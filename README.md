@@ -25,6 +25,21 @@ and keyboard (F1 the game's camera, F2 third person, F3 first person).
 - **F4 First person** - the hero's arms follow the controllers and hold the
   weapon; the hero turns with you.
 
+## The game's video settings
+
+In Diablo II: Resurrected, Options > Video:
+
+| Setting | Set to |
+|---|---|
+| **Vertical Sync** | **Off - important**: the mod draws the two eyes in turn, and VSync halves the frames each eye gets |
+| Framerate Cap | 180 (90 for each eye) |
+| Anti-Aliasing | FXAA |
+| Ambient Occlusion Quality | Medium |
+
+![Options > Video](screenshots/game_video_settings.jpg)
+
+![Vertical Sync off, Framerate Cap 180](screenshots/game_video_vsync.jpg)
+
 ## Controls in F1 - F3
 
 From above, from behind and on the floor the game is played as with a gamepad:
