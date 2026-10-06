@@ -40,6 +40,16 @@ In Diablo II: Resurrected, Options > Video:
 
 ![Vertical Sync off, Framerate Cap 180](screenshots/game_video_vsync.jpg)
 
+### A square screen
+
+For a square picture in the headset, either:
+
+- **Windowed mode:** set the game to *Windowed* in Options > Video and drag
+  the window's edges until it is square; or
+- **FlatVR's virtual monitor:** in BodyWalk's FlatVR tab create a virtual
+  monitor with a square resolution, move the game onto it, then switch the
+  game to full screen there.
+
 ## Controls in F1 - F3
 
 From above, from behind and on the floor the game is played as with a gamepad:
