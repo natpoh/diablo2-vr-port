@@ -8,7 +8,7 @@
   open-air areas.
 - **The barbarian's left hand fixed.** In first person his second weapon sits
   properly in the left hand, and he can strike with it.
-- **Daggers can be thrown.**
+- **Daggers can be thrown** - a Throw action in the mod's BodyWalk profile, plus the left-hand attack and D-pad actions.
 - **"D2R Left Hand" tab** in BodyWalk's Mapping (D2R Bridge 0.23): actions for
   the left hand while it holds a weapon.
 - **Ready for game updates.** Every time the game starts the mod looks for the

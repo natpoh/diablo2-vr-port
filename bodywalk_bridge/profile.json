@@ -1,7 +1,4 @@
 {
-    "profile_name": "D2VR",
-    "cloud_game_id": 43,
-    "cloud_profile_id": 53,
     "bind_steamvr_toggle": false,
     "crash_watchdog": true,
     "current_engine": 4,
@@ -29,7 +26,7 @@
             },
             {
                 "desc": "D2R: Bow in the hands (F4)",
-                "enabled": true,
+                "enabled": false,
                 "name": "D2R Bow"
             },
             {
@@ -84,7 +81,7 @@
             },
             {
                 "desc": "D2R: Throwing in the hands (F4)",
-                "enabled": false,
+                "enabled": true,
                 "name": "D2R Throwing"
             },
             {
@@ -131,6 +128,11 @@
                 "desc": "D2R: the game on the floor (F3)",
                 "enabled": false,
                 "name": "D2R Floor"
+            },
+            {
+                "desc": "D2R: first person (F4), a weapon in the left hand too",
+                "enabled": false,
+                "name": "D2R Left Hand"
             }
         ],
         "gestures": [
@@ -145,8 +147,8 @@
                         0.0
                     ],
                     "minVelocity": 4.800000190734863,
-                    "outCode": 4096,
-                    "outType": 2,
+                    "outCode": 0,
+                    "outType": 7,
                     "posMode": 0,
                     "posTriggerRadius": 0.49000000953674316,
                     "pressMode": 0,
@@ -182,6 +184,53 @@
                 "traj_width": 0.0
             },
             {
+                "category": "D2R Left Hand",
+                "enabled": true,
+                "mapping": {
+                    "handZoneAnchor": 0,
+                    "handZoneOffset": [
+                        0.0,
+                        0.0,
+                        0.0
+                    ],
+                    "minVelocity": 4.800000190734863,
+                    "outCode": 0,
+                    "outType": 7,
+                    "posMode": 0,
+                    "posTriggerRadius": 0.49000000953674316,
+                    "pressMode": 0,
+                    "priority": 0,
+                    "rotationTolerance": 0.5,
+                    "showInVr": false,
+                    "sourcePress": 0,
+                    "sourcePressMs": 300,
+                    "sourceRaw": -1,
+                    "sourceRaw2": -1,
+                    "strikeAngleTolerance": 92.0,
+                    "strikeDirection": [
+                        -0.3413270115852356,
+                        0.8073129057884216,
+                        -0.4813956618309021
+                    ],
+                    "tapDurationMs": 100,
+                    "type": 5,
+                    "zoneActiveColor": 4294967295,
+                    "zoneActiveGlow": 0.8999999761581421,
+                    "zoneActiveOpacity": 0.6499999761581421,
+                    "zoneColor": 4294953080,
+                    "zoneGlow": 0.4000000059604645,
+                    "zoneHoverColor": 4294937640,
+                    "zoneHoverGlow": 0.6000000238418579,
+                    "zoneHoverOpacity": 0.5,
+                    "zoneOpacity": 0.3499999940395355
+                },
+                "min_mov": 0.4000000059604645,
+                "name": "Atack left",
+                "pointsFile": "g8758184570_0",
+                "recordMode": 0,
+                "traj_width": 0.0
+            },
+            {
                 "category": "D2R Axe,D2R Unarmed",
                 "enabled": true,
                 "mapping": {
@@ -202,7 +251,7 @@
                     "showInVr": false,
                     "sourcePress": 0,
                     "sourcePressMs": 300,
-                    "sourceRaw": 1,
+                    "sourceRaw": -1,
                     "sourceRaw2": -1,
                     "strikeAngleTolerance": 92.0,
                     "strikeDirection": [
@@ -1123,7 +1172,7 @@
             },
             {
                 "category": "D2R First Person",
-                "enabled": false,
+                "enabled": true,
                 "mapping": {
                     "handZoneAnchor": 0,
                     "handZoneOffset": [
@@ -1170,7 +1219,7 @@
             },
             {
                 "category": "D2R First Person",
-                "enabled": false,
+                "enabled": true,
                 "mapping": {
                     "handZoneAnchor": 0,
                     "handZoneOffset": [
@@ -1217,7 +1266,7 @@
             },
             {
                 "category": "D2R First Person",
-                "enabled": false,
+                "enabled": true,
                 "mapping": {
                     "handZoneAnchor": 0,
                     "handZoneOffset": [
@@ -1264,7 +1313,7 @@
             },
             {
                 "category": "D2R First Person",
-                "enabled": false,
+                "enabled": true,
                 "mapping": {
                     "handZoneAnchor": 0,
                     "handZoneOffset": [
@@ -1310,7 +1359,7 @@
                 "traj_width": 0.0
             },
             {
-                "category": "D2R Floor",
+                "category": "D2R Floor,D2R Third Person,D2R Top Down",
                 "enabled": true,
                 "mapping": {
                     "handZoneAnchor": 0,
@@ -1320,8 +1369,8 @@
                         0.0
                     ],
                     "minVelocity": 2.0,
-                    "outCode": 0,
-                    "outType": 0,
+                    "outCode": 4,
+                    "outType": 2,
                     "posMode": 0,
                     "posTriggerRadius": 0.10000000149011612,
                     "pressMode": 0,
@@ -1330,8 +1379,8 @@
                     "showInVr": false,
                     "sourcePress": 0,
                     "sourcePressMs": 300,
-                    "sourceRaw": -1,
-                    "sourceRaw2": -1,
+                    "sourceRaw": 48,
+                    "sourceRaw2": 1,
                     "strikeAngleTolerance": 45.0,
                     "strikeDirection": [
                         0.0,
@@ -1351,8 +1400,149 @@
                     "zoneOpacity": 0.3499999940395355
                 },
                 "min_mov": 0.4000000059604645,
-                "name": "Action 24",
+                "name": "Left",
                 "pointsFile": "g43710437976_0",
+                "recordMode": 1,
+                "traj_width": 0.0
+            },
+            {
+                "category": "D2R Floor,D2R Third Person,D2R Top Down",
+                "enabled": true,
+                "mapping": {
+                    "handZoneAnchor": 0,
+                    "handZoneOffset": [
+                        0.0,
+                        0.0,
+                        0.0
+                    ],
+                    "minVelocity": 2.0,
+                    "outCode": 8,
+                    "outType": 2,
+                    "posMode": 0,
+                    "posTriggerRadius": 0.10000000149011612,
+                    "pressMode": 0,
+                    "priority": 0,
+                    "rotationTolerance": 0.5,
+                    "showInVr": false,
+                    "sourcePress": 0,
+                    "sourcePressMs": 300,
+                    "sourceRaw": 49,
+                    "sourceRaw2": 1,
+                    "strikeAngleTolerance": 45.0,
+                    "strikeDirection": [
+                        0.0,
+                        0.0,
+                        0.0
+                    ],
+                    "tapDurationMs": 100,
+                    "type": 1,
+                    "zoneActiveColor": 4294967295,
+                    "zoneActiveGlow": 0.8999999761581421,
+                    "zoneActiveOpacity": 0.6499999761581421,
+                    "zoneColor": 4294953080,
+                    "zoneGlow": 0.4000000059604645,
+                    "zoneHoverColor": 4294937640,
+                    "zoneHoverGlow": 0.6000000238418579,
+                    "zoneHoverOpacity": 0.5,
+                    "zoneOpacity": 0.3499999940395355
+                },
+                "min_mov": 0.4000000059604645,
+                "name": "Right",
+                "pointsFile": "g25136970928_2",
+                "recordMode": 1,
+                "traj_width": 0.0
+            },
+            {
+                "category": "D2R Floor,D2R Third Person,D2R Top Down",
+                "enabled": true,
+                "mapping": {
+                    "handZoneAnchor": 0,
+                    "handZoneOffset": [
+                        0.0,
+                        0.0,
+                        0.0
+                    ],
+                    "minVelocity": 2.0,
+                    "outCode": 1,
+                    "outType": 2,
+                    "posMode": 0,
+                    "posTriggerRadius": 0.10000000149011612,
+                    "pressMode": 0,
+                    "priority": 0,
+                    "rotationTolerance": 0.5,
+                    "showInVr": false,
+                    "sourcePress": 0,
+                    "sourcePressMs": 300,
+                    "sourceRaw": 50,
+                    "sourceRaw2": 1,
+                    "strikeAngleTolerance": 45.0,
+                    "strikeDirection": [
+                        0.0,
+                        0.0,
+                        0.0
+                    ],
+                    "tapDurationMs": 100,
+                    "type": 1,
+                    "zoneActiveColor": 4294967295,
+                    "zoneActiveGlow": 0.8999999761581421,
+                    "zoneActiveOpacity": 0.6499999761581421,
+                    "zoneColor": 4294953080,
+                    "zoneGlow": 0.4000000059604645,
+                    "zoneHoverColor": 4294937640,
+                    "zoneHoverGlow": 0.6000000238418579,
+                    "zoneHoverOpacity": 0.5,
+                    "zoneOpacity": 0.3499999940395355
+                },
+                "min_mov": 0.4000000059604645,
+                "name": "Up",
+                "pointsFile": "g25135430103_1",
+                "recordMode": 1,
+                "traj_width": 0.0
+            },
+            {
+                "category": "D2R Floor,D2R Third Person,D2R Top Down",
+                "enabled": true,
+                "mapping": {
+                    "handZoneAnchor": 0,
+                    "handZoneOffset": [
+                        0.0,
+                        0.0,
+                        0.0
+                    ],
+                    "minVelocity": 2.0,
+                    "outCode": 2,
+                    "outType": 2,
+                    "posMode": 0,
+                    "posTriggerRadius": 0.10000000149011612,
+                    "pressMode": 0,
+                    "priority": 0,
+                    "rotationTolerance": 0.5,
+                    "showInVr": false,
+                    "sourcePress": 0,
+                    "sourcePressMs": 300,
+                    "sourceRaw": 51,
+                    "sourceRaw2": 1,
+                    "strikeAngleTolerance": 45.0,
+                    "strikeDirection": [
+                        0.0,
+                        0.0,
+                        0.0
+                    ],
+                    "tapDurationMs": 100,
+                    "type": 1,
+                    "zoneActiveColor": 4294967295,
+                    "zoneActiveGlow": 0.8999999761581421,
+                    "zoneActiveOpacity": 0.6499999761581421,
+                    "zoneColor": 4294953080,
+                    "zoneGlow": 0.4000000059604645,
+                    "zoneHoverColor": 4294937640,
+                    "zoneHoverGlow": 0.6000000238418579,
+                    "zoneHoverOpacity": 0.5,
+                    "zoneOpacity": 0.3499999940395355
+                },
+                "min_mov": 0.4000000059604645,
+                "name": "Down",
+                "pointsFile": "g25135007275_0",
                 "recordMode": 1,
                 "traj_width": 0.0
             },
@@ -1400,6 +1590,53 @@
                 "min_mov": 0.4000000059604645,
                 "name": "Action 26",
                 "pointsFile": "g8977625982_0",
+                "recordMode": 1,
+                "traj_width": 0.0
+            },
+            {
+                "category": "D2R Throwing",
+                "enabled": true,
+                "mapping": {
+                    "handZoneAnchor": 0,
+                    "handZoneOffset": [
+                        0.0,
+                        0.0,
+                        0.0
+                    ],
+                    "minVelocity": 5.099999904632568,
+                    "outCode": 8192,
+                    "outType": 2,
+                    "posMode": 0,
+                    "posTriggerRadius": 0.3100000023841858,
+                    "pressMode": 0,
+                    "priority": 0,
+                    "rotationTolerance": 0.5,
+                    "showInVr": false,
+                    "sourcePress": 0,
+                    "sourcePressMs": 180,
+                    "sourceRaw": -1,
+                    "sourceRaw2": -1,
+                    "strikeAngleTolerance": 74.0,
+                    "strikeDirection": [
+                        0.7863300442695618,
+                        -0.1048378124833107,
+                        0.6088465452194214
+                    ],
+                    "tapDurationMs": 100,
+                    "type": 5,
+                    "zoneActiveColor": 4294967295,
+                    "zoneActiveGlow": 0.8999999761581421,
+                    "zoneActiveOpacity": 0.6499999761581421,
+                    "zoneColor": 4294953080,
+                    "zoneGlow": 0.4000000059604645,
+                    "zoneHoverColor": 4294937640,
+                    "zoneHoverGlow": 0.6000000238418579,
+                    "zoneHoverOpacity": 0.5,
+                    "zoneOpacity": 0.3499999940395355
+                },
+                "min_mov": 0.4000000059604645,
+                "name": "Throw",
+                "pointsFile": "g10196460870_1",
                 "recordMode": 1,
                 "traj_width": 0.0
             }
@@ -1481,7 +1718,7 @@
             "openvr_hmd_id": -1,
             "output_mode": "Disabled",
             "squat_serial": "",
-            "step_left": "None",
+            "step_left": "",
             "step_right": "None",
             "tracker_name": "HMD",
             "tracker_serial": "HMD",
@@ -1558,7 +1795,7 @@
     "flat_vr_direct_sbs_custom_width": 3840,
     "flat_vr_direct_sbs_format": 1,
     "flat_vr_direct_sbs_mode": false,
-    "flat_vr_distance": 1.743288516998291,
+    "flat_vr_distance": 1.7441860437393188,
     "flat_vr_distance_from_game": true,
     "flat_vr_double_click_snap": true,
     "flat_vr_elevation": 0.0,
@@ -1595,7 +1832,7 @@
     "flat_vr_head_lock_from_game": true,
     "flat_vr_head_lock_hold_ms": 0.0,
     "flat_vr_head_lock_input_mode": "Keyboard",
-    "flat_vr_head_locked": false,
+    "flat_vr_head_locked": true,
     "flat_vr_head_tracking_output_mode": 0,
     "flat_vr_image_algo": 2,
     "flat_vr_invert_mouse_x": false,
@@ -1981,8 +2218,11 @@
     "vr_toggle_mode": 1,
     "window_height": 1048,
     "window_maximized": false,
-    "window_width": 2053,
+    "window_width": 1929,
     "xbox_s2_tap_mode": false,
+    "profile_name": "D2VR",
+    "cloud_game_id": 43,
+    "cloud_profile_id": 53,
     "mode": "Xbox Controller (vJoy)",
     "tracker_source": "Disabled"
 }
