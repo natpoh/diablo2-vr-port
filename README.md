@@ -41,7 +41,7 @@ In Diablo II: Resurrected, Options > Video:
 | **Vertical Sync** | **Off - important**: the mod draws the two eyes in turn, and VSync halves the frames each eye gets |
 | **NVIDIA DLSS** | **Off - required**: DLSS builds each frame from the ones before it, and the mod's frames alternate between the eyes |
 | Framerate Cap | 180 (90 for each eye) |
-| Anti-Aliasing | FXAA |
+| **Anti-Aliasing** | FXAA or MSAA - **not TAA**: it builds each frame from the ones before it, like DLSS |
 | Ambient Occlusion Quality | Medium |
 
 ![Options > Video](screenshots/game_video_settings.jpg)

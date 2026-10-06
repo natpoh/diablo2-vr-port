@@ -173,6 +173,7 @@ std::vector<Item> g_items = {
     Only(kVr, Group(L"Status")),
     Status(L"reshade", L"ReShade and the mod's effect"),
     Status(L"depth_addon", L"FlatVR depth add-on"),
+    Status(L"game_video", L"The game's video settings"),
     Status(L"bw_installed", L"BodyWalk installed"),
     Status(L"vigem", L"Xbox controller driver (ViGEmBus)"),
     Status(L"bw_running", L"BodyWalk running"),
@@ -1670,6 +1671,36 @@ void RefreshStatus() {
         const bool addon = Exists(game + L"FlatVR_DepthProvider.addon64");
         SetStatus(L"depth_addon", addon ? kOk : kBad, addon ? L"FlatVR depth add-on installed"
                                                             : L"FlatVR depth add-on missing beside the game - run D2R VR Setup again");
+    }
+
+    // The game's own video settings (Saved Games\Diablo II Resurrected\Settings.json,
+    // written by the game when its options close). The mod draws the eyes in turn:
+    // anything that builds a frame from the ones before it - DLSS, TAA - mixes the
+    // two eyes, and VSync halves the frames each eye gets. "Anti Aliasing": 1 is
+    // FXAA, 2 TAA (as the game's own menu shows them, 2026-10-06).
+    {
+        std::string json;
+        const std::wstring path = GameSettingsPath();
+        const bool read = !path.empty() && ReadFileText(path, &json);
+        auto value = [&](const char* key) {
+            std::smatch m;
+            return std::regex_search(json, m, std::regex(std::string("\"") + key + "\"\\s*:\\s*(-?\\d+)")) ? std::stoi(m[1].str()) : -1;
+        };
+        if (!read) {
+            SetStatus(L"game_video", kUnknown, L"The game's video settings: not found yet (start the game once)");
+        } else {
+            std::wstring bad, warn;
+            if (value("NVIDIA DLSS") > 0) bad += L"DLSS on - switch it off. ";
+            if (value("VSync") > 0) bad += L"Vertical Sync on - switch it off. ";
+            // Off, FXAA or MSAA are all fine; only TAA (2) mixes the eyes
+            // (docs/plan_left_eye_shake.md: "Anti Aliasing": 2 was TAA).
+            if (value("Anti Aliasing") == 2) bad += L"Anti-Aliasing is TAA - pick FXAA or MSAA. ";
+            const int cap = value("Framerate Cap");
+            if (cap > 0 && cap < 180) warn += L"Framerate Cap below 180 (90 for each eye). ";
+            if (!bad.empty()) SetStatus(L"game_video", kBad, (L"Game video: " + bad + L"(Options > Video)").c_str());
+            else if (!warn.empty()) SetStatus(L"game_video", kWarn, (L"Game video: " + warn).c_str());
+            else SetStatus(L"game_video", kOk, L"Game video settings fine: DLSS, VSync and TAA off");
+        }
     }
 
     std::string text;
