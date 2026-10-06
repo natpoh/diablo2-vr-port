@@ -6,9 +6,10 @@ Diablo II: Resurrected in a VR headset: the game's own view from above in true
 controllers, the weapon in your hands - with a painted sky, depth fog and the
 game's day and night.
 
-**[Download D2R VR](https://bodywalkvr.com/mods/d2r-vr)** - the ready installer, on
-the mod's page at bodywalkvr.com. It sets up everything, including a free
-BodyWalk Lite if you don't have BodyWalk.
+**[Download D2R VR](https://bodywalkvr.com/api/download/latest?product=d2r_vr)** -
+the ready installer, always the latest version (more on the
+[mod's page](https://bodywalkvr.com/mods/d2r-vr)). It sets up everything,
+including a free BodyWalk Lite if you don't have BodyWalk.
 
 > Offline single-player only. Injecting code into the game online can get the
 > account banned. This project is not made, endorsed or supported by Blizzard
