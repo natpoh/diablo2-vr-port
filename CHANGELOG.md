@@ -2,18 +2,17 @@
 
 ## 0.141
 
-- **Sky in more places.** Tristram, Kurast (Lower Kurast, the Bazaar, Upper Kurast,
-  the Causeway), Travincal, the River of Flame, the Chaos Sanctuary and
-  Nihlathak's Temple now have a sky, like the other open-air areas.
-- **Two weapons in first person.** A barbarian's second weapon (or any item in
-  the left hand) sits in the left hand, and the grip is taken again whenever
-  either hand's item changes - a shield swapped for a dagger no longer keeps the
-  shield's grip.
-- **"D2R Left Hand" tab** in BodyWalk's Mapping (D2R Bridge 0.23): actions that
-  only apply while the left hand holds a weapon.
-- **Finds its addresses by signature.** The mod checks the game's code where it
-  expects it and, on another game build, looks for the same code elsewhere,
-  instead of switching parts off.
+- **Sky fixed in several areas.** Tristram, Kurast (Lower Kurast, the Bazaar,
+  Upper Kurast, the Causeway), Travincal, the River of Flame, the Chaos
+  Sanctuary and Nihlathak's Temple now have their sky, like the other
+  open-air areas.
+- **The barbarian's left hand fixed.** In first person his second weapon sits
+  properly in the left hand, and he can strike with it.
+- **Daggers can be thrown.**
+- **"D2R Left Hand" tab** in BodyWalk's Mapping (D2R Bridge 0.23): actions for
+  the left hand while it holds a weapon.
+- **Finds its addresses by signature.** On another game build the mod looks for
+  the code it needs instead of switching parts off.
 
 ## 0.140
 
