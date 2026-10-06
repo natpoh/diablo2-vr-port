@@ -2,8 +2,9 @@
 // Everything this layer knows about the game binary, in one place.
 // D2R 3.3.93787 under D2RLoader 1.3.1 (image base 0x140000000). Every RVA and
 // offset is explained, with the evidence that found it, in cleanroom/RECON.md.
-// A different game build changes the bytes, the loader's expected-byte check
-// fails, and the layer stays off instead of writing into the wrong place.
+// A different game build moves them: cleanroom/sigscan finds each again by its
+// pattern (game_sigs.h, made by tools/make_sigs.py) and the RVAs here stay the
+// keys; what it cannot find stays off instead of writing into the wrong place.
 
 #include <cstddef>
 #include <cstdint>

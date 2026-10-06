@@ -65,8 +65,9 @@ namespace hud { void Register(); void SetHide(int mode); void SetInterfaceScale(
                 bool PictureNow(int i, float box[4], uint64_t* srv); void SetPictureBarMoved(bool moved); void SetPictureBarOffset(float x, float y);
                 void SetLabels(bool on); bool LabelsNow(float keepBar[4], float keepMap[4], uint64_t* srv); void SetUiMask(bool on); bool UiMaskNow(); }
 #include "d2rcam.h"
+#include "sigscan.h"
 #include "mat4.h"
-namespace gamestate { void Init(const D2RL::PluginContext* ctx); void Tick(); uint32_t WeaponClass(); uint32_t WeaponSet(); uint32_t WeaponType(); uint32_t HandsHeld(); uint32_t TwoHanded(); uint32_t WeaponHand(); bool MenuOpen(); void SetViewMode(uint32_t mode); bool AutoMapOpen(); bool SetAutoMap(bool open); }
+namespace gamestate { void Init(const D2RL::PluginContext* ctx); void Tick(); uint32_t WeaponClass(); uint32_t WeaponSet(); uint32_t WeaponType(); uint32_t HandsHeld(); uint32_t TwoHanded(); uint32_t WeaponHand(); uint32_t HandsKey(); bool MenuOpen(); void SetViewMode(uint32_t mode); bool AutoMapOpen(); bool SetAutoMap(bool open); }
 #include "d2r_vr_state.h"
 
 #include "MinHook.h"
@@ -91,9 +92,10 @@ bool SafeRead(void* d, const void* s, size_t n) noexcept { __try { memcpy(d, s, 
 bool SafeWriteMem(void* d, const void* s, size_t n) noexcept { __try { memcpy(d, s, n); return true; } __except (EXCEPTION_EXECUTE_HANDLER) { return false; } }
 #pragma optimize("", on)
 
-// The game's bytes at rva are the ones expected (another game build: no).
+// The game's bytes at rva are the ones expected - at the address this build has
+// for what 3.3.93787 has at rva (cleanroom/sigscan).
 bool Matches(uint64_t rva, const uint8_t* sig, size_t n) {
-    return g_ctx != nullptr && g_ctx->CheckExpectedBytes(rva, sig, n);
+    return g_ctx != nullptr && d2rsig::Check(rva, sig, (uint32_t)n);
 }
 
 
@@ -333,7 +335,11 @@ bool IniB(const wchar_t* sec, const wchar_t* key, bool def) { return IniF(sec, k
 // Sky: only in the open air. The area's biome comes from the game's
 // BiomeSystem::SetCurrentBiome (hooked below); the exe names only the outdoor
 // ones, dungeons and caves bring theirs from level data, so anything not on
-// this list - [sky] outdoor in the ini replaces it - gets no sky.
+// this list - [sky] outdoor in the ini replaces it - gets no sky. Tristram
+// (act1_tristram, area 38), Kurast (act3_kurast, 79-82), Travincal
+// (act3_travincal_outdoors, 83), the River of Flame (act4_lava, 107), the Chaos
+// Sanctuary (act4_diab, 108) and Nihlathak's Temple (expansion_wildtemple_tempenter,
+// 121) come from level data too, and are open air.
 SRWLOCK g_biomeLock = SRWLOCK_INIT;
 std::vector<std::string> g_outdoor;
 char g_biome[96] = "";                  // last name the game set, bare (no folder, no extension), lower case
@@ -341,7 +347,7 @@ std::atomic<uint32_t> g_biomeGen{0};    // bumped by every SetCurrentBiome
 
 void LoadOutdoorBiomes() {
     wchar_t buf[1024];
-    GetPrivateProfileStringW(L"sky", L"outdoor", L"act1_outdoors,act2_outdoors,act2_town,act3_jungle,act3_docktown,act4_mesa,expansion_town,expansion_siege,expansion_mountaintop,expansion_ruins,expansion_ruins_snow",
+    GetPrivateProfileStringW(L"sky", L"outdoor", L"act1_outdoors,act1_tristram,act2_outdoors,act2_town,act3_jungle,act3_docktown,act3_kurast,act3_travincal_outdoors,act4_mesa,act4_lava,act4_diab,expansion_town,expansion_siege,expansion_mountaintop,expansion_ruins,expansion_ruins_snow,expansion_wildtemple_tempenter",
                              buf, (DWORD)std::size(buf), g_iniPath);
     std::vector<std::string> list;
     std::string cur;
@@ -1301,8 +1307,8 @@ double UsNow() {
     LARGE_INTEGER c; QueryPerformanceCounter(&c);
     return (double)c.QuadPart * k;
 }
-uint32_t Pass() { uint32_t v = 0; SafeRead(&v, (void*)(g_base + kDrawCounterRva), 4); return v; }
-float Dt() { float v = -1.0f; SafeRead(&v, (void*)(g_base + kFrameTimeRva), 4); return v; }
+uint32_t Pass() { uint32_t v = 0; SafeRead(&v, (void*)d2rsig::Addr(kDrawCounterRva), 4); return v; }
+float Dt() { float v = -1.0f; SafeRead(&v, (void*)d2rsig::Addr(kFrameTimeRva), 4); return v; }
 
 void Line(const char* fmt, ...) {
     if (!g_on.load(std::memory_order_relaxed)) return;
@@ -2204,7 +2210,7 @@ void HookUnitFacing(void* unit, float* out) {
         g_logicFacingDeg.store(atan2f(out[1], out[0]) * 57.2957795f);
         g_logicFacingAt.store(QpcUs());
     }
-    if (!out || (uintptr_t)_ReturnAddress() != g_base + RVA_AIM_FACING_RET || !AimByVector()) return;
+    if (!out || (uintptr_t)_ReturnAddress() != d2rsig::Addr(RVA_AIM_FACING_RET) || !AimByVector()) return;
     float gx, gy;
     if (!HandGridDir(&gx, &gy)) return;
     static ULONGLONG told = 0;
@@ -2224,7 +2230,7 @@ void HookUnitFacing(void* unit, float* out) {
 // cells out along the hand instead: steps of about 3 degrees, and an arrow
 // flies on past its point anyway. A melee weapon keeps the game's point, so
 // the hero does not walk off towards a far one.
-constexpr uint64_t RVA_ATTACK_POINT = 0x18BAD0;
+constexpr uint64_t RVA_ATTACK_POINT = 0x18BAD0, RVA_ATTACK_POINT_RET = 0x14484A;   // the aim's own call returns there
 const uint8_t kSigAttackPoint[16] = {0x48,0x89,0x5C,0x24,0x08,0x48,0x89,0x6C,0x24,0x10,0x48,0x89,0x74,0x24,0x18,0x57};
 using AttackPointFn = float* (*)(void* mgr, float* out, void* unit, uint64_t from, uint64_t dir);
 AttackPointFn OrigAttackPoint = nullptr;
@@ -2287,7 +2293,7 @@ uint64_t HookAttackTarget(void* self, void* unit, float* dir, int* outX, int* ou
     float theta = 0.0f;
     // only the aim function's own call (0x144845, returns to 0x14484A): the
     // walking calls keep the stick, or the hero would walk after the hand
-    if (dir && caller == 0x14484A && AimByVector() && HandGridDir(&use[0], &use[1])) {
+    if (dir && caller == d2rsig::Rva(RVA_ATTACK_POINT_RET) && AimByVector() && HandGridDir(&use[0], &use[1])) {
         d = use;
         turned = true;
     }
@@ -2507,9 +2513,9 @@ void ApplyActions(XINPUT_STATE* s) {
     }
     // The game's flag, as it loaded it, kept to put back.
     static int original = -1;
-    uint8_t* flag = (uint8_t*)(g_base + RVA_INTERACT_ON_ATTACK);
+    uint8_t* flag = (uint8_t*)d2rsig::Addr(RVA_INTERACT_ON_ATTACK);
     uint8_t now = 0;
-    if (!SafeRead(&now, flag, 1) || now > 1) return;
+    if (!flag || !SafeRead(&now, flag, 1) || now > 1) return;
     const bool separate = g_set.aAttackOnly.load() || (held & D2RVR_ACT_ATTACK);
     if (original < 0) { if (!separate && !interact) return; original = now; }
     const uint8_t want = interact ? 1 : separate ? 0 : (uint8_t)original;
@@ -2525,9 +2531,9 @@ uintptr_t HookInteractTarget(uintptr_t mgr, uint32_t player) {
     const uintptr_t r = OrigInteractTarget(mgr, player);
     if (inside) return r;
     uintptr_t t = r;
-    uint8_t* flag = (uint8_t*)(g_base + RVA_INTERACT_ON_ATTACK);
+    uint8_t* flag = (uint8_t*)d2rsig::Addr(RVA_INTERACT_ON_ATTACK);
     uint8_t f = 1;
-    if (SafeRead(&f, flag, 1) && f == 0) {   // A only attacks: ask as if it interacted, for us
+    if (flag && SafeRead(&f, flag, 1) && f == 0) {   // A only attacks: ask as if it interacted, for us
         inside = true;
         *flag = 1;
         t = OrigInteractTarget(mgr, player);
@@ -2560,7 +2566,7 @@ bool ChatFlagFound() {
     static std::atomic<int> ok{-1};
     if (ok.load() < 0) {
         const bool found = Matches(RVA_GET_UI_STATE, kSigGetUiState, sizeof kSigGetUiState) &&
-                           Matches(RVA_HUD_CHAT_CHECK, kSigHudChatCheck, sizeof kSigHudChatCheck);
+                           Matches(RVA_HUD_CHAT_CHECK, kSigHudChatCheck, sizeof kSigHudChatCheck) && d2rsig::Addr(RVA_UI_STATES);
         if (ok.exchange(found ? 1 : 0) < 0)
             LogF(found ? "vrcam: chat line flag found - W A S D go to the game while typing"
                        : "vrcam: chat line flag NOT found on this build - W A S D stay ours while typing");
@@ -2570,7 +2576,7 @@ bool ChatFlagFound() {
 
 bool ChatFlag() {
     uint8_t v = 0;
-    return ChatFlagFound() && SafeRead(&v, (void*)(g_base + RVA_UI_STATES + kUiChat), 1) && v == 1;
+    return ChatFlagFound() && SafeRead(&v, (void*)(d2rsig::Addr(RVA_UI_STATES) + kUiChat), 1) && v == 1;
 }
 
 bool ChatOpen() {
@@ -2647,7 +2653,8 @@ uint64_t HookKeyMove() {
     float x = 0.0f, y = 0.0f;
     const char* from = "";
     if (!FlatKeyMode() || !FlatMoveInput(&x, &y, &from)) return OrigKeyMove();
-    volatile uint8_t* keys = (volatile uint8_t*)(g_base + RVA_MOVE_KEYS);
+    volatile uint8_t* keys = (volatile uint8_t*)d2rsig::Addr(RVA_MOVE_KEYS);
+    if (!keys) return OrigKeyMove();
     const uint8_t keep[4] = {keys[0], keys[1], keys[2], keys[3]};
     keys[0] = 1; keys[1] = 0; keys[2] = 0; keys[3] = 0;
     const uint64_t r = OrigKeyMove();
@@ -2678,7 +2685,7 @@ void InstallKeyMoveHook() {
         }
         return;
     }
-    const bool in = g_ctx->InstallInlineHook(RVA_KEY_MOVE, kSigKeyMove, sizeof kSigKeyMove, (void*)&HookKeyMove, (void**)&OrigKeyMove);
+    const bool in = d2rsig::Hook(RVA_KEY_MOVE, kSigKeyMove, sizeof kSigKeyMove, (void*)&HookKeyMove, (void**)&OrigKeyMove);
     g_keyMove.store(in ? 1 : 2);
     Log(in ? "vrcam: flat: keyboard move hook in - W A S D walk through the game's own keyboard move, the mouse clicks where you look"
            : "vrcam: flat: keyboard move hook FAILED - W A S D walk the old way, through a pad");
@@ -2707,8 +2714,8 @@ std::atomic<int> g_mapClick{0};   // 0 not in yet, 1 in, 2 not possible
 uint64_t HookMapClick(void* unit, int type, int x, int y, uint64_t flags) {
     if (unit && (type == 0 || type == 1 || type == 3 || type == 4) && !(flags & 0xFF) &&
         g_set.flatClickShoot.load() && FlatKeyMode() && ShooterActive()) {
-        const int idx = ((ClientIndexFn)(g_base + RVA_CLIENT_INDEX))(unit);
-        if (idx >= 0 && idx < 8 && !((HoverUnitFn)(g_base + RVA_HOVER_UNIT))(idx)) {
+        const int idx = ((ClientIndexFn)d2rsig::Addr(RVA_CLIENT_INDEX))(unit);
+        if (idx >= 0 && idx < 8 && !((HoverUnitFn)d2rsig::Addr(RVA_HOVER_UNIT))(idx)) {
             flags |= 1;
             static ULONGLONG lastLog = 0;
             if (const ULONGLONG now = GetTickCount64(); now - lastLog >= 2000) {
@@ -2734,7 +2741,7 @@ void InstallMapClickHook() {
         }
         return;
     }
-    const bool in = g_ctx->InstallInlineHook(RVA_MAP_CLICK, kSigMapClick, sizeof kSigMapClick, (void*)&HookMapClick, (void**)&OrigMapClick);
+    const bool in = d2rsig::Hook(RVA_MAP_CLICK, kSigMapClick, sizeof kSigMapClick, (void*)&HookMapClick, (void**)&OrigMapClick);
     g_mapClick.store(in ? 1 : 2);
     Log(in ? "vrcam: flat: click hook in - with no target under the crosshair a click is a shot there, never a walk"
            : "vrcam: flat: click hook FAILED - a click on the ground walks");
@@ -3183,7 +3190,7 @@ void ApplyBackgroundSleep() {
     int done = 0;
     for (uint64_t rva : kSites) {
         if (Matches(rva, want ? kZero : kTen, 5)) { ++done; continue; }
-        if (Matches(rva, want ? kTen : kZero, 5) && g_ctx->PatchBytes(rva, want ? kTen : kZero, 5, want ? kZero : kTen, 5)) ++done;
+        if (Matches(rva, want ? kTen : kZero, 5) && d2rsig::Patch(rva, want ? kTen : kZero, 5, want ? kZero : kTen, 5)) ++done;
     }
     const int state = done == 2 ? (want ? 1 : 0) : 2;
     if (state != told) {
@@ -3224,7 +3231,8 @@ extern std::atomic<bool> g_inWorld;
 bool FrameTimeFound() {
     static int ok = -1;
     if (ok < 0) ok = Matches(RVA_GET_FRAME_TIME, kSigGetFrameTime, sizeof kSigGetFrameTime) &&
-                     Matches(RVA_GET_RAW_FRAME_TIME, kSigGetRawFrameTime, sizeof kSigGetRawFrameTime) ? 1 : 0;
+                     Matches(RVA_GET_RAW_FRAME_TIME, kSigGetRawFrameTime, sizeof kSigGetRawFrameTime) &&
+                     d2rsig::Addr(RVA_FRAME_TIME) && d2rsig::Addr(RVA_RAW_FRAME_TIME) ? 1 : 0;
     return ok == 1;
 }
 
@@ -3271,8 +3279,8 @@ uintptr_t HookDrawGameScreen(int a) {
     d2rcam::Refresh();
     OrigDrawGameScreen(a);
 
-    float* dt = (float*)(g_base + RVA_FRAME_TIME);
-    float* rawDt = (float*)(g_base + RVA_RAW_FRAME_TIME);
+    float* dt = (float*)d2rsig::Addr(RVA_FRAME_TIME);
+    float* rawDt = (float*)d2rsig::Addr(RVA_RAW_FRAME_TIME);
     const float keep = *dt, keepRaw = *rawDt;
     // [stereo] right_dt_ms: the right pass gets this sliver of time instead of none - effects
     // that skip a frame of no time (butterflies seen in the left eye only, 2026-10-04) draw then.
@@ -3302,7 +3310,7 @@ uintptr_t HookDrawGameScreen(int a) {
 void InstallBiomeHook() {
     static bool failed = false;
     if (g_h.biome || failed || !g_ctx || !Matches(RVA_SET_BIOME, kSigSetBiome, sizeof kSigSetBiome)) return;
-    g_h.biome = g_ctx->InstallInlineHook(RVA_SET_BIOME, kSigSetBiome, sizeof kSigSetBiome, (void*)&HookSetBiome, (void**)&OrigSetBiome);
+    g_h.biome = d2rsig::Hook(RVA_SET_BIOME, kSigSetBiome, sizeof kSigSetBiome, (void*)&HookSetBiome, (void**)&OrigSetBiome);
     failed = !g_h.biome;
     Log(g_h.biome ? "vrcam: biome hook in - the sky knows the area" : "vrcam: biome hook FAILED - the sky stays off unless [sky] always=1");
 }
@@ -3362,12 +3370,12 @@ bool HookLabelLayout(void* unit, char* name, int32_t* box, int32_t minX, int32_t
     const bool shown = OrigLabelLayout(unit, name, box, minX, maxX, flag);
     const float k = LabelSizeNow();
     if (!shown || !box || !name || std::abs(k - 1.0f) < 0.005f) return shown;
-    if (!((IsHdFn)(g_base + RVA_IS_HD))()) return shown;   // the old graphics: their text has no scale
-    const float s = ((UiScaleFn)(g_base + RVA_UI_SCALE))();
+    if (!((IsHdFn)d2rsig::Addr(RVA_IS_HD))()) return shown;   // the old graphics: their text has no scale
+    const float s = ((UiScaleFn)d2rsig::Addr(RVA_UI_SCALE))();
     if (!(s > 0.05f && s < 20.0f)) return shown;
     const int32_t most[2] = {0x7FFFFFFF, 0x7FFFFFFF};   // as the layout asks: one line, no limit
     int32_t was[2] = {}, now[2] = {};
-    const TextMeasureFn measure = (TextMeasureFn)(g_base + RVA_TEXT_MEASURE);
+    const TextMeasureFn measure = (TextMeasureFn)d2rsig::Addr(RVA_TEXT_MEASURE);
     measure(name, name + 0x80, was, s, most);
     measure(name, name + 0x80, now, s * k, most);
     // the padding the game put round the name, scaled with it; anything else is not the box expected
@@ -3419,7 +3427,7 @@ void InstallLabelHooks() {
                     "[hud_floor] labels_alpha fades them as a picture, labels_size does nothing");
             return;
         }
-        const bool in = g_ctx->InstallInlineHook(RVA_LABEL_PAINT, kSigLabelPaint, sizeof kSigLabelPaint, (void*)&HookLabelPaint, (void**)&OrigLabelPaint);
+        const bool in = d2rsig::Hook(RVA_LABEL_PAINT, kSigLabelPaint, sizeof kSigLabelPaint, (void*)&HookLabelPaint, (void**)&OrigLabelPaint);
         paintFailed = !in;
         g_labelPaintIn.store(in);
         Log(in ? "vrcam: item-label hook in - on the floor the labels' box fades by the game's own code ([hud_floor] labels_alpha)"
@@ -3436,12 +3444,43 @@ void InstallLabelHooks() {
         return;
     }
     // The name drawn at the other scale first: a smaller box round a name at the old size would wrap it.
-    if (!drawIn) drawIn = g_ctx->InstallInlineHook(RVA_TEXT_DRAW, kSigTextDraw, sizeof kSigTextDraw, (void*)&HookTextDraw, (void**)&OrigTextDraw);
-    const bool in = drawIn && g_ctx->InstallInlineHook(RVA_LABEL_LAYOUT, kSigLabelLayout, sizeof kSigLabelLayout, (void*)&HookLabelLayout, (void**)&OrigLabelLayout);
+    if (!drawIn) drawIn = d2rsig::Hook(RVA_TEXT_DRAW, kSigTextDraw, sizeof kSigTextDraw, (void*)&HookTextDraw, (void**)&OrigTextDraw);
+    const bool in = drawIn && d2rsig::Hook(RVA_LABEL_LAYOUT, kSigLabelLayout, sizeof kSigLabelLayout, (void*)&HookLabelLayout, (void**)&OrigLabelLayout);
     sizeFailed = !in;
     g_labelSizeIn.store(in);
     Log(in ? "vrcam: item-label size hooks in - on the floor [hud_floor] labels_size sets the labels' size"
            : "vrcam: item-label size hooks FAILED - labels_size does nothing");
+}
+
+// The game's addresses for the settings program's Status tab: d2r_vr_game_code.txt
+// beside the ini, rewritten whenever the resolver's report changes. Its Scan
+// button bumps [status] scan in the ini: what is not found is searched for again.
+void GameCodeTick(bool iniChanged) {
+    static int answered = -1;
+    static uint32_t written = ~0u;
+    if (!g_ctx) return;
+    if (iniChanged || answered < 0) {
+        const int scan = (int)GetPrivateProfileIntW(L"status", L"scan", 0, g_iniPath);
+        if (answered >= 0 && scan != answered) {
+            Log("vrcam: Scan pressed in D2R VR Settings - the game's addresses not found yet are looked for again");
+            d2rsig::Resolve(g_ctx, true);
+        }
+        if (scan != answered) written = ~0u;   // the program waits for its number in the file
+        answered = scan;
+    }
+    if (d2rsig::Generation() == written) return;
+    written = d2rsig::Generation();
+    std::wstring path = g_iniPath;
+    path.resize(path.size() - wcslen(L"d2r_vr.ini"));
+    path += L"d2r_vr_game_code.txt";
+    FILE* f = _wfopen(path.c_str(), L"wb");
+    if (!f) return;
+    SYSTEMTIME t;
+    GetLocalTime(&t);
+    fprintf(f, "time %04d-%02d-%02d %02d:%02d:%02d\nscan %d\nsummary %s\n", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute,
+            t.wSecond, answered, d2rsig::Summary().c_str());
+    fputs(d2rsig::Report().c_str(), f);
+    fclose(f);
 }
 
 void InstallHooks() {
@@ -3451,26 +3490,26 @@ void InstallHooks() {
         g_h.camera = d2rcam::Install(ctx);
         LogF("vrcam: camera and render distance %s", g_h.camera ? "in (cleanroom)" : "NOT in yet (code not decrypted, or another build)");
     }
-    if (!g_h.skeleton) g_h.skeleton = ctx->InstallInlineHook(RVA_COMPUTE_SELF_WORLD_POSE, kSigComputeSelfWorldPose, sizeof kSigComputeSelfWorldPose, skel::Detour(), skel::OrigSlot());
+    if (!g_h.skeleton) g_h.skeleton = d2rsig::Hook(RVA_COMPUTE_SELF_WORLD_POSE, kSigComputeSelfWorldPose, sizeof kSigComputeSelfWorldPose, skel::Detour(), skel::OrigSlot());
     if (!g_h.target) {
-        g_h.target = ctx->InstallInlineHook(RVA_ATTACK_TARGET, kSigAttackTarget, sizeof kSigAttackTarget, (void*)&HookAttackTarget, (void**)&OrigAttackTarget);
+        g_h.target = d2rsig::Hook(RVA_ATTACK_TARGET, kSigAttackTarget, sizeof kSigAttackTarget, (void*)&HookAttackTarget, (void**)&OrigAttackTarget);
         LogF("vrcam: controller target hook %s", g_h.target ? "in" : "NOT in (code not decrypted yet, or another build)");
     }
     if (!g_h.facing) {
-        g_h.facing = ctx->InstallInlineHook(RVA_UNIT_FACING, kSigUnitFacing, sizeof kSigUnitFacing, (void*)&HookUnitFacing, (void**)&OrigUnitFacing);
+        g_h.facing = d2rsig::Hook(RVA_UNIT_FACING, kSigUnitFacing, sizeof kSigUnitFacing, (void*)&HookUnitFacing, (void**)&OrigUnitFacing);
         LogF("vrcam: attack facing hook %s", g_h.facing ? "in" : "NOT in");
     }
     if (!g_h.point) {
-        g_h.point = ctx->InstallInlineHook(RVA_ATTACK_POINT, kSigAttackPoint, sizeof kSigAttackPoint, (void*)&HookAttackPoint, (void**)&OrigAttackPoint);
+        g_h.point = d2rsig::Hook(RVA_ATTACK_POINT, kSigAttackPoint, sizeof kSigAttackPoint, (void*)&HookAttackPoint, (void**)&OrigAttackPoint);
         LogF("vrcam: attack point hook %s", g_h.point ? "in" : "NOT in");
     }
     if (!g_h.interact) {
-        g_h.interact = ctx->InstallInlineHook(RVA_INTERACT_TARGET, kSigInteractTarget, sizeof kSigInteractTarget, (void*)&HookInteractTarget, (void**)&OrigInteractTarget);
+        g_h.interact = d2rsig::Hook(RVA_INTERACT_TARGET, kSigInteractTarget, sizeof kSigInteractTarget, (void*)&HookInteractTarget, (void**)&OrigInteractTarget);
         g_interactHooked.store(g_h.interact);
         LogF("vrcam: interact target hook %s", g_h.interact ? "in (pick up never attacks)" : "NOT in (pick up may attack where there is nothing)");
     }
     if (!g_h.blit) {
-        g_h.blit = ctx->InstallInlineHook(RVA_DRAW_GAME_SCREEN, kSigDrawGameScreen, sizeof kSigDrawGameScreen, (void*)&HookDrawGameScreen, (void**)&OrigDrawGameScreen);
+        g_h.blit = d2rsig::Hook(RVA_DRAW_GAME_SCREEN, kSigDrawGameScreen, sizeof kSigDrawGameScreen, (void*)&HookDrawGameScreen, (void**)&OrigDrawGameScreen);
         LogF("vrcam: draw hook (stereo pair per game frame) %s", g_h.blit ? "in" : "NOT in");
     }
     InstallBiomeHook();
@@ -4086,8 +4125,8 @@ void DiagPose(float yawInModel) {
     }
     --left;
     uint32_t pass = 0; float dt = -1.0f;
-    SafeRead(&pass, (void*)(g_base + RVA_DRAW_COUNTER), 4);
-    SafeRead(&dt, (void*)(g_base + RVA_FRAME_TIME), 4);
+    SafeRead(&pass, (void*)d2rsig::Addr(RVA_DRAW_COUNTER), 4);
+    SafeRead(&dt, (void*)d2rsig::Addr(RVA_FRAME_TIME), 4);
     char b[600];
     int n = snprintf(b, sizeof b, "pose-order: %u %.4f vr %u eye %.3f %.3f look %.3f %.3f cam %.2f tgt %.2f body %.2f |", pass, dt, g_viewBuilds.load(),
                      g_eyeWorld[0].load(), g_eyeWorld[2].load(), look[0], look[2], camYaw, TargetYaw(), yawInModel * 57.2957795f);
@@ -4402,6 +4441,10 @@ void PushArms() {
     }
     in.weaponType = (int)gamestate::WeaponType();
     in.weaponSide = (int)gamestate::WeaponHand();
+    // The grip is taken again for any change of what the two hands hold, not only of the kind: a barbarian's
+    // axe and shield, then the shield for a dagger - still "Axe", the dagger hung where the shield's stance had
+    // the left attach bone, out of the left hand (2026-10-06). Kept in the bits above the kind's own key.
+    const int handsKey = (int)(gamestate::HandsKey() & 0x7FFFu) << 16;
     in.carryAxis = g_set.carryAxis.load();
     in.carryM = g_set.carryCm.load() * 0.01f;
     in.bothAttach = g_set.bothAttach.load() && (gamestate::TwoHanded() & D2RVR_TWO_HANDS_ON) && in.weaponType != D2RVR_TYPE_BOW && in.weaponType != D2RVR_TYPE_CROSSBOW;
@@ -4426,6 +4469,7 @@ void PushArms() {
     if (likeStaff == 2) in.weaponType += 0x100;
     // and the grip is taken relative to the wrist it hangs on: another wrist, another grip
     if (in.staff) in.weaponType += 0x1000 * (in.staffHand + 1);
+    in.weaponType += handsKey;
     // Every weapon sits fast in its grip: following the game's animation, the bow,
     // the crossbow and the rest jumped about in the hand at every shot or blow
     // ("fix it all, no movement", 2026-10-05). Its own parts still move (a bow's
@@ -5320,12 +5364,15 @@ DWORD WINAPI UpdateThread(void*) {
         }
         if (nowMs >= nextSlow) {   // twice a second
             nextSlow = nowMs + 500;
-            if (ReloadIfChanged()) {
+            const bool iniChanged = ReloadIfChanged();
+            if (iniChanged) {
                 g_gen.fetch_add(1);
                 g_renderDirty.store(true);
                 g_mouseLookOn.store(MouseLookForView());
             }
             FollowMode();
+            d2rsig::Resolve(g_ctx);   // what waits for its page to be decrypted
+            GameCodeTick(iniChanged);
             if (!AllHooksIn()) InstallHooks();
             ApplyRender();
             HookGameWindow();
@@ -5384,7 +5431,7 @@ void LoadReShade() {
     else LogF("vrcam: ReShade64.dll did not load (error %lu)", GetLastError());
 }
 
-static const char g_info_version[] = "0.140.0";
+static const char g_info_version[] = "0.141.0";
 
 static const PluginInfo g_info = {
     PluginInfoSize, D2RL_PLUGIN_ABI_VERSION, "d2r-vr-vrcam", "vrcam", g_info_version, "BodyWalkVR",
@@ -5410,6 +5457,9 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     g_mouseLookOn.store(MouseLookForView());
     LogF("vrcam %s: game build %s (%s), made for D2R 3.3.93787 under D2RLoader 1.3.1", g_info_version,
          ctx->buildVersion ? ctx->buildVersion : "?", ctx->buildName ? ctx->buildName : "?");
+    // Every game address this build has, before any hook rewrites the bytes it is found by.
+    d2rsig::SetShiftTest(GetPrivateProfileIntW(L"debug", L"sig_shift_test", 0, g_iniPath));
+    d2rsig::Resolve(ctx);
 
     LoadReShade();
     d2rcam::SetCallbacks(&VrView, &VrProj);

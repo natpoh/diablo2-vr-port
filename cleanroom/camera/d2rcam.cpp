@@ -23,6 +23,7 @@
 #include "../drawdist/drawdist.h"
 #include "game_layout.h"
 #include "mat4.h"
+#include "../sigscan/sigscan.h"
 
 #include <D2RLPlugin/api.h>
 
@@ -365,7 +366,7 @@ void __fastcall HookScreenToRay(void* cam, const float* px, float* origin, float
 		return;
 	}
 	const uintptr_t ret = reinterpret_cast<uintptr_t>(_ReturnAddress()) - g_base;
-	if (ret >= ShadowFitBegin && ret < ShadowFitEnd) {
+	if (ret >= d2rsig::Rva(ShadowFitBegin) && ret < d2rsig::Rva(ShadowFitEnd)) {
 		// The shadow fit keeps the game's own camera: same fields, game pose.
 		alignas(16) uint8_t copy[camf::Size];
 		std::memcpy(copy, cam, sizeof(copy));
@@ -400,7 +401,7 @@ void __fastcall HookReleaseCamera(void* cam) {
 // ---- Installation ----------------------------------------------------------
 
 bool Check(const Site& s) {
-	return g_ctx->CheckExpectedBytes(s.rva, s.bytes, s.size);
+	return d2rsig::Check(s.rva, s.bytes, s.size);
 }
 
 template <typename Fn>
@@ -408,7 +409,7 @@ bool Hook(const Site& s, Fn detour, Fn* original) {
 	if (*original != nullptr) {
 		return true;
 	}
-	if (!Check(s) || !g_ctx->InstallInlineHook(s.rva, s.bytes, s.size, reinterpret_cast<void*>(detour), reinterpret_cast<void**>(original))) {
+	if (!Check(s) || !d2rsig::Hook(s.rva, s.bytes, s.size, reinterpret_cast<void*>(detour), reinterpret_cast<void**>(original))) {
 		*original = nullptr;
 		return false;
 	}
@@ -420,13 +421,13 @@ bool InstallCamera() {
 		return true;
 	}
 	if (g_getRenderer == nullptr && Check(GetRenderer)) {
-		g_getRenderer = reinterpret_cast<GetRendererFn>(g_base + GetRenderer.rva);
+		g_getRenderer = reinterpret_cast<GetRendererFn>(d2rsig::Addr(GetRenderer.rva));
 	}
 	if (g_getGameCamera == nullptr && Check(GetGameCamera)) {
-		g_getGameCamera = reinterpret_cast<GetCameraFn>(g_base + GetGameCamera.rva);
+		g_getGameCamera = reinterpret_cast<GetCameraFn>(d2rsig::Addr(GetGameCamera.rva));
 	}
 	if (g_getActiveCamera == nullptr && Check(GetActiveCamera)) {
-		g_getActiveCamera = reinterpret_cast<GetCameraFn>(g_base + GetActiveCamera.rva);
+		g_getActiveCamera = reinterpret_cast<GetCameraFn>(d2rsig::Addr(GetActiveCamera.rva));
 	}
 	if (g_getRenderer == nullptr || g_getGameCamera == nullptr || g_getActiveCamera == nullptr) {
 		return false;
@@ -450,6 +451,7 @@ bool Install(const D2RL::PluginContext* ctx) {
 	}
 	g_ctx  = ctx;
 	g_base = ctx->exeBase;
+	d2rsig::Resolve(ctx);
 	const bool cameraOk = InstallCamera();
 	const bool roomsOk  = drawdist::Install(ctx);
 	return cameraOk && roomsOk;

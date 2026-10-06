@@ -96,7 +96,8 @@ std::vector<std::pair<uint32_t, uint32_t>> g_typeIndex;   // ItemTypes row index
 // two-handed weapons and 0 for a set of one-handed ones (CalibrateTwoHanded).
 int g_twoOffset = -2;                        // -2 not tried yet, -1 failed
 std::atomic<uint32_t> g_two{0};
-std::atomic<uint32_t> g_from{0};             // the hand slot the weapon kind came from: 0 right, 1 left              // D2RVR_TWO_HANDED* bits of what is held
+std::atomic<uint32_t> g_from{0};
+std::atomic<uint32_t> g_handsKey{0};          // what is in the two hands, as one number (HandsKey)             // the hand slot the weapon kind came from: 0 right, 1 left              // D2RVR_TWO_HANDED* bits of what is held
 
 constexpr uint32_t Four(const char* s) { return DataTables::MakeFourCC(s[0], s[1], s[2], s[3]); }
 
@@ -338,8 +339,17 @@ void __cdecl ReadItems(const PluginContext* ctx, void*) noexcept {
     if (const int t = TwoHandedOf(code[from]); t >= 0) two = (t ? D2RVR_TWO_HANDED : 0u) | D2RVR_TWO_HANDED_KNOWN;
     else if (kind == D2RVR_TYPE_SPEAR || kind == D2RVR_TYPE_POLEARM || kind == D2RVR_TYPE_STAFF) two = D2RVR_TWO_HANDED;
     if ((two & D2RVR_TWO_HANDED) && code[from ^ 1].empty()) two |= D2RVR_TWO_HANDS_ON;
+    if (KindOf(code[1]) != 0) two |= D2RVR_LEFT_WEAPON;   // a weapon in the left hand (KindOf: no shield, no quiver)
     g_two.store(two);
     g_from.store((uint32_t)from);
+    {   // FNV-1a over both codes: a new grip for any change of what the hands hold
+        uint32_t h = 2166136261u;
+        for (const std::string* c : {&code[0], &code[1]}) {
+            for (const char ch : *c) { h ^= (uint8_t)ch; h *= 16777619u; }
+            h ^= 0xFFu; h *= 16777619u;
+        }
+        g_handsKey.store(h);
+    }
     static std::string told[2];
     if (code[0] != told[0] || code[1] != told[1]) {
         told[0] = code[0]; told[1] = code[1];
@@ -468,6 +478,7 @@ uint32_t WeaponType() { return g_type.load(); }
 uint32_t HandsHeld() { return g_held.load(); }
 uint32_t TwoHanded() { return g_two.load(); }
 uint32_t WeaponHand() { return g_from.load(); }
+uint32_t HandsKey() { return g_handsKey.load(); }
 bool MenuOpen() { return g_menu.load() != 0; }
 
 bool AutoMapOpen() { return g_autoMap.load() != 0; }

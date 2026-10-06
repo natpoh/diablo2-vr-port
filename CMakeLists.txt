@@ -46,8 +46,8 @@ add_library(minhook STATIC
 target_include_directories(minhook PUBLIC ${MINHOOK_DIR}/include)
 
 # Our camera and render distance, written clean-room from the game (cleanroom/).
-add_library(d2rcam STATIC cleanroom/camera/d2rcam.cpp cleanroom/drawdist/drawdist.cpp)
-target_include_directories(d2rcam PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/camera)
+add_library(d2rcam STATIC cleanroom/camera/d2rcam.cpp cleanroom/drawdist/drawdist.cpp cleanroom/sigscan/sigscan.cpp)
+target_include_directories(d2rcam PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/camera ${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/sigscan)
 target_link_libraries(d2rcam PUBLIC D2RLPlugin::D2RLPlugin)
 target_compile_definitions(d2rcam PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_compile_options(d2rcam PRIVATE /utf-8 /W4 /EHsc /permissive-)
@@ -86,12 +86,18 @@ target_compile_options(d2r_vr_settings PRIVATE /utf-8 /W3 /EHsc)
 # d2r_vr_settings.ini.
 set_target_properties(d2r_vr_settings PROPERTIES OUTPUT_NAME "D2R_VR_Settings")
 target_compile_definitions(d2r_vr_settings PRIVATE UNICODE _UNICODE)
-target_include_directories(d2r_vr_settings PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared ${FLATVR_SHARED_DIR} ${D2RVR_GEN_DIR})   # d2r_vr_state.h: the weapon in hand; afr_eye_shared.h: is FlatVR running
+target_include_directories(d2r_vr_settings PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared ${FLATVR_SHARED_DIR} ${D2RVR_GEN_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/sigscan)   # d2r_vr_state.h: the weapon in hand; afr_eye_shared.h: is FlatVR running
 # Our own debugging tools (not in the public tree).
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/probe_test.cpp")
     # The skeleton probe against a fake Granny skeleton in its own memory.
     add_executable(probe_test tools/probe_test.cpp vr/probe.cpp)
     target_compile_options(probe_test PRIVATE /utf-8 /W3 /EHsc)
+endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/dump_loader/D2R_image.bin")
+    # The address resolver on the game's snapshot: sigscan_test dump_loader/D2R_image.bin
+    add_executable(sigscan_test cleanroom/tests/sigscan_test.cpp)
+    target_link_libraries(sigscan_test PRIVATE d2rcam)
+    target_compile_options(sigscan_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 endif()
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/heapdiff/heapdiff.cpp")
     add_executable(heapdiff tools/heapdiff/heapdiff.cpp)   # find a value in the running game's heap by changing it

@@ -35,6 +35,7 @@
 #include <vector>
 
 #include "skeletons.h"
+#include "sigscan.h"
 
 namespace skel {
 
@@ -345,10 +346,14 @@ std::atomic<FreshHandsFn> g_freshHands{nullptr};
 // A storage (0x98 bytes): vtable, sparse pages +0x08/+0x10 (u32[256] each, page = (e >> 8) &
 // 0xFFF, slot = e & 0xFF, dense index in the low 20 bits), packed entities +0x20/+0x28 (u32),
 // components +0x38 (contiguous - the array moves when it grows, so it is re-read every time).
-// Each storage type is told by its vtable, so nothing here depends on the type index order.
+// A pool sits at its type's sequence number, which entt's type_seq<T>::value() gives - the
+// game's own function (0x20B8F0 for TransformComponent, its storage made in 0x2035B0, vtable
+// 0x1CE0958; 0x67DE50 for SkeletonComponent, made in 0x66D4F0, vtable 0x1D4A000). The storages
+// are taken from there and told afterwards by the vtables they had then. The vtables were the
+// key until 2026-10-06, but another build cannot find them by a pattern (every storage<T> is
+// made by the same code); type_seq<T> is found next to T's name hash (cleanroom/sigscan).
 constexpr uint64_t RVA_ECS_REGISTRY = 0x2677170;
-constexpr uint64_t RVA_VT_TRANSFORM_STORAGE = 0x1CE0958;   // storage<TransformComponent>, made in 0x2035B0
-constexpr uint64_t RVA_VT_SKELETON_STORAGE = 0x1D4A000;    // storage<SkeletonComponent>, made in 0x66D4F0
+constexpr uint64_t RVA_TYPE_SEQ_TRANSFORM = 0x20B8F0, RVA_TYPE_SEQ_SKELETON = 0x67DE50;
 constexpr uint32_t kTransformSize = 0xD0, kSkeletonCompSize = 0x10;
 
 std::atomic<uintptr_t> g_gameBase{0};
@@ -364,33 +369,35 @@ void NoteHero(uintptr_t self) {
 
 namespace ecs {
 SRWLOCK g_lock = SRWLOCK_INIT;
-uintptr_t g_xs = 0, g_ss = 0;               // the two storages, found by vtable
+uintptr_t g_xs = 0, g_ss = 0;               // the two storages, found by type index
+uintptr_t g_vtX = 0, g_vtS = 0;             // and their vtables then
 uintptr_t g_cachedSelf = 0;
 uint32_t g_cachedEntity = 0;
 ULONGLONG g_lastStorageLook = 0;
 const char* g_why = "";                     // why the chain does not read (for vrcam's log)
 
-bool IsStorage(uintptr_t st, uint64_t vtRva) {
+bool IsStorage(uintptr_t st, uintptr_t vtWas) {
     uintptr_t vt = 0;
-    return st && Get(st, &vt) && vt == g_gameBase.load() + vtRva;
+    return st && vtWas && Get(st, &vt) && vt == vtWas;
 }
 
 bool FindStorages() {
-    const uintptr_t reg = g_gameBase.load() + RVA_ECS_REGISTRY;
+    const uintptr_t reg = d2rsig::Addr(RVA_ECS_REGISTRY);
+    const uintptr_t seqX = d2rsig::Addr(RVA_TYPE_SEQ_TRANSFORM), seqS = d2rsig::Addr(RVA_TYPE_SEQ_SKELETON);
+    if (!reg || !seqX || !seqS) { g_why = "the renderer's registry is not known in this game build"; return false; }
     uintptr_t b = 0, e = 0;
     if (!Get(reg, &b) || !Get(reg + 8, &e) || e <= b || (e - b) % 0x28 || (e - b) / 0x28 > 4096) { g_why = "the registry's pools do not read"; return false; }
     const size_t n = (e - b) / 0x28;
-    std::vector<uint8_t> pools(n * 0x28);
-    if (!SafeCopy(pools.data(), (const void*)b, pools.size())) { g_why = "the registry's pools do not read"; return false; }
+    // Both types are in use once the hero has been posed, so their numbers are given already.
+    const uint32_t ix = (uint32_t)((int (*)())seqX)(), is = (uint32_t)((int (*)())seqS)();
     uintptr_t xs = 0, ss = 0;
-    for (size_t i = 0; i < n && !(xs && ss); ++i) {
-        uintptr_t st = 0; memcpy(&st, pools.data() + i * 0x28 + 0x20, 8);
-        if (!st) continue;
-        if (!xs && IsStorage(st, RVA_VT_TRANSFORM_STORAGE)) xs = st;
-        else if (!ss && IsStorage(st, RVA_VT_SKELETON_STORAGE)) ss = st;
+    if (ix >= n || is >= n || ix == is || !Get(b + ix * 0x28 + 0x20, &xs) || !Get(b + is * 0x28 + 0x20, &ss) || !xs || !ss) {
+        g_why = "no TransformComponent / SkeletonComponent storage in the registry";
+        return false;
     }
-    g_xs = xs; g_ss = ss;
-    if (!xs || !ss) { g_why = !xs ? "no TransformComponent storage in the registry" : "no SkeletonComponent storage in the registry"; return false; }
+    uintptr_t vx = 0, vs = 0;
+    if (!Get(xs, &vx) || !Get(ss, &vs) || !vx || !vs || vx == vs) { g_why = "the registry's storages do not read"; return false; }
+    g_xs = xs; g_ss = ss; g_vtX = vx; g_vtS = vs;
     return true;
 }
 
@@ -1992,7 +1999,7 @@ bool HeroTransform(HeroXform* out, const char** why) {
     if (!g_gameBase.load() || !self || GetTickCount64() - g_heroSeen.load() > 2000) { if (why) *why = kNoHero; return false; }
     AcquireSRWLockExclusive(&ecs::g_lock);
     struct Unlock { ~Unlock() { ReleaseSRWLockExclusive(&ecs::g_lock); } } unlock;
-    if (!ecs::IsStorage(ecs::g_xs, RVA_VT_TRANSFORM_STORAGE) || !ecs::IsStorage(ecs::g_ss, RVA_VT_SKELETON_STORAGE)) {
+    if (!ecs::IsStorage(ecs::g_xs, ecs::g_vtX) || !ecs::IsStorage(ecs::g_ss, ecs::g_vtS)) {
         // looked for at most twice a second (a failed look reads ~200 pool entries)
         const ULONGLONG now = GetTickCount64();
         if (now - ecs::g_lastStorageLook < 500) { if (why) *why = ecs::g_why; return false; }

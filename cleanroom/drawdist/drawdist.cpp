@@ -23,6 +23,7 @@
 #include "drawdist.h"
 
 #include "../camera/game_layout.h"
+#include "../sigscan/sigscan.h"
 
 #include <D2RLPlugin/api.h>
 
@@ -112,7 +113,11 @@ void LoadAndAdd(void* centreRoom, void* list, int radius) {
 	if (g_ensureTiled == nullptr || g_pushBack == nullptr) {
 		return;
 	}
-	const uint8_t version = *reinterpret_cast<const uint8_t*>(g_base + GameVersionByte);
+	const uintptr_t versionAt = d2rsig::Addr(GameVersionByte);
+	if (versionAt == 0) {
+		return;
+	}
+	const uint8_t version = *reinterpret_cast<const uint8_t*>(versionAt);
 	if (version > 3) {   // classic / LoD / RotW; anything else means the address is wrong
 		return;
 	}
@@ -202,7 +207,7 @@ void __fastcall HookSimTick(void* layer) {
 	const uint64_t until = g_recalcUntil.load(std::memory_order_relaxed);
 	if (until != 0 && GetTickCount64() > until) {
 		g_recalcUntil.store(0, std::memory_order_relaxed);
-		*reinterpret_cast<volatile uint8_t*>(g_base + ModelRecalcEveryFrame) = 0;
+		*reinterpret_cast<volatile uint8_t*>(d2rsig::Addr(ModelRecalcEveryFrame)) = 0;
 	}
 }
 
@@ -234,7 +239,7 @@ void __fastcall HookFindRooms(void* layer, void* room, void* list) {
 }
 
 bool Check(const Site& s) {
-	return g_ctx->CheckExpectedBytes(s.rva, s.bytes, s.size);
+	return d2rsig::Check(s.rva, s.bytes, s.size);
 }
 
 }   // namespace
@@ -248,29 +253,30 @@ bool Install(const D2RL::PluginContext* ctx) {
 	}
 	g_ctx  = ctx;
 	g_base = ctx->exeBase;
+	d2rsig::Resolve(ctx);
 
 	if (g_ensureTiled == nullptr && Check(EnsureRoomTiled)) {
-		g_ensureTiled = reinterpret_cast<EnsureTiledFn>(g_base + EnsureRoomTiled.rva);
+		g_ensureTiled = reinterpret_cast<EnsureTiledFn>(d2rsig::Addr(EnsureRoomTiled.rva));
 	}
 	if (g_pushBack == nullptr && Check(RoomListPushBack)) {
-		g_pushBack = reinterpret_cast<PushBackFn>(g_base + RoomListPushBack.rva);
+		g_pushBack = reinterpret_cast<PushBackFn>(d2rsig::Addr(RoomListPushBack.rva));
 	}
 	if (g_setModelRadius == nullptr && Check(layout::SetModelRadius) && Check(layout::GetModelRadius)) {
-		g_setModelRadius = reinterpret_cast<SetRadiusFn>(g_base + layout::SetModelRadius.rva);
-		g_getModelRadius = reinterpret_cast<GetRadiusFn>(g_base + layout::GetModelRadius.rva);
+		g_setModelRadius = reinterpret_cast<SetRadiusFn>(d2rsig::Addr(layout::SetModelRadius.rva));
+		g_getModelRadius = reinterpret_cast<GetRadiusFn>(d2rsig::Addr(layout::GetModelRadius.rva));
 	}
 	if (!g_recalcOk) {
-		g_recalcOk = Check(ModelRecalcCheck);
+		g_recalcOk = Check(ModelRecalcCheck) && d2rsig::Addr(ModelRecalcEveryFrame) != 0;
 	}
 	// FindRooms first: it does nothing until SimulationTick raises the flag.
 	if (o_findRooms == nullptr) {
-		if (!Check(FindRooms) || !ctx->InstallInlineHook(FindRooms.rva, FindRooms.bytes, FindRooms.size, reinterpret_cast<void*>(&HookFindRooms), reinterpret_cast<void**>(&o_findRooms))) {
+		if (!Check(FindRooms) || !d2rsig::Hook(FindRooms.rva, FindRooms.bytes, FindRooms.size, reinterpret_cast<void*>(&HookFindRooms), reinterpret_cast<void**>(&o_findRooms))) {
 			o_findRooms = nullptr;
 			return false;
 		}
 	}
 	if (o_simTick == nullptr) {
-		if (!Check(LevelSimTick) || !ctx->InstallInlineHook(LevelSimTick.rva, LevelSimTick.bytes, LevelSimTick.size, reinterpret_cast<void*>(&HookSimTick), reinterpret_cast<void**>(&o_simTick))) {
+		if (!Check(LevelSimTick) || !d2rsig::Hook(LevelSimTick.rva, LevelSimTick.bytes, LevelSimTick.size, reinterpret_cast<void*>(&HookSimTick), reinterpret_cast<void**>(&o_simTick))) {
 			o_simTick = nullptr;
 			return false;
 		}
@@ -300,7 +306,7 @@ bool SetModelRadius(float units) {
 	}
 	g_setModelRadius(units < 10.0f ? 10.0f : (units > 10000.0f ? 10000.0f : units));
 	if (g_recalcOk) {   // re-sort now, not when the hero next walks out of the elastic range
-		*reinterpret_cast<volatile uint8_t*>(g_base + ModelRecalcEveryFrame) = 1;
+		*reinterpret_cast<volatile uint8_t*>(d2rsig::Addr(ModelRecalcEveryFrame)) = 1;
 		g_recalcUntil.store(GetTickCount64() + 500, std::memory_order_relaxed);
 	}
 	return true;

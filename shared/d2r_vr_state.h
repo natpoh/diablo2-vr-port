@@ -47,7 +47,9 @@ struct D2RVR_State {
     // "2handed" field was found in the game's tables (else bits 0 and 1 come from the kind).
     uint32_t twoHanded;
 };
-enum : uint32_t { D2RVR_TWO_HANDED = 1u, D2RVR_TWO_HANDS_ON = 2u, D2RVR_TWO_HANDED_KNOWN = 4u };
+// Bit 3 (2026-10-06): the left hand's slot holds a weapon of its own - a barbarian's second blade, an
+// assassin's second claw (not a shield, not a quiver): BodyWalk's "D2R Left Hand" mapping tab.
+enum : uint32_t { D2RVR_TWO_HANDED = 1u, D2RVR_TWO_HANDS_ON = 2u, D2RVR_TWO_HANDED_KNOWN = 4u, D2RVR_LEFT_WEAPON = 8u };
 #pragma pack(pop)
 
 static_assert(sizeof(D2RVR_State) == 104, "D2RVR_State is a wire format");

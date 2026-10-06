@@ -27,6 +27,7 @@
 #include <cwchar>
 #include <fstream>
 #include <initializer_list>
+#include <deque>
 #include <map>
 #include <memory>
 #include <regex>
@@ -38,6 +39,7 @@
 #include "d2r_vr_state.h"
 #include "d2r_vr_shared.h"   // the bridge's block: is head tracking reaching the game
 #include "afr_eye_shared.h"  // FlatVR's head sample: is FlatVR running
+#include "game_sigs.h"       // the game addresses the mod looks for (the Status tab)
 #include "d2r_vr_version.h"  // D2RVR_VERSION: vrcam's g_info_version, made by tools/settings/version.cmake
 
 #pragma comment(lib, "comctl32.lib")
@@ -1773,6 +1775,94 @@ void RefreshStatus() {
 }
 
 // ---------------------------------------------------------------------------
+// The Status tab: the game's addresses (cleanroom/sigscan/game_sigs.h). vrcam
+// looks for every address it uses each time the game starts and writes what it
+// found to d2r_vr_game_code.txt beside the ini; Scan bumps [status] scan and
+// vrcam looks again for whatever is not found yet. A row per address: green
+// found, red NOT OK (and what goes off), orange waiting for the game to run that code.
+
+constexpr size_t kSigCount = sizeof(d2rsig::kSigs) / sizeof(d2rsig::kSigs[0]);
+std::deque<std::wstring> g_sigText;   // the rows' keys and labels (an Item keeps the pointers)
+
+std::wstring Wide(const char* s) {
+    std::wstring w;
+    for (; s && *s; ++s) w += (wchar_t)(unsigned char)*s;
+    return w;
+}
+
+const wchar_t* Keep(std::wstring s) { return g_sigText.emplace_back(std::move(s)).c_str(); }
+
+// The tab goes last, after Debug.
+void AddGameCodeTab() {
+    std::vector<Item> add;
+    add.push_back(Tab(L"Status"));
+    add.push_back(Group(L"The game's code"));
+    add.push_back(Status(L"sig_summary", L"Not scanned yet"));
+    add.push_back(Button(L"status", L"scan", L"Scan",
+                         L"The mod looks for its addresses in the game every time the game starts. After a game or D2RLoader "
+                         L"update, start the game and press Scan: whatever is not found yet is looked for again now."));
+    const char* area = nullptr;
+    for (const d2rsig::Sig& s : d2rsig::kSigs) {
+        if (!area || strcmp(area, s.area) != 0) {
+            area = s.area;
+            add.push_back(Group(Keep(Wide(area))));
+        }
+        add.push_back(Status(Keep(L"sig:" + Wide(s.name)), Keep(Wide(s.name) + L" - " + Wide(s.without))));
+    }
+    g_items.insert(g_items.end(), add.begin(), add.end());
+}
+
+void RefreshGameCode() {
+    const Item* head = FindItem(L"@status", L"sig_summary");
+    if (!head || g_tab != head->tab) return;
+    std::wstring path = g_ini;
+    path.resize(path.size() - wcslen(L"d2r_vr.ini"));
+    path += L"d2r_vr_game_code.txt";
+    std::ifstream f(path);
+    std::string line, time, summary;
+    int answered = -1;
+    std::map<std::string, std::pair<std::string, std::string>> rows;   // name -> (state, RVA now)
+    while (f && std::getline(f, line)) {
+        if (line.rfind("time ", 0) == 0) time = line.substr(5);
+        else if (line.rfind("scan ", 0) == 0) answered = atoi(line.c_str() + 5);
+        else if (line.rfind("summary ", 0) == 0) summary = line.substr(8);
+        else {
+            std::vector<std::string> c;
+            std::stringstream ss(line);
+            for (std::string part; std::getline(ss, part, '\t');) c.push_back(part);
+            if (c.size() >= 5) rows[c[0]] = {c[4], c[3]};
+        }
+    }
+    const int pressed = GetPrivateProfileIntW(L"status", L"scan", 0, g_ini);
+    D2RVR_State st{};
+    const bool game = ReadBlock(D2RVR_STATE_NAME, &st, sizeof st) && Moving(D2RVR_STATE_NAME, st.counter);
+    if (summary.rfind("game code: ", 0) == 0) summary = summary.substr(11);
+    if (rows.empty()) {
+        SetStatus(L"sig_summary", kUnknown, L"Not scanned yet - start the game: the mod looks for its addresses every time it starts");
+    } else if (answered < pressed) {
+        SetStatus(L"sig_summary", kWarn, game ? L"Scanning..." : L"Start the game - the mod scans when it starts");
+    } else {
+        int ok = 0;
+        for (const auto& r : rows) ok += r.second.first == "ok" || r.second.first == "moved";
+        std::wstring text = Wide(summary.c_str()) + L" - " + Wide(time.c_str()) + (game ? L"" : L" (the last time the game ran)");
+        SetStatus(L"sig_summary", ok == (int)kSigCount ? kOk : kBad, text.c_str());
+    }
+    for (const d2rsig::Sig& s : d2rsig::kSigs) {
+        const std::wstring key = L"sig:" + Wide(s.name), name = Wide(s.name), without = Wide(s.without);
+        const auto r = rows.find(s.name);
+        wchar_t was[24];
+        swprintf_s(was, L"0x%llX", (unsigned long long)s.rva);
+        if (r == rows.end()) SetStatus(key.c_str(), kUnknown, (name + L" - not scanned yet (" + without + L")").c_str());
+        else if (r->second.first == "ok") SetStatus(key.c_str(), kOk, (name + L": ok (" + was + L")").c_str());
+        else if (r->second.first == "moved")
+            SetStatus(key.c_str(), kOk, (name + L": ok, moved to " + Wide(r->second.second.c_str()) + L" (was " + was + L")").c_str());
+        else if (r->second.first == "waiting")
+            SetStatus(key.c_str(), kWarn, (name + L": waiting - the game has not run this code yet (" + without + L")").c_str());
+        else SetStatus(key.c_str(), kBad, (name + L": NOT OK - " + without + L" off").c_str());
+    }
+}
+
+// ---------------------------------------------------------------------------
 // The update check (the Home page's "D2R VR" group), as BodyWalk does its own:
 // once when the program opens, again when [update] check / develop change. A
 // thread asks bodywalkvr.com's /api/version for product d2r_vr (or
@@ -2171,6 +2261,7 @@ LRESULT CALLBACK WndProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
         FollowWeapon();
         RefreshRadios();
         RefreshWeaponList();
+        RefreshGameCode();
         static int tick = 0;
         if (++tick % 2 == 0) RefreshStatus();
         return 0;
@@ -2317,6 +2408,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
     wchar_t buf[32];
     GetPrivateProfileStringW(L"window", L"zoom", L"1", buf, 32, g_uiIni);
     g_zoom = std::clamp(std::round(wcstof(buf, nullptr) * 10.0f) / 10.0f, 0.7f, 2.0f);
+    AddGameCodeTab();
     g_tab = GetPrivateProfileIntW(L"window", L"tab", 0, g_uiIni);
     SetWeaponSection(GetPrivateProfileIntW(L"weapon", L"weapon", 1, g_uiIni) + 1);   // the kind last picked by hand
     const int savedW = GetPrivateProfileIntW(L"window", L"width", 0, g_uiIni);

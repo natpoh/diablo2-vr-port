@@ -50,6 +50,9 @@ const char* const kCatTop = "D2R Top Down";
 const char* const kCatFloor = "D2R Floor";   // VR F3, the game on the floor: its own buttons, nothing of first person
 // First person with no panel open, whatever the weapon - on top of the weapon's own tab.
 const char* const kCatFirst = "D2R First Person";
+// A weapon in the left hand too (a barbarian's pair of blades, an assassin's two claws), on top of the right
+// one's tab: actions for the second weapon (2026-10-06).
+const char* const kCatLeft = "D2R Left Hand";
 HANDLE g_stateMap = nullptr;
 const D2RVR_State* g_state = nullptr;
 uint32_t g_stateCounter = 0;
@@ -76,6 +79,7 @@ void RegisterCategories() {
     g_host.register_mapping_category(kCatFloor, "D2R: the game on the floor (F3)");
 #if D2RVR_FIRST_PERSON
     g_host.register_mapping_category(kCatFirst, "D2R: first person (F4), no panel open, any weapon");
+    g_host.register_mapping_category(kCatLeft, "D2R: first person (F4), a weapon in the left hand too");
 #endif
 }
 
@@ -200,8 +204,9 @@ void FollowGameState() {
     else if (g_state->viewMode == 4) SetCategories("main, D2R Floor");
 #if D2RVR_FIRST_PERSON
     else if (g_state->weaponType > D2RVR_TYPE_UNKNOWN && g_state->weaponType < D2RVR_TYPE_COUNT) {
-        char cats[96];
-        snprintf(cats, sizeof cats, "main, D2R First Person, D2R %s", kD2RVRWeaponTypeNames[g_state->weaponType]);
+        char cats[128];
+        snprintf(cats, sizeof cats, "main, D2R First Person, D2R %s%s", kD2RVRWeaponTypeNames[g_state->weaponType],
+                 (g_state->twoHanded & D2RVR_LEFT_WEAPON) ? ", D2R Left Hand" : "");
         SetCategories(cats);
     } else SetCategories("main, D2R First Person");
 #else
@@ -275,7 +280,7 @@ BW_EXPORT bool BW_CALLBACK BW_Plugin_Initialize(const BW_HostCallbacks* callback
         memcpy(&g_host, callbacks, have);
     }
     out_info->name = "D2R Bridge";
-    out_info->version = "0.22.0";
+    out_info->version = "0.23.0";
     out_info->author = "BodyWalkVR";
     out_info->type = BW_PLUGIN_TYPE_OUTPUT;
     out_info->output_mode_name = nullptr;   // not a mode: the Xbox pad stays the output
