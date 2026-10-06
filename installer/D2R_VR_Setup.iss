@@ -371,6 +371,8 @@ end;
 procedure PlaceReShade(GameDir: String);
 var
   Code: Integer;
+  Raw: AnsiString;
+  Ini: String;
 begin
   if (ReShadeSetup <> '') and not FileExists(GameDir + '\ReShade64.dll') then
   begin
@@ -380,6 +382,15 @@ begin
     else
       // ours: the uninstaller takes it away again (CurUninstallStepChanged)
       SaveStringToFile(GameDir + '\d2rloader\plugins\d2r_vr_reshade_ours.txt', 'ReShade was installed by D2R VR Setup.', False);
+  end;
+  // ReShade's headless setup writes its search paths as '...\Shaders\**\**', which
+  // ReShade 6.8 itself cannot resolve (error 123 in ReShade.log): no effect loads,
+  // so no fog and no sky. '...\**' is what it reads (2026-10-06).
+  if LoadStringFromFile(GameDir + '\ReShade.ini', Raw) then
+  begin
+    Ini := String(Raw);
+    if StringChangeEx(Ini, '\**\**', '\**', True) > 0 then
+      SaveStringToFile(GameDir + '\ReShade.ini', AnsiString(Ini), False);
   end;
   if FileExists(GameDir + '\dxgi.dll') then
   begin
