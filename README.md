@@ -13,6 +13,11 @@ including a free BodyWalk Lite if you don't have BodyWalk.
 **[Open the mod's page on BodyWalkVR](https://bodywalkvr.com/mods/d2r-vr)** - the
 four views in video, the controls and the setup.
 
+**What's new in 0.141:** sky in Tristram, Kurast, Travincal, the River of Flame,
+the Chaos Sanctuary and Nihlathak's Temple; a second weapon in the left hand in
+first person; the mod finds its addresses again on another game build. All
+versions: [CHANGELOG.md](CHANGELOG.md).
+
 **Discussion, bugs and ideas:** our Discord, channel
 [#diablo-2-vr](https://discord.com/channels/1481909961897279562/1556377249484251298)
 under *Game Mods* - not on the server yet? [Join it here](https://discord.gg/kVYjEdJx3e).
