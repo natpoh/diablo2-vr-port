@@ -11,8 +11,11 @@
 - **Daggers can be thrown.**
 - **"D2R Left Hand" tab** in BodyWalk's Mapping (D2R Bridge 0.23): actions for
   the left hand while it holds a weapon.
-- **Finds its addresses by signature.** On another game build the mod looks for
-  the code it needs instead of switching parts off.
+- **Ready for game updates.** Every time the game starts the mod looks for the
+  game code it needs (54 places) by signature, so a game or D2RLoader update
+  that moves the code does not switch the mod off. A new **Status** tab in
+  D2R VR Settings shows each one - found, not found and what goes off without
+  it - and a **Scan** button looks again for whatever is missing.
 
 ## 0.140
 

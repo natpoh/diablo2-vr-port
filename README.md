@@ -16,7 +16,9 @@ four views in video, the controls and the setup.
 **What's new in 0.141:** the sky fixed in several areas (Tristram, Kurast,
 Travincal, the River of Flame, the Chaos Sanctuary, Nihlathak's Temple); the
 barbarian's left hand fixed - his second weapon sits properly and strikes;
-daggers can be thrown. All versions: [CHANGELOG.md](CHANGELOG.md).
+daggers can be thrown; ready for game updates - the mod finds the game code it
+needs by itself, with a Status tab and a Scan button in D2R VR Settings. All
+versions: [CHANGELOG.md](CHANGELOG.md).
 
 **Discussion, bugs and ideas:** our Discord, channel
 [#diablo-2-vr](https://discord.com/channels/1481909961897279562/1556377249484251298)
