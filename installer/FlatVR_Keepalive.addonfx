@@ -1,0 +1,41 @@
+// FlatVR_Keepalive.addonfx
+//
+// Written by FlatVR - its ReShade Setup Helper, or its depth add-on. Safe to
+// delete, and safe to leave.
+//
+// It draws nothing. It exists because ReShade skips its whole effect pass when
+// no effect file is loaded at all, and that pass is where Generic Depth chooses
+// a depth buffer and where FlatVR's add-on takes the frame. One technique, even
+// a switched-off one, is enough for the pass to run.
+
+void VS_FlatVRKeepalive(uint id : SV_VertexID, out float4 pos : SV_Position)
+{
+	float2 uv;
+	uv.x = (id == 2) ? 2.0 : 0.0;
+	uv.y = (id == 1) ? 2.0 : 0.0;
+	pos = float4(uv * float2(2.0, -2.0) + float2(-1.0, 1.0), 0.0, 1.0);
+}
+
+float4 PS_FlatVRKeepalive(float4 pos : SV_Position) : SV_Target
+{
+	return float4(0.0, 0.0, 0.0, 0.0);
+}
+
+technique FlatVR_Keepalive
+<
+	ui_tooltip = "Does nothing, and is meant to stay switched off. It is here so that ReShade runs its effect pass at all: with no effect files loaded ReShade skips that pass, and then Generic Depth never picks a depth buffer and FlatVR never receives a frame.";
+>
+{
+	pass
+	{
+		VertexShader = VS_FlatVRKeepalive;
+		PixelShader = PS_FlatVRKeepalive;
+		// Nothing reaches the screen even if somebody switches this on out of
+		// curiosity: destination * 1 + source * 0 is the destination unchanged.
+		// This used to be a "discard;" before the return, which ReShade's own
+		// compiler rejects - "error: unreachable code" - where fxc accepts it.
+		BlendEnable = true;
+		SrcBlend = ZERO;
+		DestBlend = ONE;
+	}
+}

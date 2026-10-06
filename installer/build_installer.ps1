@@ -25,9 +25,11 @@ Get-ChildItem (Join-Path $root "reshade\sky") -Filter "D2R_Sky*.png" | Copy-Item
 # the flat crosshair, beside the skies (vrcam [input] crosshair; tools/gen_crosshair.py)
 Copy-Item (Join-Path $root "reshade\sky\D2R_Crosshair.png") "$payload\sky\"
 Copy-Item $addon "$payload\game\"
-# The keepalive effect BodyWalk writes into a game; the repo keeps no copy, the live game has one.
+# The keepalive effect BodyWalk writes into a game: vjoy's copy when there is one, else
+# ours beside this script (installer\FlatVR_Keepalive.addonfx) - never the live game,
+# which a clean test empties.
 if (Test-Path $keepalive) { Copy-Item $keepalive "$payload\game\" }
-else { Copy-Item "D:\SteamLibrary\steamapps\common\Diablo II Resurrected\FlatVR_Keepalive.addonfx" "$payload\game\" }
+else { Copy-Item (Join-Path $PSScriptRoot "FlatVR_Keepalive.addonfx") "$payload\game\" }
 
 # BodyWalk Portable for players without BodyWalk: built by vjoy's own script
 # from Release_main (build BodyWalk first), the same folder as the site's zip.
