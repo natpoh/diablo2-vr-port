@@ -66,7 +66,8 @@ For a square picture in the headset, either:
 ### The screen's size in the headset
 
 How big the screen is, how far away and how curved: in BodyWalk, on the
-**FlatVR** tab.
+**FlatVR** tab - or right in the headset, in FlatVR's overlay (**F10** by
+default).
 
 ## Controls in F1 - F3
 
