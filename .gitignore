@@ -1,0 +1,33 @@
+# build output
+/build/
+# read-only memory snapshots of the game (tens of MB, Blizzard's code)
+/dump/
+/dump_ingame/
+/dump_loader/
+# their own git repositories
+/D2R-3D/
+/PluginSDK/
+# raw sky renders; the finished textures are kept
+/reshade/sky/raw/
+*.bak*
+__pycache__/
+
+# taken out of the game's archives (Blizzard's art, this machine only) and the tool's own build
+# extracted/blizzard/ - the game's own files; the rest - our OpenAI drawings
+/extracted/
+/third_party/CascLib/
+/tools/casc_extract/build/
+
+# the installer's staging and its output
+/installer/payload/
+/installer/Output/
+
+# Blizzard's own files, wherever they turn up: the game's formats, and the skies
+# taken from its menus (kept on this machine, never published - 2026-10-05)
+*.texture
+*.model
+*.dds
+*_game.png
+*_menu.png
+*_storm.png
+/build_public/

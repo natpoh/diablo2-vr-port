@@ -1,6 +1,6 @@
 MIT License
 
-Copyright (c) 2026 natpoh
+Copyright (c) 2026 BodyWalkVR
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -19,3 +19,17 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+---------------------------------------------------------------------------
+
+This licence covers D2R VR's own code, shaders and pictures. It does not cover
+the name "D2R VR" as a mark, nor BodyWalk, BodyWalkVR and FlatVR, which are
+separate products under their own terms.
+
+Third-party parts, each under its own licence:
+- MinHook - BSD 2-clause, Copyright (C) 2009-2017 Tsuda Kageyu.
+- ReShade SDK headers - BSD 3-clause, Copyright (C) 2014 Patrick Mours.
+- D2RLoader plugin SDK - MIT.
+
+Diablo II: Resurrected is Blizzard Entertainment's. This project is not
+affiliated with or endorsed by Blizzard and ships none of the game's files.
