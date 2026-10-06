@@ -69,6 +69,13 @@ How big the screen is, how far away and how curved: in BodyWalk, on the
 **FlatVR** tab - or right in the headset, in FlatVR's overlay (**F10** by
 default).
 
+### The game in your room (F3, on the floor)
+
+In D2R VR Settings > Camera > *F3 The game on your floor*, pick a **Background
+round the game** colour (pure black or green). In Virtual Desktop turn on
+passthrough with that colour as its colour key: the background is cut out and
+the game stands in your real room.
+
 ## Controls in F1 - F3
 
 From above, from behind and on the floor the game is played as with a gamepad:
