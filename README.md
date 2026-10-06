@@ -63,6 +63,11 @@ For a square picture in the headset, either:
   monitor with a square resolution, move the game onto it, then switch the
   game to full screen there.
 
+### The screen's size in the headset
+
+How big the screen is, how far away and how curved: in BodyWalk, on the
+**FlatVR** tab.
+
 ## Controls in F1 - F3
 
 From above, from behind and on the floor the game is played as with a gamepad:
