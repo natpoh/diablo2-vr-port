@@ -13,6 +13,11 @@ including a free BodyWalk Lite if you don't have BodyWalk.
 **[Open the mod's page on BodyWalkVR](https://bodywalkvr.com/mods/d2r-vr)** - the
 four views in video, the controls and the setup.
 
+**Discussion, bugs and ideas:** our Discord, channel
+[#diablo-2-vr](https://discord.com/channels/1481909961897279562/1556377249484251298)
+under *Game Mods* - not on the server yet? [Join it here](https://discord.gg/kVYjEdJx3e).
+Tell us what works, what doesn't and what you would like to see.
+
 > Offline single-player only. Injecting code into the game online can get the
 > account banned. This project is not made, endorsed or supported by Blizzard
 > Entertainment.
