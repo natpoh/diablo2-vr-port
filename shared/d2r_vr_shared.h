@@ -116,6 +116,102 @@ struct D2RVR_Actions {
 
 static_assert(sizeof(D2RVR_Actions) == 16, "D2RVR_Actions is a wire format");
 
+// The game's own key commands (docs/buttons_recon.md): every control of its
+// Controls menu, one BodyWalk action each ("D2R key: ..."), held or not. vrcam
+// presses the command where the game's key would (its command executor, on
+// the UI thread, vr/gamecmd.cpp), so no pad and no key is needed. Written by
+// the bridge, read by vrcam. Bit n of held = the game's command n (the index
+// in its command table 0x22A7930), so the list below may grow in any order.
+#define D2RVR_COMMANDS_NAME L"Local\\BodyWalkVR_D2R_Commands"
+#define D2RVR_COMMANDS_VERSION 1u
+#define D2RVR_GAME_COMMANDS 0x45u   // the game's table: 0x00..0x44
+
+#pragma pack(push, 4)
+struct D2RVR_Commands {
+    uint32_t version;   // D2RVR_COMMANDS_VERSION
+    uint32_t counter;   // bumped on every change
+    uint64_t held[2];   // bit n (held[n / 64], bit n % 64): the game's command n held now
+};
+#pragma pack(pop)
+
+static_assert(sizeof(D2RVR_Commands) == 24, "D2RVR_Commands is a wire format");
+
+// Action name -> the game's command. All of them with a name in the game
+// (0x38 has none); Move up/right/down/left are the game's own, north on its
+// screen - vrcam's camera-relative W A S D is another thing.
+struct D2RVRCommand { const char* action; uint8_t cmd; };
+inline constexpr D2RVRCommand kD2RVRCommands[] = {
+    {"D2R key: Character screen", 0x00},
+    {"D2R key: Inventory", 0x01},
+    {"D2R key: Party screen", 0x02},
+    {"D2R key: Message log", 0x03},
+    {"D2R key: Quest log", 0x04},
+    {"D2R key: Chat", 0x05},
+    {"D2R key: Help", 0x06},
+    {"D2R key: Automap", 0x07},
+    {"D2R key: Automap - centre", 0x08},
+    {"D2R key: Automap - fade", 0x09},
+    {"D2R key: Automap - party", 0x0A},
+    {"D2R key: Automap - names", 0x0B},
+    {"D2R key: Skill tree", 0x0C},
+    {"D2R key: Choose skill", 0x0D},
+    {"D2R key: Skill 1 (F1)", 0x0E},
+    {"D2R key: Skill 2 (F2)", 0x0F},
+    {"D2R key: Skill 3 (F3)", 0x10},
+    {"D2R key: Skill 4 (F4)", 0x11},
+    {"D2R key: Skill 5 (F5)", 0x12},
+    {"D2R key: Skill 6 (F6)", 0x13},
+    {"D2R key: Skill 7 (F7)", 0x14},
+    {"D2R key: Skill 8 (F8)", 0x15},
+    {"D2R key: Show belt", 0x16},
+    {"D2R key: Potion - belt 1", 0x17},
+    {"D2R key: Potion - belt 2", 0x18},
+    {"D2R key: Potion - belt 3", 0x19},
+    {"D2R key: Potion - belt 4", 0x1A},
+    {"D2R key: Say 0", 0x1B},
+    {"D2R key: Say 1", 0x1C},
+    {"D2R key: Say 2", 0x1D},
+    {"D2R key: Say 3", 0x1E},
+    {"D2R key: Say 4", 0x1F},
+    {"D2R key: Say 5", 0x20},
+    {"D2R key: Say 6", 0x21},
+    {"D2R key: Run (hold)", 0x22},
+    {"D2R key: Run / walk switch", 0x23},
+    {"D2R key: Stand still (Shift)", 0x24},
+    {"D2R key: Show items (Alt)", 0x25},
+    {"D2R key: Close all panels", 0x26},
+    {"D2R key: Next skill", 0x27},
+    {"D2R key: Previous skill", 0x28},
+    {"D2R key: Clear messages", 0x29},
+    {"D2R key: Screenshot", 0x2A},
+    {"D2R key: Party portraits", 0x2B},
+    {"D2R key: Swap weapons", 0x2C},
+    {"D2R key: Minimap", 0x2D},
+    {"D2R key: Skill 9 (F9)", 0x2E},
+    {"D2R key: Skill 10 (F10)", 0x2F},
+    {"D2R key: Skill 11 (F11)", 0x30},
+    {"D2R key: Skill 12 (F12)", 0x31},
+    {"D2R key: Skill 13 (F13)", 0x32},
+    {"D2R key: Skill 14 (F14)", 0x33},
+    {"D2R key: Skill 15 (F15)", 0x34},
+    {"D2R key: Skill 16 (F16)", 0x35},
+    {"D2R key: Mercenary", 0x36},
+    {"D2R key: Say 7", 0x37},
+    {"D2R key: Zoom", 0x39},
+    {"D2R key: Legacy graphics", 0x3A},
+    {"D2R key: Force move", 0x3B},
+    {"D2R key: Horadric Cube", 0x3C},
+    {"D2R key: Stash - previous tab", 0x3D},
+    {"D2R key: Stash - next tab", 0x3E},
+    {"D2R key: Move up (screen)", 0x3F},
+    {"D2R key: Move right (screen)", 0x40},
+    {"D2R key: Move down (screen)", 0x41},
+    {"D2R key: Move left (screen)", 0x42},
+    {"D2R key: Show items, unfiltered", 0x43},
+    {"D2R key: Loot filter", 0x44},
+};
+inline constexpr uint32_t kD2RVRCommandCount = sizeof kD2RVRCommands / sizeof kD2RVRCommands[0];
+
 // D2R VR Settings' Start FlatVR / Stop FlatVR: two named auto-reset events the
 // bridge makes and looks at in BW_Plugin_Update; set one and the bridge asks
 // BodyWalk (host API 7, request_flatvr_running) to start or stop FlatVR, as

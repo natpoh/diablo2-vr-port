@@ -1,5 +1,22 @@
 # What's new in D2R VR
 
+## 0.143
+
+- **Smoother in dungeons on weaker PCs.** The torch light on the ceiling is off
+  for now: finding the torches read all of the game's memory every 1.5 seconds
+  and cost about a third of a CPU core while a ceiling was drawn.
+- **Ceilings in act 2**: the Lut Gholein sewers (grey-beige brick) and the
+  palace harem (Moorish coffers). Backgrounds done: 25 - sky over 18 open-air
+  area types, a ceiling in 7 dungeon types.
+- **The cathedral** keeps its flat ceiling with one dome over the altar.
+- **Third person in VR**: W A S D move the hero relative to the camera.
+
+## 0.142
+
+- **Ceilings in the cathedral and the catacombs**, anything the game draws above
+  the ceiling cut cleanly, ceiling heights from the area's floor. Settings >
+  Ceiling.
+
 ## 0.141
 
 - **Sky fixed in several areas.** Tristram, Kurast (Lower Kurast, the Bazaar,

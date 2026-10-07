@@ -52,7 +52,7 @@ target_link_libraries(d2rcam PUBLIC D2RLPlugin::D2RLPlugin)
 target_compile_definitions(d2rcam PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_compile_options(d2rcam PRIVATE /utf-8 /W4 /EHsc /permissive-)
 
-add_library(d2rl-vrcam SHARED vr/vrcam.cpp vr/skeletons.cpp vr/gamestate.cpp vr/probe.cpp vr/uitrace.cpp vr/hud.cpp vr/memdiff.cpp vr/writewatch.cpp vr/vrcam.rc)
+add_library(d2rl-vrcam SHARED vr/vrcam.cpp vr/skeletons.cpp vr/gamestate.cpp vr/gamecmd.cpp vr/probe.cpp vr/uitrace.cpp vr/hud.cpp vr/memdiff.cpp vr/writewatch.cpp vr/vrcam.rc)
 target_include_directories(d2rl-vrcam PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared ${FLATVR_SHARED_DIR} ${RESHADE_SDK_INCLUDE} ${BODYWALK_SRC})
 target_link_libraries(d2rl-vrcam PRIVATE d2rcam minhook user32)
 target_compile_options(d2rl-vrcam PRIVATE /utf-8 /W3 /EHsc /permissive-)

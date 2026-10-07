@@ -424,6 +424,11 @@ float3 Sky(float3 dir)
 texture2D GameLayerTex : D2R_GAME_LAYER;
 sampler2D GameLayerSmp { Texture = GameLayerTex; AddressU = CLAMP; AddressV = CLAMP; MinFilter = POINT; MagFilter = POINT; };
 uniform bool UiMaskOn < hidden = true; > = false;
+uniform bool UiMaskOff <
+    ui_label = "Ignore the interface mask (test)";
+    ui_tooltip = "Fog and sky over everything, the game's interface layer not looked at - to see whether a straight line "
+                 "across the picture comes from it (act 2 town, 2026-10-07).";
+> = false;
 
 // How much fog a depth value gets, 0..1. Empty depth (the void) is far: full fog.
 // How much the full fog covers, 0..1 (vrcam [fog] caves_strength in caves, else 1): below 1 the far end shows through.
@@ -460,126 +465,7 @@ float CeilRockNoise(float2 q)
     return saturate(0.55 * v);
 }
 
-// A cathedral's vault (the user, 2026-10-07: "a groin vault"): square bays CeilBay wide,
-// each two pointed barrel vaults crossing - the crown CeilHeight over the floor, the
-// springing CeilRelief under it at the bays' corners - with ribs along the bays' edges
-// and diagonals, CeilRibWidth wide, hanging CeilRibDepth under the stone. The bays fit
-// a whole number of times in the 64-tile wrap; CeilBayOffset moves them onto the game's
-// columns. vrcam [ceiling] vault_<biome>, bay_<biome>, ...
 uniform float CeilRelief < hidden = true; > = 6.0;   // world units the rock hangs down, 0 = flat
-uniform bool CeilVault < hidden = true; > = false;
-uniform float CeilBay < hidden = true; > = 40.0;
-uniform float CeilRibWidth < hidden = true; > = 1.2;
-uniform float CeilRibDepth < hidden = true; > = 0.8;
-uniform float2 CeilBayOffset < hidden = true; > = float2(0.0, 0.0);
-// q (tiles) to the bay: u, v -1..1 across it
-float2 VaultUV(float2 q)
-{
-    const float P = 64.0 * CeilScale;
-    const float bay = P / max(round(P / max(CeilBay, 4.0)), 1.0);
-    return frac((q * CeilScale - CeilBayOffset) / bay) * 2.0 - 1.0;
-}
-// how much of a rib is at q: 1 on its middle line, 0 off it (a half-round section)
-float VaultRib(float2 q)
-{
-    const float2 uv = VaultUV(q);
-    const float P = 64.0 * CeilScale;
-    const float halfW = 0.5 * P / max(round(P / max(CeilBay, 4.0)), 1.0);   // world units per uv unit
-    const float w = max(CeilRibWidth, 0.05) * 0.5 / halfW;
-    const float a = abs(uv.x), b = abs(uv.y);
-    const float d = min(abs(a - b) * 0.7071, 1.0 - max(a, b));
-    return sqrt(saturate(1.0 - (d / w) * (d / w)));
-}
-float VaultRock(float2 q)
-{
-    const float2 uv = VaultUV(q);
-    // a pointed arch: two circles of radius 1 + c through the springing, meeting at the crown
-    const float c = 0.4, r2 = (1.0 + c) * (1.0 + c), top = sqrt(r2 - c * c);
-    const float hu = sqrt(max(r2 - (abs(uv.x) + c) * (abs(uv.x) + c), 0.0)) / top;
-    const float hv = sqrt(max(r2 - (abs(uv.y) + c) * (abs(uv.y) + c), 0.0)) / top;
-    const float h = max(hu, hv);   // the two tunnels' union: the higher roof
-    return saturate(1.0 - h + VaultRib(q) * CeilRibDepth / max(CeilRelief, 0.1));
-}
-
-// The cathedral's vault on its own columns (the user, 2026-10-07: "find the columns -
-// the ceiling comes down to them, and between them it curves up in fine vaults"). The
-// height map (below) also keeps, per tile, where the game drew things above the vault's
-// springing (CeilHeight - CeilRelief) - a column's or a wall's top - as their middle
-// (SupTex); each tile then knows its nearest such support (SeedTex, within reach). At a
-// point the nearest support of the 3 x 3 tiles round it gives the distance d: the vault
-// stands on it at the springing, CeilColumnRadius out, and rises as a quarter circle to the
-// crown CeilBay / 2 further. Ribs fan out of each column (8), and one runs where two
-// columns' vaults meet.
-uniform bool CeilPillars < hidden = true; > = false;        // [ceiling] pillars_<biome>
-uniform float CeilColumnRadius < hidden = true; > = 4.0;    // [ceiling] column_radius_<biome>
-// A support is a column's top: a tile whose highest point lies between CeilColMin and
-// CeilColMax over the floor (the user sets both, 2026-10-07) - the altar canopy's spire,
-// higher, is not one; the vault rests on each column at that column's own top. The
-// points in that band give where in the tile it stands.
-uniform float CeilColMin < hidden = true; > = 20.0;   // [ceiling] column_min_<biome>
-uniform float CeilColMax < hidden = true; > = 30.0;   // [ceiling] column_max_<biome>
-// A column's top spreads at least this far every way (world units, its points' deviation): a
-// cross or a wall top is flat one way. vrcam [ceiling] column_width_<biome>
-uniform float CeilColMinWidth < hidden = true; > = 1.0;
-// How far over a column's top the vault starts: its capital's highest bits stood cut (2026-10-07)
-uniform float CeilColLift < hidden = true; > = 0.0;   // [ceiling] column_lift_<biome>
-// Half the way from a tile's nearest column to the next one (world units, less the column's
-// thickness), sampled smoothly: the vault rises from a column to that midpoint as an arch as
-// high as CeilArch times it - wider apart, higher (the user's drawing, 2026-10-07) - and no
-// higher than the crown CeilHeight.
-texture2D SpanTex { Width = 64; Height = 64; Format = R32F; };
-sampler2D SpanSmp { Texture = SpanTex; AddressU = WRAP; AddressV = WRAP; MinFilter = LINEAR; MagFilter = LINEAR; };
-static const float CeilArch = 1.2;   // a pointed arch: its height over half its span
-float PillarHalf(float2 q) { return max(tex2Dlod(SpanSmp, float4(q / 64.0, 0, 0)).x - CeilColumnRadius, 1.0); }
-texture2D SeedTex { Width = 64; Height = 64; Format = RGBA32F; };   // rg: the nearest support, tiles from the tile's corner; b: 1 = one; a: its top
-sampler2D SeedSmp { Texture = SeedTex; MinFilter = POINT; MagFilter = POINT; };
-// x: the distance to the nearest support (world units, past its radius), yz: from it to q (tiles),
-// w: how much farther the second nearest is (world units)
-float4 PillarNear(float2 q, out float top)
-{
-    const float2 c = floor(q), f = q - c;
-    float d1 = 1e6, d2 = 1e6;
-    float2 rel = 0.0;
-    top = CeilColMax;
-    [loop] for (int y = -1; y <= 1; ++y)
-        [loop] for (int x = -1; x <= 1; ++x) {
-            const float4 sd = tex2Dfetch(SeedSmp, (int2(c) + int2(x, y)) & 63);
-            if (sd.b < 0.5) continue;
-            const float2 r = f - (float2(x, y) + sd.rg);
-            const float d = length(r);
-            // the same support seen from two tiles is one
-            if (d < d1 - 1e-3) { d2 = d1; d1 = d; rel = r; top = sd.a; }
-            else if (d > d1 + 1e-3 && d < d2) d2 = d;
-        }
-    if (d1 > 1e5) return float4(1e6, 0.0, 0.0, 1e6);
-    return float4(max(d1 * CeilScale - CeilColumnRadius, 0.0), rel, d2 > 1e5 ? 1e6 : (d2 - d1) * CeilScale);
-}
-float PillarRibOf(float4 pn, float D)
-{
-    if (pn.x > 1e5) return 0.0;
-    const float w = max(CeilRibWidth, 0.05) * 0.5;
-    // fanning out of the column: 8 ribs, each CeilRibWidth wide whatever the distance, gone at the crown
-    const float a = atan2(pn.z, pn.y) / 6.2831853 * 8.0;
-    const float across = abs(frac(a + 0.5) - 0.5) * (6.2831853 / 8.0) * (pn.x + CeilColumnRadius);
-    const float fan = sqrt(saturate(1.0 - (across / w) * (across / w))) * (1.0 - smoothstep(0.7, 1.0, pn.x / D));
-    // where two columns' vaults meet - only while they still curve: up on the flat crown it ran
-    // as a long beam across the ceiling (the user, 2026-10-07: "take these stripes away")
-    const float ridge = pn.w < 1e5 ? sqrt(saturate(1.0 - (0.5 * pn.w / w) * (0.5 * pn.w / w))) * (1.0 - smoothstep(0.6, 0.9, pn.x / D)) : 0.0;
-    return max(fan, ridge);
-}
-float PillarRock(float2 q)
-{
-    float top;
-    const float4 pn = PillarNear(q, top);
-    if (pn.x > 1e5) return 0.0;   // no column near: the crown
-    const float D = PillarHalf(q);
-    const float x = saturate(pn.x / D);
-    const float rise = sqrt(saturate(1.0 - (1.0 - x) * (1.0 - x)));   // a quarter circle, upright at the column
-    return saturate(1.0 - rise + PillarRibOf(pn, D) * CeilRibDepth / max(CeilRelief, 0.1));
-}
-
-float CeilRock(float2 q) { return CeilPillars ? PillarRock(q) : CeilVault ? VaultRock(q) : CeilRockNoise(q); }
-float PillarRibAt(float2 q) { float top; return PillarRibOf(PillarNear(q, top), PillarHalf(q)); }
 
 // The cave ceiling along this eye's ray (dir: unit, in the world); false where the
 // ray never meets it - looking level or down, or the eye above it - and the void
@@ -607,25 +493,78 @@ uniform float CeilLightRadius < hidden = true; > = 25.0;   // world units from t
 #ifndef D2R_CEILING_4
  #define D2R_CEILING_4 D2R_CEILING_1
 #endif
+#ifndef D2R_CEILING_5
+ #define D2R_CEILING_5 D2R_CEILING_1
+#endif
+#ifndef D2R_CEILING_6
+ #define D2R_CEILING_6 D2R_CEILING_1
+#endif
+#ifndef D2R_CEILING_7
+ #define D2R_CEILING_7 D2R_CEILING_1
+#endif
+#ifndef D2R_CEILING_8
+ #define D2R_CEILING_8 D2R_CEILING_1
+#endif
 uniform bool CeilTexOn < hidden = true; > = true;
 uniform float CeilTexSlot < hidden = true; > = 1.0;
 texture2D CeilTex1 < source = D2R_CEILING_1; > { Width = 1024; Height = 1024; Format = RGBA8; MipLevels = 11; };
 texture2D CeilTex2 < source = D2R_CEILING_2; > { Width = 1024; Height = 1024; Format = RGBA8; MipLevels = 11; };
 texture2D CeilTex3 < source = D2R_CEILING_3; > { Width = 1024; Height = 1024; Format = RGBA8; MipLevels = 11; };
 texture2D CeilTex4 < source = D2R_CEILING_4; > { Width = 1024; Height = 1024; Format = RGBA8; MipLevels = 11; };
+texture2D CeilTex5 < source = D2R_CEILING_5; > { Width = 1024; Height = 1024; Format = RGBA8; MipLevels = 11; };
+texture2D CeilTex6 < source = D2R_CEILING_6; > { Width = 1024; Height = 1024; Format = RGBA8; MipLevels = 11; };
+texture2D CeilTex7 < source = D2R_CEILING_7; > { Width = 1024; Height = 1024; Format = RGBA8; MipLevels = 11; };
+texture2D CeilTex8 < source = D2R_CEILING_8; > { Width = 1024; Height = 1024; Format = RGBA8; MipLevels = 11; };
 sampler2D CeilSmp1 { Texture = CeilTex1; AddressU = WRAP; AddressV = WRAP; MipFilter = LINEAR; };
 sampler2D CeilSmp2 { Texture = CeilTex2; AddressU = WRAP; AddressV = WRAP; MipFilter = LINEAR; };
 sampler2D CeilSmp3 { Texture = CeilTex3; AddressU = WRAP; AddressV = WRAP; MipFilter = LINEAR; };
 sampler2D CeilSmp4 { Texture = CeilTex4; AddressU = WRAP; AddressV = WRAP; MipFilter = LINEAR; };
+sampler2D CeilSmp5 { Texture = CeilTex5; AddressU = WRAP; AddressV = WRAP; MipFilter = LINEAR; };
+sampler2D CeilSmp6 { Texture = CeilTex6; AddressU = WRAP; AddressV = WRAP; MipFilter = LINEAR; };
+sampler2D CeilSmp7 { Texture = CeilTex7; AddressU = WRAP; AddressV = WRAP; MipFilter = LINEAR; };
+sampler2D CeilSmp8 { Texture = CeilTex8; AddressU = WRAP; AddressV = WRAP; MipFilter = LINEAR; };
 static const float kCeilTexTiles = 4.0;
+// World units one picture spans - its own per dungeon (vrcam [ceiling] tex_size_<biome>; 0 = 4 tiles):
+// the sewers' brick wanted its own size, the tile grid (the height map) stays (the user, 2026-10-07)
+uniform float CeilTexSize < hidden = true; > = 0.0;
+float TexSpan() { return CeilTexSize > 0.5 ? CeilTexSize : kCeilTexTiles * CeilScale; }
 float3 CeilPic(float2 uv, float lod)
 {
     const int slot = (int)(CeilTexSlot + 0.5);
     if (slot == 2) return tex2Dlod(CeilSmp2, float4(uv, 0, lod)).rgb;
     if (slot == 3) return tex2Dlod(CeilSmp3, float4(uv, 0, lod)).rgb;
     if (slot == 4) return tex2Dlod(CeilSmp4, float4(uv, 0, lod)).rgb;
+    if (slot == 5) return tex2Dlod(CeilSmp5, float4(uv, 0, lod)).rgb;
+    if (slot == 6) return tex2Dlod(CeilSmp6, float4(uv, 0, lod)).rgb;
+    if (slot == 7) return tex2Dlod(CeilSmp7, float4(uv, 0, lod)).rgb;
+    if (slot == 8) return tex2Dlod(CeilSmp8, float4(uv, 0, lod)).rgb;
     return tex2Dlod(CeilSmp1, float4(uv, 0, lod)).rgb;
 }
+
+// The relief from the picture itself, not noise (the user, 2026-10-07: the sewers' bricks were flat
+// paint): what stands out of the vault by CeilRelief - the light parts (1), the dark (-1), or the
+// coloured (2: bricks in grey mortar). Against the picture's own blur, so the whole stays level.
+// vrcam [ceiling] relief_pic_<biome>; 0 = the old lumpy noise.
+uniform float CeilReliefPic < hidden = true; > = 0.0;
+float PicRock(float2 q)
+{
+    const float2 uv = q * CeilScale / TexSpan();
+    const float3 c = CeilPic(uv, 1.0), m = CeilPic(uv, 6.0);
+    const int mode = (int)round(CeilReliefPic);
+    float v, a;
+    if (mode == 2) {
+        v = (max(c.r, max(c.g, c.b)) - min(c.r, min(c.g, c.b))) / max(max(c.r, max(c.g, c.b)), 1e-3);
+        a = (max(m.r, max(m.g, m.b)) - min(m.r, min(m.g, m.b))) / max(max(m.r, max(m.g, m.b)), 1e-3);
+    } else {
+        v = dot(c, float3(0.2126, 0.7152, 0.0722)); a = dot(m, float3(0.2126, 0.7152, 0.0722));
+        if (mode < 0) { v = 1.0 - v; a = 1.0 - a; }
+    }
+    // the raised parts at 1 (hanging down the most), the joints at 0; bevelled edges, not cliffs
+    // (at x5 the bricks' sides stood as lit icicles - 2026-10-07)
+    return smoothstep(0.0, 1.0, saturate(0.5 + (v - a) * 2.5));
+}
+bool PicRelief() { return CeilTexOn && abs(CeilReliefPic) > 0.5; }
+float CeilRock(float2 q) { return PicRelief() ? PicRock(q) : CeilRockNoise(q); }
 
 // Torches light the ceiling (the user, 2026-10-06), found in the picture: fire is
 // bright and warm. Each frame the brightest fire of each of 8 x 4 screen cells is
@@ -759,39 +698,10 @@ uniform float CeilMapGen < hidden = true; > = 0.0;          // vrcam: another ar
 texture2D HBitsTex { Width = 64; Height = 64; Format = R32U; };
 storage2D<uint> HBitsSt { Texture = HBitsTex; };
 sampler2D<uint> HBitsSmp { Texture = HBitsTex; };
-texture2D SupXTex { Width = 64; Height = 64; Format = R32U; };
-texture2D SupZTex { Width = 64; Height = 64; Format = R32U; };
-texture2D SupNTex { Width = 64; Height = 64; Format = R32U; };
-texture2D SupHiTex { Width = 64; Height = 64; Format = R32U; };   // points over CeilColMax
-// and their spread: sums of x x, z z, x z (1/64 tile) - a capital is wide every way, a cross on
-// a wall top or the wall itself flat; the crosses took the vault down onto them (2026-10-07)
-// 1: this frame some of the tile's top lay at the screen's edge - a column half out of view
-// moved its middle, and the vault slid off it (2026-10-07): such a frame does not count
-texture2D SupEdgeTex { Width = 64; Height = 64; Format = R32U; };
-storage2D<uint> SupEdgeSt { Texture = SupEdgeTex; };
-sampler2D<uint> SupEdgeSmp { Texture = SupEdgeTex; };
-texture2D SupXXTex { Width = 64; Height = 64; Format = R32U; };
-texture2D SupZZTex { Width = 64; Height = 64; Format = R32U; };
-texture2D SupXZTex { Width = 64; Height = 64; Format = R32U; };
-storage2D<uint> SupXXSt { Texture = SupXXTex; };
-storage2D<uint> SupZZSt { Texture = SupZZTex; };
-storage2D<uint> SupXZSt { Texture = SupXZTex; };
-sampler2D<uint> SupXXSmp { Texture = SupXXTex; };
-sampler2D<uint> SupZZSmp { Texture = SupZZTex; };
-sampler2D<uint> SupXZSmp { Texture = SupXZTex; };
-texture2D Sup2Tex { Width = 64; Height = 64; Format = RGBA32F; };      // kept: E[x x], E[z z], E[x z] in tiles
-sampler2D Sup2Smp { Texture = Sup2Tex; MinFilter = POINT; MagFilter = POINT; };
-texture2D Sup2OldTex { Width = 64; Height = 64; Format = RGBA32F; };
-sampler2D Sup2OldSmp { Texture = Sup2OldTex; MinFilter = POINT; MagFilter = POINT; };
+texture2D SupHiTex { Width = 64; Height = 64; Format = R32U; };   // this frame's points over the dome's line
 storage2D<uint> SupHiSt { Texture = SupHiTex; };
 sampler2D<uint> SupHiSmp { Texture = SupHiTex; };
-storage2D<uint> SupXSt { Texture = SupXTex; };
-storage2D<uint> SupZSt { Texture = SupZTex; };
-storage2D<uint> SupNSt { Texture = SupNTex; };
-sampler2D<uint> SupXSmp { Texture = SupXTex; };
-sampler2D<uint> SupZSmp { Texture = SupZTex; };
-sampler2D<uint> SupNSmp { Texture = SupNTex; };
-texture2D SupTex { Width = 64; Height = 64; Format = RGBA32F; };
+texture2D SupTex { Width = 64; Height = 64; Format = RGBA32F; };      // a: those points, kept (not one bat - many)
 sampler2D SupSmp { Texture = SupTex; MinFilter = POINT; MagFilter = POINT; };
 texture2D SupOldTex { Width = 64; Height = 64; Format = RGBA32F; };
 sampler2D SupOldSmp { Texture = SupOldTex; MinFilter = POINT; MagFilter = POINT; };
@@ -801,12 +711,10 @@ texture2D HMapOldTex { Width = 64; Height = 64; Format = R32F; };
 sampler2D HMapOldSmp { Texture = HMapOldTex; MinFilter = POINT; MagFilter = POINT; };
 texture2D HMapGenTex { Width = 1; Height = 1; Format = R32F; };     // the CeilMapGen HMapOld belongs to
 sampler2D HMapGenSmp { Texture = HMapGenTex; MinFilter = POINT; MagFilter = POINT; };
-texture2D CeilTopTex { Width = 64; Height = 64; Format = R32F; };   // the ceiling's height per tile
-sampler2D CeilTopSmp { Texture = CeilTopTex; AddressU = WRAP; AddressV = WRAP; MinFilter = LINEAR; MagFilter = LINEAR; };
 
 void RecordHeights(uint3 id, int eye)
 {
-    if (!CeilOn || !(CeilDome || CeilPillars) || id.x >= BUFFER_WIDTH || id.y >= BUFFER_HEIGHT) return;
+    if (!CeilOn || !CeilDome || id.x >= BUFFER_WIDTH || id.y >= BUFFER_HEIGHT) return;
     const float2 uv = (id.xy + 0.5) / float2(BUFFER_WIDTH, BUFFER_HEIGHT);
     const float d = tex2Dlod(FogDepthSmp, float4(UpsideDown ? float2(uv.x, 1.0 - uv.y) : uv, 0, 0)).x;
     if (d <= 1e-6) return;
@@ -823,147 +731,24 @@ void RecordHeights(uint3 id, int eye)
     const float2 w = (e.xz + off.xz + (eye == 0 ? CeilHero0 : CeilHero1)) / CeilScale;
     const int2 cell = int2(w - 64.0 * floor(w / 64.0)) & 63;
     atomicMax(HBitsSt, cell, (uint)(min(h, 2000.0) * 16.0));
-    // about the springing: a column's capital, a wall's top - where in the tile, summed (1/256 tile)
-    if (CeilPillars && h >= CeilColMin && h <= CeilColMax) {
-        const float2 inTile = w - floor(w);
-        atomicAdd(SupXSt, cell, (uint)(inTile.x * 256.0));
-        atomicAdd(SupZSt, cell, (uint)(inTile.y * 256.0));
-        atomicAdd(SupNSt, cell, 1u);
-        const float edge = 24.0;   // pixels
-        if (id.x < edge || id.y < edge || id.x >= BUFFER_WIDTH - edge || id.y >= BUFFER_HEIGHT - edge)
-            atomicOr(SupEdgeSt, cell, 1u);
-        const float2 f64 = inTile * 64.0;
-        atomicAdd(SupXXSt, cell, (uint)(f64.x * f64.x));
-        atomicAdd(SupZZSt, cell, (uint)(f64.y * f64.y));
-        atomicAdd(SupXZSt, cell, (uint)(f64.x * f64.y));
-    }
-    if (h > (CeilPillars ? CeilColMax : DomeLine())) atomicAdd(SupHiSt, cell, 1u);
+    if (h > DomeLine()) atomicAdd(SupHiSt, cell, 1u);
 }
 void CS_RecordHeights(uint3 id : SV_DispatchThreadID) { RecordHeights(id, 0); }
 void CS_RecordHeightsR(uint3 id : SV_DispatchThreadID) { RecordHeights(id, 1); }
 void CS_ClearHeights(uint3 id : SV_DispatchThreadID)
 {
     tex2Dstore(HBitsSt, int2(id.xy), 0u);
-    tex2Dstore(SupXSt, int2(id.xy), 0u);
-    tex2Dstore(SupZSt, int2(id.xy), 0u);
-    tex2Dstore(SupNSt, int2(id.xy), 0u);
     tex2Dstore(SupHiSt, int2(id.xy), 0u);
-    tex2Dstore(SupEdgeSt, int2(id.xy), 0u);
-    tex2Dstore(SupXXSt, int2(id.xy), 0u);
-    tex2Dstore(SupZZSt, int2(id.xy), 0u);
-    tex2Dstore(SupXZSt, int2(id.xy), 0u);
 }
-// The supports kept: rg where in the tile (the running mean of every frame's), b how many points
+// the points over the dome's line, kept (none kept from another area)
 float4 PS_SupMerge(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
 {
     const int2 c = int2(pos.xy);
     const bool same = abs(tex2Dfetch(HMapGenSmp, int2(0, 0)).x - CeilMapGen) < 0.5;
-    const float4 old = same ? tex2Dfetch(SupOldSmp, c) : 0.0;
-    const float n = (float)tex2Dfetch(SupNSmp, c).x, hi = (float)tex2Dfetch(SupHiSmp, c).x;
-    if (n < 1.0 || tex2Dfetch(SupEdgeSmp, c).x != 0u) return float4(old.rgb, min(old.a + hi, 1e6));
-    const float2 now = float2((float)tex2Dfetch(SupXSmp, c).x, (float)tex2Dfetch(SupZSmp, c).x) / (256.0 * n);
-    const float on = min(old.b, 5000.0);
-    return float4((old.rg * on + now * n) / (on + n), min(old.b + n, 1e6), min(old.a + hi, 1e6));
-}
-float4 PS_Sup2Merge(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
-{
-    const int2 c = int2(pos.xy);
-    const bool same = abs(tex2Dfetch(HMapGenSmp, int2(0, 0)).x - CeilMapGen) < 0.5;
-    const float4 old = same ? tex2Dfetch(Sup2OldSmp, c) : 0.0;
-    const float on = same ? min(tex2Dfetch(SupOldSmp, c).b, 5000.0) : 0.0;
-    const float n = (float)tex2Dfetch(SupNSmp, c).x;
-    if (n < 1.0 || tex2Dfetch(SupEdgeSmp, c).x != 0u) return old;
-    const float3 now = float3((float)tex2Dfetch(SupXXSmp, c).x, (float)tex2Dfetch(SupZZSmp, c).x,
-                              (float)tex2Dfetch(SupXZSmp, c).x) / (4096.0 * n);
-    return float4((old.rgb * on + now * n) / (on + n), 0.0);
+    const float old = same ? tex2Dfetch(SupOldSmp, c).a : 0.0;
+    return float4(0.0, 0.0, 0.0, min(old + (float)tex2Dfetch(SupHiSmp, c).x, 1e6));
 }
 float4 PS_SupStore(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return tex2Dfetch(SupSmp, int2(pos.xy)); }
-float4 PS_Sup2Store(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return tex2Dfetch(Sup2Smp, int2(pos.xy)); }
-// A support of its own: 40 points or more about the springing, and few over it - much drawn
-// higher in the tile (a spire) is not a column's top. Counted, not the highest point ever seen
-// there: one bat flying over a column put it out for good (2026-10-07).
-bool SupOk(float4 sp) { return sp.b >= 40.0 && sp.a <= 0.25 * sp.b; }
-// One support per column: a column as thick as a tile mostly stands on two to four, and
-// each gave its own knot of vaults (2026-10-07). The tiles round a support whose middles
-// lie within the column's width of its own are one column: the one with the most points
-// speaks for all, at their weighted middle; the others are none.
-texture2D HeadTex { Width = 64; Height = 64; Format = RGBA32F; };   // rg: the column's middle, tiles from the tile's corner; b: 1 = one; a: its top
-sampler2D HeadSmp { Texture = HeadTex; MinFilter = POINT; MagFilter = POINT; };
-float4 PS_Heads(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
-{
-    if (!CeilPillars) return 0.0;
-    const int2 c = int2(pos.xy);
-    const float4 me = tex2Dfetch(SupSmp, c);
-    if (!SupOk(me)) return 0.0;
-    // tiles; a capital is wider than the column's shaft: its halves lay 10 units apart and stayed two (2026-10-07)
-    // at least 12 units whatever the thickness (that only says where the vault meets the column)
-    const float join = max(2.0 * CeilColumnRadius + 3.0, 12.0) / CeilScale;
-    float n = 0.0, top = 0.0;
-    float2 sum = 0.0;
-    float3 mom = 0.0;   // sums of n E[x x], n E[z z], n E[x z] about the tile's corner
-    [loop] for (int y = -1; y <= 1; ++y)
-        [loop] for (int x = -1; x <= 1; ++x) {
-            const int2 cn = (c + int2(x, y)) & 63;
-            const float4 sp = tex2Dfetch(SupSmp, cn);
-            if (!SupOk(sp)) continue;
-            const float2 at = float2(x, y) + sp.rg;
-            if (length(at - me.rg) > join) continue;
-            if (sp.b > me.b || (sp.b == me.b && (y < 0 || (y == 0 && x < 0)))) return 0.0;   // another speaks for it
-            n += sp.b; sum += at * sp.b;
-            const float2 k = float2(x, y);
-            const float3 m2 = tex2Dfetch(Sup2Smp, cn).rgb;   // about that tile's corner: shifted by k
-            mom += sp.b * float3(m2.x + 2.0 * k.x * sp.r + k.x * k.x, m2.y + 2.0 * k.y * sp.g + k.y * k.y,
-                                 m2.z + k.y * sp.r + k.x * sp.g + k.x * k.y);
-            top = max(top, min(tex2Dfetch(HMapSmp, cn).x, CeilColMax));
-        }
-    const float2 mid = sum / n;
-    const float a = mom.x / n - mid.x * mid.x, cc = mom.y / n - mid.y * mid.y, b = mom.z / n - mid.x * mid.y;
-    const float least = 0.5 * (a + cc) - sqrt(0.25 * (a - cc) * (a - cc) + b * b);   // the narrowest way
-    if (sqrt(max(least, 0.0)) * CeilScale < CeilColMinWidth) return 0.0;
-    return float4(mid, 1.0, top);
-}
-// each tile's nearest column
-float4 PS_Seeds(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
-{
-    if (!CeilPillars) return 0.0;
-    const int2 c = int2(pos.xy);
-    const int n = min((int)ceil((CeilBay * 0.5 + CeilColumnRadius) / CeilScale) + 1, 6);
-    float best = 1e6, top = 0.0;
-    float2 at = 0.0;
-    [loop] for (int y = -6; y <= 6; ++y) {
-        if (abs(y) > n) continue;
-        [loop] for (int x = -6; x <= 6; ++x) {
-            if (abs(x) > n) continue;
-            const float4 hd = tex2Dfetch(HeadSmp, (c + int2(x, y)) & 63);
-            if (hd.b < 0.5) continue;
-            const float2 r = float2(x, y) + hd.rg - 0.5;
-            const float d = dot(r, r);
-            if (d < best) { best = d; at = float2(x, y) + hd.rg; top = hd.a; }
-        }
-    }
-    return best < 1e5 ? float4(at, 1.0, top) : 0.0;
-}
-float PS_Span(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
-{
-    if (!CeilPillars) return 0.0;
-    const int2 c = int2(pos.xy);
-    const int n = 6;
-    float d1 = 1e6, d2 = 1e6;
-    float2 p1 = 0.0;
-    [loop] for (int y = -n; y <= n; ++y)
-        [loop] for (int x = -n; x <= n; ++x) {
-            const float4 hd = tex2Dfetch(HeadSmp, (c + int2(x, y)) & 63);
-            if (hd.b < 0.5) continue;
-            const float2 at = float2(x, y) + hd.rg;
-            const float d = length(at - 0.5);
-            if (d < d1) { d2 = d1; d1 = d; p1 = at; }
-            else if (d < d2) d2 = d;
-        }
-    if (d1 > 1e5) return CeilBay * 0.5;
-    // the next column out of reach: as far as the reach
-    d2 = min(d2, n + 0.5);
-    return 0.5 * (d1 + d2) * CeilScale;
-}
 // this frame's highest points on top of what was kept (none kept from another area)
 float PS_HMapMerge(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
 {
@@ -974,48 +759,6 @@ float PS_HMapMerge(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
 }
 float PS_HMapStore(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return tex2Dfetch(HMapSmp, int2(pos.xy)).x; }
 float PS_HMapGenStore(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return CeilMapGen; }
-// the ceiling over each tile: the highest of the spheres over the tiles near it that stand above it
-float PS_CeilTop(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
-{
-    if (!CeilDome) return CeilHeight;
-    const int2 c = int2(pos.xy);
-    if (CeilPillars) {
-        // over the columns' vault: spheres only over what reaches above the columns' tops, drawn
-        // there often (not one bat) - the altar's canopy; 0 elsewhere (the vault is higher)
-        const float R = max(CeilDomeRadius, CeilScale);
-        const int n = min((int)ceil(R / CeilScale), 6);
-        float top = 0.0;
-        [loop] for (int y = -6; y <= 6; ++y) {
-            if (abs(y) > n) continue;
-            [loop] for (int x = -6; x <= 6; ++x) {
-                if (abs(x) > n) continue;
-                const int2 cn = (c + int2(x, y)) & 63;
-                if (tex2Dfetch(SupSmp, cn).a < 100.0) continue;
-                const float hn = tex2Dfetch(HMapSmp, cn).x + CeilDomeClear;
-                const float dist = length(float2(x, y)) * CeilScale;
-                if (dist >= R) continue;
-                top = max(top, hn - (R - sqrt(R * R - dist * dist)));
-            }
-        }
-        return min(top, CeilHeight + max(CeilDomeMax, 0.0));
-    }
-    const float R = max(CeilDomeRadius, CeilScale);
-    const int n = min((int)ceil(R / CeilScale), 6);
-    float top = CeilHeight;
-    [loop] for (int y = -6; y <= 6; ++y) {
-        if (abs(y) > n) continue;
-        [loop] for (int x = -6; x <= 6; ++x) {
-            if (abs(x) > n) continue;
-            const float hn = tex2Dfetch(HMapSmp, (c + int2(x, y)) & 63).x + CeilDomeClear;
-            if (hn <= CeilHeight) continue;
-            const float dist = length(float2(x, y)) * CeilScale;
-            if (dist >= R) continue;
-            // a sphere of radius R whose top stands CeilDomeClear over that tile's highest point
-            top = max(top, hn - (R - sqrt(R * R - dist * dist)));
-        }
-    }
-    return min(top, CeilHeight + max(CeilDomeMax, 0.0));
-}
 // One smooth dome over each thing that stands over the ceiling (the user, 2026-10-07: "a flat
 // ceiling, and over the church one even round dome" - a sphere per tile made it lumpy). A peak
 // is a tile drawn over the ceiling often (not one bat) and the highest such within
@@ -1097,26 +840,9 @@ float CeilTopAt(float2 q)
 float CeilUnder(float2 q)
 {
     const float R = max(CeilRelief, 0.0);
-    if (CeilPillars) {
-        // on the nearest column at its own top, rising to the crown CeilHeight; with none near, the crown
-        float top;
-        const float4 pn = PillarNear(q, top);
-        // over what stands higher than the columns (the altar's canopy): the dome's sphere
-        const float dome = CeilDome ? CeilTopAt(q) : 0.0;
-        if (pn.x > 1e5) return max(CeilHeight, dome);
-        const float D = PillarHalf(q);
-        const float x = saturate(pn.x / D);
-        const float rise = sqrt(saturate(1.0 - (1.0 - x) * (1.0 - x)));
-        const float foot = top + CeilColLift;
-        const float apex = min(CeilArch * D, max(CeilHeight - foot, 0.0));
-        return max(foot + apex * rise - PillarRibOf(pn, D) * CeilRibDepth, dome);
-    }
     return CeilTopAt(q) - (R > 1e-3 ? R * CeilRock(q) : 0.0);
 }
 
-// tMax: how far along the ray the stone is known to be reached (a drawn point above the
-// ceiling): the march ends there, in finer steps - marched to the far end, it stepped over the
-// thin foot of the vault over a column and left a see-through layer on the capital (2026-10-07)
 bool Ceiling(float3 dir, int eye, out float3 c, float tMax)
 {
     c = float3(0.0, 0.0, 0.0);
@@ -1144,17 +870,16 @@ bool Ceiling(float3 dir, int eye, out float3 c, float tMax)
     if (ceilRay) {
         // the band the rock hangs in: from its lowest reach to the plane (a dome's highest)
         const float topHi = CeilHeight + (CeilDome ? max(CeilDomeMax, 0.0) : 0.0);
-        const float low = CeilPillars ? min(CeilColMin, CeilHeight - R) : CeilHeight - R;
-        const float t0 = max(low - e.y, 0.0) / dir.y;
+        const float t0 = max(CeilHeight - R - e.y, 0.0) / dir.y;
         float t1 = min((topHi - e.y) / dir.y, tMax);
         if (t0 < tw) {
             // past the full fog nothing shows: the fog's colour, no march
             if (FogOn && FogStrength >= 0.999 && t0 * ahead > FogEnd) { c = FogColor; return true; }
             t = t1;
-            if (R > 1e-3 || CeilDome || CeilPillars) {   // the columns' vault needs no Relief
+            if (R > 1e-3 || CeilDome) {
                 if (FogOn) t1 = min(t1, FogEnd / max(ahead, 0.05));
                 // the vault's thin ribs want finer steps than lumpy rock; a dome's band is tall
-                const int n = clamp(CeilVault || CeilDome || CeilPillars ? max(CeilSteps, 32) : CeilSteps, 1, 64);
+                const int n = clamp(CeilDome || PicRelief() ? max(CeilSteps, 32) : CeilSteps, 1, 64);
                 const float dt = (t1 - t0) / n;
                 float tPrev = t0, gPrev = -1.0;   // g: the ray's height above the rock's underside (> 0 = in the rock)
                 [loop] for (int i = 0; i <= n; ++i) {
@@ -1192,11 +917,20 @@ bool Ceiling(float3 dir, int eye, out float3 c, float tMax)
         q = (hit.xz + hero) / CeilScale;
         h = R > 1e-3 ? CeilRock(q) : 0.0;
         // the normal into the air (the rock is above): -(R dh/dx, 1, R dh/dz), and a dome's slope
-        const float k = 0.08;   // tiles
+        const float k = PicRelief() ? 0.02 : 0.08;   // tiles (a brick's joint is fine)
         const float ux = (CeilUnder(q + float2(k, 0.0)) - CeilUnder(q - float2(k, 0.0))) / (2.0 * k * CeilScale);
         const float uz = (CeilUnder(q + float2(0.0, k)) - CeilUnder(q - float2(0.0, k))) / (2.0 * k * CeilScale);
         nrm = normalize(float3(ux, -1.0, uz));
         tanU = float3(1.0, 0.0, 0.0); tanV = float3(0.0, 0.0, 1.0);
+        if (abs(nrm.y) < 0.5) {
+            // a raised wall: the picture along it and up it, not smeared down it from above
+            const float2 side = normalize(nrm.xz);
+            const float2 along = float2(-side.y, side.x);
+            q = float2(dot(hit.xz + hero, along), -hit.y) / CeilScale;
+            nrm = float3(side.x, 0.0, side.y);
+            tanU = float3(along.x, 0.0, along.y); tanV = float3(0.0, -1.0, 0.0);
+            h = 0.5;
+        }
     } else if (onFloor) {
         q = (hit.xz + hero) / CeilScale;
         nrm = float3(0.0, 1.0, 0.0);
@@ -1216,8 +950,8 @@ bool Ceiling(float3 dir, int eye, out float3 c, float tMax)
     if (CeilTexOn) {
         const float4 sp = eye == 0 ? SkyProj0 : SkyProj1;
         const float foot = t * 2.0 / (abs(sp.y) * BUFFER_HEIGHT) / max(-dot(dir, nrm), 0.05);   // world units
-        const float lod = log2(max(foot / (CeilScale * kCeilTexTiles) * 1024.0, 1.0));
-        const float2 uvT = q / kCeilTexTiles;
+        const float lod = log2(max(foot / TexSpan() * 1024.0, 1.0));
+        const float2 uvT = q * CeilScale / TexSpan();
         const float3 s0 = CeilPic(uvT, lod);
         const float3 blur = CeilPic(uvT, lod + 3.0);
         stone = max(blur + (s0 - blur) * CeilContrast, 0.0) * 0.55;
@@ -1228,13 +962,11 @@ bool Ceiling(float3 dir, int eye, out float3 c, float tMax)
             const float3 f0 = CeilPic(uvT * k + 0.37, lodF), f1 = CeilPic(uvT * k + 0.37, lodF + 2.0);
             stone = max(stone + (f0 - f1) * 0.55 * CeilFineDetail, 0.0);
         }
-        if (!onWall && (CeilVault || CeilPillars))   // the ribs: dressed stone, lighter
-            stone *= 1.0 + 0.3 * (CeilPillars ? PillarRibAt(q) : VaultRib(q));
         const float du = exp2(lod) * 1.5 / 1024.0;   // a texel and a half at that mip, in uv
         const float3 lw = float3(0.2126, 0.7152, 0.0722);
         const float lx = dot(CeilPic(uvT + float2(du, 0.0), lod) - CeilPic(uvT - float2(du, 0.0), lod), lw);
         const float lz = dot(CeilPic(uvT + float2(0.0, du), lod) - CeilPic(uvT - float2(0.0, du), lod), lw);
-        const float perWorld = 1.0 / (2.0 * du * kCeilTexTiles * CeilScale);   // the slope per world unit
+        const float perWorld = 1.0 / (2.0 * du * TexSpan());   // the slope per world unit
         nrm = normalize(nrm - CeilBump * perWorld * (lx * tanU + lz * tanV));
     } else stone = lerp(float3(0.16, 0.13, 0.10), float3(0.30, 0.25, 0.20), NoiseP(q * 6.0, 384.0));
     // the hero's light (as from a torch at his shoulder), dying with the distance from
@@ -1562,6 +1294,11 @@ float3 DepthFogWorld(float4 pos, float2 uv, int eye)
         // A rim pixel with no depth of its own but a drawn neighbour takes the neighbour's:
         // left out, the cut shapes stayed outlined in black on the vault.
         const float dPt = d > 1e-6 ? d : dNear;
+        // What the ceiling is wanted for here, and as far along the ray as: 1 a cut point, 2 a point
+        // behind a wall at the floor's edge, 3 the void. ONE call of Ceiling for all three - three of
+        // them inlined made the shader take 164 s to build (2026-10-07).
+        int ceilMode = 0;
+        float ceilLim = 1e9;
         if (CeilOn && !SkyOn && dPt > 1e-6) {
             const float3 off = (eye == 0 ? v.x * CamRight0 + v.y * CamUp0 + v.z * CamBack0
                                          : v.x * CamRight1 + v.y * CamUp1 + v.z * CamBack1) * (NearPlane / dPt);
@@ -1579,14 +1316,29 @@ float3 DepthFogWorld(float4 pos, float2 uv, int eye)
                 if (frac((eP.y + off.y) / 5.0) < 0.04) return 1.0;
                 // the columns the vault stands on (and the band their tops are looked for in)
                 if (hPt > 0.2) return float3(1.0, 0.0, 0.0);   // cut: the vault is drawn there
-                float topPt;
-                if (CeilPillars && PillarNear(qPt, topPt).x < 0.5) return float3(1.0, 0.85, 0.0);
-                if (CeilPillars && eP.y + off.y >= CeilColMin && eP.y + off.y <= CeilColMax) return float3(0.0, 0.8, 0.8);
                 return hPt > 0.2 ? float3(1.0, 0.0, 0.0)
                                  : lerp(float3(0.0, 0.0, 1.0), float3(0.0, 1.0, 0.0), saturate(1.0 + hPt / max(CeilHeight, 1.0)));
             }
-            float3 over;
-            if (hPt > 0.2 && Ceiling(dir, eye, over, length(off))) {
+            if (hPt > 0.2) { ceilMode = 1; ceilLim = length(off); }
+        }
+        // Nothing drawn here: the void, unless a HUD piece lies over it. Outdoors
+        // the sky fills it; in a cave the ceiling, where this ray meets it - where
+        // it does not, the void goes on as before (fogged below).
+        float3 sky = float3(0.0, 0.0, 0.0);
+        bool back = false;
+        if (ceilMode == 0 && dNear <= 1e-6) {
+            if (SkyOn) {
+                sky = Sky(dir);
+                // with the act's own fog colour the sky's low part sinks into it too:
+                // the fogged land meets the sky without an edge
+                if (FogOn && FogFixed) sky = lerp(sky, FogColor, 1.0 - smoothstep(-0.03, 0.2, dir.y));
+                back = true;
+            } else ceilMode = 3;
+        }
+        if (ceilMode != 0) {
+            float3 cc;
+            const bool got = Ceiling(dir, eye, cc, ceilLim);
+            if (ceilMode == 1 && got) {
                 // and bright: torch-lit stone is warm too, and a cut dome on a wall top stood
                 // through the ceiling as a ghost in the catacombs (2026-10-07)
                 const float peak = max(colour.r, max(colour.g, colour.b));
@@ -1597,22 +1349,9 @@ float3 DepthFogWorld(float4 pos, float2 uv, int eye)
                 // stood lit beside a flame, or black where 8 samples found no glow (2026-10-07).
                 const float3 halo = VoidGlowAt(uv) * saturate(CeilHalo);
                 // (eased in over 1.5 units it let the cut caps' outlines through - kept hard, 2026-10-07)
-                return over + dither + lerp(halo, colour, fire);
+                return cc + dither + lerp(halo, colour, fire);
             }
-        }
-        // Nothing drawn here: the void, unless a HUD piece lies over it. Outdoors
-        // the sky fills it; in a cave the ceiling, where this ray meets it - where
-        // it does not, the void goes on as before (fogged below).
-        float3 sky = float3(0.0, 0.0, 0.0);
-        bool back = false;
-        if (dNear <= 1e-6) {
-            if (SkyOn) {
-                sky = Sky(dir);
-                // with the act's own fog colour the sky's low part sinks into it too:
-                // the fogged land meets the sky without an edge
-                if (FogOn && FogFixed) sky = lerp(sky, FogColor, 1.0 - smoothstep(-0.03, 0.2, dir.y));
-                back = true;
-            } else back = Ceiling(dir, eye, sky, 1e9);
+            if (ceilMode == 3) { back = got; sky = cc; }
         }
         if (back) {
             const float luma = dot(colour, float3(0.2126, 0.7152, 0.0722));
@@ -1701,7 +1440,7 @@ float3 DepthFogWorld(float4 pos, float2 uv, int eye)
 float3 DepthFog(float4 pos, float2 uv, int eye)
 {
     const float3 fogged = DepthFogWorld(pos, uv, eye);
-    [branch] if (!UiMaskOn) return fogged;
+    [branch] if (!UiMaskOn || UiMaskOff) return fogged;
     const float ui = 1.0 - saturate(tex2Dlod(GameLayerSmp, float4(uv, 0, 0)).a);
     return lerp(fogged, tex2D(FogColorSmp, uv).rgb, ui);
 }
@@ -2073,12 +1812,7 @@ technique D2R_DepthFog <
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_HMapMerge; RenderTarget = HMapTex; }
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_HMapStore; RenderTarget = HMapOldTex; }
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_SupMerge; RenderTarget = SupTex; }
-    pass { VertexShader = VS_Fullscreen; PixelShader = PS_Sup2Merge; RenderTarget = Sup2Tex; }
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_SupStore; RenderTarget = SupOldTex; }
-    pass { VertexShader = VS_Fullscreen; PixelShader = PS_Sup2Store; RenderTarget = Sup2OldTex; }
-    pass { VertexShader = VS_Fullscreen; PixelShader = PS_Heads; RenderTarget = HeadTex; }
-    pass { VertexShader = VS_Fullscreen; PixelShader = PS_Seeds; RenderTarget = SeedTex; }
-    pass { VertexShader = VS_Fullscreen; PixelShader = PS_Span; RenderTarget = SpanTex; }
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_HMapGenStore; RenderTarget = HMapGenTex; }
     pass { ComputeShader = CS_ClearHeights<8, 8>; DispatchSizeX = 8; DispatchSizeY = 8; }
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_Peaks; RenderTarget = PeakTex; }
@@ -2112,12 +1846,7 @@ technique D2R_DepthFog_R <
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_HMapMerge; RenderTarget = HMapTex; }
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_HMapStore; RenderTarget = HMapOldTex; }
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_SupMerge; RenderTarget = SupTex; }
-    pass { VertexShader = VS_Fullscreen; PixelShader = PS_Sup2Merge; RenderTarget = Sup2Tex; }
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_SupStore; RenderTarget = SupOldTex; }
-    pass { VertexShader = VS_Fullscreen; PixelShader = PS_Sup2Store; RenderTarget = Sup2OldTex; }
-    pass { VertexShader = VS_Fullscreen; PixelShader = PS_Heads; RenderTarget = HeadTex; }
-    pass { VertexShader = VS_Fullscreen; PixelShader = PS_Seeds; RenderTarget = SeedTex; }
-    pass { VertexShader = VS_Fullscreen; PixelShader = PS_Span; RenderTarget = SpanTex; }
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_HMapGenStore; RenderTarget = HMapGenTex; }
     pass { ComputeShader = CS_ClearHeights<8, 8>; DispatchSizeX = 8; DispatchSizeY = 8; }
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_Peaks; RenderTarget = PeakTex; }

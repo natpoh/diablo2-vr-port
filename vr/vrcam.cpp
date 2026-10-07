@@ -56,7 +56,7 @@ int FindHeroMatrices(const float hero[3], uintptr_t* out, int max);
 }
 #include "skeletons.h"
 #include "writewatch.h"
-namespace uitrace { void Register(); bool Arm(const std::wstring& path); }
+namespace uitrace { void Register(); bool Arm(const std::wstring& path); void SetSkip(uint64_t pipe); void SetSkipShaders(const uint64_t* hashes, int n); }
 #include "game_hud_shared.h"
 namespace memdiff { void Step(uintptr_t base, const std::wstring& outPath, void (*log)(const char*)); void Reset(void (*log)(const char*)); }
 namespace hud { void Register(); void SetHide(int mode); void SetInterfaceScale(float s); void SetMenuOpen(bool open); void SetMapMode(int mode); bool LayerFound(); void SetLogger(void (*log)(const char*)); void SetLook(const FlatVRGameHudLook& look); void SetMapCorner(int corner); bool ToggleMapShown();
@@ -67,6 +67,7 @@ namespace hud { void Register(); void SetHide(int mode); void SetInterfaceScale(
 #include "d2rcam.h"
 #include "sigscan.h"
 #include "mat4.h"
+namespace gamecmd { void Init(const D2RL::PluginContext* ctx); void Tick(); }   // the game's key commands from BodyWalk (gamecmd.cpp)
 namespace gamestate { void Init(const D2RL::PluginContext* ctx); void Tick(); uint32_t WeaponClass(); uint32_t WeaponSet(); uint32_t WeaponType(); uint32_t HandsHeld(); uint32_t TwoHanded(); uint32_t WeaponHand(); uint32_t HandsKey(); bool MenuOpen(); int ObjectLight(uint32_t txt, uint32_t mode, float rgb[3]); uint64_t LocalPlayer(); void SetViewMode(uint32_t mode); bool AutoMapOpen(); bool SetAutoMap(bool open); }
 #include "d2r_vr_state.h"
 
@@ -217,7 +218,7 @@ struct Settings {
     std::atomic<float> ceilRelief{6.0f};    // [ceiling] relief: how far the rock hangs down, world units (0 = flat)
     std::atomic<int>   ceilSteps{12};       // [ceiling] steps: the ray's steps through the rock (the frame's cost)
     std::atomic<float> ceilLight{25.0f};    // [ceiling] light_radius: world units from the hero where his light is down to half
-    std::atomic<bool>  ceilTorches{true};   // [ceiling] torches: fire seen in the picture lights the ceiling
+    std::atomic<bool>  ceilTorches{false};  // [ceiling] torches: fire seen in the picture lights the ceiling
     std::atomic<float> ceilTorchBright{0.6f};   // [ceiling] torch_brightness
     std::atomic<float> ceilTorchRadius{20.0f};  // [ceiling] torch_radius: world units where a torch's light is down to half
     std::atomic<float> ceilTorchDist{80.0f};    // [ceiling] torch_distance: torches farther from the hero fade out (behind walls)
@@ -237,6 +238,7 @@ struct Settings {
     std::atomic<int>   inventoryPad{0};     // [input] inventory_button: the pad button "D2R: Inventory" sends - 0 Menu (Start), 1 View (Back)
     std::atomic<bool>  aAttackOnly{false};  // [input] a_attack_only: pad A never picks up or interacts; "D2R: Pick up / interact" does
     std::atomic<bool>  flatKeyMove{true};   // [input] flat_keyboard_move: flat W A S D walk through the game's own keyboard move (0x8A960), no pad
+    std::atomic<bool>  vrKeyWalk{true};     // [input] vr_keys_walk: VR view F2 without mouse look - W A S D walk where the camera looks, the mouse stays the game's
     std::atomic<bool>  flatNoPad{true};     // [input] flat_no_pad: with it, flat mode shows the game no pad at all (its UI never turns to A/B/X/Y)
     std::atomic<bool>  flatCrosshair{true};  // [input] flat_crosshair: flat mouse look, the pointer is our crosshair, not the game's gauntlet
     std::atomic<bool>  flatClickShoot{true}; // [input] flat_click_shoot: flat mouse look, a click with no target under the crosshair = a shot there, never a walk
@@ -405,21 +407,19 @@ std::vector<std::string> g_ceilBiomes;   // under g_biomeLock
 // relief_ is then how far the vault rises from its springing to the crown.
 // And dome_<biome> 1: over what the game draws higher than the ceiling (an altar's canopy)
 // it rises as a sphere dome_radius_ round, by dome_max_ at most (the shader's height map).
-struct CeilVaultCfg { bool on = false; float bay = 40.0f, ribWidth = 1.2f, ribDepth = 0.8f, offX = 0.0f, offZ = 0.0f;
-                      bool dome = false; float domeRadius = 30.0f, domeMax = 30.0f, domeFind = 0.0f;
-                      // pillars_<biome> 1: the vault stands on the columns the shader finds, column_radius_ thick
-                      bool pillars = false; float columnRadius = 4.0f;
-                      // column_min_ / column_max_<biome>: the columns' tops are looked for between them, and
-                      // the vault rests on each and rises to height_ (the crown)
-                      float columnMin = 20.0f, columnMax = 30.0f;
-                      float columnLift = 0.0f;
-                      float columnWidth = 1.0f; };   // column_width_<biome>: a top narrower than this one way is no column   // column_lift_<biome>: the vault starts this far over a column's top
+// dome_<biome> 1: over what the game draws higher than dome_find_ (or the ceiling) - the cathedral's
+// altar canopy - one smooth dome dome_radius_ round, by dome_max_ at most; tex_size_<biome>: world
+// units one picture spans (0 = 4 tiles); relief_pic_<biome>: 0 noise, 1 light / -1 dark / 2 coloured
+// parts of the picture stand out. (The groin vault, the vault on the columns or the walls and the
+// walls at the floor's edge were tried on 2026-10-07 and taken out - commit 4ac321d has them.)
+struct CeilVaultCfg { bool dome = false; float domeRadius = 30.0f, domeMax = 30.0f, domeFind = 0.0f;
+                      float texSize = 0.0f, reliefPic = 0.0f; };
 struct CeilBiomeCfg { std::string biome; float height, bright, light, relief, wet, detail, contrast; CeilVaultCfg vault; int slot = 0; };
 std::vector<CeilBiomeCfg> g_ceilBiomeCfg;   // under g_biomeLock
 
 void LoadCeilingBiomes() {
     wchar_t buf[1024];
-    GetPrivateProfileStringW(L"ceiling", L"biomes", L"act1_caves,act1_crypt,act1_barracks,act1_cathedral,act1_catacombs", buf, (DWORD)std::size(buf), g_iniPath);
+    GetPrivateProfileStringW(L"ceiling", L"biomes", L"act1_caves,act1_crypt,act1_barracks,act1_cathedral,act1_catacombs,act2_sewer,act2_palace_clean", buf, (DWORD)std::size(buf), g_iniPath);
     std::vector<std::string> list;
     std::string cur;
     for (const wchar_t* p = buf;; ++p) {
@@ -440,22 +440,12 @@ void LoadCeilingBiomes() {
                        std::clamp(IniF(L"ceiling", (L"detail_" + w).c_str(), g_set.ceilDetail.load()), 0.0f, 10.0f),
                        std::clamp(IniF(L"ceiling", (L"contrast_" + w).c_str(), g_set.ceilContrast.load()), 0.0f, 5.0f)});
         CeilVaultCfg& v = cfg.back().vault;
-        v.on = IniB(L"ceiling", (L"vault_" + w).c_str(), false);
-        v.bay = std::clamp(IniF(L"ceiling", (L"bay_" + w).c_str(), 40.0f), 4.0f, 400.0f);
-        v.ribWidth = std::clamp(IniF(L"ceiling", (L"rib_width_" + w).c_str(), 1.2f), 0.0f, 20.0f);
-        v.ribDepth = std::clamp(IniF(L"ceiling", (L"rib_depth_" + w).c_str(), 0.8f), 0.0f, 20.0f);
-        v.offX = IniF(L"ceiling", (L"bay_x_" + w).c_str(), 0.0f);
-        v.offZ = IniF(L"ceiling", (L"bay_z_" + w).c_str(), 0.0f);
         v.dome = IniB(L"ceiling", (L"dome_" + w).c_str(), false);
         v.domeRadius = std::clamp(IniF(L"ceiling", (L"dome_radius_" + w).c_str(), 30.0f), 5.0f, 200.0f);
         v.domeMax = std::clamp(IniF(L"ceiling", (L"dome_max_" + w).c_str(), 30.0f), 0.0f, 300.0f);
         v.domeFind = std::clamp(IniF(L"ceiling", (L"dome_find_" + w).c_str(), 0.0f), 0.0f, 500.0f);
-        v.pillars = IniB(L"ceiling", (L"pillars_" + w).c_str(), false);
-        v.columnRadius = std::clamp(IniF(L"ceiling", (L"column_radius_" + w).c_str(), 4.0f), 0.0f, 50.0f);
-        v.columnMin = std::clamp(IniF(L"ceiling", (L"column_min_" + w).c_str(), 20.0f), 1.0f, 500.0f);
-        v.columnMax = std::max(v.columnMin, std::clamp(IniF(L"ceiling", (L"column_max_" + w).c_str(), 30.0f), 1.0f, 500.0f));
-        v.columnLift = std::clamp(IniF(L"ceiling", (L"column_lift_" + w).c_str(), 0.0f), -20.0f, 50.0f);
-        v.columnWidth = std::clamp(IniF(L"ceiling", (L"column_width_" + w).c_str(), 1.0f), 0.0f, 20.0f);
+        v.texSize = std::clamp(IniF(L"ceiling", (L"tex_size_" + w).c_str(), 0.0f), 0.0f, 1000.0f);
+        v.reliefPic = std::clamp(IniF(L"ceiling", (L"relief_pic_" + w).c_str(), 0.0f), -1.0f, 2.0f);
     }
     AcquireSRWLockExclusive(&g_biomeLock);
     const bool same = g_ceilBiomes == list;
@@ -581,8 +571,9 @@ void LoadCrosshairFile();   // [input] crosshair (the flat crosshair's picture),
 // D2R_Sky_ours/D2R_Ceiling_<biome>.png, else [ceiling] texture (the act 1 caves' stone).
 // The different files go to the shader's 4 slots as D2R_CEILING_1..4 (like the skies);
 // a biome whose file is missing gets slot 0: the shader draws the stone itself.
-constexpr int kCeilSlots = 4;
-std::string g_ceilSlot[kCeilSlots + 1];   // [1..4] the files, under g_skyCfgLock
+// 8: a fifth dungeon picture (the act 2 sewers' brick) found no slot and drew the shader's own stone (2026-10-07)
+constexpr int kCeilSlots = 8;
+std::string g_ceilSlot[kCeilSlots + 1];   // [1..8] the files, under g_skyCfgLock
 bool g_ceilSlotOk[kCeilSlots + 1] = {};
 
 std::wstring IniPath(const wchar_t* key, const wchar_t* def) {
@@ -917,6 +908,30 @@ void LoadSettings() {
         wchar_t poke[256];
         GetPrivateProfileStringW(L"debug", L"fog_poke", L"", poke, (DWORD)std::size(poke), g_iniPath);
         gamefog::SetPoke(poke);
+        // [debug] skip_pipeline: a game pipeline (hex, as Ctrl+F10's trace prints "last pipe") whose draws are
+        // skipped - which pass draws something, found by elimination; nothing in the game's memory changes
+        wchar_t sp[64];
+        GetPrivateProfileStringW(L"debug", L"skip_pipeline", L"0", sp, (DWORD)std::size(sp), g_iniPath);
+        static uint64_t toldSkip = 0;
+        const uint64_t skip = wcstoull(sp, nullptr, 16);
+        uitrace::SetSkip(skip);
+        if (skip != toldSkip) { toldSkip = skip; LogF("vrcam: [debug] skip_pipeline %llx", (unsigned long long)skip); }
+        // [render] skip_shaders: the game's passes left out for good, by their pixel shader (Ctrl+F10's "ps"),
+        // space-separated hex. Empty = none; the default is filled in once one is confirmed.
+        wchar_t ss[512];
+        GetPrivateProfileStringW(L"render", L"skip_shaders", L"", ss, (DWORD)std::size(ss), g_iniPath);
+        uint64_t hs[8];
+        int nh = 0;
+        for (const wchar_t* q = ss; *q && nh < 8;) {
+            wchar_t* end = nullptr;
+            const uint64_t h = wcstoull(q, &end, 16);
+            if (end == q) { ++q; continue; }
+            if (h) hs[nh++] = h;
+            q = end;
+        }
+        uitrace::SetSkipShaders(hs, nh);
+        static std::wstring toldShaders;
+        if (toldShaders != ss) { toldShaders = ss; LogF("vrcam: [render] skip_shaders - %d shader(s) left out", nh); }
     }
     g_set.skyOn.store(IniB(L"sky", L"enabled", false));
     LoadSkyActs();
@@ -937,7 +952,7 @@ void LoadSettings() {
     g_set.ceilRelief.store(std::clamp(IniF(L"ceiling", L"relief", 6.0f), 0.0f, 100.0f));
     g_set.ceilSteps.store(std::clamp((int)IniF(L"ceiling", L"steps", 12.0f), 1, 64));
     g_set.ceilLight.store(std::clamp(IniF(L"ceiling", L"light_radius", 25.0f), 1.0f, 1000.0f));
-    g_set.ceilTorches.store(IniB(L"ceiling", L"torches", true));
+    g_set.ceilTorches.store(IniB(L"ceiling", L"torches", false));
     g_set.ceilTorchBright.store(std::clamp(IniF(L"ceiling", L"torch_brightness", 0.6f), 0.0f, 5.0f));
     g_set.ceilTorchRadius.store(std::clamp(IniF(L"ceiling", L"torch_radius", 20.0f), 1.0f, 500.0f));
     g_set.ceilTorchDist.store(std::clamp(IniF(L"ceiling", L"torch_distance", 80.0f), 5.0f, 1000.0f));
@@ -976,6 +991,7 @@ void LoadSettings() {
     g_set.bodywalkPad.store(IniB(L"input", L"bodywalk_pad", true));
     g_set.aAttackOnly.store(IniB(L"input", L"a_attack_only", false));
     g_set.flatKeyMove.store(IniB(L"input", L"flat_keyboard_move", true));
+    g_set.vrKeyWalk.store(IniB(L"input", L"vr_keys_walk", true));
     g_set.flatNoPad.store(IniB(L"input", L"flat_no_pad", true));
     g_set.flatClickShoot.store(IniB(L"input", L"flat_click_shoot", true));
     g_set.flatCrosshair.store(IniB(L"input", L"flat_crosshair", true));
@@ -2855,6 +2871,31 @@ std::atomic<uint32_t> g_keyMoveCalls{0};     // how often the game asked: still 
 bool FlatKeyMode() { return g_set.platform.load() == 0 && g_set.flatKeyMove.load() && g_keyMove.load() != 2; }
 // ... and the game sees no pad at all.
 bool FlatNoPad() { return FlatKeyMode() && g_set.flatNoPad.load(); }
+// VR third person (F2) played with the mouse and keyboard ([input] vr_keys_walk,
+// mouse look off): W A S D walk through the same keyboard move, ahead = where
+// our camera looks. The game's own Move keys go north on its screen whatever
+// the camera does ("W walks backwards when the camera faces south", 2026-10-07).
+// The mouse stays the game's: a click attacks, picks up or walks there as ever.
+// Only while the game's UI is in mouse mode - it asks 0x8A960 only then; a pad
+// stick (BodyWalk's) flips it to the controller until the next click.
+bool VrKeyWalk() {
+    return g_set.platform.load() == 1 && g_set.vrKeyWalk.load() && g_keyMove.load() != 2 && g_enabled.load() &&
+           g_inWorld.load() && ViewNow() == 2 && !ShooterActive();
+}
+// W A S D as the keyboard move wants them, turned by our camera; false = nothing held.
+bool VrKeyInput(float* px, float* py) {
+    if (!GameFocused() || ChatOpen()) return false;
+    auto held = [](int vk) { return (GetAsyncKeyState(vk) & 0x8000) != 0; };
+    float y = (held('W') ? 1.0f : 0.0f) - (held('S') ? 1.0f : 0.0f);
+    float x = (held('D') ? 1.0f : 0.0f) - (held('A') ? 1.0f : 0.0f);
+    if (x == 0.0f && y == 0.0f) return false;
+    if (x != 0.0f && y != 0.0f) { x *= 0.70710678f; y *= 0.70710678f; }
+    ViewStickToGame(&x, &y);
+    const float l = sqrtf(x * x + y * y);
+    if (l > 1.0f) { x /= l; y /= l; }
+    *px = x; *py = y;
+    return l > 1e-4f;
+}
 
 // What the player asks for now, as the game's keyboard move wants it (x right,
 // y up on the game's screen, length <= 1); false = nothing (the game then
@@ -2897,12 +2938,15 @@ uint64_t HookKeyMove() {
     // sliders) never reached the game: its Move byte stayed set and the hero walked on
     // by himself (2026-10-07). With the game not in front its move bytes are cleared;
     // a key still held sets them again as soon as it is back.
-    if (FlatKeyMode() && !GameFocused()) {
+    if ((FlatKeyMode() || VrKeyWalk()) && !GameFocused()) {
         if (volatile uint8_t* k = (volatile uint8_t*)d2rsig::Addr(RVA_MOVE_KEYS)) k[0] = k[1] = k[2] = k[3] = 0;
     }
     float x = 0.0f, y = 0.0f;
     const char* from = "";
-    if (!FlatKeyMode() || !FlatMoveInput(&x, &y, &from)) return OrigKeyMove();
+    bool input = false;
+    if (FlatKeyMode()) input = FlatMoveInput(&x, &y, &from);
+    else if (VrKeyWalk() && VrKeyInput(&x, &y)) { input = true; from = "VR keys"; }
+    if (!input) return OrigKeyMove();
     volatile uint8_t* keys = (volatile uint8_t*)d2rsig::Addr(RVA_MOVE_KEYS);
     if (!keys) return OrigKeyMove();
     const uint8_t keep[4] = {keys[0], keys[1], keys[2], keys[3]};
@@ -2927,9 +2971,13 @@ uint64_t HookKeyMove() {
 // in mouse mode), so only 10 s in a game area without the bytes means another build.
 void InstallKeyMoveHook() {
     static int misses = 0;
-    if (!g_ctx || g_keyMove.load() != 0 || g_set.platform.load() != 0 || !g_set.flatKeyMove.load()) return;
+    // Flat with flat_keyboard_move, or VR with vr_keys_walk (third person, VrKeyWalk).
+    const bool flat = g_set.platform.load() == 0;
+    if (!g_ctx || g_keyMove.load() != 0 || !(flat ? g_set.flatKeyMove.load() : g_set.vrKeyWalk.load())) return;
     if (!Matches(RVA_KEY_MOVE, kSigKeyMove, sizeof kSigKeyMove)) {
-        if (g_inWorld.load() && ++misses >= 20) {
+        // In VR the game may stay on the pad for a long time, its keyboard move never
+        // run and so never decrypted: no verdict there, only tried again.
+        if (flat && g_inWorld.load() && ++misses >= 20) {
             g_keyMove.store(2);
             Log("vrcam: flat: keyboard move hook NOT possible (0x8A960 not as expected - another build?) - W A S D walk the old way, through a pad");
         }
@@ -2937,8 +2985,12 @@ void InstallKeyMoveHook() {
     }
     const bool in = d2rsig::Hook(RVA_KEY_MOVE, kSigKeyMove, sizeof kSigKeyMove, (void*)&HookKeyMove, (void**)&OrigKeyMove);
     g_keyMove.store(in ? 1 : 2);
-    Log(in ? "vrcam: flat: keyboard move hook in - W A S D walk through the game's own keyboard move, the mouse clicks where you look"
-           : "vrcam: flat: keyboard move hook FAILED - W A S D walk the old way, through a pad");
+    if (flat)
+        Log(in ? "vrcam: flat: keyboard move hook in - W A S D walk through the game's own keyboard move, the mouse clicks where you look"
+               : "vrcam: flat: keyboard move hook FAILED - W A S D walk the old way, through a pad");
+    else
+        Log(in ? "vrcam: VR: keyboard move hook in - in third person (F2) W A S D walk where the camera looks"
+               : "vrcam: VR: keyboard move hook FAILED - W A S D in third person stay the game's own keys");
 }
 
 // 0xFE3B0(unit, type, x, y, flags) - the game's click on the map (move_recon.md
@@ -3012,7 +3064,7 @@ void FlatPadTick() {
     static ULONGLONG lastTold = 0;
     const uint32_t calls = g_keyMoveCalls.load();
     const bool keys = (GetAsyncKeyState('W') | GetAsyncKeyState('A') | GetAsyncKeyState('S') | GetAsyncKeyState('D')) & 0x8000;
-    if (g_keyMove.load() == 1 && FlatKeyMode() && ShooterActive() && GameFocused() && keys && calls == lastCalls &&
+    if (g_keyMove.load() == 1 && ((FlatKeyMode() && ShooterActive()) || VrKeyWalk()) && GameFocused() && keys && calls == lastCalls &&
         GetTickCount64() - lastTold > 10000) {
         lastTold = GetTickCount64();
         Log("vrcam: flat: W A S D held, but the game does not ask for a keyboard move - its UI is in controller mode "
@@ -3290,7 +3342,7 @@ LRESULT CALLBACK GameWndProc(HWND h, UINT msg, WPARAM w, LPARAM l) {
     // Enter opening the chat line: its letters may come before the game has
     // set its flag, so they are let through for a moment (not on the Enter
     // that sends the line - W pressed right after it walks).
-    if (msg == WM_KEYDOWN && w == VK_RETURN && !(l & (1 << 30)) && ShooterActive())
+    if (msg == WM_KEYDOWN && w == VK_RETURN && !(l & (1 << 30)) && (ShooterActive() || VrKeyWalk()))
         g_chatEnterAt.store(ChatFlagFound() && !ChatFlag() ? GetTickCount64() : 0);
     // Still swallowed with the keyboard move (FlatKeyMode): HookKeyMove's vector
     // replaces 0x8A960's answer, never adds to it, so a W A S D the player bound
@@ -3299,7 +3351,8 @@ LRESULT CALLBACK GameWndProc(HWND h, UINT msg, WPARAM w, LPARAM l) {
     // A key's release always goes through: pressed in F1 / F2 (the game's own walk, its
     // Move byte set), let go in F3, a swallowed release left that byte set and the hero
     // walking by himself back in F1 (2026-10-07). The game's commands are on the press.
-    if ((msg == WM_KEYDOWN || msg == WM_CHAR) && ShooterActive() && !ChatOpen()) {
+    // VR third person with vr_keys_walk (VrKeyWalk): the same - W A S D walk there.
+    if ((msg == WM_KEYDOWN || msg == WM_CHAR) && (ShooterActive() || VrKeyWalk()) && !ChatOpen()) {
         const WPARAM k = msg == WM_CHAR && w >= 'a' && w <= 'z' ? w - ('a' - 'A') : w;
         if (k == 'W' || k == 'A' || k == 'S' || k == 'D') return 0;
     }
@@ -5298,7 +5351,9 @@ void Gather() {
     static ULONGLONG last = 0;
     if (GetTickCount64() - last < 100) return;
     last = GetTickCount64();
-    const bool want = fx::CeilWanted();
+    // [ceiling] torches=0: no lights wanted, so no scan of the game's memory either - on a
+    // weak PC its read of all the game's heap every 1.5 s was suspected of VR dropouts (0.142)
+    const bool want = fx::CeilWanted() && g_set.ceilTorches.load();
     g_heroWanted.store(want);
     if (!want) { g_known.store(false); return; }
     float L[3];
@@ -5827,26 +5882,13 @@ void OnBeginEffects(reshade::api::effect_runtime* rt, reshade::api::command_list
             float wet, detail, contrast;
             CeilVaultCfg vault;
             CeilingLookNow(&wet, &detail, &contrast, &vault);
-            SetBool(rt, "CeilVault", vault.on);
-            SetFloat(rt, "CeilBay", vault.bay);
-            SetFloat(rt, "CeilRibWidth", vault.ribWidth);
-            SetFloat(rt, "CeilRibDepth", vault.ribDepth);
             SetBool(rt, "CeilDome", vault.dome);
-            SetBool(rt, "CeilPillars", vault.pillars);
-            SetFloat(rt, "CeilColumnRadius", vault.columnRadius);
-            SetFloat(rt, "CeilColMin", vault.columnMin);
-            SetFloat(rt, "CeilColMax", vault.columnMax);
-            SetFloat(rt, "CeilColLift", vault.columnLift);
-            SetFloat(rt, "CeilColMinWidth", vault.columnWidth);
+            SetFloat(rt, "CeilTexSize", vault.texSize);
+            SetFloat(rt, "CeilReliefPic", vault.reliefPic);
             SetFloat(rt, "CeilDomeRadius", vault.domeRadius);
             SetFloat(rt, "CeilDomeMax", vault.domeMax);
             SetFloat(rt, "CeilDomeFind", vault.domeFind);
             SetFloat(rt, "CeilMapGen", (float)(g_biomeGen.load() & 0xFFFFF));   // another area: the height map starts again
-            {
-                // the offset wrapped as the hero is (64 tiles): only where the bays fall matters
-                const float period = 64.0f * scale, off[2] = {fmodf(vault.offX, period), fmodf(vault.offZ, period)};
-                SetFloats(rt, "CeilBayOffset", off, 2);
-            }
             SetFloat(rt, "CeilWet", wet);
             SetFloat(rt, "CeilBump", detail);
             SetFloat(rt, "CeilContrast", contrast);
@@ -6137,6 +6179,7 @@ DWORD WINAPI UpdateThread(void*) {
         hud::SetUiMask((fx::FogWanted() || fx::TableKeyWanted()) && !LabelsWanted());
         SkyTick();
         flog::Tick(g_set.frameLog.load());
+        gamecmd::Tick();   // skills, potions, Alt... held in BodyWalk: pressed on the UI thread
         AfrQuietWhenOff();
         if (nowMs >= nextState) {   // what the hero holds, 5 times a second
             nextState = nowMs + 200;
@@ -6255,7 +6298,7 @@ void LoadReShade() {
     else LogF("vrcam: ReShade64.dll did not load (error %lu)", GetLastError());
 }
 
-static const char g_info_version[] = "0.142.0";
+static const char g_info_version[] = "0.143.0";
 
 static const PluginInfo g_info = {
     PluginInfoSize, D2RL_PLUGIN_ABI_VERSION, "d2r-vr-vrcam", "vrcam", g_info_version, "BodyWalkVR",
@@ -6299,6 +6342,7 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     OpenShared();
     OpenAfrBlock();
     gamestate::Init(ctx);
+    gamecmd::Init(ctx);
     if (HANDLE h = CreateThread(nullptr, 0, UpdateThread, nullptr, 0, &g_updateThreadId)) CloseHandle(h);
     if (!ctx->RegisterConsoleCommand("vrcam", &CmdVrcam, "vrcam - the camera: off / first person / third person (F12)"))
         ctx->LogError("vrcam: the console command did not register");

@@ -100,6 +100,12 @@ inline constexpr Sig kSigs[] = {
     {"ClientIndex", 0x9A820, Kind::Code, "48 89 5C 24 08 48 89 74 24 20 57 48 83 EC 20 48 8B D9 E8 ?? ?? ?? ??", 0x9A820, 0, 0, 0, 0, "48 89 5C 24 08 48 89 74 24 20 57 48 83 EC 20", nullptr, "flat click goes where the pointer is", "Chat, walking, clicks"},
     // unit under the pointer, called
     {"HoverUnit", 0xF1900, Kind::Code, "40 53 55 56 48 83 EC 30 8B F1 8B D9 48 89 5C 24 58 48 83 FE 08", 0xF1900, 0, 0, 0, 0, "40 53 55 56 48 83 EC 30 8B F1 8B D9", nullptr, "flat click goes where the pointer is", "Chat, walking, clicks"},
+    // key command executor, press (binding*, table, bool), called
+    {"CmdPress", 0x11FF30, Kind::Code, "40 55 56 41 56 41 57 48 8D AC 24 D8 FD FF FF 48 81 EC 28 03 00 00 48 8B 05 ?? ?? ?? ??", 0x11FF30, 0, 0, 0, 0, "40 55 56 41 56 41 57 48 8D AC 24 D8 FD FF FF", nullptr, "skills, potions, Alt... from BodyWalk", "Game commands"},
+    // key command executor, release (binding*, table, bool), called
+    {"CmdRelease", 0x1203A0, Kind::Code, "40 55 56 41 54 41 56 41 57 48 8D AC 24 E0 FD FF FF 48 81 EC 20 03 00 00 48 8B 05 ?? ?? ?? ?? 48 33 C4 48 89 85 10 02 00 00 83 3D ?? ?? ?? ?? 02", 0x1203A0, 0, 0, 0, 0, "40 55 56 41 54 41 56 41 57 48 8D AC 24 E0 FD FF FF", nullptr, "skills, potions, Alt... from BodyWalk", "Game commands"},
+    // key command table {down, up, flags} x 0x45
+    {"CmdTable", 0x22A7930, Kind::Ref, "48 8D 15 ?? ?? ?? ?? 41 B0 01 48 8B CD 45 84 F6 74 07", 0x11EB71, 0, 3, 7, 0, nullptr, nullptr, "skills, potions, Alt... from BodyWalk", "Game commands"},
     // SkeletonInstance::ComputeSelfWorldPose, hooked
     {"ComputeSelfWorldPose", 0xF78740, Kind::Code, "48 8B C4 53 56 57 48 81 EC A0 00 00 00 48 89 68 10 4C 89 60 E0", 0xF78740, 0, 0, 0, 0, "48 8B C4 53 56 57 48 81 EC A0 00 00 00 48 89 68 10", nullptr, "first-person body", "Body, sky, frame"},
     // biome change, hooked

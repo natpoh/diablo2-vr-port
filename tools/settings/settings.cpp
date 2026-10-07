@@ -140,6 +140,10 @@ constexpr const wchar_t* kSkyPicture = L"A bare name is looked for in reshade-sh
                                        L"Empty (x) = the shader draws this sky itself.";
 constexpr const wchar_t* kFogColour = L"The fog colour of this act, its caves included; the low part of the sky sinks into it. "
                                       L"Empty (x) = the sky's horizon colour, or dark without a sky.";
+constexpr const wchar_t* kTorchesTip = L"WARNING: very heavy on the CPU. To find the torches the mod reads all of the game's memory "
+                                       L"every 1.5 s while a ceiling is drawn (about a third of a CPU core) - on a weaker PC the game "
+                                       L"and VR stutter. Fire seen in the picture (torches, braziers, fire spells) then lights the "
+                                       L"ceiling over it.";
 
 // Order = layout order: a Tab starts a tab, a Group a group on it.
 std::vector<Item> g_items = {
@@ -345,6 +349,10 @@ std::vector<Item> g_items = {
            L"Flat and VR view F3 always start with it. The mouse turns the view (the pointer stays in the middle as a crosshair, "
            L"clicks go where you look), W A S D walk. F9 switches it in the game - off frees the pointer for menus.")),
     Needs(L"input", L"mouse_look", 1, Slider(L"input", L"mouse_speed", L"Mouse speed, ° per pixel", 0.02f, 1, 0.01f, 0.15f)),
+    Only(kVr, Toggle(L"input", L"vr_keys_walk", L"W A S D walk in VR view F2 (where the camera looks)", 1,
+           L"Third person with the mouse and keyboard: W A S D walk relative to the camera, not north on the game's map; the mouse "
+           L"stays the game's (click to attack, pick up, walk). Works while the game is in mouse mode - after a pad stick, click once. "
+           L"With mouse look on, its own W A S D walk is used instead.")),
     Only(kFlat, File(L"input", L"crosshair", L"Crosshair picture", L"D2R_Sky_ours\\D2R_Crosshair.png",
            L"The pointer while the mouse looks: your own picture (png, jpg, bmp), its middle is where you aim; it is "
            L"fitted into 32-64 pixels by the window's height. A picture with no transparency: its black is see-through. "
@@ -660,9 +668,8 @@ std::vector<Item> g_items = {
            L"How far the picture's grains and cracks stand out of the rock: they catch the light.")),
     Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"wet", L"Wet shine", 0, 2, 0.05f, 0.35f,
            L"Glints of the hero's and the torches' light on wet rock, as on the walls (0 = dry).")),
-    Needs(L"ceiling", L"enabled", 1, Toggle(L"ceiling", L"torches", L"Torches light the ceiling", 1,
-           L"Fire seen in the picture (torches, braziers, fire spells) lights the ceiling over it; "
-           L"remembered for a few seconds after it leaves the view.")),
+    Needs(L"ceiling", L"enabled", 1, Toggle(L"ceiling", L"torches", L"Torches light the ceiling (CPU heavy!)", 0,
+           kTorchesTip)),
     Needs(L"ceiling", L"torches", 1, Slider(L"ceiling", L"torch_brightness", L"Torch glow", 0, 3, 0.05f, 0.6f,
            L"How bright the torches' light on the ceiling is. A small flame gives less light than a big one.")),
     Needs(L"ceiling", L"torches", 1, Slider(L"ceiling", L"torch_radius", L"Torch light reach", 3, 100, 1, 20,
@@ -679,17 +686,24 @@ std::vector<Item> g_items = {
            L"How much of the game's own glow round a flame shows over the ceiling and the far floor (1 = all). "
            L"The flame itself always stays.")),
     Group(L"Ceiling: act 1 caves"),
+    Needs(L"ceiling", L"enabled", 1, Toggle(L"ceiling", L"torches", L"Torches light the ceiling (CPU heavy!)", 0,
+           kTorchesTip)),
     Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"height_act1_caves", L"Height over the floor", 5, 150, 0.1f, 30,
            L"World units (the hero is ~7.5 tall). Below the walls' tops they pierce the ceiling.")),
     Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"brightness_act1_caves", L"Brightness (0 = black)", 0, 3, 0.05f, 1,
            L"Lower = a darker ceiling.")),
     Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"light_radius_act1_caves", L"Hero's light reach", 5, 200, 1, 25,
            L"World units from the hero where his light on the ceiling is down to half; farther it goes dark.")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"relief_act1_caves", L"Relief (0 = flat)", 0, 30, 0.5f, 6,
+    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"relief_act1_caves", L"Relief (0 = flat)", 0, 30, 0.05f, 6,
            L"How far the uneven rock hangs down from the ceiling, world units.")),
+    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"relief_pic_act1_caves", L"Relief from the picture", -1, 2, 1, 0,
+           L"What stands out of the ceiling by Relief: 0 lumpy noise; 1 the picture's light parts; -1 its dark parts; "
+           L"2 its coloured parts (bricks in grey mortar). Needs a picture.")),
     Needs(L"ceiling", L"enabled", 1, File(L"ceiling", L"texture_act1_caves", L"Picture", L"D2R_Sky_ours\\D2R_Ceiling_act1_caves_walls.png",
            L"A square picture that tiles. A bare name is looked for in reshade-shaders\\Textures; a full path works too. "
            L"Empty (x) = D2R_Ceiling_act1_caves.png, else the caves' stone.")),
+    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"tex_size_act1_caves", L"Picture size (0 = 4 tiles)", 0, 200, 1, 0,
+           L"World units one picture spans: smaller = finer bricks or stones. 0 = four tiles (Tile size above).")),
     Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"contrast_act1_caves", L"Stone contrast", 0, 4, 0.05f, 1.6f,
            L"The picture's fine detail times this: more = crisper, harder stone; less = smoother.")),
     Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"detail_act1_caves", L"Detail relief", 0, 4, 0.05f, 0.8f,
@@ -703,11 +717,16 @@ std::vector<Item> g_items = {
            L"Lower = a darker ceiling.")),
     Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"light_radius_act1_crypt", L"Hero's light reach", 5, 200, 1, 25,
            L"World units from the hero where his light on the ceiling is down to half; farther it goes dark.")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"relief_act1_crypt", L"Relief (0 = flat)", 0, 30, 0.5f, 1.5,
+    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"relief_act1_crypt", L"Relief (0 = flat)", 0, 30, 0.05f, 1.5,
            L"How far the uneven masonry hangs down from the ceiling, world units.")),
+    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"relief_pic_act1_crypt", L"Relief from the picture", -1, 2, 1, 0,
+           L"What stands out of the ceiling by Relief: 0 lumpy noise; 1 the picture's light parts; -1 its dark parts; "
+           L"2 its coloured parts (bricks in grey mortar). Needs a picture.")),
     Needs(L"ceiling", L"enabled", 1, File(L"ceiling", L"texture_act1_crypt", L"Picture", L"D2R_Sky_ours\\D2R_Ceiling_act1_crypt.png",
            L"A square picture that tiles. A bare name is looked for in reshade-shaders\\Textures; a full path works too. "
            L"Empty (x) = D2R_Ceiling_act1_crypt.png, else the caves' stone.")),
+    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"tex_size_act1_crypt", L"Picture size (0 = 4 tiles)", 0, 200, 1, 0,
+           L"World units one picture spans: smaller = finer bricks or stones. 0 = four tiles (Tile size above).")),
     Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"contrast_act1_crypt", L"Stone contrast", 0, 4, 0.05f, 1.6f,
            L"The picture's fine detail times this: more = crisper, harder stone; less = smoother.")),
     Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"detail_act1_crypt", L"Detail relief", 0, 4, 0.05f, 0.8f,
@@ -722,11 +741,16 @@ std::vector<Item> g_items = {
            L"Lower = a darker ceiling.")),
     Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"light_radius_act1_barracks", L"Hero's light reach", 5, 200, 1, 25,
            L"World units from the hero where his light on the ceiling is down to half; farther it goes dark.")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"relief_act1_barracks", L"Relief (0 = flat)", 0, 30, 0.5f, 1.5,
+    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"relief_act1_barracks", L"Relief (0 = flat)", 0, 30, 0.05f, 1.5,
            L"How far the uneven masonry hangs down from the ceiling, world units.")),
+    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"relief_pic_act1_barracks", L"Relief from the picture", -1, 2, 1, 0,
+           L"What stands out of the ceiling by Relief: 0 lumpy noise; 1 the picture's light parts; -1 its dark parts; "
+           L"2 its coloured parts (bricks in grey mortar). Needs a picture.")),
     Needs(L"ceiling", L"enabled", 1, File(L"ceiling", L"texture_act1_barracks", L"Picture", L"D2R_Sky_ours\\D2R_Ceiling_act1_crypt.png",
            L"A square picture that tiles. A bare name is looked for in reshade-shaders\\Textures; a full path works too. "
            L"Empty (x) = D2R_Ceiling_act1_barracks.png, else the caves' stone.")),
+    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"tex_size_act1_barracks", L"Picture size (0 = 4 tiles)", 0, 200, 1, 0,
+           L"World units one picture spans: smaller = finer bricks or stones. 0 = four tiles (Tile size above).")),
     Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"contrast_act1_barracks", L"Stone contrast", 0, 4, 0.05f, 1.6f,
            L"The picture's fine detail times this: more = crisper, harder stone; less = smoother.")),
     Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"detail_act1_barracks", L"Detail relief", 0, 4, 0.05f, 0.8f,
@@ -740,11 +764,16 @@ std::vector<Item> g_items = {
            L"Lower = a darker ceiling.")),
     Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"light_radius_act1_catacombs", L"Hero's light reach", 5, 200, 1, 25,
            L"World units from the hero where his light on the ceiling is down to half; farther it goes dark.")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"relief_act1_catacombs", L"Relief (0 = flat)", 0, 30, 0.5f, 0,
+    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"relief_act1_catacombs", L"Relief (0 = flat)", 0, 30, 0.05f, 0,
            L"How far the uneven masonry hangs down from the ceiling, world units.")),
+    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"relief_pic_act1_catacombs", L"Relief from the picture", -1, 2, 1, 0,
+           L"What stands out of the ceiling by Relief: 0 lumpy noise; 1 the picture's light parts; -1 its dark parts; "
+           L"2 its coloured parts (bricks in grey mortar). Needs a picture.")),
     Needs(L"ceiling", L"enabled", 1, File(L"ceiling", L"texture_act1_catacombs", L"Picture", L"D2R_Sky_ours\\D2R_Ceiling_act1_crypt_brick.png",
            L"A square picture that tiles. A bare name is looked for in reshade-shaders\\Textures; a full path works too. "
            L"Empty (x) = D2R_Ceiling_act1_catacombs.png, else the caves' stone.")),
+    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"tex_size_act1_catacombs", L"Picture size (0 = 4 tiles)", 0, 200, 1, 0,
+           L"World units one picture spans: smaller = finer bricks or stones. 0 = four tiles (Tile size above).")),
     Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"contrast_act1_catacombs", L"Stone contrast", 0, 4, 0.05f, 1.2f,
            L"The picture's fine detail times this: more = crisper, harder stone; less = smoother.")),
     Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"detail_act1_catacombs", L"Detail relief", 0, 4, 0.05f, 0.5f,
@@ -758,11 +787,16 @@ std::vector<Item> g_items = {
            L"Lower = a darker ceiling.")),
     Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"light_radius_act1_cathedral", L"Hero's light reach", 5, 200, 1, 33,
            L"World units from the hero where his light on the ceiling is down to half; farther it goes dark.")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"relief_act1_cathedral", L"Relief (0 = flat)", 0, 30, 0.5f, 0,
+    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"relief_act1_cathedral", L"Relief (0 = flat)", 0, 30, 0.05f, 0,
            L"How far the uneven masonry hangs down from the ceiling, world units.")),
-    Needs(L"ceiling", L"enabled", 1, File(L"ceiling", L"texture_act1_cathedral", L"Picture", L"D2R_Sky_ours\D2R_Ceiling_act1_barracks_smooth.png",
-           L"A square picture that tiles. A bare name is looked for in reshade-shaders\Textures; a full path works too. "
+    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"relief_pic_act1_cathedral", L"Relief from the picture", -1, 2, 1, 0,
+           L"What stands out of the ceiling by Relief: 0 lumpy noise; 1 the picture's light parts; -1 its dark parts; "
+           L"2 its coloured parts (bricks in grey mortar). Needs a picture.")),
+    Needs(L"ceiling", L"enabled", 1, File(L"ceiling", L"texture_act1_cathedral", L"Picture", L"D2R_Sky_ours\\D2R_Ceiling_act1_barracks_smooth.png",
+           L"A square picture that tiles. A bare name is looked for in reshade-shaders\\Textures; a full path works too. "
            L"Empty (x) = D2R_Ceiling_act1_cathedral.png, else the caves' stone.")),
+    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"tex_size_act1_cathedral", L"Picture size (0 = 4 tiles)", 0, 200, 1, 0,
+           L"World units one picture spans: smaller = finer bricks or stones. 0 = four tiles (Tile size above).")),
     Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"contrast_act1_cathedral", L"Stone contrast", 0, 4, 0.05f, 1.2f,
            L"The picture's fine detail times this: more = crisper, harder stone; less = smoother.")),
     Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"detail_act1_cathedral", L"Detail relief", 0, 4, 0.05f, 0.5f,
@@ -779,36 +813,62 @@ std::vector<Item> g_items = {
            L"World units: how wide the sphere over a high thing is.")),
     Needs(L"ceiling", L"dome_act1_cathedral", 1, Slider(L"ceiling", L"dome_max_act1_cathedral", L"Dome height at most", 0, 100, 1, 30,
            L"World units over the ceiling; what stands higher still is cut off.")),
-    Needs(L"ceiling", L"enabled", 1, Toggle(L"ceiling", L"pillars_act1_cathedral", L"Vault on the columns", 1,
-           L"The ceiling comes down onto the columns and walls the game draws, and rises between them in ribbed vaults. "
-           L"Height is the crown; Relief is how far below it the vault rests on the columns; Bay width is twice how far "
-           L"from a column it reaches the crown.")),
-    Needs(L"ceiling", L"pillars_act1_cathedral", 1, Slider(L"ceiling", L"column_min_act1_cathedral", L"Column top lowest", 5, 100, 0.5f, 20,
-           L"World units over the floor. A column is where the game's highest point in a spot lies between this and the highest "
-           L"below; the vault rests on its top. ReShade's Show ceiling cut paints that band cyan and the columns found yellow.")),
-    Needs(L"ceiling", L"pillars_act1_cathedral", 1, Slider(L"ceiling", L"column_max_act1_cathedral", L"Column top highest", 5, 100, 0.5f, 30,
-           L"What reaches higher (the altar's spire) is not a column. The vault rises from the columns' tops to "
-           L"Height over the floor.")),
-    Needs(L"ceiling", L"pillars_act1_cathedral", 1, Slider(L"ceiling", L"column_width_act1_cathedral", L"Column top width at least", 0, 5, 0.1f, 1,
-           L"How wide every way a column's top must be (the spread of its points, world units). Crosses and wall tops are "
-           L"flat one way: raise it when the vault comes down onto them, lower it when a column is missed.")),
-    Needs(L"ceiling", L"pillars_act1_cathedral", 1, Slider(L"ceiling", L"column_lift_act1_cathedral", L"Vault above the column top", -5, 20, 0.5f, 0,
-           L"World units: how far over a column's top the vault starts. Raise it when the capital's top is cut off.")),
-    Needs(L"ceiling", L"pillars_act1_cathedral", 1, Slider(L"ceiling", L"column_radius_act1_cathedral", L"Column thickness", 0, 15, 0.5f, 4,
-           L"World units from a column's middle to where the vault rests on it.")),
-    Needs(L"ceiling", L"enabled", 1, Toggle(L"ceiling", L"vault_act1_cathedral", L"Groin vault", 1,
-           L"Pointed stone vaults over square bays, ribs along their edges and diagonals, instead of a flat ceiling. "
-           L"Height is the crown; Relief is how far the vault comes down from it to the corners of the bays.")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"bay_act1_cathedral", L"Bay width", 10, 120, 1, 40,
-           L"World units between the vault's corners - set it to the columns' spacing.")),
-    Needs(L"ceiling", L"vault_act1_cathedral", 1, Slider(L"ceiling", L"bay_x_act1_cathedral", L"Bays moved along X", -60, 60, 0.5f, 0,
-           L"Moves the bays so their corners stand on the game's columns.")),
-    Needs(L"ceiling", L"vault_act1_cathedral", 1, Slider(L"ceiling", L"bay_z_act1_cathedral", L"Bays moved along Z", -60, 60, 0.5f, 0,
-           L"Moves the bays so their corners stand on the game's columns.")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"rib_width_act1_cathedral", L"Rib width", 0, 6, 0.1f, 1.2f,
-           L"World units; 0 = no ribs.")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"rib_depth_act1_cathedral", L"Rib depth", 0, 4, 0.1f, 0.8f,
-           L"How far the ribs stand out under the vault, world units.")),
+    Group(L"Ceiling: act 2 sewers"),
+    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"height_act2_sewer", L"Height over the floor", 5, 150, 0.1f, 35,
+           L"World units (the hero is ~7.5 tall). Below the walls' tops they pierce the ceiling.")),
+    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"brightness_act2_sewer", L"Brightness (0 = black)", 0, 3, 0.05f, 1,
+           L"Lower = a darker ceiling.")),
+    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"light_radius_act2_sewer", L"Hero's light reach", 5, 200, 1, 33,
+           L"World units from the hero where his light on the ceiling is down to half; farther it goes dark.")),
+    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"relief_act2_sewer", L"Relief (0 = flat)", 0, 30, 0.05f, 0,
+           L"How far the uneven masonry hangs down from the ceiling, world units.")),
+    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"relief_pic_act2_sewer", L"Relief from the picture", -1, 2, 1, 0,
+           L"What stands out of the ceiling by Relief: 0 lumpy noise; 1 the picture's light parts; -1 its dark parts; "
+           L"2 its coloured parts (bricks in grey mortar). Needs a picture.")),
+    Needs(L"ceiling", L"enabled", 1, File(L"ceiling", L"texture_act2_sewer", L"Picture", L"D2R_Sky_ours\\D2R_Ceiling_act1_barracks_smooth.png",
+           L"A square picture that tiles. A bare name is looked for in reshade-shaders\\Textures; a full path works too. "
+           L"Empty (x) = D2R_Ceiling_act2_sewer.png, else the caves' stone.")),
+    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"tex_size_act2_sewer", L"Picture size (0 = 4 tiles)", 0, 200, 1, 0,
+           L"World units one picture spans: smaller = finer bricks or stones. 0 = four tiles (Tile size above).")),
+    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"contrast_act2_sewer", L"Stone contrast", 0, 4, 0.05f, 1.2f,
+           L"The picture's fine detail times this: more = crisper, harder stone; less = smoother.")),
+    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"detail_act2_sewer", L"Detail relief", 0, 4, 0.05f, 0.5f,
+           L"How far the picture's grains and cracks stand out of the stone: they catch the light.")),
+    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"wet_act2_sewer", L"Wet shine", 0, 2, 0.05f, 0.2f,
+           L"Glints of the hero's and the torches' light on the stone (0 = dry).")),
+    Needs(L"ceiling", L"enabled", 1, Toggle(L"ceiling", L"dome_act2_sewer", L"Dome over what is higher", 1,
+           L"Where the game draws something higher than the ceiling (the altar's canopy), the ceiling rises over it as a sphere "
+           L"instead of cutting it off.")),
+    Needs(L"ceiling", L"dome_act2_sewer", 1, Slider(L"ceiling", L"dome_find_act2_sewer", L"Dome over what reaches above", 0, 150, 0.5f, 0,
+           L"World units over the floor: only what the game draws higher than this gets a dome (set it between the columns' tops "
+           L"and the altar canopy's spire). Under the ceiling's height it is that height. ReShade's Show ceiling cut shows heights.")),
+    Needs(L"ceiling", L"dome_act2_sewer", 1, Slider(L"ceiling", L"dome_radius_act2_sewer", L"Dome radius", 10, 150, 1, 40,
+           L"World units: how wide the sphere over a high thing is.")),
+    Needs(L"ceiling", L"dome_act2_sewer", 1, Slider(L"ceiling", L"dome_max_act2_sewer", L"Dome height at most", 0, 100, 1, 30,
+           L"World units over the ceiling; what stands higher still is cut off.")),
+    Group(L"Ceiling: act 2 palace"),
+    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"height_act2_palace_clean", L"Height over the floor", 5, 150, 0.1f, 20,
+           L"World units (the hero is ~7.5 tall). What the game draws higher is cut off by the ceiling.")),
+    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"brightness_act2_palace_clean", L"Brightness (0 = black)", 0, 3, 0.05f, 1,
+           L"Lower = a darker ceiling.")),
+    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"light_radius_act2_palace_clean", L"Hero's light reach", 5, 200, 1, 25,
+           L"World units from the hero where his light on the ceiling is down to half; farther it goes dark.")),
+    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"relief_act2_palace_clean", L"Relief (0 = flat)", 0, 30, 0.05f, 0,
+           L"How far the uneven masonry hangs down from the ceiling, world units.")),
+    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"relief_pic_act2_palace_clean", L"Relief from the picture", -1, 2, 1, 0,
+           L"What stands out of the ceiling by Relief: 0 lumpy noise; 1 the picture's light parts; -1 its dark parts; "
+           L"2 its coloured parts (bricks in grey mortar). Needs a picture.")),
+    Needs(L"ceiling", L"enabled", 1, File(L"ceiling", L"texture_act2_palace_clean", L"Picture", L"D2R_Sky_ours\\D2R_Ceiling_act1_crypt_brick.png",
+           L"A square picture that tiles. A bare name is looked for in reshade-shaders\\Textures; a full path works too. "
+           L"Empty (x) = D2R_Ceiling_act2_palace_clean.png, else the caves' stone.")),
+    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"tex_size_act2_palace_clean", L"Picture size (0 = 4 tiles)", 0, 200, 1, 0,
+           L"World units one picture spans: smaller = finer bricks or stones. 0 = four tiles (Tile size above).")),
+    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"contrast_act2_palace_clean", L"Stone contrast", 0, 4, 0.05f, 1.2f,
+           L"The picture's fine detail times this: more = crisper, harder stone; less = smoother.")),
+    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"detail_act2_palace_clean", L"Detail relief", 0, 4, 0.05f, 0.5f,
+           L"How far the picture's grains and cracks stand out of the stone: they catch the light.")),
+    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"wet_act2_palace_clean", L"Wet shine", 0, 2, 0.05f, 0.2f,
+           L"Glints of the hero's and the torches' light on the stone (0 = dry).")),
 #if D2RVR_FIRST_PERSON
     Only(kVr, Tab(L"Weapon Adjust")),
     Group(L"Weapon in hand"),

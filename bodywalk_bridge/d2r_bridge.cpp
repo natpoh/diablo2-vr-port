@@ -261,6 +261,19 @@ D2RVR_Actions* Actions() {
     return g_actions;
 }
 
+// The game's key commands held ("D2R key: ..." actions): bit n = the game's
+// command n, pressed by vrcam (shared/d2r_vr_shared.h, vr/gamecmd.cpp).
+D2RVR_Commands* g_commands = nullptr;
+
+D2RVR_Commands* Commands() {
+    if (g_commands) return g_commands;
+    static HANDLE map = nullptr;
+    if (!map) map = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, sizeof(D2RVR_Commands), D2RVR_COMMANDS_NAME);
+    if (map) g_commands = (D2RVR_Commands*)MapViewOfFile(map, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(D2RVR_Commands));
+    if (g_commands) { g_commands->held[0] = g_commands->held[1] = 0; g_commands->version = D2RVR_COMMANDS_VERSION; }
+    return g_commands;
+}
+
 }  // namespace
 
 extern "C" {
@@ -280,14 +293,18 @@ BW_EXPORT bool BW_CALLBACK BW_Plugin_Initialize(const BW_HostCallbacks* callback
         memcpy(&g_host, callbacks, have);
     }
     out_info->name = "D2R Bridge";
-    out_info->version = "0.23.0";
+    out_info->version = "0.24.0";
     out_info->author = "BodyWalkVR";
     out_info->type = BW_PLUGIN_TYPE_OUTPUT;
     out_info->output_mode_name = nullptr;   // not a mode: the Xbox pad stays the output
     out_info->input_source_name = nullptr;
     RegisterCategories();
     if (g_host.register_action) for (const ActionName& a : kActions) g_host.register_action(a.name);
+    // The game's own key commands (skills, potions, Alt...), pressed by vrcam
+    // inside the game: no pad button and no key behind them.
+    if (g_host.register_action) for (const D2RVRCommand& c : kD2RVRCommands) g_host.register_action(c.action);
     Actions();
+    Commands();
     if (!OpenShared()) Info("D2R Bridge: could not create the shared memory");
     else Info("D2R Bridge: ready, head yaw goes to Diablo II: Resurrected");
     return true;
@@ -328,10 +345,23 @@ BW_EXPORT void BW_CALLBACK BW_Plugin_ReceiveAction(const char* action_name, bool
         }
         return;
     }
+    for (const D2RVRCommand& c : kD2RVRCommands) {
+        if (strcmp(c.action, action_name) != 0) continue;
+        if (D2RVR_Commands* b = Commands(); b && c.cmd < D2RVR_GAME_COMMANDS) {
+            uint64_t& word = b->held[c.cmd / 64];
+            const uint64_t bit = 1ull << (c.cmd % 64);
+            const uint64_t before = word;
+            word = active ? (before | bit) : (before & ~bit);
+            if (word != before) b->counter++;
+        }
+        return;
+    }
 }
 
 BW_EXPORT void BW_CALLBACK BW_Plugin_Shutdown() {
     SendScreenDistance(0.0f);   // a screen left pushed back would stay there until FlatVR restarts
+    // A command still held (Run, Alt) would stay held in the game: let go of all of them.
+    if (g_commands) { g_commands->held[0] = g_commands->held[1] = 0; g_commands->counter++; }
     if (g_shared) { g_shared->headValid = 0; UnmapViewOfFile(g_shared); g_shared = nullptr; }
     if (g_map) { CloseHandle(g_map); g_map = nullptr; }
     if (g_state) { UnmapViewOfFile(g_state); g_state = nullptr; }

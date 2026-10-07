@@ -43,6 +43,7 @@ uint32_t g_seq = 0;
 struct Pending {
     std::string target;
     uint32_t draws = 0, dispatches = 0, indirect = 0, pipelines = 0, constants = 0, bundles = 0;
+    uint64_t pipe = 0;    // the graphics pipeline of the last draw counted here
     resource rts[8] = {};
     uint32_t rtCount = 0;
     bool watch = false;   // one full-size 8-bit colour target: every draw into it is listed with its counts
@@ -56,7 +57,10 @@ std::unordered_map<uint64_t, Grab> g_grabs;
 bool Grabbable(const resource_desc& d) {
     const uint32_t f = (uint32_t)d.texture.format;
     return d.type == resource_type::texture_2d && (d.usage & resource_usage::render_target) != 0 && d.texture.samples <= 1 &&
-           (f == 28 || f == 29 || f == 87 || f == 91 || f == 27 || f == 86 || f == 90 || f == 10);   // 10: R16G16B16A16_FLOAT
+           (f == 28 || f == 29 || f == 87 || f == 91 || f == 27 || f == 86 || f == 90 || f == 10 ||   // 10: R16G16B16A16_FLOAT
+            // the lighting and its masks too (the act 2 town's straight line across the picture, 2026-10-07):
+            // 26 R11G11B10_FLOAT, 61 R8_UNORM, 54 R16_FLOAT, 56 R16_UNORM, 34 R16G16_FLOAT
+            f == 26 || f == 61 || f == 54 || f == 56 || f == 34);
 }
 
 // Copies a colour target, now in the render target state, on the list that drew it.
@@ -119,14 +123,17 @@ void Line(command_list* cl, const std::string& text) {
     g_out += b; g_out += text; g_out += '\n';
 }
 
+uint64_t PsHash(uint64_t pl);   // below
+
 // The draws counted into the target bound before: one line when it changes.
 void Flush(command_list* cl) {
     auto it = g_pending.find(cl);
     if (it == g_pending.end()) return;
     const Pending& p = it->second;
     if (p.draws || p.dispatches || p.indirect || p.pipelines || p.bundles) {
-        char b[160]; snprintf(b, sizeof b, "    %u draws, %u dispatches, %u indirect, %u pipelines, %u constants, %u bundles -> ",
-                              p.draws, p.dispatches, p.indirect, p.pipelines, p.constants, p.bundles);
+        char b[240]; snprintf(b, sizeof b, "    %u draws, %u dispatches, %u indirect, %u pipelines, %u constants, %u bundles, last pipe %llx ps %016llx -> ",
+                              p.draws, p.dispatches, p.indirect, p.pipelines, p.constants, p.bundles, (unsigned long long)p.pipe,
+                              (unsigned long long)PsHash(p.pipe));
         Line(cl, b + p.target);
     }
     // what was drawn is copied out now, while it is still a render target
@@ -205,7 +212,82 @@ void OnScissor(command_list* cl, uint32_t, uint32_t count, const rect* rects) {
     Line(cl, b);
 }
 
-void OnBindPipeline(command_list* cl, pipeline_stage, pipeline) {
+// Each graphics pipeline's pixel shader, hashed (FNV-1a 64 of its bytecode) as the game creates it:
+// a pipeline's handle changes with every run, its shader does not. [render] skip_shaders (vrcam) lists
+// shaders whose draws are skipped for good - the act 2 town's straight veil across the picture
+// (2026-10-07). The handles to skip are known as they are created; a bind of one marks its list
+// (thread-local: a list records on one thread), and the draws on it are skipped until another bind.
+std::mutex g_hashLock;
+std::unordered_map<uint64_t, uint64_t> g_psHash;   // pipeline -> its pixel shader's hash
+constexpr int kSkipMax = 8;
+std::atomic<uint64_t> g_skipHash[kSkipMax];        // the shaders to skip (0 = empty)
+std::atomic<uint64_t> g_skipHandle[64];            // pipelines made of them (0 = empty)
+std::atomic<int> g_skipHandles{0};
+uint64_t Fnv(const void* p, size_t n) {
+    uint64_t h = 1469598103934665603ull;
+    for (size_t i = 0; i < n; ++i) { h ^= ((const uint8_t*)p)[i]; h *= 1099511628211ull; }
+    return h;
+}
+bool SkipHash(uint64_t h) {
+    if (!h) return false;
+    for (int i = 0; i < kSkipMax; ++i) if (g_skipHash[i].load(std::memory_order_relaxed) == h) return true;
+    return false;
+}
+void AddSkipHandle(uint64_t pl) {
+    const int n = g_skipHandles.load();
+    for (int i = 0; i < n; ++i) if (g_skipHandle[i].load() == pl) return;
+    if (n < 64) { g_skipHandle[n].store(pl); g_skipHandles.store(n + 1); }
+}
+bool SkipHandle(uint64_t pl) {
+    const int n = g_skipHandles.load(std::memory_order_relaxed);
+    for (int i = 0; i < n; ++i) if (g_skipHandle[i].load(std::memory_order_relaxed) == pl) return true;
+    return false;
+}
+void OnInitPipeline(device*, pipeline_layout, uint32_t count, const pipeline_subobject* subs, pipeline pl) {
+    for (uint32_t i = 0; i < count; ++i) {
+        if (subs[i].type != pipeline_subobject_type::pixel_shader || !subs[i].data) continue;
+        const shader_desc* sd = (const shader_desc*)subs[i].data;
+        if (!sd->code || !sd->code_size) continue;
+        const uint64_t h = Fnv(sd->code, sd->code_size);
+        { std::lock_guard<std::mutex> g(g_hashLock); g_psHash[pl.handle] = h; }
+        if (SkipHash(h)) AddSkipHandle(pl.handle);
+        break;
+    }
+}
+void OnDestroyPipeline(device*, pipeline pl) {
+    std::lock_guard<std::mutex> g(g_hashLock);
+    g_psHash.erase(pl.handle);
+}
+uint64_t PsHash(uint64_t pl) {
+    std::lock_guard<std::mutex> g(g_hashLock);
+    auto it = g_psHash.find(pl);
+    return it == g_psHash.end() ? 0 : it->second;
+}
+struct ListSkip { command_list* cl = nullptr; bool skip = false; };
+thread_local ListSkip t_skip;
+
+// [debug] skip_pipeline (vrcam): every draw with this graphics pipeline is skipped - to find by
+// elimination which of the game's passes draws something (the act 2 town's line, 2026-10-07).
+// Nothing in the game's memory is changed; 0 = off.
+std::atomic<uint64_t> g_skipPipe{0};
+std::mutex g_pipeLock;
+std::unordered_map<command_list*, uint64_t> g_lastPipe;   // the last graphics pipeline bound on each list
+uint64_t LastPipe(command_list* cl) {
+    std::lock_guard<std::mutex> g(g_pipeLock);
+    auto it = g_lastPipe.find(cl);
+    return it == g_lastPipe.end() ? 0 : it->second;
+}
+
+void OnBindPipeline(command_list* cl, pipeline_stage stages, pipeline pl) {
+    if (g_skipHandles.load(std::memory_order_relaxed) &&
+        ((stages & pipeline_stage::pixel_shader) != 0 || stages == pipeline_stage::all || stages == pipeline_stage::all_graphics))
+        t_skip = {cl, SkipHandle(pl.handle)};
+    // only while looked for: a lock on every bind of every frame otherwise costs the game for nothing
+    if ((g_skipPipe.load(std::memory_order_relaxed) || Recording()) &&
+        ((stages & pipeline_stage::pixel_shader) != 0 || stages == pipeline_stage::all || stages == pipeline_stage::all_graphics)) {
+        std::lock_guard<std::mutex> g(g_pipeLock);
+        g_lastPipe[cl] = pl.handle;
+    }
     if (Recording()) { std::lock_guard<std::mutex> g(g_lock); ++g_pending[cl].pipelines; }
 }
 void OnPushConstants(command_list* cl, shader_stage, pipeline_layout, uint32_t, uint32_t, uint32_t, const void*) {
@@ -228,18 +310,28 @@ bool OnClear(command_list* cl, resource_view rtv, const float c[4], uint32_t, co
 }
 
 bool OnDraw(command_list* cl, uint32_t vertices, uint32_t instances, uint32_t, uint32_t) {
+    if (t_skip.skip && t_skip.cl == cl) return true;   // [render] skip_shaders
+    const uint64_t skip = g_skipPipe.load(std::memory_order_relaxed);
+    const uint64_t pipe = (skip || Recording()) ? LastPipe(cl) : 0;
+    if (skip && pipe == skip) return true;
     if (!Recording()) return false;
     std::lock_guard<std::mutex> g(g_lock);
     Pending& p = g_pending[cl];
     ++p.draws;
+    p.pipe = pipe;
     if (p.watch) { char b[96]; snprintf(b, sizeof b, "      draw %u vertices x %u instances", vertices, instances); Line(cl, b); }
     return false;
 }
 bool OnDrawIndexed(command_list* cl, uint32_t indices, uint32_t instances, uint32_t, int32_t, uint32_t) {
+    if (t_skip.skip && t_skip.cl == cl) return true;   // [render] skip_shaders
+    const uint64_t skip = g_skipPipe.load(std::memory_order_relaxed);
+    const uint64_t pipe = (skip || Recording()) ? LastPipe(cl) : 0;
+    if (skip && pipe == skip) return true;
     if (!Recording()) return false;
     std::lock_guard<std::mutex> g(g_lock);
     Pending& p = g_pending[cl];
     ++p.draws;
+    p.pipe = pipe;
     if (p.watch) { char b[96]; snprintf(b, sizeof b, "      draw indexed %u indices x %u instances", indices, instances); Line(cl, b); }
     return false;
 }
@@ -339,6 +431,8 @@ void Register() {
     reshade::register_event<reshade::addon_event::resolve_texture_region>(&OnResolve);
     reshade::register_event<reshade::addon_event::present>(&OnPresent);
     reshade::register_event<reshade::addon_event::bind_pipeline>(&OnBindPipeline);
+    reshade::register_event<reshade::addon_event::init_pipeline>(&OnInitPipeline);
+    reshade::register_event<reshade::addon_event::destroy_pipeline>(&OnDestroyPipeline);
     reshade::register_event<reshade::addon_event::bind_scissor_rects>(&OnScissor);
     reshade::register_event<reshade::addon_event::push_constants>(&OnPushConstants);
     reshade::register_event<reshade::addon_event::execute_secondary_command_list>(&OnExecuteSecondary);
@@ -354,5 +448,15 @@ bool Arm(const std::wstring& path) {
 }
 
 bool Busy() { return g_state.load() != 0; }
+
+// [debug] skip_pipeline: 0 = off
+void SetSkip(uint64_t pipe) { g_skipPipe.store(pipe); }
+// [render] skip_shaders: up to 8 pixel shader hashes; pipelines already made of them are found again
+void SetSkipShaders(const uint64_t* hashes, int n) {
+    for (int i = 0; i < kSkipMax; ++i) g_skipHash[i].store(i < n ? hashes[i] : 0);
+    g_skipHandles.store(0);
+    std::lock_guard<std::mutex> g(g_hashLock);
+    for (const auto& kv : g_psHash) if (SkipHash(kv.second)) AddSkipHandle(kv.first);
+}
 
 }  // namespace uitrace
