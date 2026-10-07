@@ -259,11 +259,17 @@ void Publish() {
     g_state->counter++;
 }
 
+std::atomic<uint64_t> g_player{0};   // the local player's handle, as the SDK gives it (vrcam tries it as the hero unit)
+void CalibrateObjectLights();   // the Objects table's light fields, below
+extern int g_objLitOffset;
+
 // On the UI thread: the two hands of the active set.
 void __cdecl ReadItems(const PluginContext* ctx, void*) noexcept {
     g_readQueued.store(false);
     PlayerHandle player = InvalidPlayerHandle;
-    if (!g_inventory || !g_items || g_inventory->getLocalPlayer(ctx, &player) != Inventory::Result::Success || player == InvalidPlayerHandle) {
+    const bool havePlayer = g_inventory && g_inventory->getLocalPlayer(ctx, &player) == Inventory::Result::Success && player != InvalidPlayerHandle;
+    g_player.store(havePlayer ? player : 0);
+    if (!g_inventory || !g_items || !havePlayer) {
         g_weapon.store(D2RVR_WEAPON_UNKNOWN);
         g_type.store(D2RVR_TYPE_UNKNOWN);
         g_held.store(0);
@@ -323,6 +329,7 @@ void __cdecl ReadItems(const PluginContext* ctx, void*) noexcept {
     // sits in the left with the quiver in the right); a hand holding no weapon
     // kind we know (a shield) is skipped. Unknown kinds fall back to the class.
     if (g_typeOffset == -2) CalibrateTypes();
+    if (g_objLitOffset == -2) CalibrateObjectLights();
     if (g_twoOffset == -2 && g_typeOffset >= 0) CalibrateTwoHanded();
     uint32_t kind = KindOf(code[0]);
     int from = 0;   // the hand the kind came from
@@ -427,6 +434,64 @@ SharedEvents::UiMessageAction __cdecl OnUiMessage(const PluginContext*, const Sh
     return SharedEvents::UiMessageAction::Continue;
 }
 
+// Which objects give light, from the game's own Objects table (Objects.txt): Lit0..Lit7,
+// the light's radius in each of the object's modes (a torch: 0 unlit, 19 burning), and
+// Red/Green/Blue, its colour. The compiled row's offsets are not named by the SDK: found
+// once, on the UI thread, as the bytes that read Objects.txt's values for five objects
+// at once - a brazier, a tiki torch, a bonfire, a small fire and hellfire (2026-10-07).
+struct ObjLight { uint8_t lit[8]; uint8_t rgb[3]; };
+constexpr uint32_t kObjMax = 1024;
+ObjLight g_objLight[kObjMax];
+std::atomic<uint32_t> g_objCount{0};   // rows known; 0 = not (yet)
+int g_objLitOffset = -2;                // -2 not tried yet, -1 failed (declared above ReadItems)
+
+void CalibrateObjectLights() {
+    g_objLitOffset = -1;
+    if (!g_tables || !g_tables->getTable) return;
+    static const struct { uint32_t id; uint8_t lit[8]; uint8_t rgb[3]; } kProbe[] = {
+        {29, {0, 19, 18, 0, 0, 0, 0, 0}, {255, 236, 176}},   // Brazier
+        {37, {0, 19, 19, 0, 0, 0, 0, 0}, {255, 236, 176}},   // TikiTorch1
+        {39, {0, 19, 19, 0, 0, 0, 0, 0}, {255, 236, 176}},   // RogueBonfire
+        {160, {0, 16, 17, 0, 0, 0, 0, 0}, {255, 255, 255}},  // FireSmall
+        {345, {6, 0, 0, 0, 0, 0, 0, 0}, {255, 100, 100}}};   // Hellfire1
+    for (DataTables::Bank bank : {DataTables::Bank::Lod, DataTables::Bank::Rotw, DataTables::Bank::Classic}) {
+        DataTables::TableView v{};
+        v.structSize = DataTables::TableViewSize;
+        if (g_tables->getTable(g_ctx, bank, DataTables::TableId::Objects, &v) != DataTables::Result::Success || !v.rows || v.rowCount <= 345 || !v.rowSize)
+            continue;
+        const uint8_t* rows = (const uint8_t*)v.rows;
+        int lit = -1, rgb = -1;
+        for (uint32_t o = 0; o + 8 <= v.rowSize && (lit < 0 || rgb < 0); ++o) {
+            bool l = lit < 0, c = rgb < 0 && o + 3 <= v.rowSize;
+            for (const auto& p : kProbe) {
+                const uint8_t* r = rows + (size_t)p.id * v.rowSize;
+                l = l && memcmp(r + o, p.lit, 8) == 0;
+                c = c && memcmp(r + o, p.rgb, 3) == 0;
+            }
+            if (l) lit = (int)o;
+            if (c) rgb = (int)o;
+        }
+        char b[160];
+        snprintf(b, sizeof b, "gamestate: object lights - bank %u, %u rows of %u bytes, Lit at %d, colour at %d", (unsigned)bank, v.rowCount, v.rowSize, lit, rgb);
+        Log(b);
+        if (lit < 0 || rgb < 0) continue;
+        const uint32_t n = std::min(v.rowCount, kObjMax);
+        uint32_t lights = 0;
+        for (uint32_t i = 0; i < n; ++i) {
+            const uint8_t* r = rows + (size_t)i * v.rowSize;
+            memcpy(g_objLight[i].lit, r + lit, 8);
+            memcpy(g_objLight[i].rgb, r + rgb, 3);
+            for (uint8_t x : g_objLight[i].lit) if (x) { ++lights; break; }
+        }
+        g_objLitOffset = lit;
+        g_objCount.store(n);
+        snprintf(b, sizeof b, "gamestate: object lights - %u of %u objects give light", lights, n);
+        Log(b);
+        return;
+    }
+    Log("gamestate: object lights NOT found in the Objects table - the ceiling's torches stay as seen in the picture");
+}
+
 template <class S> const S* Query(const PluginContext* ctx) {
     const S* s = nullptr;
     return ctx->QueryService(&s) == ServiceQueryResult::Success ? s : nullptr;
@@ -480,6 +545,14 @@ uint32_t TwoHanded() { return g_two.load(); }
 uint32_t WeaponHand() { return g_from.load(); }
 uint32_t HandsKey() { return g_handsKey.load(); }
 bool MenuOpen() { return g_menu.load() != 0; }
+uint64_t LocalPlayer() { return g_player.load(); }
+// An object's light in a mode: its radius (Objects.txt Lit, 0 = none) and colour 0..1.
+int ObjectLight(uint32_t txt, uint32_t mode, float rgb[3]) {
+    if (txt >= g_objCount.load() || mode > 7) return 0;
+    const ObjLight& o = g_objLight[txt];
+    for (int c = 0; c < 3; ++c) rgb[c] = o.rgb[c] / 255.0f;
+    return o.lit[mode];
+}
 
 bool AutoMapOpen() { return g_autoMap.load() != 0; }
 

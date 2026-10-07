@@ -67,7 +67,7 @@ namespace hud { void Register(); void SetHide(int mode); void SetInterfaceScale(
 #include "d2rcam.h"
 #include "sigscan.h"
 #include "mat4.h"
-namespace gamestate { void Init(const D2RL::PluginContext* ctx); void Tick(); uint32_t WeaponClass(); uint32_t WeaponSet(); uint32_t WeaponType(); uint32_t HandsHeld(); uint32_t TwoHanded(); uint32_t WeaponHand(); uint32_t HandsKey(); bool MenuOpen(); void SetViewMode(uint32_t mode); bool AutoMapOpen(); bool SetAutoMap(bool open); }
+namespace gamestate { void Init(const D2RL::PluginContext* ctx); void Tick(); uint32_t WeaponClass(); uint32_t WeaponSet(); uint32_t WeaponType(); uint32_t HandsHeld(); uint32_t TwoHanded(); uint32_t WeaponHand(); uint32_t HandsKey(); bool MenuOpen(); int ObjectLight(uint32_t txt, uint32_t mode, float rgb[3]); uint64_t LocalPlayer(); void SetViewMode(uint32_t mode); bool AutoMapOpen(); bool SetAutoMap(bool open); }
 #include "d2r_vr_state.h"
 
 #include "MinHook.h"
@@ -81,6 +81,7 @@ namespace gamestate { void Init(const D2RL::PluginContext* ctx); void Tick(); ui
 using namespace D2RL;
 
 namespace {
+namespace gamefog { void SetPoke(const std::wstring& want); }   // [debug] fog_poke, below
 
 const PluginContext* g_ctx = nullptr;
 uintptr_t g_base = 0;
@@ -194,6 +195,9 @@ struct Settings {
     std::atomic<bool>  fogOn{false};        // D2R_DepthFog.fx driven from here through ReShade
     std::atomic<float> fogStart{150.0f};    // world units from the eye
     std::atomic<float> fogEnd{600.0f};
+    std::atomic<float> fogCaveStart{150.0f};   // [fog] caves_start / caves_end: the same, in caves and dungeons (every area off [sky] outdoor)
+    std::atomic<float> fogCaveEnd{600.0f};
+    std::atomic<float> fogCaveStrength{1.0f};  // [fog] caves_strength: how much the full fog covers in caves, 0..1
     std::atomic<float> fogCurve{1.6f};
     std::atomic<float> fogBlur{3.0f};      // the fog over a 5x5 grid this many pixels apart: holes and specks in the depth melt away
     std::atomic<bool>  skyOn{false};        // sky in the void, same shader as the fog
@@ -205,6 +209,27 @@ struct Settings {
     std::atomic<float> nightBright{0.25f};  // [sky] night_brightness: the sky and the fog at full night, times their day brightness
     std::atomic<bool>  skyAlways{false};    // whatever the biome (testing): caves get a sky too
     std::atomic<bool>  skyHidePanels{true}; // no sky while a side panel shifts the picture
+    std::atomic<bool>  fogCaves{true};      // [fog] caves: the fog in caves and dungeons too (every area off [sky] outdoor)
+    std::atomic<bool>  ceilOn{false};       // [ceiling] enabled: a vault over the void in caves (first person only)
+    std::atomic<float> ceilHeight{30.0f};   // [ceiling] height: over the hero's floor, world units
+    std::atomic<float> ceilScale{10.0f};    // [ceiling] scale: world units per tile (the test grid's cell)
+    std::atomic<float> ceilBright{1.0f};    // [ceiling] brightness
+    std::atomic<float> ceilRelief{6.0f};    // [ceiling] relief: how far the rock hangs down, world units (0 = flat)
+    std::atomic<int>   ceilSteps{12};       // [ceiling] steps: the ray's steps through the rock (the frame's cost)
+    std::atomic<float> ceilLight{25.0f};    // [ceiling] light_radius: world units from the hero where his light is down to half
+    std::atomic<bool>  ceilTorches{true};   // [ceiling] torches: fire seen in the picture lights the ceiling
+    std::atomic<float> ceilTorchBright{0.6f};   // [ceiling] torch_brightness
+    std::atomic<float> ceilTorchRadius{20.0f};  // [ceiling] torch_radius: world units where a torch's light is down to half
+    std::atomic<float> ceilTorchDist{80.0f};    // [ceiling] torch_distance: torches farther from the hero fade out (behind walls)
+    std::atomic<bool>  ceilMonsters{false};      // [ceiling] monster_lights: the Fallen's torches light the ceiling (off: their units are not even read)
+    std::atomic<float> ceilMonsterBright{0.35f}; // [ceiling] monster_brightness: the Fallen's torches, times the torches' glow
+    std::atomic<float> ceilWall{200.0f};         // [ceiling] wall_distance: the stone wall round the hero closing the void past the floor (0 = none)
+    std::atomic<float> ceilFloor{5.0f};          // [ceiling] floor_depth: stone this far under the hero's floor past the drawn floor's edge (0 = none)
+    std::atomic<float> ceilTorchWarm{0.6f};      // [ceiling] torch_warmth: the game's pale torch colour toward fire's orange, 0..1
+    std::atomic<float> ceilHalo{1.0f};          // [ceiling] torch_halo: the game's glow round a flame over the ceiling, 0..1
+    std::atomic<float> ceilWet{0.35f};      // [ceiling] wet: how much the rock shines, like the walls
+    std::atomic<float> ceilDetail{0.8f};    // [ceiling] detail: world units the picture's light parts stand out of the rock
+    std::atomic<float> ceilContrast{1.6f};  // [ceiling] contrast: the picture's fine detail times this
     std::atomic<int>   armsMode{0};        // 0 game animation, 1 test pose (arms ahead), 2 controllers
     std::atomic<bool>  hideHead{false};     // shrink the hero's head away (first person)
     std::atomic<float> armScale{1.0f};      // reach on top of the hero/user height ratio
@@ -315,6 +340,7 @@ struct Settings {
     std::atomic<float> rightDtMs{0.01f};    // [stereo] right_dt_ms: the frame time the right pass of a pair gets (0 = none)
     std::atomic<bool>  bgFullSpeed{true};   // no Sleep(10) per frame while the game window is not in front
     std::atomic<bool>  gameHeightFog{false};   // [render] game_height_fog: keep the game's own height fog (gamefog::)
+    std::atomic<int>   solidWalls{1};          // [render] solid_walls: 0 the game's see-through walls, 1 solid but in F1, 2 solid in every view
     std::atomic<float> uiShift{0.0f};       // AFR: the HUD moved apart per eye in the shader, % of the half screen; more = nearer
     std::atomic<float> hudTop{0.70f};       // the HUD is looked for below this height (0 top .. 1 bottom)
 } g_set;
@@ -336,7 +362,8 @@ bool IniB(const wchar_t* sec, const wchar_t* key, bool def) { return IniF(sec, k
 // BiomeSystem::SetCurrentBiome (hooked below); the exe names only the outdoor
 // ones, dungeons and caves bring theirs from level data, so anything not on
 // this list - [sky] outdoor in the ini replaces it - gets no sky. Tristram
-// (act1_tristram, area 38), Kurast (act3_kurast, 79-82), Travincal
+// (act1_tristram, area 38), the monastery's courtyard (act1_court, the Outer Cloister -
+// added 2026-10-07), Kurast (act3_kurast, 79-82), Travincal
 // (act3_travincal_outdoors, 83), the River of Flame (act4_lava, 107), the Chaos
 // Sanctuary (act4_diab, 108) and Nihlathak's Temple (expansion_wildtemple_tempenter,
 // 121) come from level data too, and are open air.
@@ -347,7 +374,7 @@ std::atomic<uint32_t> g_biomeGen{0};    // bumped by every SetCurrentBiome
 
 void LoadOutdoorBiomes() {
     wchar_t buf[1024];
-    GetPrivateProfileStringW(L"sky", L"outdoor", L"act1_outdoors,act1_tristram,act2_outdoors,act2_town,act3_jungle,act3_docktown,act3_kurast,act3_travincal_outdoors,act4_mesa,act4_lava,act4_diab,expansion_town,expansion_siege,expansion_mountaintop,expansion_ruins,expansion_ruins_snow,expansion_wildtemple_tempenter",
+    GetPrivateProfileStringW(L"sky", L"outdoor", L"act1_outdoors,act1_tristram,act1_court,act2_outdoors,act2_town,act3_jungle,act3_docktown,act3_kurast,act3_travincal_outdoors,act4_mesa,act4_lava,act4_diab,expansion_town,expansion_siege,expansion_mountaintop,expansion_ruins,expansion_ruins_snow,expansion_wildtemple_tempenter",
                              buf, (DWORD)std::size(buf), g_iniPath);
     std::vector<std::string> list;
     std::string cur;
@@ -360,6 +387,116 @@ void LoadOutdoorBiomes() {
     }
     AcquireSRWLockExclusive(&g_biomeLock); g_outdoor = list; ReleaseSRWLockExclusive(&g_biomeLock);
     g_biomeGen.fetch_add(1);   // re-judged with the new list
+}
+
+// Cave ceiling (docs/plan_cave_ceiling.md): the biomes that get a vault over the
+// void, [ceiling] biomes: act 1's caves, then its crypts (2026-10-07); the other kinds
+// of dungeon one by one.
+std::vector<std::string> g_ceilBiomes;   // under g_biomeLock
+// Each kind of dungeon its own: [ceiling] height_<biome>, brightness_<biome>,
+// light_radius_<biome>; a key not there takes the common one (height, brightness,
+// light_radius). The user sets them per dungeon in the settings window.
+// And relief_<biome>; its picture texture_<biome> (LoadCeilingTextures, below), one of
+// the shader's 4 slots: a crypt's brick vault is not a cave's rock.
+// And wet_, detail_, contrast_<biome>: the barracks' smooth slabs shone and stood
+// grainy with the cave rock's (the user, 2026-10-07).
+// And a cathedral's groin vault instead of rock: vault_<biome> 1, bay_ (its bays' width),
+// rib_width_, rib_depth_, bay_x_ / bay_z_ (the bays moved onto the game's columns);
+// relief_ is then how far the vault rises from its springing to the crown.
+// And dome_<biome> 1: over what the game draws higher than the ceiling (an altar's canopy)
+// it rises as a sphere dome_radius_ round, by dome_max_ at most (the shader's height map).
+struct CeilVaultCfg { bool on = false; float bay = 40.0f, ribWidth = 1.2f, ribDepth = 0.8f, offX = 0.0f, offZ = 0.0f;
+                      bool dome = false; float domeRadius = 30.0f, domeMax = 30.0f, domeFind = 0.0f;
+                      // pillars_<biome> 1: the vault stands on the columns the shader finds, column_radius_ thick
+                      bool pillars = false; float columnRadius = 4.0f;
+                      // column_min_ / column_max_<biome>: the columns' tops are looked for between them, and
+                      // the vault rests on each and rises to height_ (the crown)
+                      float columnMin = 20.0f, columnMax = 30.0f;
+                      float columnLift = 0.0f;
+                      float columnWidth = 1.0f; };   // column_width_<biome>: a top narrower than this one way is no column   // column_lift_<biome>: the vault starts this far over a column's top
+struct CeilBiomeCfg { std::string biome; float height, bright, light, relief, wet, detail, contrast; CeilVaultCfg vault; int slot = 0; };
+std::vector<CeilBiomeCfg> g_ceilBiomeCfg;   // under g_biomeLock
+
+void LoadCeilingBiomes() {
+    wchar_t buf[1024];
+    GetPrivateProfileStringW(L"ceiling", L"biomes", L"act1_caves,act1_crypt,act1_barracks,act1_cathedral,act1_catacombs", buf, (DWORD)std::size(buf), g_iniPath);
+    std::vector<std::string> list;
+    std::string cur;
+    for (const wchar_t* p = buf;; ++p) {
+        if (*p == L',' || *p == 0) {
+            if (!cur.empty()) list.push_back(cur);
+            cur.clear();
+            if (!*p) break;
+        } else if (*p != L' ' && *p != L'\t' && *p < 128) cur += (char)towlower(*p);
+    }
+    std::vector<CeilBiomeCfg> cfg;
+    for (const std::string& b : list) {
+        const std::wstring w(b.begin(), b.end());
+        cfg.push_back({b, std::clamp(IniF(L"ceiling", (L"height_" + w).c_str(), g_set.ceilHeight.load()), 1.0f, 500.0f),
+                       std::clamp(IniF(L"ceiling", (L"brightness_" + w).c_str(), g_set.ceilBright.load()), 0.0f, 4.0f),
+                       std::clamp(IniF(L"ceiling", (L"light_radius_" + w).c_str(), g_set.ceilLight.load()), 1.0f, 1000.0f),
+                       std::clamp(IniF(L"ceiling", (L"relief_" + w).c_str(), g_set.ceilRelief.load()), 0.0f, 100.0f),
+                       std::clamp(IniF(L"ceiling", (L"wet_" + w).c_str(), g_set.ceilWet.load()), 0.0f, 3.0f),
+                       std::clamp(IniF(L"ceiling", (L"detail_" + w).c_str(), g_set.ceilDetail.load()), 0.0f, 10.0f),
+                       std::clamp(IniF(L"ceiling", (L"contrast_" + w).c_str(), g_set.ceilContrast.load()), 0.0f, 5.0f)});
+        CeilVaultCfg& v = cfg.back().vault;
+        v.on = IniB(L"ceiling", (L"vault_" + w).c_str(), false);
+        v.bay = std::clamp(IniF(L"ceiling", (L"bay_" + w).c_str(), 40.0f), 4.0f, 400.0f);
+        v.ribWidth = std::clamp(IniF(L"ceiling", (L"rib_width_" + w).c_str(), 1.2f), 0.0f, 20.0f);
+        v.ribDepth = std::clamp(IniF(L"ceiling", (L"rib_depth_" + w).c_str(), 0.8f), 0.0f, 20.0f);
+        v.offX = IniF(L"ceiling", (L"bay_x_" + w).c_str(), 0.0f);
+        v.offZ = IniF(L"ceiling", (L"bay_z_" + w).c_str(), 0.0f);
+        v.dome = IniB(L"ceiling", (L"dome_" + w).c_str(), false);
+        v.domeRadius = std::clamp(IniF(L"ceiling", (L"dome_radius_" + w).c_str(), 30.0f), 5.0f, 200.0f);
+        v.domeMax = std::clamp(IniF(L"ceiling", (L"dome_max_" + w).c_str(), 30.0f), 0.0f, 300.0f);
+        v.domeFind = std::clamp(IniF(L"ceiling", (L"dome_find_" + w).c_str(), 0.0f), 0.0f, 500.0f);
+        v.pillars = IniB(L"ceiling", (L"pillars_" + w).c_str(), false);
+        v.columnRadius = std::clamp(IniF(L"ceiling", (L"column_radius_" + w).c_str(), 4.0f), 0.0f, 50.0f);
+        v.columnMin = std::clamp(IniF(L"ceiling", (L"column_min_" + w).c_str(), 20.0f), 1.0f, 500.0f);
+        v.columnMax = std::max(v.columnMin, std::clamp(IniF(L"ceiling", (L"column_max_" + w).c_str(), 30.0f), 1.0f, 500.0f));
+        v.columnLift = std::clamp(IniF(L"ceiling", (L"column_lift_" + w).c_str(), 0.0f), -20.0f, 50.0f);
+        v.columnWidth = std::clamp(IniF(L"ceiling", (L"column_width_" + w).c_str(), 1.0f), 0.0f, 20.0f);
+    }
+    AcquireSRWLockExclusive(&g_biomeLock);
+    const bool same = g_ceilBiomes == list;
+    g_ceilBiomes = list;
+    for (CeilBiomeCfg& c : cfg)   // the picture's slot kept until LoadCeilingTextures looks again: no flicker on a reload
+        for (const CeilBiomeCfg& old : g_ceilBiomeCfg) if (old.biome == c.biome) c.slot = old.slot;
+    g_ceilBiomeCfg = cfg;
+    ReleaseSRWLockExclusive(&g_biomeLock);
+    if (!same) g_biomeGen.fetch_add(1);
+}
+
+// The ceiling's height, brightness, light reach, relief and picture slot (0 = none: the
+// shader's own stone) in the area now - its biome's own, or the common ones.
+void CeilingNow(float* height, float* bright, float* light, float* relief = nullptr, int* slot = nullptr) {
+    float r = g_set.ceilRelief.load();
+    int sl = 0;
+    *height = g_set.ceilHeight.load(); *bright = g_set.ceilBright.load(); *light = g_set.ceilLight.load();
+    AcquireSRWLockShared(&g_biomeLock);
+    for (const CeilBiomeCfg& c : g_ceilBiomeCfg)
+        if (c.biome == g_biome) { *height = c.height; *bright = c.bright; *light = c.light; r = c.relief; sl = c.slot; break; }
+    ReleaseSRWLockShared(&g_biomeLock);
+    if (relief) *relief = r;
+    if (slot) *slot = sl;
+}
+
+// The stone's look in the area now: its shine, how far the picture's light parts stand out, its fine detail.
+void CeilingLookNow(float* wet, float* detail, float* contrast, CeilVaultCfg* vault) {
+    *wet = g_set.ceilWet.load(); *detail = g_set.ceilDetail.load(); *contrast = g_set.ceilContrast.load();
+    *vault = CeilVaultCfg{};
+    AcquireSRWLockShared(&g_biomeLock);
+    for (const CeilBiomeCfg& c : g_ceilBiomeCfg)
+        if (c.biome == g_biome) { *wet = c.wet; *detail = c.detail; *contrast = c.contrast; *vault = c.vault; break; }
+    ReleaseSRWLockShared(&g_biomeLock);
+}
+
+bool IsCeilingBiome(const std::string& biome) {
+    bool on = false;
+    AcquireSRWLockShared(&g_biomeLock);
+    for (const std::string& b : g_ceilBiomes) if (b == biome) { on = true; break; }
+    ReleaseSRWLockShared(&g_biomeLock);
+    return on;
 }
 
 // Starting palettes, by eye; picked by a part of the biome's name.
@@ -439,6 +576,56 @@ bool SkyFileExists(const std::wstring& name) {
 }
 
 void LoadCrosshairFile();   // [input] crosshair (the flat crosshair's picture), with the cursor code
+
+// The ceiling's pictures, one per kind of dungeon: [ceiling] texture_<biome>, by default
+// D2R_Sky_ours/D2R_Ceiling_<biome>.png, else [ceiling] texture (the act 1 caves' stone).
+// The different files go to the shader's 4 slots as D2R_CEILING_1..4 (like the skies);
+// a biome whose file is missing gets slot 0: the shader draws the stone itself.
+constexpr int kCeilSlots = 4;
+std::string g_ceilSlot[kCeilSlots + 1];   // [1..4] the files, under g_skyCfgLock
+bool g_ceilSlotOk[kCeilSlots + 1] = {};
+
+std::wstring IniPath(const wchar_t* key, const wchar_t* def) {
+    wchar_t buf[MAX_PATH];
+    GetPrivateProfileStringW(L"ceiling", key, def, buf, MAX_PATH, g_iniPath);
+    std::wstring f = buf;
+    while (!f.empty() && (f.back() == L' ' || f.back() == L'"')) f.pop_back();
+    while (!f.empty() && (f.front() == L' ' || f.front() == L'"')) f.erase(0, 1);
+    return f;
+}
+
+void LoadCeilingTextures() {
+    const std::wstring common = IniPath(L"texture", L"D2R_Sky_ours/D2R_Ceiling_act1_caves_walls.png");
+    AcquireSRWLockExclusive(&g_biomeLock);
+    std::vector<CeilBiomeCfg> cfg = g_ceilBiomeCfg;
+    ReleaseSRWLockExclusive(&g_biomeLock);
+    std::string slot[kCeilSlots + 1];
+    int used = 0;
+    for (CeilBiomeCfg& c : cfg) {
+        const std::wstring w(c.biome.begin(), c.biome.end());
+        std::wstring f = IniPath((L"texture_" + w).c_str(), (L"D2R_Sky_ours/D2R_Ceiling_" + w + L".png").c_str());
+        if (f.empty() || !SkyFileExists(f)) f = common;
+        c.slot = 0;
+        if (f.empty() || !SkyFileExists(f)) { LogF("vrcam: cave ceiling %s - no picture found, the shader draws the stone itself", c.biome.c_str()); continue; }
+        for (wchar_t& ch : f) if (ch == L'\\') ch = L'/';   // an FX string takes no backslashes
+        const std::string name = Utf8(f.c_str());
+        for (int k = 1; k <= used && !c.slot; ++k) if (slot[k] == name) c.slot = k;
+        if (!c.slot && used < kCeilSlots) { slot[++used] = name; c.slot = used; }
+    }
+    AcquireSRWLockExclusive(&g_biomeLock);
+    for (CeilBiomeCfg& now : g_ceilBiomeCfg)
+        for (const CeilBiomeCfg& c : cfg) if (c.biome == now.biome) now.slot = c.slot;
+    ReleaseSRWLockExclusive(&g_biomeLock);
+    bool changed = false;
+    AcquireSRWLockExclusive(&g_skyCfgLock);
+    for (int k = 1; k <= kCeilSlots; ++k) {
+        const bool ok = k <= used;
+        if (g_ceilSlot[k] != slot[k] || g_ceilSlotOk[k] != ok) changed = true;
+        g_ceilSlot[k] = slot[k]; g_ceilSlotOk[k] = ok;
+    }
+    ReleaseSRWLockExclusive(&g_skyCfgLock);
+    if (changed) g_skyCfgGen.fetch_add(1);
+}
 
 void LoadSkyActs() {
     bool changed = false;
@@ -697,6 +884,7 @@ void LoadSettings() {
     g_set.convergence.store(std::clamp(IniF(L"stereo", L"convergence", 15.0f), 0.0f, 1000.0f));
     g_set.bgFullSpeed.store(IniB(L"render", L"background_full_speed", true));
     g_set.gameHeightFog.store(IniB(L"render", L"game_height_fog", false));
+    g_set.solidWalls.store(std::clamp((int)IniF(L"render", L"solid_walls", 1.0f), 0, 2));
     g_set.stampPixels.store(IniB(L"stereo", L"stamp_pixels", true));
     g_set.pipelineDepth.store(std::clamp((int)IniF(L"stereo", L"pipeline_depth", 0.0f), 0, 3));
     g_set.thirdDistance.store(std::clamp(IniF(L"third", L"distance", 7.0f), -5.0f, 200.0f));
@@ -718,8 +906,18 @@ void LoadSettings() {
     g_set.fogOn.store(IniB(L"fog", L"enabled", false));
     g_set.fogStart.store(std::clamp(IniF(L"fog", L"start", 150.0f), 0.0f, 100000.0f));
     g_set.fogEnd.store(std::clamp(IniF(L"fog", L"end", 600.0f), g_set.fogStart.load() + 1.0f, 200000.0f));
+    // caves: their own range, the open air's when not set (caves are smaller, their fog nearer)
+    g_set.fogCaveStart.store(std::clamp(IniF(L"fog", L"caves_start", g_set.fogStart.load()), 0.0f, 100000.0f));
+    g_set.fogCaveEnd.store(std::clamp(IniF(L"fog", L"caves_end", g_set.fogEnd.load()), g_set.fogCaveStart.load() + 1.0f, 200000.0f));
+    g_set.fogCaveStrength.store(std::clamp(IniF(L"fog", L"caves_strength", 1.0f), 0.0f, 1.0f));
     g_set.fogCurve.store(std::clamp(IniF(L"fog", L"curve", 1.6f), 0.3f, 4.0f));
     g_set.fogBlur.store(std::clamp(IniF(L"fog", L"blur", 3.0f), 0.0f, 12.0f));
+    g_set.fogCaves.store(IniB(L"fog", L"caves", true));
+    {
+        wchar_t poke[256];
+        GetPrivateProfileStringW(L"debug", L"fog_poke", L"", poke, (DWORD)std::size(poke), g_iniPath);
+        gamefog::SetPoke(poke);
+    }
     g_set.skyOn.store(IniB(L"sky", L"enabled", false));
     LoadSkyActs();
     LoadCrosshairFile();
@@ -732,6 +930,28 @@ void LoadSettings() {
     g_set.skyAlways.store(IniB(L"sky", L"always", false));
     g_set.skyHidePanels.store(IniB(L"sky", L"hide_with_panels", true));
     LoadOutdoorBiomes();
+    g_set.ceilOn.store(IniB(L"ceiling", L"enabled", false));
+    g_set.ceilHeight.store(std::clamp(IniF(L"ceiling", L"height", 30.0f), 1.0f, 500.0f));
+    g_set.ceilScale.store(std::clamp(IniF(L"ceiling", L"scale", 10.0f), 0.5f, 1000.0f));
+    g_set.ceilBright.store(std::clamp(IniF(L"ceiling", L"brightness", 1.0f), 0.0f, 4.0f));
+    g_set.ceilRelief.store(std::clamp(IniF(L"ceiling", L"relief", 6.0f), 0.0f, 100.0f));
+    g_set.ceilSteps.store(std::clamp((int)IniF(L"ceiling", L"steps", 12.0f), 1, 64));
+    g_set.ceilLight.store(std::clamp(IniF(L"ceiling", L"light_radius", 25.0f), 1.0f, 1000.0f));
+    g_set.ceilTorches.store(IniB(L"ceiling", L"torches", true));
+    g_set.ceilTorchBright.store(std::clamp(IniF(L"ceiling", L"torch_brightness", 0.6f), 0.0f, 5.0f));
+    g_set.ceilTorchRadius.store(std::clamp(IniF(L"ceiling", L"torch_radius", 20.0f), 1.0f, 500.0f));
+    g_set.ceilTorchDist.store(std::clamp(IniF(L"ceiling", L"torch_distance", 80.0f), 5.0f, 1000.0f));
+    g_set.ceilMonsters.store(IniB(L"ceiling", L"monster_lights", false));
+    g_set.ceilMonsterBright.store(std::clamp(IniF(L"ceiling", L"monster_brightness", 0.35f), 0.0f, 3.0f));
+    g_set.ceilHalo.store(std::clamp(IniF(L"ceiling", L"torch_halo", 1.0f), 0.0f, 1.0f));
+    g_set.ceilTorchWarm.store(std::clamp(IniF(L"ceiling", L"torch_warmth", 0.6f), 0.0f, 1.0f));
+    g_set.ceilWall.store(std::clamp(IniF(L"ceiling", L"wall_distance", 200.0f), 0.0f, 5000.0f));
+    g_set.ceilFloor.store(std::clamp(IniF(L"ceiling", L"floor_depth", 5.0f), 0.0f, 500.0f));
+    g_set.ceilWet.store(std::clamp(IniF(L"ceiling", L"wet", 0.35f), 0.0f, 3.0f));
+    g_set.ceilDetail.store(std::clamp(IniF(L"ceiling", L"detail", 0.8f), 0.0f, 10.0f));
+    g_set.ceilContrast.store(std::clamp(IniF(L"ceiling", L"contrast", 1.6f), 0.0f, 5.0f));
+    LoadCeilingBiomes();
+    LoadCeilingTextures();
     g_set.armsMode.store(std::clamp((int)IniF(L"arms", L"mode", 0.0f), 0, 2));
     g_set.hideHead.store(IniB(L"arms", L"hide_head", false));
     g_set.armScale.store(std::clamp(IniF(L"arms", L"scale", 1.0f), 0.3f, 3.0f));
@@ -1123,7 +1343,8 @@ std::atomic<float> g_lastNear{1.5f};    // the near plane last written; the fog 
 // (M[0], M[5], M[8], M[9]) and the camera's axes in the world (right, up, back).
 // ReShade runs on the frame being presented, so it picks the eye the FlatVR
 // addon files that frame under. Only ever read as a whole under the lock.
-struct SkyView { float proj[4]; float axes[9]; float eyeRel[3]; bool proj_ok, axes_ok; };   // eyeRel: the eye less the hero, world units
+// eyeRel: the eye less the hero, world units; hero: the hero (his feet) in the world, the same view build
+struct SkyView { float proj[4]; float axes[9]; float eyeRel[3]; float hero[3]; bool proj_ok, axes_ok; };
 // The game on the floor's bounds (D2R_DepthFog.fx TableKey): the ground the game's
 // own camera would show. Its view x projection and the hero, from the same view build.
 struct TableBox { float vp[16]; float hero[3]; bool ok; };
@@ -1723,6 +1944,7 @@ bool VrView(const d2rcam::WorldView& in, float out[16]) {
         SkyView& sv = g_skyView[g_eye.load() & 1];
         for (int i = 0; i < 3; ++i) { sv.axes[i] = view[i*4]; sv.axes[3 + i] = view[i*4 + 1]; sv.axes[6 + i] = view[i*4 + 2]; }
         sv.eyeRel[0] = camPos.x - L[0]; sv.eyeRel[1] = camPos.y - L[1]; sv.eyeRel[2] = camPos.z - L[2];
+        memcpy(sv.hero, L, sizeof sv.hero);
         sv.axes_ok = true;
         ReleaseSRWLockExclusive(&g_skyLock);
     }
@@ -2181,6 +2403,26 @@ UnitFacingFn OrigUnitFacing = nullptr;
 // log: is it this frame's on the first pass of a pair, where the render matrix
 // is a frame old, and does it say where the model is drawn facing?
 std::atomic<void*> g_heroUnit{nullptr};
+// The hero unit found without an attack, for the cave ceiling's torches (worldobj): while
+// it is wanted, every unit the game asks the facing of is tried - a player (type 0)
+// whose place on its path, times 2, is the look-at (2026-10-07: "on entering the cave").
+std::atomic<void*> g_heroSeen{nullptr};
+std::atomic<bool> g_heroWanted{false};
+
+bool IsHeroUnit(const void* unit) {
+    float L[3];
+    AcquireSRWLockShared(&g_lookLock); memcpy(L, g_lookAt, sizeof L); ReleaseSRWLockShared(&g_lookLock);
+    __try {
+        const uint8_t* u = (const uint8_t*)unit;
+        if (*(const uint32_t*)u != 0) return false;
+        const uint8_t* path = *(const uint8_t* const*)(u + 0x38);
+        if ((uintptr_t)path < 0x10000) return false;
+        const float x = 2.0f * *(const uint16_t*)(path + 2), z = 2.0f * *(const uint16_t*)(path + 6);
+        return fabsf(x - L[0]) < 3.0f && fabsf(z - L[2]) < 3.0f;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
 std::atomic<float> g_logicFacingDeg{0.0f};
 std::atomic<LONGLONG> g_logicFacingAt{0};
 
@@ -2206,6 +2448,7 @@ LONGLONG QpcUs() {
 
 void HookUnitFacing(void* unit, float* out) {
     OrigUnitFacing(unit, out);
+    if (unit && g_heroWanted.load() && !g_heroSeen.load() && IsHeroUnit(unit)) g_heroSeen.store(unit);   // until one is found
     if (out && unit && unit == g_heroUnit.load()) {
         g_logicFacingDeg.store(atan2f(out[1], out[0]) * 57.2957795f);
         g_logicFacingAt.store(QpcUs());
@@ -2650,6 +2893,13 @@ bool FlatMoveInput(float* px, float* py, const char** from) {
 // vector goes back instead. With no input the original runs untouched.
 uint64_t HookKeyMove() {
     g_keyMoveCalls.fetch_add(1, std::memory_order_relaxed);
+    // A move key let go while another window was in front (the settings window, its
+    // sliders) never reached the game: its Move byte stayed set and the hero walked on
+    // by himself (2026-10-07). With the game not in front its move bytes are cleared;
+    // a key still held sets them again as soon as it is back.
+    if (FlatKeyMode() && !GameFocused()) {
+        if (volatile uint8_t* k = (volatile uint8_t*)d2rsig::Addr(RVA_MOVE_KEYS)) k[0] = k[1] = k[2] = k[3] = 0;
+    }
     float x = 0.0f, y = 0.0f;
     const char* from = "";
     if (!FlatKeyMode() || !FlatMoveInput(&x, &y, &from)) return OrigKeyMove();
@@ -3046,7 +3296,10 @@ LRESULT CALLBACK GameWndProc(HWND h, UINT msg, WPARAM w, LPARAM l) {
     // replaces 0x8A960's answer, never adds to it, so a W A S D the player bound
     // to the game's own Move keys would change nothing - but by default the game
     // has other commands on them (W swaps weapons), which would fire with every step.
-    if ((msg == WM_KEYDOWN || msg == WM_KEYUP || msg == WM_CHAR) && ShooterActive() && !ChatOpen()) {
+    // A key's release always goes through: pressed in F1 / F2 (the game's own walk, its
+    // Move byte set), let go in F3, a swallowed release left that byte set and the hero
+    // walking by himself back in F1 (2026-10-07). The game's commands are on the press.
+    if ((msg == WM_KEYDOWN || msg == WM_CHAR) && ShooterActive() && !ChatOpen()) {
         const WPARAM k = msg == WM_CHAR && w >= 'a' && w <= 'z' ? w - ('a' - 'A') : w;
         if (k == 'W' || k == 'A' || k == 'S' || k == 'D') return 0;
     }
@@ -4553,6 +4806,7 @@ std::atomic<int> g_skyPalette{-1};   // kPalettes index while the sky shows, els
 std::atomic<int> g_fogAct{0};        // the area's act for the fog colour, caves too; 0 = unknown
 std::atomic<bool> g_underground{false};   // in the world, off the outdoor list: the fog takes [fog] color_caves
 std::atomic<bool> g_inWorld{false};  // a game area is loaded: not the main menu (its own "frontend" biome), not before any
+std::atomic<bool> g_ceilBiome{false};   // the area's biome is on [ceiling] biomes
 
 // The game's own day and night (2026-10-05). The game draws a debug line with
 // the time of day ("End of dusk, start of night" ... and "Env Cycle = %i") from
@@ -4667,6 +4921,14 @@ namespace gamefog {
 struct Patch { float* density; float was; };
 SRWLOCK g_lock = SRWLOCK_INIT;
 std::vector<Patch> g_patched;   // what was set to 0, to put back
+// [debug] fog_poke: "k=v k=v", fields by their place from the depth fog's colour (as the
+// log's "fog def" lines number them, | = 0) set to v in every loaded definition - to
+// find which field draws the act 1 caves' veil without restarting. Taken back when changed.
+std::vector<float*> g_defs;               // the definitions of the last scan (24 at most)
+std::vector<Patch> g_poked;               // what the poke changed, to put back
+std::wstring g_pokeWant;                  // under g_lock
+std::atomic<uint32_t> g_pokeGen{0};
+uint32_t g_pokedGen = ~0u;                // under g_lock
 std::atomic<bool> g_busy{false};
 
 // Before it: the volumetric fog's diffuse colour (-17..-15), emissive (-14..-12),
@@ -4687,11 +4949,16 @@ bool Looks(const float* f) {
 
 // One heap region: each definition with a height fog gets density 0. -1 if the
 // region went away under the scan.
-int ScanRegion(float* p, size_t n, Patch* out, int cap, int* defs) {
+// Each definition's floats from -20 to +13 go to `dump` (up to dumpCap), for the log in
+// a cave: the act 1 caves have no height fog, yet a veil's hard edge crosses their floor
+// at a distance from the hero (2026-10-07) - which field it is, is read from these.
+constexpr int kDumpFrom = -20, kDumpN = 34;
+int ScanRegion(float* p, size_t n, Patch* out, int cap, int* defs, float (*dump)[kDumpN], float** where, int dumpCap) {
     int got = 0;
     __try {
-        for (size_t i = 20; i + 10 < n && got < cap; ++i) {
+        for (size_t i = 20; i + 14 < n && got < cap; ++i) {
             if (!(p[i + 4] >= 500.0f && p[i + 4] <= 5000.0f) || !Looks(p + i)) continue;
+            if (*defs < dumpCap) { memcpy(dump[*defs], p + i + kDumpFrom, sizeof dump[0]); where[*defs] = p + i; }
             ++*defs;
             if (p[i + 8] > 0.0f) {
                 out[got++] = {p + i + 8, p[i + 8]};
@@ -4708,6 +4975,8 @@ DWORD WINAPI ScanThread(void*) {
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_LOWEST);
     const ULONGLONG t0 = GetTickCount64();
     int defs = 0, taken = 0;
+    static float dump[24][kDumpN];
+    static float* where[24];
     MEMORY_BASIC_INFORMATION mi{};
     for (uintptr_t a = 0x10000; a < 0x7FFFFFFF0000ull && VirtualQuery((void*)a, &mi, sizeof mi);
          a = (uintptr_t)mi.BaseAddress + mi.RegionSize) {
@@ -4716,7 +4985,7 @@ DWORD WINAPI ScanThread(void*) {
             continue;
         if (g_set.gameHeightFog.load()) break;   // switched back on meanwhile
         Patch found[32];
-        const int n = ScanRegion((float*)mi.BaseAddress, mi.RegionSize / sizeof(float), found, 32, &defs);
+        const int n = ScanRegion((float*)mi.BaseAddress, mi.RegionSize / sizeof(float), found, 32, &defs, dump, where, 24);
         if (n <= 0) continue;
         taken += n;
         AcquireSRWLockExclusive(&g_lock);
@@ -4728,6 +4997,19 @@ DWORD WINAPI ScanThread(void*) {
         toldDefs = defs;
         LogF("vrcam: the game's height fog - %d area definitions loaded, %d had it, set to 0 (%.1f s)", defs, taken,
              (GetTickCount64() - t0) / 1000.0);
+    }
+    AcquireSRWLockExclusive(&g_lock);
+    g_defs.assign(where, where + std::min(defs, 24));
+    g_pokedGen = ~0u;   // the new ones get [debug] fog_poke too
+    ReleaseSRWLockExclusive(&g_lock);
+    if (g_ceilBiome.load()) {   // in a cave: every definition's fields, -20 .. +13 from its depth fog's colour
+        for (int d = 0; d < std::min(defs, 24); ++d) {
+            char b[640];
+            int len = snprintf(b, sizeof b, "vrcam: fog def %d:", d);
+            for (int k = 0; k < kDumpN && len < (int)sizeof b - 16; ++k)
+                len += snprintf(b + len, sizeof b - len, " %s%g", k + kDumpFrom == 0 ? "|" : "", dump[d][k]);
+            Log(b);
+        }
     }
     g_busy.store(false);
     return 0;
@@ -4742,9 +5024,39 @@ bool PutBack(const Patch& p) {
     }
 }
 
+bool PokeOne(float* f, float v, float* was) {
+    __try { *was = *f; *f = v; return true; } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+void ApplyPoke() {
+    AcquireSRWLockExclusive(&g_lock);
+    if (g_pokedGen != g_pokeGen.load()) {
+        g_pokedGen = g_pokeGen.load();
+        for (auto it = g_poked.rbegin(); it != g_poked.rend(); ++it) { float x; PokeOne(it->density, it->was, &x); }
+        g_poked.clear();
+        int set = 0;
+        for (const wchar_t* q = g_pokeWant.c_str(); *q;) {
+            int k = 0; float v = 0.0f; int used = 0;
+            if (swscanf_s(q, L" %d = %f%n", &k, &v, &used) != 2 || used <= 0) break;
+            q += used;
+            if (k < kDumpFrom || k >= kDumpFrom + kDumpN) continue;
+            for (float* d : g_defs) { float was; if (PokeOne(d + k, v, &was)) { g_poked.push_back({d + k, was}); ++set; } }
+        }
+        if (!g_pokeWant.empty() || set) LogF("vrcam: [debug] fog_poke '%s' - %d fields set", Utf8(g_pokeWant.c_str()).c_str(), set);
+    }
+    ReleaseSRWLockExclusive(&g_lock);
+}
+void SetPoke(const std::wstring& w) {
+    AcquireSRWLockExclusive(&g_lock);
+    const bool changed = w != g_pokeWant;
+    g_pokeWant = w;
+    ReleaseSRWLockExclusive(&g_lock);
+    if (changed) g_pokeGen.fetch_add(1);
+}
+
 // On the update thread: a scan 1, 4 and 12 s after every biome change (an area's
 // definitions are loaded as it is entered), on a thread of its own.
 void Tick() {
+    ApplyPoke();
     static uint32_t seenGen = ~0u;
     static ULONGLONG due[3] = {};
     const ULONGLONG now = GetTickCount64();
@@ -4778,8 +5090,361 @@ void Tick() {
 }
 }  // namespace gamefog
 
+// Walls the game makes see-through (2026-10-07). From its own camera high above, a wall
+// between it and the hero is drawn at half alpha so the hero stays in sight; from our
+// camera that is any wall we look at. The alpha is data: transparentWallAlpha, 0.5, in
+// data/hd/global/excel/translation_settings.json, loaded into GlobalTranslationSettings - a
+// static block in the image (RVA 0x2401498 on this build): highlight -0.3, its characters'
+// 0.5, item shift 0, attack fx (bool), wind 0.9, 0.45, monster fade (bool), fade in 0.15,
+// out 0.45, monster light 1, transition 0.45, then the wall alpha 0.5. Found by those
+// values (another build: scanned), set to 1 per [render] solid_walls: 0 the game's,
+// 1 every view but F1 (the default: from above the hero is still wanted in sight - the
+// user, 2026-10-07: "see-through only for F1"), 2 in every view.
+namespace solidwalls {
+std::atomic<uintptr_t> g_alpha{0};   // the wall alpha's address, 0 = not found yet
+float g_was = 0.5f;                  // the game's own value
+
+bool Fits(const float* f) {   // the block's values, the bools skipped
+    return f[0] == -0.3f && f[1] == 0.5f && f[2] == 0.0f && f[4] == 0.9f && f[5] == 0.45f && f[7] == 0.15f &&
+           f[8] == 0.45f && f[10] == 0.45f && f[11] > 0.0f && f[11] <= 1.0f;
+}
+
+void Find() {
+    if (g_alpha.load() || !g_base) return;
+    static ULONGLONG last = 0;
+    if (GetTickCount64() - last < 5000) return;
+    last = GetTickCount64();
+    float f[12];
+    if (env::SafeRead((void*)(g_base + 0x2401498), f, sizeof f) && Fits(f)) {
+        g_was = f[11];
+        g_alpha.store(g_base + 0x2401498 + 11 * 4);
+        LogF("vrcam: the game's see-through wall alpha found (%.2f) at +0x24014C4", g_was);
+        return;
+    }
+    IMAGE_DOS_HEADER dos{};
+    IMAGE_NT_HEADERS64 nt{};
+    if (!env::SafeRead((void*)g_base, &dos, sizeof dos) || dos.e_magic != IMAGE_DOS_SIGNATURE) return;
+    if (!env::SafeRead((void*)(g_base + dos.e_lfanew), &nt, sizeof nt) || nt.Signature != IMAGE_NT_SIGNATURE) return;
+    constexpr size_t kChunk = 0x10000;
+    static float buf[kChunk / 4 + 12];
+    const uintptr_t end = g_base + nt.OptionalHeader.SizeOfImage;
+    for (uintptr_t a = g_base + 0x1000; a < end; a += kChunk) {
+        const size_t n = (size_t)std::min<uintptr_t>(kChunk + 48, end - a);
+        if (!env::PageReadable(a) || !env::SafeRead((void*)a, buf, n)) continue;
+        for (size_t i = 0; i + 12 <= n / 4; ++i) {
+            if (buf[i] != -0.3f || !Fits(buf + i)) continue;
+            g_was = buf[i + 11];
+            g_alpha.store(a + (i + 11) * 4);
+            LogF("vrcam: the game's see-through wall alpha found (%.2f) at +0x%llX", g_was, (unsigned long long)(a + (i + 11) * 4 - g_base));
+            return;
+        }
+    }
+    static bool told = false;
+    if (!told) { told = true; Log("vrcam: the game's see-through wall alpha NOT found (another build?) - walls fade as the game has them"); }
+}
+
+// On the update thread: the alpha the view wants, written when it changes.
+void Tick() {
+    Find();
+    const uintptr_t a = g_alpha.load();
+    if (!a) return;
+    const int mode = g_set.solidWalls.load();
+    const bool inside = g_enabled.load() && !TopPersp();   // every view but F1 (the game's camera, or ours from above): the floor too
+    const float want = mode == 2 || (mode == 1 && inside) ? 1.0f : g_was;
+    float now = 0.0f;
+    if (!env::SafeRead((void*)a, &now, sizeof now) || now == want) return;
+    __try { *(volatile float*)a = want; } __except (EXCEPTION_EXECUTE_HANDLER) { return; }
+    LogF("vrcam: walls %s (alpha %.2f)", want >= 1.0f ? "solid" : "see-through as the game has them", want);
+}
+}  // namespace solidwalls
+
+// Torches from the game itself (2026-10-07): the fire found in the picture took the depth
+// of the wall behind the flame, and its light jumped about as the hero walked. Objects
+// near the hero, walked to the classic D2 way - the hero's path (+0x38), its room
+// (+0x20), the rooms near it (+0x00, count +0x40), each room's units (+0xA8, next
+// +0x158) - the offsets MapAssist reads in D2R, confirmed on this build by a probe: the
+// hero's place on the path (+2/+6, subtiles, fraction below) times 2 is vrcam's look-at,
+// x to x and y to z; an object's (static path +0x10/+0x14) found a tiki torch where one
+// stood. What gives light and how far is the game's Objects table (gamestate::ObjectLight).
+// The hero unit is the one the attack hook last worked on: hit once in an area.
+namespace fx { bool CeilWanted(); }
+namespace worldobj {
+template <class T> bool Rd(uintptr_t a, T* out) { return a > 0x10000 && env::SafeRead((const void*)a, out, sizeof(T)); }
+
+struct Light { float x, y, z, lit, rgb[3]; bool monster = false; };   // world point (vrcam's, absolute); Objects.txt Lit; colour; a monster's
+constexpr int kMaxLights = 16;
+SRWLOCK g_lock = SRWLOCK_INIT;
+Light g_lights[kMaxLights];
+int g_count = 0;
+std::atomic<bool> g_known{false};   // the walk worked last time: the shader takes these, not the picture's fire
+
+// Most torches in D2R's caves are not objects at all: the HD scenery's props, whose light
+// only the renderer knows. Its lists of light points were found in the heap (2026-10-07,
+// read from outside while standing at the torches): runs of world points (x, y, z) 12
+// bytes apart, all at one height (6.533 for the caves' torches, 6.5 the object torch's),
+// metres apart - the object torches among them. Found again every 3 s on a thread of its
+// own, as the game's height fog is: runs of 3 to 64 such points within 400 units of the
+// hero, 2 to 30 units over his floor (the crypts' wall torches hang at ~12.4), at least 6 apart;
+// mesh vertices lie closer.
+constexpr int kScanMax = 128;
+SRWLOCK g_scanLock = SRWLOCK_INIT;
+float g_scanPts[kScanMax][3];
+int g_scanCount = 0;
+// Found in 2 scans at the same place or more: a torch that stands. The Fallen's torches
+// are in the renderer's lists too, and each place they ran through was kept 30 s - a
+// trail of lights lit the ceiling over half the cave (2026-10-07); only what stands lights it.
+bool g_scanStill[kScanMax] = {};
+std::atomic<bool> g_scanBusy{false};
+struct ScanArgs { float hero[3]; };
+
+// One heap region; -1 if it went away under the scan.
+int ScanLightRuns(const float* p, size_t n, const float hero[3], float (*out)[3], int cap) {
+    int got = 0;
+    __try {
+        for (size_t i = 0; i + 3 * 3 <= n && got < cap; ++i) {
+            const float y = p[i + 1];
+            if (!(y > hero[1] + 2.0f && y < hero[1] + 30.0f) || !std::isfinite(p[i]) || !std::isfinite(p[i + 2])) continue;
+            // the run starting here: same height, inside the box, apart from the one before
+            size_t j = i, len = 0;
+            while (j + 3 <= n && len < 64) {
+                const float x = p[j], yy = p[j + 1], z = p[j + 2];
+                // asked the way round that a NaN fails: junk in a passing buffer held NaNs, and
+                // one NaN among the lights blanked the whole ceiling (2026-10-07)
+                if (!(fabsf(yy - y) <= 0.05f && fabsf(x - hero[0]) <= 400.0f && fabsf(z - hero[2]) <= 400.0f)) break;
+                if (len > 0) {
+                    const float dx = x - p[j - 3], dz = z - p[j - 1];
+                    if (dx * dx + dz * dz < 36.0f) break;
+                }
+                ++len; j += 3;
+            }
+            if (len < 3 || len >= 64) continue;
+            for (size_t k = i; k < j && got < cap; k += 3) { out[got][0] = p[k]; out[got][1] = p[k + 1]; out[got][2] = p[k + 2]; ++got; }
+            i = j - 1;
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return -1;
+    }
+    return got;
+}
+
+DWORD WINAPI ScanThread(void* arg) {
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_LOWEST);
+    ScanArgs a = *(ScanArgs*)arg;
+    delete (ScanArgs*)arg;
+    static float pts[1024][3];
+    int count = 0;
+    MEMORY_BASIC_INFORMATION mi{};
+    for (uintptr_t m = 0x10000; m < 0x7FFFFFFF0000ull && VirtualQuery((void*)m, &mi, sizeof mi) && count < 1024;
+         m = (uintptr_t)mi.BaseAddress + mi.RegionSize) {
+        if (mi.State != MEM_COMMIT || mi.Type != MEM_PRIVATE || mi.Protect != PAGE_READWRITE || mi.RegionSize > (1ull << 31)) continue;
+        const int got = ScanLightRuns((const float*)mi.BaseAddress, mi.RegionSize / sizeof(float), a.hero, pts + count, 1024 - count);
+        if (got > 0) count += got;
+    }
+    // The same light is in several of the renderer's lists (6 and more were seen for each
+    // torch): one point each (within 2 units), and only what is in 3 lists or more - junk
+    // in a passing buffer that happened to fit the rule is in one, and came and went: 5
+    // lights one scan, 76 the next (2026-10-07).
+    int unique = 0;
+    static float u[1024][3];
+    static int seen[1024];
+    for (int i = 0; i < count; ++i) {
+        int k = 0;
+        while (k < unique && !(fabsf(u[k][0] - pts[i][0]) < 2.0f && fabsf(u[k][2] - pts[i][2]) < 2.0f)) ++k;
+        if (k < unique) { ++seen[k]; continue; }
+        memcpy(u[unique], pts[i], sizeof u[0]); seen[unique] = 1; ++unique;
+    }
+    int kept = 0;
+    for (int k = 0; k < unique && kept < kScanMax; ++k)
+        if (seen[k] >= 3) { memcpy(u[kept], u[k], sizeof u[0]); ++kept; }
+    unique = kept;
+    // Kept: a torch stands still, and a scan that read the lists while the renderer was
+    // rewriting them found it in fewer than 3 - the light came on 10 s late and went off
+    // again (2026-10-07). What a scan finds is (re)stamped; what none has found for 30 s,
+    // or what is 400 units off now, goes.
+    static ULONGLONG stamp[kScanMax];
+    static int hits[kScanMax];
+    const ULONGLONG now = GetTickCount64();
+    AcquireSRWLockExclusive(&g_scanLock);
+    int n = g_scanCount;
+    for (int i = 0; i < unique; ++i) {
+        int k = 0;
+        while (k < n && !(fabsf(g_scanPts[k][0] - u[i][0]) < 2.0f && fabsf(g_scanPts[k][2] - u[i][2]) < 2.0f)) ++k;
+        if (k == n && n < kScanMax) { ++n; hits[k] = 0; }
+        if (k < n) { memcpy(g_scanPts[k], u[i], sizeof u[0]); stamp[k] = now; hits[k] = std::min(hits[k] + 1, 1000); }
+    }
+    int keep = 0, still = 0;
+    for (int k = 0; k < n; ++k) {
+        const bool close = fabsf(g_scanPts[k][0] - a.hero[0]) <= 400.0f && fabsf(g_scanPts[k][2] - a.hero[2]) <= 400.0f;
+        if (now - stamp[k] > 30000 || !close) continue;
+        memcpy(g_scanPts[keep], g_scanPts[k], sizeof g_scanPts[0]); stamp[keep] = stamp[k]; hits[keep] = hits[k];
+        g_scanStill[keep] = hits[k] >= 2;
+        still += g_scanStill[keep] ? 1 : 0;
+        ++keep;
+    }
+    g_scanCount = keep;
+    ReleaseSRWLockExclusive(&g_scanLock);
+    unique = still;
+    static int told = -1;
+    if (unique != told) { told = unique; LogF("worldobj: the renderer's lights - %d standing near the hero (%d points in its lists this time)", unique, count); }
+    g_scanBusy.store(false);
+    return 0;
+}
+
+// Every 100 ms while the ceiling is drawn: the 16 nearest lights - the renderer's (found
+// by the scan, wherever the hero is: his place is the look-at) and the lit objects in
+// the rooms near the hero, once his unit is known (the attack hook's, or the one the
+// facing hook found: no need to hit anything).
+void Gather() {
+    static ULONGLONG last = 0;
+    if (GetTickCount64() - last < 100) return;
+    last = GetTickCount64();
+    const bool want = fx::CeilWanted();
+    g_heroWanted.store(want);
+    if (!want) { g_known.store(false); return; }
+    float L[3];
+    AcquireSRWLockShared(&g_lookLock); memcpy(L, g_lookAt, sizeof L); ReleaseSRWLockShared(&g_lookLock);
+    const float heroX = L[0], heroY = L[1], heroZ = L[2];   // his feet
+    static ULONGLONG lastScan = 0;
+    if (GetTickCount64() - lastScan > 1500 && !g_scanBusy.exchange(true)) {
+        lastScan = GetTickCount64();
+        ScanArgs* a = new ScanArgs{{heroX, heroY, heroZ}};
+        if (HANDLE th = CreateThread(nullptr, 0, ScanThread, a, 0, nullptr)) CloseHandle(th);
+        else { delete a; g_scanBusy.store(false); }
+    }
+    Light found[64 + kScanMax];
+    float dist[64 + kScanMax];
+    int n = 0, objects = 0;
+    uint32_t nNear = 0;
+    // what the objects are, for the log: in a crypt with a lit tripod in view none gave light (2026-10-07)
+    char seen[170] = "";   // LogF holds 256
+    size_t seenLen = 0;
+    // the objects: the attack hook's hero, else the facing hook's - checked again, it may be stale
+    uintptr_t hero = (uintptr_t)g_heroUnit.load();
+    if (!hero || !IsHeroUnit((void*)hero)) hero = (uintptr_t)g_heroSeen.load();
+    if (hero && !IsHeroUnit((void*)hero)) { g_heroSeen.store(nullptr); hero = 0; }
+    if (!hero) {   // the SDK's handle of the local player, if it is the unit itself (tried, never trusted)
+        const uintptr_t p = (uintptr_t)gamestate::LocalPlayer();
+        if (p > 0x10000 && IsHeroUnit((void*)p)) { hero = p; g_heroSeen.store((void*)p); }
+    }
+    uintptr_t path = 0, room = 0, nearRooms = 0;
+    const bool monsters = g_set.ceilMonsters.load() && g_set.ceilMonsterBright.load() > 0.0f;
+    if (hero && Rd(hero + 0x38, &path) && Rd(path + 0x20, &room) && Rd(room, &nearRooms) && Rd(room + 0x40, &nNear) &&
+        nearRooms && nNear > 0 && nNear <= 64) {
+        // The rooms near the hero's and the rooms near those: a crypt's rooms are small, and
+        // the near ones held 2 objects - its torches stood a room further (2026-10-07).
+        uintptr_t rooms[128];
+        uint32_t nRooms = 0;
+        auto addRoom = [&](uintptr_t rm) {
+            if (!rm || nRooms >= 128) return;
+            for (uint32_t k = 0; k < nRooms; ++k) if (rooms[k] == rm) return;
+            rooms[nRooms++] = rm;
+        };
+        for (uint32_t r = 0; r < nNear; ++r) { uintptr_t rm = 0; if (Rd(nearRooms + r * 8, &rm)) addRoom(rm); }
+        const uint32_t ring1 = nRooms;
+        for (uint32_t r = 0; r < ring1; ++r) {
+            uintptr_t list = 0;
+            uint32_t cnt = 0;
+            if (!Rd(rooms[r], &list) || !Rd(rooms[r] + 0x40, &cnt) || !list || cnt > 64) continue;
+            for (uint32_t q = 0; q < cnt; ++q) { uintptr_t rm = 0; if (Rd(list + q * 8, &rm)) addRoom(rm); }
+        }
+        nNear = nRooms;
+        for (uint32_t r = 0; r < nRooms; ++r) {
+            uintptr_t rm = rooms[r], u = 0;
+            if (!Rd(rm + 0xA8, &u)) continue;
+            for (int k = 0; u && k < 512; ++k) {
+                uint32_t ut = 0, txt = 0, mode = 0;
+                uintptr_t up = 0, next = 0;
+                Rd(u, &ut); Rd(u + 4, &txt); Rd(u + 0xC, &mode); Rd(u + 0x38, &up); Rd(u + 0x158, &next);
+                if (ut == 2 && up) {
+                    ++objects;
+                    float rgb[3];
+                    const int lit = gamestate::ObjectLight(txt, mode, rgb);
+                    uint32_t sx = 0, sy = 0;
+                    if (seenLen < sizeof seen - 40) {
+                        uint32_t ox = 0, oy = 0;
+                        Rd(up + 0x10, &ox); Rd(up + 0x14, &oy);
+                        const int w = snprintf(seen + seenLen, sizeof seen - seenLen, " #%u mode %u lit %d at %.0f,%.0f;",
+                                               txt, mode, lit, 2.0f * ox - heroX, 2.0f * oy - heroZ);
+                        if (w > 0) seenLen += (size_t)w;
+                    }
+                    if (lit > 0 && Rd(up + 0x10, &sx) && Rd(up + 0x14, &sy)) {
+                        // the middle of the subtile; nearest first, the farthest dropped when full
+                        const Light l{2.0f * sx + 1.0f, heroY + 4.9f, 2.0f * sy + 1.0f, (float)lit, {rgb[0], rgb[1], rgb[2]}};
+                        const float d = (l.x - heroX) * (l.x - heroX) + (l.z - heroZ) * (l.z - heroZ);
+                        if (n < 64) { found[n] = l; dist[n] = d; ++n; }
+                    }
+                } else if (ut == 1 && monsters && up && mode != 0 && mode != 12) {
+                    // The Fallen carry a torch in D2R and their shamans a staff of fire (the user's
+                    // screenshots, 2026-10-07) - none of it in the game's own light data (monstats2
+                    // gives the shamans 5, the Fallen nothing): a hand-held torch of our own that walks
+                    // with them. MonStats rows (monstats.txt): fallen1-5 19..23, fallen6-8 642..644,
+                    // fallenshaman1-5 58..62, fallenshaman6-8 645..647. Dying (0) and dead (12): none.
+                    const bool fallen = (txt >= 19 && txt <= 23) || (txt >= 642 && txt <= 644);
+                    const bool shaman = (txt >= 58 && txt <= 62) || (txt >= 645 && txt <= 647);
+                    uint16_t fx = 0, mx = 0, fz = 0, mz = 0;
+                    if ((fallen || shaman) && Rd(up + 0, &fx) && Rd(up + 2, &mx) && Rd(up + 4, &fz) && Rd(up + 6, &mz)) {
+                        // smaller than a standing torch's (19), and dimmer: [ceiling] monster_brightness
+                        // ("too strong a glow from them", 2026-10-07)
+                        const Light l{2.0f * (mx + fx / 65536.0f), heroY + 3.5f, 2.0f * (mz + fz / 65536.0f), shaman ? 10.0f : 8.0f,
+                                      {1.0f, 236.0f / 255.0f, 176.0f / 255.0f}, true};
+                        const float d = (l.x - heroX) * (l.x - heroX) + (l.z - heroZ) * (l.z - heroZ);
+                        if (n < 64) { found[n] = l; dist[n] = d; ++n; }
+                    }
+                }
+                u = next;
+            }
+        }
+    }
+    {   // the renderer's lights; where one is an object's too, the object's own (its colour, its reach)
+        float sp[kScanMax][3];
+        bool st[kScanMax];
+        AcquireSRWLockShared(&g_scanLock);
+        const int m = g_scanCount;
+        memcpy(sp, g_scanPts, m * sizeof sp[0]);
+        memcpy(st, g_scanStill, m * sizeof st[0]);
+        ReleaseSRWLockShared(&g_scanLock);
+        const int objs = n;
+        for (int i = 0; i < m; ++i) {
+            if (!st[i]) continue;   // seen once: may be a monster's torch running past
+            bool dup = false;
+            for (int k = 0; k < objs && !dup; ++k) dup = fabsf(found[k].x - sp[i][0]) < 4.0f && fabsf(found[k].z - sp[i][2]) < 4.0f;
+            if (dup) continue;
+            found[n] = Light{sp[i][0], sp[i][1], sp[i][2], 19.0f, {1.0f, 236.0f / 255.0f, 176.0f / 255.0f}};   // a torch's
+            dist[n] = (sp[i][0] - heroX) * (sp[i][0] - heroX) + (sp[i][2] - heroZ) * (sp[i][2] - heroZ);
+            ++n;
+        }
+    }
+    for (int i = 1; i < n; ++i)   // a few dozen at most: insertion sort by distance
+        for (int j = i; j > 0 && dist[j] < dist[j - 1]; --j) { std::swap(dist[j], dist[j - 1]); std::swap(found[j], found[j - 1]); }
+    const int keep = std::min(n, kMaxLights);
+    AcquireSRWLockExclusive(&g_lock);
+    memcpy(g_lights, found, keep * sizeof(Light));
+    g_count = keep;
+    ReleaseSRWLockExclusive(&g_lock);
+    g_known.store(true);
+    static int told = -1, toldObjects = -1;
+    static bool toldHero = false;
+    if (keep != told || objects != toldObjects || (hero != 0) != toldHero) {
+        told = keep; toldObjects = objects; toldHero = hero != 0;
+        LogF("worldobj: %d lights near the hero light the ceiling (%d objects in %u rooms%s)", keep, objects, nNear,
+             hero ? "" : "; the hero unit not found yet - the renderer's lights only");
+        if (objects) LogF("worldobj: objects (Objects.txt row, mode, light radius, place from the hero):%s", seen);
+    }
+}
+
+int Lights(Light* out) {
+    AcquireSRWLockShared(&g_lock);
+    const int n = g_count;
+    memcpy(out, g_lights, n * sizeof(Light));
+    ReleaseSRWLockShared(&g_lock);
+    return n;
+}
+}  // namespace worldobj
+
 void SkyTick() {
     env::Find();
+    solidwalls::Tick();
+    worldobj::Gather();
     gamefog::Tick();
     static uint32_t seenGen = ~0u;
     static std::string biome;
@@ -4792,11 +5457,30 @@ void SkyTick() {
         g_inWorld.store(world);
         g_fogAct.store(world ? ActOfBiome(biome) : 0);
         g_underground.store(world && !IsOutdoorBiome(biome));
+        g_ceilBiome.store(world && IsCeilingBiome(biome));
         static std::string told = "?";   // no biome name has a question mark
         if (biome != told) {
             told = biome;
-            LogF("vrcam: biome '%s' - %s", biome.empty() ? "(none yet)" : biome.c_str(),
-                 palette >= 0 ? kPalettes[palette].part : "no sky here (not in [sky] outdoor)");
+            LogF("vrcam: biome '%s' - %s%s", biome.empty() ? "(none yet)" : biome.c_str(),
+                 palette >= 0 ? kPalettes[palette].part : "no sky here (not in [sky] outdoor)",
+                 g_ceilBiome.load() ? ", a cave ceiling ([ceiling] biomes)" : "");
+        }
+    }
+    {   // the cave ceiling: each change of mind to the log, like the sky's
+        const char* cw = nullptr;
+        if (!g_set.ceilOn.load()) cw = "[ceiling] enabled=0";
+        else if (!g_ceilBiome.load()) cw = "not on [ceiling] biomes";
+        else if (!g_enabled.load() || ThirdPerson()) cw = "not first person";
+        else if (gamestate::MenuOpen()) cw = "a menu is open";
+        static std::string toldCeil = "?";
+        if (std::string(cw ? cw : "") != toldCeil) {
+            toldCeil = cw ? cw : "";
+            if (cw) LogF("vrcam: cave ceiling off - %s", cw);
+            else {
+                float height, bright, light;
+                CeilingNow(&height, &bright, &light);
+                LogF("vrcam: cave ceiling on - %.0f units over the hero's floor, brightness %.2f, light reach %.0f", height, bright, light);
+            }
         }
     }
     const char* why = nullptr;
@@ -4864,9 +5548,18 @@ bool BoneAxesWanted() { return false; }
 // with the head, so that FlatVR can place its screen at the pose of the frame.
 bool StampWanted() { return g_enabled.load() && g_afrBlock && g_set.stampPixels.load(); }
 
-bool FogWanted() { return g_set.fogOn.load() && g_enabled.load() && !Overhead() && g_inWorld.load() && !gamestate::MenuOpen(); }
+bool FogWanted() {
+    return g_set.fogOn.load() && g_enabled.load() && !Overhead() && g_inWorld.load() && !gamestate::MenuOpen() &&
+           (g_set.fogCaves.load() || !g_underground.load());   // [fog] caves=0: none underground
+}
 // The table (F5): the void black, the game lifted off black - D2R_DepthFog.fx TableKey.
 bool TableKeyWanted() { return TableView() && g_inWorld.load() && !gamestate::MenuOpen(); }
+// The cave ceiling (D2R_DepthFog.fx Ceiling): from inside only - VR F4 and flat F3,
+// never from above, from behind or on the floor (all three run as ThirdPerson).
+bool CeilWanted() {
+    return g_set.ceilOn.load() && g_enabled.load() && !ThirdPerson() && g_inWorld.load() && g_ceilBiome.load() &&
+           !gamestate::MenuOpen();
+}
 
 // The pictures of each act as the shader's preprocessor definitions; only what
 // differs is set, since every change recompiles the effect. True if it did.
@@ -4895,6 +5588,25 @@ bool ApplySkyPictures(reshade::api::effect_runtime* rt) {
             set = true;
         }
     }
+    {   // the cave ceiling's pictures, a slot each; an empty slot keeps one that is there (never sampled)
+        std::string file[kCeilSlots + 1];
+        bool ok[kCeilSlots + 1] = {};
+        AcquireSRWLockShared(&g_skyCfgLock);
+        for (int k = 1; k <= kCeilSlots; ++k) { file[k] = g_ceilSlot[k]; ok[k] = g_ceilSlotOk[k]; }
+        ReleaseSRWLockShared(&g_skyCfgLock);
+        const std::string spare = ok[1] ? file[1] : std::string("D2R_Sky_ours/D2R_Ceiling_act1_caves_walls.png");
+        for (int k = 1; k <= kCeilSlots; ++k) {
+            char name[24];
+            snprintf(name, sizeof name, "D2R_CEILING_%d", k);
+            const std::string want = "\"" + (ok[k] ? file[k] : spare) + "\"";
+            char have[1024] = {};
+            size_t size = sizeof have;
+            if (rt->get_preprocessor_definition_for_effect("D2R_DepthFog.fx", name, have, &size) && want == have) continue;
+            rt->set_preprocessor_definition_for_effect("D2R_DepthFog.fx", name, want.c_str());
+            LogF("vrcam: cave ceiling picture %s = %s", name, want.c_str());
+            set = true;
+        }
+    }
     if (set) Forget(rt);
     return set;
 }
@@ -4910,7 +5622,7 @@ void OnFinishEffects(reshade::api::effect_runtime* rt, reshade::api::command_lis
     if (!g_tech[0].handle) { hud::SetPictureReady(false); return; }
     // Off while a menu is open: the fog lies over the whole picture, the
     // inventory and trade panels included, and darkened them.
-    const bool want = FogWanted() || g_skyPalette.load() >= 0 || HudWanted() || StampWanted() || hud::PictureWanted() || TableKeyWanted() || PhantomWanted() || BoneAxesWanted();
+    const bool want = FogWanted() || g_skyPalette.load() >= 0 || CeilWanted() || HudWanted() || StampWanted() || hud::PictureWanted() || TableKeyWanted() || PhantomWanted() || BoneAxesWanted();
     // The toolbar and the map are taken out of the game's picture to be drawn
     // back at their own size only while this effect runs, and is new enough to.
     {
@@ -4942,8 +5654,9 @@ void OnBeginEffects(reshade::api::effect_runtime* rt, reshade::api::command_list
     if (!g_tech[0].handle) return;
     if (!rt->get_technique_state(g_tech[0]) && !(g_tech[1].handle && rt->get_technique_state(g_tech[1]))) return;
     SetFloat(rt, "NearPlane", g_lastNear.load());
-    SetFloat(rt, "FogStart", g_set.fogStart.load());
-    SetFloat(rt, "FogEnd", g_set.fogEnd.load());
+    SetFloat(rt, "FogStart", g_underground.load() ? g_set.fogCaveStart.load() : g_set.fogStart.load());
+    SetFloat(rt, "FogEnd", g_underground.load() ? g_set.fogCaveEnd.load() : g_set.fogEnd.load());
+    SetFloat(rt, "FogStrength", g_underground.load() ? g_set.fogCaveStrength.load() : 1.0f);
     SetFloat(rt, "FogCurve", g_set.fogCurve.load());
     SetFloat(rt, "FogBlur", g_set.fogBlur.load());
     SetBool(rt, "FogOn", FogWanted());
@@ -5037,6 +5750,113 @@ void OnBeginEffects(reshade::api::effect_runtime* rt, reshade::api::command_list
     bool sky = pal >= 0;
     for (const SkyView& v : sv) sky = sky && v.proj_ok && v.axes_ok && v.proj[0] != 0.0f && v.proj[1] != 0.0f;
     SetBool(rt, "SkyOn", sky);
+    {   // the cave ceiling: a plane CeilHeight over the hero's floor, met by each eye's ray
+        bool ceil = !sky && CeilWanted();
+        for (const SkyView& v : sv) ceil = ceil && v.proj_ok && v.axes_ok && v.proj[0] != 0.0f && v.proj[1] != 0.0f;
+        SetBool(rt, "CeilOn", ceil);
+        if (ceil) {
+            const float scale = g_set.ceilScale.load();
+            // The hero's place wrapped on a whole number of tiles: the world's own
+            // coordinates in a float would round the pattern into steps far from the
+            // origin; what repeats every tile cannot tell the wrap.
+            const double period = 64.0 * scale;
+            // Heights over the area's floor, not the hero's feet: on a ledge the ceiling rose with
+            // him (the user, 2026-10-07). The floor: the lowest the hero has stood since the area
+            // changed; everything the shader measures (the ceiling, its height map) follows it.
+            static float floorY = 0.0f;
+            static uint32_t floorGen = ~0u;
+            if (floorGen != g_biomeGen.load()) { floorGen = g_biomeGen.load(); floorY = sv[0].hero[1]; }
+            floorY = std::min(floorY, sv[0].hero[1]);
+            for (int e = 0; e < 2; ++e) {
+                char n[16];
+                snprintf(n, sizeof n, "SkyProj%d", e); SetFloats(rt, n, sv[e].proj, 4);
+                snprintf(n, sizeof n, "CamRight%d", e); SetFloats(rt, n, sv[e].axes, 3);
+                snprintf(n, sizeof n, "CamUp%d", e); SetFloats(rt, n, sv[e].axes + 3, 3);
+                snprintf(n, sizeof n, "CamBack%d", e); SetFloats(rt, n, sv[e].axes + 6, 3);
+                const float eyeOverFloor[3] = {sv[e].eyeRel[0], sv[e].eyeRel[1] + (sv[e].hero[1] - floorY), sv[e].eyeRel[2]};
+                snprintf(n, sizeof n, "CeilEye%d", e); SetFloats(rt, n, eyeOverFloor, 3);
+                double hx = fmod((double)sv[e].hero[0], period), hz = fmod((double)sv[e].hero[2], period);
+                if (hx < 0.0) hx += period;
+                if (hz < 0.0) hz += period;
+                const float hero[2] = {(float)hx, (float)hz};
+                snprintf(n, sizeof n, "CeilHero%d", e); SetFloats(rt, n, hero, 2);
+            }
+            float height, bright, light, relief;
+            int slot;
+            CeilingNow(&height, &bright, &light, &relief, &slot);
+            SetFloat(rt, "CeilHeight", height);
+            SetFloat(rt, "CeilScale", scale);
+            SetFloat(rt, "CeilBrightness", bright);
+            SetFloat(rt, "CeilRelief", relief);
+            SetFloat(rt, "CeilTexSlot", (float)slot);
+            SetFloat(rt, "CeilLightRadius", light);
+            SetBool(rt, "CeilTorches", g_set.ceilTorches.load());
+            SetFloat(rt, "CeilTorchBright", g_set.ceilTorchBright.load());
+            SetFloat(rt, "CeilTorchRadius", g_set.ceilTorchRadius.load());
+            SetFloat(rt, "CeilHalo", g_set.ceilHalo.load());
+            SetFloat(rt, "CeilTorchWarm", g_set.ceilTorchWarm.load());
+            SetFloat(rt, "CeilWallDist", g_set.ceilWall.load());
+            SetFloat(rt, "CeilFloorDepth", g_set.ceilFloor.load());
+            {   // the lit objects the game has near the hero, relative to him; the flame ~7 units up
+                worldobj::Light l[worldobj::kMaxLights];
+                const int n = worldobj::g_known.load() ? worldobj::Lights(l) : 0;
+                float pos[worldobj::kMaxLights * 4] = {}, col[worldobj::kMaxLights * 4] = {};
+                for (int i = 0; i < n; ++i) {
+                    pos[i * 4 + 0] = l[i].x - sv[0].hero[0];
+                    pos[i * 4 + 1] = l[i].y - floorY;   // over the area's floor, as the ceiling
+                    pos[i * 4 + 2] = l[i].z - sv[0].hero[2];
+                    pos[i * 4 + 3] = l[i].lit;
+                    for (int c = 0; c < 3; ++c) col[i * 4 + c] = l[i].rgb[c];
+                    // farther than [ceiling] torch_distance from the hero: gone, fading over its last quarter -
+                    // the torches of the next hall lit the ceiling over the walls between (2026-10-07)
+                    const float d = sqrtf(pos[i * 4] * pos[i * 4] + pos[i * 4 + 2] * pos[i * 4 + 2]), reach = g_set.ceilTorchDist.load();
+                    col[i * 4 + 3] = std::clamp((reach - d) / (0.25f * reach), 0.0f, 1.0f) * (l[i].monster ? g_set.ceilMonsterBright.load() : 1.0f);
+                }
+                SetBool(rt, "GameLightsOn", worldobj::g_known.load());
+                SetFloats(rt, "GameLightPos", pos, worldobj::kMaxLights * 4);
+                SetFloats(rt, "GameLightCol", col, worldobj::kMaxLights * 4);
+                static ULONGLONG told = 0;   // what goes to the shader, every 5 s: the nearest light, as the hero sees it
+                if (GetTickCount64() - told > 5000) {
+                    told = GetTickCount64();
+                    const bool hasPos = rt->find_uniform_variable("D2R_DepthFog.fx", "GameLightPos").handle != 0;
+                    LogF("worldobj: to the shader %d lights (uniform %s), nearest at %.1f %.1f %.1f radius %.0f colour %.2f %.2f %.2f; hero %.1f %.1f %.1f, eye %.1f %.1f %.1f, ceiling %.0f",
+                         n, hasPos ? "found" : "MISSING", pos[0], pos[1], pos[2], pos[3], col[0], col[1], col[2],
+                         sv[0].hero[0], sv[0].hero[1], sv[0].hero[2], sv[0].eyeRel[0], sv[0].eyeRel[1], sv[0].eyeRel[2], height);
+                }
+            }
+            float wet, detail, contrast;
+            CeilVaultCfg vault;
+            CeilingLookNow(&wet, &detail, &contrast, &vault);
+            SetBool(rt, "CeilVault", vault.on);
+            SetFloat(rt, "CeilBay", vault.bay);
+            SetFloat(rt, "CeilRibWidth", vault.ribWidth);
+            SetFloat(rt, "CeilRibDepth", vault.ribDepth);
+            SetBool(rt, "CeilDome", vault.dome);
+            SetBool(rt, "CeilPillars", vault.pillars);
+            SetFloat(rt, "CeilColumnRadius", vault.columnRadius);
+            SetFloat(rt, "CeilColMin", vault.columnMin);
+            SetFloat(rt, "CeilColMax", vault.columnMax);
+            SetFloat(rt, "CeilColLift", vault.columnLift);
+            SetFloat(rt, "CeilColMinWidth", vault.columnWidth);
+            SetFloat(rt, "CeilDomeRadius", vault.domeRadius);
+            SetFloat(rt, "CeilDomeMax", vault.domeMax);
+            SetFloat(rt, "CeilDomeFind", vault.domeFind);
+            SetFloat(rt, "CeilMapGen", (float)(g_biomeGen.load() & 0xFFFFF));   // another area: the height map starts again
+            {
+                // the offset wrapped as the hero is (64 tiles): only where the bays fall matters
+                const float period = 64.0f * scale, off[2] = {fmodf(vault.offX, period), fmodf(vault.offZ, period)};
+                SetFloats(rt, "CeilBayOffset", off, 2);
+            }
+            SetFloat(rt, "CeilWet", wet);
+            SetFloat(rt, "CeilBump", detail);
+            SetFloat(rt, "CeilContrast", contrast);
+            if (const reshade::api::effect_uniform_variable u = rt->find_uniform_variable("D2R_DepthFog.fx", "CeilSteps"); u.handle) {
+                const int steps = g_set.ceilSteps.load();
+                rt->set_uniform_value_int(u, &steps, 1);
+            }
+            SetBool(rt, "CeilTexOn", slot > 0);
+        }
+    }
     {   // from above: the labels on the tilted plane
         float keepBar[4], keepMap[4];
         uint64_t srv = 0;
@@ -5084,9 +5904,13 @@ void OnBeginEffects(reshade::api::effect_runtime* rt, reshade::api::command_list
             w[1] += v[1];
         };
         {   // each eye's camera from where the hands hang, and its projection (set here too:
-            // the sky's block sets them only while the sky is drawn)
+            // the sky's block sets them only while the sky is drawn). Without AFR (flat) only
+            // the one eye there is is kept fresh: both take it, as the sky's block does - the
+            // other's stale view, written here, froze the cave ceiling in flat F3 (2026-10-07).
             SkyView sv[2];
-            AcquireSRWLockShared(&g_skyLock); sv[0] = g_skyView[0]; sv[1] = g_skyView[1]; ReleaseSRWLockShared(&g_skyLock);
+            AcquireSRWLockShared(&g_skyLock);
+            sv[0] = g_skyView[AfrOn() ? 0 : eye]; sv[1] = g_skyView[AfrOn() ? 1 : eye];
+            ReleaseSRWLockShared(&g_skyLock);
             for (int e = 0; e < 2; ++e) {
                 const SkyView& s = sv[e].axes_ok && sv[e].proj_ok ? sv[e] : sv[0];
                 float off[3];
@@ -5431,7 +6255,7 @@ void LoadReShade() {
     else LogF("vrcam: ReShade64.dll did not load (error %lu)", GetLastError());
 }
 
-static const char g_info_version[] = "0.141.0";
+static const char g_info_version[] = "0.142.0";
 
 static const PluginInfo g_info = {
     PluginInfoSize, D2RL_PLUGIN_ABI_VERSION, "d2r-vr-vrcam", "vrcam", g_info_version, "BodyWalkVR",
