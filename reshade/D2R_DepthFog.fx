@@ -1500,6 +1500,7 @@ uniform float4 GameBarBox < hidden = true; > = float4(0.0, 0.0, 0.0, 0.0);   // 
 uniform float GameBarShift < hidden = true; > = 0.0;   // uv, the toolbar alone: + nearer, - farther (added to HudShift)
 uniform bool GameMapOn < hidden = true; > = false;
 uniform float4 GameMapBox < hidden = true; > = float4(0.0, 0.0, 0.0, 0.0);
+uniform float GameMapShift < hidden = true; > = 0.0;   // uv, the map alone: + nearer, - farther (F3 [hud_floor] map_near)
 texture2D GameBarTex : D2R_GAME_BAR;
 texture2D GameMapTex : D2R_GAME_MAP;
 sampler2D GameBarSmp { Texture = GameBarTex; AddressU = CLAMP; AddressV = CLAMP; };
@@ -1574,7 +1575,7 @@ float4 GamePieces(float2 uv, float eyeSign)
     [branch] if (GameBarOn) p = GamePiece(GameBarSmp, GameBarBox, src - float2(eyeSign * GameBarShift, 0.0));
     [branch] if (GameMapOn)
     {
-        const float4 m = GamePiece(GameMapSmp, GameMapBox, src);   // the map over the toolbar where they meet
+        const float4 m = GamePiece(GameMapSmp, GameMapBox, src - float2(eyeSign * GameMapShift, 0.0));   // the map over the toolbar where they meet
         p = float4(m.rgb + p.rgb * m.a, p.a * m.a);
     }
     return p;

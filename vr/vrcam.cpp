@@ -62,7 +62,7 @@ namespace memdiff { void Step(uintptr_t base, const std::wstring& outPath, void 
 namespace hud { void Register(); void SetHide(int mode); void SetInterfaceScale(float s); void SetMenuOpen(bool open); void SetMapMode(int mode); bool LayerFound(); void SetLogger(void (*log)(const char*)); void SetLook(const FlatVRGameHudLook& look); void SetMapCorner(int corner); bool ToggleMapShown();
                 void SetPointer(uint32_t mode); void SetPointerDepth(float base, float tilt, float curve, float topScale); int Anchor(int panel); void SetForearm(int panel, bool valid, const float elbow[3], const float wrist[3], const float across[3]);
                 void SetClassicView(bool on); void SetPictureZoom(float bar, float map); bool PictureWanted(); void SetPictureReady(bool ready);
-                bool PictureNow(int i, float box[4], uint64_t* srv); void SetPictureBarMoved(bool moved); void SetPictureBarOffset(float x, float y);
+                bool PictureNow(int i, float box[4], uint64_t* srv); void SetPictureBarMoved(bool moved); void SetPictureBarOffset(float x, float y); void SetPictureMapMoved(bool moved); void SetPictureMapOffset(float x, float y);
                 void SetLabels(bool on); bool LabelsNow(float keepBar[4], float keepMap[4], uint64_t* srv); void SetUiMask(bool on); bool UiMaskNow(); }
 #include "d2rcam.h"
 #include "sigscan.h"
@@ -152,6 +152,8 @@ struct Settings {
     std::atomic<float> labelsSizeTop{1.0f}, labelsSizeThird{1.0f}, labelsSizeBody{1.0f};
     // bar_x / bar_y per view: the toolbar moved on the screen, uv (+x right, +y DOWN; the ini's bar_y is + up, %)
     std::atomic<float> barXTop{0.0f}, barYTop{0.0f}, barXThird{0.0f}, barYThird{0.0f}, barXFloor{0.0f}, barYFloor{0.0f};
+    // [hud_floor] map_size / map_near / map_x / map_y: the corner map on the floor (F3), as its toolbar
+    std::atomic<float> mapSizeFloor{1.0f}, mapNearFloor{0.0f}, mapXFloor{0.0f}, mapYFloor{0.0f};
     std::atomic<float> barNear{0.0f};       // [hud] bar_near: from above and behind, the toolbar nearer (+) or farther (-), % of the half screen per eye
     std::atomic<float> labelsNear{0.0f};     // [hud] labels_near: from above in stereo, labels nearer (+) / farther (-), % of the half screen per eye
     std::atomic<float> labelsTilt{0.0f};
@@ -162,6 +164,11 @@ struct Settings {
     // screen, the labels' units, a smooth curve through them - a straight line fitted the bottom and the middle and
     // came apart far off at the top (2026-10-06). Unset: from pointer_near / pointer_tilt (about the middle).
     std::atomic<float> pointerAt[2][3] = {};
+    std::atomic<float> crosshairDepth{0.0f};   // [hud_third] crosshair_depth: VR F2 with mouse look, the crosshair's depth (the pointer's units)
+    std::atomic<bool>  crosshairOn{true};      // [hud_third] crosshair: VR F2 with mouse look, the crosshair shown (off = no pointer at all)
+    std::atomic<float> crosshairSize{100.0f};  // [hud_third] crosshair_size: %, of the size the window's height picks (32 / 48 / 64 px)
+    // [hud_third] crosshair_depth is its depth looking ahead, crosshair_depth_down looking straight down; in between by the sine of the look down
+    std::atomic<float> crosshairDepthDown{0.0f};
     std::atomic<float> pointerTopSize[2] = {100.0f, 100.0f};   // [hud_top] / [hud_third] pointer_top_size: %, its size at the top of the screen     // [hud] labels_tilt: ... and how much nearer the bottom of the screen than the top
     std::atomic<int>   hudClassic{0};       // [hud] classic: from above and behind 0 = toolbar and map in the picture (own size), 1 = as in first person
     std::atomic<int>   hudHide{0};          // [hud] hide: 0 nothing, 1 the toolbar, 2 the whole interface out of the picture (hud.cpp)
@@ -789,6 +796,10 @@ void LoadSettings() {
     g_set.barYThird.store(-std::clamp(IniF(L"hud_third", L"bar_y", 0.0f), -100.0f, 100.0f) * 0.01f);
     g_set.barXFloor.store(std::clamp(IniF(L"hud_floor", L"bar_x", 0.0f), -100.0f, 100.0f) * 0.01f);
     g_set.barYFloor.store(-std::clamp(IniF(L"hud_floor", L"bar_y", 0.0f), -100.0f, 100.0f) * 0.01f);
+    g_set.mapSizeFloor.store(std::clamp(IniF(L"hud_floor", L"map_size", 100.0f), 30.0f, 300.0f) * 0.01f);
+    g_set.mapNearFloor.store(std::clamp(IniF(L"hud_floor", L"map_near", 0.0f), -20.0f, 20.0f));
+    g_set.mapXFloor.store(std::clamp(IniF(L"hud_floor", L"map_x", 0.0f), -100.0f, 100.0f) * 0.01f);
+    g_set.mapYFloor.store(-std::clamp(IniF(L"hud_floor", L"map_y", 0.0f), -100.0f, 100.0f) * 0.01f);
     g_set.labelsAlphaFloor.store(std::clamp(IniF(L"hud_floor", L"labels_alpha", 0.5f), 0.0f, 1.0f));
     g_set.labelsSizeFloor.store(std::clamp(IniF(L"hud_floor", L"labels_size", 100.0f), 20.0f, 150.0f) * 0.01f);
     g_set.labelsNativeFloor.store(IniF(L"hud_floor", L"labels_native", 1.0f) != 0.0f);
@@ -810,6 +821,10 @@ void LoadSettings() {
         g_set.pointerAt[i][2].store(std::clamp(IniF(sec, L"pointer_bottom", n + 0.5f * t), -40.0f, 40.0f));
         g_set.pointerTopSize[i].store(std::clamp(IniF(sec, L"pointer_top_size", 100.0f), 10.0f, 200.0f));
     }
+    g_set.crosshairDepth.store(std::clamp(IniF(L"hud_third", L"crosshair_depth", 0.0f), -40.0f, 40.0f));
+    g_set.crosshairOn.store(IniB(L"hud_third", L"crosshair", true));
+    g_set.crosshairSize.store(std::clamp(IniF(L"hud_third", L"crosshair_size", 100.0f), 25.0f, 400.0f));
+    g_set.crosshairDepthDown.store(std::clamp(IniF(L"hud_third", L"crosshair_depth_down", g_set.crosshairDepth.load()), -40.0f, 40.0f));
     {   // [hud] how FlatVR shows the toolbar and the map (game_hud_shared.h)
         FlatVRGameHudLook look = FlatVRGameHudDefaultLook();
         look.bar_anchor = (uint32_t)std::clamp((int)IniF(L"hud", L"bar_place", (float)look.bar_anchor), 0, 4);
@@ -1130,6 +1145,12 @@ std::atomic<float> g_turnYaw{0.0f};     // body turn from the right stick; F11 k
 std::atomic<float> g_heldYaw{0.0f}, g_heldPitch{0.0f};
 extern std::atomic<bool> g_pairNow;
 std::atomic<float> g_rightX{0.0f};      // last right stick X the game polled, -1..1
+// When a poll last got BodyWalk's own pad (PadFromBodyWalk). Some polls of pad 0
+// came back without it (the pad trace flipped 2000 / 0000 within a millisecond)
+// and wrote the right stick back to 0 between BodyWalk's: the body did not turn
+// in F4 (2026-10-07). While BodyWalk's pad is live only its polls set what
+// TurnStick keeps.
+std::atomic<ULONGLONG> g_padMirrorOkAt{0};
 std::atomic<float> g_camYaw{0.0f};
 std::atomic<bool> g_facingReset{false};   // F11: forget the hero-facing candidates, search again      // the yaw last folded into the view; the stick turns by this
 std::atomic<uint32_t> g_gen{1};
@@ -1275,6 +1296,8 @@ int ArmsMode() { return 0; }
 bool MouseLookForView() {
     if (g_set.platform.load() == 0) return ViewNow() != 1;
     if (Overhead()) return false;   // from above and the floor: the head and the pad
+    // VR F2 with vr_keys_walk is flat's F2: it starts with mouse look (F9 frees the pointer).
+    if (ViewNow() == 2 && g_set.vrKeyWalk.load()) return true;
     return g_set.mouseLook.load();
 }
 // The interface in the picture (not taken out for FlatVR), per view.
@@ -1329,6 +1352,13 @@ float JumpLift() {
 }
 
 std::atomic<float> g_eyeWorld[3];   // the camera in the world (third person: its pivot), last view rebuild - the hands hang off it
+// F3: our camera over the game's ground, for the mouse pointer laid on it (FloorPointerTick) - the eyes this
+// high above the hero's ground (world units), and the world-up (y) parts of the view's forward and up.
+std::atomic<float> g_floorEyeH{0.0f}, g_floorFwdY{0.0f}, g_floorUpY{0.0f};
+std::atomic<float> g_viewFwdY{0.0f};   // every view: the world-up part of where the camera looks (- = down), for the F2 crosshair
+std::atomic<bool> g_floorCamOk{false};
+// ... and the projection it is drawn with (VrProj): M[0], M[5], the eyes apart and zero parallax, world units.
+std::atomic<float> g_projSx{0.0f}, g_projSy{0.0f}, g_stereoIpd{0.0f}, g_stereoConv{0.0f};
 std::atomic<uint32_t> g_viewBuilds{0};   // world camera view rebuilds so far (pose-order diagnostics)
 // The eye point less the camera's look-at (height, side, forward), from the last
 // view rebuild. The skeleton adds it to the look-at as it is at the pose: on the
@@ -1627,6 +1657,8 @@ bool TopStereoOn() { return !g_enabled.load() && g_set.topStereo.load() && g_set
 bool AfrOn() { return g_set.afr.load() && g_inWorld.load() && (g_enabled.load() || TopStereoOn()); }
 // From above and behind: the toolbar moved nearer or farther - only real stereo has a depth to move it in.
 bool BarNearWanted() { return AfrOn() && ClassicNow() && std::abs(BarNearNow()) > 0.01f; }
+// The map on the floor (F3) nearer or farther in stereo ([hud_floor] map_near), as the toolbar.
+bool MapNearWanted() { return AfrOn() && ClassicNow() && TableView() && std::abs(g_set.mapNearFloor.load()) > 0.01f; }
 // VR F3, the game on the floor, with our camera on (ClassicNow's order: off is F1 whatever the view).
 bool FloorView() { return g_enabled.load() && TableView(); }
 // The item labels' box opacity and size for the view now - each VR view's Interface tab has
@@ -1876,6 +1908,7 @@ bool VrView(const d2rcam::WorldView& in, float out[16]) {
     if (TableView()) {
         if (!TableCamera(in, &eye, &fwd, &up, &right, &ahead, &yaw)) return false;
         hang = eye;
+        g_floorEyeH.store(eye.y - L[1]); g_floorFwdY.store(fwd.y); g_floorUpY.store(up.y); g_floorCamOk.store(true);
     } else if (TopPersp()) {
         if (!TopCamera(in, &eye, &fwd, &up, &right, &ahead)) return false;
         hang = eye;
@@ -1920,6 +1953,7 @@ bool VrView(const d2rcam::WorldView& in, float out[16]) {
     hang = ThirdPerson() ? pivot : pivot + (eye - pivot) * g_set.handsFollowCam.load();
     }
     g_viewBuilds.fetch_add(1);
+    g_viewFwdY.store(fwd.y);
     float view[16];
     d2rcam::m4::LookTo(eye, fwd, up, view);
     const float hangA[3] = {hang.x, hang.y, hang.z};
@@ -2006,6 +2040,7 @@ bool VrProj(const d2rcam::WorldView& in, float M[16]) {
     // whole world was in front of the screen and read as shallow.
     float ipd = g_set.ipd.load(), conv = g_set.convergence.load();
     TrueScale(&ipd, &conv);
+    g_projSx.store(M[0]); g_projSy.store(M[5]); g_stereoIpd.store(ipd); g_stereoConv.store(conv);
     if (AfrOn() && conv > 0.0f) {
         const float shift = M[0] * 0.5f * ipd / conv;
         M[8] += g_eye.load() == 0 ? shift : -shift;
@@ -2613,21 +2648,25 @@ bool ViewStickToGame(float* px, float* py) {
     return true;
 }
 
-void TurnStick(XINPUT_STATE* s) {
+void TurnStick(XINPUT_STATE* s, bool fromBodyWalk) {
     if (!s || !g_enabled.load()) return;
     const XINPUT_GAMEPAD in = s->Gamepad;
-    g_aHeld.store((in.wButtons & XINPUT_GAMEPAD_A) != 0 && !gamestate::MenuOpen());
-    g_skillHeld.store((in.wButtons & (XINPUT_GAMEPAD_A | XINPUT_GAMEPAD_B | XINPUT_GAMEPAD_X | XINPUT_GAMEPAD_Y | XINPUT_GAMEPAD_RIGHT_SHOULDER)) != 0 &&
-                      !gamestate::MenuOpen());
+    // What is kept (held buttons, the right stick, the log) only from BodyWalk's pad while it is live.
+    const bool own = fromBodyWalk || GetTickCount64() - g_padMirrorOkAt.load() > 1000;
+    if (own) {
+        g_aHeld.store((in.wButtons & XINPUT_GAMEPAD_A) != 0 && !gamestate::MenuOpen());
+        g_skillHeld.store((in.wButtons & (XINPUT_GAMEPAD_A | XINPUT_GAMEPAD_B | XINPUT_GAMEPAD_X | XINPUT_GAMEPAD_Y | XINPUT_GAMEPAD_RIGHT_SHOULDER)) != 0 &&
+                          !gamestate::MenuOpen());
+    }
     const bool lt = in.bLeftTrigger >= 128, rt = in.bRightTrigger >= 128;
-    if (in.wButtons != g_padTrace.buttons || lt != (g_padTrace.lt >= 128) || rt != (g_padTrace.rt >= 128)) {
+    if (own && (in.wButtons != g_padTrace.buttons || lt != (g_padTrace.lt >= 128) || rt != (g_padTrace.rt >= 128))) {
         LogF("pad: buttons %04X LT %u RT %u stick %d %d", in.wButtons, in.bLeftTrigger, in.bRightTrigger, in.sThumbLX, in.sThumbLY);
         g_padTrace.buttons = in.wButtons; g_padTrace.lt = in.bLeftTrigger; g_padTrace.rt = in.bRightTrigger;
     }
     // A menu (inventory, trade, stash...) gets the pad as it is: the left stick
     // moves its cursor on the screen, so turning it by the camera's yaw sent the
     // cursor the wrong way, and the right stick is the menu's too.
-    if (gamestate::MenuOpen()) { g_rightX.store(0.0f); return; }
+    if (gamestate::MenuOpen()) { if (own) g_rightX.store(0.0f); return; }
     AimByMouse(s);
     AimByTurn(s);
     const bool aimed = BowStick(s);
@@ -2639,7 +2678,7 @@ void TurnStick(XINPUT_STATE* s) {
     } } out{in, s->Gamepad, s, aimed};
     if (g_set.rightTurn.load()) {
         // The right stick is ours while on: it turns the body, the game never sees it.
-        g_rightX.store(s->Gamepad.sThumbRX / 32767.0f);
+        if (own) g_rightX.store(s->Gamepad.sThumbRX / 32767.0f);
         s->Gamepad.sThumbRX = 0; s->Gamepad.sThumbRY = 0;
     }
     float x = s->Gamepad.sThumbLX / 32767.0f, y = s->Gamepad.sThumbLY / 32767.0f;
@@ -2689,6 +2728,7 @@ bool PadFromBodyWalk(XINPUT_STATE* s) {
     s->Gamepad.bRightTrigger = m.right_trigger;
     s->Gamepad.sThumbLX = m.thumb_lx; s->Gamepad.sThumbLY = m.thumb_ly;
     s->Gamepad.sThumbRX = m.thumb_rx; s->Gamepad.sThumbRY = m.thumb_ry;
+    g_padMirrorOkAt.store(GetTickCount64());
     return true;
 }
 
@@ -2871,16 +2911,18 @@ std::atomic<uint32_t> g_keyMoveCalls{0};     // how often the game asked: still 
 bool FlatKeyMode() { return g_set.platform.load() == 0 && g_set.flatKeyMove.load() && g_keyMove.load() != 2; }
 // ... and the game sees no pad at all.
 bool FlatNoPad() { return FlatKeyMode() && g_set.flatNoPad.load(); }
-// VR third person (F2) played with the mouse and keyboard ([input] vr_keys_walk,
-// mouse look off): W A S D walk through the same keyboard move, ahead = where
-// our camera looks. The game's own Move keys go north on its screen whatever
+// VR third person (F2) played with the mouse and keyboard ([input] vr_keys_walk):
+// W A S D walk through the same keyboard move, ahead = where our camera looks.
+// With mouse look (F2 starts with it, F9 frees the pointer) it is flat's F2:
+// the mouse turns the camera, the pointer is our crosshair in the middle and a
+// click goes there (KeyMoveMode below). The game's own Move keys go north on its screen whatever
 // the camera does ("W walks backwards when the camera faces south", 2026-10-07).
 // The mouse stays the game's: a click attacks, picks up or walks there as ever.
 // Only while the game's UI is in mouse mode - it asks 0x8A960 only then; a pad
 // stick (BodyWalk's) flips it to the controller until the next click.
 bool VrKeyWalk() {
     return g_set.platform.load() == 1 && g_set.vrKeyWalk.load() && g_keyMove.load() != 2 && g_enabled.load() &&
-           g_inWorld.load() && ViewNow() == 2 && !ShooterActive();
+           g_inWorld.load() && ViewNow() == 2;
 }
 // W A S D as the keyboard move wants them, turned by our camera; false = nothing held.
 bool VrKeyInput(float* px, float* py) {
@@ -2896,6 +2938,11 @@ bool VrKeyInput(float* px, float* py) {
     *px = x; *py = y;
     return l > 1e-4f;
 }
+// The game in mouse mode with W A S D through its keyboard move: flat, or VR F2.
+// With mouse look on top the mouse is the game's, held in the middle (our
+// crosshair, a click goes where the camera looks); the old pad stick
+// (KeysAsStick) only where neither is.
+bool KeyMoveMode() { return FlatKeyMode() || VrKeyWalk(); }
 
 // What the player asks for now, as the game's keyboard move wants it (x right,
 // y up on the game's screen, length <= 1); false = nothing (the game then
@@ -3015,7 +3062,7 @@ std::atomic<int> g_mapClick{0};   // 0 not in yet, 1 in, 2 not possible
 
 uint64_t HookMapClick(void* unit, int type, int x, int y, uint64_t flags) {
     if (unit && (type == 0 || type == 1 || type == 3 || type == 4) && !(flags & 0xFF) &&
-        g_set.flatClickShoot.load() && FlatKeyMode() && ShooterActive()) {
+        g_set.flatClickShoot.load() && KeyMoveMode() && ShooterActive()) {
         const int idx = ((ClientIndexFn)d2rsig::Addr(RVA_CLIENT_INDEX))(unit);
         if (idx >= 0 && idx < 8 && !((HoverUnitFn)d2rsig::Addr(RVA_HOVER_UNIT))(idx)) {
             flags |= 1;
@@ -3034,10 +3081,12 @@ uint64_t HookMapClick(void* unit, int type, int x, int y, uint64_t flags) {
 // bytes = another build, and clicks stay the game's own.
 void InstallMapClickHook() {
     static int misses = 0;
-    if (!g_ctx || g_mapClick.load() != 0 || g_set.platform.load() != 0 || !g_set.flatKeyMove.load()) return;
+    // Flat with flat_keyboard_move, or VR with vr_keys_walk (F2's mouse look shoots the same way).
+    const bool flat = g_set.platform.load() == 0;
+    if (!g_ctx || g_mapClick.load() != 0 || !(flat ? g_set.flatKeyMove.load() : g_set.vrKeyWalk.load())) return;
     if (!Matches(RVA_MAP_CLICK, kSigMapClick, sizeof kSigMapClick) || !Matches(RVA_CLIENT_INDEX, kSigClientIndex, sizeof kSigClientIndex) ||
         !Matches(RVA_HOVER_UNIT, kSigHoverUnit, sizeof kSigHoverUnit)) {
-        if (g_inWorld.load() && ++misses >= 20) {
+        if (flat && g_inWorld.load() && ++misses >= 20) {   // VR: no verdict, the code may run (and decrypt) much later
             g_mapClick.store(2);
             Log("vrcam: flat: click hook NOT possible (0xFE3B0 / 0x9A820 / 0xF1900 not as expected - another build?) - a click on the ground walks");
         }
@@ -3085,7 +3134,7 @@ void FlatPadTick() {
 // Flat mode with the keyboard move (FlatKeyMode) has no such pad: kept only
 // for another game build, where the keyboard move hook cannot go in.
 void KeysAsStick(XINPUT_STATE* s, DWORD* r) {
-    if (FlatKeyMode() || !ShooterActive() || !GameFocused()) return;
+    if (KeyMoveMode() || !ShooterActive() || !GameFocused()) return;
     auto held = [](int vk) { return (GetAsyncKeyState(vk) & 0x8000) != 0; };
     if (*r != ERROR_SUCCESS) { memset(s, 0, sizeof *s); *r = ERROR_SUCCESS; }
     const int swap = GetSystemMetrics(SM_SWAPBUTTON) ? VK_RBUTTON : VK_LBUTTON;   // the primary button
@@ -3121,11 +3170,22 @@ template <int I> DWORD WINAPI XDetour(DWORD idx, XINPUT_STATE* s) {
     --t_xDepth;
     // Flat with a real pad let through (flat_no_pad=0): that pad only, its stick
     // turned by the camera below; BodyWalk's stick walks through the keyboard move.
-    if (t_xDepth == 0 && idx == 0 && s && !FlatKeyMode() && PadFromBodyWalk(s)) r = ERROR_SUCCESS;
+    bool mirror = false;
+    if (t_xDepth == 0 && idx == 0 && s && !FlatKeyMode() && PadFromBodyWalk(s)) { r = ERROR_SUCCESS; mirror = true; }
     if (t_xDepth == 0 && idx == 0 && s) KeysAsStick(s, &r);
     if (r == ERROR_SUCCESS && t_xDepth == 0) {
         if (idx == 0) ApplyActions(s);
-        TurnStick(s);
+        {   // which entry polls what, with BodyWalk's pad or without (2026-10-07): at most 30 lines a session
+            static std::atomic<int> lines{0};
+            static ULONGLONG told[std::size(g_xhooks)] = {};
+            if (lines.load() < 30 && GetTickCount64() - told[I] > 2000) {
+                told[I] = GetTickCount64();
+                lines.fetch_add(1);
+                LogF("pad diag: %ls!%s pad %u, BodyWalk's pad %s, buttons %04X, right X %d, thread %lu", g_xhooks[I].dll,
+                     g_xhooks[I].name, idx, mirror ? "yes" : "no", s->Gamepad.wButtons, s->Gamepad.sThumbRX, GetCurrentThreadId());
+            }
+        }
+        TurnStick(s, mirror);
     }
     return r;
 }
@@ -3200,7 +3260,11 @@ SetCursorFn OrigSetCursor;
 std::atomic<HCURSOR> g_cross[std::size(crosshair::kSizes)] = {};
 std::atomic<bool> g_crossHooked{false};
 
-bool CrosshairNow() { return g_set.flatCrosshair.load() && FlatKeyMode() && ShooterActive(); }
+bool CrosshairNow() {
+    return g_set.flatCrosshair.load() && KeyMoveMode() && ShooterActive() && (g_set.platform.load() == 0 || g_set.crosshairOn.load());
+}
+// VR F2 with mouse look and [hud_third] crosshair=0: no pointer in the headset at all.
+bool CrosshairHidden() { return g_set.platform.load() == 1 && ViewNow() == 2 && KeyMoveMode() && ShooterActive() && !g_set.crosshairOn.load(); }
 
 HCURSOR MakeCrosshair(const crosshair::Size& s) {
     BITMAPV5HEADER bi{};
@@ -3266,6 +3330,39 @@ bool ReadCrosshairFile(const std::wstring& path, int side, std::vector<uint8_t>*
 SRWLOCK g_crossLock = SRWLOCK_INIT;
 std::wstring g_crossFile;              // [input] crosshair as written
 std::atomic<uint32_t> g_crossGen{1};   // bumped when it changes; CrosshairTick rebuilds
+std::atomic<HCURSOR> g_crossVr{nullptr};   // VR: one more, at [hud_third] crosshair_size (CrosshairTick)
+
+// The size the window's height picks: 32 px below 900, 48 below 1500, 64 above.
+int CrosshairSizeIndex() {
+    RECT rc{};
+    const int h = g_gameWnd && GetClientRect(g_gameWnd, &rc) ? rc.bottom : 1080;
+    return h < 900 ? 0 : h < 1500 ? 1 : 2;
+}
+
+// The built-in picture at any size: each output pixel the average of the source
+// pixels it covers (straight alpha, colour weighted by it).
+std::vector<uint8_t> ScaledBuiltin(int side) {
+    const crosshair::Size& s = crosshair::kSizes[std::size(crosshair::kSizes) - 1];
+    std::vector<uint8_t> out((size_t)side * side * 4, 0);
+    const float k = (float)s.side / (float)side;
+    for (int y = 0; y < side; ++y)
+        for (int x = 0; x < side; ++x) {
+            const int x0 = (int)(x * k), x1 = std::max(x0 + 1, (int)((x + 1) * k)), y0 = (int)(y * k), y1 = std::max(y0 + 1, (int)((y + 1) * k));
+            float c[3] = {}, a = 0.0f;
+            int n = 0;
+            for (int sy = y0; sy < std::min(y1, s.side); ++sy)
+                for (int sx = x0; sx < std::min(x1, s.side); ++sx, ++n) {
+                    const uint8_t* p = &s.bgra[((size_t)sy * s.side + sx) * 4];
+                    const float pa = p[3] / 255.0f;
+                    for (int i = 0; i < 3; ++i) c[i] += p[i] * pa;
+                    a += pa;
+                }
+            uint8_t* q = &out[((size_t)y * side + x) * 4];
+            if (n && a > 1e-4f) for (int i = 0; i < 3; ++i) q[i] = (uint8_t)std::min(255.0f, c[i] / a + 0.5f);
+            q[3] = n ? (uint8_t)(a / n * 255.0f + 0.5f) : 0;
+        }
+    return out;
+}
 
 void LoadCrosshairFile() {
     wchar_t buf[MAX_PATH];
@@ -3284,9 +3381,16 @@ void LoadCrosshairFile() {
 // handles are left alone (one may be the cursor on screen right now).
 void CrosshairTick() {
     static uint32_t built = 0;
+    static int builtVrSide = 0;
     const uint32_t gen = g_crossGen.load();
-    if (gen == built || g_set.platform.load() != 0) return;
+    if (g_set.platform.load() != 0 && !g_set.vrKeyWalk.load()) return;   // flat, or VR F2's mouse look
+    // VR: the window's size times [hud_third] crosshair_size
+    const int vrSide = g_set.platform.load() == 1
+        ? std::clamp((int)lroundf(crosshair::kSizes[CrosshairSizeIndex()].side * g_set.crosshairSize.load() * 0.01f), 8, 256) : 0;
+    if (gen == built && vrSide == builtVrSide) return;
+    const bool all = gen != built;
     built = gen;
+    builtVrSide = vrSide;
     AcquireSRWLockShared(&g_crossLock); std::wstring f = g_crossFile; ReleaseSRWLockShared(&g_crossLock);
     std::wstring full = f;
     if (!f.empty() && f.find(L':') == std::wstring::npos && f.rfind(L"\\\\", 0) != 0) {
@@ -3296,6 +3400,15 @@ void CrosshairTick() {
         dir[n] = 0;
         full = std::wstring(dir) + L"reshade-shaders\\Textures\\" + f;
     }
+    if (vrSide) {
+        std::vector<uint8_t> px;
+        HCURSOR c = nullptr;
+        if (!full.empty() && ReadCrosshairFile(full, vrSide, &px)) c = MakeCrosshair({vrSide, px.data()});
+        if (!c) { px = ScaledBuiltin(vrSide); c = MakeCrosshair({vrSide, px.data()}); }
+        g_crossVr.store(c);
+        LogF("vrcam: VR: crosshair %d px (%.0f%%)", vrSide, g_set.crosshairSize.load());
+    }
+    if (!all) return;
     bool own = false;
     for (size_t k = 0; k < std::size(crosshair::kSizes); ++k) {
         const int side = crosshair::kSizes[k].side;
@@ -3310,11 +3423,11 @@ void CrosshairTick() {
     else LogF("vrcam: flat: crosshair '%s' NOT readable - the built-in one", Utf8(full.c_str()).c_str());
 }
 
-// The size for the game window's height: 32 px below 900, 48 below 1500, 64 above.
+// The size for the game window's height (CrosshairSizeIndex); in VR the one at [hud_third] crosshair_size.
 HCURSOR Crosshair() {
-    RECT rc{};
-    const int h = g_gameWnd && GetClientRect(g_gameWnd, &rc) ? rc.bottom : 1080;
-    return g_cross[h < 900 ? 0 : h < 1500 ? 1 : 2].load();
+    if (g_set.platform.load() == 1)
+        if (HCURSOR c = g_crossVr.load()) return c;
+    return g_cross[CrosshairSizeIndex()].load();
 }
 
 HCURSOR WINAPI HookSetCursor(HCURSOR c) {
@@ -3325,7 +3438,7 @@ HCURSOR WINAPI HookSetCursor(HCURSOR c) {
 
 // Only in flat mode; once (user32 is there from the start).
 void HookCursor() {
-    if (g_crossHooked.load() || g_set.platform.load() != 0) return;
+    if (g_crossHooked.load() || (g_set.platform.load() != 0 && !g_set.vrKeyWalk.load())) return;   // flat, or VR F2's mouse look
     g_crossHooked.store(true);
     void* fn = (void*)GetProcAddress(GetModuleHandleW(L"user32.dll"), "SetCursor");
     const bool ok = fn && MH_CreateHook(fn, (void*)&HookSetCursor, (void**)&OrigSetCursor) == MH_OK && MH_EnableHook(fn) == MH_OK;
@@ -3364,7 +3477,7 @@ LRESULT CALLBACK GameWndProc(HWND h, UINT msg, WPARAM w, LPARAM l) {
     // ray (d2rcam's ScreenToRay). Every mouse message carries the middle, so
     // the pointer's travel between two MouseTicks never moves the game's point.
     // Raw mouse input (the game registers none) is dropped as before.
-    if (ShooterActive() && FlatKeyMode()) {
+    if (ShooterActive() && KeyMoveMode()) {
         if (msg == WM_SETCURSOR && LOWORD(l) == HTCLIENT && CrosshairNow() && OrigSetCursor)
             if (HCURSOR x = Crosshair()) { OrigSetCursor(x); return TRUE; }
         RECT rc{};
@@ -5922,6 +6035,7 @@ void OnBeginEffects(reshade::api::effect_runtime* rt, reshade::api::command_list
         }
     }
     SetFloat(rt, "GameBarShift", BarNearWanted() ? BarNearNow() * 0.005f : 0.0f);
+    SetFloat(rt, "GameMapShift", MapNearWanted() ? g_set.mapNearFloor.load() * 0.005f : 0.0f);
     for (int i = 0; i < 2; ++i) {   // the toolbar and the map back in the picture, at their own size and depth (classic views)
         float box[4];
         uint64_t srv = 0;
@@ -6079,6 +6193,60 @@ void TryRegister() {
 #endif
 DWORD g_updateThreadId = 0;
 
+// F3, the game on the floor: the mouse pointer laid on the game's ground by
+// itself, wherever the head looks from. A plane seen from our camera has
+// 1/depth linear in the screen's height, so FlatVR's per-eye shift
+// (FlatVRGameHudPointerDepth: base + tilt v + curve v^2, v 0 top .. 1 bottom, a
+// fraction of one eye's width, + nearer) is exactly a line: with the off-axis
+// pair of VrView / VrProj, shift(v) = M[0] ipd / 4 (1/z(v) - 1/conv). Its size at
+// the top of the screen follows the depths' ratio (far off it is small, as the
+// ground it points at). Sent when it moves, not every tick: hud's lock is the
+// render thread's too.
+bool FloorPointerAuto() {
+    return g_set.platform.load() == 1 && g_enabled.load() && TableView() && g_floorCamOk.load() && g_inWorld.load() &&
+           !gamestate::MenuOpen();
+}
+void FloorPointerTick() {
+    static float sent[3] = {1e9f, 1e9f, 1e9f};
+    static bool told = false;
+    if (!FloorPointerAuto()) { sent[0] = 1e9f; told = false; return; }
+    const float h = g_floorEyeH.load(), sx = g_projSx.load(), sy = g_projSy.load();
+    if (h < 1e-3f || sx <= 0.0f || sy <= 0.0f) return;
+    const float fy = g_floorFwdY.load(), uy = g_floorUpY.load(), conv = g_stereoConv.load();
+    auto inv = [&](float v) { return -(fy + uy * (1.0f - 2.0f * v) / sy) / h; };   // 1 / the ground's depth at height v
+    const float k = sx * g_stereoIpd.load() * 0.25f, c = conv > 0.0f ? 1.0f / conv : 0.0f;
+    const float top = inv(0.0f), bottom = inv(1.0f);
+    const float base = k * (top - c), tilt = k * (bottom - top);
+    const float topScale = bottom > 1e-6f ? std::clamp(top / bottom, 0.3f, 1.0f) : 1.0f;
+    if (fabsf(base - sent[0]) < 2e-4f && fabsf(tilt - sent[1]) < 2e-4f && fabsf(topScale - sent[2]) < 0.005f) return;
+    sent[0] = base; sent[1] = tilt; sent[2] = topScale;
+    hud::SetPointerDepth(base, tilt, 0.0f, topScale);
+    if (!told) {
+        told = true;
+        LogF("vrcam: mouse pointer for FlatVR laid on the floor's ground: shift %.4f at the top, %.4f at the bottom, size at the top %.2f",
+             base, base + tilt, topScale);
+    }
+}
+
+// VR F2 with mouse look: the crosshair's depth, from [hud_third] crosshair_depth
+// looking ahead to crosshair_depth_down looking straight down, by the sine of the
+// camera's look down - the ground in the middle of the screen comes nearer as the
+// view tips down, and is far off looking ahead. Every tick (the head
+// moves), sent only when it changed: hud's lock is the render thread's too.
+bool CrosshairDepthNow() {
+    return g_set.platform.load() == 1 && ViewNow() == 2 && KeyMoveMode() && ShooterActive() && g_set.crosshairOn.load();
+}
+void CrosshairDepthTick() {
+    static float sent = 1e9f;
+    if (!CrosshairDepthNow()) { sent = 1e9f; return; }
+    const float down = std::clamp(-g_viewFwdY.load(), 0.0f, 1.0f);
+    const float ahead = g_set.crosshairDepth.load();
+    const float d = (ahead + (g_set.crosshairDepthDown.load() - ahead) * down) * 0.005f;
+    if (fabsf(d - sent) < 2e-4f) return;
+    sent = d;
+    hud::SetPointerDepth(d, 0.0f, 0.0f, 1.0f);
+}
+
 // A key's press, once per press, only while the game is in front.
 struct Key {
     int vk;
@@ -6167,8 +6335,12 @@ DWORD WINAPI UpdateThread(void*) {
         // the picture, at their own size; on the hands only in first person.
         hud::SetClassicView(ClassicNow());
         // first person without the body: the map at a size of its own, from its corner
-        hud::SetPictureZoom(BarSizeNow(), InsideFree() ? g_set.mapZoomInside.load() : 1.0f);
+        // ... and on the floor (F3) its own size, depth and place, as the toolbar's
+        hud::SetPictureZoom(BarSizeNow(), InsideFree() ? g_set.mapZoomInside.load() : TableView() ? g_set.mapSizeFloor.load() : 1.0f);
         hud::SetPictureBarMoved(BarNearWanted());
+        hud::SetPictureMapMoved(MapNearWanted());
+        if (ClassicNow() && TableView()) hud::SetPictureMapOffset(g_set.mapXFloor.load(), g_set.mapYFloor.load());
+        else hud::SetPictureMapOffset(0.0f, 0.0f);
         {   // [hud_*] bar_x / bar_y: the toolbar somewhere else on the screen
             float bx = 0.0f, by = 0.0f;
             if (ClassicNow()) BarOffsetNow(&bx, &by);
@@ -6180,6 +6352,8 @@ DWORD WINAPI UpdateThread(void*) {
         SkyTick();
         flog::Tick(g_set.frameLog.load());
         gamecmd::Tick();   // skills, potions, Alt... held in BodyWalk: pressed on the UI thread
+        FloorPointerTick();   // F3: the mouse pointer on the game's ground, as the head moves
+        CrosshairDepthTick();   // F2's crosshair: nearer as the camera looks down
         AfrQuietWhenOff();
         if (nowMs >= nextState) {   // what the hero holds, 5 times a second
             nextState = nowMs + 200;
@@ -6206,7 +6380,7 @@ DWORD WINAPI UpdateThread(void*) {
             {
                 const bool menu = gamestate::MenuOpen() || !g_inWorld.load();
                 const bool firstPerson = g_enabled.load() && !ThirdPerson() && FullBody();   // the mouse views keep it: it is the crosshair
-                hud::SetPointer(menu || !firstPerson ? 1u : 2u);
+                hud::SetPointer((menu || !firstPerson) && !CrosshairHidden() ? 1u : 2u);   // [hud_third] crosshair=0: none in F2
                 // its depth over the ground: F1 (from above) and F2 (behind), not over a panel
                 // By the key, F1 or F2 (ViewNow): F1 whether our camera or the game's own is up there, and
                 // never by ThirdPerson() - VR F1 in perspective runs as g_view 2, it read as F2 and took
@@ -6221,7 +6395,16 @@ DWORD WINAPI UpdateThread(void*) {
                          view < 0 ? 0.0f : g_set.pointerAt[view][2].load());
                 }
                 // the curve through the top, middle and bottom depths: FlatVR takes a + b v + c v^2 (v 0 top, 1 bottom)
-                if (view < 0) hud::SetPointerDepth(0.0f, 0.0f, 0.0f, 1.0f);
+                // VR F2 with mouse look: the pointer is the crosshair, held in the middle - one depth, its own.
+                const bool cross = view == 1 && g_set.platform.load() == 1 && ShooterActive() && KeyMoveMode();
+                static int toldCross = -1;
+                if ((int)cross != toldCross) {
+                    toldCross = cross;
+                    if (cross) LogF("vrcam: crosshair depth for FlatVR: %.1f ([hud_third] crosshair_depth)", g_set.crosshairDepth.load());
+                }
+                if (FloorPointerAuto()) {}   // F3: on the ground by itself, FloorPointerTick
+                else if (view < 0) hud::SetPointerDepth(0.0f, 0.0f, 0.0f, 1.0f);
+                else if (cross) {}   // F2's crosshair: CrosshairDepthTick, with the head's look down
                 else {
                     const float T = g_set.pointerAt[view][0].load() * 0.005f, M = g_set.pointerAt[view][1].load() * 0.005f,
                                 B = g_set.pointerAt[view][2].load() * 0.005f;
@@ -6298,7 +6481,7 @@ void LoadReShade() {
     else LogF("vrcam: ReShade64.dll did not load (error %lu)", GetLastError());
 }
 
-static const char g_info_version[] = "0.143.0";
+static const char g_info_version[] = "0.144.0";
 
 static const PluginInfo g_info = {
     PluginInfoSize, D2RL_PLUGIN_ABI_VERSION, "d2r-vr-vrcam", "vrcam", g_info_version, "BodyWalkVR",

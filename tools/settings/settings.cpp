@@ -346,17 +346,19 @@ std::vector<Item> g_items = {
     Needs(L"turn", L"right_stick", 1, Invert(L"turn", L"sign", L"Reverse turning", 1, L"Tick if pushing right turns you left.")),
     Group(L"Mouse and keyboard (no headset)"),
     Only(kVr, Toggle(L"input", L"mouse_look", L"Mouse look in VR views F2 and F4 too", 0,
-           L"Flat and VR view F3 always start with it. The mouse turns the view (the pointer stays in the middle as a crosshair, "
-           L"clicks go where you look), W A S D walk. F9 switches it in the game - off frees the pointer for menus.")),
-    Needs(L"input", L"mouse_look", 1, Slider(L"input", L"mouse_speed", L"Mouse speed, ° per pixel", 0.02f, 1, 0.01f, 0.15f)),
-    Only(kVr, Toggle(L"input", L"vr_keys_walk", L"W A S D walk in VR view F2 (where the camera looks)", 1,
-           L"Third person with the mouse and keyboard: W A S D walk relative to the camera, not north on the game's map; the mouse "
-           L"stays the game's (click to attack, pick up, walk). Works while the game is in mouse mode - after a pad stick, click once. "
-           L"With mouse look on, its own W A S D walk is used instead.")),
-    Only(kFlat, File(L"input", L"crosshair", L"Crosshair picture", L"D2R_Sky_ours\\D2R_Crosshair.png",
+           L"Flat and VR view F3 always start with it, and VR F2 too while the switch below is on. The mouse turns the view "
+           L"(the pointer stays in the middle as a crosshair, clicks go where you look), W A S D walk. F9 switches it in "
+           L"the game - off frees the pointer for menus.")),
+    Slider(L"input", L"mouse_speed", L"Mouse speed, ° per pixel", 0.02f, 1, 0.01f, 0.15f),
+    Only(kVr, Toggle(L"input", L"vr_keys_walk", L"VR view F2 like flat: mouse look, crosshair, W A S D", 1,
+           L"Third person with the mouse and keyboard, as in flat mode: the mouse turns the camera, the pointer is the crosshair "
+           L"in the middle (its depth: UI: F2 behind tab), a click goes there - on a monster an attack, on an item a pick-up, "
+           L"on the ground a shot - and W A S D walk where the camera looks, not north on the game's map. F9 frees the pointer "
+           L"for menus; W A S D keep walking. Needs the game in mouse mode: after a pad stick, click once.")),
+    File(L"input", L"crosshair", L"Crosshair picture", L"D2R_Sky_ours\\D2R_Crosshair.png",
            L"The pointer while the mouse looks: your own picture (png, jpg, bmp), its middle is where you aim; it is "
            L"fitted into 32-64 pixels by the window's height. A picture with no transparency: its black is see-through. "
-           L"A bare name is looked for in reshade-shaders\\Textures; a full path works too. Empty (x) = the built-in one.")),
+           L"A bare name is looked for in reshade-shaders\\Textures; a full path works too. Empty (x) = the built-in one."),
     Only(kVr, Group(L"Input")),
     Toggle(L"input", L"bodywalk_pad", L"Gamepad straight from BodyWalk", 1,
            L"The game's gamepad is BodyWalk's own report, read directly: no virtual gamepad (ViGEm) needed."),
@@ -465,6 +467,19 @@ std::vector<Item> g_items = {
     Needs(L"hud_third", L"classic", 0, Slider(L"hud_third", L"bar_y", L"Toolbar up / down, %", -30, 100, 1, 0,
            L"The toolbar moved up the screen, % of its height: + up, - down (partly off the screen); 0 = the bottom, "
            L"where the game puts it.")),
+    Group(L"Crosshair (mouse look)"),
+    Toggle(L"hud_third", L"crosshair", L"Enable crosshair", 1,
+           L"With mouse look in F2 the pointer is a crosshair in the middle of the screen. Off: no pointer in the headset "
+           L"at all - a click still goes to the middle."),
+    Needs(L"hud_third", L"crosshair", 1, Slider(L"hud_third", L"crosshair_size", L"Crosshair size, %", 25, 400, 5, 100,
+           L"100 = the size the game window's height picks (32, 48 or 64 pixels); the picture is the one on the Controls tab.")),
+    Needs(L"hud_third", L"crosshair", 1, Slider(L"hud_third", L"crosshair_depth", L"Crosshair depth, looking ahead", -30, 30, 0.1f, 0,
+           L"With mouse look in F2 the pointer is a crosshair in the middle of the screen: + brings it nearer, - pushes it "
+           L"farther, 0 = on the screen. Set it where the ground ahead is with the camera level, so it does not come apart "
+           L"in stereo. Real stereo only, as the mouse pointer's depth in F1.")),
+    Needs(L"hud_third", L"crosshair", 1, Slider(L"hud_third", L"crosshair_depth_down", L"Crosshair depth, looking down", -30, 30, 0.1f, 0,
+           L"The same with the camera looking straight down at the hero, where the ground is much nearer; in between it "
+           L"goes from one to the other as the view tips down.")),
 
     // VR F3, the game on the floor: [hud_floor]. Until 2026-10-05 this view used
     // F2's [hud_third] (vrcam runs it as view 2); its screen is head-locked, so
@@ -491,6 +506,17 @@ std::vector<Item> g_items = {
            L"The toolbar moved across the screen, % of its width: + right, - left; 0 = the middle, where the game puts it."),
     Slider(L"hud_floor", L"bar_y", L"Toolbar up / down, %", -30, 100, 1, 0,
            L"The toolbar moved up the screen, % of its height: + up, - down (partly off the screen); 0 = the bottom, "
+           L"where the game puts it."),
+    Group(L"Map, the game on your floor"),
+    Slider(L"hud_floor", L"map_size", L"Map size, %", 30, 300, 1, 100,
+           L"The corner map (Tab) smaller or larger, about its own corner. Needs D2R_DepthFog.fx on in ReShade (it draws "
+           L"the map back); without it the game's own map stays. The mouse pointer lies on the game's ground by itself here."),
+    Slider(L"hud_floor", L"map_near", L"Map nearer / farther", -10, 10, 0.1f, 0,
+           L"Real stereo only: + brings the map towards the eyes, - pushes it behind the screen; 0 = where the game puts it."),
+    Slider(L"hud_floor", L"map_x", L"Map left / right, %", -50, 50, 1, 0,
+           L"The map moved across the screen, % of the screen's width: + right, - left; 0 = its corner, where the game puts it."),
+    Slider(L"hud_floor", L"map_y", L"Map up / down, %", -100, 30, 1, 0,
+           L"The map moved up the screen, % of the screen's height: + up (partly off the screen), - down; 0 = the top, "
            L"where the game puts it."),
     Group(L"Item labels on the ground"),
     Slider(L"hud_floor", L"labels_alpha", L"Item labels: opacity", 0, 1, 0.05f, 0.5f,

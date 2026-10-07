@@ -1,5 +1,25 @@
 # What's new in D2R VR
 
+## 0.144
+
+- **The belt works again**: the potion zones at your waist (first person, F4)
+  show in the headset and fire, and so do the sword, axe and throwing swings.
+  The mod's BodyWalk profile had shipped without their recorded positions.
+- **Every game control from BodyWalk**: 68 new actions "D2R key: ..." in
+  BodyWalk's Mapping tab - skills F1-F16, potions 1-4, Alt, Run, Shift,
+  character, inventory, map, mercenary, cube and the rest - pressed straight
+  in the game, no gamepad and no key needed.
+- **Third person (F2) like flat mode**: the mouse turns the camera, the pointer
+  is a crosshair in the middle (on/off, size, and its depth looking ahead and
+  looking down on the UI: F2 tab), a click goes
+  there, W A S D walk where the camera looks; F9 frees the pointer for menus.
+- **The game on the floor (F3)**: the corner map gets size, depth and place
+  like the toolbar (UI: F3 tab), and the mouse pointer lies on the game's
+  ground by itself.
+- **Turning with the right stick in first person (F4) fixed**: the body
+  turned not at all when some of the game's controller polls came without
+  BodyWalk's pad and reset the stick to the middle.
+
 ## 0.143
 
 - **Smoother in dungeons on weaker PCs.** The torch light on the ceiling is off

@@ -86,7 +86,10 @@ std::atomic<bool> g_barMoved{false};   // [hud] bar_near: the toolbar nearer or 
 std::atomic<float> g_barOffX{0.0f}, g_barOffY{0.0f};   // [hud_*] bar_x / bar_y: the toolbar elsewhere on the screen, uv (+y down)
 bool BarOffset() { return std::abs(g_barOffX.load()) > 0.0005f || std::abs(g_barOffY.load()) > 0.0005f; }
 bool BarZoomed() { return std::abs(g_barZoom.load() - 1.0f) > 0.005f || g_barMoved.load() || BarOffset(); }
-bool MapZoomed() { return std::abs(g_mapZoom.load() - 1.0f) > 0.005f; }
+std::atomic<bool> g_mapMoved{false};   // [hud_floor] map_near: the map nearer or farther in stereo (the shader shifts it per eye)
+std::atomic<float> g_mapOffX{0.0f}, g_mapOffY{0.0f};   // [hud_floor] map_x / map_y: the map elsewhere on the screen, uv (+y down)
+bool MapOffset() { return std::abs(g_mapOffX.load()) > 0.0005f || std::abs(g_mapOffY.load()) > 0.0005f; }
+bool MapZoomed() { return std::abs(g_mapZoom.load() - 1.0f) > 0.005f || g_mapMoved.load() || MapOffset(); }
 // What is taken out of the picture now: for FlatVR in first person, to be drawn back at another size otherwise.
 int HideNow() { return g_classic.load() ? (g_picReady.load() && BarZoomed() ? 1 : 0) : g_hide.load(); }
 int MapNow() { return g_classic.load() ? (g_picReady.load() && MapZoomed() ? 1 : 0) : g_mapMode.load(); }
@@ -379,6 +382,9 @@ void Publish(command_list* cl, resource layer, uint32_t w, uint32_t h, int hide)
     if (g_pic.on[kMap]) {
         const bool left = mapBox.left + mapBox.right < (int32_t)w;
         ZoomedUv(mapBox, (float)(left ? mapBox.left : mapBox.right), (float)mapBox.top, g_mapZoom.load(), w, h, g_pic.box[kMap]);
+        const float dx = g_mapOffX.load(), dy = g_mapOffY.load();   // then moved, whole
+        g_pic.box[kMap][0] += dx; g_pic.box[kMap][2] += dx;
+        g_pic.box[kMap][1] += dy; g_pic.box[kMap][3] += dy;
     }
     if (FlatVRGameHud* b = (bar || map || g_block) ? Block() : nullptr) {
         // in the picture from above and behind: nothing in the room
@@ -490,6 +496,9 @@ void SetPictureBarMoved(bool moved) { g_barMoved.store(moved); }
 void SetPictureZoom(float bar, float map) { g_barZoom.store(std::clamp(bar, 0.2f, 3.0f)); g_mapZoom.store(std::clamp(map, 0.3f, 3.0f)); }
 // ... and moved on the screen from where the game puts it, uv (+x right, +y down): taken out for that too.
 void SetPictureBarOffset(float x, float y) { g_barOffX.store(std::clamp(x, -1.0f, 1.0f)); g_barOffY.store(std::clamp(y, -1.0f, 1.0f)); }
+// The same for the map (F3, the game on the floor): nearer or farther, and moved.
+void SetPictureMapMoved(bool moved) { g_mapMoved.store(moved); }
+void SetPictureMapOffset(float x, float y) { g_mapOffX.store(std::clamp(x, -1.0f, 1.0f)); g_mapOffY.store(std::clamp(y, -1.0f, 1.0f)); }
 // Some piece is to be drawn back at another size: vrcam keeps the effect on for it.
 bool PictureWanted() { return (g_classic.load() && (BarZoomed() || MapZoomed())) || g_labels.load(); }
 // From above in stereo, with a tilt or a depth for them: the labels on their plane (vrcam decides when).
