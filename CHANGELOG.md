@@ -1,5 +1,35 @@
 # What's new in D2R VR
 
+## 0.145
+
+- **DLSS works with real stereo**: each eye gets a DLSS of its own, fed the
+  motion against that same eye's last picture - no shaking standing still, no
+  smear in head turns. The Status tab no longer asks to switch DLSS off.
+- **Character screen**: the heroes keep their heads (the mod's VR camera stays
+  out of the menus).
+- **Performance tab**: Potato is Low with the 3D made from ReShade's depth
+  (one picture a frame) instead of real stereo. New "Headset refresh rate"
+  (72-120 Hz) sets the game's frame cap - the rate for one picture a frame,
+  twice it for real stereo. Render distance, rate and cap need the game
+  restarted (said under the 3D choice).
+- **3D in the headset follows the mod**: FlatVR's 3D source (depth, stereo
+  pair or none) is set by the mod whenever BodyWalk starts and whenever it
+  changes; FlatVR's Head Lock comes back after such a switch. The mod's
+  BodyWalk profile no longer forces the stereo pair on, and keeps the depth
+  unflipped.
+- **The toolbar is on your left forearm now** (first person, F4): orbs,
+  belt and skills lie along the inside of the arm, cut in two - turn the palm
+  up to read it. To have it on the body again: D2R VR Settings > **UI: F4
+  body** > Toolbar in the headset > **Where: Low in front** (or Chest, low).
+  The forearm and the body each keep sliders of their own.
+- **New defaults from the author's own play**: cave ceilings on with the tuned cathedral and sewer
+  vaults, near fog (30-200), the crosshair and the left hand's hold retuned,
+  the inventory screen nearer (2.5 m).
+- **The staff in the right hand works again**: the left hand takes it with
+  the grip and slides along it, closes and opens with the grip while it is off
+  it, and spells go along the staff - all of it had been off whenever "aim
+  from the left hand to the right" was off (the default since 0.140).
+
 ## 0.144
 
 - **The belt works again**: the potion zones at your waist (first person, F4)

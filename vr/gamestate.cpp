@@ -572,6 +572,44 @@ void __cdecl DispatchAutoMap(const PluginContext* ctx, void* user) noexcept {
     Log(b);
 }
 
+// The name plate over the target monster: the game's HUDMonsterHealth panel. Its
+// rectangle, read on the UI thread (widget calls must be) a few times a second.
+std::atomic<int32_t> g_plate[4] = {};
+std::atomic<ULONGLONG> g_plateAt{0};
+Widgets::WidgetHandle g_platePanel = Widgets::InvalidHandle;
+void __cdecl ReadPlate(const PluginContext* ctx, void*) noexcept {
+    if (!g_widgets || !g_widgets->findPanel || !g_widgets->getWidgetRect) return;
+    static int told = 0;
+    static Widgets::Rect last{};
+    Widgets::Result r = Widgets::Result::Success;
+    if (g_platePanel == Widgets::InvalidHandle) r = g_widgets->findPanel(ctx, "HUDMonsterHealth", &g_platePanel);
+    Widgets::Rect rc{};
+    if (r == Widgets::Result::Success && g_platePanel != Widgets::InvalidHandle) r = g_widgets->getWidgetRect(ctx, g_platePanel, &rc);
+    if (r == Widgets::Result::StaleHandle || r == Widgets::Result::NotFound) g_platePanel = Widgets::InvalidHandle;
+    const bool ok = r == Widgets::Result::Success && rc.width > 0 && rc.height > 0;
+    if (ok) {
+        g_plate[0].store(rc.x); g_plate[1].store(rc.y); g_plate[2].store(rc.width); g_plate[3].store(rc.height);
+        g_plateAt.store(GetTickCount64());
+    }
+    if (told < 6 && (!ok || rc.x != last.x || rc.y != last.y || rc.width != last.width || rc.height != last.height)) {
+        ++told;
+        last = rc;
+        char b[160];
+        snprintf(b, sizeof b, "gamestate: the monster's name plate (HUDMonsterHealth) - result %u, at %d,%d size %dx%d",
+                 (unsigned)r, rc.x, rc.y, rc.width, rc.height);
+        Log(b);
+    }
+}
+void PollPlate() {
+    if (g_ctx && g_threads && g_threads->runOnUiThread && g_widgets) g_threads->runOnUiThread(g_ctx, &ReadPlate, nullptr);
+}
+// The plate's rectangle (x, y, w, h, the panel's own units), if read lately.
+bool PlateRect(int32_t out[4]) {
+    if (GetTickCount64() - g_plateAt.load() > 1000) return false;
+    for (int i = 0; i < 4; ++i) out[i] = g_plate[i].load();
+    return true;
+}
+
 bool SetAutoMap(bool open) {
     if (!g_ctx || !g_threads || !g_threads->runOnUiThread || !g_widgets) return false;
     return g_threads->runOnUiThread(g_ctx, &DispatchAutoMap, open ? (void*)1 : nullptr) == Threads::Result::Success;

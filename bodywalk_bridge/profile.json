@@ -2304,7 +2304,7 @@
     "flat_vr_reshade_draw_cursor": true,
     "flat_vr_reshade_enabled": true,
     "flat_vr_reshade_intensity": 0.0024999999441206455,
-    "flat_vr_reshade_stereo_pair": true,
+    "flat_vr_reshade_depth_flip": false,
     "flat_vr_right_click_btn": "",
     "flat_vr_right_click_input_mode": "Disabled",
     "flat_vr_scale": 1.4829082489013672,

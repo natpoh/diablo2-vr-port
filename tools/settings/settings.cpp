@@ -19,9 +19,13 @@
 #include <shlobj.h>
 #include <shellapi.h>   // CommandLineToArgvW: the installer's --setup-bodywalk
 #include <tlhelp32.h>
-#include <winhttp.h>    // the update check
+#include <winhttp.h>    // the update check, D2RLoader's download
+#include <wincrypt.h>   // CryptBinaryToStringW: PowerShell's -EncodedCommand
+#include <bcrypt.h>     // SHA-256 of the D2RLoader download
 
 #include <algorithm>
+#include <atomic>
+#include <iterator>
 #include <cmath>
 #include <cstdio>
 #include <cwchar>
@@ -47,6 +51,8 @@
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "comdlg32.lib")
 #pragma comment(lib, "winhttp.lib")
+#pragma comment(lib, "crypt32.lib")
+#pragma comment(lib, "bcrypt.lib")
 #pragma comment(linker, "\"/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
 
 namespace {
@@ -78,6 +84,8 @@ struct Item {
     unsigned soonMask = 0;                   // Radio: these choices (bit k = choice k) are coming soon as well, wherever they sit
     COLORREF color = 0;                      // Status: the line's colour now
     bool hidden = false;                     // left out of the page for now (the update row until there is one)
+    struct ShowFor { const wchar_t* section = nullptr; const wchar_t* key = nullptr; unsigned mask = 0; int item = -1; } showFor;
+    bool off = false;                        // left out while showFor's key has a value not in its mask (UpdateEnabled)
     HWND name = nullptr, ctl = nullptr, value = nullptr, browse = nullptr, clear = nullptr, line = nullptr;
     HBRUSH brush = nullptr;                  // Color: the swatch
 };
@@ -136,6 +144,13 @@ Item Needs(const wchar_t* section, const wchar_t* key, float value, Item i) {
     i.needs.push_back({section, key, value, -1}); return i;
 }
 
+// On the page only while section/key (a Choice) has one of the values in `mask` (bit v = value v).
+Item ShowFor(const wchar_t* section, const wchar_t* key, unsigned mask, Item i) {
+    i.showFor.section = section; i.showFor.key = key; i.showFor.mask = mask; return i;
+}
+// The toolbar on a forearm (Where: 1, 2) or on the body (3, 4): a set of sliders each.
+constexpr unsigned kBarArm = (1u << 1) | (1u << 2), kBarBody = (1u << 3) | (1u << 4);
+
 constexpr const wchar_t* kSkyPicture = L"A bare name is looked for in reshade-shaders\\Textures; a full path works too. "
                                        L"Empty (x) = the shader draws this sky itself.";
 constexpr const wchar_t* kFogColour = L"The fog colour of this act, its caves included; the low part of the sky sinks into it. "
@@ -177,6 +192,11 @@ std::vector<Item> g_items = {
           L"The game does not get F1 - F4.")),
 #endif
     Only(kVr, Group(L"Status")),
+    Status(L"d2rloader", L"D2RLoader"),
+    // Download and install D2RLoader: shown while there is no D2RLoader.exe beside D2R.exe (D2RLoaderStatus).
+    Hide(Button(L"@run", L"d2rloader_get", L"Download and install D2RLoader 1.3.1",
+           L"Downloads D2RLoader 1.3.1 from d2rloader.net, checks it against the SHA-256 the site publishes and unpacks it "
+           L"into the game's folder, beside D2R.exe. The mod runs only under D2RLoader.")),
     Status(L"reshade", L"ReShade and the mod's effect"),
     Status(L"depth_addon", L"FlatVR depth add-on"),
     Status(L"game_video", L"The game's video settings"),
@@ -215,6 +235,52 @@ std::vector<Item> g_items = {
            L"Starts FlatVR in BodyWalk - the picture goes into the headset. The same as START FLATVR on BodyWalk's FlatVR tab."))),
     Only(kVr, Hide(Button(L"@run", L"flatvr_stop", L"Stop FlatVR",
            L"Stops FlatVR in BodyWalk. The same as STOP FLATVR on BodyWalk's FlatVR tab."))),
+
+    Tab(L"Performance"),
+    Group(L"Quality"),
+    Choice(L"@preset", L"preset", L"Quality preset", 2, {L"Potato", L"Low", L"Medium", L"High", L"Custom"},
+           L"Sets the settings below at once. Potato: as Low, but the 3D made from ReShade's depth instead of real stereo "
+           L"(one frame a picture, not two) and the headset at 72 Hz, the game capped at it; the others 90 Hz. "
+           L"Low: 1 room ring, models out to 150, near fog (30 to 100; in caves 60 to 100), no ceiling. "
+           L"Medium: 2 rings, 300, fog 30 to 200 (in caves 100 to 200), ceiling on. High: 3 rings, 400, finer ceiling relief and torches lighting "
+           L"the ceiling (heavy on the CPU). Low, Medium and High keep real stereo. Changing any of them by hand shows Custom."),
+    Slider(L"render", L"rings", L"Room rings around the hero", 1, 8, 1, 4, L"Extra room rings around the hero. With fog, 4-6 is enough."),
+    Slider(L"render", L"model_radius", L"Model visibility radius", 150, 1000, 50, 300, L"The game's own is 150."),
+    Toggle(L"fog", L"enabled", L"Distance fog", 0,
+           L"Through ReShade (D2R_DepthFog.fx in reshade-shaders\\Shaders). With the sky on, it fades into the sky."),
+    Needs(L"fog", L"enabled", 1, Slider(L"fog", L"start", L"Fog start", 0, 1000, 5, 150,
+           L"Where the fog begins. World units (the hero is ~7.5 tall).")),
+    Needs(L"fog", L"enabled", 1, Slider(L"fog", L"end", L"Full fog", 10, 2000, 10, 600,
+           L"Where the fog is complete. World units (the hero is ~7.5 tall). Near fog hides what a short render distance leaves out.")),
+    Needs(L"fog", L"enabled", 1, Slider(L"fog", L"caves_start", L"Fog start in caves", 0, 1000, 5, 150,
+           L"Where the fog begins in caves, dungeons and crypts. World units (the hero is ~7.5 tall).")),
+    Needs(L"fog", L"enabled", 1, Slider(L"fog", L"caves_end", L"Full fog in caves", 10, 2000, 10, 600,
+           L"Where the fog is complete in caves, dungeons and crypts. World units (the hero is ~7.5 tall).")),
+    Toggle(L"sky", L"enabled", L"Sky outdoors (via ReShade)", 0,
+           L"A painted sky over the black void outdoors. It needs ReShade's depth (below)."),
+    Toggle(L"@reshade", L"generic_depth", L"ReShade depth map (Generic Depth)", 1,
+           L"ReShade's Generic Depth add-on finds the game's depth buffer every frame. Off saves GPU time, but the fog, "
+           L"the sky, the ceiling and the 3D from the depth need it. Applies when the game is started again."),
+    Toggle(L"ceiling", L"enabled", L"Ceiling in caves (via ReShade)", 0,
+           L"A stone vault over the black void in dungeons, first person only."),
+    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"steps", L"Ceiling relief steps", 4, 32, 1, 12,
+           L"Steps of the ray through the rock: more = finer relief, a dearer frame.")),
+    Needs(L"ceiling", L"enabled", 1, Toggle(L"ceiling", L"torches", L"Torches light the ceiling (CPU heavy!)", 0,
+           kTorchesTip)),
+    Only(kVr, Choice(L"@stereo3d", L"source", L"3D in the headset", 2,
+           {L"Mono - a flat screen", L"3D from the depth (ReShade)", L"Real stereo - two frames"},
+           L"Mono: no 3D. 3D from the depth: one picture, FlatVR makes the second eye from ReShade's depth "
+           L"(works with DLSS). Real stereo: the game draws the left eye, the right eye, the left... - true 3D, "
+           L"with DLSS too (each eye its own; TAA still smears it). Sets the Stereo tab's Real stereo and, while BodyWalk runs, FlatVR's "
+           L"3D source (BodyWalk 1.76 or later).")),
+    Only(kVr, Choice(L"stereo", L"headset_rate", L"Headset refresh rate", 3, {L"72 Hz", L"75 Hz", L"80 Hz", L"90 Hz", L"120 Hz"},
+           L"Sets the game's frame cap (in its own options, Settings.json): one picture a frame (mono, the 3D from the depth) "
+           L"at the headset's rate, real stereo at twice it (each eye at the rate). More pictures than the headset shows make "
+           L"the frame shake. The game reads it when it starts: set it with the game closed (it writes its own options on exit), or restart the game after.")),
+    Only(kVr, Slider(L"@game", L"Framerate Cap", L"Game frame cap, fps (0 = none)", 0, 300, 1, 180,
+           L"The game's own frame cap (its Settings.json). Set from the headset's rate and the 3D above; can be changed by hand.")),
+    Status(L"perf_restart", L"Need to restart the game: the render distance (room rings, models), the headset rate and the frame cap "
+                            L"take effect when the game starts again."),
 
     Tab(L"Camera"),
     // One group per view (Home, F1 - F4 in VR, F1 - F3 flat), the shared ones first.
@@ -362,6 +428,10 @@ std::vector<Item> g_items = {
     Only(kVr, Group(L"Input")),
     Toggle(L"input", L"bodywalk_pad", L"Gamepad straight from BodyWalk", 1,
            L"The game's gamepad is BodyWalk's own report, read directly: no virtual gamepad (ViGEm) needed."),
+    Only(kVr, Toggle(L"input", L"direct_walk", L"Walk straight from BodyWalk, not through the gamepad", 1,
+           L"Views F2-F4: BodyWalk's stick moves the hero through the game's own walking code, turned by the camera, in "
+           L"mouse mode and in controller mode alike; the gamepad's left stick is kept from the game outside menus (it "
+           L"would walk twice and switch the interface to the controller). Off: the hero walks through the gamepad's stick.")),
     Choice(L"input", L"inventory_button", L"\"D2R: Inventory\" presses", 0, {L"Menu (Start)", L"View (Back)"},
            L"The pad button BodyWalk's \"D2R: Inventory\" action sends to the game. In D2R's pad layout View opens the map."),
     Toggle(L"input", L"a_attack_only", L"A button only attacks", 0,
@@ -445,6 +515,9 @@ std::vector<Item> g_items = {
            L"The HUD is looked for below this height: 0 = top of the screen, 1 = bottom."),
 
     Group(L"Item labels on the ground"),
+    Hide(Slider(L"hud", L"monster_alpha", L"Name over a monster: opacity", 0, 1, 0.05f, 1,
+           L"The name plate the game shows over the monster under the cursor (its MonsterHealth panel), box and name "
+           L"alike: 1 = as the game draws it, 0 = gone. One setting for every view. Needs D2R_DepthFog.fx on in ReShade.")),   // hidden: not working yet
     Slider(L"hud_top", L"labels_alpha", L"Item labels: opacity", 0, 1, 0.05f, 1,
            L"How much of the dark box behind the names of items on the ground is drawn in the view from above (F1): 1 = as the game draws "
            L"it, 0 = no box, the names alone. The names stay bright. Through the game's label code (vrcam's log says "
@@ -485,6 +558,9 @@ std::vector<Item> g_items = {
     // F2's [hud_third] (vrcam runs it as view 2); its screen is head-locked, so
     // the toolbar stays in view wherever you look - hence size, depth and place.
     Group(L"Item labels on the ground"),
+    Hide(Slider(L"hud", L"monster_alpha", L"Name over a monster: opacity", 0, 1, 0.05f, 1,
+           L"The name plate the game shows over the monster under the cursor (its MonsterHealth panel), box and name "
+           L"alike: 1 = as the game draws it, 0 = gone. One setting for every view. Needs D2R_DepthFog.fx on in ReShade.")),   // hidden: not working yet
     Slider(L"hud_third", L"labels_alpha", L"Item labels: opacity", 0, 1, 0.05f, 1,
            L"How much of the dark box behind the names of items on the ground is drawn in third person (F2): 1 = as the game draws "
            L"it, 0 = no box, the names alone. The names stay bright. Through the game's label code (vrcam's log says "
@@ -519,6 +595,9 @@ std::vector<Item> g_items = {
            L"The map moved up the screen, % of the screen's height: + up (partly off the screen), - down; 0 = the top, "
            L"where the game puts it."),
     Group(L"Item labels on the ground"),
+    Hide(Slider(L"hud", L"monster_alpha", L"Name over a monster: opacity", 0, 1, 0.05f, 1,
+           L"The name plate the game shows over the monster under the cursor (its MonsterHealth panel), box and name "
+           L"alike: 1 = as the game draws it, 0 = gone. One setting for every view. Needs D2R_DepthFog.fx on in ReShade.")),   // hidden: not working yet
     Slider(L"hud_floor", L"labels_alpha", L"Item labels: opacity", 0, 1, 0.05f, 0.5f,
            L"How much of the dark box behind the names of items on the ground is drawn: 1 = as the game draws it, "
            L"0 = no box, the names alone. The names themselves stay bright. Should the game's label code not be found "
@@ -540,6 +619,9 @@ std::vector<Item> g_items = {
     Only(kVr, Tab(L"UI: F4 body")),
     // Read by BodyWalk's D2R Bridge (not vrcam), which asks FlatVR for it (host API 6).
     Group(L"Item labels on the ground"),
+    Hide(Slider(L"hud", L"monster_alpha", L"Name over a monster: opacity", 0, 1, 0.05f, 1,
+           L"The name plate the game shows over the monster under the cursor (its MonsterHealth panel), box and name "
+           L"alike: 1 = as the game draws it, 0 = gone. One setting for every view. Needs D2R_DepthFog.fx on in ReShade.")),   // hidden: not working yet
     Slider(L"hud", L"labels_alpha", L"Item labels: opacity", 0, 1, 0.05f, 1,
            L"How much of the dark box behind the names of items on the ground is drawn in first person (F4): 1 = as the game draws "
            L"it, 0 = no box, the names alone. The names stay bright. Through the game's label code (vrcam's log says "
@@ -570,17 +652,29 @@ std::vector<Item> g_items = {
     Choice(L"hud", L"bar_place", L"Where", 2, {L"Not shown", L"Left forearm", L"Right forearm", L"Low in front", L"Chest, low"},
            L"Where FlatVR hangs the toolbar taken out of the picture (Hide the game's interface: The toolbar). "
            L"On a forearm it lies along the inside of the arm: turn the palm up to read it."),
-    Slider(L"hud", L"bar_width", L"Length, m", 0.1f, 1.0f, 0.01f, 0.22f),
-    Choice(L"hud", L"bar_split", L"Cut in two", 0, {L"No - one strip", L"Yes, the red half on one side", L"Yes, the red half on the other side"},
+    // On a forearm (bar_*_arm)
+    ShowFor(L"hud", L"bar_place", kBarArm, Slider(L"hud", L"bar_width_arm", L"Length, m", 0.1f, 1.0f, 0.01f, 0.22f)),
+    ShowFor(L"hud", L"bar_place", kBarArm, Choice(L"hud", L"bar_split_arm", L"Cut in two", 0,
+           {L"No - one strip", L"Yes, the red half on one side", L"Yes, the red half on the other side"},
            L"The strip cut at the middle and the halves laid side by side: the blue orb's half stays where it was, the red "
            L"orb's half turned end for end beside it, so both orbs sit together at the wrist. Half as long, twice as wide. "
-           L"If they end up at the elbow, Rotate Z 180."),
-    Slider(L"hud", L"bar_along", L"Move X (along the arm), cm", -15, 25, 0.5f, 0, L"+ further up the arm, - towards the hand."),
-    Slider(L"hud", L"bar_side", L"Move Y (across the arm), cm", -20, 20, 0.5f, 0, L"Sideways in the strip's own plane."),
-    Slider(L"hud", L"bar_lift", L"Move Z (off the arm), cm", -10, 20, 0.5f, 0, L"+ further from the arm (or the chest), - closer."),
-    Slider(L"hud", L"bar_roll", L"Rotate X (round the arm), °", -180, 180, 1, 0, L"Turns the strip round its own length - on a forearm, round the arm."),
-    Slider(L"hud", L"bar_tip", L"Rotate Y (tip the far end), °", -90, 90, 1, 0, L"Raises or lowers the end towards the hand."),
-    Slider(L"hud", L"bar_spin", L"Rotate Z (in its plane), °", -180, 180, 1, 0, L"Spins the strip flat on the arm; 180 = the other way round."),
+           L"If they end up at the elbow, Rotate Z 180.")),
+    ShowFor(L"hud", L"bar_place", kBarArm, Slider(L"hud", L"bar_along_arm", L"Move X (along the arm), cm", -15, 25, 0.5f, 0, L"+ further up the arm, - towards the hand.")),
+    ShowFor(L"hud", L"bar_place", kBarArm, Slider(L"hud", L"bar_side_arm", L"Move Y (across the arm), cm", -20, 20, 0.5f, 0, L"Sideways in the strip's own plane.")),
+    ShowFor(L"hud", L"bar_place", kBarArm, Slider(L"hud", L"bar_lift_arm", L"Move Z (off the arm), cm", -10, 20, 0.5f, 0, L"+ further from the arm, - closer.")),
+    ShowFor(L"hud", L"bar_place", kBarArm, Slider(L"hud", L"bar_roll_arm", L"Rotate X (round the arm), °", -180, 180, 1, 0, L"Turns the strip round the arm.")),
+    ShowFor(L"hud", L"bar_place", kBarArm, Slider(L"hud", L"bar_tip_arm", L"Rotate Y (tip the far end), °", -90, 90, 1, 0, L"Raises or lowers the end towards the hand.")),
+    ShowFor(L"hud", L"bar_place", kBarArm, Slider(L"hud", L"bar_spin_arm", L"Rotate Z (in its plane), °", -180, 180, 1, 0, L"Spins the strip flat on the arm; 180 = the other way round.")),
+    // On the body (bar_*_body): low in front or on the chest - no moving along an arm
+    ShowFor(L"hud", L"bar_place", kBarBody, Slider(L"hud", L"bar_width_body", L"Length, m", 0.1f, 1.0f, 0.01f, 0.22f)),
+    ShowFor(L"hud", L"bar_place", kBarBody, Choice(L"hud", L"bar_split_body", L"Cut in two", 0,
+           {L"No - one strip", L"Yes, the red half on one side", L"Yes, the red half on the other side"},
+           L"The strip cut at the middle and the halves laid side by side, both orbs together at one end. Half as long, twice as wide.")),
+    ShowFor(L"hud", L"bar_place", kBarBody, Slider(L"hud", L"bar_side_body", L"Move Y (across the strip), cm", -20, 20, 0.5f, 0, L"Sideways in the strip's own plane.")),
+    ShowFor(L"hud", L"bar_place", kBarBody, Slider(L"hud", L"bar_lift_body", L"Move Z (off its face), cm", -10, 20, 0.5f, 0, L"+ towards the eyes, - away.")),
+    ShowFor(L"hud", L"bar_place", kBarBody, Slider(L"hud", L"bar_roll_body", L"Rotate X (round its length), °", -180, 180, 1, 0, L"Tilts the strip towards you or away.")),
+    ShowFor(L"hud", L"bar_place", kBarBody, Slider(L"hud", L"bar_tip_body", L"Rotate Y (tip one end), °", -90, 90, 1, 0, L"Raises or lowers one end.")),
+    ShowFor(L"hud", L"bar_place", kBarBody, Slider(L"hud", L"bar_spin_body", L"Rotate Z (in its plane), °", -180, 180, 1, 0, L"Spins the strip flat; 180 = the other way round.")),
     Group(L"Map in the headset"),
     Choice(L"hud", L"map_place", L"Where", 1, {L"Not shown", L"Left hand", L"Right hand", L"Low in front", L"Chest, low"},
            L"Where FlatVR hangs the corner map taken out of the picture (Corner map: Out of the picture). "
@@ -624,7 +718,7 @@ std::vector<Item> g_items = {
            L"was see-through; from above it hid the hero."),
     Group(L"Render distance"),
     Slider(L"render", L"rings", L"Room rings around the hero", 1, 8, 1, 4, L"Extra room rings around the hero. With fog, 4-6 is enough."),
-    Slider(L"render", L"model_radius", L"Model visibility radius", 150, 6000, 50, 1500, L"The game's own is 150."),
+    Slider(L"render", L"model_radius", L"Model visibility radius", 150, 1000, 50, 300, L"The game's own is 150."),
 
     Tab(L"Sky"),
     Group(L"Sky"),
@@ -1291,7 +1385,106 @@ const wchar_t* SectionOf(const Item& it) {
 }
 const wchar_t* FileOf(const Item& it) { return wcscmp(it.section, L"@ui") == 0 ? g_uiIni : g_ini; }
 
+// The Performance tab's presets (2026-10-08): Potato (Low with the 3D from the depth), Low, Medium (the shipped defaults), High.
+// Not kept anywhere: the drop-down shows whichever preset the keys match, else Custom.
+constexpr int kPresets = 4;   // Potato, Low, Medium, High; then Custom
+struct PresetKey { const wchar_t* section; const wchar_t* key; float v[kPresets]; };
+const PresetKey kPreset[] = {
+    {L"render", L"rings", {1, 1, 2, 3}},
+    {L"render", L"model_radius", {150, 150, 300, 400}},
+    {L"fog", L"enabled", {1, 1, 1, 1}},
+    {L"fog", L"start", {30, 30, 30, 30}},
+    {L"fog", L"end", {100, 100, 200, 250}},
+    {L"fog", L"caves", {1, 1, 1, 1}},
+    {L"fog", L"caves_start", {60, 60, 100, 100}},
+    {L"fog", L"caves_end", {100, 100, 200, 200}},
+    {L"sky", L"enabled", {1, 1, 1, 1}},
+    {L"@reshade", L"generic_depth", {1, 1, 1, 1}},
+    {L"ceiling", L"enabled", {0, 0, 1, 1}},
+    {L"ceiling", L"steps", {8, 8, 12, 20}},
+    {L"ceiling", L"torches", {0, 0, 0, 1}},
+    {L"@stereo3d", L"source", {1, 2, 2, 2}},   // Potato: the 3D from ReShade's depth, one frame a picture
+    {L"stereo", L"headset_rate", {0, 3, 3, 3}},   // Potato 72 Hz, the others 90 (the game's cap follows: ApplyFrameCap)
+};
+float ReadValue(const Item& it);
+const Item* PresetItem(const wchar_t* section, const wchar_t* key) {
+    for (const Item& it : g_items)
+        if (it.key && it.section && wcscmp(it.section, section) == 0 && wcscmp(it.key, key) == 0) return &it;
+    return nullptr;
+}
+int MatchPreset() {
+    for (int p = 0; p < kPresets; ++p) {
+        bool all = true;
+        for (const PresetKey& k : kPreset) {
+            const Item* it = PresetItem(k.section, k.key);
+            if (it && fabsf(ReadValue(*it) - k.v[p]) > 0.001f) { all = false; break; }
+        }
+        if (all) return p;
+    }
+    return kPresets;
+}
+
+// "@reshade" generic_depth: ReShade's Generic Depth add-on, on unless its name is in
+// [ADDON] DisabledAddons of the ReShade.ini beside the game (read when the game starts).
+std::wstring GameFolder();
+constexpr const wchar_t* kGenericDepth = L"Generic Depth";
+std::vector<std::wstring> DisabledAddons() {
+    wchar_t buf[2048] = {};
+    GetPrivateProfileStringW(L"ADDON", L"DisabledAddons", L"", buf, 2048, (GameFolder() + L"ReShade.ini").c_str());
+    std::vector<std::wstring> out;
+    std::wstring cur;
+    for (const wchar_t* c = buf;; ++c) {
+        if (*c == L',' || !*c) {
+            while (!cur.empty() && cur.back() == L' ') cur.pop_back();
+            size_t b = 0;
+            while (b < cur.size() && cur[b] == L' ') ++b;
+            if (b < cur.size()) out.push_back(cur.substr(b));
+            cur.clear();
+            if (!*c) break;
+        } else cur += *c;
+    }
+    return out;
+}
+float ReadReShadeValue(const Item&) {
+    for (const std::wstring& a : DisabledAddons()) if (_wcsicmp(a.c_str(), kGenericDepth) == 0) return 0.0f;
+    return 1.0f;
+}
+void WriteReShadeValue(const Item&, float v) {
+    const std::wstring ini = GameFolder() + L"ReShade.ini";
+    if (GetFileAttributesW(ini.c_str()) == INVALID_FILE_ATTRIBUTES) return;   // no ReShade: nothing to switch
+    std::wstring list;
+    for (const std::wstring& a : DisabledAddons()) {
+        if (_wcsicmp(a.c_str(), kGenericDepth) == 0) continue;
+        list += (list.empty() ? L"" : L",") + a;
+    }
+    if (v == 0.0f) list += (list.empty() ? L"" : L",") + std::wstring(kGenericDepth);
+    WritePrivateProfileStringW(L"ADDON", L"DisabledAddons", list.c_str(), ini.c_str());
+}
+
+// "@stereo3d" source: 0 mono, 1 3D from ReShade's depth, 2 real stereo - kept as [stereo]
+// source, with [stereo] afr (real stereo) the truth: the Stereo tab switches that alone.
+void SignalBridge(const wchar_t* name);
+float ReadStereo3D() {
+    const bool afr = GetPrivateProfileIntW(L"stereo", L"afr", 0, g_ini) != 0;
+    const int source = GetPrivateProfileIntW(L"stereo", L"source", afr ? 2 : 1, g_ini);
+    if (afr) return 2.0f;
+    return source == 0 ? 0.0f : 1.0f;
+}
+void WriteStereo3D(float v) {
+    const int s = std::clamp((int)std::lround(v), 0, 2);
+    wchar_t buf[8];
+    swprintf_s(buf, L"%d", s);
+    WritePrivateProfileStringW(L"stereo", L"source", buf, g_ini);
+    WritePrivateProfileStringW(L"stereo", L"afr", s == 2 ? L"1" : L"0", g_ini);
+    // BodyWalk's FlatVR follows, through the D2R Bridge (no event = no BodyWalk running)
+    static const wchar_t* const kName[3] = {D2RVR_FLATVR_3D_NONE_NAME, D2RVR_FLATVR_3D_DEPTH_NAME, D2RVR_FLATVR_3D_PAIR_NAME};
+    SignalBridge(kName[s]);
+}
+
 float ReadValue(const Item& it) {
+    if (wcscmp(it.section, L"@preset") == 0) return (float)MatchPreset();
+    if (wcscmp(it.section, L"@stereo3d") == 0) return ReadStereo3D();
+    if (wcscmp(it.section, L"@reshade") == 0) return ReadReShadeValue(it);
     if (wcscmp(it.section, L"@game") == 0) { float v = it.def; ReadGameValue(it, &v); return v; }
     if (wcscmp(it.section, L"@bodywalk") == 0) return ReadBodyWalkValue(it);
     wchar_t buf[64], def[64];
@@ -1308,13 +1501,34 @@ float ReadValue(const Item& it) {
     return end != buf && std::isfinite(v) ? v : it.def;
 }
 
+void ShowPreset();
+void ApplyFrameCap();
 void WriteValue(const Item& it, float v) {
+    if (wcscmp(it.section, L"@preset") == 0) return;   // ApplyPreset, from the drop-down
+    if (wcscmp(it.section, L"@stereo3d") == 0) { WriteStereo3D(v); ApplyFrameCap(); ShowPreset(); return; }
+    if (wcscmp(it.section, L"@reshade") == 0) { WriteReShadeValue(it, v); ShowPreset(); return; }
     if (wcscmp(it.section, L"@game") == 0) { WriteGameValue(it, v); return; }
     if (wcscmp(it.section, L"@bodywalk") == 0) { WriteBodyWalkValue(it, v); return; }
     wchar_t buf[64];
     if (it.step >= 1.0f) swprintf_s(buf, L"%d", (int)std::lround(v));
     else swprintf_s(buf, L"%g", std::round(v / it.step) * it.step);
     WritePrivateProfileStringW(SectionOf(it), it.key, buf, FileOf(it));
+    if (wcscmp(it.section, L"stereo") == 0 && (wcscmp(it.key, L"headset_rate") == 0 || wcscmp(it.key, L"afr") == 0)) ApplyFrameCap();
+    ShowPreset();   // a key of a preset changed by hand: Custom (or the preset it now matches)
+}
+
+// The game's frame cap (its Settings.json) from the headset's rate: one picture a
+// frame at the rate, real stereo (a pair, eye by eye) at twice it.
+const Item* PresetItem(const wchar_t* section, const wchar_t* key);
+void RefreshControls();
+void ApplyFrameCap() {
+    static const int kHz[5] = {72, 75, 80, 90, 120};
+    const int i = std::clamp((int)GetPrivateProfileIntW(L"stereo", L"headset_rate", 3, g_ini), 0, 4);
+    const bool pair = GetPrivateProfileIntW(L"stereo", L"afr", 0, g_ini) != 0;
+    if (const Item* cap = PresetItem(L"@game", L"Framerate Cap")) {
+        WriteGameValue(*cap, (float)(pair ? 2 * kHz[i] : kHz[i]));
+        RefreshControls();
+    }
 }
 
 int Steps(const Item& it) { return (int)std::lround((it.max - it.min) / it.step); }
@@ -1466,10 +1680,38 @@ void Build(HWND page) {
         for (Item::Need& nd : it.needs)
             for (size_t j = 0; j < g_items.size(); ++j)
                 if (g_items[j].key && wcscmp(g_items[j].section, nd.section) == 0 && wcscmp(g_items[j].key, nd.key) == 0) nd.item = (int)j;
+    for (Item& it : g_items)
+        if (it.showFor.key)
+            for (size_t j = 0; j < g_items.size(); ++j)
+                if (g_items[j].key && wcscmp(g_items[j].section, it.showFor.section) == 0 && wcscmp(g_items[j].key, it.showFor.key) == 0) it.showFor.item = (int)j;
 }
 
 // Greys out what the current values make unused (the FOV slider while the FOV comes from FlatVR...).
+void LayoutPage();
+// [hud] bar_*: one set for every place before; now a set for the forearm and one
+// for the body, both starting from it.
+void CarryBarKeys() {
+    for (const wchar_t* name : {L"width", L"split", L"along", L"side", L"lift", L"roll", L"tip", L"spin"}) {
+        wchar_t old[32], v[64];
+        swprintf_s(old, L"bar_%s", name);
+        if (!GetPrivateProfileStringW(L"hud", old, L"", v, 64, g_ini) || !v[0]) continue;
+        for (const wchar_t* set : {L"_arm", L"_body"}) {
+            wchar_t key[48], have[64];
+            swprintf_s(key, L"bar_%s%s", name, set);
+            if (!GetPrivateProfileStringW(L"hud", key, L"", have, 64, g_ini) || !have[0])
+                WritePrivateProfileStringW(L"hud", key, v, g_ini);
+        }
+    }
+}
 void UpdateEnabled() {
+    bool moved = false;   // a ShowFor item came or went: the page laid out again
+    for (Item& it : g_items) {
+        if (it.showFor.item < 0) continue;
+        const long v = std::lround(ReadValue(g_items[it.showFor.item]));
+        const bool off = v < 0 || v > 31 || !(it.showFor.mask & (1u << v));
+        if (off != it.off) { it.off = off; moved = true; }
+    }
+    if (moved && g_page) LayoutPage();
     for (const Item& it : g_items) {
         if (it.needs.empty()) continue;
         BOOL on = TRUE;
@@ -1481,7 +1723,50 @@ void UpdateEnabled() {
     }
 }
 
-bool ShownNow(const Item& it) { return it.kind != Kind::Tab && it.tab == g_tab && (it.modes & PlatformBit()) != 0 && !it.hidden; }
+// Every control as the ini has it now: after a preset wrote several keys, the same key
+// shown on two tabs, etc.
+void RefreshControls() {
+    for (Item& it : g_items) {
+        if (!it.key || !it.ctl || !it.section) continue;
+        if (wcscmp(it.section, L"@status") == 0 || wcscmp(it.section, L"@update") == 0 || wcscmp(it.section, L"@run") == 0) continue;
+        switch (it.kind) {
+        case Kind::Slider: {
+            const float v = ReadValue(it);
+            SendMessageW(it.ctl, TBM_SETPOS, TRUE, ToPos(it, v));
+            ShowValue(it, v);
+            break;
+        }
+        case Kind::Toggle:
+        case Kind::Invert: {
+            const float v = ReadValue(it);
+            const bool on = it.kind == Kind::Toggle ? v != 0.0f : v < 0.0f;
+            SendMessageW(it.ctl, BM_SETCHECK, on ? BST_CHECKED : BST_UNCHECKED, 0);
+            break;
+        }
+        case Kind::Choice: SendMessageW(it.ctl, CB_SETCURSEL, ToPos(it, ReadValue(it)), 0); break;
+        default: break;
+        }
+    }
+}
+
+void ShowPreset() {
+    for (Item& it : g_items)
+        if (it.ctl && it.section && wcscmp(it.section, L"@preset") == 0) SendMessageW(it.ctl, CB_SETCURSEL, MatchPreset(), 0);
+}
+
+void ApplyPreset(int p) {
+    if (p < 0 || p >= kPresets) return;
+    for (const PresetKey& k : kPreset) {
+        if (const Item* it = PresetItem(k.section, k.key)) { WriteValue(*it, k.v[p]); continue; }
+        wchar_t buf[32];
+        swprintf_s(buf, L"%g", k.v[p]);
+        WritePrivateProfileStringW(k.section, k.key, buf, g_ini);
+    }
+    RefreshControls();
+    UpdateEnabled();
+}
+
+bool ShownNow(const Item& it) { return it.kind != Kind::Tab && it.tab == g_tab && (it.modes & PlatformBit()) != 0 && !it.hidden && !it.off; }
 
 // The strip: the current platform's tabs only. The tab shown stays if it is one of them.
 void RebuildTabs() {
@@ -1534,7 +1819,7 @@ void LayoutPage() {
         y += headH;
         for (size_t i = g.first + 1; i < g.end; ++i) {
             const Item& it = g_items[i];
-            if (!(it.modes & PlatformBit()) || it.hidden) continue;
+            if (!(it.modes & PlatformBit()) || it.hidden || it.off) continue;
             switch (it.kind) {
             case Kind::Radio:   // a row each
                 for (size_t k = 0; k < it.radios.size(); ++k)
@@ -1653,6 +1938,7 @@ void SelectTab(int t) {
     g_tab = g_tabIds[t];
     SendMessageW(g_tabs, TCM_SETCURSEL, t, 0);
     g_scrollY = 0;
+    RefreshControls();   // a key shown on two tabs (Performance and its own) changed on the other
     LayoutPage();
 }
 
@@ -1905,8 +2191,11 @@ void SignalBridge(const wchar_t* name) {
 // The VR status column: what BodyWalk, its D2R Bridge, FlatVR and the game
 // say right now. BodyWalk's own settings file, the plugin on disk, and the
 // three shared blocks each side writes while it runs.
+void D2RLoaderStatus();   // D2RLoader's row and its button (below, by the update check)
+
 void RefreshStatus() {
     if (g_platform != 1 || g_tab != 0) return;
+    D2RLoaderStatus();
     const std::wstring dir = BodyWalkDir();
     // Standalone or Steam build: whichever settings file was written last.
     std::wstring cfg;
@@ -1943,8 +2232,9 @@ void RefreshStatus() {
 
     // The game's own video settings (Saved Games\Diablo II Resurrected\Settings.json,
     // written by the game when its options close). The mod draws the eyes in turn:
-    // anything that builds a frame from the ones before it - DLSS, TAA - mixes the
-    // two eyes, and VSync halves the frames each eye gets. "Anti Aliasing": 1 is
+    // TAA builds a frame from the ones before it and mixes the eyes (DLSS no longer:
+    // each eye gets a DLSS of its own and its own motion, 0.145);
+    // VSync halves the frames each eye gets. "Anti Aliasing": 1 is
     // FXAA, 2 TAA (as the game's own menu shows them, 2026-10-06).
     {
         std::string json;
@@ -1958,16 +2248,21 @@ void RefreshStatus() {
             SetStatus(L"game_video", kUnknown, L"The game's video settings: not found yet (start the game once)");
         } else {
             std::wstring bad, warn;
-            if (value("NVIDIA DLSS") > 0) bad += L"DLSS on - switch it off. ";
             if (value("VSync") > 0) bad += L"Vertical Sync on - switch it off. ";
             // Off, FXAA or MSAA are all fine; only TAA (2) mixes the eyes
             // (docs/plan_left_eye_shake.md: "Anti Aliasing": 2 was TAA).
             if (value("Anti Aliasing") == 2) bad += L"Anti-Aliasing is TAA - pick FXAA or MSAA. ";
             const int cap = value("Framerate Cap");
-            if (cap > 0 && cap < 180) warn += L"Framerate Cap below 180 (90 for each eye). ";
+            {   // the headset's rate for one picture a frame, twice it for real stereo (Performance tab)
+                static const int kHz[5] = {72, 75, 80, 90, 120};
+                const int hz = kHz[std::clamp((int)GetPrivateProfileIntW(L"stereo", L"headset_rate", 3, g_ini), 0, 4)];
+                const bool pair = GetPrivateProfileIntW(L"stereo", L"afr", 0, g_ini) != 0;
+                const int want = pair ? 2 * hz : hz;
+                if (cap > 0 && cap < want) warn += L"Framerate Cap below " + std::to_wstring(want) + (pair ? L" (the headset's rate for each eye). " : L" (the headset's rate). ");
+            }
             if (!bad.empty()) SetStatus(L"game_video", kBad, (L"Game video: " + bad + L"(Options > Video)").c_str());
             else if (!warn.empty()) SetStatus(L"game_video", kWarn, (L"Game video: " + warn).c_str());
-            else SetStatus(L"game_video", kOk, L"Game video settings fine: DLSS, VSync and TAA off");
+            else SetStatus(L"game_video", kOk, L"Game video settings fine: VSync and TAA off");
         }
     }
 
@@ -2333,6 +2628,221 @@ void ShowUpdateRow(bool download, bool changelog) {
 }
 
 // manual: the "Check for updates" button - asks even with [update] check=0.
+// ---------------------------------------------------------------------------
+// D2RLoader: its row on the Home page's Status, and the button that puts it in.
+// The mod runs under D2RLoader 1.3.1 (vrcam is made for its layout). A player
+// found its download refused by Edge and Chrome (2026-10-08): the button fetches
+// that very file from d2rloader.net, checks it against the SHA-256 the site
+// publishes and unpacks it beside D2R.exe - only when the player clicks it.
+constexpr wchar_t kD2RLoaderHost[] = L"d2rloader.net";
+constexpr wchar_t kD2RLoaderPath[] = L"/downloads/D2RLoader-1.3.1-beta.zip";
+constexpr wchar_t kD2RLoaderZip[] = L"D2RLoader-1.3.1-beta.zip";
+constexpr char kD2RLoaderSha256[] = "9286c6b5bff7f1043658411dbea305faa9698b6a455e6441668fc6d02c22aad7";
+constexpr UINT WM_APP_D2RL = WM_APP + 2;
+std::atomic<bool> g_d2rlBusy{false};
+std::wstring g_d2rlError;   // the last try's failure, kept on the row until D2RLoader is there (UI thread)
+struct D2RLProgress { int state; std::wstring text; bool done; };
+
+// The game's folder: this program sits beside D2R.exe, and a copy in d2rloader\plugins.
+std::wstring GameFolder() {
+    wchar_t exe[MAX_PATH];
+    DWORD n = GetModuleFileNameW(nullptr, exe, MAX_PATH);
+    while (n && exe[n - 1] != L'\\') --n;
+    std::wstring dir(exe, n);
+    const std::wstring tail = L"d2rloader\\plugins\\";
+    if (dir.size() > tail.size() && _wcsicmp(dir.c_str() + dir.size() - tail.size(), tail.c_str()) == 0)
+        dir.resize(dir.size() - tail.size());
+    return dir;
+}
+
+// allow_global_extensions = true in d2rloader\config\d2rloader.toml: D2RLoader loads
+// the plugins in d2rloader\plugins only with it (as D2R VR Setup's EnableGlobalExtensions).
+void EnableGlobalExtensions(const std::wstring& game) {
+    const std::wstring path = game + L"d2rloader\\config\\d2rloader.toml";
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return;
+    std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    in.close();
+    const std::string off = "allow_global_extensions = false";
+    const size_t at = text.find(off);
+    if (at == std::string::npos) return;
+    text.replace(at, off.size(), "allow_global_extensions = true");
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    out << text;
+    LogLine(L"d2rloader: allow_global_extensions switched on - D2RLoader loads the mod's plugins");
+}
+
+void D2RLoaderStatus() {
+    const std::wstring game = GameFolder();
+    const bool have = Exists(game + L"D2RLoader.exe");
+    if (!g_d2rlBusy.load()) {
+        if (have) {
+            EnableGlobalExtensions(game);
+            SetStatus(L"d2rloader", kOk, L"D2RLoader installed");
+        } else {
+            SetStatus(L"d2rloader", kBad, g_d2rlError.empty() ? L"D2RLoader is not in the game's folder - the mod runs only under it"
+                                                               : g_d2rlError.c_str());
+        }
+    }
+    if (Item* b = FindItem(L"@run", L"d2rloader_get"); b && b->hidden != have) {
+        b->hidden = have;
+        LayoutPage();
+    }
+}
+
+void PostD2RL(HWND wnd, int state, std::wstring text, bool done) {
+    auto* p = new D2RLProgress{state, std::move(text), done};
+    if (!PostMessageW(wnd, WM_APP_D2RL, 0, (LPARAM)p)) delete p;   // the window is gone
+}
+
+bool Sha256Hex(const std::vector<uint8_t>& data, std::string* hex) {
+    BCRYPT_ALG_HANDLE alg = nullptr;
+    BCRYPT_HASH_HANDLE h = nullptr;
+    uint8_t out[32];
+    const bool ok = BCryptOpenAlgorithmProvider(&alg, BCRYPT_SHA256_ALGORITHM, nullptr, 0) == 0 &&
+                    BCryptCreateHash(alg, &h, nullptr, 0, nullptr, 0, 0) == 0 &&
+                    BCryptHashData(h, (PUCHAR)data.data(), (ULONG)data.size(), 0) == 0 &&
+                    BCryptFinishHash(h, out, sizeof out, 0) == 0;
+    if (h) BCryptDestroyHash(h);
+    if (alg) BCryptCloseAlgorithmProvider(alg, 0);
+    if (!ok) return false;
+    static const char digits[] = "0123456789abcdef";
+    hex->clear();
+    for (uint8_t b : out) { *hex += digits[b >> 4]; *hex += digits[b & 15]; }
+    return true;
+}
+
+// PowerShell takes a whole script as base64 of UTF-16LE (-EncodedCommand): no quoting of paths on its command line.
+std::wstring EncodedCommand(const std::wstring& script) {
+    DWORD n = 0;
+    const BYTE* bytes = (const BYTE*)script.data();
+    const DWORD size = (DWORD)(script.size() * sizeof(wchar_t));
+    if (!CryptBinaryToStringW(bytes, size, CRYPT_STRING_BASE64 | CRYPT_STRING_NOCRLF, nullptr, &n)) return L"";
+    std::wstring out(n, L'\0');
+    if (!CryptBinaryToStringW(bytes, size, CRYPT_STRING_BASE64 | CRYPT_STRING_NOCRLF, out.data(), &n)) return L"";
+    out.resize(n);
+    return out;
+}
+
+// A path inside a PowerShell single-quoted string.
+std::wstring PsQuote(const std::wstring& s) {
+    std::wstring out = L"'";
+    for (wchar_t c : s) { out += c; if (c == L'\'') out += L'\''; }
+    return out + L"'";
+}
+
+void D2RLoaderThread(HWND wnd, std::wstring game) {
+    auto fail = [&](const std::wstring& why) { LogLine(L"d2rloader: " + why); PostD2RL(wnd, kBad, why, true); };
+    std::vector<uint8_t> data;
+    {
+        HINTERNET session = WinHttpOpen(L"D2RVR-Settings/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME,
+                                        WINHTTP_NO_PROXY_BYPASS, 0);
+        HINTERNET connect = session ? WinHttpConnect(session, kD2RLoaderHost, INTERNET_DEFAULT_HTTPS_PORT, 0) : nullptr;
+        HINTERNET request = connect ? WinHttpOpenRequest(connect, L"GET", kD2RLoaderPath, nullptr, WINHTTP_NO_REFERER,
+                                                         WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE) : nullptr;
+        DWORD status = 0, size = sizeof status;
+        const bool sent = request && WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) &&
+                          WinHttpReceiveResponse(request, nullptr) &&
+                          WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX,
+                                              &status, &size, WINHTTP_NO_HEADER_INDEX) && status == 200;
+        if (sent) {
+            DWORD total = 0;
+            size = sizeof total;
+            WinHttpQueryHeaders(request, WINHTTP_QUERY_CONTENT_LENGTH | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX,
+                                &total, &size, WINHTTP_NO_HEADER_INDEX);
+            int shown = -1;
+            for (;;) {
+                DWORD avail = 0;
+                if (!WinHttpQueryDataAvailable(request, &avail) || !avail) break;
+                const size_t at = data.size();
+                data.resize(at + avail);
+                DWORD got = 0;
+                if (!WinHttpReadData(request, data.data() + at, avail, &got)) { data.clear(); break; }
+                data.resize(at + got);
+                const int pct = total ? (int)((uint64_t)data.size() * 100 / total) : -1;
+                if (pct >= 0 && pct / 5 != shown / 5) {
+                    shown = pct;
+                    PostD2RL(wnd, kUnknown, L"Downloading D2RLoader 1.3.1 from d2rloader.net... " + std::to_wstring(pct) + L"%", false);
+                }
+            }
+        }
+        if (request) WinHttpCloseHandle(request);
+        if (connect) WinHttpCloseHandle(connect);
+        if (session) WinHttpCloseHandle(session);
+        if (!sent) { fail(L"Could not download D2RLoader from d2rloader.net (HTTP " + std::to_wstring(status) + L") - try again, or get it from the site"); return; }
+        if (data.empty()) { fail(L"The download of D2RLoader broke off - try again"); return; }
+    }
+    std::string hex;
+    if (!Sha256Hex(data, &hex) || hex != kD2RLoaderSha256) {
+        fail(L"The downloaded D2RLoader is not the file d2rloader.net publishes (SHA-256 differs) - nothing was installed");
+        return;
+    }
+    wchar_t tmp[MAX_PATH];
+    GetTempPathW(MAX_PATH, tmp);
+    const std::wstring zip = std::wstring(tmp) + kD2RLoaderZip;
+    {
+        std::ofstream out(zip, std::ios::binary | std::ios::trunc);
+        out.write((const char*)data.data(), (std::streamsize)data.size());
+        if (!out) { fail(L"Could not save the D2RLoader download to " + zip); return; }
+    }
+    PostD2RL(wnd, kUnknown, L"Unpacking D2RLoader into the game's folder...", false);
+    // Unpacked to a folder of its own first: wherever D2RLoader.exe lies in the
+    // archive, its folder's contents go beside D2R.exe.
+    const std::wstring unpack = std::wstring(tmp) + L"d2rloader_unpack";
+    const std::wstring script =
+        L"$ErrorActionPreference='Stop'; $t=" + PsQuote(unpack) + L"; $g=" + PsQuote(game) +
+        L"; if (Test-Path -LiteralPath $t) { Remove-Item -LiteralPath $t -Recurse -Force }" +
+        L"; Expand-Archive -LiteralPath " + PsQuote(zip) + L" -DestinationPath $t -Force" +
+        L"; $e = Get-ChildItem -LiteralPath $t -Recurse -Filter 'D2RLoader.exe' | Select-Object -First 1" +
+        L"; if (-not $e) { exit 3 }" +
+        L"; Get-ChildItem -LiteralPath $e.DirectoryName | Copy-Item -Destination $g -Recurse -Force" +
+        L"; Remove-Item -LiteralPath $t -Recurse -Force; exit 0";
+    std::wstring cmd = L"powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand " + EncodedCommand(script);
+    STARTUPINFOW si{sizeof si};
+    PROCESS_INFORMATION pi{};
+    DWORD code = 1;
+    if (CreateProcessW(nullptr, cmd.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
+        WaitForSingleObject(pi.hProcess, 120000);
+        GetExitCodeProcess(pi.hProcess, &code);
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+    }
+    DeleteFileW(zip.c_str());
+    if (code == 3) { fail(L"The D2RLoader archive has no D2RLoader.exe in it - nothing was installed"); return; }
+    if (code != 0) { fail(L"Could not unpack D2RLoader into the game's folder (code " + std::to_wstring(code) + L")"); return; }
+    if (!Exists(game + L"D2RLoader.exe")) {
+        // Unpacked, and gone: an antivirus took it. Said as it is; the player decides.
+        fail(L"D2RLoader was unpacked, but D2RLoader.exe is not in the game's folder - an antivirus may have removed it "
+             L"(Windows Security > Protection history)");
+        return;
+    }
+    EnableGlobalExtensions(game);
+    LogLine(L"d2rloader: 1.3.1 installed into " + game);
+    PostD2RL(wnd, kOk, L"D2RLoader 1.3.1 installed - start the game with D2RLoader.exe", true);
+}
+
+void StartD2RLoaderInstall() {
+    if (g_d2rlBusy.exchange(true)) return;
+    if (Item* b = FindItem(L"@run", L"d2rloader_get")) EnableWindow(b->ctl, FALSE);
+    SetStatus(L"d2rloader", kUnknown, L"Downloading D2RLoader 1.3.1 from d2rloader.net...");
+    try {
+        std::thread(D2RLoaderThread, g_main, GameFolder()).detach();
+    } catch (const std::exception&) {
+        g_d2rlBusy.store(false);
+        SetStatus(L"d2rloader", kBad, L"Could not start the download");
+    }
+}
+
+void OnD2RLProgress(D2RLProgress* raw) {
+    std::unique_ptr<D2RLProgress> p(raw);
+    SetStatus(L"d2rloader", p->state, p->text.c_str());
+    if (!p->done) return;
+    g_d2rlBusy.store(false);
+    g_d2rlError = p->state == kOk ? L"" : p->text;
+    if (Item* b = FindItem(L"@run", L"d2rloader_get")) EnableWindow(b->ctl, TRUE);
+    if (p->state == kOk) D2RLoaderStatus();   // the button goes away with D2RLoader there
+}
+
 void StartUpdateCheck(bool manual = false) {
     ++g_updateGen;   // an answer still on its way is stale now
     g_updateUrl.clear();
@@ -2461,7 +2971,10 @@ LRESULT CALLBACK PageProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
                 RefreshWeaponList();
                 return 0;
             }
-            if (it.kind == Kind::Choice && HIWORD(w) == CBN_SELCHANGE) {
+            if (it.kind == Kind::Choice && HIWORD(w) == CBN_SELCHANGE && wcscmp(it.section, L"@preset") == 0) {
+                ApplyPreset((int)SendMessageW(it.ctl, CB_GETCURSEL, 0, 0));
+                ShowPreset();   // Custom picked: back to what the keys match
+            } else if (it.kind == Kind::Choice && HIWORD(w) == CBN_SELCHANGE) {
                 const int sel = (int)SendMessageW(it.ctl, CB_GETCURSEL, 0, 0);
                 WriteValue(it, FromPos(it, sel));
                 if (wcscmp(it.section, L"@ui") == 0 && wcscmp(it.key, L"weapon") == 0) ShowWeapon(sel + 1);
@@ -2471,6 +2984,7 @@ LRESULT CALLBACK PageProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
                 else OpenDownload();
             } else if (HIWORD(w) == BN_CLICKED && it.kind == Kind::Button && wcscmp(it.section, L"@run") == 0) {
                 if (wcscmp(it.key, L"bodywalk") == 0) StartBodyWalk();
+                else if (wcscmp(it.key, L"d2rloader_get") == 0) StartD2RLoaderInstall();
                 else SignalBridge(wcscmp(it.key, L"flatvr_start") == 0 ? D2RVR_FLATVR_START_NAME : D2RVR_FLATVR_STOP_NAME);
             } else if (HIWORD(w) == BN_CLICKED && it.kind == Kind::Button) {
                 WriteValue(it, (float)(((int)ReadValue(it) + 1) % 1000000));
@@ -2510,6 +3024,7 @@ LRESULT CALLBACK WndProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
                                    L"Changes apply at once while the game runs.   F1 - F4: the view (Home).   F12: next view.   "
                                    L"F11: \"ahead\" is where I look.   Ctrl + wheel: zoom.   Ctrl + Tab: next tab.",
                                    WS_CHILD | WS_VISIBLE | SS_LEFT | SS_NOPREFIX, 0, 0, 0, 0, wnd, nullptr, inst, nullptr);
+        CarryBarKeys();
         Build(g_page);
         UpdateEnabled();
         g_platform = GetPrivateProfileIntW(L"mode", L"platform", 1, g_ini) != 0 ? 1 : 0;
@@ -2523,6 +3038,7 @@ LRESULT CALLBACK WndProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
         return 0;
     }
     case WM_APP_UPDATE: OnUpdateResult((UpdateResult*)l); return 0;
+    case WM_APP_D2RL: OnD2RLProgress((D2RLProgress*)l); return 0;
     case WM_TIMER: {
         FollowWeapon();
         RefreshRadios();

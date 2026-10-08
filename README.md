@@ -156,3 +156,10 @@ Third-party: MinHook (BSD 2-clause, `third_party/minhook`), the ReShade SDK
 headers (BSD 3-clause, `external/reshade`), the D2RLoader plugin SDK (MIT).
 Diablo II: Resurrected is Blizzard Entertainment's; this project is not affiliated
 with or endorsed by Blizzard and ships none of the game's files.
+
+## Say thanks
+
+D2R VR is free and stays free - no paywalls, no exclusive builds. If you enjoy
+it and want to say thanks, you can support it on
+**[Patreon](https://www.patreon.com/c/d2vr)**: it pays for development time and
+VR hardware for testing.

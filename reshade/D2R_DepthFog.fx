@@ -286,6 +286,11 @@ texture2D FogColorTex : COLOR;
 texture2D FogDepthTex : DEPTH;
 sampler2D FogColorSmp { Texture = FogColorTex; };
 sampler2D FogDepthSmp { Texture = FogDepthTex; MinFilter = POINT; MagFilter = POINT; };
+// The part of the depth buffer the game draws the scene into (vrcam, from the game's
+// viewport): 1 without an upscaler; DLSS draws at 0.5 - 0.67 of the screen into the top
+// left of a screen-size buffer, so every read of the depth goes through DepthAt (2026-10-08).
+uniform float2 DepthScale < hidden = true; > = float2(1.0, 1.0);
+float4 DepthAt(float2 duv) { return tex2Dlod(FogDepthSmp, float4(duv * DepthScale, 0, 0)); }
 
 void VS_Fullscreen(in uint id : SV_VertexID, out float4 pos : SV_Position, out float2 uv : TEXCOORD)
 {
@@ -716,7 +721,7 @@ void RecordHeights(uint3 id, int eye)
 {
     if (!CeilOn || !CeilDome || id.x >= BUFFER_WIDTH || id.y >= BUFFER_HEIGHT) return;
     const float2 uv = (id.xy + 0.5) / float2(BUFFER_WIDTH, BUFFER_HEIGHT);
-    const float d = tex2Dlod(FogDepthSmp, float4(UpsideDown ? float2(uv.x, 1.0 - uv.y) : uv, 0, 0)).x;
+    const float d = DepthAt(UpsideDown ? float2(uv.x, 1.0 - uv.y) : uv).x;
     if (d <= 1e-6) return;
     const float2 ndc = float2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
     const float4 sp = eye == 0 ? SkyProj0 : SkyProj1;
@@ -1006,17 +1011,17 @@ float2 FirstDepthBelowAt(float2 duv, float down)
     float miss = 0.0, hit = 0.0;
     [unroll] for (int s = 1; s <= 10; ++s) {
         const float off = exp2((float)s);
-        const bool drawn = tex2Dlod(FogDepthSmp, float4(duv + float2(0.0, down * off), 0, 0)).x > 1e-6;
+        const bool drawn = DepthAt(duv + float2(0.0, down * off)).x > 1e-6;
         hit = hit > 0.0 ? hit : (drawn ? off : 0.0);
         miss = hit > 0.0 ? miss : off;
     }
     [unroll] for (int b = 0; b < 9; ++b) {
         const float mid = 0.5 * (miss + hit);
-        const bool drawn = hit > 0.0 && tex2Dlod(FogDepthSmp, float4(duv + float2(0.0, down * mid), 0, 0)).x > 1e-6;
+        const bool drawn = hit > 0.0 && DepthAt(duv + float2(0.0, down * mid)).x > 1e-6;
         hit = drawn ? mid : hit;
         miss = drawn ? miss : mid;
     }
-    return hit > 0.0 ? float2(tex2Dlod(FogDepthSmp, float4(duv + float2(0.0, down * (hit + 1.0)), 0, 0)).x, hit) : float2(0.0, 0.0);
+    return hit > 0.0 ? float2(DepthAt(duv + float2(0.0, down * (hit + 1.0))).x, hit) : float2(0.0, 0.0);
 }
 
 // The fog of what is drawn without depth over the void, worked out at an eighth
@@ -1121,7 +1126,7 @@ float4 TorchCands(float4 pos, int eye)
             if (t.x >= 0 && t.y >= 0 && t.x < kFireW && t.y < kFireH) area += Texel(FireSmp, t.x, t.y, (float)kFireW, (float)kFireH).w;
         }
     const float2 duv = UpsideDown ? float2(at.x, 1.0 - at.y) : at;
-    const float own = tex2Dlod(FogDepthSmp, float4(duv, 0, 0)).x;
+    const float own = DepthAt(duv).x;
     const float2 below = FirstDepthBelowAt(duv, UpsideDown ? -BUFFER_RCP_HEIGHT : BUFFER_RCP_HEIGHT);
     float d = own;
     if (below.y > 0.0 && below.y <= 64.0 && below.x > own * 1.1) d = below.x;
@@ -1226,7 +1231,7 @@ float4 PS_VoidGlow8(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
     [loop] for (int y = 0; y < 8; y += 2)
         [loop] for (int x = 0; x < 8; x += 2) {
             const float2 u = (base + int2(x, y) + 0.5) / float2(BUFFER_WIDTH, BUFFER_HEIGHT);
-            if (tex2Dlod(FogDepthSmp, float4(UpsideDown ? float2(u.x, 1.0 - u.y) : u, 0, 0)).x > 1e-6) continue;
+            if (DepthAt(UpsideDown ? float2(u.x, 1.0 - u.y) : u).x > 1e-6) continue;
             const float3 c = tex2Dlod(FogColorSmp, float4(u, 0, 0)).rgb;
             sum += float4(c * saturate((c.r - c.b) * 15.0), 1.0);
         }
@@ -1255,7 +1260,7 @@ float3 DepthFogWorld(float4 pos, float2 uv, int eye)
 {
     const float3 colour = tex2D(FogColorSmp, uv).rgb;
     const float2 duv = UpsideDown ? float2(uv.x, 1.0 - uv.y) : uv;
-    const float d = tex2Dlod(FogDepthSmp, float4(duv, 0, 0)).x;
+    const float d = DepthAt(duv).x;
 
     // No depth at all (ReShade's Generic Depth off, or nothing picked): every
     // pixel read as the void, the fog covered the HUD and the sky filled every
@@ -1272,10 +1277,10 @@ float3 DepthFogWorld(float4 pos, float2 uv, int eye)
     // which also drowns single near pixels the game's dithered transparencies
     // leave in far ground.
     const float2 px = float2(BUFFER_RCP_WIDTH, BUFFER_RCP_HEIGHT);
-    const float d1 = tex2Dlod(FogDepthSmp, float4(duv + float2(px.x, 0), 0, 0)).x;
-    const float d2 = tex2Dlod(FogDepthSmp, float4(duv - float2(px.x, 0), 0, 0)).x;
-    const float d3 = tex2Dlod(FogDepthSmp, float4(duv + float2(0, px.y), 0, 0)).x;
-    const float d4 = tex2Dlod(FogDepthSmp, float4(duv - float2(0, px.y), 0, 0)).x;
+    const float d1 = DepthAt(duv + float2(px.x, 0)).x;
+    const float d2 = DepthAt(duv - float2(px.x, 0)).x;
+    const float d3 = DepthAt(duv + float2(0, px.y)).x;
+    const float d4 = DepthAt(duv - float2(0, px.y)).x;
     const float dNear = max(max(d, d1), max(max(d2, d3), d4));
     const float dFar = min(min(d, d1), min(min(d2, d3), d4));
 
@@ -1378,7 +1383,7 @@ float3 DepthFogWorld(float4 pos, float2 uv, int eye)
                 const float down = UpsideDown ? -px.y : px.y;
                 float dn = 0.0;
                 [unroll] for (int s2 = 1; s2 <= 4; ++s2) {
-                    const float dd = tex2Dlod(FogDepthSmp, float4(duv + float2(0.0, down * exp2((float)s2)), 0, 0)).x;
+                    const float dd = DepthAt(duv + float2(0.0, down * exp2((float)s2))).x;
                     dn = dn > 0.0 ? dn : dd;
                 }
                 if (dn > 1e-6) tf = max(tf, FogAmount(dn));
@@ -1419,7 +1424,7 @@ float3 DepthFogWorld(float4 pos, float2 uv, int eye)
         float sum = 0.0, wsum = 0.0;
         [unroll] for (int y = -1; y <= 1; ++y)
             [unroll] for (int x = -1; x <= 1; ++x) {
-                const float ts = FogAmount(tex2Dlod(FogDepthSmp, float4(duv + float2(x, y) * px * FogBlur, 0, 0)).x);
+                const float ts = FogAmount(DepthAt(duv + float2(x, y) * px * FogBlur).x);
                 const float w = 1.0 - saturate(abs(ts - t0) * 4.0);
                 sum += ts * w; wsum += w;
             }
@@ -1522,6 +1527,10 @@ uniform float LabelTilt < hidden = true; > = 0.0;
 uniform float LabelAlpha < hidden = true; > = 1.0;
 uniform float4 LabelKeep0 < hidden = true; > = float4(0.0, 0.0, 0.0, 0.0);
 uniform float4 LabelKeep1 < hidden = true; > = float4(0.0, 0.0, 0.0, 0.0);
+// vrcam [hud] monster_alpha: the name plate over the target monster (the game's
+// MonsterHealth panel, uv box) faded as a whole - box, frame and name.
+uniform float4 PlateBox < hidden = true; > = float4(0.0, 0.0, 0.0, 0.0);
+uniform float PlateAlpha < hidden = true; > = 1.0;
 
 bool InBox(float2 uv, float4 box) { return uv.x >= box.x && uv.y >= box.y && uv.x < box.z && uv.y < box.w; }
 bool Kept(float2 uv) { return InBox(uv, LabelKeep0) || InBox(uv, LabelKeep1); }
@@ -1543,8 +1552,9 @@ float4 GameLabels(float2 uv, float eyeSign)
     if (Kept(flat)) return tex2Dlod(GameLayerSmp, float4(flat, 0, 0));
     const float2 src = uv - float2(eyeSign * (LabelBase + LabelTilt * uv.y), 0.0);
     if (src.x < 0.0 || src.x > 1.0 || Kept(src)) return float4(0.0, 0.0, 0.0, 1.0);
-    const float4 l = tex2Dlod(GameLayerSmp, float4(src, 0, 0));
-    if (LabelAlpha < 0.999) return FadedLabel(l);
+    float4 l = tex2Dlod(GameLayerSmp, float4(src, 0, 0));
+    if (LabelAlpha < 0.999) l = FadedLabel(l);
+    if (PlateAlpha < 0.999 && InBox(src, PlateBox)) l = float4(l.rgb * PlateAlpha, 1.0 - (1.0 - saturate(l.a)) * PlateAlpha);
     return l;
 }
 
@@ -1754,11 +1764,11 @@ float3 TableKey(float2 uv, int eye)
         return max(c, float3(TableFloor, TableFloor, TableFloor));
     const float2 duv = UpsideDown ? float2(uv.x, 1.0 - uv.y) : uv;
     const float2 px = 2.0 * float2(BUFFER_RCP_WIDTH, BUFFER_RCP_HEIGHT);
-    float d = tex2Dlod(FogDepthSmp, float4(duv, 0, 0)).x;
-    d = max(d, tex2Dlod(FogDepthSmp, float4(duv + float2(px.x, 0), 0, 0)).x);
-    d = max(d, tex2Dlod(FogDepthSmp, float4(duv - float2(px.x, 0), 0, 0)).x);
-    d = max(d, tex2Dlod(FogDepthSmp, float4(duv + float2(0, px.y), 0, 0)).x);
-    d = max(d, tex2Dlod(FogDepthSmp, float4(duv - float2(0, px.y), 0, 0)).x);
+    float d = DepthAt(duv).x;
+    d = max(d, DepthAt(duv + float2(px.x, 0)).x);
+    d = max(d, DepthAt(duv - float2(px.x, 0)).x);
+    d = max(d, DepthAt(duv + float2(0, px.y)).x);
+    d = max(d, DepthAt(duv - float2(0, px.y)).x);
     const float top = max(c.r, max(c.g, c.b));
     // Nothing drawn here. Dark: the void. Bright: the interface, or something drawn
     // without depth - rain (kept: "it does not get in the way") and grass at the end of
@@ -1774,7 +1784,7 @@ float3 TableKey(float2 uv, int eye)
         float hitOff = 0.0, hitD = 0.0;
         [unroll] for (int k = 1; k <= 6; ++k) {
             const float off = exp2((float)k);
-            const float dd = tex2Dlod(FogDepthSmp, float4(duv + float2(0.0, down * off), 0, 0)).x;
+            const float dd = DepthAt(duv + float2(0.0, down * off)).x;
             const bool take = hitD <= 0.0 && dd > 0.0;
             hitOff = take ? off : hitOff;
             hitD = take ? dd : hitD;
@@ -1785,7 +1795,7 @@ float3 TableKey(float2 uv, int eye)
     // A pixel with no depth of its own beside one that has it (the foam and glints
     // along the far water's edge) is tested at its neighbour's depth: at its own,
     // zero, it was never outside and stood on the black at the horizon (2026-10-05).
-    const float dc = tex2Dlod(FogDepthSmp, float4(duv, 0, 0)).x;
+    const float dc = DepthAt(duv).x;
     if (OutsideTable(uv, dc > 0.0 ? dc : d, eye)) return TableBackground;
     return top < TableFloor ? max(c, float3(TableFloor, TableFloor, TableFloor)) : c;
 }

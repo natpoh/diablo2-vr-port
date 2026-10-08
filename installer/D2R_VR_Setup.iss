@@ -29,6 +29,11 @@
 #define MinBodyWalkMinor 74
 #define BodyWalkDownload "https://bodywalkvr.com/api/download/latest?product=bodywalk"
 #define D2RLoaderSite "https://d2rloader.net"
+; The one D2RLoader the mod is made for, fetched only when the player asks (InstallD2RLoader);
+; the SHA-256 is the one d2rloader.net publishes on its download page.
+#define D2RLoaderZipUrl "https://d2rloader.net/downloads/D2RLoader-1.3.1-beta.zip"
+#define D2RLoaderZip "D2RLoader-1.3.1-beta.zip"
+#define D2RLoaderSha256 "9286c6b5bff7f1043658411dbea305faa9698b6a455e6441668fc6d02c22aad7"
 ; Per user and writable: BodyWalk writes config.json, imgui.ini and plugins\ beside its exe.
 ; BodyWalk Portable is part of the mod, in the game's folder. It writes nothing
 ; beside itself (1.74 on): settings, configs and plugins go to %LOCALAPPDATA%\BodyWalkVR.
@@ -198,6 +203,59 @@ begin
     StringChangeEx(S, 'allow_global_extensions = false', 'allow_global_extensions = true', True);
     SaveStringToFile(Path, AnsiString(S), False);
   end;
+end;
+
+// D2RLoader 1.3.1 into the game's folder, on the player's click: downloaded from
+// d2rloader.net (the download page checks it against the published SHA-256),
+// unpacked by PowerShell to a folder of its own, and the contents of the folder
+// D2RLoader.exe is in copied beside D2R.exe. A player found the download refused
+// by Edge and Chrome (2026-10-08). True when D2RLoader.exe is there afterwards.
+function InstallD2RLoader(GameDir: String): Boolean;
+var
+  Zip, Unpack, Script, Ps: String;
+  Code: Integer;
+begin
+  Result := False;
+  DownloadPage.Clear;
+  DownloadPage.Add('{#D2RLoaderZipUrl}', '{#D2RLoaderZip}', '{#D2RLoaderSha256}');
+  DownloadPage.Show;
+  try
+    try
+      DownloadPage.Download;
+    except
+      MsgBox('D2RLoader could not be downloaded from d2rloader.net: ' + GetExceptionMessage + #13#10#13#10 +
+             'Try again, or download it from the site yourself.', mbError, MB_OK);
+      Exit;
+    end;
+  finally
+    DownloadPage.Hide;
+  end;
+  Zip := ExpandConstant('{tmp}\{#D2RLoaderZip}');
+  Unpack := ExpandConstant('{tmp}\d2rloader_unpack');
+  Script := ExpandConstant('{tmp}\unpack_d2rloader.ps1');
+  SaveStringToFile(Script,
+    'param($Zip, $Unpack, $Game)' + #13#10 +
+    '$ErrorActionPreference = ''Stop''' + #13#10 +
+    'Expand-Archive -LiteralPath $Zip -DestinationPath $Unpack -Force' + #13#10 +
+    '$e = Get-ChildItem -LiteralPath $Unpack -Recurse -Filter ''D2RLoader.exe'' | Select-Object -First 1' + #13#10 +
+    'if (-not $e) { exit 3 }' + #13#10 +
+    'Get-ChildItem -LiteralPath $e.DirectoryName | Copy-Item -Destination $Game -Recurse -Force' + #13#10 +
+    'exit 0' + #13#10, False);
+  Ps := ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe');
+  if not Exec(Ps, '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + Script + '" -Zip "' + Zip + '" -Unpack "' + Unpack +
+              '" -Game "' + GameDir + '"', '', SW_HIDE, ewWaitUntilTerminated, Code) or (Code <> 0) then
+  begin
+    MsgBox('D2RLoader could not be unpacked into the game''s folder (code ' + IntToStr(Code) + ').', mbError, MB_OK);
+    Exit;
+  end;
+  if not FileExists(GameDir + '\D2RLoader.exe') then
+  begin
+    MsgBox('D2RLoader was unpacked, but D2RLoader.exe is not in the game''s folder: an antivirus may have removed it ' +
+           '(Windows Security > Protection history).', mbError, MB_OK);
+    Exit;
+  end;
+  EnableGlobalExtensions(GameDir);
+  Result := True;
 end;
 
 // ---------------------------------------------------------------- versions
@@ -555,12 +613,31 @@ begin
     end;
     if not FileExists(Dir + '\D2RLoader.exe') then
     begin
-      if MsgBox('D2RLoader is not installed in this game folder. D2R VR runs only under D2RLoader 1.3.1.' + #13#10#13#10 +
-                'Download it from d2rloader.net, unpack it into the game''s folder (beside D2R.exe), then click Next again.' + #13#10#13#10 +
-                'Open d2rloader.net now?', mbConfirmation, MB_YESNO) = IDYES then
-        ShellExec('open', '{#D2RLoaderSite}', '', '', SW_SHOWNORMAL, ewNoWait, Code);
-      Result := False;
-      Exit;
+      // Three buttons: Setup fetches it (only on this click), the site, or back.
+      case TaskDialogMsgBox('D2RLoader is not installed in this game folder',
+             'D2R VR runs only under D2RLoader 1.3.1. Setup can download it from d2rloader.net, check it against the ' +
+             'SHA-256 the site publishes and unpack it into the game''s folder, beside D2R.exe.',
+             mbConfirmation, MB_YESNOCANCEL, ['Download and install D2RLoader 1.3.1', 'Open d2rloader.net', 'Cancel'], 0) of
+        IDYES:
+          if InstallD2RLoader(Dir) then
+            MsgBox('D2RLoader 1.3.1 is installed in the game''s folder. Setup goes on with D2R VR.', mbInformation, MB_OK)
+          else
+          begin
+            Result := False;
+            Exit;
+          end;
+        IDNO:
+          begin
+            ShellExec('open', '{#D2RLoaderSite}', '', '', SW_SHOWNORMAL, ewNoWait, Code);
+            Result := False;
+            Exit;
+          end;
+      else
+        begin
+          Result := False;
+          Exit;
+        end;
+      end;
     end;
   end;
 

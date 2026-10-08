@@ -123,3 +123,34 @@ struct FlatVRScreenGeom {
 #pragma pack(pop)
 
 static_assert(sizeof(FlatVRScreenGeom) == 32, "FlatVRScreenGeom is a wire format");
+
+// The camera the shared depth was drawn with, written every frame by a mod
+// that builds the game's camera itself (D2R VR's vrcam), read by FlatVR: with
+// it, 3D from ReShade's depth comes out at the world's own size - the second
+// eye shifted for the user's IPD by each pixel's distance in metres - instead
+// of the depth sliders' guess. The depth is reversed and infinite: a pixel's
+// distance along the view is near_world / depth, in world units. Its own
+// mapping; a stalled counter means the mod's camera is off.
+#define FLATVR_DEPTH_CAMERA_NAME L"Local\\BodyWalkVR_DepthCamera"
+#define FLATVR_DEPTH_CAMERA_VERSION 1u
+
+#pragma pack(push, 4)
+struct FlatVRDepthCamera {
+  uint32_t version;        // FLATVR_DEPTH_CAMERA_VERSION
+  uint32_t counter;        // bumped with every frame the mod's camera is on
+  float near_world;        // distance = near_world / depth, world units
+  float units_per_metre;   // world units in a metre of the user's room
+  float tan_half_w;        // the camera's tan(horizontal FOV / 2)
+  float tan_half_h;        // and vertical
+  uint32_t flags;          // FLATVR_DEPTH_CAMERA_*; was reserved, so an older mod sends 0
+  uint32_t reserved;
+};
+#pragma pack(pop)
+
+static_assert(sizeof(FlatVRDepthCamera) == 32, "FlatVRDepthCamera is a wire format");
+
+// The depth is upside down against the picture: a Unity game on Direct3D
+// draws into a texture flipped and turns it back only on the way to the
+// screen (the Heroes Olden Era mod sets it). FlatVR flips it where it takes
+// the buffer in, as its own "Flip Depth Map Vertically" box would.
+#define FLATVR_DEPTH_CAMERA_UPSIDE_DOWN 1u

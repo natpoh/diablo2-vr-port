@@ -218,3 +218,9 @@ inline constexpr uint32_t kD2RVRCommandCount = sizeof kD2RVRCommands / sizeof kD
 // the FlatVR tab's own buttons do. No event = no BodyWalk with the bridge.
 #define D2RVR_FLATVR_START_NAME L"Local\\BodyWalkVR_D2R_FlatVRStart"
 #define D2RVR_FLATVR_STOP_NAME L"Local\\BodyWalkVR_D2R_FlatVRStop"
+// The same for FlatVR's 3D source (host API 8, request_flatvr_stereo_source): a
+// flat screen, the game's depth through ReShade, or the stereo pair the game
+// draws - D2R VR Settings' "3D in the headset".
+#define D2RVR_FLATVR_3D_NONE_NAME L"Local\\BodyWalkVR_D2R_FlatVR3DNone"
+#define D2RVR_FLATVR_3D_DEPTH_NAME L"Local\\BodyWalkVR_D2R_FlatVR3DDepth"
+#define D2RVR_FLATVR_3D_PAIR_NAME L"Local\\BodyWalkVR_D2R_FlatVR3DPair"

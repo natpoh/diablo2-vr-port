@@ -238,6 +238,17 @@ typedef struct {
     // wish is kept.
     void (BW_CALLBACK *request_flatvr_running)(int on);
 
+    // ---- added in host API version 8 ----
+    // Same rule again: not before BW_Plugin_SetHostApiVersion has reported 8.
+
+    // Where FlatVR's 3D comes from, as the FlatVR tab sets it: 0 none (a flat
+    // screen), 1 the game's depth through ReShade, 2 the stereo pair the game
+    // draws (two frames, no depth - the ReShade tab's "Stereo pair from the
+    // game"). For a game's settings program to offer the choice beside its own
+    // stereo switch (D2R VR Settings). Done on BodyWalk's next GUI frame and
+    // saved; only the latest wish is kept.
+    void (BW_CALLBACK *request_flatvr_stereo_source)(int source);
+
 } BW_HostCallbacks;
 
 #pragma pack(pop)
@@ -342,14 +353,15 @@ typedef struct {
 // version 3 adds register_input_device; version 4 adds nothing to the struct
 // and only says the host pushes BW_BodyTrackers; version 5 adds
 // request_flatvr_head_lock; version 6 adds request_flatvr_screen_distance;
-// version 7 adds request_flatvr_running.
+// version 7 adds request_flatvr_running; version 8 adds
+// request_flatvr_stereo_source.
 //
 // A plugin that uses anything from version 2 or later MUST export this and must
 // treat "never called" as version 1: on an older host those fields are past the
 // end of the struct, so reading them is undefined and checking them for null
 // proves nothing. Exporting it costs a plugin nothing on either host.
 // BW_EXPORT void BW_CALLBACK BW_Plugin_SetHostApiVersion(uint32_t version);
-#define BW_HOST_API_VERSION 7u
+#define BW_HOST_API_VERSION 8u
 
 #ifdef __cplusplus
 }

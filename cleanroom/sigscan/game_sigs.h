@@ -100,6 +100,10 @@ inline constexpr Sig kSigs[] = {
     {"ClientIndex", 0x9A820, Kind::Code, "48 89 5C 24 08 48 89 74 24 20 57 48 83 EC 20 48 8B D9 E8 ?? ?? ?? ??", 0x9A820, 0, 0, 0, 0, "48 89 5C 24 08 48 89 74 24 20 57 48 83 EC 20", nullptr, "flat click goes where the pointer is", "Chat, walking, clicks"},
     // unit under the pointer, called
     {"HoverUnit", 0xF1900, Kind::Code, "40 53 55 56 48 83 EC 30 8B F1 8B D9 48 89 5C 24 58 48 83 FE 08", 0xF1900, 0, 0, 0, 0, "40 53 55 56 48 83 EC 30 8B F1 8B D9", nullptr, "flat click goes where the pointer is", "Chat, walking, clicks"},
+    // ControllerInputHandler walking stick (handler, float2* out, player), hooked
+    {"StickGet", 0x13CF10, Kind::Ref, "E8 ?? ?? ?? ?? F3 0F 10 58 04 F3 0F 10 38 0F 28 C3 0F 28 CF", 0x2AD6BD, 0, 1, 5, 0, "48 89 5C 24 08 48 89 74 24 18 57 48 83 EC 20", nullptr, "VR walk straight from BodyWalk", "Chat, walking, clicks"},
+    // return address of the walk's StickGet call in the per-player update
+    {"WalkStickRet", 0x14C647, Kind::Code, "F3 0F 10 00 F3 0F 10 48 04 EB 2B 48 8D 44 24 40 4C 89 64 24 40", 0x14C647, 0, 0, 0, 0, "F3 0F 10 00 F3 0F 10 48 04", nullptr, "VR walk straight from BodyWalk", "Chat, walking, clicks"},
     // key command executor, press (binding*, table, bool), called
     {"CmdPress", 0x11FF30, Kind::Code, "40 55 56 41 56 41 57 48 8D AC 24 D8 FD FF FF 48 81 EC 28 03 00 00 48 8B 05 ?? ?? ?? ??", 0x11FF30, 0, 0, 0, 0, "40 55 56 41 56 41 57 48 8D AC 24 D8 FD FF FF", nullptr, "skills, potions, Alt... from BodyWalk", "Game commands"},
     // key command executor, release (binding*, table, bool), called

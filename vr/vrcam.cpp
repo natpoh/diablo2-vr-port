@@ -68,13 +68,14 @@ namespace hud { void Register(); void SetHide(int mode); void SetInterfaceScale(
 #include "sigscan.h"
 #include "mat4.h"
 namespace gamecmd { void Init(const D2RL::PluginContext* ctx); void Tick(); }   // the game's key commands from BodyWalk (gamecmd.cpp)
-namespace gamestate { void Init(const D2RL::PluginContext* ctx); void Tick(); uint32_t WeaponClass(); uint32_t WeaponSet(); uint32_t WeaponType(); uint32_t HandsHeld(); uint32_t TwoHanded(); uint32_t WeaponHand(); uint32_t HandsKey(); bool MenuOpen(); int ObjectLight(uint32_t txt, uint32_t mode, float rgb[3]); uint64_t LocalPlayer(); void SetViewMode(uint32_t mode); bool AutoMapOpen(); bool SetAutoMap(bool open); }
+namespace gamestate { void Init(const D2RL::PluginContext* ctx); void Tick(); uint32_t WeaponClass(); uint32_t WeaponSet(); uint32_t WeaponType(); uint32_t HandsHeld(); uint32_t TwoHanded(); uint32_t WeaponHand(); uint32_t HandsKey(); bool MenuOpen(); int ObjectLight(uint32_t txt, uint32_t mode, float rgb[3]); uint64_t LocalPlayer(); void SetViewMode(uint32_t mode); bool AutoMapOpen(); bool SetAutoMap(bool open); void PollPlate(); bool PlateRect(int32_t out[4]); }
 #include "d2r_vr_state.h"
 
 #include "MinHook.h"
 #include "crosshair_cursor.h"
 #include "d2r_vr_shared.h"
 #include "afr_eye_shared.h"
+#include "dlss_mv.h"
 #include "pad_mirror_shared.h"
 
 #pragma intrinsic(_ReturnAddress)
@@ -149,6 +150,7 @@ struct Settings {
     std::atomic<bool>  labelsNativeFloor{true};  // labels_native (not on the settings page): 0 = never the game's code, the box faded as a picture
     // The same two for the other views (2026-10-06): [hud_top] F1, [hud_third] F2, [hud] F4 - the game's own by default.
     std::atomic<float> labelsAlphaTop{1.0f}, labelsAlphaThird{1.0f}, labelsAlphaBody{1.0f};
+    std::atomic<float> plateAlpha{1.0f};   // [hud] monster_alpha: the name plate over the target monster, 1 = as the game draws it
     std::atomic<float> labelsSizeTop{1.0f}, labelsSizeThird{1.0f}, labelsSizeBody{1.0f};
     // bar_x / bar_y per view: the toolbar moved on the screen, uv (+x right, +y DOWN; the ini's bar_y is + up, %)
     std::atomic<float> barXTop{0.0f}, barYTop{0.0f}, barXThird{0.0f}, barYThird{0.0f}, barXFloor{0.0f}, barYFloor{0.0f};
@@ -246,9 +248,13 @@ struct Settings {
     std::atomic<bool>  aAttackOnly{false};  // [input] a_attack_only: pad A never picks up or interacts; "D2R: Pick up / interact" does
     std::atomic<bool>  flatKeyMove{true};   // [input] flat_keyboard_move: flat W A S D walk through the game's own keyboard move (0x8A960), no pad
     std::atomic<bool>  vrKeyWalk{true};     // [input] vr_keys_walk: VR view F2 without mouse look - W A S D walk where the camera looks, the mouse stays the game's
+    std::atomic<bool>  directWalk{true};    // [input] direct_walk: VR F2-F4, BodyWalk's stick walks the hero straight (StickGet / KeyMove hooks), not through the pad
     std::atomic<bool>  flatNoPad{true};     // [input] flat_no_pad: with it, flat mode shows the game no pad at all (its UI never turns to A/B/X/Y)
     std::atomic<bool>  flatCrosshair{true};  // [input] flat_crosshair: flat mouse look, the pointer is our crosshair, not the game's gauntlet
     std::atomic<bool>  flatClickShoot{true}; // [input] flat_click_shoot: flat mouse look, a click with no target under the crosshair = a shot there, never a walk
+    std::atomic<bool>  findPrevMatrix{false};
+    std::atomic<bool>  dlssPrevFix{false};
+    std::atomic<int>   dlssMv{2};              // [render] dlss_mv: 0 off, 1 check vrcam's matrices against the game's motion vectors (logs), 2 hand DLSS the same eye's     // [render] dlss_prev_fix: the game's previous-frame view made the same eye's (experiment)   // [debug] find_prev_matrix: once, where the game keeps past frames' view matrices (DLSS motion vectors)
     std::atomic<bool>  frameLog{false};     // [debug] frame_log: every pair, view, hero pose and present to d2r_vr_frames.csv
     std::atomic<bool>  poseOrderLog{false}; // [debug] pose_order: which of eye / look-at / hero matrix is stale per pass, to the log
     std::atomic<float> facingSign{1.0f};    // flip if the arms swing the wrong way when the model turns
@@ -345,6 +351,7 @@ struct Settings {
     std::atomic<bool>  trueScale{true};     // eyes and zero-parallax plane from the FlatVR screen and the user's height: the world 1:1
     std::atomic<float> eyeMm{63.0f};        // the user's own eye distance, millimetres
     std::atomic<float> eyeHeightM{1.64f};   // the user's eyes above the floor STANDING: metres -> world units, seated or not
+    std::atomic<bool>  dlssPerEye{true};   // [render] dlss_per_eye: real stereo with DLSS - a DLSS instance of its own for each eye
     std::atomic<bool>  pairPerTick{false};  // AFR: both eyes drawn from one game frame (the frame drawn twice), not by turns
     std::atomic<float> rightDtMs{0.01f};    // [stereo] right_dt_ms: the frame time the right pass of a pair gets (0 = none)
     std::atomic<bool>  bgFullSpeed{true};   // no Sleep(10) per frame while the game window is not in front
@@ -806,6 +813,7 @@ void LoadSettings() {
     g_set.labelsAlphaTop.store(std::clamp(IniF(L"hud_top", L"labels_alpha", 1.0f), 0.0f, 1.0f));
     g_set.labelsAlphaThird.store(std::clamp(IniF(L"hud_third", L"labels_alpha", 1.0f), 0.0f, 1.0f));
     g_set.labelsAlphaBody.store(std::clamp(IniF(L"hud", L"labels_alpha", 1.0f), 0.0f, 1.0f));
+    g_set.plateAlpha.store(std::clamp(IniF(L"hud", L"monster_alpha", 1.0f), 0.0f, 1.0f));
     g_set.labelsSizeTop.store(std::clamp(IniF(L"hud_top", L"labels_size", 100.0f), 20.0f, 150.0f) * 0.01f);
     g_set.labelsSizeThird.store(std::clamp(IniF(L"hud_third", L"labels_size", 100.0f), 20.0f, 150.0f) * 0.01f);
     g_set.labelsSizeBody.store(std::clamp(IniF(L"hud", L"labels_size", 100.0f), 20.0f, 150.0f) * 0.01f);
@@ -828,14 +836,24 @@ void LoadSettings() {
     {   // [hud] how FlatVR shows the toolbar and the map (game_hud_shared.h)
         FlatVRGameHudLook look = FlatVRGameHudDefaultLook();
         look.bar_anchor = (uint32_t)std::clamp((int)IniF(L"hud", L"bar_place", (float)look.bar_anchor), 0, 4);
-        look.bar_roll_deg = std::clamp(IniF(L"hud", L"bar_roll", 0.0f), -180.0f, 180.0f);
-        look.bar_tip_deg = std::clamp(IniF(L"hud", L"bar_tip", 0.0f), -90.0f, 90.0f);
-        look.bar_spin_deg = std::clamp(IniF(L"hud", L"bar_spin", 0.0f), -180.0f, 180.0f);
-        look.bar_lift_cm = std::clamp(IniF(L"hud", L"bar_lift", 0.0f), -10.0f, 20.0f);
-        look.bar_side_cm = std::clamp(IniF(L"hud", L"bar_side", 0.0f), -20.0f, 20.0f);
-        look.bar_width_m = std::clamp(IniF(L"hud", L"bar_width", look.bar_width_m), 0.05f, 1.5f);
-        look.bar_along_cm = std::clamp(IniF(L"hud", L"bar_along", look.bar_along_cm), -30.0f, 40.0f);
-        look.bar_split = (uint32_t)std::clamp((int)IniF(L"hud", L"bar_split", 0.0f), 0, 2);   // two halves side by side, both orbs at one end
+        // A set of its own on a forearm (bar_*_arm) and on the body (bar_*_body); the
+        // one key of before (bar_*) stands in for both until they are set.
+        const wchar_t* set = look.bar_anchor == 1 || look.bar_anchor == 2 ? L"_arm" : L"_body";
+        auto bar = [&](const wchar_t* name, float def) {
+            wchar_t key[64];
+            swprintf_s(key, L"bar_%s%s", name, set);
+            wchar_t old[64];
+            swprintf_s(old, L"bar_%s", name);
+            return IniF(L"hud", key, IniF(L"hud", old, def));
+        };
+        look.bar_roll_deg = std::clamp(bar(L"roll", 0.0f), -180.0f, 180.0f);
+        look.bar_tip_deg = std::clamp(bar(L"tip", 0.0f), -90.0f, 90.0f);
+        look.bar_spin_deg = std::clamp(bar(L"spin", 0.0f), -180.0f, 180.0f);
+        look.bar_lift_cm = std::clamp(bar(L"lift", 0.0f), -10.0f, 20.0f);
+        look.bar_side_cm = std::clamp(bar(L"side", 0.0f), -20.0f, 20.0f);
+        look.bar_width_m = std::clamp(bar(L"width", look.bar_width_m), 0.05f, 1.5f);
+        look.bar_along_cm = std::clamp(bar(L"along", look.bar_along_cm), -30.0f, 40.0f);
+        look.bar_split = (uint32_t)std::clamp((int)bar(L"split", 0.0f), 0, 2);   // two halves side by side, both orbs at one end
         look.map_anchor = (uint32_t)std::clamp((int)IniF(L"hud", L"map_place", (float)look.map_anchor), 0, 4);
         look.map_orb = IniB(L"hud", L"map_orb", look.map_orb != 0) ? 1u : 0u;
         look.map_width_m = std::clamp(IniF(L"hud", L"map_width", look.map_width_m), 0.05f, 1.5f);
@@ -879,6 +897,7 @@ void LoadSettings() {
     g_set.afr.store(IniB(L"stereo", L"afr", false) && g_set.platform.load() == 1);   // on a monitor alternate eyes only flicker
     g_set.ipd.store(std::clamp(IniF(L"stereo", L"ipd", 0.27f), 0.0f, 5.0f));
     g_set.afrSwap.store(IniB(L"stereo", L"swap", false));
+    g_set.dlssPerEye.store(IniB(L"render", L"dlss_per_eye", true));
     g_set.pairPerTick.store(IniB(L"stereo", L"pair_per_tick", false));
     g_set.rightDtMs.store(std::clamp(IniF(L"stereo", L"right_dt_ms", 0.01f), 0.0f, 5.0f));
     g_set.trueScale.store(IniB(L"stereo", L"true_scale", true));
@@ -987,6 +1006,18 @@ void LoadSettings() {
     g_set.armScale.store(std::clamp(IniF(L"arms", L"scale", 1.0f), 0.3f, 3.0f));
     g_set.poseOrderLog.store(IniB(L"debug", L"pose_order", false));
     g_set.frameLog.store(IniB(L"debug", L"frame_log", false));
+    g_set.findPrevMatrix.store(IniB(L"debug", L"find_prev_matrix", false));
+    g_set.dlssPrevFix.store(IniB(L"render", L"dlss_prev_fix", false));
+    g_set.dlssMv.store(std::clamp((int)IniF(L"render", L"dlss_mv", 2.0f), 0, 2));
+    dlssmv::SetMode(g_set.dlssMv.load());
+    // [render] dlss_mv 2: DLSS gets the same eye's jitter step and, in the far part, the camera's turn.
+    // dlss_mv_sign: the camera's part's sign in the game's vectors (-1); dlss_mv_lag: the picture's view,
+    // evaluations back (0); dlss_mv_far_turn: how much of the turn the far part gets (1);
+    // dlss_mv_near: the near part redone from the eyes' parallax (off: it swam on grass); dlss_mv_jitter (on).
+    dlssmv::SetSign(IniF(L"render", L"dlss_mv_sign", -1.0f));
+    dlssmv::SetLag((int)IniF(L"render", L"dlss_mv_lag", 0.0f));
+    dlssmv::SetFarTurn(IniF(L"render", L"dlss_mv_far_turn", 1.0f));
+    dlssmv::SetFixes(IniB(L"render", L"dlss_mv_near", false), IniB(L"render", L"dlss_mv_jitter", true));
     g_set.phantomRay.store(IniB(L"debug", L"phantom_ray", false));
     g_set.boneAxes.store(IniB(L"debug", L"bone_axes", false));
     g_set.weaponDiag.store(IniB(L"debug", L"weapon_diag", false));
@@ -1007,6 +1038,7 @@ void LoadSettings() {
     g_set.aAttackOnly.store(IniB(L"input", L"a_attack_only", false));
     g_set.flatKeyMove.store(IniB(L"input", L"flat_keyboard_move", true));
     g_set.vrKeyWalk.store(IniB(L"input", L"vr_keys_walk", true));
+    g_set.directWalk.store(IniB(L"input", L"direct_walk", true));
     g_set.flatNoPad.store(IniB(L"input", L"flat_no_pad", true));
     g_set.flatClickShoot.store(IniB(L"input", L"flat_click_shoot", true));
     g_set.flatCrosshair.store(IniB(L"input", L"flat_crosshair", true));
@@ -1679,10 +1711,43 @@ bool LabelBoxNative() { return g_labelPaintIn.load() && g_set.labelsNativeFloor.
 // From above only (the camera ours is off) in stereo: the labels over monsters on a plane tilted like the ground.
 // On the floor (F3): the labels faded as a picture ([hud_floor] labels_alpha) - only while the game's
 // own label code is not hooked (another game build, or labels_native=0), which fades the box exactly.
-bool LabelsWanted() {
-    if (FloorView()) return g_inWorld.load() && g_set.labelsAlphaFloor.load() < 0.995f && !LabelBoxNative();
+// From above in stereo with a depth or a tilt for the labels: they come out to lie on their plane.
+bool LabelsTilted() {
     return AfrOn() && !g_enabled.load() && g_set.classicTop.load() == 0 &&
            (std::abs(g_set.labelsNear.load()) > 0.01f || std::abs(g_set.labelsTilt.load()) > 0.01f);
+}
+// [hud] monster_alpha: the plate over the target monster faded - the interface comes out
+// for that too, drawn back where the game puts it.
+bool PlateFaded() {
+    int32_t r[4];
+    return g_inWorld.load() && g_set.plateAlpha.load() < 0.995f && gamestate::PlateRect(r);
+}
+bool LabelsWanted() {
+    if (PlateFaded()) return true;
+    if (FloorView()) return g_inWorld.load() && g_set.labelsAlphaFloor.load() < 0.995f && !LabelBoxNative();
+    return LabelsTilted();
+}
+
+// FlatVR's 3D source as [stereo] has it - real stereo: the game's pair; else the
+// depth (source 1) or none (0) - told through the D2R Bridge's events whenever
+// the bridge comes up (BodyWalk started: a profile may have set the pair on)
+// and whenever the setting changes. FlatVR with the pair on and one picture
+// coming shows it flat (2026-10-08).
+void FlatVr3DTick() {
+    static int sent = -1;
+    static bool had = false;
+    static const wchar_t* const kName[3] = {D2RVR_FLATVR_3D_NONE_NAME, D2RVR_FLATVR_3D_DEPTH_NAME, D2RVR_FLATVR_3D_PAIR_NAME};
+    const int want = g_set.afr.load() ? 2 : ((int)IniF(L"stereo", L"source", 1.0f) == 0 ? 0 : 1);
+    HANDLE e = OpenEventW(EVENT_MODIFY_STATE, FALSE, kName[want]);
+    const bool have = e != nullptr;   // the bridge makes the events: they are there while it runs
+    if (have && (!had || want != sent)) {
+        SetEvent(e);
+        sent = want;
+        static const char* const kSaid[3] = {"none (a flat screen)", "the depth (ReShade)", "the game's stereo pair"};
+        LogF("vrcam: FlatVR's 3D source set to %s (through the D2R Bridge)", kSaid[want]);
+    }
+    had = have;
+    if (e) CloseHandle(e);
 }
 
 // The addon and FlatVR take a pair while the block says so. Its writers run on
@@ -1733,7 +1798,8 @@ V3 Facing(float heading, float down) {
     return {-sinf(heading) * cosf(down), -sinf(down), -cosf(heading) * cosf(down)};
 }
 
-void VrFrame() { AfrNextFrame(); }
+namespace prevscan { void FrameDone(); }
+void VrFrame() { prevscan::FrameDone(); AfrNextFrame(); }
 
 // The game's view from above, per eye: orthographic, so moving the camera
 // aside would only slide the picture. Each eye's view is turned instead, half
@@ -1894,11 +1960,268 @@ bool TableCamera(const d2rcam::WorldView& in, V3* eye, V3* fwd, V3* up, V3* righ
 // Our view: the game camera's heading and tilt, turned by TargetYaw / Pitch /
 // Roll (head, mouse, right stick), from the hero's eyes (ViewHeight) or behind
 // them ([camera] distance, third person).
+// Where the game keeps the views of frames past (2026-10-08, [debug]
+// find_prev_matrix=1): DLSS's motion vectors are made against the previous
+// frame's camera, which with real stereo is the other eye's. To give each eye's
+// DLSS instance its own eye's previous camera the game's copy has to be found.
+// Every view vrcam hands the game is kept with its frame number (512 frames);
+// a thread then reads the game's memory - the heap and the GPU upload buffers
+// mapped into it - for exact copies, straight or transposed, and logs each copy
+// with how many frames old it was when read. A place that is always 1 frame
+// old is where the previous frame is kept. Turn the head while it runs, so every
+// frame's view is its own.
+namespace prevscan {
+constexpr int kRing = 512;
+struct Entry { uint32_t frame; float m[16]; };
+SRWLOCK g_lock = SRWLOCK_INIT;
+Entry g_ring[kRing];
+uint32_t g_count = 0;
+std::atomic<uint32_t> g_frame{0};
+std::atomic<bool> g_busy{false};
+// After the scans: the copies found in the game's own heap, watched in-frame -
+// read each time vrcam hands the game a new view, before it is written, and
+// logged with how many views old each holds. Write-combined GPU buffers are
+// left out: transport, not where the game keeps anything.
+constexpr int kWatch = 24;
+uintptr_t g_watch[kWatch];
+std::atomic<int> g_watchCount{0};
+std::atomic<int> g_watchLeft{0};
+int g_ages[kWatch][80];   // what the watch saw, per place and call
+int g_seen = 0;
+// The game's copy of the previous frame's view: the place whose age goes 2, 1, 2, 1
+// call by call (vrcam is asked twice a frame, it is written once, at the frame's
+// start). 0 = not found.
+std::atomic<uintptr_t> g_prevAddr{0};
+// The view of each game frame (the last one handed over before the next frame).
+float g_frameView[4][16];
+uint32_t g_frameViews = 0;
+float g_lastView[16];
+bool g_lastViewOk = false;
+int g_lastEye = 0;
+float g_lastProj[16];
+bool g_lastProjOk = false;
+
+void PickPrev() {
+    for (int i = 0; i < g_watchCount.load(); ++i) {
+        int good = 0;
+        for (int c = 2; c < g_seen; ++c) {
+            const int a = g_ages[i][c], b = g_ages[i][c - 1];
+            if ((a == 2 && b == 1) || (a == 1 && b == 2)) ++good;
+        }
+        if (g_seen > 20 && good >= g_seen - 6) {
+            g_prevAddr.store(g_watch[i]);
+            LogF("vrcam: the game keeps the previous frame's view at %p (%d of %d calls fit)%s", (void*)g_watch[i], good, g_seen - 2,
+                 g_set.dlssPrevFix.load() ? " - [render] dlss_prev_fix: it gets the same eye's, two frames back" : "");
+            return;
+        }
+    }
+    Log("vrcam: no place in the game's heap holds the previous frame's view exactly");
+}
+
+// Once a game frame (VrFrame): the view the frame was drawn with.
+void FrameDone() {
+    if (!g_lastViewOk) return;
+    if (g_lastProjOk) dlssmv::RecordFrame(g_lastView, g_lastProj, g_lastEye);
+    memcpy(g_frameView[g_frameViews % 4], g_lastView, sizeof g_lastView);
+    ++g_frameViews;
+}
+
+// After the game copied its view into its previous-frame place (at the frame's
+// start): the same eye's view two frames back instead, when it holds just what
+// the game puts there - the last frame's view - and nothing else.
+void FixPrev() {
+    const uintptr_t a = g_prevAddr.load();
+    if (!a || !g_set.dlssPrevFix.load() || !AfrOn() || PairWanted() || g_frameViews < 3) return;
+    const float* last = g_frameView[(g_frameViews - 1) % 4];
+    const float* same = g_frameView[(g_frameViews - 2) % 4];
+    float now[16];
+    if (!SafeRead(now, (const void*)a, sizeof now)) { g_prevAddr.store(0); return; }
+    if (memcmp(now, same, sizeof now) == 0) return;   // already ours this frame
+    if (memcmp(now, last, sizeof now) != 0) {         // not the game's previous view any more: let go
+        static int off = 0;
+        if (++off > 30) { g_prevAddr.store(0); off = 0; Log("vrcam: the previous-frame place holds something else now - let go"); }
+        return;
+    }
+    __try { memcpy((void*)a, same, 64); } __except (EXCEPTION_EXECUTE_HANDLER) { g_prevAddr.store(0); }
+}
+
+// How many views old the 16 floats at a are, -1 none kept, -2 unreadable.
+int AgeAt(uintptr_t a, bool* transposed) {
+    float m[16];
+    if (!SafeRead(m, (const void*)a, sizeof m)) return -2;
+    const uint32_t now = g_frame.load();
+    AcquireSRWLockShared(&g_lock);
+    int age = -1;
+    const uint32_t c = g_count;
+    for (int k = 0; k < 64 && k < (int)c && age < 0; ++k) {
+        const Entry& e = g_ring[(c - 1 - k) % kRing];
+        if (memcmp(m, e.m, sizeof m) == 0) { age = (int)(now - e.frame); *transposed = false; break; }
+        bool same = true;
+        for (int r = 0; r < 4 && same; ++r)
+            for (int q = 0; q < 4 && same; ++q) same = m[r * 4 + q] == e.m[q * 4 + r];
+        if (same) { age = (int)(now - e.frame); *transposed = true; }
+    }
+    ReleaseSRWLockShared(&g_lock);
+    return age;
+}
+
+// On the render thread, as a view is about to be handed over.
+void Watch() {
+    if (g_watchLeft.load() <= 0) return;
+    const int n = g_watchCount.load();
+    char line[512];
+    int len = snprintf(line, sizeof line, "vrcam: prev watch (call %u):", g_frame.load() + 1);
+    for (int i = 0; i < n && len < (int)sizeof line - 16; ++i) {
+        bool tr = false;
+        const int age = AgeAt(g_watch[i], &tr);
+        len += snprintf(line + len, sizeof line - len, " %d%s", age, tr ? "t" : "");
+        if (g_seen < 80) g_ages[i][g_seen] = age;
+    }
+    Log(line);
+    if (g_seen < 80) ++g_seen;
+    if (g_watchLeft.fetch_sub(1) == 1) PickPrev();
+}
+
+void Record(const float m[16]) {
+    const uint32_t f = g_frame.fetch_add(1) + 1;
+    AcquireSRWLockExclusive(&g_lock);
+    Entry& e = g_ring[g_count % kRing];
+    e.frame = f;
+    memcpy(e.m, m, sizeof e.m);
+    ++g_count;
+    ReleaseSRWLockExclusive(&g_lock);
+}
+
+struct Hit { uintptr_t addr; int age; bool transposed; uint32_t prot; };
+
+// One region: every 16-byte step whose 16 floats are a kept view (or its transpose).
+int ScanRegion(const uint8_t* base, size_t size, const Entry* snap, int n, const uint32_t* first, const uint32_t* firstT,
+               const uint8_t* bloom, Hit* out, int cap, uint32_t prot) {
+    int got = 0;
+    __try {
+        for (size_t o = 0; o + 64 <= size && got < cap; o += 16) {
+            const uint32_t w = *(const uint32_t*)(base + o);
+            if (w == 0 || !bloom[(w * 2654435761u) >> 20]) continue;
+            for (int k = 0; k < n && got < cap; ++k) {
+                if (w == first[k] && memcmp(base + o, snap[k].m, 64) == 0) {
+                    out[got++] = {(uintptr_t)(base + o), (int)(g_frame.load() - snap[k].frame), false, prot};
+                    break;
+                }
+                if (w == firstT[k]) {
+                    const float* f = (const float*)(base + o);
+                    bool same = true;
+                    for (int r = 0; r < 4 && same; ++r)
+                        for (int c = 0; c < 4 && same; ++c) same = f[r * 4 + c] == snap[k].m[c * 4 + r];
+                    if (same) { out[got++] = {(uintptr_t)(base + o), (int)(g_frame.load() - snap[k].frame), true, prot}; break; }
+                }
+            }
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {}
+    return got;
+}
+
+DWORD WINAPI Thread(void*) {
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+    static Entry snap[kRing];
+    static uint32_t first[kRing], firstT[kRing];
+    static Hit hits[4096];
+    static uint8_t bloom[4096];
+    for (int pass = 1; pass <= 3; ++pass) {
+        const ULONGLONG t0 = GetTickCount64();
+        int nh = 0;
+        size_t read = 0;
+        MEMORY_BASIC_INFORMATION mi{};
+        for (uintptr_t a = 0x10000; a < 0x7FFFFFFF0000ull && nh < 4096; a = (uintptr_t)mi.BaseAddress + mi.RegionSize) {
+            // a region going away under the walk is stepped over, not the end of it
+            if (!VirtualQuery((void*)a, &mi, sizeof mi)) { mi.BaseAddress = (void*)a; mi.RegionSize = 0x10000; continue; }
+            const uint32_t prot = mi.Protect & 0xFF;
+            if (mi.State != MEM_COMMIT || (mi.Protect & PAGE_GUARD) || (prot != PAGE_READWRITE && prot != PAGE_WRITECOPY) ||
+                mi.RegionSize > (1ull << 31) || (mi.Type != MEM_PRIVATE && mi.Type != MEM_MAPPED))
+                continue;
+            // the views kept now, the last 64 frames: what a region holds was written lately
+            int n = 0;
+            AcquireSRWLockShared(&g_lock);
+            const uint32_t c = g_count;
+            for (int k = 0; k < 64 && k < (int)c; ++k) snap[n++] = g_ring[(c - 1 - k) % kRing];
+            ReleaseSRWLockShared(&g_lock);
+            memset(bloom, 0, sizeof bloom);
+            for (int k = 0; k < n; ++k) {
+                memcpy(&first[k], &snap[k].m[0], 4);
+                memcpy(&firstT[k], &snap[k].m[0], 4);   // m[0] is on the diagonal: the same either way
+                bloom[(first[k] * 2654435761u) >> 20] = 1;
+            }
+            read += mi.RegionSize;
+            nh += ScanRegion((const uint8_t*)mi.BaseAddress, mi.RegionSize, snap, n, first, firstT, bloom, hits + nh, 4096 - nh, mi.Protect);
+        }
+        LogF("vrcam: prev-matrix scan %d: %.0f MB read in %.1f s, %d copies of vrcam's views found", pass, read / 1048576.0,
+             (GetTickCount64() - t0) / 1000.0, nh);
+        for (int i = 0; i < nh && i < 200; ++i) {
+            MEMORY_BASIC_INFORMATION r{};
+            VirtualQuery((void*)hits[i].addr, &r, sizeof r);
+            const uintptr_t mod = (uintptr_t)GetModuleHandleW(nullptr);
+            LogF("vrcam:   copy at %p (region %p +0x%llX, %s, protect 0x%X%s) - %d frame(s) old%s", (void*)hits[i].addr, r.AllocationBase,
+                 (unsigned long long)(hits[i].addr - (uintptr_t)r.AllocationBase), r.Type == MEM_MAPPED ? "mapped" : "private",
+                 hits[i].prot, (uintptr_t)r.AllocationBase == mod ? ", the game's image" : "", hits[i].age,
+                 hits[i].transposed ? ", transposed" : "");
+        }
+        // the heap copies of every pass, unique, for the in-frame watch
+        static int n = 0;
+        if (pass == 1) n = 0;
+        for (int i = 0; i < nh && n < kWatch; ++i) {
+            if ((hits[i].prot & 0x400) != 0) continue;   // write-combined: GPU transport
+            bool dup = false;
+            for (int k = 0; k < n && !dup; ++k) dup = g_watch[k] == hits[i].addr;
+            if (!dup) g_watch[n++] = hits[i].addr;
+        }
+        if (pass == 3) {
+            g_watchCount.store(n);
+            char b[1024];
+            int len = snprintf(b, sizeof b, "vrcam: prev watch - %d heap places, in this order:", n);
+            for (int k = 0; k < n && len < (int)sizeof b - 24; ++k) len += snprintf(b + len, sizeof b - len, " %p", (void*)g_watch[k]);
+            Log(b);
+            g_seen = 0;
+            g_watchLeft.store(80);
+        }
+        Sleep(500);
+    }
+    g_busy.store(false);
+    return 0;
+}
+
+// Once per switch of [debug] find_prev_matrix to 1.
+void Tick() {
+    static bool was = false;
+    const bool want = g_set.findPrevMatrix.load();
+    if (want && !was && !g_busy.exchange(true)) {
+        Log("vrcam: prev-matrix scan starting - turn the head slowly for the next few seconds");
+        if (HANDLE h = CreateThread(nullptr, 0, Thread, nullptr, 0, nullptr)) CloseHandle(h);
+        else g_busy.store(false);
+    }
+    was = want;
+}
+}  // namespace prevscan
+
+bool VrViewInner(const d2rcam::WorldView& in, float out[16]);
+extern std::atomic<bool> g_inWorld;
 bool VrView(const d2rcam::WorldView& in, float out[16]) {
+    prevscan::Watch();
+    const bool ours = VrViewInner(in, out);
+    if (ours) {
+        prevscan::Record(out);
+        memcpy(prevscan::g_lastView, out, sizeof prevscan::g_lastView);
+        prevscan::g_lastViewOk = true;
+        prevscan::g_lastEye = g_eye.load() & 1;
+        prevscan::FixPrev();
+    }
+    return ours;
+}
+bool VrViewInner(const d2rcam::WorldView& in, float out[16]) {
     AcquireSRWLockExclusive(&g_lookLock);
     memcpy(g_lookAt, in.lookAt, sizeof g_lookAt);
     g_lookOk = in.lookAtValid;
     ReleaseSRWLockExclusive(&g_lookLock);
+    // The menus (the character screen's 3D scene too: it has a hero point) keep the game's camera.
+    if (!g_inWorld.load()) return false;
     if (TopStereoOn()) return TopStereoView(in, out);
     if (!g_enabled.load() || !in.lookAtValid) return false;
     const float* G = in.gameView;   // row-major, v * M: column i is the game camera's axis i in the world
@@ -2024,8 +2347,18 @@ bool VrView(const d2rcam::WorldView& in, float out[16]) {
 // Our projection: the FlatVR screen's frustum (or [camera] fov), the near
 // clip that cuts the hero's own head away, and in AFR each eye's off-axis
 // shift so what lies at `convergence` sits on the screen.
+bool VrProjInner(const d2rcam::WorldView& in, float M[16]);
 bool VrProj(const d2rcam::WorldView& in, float M[16]) {
-    if (!g_enabled.load()) return false;
+    const bool ours = VrProjInner(in, M);
+    if (ours) {
+        memcpy(prevscan::g_lastProj, M, sizeof prevscan::g_lastProj);
+        prevscan::g_lastProjOk = true;
+        if (prevscan::g_lastViewOk) dlssmv::SetPending(prevscan::g_lastView, M, g_eye.load() & 1);
+    }
+    return ours;
+}
+bool VrProjInner(const d2rcam::WorldView& in, float M[16]) {
+    if (!g_enabled.load() || !g_inWorld.load()) return false;   // the menus: the game's own (no near clip through the heroes' heads)
     const float ratio = in.viewportH > 0.0f ? in.viewportW / in.viewportH : 0.0f;
     const float aspect = ratio > 0.1f && ratio < 10.0f ? ratio : 16.0f / 9.0f;
     g_lastAspect.store(aspect);
@@ -2165,7 +2498,8 @@ bool StaffAim() {
     // (2026-10-06); there it aims with one hand, like the bow.
     if (!FullBody()) return false;
     const D2RVR_Shared* sh = g_shared;
-    const bool staffNow = g_set.staffTwoHands.load() && gamestate::WeaponType() == D2RVR_TYPE_STAFF;
+    // along the staff in the right hand (staff_free_left) too, not only aimed from hand to hand ([bow] staff_two_hands)
+    const bool staffNow = (g_set.staffTwoHands.load() || g_set.staffFreeLeft.load()) && gamestate::WeaponType() == D2RVR_TYPE_STAFF;
     if (!(staffNow || XbowLikeStaff()) || !sh || sh->version != D2RVR_SHARED_VERSION) return false;
 #if D2RVR_FIRST_PERSON
     if (g_set.staffFreeLeft.load() && ArmsMode() == 2) return (sh->handsValid & 1u) && skel::StaffAxis(nullptr);
@@ -2648,6 +2982,8 @@ bool ViewStickToGame(float* px, float* py) {
     return true;
 }
 
+bool DirectWalkNow();
+bool StickHookIn();
 void TurnStick(XINPUT_STATE* s, bool fromBodyWalk) {
     if (!s || !g_enabled.load()) return;
     const XINPUT_GAMEPAD in = s->Gamepad;
@@ -2681,6 +3017,10 @@ void TurnStick(XINPUT_STATE* s, bool fromBodyWalk) {
         if (own) g_rightX.store(s->Gamepad.sThumbRX / 32767.0f);
         s->Gamepad.sThumbRX = 0; s->Gamepad.sThumbRY = 0;
     }
+    // Walking straight from BodyWalk (HookStickGet / HookKeyMove): the pad's left
+    // stick is kept from the game in the world - it would walk twice, and a stick
+    // pushed flips the game's interface to the controller.
+    if (DirectWalkNow() && StickHookIn()) { s->Gamepad.sThumbLX = 0; s->Gamepad.sThumbLY = 0; return; }
     float x = s->Gamepad.sThumbLX / 32767.0f, y = s->Gamepad.sThumbLY / 32767.0f;
     if (!ViewStickToGame(&x, &y)) return;
     s->Gamepad.sThumbLX = (SHORT)std::clamp(x * 32767.0f, -32768.0f, 32767.0f);
@@ -2944,6 +3284,32 @@ bool VrKeyInput(float* px, float* py) {
 // (KeysAsStick) only where neither is.
 bool KeyMoveMode() { return FlatKeyMode() || VrKeyWalk(); }
 
+// VR walk straight from BodyWalk ([input] direct_walk): its stick, read from its
+// own report (pad_mirror_shared.h), goes into the two places the game takes the
+// walking vector from - 0x8A960 in mouse mode (HookKeyMove) and the walk's call of
+// ControllerInputHandler's stick getter 0x13CF10 in controller mode (HookStickGet)
+// - so the game's pad left stick is not needed and is kept from it in the world.
+// Our camera's views only (F2-F4: the stick turned like any other), no menu, no chat.
+std::atomic<int> g_stickHook{0};   // HookStickGet: 0 not in yet, 1 in, 2 not possible
+bool DirectWalkNow() {
+    return g_set.platform.load() == 1 && g_set.directWalk.load() && g_enabled.load() && g_inWorld.load() &&
+           !gamestate::MenuOpen() && !ChatOpen();
+}
+// BodyWalk's stick as the game takes a walking vector (x right, y up on its screen,
+// length <= 1, its dead zone 10349 of 32767 with no rescale), turned by our camera.
+bool BodyWalkWalk(float* px, float* py) {
+    BWPadMirror m;
+    if (!PadMirrorRead(&m)) return false;
+    const float lx = (float)m.thumb_lx, ly = (float)m.thumb_ly;
+    if (lx * lx + ly * ly <= 10349.0f * 10349.0f) return false;
+    float x = std::clamp(lx / 32767.0f, -1.0f, 1.0f), y = std::clamp(ly / 32767.0f, -1.0f, 1.0f);
+    ViewStickToGame(&x, &y);
+    const float l = sqrtf(x * x + y * y);
+    if (l > 1.0f) { x /= l; y /= l; }
+    *px = x; *py = y;
+    return l > 1e-4f;
+}
+
 // What the player asks for now, as the game's keyboard move wants it (x right,
 // y up on the game's screen, length <= 1); false = nothing (the game then
 // stops the hero itself). W A S D while our mouse look is on, the window in
@@ -2993,6 +3359,7 @@ uint64_t HookKeyMove() {
     bool input = false;
     if (FlatKeyMode()) input = FlatMoveInput(&x, &y, &from);
     else if (VrKeyWalk() && VrKeyInput(&x, &y)) { input = true; from = "VR keys"; }
+    else if (DirectWalkNow() && BodyWalkWalk(&x, &y)) { input = true; from = "BodyWalk, straight"; }
     if (!input) return OrigKeyMove();
     volatile uint8_t* keys = (volatile uint8_t*)d2rsig::Addr(RVA_MOVE_KEYS);
     if (!keys) return OrigKeyMove();
@@ -3020,7 +3387,7 @@ void InstallKeyMoveHook() {
     static int misses = 0;
     // Flat with flat_keyboard_move, or VR with vr_keys_walk (third person, VrKeyWalk).
     const bool flat = g_set.platform.load() == 0;
-    if (!g_ctx || g_keyMove.load() != 0 || !(flat ? g_set.flatKeyMove.load() : g_set.vrKeyWalk.load())) return;
+    if (!g_ctx || g_keyMove.load() != 0 || !(flat ? g_set.flatKeyMove.load() : g_set.vrKeyWalk.load() || g_set.directWalk.load())) return;
     if (!Matches(RVA_KEY_MOVE, kSigKeyMove, sizeof kSigKeyMove)) {
         // In VR the game may stay on the pad for a long time, its keyboard move never
         // run and so never decrypted: no verdict there, only tried again.
@@ -3038,6 +3405,45 @@ void InstallKeyMoveHook() {
     else
         Log(in ? "vrcam: VR: keyboard move hook in - in third person (F2) W A S D walk where the camera looks"
                : "vrcam: VR: keyboard move hook FAILED - W A S D in third person stay the game's own keys");
+}
+
+// ControllerInputHandler's walking stick, 0x13CF10(handler, float2* out, player):
+// copies the stick its events left (handler + 0x20 + player * 0x1C8) into out and
+// returns out. Six callers (the walk, the attack's target, panels); only the walk's
+// (0x14C642, returning to 0x14C647) gets BodyWalk's stick instead - nothing while it
+// is in its dead zone, so the pad's stick never walks on its own.
+constexpr uint64_t RVA_STICK_GET = 0x13CF10, RVA_WALK_STICK_RET = 0x14C647;
+// mov [rsp+8], rbx; mov [rsp+0x18], rsi; push rdi; sub rsp, 0x20; mov edi, r8d (no rip, no rel32)
+const uint8_t kSigStickGet[15] = {0x48,0x89,0x5C,0x24,0x08,0x48,0x89,0x74,0x24,0x18,0x57,0x48,0x83,0xEC,0x20};
+using StickGetFn = float* (*)(void* handler, float* out, uint32_t player);
+StickGetFn OrigStickGet;
+bool StickHookIn() { return g_stickHook.load() == 1; }
+
+float* HookStickGet(void* handler, float* out, uint32_t player) {
+    float* r = OrigStickGet(handler, out, player);
+    if (r && (uintptr_t)_ReturnAddress() == d2rsig::Addr(RVA_WALK_STICK_RET) && DirectWalkNow()) {
+        float x = 0.0f, y = 0.0f;
+        const bool on = BodyWalkWalk(&x, &y);
+        r[0] = on ? x : 0.0f;
+        r[1] = on ? y : 0.0f;
+        static ULONGLONG lastLog = 0;
+        if (on && GetTickCount64() - lastLog >= 2000) {
+            lastLog = GetTickCount64();
+            LogF("vrcam: walk straight from BodyWalk (controller mode) v=(%.2f,%.2f)", x, y);
+        }
+    }
+    return r;
+}
+
+// VR with direct_walk; tried with the others twice a second. The code decrypts the
+// first time it runs (in controller mode), so no "not possible" verdict by time.
+void InstallStickHook() {
+    if (!g_ctx || g_stickHook.load() != 0 || g_set.platform.load() != 1 || !g_set.directWalk.load()) return;
+    if (!Matches(RVA_STICK_GET, kSigStickGet, sizeof kSigStickGet) || !d2rsig::Addr(RVA_WALK_STICK_RET)) return;
+    const bool in = d2rsig::Hook(RVA_STICK_GET, kSigStickGet, sizeof kSigStickGet, (void*)&HookStickGet, (void**)&OrigStickGet);
+    g_stickHook.store(in ? 1 : 2);
+    Log(in ? "vrcam: VR: walking stick hook in - BodyWalk's stick walks the hero straight, the pad's left stick is kept from the game"
+           : "vrcam: VR: walking stick hook FAILED - the hero walks through the pad's left stick as before");
 }
 
 // 0xFE3B0(unit, type, x, y, flags) - the game's click on the map (move_recon.md
@@ -4785,7 +5191,11 @@ void PushArms() {
 #if D2RVR_FIRST_PERSON
     in.hideHead = own && (g_set.hideHead.load() || !FullBody());
     const int likeStaff = HeldLikeStaff();
-    in.staff = own && ((g_set.staffTwoHands.load() && gamestate::WeaponType() == D2RVR_TYPE_STAFF) || XbowLikeStaff() || likeStaff);
+    // a staff in the hands: aimed from hand to hand ([bow] staff_two_hands) or fast in the right one with
+    // the left free (staff_free_left) - the latter no longer waits for the aim's box (off by default since
+    // 2026-10-06, it left the free left hand stiff in the staff's grip, never closing with the grip)
+    in.staff = own && (((g_set.staffTwoHands.load() || g_set.staffFreeLeft.load()) && gamestate::WeaponType() == D2RVR_TYPE_STAFF) ||
+                       XbowLikeStaff() || likeStaff);
     in.staffHand = gamestate::WeaponType() == D2RVR_TYPE_CROSSBOW ? g_set.xbowHand.load()
                  : likeStaff == 1 ? (gamestate::WeaponType() == D2RVR_TYPE_SPEAR || gamestate::WeaponType() == D2RVR_TYPE_POLEARM
                                      ? g_set.spearHand.load() : g_set.axeHand.load())
@@ -5361,10 +5771,19 @@ int g_scanCount = 0;
 // trail of lights lit the ceiling over half the cave (2026-10-07); only what stands lights it.
 bool g_scanStill[kScanMax] = {};
 std::atomic<bool> g_scanBusy{false};
-struct ScanArgs { float hero[3]; };
+struct ScanArgs { float hero[3]; bool full; };
+// Where the last full scan found lights: 64 KB windows of the heap (2026-10-08). Reading
+// all the game's memory (~5.7 GB) every 1.5 s cost a third of a core and was suspected
+// of VR dropouts on weak PCs (0.143 turned the torches off for it). Now the whole heap
+// is read only after an area change (1, 4 and 12 s) and every 20 s; in between only
+// these windows - the renderer rewrites its light lists in place.
+constexpr uintptr_t kScanWin = 0x10000;
+constexpr int kScanWinMax = 256;
+uintptr_t g_scanWin[kScanWinMax];   // window starts, written and read only on the scan thread
+int g_scanWinCount = 0;
 
 // One heap region; -1 if it went away under the scan.
-int ScanLightRuns(const float* p, size_t n, const float hero[3], float (*out)[3], int cap) {
+int ScanLightRuns(const float* p, size_t n, const float hero[3], float (*out)[3], int cap, const float** at = nullptr) {
     int got = 0;
     __try {
         for (size_t i = 0; i + 3 * 3 <= n && got < cap; ++i) {
@@ -5384,7 +5803,11 @@ int ScanLightRuns(const float* p, size_t n, const float hero[3], float (*out)[3]
                 ++len; j += 3;
             }
             if (len < 3 || len >= 64) continue;
-            for (size_t k = i; k < j && got < cap; k += 3) { out[got][0] = p[k]; out[got][1] = p[k + 1]; out[got][2] = p[k + 2]; ++got; }
+            for (size_t k = i; k < j && got < cap; k += 3) {
+                out[got][0] = p[k]; out[got][1] = p[k + 1]; out[got][2] = p[k + 2];
+                if (at) at[got] = p + k;
+                ++got;
+            }
             i = j - 1;
         }
     } __except (EXCEPTION_EXECUTE_HANDLER) {
@@ -5397,14 +5820,43 @@ DWORD WINAPI ScanThread(void* arg) {
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_LOWEST);
     ScanArgs a = *(ScanArgs*)arg;
     delete (ScanArgs*)arg;
+    const LONGLONG t0 = QpcUs();
     static float pts[1024][3];
+    static const float* at[1024];
     int count = 0;
+    size_t read = 0;
     MEMORY_BASIC_INFORMATION mi{};
-    for (uintptr_t m = 0x10000; m < 0x7FFFFFFF0000ull && VirtualQuery((void*)m, &mi, sizeof mi) && count < 1024;
-         m = (uintptr_t)mi.BaseAddress + mi.RegionSize) {
-        if (mi.State != MEM_COMMIT || mi.Type != MEM_PRIVATE || mi.Protect != PAGE_READWRITE || mi.RegionSize > (1ull << 31)) continue;
-        const int got = ScanLightRuns((const float*)mi.BaseAddress, mi.RegionSize / sizeof(float), a.hero, pts + count, 1024 - count);
-        if (got > 0) count += got;
+    auto usable = [&]() {
+        return mi.State == MEM_COMMIT && mi.Type == MEM_PRIVATE && mi.Protect == PAGE_READWRITE && mi.RegionSize <= (1ull << 31);
+    };
+    if (a.full) {
+        for (uintptr_t m = 0x10000; m < 0x7FFFFFFF0000ull && VirtualQuery((void*)m, &mi, sizeof mi) && count < 1024;
+             m = (uintptr_t)mi.BaseAddress + mi.RegionSize) {
+            if (!usable()) continue;
+            read += mi.RegionSize;
+            const int got = ScanLightRuns((const float*)mi.BaseAddress, mi.RegionSize / sizeof(float), a.hero, pts + count, 1024 - count, at + count);
+            if (got > 0) count += got;
+        }
+    } else {
+        for (int w = 0; w < g_scanWinCount && count < 1024; ++w) {
+            if (!VirtualQuery((void*)g_scanWin[w], &mi, sizeof mi) || !usable()) continue;
+            // the window and 1 KB past it (a run across its end), never past the region
+            const uintptr_t end = std::min(g_scanWin[w] + kScanWin + 0x400, (uintptr_t)mi.BaseAddress + mi.RegionSize);
+            if (end <= g_scanWin[w]) continue;
+            read += end - g_scanWin[w];
+            const int got = ScanLightRuns((const float*)g_scanWin[w], (end - g_scanWin[w]) / sizeof(float), a.hero, pts + count, 1024 - count, at + count);
+            if (got > 0) count += got;
+        }
+    }
+    if (a.full) {   // the windows the next scans read: one per place a point was found
+        int nw = 0;
+        for (int i = 0; i < count && nw < kScanWinMax; ++i) {
+            const uintptr_t w = (uintptr_t)at[i] & ~(kScanWin - 1);
+            int k = 0;
+            while (k < nw && g_scanWin[k] != w) ++k;
+            if (k == nw) g_scanWin[nw++] = w;
+        }
+        g_scanWinCount = nw;
     }
     // The same light is in several of the renderer's lists (6 and more were seen for each
     // torch): one point each (within 2 units), and only what is in 3 lists or more - junk
@@ -5451,7 +5903,14 @@ DWORD WINAPI ScanThread(void* arg) {
     ReleaseSRWLockExclusive(&g_scanLock);
     unique = still;
     static int told = -1;
-    if (unique != told) { told = unique; LogF("worldobj: the renderer's lights - %d standing near the hero (%d points in its lists this time)", unique, count); }
+    static ULONGLONG toldAt = 0;
+    const double ms = (QpcUs() - t0) / 1000.0;
+    // every full scan, and a change; the narrow ones once a minute besides
+    if (unique != told || a.full || now - toldAt > 60000) {
+        told = unique; toldAt = now;
+        LogF("worldobj: the renderer's lights - %d standing near the hero (%d points in its lists; %s scan, %.0f MB in %.1f ms, %d windows)",
+             unique, count, a.full ? "full" : "narrow", read / 1048576.0, ms, g_scanWinCount);
+    }
     g_scanBusy.store(false);
     return 0;
 }
@@ -5472,10 +5931,21 @@ void Gather() {
     float L[3];
     AcquireSRWLockShared(&g_lookLock); memcpy(L, g_lookAt, sizeof L); ReleaseSRWLockShared(&g_lookLock);
     const float heroX = L[0], heroY = L[1], heroZ = L[2];   // his feet
-    static ULONGLONG lastScan = 0;
-    if (GetTickCount64() - lastScan > 1500 && !g_scanBusy.exchange(true)) {
-        lastScan = GetTickCount64();
-        ScanArgs* a = new ScanArgs{{heroX, heroY, heroZ}};
+    static ULONGLONG lastScan = 0, lastFull = 0;
+    static ULONGLONG fullDue[3] = {};
+    static uint32_t scanGen = ~0u;
+    const ULONGLONG tick = GetTickCount64();
+    if (const uint32_t gen = g_biomeGen.load(); gen != scanGen) {   // a new area: its lights, 1, 4 and 12 s in
+        scanGen = gen;
+        fullDue[0] = tick + 1000; fullDue[1] = tick + 4000; fullDue[2] = tick + 12000;
+    }
+    if (tick - lastScan > 1500 && !g_scanBusy.exchange(true)) {
+        lastScan = tick;
+        bool full = tick - lastFull > 20000;
+        for (ULONGLONG& d : fullDue)
+            if (d && tick >= d) { d = 0; full = true; }
+        if (full) lastFull = tick;
+        ScanArgs* a = new ScanArgs{{heroX, heroY, heroZ}, full};
         if (HANDLE th = CreateThread(nullptr, 0, ScanThread, a, 0, nullptr)) CloseHandle(th);
         else { delete a; g_scanBusy.store(false); }
     }
@@ -5682,6 +6152,117 @@ reshade::api::effect_technique g_tech[2]{};
 // The eye of the frame presented last (OnBeginEffects); the next is the other.
 int g_fxEye = 0;
 
+// DLSS with real stereo (2026-10-08): DLSS builds each picture out of the ones
+// before it, and with the eyes by turns the one before is the OTHER eye's - its
+// silhouettes showed through the other eye (with real stereo off DLSS looked
+// right). So each eye gets a DLSS instance of its own: the driver's NGX
+// (_nvngx.dll, which the game's own NGX library calls by name) is hooked, a
+// second SuperSampling feature is made beside the game's, and the right eye's
+// frames are evaluated on it. The motion vectors are still the game's, made
+// against the previous frame - the other eye's (see the plan, next step).
+namespace dlsseyes {
+struct NgxHandle { unsigned int Id; };
+using CreateFn = int(__cdecl*)(void* cmdList, int feature, void* params, NgxHandle** out);
+using EvalFn = int(__cdecl*)(void* cmdList, const NgxHandle* h, const void* params, void* callback);
+using ReleaseFn = int(__cdecl*)(NgxHandle* h);
+CreateFn OrigCreate = nullptr;
+EvalFn OrigEval = nullptr;
+ReleaseFn OrigRelease = nullptr;
+constexpr int kSuperSampling = 1;   // NVSDK_NGX_Feature_SuperSampling
+SRWLOCK g_lock = SRWLOCK_INIT;
+struct Twin { const NgxHandle* game; NgxHandle* twin; };
+std::vector<Twin> g_twins;
+std::vector<const NgxHandle*> g_noTwin;   // a twin was tried for these and failed: not again
+bool Ok(int r) { return (r & 0xFFF00000) != 0xBAD00000; }
+
+NgxHandle* TwinOf(const NgxHandle* h) {
+    AcquireSRWLockShared(&g_lock);
+    NgxHandle* t = nullptr;
+    for (const Twin& x : g_twins) if (x.game == h) { t = x.twin; break; }
+    ReleaseSRWLockShared(&g_lock);
+    return t;
+}
+bool TriedBefore(const NgxHandle* h) {
+    AcquireSRWLockShared(&g_lock);
+    const bool tried = std::find(g_noTwin.begin(), g_noTwin.end(), h) != g_noTwin.end();
+    ReleaseSRWLockShared(&g_lock);
+    return tried;
+}
+// A second instance from the same parameters: at the game's own creation, or -
+// for a feature made before the hook was in - from the evaluation's parameters
+// (the game keeps one parameter set, creation keys and all).
+NgxHandle* MakeTwin(void* cmdList, const NgxHandle* game, void* params, const char* when) {
+    NgxHandle* twin = nullptr;
+    const int r = OrigCreate(cmdList, kSuperSampling, params, &twin);
+    AcquireSRWLockExclusive(&g_lock);
+    if (Ok(r) && twin) g_twins.push_back({game, twin});
+    else { g_noTwin.push_back(game); twin = nullptr; }
+    ReleaseSRWLockExclusive(&g_lock);
+    if (twin) LogF("vrcam: DLSS - a second instance for the right eye (%s): game's %u, the eye's %u", when, game->Id, twin->Id);
+    else LogF("vrcam: DLSS - the right eye's instance could not be made (%s, 0x%08X): both eyes share the game's", when, (unsigned)r);
+    return twin;
+}
+
+int __cdecl HookCreate(void* cmdList, int feature, void* params, NgxHandle** out) {
+    const int r = OrigCreate(cmdList, feature, params, out);
+    if (feature == kSuperSampling && Ok(r) && out && *out && g_set.dlssPerEye.load())
+        MakeTwin(cmdList, *out, params, "with the game's");
+    return r;
+}
+int __cdecl HookEval(void* cmdList, const NgxHandle* h, const void* params, void* callback) {
+    if (h && g_set.dlssPerEye.load() && AfrOn()) {
+        // the eye this frame draws: a pair per game frame sets it for each pass;
+        // by turns, the one after the eye presented last
+        const int eye = PairWanted() ? (g_eye.load() & 1) : (g_fxEye ^ 1);
+        if (eye == 1) {
+            NgxHandle* twin = TwinOf(h);
+            if (!twin && !TriedBefore(h)) twin = MakeTwin(cmdList, h, const_cast<void*>(params), "at the first evaluation");
+            if (twin) {
+                void* restore = g_inWorld.load() ? dlssmv::BeforeEvaluate(cmdList, params, eye) : nullptr;
+                const int r = OrigEval(cmdList, twin, params, callback);
+                dlssmv::AfterEvaluate(params, restore);
+                return r;
+            }
+        }
+        if (TwinOf(h)) {   // the left eye on the game's own instance
+            void* restore = g_inWorld.load() ? dlssmv::BeforeEvaluate(cmdList, params, eye) : nullptr;
+            const int r = OrigEval(cmdList, h, params, callback);
+            dlssmv::AfterEvaluate(params, restore);
+            return r;
+        }
+    }
+    return OrigEval(cmdList, h, params, callback);
+}
+int __cdecl HookRelease(NgxHandle* h) {
+    NgxHandle* twin = nullptr;
+    AcquireSRWLockExclusive(&g_lock);
+    for (size_t i = 0; i < g_twins.size(); ++i)
+        if (g_twins[i].game == h) { twin = g_twins[i].twin; g_twins.erase(g_twins.begin() + i); break; }
+    g_noTwin.erase(std::remove(g_noTwin.begin(), g_noTwin.end(), h), g_noTwin.end());
+    ReleaseSRWLockExclusive(&g_lock);
+    if (twin) OrigRelease(twin);
+    return OrigRelease(h);
+}
+
+// Once the driver's NGX is in the process (the game loads it when it starts NGX).
+void Install() {
+    static bool done = false;
+    if (done) return;
+    HMODULE m = GetModuleHandleW(L"_nvngx.dll");
+    if (!m) return;
+    done = true;
+    void* c = (void*)GetProcAddress(m, "NVSDK_NGX_D3D12_CreateFeature");
+    void* e = (void*)GetProcAddress(m, "NVSDK_NGX_D3D12_EvaluateFeature");
+    void* r = (void*)GetProcAddress(m, "NVSDK_NGX_D3D12_ReleaseFeature");
+    const bool ok = c && e && r &&
+                    MH_CreateHook(c, (void*)&HookCreate, (void**)&OrigCreate) == MH_OK &&
+                    MH_CreateHook(e, (void*)&HookEval, (void**)&OrigEval) == MH_OK &&
+                    MH_CreateHook(r, (void*)&HookRelease, (void**)&OrigRelease) == MH_OK &&
+                    MH_EnableHook(c) == MH_OK && MH_EnableHook(e) == MH_OK && MH_EnableHook(r) == MH_OK;
+    LogF("vrcam: DLSS hooks %s (_nvngx.dll) - with real stereo each eye gets its own DLSS instance", ok ? "in" : "NOT in");
+}
+}  // namespace dlsseyes
+
 // The views of the toolbar's and the map's copies bound to the effect (hud::PictureNow), 0 = none yet.
 uint64_t g_pieceBound[3] = {};   // the toolbar, the map, the labels' layer
 
@@ -5818,7 +6399,127 @@ void OnFinishEffects(reshade::api::effect_runtime* rt, reshade::api::command_lis
     }
 }
 
+// How much of the screen the game draws its scene at (2026-10-08). With DLSS on, the
+// scene is drawn into the top left 0.5 - 0.67 of screen-size targets and only then
+// scaled up; ReShade's depth is that buffer, so the fog and the sky took the whole
+// screen's depth from a corner of it (a dark box on the picture, players' screenshots).
+// Read from the game itself: the viewport set while a screen-size depth buffer is bound.
+namespace renderscale {
+using namespace reshade::api;
+thread_local command_list* t_cl = nullptr;      // a list is recorded on one thread at a time
+thread_local uint32_t t_dsW = 0, t_dsH = 0;     // its depth buffer now (0 = none)
+thread_local float t_vpW = 0.0f, t_vpH = 0.0f;  // its viewport now
+std::atomic<uint32_t> g_screenW{0}, g_screenH{0};
+// The shares seen lately and how often: the scene's passes are most of them - the
+// interface, drawn after the upscale, would make the largest one the whole screen.
+struct Seen { uint32_t x, y, n; };
+SRWLOCK g_lock = SRWLOCK_INIT;
+Seen g_seen[8];
+int g_seenCount = 0;
+
+void Note() {
+    const uint32_t w = g_screenW.load(std::memory_order_relaxed), h = g_screenH.load(std::memory_order_relaxed);
+    if (!w || t_dsW != w || t_dsH != h || t_vpW < 16.0f || t_vpH < 16.0f) return;   // not a screen-size depth buffer
+    if (t_vpW > w * 1.01f || t_vpH > h * 1.01f) return;
+    const uint32_t x = (uint32_t)(t_vpW / w * 1000.0f + 0.5f), y = (uint32_t)(t_vpH / h * 1000.0f + 0.5f);
+    AcquireSRWLockExclusive(&g_lock);
+    int k = 0;
+    while (k < g_seenCount && !(g_seen[k].x == x && g_seen[k].y == y)) ++k;
+    if (k < g_seenCount) ++g_seen[k].n;
+    else if (g_seenCount < 8) g_seen[g_seenCount++] = {x, y, 1};
+    ReleaseSRWLockExclusive(&g_lock);
+}
+void OnBind(command_list* cl, uint32_t, const resource_view*, resource_view dsv) {
+    if (cl != t_cl) { t_cl = cl; t_vpW = t_vpH = 0.0f; }
+    t_dsW = t_dsH = 0;
+    if (dsv.handle) {
+        device* dev = cl->get_device();
+        const resource_desc d = dev->get_resource_desc(dev->get_resource_from_view(dsv));
+        t_dsW = d.texture.width; t_dsH = d.texture.height;
+    }
+    Note();
+}
+void OnViewports(command_list* cl, uint32_t first, uint32_t count, const viewport* vps) {
+    if (first != 0 || count == 0) return;
+    if (cl != t_cl) { t_cl = cl; t_dsW = t_dsH = 0; }
+    t_vpW = vps[0].width; t_vpH = vps[0].height;
+    Note();
+}
+// Once a frame, before the effect: the share seen over the last half second, kept when
+// none was seen (a menu, a loading screen).
+void Frame(effect_runtime* rt, float out[2]) {
+    uint32_t w = 0, h = 0;
+    rt->get_screenshot_width_and_height(&w, &h);
+    g_screenW.store(w); g_screenH.store(h);
+    static float scale[2] = {1.0f, 1.0f};
+    static ULONGLONG since = 0;
+    const ULONGLONG now = GetTickCount64();
+    if (now - since >= 500) {
+        since = now;
+        Seen s[8];
+        AcquireSRWLockExclusive(&g_lock);
+        const int n = g_seenCount;
+        memcpy(s, g_seen, sizeof s);
+        g_seenCount = 0;
+        ReleaseSRWLockExclusive(&g_lock);
+        int best = -1;
+        for (int k = 0; k < n; ++k) if (best < 0 || s[k].n > s[best].n) best = k;
+        if (best >= 0) {
+            const float sx = std::clamp(s[best].x / 1000.0f, 0.25f, 1.0f), sy = std::clamp(s[best].y / 1000.0f, 0.25f, 1.0f);
+            if (fabsf(sx - scale[0]) > 0.002f || fabsf(sy - scale[1]) > 0.002f) {
+                char all[160] = "";
+                size_t len = 0;
+                for (int k = 0; k < n && len < sizeof all - 24; ++k)
+                    len += snprintf(all + len, sizeof all - len, " %.3fx%.3f:%u", s[k].x / 1000.0f, s[k].y / 1000.0f, s[k].n);
+                LogF("vrcam: the game draws its scene at %.3f x %.3f of the screen (%ux%u)%s; seen:%s", sx, sy, w, h,
+                     sx < 0.99f ? " - an upscaler (DLSS): the depth is read from that part" : "", all);
+            }
+            scale[0] = sx; scale[1] = sy;
+        }
+    }
+    out[0] = scale[0]; out[1] = scale[1];
+}
+}  // namespace renderscale
+
+// The camera behind the depth, for FlatVR's 3D from ReShade's depth (2026-10-08):
+// with it FlatVR shifts the second eye by each pixel's distance in metres and the
+// user's IPD - the world at its own size, as real stereo with [stereo] true_scale
+// has it - instead of its depth sliders' guess, which made the world look bigger.
+// Written while the world is 1:1 (TrueScale: the frustum is FlatVR's screen);
+// otherwise the counter stops and FlatVR goes back to its sliders.
+namespace depthcam {
+FlatVRDepthCamera* g_block = nullptr;
+void Publish() {
+    if (!g_block) {
+        static ULONGLONG lastTry = 0;
+        if (GetTickCount64() - lastTry < 2000) return;
+        lastTry = GetTickCount64();
+        HANDLE m = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, sizeof(FlatVRDepthCamera), FLATVR_DEPTH_CAMERA_NAME);
+        if (!m) return;
+        g_block = (FlatVRDepthCamera*)MapViewOfFile(m, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(FlatVRDepthCamera));
+        if (!g_block) { CloseHandle(m); return; }   // else the handle is kept: the name lives while we do
+    }
+    float ipd = 0.0f, conv = 0.0f, w = 0.0f, h = 0.0f, d = 0.0f;
+    if (!g_enabled.load() || !g_inWorld.load() || !TrueScale(&ipd, &conv) || !LiveScreen(&w, &h, &d) || d <= 0.0f) return;
+    const float eyeM = g_set.eyeMm.load() * 0.001f;
+    if (!(eyeM > 0.01f)) return;
+    g_block->near_world = g_lastNear.load();
+    g_block->units_per_metre = ipd / eyeM;
+    g_block->tan_half_w = 0.5f * w / d;
+    g_block->tan_half_h = 0.5f * h / d;
+    g_block->version = FLATVR_DEPTH_CAMERA_VERSION;
+    MemoryBarrier();
+    g_block->counter = g_block->counter + 1;
+}
+}  // namespace depthcam
+
 void OnBeginEffects(reshade::api::effect_runtime* rt, reshade::api::command_list*, reshade::api::resource_view, reshade::api::resource_view) {
+    {
+        float s[2];
+        renderscale::Frame(rt, s);
+        SetFloats(rt, "DepthScale", s, 2);
+    }
+    depthcam::Publish();
     if (!g_tech[0].handle) return;
     if (!rt->get_technique_state(g_tech[0]) && !(g_tech[1].handle && rt->get_technique_state(g_tech[1]))) return;
     SetFloat(rt, "NearPlane", g_lastNear.load());
@@ -6023,11 +6724,21 @@ void OnBeginEffects(reshade::api::effect_runtime* rt, reshade::api::command_list
         SetBool(rt, "LabelsOn", on && srv == g_pieceBound[2]);
         const bool mask = srv && srv == g_pieceBound[2] && hud::UiMaskNow();
         SetBool(rt, "UiMaskOn", mask);
-        if (on) {   // on the floor flat where the game puts them, each eye's own: only faded
+        if (on) {   // on the floor (or for the plate alone) flat where the game puts them, each eye's own: only faded
             const bool floor = FloorView();
-            SetFloat(rt, "LabelBase", floor ? 0.0f : g_set.labelsNear.load() * 0.005f);
-            SetFloat(rt, "LabelTilt", floor ? 0.0f : g_set.labelsTilt.load() * 0.005f);
-            SetFloat(rt, "LabelAlpha", floor ? g_set.labelsAlphaFloor.load() : 1.0f);
+            const bool tilted = !floor && LabelsTilted();
+            SetFloat(rt, "LabelBase", tilted ? g_set.labelsNear.load() * 0.005f : 0.0f);
+            SetFloat(rt, "LabelTilt", tilted ? g_set.labelsTilt.load() * 0.005f : 0.0f);
+            SetFloat(rt, "LabelAlpha", floor && !LabelBoxNative() ? g_set.labelsAlphaFloor.load() : 1.0f);
+            float box[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+            int32_t r[4];
+            const uint32_t sw = renderscale::g_screenW.load(), sh = renderscale::g_screenH.load();
+            if (g_set.plateAlpha.load() < 0.995f && sw && sh && gamestate::PlateRect(r)) {
+                box[0] = (float)r[0] / sw; box[1] = (float)r[1] / sh;
+                box[2] = (float)(r[0] + r[2]) / sw; box[3] = (float)(r[1] + r[3]) / sh;
+            }
+            SetFloats(rt, "PlateBox", box, 4);
+            SetFloat(rt, "PlateAlpha", g_set.plateAlpha.load());
         }
         if (on || mask) {   // the toolbar and the map in the layer: never faded, never keyed away (TableKey)
             SetFloats(rt, "LabelKeep0", keepBar, 4);
@@ -6166,8 +6877,11 @@ void TryRegister() {
     reshade::register_event<reshade::addon_event::reshade_begin_effects>(&OnBeginEffects);
     reshade::register_event<reshade::addon_event::reshade_finish_effects>(&OnFinishEffects);
     reshade::register_event<reshade::addon_event::reshade_reloaded_effects>(&Forget);
+    reshade::register_event<reshade::addon_event::bind_render_targets_and_depth_stencil>(&renderscale::OnBind);
+    reshade::register_event<reshade::addon_event::bind_viewports>(&renderscale::OnViewports);
     uitrace::Register();   // Ctrl + F10: one frame's render targets to d2r_vr_uitrace.txt
     hud::SetLogger(&Log);
+    dlssmv::SetLogger(&Log);
     hud::Register();       // the interface's own layer: [hud] hide
     g_registered = true;
     Log("vrcam: joined ReShade - the fog and the sky follow d2r_vr.ini [fog] [sky]");
@@ -6346,6 +7060,10 @@ DWORD WINAPI UpdateThread(void*) {
             if (ClassicNow()) BarOffsetNow(&bx, &by);
             hud::SetPictureBarOffset(bx, by);
         }
+        if (g_inWorld.load() && g_set.plateAlpha.load() < 0.995f) {   // the plate's place, 10 times a second
+            static ULONGLONG nextPlate = 0;
+            if (nowMs >= nextPlate) { nextPlate = nowMs + 100; gamestate::PollPlate(); }
+        }
         hud::SetLabels(LabelsWanted());
         // the fog leaves the interface alone; the floor's key never takes its text for the void
         hud::SetUiMask((fx::FogWanted() || fx::TableKeyWanted()) && !LabelsWanted());
@@ -6414,6 +7132,9 @@ DWORD WINAPI UpdateThread(void*) {
         }
         if (nowMs >= nextSlow) {   // twice a second
             nextSlow = nowMs + 500;
+            FlatVr3DTick();
+            fx::dlsseyes::Install();
+            prevscan::Tick();
             const bool iniChanged = ReloadIfChanged();
             if (iniChanged) {
                 g_gen.fetch_add(1);
@@ -6434,6 +7155,7 @@ DWORD WINAPI UpdateThread(void*) {
             InstallBiomeHook();
             InstallLabelHooks();
             InstallKeyMoveHook();
+            InstallStickHook();
             InstallMapClickHook();
             HookCursor();
             CrosshairTick();
@@ -6481,7 +7203,7 @@ void LoadReShade() {
     else LogF("vrcam: ReShade64.dll did not load (error %lu)", GetLastError());
 }
 
-static const char g_info_version[] = "0.144.0";
+static const char g_info_version[] = "0.145.0";
 
 static const PluginInfo g_info = {
     PluginInfoSize, D2RL_PLUGIN_ABI_VERSION, "d2r-vr-vrcam", "vrcam", g_info_version, "BodyWalkVR",

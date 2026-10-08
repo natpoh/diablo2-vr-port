@@ -284,7 +284,8 @@ BW_EXPORT bool BW_CALLBACK BW_Plugin_Initialize(const BW_HostCallbacks* callback
     // Only the part this host has: a whole-struct copy from an older BodyWalk
     // reads past the end of its smaller struct.
     if (callbacks) {
-        const size_t have = g_hostVer >= 7 ? sizeof(BW_HostCallbacks)
+        const size_t have = g_hostVer >= 8 ? sizeof(BW_HostCallbacks)
+                          : g_hostVer >= 7 ? offsetof(BW_HostCallbacks, request_flatvr_stereo_source)
                           : g_hostVer >= 6 ? offsetof(BW_HostCallbacks, request_flatvr_running)
                           : g_hostVer >= 5 ? offsetof(BW_HostCallbacks, request_flatvr_screen_distance)
                           : g_hostVer >= 3 ? offsetof(BW_HostCallbacks, request_flatvr_head_lock)
@@ -293,7 +294,7 @@ BW_EXPORT bool BW_CALLBACK BW_Plugin_Initialize(const BW_HostCallbacks* callback
         memcpy(&g_host, callbacks, have);
     }
     out_info->name = "D2R Bridge";
-    out_info->version = "0.24.0";
+    out_info->version = "0.26.0";
     out_info->author = "BodyWalkVR";
     out_info->type = BW_PLUGIN_TYPE_OUTPUT;
     out_info->output_mode_name = nullptr;   // not a mode: the Xbox pad stays the output
@@ -314,6 +315,8 @@ BW_EXPORT bool BW_CALLBACK BW_Plugin_Initialize(const BW_HostCallbacks* callback
 // on to BodyWalk, host API 7. The events are made here, so they exist exactly
 // while a BodyWalk with this bridge runs.
 HANDLE g_flatVrStart = nullptr, g_flatVrStop = nullptr;
+// "3D in the headset" (D2RVR_FLATVR_3D_*_NAME): FlatVR's 3D source, host API 8.
+HANDLE g_flatVr3D[3] = {};
 
 void FollowFlatVrButtons() {
     if (!g_flatVrStart) g_flatVrStart = CreateEventW(nullptr, FALSE, FALSE, D2RVR_FLATVR_START_NAME);
@@ -326,6 +329,21 @@ void FollowFlatVrButtons() {
     if (g_flatVrStop && WaitForSingleObject(g_flatVrStop, 0) == WAIT_OBJECT_0) {
         if (can) g_host.request_flatvr_running(0);
         Info(can ? "D2R Bridge: Stop FlatVR from D2R VR Settings" : "D2R Bridge: Stop FlatVR asked, but this BodyWalk is older than 1.74");
+    }
+    static const wchar_t* const k3D[3] = {D2RVR_FLATVR_3D_NONE_NAME, D2RVR_FLATVR_3D_DEPTH_NAME, D2RVR_FLATVR_3D_PAIR_NAME};
+    static const char* const kSaid[3] = {"none (a flat screen)", "the game's depth (ReShade)", "the game's stereo pair"};
+    const bool can3D = g_hostVer >= 8 && g_host.request_flatvr_stereo_source;
+    for (int k = 0; k < 3; ++k) {
+        if (!g_flatVr3D[k]) g_flatVr3D[k] = CreateEventW(nullptr, FALSE, FALSE, k3D[k]);
+        if (!g_flatVr3D[k] || WaitForSingleObject(g_flatVr3D[k], 0) != WAIT_OBJECT_0) continue;
+        if (can3D) {
+            g_host.request_flatvr_stereo_source(k);
+            g_headLockSent = -1;   // FlatVR drops its Head Lock with the switch: the game's wish sent again
+        }
+        char b[160];
+        snprintf(b, sizeof b, can3D ? "D2R Bridge: FlatVR's 3D from %s, from D2R VR Settings"
+                                    : "D2R Bridge: FlatVR's 3D from %s asked, but this BodyWalk is older than 1.76", kSaid[k]);
+        Info(b);
     }
 }
 
