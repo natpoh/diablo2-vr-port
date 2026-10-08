@@ -6091,7 +6091,11 @@ void SkyTick() {
         seenGen = gen;
         AcquireSRWLockShared(&g_biomeLock); biome = g_biome; ReleaseSRWLockShared(&g_biomeLock);
         palette = SkyPaletteFor(biome, g_set.skyAlways.load());
-        const bool world = !biome.empty() && biome.find("frontend") == std::string::npos;
+        // Not a world: the main menu (act2_frontend_biome) and the menu scenes of
+        // their own - character creation is 'ui_characterselectscreen' (2026-10-08:
+        // taken for a world it got the first person's stereo, HUD shift and hidden heads).
+        const bool world = !biome.empty() && biome.find("frontend") == std::string::npos &&
+                           biome.rfind("ui_", 0) != 0;
         g_inWorld.store(world);
         g_fogAct.store(world ? ActOfBiome(biome) : 0);
         g_underground.store(world && !IsOutdoorBiome(biome));
@@ -7203,7 +7207,7 @@ void LoadReShade() {
     else LogF("vrcam: ReShade64.dll did not load (error %lu)", GetLastError());
 }
 
-static const char g_info_version[] = "0.150.0";
+static const char g_info_version[] = "0.151.0";
 
 static const PluginInfo g_info = {
     PluginInfoSize, D2RL_PLUGIN_ABI_VERSION, "d2r-vr-vrcam", "vrcam", g_info_version, "BodyWalkVR",

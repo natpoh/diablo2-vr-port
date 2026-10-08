@@ -1,5 +1,12 @@
 # What's new in D2R VR
 
+## 0.151
+
+- **Creating a character works in first person (F4)**: the Create New screen
+  was taken for a game area - the heroes stood there without heads and the
+  name field and buttons slid off. It is a menu again, with the game's own
+  camera.
+
 ## 0.150
 
 - **Much faster with DLSS in real stereo**: the motion fix for DLSS (0.145)
