@@ -182,6 +182,31 @@ void Main(uint3 id : SV_DispatchThreadID, uint gi : SV_GroupIndex, uint3 gid : S
     const float2 g = inside ? Game[id.xy] : 0.0;
     const float2 uv = (float2(id.xy) + 0.5) / float2(Size);
     const bool far = d >= 0.99998;   // where the game's vectors are the camera's turn (and the jitter) alone
+    // the game's vector = its jitter step + Scale (where the point was - uv) + the objects' own motion
+    // Mode 2 (the fix) only: none of the check below - it cost frames (Mode is the same for the whole dispatch)
+    if (Mode == 2) {
+        if (inside) {
+            const uint u = Use;
+            const float2 tS = Turn(uv, InvCur[u], PrevSame[u]);
+            const float2 jit = (Fix & 2) ? Jit.zw : Jit.xy;   // the jitter's step: this eye's last, or the game's (the render before)
+            float2 o;
+            if (far) {
+                o = g - Jit.xy + jit + FarTurn * Scale * tS;
+            } else if (!(Fix & 1)) {
+                o = g - Jit.xy + jit;
+            } else {
+                const float2 tO = Turn(uv, InvCur[u], PrevOther[u]);
+                const float2 dO = Move(uv, tO, InvCur[u], PrevOther[u]);
+                const float2 dS = Move(uv, tS, InvCur[u], PrevSame[u]);
+                const float2 r = g - Jit.xy - Scale * tO;   // Scale z dO + the objects' own
+                const float dd = dot(dO, dO);
+                const float z = dd > 1e-12 ? clamp(Scale * dot(r, dO) / dd, 0.0, 1.0) : 0.0;
+                o = jit + Scale * (tS + z * dS) + (r - Scale * z * dO);
+            }
+            Out[id.xy] = o;
+        }
+        return;
+    }
     float2 m[3] = {float2(0.0, 0.0), float2(0.0, 0.0), float2(0.0, 0.0)};
     if (inside) {
         m[0] = Turn(uv, InvCur[0], PrevOther[0]);
@@ -256,26 +281,6 @@ void Main(uint3 id : SV_DispatchThreadID, uint gi : SV_GroupIndex, uint3 gid : S
         }
     }
     // the game's vector = its jitter step + Scale (where the point was - uv) + the objects' own motion
-    if (inside && Mode == 2) {
-        const uint u = Use;
-        const float2 tS = Turn(uv, InvCur[u], PrevSame[u]);
-        const float2 jit = (Fix & 2) ? Jit.zw : Jit.xy;   // the jitter's step: this eye's last, or the game's (the render before)
-        float2 o;
-        if (far) {
-            o = g - Jit.xy + jit + FarTurn * Scale * tS;
-        } else if (!(Fix & 1)) {
-            o = g - Jit.xy + jit;
-        } else {
-            const float2 tO = Turn(uv, InvCur[u], PrevOther[u]);
-            const float2 dO = Move(uv, tO, InvCur[u], PrevOther[u]);
-            const float2 dS = Move(uv, tS, InvCur[u], PrevSame[u]);
-            const float2 r = g - Jit.xy - Scale * tO;   // Scale z dO + the objects' own
-            const float dd = dot(dO, dO);
-            const float z = dd > 1e-12 ? clamp(Scale * dot(r, dO) / dd, 0.0, 1.0) : 0.0;
-            o = jit + Scale * (tS + z * dS) + (r - Scale * z * dO);
-        }
-        Out[id.xy] = o;
-    }
 }
 )";
 
@@ -806,7 +811,22 @@ void* BeforeEvaluate(void* cmdListV, const void* paramsV, int eye) {
     cl->SetComputeRootDescriptorTable(1, gpu);
     cl->Dispatch((w + 15) / 16, (h + 15) / 16, 1);
 
-    // the stats out to the readback slot; the vectors over to DLSS
+    // the stats out to the readback slot (the check only); the vectors over to DLSS
+    if (fix) {
+        b[1].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+        b[1].Transition.pResource = g.out.Get();
+        b[1].Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+        b[1].Transition.StateBefore = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+        b[1].Transition.StateAfter = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+        g.outState = b[1].Transition.StateAfter;
+        cl->ResourceBarrier(1, &b[1]);
+        g.lastJitter[0] = jx;
+        g.lastJitter[1] = jy;
+        g.eyeJitter[eye & 1][0] = jx;
+        g.eyeJitter[eye & 1][1] = jy;
+        params->Set("MotionVectors", g.out.Get());
+        return mv;   // the game's own, to put back after the evaluation
+    }
     b[0].Transition.StateBefore = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
     b[0].Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_SOURCE;
     nb = 1;

@@ -1,5 +1,11 @@
 # What's new in D2R VR
 
+## 0.150
+
+- **Much faster with DLSS in real stereo**: the motion fix for DLSS (0.145)
+  also ran a heavy self-check every frame. It no longer does - 50 stereo
+  pairs a second became 79 on the author's PC (100 -> 158 fps).
+
 ## 0.149
 
 - **A desktop shortcut**: Setup can put "D2R VR" on the desktop (ticked by
