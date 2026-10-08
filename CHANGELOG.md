@@ -1,5 +1,11 @@
 # What's new in D2R VR
 
+## 0.148
+
+- **Setup's "Open D2R VR Settings" works**: on the finish screen it failed with
+  "CreateProcess failed; code 740 - the requested operation requires
+  elevation" when Setup ran as administrator.
+
 ## 0.147
 
 - **Launch the game from D2R VR Settings**: Home > **Launch Diablo II
