@@ -431,10 +431,16 @@ var
   Code: Integer;
   Raw: AnsiString;
   Ini: String;
+  Target: String;
 begin
   if (ReShadeSetup <> '') and not FileExists(GameDir + '\ReShade64.dll') then
   begin
-    if not Exec(ReShadeSetup, '"' + GameDir + '\D2RLoader.exe" --api dxgi --headless', '', SW_SHOW, ewWaitUntilTerminated, Code) or (Code <> 0) then
+    // ReShade's setup needs an exe that is there: without D2RLoader yet (not installed,
+    // or skipped on the folder page) it quit with code 1 (a player, 0.144, 2026-10-08).
+    // D2R.exe beside it gives the same dxgi.dll in the same folder.
+    Target := GameDir + '\D2RLoader.exe';
+    if not FileExists(Target) then Target := GameDir + '\D2R.exe';
+    if not Exec(ReShadeSetup, '"' + Target + '" --api dxgi --headless', '', SW_SHOW, ewWaitUntilTerminated, Code) or (Code <> 0) then
       MsgBox('ReShade''s installer did not finish (code ' + IntToStr(Code) + '). Install ReShade with add-on support for D2RLoader.exe ' +
              '(DirectX 10/11/12) from reshade.me, then rename dxgi.dll in the game''s folder to ReShade64.dll.', mbError, MB_OK)
     else
@@ -650,19 +656,9 @@ begin
     BodyWalkPortable := False;
     BodyWalkFresh := False;
     DownloadPage.Clear;
-    // ReShade: only when the game has none the mod can load
-    if not FileExists(Dir + '\ReShade64.dll') and not FileExists(Dir + '\dxgi.dll') then
-    begin
-      Name := ReShadeName;
-      if Name = '' then
-        MsgBox('Could not find the current ReShade on reshade.me. Setup goes on without it: install ReShade with add-on support ' +
-               'for D2RLoader.exe yourself, then rename dxgi.dll to ReShade64.dll.', mbError, MB_OK)
-      else
-      begin
-        DownloadPage.Add('https://reshade.me/downloads/' + Name, Name, '');
-        ReShadeSetup := ExpandConstant('{tmp}\' + Name);
-      end;
-    end;
+    // ReShade: no longer installed here - D2R VR Settings has the button (Home > Status >
+    // Install ReShade), after D2RLoader: its headless setup quit with code 1 for a player
+    // whose folder had no D2RLoader.exe yet (0.144, 2026-10-08).
     if IsVR then
     begin
       // none installed: FindBodyWalk says no and points at the portable copy

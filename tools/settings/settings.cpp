@@ -198,6 +198,11 @@ std::vector<Item> g_items = {
            L"Downloads D2RLoader 1.3.1 from d2rloader.net, checks it against the SHA-256 the site publishes and unpacks it "
            L"into the game's folder, beside D2R.exe. The mod runs only under D2RLoader.")),
     Status(L"reshade", L"ReShade and the mod's effect"),
+    // Install ReShade: shown while there is no ReShade64.dll beside D2R.exe (RefreshStatus).
+    Hide(Button(L"@run", L"reshade_get", L"Install ReShade",
+           L"Downloads the current ReShade with add-on support from reshade.me, installs it into the game's folder for "
+           L"DirectX 10/11/12 and renames its dxgi.dll to ReShade64.dll, which the mod loads itself (the plain D2R.exe "
+           L"refuses a dxgi.dll). The fog, the sky, the ceiling and the depth for FlatVR need it.")),
     Status(L"depth_addon", L"FlatVR depth add-on"),
     Status(L"game_video", L"The game's video settings"),
     Status(L"bw_installed", L"BodyWalk installed"),
@@ -2192,6 +2197,8 @@ void SignalBridge(const wchar_t* name) {
 // say right now. BodyWalk's own settings file, the plugin on disk, and the
 // three shared blocks each side writes while it runs.
 void D2RLoaderStatus();   // D2RLoader's row and its button (below, by the update check)
+extern std::atomic<bool> g_rsBusy;   // Install ReShade (below)
+extern std::wstring g_rsError;
 
 void RefreshStatus() {
     if (g_platform != 1 || g_tab != 0) return;
@@ -2219,12 +2226,18 @@ void RefreshStatus() {
         const std::wstring game(exe, n);
         if (Exists(game + L"dxgi.dll"))
             SetStatus(L"reshade", kBad, L"dxgi.dll is beside the game: D2R refuses it - rename it to ReShade64.dll");
-        else if (!Exists(game + L"ReShade64.dll"))
-            SetStatus(L"reshade", kBad, L"ReShade not installed - run D2R VR Setup again");
+        else if (!Exists(game + L"ReShade64.dll")) {
+            if (!g_rsBusy.load())
+                SetStatus(L"reshade", kBad, g_rsError.empty() ? L"ReShade not installed - press Install ReShade" : g_rsError.c_str());
+        }
         else if (!Exists(game + L"reshade-shaders\\Shaders\\D2R_DepthFog.fx"))
             SetStatus(L"reshade", kBad, L"ReShade is there, the mod's effect D2R_DepthFog.fx is not - run D2R VR Setup again");
         else
             SetStatus(L"reshade", kOk, L"ReShade and the mod's effect installed");
+        if (Item* b = FindItem(L"@run", L"reshade_get")) {
+            const bool hide = Exists(game + L"ReShade64.dll") || Exists(game + L"dxgi.dll");
+            if (b->hidden != hide) { b->hidden = hide; LayoutPage(); }
+        }
         const bool addon = Exists(game + L"FlatVR_DepthProvider.addon64");
         SetStatus(L"depth_addon", addon ? kOk : kBad, addon ? L"FlatVR depth add-on installed"
                                                             : L"FlatVR depth add-on missing beside the game - run D2R VR Setup again");
@@ -2821,6 +2834,139 @@ void D2RLoaderThread(HWND wnd, std::wstring game) {
     PostD2RL(wnd, kOk, L"D2RLoader 1.3.1 installed - start the game with D2RLoader.exe", true);
 }
 
+// ---- Install ReShade (Home > Status): reshade.me's current setup with add-on support,
+// headless, for D2RLoader.exe (D2R.exe while there is none); then its dxgi.dll is
+// renamed to ReShade64.dll and its search paths fixed, as D2R VR Setup did up to 0.145.
+std::atomic<bool> g_rsBusy{false};
+std::wstring g_rsError;
+constexpr UINT WM_APP_RESHADE = WM_APP + 41;
+
+bool HttpGet(const wchar_t* host, const std::wstring& path, std::vector<uint8_t>* data, DWORD* status) {
+    HINTERNET session = WinHttpOpen(L"D2RVR-Settings/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    HINTERNET connect = session ? WinHttpConnect(session, host, INTERNET_DEFAULT_HTTPS_PORT, 0) : nullptr;
+    HINTERNET request = connect ? WinHttpOpenRequest(connect, L"GET", path.c_str(), nullptr, WINHTTP_NO_REFERER,
+                                                     WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE) : nullptr;
+    DWORD size = sizeof *status;
+    *status = 0;
+    bool ok = request && WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) &&
+              WinHttpReceiveResponse(request, nullptr) &&
+              WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX,
+                                  status, &size, WINHTTP_NO_HEADER_INDEX) && *status == 200;
+    if (ok) {
+        for (;;) {
+            DWORD avail = 0;
+            if (!WinHttpQueryDataAvailable(request, &avail) || !avail) break;
+            const size_t at = data->size();
+            data->resize(at + avail);
+            DWORD got = 0;
+            if (!WinHttpReadData(request, data->data() + at, avail, &got)) { ok = false; break; }
+            data->resize(at + got);
+        }
+    }
+    if (request) WinHttpCloseHandle(request);
+    if (connect) WinHttpCloseHandle(connect);
+    if (session) WinHttpCloseHandle(session);
+    return ok && !data->empty();
+}
+
+void PostReShade(HWND wnd, int state, std::wstring text, bool done) {
+    auto* p = new D2RLProgress{state, std::move(text), done};
+    if (!PostMessageW(wnd, WM_APP_RESHADE, 0, (LPARAM)p)) delete p;
+}
+
+void ReShadeThread(HWND wnd, std::wstring game) {
+    auto fail = [&](const std::wstring& why) { LogLine(L"reshade: " + why); PostReShade(wnd, kBad, why, true); };
+    // the current setup's name on reshade.me's front page, as BodyWalk finds it
+    std::vector<uint8_t> page;
+    DWORD status = 0;
+    if (!HttpGet(L"reshade.me", L"/", &page, &status)) { fail(L"Could not reach reshade.me (HTTP " + std::to_wstring(status) + L") - try again"); return; }
+    const std::string html(page.begin(), page.end());
+    std::string name;
+    for (size_t p = html.find("ReShade_Setup_"); p != std::string::npos; p = html.find("ReShade_Setup_", p + 1)) {
+        const size_t e = html.find("_Addon.exe", p);
+        if (e != std::string::npos && e - p < 40) { name = html.substr(p, e - p + 10); break; }
+    }
+    if (name.empty()) { fail(L"Could not find the current ReShade with add-on support on reshade.me"); return; }
+    const std::wstring wname(name.begin(), name.end());
+    PostReShade(wnd, kUnknown, L"Downloading " + wname + L" from reshade.me...", false);
+    std::vector<uint8_t> setup;
+    if (!HttpGet(L"reshade.me", L"/downloads/" + wname, &setup, &status)) { fail(L"Could not download " + wname + L" (HTTP " + std::to_wstring(status) + L")"); return; }
+    wchar_t tmp[MAX_PATH];
+    GetTempPathW(MAX_PATH, tmp);
+    const std::wstring exe = std::wstring(tmp) + wname;
+    {
+        std::ofstream out(exe, std::ios::binary | std::ios::trunc);
+        out.write((const char*)setup.data(), (std::streamsize)setup.size());
+        if (!out) { fail(L"Could not save the ReShade setup to " + exe); return; }
+    }
+    PostReShade(wnd, kUnknown, L"Installing ReShade into the game's folder...", false);
+    // One script: the headless setup for D2RLoader.exe (D2R.exe while there is none - the
+    // setup quits with code 1 for an exe that is not there), the search paths ReShade 6.8
+    // cannot read ('\**\**' -> '\**'), dxgi.dll -> ReShade64.dll, our mark for the uninstaller.
+    // Elevated when the game's folder takes no writes (Program Files).
+    const std::wstring script =
+        L"$ErrorActionPreference='Stop'; $g=" + PsQuote(game) + L"; $s=" + PsQuote(exe) +
+        L"; $t = Join-Path $g 'D2RLoader.exe'; if (-not (Test-Path -LiteralPath $t)) { $t = Join-Path $g 'D2R.exe' }" +
+        L"; $p = Start-Process -FilePath $s -ArgumentList ('\"' + $t + '\" --api dxgi --headless') -Wait -PassThru" +
+        L"; if ($p.ExitCode -ne 0) { exit 10 + $p.ExitCode }" +
+        L"; $ini = Join-Path $g 'ReShade.ini'; if (Test-Path -LiteralPath $ini) { $c = [IO.File]::ReadAllText($ini); $n = $c.Replace('\\**\\**', '\\**'); if ($n -ne $c) { [IO.File]::WriteAllText($ini, $n) } }" +
+        L"; $d = Join-Path $g 'dxgi.dll'; $r = Join-Path $g 'ReShade64.dll'" +
+        L"; if (Test-Path -LiteralPath $d) { if (Test-Path -LiteralPath $r) { Remove-Item -LiteralPath $d -Force } else { Rename-Item -LiteralPath $d -NewName 'ReShade64.dll' } }" +
+        L"; if (-not (Test-Path -LiteralPath $r)) { exit 3 }" +
+        L"; $m = Join-Path $g 'd2rloader\\plugins'; if (Test-Path -LiteralPath $m) { Set-Content -LiteralPath (Join-Path $m 'd2r_vr_reshade_ours.txt') -Value 'ReShade was installed by D2R VR Settings.' }" +
+        L"; exit 0";
+    const std::wstring args = L"-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -EncodedCommand " + EncodedCommand(script);
+    bool writable = false;
+    {
+        const std::wstring probe = game + L"d2r_vr_write_probe.tmp";
+        HANDLE f = CreateFileW(probe.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_FLAG_DELETE_ON_CLOSE, nullptr);
+        if (f != INVALID_HANDLE_VALUE) { writable = true; CloseHandle(f); }
+    }
+    SHELLEXECUTEINFOW sei{sizeof sei};
+    sei.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC;
+    sei.lpVerb = writable ? L"open" : L"runas";
+    sei.lpFile = L"powershell.exe";
+    sei.lpParameters = args.c_str();
+    sei.nShow = SW_HIDE;
+    DWORD code = 1;
+    if (!ShellExecuteExW(&sei) || !sei.hProcess) {
+        DeleteFileW(exe.c_str());
+        fail(writable ? L"Could not start the ReShade setup" : L"The game's folder needs administrator rights - allow it, and press Install ReShade again");
+        return;
+    }
+    WaitForSingleObject(sei.hProcess, 300000);
+    GetExitCodeProcess(sei.hProcess, &code);
+    CloseHandle(sei.hProcess);
+    DeleteFileW(exe.c_str());
+    if (code == 3) { fail(L"ReShade's setup ran, but no ReShade64.dll came out - an antivirus may have removed it"); return; }
+    if (code >= 10) { fail(L"ReShade's setup did not finish (code " + std::to_wstring(code - 10) + L") - try again, or install it from reshade.me"); return; }
+    if (code != 0) { fail(L"Could not install ReShade (code " + std::to_wstring(code) + L")"); return; }
+    LogLine(L"reshade: " + wname + L" installed into " + game);
+    PostReShade(wnd, kOk, L"ReShade installed - start the game with D2RLoader.exe", true);
+}
+
+void StartReShadeInstall() {
+    if (g_rsBusy.exchange(true)) return;
+    if (Item* b = FindItem(L"@run", L"reshade_get")) EnableWindow(b->ctl, FALSE);
+    SetStatus(L"reshade", kUnknown, L"Looking for the current ReShade on reshade.me...");
+    try {
+        std::thread(ReShadeThread, g_main, GameFolder()).detach();
+    } catch (const std::exception&) {
+        g_rsBusy.store(false);
+        SetStatus(L"reshade", kBad, L"Could not start the ReShade setup");
+    }
+}
+
+void OnReShadeProgress(D2RLProgress* raw) {
+    std::unique_ptr<D2RLProgress> p(raw);
+    SetStatus(L"reshade", p->state, p->text.c_str());
+    if (!p->done) return;
+    g_rsBusy.store(false);
+    g_rsError = p->state == kOk ? L"" : p->text;
+    if (Item* b = FindItem(L"@run", L"reshade_get")) EnableWindow(b->ctl, TRUE);
+    if (p->state == kOk) RefreshStatus();   // the button goes away with ReShade there
+}
+
 void StartD2RLoaderInstall() {
     if (g_d2rlBusy.exchange(true)) return;
     if (Item* b = FindItem(L"@run", L"d2rloader_get")) EnableWindow(b->ctl, FALSE);
@@ -2985,6 +3131,7 @@ LRESULT CALLBACK PageProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
             } else if (HIWORD(w) == BN_CLICKED && it.kind == Kind::Button && wcscmp(it.section, L"@run") == 0) {
                 if (wcscmp(it.key, L"bodywalk") == 0) StartBodyWalk();
                 else if (wcscmp(it.key, L"d2rloader_get") == 0) StartD2RLoaderInstall();
+                else if (wcscmp(it.key, L"reshade_get") == 0) StartReShadeInstall();
                 else SignalBridge(wcscmp(it.key, L"flatvr_start") == 0 ? D2RVR_FLATVR_START_NAME : D2RVR_FLATVR_STOP_NAME);
             } else if (HIWORD(w) == BN_CLICKED && it.kind == Kind::Button) {
                 WriteValue(it, (float)(((int)ReadValue(it) + 1) % 1000000));
@@ -3039,6 +3186,7 @@ LRESULT CALLBACK WndProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
     }
     case WM_APP_UPDATE: OnUpdateResult((UpdateResult*)l); return 0;
     case WM_APP_D2RL: OnD2RLProgress((D2RLProgress*)l); return 0;
+    case WM_APP_RESHADE: OnReShadeProgress((D2RLProgress*)l); return 0;
     case WM_TIMER: {
         FollowWeapon();
         RefreshRadios();

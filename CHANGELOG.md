@@ -1,5 +1,13 @@
 # What's new in D2R VR
 
+## 0.146
+
+- **ReShade installs from D2R VR Settings now**: Home > Status > **Install
+  ReShade** downloads it from reshade.me and sets it up for the game by
+  itself - no renaming files. Setup no longer installs it: its ReShade step
+  failed ("did not finish, code 1") when D2RLoader was not in the game's
+  folder yet.
+
 ## 0.145
 
 - **DLSS works with real stereo**: each eye gets a DLSS of its own, fed the
