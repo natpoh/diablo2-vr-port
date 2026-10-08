@@ -1,5 +1,11 @@
 # What's new in D2R VR
 
+## 0.149
+
+- **A desktop shortcut**: Setup can put "D2R VR" on the desktop (ticked by
+  default) - D2R VR Settings starts BodyWalk, installs ReShade and D2RLoader
+  and launches the game, so there is no need to open the game's folder.
+
 ## 0.148
 
 - **Setup's "Open D2R VR Settings" works**: on the finish screen it failed with

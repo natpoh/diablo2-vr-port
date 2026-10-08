@@ -111,8 +111,13 @@ Type: files; Name: "{app}\d2rloader\plugins\d2r_vr_settings.exe"
 ; it goes first and D2R_VR_Settings.exe comes in under its own name
 Type: files; Name: "{app}\d2r_vr_settings.exe"
 
+; A shortcut on the desktop too, so nobody hunts for the game's folder (on by default).
+[Tasks]
+Name: "desktopicon"; Description: "Create a desktop shortcut to D2R VR Settings"; GroupDescription: "Shortcuts:"
+
 [Icons]
 Name: "{autoprograms}\D2R VR Settings"; Filename: "{app}\D2R_VR_Settings.exe"; WorkingDir: "{app}"
+Name: "{autodesktop}\D2R VR"; Filename: "{app}\D2R_VR_Settings.exe"; WorkingDir: "{app}"; Tasks: desktopicon
 Name: "{autoprograms}\BodyWalk VR"; Filename: "{#PortableDir}\BodyWalkVR.exe"; WorkingDir: "{#PortableDir}"; Check: UsePortable
 
 
