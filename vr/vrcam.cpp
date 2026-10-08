@@ -345,6 +345,8 @@ struct Settings {
     std::atomic<float> tableTurnDeg{0.0f};  // [table] turn: the world turned about the hero on the board, degrees (45: its grid square to the board)       // [table] place: the settings program's "put the game in front of me" button, one more per press   // [table] bounds: the diorama is the ground the game's own view shows, times this; 0 = no edge   // [table] ahead_m: the hero this far ahead of where the head is when the view is taken (F5, F11)
     std::atomic<float> thirdHeight{6.5f};   // third person: the eye point above the ground
     std::atomic<bool>  stampPixels{true};
+    std::atomic<bool>  stamps{true};
+    std::atomic<bool>  pictureRing{true};   // [stereo] picture_ring: FlatVR's addon hands over the newest finished picture (2.19: ReShade.ini [FLATVR] ColourRing)        // [stereo] stamps: each frame's head-pose moment to FlatVR (0: none at all, the screen at the head as it is)
     std::atomic<int>   pipelineDepth{0};    // the presented frame is this many of its eye's views older than the newest (D3D12 queueing)   // the frame stamp strip for FlatVR (bottom-right corner)
     std::atomic<bool>  topStereo{false};    // the game's own view from above (F12 off) in stereo too: each eye turned about the hero
     std::atomic<float> topAngle{3.0f};      // that turn between the eyes, degrees
@@ -911,6 +913,8 @@ void LoadSettings() {
     g_set.gameHeightFog.store(IniB(L"render", L"game_height_fog", false));
     g_set.solidWalls.store(std::clamp((int)IniF(L"render", L"solid_walls", 1.0f), 0, 2));
     g_set.stampPixels.store(IniB(L"stereo", L"stamp_pixels", true));
+    g_set.stamps.store(IniB(L"stereo", L"stamps", true));
+    g_set.pictureRing.store(IniB(L"stereo", L"picture_ring", true));
     g_set.pipelineDepth.store(std::clamp((int)IniF(L"stereo", L"pipeline_depth", 0.0f), 0, 3));
     g_set.thirdDistance.store(std::clamp(IniF(L"third", L"distance", 7.0f), -5.0f, 200.0f));
     g_set.tableFloor.store(std::clamp(IniF(L"table", L"floor", 0.05f), 0.0f, 0.3f));
@@ -2298,7 +2302,11 @@ bool VrViewInner(const d2rcam::WorldView& in, float out[16]) {
     // one of this moment (PredictHead carries it on to now). FlatVR places
     // the screen at the head pose of this stamp and the headset's own
     // reprojection does the rest - see FlatVRAfrHalves.
-    if (g_afrBlock) {
+    // [stereo] stamps=0 (a D2R VR Settings box, 2026-10-08): no stamp at all - FlatVR
+    // then keeps its screen at the head as it is, as in the views without a head-turned
+    // camera, which stayed smooth while tabletop and first person juddered for players.
+    if (g_afrBlock && !g_set.stamps.load()) g_afrBlock->stamp_magic = 0;
+    if (g_afrBlock && g_set.stamps.load()) {
         // Without prediction the head in this view is BodyWalk's last
         // sample as it was: its own stamp is the exact moment. With it,
         // the head carried on to now.
@@ -6299,7 +6307,7 @@ bool BoneAxesWanted() { return false; }
 
 // The frame stamp strip (D2R_DepthFog.fx PS_Stamp): whenever the camera turns
 // with the head, so that FlatVR can place its screen at the pose of the frame.
-bool StampWanted() { return g_enabled.load() && g_afrBlock && g_set.stampPixels.load(); }
+bool StampWanted() { return g_enabled.load() && g_afrBlock && g_set.stamps.load() && g_set.stampPixels.load(); }
 
 bool FogWanted() {
     return g_set.fogOn.load() && g_enabled.load() && !Overhead() && g_inWorld.load() && !gamestate::MenuOpen() &&
@@ -6524,6 +6532,17 @@ void OnBeginEffects(reshade::api::effect_runtime* rt, reshade::api::command_list
         SetFloats(rt, "DepthScale", s, 2);
     }
     depthcam::Publish();
+    {   // FlatVR's ring of finished pictures, on or off from D2R VR Settings: the addon
+        // (FlatVR_DepthProvider 2.19+) reads ReShade.ini [FLATVR] ColourRing once a second
+        static int told = -1;
+        const int on = g_set.pictureRing.load() ? 1 : 0;
+        if (on != told) {
+            told = on;
+            reshade::set_config_value(nullptr, "FLATVR", "ColourRing", on ? "1" : "0");
+            LogF("vrcam: FlatVR's ring of finished pictures %s (ReShade.ini [FLATVR] ColourRing=%d, [stereo] picture_ring)",
+                 on ? "on" : "off", on);
+        }
+    }
     if (!g_tech[0].handle) return;
     if (!rt->get_technique_state(g_tech[0]) && !(g_tech[1].handle && rt->get_technique_state(g_tech[1]))) return;
     SetFloat(rt, "NearPlane", g_lastNear.load());

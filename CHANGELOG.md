@@ -6,6 +6,16 @@
   was taken for a game area - the heroes stood there without heads and the
   name field and buttons slid off. It is a menu again, with the game's own
   camera.
+- **Two switches for judder in head turns** (tabletop and first person),
+  D2R VR Settings > Stereo > Timing, both on by default and live:
+  **Frame stamps** - FlatVR places each frame at the head pose it was drawn
+  for; untick and the screen stays at the head as it is, like in the other
+  views. **Newest finished picture (FlatVR frame ring)** - untick and the
+  picture goes over to FlatVR the old way. If tabletop or
+  first person doubles or judders when you turn your head, untick them one
+  at a time and tell us which one helped.
+- FlatVR's ReShade add-on 2.19 (the frame ring can be switched off from the
+  game).
 
 ## 0.150
 

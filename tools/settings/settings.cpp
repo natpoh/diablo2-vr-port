@@ -471,8 +471,16 @@ std::vector<Item> g_items = {
            L"The distance that sits on the FlatVR screen; farther goes deeper behind it. "
            L"0 = parallel eyes (everything in front of the screen). Smaller = deeper.")),
     Group(L"Timing"),
-    Slider(L"stereo", L"pipeline_depth", L"Pipeline depth (smoother head turns)", 0, 3, 1, 0,
-           L"How many of an eye's views the shown frame lags the newest one. Try 0, 1 and 2 for the smoothest head turn."),
+    Toggle(L"stereo", L"stamps", L"Frame stamps (FlatVR places each frame at its head pose)", 1,
+           L"Each frame tells FlatVR when its view was taken, so the screen sits where the head was then. "
+           L"Untick if tabletop or first person judders or doubles when you turn your head - FlatVR then keeps "
+           L"the screen at the head as it is, like in the other views. Takes effect at once."),
+    Toggle(L"stereo", L"picture_ring", L"Newest finished picture (FlatVR frame ring)", 1,
+           L"FlatVR takes the newest picture the game has finished instead of the one shared picture. "
+           L"Untick if head turns judder - the picture then goes over as before (FlatVR addon 2.19 and newer). "
+           L"Takes effect within a second."),
+    Needs(L"stereo", L"stamps", 1, Slider(L"stereo", L"pipeline_depth", L"Pipeline depth (smoother head turns)", 0, 3, 1, 0,
+           L"How many of an eye's views the shown frame lags the newest one. Try 0, 1 and 2 for the smoothest head turn.")),
 
     // The interface, one tab per view (F1 - F4 on the Home page). [hud_top],
     // [hud_third], [hud_floor] and [hud_inside] are that view's own; unset, the old shared
