@@ -117,7 +117,9 @@ Name: "{autoprograms}\BodyWalk VR"; Filename: "{#PortableDir}\BodyWalkVR.exe"; W
 
 
 [Run]
-Filename: "{app}\D2R_VR_Settings.exe"; Description: "Open D2R VR Settings"; Flags: postinstall nowait skipifsilent
+; shellexec: started the way Explorer starts it - a player got "CreateProcess failed; code 740,
+; the requested operation requires elevation" from the plain CreateProcess (0.147, 2026-10-08)
+Filename: "{app}\D2R_VR_Settings.exe"; WorkingDir: "{app}"; Description: "Open D2R VR Settings"; Flags: postinstall nowait skipifsilent shellexec
 
 [Code]
 var
