@@ -1,5 +1,11 @@
 # What's new in D2R VR
 
+## 0.147
+
+- **Launch the game from D2R VR Settings**: Home > **Launch Diablo II
+  (D2RLoader)**, under Start BodyWalk - shown while D2RLoader is installed and
+  the game is not running.
+
 ## 0.146
 
 - **ReShade installs from D2R VR Settings now**: Home > Status > **Install

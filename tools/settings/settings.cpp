@@ -234,6 +234,9 @@ std::vector<Item> g_items = {
     // BodyWalk is found and not running (RefreshStatus, BodyWalkExe).
     Only(kVr, Hide(Button(L"@run", L"bodywalk", L"Start BodyWalk",
            L"Starts BodyWalk - the one in the game's folder that D2R VR Setup put in, or your installed one."))),
+    // Launch the game under D2RLoader: shown while D2RLoader.exe is beside D2R.exe and the game is not running.
+    Hide(Button(L"@run", L"d2r_launch", L"Launch Diablo II (D2RLoader)",
+           L"Starts the game with D2RLoader.exe from its folder - the mod runs only under D2RLoader.")),
     // FlatVR's own START / STOP, so nobody hunts for them in BodyWalk: shown
     // while BodyWalk runs with the bridge (its events exist), one at a time.
     Only(kVr, Hide(Button(L"@run", L"flatvr_start", L"Start FlatVR",
@@ -2175,6 +2178,21 @@ std::wstring BodyWalkExe() {
     return L"";
 }
 
+Item* FindItem(const wchar_t* section, const wchar_t* key);
+// The game under D2RLoader, from its own folder (this program sits beside D2R.exe).
+void LaunchGame() {
+    const std::wstring game = GameFolder();
+    const std::wstring exe = game + L"D2RLoader.exe";
+    ShellExecuteW(g_main, L"open", exe.c_str(), nullptr, game.c_str(), SW_SHOWNORMAL);
+}
+// Shown while D2RLoader.exe is there and the game is not running.
+void LaunchButton() {
+    Item* b = FindItem(L"@run", L"d2r_launch");
+    if (!b) return;
+    const bool hide = !Exists(GameFolder() + L"D2RLoader.exe") || ProcessRunning(L"D2RLoader.exe") || ProcessRunning(L"D2R.exe");
+    if (b->hidden != hide) { b->hidden = hide; LayoutPage(); }
+}
+
 void StartBodyWalk() {
     const std::wstring exe = BodyWalkExe();
     if (exe.empty()) return;
@@ -2200,7 +2218,9 @@ void D2RLoaderStatus();   // D2RLoader's row and its button (below, by the updat
 extern std::atomic<bool> g_rsBusy;   // Install ReShade (below)
 extern std::wstring g_rsError;
 
+void LaunchButton();
 void RefreshStatus() {
+    LaunchButton();   // flat and VR alike
     if (g_platform != 1 || g_tab != 0) return;
     D2RLoaderStatus();
     const std::wstring dir = BodyWalkDir();
@@ -3130,6 +3150,7 @@ LRESULT CALLBACK PageProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
                 else OpenDownload();
             } else if (HIWORD(w) == BN_CLICKED && it.kind == Kind::Button && wcscmp(it.section, L"@run") == 0) {
                 if (wcscmp(it.key, L"bodywalk") == 0) StartBodyWalk();
+                else if (wcscmp(it.key, L"d2r_launch") == 0) LaunchGame();
                 else if (wcscmp(it.key, L"d2rloader_get") == 0) StartD2RLoaderInstall();
                 else if (wcscmp(it.key, L"reshade_get") == 0) StartReShadeInstall();
                 else SignalBridge(wcscmp(it.key, L"flatvr_start") == 0 ? D2RVR_FLATVR_START_NAME : D2RVR_FLATVR_STOP_NAME);
