@@ -1,5 +1,16 @@
 # What's new in D2R VR
 
+## 0.152
+
+- **Smooth head turns again in tabletop and first person**: FlatVR's frame
+  ring (new in 0.150) is now off by default - with it the picture juddered
+  and doubled when you turned your head. Players who tried it: "a night and
+  day difference". The switch stays in D2R VR Settings > Stereo > Timing
+  (Newest finished picture); keep **Frame stamps** on - without them it is
+  as bad as before.
+- The log tells where a frame's time goes (presents a second, the game's
+  busiest threads, and in real stereo each eye's pass).
+
 ## 0.151
 
 - **Creating a character works in first person (F4)**: the Create New screen

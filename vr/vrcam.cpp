@@ -22,6 +22,7 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <tlhelp32.h>
 #include <intrin.h>
 #include <xinput.h>
 
@@ -346,7 +347,7 @@ struct Settings {
     std::atomic<float> thirdHeight{6.5f};   // third person: the eye point above the ground
     std::atomic<bool>  stampPixels{true};
     std::atomic<bool>  stamps{true};
-    std::atomic<bool>  pictureRing{true};   // [stereo] picture_ring: FlatVR's addon hands over the newest finished picture (2.19: ReShade.ini [FLATVR] ColourRing)        // [stereo] stamps: each frame's head-pose moment to FlatVR (0: none at all, the screen at the head as it is)
+    std::atomic<bool>  pictureRing{false};  // [stereo] picture_ring (off by default since 0.152: it juddered in head turns): FlatVR's addon hands over the newest finished picture (2.19: ReShade.ini [FLATVR] ColourRing)        // [stereo] stamps: each frame's head-pose moment to FlatVR (0: none at all, the screen at the head as it is)
     std::atomic<int>   pipelineDepth{0};    // the presented frame is this many of its eye's views older than the newest (D3D12 queueing)   // the frame stamp strip for FlatVR (bottom-right corner)
     std::atomic<bool>  topStereo{false};    // the game's own view from above (F12 off) in stereo too: each eye turned about the hero
     std::atomic<float> topAngle{3.0f};      // that turn between the eyes, degrees
@@ -914,7 +915,7 @@ void LoadSettings() {
     g_set.solidWalls.store(std::clamp((int)IniF(L"render", L"solid_walls", 1.0f), 0, 2));
     g_set.stampPixels.store(IniB(L"stereo", L"stamp_pixels", true));
     g_set.stamps.store(IniB(L"stereo", L"stamps", true));
-    g_set.pictureRing.store(IniB(L"stereo", L"picture_ring", true));
+    g_set.pictureRing.store(IniB(L"stereo", L"picture_ring", false));
     g_set.pipelineDepth.store(std::clamp((int)IniF(L"stereo", L"pipeline_depth", 0.0f), 0, 3));
     g_set.thirdDistance.store(std::clamp(IniF(L"third", L"distance", 7.0f), -5.0f, 200.0f));
     g_set.tableFloor.store(std::clamp(IniF(L"table", L"floor", 0.05f), 0.0f, 0.3f));
@@ -4084,6 +4085,72 @@ void SetEye(int eye) {
 
 void TurnTick();
 
+// Where a pair's time goes (2026-10-08, the frame budget: ~80 pairs/s whatever
+// DLSS or the window size, the GPU at 85-88%). Microseconds on the QPC clock,
+// summed over the log's 10 s and printed with the pairs/s line: outside the
+// pair (the game's own frame), each pass, and in each pass the stretch from
+// ReShade's effects to the Present event (effects) and from Present to the pass's
+// end (the Present call itself: waiting for the GPU or the swap chain).
+namespace pairtime {
+std::atomic<double> g_effBegin{0.0}, g_effSum{0.0}, g_presentAt{0.0};
+std::atomic<DWORD> g_drawThread{0};
+double UsNow() { return flog::UsNow(); }
+// This thread's own CPU time, us: a pass's wall time minus it is waiting. From its
+// cycle count (GetThreadTimes moves only at the scheduler's tick: it read 0) at the
+// clock's rate, measured once against QPC over 50 ms - a turbo clock reads it a little off.
+double CpuUs() {
+    static const double cyclesPerUs = [] {
+        ULONG64 c0 = 0, c1 = 0;
+        const double t0 = UsNow();
+        QueryThreadCycleTime(GetCurrentThread(), &c0);
+        while (UsNow() - t0 < 50000.0) {}
+        QueryThreadCycleTime(GetCurrentThread(), &c1);
+        return (double)(c1 - c0) / (UsNow() - t0);
+    }();
+    ULONG64 c = 0;
+    QueryThreadCycleTime(GetCurrentThread(), &c);
+    return cyclesPerUs > 0.0 ? (double)c / cyclesPerUs : 0.0;
+}
+// The game's busiest threads over the last call's span, % of one core, by their
+// cycle counts (Toolhelp + QueryThreadCycleTime): "game thread 38%, 1234 92% (the
+// render thread?)". Called with the pairs/s line; the pass's own thread is marked.
+std::string BusyThreads(double spanUs) {
+    static std::unordered_map<DWORD, ULONG64> last;
+    std::unordered_map<DWORD, ULONG64> now;
+    std::vector<std::pair<double, DWORD>> busy;
+    const double cpu0 = CpuUs(); (void)cpu0;   // calibrates cyclesPerUs on first use
+    ULONG64 one = 0; QueryThreadCycleTime(GetCurrentThread(), &one);
+    const double perUs = one && CpuUs() > 0.0 ? (double)one / CpuUs() : 0.0;
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    if (snap == INVALID_HANDLE_VALUE || perUs <= 0.0) return "?";
+    THREADENTRY32 te{sizeof te};
+    const DWORD pid = GetCurrentProcessId();
+    for (BOOL ok = Thread32First(snap, &te); ok; ok = Thread32Next(snap, &te)) {
+        if (te.th32OwnerProcessID != pid) continue;
+        HANDLE h = OpenThread(THREAD_QUERY_LIMITED_INFORMATION, FALSE, te.th32ThreadID);
+        if (!h) continue;
+        ULONG64 c = 0;
+        if (QueryThreadCycleTime(h, &c)) {
+            now[te.th32ThreadID] = c;
+            if (auto it = last.find(te.th32ThreadID); it != last.end() && spanUs > 0.0)
+                busy.push_back({100.0 * (double)(c - it->second) / perUs / spanUs, te.th32ThreadID});
+        }
+        CloseHandle(h);
+    }
+    CloseHandle(snap);
+    last.swap(now);
+    std::sort(busy.begin(), busy.end(), [](auto& a, auto& b) { return a.first > b.first; });
+    std::string out;
+    char b[64];
+    for (size_t i = 0; i < busy.size() && i < 5; ++i) {
+        snprintf(b, sizeof b, "%s%lu%s %.0f%%", i ? ", " : "", busy[i].second,
+                 busy[i].second == g_drawThread.load() ? " (draw)" : "", busy[i].first);
+        out += b;
+    }
+    return out;
+}
+}  // namespace pairtime
+
 uintptr_t HookDrawGameScreen(int a) {
     static thread_local int depth = 0;
     static bool told = false, toldWhy = false;
@@ -4108,9 +4175,19 @@ uintptr_t HookDrawGameScreen(int a) {
     if (const D2RVR_Shared* hs = g_shared)
         flog::Line("S,%u,%.4f,%.3f,%.3f,%.3f,%.3f,%u", flog::Pass(), flog::Dt(), g_heldYaw.load(), hs->headYawDeg, hs->headPitchDeg, hs->headRollDeg, hs->sampleStamp);
 
+    static double lastEnd = 0.0, sumGap = 0.0, sumPass[2] = {}, sumPresent[2] = {}, sumEff[2] = {}, maxPair = 0.0, sumCpu = 0.0, sumWall = 0.0;
+    const double t0 = pairtime::UsNow(), c0 = pairtime::CpuUs();
+    pairtime::g_drawThread.store(GetCurrentThreadId());
+    if (lastEnd > 0.0) sumGap += t0 - lastEnd;
+    pairtime::g_presentAt.store(0.0); pairtime::g_effSum.store(0.0);
     SetEye(0);
     d2rcam::Refresh();
     OrigDrawGameScreen(a);
+    const double t1 = pairtime::UsNow();
+    sumPass[0] += t1 - t0;
+    if (const double pa = pairtime::g_presentAt.load(); pa > t0) sumPresent[0] += t1 - pa;
+    sumEff[0] += pairtime::g_effSum.load();
+    pairtime::g_presentAt.store(0.0); pairtime::g_effSum.store(0.0);
 
     float* dt = (float*)d2rsig::Addr(RVA_FRAME_TIME);
     float* rawDt = (float*)d2rsig::Addr(RVA_RAW_FRAME_TIME);
@@ -4123,6 +4200,13 @@ uintptr_t HookDrawGameScreen(int a) {
     d2rcam::Refresh();
     const uintptr_t r = OrigDrawGameScreen(a);
     *dt = keep; *rawDt = keepRaw;
+    const double t2 = pairtime::UsNow();
+    sumPass[1] += t2 - t1;
+    if (const double pa = pairtime::g_presentAt.load(); pa > t1) sumPresent[1] += t2 - pa;
+    sumEff[1] += pairtime::g_effSum.load();
+    if (lastEnd > 0.0) maxPair = std::max(maxPair, t2 - lastEnd);
+    lastEnd = t2;
+    sumCpu += pairtime::CpuUs() - c0; sumWall += t2 - t0;
 
     g_pairNow.store(false);
     if (live) g_shared = live;
@@ -4134,6 +4218,16 @@ uintptr_t HookDrawGameScreen(int a) {
     if (!told) { told = true; Log("vrcam: pair per game frame ON - left eye, then right eye with the frame time held"); }
     if (const ULONGLONG now = GetTickCount64(); now - since >= 10000) {
         LogF("vrcam: %.1f pairs/s from one game frame each", pairs * 1000.0 / (double)(now - since));
+        if (pairs) {
+            const double k = 0.001 / pairs;   // us summed -> ms a pair
+            LogF("vrcam: a pair, ms: game %.2f | left %.2f (effects %.2f, Present %.2f) | right %.2f (effects %.2f, Present %.2f) | longest %.1f",
+                 sumGap * k, sumPass[0] * k, sumEff[0] * k, sumPresent[0] * k, sumPass[1] * k, sumEff[1] * k, sumPresent[1] * k,
+                 maxPair * 0.001);
+            LogF("vrcam: the two passes busy the game's thread %.0f%% of their time (%.2f ms CPU a pair; the rest waits - GPU, fences, locks)",
+                 sumWall > 0.0 ? 100.0 * sumCpu / sumWall : 0.0, sumCpu * k);
+        }
+        sumGap = 0.0; maxPair = 0.0; sumCpu = 0.0; sumWall = 0.0;
+        for (int e = 0; e < 2; ++e) sumPass[e] = sumPresent[e] = sumEff[e] = 0.0;
         since = now; pairs = 0;
     }
     return r;
@@ -6377,6 +6471,7 @@ bool ApplySkyPictures(reshade::api::effect_runtime* rt) {
 // resources it had not created yet, and the game died in D3D12 (null+0x19C).
 // From here it takes effect on the next frame, with everything in place.
 void OnFinishEffects(reshade::api::effect_runtime* rt, reshade::api::command_list*, reshade::api::resource_view, reshade::api::resource_view) {
+    if (const double b = pairtime::g_effBegin.exchange(0.0); b > 0.0) pairtime::g_effSum.store(pairtime::g_effSum.load() + pairtime::UsNow() - b);
     if (ApplySkyPictures(rt)) return;   // the effect reloads with the new pictures
     if (!g_tech[0].handle) g_tech[0] = rt->find_technique("D2R_DepthFog.fx", "D2R_DepthFog");
     if (!g_tech[1].handle) g_tech[1] = rt->find_technique("D2R_DepthFog.fx", "D2R_DepthFog_R");
@@ -6525,7 +6620,26 @@ void Publish() {
 }
 }  // namespace depthcam
 
+// Right before the swap chain's real Present (after ReShade's effects and overlay): pairtime.
+void OnReshadePresent(reshade::api::effect_runtime*) {
+    const double t = pairtime::UsNow();
+    pairtime::g_presentAt.store(t);
+    // Any mode (mono, stereo, menus): the presents a second and the game's busiest
+    // threads, every 10 s - the frame budget's hunt (~7 ms a present, 2026-10-08).
+    static double since = 0.0;
+    static uint32_t n = 0;
+    ++n;
+    if (since == 0.0) { since = t; pairtime::BusyThreads(0.0); return; }
+    if (t - since >= 10e6) {
+        if (!pairtime::g_drawThread.load()) pairtime::g_drawThread.store(GetCurrentThreadId());
+        LogF("vrcam: %.1f presents/s; the game's busiest threads, %% of a core (present thread %lu): %s",
+             n * 1e6 / (t - since), GetCurrentThreadId(), pairtime::BusyThreads(t - since).c_str());
+        since = t; n = 0;
+    }
+}
+
 void OnBeginEffects(reshade::api::effect_runtime* rt, reshade::api::command_list*, reshade::api::resource_view, reshade::api::resource_view) {
+    pairtime::g_effBegin.store(pairtime::UsNow());
     {
         float s[2];
         renderscale::Frame(rt, s);
@@ -6899,6 +7013,7 @@ void TryRegister() {
     if (!reshade::register_addon(g_self)) return;
     reshade::register_event<reshade::addon_event::reshade_begin_effects>(&OnBeginEffects);
     reshade::register_event<reshade::addon_event::reshade_finish_effects>(&OnFinishEffects);
+    reshade::register_event<reshade::addon_event::reshade_present>(&OnReshadePresent);
     reshade::register_event<reshade::addon_event::reshade_reloaded_effects>(&Forget);
     reshade::register_event<reshade::addon_event::bind_render_targets_and_depth_stencil>(&renderscale::OnBind);
     reshade::register_event<reshade::addon_event::bind_viewports>(&renderscale::OnViewports);
@@ -7226,7 +7341,7 @@ void LoadReShade() {
     else LogF("vrcam: ReShade64.dll did not load (error %lu)", GetLastError());
 }
 
-static const char g_info_version[] = "0.151.0";
+static const char g_info_version[] = "0.152.0";
 
 static const PluginInfo g_info = {
     PluginInfoSize, D2RL_PLUGIN_ABI_VERSION, "d2r-vr-vrcam", "vrcam", g_info_version, "BodyWalkVR",
