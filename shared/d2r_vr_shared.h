@@ -224,3 +224,87 @@ inline constexpr uint32_t kD2RVRCommandCount = sizeof kD2RVRCommands / sizeof kD
 #define D2RVR_FLATVR_3D_NONE_NAME L"Local\\BodyWalkVR_D2R_FlatVR3DNone"
 #define D2RVR_FLATVR_3D_DEPTH_NAME L"Local\\BodyWalkVR_D2R_FlatVR3DDepth"
 #define D2RVR_FLATVR_3D_PAIR_NAME L"Local\\BodyWalkVR_D2R_FlatVR3DPair"
+// BodyWalk's Mapping Input Source with native OpenXR (host API 9,
+// request_gesture_source): the game's own headset ("D2R VR", through this bridge)
+// while the game holds it, FlatVR again after (only if it was the game's). Set by
+// D2R VR Settings when "Native OpenXR" is picked or left, and by the game when
+// its session starts and ends.
+#define D2RVR_GESTURES_GAME_NAME L"Local\\BodyWalkVR_D2R_GesturesGame"
+#define D2RVR_GESTURES_FLATVR_NAME L"Local\\BodyWalkVR_D2R_GesturesFlatVR"
+// There while the bridge runs in a BodyWalk that takes the game's own headset (host
+// API 9: send_xr_frame, request_gesture_source) - D2R VR Settings offers native OpenXR
+// only then (or with a BodyWalk of 1.78 on): with an older one the game would show its
+// picture but get no buttons and no gestures.
+#define D2RVR_BRIDGE_XR_SOURCE_NAME L"Local\\BodyWalkVR_D2R_XrSource"
+
+// Native OpenXR (vrcam's vr/xr.cpp): the game holds the headset itself and reads
+// the head and the controllers from its own session; the bridge hands them to
+// BodyWalk as its tracking source instead of FlatVR, so gestures, the Mapping and
+// the virtual pad go on as with FlatVR. Written by vrcam once a headset frame
+// (at the moment the frame will be shown), read by the bridge. Poses as the
+// runtime has them: metres in its STAGE space (the floor at 0; LOCAL without one) - x right, y up, z back -
+// rotations x y z w, not recentered.
+#define D2RVR_XR_INPUT_NAME L"Local\\BodyWalkVR_D2R_XrInput"
+#define D2RVR_XR_INPUT_VERSION 1u
+
+enum D2RVRXrButton : uint32_t {
+    D2RVR_XRB_PRIMARY = 1u << 0,     // A on the right controller, X on the left
+    D2RVR_XRB_SECONDARY = 1u << 1,   // B / Y
+    D2RVR_XRB_STICK = 1u << 2,       // the thumbstick pressed in
+    D2RVR_XRB_MENU = 1u << 3,        // the menu button (left), the system one is the runtime's
+    D2RVR_XRB_TRIGGER = 1u << 4,     // the trigger pulled past its click (or past 0.8 without one)
+    D2RVR_XRB_SQUEEZE = 1u << 5,     // the grip squeezed past its click (or past 0.8)
+};
+
+#pragma pack(push, 4)
+struct D2RVR_XrPose {
+    float pos[3];
+    float rot[4];
+    uint32_t valid;   // 1 position and orientation tracked, 2 orientation only, 0 none
+};
+struct D2RVR_XrHand {
+    D2RVR_XrPose grip;   // the controller as held (the grip pose)
+    D2RVR_XrPose aim;    // where it points (the aim pose)
+    float trigger, squeeze, stickX, stickY;   // 0..1, 0..1, -1..1 (+ right, + up)
+    uint32_t buttons;    // D2RVRXrButton bits
+    uint32_t active;     // 1 while any of its actions is bound (a controller is there)
+};
+struct D2RVR_XrInput {
+    uint32_t version;     // D2RVR_XR_INPUT_VERSION
+    uint32_t counter;     // bumped on every write; frozen = no session (or the game paused)
+    uint32_t stamp;       // D2RVRStampNow() when written
+    uint32_t focused;     // 1 while the session has the input focus
+    int64_t displayTime;  // the XrTime the poses are for
+    D2RVR_XrPose head;    // between the eyes
+    D2RVR_XrHand hand[2]; // 0 left, 1 right
+    char profile[2][64];  // the interaction profile each hand runs, e.g. /interaction_profiles/oculus/touch_controller
+};
+#pragma pack(pop)
+static_assert(sizeof(D2RVR_XrInput) == 360, "D2RVR_XrInput is a wire format");
+
+// Native OpenXR: BodyWalk's gesture zones ticked "VR" in its Mapping tab (the belt's
+// potions, a holster), placed by BodyWalk from the head in D2RVR_XrInput - so in the
+// same STAGE space - and drawn by vrcam as see-through balls, as FlatVR draws them.
+// Written by the bridge (BW_Plugin_ReceiveVrZones, host API 10: BodyWalk 1.78) every
+// BodyWalk GUI frame while there are zones to show; vrcam lets them lapse when the
+// stamp is older than half a second (BodyWalk closed, the zones unticked).
+#define D2RVR_XR_ZONES_NAME L"Local\\BodyWalkVR_D2R_XrZones"
+#define D2RVR_XR_ZONES_VERSION 1u
+#define D2RVR_XR_ZONES_MAX 32u
+
+#pragma pack(push, 4)
+struct D2RVR_XrZone {
+    float centre[3];   // metres, STAGE space
+    float radius;      // metres
+    uint32_t rgba;     // the colour for its state now, R in the low byte, alpha = opacity
+    float glow;        // halo and rim, 0..1
+};
+struct D2RVR_XrZones {
+    uint32_t version;  // D2RVR_XR_ZONES_VERSION
+    uint32_t counter;  // bumped on every write
+    uint32_t stamp;    // D2RVRStampNow() when written
+    uint32_t count;    // used entries in zone[]
+    D2RVR_XrZone zone[D2RVR_XR_ZONES_MAX];
+};
+#pragma pack(pop)
+static_assert(sizeof(D2RVR_XrZones) == 16 + 32 * 24, "D2RVR_XrZones is a wire format");

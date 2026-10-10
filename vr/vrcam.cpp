@@ -53,6 +53,7 @@
 
 #include <D2RLPlugin/api.h>
 #include <reshade.hpp>
+#include "game_device_only.h"
 
 namespace probe {
 void Run(const float hero[3], const wchar_t* outPath);
@@ -81,6 +82,7 @@ namespace gamestate { void Init(const D2RL::PluginContext* ctx); void Tick(); ui
 #include "d2r_vr_shared.h"
 #include "afr_eye_shared.h"
 #include "dlss_mv.h"
+#include "xr.h"
 #include <timeapi.h>   // timeBeginPeriod: the pacer's 1 ms sleeps
 #pragma comment(lib, "winmm.lib")
 #include "pad_mirror_shared.h"
@@ -779,10 +781,11 @@ void StartMatrixWatch();   // [debug] matrix_writer, below PickHeroMatrix
 namespace drawprof { extern std::atomic<bool> g_want; }
 namespace cbcmp { extern std::atomic<bool> g_go; void NoteView(int eye, const float v[16]); }
 namespace rtrace { extern std::atomic<bool> g_go; }
-extern std::atomic<int> g_projFix; extern std::atomic<float> g_shiftMul; extern std::atomic<int> g_replayViews; extern std::atomic<int> g_viewMask; extern std::atomic<int> g_replayPositions; extern std::atomic<int> g_replayPrev;
+extern std::atomic<bool> g_xrThirdGaze; extern std::atomic<int> g_projFix; extern std::atomic<float> g_shiftMul; extern std::atomic<int> g_replayViews; extern std::atomic<int> g_viewMask; extern std::atomic<int> g_replayPositions; extern std::atomic<int> g_replayPrev;
 namespace replay { extern std::atomic<bool> g_fxSync; extern std::atomic<bool> g_dlssBoth; extern std::atomic<bool> g_replayCopy; }
 namespace replay { extern std::atomic<int> g_peekWant; }
 namespace camfix { extern std::atomic<int> g_scanWant; }
+namespace flog { void StartDiag(); }
 namespace replay { extern std::atomic<int> g_want; extern std::atomic<int> g_ahead; extern std::atomic<bool> g_depthCopy; extern std::atomic<bool> g_on; extern std::atomic<bool> g_fxAtHold; extern std::atomic<bool> g_holdSignalsOn; }
 // The left eye's view as last built, and the half-eye shift in it (VrViewInner): the
 // replay makes the right eye's camera constants from them.
@@ -989,6 +992,8 @@ void LoadSettings() {
     replay::g_dlssBoth.store(IniB(L"stereo", L"replay_dlss", false));
     replay::g_replayCopy.store(IniB(L"stereo", L"replay_copy", true));
     replay::g_fxAtHold.store(IniB(L"stereo", L"replay_fx", true));
+    xr::LoadSettings(g_iniPath);   // [openxr]: the game in the headset itself (vr/xr.cpp)
+    g_xrThirdGaze.store(IniB(L"openxr", L"third_gaze", false));
     {   // [debug] profile_draw: one 5 s profile of the draw thread each time it turns 1
         static bool was = false;
         const bool on = IniB(L"debug", L"profile_draw", false);
@@ -1010,6 +1015,13 @@ void LoadSettings() {
         const bool rt = IniB(L"debug", L"replay_trace_go", false);
         if (rt && !wasRt) rtrace::g_go.store(true);
         wasRt = rt;
+        // [debug] diag_go: D2R VR Settings' Collect logs writes a new value - 10 s of the frame
+        // log (and FlatVR's pose trace beside it) for the logs it zips. The value at start is
+        // only noted: a capture begins on a change while the game runs.
+        static int lastDiag = INT_MIN;
+        const int diag = (int)IniF(L"debug", L"diag_go", 0.0f);
+        if (lastDiag != INT_MIN && diag != lastDiag) flog::StartDiag();
+        lastDiag = diag;
     }
     g_set.pipelineDepth.store(std::clamp((int)IniF(L"stereo", L"pipeline_depth", 0.0f), 0, 3));
     g_set.thirdDistance.store(std::clamp(IniF(L"third", L"distance", 7.0f), -5.0f, 200.0f));
@@ -1276,6 +1288,7 @@ std::atomic<float> g_turnYaw{0.0f};     // body turn from the right stick; F11 k
 // move on a 10 ms timer, and between the passes the eyes got different turns.
 std::atomic<float> g_heldYaw{0.0f}, g_heldPitch{0.0f};
 extern std::atomic<bool> g_pairNow;
+bool NativeView();
 std::atomic<float> g_rightX{0.0f};      // last right stick X the game polled, -1..1
 // When a poll last got BodyWalk's own pad (PadFromBodyWalk). Some polls of pad 0
 // came back without it (the pad trace flipped 2000 / 0000 within a millisecond)
@@ -1345,6 +1358,11 @@ void PredictHead(const D2RVR_Shared* s, float out[3]) {
 // The yaw the camera should have now: head (if on) plus the mouse's extra.
 float TargetYaw() {
     float yaw = g_pairNow.load() ? g_heldYaw.load() : g_mouseYaw.load() + g_turnYaw.load(), head = 0.0f;
+    // Native OpenXR (F4/F2 drawn with the runtime's eyes): the head yaw those eyes were drawn with,
+    // from xr's own recentre - the native view's own turn. Not D2RVR_Shared's: in a pair that is the
+    // room's raw yaw, against g_recenter from whichever block was there at the last F11 - the body
+    // stood ~100 deg off the view at game start until a lucky F11 (2026-10-10).
+    if (float rel = 0.0f; NativeView() && xr::PairHeadYaw(&rel)) return WrapDeg(yaw - rel * 57.2957795f);
     if (g_set.headYaw.load() && HeadYaw(&head)) {
         float p[3]; PredictHead(g_shared, p);
         yaw += g_set.yawSign.load() * g_set.yawScale.load() * WrapDeg(p[0] - g_recenter.load());
@@ -1409,6 +1427,12 @@ bool InsideFree() { return g_enabled.load() && !ThirdPerson() && !FullBody(); } 
 #else
 bool InsideFree() { return false; }
 #endif
+// Native OpenXR ([openxr] on, vr/xr.cpp) draws these views as the headset's own eyes: first
+// person (F4) and third person (F2). The others go to the headset as a flat picture.
+bool NativeView() { return g_set.platform.load() == 1 && (FullBody() || (ThirdPerson() && g_set.vrView.load() == 2)); }
+// [openxr] third_gaze: in F2 the camera swings round the hero with the gaze (1, as on FlatVR's
+// screen) or stays behind him on the body's turn while the head looks round (0, default).
+std::atomic<bool> g_xrThirdGaze{false};
 // VR view 5: the game laid on the room's floor and looked at from above - our
 // own camera where the head is in the room ([table] hero_cm, TableCamera), the
 // hero whole as the game animates him, the void black for the headset to key.
@@ -1733,6 +1757,8 @@ float CameraFov() {
 // lines up with it. Lines collect in memory; the timer thread writes them out.
 namespace flog {
 std::atomic<bool> g_on{false};
+std::atomic<ULONGLONG> g_diagUntil{0};   // [debug] diag_go: the frame log runs until then
+void StartDiag();
 SRWLOCK g_lock = SRWLOCK_INIT;
 std::string g_buf;
 constexpr uint64_t kDrawCounterRva = 0x33ED6D8, kFrameTimeRva = 0x27D31D0;   // as RVA_DRAW_COUNTER / RVA_FRAME_TIME below
@@ -1781,7 +1807,8 @@ void Tick(bool want) {
               "# V: t_us,V,pass,dt,eye,targetYaw,camYaw,lookX,lookZ,stamp                  - a world view built\n"
               "# P: t_us,P,pass,dt,eye,matrix,rawX,rawZ,rawYaw,lookX,lookZ,usedYaw,bodyYaw,eyeX,eyeY,eyeZ,result,logicFacing,logicAgeMs - a hero pose\n"
               "# R: t_us,R,pass,eye,stamp                                                    - ReShade on a present\n"
-              "# C: t_us,C,pass,eye,addr:yaw,...                                             - every hero matrix copy at the pose (address: low 20 bits)\n", f);
+              "# C: t_us,C,pass,eye,addr:yaw,...                                             - every hero matrix copy at the pose (address: low 20 bits)\n"
+              "# Y: t_us,Y,pass,replayed,waitPrev,waitRestore,holdLeft,waitLastPair,camera,submit,presentR,copyL,presentL - a one-pass pair's steps, us\n", f);
         if (const std::wstring flag = FlagPath(); !flag.empty())
             if (FILE* t = _wfopen(flag.c_str(), L"wb")) fclose(t);
         g_on.store(true);
@@ -1801,6 +1828,19 @@ void Tick(bool want) {
     } else fflush(f);
 }
 }  // namespace flog
+
+// Settings' Collect logs: the frame log for 10 s and the state it ran in, once in the log.
+bool AfrOn();
+extern std::atomic<bool> g_inWorld;
+namespace replay { extern std::atomic<int> g_want; extern std::atomic<bool> g_on; extern std::atomic<int> g_ahead; extern std::atomic<uint32_t> g_replays; }
+void flog::StartDiag() {
+    g_diagUntil.store(GetTickCount64() + 10000);
+    LogF("vrcam: diagnostic capture (D2R VR Settings, Collect logs): 10 s of d2r_vr_frames.csv - stereo %d, pair per frame %d, "
+         "replay want %d on %d ahead %d (pairs replayed so far %u), pace %d at %d Hz, pipeline depth %d, stamps %d, in world %d",
+         AfrOn() ? 1 : 0, IniB(L"stereo", L"pair_per_tick", false) ? 1 : 0, replay::g_want.load(), replay::g_on.load() ? 1 : 0,
+         replay::g_ahead.load(), replay::g_replays.load(), g_set.pace.load() ? 1 : 0, g_set.headsetHz.load(),
+         g_set.pipelineDepth.load(), g_set.stamps.load() ? 1 : 0, g_inWorld.load() ? 1 : 0);
+}
 
 
 // Alternate-frame stereo: the eye flips once a game frame, and the FlatVR addon
@@ -2364,7 +2404,50 @@ bool VrViewInner(const d2rcam::WorldView& in, float out[16]) {
     const float* L = in.lookAt;
     V3 fwd, ahead, right, up, eye, hang;
     float yaw = 0.0f;
-    if (TableView()) {
+    // Native OpenXR (vr/xr.cpp): the runtime's eyes for the moment this frame is shown.
+    xr::Eyes xe{};
+    const bool native = NativeView() && xr::PairEyes(&xe);
+    float nativeIpd = 0.0f;   // world units
+    if (native) {
+        // The head as the runtime has it - its turn, tilt and place in the room, metres from
+        // where it was at the recentre - on top of the body's turn (stick, mouse); no neck
+        // model, no head prediction: the runtime predicts for the display time.
+        const V3 gameFwd = {-G[2], -G[6], -G[10]};
+        const float heading0 = atan2f(-gameFwd.x, -gameFwd.z);
+        const float d2r = 3.14159265f / 180.0f;
+        const float body = WrapDeg(g_pairNow.load() ? g_heldYaw.load() : g_mouseYaw.load() + g_turnYaw.load());
+        const float base = heading0 - body * d2r;   // the room's -z in the world
+        const float cb = cosf(base), sb = sinf(base);
+        auto toWorld = [&](V3 v) { return V3{v.x * cb + v.z * sb, v.y, -v.x * sb + v.z * cb}; };
+        const float* q = xe.quat[0];   // the left eye's turn (the eyes are parallel on most headsets: logged at the start)
+        const V3 hf = d2rcam::m4::Rotate(q, {0.0f, 0.0f, -1.0f});
+        fwd = toWorld(hf);
+        up = toWorld(d2rcam::m4::Rotate(q, {0.0f, 1.0f, 0.0f}));
+        right = toWorld(d2rcam::m4::Rotate(q, {1.0f, 0.0f, 0.0f}));
+        yaw = WrapDeg(body - atan2f(-hf.x, -hf.z) / d2r);   // + turns right, as TargetYaw
+        const float heading = heading0 - yaw * d2r;
+        ahead = Facing(heading, 0.0f);
+        const V3 side = {cosf(heading), 0.0f, -sinf(heading)};
+        const V3 pivot = V3{L[0], L[1] + ViewHeight() + JumpLift(), L[2]} + side * g_set.camSide.load() + ahead * g_set.camForward.load();
+        const float upm = std::max(1.0f, ViewHeight()) / UserEyeHeightM();   // world units per metre, as TrueScale
+        const V3 mid = {0.5f * (xe.pos[0][0] + xe.pos[1][0]), 0.5f * (xe.pos[0][1] + xe.pos[1][1]), 0.5f * (xe.pos[0][2] + xe.pos[1][2])};
+        V3 head = pivot + toWorld(mid) * upm;
+        if (xr::LeanM() <= 0.0f && !ThirdPerson() && g_set.neckModel.load()) {
+            // held to the body: the head turns about the top of the neck, as with FlatVR (VrViewInner's neck model)
+            const float nu = g_set.neckUpCm.load() * 0.01f * upm, nf = g_set.neckFwdCm.load() * 0.01f * upm;
+            head = head - V3{0.0f, nu, 0.0f} + up * nu + fwd * nf;
+        }
+        if (ThirdPerson()) {
+            // behind the hero: on the body's turn, the head free to look round (or with the gaze)
+            eye = head - (g_xrThirdGaze.load() ? fwd : Facing(base, 0.0f)) * ViewDistance();
+            hang = pivot;
+        } else {
+            eye = head - fwd * ViewDistance();
+            hang = head + (eye - head) * g_set.handsFollowCam.load();
+        }
+        const V3 apart = {xe.pos[1][0] - xe.pos[0][0], xe.pos[1][1] - xe.pos[0][1], xe.pos[1][2] - xe.pos[0][2]};
+        nativeIpd = d2rcam::m4::Length(apart) * upm;
+    } else if (TableView()) {
         if (!TableCamera(in, &eye, &fwd, &up, &right, &ahead, &yaw)) return false;
         hang = eye;
         g_floorEyeH.store(eye.y - L[1]); g_floorFwdY.store(fwd.y); g_floorUpY.store(up.y); g_floorCamOk.store(true);
@@ -2425,7 +2508,8 @@ bool VrViewInner(const d2rcam::WorldView& in, float out[16]) {
         // Camera half an eye to the left (eye 0) or right (eye 1): the
         // world then sits that much to the right or left in view space.
         float ipd = g_set.ipd.load(), conv = 0.0f;
-        TrueScale(&ipd, &conv);
+        if (native) ipd = nativeIpd;   // the runtime's eyes, at the world's scale
+        else TrueScale(&ipd, &conv);
         const float half = 0.5f * ipd;
         view[12] += g_eye.load() == 0 ? half : -half;
         g_eyeHalf.store(half);
@@ -2522,6 +2606,30 @@ bool VrProjInner(const d2rcam::WorldView& in, float M[16]) {
     // The table: nothing of the hero to cut away, and the head may come down close to the game - 5 cm.
     const float nearZ = TableView() ? 0.05f * g_set.tableScale.load() : TopPersp() ? 0.5f : std::max(g_set.nearClip.load(), 0.05f);
     g_lastNear.store(nearZ);
+    float shift = 0.0f;
+    xr::Eyes xe{};
+    if (NativeView() && xr::PairEyes(&xe)) {
+        // Native OpenXR: this eye's own frustum, from the runtime's fov (tangents; left and down
+        // negative). The replay makes the right eye from the left projection with its x offset
+        // moved by twice `shift` (camfix): the right eye's own offset, with the mirrored fovs
+        // headsets have - each eye wider on its outer side.
+        const int e = g_eye.load() & 1;
+        auto offX = [&](int i) { return (xe.tanR[i] + xe.tanL[i]) / (xe.tanR[i] - xe.tanL[i]); };
+        d2rcam::m4::PerspectiveRevZ(1.0f, 1.0f, nearZ, M);
+        M[0] = 2.0f / (xe.tanR[e] - xe.tanL[e]);
+        M[5] = 2.0f / (xe.tanU[e] - xe.tanD[e]);
+        M[8] = offX(e);
+        M[9] = (xe.tanU[e] + xe.tanD[e]) / (xe.tanU[e] - xe.tanD[e]);
+        shift = 0.5f * (offX(0) - offX(1));
+        static bool told = false;
+        if (!told && e == 0) {
+            told = true;
+            const float r0 = 2.0f / (xe.tanR[1] - xe.tanL[1]), r5 = 2.0f / (xe.tanU[1] - xe.tanD[1]);
+            LogF("vrcam: openxr - projection x %.4f y %.4f, off-axis %.4f / %.4f (left / right); the right eye's x %.4f y %.4f%s", M[0], M[5], M[8],
+                 offX(1), r0, r5, fabsf(r0 - M[0]) > 0.01f * M[0] || fabsf(r5 - M[5]) > 0.01f * M[5] ? " - NOT mirrored: the replayed right eye is a little off" : "");
+        }
+        g_projSx.store(M[0]); g_projSy.store(M[5]); g_stereoIpd.store(2.0f * g_eyeHalf.load()); g_stereoConv.store(0.0f);
+    } else {
     d2rcam::m4::PerspectiveRevZ(CameraFov() * 3.14159265f / 180.0f, aspect, nearZ, M);
     // The frustum IS the FlatVR screen: each side by its own size at its distance.
     if (float sw, sh, sd; g_set.fovFromFlatVR.load() && LiveScreen(&sw, &sh, &sd)) { M[0] = 2.0f * sd / sw; M[5] = 2.0f * sd / sh; }
@@ -2531,10 +2639,10 @@ bool VrProjInner(const d2rcam::WorldView& in, float M[16]) {
     float ipd = g_set.ipd.load(), conv = g_set.convergence.load();
     TrueScale(&ipd, &conv);
     g_projSx.store(M[0]); g_projSy.store(M[5]); g_stereoIpd.store(ipd); g_stereoConv.store(conv);
-    float shift = 0.0f;
     if (AfrOn() && conv > 0.0f) {
         shift = M[0] * 0.5f * ipd / conv;
         M[8] += g_eye.load() == 0 ? shift : -shift;
+    }
     }
     if ((g_eye.load() & 1) == 0) g_projShift.store(shift);
     AcquireSRWLockExclusive(&g_skyLock);
@@ -4603,8 +4711,8 @@ void Register() {
     g_rec[0] = (Rec*)VirtualAlloc(nullptr, sizeof(Rec) * kMax, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
     g_rec[1] = (Rec*)VirtualAlloc(nullptr, sizeof(Rec) * kMax, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
     if (!g_rec[0] || !g_rec[1]) return;
-    reshade::register_event<reshade::addon_event::push_descriptors>(&OnPushDescriptors);
-    reshade::register_event<reshade::addon_event::push_constants>(&OnPushConstants);
+    reshade::register_event<reshade::addon_event::push_descriptors>(&d2rvr::D3D12Only<&OnPushDescriptors>::Call);
+    reshade::register_event<reshade::addon_event::push_constants>(&d2rvr::D3D12Only<&OnPushConstants>::Call);
     g_on.store(true);
     Log("vrcam: cb_compare on - [debug] cb_compare_go=1 records one stereo pair's constant buffers");
 }
@@ -4758,11 +4866,11 @@ void Register() {
     if (!IniB(L"debug", L"replay_trace", false)) return;
     g_ev = (Ev*)VirtualAlloc(nullptr, sizeof(Ev) * kMax, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
     if (!g_ev) return;
-    reshade::register_event<reshade::addon_event::reset_command_list>(&OnReset);
-    reshade::register_event<reshade::addon_event::close_command_list>(&OnClose);
-    reshade::register_event<reshade::addon_event::execute_command_list>(&OnExecuteHook);
-    reshade::register_event<reshade::addon_event::present>(&OnPresent);
-    reshade::register_event<reshade::addon_event::bind_render_targets_and_depth_stencil>(&OnBindRT);
+    reshade::register_event<reshade::addon_event::reset_command_list>(&d2rvr::D3D12Only<&OnReset>::Call);
+    reshade::register_event<reshade::addon_event::close_command_list>(&d2rvr::D3D12Only<&OnClose>::Call);
+    reshade::register_event<reshade::addon_event::execute_command_list>(&d2rvr::D3D12Only<&OnExecuteHook>::Call);
+    reshade::register_event<reshade::addon_event::present>(&d2rvr::D3D12Only<&OnPresent>::Call);
+    reshade::register_event<reshade::addon_event::bind_render_targets_and_depth_stencil>(&d2rvr::D3D12Only<&OnBindRT>::Call);
     g_on.store(true);
     Log("vrcam: replay_trace on - [debug] replay_trace_go=1 records one stereo pair's submissions");
 }
@@ -5021,7 +5129,9 @@ int PatchKnown(float* f, int n, const Layout& lay, double shift, const double ri
             AcquireSRWLockExclusive(&tl);
             bool seen = false;
             for (const auto& t : told) if (t.first == pk && t.second == o * 4 + way) seen = true;
-            if (!seen && told.size() < 200) told.push_back({pk, o * 4 + way});
+            // full: no more lines - native OpenXR's projection moves a little every frame, and a key
+            // per frame filled the list and then logged every view of every pair (2026-10-10)
+            if (!seen) { if (told.size() < 200) told.push_back({pk, o * 4 + way}); else seen = true; }
             ReleaseSRWLockExclusive(&tl);
             if (!seen) LogF("vrcam: replay - view at word %d (parts %u) %s: P %.4f %.4f %.4f %.4f / %.4f %.4f (ours x %.4f)", o, lay.parts[k],
                             fold ? "FOLDED" : "MOVED", o + 48 <= n ? f[o + 32] : 0.f, o + 48 <= n ? f[o + 37] : 0.f,
@@ -5291,9 +5401,9 @@ void OnReset(command_list* cl) {
 }
 
 void Register() {
-    reshade::register_event<reshade::addon_event::init_resource>(&OnInitResource);
-    reshade::register_event<reshade::addon_event::destroy_resource>(&OnDestroyResource);
-    reshade::register_event<reshade::addon_event::reset_command_list>(&OnReset);
+    reshade::register_event<reshade::addon_event::init_resource>(&d2rvr::D3D12Only<&OnInitResource>::Call);
+    reshade::register_event<reshade::addon_event::destroy_resource>(&d2rvr::D3D12Only<&OnDestroyResource>::Call);
+    reshade::register_event<reshade::addon_event::reset_command_list>(&d2rvr::D3D12Only<&OnReset>::Call);
 }
 // No waiting for the GPU (2026-10-09): the camera buffers the left pass binds are bound
 // from slots of our own GPU buffer instead. At the binding, the game's values are copied
@@ -5561,6 +5671,14 @@ enum { kWaitPrev, kWaitRestore, kHold, kWaitLeft, kPatch, kSubmit, kPresentR, kC
 double g_stepUs[kSteps] = {};
 uint32_t g_stepPairs = 0;
 struct StepTimer { int k; double t0; StepTimer(int k_) : k(k_), t0(pairtime::UsNow()) {} ~StepTimer() { g_stepUs[k] += pairtime::UsNow() - t0; } };
+// The frame log's Y line: this pair's steps, us (the sums since the last pair; they restart every 10 s).
+void PairLine(bool replayed) {
+    static double last[kSteps] = {};
+    double d[kSteps];
+    for (int i = 0; i < kSteps; ++i) { d[i] = g_stepUs[i] >= last[i] ? g_stepUs[i] - last[i] : g_stepUs[i]; last[i] = g_stepUs[i]; }
+    flog::Line("Y,%u,%d,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f", flog::Pass(), replayed ? 1 : 0,
+               d[0], d[1], d[2], d[3], d[4], d[5], d[6], d[7], d[8]);
+}
 struct QFence { ID3D12CommandQueue* q; ID3D12Fence* f; UINT64 v; };
 std::vector<QFence> g_qf;
 Pt g_lastReplay, g_prevReplay;
@@ -5858,6 +5976,22 @@ D3D12_RESOURCE_BARRIER Tr(ID3D12Resource* r, D3D12_RESOURCE_STATES from, D3D12_R
     return b;
 }
 
+// Native OpenXR (vr/xr.cpp) on the game's queue: the runtime's own signals pass our queue
+// hooks as ours do.
+bool XrBegin() {
+    t_ours = true;
+    const bool on = xr::BeginPair(g_dev, g_direct);
+    t_ours = false;
+    return on;
+}
+void XrCopy(int eye, ID3D12Resource* bb) { t_ours = true; xr::CopyEye(eye, bb); t_ours = false; }
+void XrEnd() { t_ours = true; xr::EndPair(); t_ours = false; }
+void XrPresent(ID3D12Device* dev, ID3D12CommandQueue* q, ID3D12Resource* bb) {
+    t_ours = true;
+    xr::OnPresent(dev, q, bb, g_pairNow.load() ? (g_eye.load() & 1) : -1);   // a pass of two: its eye
+    t_ours = false;
+}
+
 // Our own list on the direct queue: the next allocator of the ring, reset and opened.
 ID3D12GraphicsCommandList* Open() {
     const int a = g_allocAt;
@@ -6091,6 +6225,7 @@ bool HoldLeft() {
         if (g_fxSync.load() && g_lastReplay.f) { StepTimer st(kWaitLeft); WaitFor(g_lastReplay); }
         const bool ok = EffectsAtHold(bb, holdIndex);
         if (ok && g_peekStage == 1) Peek(0, bb);
+        if (ok) XrCopy(0, bb);   // native OpenXR: the left eye, as FlatVR's add-on takes it from that effect pass
         bb->Release();
         return ok;
     }
@@ -6111,6 +6246,7 @@ bool HoldLeft() {
     Check("before holding the left picture");
     Copy(g_leftImg, D3D12_RESOURCE_STATE_COMMON, bb, D3D12_RESOURCE_STATE_PRESENT);
     Check("copying the left picture out");
+    XrCopy(0, bb);
     if (ID3D12Resource* depth = g_depthCopy.load() ? (ID3D12Resource*)g_depthRes.load() : nullptr) {
         const D3D12_RESOURCE_DESC dd = depth->GetDesc();
         if (g_leftDepth) {
@@ -6306,9 +6442,9 @@ DWORD WINAPI Watchdog(void*) {
 void Register() {
     if (!IniB(L"debug", L"replay_proto", true)) return;
     if (HANDLE h = CreateThread(nullptr, 0, Watchdog, nullptr, 0, nullptr)) CloseHandle(h);
-    reshade::register_event<reshade::addon_event::execute_command_list>(&OnExecute);
-    reshade::register_event<reshade::addon_event::present>(&OnPresent);
-    reshade::register_event<reshade::addon_event::barrier>(&OnBarrier);
+    reshade::register_event<reshade::addon_event::execute_command_list>(&d2rvr::D3D12Only<&OnExecute>::Call);
+    reshade::register_event<reshade::addon_event::present>(&d2rvr::D3D12Only<&OnPresent>::Call);
+    reshade::register_event<reshade::addon_event::barrier>(&d2rvr::D3D12Only<&OnBarrier>::Call);
     camfix::Register();
     g_on.store(true);
     Log("vrcam: replay prototype on - [stereo] replay_right=1 draws the right eye from the left eye's lists");
@@ -6500,6 +6636,8 @@ bool RightFromLeft() {
             if (g_peekStage == 1) { Peek(1, bb); g_peekStage = 2; }
             bb->Release();
         }
+    if (xr::On())   // native OpenXR: the right eye
+        if (ID3D12Resource* bb = BackBuffer(bbRight)) { XrCopy(1, bb); bb->Release(); }
     if (g_marks) { g_why = "after the right eye's effects, before its present"; SignalOn(g_direct); }
     double t1 = pairtime::UsNow(); g_stepUs[kSubmit] += t1 - t; t = t1;
     const HRESULT hrR = g_proxy->Present(0, g_presentFlags);
@@ -6534,6 +6672,7 @@ bool RightFromLeft() {
                  2.0 * g_eyeHalf.load() * g_shiftMul.load(), g_eyeHalf.load(), g_shiftMul.load(), g_projShift.load(), g_projSx.load());
         }
         ++g_stepPairs;
+        PairLine(true);
         return true;
     }
     if (ID3D12Resource* bb = BackBuffer(bbLeft)) {
@@ -6552,6 +6691,7 @@ bool RightFromLeft() {
     NotePresent(hrL, bbLeft, g_native->GetCurrentBackBufferIndex());
     g_stepUs[kPresentL] += pairtime::UsNow() - t;
     ++g_stepPairs;
+    PairLine(true);
     // the game asked for the back buffer index right after its (held) present, before our two
     // went out: it would draw the next frame into one already presented (device removed, 0x887A002B)
     if (g_wrap) SetGameBackBuffer(g_wrap, g_native->GetCurrentBackBufferIndex());
@@ -6561,6 +6701,53 @@ bool RightFromLeft() {
     return true;
 }
 }  // namespace replay
+
+// Native OpenXR: the pair's head and hands from the game's own session, at the moment the
+// frame will be shown - what the D2R Bridge makes of BodyWalk's frame (hands from the head in
+// the frame of its turn alone), without the trip out to BodyWalk and back. The rest of the
+// block (the user's height) stays the bridge's.
+bool XrIntoShared(D2RVR_Shared* out, const D2RVR_Shared* bridge) {
+    D2RVR_XrInput in;
+    if (!xr::PairInput(&in) || !in.head.valid) return false;
+    if (!bridge) memset(out, 0, sizeof *out);
+    const float r2d = 57.2957795f;
+    const V3 f = d2rcam::m4::Rotate(in.head.rot, {0.0f, 0.0f, -1.0f});
+    const V3 r = d2rcam::m4::Rotate(in.head.rot, {1.0f, 0.0f, 0.0f});
+    const V3 u = d2rcam::m4::Rotate(in.head.rot, {0.0f, 1.0f, 0.0f});
+    const float yaw = atan2f(-f.x, -f.z);   // in the room, + turned left
+    out->version = D2RVR_SHARED_VERSION;
+    out->headValid = 1;
+    out->headYawDeg = yaw * r2d;
+    out->headHeightM = in.head.pos[1];
+    out->headPitchDeg = asinf(std::clamp(f.y, -1.0f, 1.0f)) * r2d; out->pitchValid = 1;
+    out->headRollDeg = atan2f(-r.y, u.y) * r2d; out->rollValid = 1;
+    const float c = cosf(yaw), sn = sinf(yaw), qs = sinf(-yaw * 0.5f), qc = cosf(-yaw * 0.5f);
+    auto put = [&](const D2RVR_XrPose& g, float* pos, float* rot) {
+        const float dx = g.pos[0] - in.head.pos[0], dy = g.pos[1] - in.head.pos[1], dz = g.pos[2] - in.head.pos[2];
+        pos[0] = dx * c - dz * sn;
+        pos[1] = dy;
+        pos[2] = dx * sn + dz * c;
+        const float x = g.rot[0], y = g.rot[1], z = g.rot[2], w = g.rot[3];   // the head's turn taken off
+        rot[0] = qc * x + qs * z;
+        rot[1] = qc * y + qs * w;
+        rot[2] = qc * z - qs * x;
+        rot[3] = qc * w - qs * y;
+    };
+    uint32_t hands = 0;
+    if (in.hand[1].grip.valid) { put(in.hand[1].grip, out->rightHand, out->rightRot); hands |= 1u; }
+    if (in.hand[0].grip.valid) { put(in.hand[0].grip, out->leftHand, out->leftRot); hands |= 2u; }
+    out->handsValid = hands;
+    out->rightGrip = (hands & 1u) ? std::clamp(in.hand[1].squeeze, 0.0f, 1.0f) : 0.0f;
+    out->leftGrip = (hands & 2u) ? std::clamp(in.hand[0].squeeze, 0.0f, 1.0f) : 0.0f;
+    out->gripMagic = D2RVR_GRIP_MAGIC;
+    for (int i = 0; i < 3; ++i) out->headRoom[i] = in.head.pos[i];
+    out->headYawRoomDeg = yaw * r2d;
+    out->roomMagic = D2RVR_ROOM_MAGIC;
+    out->sampleStamp = D2RVRStampNow();
+    out->sampleStampMagic = D2RVR_SAMPLE_STAMP_MAGIC;
+    out->counter++;
+    return true;
+}
 
 uintptr_t HookDrawGameScreen(int a) {
     static thread_local int depth = 0;
@@ -6594,6 +6781,15 @@ uintptr_t HookDrawGameScreen(int a) {
     cbcmp::PairBegin();
     rtrace::PairBegin();
     const bool replayRight = replay::Wanted();
+    // Native OpenXR (first person, one pass two pictures): the runtime's frame - its wait paces
+    // the pair, its views are the eyes the camera draws with (VrViewInner, VrProjInner). Before
+    // the left pass is taken: the game's lists from other threads while it blocks stay out of it.
+    // (a panel open - inventory, stash, trade, the pause menu: the flat picture, where the head looks)
+    // Two passes too (before the replay is on, 240 pairs into an area): the eyes then come with
+    // each pass's present (XrPresent) - stereo at once, not 5 s of the flat picture eye after eye
+    // (2026-10-10). Only with the world camera running, as the replay itself.
+    const bool native = NativeView() && !gamestate::MenuOpen() && d2rcam::InWorld() && replay::XrBegin();
+    if (native && XrIntoShared(&held, live)) g_shared = &held;   // the game's own head and hands for this pair
     if (replayRight) replay::BeginLeft();
     SetEye(0);
     d2rcam::Refresh();
@@ -6616,6 +6812,8 @@ uintptr_t HookDrawGameScreen(int a) {
     SetEye(1);
     d2rcam::Refresh();
     const uintptr_t r = replayRight && replay::RightFromLeft() ? leftR : OrigDrawGameScreen(a);
+    if (native) replay::XrEnd();   // both eyes to the runtime, or an empty frame if one went missing
+    xr::PairOver();
     *dt = keep; *rawDt = keepRaw;
     cbcmp::PairEnd();
     rtrace::PairEnd();
@@ -6628,7 +6826,7 @@ uintptr_t HookDrawGameScreen(int a) {
     sumCpu += pairtime::CpuUs() - c0; sumWall += t2 - t0;
 
     g_pairNow.store(false);
-    if (live) g_shared = live;
+    if (live || native) g_shared = live;
     --depth;
 
     static ULONGLONG since = GetTickCount64();
@@ -6941,6 +7139,7 @@ void Recenter() {
     g_mouseYaw.store(0.0f); g_mousePitch.store(0.0f);
     g_facingReset.store(true);   // and the hero's facing is looked for again
     g_tableReanchor.store(true); // and the table view puts the game in front of the head again
+    xr::Recenter();              // and native OpenXR's straight ahead taken from the next views
 #if D2RVR_FIRST_PERSON
     skel::ResetGrip();           // and the weapon's grip taken again
 #endif
@@ -9105,8 +9304,21 @@ void Tick() {
 }
 }  // namespace pace
 
-void OnReshadePresent(reshade::api::effect_runtime*) {
-    pace::Tick();
+void OnReshadePresent(reshade::api::effect_runtime* rt) {
+    // Native OpenXR: the runtime paces the game (xrWaitFrame); a present outside a pair goes
+    // to the headset as a flat picture.
+    xr::SetWindow((HWND)rt->get_hwnd());   // the swap chain's own window: where the pointer is
+    {   // native OpenXR: straight ahead and the body taken again when a game is entered (the hero
+        // appears) - the head is wherever it was in the menus; not at an area change, the hero stays
+        static bool hadHero = false;
+        const bool hero = gamestate::LocalPlayer() != 0;
+        if (hero && !hadHero && xr::On()) { Recenter(); Log("vrcam: openxr - a game entered: recentred"); }
+        hadHero = hero;
+    }
+    if (xr::On() || xr::Running() || xr::StopPending())
+        replay::XrPresent((ID3D12Device*)rt->get_device()->get_native(), (ID3D12CommandQueue*)rt->get_command_queue()->get_native(),
+                          (ID3D12Resource*)rt->get_current_back_buffer().handle);
+    else pace::Tick();
     const double t = pairtime::UsNow();
     pairtime::g_presentAt.store(t);
     pairtime::g_presents.fetch_add(1, std::memory_order_relaxed);
@@ -9525,12 +9737,14 @@ void TryRegister() {
     reshade::register_event<reshade::addon_event::reshade_finish_effects>(&OnFinishEffects);
     reshade::register_event<reshade::addon_event::reshade_present>(&OnReshadePresent);
     reshade::register_event<reshade::addon_event::reshade_reloaded_effects>(&Forget);
-    reshade::register_event<reshade::addon_event::bind_render_targets_and_depth_stencil>(&renderscale::OnBind);
-    reshade::register_event<reshade::addon_event::bind_viewports>(&renderscale::OnViewports);
+    reshade::register_event<reshade::addon_event::bind_render_targets_and_depth_stencil>(&d2rvr::D3D12Only<&renderscale::OnBind>::Call);
+    reshade::register_event<reshade::addon_event::bind_viewports>(&d2rvr::D3D12Only<&renderscale::OnViewports>::Call);
     uitrace::Register();   // Ctrl + F10: one frame's render targets to d2r_vr_uitrace.txt
     cbcmp::Register();     // [debug] cb_compare: one pair's constant buffers, left against right
     rtrace::Register();    // [debug] replay_trace: one pair's command list submissions
     replay::Register();    // [debug] replay_proto: the right eye from the left eye's command lists
+    // native OpenXR's session gone before the game's device is (the game closing)
+    reshade::register_event<reshade::addon_event::destroy_device>([](reshade::api::device* d) { xr::DeviceGone((ID3D12Device*)d->get_native()); });
     hud::SetLogger(&Log);
     dlssmv::SetLogger(&Log);
     hud::Register();       // the interface's own layer: [hud] hide
@@ -9719,7 +9933,7 @@ DWORD WINAPI UpdateThread(void*) {
         // the fog leaves the interface alone; the floor's key never takes its text for the void
         hud::SetUiMask((fx::FogWanted() || fx::TableKeyWanted()) && !LabelsWanted());
         SkyTick();
-        flog::Tick(g_set.frameLog.load());
+        flog::Tick(g_set.frameLog.load() || GetTickCount64() < flog::g_diagUntil.load());
         gamecmd::Tick();   // skills, potions, Alt... held in BodyWalk: pressed on the UI thread
         FloorPointerTick();   // F3: the mouse pointer on the game's ground, as the head moves
         CrosshairDepthTick();   // F2's crosshair: nearer as the camera looks down
@@ -9784,6 +9998,7 @@ DWORD WINAPI UpdateThread(void*) {
         if (nowMs >= nextSlow) {   // twice a second
             nextSlow = nowMs + 500;
             FlatVr3DTick();
+            xr::FollowBridge();
             fx::dlsseyes::Install();
             prevscan::Tick();
             const bool iniChanged = ReloadIfChanged();
@@ -9854,7 +10069,7 @@ void LoadReShade() {
     else LogF("vrcam: ReShade64.dll did not load (error %lu)", GetLastError());
 }
 
-static const char g_info_version[] = "0.154.0";
+static const char g_info_version[] = "0.156.0";
 
 static const PluginInfo g_info = {
     PluginInfoSize, D2RL_PLUGIN_ABI_VERSION, "d2r-vr-vrcam", "vrcam", g_info_version, "BodyWalkVR",
@@ -9876,6 +10091,7 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     while (n > 0 && g_iniPath[n - 1] != L'\\') --n;
     g_iniPath[n] = 0;
     wcscat_s(g_iniPath, L"d2r_vr.ini");
+    xr::SetLogger(&Log);   // before the settings: [openxr] on says so in the log
     ReloadIfChanged();
     NoTemporalAA();
     g_mouseLookOn.store(MouseLookForView());
@@ -9907,6 +10123,7 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
 }
 
 D2RL_PLUGIN_EXPORT void D2RLoaderUnloadPlugin() noexcept {
+    xr::Shutdown();   // the session before anything it runs on goes; FlatVR started again
     g_enabled.store(false);
     d2rcam::SetEnabled(false);
     if (fx::g_registered) { reshade::unregister_addon(g_self); fx::g_registered = false; }

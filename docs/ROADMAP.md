@@ -83,6 +83,9 @@ ends:
   [repo]
 - **The upper body from body trackers** (chest, waist) and forearm twist bones
   that follow the wrist. [repo + BodyWalk/FlatVR]
+- **Walking in the room moves the hero** (native OpenXR): a real step forward or
+  to the side presses the stick that way, as VR games do. Today the camera is
+  held to the hero's body: a lean of 10 cm, then the body follows. [repo]
 
 ## Interface
 

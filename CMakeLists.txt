@@ -39,6 +39,19 @@ else()
     FetchContent_MakeAvailable(D2RLPluginSDK)
 endif()
 
+# Khronos' OpenXR loader (Apache-2.0) for native OpenXR ([openxr] on, vr/xr.cpp): linked in
+# statically, so there is no openxr_loader.dll to ship beside the game.
+include(FetchContent)
+set(DYNAMIC_LOADER OFF CACHE BOOL "" FORCE)
+set(BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(BUILD_API_LAYERS OFF CACHE BOOL "" FORCE)
+set(BUILD_CONFORMANCE_TESTS OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(OpenXR GIT_REPOSITORY https://github.com/KhronosGroup/OpenXR-SDK.git
+    GIT_TAG release-1.1.54 GIT_SHALLOW TRUE)
+FetchContent_MakeAvailable(OpenXR)
+# its static loader takes the DLL C runtime; ours is the static one
+set_target_properties(openxr_loader PROPERTIES MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+
 set(MINHOOK_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/minhook")   # BSD, Tsuda Kageyu
 add_library(minhook STATIC
     ${MINHOOK_DIR}/src/buffer.c ${MINHOOK_DIR}/src/hook.c
@@ -67,9 +80,9 @@ add_library(heft_bench SHARED cleanroom/heft/heft_capi.cpp)
 target_link_libraries(heft_bench PRIVATE heft_benchdefs)
 target_compile_options(heft_bench PRIVATE /utf-8 /W4 /EHsc /permissive-)
 
-add_library(d2rl-vrcam SHARED vr/vrcam.cpp vr/dlss_mv.cpp vr/skeletons.cpp vr/gamestate.cpp vr/gamecmd.cpp vr/probe.cpp vr/uitrace.cpp vr/hud.cpp vr/memdiff.cpp vr/writewatch.cpp vr/vrcam.rc)
+add_library(d2rl-vrcam SHARED vr/vrcam.cpp vr/xr.cpp vr/dlss_mv.cpp vr/skeletons.cpp vr/gamestate.cpp vr/gamecmd.cpp vr/probe.cpp vr/uitrace.cpp vr/hud.cpp vr/memdiff.cpp vr/writewatch.cpp vr/vrcam.rc)
 target_include_directories(d2rl-vrcam PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared ${FLATVR_SHARED_DIR} ${RESHADE_SDK_INCLUDE} ${BODYWALK_SRC})
-target_link_libraries(d2rl-vrcam PRIVATE d2rcam minhook user32)
+target_link_libraries(d2rl-vrcam PRIVATE d2rcam minhook user32 OpenXR::openxr_loader)
 target_compile_options(d2rl-vrcam PRIVATE /utf-8 /W3 /EHsc /permissive-)
 
 add_library(d2r_bridge SHARED bodywalk_bridge/d2r_bridge.cpp)

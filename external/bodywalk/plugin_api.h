@@ -114,6 +114,45 @@ typedef struct {
     BW_Pose chest;
     BW_Pose waist;
 } BW_BodyTrackers;
+
+// The headset and both controllers from a plugin whose game holds the headset
+// itself (a game that is an OpenXR app of its own - D2R VR's native OpenXR):
+// what FlatVR's session gives BodyWalk while FlatVR runs, handed over by the
+// plugin instead (host API 9, send_xr_frame).
+//
+// Poses as an OpenXR app locates them: metres in the room's STAGE space (the
+// floor at y = 0), x right, y up, z back; rotations x y z w, absolute in that
+// space. The hands are the controllers' grip poses. Each hand's trigger, grip,
+// stick and buttons are filled in its BW_Pose; buttons use the OpenVR bit
+// numbers FlatVR's frame uses: 0 menu, 1 B / Y, 2 grip, 7 A / X, 32 stick
+// click, 33 trigger click, 34 stick touch. valid = 1 while tracked.
+typedef struct {
+    uint32_t version;          // Struct version, currently 1
+    uint32_t flags;            // 0
+    BW_Pose head;
+    BW_Pose leftHand;
+    BW_Pose rightHand;
+} BW_XrFrame;
+
+// The Mapping tab's gesture zones ticked "VR" (a potion on the belt, a holster),
+// as FlatVR draws them in the headset: see-through balls. Pushed to a plugin whose
+// game holds the headset itself (BW_Plugin_ReceiveVrZones), placed from that
+// game's own head - the frames it sends with send_xr_frame - so they are in the
+// same space: metres, its STAGE space, x right, y up, z back. Only while that
+// game's frames are the Mapping's Input Source and FlatVR is not running.
+#define BW_VR_ZONES_MAX 32
+typedef struct {
+    float centre[3];
+    float radius;              // metres
+    uint32_t rgba;             // the colour for its state now (at rest, a hand inside, firing), R in the low byte, alpha = opacity
+    float glow;                // its halo and rim, 0..1
+} BW_VrZone;
+
+typedef struct {
+    uint32_t version;          // Struct version, currently 1
+    uint32_t count;            // used entries in zone[]; 0 = none to show
+    BW_VrZone zone[BW_VR_ZONES_MAX];
+} BW_VrZones;
 #pragma pack(pop)
 
 // ---------------------------------------------------------
@@ -249,6 +288,26 @@ typedef struct {
     // saved; only the latest wish is kept.
     void (BW_CALLBACK *request_flatvr_stereo_source)(int source);
 
+    // ---- added in host API version 9 ----
+    // Same rule again: not before BW_Plugin_SetHostApiVersion has reported 9.
+
+    // The headset and the controllers, for a plugin whose game holds the
+    // headset itself so FlatVR cannot (BW_XrFrame above). `source` is the
+    // plugin's own input_source_name: picked as the Mapping tab's Input
+    // Source, the gestures, the Mapping and the virtual pad run on these
+    // frames exactly as on FlatVR's, and they go out as BW_TrackingData
+    // (Universal tracking output) too. Send one every headset frame, from any
+    // thread; a source that stops sending reads as not tracking after half a
+    // second.
+    void (BW_CALLBACK *send_xr_frame)(const char* source, const BW_XrFrame* frame);
+
+    // Switch the Mapping tab's Input Source to `source` and save it; the
+    // engine and everything else stay as they are. With `only_if` not NULL, only while the source
+    // is that one now - so a game going back to FlatVR does not override a
+    // user who mapped SteamVR meanwhile. Done on BodyWalk's next GUI frame;
+    // only the latest wish is kept. Call it when the game's wish CHANGES.
+    void (BW_CALLBACK *request_gesture_source)(const char* source, const char* only_if);
+
 } BW_HostCallbacks;
 
 #pragma pack(pop)
@@ -346,6 +405,11 @@ typedef struct {
 // devices. Pushed on the host's own clock, not on a runtime's frame.
 // BW_EXPORT void BW_CALLBACK BW_Plugin_ReceiveBodyTrackers(const BW_BodyTrackers* data);
 
+// Optional (host API 10): the gesture zones to draw, for a plugin whose game
+// holds the headset (BW_VrZones). Pushed every GUI frame while there are zones
+// to show; a game should let them lapse when none has come for half a second.
+// BW_EXPORT void BW_CALLBACK BW_Plugin_ReceiveVrZones(const BW_VrZones* zones);
+
 // Optional: how far down BW_HostCallbacks this host actually fills in. Called
 // once, before BW_Plugin_Initialize, so a plugin can decide during its own
 // startup instead of deferring. Version 1 is everything up to register_action;
@@ -354,14 +418,16 @@ typedef struct {
 // and only says the host pushes BW_BodyTrackers; version 5 adds
 // request_flatvr_head_lock; version 6 adds request_flatvr_screen_distance;
 // version 7 adds request_flatvr_running; version 8 adds
-// request_flatvr_stereo_source.
+// request_flatvr_stereo_source; version 9 adds send_xr_frame and
+// request_gesture_source; version 10 adds nothing to the struct and only says
+// the host pushes BW_VrZones (BW_Plugin_ReceiveVrZones).
 //
 // A plugin that uses anything from version 2 or later MUST export this and must
 // treat "never called" as version 1: on an older host those fields are past the
 // end of the struct, so reading them is undefined and checking them for null
 // proves nothing. Exporting it costs a plugin nothing on either host.
 // BW_EXPORT void BW_CALLBACK BW_Plugin_SetHostApiVersion(uint32_t version);
-#define BW_HOST_API_VERSION 8u
+#define BW_HOST_API_VERSION 10u
 
 #ifdef __cplusplus
 }

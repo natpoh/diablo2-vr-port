@@ -6,6 +6,13 @@
 //
 // Needs "Universal tracking output" switched on in BodyWalk: that is what
 // makes the host call BW_Plugin_ReceiveTracking at all.
+//
+// Native OpenXR (vrcam's [openxr] on): the game holds the headset itself, so
+// FlatVR cannot give BodyWalk the head and the controllers. The game publishes
+// them (D2RVR_XrInput) and this bridge hands them on as BodyWalk's input source
+// "D2R VR" (host API 9, send_xr_frame) - picked as the Mapping tab's Input
+// Source, the gestures, the Mapping and the virtual pad run on them as on
+// FlatVR's, and the hands come back through BW_Plugin_ReceiveTracking as ever.
 
 #define WIN32_LEAN_AND_MEAN
 #include "d2r_vr_build.h"
@@ -28,6 +35,8 @@
 namespace {
 
 BW_HostCallbacks g_host{};
+// The input source the game's own headset frames come under (native OpenXR, host API 9).
+const char* const kXrSource = "D2R VR";
 // How far down BW_HostCallbacks the host fills in (BW_Plugin_SetHostApiVersion);
 // never called = version 1. Fields past it must not even be copied.
 uint32_t g_hostVer = 1;
@@ -284,7 +293,8 @@ BW_EXPORT bool BW_CALLBACK BW_Plugin_Initialize(const BW_HostCallbacks* callback
     // Only the part this host has: a whole-struct copy from an older BodyWalk
     // reads past the end of its smaller struct.
     if (callbacks) {
-        const size_t have = g_hostVer >= 8 ? sizeof(BW_HostCallbacks)
+        const size_t have = g_hostVer >= 9 ? sizeof(BW_HostCallbacks)
+                          : g_hostVer >= 8 ? offsetof(BW_HostCallbacks, send_xr_frame)
                           : g_hostVer >= 7 ? offsetof(BW_HostCallbacks, request_flatvr_stereo_source)
                           : g_hostVer >= 6 ? offsetof(BW_HostCallbacks, request_flatvr_running)
                           : g_hostVer >= 5 ? offsetof(BW_HostCallbacks, request_flatvr_screen_distance)
@@ -296,9 +306,10 @@ BW_EXPORT bool BW_CALLBACK BW_Plugin_Initialize(const BW_HostCallbacks* callback
     out_info->name = "D2R Bridge";
     out_info->version = "0.26.0";
     out_info->author = "BodyWalkVR";
-    out_info->type = BW_PLUGIN_TYPE_OUTPUT;
+    out_info->type = BW_PLUGIN_TYPE_BOTH;
     out_info->output_mode_name = nullptr;   // not a mode: the Xbox pad stays the output
-    out_info->input_source_name = nullptr;
+    // the game's own headset and controllers, native OpenXR (host API 9): a source for the Mapping tab
+    out_info->input_source_name = g_hostVer >= 9 ? kXrSource : nullptr;
     RegisterCategories();
     if (g_host.register_action) for (const ActionName& a : kActions) g_host.register_action(a.name);
     // The game's own key commands (skills, potions, Alt...), pressed by vrcam
@@ -306,6 +317,9 @@ BW_EXPORT bool BW_CALLBACK BW_Plugin_Initialize(const BW_HostCallbacks* callback
     if (g_host.register_action) for (const D2RVRCommand& c : kD2RVRCommands) g_host.register_action(c.action);
     Actions();
     Commands();
+    // the game's own headset can come through this BodyWalk (D2R VR Settings looks for it)
+    static HANDLE xrSource = nullptr;
+    if (!xrSource && g_hostVer >= 9 && g_host.send_xr_frame) xrSource = CreateEventW(nullptr, TRUE, TRUE, D2RVR_BRIDGE_XR_SOURCE_NAME);
     if (!OpenShared()) Info("D2R Bridge: could not create the shared memory");
     else Info("D2R Bridge: ready, head yaw goes to Diablo II: Resurrected");
     return true;
@@ -318,6 +332,12 @@ HANDLE g_flatVrStart = nullptr, g_flatVrStop = nullptr;
 // "3D in the headset" (D2RVR_FLATVR_3D_*_NAME): FlatVR's 3D source, host API 8.
 HANDLE g_flatVr3D[3] = {};
 
+// The Mapping's Input Source follows the game's own headset by its frames (FollowGameHeadset);
+// D2R VR Settings' "native off" (GESTURES_FLATVR) keeps it quiet for a while.
+bool g_xrLive = false;
+bool g_xrSilent = false;   // given back for 10 s of silence, the session not over: back again only over that FlatVR
+ULONGLONG g_xrAskedAt = 0, g_xrQuietUntil = 0;
+
 void FollowFlatVrButtons() {
     if (!g_flatVrStart) g_flatVrStart = CreateEventW(nullptr, FALSE, FALSE, D2RVR_FLATVR_START_NAME);
     if (!g_flatVrStop) g_flatVrStop = CreateEventW(nullptr, FALSE, FALSE, D2RVR_FLATVR_STOP_NAME);
@@ -329,6 +349,20 @@ void FollowFlatVrButtons() {
     if (g_flatVrStop && WaitForSingleObject(g_flatVrStop, 0) == WAIT_OBJECT_0) {
         if (can) g_host.request_flatvr_running(0);
         Info(can ? "D2R Bridge: Stop FlatVR from D2R VR Settings" : "D2R Bridge: Stop FlatVR asked, but this BodyWalk is older than 1.74");
+    }
+    // native OpenXR: the Mapping's Input Source follows who holds the headset (host API 9)
+    static HANDLE gestures[2] = {};
+    static const wchar_t* const kGestures[2] = {D2RVR_GESTURES_GAME_NAME, D2RVR_GESTURES_FLATVR_NAME};
+    for (int k = 0; k < 2; ++k) {
+        if (!gestures[k]) gestures[k] = CreateEventW(nullptr, FALSE, FALSE, kGestures[k]);
+        if (!gestures[k] || WaitForSingleObject(gestures[k], 0) != WAIT_OBJECT_0) continue;
+        const bool can = g_hostVer >= 9 && g_host.request_gesture_source;
+        if (can) g_host.request_gesture_source(k == 0 ? kXrSource : "FlatVR", k == 0 ? nullptr : kXrSource);
+        g_xrSilent = false;
+        if (k == 1) { g_xrQuietUntil = GetTickCount64() + 5000; g_xrLive = false; }   // the last frames do not ask it back
+        Info(!can ? "D2R Bridge: the Mapping's Input Source asked, but this BodyWalk is older than host API 9"
+             : k == 0 ? "D2R Bridge: Mapping's Input Source -> D2R VR (the game holds the headset)"
+                      : "D2R Bridge: Mapping's Input Source -> FlatVR again (if it was D2R VR)");
     }
     static const wchar_t* const k3D[3] = {D2RVR_FLATVR_3D_NONE_NAME, D2RVR_FLATVR_3D_DEPTH_NAME, D2RVR_FLATVR_3D_PAIR_NAME};
     static const char* const kSaid[3] = {"none (a flat screen)", "the game's depth (ReShade)", "the game's stereo pair"};
@@ -347,9 +381,156 @@ void FollowFlatVrButtons() {
     }
 }
 
+// The game's headset frames (D2RVR_XrInput, written by vrcam once a headset frame)
+// to BodyWalk as the source "D2R VR". Opened, or made first, by whichever side
+// comes first; a frame is sent when its counter moved, nothing once it stands
+// still (BodyWalk takes a silent source for not tracking).
+HANDLE g_xrMap = nullptr;
+const D2RVR_XrInput* g_xr = nullptr;
+uint32_t g_xrSeen = 0;
+ULONGLONG g_xrMovedAt = 0;
+std::atomic<uint32_t> g_xrSent{0};
+
+const D2RVR_XrInput* XrInput() {
+    if (g_xr) return g_xr;
+    static ULONGLONG lastTry = 0;
+    if (lastTry && GetTickCount64() - lastTry < 1000) return nullptr;
+    lastTry = GetTickCount64();
+    SECURITY_ATTRIBUTES sa{sizeof sa, nullptr, FALSE};
+    PSECURITY_DESCRIPTOR sd = nullptr;
+    if (ConvertStringSecurityDescriptorToSecurityDescriptorW(L"D:(A;;GA;;;WD)S:(ML;;NW;;;LW)", SDDL_REVISION_1, &sd, nullptr))
+        sa.lpSecurityDescriptor = sd;
+    g_xrMap = CreateFileMappingW(INVALID_HANDLE_VALUE, &sa, PAGE_READWRITE, 0, sizeof(D2RVR_XrInput), D2RVR_XR_INPUT_NAME);
+    if (sd) LocalFree(sd);
+    if (!g_xrMap) return nullptr;
+    g_xr = (const D2RVR_XrInput*)MapViewOfFile(g_xrMap, FILE_MAP_READ, 0, 0, sizeof(D2RVR_XrInput));
+    if (!g_xr) { CloseHandle(g_xrMap); g_xrMap = nullptr; }
+    return g_xr;
+}
+
+// The Mapping's Input Source by the game's frames, whenever BodyWalk started (2026-10-10): the
+// events the game sets (D2RVR_GESTURES_GAME_NAME) are made by this bridge, so one set before
+// BodyWalk ran was lost - the Mapping stayed on FlatVR and the controllers did nothing. "D2R VR"
+// asked when the frames come; asked again every 2 s only if something put FlatVR back (a profile
+// loaded) - never over a source the user picked; FlatVR again (only if it is still D2R VR) when
+// the game says its session is over, or its frames have stood still for 10 s (a game gone).
+void FollowGameHeadset(bool fresh, bool focused, bool ended) {
+    if (g_hostVer < 9 || !g_host.request_gesture_source) return;
+    const ULONGLONG now = GetTickCount64();
+    if (fresh) g_xrMovedAt = now;
+    if (ended) g_xrSilent = false;   // a new session asks outright again
+    if (fresh && focused && !ended && now >= g_xrQuietUntil) {
+        if (!g_xrLive) {
+            g_xrLive = true;
+            g_xrAskedAt = now;
+            // the same session back after a silence (the headset slept): only over the FlatVR our
+            // give-back left, never over a source the user picked meanwhile
+            g_host.request_gesture_source(kXrSource, g_xrSilent ? "FlatVR" : nullptr);
+            g_xrSilent = false;
+            Info("D2R Bridge: the game's own headset frames come - Mapping's Input Source -> D2R VR");
+        } else if (now - g_xrAskedAt > 2000) {
+            g_xrAskedAt = now;
+            g_host.request_gesture_source(kXrSource, "FlatVR");
+        }
+    } else if (g_xrLive && (ended || now - g_xrMovedAt > 10000)) {
+        g_xrLive = false;
+        g_xrSilent = !ended;
+        g_host.request_gesture_source("FlatVR", kXrSource);
+        Info("D2R Bridge: the game's own headset session is over - Mapping's Input Source -> FlatVR again (if it was D2R VR)");
+    }
+}
+
+void SendXrFrame() {
+    if (g_hostVer < 9 || !g_host.send_xr_frame) return;
+    const D2RVR_XrInput* blk = XrInput();
+    if (!blk || blk->version != D2RVR_XR_INPUT_VERSION) { FollowGameHeadset(false, false, false); return; }
+    const uint32_t c = blk->counter;
+    if (c == g_xrSeen) { FollowGameHeadset(false, false, false); return; }
+    D2RVR_XrInput x;
+    memcpy(&x, blk, sizeof x);
+    if (x.counter != c) return;   // written under us: the next one
+    g_xrSeen = c;
+    // a block a session left behind (the game still runs, its session long over) is no frame
+    const int32_t age = (int32_t)(D2RVRStampNow() - x.stamp);   // 0.1 ms
+    if (age < -10000 || age > 10000) { FollowGameHeadset(false, false, false); return; }
+    const bool ended = !x.focused && !x.head.valid && !x.hand[0].grip.valid && !x.hand[1].grip.valid;   // the game's last word (xr.cpp Teardown)
+    BW_XrFrame f{};
+    f.version = 1;
+    auto pose = [](const D2RVR_XrPose& p, BW_Pose& o) {
+        memcpy(o.pos, p.pos, sizeof o.pos);
+        memcpy(o.rot, p.rot, sizeof o.rot);
+        o.valid = p.valid ? 1u : 0u;
+    };
+    pose(x.head, f.head);
+    for (int h = 0; h < 2; ++h) {
+        const D2RVR_XrHand& in = x.hand[h];
+        BW_Pose& o = h ? f.rightHand : f.leftHand;
+        pose(in.grip, o);
+        o.trigger = in.trigger;
+        o.grip = in.squeeze;
+        o.stickX = in.stickX;
+        o.stickY = in.stickY;
+        // OpenVR's bit numbers, as FlatVR's frame has them
+        uint64_t b = 0;
+        if (in.buttons & D2RVR_XRB_MENU) b |= 1ull << 0;
+        if (in.buttons & D2RVR_XRB_SECONDARY) b |= 1ull << 1;
+        if (in.buttons & D2RVR_XRB_SQUEEZE) b |= 1ull << 2;
+        if (in.buttons & D2RVR_XRB_PRIMARY) b |= 1ull << 7;
+        if (in.buttons & D2RVR_XRB_STICK) b |= 1ull << 32;
+        if (in.buttons & D2RVR_XRB_TRIGGER) b |= 1ull << 33;
+        if (std::fabs(in.stickX) > 0.05f || std::fabs(in.stickY) > 0.05f) b |= 1ull << 34;   // (no touch sensor read: moved = touched)
+        o.buttons = b;
+    }
+    g_host.send_xr_frame(kXrSource, &f);
+    FollowGameHeadset(!ended, x.focused != 0, ended);
+    if (g_xrSent.fetch_add(1) == 0) Info("D2R Bridge: the game's own headset and controllers (native OpenXR) go to BodyWalk as \"D2R VR\"");
+}
+
+// BodyWalk's gesture zones to show in the game's own headset view (host API 10),
+// on to vrcam as D2RVR_XrZones: it draws them as see-through balls.
+HANDLE g_zonesMap = nullptr;
+D2RVR_XrZones* g_zones = nullptr;
+
+D2RVR_XrZones* XrZones() {
+    if (g_zones) return g_zones;
+    static ULONGLONG lastTry = 0;
+    if (lastTry && GetTickCount64() - lastTry < 1000) return nullptr;
+    lastTry = GetTickCount64();
+    SECURITY_ATTRIBUTES sa{sizeof sa, nullptr, FALSE};
+    PSECURITY_DESCRIPTOR sd = nullptr;
+    if (ConvertStringSecurityDescriptorToSecurityDescriptorW(L"D:(A;;GA;;;WD)S:(ML;;NW;;;LW)", SDDL_REVISION_1, &sd, nullptr))
+        sa.lpSecurityDescriptor = sd;
+    g_zonesMap = CreateFileMappingW(INVALID_HANDLE_VALUE, &sa, PAGE_READWRITE, 0, sizeof(D2RVR_XrZones), D2RVR_XR_ZONES_NAME);
+    if (sd) LocalFree(sd);
+    if (!g_zonesMap) return nullptr;
+    g_zones = (D2RVR_XrZones*)MapViewOfFile(g_zonesMap, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(D2RVR_XrZones));
+    if (!g_zones) { CloseHandle(g_zonesMap); g_zonesMap = nullptr; }
+    return g_zones;
+}
+
+BW_EXPORT void BW_CALLBACK BW_Plugin_ReceiveVrZones(const BW_VrZones* in) {
+    if (!in || in->version < 1) return;
+    D2RVR_XrZones* b = XrZones();
+    if (!b) return;
+    static_assert(sizeof(BW_VrZone) == sizeof(D2RVR_XrZone), "the zones cross as they are");
+    const uint32_t n = in->count < D2RVR_XR_ZONES_MAX ? in->count : D2RVR_XR_ZONES_MAX;
+    // The game reads it in a loop of its own: counter odd while it is being written.
+    b->counter |= 1u;
+    MemoryBarrier();
+    memcpy(b->zone, in->zone, n * sizeof(D2RVR_XrZone));
+    b->count = n;
+    b->version = D2RVR_XR_ZONES_VERSION;
+    b->stamp = D2RVRStampNow();
+    MemoryBarrier();
+    b->counter += 1u;
+    static bool told = false;
+    if (n && !told) { told = true; Info("D2R Bridge: BodyWalk's VR gesture zones go to the game's own headset view"); }
+}
+
 BW_EXPORT void BW_CALLBACK BW_Plugin_Update() {
     FollowGameState();
     FollowFlatVrButtons();
+    SendXrFrame();
 }
 
 BW_EXPORT void BW_CALLBACK BW_Plugin_ReceiveAction(const char* action_name, bool active) {
@@ -385,6 +566,10 @@ BW_EXPORT void BW_CALLBACK BW_Plugin_Shutdown() {
     if (g_state) { UnmapViewOfFile(g_state); g_state = nullptr; }
     if (g_stateMap) { CloseHandle(g_stateMap); g_stateMap = nullptr; }
     if (g_flatVrStart) { CloseHandle(g_flatVrStart); g_flatVrStart = nullptr; }
+    if (g_xr) { UnmapViewOfFile(g_xr); g_xr = nullptr; }
+    if (g_xrMap) { CloseHandle(g_xrMap); g_xrMap = nullptr; }
+    if (g_zones) { g_zones->count = 0; g_zones->counter += 2u; UnmapViewOfFile(g_zones); g_zones = nullptr; }
+    if (g_zonesMap) { CloseHandle(g_zonesMap); g_zonesMap = nullptr; }
     if (g_flatVrStop) { CloseHandle(g_flatVrStop); g_flatVrStop = nullptr; }
 }
 

@@ -30,6 +30,18 @@ Copy-Item (Join-Path $root "build\Release\d2r_bridge.dll") "$payload\bodywalk\"
 Copy-Item (Join-Path $root "bodywalk_bridge\profile.json") "$payload\bodywalk\"
 Copy-Item (Join-Path $root "reshade\D2R_DepthFog.fx") "$payload\shaders\"
 Get-ChildItem (Join-Path $root "reshade\sky") -Filter "D2R_Sky*.png" | Copy-Item -Destination "$payload\sky\"
+# The cave ceilings' pictures d2r_vr.ini names, beside the skies: our OpenAI drawings
+# (tools/casc_extract/gen_ceiling_from_ref.py), kept in extracted\ - never in the repository -
+# or, for the ones finished in the game (*_smooth), the game's D2R_Sky_ours. Without them
+# ReShade said "errors loading some effects" and the caves had no ceiling (a player, 0.153).
+$ceilFrom = @((Join-Path $root "extracted"), "D:\SteamLibrary\steamapps\common\Diablo II Resurrected\reshade-shaders\Textures\D2R_Sky_ours")
+$ceilNames = Select-String -Path (Join-Path $root "d2r_vr.ini") -Pattern 'D2R_Ceiling_[A-Za-z0-9_]+\.png' -AllMatches |
+    ForEach-Object { $_.Matches } | ForEach-Object { $_.Value } | Sort-Object -Unique
+foreach ($n in $ceilNames) {
+    $src = $ceilFrom | ForEach-Object { Join-Path $_ $n } | Where-Object { Test-Path $_ } | Select-Object -First 1
+    if (-not $src) { throw "ceiling picture not found: $n (looked in $($ceilFrom -join ', '))" }
+    Copy-Item $src "$payload\sky\"
+}
 # the flat crosshair, beside the skies (vrcam [input] crosshair; tools/gen_crosshair.py)
 Copy-Item (Join-Path $root "reshade\sky\D2R_Crosshair.png") "$payload\sky\"
 Copy-Item $addon "$payload\game\FlatVR_DepthProvider.addon64"

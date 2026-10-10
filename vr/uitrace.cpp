@@ -28,6 +28,7 @@
 #include <algorithm>
 
 #include <reshade.hpp>
+#include "game_device_only.h"
 
 namespace uitrace {
 namespace {
@@ -418,24 +419,24 @@ void OnPresent(command_queue* queue, swapchain* sc, const rect*, const rect*, ui
 }  // namespace
 
 void Register() {
-    reshade::register_event<reshade::addon_event::begin_render_pass>(&OnBeginRenderPass);
-    reshade::register_event<reshade::addon_event::end_render_pass>(&OnEndRenderPass);
-    reshade::register_event<reshade::addon_event::bind_render_targets_and_depth_stencil>(&OnBindRenderTargets);
-    reshade::register_event<reshade::addon_event::clear_render_target_view>(&OnClear);
-    reshade::register_event<reshade::addon_event::draw>(&OnDraw);
-    reshade::register_event<reshade::addon_event::draw_indexed>(&OnDrawIndexed);
-    reshade::register_event<reshade::addon_event::dispatch>(&OnDispatch);
-    reshade::register_event<reshade::addon_event::draw_or_dispatch_indirect>(&OnIndirect);
-    reshade::register_event<reshade::addon_event::copy_resource>(&OnCopy);
-    reshade::register_event<reshade::addon_event::copy_texture_region>(&OnCopyRegion);
-    reshade::register_event<reshade::addon_event::resolve_texture_region>(&OnResolve);
-    reshade::register_event<reshade::addon_event::present>(&OnPresent);
-    reshade::register_event<reshade::addon_event::bind_pipeline>(&OnBindPipeline);
-    reshade::register_event<reshade::addon_event::init_pipeline>(&OnInitPipeline);
-    reshade::register_event<reshade::addon_event::destroy_pipeline>(&OnDestroyPipeline);
-    reshade::register_event<reshade::addon_event::bind_scissor_rects>(&OnScissor);
-    reshade::register_event<reshade::addon_event::push_constants>(&OnPushConstants);
-    reshade::register_event<reshade::addon_event::execute_secondary_command_list>(&OnExecuteSecondary);
+    reshade::register_event<reshade::addon_event::begin_render_pass>(&d2rvr::D3D12Only<&OnBeginRenderPass>::Call);
+    reshade::register_event<reshade::addon_event::end_render_pass>(&d2rvr::D3D12Only<&OnEndRenderPass>::Call);
+    reshade::register_event<reshade::addon_event::bind_render_targets_and_depth_stencil>(&d2rvr::D3D12Only<&OnBindRenderTargets>::Call);
+    reshade::register_event<reshade::addon_event::clear_render_target_view>(&d2rvr::D3D12Only<&OnClear>::Call);
+    reshade::register_event<reshade::addon_event::draw>(&d2rvr::D3D12Only<&OnDraw>::Call);
+    reshade::register_event<reshade::addon_event::draw_indexed>(&d2rvr::D3D12Only<&OnDrawIndexed>::Call);
+    reshade::register_event<reshade::addon_event::dispatch>(&d2rvr::D3D12Only<&OnDispatch>::Call);
+    reshade::register_event<reshade::addon_event::draw_or_dispatch_indirect>(&d2rvr::D3D12Only<&OnIndirect>::Call);
+    reshade::register_event<reshade::addon_event::copy_resource>(&d2rvr::D3D12Only<&OnCopy>::Call);
+    reshade::register_event<reshade::addon_event::copy_texture_region>(&d2rvr::D3D12Only<&OnCopyRegion>::Call);
+    reshade::register_event<reshade::addon_event::resolve_texture_region>(&d2rvr::D3D12Only<&OnResolve>::Call);
+    reshade::register_event<reshade::addon_event::present>(&d2rvr::D3D12Only<&OnPresent>::Call);
+    reshade::register_event<reshade::addon_event::bind_pipeline>(&d2rvr::D3D12Only<&OnBindPipeline>::Call);
+    reshade::register_event<reshade::addon_event::init_pipeline>(&d2rvr::D3D12Only<&OnInitPipeline>::Call);
+    reshade::register_event<reshade::addon_event::destroy_pipeline>(&d2rvr::D3D12Only<&OnDestroyPipeline>::Call);
+    reshade::register_event<reshade::addon_event::bind_scissor_rects>(&d2rvr::D3D12Only<&OnScissor>::Call);
+    reshade::register_event<reshade::addon_event::push_constants>(&d2rvr::D3D12Only<&OnPushConstants>::Call);
+    reshade::register_event<reshade::addon_event::execute_secondary_command_list>(&d2rvr::D3D12Only<&OnExecuteSecondary>::Call);
 }
 
 // Records the next whole frame into path.

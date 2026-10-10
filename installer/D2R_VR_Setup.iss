@@ -15,8 +15,11 @@
 ;     carries (vjoy installer\make_bodywalk_portable.ps1; LITE on its first
 ;     start) goes into <game>\BodyWalkVR, with ViGEmBus and a
 ;     Start menu shortcut; running this Setup again refreshes that copy.
-;     Installed: used as it is - at least 1.74 is wanted, an older standalone
-;     one is updated on a yes. Then
+;     Installed: used as it is when it is at least 1.78 (the gesture zones in the
+;     headset and the Input Source the game asks for, host API 9/10; 1.77 for the
+;     add-on's present stamp); an older one (Steam's 1.74, an old standalone) is left
+;     alone and the portable copy goes in beside the game instead - D2R VR Settings
+;     starts the newest BodyWalk it finds. Then
 ;     the D2R Bridge plugin goes into BodyWalk's plugins and BodyWalk's
 ;     settings are set for the mod (D2R_VR_Settings.exe --setup-bodywalk), and
 ;     the FlatVR depth addon goes beside the game;
@@ -26,7 +29,7 @@
   #define ModVersion "0.0"
 #endif
 #define MinBodyWalkMajor 1
-#define MinBodyWalkMinor 74
+#define MinBodyWalkMinor 78
 #define BodyWalkDownload "https://bodywalkvr.com/api/download/latest?product=bodywalk"
 #define D2RLoaderSite "https://d2rloader.net"
 ; The one D2RLoader the mod is made for, fetched only when the player asks (InstallD2RLoader);
@@ -668,18 +671,19 @@ begin
     // whose folder had no D2RLoader.exe yet (0.144, 2026-10-08).
     if IsVR then
     begin
-      // none installed: FindBodyWalk says no and points at the portable copy
+      // none installed: FindBodyWalk says no and points at the portable copy. One older than
+      // D2R VR needs stays as it is and the portable copy goes in too: an old FlatVR with the
+      // add-on this Setup brings put a player's eyes out of line (1.76 with 0.153, 2026-10-10).
       if FindBodyWalk(Version) and not AtLeastMin(Version) then
       begin
-        if BodyWalkSteam then
-          MsgBox('Your BodyWalk (Steam) is older than {#MinBodyWalkMajor}.{#MinBodyWalkMinor} or does not say its version. ' +
-                 'Let Steam update it before playing; Setup goes on.', mbInformation, MB_OK)
-        else if MsgBox('Your BodyWalk is ' + Version + '; D2R VR needs {#MinBodyWalkMajor}.{#MinBodyWalkMinor} or newer. Download and install the update now?',
-                       mbConfirmation, MB_YESNO) = IDYES then
-        begin
-          DownloadPage.Add('{#BodyWalkDownload}', 'BodyWalkVR_Setup.exe', '');
-          BodyWalkSetup := ExpandConstant('{tmp}\BodyWalkVR_Setup.exe');
-        end;
+        if Version = '' then Name := 'of an unknown version' else Name := Version;
+        if BodyWalkSteam then Name := 'from Steam is ' + Name else Name := 'is ' + Name;
+        MsgBox('Your BodyWalk ' + Name + ', older than D2R VR needs ({#MinBodyWalkMajor}.{#MinBodyWalkMinor}). ' +
+               'Setup puts BodyWalk Portable {#MinBodyWalkMajor}.{#MinBodyWalkMinor} in the game''s folder, and D2R VR Settings starts that one. ' +
+               'Your BodyWalk stays as it is.', mbInformation, MB_OK);
+        BodyWalkPortable := True;
+        BodyWalkDir := ExpandConstant('{#PortableDir}');
+        BodyWalkFresh := not FileExists(BodyWalkDir + '\BodyWalkVR.exe');
       end;
     end;
     if (ReShadeSetup <> '') or (BodyWalkSetup <> '') then

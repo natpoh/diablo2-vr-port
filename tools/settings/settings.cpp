@@ -19,6 +19,7 @@
 #include <shlobj.h>
 #include <shellapi.h>   // CommandLineToArgvW: the installer's --setup-bodywalk
 #include <tlhelp32.h>
+#pragma comment(lib, "version.lib")   // GetFileVersionInfo: which BodyWalk is new enough
 #include <winhttp.h>    // the update check, D2RLoader's download
 #include <wincrypt.h>   // CryptBinaryToStringW: PowerShell's -EncodedCommand
 #include <bcrypt.h>     // SHA-256 of the D2RLoader download
@@ -226,6 +227,12 @@ std::vector<Item> g_items = {
     Hide(Status(L"changelog", L"")),
     Hide(Button(L"@update", L"download", L"Download",
            L"Opens the download page in your browser. This program never downloads or runs anything itself.")),
+    Button(L"@run", L"collect_logs", L"Collect logs for support",
+           L"Makes one zip on your desktop with what we need to find a problem: the mod's, D2RLoader's, ReShade's and "
+           L"FlatVR's logs, the settings, the versions, the graphics card and Windows. While the game runs it first "
+           L"records 10 s of how the frames are drawn - keep playing and turn your head. Nothing is sent anywhere: "
+           L"post the zip in our Discord (#diablo-2-vr)."),
+    Status(L"collect", L"Collect logs: a zip on your desktop to post in our Discord"),
     Toggle(L"update", L"check", L"Check for updates when this program opens", 1,
            L"Asks bodywalkvr.com for the newest version of the mod. Nothing is downloaded."),
     Needs(L"update", L"check", 1, Toggle(L"update", L"develop", L"Beta versions too (develop channel)", 0,
@@ -250,10 +257,10 @@ std::vector<Item> g_items = {
            L"Sets the settings below at once. Potato: as Low, but the 3D made from ReShade's depth instead of real stereo "
            L"(one frame a picture, not two) and the headset at 72 Hz, the game capped at it; the others 90 Hz. "
            L"Low: 1 room ring, models out to 150, near fog (30 to 100; in caves 60 to 100), no ceiling. "
-           L"Medium: 2 rings, 300, fog 30 to 200 (in caves 100 to 200), ceiling on. High: 3 rings, 400, finer ceiling relief and torches lighting "
+           L"Medium: 2 rings, 200, fog 30 to 200 (in caves 100 to 200), ceiling on. High: 3 rings, 400, finer ceiling relief and torches lighting "
            L"the ceiling (heavy on the CPU). Low, Medium and High keep real stereo. Changing any of them by hand shows Custom."),
     Slider(L"render", L"rings", L"Room rings around the hero", 1, 8, 1, 4, L"Extra room rings around the hero. With fog, 4-6 is enough."),
-    Slider(L"render", L"model_radius", L"Model visibility radius", 150, 1000, 50, 300, L"The game's own is 150."),
+    Slider(L"render", L"model_radius", L"Model visibility radius", 150, 1000, 50, 200, L"The game's own is 150."),
     Toggle(L"fog", L"enabled", L"Distance fog", 0,
            L"Through ReShade (D2R_DepthFog.fx in reshade-shaders\\Shaders). With the sky on, it fades into the sky."),
     Needs(L"fog", L"enabled", 1, Slider(L"fog", L"start", L"Fog start", 0, 1000, 5, 150,
@@ -276,19 +283,25 @@ std::vector<Item> g_items = {
     Needs(L"ceiling", L"enabled", 1, Toggle(L"ceiling", L"torches", L"Torches light the ceiling (CPU heavy!)", 0,
            kTorchesTip)),
     Only(kVr, Choice(L"@stereo3d", L"source", L"3D in the headset", 0,
-           {L"Stereo - one pass, two pictures", L"Stereo - eyes by turns", L"3D from the depth (ReShade)", L"Mono - a flat screen"},
+           {L"Stereo - one pass, two pictures", L"Stereo - eyes by turns", L"3D from the depth (ReShade)", L"Mono - a flat screen",
+            L"Native OpenXR - the game itself in the headset (prototype)"},
            L"Stereo: the game draws each frame once and the right eye is drawn again from the same work with its own "
            L"camera - true 3D at nearly the mono frame rate (new: if it is unstable on your PC, take Eyes by turns). "
            L"Eyes by turns: the game draws the left eye, the right eye, the left... a full frame each (~half the mono "
            L"rate per eye). 3D from the depth: one picture, FlatVR makes the second eye from ReShade's depth (works with "
            L"DLSS). Mono: no 3D. Stereo needs a game restart to switch on the first time. Sets the Stereo tab's Real "
-           L"stereo and, while BodyWalk runs, FlatVR's 3D source (BodyWalk 1.76 or later).")),
+           L"stereo and, while BodyWalk runs, FlatVR's 3D source (BodyWalk 1.76 or later). Native OpenXR (a prototype): the game "
+           L"is an OpenXR app and shows its own stereo pair in the headset, one pass two pictures - each eye's real view and the "
+           L"head's place in the room, paced by the headset, no FlatVR - from the game's first frame. First (F4) and third person "
+           L"(F2) in stereo; menus, open panels, F1 and F3 as a flat picture where you look. FlatVR is stopped while the game holds the headset, so BodyWalk's own panels are not in it; buttons "
+           L"and gestures need BodyWalk's OpenXR layer and the profile's gesture source set to OpenXR. Switches while the game runs.")),
     Only(kVr, Choice(L"stereo", L"headset_rate", L"Headset refresh rate", 3, {L"72 Hz", L"75 Hz", L"80 Hz", L"90 Hz", L"120 Hz"},
            L"Sets the game's frame cap (in its own options, Settings.json): one picture a frame (mono, the 3D from the depth) "
            L"at the headset's rate, real stereo at twice it (each eye at the rate). More pictures than the headset shows make "
            L"the frame shake. The game reads it when it starts: set it with the game closed (it writes its own options on exit), or restart the game after.")),
     Only(kVr, Slider(L"@game", L"Framerate Cap", L"Game frame cap, fps (0 = none)", 0, 300, 1, 180,
            L"The game's own frame cap (its Settings.json). Set from the headset's rate and the 3D above; can be changed by hand.")),
+    Only(kVr, Status(L"native_xr", L"Native OpenXR (the last 3D choice above) needs a BodyWalk that takes the game's headset: 1.78 or later")),
     Status(L"perf_restart", L"Need to restart the game: the render distance (room rings, models), the headset rate and the frame cap "
                             L"take effect when the game starts again."),
 
@@ -448,6 +461,26 @@ std::vector<Item> g_items = {
            L"Picking up, opening and talking then go to the BodyWalk action \"D2R: Pick up / interact\"."),
 
     Only(kVr, Tab(L"Stereo")),
+    // Native OpenXR (Performance > 3D in the headset > Native OpenXR): applied at once while the game runs.
+    Group(L"Native OpenXR (the game itself in the headset)"),
+    Slider(L"openxr", L"flat_distance_m", L"Flat picture: distance, m", 0.5f, 10.0f, 0.1f, 2.5f,
+           L"Menus, open panels (inventory, trade...), loading and the views shown flat (F1, F3) stand this far ahead, where "
+           L"you looked when they came up. Farther = smaller in view."),
+    Slider(L"openxr", L"flat_width_m", L"Flat picture: width, m", 0.5f, 8.0f, 0.1f, 2.4f,
+           L"How wide that picture is; its height follows the game window's shape."),
+    Slider(L"openxr", L"lean_m", L"Head off the body, m", 0.0f, 0.5f, 0.01f, 0.1f,
+           L"First and third person: how far the head may lean away from the hero's body. Farther, the body follows - "
+           L"walking in the room never takes the camera out of the hero. 0 = turning only."),
+    Toggle(L"openxr", L"symmetric_fov", L"Labels over monsters meet in both eyes", 1,
+           L"Each eye drawn as wide to the left as to the right: the game's interface (the names over monsters and items) "
+           L"is the same in both eyes and meets. Off: each eye's own view, a little fewer pixels, the names apart."),
+    Toggle(L"openxr", L"fov_crop", L"Sharper: the picture keeps the window's shape", 1,
+           L"Each eye's view cut to the game window's shape: square pixels, all the window's lines on a smaller angle, so the "
+           L"picture is sharper; above and below it the headset shows black (nothing drawn there, it costs nothing). "
+           L"Off: the picture stretched over the headset's whole view - taller, softer up and down."),
+    Toggle(L"openxr", L"third_gaze", L"F2: the camera swings round the hero with the gaze", 0,
+           L"Off: the camera stays behind the hero on his turn and the head looks round freely. On: it swings round him "
+           L"with the head, as on FlatVR's screen."),
     Group(L"Stereo 3D"),
     Toggle(L"stereo", L"afr", L"Real stereo (alternate frames)", 0,
            L"The game draws the left eye, the right eye, the left... Needs the FlatVR addon in the game, "
@@ -736,7 +769,7 @@ std::vector<Item> g_items = {
            L"was see-through; from above it hid the hero."),
     Group(L"Render distance"),
     Slider(L"render", L"rings", L"Room rings around the hero", 1, 8, 1, 4, L"Extra room rings around the hero. With fog, 4-6 is enough."),
-    Slider(L"render", L"model_radius", L"Model visibility radius", 150, 1000, 50, 300, L"The game's own is 150."),
+    Slider(L"render", L"model_radius", L"Model visibility radius", 150, 1000, 50, 200, L"The game's own is 150."),
 
     Tab(L"Sky"),
     Group(L"Sky"),
@@ -1409,7 +1442,7 @@ constexpr int kPresets = 4;   // Potato, Low, Medium, High; then Custom
 struct PresetKey { const wchar_t* section; const wchar_t* key; float v[kPresets]; };
 const PresetKey kPreset[] = {
     {L"render", L"rings", {1, 1, 2, 3}},
-    {L"render", L"model_radius", {150, 150, 300, 400}},
+    {L"render", L"model_radius", {150, 150, 200, 400}},   // Medium 200: 300 cost ~2 ms CPU a pair (2026-10-10)
     {L"fog", L"enabled", {1, 1, 1, 1}},
     {L"fog", L"start", {30, 30, 30, 30}},
     {L"fog", L"end", {100, 100, 200, 250}},
@@ -1479,20 +1512,46 @@ void WriteReShadeValue(const Item&, float v) {
     WritePrivateProfileStringW(L"ADDON", L"DisabledAddons", list.c_str(), ini.c_str());
 }
 
-// "@stereo3d" source, the four modes: 0 stereo (one pass, two pictures - [stereo] afr,
+// "@stereo3d" source, the five modes: 0 stereo (one pass, two pictures - [stereo] afr,
 // pair_per_tick and replay_right), 1 stereo by turns (afr alone), 2 3D from ReShade's depth,
-// 3 mono - kept as [stereo] source (0 none, 1 depth, 2 the game's pair) and those keys: the
+// 3 mono, 4 native OpenXR (mode 0's keys and [openxr] on: the game in the headset itself,
+// vr/xr.cpp) - kept as [stereo] source (0 none, 1 depth, 2 the game's pair) and those keys: the
 // Stereo tab switches afr and pair_per_tick alone (two passes a frame: pair_per_tick without
 // replay_right, reads as stereo here).
 void SignalBridge(const wchar_t* name);
 float ReadStereo3D() {
+    if (GetPrivateProfileIntW(L"openxr", L"on", 0, g_ini) != 0) return 4.0f;
     const bool afr = GetPrivateProfileIntW(L"stereo", L"afr", 0, g_ini) != 0;
     const int source = GetPrivateProfileIntW(L"stereo", L"source", afr ? 2 : 1, g_ini);
     if (afr) return GetPrivateProfileIntW(L"stereo", L"pair_per_tick", 0, g_ini) != 0 ? 0.0f : 1.0f;
     return source == 0 ? 3.0f : 2.0f;
 }
-void WriteStereo3D(float v) {
-    const int m = std::clamp((int)std::lround(v), 0, 3);
+int ExeVersion(const std::wstring& exe);
+std::wstring BodyWalkExe();
+void SetStatus(const wchar_t* key, int state, const wchar_t* text);
+// Native OpenXR's buttons and gestures go through BodyWalk (host API 9): its bridge says so
+// while it runs, or the BodyWalk found is 1.78 or later.
+bool BodyWalkTakesGameHeadset() {
+    if (HANDLE e = OpenEventW(SYNCHRONIZE, FALSE, D2RVR_BRIDGE_XR_SOURCE_NAME)) { CloseHandle(e); return true; }
+    const std::wstring exe = BodyWalkExe();
+    return !exe.empty() && ExeVersion(exe) >= 1078;
+}
+// False: not written (native OpenXR without a BodyWalk for it).
+bool WriteStereo3D(float v) {
+    const bool native = std::lround(v) == 4;   // runs on the one-pass stereo only
+    const bool wasNative = GetPrivateProfileIntW(L"openxr", L"on", 0, g_ini) != 0;
+    if (native && !wasNative && !BodyWalkTakesGameHeadset()) {
+        SetStatus(L"native_xr", 1, L"Native OpenXR not set: this BodyWalk cannot take the game's headset (buttons and gestures). "
+                                   L"Start BodyWalk if it is 1.78 or later, or update it");
+        return false;
+    }
+    if (native != wasNative)
+        SetStatus(L"native_xr", native ? 0 : 3, native ? L"Native OpenXR on: BodyWalk's Mapping takes the game's headset (D2R VR)"
+                                                     : L"Native OpenXR off: the picture goes through FlatVR");
+    WritePrivateProfileStringW(L"openxr", L"on", native ? L"1" : L"0", g_ini);
+    // BodyWalk's Mapping Input Source with it: the game's headset, or FlatVR's again
+    if (native != wasNative) SignalBridge(native ? D2RVR_GESTURES_GAME_NAME : D2RVR_GESTURES_FLATVR_NAME);
+    const int m = native ? 0 : std::clamp((int)std::lround(v), 0, 3);
     static const int kSource[4] = {2, 2, 1, 0};
     const int s = kSource[m];
     wchar_t buf[8];
@@ -1507,6 +1566,7 @@ void WriteStereo3D(float v) {
     // BodyWalk's FlatVR follows, through the D2R Bridge (no event = no BodyWalk running)
     static const wchar_t* const kName[3] = {D2RVR_FLATVR_3D_NONE_NAME, D2RVR_FLATVR_3D_DEPTH_NAME, D2RVR_FLATVR_3D_PAIR_NAME};
     SignalBridge(kName[s]);
+    return true;
 }
 
 float ReadValue(const Item& it) {
@@ -1531,9 +1591,13 @@ float ReadValue(const Item& it) {
 
 void ShowPreset();
 void ApplyFrameCap();
+void RefreshControls();
 void WriteValue(const Item& it, float v) {
     if (wcscmp(it.section, L"@preset") == 0) return;   // ApplyPreset, from the drop-down
-    if (wcscmp(it.section, L"@stereo3d") == 0) { WriteStereo3D(v); ApplyFrameCap(); ShowPreset(); return; }
+    if (wcscmp(it.section, L"@stereo3d") == 0) {
+        if (!WriteStereo3D(v)) { RefreshControls(); return; }   // the list back to what is set
+        ApplyFrameCap(); ShowPreset(); return;
+    }
     if (wcscmp(it.section, L"@reshade") == 0) { WriteReShadeValue(it, v); ShowPreset(); return; }
     if (wcscmp(it.section, L"@game") == 0) { WriteGameValue(it, v); return; }
     if (wcscmp(it.section, L"@bodywalk") == 0) { WriteBodyWalkValue(it, v); return; }
@@ -1557,8 +1621,11 @@ void ApplyFrameCap() {
     const int i = std::clamp((int)GetPrivateProfileIntW(L"stereo", L"headset_rate", 3, g_ini), 0, 4);
     const bool byTurns = GetPrivateProfileIntW(L"stereo", L"afr", 0, g_ini) != 0 &&
                          GetPrivateProfileIntW(L"stereo", L"pair_per_tick", 0, g_ini) == 0;
+    // Native OpenXR: the headset paces the game itself (xrWaitFrame) - no cap of the game's own,
+    // which could only make it miss the headset's frames (2026-10-10)
+    const bool native = GetPrivateProfileIntW(L"openxr", L"on", 0, g_ini) != 0;
     if (const Item* cap = PresetItem(L"@game", L"Framerate Cap")) {
-        WriteGameValue(*cap, (float)(byTurns ? 2 * kHz[i] : kHz[i]));
+        WriteGameValue(*cap, native ? 0.0f : (float)(byTurns ? 2 * kHz[i] : kHz[i]));
         RefreshControls();
     }
 }
@@ -2175,15 +2242,44 @@ void RefreshWeaponList() {
     }
 }
 
-// BodyWalkVR.exe on this PC, "" when there is none: the portable copy D2R VR
-// Setup puts in the game's folder (next to this program), else an installer's
-// or Steam's uninstall entry - the ones the Setup looks for.
+// The BodyWalk D2R VR needs: 1.78 and on (0.156: the belt's zones in the headset and the
+// Mapping on the game's own headset, host API 9/10, FlatVR's late pictures left out; 1.77
+// for FlatVR's frame conveyor and the add-on's present stamp - with 1.76 and the add-on
+// 2.19 a player's eyes went out of line after ~10 s, 2026-10-10). Setup holds the same minimum.
+constexpr int kMinBodyWalkMajor = 1, kMinBodyWalkMinor = 78;
+
+// An exe's own version block as major * 1000 + minor (1.77 -> 1077), 0 when it has none.
+int ExeVersion(const std::wstring& exe) {
+    DWORD ignored = 0;
+    const DWORD size = GetFileVersionInfoSizeW(exe.c_str(), &ignored);
+    if (!size) return 0;
+    std::vector<BYTE> data(size);
+    VS_FIXEDFILEINFO* fi = nullptr;
+    UINT len = 0;
+    if (!GetFileVersionInfoW(exe.c_str(), 0, size, data.data()) ||
+        !VerQueryValueW(data.data(), L"\\", (void**)&fi, &len) || !fi)
+        return 0;
+    return (int)HIWORD(fi->dwFileVersionMS) * 1000 + (int)LOWORD(fi->dwFileVersionMS);
+}
+bool NewEnough(int version) { return version >= kMinBodyWalkMajor * 1000 + kMinBodyWalkMinor; }
+std::wstring VersionText(int version) {
+    if (!version) return L"?";
+    wchar_t b[32];
+    swprintf_s(b, L"%d.%d", version / 1000, version % 1000);
+    return b;
+}
+
+// BodyWalkVR.exe on this PC, "" when there is none: the newest of the portable copy
+// D2R VR Setup puts in the game's folder (next to this program), an installer's and
+// Steam's (the uninstall entries the Setup looks for). The newest, not the first: an
+// old Steam BodyWalk beside the portable 1.77 was started and the game crashed.
 std::wstring BodyWalkExe() {
+    std::vector<std::wstring> found;
     wchar_t self[MAX_PATH];
     DWORD n = GetModuleFileNameW(nullptr, self, MAX_PATH);
     while (n && self[n - 1] != L'\\') --n;
     const std::wstring portable = std::wstring(self, n) + L"BodyWalkVR\\BodyWalkVR.exe";
-    if (Exists(portable)) return portable;
+    if (Exists(portable)) found.push_back(portable);
     for (const wchar_t* key : {L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{5E9E3C51-4043-4245-8B24-817C647DE553}_is1",
                                L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\BodyWalkVR_is1",
                                L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Steam App 4711120"})
@@ -2197,17 +2293,62 @@ std::wstring BodyWalkExe() {
                 std::wstring exe(dir);
                 if (exe.back() != L'\\') exe += L'\\';
                 exe += L"BodyWalkVR.exe";
-                if (Exists(exe)) return exe;
+                if (Exists(exe) && std::find(found.begin(), found.end(), exe) == found.end()) found.push_back(exe);
             }
-    return L"";
+    std::wstring best;
+    int bestVersion = -1;
+    for (const std::wstring& exe : found)   // ties: the earlier one (the portable copy first)
+        if (const int v = ExeVersion(exe); v > bestVersion) { best = exe; bestVersion = v; }
+    return best;
+}
+
+// The running BodyWalkVR.exe's path, "" when none runs (or it cannot be read).
+std::wstring RunningBodyWalkExe() {
+    std::wstring path;
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snap == INVALID_HANDLE_VALUE) return path;
+    PROCESSENTRY32W pe{sizeof pe};
+    for (BOOL ok = Process32FirstW(snap, &pe); ok && path.empty(); ok = Process32NextW(snap, &pe)) {
+        if (_wcsicmp(pe.szExeFile, L"BodyWalkVR.exe") != 0) continue;
+        if (HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pe.th32ProcessID)) {
+            wchar_t buf[MAX_PATH];
+            DWORD len = MAX_PATH;
+            if (QueryFullProcessImageNameW(h, 0, buf, &len)) path.assign(buf, len);
+            CloseHandle(h);
+        }
+    }
+    CloseHandle(snap);
+    return path;
 }
 
 Item* FindItem(const wchar_t* section, const wchar_t* key);
-// The game under D2RLoader, from its own folder (this program sits beside D2R.exe).
+void StartBodyWalk();
+// FlatVR started by Launch once BodyWalk's bridge is up (FollowLaunch): until this tick, 0 = not wanted.
+ULONGLONG g_flatVrStartBy = 0;
+// The game under D2RLoader, from its own folder (this program sits beside D2R.exe). For VR,
+// BodyWalk with it - the head, the buttons and the gestures go through its D2R Bridge, and
+// nobody should have to know to start it first (2026-10-10) - and FlatVR once the bridge is
+// up, unless the game holds the headset itself (native OpenXR: it stops FlatVR anyway).
 void LaunchGame() {
     const std::wstring game = GameFolder();
     const std::wstring exe = game + L"D2RLoader.exe";
     ShellExecuteW(g_main, L"open", exe.c_str(), nullptr, game.c_str(), SW_SHOWNORMAL);
+    if (g_platform != 1) return;
+    if (RunningBodyWalkExe().empty()) StartBodyWalk();
+    const bool native = GetPrivateProfileIntW(L"openxr", L"on", 0, g_ini) != 0;
+    g_flatVrStartBy = native ? 0 : GetTickCount64() + 60000;
+}
+// Every timer tick: FlatVR's Start sent once the bridge's event is there (BodyWalk loaded
+// with it), if FlatVR is not running already; given up after a minute.
+void FollowLaunch() {
+    if (!g_flatVrStartBy) return;
+    if (GetTickCount64() > g_flatVrStartBy) { g_flatVrStartBy = 0; return; }
+    HANDLE ev = OpenEventW(EVENT_MODIFY_STATE, FALSE, D2RVR_FLATVR_START_NAME);
+    if (!ev) return;
+    FlatVRHeadSample hs{};
+    if (!(ReadBlock(FLATVR_HEAD_SAMPLE_NAME, &hs, sizeof hs) && Moving(FLATVR_HEAD_SAMPLE_NAME, hs.counter))) SetEvent(ev);
+    CloseHandle(ev);
+    g_flatVrStartBy = 0;
 }
 // Shown while D2RLoader.exe is there and the game is not running.
 void LaunchButton() {
@@ -2220,6 +2361,14 @@ void LaunchButton() {
 void StartBodyWalk() {
     const std::wstring exe = BodyWalkExe();
     if (exe.empty()) return;
+    // Never one older than D2R VR needs (an old Steam BodyWalk with no newer copy beside it).
+    if (const int v = ExeVersion(exe); !NewEnough(v)) {
+        const std::wstring t = L"BodyWalk " + VersionText(v) + L" (" + exe + L") is older than D2R VR needs (" +
+                               VersionText(kMinBodyWalkMajor * 1000 + kMinBodyWalkMinor) +
+                               L").\n\nRun D2R VR Setup again: it puts BodyWalk Portable in the game's folder, and this button starts that one.";
+        MessageBoxW(g_main, t.c_str(), L"D2R VR", MB_OK | MB_ICONWARNING);
+        return;
+    }
     const std::wstring dir = exe.substr(0, exe.find_last_of(L'\\'));
     ShellExecuteW(g_main, L"open", exe.c_str(), nullptr, dir.c_str(), SW_SHOWNORMAL);
 }
@@ -2316,7 +2465,9 @@ void RefreshStatus() {
                 const bool pair = GetPrivateProfileIntW(L"stereo", L"afr", 0, g_ini) != 0 &&
                                   GetPrivateProfileIntW(L"stereo", L"pair_per_tick", 0, g_ini) == 0;   // eyes by turns
                 const int want = pair ? 2 * hz : hz;
-                if (cap > 0 && cap < want) warn += L"Framerate Cap below " + std::to_wstring(want) + (pair ? L" (the headset's rate for each eye). " : L" (the headset's rate). ");
+                if (GetPrivateProfileIntW(L"openxr", L"on", 0, g_ini) != 0) {   // native: the headset paces it
+                    if (cap > 0 && cap < 120) warn += L"Framerate Cap " + std::to_wstring(cap) + L" - with native OpenXR the headset paces the game: 0 (none) is best. ";
+                } else if (cap > 0 && cap < want) warn += L"Framerate Cap below " + std::to_wstring(want) + (pair ? L" (the headset's rate for each eye). " : L" (the headset's rate). ");
                 else if (cap > want) warn += L"Framerate Cap above " + std::to_wstring(want) + L" - head turns judder when the game outruns the headset. ";
             }
             if (!bad.empty()) SetStatus(L"game_video", kBad, (L"Game video: " + bad + L"(Options > Video)").c_str());
@@ -2333,8 +2484,14 @@ void RefreshStatus() {
     const std::wstring bwExe = BodyWalkExe();
     // Installed = its settings file, or its exe found (never started yet: the
     // "not running" line below says the one thing to do).
-    SetStatus(L"bw_installed", have || !bwExe.empty() ? kOk : kBad,
-              have || !bwExe.empty() ? L"BodyWalk installed" : L"BodyWalk not found - install it and start it once");
+    const int bwVersion = bwExe.empty() ? 0 : ExeVersion(bwExe);
+    if (!bwExe.empty() && !NewEnough(bwVersion)) {
+        const std::wstring t = L"BodyWalk " + VersionText(bwVersion) + L" is older than D2R VR needs (" +
+                               VersionText(kMinBodyWalkMajor * 1000 + kMinBodyWalkMinor) + L") - run D2R VR Setup again, it puts in BodyWalk Portable";
+        SetStatus(L"bw_installed", kBad, t.c_str());
+    } else
+        SetStatus(L"bw_installed", have || !bwExe.empty() ? kOk : kBad,
+                  have || !bwExe.empty() ? L"BodyWalk installed" : L"BodyWalk not found - install it and start it once");
     // BodyWalk's virtual Xbox pad, which the D2R Bridge drives. BodyWalk's own
     // installer and ours put it in; a portable BodyWalk from the zip asks for it.
     HKEY vigem = nullptr;
@@ -2344,7 +2501,16 @@ void RefreshStatus() {
     SetStatus(L"vigem", pad ? kOk : kBad, pad ? L"Xbox controller driver installed (ViGEmBus)"
                                               : L"Xbox controller driver (ViGEmBus) not installed - BodyWalk offers it in Xbox mode");
     const bool running = ProcessRunning(L"BodyWalkVR.exe");
-    SetStatus(L"bw_running", running ? kOk : kBad, running ? L"BodyWalk running" : L"BodyWalk is not running - start it");
+    // The running one may be an older copy than the one Start BodyWalk would start (Steam's).
+    const std::wstring runExe = running ? RunningBodyWalkExe() : L"";
+    const int runVersion = runExe.empty() ? 0 : ExeVersion(runExe);
+    if (running && runVersion && !NewEnough(runVersion)) {
+        const std::wstring t = L"BodyWalk " + VersionText(runVersion) + L" is running - D2R VR needs " +
+                               VersionText(kMinBodyWalkMajor * 1000 + kMinBodyWalkMinor) +
+                               (NewEnough(bwVersion) ? L": close it and press Start BodyWalk" : L": run D2R VR Setup again");
+        SetStatus(L"bw_running", kBad, t.c_str());
+    } else
+        SetStatus(L"bw_running", running ? kOk : kBad, running ? L"BodyWalk running" : L"BodyWalk is not running - start it");
     if (Item* start = FindItem(L"@run", L"bodywalk"); start && start->hidden != (running || bwExe.empty())) {
         start->hidden = running || bwExe.empty();
         LayoutPage();
@@ -3013,6 +3179,120 @@ void OnReShadeProgress(D2RLProgress* raw) {
     if (p->state == kOk) RefreshStatus();   // the button goes away with ReShade there
 }
 
+// ---------------------------------------------------------------------------
+// Collect logs for support (Home): one zip on the desktop the player posts in our
+// Discord. While the game runs, [debug] diag_go makes vrcam write 10 s of its frame log
+// (d2r_vr_frames.csv: every pair, view, pose, present and one-pass step) and FlatVR its
+// pose trace beside it; then PowerShell copies the logs, the settings (BodyWalk's only
+// the keys D2R VR needs - no e-mail, no headset serials), the versions and the PC's
+// graphics card, CPU and Windows into the zip, and Explorer shows it. Nothing is sent.
+constexpr UINT WM_APP_COLLECT = WM_APP + 42;
+std::atomic<bool> g_collectBusy{false};
+
+void PostCollect(HWND wnd, int state, std::wstring text, bool done) {
+    auto* p = new D2RLProgress{state, std::move(text), done};
+    if (!PostMessageW(wnd, WM_APP_COLLECT, 0, (LPARAM)p)) delete p;
+}
+
+void CollectThread(HWND wnd, std::wstring game, bool running) {
+    if (running) {
+        wchar_t v[32];
+        swprintf_s(v, L"%lu", GetTickCount());
+        WritePrivateProfileStringW(L"debug", L"diag_go", v, g_ini);
+        for (int left = 11; left > 0; --left) {
+            PostCollect(wnd, kUnknown, L"Recording how the frames are drawn: " + std::to_wstring(left) +
+                        L" s - keep playing and turn your head", false);
+            Sleep(1000);
+        }
+    }
+    PostCollect(wnd, kUnknown, L"Packing the logs...", false);
+    wchar_t* desk = nullptr;
+    std::wstring dir;
+    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_Desktop, 0, nullptr, &desk)) && desk) dir = desk;
+    CoTaskMemFree(desk);
+    if (dir.empty()) dir = game;
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    wchar_t name[64];
+    swprintf_s(name, L"D2R_VR_logs_%04d-%02d-%02d_%02d-%02d-%02d", st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
+    const std::wstring zip = dir + L"\\" + name + L".zip";
+    std::wstring script = LR"PS($ErrorActionPreference='SilentlyContinue'
+$g=__GAME__; $z=__ZIP__; $n=__NAME__
+$t=Join-Path $env:TEMP $n; New-Item -ItemType Directory -Force $t | Out-Null
+function C($p,$sub){ if(Test-Path -LiteralPath $p){ $d=Join-Path $t $sub; New-Item -ItemType Directory -Force $d | Out-Null; Copy-Item -LiteralPath $p -Destination $d -Force } }
+$pl=Join-Path $g 'd2rloader\plugins'; $lg=Join-Path $g 'd2rloader\logs'
+Get-ChildItem -LiteralPath $lg -File | Where-Object { ($_.Extension -in '.log','.txt','.csv') -and $_.Length -lt 50MB } | ForEach-Object { C $_.FullName 'd2rloader_logs' }
+foreach($f in 'd2r_vr.ini','d2r_vr.default.ini','d2r_vr_frames.csv','d2r_vr_uitrace.txt'){ C (Join-Path $pl $f) 'plugins' }
+foreach($f in 'ReShade.log','ReShade.ini','ReShadePreset.ini','FlatVR_DepthProvider.log'){ C (Join-Path $g $f) 'game' }
+C (Join-Path $env:USERPROFILE 'Saved Games\Diablo II Resurrected\Settings.json') 'game'
+$b=Join-Path $env:LOCALAPPDATA 'BodyWalkVR'
+foreach($f in 'flat_vr_pose_trace.csv','flat_vr_init_log.txt','system_info.txt','plugin_profiles.json','openxr_layer.log'){ C (Join-Path $b $f) 'bodywalk' }
+foreach($f in 'usersettings.json','usersettings_steam.json'){
+  $p=Join-Path $b $f
+  if(Test-Path -LiteralPath $p){
+    $j=Get-Content -LiteralPath $p -Raw | ConvertFrom-Json; $o=[ordered]@{}
+    foreach($pr in $j.PSObject.Properties){ $k=$pr.Name
+      if(($k -match '^(flat_vr_|gesture_source$|universal_tracking_output$|disabled_plugins$|loaded_profile_name$|current_engine$|output_mode)') -and ($k -notmatch 'serial|email|token|author|password|license')){ $o[$k]=$pr.Value } }
+    New-Item -ItemType Directory -Force (Join-Path $t 'bodywalk') | Out-Null
+    $o | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path (Join-Path $t 'bodywalk') $f) -Encoding UTF8 } }
+$i=@('D2R VR logs '+$n,'')
+function V($p){ if(Test-Path -LiteralPath $p){ $e=Get-Item -LiteralPath $p; '{0}: {1} ({2:yyyy-MM-dd HH:mm})' -f $p,$e.VersionInfo.FileVersion,$e.LastWriteTime } else { $p+': none' } }
+foreach($p in (Join-Path $pl 'd2rl-vrcam.dll'),(Join-Path $g 'D2R_VR_Settings.exe'),(Join-Path $g 'FlatVR_DepthProvider.addon64'),(Join-Path $g 'ReShade64.dll'),(Join-Path $g 'D2RLoader.exe'),(Join-Path $g 'BodyWalkVR\BodyWalkVR.exe')){ $i+=V $p }
+Get-Process BodyWalkVR,D2R,D2RLoader | ForEach-Object { $i+=('running: '+$_.ProcessName+' '+$_.Path+' '+$_.MainModule.FileVersionInfo.FileVersion) }
+$i+=''
+Get-CimInstance Win32_OperatingSystem | ForEach-Object { $i+=('Windows: '+$_.Caption+' '+$_.Version+', RAM '+[math]::Round($_.TotalVisibleMemorySize/1MB,1)+' GB') }
+Get-CimInstance Win32_Processor | ForEach-Object { $i+=('CPU: '+$_.Name) }
+Get-CimInstance Win32_VideoController | ForEach-Object { $i+=('GPU: '+$_.Name+', driver '+$_.DriverVersion+', '+$_.CurrentHorizontalResolution+'x'+$_.CurrentVerticalResolution+' at '+$_.CurrentRefreshRate+' Hz') }
+$i | Set-Content -LiteralPath (Join-Path $t 'versions_and_pc.txt') -Encoding UTF8
+Compress-Archive -Path (Join-Path $t '*') -DestinationPath $z -Force
+Remove-Item -LiteralPath $t -Recurse -Force
+if(Test-Path -LiteralPath $z){ exit 0 } else { exit 2 })PS";
+    auto put = [&](const wchar_t* key, const std::wstring& value) {
+        const size_t at = script.find(key);
+        if (at != std::wstring::npos) script.replace(at, wcslen(key), PsQuote(value));
+    };
+    put(L"__GAME__", game);
+    put(L"__ZIP__", zip);
+    put(L"__NAME__", name);
+    const std::wstring args = L"-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -EncodedCommand " + EncodedCommand(script);
+    SHELLEXECUTEINFOW sei{sizeof sei};
+    sei.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC;
+    sei.lpVerb = L"open";
+    sei.lpFile = L"powershell.exe";
+    sei.lpParameters = args.c_str();
+    sei.nShow = SW_HIDE;
+    if (!ShellExecuteExW(&sei) || !sei.hProcess) { PostCollect(wnd, kBad, L"Could not start PowerShell to pack the logs", true); return; }
+    WaitForSingleObject(sei.hProcess, 180000);
+    DWORD code = 1;
+    GetExitCodeProcess(sei.hProcess, &code);
+    CloseHandle(sei.hProcess);
+    if (code != 0 || !Exists(zip)) { PostCollect(wnd, kBad, L"Could not make the zip (code " + std::to_wstring(code) + L")", true); return; }
+    LogLine(L"collect logs: " + zip);
+    const std::wstring sel = L"/select,\"" + zip + L"\"";
+    ShellExecuteW(nullptr, L"open", L"explorer.exe", sel.c_str(), nullptr, SW_SHOWNORMAL);
+    PostCollect(wnd, kOk, L"Saved on your desktop: " + std::wstring(name) + L".zip - post it in our Discord (#diablo-2-vr)", true);
+}
+
+void StartCollectLogs() {
+    if (g_collectBusy.exchange(true)) return;
+    if (Item* b = FindItem(L"@run", L"collect_logs")) EnableWindow(b->ctl, FALSE);
+    SetStatus(L"collect", kUnknown, L"Collecting the logs...");
+    try {
+        std::thread(CollectThread, g_main, GameFolder(), ProcessRunning(L"D2R.exe")).detach();
+    } catch (const std::exception&) {
+        g_collectBusy.store(false);
+        SetStatus(L"collect", kBad, L"Could not start collecting the logs");
+    }
+}
+
+void OnCollectProgress(D2RLProgress* raw) {
+    std::unique_ptr<D2RLProgress> p(raw);
+    SetStatus(L"collect", p->state, p->text.c_str());
+    if (!p->done) return;
+    g_collectBusy.store(false);
+    if (Item* b = FindItem(L"@run", L"collect_logs")) EnableWindow(b->ctl, TRUE);
+}
+
 void StartD2RLoaderInstall() {
     if (g_d2rlBusy.exchange(true)) return;
     if (Item* b = FindItem(L"@run", L"d2rloader_get")) EnableWindow(b->ctl, FALSE);
@@ -3179,6 +3459,7 @@ LRESULT CALLBACK PageProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
                 else if (wcscmp(it.key, L"d2r_launch") == 0) LaunchGame();
                 else if (wcscmp(it.key, L"d2rloader_get") == 0) StartD2RLoaderInstall();
                 else if (wcscmp(it.key, L"reshade_get") == 0) StartReShadeInstall();
+                else if (wcscmp(it.key, L"collect_logs") == 0) StartCollectLogs();
                 else SignalBridge(wcscmp(it.key, L"flatvr_start") == 0 ? D2RVR_FLATVR_START_NAME : D2RVR_FLATVR_STOP_NAME);
             } else if (HIWORD(w) == BN_CLICKED && it.kind == Kind::Button) {
                 WriteValue(it, (float)(((int)ReadValue(it) + 1) % 1000000));
@@ -3234,7 +3515,9 @@ LRESULT CALLBACK WndProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
     case WM_APP_UPDATE: OnUpdateResult((UpdateResult*)l); return 0;
     case WM_APP_D2RL: OnD2RLProgress((D2RLProgress*)l); return 0;
     case WM_APP_RESHADE: OnReShadeProgress((D2RLProgress*)l); return 0;
+    case WM_APP_COLLECT: OnCollectProgress((D2RLProgress*)l); return 0;
     case WM_TIMER: {
+        FollowLaunch();
         FollowWeapon();
         RefreshRadios();
         RefreshWeaponList();
@@ -3292,7 +3575,8 @@ LRESULT CALLBACK WndProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
 // For the mod's installer (installer/D2R_VR_Setup.iss): BodyWalk's settings
 // as the VR mode needs them - Universal tracking output (the head reaches the
 // bridge), FlatVR on, Head Lock follows the game, frame generation off (it
-// shakes the picture in D2R) - and the D2R Bridge plugin not switched off.
+// shakes the picture in D2R), the background and glow round the screen off -
+// and the D2R Bridge plugin not switched off.
 // Each file given that exists is edited as text (BodyWalk's own JSON, keys
 // added at the top when missing), BodyWalk must not be running. Exit code: 0
 // all written, 1 a file could not be written, 2 none of them exists.
@@ -3334,6 +3618,7 @@ int SetupBodyWalk(int argc, wchar_t** argv) {
         SetJsonBool(text, "flat_vr_enabled", true);
         SetJsonBool(text, "flat_vr_head_lock_from_game", true);
         SetJsonBool(text, "flat_vr_optical_flow", false);
+        SetJsonBool(text, "flat_vr_enable_ambilight", false);   // FlatVR's background and glow round the screen: off for D2R
         EnablePlugin(text, "d2r_bridge");
         EnablePlugin(text, "\"flatvr\"");
         std::ofstream f(argv[i], std::ios::binary | std::ios::trunc);

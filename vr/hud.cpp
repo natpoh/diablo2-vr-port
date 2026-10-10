@@ -62,8 +62,10 @@
 #include <vector>
 
 #include <reshade.hpp>
+#include "game_device_only.h"
 
 #include "game_hud_shared.h"
+#include "hud_native.h"
 
 namespace hud {
 namespace {
@@ -205,6 +207,9 @@ enum { kBar = 0, kMap = 1, kShares = 2 };
 // srv: the same texture for D2R_DepthFog.fx, which draws it back into the picture from above and behind
 struct Share { resource tex{}; resource_view srv{}; HANDLE handle = nullptr; uint32_t w = 0, h = 0; bool fresh = true; };
 Share g_share[kShares];
+// The pieces' state for native OpenXR (NativeHud): out of the picture at the last pass, and when.
+std::atomic<bool> g_outNow[kShares] = {};
+std::atomic<ULONGLONG> g_outAt{0};
 bool g_shareFailed = false;   // creating one failed: not tried again every frame
 uint32_t g_frames = 0;        // interface passes seen, the clock the retired shares wait on
 
@@ -386,6 +391,9 @@ void Publish(command_list* cl, resource layer, uint32_t w, uint32_t h, int hide)
         g_pic.box[kMap][0] += dx; g_pic.box[kMap][2] += dx;
         g_pic.box[kMap][1] += dy; g_pic.box[kMap][3] += dy;
     }
+    g_outNow[kBar].store(bar && !classic);
+    g_outNow[kMap].store(map && !classic && g_mapShown.load());
+    g_outAt.store(GetTickCount64());
     if (FlatVRGameHud* b = (bar || map || g_block) ? Block() : nullptr) {
         // in the picture from above and behind: nothing in the room
         b->panel[kBar].visible = bar && !classic ? 1u : 0u;
@@ -475,10 +483,10 @@ void OnReset(command_list* cl) {
 }  // namespace
 
 void Register() {
-    reshade::register_event<reshade::addon_event::clear_render_target_view>(&OnClear);
-    reshade::register_event<reshade::addon_event::bind_render_targets_and_depth_stencil>(&OnBind);
-    reshade::register_event<reshade::addon_event::reset_command_list>(&OnReset);
-    reshade::register_event<reshade::addon_event::bind_scissor_rects>(&OnScissor);
+    reshade::register_event<reshade::addon_event::clear_render_target_view>(&d2rvr::D3D12Only<&OnClear>::Call);
+    reshade::register_event<reshade::addon_event::bind_render_targets_and_depth_stencil>(&d2rvr::D3D12Only<&OnBind>::Call);
+    reshade::register_event<reshade::addon_event::reset_command_list>(&d2rvr::D3D12Only<&OnReset>::Call);
+    reshade::register_event<reshade::addon_event::bind_scissor_rects>(&d2rvr::D3D12Only<&OnScissor>::Call);
 }
 
 void SetHide(int mode) { g_hide.store(mode); }
@@ -569,6 +577,22 @@ void SetLook(const FlatVRGameHudLook& look) {
     g_look = look;
     g_look.pointer = pointer;
     if (g_block) g_block->look = g_look;
+}
+
+bool NativeHud(NativePiece out[kNativePieces], FlatVRGameHudLook* look, FlatVRGameHudPose* barPose) {
+    const ULONGLONG at = g_outAt.load();
+    if (!at) return false;
+    const bool fresh = GetTickCount64() - at < 500;   // no interface pass for half a second: nothing out
+    std::lock_guard<std::mutex> g(g_lock);
+    for (int i = 0; i < kNativePieces && i < kShares; ++i) {
+        out[i].tex = (ID3D12Resource*)(uintptr_t)g_share[i].tex.handle;
+        out[i].w = g_share[i].w;
+        out[i].h = g_share[i].h;
+        out[i].visible = fresh && out[i].tex && !g_share[i].fresh && g_outNow[i].load();
+    }
+    *look = g_look;
+    *barPose = g_pose[kBar];
+    return true;
 }
 
 }  // namespace hud

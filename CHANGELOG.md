@@ -1,5 +1,46 @@
 # What's new in D2R VR
 
+## 0.156
+
+- **Native OpenXR (prototype)**: the game shows itself in the headset - no
+  FlatVR screen in between (D2R VR Settings > Performance > 3D in the headset
+  > Native OpenXR; needs BodyWalk 1.78). Stereo from the very first moment in
+  first person, the hero's body facing where you look from the start, your
+  controllers through BodyWalk even when BodyWalk was started after the game,
+  and BodyWalk's belt zones (gesture zones ticked "VR") as see-through balls
+  in the headset. Bare hands (no controller) press nothing. A sharper picture
+  by default: each eye keeps the game window's shape, black above and below
+  (Stereo > Native OpenXR, "Sharper: the picture keeps the window's shape").
+  Tip: switch Virtual Desktop's Synchronous Spacewarp off, or it may hold the
+  game at 45 fps.
+- **Launch Diablo II starts BodyWalk too**, and FlatVR once BodyWalk is up -
+  no need to know to start them first.
+- **BodyWalk 1.78 required**: FlatVR can leave out a late picture instead of
+  flashing an old frame on head turns ("Leave out late pictures"), and
+  BodyWalk follows the game's wishes while minimised. Setup puts BodyWalk
+  Portable 1.78 beside the game when yours is older.
+- **Medium** quality now draws models out to 200 (was 300): about 2 ms less
+  CPU a frame for little that you would miss.
+
+## 0.155
+
+- **Collect logs for support** (D2R VR Settings > Home): one zip on your
+  desktop with the logs, the settings, the versions and your graphics card -
+  while the game runs it first records 10 seconds of how the frames are
+  drawn. Post the zip in our Discord (#diablo-2-vr) when something is wrong.
+- **D2R VR needs BodyWalk 1.77** (FlatVR's frame conveyor). Setup checks the
+  BodyWalk you have: if it is older - Steam's is 1.74 for now - it stays as
+  it is and Setup puts BodyWalk Portable 1.77 in the game's folder.
+- **Start BodyWalk starts the newest BodyWalk** it finds, never one older than
+  D2R VR needs; Home > Status says when the running BodyWalk is too old.
+- FlatVR's add-on 2.19 with the picture's present moment is back (it goes
+  with BodyWalk 1.77).
+- **Cave ceilings for everyone**: their stone pictures now come with the
+  installer - without them ReShade said "There were errors loading some
+  effects" and the caves had no ceiling.
+- Setup switches FlatVR's background and glow round the screen off (BodyWalk
+  > FlatVR > Background & Glow).
+
 ## 0.154
 
 - **The eyes stay in line in Stereo - one pass, two pictures** with the
