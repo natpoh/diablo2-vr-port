@@ -14,11 +14,24 @@
   ones (up to 2 s) instead of turning the camera to BodyWalk's head and back;
   a hand counts only when the headset knows where it is, not just how it is
   turned.
+- **Native OpenXR no longer kills the game when the headset sleeps**: the
+  game waited without end for pictures SteamVR does not hand out while the
+  headset is asleep, the graphics card gave up and the game died. A picture
+  that does not come is now left out of that frame.
+- **Native OpenXR start guard**: on some PCs the game died at every start in
+  native mode (the headset's runtime and ReShade do not get along there).
+  If the game dies while native OpenXR is starting, the next start switches
+  native off ([openxr] on=0) and runs on FlatVR - the log says so; switch it
+  on again in D2R VR Settings > Performance.
+- **Native OpenXR: the head turns about the neck** ("Head turns about the
+  neck", Camera tab) - looking down the eyes go forward over the chest, as on
+  FlatVR. It did nothing in native before.
+- D2R VR Settings: the Camera tab's first-person group is F4.
 - **If the game crashes, we can now see where**: D2R VR writes each step of
   its start as it goes (d2rloader\logs\d2r_vr_start.txt), and a crash's
   module, code and stack to d2r_vr_crash.txt with a minidump beside it.
-  Collect logs (D2R VR Settings > Home) takes them, and Windows' own record
-  of the crash - post the zip in our Discord.
+  Collect logs (D2R VR Settings > Home) takes them, D2RLoader's own crash
+  reports and Windows' record of the crash - post the zip in our Discord.
 
 ## 0.156
 

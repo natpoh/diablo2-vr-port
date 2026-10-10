@@ -2485,8 +2485,11 @@ bool VrViewInner(const d2rcam::WorldView& in, float out[16]) {
         const float upm = std::max(1.0f, ViewHeight()) / UserEyeHeightM();   // world units per metre, as TrueScale
         const V3 mid = {0.5f * (xe.pos[0][0] + xe.pos[1][0]), 0.5f * (xe.pos[0][1] + xe.pos[1][1]), 0.5f * (xe.pos[0][2] + xe.pos[1][2])};
         V3 head = pivot + toWorld(mid) * upm;
-        if (xr::LeanM() <= 0.0f && !ThirdPerson() && g_set.neckModel.load()) {
-            // held to the body: the head turns about the top of the neck, as with FlatVR (VrViewInner's neck model)
+        if (!ThirdPerson() && g_set.neckModel.load()) {
+            // the head turns about the top of the neck, as with FlatVR (VrViewInner's neck model): looking
+            // down the eyes go forward and down over the chest. On top of the headset's own place since
+            // 2026-10-10 - only with lean_m 0 before, so with the default 0.1 "Head turns about the neck"
+            // did nothing in native and looking down saw the chest's armour from behind it (PS VR2).
             const float nu = g_set.neckUpCm.load() * 0.01f * upm, nf = g_set.neckFwdCm.load() * 0.01f * upm;
             head = head - V3{0.0f, nu, 0.0f} + up * nu + fwd * nf;
         }

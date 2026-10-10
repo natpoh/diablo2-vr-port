@@ -38,6 +38,8 @@
 #include "hud_native.h"
 
 namespace xr {
+void GuardSet();
+void GuardClear(const char* why);   // the start guard (before LoadSettings)
 namespace {
 
 void (*g_log)(const char*) = nullptr;
@@ -119,6 +121,9 @@ Kind g_kind = kNone;
 XrFrameState g_fs{XR_TYPE_FRAME_STATE};
 XrView g_views[2] = {{XR_TYPE_VIEW}, {XR_TYPE_VIEW}};
 bool g_viewsOk = false;
+// A swapchain image acquired whose wait ran out: waited for again next time (NextImage).
+struct PendingImage { XrSwapchain sc; uint32_t idx; };
+PendingImage g_pendingImg[16];
 bool g_copied[2] = {};
 XrFovf g_fovUsed[2] = {};
 
@@ -582,6 +587,7 @@ void Publish(bool focused) {
 // -- start: instance, system, session (a worker thread) ------------------------
 void Teardown() {   // under g_lock or before the session exists
     g_running.store(false);
+    for (PendingImage& q : g_pendingImg) q = PendingImage{};   // their swapchains go now
     if (g_ptr.sc) xrDestroySwapchain(g_ptr.sc);
     g_ptr = Pointer{};
     for (HudOut& o : g_hudOut) { if (o.sc) xrDestroySwapchain(o.sc); o = HudOut{}; }
@@ -760,6 +766,7 @@ DWORD WINAPI StartThread(void*) {
     if (!ok) Teardown();
     ReleaseSRWLockExclusive(&g_lock);
     if (!ok) {
+        GuardClear("no session, and the game lives");
         Log("vrcam: openxr - no session: FlatVR goes on as always for this run");
         if (g_flatVrStopped) { SignalBridge(D2RVR_FLATVR_START_NAME); g_flatVrStopped = false; }
         g_state.store(kFailed);
@@ -858,10 +865,45 @@ void SubmitList() {
 // and on white: what differs is its coverage), in a static swapchain of its own -
 // made again when the shape changes - and a small quad laid on the flat picture
 // where the pointer is in the game's window.
+// A swapchain's next image, acquired and waited for - the wait bounded (2026-10-10). With
+// SteamVR's headset asleep (its frames 100 ms apart) an endless wait held the game's draw thread
+// for a minute, until the GPU behind it gave up (DXGI_ERROR_DEVICE_HUNG) and the game died. Now
+// 20 ms (1 ms once a wait ran out in the last half second): that piece is left out of this frame,
+// and its image, acquired already, is waited for again next time rather than another acquired
+// (a chain whose images are all acquired gives no more). 1 ready, 0 ran out, -1 failed.
+ULONGLONG g_waitRanOutAt = 0;
+void ForgetPending(XrSwapchain sc) { for (PendingImage& q : g_pendingImg) if (q.sc == sc) q = PendingImage{}; }
+int NextImage(XrSwapchain sc, uint32_t* idx, const char* what) {
+    char b[96];
+    PendingImage* p = nullptr;
+    for (PendingImage& q : g_pendingImg) if (q.sc && q.sc == sc) { p = &q; break; }
+    if (p) {
+        *idx = p->idx;
+    } else {
+        snprintf(b, sizeof b, "xrAcquireSwapchainImage(%s)", what);
+        if (!Ok(xrAcquireSwapchainImage(sc, nullptr, idx), b)) return -1;
+    }
+    const ULONGLONG now = GetTickCount64();
+    XrSwapchainImageWaitInfo wi{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
+    wi.timeout = g_waitRanOutAt && now - g_waitRanOutAt < 500 ? 1000000 : 20000000;   // ns
+    const XrResult r = xrWaitSwapchainImage(sc, &wi);
+    if (r == XR_TIMEOUT_EXPIRED) {
+        if (!p) for (PendingImage& q : g_pendingImg) if (!q.sc) { q = PendingImage{sc, *idx}; break; }
+        if (!g_waitRanOutAt || now - g_waitRanOutAt > 10000)
+            LogF("vrcam: openxr - the runtime holds the %s's images (the headset asleep?): left out of this frame, not waited for", what);
+        g_waitRanOutAt = now;
+        return 0;
+    }
+    if (p) *p = PendingImage{};   // waited for (or gone): acquired anew next time
+    snprintf(b, sizeof b, "xrWaitSwapchainImage(%s)", what);
+    return Ok(r, b) ? 1 : -1;
+}
+
 ID3D12Resource* g_ptrUpload = nullptr;
+ULONGLONG g_ptrRetryAt = 0;   // the pointer's image ran out of its wait: made again from then on
 
 bool MakePointerImage(HCURSOR cur) {
-    if (g_ptr.sc) { xrDestroySwapchain(g_ptr.sc); g_ptr.sc = XR_NULL_HANDLE; }
+    if (g_ptr.sc) { ForgetPending(g_ptr.sc); xrDestroySwapchain(g_ptr.sc); g_ptr.sc = XR_NULL_HANDLE; }
     g_ptr.ok = false;
     g_ptr.shape = cur;
     ICONINFO ii{};
@@ -925,10 +967,11 @@ bool MakePointerImage(HCURSOR cur) {
     std::vector<XrSwapchainImageD3D12KHR> img(cnt, {XR_TYPE_SWAPCHAIN_IMAGE_D3D12_KHR});
     xrEnumerateSwapchainImages(g_ptr.sc, cnt, &cnt, (XrSwapchainImageBaseHeader*)img.data());
     uint32_t idx = 0;
-    if (!cnt || !Ok(xrAcquireSwapchainImage(g_ptr.sc, nullptr, &idx), "xrAcquireSwapchainImage(pointer)")) return false;
-    XrSwapchainImageWaitInfo wi{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
-    wi.timeout = XR_INFINITE_DURATION;
-    if (!Ok(xrWaitSwapchainImage(g_ptr.sc, &wi), "xrWaitSwapchainImage(pointer)")) return false;
+    if (!cnt) return false;
+    if (const int got = NextImage(g_ptr.sc, &idx, "pointer"); got <= 0) {
+        if (got == 0) { g_ptr.shape = nullptr; g_ptrRetryAt = GetTickCount64() + 1000; }   // made again in a second
+        return false;
+    }
     if (ID3D12GraphicsCommandList* l = OpenList()) {
         ID3D12Resource* t = img[idx].texture;
         D3D12_RESOURCE_BARRIER b = Tr(t, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_DEST);
@@ -964,7 +1007,7 @@ bool PointerQuad(const XrCompositionLayerQuad& pic, XrCompositionLayerQuad* out)
     if (!ScreenToClient(g_wnd, &p) || !GetClientRect(g_wnd, &rc) || rc.right <= 0 || rc.bottom <= 0) return no(4, "the window has no size");
     if (p.x < 0 || p.y < 0 || p.x >= rc.right || p.y >= rc.bottom) return no(5, "outside the game's window");
     if (why != 0) { why = 0; Log("vrcam: openxr - mouse pointer shown on the flat picture"); }
-    if (ci.hCursor != g_ptr.shape && !MakePointerImage(ci.hCursor)) return false;
+    if (ci.hCursor != g_ptr.shape && (GetTickCount64() < g_ptrRetryAt || !MakePointerImage(ci.hCursor))) return false;
     if (!g_ptr.ok) return false;
     const float W = pic.size.width, H = pic.size.height, n = (float)g_ptr.n;
     const float cx = (float)(p.x - g_ptr.hotX) + 0.5f * n, cy = (float)(p.y - g_ptr.hotY) + 0.5f * n;   // the image's middle, window pixels
@@ -1256,11 +1299,8 @@ bool EnsureHudOut(HudOut& o, uint32_t w, uint32_t h, const char* what) {
 // One piece drawn into its swapchain's next image, on our list on the game's queue.
 bool DrawHud(HudOut& o, ID3D12Resource* src, bool orb, const float cb[12]) {
     uint32_t idx = 0;
-    if (!Ok(xrAcquireSwapchainImage(o.sc, nullptr, &idx), "xrAcquireSwapchainImage(interface)")) return false;
-    XrSwapchainImageWaitInfo wi{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
-    wi.timeout = XR_INFINITE_DURATION;
     XrSwapchainImageReleaseInfo ri{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
-    if (!Ok(xrWaitSwapchainImage(o.sc, &wi), "xrWaitSwapchainImage(interface)")) return false;
+    if (NextImage(o.sc, &idx, "interface") <= 0) return false;
     ID3D12GraphicsCommandList* l = OpenList();
     if (!l || idx >= o.img.size()) { xrReleaseSwapchainImage(o.sc, &ri); return false; }
     const uint32_t slot = g_srvAt++ % kSrvRing;
@@ -1508,11 +1548,8 @@ uint32_t HangZones(const XrCompositionLayerBaseHeader** layers, uint32_t nl, uin
     HudOut& o = g_zoneOut;
     if (!EnsureHudOut(o, kZoneCell * kZoneCols, kZoneCell * rows, "gesture zones")) return nl;
     uint32_t idx = 0;
-    if (!Ok(xrAcquireSwapchainImage(o.sc, nullptr, &idx), "xrAcquireSwapchainImage(zones)")) return nl;
-    XrSwapchainImageWaitInfo wi{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
-    wi.timeout = XR_INFINITE_DURATION;
     XrSwapchainImageReleaseInfo ri{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
-    if (!Ok(xrWaitSwapchainImage(o.sc, &wi), "xrWaitSwapchainImage(zones)")) return nl;
+    if (NextImage(o.sc, &idx, "gesture zones") <= 0) return nl;
     ID3D12GraphicsCommandList* l = OpenList();
     if (!l || idx >= o.img.size()) { xrReleaseSwapchainImage(o.sc, &ri); return nl; }
     D3D12_CPU_DESCRIPTOR_HANDLE rtv = g_rtvHeap->GetCPUDescriptorHandleForHeapStart();
@@ -1569,10 +1606,7 @@ uint32_t HangZones(const XrCompositionLayerBaseHeader** layers, uint32_t nl, uin
 bool CopyInto(Chain& c, ID3D12Resource* bb) {
     if (!MakeCopyList()) return false;
     uint32_t idx = 0;
-    if (!Ok(xrAcquireSwapchainImage(c.sc, nullptr, &idx), "xrAcquireSwapchainImage")) return false;
-    XrSwapchainImageWaitInfo wi{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
-    wi.timeout = XR_INFINITE_DURATION;
-    if (!Ok(xrWaitSwapchainImage(c.sc, &wi), "xrWaitSwapchainImage")) return false;
+    if (NextImage(c.sc, &idx, "picture") <= 0) return false;
     ID3D12Resource* dst = c.img[idx].texture;
     if (!OpenList()) return false;
     D3D12_RESOURCE_BARRIER b[2] = {Tr(bb, D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_COPY_SOURCE),
@@ -1679,7 +1713,7 @@ bool OpenFrame(Kind kind) {
     g_fs = {XR_TYPE_FRAME_STATE};
     XrFrameWaitInfo wi{XR_TYPE_FRAME_WAIT_INFO};
     if (!Ok(xrWaitFrame(g_session, &wi, &g_fs), "xrWaitFrame")) return false;
-    ++g_framesRunning;
+    if (++g_framesRunning == 90) GuardClear("the session runs: 90 frames");
     const double t1 = UsNow();
     g_st.waitUs += t1 - t0;
     g_st.waitMax = std::max(g_st.waitMax, t1 - t0);
@@ -1846,6 +1880,31 @@ void CloseFrame() {
 void SetLogger(void (*log)(const char*)) { g_log = log; }
 void SetWindow(HWND wnd) { g_wnd = wnd; }
 
+// The start guard (2026-10-10): players' games died starting native OpenXR - their runtime's own
+// D3D11 work went through ReShade's DXGI hooks (an int3 in dxgi.dll under ReShade64.dll), at
+// every start, so the game "crashed on startup" until on=0 was found by hand. A file beside the
+// ini while a session starts, gone once 90 frames ran or the session ended cleanly: found at the
+// next load with on=1, the last start died in it - native is switched off ([openxr] on=0, the
+// log says why) and the game starts on FlatVR. Switched on again in D2R VR Settings.
+wchar_t g_guardPath[MAX_PATH] = L"";
+bool g_guardSet = false;
+void GuardSet() {
+    if (!g_guardPath[0] || g_guardSet) return;
+    HANDLE h = CreateFileW(g_guardPath, GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return;
+    const char text[] = "D2R VR: a native OpenXR session is starting. If the game dies before it runs, this file stays and the next start turns native OpenXR off.\r\n";
+    DWORD w = 0;
+    WriteFile(h, text, sizeof text - 1, &w, nullptr);
+    CloseHandle(h);
+    g_guardSet = true;
+}
+void GuardClear(const char* why) {
+    if (!g_guardSet) return;
+    g_guardSet = false;
+    DeleteFileW(g_guardPath);
+    LogF("vrcam: openxr - start guard cleared (%s)", why);
+}
+
 void LoadSettings(const wchar_t* ini) {
     auto f = [&](const wchar_t* key, float def) {
         wchar_t b[64], d[64];
@@ -1858,7 +1917,28 @@ void LoadSettings(const wchar_t* ini) {
     // on: live - switched on, the session starts at the next first-person pair (after a
     // failure too: it is tried again); switched off, it ends and FlatVR comes back
     static int was = -1;
-    const bool on = f(L"on", 0.0f) != 0.0f;
+    bool on = f(L"on", 0.0f) != 0.0f;
+    if (!g_guardPath[0]) {   // the first read: did the last start die starting a session?
+        wcscpy_s(g_guardPath, ini);
+        if (wchar_t* slash = wcsrchr(g_guardPath, L'\\')) slash[1] = 0;
+        wcscat_s(g_guardPath, L"d2r_vr_openxr_starting.txt");
+        if (GetFileAttributesW(g_guardPath) != INVALID_FILE_ATTRIBUTES) {
+            DeleteFileW(g_guardPath);
+            if (on) {
+                WritePrivateProfileStringW(L"openxr", L"on", L"0", ini);
+                SYSTEMTIME t;
+                GetLocalTime(&t);
+                wchar_t when[48];
+                swprintf_s(when, L"%04d-%02d-%02d %02d:%02d", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute);
+                WritePrivateProfileStringW(L"openxr", L"off_after_crash", when, ini);
+                on = false;
+                was = 0;
+                Log("vrcam: openxr - THE LAST START DIED while native OpenXR was starting (the start guard was still there): "
+                    "native OpenXR is switched OFF ([openxr] on=0) - the game goes on FlatVR. Switch it on again in D2R VR Settings > "
+                    "Performance > 3D in the headset; if it dies again, send Collect logs");
+            }
+        }
+    }
     if ((int)on != was) {
         if (on) Log("vrcam: openxr - [openxr] on=1: the game shows itself in the headset, in stereo from the first pair in first person");
         else if (was == 1) Log("vrcam: openxr - [openxr] on=0: back to FlatVR");
@@ -1897,6 +1977,7 @@ void Start(ID3D12Device* dev, ID3D12CommandQueue* queue) {
     g_dev = dev;
     g_queue = queue;
     g_state.store(kStarting);
+    GuardSet();   // gone once the session runs (90 frames) or ends cleanly
     Log("vrcam: openxr - starting the session");
     if (HANDLE h = CreateThread(nullptr, 0, StartThread, nullptr, 0, nullptr)) CloseHandle(h);
     else g_state.store(kFailed);
@@ -2047,6 +2128,7 @@ void Stop(bool final) {
         Teardown();
         Log("vrcam: openxr - session and instance gone");
     }
+    GuardClear(final ? "the game closes" : "switched off");
     g_state.store(final ? kFailed : kIdle);
     if (had) SignalBridge(D2RVR_GESTURES_FLATVR_NAME);   // the Mapping back on FlatVR (if it was the game's)
     if (g_flatVrStopped) { SignalBridge(D2RVR_FLATVR_START_NAME); g_flatVrStopped = false; Log("vrcam: openxr - FlatVR started again"); }

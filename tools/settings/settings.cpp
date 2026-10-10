@@ -328,7 +328,7 @@ std::vector<Item> g_items = {
     Slider(L"third", L"distance", L"Camera back", 0, 30, 0.5f, 7, L"How far back from the eye point. World units, about 0.24 m each."),
     Slider(L"third", L"height", L"Camera height", 0, 20, 0.1f, 6.5f, L"Eye point above the ground. World units, about 0.24 m each."),
 #if D2RVR_FIRST_PERSON
-    Group(L"F3  First person"),
+    Group(L"F4  First person"),
     Slider(L"camera", L"near", L"Near clip (hides the hero's head)", 0, 5, 0.1f, 1.5f,
            L"Nothing closer than this is drawn: hides the hero's own head and hair. World units, about 0.24 m each."),
     Toggle(L"camera", L"height_auto", L"Eye height from the hero's class", 1,
@@ -346,7 +346,8 @@ std::vector<Item> g_items = {
            L"Eye point ahead (+) / behind (-) along where you look, without tilting with the head."),
     Toggle(L"camera", L"neck_model", L"Head turns about the neck", 1,
            L"Like a real head: it turns about the top of the neck, below and behind the eyes. Level, the eyes sit in front of "
-           L"the neck; looking down they move forward and down and see the chest, not the neck."),
+           L"the neck; looking down they move forward and down and see the chest, not the neck. Native OpenXR too, on top "
+           L"of the headset's own place."),
     Needs(L"camera", L"neck_model", 1, Slider(L"camera", L"neck_up_cm", L"Eyes above the neck pivot, cm", 0, 25, 1, 10)),
     Needs(L"camera", L"neck_model", 1, Slider(L"camera", L"neck_forward_cm", L"Eyes in front of the neck pivot, cm", 0, 25, 1, 9)),
     Toggle(L"camera", L"follow_jump", L"Camera rises when the hero jumps", 1,
@@ -3227,6 +3228,7 @@ function C($p,$sub){ if(Test-Path -LiteralPath $p){ $d=Join-Path $t $sub; New-It
 $pl=Join-Path $g 'd2rloader\plugins'; $lg=Join-Path $g 'd2rloader\logs'
 Get-ChildItem -LiteralPath $lg -File | Where-Object { ($_.Extension -in '.log','.txt','.csv') -and $_.Length -lt 50MB } | ForEach-Object { C $_.FullName 'd2rloader_logs' }
 foreach($f in 'd2r_vr.ini','d2r_vr.default.ini','d2r_vr_frames.csv','d2r_vr_uitrace.txt'){ C (Join-Path $pl $f) 'plugins' }
+Get-ChildItem -LiteralPath (Join-Path $g 'd2rloader\crashes') -File -Filter '*.log' | Sort-Object LastWriteTime -Descending | Select-Object -First 3 | ForEach-Object { C $_.FullName 'd2rloader_crashes' }
 Get-ChildItem -LiteralPath $lg -File -Filter '*.dmp' | Where-Object { $_.LastWriteTime -gt (Get-Date).AddDays(-1) -and $_.Length -lt 50MB } | ForEach-Object { C $_.FullName 'd2rloader_logs' }
 foreach($f in 'ReShade.log','ReShade.ini','ReShadePreset.ini','FlatVR_DepthProvider.log'){ C (Join-Path $g $f) 'game' }
 $ev=Get-WinEvent -FilterHashtable @{LogName='Application'; ProviderName='Application Error','Application Hang'; StartTime=(Get-Date).AddDays(-14)} -MaxEvents 400 | Where-Object { $_.Message -match 'D2R|D2RLoader|Diablo' } | Select-Object -First 3
