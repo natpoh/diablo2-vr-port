@@ -55,9 +55,9 @@ In Diablo II: Resurrected, Options > Video:
 | Setting | Set to |
 |---|---|
 | **Vertical Sync** | **Off - important**: the mod draws the two eyes in turn, and VSync halves the frames each eye gets |
-| **NVIDIA DLSS** | **Off - required**: DLSS builds each frame from the ones before it, and the mod's frames alternate between the eyes |
+| NVIDIA DLSS | On or off - both work in stereo: each eye gets its own DLSS (in *Stereo - one pass, two pictures* the two eyes share one) |
 | Framerate Cap | 180 (90 for each eye) |
-| **Anti-Aliasing** | FXAA or MSAA - **not TAA**: it builds each frame from the ones before it, like DLSS |
+| **Anti-Aliasing** | FXAA or MSAA - **not TAA**: it builds each frame from the ones before it and mixes the two eyes |
 | Ambient Occlusion Quality | Medium |
 
 ![Options > Video](screenshots/game_video_settings.jpg)
@@ -128,7 +128,9 @@ Everything else is where the game's own gamepad layout puts it.
 
 ## Settings
 
-`D2R_VR_Settings.exe`, next to `D2R.exe`. Changes apply at once while the game runs.
+`D2R_VR_Settings.exe`, next to `D2R.exe` (Setup also puts a **D2R VR** shortcut on
+the desktop). Changes apply at once while the game runs. Start the game from it
+too: Home > **Launch Diablo II (D2RLoader)** - no need to open the game's folder.
 Every tab, with a picture and what it is for: [SETTINGS.md](SETTINGS.md).
 
 ![D2R VR Settings](screenshots/settings_00_home.png)
