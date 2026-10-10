@@ -7,6 +7,9 @@
   add-on, and with BodyWalk 1.76 the eyes went out of line after about 10
   seconds. The add-on is the one from 0.152 again; the newer one comes back
   with BodyWalk 1.77.
+- **Pipeline depth is 0 by default again** (D2R VR Settings > Stereo >
+  Timing): with 1 (0.153) head turns lagged and the sky floated in mono and
+  in eyes by turns.
 
 ## 0.153
 
