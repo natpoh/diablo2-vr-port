@@ -1,5 +1,13 @@
 # What's new in D2R VR
 
+## 0.154
+
+- **The eyes stay in line in Stereo - one pass, two pictures** with the
+  BodyWalk that comes with the installer (1.76): 0.153 brought a newer FlatVR
+  add-on, and with BodyWalk 1.76 the eyes went out of line after about 10
+  seconds. The add-on is the one from 0.152 again; the newer one comes back
+  with BodyWalk 1.77.
+
 ## 0.153
 
 - **A new 3D mode: Stereo - one pass, two pictures** (the default). The game

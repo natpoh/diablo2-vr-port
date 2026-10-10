@@ -6,10 +6,18 @@
 # The mod's own files come from build\Release (build them first), the sky
 # pictures from reshade\sky (OUR skies only - never extracted\, that is
 # Blizzard's art), the FlatVR addon from BodyWalk's Release_main build.
+#
+#   -Addon <file>     another FlatVR addon than Release_main's (one the bundled BodyWalk knows)
+#   -Portable <dir>   a BodyWalk Portable folder kept from an earlier build, instead of
+#                     making one from Release_main (which may hold a BodyWalk not released yet)
+param(
+    [string]$Addon = "C:\wsl\vjoy\Release_main\flatvr\reshade_addon\FlatVR_DepthProvider.addon64",
+    [string]$Portable = ""
+)
 $ErrorActionPreference = "Stop"
 $root = Split-Path $PSScriptRoot -Parent
 $payload = Join-Path $PSScriptRoot "payload"
-$addon = "C:\wsl\vjoy\Release_main\flatvr\reshade_addon\FlatVR_DepthProvider.addon64"
+$addon = $Addon
 $keepalive = "C:\wsl\vjoy\cpp_src\flatvr\reshade_depth_addon\FlatVR_Keepalive.addonfx"
 $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
 
@@ -24,7 +32,7 @@ Copy-Item (Join-Path $root "reshade\D2R_DepthFog.fx") "$payload\shaders\"
 Get-ChildItem (Join-Path $root "reshade\sky") -Filter "D2R_Sky*.png" | Copy-Item -Destination "$payload\sky\"
 # the flat crosshair, beside the skies (vrcam [input] crosshair; tools/gen_crosshair.py)
 Copy-Item (Join-Path $root "reshade\sky\D2R_Crosshair.png") "$payload\sky\"
-Copy-Item $addon "$payload\game\"
+Copy-Item $addon "$payload\game\FlatVR_DepthProvider.addon64"
 # The keepalive effect BodyWalk writes into a game: vjoy's copy when there is one, else
 # ours beside this script (installer\FlatVR_Keepalive.addonfx) - never the live game,
 # which a clean test empties.
@@ -33,9 +41,12 @@ else { Copy-Item (Join-Path $PSScriptRoot "FlatVR_Keepalive.addonfx") "$payload\
 
 # BodyWalk Portable for players without BodyWalk: built by vjoy's own script
 # from Release_main (build BodyWalk first), the same folder as the site's zip.
-& "C:\wsl\vjoy\installer\make_bodywalk_portable.ps1"
-if ($LASTEXITCODE -ne 0) { throw "make_bodywalk_portable.ps1 failed ($LASTEXITCODE)" }
-Copy-Item "C:\wsl\vjoy\installer\Output\BodyWalkVR_Portable" "$payload\bodywalk_portable" -Recurse
+if ($Portable) { Copy-Item $Portable "$payload\bodywalk_portable" -Recurse }
+else {
+    & "C:\wsl\vjoy\installer\make_bodywalk_portable.ps1"
+    if ($LASTEXITCODE -ne 0) { throw "make_bodywalk_portable.ps1 failed ($LASTEXITCODE)" }
+    Copy-Item "C:\wsl\vjoy\installer\Output\BodyWalkVR_Portable" "$payload\bodywalk_portable" -Recurse
+}
 
 # The version shown and in the file name: vrcam's own (g_info_version).
 $m = Select-String -Path (Join-Path $root "vr\vrcam.cpp") -Pattern 'g_info_version\[\] = "([0-9.]+)"'
