@@ -970,7 +970,7 @@ bool PointerQuad(const XrCompositionLayerQuad& pic, XrCompositionLayerQuad* out)
 // from premultiplied transmittance to plain premultiplied colour, cut in two if asked;
 // the map as a glass orb in the palm), on the game's queue after the pair.
 //
-// The shader is FlatVR's own (BodyWalk's flat_vr_game_hud.cpp, kHudShader), as it is.
+// The shader is FlatVR's own, as it is (its author's leave to publish it here).
 const char kHudShader[] = R"(
 cbuffer Hud : register(b0) {
   float g_encoded; float g_time; float g_aspect; float g_size;

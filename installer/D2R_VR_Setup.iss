@@ -90,7 +90,7 @@ Source: "payload\game\FlatVR_DepthProvider.addon64"; DestDir: "{app}"; Flags: ig
 Source: "payload\game\FlatVR_Keepalive.addonfx"; DestDir: "{app}"; Flags: ignoreversion; Check: IsVR
 Source: "payload\bodywalk\d2r_bridge.dll"; DestDir: "{localappdata}\BodyWalkVR\plugins\d2r_bridge"; Flags: ignoreversion; Check: IsVR
 ; The mod's BodyWalk profile ("D2VR (mod)"): BodyWalk applies it on its own terms
-; (a changed profile is never overwritten without asking - gui_tab_profiles_local.cpp).
+; (a profile the player changed is never overwritten without asking).
 Source: "payload\bodywalk\profile.json"; DestDir: "{localappdata}\BodyWalkVR\plugins\d2r_bridge"; Flags: ignoreversion; Check: IsVR
 ; BodyWalk Portable, only when no BodyWalk is installed. LITE is forced on its
 ; first start only: refreshing the copy keeps the player's own choice.
