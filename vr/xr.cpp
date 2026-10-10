@@ -162,6 +162,7 @@ int g_framesRunning = 0;   // frames since xrBeginSession
 std::atomic<float> g_pairYaw{0.0f};
 std::atomic<ULONGLONG> g_pairYawAt{0};   // GetTickCount64 when taken, 0 = none
 std::atomic<bool> g_pairOpen{false};
+std::atomic<bool> g_pairMissed{false};   // the last pair asked for did not open: its yaw kept 2 s, as vrcam keeps its eyes
 // The pair's frame was opened and closed empty (the runtime said not to render, or no views):
 // its presents open no flat frame of their own - a second xrWaitFrame a pair halved the game to
 // 45 pairs/s whenever the headset was not showing it (2026-10-10).
@@ -450,15 +451,29 @@ bool MakeActions() {
     return true;
 }
 
-void PoseOut(XrSpace space, D2RVR_XrPose* out) {
+// A located pose, only as far as the runtime vouches for it (2026-10-10): its turn finite and of
+// unit length (made exactly so), its place only with POSITION_VALID - a hand needs both (else
+// none); the head may be a turn alone (valid 2), held at `held`, where it was last located.
+void PoseOut(XrSpace space, D2RVR_XrPose* out, float* held = nullptr) {
     *out = {};
     if (!space) return;
     XrSpaceLocation l{XR_TYPE_SPACE_LOCATION};
     if (XR_FAILED(xrLocateSpace(space, g_roomSpace ? g_roomSpace : g_space, g_fs.predictedDisplayTime, &l))) return;
-    const bool rot = (l.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) != 0, pos = (l.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT) != 0;
-    if (!rot) return;
-    out->pos[0] = l.pose.position.x; out->pos[1] = l.pose.position.y; out->pos[2] = l.pose.position.z;
-    out->rot[0] = l.pose.orientation.x; out->rot[1] = l.pose.orientation.y; out->rot[2] = l.pose.orientation.z; out->rot[3] = l.pose.orientation.w;
+    const bool rot = (l.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) != 0;
+    const XrQuaternionf& q = l.pose.orientation;
+    const XrVector3f& p = l.pose.position;
+    const float n2 = q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w;
+    if (!rot || !std::isfinite(n2) || n2 < 0.5f || n2 > 2.0f) return;
+    const bool pos = (l.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT) != 0 && std::isfinite(p.x) && std::isfinite(p.y) && std::isfinite(p.z);
+    if (!pos && !held) return;
+    const float k = 1.0f / sqrtf(n2);
+    out->rot[0] = q.x * k; out->rot[1] = q.y * k; out->rot[2] = q.z * k; out->rot[3] = q.w * k;
+    if (pos) {
+        out->pos[0] = p.x; out->pos[1] = p.y; out->pos[2] = p.z;
+        if (held) memcpy(held, out->pos, sizeof out->pos);
+    } else {
+        memcpy(out->pos, held, sizeof out->pos);
+    }
     out->valid = pos ? 1u : 2u;
 }
 float FloatOf(XrAction a, int h, bool* active) {
@@ -507,13 +522,14 @@ bool BareHand(int h) {
     return src.isActive && src.dataSource == XR_HAND_TRACKING_DATA_SOURCE_UNOBSTRUCTED_EXT;
 }
 
+float g_headHeld[3] = {};   // where the head was last located (a frame with its turn alone keeps it there)
 void Publish(bool focused) {
     if (!g_actionsOk) return;
     D2RVR_XrInput& in = g_inNow;
     in.version = D2RVR_XR_INPUT_VERSION;
     in.focused = focused ? 1u : 0u;
     in.displayTime = g_fs.predictedDisplayTime;
-    PoseOut(g_viewSpace, &in.head);
+    PoseOut(g_viewSpace, &in.head, g_headHeld);
     for (int h = 0; h < 2; ++h) {
         D2RVR_XrHand& o = in.hand[h];
         bool act = false;
@@ -1682,8 +1698,17 @@ bool OpenFrame(Kind kind) {
     XrViewState vs{XR_TYPE_VIEW_STATE};
     uint32_t n = 0;
     g_views[0] = g_views[1] = {XR_TYPE_VIEW};
+    // views that are views: finite, their turns of unit length (broken ones are no views - vrcam
+    // keeps the last good pair's then, 2026-10-10)
+    auto sane = [&vs](const XrView& v) {
+        const XrQuaternionf& q = v.pose.orientation;
+        const XrVector3f& p = v.pose.position;
+        const float n2 = q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w;
+        return std::isfinite(n2) && fabsf(n2 - 1.0f) < 0.05f &&
+               (!(vs.viewStateFlags & XR_VIEW_STATE_POSITION_VALID_BIT) || (std::isfinite(p.x) && std::isfinite(p.y) && std::isfinite(p.z)));
+    };
     if (Ok(xrLocateViews(g_session, &li, &vs, 2, &n, g_views), "xrLocateViews") && n == 2 &&
-        (vs.viewStateFlags & XR_VIEW_STATE_ORIENTATION_VALID_BIT)) {
+        (vs.viewStateFlags & XR_VIEW_STATE_ORIENTATION_VALID_BIT) && sane(g_views[0]) && sane(g_views[1])) {
         g_viewsOk = true;
         if (!(vs.viewStateFlags & XR_VIEW_STATE_POSITION_VALID_BIT))
             for (XrView& v : g_views) v.pose.position = g_cPos;   // rotation only: the head held where it was taken
@@ -1903,8 +1928,11 @@ bool BeginPair(ID3D12Device* dev, ID3D12CommandQueue* queue) {
         g_pairYaw.store(atan2f(sinf(r), cosf(r)));
         g_pairYawAt.store(GetTickCount64());
         g_pairOpen.store(true);
+        g_pairMissed.store(false);
     } else {
-        g_pairYawAt.store(0);
+        // the last good pair's yaw kept while vrcam keeps that pair's eyes (NativeEyes): the
+        // body did not go to BodyWalk's zero for a frame and back (2026-10-10)
+        g_pairMissed.store(true);
         g_pairOpen.store(false);
     }
     ReleaseSRWLockExclusive(&g_lock);
@@ -1939,7 +1967,8 @@ void PairOver() { g_pairSpent = false; }   // the draw thread, after a pair's la
 
 bool PairHeadYaw(float* rad) {
     const ULONGLONG at = g_pairYawAt.load();
-    if (!at || !g_running.load() || (!g_pairOpen.load() && GetTickCount64() - at > 250)) return false;
+    const ULONGLONG keep = g_pairMissed.load() ? 2000 : 250;
+    if (!at || !g_running.load() || (!g_pairOpen.load() && GetTickCount64() - at > keep)) return false;
     *rad = g_pairYaw.load();
     return true;
 }

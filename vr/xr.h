@@ -42,7 +42,8 @@ bool BeginPair(ID3D12Device* dev, ID3D12CommandQueue* queue);
 bool PairEyes(Eyes* out);
 // The head's yaw (radians, + turned left) in the views of the last stereo pair opened, from the
 // last recentre - what PairEyes turns the eyes by, for the body. False with no session, after a
-// flat frame or a pair that did not open, or when the last pair is older than 250 ms. Any thread.
+// flat frame, or when the last pair is older than 250 ms - 2 s when the pairs since did not open
+// (the last good pair's yaw is kept, as vrcam keeps its eyes). Any thread.
 bool PairHeadYaw(float* rad);
 // One eye's finished picture (its effects run, the back buffer in the PRESENT state)
 // copied into that eye's swapchain image, on the game's queue.

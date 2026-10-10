@@ -24,6 +24,7 @@
 #include <windows.h>
 #include <tlhelp32.h>
 #include <psapi.h>
+#include <dbghelp.h>
 #include <d3d12.h>
 #include <dxgi1_4.h>
 #include <intrin.h>
@@ -111,14 +112,20 @@ bool Matches(uint64_t rva, const uint8_t* sig, size_t n) {
 }
 
 
+// Crash reports (namespace crash, after the replay): the start's steps and the log's first minutes
+// to a file of our own as they come, and an exception the game dies of to d2r_vr_crash.txt.
+namespace crash { void Install(const char* version); void Uninstall(); void Keep(); void Mirror(const char* text); void Step(const char* name); void Mark(const char* what); }
+
 void Log(const char* text) {
     if (g_ctx != nullptr) g_ctx->LogInfo(text);
+    crash::Mirror(text);
 }
 void LogF(const char* fmt, ...);
 // To the game's console as well as the log.
 void Say(const char* text) {
     if (g_ctx == nullptr) return;
     g_ctx->LogInfo(text);
+    crash::Mirror(text);
     g_ctx->WriteConsoleMessage(text, ConsoleMessageKind::Output);
 }
 
@@ -1335,7 +1342,8 @@ std::atomic<bool> g_pairNow{false};
 
 // yaw, pitch, roll as sent (degrees), advanced to now.
 void PredictHead(const D2RVR_Shared* s, float out[3]) {
-    const float raw[3] = {s->headYawDeg, s->pitchValid ? s->headPitchDeg : 0.0f, s->rollValid ? s->headRollDeg : 0.0f};
+    float raw[3] = {s->headYawDeg, s->pitchValid ? s->headPitchDeg : 0.0f, s->rollValid ? s->headRollDeg : 0.0f};
+    for (float& v : raw) if (!std::isfinite(v)) v = 0.0f;   // one NaN kept in the track would stay there for good
     if (!g_set.headPredict.load() || g_pairNow.load()) { memcpy(out, raw, sizeof raw); return; }
     const double now = NowSeconds();
     AcquireSRWLockExclusive(&g_headLock);
@@ -2377,6 +2385,51 @@ void Tick() {
 }
 }  // namespace prevscan
 
+// Native OpenXR: the eyes this pass is drawn with - the open pair's (PairEyes), when they are
+// eyes at all (finite, their turns of unit length). A pair that did not open, or eyes that came
+// back broken, keep the last good ones up to 2 s while the session runs in the world: falling
+// back to BodyWalk's head for those frames meant its other zero and the camera swung between
+// the two (2026-10-10). False: no native eyes - the camera is built as on FlatVR.
+SRWLOCK g_goodEyesLock = SRWLOCK_INIT;
+xr::Eyes g_goodEyes{};
+ULONGLONG g_goodEyesAt = 0;
+bool EyesSane(const xr::Eyes& e) {
+    for (int i = 0; i < 2; ++i) {
+        const float* q = e.quat[i];
+        const float n2 = q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3];
+        if (!std::isfinite(n2) || fabsf(n2 - 1.0f) > 0.05f) return false;
+        for (int k = 0; k < 3; ++k) if (!std::isfinite(e.pos[i][k]) || fabsf(e.pos[i][k]) > 20.0f) return false;
+        if (!std::isfinite(e.tanL[i]) || !std::isfinite(e.tanR[i]) || !std::isfinite(e.tanU[i]) || !std::isfinite(e.tanD[i]) ||
+            !(e.tanR[i] - e.tanL[i] > 0.01f) || !(e.tanU[i] - e.tanD[i] > 0.01f))
+            return false;
+    }
+    return true;
+}
+bool NativeEyes(xr::Eyes* out) {
+    if (!NativeView()) return false;
+    xr::Eyes e{};
+    const bool got = xr::PairEyes(&e) && EyesSane(e);
+    const ULONGLONG now = GetTickCount64();
+    bool ok = got;
+    AcquireSRWLockExclusive(&g_goodEyesLock);
+    if (got) {
+        g_goodEyes = e;
+        g_goodEyesAt = now;
+        *out = e;
+    } else if (g_goodEyesAt && now - g_goodEyesAt < 2000 && xr::Running() && !gamestate::MenuOpen()) {
+        *out = g_goodEyes;
+        ok = true;
+        static ULONGLONG toldAt = 0;
+        if (!toldAt || now - toldAt > 10000) {
+            toldAt = now;
+            LogF("vrcam: openxr - no eyes from the runtime for this pass: the last good ones kept (%llu ms old) - the camera stays put",
+                 (unsigned long long)(now - g_goodEyesAt));
+        }
+    }
+    ReleaseSRWLockExclusive(&g_goodEyesLock);
+    return ok;
+}
+
 bool VrViewInner(const d2rcam::WorldView& in, float out[16]);
 extern std::atomic<bool> g_inWorld;
 bool VrView(const d2rcam::WorldView& in, float out[16]) {
@@ -2406,7 +2459,7 @@ bool VrViewInner(const d2rcam::WorldView& in, float out[16]) {
     float yaw = 0.0f;
     // Native OpenXR (vr/xr.cpp): the runtime's eyes for the moment this frame is shown.
     xr::Eyes xe{};
-    const bool native = NativeView() && xr::PairEyes(&xe);
+    const bool native = NativeEyes(&xe);
     float nativeIpd = 0.0f;   // world units
     if (native) {
         // The head as the runtime has it - its turn, tilt and place in the room, metres from
@@ -2493,6 +2546,21 @@ bool VrViewInner(const d2rcam::WorldView& in, float out[16]) {
     // Third person keeps the pivot (the camera is far behind the hero there).
     // The head centre, before the AFR half-eye shift.
     hang = ThirdPerson() ? pivot : pivot + (eye - pivot) * g_set.handsFollowCam.load();
+    }
+    {   // a view that is no view (an angle come through not finite): the last good one, never a
+        // frame of stretched triangles (2026-10-10). The render thread only.
+        struct Good { V3 fwd, ahead, right, up, eye, hang; float yaw, ipd; bool ok; };
+        static Good good{};
+        auto fin = [](const V3& v) { return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z); };
+        if (fin(fwd) && fin(ahead) && fin(right) && fin(up) && fin(eye) && fin(hang) && std::isfinite(yaw) && std::isfinite(nativeIpd)) {
+            good = {fwd, ahead, right, up, eye, hang, yaw, nativeIpd, true};
+        } else {
+            static ULONGLONG toldAt = 0;
+            if (!toldAt || GetTickCount64() - toldAt > 10000) { toldAt = GetTickCount64(); Log("vrcam: a view came out not finite - the last good one kept"); }
+            if (!good.ok) return false;
+            fwd = good.fwd; ahead = good.ahead; right = good.right; up = good.up; eye = good.eye; hang = good.hang; yaw = good.yaw;
+            nativeIpd = good.ipd;
+        }
     }
     g_viewBuilds.fetch_add(1);
     g_viewFwdY.store(fwd.y);
@@ -2608,7 +2676,7 @@ bool VrProjInner(const d2rcam::WorldView& in, float M[16]) {
     g_lastNear.store(nearZ);
     float shift = 0.0f;
     xr::Eyes xe{};
-    if (NativeView() && xr::PairEyes(&xe)) {
+    if (NativeEyes(&xe)) {
         // Native OpenXR: this eye's own frustum, from the runtime's fov (tangents; left and down
         // negative). The replay makes the right eye from the left projection with its x offset
         // moved by twice `shift` (camfix): the right eye's own offset, with the mirrored fovs
@@ -6702,6 +6770,291 @@ bool RightFromLeft() {
 }
 }  // namespace replay
 
+// Crash reports (2026-10-10, 0.157): a player's game died at its start with nothing in the log to
+// say where. Nothing of this costs a frame anything:
+// - d2rloader\logs\d2r_vr_start.txt: the log's first two minutes, line by line straight to the
+//   file (WriteFile - no buffer left to lose when the game dies), each start step before and
+//   after: its last line is the step that died. The run before is kept as d2r_vr_start_prev.txt.
+// - d2r_vr_crash.txt: an exception the game dies of - the top-level filter, put first again every
+//   2 s (the game's own crash handler is called after it) - with the module and offset it hit in,
+//   the code, the registers, the stack and the module list, and a minidump beside it
+//   (d2r_vr_crash.dmp). The few exceptions nothing catches (stack overflow, heap corruption, an
+//   illegal instruction) are written from a vectored handler at once; an access violation is only
+//   noted there (many are caught on purpose - SafeRead) and named in a report that follows.
+// Collect logs (D2R VR Settings > Home) takes them all.
+namespace crash {
+wchar_t g_dir[MAX_PATH] = L"";   // d2rloader\logs\ with its slash, "" until Install
+const char* g_version = "?";
+HANDLE g_start = INVALID_HANDLE_VALUE;
+std::atomic<ULONGLONG> g_mirrorUntil{0};
+char g_step[96] = "loading the plugin";   // the last start step begun, or the last milestone
+ULONGLONG g_stepAt = 0, g_installedAt = 0;
+std::atomic<int> g_busy{0}, g_firstChance{0}, g_dumps{0};
+std::atomic<DWORD> g_filterThread{0};
+LPTOP_LEVEL_EXCEPTION_FILTER g_prev = nullptr;
+void* g_veh = nullptr;
+using MiniDumpFn = BOOL(WINAPI*)(HANDLE, DWORD, HANDLE, MINIDUMP_TYPE, PMINIDUMP_EXCEPTION_INFORMATION,
+                                 PMINIDUMP_USER_STREAM_INFORMATION, PMINIDUMP_CALLBACK_INFORMATION);
+MiniDumpFn g_miniDump = nullptr;
+struct Seen { DWORD tid; DWORD64 pc, target; ULONG_PTR rw; ULONGLONG at; };
+Seen g_lastAv{};   // the last access violation, first chance (it may well have been caught)
+
+// One line to d2r_vr_start.txt, with the time.
+void Line(const char* text) {
+    if (g_start == INVALID_HANDLE_VALUE) return;
+    SYSTEMTIME t;
+    GetLocalTime(&t);
+    char b[640];
+    int n = snprintf(b, sizeof b, "[%02d:%02d:%02d.%03d] %s\r\n", t.wHour, t.wMinute, t.wSecond, t.wMilliseconds, text);
+    if (n <= 0) return;
+    if (n >= (int)sizeof b) { n = (int)sizeof b - 1; b[n - 2] = '\r'; b[n - 1] = '\n'; }
+    DWORD w = 0;
+    WriteFile(g_start, b, (DWORD)n, &w, nullptr);
+}
+void Mirror(const char* text) {
+    if (GetTickCount64() < g_mirrorUntil.load(std::memory_order_relaxed)) Line(text);
+}
+
+// The start's steps: the one before done (with its time), this one begun. nullptr: the start is over.
+void Step(const char* name) {
+    const ULONGLONG now = GetTickCount64();
+    char b[200];
+    if (g_stepAt) { snprintf(b, sizeof b, "vrcam start: %s - done (%llu ms)", g_step, now - g_stepAt); Log(b); }
+    if (name) {
+        strncpy_s(g_step, name, _TRUNCATE);
+        g_stepAt = now;
+        snprintf(b, sizeof b, "vrcam start: %s ...", name);
+        Log(b);
+    } else {
+        strncpy_s(g_step, "the plugin loaded, the game going on", _TRUNCATE);
+        g_stepAt = 0;
+    }
+}
+// A milestone after the start (the first present, ReShade joined...): the report names the last one.
+void Mark(const char* what) {
+    strncpy_s(g_step, what, _TRUNCATE);
+    char b[160];
+    snprintf(b, sizeof b, "vrcam milestone: %s", what);
+    Line(b);
+}
+
+// The report's own memory: the heap may be what broke, and a stack overflow leaves little stack.
+char g_buf[32768];
+size_t g_len = 0;
+void Add(const char* fmt, ...) {
+    if (g_len >= sizeof g_buf - 1) return;
+    va_list ap;
+    va_start(ap, fmt);
+    const int n = vsnprintf(g_buf + g_len, sizeof g_buf - g_len, fmt, ap);
+    va_end(ap);
+    if (n > 0) g_len = std::min(g_len + (size_t)n, sizeof g_buf - 1);
+}
+struct ModInfo { uint64_t base, end; char name[56]; };
+HMODULE g_mods[1024];
+ModInfo g_modInfo[1024];
+int g_modCount = 0;
+void ListMods() {   // psapi reads the module list in place: no loader lock (DumpAllStacks)
+    g_modCount = 0;
+    DWORD need = 0;
+    if (!K32EnumProcessModules(GetCurrentProcess(), g_mods, sizeof g_mods, &need)) return;
+    for (DWORD i = 0; i < need / sizeof(HMODULE) && i < 1024; ++i) {
+        MODULEINFO mi{};
+        if (!K32GetModuleInformation(GetCurrentProcess(), g_mods[i], &mi, sizeof mi)) continue;
+        ModInfo& m = g_modInfo[g_modCount++];
+        m.base = (uint64_t)mi.lpBaseOfDll;
+        m.end = m.base + mi.SizeOfImage;
+        if (!K32GetModuleBaseNameA(GetCurrentProcess(), g_mods[i], m.name, sizeof m.name)) strcpy_s(m.name, "?");
+    }
+}
+void AddWhere(DWORD64 pc) {
+    for (int i = 0; i < g_modCount; ++i)
+        if (pc >= g_modInfo[i].base && pc < g_modInfo[i].end) { Add("%s+0x%llX", g_modInfo[i].name, pc - g_modInfo[i].base); return; }
+    Add("0x%llX (in no module)", pc);
+}
+const char* CodeName(DWORD c) {
+    switch (c) {
+    case EXCEPTION_ACCESS_VIOLATION: return "access violation";
+    case EXCEPTION_STACK_OVERFLOW: return "stack overflow";
+    case 0xC0000374: return "heap corruption";
+    case EXCEPTION_ILLEGAL_INSTRUCTION: return "illegal instruction";
+    case EXCEPTION_PRIV_INSTRUCTION: return "privileged instruction";
+    case EXCEPTION_IN_PAGE_ERROR: return "in-page error (a file the code was read from went away)";
+    case EXCEPTION_INT_DIVIDE_BY_ZERO: return "integer divide by zero";
+    case 0xE06D7363: return "C++ exception not caught";
+    case 0xC0000409: return "stack buffer overrun / fail fast";
+    case 0x80000003: return "breakpoint";
+    default: return "";
+    }
+}
+void Write(const wchar_t* name) {
+    wchar_t path[MAX_PATH];
+    wcscpy_s(path, g_dir);
+    wcscat_s(path, name);
+    HANDLE f = CreateFileW(path, FILE_APPEND_DATA | SYNCHRONIZE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return;
+    DWORD w = 0;
+    WriteFile(f, g_buf, (DWORD)g_len, &w, nullptr);
+    CloseHandle(f);
+}
+
+// To d2r_vr_crash.txt: what, where, the registers, the stack, the last access violation before it;
+// `fatal` (the one the game dies of) the whole module list too.
+void Report(EXCEPTION_POINTERS* ep, const char* kind, bool walk, bool fatal) {
+    if (!g_dir[0] || !ep || !ep->ExceptionRecord || !ep->ContextRecord) return;
+    if (!fatal) {   // first chance: the first few, never two at once
+        if (g_firstChance.load() >= 4 || g_busy.exchange(1)) return;
+        ++g_firstChance;
+    } else {        // the one the game dies of waits for one being written (a writer stuck that long: anyway)
+        for (int i = 0; i < 200 && g_busy.exchange(1); ++i) Sleep(1);
+    }
+    const EXCEPTION_RECORD& r = *ep->ExceptionRecord;
+    const CONTEXT& c = *ep->ContextRecord;
+    ListMods();
+    g_len = 0;
+    SYSTEMTIME t;
+    GetLocalTime(&t);
+    Add("==== %04d-%02d-%02d %02d:%02d:%02d - D2R VR vrcam %s - %s ====\r\n", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond, g_version, kind);
+    Add("exception 0x%08lX %s at ", r.ExceptionCode, CodeName(r.ExceptionCode));
+    AddWhere((DWORD64)r.ExceptionAddress);
+    if (r.ExceptionCode == EXCEPTION_ACCESS_VIOLATION && r.NumberParameters >= 2)
+        Add(" - %s 0x%llX", r.ExceptionInformation[0] == 1 ? "writing" : r.ExceptionInformation[0] == 8 ? "running code at" : "reading",
+            (unsigned long long)r.ExceptionInformation[1]);
+    const DWORD tid = GetCurrentThreadId();
+    Add("\r\nthread %lu%s; %.1f s after the plugin loaded; the start's last step: %s\r\n", tid,
+        tid == pairtime::g_drawThread.load() ? " (the game's draw thread)" : "", (GetTickCount64() - g_installedAt) / 1000.0, g_step);
+    Add("rip %016llX rsp %016llX rbp %016llX\r\nrax %016llX rbx %016llX rcx %016llX rdx %016llX\r\nrsi %016llX rdi %016llX r8  %016llX r9  %016llX\r\n"
+        "r10 %016llX r11 %016llX r12 %016llX r13 %016llX\r\nr14 %016llX r15 %016llX\r\n",
+        c.Rip, c.Rsp, c.Rbp, c.Rax, c.Rbx, c.Rcx, c.Rdx, c.Rsi, c.Rdi, c.R8, c.R9, c.R10, c.R11, c.R12, c.R13, c.R14, c.R15);
+    if (walk && c.Rsp) {
+        MEMORY_BASIC_INFORMATION mbi{};
+        if (VirtualQuery((void*)c.Rsp, &mbi, sizeof mbi) && mbi.State == MEM_COMMIT) {
+            DWORD64 pcs[drawprof::kDepth];
+            const size_t have = (size_t)((DWORD64)mbi.BaseAddress + mbi.RegionSize - c.Rsp);
+            const int n = drawprof::UnwindCopy(c, (uint8_t*)c.Rsp, have, pcs);   // the stack itself: the copy at no offset
+            Add("stack:\r\n");
+            for (int i = 0; i < n; ++i) { Add("    "); AddWhere(pcs[i]); Add("\r\n"); }
+        }
+    }
+    const Seen av = g_lastAv;
+    if (av.at && r.ExceptionCode != EXCEPTION_ACCESS_VIOLATION && GetTickCount64() - av.at < 10000) {
+        Add("an access violation %.1f s before (thread %lu, maybe caught): at ", (GetTickCount64() - av.at) / 1000.0, av.tid);
+        AddWhere(av.pc);
+        Add(" %s 0x%llX\r\n", av.rw == 1 ? "writing" : av.rw == 8 ? "running code at" : "reading", (unsigned long long)av.target);
+    }
+    if (fatal) {
+        Add("modules:\r\n");
+        for (int i = 0; i < g_modCount; ++i)
+            Add("    %016llX %8llX %s\r\n", g_modInfo[i].base, g_modInfo[i].end - g_modInfo[i].base, g_modInfo[i].name);
+    }
+    Add("\r\n");
+    Write(L"d2r_vr_crash.txt");
+    Line(kind);
+    Line("vrcam: the crash went to d2rloader\\logs\\d2r_vr_crash.txt");
+    g_busy.store(0);
+}
+
+// A minidump beside the report, once a run: the threads, their stacks, the modules.
+void Dump(EXCEPTION_POINTERS* ep) {
+    if (!g_miniDump || !g_dir[0] || g_dumps.exchange(1)) return;
+    wchar_t path[MAX_PATH];
+    wcscpy_s(path, g_dir);
+    wcscat_s(path, L"d2r_vr_crash.dmp");
+    HANDLE f = CreateFileW(path, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return;
+    MINIDUMP_EXCEPTION_INFORMATION mei{GetCurrentThreadId(), ep, FALSE};
+    const BOOL ok = g_miniDump(GetCurrentProcess(), GetCurrentProcessId(), f,
+                               (MINIDUMP_TYPE)(MiniDumpWithThreadInfo | MiniDumpWithUnloadedModules | MiniDumpWithIndirectlyReferencedMemory),
+                               &mei, nullptr, nullptr);
+    CloseHandle(f);
+    Line(ok ? "vrcam: minidump d2rloader\\logs\\d2r_vr_crash.dmp written" : "vrcam: the minidump could not be written");
+}
+
+LONG WINAPI Unhandled(EXCEPTION_POINTERS* ep) {
+    const DWORD me = GetCurrentThreadId();
+    if (g_filterThread.load() == me) return EXCEPTION_CONTINUE_SEARCH;   // a filter chained back to ours
+    DWORD none = 0;
+    const bool first = g_filterThread.compare_exchange_strong(none, me);
+    if (first) {
+        Report(ep, "UNHANDLED - the game closes on this", true, true);
+        Dump(ep);
+    }
+    LONG r = EXCEPTION_CONTINUE_SEARCH;
+    if (g_prev && g_prev != &Unhandled) r = g_prev(ep);   // the game's own crash handler, as before
+    if (first) g_filterThread.store(0);
+    return r;
+}
+
+LONG WINAPI Vectored(EXCEPTION_POINTERS* ep) {
+    const EXCEPTION_RECORD* r = ep ? ep->ExceptionRecord : nullptr;
+    if (!r) return EXCEPTION_CONTINUE_SEARCH;
+    switch (r->ExceptionCode) {
+    case EXCEPTION_ACCESS_VIOLATION:   // noted only: caught ones are many (SafeRead)
+        g_lastAv = {GetCurrentThreadId(), (DWORD64)r->ExceptionAddress, r->NumberParameters >= 2 ? (DWORD64)r->ExceptionInformation[1] : 0,
+                    r->NumberParameters >= 1 ? r->ExceptionInformation[0] : 0, GetTickCount64()};
+        break;
+    case EXCEPTION_STACK_OVERFLOW:     // little stack left: no walk
+        Report(ep, "stack overflow (first chance)", false, false);
+        break;
+    case 0xC0000374:                   // heap corruption: the process ends without the filter
+    case EXCEPTION_ILLEGAL_INSTRUCTION:
+    case EXCEPTION_PRIV_INSTRUCTION:
+    case EXCEPTION_IN_PAGE_ERROR:
+        Report(ep, "first chance - an exception seldom caught", true, false);
+        break;
+    }
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
+// First thing at the plugin's load: the files, the filter and the vectored handler.
+void Install(const char* version) {
+    g_version = version;
+    g_installedAt = GetTickCount64();
+    wcscpy_s(g_dir, g_iniPath);
+    if (wchar_t* slash = wcsrchr(g_dir, L'\\')) slash[1] = 0;
+    wcscat_s(g_dir, L"..\\logs\\");
+    CreateDirectoryW(g_dir, nullptr);
+    wchar_t a[MAX_PATH], b[MAX_PATH];
+    auto at = [&](wchar_t* out, const wchar_t* name) { wcscpy_s(out, MAX_PATH, g_dir); wcscat_s(out, MAX_PATH, name); };
+    at(a, L"d2r_vr_start.txt"); at(b, L"d2r_vr_start_prev.txt");
+    MoveFileExW(a, b, MOVEFILE_REPLACE_EXISTING);
+    g_start = CreateFileW(a, FILE_APPEND_DATA | SYNCHRONIZE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, CREATE_ALWAYS,
+                          FILE_ATTRIBUTE_NORMAL, nullptr);
+    g_mirrorUntil.store(g_installedAt + 120000);
+    at(a, L"d2r_vr_crash.txt"); at(b, L"d2r_vr_crash_old.txt");
+    WIN32_FILE_ATTRIBUTE_DATA fa{};
+    if (GetFileAttributesExW(a, GetFileExInfoStandard, &fa) && (fa.nFileSizeHigh || fa.nFileSizeLow > 1024 * 1024)) MoveFileExW(a, b, MOVEFILE_REPLACE_EXISTING);
+    wchar_t sys[MAX_PATH];
+    if (UINT n = GetSystemDirectoryW(sys, MAX_PATH); n && n < MAX_PATH - 16) {
+        wcscat_s(sys, L"\\dbghelp.dll");
+        if (HMODULE d = LoadLibraryW(sys)) g_miniDump = (MiniDumpFn)GetProcAddress(d, "MiniDumpWriteDump");
+    }
+    g_prev = SetUnhandledExceptionFilter(&Unhandled);
+    g_veh = AddVectoredExceptionHandler(0, &Vectored);
+    char line[160];
+    snprintf(line, sizeof line, "D2R VR vrcam %s starting - this file is the log's first two minutes, written as it goes", version);
+    Line(line);
+}
+
+// Every 2 s (the update thread): our filter first again if something set its own since; theirs after.
+void Keep() {
+    const LPTOP_LEVEL_EXCEPTION_FILTER cur = SetUnhandledExceptionFilter(&Unhandled);
+    if (cur == &Unhandled) return;
+    g_prev = cur;
+    static int told = 0;
+    if (told++ < 3) LogF("vrcam: crash reports - another crash handler was set (%p): ours goes first again, then it", (void*)cur);
+}
+
+void Uninstall() {
+    if (g_veh) { RemoveVectoredExceptionHandler(g_veh); g_veh = nullptr; }
+    const LPTOP_LEVEL_EXCEPTION_FILTER cur = SetUnhandledExceptionFilter(g_prev);
+    if (cur != &Unhandled) SetUnhandledExceptionFilter(cur);   // not ours any more: left as it was
+    g_mirrorUntil.store(0);
+    const HANDLE h = g_start;
+    g_start = INVALID_HANDLE_VALUE;
+    if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
+}
+}  // namespace crash
+
 // Native OpenXR: the pair's head and hands from the game's own session, at the moment the
 // frame will be shown - what the D2R Bridge makes of BodyWalk's frame (hands from the head in
 // the frame of its turn alone), without the trip out to BodyWalk and back. The rest of the
@@ -6734,8 +7087,9 @@ bool XrIntoShared(D2RVR_Shared* out, const D2RVR_Shared* bridge) {
         rot[3] = qc * w - qs * y;
     };
     uint32_t hands = 0;
-    if (in.hand[1].grip.valid) { put(in.hand[1].grip, out->rightHand, out->rightRot); hands |= 1u; }
-    if (in.hand[0].grip.valid) { put(in.hand[0].grip, out->leftHand, out->leftRot); hands |= 2u; }
+    // a hand only with its place too (valid 1): PoseOut gives none else, this keeps it so
+    if (in.hand[1].grip.valid == 1) { put(in.hand[1].grip, out->rightHand, out->rightRot); hands |= 1u; }
+    if (in.hand[0].grip.valid == 1) { put(in.hand[0].grip, out->leftHand, out->leftRot); hands |= 2u; }
     out->handsValid = hands;
     out->rightGrip = (hands & 1u) ? std::clamp(in.hand[1].squeeze, 0.0f, 1.0f) : 0.0f;
     out->leftGrip = (hands & 2u) ? std::clamp(in.hand[0].squeeze, 0.0f, 1.0f) : 0.0f;
@@ -6761,7 +7115,7 @@ uintptr_t HookDrawGameScreen(int a) {
     }
     ++depth;
     static bool toldTry = false;   // before the first pair: if the game dies on it, the log says where
-    if (!toldTry) { toldTry = true; Log("vrcam: pair per game frame - drawing the first pair"); }
+    if (!toldTry) { toldTry = true; Log("vrcam: pair per game frame - drawing the first pair"); crash::Mark("drawing the first stereo pair"); }
     // One head for the pair: BodyWalk's block may change between the passes.
     static D2RVR_Shared held;
     const D2RVR_Shared* live = g_shared;
@@ -6825,8 +7179,10 @@ uintptr_t HookDrawGameScreen(int a) {
     lastEnd = t2;
     sumCpu += pairtime::CpuUs() - c0; sumWall += t2 - t0;
 
-    g_pairNow.store(false);
+    // BodyWalk's block back before the pair is over: the timer thread, seeing no pair, would
+    // otherwise read the held one (the game's own head in native: another zero) meanwhile
     if (live || native) g_shared = live;
+    g_pairNow.store(false);
     --depth;
 
     static ULONGLONG since = GetTickCount64();
@@ -9305,6 +9661,8 @@ void Tick() {
 }  // namespace pace
 
 void OnReshadePresent(reshade::api::effect_runtime* rt) {
+    static bool firstSeen = false;
+    if (!firstSeen) { firstSeen = true; crash::Mark("the first picture presented (ReShade's present)"); }
     // Native OpenXR: the runtime paces the game (xrWaitFrame); a present outside a pair goes
     // to the headset as a flat picture.
     xr::SetWindow((HWND)rt->get_hwnd());   // the swap chain's own window: where the pointer is
@@ -9750,6 +10108,7 @@ void TryRegister() {
     hud::Register();       // the interface's own layer: [hud] hide
     g_registered = true;
     Log("vrcam: joined ReShade - the fog and the sky follow d2r_vr.ini [fog] [sky]");
+    crash::Mark("joined ReShade (its present events)");
     // Both read ReShade's depth, which Generic Depth provides (FlatVR's addon
     // only corrects its pick); without it the shader sees no depth and stays off.
     wchar_t ini[MAX_PATH];
@@ -9997,6 +10356,8 @@ DWORD WINAPI UpdateThread(void*) {
         }
         if (nowMs >= nextSlow) {   // twice a second
             nextSlow = nowMs + 500;
+            static ULONGLONG nextCrashKeep = 0;
+            if (nowMs >= nextCrashKeep) { nextCrashKeep = nowMs + 2000; crash::Keep(); }
             FlatVr3DTick();
             xr::FollowBridge();
             fx::dlsseyes::Install();
@@ -10069,7 +10430,7 @@ void LoadReShade() {
     else LogF("vrcam: ReShade64.dll did not load (error %lu)", GetLastError());
 }
 
-static const char g_info_version[] = "0.156.0";
+static const char g_info_version[] = "0.157.0";
 
 static const PluginInfo g_info = {
     PluginInfoSize, D2RL_PLUGIN_ABI_VERSION, "d2r-vr-vrcam", "vrcam", g_info_version, "BodyWalkVR",
@@ -10091,6 +10452,8 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     while (n > 0 && g_iniPath[n - 1] != L'\\') --n;
     g_iniPath[n] = 0;
     wcscat_s(g_iniPath, L"d2r_vr.ini");
+    crash::Install(g_info_version);   // first: a start that dies leaves its last step in d2r_vr_start.txt
+    crash::Step("settings (d2r_vr.ini)");
     xr::SetLogger(&Log);   // before the settings: [openxr] on says so in the log
     ReloadIfChanged();
     NoTemporalAA();
@@ -10098,10 +10461,13 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     LogF("vrcam %s: game build %s (%s), made for D2R 3.3.93787 under D2RLoader 1.3.1", g_info_version,
          ctx->buildVersion ? ctx->buildVersion : "?", ctx->buildName ? ctx->buildName : "?");
     // Every game address this build has, before any hook rewrites the bytes it is found by.
+    crash::Step("game addresses (signatures)");
     d2rsig::SetShiftTest(GetPrivateProfileIntW(L"debug", L"sig_shift_test", 0, g_iniPath));
     d2rsig::Resolve(ctx);
 
+    crash::Step("ReShade (ReShade64.dll and its add-ons, FlatVR's depth add-on among them)");
     LoadReShade();
+    crash::Step("camera callbacks, MinHook, the hero's skeleton");
     d2rcam::SetCallbacks(&VrView, &VrProj);
     d2rcam::SetFrameCallback(&VrFrame);
     d2rcam::SetRayOverride(&VrRay);
@@ -10110,15 +10476,22 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     skel::TrackHero(true);   // the hero's SkeletonInstance is how his facing is found (FacingStructural)
     skel::SetFresh(&FreshYawInModel);
     skel::SetFreshHands(&FreshHands);
+    crash::Step("the game's hooks");
     InstallHooks();
+    crash::Step("XInput hooks");
     HookXInput();
+    crash::Step("shared memory (D2R Bridge, FlatVR)");
     OpenShared();
     OpenAfrBlock();
+    crash::Step("game state");
     gamestate::Init(ctx);
+    crash::Step("game commands");
     gamecmd::Init(ctx);
+    crash::Step("update thread and console command");
     if (HANDLE h = CreateThread(nullptr, 0, UpdateThread, nullptr, 0, &g_updateThreadId)) CloseHandle(h);
     if (!ctx->RegisterConsoleCommand("vrcam", &CmdVrcam, "vrcam - the camera: off / first person / third person (F12)"))
         ctx->LogError("vrcam: the console command did not register");
+    crash::Step(nullptr);
     return true;
 }
 
@@ -10129,5 +10502,6 @@ D2RL_PLUGIN_EXPORT void D2RLoaderUnloadPlugin() noexcept {
     if (fx::g_registered) { reshade::unregister_addon(g_self); fx::g_registered = false; }
     if (g_gameWnd && g_gameWndProc) SetWindowLongPtrW(g_gameWnd, GWLP_WNDPROC, (LONG_PTR)g_gameWndProc);
     if (g_updateThreadId) PostThreadMessageW(g_updateThreadId, WM_QUIT, 0, 0);
+    crash::Uninstall();
     g_ctx = nullptr;
 }

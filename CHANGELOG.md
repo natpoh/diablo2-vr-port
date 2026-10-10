@@ -1,5 +1,25 @@
 # What's new in D2R VR
 
+## 0.157
+
+- **The camera no longer spins without controllers.** With the controllers
+  put down (not seen by the headset) the view could swing between the ground
+  and the sky every frame: BodyWalk was handing the game the head from two
+  places at once, each with its own idea of straight ahead. The game now
+  takes the head from one place only - FlatVR's when it runs - drops a head
+  that jumps farther than a head can turn, and holds the last good one
+  through a moment without tracking. A recentre still comes through (after
+  0.3 s). Without hands the camera just stays put.
+- **Native OpenXR**: a frame the headset gives no eyes for keeps the last good
+  ones (up to 2 s) instead of turning the camera to BodyWalk's head and back;
+  a hand counts only when the headset knows where it is, not just how it is
+  turned.
+- **If the game crashes, we can now see where**: D2R VR writes each step of
+  its start as it goes (d2rloader\logs\d2r_vr_start.txt), and a crash's
+  module, code and stack to d2r_vr_crash.txt with a minidump beside it.
+  Collect logs (D2R VR Settings > Home) takes them, and Windows' own record
+  of the crash - post the zip in our Discord.
+
 ## 0.156
 
 - **Native OpenXR (prototype)**: the game shows itself in the headset - no

@@ -3186,6 +3186,10 @@ void OnReShadeProgress(D2RLProgress* raw) {
 // pose trace beside it; then PowerShell copies the logs, the settings (BodyWalk's only
 // the keys D2R VR needs - no e-mail, no headset serials), the versions and the PC's
 // graphics card, CPU and Windows into the zip, and Explorer shows it. Nothing is sent.
+// A crash too (0.157): vrcam's d2r_vr_crash.txt and d2r_vr_start.txt come with the logs
+// folder, its minidump (*.dmp, the last day's), and Windows' last three Application Error /
+// Application Hang events of the game or D2RLoader (the module it died in, when vrcam had
+// not loaded yet).
 constexpr UINT WM_APP_COLLECT = WM_APP + 42;
 std::atomic<bool> g_collectBusy{false};
 
@@ -3223,7 +3227,10 @@ function C($p,$sub){ if(Test-Path -LiteralPath $p){ $d=Join-Path $t $sub; New-It
 $pl=Join-Path $g 'd2rloader\plugins'; $lg=Join-Path $g 'd2rloader\logs'
 Get-ChildItem -LiteralPath $lg -File | Where-Object { ($_.Extension -in '.log','.txt','.csv') -and $_.Length -lt 50MB } | ForEach-Object { C $_.FullName 'd2rloader_logs' }
 foreach($f in 'd2r_vr.ini','d2r_vr.default.ini','d2r_vr_frames.csv','d2r_vr_uitrace.txt'){ C (Join-Path $pl $f) 'plugins' }
+Get-ChildItem -LiteralPath $lg -File -Filter '*.dmp' | Where-Object { $_.LastWriteTime -gt (Get-Date).AddDays(-1) -and $_.Length -lt 50MB } | ForEach-Object { C $_.FullName 'd2rloader_logs' }
 foreach($f in 'ReShade.log','ReShade.ini','ReShadePreset.ini','FlatVR_DepthProvider.log'){ C (Join-Path $g $f) 'game' }
+$ev=Get-WinEvent -FilterHashtable @{LogName='Application'; ProviderName='Application Error','Application Hang'; StartTime=(Get-Date).AddDays(-14)} -MaxEvents 400 | Where-Object { $_.Message -match 'D2R|D2RLoader|Diablo' } | Select-Object -First 3
+if($ev){ $ev | Format-List TimeCreated,ProviderName,Id,Message | Out-String -Width 400 | Set-Content -LiteralPath (Join-Path $t 'windows_crash_events.txt') -Encoding UTF8 }
 C (Join-Path $env:USERPROFILE 'Saved Games\Diablo II Resurrected\Settings.json') 'game'
 $b=Join-Path $env:LOCALAPPDATA 'BodyWalkVR'
 foreach($f in 'flat_vr_pose_trace.csv','flat_vr_init_log.txt','system_info.txt','plugin_profiles.json','openxr_layer.log'){ C (Join-Path $b $f) 'bodywalk' }

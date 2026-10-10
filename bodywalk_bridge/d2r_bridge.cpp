@@ -44,6 +44,12 @@ int g_headLockSent = -1;   // the Head Lock wish last sent to FlatVR, -1 none
 float g_distanceSent = 0.0f;   // the screen distance last asked of FlatVR, 0 none
 HANDLE g_map = nullptr;
 D2RVR_Shared* g_shared = nullptr;
+// BW_Plugin_ReceiveTracking comes from several of BodyWalk's threads at once (its head filter)
+SRWLOCK g_trackLock = SRWLOCK_INIT;
+struct TrackLock {
+    TrackLock() { AcquireSRWLockExclusive(&g_trackLock); }
+    ~TrackLock() { ReleaseSRWLockExclusive(&g_trackLock); }
+};
 std::atomic<uint32_t> g_frames{0};
 ULONGLONG g_lastFrameTick = 0;
 
@@ -304,7 +310,7 @@ BW_EXPORT bool BW_CALLBACK BW_Plugin_Initialize(const BW_HostCallbacks* callback
         memcpy(&g_host, callbacks, have);
     }
     out_info->name = "D2R Bridge";
-    out_info->version = "0.26.0";
+    out_info->version = "0.27.0";
     out_info->author = "BodyWalkVR";
     out_info->type = BW_PLUGIN_TYPE_BOTH;
     out_info->output_mode_name = nullptr;   // not a mode: the Xbox pad stays the output
@@ -387,6 +393,9 @@ void FollowFlatVrButtons() {
 // still (BodyWalk takes a silent source for not tracking).
 HANDLE g_xrMap = nullptr;
 const D2RVR_XrInput* g_xr = nullptr;
+// The thread inside send_xr_frame now: BodyWalk hands the frame straight back through
+// BW_Plugin_ReceiveTracking on it, the same thread its SteamVR tracking output comes on.
+std::atomic<DWORD> g_xrSendThread{0};
 uint32_t g_xrSeen = 0;
 ULONGLONG g_xrMovedAt = 0;
 std::atomic<uint32_t> g_xrSent{0};
@@ -456,20 +465,28 @@ void SendXrFrame() {
     const bool ended = !x.focused && !x.head.valid && !x.hand[0].grip.valid && !x.hand[1].grip.valid;   // the game's last word (xr.cpp Teardown)
     BW_XrFrame f{};
     f.version = 1;
-    auto pose = [](const D2RVR_XrPose& p, BW_Pose& o) {
+    // Only a pose that is one: finite, its turn of unit length (made exactly so); a hand only
+    // with its place too (valid 1) - a turn alone (2) is the head's, held where it was.
+    auto pose = [](const D2RVR_XrPose& p, BW_Pose& o, bool needPlace) {
+        const float n2 = p.rot[0] * p.rot[0] + p.rot[1] * p.rot[1] + p.rot[2] * p.rot[2] + p.rot[3] * p.rot[3];
+        const bool ok = (p.valid == 1 || (p.valid == 2 && !needPlace)) && std::isfinite(p.pos[0]) && std::isfinite(p.pos[1]) &&
+                        std::isfinite(p.pos[2]) && std::isfinite(n2) && n2 >= 0.5f && n2 <= 2.0f;
+        if (!ok) { o.valid = 0; return; }
+        const float k = 1.0f / std::sqrt(n2);
         memcpy(o.pos, p.pos, sizeof o.pos);
-        memcpy(o.rot, p.rot, sizeof o.rot);
-        o.valid = p.valid ? 1u : 0u;
+        for (int i = 0; i < 4; ++i) o.rot[i] = p.rot[i] * k;
+        o.valid = 1;
     };
-    pose(x.head, f.head);
+    pose(x.head, f.head, false);
     for (int h = 0; h < 2; ++h) {
         const D2RVR_XrHand& in = x.hand[h];
         BW_Pose& o = h ? f.rightHand : f.leftHand;
-        pose(in.grip, o);
-        o.trigger = in.trigger;
-        o.grip = in.squeeze;
-        o.stickX = in.stickX;
-        o.stickY = in.stickY;
+        pose(in.grip, o, true);
+        auto finite = [](float v) { return std::isfinite(v) ? v : 0.0f; };
+        o.trigger = finite(in.trigger);
+        o.grip = finite(in.squeeze);
+        o.stickX = finite(in.stickX);
+        o.stickY = finite(in.stickY);
         // OpenVR's bit numbers, as FlatVR's frame has them
         uint64_t b = 0;
         if (in.buttons & D2RVR_XRB_MENU) b |= 1ull << 0;
@@ -481,7 +498,9 @@ void SendXrFrame() {
         if (std::fabs(in.stickX) > 0.05f || std::fabs(in.stickY) > 0.05f) b |= 1ull << 34;   // (no touch sensor read: moved = touched)
         o.buttons = b;
     }
+    g_xrSendThread.store(GetCurrentThreadId());
     g_host.send_xr_frame(kXrSource, &f);
+    g_xrSendThread.store(0);
     FollowGameHeadset(!ended, x.focused != 0, ended);
     if (g_xrSent.fetch_add(1) == 0) Info("D2R Bridge: the game's own headset and controllers (native OpenXR) go to BodyWalk as \"D2R VR\"");
 }
@@ -561,8 +580,11 @@ BW_EXPORT void BW_CALLBACK BW_Plugin_Shutdown() {
     SendScreenDistance(0.0f);   // a screen left pushed back would stay there until FlatVR restarts
     // A command still held (Run, Alt) would stay held in the game: let go of all of them.
     if (g_commands) { g_commands->held[0] = g_commands->held[1] = 0; g_commands->counter++; }
-    if (g_shared) { g_shared->headValid = 0; UnmapViewOfFile(g_shared); g_shared = nullptr; }
-    if (g_map) { CloseHandle(g_map); g_map = nullptr; }
+    {
+        TrackLock lock;   // not while a tracking frame is being written
+        if (g_shared) { g_shared->headValid = 0; UnmapViewOfFile(g_shared); g_shared = nullptr; }
+        if (g_map) { CloseHandle(g_map); g_map = nullptr; }
+    }
     if (g_state) { UnmapViewOfFile(g_state); g_state = nullptr; }
     if (g_stateMap) { CloseHandle(g_stateMap); g_stateMap = nullptr; }
     if (g_flatVrStart) { CloseHandle(g_flatVrStart); g_flatVrStart = nullptr; }
@@ -605,75 +627,257 @@ uint32_t UserHeightMm() {
     return mm;
 }
 
-BW_EXPORT void BW_CALLBACK BW_Plugin_ReceiveTracking(const BW_TrackingData* data) {
-    if (!data || !OpenShared()) return;
-    // UniversalOutputService sends the head as a pure yaw quaternion,
-    // y = sin(-yaw/2), w = cos(-yaw/2), yaw positive to the left.
-    const BW_Pose& h = data->head;
-    float yaw = -2.0f * std::atan2(h.rot[1], h.rot[3]) * 57.2957795f;
-    yaw -= 360.0f * std::floor((yaw + 180.0f) / 360.0f);
-    g_shared->headYawDeg = yaw;
-    g_shared->headHeightM = h.pos[1];
-    // headPitchDeg exists from BW_TrackingData version 2 on; an older host's
-    // struct ends before it, so it must not be read there.
-    const bool hasPitch = data->version >= 2;
-    g_shared->headPitchDeg = hasPitch ? data->headPitchDeg : 0.0f;
-    g_shared->pitchValid = hasPitch ? 1u : 0u;
-    const bool hasRoll = data->version >= 3;
-    g_shared->headRollDeg = hasRoll ? data->headRollDeg : 0.0f;
-    g_shared->rollValid = hasRoll ? 1u : 0u;
+// One head for the game (2026-10-10). BodyWalk 1.78 sends its Universal tracking output from up
+// to four places - FlatVR's frame thread, the game's own frames (send_xr_frame), the OpenXR
+// layer's and SteamVR's - each on its own thread, each head in its own space with its own zero,
+// and each frame here overwrote the last: a player's camera swung between the ground and the sky
+// every frame while his controllers lay unseen (0.156). So the frames of one thread only: FlatVR's
+// when it sends heads (its head is the screen's, and its sample stamps go with it), else the first
+// to send one, kept until it has sent none for half a second. Within it a head that jumped farther
+// than a head turns is dropped and the last good one kept - unless the new one holds for 300 ms
+// with nothing near the old one coming (a recentre); a head gone (not valid, or not finite) is
+// held for a second. Everything here under g_trackLock: BodyWalk calls from all of them.
+namespace {
+constexpr float kHeadMaxDegPerS = 1500.0f;   // past any real head turn
+constexpr double kHeadNewAfterS = 0.3;        // a jump that holds this long is the head
+constexpr double kHeadHoldS = 1.0;            // a head gone is held this long
+constexpr double kThreadQuietS = 0.5;         // the thread taken is let go after this without a head
+constexpr double kHeadStuckS = 1.0;           // nothing taken this long while heads come: the next one is
+constexpr DWORD kXrSender = 2;                // the game's own frames (no thread id is 2: they are multiples of 4)
+// The threads sending frames. FlatVR names each head it hands over (FlatVRHeadSample) just before
+// handing it over, on its own thread: a thread whose frames nearly always come with a name no
+// frame had before is FlatVR's; another one's come with the name already seen.
+struct Sender { DWORD tid; double headAt; float flatVr; uint32_t frames; };
+struct HeadFilter {
+    Sender sender[4] = {};
+    DWORD tid = 0;           // the thread whose frames are taken, 0 none yet
+    float ang[3] = {};       // the last head taken: yaw as sent, pitch, roll (deg)
+    double angAt = 0.0;      // when, 0 none yet
+    float cand[3] = {};      // a head that jumped, followed while it holds together
+    double candFrom = 0.0, candAt = 0.0;
+    uint32_t nameSeen = 0;   // FlatVR's last head name a frame came with
+    // for the log, every 10 s
+    uint32_t taken = 0, dropped = 0, held = 0, others = 0, switches = 0, jumps = 0;
+    double loggedAt = 0.0;
+};
+HeadFilter g_hf;
 
-    // Hands: room axes from the head, turned by the head's room yaw so they
-    // read as "ahead of me / to my right". Only a v4 host sends that yaw.
-    uint32_t hands = 0;
-    if (data->version >= 4) {
-        const float th = data->headYawRoomDeg * 0.0174532925f;
-        const float c = std::cos(th), s = std::sin(th);
-        const float qs = std::sin(-th * 0.5f), qc = std::cos(-th * 0.5f);   // undo the yaw: about +y by -th
-        auto put = [&](const BW_Pose& p, float* pos, float* rot) {
-            pos[0] = p.pos[0] * c - p.pos[2] * s;
-            pos[1] = p.pos[1];
-            pos[2] = p.pos[0] * s + p.pos[2] * c;
-            // q = qyaw^-1 * p.rot, with qyaw^-1 = (0, qs, 0, qc)
-            const float x = p.rot[0], y = p.rot[1], z = p.rot[2], w = p.rot[3];
-            rot[0] = qc * x + qs * z;
-            rot[1] = qc * y + qs * w;
-            rot[2] = qc * z - qs * x;
-            rot[3] = qc * w - qs * y;
-        };
-        if (data->rightHand.valid) { put(data->rightHand, g_shared->rightHand, g_shared->rightRot); hands |= 1u; }
-        if (data->leftHand.valid) { put(data->leftHand, g_shared->leftHand, g_shared->leftRot); hands |= 2u; }
+double Seconds() {
+    static const double f = [] { LARGE_INTEGER q; QueryPerformanceFrequency(&q); return (double)q.QuadPart; }();
+    LARGE_INTEGER c;
+    QueryPerformanceCounter(&c);
+    return (double)c.QuadPart / f;
+}
+float Wrap180(float a) { return std::remainder(a, 360.0f); }
+// How far apart two heads look, degrees: the yaw by how far it swings the line of sight
+// (looking straight down, the yaw is all noise and moves nothing), pitch and roll as they are.
+float HeadApart(const float a[3], const float b[3]) {
+    const float cp = std::cos(0.5f * (a[1] + b[1]) * 0.0174532925f);
+    return (std::max)({std::fabs(Wrap180(a[0] - b[0])) * (std::max)(cp, 0.1f), std::fabs(a[1] - b[1]), std::fabs(Wrap180(a[2] - b[2]))});
+}
+// How far a head may have turned in dt (its frames come every 5..15 ms; after a longer gap no
+// farther than 40 deg - a head that went farther comes back as a new one, after 300 ms).
+float HeadReach(double dt) { return kHeadMaxDegPerS * (float)std::clamp(dt, 0.004, 0.025) + 2.0f; }
+bool Finite3(const float* v) { return std::isfinite(v[0]) && std::isfinite(v[1]) && std::isfinite(v[2]); }
+// A hand's pose fit to pass on: finite, within 5 m of the head, its turn of unit length (made exactly so).
+bool HandSane(const BW_Pose& p, float rot[4]) {
+    if (!Finite3(p.pos) || std::fabs(p.pos[0]) > 5.0f || std::fabs(p.pos[1]) > 5.0f || std::fabs(p.pos[2]) > 5.0f) return false;
+    const float n2 = p.rot[0] * p.rot[0] + p.rot[1] * p.rot[1] + p.rot[2] * p.rot[2] + p.rot[3] * p.rot[3];
+    if (!std::isfinite(n2) || n2 < 0.5f || n2 > 2.0f) return false;
+    const float k = 1.0f / std::sqrt(n2);
+    for (int i = 0; i < 4; ++i) rot[i] = p.rot[i] * k;
+    return true;
+}
+
+Sender& SenderOf(DWORD tid, double now) {
+    HeadFilter& f = g_hf;
+    Sender* slot = nullptr;   // a free one, else the longest quiet - never the one taken
+    for (Sender& s : f.sender) {
+        if (s.tid == tid) return s;
+        if (f.tid && s.tid == f.tid) continue;
+        if (!slot || !s.tid || (slot->tid && s.headAt < slot->headAt)) slot = &s;
     }
-    g_shared->handsValid = hands;
-    // Grips: vrcam's "left hand takes the staff" (BW_Pose has had grip from v1).
-    g_shared->rightGrip = (hands & 1u) ? std::clamp(data->rightHand.grip, 0.0f, 1.0f) : 0.0f;
-    g_shared->leftGrip = (hands & 2u) ? std::clamp(data->leftHand.grip, 0.0f, 1.0f) : 0.0f;
-    g_shared->gripMagic = D2RVR_GRIP_MAGIC;
-    // The head in the room (vrcam's table view): position as BodyWalk has it,
-    // and its room yaw (a v4 host's) - v4 is what sends that yaw.
-    if (data->version >= 4) {
-        for (int i = 0; i < 3; ++i) g_shared->headRoom[i] = h.pos[i];
-        g_shared->headYawRoomDeg = data->headYawRoomDeg;
-        g_shared->roomMagic = D2RVR_ROOM_MAGIC;
+    *slot = Sender{tid, now, 0.0f, 0};
+    return *slot;
+}
+bool IsFlatVr(const Sender& s) { return s.frames >= 30 && s.flatVr > 0.7f; }
+
+// What to do with this frame: write it whole, or drop it (the last good head stays).
+// fresh: it came with a FlatVR head name no frame had before; flatVr: its sender is FlatVR's.
+bool HeadFilterTakes(DWORD tid, double now, bool headOk, const float a[3], bool fresh, bool* flatVr) {
+    HeadFilter& f = g_hf;
+    Sender& me = SenderOf(tid, now);
+    me.flatVr = 0.95f * me.flatVr + (fresh ? 0.05f : 0.0f);
+    if (me.frames < 1000000) ++me.frames;
+    if (headOk) me.headAt = now;
+    *flatVr = IsFlatVr(me);
+    if (tid != f.tid) {
+        const Sender* taken = nullptr;
+        for (const Sender& s : f.sender) if (f.tid && s.tid == f.tid) taken = &s;
+        const bool quiet = !taken || now - taken->headAt >= kThreadQuietS;
+        // FlatVR's thread goes before any other; any once the one taken has sent no head for a while
+        const bool better = headOk && IsFlatVr(me) && (!taken || !IsFlatVr(*taken));
+        if (f.tid && !quiet && !better) { ++f.others; return false; }   // another source's, alternating with ours
+        // nobody's head yet, or the one taken gone a while: passed as it is (no head - the camera
+        // goes back to the mouse alone, as before this filter)
+        if (!headOk) return f.tid == 0 || !taken || now - taken->headAt >= kHeadHoldS;
+        if (f.tid) {
+            ++f.switches;
+            char b[220];
+            snprintf(b, sizeof b, "D2R Bridge: the head from another of BodyWalk's threads now (%lu%s, was %lu)%s", (unsigned long)tid,
+                     IsFlatVr(me) ? ", FlatVR's" : "", (unsigned long)f.tid,
+                     better ? " - FlatVR's head goes first" : " - the last one sent no head for 0.5 s");
+            Info(b);
+        }
+        f.tid = tid;
+        f.candAt = 0.0;
     }
-    g_shared->headValid = h.valid ? 1u : 0u;
-    // FlatVR's name for this head when FlatVR handed it over (its prediction
-    // for the display, so "now" would be the wrong moment), else now.
-    static const FlatVRHeadSample* named = nullptr;
+    if (!headOk) {   // held a while: a frame or two without a head turned the camera back to straight ahead
+        if (f.angAt > 0.0 && now - f.angAt < kHeadHoldS) { ++f.held; return false; }
+        return true;
+    }
+    bool take = f.angAt <= 0.0 || HeadApart(a, f.ang) <= HeadReach(now - f.angAt);
+    if (!take) {
+        ++f.dropped;
+        // the head that jumped, followed; a third one while it is being fed does not start over
+        // (two heads in turn, both new: the first one followed holds its 300 ms)
+        if (f.candAt > 0.0 && HeadApart(a, f.cand) <= HeadReach(now - f.candAt)) { f.candAt = now; memcpy(f.cand, a, sizeof f.cand); }
+        else if (f.candAt <= 0.0 || now - f.candAt > 0.05) { f.candFrom = f.candAt = now; memcpy(f.cand, a, sizeof f.cand); }
+        // the new head held together, and nothing near the old one came meanwhile: a recentre;
+        // and nothing taken for a second while heads come: whatever comes, never stuck for good
+        if ((f.candAt - f.candFrom >= kHeadNewAfterS && now - f.angAt >= kHeadNewAfterS) || now - f.angAt >= kHeadStuckS) { take = true; ++f.jumps; }
+    }
+    if (take) {
+        memcpy(f.ang, a, sizeof f.ang);
+        f.angAt = now;
+        f.candAt = 0.0;
+        ++f.taken;
+    }
+    return take;
+}
+
+// Every 10 s, when anything was dropped: how often, and whether two sources alternated.
+void HeadFilterLog(double now) {
+    HeadFilter& f = g_hf;
+    if (f.loggedAt <= 0.0) { f.loggedAt = now; return; }
+    if (now - f.loggedAt < 10.0) return;
+    f.loggedAt = now;
+    if (f.dropped || f.held || f.others || f.jumps) {
+        char b[480];
+        snprintf(b, sizeof b, "D2R Bridge: head filter, last 10 s - %u heads taken, %u dropped (a jump no head makes), %u held (no head), "
+                 "%u taken after a jump that held (a recentre), %u frames of another thread ignored, %u switches%s",
+                 f.taken, f.dropped, f.held, f.jumps, f.others, f.switches,
+                 f.others ? " - BodyWalk sends tracking from two sources at once (FlatVR and SteamVR, or an OpenXR game's layer?): one is used" : "");
+        Info(b);
+    }
+    f.taken = f.dropped = f.held = f.others = f.switches = f.jumps = 0;
+}
+
+}  // namespace
+
+// FlatVR's name for the head it hands over now (its prediction for the display, so "now" would
+// be the wrong moment for it) - and, by whether it is new, which thread is FlatVR's.
+std::atomic<const FlatVRHeadSample*> g_named{nullptr};
+
+BW_EXPORT void BW_CALLBACK BW_Plugin_ReceiveTracking(const BW_TrackingData* in) {
+    if (!in) return;
+    // First of all a copy, and FlatVR's name as it is now: BodyWalk's block is one for all its
+    // threads, rewritten without a lock - read later (after waiting for g_trackLock) it may hold
+    // another thread's head under this thread's id.
+    const uint32_t ver = in->version;
+    BW_TrackingData d{};
+    memcpy(&d, in, ver >= 4 ? sizeof d : ver >= 3 ? offsetof(BW_TrackingData, headYawRoomDeg)
+                 : ver >= 2 ? offsetof(BW_TrackingData, headRollDeg) : offsetof(BW_TrackingData, headPitchDeg));
+    d.version = ver;
+    const BW_TrackingData* data = &d;
+    const FlatVRHeadSample* named = g_named.load();
+    const bool nameOk = named && named->version == FLATVR_HEAD_SAMPLE_VERSION;
+    const uint32_t name = nameOk ? named->counter : 0;
+    const uint32_t nameStamp = nameOk ? named->stamp : 0;
+    const DWORD tid = GetCurrentThreadId();
+    const DWORD sender = g_xrSendThread.load() == tid ? kXrSender : tid;
+    TrackLock lock;
+    if (!OpenShared()) return;
     if (!named) {
         static ULONGLONG lastLook = 0;
         if (GetTickCount64() - lastLook > 1000) {
             lastLook = GetTickCount64();
             if (HANDLE m = OpenFileMappingW(FILE_MAP_READ, FALSE, FLATVR_HEAD_SAMPLE_NAME)) {
-                named = (const FlatVRHeadSample*)MapViewOfFile(m, FILE_MAP_READ, 0, 0, sizeof(FlatVRHeadSample));
+                g_named.store((const FlatVRHeadSample*)MapViewOfFile(m, FILE_MAP_READ, 0, 0, sizeof(FlatVRHeadSample)));
                 CloseHandle(m);
             }
         }
     }
-    g_shared->sampleStamp = named && named->version == FLATVR_HEAD_SAMPLE_VERSION &&
-                                    (int32_t)(D2RVRStampNow() - named->stamp) >= 0 &&
-                                    (int32_t)(D2RVRStampNow() - named->stamp) < 300
-                                ? named->stamp : D2RVRStampNow();
+    const bool fresh = nameOk && name != g_hf.nameSeen;
+    g_hf.nameSeen = name;
+    // UniversalOutputService sends the head as a pure yaw quaternion,
+    // y = sin(-yaw/2), w = cos(-yaw/2), yaw positive to the left.
+    const BW_Pose& h = data->head;
+    float yaw = -2.0f * std::atan2(h.rot[1], h.rot[3]) * 57.2957795f;
+    yaw -= 360.0f * std::floor((yaw + 180.0f) / 360.0f);
+    // headPitchDeg exists from BW_TrackingData version 2 on; an older host's
+    // struct ends before it, so it must not be read there.
+    const bool hasPitch = data->version >= 2;
+    const bool hasRoll = data->version >= 3;
+    const float ang[3] = {yaw, hasPitch ? data->headPitchDeg : 0.0f, hasRoll ? data->headRollDeg : 0.0f};
+    const bool roomOk = data->version < 4 || (Finite3(h.pos) && std::isfinite(data->headYawRoomDeg));
+    const bool headOk = h.valid && Finite3(ang) && std::isfinite(h.pos[1]) && roomOk;
+    const double now = Seconds();
+    bool flatVr = false;
+    const bool take = HeadFilterTakes(sender, now, headOk, ang, fresh, &flatVr);
+    HeadFilterLog(now);
+    if (!take) return;
+    if (headOk) {   // (a head gone leaves the last angles: headValid says it is gone)
+        g_shared->headYawDeg = ang[0];
+        g_shared->headHeightM = h.pos[1];
+        g_shared->headPitchDeg = ang[1];
+        g_shared->headRollDeg = ang[2];
+    }
+    g_shared->pitchValid = hasPitch ? 1u : 0u;
+    g_shared->rollValid = hasRoll ? 1u : 0u;
+
+    // Hands: room axes from the head, turned by the head's room yaw so they
+    // read as "ahead of me / to my right". Only a v4 host sends that yaw.
+    uint32_t hands = 0;
+    if (data->version >= 4 && headOk) {
+        const float th = data->headYawRoomDeg * 0.0174532925f;
+        const float c = std::cos(th), s = std::sin(th);
+        const float qs = std::sin(-th * 0.5f), qc = std::cos(-th * 0.5f);   // undo the yaw: about +y by -th
+        auto put = [&](const BW_Pose& p, float* pos, float* rot) {
+            float q[4];
+            if (!HandSane(p, q)) return false;
+            pos[0] = p.pos[0] * c - p.pos[2] * s;
+            pos[1] = p.pos[1];
+            pos[2] = p.pos[0] * s + p.pos[2] * c;
+            // q = qyaw^-1 * p.rot, with qyaw^-1 = (0, qs, 0, qc)
+            const float x = q[0], y = q[1], z = q[2], w = q[3];
+            rot[0] = qc * x + qs * z;
+            rot[1] = qc * y + qs * w;
+            rot[2] = qc * z - qs * x;
+            rot[3] = qc * w - qs * y;
+            return true;
+        };
+        if (data->rightHand.valid && put(data->rightHand, g_shared->rightHand, g_shared->rightRot)) hands |= 1u;
+        if (data->leftHand.valid && put(data->leftHand, g_shared->leftHand, g_shared->leftRot)) hands |= 2u;
+    }
+    g_shared->handsValid = hands;
+    // Grips: vrcam's "left hand takes the staff" (BW_Pose has had grip from v1).
+    auto grip = [](float g) { return std::isfinite(g) ? std::clamp(g, 0.0f, 1.0f) : 0.0f; };
+    g_shared->rightGrip = (hands & 1u) ? grip(data->rightHand.grip) : 0.0f;
+    g_shared->leftGrip = (hands & 2u) ? grip(data->leftHand.grip) : 0.0f;
+    g_shared->gripMagic = D2RVR_GRIP_MAGIC;
+    // The head in the room (vrcam's table view): position as BodyWalk has it,
+    // and its room yaw (a v4 host's) - v4 is what sends that yaw.
+    if (data->version >= 4 && headOk) {
+        for (int i = 0; i < 3; ++i) g_shared->headRoom[i] = h.pos[i];
+        g_shared->headYawRoomDeg = data->headYawRoomDeg;
+        g_shared->roomMagic = D2RVR_ROOM_MAGIC;
+    }
+    g_shared->headValid = headOk ? 1u : 0u;
+    // FlatVR's name on its own frames only (its thread's, or one that came with a new name):
+    // another source's head is not the one it names - else now
+    const int32_t nameAge = (int32_t)(D2RVRStampNow() - nameStamp);
+    g_shared->sampleStamp = nameOk && (fresh || flatVr) && nameAge >= 0 && nameAge < 300 ? nameStamp : D2RVRStampNow();
     g_shared->sampleStampMagic = D2RVR_SAMPLE_STAMP_MAGIC;
     g_shared->userHeightMm = UserHeightMm();
     g_shared->counter++;
