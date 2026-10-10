@@ -1,5 +1,40 @@
 # What's new in D2R VR
 
+## 0.153
+
+- **A new 3D mode: Stereo - one pass, two pictures** (the default). The game
+  draws each frame once and the right eye is drawn again on the graphics card
+  from the same work, with its own camera: true 3D with the sky and the
+  shadows right in both eyes, at nearly the mono frame rate (on the author's
+  PC 127-159 stereo pairs a second, against 108 with two passes). D2R VR
+  Settings > Performance > **3D in the headset** has four modes now:
+  Stereo - one pass, two pictures; Stereo - eyes by turns; 3D from the depth
+  (ReShade); Mono. If the new one is unstable on your PC, take Eyes by turns.
+- **Frames paced to the headset**: the game's frames are held to the
+  headset's refresh rate - a game faster or slower than the headset juddered
+  in head turns. D2R VR Settings sets the game's frame cap to the headset
+  rate (twice it for Eyes by turns).
+- **Smoother head turns** in mono, 3D from the depth and Eyes by turns when
+  the game and the headset run at different rates: Pipeline depth is 1 by
+  default, and the sky follows the frame that is shown.
+- The game's temporal anti-aliasing is set to FXAA when the game starts in
+  real stereo - it mixed the two eyes into a ghost behind everything that
+  moves ([stereo] keep_taa=1 keeps it).
+- **No hitch every 10 seconds**: the log's thread count (0.152) stopped the
+  game for 30-50 ms every 10 s; it no longer runs on the game's thread.
+- Known limits: with DLSS, Stereo - one pass shares one DLSS between the two
+  eyes (a DLSS for each eye still hangs the graphics card there - off). When
+  the graphics card cannot keep the headset's rate, the picture judders -
+  lower the headset rate or the resolution.
+- **For developers - help is welcome**: the roadmap, the known problems (what
+  we know about each one and where in the code to start) and notes for
+  developers are in [docs/](docs/README.md) - fork the project, fix one and
+  send a pull request. The weapon weight work for first person is published
+  too: a model with tests and a Unity bench, not in the game yet
+  ([docs/WEAPON_WEIGHT.md](docs/WEAPON_WEIGHT.md)).
+- **Next version**: D2R VR moves to BodyWalk's Game Link standard (the open
+  BodyWalk plugin SDK) instead of its own bridge to BodyWalk.
+
 ## 0.152
 
 - **Smooth head turns again in tabletop and first person**: FlatVR's frame

@@ -23,6 +23,9 @@
 #endif
 #include <windows.h>
 #include <tlhelp32.h>
+#include <psapi.h>
+#include <d3d12.h>
+#include <dxgi1_4.h>
 #include <intrin.h>
 #include <xinput.h>
 
@@ -38,6 +41,7 @@
 #include <cwctype>
 #include <iterator>
 #include <unordered_map>
+#include <map>
 #include <unordered_set>
 #include <string>
 #include <vector>
@@ -77,6 +81,8 @@ namespace gamestate { void Init(const D2RL::PluginContext* ctx); void Tick(); ui
 #include "d2r_vr_shared.h"
 #include "afr_eye_shared.h"
 #include "dlss_mv.h"
+#include <timeapi.h>   // timeBeginPeriod: the pacer's 1 ms sleeps
+#pragma comment(lib, "winmm.lib")
 #include "pad_mirror_shared.h"
 
 #pragma intrinsic(_ReturnAddress)
@@ -347,6 +353,8 @@ struct Settings {
     std::atomic<float> thirdHeight{6.5f};   // third person: the eye point above the ground
     std::atomic<bool>  stampPixels{true};
     std::atomic<bool>  stamps{true};
+    std::atomic<bool>  pace{true};        // [stereo] pace: game frames held to the headset's rate (see pace::Tick)
+    std::atomic<int>   headsetHz{90};     // [stereo] headset_rate (0..4: 72 75 80 90 120)
     std::atomic<bool>  pictureRing{false};  // [stereo] picture_ring (off by default since 0.152: it juddered in head turns): FlatVR's addon hands over the newest finished picture (2.19: ReShade.ini [FLATVR] ColourRing)        // [stereo] stamps: each frame's head-pose moment to FlatVR (0: none at all, the screen at the head as it is)
     std::atomic<int>   pipelineDepth{0};    // the presented frame is this many of its eye's views older than the newest (D3D12 queueing)   // the frame stamp strip for FlatVR (bottom-right corner)
     std::atomic<bool>  topStereo{false};    // the game's own view from above (F12 off) in stereo too: each eye turned about the hero
@@ -733,8 +741,54 @@ float GameInterfaceScale() {
     return pct >= 30.0f && pct <= 100.0f ? pct / 100.0f : 1.0f;
 }
 
+// Real stereo with the game's temporal anti-aliasing ("Anti Aliasing" 2 and up in Settings.json):
+// it blends each picture with the one before - the other eye's - and every moving thing trails a
+// ghost (the staff in the hand, 2026-10-09). At the plugin's start, before the game reads the
+// file, it is set to FXAA (1); [stereo] keep_taa=1 leaves it alone.
+void NoTemporalAA() {
+    if (!IniB(L"stereo", L"afr", false) || IniB(L"stereo", L"keep_taa", false)) return;
+    PWSTR dir = nullptr;
+    std::wstring path;
+    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_SavedGames, 0, nullptr, &dir))) path = std::wstring(dir) + L"\\Diablo II Resurrected\\Settings.json";
+    if (dir) CoTaskMemFree(dir);
+    FILE* f = path.empty() ? nullptr : _wfopen(path.c_str(), L"rb");
+    if (!f) return;
+    std::string text(1 << 16, ' ');
+    text.resize(fread(text.data(), 1, text.size(), f));
+    fclose(f);
+    const size_t at = text.find("\"Anti Aliasing\"");
+    const size_t colon = at == std::string::npos ? at : text.find(':', at);
+    if (colon == std::string::npos) return;
+    size_t b = colon + 1;
+    while (b < text.size() && (text[b] == ' ' || text[b] == '\t')) ++b;
+    size_t e = b;
+    while (e < text.size() && isdigit((unsigned char)text[e])) ++e;
+    if (e == b) return;
+    const int aa = atoi(text.c_str() + b);
+    if (aa < 2) return;
+    text.replace(b, e - b, "1");
+    if (FILE* w = _wfopen(path.c_str(), L"wb")) {
+        fwrite(text.data(), 1, text.size(), w);
+        fclose(w);
+        LogF("vrcam: the game's Anti Aliasing was %d (temporal: it mixes the eyes, a ghost behind everything moving) - set to FXAA ([stereo] keep_taa=1 to keep it)", aa);
+    }
+}
+
 void StartMatrixWatch();   // [debug] matrix_writer, below PickHeroMatrix
 
+namespace drawprof { extern std::atomic<bool> g_want; }
+namespace cbcmp { extern std::atomic<bool> g_go; void NoteView(int eye, const float v[16]); }
+namespace rtrace { extern std::atomic<bool> g_go; }
+extern std::atomic<int> g_projFix; extern std::atomic<float> g_shiftMul; extern std::atomic<int> g_replayViews; extern std::atomic<int> g_viewMask; extern std::atomic<int> g_replayPositions; extern std::atomic<int> g_replayPrev;
+namespace replay { extern std::atomic<bool> g_fxSync; extern std::atomic<bool> g_dlssBoth; extern std::atomic<bool> g_replayCopy; }
+namespace replay { extern std::atomic<int> g_peekWant; }
+namespace camfix { extern std::atomic<int> g_scanWant; }
+namespace replay { extern std::atomic<int> g_want; extern std::atomic<int> g_ahead; extern std::atomic<bool> g_depthCopy; extern std::atomic<bool> g_on; extern std::atomic<bool> g_fxAtHold; extern std::atomic<bool> g_holdSignalsOn; }
+// The left eye's view as last built, and the half-eye shift in it (VrViewInner): the
+// replay makes the right eye's camera constants from them.
+float g_leftView[16] = {};
+SRWLOCK g_leftViewLock = SRWLOCK_INIT;
+std::atomic<float> g_eyeHalf{0.0f};
 void LoadSettings() {
     g_set.platform.store(IniF(L"mode", L"platform", 1.0f) != 0.0f ? 1 : 0);
 #if D2RVR_FIRST_PERSON
@@ -916,6 +970,47 @@ void LoadSettings() {
     g_set.stampPixels.store(IniB(L"stereo", L"stamp_pixels", true));
     g_set.stamps.store(IniB(L"stereo", L"stamps", true));
     g_set.pictureRing.store(IniB(L"stereo", L"picture_ring", false));
+    g_set.pace.store(IniB(L"stereo", L"pace", true));
+    {
+        static const int kHz[5] = {72, 75, 80, 90, 120};
+        g_set.headsetHz.store(kHz[std::clamp((int)IniF(L"stereo", L"headset_rate", 3.0f), 0, 4)]);
+    }
+    replay::g_want.store((int)IniF(L"stereo", L"replay_right", 0.0f));
+    replay::g_ahead.store(std::clamp((int)IniF(L"stereo", L"replay_ahead", 1.0f), 1, 3));
+    replay::g_depthCopy.store(IniB(L"stereo", L"replay_depth", false));
+    replay::g_holdSignalsOn.store(IniB(L"stereo", L"replay_hold_signals", false));
+    g_projFix.store((int)IniF(L"stereo", L"replay_proj", 3.0f));
+    g_shiftMul.store(IniF(L"stereo", L"replay_shift_mul", 1.0f));
+    g_replayViews.store(std::clamp((int)IniF(L"stereo", L"replay_views", 8.0f), 0, 8));
+    g_viewMask.store((int)IniF(L"stereo", L"replay_view_mask", 0.0f));
+    g_replayPositions.store((int)IniF(L"stereo", L"replay_positions", 2.0f));
+    g_replayPrev.store((int)IniF(L"stereo", L"replay_prev", 1.0f));
+    replay::g_fxSync.store(IniB(L"stereo", L"replay_fx_sync", true));
+    replay::g_dlssBoth.store(IniB(L"stereo", L"replay_dlss", false));
+    replay::g_replayCopy.store(IniB(L"stereo", L"replay_copy", true));
+    replay::g_fxAtHold.store(IniB(L"stereo", L"replay_fx", true));
+    {   // [debug] profile_draw: one 5 s profile of the draw thread each time it turns 1
+        static bool was = false;
+        const bool on = IniB(L"debug", L"profile_draw", false);
+        if (on && !was) drawprof::g_want.store(true);
+        was = on;
+        static bool wasGo = false;
+        const bool go = IniB(L"debug", L"cb_compare_go", false);
+        if (go && !wasGo) cbcmp::g_go.store(true);
+        wasGo = go;
+        static bool wasScan = false;   // [debug] replay_scan_go 0 -> 1: copies of the left camera in upload memory
+        const bool scan = IniB(L"debug", L"replay_scan_go", false);
+        if (scan && !wasScan) camfix::g_scanWant.store(1);
+        wasScan = scan;
+        static bool wasPeek = false;   // [debug] replay_peek_go 0 -> 1: one pair's two pictures compared
+        const bool peek = IniB(L"debug", L"replay_peek_go", false);
+        if (peek && !wasPeek) replay::g_peekWant.store(1);
+        wasPeek = peek;
+        static bool wasRt = false;
+        const bool rt = IniB(L"debug", L"replay_trace_go", false);
+        if (rt && !wasRt) rtrace::g_go.store(true);
+        wasRt = rt;
+    }
     g_set.pipelineDepth.store(std::clamp((int)IniF(L"stereo", L"pipeline_depth", 0.0f), 0, 3));
     g_set.thirdDistance.store(std::clamp(IniF(L"third", L"distance", 7.0f), -5.0f, 200.0f));
     g_set.tableFloor.store(std::clamp(IniF(L"table", L"floor", 0.05f), 0.0f, 0.3f));
@@ -1396,6 +1491,35 @@ std::atomic<float> g_viewFwdY{0.0f};   // every view: the world-up part of where
 std::atomic<bool> g_floorCamOk{false};
 // ... and the projection it is drawn with (VrProj): M[0], M[5], the eyes apart and zero parallax, world units.
 std::atomic<float> g_projSx{0.0f}, g_projSy{0.0f}, g_stereoIpd{0.0f}, g_stereoConv{0.0f};
+// The off-axis shift of the left eye's projection (M[8]; the right eye's is minus it), 0 without:
+// the replayed right eye has only the left pass's projection, moved by twice this.
+std::atomic<float> g_projShift{0.0f};
+// [stereo] replay_proj: 0 off, 1 the right eye's off-axis projection (+ its inverse), 2 without
+// the inverse, 3 (default) also the eye's shift folded into the projection instead of the view:
+// the objects come with their place already in the left eye's view space (per-object constants,
+// not replayed) - a moved view left them where they were, the right eye showed them as the left.
+std::atomic<int> g_projFix{3};
+std::atomic<float> g_shiftMul{1.0f};
+// [stereo] replay_views (8 = all): how many of a camera buffer's view matrices the right eye
+// moves - two passes a frame move all five of D2R's (cb_diff over the whole 4 KB, 2026-10-09).
+std::atomic<int> g_replayViews{8};
+// [stereo] replay_view_mask (testing; 0 = by replay_views): bit k on = the k-th view found in a
+// camera buffer is moved for the right eye
+std::atomic<int> g_viewMask{0};
+// [stereo] replay_positions: camera positions found on their own, moved for the right eye -
+// 2 (default) only in buffers with one (two passes a frame: those differ between the eyes - the
+// camera position at words 4 / 68 - while a buffer with four, one a camera record at words 112,
+// 304, 496, 688, is the same for both: moved, the right eye's lighting and shadows went wrong),
+// 1 all, 0 none
+std::atomic<int> g_replayPositions{2};
+// [stereo] replay_prev (1): the last frame's view*projection each camera record keeps 96 words
+// after its view (what the game's temporal filter reprojects its history with) made the right
+// eye's in BOTH eyes. The replay draws the right eye last with the same lists: the history both
+// eyes read is the last pair's right picture, and the left eye's matrix put it beside itself -
+// speckled skin and doubled hair in the right eye (2026-10-09).
+std::atomic<int> g_replayPrev{1};
+   // [stereo] replay_shift_mul (testing): the right eye's shift times this
+std::atomic<uint32_t> g_nFold{0}, g_nView{0}, g_nPos{0};   // patched a pair: folded into the projection, the view moved, positions
 std::atomic<uint32_t> g_viewBuilds{0};   // world camera view rebuilds so far (pose-order diagnostics)
 // The eye point less the camera's look-at (height, side, forward), from the last
 // view rebuild. The skeleton adds it to the look-at as it is at the pose: on the
@@ -1434,6 +1558,13 @@ struct TableBox { float vp[16]; float hero[3]; bool ok; };
 TableBox g_tableBox{};   // under g_skyLock
 SRWLOCK g_skyLock = SRWLOCK_INIT;
 SkyView g_skyView[2]{};
+// Each eye's last four views as the sky saw them, newest at g_skyHistAt (pushed when a view's
+// projection is in, the last of its parts): the sky is drawn [stereo] pipeline_depth views
+// back, as the frame stamp is - the picture presented is that older view, and the sky by the
+// newest one shook against the world once the stamp was right (2026-10-09).
+SkyView g_skyHist[2][4]{};
+int g_skyHistAt[2] = {};
+SkyView SkyBack(int e);   // below, by g_set
 
 // The FlatVR screen's angular height, from BodyWalk's own settings file: the
 // game camera's vertical FOV set to it maps the picture onto the screen one to
@@ -2297,6 +2428,7 @@ bool VrViewInner(const d2rcam::WorldView& in, float out[16]) {
         TrueScale(&ipd, &conv);
         const float half = 0.5f * ipd;
         view[12] += g_eye.load() == 0 ? half : -half;
+        g_eyeHalf.store(half);
         camPos = eye + right * (g_eye.load() == 0 ? -half : half);
     }
     // When this eye's view was built: the head pose it is drawn for is the
@@ -2319,6 +2451,10 @@ bool VrViewInner(const d2rcam::WorldView& in, float out[16]) {
         // and remembered: the frame presented may be an older view of this eye
         const int e = g_eye.load() & 1;
         g_stampHist[e][g_stampHistAt[e] = (g_stampHistAt[e] + 1) & 3] = stamp;
+        if (e == 0 && replay::g_on.load() && replay::g_want.load()) {   // replayed: the right eye is this view too, no view of its own
+            g_afrBlock->stamp[1] = stamp;
+            g_stampHist[1][g_stampHistAt[1] = (g_stampHistAt[1] + 1) & 3] = stamp;
+        }
         g_afrBlock->stamp_magic = FLATVR_AFR_STAMP_MAGIC;
     }
     {   // Row-major, v*M: the columns are the camera's axes in the world.
@@ -2328,6 +2464,16 @@ bool VrViewInner(const d2rcam::WorldView& in, float out[16]) {
         sv.eyeRel[0] = camPos.x - L[0]; sv.eyeRel[1] = camPos.y - L[1]; sv.eyeRel[2] = camPos.z - L[2];
         memcpy(sv.hero, L, sizeof sv.hero);
         sv.axes_ok = true;
+        if ((g_eye.load() & 1) == 0 && AfrOn() && replay::g_on.load() && replay::g_want.load()) {
+            // replayed: the right eye's sky view is the left one moved by the eye separation
+            SkyView& r1 = g_skyView[1];
+            const bool projOk = r1.proj_ok;
+            float proj[4]; memcpy(proj, r1.proj, sizeof proj);
+            r1 = sv;   // the projection: VrProjInner's (the left one shifted the other way)
+            if (projOk) memcpy(r1.proj, proj, sizeof proj); else r1.proj_ok = sv.proj_ok;
+            const float sh = 2.0f * g_eyeHalf.load();
+            r1.eyeRel[0] += right.x * sh; r1.eyeRel[1] += right.y * sh; r1.eyeRel[2] += right.z * sh;
+        }
         ReleaseSRWLockExclusive(&g_skyLock);
     }
     g_camYaw.store(yaw);
@@ -2350,6 +2496,8 @@ bool VrViewInner(const d2rcam::WorldView& in, float out[16]) {
                atan2f(f.camF[0], f.camF[2]) * 57.2957795f, L[0], L[2],
                g_afrBlock ? g_afrBlock->stamp[g_eye.load() & 1] : 0u);
     memcpy(out, view, sizeof view);
+    cbcmp::NoteView(g_eye.load(), view);
+    if (g_eye.load() == 0) { AcquireSRWLockExclusive(&g_leftViewLock); memcpy(g_leftView, view, sizeof view); ReleaseSRWLockExclusive(&g_leftViewLock); }
     return true;
 }
 
@@ -2383,13 +2531,24 @@ bool VrProjInner(const d2rcam::WorldView& in, float M[16]) {
     float ipd = g_set.ipd.load(), conv = g_set.convergence.load();
     TrueScale(&ipd, &conv);
     g_projSx.store(M[0]); g_projSy.store(M[5]); g_stereoIpd.store(ipd); g_stereoConv.store(conv);
+    float shift = 0.0f;
     if (AfrOn() && conv > 0.0f) {
-        const float shift = M[0] * 0.5f * ipd / conv;
+        shift = M[0] * 0.5f * ipd / conv;
         M[8] += g_eye.load() == 0 ? shift : -shift;
     }
+    if ((g_eye.load() & 1) == 0) g_projShift.store(shift);
     AcquireSRWLockExclusive(&g_skyLock);
     SkyView& sv = g_skyView[g_eye.load() & 1];
     sv.proj[0] = M[0]; sv.proj[1] = M[5]; sv.proj[2] = M[8]; sv.proj[3] = M[9]; sv.proj_ok = true;
+    const bool replayed = (g_eye.load() & 1) == 0 && AfrOn() && replay::g_on.load() && replay::g_want.load();
+    if (replayed) {
+        // replayed: no right pass builds the right eye's projection - the left one, shifted the other way
+        SkyView& r1 = g_skyView[1];
+        r1.proj[0] = M[0]; r1.proj[1] = M[5]; r1.proj[2] = M[8] - 2.0f * shift; r1.proj[3] = M[9]; r1.proj_ok = true;
+    }
+    for (int e = 0; e < 2; ++e)
+        if (e == (g_eye.load() & 1) || (e == 1 && replayed))
+            g_skyHist[e][g_skyHistAt[e] = (g_skyHistAt[e] + 1) & 3] = g_skyView[e];
     ReleaseSRWLockExclusive(&g_skyLock);
     return true;
 }
@@ -4093,6 +4252,7 @@ void TurnTick();
 // end (the Present call itself: waiting for the GPU or the swap chain).
 namespace pairtime {
 std::atomic<double> g_effBegin{0.0}, g_effSum{0.0}, g_presentAt{0.0};
+std::atomic<uint32_t> g_presents{0};   // real presents (ReShade's), never cleared: the replay watchdog's
 std::atomic<DWORD> g_drawThread{0};
 double UsNow() { return flog::UsNow(); }
 // This thread's own CPU time, us: a pass's wall time minus it is waiting. From its
@@ -4151,6 +4311,2257 @@ std::string BusyThreads(double spanUs) {
 }
 }  // namespace pairtime
 
+// A sampling profile of the draw thread ([debug] profile_draw=1, live; it turns
+// itself off after one run): 5 s at ~1 kHz, the thread suspended for each sample
+// just long enough to read its context and unwind its stack into a fixed array
+// (no allocation, no locks of ours while it is stopped). Then, by module and by
+// function (the unwind table's start): self = the sample's leaf is there,
+// incl = it is anywhere on the stack. Where the draw thread's ~6 ms an eye go.
+namespace drawprof {
+std::atomic<bool> g_want{false}, g_running{false};
+constexpr int kDepth = 24;
+struct Sample { int n; DWORD64 pc[kDepth]; };
+
+std::string ModuleOf(DWORD64 pc, DWORD64* base) {
+    HMODULE m = nullptr;
+    *base = 0;
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCWSTR)pc, &m) || !m)
+        return "?";
+    *base = (DWORD64)m;
+    char path[MAX_PATH] = {};
+    GetModuleFileNameA(m, path, MAX_PATH);
+    const char* b = strrchr(path, '\\');
+    return b ? b + 1 : path;
+}
+
+// A stopped thread's stack, copied, walked by the unwind tables. Under SEH: a
+// frame kept in a register other than RSP/RBP still points into the live stack,
+// whatever is there now - a bad read ends the walk, not the game.
+// The game's own unwind table: D2RLoader rebuilds the image after Windows registered
+// it, so RtlLookupFunctionEntry finds nothing in it - its .pdata is read in place
+// (the header's exception directory, as in dump_loader's snapshot: 0x3BFF000).
+PRUNTIME_FUNCTION GameFunction(DWORD64 pc, DWORD64* imageBase) {
+    static const DWORD64 base = (DWORD64)GetModuleHandleW(nullptr);
+    static const RUNTIME_FUNCTION* table = nullptr;
+    static size_t count = 0;
+    static DWORD imageSize = 0;
+    static bool tried = false;
+    if (!tried) {
+        tried = true;
+        __try {
+            const auto* dos = (const IMAGE_DOS_HEADER*)base;
+            const auto* nt = (const IMAGE_NT_HEADERS64*)(base + dos->e_lfanew);
+            const IMAGE_DATA_DIRECTORY& d = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXCEPTION];
+            imageSize = nt->OptionalHeader.SizeOfImage;
+            if (d.VirtualAddress && d.Size) { table = (const RUNTIME_FUNCTION*)(base + d.VirtualAddress); count = d.Size / sizeof(RUNTIME_FUNCTION); }
+        } __except (EXCEPTION_EXECUTE_HANDLER) { table = nullptr; }
+    }
+    if (!table || pc < base || pc >= base + imageSize) return nullptr;
+    const DWORD rva = (DWORD)(pc - base);
+    size_t lo = 0, hi = count;
+    while (lo < hi) {
+        const size_t mid = (lo + hi) / 2;
+        if (table[mid].EndAddress <= rva) lo = mid + 1;
+        else hi = mid;
+    }
+    if (lo >= count || table[lo].BeginAddress > rva) return nullptr;
+    PRUNTIME_FUNCTION f = (PRUNTIME_FUNCTION)&table[lo];
+    // chained entries (UNW_FLAG_CHAININFO) are followed by RtlVirtualUnwind itself
+    *imageBase = base;
+    return f;
+}
+
+PRUNTIME_FUNCTION FindFunction(DWORD64 pc, DWORD64* imageBase) {
+    if (PRUNTIME_FUNCTION f = RtlLookupFunctionEntry(pc, imageBase, nullptr)) return f;
+    return GameFunction(pc, imageBase);
+}
+
+int UnwindCopy(CONTEXT c, uint8_t* copy, size_t copied, DWORD64* out) {
+    const DWORD64 orig = c.Rsp, origEnd = c.Rsp + copied, delta = (DWORD64)copy - orig;
+    const DWORD64 lo = (DWORD64)copy, hi = (DWORD64)copy + copied;
+    c.Rsp += delta;
+    if (c.Rbp >= orig && c.Rbp < origEnd) c.Rbp += delta;
+    int n = 0;
+    __try {
+        for (int d = 0; d < kDepth && c.Rip; ++d) {
+            out[n++] = c.Rip;
+            if (c.Rsp < lo || c.Rsp + 8 > hi) break;
+            DWORD64 imageBase = 0;
+            PRUNTIME_FUNCTION f = FindFunction(c.Rip, &imageBase);
+            if (!f) { c.Rip = *(DWORD64*)c.Rsp; c.Rsp += 8; continue; }   // a leaf: the return address on top
+            void* handlerData = nullptr; DWORD64 establisher = 0;
+            RtlVirtualUnwind(UNW_FLAG_NHANDLER, imageBase, c.Rip, f, &c, &handlerData, &establisher, nullptr);
+            if (c.Rbp >= orig && c.Rbp < origEnd) c.Rbp += delta;
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {}
+    return n;
+}
+
+DWORD WINAPI Run(void* arg) {
+    const DWORD tid = (DWORD)(uintptr_t)arg;
+    HANDLE th = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE, tid);
+    if (!th) { Log("vrcam: profile_draw - cannot open the draw thread"); g_running.store(false); return 0; }
+    static Sample samples[6000];
+    static uint8_t stackCopy[32768];
+    int count = 0;
+    const ULONGLONG until = GetTickCount64() + 5000;
+    while (GetTickCount64() < until && count < 6000) {
+        // Stopped only for the context and a memcpy of its stack: nothing that
+        // takes a lock (the first version unwound while it was stopped and hung
+        // the game - the unwinder waited on a lock the stopped thread held).
+        CONTEXT c{}; c.ContextFlags = CONTEXT_FULL;
+        size_t copied = 0;
+        if (SuspendThread(th) == (DWORD)-1) { Sleep(1); continue; }
+        const bool got = GetThreadContext(th, &c) != 0;
+        if (got && c.Rsp) {
+            MEMORY_BASIC_INFORMATION mbi{};
+            if (VirtualQuery((void*)c.Rsp, &mbi, sizeof mbi) && mbi.State == MEM_COMMIT) {
+                const DWORD64 regionEnd = (DWORD64)mbi.BaseAddress + mbi.RegionSize;
+                copied = (size_t)std::min<DWORD64>(sizeof stackCopy, regionEnd - c.Rsp);
+                memcpy(stackCopy, (void*)c.Rsp, copied);
+            }
+        }
+        ResumeThread(th);
+        if (!got || !copied) { Sleep(1); continue; }
+        // Unwind the copy: the stack and frame registers moved into it.
+        Sample& sm = samples[count];
+        sm.n = UnwindCopy(c, stackCopy, copied, sm.pc);
+        if (sm.n) ++count;
+        Sleep(1);
+    }
+    CloseHandle(th);
+
+    // by module and by function: self and inclusive
+    struct Acc { int self = 0, incl = 0; };
+    std::unordered_map<std::string, Acc> mods, funcs, callers, callers2, under1, under2, under3;
+    // the tree under sDrawGameScreen (D2R 0x93B40): what each pass calls, two and three levels down
+    const DWORD64 drawRoot = (DWORD64)GetModuleHandleW(nullptr) + 0x93B40;
+    int underN = 0;
+    std::unordered_map<DWORD64, std::pair<std::string, DWORD64>> modCache;
+    auto modOf = [&](DWORD64 pc) -> std::pair<std::string, DWORD64> {
+        const DWORD64 page = pc & ~0xFFFull;
+        auto it = modCache.find(page);
+        if (it != modCache.end()) return it->second;
+        DWORD64 base = 0; std::string m = ModuleOf(pc, &base);
+        return modCache[page] = {m, base};
+    };
+    auto funcOf = [&](DWORD64 pc) -> std::string {
+        auto [m, base] = modOf(pc);
+        DWORD64 ib = 0;
+        PRUNTIME_FUNCTION f = FindFunction(pc, &ib);
+        char b[128];
+        if (f && ib) snprintf(b, sizeof b, "%s+0x%llX", m.c_str(), (unsigned long long)f->BeginAddress);
+        else snprintf(b, sizeof b, "%s+0x%llX?", m.c_str(), (unsigned long long)(base ? pc - base : pc));
+        return b;
+    };
+    for (int i = 0; i < count; ++i) {
+        const Sample& sm = samples[i];
+        {
+            int r = -1;
+            for (int d = 0; d < sm.n; ++d) {
+                DWORD64 ib = 0;
+                PRUNTIME_FUNCTION f = FindFunction(sm.pc[d], &ib);
+                if (f && ib + f->BeginAddress == drawRoot) { r = d; break; }
+            }
+            if (r >= 1) {
+                ++underN;
+                const std::string a = funcOf(sm.pc[r - 1]);
+                under1[a].incl++;
+                if (r >= 2) {
+                    const std::string b = a + " > " + funcOf(sm.pc[r - 2]);
+                    under2[b].incl++;
+                    if (r >= 3) under3[b + " > " + funcOf(sm.pc[r - 3])].incl++;
+                }
+            }
+        }
+        std::vector<std::string> seenM, seenF;
+        for (int d = 0; d < sm.n; ++d) {
+            const std::string m = modOf(sm.pc[d]).first, fn = funcOf(sm.pc[d]);
+            if (d == 0) { mods[m].self++; funcs[fn].self++; }
+            // who calls the leaf, and the first caller outside the system DLLs (ntdll, kernel, win32u, D3D12Core, the driver)
+            if (d == 1) callers[funcOf(sm.pc[0]) + " <- " + fn].self++;
+            if (d >= 1 && m != "ntdll.dll" && m != "KERNELBASE.dll" && m != "kernel32.dll" && m != "win32u.dll" &&
+                m != "D3D12Core.dll" && m != "nvwgf2umx.dll" && m != "?" && seenM.empty() == false) {
+                static thread_local int lastSample = -1;
+                if (lastSample != i) { lastSample = i; callers2[modOf(sm.pc[0]).first + " <- " + fn].self++; }
+            }
+            if (std::find(seenM.begin(), seenM.end(), m) == seenM.end()) { seenM.push_back(m); mods[m].incl++; }
+            if (std::find(seenF.begin(), seenF.end(), fn) == seenF.end()) { seenF.push_back(fn); funcs[fn].incl++; }
+        }
+    }
+    auto dump = [&](const char* what, std::unordered_map<std::string, Acc>& map, bool bySelf, size_t top) {
+        std::vector<std::pair<std::string, Acc>> v(map.begin(), map.end());
+        std::sort(v.begin(), v.end(), [&](auto& a, auto& b) { return bySelf ? a.second.self > b.second.self : a.second.incl > b.second.incl; });
+        LogF("vrcam: profile_draw %s (%d samples):", what, count);
+        for (size_t i = 0; i < v.size() && i < top; ++i)
+            LogF("vrcam:   %5.1f%% self %5.1f%% incl  %s", 100.0 * v[i].second.self / count, 100.0 * v[i].second.incl / count, v[i].first.c_str());
+    };
+    {   // every sample's stack as module+rva, leaf first, for an offline call tree (tools/prof_tree.py)
+        wchar_t path[MAX_PATH];
+        wcscpy_s(path, g_iniPath);
+        if (wchar_t* slash = wcsrchr(path, L'\\')) *slash = 0;
+        wcscat_s(path, L"\\..\\logs\\d2r_vr_profile.txt");
+        if (FILE* fp = _wfopen(path, L"w")) {
+            for (int i = 0; i < count; ++i) {
+                for (int d = 0; d < samples[i].n; ++d) {
+                    auto [m, base] = modOf(samples[i].pc[d]);
+                    fprintf(fp, "%s%s+%llX", d ? " " : "", m.c_str(), (unsigned long long)(base ? samples[i].pc[d] - base : samples[i].pc[d]));
+                }
+                fputc('\n', fp);
+            }
+            fclose(fp);
+            Log("vrcam: profile_draw - the stacks went to d2rloader\\logs\\d2r_vr_profile.txt");
+        }
+    }
+    if (count) {
+        dump("modules", mods, false, 14);
+        dump("functions by self", funcs, true, 25);
+        dump("functions by inclusive", funcs, false, 20);
+        dump("leaf <- its caller", callers, true, 30);
+        LogF("vrcam: profile_draw - %d of %d samples inside sDrawGameScreen (0x93B40)", underN, count);
+        dump("under sDrawGameScreen, level 1", under1, false, 15);
+        dump("under sDrawGameScreen, level 2", under2, false, 25);
+        dump("under sDrawGameScreen, level 3", under3, false, 30);
+        dump("leaf module <- first caller in an app module", callers2, true, 30);
+    }
+    g_running.store(false);
+    return 0;
+}
+
+
+// From the present callback (the draw thread): start a run when asked.
+void Tick() {
+    if (!g_want.load() || g_running.exchange(true)) return;
+    g_want.store(false);
+    Log("vrcam: profile_draw - sampling the draw thread for 5 s");
+    if (HANDLE h = CreateThread(nullptr, 0, Run, (void*)(uintptr_t)GetCurrentThreadId(), 0, nullptr)) CloseHandle(h);
+    else g_running.store(false);
+}
+}  // namespace drawprof
+
+// One CPU pass for two GPU frames - first, can it be done at all? (2026-10-09)
+// [debug] cb_compare=1 (read when vrcam joins ReShade: the game restarted with it)
+// listens to every root constant buffer and root constant the game binds; each time
+// [debug] cb_compare_go turns 1, one stereo pair is recorded - the left pass's
+// bindings, then the right's - and compared: how many of the right eye's constants
+// the left eye had byte for byte, and, by root parameter, which ones differ. If only
+// a few (the camera's) differ, the left eye's command lists can be replayed for the
+// right eye with those patched; if every object's own constants differ, they hold
+// the view and replay is out.
+namespace cbcmp {
+using namespace reshade::api;
+std::atomic<bool> g_on{false}, g_go{false};
+std::atomic<int> g_state{0};   // 0 idle, 1 armed for the next pair, 2 recording
+std::atomic<int> g_eyeRec{0};
+constexpr int kMax = 40000, kHead = 4096;   // the whole 4 KB: camera buffers keep four views, the last at word 596
+struct Rec { uint64_t hash; uint32_t param, kind, len, tid; uint64_t layout; uint8_t head[kHead]; };
+Rec* g_rec[2] = {nullptr, nullptr};
+float g_view[2][16] = {};   // vrcam's view (row-major, v*M) for each eye, the last one built while recording
+void NoteView(int eye, const float v[16]) { if (g_state.load(std::memory_order_relaxed) == 2) memcpy(g_view[eye & 1], v, sizeof g_view[0]); }
+std::atomic<int> g_n[2];
+SRWLOCK g_lock = SRWLOCK_INIT;
+
+uint64_t Fnv(const uint8_t* p, size_t n) {
+    uint64_t h = 1469598103934665603ull;
+    for (size_t i = 0; i < n; ++i) { h ^= p[i]; h *= 1099511628211ull; }
+    return h;
+}
+
+void Add(uint32_t kind, uint64_t layout, uint32_t param, const void* data, uint32_t len) {
+    const int e = g_eyeRec.load() & 1;
+    const int i = g_n[e].fetch_add(1);
+    if (i >= kMax) return;
+    Rec& r = g_rec[e][i];
+    r.kind = kind; r.layout = layout; r.param = param; r.tid = GetCurrentThreadId();
+    r.len = std::min<uint32_t>(len, kHead);
+    memcpy(r.head, data, r.len);
+    r.hash = Fnv(r.head, r.len) ^ ((uint64_t)r.len << 56);
+}
+
+void OnPushDescriptors(command_list* cl, shader_stage, pipeline_layout layout, uint32_t param, const descriptor_table_update& u) {
+    if (g_state.load(std::memory_order_relaxed) != 2 || u.type != descriptor_type::constant_buffer || !u.count || !u.descriptors) return;
+    const buffer_range& br = static_cast<const buffer_range*>(u.descriptors)[0];
+    device* dev = cl->get_device();
+    const resource_desc d = dev->get_resource_desc(br.buffer);
+    if (d.type != resource_type::buffer || br.offset >= d.buffer.size) return;
+    const uint64_t len = std::min<uint64_t>(kHead, d.buffer.size - br.offset);
+    void* p = nullptr;
+    if (!dev->map_buffer_region(br.buffer, br.offset, len, map_access::read_only, &p) || !p) return;
+    uint8_t tmp[kHead];
+    __try { memcpy(tmp, p, (size_t)len); } __except (EXCEPTION_EXECUTE_HANDLER) { dev->unmap_buffer_region(br.buffer); return; }
+    dev->unmap_buffer_region(br.buffer);
+    Add(1, layout.handle, param, tmp, (uint32_t)len);
+}
+
+void OnPushConstants(command_list*, shader_stage, pipeline_layout layout, uint32_t param, uint32_t first, uint32_t count, const void* values) {
+    if (g_state.load(std::memory_order_relaxed) != 2 || !values) return;
+    Add(2, layout.handle, param | (first << 16), values, count * 4);
+}
+
+void Register() {
+    if (!IniB(L"debug", L"cb_compare", false)) return;
+    g_rec[0] = (Rec*)VirtualAlloc(nullptr, sizeof(Rec) * kMax, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    g_rec[1] = (Rec*)VirtualAlloc(nullptr, sizeof(Rec) * kMax, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    if (!g_rec[0] || !g_rec[1]) return;
+    reshade::register_event<reshade::addon_event::push_descriptors>(&OnPushDescriptors);
+    reshade::register_event<reshade::addon_event::push_constants>(&OnPushConstants);
+    g_on.store(true);
+    Log("vrcam: cb_compare on - [debug] cb_compare_go=1 records one stereo pair's constant buffers");
+}
+
+// The pair's hook, before the left pass / between / after the right.
+void PairBegin() {
+    if (!g_on.load()) return;
+    if (g_go.exchange(false)) g_state.store(1);
+    if (g_state.load() == 1) { g_n[0] = 0; g_n[1] = 0; g_eyeRec = 0; g_state.store(2); }
+}
+void PairMiddle() { if (g_state.load() == 2) g_eyeRec = 1; }
+
+void Report() {
+    const int n0 = std::min<int>(g_n[0].load(), kMax), n1 = std::min<int>(g_n[1].load(), kMax);
+    std::unordered_map<uint64_t, int> left;
+    for (int i = 0; i < n0; ++i) left[g_rec[0][i].hash]++;
+    struct By { int n = 0, same = 0, firstDiff = -1; uint32_t len = 0; uint64_t layout = 0; };
+    std::map<std::pair<uint32_t, uint32_t>, By> by;   // (kind, param)
+    int same = 0;
+    for (int i = 0; i < n1; ++i) {
+        const Rec& r = g_rec[1][i];
+        By& b = by[{r.kind, r.param}];
+        b.n++; b.len = r.len; b.layout = r.layout;
+        auto it = left.find(r.hash);
+        if (it != left.end() && it->second > 0) { it->second--; same++; b.same++; }
+        else if (b.firstDiff < 0) b.firstDiff = i;
+    }
+    LogF("vrcam: cb_compare - left %d bindings, right %d; %d of the right eye's (%.1f%%) the left eye had byte for byte",
+         n0, n1, same, n1 ? 100.0 * same / n1 : 0.0);
+    for (auto& [k, b] : by) {
+        if (b.n == b.same) continue;
+        LogF("vrcam:   differ: %s param %u (first %u) layout %llX - %d of %d differ, %u bytes read",
+             k.first == 1 ? "root CBV" : "root constants", k.second & 0xFFFF, k.second >> 16,
+             (unsigned long long)b.layout, b.n - b.same, b.n, b.len);
+    }
+    // the first differing binding of the three most common differing params: its floats, right eye and
+    // the left eye's binding of the same param at the same position in the draw thread's order
+    int shown = 0;
+    for (auto& [k, b] : by) {
+        if (b.n == b.same || b.firstDiff < 0 || shown >= 4) continue;
+        ++shown;
+        const Rec& r = g_rec[1][b.firstDiff];
+        int nth = 0;
+        for (int i = 0; i < b.firstDiff; ++i) if (g_rec[1][i].kind == r.kind && g_rec[1][i].param == r.param && g_rec[1][i].tid == r.tid) ++nth;
+        const Rec* l = nullptr;
+        for (int i = 0, m = 0; i < n0; ++i)
+            if (g_rec[0][i].kind == r.kind && g_rec[0][i].param == r.param) { if (m++ == nth) { l = &g_rec[0][i]; break; } }
+        for (int part = 0; part < 2; ++part) {
+            const Rec* x = part ? l : &r;
+            if (!x) continue;
+            std::string line;
+            char b2[32];
+            const float* f = (const float*)x->head;
+            for (uint32_t j = 0; j < std::min<uint32_t>(x->len / 4, 40); ++j) { snprintf(b2, sizeof b2, "%s%.4g", j ? " " : "", f[j]); line += b2; }
+            LogF("vrcam:   %s param %u %s: %.200s", k.first == 1 ? "CBV" : "consts", k.second & 0xFFFF, part ? "left " : "right", line.c_str());
+            if (line.size() > 200) LogF("vrcam:      ...%.200s", line.c_str() + 200);
+        }
+    }
+}
+// Both eyes' records to d2rloader\logs\d2r_vr_cbdump.bin for tools/cb_diff.py:
+// "CBD1", then per eye an int count and the records as they are (Rec, packed by the compiler).
+void Dump() {
+    wchar_t path[MAX_PATH];
+    wcscpy_s(path, g_iniPath);
+    if (wchar_t* slash = wcsrchr(path, L'\\')) *slash = 0;
+    wcscat_s(path, L"\\..\\logs\\d2r_vr_cbdump.bin");
+    FILE* f = _wfopen(path, L"wb");
+    if (!f) return;
+    fwrite("CBD1", 1, 4, f);
+    const uint32_t recSize = sizeof(Rec);
+    fwrite(&recSize, 4, 1, f);
+    for (int e = 0; e < 2; ++e) {
+        const int n = std::min<int>(g_n[e].load(), kMax);
+        fwrite(&n, 4, 1, f);
+        fwrite(g_rec[e], sizeof(Rec), n, f);
+    }
+    fwrite("VIEW", 1, 4, f);
+    fwrite(g_view, sizeof g_view, 1, f);
+    fclose(f);
+    Log("vrcam: cb_compare - both eyes' records went to d2rloader\\logs\\d2r_vr_cbdump.bin");
+}
+void PairEnd() {
+    if (g_state.load() != 2) return;
+    g_state.store(0);
+    Report();
+    Dump();
+}
+}  // namespace cbcmp
+
+// The submissions of one stereo pair, for replaying the left eye's command lists as
+// the right eye's ([debug] replay_trace=1 when vrcam joins ReShade; replay_trace_go
+// 0 -> 1 records one pair): command lists reset, closed and executed (queue, list),
+// the back buffer bound as a render target (which list draws the final picture),
+// the queue's Signal and Wait (the game's frame fences, D3D12Core hooked through the
+// queue's vtable) and Present - in order, with the time, thread and eye, to
+// d2rloader\logs\d2r_vr_replaytrace.txt.
+namespace rtrace {
+using namespace reshade::api;
+std::atomic<bool> g_on{false}, g_go{false};
+std::atomic<int> g_state{0};   // 0 idle, 1 armed, 2 recording
+struct Ev { double t; DWORD tid; int eye; char kind; uint64_t a, b, c; };
+constexpr int kMax = 60000;
+Ev* g_ev = nullptr;
+std::atomic<int> g_n{0};
+double g_t0 = 0.0;
+std::atomic<uint64_t> g_bb[8];   // the swap chain's back buffers (resource handles), from Present
+
+void Add(char kind, uint64_t a, uint64_t b = 0, uint64_t c = 0) {
+    if (g_state.load(std::memory_order_relaxed) != 2) return;
+    const int i = g_n.fetch_add(1);
+    if (i >= kMax) return;
+    g_ev[i] = {pairtime::UsNow() - g_t0, GetCurrentThreadId(), g_eye.load(), kind, a, b, c};
+}
+
+void OnReset(command_list* cl) { Add('R', (uint64_t)cl->get_native()); }
+void OnClose(command_list* cl) { Add('C', (uint64_t)cl->get_native()); }
+void OnExecute(command_queue* q, command_list* cl) { Add('X', (uint64_t)q->get_native(), (uint64_t)cl->get_native(), (uint64_t)q->get_type()); }
+void OnPresent(command_queue* q, swapchain* sc, const rect*, const rect*, uint32_t, const rect*) {
+    const uint32_t n = std::min<uint32_t>(sc->get_back_buffer_count(), 8);
+    for (uint32_t i = 0; i < n; ++i) g_bb[i] = sc->get_back_buffer(i).handle;
+    Add('P', (uint64_t)q->get_native(), (uint64_t)sc->get_native(), sc->get_current_back_buffer_index());
+}
+void OnBindRT(command_list* cl, uint32_t count, const resource_view* rtvs, resource_view) {
+    if (g_state.load(std::memory_order_relaxed) != 2) return;
+    device* dev = cl->get_device();
+    for (uint32_t i = 0; i < count; ++i) {
+        if (!rtvs[i].handle) continue;
+        const uint64_t r = dev->get_resource_from_view(rtvs[i]).handle;
+        for (int k = 0; k < 8; ++k)
+            if (r && g_bb[k].load() == r) { Add('B', (uint64_t)cl->get_native(), r, k); break; }
+    }
+}
+
+using SignalFn = HRESULT(STDMETHODCALLTYPE*)(ID3D12CommandQueue*, ID3D12Fence*, UINT64);
+using WaitFn = HRESULT(STDMETHODCALLTYPE*)(ID3D12CommandQueue*, ID3D12Fence*, UINT64);
+SignalFn OrigSignal = nullptr;
+WaitFn OrigWait = nullptr;
+HRESULT STDMETHODCALLTYPE HookSignal(ID3D12CommandQueue* q, ID3D12Fence* f, UINT64 v) { Add('S', (uint64_t)q, (uint64_t)f, v); return OrigSignal(q, f, v); }
+HRESULT STDMETHODCALLTYPE HookWait(ID3D12CommandQueue* q, ID3D12Fence* f, UINT64 v) { Add('W', (uint64_t)q, (uint64_t)f, v); return OrigWait(q, f, v); }
+std::atomic<bool> g_hooked{false};
+void HookQueue(command_queue* q) {
+    if (g_hooked.exchange(true)) return;
+    void** vt = *(void***)q->get_native();
+    const bool ok = MH_CreateHook(vt[14], (void*)&HookSignal, (void**)&OrigSignal) == MH_OK && MH_EnableHook(vt[14]) == MH_OK &&
+                    MH_CreateHook(vt[15], (void*)&HookWait, (void**)&OrigWait) == MH_OK && MH_EnableHook(vt[15]) == MH_OK;
+    LogF("vrcam: replay_trace - queue Signal/Wait hooks %s", ok ? "in" : "FAILED");
+}
+void OnExecuteHook(command_queue* q, command_list* cl) { HookQueue(q); OnExecute(q, cl); }
+
+void Register() {
+    if (!IniB(L"debug", L"replay_trace", false)) return;
+    g_ev = (Ev*)VirtualAlloc(nullptr, sizeof(Ev) * kMax, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    if (!g_ev) return;
+    reshade::register_event<reshade::addon_event::reset_command_list>(&OnReset);
+    reshade::register_event<reshade::addon_event::close_command_list>(&OnClose);
+    reshade::register_event<reshade::addon_event::execute_command_list>(&OnExecuteHook);
+    reshade::register_event<reshade::addon_event::present>(&OnPresent);
+    reshade::register_event<reshade::addon_event::bind_render_targets_and_depth_stencil>(&OnBindRT);
+    g_on.store(true);
+    Log("vrcam: replay_trace on - [debug] replay_trace_go=1 records one stereo pair's submissions");
+}
+
+void PairBegin() {
+    if (!g_on.load()) return;
+    if (g_go.exchange(false)) { g_n = 0; g_t0 = pairtime::UsNow(); g_state.store(2); Add('L', 0); }
+}
+void PairMiddle() { Add('M', 0); }
+// After the right pass: its Present (at the end of PrismBlit) is in.
+void PairEnd() {
+    if (g_state.load() != 2) return;
+    Add('E', 0);
+    g_state.store(0);
+    wchar_t path[MAX_PATH];
+    wcscpy_s(path, g_iniPath);
+    if (wchar_t* slash = wcsrchr(path, L'\\')) *slash = 0;
+    wcscat_s(path, L"\\..\\logs\\d2r_vr_replaytrace.txt");
+    FILE* f = _wfopen(path, L"w");
+    if (!f) return;
+    const int n = std::min<int>(g_n.load(), kMax);
+    for (int i = 0; i < n; ++i) {
+        const Ev& e = g_ev[i];
+        fprintf(f, "%9.1f %6lu e%d %c %llX %llX %llX\n", e.t, e.tid, e.eye, e.kind,
+                (unsigned long long)e.a, (unsigned long long)e.b, (unsigned long long)e.c);
+    }
+    fclose(f);
+    LogF("vrcam: replay_trace - %d events of one pair to d2rloader\\logs\\d2r_vr_replaytrace.txt", n);
+}
+}  // namespace rtrace
+
+// One CPU pass, two GPU frames - prototype ([debug] replay_proto=1 when vrcam joins
+// ReShade; [stereo] replay_right live: 1 replay, 3 no replay - the left picture twice).
+// The left eye's pass runs as ever; its direct and compute command lists are noted
+// as the game executes them (the copy queue's uploads are not: their data stays where
+// they put it). Its Present is held back: in the flip model a presented back buffer
+// belongs to DXGI - reading it, or drawing into it again, removed the device
+// (0x887A002B, access denied). Instead the left picture is copied out of the back
+// buffer, the noted lists are executed once more on the same queues (our own fence
+// between them) - they draw into the same back buffer, still the current one - and
+// that is presented as the right eye; then the left copy goes into the next back
+// buffer and is presented as the left eye. Both through the game's swap chain
+// (ReShade's proxy: the effects and FlatVR's add-on run on them). The camera's
+// constant buffers are not patched yet: the right eye is the left one again - this
+// proves the replay. DLSS must be off (its evaluation is recorded with one history).
+// The right eye's camera in the replayed lists. The game's per-object constants are
+// the same for both eyes (cb_compare); the camera's are not. Its constant buffers are
+// found as the left pass binds them: the native command lists' Set*RootSignature and
+// Set*RootConstantBufferView are hooked; each (root signature, parameter) is judged
+// once by its content (does it hold the left eye's view matrix, or the camera's
+// position?), and the camera ones' GPU addresses are noted. The game's upload buffers
+// are known from ReShade's init_resource (vrcam joins before the game makes its
+// device), so a GPU address reads as CPU memory. After the left pass is done on the
+// GPU those buffers are rewritten for the right eye - the view, its inverse, view *
+// projection and its inverse, the camera position - and the lists run again.
+namespace camfix {
+using namespace reshade::api;
+struct Upload { uint64_t va, size; uint8_t* cpu; uint64_t res; };
+std::vector<Upload> g_uploads;     // sorted by va
+SRWLOCK g_upLock = SRWLOCK_INIT;
+std::atomic<bool> g_capture{false};
+std::atomic<uint32_t> g_patched{0};
+std::atomic<uint32_t> g_nNote{0}, g_nNoRS{0}, g_nNoCpu{0}, g_nJudged{0}, g_nUploads{0}, g_nInit{0};
+
+void OnInitResource(device* dev, const resource_desc& d, const subresource_data*, resource_usage, resource res) {
+    if (d.type == resource_type::buffer) g_nInit.fetch_add(1);
+    if (d.type != resource_type::buffer || d.heap != memory_heap::cpu_to_gpu) return;
+    g_nUploads.fetch_add(1);
+    ID3D12Resource* r = (ID3D12Resource*)res.handle;
+    void* cpu = nullptr;
+    if (!dev->map_buffer_region(res, 0, UINT64_MAX, map_access::write_only, &cpu) || !cpu) return;
+    const Upload u{r->GetGPUVirtualAddress(), d.buffer.size, (uint8_t*)cpu, res.handle};
+    AcquireSRWLockExclusive(&g_upLock);
+    g_uploads.insert(std::upper_bound(g_uploads.begin(), g_uploads.end(), u, [](const Upload& a, const Upload& b) { return a.va < b.va; }), u);
+    ReleaseSRWLockExclusive(&g_upLock);
+}
+void OnDestroyResource(device*, resource res) {
+    AcquireSRWLockExclusive(&g_upLock);
+    for (size_t i = 0; i < g_uploads.size(); ++i)
+        if (g_uploads[i].res == res.handle) { g_uploads.erase(g_uploads.begin() + i); break; }
+    ReleaseSRWLockExclusive(&g_upLock);
+}
+// CPU memory of a GPU address in an upload buffer, and how many bytes follow it there.
+uint8_t* Cpu(uint64_t va, uint64_t* room) {
+    AcquireSRWLockShared(&g_upLock);
+    uint8_t* out = nullptr;
+    auto it = std::upper_bound(g_uploads.begin(), g_uploads.end(), va, [](uint64_t v, const Upload& u) { return v < u.va; });
+    if (it != g_uploads.begin()) {
+        --it;
+        if (va < it->va + it->size) { out = it->cpu + (va - it->va); *room = it->va + it->size - va; }
+    }
+    ReleaseSRWLockShared(&g_upLock);
+    return out;
+}
+
+// the left view (row-major, v*M) and the right one: the half-eye shift taken twice off x
+void Views(double L[16], double R[16]) {
+    float v[16];
+    AcquireSRWLockShared(&g_leftViewLock); memcpy(v, g_leftView, sizeof v); ReleaseSRWLockShared(&g_leftViewLock);
+    for (int i = 0; i < 16; ++i) L[i] = R[i] = v[i];
+    R[12] = L[12] - 2.0 * g_eyeHalf.load();
+}
+bool Inv4(const double M[16], double out[16]) {   // Gauss-Jordan, partial pivoting
+    double a[4][8];
+    for (int r = 0; r < 4; ++r) for (int c = 0; c < 4; ++c) { a[r][c] = M[r * 4 + c]; a[r][4 + c] = r == c ? 1.0 : 0.0; }
+    for (int c = 0; c < 4; ++c) {
+        int piv = c;
+        for (int r = c + 1; r < 4; ++r) if (fabs(a[r][c]) > fabs(a[piv][c])) piv = r;
+        if (fabs(a[piv][c]) < 1e-12) return false;
+        if (piv != c) for (int k = 0; k < 8; ++k) std::swap(a[c][k], a[piv][k]);
+        const double d = 1.0 / a[c][c];
+        for (int k = 0; k < 8; ++k) a[c][k] *= d;
+        for (int r = 0; r < 4; ++r) {
+            if (r == c || a[r][c] == 0.0) continue;
+            const double m = a[r][c];
+            for (int k = 0; k < 8; ++k) a[r][k] -= m * a[c][k];
+        }
+    }
+    for (int r = 0; r < 4; ++r) for (int c = 0; c < 4; ++c) out[r * 4 + c] = a[r][4 + c];
+    return true;
+}
+void InvRigid(const double V[16], double out[16]) {   // rotation transposed, translation -t*R^T
+    for (int r = 0; r < 3; ++r) for (int c = 0; c < 3; ++c) out[r * 4 + c] = V[c * 4 + r];
+    out[3] = out[7] = out[11] = 0.0;
+    for (int c = 0; c < 3; ++c) out[12 + c] = -(V[12] * out[c] + V[13] * out[4 + c] + V[14] * out[8 + c]);
+    out[15] = 1.0;
+}
+void Mul(const double A[16], const double B[16], double out[16]) {
+    for (int r = 0; r < 4; ++r) for (int c = 0; c < 4; ++c) {
+        double s = 0.0;
+        for (int k = 0; k < 4; ++k) s += A[r * 4 + k] * B[k * 4 + c];
+        out[r * 4 + c] = s;
+    }
+}
+bool Near(const float* f, const double* m, int n, double rel, double abs_) {
+    for (int i = 0; i < n; ++i) if (fabs(f[i] - m[i]) > abs_ + rel * fabs(m[i])) return false;
+    return true;
+}
+void Put(float* f, const double* m, int n) { for (int i = 0; i < n; ++i) f[i] = (float)m[i]; }
+
+// Where a camera buffer keeps the view: learned once per (root signature, parameter)
+// against the left view vrcam built (loosely - that one may have moved on with the
+// head since), then rewritten from the buffer's own view each time.
+struct Layout {
+    // view matrices (row-major, v*M) at these words: D2R's camera buffers keep five - four camera
+    // records of 192 words (20, 212, 404, 596) and one more at 788 (two passes: all five move for
+    // the right eye; with four looked for the fifth, which the shadows use, stayed the left one's)
+    int nv = 0, vo[8] = {};
+    uint8_t parts[8] = {};         // 2 its inverse follows, 4 view*projection at +64 (projection at +32), 8 its inverse at +80
+    int nc = 0, co[4] = {};        // the camera position on its own
+};
+bool Rigid(const float* m) {   // rows 0-2 a rotation, column 3 = (0,0,0,1)
+    for (int r = 0; r < 3; ++r) {
+        double len = 0.0;
+        for (int c = 0; c < 3; ++c) len += (double)m[r * 4 + c] * m[r * 4 + c];
+        if (fabs(len - 1.0) > 1e-3 || fabs(m[r * 4 + 3]) > 1e-6) return false;
+    }
+    return fabs(m[15] - 1.0f) < 1e-6;
+}
+// The view and what goes with it, judged against the left view L: rotation within 0.05,
+// translation within 2 units (the head may have turned a little since L was built).
+Layout Learn(const float* f, int n, const double L[16]) {
+    Layout lay;
+    double iL[16];
+    InvRigid(L, iL);
+    std::vector<int> covered;
+    for (int o = 0; o + 16 <= n && lay.nv < 8; ++o) {
+        if (!Rigid(f + o) || !Near(f + o, L, 12, 0.0, 0.05) || !Near(f + o + 12, L + 12, 3, 0.0, 2.0)) continue;
+        double V[16], iV[16];
+        for (int i = 0; i < 16; ++i) V[i] = f[o + i];
+        InvRigid(V, iV);
+        uint8_t parts = 0;
+        if (o + 32 <= n && Near(f + o + 16, iV, 16, 1e-5, 2e-2)) parts |= 2;
+        if (o + 96 <= n) {
+            double P[16], Pi[16], vp[16], ivp[16];
+            for (int i = 0; i < 16; ++i) { P[i] = f[o + 32 + i]; Pi[i] = f[o + 48 + i]; }
+            Mul(V, P, vp);
+            if (Near(f + o + 64, vp, 16, 1e-4, 1e-2)) {
+                parts |= 4;
+                Mul(Pi, iV, ivp);
+                if (Near(f + o + 80, ivp, 16, 1e-3, 1e-1)) parts |= 8;
+            }
+        }
+        lay.vo[lay.nv] = o; lay.parts[lay.nv] = parts; ++lay.nv;
+        covered.push_back(o);
+        if (parts & 2) covered.push_back(o + 16);
+        o += 15;
+    }
+    for (int o = 0; o + 3 <= n && lay.nc < 4; ++o) {
+        if (!Near(f + o, iL + 12, 3, 0.0, 0.25) || fabs(f[o]) < 10.0f) continue;   // a position out in the world, not a small number
+        bool inside = false;
+        for (int c : covered) if (o >= c && o < c + 16) inside = true;
+        if (inside) continue;
+        lay.co[lay.nc++] = o;
+        o += 2;
+    }
+    return lay;
+}
+// The right eye's values over the left eye's, by the learned layout: the buffer's own
+// view moved by the eye separation along its x (vrcam's half-eye shift, twice).
+// prev (row-major) moved by the right eye's frustum: prev * inverse(P) * P_right, P_right = the
+// fold's T(-shift) * P with the other off-axis shift. False if P is not ours.
+bool PrevMoved(const float* f, int o, double shift, double out[16]) {
+    const double sx = g_projSx.load();
+    if (sx == 0.0 || fabs(f[o + 32] - sx) > 1e-3 * fabs(sx)) return false;
+    double P[16], Pr[16], Pi[16], prev[16], C[16];
+    for (int i = 0; i < 16; ++i) { P[i] = f[o + 32 + i]; prev[i] = f[o + 96 + i]; }
+    for (int i = 0; i < 16; ++i) Pr[i] = P[i];
+    Pr[8] -= 2.0 * g_projShift.load();
+    for (int c = 0; c < 4; ++c) Pr[12 + c] = Pr[12 + c] - shift * Pr[c];
+    if (!Inv4(P, Pi)) return false;
+    Mul(Pi, Pr, C);
+    Mul(prev, C, out);
+    for (int i = 0; i < 16; ++i) if (!std::isfinite(out[i])) return false;
+    return true;
+}
+// Both eyes' staged values (see g_replayPrev): each camera record's last-frame view*projection
+// made the right eye's.
+void PrevToRightEye(float* f, int n, const Layout& lay, double shift) {
+    if (!g_replayPrev.load()) return;
+    const int mask = g_viewMask.load() ? g_viewMask.load() : (1 << g_replayViews.load()) - 1;
+    for (int k = 0; k < lay.nv; ++k) {
+        if (!(mask & (1 << k)) || !(lay.parts[k] & 4)) continue;
+        const int o = lay.vo[k];
+        if (o + 112 > n) continue;
+        double out[16];
+        if (PrevMoved(f, o, shift, out)) Put(f + o + 96, out, 16);
+    }
+}
+int PatchKnown(float* f, int n, const Layout& lay, double shift, const double right[3]) {
+    int done = 0;
+    double ax[3] = {right[0], right[1], right[2]};
+    const int mask = g_viewMask.load() ? g_viewMask.load() : (1 << g_replayViews.load()) - 1;
+    for (int k = 0; k < lay.nv; ++k) {
+        if (!(mask & (1 << k))) continue;
+        // Folded (replay_proj 3), a view with no projection beside it stays the left one: what reads
+        // it pairs it with a projection that carries the eye's shift already (D2R's view at word
+        // 980 moved too put the right eye's shading off by a second eye's shift, 2026-10-10).
+        if (g_projFix.load() == 3 && !(lay.parts[k] & 4)) continue;
+        const int o = lay.vo[k];
+        if (o + 16 > n || !Rigid(f + o)) continue;
+        double V[16], R[16], iV[16], iR[16];
+        for (int i = 0; i < 16; ++i) R[i] = V[i] = f[o + i];
+        ax[0] = V[0]; ax[1] = V[4]; ax[2] = V[8];   // the camera's right, in the world
+        // Folded (replay_proj 3): the view stays the left one, the projection takes the shift.
+        bool fold = false;
+        if (g_projFix.load() == 3 && (lay.parts[k] & 4) && o + 80 <= n) {
+            const double sx = g_projSx.load();
+            fold = sx != 0.0 && fabs(f[o + 32] - sx) < 1e-3 * fabs(sx);
+        }
+        {   // which way each view goes, once per (layout, view, way)
+            static std::vector<std::pair<int, int>> told;
+            static SRWLOCK tl = SRWLOCK_INIT;
+            const int way = fold ? 1 : 2;
+            const int pk = o + 48 <= n ? (int)(f[o + 32] * 1000.0f) : -1;
+            AcquireSRWLockExclusive(&tl);
+            bool seen = false;
+            for (const auto& t : told) if (t.first == pk && t.second == o * 4 + way) seen = true;
+            if (!seen && told.size() < 200) told.push_back({pk, o * 4 + way});
+            ReleaseSRWLockExclusive(&tl);
+            if (!seen) LogF("vrcam: replay - view at word %d (parts %u) %s: P %.4f %.4f %.4f %.4f / %.4f %.4f (ours x %.4f)", o, lay.parts[k],
+                            fold ? "FOLDED" : "MOVED", o + 48 <= n ? f[o + 32] : 0.f, o + 48 <= n ? f[o + 37] : 0.f,
+                            o + 48 <= n ? f[o + 40] : 0.f, o + 48 <= n ? f[o + 41] : 0.f, o + 48 <= n ? f[o + 43] : 0.f,
+                            o + 48 <= n ? f[o + 46] : 0.f, g_projSx.load());
+        }
+        // A view whose projection is not the eye's (orthographic, P 0.006 - 1.0: the shadow cascades'
+        // light cameras, turned nearly as the eye is and so taken for it) is no eye camera: moved,
+        // the right eye's shadow maps were drawn from a light shifted by the eyes' distance and its
+        // shadows lay where the left eye's were (2026-10-10). Left alone, in every mode.
+        if ((lay.parts[k] & 4) && o + 48 <= n) {
+            const double sx = g_projSx.load();
+            if (sx == 0.0 || fabs(f[o + 32] - sx) > 1e-3 * fabs(sx) || f[o + 43] == 0.0f) continue;
+        }
+        if (fold) {
+            double P[16], Pr[16], Pi[16], vp[16], ivp[16];
+            for (int i = 0; i < 16; ++i) P[i] = f[o + 32 + i];
+            P[8] -= 2.0 * g_projShift.load();   // the right eye's own off-axis frustum
+            // T * P, T moving x by -shift in view space (row-major, v*M): only row 3 changes
+            for (int i = 0; i < 16; ++i) Pr[i] = P[i];
+            for (int c = 0; c < 4; ++c) Pr[12 + c] = P[12 + c] - shift * P[c];
+            bool piOk = Inv4(Pr, Pi);
+            for (int i = 0; i < 16 && piOk; ++i) piOk = std::isfinite(Pi[i]);
+            Put(f + o + 32, Pr, 16);
+            if (piOk) Put(f + o + 48, Pi, 16);
+            Mul(V, Pr, vp);
+            Put(f + o + 64, vp, 16);
+            if ((lay.parts[k] & 8) && o + 96 <= n && piOk) {
+                InvRigid(V, iV);
+                Mul(Pi, iV, ivp);
+                Put(f + o + 80, ivp, 16);
+            }
+            ++done;
+            g_nFold.fetch_add(1, std::memory_order_relaxed);
+            continue;
+        }
+        g_nView.fetch_add(1, std::memory_order_relaxed);
+        R[12] -= shift;
+        InvRigid(V, iV); InvRigid(R, iR);
+        Put(f + o, R, 16);
+        if ((lay.parts[k] & 2) && o + 32 <= n) Put(f + o + 16, iR, 16);
+        if ((lay.parts[k] & 4) && o + 80 <= n) {
+            double P[16], vp[16];
+            for (int i = 0; i < 16; ++i) P[i] = f[o + 32 + i];
+            // The right eye's own off-axis frustum: the left pass's projection (ours - its x
+            // scale is vrcam's) shifted the other way. Without it the right eye had the left
+            // eye's shift: parallel eyes, the world in front of the screen ("mono").
+            double Pi[16];
+            bool piOk = false;
+            const double ps = g_projShift.load(), sx = g_projSx.load();
+            const int fix = g_projFix.load();
+            if (fix && ps != 0.0 && sx != 0.0 && fabs(P[0] - sx) < 1e-3 * fabs(sx)) {
+                P[8] -= 2.0 * ps;
+                Put(f + o + 32, P, 16);
+                if (fix == 1) {
+                    piOk = Inv4(P, Pi);
+                    for (int i = 0; i < 16 && piOk; ++i) piOk = std::isfinite(Pi[i]);
+                    if (piOk) Put(f + o + 48, Pi, 16);
+                }
+            }
+            Mul(R, P, vp);
+            Put(f + o + 64, vp, 16);
+            if ((lay.parts[k] & 8) && o + 96 <= n) {
+                double ivp[16];
+                if (!piOk) for (int i = 0; i < 16; ++i) Pi[i] = f[o + 48 + i];
+                Mul(Pi, iR, ivp);
+                Put(f + o + 80, ivp, 16);
+            }
+        }
+        ++done;
+    }
+    const int posMode = g_replayPositions.load();
+    for (int k = 0; k < (posMode == 1 || (posMode == 2 && lay.nc == 1) ? lay.nc : 0); ++k) {
+        const int o = lay.co[k];
+        if (o + 3 > n) continue;
+        for (int i = 0; i < 3; ++i) f[o + i] = (float)(f[o + i] + ax[i] * shift);
+        g_nPos.fetch_add(1, std::memory_order_relaxed);
+        ++done;
+    }
+    return done;
+}
+
+// One constant buffer, in place (words; n of them): returns what it found.
+int Patch(float* f, int n, const double L[16], const double R[16]) {
+    double iL[16], iR[16];
+    InvRigid(L, iL); InvRigid(R, iR);
+    int found = 0;
+    std::vector<int> covered;
+    for (int o = 0; o + 16 <= n; ++o) {
+        if (!Near(f + o, L, 16, 1e-5, 1e-3)) continue;
+        Put(f + o, R, 16); found |= 1; covered.push_back(o);
+        if (o + 32 <= n && Near(f + o + 16, iL, 16, 1e-5, 2e-2)) { Put(f + o + 16, iR, 16); found |= 2; covered.push_back(o + 16); }
+        if (o + 96 <= n) {
+            double P[16], Pi[16], vpL[16], vpR[16], ivpL[16], ivpR[16];
+            for (int i = 0; i < 16; ++i) { P[i] = f[o + 32 + i]; Pi[i] = f[o + 48 + i]; }
+            Mul(L, P, vpL); Mul(R, P, vpR);
+            if (Near(f + o + 64, vpL, 16, 1e-4, 1e-2)) {
+                Put(f + o + 64, vpR, 16); found |= 4;
+                Mul(Pi, iL, ivpL); Mul(Pi, iR, ivpR);
+                if (Near(f + o + 80, ivpL, 16, 1e-3, 1e-1)) { Put(f + o + 80, ivpR, 16); found |= 8; }
+            }
+        }
+        o += 15;
+    }
+    for (int o = 0; o + 3 <= n; ++o) {   // the camera position on its own (not inside a matrix just written)
+        if (!Near(f + o, iL + 12, 3, 1e-6, 1e-3)) continue;
+        bool inside = false;
+        for (int c : covered) if (o >= c && o < c + 16) inside = true;
+        if (inside) continue;
+        Put(f + o, iR + 12, 3); found |= 16;
+        o += 2;
+    }
+    return found;
+}
+
+// Native command list hooks: the current root signature per list, the camera bindings.
+using SetRSFn = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*, ID3D12RootSignature*);
+using SetCBVFn = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*, UINT, D3D12_GPU_VIRTUAL_ADDRESS);
+// D3D12 gives each command list type its own vtable (its own functions): the direct
+// lists' and the compute lists' are hooked, each with its own trampolines (slot).
+SetRSFn OrigSetGfxRS[2] = {}, OrigSetCompRS[2] = {};
+SetCBVFn OrigSetGfxCBV[2] = {}, OrigSetCompCBV[2] = {};
+thread_local ID3D12GraphicsCommandList* t_list = nullptr;
+thread_local ID3D12RootSignature* t_rs[2] = {};
+struct Key { ID3D12RootSignature* rs; UINT param; int verdict; Layout lay; };   // verdict 1 camera, 0 not
+std::vector<Key> g_keys;
+SRWLOCK g_keyLock = SRWLOCK_INIT;
+struct Va { uint64_t va; Layout lay; };
+std::vector<Va> g_vas;             // this left pass's camera buffers
+SRWLOCK g_vaLock = SRWLOCK_INIT;
+
+// Each thread's own cache of verdicts (31,000 root CBVs a pass: no lock on the way).
+struct Cached { ID3D12RootSignature* rs; UINT param; int verdict; };
+thread_local Cached t_cache[64] = {};
+thread_local uint32_t t_cacheGen = 0;
+extern std::atomic<uint32_t> g_keyGen;
+int VerdictSlow(ID3D12RootSignature* rs, UINT param, uint64_t va);
+inline int Verdict(ID3D12RootSignature* rs, UINT param, uint64_t va) {
+    if (t_cacheGen != g_keyGen.load(std::memory_order_relaxed)) { t_cacheGen = g_keyGen.load(); for (Cached& x : t_cache) x = {}; }
+    Cached& c = t_cache[(((uintptr_t)rs >> 4) ^ (param * 7u)) & 63];
+    if (c.rs == rs && c.param == param) return c.verdict;
+    const int v = VerdictSlow(rs, param, va);
+    if (v >= 0) c = {rs, param, v};
+    return v > 0 ? v : 0;
+}
+// -1: no verdict yet (not in an upload buffer this time)
+int VerdictSlow(ID3D12RootSignature* rs, UINT param, uint64_t va) {
+    AcquireSRWLockShared(&g_keyLock);
+    int v = -1;
+    for (size_t i = 0; i < g_keys.size(); ++i) if (g_keys[i].rs == rs && g_keys[i].param == param) { v = g_keys[i].verdict ? 1 + (int)i : 0; break; }
+    ReleaseSRWLockShared(&g_keyLock);
+    if (v >= 0) return v;
+    uint64_t room = 0;
+    uint8_t* cpu = Cpu(va, &room);
+    if (!cpu) { g_nNoCpu.fetch_add(1); return -1; }   // not an upload buffer: unknown this time, asked again next time
+    g_nJudged.fetch_add(1);
+    // the whole slot's worth (4 KB): judged by the first 1 KB, a buffer with its view further on
+    // (the right eye's shadows: one copy of the left view outside every slot) was no camera
+    float f[1024];
+    const int n = (int)std::min<uint64_t>(room, sizeof f) / 4;
+    memcpy(f, cpu, n * 4);
+    double L[16], R[16];
+    Views(L, R);
+    const Layout lay = Learn(f, n, L);
+    const bool cam = lay.nv || lay.nc;
+    AcquireSRWLockExclusive(&g_keyLock);
+    g_keys.push_back({rs, param, cam ? 1 : 0, lay});
+    v = cam ? (int)g_keys.size() : 0;   // 1 + its index
+    ReleaseSRWLockExclusive(&g_keyLock);
+    if (cam) {
+        char vs[160] = "";
+        for (int k = 0, at = 0; k < lay.nv && at < 150; ++k) at += snprintf(vs + at, sizeof vs - at, " %d(%u)", lay.vo[k], lay.parts[k]);
+        LogF("vrcam: replay - camera constants: root signature %p parameter %u - %d view(s) at%s, %d position(s) at %d %d %d %d",
+             (void*)rs, param, lay.nv, vs, lay.nc, lay.co[0], lay.co[1], lay.co[2], lay.co[3]);
+    }
+    return v;
+}
+uint64_t Redirect(uint64_t va, const Layout& lay, int key, bool* fresh);
+int KeyCount(int key);
+extern std::atomic<bool> g_redirect;
+extern std::atomic<int> g_nSlots;
+constexpr int kSlotsFwd = 256;
+// A "camera" key whose buffers fill the slots is an object's (its position near the hero
+// passed for the camera's): not a camera from now on, in every thread's cache too.
+std::atomic<uint32_t> g_keyGen{0};
+void Demote(int key) {
+    AcquireSRWLockExclusive(&g_keyLock);
+    if (g_keys[key - 1].verdict) {
+        g_keys[key - 1].verdict = 0;
+        g_keyGen.fetch_add(1);
+        LogF("vrcam: replay - root signature %p parameter %u: too many buffers a pass - an object's, not the camera's",
+             (void*)g_keys[key - 1].rs, g_keys[key - 1].param);
+    }
+    ReleaseSRWLockExclusive(&g_keyLock);
+}
+uint64_t Note(int which, ID3D12GraphicsCommandList* cl, UINT param, uint64_t va) {
+    if (!g_capture.load(std::memory_order_relaxed) || !va) return 0;
+    ID3D12RootSignature* rs = t_list == cl ? t_rs[which] : nullptr;
+    if (!rs) return 0;
+    const int key = Verdict(rs, param, va);
+    if (!key) return 0;
+    AcquireSRWLockShared(&g_keyLock);
+    const Layout lay = g_keys[key - 1].lay;
+    ReleaseSRWLockShared(&g_keyLock);
+    if (g_redirect.load(std::memory_order_relaxed)) {
+        bool fresh = false;
+        const uint64_t to = Redirect(va, lay, key, &fresh);
+        if (fresh && !lay.nv && KeyCount(key) > 24) Demote(key);   // a position-only key with a 25th buffer in a pass: an object's
+        return to;
+    }
+    AcquireSRWLockExclusive(&g_vaLock);
+    bool seen = false;
+    for (const Va& x : g_vas) if (x.va == va) { seen = true; break; }
+    if (!seen) g_vas.push_back({va, lay});
+    ReleaseSRWLockExclusive(&g_vaLock);
+    return 0;
+}
+template <int S> void STDMETHODCALLTYPE HookSetGfxRS(ID3D12GraphicsCommandList* cl, ID3D12RootSignature* rs) {
+    if (t_list != cl) { t_list = cl; t_rs[1] = nullptr; }
+    t_rs[0] = rs; OrigSetGfxRS[S](cl, rs);
+}
+template <int S> void STDMETHODCALLTYPE HookSetCompRS(ID3D12GraphicsCommandList* cl, ID3D12RootSignature* rs) {
+    if (t_list != cl) { t_list = cl; t_rs[0] = nullptr; }
+    t_rs[1] = rs; OrigSetCompRS[S](cl, rs);
+}
+template <int S> void STDMETHODCALLTYPE HookSetGfxCBV(ID3D12GraphicsCommandList* cl, UINT p, D3D12_GPU_VIRTUAL_ADDRESS va) {
+    const uint64_t to = Note(0, cl, p, va);
+    OrigSetGfxCBV[S](cl, p, to ? to : va);
+}
+template <int S> void STDMETHODCALLTYPE HookSetCompCBV(ID3D12GraphicsCommandList* cl, UINT p, D3D12_GPU_VIRTUAL_ADDRESS va) {
+    const uint64_t to = Note(1, cl, p, va);
+    OrigSetCompCBV[S](cl, p, to ? to : va);
+}
+
+std::vector<void*> g_hookedFns;   // function addresses hooked already (vtables may share them)
+SRWLOCK g_hookLock = SRWLOCK_INIT;
+bool HookOne(void* fn, void* detour, void** orig) {
+    if (std::find(g_hookedFns.begin(), g_hookedFns.end(), fn) != g_hookedFns.end()) return true;
+    const bool ok = MH_CreateHook(fn, detour, orig) == MH_OK && MH_EnableHook(fn) == MH_OK;
+    if (ok) g_hookedFns.push_back(fn);
+    return ok;
+}
+template <int S> bool HookTable(void** vt) {
+    bool ok = true;
+    ok &= HookOne(vt[29], (void*)&HookSetCompRS<S>, (void**)&OrigSetCompRS[S]);
+    ok &= HookOne(vt[30], (void*)&HookSetGfxRS<S>, (void**)&OrigSetGfxRS[S]);
+    ok &= HookOne(vt[37], (void*)&HookSetCompCBV<S>, (void**)&OrigSetCompCBV[S]);
+    ok &= HookOne(vt[38], (void*)&HookSetGfxCBV<S>, (void**)&OrigSetGfxCBV[S]);
+    return ok;
+}
+bool g_slotDone[2] = {};
+void OnReset(command_list* cl) {
+    if (g_slotDone[0] && g_slotDone[1]) return;
+    ID3D12GraphicsCommandList* n = (ID3D12GraphicsCommandList*)cl->get_native();
+    const D3D12_COMMAND_LIST_TYPE t = n->GetType();
+    const int slot = t == D3D12_COMMAND_LIST_TYPE_DIRECT ? 0 : t == D3D12_COMMAND_LIST_TYPE_COMPUTE ? 1 : -1;
+    if (slot < 0) return;
+    AcquireSRWLockExclusive(&g_hookLock);
+    if (!g_slotDone[slot]) {
+        g_slotDone[slot] = true;
+        void** vt = *(void***)n;
+        const bool ok = slot == 0 ? HookTable<0>(vt) : HookTable<1>(vt);
+        LogF("vrcam: replay - %s command list hooks (root signature, root CBV) %s, vtable %p",
+             slot == 0 ? "direct" : "compute", ok ? "in" : "FAILED", (void*)vt);
+    }
+    ReleaseSRWLockExclusive(&g_hookLock);
+}
+
+void Register() {
+    reshade::register_event<reshade::addon_event::init_resource>(&OnInitResource);
+    reshade::register_event<reshade::addon_event::destroy_resource>(&OnDestroyResource);
+    reshade::register_event<reshade::addon_event::reset_command_list>(&OnReset);
+}
+// No waiting for the GPU (2026-10-09): the camera buffers the left pass binds are bound
+// from slots of our own GPU buffer instead. At the binding, the game's values are copied
+// into an upload staging slot for the left eye and, moved by the eye separation, into
+// one for the right; the GPU copies the left ones into the slots before the left pass's
+// lists and the right ones before the replay - the queue keeps the order, the CPU never
+// waits, and the game's own buffers are never touched.
+constexpr int kSlots = 256, kSlotBytes = 4096, kRing = 4;   // slots a pass; staging for kRing pairs
+ID3D12Resource* g_slotsBuf = nullptr;      // DEFAULT: what the shaders read
+ID3D12Resource* g_stageBuf = nullptr;      // UPLOAD: [ring][eye][slot]
+uint8_t* g_stageCpu = nullptr;
+uint64_t g_slotsVa = 0;
+int g_ring = 0;                            // this pair's staging
+struct SlotUse { uint64_t gameVa; int bytes; int key; };
+SlotUse g_slotUse[kSlots];
+std::atomic<int> g_nSlots{0};
+SRWLOCK g_slotLock = SRWLOCK_INIT;
+std::atomic<bool> g_redirect{false};       // binding from slots this left pass
+std::atomic<uint32_t> g_overflow{0};
+
+bool MakeSlots(ID3D12Device* dev) {
+    if (g_slotsBuf) return true;
+    D3D12_HEAP_PROPERTIES hp{};
+    D3D12_RESOURCE_DESC rd{};
+    rd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    rd.Height = 1; rd.DepthOrArraySize = 1; rd.MipLevels = 1; rd.SampleDesc.Count = 1;
+    rd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+    rd.Width = (UINT64)kSlots * kSlotBytes;
+    hp.Type = D3D12_HEAP_TYPE_DEFAULT;
+    if (FAILED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd, D3D12_RESOURCE_STATE_COMMON, nullptr,
+                                            __uuidof(ID3D12Resource), (void**)&g_slotsBuf))) return false;
+    rd.Width = (UINT64)kRing * 2 * kSlots * kSlotBytes;
+    hp.Type = D3D12_HEAP_TYPE_UPLOAD;
+    if (FAILED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+                                            __uuidof(ID3D12Resource), (void**)&g_stageBuf))) return false;
+    D3D12_RANGE none{0, 0};
+    if (FAILED(g_stageBuf->Map(0, &none, (void**)&g_stageCpu))) return false;
+    g_slotsVa = g_slotsBuf->GetGPUVirtualAddress();
+    LogF("vrcam: replay - camera slots made: %d x %d bytes on the GPU, staging for %d pairs", kSlots, kSlotBytes, kRing);
+    return true;
+}
+uint8_t* Stage(int ring, int eye, int slot) { return g_stageCpu + ((size_t)(ring * 2 + eye) * kSlots + slot) * kSlotBytes; }
+uint64_t StageOffset(int ring, int eye, int slot) { return ((uint64_t)(ring * 2 + eye) * kSlots + slot) * kSlotBytes; }
+
+// From the binding hook: the slot to bind instead of the game's buffer (0: bind the game's).
+int KeyCount(int key) {
+    AcquireSRWLockShared(&g_slotLock);
+    int c = 0;
+    const int n = g_nSlots.load();
+    for (int i = 0; i < n; ++i) c += g_slotUse[i].key == key;
+    ReleaseSRWLockShared(&g_slotLock);
+    return c;
+}
+// A buffer's slot this pass, found without a lock: the binding hook runs on the game's five
+// recording threads ~250 times a pass, and the exclusive lock with a scan of the slots under
+// it held them up - a third of the draw thread's time waited in it (2026-10-09, 69 pairs/s
+// with the replay against 108 without). Open addressing, va 0 = empty, cleared each left pass;
+// an entry is written whole under g_slotLock (slot first, then va), read without it.
+constexpr int kHash = 1024;   // a power of two, 4 x kSlots
+std::atomic<uint64_t> g_hashVa[kHash];
+std::atomic<int> g_hashSlot[kHash];
+uint32_t HashOf(uint64_t va) { return (uint32_t)((va >> 8) * 0x9E3779B97F4A7C15ull >> 54) & (kHash - 1); }
+int FindSlot(uint64_t va) {
+    for (uint32_t h = HashOf(va), i = 0; i < kHash; ++i, h = (h + 1) & (kHash - 1)) {
+        const uint64_t v = g_hashVa[h].load(std::memory_order_acquire);
+        if (v == va) return g_hashSlot[h].load(std::memory_order_relaxed);
+        if (!v) return -1;
+    }
+    return -1;
+}
+void PutSlot(uint64_t va, int slot) {   // under g_slotLock
+    for (uint32_t h = HashOf(va), i = 0; i < kHash; ++i, h = (h + 1) & (kHash - 1))
+        if (!g_hashVa[h].load(std::memory_order_relaxed)) {
+            g_hashSlot[h].store(slot, std::memory_order_relaxed);
+            g_hashVa[h].store(va, std::memory_order_release);
+            return;
+        }
+}
+void ClearSlots() { for (int i = 0; i < kHash; ++i) g_hashVa[i].store(0, std::memory_order_relaxed); }
+uint64_t Redirect(uint64_t va, const Layout& lay, int key, bool* fresh) {
+    if (const int i = FindSlot(va); i >= 0) return g_slotsVa + (uint64_t)i * kSlotBytes;
+    AcquireSRWLockExclusive(&g_slotLock);
+    const int n = g_nSlots.load();
+    if (const int i = FindSlot(va); i >= 0) { ReleaseSRWLockExclusive(&g_slotLock); return g_slotsVa + (uint64_t)i * kSlotBytes; }
+    *fresh = true;
+    if (n >= kSlots) { ReleaseSRWLockExclusive(&g_slotLock); g_overflow.fetch_add(1); return 0; }
+    uint64_t room = 0;
+    uint8_t* cpu = Cpu(va, &room);
+    if (!cpu) { ReleaseSRWLockExclusive(&g_slotLock); return 0; }
+    const int bytes = (int)std::min<uint64_t>(room, kSlotBytes) & ~3;
+    uint8_t* left = Stage(g_ring, 0, n);
+    uint8_t* right = Stage(g_ring, 1, n);
+    memcpy(left, cpu, bytes);
+    if (g_replayPrev.load() >= 1) PrevToRightEye((float*)left, bytes / 4, lay, 2.0 * g_eyeHalf.load() * g_shiftMul.load());
+    memcpy(right, left, bytes);
+    if (g_replayPrev.load() == 2) {   // the right eye's "last frame" = the left eye's current view*projection
+        const int mask = g_viewMask.load() ? g_viewMask.load() : (1 << g_replayViews.load()) - 1;
+        for (int k = 0; k < lay.nv; ++k) {
+            if (!(mask & (1 << k)) || !(lay.parts[k] & 4)) continue;
+            const int o = lay.vo[k];
+            if ((o + 112) * 4 <= bytes) memcpy(right + (o + 96) * 4, left + (o + 64) * 4, 64);
+            // and the rest of "the pass before" as two passes give the right record (cb dump,
+            // 2026-10-10): the left eye's view from its third word at +130, its inverse at +144,
+            // its projection's first 12 words at +160 - zeros in the left record. Without them the
+            // right eye's character came out darker (its lighting blended against nothing).
+            if ((o + 172) * 4 <= bytes) {
+                memcpy(right + (o + 130) * 4, left + (o + 2) * 4, 14 * 4);
+                memcpy(right + (o + 144) * 4, left + (o + 16) * 4, 16 * 4);
+                memcpy(right + (o + 160) * 4, left + (o + 32) * 4, 12 * 4);
+            }
+        }
+    }
+    double L[16], R[16];
+    Views(L, R);
+    const double right3[3] = {L[0], L[4], L[8]};
+    PatchKnown((float*)right, bytes / 4, lay, 2.0 * g_eyeHalf.load() * g_shiftMul.load(), right3);
+    g_slotUse[n] = {va, bytes, key};
+    g_nSlots.store(n + 1);
+    PutSlot(va, n);
+    ReleaseSRWLockExclusive(&g_slotLock);
+    return g_slotsVa + (uint64_t)n * kSlotBytes;
+}
+// Our copy list's body: this pair's staged values of one eye into the slots.
+void RecordSlots(ID3D12GraphicsCommandList* l, int eye, int from = 0, int to = -1) {
+    const int n = to < 0 ? g_nSlots.load() : to;
+    for (int i = from; i < n; ++i)
+        l->CopyBufferRegion(g_slotsBuf, (UINT64)i * kSlotBytes, g_stageBuf, StageOffset(g_ring, eye, i), (UINT64)g_slotUse[i].bytes);
+}
+
+// [debug] replay_scan_go 0 -> 1, once: every copy of the left eye's camera (the view, and the
+// view*projection, of the first camera slot with a view) anywhere in the game's upload buffers,
+// logged with whether one of our slots covers it - the right eye's shadows stayed where the left
+// eye had them: a pass reads the camera from a buffer the root CBV hook never sees.
+std::atomic<int> g_scanWant{0};
+void ScanCopies() {
+    AcquireSRWLockShared(&g_slotLock);
+    const int n = g_nSlots.load();
+    int si = -1, vo = -1; uint8_t parts = 0;
+    for (int i = 0; i < n && si < 0; ++i) {
+        const int key = g_slotUse[i].key;
+        if (key <= 0) continue;
+        AcquireSRWLockShared(&g_keyLock);
+        const Layout lay = g_keys[key - 1].lay;
+        ReleaseSRWLockShared(&g_keyLock);
+        if (lay.nv) { si = i; vo = lay.vo[0]; parts = lay.parts[0]; }
+    }
+    float V[16] = {}, VP[16] = {};
+    if (si >= 0) {
+        const float* f = (const float*)Stage(g_ring, 0, si);
+        memcpy(V, f + vo, sizeof V);
+        if (parts & 4) memcpy(VP, f + vo + 64, sizeof VP);
+    }
+    std::vector<std::pair<uint64_t, int>> slotsCopy;
+    for (int i = 0; i < n; ++i) slotsCopy.push_back({g_slotUse[i].gameVa, g_slotUse[i].bytes});
+    ReleaseSRWLockShared(&g_slotLock);
+    if (si < 0) { Log("vrcam: replay scan - no camera slot with a view this pass"); return; }
+    AcquireSRWLockShared(&g_upLock);
+    const std::vector<Upload> ups = g_uploads;
+    ReleaseSRWLockShared(&g_upLock);
+    uint64_t scanned = 0; int hits = 0, uncovered = 0;
+    const double t0 = flog::UsNow();
+    for (const Upload& u : ups) {
+        if (!u.cpu || u.size < 64) continue;
+        scanned += u.size;
+        const float* w = (const float*)u.cpu;
+        const uint64_t nw = u.size / 4;
+        for (uint64_t k = 0; k + 16 <= nw; ++k) {
+            const bool isV = w[k] == V[0] && w[k + 1] == V[1] && w[k + 5] == V[5] && memcmp(w + k, V, 64) == 0;
+            const bool isVP = !isV && (parts & 4) && w[k] == VP[0] && w[k + 5] == VP[5] && memcmp(w + k, VP, 64) == 0;
+            if (!isV && !isVP) continue;
+            const uint64_t va = u.va + k * 4;
+            bool covered = false;
+            for (const auto& sc : slotsCopy) if (va >= sc.first && va < sc.first + (uint64_t)sc.second) covered = true;
+            ++hits; if (!covered) ++uncovered;
+            if (hits <= 40) LogF("vrcam: replay scan - %s at %llx (buffer %llx + %llu of %llu)%s", isV ? "view" : "view*proj",
+                                 (unsigned long long)va, (unsigned long long)u.va, (unsigned long long)(k * 4),
+                                 (unsigned long long)u.size, covered ? " - in a slot" : " - NOT in a slot");
+            k += 15;
+        }
+    }
+    LogF("vrcam: replay scan - %d copies (%d not in a slot) in %.1f MB of %zu upload buffers, %.1f ms; slots %d",
+         hits, uncovered, scanned / 1048576.0, ups.size(), (flog::UsNow() - t0) / 1000.0, n);
+}
+void BeginLeft(bool redirect) {
+    AcquireSRWLockExclusive(&g_vaLock); g_vas.clear(); ReleaseSRWLockExclusive(&g_vaLock);
+    g_ring = (g_ring + 1) % kRing;
+    g_nSlots.store(0);
+    ClearSlots();
+    g_redirect.store(redirect && g_slotsBuf);
+    g_capture.store(true);
+}
+
+// What was rewritten, to be put back: the game does not write a camera buffer again
+// while the camera holds still - it kept drawing the left eye with our right camera
+// (stereo for a few seconds, then both eyes the right one).
+struct Saved { uint8_t* cpu; int n; float orig[256], mine[256]; };
+std::vector<Saved> g_saved;
+// After the replay is done on the GPU, before the game's next left pass reaches the GPU:
+// the left values back, where the game has not written new ones meanwhile.
+void Restore() {
+    for (const Saved& sv : g_saved)
+        if (memcmp(sv.cpu, sv.mine, sv.n * 4) == 0) memcpy(sv.cpu, sv.orig, sv.n * 4);
+    g_saved.clear();
+}
+// After the left pass is done on the GPU: its camera buffers, rewritten for the right eye.
+int RightEye() {
+    g_capture.store(false);
+    std::vector<Va> vas;
+    AcquireSRWLockExclusive(&g_vaLock); vas.swap(g_vas); ReleaseSRWLockExclusive(&g_vaLock);
+    double L[16], R[16];
+    Views(L, R);
+    const double shift = 2.0 * g_eyeHalf.load();
+    const double right[3] = {L[0], L[4], L[8]};
+    int done = 0;
+    for (const Va& x : vas) {
+        uint64_t room = 0;
+        uint8_t* cpu = Cpu(x.va, &room);
+        if (!cpu) continue;
+        float f[256];
+        const int n = (int)std::min<uint64_t>(room, sizeof f) / 4;
+        memcpy(f, cpu, n * 4);
+        Saved sv;
+        sv.cpu = cpu; sv.n = n;
+        memcpy(sv.orig, f, n * 4);
+        if (PatchKnown(f, n, x.lay, shift, right)) {
+            memcpy(cpu, f, n * 4);
+            memcpy(sv.mine, f, n * 4);
+            g_saved.push_back(sv);
+            ++done;
+        }
+    }
+    if (g_patched.fetch_add(1) % 900 == 0) {
+        LogF("vrcam: replay - the right eye's camera: %d of %zu camera buffers rewritten", done, vas.size());
+        LogF("vrcam: replay - root CBVs seen %u (no root signature %u, not in an upload buffer %u, judged %u); buffers made %u, upload ones %u, known %zu",
+             g_nNote.load(), g_nNoRS.load(), g_nNoCpu.load(), g_nJudged.load(), g_nInit.load(), g_nUploads.load(), g_uploads.size());
+    }
+    return done;
+}
+}  // namespace camfix
+
+namespace replay {
+using namespace reshade::api;
+std::atomic<bool> g_on{false};
+std::atomic<int> g_capturing{0};   // 1 while the left pass runs
+std::atomic<int> g_want{0};        // [stereo] replay_right, from LoadSettings
+struct Sub { ID3D12CommandQueue* q; ID3D12CommandList* cl; };
+std::vector<Sub> g_subs;           // the left pass's direct and compute submissions, in order
+SRWLOCK g_lock = SRWLOCK_INIT;
+IDXGISwapChain* g_proxy = nullptr; // the game's swap chain (ReShade's proxy): what it presents through
+UINT g_presentFlags = 0;
+IDXGISwapChain3* g_native = nullptr;
+HANDLE g_latency = nullptr;   // the swap chain's frame latency waitable object, if it was made with one
+bool g_latencyAsked = false;
+bool g_leftHeld = false;           // the left pass's Present was held back and its picture copied out
+uint8_t* g_wrap = nullptr;         // the game's swap chain wrapper (its present's r8); the game keeps the
+                                   // back buffer index it draws into next at +0x98 (D2R 0x10FAE65: right after
+                                   // its present it asks the swap chain and stores it there)
+ID3D12Device* g_dev = nullptr;
+ID3D12CommandQueue* g_direct = nullptr;
+// A fence per queue: one fence signalled from two queues went back down when the
+// second finished first, and a GPU wait on it never ended (the game hung).
+struct Pt { ID3D12Fence* f = nullptr; UINT64 v = 0; };
+// Where a replayed pair's time goes, us summed over the 10 s log period (Steps).
+enum { kWaitPrev, kWaitRestore, kHold, kWaitLeft, kPatch, kSubmit, kPresentR, kCopyL, kPresentL, kSteps };
+double g_stepUs[kSteps] = {};
+uint32_t g_stepPairs = 0;
+struct StepTimer { int k; double t0; StepTimer(int k_) : k(k_), t0(pairtime::UsNow()) {} ~StepTimer() { g_stepUs[k] += pairtime::UsNow() - t0; } };
+struct QFence { ID3D12CommandQueue* q; ID3D12Fence* f; UINT64 v; };
+std::vector<QFence> g_qf;
+Pt g_lastReplay, g_prevReplay;
+ID3D12Fence* g_fence = nullptr;   // (made with the first one: Setup's "ready")
+std::atomic<bool> g_restorePending{false};
+std::atomic<int> g_ahead{1};   // [stereo] replay_ahead: replays the CPU may run ahead of (1 or 2)   // the camera buffers to put back before the left pass reaches the GPU
+HANDLE g_event = nullptr;
+constexpr int kAllocs = 16;
+ID3D12CommandAllocator* g_alloc[kAllocs] = {};
+Pt g_allocDone[kAllocs] = {};
+int g_allocAt = 0, g_openAlloc = 0;
+ID3D12GraphicsCommandList* g_list = nullptr;
+ID3D12Resource* g_leftImg = nullptr;   // the left eye's picture, out of the back buffer
+// One present a pair ([stereo] replay_fx, on): at the hold the left eye's effects run on its
+// back buffer with its own depth (render_effects) and FlatVR's add-on takes it from that
+// effect pass; the replay draws the right eye into the same back buffer, presented once -
+// as many presents as the game's waits (two a pair drifted and hung), the sky by each
+// eye's own depth, no copy of the left picture.
+reshade::api::effect_runtime* g_rt = nullptr;
+std::atomic<bool> g_fxAtHold{true};
+// ReShade renders its effects once between two presents (render_effects returns at once the
+// second time): the right eye's, rendered after the left eye's at the hold, never ran - no sky
+// and FlatVR's add-on, which takes the picture from the effect pass, had no right eyes (its
+// stream stopped). The right eye gets only our technique (D2R_DepthFog_R, render_technique:
+// no once-a-frame check, and the begin / finish effects events FlatVR's add-on takes it from).
+reshade::api::effect_technique g_rightTech{};
+// DLSS in the replay: the left pass's list carries both evaluations - the game's DLSS instance
+// and the right eye's twin - each under D3D12 predication on this buffer: [0] (u64) the game's,
+// [1] the twin's, 0 = skipped. Before the left pass {1, 0}, before the replay {0, 1}: each eye
+// runs on its own instance and history (one instance for both smeared each eye into the other).
+ID3D12Resource* g_predBuf = nullptr;   // DEFAULT, 16 bytes used, D3D12_RESOURCE_STATE_PREDICATION once written
+ID3D12Resource* g_predSrc = nullptr;   // UPLOAD: {1, 0} at 0, {0, 1} at 16
+bool g_predReady = false;
+std::atomic<uint32_t> g_predEvals{0};
+std::atomic<bool> g_dlssBoth{false};   // [stereo] replay_dlss: 1 both eyes' evaluations, predicated; 0 the game's alone (one instance)
+// [stereo] replay_fx_sync (on): the left eye's effects wait for the last pair to be done on the
+// GPU. ReShade writes an effect's constants in place, once per render: with the CPU a pair
+// ahead, the next left eye's values (its frame stamps among them) were in the buffer before
+// the GPU drew the last right eye's effects - its picture went to FlatVR with the next pair's
+// head stamp, and the right eye juddered as the head turned.
+std::atomic<bool> g_fxSync{true};
+uint64_t g_rtvRes[8] = {};
+reshade::api::resource_view g_rtv[8] = {};
+// The depth buffer ReShade's effects read (D2R_DepthFog.fx FogDepthTex's binding) and its
+// state as the game's last barrier left it: the left eye is presented after the replay,
+// when that buffer holds the right eye's depth - the sky and the fog of the left eye were
+// drawn by the right eye's depth (a dark seam beside the head). Its depth goes back first.
+std::atomic<uint64_t> g_depthRes{0};
+std::atomic<uint32_t> g_depthState{0};   // 0: no barrier seen - the game keeps it as a depth target
+// [stereo] replay_depth (off): the copy needs the buffer's true state - COMMON assumed lost the
+// shadows, DEPTH_WRITE removed the device (0x887A0001); no barrier on it is ever seen.
+std::atomic<bool> g_depthCopy{false};
+// The state to transition the depth buffer from: the game's last barrier on it, else DEPTH_WRITE
+// (COMMON assumed for a depth target the game never moves broke its compression: no shadows).
+D3D12_RESOURCE_STATES DepthState() {
+    const uint32_t st = g_depthState.load();
+    return st ? (D3D12_RESOURCE_STATES)st : D3D12_RESOURCE_STATE_DEPTH_WRITE;
+}
+ID3D12Resource* g_leftDepth = nullptr;
+std::atomic<uint32_t> g_replays{0}, g_fails{0};
+// The back buffer indices of the last pairs, for the watchdog: the one the left pass drew in
+// (DXGI's, and the game's own at its wrapper +0x98), the right eye's, DXGI's after our present.
+struct PairIdx { UINT hold, game, right, after, presents; HRESULT hr; };
+PairIdx g_pairIdx[16] = {};
+uint32_t g_pairIdxAt = 0;
+UINT g_gameIdxNow = ~0u;
+
+// The game's end-of-frame signals held until the replay is on the queue (2026-10-09). The
+// game signals its frame fences after its last lists, and on the GPU those came before our
+// replay: the game took the frame for done and freed what it drew with while the replay
+// still read it (the device hung at an area change, 0x887A0006). A direct or compute queue's
+// signals are kept back while the left pass runs; the next submission on that queue lets
+// them go first (they were mid-frame - compute waits on them), and the ones left at the
+// game's present are issued after the replay.
+using QSignalFn = HRESULT(STDMETHODCALLTYPE*)(ID3D12CommandQueue*, ID3D12Fence*, UINT64);
+// each queue type may have its own vtable (the command lists do): a trampoline per slot
+QSignalFn OrigQSignalT[3] = {};
+QSignalFn OrigQSignal = nullptr;   // any of them, for our own calls (they go through the queue's vtable anyway)
+struct HeldSig { ID3D12CommandQueue* q; ID3D12Fence* f; UINT64 v; };
+std::vector<HeldSig> g_held;
+SRWLOCK g_heldLock = SRWLOCK_INIT;
+std::atomic<bool> g_holdSignals{false};
+// [stereo] replay_hold_signals (off): the counters showed none ever left for the replay (the
+// game's own queue waits let them go), and a signal held while the game loads an area is a
+// wait that never ends.
+std::atomic<bool> g_holdSignalsOn{false};
+std::atomic<uint32_t> g_heldMax{0};
+thread_local bool t_ours = false;   // our own signals pass
+std::atomic<uint32_t> g_sigCalls{0}, g_sigHeld{0}, g_sigWhileHolding{0};
+// The game's own Signal / Wait / ExecuteCommandLists on its queues, the last 1024, for the
+// watchdog: what a stuck queue waits for and who was to signal it (an area change hung the
+// direct queue inside the replay, 2026-10-09).
+struct GameOp { ID3D12CommandQueue* q; ID3D12Fence* f; UINT64 v; DWORD tid; char op; };
+GameOp g_gameOps[1024];
+std::atomic<uint32_t> g_gameOpAt{0};
+UINT64 SafeDone(ID3D12Fence* f) { __try { return f->GetCompletedValue(); } __except (EXCEPTION_EXECUTE_HANDLER) { return ~0ull; } }
+void NoteGame(ID3D12CommandQueue* q, char op, ID3D12Fence* f, UINT64 v) {
+    if (op != 'w' && q->GetDesc().Type == D3D12_COMMAND_LIST_TYPE_COPY) return;   // the streaming's flood: only its waits
+    const uint32_t i = g_gameOpAt.fetch_add(1, std::memory_order_relaxed) & 1023;
+    g_gameOps[i] = {q, f, v, GetCurrentThreadId(), op};
+}
+template <int S> HRESULT STDMETHODCALLTYPE HookQSignal(ID3D12CommandQueue* q, ID3D12Fence* f, UINT64 v) {
+    g_sigCalls.fetch_add(1, std::memory_order_relaxed);
+    if (!t_ours) NoteGame(q, 's', f, v);
+    if (g_holdSignals.load(std::memory_order_relaxed)) g_sigWhileHolding.fetch_add(1, std::memory_order_relaxed);
+    if (!t_ours && g_holdSignals.load(std::memory_order_relaxed) && q->GetDesc().Type != D3D12_COMMAND_LIST_TYPE_COPY) {
+        g_sigHeld.fetch_add(1, std::memory_order_relaxed);
+        AcquireSRWLockExclusive(&g_heldLock);
+        g_held.push_back({q, f, v});
+        ReleaseSRWLockExclusive(&g_heldLock);
+        return S_OK;
+    }
+    return OrigQSignalT[S](q, f, v);
+}
+// Let a queue's held signals go (before its next submission, or after the replay).
+void ReleaseHeld(ID3D12CommandQueue* q) {
+    AcquireSRWLockExclusive(&g_heldLock);
+    std::vector<HeldSig> keep;
+    for (const HeldSig& h : g_held) {
+        if (!q || h.q == q) { t_ours = true; h.q->Signal(h.f, h.v); t_ours = false; }
+        else keep.push_back(h);
+    }
+    g_held.swap(keep);
+    ReleaseSRWLockExclusive(&g_heldLock);
+}
+// A wait the game puts on its direct or compute queue lets every held signal go first: the
+// other queue may be waiting for one of them (direct signals, compute waits and signals,
+// direct waits for that - held, it was a deadlock). The copy queue's waits may wait on.
+using QWaitFn = HRESULT(STDMETHODCALLTYPE*)(ID3D12CommandQueue*, ID3D12Fence*, UINT64);
+QWaitFn OrigQWaitT[3] = {};
+template <int S> HRESULT STDMETHODCALLTYPE HookQWait(ID3D12CommandQueue* q, ID3D12Fence* f, UINT64 v) {
+    if (!t_ours) NoteGame(q, 'w', f, v);
+    if (!t_ours && g_holdSignals.load(std::memory_order_relaxed) && q->GetDesc().Type != D3D12_COMMAND_LIST_TYPE_COPY) ReleaseHeld(nullptr);
+    return OrigQWaitT[S](q, f, v);
+}
+std::atomic<bool> g_sigHooked{false};   // the direct queue's (the one that matters) is in
+std::vector<void*> g_qHookedFns;
+bool g_qSlotDone[3] = {};
+template <int S> bool HookQTable(void** vt) {
+    bool ok = true;
+    if (std::find(g_qHookedFns.begin(), g_qHookedFns.end(), vt[14]) == g_qHookedFns.end()) {
+        ok &= MH_CreateHook(vt[14], (void*)&HookQSignal<S>, (void**)&OrigQSignalT[S]) == MH_OK && MH_EnableHook(vt[14]) == MH_OK;
+        g_qHookedFns.push_back(vt[14]);
+    }
+    if (std::find(g_qHookedFns.begin(), g_qHookedFns.end(), vt[15]) == g_qHookedFns.end()) {
+        ok &= MH_CreateHook(vt[15], (void*)&HookQWait<S>, (void**)&OrigQWaitT[S]) == MH_OK && MH_EnableHook(vt[15]) == MH_OK;
+        g_qHookedFns.push_back(vt[15]);
+    }
+    return ok;
+}
+void HookQueueSignal(ID3D12CommandQueue* q) {
+    const D3D12_COMMAND_LIST_TYPE t = q->GetDesc().Type;
+    const int slot = t == D3D12_COMMAND_LIST_TYPE_DIRECT ? 0 : t == D3D12_COMMAND_LIST_TYPE_COMPUTE ? 1 : 2;
+    if (g_qSlotDone[slot]) return;
+    g_qSlotDone[slot] = true;
+    void** vt = *(void***)q;
+    const bool ok = slot == 0 ? HookQTable<0>(vt) : slot == 1 ? HookQTable<1>(vt) : HookQTable<2>(vt);
+    if (slot == 0) g_sigHooked.store(ok);
+    LogF("vrcam: replay - the %s queue's Signal/Wait hooked %s, vtable %p", slot == 0 ? "direct" : slot == 1 ? "compute" : "copy",
+         ok ? "in" : "FAILED", (void*)vt);
+}
+
+void WaitFor(const Pt& p);
+bool Setup(ID3D12CommandQueue* q);
+void CopySlots(int eye);
+void CopyLateSlots(ID3D12CommandQueue* nq);
+bool MakePred();
+void RecordPred(ID3D12GraphicsCommandList* l, int eye);
+int g_leftCopied = 0;
+std::atomic<uint32_t> g_lateSlots{0};
+// The game's lists on its direct and compute queues outside the left pass (not replayed: what
+// they draw is the left eye's in both - the right eye's shadows stayed where the left eye had
+// them), by thread: the draw thread's own, and others'.
+std::atomic<uint32_t> g_outsideDraw{0}, g_outsideOther{0}, g_insideLists{0};
+std::atomic<DWORD> g_captureThread{0};
+std::atomic<bool> g_replayCopy{true};   // [stereo] replay_copy (see OnExecute)
+std::atomic<uint32_t> g_copyLists{0};
+// who sends them: the last few threads, queue types and the moment (us since the pair's left pass began)
+struct Outside { DWORD tid; int type; double atUs; };
+Outside g_outside[8] = {};
+std::atomic<uint32_t> g_outsideAt{0};
+std::atomic<double> g_pairStartUs{0.0};
+void OnExecute(command_queue* q, command_list* cl) {
+    HookQueueSignal((ID3D12CommandQueue*)q->get_native());
+    if (!t_ours) NoteGame((ID3D12CommandQueue*)q->get_native(), 'x', nullptr, 0);
+    if (!t_ours && g_on.load(std::memory_order_relaxed) && g_want.load(std::memory_order_relaxed) == 1) {
+        const command_queue_type t = q->get_type();
+        if ((t & command_queue_type::graphics) != 0 || (t & command_queue_type::compute) != 0) {
+            if (g_capturing.load(std::memory_order_relaxed)) g_insideLists.fetch_add(1, std::memory_order_relaxed);
+            else if (GetCurrentThreadId() == g_captureThread.load(std::memory_order_relaxed)) g_outsideDraw.fetch_add(1, std::memory_order_relaxed);
+            else {
+                g_outsideOther.fetch_add(1, std::memory_order_relaxed);
+                const uint32_t i = g_outsideAt.fetch_add(1) & 7;
+                g_outside[i] = {GetCurrentThreadId(), (t & command_queue_type::graphics) != 0 ? 0 : 2, pairtime::UsNow() - g_pairStartUs.load()};
+            }
+        }
+    }
+    if (!g_capturing.load(std::memory_order_relaxed)) return;
+    const command_queue_type t = q->get_type();
+    // The copy queue: its lists from the draw thread inside the left pass are part of the frame -
+    // mid-frame the direct queue signals, the copy queue waits for it, copies, and the direct
+    // queue waits for that ([stereo] replay_copy, on: replayed too; left out, the right eye read
+    // the left eye's copy - its character sat in shadows of its own, 2026-10-10). The streaming's
+    // uploads come from other threads and stay out.
+    if ((t & command_queue_type::graphics) == 0 && (t & command_queue_type::compute) == 0 &&
+        !(g_replayCopy.load(std::memory_order_relaxed) && GetCurrentThreadId() == g_captureThread.load(std::memory_order_relaxed))) return;
+    ReleaseHeld((ID3D12CommandQueue*)q->get_native());   // signals mid-frame: before this queue's next lists
+    if (g_restorePending.exchange(false)) {   // the left pass's first list: the left camera into the slots first
+        StepTimer st(kWaitRestore);
+        if (camfix::g_redirect.load()) {
+            if (!g_direct) {   // (the first pair: the direct queue is this one)
+                D3D12_COMMAND_QUEUE_DESC d = ((ID3D12CommandQueue*)q->get_native())->GetDesc();
+                if (d.Type == D3D12_COMMAND_LIST_TYPE_DIRECT) g_direct = (ID3D12CommandQueue*)q->get_native();
+            }
+            if (g_direct && Setup(g_direct)) CopySlots(0);
+        } else {
+            WaitFor(g_lastReplay);
+            camfix::Restore();
+        }
+    }
+    else CopyLateSlots((ID3D12CommandQueue*)q->get_native());
+    AcquireSRWLockExclusive(&g_lock);
+    g_subs.push_back({(ID3D12CommandQueue*)q->get_native(), (ID3D12CommandList*)cl->get_native()});
+    ReleaseSRWLockExclusive(&g_lock);
+}
+
+void OnBarrier(command_list*, uint32_t count, const resource* res, const resource_usage*, const resource_usage* to) {
+    const uint64_t d = g_depthRes.load(std::memory_order_relaxed);
+    if (!d) return;
+    for (uint32_t i = 0; i < count; ++i)
+        if (res[i].handle == d) g_depthState.store((uint32_t)to[i], std::memory_order_relaxed);
+}
+
+void OnPresent(command_queue*, swapchain* sc, const rect*, const rect*, uint32_t, const rect*) {
+    if (!g_native) {
+        IDXGISwapChain* n = (IDXGISwapChain*)sc->get_native();
+        if (n) n->QueryInterface(__uuidof(IDXGISwapChain3), (void**)&g_native);
+    }
+}
+
+bool Setup(ID3D12CommandQueue* q) {
+    if (g_list) return true;
+    if (FAILED(q->GetDevice(__uuidof(ID3D12Device), (void**)&g_dev))) return false;
+    if (FAILED(g_dev->CreateFence(0, D3D12_FENCE_FLAG_NONE, __uuidof(ID3D12Fence), (void**)&g_fence))) return false;
+    g_event = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    for (int i = 0; i < kAllocs; ++i)
+        if (FAILED(g_dev->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, __uuidof(ID3D12CommandAllocator), (void**)&g_alloc[i]))) return false;
+    if (FAILED(g_dev->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, g_alloc[0], nullptr, __uuidof(ID3D12GraphicsCommandList), (void**)&g_list))) return false;
+    g_list->Close();
+    camfix::MakeSlots(g_dev);
+    Log("vrcam: replay - fence, allocators and the copy list made");
+    return true;
+}
+
+// The last 64 signals and GPU waits we put on the queues, for the watchdog.
+struct Hist { ID3D12CommandQueue* q; char op; ID3D12Fence* f; UINT64 v; const char* why; };
+Hist g_hist[256];
+int g_histAt = 0;
+const char* g_why = "";
+void Note(ID3D12CommandQueue* q, char op, ID3D12Fence* f, UINT64 v) { g_hist[g_histAt++ & 255] = {q, op, f, v, g_why}; }
+// [debug] replay_marks (on while the hang is hunted): a signal after every replayed list and
+// around the right eye's effects and present - the watchdog's "done" then says which one the
+// queue stopped at.
+bool g_marks = true;
+const char* const kListMark[32] = {
+    "replay: list 0", "replay: list 1", "replay: list 2", "replay: list 3", "replay: list 4", "replay: list 5", "replay: list 6", "replay: list 7",
+    "replay: list 8", "replay: list 9", "replay: list 10", "replay: list 11", "replay: list 12", "replay: list 13", "replay: list 14", "replay: list 15",
+    "replay: list 16", "replay: list 17", "replay: list 18", "replay: list 19", "replay: list 20", "replay: list 21", "replay: list 22", "replay: list 23",
+    "replay: list 24", "replay: list 25", "replay: list 26", "replay: list 27", "replay: list 28", "replay: list 29", "replay: list 30", "replay: list 31+"};
+void GpuWait(ID3D12CommandQueue* q, const Pt& p) { if (p.f) { t_ours = true; q->Wait(p.f, p.v); t_ours = false; Note(q, 'W', p.f, p.v); } }
+Pt SignalOn(ID3D12CommandQueue* q) {
+    for (QFence& x : g_qf)
+        if (x.q == q) {
+            t_ours = true; q->Signal(x.f, ++x.v); t_ours = false;
+            Note(q, 'S', x.f, x.v); return {x.f, x.v};
+        }
+    QFence x{q, nullptr, 0};
+    if (FAILED(g_dev->CreateFence(0, D3D12_FENCE_FLAG_NONE, __uuidof(ID3D12Fence), (void**)&x.f))) return {};
+    g_qf.push_back(x);
+    return SignalOn(q);
+}
+void WaitFor(const Pt& p) {
+    if (!p.f || p.f->GetCompletedValue() >= p.v) return;
+    p.f->SetEventOnCompletion(p.v, g_event);
+    WaitForSingleObject(g_event, 100);
+}
+
+D3D12_RESOURCE_BARRIER Tr(ID3D12Resource* r, D3D12_RESOURCE_STATES from, D3D12_RESOURCE_STATES to) {
+    D3D12_RESOURCE_BARRIER b{};
+    b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    b.Transition.pResource = r;
+    b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+    b.Transition.StateBefore = from;
+    b.Transition.StateAfter = to;
+    return b;
+}
+
+// Our own list on the direct queue: the next allocator of the ring, reset and opened.
+ID3D12GraphicsCommandList* Open() {
+    const int a = g_allocAt;
+    g_allocAt = (g_allocAt + 1) % kAllocs;
+    WaitFor(g_allocDone[a]);
+    g_alloc[a]->Reset();
+    g_list->Reset(g_alloc[a], nullptr);
+    g_openAlloc = a;
+    return g_list;
+}
+void Submit(ID3D12CommandQueue* q) {
+    g_list->Close();
+    ID3D12CommandList* l = g_list;
+    q->ExecuteCommandLists(1, &l);
+    g_allocDone[g_openAlloc] = SignalOn(q);
+}
+// One eye's camera values into the slots, on the direct queue.
+// The left values' copies this pass reached (slots made later - by lists recorded after the
+// pass's first submission - had last pair's right values in the left eye: they get theirs
+// before the next submission).
+void CopySlots(int eye) {
+    if (eye == 0) g_leftCopied = 0;   // a new left pass: none of its slots copied yet
+    if (!g_direct) return;
+    MakePred();
+    if (!camfix::g_nSlots.load() && !g_predBuf) return;
+    g_why = eye ? "slots: right" : "slots: left";
+    const int n = camfix::g_nSlots.load();
+    ID3D12GraphicsCommandList* l = Open();
+    camfix::RecordSlots(l, eye, 0, n);
+    RecordPred(l, eye);
+    if (eye == 0) g_leftCopied = n;
+    Submit(g_direct);
+}
+
+// Slots made since the left values went in: theirs now, on the direct queue; a compute
+// submission waits for that copy.
+void CopyLateSlots(ID3D12CommandQueue* nq) {
+    if (!camfix::g_redirect.load() || !g_direct || camfix::g_nSlots.load() <= g_leftCopied) return;
+    const int n = camfix::g_nSlots.load();
+    g_lateSlots.fetch_add((uint32_t)(n - g_leftCopied), std::memory_order_relaxed);
+    g_why = "slots: left, late";
+    camfix::RecordSlots(Open(), 0, g_leftCopied, n);
+    g_leftCopied = n;
+    Submit(g_direct);
+    if (nq != g_direct) { g_why = "slots: left, late (compute waits)"; GpuWait(nq, g_allocDone[g_openAlloc]); }
+}
+
+// One copy on the direct queue, with our own list (a ring of allocators).
+void Copy(ID3D12Resource* dst, D3D12_RESOURCE_STATES dstState, ID3D12Resource* src, D3D12_RESOURCE_STATES srcState) {
+    g_why = "picture copy";
+    const int a = g_allocAt;
+    g_allocAt = (g_allocAt + 1) % kAllocs;
+    WaitFor(g_allocDone[a]);
+    g_alloc[a]->Reset();
+    g_list->Reset(g_alloc[a], nullptr);
+    D3D12_RESOURCE_BARRIER b[2] = {Tr(src, srcState, D3D12_RESOURCE_STATE_COPY_SOURCE), Tr(dst, dstState, D3D12_RESOURCE_STATE_COPY_DEST)};
+    g_list->ResourceBarrier(2, b);
+    g_list->CopyResource(dst, src);
+    D3D12_RESOURCE_BARRIER c[2] = {Tr(src, D3D12_RESOURCE_STATE_COPY_SOURCE, srcState), Tr(dst, D3D12_RESOURCE_STATE_COPY_DEST, dstState)};
+    g_list->ResourceBarrier(2, c);
+    g_list->Close();
+    ID3D12CommandList* l = g_list;
+    g_direct->ExecuteCommandLists(1, &l);
+    g_allocDone[a] = SignalOn(g_direct);
+}
+
+// [debug] replay_peek_go: one pair's left picture (after its effects, at the hold) and right
+// picture (after its effects, before the present) read back and compared - whether the right
+// eye is a picture of its own (the headset showed "mono" with the replay).
+std::atomic<int> g_peekWant{0};
+int g_peekStage = 0;   // 0 idle, 1 this pair, 2 both copies queued
+ID3D12Resource* g_peekBuf[2] = {};
+D3D12_PLACED_SUBRESOURCE_FOOTPRINT g_peekFp{};
+UINT g_peekW = 0, g_peekH = 0;
+Pt g_peekDone{};
+void Peek(int eye, ID3D12Resource* bb) {
+    const D3D12_RESOURCE_DESC d = bb->GetDesc();
+    UINT64 total = 0;
+    g_dev->GetCopyableFootprints(&d, 0, 1, 0, &g_peekFp, nullptr, nullptr, &total);
+    g_peekW = (UINT)d.Width; g_peekH = d.Height;
+    if (!g_peekBuf[eye]) {
+        D3D12_HEAP_PROPERTIES hp{}; hp.Type = D3D12_HEAP_TYPE_READBACK;
+        D3D12_RESOURCE_DESC rd{}; rd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER; rd.Width = total; rd.Height = 1;
+        rd.DepthOrArraySize = 1; rd.MipLevels = 1; rd.SampleDesc.Count = 1; rd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+        if (FAILED(g_dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd, D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
+                                                  __uuidof(ID3D12Resource), (void**)&g_peekBuf[eye]))) { g_peekStage = 0; return; }
+    }
+    g_why = "peek";
+    const int a = g_allocAt;
+    g_allocAt = (g_allocAt + 1) % kAllocs;
+    WaitFor(g_allocDone[a]);
+    g_alloc[a]->Reset();
+    g_list->Reset(g_alloc[a], nullptr);
+    D3D12_RESOURCE_BARRIER b = Tr(bb, D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    g_list->ResourceBarrier(1, &b);
+    D3D12_TEXTURE_COPY_LOCATION dst{}; dst.pResource = g_peekBuf[eye]; dst.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT; dst.PlacedFootprint = g_peekFp;
+    D3D12_TEXTURE_COPY_LOCATION src{}; src.pResource = bb; src.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX; src.SubresourceIndex = 0;
+    g_list->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+    D3D12_RESOURCE_BARRIER c = Tr(bb, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_PRESENT);
+    g_list->ResourceBarrier(1, &c);
+    g_list->Close();
+    ID3D12CommandList* l = g_list;
+    g_direct->ExecuteCommandLists(1, &l);
+    g_allocDone[a] = g_peekDone = SignalOn(g_direct);
+}
+void PeekReport() {
+    for (int i = 0; i < 30 && g_peekDone.f && g_peekDone.f->GetCompletedValue() < g_peekDone.v; ++i) WaitFor(g_peekDone);
+    const uint8_t* m[2] = {};
+    D3D12_RANGE r{0, 0};
+    for (int e = 0; e < 2; ++e) if (g_peekBuf[e]) g_peekBuf[e]->Map(0, nullptr, (void**)&m[e]);
+    if (m[0] && m[1]) {
+        const UINT pitch = g_peekFp.Footprint.RowPitch, w = g_peekW, h = g_peekH;
+        const UINT bpp = std::max<UINT>(1, std::min<UINT>(pitch / std::max<UINT>(1, w), 8));
+        uint64_t diff = 0, all = 0;
+        for (UINT y = 0; y < h; ++y)
+            for (UINT x = 0; x < w; ++x, ++all)
+                if (memcmp(m[0] + (size_t)y * pitch + x * bpp, m[1] + (size_t)y * pitch + x * bpp, bpp) != 0) ++diff;
+        // the right picture against the left moved sideways: the shift that fits best (4-byte pixels,
+        // the green byte, the middle half of the rows)
+        int best = 0; double bestErr = 1e300, err0 = 0.0;
+        if (bpp == 4)
+            for (int sft = -80; sft <= 80; ++sft) {
+                double e = 0.0; uint64_t n = 0;
+                for (UINT y = h / 4; y < h * 3 / 4; y += 4)
+                    for (UINT x = 100; x + 100 < w; x += 2) {
+                        const int a = m[0][(size_t)y * pitch + x * 4 + 1], b = m[1][(size_t)y * pitch + (x + sft) * 4 + 1];
+                        e += std::abs(a - b); ++n;
+                    }
+                e /= std::max<uint64_t>(1, n);
+                if (sft == 0) err0 = e;
+                if (e < bestErr) { bestErr = e; best = sft; }
+            }
+        LogF("vrcam: replay peek - %ux%u (%u bytes a pixel): left and right differ in %.1f%% of pixels; best sideways fit %d px (mean |diff| %.2f, at 0 px %.2f)",
+             w, h, bpp, 100.0 * diff / std::max<uint64_t>(1, all), best, bestErr, err0);
+    } else {
+        Log("vrcam: replay peek - could not map the read-back pictures");
+    }
+    for (int e = 0; e < 2; ++e) if (m[e]) g_peekBuf[e]->Unmap(0, &r);
+}
+
+// Prototype diagnostics: the device's health after each step, the first failure logged.
+bool MakePred() {
+    if (g_predBuf) return true;
+    D3D12_HEAP_PROPERTIES hp{};
+    D3D12_RESOURCE_DESC rd{};
+    rd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER; rd.Width = 256; rd.Height = 1; rd.DepthOrArraySize = 1;
+    rd.MipLevels = 1; rd.SampleDesc.Count = 1; rd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+    hp.Type = D3D12_HEAP_TYPE_UPLOAD;
+    if (FAILED(g_dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+                                              __uuidof(ID3D12Resource), (void**)&g_predSrc))) return false;
+    uint64_t* v = nullptr;
+    D3D12_RANGE none{0, 0};
+    if (FAILED(g_predSrc->Map(0, &none, (void**)&v))) return false;
+    v[0] = 1; v[1] = 0; v[2] = 0; v[3] = 1;
+    g_predSrc->Unmap(0, nullptr);
+    hp.Type = D3D12_HEAP_TYPE_DEFAULT;
+    if (FAILED(g_dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd, D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
+                                              __uuidof(ID3D12Resource), (void**)&g_predBuf))) return false;
+    Log("vrcam: replay - DLSS predicate made (each eye its own DLSS instance in the replay)");
+    return true;
+}
+void RecordPred(ID3D12GraphicsCommandList* l, int eye) {
+    if (!g_predBuf) return;
+    if (g_predReady) { D3D12_RESOURCE_BARRIER b = Tr(g_predBuf, D3D12_RESOURCE_STATE_PREDICATION, D3D12_RESOURCE_STATE_COPY_DEST); l->ResourceBarrier(1, &b); }
+    l->CopyBufferRegion(g_predBuf, 0, g_predSrc, eye ? 16 : 0, 16);
+    D3D12_RESOURCE_BARRIER c = Tr(g_predBuf, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PREDICATION);
+    l->ResourceBarrier(1, &c);
+    g_predReady = true;
+}
+// The left pass being recorded for a replay, with the predicate in place: both evaluations.
+bool DlssBoth() { return g_dlssBoth.load() && g_on.load() && g_want.load() == 1 && g_capturing.load() == 1 && g_predReady && camfix::g_redirect.load(); }
+
+void Check(const char* step, HRESULT hr = S_OK) {
+    static bool told = false;
+    if (told || !g_dev) return;
+    const HRESULT dr = g_dev->GetDeviceRemovedReason();
+    if (dr != S_OK || FAILED(hr)) {
+        told = true;
+        LogF("vrcam: replay - after %s: hr %08lX, device removed reason %08lX", step, (unsigned long)hr, (unsigned long)dr);
+    }
+}
+
+ID3D12Resource* BackBuffer(UINT i) {
+    ID3D12Resource* r = nullptr;
+    g_native->GetBuffer(i, __uuidof(ID3D12Resource), (void**)&r);
+    return r;
+}
+
+// The left eye's effects on its back buffer now (the depth is still its own); right: the
+// right eye's technique alone (see g_rightTech).
+bool EffectsAtHold(ID3D12Resource* bb, UINT index, bool right = false) {
+    using namespace reshade::api;
+    if (!g_rt || index >= 8) return false;
+    device* dev = g_rt->get_device();
+    const resource res{(uint64_t)bb};
+    if (g_rtvRes[index] != res.handle) {
+        if (g_rtv[index].handle) dev->destroy_resource_view(g_rtv[index]);
+        g_rtv[index] = {0};
+        const D3D12_RESOURCE_DESC d = bb->GetDesc();
+        if (!dev->create_resource_view(res, resource_usage::render_target, resource_view_desc((format)d.Format), &g_rtv[index])) return false;
+        g_rtvRes[index] = res.handle;
+    }
+    command_queue* q = g_rt->get_command_queue();
+    command_list* cl = q->get_immediate_command_list();
+    t_ours = true;   // ReShade's and FlatVR's own signals in here are not the game's: they pass
+    cl->barrier(res, resource_usage::present, resource_usage::render_target);
+    if (right) g_rt->render_technique(g_rightTech, cl, g_rtv[index], g_rtv[index]);
+    else g_rt->render_effects(cl, g_rtv[index], g_rtv[index]);
+    cl->barrier(res, resource_usage::render_target, resource_usage::present);
+    q->flush_immediate_command_list();
+    t_ours = false;
+    return true;
+}
+
+// The left pass's Present: its picture copied out, the Present held back (told the game it went).
+bool HoldLeft() {
+    if (!g_native) return false;
+    ID3D12CommandQueue* direct = nullptr;
+    AcquireSRWLockExclusive(&g_lock);
+    for (const Sub& s : g_subs)
+        if (s.q->GetDesc().Type == D3D12_COMMAND_LIST_TYPE_DIRECT) { direct = s.q; break; }
+    ReleaseSRWLockExclusive(&g_lock);
+    if (!direct) return false;
+    g_direct = direct;
+    if (!Setup(direct)) return false;
+    const UINT holdIndex = g_native->GetCurrentBackBufferIndex();
+    g_pairIdx[g_pairIdxAt & 15] = {holdIndex, g_gameIdxNow, ~0u, ~0u, 0u, S_OK};
+    ID3D12Resource* bb = BackBuffer(holdIndex);
+    if (!bb) return false;
+    if (g_fxAtHold.load() && g_rt) {   // one present a pair: the left eye goes out from this effect pass
+        if (g_fxSync.load() && g_lastReplay.f) { StepTimer st(kWaitLeft); WaitFor(g_lastReplay); }
+        const bool ok = EffectsAtHold(bb, holdIndex);
+        if (ok && g_peekStage == 1) Peek(0, bb);
+        bb->Release();
+        return ok;
+    }
+    const D3D12_RESOURCE_DESC d = bb->GetDesc();
+    if (g_leftImg) {
+        const D3D12_RESOURCE_DESC h = g_leftImg->GetDesc();
+        if (h.Width != d.Width || h.Height != d.Height || h.Format != d.Format) { g_leftImg->Release(); g_leftImg = nullptr; }
+    }
+    if (!g_leftImg) {
+        D3D12_HEAP_PROPERTIES hp{};
+        hp.Type = D3D12_HEAP_TYPE_DEFAULT;
+        D3D12_RESOURCE_DESC rd = d;
+        rd.Flags = D3D12_RESOURCE_FLAG_NONE;
+        if (FAILED(g_dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd, D3D12_RESOURCE_STATE_COMMON, nullptr,
+                                                  __uuidof(ID3D12Resource), (void**)&g_leftImg))) { bb->Release(); return false; }
+        LogF("vrcam: replay - the left picture's texture made, %llux%u", (unsigned long long)d.Width, d.Height);
+    }
+    Check("before holding the left picture");
+    Copy(g_leftImg, D3D12_RESOURCE_STATE_COMMON, bb, D3D12_RESOURCE_STATE_PRESENT);
+    Check("copying the left picture out");
+    if (ID3D12Resource* depth = g_depthCopy.load() ? (ID3D12Resource*)g_depthRes.load() : nullptr) {
+        const D3D12_RESOURCE_DESC dd = depth->GetDesc();
+        if (g_leftDepth) {
+            const D3D12_RESOURCE_DESC h = g_leftDepth->GetDesc();
+            if (h.Width != dd.Width || h.Height != dd.Height || h.Format != dd.Format) { g_leftDepth->Release(); g_leftDepth = nullptr; }
+        }
+        if (!g_leftDepth) {
+            D3D12_HEAP_PROPERTIES hp{};
+            hp.Type = D3D12_HEAP_TYPE_DEFAULT;
+            if (SUCCEEDED(g_dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &dd, D3D12_RESOURCE_STATE_COMMON, nullptr,
+                                                         __uuidof(ID3D12Resource), (void**)&g_leftDepth)))
+                LogF("vrcam: replay - the left depth's copy made, %llux%u format %d, state %X",
+                     (unsigned long long)dd.Width, dd.Height, (int)dd.Format, g_depthState.load());
+        }
+        if (g_leftDepth) Copy(g_leftDepth, D3D12_RESOURCE_STATE_COMMON, depth, DepthState());
+    }
+    bb->Release();
+    return true;
+}
+
+// The game's present (D2R 0x109F4C0: rcx its device, rdx a result, r8 its swap chain
+// wrapper - [0] the IDXGISwapChain it presents through, +0x50 the sync interval).
+constexpr uint64_t RVA_GAME_PRESENT = 0x109F4C0;
+const uint8_t kSigGamePresent[16] = {0x48,0x89,0x5C,0x24,0x18,0x48,0x89,0x54,0x24,0x10,0x57,0x48,0x83,0xEC,0x40,0x4D};
+using GamePresentFn = void* (*)(void*, void*, void*);
+GamePresentFn OrigGamePresent = nullptr;
+void* HookGamePresent(void* dev, void* result, void* wrap) {
+    if (wrap) { __try { g_gameIdxNow = *(const uint32_t*)((const uint8_t*)wrap + 0x98); } __except (EXCEPTION_EXECUTE_HANDLER) {} }
+    if (wrap) {
+        __try {   // and the flags it presents with: tearing allowed (0x200) as the game decides it
+            const uint8_t* w = (const uint8_t*)wrap;
+            g_proxy = *(IDXGISwapChain**)wrap;
+            g_presentFlags = *((const uint8_t*)dev + 0x80) && *(const uint32_t*)(w + 0x50) == 0 && !w[0x38] && w[0x39] ? 0x200u : 0u;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {}
+    }
+    double holdT0 = pairtime::UsNow();
+    if (g_capturing.load() && !g_leftHeld && HoldLeft()) {
+        g_stepUs[kHold] += pairtime::UsNow() - holdT0;
+        g_leftHeld = true;
+        g_wrap = (uint8_t*)wrap;
+        *(uint16_t*)result = 0;                     // the game's own success: code 0, HRESULT 0
+        *(uint32_t*)((uint8_t*)result + 4) = 0;
+        return result;
+    }
+    return OrigGamePresent(dev, result, wrap);
+}
+
+// A watchdog for the prototype: no present for 3 s while replaying - the fences' state
+// (signalled vs done) and where the draw thread waits, to the log, once.
+void LogStack(DWORD tid) {
+    HANDLE th = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE, tid);
+    if (!th) return;
+    static uint8_t copy[32768];
+    CONTEXT c{}; c.ContextFlags = CONTEXT_FULL;
+    size_t copied = 0;
+    if (SuspendThread(th) != (DWORD)-1) {
+        if (GetThreadContext(th, &c) && c.Rsp) {
+            MEMORY_BASIC_INFORMATION mbi{};
+            if (VirtualQuery((void*)c.Rsp, &mbi, sizeof mbi) && mbi.State == MEM_COMMIT) {
+                copied = (size_t)std::min<DWORD64>(sizeof copy, (DWORD64)mbi.BaseAddress + mbi.RegionSize - c.Rsp);
+                memcpy(copy, (void*)c.Rsp, copied);
+            }
+        }
+        ResumeThread(th);
+    }
+    CloseHandle(th);
+    if (!copied) return;
+    DWORD64 pcs[24];
+    const int n = drawprof::UnwindCopy(c, copy, copied, pcs);
+    for (int i = 0; i < n; ++i) {
+        DWORD64 base = 0;
+        const std::string m = drawprof::ModuleOf(pcs[i], &base);
+        LogF("vrcam: watchdog -   %s+0x%llX", m.c_str(), (unsigned long long)(base ? pcs[i] - base : pcs[i]));
+    }
+}
+// Every thread's stack to d2rloader\logs\d2r_vr_hang.txt, written straight to the file
+// (the log itself may be what is stuck) with the modules looked up from a list taken
+// beforehand (GetModuleHandleEx takes the loader lock a stuck thread may hold).
+struct Mod { uint64_t base, end; char name[64]; };
+std::vector<Mod> g_mods;
+void ListModules() {   // psapi reads the module list in place: no thread made, no loader lock
+    g_mods.clear();
+    HMODULE mods[1024];
+    DWORD need = 0;
+    if (!K32EnumProcessModules(GetCurrentProcess(), mods, sizeof mods, &need)) return;
+    for (DWORD i = 0; i < need / sizeof(HMODULE) && i < 1024; ++i) {
+        MODULEINFO mi{};
+        if (!K32GetModuleInformation(GetCurrentProcess(), mods[i], &mi, sizeof mi)) continue;
+        Mod m{(uint64_t)mi.lpBaseOfDll, (uint64_t)mi.lpBaseOfDll + mi.SizeOfImage, {}};
+        K32GetModuleBaseNameA(GetCurrentProcess(), mods[i], m.name, sizeof m.name);
+        g_mods.push_back(m);
+    }
+}
+void DumpAllStacks() {
+    ListModules();
+    wchar_t path[MAX_PATH];
+    wcscpy_s(path, g_iniPath);
+    if (wchar_t* slash = wcsrchr(path, L'\\')) *slash = 0;
+    wcscat_s(path, L"\\..\\logs\\d2r_vr_hang.txt");
+    FILE* f = _wfopen(path, L"w");
+    if (!f) return;
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    THREADENTRY32 te{sizeof te};
+    const DWORD me = GetCurrentThreadId(), pid = GetCurrentProcessId();
+    static uint8_t copy[65536];
+    for (BOOL ok = Thread32First(snap, &te); ok; ok = Thread32Next(snap, &te)) {
+        if (te.th32OwnerProcessID != pid || te.th32ThreadID == me) continue;
+        HANDLE th = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE, te.th32ThreadID);
+        if (!th) continue;
+        CONTEXT c{}; c.ContextFlags = CONTEXT_FULL;
+        size_t copied = 0;
+        if (SuspendThread(th) != (DWORD)-1) {
+            if (GetThreadContext(th, &c) && c.Rsp) {
+                MEMORY_BASIC_INFORMATION mbi{};
+                if (VirtualQuery((void*)c.Rsp, &mbi, sizeof mbi) && mbi.State == MEM_COMMIT) {
+                    copied = (size_t)std::min<DWORD64>(sizeof copy, (DWORD64)mbi.BaseAddress + mbi.RegionSize - c.Rsp);
+                    memcpy(copy, (void*)c.Rsp, copied);
+                }
+            }
+            ResumeThread(th);
+        }
+        CloseHandle(th);
+        fprintf(f, "thread %lu%s\n", te.th32ThreadID, te.th32ThreadID == pairtime::g_drawThread.load() ? " (draw)" : "");
+        if (!copied) continue;
+        DWORD64 pcs[24];
+        const int n = drawprof::UnwindCopy(c, copy, copied, pcs);
+        for (int i = 0; i < n; ++i) {
+            const Mod* m = nullptr;
+            for (const Mod& x : g_mods) if (pcs[i] >= x.base && pcs[i] < x.end) { m = &x; break; }
+            fprintf(f, "    %s+0x%llX\n", m ? m->name : "?", (unsigned long long)(m ? pcs[i] - m->base : pcs[i]));
+        }
+    }
+    CloseHandle(snap);
+    fclose(f);
+}
+DWORD WINAPI Watchdog(void*) {
+    bool told = false;
+    Log("vrcam: replay - watchdog running (no present for 3 s while replaying: every thread's stack to d2r_vr_hang.txt)");
+    // By the presents' count: g_presentAt, cleared at every pair's start, stayed 0 when the
+    // game hung inside a pair with its left present held - no dump (2026-10-09, an area change).
+    uint32_t seen = 0;
+    double since = 0.0;
+    for (;;) {
+        Sleep(500);
+        const uint32_t now = pairtime::g_presents.load();
+        if (now != seen || !g_replays.load()) { seen = now; since = pairtime::UsNow(); told = false; continue; }
+        if (pairtime::UsNow() - since < 3e6) continue;
+        if (told) continue;
+        told = true;
+        DumpAllStacks();   // first, to its own file: the log may be the stuck thing
+        Log("vrcam: watchdog - no present for 3 s while replaying:");
+        for (const QFence& x : g_qf)
+            LogF("vrcam: watchdog -   queue %p (type %d): our fence signalled %llu, done %llu", (void*)x.q, (int)x.q->GetDesc().Type,
+                 (unsigned long long)x.v, (unsigned long long)x.f->GetCompletedValue());
+        if (g_native) {
+            UINT last = 0; g_native->GetLastPresentCount(&last);
+            DXGI_FRAME_STATISTICS fs{};
+            const HRESULT hs = g_native->GetFrameStatistics(&fs);
+            LogF("vrcam: watchdog -   DXGI: presents issued %u, frame statistics hr %08lX: present count %u, present refresh %u, sync refresh %u; back buffer now %u, the game's %u",
+                 last, (unsigned long)hs, fs.PresentCount, fs.PresentRefreshCount, fs.SyncRefreshCount, g_native->GetCurrentBackBufferIndex(), g_gameIdxNow);
+            for (uint32_t i = g_pairIdxAt - std::min<uint32_t>(g_pairIdxAt + 1, 16); i != g_pairIdxAt + 1; ++i) {
+                const PairIdx& pi = g_pairIdx[i & 15];
+                LogF("vrcam: watchdog -   pair: left drew in %u (game's %u), right %u, after %u, hr %08lX, presents %u",
+                     pi.hold, pi.game, pi.right, pi.after, (unsigned long)pi.hr, pi.presents);
+            }
+        }
+        LogF("vrcam: watchdog -   last replay point %llu, two back %llu; slots %d", (unsigned long long)g_lastReplay.v,
+             (unsigned long long)g_prevReplay.v, camfix::g_nSlots.load());
+        for (int i = 256 - 96; i < 256; ++i) {
+            const Hist& h = g_hist[(g_histAt + i) & 255];
+            if (!h.q) continue;
+            LogF("vrcam: watchdog -   %c q %p f %p %llu (%s)", h.op, (void*)h.q, (void*)h.f, (unsigned long long)h.v, h.why);
+        }
+        {   // the game's own, oldest first; a wait shows its fence's completed value now
+            const uint32_t end = g_gameOpAt.load();
+            const uint32_t n = std::min<uint32_t>(end, 160);
+            Log("vrcam: watchdog -   the game's queue ops (s signal, w wait [done now], x submit), last 160:");
+            for (uint32_t i = end - n; i != end; ++i) {
+                const GameOp& o = g_gameOps[i & 1023];
+                if (!o.q) continue;
+                if (o.op == 'x') LogF("vrcam: watchdog -   x q %p (type %d) thread %lu", (void*)o.q, (int)o.q->GetDesc().Type, o.tid);
+                else LogF("vrcam: watchdog -   %c q %p (type %d) f %p %llu [done %llu] thread %lu", o.op, (void*)o.q, (int)o.q->GetDesc().Type,
+                          (void*)o.f, (unsigned long long)o.v, (unsigned long long)SafeDone(o.f), o.tid);
+            }
+        }
+        LogF("vrcam: watchdog -   the draw thread %lu waits in:", pairtime::g_drawThread.load());
+        LogStack(pairtime::g_drawThread.load());
+    }
+}
+
+// On unless [debug] replay_proto=0: the hooks cost next to nothing while [stereo] replay_right is
+// off, and the Settings' "Stereo" mode switches it on live.
+void Register() {
+    if (!IniB(L"debug", L"replay_proto", true)) return;
+    if (HANDLE h = CreateThread(nullptr, 0, Watchdog, nullptr, 0, nullptr)) CloseHandle(h);
+    reshade::register_event<reshade::addon_event::execute_command_list>(&OnExecute);
+    reshade::register_event<reshade::addon_event::present>(&OnPresent);
+    reshade::register_event<reshade::addon_event::barrier>(&OnBarrier);
+    camfix::Register();
+    g_on.store(true);
+    Log("vrcam: replay prototype on - [stereo] replay_right=1 draws the right eye from the left eye's lists");
+}
+
+// The game's present is hooked when first wanted, in the world: at ReShade's start the
+// game's code may not be decrypted yet.
+// Only in a loaded area and after 2 s of it: a menu or a loading screen has nothing to gain,
+// and the game frees and makes resources then (it hung at an area change, 2026-10-09).
+int g_worldPairs = 0;
+bool Wanted() {
+    if (!g_on.load() || !g_want.load()) return false;
+    if (!g_inWorld.load() || !d2rcam::InWorld()) {
+        if (g_worldPairs >= 240) Log("vrcam: replay - paused (no world: a menu or an area change)");
+        g_worldPairs = 0;
+        return false;
+    }
+    if (g_worldPairs < 240) {
+        if (++g_worldPairs < 240) return false;
+        Log("vrcam: replay - on (the area settled)");
+    }
+    static int hooked = -1;
+    if (hooked < 0) {
+        hooked = d2rsig::Hook(RVA_GAME_PRESENT, kSigGamePresent, sizeof kSigGamePresent, (void*)&HookGamePresent, (void**)&OrigGamePresent) ? 1 : 0;
+        LogF("vrcam: replay - the game's present %s", hooked ? "hooked" : "NOT where expected - no replay");
+    }
+    return hooked == 1 && g_proxy && g_native;   // both known after a present through the hook
+}
+
+// Before a pair's left pass. The previous replay must be done on the GPU first: the game
+// resets the left eye's command allocators once its own frame fence passes, which comes
+// before our replay of them.
+void BeginLeft() {
+    // the replay two pairs back: the game's allocators of that left pass come round again
+    // (3 back buffers, 2 presents a pair); the last one may still run while this pass records
+    {
+        StepTimer st(kWaitPrev);
+        if (g_fence) WaitFor(g_ahead.load() >= 2 ? g_prevReplay : g_lastReplay);
+        // The skipped right pass's wait on the swap chain's frame latency object: the game waits
+        // once a pass, we present twice a pair - with one wait a pair the count drifted, DXGI
+        // handed out the back buffer still on screen and the GPU waited for a newer present
+        // queued behind it (the game hung at replay_ahead 2). Here, where the pass would wait.
+        if (g_ahead.load() == 2 && g_latency && !(g_fxAtHold.load() && g_rt)) WaitForSingleObject(g_latency, 100);
+    }
+    if (g_peekStage == 2) { PeekReport(); g_peekStage = 0; }
+    if (g_peekStage == 1) g_peekStage = 0;   // armed but the pair went out otherwise: again
+    if (g_peekWant.exchange(0)) g_peekStage = 1;
+    g_prevReplay = g_lastReplay;
+    g_restorePending.store(true);
+    AcquireSRWLockExclusive(&g_lock);
+    g_subs.clear();
+    ReleaseSRWLockExclusive(&g_lock);
+    g_leftHeld = false;
+    g_captureThread.store(GetCurrentThreadId());
+    g_pairStartUs.store(pairtime::UsNow());
+    g_capturing.store(1);
+    if (g_sigHooked.load() && g_holdSignalsOn.load()) g_holdSignals.store(true);
+    if (g_want.load() == 1 || g_want.load() == 4) camfix::BeginLeft(g_want.load() == 1);
+}
+
+// Our presents' results: a present that is not S_OK, or that leaves the back buffer index
+// where it was (DXGI_STATUS_OCCLUDED: the window covered - it is dropped), told once a second.
+void NotePresent(HRESULT hr, UINT before, UINT after) {
+    static uint32_t n = 0, odd = 0, stuck = 0;
+    static HRESULT lastOdd = S_OK;
+    static ULONGLONG since = GetTickCount64();
+    ++n;
+    if (hr != S_OK) { ++odd; lastOdd = hr; }
+    if (before == after) ++stuck;
+    if (GetTickCount64() - since >= 1000) {
+        if (odd || stuck) LogF("vrcam: replay - presents: %u, not S_OK %u (last %08lX), back buffer index unchanged %u", n, odd, (unsigned long)lastOdd, stuck);
+        n = odd = stuck = 0; since = GetTickCount64();
+    }
+}
+
+void SetGameBackBuffer(uint8_t* wrap, UINT index) {
+    __try { *(uint32_t*)(wrap + 0x98) = index; } __except (EXCEPTION_EXECUTE_HANDLER) {}
+}
+
+// After the left pass, instead of the right one. False: the left eye went out as usual
+// (its Present was not held), the caller draws the right eye the usual way.
+bool RightFromLeft() {
+    g_capturing.store(0);
+    g_holdSignals.store(false);
+    std::vector<Sub> subs;
+    AcquireSRWLockExclusive(&g_lock);
+    subs.swap(g_subs);
+    ReleaseSRWLockExclusive(&g_lock);
+    if (!g_leftHeld) { ReleaseHeld(nullptr); g_fails.fetch_add(1); return false; }
+    g_leftHeld = false;
+    const int mode = g_want.load();
+    camfix::g_capture.store(false);
+    if (camfix::g_scanWant.exchange(0)) camfix::ScanCopies();
+    if (mode == 1) {   // the right eye's camera into the slots, on the direct queue before the replay
+        StepTimer st(kPatch);
+        CopySlots(1);
+    }
+    if (mode == 4) {   // the left pass done on the GPU (every queue it used), then its camera rewritten
+        std::vector<ID3D12CommandQueue*> qs;
+        for (const Sub& s : subs) if (std::find(qs.begin(), qs.end(), s.q) == qs.end()) qs.push_back(s.q);
+        std::vector<Pt> pts;
+        for (ID3D12CommandQueue* q : qs) pts.push_back(SignalOn(q));
+        {
+            StepTimer st(kWaitLeft);
+            for (const Pt& pt : pts) WaitFor(pt);
+        }
+        StepTimer st(kPatch);
+        camfix::RightEye();
+    }
+    double t = pairtime::UsNow();
+    if (mode != 3) {   // the lists again, a batch per run of one queue; a fence between queues
+        // (the first batch may be the compute queue's: it must see the right eye's slots too)
+        if (mode == 1 && !subs.empty() && subs[0].q != g_direct) { g_why = "replay: first batch not direct"; GpuWait(subs[0].q, SignalOn(g_direct)); }
+        ID3D12CommandQueue* prev = nullptr;
+        size_t i = 0;
+        while (i < subs.size()) {
+            ID3D12CommandQueue* q = subs[i].q;
+            std::vector<ID3D12CommandList*> batch;
+            while (i < subs.size() && subs[i].q == q) batch.push_back(subs[i++].cl);
+            if (prev && prev != q) { g_why = "replay: queue switch"; GpuWait(q, SignalOn(prev)); }
+            if (g_marks) {
+                for (size_t j = 0; j < batch.size(); ++j) {   // k: the list's place in the pass
+                    const size_t k = i - batch.size() + j;
+                    q->ExecuteCommandLists(1, &batch[j]);
+                    g_why = kListMark[std::min<size_t>(k, 31)];
+                    SignalOn(q);
+                }
+            } else {
+                q->ExecuteCommandLists((UINT)batch.size(), batch.data());
+            }
+            prev = q;
+        }
+        if (prev && prev != g_direct) { g_why = "replay: back to direct"; GpuWait(g_direct, SignalOn(prev)); }
+    }
+    // One wait on the swap chain's frame latency object a present, as the game does before its
+    // frame: it waits once a game frame, we present twice - unthrottled, the GPU ran into a back
+    // buffer still queued behind presents waiting after it (the game hung, replay_ahead 2).
+    if (!g_latencyAsked) {
+        g_latencyAsked = true;
+        DXGI_SWAP_CHAIN_DESC1 d{};
+        IDXGISwapChain2* s2 = nullptr;
+        if (SUCCEEDED(g_native->GetDesc1(&d)) && (d.Flags & DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT) &&
+            SUCCEEDED(g_native->QueryInterface(__uuidof(IDXGISwapChain2), (void**)&s2))) {
+            g_latency = s2->GetFrameLatencyWaitableObject();
+            // Each wait let through only when every earlier present was done (latency 1): the CPU
+            // waited for the GPU's replay. [stereo] replay_latency frames may queue instead.
+            UINT was = 0;
+            s2->GetMaximumFrameLatency(&was);
+            const UINT want = (UINT)std::clamp((int)IniF(L"stereo", L"replay_latency", 3.0f), 1, 8);
+            const bool change = g_ahead.load() >= 2 && !(g_fxAtHold.load() && g_rt) && want != was;
+            if (change) s2->SetMaximumFrameLatency(want);
+            LogF("vrcam: replay - frame latency %u -> %u", was, change ? want : was);
+            s2->Release();
+        }
+        LogF("vrcam: replay - the swap chain %s a frame latency waitable object (flags %X, %u buffers)",
+             g_latency ? "has" : "has NO", d.Flags, d.BufferCount);
+    }
+    // (only with [stereo] replay_ahead=2: that wait keeps presents to the monitor's refresh -
+    // 65 pairs/s - so by default the CPU runs only one replay ahead and needs no throttle)
+    // [stereo] replay_ahead 2: the presents kept bounded by the GPU instead - the last pair
+    // done before this one's go out (the replay of this one runs on while the CPU records
+    // the next left pass). 3: the latency object as above (follows the monitor).
+    if (g_latency && g_ahead.load() >= 3) { StepTimer st(kWaitPrev); WaitForSingleObject(g_latency, 100); }
+    {   // the game's end-of-frame signals, now behind the replay on their queues
+        AcquireSRWLockShared(&g_heldLock);
+        const uint32_t n = (uint32_t)g_held.size();
+        ReleaseSRWLockShared(&g_heldLock);
+        if (n > g_heldMax.load()) { g_heldMax.store(n); LogF("vrcam: replay - %u end-of-frame signal(s) of the game held for the replay", n); }
+        static ULONGLONG told = 0;
+        if (GetTickCount64() - told > 10000) {
+            told = GetTickCount64();
+            LogF("vrcam: replay - queue signals: %u in all, %u while holding, %u held; at this replay %u still held",
+                 g_sigCalls.load(), g_sigWhileHolding.load(), g_sigHeld.load(), n);
+        }
+        ReleaseHeld(nullptr);
+    }
+    // the right eye: the back buffer as the lists left it (mode 3: the left picture again)
+    const UINT bbRight = g_native->GetCurrentBackBufferIndex();
+    Check("the replay");
+    SetEye(1);
+    // ReShade renders no effects at a present once an add-on has rendered them in that frame:
+    // with the left eye's at the hold, the right eye's went without (no sky, and FlatVR's
+    // add-on, which takes the picture from the effect pass, had only left eyes - its stream
+    // stopped). The right eye's are rendered here too, on the replayed picture and depth.
+    if (g_marks) { g_why = "before the right eye's effects"; SignalOn(g_direct); }
+    if (g_fxAtHold.load() && g_rt && g_rightTech.handle)
+        if (ID3D12Resource* bb = BackBuffer(bbRight)) {
+            EffectsAtHold(bb, bbRight, true);
+            if (g_peekStage == 1) { Peek(1, bb); g_peekStage = 2; }
+            bb->Release();
+        }
+    if (g_marks) { g_why = "after the right eye's effects, before its present"; SignalOn(g_direct); }
+    double t1 = pairtime::UsNow(); g_stepUs[kSubmit] += t1 - t; t = t1;
+    const HRESULT hrR = g_proxy->Present(0, g_presentFlags);
+    Check("the right eye's present", hrR);
+    NotePresent(hrR, bbRight, g_native->GetCurrentBackBufferIndex());
+    {
+        PairIdx& pi = g_pairIdx[g_pairIdxAt++ & 15];
+        pi.right = bbRight; pi.after = g_native->GetCurrentBackBufferIndex(); pi.hr = hrR;
+        UINT c = 0; g_native->GetLastPresentCount(&c); pi.presents = c;
+    }
+    t1 = pairtime::UsNow(); g_stepUs[kPresentR] += t1 - t; t = t1;
+    // the left eye: its copy into the next back buffer (not with its effects run at the hold:
+    // it went out from that effect pass)
+    const UINT bbLeft = g_native->GetCurrentBackBufferIndex();
+    if (g_fxAtHold.load() && g_rt) {
+        g_why = "end of pair";
+        g_lastReplay = SignalOn(g_direct);
+        if (g_wrap) SetGameBackBuffer(g_wrap, g_native->GetCurrentBackBufferIndex());
+        if (g_replays.fetch_add(1) % 900 == 0)
+        {
+            LogF("vrcam: replay - a pair from one pass, one present: %zu lists again (mode %d), back buffer %u; %d camera slots (%u overflowed)",
+                 subs.size(), mode, bbRight, camfix::g_nSlots.load(), camfix::g_overflow.load());
+            const uint32_t pairs = std::max<uint32_t>(1, g_replays.load());
+            LogF("vrcam: replay - slots made after the left values went in: %.2f a pair (copied late)", g_lateSlots.load() / (double)pairs);
+            LogF("vrcam: replay - the game's lists a pair: %.1f in the left pass (replayed), %.1f outside it on the draw thread, %.1f from other threads (neither replayed)",
+                 g_insideLists.load() / (double)pairs, g_outsideDraw.load() / (double)pairs, g_outsideOther.load() / (double)pairs);
+            for (int i = 0; i < 8; ++i)
+                if (g_outside[i].tid) LogF("vrcam: replay -   outside: thread %lu (draw thread %lu), queue type %d, %.2f ms after the left pass began",
+                                           g_outside[i].tid, g_captureThread.load(), g_outside[i].type, g_outside[i].atUs / 1000.0);
+            LogF("vrcam: replay - the right eye's camera, a pair: %.1f folded into the projection, %.1f views moved, %.1f positions; shift %.4f (eye half %.4f x2 x%.2f), off-axis %.4f, x scale %.4f",
+                 g_nFold.load() / (double)pairs, g_nView.load() / (double)pairs, g_nPos.load() / (double)pairs,
+                 2.0 * g_eyeHalf.load() * g_shiftMul.load(), g_eyeHalf.load(), g_shiftMul.load(), g_projShift.load(), g_projSx.load());
+        }
+        ++g_stepPairs;
+        return true;
+    }
+    if (ID3D12Resource* bb = BackBuffer(bbLeft)) {
+        Copy(bb, D3D12_RESOURCE_STATE_PRESENT, g_leftImg, D3D12_RESOURCE_STATE_COMMON);
+        bb->Release();
+    }
+    Check("copying the left picture in");
+    if (ID3D12Resource* depth = g_depthCopy.load() ? (ID3D12Resource*)g_depthRes.load() : nullptr; depth && g_leftDepth)
+        Copy(depth, DepthState(), g_leftDepth, D3D12_RESOURCE_STATE_COMMON);
+    g_why = "end of pair";
+    g_lastReplay = SignalOn(g_direct);
+    SetEye(0);
+    t1 = pairtime::UsNow(); g_stepUs[kCopyL] += t1 - t; t = t1;
+    const HRESULT hrL = g_proxy->Present(0, g_presentFlags);
+    Check("the left eye's present", hrL);
+    NotePresent(hrL, bbLeft, g_native->GetCurrentBackBufferIndex());
+    g_stepUs[kPresentL] += pairtime::UsNow() - t;
+    ++g_stepPairs;
+    // the game asked for the back buffer index right after its (held) present, before our two
+    // went out: it would draw the next frame into one already presented (device removed, 0x887A002B)
+    if (g_wrap) SetGameBackBuffer(g_wrap, g_native->GetCurrentBackBufferIndex());
+    if (g_replays.fetch_add(1) % 900 == 0)
+        LogF("vrcam: replay - a pair from one pass: %zu lists again (mode %d), right in back buffer %u, left in %u; %d camera slots (%u overflowed)",
+             subs.size(), mode, bbRight, bbLeft, camfix::g_nSlots.load(), camfix::g_overflow.load());
+    return true;
+}
+}  // namespace replay
+
 uintptr_t HookDrawGameScreen(int a) {
     static thread_local int depth = 0;
     static bool told = false, toldWhy = false;
@@ -4180,9 +6591,15 @@ uintptr_t HookDrawGameScreen(int a) {
     pairtime::g_drawThread.store(GetCurrentThreadId());
     if (lastEnd > 0.0) sumGap += t0 - lastEnd;
     pairtime::g_presentAt.store(0.0); pairtime::g_effSum.store(0.0);
+    cbcmp::PairBegin();
+    rtrace::PairBegin();
+    const bool replayRight = replay::Wanted();
+    if (replayRight) replay::BeginLeft();
     SetEye(0);
     d2rcam::Refresh();
-    OrigDrawGameScreen(a);
+    const uintptr_t leftR = OrigDrawGameScreen(a);
+    cbcmp::PairMiddle();
+    rtrace::PairMiddle();
     const double t1 = pairtime::UsNow();
     sumPass[0] += t1 - t0;
     if (const double pa = pairtime::g_presentAt.load(); pa > t0) sumPresent[0] += t1 - pa;
@@ -4198,8 +6615,10 @@ uintptr_t HookDrawGameScreen(int a) {
     *dt = rightDt; *rawDt = rightDt;
     SetEye(1);
     d2rcam::Refresh();
-    const uintptr_t r = OrigDrawGameScreen(a);
+    const uintptr_t r = replayRight && replay::RightFromLeft() ? leftR : OrigDrawGameScreen(a);
     *dt = keep; *rawDt = keepRaw;
+    cbcmp::PairEnd();
+    rtrace::PairEnd();
     const double t2 = pairtime::UsNow();
     sumPass[1] += t2 - t1;
     if (const double pa = pairtime::g_presentAt.load(); pa > t1) sumPresent[1] += t2 - pa;
@@ -4225,6 +6644,14 @@ uintptr_t HookDrawGameScreen(int a) {
                  maxPair * 0.001);
             LogF("vrcam: the two passes busy the game's thread %.0f%% of their time (%.2f ms CPU a pair; the rest waits - GPU, fences, locks)",
                  sumWall > 0.0 ? 100.0 * sumCpu / sumWall : 0.0, sumCpu * k);
+        }
+        if (replay::g_stepPairs) {
+            const double k2 = 0.001 / replay::g_stepPairs;
+            double* u = replay::g_stepUs;
+            LogF("vrcam: replay steps, ms a pair: wait prev replay %.2f | wait before restore %.2f | hold left %.2f | wait last pair (effects) %.2f | camera %.2f | submit %.2f | present R %.2f | copy L %.2f | present L %.2f",
+                 u[0] * k2, u[1] * k2, u[2] * k2, u[3] * k2, u[4] * k2, u[5] * k2, u[6] * k2, u[7] * k2, u[8] * k2);
+            for (int i = 0; i < replay::kSteps; ++i) u[i] = 0.0;
+            replay::g_stepPairs = 0;
         }
         sumGap = 0.0; maxPair = 0.0; sumCpu = 0.0; sumWall = 0.0;
         for (int e = 0; e < 2; ++e) sumPass[e] = sumPresent[e] = sumEff[e] = 0.0;
@@ -6320,6 +8747,22 @@ int __cdecl HookEval(void* cmdList, const NgxHandle* h, const void* params, void
         // the eye this frame draws: a pair per game frame sets it for each pass;
         // by turns, the one after the eye presented last
         const int eye = PairWanted() ? (g_eye.load() & 1) : (g_fxEye ^ 1);
+        if (eye == 0 && replay::DlssBoth()) {   // the left pass of a replay: both instances, predicated
+            NgxHandle* twin = TwinOf(h);
+            if (!twin && !TriedBefore(h)) twin = MakeTwin(cmdList, h, const_cast<void*>(params), "for the replay");
+            if (twin) {
+                auto* cl = (ID3D12GraphicsCommandList*)cmdList;
+                cl->SetPredication(replay::g_predBuf, 0, D3D12_PREDICATION_OP_EQUAL_ZERO);
+                void* restore = g_inWorld.load() ? dlssmv::BeforeEvaluate(cmdList, params, 0) : nullptr;
+                const int r = OrigEval(cmdList, h, params, callback);
+                dlssmv::AfterEvaluate(params, restore);
+                cl->SetPredication(replay::g_predBuf, 8, D3D12_PREDICATION_OP_EQUAL_ZERO);
+                OrigEval(cmdList, twin, params, callback);
+                cl->SetPredication(nullptr, 0, D3D12_PREDICATION_OP_EQUAL_ZERO);
+                if (replay::g_predEvals.fetch_add(1) == 0) Log("vrcam: DLSS - the replay's left pass carries both eyes' evaluations (predicated)");
+                return r;
+            }
+        }
         if (eye == 1) {
             NgxHandle* twin = TwinOf(h);
             if (!twin && !TriedBefore(h)) twin = MakeTwin(cmdList, h, const_cast<void*>(params), "at the first evaluation");
@@ -6372,7 +8815,7 @@ void Install() {
 // The views of the toolbar's and the map's copies bound to the effect (hud::PictureNow), 0 = none yet.
 uint64_t g_pieceBound[3] = {};   // the toolbar, the map, the labels' layer
 
-void Forget(reshade::api::effect_runtime*) { g_tech[0] = g_tech[1] = {0}; g_pieceBound[0] = g_pieceBound[1] = g_pieceBound[2] = 0; }
+void Forget(reshade::api::effect_runtime*) { g_tech[0] = g_tech[1] = {0}; replay::g_rightTech = {0}; g_pieceBound[0] = g_pieceBound[1] = g_pieceBound[2] = 0; }
 
 void SetFloats(reshade::api::effect_runtime* rt, const char* name, const float* v, size_t n) {
     const reshade::api::effect_uniform_variable u = rt->find_uniform_variable("D2R_DepthFog.fx", name);
@@ -6401,6 +8844,16 @@ bool BoneAxesWanted() { return false; }
 
 // The frame stamp strip (D2R_DepthFog.fx PS_Stamp): whenever the camera turns
 // with the head, so that FlatVR can place its screen at the pose of the frame.
+// [stereo] pipeline_depth where the engine pipelines: one picture a game frame (mono, the
+// depth, eyes by turns). A pair from one game frame presents each eye from inside its own
+// pass, the view just built: 0 there.
+int PipeDepth() { return PairWanted() ? 0 : g_set.pipelineDepth.load(); }
+SkyView SkyBack(int e) {   // under g_skyLock
+    const int d = PipeDepth();
+    if (d <= 0) return g_skyView[e];
+    const SkyView& h = g_skyHist[e][(g_skyHistAt[e] - d) & 3];
+    return h.axes_ok && h.proj_ok ? h : g_skyView[e];
+}
 bool StampWanted() { return g_enabled.load() && g_afrBlock && g_set.stamps.load() && g_set.stampPixels.load(); }
 
 bool FogWanted() {
@@ -6475,6 +8928,7 @@ void OnFinishEffects(reshade::api::effect_runtime* rt, reshade::api::command_lis
     if (ApplySkyPictures(rt)) return;   // the effect reloads with the new pictures
     if (!g_tech[0].handle) g_tech[0] = rt->find_technique("D2R_DepthFog.fx", "D2R_DepthFog");
     if (!g_tech[1].handle) g_tech[1] = rt->find_technique("D2R_DepthFog.fx", "D2R_DepthFog_R");
+    replay::g_rightTech = g_tech[1];
     if (!g_tech[0].handle) { hud::SetPictureReady(false); return; }
     // Off while a menu is open: the fog lies over the whole picture, the
     // inventory and trade panels included, and darkened them.
@@ -6621,25 +9075,81 @@ void Publish() {
 }  // namespace depthcam
 
 // Right before the swap chain's real Present (after ReShade's effects and overlay): pairtime.
+// [stereo] pace (on): the presents held to the headset's rate - a game frame per headset frame.
+// FlatVR shows the newest picture each headset frame; a game faster than the headset judders
+// on head turns (2026-10-09: 90 fps against 90 Hz smooth, 170 fps not), whatever the game's
+// own frame cap says (the game rewrites its Settings.json while it runs, so the Settings
+// program cannot set it then). Presents a headset frame: eyes by turns and two passes a pair
+// two, a replayed pair (one present), mono and the depth one.
+namespace pace {
+double g_next = 0.0;
+uint32_t g_lastReplays = 0;
+int g_replayedRecently = 0;   // presents since a replayed pair was seen, capped
+void Tick() {
+    if (!g_set.pace.load() || !g_inWorld.load()) { g_next = 0.0; return; }
+    const uint32_t r = replay::g_replays.load(std::memory_order_relaxed);
+    if (r != g_lastReplays) { g_lastReplays = r; g_replayedRecently = 0; }
+    else if (g_replayedRecently < 8) ++g_replayedRecently;
+    const bool replayed = g_replayedRecently < 4;
+    const int perFrame = AfrOn() && !replayed ? 2 : 1;
+    const double period = 1e6 / ((double)g_set.headsetHz.load() * perFrame);
+    double now = pairtime::UsNow();
+    if (g_next <= 0.0 || now - g_next > 2.0 * period) { g_next = now + period; return; }   // behind: no catching up
+    if (now < g_next) {
+        static bool fine = (timeBeginPeriod(1), true);
+        (void)fine;
+        while (g_next - now > 1500.0) { Sleep(1); now = pairtime::UsNow(); }
+        while (now < g_next) { YieldProcessor(); now = pairtime::UsNow(); }
+    }
+    g_next += period;
+}
+}  // namespace pace
+
 void OnReshadePresent(reshade::api::effect_runtime*) {
+    pace::Tick();
     const double t = pairtime::UsNow();
     pairtime::g_presentAt.store(t);
+    pairtime::g_presents.fetch_add(1, std::memory_order_relaxed);
+    drawprof::Tick();
     // Any mode (mono, stereo, menus): the presents a second and the game's busiest
-    // threads, every 10 s - the frame budget's hunt (~7 ms a present, 2026-10-08).
-    static double since = 0.0;
-    static uint32_t n = 0;
-    ++n;
-    if (since == 0.0) { since = t; pairtime::BusyThreads(0.0); return; }
-    if (t - since >= 10e6) {
-        if (!pairtime::g_drawThread.load()) pairtime::g_drawThread.store(GetCurrentThreadId());
-        LogF("vrcam: %.1f presents/s; the game's busiest threads, %% of a core (present thread %lu): %s",
-             n * 1e6 / (t - since), GetCurrentThreadId(), pairtime::BusyThreads(t - since).c_str());
-        since = t; n = 0;
+    // threads, every 10 s - the frame budget's hunt (~7 ms a present, 2026-10-08). On a
+    // thread of its own: the snapshot of every thread (Toolhelp) held this present up
+    // 30-50 ms every 10 s - a frame far too late, a jerk in a head turn (2026-10-09).
+    static std::atomic<DWORD> presentThread{0};
+    if (!presentThread.load()) {
+        presentThread.store(GetCurrentThreadId());
+        if (HANDLE h = CreateThread(nullptr, 0, [](void*) -> DWORD {
+                double since = pairtime::UsNow();
+                uint32_t n0 = pairtime::g_presents.load();
+                pairtime::BusyThreads(0.0);
+                for (;;) {
+                    Sleep(10000);
+                    const double now = pairtime::UsNow();
+                    const uint32_t n = pairtime::g_presents.load();
+                    if (!pairtime::g_drawThread.load()) pairtime::g_drawThread.store(presentThread.load());
+                    LogF("vrcam: %.1f presents/s; the game's busiest threads, %% of a core (present thread %lu): %s",
+                         (n - n0) * 1e6 / (now - since), presentThread.load(), pairtime::BusyThreads(now - since).c_str());
+                    since = now; n0 = n;
+                }
+            }, nullptr, 0, nullptr)) CloseHandle(h);
     }
 }
 
 void OnBeginEffects(reshade::api::effect_runtime* rt, reshade::api::command_list*, reshade::api::resource_view, reshade::api::resource_view) {
     pairtime::g_effBegin.store(pairtime::UsNow());
+    if (replay::g_on.load()) replay::g_rt = rt;
+    if (replay::g_on.load()) {   // the depth buffer our effect reads: replay keeps the left eye's for its present
+        const reshade::api::effect_texture_variable v = rt->find_texture_variable("D2R_DepthFog.fx", "FogDepthTex");
+        if (v.handle) {
+            reshade::api::resource_view srv{0};
+            rt->get_texture_binding(v, &srv, nullptr);
+            const uint64_t res = srv.handle ? rt->get_device()->get_resource_from_view(srv).handle : 0;
+            if (res && res != replay::g_depthRes.load()) {
+                replay::g_depthRes.store(res);
+                LogF("vrcam: replay - the effects' depth buffer: %p", (void*)res);
+            }
+        }
+    }
     {
         float s[2];
         renderscale::Frame(rt, s);
@@ -6751,7 +9261,7 @@ void OnBeginEffects(reshade::api::effect_runtime* rt, reshade::api::command_list
     // Both eyes' views: the technique on picks one. Without AFR the one eye there is fills both.
     SkyView sv[2];
     AcquireSRWLockShared(&g_skyLock);
-    sv[0] = g_skyView[AfrOn() ? 0 : eye]; sv[1] = g_skyView[AfrOn() ? 1 : eye];
+    sv[0] = SkyBack(AfrOn() ? 0 : eye); sv[1] = SkyBack(AfrOn() ? 1 : eye);
     ReleaseSRWLockShared(&g_skyLock);
     bool sky = pal >= 0;
     for (const SkyView& v : sv) sky = sky && v.proj_ok && v.axes_ok && v.proj[0] != 0.0f && v.proj[1] != 0.0f;
@@ -6913,7 +9423,7 @@ void OnBeginEffects(reshade::api::effect_runtime* rt, reshade::api::command_list
             // other's stale view, written here, froze the cave ceiling in flat F3 (2026-10-07).
             SkyView sv[2];
             AcquireSRWLockShared(&g_skyLock);
-            sv[0] = g_skyView[AfrOn() ? 0 : eye]; sv[1] = g_skyView[AfrOn() ? 1 : eye];
+            sv[0] = SkyBack(AfrOn() ? 0 : eye); sv[1] = SkyBack(AfrOn() ? 1 : eye);
             ReleaseSRWLockShared(&g_skyLock);
             for (int e = 0; e < 2; ++e) {
                 const SkyView& s = sv[e].axes_ok && sv[e].proj_ok ? sv[e] : sv[0];
@@ -6973,7 +9483,7 @@ void OnBeginEffects(reshade::api::effect_runtime* rt, reshade::api::command_list
             uint32_t v[2];
             for (int e = 0; e < 2; ++e) {
                 const int from = AfrOn() ? e : (eye & 1);
-                v[e] = g_stampHist[from][(g_stampHistAt[from] - g_set.pipelineDepth.load()) & 3];
+                v[e] = g_stampHist[from][(g_stampHistAt[from] - PipeDepth()) & 3];
                 const reshade::api::effect_uniform_variable u = rt->find_uniform_variable("D2R_DepthFog.fx", e ? "FrameStamp1" : "FrameStamp0");
                 if (u.handle) rt->set_uniform_value_uint(u, &v[e], 1);
             }
@@ -7018,6 +9528,9 @@ void TryRegister() {
     reshade::register_event<reshade::addon_event::bind_render_targets_and_depth_stencil>(&renderscale::OnBind);
     reshade::register_event<reshade::addon_event::bind_viewports>(&renderscale::OnViewports);
     uitrace::Register();   // Ctrl + F10: one frame's render targets to d2r_vr_uitrace.txt
+    cbcmp::Register();     // [debug] cb_compare: one pair's constant buffers, left against right
+    rtrace::Register();    // [debug] replay_trace: one pair's command list submissions
+    replay::Register();    // [debug] replay_proto: the right eye from the left eye's command lists
     hud::SetLogger(&Log);
     dlssmv::SetLogger(&Log);
     hud::Register();       // the interface's own layer: [hud] hide
@@ -7341,7 +9854,7 @@ void LoadReShade() {
     else LogF("vrcam: ReShade64.dll did not load (error %lu)", GetLastError());
 }
 
-static const char g_info_version[] = "0.152.0";
+static const char g_info_version[] = "0.153.0";
 
 static const PluginInfo g_info = {
     PluginInfoSize, D2RL_PLUGIN_ABI_VERSION, "d2r-vr-vrcam", "vrcam", g_info_version, "BodyWalkVR",
@@ -7364,6 +9877,7 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     g_iniPath[n] = 0;
     wcscat_s(g_iniPath, L"d2r_vr.ini");
     ReloadIfChanged();
+    NoTemporalAA();
     g_mouseLookOn.store(MouseLookForView());
     LogF("vrcam %s: game build %s (%s), made for D2R 3.3.93787 under D2RLoader 1.3.1", g_info_version,
          ctx->buildVersion ? ctx->buildVersion : "?", ctx->buildName ? ctx->buildName : "?");

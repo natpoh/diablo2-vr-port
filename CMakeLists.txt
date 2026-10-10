@@ -52,6 +52,21 @@ target_link_libraries(d2rcam PUBLIC D2RLPlugin::D2RLPlugin)
 target_compile_definitions(d2rcam PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_compile_options(d2rcam PRIVATE /utf-8 /W4 /EHsc /permissive-)
 
+# A held weapon's weight (cleanroom/heft, docs/WEAPON_WEIGHT.md): the model, its
+# synthetic tests, and heft_bench.dll for the Unity bench (tools/heft_bench_unity).
+add_library(heft STATIC cleanroom/heft/heft.cpp)
+target_include_directories(heft PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/heft)
+target_compile_options(heft PRIVATE /utf-8 /W4 /EHsc /permissive-)
+add_library(heft_benchdefs STATIC cleanroom/heft/bench.cpp)
+target_link_libraries(heft_benchdefs PUBLIC heft)
+target_compile_options(heft_benchdefs PRIVATE /utf-8 /W4 /EHsc /permissive-)
+add_executable(heft_test cleanroom/tests/heft_test.cpp)
+target_link_libraries(heft_test PRIVATE heft_benchdefs)
+target_compile_options(heft_test PRIVATE /utf-8 /W4 /EHsc /permissive- /D_CRT_SECURE_NO_WARNINGS)
+add_library(heft_bench SHARED cleanroom/heft/heft_capi.cpp)
+target_link_libraries(heft_bench PRIVATE heft_benchdefs)
+target_compile_options(heft_bench PRIVATE /utf-8 /W4 /EHsc /permissive-)
+
 add_library(d2rl-vrcam SHARED vr/vrcam.cpp vr/dlss_mv.cpp vr/skeletons.cpp vr/gamestate.cpp vr/gamecmd.cpp vr/probe.cpp vr/uitrace.cpp vr/hud.cpp vr/memdiff.cpp vr/writewatch.cpp vr/vrcam.rc)
 target_include_directories(d2rl-vrcam PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared ${FLATVR_SHARED_DIR} ${RESHADE_SDK_INCLUDE} ${BODYWALK_SRC})
 target_link_libraries(d2rl-vrcam PRIVATE d2rcam minhook user32)

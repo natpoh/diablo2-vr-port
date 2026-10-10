@@ -154,3 +154,39 @@ static_assert(sizeof(FlatVRDepthCamera) == 32, "FlatVRDepthCamera is a wire form
 // screen (the Heroes Olden Era mod sets it). FlatVR flips it where it takes
 // the buffer in, as its own "Flip Depth Map Vertically" box would.
 #define FLATVR_DEPTH_CAMERA_UPSIDE_DOWN 1u
+
+// When the game presented the picture, carried IN the picture: the addon
+// writes it into the shared copy of every single (not paired) frame as 48
+// black/white pixels at the LEFT end of the bottom row - the same strip a
+// game mod draws at the right end for its view stamp (8 magic bits, the 32-bit
+// stamp in the clock above, 8 check bits = the stamp's four bytes XORed;
+// pixel i is bit i). FlatVR reads it in the pass that copies the picture and
+// paints it over, so whichever frame it got, it knows that frame's own present
+// moment - no shared block can say that, it runs ahead of the GPU copy. For a
+// game whose camera FlatVR turns (mouse, OpenTrack) the head handed out a
+// game-latency before that moment is the pose the frame was drawn with: the
+// frame conveyor (FlatVrService::RenderPoseFromPresent).
+#define FLATVR_PRESENT_STAMP_MAGIC 0xB3u
+#define FLATVR_PRESENT_STAMP_PIXELS 48u
+
+// A strip's six bytes, pixel i = bit (i % 8) of byte i / 8: the magic, the
+// stamp low byte first, the check.
+inline void FlatVRStampStripBytes(uint8_t magic, uint32_t stamp, uint8_t out[6]) {
+  out[0] = magic;
+  out[1] = (uint8_t)stamp;
+  out[2] = (uint8_t)(stamp >> 8);
+  out[3] = (uint8_t)(stamp >> 16);
+  out[4] = (uint8_t)(stamp >> 24);
+  out[5] = (uint8_t)((stamp ^ (stamp >> 8) ^ (stamp >> 16) ^ (stamp >> 24)) & 0xFFu);
+}
+
+// And back, from the strip's 48 pixels read as bits into two words (pixels
+// 0-31 in `lo`, 32-47 in the low half of `hi`): false unless it is a strip
+// with this magic and its check holds.
+inline bool FlatVRStampStripRead(uint32_t lo, uint32_t hi, uint8_t magic, uint32_t *stamp) {
+  const uint64_t bits = (uint64_t)lo | ((uint64_t)(hi & 0xFFFFu) << 32);
+  *stamp = (uint32_t)(bits >> 8);
+  const uint32_t check = (uint32_t)((bits >> 40) & 0xFFu);
+  const uint32_t sum = (*stamp ^ (*stamp >> 8) ^ (*stamp >> 16) ^ (*stamp >> 24)) & 0xFFu;
+  return (uint32_t)(bits & 0xFFu) == magic && check == sum;
+}

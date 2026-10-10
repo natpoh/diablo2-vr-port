@@ -275,12 +275,14 @@ std::vector<Item> g_items = {
            L"Steps of the ray through the rock: more = finer relief, a dearer frame.")),
     Needs(L"ceiling", L"enabled", 1, Toggle(L"ceiling", L"torches", L"Torches light the ceiling (CPU heavy!)", 0,
            kTorchesTip)),
-    Only(kVr, Choice(L"@stereo3d", L"source", L"3D in the headset", 2,
-           {L"Mono - a flat screen", L"3D from the depth (ReShade)", L"Real stereo - two frames"},
-           L"Mono: no 3D. 3D from the depth: one picture, FlatVR makes the second eye from ReShade's depth "
-           L"(works with DLSS). Real stereo: the game draws the left eye, the right eye, the left... - true 3D, "
-           L"with DLSS too (each eye its own; TAA still smears it). Sets the Stereo tab's Real stereo and, while BodyWalk runs, FlatVR's "
-           L"3D source (BodyWalk 1.76 or later).")),
+    Only(kVr, Choice(L"@stereo3d", L"source", L"3D in the headset", 0,
+           {L"Stereo - one pass, two pictures", L"Stereo - eyes by turns", L"3D from the depth (ReShade)", L"Mono - a flat screen"},
+           L"Stereo: the game draws each frame once and the right eye is drawn again from the same work with its own "
+           L"camera - true 3D at nearly the mono frame rate (new: if it is unstable on your PC, take Eyes by turns). "
+           L"Eyes by turns: the game draws the left eye, the right eye, the left... a full frame each (~half the mono "
+           L"rate per eye). 3D from the depth: one picture, FlatVR makes the second eye from ReShade's depth (works with "
+           L"DLSS). Mono: no 3D. Stereo needs a game restart to switch on the first time. Sets the Stereo tab's Real "
+           L"stereo and, while BodyWalk runs, FlatVR's 3D source (BodyWalk 1.76 or later).")),
     Only(kVr, Choice(L"stereo", L"headset_rate", L"Headset refresh rate", 3, {L"72 Hz", L"75 Hz", L"80 Hz", L"90 Hz", L"120 Hz"},
            L"Sets the game's frame cap (in its own options, Settings.json): one picture a frame (mono, the 3D from the depth) "
            L"at the headset's rate, real stereo at twice it (each eye at the rate). More pictures than the headset shows make "
@@ -1419,7 +1421,7 @@ const PresetKey kPreset[] = {
     {L"ceiling", L"enabled", {0, 0, 1, 1}},
     {L"ceiling", L"steps", {8, 8, 12, 20}},
     {L"ceiling", L"torches", {0, 0, 0, 1}},
-    {L"@stereo3d", L"source", {1, 2, 2, 2}},   // Potato: the 3D from ReShade's depth, one frame a picture
+    {L"@stereo3d", L"source", {2, 0, 0, 0}},   // Potato: the 3D from ReShade's depth, one frame a picture
     {L"stereo", L"headset_rate", {0, 3, 3, 3}},   // Potato 72 Hz, the others 90 (the game's cap follows: ApplyFrameCap)
 };
 float ReadValue(const Item& it);
@@ -1477,21 +1479,31 @@ void WriteReShadeValue(const Item&, float v) {
     WritePrivateProfileStringW(L"ADDON", L"DisabledAddons", list.c_str(), ini.c_str());
 }
 
-// "@stereo3d" source: 0 mono, 1 3D from ReShade's depth, 2 real stereo - kept as [stereo]
-// source, with [stereo] afr (real stereo) the truth: the Stereo tab switches that alone.
+// "@stereo3d" source, the four modes: 0 stereo (one pass, two pictures - [stereo] afr,
+// pair_per_tick and replay_right), 1 stereo by turns (afr alone), 2 3D from ReShade's depth,
+// 3 mono - kept as [stereo] source (0 none, 1 depth, 2 the game's pair) and those keys: the
+// Stereo tab switches afr and pair_per_tick alone (two passes a frame: pair_per_tick without
+// replay_right, reads as stereo here).
 void SignalBridge(const wchar_t* name);
 float ReadStereo3D() {
     const bool afr = GetPrivateProfileIntW(L"stereo", L"afr", 0, g_ini) != 0;
     const int source = GetPrivateProfileIntW(L"stereo", L"source", afr ? 2 : 1, g_ini);
-    if (afr) return 2.0f;
-    return source == 0 ? 0.0f : 1.0f;
+    if (afr) return GetPrivateProfileIntW(L"stereo", L"pair_per_tick", 0, g_ini) != 0 ? 0.0f : 1.0f;
+    return source == 0 ? 3.0f : 2.0f;
 }
 void WriteStereo3D(float v) {
-    const int s = std::clamp((int)std::lround(v), 0, 2);
+    const int m = std::clamp((int)std::lround(v), 0, 3);
+    static const int kSource[4] = {2, 2, 1, 0};
+    const int s = kSource[m];
     wchar_t buf[8];
     swprintf_s(buf, L"%d", s);
     WritePrivateProfileStringW(L"stereo", L"source", buf, g_ini);
     WritePrivateProfileStringW(L"stereo", L"afr", s == 2 ? L"1" : L"0", g_ini);
+    if (m <= 1) {
+        WritePrivateProfileStringW(L"stereo", L"pair_per_tick", m == 0 ? L"1" : L"0", g_ini);
+        WritePrivateProfileStringW(L"stereo", L"replay_right", m == 0 ? L"1" : L"0", g_ini);
+        if (m == 0) WritePrivateProfileStringW(L"stereo", L"replay_ahead", L"2", g_ini);
+    }
     // BodyWalk's FlatVR follows, through the D2R Bridge (no event = no BodyWalk running)
     static const wchar_t* const kName[3] = {D2RVR_FLATVR_3D_NONE_NAME, D2RVR_FLATVR_3D_DEPTH_NAME, D2RVR_FLATVR_3D_PAIR_NAME};
     SignalBridge(kName[s]);
@@ -1529,20 +1541,24 @@ void WriteValue(const Item& it, float v) {
     if (it.step >= 1.0f) swprintf_s(buf, L"%d", (int)std::lround(v));
     else swprintf_s(buf, L"%g", std::round(v / it.step) * it.step);
     WritePrivateProfileStringW(SectionOf(it), it.key, buf, FileOf(it));
-    if (wcscmp(it.section, L"stereo") == 0 && (wcscmp(it.key, L"headset_rate") == 0 || wcscmp(it.key, L"afr") == 0)) ApplyFrameCap();
+    if (wcscmp(it.section, L"stereo") == 0 && (wcscmp(it.key, L"headset_rate") == 0 || wcscmp(it.key, L"afr") == 0 || wcscmp(it.key, L"pair_per_tick") == 0)) ApplyFrameCap();
     ShowPreset();   // a key of a preset changed by hand: Custom (or the preset it now matches)
 }
 
-// The game's frame cap (its Settings.json) from the headset's rate: one picture a
-// frame at the rate, real stereo (a pair, eye by eye) at twice it.
+// The game's frame cap (its Settings.json) from the headset's rate: a game frame per
+// headset frame - FlatVR shows the newest picture each headset frame, and a game faster or
+// slower than the headset judders on head turns (2026-10-09: 90 against 90 smooth, 170 not).
+// Eyes by turns draw one eye a game frame: twice the rate. Mono, the depth and Stereo (both
+// eyes from one game frame, [stereo] pair_per_tick) the rate itself.
 const Item* PresetItem(const wchar_t* section, const wchar_t* key);
 void RefreshControls();
 void ApplyFrameCap() {
     static const int kHz[5] = {72, 75, 80, 90, 120};
     const int i = std::clamp((int)GetPrivateProfileIntW(L"stereo", L"headset_rate", 3, g_ini), 0, 4);
-    const bool pair = GetPrivateProfileIntW(L"stereo", L"afr", 0, g_ini) != 0;
+    const bool byTurns = GetPrivateProfileIntW(L"stereo", L"afr", 0, g_ini) != 0 &&
+                         GetPrivateProfileIntW(L"stereo", L"pair_per_tick", 0, g_ini) == 0;
     if (const Item* cap = PresetItem(L"@game", L"Framerate Cap")) {
-        WriteGameValue(*cap, (float)(pair ? 2 * kHz[i] : kHz[i]));
+        WriteGameValue(*cap, (float)(byTurns ? 2 * kHz[i] : kHz[i]));
         RefreshControls();
     }
 }
@@ -2297,9 +2313,11 @@ void RefreshStatus() {
             {   // the headset's rate for one picture a frame, twice it for real stereo (Performance tab)
                 static const int kHz[5] = {72, 75, 80, 90, 120};
                 const int hz = kHz[std::clamp((int)GetPrivateProfileIntW(L"stereo", L"headset_rate", 3, g_ini), 0, 4)];
-                const bool pair = GetPrivateProfileIntW(L"stereo", L"afr", 0, g_ini) != 0;
+                const bool pair = GetPrivateProfileIntW(L"stereo", L"afr", 0, g_ini) != 0 &&
+                                  GetPrivateProfileIntW(L"stereo", L"pair_per_tick", 0, g_ini) == 0;   // eyes by turns
                 const int want = pair ? 2 * hz : hz;
                 if (cap > 0 && cap < want) warn += L"Framerate Cap below " + std::to_wstring(want) + (pair ? L" (the headset's rate for each eye). " : L" (the headset's rate). ");
+                else if (cap > want) warn += L"Framerate Cap above " + std::to_wstring(want) + L" - head turns judder when the game outruns the headset. ";
             }
             if (!bad.empty()) SetStatus(L"game_video", kBad, (L"Game video: " + bad + L"(Options > Video)").c_str());
             else if (!warn.empty()) SetStatus(L"game_video", kWarn, (L"Game video: " + warn).c_str());

@@ -20,6 +20,10 @@ daggers can be thrown; ready for game updates - the mod finds the game code it
 needs by itself, with a Status tab and a Scan button in D2R VR Settings. All
 versions: [CHANGELOG.md](CHANGELOG.md).
 
+**Want to help?** The roadmap, the known problems with what we know about
+each, and notes for developers are in [docs/](docs/README.md) - fork it, fix
+one and send a pull request.
+
 **Discussion, bugs and ideas:** our Discord, channel
 [#diablo-2-vr](https://discord.com/channels/1481909961897279562/1556377249484251298)
 under *Game Mods* - not on the server yet? [Join it here](https://discord.gg/kVYjEdJx3e).

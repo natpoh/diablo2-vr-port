@@ -1,0 +1,9 @@
+/Library/
+/Logs/
+/Temp/
+/UserSettings/
+/obj/
+/results*/
+*.csproj
+*.sln
+/Assets/Plugins/x86_64/heft_bench.dll
