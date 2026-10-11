@@ -515,10 +515,10 @@ std::vector<Item> g_items = {
            L"Writes the game's own Settings.json: a window, as wide as it is tall (the size below). The headset's eye is about "
            L"square, so the whole picture fills it - no black bars with the box above ticked. vrcam keeps the window "
            L"square while the game runs (the game writes a cut size back into its file). Off: the size it had before."),
-    Slider(L"openxr", L"window_size", L"Square window: size, px", 640.0f, 2400.0f, 8.0f, 2000.0f,
-           L"The square window's side, as far as the monitor fits it (vrcam keeps it inside the screen: past its edge "
-           L"the fog flickered in the left eye) - about 2060 on a 4K screen. A bigger square needs a monitor of a higher "
-           L"resolution, a virtual one too (up to 2400: taller, the game itself closes). Bigger is sharper and slower."),
+    Slider(L"openxr", L"window_size", L"Square window: size, px", 640.0f, 4000.0f, 8.0f, 2000.0f,
+           L"The square window's side, as far as a monitor holds it (past a monitor's edge the game itself closes): about 2060 "
+           L"on a 4K screen. Bigger: make a virtual monitor that size in BodyWalk (Virtual Monitor, no need to make it primary) - "
+           L"vrcam moves the game's window onto it by itself. Bigger is sharper and slower."),
     Status(L"square_window", L"The game window as the game has it"),
     Toggle(L"openxr", L"third_gaze", L"F2: the camera swings round the hero with the gaze", 0,
            L"Off: the camera stays behind the hero on his turn and the head looks round freely. On: it swings round him "
@@ -1524,7 +1524,7 @@ const PresetKey kPreset[] = {
     {L"fog", L"caves_end", {100, 100, 200, 200}},
     {L"sky", L"enabled", {1, 1, 1, 1}},
     {L"@reshade", L"generic_depth", {1, 1, 1, 1}},
-    {L"ceiling", L"enabled", {0, 0, 1, 1}},
+    {L"ceiling", L"enabled", {0, 1, 1, 1}},   // Low too (8 relief steps): players on Low had no ceilings at all
     {L"ceiling", L"steps", {8, 8, 12, 20}},
     {L"ceiling", L"torches", {0, 0, 0, 1}},
     {L"@stereo3d", L"source", {2, 0, 0, 0}},   // Potato: the 3D from ReShade's depth, one frame a picture
@@ -1669,7 +1669,7 @@ void WriteSquareWindow(bool on) {
             swprintf_s(b, L"%dx%d", w, h);
             WritePrivateProfileStringW(L"openxr", L"window_before", b, g_ini);
         }
-        side = std::clamp((int)GetPrivateProfileIntW(L"openxr", L"window_size", 2000, g_ini), 640, 2400);
+        side = std::clamp((int)GetPrivateProfileIntW(L"openxr", L"window_size", 2000, g_ini), 640, 4000);
         side -= side % 8;
         if (!WriteGameWindow(side, side)) { SetStatus(L"square_window", 1, L"The game's Settings.json could not be written"); return; }
         const std::wstring rs = GameFolder() + L"ReShade.ini";

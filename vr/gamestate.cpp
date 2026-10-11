@@ -410,6 +410,10 @@ bool Has(const char* s, const char* part) {
     return false;
 }
 
+// When the game's title screen first came up (GetTickCount64, 0 = not yet): D2R builds it at its window's
+// size and dies when that is very tall (3000 on a 4000x4000 monitor, 2026-10-11) - vrcam's square window
+// grows the window only after it.
+std::atomic<uint64_t> g_titleAt{0};
 SharedEvents::UiMessageAction __cdecl OnUiMessage(const PluginContext*, const SharedEvents::UiMessageEvent* e, void*) noexcept {
     if (!e) return SharedEvents::UiMessageAction::Continue;
     const char* target = e->target ? e->target : "";
@@ -425,7 +429,10 @@ SharedEvents::UiMessageAction __cdecl OnUiMessage(const PluginContext*, const Sh
     }
     if (strcmp(target, "PanelManager") == 0) {
         const bool before = g_menu.load() != 0;
-        if (!strcmp(command, "OpenPanel") || !strcmp(command, "OpenExclusivePanel")) { if (*text) g_panels.insert(text); }
+        if (!strcmp(command, "OpenPanel") || !strcmp(command, "OpenExclusivePanel")) {
+            if (*text) g_panels.insert(text);
+            if (!strcmp(text, "TitleScreenPanel") && !g_titleAt.load()) g_titleAt.store(GetTickCount64());
+        }
         else if (!strcmp(command, "ClosePanel") || !strcmp(command, "UnloadPanel")) g_panels.erase(text);
         else if (!strcmp(command, "UnloadAll") || !strcmp(command, "CloseAll")) g_panels.clear();
         g_autoMap.store(g_panels.count("AutoMap") ? 1 : 0);
@@ -556,6 +563,7 @@ uint32_t TwoHanded() { return g_two.load(); }
 uint32_t WeaponHand() { return g_from.load(); }
 uint32_t HandsKey() { return g_handsKey.load(); }
 bool MenuOpen() { return g_menu.load() != 0; }
+uint64_t TitleScreenAt() { return g_titleAt.load(); }
 uint64_t LocalPlayer() { return g_player.load(); }
 // An object's light in a mode: its radius (Objects.txt Lit, 0 = none) and colour 0..1.
 int ObjectLight(uint32_t txt, uint32_t mode, float rgb[3]) {

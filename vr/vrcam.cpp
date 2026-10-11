@@ -75,7 +75,7 @@ namespace hud { void Register(); void SetHide(int mode); void SetInterfaceScale(
 #include "sigscan.h"
 #include "mat4.h"
 namespace gamecmd { void Init(const D2RL::PluginContext* ctx); void Tick(); }   // the game's key commands from BodyWalk (gamecmd.cpp)
-namespace gamestate { void Init(const D2RL::PluginContext* ctx); void Tick(); uint32_t WeaponClass(); uint32_t WeaponSet(); uint32_t WeaponType(); uint32_t HandsHeld(); uint32_t TwoHanded(); uint32_t WeaponHand(); uint32_t HandsKey(); bool MenuOpen(); int ObjectLight(uint32_t txt, uint32_t mode, float rgb[3]); uint64_t LocalPlayer(); void SetViewMode(uint32_t mode); bool AutoMapOpen(); bool SetAutoMap(bool open); void PollPlate(); bool PlateRect(int32_t out[4]); }
+namespace gamestate { void Init(const D2RL::PluginContext* ctx); void Tick(); uint32_t WeaponClass(); uint32_t WeaponSet(); uint32_t WeaponType(); uint32_t HandsHeld(); uint32_t TwoHanded(); uint32_t WeaponHand(); uint32_t HandsKey(); bool MenuOpen(); uint64_t TitleScreenAt(); int ObjectLight(uint32_t txt, uint32_t mode, float rgb[3]); uint64_t LocalPlayer(); void SetViewMode(uint32_t mode); bool AutoMapOpen(); bool SetAutoMap(bool open); void PollPlate(); bool PlateRect(int32_t out[4]); }
 #include "d2r_vr_state.h"
 
 #include "MinHook.h"
@@ -807,8 +807,19 @@ void SafeGameWindow() {
     const size_t q2 = q1 == std::string::npos ? q1 : text.find('"', q1 + 1);
     if (q2 == std::string::npos) return;
     int w = 0, h = 0;
-    if (sscanf_s(text.c_str() + q1 + 1, "%dx%d", &w, &h) != 2 || h <= 2400) return;
-    const int nw = w == h ? 2400 : w, nh = 2400;
+    if (sscanf_s(text.c_str() + q1 + 1, "%dx%d", &w, &h) != 2) return;
+    // the game builds its title screen at the size it starts with, and dies there when it is very tall
+    // (3000 even on a 4000x4000 monitor; 2400 lives): it starts as tall as the main monitor holds, 2400 at most - D2R VR Settings' square
+    // window grows it to its size after the title screen (BigWindowTick), on a monitor that holds it
+    // and no taller than the main monitor holds (its work area less a frame): the menus need no more
+    int limit = 2400;
+    {
+        MONITORINFO mi{sizeof mi};
+        if (GetMonitorInfoW(MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY), &mi))
+            limit = std::max(480, std::min(limit, (int)(mi.rcWork.bottom - mi.rcWork.top) - 45));
+    }
+    if (h <= limit) return;
+    const int nh = limit, nw = w == h ? limit : w;
     const std::string size = std::to_string(nw) + "x" + std::to_string(nh);
     text.replace(q1 + 1, q2 - q1 - 1, size);
     const DWORD attr = GetFileAttributesW(path.c_str());
@@ -816,8 +827,8 @@ void SafeGameWindow() {
     if (FILE* o = _wfopen(path.c_str(), L"wb")) {
         fwrite(text.data(), 1, text.size(), o);
         fclose(o);
-        LogF("vrcam: the game's windowed size was %dx%d - taller than ~2400 D2R itself closes at its title screen: set to %s%s "
-             "(a bigger square needs a bigger or virtual monitor)", w, h, size.c_str(),
+        LogF("vrcam: the game's windowed size was %dx%d - taller than the main monitor holds (%d; D2R builds its title screen at "
+             "that size and closes past ~2400): set to %s%s (D2R VR Settings' square window grows it in a game)", w, h, limit, size.c_str(),
              attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_READONLY) ? ", its read-only flag taken off" : "");
     } else {
         LogF("vrcam: the game's windowed size is %dx%d - taller than ~2400 D2R itself closes at its title screen, and Settings.json "
@@ -4321,23 +4332,43 @@ void BigWindowTick() {
     if (!g_gameWnd || !g_gameWndProc || !xr::On() || now - at < 2000) return;
     at = now;
     if (IsIconic(g_gameWnd) || IsZoomed(g_gameWnd) || !IniB(L"openxr", L"square_window", false)) return;
+    // only in a game, the hero there 3 s: the game dies when its window grows that tall while it builds a
+    // screen - its title screen at the start, its frontend scene (grown 4 s after the title: dead 2 s
+    // later, 2026-10-11); the menus before keep the size it started with (2400 at most, SafeGameWindow)
+    static ULONGLONG heroSince = 0;
+    if (!gamestate::LocalPlayer() || !g_inWorld.load()) { heroSince = 0; return; }
+    if (!heroSince) heroSince = now;
+    if (now - heroSince < 3000) return;
     RECT c{}, r{};
     if (!GetClientRect(g_gameWnd, &c) || !GetWindowRect(g_gameWnd, &r)) return;
-    MONITORINFO mi{sizeof mi};
-    if (!GetMonitorInfoW(MonitorFromWindow(g_gameWnd, MONITOR_DEFAULTTONEAREST), &mi)) return;
-    const RECT& wa = mi.rcWork;
     const int fw = (r.right - r.left) - c.right, fh = (r.bottom - r.top) - c.bottom;
-    const int asked = std::clamp((int)IniF(L"openxr", L"window_size", 2000.0f), 640, 2400);
-    const int fits = std::min((int)(wa.right - wa.left) - fw, (int)(wa.bottom - wa.top) - fh);
+    const int asked = std::clamp((int)IniF(L"openxr", L"window_size", 2000.0f), 640, 4000);
+    // the monitor it is on when that holds the square; else the one that holds the most (a virtual
+    // monitor made for it, BodyWalk's Virtual Monitor): the window is moved there, no "make it primary"
+    struct Pick { HMONITOR here; RECT best; int bestFits; RECT cur; int curFits; int fw, fh; };
+    Pick pk{MonitorFromWindow(g_gameWnd, MONITOR_DEFAULTTONEAREST), {}, 0, {}, 0, fw, fh};
+    EnumDisplayMonitors(nullptr, nullptr, [](HMONITOR m, HDC, LPRECT, LPARAM p) -> BOOL {
+        Pick& k = *(Pick*)p;
+        MONITORINFO mi{sizeof mi};
+        if (!GetMonitorInfoW(m, &mi)) return TRUE;
+        const int fits = std::min((int)(mi.rcWork.right - mi.rcWork.left) - k.fw, (int)(mi.rcWork.bottom - mi.rcWork.top) - k.fh);
+        if (m == k.here) { k.cur = mi.rcWork; k.curFits = fits; }
+        if (fits > k.bestFits) { k.best = mi.rcWork; k.bestFits = fits; }
+        return TRUE;
+    }, (LPARAM)&pk);
+    if (!pk.curFits && !pk.bestFits) return;
+    const bool stay = pk.curFits >= asked || pk.bestFits <= pk.curFits;
+    const RECT wa = stay ? pk.cur : pk.best;
+    const int fits = stay ? pk.curFits : pk.bestFits;
     const int side = std::max(320, std::min(asked, fits));
     const int x = std::clamp((int)r.left, (int)wa.left, std::max((int)wa.left, (int)wa.right - (side + fw)));
     const int y = (int)wa.top;
     if (c.right == side && c.bottom == side && r.left == x && r.top == y) return;
     SetWindowPos(g_gameWnd, nullptr, x, y, side + fw, side + fh, SWP_NOZORDER | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS);
     static int told = 0;
-    if (told++ < 5) LogF("vrcam: openxr - the game's window %dx%d made %dx%d (D2R VR Settings' square window, %d asked%s)",
-                         (int)c.right, (int)c.bottom, side, side, asked,
-                         side < asked ? " - the monitor fits no more: a bigger square needs a monitor (or a virtual one) of a higher resolution" : "");
+    if (told++ < 8) LogF("vrcam: openxr - the game's window %dx%d made %dx%d at %d,%d (D2R VR Settings' square window, %d asked%s%s)",
+                         (int)c.right, (int)c.bottom, side, side, x, y, asked, stay ? "" : " - moved to the monitor that holds it",
+                         side < asked ? " - no monitor holds more: a bigger square needs one (BodyWalk's Virtual Monitor) of a higher resolution" : "");
 }
 
 void HookGameWindow() {
@@ -10777,11 +10808,36 @@ void LoadReShade() {
     wcscpy_s(path, dir);
     wcscat_s(path, L"ReShade64.dll");
     if (GetFileAttributesW(path) == INVALID_FILE_ATTRIBUTES) { Log("vrcam: no ReShade64.dll beside the game - no fog, sky or FlatVR picture"); return; }
-    if (LoadLibraryW(path)) Log("vrcam: ReShade loaded from ReShade64.dll");
-    else LogF("vrcam: ReShade64.dll did not load (error %lu)", GetLastError());
+    if (LoadLibraryW(path)) { Log("vrcam: ReShade loaded from ReShade64.dll"); return; }
+    const DWORD err = GetLastError();
+    LogF("vrcam: ReShade64.dll did not load (error %lu)", err);
+    // Who is ReShade here already (ReShade refuses a second copy in a process: error 1114, its own
+    // start saying no before it writes a line to ReShade.log - a player's game had no ReShade at all
+    // then, and native OpenXR, which starts from ReShade's frames, never came up, 2026-10-11): every
+    // module that exports ReShade's entry points or has "reshade" in its name, with its path.
+    HMODULE mods[1024];
+    DWORD need = 0;
+    int found = 0;
+    if (K32EnumProcessModules(GetCurrentProcess(), mods, sizeof mods, &need)) {
+        for (DWORD i = 0; i < need / sizeof(HMODULE) && i < 1024; ++i) {
+            wchar_t name[MAX_PATH] = L"";
+            GetModuleFileNameW(mods[i], name, MAX_PATH);
+            std::wstring low = name;
+            for (wchar_t& c : low) c = (wchar_t)towlower(c);
+            const bool exports = GetProcAddress(mods[i], "ReShadeVersion") || GetProcAddress(mods[i], "ReShadeRegisterAddon");
+            if (!exports && low.find(L"reshade") == std::wstring::npos) continue;
+            ++found;
+            char utf8[MAX_PATH * 3] = "";
+            WideCharToMultiByte(CP_UTF8, 0, name, -1, utf8, sizeof utf8, nullptr, nullptr);
+            LogF("vrcam: ReShade-like module in the game: %s%s", utf8, exports ? " (exports ReShade's entry points: a ReShade already loaded)" : "");
+        }
+    }
+    if (!found)
+        LogF("vrcam: no other ReShade in the game - ReShade64.dll itself refused (%s): reinstall D2R VR over the game; "
+             "an antivirus may also block it", err == ERROR_DLL_INIT_FAILED ? "its start said no" : "it could not be loaded");
 }
 
-static const char g_info_version[] = "0.161.0";
+static const char g_info_version[] = "0.162.0";
 
 static const PluginInfo g_info = {
     PluginInfoSize, D2RL_PLUGIN_ABI_VERSION, "d2r-vr-vrcam", "vrcam", g_info_version, "BodyWalkVR",

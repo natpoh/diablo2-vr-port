@@ -1,5 +1,22 @@
 # What's new in D2R VR
 
+## 0.162
+
+- **A square window bigger than your monitor, up to 4000x4000** (D2R VR
+  Settings > Stereo > Native OpenXR > Square window). Make a virtual monitor
+  that big in BodyWalk (Virtual Monitor) - no need to make it your main
+  monitor, so your desktop icons stay put. When you enter a game, D2R VR
+  moves the game's window onto the biggest monitor and grows it to your size
+  a few seconds after the hero appears. The menus stay at your monitor's size:
+  D2R itself closes when its window is very tall while it builds a screen
+  (its title screen, the character screen).
+- **The game always starts at a size it can take**: as tall as your main
+  monitor holds, 2400 at most.
+- **The Low preset has cave ceilings too** - players on Low had none.
+- When ReShade64.dll does not load (Windows error 1114, a broken or second
+  copy of ReShade), the mod's log names every ReShade copy it finds in the
+  game - for the logs you send us.
+
 ## 0.161
 
 - **No more fog flicker in the left eye.** With ReShade's Generic Depth on
