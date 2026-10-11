@@ -1,5 +1,20 @@
 # What's new in D2R VR
 
+## 0.160
+
+- **The fog, the sky and the ceiling always get the scene's own depth.**
+  D2R VR now hands ReShade the game's depth itself, so ReShade's guess no
+  longer matters. With a square window ReShade had taken the game's shadow
+  map instead: the fog and the sky were laid as if seen from above.
+- **Square game window up to 2400x2400** (D2R VR Settings > Stereo > Native
+  OpenXR > Square window: size). The 2047 limit of 0.159 is gone. Taller
+  windows are not possible: D2R itself closes at the title screen with a
+  window taller than about 2400 - so for "3000x3000" take 2400x2400.
+- **The square window stays square from the second start on.** The game
+  wrote the size Windows had cut its window to back into its own settings
+  (2400x2137 for 2400x2400), and the next start had black bars again. D2R VR
+  now keeps the window at the size you set while native OpenXR runs.
+
 ## 0.159
 
 - **Native OpenXR: the game's window can be bigger than your monitor.**

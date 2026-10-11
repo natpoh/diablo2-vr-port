@@ -794,6 +794,7 @@ extern std::atomic<bool> g_xrThirdGaze; extern std::atomic<int> g_projFix; exter
 namespace replay { extern std::atomic<bool> g_fxSync; extern std::atomic<bool> g_dlssBoth; extern std::atomic<bool> g_replayCopy; }
 namespace replay { extern std::atomic<int> g_peekWant; }
 namespace camfix { extern std::atomic<int> g_scanWant; }
+std::atomic<bool> g_ownDepth{true};   // [render] own_depth (scenedepth::)
 namespace flog { void StartDiag(); }
 namespace replay { extern std::atomic<bool> g_rightDepth; }
 namespace replay { extern std::atomic<int> g_want; extern std::atomic<int> g_ahead; extern std::atomic<bool> g_depthCopy; extern std::atomic<bool> g_on; extern std::atomic<bool> g_fxAtHold; extern std::atomic<bool> g_holdSignalsOn; }
@@ -979,6 +980,7 @@ void LoadSettings() {
     g_set.convergence.store(std::clamp(IniF(L"stereo", L"convergence", 15.0f), 0.0f, 1000.0f));
     g_set.bgFullSpeed.store(IniB(L"render", L"background_full_speed", true));
     g_set.gameHeightFog.store(IniB(L"render", L"game_height_fog", false));
+    g_ownDepth.store(IniB(L"render", L"own_depth", true));
     g_set.solidWalls.store(std::clamp((int)IniF(L"render", L"solid_walls", 1.0f), 0, 2));
     g_set.stampPixels.store(IniB(L"stereo", L"stamp_pixels", true));
     g_set.stamps.store(IniB(L"stereo", L"stamps", true));
@@ -4313,14 +4315,23 @@ void BigWindowTick() {
     at = now;
     if (IsIconic(g_gameWnd) || IsZoomed(g_gameWnd)) return;
     int ww = 0, wh = 0;
-    GameWindowedSize(&ww, &wh);
+    // D2R VR Settings' "Square game window" ([openxr] square_window, window_size): the square from our
+    // ini - the game writes the size Windows cut its window to back into its Settings.json (2400x2137
+    // after a 2400x2400 start, 2026-10-11), so its file alone would bring the bars back next time.
+    const bool square = IniB(L"openxr", L"square_window", false);
+    if (square) {
+        ww = wh = std::clamp((int)IniF(L"openxr", L"window_size", 2000.0f), 640, 2400);
+    } else {
+        GameWindowedSize(&ww, &wh);
+    }
     RECT c{}, r{};
     if (!ww || !GetClientRect(g_gameWnd, &c) || !GetWindowRect(g_gameWnd, &r)) return;
-    if (c.right != ww || c.bottom >= wh) return;
+    if (square ? (c.right == ww && c.bottom == wh) : (c.right != ww || c.bottom >= wh)) return;
     const int fw = (r.right - r.left) - c.right, fh = (r.bottom - r.top) - c.bottom;
     SetWindowPos(g_gameWnd, nullptr, 0, 0, ww + fw, wh + fh, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS);
     static int told = 0;
-    if (told++ < 5) LogF("vrcam: openxr - the game's window %dx%d made %dx%d as its Settings.json asks (taller than the screen: Windows had cut it)", (int)c.right, (int)c.bottom, ww, wh);
+    if (told++ < 5) LogF("vrcam: openxr - the game's window %dx%d made %dx%d (%s)", (int)c.right, (int)c.bottom, ww, wh,
+                         square ? "D2R VR Settings' square window" : "as its Settings.json asks: Windows had cut it to the screen");
 }
 
 void HookGameWindow() {
@@ -9858,7 +9869,134 @@ void Tick() {
 }
 }  // namespace pace
 
+// The scene's depth for our effects, picked by vrcam, not by ReShade (2026-10-11). ReShade's Generic
+// Depth takes the depth-stencil with the most draws among those shaped like the screen: with a
+// square window (native OpenXR without black bars) the game's shadow map - 4096 x 4096, square too,
+// more draws - won, and the fog and the sky were laid by a view from above. ReShade's own size check
+// keeps it out only for a window under 2048. Here: the depth-stencil the game binds most in a frame
+// that is EXACTLY the window's size (the shadow map never is: a window is under 4096), copied into a
+// texture of ours and bound as DEPTH for every effect after ReShade's; none of that size - ReShade's
+// choice stays. The barriers as the replay's right-eye copy makes them (the game's last state on it).
+// [render] own_depth (on).
+namespace scenedepth {
+using namespace reshade::api;
+struct Ds { uint64_t res; uint32_t binds, last, state; };
+Ds g_ds[16] = {};
+SRWLOCK g_lock = SRWLOCK_INIT;
+resource g_copy{0};
+resource_view g_srv{0};
+resource_desc g_copyDesc{};
+uint64_t g_from = 0;   // the depth-stencil copied last (the log, once per change)
+
+void OnBind(command_list* cl, uint32_t, const resource_view*, resource_view dsv) {
+    if (!dsv.handle || !g_ownDepth.load(std::memory_order_relaxed)) return;
+    const uint64_t r = cl->get_device()->get_resource_from_view(dsv).handle;
+    if (!r) return;
+    AcquireSRWLockExclusive(&g_lock);
+    Ds* slot = nullptr;
+    for (Ds& d : g_ds) {
+        if (d.res == r) { slot = &d; break; }
+        if (!d.res && !slot) slot = &d;
+    }
+    if (slot) {
+        if (!slot->res) *slot = Ds{r, 0, 0, 0};
+        ++slot->binds;
+    }
+    ReleaseSRWLockExclusive(&g_lock);
+}
+void OnBarrier(command_list*, uint32_t count, const resource* res, const resource_usage*, const resource_usage* to) {
+    if (!g_ownDepth.load(std::memory_order_relaxed)) return;
+    AcquireSRWLockExclusive(&g_lock);
+    for (uint32_t i = 0; i < count; ++i)
+        for (Ds& d : g_ds)
+            if (d.res && d.res == res[i].handle) d.state = (uint32_t)to[i];
+    ReleaseSRWLockExclusive(&g_lock);
+}
+// After each present: the frame's counts become the last ones; one not bound for two frames goes.
+void FrameEnd() {
+    AcquireSRWLockExclusive(&g_lock);
+    for (Ds& d : g_ds) {
+        if (!d.res) continue;
+        if (!d.binds && !d.last) d = Ds{};
+        else { d.last = d.binds; d.binds = 0; }
+    }
+    ReleaseSRWLockExclusive(&g_lock);
+}
+format SrvFormat(format typeless) {
+    switch (typeless) {
+        case format::r32_g8_typeless: return format::r32_float_x8_uint;
+        case format::r24_g8_typeless: return format::r24_unorm_x8_uint;
+        case format::r32_typeless: return format::r32_float;
+        case format::r16_typeless: return format::r16_unorm;
+        default: return format_to_default_typed(typeless);
+    }
+}
+// reshade_begin_effects: the scene's depth into our copy on the effects' own list, bound as DEPTH.
+void Bind(effect_runtime* rt, command_list* cl) {
+    static int told = -1;
+    auto tell = [&](int what, const char* text) { if (told != what) { told = what; Log(text); } };
+    if (!g_ownDepth.load() || !cl) return;
+    uint32_t w = 0, h = 0;
+    rt->get_screenshot_width_and_height(&w, &h);
+    device* dev = rt->get_device();
+    Ds best{};
+    resource_desc bd{};
+    AcquireSRWLockShared(&g_lock);
+    for (const Ds& d : g_ds) {
+        const uint32_t n = std::max(d.binds, d.last);
+        if (!d.res || n <= std::max(best.binds, best.last)) continue;
+        const resource_desc rd = dev->get_resource_desc({d.res});
+        if (rd.type != resource_type::texture_2d || (rd.usage & resource_usage::depth_stencil) == 0 || rd.texture.width != w ||
+            rd.texture.height != h || rd.texture.samples != 1)
+            continue;
+        best = d;
+        bd = rd;
+    }
+    ReleaseSRWLockShared(&g_lock);
+    if (!best.res) return tell(1, "vrcam: own depth - no depth-stencil the window's size bound yet: ReShade's choice for now");
+    const format tl = format_to_typeless(bd.texture.format);
+    if (!g_copy.handle || g_copyDesc.texture.width != w || g_copyDesc.texture.height != h || g_copyDesc.texture.format != tl) {
+        if (g_copy.handle) {
+            rt->get_command_queue()->wait_idle();
+            if (g_srv.handle) dev->destroy_resource_view(g_srv);
+            dev->destroy_resource(g_copy);
+            g_srv = {0};
+            g_copy = {0};
+        }
+        const resource_desc cd(resource_type::texture_2d, w, h, 1, 1, tl, 1, memory_heap::gpu_only,
+                               resource_usage::shader_resource | resource_usage::copy_dest);
+        if (!dev->create_resource(cd, nullptr, resource_usage::shader_resource, &g_copy)) {
+            g_copy = {0};
+            return tell(2, "vrcam: own depth - our depth texture could not be made: ReShade's choice stays");
+        }
+        if (!dev->create_resource_view(g_copy, resource_usage::shader_resource, resource_view_desc(SrvFormat(tl)), &g_srv)) {
+            dev->destroy_resource(g_copy);
+            g_copy = {0};
+            g_srv = {0};
+            return tell(3, "vrcam: own depth - no view of our depth texture: ReShade's choice stays");
+        }
+        g_copyDesc = cd;
+        LogF("vrcam: own depth - our depth texture %ux%u (format %u, viewed as %u)", w, h, (unsigned)tl, (unsigned)SrvFormat(tl));
+    }
+    const resource src{best.res};
+    const resource_usage from = best.state ? (resource_usage)best.state : resource_usage::depth_stencil_write;
+    cl->barrier(src, from, resource_usage::copy_source);
+    cl->barrier(g_copy, resource_usage::shader_resource, resource_usage::copy_dest);
+    cl->copy_resource(src, g_copy);
+    cl->barrier(src, resource_usage::copy_source, from);
+    cl->barrier(g_copy, resource_usage::copy_dest, resource_usage::shader_resource);
+    rt->update_texture_bindings("DEPTH", g_srv, g_srv);
+    if (best.res != g_from) {
+        g_from = best.res;
+        LogF("vrcam: own depth - the effects read the game's depth-stencil %p (%ux%u, bound %u times a frame, state %X), "
+             "not ReShade's pick ([render] own_depth=0 gives it back)", (void*)best.res, w, h, std::max(best.binds, best.last), (unsigned)from);
+    }
+    told = 0;
+}
+}  // namespace scenedepth
+
 void OnReshadePresent(reshade::api::effect_runtime* rt) {
+    scenedepth::FrameEnd();
     static bool firstSeen = false;
     if (!firstSeen) { firstSeen = true; crash::Mark("the first picture presented (ReShade's present)"); }
     // Native OpenXR: the runtime paces the game (xrWaitFrame); a present outside a pair goes
@@ -9902,8 +10040,10 @@ void OnReshadePresent(reshade::api::effect_runtime* rt) {
     }
 }
 
-void OnBeginEffects(reshade::api::effect_runtime* rt, reshade::api::command_list*, reshade::api::resource_view, reshade::api::resource_view) {
+
+void OnBeginEffects(reshade::api::effect_runtime* rt, reshade::api::command_list* cl, reshade::api::resource_view, reshade::api::resource_view) {
     pairtime::g_effBegin.store(pairtime::UsNow());
+    scenedepth::Bind(rt, cl);   // before the replay reads which depth the effects have
     if (replay::g_on.load()) replay::g_rt = rt;
     if (replay::g_on.load()) {   // the depth buffer our effect reads: replay keeps the left eye's for its present
         const reshade::api::effect_texture_variable v = rt->find_texture_variable("D2R_DepthFog.fx", "FogDepthTex");
@@ -10293,6 +10433,8 @@ void TryRegister() {
     if (g_registered || !g_self) return;
     if (!reshade::register_addon(g_self)) return;
     reshade::register_event<reshade::addon_event::reshade_begin_effects>(&OnBeginEffects);
+    reshade::register_event<reshade::addon_event::bind_render_targets_and_depth_stencil>(&d2rvr::D3D12Only<&scenedepth::OnBind>::Call);
+    reshade::register_event<reshade::addon_event::barrier>(&d2rvr::D3D12Only<&scenedepth::OnBarrier>::Call);
     reshade::register_event<reshade::addon_event::reshade_finish_effects>(&OnFinishEffects);
     reshade::register_event<reshade::addon_event::reshade_present>(&OnReshadePresent);
     reshade::register_event<reshade::addon_event::reshade_reloaded_effects>(&Forget);
@@ -10631,7 +10773,7 @@ void LoadReShade() {
     else LogF("vrcam: ReShade64.dll did not load (error %lu)", GetLastError());
 }
 
-static const char g_info_version[] = "0.159.0";
+static const char g_info_version[] = "0.160.0";
 
 static const PluginInfo g_info = {
     PluginInfoSize, D2RL_PLUGIN_ABI_VERSION, "d2r-vr-vrcam", "vrcam", g_info_version, "BodyWalkVR",

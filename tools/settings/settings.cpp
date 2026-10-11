@@ -514,11 +514,11 @@ std::vector<Item> g_items = {
     Toggle(L"@window", L"square", L"Square game window (no black bars)", 0,
            L"Writes the game's own Settings.json: a window, as wide as it is tall (the size below). The headset's eye is about "
            L"square, so the whole picture fills it - no black bars with the box above ticked. vrcam lets the window be taller "
-           L"than the monitor. The game must be closed: it writes its own size back when it quits. Off: the size it had before."),
-    Slider(L"openxr", L"window_size", L"Square window: size, px", 640.0f, 2040.0f, 8.0f, 2000.0f,
-           L"The square window's side. Up to 2040: from 2048 ReShade takes the game's shadow map (4096 x 4096, also square) for "
-           L"the scene's depth - the fog and the sky go wrong (a view from above laid over the picture). 2000 is a good size; "
-           L"DLSS or the game's own scale makes it sharper or faster."),
+           L"than the monitor and keeps it square while the game runs (the game writes a cut size back into its file). Off: the size it had before."),
+    Slider(L"openxr", L"window_size", L"Square window: size, px", 640.0f, 2400.0f, 8.0f, 2000.0f,
+           L"The square window's side, up to 2400: taller, the game itself fails (its own fixed buffers, it closes at the title "
+           L"screen - 2600 and 3000 tried). Bigger is sharper and slower; DLSS or the game's own scale on top. vrcam gives the "
+           L"effects the scene's own depth, so a square of any size keeps the fog and the sky right."),
     Status(L"square_window", L"The game window as the game has it"),
     Toggle(L"openxr", L"third_gaze", L"F2: the camera swings round the hero with the gaze", 0,
            L"Off: the camera stays behind the hero on his turn and the head looks round freely. On: it swings round him "
@@ -1653,8 +1653,7 @@ bool WriteStereo3D(float v) {
 // scene's depth, 2026-10-11). Off: the size kept before.
 bool ProcessRunning(const wchar_t* exe);
 float ReadSquareWindow() {
-    int mode = -1, w = 0, h = 0;
-    return ReadGameWindow(&mode, &w, &h) && mode == 0 && w == h ? 1.0f : 0.0f;
+    return GetPrivateProfileIntW(L"openxr", L"square_window", 0, g_ini) != 0 ? 1.0f : 0.0f;
 }
 void WriteSquareWindow(bool on) {
     int mode = -1, w = 0, h = 0;
@@ -1670,7 +1669,7 @@ void WriteSquareWindow(bool on) {
             swprintf_s(b, L"%dx%d", w, h);
             WritePrivateProfileStringW(L"openxr", L"window_before", b, g_ini);
         }
-        side = std::clamp((int)GetPrivateProfileIntW(L"openxr", L"window_size", 2000, g_ini), 640, 2040);
+        side = std::clamp((int)GetPrivateProfileIntW(L"openxr", L"window_size", 2000, g_ini), 640, 2400);
         side -= side % 8;
         if (!WriteGameWindow(side, side)) { SetStatus(L"square_window", 1, L"The game's Settings.json could not be written"); return; }
         const std::wstring rs = GameFolder() + L"ReShade.ini";
@@ -1683,9 +1682,10 @@ void WriteSquareWindow(bool on) {
         if (swscanf_s(b, L"%dx%d", &bw, &bh) != 2 || bw < 320 || bh < 200 || bw == bh) { bw = 1920; bh = 1080; }
         if (!WriteGameWindow(bw, bh)) { SetStatus(L"square_window", 1, L"The game's Settings.json could not be written"); return; }
     }
+    WritePrivateProfileStringW(L"openxr", L"square_window", on ? L"1" : L"0", g_ini);   // vrcam keeps the window to it
     wchar_t msg[256];
-    if (on) swprintf_s(msg, L"The game window: %d x %d%s", side, side, running ? L" - close the game and set it again: it writes its own size back when it quits" : L" from the next start");
-    else swprintf_s(msg, L"The game window back to its own size%s", running ? L" - close the game and set it again" : L" from the next start");
+    if (on) swprintf_s(msg, L"The game window: %d x %d%s", side, side, running ? L" - set now by vrcam in native OpenXR" : L" from the next start");
+    else swprintf_s(msg, L"The game window back to its own size%s", running ? L" from the next start (close the game first: it writes its size back when it quits)" : L" from the next start");
     SetStatus(L"square_window", running ? 2 : 0, msg);
 }
 
