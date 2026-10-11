@@ -1,5 +1,26 @@
 # What's new in D2R VR
 
+## 0.161
+
+- **No more fog flicker in the left eye.** With ReShade's Generic Depth on
+  and a big square window, ReShade sometimes swapped the scene's depth for
+  the game's shadow map when you turned your head, and the fog and the sky in
+  the left eye flashed as if seen from above. D2R VR's fog, sky and ceiling
+  now read the scene's depth through a channel of their own, which nothing
+  else can take over. ReShade's own depth stays for FlatVR's "3D from the
+  depth". Update the mod and its shader together - the installer does.
+- **The game's window no longer goes past your monitor.** A window taller
+  than about 2400 makes D2R itself close at the title screen, so the square
+  window (Stereo > Native OpenXR) is now fitted to your monitor: on a 4K
+  screen about 2069x2069. For a bigger square, use a bigger or a virtual
+  monitor (for example BodyWalk's Virtual Monitor).
+- **No more crash at the title screen from a too tall window.** A windowed
+  size taller than 2400 in the game's Settings.json (say 3000x3000, even
+  set read-only) is cut to 2400 when the game starts, and the read-only flag
+  is taken off - D2R itself closes at its title screen above about 2400.
+  After such crashes native OpenXR may have been switched off by the start
+  guard: switch it on again in D2R VR Settings (3D in the headset).
+
 ## 0.160
 
 - **The fog, the sky and the ceiling always get the scene's own depth.**

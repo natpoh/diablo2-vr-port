@@ -283,7 +283,9 @@ texture2D SkyCap6Tex < source = D2R_SKYCAP_SNOW; > { Width = 1024; Height = 1024
 sampler2D SkyCap6Smp { Texture = SkyCap6Tex; AddressU = WRAP; AddressV = WRAP; };
 
 texture2D FogColorTex : COLOR;
-texture2D FogDepthTex : DEPTH;
+// the scene's depth, bound by D2R VR (vrcam's own pick, the depth buffer the window's size the game uses
+// most) - not ReShade's DEPTH, which Generic Depth may point at the game's shadow map
+texture2D FogDepthTex : D2RVR_DEPTH;
 sampler2D FogColorSmp { Texture = FogColorTex; };
 sampler2D FogDepthSmp { Texture = FogDepthTex; MinFilter = POINT; MagFilter = POINT; };
 // The part of the depth buffer the game draws the scene into (vrcam, from the game's

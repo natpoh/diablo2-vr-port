@@ -785,6 +785,46 @@ void NoTemporalAA() {
     }
 }
 
+// D2R itself dies at its title screen with a window taller than about 2400 ("A Fixed sized vector
+// tried to reallocate" in its blz-log.txt, then its own crash handler; 2600 and 3000 tried, 2026-10-11).
+// Players were told on Discord to put 3000x3000 into Settings.json and make it read-only: every start
+// died, and vrcam's start guard then switched native OpenXR off - flat on the monitor. At the plugin's
+// start, before the game reads the file: a windowed size taller than 2400 is cut to 2400 (a square
+// stays square), the read-only flag taken off first (it kept the bad size for good).
+void SafeGameWindow() {
+    PWSTR dir = nullptr;
+    std::wstring path;
+    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_SavedGames, 0, nullptr, &dir))) path = std::wstring(dir) + L"\\Diablo II Resurrected\\Settings.json";
+    if (dir) CoTaskMemFree(dir);
+    FILE* f = path.empty() ? nullptr : _wfopen(path.c_str(), L"rb");
+    if (!f) return;
+    std::string text(1 << 16, ' ');
+    text.resize(fread(text.data(), 1, text.size(), f));
+    fclose(f);
+    const char* key = "\"Screen Resolution (Windowed)\"";
+    const size_t at = text.find(key);
+    const size_t q1 = at == std::string::npos ? at : text.find('"', text.find(':', at));
+    const size_t q2 = q1 == std::string::npos ? q1 : text.find('"', q1 + 1);
+    if (q2 == std::string::npos) return;
+    int w = 0, h = 0;
+    if (sscanf_s(text.c_str() + q1 + 1, "%dx%d", &w, &h) != 2 || h <= 2400) return;
+    const int nw = w == h ? 2400 : w, nh = 2400;
+    const std::string size = std::to_string(nw) + "x" + std::to_string(nh);
+    text.replace(q1 + 1, q2 - q1 - 1, size);
+    const DWORD attr = GetFileAttributesW(path.c_str());
+    if (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_READONLY)) SetFileAttributesW(path.c_str(), attr & ~FILE_ATTRIBUTE_READONLY);
+    if (FILE* o = _wfopen(path.c_str(), L"wb")) {
+        fwrite(text.data(), 1, text.size(), o);
+        fclose(o);
+        LogF("vrcam: the game's windowed size was %dx%d - taller than ~2400 D2R itself closes at its title screen: set to %s%s "
+             "(a bigger square needs a bigger or virtual monitor)", w, h, size.c_str(),
+             attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_READONLY) ? ", its read-only flag taken off" : "");
+    } else {
+        LogF("vrcam: the game's windowed size is %dx%d - taller than ~2400 D2R itself closes at its title screen, and Settings.json "
+             "could not be written: set it to 2400x2400 or less by hand", w, h);
+    }
+}
+
 void StartMatrixWatch();   // [debug] matrix_writer, below PickHeroMatrix
 
 namespace drawprof { extern std::atomic<bool> g_want; }
@@ -4211,17 +4251,9 @@ void HookCursor() {
 // and panels on them) - but not while the chat line is open: then they are
 // letters, and every other key goes to the game anyway.
 LRESULT CALLBACK GameWndProc(HWND h, UINT msg, WPARAM w, LPARAM l) {
-    // Native OpenXR: the window may be bigger than the monitor (a square as tall as the headset's
-    // eye on a 1440p screen). Windows holds a window to the screen's height plus its frame through
-    // this message (players' 3000x3000 came out 3000x1460, the bars in the headset stayed); the
-    // game sizes its picture by the window, so lifted, it draws the square (2026-10-11).
-    if (msg == WM_GETMINMAXINFO && xr::On()) {
-        const LRESULT r = CallWindowProcW(g_gameWndProc, h, msg, w, l);
-        MINMAXINFO* mm = (MINMAXINFO*)l;
-        mm->ptMaxTrackSize.x = std::max<LONG>(mm->ptMaxTrackSize.x, 16384);
-        mm->ptMaxTrackSize.y = std::max<LONG>(mm->ptMaxTrackSize.y, 16384);
-        return r;
-    }
+    // (Windows keeps a window to its monitor; vrcam let it be bigger in 0.159-0.160 - a window past the
+    // screen's edge flickered the fog in the left eye, and one taller than ~2400 crashes the game itself at
+    // its title screen: a square now fits the monitor - BigWindowTick; a bigger one: a virtual monitor.)
     // F1..F3 (F4 in VR) pick the view: the game, which has skills on them, never sees them.
     if ((msg == WM_KEYDOWN || msg == WM_KEYUP) && w >= VK_F1 && (int)w < VK_F1 + ViewCount()) return 0;
     // Enter opening the chat line: its letters may come before the game has
@@ -4278,60 +4310,34 @@ LRESULT CALLBACK GameWndProc(HWND h, UINT msg, WPARAM w, LPARAM l) {
     return CallWindowProcW(g_gameWndProc, h, msg, w, l);
 }
 
-// The game's windowed size from its Settings.json ("Screen Resolution (Windowed)", "Window Mode" 0 =
-// a window), 0 0 when it is not a window or cannot be read.
-void GameWindowedSize(int* w, int* h) {
-    *w = *h = 0;
-    PWSTR dir = nullptr;
-    std::wstring path;
-    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_SavedGames, 0, nullptr, &dir))) path = std::wstring(dir) + L"\\Diablo II Resurrected\\Settings.json";
-    if (dir) CoTaskMemFree(dir);
-    FILE* f = path.empty() ? nullptr : _wfopen(path.c_str(), L"rb");
-    if (!f) return;
-    std::string text(1 << 16, ' ');
-    text.resize(fread(text.data(), 1, text.size(), f));
-    fclose(f);
-    auto after = [&](const char* key) -> const char* {
-        const size_t at = text.find(key);
-        const size_t colon = at == std::string::npos ? at : text.find(':', at);
-        return colon == std::string::npos ? nullptr : text.c_str() + colon + 1;
-    };
-    const char* mode = after("\"Window Mode\"");
-    const char* res = after("\"Screen Resolution (Windowed)\"");
-    if (!mode || atoi(mode) != 0 || !res) return;
-    int x = 0, y = 0;
-    if (sscanf_s(res, " \"%dx%d\"", &x, &y) == 2 && x >= 320 && y >= 200 && x <= 16384 && y <= 16384) { *w = x; *h = y; }
-}
-
-// Native OpenXR: the window as big as the game asked for, beyond the monitor too (GameWndProc
-// lifts Windows' limit; this puts the window right when it was cut to the screen before that -
-// the game made its window before vrcam was in). Only the cut a screen makes: the width as asked,
-// the height short of it. Posted (SWP_ASYNCWINDOWPOS): the window's thread may be the one that waits
-// on ours. Looked at every 2 s.
+// D2R VR Settings' "Square game window" ([openxr] square_window, window_size): kept from our ini - the
+// game writes the size Windows cut its window to back into its Settings.json. As big as asked, but on
+// its monitor (its work area, the frame included): past the screen's edge the fog flickered in the left
+// eye at 2400 on a 2160 screen, and on a virtual monitor of a higher resolution it did not (2026-10-11).
+// Put at the work area's top. Posted (SWP_ASYNCWINDOWPOS): the window's thread may wait on ours.
 void BigWindowTick() {
     static ULONGLONG at = 0;
     const ULONGLONG now = GetTickCount64();
     if (!g_gameWnd || !g_gameWndProc || !xr::On() || now - at < 2000) return;
     at = now;
-    if (IsIconic(g_gameWnd) || IsZoomed(g_gameWnd)) return;
-    int ww = 0, wh = 0;
-    // D2R VR Settings' "Square game window" ([openxr] square_window, window_size): the square from our
-    // ini - the game writes the size Windows cut its window to back into its Settings.json (2400x2137
-    // after a 2400x2400 start, 2026-10-11), so its file alone would bring the bars back next time.
-    const bool square = IniB(L"openxr", L"square_window", false);
-    if (square) {
-        ww = wh = std::clamp((int)IniF(L"openxr", L"window_size", 2000.0f), 640, 2400);
-    } else {
-        GameWindowedSize(&ww, &wh);
-    }
+    if (IsIconic(g_gameWnd) || IsZoomed(g_gameWnd) || !IniB(L"openxr", L"square_window", false)) return;
     RECT c{}, r{};
-    if (!ww || !GetClientRect(g_gameWnd, &c) || !GetWindowRect(g_gameWnd, &r)) return;
-    if (square ? (c.right == ww && c.bottom == wh) : (c.right != ww || c.bottom >= wh)) return;
+    if (!GetClientRect(g_gameWnd, &c) || !GetWindowRect(g_gameWnd, &r)) return;
+    MONITORINFO mi{sizeof mi};
+    if (!GetMonitorInfoW(MonitorFromWindow(g_gameWnd, MONITOR_DEFAULTTONEAREST), &mi)) return;
+    const RECT& wa = mi.rcWork;
     const int fw = (r.right - r.left) - c.right, fh = (r.bottom - r.top) - c.bottom;
-    SetWindowPos(g_gameWnd, nullptr, 0, 0, ww + fw, wh + fh, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS);
+    const int asked = std::clamp((int)IniF(L"openxr", L"window_size", 2000.0f), 640, 2400);
+    const int fits = std::min((int)(wa.right - wa.left) - fw, (int)(wa.bottom - wa.top) - fh);
+    const int side = std::max(320, std::min(asked, fits));
+    const int x = std::clamp((int)r.left, (int)wa.left, std::max((int)wa.left, (int)wa.right - (side + fw)));
+    const int y = (int)wa.top;
+    if (c.right == side && c.bottom == side && r.left == x && r.top == y) return;
+    SetWindowPos(g_gameWnd, nullptr, x, y, side + fw, side + fh, SWP_NOZORDER | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS);
     static int told = 0;
-    if (told++ < 5) LogF("vrcam: openxr - the game's window %dx%d made %dx%d (%s)", (int)c.right, (int)c.bottom, ww, wh,
-                         square ? "D2R VR Settings' square window" : "as its Settings.json asks: Windows had cut it to the screen");
+    if (told++ < 5) LogF("vrcam: openxr - the game's window %dx%d made %dx%d (D2R VR Settings' square window, %d asked%s)",
+                         (int)c.right, (int)c.bottom, side, side, asked,
+                         side < asked ? " - the monitor fits no more: a bigger square needs a monitor (or a virtual one) of a higher resolution" : "");
 }
 
 void HookGameWindow() {
@@ -9875,9 +9881,11 @@ void Tick() {
 // more draws - won, and the fog and the sky were laid by a view from above. ReShade's own size check
 // keeps it out only for a window under 2048. Here: the depth-stencil the game binds most in a frame
 // that is EXACTLY the window's size (the shadow map never is: a window is under 4096), copied into a
-// texture of ours and bound as DEPTH for every effect after ReShade's; none of that size - ReShade's
-// choice stays. The barriers as the replay's right-eye copy makes them (the game's last state on it).
-// [render] own_depth (on).
+// texture of ours, bound to D2R_DepthFog.fx's own semantic D2RVR_DEPTH - not DEPTH: Generic Depth,
+// when on, rebinds DEPTH whenever its pick changes, and with a window over ~2214 its pick went to the
+// shadow map on head turns - the left eye's fog flickered with a view from above (2026-10-11). Generic
+// Depth now feeds only FlatVR's "3D from the depth". None of the window's size: no depth for our effects.
+// The barriers as the replay's right-eye copy makes them (the game's last state on it). [render] own_depth (on).
 namespace scenedepth {
 using namespace reshade::api;
 struct Ds { uint64_t res; uint32_t binds, last, state; };
@@ -9985,11 +9993,11 @@ void Bind(effect_runtime* rt, command_list* cl) {
     cl->copy_resource(src, g_copy);
     cl->barrier(src, resource_usage::copy_source, from);
     cl->barrier(g_copy, resource_usage::copy_dest, resource_usage::shader_resource);
-    rt->update_texture_bindings("DEPTH", g_srv, g_srv);
+    rt->update_texture_bindings("D2RVR_DEPTH", g_srv, g_srv);   // ours alone: Generic Depth binds DEPTH
     if (best.res != g_from) {
         g_from = best.res;
         LogF("vrcam: own depth - the effects read the game's depth-stencil %p (%ux%u, bound %u times a frame, state %X), "
-             "not ReShade's pick ([render] own_depth=0 gives it back)", (void*)best.res, w, h, std::max(best.binds, best.last), (unsigned)from);
+             "bound to D2RVR_DEPTH, never ReShade's pick", (void*)best.res, w, h, std::max(best.binds, best.last), (unsigned)from);
     }
     told = 0;
 }
@@ -10773,7 +10781,7 @@ void LoadReShade() {
     else LogF("vrcam: ReShade64.dll did not load (error %lu)", GetLastError());
 }
 
-static const char g_info_version[] = "0.160.0";
+static const char g_info_version[] = "0.161.0";
 
 static const PluginInfo g_info = {
     PluginInfoSize, D2RL_PLUGIN_ABI_VERSION, "d2r-vr-vrcam", "vrcam", g_info_version, "BodyWalkVR",
@@ -10800,6 +10808,7 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     xr::SetLogger(&Log);   // before the settings: [openxr] on says so in the log
     ReloadIfChanged();
     NoTemporalAA();
+    SafeGameWindow();
     g_mouseLookOn.store(MouseLookForView());
     LogF("vrcam %s: game build %s (%s), made for D2R 3.3.93787 under D2RLoader 1.3.1", g_info_version,
          ctx->buildVersion ? ctx->buildVersion : "?", ctx->buildName ? ctx->buildName : "?");

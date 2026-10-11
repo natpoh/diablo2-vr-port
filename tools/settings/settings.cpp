@@ -513,12 +513,12 @@ std::vector<Item> g_items = {
            L"Off: the picture stretched over the headset's whole view - taller, softer up and down."),
     Toggle(L"@window", L"square", L"Square game window (no black bars)", 0,
            L"Writes the game's own Settings.json: a window, as wide as it is tall (the size below). The headset's eye is about "
-           L"square, so the whole picture fills it - no black bars with the box above ticked. vrcam lets the window be taller "
-           L"than the monitor and keeps it square while the game runs (the game writes a cut size back into its file). Off: the size it had before."),
+           L"square, so the whole picture fills it - no black bars with the box above ticked. vrcam keeps the window "
+           L"square while the game runs (the game writes a cut size back into its file). Off: the size it had before."),
     Slider(L"openxr", L"window_size", L"Square window: size, px", 640.0f, 2400.0f, 8.0f, 2000.0f,
-           L"The square window's side, up to 2400: taller, the game itself fails (its own fixed buffers, it closes at the title "
-           L"screen - 2600 and 3000 tried). Bigger is sharper and slower; DLSS or the game's own scale on top. vrcam gives the "
-           L"effects the scene's own depth, so a square of any size keeps the fog and the sky right."),
+           L"The square window's side, as far as the monitor fits it (vrcam keeps it inside the screen: past its edge "
+           L"the fog flickered in the left eye) - about 2060 on a 4K screen. A bigger square needs a monitor of a higher "
+           L"resolution, a virtual one too (up to 2400: taller, the game itself closes). Bigger is sharper and slower."),
     Status(L"square_window", L"The game window as the game has it"),
     Toggle(L"openxr", L"third_gaze", L"F2: the camera swings round the hero with the gaze", 0,
            L"Off: the camera stays behind the hero on his turn and the head looks round freely. On: it swings round him "
