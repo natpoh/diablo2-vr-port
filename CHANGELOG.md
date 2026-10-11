@@ -1,5 +1,45 @@
 # What's new in D2R VR
 
+## 0.158
+
+- **FlatVR: the horizon no longer leans** after switching from native OpenXR
+  (or after a recentre): the camera took the head's sideways tilt at that
+  moment as "upright", and the picture stood a degree or three askew - seen
+  most when turning the head right. In the headset the camera's roll is now
+  always the head's own.
+- **Caves: any fire can light the ceiling** - a new box "Any fire lights the
+  ceiling (ReShade, from the picture)" (Ceiling): torches, braziers, fire
+  spells and burning monsters light the vault over them, found in the picture
+  itself. No reading of the game's memory, so it is light on the CPU (unlike
+  "Torches light the ceiling"). A spell's light goes out with the spell; a
+  fire out of sight keeps lighting for a few seconds.
+- **D2R VR talks to BodyWalk through Game Link**, BodyWalk's open link for
+  game mods, instead of a plugin of its own (the D2R Bridge). Setup puts the
+  Game Link plugin in and takes the old bridge out; the mod's actions are in
+  BodyWalk's Mapping as before.
+- **Native OpenXR**:
+  - "Eyes by turns" as an option (Performance > 3D in the headset): one eye a
+    game frame, half the work; the other eye shown as it was last drawn,
+    turned to the head by the headset. The sky in the headset was missing
+    there and is back.
+  - A brightness slider (Stereo > Native OpenXR), on headsets whose runtime
+    supports it - SteamVR does not yet.
+  - PS VR2 on SteamVR: the camera no longer falls to the ground when SteamVR
+    moves its "straight ahead" without saying so; a controller that loses its
+    place for a moment is held by the head instead of the arms jumping and
+    resetting; when SteamVR takes the input away (its dashboard) the hands
+    stay put and the buttons let go.
+  - The game no longer dies at every native start on some PCs (ReShade's DXGI
+    wrapper on the headset runtime's adapter lookup).
+- **Stereo "one pass, two pictures"**: the right eye's fog, sky and ceiling
+  use the right eye's own depth - they came out doubled.
+- **Your own ReShade setup**: "Keep ReShade as dxgi.dll" (Home) keeps a
+  ReShade of your own (2D presets, another mod that wants dxgi.dll) working -
+  with it on, Setup leaves your dxgi.dll alone; a dxgi.dll beside ours is put
+  aside, never deleted. ReShade's rows show in flat too.
+- In a shop the left stick click is the pad's own again: "hold the left
+  stick to repair all" at a vendor works.
+
 ## 0.157
 
 - **The camera no longer spins without controllers.** With the controllers

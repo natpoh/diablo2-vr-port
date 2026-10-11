@@ -42,7 +42,7 @@
 #include <vector>
 
 #include "d2r_vr_state.h"
-#include "d2r_vr_shared.h"   // the bridge's block: is head tracking reaching the game
+#include "d2r_vr_shared.h"   // BodyWalk Game Link (bodywalk/game_link.h): is BodyWalk there, head tracking, FlatVR wishes
 #include "afr_eye_shared.h"  // FlatVR's head sample: is FlatVR running
 #include "game_sigs.h"       // the game addresses the mod looks for (the Status tab)
 #include "d2r_vr_version.h"  // D2RVR_VERSION: vrcam's g_info_version, made by tools/settings/version.cmake
@@ -76,8 +76,8 @@ struct Item {
     const wchar_t* sdef = nullptr;           // File: the default path; Color: what an empty value means
     const wchar_t* tip = nullptr;            // the tooltip: what the short label leaves out
     std::vector<const wchar_t*> choices;     // Choice: the names of 0, 1, 2...
-    struct Need { const wchar_t* section; const wchar_t* key; float value; int item; };
-    std::vector<Need> needs;                 // greyed out unless every such key has its value (item: set by Build)
+    struct Need { const wchar_t* section; const wchar_t* key; float value; int item; const wchar_t* orKey = nullptr; int orItem = -1; };
+    std::vector<Need> needs;                 // greyed out unless every such key has its value - or its orKey has (items: set by Build)
     int tab = 0;                             // set by Build
     int modes = kBoth;                       // shown in flat, VR or both (Build folds in its tab's and group's)
     std::vector<HWND> radios;                // Radio: one button per value
@@ -144,6 +144,10 @@ Item Hide(Item i) { i.hidden = true; return i; }
 Item Needs(const wchar_t* section, const wchar_t* key, float value, Item i) {
     i.needs.push_back({section, key, value, -1}); return i;
 }
+// The same with two keys of a section, either of which may have the value (either tick box ticked).
+Item NeedsEither(const wchar_t* section, const wchar_t* key, const wchar_t* orKey, float value, Item i) {
+    i.needs.push_back({section, key, value, -1, orKey, -1}); return i;
+}
 
 // On the page only while section/key (a Choice) has one of the values in `mask` (bit v = value v).
 Item ShowFor(const wchar_t* section, const wchar_t* key, unsigned mask, Item i) {
@@ -160,6 +164,10 @@ constexpr const wchar_t* kTorchesTip = L"WARNING: very heavy on the CPU. To find
                                        L"every 1.5 s while a ceiling is drawn (about a third of a CPU core) - on a weaker PC the game "
                                        L"and VR stutter. Fire seen in the picture (torches, braziers, fire spells) then lights the "
                                        L"ceiling over it.";
+constexpr const wchar_t* kPictureFireTip = L"Fire found in the picture by ReShade lights the ceiling: torches, braziers, fire spells, "
+                                           L"burning monsters - any fire on the screen, as the first ceilings did. No reading of the "
+                                           L"game's memory, so light on the CPU (a little GPU). A fire out of sight is remembered for "
+                                           L"8 s; one that goes out in plain view goes dark at once. In place of the torches above.";
 
 // Order = layout order: a Tab starts a tab, a Group a group on it.
 std::vector<Item> g_items = {
@@ -168,7 +176,7 @@ std::vector<Item> g_items = {
     // Flat is open for players since 2026-10-06 (greyed "coming soon" 2026-10-05 .. 10-06).
     Radio(L"mode", L"platform", 0, 1,
           {L"Flat: on the monitor, mouse and keyboard", L"VR: in the headset, with BodyWalk and FlatVR"},
-          L"VR needs BodyWalk with the D2R Bridge plugin and FlatVR - the Status column says what is missing."),
+          L"VR needs BodyWalk with the Game Link plugin and FlatVR - the Status column says what is missing."),
 #if D2RVR_FIRST_PERSON
     Only(kFlat, Group(L"View (F1 - F3 in the game)")),
     Radio(L"mode", L"flat_view", 1, 3,
@@ -192,7 +200,9 @@ std::vector<Item> g_items = {
           L"Switch in the game with F1 - F3 (F12 goes round). F3: the game lies on the floor of your room. "
           L"The game does not get F1 - F4.")),
 #endif
-    Only(kVr, Group(L"Status")),
+    // D2RLoader and ReShade: both ways to play (flat had no Install ReShade - a player found it in
+    // VR only, 2026-10-11 - the whole Status group was VR's).
+    Group(L"The game and ReShade"),
     Status(L"d2rloader", L"D2RLoader"),
     // Download and install D2RLoader: shown while there is no D2RLoader.exe beside D2R.exe (D2RLoaderStatus).
     Hide(Button(L"@run", L"d2rloader_get", L"Download and install D2RLoader 1.3.1",
@@ -204,12 +214,25 @@ std::vector<Item> g_items = {
            L"Downloads the current ReShade with add-on support from reshade.me, installs it into the game's folder for "
            L"DirectX 10/11/12 and renames its dxgi.dll to ReShade64.dll, which the mod loads itself (the plain D2R.exe "
            L"refuses a dxgi.dll). The fog, the sky, the ceiling and the depth for FlatVR need it.")),
+    // ReShade's file for players with a ReShade setup of their own (2D presets, other mods that want dxgi.dll):
+    // one button at a time, by which file is there (RefreshStatus); [reshade] as_dxgi keeps the choice, and
+    // D2R VR Setup leaves a dxgi.dll alone with it.
+    Hide(Button(L"@run", L"reshade_dxgi", L"Keep ReShade as dxgi.dll (my own ReShade setup)",
+           L"IMPORTANT - only if you use ReShade outside D2R VR too (your own presets in the normal 2D game, another mod "
+           L"that wants dxgi.dll): renames ReShade64.dll to dxgi.dll, so the game loads ReShade itself at every start, and "
+           L"D2R VR Setup leaves it so on updates. D2R VR works with it too (under D2RLoader). If the game does not start "
+           L"with it, press \"ReShade for D2R VR only\". Takes effect at the next start of the game.")),
+    Hide(Button(L"@run", L"reshade_r64", L"ReShade for D2R VR only (rename dxgi.dll to ReShade64.dll)",
+           L"Renames dxgi.dll to ReShade64.dll, which D2R VR loads itself under D2RLoader - the way D2R VR Setup puts it. "
+           L"The game started without D2RLoader has no ReShade then. Takes effect at the next start of the game.")),
+    Status(L"reshade_note", L"IMPORTANT"),
+    Only(kVr, Group(L"Status")),
     Status(L"depth_addon", L"FlatVR depth add-on"),
     Status(L"game_video", L"The game's video settings"),
     Status(L"bw_installed", L"BodyWalk installed"),
     Status(L"vigem", L"Xbox controller driver (ViGEmBus)"),
     Status(L"bw_running", L"BodyWalk running"),
-    Status(L"bridge", L"D2R Bridge plugin"),
+    Status(L"game_link", L"Game Link plugin"),
     Status(L"universal", L"Universal tracking output"),
     Status(L"flatvr_on", L"FlatVR switched on"),
     Status(L"head_lock", L"Head Lock follows the game"),
@@ -245,7 +268,7 @@ std::vector<Item> g_items = {
     Hide(Button(L"@run", L"d2r_launch", L"Launch Diablo II (D2RLoader)",
            L"Starts the game with D2RLoader.exe from its folder - the mod runs only under D2RLoader.")),
     // FlatVR's own START / STOP, so nobody hunts for them in BodyWalk: shown
-    // while BodyWalk runs with the bridge (its events exist), one at a time.
+    // while BodyWalk runs with Game Link (its Host block moves), one at a time.
     Only(kVr, Hide(Button(L"@run", L"flatvr_start", L"Start FlatVR",
            L"Starts FlatVR in BodyWalk - the picture goes into the headset. The same as START FLATVR on BodyWalk's FlatVR tab."))),
     Only(kVr, Hide(Button(L"@run", L"flatvr_stop", L"Stop FlatVR",
@@ -282,9 +305,11 @@ std::vector<Item> g_items = {
            L"Steps of the ray through the rock: more = finer relief, a dearer frame.")),
     Needs(L"ceiling", L"enabled", 1, Toggle(L"ceiling", L"torches", L"Torches light the ceiling (CPU heavy!)", 0,
            kTorchesTip)),
+    Needs(L"ceiling", L"enabled", 1, Toggle(L"ceiling", L"fire_from_picture", L"Any fire lights the ceiling (ReShade, from the picture)", 0,
+           kPictureFireTip)),
     Only(kVr, Choice(L"@stereo3d", L"source", L"3D in the headset", 0,
            {L"Stereo - one pass, two pictures", L"Stereo - eyes by turns", L"3D from the depth (ReShade)", L"Mono - a flat screen",
-            L"Native OpenXR - the game itself in the headset (prototype)"},
+            L"Native OpenXR - the game itself in the headset (prototype)", L"Native OpenXR - eyes by turns (prototype)"},
            L"Stereo: the game draws each frame once and the right eye is drawn again from the same work with its own "
            L"camera - true 3D at nearly the mono frame rate (new: if it is unstable on your PC, take Eyes by turns). "
            L"Eyes by turns: the game draws the left eye, the right eye, the left... a full frame each (~half the mono "
@@ -294,14 +319,17 @@ std::vector<Item> g_items = {
            L"is an OpenXR app and shows its own stereo pair in the headset, one pass two pictures - each eye's real view and the "
            L"head's place in the room, paced by the headset, no FlatVR - from the game's first frame. First (F4) and third person "
            L"(F2) in stereo; menus, open panels, F1 and F3 as a flat picture where you look. FlatVR is stopped while the game holds the headset, so BodyWalk's own panels are not in it; buttons "
-           L"and gestures need BodyWalk's OpenXR layer and the profile's gesture source set to OpenXR. Switches while the game runs.")),
+           L"and gestures need BodyWalk's OpenXR layer and the profile's gesture source set to OpenXR. Switches while the game runs. "
+           L"Native OpenXR - eyes by turns: the same, but the game draws one eye a frame, left and right in turn, and the headset "
+           L"turns the other eye's last picture to your head - each eye its own pass (no right eye made from the left one's work), "
+           L"one pass of work a frame, each eye at half the rate.")),
     Only(kVr, Choice(L"stereo", L"headset_rate", L"Headset refresh rate", 3, {L"72 Hz", L"75 Hz", L"80 Hz", L"90 Hz", L"120 Hz"},
            L"Sets the game's frame cap (in its own options, Settings.json): one picture a frame (mono, the 3D from the depth) "
            L"at the headset's rate, real stereo at twice it (each eye at the rate). More pictures than the headset shows make "
            L"the frame shake. The game reads it when it starts: set it with the game closed (it writes its own options on exit), or restart the game after.")),
     Only(kVr, Slider(L"@game", L"Framerate Cap", L"Game frame cap, fps (0 = none)", 0, 300, 1, 180,
            L"The game's own frame cap (its Settings.json). Set from the headset's rate and the 3D above; can be changed by hand.")),
-    Only(kVr, Status(L"native_xr", L"Native OpenXR (the last 3D choice above) needs a BodyWalk that takes the game's headset: 1.78 or later")),
+    Only(kVr, Status(L"native_xr", L"Native OpenXR (the last two 3D choices above) needs a BodyWalk that takes the game's headset: 1.78 or later")),
     Status(L"perf_restart", L"Need to restart the game: the render distance (room rings, models), the headset rate and the frame cap "
                             L"take effect when the game starts again."),
 
@@ -314,7 +342,7 @@ std::vector<Item> g_items = {
            L"Vertical field of view of the game camera, used when the box above is off.")),
     Slider(L"camera", L"pitch", L"Horizon (lower = looks higher)", -120, 30, 1, -45,
            L"Pitch on top of the game's own camera, degrees. -60 = level with the horizon."),
-    Only(kVr, Toggle(L"head", L"yaw_from_head", L"Turn with the headset", 1, L"Needs BodyWalk with the D2R Bridge plugin.")),
+    Only(kVr, Toggle(L"head", L"yaw_from_head", L"Turn with the headset", 1, L"Needs BodyWalk with the Game Link plugin.")),
     Only(kVr, Needs(L"head", L"yaw_from_head", 1, Invert(L"head", L"yaw_sign", L"Reverse turning", -1, L"Tick if turning the head left turns the view right."))),
     Only(kVr, Toggle(L"head", L"pitch_from_head", L"Look up and down with the headset", 1)),
     Only(kVr, Needs(L"head", L"pitch_from_head", 1, Invert(L"head", L"pitch_sign", L"Reverse up and down", 1, L"Tick if looking up tilts the view down."))),
@@ -464,6 +492,10 @@ std::vector<Item> g_items = {
     Only(kVr, Tab(L"Stereo")),
     // Native OpenXR (Performance > 3D in the headset > Native OpenXR): applied at once while the game runs.
     Group(L"Native OpenXR (the game itself in the headset)"),
+    Slider(L"openxr", L"brightness", L"Brightness in the headset", 0.2f, 1.5f, 0.05f, 1.0f,
+           L"Everything the game shows in the headset, darker or brighter: the picture, the flat picture, the toolbar and the "
+           L"map. 1 = as the game draws it. The headset's runtime does it (SteamVR, Virtual Desktop...); one without it leaves "
+           L"the picture as it is - vrcam's log says which."),
     Slider(L"openxr", L"flat_distance_m", L"Flat picture: distance, m", 0.5f, 10.0f, 0.1f, 2.5f,
            L"Menus, open panels (inventory, trade...), loading and the views shown flat (F1, F3) stand this far ahead, where "
            L"you looked when they came up. Farther = smaller in view."),
@@ -669,7 +701,7 @@ std::vector<Item> g_items = {
            L"For it top left, set the game's mini map to the left in its options. Needs D2R_DepthFog.fx on in ReShade."),
 
     Only(kVr, Tab(L"UI: F4 body")),
-    // Read by BodyWalk's D2R Bridge (not vrcam), which asks FlatVR for it (host API 6).
+    // [screen] menu_distance_m: vrcam asks FlatVR for it through Game Link (GameState, host API 6).
     Group(L"Item labels on the ground"),
     Hide(Slider(L"hud", L"monster_alpha", L"Name over a monster: opacity", 0, 1, 0.05f, 1,
            L"The name plate the game shows over the monster under the cursor (its MonsterHealth panel), box and name "
@@ -687,7 +719,7 @@ std::vector<Item> g_items = {
            L"screen this far from your eyes, so the whole panel is in view, and brings it back to your own distance when "
            L"the panel closes - smoothly, in under half a second. Your FlatVR Distance setting is not changed. A screen "
            L"already farther away than this comes nearer instead. 0 = the screen stays where it is. Needs BodyWalk with "
-           L"the D2R Bridge plugin and FlatVR's \"Screen distance follows the game\" (on by default)."),
+           L"the Game Link plugin and FlatVR's \"Screen distance follows the game\" (on by default)."),
     Group(L"In the game's picture"),
     Choice(L"hud", L"map", L"Corner map", 0, {L"In the picture", L"Out of the picture (its own texture)"},
            L"The game draws the corner map under a scissor of its own: its draws go to a texture of their own, the labels "
@@ -842,9 +874,11 @@ std::vector<Item> g_items = {
            L"Glints of the hero's and the torches' light on wet rock, as on the walls (0 = dry).")),
     Needs(L"ceiling", L"enabled", 1, Toggle(L"ceiling", L"torches", L"Torches light the ceiling (CPU heavy!)", 0,
            kTorchesTip)),
-    Needs(L"ceiling", L"torches", 1, Slider(L"ceiling", L"torch_brightness", L"Torch glow", 0, 3, 0.05f, 0.6f,
+    Needs(L"ceiling", L"enabled", 1, Toggle(L"ceiling", L"fire_from_picture", L"Any fire lights the ceiling (ReShade, from the picture)", 0,
+           kPictureFireTip)),
+    NeedsEither(L"ceiling", L"torches", L"fire_from_picture", 1, Slider(L"ceiling", L"torch_brightness", L"Torch glow", 0, 3, 0.05f, 0.6f,
            L"How bright the torches' light on the ceiling is. A small flame gives less light than a big one.")),
-    Needs(L"ceiling", L"torches", 1, Slider(L"ceiling", L"torch_radius", L"Torch light reach", 3, 100, 1, 20,
+    NeedsEither(L"ceiling", L"torches", L"fire_from_picture", 1, Slider(L"ceiling", L"torch_radius", L"Torch light reach", 3, 100, 1, 20,
            L"World units from a fire where its light on the ceiling is down to half.")),
     Needs(L"ceiling", L"torches", 1, Slider(L"ceiling", L"torch_warmth", L"Torch warmth (yellow)", 0, 1, 0.05f, 0.6f,
            L"0 = the game's own pale torch colour; more = the orange-yellow of fire on the stone.")),
@@ -860,6 +894,8 @@ std::vector<Item> g_items = {
     Group(L"Ceiling: act 1 caves"),
     Needs(L"ceiling", L"enabled", 1, Toggle(L"ceiling", L"torches", L"Torches light the ceiling (CPU heavy!)", 0,
            kTorchesTip)),
+    Needs(L"ceiling", L"enabled", 1, Toggle(L"ceiling", L"fire_from_picture", L"Any fire lights the ceiling (ReShade, from the picture)", 0,
+           kPictureFireTip)),
     Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"height_act1_caves", L"Height over the floor", 5, 150, 0.1f, 30,
            L"World units (the hero is ~7.5 tall). Below the walls' tops they pierce the ceiling.")),
     Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"brightness_act1_caves", L"Brightness (0 = black)", 0, 3, 0.05f, 1,
@@ -1513,15 +1549,18 @@ void WriteReShadeValue(const Item&, float v) {
     WritePrivateProfileStringW(L"ADDON", L"DisabledAddons", list.c_str(), ini.c_str());
 }
 
-// "@stereo3d" source, the five modes: 0 stereo (one pass, two pictures - [stereo] afr,
+// "@stereo3d" source, the six modes (5: native OpenXR with the eyes by turns - [openxr] on with
+// afr alone, 2026-10-11): 0 stereo (one pass, two pictures - [stereo] afr,
 // pair_per_tick and replay_right), 1 stereo by turns (afr alone), 2 3D from ReShade's depth,
 // 3 mono, 4 native OpenXR (mode 0's keys and [openxr] on: the game in the headset itself,
 // vr/xr.cpp) - kept as [stereo] source (0 none, 1 depth, 2 the game's pair) and those keys: the
 // Stereo tab switches afr and pair_per_tick alone (two passes a frame: pair_per_tick without
 // replay_right, reads as stereo here).
-void SignalBridge(const wchar_t* name);
+BW_LinkRequests* LinkRequests();
+bool LinkHost(uint32_t* caps = nullptr);
 float ReadStereo3D() {
-    if (GetPrivateProfileIntW(L"openxr", L"on", 0, g_ini) != 0) return 4.0f;
+    if (GetPrivateProfileIntW(L"openxr", L"on", 0, g_ini) != 0)
+        return GetPrivateProfileIntW(L"stereo", L"afr", 0, g_ini) != 0 && GetPrivateProfileIntW(L"stereo", L"pair_per_tick", 0, g_ini) == 0 ? 5.0f : 4.0f;
     const bool afr = GetPrivateProfileIntW(L"stereo", L"afr", 0, g_ini) != 0;
     const int source = GetPrivateProfileIntW(L"stereo", L"source", afr ? 2 : 1, g_ini);
     if (afr) return GetPrivateProfileIntW(L"stereo", L"pair_per_tick", 0, g_ini) != 0 ? 0.0f : 1.0f;
@@ -1530,16 +1569,16 @@ float ReadStereo3D() {
 int ExeVersion(const std::wstring& exe);
 std::wstring BodyWalkExe();
 void SetStatus(const wchar_t* key, int state, const wchar_t* text);
-// Native OpenXR's buttons and gestures go through BodyWalk (host API 9): its bridge says so
-// while it runs, or the BodyWalk found is 1.78 or later.
+// Native OpenXR's buttons and gestures go through BodyWalk (host API 9): its Game Link says
+// so while it runs, or the BodyWalk found is 1.78 or later.
 bool BodyWalkTakesGameHeadset() {
-    if (HANDLE e = OpenEventW(SYNCHRONIZE, FALSE, D2RVR_BRIDGE_XR_SOURCE_NAME)) { CloseHandle(e); return true; }
+    if (uint32_t caps = 0; LinkHost(&caps) && (caps & BW_LINK_CAP_XR_INPUT)) return true;
     const std::wstring exe = BodyWalkExe();
     return !exe.empty() && ExeVersion(exe) >= 1078;
 }
 // False: not written (native OpenXR without a BodyWalk for it).
 bool WriteStereo3D(float v) {
-    const bool native = std::lround(v) == 4;   // runs on the one-pass stereo only
+    const bool native = std::lround(v) == 4 || std::lround(v) == 5;   // the one-pass stereo, or the eyes by turns (5)
     const bool wasNative = GetPrivateProfileIntW(L"openxr", L"on", 0, g_ini) != 0;
     if (native && !wasNative && !BodyWalkTakesGameHeadset()) {
         SetStatus(L"native_xr", 1, L"Native OpenXR not set: this BodyWalk cannot take the game's headset (buttons and gestures). "
@@ -1547,12 +1586,14 @@ bool WriteStereo3D(float v) {
         return false;
     }
     if (native != wasNative)
-        SetStatus(L"native_xr", native ? 0 : 3, native ? L"Native OpenXR on: BodyWalk's Mapping takes the game's headset (D2R VR)"
+        SetStatus(L"native_xr", native ? 0 : 3, native ? L"Native OpenXR on: BodyWalk's Mapping takes the game's headset (Game Link)"
                                                      : L"Native OpenXR off: the picture goes through FlatVR");
     WritePrivateProfileStringW(L"openxr", L"on", native ? L"1" : L"0", g_ini);
     // BodyWalk's Mapping Input Source with it: the game's headset, or FlatVR's again
-    if (native != wasNative) SignalBridge(native ? D2RVR_GESTURES_GAME_NAME : D2RVR_GESTURES_FLATVR_NAME);
-    const int m = native ? 0 : std::clamp((int)std::lround(v), 0, 3);
+    if (native != wasNative)
+        if (BW_LinkRequests* r = LinkRequests())
+            bw::link::Request(r, &r->presenter, native ? BW_LINK_PRESENTER_GAME : BW_LINK_PRESENTER_FLATVR);
+    const int m = native ? (std::lround(v) == 5 ? 1 : 0) : std::clamp((int)std::lround(v), 0, 3);
     static const int kSource[4] = {2, 2, 1, 0};
     const int s = kSource[m];
     wchar_t buf[8];
@@ -1564,9 +1605,8 @@ bool WriteStereo3D(float v) {
         WritePrivateProfileStringW(L"stereo", L"replay_right", m == 0 ? L"1" : L"0", g_ini);
         if (m == 0) WritePrivateProfileStringW(L"stereo", L"replay_ahead", L"2", g_ini);
     }
-    // BodyWalk's FlatVR follows, through the D2R Bridge (no event = no BodyWalk running)
-    static const wchar_t* const kName[3] = {D2RVR_FLATVR_3D_NONE_NAME, D2RVR_FLATVR_3D_DEPTH_NAME, D2RVR_FLATVR_3D_PAIR_NAME};
-    SignalBridge(kName[s]);
+    // BodyWalk's FlatVR follows, through Game Link (s is BW_LINK_STEREO_*; done only while BodyWalk runs)
+    if (BW_LinkRequests* r = LinkRequests()) bw::link::Request(r, &r->stereoSource, s);
     return true;
 }
 
@@ -1779,7 +1819,10 @@ void Build(HWND page) {
     for (Item& it : g_items)
         for (Item::Need& nd : it.needs)
             for (size_t j = 0; j < g_items.size(); ++j)
-                if (g_items[j].key && wcscmp(g_items[j].section, nd.section) == 0 && wcscmp(g_items[j].key, nd.key) == 0) nd.item = (int)j;
+                if (g_items[j].key && wcscmp(g_items[j].section, nd.section) == 0) {
+                    if (wcscmp(g_items[j].key, nd.key) == 0) nd.item = (int)j;
+                    if (nd.orKey && wcscmp(g_items[j].key, nd.orKey) == 0) nd.orItem = (int)j;
+                }
     for (Item& it : g_items)
         if (it.showFor.key)
             for (size_t j = 0; j < g_items.size(); ++j)
@@ -1816,7 +1859,8 @@ void UpdateEnabled() {
         if (it.needs.empty()) continue;
         BOOL on = TRUE;
         for (const Item::Need& nd : it.needs)
-            if (nd.item >= 0 && std::lround(ReadValue(g_items[nd.item])) != std::lround(nd.value)) on = FALSE;
+            if (nd.item >= 0 && std::lround(ReadValue(g_items[nd.item])) != std::lround(nd.value) &&
+                !(nd.orItem >= 0 && std::lround(ReadValue(g_items[nd.orItem])) == std::lround(nd.value))) on = FALSE;
         for (HWND h : {it.name, it.ctl, it.value, it.browse, it.clear})
             if (h) EnableWindow(h, on);
         for (HWND h : it.radios) EnableWindow(h, on);
@@ -2324,11 +2368,11 @@ std::wstring RunningBodyWalkExe() {
 
 Item* FindItem(const wchar_t* section, const wchar_t* key);
 void StartBodyWalk();
-// FlatVR started by Launch once BodyWalk's bridge is up (FollowLaunch): until this tick, 0 = not wanted.
+// FlatVR started by Launch once BodyWalk's Game Link is up (FollowLaunch): until this tick, 0 = not wanted.
 ULONGLONG g_flatVrStartBy = 0;
 // The game under D2RLoader, from its own folder (this program sits beside D2R.exe). For VR,
-// BodyWalk with it - the head, the buttons and the gestures go through its D2R Bridge, and
-// nobody should have to know to start it first (2026-10-10) - and FlatVR once the bridge is
+// BodyWalk with it - the head, the buttons and the gestures go through its Game Link, and
+// nobody should have to know to start it first (2026-10-10) - and FlatVR once Game Link is
 // up, unless the game holds the headset itself (native OpenXR: it stops FlatVR anyway).
 void LaunchGame() {
     const std::wstring game = GameFolder();
@@ -2339,16 +2383,16 @@ void LaunchGame() {
     const bool native = GetPrivateProfileIntW(L"openxr", L"on", 0, g_ini) != 0;
     g_flatVrStartBy = native ? 0 : GetTickCount64() + 60000;
 }
-// Every timer tick: FlatVR's Start sent once the bridge's event is there (BodyWalk loaded
-// with it), if FlatVR is not running already; given up after a minute.
+// Every timer tick: FlatVR's Start asked once Game Link is up (BodyWalk loaded with it),
+// if FlatVR is not running already; given up after a minute.
 void FollowLaunch() {
     if (!g_flatVrStartBy) return;
     if (GetTickCount64() > g_flatVrStartBy) { g_flatVrStartBy = 0; return; }
-    HANDLE ev = OpenEventW(EVENT_MODIFY_STATE, FALSE, D2RVR_FLATVR_START_NAME);
-    if (!ev) return;
+    uint32_t caps = 0;
+    if (!LinkHost(&caps) || !(caps & BW_LINK_CAP_FLATVR_RUNNING)) return;
     FlatVRHeadSample hs{};
-    if (!(ReadBlock(FLATVR_HEAD_SAMPLE_NAME, &hs, sizeof hs) && Moving(FLATVR_HEAD_SAMPLE_NAME, hs.counter))) SetEvent(ev);
-    CloseHandle(ev);
+    if (!(ReadBlock(FLATVR_HEAD_SAMPLE_NAME, &hs, sizeof hs) && Moving(FLATVR_HEAD_SAMPLE_NAME, hs.counter)))
+        if (BW_LinkRequests* r = LinkRequests()) bw::link::Request(r, &r->flatvrRunning, 1);
     g_flatVrStartBy = 0;
 }
 // Shown while D2RLoader.exe is there and the game is not running.
@@ -2376,16 +2420,30 @@ void StartBodyWalk() {
 
 Item* FindItem(const wchar_t* section, const wchar_t* key);
 
-// D2R VR Settings' Start / Stop FlatVR: the bridge's event (D2RVR_FLATVR_START_NAME);
-// the bridge asks BodyWalk, which answers on its next frame.
-void SignalBridge(const wchar_t* name) {
-    if (HANDLE ev = OpenEventW(EVENT_MODIFY_STATE, FALSE, name)) {
-        SetEvent(ev);
-        CloseHandle(ev);
-    }
+// BodyWalk Game Link (bodywalk/game_link.h): Start / Stop FlatVR, FlatVR's 3D source and who
+// holds the headset go as Requests - BodyWalk does them on its next frame, only those made
+// while it runs. Made, or opened, once and kept: a request lives in the block.
+BW_LinkRequests* LinkRequests() {
+    static HANDLE map = nullptr;
+    static BW_LinkRequests* r = nullptr;
+    if (!r) r = (BW_LinkRequests*)bw::link::Open(BW_LINK_REQUESTS_NAME, &map);
+    return r;
+}
+// BodyWalk runs with Game Link: its Host block moves and its process is there; caps = what
+// that BodyWalk can do (BW_LINK_CAP_*).
+bool LinkHost(uint32_t* caps) {
+    static HANDLE map = nullptr;
+    static const BW_LinkHost* h = nullptr;
+    static bw::link::Pulse pulse;
+    if (caps) *caps = 0;
+    if (!h) h = (const BW_LinkHost*)bw::link::Open(BW_LINK_HOST_NAME, &map);
+    if (!h || !pulse.Alive(&h->header, 2000)) return false;
+    BW_LinkHost c;
+    if (caps && bw::link::Read(h, &c)) *caps = c.caps;
+    return true;
 }
 
-// The VR status column: what BodyWalk, its D2R Bridge, FlatVR and the game
+// The VR status column: what BodyWalk, its Game Link, FlatVR and the game
 // say right now. BodyWalk's own settings file, the plugin on disk, and the
 // three shared blocks each side writes while it runs.
 void D2RLoaderStatus();   // D2RLoader's row and its button (below, by the update check)
@@ -2418,9 +2476,16 @@ void RefreshStatus() {
         DWORD n = GetModuleFileNameW(nullptr, exe, MAX_PATH);
         while (n && exe[n - 1] != L'\\') --n;
         const std::wstring game(exe, n);
-        if (Exists(game + L"dxgi.dll"))
-            SetStatus(L"reshade", kBad, L"dxgi.dll is beside the game: D2R refuses it - rename it to ReShade64.dll");
-        else if (!Exists(game + L"ReShade64.dll")) {
+        const bool r64 = Exists(game + L"ReShade64.dll"), dx = Exists(game + L"dxgi.dll");
+        const bool asDxgi = GetPrivateProfileIntW(L"reshade", L"as_dxgi", 0, g_ini) != 0;
+        if (dx && !Exists(game + L"reshade-shaders\\Shaders\\D2R_DepthFog.fx"))
+            SetStatus(L"reshade", kBad, L"ReShade is there (dxgi.dll), the mod's effect D2R_DepthFog.fx is not - run D2R VR Setup again");
+        else if (dx)
+            SetStatus(L"reshade", asDxgi ? kOk : kWarn,
+                      asDxgi ? L"ReShade as dxgi.dll (your own setup): the game loads it itself, D2R VR works with it"
+                             : L"ReShade as dxgi.dll: the game loads it itself, D2R VR works with it - D2R VR Setup renames it "
+                               L"to ReShade64.dll on an update unless you press \"Keep ReShade as dxgi.dll\"");
+        else if (!r64) {
             if (!g_rsBusy.load())
                 SetStatus(L"reshade", kBad, g_rsError.empty() ? L"ReShade not installed - press Install ReShade" : g_rsError.c_str());
         }
@@ -2429,9 +2494,20 @@ void RefreshStatus() {
         else
             SetStatus(L"reshade", kOk, L"ReShade and the mod's effect installed");
         if (Item* b = FindItem(L"@run", L"reshade_get")) {
-            const bool hide = Exists(game + L"ReShade64.dll") || Exists(game + L"dxgi.dll");
+            const bool hide = r64 || dx;
             if (b->hidden != hide) { b->hidden = hide; LayoutPage(); }
         }
+        // one of the two renames, by the file there; with dxgi.dll not kept yet, "keep" stays offered
+        if (Item* b = FindItem(L"@run", L"reshade_dxgi")) {
+            const bool hide = !((r64 && !dx) || (dx && !asDxgi));
+            if (b->hidden != hide) { b->hidden = hide; LayoutPage(); }
+        }
+        if (Item* b = FindItem(L"@run", L"reshade_r64")) {
+            const bool hide = !dx;
+            if (b->hidden != hide) { b->hidden = hide; LayoutPage(); }
+        }
+        SetStatus(L"reshade_note", kWarn,
+                  L"Your own ReShade (2D presets, a mod that wants dxgi.dll)? Press \"Keep ReShade as dxgi.dll\".");
         const bool addon = Exists(game + L"FlatVR_DepthProvider.addon64");
         SetStatus(L"depth_addon", addon ? kOk : kBad, addon ? L"FlatVR depth add-on installed"
                                                             : L"FlatVR depth add-on missing beside the game - run D2R VR Setup again");
@@ -2493,7 +2569,7 @@ void RefreshStatus() {
     } else
         SetStatus(L"bw_installed", have || !bwExe.empty() ? kOk : kBad,
                   have || !bwExe.empty() ? L"BodyWalk installed" : L"BodyWalk not found - install it and start it once");
-    // BodyWalk's virtual Xbox pad, which the D2R Bridge drives. BodyWalk's own
+    // BodyWalk's virtual Xbox pad: walking, sticks and buttons reach the game through it. BodyWalk's own
     // installer and ours put it in; a portable BodyWalk from the zip asks for it.
     HKEY vigem = nullptr;
     const bool pad = RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"SYSTEM\\CurrentControlSet\\Services\\ViGEmBus", 0,
@@ -2517,10 +2593,15 @@ void RefreshStatus() {
         LayoutPage();
     }
 
-    const bool dll = Exists(dir + L"\\plugins\\d2r_bridge\\d2r_bridge.dll");
-    if (!dll) SetStatus(L"bridge", kBad, L"D2R Bridge plugin not installed (BodyWalk\\plugins\\d2r_bridge)");
-    else if (have && PluginOff(text, "d2r_bridge")) SetStatus(L"bridge", kBad, L"D2R Bridge plugin is switched off in BodyWalk's plugin list");
-    else SetStatus(L"bridge", kOk, L"D2R Bridge plugin installed");
+    const bool dll = Exists(dir + L"\\plugins\\game_link\\game_link.dll");
+    if (!dll) SetStatus(L"game_link", kBad, L"Game Link plugin not installed (BodyWalk\\plugins\\game_link) - run D2R VR Setup again");
+    else if (have && PluginOff(text, "game_link")) SetStatus(L"game_link", kBad, L"Game Link plugin is switched off in BodyWalk's plugin list");
+    else if (running && !LinkHost()) SetStatus(L"game_link", kWarn, L"Game Link plugin installed, but the running BodyWalk has not loaded it - restart BodyWalk");
+    else SetStatus(L"game_link", kOk, running ? L"Game Link plugin running" : L"Game Link plugin installed");
+    // The D2R Bridge plugin of 0.157 and before, left beside Game Link (BodyWalk held it while
+    // Setup ran and was not closed): every action twice in BodyWalk's Mapping.
+    if (dll && Exists(dir + L"\\plugins\\d2r_bridge\\d2r_bridge.dll"))
+        SetStatus(L"game_link", kWarn, L"The old D2R Bridge plugin is still in BodyWalk\\plugins\\d2r_bridge - close BodyWalk and run D2R VR Setup again");
 
     auto flag = [&](const wchar_t* key, const char* json, bool want, int missState, const wchar_t* good, const wchar_t* bad) {
         if (!have) { SetStatus(key, kUnknown, good); return; }
@@ -2539,23 +2620,23 @@ void RefreshStatus() {
 
     FlatVRHeadSample hs{};
     const bool flatvr = ReadBlock(FLATVR_HEAD_SAMPLE_NAME, &hs, sizeof hs) && Moving(FLATVR_HEAD_SAMPLE_NAME, hs.counter);
-    // Start / Stop FlatVR: while the bridge's events are there (BodyWalk runs
-    // with it), the one that fits FlatVR's state now.
+    // Start / Stop FlatVR: while BodyWalk runs with Game Link (and can do it), the one
+    // that fits FlatVR's state now.
     {
-        HANDLE ev = OpenEventW(SYNCHRONIZE, FALSE, D2RVR_FLATVR_START_NAME);
-        const bool bridge = ev != nullptr;
-        if (ev) CloseHandle(ev);
+        uint32_t caps = 0;
+        const bool link = LinkHost(&caps) && (caps & BW_LINK_CAP_FLATVR_RUNNING);
         bool relayout = false;
-        if (Item* s = FindItem(L"@run", L"flatvr_start"); s && s->hidden != (!bridge || flatvr)) { s->hidden = !bridge || flatvr; relayout = true; }
-        if (Item* s = FindItem(L"@run", L"flatvr_stop"); s && s->hidden != (!bridge || !flatvr)) { s->hidden = !bridge || !flatvr; relayout = true; }
+        if (Item* s = FindItem(L"@run", L"flatvr_start"); s && s->hidden != (!link || flatvr)) { s->hidden = !link || flatvr; relayout = true; }
+        if (Item* s = FindItem(L"@run", L"flatvr_stop"); s && s->hidden != (!link || !flatvr)) { s->hidden = !link || !flatvr; relayout = true; }
         if (relayout) LayoutPage();
     }
     SetStatus(L"flatvr_running", flatvr ? kOk : kWarn, flatvr ? L"FlatVR running" : L"FlatVR is not started - press START in FlatVR");
-    D2RVR_Shared sh{};
-    const bool live = ReadBlock(D2RVR_SHARED_NAME, &sh, offsetof(D2RVR_Shared, headPitchDeg)) && Moving(D2RVR_SHARED_NAME, sh.counter);
-    SetStatus(L"head", live && sh.headValid ? kOk : kWarn,
-              live && sh.headValid ? L"Head tracking reaches the game" :
-              live ? L"The bridge runs, but the headset is not tracking" : L"No head tracking from BodyWalk yet");
+    BW_LinkTracking tr{};
+    const bool live = ReadBlock(BW_LINK_TRACKING_NAME, &tr, sizeof tr) && tr.header.magic == BW_LINK_MAGIC && Moving(BW_LINK_TRACKING_NAME, tr.header.sequence);
+    const bool tracked = live && (tr.flags & BW_LINK_TRACK_HEAD) != 0;
+    SetStatus(L"head", tracked ? kOk : kWarn,
+              tracked ? L"Head tracking reaches the game" :
+              live ? L"BodyWalk sends tracking, but the headset is not tracking" : L"No head tracking from BodyWalk yet");
     D2RVR_State st{};
     const bool game = ReadBlock(D2RVR_STATE_NAME, &st, sizeof st) && Moving(D2RVR_STATE_NAME, st.counter);
     SetStatus(L"game", game ? kOk : kUnknown, game ? L"The game runs with the mod" : L"The game is not running (or the mod is not loaded)");
@@ -3282,6 +3363,32 @@ if(Test-Path -LiteralPath $z){ exit 0 } else { exit 2 })PS";
     PostCollect(wnd, kOk, L"Saved on your desktop: " + std::wstring(name) + L".zip - post it in our Discord (#diablo-2-vr)", true);
 }
 
+// ReShade's file (Home > The game and ReShade, 2026-10-11): dxgi.dll for players with a ReShade
+// setup of their own - the game loads it at every start, and D2R VR Setup leaves it with [reshade]
+// as_dxgi=1 - or ReShade64.dll, D2R VR's way (vrcam loads it under D2RLoader). Both there: the
+// other dxgi.dll is put aside as dxgi.dll.off, never deleted.
+void ReShadeAs(bool dxgi) {
+    const std::wstring game = GameFolder();
+    const std::wstring r64 = game + L"ReShade64.dll", dx = game + L"dxgi.dll";
+    bool ok = true;
+    if (dxgi) {
+        if (!Exists(dx)) ok = MoveFileExW(r64.c_str(), dx.c_str(), 0) != 0;
+    } else if (Exists(r64)) {
+        ok = MoveFileExW(dx.c_str(), (game + L"dxgi.dll.off").c_str(), MOVEFILE_REPLACE_EXISTING) != 0;
+    } else {
+        ok = MoveFileExW(dx.c_str(), r64.c_str(), 0) != 0;
+    }
+    if (ok) WritePrivateProfileStringW(L"reshade", L"as_dxgi", dxgi ? L"1" : L"0", g_ini);
+    LogLine(std::wstring(L"reshade: ") + (dxgi ? L"kept as dxgi.dll" : L"ReShade64.dll for D2R VR only") + (ok ? L"" : L" - FAILED"));
+    if (!ok) {
+        const DWORD e = GetLastError();
+        MessageBoxW(g_main, (L"Could not rename ReShade's file in the game's folder (error " + std::to_wstring(e) +
+                             L"). The folder may need administrator rights, or the game is running - close it and try again.").c_str(),
+                    L"D2R VR Settings", MB_OK | MB_ICONWARNING);
+    }
+    RefreshStatus();
+}
+
 void StartCollectLogs() {
     if (g_collectBusy.exchange(true)) return;
     if (Item* b = FindItem(L"@run", L"collect_logs")) EnableWindow(b->ctl, FALSE);
@@ -3468,8 +3575,10 @@ LRESULT CALLBACK PageProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
                 else if (wcscmp(it.key, L"d2r_launch") == 0) LaunchGame();
                 else if (wcscmp(it.key, L"d2rloader_get") == 0) StartD2RLoaderInstall();
                 else if (wcscmp(it.key, L"reshade_get") == 0) StartReShadeInstall();
+                else if (wcscmp(it.key, L"reshade_dxgi") == 0) ReShadeAs(true);
+                else if (wcscmp(it.key, L"reshade_r64") == 0) ReShadeAs(false);
                 else if (wcscmp(it.key, L"collect_logs") == 0) StartCollectLogs();
-                else SignalBridge(wcscmp(it.key, L"flatvr_start") == 0 ? D2RVR_FLATVR_START_NAME : D2RVR_FLATVR_STOP_NAME);
+                else if (BW_LinkRequests* r = LinkRequests()) bw::link::Request(r, &r->flatvrRunning, wcscmp(it.key, L"flatvr_start") == 0 ? 1 : 0);
             } else if (HIWORD(w) == BN_CLICKED && it.kind == Kind::Button) {
                 WriteValue(it, (float)(((int)ReadValue(it) + 1) % 1000000));
             } else if (HIWORD(w) == BN_CLICKED && (it.kind == Kind::Toggle || it.kind == Kind::Invert)) {
@@ -3583,9 +3692,9 @@ LRESULT CALLBACK WndProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
 //
 // For the mod's installer (installer/D2R_VR_Setup.iss): BodyWalk's settings
 // as the VR mode needs them - Universal tracking output (the head reaches the
-// bridge), FlatVR on, Head Lock follows the game, frame generation off (it
+// Game Link), FlatVR on, Head Lock follows the game, frame generation off (it
 // shakes the picture in D2R), the background and glow round the screen off -
-// and the D2R Bridge plugin not switched off.
+// and the Game Link plugin not switched off.
 // Each file given that exists is edited as text (BodyWalk's own JSON, keys
 // added at the top when missing), BodyWalk must not be running. Exit code: 0
 // all written, 1 a file could not be written, 2 none of them exists.
@@ -3628,13 +3737,30 @@ int SetupBodyWalk(int argc, wchar_t** argv) {
         SetJsonBool(text, "flat_vr_head_lock_from_game", true);
         SetJsonBool(text, "flat_vr_optical_flow", false);
         SetJsonBool(text, "flat_vr_enable_ambilight", false);   // FlatVR's background and glow round the screen: off for D2R
-        EnablePlugin(text, "d2r_bridge");
+        EnablePlugin(text, "game_link");
         EnablePlugin(text, "\"flatvr\"");
         std::ofstream f(argv[i], std::ios::binary | std::ios::trunc);
         f << text;
         if (!f.good()) ++failed;
     }
     return failed ? 1 : found ? 0 : 2;
+}
+
+// D2R_VR_Settings.exe --game-link-manifest <file>
+//
+// For installer/build_installer.ps1: the game's Game Link manifest as BodyWalk keeps
+// its copy (bodywalk/game_link.h, BW_LINK_CACHE_DIR) - what vrcam sends (vr/link.cpp),
+// from the same tables. The installer puts it in BodyWalk's game_link folder, so the
+// actions are in BodyWalk's Mapping from its first start, before the game ever ran.
+// Exit code 0 written, 1 not.
+int WriteGameLinkManifest(const wchar_t* path) {
+    std::ofstream f(path, std::ios::binary | std::ios::trunc);
+    if (!f) return 1;
+    f << "game " D2RVR_GAME_ID "\n" << "name " D2RVR_GAME_NAME "\n" << "mod " D2RVR_MOD_NAME " " D2RVR_VERSION "\n";
+    for (const D2RVRActionName& a : kD2RVRActions) f << "action " << a.name << "\n";
+    for (const D2RVRCommand& c : kD2RVRCommands) f << "action " << c.action << "\n";
+    D2RVRTabs([&](const char* name, const char* desc) { f << "tab " << name << "|" << desc << "\n"; });
+    return f.good() ? 0 : 1;
 }
 
 }  // namespace
@@ -3645,6 +3771,11 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
         wchar_t** argv = CommandLineToArgvW(GetCommandLineW(), &argc);
         if (argv && argc >= 2 && wcscmp(argv[1], L"--setup-bodywalk") == 0) {
             const int r = SetupBodyWalk(argc, argv);
+            LocalFree(argv);
+            return r;
+        }
+        if (argv && argc >= 3 && wcscmp(argv[1], L"--game-link-manifest") == 0) {   // the installer's build
+            const int r = WriteGameLinkManifest(argv[2]);
             LocalFree(argv);
             return r;
         }

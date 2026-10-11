@@ -33,10 +33,11 @@ Tell us what works, what doesn't and what you would like to see.
 > account banned. This project is not made, endorsed or supported by Blizzard
 > Entertainment.
 
-It is a [D2RLoader](https://d2rloader.net) plugin (`d2rl-vrcam.dll`), a ReShade
-effect (`D2R_DepthFog.fx`) and, for the headset, a BodyWalk plugin
-(`d2r_bridge.dll`) that hands the head to the game; FlatVR (in BodyWalk) shows the
-picture in the headset. Without a headset it plays flat on a monitor with mouse
+It is a [D2RLoader](https://d2rloader.net) plugin (`d2rl-vrcam.dll`) and a ReShade
+effect (`D2R_DepthFog.fx`). For the headset it talks to BodyWalk through BodyWalk
+Game Link (`external/bodywalk/game_link.h`, BodyWalk's `game_link` plugin), which
+hands it the head and the hands; FlatVR (in BodyWalk) shows the picture in the
+headset. Without a headset it plays flat on a monitor with mouse
 and keyboard (F1 the game's camera, F2 third person, F3 first person).
 
 ## Views (F1 - F4 in the game, F12 goes round)
@@ -124,7 +125,7 @@ Everything else is where the game's own gamepad layout puts it.
 - Diablo II: Resurrected 3.3.93787 under D2RLoader 1.3.1 (other builds need
   their addresses checked; the plugin says so in its log)
 - ReShade with add-on support, its Generic Depth add-on on
-- For the headset: BodyWalk (Steam) with FlatVR and the D2R Bridge plugin
+- For the headset: BodyWalk 1.78 or later with FlatVR and its Game Link plugin (Setup puts it in)
 
 ## Settings
 

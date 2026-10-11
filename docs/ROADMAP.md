@@ -101,26 +101,30 @@ ends:
 
 ## BodyWalk Game Link
 
-Today D2R VR talks to BodyWalk through its own bridge (`bodywalk_bridge/`,
-`d2r_bridge.dll`) and its own shared-memory blocks. BodyWalk is replacing the
-per-game bridges with one standard, **Game Link**: a shared `game_link.dll`
-plugin in BodyWalk and one header, `bodywalk/game_link.h`, for game mods. It
-is MIT-licensed, in the public SDK
+D2R VR used to talk to BodyWalk through its own bridge (`d2r_bridge.dll`) and
+its own shared-memory blocks. BodyWalk replaces the per-game bridges with one
+standard, **Game Link**: a shared `game_link.dll` plugin in BodyWalk and one
+header, `bodywalk/game_link.h`, for game mods. It is MIT-licensed and goes into
+the public SDK
 [integralab-am/bodywalkvr-plugin-sdk](https://github.com/integralab-am/bodywalkvr-plugin-sdk).
-The SDK is just starting.
 
-For D2R VR this means:
+Done (after 0.156):
 
-- **vrcam and D2R VR Settings move to `game_link.h`:**
-  - a manifest of the mod's actions (`D2R: ...`, `D2R key: ...`) and gesture
-    tabs;
-  - a GameState block instead of `D2R_State`;
-  - a Requests block instead of the five named FlatVR events.
-- **The game-specific logic moves from the bridge into vrcam:** which view
-  uses which gesture tab, Head Lock, and the screen distance for the panels.
-- **`bodywalk_bridge/` and `external/bodywalk` go;** the SDK comes in through
-  CMake's FetchContent.
-- **The installer ships `game_link`** instead of `d2r_bridge`.
+- **vrcam and D2R VR Settings speak `game_link.h`** (`vr/link.cpp`): a manifest
+  of the mod's actions (`D2R: ...`, `D2R key: ...`) and gesture tabs, a
+  GameState block, Requests instead of the named FlatVR events, and for native
+  OpenXR the game's headset to BodyWalk (XrInput) and BodyWalk's gesture zones
+  back (VrZones).
+- **The game-specific logic moved from the bridge into vrcam:** which view uses
+  which gesture tab, Head Lock, and the screen distance for the panels.
+- **The installer ships `game_link`** instead of `d2r_bridge`, and the game's
+  manifest, so its actions are in BodyWalk's Mapping from its first start.
+
+Still to do:
+
+- **`game_link.h` through CMake's FetchContent** once the SDK repository is
+  out; until then it is copied into `external/`.
+- **`game_link` inside BodyWalk itself**, so no mod has to install it.
 
 [repo + BodyWalk/FlatVR]
 

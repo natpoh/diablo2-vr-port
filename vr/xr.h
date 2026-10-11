@@ -61,13 +61,16 @@ void EndPair();
 void OnPresent(ID3D12Device* dev, ID3D12CommandQueue* queue, ID3D12Resource* backBuffer, int pairEye = -1);
 // After every pair, native or not (its presents done): the next presents may open flat frames again.
 void PairOver();
-// Twice a second: BodyWalk's bridge come after the session was made gets its signal again.
-void FollowBridge();
+// Twice a second: BodyWalk (Game Link) come after the session was made gets its wish again.
+void FollowLink();
 
 // A session is running: the runtime paces the game (xrWaitFrame), not vrcam.
 bool Running();
 // [openxr] lean_m: how far the head may move off the body (0: not at all - a neck model then).
 float LeanM();
+// Native OpenXR with the eyes by turns ([stereo] afr without pair_per_tick): one pass a game frame,
+// one eye, the other handed in again as it was last drawn.
+bool ByTurns();
 // [openxr] on went to 0 while a session is up: the next present ends it.
 bool StopPending();
 // The next views taken as straight ahead (F11, BodyWalk's recentre).

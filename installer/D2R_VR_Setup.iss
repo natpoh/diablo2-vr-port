@@ -20,9 +20,12 @@
 ;     add-on's present stamp); an older one (Steam's 1.74, an old standalone) is left
 ;     alone and the portable copy goes in beside the game instead - D2R VR Settings
 ;     starts the newest BodyWalk it finds. Then
-;     the D2R Bridge plugin goes into BodyWalk's plugins and BodyWalk's
-;     settings are set for the mod (D2R_VR_Settings.exe --setup-bodywalk), and
-;     the FlatVR depth addon goes beside the game;
+;     BodyWalk's Game Link plugin goes into BodyWalk's plugins (the old D2R
+;     Bridge plugin out), the game's Game Link manifest into BodyWalk's
+;     game_link folder (the mod's actions are in BodyWalk's Mapping from its
+;     first start), BodyWalk's settings are set for the mod
+;     (D2R_VR_Settings.exe --setup-bodywalk), and the FlatVR depth addon goes
+;     beside the game;
 ;   - writes the chosen way to play into d2r_vr.ini ([mode] platform).
 
 #ifndef ModVersion
@@ -88,10 +91,15 @@ Source: "payload\sky\*.png"; DestDir: "{app}\reshade-shaders\Textures\D2R_Sky_ou
 ; VR: the headset side.
 Source: "payload\game\FlatVR_DepthProvider.addon64"; DestDir: "{app}"; Flags: ignoreversion; Check: IsVR
 Source: "payload\game\FlatVR_Keepalive.addonfx"; DestDir: "{app}"; Flags: ignoreversion; Check: IsVR
-Source: "payload\bodywalk\d2r_bridge.dll"; DestDir: "{localappdata}\BodyWalkVR\plugins\d2r_bridge"; Flags: ignoreversion; Check: IsVR
-; The mod's BodyWalk profile ("D2VR (mod)"): BodyWalk applies it on its own terms
-; (a profile the player changed is never overwritten without asking).
-Source: "payload\bodywalk\profile.json"; DestDir: "{localappdata}\BodyWalkVR\plugins\d2r_bridge"; Flags: ignoreversion; Check: IsVR
+; BodyWalk Game Link (vjoy plugins/game_link): the game talks to BodyWalk through it (vr/link.cpp).
+Source: "payload\bodywalk\game_link.dll"; DestDir: "{localappdata}\BodyWalkVR\plugins\game_link"; Flags: ignoreversion; Check: IsVR
+; The game's manifest as Game Link keeps it (D2R_VR_Settings.exe --game-link-manifest): the
+; "D2R: ..." actions are in BodyWalk's Mapping from its first start, before the game ran.
+Source: "payload\bodywalk\d2r.txt"; DestDir: "{localappdata}\BodyWalkVR\game_link"; Flags: ignoreversion; Check: IsVR
+; The mod's BodyWalk profile ("D2VR (mod)"), beside the plugin as BodyWalk looks for it:
+; BodyWalk applies it on its own terms (a profile the player changed is never
+; overwritten without asking).
+Source: "payload\bodywalk\profile.json"; DestDir: "{localappdata}\BodyWalkVR\plugins\game_link"; Flags: ignoreversion; Check: IsVR
 ; BodyWalk Portable, only when no BodyWalk is installed. LITE is forced on its
 ; first start only: refreshing the copy keeps the player's own choice.
 Source: "payload\bodywalk_portable\*"; DestDir: "{#PortableDir}"; Excludes: "force_lite_mode.txt,imgui.ini"; Flags: ignoreversion recursesubdirs createallsubdirs; Check: UsePortable
@@ -113,6 +121,10 @@ Type: files; Name: "{app}\d2rloader\plugins\d2r_vr_settings.exe"
 ; the lowercase name before 2026-10-06: Windows keeps an existing file's case, so
 ; it goes first and D2R_VR_Settings.exe comes in under its own name
 Type: files; Name: "{app}\d2r_vr_settings.exe"
+; the D2R Bridge plugin, BodyWalk's side up to 0.157: Game Link does its work now, and the
+; two together would register every action twice (gone again after BodyWalk is closed,
+; SetBodyWalkSettings, if it was running now)
+Type: filesandordirs; Name: "{localappdata}\BodyWalkVR\plugins\d2r_bridge"
 
 ; A shortcut on the desktop too, so nobody hunts for the game's folder (on by default).
 [Tasks]
@@ -375,9 +387,11 @@ var
   Code: Integer;
 begin
   while BodyWalkRunning do
-    if MsgBox('BodyWalk is running. Close it so Setup can set it up for D2R VR (Universal tracking output, FlatVR, the D2R Bridge plugin), then click OK.' + #13#10#13#10 +
+    if MsgBox('BodyWalk is running. Close it so Setup can set it up for D2R VR (Universal tracking output, FlatVR, the Game Link plugin), then click OK.' + #13#10#13#10 +
               'Cancel skips this: you can set it by hand later.', mbInformation, MB_OKCANCEL) = IDCANCEL then
       Exit;
+  // the old D2R Bridge plugin, if BodyWalk held it when [InstallDelete] ran
+  DelTree(ExpandConstant('{localappdata}\BodyWalkVR\plugins\d2r_bridge'), True, True, True);
   Args := '--setup-bodywalk' +
           ' "' + ExpandConstant('{localappdata}\BodyWalkVR\usersettings.json') + '"' +
           ' "' + ExpandConstant('{localappdata}\BodyWalkVR\usersettings_steam.json') + '"' +
@@ -385,10 +399,10 @@ begin
           ' "' + BodyWalkDir + '\steam_default_settings.json"';
   if not Exec(ExpandConstant('{app}\D2R_VR_Settings.exe'), Args, '', SW_HIDE, ewWaitUntilTerminated, Code) or (Code <> 0) then
     MsgBox('BodyWalk''s settings could not all be set (code ' + IntToStr(Code) + '). In BodyWalk switch on Universal tracking output ' +
-           '(Startup tab) and FlatVR, and make sure the D2R Bridge plugin is on.', mbError, MB_OK);
+           '(Startup tab) and FlatVR, and make sure the Game Link plugin is on.', mbError, MB_OK);
 end;
 
-// ViGEmBus: BodyWalk's virtual Xbox pad, which the D2R Bridge drives. The
+// ViGEmBus: BodyWalk's virtual Xbox pad: walking, sticks and buttons reach the game through it. The
 // BodyWalk installer runs it; for the portable copy we do, once.
 procedure InstallViGEm;
 var
@@ -438,6 +452,7 @@ end;
 // ReShade as the mod wants it: ReShade64.dll, no dxgi.dll left beside the game.
 procedure PlaceReShade(GameDir: String);
 var
+  KeepDxgi: Boolean;
   Code: Integer;
   Raw: AnsiString;
   Ini: String;
@@ -466,7 +481,10 @@ begin
     if StringChangeEx(Ini, '\**\**', '\**', True) > 0 then
       SaveStringToFile(GameDir + '\ReShade.ini', AnsiString(Ini), False);
   end;
-  if FileExists(GameDir + '\dxgi.dll') then
+  // D2R VR Settings > Home > "Keep ReShade as dxgi.dll" ([reshade] as_dxgi=1): the player's own ReShade
+  // setup (2D presets, another mod that wants dxgi.dll) - its dxgi.dll stays as it is (2026-10-11).
+  KeepDxgi := GetIniInt('reshade', 'as_dxgi', 0, 0, 1, GameDir + '\d2rloader\plugins\d2r_vr.ini') = 1;
+  if FileExists(GameDir + '\dxgi.dll') and not KeepDxgi then
   begin
     if FileExists(GameDir + '\ReShade64.dll') then
       DeleteFile(GameDir + '\dxgi.dll')   // a ReShade the old way beside the one vrcam loads: one is enough

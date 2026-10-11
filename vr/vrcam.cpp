@@ -4,8 +4,8 @@
 // own view and the hero point once a game frame and puts back the view and
 // projection made here. Render distance is cleanroom/drawdist. This file is the
 // VR layer on top:
-//   - the view turns with the head, read from BodyWalk's D2R Bridge (shared
-//     memory, see shared/d2r_vr_shared.h), or with the mouse;
+//   - the view turns with the head, read from BodyWalk through Game Link
+//     (vr/link.cpp, bodywalk/game_link.h), or with the mouse;
 //   - alternate-frame stereo for FlatVR, fog and sky through ReShade;
 //   - the hero's body turns to the view, his head hides, his arms follow the
 //     controllers (skeletons.cpp);
@@ -81,6 +81,7 @@ namespace gamestate { void Init(const D2RL::PluginContext* ctx); void Tick(); ui
 #include "MinHook.h"
 #include "crosshair_cursor.h"
 #include "d2r_vr_shared.h"
+#include "link.h"
 #include "afr_eye_shared.h"
 #include "dlss_mv.h"
 #include "xr.h"
@@ -198,7 +199,7 @@ struct Settings {
     std::atomic<bool>  neckModel{true};     // [camera] neck_model: the head turns about the neck, below and behind the eyes
     std::atomic<float> neckUpCm{10.0f};     // [camera] neck_up_cm: eyes above that pivot
     std::atomic<float> neckFwdCm{9.0f};     // [camera] neck_forward_cm: eyes in front of it
-    std::atomic<bool>  headYaw{true};       // yaw from the headset via D2R Bridge
+    std::atomic<bool>  headYaw{true};       // yaw from the headset via BodyWalk (Game Link)
     std::atomic<float> yawSign{1.0f};       // flip if turning the head left turns the view right
     std::atomic<float> yawScale{1.0f};
     std::atomic<bool>  headPredict{false};  // carry the head on between BodyWalk's updates (off: FlatVR places the screen by the sample's own stamp)
@@ -243,7 +244,8 @@ struct Settings {
     std::atomic<float> ceilRelief{6.0f};    // [ceiling] relief: how far the rock hangs down, world units (0 = flat)
     std::atomic<int>   ceilSteps{12};       // [ceiling] steps: the ray's steps through the rock (the frame's cost)
     std::atomic<float> ceilLight{25.0f};    // [ceiling] light_radius: world units from the hero where his light is down to half
-    std::atomic<bool>  ceilTorches{false};  // [ceiling] torches: fire seen in the picture lights the ceiling
+    std::atomic<bool>  ceilTorches{false};  // [ceiling] torches: the game's own lights (found by the memory scan) light the ceiling
+    std::atomic<bool>  ceilPictureFire{false};   // [ceiling] fire_from_picture: fire seen in the picture lights it instead - any fire, no scan
     std::atomic<float> ceilTorchBright{0.6f};   // [ceiling] torch_brightness
     std::atomic<float> ceilTorchRadius{20.0f};  // [ceiling] torch_radius: world units where a torch's light is down to half
     std::atomic<float> ceilTorchDist{80.0f};    // [ceiling] torch_distance: torches farther from the hero fade out (behind walls)
@@ -793,6 +795,7 @@ namespace replay { extern std::atomic<bool> g_fxSync; extern std::atomic<bool> g
 namespace replay { extern std::atomic<int> g_peekWant; }
 namespace camfix { extern std::atomic<int> g_scanWant; }
 namespace flog { void StartDiag(); }
+namespace replay { extern std::atomic<bool> g_rightDepth; }
 namespace replay { extern std::atomic<int> g_want; extern std::atomic<int> g_ahead; extern std::atomic<bool> g_depthCopy; extern std::atomic<bool> g_on; extern std::atomic<bool> g_fxAtHold; extern std::atomic<bool> g_holdSignalsOn; }
 // The left eye's view as last built, and the half-eye shift in it (VrViewInner): the
 // replay makes the right eye's camera constants from them.
@@ -988,6 +991,7 @@ void LoadSettings() {
     replay::g_want.store((int)IniF(L"stereo", L"replay_right", 0.0f));
     replay::g_ahead.store(std::clamp((int)IniF(L"stereo", L"replay_ahead", 1.0f), 1, 3));
     replay::g_depthCopy.store(IniB(L"stereo", L"replay_depth", false));
+    replay::g_rightDepth.store(IniB(L"stereo", L"replay_right_depth", true));
     replay::g_holdSignalsOn.store(IniB(L"stereo", L"replay_hold_signals", false));
     g_projFix.store((int)IniF(L"stereo", L"replay_proj", 3.0f));
     g_shiftMul.store(IniF(L"stereo", L"replay_shift_mul", 1.0f));
@@ -1106,6 +1110,7 @@ void LoadSettings() {
     g_set.ceilSteps.store(std::clamp((int)IniF(L"ceiling", L"steps", 12.0f), 1, 64));
     g_set.ceilLight.store(std::clamp(IniF(L"ceiling", L"light_radius", 25.0f), 1.0f, 1000.0f));
     g_set.ceilTorches.store(IniB(L"ceiling", L"torches", false));
+    g_set.ceilPictureFire.store(IniB(L"ceiling", L"fire_from_picture", false));
     g_set.ceilTorchBright.store(std::clamp(IniF(L"ceiling", L"torch_brightness", 0.6f), 0.0f, 5.0f));
     g_set.ceilTorchRadius.store(std::clamp(IniF(L"ceiling", L"torch_radius", 20.0f), 1.0f, 500.0f));
     g_set.ceilTorchDist.store(std::clamp(IniF(L"ceiling", L"torch_distance", 80.0f), 5.0f, 1000.0f));
@@ -1307,12 +1312,16 @@ std::atomic<float> g_camYaw{0.0f};
 std::atomic<bool> g_facingReset{false};   // F11: forget the hero-facing candidates, search again      // the yaw last folded into the view; the stick turns by this
 std::atomic<uint32_t> g_gen{1};
 
-// D2R Bridge
-HANDLE g_map = nullptr;
-const D2RVR_Shared* g_shared = nullptr;
+// The head and the hands from BodyWalk (Game Link's Tracking, link::Head); while a pair is
+// drawn, the pair's own copy - one head for both eyes (HookDrawGameScreen).
+std::atomic<const D2RVR_Shared*> g_pairShared{nullptr};
+const D2RVR_Shared* Shared() {
+    const D2RVR_Shared* p = g_pairShared.load();
+    return p ? p : link::Head();
+}
 
 bool HeadYaw(float* yaw) {
-    const D2RVR_Shared* s = g_shared;
+    const D2RVR_Shared* s = Shared();
     if (!s || s->version != D2RVR_SHARED_VERSION || !s->headValid) return false;
     *yaw = s->headYawDeg;
     return std::isfinite(*yaw);
@@ -1372,19 +1381,31 @@ float TargetYaw() {
     // stood ~100 deg off the view at game start until a lucky F11 (2026-10-10).
     if (float rel = 0.0f; NativeView() && xr::PairHeadYaw(&rel)) return WrapDeg(yaw - rel * 57.2957795f);
     if (g_set.headYaw.load() && HeadYaw(&head)) {
-        float p[3]; PredictHead(g_shared, p);
+        float p[3]; PredictHead(Shared(), p);
         yaw += g_set.yawSign.load() * g_set.yawScale.load() * WrapDeg(p[0] - g_recenter.load());
     }
     return WrapDeg(yaw);
 }
 
+// In the headset the camera's roll is the head's own, against gravity - never from the
+// recentre (2026-10-11). FlatVR shows each picture on a screen at the very head pose it
+// was drawn with, so a camera rolled by the head's roll at the recentre stood that much
+// askew on it: the horizon leaned by the roll the head happened to have then (1-3
+// degrees, a new amount after every restart), and showed as a lean "only turning right"
+// - turning left the head leans that way by itself. On a monitor the recentre's upright
+// stays: there the head only steers a screen that does not move with it. (The pitch
+// keeps its recentre: off level it moves the horizon up or down, it does not lean it,
+// and [camera] pitch is set against it.)
+bool HeadLevelIsGravity() { return g_set.platform.load() == 1; }
+
 // Roll about the line of sight from the head tilting sideways, 0 when off.
 float TargetRoll() {
-    const D2RVR_Shared* sh = g_shared;
+    const D2RVR_Shared* sh = Shared();
     if (!g_set.headRoll.load() || !sh || sh->version != D2RVR_SHARED_VERSION || !sh->headValid || !sh->rollValid || !std::isfinite(sh->headRollDeg))
         return 0.0f;
     float p[3]; PredictHead(sh, p);
-    return std::clamp(g_set.rollSign.load() * (p[2] - g_recenterRoll.load()), -80.0f, 80.0f);
+    const float level = HeadLevelIsGravity() ? 0.0f : g_recenterRoll.load();
+    return std::clamp(g_set.rollSign.load() * (p[2] - level), -80.0f, 80.0f);
 }
 
 // Pitch relative to the game's own steep camera: ini level point, the mouse's
@@ -1392,7 +1413,7 @@ float TargetRoll() {
 // vertical, where the rotation would flip.
 float TargetPitch() {
     float pitch = g_set.pitch.load() + (g_pairNow.load() ? g_heldPitch.load() : g_mousePitch.load());
-    const D2RVR_Shared* sh = g_shared;
+    const D2RVR_Shared* sh = Shared();
     if (g_set.headPitch.load() && sh && sh->version == D2RVR_SHARED_VERSION && sh->headValid && sh->pitchValid && std::isfinite(sh->headPitchDeg))
     {
         float p[3]; PredictHead(sh, p);
@@ -1669,8 +1690,8 @@ void UpdateFovFromFlatVR() {
 // FlatVR frame): width AND height, so a screen of any aspect - the picture's
 // own, a crop - gets a frustum that is exactly it. Taken while its counter
 // moves; an older FlatVR, or one not running, leaves the usersettings path.
-// KeepBlockName: a block BodyWalk or FlatVR makes (screen size, pad, the bridge's
-// actions) is opened once and its HANDLE kept, not only the view. A section loses
+// KeepBlockName: a block BodyWalk or FlatVR makes (screen size, pad, Game Link's
+// blocks) is opened once and its HANDLE kept, not only the view. A section loses
 // its name when its last handle closes: with BodyWalk restarted while the game
 // ran, the new BodyWalk made new blocks and this kept reading the dead ones - the
 // D2R: Map action never arrived (2026-10-04; FlatVR had the same with the AFR flag).
@@ -1714,11 +1735,11 @@ bool LiveScreen(float* w, float* h, float* d) {
 }
 
 // The user's eyes above the floor standing: from the height set in BodyWalk
-// (Avatar > Body Height, handed over by the bridge), else [stereo]
+// (Avatar > Body Height, handed over by Game Link), else [stereo]
 // user_height_m; an adult's eyes sit at ~0.936 of the height. Seated or not:
 // it is the scale, not where the head is now.
 float UserEyeHeightM() {
-    const D2RVR_Shared* sh = g_shared;
+    const D2RVR_Shared* sh = Shared();
     if (sh && sh->version == D2RVR_SHARED_VERSION && sh->userHeightMm >= 1100 && sh->userHeightMm <= 2500)
         return 0.936f * sh->userHeightMm * 0.001f;
     return g_set.eyeHeightM.load();
@@ -1913,25 +1934,23 @@ bool LabelsWanted() {
 }
 
 // FlatVR's 3D source as [stereo] has it - real stereo: the game's pair; else the
-// depth (source 1) or none (0) - told through the D2R Bridge's events whenever
-// the bridge comes up (BodyWalk started: a profile may have set the pair on)
-// and whenever the setting changes. FlatVR with the pair on and one picture
-// coming shows it flat (2026-10-08).
+// depth (source 1) or none (0) - asked through Game Link whenever BodyWalk comes
+// up (BodyWalk started: a profile may have set the pair on) and whenever the
+// setting changes. FlatVR with the pair on and one picture coming shows it flat
+// (2026-10-08).
 void FlatVr3DTick() {
     static int sent = -1;
     static bool had = false;
-    static const wchar_t* const kName[3] = {D2RVR_FLATVR_3D_NONE_NAME, D2RVR_FLATVR_3D_DEPTH_NAME, D2RVR_FLATVR_3D_PAIR_NAME};
-    const int want = g_set.afr.load() ? 2 : ((int)IniF(L"stereo", L"source", 1.0f) == 0 ? 0 : 1);
-    HANDLE e = OpenEventW(EVENT_MODIFY_STATE, FALSE, kName[want]);
-    const bool have = e != nullptr;   // the bridge makes the events: they are there while it runs
+    const int want = g_set.afr.load() ? BW_LINK_STEREO_PAIR : ((int)IniF(L"stereo", L"source", 1.0f) == 0 ? BW_LINK_STEREO_NONE : BW_LINK_STEREO_DEPTH);
+    uint32_t caps = 0;
+    const bool have = link::HostAlive(&caps) && (caps & BW_LINK_CAP_STEREO_SOURCE);
     if (have && (!had || want != sent)) {
-        SetEvent(e);
+        link::RequestStereoSource(want);
         sent = want;
         static const char* const kSaid[3] = {"none (a flat screen)", "the depth (ReShade)", "the game's stereo pair"};
-        LogF("vrcam: FlatVR's 3D source set to %s (through the D2R Bridge)", kSaid[want]);
+        LogF("vrcam: FlatVR's 3D source set to %s (through Game Link)", kSaid[want]);
     }
     had = have;
-    if (e) CloseHandle(e);
 }
 
 // The addon and FlatVR take a pair while the block says so. Its writers run on
@@ -1941,6 +1960,7 @@ void AfrQuietWhenOff() {
     if (g_afrBlock && g_afrBlock->enabled && !AfrOn()) g_afrBlock->enabled = 0u;
 }
 bool PairWanted();
+bool NativeByTurns();
 
 // Once a game frame: the per-frame camera update's copy(second, MASTER).
 // Drawing a pair per game frame, the eye is set by HookDrawGameScreen instead.
@@ -2019,10 +2039,10 @@ struct TableAnchor { float fx, fz, phi, floorY, headX, headZ, yaw, ahead; bool o
 TableAnchor g_tableAnchor{};             // render thread only
 std::atomic<bool> g_tableReanchor{true}; // set by F5 and F11, taken by the next view build
 
-// The head in the room (bridge 0.15+): stage position, metres, and its room yaw
+// The head in the room: stage position, metres, and its room yaw
 // (degrees, + left), carried on to now with the angles' prediction.
 bool RoomHead(float pos[3], float ang[3]) {
-    const D2RVR_Shared* sh = g_shared;
+    const D2RVR_Shared* sh = Shared();
     if (!sh || sh->version != D2RVR_SHARED_VERSION || !sh->headValid || sh->roomMagic != D2RVR_ROOM_MAGIC) return false;
     for (int i = 0; i < 3; ++i) pos[i] = sh->headRoom[i];
     PredictHead(sh, ang);
@@ -2215,7 +2235,7 @@ void FrameDone() {
 // the game puts there - the last frame's view - and nothing else.
 void FixPrev() {
     const uintptr_t a = g_prevAddr.load();
-    if (!a || !g_set.dlssPrevFix.load() || !AfrOn() || PairWanted() || g_frameViews < 3) return;
+    if (!a || !g_set.dlssPrevFix.load() || !AfrOn() || (PairWanted() && !NativeByTurns()) || g_frameViews < 3) return;   // native by turns: eyes in turn, as AFR
     const float* last = g_frameView[(g_frameViews - 1) % 4];
     const float* same = g_frameView[(g_frameViews - 2) % 4];
     float now[16];
@@ -2599,7 +2619,7 @@ bool VrViewInner(const d2rcam::WorldView& in, float out[16]) {
         // sample as it was: its own stamp is the exact moment. With it,
         // the head carried on to now.
         uint32_t stamp = FlatVRAfrStampNow();
-        const D2RVR_Shared* sh = g_shared;
+        const D2RVR_Shared* sh = Shared();
         if (!g_set.headPredict.load() && sh && sh->version == D2RVR_SHARED_VERSION && sh->sampleStampMagic == D2RVR_SAMPLE_STAMP_MAGIC)
             stamp = sh->sampleStamp;
         g_afrBlock->stamp[g_eye.load() & 1] = stamp;
@@ -2768,7 +2788,7 @@ bool BowStick(XINPUT_STATE* s) {
     const XINPUT_GAMEPAD& g = s->Gamepad;
     const WORD skills = XINPUT_GAMEPAD_A | XINPUT_GAMEPAD_B | XINPUT_GAMEPAD_X | XINPUT_GAMEPAD_Y | XINPUT_GAMEPAD_RIGHT_SHOULDER;
     if (!(g.wButtons & skills) && g.bRightTrigger < 128) return false;
-    const D2RVR_Shared* sh = g_shared;
+    const D2RVR_Shared* sh = Shared();
     const int hand = g_set.bowHand.load();
     if (!sh || sh->version != D2RVR_SHARED_VERSION || !sh->headValid || !(sh->handsValid & (1u << hand))) return false;
     const float* q = hand == 0 ? sh->rightRot : sh->leftRot;
@@ -2809,7 +2829,7 @@ int AimHand() {
     const uint32_t type = gamestate::WeaponType();
     const bool thrown = type == D2RVR_TYPE_JAVELIN || type == D2RVR_TYPE_THROWING;   // thrown from the right hand
     const int hand = thrown ? 0 : ranged && g_set.rangedLeft.load() ? 1 : gamestate::WeaponSet() == 2 ? g_set.bowHand2.load() : g_set.bowHand.load();
-    const D2RVR_Shared* sh = g_shared;
+    const D2RVR_Shared* sh = Shared();
     if (sh && sh->version == D2RVR_SHARED_VERSION && !(sh->handsValid & (1u << hand)) && (sh->handsValid & (1u << (hand ^ 1))))
         return hand ^ 1;
     return hand;
@@ -2844,7 +2864,7 @@ bool StaffAim() {
     // line points sideways - a crossbow in third person shot to the left
     // (2026-10-06); there it aims with one hand, like the bow.
     if (!FullBody()) return false;
-    const D2RVR_Shared* sh = g_shared;
+    const D2RVR_Shared* sh = Shared();
     // along the staff in the right hand (staff_free_left) too, not only aimed from hand to hand ([bow] staff_two_hands)
     const bool staffNow = (g_set.staffTwoHands.load() || g_set.staffFreeLeft.load()) && gamestate::WeaponType() == D2RVR_TYPE_STAFF;
     if (!(staffNow || XbowLikeStaff()) || !sh || sh->version != D2RVR_SHARED_VERSION) return false;
@@ -2867,7 +2887,7 @@ bool HandRay(float* o, float* d) {
         for (int i = 0; i < 3; ++i) { d[i] = dw[i] / l; o[i] = g_eyeWorld[i].load(); }
         return true;
     }
-    const D2RVR_Shared* sh = g_shared;
+    const D2RVR_Shared* sh = Shared();
     const bool staff = StaffAim();
     const int hand = staff ? 0 : AimHand();
     if (!sh || sh->version != D2RVR_SHARED_VERSION || !sh->headValid || !(sh->handsValid & (1u << hand)) || !g_eyeOk.load()) return false;
@@ -3018,7 +3038,7 @@ void AimByMouse(XINPUT_STATE* s) {
 // The hand's pointing, flattened, as a stick relative to the view: the grip's
 // -Z held like a gun, -Y (wrist to knuckles) round a bow's upright grip.
 bool HandStick(float* sx, float* sy) {
-    const D2RVR_Shared* sh = g_shared;
+    const D2RVR_Shared* sh = Shared();
     const int hand = AimHand();
     if (!sh || sh->version != D2RVR_SHARED_VERSION || !sh->headValid || !(sh->handsValid & (1u << hand))) return false;
     const float* q = hand == 0 ? sh->rightRot : sh->leftRot;
@@ -3423,23 +3443,8 @@ bool PadFromBodyWalk(XINPUT_STATE* s) {
 // target it picks up, opens or talks instead - the game's
 // allowInteractOnDefaultAttack (controllersettings.json, read into RVA
 // 0x22BD840; asked by 0x145CB0 for skill slot 0 on a pad). With it off, A only
-// attacks. The bridge's two actions press A with it off, or on.
+// attacks. BodyWalk's two actions press A with it off, or on.
 constexpr uint64_t RVA_INTERACT_ON_ATTACK = 0x22BD840;
-const D2RVR_Actions* g_actions = nullptr;
-
-uint32_t ActionsHeld() {
-    if (!g_actions) {
-        static ULONGLONG lastTry = 0;
-        if (GetTickCount64() - lastTry < 1000) return 0;
-        lastTry = GetTickCount64();
-        if (HANDLE m = OpenFileMappingW(FILE_MAP_READ, FALSE, D2RVR_ACTIONS_NAME)) {
-            g_actions = (const D2RVR_Actions*)MapViewOfFile(m, FILE_MAP_READ, 0, 0, sizeof(D2RVR_Actions));
-            if (!g_actions) CloseHandle(m);   // else kept: see KeepBlockName
-        }
-        if (!g_actions) return 0;
-    }
-    return g_actions->version == D2RVR_ACTIONS_VERSION ? g_actions->held : 0u;
-}
 
 // What the pad would pick up / open / talk to now: the controller's interact
 // target, InteractTarget (RVA 0x18D960, (controller manager, player id)),
@@ -3463,7 +3468,8 @@ bool InteractTargetNow() {
 }
 
 void ApplyActions(XINPUT_STATE* s) {
-    const uint32_t held = ActionsHeld();
+    static link::Presses presses;   // the game's pad polls only (index 0)
+    const uint32_t held = link::ActionsHeld(presses);
     // Pick up only onto a target: nothing there, nothing pressed - never an attack.
     // Without the hook (another build) it cannot tell, and stays a plain A.
     const bool interact = (held & D2RVR_ACT_INTERACT) && (InteractTargetNow() || !g_interactHooked.load());
@@ -4408,9 +4414,15 @@ bool FrameTimeFound() {
     return ok == 1;
 }
 
+// Native OpenXR with the eyes by turns (D2R VR Settings: "Native OpenXR - eyes by turns"): one pass
+// a game frame through HookDrawGameScreen, which opens the runtime's frame for it (DrawByTurns).
+bool NativeByTurns() { return g_set.platform.load() == 1 && xr::ByTurns() && !g_set.pairPerTick.load(); }
+
 // Without the frame time held, the second pass would play the frame's
 // animation and particles a second time: the pair is drawn only with it.
-bool PairWanted() { return g_h.blit && AfrOn() && g_set.pairPerTick.load() && g_inWorld.load() && FrameTimeFound(); }
+bool PairWanted() {
+    return g_h.blit && AfrOn() && (g_set.pairPerTick.load() || NativeByTurns()) && g_inWorld.load() && FrameTimeFound();
+}
 
 void SetEye(int eye) {
     g_eye.store(eye);
@@ -5809,6 +5821,20 @@ D3D12_RESOURCE_STATES DepthState() {
     return st ? (D3D12_RESOURCE_STATES)st : D3D12_RESOURCE_STATE_DEPTH_WRITE;
 }
 ID3D12Resource* g_leftDepth = nullptr;
+// The right eye's depth for its effects (2026-10-11). In D3D12 ReShade's Generic Depth hands the
+// effects a copy of the game's depth buffer (g_depthRes), made as it sees the game's lists go -
+// through ReShade. The replay sends the left pass's lists again on the queue itself, past ReShade:
+// the copy stayed the left eye's, and the right eye's fog, sky and ceiling were cut out by the left
+// eye's depth - "ReShade's depth is in mono", players' doubled right eye in "one pass, two pictures"
+// (right for the first seconds of an area, while two passes were still drawn). So the depth-stencil
+// the pass binds most that is the copy's size and kind goes into the copy before the right eye's
+// effects - the barriers as Generic Depth makes them for its own copies; the depth-stencil from the
+// state the game's last barrier on it left (else as a depth target). [stereo] replay_right_depth (on).
+std::atomic<bool> g_rightDepth{true};
+struct DsSeen { uint64_t res; uint32_t binds; uint32_t state; };
+DsSeen g_ds[8] = {};
+SRWLOCK g_dsLock = SRWLOCK_INIT;
+std::atomic<uint32_t> g_rightDepthCopies{0};
 std::atomic<uint32_t> g_replays{0}, g_fails{0};
 // The back buffer indices of the last pairs, for the watchdog: the one the left pass drew in
 // (DXGI's, and the game's own at its wrapper +0x98), the right eye's, DXGI's after our present.
@@ -5981,6 +6007,74 @@ void OnBarrier(command_list*, uint32_t count, const resource* res, const resourc
     if (!d) return;
     for (uint32_t i = 0; i < count; ++i)
         if (res[i].handle == d) g_depthState.store((uint32_t)to[i], std::memory_order_relaxed);
+    if (!g_rightDepth.load(std::memory_order_relaxed)) return;
+    AcquireSRWLockExclusive(&g_dsLock);
+    for (uint32_t i = 0; i < count; ++i)
+        for (DsSeen& s : g_ds)
+            if (s.res && s.res == res[i].handle) s.state = (uint32_t)to[i];
+    ReleaseSRWLockExclusive(&g_dsLock);
+}
+
+// A depth-stencil bound while the left pass records: counted (the right eye's depth comes from the
+// one bound most that fits the effects' copy).
+void OnBindDs(command_list* cl, uint32_t, const resource_view*, resource_view dsv) {
+    if (!dsv.handle || !g_capturing.load(std::memory_order_relaxed) || !g_rightDepth.load(std::memory_order_relaxed)) return;
+    const uint64_t r = cl->get_device()->get_resource_from_view(dsv).handle;
+    if (!r) return;
+    AcquireSRWLockExclusive(&g_dsLock);
+    DsSeen* slot = nullptr;
+    for (DsSeen& s : g_ds) {
+        if (s.res == r) { slot = &s; break; }
+        if (!s.res && !slot) slot = &s;
+    }
+    if (slot) {
+        if (!slot->res) *slot = DsSeen{r, 0, 0};
+        ++slot->binds;
+    }
+    ReleaseSRWLockExclusive(&g_dsLock);
+}
+
+// After the replay, before the right eye's effects: its depth into the effects' copy (see g_rightDepth).
+void RightDepthIntoCopy() {
+    using namespace reshade::api;
+    static int told = -1;   // the last thing logged, once each
+    auto tell = [&](int what, const char* text) { if (told != what) { told = what; Log(text); } };
+    if (!g_rightDepth.load() || !g_rt) return;
+    const uint64_t copy = g_depthRes.load();
+    if (!copy) return tell(1, "vrcam: replay - right eye's depth: the effects' depth buffer not known yet");
+    device* dev = g_rt->get_device();
+    const resource_desc cd = dev->get_resource_desc({copy});
+    if ((cd.usage & resource_usage::depth_stencil) != 0)
+        return tell(2, "vrcam: replay - right eye's depth: the effects read the game's depth buffer itself - the replay wrote it, nothing to copy");
+    DsSeen best{};
+    AcquireSRWLockShared(&g_dsLock);
+    for (const DsSeen& s : g_ds) {
+        if (!s.res || s.res == copy || s.binds <= best.binds) continue;
+        const resource_desc d = dev->get_resource_desc({s.res});
+        if ((d.usage & resource_usage::depth_stencil) == 0 || d.texture.width != cd.texture.width || d.texture.height != cd.texture.height ||
+            d.texture.samples != cd.texture.samples || format_to_typeless(d.texture.format) != format_to_typeless(cd.texture.format))
+            continue;
+        best = s;
+    }
+    ReleaseSRWLockShared(&g_dsLock);
+    if (!best.res) return tell(3, "vrcam: replay - right eye's depth: no depth-stencil of the pass fits the effects' copy - left as it is");
+    const resource src{best.res}, dst{copy};
+    const resource_usage from = best.state ? (resource_usage)best.state : resource_usage::depth_stencil_write;
+    command_queue* q = g_rt->get_command_queue();
+    command_list* cl = q->get_immediate_command_list();
+    t_ours = true;
+    cl->barrier(src, from, resource_usage::copy_source);
+    cl->barrier(dst, resource_usage::shader_resource, resource_usage::copy_dest);
+    cl->copy_resource(src, dst);
+    cl->barrier(src, resource_usage::copy_source, from);
+    cl->barrier(dst, resource_usage::copy_dest, resource_usage::shader_resource);
+    q->flush_immediate_command_list();
+    t_ours = false;
+    if (g_rightDepthCopies.fetch_add(1) == 0)
+        LogF("vrcam: replay - right eye's depth: the pass's depth-stencil %p (%ux%u, bound %u times, from state %X) into the effects' copy %p "
+             "before the right eye's effects - its fog and sky by its own depth ([stereo] replay_right_depth=0 leaves the left one's)",
+             (void*)best.res, cd.texture.width, cd.texture.height, best.binds, (unsigned)from, (void*)copy);
+    told = 0;
 }
 
 void OnPresent(command_queue*, swapchain* sc, const rect*, const rect*, uint32_t, const rect*) {
@@ -6057,8 +6151,15 @@ bool XrBegin() {
 }
 void XrCopy(int eye, ID3D12Resource* bb) { t_ours = true; xr::CopyEye(eye, bb); t_ours = false; }
 void XrEnd() { t_ours = true; xr::EndPair(); t_ours = false; }
-void XrPresent(ID3D12Device* dev, ID3D12CommandQueue* q, ID3D12Resource* bb) {
+void XrPresent(reshade::api::effect_runtime* rt, ID3D12Resource* bb) {
     t_ours = true;
+    // ReShade's effects of this present (the sky, the fog) are still in its immediate list here:
+    // sent first, or our copy ran on the GPU before them - the headset without the sky while the
+    // window had it, in the eyes by turns (2026-10-11). The replay flushes it in EffectsAtHold.
+    reshade::api::command_queue* rq = rt->get_command_queue();
+    rq->flush_immediate_command_list();
+    ID3D12Device* dev = (ID3D12Device*)rt->get_device()->get_native();
+    ID3D12CommandQueue* q = (ID3D12CommandQueue*)rq->get_native();
     xr::OnPresent(dev, q, bb, g_pairNow.load() ? (g_eye.load() & 1) : -1);   // a pass of two: its eye
     t_ours = false;
 }
@@ -6516,6 +6617,7 @@ void Register() {
     reshade::register_event<reshade::addon_event::execute_command_list>(&d2rvr::D3D12Only<&OnExecute>::Call);
     reshade::register_event<reshade::addon_event::present>(&d2rvr::D3D12Only<&OnPresent>::Call);
     reshade::register_event<reshade::addon_event::barrier>(&d2rvr::D3D12Only<&OnBarrier>::Call);
+    reshade::register_event<reshade::addon_event::bind_render_targets_and_depth_stencil>(&d2rvr::D3D12Only<&OnBindDs>::Call);
     camfix::Register();
     g_on.store(true);
     Log("vrcam: replay prototype on - [stereo] replay_right=1 draws the right eye from the left eye's lists");
@@ -6569,6 +6671,9 @@ void BeginLeft() {
     g_subs.clear();
     ReleaseSRWLockExclusive(&g_lock);
     g_leftHeld = false;
+    AcquireSRWLockExclusive(&g_dsLock);
+    for (DsSeen& d : g_ds) d.binds = 0;   // this pair's binds; a buffer's last barrier state is kept
+    ReleaseSRWLockExclusive(&g_dsLock);
     g_captureThread.store(GetCurrentThreadId());
     g_pairStartUs.store(pairtime::UsNow());
     g_capturing.store(1);
@@ -6703,6 +6808,7 @@ bool RightFromLeft() {
     if (g_marks) { g_why = "before the right eye's effects"; SignalOn(g_direct); }
     if (g_fxAtHold.load() && g_rt && g_rightTech.handle)
         if (ID3D12Resource* bb = BackBuffer(bbRight)) {
+            RightDepthIntoCopy();   // the effects' depth copy was still the left eye's
             EffectsAtHold(bb, bbRight, true);
             if (g_peekStage == 1) { Peek(1, bb); g_peekStage = 2; }
             bb->Release();
@@ -7059,9 +7165,9 @@ void Uninstall() {
 }  // namespace crash
 
 // Native OpenXR: the pair's head and hands from the game's own session, at the moment the
-// frame will be shown - what the D2R Bridge makes of BodyWalk's frame (hands from the head in
+// frame will be shown - what Game Link makes of BodyWalk's frame (hands from the head in
 // the frame of its turn alone), without the trip out to BodyWalk and back. The rest of the
-// block (the user's height) stays the bridge's.
+// block (the user's height) stays BodyWalk's.
 bool XrIntoShared(D2RVR_Shared* out, const D2RVR_Shared* bridge) {
     D2RVR_XrInput in;
     if (!xr::PairInput(&in) || !in.head.valid) return false;
@@ -7106,9 +7212,46 @@ bool XrIntoShared(D2RVR_Shared* out, const D2RVR_Shared* bridge) {
     return true;
 }
 
+// Native OpenXR, eyes by turns (2026-10-11): one pass a game frame, the eyes in turn. The runtime's
+// frame gets this eye fresh and the other one as it was last drawn, at the pose it was drawn with -
+// the runtime turns it to the head. No replay: the right eye is a pass of its own, never made from
+// the left one's lists (players' right eye had its depth to the left in "one pass, two pictures").
+// Each eye at half the game's rate, one pass of work a frame. A panel open, or a view the headset
+// does not take as eyes: the flat picture, one eye's camera kept.
+uintptr_t DrawByTurns(int a) {
+    static int eye = 1;
+    static D2RVR_Shared held;
+    static bool told = false;
+    const D2RVR_Shared* live = link::Head();
+    if (live) { memcpy(&held, live, sizeof held); g_pairShared.store(&held); }
+    TurnTick();
+    g_heldYaw.store(g_mouseYaw.load() + g_turnYaw.load());
+    g_heldPitch.store(g_mousePitch.load());
+    pairtime::g_drawThread.store(GetCurrentThreadId());
+    const bool native = NativeView() && !gamestate::MenuOpen() && d2rcam::InWorld() && replay::XrBegin();
+    if (native && XrIntoShared(&held, live)) g_pairShared.store(&held);
+    eye = native ? eye ^ 1 : 0;
+    g_pairNow.store(native);   // its present goes to the runtime as this eye (XrPresent)
+    SetEye(eye);
+    d2rcam::Refresh();
+    const uintptr_t r = OrigDrawGameScreen(a);
+    if (native) replay::XrEnd();   // this eye and the other's last to the runtime
+    xr::PairOver();
+    if (live || native) g_pairShared.store(nullptr);
+    g_pairNow.store(false);
+    if (!told && native) { told = true; Log("vrcam: openxr - eyes by turns ON - one pass a game frame, left and right in turn"); }
+    return r;
+}
+
 uintptr_t HookDrawGameScreen(int a) {
     static thread_local int depth = 0;
     static bool told = false, toldWhy = false;
+    if (!depth && PairWanted() && NativeByTurns()) {
+        ++depth;
+        const uintptr_t r = DrawByTurns(a);
+        --depth;
+        return r;
+    }
     if (depth || !PairWanted()) {
         if (!toldWhy && g_h.blit && AfrOn() && g_set.pairPerTick.load() && !FrameTimeFound()) {
             toldWhy = true;
@@ -7121,13 +7264,13 @@ uintptr_t HookDrawGameScreen(int a) {
     if (!toldTry) { toldTry = true; Log("vrcam: pair per game frame - drawing the first pair"); crash::Mark("drawing the first stereo pair"); }
     // One head for the pair: BodyWalk's block may change between the passes.
     static D2RVR_Shared held;
-    const D2RVR_Shared* live = g_shared;
-    if (live) { memcpy(&held, live, sizeof held); g_shared = &held; }
+    const D2RVR_Shared* live = link::Head();
+    if (live) { memcpy(&held, live, sizeof held); g_pairShared.store(&held); }
     TurnTick();   // the turn up to this very moment, not to the last timer tick
     g_heldYaw.store(g_mouseYaw.load() + g_turnYaw.load());
     g_heldPitch.store(g_mousePitch.load());
     g_pairNow.store(true);
-    if (const D2RVR_Shared* hs = g_shared)
+    if (const D2RVR_Shared* hs = Shared())
         flog::Line("S,%u,%.4f,%.3f,%.3f,%.3f,%.3f,%u", flog::Pass(), flog::Dt(), g_heldYaw.load(), hs->headYawDeg, hs->headPitchDeg, hs->headRollDeg, hs->sampleStamp);
 
     static double lastEnd = 0.0, sumGap = 0.0, sumPass[2] = {}, sumPresent[2] = {}, sumEff[2] = {}, maxPair = 0.0, sumCpu = 0.0, sumWall = 0.0;
@@ -7146,7 +7289,7 @@ uintptr_t HookDrawGameScreen(int a) {
     // each pass's present (XrPresent) - stereo at once, not 5 s of the flat picture eye after eye
     // (2026-10-10). Only with the world camera running, as the replay itself.
     const bool native = NativeView() && !gamestate::MenuOpen() && d2rcam::InWorld() && replay::XrBegin();
-    if (native && XrIntoShared(&held, live)) g_shared = &held;   // the game's own head and hands for this pair
+    if (native && XrIntoShared(&held, live)) g_pairShared.store(&held);   // the game's own head and hands for this pair
     if (replayRight) replay::BeginLeft();
     SetEye(0);
     d2rcam::Refresh();
@@ -7182,9 +7325,9 @@ uintptr_t HookDrawGameScreen(int a) {
     lastEnd = t2;
     sumCpu += pairtime::CpuUs() - c0; sumWall += t2 - t0;
 
-    // BodyWalk's block back before the pair is over: the timer thread, seeing no pair, would
+    // BodyWalk's head back before the pair is over: the timer thread, seeing no pair, would
     // otherwise read the held one (the game's own head in native: another zero) meanwhile
-    if (live || native) g_shared = live;
+    if (live || native) g_pairShared.store(nullptr);
     g_pairNow.store(false);
     --depth;
 
@@ -7447,7 +7590,7 @@ bool ApplyView(const char** said) {
     g_mouseLookOn.store(MouseLookForView());
     // 4: the game on the floor - our camera follows the head, so FlatVR's screen must too.
     // F1 in true perspective is sent as the game's own view (0): its camera is the game's,
-    // not the head's, and with Head Lock on (the bridge locks 1, 3 and 4) the picture
+    // not the head's, and with Head Lock on (vr/link.cpp locks 1, 3 and 4) the picture
     // stuck to the head ("the camera sticks to my head, it must not", 2026-10-05).
     gamestate::SetViewMode(!on ? 0u : table ? 4u : vr && v == 1 ? 0u : (uint32_t)g_view.load());
     g_gen.fetch_add(1);
@@ -7493,8 +7636,8 @@ const char* Toggle() {
 void Recenter() {
     float head = 0.0f;
     if (HeadYaw(&head)) g_recenter.store(head);
-    if (const D2RVR_Shared* sh = g_shared; sh && sh->pitchValid && std::isfinite(sh->headPitchDeg)) g_recenterPitch.store(sh->headPitchDeg);
-    if (const D2RVR_Shared* sh = g_shared; sh && sh->rollValid && std::isfinite(sh->headRollDeg)) g_recenterRoll.store(sh->headRollDeg);
+    if (const D2RVR_Shared* sh = Shared(); sh && sh->pitchValid && std::isfinite(sh->headPitchDeg)) g_recenterPitch.store(sh->headPitchDeg);
+    if (const D2RVR_Shared* sh = Shared(); sh && sh->rollValid && std::isfinite(sh->headRollDeg)) g_recenterRoll.store(sh->headRollDeg);
     g_mouseYaw.store(0.0f); g_mousePitch.store(0.0f);
     g_facingReset.store(true);   // and the hero's facing is looked for again
     g_tableReanchor.store(true); // and the table view puts the game in front of the head again
@@ -7510,14 +7653,6 @@ void Recenter() {
 ConsoleCommandResult __cdecl CmdVrcam(D2R::Game::Client*, const ConsoleCommandContext*, void*) noexcept {
     Say(Toggle());
     return ConsoleCommandResult::Handled;
-}
-void OpenShared() {
-    if (g_shared) return;
-    if (!g_map) g_map = OpenFileMappingW(FILE_MAP_READ, FALSE, D2RVR_SHARED_NAME);
-    // The whole section, not sizeof: an older bridge made it smaller (no grips),
-    // and a view longer than the section fails. A page holds either.
-    if (g_map) g_shared = (const D2RVR_Shared*)MapViewOfFile(g_map, FILE_MAP_READ, 0, 0, 0);
-    if (g_shared) Log("vrcam: connected to D2R Bridge");
 }
 
 // Right stick turn: smooth at turnSpeed, or one snap per flick. Run on the 1 ms
@@ -7570,7 +7705,7 @@ DWORD WINAPI ProbeThread(void* p) {
 }
 
 // The hero's arms (skeletons.cpp): mode, head hiding and the controllers from
-// D2R Bridge, handed over every 10 ms. Off whenever the VR camera is off.
+// BodyWalk (Game Link), handed over every 10 ms. Off whenever the VR camera is off.
 // Where the hero's model faces, against where the camera looks. The renderer's
 // model-to-world matrix is found by a background search (probe::FindHeroMatrices)
 // and then read in place for as long as its translation stays on the hero.
@@ -8236,7 +8371,7 @@ bool CameraYawInModel(float* out, float* eyeModel, bool* eyeOk) {
 // For the skeleton hook, on every pose: the controllers from the block the
 // camera reads its head from (during a pair, the pair's own copy).
 bool FreshHands(skel::Input* in) {
-    const D2RVR_Shared* sh = g_shared;
+    const D2RVR_Shared* sh = Shared();
     if (!sh || sh->version != D2RVR_SHARED_VERSION || !sh->headValid) return false;
     in->handsValid = sh->handsValid;
     memcpy(in->hand[0], sh->rightHand, sizeof in->hand[0]); memcpy(in->hand[1], sh->leftHand, sizeof in->hand[1]);
@@ -8251,7 +8386,7 @@ void PushArms() {
     // Only in a game area: on the main menu's character screen the hero stood
     // headless, his arms on the controllers (2026-10-05) - there he is the game's.
     const bool on = g_enabled.load() && g_inWorld.load();
-    const D2RVR_Shared* sh = g_shared;
+    const D2RVR_Shared* sh = Shared();
     skel::Input in;
     if (sh && sh->version == D2RVR_SHARED_VERSION && sh->headValid) {
         in.handsValid = sh->handsValid;
@@ -9011,8 +9146,9 @@ void Gather() {
     if (GetTickCount64() - last < 100) return;
     last = GetTickCount64();
     // [ceiling] torches=0: no lights wanted, so no scan of the game's memory either - on a
-    // weak PC its read of all the game's heap every 1.5 s was suspected of VR dropouts (0.142)
-    const bool want = fx::CeilWanted() && g_set.ceilTorches.load();
+    // weak PC its read of all the game's heap every 1.5 s was suspected of VR dropouts (0.142).
+    // Nor with [ceiling] fire_from_picture: the shader finds the fire in the picture itself.
+    const bool want = fx::CeilWanted() && g_set.ceilTorches.load() && !g_set.ceilPictureFire.load();
     g_heroWanted.store(want);
     if (!want) { g_known.store(false); return; }
     float L[3];
@@ -9677,8 +9813,7 @@ void OnReshadePresent(reshade::api::effect_runtime* rt) {
         hadHero = hero;
     }
     if (xr::On() || xr::Running() || xr::StopPending())
-        replay::XrPresent((ID3D12Device*)rt->get_device()->get_native(), (ID3D12CommandQueue*)rt->get_command_queue()->get_native(),
-                          (ID3D12Resource*)rt->get_current_back_buffer().handle);
+        replay::XrPresent(rt, (ID3D12Resource*)rt->get_current_back_buffer().handle);
     else pace::Tick();
     const double t = pairtime::UsNow();
     pairtime::g_presentAt.store(t);
@@ -9879,7 +10014,11 @@ void OnBeginEffects(reshade::api::effect_runtime* rt, reshade::api::command_list
             SetFloat(rt, "CeilRelief", relief);
             SetFloat(rt, "CeilTexSlot", (float)slot);
             SetFloat(rt, "CeilLightRadius", light);
-            SetBool(rt, "CeilTorches", g_set.ceilTorches.load());
+            // [ceiling] fire_from_picture (2026-10-11, "any fire gives light, as at the start"): the
+            // shader's own search of the picture for fire - torches, braziers, spells, burning
+            // monsters - in place of the game's lights; it is what ran before those were found.
+            const bool pictureFire = g_set.ceilPictureFire.load();
+            SetBool(rt, "CeilTorches", g_set.ceilTorches.load() || pictureFire);
             SetFloat(rt, "CeilTorchBright", g_set.ceilTorchBright.load());
             SetFloat(rt, "CeilTorchRadius", g_set.ceilTorchRadius.load());
             SetFloat(rt, "CeilHalo", g_set.ceilHalo.load());
@@ -9901,7 +10040,7 @@ void OnBeginEffects(reshade::api::effect_runtime* rt, reshade::api::command_list
                     const float d = sqrtf(pos[i * 4] * pos[i * 4] + pos[i * 4 + 2] * pos[i * 4 + 2]), reach = g_set.ceilTorchDist.load();
                     col[i * 4 + 3] = std::clamp((reach - d) / (0.25f * reach), 0.0f, 1.0f) * (l[i].monster ? g_set.ceilMonsterBright.load() : 1.0f);
                 }
-                SetBool(rt, "GameLightsOn", worldobj::g_known.load());
+                SetBool(rt, "GameLightsOn", worldobj::g_known.load() && !pictureFire);
                 SetFloats(rt, "GameLightPos", pos, worldobj::kMaxLights * 4);
                 SetFloats(rt, "GameLightCol", col, worldobj::kMaxLights * 4);
                 static ULONGLONG told = 0;   // what goes to the shader, every 5 s: the nearest light, as the hero sees it
@@ -10223,13 +10362,14 @@ DWORD WINAPI UpdateThread(void*) {
         const ULONGLONG nowMs = GetTickCount64();
         const bool focus = GameFocused();
         if (f12.Pressed(focus)) Toggle();
-        {   // the same from BodyWalk's mapping: the bridge's view actions, at the press
+        {   // the same from BodyWalk's mapping: the view actions, at the press
             static uint32_t was = 0;
-            const uint32_t held = ActionsHeld(), pressed = held & ~was;
+            static link::Presses presses;
+            const uint32_t held = link::ActionsHeld(presses), pressed = held & ~was;
             was = held;
-            // The bits keep the old numbering (an older bridge sends them): 3 was the VR
-            // mouse view, gone; 4 the body, now F3; 5 the floor, now F4.
-            static const int kVrOf[5] = {1, 2, 0, 4, 3};   // the bridge's actions: above, third, (flat F3), body = F4, table = F3
+            // The bits keep the D2R Bridge's old numbering: 3 was the VR mouse view, gone;
+            // 4 the body, now F3; 5 the floor, now F4.
+            static const int kVrOf[5] = {1, 2, 0, 4, 3};   // the actions: above, third, (flat F3), body = F4, table = F3
             const bool vr = g_set.platform.load() == 1;
             for (int k = 0; k < 5; ++k)
                 if (pressed & (D2RVR_ACT_VIEW_1 << k)) SetView(vr ? kVrOf[k] : k + 1);
@@ -10362,7 +10502,7 @@ DWORD WINAPI UpdateThread(void*) {
             static ULONGLONG nextCrashKeep = 0;
             if (nowMs >= nextCrashKeep) { nextCrashKeep = nowMs + 2000; crash::Keep(); }
             FlatVr3DTick();
-            xr::FollowBridge();
+            xr::FollowLink();
             fx::dlsseyes::Install();
             prevscan::Tick();
             const bool iniChanged = ReloadIfChanged();
@@ -10377,7 +10517,6 @@ DWORD WINAPI UpdateThread(void*) {
             if (!AllHooksIn()) InstallHooks();
             ApplyRender();
             HookGameWindow();
-            OpenShared();
             UpdateFovFromFlatVR();
             HookXInput();
             ReportXInputUse();
@@ -10421,8 +10560,8 @@ void LoadReShade() {
     dir[n] = 0;
     std::wstring proxy = std::wstring(dir) + L"dxgi.dll";
     if (GetFileAttributesW(proxy.c_str()) != INVALID_FILE_ATTRIBUTES) {
-        Log("vrcam: dxgi.dll in the game's folder (ReShade the old way) - the plain game (D2R.exe) will not start with it there; "
-            "rename it to ReShade64.dll and vrcam loads it");
+        Log("vrcam: ReShade as dxgi.dll beside the game - the game loads it itself, vrcam joins it (D2R VR Settings > Home: "
+            "\"Keep ReShade as dxgi.dll\" for a ReShade setup of your own, or \"ReShade for D2R VR only\")");
         return;
     }
     wchar_t path[MAX_PATH];
@@ -10433,11 +10572,11 @@ void LoadReShade() {
     else LogF("vrcam: ReShade64.dll did not load (error %lu)", GetLastError());
 }
 
-static const char g_info_version[] = "0.157.0";
+static const char g_info_version[] = "0.158.0";
 
 static const PluginInfo g_info = {
     PluginInfoSize, D2RL_PLUGIN_ABI_VERSION, "d2r-vr-vrcam", "vrcam", g_info_version, "BodyWalkVR",
-    "D2R in a headset or as a first-person game: head-driven camera through BodyWalk's D2R Bridge, mouse look and W A S D. "
+    "D2R in a headset or as a first-person game: head-driven camera through BodyWalk Game Link, mouse look and W A S D. "
     "F12 off / first / third person, F11 recenter, F9 mouse look.",
     PluginFlags::Shared | PluginFlags::NativeHooks, {0, 0, 0, 0},
 };
@@ -10483,8 +10622,8 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     InstallHooks();
     crash::Step("XInput hooks");
     HookXInput();
-    crash::Step("shared memory (D2R Bridge, FlatVR)");
-    OpenShared();
+    crash::Step("shared memory (Game Link, FlatVR)");
+    link::Init(&Log, g_iniPath, g_info_version);   // the game's actions and tabs to BodyWalk, the head and hands back
     OpenAfrBlock();
     crash::Step("game state");
     gamestate::Init(ctx);

@@ -1,12 +1,13 @@
-// The game's state, the other way round from d2r_vr_shared.h: written by the
-// vrcam plugin inside D2R (gamestate.cpp), read by BodyWalk's D2R Bridge, which
-// switches BodyWalk's mapping category from it - the bow's gestures while a
-// bow is in hand, the sword's otherwise, the menu's while a panel is open.
+// The game's state, written by the vrcam plugin inside D2R (gamestate.cpp):
+// what the hero holds, whether a panel is open, the view. vrcam turns it into
+// Game Link's GameState for BodyWalk (vr/link.cpp: the bow's gestures while a
+// bow is in hand, the sword's otherwise, the menu's while a panel is open), and
+// D2R VR Settings reads it here (the weapon in hand, is the game running).
 #pragma once
 
 #include <cstdint>
 
-#define D2RVR_STATE_NAME L"Local\\BodyWalkVR_D2R_State"
+#define D2RVR_STATE_NAME L"Local\\D2RVR_State"
 #define D2RVR_STATE_VERSION 1u
 
 enum D2RVR_WeaponClass : uint32_t {
@@ -18,7 +19,7 @@ enum D2RVR_WeaponClass : uint32_t {
 };
 
 // The weapon's kind, from the game's own ItemTypes (gamestate.cpp), one
-// BodyWalk mapping tab each: "D2R " + the name below.
+// BodyWalk Mapping tab each: "D2R " + the name below.
 enum D2RVR_WeaponType : uint32_t {
     D2RVR_TYPE_UNKNOWN = 0, D2RVR_TYPE_UNARMED, D2RVR_TYPE_BOW, D2RVR_TYPE_CROSSBOW, D2RVR_TYPE_SWORD,
     D2RVR_TYPE_AXE, D2RVR_TYPE_MACE, D2RVR_TYPE_SCEPTER, D2RVR_TYPE_WAND, D2RVR_TYPE_STAFF,

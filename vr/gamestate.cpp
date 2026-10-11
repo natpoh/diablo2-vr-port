@@ -1,6 +1,7 @@
 // gamestate.cpp - what the hero holds and whether a menu is open, read through
-// D2RLoader's services and published for BodyWalk's D2R Bridge
-// (shared/d2r_vr_state.h), which switches the mapping category from it.
+// D2RLoader's services and published: for BodyWalk as Game Link's GameState
+// (vr/link.cpp: the Mapping tabs, FlatVR's Head Lock and screen distance), and
+// for D2R VR Settings (shared/d2r_vr_state.h).
 //
 // Items: the local player and his equipped items may only be read on the UI
 // thread, so Tick() (vrcam's timer, 5 times a second) queues a read there.
@@ -33,6 +34,7 @@
 #include <D2RLPlugin/api.h>
 
 #include "d2r_vr_state.h"
+#include "link.h"
 
 using namespace D2RL;
 
@@ -248,6 +250,15 @@ uint32_t KindOf(const std::string& code) {
 }
 
 void Publish() {
+    D2RVR_State s{};
+    s.version = D2RVR_STATE_VERSION;
+    s.weaponClass = g_weapon.load();
+    s.menuOpen = g_menu.load();
+    s.weaponSet = g_set.load();
+    s.weaponType = g_type.load();
+    s.viewMode = g_view.load();
+    s.twoHanded = g_two.load();
+    link::PublishState(s);
     if (!g_state) return;
     g_state->weaponClass = g_weapon.load();
     g_state->menuOpen = g_menu.load();
@@ -520,7 +531,7 @@ void Init(const PluginContext* ctx) {
         l.callback = &OnUiMessage;
         if (g_events->registerUiMessageListener(ctx, &l, &g_uiListener) != SharedEvents::Result::Success) Log("gamestate: could not listen to UI messages");
     }
-    // Low integrity may read it too (BodyWalk and the game can run at different levels).
+    // Low integrity may read it too (D2R VR Settings and the game can run at different levels).
     SECURITY_ATTRIBUTES sa{sizeof sa, nullptr, FALSE};
     PSECURITY_DESCRIPTOR sd = nullptr;
     if (ConvertStringSecurityDescriptorToSecurityDescriptorW(L"D:(A;;GA;;;WD)S:(ML;;NW;;;LW)", SDDL_REVISION_1, &sd, nullptr))

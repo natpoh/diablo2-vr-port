@@ -10,7 +10,7 @@ change the camera, the stereo or anything that touches the game's memory.
 | `d2rl-vrcam.dll` | `vr/` | The D2RLoader plugin: the camera, stereo, first person, HUD, the game's commands. Also a ReShade add-on: it talks to `D2R_DepthFog.fx` and draws the right eye in "one pass" stereo. |
 | `D2R_DepthFog.fx` | `reshade/` | Fog, sky, cave ceilings, the frame stamp for FlatVR. Built from the game's depth. |
 | `D2R_VR_Settings.exe` | `tools/settings/` | The settings app. It writes `d2r_vr.ini`; vrcam reads it again while the game runs. |
-| `d2r_bridge.dll` | `bodywalk_bridge/` | The BodyWalk plugin: the head and controllers into shared memory (`shared/`). |
+| BodyWalk Game Link | `vr/link.cpp`, `shared/` | How the mod talks to BodyWalk (`external/bodywalk/game_link.h`): the game's actions and Mapping tabs out, the head, the hands and the actions fired back. BodyWalk's side is its own `game_link` plugin, which the installer puts in. |
 | clean-room code | `cleanroom/` | The camera maths, the draw distance, the signature scanner and the weapon weight model - no game code. |
 
 BodyWalk, FlatVR and FlatVR's ReShade add-on are separate products. Their

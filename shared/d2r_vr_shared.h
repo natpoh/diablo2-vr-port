@@ -1,5 +1,6 @@
-// The one block of shared memory between the BodyWalk side (D2R Bridge
-// plugin, writer) and the game side (vrcam plugin inside D2R, reader).
+// D2R VR and BodyWalk, through BodyWalk Game Link (bodywalk/game_link.h): what
+// the mod tells BodyWalk about the game - its actions, its Mapping tabs - and
+// vrcam's own view of what comes back (vr/link.cpp).
 //
 // The head's turn, and the hands relative to the head. Walking, sticks and
 // buttons do not cross here: they reach the game as BodyWalk's ordinary virtual
@@ -8,6 +9,7 @@
 #pragma once
 
 #include <cstdint>
+#include <cstdio>
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -15,79 +17,71 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <bodywalk/game_link.h>
+#include "d2r_vr_build.h"
+#include "d2r_vr_state.h"   // the weapon kinds: a Mapping tab each
+
+// FlatVR's clock (afr_eye_shared.h's FlatVRAfrStampNow): QPC in 0.1 ms.
+inline uint32_t D2RVRStampNow() { return BW_LinkStampNow(); }
+
+// Who we are in Game Link's Manifest.
+#define D2RVR_GAME_ID "d2r"
+#define D2RVR_GAME_NAME "Diablo II: Resurrected"
+#define D2RVR_MOD_NAME "D2R VR"
 
 #define D2RVR_SAMPLE_STAMP_MAGIC 0x48444148u  // "HADH"
-
-// The same clock as FlatVRAfrStampNow (afr_eye_shared.h): QPC in 0.1 ms.
-inline uint32_t D2RVRStampNow() {
-    LARGE_INTEGER f, c;
-    QueryPerformanceFrequency(&f);
-    QueryPerformanceCounter(&c);
-    return (uint32_t)((unsigned long long)c.QuadPart / ((unsigned long long)f.QuadPart / 10000ull));
-}
-
-#define D2RVR_SHARED_NAME L"Local\\BodyWalkVR_D2R"
 #define D2RVR_SHARED_VERSION 4u
 
-#pragma pack(push, 1)
+// The head and the hands as vrcam uses them: made from Game Link's Tracking
+// (vr/link.cpp, link::Head) or, in native OpenXR, from the game's own session
+// (XrIntoShared). The layout of the D2R Bridge's old block, which every reader in
+// vrcam was written against.
 struct D2RVR_Shared {
     uint32_t version;        // D2RVR_SHARED_VERSION
-    uint32_t counter;        // bumped on every write; a frozen counter = BodyWalk stopped
+    uint32_t counter;        // moves with every new head; frozen = BodyWalk stopped
     uint32_t headValid;      // 1 while the headset is tracking
     float    headYawDeg;     // head turn since BodyWalk's last recenter, positive = left
     float    headHeightM;    // head height in the room (metres)
     float    headPitchDeg;   // up (+) / down (-) from the horizon
-    uint32_t pitchValid;     // 0 when BodyWalk is older than BW_TrackingData version 2
+    uint32_t pitchValid;     // 0 when BodyWalk sends no pitch
     float    headRollDeg;    // tilted toward the right shoulder (+) / left (-)
-    uint32_t rollValid;      // 0 when BodyWalk is older than BW_TrackingData version 3
-    // v4: hands from the head, in metres, in the frame of the head's turn only
+    uint32_t rollValid;      // 0 when BodyWalk sends no roll
+    // Hands from the head, in metres, in the frame of the head's turn only
     // (x right, y up, z back - OpenXR axes, no head pitch or roll in it).
-    // handsValid bit 0 = right, bit 1 = left; 0 when BodyWalk is older than
-    // BW_TrackingData version 4 (no room yaw to turn them by).
+    // handsValid bit 0 = right, bit 1 = left; 0 when BodyWalk sends no room yaw
+    // to turn them by.
     uint32_t handsValid;
     float    rightHand[3];
     float    leftHand[3];
     float    rightRot[4];    // controller orientation in the same frame, x y z w
     float    leftRot[4];
-    // When the head above was sampled, in the clock of afr_eye_shared.h's
-    // FlatVRAfrStampNow (QPC in 0.1 ms, low 32 bits); valid while
+    // When the head above was sampled, in the clock of D2RVRStampNow; valid while
     // sampleStampMagic says so. The game side stamps its views with it, and
     // FlatVR places the screen at the head pose of that moment.
     uint32_t sampleStamp;
     uint32_t sampleStampMagic;   // D2RVR_SAMPLE_STAMP_MAGIC
-    // The user's height as set in BodyWalk (Avatar > Body Height), millimetres;
-    // 0 from a bridge older than 0.8 (this word was reserved, always 0).
+    // The user's height as set in BodyWalk (Avatar > Body Height), millimetres; 0 not known.
     uint32_t userHeightMm;
-    // The controllers' grip triggers, 0..1, valid while gripMagic says so
-    // (bridge 0.13+). Appended without a version bump, like the stamp above:
-    // an older vrcam stops reading at 108 bytes, and a newer one reading an
-    // older bridge's block finds zeros here (the view is a whole page) - no magic.
+    // The controllers' grip triggers, 0..1, valid while gripMagic says so.
     uint32_t gripMagic;      // D2RVR_GRIP_MAGIC
     float    rightGrip;
     float    leftGrip;
-    // Where the head is in the room (bridge 0.15+, valid while roomMagic says
-    // so; appended like the grips): BodyWalk's room, OpenXR stage axes - x
-    // right, y up, z back, metres - and its yaw in that room, not recentered
-    // (positive = turned left). For the table view (F5): the player walks
-    // round the game laid out on a real table.
+    // Where the head is in the room, valid while roomMagic says so: BodyWalk's
+    // room, OpenXR stage axes - x right, y up, z back, metres - and its yaw in
+    // that room, not recentered (positive = turned left). For the table view
+    // (F5): the player walks round the game laid out on a real table.
     uint32_t roomMagic;      // D2RVR_ROOM_MAGIC
     float    headRoom[3];
     float    headYawRoomDeg;
 };
-#pragma pack(pop)
 
 #define D2RVR_GRIP_MAGIC 0x50495247u   // "GRIP"
 #define D2RVR_ROOM_MAGIC 0x4D4F4F52u   // "ROOM"
 
-static_assert(sizeof(D2RVR_Shared) == 140, "D2RVR_Shared is a wire format");
-
-// BodyWalk actions the bridge registers ("D2R: Attack", "D2R: Pick up /
-// interact" ...), held or not, for vrcam to act on inside the game. Written by
-// the bridge (BW_Plugin_ReceiveAction), read by vrcam. Its own mapping, so an
-// older bridge or vrcam simply misses it.
-#define D2RVR_ACTIONS_NAME L"Local\\BodyWalkVR_D2R_Actions"
-#define D2RVR_ACTIONS_VERSION 1u
-
+// BodyWalk actions for vrcam to act on inside the game ("D2R: Attack", "D2R:
+// Pick up / interact" ...): mapped like any button in BodyWalk's Mapping tab.
+// vrcam's own bits; in Game Link they are the Manifest's first actions, in
+// kD2RVRActions' order.
 enum D2RVRAction : uint32_t {
     D2RVR_ACT_ATTACK = 1u << 0,     // the default attack (pad A) that never picks up or opens anything
     D2RVR_ACT_INTERACT = 1u << 1,   // pick up / open / talk: what pad A does on a target, and nothing else
@@ -105,36 +99,33 @@ enum D2RVRAction : uint32_t {
     D2RVR_ACT_RECENTER = 1u << 11,  // F11: straight ahead is where I look; the game on the floor put down in front of me
 };
 
-#pragma pack(push, 4)
-struct D2RVR_Actions {
-    uint32_t version;   // D2RVR_ACTIONS_VERSION
-    uint32_t counter;   // bumped on every change
-    uint32_t held;      // D2RVRAction bits held now
-    uint32_t reserved;
+// The Manifest's actions, in this order: BodyWalk's Mapping (and the mod's own
+// profile, installer/bodywalk_profile.json) refers to an action by its place in
+// BodyWalk's list. Add new ones at the end of kD2RVRCommands, never in between.
+struct D2RVRActionName { const char* name; uint32_t bit; };
+inline constexpr D2RVRActionName kD2RVRActions[] = {
+    {"D2R: Attack (never picks up)", D2RVR_ACT_ATTACK},
+    {"D2R: Pick up / interact", D2RVR_ACT_INTERACT},
+    {"D2R: Inventory", D2RVR_ACT_INVENTORY},
+    {"D2R: Map (show / hide)", D2RVR_ACT_MAP},
+    {"D2R: Swap weapons", D2RVR_ACT_SWAP},
+    {"D2R: View - from above", D2RVR_ACT_VIEW_1},
+    {"D2R: View - third person", D2RVR_ACT_VIEW_2},
+#if D2RVR_FIRST_PERSON
+    {"D2R: View - first person (body)", D2RVR_ACT_VIEW_4},
+#endif
+    {"D2R: View - table", D2RVR_ACT_VIEW_5},
+    {"D2R: View - next", D2RVR_ACT_VIEW_NEXT},
+    {"D2R: Recenter / put the game in front of me (F11)", D2RVR_ACT_RECENTER},
 };
-#pragma pack(pop)
-
-static_assert(sizeof(D2RVR_Actions) == 16, "D2RVR_Actions is a wire format");
+inline constexpr uint32_t kD2RVRActionCount = sizeof kD2RVRActions / sizeof kD2RVRActions[0];
 
 // The game's own key commands (docs/buttons_recon.md): every control of its
-// Controls menu, one BodyWalk action each ("D2R key: ..."), held or not. vrcam
-// presses the command where the game's key would (its command executor, on
-// the UI thread, vr/gamecmd.cpp), so no pad and no key is needed. Written by
-// the bridge, read by vrcam. Bit n of held = the game's command n (the index
-// in its command table 0x22A7930), so the list below may grow in any order.
-#define D2RVR_COMMANDS_NAME L"Local\\BodyWalkVR_D2R_Commands"
-#define D2RVR_COMMANDS_VERSION 1u
+// Controls menu, one BodyWalk action each ("D2R key: ..."), after
+// kD2RVRActions in the Manifest. vrcam presses the command where the game's key
+// would (its command executor, on the UI thread, vr/gamecmd.cpp), so no pad and
+// no key is needed. cmd = the index in the game's command table 0x22A7930.
 #define D2RVR_GAME_COMMANDS 0x45u   // the game's table: 0x00..0x44
-
-#pragma pack(push, 4)
-struct D2RVR_Commands {
-    uint32_t version;   // D2RVR_COMMANDS_VERSION
-    uint32_t counter;   // bumped on every change
-    uint64_t held[2];   // bit n (held[n / 64], bit n % 64): the game's command n held now
-};
-#pragma pack(pop)
-
-static_assert(sizeof(D2RVR_Commands) == 24, "D2RVR_Commands is a wire format");
 
 // Action name -> the game's command. All of them with a name in the game
 // (0x38 has none); Move up/right/down/left are the game's own, north on its
@@ -211,67 +202,46 @@ inline constexpr D2RVRCommand kD2RVRCommands[] = {
     {"D2R key: Loot filter", 0x44},
 };
 inline constexpr uint32_t kD2RVRCommandCount = sizeof kD2RVRCommands / sizeof kD2RVRCommands[0];
+static_assert(kD2RVRActionCount + kD2RVRCommandCount <= BW_LINK_MAX_ACTIONS, "the Manifest holds them all");
 
-// D2R VR Settings' Start FlatVR / Stop FlatVR: two named auto-reset events the
-// bridge makes and looks at in BW_Plugin_Update; set one and the bridge asks
-// BodyWalk (host API 7, request_flatvr_running) to start or stop FlatVR, as
-// the FlatVR tab's own buttons do. No event = no BodyWalk with the bridge.
-#define D2RVR_FLATVR_START_NAME L"Local\\BodyWalkVR_D2R_FlatVRStart"
-#define D2RVR_FLATVR_STOP_NAME L"Local\\BodyWalkVR_D2R_FlatVRStop"
-// The same for FlatVR's 3D source (host API 8, request_flatvr_stereo_source): a
-// flat screen, the game's depth through ReShade, or the stereo pair the game
-// draws - D2R VR Settings' "3D in the headset".
-#define D2RVR_FLATVR_3D_NONE_NAME L"Local\\BodyWalkVR_D2R_FlatVR3DNone"
-#define D2RVR_FLATVR_3D_DEPTH_NAME L"Local\\BodyWalkVR_D2R_FlatVR3DDepth"
-#define D2RVR_FLATVR_3D_PAIR_NAME L"Local\\BodyWalkVR_D2R_FlatVR3DPair"
-// BodyWalk's Mapping Input Source with native OpenXR (host API 9,
-// request_gesture_source): the game's own headset ("D2R VR", through this bridge)
-// while the game holds it, FlatVR again after (only if it was the game's). Set by
-// D2R VR Settings when "Native OpenXR" is picked or left, and by the game when
-// its session starts and ends.
-#define D2RVR_GESTURES_GAME_NAME L"Local\\BodyWalkVR_D2R_GesturesGame"
-#define D2RVR_GESTURES_FLATVR_NAME L"Local\\BodyWalkVR_D2R_GesturesFlatVR"
-// There while the bridge runs in a BodyWalk that takes the game's own headset (host
-// API 9: send_xr_frame, request_gesture_source) - D2R VR Settings offers native OpenXR
-// only then (or with a BodyWalk of 1.78 on): with an older one the game would show its
-// picture but get no buttons and no gestures.
-#define D2RVR_BRIDGE_XR_SOURCE_NAME L"Local\\BodyWalkVR_D2R_XrSource"
+// The Manifest's Mapping tabs, in order: tab(name, description) for each. One per
+// weapon kind ("D2R Bow", "D2R Sword" ...), whichever weapon set it is in, or the
+// menu's, each on top of "main" - vr/link.cpp's PublishState picks them. Sent by
+// vrcam, and written by D2R VR Settings for the installer (--game-link-manifest).
+template <class F> void D2RVRTabs(F&& tab) {
+#if D2RVR_FIRST_PERSON
+    for (uint32_t k = D2RVR_TYPE_UNARMED; k < D2RVR_TYPE_COUNT; ++k) {
+        char name[48], desc[120];
+        snprintf(name, sizeof name, "D2R %s", kD2RVRWeaponTypeNames[k]);
+        snprintf(desc, sizeof desc, "D2R: %s in the hands (F4)", kD2RVRWeaponTypeNames[k]);
+        tab(name, desc);
+    }
+#endif
+    tab("D2R Menu", "D2R: a trade, inventory or other panel is open");
+    tab("D2R Third Person", "D2R: the third-person view (F2)");
+    tab("D2R Top Down", "D2R: the view from above (F1)");
+    tab("D2R Floor", "D2R: the game on the floor (F3)");   // VR F3: its own buttons, nothing of first person
+#if D2RVR_FIRST_PERSON
+    tab("D2R First Person", "D2R: first person (F4), no panel open, any weapon");
+    // A weapon in the left hand too (a barbarian's pair of blades, an assassin's two claws), on top
+    // of the right one's tab: actions for the second weapon (2026-10-06).
+    tab("D2R Left Hand", "D2R: first person (F4), a weapon in the left hand too");
+#endif
+}
 
 // Native OpenXR (vrcam's vr/xr.cpp): the game holds the headset itself and reads
-// the head and the controllers from its own session; the bridge hands them to
-// BodyWalk as its tracking source instead of FlatVR, so gestures, the Mapping and
-// the virtual pad go on as with FlatVR. Written by vrcam once a headset frame
-// (at the moment the frame will be shown), read by the bridge. Poses as the
-// runtime has them: metres in its STAGE space (the floor at 0; LOCAL without one) - x right, y up, z back -
-// rotations x y z w, not recentered.
-#define D2RVR_XR_INPUT_NAME L"Local\\BodyWalkVR_D2R_XrInput"
+// the head and the controllers from its own session; vrcam hands them to
+// BodyWalk through Game Link's XrInput, so gestures, the Mapping and the virtual
+// pad go on as with FlatVR. vrcam's own copy, once a headset frame (at the
+// moment the frame will be shown): poses as the runtime has them, metres in its
+// STAGE space (the floor at 0; LOCAL without one) - x right, y up, z back -
+// rotations x y z w, not recentered. Buttons are BW_LINK_XRB_* bits.
+using D2RVR_XrPose = BW_LinkXrPose;
+using D2RVR_XrHand = BW_LinkXrHand;
 #define D2RVR_XR_INPUT_VERSION 1u
-
-enum D2RVRXrButton : uint32_t {
-    D2RVR_XRB_PRIMARY = 1u << 0,     // A on the right controller, X on the left
-    D2RVR_XRB_SECONDARY = 1u << 1,   // B / Y
-    D2RVR_XRB_STICK = 1u << 2,       // the thumbstick pressed in
-    D2RVR_XRB_MENU = 1u << 3,        // the menu button (left), the system one is the runtime's
-    D2RVR_XRB_TRIGGER = 1u << 4,     // the trigger pulled past its click (or past 0.8 without one)
-    D2RVR_XRB_SQUEEZE = 1u << 5,     // the grip squeezed past its click (or past 0.8)
-};
-
-#pragma pack(push, 4)
-struct D2RVR_XrPose {
-    float pos[3];
-    float rot[4];
-    uint32_t valid;   // 1 position and orientation tracked, 2 orientation only, 0 none
-};
-struct D2RVR_XrHand {
-    D2RVR_XrPose grip;   // the controller as held (the grip pose)
-    D2RVR_XrPose aim;    // where it points (the aim pose)
-    float trigger, squeeze, stickX, stickY;   // 0..1, 0..1, -1..1 (+ right, + up)
-    uint32_t buttons;    // D2RVRXrButton bits
-    uint32_t active;     // 1 while any of its actions is bound (a controller is there)
-};
 struct D2RVR_XrInput {
     uint32_t version;     // D2RVR_XR_INPUT_VERSION
-    uint32_t counter;     // bumped on every write; frozen = no session (or the game paused)
+    uint32_t counter;     // moves with every frame
     uint32_t stamp;       // D2RVRStampNow() when written
     uint32_t focused;     // 1 while the session has the input focus
     int64_t displayTime;  // the XrTime the poses are for
@@ -279,32 +249,3 @@ struct D2RVR_XrInput {
     D2RVR_XrHand hand[2]; // 0 left, 1 right
     char profile[2][64];  // the interaction profile each hand runs, e.g. /interaction_profiles/oculus/touch_controller
 };
-#pragma pack(pop)
-static_assert(sizeof(D2RVR_XrInput) == 360, "D2RVR_XrInput is a wire format");
-
-// Native OpenXR: BodyWalk's gesture zones ticked "VR" in its Mapping tab (the belt's
-// potions, a holster), placed by BodyWalk from the head in D2RVR_XrInput - so in the
-// same STAGE space - and drawn by vrcam as see-through balls, as FlatVR draws them.
-// Written by the bridge (BW_Plugin_ReceiveVrZones, host API 10: BodyWalk 1.78) every
-// BodyWalk GUI frame while there are zones to show; vrcam lets them lapse when the
-// stamp is older than half a second (BodyWalk closed, the zones unticked).
-#define D2RVR_XR_ZONES_NAME L"Local\\BodyWalkVR_D2R_XrZones"
-#define D2RVR_XR_ZONES_VERSION 1u
-#define D2RVR_XR_ZONES_MAX 32u
-
-#pragma pack(push, 4)
-struct D2RVR_XrZone {
-    float centre[3];   // metres, STAGE space
-    float radius;      // metres
-    uint32_t rgba;     // the colour for its state now, R in the low byte, alpha = opacity
-    float glow;        // halo and rim, 0..1
-};
-struct D2RVR_XrZones {
-    uint32_t version;  // D2RVR_XR_ZONES_VERSION
-    uint32_t counter;  // bumped on every write
-    uint32_t stamp;    // D2RVRStampNow() when written
-    uint32_t count;    // used entries in zone[]
-    D2RVR_XrZone zone[D2RVR_XR_ZONES_MAX];
-};
-#pragma pack(pop)
-static_assert(sizeof(D2RVR_XrZones) == 16 + 32 * 24, "D2RVR_XrZones is a wire format");

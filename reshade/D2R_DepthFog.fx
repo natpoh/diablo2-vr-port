@@ -582,6 +582,7 @@ uniform bool CeilTorches < hidden = true; > = true;
 uniform float CeilTorchRadius < hidden = true; > = 20.0;    // [ceiling] torch_radius: world units where a torch's light is down to half
 uniform float CeilTorchBright < hidden = true; > = 0.6;     // [ceiling] torch_brightness
 uniform float CeilTorchMemory < hidden = true; > = 8.0;     // seconds a torch out of sight still lights
+uniform float CeilFireGone < hidden = true; > = 0.3;        // seconds a fire that went out in plain view still lights (a spell's)
 uniform float CeilTorchWarm < hidden = true; > = 0.6;      // [ceiling] torch_warmth: the game's pale torch colour toward fire's orange
 uniform float CeilHalo < hidden = true; > = 1.0;            // [ceiling] torch_halo: how much of the game's glow round a flame shows in a cave (1 = all)
 uniform float FrameTime < source = "frametime"; >;
@@ -1157,12 +1158,44 @@ float4 TorchCands(float4 pos, int eye)
 float4 PS_TorchCands(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return TorchCands(pos, 0); }
 float4 PS_TorchCandsR(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return TorchCands(pos, 1); }
 
+// A kept light on this eye's screen (2026-10-11, [ceiling] fire_from_picture: any fire
+// lights the ceiling, spells too). x: 1 = in view, nothing nearer in front of it; y: the
+// fire in the picture round it (FireTex's sums over 5 x 5 blocks, 80 px). The memory is
+// for fire out of sight - behind the view or a wall; a spell's fire that went out in
+// plain view is gone, and a torch beside a brighter one in its cell (no candidate of its
+// own) still burns.
+float2 FireInView(float3 w, int eye)
+{
+    const float3 e = eye == 0 ? CeilEye0 : CeilEye1;
+    const float2 hero = eye == 0 ? CeilHero0 : CeilHero1;
+    const float3 dv = WrapDelta(float3(e.x + hero.x, e.y, e.z + hero.y), w);
+    const float3 R = eye == 0 ? CamRight0 : CamRight1, U = eye == 0 ? CamUp0 : CamUp1, B = eye == 0 ? CamBack0 : CamBack1;
+    const float z = -dot(dv, B);   // along the view, as TorchCands placed it
+    if (z < 1.0) return 0.0;
+    const float4 sp = eye == 0 ? SkyProj0 : SkyProj1;
+    const float2 ndc = float2(sp.x * dot(dv, R) / z - sp.z, sp.y * dot(dv, U) / z - sp.w);
+    if (abs(ndc.x) > 0.95 || abs(ndc.y) > 0.95) return 0.0;
+    const float2 at = float2(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+    if (at.y >= 0.88) return 0.0;   // the interface's strip: never looked at for fire
+    const float2 duv = UpsideDown ? float2(at.x, 1.0 - at.y) : at;
+    const float d = DepthAt(duv).x;
+    if (d > 1e-6 && NearPlane / d < z - 6.0) return 0.0;   // a wall or a monster in front of it
+    const int2 b = int2(at * float2(kFireW, kFireH));
+    float fire = 0.0;
+    [unroll] for (int y = -2; y <= 2; ++y)
+        [unroll] for (int x = -2; x <= 2; ++x) {
+            const int2 t = b + int2(x, y);
+            if (t.x >= 0 && t.y >= 0 && t.x < kFireW && t.y < kFireH) fire += Texel(FireSmp, t.x, t.y, (float)kFireW, (float)kFireH).w;
+        }
+    return float2(1.0, fire);
+}
+
 // The list of 16 torches: a torch already there is moved toward the candidate seen
-// near it and lives on; one not seen fades over CeilTorchMemory seconds; a place
-// that was free takes the next candidate no torch is near (the n-th free place the
-// n-th such candidate, so every place picks a different one). Two torches that came
-// together keep the first.
-float4 PS_TorchMerge(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
+// near it and lives on; one not seen fades over CeilTorchMemory seconds out of sight,
+// CeilFireGone in plain view with no fire left there; a place that was free takes the
+// next candidate no torch is near (the n-th free place the n-th such candidate, so
+// every place picks a different one). Two torches that came together keep the first.
+float4 TorchMerge(float4 pos, int eye)
 {
     if (!CeilOn || !CeilTorches || GameLightsOn) return 0.0;
     const int i = (int)pos.x, row = (int)pos.y;
@@ -1187,7 +1220,9 @@ float4 PS_TorchMerge(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
             if (row == 0) return float4(p0.xyz + WrapDelta(p0.xyz, q.xyz) * 0.3, lerp(p0.w, q.w, 0.3));
             return float4(lerp(c0.rgb, Texel(TorchCandSmp, bestJ, 1, 32.0, 2.0).rgb, 0.3), 1.0);
         }
-        const float life = c0.w - FrameTime * 0.001 / max(CeilTorchMemory, 0.1);
+        const float2 seen = FireInView(p0.xyz, eye);
+        if (seen.x > 0.5 && seen.y > 0.25) return row == 0 ? p0 : float4(c0.rgb, 1.0);   // still burning there
+        const float life = c0.w - FrameTime * 0.001 / max(seen.x > 0.5 ? CeilFireGone : CeilTorchMemory, 0.05);
         if (life <= 0.0) return 0.0;
         return row == 0 ? p0 : float4(c0.rgb, life);
     }
@@ -1214,6 +1249,8 @@ float4 PS_TorchMerge(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
     }
     return 0.0;
 }
+float4 PS_TorchMerge(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return TorchMerge(pos, 0); }
+float4 PS_TorchMergeR(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return TorchMerge(pos, 1); }
 float4 PS_TorchStore(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return tex2D(TorchSmp, uv); }
 
 // The glow and the flames the game draws over the void (no depth there), warm only (not the grey
@@ -1849,7 +1886,7 @@ technique D2R_DepthFog_R <
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_VoidFogBlurV; RenderTarget = VoidFogTex; }
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_Fire; RenderTarget = FireTex; }
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_TorchCandsR; RenderTarget = TorchCandTex; }
-    pass { VertexShader = VS_Fullscreen; PixelShader = PS_TorchMerge; RenderTarget = TorchTex; }
+    pass { VertexShader = VS_Fullscreen; PixelShader = PS_TorchMergeR; RenderTarget = TorchTex; }
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_TorchStore; RenderTarget = TorchOldTex; }
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_VoidGlow8; RenderTarget = VoidGlow8Tex; }
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_VoidGlow32; RenderTarget = VoidGlow32Tex; }

@@ -32,7 +32,7 @@ the headset-only ones.
   right from here. Each button shows only when it can do something.
 - **Status** - everything the VR chain needs, top to bottom: ReShade and the
   mod's effect, FlatVR's depth add-on, BodyWalk, the Xbox controller driver, the
-  D2R Bridge plugin, BodyWalk's settings for the mod, FlatVR running, head
+  Game Link plugin, BodyWalk's settings for the mod, FlatVR running, head
   tracking reaching the game, the game running with the mod. Green is fine;
   red or orange says what to do.
 

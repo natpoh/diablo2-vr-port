@@ -34,8 +34,10 @@
 
 #include "xr.h"
 #include "d2r_vr_shared.h"
+#include "link.h"
 #include "afr_eye_shared.h"
 #include "hud_native.h"
+#include "reshade_shield.h"
 
 namespace xr {
 void GuardSet();
@@ -63,9 +65,15 @@ struct Cfg {
     float quadM = 2.0f;       // outside a pair: the flat picture this far ahead, metres
     float quadWidthM = 2.4f;  // and this wide
     float leanM = 0.10f;      // the head may move this far from the body sideways (lean_m); farther, the body follows
+    bool byTurns = false;     // eyes by turns ([stereo] afr without pair_per_tick): one eye a game frame
     bool bareHands = false;   // bare_hands: a hand without a controller (the runtime's hand tracking) works as one; 0: it presses and places nothing
+    float handHoldMs = 1000.0f;   // hand_hold_ms: a controller that loses its place this long is held where it was by the head
+    float brightness = 1.0f;  // brightness: everything in the headset times this (the runtime's colour scale), 1 = as drawn
 };
 Cfg g_cfg;
+// XR_KHR_composition_layer_color_scale_bias: the runtime scales each layer's colour - the brightness
+// slider at no cost of ours. Without it the picture is as the game draws it.
+bool g_colorScaleExt = false;
 bool g_final = false;                 // the game is closing: no session again
 std::atomic<bool> g_stopWanted{false};  // [openxr] on went to 0 while a session runs: the draw thread ends it
 
@@ -121,6 +129,11 @@ Kind g_kind = kNone;
 XrFrameState g_fs{XR_TYPE_FRAME_STATE};
 XrView g_views[2] = {{XR_TYPE_VIEW}, {XR_TYPE_VIEW}};
 bool g_viewsOk = false;
+// Each eye's last picture as handed to the runtime: the pose and fov it was drawn with, and its
+// swapchain (whose last released image still holds it). Eyes by turns hands the eye not drawn this
+// frame in again with these - the runtime turns it to the head as it is (2026-10-11).
+struct LastEye { XrPosef pose; XrFovf fov; XrSwapchain sc; bool ok; };
+LastEye g_lastEye[2] = {};
 // A swapchain image acquired whose wait ran out: waited for again next time (NextImage).
 struct PendingImage { XrSwapchain sc; uint32_t idx; };
 PendingImage g_pendingImg[16];
@@ -268,9 +281,6 @@ float YawOf(const XrQuaternionf& q) {
 }
 
 // -- FlatVR --------------------------------------------------------------------
-void SignalBridge(const wchar_t* name) {
-    if (HANDLE e = OpenEventW(EVENT_MODIFY_STATE, FALSE, name)) { SetEvent(e); CloseHandle(e); }
-}
 // FlatVR's head sample moves while FlatVR runs (D2R VR Settings reads it the same way).
 uint32_t FlatVRCounter(bool* running) {
     *running = false;
@@ -285,16 +295,18 @@ uint32_t FlatVRCounter(bool* running) {
     CloseHandle(m);
     return c;
 }
-// Stopped through the D2R Bridge (BodyWalk's request_flatvr_running), then until its
+// Stopped through Game Link (BodyWalk's request_flatvr_running), then until its
 // head sample stands still for half a second (5 s at most): FlatVR holds the headset.
 void StopFlatVR() {
     bool running = false;
     uint32_t last = FlatVRCounter(&running);
     if (!running) { Log("vrcam: openxr - FlatVR is not running"); return; }
-    HANDLE e = OpenEventW(EVENT_MODIFY_STATE, FALSE, D2RVR_FLATVR_STOP_NAME);
-    if (!e) { Log("vrcam: openxr - FlatVR runs but the D2R Bridge is not there to stop it - the session may not get the headset"); return; }
-    SetEvent(e);
-    CloseHandle(e);
+    uint32_t caps = 0;
+    if (!link::HostAlive(&caps) || !(caps & BW_LINK_CAP_FLATVR_RUNNING)) {
+        Log("vrcam: openxr - FlatVR runs but BodyWalk's Game Link is not there to stop it - the session may not get the headset");
+        return;
+    }
+    link::RequestFlatVR(false);
     g_flatVrStopped = true;
     const ULONGLONG t0 = GetTickCount64();
     ULONGLONG still = t0;
@@ -304,15 +316,15 @@ void StopFlatVR() {
         if (c != last) { last = c; still = GetTickCount64(); }
         if (GetTickCount64() - still >= 500) break;
     }
-    LogF("vrcam: openxr - FlatVR stopped through the D2R Bridge (%.1f s)", (GetTickCount64() - t0) / 1000.0);
+    LogF("vrcam: openxr - FlatVR stopped through Game Link (%.1f s)", (GetTickCount64() - t0) / 1000.0);
     Sleep(300);
 }
 
-// -- the controllers: our own actions, published for the D2R Bridge ------------
+// -- the controllers: our own actions, published for BodyWalk -------------------
 // Grip and aim poses, triggers, grips, sticks and the face buttons of both hands,
 // suggested for the controllers OpenXR runtimes have. Read once a frame at the
-// frame's display time and written into D2RVR_XrInput: the bridge hands them to
-// BodyWalk in place of FlatVR's (gestures, the Mapping, the virtual pad).
+// frame's display time and written into Game Link's XrInput: BodyWalk takes them
+// in place of FlatVR's (gestures, the Mapping, the virtual pad).
 XrActionSet g_actSet = XR_NULL_HANDLE;
 XrAction g_aGrip = XR_NULL_HANDLE, g_aAim = XR_NULL_HANDLE, g_aTrigger = XR_NULL_HANDLE, g_aTriggerClick = XR_NULL_HANDLE,
          g_aSqueeze = XR_NULL_HANDLE, g_aStick = XR_NULL_HANDLE, g_aStickClick = XR_NULL_HANDLE, g_aPrimary = XR_NULL_HANDLE,
@@ -335,8 +347,7 @@ PFN_xrDestroyHandTrackerEXT g_xrDestroyHandTracker = nullptr;
 PFN_xrLocateHandJointsEXT g_xrLocateHandJoints = nullptr;
 int g_bareSaid[2] = {-1, -1};
 bool g_actionsOk = false;
-HANDLE g_inMap = nullptr;
-D2RVR_XrInput* g_in = nullptr;
+bool g_inSent = false;     // XrInput written this session: its end is told too
 D2RVR_XrInput g_inNow{};   // the last frame's, for vrcam's own arms
 
 XrPath Path(const char* s) {
@@ -442,28 +453,22 @@ bool MakeActions() {
     at.countActionSets = 1;
     at.actionSets = &g_actSet;
     if (!Ok(xrAttachSessionActionSets(g_session, &at), "xrAttachSessionActionSets")) return false;
-    if (!g_inMap) {   // made by whichever side comes first, readable at any integrity level (as the bridge's blocks)
-        SECURITY_ATTRIBUTES sa{sizeof sa, nullptr, FALSE};
-        PSECURITY_DESCRIPTOR sd = nullptr;
-        if (ConvertStringSecurityDescriptorToSecurityDescriptorW(L"D:(A;;GA;;;WD)S:(ML;;NW;;;LW)", SDDL_REVISION_1, &sd, nullptr))
-            sa.lpSecurityDescriptor = sd;
-        g_inMap = CreateFileMappingW(INVALID_HANDLE_VALUE, &sa, PAGE_READWRITE, 0, sizeof(D2RVR_XrInput), D2RVR_XR_INPUT_NAME);
-        if (sd) LocalFree(sd);
-    }
-    if (g_inMap && !g_in) g_in = (D2RVR_XrInput*)MapViewOfFile(g_inMap, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(D2RVR_XrInput));
-    Log(g_in ? "vrcam: openxr - controllers: our actions attached, published for the D2R Bridge"
-             : "vrcam: openxr - controllers: our actions attached, but the block for the D2R Bridge could not be made");
+    Log("vrcam: openxr - controllers: our actions attached, published for BodyWalk (Game Link)");
     return true;
 }
 
 // A located pose, only as far as the runtime vouches for it (2026-10-10): its turn finite and of
 // unit length (made exactly so), its place only with POSITION_VALID - a hand needs both (else
 // none); the head may be a turn alone (valid 2), held at `held`, where it was last located.
-void PoseOut(XrSpace space, D2RVR_XrPose* out, float* held = nullptr) {
+struct LocateSeen { XrResult r; XrSpaceLocationFlags flags; };
+void PoseOut(XrSpace space, D2RVR_XrPose* out, float* held = nullptr, LocateSeen* seen = nullptr) {
     *out = {};
+    if (seen) *seen = {XR_ERROR_HANDLE_INVALID, 0};
     if (!space) return;
     XrSpaceLocation l{XR_TYPE_SPACE_LOCATION};
-    if (XR_FAILED(xrLocateSpace(space, g_roomSpace ? g_roomSpace : g_space, g_fs.predictedDisplayTime, &l))) return;
+    const XrResult lr = xrLocateSpace(space, g_roomSpace ? g_roomSpace : g_space, g_fs.predictedDisplayTime, &l);
+    if (seen) *seen = {lr, XR_SUCCEEDED(lr) ? l.locationFlags : 0};
+    if (XR_FAILED(lr)) return;
     const bool rot = (l.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) != 0;
     const XrQuaternionf& q = l.pose.orientation;
     const XrVector3f& p = l.pose.position;
@@ -511,7 +516,7 @@ void ReadProfiles() {
     LogF("vrcam: openxr - controllers: left %s, right %s", g_inNow.profile[0][0] ? g_inNow.profile[0] : "none",
          g_inNow.profile[1][0] ? g_inNow.profile[1] : "none");
 }
-// This frame's head and hands, at its display time, to the bridge's block.
+// This frame's head and hands, at its display time, to Game Link's XrInput.
 bool BareHand(int h) {
     if (!g_handSourceExt || !g_handTracker[h] || !g_xrLocateHandJoints) return false;
     XrHandJointLocationEXT j[XR_HAND_JOINT_COUNT_EXT];
@@ -528,6 +533,68 @@ bool BareHand(int h) {
 }
 
 float g_headHeld[3] = {};   // where the head was last located (a frame with its turn alone keeps it there)
+
+// A controller out of the tracking cameras' view for a moment (PS VR2's Sense controllers at the
+// belt, behind the back, close to the body: SteamVR gives its turn alone, or nothing) dropped the
+// doll's arm at once and reset it - "the hands keep coming off" while the sticks worked
+// (2026-10-11). Its last tracked place is kept by the head (in the frame of the head's turn, so
+// it turns with the player) for [openxr] hand_hold_ms, with the turn the runtime still gives.
+struct HandHold { float rel[3]; float rot[4]; XrTime at; bool ok; };
+HandHold g_hold[2][2] = {};   // [hand][grip, aim]
+float g_poseHeld[2][2][3] = {};   // PoseOut's last place of each (it then gives the turn alone, valid 2)
+uint32_t g_holdTimes = 0;     // poses held so far (the log's count)
+// Without the input focus (another app's overlay or the dashboard has it) the runtime's places for
+// the controllers are not the controllers' (SteamVR gives them flagged valid, the doll's hands
+// jumped and reset): held by the head for as long as the focus is away.
+void HoldPose(D2RVR_XrPose& p, HandHold& h, const D2RVR_XrPose& head, bool focused) {
+    const XrTime now = g_fs.predictedDisplayTime;
+    if (!focused) p.valid = 0;
+    if (head.valid == 0) { if (p.valid == 2) p = D2RVR_XrPose{}; return; }
+    const XrQuaternionf hq{head.rot[0], head.rot[1], head.rot[2], head.rot[3]};
+    const float hy = YawOf(hq);
+    if (p.valid == 1) {
+        const XrVector3f rel = Rot(Yaw(-hy), {p.pos[0] - head.pos[0], p.pos[1] - head.pos[1], p.pos[2] - head.pos[2]});
+        h.rel[0] = rel.x; h.rel[1] = rel.y; h.rel[2] = rel.z;
+        memcpy(h.rot, p.rot, sizeof h.rot);
+        h.at = now;
+        h.ok = true;
+        return;
+    }
+    if (!h.ok || (focused && now - h.at > (XrTime)(g_cfg.handHoldMs * 1e6))) {   // gone for good: no hand, as before
+        if (p.valid != 1) p = D2RVR_XrPose{};
+        return;
+    }
+    const XrVector3f w = Rot(Yaw(hy), {h.rel[0], h.rel[1], h.rel[2]});
+    p.pos[0] = head.pos[0] + w.x; p.pos[1] = head.pos[1] + w.y; p.pos[2] = head.pos[2] + w.z;
+    if (p.valid != 2) memcpy(p.rot, h.rot, sizeof p.rot);   // no turn either: the last one
+    p.valid = 1;
+    if (++g_holdTimes % 500 == 1)
+        LogF("vrcam: openxr - a controller lost its place: held by the head (%u frames so far; [openxr] hand_hold_ms %.0f)", g_holdTimes, g_cfg.handHoldMs);
+}
+
+// What the runtime gives for each controller's grip, logged once per change (PS VR2 on SteamVR:
+// "the hands come off" while the controllers stay in the cameras' view, 2026-10-11): the locate's
+// result, its flags (P/p position valid/tracked, R/r orientation), the display time asked for
+// against the last frame's, the session focused or not, how long the last state held.
+struct HandSeen { XrResult r = XR_SUCCESS; XrSpaceLocationFlags flags = ~0ull; int focused = -1; double since = 0.0; uint32_t changes = 0; };
+HandSeen g_handSeen[2];
+XrTime g_lastPublishTime = 0;
+void LogHandSeen(int h, const LocateSeen& ls, bool focused, bool active) {
+    HandSeen& s = g_handSeen[h];
+    if (ls.r == s.r && ls.flags == s.flags && (int)focused == s.focused) return;
+    const double now = UsNow();
+    const double held = s.since > 0.0 ? (now - s.since) / 1000.0 : 0.0;
+    s.r = ls.r; s.flags = ls.flags; s.focused = focused; s.since = now;
+    if (++s.changes > 400 && s.changes % 50 != 0) return;   // a flood: every 50th after the first 400
+    const XrSpaceLocationFlags f = ls.flags;
+    LogF("vrcam: openxr - the %s grip: locate %d, %c%c%c%c (P/p position valid/tracked, R/r orientation), display time %+.2f ms on the last frame's%s, "
+         "session %s, actions %s; the last state held %.0f ms (change %u)",
+         h ? "right" : "left", (int)ls.r, (f & XR_SPACE_LOCATION_POSITION_VALID_BIT) ? 'P' : '-', (f & XR_SPACE_LOCATION_POSITION_TRACKED_BIT) ? 'p' : '-',
+         (f & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) ? 'R' : '-', (f & XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT) ? 'r' : '-',
+         g_lastPublishTime ? (double)(g_fs.predictedDisplayTime - g_lastPublishTime) / 1e6 : 0.0, g_fs.predictedDisplayTime ? "" : " (NO display time)",
+         focused ? "focused" : "NOT focused", active ? "active" : "inactive", held, s.changes);
+}
+
 void Publish(bool focused) {
     if (!g_actionsOk) return;
     D2RVR_XrInput& in = g_inNow;
@@ -538,8 +605,11 @@ void Publish(bool focused) {
     for (int h = 0; h < 2; ++h) {
         D2RVR_XrHand& o = in.hand[h];
         bool act = false;
-        PoseOut(g_gripSpace[h], &o.grip);
-        PoseOut(g_aimSpace[h], &o.aim);
+        LocateSeen gripSeen{};
+        PoseOut(g_gripSpace[h], &o.grip, g_poseHeld[h][0], &gripSeen);
+        PoseOut(g_aimSpace[h], &o.aim, g_poseHeld[h][1]);
+        HoldPose(o.grip, g_hold[h][0], in.head, focused);
+        HoldPose(o.aim, g_hold[h][1], in.head, focused);
         o.trigger = FloatOf(g_aTrigger, h, &act);
         o.squeeze = FloatOf(g_aSqueeze, h, &act);
         o.stickX = o.stickY = 0.0f;
@@ -550,15 +620,16 @@ void Publish(bool focused) {
             if (XR_SUCCEEDED(xrGetActionStateVector2f(g_session, &gi, &st)) && st.isActive) { o.stickX = st.currentState.x; o.stickY = st.currentState.y; act = true; }
         }
         uint32_t b = 0;
-        if (BoolOf(g_aPrimary, h, &act)) b |= D2RVR_XRB_PRIMARY;
-        if (BoolOf(g_aSecondary, h, &act)) b |= D2RVR_XRB_SECONDARY;
-        if (BoolOf(g_aStickClick, h, &act)) b |= D2RVR_XRB_STICK;
-        if (BoolOf(g_aMenu, h, &act)) b |= D2RVR_XRB_MENU;
+        if (BoolOf(g_aPrimary, h, &act)) b |= BW_LINK_XRB_PRIMARY;
+        if (BoolOf(g_aSecondary, h, &act)) b |= BW_LINK_XRB_SECONDARY;
+        if (BoolOf(g_aStickClick, h, &act)) b |= BW_LINK_XRB_STICK;
+        if (BoolOf(g_aMenu, h, &act)) b |= BW_LINK_XRB_MENU;
         bool clickBound = false;
-        if (BoolOf(g_aTriggerClick, h, &clickBound) || (!clickBound && o.trigger > 0.8f)) b |= D2RVR_XRB_TRIGGER;
-        if (o.squeeze > 0.8f) b |= D2RVR_XRB_SQUEEZE;
+        if (BoolOf(g_aTriggerClick, h, &clickBound) || (!clickBound && o.trigger > 0.8f)) b |= BW_LINK_XRB_TRIGGER;
+        if (o.squeeze > 0.8f) b |= BW_LINK_XRB_SQUEEZE;
         o.buttons = b;
         o.active = act || o.grip.valid ? 1u : 0u;
+        LogHandSeen(h, gripSeen, focused, act);
         const bool bare = BareHand(h);
         if (bare && !g_cfg.bareHands) {   // no controller in it: nothing pressed, no hand for BodyWalk
             o = D2RVR_XrHand{};
@@ -571,23 +642,18 @@ void Publish(bool focused) {
                       : "a controller (or not tracked)");
         }
     }
+    g_lastPublishTime = g_fs.predictedDisplayTime;
     in.stamp = D2RVRStampNow();
     in.counter++;
-    if (g_in) {
-        // the counter last: the bridge takes a block whose counter moved as whole
-        D2RVR_XrInput copy = in;
-        const uint32_t c = copy.counter;
-        copy.counter = g_in->counter;
-        memcpy(g_in, &copy, sizeof copy);
-        MemoryBarrier();
-        g_in->counter = c;
-    }
+    link::PublishXr(in, false);
+    g_inSent = true;
 }
 
 // -- start: instance, system, session (a worker thread) ------------------------
 void Teardown() {   // under g_lock or before the session exists
     g_running.store(false);
     for (PendingImage& q : g_pendingImg) q = PendingImage{};   // their swapchains go now
+    g_lastEye[0] = g_lastEye[1] = LastEye{};
     if (g_ptr.sc) xrDestroySwapchain(g_ptr.sc);
     g_ptr = Pointer{};
     for (HudOut& o : g_hudOut) { if (o.sc) xrDestroySwapchain(o.sc); o = HudOut{}; }
@@ -611,13 +677,12 @@ void Teardown() {   // under g_lock or before the session exists
     g_bareSaid[0] = g_bareSaid[1] = -1;
     g_pairYawAt.store(0);
     g_pairOpen.store(false);
-    if (g_in) {   // a last frame that says the session is over: the bridge gives the Mapping back at once
-        g_in->focused = 0;
-        g_in->head.valid = 0;
-        g_in->hand[0] = g_in->hand[1] = D2RVR_XrHand{};
-        g_in->stamp = D2RVRStampNow();
-        MemoryBarrier();
-        g_in->counter++;
+    if (g_inSent) {   // a last frame that says the session is over: BodyWalk gives the Mapping back at once
+        D2RVR_XrInput last{};
+        last.version = D2RVR_XR_INPUT_VERSION;
+        last.stamp = D2RVRStampNow();
+        link::PublishXr(last, true);
+        g_inSent = false;
     }
     if (g_space) { xrDestroySpace(g_space); g_space = XR_NULL_HANDLE; }
     if (g_session) { xrDestroySession(g_session); g_session = XR_NULL_HANDLE; }
@@ -626,14 +691,17 @@ void Teardown() {   // under g_lock or before the session exists
 }
 
 bool StartSession() {
+    // before the runtime is in the game: ReShade's DXGI factory must not take its asks for no adapter (reshade_shield.cpp)
+    reshade_shield::Install(g_log);
     // the extensions the runtime has
     uint32_t n = 0;
     if (!Ok(xrEnumerateInstanceExtensionProperties(nullptr, 0, &n, nullptr), "xrEnumerateInstanceExtensionProperties")) return false;
     std::vector<XrExtensionProperties> ext(n, {XR_TYPE_EXTENSION_PROPERTIES});
     xrEnumerateInstanceExtensionProperties(nullptr, n, &n, ext.data());
-    bool d3d12 = false, hands = false, handSource = false;
+    bool d3d12 = false, hands = false, handSource = false, colorScale = false;
     for (const auto& e : ext) {
         if (!strcmp(e.extensionName, XR_KHR_D3D12_ENABLE_EXTENSION_NAME)) d3d12 = true;
+        if (!strcmp(e.extensionName, XR_KHR_COMPOSITION_LAYER_COLOR_SCALE_BIAS_EXTENSION_NAME)) colorScale = true;
         if (!strcmp(e.extensionName, XR_EXT_HAND_TRACKING_EXTENSION_NAME)) hands = true;
         if (!strcmp(e.extensionName, XR_EXT_HAND_TRACKING_DATA_SOURCE_EXTENSION_NAME)) handSource = true;
     }
@@ -651,6 +719,10 @@ bool StartSession() {
     std::vector<const char*> exts{XR_KHR_D3D12_ENABLE_EXTENSION_NAME};
     if (hands) exts.push_back(XR_EXT_HAND_TRACKING_EXTENSION_NAME);
     if (hands && handSource) exts.push_back(XR_EXT_HAND_TRACKING_DATA_SOURCE_EXTENSION_NAME);
+    if (colorScale) exts.push_back(XR_KHR_COMPOSITION_LAYER_COLOR_SCALE_BIAS_EXTENSION_NAME);
+    g_colorScaleExt = colorScale;
+    Log(colorScale ? "vrcam: openxr - colour scale: yes ([openxr] brightness works)"
+                   : "vrcam: openxr - the runtime has no XR_KHR_composition_layer_color_scale_bias: [openxr] brightness does nothing");
     XrInstanceCreateInfo ci{XR_TYPE_INSTANCE_CREATE_INFO};
     strcpy_s(ci.applicationInfo.applicationName, "D2R VR");
     ci.applicationInfo.applicationVersion = 1;
@@ -768,12 +840,12 @@ DWORD WINAPI StartThread(void*) {
     if (!ok) {
         GuardClear("no session, and the game lives");
         Log("vrcam: openxr - no session: FlatVR goes on as always for this run");
-        if (g_flatVrStopped) { SignalBridge(D2RVR_FLATVR_START_NAME); g_flatVrStopped = false; }
+        if (g_flatVrStopped) { link::RequestFlatVR(true); g_flatVrStopped = false; }
         g_state.store(kFailed);
         return 0;
     }
     LogModules();
-    SignalBridge(D2RVR_GESTURES_GAME_NAME);   // BodyWalk's Mapping on the game's own headset ("D2R VR")
+    link::RequestPresenter(true);   // BodyWalk's Mapping on the game's own headset ("Game Link")
     LogF("vrcam: openxr - ready in %.1f s, waiting for the runtime's go", (GetTickCount64() - t0) / 1000.0);
     g_state.store(kCreated);
     return 0;
@@ -1489,49 +1561,26 @@ uint32_t HangHud(const XrCompositionLayerBaseHeader** layers, uint32_t nl, uint3
 }
 
 // BodyWalk's gesture zones ticked "VR" in its Mapping tab (the belt's potions), handed on
-// by the bridge (D2RVR_XrZones): placed by BodyWalk from the head this game gave it, so in
-// the space that head was located in (g_roomSpace). Read whole (the counter odd while the
-// bridge writes); none once BodyWalk has sent none for half a second.
-HANDLE g_zonesMap = nullptr;
-const D2RVR_XrZones* g_zonesIn = nullptr;
-
-uint32_t ReadZones(D2RVR_XrZone* out) {
-    if (!g_zonesIn) {
-        static ULONGLONG lastTry = 0;   // the bridge makes the block: looked for once a second until it is there
-        if (lastTry && GetTickCount64() - lastTry < 1000) return 0;
-        lastTry = GetTickCount64();
-        if (!g_zonesMap) g_zonesMap = OpenFileMappingW(FILE_MAP_READ, FALSE, D2RVR_XR_ZONES_NAME);
-        if (!g_zonesMap) return 0;
-        g_zonesIn = (const D2RVR_XrZones*)MapViewOfFile(g_zonesMap, FILE_MAP_READ, 0, 0, sizeof(D2RVR_XrZones));
-        if (!g_zonesIn) return 0;
-        Log("vrcam: openxr - BodyWalk's gesture zones found (the bridge's block)");
-    }
-    const volatile uint32_t& counter = ((const volatile D2RVR_XrZones*)g_zonesIn)->counter;
-    for (int tries = 0; tries < 4; ++tries) {
-        const uint32_t c = counter;
-        if (c & 1u) { YieldProcessor(); continue; }
-        MemoryBarrier();
-        const uint32_t ver = g_zonesIn->version, stamp = g_zonesIn->stamp;
-        const uint32_t n = std::min<uint32_t>(g_zonesIn->count, D2RVR_XR_ZONES_MAX);
-        memcpy(out, (const void*)g_zonesIn->zone, n * sizeof(D2RVR_XrZone));
-        MemoryBarrier();
-        if (counter != c) continue;
-        if (ver != D2RVR_XR_ZONES_VERSION || D2RVRStampNow() - stamp > 5000u) return 0;   // 0.1 ms units: half a second
-        return n;
-    }
-    return 0;
+// through Game Link's VrZones: placed by BodyWalk from the head this game gave it, so in
+// the space that head was located in (g_roomSpace); none once BodyWalk has sent none for
+// half a second.
+uint32_t ReadZones(BW_LinkVrZone* out) {
+    const uint32_t n = link::VrZones(out, BW_LINK_VRZONES_MAX);
+    static bool told = false;
+    if (n && !told) { told = true; Log("vrcam: openxr - BodyWalk's gesture zones come (Game Link)"); }
+    return n;
 }
 
 // The zones as see-through balls, each a quad turned to the head, the nearest kept when
 // there are more than the runtime's layers allow, the farthest laid first so a nearer one
 // lies over it. Appended to layers[] from nl on, at most max.
 uint32_t HangZones(const XrCompositionLayerBaseHeader** layers, uint32_t nl, uint32_t max) {
-    D2RVR_XrZone z[D2RVR_XR_ZONES_MAX];
+    BW_LinkVrZone z[BW_LINK_VRZONES_MAX];
     uint32_t n = ReadZones(z);
     if (!n || nl >= max || !g_inNow.head.valid || !MakeHudPipeline()) return nl;
     const XrVector3f head = P3(g_inNow.head.pos);
-    uint32_t order[D2RVR_XR_ZONES_MAX];
-    float dist[D2RVR_XR_ZONES_MAX];
+    uint32_t order[BW_LINK_VRZONES_MAX];
+    float dist[BW_LINK_VRZONES_MAX];
     uint32_t m = 0;
     for (uint32_t i = 0; i < n; ++i) {
         if (!(z[i].radius > 0.005f && z[i].radius < 1.0f) || !((z[i].rgba >> 24) & 0xFFu)) continue;   // nothing, or not seen
@@ -1563,7 +1612,7 @@ uint32_t HangZones(const XrCompositionLayerBaseHeader** layers, uint32_t nl, uin
     const float seconds = (float)(GetTickCount64() % 3600000ull) / 1000.0f;
     const float cell = (float)kZoneCell;
     for (uint32_t k = 0; k < m; ++k) {
-        const D2RVR_XrZone& zone = z[order[k]];
+        const BW_LinkVrZone& zone = z[order[k]];
         const float x = (float)(k % kZoneCols) * cell, y = (float)(k / kZoneCols) * cell;
         const D3D12_VIEWPORT vp{x, y, cell, cell, 0.0f, 1.0f};
         const D3D12_RECT sc{(LONG)x, (LONG)y, (LONG)(x + cell), (LONG)(y + cell)};
@@ -1638,8 +1687,25 @@ void Poll() {
     while (g_inst && xrPollEvent(g_inst, &ev) == XR_SUCCESS) {
         if (ev.type == XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED) {
             const auto& sc = *(const XrEventDataSessionStateChanged*)&ev;
+            const XrSessionState was = g_ss;
             g_ss = sc.state;
             LogF("vrcam: openxr - session %s", StateName(g_ss));
+            {   // input focus taken away again and again (PS VR2 on SteamVR: 39 times in 20 minutes, the
+                // doll's hands dropping each time, 2026-10-11) - said once a minute, with who may take it
+                static ULONGLONG minuteAt = 0;
+                static uint32_t lost = 0;
+                if (was == XR_SESSION_STATE_FOCUSED && g_ss == XR_SESSION_STATE_VISIBLE) ++lost;
+                const ULONGLONG now = GetTickCount64();
+                if (!minuteAt) minuteAt = now;
+                if (now - minuteAt >= 60000) {
+                    if (lost >= 3)
+                        LogF("vrcam: openxr - the input focus went to something else %u times in the last minute: SteamVR's dashboard, "
+                             "the headset's own menu or another app's overlay takes it (the hands are held by the head meanwhile, "
+                             "the buttons let go)", lost);
+                    minuteAt = now;
+                    lost = 0;
+                }
+            }
             if (g_ss == XR_SESSION_STATE_READY) {
                 XrSessionBeginInfo bi{XR_TYPE_SESSION_BEGIN_INFO};
                 bi.primaryViewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
@@ -1654,14 +1720,14 @@ void Poll() {
                 EndSessionNow(g_ss == XR_SESSION_STATE_EXITING ? "exiting" : "the headset is lost");
                 Teardown();
                 g_state.store(kFailed);
-                if (g_flatVrStopped) { SignalBridge(D2RVR_FLATVR_START_NAME); g_flatVrStopped = false; Log("vrcam: openxr - FlatVR started again"); }
+                if (g_flatVrStopped) { link::RequestFlatVR(true); g_flatVrStopped = false; Log("vrcam: openxr - FlatVR started again"); }
                 return;
             }
         } else if (ev.type == XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING) {
             EndSessionNow("the runtime is going away");
             Teardown();
             g_state.store(kFailed);
-            if (g_flatVrStopped) { SignalBridge(D2RVR_FLATVR_START_NAME); g_flatVrStopped = false; }
+            if (g_flatVrStopped) { link::RequestFlatVR(true); g_flatVrStopped = false; }
             return;
         } else if (ev.type == XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED) {
             if (g_actionsOk) ReadProfiles();
@@ -1773,6 +1839,34 @@ bool OpenFrame(Kind kind) {
                 g_monoPos = {0.5f * (a.x + b.x), 0.5f * (a.y + b.y), 0.5f * (a.z + b.z)};
             }
         }
+        {   // A recentre the runtime never told: SteamVR (PS VR2) moved LOCAL from the floor to the
+            // head - the head 1.7 m lower from one frame to the next, no REFERENCE_SPACE_CHANGE_PENDING,
+            // and the camera, held to the old recentre's height, fell to the ground (2026-10-11). A
+            // head moves no faster than ~5 m/s or turns ~1500 deg/s: a jump beyond that is the space.
+            static XrVector3f lastMid{};
+            static float lastYaw = 0.0f;
+            static XrTime lastT = 0;
+            const bool posOk = (vs.viewStateFlags & XR_VIEW_STATE_POSITION_VALID_BIT) != 0;
+            const XrVector3f& a = g_views[0].pose.position, &b = g_views[1].pose.position;
+            const XrVector3f m{0.5f * (a.x + b.x), 0.5f * (a.y + b.y), 0.5f * (a.z + b.z)};
+            const float yawNow = YawOf(g_views[0].pose.orientation);
+            const double dt = (double)(g_fs.predictedDisplayTime - lastT) / 1e9;
+            if (lastT && posOk && dt > 0.0 && dt < 0.1) {
+                const float dx = m.x - lastMid.x, dy = m.y - lastMid.y, dz = m.z - lastMid.z;
+                const float moved = sqrtf(dx * dx + dy * dy + dz * dz);
+                float turned = yawNow - lastYaw;
+                turned = fabsf(atan2f(sinf(turned), cosf(turned)));
+                const double t = std::max(dt, 0.011);
+                if (moved > std::max(0.25, 5.0 * t) || turned > std::max(0.79, 26.0 * t)) {
+                    g_recentre.store(true);
+                    LogF("vrcam: openxr - the head jumped %.2f m (%.2f %.2f %.2f) and %.1f deg in %.1f ms: the runtime moved our space "
+                         "without a word - recentred", moved, dx, dy, dz, turned * 57.29578f, dt * 1000.0);
+                }
+            }
+            lastT = posOk ? g_fs.predictedDisplayTime : 0;   // (no place: no jump to judge after it)
+            lastMid = m;
+            lastYaw = yawNow;
+        }
         const bool tracked = (vs.viewStateFlags & XR_VIEW_STATE_ORIENTATION_TRACKED_BIT) != 0;
         if (g_fs.shouldRender && (tracked || g_framesRunning > 45) && g_fs.predictedDisplayTime >= g_recentreAfter &&
             g_recentre.exchange(false)) {   // (the request waits until then: the exchange last)
@@ -1818,10 +1912,16 @@ void CloseFrame() {
     const XrCompositionLayerBaseHeader* layers[4 + kZonesMax] = {};
     const uint32_t most = std::min<uint32_t>(4 + kZonesMax, g_maxLayers);
     uint32_t nl = 0;
-    if (g_fs.shouldRender && g_kind == kPair && g_copied[0] && g_copied[1] && g_viewsOk) {
+    if (g_kind == kPair && g_viewsOk)
+        for (int e = 0; e < 2; ++e)
+            if (g_copied[e]) g_lastEye[e] = LastEye{g_views[e].pose, g_fovUsed[e], g_eyeChain[e].sc, true};   // drawn with these
+    // eyes by turns: this frame's eye and the other's last, still in its swapchain
+    const bool turns = g_cfg.byTurns && (g_copied[0] || g_copied[1]) && g_lastEye[0].ok && g_lastEye[1].ok &&
+                       g_lastEye[0].sc == g_eyeChain[0].sc && g_lastEye[1].sc == g_eyeChain[1].sc;
+    if (g_fs.shouldRender && g_kind == kPair && ((g_copied[0] && g_copied[1]) || turns) && g_viewsOk) {
         for (int e = 0; e < 2; ++e) {
-            pv[e].pose = g_views[e].pose;   // the poses and fovs the eyes were drawn with
-            pv[e].fov = g_fovUsed[e];
+            pv[e].pose = g_lastEye[e].pose;   // the poses and fovs the eyes were drawn with
+            pv[e].fov = g_lastEye[e].fov;
             pv[e].subImage.swapchain = g_eyeChain[e].sc;
             pv[e].subImage.imageRect = {{0, 0}, {(int32_t)g_eyeChain[e].w, (int32_t)g_eyeChain[e].h}};
         }
@@ -1850,6 +1950,15 @@ void CloseFrame() {
         nl = HangZones(layers, nl, most);   // the belt's balls stay where they are over a panel too
         ++g_st.monos;
     }
+    // [openxr] brightness: every layer's colour scaled by the runtime (the HUD's too, so it sits in
+    // the picture as before). The layers' own structs live on between frames: their link is set
+    // every frame, to it or to nothing.
+    static XrCompositionLayerColorScaleBiasKHR scale{XR_TYPE_COMPOSITION_LAYER_COLOR_SCALE_BIAS_KHR};
+    const float bright = g_cfg.brightness;
+    const bool scaled = g_colorScaleExt && std::fabs(bright - 1.0f) > 0.001f;
+    scale.colorScale = {bright, bright, bright, 1.0f};
+    scale.colorBias = {0.0f, 0.0f, 0.0f, 0.0f};
+    for (uint32_t i = 0; i < nl; ++i) ((XrCompositionLayerBaseHeader*)layers[i])->next = scaled ? &scale : nullptr;
     static int ends = 0;
     if (ends < 3) LogF("vrcam: openxr - frame %d: xrEndFrame with %u layer(s)", ++ends, nl);
     XrFrameEndInfo ei{XR_TYPE_FRAME_END_INFO};
@@ -1961,12 +2070,33 @@ void LoadSettings(const wchar_t* ini) {
     }
     g_cfg.quadWidthM = std::clamp(f(L"flat_width_m", 2.4f), 0.3f, 20.0f);
     g_cfg.leanM = std::clamp(f(L"lean_m", 0.10f), 0.0f, 5.0f);
+    g_cfg.handHoldMs = std::clamp(f(L"hand_hold_ms", 1000.0f), 0.0f, 10000.0f);
+    {   // eyes by turns (D2R VR Settings > Performance > 3D in the headset > Native OpenXR - eyes by turns)
+        static int said = -1;
+        const bool turns = GetPrivateProfileIntW(L"stereo", L"afr", 0, ini) != 0 && GetPrivateProfileIntW(L"stereo", L"pair_per_tick", 0, ini) == 0;
+        if (on && (int)turns != said) {
+            said = turns;
+            Log(turns ? "vrcam: openxr - eyes by turns: one eye a game frame, the other as it was last drawn"
+                      : "vrcam: openxr - both eyes from one game frame");
+        }
+        g_cfg.byTurns = turns;
+    }
     g_cfg.bareHands = f(L"bare_hands", 0.0f) != 0.0f;
+    {
+        const float b = f(L"brightness", 1.0f);
+        g_cfg.brightness = std::isfinite(b) ? std::clamp(b, 0.2f, 2.0f) : 1.0f;
+        static float said = 1.0f;
+        if (on && g_cfg.brightness != said) {
+            said = g_cfg.brightness;
+            LogF("vrcam: openxr - brightness %.2f%s", said, g_colorScaleExt || g_state.load() == kIdle ? "" : " (the runtime cannot: no colour scale)");
+        }
+    }
 }
 
 bool On() { return g_cfg.on && g_state.load() != kFailed; }
 bool Running() { return g_running.load(); }
 float LeanM() { return g_cfg.leanM; }
+bool ByTurns() { return g_cfg.on && g_cfg.byTurns; }
 bool StopPending() { return g_stopWanted.load() && g_state.load() != kIdle; }
 void Recenter() { g_recentre.store(true); }
 
@@ -2100,19 +2230,18 @@ void OnPresent(ID3D12Device* dev, ID3D12CommandQueue* queue, ID3D12Resource* bb,
     ReleaseSRWLockExclusive(&g_lock);
 }
 
-// BodyWalk's bridge come after the session was made (BodyWalk started later): the signal for
-// its Mapping sent again - the one at the start found no bridge to take it (2026-10-10).
-void FollowBridge() {
+// BodyWalk come after the session was made (BodyWalk started later): the wish for its
+// Mapping made again - the one at the start found no BodyWalk to take it (2026-10-10).
+void FollowLink() {
     static bool had = false;
     if (g_state.load() != kCreated) { had = false; return; }
-    HANDLE e = OpenEventW(EVENT_MODIFY_STATE, FALSE, D2RVR_GESTURES_GAME_NAME);
-    const bool have = e != nullptr;
+    uint32_t caps = 0;
+    const bool have = link::HostAlive(&caps) && (caps & BW_LINK_CAP_XR_INPUT);
     if (have && !had) {
-        SetEvent(e);
-        Log("vrcam: openxr - BodyWalk's D2R Bridge is there: its Mapping on the game's headset (D2R VR)");
+        link::RequestPresenter(true);
+        Log("vrcam: openxr - BodyWalk's Game Link is there: its Mapping on the game's headset (Game Link)");
     }
     had = have;
-    if (e) CloseHandle(e);
 }
 
 // The session and the instance gone, FlatVR started again; final: the game is closing.
@@ -2130,8 +2259,8 @@ void Stop(bool final) {
     }
     GuardClear(final ? "the game closes" : "switched off");
     g_state.store(final ? kFailed : kIdle);
-    if (had) SignalBridge(D2RVR_GESTURES_FLATVR_NAME);   // the Mapping back on FlatVR (if it was the game's)
-    if (g_flatVrStopped) { SignalBridge(D2RVR_FLATVR_START_NAME); g_flatVrStopped = false; Log("vrcam: openxr - FlatVR started again"); }
+    if (had) link::RequestPresenter(false);   // the Mapping back on FlatVR (if it was the game's)
+    if (g_flatVrStopped) { link::RequestFlatVR(true); g_flatVrStopped = false; Log("vrcam: openxr - FlatVR started again"); }
     ReleaseSRWLockExclusive(&g_lock);
 }
 

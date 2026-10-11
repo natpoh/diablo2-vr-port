@@ -12,12 +12,12 @@
 // of that command, so every gate of the game's stays the game's - and no pad
 // and no key is involved, the UI stays whatever it is.
 //
-// What is pressed: D2RVR_Commands (shared/d2r_vr_shared.h), bit n = the
-// game's command n, written by the D2R Bridge from BodyWalk's "D2R key: ..."
-// actions (every named command, kD2RVRCommands). Tick() (vrcam's 1 ms timer)
+// What is pressed: BodyWalk's "D2R key: ..." actions (every named command,
+// kD2RVRCommands in shared/d2r_vr_shared.h), held as Game Link's Actions say
+// (vr/link.cpp: bit n = the game's command n). Tick() (vrcam's 1 ms timer)
 // notices a change and queues Apply() on the UI thread, where the game handles
-// its keys; Apply() releases what went up and presses what went down. The
-// bridge gone = everything released.
+// its keys; Apply() releases what went up and presses what went down. BodyWalk
+// gone = everything released.
 
 #define WIN32_LEAN_AND_MEAN
 #ifndef NOMINMAX
@@ -33,6 +33,7 @@
 #include <D2RLPlugin/api.h>
 
 #include "d2r_vr_shared.h"
+#include "link.h"
 #include "sigscan.h"
 
 using namespace D2RL;
@@ -52,9 +53,8 @@ using ExecFn = bool (*)(const void* binding, void* table, bool force);
 
 const PluginContext* g_ctx = nullptr;
 const ThreadService* g_threads = nullptr;
-const D2RVR_Commands* g_block = nullptr;
 std::atomic<bool> g_queued{false};
-// The bits Apply() has pressed (UI thread writes, the timer reads), as D2RVR_Commands::held.
+// The bits Apply() has pressed (UI thread writes, the timer reads): bit n = the game's command n.
 std::atomic<uint64_t> g_applied[2] = {0, 0};
 std::atomic<int> g_ok{-1};            // -1 not found yet, 1 found, 0 faulted (switched off for the session)
 
@@ -77,22 +77,11 @@ template <class S> const S* Query(const PluginContext* ctx) {
 
 bool Read(void* d, const void* s, size_t n) noexcept { __try { memcpy(d, s, n); return true; } __except (EXCEPTION_EXECUTE_HANDLER) { return false; } }
 
-// What BodyWalk holds now; nothing while there is no bridge (or another version of the block).
-void CommandsHeld(uint64_t out[2]) {
-    out[0] = out[1] = 0;
-    if (!g_block) {
-        static ULONGLONG lastTry = 0;
-        if (GetTickCount64() - lastTry < 1000) return;
-        lastTry = GetTickCount64();
-        if (HANDLE m = OpenFileMappingW(FILE_MAP_READ, FALSE, D2RVR_COMMANDS_NAME)) {
-            g_block = (const D2RVR_Commands*)MapViewOfFile(m, FILE_MAP_READ, 0, 0, sizeof(D2RVR_Commands));
-            if (!g_block) CloseHandle(m);   // else kept for the life of the game, as vrcam's own views
-        }
-        if (!g_block) return;
-    }
-    if (g_block->version != D2RVR_COMMANDS_VERSION) return;
-    out[0] = g_block->held[0];
-    out[1] = g_block->held[1] & ((1ull << (kCommands - 64)) - 1);   // commands 64..0x44
+// What BodyWalk holds now; nothing while BodyWalk is not there. One Presses per
+// caller: a short press reads as held for each of them (link::kTapMs).
+void Held(uint64_t out[2], link::Presses& presses) {
+    link::CommandsHeld(out, presses);
+    out[1] &= (1ull << (kCommands - 64)) - 1;   // commands 64..0x44
 }
 
 bool Same(const uint64_t a[2]) { return a[0] == g_applied[0].load() && a[1] == g_applied[1].load(); }
@@ -173,7 +162,8 @@ void Press(uint32_t cmd, bool down) {
 void __cdecl Apply(const PluginContext*, void*) noexcept {
     g_queued.store(false);   // first: a change from now on queues another run
     uint64_t want[2];
-    CommandsHeld(want);
+    static link::Presses presses;
+    Held(want, presses);
     if (Same(want)) return;
     const uint64_t had[2] = {g_applied[0].load(), g_applied[1].load()};
     auto store = [&] { g_applied[0].store(want[0]); g_applied[1].store(want[1]); };
@@ -199,7 +189,8 @@ void Init(const PluginContext* ctx) {
 void Tick() {
     if (!g_ctx || !g_threads || !g_threads->runOnUiThread || g_ok.load() == 0) return;
     uint64_t held[2];
-    CommandsHeld(held);
+    static link::Presses presses;
+    Held(held, presses);
     if (Same(held) || g_queued.exchange(true)) return;
     if (g_threads->runOnUiThread(g_ctx, &Apply, nullptr) != Threads::Result::Success) g_queued.store(false);
 }

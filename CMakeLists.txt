@@ -3,7 +3,8 @@ project(d2r_vr LANGUAGES C CXX RC)
 
 #   d2rl-vrcam.dll    game side, D2RLoader plugin: the VR layer (vr/) on our own
 #                     camera and render distance (cleanroom/) - no D2R-3D code
-#   d2r_bridge.dll    BodyWalk side, output plugin (head yaw -> shared memory)
+# BodyWalk's side is its own Game Link plugin (game_link.dll, built with BodyWalk);
+# the mod speaks bodywalk/game_link.h to it (vr/link.cpp).
 # D2R-3D/ is kept for reference only; nothing here builds from it.
 
 set(CMAKE_CXX_STANDARD 20)
@@ -14,16 +15,20 @@ set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded")   # no VC runtime to ship next t
 option(D2RVR_FIRST_PERSON "Build first person: arms, hands, held weapons, VR F4 and flat F3" ON)
 add_compile_definitions(D2RVR_FIRST_PERSON=$<IF:$<BOOL:${D2RVR_FIRST_PERSON}>,1,0>)
 
-# Headers from BodyWalk and FlatVR (the shared-memory blocks, the plugin API) and the
+# Headers from BodyWalk and FlatVR (the shared-memory blocks, BodyWalk Game Link) and the
 # ReShade SDK: in external/ when this is the public tree (tools/make_public.py), else
-# from the BodyWalk source tree beside it.
+# from the BodyWalk source tree beside it. Game Link (bodywalk/game_link.h, MIT) moves to
+# BodyWalk's public plugin SDK (integralab-am/bodywalkvr-plugin-sdk) and comes in through
+# FetchContent once that is out.
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external")
     set(_ext "${CMAKE_CURRENT_SOURCE_DIR}/external")
-    set(BODYWALK_SRC "${_ext}/bodywalk" CACHE PATH "Dir holding plugin_api.h and pad_mirror_shared.h")
+    set(BODYWALK_SRC "${_ext}/bodywalk" CACHE PATH "Dir holding pad_mirror_shared.h")
+    set(BODYWALK_SDK_INCLUDE "${_ext}" CACHE PATH "Dir holding bodywalk/game_link.h")
     set(FLATVR_SHARED_DIR "${_ext}/flatvr" CACHE PATH "Dir holding FlatVR's shared-memory headers")
     set(RESHADE_SDK_INCLUDE "${_ext}/reshade/include" CACHE PATH "ReShade SDK include dir")
 else()
-    set(BODYWALK_SRC "C:/wsl/vjoy/cpp_src/src" CACHE PATH "Dir holding plugin_api.h and pad_mirror_shared.h")
+    set(BODYWALK_SRC "C:/wsl/vjoy/cpp_src/src" CACHE PATH "Dir holding pad_mirror_shared.h")
+    set(BODYWALK_SDK_INCLUDE "C:/wsl/vjoy/sdk/include" CACHE PATH "Dir holding bodywalk/game_link.h")
     set(FLATVR_SHARED_DIR "C:/wsl/vjoy/cpp_src/flatvr/reshade_depth_addon" CACHE PATH "Dir holding FlatVR's shared-memory headers")
     set(RESHADE_SDK_INCLUDE "C:/wsl/vjoy/cpp_src/flatvr/reshade_sdk/include" CACHE PATH "ReShade SDK include dir")
 endif()
@@ -80,15 +85,10 @@ add_library(heft_bench SHARED cleanroom/heft/heft_capi.cpp)
 target_link_libraries(heft_bench PRIVATE heft_benchdefs)
 target_compile_options(heft_bench PRIVATE /utf-8 /W4 /EHsc /permissive-)
 
-add_library(d2rl-vrcam SHARED vr/vrcam.cpp vr/xr.cpp vr/dlss_mv.cpp vr/skeletons.cpp vr/gamestate.cpp vr/gamecmd.cpp vr/probe.cpp vr/uitrace.cpp vr/hud.cpp vr/memdiff.cpp vr/writewatch.cpp vr/vrcam.rc)
-target_include_directories(d2rl-vrcam PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared ${FLATVR_SHARED_DIR} ${RESHADE_SDK_INCLUDE} ${BODYWALK_SRC})
+add_library(d2rl-vrcam SHARED vr/vrcam.cpp vr/xr.cpp vr/link.cpp vr/reshade_shield.cpp vr/dlss_mv.cpp vr/skeletons.cpp vr/gamestate.cpp vr/gamecmd.cpp vr/probe.cpp vr/uitrace.cpp vr/hud.cpp vr/memdiff.cpp vr/writewatch.cpp vr/vrcam.rc)
+target_include_directories(d2rl-vrcam PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared ${FLATVR_SHARED_DIR} ${RESHADE_SDK_INCLUDE} ${BODYWALK_SRC} ${BODYWALK_SDK_INCLUDE})
 target_link_libraries(d2rl-vrcam PRIVATE d2rcam minhook user32 OpenXR::openxr_loader)
 target_compile_options(d2rl-vrcam PRIVATE /utf-8 /W3 /EHsc /permissive-)
-
-add_library(d2r_bridge SHARED bodywalk_bridge/d2r_bridge.cpp)
-target_include_directories(d2r_bridge PRIVATE ${BODYWALK_SRC} ${CMAKE_CURRENT_SOURCE_DIR}/shared ${FLATVR_SHARED_DIR})
-target_link_libraries(d2r_bridge PRIVATE advapi32)
-target_compile_options(d2r_bridge PRIVATE /utf-8 /W3 /EHsc)
 
 # Sliders for d2r_vr.ini, dropped next to it in <game>\d2rloader\plugins.
 # Its version (Home page, update check) is vrcam's g_info_version: d2r_vr_version.h is made from
@@ -114,12 +114,18 @@ target_compile_options(d2r_vr_settings PRIVATE /utf-8 /W3 /EHsc)
 # d2r_vr_settings.ini.
 set_target_properties(d2r_vr_settings PROPERTIES OUTPUT_NAME "D2R_VR_Settings")
 target_compile_definitions(d2r_vr_settings PRIVATE UNICODE _UNICODE)
-target_include_directories(d2r_vr_settings PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared ${FLATVR_SHARED_DIR} ${D2RVR_GEN_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/sigscan)   # d2r_vr_state.h: the weapon in hand; afr_eye_shared.h: is FlatVR running
+target_include_directories(d2r_vr_settings PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared ${FLATVR_SHARED_DIR} ${D2RVR_GEN_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/sigscan ${BODYWALK_SDK_INCLUDE})   # d2r_vr_state.h: the weapon in hand; afr_eye_shared.h: is FlatVR running; game_link.h: BodyWalk
 # Our own debugging tools (not in the public tree).
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/probe_test.cpp")
     # The skeleton probe against a fake Granny skeleton in its own memory.
     add_executable(probe_test tools/probe_test.cpp vr/probe.cpp)
     target_compile_options(probe_test PRIVATE /utf-8 /W3 /EHsc)
+endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/game_link_test.cpp")
+    # BodyWalk Game Link end to end: BodyWalk's game_link.dll and vr/link.cpp in one process.
+    add_executable(game_link_test tools/game_link_test.cpp vr/link.cpp)
+    target_include_directories(game_link_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared ${CMAKE_CURRENT_SOURCE_DIR}/vr ${BODYWALK_SDK_INCLUDE} ${BODYWALK_SRC})   # plugin_api.h: BodyWalk's
+    target_compile_options(game_link_test PRIVATE /utf-8 /W3 /EHsc)
 endif()
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/dump_loader/D2R_image.bin")
     # The address resolver on the game's snapshot: sigscan_test dump_loader/D2R_image.bin
