@@ -4209,6 +4209,17 @@ void HookCursor() {
 // and panels on them) - but not while the chat line is open: then they are
 // letters, and every other key goes to the game anyway.
 LRESULT CALLBACK GameWndProc(HWND h, UINT msg, WPARAM w, LPARAM l) {
+    // Native OpenXR: the window may be bigger than the monitor (a square as tall as the headset's
+    // eye on a 1440p screen). Windows holds a window to the screen's height plus its frame through
+    // this message (players' 3000x3000 came out 3000x1460, the bars in the headset stayed); the
+    // game sizes its picture by the window, so lifted, it draws the square (2026-10-11).
+    if (msg == WM_GETMINMAXINFO && xr::On()) {
+        const LRESULT r = CallWindowProcW(g_gameWndProc, h, msg, w, l);
+        MINMAXINFO* mm = (MINMAXINFO*)l;
+        mm->ptMaxTrackSize.x = std::max<LONG>(mm->ptMaxTrackSize.x, 16384);
+        mm->ptMaxTrackSize.y = std::max<LONG>(mm->ptMaxTrackSize.y, 16384);
+        return r;
+    }
     // F1..F3 (F4 in VR) pick the view: the game, which has skills on them, never sees them.
     if ((msg == WM_KEYDOWN || msg == WM_KEYUP) && w >= VK_F1 && (int)w < VK_F1 + ViewCount()) return 0;
     // Enter opening the chat line: its letters may come before the game has
@@ -4265,7 +4276,55 @@ LRESULT CALLBACK GameWndProc(HWND h, UINT msg, WPARAM w, LPARAM l) {
     return CallWindowProcW(g_gameWndProc, h, msg, w, l);
 }
 
+// The game's windowed size from its Settings.json ("Screen Resolution (Windowed)", "Window Mode" 0 =
+// a window), 0 0 when it is not a window or cannot be read.
+void GameWindowedSize(int* w, int* h) {
+    *w = *h = 0;
+    PWSTR dir = nullptr;
+    std::wstring path;
+    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_SavedGames, 0, nullptr, &dir))) path = std::wstring(dir) + L"\\Diablo II Resurrected\\Settings.json";
+    if (dir) CoTaskMemFree(dir);
+    FILE* f = path.empty() ? nullptr : _wfopen(path.c_str(), L"rb");
+    if (!f) return;
+    std::string text(1 << 16, ' ');
+    text.resize(fread(text.data(), 1, text.size(), f));
+    fclose(f);
+    auto after = [&](const char* key) -> const char* {
+        const size_t at = text.find(key);
+        const size_t colon = at == std::string::npos ? at : text.find(':', at);
+        return colon == std::string::npos ? nullptr : text.c_str() + colon + 1;
+    };
+    const char* mode = after("\"Window Mode\"");
+    const char* res = after("\"Screen Resolution (Windowed)\"");
+    if (!mode || atoi(mode) != 0 || !res) return;
+    int x = 0, y = 0;
+    if (sscanf_s(res, " \"%dx%d\"", &x, &y) == 2 && x >= 320 && y >= 200 && x <= 16384 && y <= 16384) { *w = x; *h = y; }
+}
+
+// Native OpenXR: the window as big as the game asked for, beyond the monitor too (GameWndProc
+// lifts Windows' limit; this puts the window right when it was cut to the screen before that -
+// the game made its window before vrcam was in). Only the cut a screen makes: the width as asked,
+// the height short of it. Posted (SWP_ASYNCWINDOWPOS): the window's thread may be the one that waits
+// on ours. Looked at every 2 s.
+void BigWindowTick() {
+    static ULONGLONG at = 0;
+    const ULONGLONG now = GetTickCount64();
+    if (!g_gameWnd || !g_gameWndProc || !xr::On() || now - at < 2000) return;
+    at = now;
+    if (IsIconic(g_gameWnd) || IsZoomed(g_gameWnd)) return;
+    int ww = 0, wh = 0;
+    GameWindowedSize(&ww, &wh);
+    RECT c{}, r{};
+    if (!ww || !GetClientRect(g_gameWnd, &c) || !GetWindowRect(g_gameWnd, &r)) return;
+    if (c.right != ww || c.bottom >= wh) return;
+    const int fw = (r.right - r.left) - c.right, fh = (r.bottom - r.top) - c.bottom;
+    SetWindowPos(g_gameWnd, nullptr, 0, 0, ww + fw, wh + fh, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS);
+    static int told = 0;
+    if (told++ < 5) LogF("vrcam: openxr - the game's window %dx%d made %dx%d as its Settings.json asks (taller than the screen: Windows had cut it)", (int)c.right, (int)c.bottom, ww, wh);
+}
+
 void HookGameWindow() {
+    BigWindowTick();
     if (g_gameWndProc) return;
     HWND h = nullptr;
     EnumWindows(FindGameWindow, (LPARAM)&h);
@@ -10572,7 +10631,7 @@ void LoadReShade() {
     else LogF("vrcam: ReShade64.dll did not load (error %lu)", GetLastError());
 }
 
-static const char g_info_version[] = "0.158.0";
+static const char g_info_version[] = "0.159.0";
 
 static const PluginInfo g_info = {
     PluginInfoSize, D2RL_PLUGIN_ABI_VERSION, "d2r-vr-vrcam", "vrcam", g_info_version, "BodyWalkVR",

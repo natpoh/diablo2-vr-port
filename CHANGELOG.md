@@ -1,5 +1,22 @@
 # What's new in D2R VR
 
+## 0.159
+
+- **Native OpenXR: the game's window can be bigger than your monitor.**
+  Windows cut a window to the screen's height - a 2200x2200 window came out
+  2200x2136, and the picture in the headset got black bars. The window now
+  takes the size the game's Settings.json asks for.
+- **Native OpenXR without black bars**, two ways:
+  - Tick **"Square game window (no black bars)"** in D2R VR Settings >
+    Stereo > Native OpenXR and set its size (2000 by default, up to 2040).
+    Settings makes the game's window square for you and puts ReShade's depth
+    setting back to the one that works. Close the game first: it writes its
+    own window size back when it exits. A square window must stay under
+    2048: from 2048 on, ReShade takes the game's 4096x4096 shadow map for the
+    scene's depth, and the sky and the fog come out wrong.
+  - Or untick Stereo > **"Sharper: the picture keeps the window's shape"**:
+    no bars with any window, a little softer up and down.
+
 ## 0.158
 
 - **FlatVR: the horizon no longer leans** after switching from native OpenXR

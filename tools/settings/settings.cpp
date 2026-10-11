@@ -511,6 +511,15 @@ std::vector<Item> g_items = {
            L"Each eye's view cut to the game window's shape: square pixels, all the window's lines on a smaller angle, so the "
            L"picture is sharper; above and below it the headset shows black (nothing drawn there, it costs nothing). "
            L"Off: the picture stretched over the headset's whole view - taller, softer up and down."),
+    Toggle(L"@window", L"square", L"Square game window (no black bars)", 0,
+           L"Writes the game's own Settings.json: a window, as wide as it is tall (the size below). The headset's eye is about "
+           L"square, so the whole picture fills it - no black bars with the box above ticked. vrcam lets the window be taller "
+           L"than the monitor. The game must be closed: it writes its own size back when it quits. Off: the size it had before."),
+    Slider(L"openxr", L"window_size", L"Square window: size, px", 640.0f, 2040.0f, 8.0f, 2000.0f,
+           L"The square window's side. Up to 2040: from 2048 ReShade takes the game's shadow map (4096 x 4096, also square) for "
+           L"the scene's depth - the fog and the sky go wrong (a view from above laid over the picture). 2000 is a good size; "
+           L"DLSS or the game's own scale makes it sharper or faster."),
+    Status(L"square_window", L"The game window as the game has it"),
     Toggle(L"openxr", L"third_gaze", L"F2: the camera swings round the hero with the gaze", 0,
            L"Off: the camera stays behind the hero on his turn and the head looks round freely. On: it swings round him "
            L"with the head, as on FlatVR's screen."),
@@ -1328,6 +1337,33 @@ bool ReadGameValue(const Item& it, float* v) {
     return true;
 }
 
+// The game's windowed size in its Settings.json: "Window Mode" (0 = a window) and
+// "Screen Resolution (Windowed)" "WxH" (D2R VR Settings > Stereo > Square game window).
+bool ReadGameWindow(int* mode, int* w, int* h) {
+    std::string text;
+    if (!ReadFileText(GameSettingsPath(), &text)) return false;
+    std::smatch m;
+    *mode = std::regex_search(text, m, std::regex("\"Window Mode\"\\s*:\\s*(-?[0-9]+)")) ? std::stoi(m[1].str()) : -1;
+    if (!std::regex_search(text, m, std::regex("\"Screen Resolution \\(Windowed\\)\"\\s*:\\s*\"([0-9]+)x([0-9]+)\""))) return false;
+    *w = std::stoi(m[1].str());
+    *h = std::stoi(m[2].str());
+    return true;
+}
+bool WriteGameWindow(int w, int h) {
+    const std::wstring path = GameSettingsPath();
+    std::string text;
+    if (!ReadFileText(path, &text)) return false;
+    std::smatch m;
+    if (!std::regex_search(text, m, std::regex("(\"Screen Resolution \\(Windowed\\)\"\\s*:\\s*\")([0-9]+x[0-9]+)(\")"))) return false;
+    std::string out = m.prefix().str() + m[1].str() + std::to_string(w) + "x" + std::to_string(h) + m[3].str() + m.suffix().str();
+    if (std::regex_search(out, m, std::regex("(\"Window Mode\"\\s*:\\s*)(-?[0-9]+)")))
+        out = m.prefix().str() + m[1].str() + "0" + m.suffix().str();
+    if (out == text) return true;
+    std::ofstream f(path, std::ios::binary | std::ios::trunc);
+    f << out;
+    return (bool)f;
+}
+
 void WriteGameValue(const Item& it, float v) {
     const std::wstring path = GameSettingsPath();
     std::string text;
@@ -1610,11 +1646,55 @@ bool WriteStereo3D(float v) {
     return true;
 }
 
+// "Square game window": on while the game's window is a square of any size. On: the game's
+// Settings.json gets a window of [openxr] window_size both ways (the size it had kept in
+// [openxr] window_before), and ReShade's depth heuristic is kept from "multiples of
+// resolution" (UseAspectRatioHeuristics=2 takes the 4096 x 4096 shadow map for the square
+// scene's depth, 2026-10-11). Off: the size kept before.
+bool ProcessRunning(const wchar_t* exe);
+float ReadSquareWindow() {
+    int mode = -1, w = 0, h = 0;
+    return ReadGameWindow(&mode, &w, &h) && mode == 0 && w == h ? 1.0f : 0.0f;
+}
+void WriteSquareWindow(bool on) {
+    int mode = -1, w = 0, h = 0;
+    if (!ReadGameWindow(&mode, &w, &h)) {
+        SetStatus(L"square_window", 1, L"The game's Settings.json not found (Saved Games\\Diablo II Resurrected) - start the game once");
+        return;
+    }
+    const bool running = ProcessRunning(L"D2RLoader.exe") || ProcessRunning(L"D2R.exe");
+    int side = 0;
+    if (on) {
+        if (w != h) {   // the size it had, for "off"
+            wchar_t b[32];
+            swprintf_s(b, L"%dx%d", w, h);
+            WritePrivateProfileStringW(L"openxr", L"window_before", b, g_ini);
+        }
+        side = std::clamp((int)GetPrivateProfileIntW(L"openxr", L"window_size", 2000, g_ini), 640, 2040);
+        side -= side % 8;
+        if (!WriteGameWindow(side, side)) { SetStatus(L"square_window", 1, L"The game's Settings.json could not be written"); return; }
+        const std::wstring rs = GameFolder() + L"ReShade.ini";
+        if (GetPrivateProfileIntW(L"DEPTH", L"UseAspectRatioHeuristics", 1, rs.c_str()) == 2)
+            WritePrivateProfileStringW(L"DEPTH", L"UseAspectRatioHeuristics", L"1", rs.c_str());
+    } else {
+        wchar_t b[32] = L"";
+        GetPrivateProfileStringW(L"openxr", L"window_before", L"", b, 32, g_ini);
+        int bw = 0, bh = 0;
+        if (swscanf_s(b, L"%dx%d", &bw, &bh) != 2 || bw < 320 || bh < 200 || bw == bh) { bw = 1920; bh = 1080; }
+        if (!WriteGameWindow(bw, bh)) { SetStatus(L"square_window", 1, L"The game's Settings.json could not be written"); return; }
+    }
+    wchar_t msg[256];
+    if (on) swprintf_s(msg, L"The game window: %d x %d%s", side, side, running ? L" - close the game and set it again: it writes its own size back when it quits" : L" from the next start");
+    else swprintf_s(msg, L"The game window back to its own size%s", running ? L" - close the game and set it again" : L" from the next start");
+    SetStatus(L"square_window", running ? 2 : 0, msg);
+}
+
 float ReadValue(const Item& it) {
     if (wcscmp(it.section, L"@preset") == 0) return (float)MatchPreset();
     if (wcscmp(it.section, L"@stereo3d") == 0) return ReadStereo3D();
     if (wcscmp(it.section, L"@reshade") == 0) return ReadReShadeValue(it);
     if (wcscmp(it.section, L"@game") == 0) { float v = it.def; ReadGameValue(it, &v); return v; }
+    if (wcscmp(it.section, L"@window") == 0) return ReadSquareWindow();
     if (wcscmp(it.section, L"@bodywalk") == 0) return ReadBodyWalkValue(it);
     wchar_t buf[64], def[64];
     swprintf_s(def, L"%g", it.def);
@@ -1641,11 +1721,13 @@ void WriteValue(const Item& it, float v) {
     }
     if (wcscmp(it.section, L"@reshade") == 0) { WriteReShadeValue(it, v); ShowPreset(); return; }
     if (wcscmp(it.section, L"@game") == 0) { WriteGameValue(it, v); return; }
+    if (wcscmp(it.section, L"@window") == 0) { WriteSquareWindow(v != 0.0f); return; }
     if (wcscmp(it.section, L"@bodywalk") == 0) { WriteBodyWalkValue(it, v); return; }
     wchar_t buf[64];
     if (it.step >= 1.0f) swprintf_s(buf, L"%d", (int)std::lround(v));
     else swprintf_s(buf, L"%g", std::round(v / it.step) * it.step);
     WritePrivateProfileStringW(SectionOf(it), it.key, buf, FileOf(it));
+    if (wcscmp(it.section, L"openxr") == 0 && wcscmp(it.key, L"window_size") == 0 && ReadSquareWindow() != 0.0f) WriteSquareWindow(true);   // the new size at once
     if (wcscmp(it.section, L"stereo") == 0 && (wcscmp(it.key, L"headset_rate") == 0 || wcscmp(it.key, L"afr") == 0 || wcscmp(it.key, L"pair_per_tick") == 0)) ApplyFrameCap();
     ShowPreset();   // a key of a preset changed by hand: Custom (or the preset it now matches)
 }
