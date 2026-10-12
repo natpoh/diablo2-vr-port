@@ -75,6 +75,9 @@ bool ByTurns();
 bool StopPending();
 // The next views taken as straight ahead (F11, BodyWalk's recentre).
 void Recenter();
+// A panel (inventory, trade, stash...) is open in a game: the flat picture goes to the panels'
+// distance ([screen] menu_distance_m) while it is, and back after - eased, as FlatVR's screen.
+void SetPanelOpen(bool open);
 // Session and instance gone, FlatVR started again; from the game's exit paths.
 void Shutdown();
 // A D3D12 device is going (ReShade's destroy_device): the session's own ends with it.

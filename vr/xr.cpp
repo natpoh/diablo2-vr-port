@@ -63,6 +63,7 @@ struct Cfg {
     bool symmetric = true;    // each eye's fov made as wide to the left as to the right (symmetric_fov)
     bool stopFlatVR = true;   // FlatVR stopped before the session, started again after
     float quadM = 2.0f;       // outside a pair: the flat picture this far ahead, metres
+    float panelM = 1.6f;      // and while a panel is open in a game ([screen] menu_distance_m), 0 = quadM
     float quadWidthM = 2.4f;  // and this wide
     float leanM = 0.10f;      // the head may move this far from the body sideways (lean_m); farther, the body follows
     bool byTurns = false;     // eyes by turns ([stereo] afr without pair_per_tick): one eye a game frame
@@ -156,11 +157,16 @@ HANDLE g_fenceEvt = nullptr;
 
 // The flat picture (menus, panels, loading): put in the room where the head looks when it
 // comes up - a panel opened in first person stands where it was opened - level, at
-// [openxr] flat_distance_m ([screen] menu_distance_m unless set), and stays there.
+// [openxr] flat_distance_m, and stays there.
 float g_monoYaw = 0.0f;
 XrVector3f g_monoPos{};
 bool g_monoAnchored = false;
 int g_lastDrawn = 0;   // the kind of the last frame that went out
+// A panel open in a game (inventory, trade, stash...; vrcam's SetPanelOpen): the flat picture
+// stands at FlatVR's "Screen distance while a panel is open" ([screen] menu_distance_m) instead -
+// the square window's interface is as wide as the picture, and at the menus' distance its sides
+// were out of view (2026-10-12). Eased there and back as FlatVR eases its screen (FlatDistance).
+std::atomic<bool> g_panelOpen{false};
 
 // The body the camera is held to (lean_m): where the head is over the floor, as far as a
 // lean goes - the head may lean round it, and walking off in the room drags it along
@@ -1904,6 +1910,21 @@ bool OpenFrame(Kind kind) {
     return true;
 }
 
+// The flat picture's distance now: the panels' while one is open, else the menus'. A change
+// while it is shown is eased over 0.4 s (smoothstep, as FlatVR's screen goes back for a panel);
+// fresh = the picture comes up now: there at once.
+float FlatDistance(bool fresh) {
+    static float from = 0.0f, to = 0.0f, now = 0.0f;
+    static double since = 0.0;
+    const float target = g_panelOpen.load() && g_cfg.panelM > 0.0f ? g_cfg.panelM : g_cfg.quadM;
+    const double t = UsNow();
+    if (fresh || !(now > 0.0f)) { from = to = now = target; since = t; return now; }
+    if (target != to) { from = now; to = target; since = t; }
+    const float k = (float)std::min(1.0, (t - since) / 400000.0);
+    now = from + (to - from) * k * k * (3.0f - 2.0f * k);
+    return now;
+}
+
 void CloseFrame() {
     if (g_kind == kNone) return;
     XrCompositionLayerProjectionView pv[2] = {{XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW}, {XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW}};
@@ -1936,7 +1957,7 @@ void CloseFrame() {
         // the picture where the head looked when it came up, level, world-locked
         const XrQuaternionf q = Yaw(g_monoAnchored ? g_monoYaw : g_cYaw);
         const XrVector3f at = g_monoAnchored ? g_monoPos : g_cPos;
-        const XrVector3f ahead = Rot(q, {0.0f, 0.0f, -g_cfg.quadM});
+        const XrVector3f ahead = Rot(q, {0.0f, 0.0f, -FlatDistance(g_lastDrawn != kMono)});
         quad.space = g_space;
         quad.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
         quad.subImage.swapchain = g_quadChain.sc;
@@ -2062,13 +2083,28 @@ void LoadSettings(const wchar_t* ini) {
     g_cfg.stopFlatVR = f(L"stop_flatvr", 1.0f) != 0.0f;
     g_cfg.fovCrop = f(L"fov_crop", 1.0f) != 0.0f;   // on: sharper (square pixels), black above and below (2026-10-10)
     g_cfg.symmetric = f(L"symmetric_fov", 1.0f) != 0.0f;
-    {   // the panels' distance FlatVR was given ([screen] menu_distance_m), unless [openxr] says its own
+    {   // the menus' distance ([openxr] flat_distance_m; unset, FlatVR's panel distance as before) and the
+        // panels': FlatVR's "Screen distance while a panel is open" ([screen] menu_distance_m, D2R VR
+        // Settings > UI: F4 body, its default as link.cpp's), 0 = the menus' - it never reached native
+        // while flat_distance_m was set, so its slider moved nothing there (2026-10-12)
         wchar_t b[32];
-        GetPrivateProfileStringW(L"screen", L"menu_distance_m", L"2", b, 32, ini);
-        const float menuM = wcstof(b, nullptr);
-        g_cfg.quadM = std::clamp(f(L"flat_distance_m", std::isfinite(menuM) && menuM > 0.3f ? menuM : 2.0f), 0.5f, 10.0f);
+        GetPrivateProfileStringW(L"screen", L"menu_distance_m", L"", b, 32, ini);
+        const float menuM = b[0] ? wcstof(b, nullptr) : 1.6f;
+        g_cfg.quadM = std::clamp(f(L"flat_distance_m", b[0] && std::isfinite(menuM) && menuM > 0.3f ? menuM : 2.0f), 0.5f, 10.0f);
+        g_cfg.panelM = std::isfinite(menuM) && menuM > 0.0f ? std::clamp(menuM, 0.5f, 20.0f) : 0.0f;
     }
     g_cfg.quadWidthM = std::clamp(f(L"flat_width_m", 2.4f), 0.3f, 20.0f);
+    {
+        static float said[3] = {};
+        if (on && (g_cfg.quadM != said[0] || g_cfg.panelM != said[1] || g_cfg.quadWidthM != said[2])) {
+            said[0] = g_cfg.quadM; said[1] = g_cfg.panelM; said[2] = g_cfg.quadWidthM;
+            char panel[96];
+            if (g_cfg.panelM > 0.0f) snprintf(panel, sizeof panel, "%.2f m ([screen] menu_distance_m)", g_cfg.panelM);
+            else snprintf(panel, sizeof panel, "the same ([screen] menu_distance_m=0)");
+            LogF("vrcam: openxr - the flat picture %.2f m wide: menus, loading, F1 and F3 at %.2f m ([openxr] flat_distance_m), a panel open in a game at %s",
+                 g_cfg.quadWidthM, g_cfg.quadM, panel);
+        }
+    }
     g_cfg.leanM = std::clamp(f(L"lean_m", 0.10f), 0.0f, 5.0f);
     g_cfg.handHoldMs = std::clamp(f(L"hand_hold_ms", 1000.0f), 0.0f, 10000.0f);
     {   // eyes by turns (D2R VR Settings > Performance > 3D in the headset > Native OpenXR - eyes by turns)
@@ -2099,6 +2135,10 @@ float LeanM() { return g_cfg.leanM; }
 bool ByTurns() { return g_cfg.on && g_cfg.byTurns; }
 bool StopPending() { return g_stopWanted.load() && g_state.load() != kIdle; }
 void Recenter() { g_recentre.store(true); }
+void SetPanelOpen(bool open) {
+    if (g_panelOpen.exchange(open) == open || !g_cfg.on || !(g_cfg.panelM > 0.0f) || g_cfg.panelM == g_cfg.quadM) return;
+    LogF("vrcam: openxr - %s: the flat picture to %.2f m", open ? "a panel open" : "the panel closed", open ? g_cfg.panelM : g_cfg.quadM);
+}
 
 void Stop(bool final);
 // The session started on the game's device and queue (a worker thread), once.

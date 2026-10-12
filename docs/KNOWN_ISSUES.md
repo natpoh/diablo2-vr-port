@@ -276,7 +276,7 @@ See [ROADMAP.md](ROADMAP.md).
 
 ## Settings app and smaller things
 
-### 17. "Monster name plate opacity" does nothing, so it is hidden [repo]
+### 17. "Monster name plate opacity" does nothing, so it is hidden [repo] - DONE 2026-10-12, to check in the game
 
 - `[hud] monster_alpha` fades the rectangle of the `HUDMonsterHealth` panel,
   but that panel is 0 x 0. The plate is its child widget "Health" (layout

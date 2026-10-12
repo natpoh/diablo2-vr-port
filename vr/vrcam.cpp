@@ -168,6 +168,7 @@ struct Settings {
     // The same two for the other views (2026-10-06): [hud_top] F1, [hud_third] F2, [hud] F4 - the game's own by default.
     std::atomic<float> labelsAlphaTop{1.0f}, labelsAlphaThird{1.0f}, labelsAlphaBody{1.0f};
     std::atomic<float> plateAlpha{1.0f};   // [hud] monster_alpha: the name plate over the target monster, 1 = as the game draws it
+    std::atomic<float> plateSize{1.0f};    // [hud] monster_size: that plate larger or smaller about its middle, 1 = the game's
     std::atomic<float> labelsSizeTop{1.0f}, labelsSizeThird{1.0f}, labelsSizeBody{1.0f};
     // bar_x / bar_y per view: the toolbar moved on the screen, uv (+x right, +y DOWN; the ini's bar_y is + up, %)
     std::atomic<float> barXTop{0.0f}, barYTop{0.0f}, barXThird{0.0f}, barYThird{0.0f}, barXFloor{0.0f}, barYFloor{0.0f};
@@ -176,6 +177,9 @@ struct Settings {
     std::atomic<float> barNear{0.0f};       // [hud] bar_near: from above and behind, the toolbar nearer (+) or farther (-), % of the half screen per eye
     std::atomic<float> labelsNear{0.0f};     // [hud] labels_near: from above in stereo, labels nearer (+) / farther (-), % of the half screen per eye
     std::atomic<float> labelsTilt{0.0f};
+    std::atomic<float> labelsNearBody{0.0f};   // [hud] labels_near_body: the same in first person (F4) - native too
+    std::atomic<float> labelsDepthBody{0.0f};  // [hud] labels_depth_body: F4, each item label at its item's depth, 1 = exactly (0 = the game's)
+    std::atomic<float> labelsFarBody{1.0f};    // [hud] labels_far: F4, a label 10 m off and farther this much of labels_size (1 = no change)
     // [hud_top] / [hud_third] pointer_near, pointer_tilt: the mouse pointer FlatVR lays into the stereo pair, F1 / F2,
     // in the labels' units - nearer (+) and how much nearer at the bottom of the screen than at the top
     std::atomic<float> pointerNear[2] = {0.0f, 0.0f}, pointerTilt[2] = {0.0f, 0.0f};
@@ -785,6 +789,44 @@ void NoTemporalAA() {
     }
 }
 
+// The corner map for the hand (2026-10-12): the map in the headset - the orb or the flat panel - is the
+// game's mini map taken out of the picture ([hud] map=1), and only the one on the right comes into the orb
+// (the author, 2026-10-12): the game's map is on the right, the left or in the middle (Fullscreen) - in the
+// middle players had the whole-screen map before their eyes, moving with the view, and no orb. At the
+// plugin's start, before the game reads the file, in VR with the map out of the picture: "AutoMapMode" set
+// to 2 - on the right (the game moves it left while a panel covers the right; seen in the log as the map's
+// box on either side) - unless it is 2 already. The game's own options may change it; the next start sets
+// it again.
+void MiniMapForHand() {
+    if (g_set.platform.load() != 1 || g_set.hudMap.load() != 1) return;
+    PWSTR dir = nullptr;
+    std::wstring path;
+    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_SavedGames, 0, nullptr, &dir))) path = std::wstring(dir) + L"\\Diablo II Resurrected\\Settings.json";
+    if (dir) CoTaskMemFree(dir);
+    FILE* f = path.empty() ? nullptr : _wfopen(path.c_str(), L"rb");
+    if (!f) return;
+    std::string text(1 << 16, ' ');
+    text.resize(fread(text.data(), 1, text.size(), f));
+    fclose(f);
+    const size_t at = text.find("\"AutoMapMode\"");
+    const size_t colon = at == std::string::npos ? at : text.find(':', at);
+    if (colon == std::string::npos) return;
+    size_t b = colon + 1;
+    while (b < text.size() && (text[b] == ' ' || text[b] == '\t')) ++b;
+    size_t e = b;
+    while (e < text.size() && isdigit((unsigned char)text[e])) ++e;
+    if (e == b) return;
+    const int mode = atoi(text.c_str() + b);
+    if (mode == 2) return;
+    text.replace(b, e - b, "2");
+    if (FILE* w = _wfopen(path.c_str(), L"wb")) {
+        fwrite(text.data(), 1, text.size(), w);
+        fclose(w);
+        LogF("vrcam: the game's AutoMapMode was %d (its map not on the right - only that one comes into the hand) - set to 2, "
+             "the map on the right ([hud] map=0 leaves it alone)", mode);
+    }
+}
+
 // D2R itself dies at its title screen with a window taller than about 2400 ("A Fixed sized vector
 // tried to reallocate" in its blz-log.txt, then its own crash handler; 2600 and 3000 tried, 2026-10-11).
 // Players were told on Discord to put 3000x3000 into Settings.json and make it read-only: every start
@@ -841,11 +883,13 @@ void StartMatrixWatch();   // [debug] matrix_writer, below PickHeroMatrix
 namespace drawprof { extern std::atomic<bool> g_want; }
 namespace cbcmp { extern std::atomic<bool> g_go; void NoteView(int eye, const float v[16]); }
 namespace rtrace { extern std::atomic<bool> g_go; }
+extern std::atomic<int> g_inputLog;
 extern std::atomic<bool> g_xrThirdGaze; extern std::atomic<int> g_projFix; extern std::atomic<float> g_shiftMul; extern std::atomic<int> g_replayViews; extern std::atomic<int> g_viewMask; extern std::atomic<int> g_replayPositions; extern std::atomic<int> g_replayPrev;
 namespace replay { extern std::atomic<bool> g_fxSync; extern std::atomic<bool> g_dlssBoth; extern std::atomic<bool> g_replayCopy; }
 namespace replay { extern std::atomic<int> g_peekWant; }
 namespace camfix { extern std::atomic<int> g_scanWant; }
 std::atomic<bool> g_ownDepth{true};   // [render] own_depth (scenedepth::)
+std::atomic<bool> g_squareWin{false};   // [openxr] square_window: D2R VR Settings' square game window
 namespace flog { void StartDiag(); }
 namespace replay { extern std::atomic<bool> g_rightDepth; }
 namespace replay { extern std::atomic<int> g_want; extern std::atomic<int> g_ahead; extern std::atomic<bool> g_depthCopy; extern std::atomic<bool> g_on; extern std::atomic<bool> g_fxAtHold; extern std::atomic<bool> g_holdSignalsOn; }
@@ -936,11 +980,15 @@ void LoadSettings() {
     g_set.labelsAlphaThird.store(std::clamp(IniF(L"hud_third", L"labels_alpha", 1.0f), 0.0f, 1.0f));
     g_set.labelsAlphaBody.store(std::clamp(IniF(L"hud", L"labels_alpha", 1.0f), 0.0f, 1.0f));
     g_set.plateAlpha.store(std::clamp(IniF(L"hud", L"monster_alpha", 1.0f), 0.0f, 1.0f));
+    g_set.plateSize.store(std::clamp(IniF(L"hud", L"monster_size", 100.0f), 30.0f, 200.0f) * 0.01f);
     g_set.labelsSizeTop.store(std::clamp(IniF(L"hud_top", L"labels_size", 100.0f), 20.0f, 150.0f) * 0.01f);
     g_set.labelsSizeThird.store(std::clamp(IniF(L"hud_third", L"labels_size", 100.0f), 20.0f, 150.0f) * 0.01f);
     g_set.labelsSizeBody.store(std::clamp(IniF(L"hud", L"labels_size", 100.0f), 20.0f, 150.0f) * 0.01f);
     g_set.labelsNear.store(std::clamp(IniF(L"hud", L"labels_near", 0.0f), -20.0f, 20.0f));
     g_set.labelsTilt.store(std::clamp(IniF(L"hud", L"labels_tilt", 0.0f), -40.0f, 40.0f));
+    g_set.labelsNearBody.store(std::clamp(IniF(L"hud", L"labels_near_body", 0.0f), -20.0f, 20.0f));
+    g_set.labelsDepthBody.store(std::clamp(IniF(L"hud", L"labels_depth_body", 0.0f), 0.0f, 150.0f) * 0.01f);
+    g_set.labelsFarBody.store(std::clamp(IniF(L"hud", L"labels_far", 100.0f), 20.0f, 100.0f) * 0.01f);
     for (int i = 0; i < 2; ++i) {
         const wchar_t* sec = i == 0 ? L"hud_top" : L"hud_third";
         g_set.pointerNear[i].store(std::clamp(IniF(sec, L"pointer_near", 0.0f), -20.0f, 20.0f));
@@ -1032,6 +1080,7 @@ void LoadSettings() {
     g_set.bgFullSpeed.store(IniB(L"render", L"background_full_speed", true));
     g_set.gameHeightFog.store(IniB(L"render", L"game_height_fog", false));
     g_ownDepth.store(IniB(L"render", L"own_depth", true));
+    g_squareWin.store(IniB(L"openxr", L"square_window", false));
     g_set.solidWalls.store(std::clamp((int)IniF(L"render", L"solid_walls", 1.0f), 0, 2));
     g_set.stampPixels.store(IniB(L"stereo", L"stamp_pixels", true));
     g_set.stamps.store(IniB(L"stereo", L"stamps", true));
@@ -1058,6 +1107,7 @@ void LoadSettings() {
     replay::g_fxAtHold.store(IniB(L"stereo", L"replay_fx", true));
     xr::LoadSettings(g_iniPath);   // [openxr]: the game in the headset itself (vr/xr.cpp)
     g_xrThirdGaze.store(IniB(L"openxr", L"third_gaze", false));
+    g_inputLog.store((int)IniF(L"debug", L"input_log", 1.0f));   // presses and their sources (InputLogF)
     {   // [debug] profile_draw: one 5 s profile of the draw thread each time it turns 1
         static bool was = false;
         const bool on = IniB(L"debug", L"profile_draw", false);
@@ -1970,15 +2020,22 @@ bool LabelBoxNative() { return g_labelPaintIn.load() && g_set.labelsNativeFloor.
 // On the floor (F3): the labels faded as a picture ([hud_floor] labels_alpha) - only while the game's
 // own label code is not hooked (another game build, or labels_native=0), which fades the box exactly.
 // From above in stereo with a depth or a tilt for the labels: they come out to lie on their plane.
+// In first person (F4, native OpenXR too) the labels on the ground: the game draws them on the same pixels
+// in both eyes - at infinity in the headset, out of place against their items (2026-10-12). Each item
+// label at its own item's depth ([hud] labels_depth_body, LabelDepthUniforms), the rest of the layer
+// by labels_near_body - by the item's distance, not by the head's tilt (the author, 2026-10-12).
 bool LabelsTilted() {
-    return AfrOn() && !g_enabled.load() && g_set.classicTop.load() == 0 &&
-           (std::abs(g_set.labelsNear.load()) > 0.01f || std::abs(g_set.labelsTilt.load()) > 0.01f);
+    if (!AfrOn()) return false;
+    if (!g_enabled.load())
+        return g_set.classicTop.load() == 0 && (std::abs(g_set.labelsNear.load()) > 0.01f || std::abs(g_set.labelsTilt.load()) > 0.01f);
+    return FullBody() && (std::abs(g_set.labelsNearBody.load()) > 0.01f || g_set.labelsDepthBody.load() > 0.005f);
 }
-// [hud] monster_alpha: the plate over the target monster faded - the interface comes out
-// for that too, drawn back where the game puts it.
+// [hud] monster_alpha, monster_size: the plate over the target monster faded or sized - the interface
+// comes out for that too, drawn back where the game puts it.
+bool PlateWanted() { return g_set.plateAlpha.load() < 0.995f || std::abs(g_set.plateSize.load() - 1.0f) > 0.005f; }
 bool PlateFaded() {
     int32_t r[4];
-    return g_inWorld.load() && g_set.plateAlpha.load() < 0.995f && gamestate::PlateRect(r);
+    return g_inWorld.load() && PlateWanted() && gamestate::PlateRect(r);
 }
 bool LabelsWanted() {
     if (PlateFaded()) return true;
@@ -3492,6 +3549,74 @@ bool PadFromBodyWalk(XINPUT_STATE* s) {
     return true;
 }
 
+// The input log ([debug] input_log: 1 = the first 400 lines of a run, 2 = all, 0 = off). Heroes
+// attacked on head turns with nothing pressed in BodyWalk (two players and the author, 2026-10-12):
+// every press that can make the hero act goes into the log with where it came from - a button or a
+// trigger of the pad the game gets (BodyWalk's pad, an XInput pad, or vrcam's own for an action),
+// BodyWalk's actions through Game Link (its gestures among them), a click or a key in the game's
+// window (from a device or injected) - and how fast the head was turning just then.
+std::atomic<int> g_inputLog{1};
+std::atomic<float> g_headRate{0.0f};   // deg/s, sampled at the game's pad polls
+void SampleHeadRate() {
+    static SRWLOCK lock = SRWLOCK_INIT;
+    static float last = 0.0f;
+    static ULONGLONG lastAt = 0;
+    float yaw;
+    if (!HeadYaw(&yaw) || !TryAcquireSRWLockExclusive(&lock)) return;
+    const ULONGLONG now = GetTickCount64();
+    if (!lastAt || now - lastAt > 500) { last = yaw; lastAt = now; g_headRate.store(0.0f); }
+    else if (now - lastAt >= 30) {
+        g_headRate.store(WrapDeg(yaw - last) * 1000.0f / (float)(now - lastAt));
+        last = yaw;
+        lastAt = now;
+    }
+    ReleaseSRWLockExclusive(&lock);
+}
+void InputLogF(const char* fmt, ...) {
+    const int mode = g_inputLog.load();
+    if (mode <= 0) return;
+    static std::atomic<int> lines{0};
+    const int n = lines.fetch_add(1);
+    if (mode == 1 && n >= 400) {
+        if (n == 400) Log("input: 400 lines - quiet from here on ([debug] input_log=2 logs them all)");
+        return;
+    }
+    char b[384];
+    va_list a;
+    va_start(a, fmt);
+    vsnprintf(b, sizeof b, fmt, a);
+    va_end(a);
+    LogF("input: %s | the head turning %.0f deg/s%s", b, fabsf(g_headRate.load()), gamestate::MenuOpen() ? ", a panel open" : "");
+}
+// The pad as the game gets it against its last poll: buttons and triggers pressed, each with its
+// source - in `got` (before vrcam's actions) from the pad read, else vrcam's own for an action.
+void InputLogPad(const XINPUT_GAMEPAD& got, const XINPUT_GAMEPAD& fin, bool mirror) {
+    if (g_inputLog.load() <= 0) return;
+    static const char* const kNames[16] = {"Up", "Down", "Left", "Right", "Start", "Back", "LS", "RS", "LB", "RB", "0x0400", "0x0800", "A", "B", "X", "Y"};
+    static SRWLOCK lock = SRWLOCK_INIT;
+    static WORD was = 0;
+    static bool ltWas = false, rtWas = false;
+    static ULONGLONG downAt[16] = {};
+    if (!TryAcquireSRWLockExclusive(&lock)) return;
+    const char* from = mirror ? "BodyWalk's pad" : "an XInput pad (a device, or a virtual one)";
+    const ULONGLONG now = GetTickCount64();
+    for (int i = 0; i < 16; ++i) {
+        const WORD bit = (WORD)(1u << i);
+        if ((fin.wButtons & bit) && !(was & bit)) {
+            downAt[i] = now;
+            InputLogF("pad %s down - %s", kNames[i], (got.wButtons & bit) ? from : "vrcam's, for a BodyWalk action");
+        } else if (!(fin.wButtons & bit) && (was & bit) && now - downAt[i] < 150)
+            InputLogF("pad %s up after %llu ms", kNames[i], now - downAt[i]);
+    }
+    was = fin.wButtons;
+    const bool lt = fin.bLeftTrigger > XINPUT_GAMEPAD_TRIGGER_THRESHOLD, rt = fin.bRightTrigger > XINPUT_GAMEPAD_TRIGGER_THRESHOLD;
+    if (lt && !ltWas) InputLogF("pad LT pulled (%u) - %s", fin.bLeftTrigger, from);
+    if (rt && !rtWas) InputLogF("pad RT pulled (%u) - %s", fin.bRightTrigger, from);
+    ltWas = lt;
+    rtWas = rt;
+    ReleaseSRWLockExclusive(&lock);
+}
+
 // Attack apart from pick-up / interact. Pad A is the default attack, and on a
 // target it picks up, opens or talks instead - the game's
 // allowInteractOnDefaultAttack (controllersettings.json, read into RVA
@@ -3523,6 +3648,13 @@ bool InteractTargetNow() {
 void ApplyActions(XINPUT_STATE* s) {
     static link::Presses presses;   // the game's pad polls only (index 0)
     const uint32_t held = link::ActionsHeld(presses);
+    {   // BodyWalk's actions as they are pressed - its gestures among them - for the input log
+        static uint32_t was = 0;
+        const uint32_t pressed = held & ~was;
+        was = held;
+        for (const D2RVRActionName& a : kD2RVRActions)
+            if (pressed & a.bit) InputLogF("BodyWalk action '%s' (through Game Link: a button bound to it, or a gesture)", a.name);
+    }
     // Pick up only onto a target: nothing there, nothing pressed - never an attack.
     // Without the hook (another build) it cannot tell, and stays a plain A.
     const bool interact = (held & D2RVR_ACT_INTERACT) && (InteractTargetNow() || !g_interactHooked.load());
@@ -3986,7 +4118,8 @@ template <int I> DWORD WINAPI XDetour(DWORD idx, XINPUT_STATE* s) {
     if (t_xDepth == 0 && idx == 0 && s && !FlatKeyMode() && PadFromBodyWalk(s)) { r = ERROR_SUCCESS; mirror = true; }
     if (t_xDepth == 0 && idx == 0 && s) KeysAsStick(s, &r);
     if (r == ERROR_SUCCESS && t_xDepth == 0) {
-        if (idx == 0) ApplyActions(s);
+        const XINPUT_GAMEPAD got = s->Gamepad;   // as the pad had it, before vrcam's actions (the input log)
+        if (idx == 0) { SampleHeadRate(); ApplyActions(s); }
         {   // which entry polls what, with BodyWalk's pad or without (2026-10-07): at most 30 lines a session
             static std::atomic<int> lines{0};
             static ULONGLONG told[std::size(g_xhooks)] = {};
@@ -3998,6 +4131,7 @@ template <int I> DWORD WINAPI XDetour(DWORD idx, XINPUT_STATE* s) {
             }
         }
         TurnStick(s, mirror);
+        if (idx == 0) InputLogPad(got, s->Gamepad, mirror);
     }
     return r;
 }
@@ -4261,7 +4395,29 @@ void HookCursor() {
 // W A S D are ours while the shooter controls are on (the game has skills
 // and panels on them) - but not while the chat line is open: then they are
 // letters, and every other key goes to the game anyway.
+// A click or a key in the game's window for the input log, and whether a device or a program sent it.
+void InputLogWindow(UINT msg, WPARAM w) {
+    INPUT_MESSAGE_SOURCE src{};
+    const char* how = !GetCurrentInputMessageSource(&src) ? "its origin unknown"
+                      : src.originId == IMO_INJECTED  ? "injected by a program (BodyWalk's keys and mouse, a macro tool...)"
+                      : src.originId == IMO_HARDWARE  ? "from a device"
+                      : src.originId == IMO_SYSTEM    ? "from Windows"
+                                                      : "its origin unknown";
+    if (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN) {
+        char name[32] = "";
+        GetKeyNameTextA((LONG)(MapVirtualKeyW((UINT)w, MAPVK_VK_TO_VSC) << 16), name, sizeof name);
+        InputLogF("key %s (0x%02X) in the game's window - %s", name[0] ? name : "?", (unsigned)w, how);
+    } else {
+        InputLogF("%s in the game's window - %s", msg == WM_LBUTTONDOWN ? "left click" : msg == WM_RBUTTONDOWN ? "right click"
+                                                  : msg == WM_MBUTTONDOWN ? "middle click" : "side button", how);
+    }
+}
+
 LRESULT CALLBACK GameWndProc(HWND h, UINT msg, WPARAM w, LPARAM l) {
+    // the input log: clicks, and keys pressed (not repeats, not the chat line's letters)
+    if (g_inputLog.load() > 0 && (msg == WM_LBUTTONDOWN || msg == WM_RBUTTONDOWN || msg == WM_MBUTTONDOWN || msg == WM_XBUTTONDOWN ||
+                                  ((msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN) && !(l & (1 << 30)) && !ChatOpen())))
+        InputLogWindow(msg, w);
     // (Windows keeps a window to its monitor; vrcam let it be bigger in 0.159-0.160 - a window past the
     // screen's edge flickered the fog in the left eye, and one taller than ~2400 crashes the game itself at
     // its title screen: a square now fits the monitor - BigWindowTick; a bigger one: a virtual monitor.)
@@ -4326,12 +4482,38 @@ LRESULT CALLBACK GameWndProc(HWND h, UINT msg, WPARAM w, LPARAM l) {
 // its monitor (its work area, the frame included): past the screen's edge the fog flickered in the left
 // eye at 2400 on a 2160 screen, and on a virtual monitor of a higher resolution it did not (2026-10-11).
 // Put at the work area's top. Posted (SWP_ASYNCWINDOWPOS): the window's thread may wait on ours.
+// Onto another monitor in two steps: moved there at the size it has, made square at the next look, on
+// it - across monitors of another scale Windows' WM_DPICHANGED has the game size itself in between.
+// What stops it goes into the log once each time it changes, and the monitors as they are seen: a
+// player's window stayed small on the main monitor and the log had no word on why (2026-10-12).
+void SquareWhy(int why, const char* fmt, ...) {
+    static int said = 0;
+    if (why == said) return;
+    said = why;
+    if (!why) return;
+    char b[512];
+    va_list a;
+    va_start(a, fmt);
+    vsnprintf(b, sizeof b, fmt, a);
+    va_end(a);
+    LogF("vrcam: square window - %s", b);
+}
 void BigWindowTick() {
     static ULONGLONG at = 0;
     const ULONGLONG now = GetTickCount64();
-    if (!g_gameWnd || !g_gameWndProc || !xr::On() || now - at < 2000) return;
+    if (!g_gameWnd || !g_gameWndProc || now - at < 2000) return;
     at = now;
-    if (IsIconic(g_gameWnd) || IsZoomed(g_gameWnd) || !IniB(L"openxr", L"square_window", false)) return;
+    if (!IniB(L"openxr", L"square_window", false)) { SquareWhy(0, ""); return; }
+    if (!xr::On()) {
+        wchar_t off[48] = L"";
+        GetPrivateProfileStringW(L"openxr", L"off_after_crash", L"", off, 48, g_iniPath);
+        SquareWhy(1, "ticked, but native OpenXR is not running ([openxr] on=0%s%s, or its session did not start): the window keeps "
+                  "its start size on its monitor - D2R VR Settings > Performance > 3D in the headset > Native OpenXR",
+                  off[0] ? ", switched off by the start guard after a crash at " : "", Utf8(off).c_str());
+        return;
+    }
+    if (IsIconic(g_gameWnd)) return;
+    if (IsZoomed(g_gameWnd)) { SquareWhy(2, "the game's window is maximized - restore it (double-click its title bar) for the square"); return; }
     // only in a game, the hero there 3 s: the game dies when its window grows that tall while it builds a
     // screen - its title screen at the start, its frontend scene (grown 4 s after the title: dead 2 s
     // later, 2026-10-11); the menus before keep the size it started with (2400 at most, SafeGameWindow)
@@ -4342,32 +4524,74 @@ void BigWindowTick() {
     RECT c{}, r{};
     if (!GetClientRect(g_gameWnd, &c) || !GetWindowRect(g_gameWnd, &r)) return;
     const int fw = (r.right - r.left) - c.right, fh = (r.bottom - r.top) - c.bottom;
+    static bool frameTold = false;
+    if (fw <= 0 && fh <= 0 && !frameTold) {
+        frameTold = true;
+        LogF("vrcam: square window - the game's window has no frame (%dx%d): its Options > Video > Window Mode is not Windowed - "
+             "the square wants Windowed", (int)c.right, (int)c.bottom);
+    }
     const int asked = std::clamp((int)IniF(L"openxr", L"window_size", 2000.0f), 640, 4000);
     // the monitor it is on when that holds the square; else the one that holds the most (a virtual
     // monitor made for it, BodyWalk's Virtual Monitor): the window is moved there, no "make it primary"
-    struct Pick { HMONITOR here; RECT best; int bestFits; RECT cur; int curFits; int fw, fh; };
-    Pick pk{MonitorFromWindow(g_gameWnd, MONITOR_DEFAULTTONEAREST), {}, 0, {}, 0, fw, fh};
+    struct Pick { HMONITOR here, bestMon; RECT best; int bestFits; RECT cur; int curFits; int fw, fh; wchar_t hereName[32], bestName[32]; char list[640]; };
+    Pick pk{MonitorFromWindow(g_gameWnd, MONITOR_DEFAULTTONEAREST), nullptr, {}, 0, {}, 0, fw, fh, L"", L"", ""};
     EnumDisplayMonitors(nullptr, nullptr, [](HMONITOR m, HDC, LPRECT, LPARAM p) -> BOOL {
         Pick& k = *(Pick*)p;
-        MONITORINFO mi{sizeof mi};
+        MONITORINFOEXW mi{};
+        mi.cbSize = sizeof mi;
         if (!GetMonitorInfoW(m, &mi)) return TRUE;
         const int fits = std::min((int)(mi.rcWork.right - mi.rcWork.left) - k.fw, (int)(mi.rcWork.bottom - mi.rcWork.top) - k.fh);
-        if (m == k.here) { k.cur = mi.rcWork; k.curFits = fits; }
-        if (fits > k.bestFits) { k.best = mi.rcWork; k.bestFits = fits; }
+        if (m == k.here) { k.cur = mi.rcWork; k.curFits = fits; wcscpy_s(k.hereName, mi.szDevice); }
+        if (fits > k.bestFits) { k.best = mi.rcWork; k.bestFits = fits; k.bestMon = m; wcscpy_s(k.bestName, mi.szDevice); }
+        const size_t n = strlen(k.list);
+        snprintf(k.list + n, sizeof k.list - n, "%s%ls %ld,%ld %ldx%ld%s%s", n ? "; " : "", mi.szDevice, mi.rcWork.left, mi.rcWork.top,
+                 mi.rcWork.right - mi.rcWork.left, mi.rcWork.bottom - mi.rcWork.top, (mi.dwFlags & MONITORINFOF_PRIMARY) ? " main" : "",
+                 m == k.here ? " (the game's)" : "");
         return TRUE;
     }, (LPARAM)&pk);
+    {   // the monitors (their work areas) whenever they change
+        static std::string seen;
+        if (seen != pk.list) { seen = pk.list; LogF("vrcam: square window - monitors: %s; %d asked", pk.list, asked); }
+    }
     if (!pk.curFits && !pk.bestFits) return;
-    const bool stay = pk.curFits >= asked || pk.bestFits <= pk.curFits;
-    const RECT wa = stay ? pk.cur : pk.best;
-    const int fits = stay ? pk.curFits : pk.bestFits;
-    const int side = std::max(320, std::min(asked, fits));
+    // a move asked for and the window still on its monitor at the next look: something puts it back
+    // (the game's Window Mode, another program) - after three, it is made square where it is
+    static HMONITOR movedTo = nullptr;
+    static int moveMisses = 0;
+    if (movedTo) {
+        moveMisses = pk.here == movedTo ? 0 : moveMisses + 1;
+        if (moveMisses >= 3)
+            SquareWhy(4, "the game's window did not go onto %ls three times - it stays on %ls and is made as big as that holds (%d)",
+                      pk.bestName, pk.hereName, pk.curFits);
+        movedTo = nullptr;
+    }
+    const bool stay = pk.curFits >= asked || pk.bestFits <= pk.curFits || moveMisses >= 3;
+    if (!stay) {
+        SetWindowPos(g_gameWnd, nullptr, pk.best.left, pk.best.top, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS);
+        movedTo = pk.bestMon;
+        static int movedTold = 0;
+        if (movedTold++ < 8) LogF("vrcam: square window - the game's window %dx%d moved from %ls onto %ls (holds %d, %d asked) - made square there next",
+                                  (int)c.right, (int)c.bottom, pk.hereName, pk.bestName, pk.bestFits, asked);
+        return;
+    }
+    const RECT wa = pk.cur;
+    const int side = std::max(320, std::min(asked, pk.curFits));
     const int x = std::clamp((int)r.left, (int)wa.left, std::max((int)wa.left, (int)wa.right - (side + fw)));
     const int y = (int)wa.top;
-    if (c.right == side && c.bottom == side && r.left == x && r.top == y) return;
+    // a size asked for and not there three looks on: said, still asked again
+    static int sizeMisses = 0;
+    if (c.right == side && c.bottom == side && r.left == x && r.top == y) {
+        sizeMisses = 0;
+        if (moveMisses < 3) SquareWhy(0, "");
+        return;
+    }
+    if (++sizeMisses == 4)
+        SquareWhy(5, "the game's window does not take %dx%d at %d,%d on %ls: it is %dx%d at %ld,%ld (its DPI %u) - something sizes it back",
+                  side, side, x, y, pk.hereName, (int)c.right, (int)c.bottom, r.left, r.top, GetDpiForWindow(g_gameWnd));
     SetWindowPos(g_gameWnd, nullptr, x, y, side + fw, side + fh, SWP_NOZORDER | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS);
     static int told = 0;
-    if (told++ < 8) LogF("vrcam: openxr - the game's window %dx%d made %dx%d at %d,%d (D2R VR Settings' square window, %d asked%s%s)",
-                         (int)c.right, (int)c.bottom, side, side, x, y, asked, stay ? "" : " - moved to the monitor that holds it",
+    if (told++ < 8) LogF("vrcam: openxr - the game's window %dx%d made %dx%d at %d,%d on %ls (D2R VR Settings' square window, %d asked%s)",
+                         (int)c.right, (int)c.bottom, side, side, x, y, pk.hereName, asked,
                          side < asked ? " - no monitor holds more: a bigger square needs one (BodyWalk's Virtual Monitor) of a higher resolution" : "");
 }
 
@@ -7527,13 +7751,77 @@ float LabelSizeNow() {
     return g_set.labelsNativeFloor.load() && g_labelSizeIn.load() ? size : 1.0f;
 }
 
+// [hud] labels_far, first person (F4): nearer labels larger, farther ones smaller, as signs in the room
+// (2026-10-12) - labels_size at 1.5 m and nearer, labels_far of it at 10 m and farther, a straight line
+// between; the distance from the hero's feet to the item's own place on the ground (its static path).
+bool LabelsByDistance() { return FullBody() && g_enabled.load() && g_set.labelsFarBody.load() < 0.995f; }
+// An item's distance on the ground from the hero's feet, world units.
+bool LabelItemDistance(void* unit, float* out) {
+    uintptr_t path = 0;
+    uint32_t sx = 0, sy = 0;
+    float hero[3];
+    if (!unit || !SafeRead(&path, (const uint8_t*)unit + 0x38, sizeof path) || path < 0x10000 ||
+        !SafeRead(&sx, (const void*)(path + 0x10), 4) || !SafeRead(&sy, (const void*)(path + 0x14), 4) || !LookAtNow(hero))
+        return false;
+    const float dx = 2.0f * sx + 1.0f - hero[0], dz = 2.0f * sy + 1.0f - hero[2];
+    *out = sqrtf(dx * dx + dz * dz);
+    return std::isfinite(*out);
+}
+float LabelDistanceK(void* unit) {
+    float d;
+    if (!LabelsByDistance() || !LabelItemDistance(unit, &d)) return 1.0f;
+    const float upm = std::max(1.0f, ViewHeight()) / UserEyeHeightM();   // world units per metre, as TrueScale
+    const float m = d / upm;
+    const float t = std::clamp((m - 1.5f) / (10.0f - 1.5f), 0.0f, 1.0f);
+    return 1.0f + (g_set.labelsFarBody.load() - 1.0f) * t;
+}
+// Each label's own scale from its layout to its paint (the name's buffer and the box are the label's own;
+// both run on the game's interface thread), the newest first.
+struct LabelScale { const void* name; const void* box; float k; };
+LabelScale g_labelScale[128];
+uint32_t g_labelScaleNext = 0;
+void NoteLabelScale(const void* name, const void* box, float k) { g_labelScale[g_labelScaleNext++ % 128] = {name, box, k}; }
+float LabelScaleOf(const void* name, const void* box, float fallback) {
+    for (uint32_t i = 1; i <= 128; ++i) {
+        const LabelScale& e = g_labelScale[(g_labelScaleNext - i) % 128];
+        if (e.k > 0.0f && (e.name == name || e.box == box)) return e.k;
+    }
+    return fallback;
+}
+
+// [hud] labels_depth_body, F4 in stereo: each item label at its item's depth - this frame's labels, their boxes
+// in the interface's pixels and their items' distances, for the effect (LabelDepthUniforms).
+bool LabelDepthWanted() { return AfrOn() && g_enabled.load() && FullBody() && g_set.labelsDepthBody.load() > 0.005f; }
+struct LabelDepth { int32_t x, y, w, h; float dist; };
+constexpr int kLabelDepthMax = 32;   // as D2R_DepthFog.fx's LabelBoxes
+SRWLOCK g_labelDepthLock = SRWLOCK_INIT;
+LabelDepth g_labelDepthNew[kLabelDepthMax];
+int g_labelDepthNewN = 0;
+void NoteLabelDepth(void* unit, const int32_t* box) {
+    float d;
+    if (!LabelDepthWanted() || !LabelItemDistance(unit, &d)) return;
+    AcquireSRWLockExclusive(&g_labelDepthLock);
+    if (g_labelDepthNewN < kLabelDepthMax) g_labelDepthNew[g_labelDepthNewN++] = {box[0], box[1], box[2], box[3], d};
+    ReleaseSRWLockExclusive(&g_labelDepthLock);
+}
+
+bool ResizeLabelBox(char* name, int32_t* box, float k);
+std::atomic<float> g_uiScaleSeen{0.0f};   // the game's interface scale, as the label code last asked it
 bool HookLabelLayout(void* unit, char* name, int32_t* box, int32_t minX, int32_t maxX, uint8_t flag) {
     const bool shown = OrigLabelLayout(unit, name, box, minX, maxX, flag);
-    const float k = LabelSizeNow();
-    if (!shown || !box || !name || std::abs(k - 1.0f) < 0.005f) return shown;
+    const float k = LabelSizeNow() * LabelDistanceK(unit);
+    if (shown && name) NoteLabelScale(name, box, k);
+    if (shown && box && name && std::abs(k - 1.0f) >= 0.005f) ResizeLabelBox(name, box, k);
+    if (shown && box) NoteLabelDepth(unit, box);
+    return shown;
+}
+// The box made again round the name at k times its scale, about the same bottom middle.
+bool ResizeLabelBox(char* name, int32_t* box, float k) {
+    const bool shown = true;
     if (!((IsHdFn)d2rsig::Addr(RVA_IS_HD))()) return shown;   // the old graphics: their text has no scale
     const float s = ((UiScaleFn)d2rsig::Addr(RVA_UI_SCALE))();
     if (!(s > 0.05f && s < 20.0f)) return shown;
+    g_uiScaleSeen.store(s);
     const int32_t most[2] = {0x7FFFFFFF, 0x7FFFFFFF};   // as the layout asks: one line, no limit
     int32_t was[2] = {}, now[2] = {};
     const TextMeasureFn measure = (TextMeasureFn)d2rsig::Addr(RVA_TEXT_MEASURE);
@@ -7552,13 +7840,13 @@ bool HookLabelLayout(void* unit, char* name, int32_t* box, int32_t minX, int32_t
 uintptr_t HookLabelPaint(const int32_t* box, const char* name, const float* colour) {
     float alpha, size;
     LabelLookNow(&alpha, &size);
-    if (!colour || !g_set.labelsNativeFloor.load() || (alpha >= 0.995f && std::abs(size - 1.0f) < 0.005f))
+    if (!colour || !g_set.labelsNativeFloor.load() || (alpha >= 0.995f && std::abs(size - 1.0f) < 0.005f && !LabelsByDistance()))
         return OrigLabelPaint(box, name, colour);
     float c[4];
     memcpy(c, colour, sizeof c);
     if (c[3] > 0.0f) c[3] *= alpha;   // below 0 the game skips the fill: left so
     const float keep = t_labelScale;
-    t_labelScale = LabelSizeNow();
+    t_labelScale = LabelScaleOf(name, box, LabelSizeNow());
     const uintptr_t r = OrigLabelPaint(box, name, c);
     t_labelScale = keep;
     return r;
@@ -7578,7 +7866,7 @@ void InstallLabelHooks() {
     float alpha, size;
     LabelLookNow(&alpha, &size);   // the view now: the hooks go in the first time any view wants them
     const bool wantBox = alpha < 0.995f;
-    const bool wantSize = std::abs(size - 1.0f) > 0.005f;
+    const bool wantSize = std::abs(size - 1.0f) > 0.005f || LabelsByDistance() || LabelDepthWanted();
     if (!wantBox && !wantSize) return;
     if (!g_labelPaintIn.load()) {
         if (paintFailed) return;
@@ -9623,6 +9911,80 @@ void SetFloats(reshade::api::effect_runtime* rt, const char* name, const float* 
     if (u.handle) rt->set_uniform_value_float(u, v, n);
 }
 void SetFloat(reshade::api::effect_runtime* rt, const char* name, float v) { SetFloats(rt, name, &v, 1); }
+// The monster's name plate as uv of the screen (2026-10-12): gamestate has it in the layout's units (the panel's
+// place plus its child Health's); the game's interface scale makes them pixels - the label code's, else asked
+// here, else the screen's height over 1080 - and it stands centred across, as D2R puts it at the top middle.
+// The first few go into the log, to check it against where it shows.
+void PlateBoxUv(const int32_t r[4], uint32_t sw, uint32_t sh, float box[4]) {
+    float s = g_uiScaleSeen.load();
+    if (!(s > 0.05f && s < 20.0f) && Matches(RVA_UI_SCALE, kSigUiScale, sizeof kSigUiScale)) s = ((UiScaleFn)d2rsig::Addr(RVA_UI_SCALE))();
+    if (!(s > 0.05f && s < 20.0f)) s = sh / 1080.0f;
+    const float w = r[2] * s, h = r[3] * s, x0 = 0.5f * (sw - w), y0 = r[1] * s;
+    box[0] = x0 / sw; box[1] = y0 / sh; box[2] = (x0 + w) / sw; box[3] = (y0 + h) / sh;
+    static int told = 0;
+    static int32_t last[4] = {};
+    if (told < 4 && memcmp(last, r, sizeof last) != 0) {
+        ++told;
+        memcpy(last, r, sizeof last);
+        LogF("vrcam: the monster's name plate %d,%d %dx%d (layout) x scale %.3f -> %.0f,%.0f %.0fx%.0f on %ux%u (centred across)",
+             r[0], r[1], r[2], r[3], s, x0, y0, w, h, sw, sh);
+    }
+}
+void SetInt(reshade::api::effect_runtime* rt, const char* name, int v) {
+    const reshade::api::effect_uniform_variable u = rt->find_uniform_variable("D2R_DepthFog.fx", name);
+    if (u.handle) rt->set_uniform_value_int(u, &v, 1);
+}
+// [hud] labels_depth_body: this frame's item labels for the effect - each one's box (uv of the interface's
+// layer) and its shift per eye, its item at its own depth against where the game leaves the label (the
+// convergence; with native OpenXR's eyes, infinity): 0.5 * M[0] * half the eyes' gap * (1/z - 1/conv), z the
+// eyes' distance to the item (along the ground off the hero's feet, the camera's height above them) - times
+// labels_depth_body, plus labels_near_body for all. The right eye's present (replayed) has no layout of its
+// own: the left's labels stay for it.
+void LabelDepthUniforms(reshade::api::effect_runtime* rt, uint64_t layerSrv, bool on, float base) {
+    static LabelDepth shown[kLabelDepthMax];
+    static int shownN = 0;
+    static ULONGLONG at = 0;
+    const ULONGLONG now = GetTickCount64();
+    AcquireSRWLockExclusive(&g_labelDepthLock);
+    if (g_labelDepthNewN > 0) {
+        memcpy(shown, g_labelDepthNew, sizeof(LabelDepth) * g_labelDepthNewN);
+        shownN = g_labelDepthNewN;
+        g_labelDepthNewN = 0;
+        at = now;
+    } else if (now - at > 250) shownN = 0;   // none laid out lately: none shown
+    ReleaseSRWLockExclusive(&g_labelDepthLock);
+    int n = 0;
+    float boxes[kLabelDepthMax * 4] = {}, shifts[kLabelDepthMax] = {};
+    if (on && layerSrv) {
+        reshade::api::device* dev = rt->get_device();
+        const reshade::api::resource_desc d = dev->get_resource_desc(dev->get_resource_from_view(reshade::api::resource_view{layerSrv}));
+        const float W = (float)d.texture.width, H = (float)d.texture.height;
+        const float m0 = g_projSx.load(), half = 0.5f * g_stereoIpd.load(), conv = g_stereoConv.load();
+        const float eyeH = std::max(1.0f, ViewHeight()), k = g_set.labelsDepthBody.load();
+        if (W > 0.0f && H > 0.0f && m0 > 0.0f && half > 0.0f) {
+            for (int i = 0; i < shownN; ++i) {
+                const LabelDepth& l = shown[i];
+                const float z = std::max(1.0f, sqrtf(l.dist * l.dist + eyeH * eyeH));
+                boxes[n * 4 + 0] = l.x / W;
+                boxes[n * 4 + 1] = l.y / H;
+                boxes[n * 4 + 2] = (l.x + l.w) / W;
+                boxes[n * 4 + 3] = (l.y + l.h) / H;
+                shifts[n] = base + k * 0.5f * m0 * half * (1.0f / z - (conv > 0.0f ? 1.0f / conv : 0.0f));
+                ++n;
+            }
+            static int told = 0;
+            if (n && told < 3 && ++told)
+                LogF("vrcam: item labels at their items' depth - %d labels, the first %d,%d %dx%d on a %.0fx%.0f layer, %.1f units off: "
+                     "%.4f uv per eye (M0 %.3f, eyes %.3f apart, convergence %.1f)", n, shown[0].x, shown[0].y, shown[0].w, shown[0].h,
+                     W, H, shown[0].dist, shifts[0], m0, 2.0f * half, conv);
+        }
+    }
+    SetInt(rt, "LabelCount", n);
+    if (n) {
+        SetFloats(rt, "LabelBoxes", boxes, (size_t)n * 4);
+        SetFloats(rt, "LabelShifts", shifts, (size_t)n);
+    }
+}
 void SetBool(reshade::api::effect_runtime* rt, const char* name, bool v) {
     const reshade::api::effect_uniform_variable u = rt->find_uniform_variable("D2R_DepthFog.fx", name);
     if (u.handle) rt->set_uniform_value_bool(u, &v, 1);
@@ -9917,6 +10279,10 @@ void Tick() {
 // shadow map on head turns - the left eye's fog flickered with a view from above (2026-10-11). Generic
 // Depth now feeds only FlatVR's "3D from the depth". None of the window's size: no depth for our effects.
 // The barriers as the replay's right-eye copy makes them (the game's last state on it). [render] own_depth (on).
+// Only in VR with D2R VR Settings' square window, where the shadow map is the trap: flat mode and VR
+// without it read ReShade's DEPTH as before 0.161 (the effect's OwnDepth) - a flat player's game at the
+// Resolution Scale above 100 had no depth of the window's size, and no sky or fog (2026-10-12).
+bool OwnDepthNow() { return g_ownDepth.load(std::memory_order_relaxed) && g_squareWin.load(std::memory_order_relaxed) && g_set.platform.load() == 1; }
 namespace scenedepth {
 using namespace reshade::api;
 struct Ds { uint64_t res; uint32_t binds, last, state; };
@@ -9928,7 +10294,7 @@ resource_desc g_copyDesc{};
 uint64_t g_from = 0;   // the depth-stencil copied last (the log, once per change)
 
 void OnBind(command_list* cl, uint32_t, const resource_view*, resource_view dsv) {
-    if (!dsv.handle || !g_ownDepth.load(std::memory_order_relaxed)) return;
+    if (!dsv.handle || !OwnDepthNow()) return;
     const uint64_t r = cl->get_device()->get_resource_from_view(dsv).handle;
     if (!r) return;
     AcquireSRWLockExclusive(&g_lock);
@@ -9944,7 +10310,7 @@ void OnBind(command_list* cl, uint32_t, const resource_view*, resource_view dsv)
     ReleaseSRWLockExclusive(&g_lock);
 }
 void OnBarrier(command_list*, uint32_t count, const resource* res, const resource_usage*, const resource_usage* to) {
-    if (!g_ownDepth.load(std::memory_order_relaxed)) return;
+    if (!OwnDepthNow()) return;
     AcquireSRWLockExclusive(&g_lock);
     for (uint32_t i = 0; i < count; ++i)
         for (Ds& d : g_ds)
@@ -9974,27 +10340,38 @@ format SrvFormat(format typeless) {
 void Bind(effect_runtime* rt, command_list* cl) {
     static int told = -1;
     auto tell = [&](int what, const char* text) { if (told != what) { told = what; Log(text); } };
-    if (!g_ownDepth.load() || !cl) return;
+    if (!OwnDepthNow() || !cl) return;
     uint32_t w = 0, h = 0;
     rt->get_screenshot_width_and_height(&w, &h);
     device* dev = rt->get_device();
-    Ds best{};
-    resource_desc bd{};
+    // The window's size first; else one of its shape at another scale - the game's Resolution Scale
+    // above 100 draws into targets bigger than the window (200: twice), and with none the window's
+    // size the effects had no depth at all: no sky, no fog in flat mode since 0.161 (2026-10-12).
+    // A square power of two (1024, 2048, 4096) is a shadow map unless it is the window's size.
+    Ds best{}, scaled{};
+    resource_desc bd{}, sd{};
     AcquireSRWLockShared(&g_lock);
     for (const Ds& d : g_ds) {
+        if (!d.res) continue;
         const uint32_t n = std::max(d.binds, d.last);
-        if (!d.res || n <= std::max(best.binds, best.last)) continue;
         const resource_desc rd = dev->get_resource_desc({d.res});
-        if (rd.type != resource_type::texture_2d || (rd.usage & resource_usage::depth_stencil) == 0 || rd.texture.width != w ||
-            rd.texture.height != h || rd.texture.samples != 1)
+        if (rd.type != resource_type::texture_2d || (rd.usage & resource_usage::depth_stencil) == 0 || rd.texture.samples != 1) continue;
+        const uint32_t rw = rd.texture.width, rh = rd.texture.height;
+        if (rw == w && rh == h) {
+            if (n > std::max(best.binds, best.last)) { best = d; bd = rd; }
             continue;
-        best = d;
-        bd = rd;
+        }
+        const bool shadow = rw == rh && (rw & (rw - 1)) == 0;
+        const double k = w ? (double)rw / w : 0.0;
+        const bool shape = std::fabs((double)rw * h - (double)rh * w) <= 0.005 * (double)rw * h;
+        if (!shadow && shape && k >= 0.49 && k <= 2.01 && n > std::max(scaled.binds, scaled.last)) { scaled = d; sd = rd; }
     }
     ReleaseSRWLockShared(&g_lock);
-    if (!best.res) return tell(1, "vrcam: own depth - no depth-stencil the window's size bound yet: ReShade's choice for now");
+    if (!best.res && scaled.res) { best = scaled; bd = sd; }
+    if (!best.res) return tell(1, "vrcam: own depth - no depth-stencil of the window's shape bound yet: no depth for the fog and the sky until one is");
+    const uint32_t cw = bd.texture.width, ch = bd.texture.height;   // our copy: the source's own size
     const format tl = format_to_typeless(bd.texture.format);
-    if (!g_copy.handle || g_copyDesc.texture.width != w || g_copyDesc.texture.height != h || g_copyDesc.texture.format != tl) {
+    if (!g_copy.handle || g_copyDesc.texture.width != cw || g_copyDesc.texture.height != ch || g_copyDesc.texture.format != tl) {
         if (g_copy.handle) {
             rt->get_command_queue()->wait_idle();
             if (g_srv.handle) dev->destroy_resource_view(g_srv);
@@ -10002,7 +10379,7 @@ void Bind(effect_runtime* rt, command_list* cl) {
             g_srv = {0};
             g_copy = {0};
         }
-        const resource_desc cd(resource_type::texture_2d, w, h, 1, 1, tl, 1, memory_heap::gpu_only,
+        const resource_desc cd(resource_type::texture_2d, cw, ch, 1, 1, tl, 1, memory_heap::gpu_only,
                                resource_usage::shader_resource | resource_usage::copy_dest);
         if (!dev->create_resource(cd, nullptr, resource_usage::shader_resource, &g_copy)) {
             g_copy = {0};
@@ -10015,7 +10392,8 @@ void Bind(effect_runtime* rt, command_list* cl) {
             return tell(3, "vrcam: own depth - no view of our depth texture: ReShade's choice stays");
         }
         g_copyDesc = cd;
-        LogF("vrcam: own depth - our depth texture %ux%u (format %u, viewed as %u)", w, h, (unsigned)tl, (unsigned)SrvFormat(tl));
+        LogF("vrcam: own depth - our depth texture %ux%u (format %u, viewed as %u; the window %ux%u)", cw, ch, (unsigned)tl,
+             (unsigned)SrvFormat(tl), w, h);
     }
     const resource src{best.res};
     const resource_usage from = best.state ? (resource_usage)best.state : resource_usage::depth_stencil_write;
@@ -10027,8 +10405,9 @@ void Bind(effect_runtime* rt, command_list* cl) {
     rt->update_texture_bindings("D2RVR_DEPTH", g_srv, g_srv);   // ours alone: Generic Depth binds DEPTH
     if (best.res != g_from) {
         g_from = best.res;
-        LogF("vrcam: own depth - the effects read the game's depth-stencil %p (%ux%u, bound %u times a frame, state %X), "
-             "bound to D2RVR_DEPTH, never ReShade's pick", (void*)best.res, w, h, std::max(best.binds, best.last), (unsigned)from);
+        LogF("vrcam: own depth - the effects read the game's depth-stencil %p (%ux%u%s, bound %u times a frame, state %X), "
+             "bound to D2RVR_DEPTH, never ReShade's pick", (void*)best.res, cw, ch,
+             cw == w && ch == h ? "" : " - not the window's size: the game's Resolution Scale", std::max(best.binds, best.last), (unsigned)from);
     }
     told = 0;
 }
@@ -10048,6 +10427,8 @@ void OnReshadePresent(reshade::api::effect_runtime* rt) {
         if (hero && !hadHero && xr::On()) { Recenter(); Log("vrcam: openxr - a game entered: recentred"); }
         hadHero = hero;
     }
+    // a panel open in a game: the flat picture at the panels' distance from its first frame
+    xr::SetPanelOpen(gamestate::MenuOpen() && g_inWorld.load());
     if (xr::On() || xr::Running() || xr::StopPending())
         replay::XrPresent(rt, (ID3D12Resource*)rt->get_current_back_buffer().handle);
     else pace::Tick();
@@ -10082,10 +10463,12 @@ void OnReshadePresent(reshade::api::effect_runtime* rt) {
 
 void OnBeginEffects(reshade::api::effect_runtime* rt, reshade::api::command_list* cl, reshade::api::resource_view, reshade::api::resource_view) {
     pairtime::g_effBegin.store(pairtime::UsNow());
+    const bool own = OwnDepthNow();
+    SetBool(rt, "OwnDepth", own);   // ours (VR, the square window) or ReShade's DEPTH (scenedepth::)
     scenedepth::Bind(rt, cl);   // before the replay reads which depth the effects have
     if (replay::g_on.load()) replay::g_rt = rt;
     if (replay::g_on.load()) {   // the depth buffer our effect reads: replay keeps the left eye's for its present
-        const reshade::api::effect_texture_variable v = rt->find_texture_variable("D2R_DepthFog.fx", "FogDepthTex");
+        const reshade::api::effect_texture_variable v = rt->find_texture_variable("D2R_DepthFog.fx", own ? "FogDepthTex" : "FogDepthRsTex");
         if (v.handle) {
             reshade::api::resource_view srv{0};
             rt->get_texture_binding(v, &srv, nullptr);
@@ -10324,18 +10707,18 @@ void OnBeginEffects(reshade::api::effect_runtime* rt, reshade::api::command_list
         if (on) {   // on the floor (or for the plate alone) flat where the game puts them, each eye's own: only faded
             const bool floor = FloorView();
             const bool tilted = !floor && LabelsTilted();
-            SetFloat(rt, "LabelBase", tilted ? g_set.labelsNear.load() * 0.005f : 0.0f);
-            SetFloat(rt, "LabelTilt", tilted ? g_set.labelsTilt.load() * 0.005f : 0.0f);
+            const bool body = g_enabled.load();   // first person (F4); else from above
+            SetFloat(rt, "LabelBase", tilted ? (body ? g_set.labelsNearBody : g_set.labelsNear).load() * 0.005f : 0.0f);
+            SetFloat(rt, "LabelTilt", tilted && !body ? g_set.labelsTilt.load() * 0.005f : 0.0f);
+            LabelDepthUniforms(rt, srv, tilted && body, g_set.labelsNearBody.load() * 0.005f);
             SetFloat(rt, "LabelAlpha", floor && !LabelBoxNative() ? g_set.labelsAlphaFloor.load() : 1.0f);
             float box[4] = {0.0f, 0.0f, 0.0f, 0.0f};
             int32_t r[4];
             const uint32_t sw = renderscale::g_screenW.load(), sh = renderscale::g_screenH.load();
-            if (g_set.plateAlpha.load() < 0.995f && sw && sh && gamestate::PlateRect(r)) {
-                box[0] = (float)r[0] / sw; box[1] = (float)r[1] / sh;
-                box[2] = (float)(r[0] + r[2]) / sw; box[3] = (float)(r[1] + r[3]) / sh;
-            }
+            if (PlateWanted() && sw && sh && gamestate::PlateRect(r)) PlateBoxUv(r, sw, sh, box);
             SetFloats(rt, "PlateBox", box, 4);
             SetFloat(rt, "PlateAlpha", g_set.plateAlpha.load());
+            SetFloat(rt, "PlateScale", g_set.plateSize.load());
         }
         if (on || mask) {   // the toolbar and the map in the layer: never faded, never keyed away (TableKey)
             SetFloats(rt, "LabelKeep0", keepBar, 4);
@@ -10667,7 +11050,7 @@ DWORD WINAPI UpdateThread(void*) {
             if (ClassicNow()) BarOffsetNow(&bx, &by);
             hud::SetPictureBarOffset(bx, by);
         }
-        if (g_inWorld.load() && g_set.plateAlpha.load() < 0.995f) {   // the plate's place, 10 times a second
+        if (g_inWorld.load() && PlateWanted()) {   // the plate's place, 10 times a second
             static ULONGLONG nextPlate = 0;
             if (nowMs >= nextPlate) { nextPlate = nowMs + 100; gamestate::PollPlate(); }
         }
@@ -10837,7 +11220,7 @@ void LoadReShade() {
              "an antivirus may also block it", err == ERROR_DLL_INIT_FAILED ? "its start said no" : "it could not be loaded");
 }
 
-static const char g_info_version[] = "0.162.0";
+static const char g_info_version[] = "0.163.0";
 
 static const PluginInfo g_info = {
     PluginInfoSize, D2RL_PLUGIN_ABI_VERSION, "d2r-vr-vrcam", "vrcam", g_info_version, "BodyWalkVR",
@@ -10864,6 +11247,7 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     xr::SetLogger(&Log);   // before the settings: [openxr] on says so in the log
     ReloadIfChanged();
     NoTemporalAA();
+    MiniMapForHand();
     SafeGameWindow();
     g_mouseLookOn.store(MouseLookForView());
     LogF("vrcam %s: game build %s (%s), made for D2R 3.3.93787 under D2RLoader 1.3.1", g_info_version,

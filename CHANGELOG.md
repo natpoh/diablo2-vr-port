@@ -1,5 +1,34 @@
 # What's new in D2R VR
 
+## 0.163
+
+- **No more attacks on head turns and while walking.** BodyWalk's strike
+  gestures measured the hand's speed against the head, so a quick head turn
+  or a step swung still hands. BodyWalk 1.79 measures the hands themselves.
+  D2R VR now needs BodyWalk 1.79: Setup puts BodyWalk Portable 1.79 beside an
+  older one.
+- **Item labels on their items** in first person (F4, native too) - D2R VR
+  Settings > UI: F4 body > Item labels on the ground:
+  - "at their items, %": each label at its own item's depth in stereo
+    (100 = exactly; the game draws them on the same spot in both eyes, far off);
+  - "size far away": nearer labels larger, farther ones smaller;
+  - "stereo depth on top": all of them nearer or farther.
+- **Names over monsters**: their opacity works now, and they have a size
+  (UI: F4 body > Names over monsters).
+- **The game interface size** slider is on UI: F4 body now: with the square
+  game window, lower it until the inventory and the stash fit.
+- **Native OpenXR**: an open panel (inventory, trade, stash) moves the flat
+  picture out to the panel distance, and back when it closes.
+- **The map in your hand**: with the game's map in the middle (full screen)
+  the orb stayed empty - D2R VR now puts it on the right at start.
+- **Sky and fog in flat mode** are back with the game's Resolution Scale above
+  100.
+- **The square game window** no longer unticks itself when the game's
+  Settings.json has no window size in it, and the log says why a window is not
+  made square.
+- For support: the log names every press that makes the hero act and where it
+  came from ([debug] input_log).
+
 ## 0.162
 
 - **A square window bigger than your monitor, up to 4000x4000** (D2R VR

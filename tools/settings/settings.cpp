@@ -496,11 +496,16 @@ std::vector<Item> g_items = {
            L"Everything the game shows in the headset, darker or brighter: the picture, the flat picture, the toolbar and the "
            L"map. 1 = as the game draws it. The headset's runtime does it (SteamVR, Virtual Desktop...); one without it leaves "
            L"the picture as it is - vrcam's log says which."),
-    Slider(L"openxr", L"flat_distance_m", L"Flat picture: distance, m", 0.5f, 10.0f, 0.1f, 2.5f,
-           L"Menus, open panels (inventory, trade...), loading and the views shown flat (F1, F3) stand this far ahead, where "
-           L"you looked when they came up. Farther = smaller in view."),
+    Slider(L"openxr", L"flat_distance_m", L"Flat picture: distance, m", 0.5f, 10.0f, 0.1f, 2.0f,
+           L"Menus, loading and the views shown flat (F1, F3) stand this far ahead, where you looked when they came up. "
+           L"Farther = smaller in view. An open panel (inventory, trade...) has its own distance, below."),
     Slider(L"openxr", L"flat_width_m", L"Flat picture: width, m", 0.5f, 8.0f, 0.1f, 2.4f,
            L"How wide that picture is; its height follows the game window's shape."),
+    Slider(L"screen", L"menu_distance_m", L"Flat picture with a panel open (inventory, trade...): distance, m", 0, 8, 0.1f, 1.6f,
+           L"While the inventory, a trader, the stash or another panel is open in a game, the flat picture moves this far "
+           L"away - smoothly - and back when it closes. With a square window the game's interface is as wide as the picture: "
+           L"farther, its left and right edges come into view. 0 = the distance above. The same setting as \"Screen distance "
+           L"while a panel is open\" for FlatVR (UI: F4 body)."),
     Slider(L"openxr", L"lean_m", L"Head off the body, m", 0.0f, 0.5f, 0.01f, 0.1f,
            L"First and third person: how far the head may lean away from the hero's body. Farther, the body follows - "
            L"walking in the room never takes the camera out of the hero. 0 = turning only."),
@@ -599,9 +604,6 @@ std::vector<Item> g_items = {
            L"The pointer smaller the higher it is on the screen - far off, as what it points at is: this size at the "
            L"top, its own at the bottom, a straight line between. 100 = its own size everywhere."),
     Group(L"Every view"),
-    Slider(L"@game", L"Safe Screen Percent", L"Game interface size, % (restart)", 50, 100, 1, 100,
-           L"Below 100 the game lays its whole interface out in a smaller box in the middle of the screen. "
-           L"Read when the game starts: change it with the game closed, or the game puts its own value back on exit."),
     Needs(L"stereo", L"afr", 1, Slider(L"stereo", L"ui_near", L"Interface nearer (0 = on the screen)", 0, 10, 0.1f, 0,
            L"Real stereo only: the HUD is moved apart per eye by the shader, % of the half screen.")),
     Slider(L"stereo", L"ui_top", L"Interface top edge", 0.4f, 1, 0.01f, 0.7f,
@@ -712,9 +714,6 @@ std::vector<Item> g_items = {
     Only(kVr, Tab(L"UI: F4 body")),
     // [screen] menu_distance_m: vrcam asks FlatVR for it through Game Link (GameState, host API 6).
     Group(L"Item labels on the ground"),
-    Hide(Slider(L"hud", L"monster_alpha", L"Name over a monster: opacity", 0, 1, 0.05f, 1,
-           L"The name plate the game shows over the monster under the cursor (its MonsterHealth panel), box and name "
-           L"alike: 1 = as the game draws it, 0 = gone. One setting for every view. Needs D2R_DepthFog.fx on in ReShade.")),   // hidden: not working yet
     Slider(L"hud", L"labels_alpha", L"Item labels: opacity", 0, 1, 0.05f, 1,
            L"How much of the dark box behind the names of items on the ground is drawn in first person (F4): 1 = as the game draws "
            L"it, 0 = no box, the names alone. The names stay bright. Through the game's label code (vrcam's log says "
@@ -722,13 +721,38 @@ std::vector<Item> g_items = {
     Slider(L"hud", L"labels_size", L"Item labels: size, %", 20, 150, 5, 100,
            L"The names of items on the ground and their boxes in first person (F4), smaller or larger, each about the point under it. "
            L"100 = the game's own. Item tooltips and all other text keep their size."),
+    Slider(L"hud", L"labels_far", L"Item labels: size far away, % of the size above", 20, 100, 5, 100,
+           L"Nearer names larger, farther ones smaller, as signs in the room: the size above for an item 1.5 m away and nearer, "
+           L"this much of it for one 10 m away and farther, smoothly in between. 100 = the same size at any distance."),
+    Slider(L"hud", L"labels_depth_body", L"Item labels: at their items, %", 0, 150, 5, 0,
+           L"In stereo the game draws the labels on the same spot in both eyes - in the headset they float far off, not on "
+           L"their items. Here each label is set at its own item's depth, by the item's distance from you: 100 = exactly "
+           L"there, 0 = where the game leaves them. Their interface layer is taken out of the picture for it; the toolbar "
+           L"and the map stay."),
+    Slider(L"hud", L"labels_near_body", L"Item labels: stereo depth on top, all", -20, 20, 0.1f, 0,
+           L"Every label (and the rest of the interface left in the picture: names over monsters, chat) nearer (+) or "
+           L"farther (-) by the same amount, on top of the slider above."),
+    Group(L"Names over monsters"),
+    // [hud] monster_alpha, monster_size: the plate is the HUDMonsterHealth panel's child Health (2026-10-12; the panel itself is 0 x 0)
+    Slider(L"hud", L"monster_alpha", L"Name over a monster: opacity", 0, 1, 0.05f, 1,
+           L"The name plate the game shows for the monster you target (box, frame and name alike): 1 = as the game draws it, "
+           L"0 = gone. Every view. Needs D2R_DepthFog.fx on in ReShade."),
+    Slider(L"hud", L"monster_size", L"Name over a monster: size, %", 30, 200, 5, 100,
+           L"That plate smaller or larger about its middle. 100 = the game's own. Every view."),
     Group(L"Panels (inventory, trade...)"),
     Slider(L"screen", L"menu_distance_m", L"Screen distance while a panel is open (inventory, trade...), m", 0, 8, 0.1f, 1.6f,
            L"While the inventory, a trader, the stash or another panel is open in first person (F4), FlatVR moves its "
            L"screen this far from your eyes, so the whole panel is in view, and brings it back to your own distance when "
            L"the panel closes - smoothly, in under half a second. Your FlatVR Distance setting is not changed. A screen "
            L"already farther away than this comes nearer instead. 0 = the screen stays where it is. Needs BodyWalk with "
-           L"the Game Link plugin and FlatVR's \"Screen distance follows the game\" (on by default)."),
+           L"the Game Link plugin and FlatVR's \"Screen distance follows the game\" (on by default). With native OpenXR "
+           L"the flat picture a panel is shown on goes this far, in any view (Stereo > Native OpenXR)."),
+    // Here from "UI: F1 above" (every view; nobody found it there, 2026-10-12): the square window's panels need it.
+    Slider(L"@game", L"Safe Screen Percent", L"Game interface size, % (restart)", 50, 100, 1, 100,
+           L"Below 100 the game lays its whole interface out in a smaller box in the middle of the screen - in every view. "
+           L"With the square game window (Stereo > Native OpenXR) the inventory, the stash and the other panels are wider "
+           L"than the window and come out cut at the sides: lower this until they fit (about 75-85). "
+           L"Read when the game starts: change it with the game closed, or the game puts its own value back on exit."),
     Group(L"In the game's picture"),
     Choice(L"hud", L"map", L"Corner map", 0, {L"In the picture", L"Out of the picture (its own texture)"},
            L"The game draws the corner map under a scissor of its own: its draws go to a texture of their own, the labels "
@@ -1658,7 +1682,14 @@ float ReadSquareWindow() {
 void WriteSquareWindow(bool on) {
     int mode = -1, w = 0, h = 0;
     if (!ReadGameWindow(&mode, &w, &h)) {
-        SetStatus(L"square_window", 1, L"The game's Settings.json not found (Saved Games\\Diablo II Resurrected) - start the game once");
+        // Kept all the same: vrcam makes the window square in a game from our ini (BigWindowTick). It was
+        // dropped here, and the box unticked itself at the next look - "the setting disappears" (2026-10-12).
+        WritePrivateProfileStringW(L"openxr", L"square_window", on ? L"1" : L"0", g_ini);
+        const std::wstring p = GameSettingsPath();
+        const bool there = !p.empty() && GetFileAttributesW(p.c_str()) != INVALID_FILE_ATTRIBUTES;
+        SetStatus(L"square_window", 1, !on ? L"Off" : there
+            ? L"Kept. The game's Settings.json has no windowed size in it: in the game set Options > Video > Window Mode to Windowed, then quit the game once"
+            : L"Kept. The game's Settings.json is not there yet (Saved Games\\Diablo II Resurrected): the game writes it when it quits - vrcam makes the window square in a game anyway");
         return;
     }
     const bool running = ProcessRunning(L"D2RLoader.exe") || ProcessRunning(L"D2R.exe");
@@ -2369,11 +2400,12 @@ void RefreshWeaponList() {
     }
 }
 
-// The BodyWalk D2R VR needs: 1.78 and on (0.156: the belt's zones in the headset and the
+// The BodyWalk D2R VR needs: 1.79 and on (0.163: its strike gestures measure the hands in the
+// room - on 1.78 a head turn or a step attacked, 2026-10-12; 0.156: the belt's zones in the headset and the
 // Mapping on the game's own headset, host API 9/10, FlatVR's late pictures left out; 1.77
 // for FlatVR's frame conveyor and the add-on's present stamp - with 1.76 and the add-on
 // 2.19 a player's eyes went out of line after ~10 s, 2026-10-10). Setup holds the same minimum.
-constexpr int kMinBodyWalkMajor = 1, kMinBodyWalkMinor = 78;
+constexpr int kMinBodyWalkMajor = 1, kMinBodyWalkMinor = 79;
 
 // An exe's own version block as major * 1000 + minor (1.77 -> 1077), 0 when it has none.
 int ExeVersion(const std::wstring& exe) {

@@ -283,16 +283,26 @@ texture2D SkyCap6Tex < source = D2R_SKYCAP_SNOW; > { Width = 1024; Height = 1024
 sampler2D SkyCap6Smp { Texture = SkyCap6Tex; AddressU = WRAP; AddressV = WRAP; };
 
 texture2D FogColorTex : COLOR;
-// the scene's depth, bound by D2R VR (vrcam's own pick, the depth buffer the window's size the game uses
-// most) - not ReShade's DEPTH, which Generic Depth may point at the game's shadow map
+// The scene's depth. In VR with D2R VR Settings' square window: vrcam's own pick (D2RVR_DEPTH) - for a
+// square window ReShade's Generic Depth may take the game's shadow map, square too. Everywhere else
+// ReShade's DEPTH as before 0.161: flat mode with the game's Resolution Scale above 100 had no depth of
+// vrcam's at all - no sky, no fog (2026-10-12). vrcam says which (OwnDepth).
 texture2D FogDepthTex : D2RVR_DEPTH;
+texture2D FogDepthRsTex : DEPTH;
 sampler2D FogColorSmp { Texture = FogColorTex; };
 sampler2D FogDepthSmp { Texture = FogDepthTex; MinFilter = POINT; MagFilter = POINT; };
+sampler2D FogDepthRsSmp { Texture = FogDepthRsTex; MinFilter = POINT; MagFilter = POINT; };
+uniform bool OwnDepth < hidden = true; > = false;
 // The part of the depth buffer the game draws the scene into (vrcam, from the game's
 // viewport): 1 without an upscaler; DLSS draws at 0.5 - 0.67 of the screen into the top
 // left of a screen-size buffer, so every read of the depth goes through DepthAt (2026-10-08).
 uniform float2 DepthScale < hidden = true; > = float2(1.0, 1.0);
-float4 DepthAt(float2 duv) { return tex2Dlod(FogDepthSmp, float4(duv * DepthScale, 0, 0)); }
+float4 DepthAt(float2 duv) {
+    const float4 c = float4(duv * DepthScale, 0, 0);
+    return OwnDepth ? tex2Dlod(FogDepthSmp, c) : tex2Dlod(FogDepthRsSmp, c);
+}
+// under 16: no depth bound
+int DepthWidth() { return OwnDepth ? tex2Dsize(FogDepthSmp, 0).x : tex2Dsize(FogDepthRsSmp, 0).x; }
 
 void VS_Fullscreen(in uint id : SV_VertexID, out float4 pos : SV_Position, out float2 uv : TEXCOORD)
 {
@@ -1041,7 +1051,7 @@ sampler2D VoidFogTmpSmp { Texture = VoidFogTmpTex; AddressU = CLAMP; AddressV = 
 
 float PS_VoidFog(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
 {
-    if (!FogOn || tex2Dsize(FogDepthSmp, 0).x < 16) return 0.0;
+    if (!FogOn || DepthWidth() < 16) return 0.0;
     const float2 duv = UpsideDown ? float2(uv.x, 1.0 - uv.y) : uv;
     const float down = UpsideDown ? -BUFFER_RCP_HEIGHT : BUFFER_RCP_HEIGHT;
     const float2 hit = FirstDepthBelowAt(duv, down);
@@ -1306,7 +1316,7 @@ float3 DepthFogWorld(float4 pos, float2 uv, int eye)
     // dark speck of the ground. ReShade then binds a tiny empty texture, not a
     // screen-sized buffer. (Probing for empty depth low on the screen was wrong:
     // looking up, the sky is down there too, and the sky went out.)
-    if (tex2Dsize(FogDepthSmp, 0).x < 16) return colour;
+    if (DepthWidth() < 16) return colour;
 
     // The pixel's four neighbours. Where the drawn distance ends, the far
     // ground has single empty pixels (depth 0): each was taken for the void,
@@ -1570,9 +1580,24 @@ uniform float4 LabelKeep1 < hidden = true; > = float4(0.0, 0.0, 0.0, 0.0);
 // MonsterHealth panel, uv box) faded as a whole - box, frame and name.
 uniform float4 PlateBox < hidden = true; > = float4(0.0, 0.0, 0.0, 0.0);
 uniform float PlateAlpha < hidden = true; > = 1.0;
+uniform float PlateScale < hidden = true; > = 1.0;   // vrcam [hud] monster_size: the plate larger or smaller about its middle
+
+// First person (F4, vrcam [hud] labels_depth_body): each item label on the ground at its own item's depth -
+// its box (uv, x0 y0 x1 y1, where the game drew it) and its shift per eye (uv, + nearer). The rest of the
+// layer moves by LabelBase. LabelCount 0: none.
+uniform int LabelCount < hidden = true; > = 0;
+uniform float4 LabelBoxes[32] < hidden = true; >;
+uniform float LabelShifts[32] < hidden = true; >;
 
 bool InBox(float2 uv, float4 box) { return uv.x >= box.x && uv.y >= box.y && uv.x < box.z && uv.y < box.w; }
 bool Kept(float2 uv) { return InBox(uv, LabelKeep0) || InBox(uv, LabelKeep1); }
+// an item label drawn at its own depth: the layer's pixel there is not drawn again with the rest
+bool InItemLabel(float2 src)
+{
+    [loop] for (int i = 0; i < LabelCount; ++i)
+        if (InBox(src, LabelBoxes[i])) return true;
+    return false;
+}
 
 // A label's pixel faded by LabelAlpha: its cover (1 - a) is cut, the more the darker
 // the colour under it - the boxes ({0,0,0,0.6} in the game) fade, the names keep
@@ -1589,8 +1614,29 @@ float4 GameLabels(float2 uv, float eyeSign)
 {
     const float2 flat = uv - float2(eyeSign * HudShift, 0.0);
     if (Kept(flat)) return tex2Dlod(GameLayerSmp, float4(flat, 0, 0));
+    [loop] for (int i = 0; i < LabelCount; ++i)   // the item labels, each at its item's depth
+    {
+        const float2 s = uv - float2(eyeSign * LabelShifts[i], 0.0);
+        if (InBox(s, LabelBoxes[i]))
+        {
+            float4 il = tex2Dlod(GameLayerSmp, float4(s, 0, 0));
+            if (LabelAlpha < 0.999) il = FadedLabel(il);
+            return il;
+        }
+    }
     const float2 src = uv - float2(eyeSign * (LabelBase + LabelTilt * uv.y), 0.0);
-    if (src.x < 0.0 || src.x > 1.0 || Kept(src)) return float4(0.0, 0.0, 0.0, 1.0);
+    if (src.x < 0.0 || src.x > 1.0 || Kept(src) || InItemLabel(src)) return float4(0.0, 0.0, 0.0, 1.0);
+    [branch] if (abs(PlateScale - 1.0) > 0.005 && PlateBox.z > PlateBox.x)
+    {
+        const float2 c = 0.5 * (PlateBox.xy + PlateBox.zw);
+        const float2 ps = c + (src - c) / PlateScale;   // the plate's own pixel shown here
+        if (InBox(ps, PlateBox))
+        {
+            const float4 p = tex2Dlod(GameLayerSmp, float4(ps, 0, 0));
+            return float4(p.rgb * PlateAlpha, 1.0 - (1.0 - saturate(p.a)) * PlateAlpha);
+        }
+        if (InBox(src, PlateBox)) return float4(0.0, 0.0, 0.0, 1.0);   // its old place, left empty
+    }
     float4 l = tex2Dlod(GameLayerSmp, float4(src, 0, 0));
     if (LabelAlpha < 0.999) l = FadedLabel(l);
     if (PlateAlpha < 0.999 && InBox(src, PlateBox)) l = float4(l.rgb * PlateAlpha, 1.0 - (1.0 - saturate(l.a)) * PlateAlpha);
@@ -1787,7 +1833,7 @@ bool OutsideTable(float2 uv, float d, int eye)
 float3 TableKey(float2 uv, int eye)
 {
     const float3 c = tex2D(FogColorSmp, uv).rgb;
-    if (!TableKeyOn || tex2Dsize(FogDepthSmp, 0).x < 16) return c;
+    if (!TableKeyOn || DepthWidth() < 16) return c;
     // The toolbar and the map drawn back (PS_GameHud, [hud_floor]) are never the void,
     // wherever bar_x / bar_y put them - over the room or past the board's edge: kept,
     // their dark lifted like the game's so the headset's key does not cut them.

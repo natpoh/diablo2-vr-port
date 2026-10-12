@@ -15,9 +15,10 @@
 ;     carries (vjoy installer\make_bodywalk_portable.ps1; LITE on its first
 ;     start) goes into <game>\BodyWalkVR, with ViGEmBus and a
 ;     Start menu shortcut; running this Setup again refreshes that copy.
-;     Installed: used as it is when it is at least 1.78 (the gesture zones in the
-;     headset and the Input Source the game asks for, host API 9/10; 1.77 for the
-;     add-on's present stamp); an older one (Steam's 1.74, an old standalone) is left
+;     Installed: used as it is when it is at least 1.79 (its strike gestures no longer
+;     go off on head turns or steps; 1.78 for the gesture zones in the headset and the
+;     Input Source the game asks for, host API 9/10; 1.77 for the add-on's present
+;     stamp); an older one (Steam's 1.74, an old standalone) is left
 ;     alone and the portable copy goes in beside the game instead - D2R VR Settings
 ;     starts the newest BodyWalk it finds. Then
 ;     BodyWalk's Game Link plugin goes into BodyWalk's plugins (the old D2R
@@ -32,7 +33,7 @@
   #define ModVersion "0.0"
 #endif
 #define MinBodyWalkMajor 1
-#define MinBodyWalkMinor 78
+#define MinBodyWalkMinor 79
 #define BodyWalkDownload "https://bodywalkvr.com/api/download/latest?product=bodywalk"
 #define D2RLoaderSite "https://d2rloader.net"
 ; The one D2RLoader the mod is made for, fetched only when the player asks (InstallD2RLoader);

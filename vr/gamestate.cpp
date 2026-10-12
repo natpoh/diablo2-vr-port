@@ -605,17 +605,28 @@ void __cdecl ReadPlate(const PluginContext* ctx, void*) noexcept {
     Widgets::Rect rc{};
     if (r == Widgets::Result::Success && g_platePanel != Widgets::InvalidHandle) r = g_widgets->getWidgetRect(ctx, g_platePanel, &rc);
     if (r == Widgets::Result::StaleHandle || r == Widgets::Result::NotFound) g_platePanel = Widgets::InvalidHandle;
-    const bool ok = r == Widgets::Result::Success && rc.width > 0 && rc.height > 0;
+    // The panel itself is 0 x 0: the plate is its child "Health" (HUDMonsterHealthHD.json), its rectangle
+    // local to the panel - taken as the plate, the panel's place added (docs/KNOWN_ISSUES.md 17, 2026-10-12).
+    static Widgets::WidgetHandle health = Widgets::InvalidHandle;
+    if (g_platePanel == Widgets::InvalidHandle) health = Widgets::InvalidHandle;
+    Widgets::Rect hc{};
+    Widgets::Result hr = Widgets::Result::NotFound;
+    if (r == Widgets::Result::Success && g_platePanel != Widgets::InvalidHandle && g_widgets->findWidget) {
+        if (health == Widgets::InvalidHandle) g_widgets->findWidget(ctx, g_platePanel, "Health", &health);
+        if (health != Widgets::InvalidHandle) hr = g_widgets->getWidgetRect(ctx, health, &hc);
+        if (hr == Widgets::Result::StaleHandle || hr == Widgets::Result::NotFound) health = Widgets::InvalidHandle;
+    }
+    const bool ok = hr == Widgets::Result::Success && hc.width > 0 && hc.height > 0;
     if (ok) {
-        g_plate[0].store(rc.x); g_plate[1].store(rc.y); g_plate[2].store(rc.width); g_plate[3].store(rc.height);
+        g_plate[0].store(rc.x + hc.x); g_plate[1].store(rc.y + hc.y); g_plate[2].store(hc.width); g_plate[3].store(hc.height);
         g_plateAt.store(GetTickCount64());
     }
-    if (told < 6 && (!ok || rc.x != last.x || rc.y != last.y || rc.width != last.width || rc.height != last.height)) {
+    if (told < 6 && (!ok || hc.x != last.x || hc.y != last.y || hc.width != last.width || hc.height != last.height)) {
         ++told;
-        last = rc;
-        char b[160];
-        snprintf(b, sizeof b, "gamestate: the monster's name plate (HUDMonsterHealth) - result %u, at %d,%d size %dx%d",
-                 (unsigned)r, rc.x, rc.y, rc.width, rc.height);
+        last = hc;
+        char b[200];
+        snprintf(b, sizeof b, "gamestate: the monster's name plate - HUDMonsterHealth (result %u) at %d,%d size %dx%d, its Health (result %u) "
+                 "at %d,%d size %dx%d", (unsigned)r, rc.x, rc.y, rc.width, rc.height, (unsigned)hr, hc.x, hc.y, hc.width, hc.height);
         Log(b);
     }
 }
