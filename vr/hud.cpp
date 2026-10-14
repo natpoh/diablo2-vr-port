@@ -45,6 +45,16 @@
 // (PictureNow): the toolbar from the middle of its bottom edge, the map from
 // its corner. Only while vrcam says that effect is running (SetPictureReady),
 // so a missing or switched-off effect never costs the picture its toolbar.
+//
+// [openxr] menu_3d (SetPanelOut, docs/plan_laser_menus.md step 2): a menu open in
+// first person goes to the headset as a panel of its own. The whole layer is
+// copied into a texture of ours when the game's list leaves it, and emptied: the
+// frame's last pass puts nothing over the world, which goes to both eyes in
+// stereo, and xr.cpp hangs the copy in front of the player. On FlatVR the same
+// copy is a shared texture handed over as a third piece (FLATVR_HUD_KIND_MENU,
+// slot 2) - only to a FlatVR whose reader block says it hangs one
+// (FlatVrTakesMenu): an older FlatVR never sees it, and vrcam keeps the menu
+// in the picture for it.
 
 #define WIN32_LEAN_AND_MEAN
 #ifndef NOMINMAX
@@ -65,7 +75,11 @@
 #include "game_device_only.h"
 
 #include "game_hud_shared.h"
+#include "hud_globes.h"   // where the game's own life and mana globes are in its interface layer (the wrists' medallions)
+#include "hud_rects.h"    // the toolbar's strip in that layer (the box taken out of the picture), with the cut sliders
 #include "hud_native.h"
+
+#include "flatvr_menu_shared.h"   // FlatVR's menu piece, whichever FlatVR header the build sees
 
 namespace hud {
 namespace {
@@ -77,6 +91,8 @@ void Log(const char* s) { if (g_log) g_log(s); }
 
 std::atomic<int> g_hide{0};   // 0 nothing, 1 the toolbar, 2 everything
 std::atomic<float> g_uiScale{1.0f};
+std::atomic<float> g_cutUp{0.0f}, g_cutDown{0.0f};   // [hud] hide_up_pct / hide_down_pct: the toolbar's strip taller above / below, percent of the layer's height
+std::atomic<bool> g_cutTint{false};                  // [debug] hide_strip_tint: the strip taken out is painted a see-through magenta instead, to see its edges
 std::atomic<bool> g_menu{false};   // the main menu, or a panel (inventory, trade...) open: nothing is hidden then   // the game's interface size, 0.5..1
 std::atomic<uint64_t> g_layer{0};   // the interface's resource, learnt from its clear
 std::atomic<int> g_mapMode{0};     // [hud] map: 0 in the picture, 1 in its own texture
@@ -153,11 +169,11 @@ rect Clamped(float l, float t, float r, float b, uint32_t w, uint32_t h) {
     return rect{std::max(0, (int32_t)l), std::max(0, (int32_t)t), std::min((int32_t)w, (int32_t)r), std::min((int32_t)h, (int32_t)b)};
 }
 
-// The toolbar (orbs, belt, skills): a strip across the whole width at the bottom.
+// The toolbar (orbs, belt, skills): a strip across the whole width at the bottom - 0.215 H s tall (the bar is 0.189, the wings and the statues' horns over it), and the two
+// [hud] hide_up_pct / hide_down_pct sliders' share more above and below (vr/hud_rects.h).
 rect ToolbarRect(uint32_t w, uint32_t h) {
-    const float s = g_uiScale.load(), H = (float)h;
-    const float bottom = H * (0.5f + 0.5f * s), top = bottom - 0.215f * H * s;   // 0.189 the bar, the wings a little above
-    return Clamped(0.0f, top, (float)w, bottom + 0.004f * H, w, h);
+    const hudrects::Box b = hudrects::Toolbar(w, h, g_uiScale.load(), g_cutUp.load(), g_cutDown.load());
+    return rect{b.left, b.top, b.right, b.bottom};
 }
 
 // The corner map, from the safe area's top-left corner.
@@ -235,6 +251,13 @@ void DrainRetired(device* dev) {
 
 HANDLE g_blockMem = nullptr;
 FlatVRGameHud* g_block = nullptr;
+constexpr int kMenuSlot = 2;   // a menu's panel in the block (FLATVR_HUD_KIND_MENU)
+// FlatVR hangs a menu panel: its reader block (FlatVRGameHudReader) says so and its counter moved
+// within a second (PollMenuReader, vrcam's timer).
+std::atomic<bool> g_flatVrMenu{false};
+FlatVRGameHudMenu g_menuPlace{2.3f, 1.9f, 0.0f, 0, 0, {}};   // SetMenuPlace; under g_lock
+// FlatVR's reader block, mapped by PollMenuReader once found, never unmapped: FlatVrLaserState reads it.
+std::atomic<const FlatVRGameHudReader*> g_reader{nullptr};
 // How FlatVR is to show them: [hud] in d2r_vr.ini (D2R VR Settings > Interface), via SetLook.
 FlatVRGameHudLook g_look = FlatVRGameHudDefaultLook();
 // The hero's forearm each panel lies on (SetForearm, from the skeleton), copied into the block with every Publish.
@@ -242,17 +265,19 @@ FlatVRGameHudPose g_pose[FLATVR_GAME_HUD_PANELS] = {};
 
 FlatVRGameHud* Block() {
     if (g_block) return g_block;
-    g_blockMem = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, sizeof(FlatVRGameHud), FLATVR_GAME_HUD_NAME);
+    g_blockMem = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, (DWORD)kHudBlockSize, FLATVR_GAME_HUD_NAME);
     if (!g_blockMem) return nullptr;
-    g_block = (FlatVRGameHud*)MapViewOfFile(g_blockMem, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(FlatVRGameHud));
+    g_block = (FlatVRGameHud*)MapViewOfFile(g_blockMem, FILE_MAP_ALL_ACCESS, 0, 0, kHudBlockSize);
     if (!g_block) { CloseHandle(g_blockMem); g_blockMem = nullptr; return nullptr; }
-    std::memset(g_block, 0, sizeof(FlatVRGameHud));
+    std::memset(g_block, 0, kHudBlockSize);   // (the menu's tail too)
     g_block->source_pid = GetCurrentProcessId();
     g_block->panel_count = kShares;
     g_block->panel[kBar].kind = FLATVR_HUD_KIND_TOOLBAR;
     g_block->panel[kMap].kind = FLATVR_HUD_KIND_MAP;
+    g_block->panel_count = kMenuSlot + 1;   // (a FlatVR before the menu reads two)
+    g_block->panel[kMenuSlot].kind = FLATVR_HUD_KIND_MENU;
     g_block->look = g_look;
-    g_block->version = FLATVR_GAME_HUD_VERSION;
+    g_block->version = 3u;   // 4 only for a FlatVR that reads it (Publish): an older one drops a newer block
     Log("hud: publishing the toolbar and the map for FlatVR (BodyWalkVR_GameHud)");
     return g_block;
 }
@@ -345,16 +370,104 @@ bool CopyLayer(command_list* cl, resource layer, uint32_t w, uint32_t h) {
     return true;
 }
 
+// The whole interface while a menu goes as a panel (SetPanelOut): copied for xr.cpp, which draws
+// it into its swapchain on the game's queue after the pair, and shared as the toolbar is for FlatVR
+// (slot kMenuSlot). Under g_lock.
+std::atomic<bool> g_panelOut{false};
+struct Panel { resource tex{}; HANDLE handle = nullptr; uint32_t w = 0, h = 0; bool fresh = true; };
+Panel g_panel;
+std::atomic<bool> g_panelNow{false};    // copied out (and the layer emptied) by the last interface pass
+std::atomic<ULONGLONG> g_panelAt{0};   // and when
+// The layer left more than once between two of its clears: the interface drawn in runs, the copy of
+// a later run would lack what the earlier one's emptying took (to the log once - then d2r-pcvr's way,
+// the final pass told to leave the interface out, is the one to take).
+std::atomic<int> g_panelRuns{0};
+
+bool CopyPanel(command_list* cl, resource layer, uint32_t w, uint32_t h) {
+    device* dev = cl->get_device();
+    if (!g_panel.tex.handle || g_panel.w != w || g_panel.h != h) {
+        if (g_panel.tex.handle) g_retired.push_back({g_panel.tex, {}, g_panel.handle, g_frames});   // xr.cpp's list, FlatVR may still read it
+        g_panel = Panel{};
+        if (g_block) { g_block->panel[kMenuSlot].visible = 0; g_block->panel[kMenuSlot].nt_handle = 0; }
+        const resource_desc d(w, h, 1, 1, format::r16g16b16a16_float, 1, memory_heap::default_,
+                              resource_usage::copy_dest | resource_usage::shader_resource,
+                              resource_flags::shared | resource_flags::shared_nt_handle);
+        if (!dev->create_resource(d, nullptr, resource_usage::copy_dest, &g_panel.tex, &g_panel.handle)) {
+            g_panel = Panel{};
+            static bool told = false;
+            if (!told) { told = true; Log("hud: the menu's panel texture could not be made - the menu stays in the picture"); }
+            return false;
+        }
+        g_panel.w = w; g_panel.h = h;
+        char line[128];
+        snprintf(line, sizeof line, "hud: a menu as a panel of its own ([openxr] menu_3d): the interface copied out, %ux%u", w, h);
+        Log(line);
+    }
+    cl->barrier(layer, resource_usage::render_target, resource_usage::copy_source);
+    if (!g_panel.fresh) cl->barrier(g_panel.tex, resource_usage::shader_resource, resource_usage::copy_dest);
+    cl->copy_resource(layer, g_panel.tex);
+    cl->barrier(g_panel.tex, resource_usage::copy_dest, resource_usage::shader_resource);
+    cl->barrier(layer, resource_usage::copy_source, resource_usage::render_target);
+    g_panel.fresh = false;
+    return true;
+}
+
+// The game's own life and mana globes, cut out of the interface layer for the wrists (vr/hud_globes.h): ONE texture, the life globe's square on the
+// left and the mana globe's on the right, copied while vrcam asks for them (SetGlobes) and the effect runs. Local: FlatVR never sees it. Under g_lock.
+std::atomic<bool> g_globesWant{false};
+struct Globes { resource tex{}; resource_view srv{}; uint32_t w = 0, h = 0; bool fresh = true; bool on = false; float fit = 0.0f; ULONGLONG at = 0; };
+Globes g_glb;
+std::atomic<int> g_globesWhy{0};   // why nothing was cut last time: 0 cut, 1 not asked, 2 the layer's size or the safe area's, 3 a texture could not be made
+
+bool CopyGlobes(command_list* cl, resource layer, uint32_t w, uint32_t h) {
+    const hudglobes::Boxes b = hudglobes::Compute(w, h, g_uiScale.load());
+    if (!b.ok) { g_globesWhy.store(2); return false; }
+    device* dev = cl->get_device();
+    const uint32_t side = (uint32_t)(2 * b.half), tw = 2 * side, th = side;
+    if (!g_glb.tex.handle || g_glb.w != tw || g_glb.h != th) {
+        if (g_glb.tex.handle) g_retired.push_back({g_glb.tex, g_glb.srv, nullptr, g_frames});   // the effect may still read it
+        g_glb.tex = {}; g_glb.srv = {}; g_glb.fresh = true; g_glb.on = false;
+        const resource_desc d(tw, th, 1, 1, format::r16g16b16a16_float, 1, memory_heap::default_, resource_usage::copy_dest | resource_usage::shader_resource);
+        if (!dev->create_resource(d, nullptr, resource_usage::copy_dest, &g_glb.tex)) { g_glb.tex = {}; g_globesWhy.store(3); return false; }
+        if (!dev->create_resource_view(g_glb.tex, resource_usage::shader_resource, resource_view_desc(format::r16g16b16a16_float), &g_glb.srv)) {
+            dev->destroy_resource(g_glb.tex); g_glb.tex = {}; g_glb.srv = {}; g_globesWhy.store(3);
+            return false;
+        }
+        g_glb.w = tw; g_glb.h = th;
+        char line[200];
+        snprintf(line, sizeof line, "hud: the game's own life and mana globes are cut out of its interface for the wrists: two %ux%u squares at %d,%d and %d,%d on a %ux%u layer (disc radius %.0f px)",
+                 side, side, b.left[0], b.top, b.left[1], b.top, w, h, b.radius);
+        Log(line);
+    }
+    cl->barrier(layer, resource_usage::render_target, resource_usage::copy_source);
+    if (!g_glb.fresh) cl->barrier(g_glb.tex, resource_usage::shader_resource, resource_usage::copy_dest);   // made in copy_dest
+    for (int i = 0; i < 2; ++i) {
+        const subresource_box from{(uint32_t)b.left[i], (uint32_t)b.top, 0, (uint32_t)b.left[i] + side, (uint32_t)b.top + side, 1};
+        const subresource_box to{(uint32_t)i * side, 0, 0, (uint32_t)i * side + side, side, 1};
+        cl->copy_texture_region(layer, 0, &from, g_glb.tex, 0, &to, filter_mode::min_mag_mip_point);
+    }
+    cl->barrier(g_glb.tex, resource_usage::copy_dest, resource_usage::shader_resource);
+    cl->barrier(layer, resource_usage::copy_source, resource_usage::render_target);
+    g_glb.fresh = false;
+    g_glb.fit = b.fit;
+    g_glb.at = GetTickCount64();
+    g_glb.on = true;
+    g_globesWhy.store(0);
+    return true;
+}
+
 // The interface of this frame is drawn and the toolbar not yet emptied: copy both pieces out.
 void Publish(command_list* cl, resource layer, uint32_t w, uint32_t h, int hide) {
     ++g_frames;
     device* dev = cl->get_device();
     DrainRetired(dev);
-    const bool menu = g_menu.load(), classic = g_classic.load();
+    const bool menu = g_menu.load() || g_panelOut.load(), classic = g_classic.load();   // a menu's panel takes the toolbar with it
     bool bar = false, map = false;
     const rect barBox = ToolbarRect(w, h);
     rect mapBox{};
     if (hide >= 1 && !menu) bar = CopyOut(cl, layer, barBox, kBar);
+    if (g_globesWant.load() && g_picReady.load()) CopyGlobes(cl, layer, w, h);   // (the layer is left as it is: the toolbar stays or goes by [hud] hide)
+    else { g_glb.on = false; g_globesWhy.store(1); }
     const bool drawn = g_mapDrawn;
     g_mapDrawn = false;
     // the parts the labels' plane leaves flat: the toolbar's strip, and the map's box while it is drawn
@@ -400,6 +513,8 @@ void Publish(command_list* cl, resource layer, uint32_t w, uint32_t h, int hide)
         b->panel[kMap].visible = map && !classic && g_mapShown.load() ? 1u : 0u;
         b->look = g_look;
         for (int i = 0; i < kShares; ++i) b->pose[i] = g_pose[i];
+        b->version = g_flatVrMenu.load() ? kHudVersionMenu : 3u;
+        MenuOf(b) = g_menuPlace;
         b->counter = b->counter + 1;
     }
 }
@@ -407,6 +522,7 @@ void Publish(command_list* cl, resource layer, uint32_t w, uint32_t h, int hide)
 bool OnClear(command_list* cl, resource_view rtv, const float c[4], uint32_t, const rect*) {
     device* dev = cl->get_device();
     if (!IsLayerClear(dev, rtv, c)) return false;
+    g_panelRuns.store(0);
     g_frameMap.store(MapNow());
     if (g_frameMap.load() == 1) {   // the frame's interface starts: so does the map's
         const resource_desc d = dev->get_resource_desc(dev->get_resource_from_view(rtv));
@@ -450,20 +566,45 @@ void OnBind(command_list* cl, uint32_t count, const resource_view* rtvs, resourc
     if (it != g_drawing.end() && it->second.layer.handle != now.handle) {
         const resource_view layerRtv = it->second.layer;
         const int hideNow = HideNow();
+        const bool panel = g_panelOut.load();
         {
             const resource_desc d = dev->get_resource_desc(dev->get_resource_from_view(layerRtv));
             Publish(cl, dev->get_resource_from_view(layerRtv), d.texture.width, d.texture.height, hideNow);
         }
-        if (const int hide = g_menu.load() ? 0 : hideNow; hide == 2) {
+        if (panel) {   // a menu as a panel: all of it out, the world alone in the picture
+            if (g_panelRuns.fetch_add(1) == 1) {
+                static bool told = false;
+                if (!told) { told = true; Log("hud: the interface's layer was drawn in more than one run this frame - the menu's panel may lack parts"); }
+            }
+            const bool out = CopyPanel(cl, dev->get_resource_from_view(layerRtv), it->second.w, it->second.h);
+            if (out) cl->clear_render_target_view(layerRtv, kEmpty);
+            g_panelNow.store(out);
+            g_panelAt.store(GetTickCount64());
+            if (FlatVRGameHud* b = g_flatVrMenu.load() || g_block ? Block() : nullptr) {   // for FlatVR, as the toolbar
+                FlatVRGameHudPanel& m = b->panel[kMenuSlot];
+                m.nt_handle = (uint64_t)(uintptr_t)g_panel.handle;
+                m.width = g_panel.w;
+                m.height = g_panel.h;
+                m.format = (uint32_t)format::r16g16b16a16_float;   // = DXGI_FORMAT_R16G16B16A16_FLOAT
+                m.kind = FLATVR_HUD_KIND_MENU;
+                m.visible = out && g_panel.handle ? 1u : 0u;
+            }
+        } else if (const int hide = g_menu.load() ? 0 : hideNow; hide == 2) {
             cl->clear_render_target_view(layerRtv, kEmpty);
         } else if (hide == 1 && (!g_classic.load() || g_pic.on[kBar])) {   // drawn back from a copy: only if there is one
             const resource_desc d = dev->get_resource_desc(dev->get_resource_from_view(layerRtv));
             const rect bar = ToolbarRect(d.texture.width, d.texture.height);   // the map stays (MapRect: kept for FlatVR)
-            cl->clear_render_target_view(layerRtv, kEmpty, 1, &bar);
+            // (premultiplied, alpha the picture's transmittance: kTint lets 70 % of the world through under a magenta veil - the strip's edges, to tune the two cut sliders by)
+            static const float kTint[4] = {0.30f, 0.0f, 0.30f, 0.70f};
+            cl->clear_render_target_view(layerRtv, g_cutTint.load() ? kTint : kEmpty, 1, &bar);
         }
         // From above: the rest of it out whole, for the effect to lay on the tilted plane.
-        const bool labels = g_labels.load() && g_picReady.load() && !g_menu.load();
-        const bool mask = !labels && g_uiMask.load() && g_picReady.load() && !g_menu.load();   // copied, left in
+        if (!panel) {
+            g_panelNow.store(false);
+            if (g_block) g_block->panel[kMenuSlot].visible = 0;
+        }
+        const bool labels = g_labels.load() && g_picReady.load() && !g_menu.load() && !panel;
+        const bool mask = !labels && g_uiMask.load() && g_picReady.load() && !g_menu.load() && !panel;   // copied, left in
         g_lab.on = (labels || mask) && CopyLayer(cl, dev->get_resource_from_view(layerRtv), it->second.w, it->second.h);
         if (g_lab.on && labels) cl->clear_render_target_view(layerRtv, kEmpty);
         g_lab.at = GetTickCount64();
@@ -475,6 +616,9 @@ void OnBind(command_list* cl, uint32_t count, const resource_view* rtvs, resourc
     }
 }
 
+// Reset, and made or let go (2026-10-13): a list let go while it had the interface bound left
+// its entry, and a new list at the same address - D3D12 makes one recording, with no reset -
+// took it for its own: the layer's old view published, cleared, sent to the map.
 void OnReset(command_list* cl) {
     std::lock_guard<std::mutex> g(g_lock);
     g_drawing.erase(cl);
@@ -486,6 +630,8 @@ void Register() {
     reshade::register_event<reshade::addon_event::clear_render_target_view>(&d2rvr::D3D12Only<&OnClear>::Call);
     reshade::register_event<reshade::addon_event::bind_render_targets_and_depth_stencil>(&d2rvr::D3D12Only<&OnBind>::Call);
     reshade::register_event<reshade::addon_event::reset_command_list>(&d2rvr::D3D12Only<&OnReset>::Call);
+    reshade::register_event<reshade::addon_event::init_command_list>(&d2rvr::D3D12Only<&OnReset>::Call);
+    reshade::register_event<reshade::addon_event::destroy_command_list>(&d2rvr::D3D12Only<&OnReset>::Call);
     reshade::register_event<reshade::addon_event::bind_scissor_rects>(&d2rvr::D3D12Only<&OnScissor>::Call);
 }
 
@@ -493,6 +639,11 @@ void SetHide(int mode) { g_hide.store(mode); }
 void SetMenuOpen(bool open) { g_menu.store(open); }
 void SetMapMode(int mode) { g_mapMode.store(mode); }
 void SetInterfaceScale(float s) { g_uiScale.store(std::clamp(s, 0.3f, 1.0f)); }
+void SetToolbarCut(float upPct, float downPct, bool tint) {
+    g_cutUp.store(hudrects::UpPct(upPct));
+    g_cutDown.store(hudrects::DownPct(downPct));
+    g_cutTint.store(tint);
+}
 bool LayerFound() { return g_layer.load() != 0; }
 void SetLogger(void (*log)(const char*)) { g_log = log; }
 void SetMapCorner(int corner) { g_mapCorner.store(std::clamp(corner, 0, 2)); }
@@ -537,6 +688,18 @@ bool PictureNow(int i, float box[4], uint64_t* srv) {
     for (int k = 0; k < 4; ++k) box[k] = g_pic.box[i][k];
     return on && *srv;
 }
+// The wrists' medallions from the game's own globes (vr/hud_globes.h): vrcam asks while the look is on and the effect runs; the effect gets the texture
+// (the life globe's square on its left half, the mana globe's on the right) and the disc's radius over half a square. False until a cut came, and a
+// quarter of a second after the last one (no interface pass: a menu, a load).
+void SetGlobes(bool want) { g_globesWant.store(want); }
+bool GlobesNow(float* fit, uint64_t* srv) {
+    std::lock_guard<std::mutex> g(g_lock);
+    *srv = g_glb.srv.handle;
+    *fit = g_glb.fit;
+    return g_glb.on && *srv && GetTickCount64() - g_glb.at < 250;
+}
+// Why GlobesNow is false: 0 it is not (a cut is there), 1 not asked (or the effect is not running), 2 the layer's size / the safe area do not hold the globes whole, 3 a texture failed.
+int GlobesWhy() { return g_globesWhy.load(); }
 bool ToggleMapShown() { const bool now = !g_mapShown.load(); g_mapShown.store(now); return now; }
 // The Windows pointer in the headset (FlatVRGameHudLook::pointer): 1 whenever shown, 2 never.
 void SetPointer(uint32_t mode) {
@@ -590,9 +753,57 @@ bool NativeHud(NativePiece out[kNativePieces], FlatVRGameHudLook* look, FlatVRGa
         out[i].h = g_share[i].h;
         out[i].visible = fresh && out[i].tex && !g_share[i].fresh && g_outNow[i].load();
     }
+    NativePiece& p = out[kNativePanel];
+    p.tex = (ID3D12Resource*)(uintptr_t)g_panel.tex.handle;
+    p.w = g_panel.w;
+    p.h = g_panel.h;
+    p.visible = p.tex && !g_panel.fresh && g_panelOut.load() && g_panelNow.load() && GetTickCount64() - g_panelAt.load() < 500;
     *look = g_look;
     *barPose = g_pose[kBar];
     return true;
+}
+
+void SetPanelOut(bool out) {
+    if (g_panelOut.exchange(out) != out)
+        Log(out ? "hud: a menu open - the interface goes out of the picture as a panel ([openxr] menu_3d)"
+                : "hud: the menu's panel over - the interface back as before");
+}
+
+// FlatVR's reader block (game_hud_shared.h, FlatVRGameHudReader), looked at by vrcam's timer: a FlatVR
+// that hangs a menu panel and is drawing (its counter moved within a second). Without one - an older
+// FlatVR, or none - vrcam keeps the menus in the picture on FlatVR.
+void PollMenuReader() {
+    static HANDLE map = nullptr;
+    static const FlatVRGameHudReader* r = nullptr;
+    static ULONGLONG nextTry = 0, movedAt = 0;
+    static uint32_t last = 0;
+    const ULONGLONG now = GetTickCount64();
+    if (!r && now >= nextTry) {
+        nextTry = now + 500;
+        if ((map = OpenFileMappingW(FILE_MAP_READ, FALSE, FLATVR_GAME_HUD_READER_NAME)) != nullptr) {
+            r = (const FlatVRGameHudReader*)MapViewOfFile(map, FILE_MAP_READ, 0, 0, sizeof(FlatVRGameHudReader));
+            if (!r) { CloseHandle(map); map = nullptr; }
+            else g_reader.store(r);
+        }
+    }
+    bool ok = false;
+    if (r) {
+        const uint32_t c = r->counter;
+        if (c != last) { last = c; movedAt = now; }
+        ok = r->version >= 4 && (r->kinds & (1u << FLATVR_HUD_KIND_MENU)) != 0 && now - movedAt < 1000;
+    }
+    if (g_flatVrMenu.exchange(ok) != ok)
+        Log(ok ? "hud: FlatVR hangs a menu as a panel of its own (its reader block) - [openxr] menu_3d works on FlatVR"
+               : "hud: no FlatVR that hangs a menu panel is drawing now - on FlatVR the menus stay in the picture");
+}
+bool FlatVrTakesMenu() { return g_flatVrMenu.load(); }
+void SetMenuPlace(float widthM, float distanceM, float belowM, uint32_t laser, uint32_t window) {
+    std::lock_guard<std::mutex> g(g_lock);
+    g_menuPlace = FlatVRGameHudMenu{widthM, distanceM, belowM, laser, window, {}};
+}
+int FlatVrLaserState() {
+    const FlatVRGameHudReader* r = g_reader.load();
+    return r && g_flatVrMenu.load() ? (int)((const volatile FlatVRGameHudReader*)r)->laser : 0;
 }
 
 }  // namespace hud

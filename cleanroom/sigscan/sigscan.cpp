@@ -451,7 +451,42 @@ uintptr_t Addr(uint64_t rva) {
 	return r ? g_base + r : 0;
 }
 
+bool NotInBuild(uint64_t rva) {
+	const int i = Index(rva);
+	return i >= 0 && g_resolved.load() && g_e[i].state.load() == Missing;
+}
+
 namespace {
+// The calls this module has hooked, with the bytes the hooker expected at the entry before it was patched. A hook rewrites the first bytes of the function, so any LATER check of
+// those bytes - by another feature that calls the function and wants to know it is the code it was written for - would fail on our own patch (2026-10-14: the potion hide's hook on
+// the renderer's world-matrix function made the engine unit's check fail, and the belt potions were gone). Check answers true for a function hooked here when the bytes asked about
+// are the bytes the hooker had proven were there.
+struct HookedEntry {
+	uint64_t             rva;        // the key the caller used, as in Hook and Check
+	std::vector<uint8_t> expected;
+};
+std::mutex               g_hookLock;
+std::vector<HookedEntry> g_hooked;
+
+void NoteHooked(uint64_t rva, const void* expected, uint32_t size) {
+	const auto* e = static_cast<const uint8_t*>(expected);
+	std::lock_guard<std::mutex> lock(g_hookLock);
+	for (HookedEntry& h : g_hooked) {
+		if (h.rva == rva) {
+			if (h.expected.size() < size) h.expected.assign(e, e + size);   // the longer proof stands
+			return;
+		}
+	}
+	g_hooked.push_back({ rva, std::vector<uint8_t>(e, e + size) });
+}
+
+bool WasHookedWith(uint64_t rva, const void* expected, uint32_t size) {
+	std::lock_guard<std::mutex> lock(g_hookLock);
+	for (const HookedEntry& h : g_hooked)
+		if (h.rva == rva) return size <= h.expected.size() && std::memcmp(h.expected.data(), expected, size) == 0;
+	return false;
+}
+
 // Not where 3.3.93787 has it: the loader's own checks would compare the old bytes.
 bool Moved(int i) { return g_e[i].searched.load() || g_e[i].rva.load() != kSigs[i].rva; }
 
@@ -472,13 +507,15 @@ bool CheckMoved(int i, const void* expected, uint32_t size) {
 
 bool Check(uint64_t rva, const void* expected, uint32_t size) {
 	if (g_ctx == nullptr) return false;
+	if (WasHookedWith(rva, expected, size)) return true;   // our own hook is what is there: the bytes it replaced were these
 	const int i = Index(rva);
 	if (i < 0 || !g_resolved.load()) return g_ctx->CheckExpectedBytes(rva, expected, size);
 	if (!Rva(rva)) return false;
 	return Moved(i) ? CheckMoved(i, expected, size) : g_ctx->CheckExpectedBytes(rva, expected, size);
 }
 
-bool Hook(uint64_t rva, const void* expected, uint32_t size, void* detour, void** original) {
+namespace {
+bool HookAt(uint64_t rva, const void* expected, uint32_t size, void* detour, void** original) {
 	if (g_ctx == nullptr) return false;
 	const int i = Index(rva);
 	if (i < 0 || !g_resolved.load()) return g_ctx->InstallInlineHook(rva, expected, size, detour, original);
@@ -488,6 +525,15 @@ bool Hook(uint64_t rva, const void* expected, uint32_t size, void* detour, void*
 	std::vector<uint8_t> live(size);
 	if (!CheckMoved(i, expected, size) || !ReadLive(live.data(), at, size)) return false;
 	return g_ctx->InstallInlineHook(at, live.data(), size, detour, original);
+}
+}   // namespace
+
+bool Hook(uint64_t rva, const void* expected, uint32_t size, void* detour, void** original) {
+	if (g_ctx == nullptr) return false;
+	if (WasHookedWith(rva, expected, size)) return false;   // already hooked here by us: a second inline hook on the same bytes is never asked for (it would chain a patch on a patch)
+	const bool ok = HookAt(rva, expected, size, detour, original);
+	if (ok) NoteHooked(rva, expected, size);
+	return ok;
 }
 
 bool Patch(uint64_t rva, const void* expected, uint32_t expectedSize, const void* bytes, uint32_t size) {

@@ -35,9 +35,32 @@
 #include "xr.h"
 #include "d2r_vr_shared.h"
 #include "link.h"
+#include "direct_feed.h"
 #include "afr_eye_shared.h"
+
+// vrcam.cpp: the balls over the belt's bottles a hand is at (x y z in BodyWalk's frame, radius m, alpha, r g b)
+int D2rvrHoverSpheres(float (*out)[8], int max);
 #include "hud_native.h"
 #include "reshade_shield.h"
+#include "panel_input.h"
+#include "xr_layers.h"
+#include "focus_gate.h"
+#include "view_gate.h"
+#include "views3d.h"   // [openxr] views_3d: F1 as a window, F3 as the room (the pure maths)
+#include "hset_panel.h"   // the in-headset settings panel ([openxr] headset_settings): vr/xr_headset_settings.h
+#include "hset_paint.h"
+#include "hset_store.h"
+#include "calibration.h"
+#include "haptics.h"
+#include "frame_trace.h"   // [debug] frame_trace: what the runtime's haptic call costs a pair
+#include "laser_tooltip.h"
+#include "render_resolution.h"
+#include "hset_ray.h"   // vectors, a ray against a panel, the pad values, the release gate: for any panel hung in the headset
+#include "hset_view.h"   // the settings' view buttons F1 - F4: the controller's own view path
+#include "skill_wheel.h"   // [openxr] skill_wheel: the skill wheel in the headset (vr/xr_skill_wheel.h is its layer)
+#include "rune_shader.h"   // [openxr] runes_draw: BodyWalk's gesture runes in the headset (vr/xr_runes.h is their layer; rune_geom.h the maths)
+#include "wheel_paint.h"
+#include "hand_vitals_wire.h"   // [hud] hand_vitals: life and mana on the hand when the palm turns to the face (vr/xr_hand_vitals.h is its layer)
 
 namespace xr {
 void GuardSet();
@@ -61,6 +84,7 @@ struct Cfg {
     bool stage = false;       // space=stage: the room's floor, else LOCAL (the head at the start)
     bool fovCrop = true;      // fov_crop: each eye's fov narrowed to the window's aspect (sharper, black above and below)
     bool symmetric = true;    // each eye's fov made as wide to the left as to the right (symmetric_fov)
+    float ipdFallbackM = 0.064f;   // ipd_fallback_mm: the gap given to two views the runtime located in one place (0 = none)
     bool stopFlatVR = true;   // FlatVR stopped before the session, started again after
     float quadM = 2.0f;       // outside a pair: the flat picture this far ahead, metres
     float panelM = 1.6f;      // and while a panel is open in a game ([screen] menu_distance_m), 0 = quadM
@@ -70,8 +94,43 @@ struct Cfg {
     bool bareHands = false;   // bare_hands: a hand without a controller (the runtime's hand tracking) works as one; 0: it presses and places nothing
     float handHoldMs = 1000.0f;   // hand_hold_ms: a controller that loses its place this long is held where it was by the head
     float brightness = 1.0f;  // brightness: everything in the headset times this (the runtime's colour scale), 1 = as drawn
+    bool laser = false;       // laser: a controller pointing at the flat picture's menus is the mouse (docs/plan_laser_menus.md)
+    int laserHand = 1;        // laser_hand: 0 left, 1 right; the other hand's trigger and grip are Ctrl and Shift
+    bool laserTooltips = false;   // laser_tooltips: under the laser the game's item tooltip shows at once, with its comparison (vr/laser_tooltip.h)
+    bool pointer3d = true;    // pointer_3d: the game's mouse pointer drawn on F1's and F3's ground in 3D (vr/pointer3d.h); clicks and the mouse are not touched
+    bool views3d = true;      // views_3d: F1 (a window of the room onto the game) and F3 (the diorama in the room) drawn with the runtime's eyes (vr/views3d.h); 0 = the flat picture
+    bool menu3d = true;       // menu_3d: a menu in F4 as a panel of its own, the world in stereo behind it (HangPanel); on since tested (2026-10-13)
+    bool headsetSettings = false;   // headset_settings: a settings panel in the headset, opened with both grips squeezed and a thumbstick click (vr/xr_headset_settings.h)
+    bool runesDraw = false;   // runes_draw: BodyWalk's gesture runes and the hand's trail drawn in the headset, F4 only (vr/xr_runes.h)
+    bool haptics = false;     // haptics: pulses in the controllers (vr/haptics.cpp; the output action is made either way)
+    float hapticsScale = 1.0f;   // haptics_scale: their strength times this
+    rendersize::Pick vrPick;  // [render] vr_resolution_px / vr_resolution: the render size the game is given (render_size.h); Desktop = the window's own
 };
 Cfg g_cfg;
+// [render] vr_resolution: what the runtime holds per eye (both eyes' limits and the system's swapchain limit), taken when
+// a session starts; and the size of the last back buffer a present showed.
+std::atomic<uint64_t> g_vrRecommended{0}, g_vrMaximum{0}, g_outputSize{0};
+wchar_t g_headsetPath[MAX_PATH] = L"";   // d2r_vr_headset.ini beside d2r_vr.ini (LoadSettings)
+// What the runtime says of the headset, for D2R VR Settings (the render size slider's tip says what the headset recommends, with the
+// game closed too): [headset] name, recommended_w/h, max_w/h, in a file beside the ini - not in the ini itself, which vrcam reloads
+// whenever it changes. Written when a session starts, only what changed.
+void WriteHeadsetInfo(const char* name, vrres::Size recommended, vrres::Size maximum) {
+    if (!g_headsetPath[0] || !recommended) return;
+    auto put = [](const wchar_t* key, uint32_t v) {
+        if (GetPrivateProfileIntW(L"headset", key, -1, g_headsetPath) == (int)v) return;
+        wchar_t b[24];
+        swprintf_s(b, L"%u", v);
+        WritePrivateProfileStringW(L"headset", key, b, g_headsetPath);
+    };
+    put(L"recommended_w", recommended.w);
+    put(L"recommended_h", recommended.h);
+    put(L"max_w", maximum.w);
+    put(L"max_h", maximum.h);
+    wchar_t wname[96] = L"", had[96] = L"";
+    MultiByteToWideChar(CP_UTF8, 0, name, -1, wname, 96);
+    GetPrivateProfileStringW(L"headset", L"name", L"", had, 96, g_headsetPath);
+    if (wname[0] && wcscmp(wname, had) != 0) WritePrivateProfileStringW(L"headset", L"name", wname, g_headsetPath);
+}
 // XR_KHR_composition_layer_color_scale_bias: the runtime scales each layer's colour - the brightness
 // slider at no cost of ours. Without it the picture is as the game draws it.
 bool g_colorScaleExt = false;
@@ -90,6 +149,15 @@ XrSessionState g_ss = XR_SESSION_STATE_UNKNOWN;
 std::atomic<bool> g_running{false};   // between xrBeginSession and xrEndSession
 std::vector<int64_t> g_formats;       // the runtime's swapchain formats, its order of preference
 bool g_flatVrStopped = false;
+// The runtime had no headset (XR_ERROR_FORM_FACTOR_UNAVAILABLE: Virtual Desktop or Link not
+// streaming yet, the headset asleep or off the head) when the game started: the session was
+// given up for the whole run, and with FlatVR not running either nothing brought the head and
+// the hands to BodyWalk until native was switched off and on again (the user, 2026-10-13: "after
+// a restart of the game BodyWalk picks up no movement"). Tried again every 10 s while FlatVR
+// does not run (FollowLink) - over a running FlatVR the player is not left without one.
+std::atomic<bool> g_headsetAbsent{false};
+std::atomic<ULONGLONG> g_retryAt{0};
+constexpr ULONGLONG kRetryMs = 10000;
 
 ID3D12Device* g_dev = nullptr;
 ID3D12CommandQueue* g_queue = nullptr;
@@ -119,6 +187,7 @@ HudOut g_hudOut[hud::kNativePieces];
 // BodyWalk's gesture zones ticked "VR" (HangZones): one atlas swapchain, a ball in a
 // cell of it for each zone, and a quad layer each.
 constexpr uint32_t kZoneCell = 256, kZoneCols = 4, kZonesMax = 16;
+constexpr uint32_t kRuneLayers = 8;   // BodyWalk's gesture runes (HangRunes, xr_runes.h): a picture and a trail each, four at most
 HudOut g_zoneOut;
 XrCompositionLayerQuad g_zoneLayer[kZonesMax];
 uint32_t g_maxLayers = 16;   // the runtime's most layers a frame (xrGetSystemProperties); 16 is what it must take
@@ -140,6 +209,19 @@ struct PendingImage { XrSwapchain sc; uint32_t idx; };
 PendingImage g_pendingImg[16];
 bool g_copied[2] = {};
 XrFovf g_fovUsed[2] = {};
+// [openxr] views_3d (vr/views3d.h)
+int g_viewsMode = 0;      // what vrcam asked the next pair to be (xr.h SetViewsMode): kViewsHead, kViewsWindow, kViewsRoom
+PointerAtFn g_pointerAt = nullptr;   // vrcam's: the ground under the game's mouse in F1 / F3 (xr.h)
+int g_pairMode = 0;       // what the open pair is (OpenFrame)
+views3d::Anchor g_winAnchor;    // where F1's window stands (held to the gaze first, brought round after a second 60 degrees off)
+views3d::Window g_win{};
+views3d::WindowEyes g_winEyes{};
+views3d::Placed g_winAt{};
+bool g_winOk = false;
+int g_lastMode = 0;       // the mode of the last pair that was opened (a window comes up in front of the gaze again after another view)
+float g_floorY = 0.0f;    // F3: the room's floor in the layer's space, when the runtime's STAGE gave it
+bool g_floorOk = false;
+uint32_t g_epoch = 0;     // moves each time the layer's space was recentred (the runtime's, ours, F11) or jumped: F3's diorama is put again
 
 // Our own copy list on the game's queue: a ring of allocators behind one fence.
 // Sixteen: a pair frame takes up to five lists (two eyes, the toolbar, the map, the belt's balls);
@@ -167,6 +249,18 @@ int g_lastDrawn = 0;   // the kind of the last frame that went out
 // the square window's interface is as wide as the picture, and at the menus' distance its sides
 // were out of view (2026-10-12). Eased there and back as FlatVR eases its screen (FlatDistance).
 std::atomic<bool> g_panelOpen{false};
+// [openxr] laser: what the flat picture shows are menus (vrcam's SetLaserWanted: a panel open in a game,
+// or no game), and where the last frame hung it - the laser's surface (CloseFrame; not after a pair).
+std::atomic<bool> g_laserWanted{false};
+// [openxr] headset_settings: the settings panel is up (xr_headset_settings.h): the laser stands down, the hands are the panel's.
+std::atomic<bool> g_hsOpen{false};
+wchar_t g_iniPath[MAX_PATH] = L"";   // d2r_vr.ini, as LoadSettings was given it
+struct FlatShown { XrPosef pose; XrExtent2Df size; bool ok; };
+FlatShown g_flatShown{};
+// [openxr] menu_3d: where a menu's panel hangs in a pair's frame (HangPanel) - the flat picture's
+// rules, kept apart from it; anchored again at a recentre.
+struct PanelPlace { bool anchored = false; float yaw = 0.0f; XrVector3f pos{}; double shownUs = 0.0, offSince = 0.0; bool told = false; };
+PanelPlace g_panelPlace;
 
 // The body the camera is held to (lean_m): where the head is over the floor, as far as a
 // lean goes - the head may lean round it, and walking off in the room drags it along
@@ -197,6 +291,7 @@ XrVector3f g_cPos{};
 // 10 s statistics
 struct Stats { uint32_t frames = 0, pairs = 0, monos = 0, noRender = 0, noViews = 0; double waitUs = 0, waitMax = 0, frameUs = 0; ULONGLONG since = 0; } g_st;
 double g_beginUs = 0.0;
+PairTiming g_clock{};   // the pair's time inside our calls (xr.h LastPairTiming), reset by BeginPair
 
 double UsNow() {
     static LARGE_INTEGER f = [] { LARGE_INTEGER q; QueryPerformanceFrequency(&q); return q; }();
@@ -335,6 +430,7 @@ XrActionSet g_actSet = XR_NULL_HANDLE;
 XrAction g_aGrip = XR_NULL_HANDLE, g_aAim = XR_NULL_HANDLE, g_aTrigger = XR_NULL_HANDLE, g_aTriggerClick = XR_NULL_HANDLE,
          g_aSqueeze = XR_NULL_HANDLE, g_aStick = XR_NULL_HANDLE, g_aStickClick = XR_NULL_HANDLE, g_aPrimary = XR_NULL_HANDLE,
          g_aSecondary = XR_NULL_HANDLE, g_aMenu = XR_NULL_HANDLE;
+XrAction g_aHaptic = XR_NULL_HANDLE;   // output: a pulse in a controller ([openxr] haptics, vr/haptics.cpp)
 XrPath g_handPath[2] = {XR_NULL_PATH, XR_NULL_PATH};   // /user/hand/left, /user/hand/right
 XrSpace g_gripSpace[2] = {}, g_aimSpace[2] = {}, g_viewSpace = XR_NULL_HANDLE;
 // What BodyWalk gets is in the room's STAGE space, the floor at 0, as FlatVR gives it (its jump
@@ -402,26 +498,31 @@ bool MakeActions() {
     g_aPrimary = MakeAction("primary", "A / X", XR_ACTION_TYPE_BOOLEAN_INPUT);
     g_aSecondary = MakeAction("secondary", "B / Y", XR_ACTION_TYPE_BOOLEAN_INPUT);
     g_aMenu = MakeAction("menu", "Menu", XR_ACTION_TYPE_BOOLEAN_INPUT);
+    // Made and bound whether [openxr] haptics is ticked or not (it switches live, and an action cannot be
+    // added to an attached set): ticked off, nothing is ever played through it.
+    g_aHaptic = MakeAction("haptic", "Vibration", XR_ACTION_TYPE_VIBRATION_OUTPUT);
 #define BOTH(a, p) {a, "/user/hand/left/input/" p}, {a, "/user/hand/right/input/" p}
+#define MOTORS(a) {a, "/user/hand/left/output/haptic"}, {a, "/user/hand/right/output/haptic"}   // every profile we suggest has a motor
     Suggest("/interaction_profiles/oculus/touch_controller",
             {BOTH(g_aGrip, "grip/pose"), BOTH(g_aAim, "aim/pose"), BOTH(g_aTrigger, "trigger/value"), BOTH(g_aSqueeze, "squeeze/value"),
              BOTH(g_aStick, "thumbstick"), BOTH(g_aStickClick, "thumbstick/click"),
              {g_aPrimary, "/user/hand/left/input/x/click"}, {g_aPrimary, "/user/hand/right/input/a/click"},
              {g_aSecondary, "/user/hand/left/input/y/click"}, {g_aSecondary, "/user/hand/right/input/b/click"},
-             {g_aMenu, "/user/hand/left/input/menu/click"}});
+             {g_aMenu, "/user/hand/left/input/menu/click"}, MOTORS(g_aHaptic)});
     Suggest("/interaction_profiles/valve/index_controller",
             {BOTH(g_aGrip, "grip/pose"), BOTH(g_aAim, "aim/pose"), BOTH(g_aTrigger, "trigger/value"), BOTH(g_aTriggerClick, "trigger/click"),
              BOTH(g_aSqueeze, "squeeze/value"), BOTH(g_aStick, "thumbstick"), BOTH(g_aStickClick, "thumbstick/click"),
-             BOTH(g_aPrimary, "a/click"), BOTH(g_aSecondary, "b/click")});
+             BOTH(g_aPrimary, "a/click"), BOTH(g_aSecondary, "b/click"), MOTORS(g_aHaptic)});
     Suggest("/interaction_profiles/htc/vive_controller",
             {BOTH(g_aGrip, "grip/pose"), BOTH(g_aAim, "aim/pose"), BOTH(g_aTrigger, "trigger/value"), BOTH(g_aTriggerClick, "trigger/click"),
-             BOTH(g_aSqueeze, "squeeze/click"), BOTH(g_aStick, "trackpad"), BOTH(g_aStickClick, "trackpad/click"), BOTH(g_aMenu, "menu/click")});
+             BOTH(g_aSqueeze, "squeeze/click"), BOTH(g_aStick, "trackpad"), BOTH(g_aStickClick, "trackpad/click"), BOTH(g_aMenu, "menu/click"), MOTORS(g_aHaptic)});
     Suggest("/interaction_profiles/microsoft/motion_controller",
             {BOTH(g_aGrip, "grip/pose"), BOTH(g_aAim, "aim/pose"), BOTH(g_aTrigger, "trigger/value"), BOTH(g_aSqueeze, "squeeze/click"),
-             BOTH(g_aStick, "thumbstick"), BOTH(g_aStickClick, "thumbstick/click"), BOTH(g_aMenu, "menu/click")});
+             BOTH(g_aStick, "thumbstick"), BOTH(g_aStickClick, "thumbstick/click"), BOTH(g_aMenu, "menu/click"), MOTORS(g_aHaptic)});
     Suggest("/interaction_profiles/khr/simple_controller",
-            {BOTH(g_aGrip, "grip/pose"), BOTH(g_aAim, "aim/pose"), BOTH(g_aTrigger, "select/click"), BOTH(g_aMenu, "menu/click")});
+            {BOTH(g_aGrip, "grip/pose"), BOTH(g_aAim, "aim/pose"), BOTH(g_aTrigger, "select/click"), BOTH(g_aMenu, "menu/click"), MOTORS(g_aHaptic)});
 #undef BOTH
+#undef MOTORS
     for (int h = 0; h < 2; ++h) {
         XrActionSpaceCreateInfo ai{XR_TYPE_ACTION_SPACE_CREATE_INFO};
         ai.subactionPath = g_handPath[h];
@@ -521,6 +622,7 @@ void ReadProfiles() {
     }
     LogF("vrcam: openxr - controllers: left %s, right %s", g_inNow.profile[0][0] ? g_inNow.profile[0] : "none",
          g_inNow.profile[1][0] ? g_inNow.profile[1] : "none");
+    skillwheel::SetProfiles(g_inNow.profile[0], g_inNow.profile[1]);   // (the skill panel's tiles name the controller's own buttons)
 }
 // This frame's head and hands, at its display time, to Game Link's XrInput.
 bool BareHand(int h) {
@@ -601,6 +703,41 @@ void LogHandSeen(int h, const LocateSeen& ls, bool focused, bool active) {
          focused ? "focused" : "NOT focused", active ? "active" : "inactive", held, s.changes);
 }
 
+// A press held through a loss of the input focus is not a press when the focus returns (vr/focus_gate.h): with the
+// focus away every action reads let go, and the first live frame would hand BodyWalk a trigger still down - often the
+// very click that closed the dashboard - as a fresh press: an attack at whatever the hand points at. The grip is a
+// hold, not a press, and is not held back.
+focusgate::Gate g_gate[2];
+uint32_t g_gateTimes = 0;
+constexpr uint32_t kGatedButtons = BW_LINK_XRB_TRIGGER | BW_LINK_XRB_PRIMARY | BW_LINK_XRB_SECONDARY | BW_LINK_XRB_STICK | BW_LINK_XRB_MENU;
+
+void LaserStep(D2RVR_XrInput& in, bool focused);   // the laser, below
+void LaserTeardown();
+void WheelTeardown();   // the skill wheel's picture, below (xr_skill_wheel.h)
+void RunesTeardown();   // the gesture runes' atlas, below (xr_runes.h)
+void VitalsTeardown();   // the hand vitals panel's picture, below (xr_hand_vitals.h)
+void HsStep(D2RVR_XrInput& in, bool focused);   // the settings panel, below (xr_headset_settings.h)
+void HsTeardown();
+void DropCalibration();   // the T-pose measurement's pictures, below
+
+// The T-pose measurement (vr/calibration.cpp) gets this frame's head and hands in the room's space, as the runtime located them.
+void FeedCalibration(const D2RVR_XrInput& in, const bool located[2], bool focused) {
+    calib::Frame f;
+    f.time = (double)in.displayTime * 1e-9;
+    f.floor = g_roomSpace != XR_NULL_HANDLE;   // a STAGE space; LOCAL has no floor
+    f.focused = focused;
+    f.headTracked = in.head.valid == 1;
+    memcpy(f.head, in.head.pos, sizeof f.head);
+    memcpy(f.headRot, in.head.rot, sizeof f.headRot);
+    for (int h = 0; h < 2; ++h) {
+        f.handTracked[h] = located[h] && in.hand[h].active;
+        memcpy(f.hand[h], in.hand[h].grip.pos, sizeof f.hand[h]);
+        f.trigger[h] = in.hand[h].trigger;
+    }
+    f.cancel = (in.hand[1].buttons & BW_LINK_XRB_SECONDARY) != 0;   // B on the right controller
+    calib::Feed(f);
+}
+
 void Publish(bool focused) {
     if (!g_actionsOk) return;
     D2RVR_XrInput& in = g_inNow;
@@ -608,11 +745,13 @@ void Publish(bool focused) {
     in.focused = focused ? 1u : 0u;
     in.displayTime = g_fs.predictedDisplayTime;
     PoseOut(g_viewSpace, &in.head, g_headHeld);
+    bool located[2] = {};   // a controller really located this frame (not a place held by the head): the T-pose measurement
     for (int h = 0; h < 2; ++h) {
         D2RVR_XrHand& o = in.hand[h];
         bool act = false;
         LocateSeen gripSeen{};
         PoseOut(g_gripSpace[h], &o.grip, g_poseHeld[h][0], &gripSeen);
+        located[h] = o.grip.valid == 1;
         PoseOut(g_aimSpace[h], &o.aim, g_poseHeld[h][1]);
         HoldPose(o.grip, g_hold[h][0], in.head, focused);
         HoldPose(o.aim, g_hold[h][1], in.head, focused);
@@ -647,12 +786,44 @@ void Publish(bool focused) {
                  bare ? (g_cfg.bareHands ? "bare (hand tracking), taken as a controller ([openxr] bare_hands=1)" : "bare (hand tracking) - presses nothing, no hand for BodyWalk")
                       : "a controller (or not tracked)");
         }
+        {   // (after the bare hand's reset, before the laser reads the buttons)
+            static bool held[2] = {};
+            // F4 only (vr/view_gate.h): in the other views the controls go out as they did before this gate (it still follows the hands)
+            const bool now = g_gate[h].StepIf(viewgate::F4(), focused, &o.buttons, &o.trigger, kGatedButtons);
+            if (now && !held[h] && (++g_gateTimes <= 5 || g_gateTimes % 50 == 0))
+                LogF("vrcam: openxr - the %s hand's trigger or button was still down when the input focus came back: not a press until it is let go (%u)",
+                     h ? "right" : "left", g_gateTimes);
+            held[h] = now;
+        }
     }
+    HsStep(in, focused);      // the settings panel, when it is up, has both hands: nothing of them goes on
+    FeedCalibration(in, located, focused);
+    LaserStep(in, focused);   // what the laser takes is not BodyWalk's
+    directinput::Feed(&in, g_laserWanted.load());   // the gestures' listeners, and [openxr] direct_input's pad, actions, commands and head
     g_lastPublishTime = g_fs.predictedDisplayTime;
     in.stamp = D2RVRStampNow();
     in.counter++;
     link::PublishXr(in, false);
     g_inSent = true;
+}
+
+// [openxr] haptics (vr/haptics.cpp): the pulses that wait, played on the output action - once a frame, after
+// the actions are synced. xrApplyHapticFeedback replaces what the motor plays; a session without the input
+// focus (the headset off the head, the dashboard open) is not given any: haptics::Flush drops what waits.
+bool ApplyHaptic(int hand, float amplitude, int durationMs) {
+    XrHapticActionInfo ai{XR_TYPE_HAPTIC_ACTION_INFO};
+    ai.action = g_aHaptic;
+    ai.subactionPath = g_handPath[hand & 1];
+    XrHapticVibration v{XR_TYPE_HAPTIC_VIBRATION};
+    v.duration = (XrDuration)durationMs * 1000000;   // ns
+    v.frequency = XR_FREQUENCY_UNSPECIFIED;
+    v.amplitude = amplitude;
+    frametrace::Scope trace(frametrace::kHaptic);   // [debug] frame_trace: the runtime's call - some runtimes make a round trip of it
+    return Ok(xrApplyHapticFeedback(g_session, &ai, (const XrHapticBaseHeader*)&v), "xrApplyHapticFeedback");
+}
+void FlushHaptics() {
+    const bool can = g_actionsOk && g_aHaptic && g_session && g_ss == XR_SESSION_STATE_FOCUSED;
+    haptics::Flush(GetTickCount64(), can, &ApplyHaptic);
 }
 
 // -- start: instance, system, session (a worker thread) ------------------------
@@ -662,7 +833,16 @@ void Teardown() {   // under g_lock or before the session exists
     g_lastEye[0] = g_lastEye[1] = LastEye{};
     if (g_ptr.sc) xrDestroySwapchain(g_ptr.sc);
     g_ptr = Pointer{};
-    for (HudOut& o : g_hudOut) { if (o.sc) xrDestroySwapchain(o.sc); o = HudOut{}; }
+    LaserTeardown();   // its buttons and keys let go, its images gone
+    HsTeardown();      // the settings panel's picture and its thread
+    calib::Stop();     // a T-pose measurement under way ends with the session
+    DropCalibration();
+    WheelTeardown();   // the skill wheel closed, its picture gone
+    RunesTeardown();   // the gesture runes' atlas
+    VitalsTeardown();  // the hand vitals panel's picture gone
+    g_panelPlace = PanelPlace{};
+    g_gate[0] = g_gate[1] = focusgate::Gate{};   // a new session: what is down at its start is held back too
+    for (HudOut& o : g_hudOut) { if (o.sc) xrDestroySwapchain(o.sc); o = HudOut{}; }   // (a menu's panel's too)
     if (g_zoneOut.sc) xrDestroySwapchain(g_zoneOut.sc);
     g_zoneOut = HudOut{};
     for (Chain* c : {&g_eyeChain[0], &g_eyeChain[1], &g_quadChain}) {
@@ -677,7 +857,9 @@ void Teardown() {   // under g_lock or before the session exists
     if (g_viewSpace) { xrDestroySpace(g_viewSpace); g_viewSpace = XR_NULL_HANDLE; }
     if (g_roomSpace) { xrDestroySpace(g_roomSpace); g_roomSpace = XR_NULL_HANDLE; }
     if (g_actSet) { xrDestroyActionSet(g_actSet); g_actSet = XR_NULL_HANDLE; }   // its actions go with it
+    g_aHaptic = XR_NULL_HANDLE;
     g_actionsOk = false;
+    directinput::SessionEnd();
     for (XrHandTrackerEXT& t : g_handTracker) { if (t && g_xrDestroyHandTracker) g_xrDestroyHandTracker(t); t = XR_NULL_HANDLE; }
     g_xrCreateHandTracker = nullptr; g_xrDestroyHandTracker = nullptr; g_xrLocateHandJoints = nullptr;
     g_bareSaid[0] = g_bareSaid[1] = -1;
@@ -694,6 +876,9 @@ void Teardown() {   // under g_lock or before the session exists
     if (g_session) { xrDestroySession(g_session); g_session = XR_NULL_HANDLE; }
     if (g_inst) { xrDestroyInstance(g_inst); g_inst = XR_NULL_HANDLE; }
     g_kind = kNone;
+    vrres::SessionEnded();   // [render] vr_resolution: the window's own size back (a post - the window's thread does it)
+    g_vrRecommended.store(0);
+    g_vrMaximum.store(0);
 }
 
 bool StartSession() {
@@ -747,7 +932,9 @@ bool StartSession() {
     si.formFactor = XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY;
     XrResult r = XR_ERROR_FORM_FACTOR_UNAVAILABLE;
     for (int i = 0; i < 20 && (r = xrGetSystem(g_inst, &si, &g_sys)) == XR_ERROR_FORM_FACTOR_UNAVAILABLE; ++i) Sleep(250);
+    g_headsetAbsent.store(r == XR_ERROR_FORM_FACTOR_UNAVAILABLE);
     if (!Ok(r, "xrGetSystem")) return false;
+    vrres::Size maxSwapchain;   // [render] vr_resolution: the system's swapchain limit (0 = the query failed)
     XrSystemProperties sp{XR_TYPE_SYSTEM_PROPERTIES};
     XrSystemHandTrackingPropertiesEXT hp{XR_TYPE_SYSTEM_HAND_TRACKING_PROPERTIES_EXT};
     if (hands) sp.next = &hp;
@@ -763,13 +950,23 @@ bool StartSession() {
         if (sp.graphicsProperties.maxLayerCount) g_maxLayers = sp.graphicsProperties.maxLayerCount;
         LogF("vrcam: openxr - headset %s, %u layers at most, swapchains up to %ux%u", sp.systemName, sp.graphicsProperties.maxLayerCount,
              sp.graphicsProperties.maxSwapchainImageWidth, sp.graphicsProperties.maxSwapchainImageHeight);
+        maxSwapchain = {sp.graphicsProperties.maxSwapchainImageWidth, sp.graphicsProperties.maxSwapchainImageHeight};
     }
     {
         uint32_t nv = 0;
         XrViewConfigurationView vv[2] = {{XR_TYPE_VIEW_CONFIGURATION_VIEW}, {XR_TYPE_VIEW_CONFIGURATION_VIEW}};
-        if (XR_SUCCEEDED(xrEnumerateViewConfigurationViews(g_inst, g_sys, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, 2, &nv, vv)) && nv == 2)
+        if (XR_SUCCEEDED(xrEnumerateViewConfigurationViews(g_inst, g_sys, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, 2, &nv, vv)) && nv == 2) {
             LogF("vrcam: openxr - each eye's recommended picture %ux%u (the window keeps its own size)", vv[0].recommendedImageRectWidth,
                  vv[0].recommendedImageRectHeight);
+            // [render] vr_resolution: Headset is the larger of the eyes' recommendations; the most, what both eyes and the
+            // system's swapchain hold (unknown system limit: none - the window's own size stays)
+            g_vrRecommended.store(vrres::Pack({std::max(vv[0].recommendedImageRectWidth, vv[1].recommendedImageRectWidth),
+                                               std::max(vv[0].recommendedImageRectHeight, vv[1].recommendedImageRectHeight)}));
+            g_vrMaximum.store(maxSwapchain ? vrres::Pack({std::min({vv[0].maxImageRectWidth, vv[1].maxImageRectWidth, maxSwapchain.w}),
+                                                         std::min({vv[0].maxImageRectHeight, vv[1].maxImageRectHeight, maxSwapchain.h})})
+                                           : 0);
+            WriteHeadsetInfo(sp.systemName, vrres::Unpack(g_vrRecommended.load()), vrres::Unpack(g_vrMaximum.load()));
+        }
     }
 
     // the runtime's GPU must be the game's
@@ -845,13 +1042,21 @@ DWORD WINAPI StartThread(void*) {
     ReleaseSRWLockExclusive(&g_lock);
     if (!ok) {
         GuardClear("no session, and the game lives");
-        Log("vrcam: openxr - no session: FlatVR goes on as always for this run");
+        const bool again = g_headsetAbsent.load();
+        if (again) {
+            static int told = 0;
+            if (told++ % 30 == 0) Log("vrcam: openxr - no headset yet (is Virtual Desktop or Link streaming?): tried again every 10 s while FlatVR does not run");
+        } else {
+            Log("vrcam: openxr - no session: FlatVR goes on as always for this run");
+        }
         if (g_flatVrStopped) { link::RequestFlatVR(true); g_flatVrStopped = false; }
+        g_retryAt.store(again ? GetTickCount64() + kRetryMs : 0);
         g_state.store(kFailed);
         return 0;
     }
+    g_retryAt.store(0);
     LogModules();
-    link::RequestPresenter(true);   // BodyWalk's Mapping on the game's own headset ("Game Link")
+    if (!directinput::Governing() || directinput::BodyWalkWalks()) link::RequestPresenter(true);   // BodyWalk's Mapping on the game's own headset ("Game Link"; not while direct_input governs (the key set, view F4): it gets no controllers then - except for its walking: [openxr] direct_bodywalk_walk gives it the poses)
     LogF("vrcam: openxr - ready in %.1f s, waiting for the runtime's go", (GetTickCount64() - t0) / 1000.0);
     g_state.store(kCreated);
     return 0;
@@ -870,8 +1075,10 @@ bool MakeCopyList() {
 }
 void WaitFence(UINT64 v, DWORD ms) {
     if (!g_fence || g_fence->GetCompletedValue() >= v) return;
+    const double t = UsNow();
     g_fence->SetEventOnCompletion(v, g_fenceEvt);
     WaitForSingleObject(g_fenceEvt, ms);
+    g_clock.fence += UsNow() - t;
 }
 
 D3D12_RESOURCE_BARRIER Tr(ID3D12Resource* r, D3D12_RESOURCE_STATES from, D3D12_RESOURCE_STATES to) {
@@ -907,11 +1114,16 @@ bool EnsureChain(Chain& c, const D3D12_RESOURCE_DESC& d, const char* what) {
     ci.faceCount = 1;
     ci.arraySize = 1;
     ci.mipCount = 1;
-    if (!Ok(xrCreateSwapchain(g_session, &ci, &c.sc), "xrCreateSwapchain")) { c.bad = true; c.sc = XR_NULL_HANDLE; return false; }
+    if (!Ok(xrCreateSwapchain(g_session, &ci, &c.sc), "xrCreateSwapchain")) {
+        c.bad = true; c.sc = XR_NULL_HANDLE;
+        vrres::SwapchainMade(c.w, c.h, false);   // [render] vr_resolution(_px): a size the runtime refuses falls back to the last good one
+        return false;
+    }
     uint32_t n = 0;
     xrEnumerateSwapchainImages(c.sc, 0, &n, nullptr);
     c.img.assign(n, {XR_TYPE_SWAPCHAIN_IMAGE_D3D12_KHR});
     xrEnumerateSwapchainImages(c.sc, n, &n, (XrSwapchainImageBaseHeader*)c.img.data());
+    vrres::SwapchainMade(c.w, c.h, true);
     LogF("vrcam: openxr - %s swapchain %ux%u %s (back buffer %s), %u images", what, c.w, c.h, FormatName(c.fmt), FormatName(d.Format), n);
     if (Family(d.Format) == 3) Log("vrcam: openxr -   a 10-bit back buffer has no sRGB twin: the headset may show it too bright");
     return true;
@@ -964,7 +1176,9 @@ int NextImage(XrSwapchain sc, uint32_t* idx, const char* what) {
     const ULONGLONG now = GetTickCount64();
     XrSwapchainImageWaitInfo wi{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
     wi.timeout = g_waitRanOutAt && now - g_waitRanOutAt < 500 ? 1000000 : 20000000;   // ns
+    const double tw = UsNow();
     const XrResult r = xrWaitSwapchainImage(sc, &wi);
+    g_clock.image += UsNow() - tw;
     if (r == XR_TIMEOUT_EXPIRED) {
         if (!p) for (PendingImage& q : g_pendingImg) if (!q.sc) { q = PendingImage{sc, *idx}; break; }
         if (!g_waitRanOutAt || now - g_waitRanOutAt > 10000)
@@ -979,6 +1193,58 @@ int NextImage(XrSwapchain sc, uint32_t* idx, const char* what) {
 
 ID3D12Resource* g_ptrUpload = nullptr;
 ULONGLONG g_ptrRetryAt = 0;   // the pointer's image ran out of its wait: made again from then on
+
+// A static swapchain (acquired, filled and released once, shown as long as it lasts) of w x h
+// premultiplied pixels, sRGB, R in each one's low byte. `upload` holds them until the copy is done:
+// kept until the next image made with it. `sc` is the caller's to destroy once made, whatever
+// came after. 1 made, 0 the image's wait ran out (make it again later), -1 failed.
+int MakeStaticImage(uint32_t w, uint32_t h, const uint32_t* rgba, ID3D12Resource*& upload, XrSwapchain& sc, const char* what) {
+    const UINT pitch = (w * 4 + 255) & ~255u;
+    if (upload) { upload->Release(); upload = nullptr; }
+    D3D12_HEAP_PROPERTIES hp{}; hp.Type = D3D12_HEAP_TYPE_UPLOAD;
+    D3D12_RESOURCE_DESC rd{}; rd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER; rd.Width = (UINT64)pitch * h; rd.Height = 1;
+    rd.DepthOrArraySize = 1; rd.MipLevels = 1; rd.SampleDesc.Count = 1; rd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+    if (FAILED(g_dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+                                              __uuidof(ID3D12Resource), (void**)&upload))) return -1;
+    uint8_t* dst = nullptr;
+    D3D12_RANGE none{0, 0};
+    if (FAILED(upload->Map(0, &none, (void**)&dst))) return -1;
+    for (uint32_t y = 0; y < h; ++y) memcpy(dst + (size_t)y * pitch, rgba + (size_t)y * w, (size_t)w * 4);
+    upload->Unmap(0, nullptr);
+    int64_t fmt = 0;
+    for (int64_t f : g_formats) if (f == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB) fmt = f;
+    if (!fmt) return -1;
+    XrSwapchainCreateInfo ci{XR_TYPE_SWAPCHAIN_CREATE_INFO};
+    ci.createFlags = XR_SWAPCHAIN_CREATE_STATIC_IMAGE_BIT;
+    ci.usageFlags = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT;
+    ci.format = fmt; ci.sampleCount = 1; ci.width = w; ci.height = h; ci.faceCount = 1; ci.arraySize = 1; ci.mipCount = 1;
+    char b[96];
+    snprintf(b, sizeof b, "xrCreateSwapchain(%s)", what);
+    if (!Ok(xrCreateSwapchain(g_session, &ci, &sc), b)) { sc = XR_NULL_HANDLE; return -1; }
+    uint32_t cnt = 0;
+    xrEnumerateSwapchainImages(sc, 0, &cnt, nullptr);
+    std::vector<XrSwapchainImageD3D12KHR> img(cnt, {XR_TYPE_SWAPCHAIN_IMAGE_D3D12_KHR});
+    xrEnumerateSwapchainImages(sc, cnt, &cnt, (XrSwapchainImageBaseHeader*)img.data());
+    uint32_t idx = 0;
+    if (!cnt) return -1;
+    if (const int got = NextImage(sc, &idx, what); got <= 0) return got;
+    if (ID3D12GraphicsCommandList* l = OpenList()) {
+        ID3D12Resource* t = img[idx].texture;
+        D3D12_RESOURCE_BARRIER rb = Tr(t, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_DEST);
+        l->ResourceBarrier(1, &rb);
+        D3D12_TEXTURE_COPY_LOCATION to{}, from{};
+        to.pResource = t; to.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+        from.pResource = upload; from.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+        from.PlacedFootprint.Footprint = {DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, w, h, 1, pitch};
+        l->CopyTextureRegion(&to, 0, 0, 0, &from, nullptr);
+        rb = Tr(t, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_RENDER_TARGET);
+        l->ResourceBarrier(1, &rb);
+        SubmitList();
+    }
+    XrSwapchainImageReleaseInfo ri{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
+    snprintf(b, sizeof b, "xrReleaseSwapchainImage(%s)", what);
+    return Ok(xrReleaseSwapchainImage(sc, &ri), b) ? 1 : -1;
+}
 
 bool MakePointerImage(HCURSOR cur) {
     if (g_ptr.sc) { ForgetPending(g_ptr.sc); xrDestroySwapchain(g_ptr.sc); g_ptr.sc = XR_NULL_HANDLE; }
@@ -1013,58 +1279,15 @@ bool MakePointerImage(HCURSOR cur) {
     ReleaseDC(nullptr, screen);
     if (px[0].size() != (size_t)n * n || px[1].size() != (size_t)n * n) return false;
     // premultiplied: the colour as drawn on black, alpha = 1 - (white - black)
-    const UINT pitch = ((UINT)n * 4 + 255) & ~255u;
-    if (g_ptrUpload) { g_ptrUpload->Release(); g_ptrUpload = nullptr; }
-    D3D12_HEAP_PROPERTIES hp{}; hp.Type = D3D12_HEAP_TYPE_UPLOAD;
-    D3D12_RESOURCE_DESC rd{}; rd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER; rd.Width = (UINT64)pitch * n; rd.Height = 1;
-    rd.DepthOrArraySize = 1; rd.MipLevels = 1; rd.SampleDesc.Count = 1; rd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-    if (FAILED(g_dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
-                                              __uuidof(ID3D12Resource), (void**)&g_ptrUpload))) return false;
-    uint8_t* dst = nullptr;
-    D3D12_RANGE none{0, 0};
-    if (FAILED(g_ptrUpload->Map(0, &none, (void**)&dst))) return false;
-    for (int y = 0; y < n; ++y)
-        for (int x = 0; x < n; ++x) {
-            const uint32_t b = px[0][(size_t)y * n + x], w = px[1][(size_t)y * n + x];   // BGRA
-            uint8_t* o = dst + (size_t)y * pitch + (size_t)x * 4;
-            const int cover = 255 - std::clamp((int)(w & 0xFF) - (int)(b & 0xFF), 0, 255);
-            o[0] = (uint8_t)((b >> 16) & 0xFF); o[1] = (uint8_t)((b >> 8) & 0xFF); o[2] = (uint8_t)(b & 0xFF); o[3] = (uint8_t)cover;
-        }
-    g_ptrUpload->Unmap(0, nullptr);
-    // a static image: acquired, filled and released once, shown as long as the shape lasts
-    int64_t fmt = 0;
-    for (int64_t f : g_formats) if (f == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB) fmt = f;
-    if (!fmt) return false;
-    XrSwapchainCreateInfo ci{XR_TYPE_SWAPCHAIN_CREATE_INFO};
-    ci.createFlags = XR_SWAPCHAIN_CREATE_STATIC_IMAGE_BIT;
-    ci.usageFlags = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT;
-    ci.format = fmt; ci.sampleCount = 1; ci.width = n; ci.height = n; ci.faceCount = 1; ci.arraySize = 1; ci.mipCount = 1;
-    if (!Ok(xrCreateSwapchain(g_session, &ci, &g_ptr.sc), "xrCreateSwapchain(pointer)")) { g_ptr.sc = XR_NULL_HANDLE; return false; }
-    uint32_t cnt = 0;
-    xrEnumerateSwapchainImages(g_ptr.sc, 0, &cnt, nullptr);
-    std::vector<XrSwapchainImageD3D12KHR> img(cnt, {XR_TYPE_SWAPCHAIN_IMAGE_D3D12_KHR});
-    xrEnumerateSwapchainImages(g_ptr.sc, cnt, &cnt, (XrSwapchainImageBaseHeader*)img.data());
-    uint32_t idx = 0;
-    if (!cnt) return false;
-    if (const int got = NextImage(g_ptr.sc, &idx, "pointer"); got <= 0) {
-        if (got == 0) { g_ptr.shape = nullptr; g_ptrRetryAt = GetTickCount64() + 1000; }   // made again in a second
-        return false;
+    std::vector<uint32_t> rgba((size_t)n * n);
+    for (size_t i = 0; i < rgba.size(); ++i) {
+        const uint32_t b = px[0][i], w = px[1][i];   // BGRA
+        const uint32_t cover = 255 - std::clamp((int)(w & 0xFF) - (int)(b & 0xFF), 0, 255);
+        rgba[i] = ((b >> 16) & 0xFF) | (b & 0xFF00) | ((b & 0xFF) << 16) | (cover << 24);
     }
-    if (ID3D12GraphicsCommandList* l = OpenList()) {
-        ID3D12Resource* t = img[idx].texture;
-        D3D12_RESOURCE_BARRIER b = Tr(t, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_DEST);
-        l->ResourceBarrier(1, &b);
-        D3D12_TEXTURE_COPY_LOCATION to{}, from{};
-        to.pResource = t; to.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
-        from.pResource = g_ptrUpload; from.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
-        from.PlacedFootprint.Footprint = {DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, (UINT)n, (UINT)n, 1, pitch};
-        l->CopyTextureRegion(&to, 0, 0, 0, &from, nullptr);
-        b = Tr(t, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_RENDER_TARGET);
-        l->ResourceBarrier(1, &b);
-        SubmitList();
-    }
-    XrSwapchainImageReleaseInfo ri{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
-    g_ptr.ok = Ok(xrReleaseSwapchainImage(g_ptr.sc, &ri), "xrReleaseSwapchainImage(pointer)");
+    const int got = MakeStaticImage((uint32_t)n, (uint32_t)n, rgba.data(), g_ptrUpload, g_ptr.sc, "pointer");
+    if (got == 0) { g_ptr.shape = nullptr; g_ptrRetryAt = GetTickCount64() + 1000; }   // made again in a second
+    g_ptr.ok = got > 0;
     return g_ptr.ok;
 }
 
@@ -1088,14 +1311,67 @@ bool PointerQuad(const XrCompositionLayerQuad& pic, XrCompositionLayerQuad* out)
     if (ci.hCursor != g_ptr.shape && (GetTickCount64() < g_ptrRetryAt || !MakePointerImage(ci.hCursor))) return false;
     if (!g_ptr.ok) return false;
     const float W = pic.size.width, H = pic.size.height, n = (float)g_ptr.n;
-    const float cx = (float)(p.x - g_ptr.hotX) + 0.5f * n, cy = (float)(p.y - g_ptr.hotY) + 0.5f * n;   // the image's middle, window pixels
-    const XrVector3f off = Rot(pic.pose.orientation, {(cx / rc.right - 0.5f) * W, (0.5f - cy / rc.bottom) * H, 0.003f});   // a hair in front
+    // The pointer's size is its pixels of the picture: with a render size ([render] vr_resolution) the game's, not the window's
+    // (the window may be small, the picture is as big as the game draws it). Where it points is the window's fraction either way.
+    vrres::Size game;
+    const float picW = vrres::GameSize(g_wnd, &game) ? (float)game.w : (float)rc.right, picH = game ? (float)game.h : (float)rc.bottom;
+    const float fx = (float)p.x / rc.right + (0.5f * n - (float)g_ptr.hotX) / picW;   // the image's middle, as a fraction of the picture
+    const float fy = (float)p.y / rc.bottom + (0.5f * n - (float)g_ptr.hotY) / picH;
+    const XrVector3f off = Rot(pic.pose.orientation, {(fx - 0.5f) * W, (0.5f - fy) * H, 0.003f});   // a hair in front
     *out = pic;
     out->subImage.swapchain = g_ptr.sc;
     out->subImage.imageRect = {{0, 0}, {g_ptr.n, g_ptr.n}};
     out->pose.position = {pic.pose.position.x + off.x, pic.pose.position.y + off.y, pic.pose.position.z + off.z};
-    out->size = {W * n / rc.right, H * n / rc.bottom};
+    out->size = {W * n / picW, H * n / picH};
     out->layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+    return true;
+}
+
+// F1 and F3 in 3D (pointer_3d): the game's own pointer where its mouse points - the ground point under the mouse's pixel, as the game's mouse
+// code sees it (vr/pointer3d.h; vrcam answers). The scene stands in the room, so the pointer is a quad too, hung at that point turned to the eyes,
+// its hot spot on the point, as large as the pointer is on the flat picture seen from the same distance: a few centimetres, 2.4 degrees for a
+// 32 px cursor. Nothing of the mouse is touched: only the picture of the cursor the game shows. `eyes` is the middle between the eyes (the room).
+bool Pointer3dQuad(XrVector3f eyes, XrQuaternionf look, XrCompositionLayerQuad* out) {
+    static int why = -1;   // the reason it is not shown, to the log when it changes
+    auto no = [&](int w, const char* said) {
+        if (w != why) { why = w; LogF("vrcam: openxr - mouse pointer in F%d (3D) not shown: %s", g_pairMode == kViewsWindow ? 1 : 3, said); }
+        return false;
+    };
+    if (!g_cfg.pointer3d || !g_pointerAt) return false;
+    if (!g_wnd) return no(1, "no game window known");
+    CURSORINFO ci{sizeof ci};
+    if (!GetCursorInfo(&ci) || !ci.hCursor) return no(2, "no pointer (GetCursorInfo)");
+    if (!(ci.flags & CURSOR_SHOWING)) return no(3, "the game hides it");
+    POINT p = ci.ptScreenPos;
+    RECT rc{};
+    if (!ScreenToClient(g_wnd, &p) || !GetClientRect(g_wnd, &rc) || rc.right <= 0 || rc.bottom <= 0) return no(4, "the window has no size");
+    if (p.x < 0 || p.y < 0 || p.x >= rc.right || p.y >= rc.bottom) return no(5, "outside the game's window");
+    const float u = ((float)p.x + 0.5f) / (float)rc.right, v = ((float)p.y + 0.5f) / (float)rc.bottom;
+    PointerAt at{};
+    if (!g_pointerAt(g_pairMode, u, v, &at)) return no(6, "no ground under it (the sky, or the view's camera not built yet)");
+    if (ci.hCursor != g_ptr.shape && (GetTickCount64() < g_ptrRetryAt || !MakePointerImage(ci.hCursor))) return false;
+    if (!g_ptr.ok) return false;
+    XrVector3f point{at.at[0], at.at[1], at.at[2]};
+    if (g_pairMode == kViewsWindow) {   // the window's frame into the room
+        const XrVector3f r = Rot(Yaw(g_winAt.yaw), point);
+        point = {r.x + g_winAt.centre.x, r.y + g_winAt.centre.y, r.z + g_winAt.centre.z};
+    }
+    const XrVector3f to{point.x - eyes.x, point.y - eyes.y, point.z - eyes.z};
+    const float dist = std::max(0.2f, sqrtf(to.x * to.x + to.y * to.y + to.z * to.z));
+    const float n = (float)g_ptr.n;
+    const float px = std::max(0.0004f, 0.0013f * dist);   // metres a cursor pixel stands for at that distance
+    const XrVector3f off = Rot(look, {(0.5f * n - (float)g_ptr.hotX) * px, ((float)g_ptr.hotY - 0.5f * n) * px, 0.004f});   // the hot spot on the point, a hair to the eyes
+    *out = XrCompositionLayerQuad{XR_TYPE_COMPOSITION_LAYER_QUAD};
+    out->space = g_space;
+    out->eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+    out->subImage.swapchain = g_ptr.sc;
+    out->subImage.imageRect = {{0, 0}, {g_ptr.n, g_ptr.n}};
+    out->pose.orientation = look;
+    out->pose.position = {point.x + off.x, point.y + off.y, point.z + off.z};
+    out->size = {n * px, n * px};
+    out->layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+    if (why != 0) { why = 0; LogF("vrcam: openxr - mouse pointer shown on F%d's ground (3D): the game's mouse at %.3f, %.3f of its window is the ground %.2f m from you, at %.2f %.2f %.2f",
+                                  g_pairMode == kViewsWindow ? 1 : 3, u, v, dist, point.x, point.y, point.z); }
     return true;
 }
 
@@ -1519,7 +1795,7 @@ uint32_t HangHud(const XrCompositionLayerBaseHeader** layers, uint32_t nl, uint3
     if (!piece[0].visible && !piece[1].visible) return nl;
     if (!MakeHudPipeline()) return nl;
     const float seconds = (float)(GetTickCount64() % 3600000ull) / 1000.0f;   // the orb's mist; wraps hourly
-    for (int i = 0; i < hud::kNativePieces && nl < max; ++i) {
+    for (int i = 0; i <= hud::kNativeMap && nl < max; ++i) {   // (a menu's panel: HangPanel)
         const hud::NativePiece& src = piece[i];
         if (!src.visible || !src.w || !src.h) continue;
         const bool map = i == hud::kNativeMap;
@@ -1583,6 +1859,23 @@ uint32_t ReadZones(BW_LinkVrZone* out) {
 uint32_t HangZones(const XrCompositionLayerBaseHeader** layers, uint32_t nl, uint32_t max) {
     BW_LinkVrZone z[BW_LINK_VRZONES_MAX];
     uint32_t n = ReadZones(z);
+    // and vrcam's own: a ball on each belt bottle a hand is at (engitem::HoverSpheres, BodyWalk's
+    // frame - metres from the head, x right, y up, z back, its turn only), put in the room the
+    // way HoldPose puts a held hand back
+    float hover[4][8];
+    const int nh = g_inNow.head.valid ? D2rvrHoverSpheres(hover, 4) : 0;
+    if (nh > 0) {
+        const float hy = YawOf(Q4(g_inNow.head.rot));
+        for (int i = 0; i < nh && n < BW_LINK_VRZONES_MAX; ++i) {
+            const XrVector3f w = Rot(Yaw(hy), {hover[i][0], hover[i][1], hover[i][2]});
+            BW_LinkVrZone& b = z[n++];
+            b.centre[0] = g_inNow.head.pos[0] + w.x; b.centre[1] = g_inNow.head.pos[1] + w.y; b.centre[2] = g_inNow.head.pos[2] + w.z;
+            b.radius = hover[i][3];
+            auto byte = [](float v) { return (uint32_t)(std::clamp(v, 0.0f, 1.0f) * 255.0f + 0.5f); };
+            b.rgba = byte(hover[i][5]) | byte(hover[i][6]) << 8 | byte(hover[i][7]) << 16 | byte(hover[i][4]) << 24;   // the potion's colour, see-through
+            b.glow = 0.5f;
+        }
+    }
     if (!n || nl >= max || !g_inNow.head.valid || !MakeHudPipeline()) return nl;
     const XrVector3f head = P3(g_inNow.head.pos);
     uint32_t order[BW_LINK_VRZONES_MAX];
@@ -1658,6 +1951,265 @@ uint32_t HangZones(const XrCompositionLayerBaseHeader** layers, uint32_t nl, uin
 
 // The back buffer (PRESENT) into the chain's next image (RENDER_TARGET, as the D3D12
 // binding hands them out and wants them back), on the game's queue.
+// -- the laser: a controller pointing at the menus is the mouse ([openxr] laser) -----------
+// docs/plan_laser_menus.md, after bearstonem/d2r-pcvr (MIT). Every flat frame, in Publish before
+// BodyWalk gets the hands: where the laser hand points on the flat picture as the last frame hung
+// it (g_flatShown; with menu_3d a menu's panel in a pair's frame, HangPanel) - the cursor goes there; its trigger is the left button, with its grip held at
+// the press the right one; the other hand's trigger is Ctrl, its grip Shift. A press starts only
+// on the picture, a drag holds on off it. What the laser has is hidden from BodyWalk (no pad
+// button goes with a click), each trigger and grip taken or given back only while it is let go.
+// A stick or a face button (BodyWalk's pad navigating the panel) parks the laser until it is
+// moved on the picture again. vr/panel_input.cpp keeps the game in its controller layout meanwhile.
+struct Laser {
+    bool drawn = false;        // this frame: the beam drawn (and the dot, hit)
+    bool hit = false;          // it points at the picture
+    XrVector3f from{}, dir{}, at{};
+    float len = 0.0f;          // to the hit, else the beam's own length
+    bool pad = false;          // the pad navigates: the laser waits, the focus is the pad's
+    bool anchored = false;     // where the pad last went, it pointed at the picture (padU, padV)
+    float padU = 0.0f, padV = 0.0f;
+    bool takes[2][2] = {};     // [hand][trigger, grip]: the laser's, hidden from BodyWalk
+    bool button[2] = {};       // the left, right mouse button held down by us
+    bool key[2] = {};          // Ctrl, Shift held down by us
+    bool trigger = false;      // the laser hand's trigger the frame before (a press is its edge)
+    int said = -1;             // the state last told the log
+    uint32_t tellings = 0;
+};
+Laser g_laser;
+// The beam and the dot, made once a session.
+struct LaserImage { XrSwapchain sc = XR_NULL_HANDLE; ID3D12Resource* upload = nullptr; uint32_t w = 0, h = 0; int state = 0; ULONGLONG retryAt = 0; };
+LaserImage g_beamImg, g_dotImg;
+constexpr float kBeamM = 1.5f, kBeamWidthM = 0.006f, kDotM = 0.022f;
+
+bool SendButton(int b, bool down) {
+    INPUT i{};
+    i.type = INPUT_MOUSE;
+    i.mi.dwFlags = b ? (down ? MOUSEEVENTF_RIGHTDOWN : MOUSEEVENTF_RIGHTUP) : (down ? MOUSEEVENTF_LEFTDOWN : MOUSEEVENTF_LEFTUP);
+    return SendInput(1, &i, sizeof i) == 1;
+}
+bool SendKey(WORD vk, bool down) {
+    INPUT i{};
+    i.type = INPUT_KEYBOARD;
+    i.ki.wScan = (WORD)MapVirtualKeyW(vk, MAPVK_VK_TO_VSC);
+    i.ki.dwFlags = KEYEVENTF_SCANCODE | (down ? 0 : KEYEVENTF_KEYUP);
+    return i.ki.wScan && SendInput(1, &i, sizeof i) == 1;
+}
+
+// Everything the laser holds let go - the lease kept a moment longer, so the queued release
+// still reaches the panel in the pad's layout.
+void LaserLetGo() {
+    Laser& L = g_laser;
+    if (L.button[0] || L.button[1] || L.key[0] || L.key[1]) panelinput::OwnPointer();
+    for (int b = 0; b < 2; ++b) if (L.button[b]) { SendButton(b, false); L.button[b] = false; }
+    if (L.key[0]) { SendKey(VK_CONTROL, false); L.key[0] = false; }
+    if (L.key[1]) { SendKey(VK_SHIFT, false); L.key[1] = false; }
+}
+
+void LaserTeardown() {   // under g_lock or before the session exists
+    LaserLetGo();
+    for (LaserImage* i : {&g_beamImg, &g_dotImg}) {
+        if (i->sc) { ForgetPending(i->sc); xrDestroySwapchain(i->sc); }
+        ID3D12Resource* upload = i->upload;   // kept until the next image made with it, as the pointer's: its copy may still run
+        *i = LaserImage{};
+        i->upload = upload;
+    }
+    g_laser = Laser{};
+    g_flatShown = FlatShown{};
+}
+
+void LaserTell(int state) {
+    Laser& L = g_laser;
+    if (state == L.said) return;
+    L.said = state;
+    if (++L.tellings > 200 && L.tellings % 50 != 0) return;   // a flood (tracking coming and going): every 50th
+    static const char* const kWhy[] = {
+        "the mouse on the menus: the trigger clicks, with the grip held it right-clicks; the other hand's trigger is Ctrl, its grip Shift",
+        "off ([openxr] laser=0)", "no flat picture", "the flat picture is a view (F1, F3), not menus", "the session has no input focus",
+        "the game's window is not in front - no clicks", "the laser hand is not tracked (or no controller in it)",
+        "the pad navigates the panel - the laser waits until it is moved on the picture",
+        "the headset settings panel is open - it has the hands, nothing goes to the game"};
+    LogF("vrcam: openxr - laser (%s hand): %s (%u)", g_cfg.laserHand ? "right" : "left", kWhy[state], L.tellings);
+}
+
+void LaserStep(D2RVR_XrInput& in, bool focused) {
+    Laser& L = g_laser;
+    L.drawn = L.hit = false;
+    bool holds = L.button[0] || L.button[1] || L.key[0] || L.key[1];
+    for (const auto& t : L.takes) holds = holds || t[0] || t[1];
+    if (!g_cfg.laser && !holds) { L.pad = false; L.said = -1; return; }   // off, and nothing of it left to let go
+    const int lh = g_cfg.laserHand ? 1 : 0, oh = 1 - lh;
+    const uint32_t raw[2] = {in.hand[0].buttons, in.hand[1].buttons};   // as pressed, before anything is taken
+    int why = 0;
+    XrSpaceLocation aim{XR_TYPE_SPACE_LOCATION};
+    const XrSpaceLocationFlags need = XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT;
+    if (!g_cfg.laser) why = 1;
+    else if (g_hsOpen.load()) why = 8;   // the settings panel has the hands: no mouse, no keys to the game
+    else if ((g_kind != kMono && !(g_kind == kPair && g_cfg.menu3d)) || !g_flatShown.ok) why = 2;   // (menu_3d: a menu's panel in a pair)
+    else if (!g_laserWanted.load()) why = 3;
+    else if (!focused) why = 4;
+    else if (!g_wnd || GetForegroundWindow() != GetAncestor(g_wnd, GA_ROOT)) why = 5;
+    else if (!in.hand[lh].active || !g_aimSpace[lh] || XR_FAILED(xrLocateSpace(g_aimSpace[lh], g_space, g_fs.predictedDisplayTime, &aim)) ||
+             (aim.locationFlags & need) != need) why = 6;
+    // the ray against the picture: u, v from its top left
+    float u = 0.0f, v = 0.0f;
+    if (!why) {
+        L.from = aim.pose.position;
+        L.dir = Unit(Rot(aim.pose.orientation, {0.0f, 0.0f, -1.0f}));
+        const XrPosef& s = g_flatShown.pose;
+        const XrVector3f n = Rot(s.orientation, {0.0f, 0.0f, 1.0f});   // the picture's front
+        const float dn = DotV(L.dir, n);
+        const float t = dn < -1e-4f ? DotV(Minus(s.position, L.from), n) / dn : -1.0f;
+        if (t > 0.0f) {
+            const XrQuaternionf back{-s.orientation.x, -s.orientation.y, -s.orientation.z, s.orientation.w};
+            const XrVector3f p = Plus(L.from, Times(L.dir, t));
+            const XrVector3f local = Rot(back, Minus(p, s.position));
+            u = local.x / g_flatShown.size.width + 0.5f;
+            v = 0.5f - local.y / g_flatShown.size.height;
+            L.hit = u >= 0.0f && u < 1.0f && v >= 0.0f && v < 1.0f;
+            if (L.hit) { L.at = p; L.len = t; }
+        }
+        if (!L.hit) L.len = kBeamM;
+    }
+    // BodyWalk's pad navigating (a stick off its middle, a face button): the laser waits until the
+    // aim moves on the picture again - tracking's tremble does not take the focus back
+    bool padNow = false;
+    for (const D2RVR_XrHand& o : in.hand)
+        if (fabsf(o.stickX) > 0.35f || fabsf(o.stickY) > 0.35f ||
+            (o.buttons & (BW_LINK_XRB_PRIMARY | BW_LINK_XRB_SECONDARY | BW_LINK_XRB_STICK | BW_LINK_XRB_MENU))) padNow = true;
+    if (why) L.pad = false;
+    else if (padNow && !L.button[0] && !L.button[1]) { L.pad = true; L.anchored = L.hit; L.padU = u; L.padV = v; }
+    else if (L.pad && !padNow && L.hit && (!L.anchored || hypotf(u - L.padU, v - L.padV) > 0.045f)) L.pad = false;
+    const bool acts = !why && !L.pad;   // the laser is the mouse this frame
+    L.drawn = acts;
+    if (why != 1) LaserTell(why ? why : L.pad ? 7 : 0);
+    // who has each trigger and grip, decided while it is let go: the laser's while it points at the picture
+    const bool claim = acts && L.hit;
+    for (int h = 0; h < 2; ++h) {
+        D2RVR_XrHand& o = in.hand[h];
+        if (o.trigger < 0.1f && !(raw[h] & BW_LINK_XRB_TRIGGER)) L.takes[h][0] = claim;
+        if (o.squeeze < 0.1f && !(raw[h] & BW_LINK_XRB_SQUEEZE)) L.takes[h][1] = claim;
+        if (L.takes[h][0]) { o.trigger = 0.0f; o.buttons &= ~(uint32_t)BW_LINK_XRB_TRIGGER; }
+        if (L.takes[h][1]) { o.squeeze = 0.0f; o.buttons &= ~(uint32_t)BW_LINK_XRB_SQUEEZE; }
+    }
+    if (acts) panelinput::OwnPointer();
+    else if (L.pad) panelinput::UseController();
+    if (acts && L.hit) {   // the cursor where it points: the picture is the game window's client area
+        // (the window's REAL pixels, also with a render size ([render] vr_resolution): the picture is the game's whole output, the
+        // window's whole client area is the same picture, and the game's own ScreenToClient maps the one to the other - render_resolution.cpp)
+        RECT rc{};
+        POINT p{}, now{};
+        if (GetClientRect(g_wnd, &rc) && rc.right > 0 && rc.bottom > 0) {
+            p = {std::clamp((LONG)(u * rc.right), 0L, rc.right - 1), std::clamp((LONG)(v * rc.bottom), 0L, rc.bottom - 1)};
+            if (ClientToScreen(g_wnd, &p) && (!GetCursorPos(&now) || now.x != p.x || now.y != p.y)) SetCursorPos(p.x, p.y);
+        }
+    }
+    const bool trig = (raw[lh] & BW_LINK_XRB_TRIGGER) != 0, grip = (raw[lh] & BW_LINK_XRB_SQUEEZE) != 0;
+    for (int b = 0; b < 2; ++b)   // let go with the trigger, or when the laser stops
+        if (L.button[b] && (!trig || why)) { panelinput::OwnPointer(); SendButton(b, false); L.button[b] = false; }
+    if (acts && L.hit && trig && !L.trigger && L.takes[lh][0]) {   // a fresh press on the picture
+        const int b = grip && L.takes[lh][1] ? 1 : 0;
+        L.button[b] = SendButton(b, true);
+        if (L.button[b]) haptics::Play(b ? haptics::Event::MenuRightClick : haptics::Event::MenuClick, lh);   // (lh: 0 left, 1 right, as haptics' hands)
+    }
+    L.trigger = trig;
+    const bool want[2] = {acts && L.takes[oh][0] && (raw[oh] & BW_LINK_XRB_TRIGGER) != 0,
+                          acts && L.takes[oh][1] && (raw[oh] & BW_LINK_XRB_SQUEEZE) != 0};
+    for (int k = 0; k < 2; ++k)
+        if (want[k] != L.key[k]) {
+            panelinput::OwnPointer();
+            if (SendKey(k ? VK_SHIFT : VK_CONTROL, want[k]) || !want[k]) L.key[k] = want[k];
+        }
+    // the game's own item tooltip and comparison, without their waits ([openxr] laser_tooltips; panel_input.cpp)
+    panelinput::ItemHover(lasertip::Hovering(g_cfg.laserTooltips && viewgate::F4(), acts, L.hit, L.button[0] || L.button[1]));   // (F4 only: elsewhere the game's own delay)
+}
+
+// The beam (soft across, fading to its far end, which is the image's top) and the dot, premultiplied:
+// a warm white core in a red glow.
+void LaserImages() {
+    const ULONGLONG now = GetTickCount64();
+    auto make = [&](LaserImage& i, uint32_t w, uint32_t h, const char* what, auto shade) {
+        if (i.state != 0 || now < i.retryAt) return;
+        if (i.sc) { ForgetPending(i.sc); xrDestroySwapchain(i.sc); i.sc = XR_NULL_HANDLE; }
+        std::vector<uint32_t> px((size_t)w * h);
+        for (uint32_t y = 0; y < h; ++y)
+            for (uint32_t x = 0; x < w; ++x) {
+                float a = 0.0f, core = 0.0f;
+                shade(x, y, &a, &core);
+                const float r = 255.0f, g = 70.0f + 170.0f * core, b = 40.0f + 170.0f * core;
+                px[(size_t)y * w + x] = (uint32_t)(r * a) | (uint32_t)(g * a) << 8 | (uint32_t)(b * a) << 16 | (uint32_t)(255.0f * a) << 24;
+            }
+        i.w = w; i.h = h;
+        i.state = MakeStaticImage(w, h, px.data(), i.upload, i.sc, what);
+        if (i.state == 0) i.retryAt = now + 1000;   // its wait ran out: again in a second
+    };
+    make(g_beamImg, 16, 128, "laser beam", [](uint32_t x, uint32_t y, float* a, float* core) {
+        const float d = fabsf(((float)x + 0.5f) / 8.0f - 1.0f);   // 0 in the middle, 1 at the edges
+        const float across = std::max(0.0f, 1.0f - d);
+        *a = across * across * (0.35f + 0.65f * (float)y / 127.0f);
+        *core = d < 0.3f ? 1.0f - d / 0.3f : 0.0f;
+    });
+    make(g_dotImg, 32, 32, "laser dot", [](uint32_t x, uint32_t y, float* a, float* core) {
+        const float dx = ((float)x + 0.5f) / 16.0f - 1.0f, dy = ((float)y + 0.5f) / 16.0f - 1.0f, r = sqrtf(dx * dx + dy * dy);
+        *a = r < 0.6f ? 1.0f : r < 1.0f ? 1.0f - (r - 0.6f) / 0.4f : 0.0f;
+        *core = r < 0.35f ? 1.0f : r < 0.55f ? 1.0f - (r - 0.35f) / 0.2f : 0.0f;
+    });
+}
+
+// What a beam is drawn from: the game's laser (g_laser, over the flat picture) or the settings panel's (xr_headset_settings.h).
+struct BeamView {
+    bool drawn = false, hit = false;
+    XrVector3f from{}, dir{}, at{};
+    float len = 0.0f;
+    XrQuaternionf surface{0.0f, 0.0f, 0.0f, 1.0f};   // the surface it meets: the dot lies in it
+};
+// A laser drawn over a surface: the beam from the controller (to where it points, or kBeamM on), turned to the eyes about
+// its own line, and the dot a hair in front of the surface.
+uint32_t HangBeam(const BeamView& L, const XrCompositionLayerBaseHeader** layers, uint32_t nl, uint32_t max, XrCompositionLayerQuad& beam, XrCompositionLayerQuad& dot) {
+    if (!L.drawn) return nl;
+    LaserImages();
+    if (g_beamImg.state > 0 && nl < max) {
+        const XrVector3f mid = Plus(L.from, Times(L.dir, 0.5f * L.len));
+        const XrVector3f eyes = g_viewsOk ? Times(Plus(g_views[0].pose.position, g_views[1].pose.position), 0.5f) : g_cPos;
+        XrVector3f z = Minus(eyes, mid);
+        z = Minus(z, Times(L.dir, DotV(z, L.dir)));
+        if (DotV(z, z) < 1e-8f) z = CrossV(L.dir, fabsf(L.dir.y) < 0.9f ? XrVector3f{0.0f, 1.0f, 0.0f} : XrVector3f{1.0f, 0.0f, 0.0f});
+        z = Unit(z);
+        beam.space = g_space;
+        beam.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+        beam.subImage.swapchain = g_beamImg.sc;
+        beam.subImage.imageRect = {{0, 0}, {(int32_t)g_beamImg.w, (int32_t)g_beamImg.h}};
+        beam.pose.orientation = FromAxes(CrossV(L.dir, z), L.dir, z);   // the quad's height along the ray
+        beam.pose.position = mid;
+        beam.size = {kBeamWidthM, L.len};
+        beam.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+        layers[nl++] = (const XrCompositionLayerBaseHeader*)&beam;
+    }
+    if (L.hit && g_dotImg.state > 0 && nl < max) {
+        const XrQuaternionf& q = L.surface;
+        dot.space = g_space;
+        dot.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+        dot.subImage.swapchain = g_dotImg.sc;
+        dot.subImage.imageRect = {{0, 0}, {(int32_t)g_dotImg.w, (int32_t)g_dotImg.h}};
+        dot.pose.orientation = q;
+        dot.pose.position = Plus(L.at, Rot(q, {0.0f, 0.0f, 0.004f}));
+        dot.size = {kDotM, kDotM};
+        dot.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+        layers[nl++] = (const XrCompositionLayerBaseHeader*)&dot;
+    }
+    return nl;
+}
+// The game's laser over the flat picture.
+uint32_t HangLaser(const XrCompositionLayerBaseHeader** layers, uint32_t nl, uint32_t max, XrCompositionLayerQuad& beam, XrCompositionLayerQuad& dot) {
+    const Laser& L = g_laser;
+    return HangBeam(BeamView{L.drawn, L.hit, L.from, L.dir, L.at, L.len, g_flatShown.pose.orientation}, layers, nl, max, beam, dot);
+}
+
+#include "xr_quad_atlas.h"         // a CPU-painted picture as a quad layer (the settings panel; the skill wheel can use it)
+#include "xr_headset_settings.h"   // the settings panel in the headset ([openxr] headset_settings): uses what is above
+#include "xr_skill_wheel.h"         // the skill wheel in the headset ([openxr] skill_wheel): uses what is above
+#include "xr_runes.h"               // BodyWalk's gesture runes in the headset ([openxr] runes_draw): uses what is above
+#include "xr_hand_vitals.h"        // the hand vitals panel ([hud] hand_vitals): uses what is above
+
 bool CopyInto(Chain& c, ID3D12Resource* bb) {
     if (!MakeCopyList()) return false;
     uint32_t idx = 0;
@@ -1681,6 +2233,7 @@ bool CopyInto(Chain& c, ID3D12Resource* bb) {
 }
 
 void EndSessionNow(const char* why) {
+    directinput::SessionEnd();   // what the session held in the game is let go
     g_pairYawAt.store(0);
     if (g_running.exchange(false) && g_session) Ok(xrEndSession(g_session), "xrEndSession");
     LogF("vrcam: openxr - session ended (%s)", why);
@@ -1717,6 +2270,7 @@ void Poll() {
                 bi.primaryViewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
                 Log("vrcam: openxr - xrBeginSession");
                 if (Ok(xrBeginSession(g_session, &bi), "xrBeginSession")) {
+                    directinput::SessionBegin();
                     g_running.store(true); g_recentre.store(true); g_recentreAfter = 0; g_framesRunning = 0; g_st = Stats{};
                     g_monoAnchored = false; g_lastDrawn = kNone;   // the flat picture comes up anew, held to the gaze at first
                 }
@@ -1771,6 +2325,30 @@ XrFovf Cropped(XrFovf f) {
     return {atanf(l), atanf(r), atanf(u), atanf(d)};
 }
 
+// [openxr] views_3d, F1 (vr/views3d.h): the game's view from above is a WINDOW of the room - the flat picture's place, width and
+// distance, put where the head looked when F1 came up - with the hero on its middle. Each eye sees the world through the window
+// from where it really is: the frustum is the window's four edges seen from the eye, so the window itself shows the same in
+// both eyes and the rest has depth, and a head moved sideways sees round things. An eye's picture is therefore the window's
+// own texture (the plane maps to the same pixel from every eye): CloseFrame hangs it on the window as a quad per eye
+// (eyeVisibility LEFT / RIGHT) - the compositor draws it with the head as it is when shown, as it does the flat picture.
+// The eyes never come nearer the window's plane than kWindowMinZ.
+constexpr float kWindowMinZ = 0.25f;
+void PlaceWindow() {
+    g_win = views3d::MakeWindow(g_cfg.quadWidthM, g_cfg.quadM, g_aspect.load());
+    const XrVector3f &a = g_views[0].pose.position, &b = g_views[1].pose.position;
+    const views3d::Vec mid{0.5f * (a.x + b.x), 0.5f * (a.y + b.y), 0.5f * (a.z + b.z)};
+    const bool put = g_winAnchor.Step(YawOf(g_views[0].pose.orientation), mid, UsNow());
+    g_winAt = views3d::Place(g_win, g_winAnchor.Yaw(), g_winAnchor.Pos());
+    g_winEyes = views3d::ThroughWindow(g_win, g_winAt, {a.x, a.y, a.z}, {b.x, b.y, b.z}, kWindowMinZ);
+    g_winOk = true;
+    static ULONGLONG toldAt = 0;
+    if (put && (GetTickCount64() - toldAt > 1500)) {
+        toldAt = GetTickCount64();
+        LogF("vrcam: openxr - F1 in 3D: the window %.2f x %.2f m, %.2f m ahead of where you looked (gaze yaw %.0f deg), its middle at %.2f %.2f %.2f",
+             g_win.width, g_win.height, g_win.dist, g_winAnchor.Yaw() * 57.29578f, g_winAt.centre.x, g_winAt.centre.y, g_winAt.centre.z);
+    }
+}
+
 // xrWaitFrame (the runtime's pacing: it blocks), xrBeginFrame, the views at the moment
 // this frame will be shown, and the actions synced (BodyWalk's OpenXR layer reads the
 // controllers on that).
@@ -1789,6 +2367,7 @@ bool OpenFrame(Kind kind) {
     const double t1 = UsNow();
     g_st.waitUs += t1 - t0;
     g_st.waitMax = std::max(g_st.waitMax, t1 - t0);
+    if (kind == kPair) g_clock.wait = t1 - t0;
     if (crumb) LogF("vrcam: openxr -   should render %d, display period %.2f ms; xrBeginFrame", (int)g_fs.shouldRender, g_fs.predictedDisplayPeriod / 1e6);
     XrFrameBeginInfo bi{XR_TYPE_FRAME_BEGIN_INFO};
     const XrResult br = xrBeginFrame(g_session, &bi);
@@ -1797,6 +2376,8 @@ bool OpenFrame(Kind kind) {
     g_kind = kind;
     g_copied[0] = g_copied[1] = false;
     g_viewsOk = false;
+    g_pairMode = 0;   // (set again once the views are located)
+    g_winOk = false;
     XrViewLocateInfo li{XR_TYPE_VIEW_LOCATE_INFO};
     li.viewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
     li.displayTime = g_fs.predictedDisplayTime;
@@ -1818,6 +2399,27 @@ bool OpenFrame(Kind kind) {
         g_viewsOk = true;
         if (!(vs.viewStateFlags & XR_VIEW_STATE_POSITION_VALID_BIT))
             for (XrView& v : g_views) v.pose.position = g_cPos;   // rotation only: the head held where it was taken
+        {   // Two views in one place are no stereo: a runtime that locates both eyes at the same point (no position for the
+            // eyes, only the head's turn - what a Meta Air Link player's log showed, 2026-10-14: "eyes 0 mm apart", a double
+            // image that never merged) gets the eyes' own gap, about the middle, along each view's right. [openxr]
+            // ipd_fallback_mm (default 64; 0 = off).
+            const XrVector3f &a = g_views[0].pose.position, &b = g_views[1].pose.position;
+            const float gap = sqrtf((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y) + (a.z - b.z) * (a.z - b.z));
+            if (g_cfg.ipdFallbackM > 0.0f && gap < 0.02f) {
+                const XrVector3f mid{0.5f * (a.x + b.x), 0.5f * (a.y + b.y), 0.5f * (a.z + b.z)};
+                for (int e = 0; e < 2; ++e) {
+                    const XrVector3f right = Rot(g_views[e].pose.orientation, {1.0f, 0.0f, 0.0f});
+                    const float side = (e == 0 ? -0.5f : 0.5f) * g_cfg.ipdFallbackM;
+                    g_views[e].pose.position = {mid.x + right.x * side, mid.y + right.y * side, mid.z + right.z * side};
+                }
+                static bool told = false;
+                if (!told) {
+                    told = true;
+                    LogF("vrcam: openxr - the runtime located the eyes %.1f mm apart: %.0f mm is used instead ([openxr] ipd_fallback_mm)",
+                         gap * 1000.0f, g_cfg.ipdFallbackM * 1000.0f);
+                }
+            }
+        }
         for (int e = 0; e < 2; ++e) g_fovUsed[e] = Cropped(g_views[e].fov);
         if (kind == kMono) {
             // Put where the head looks when it comes up; held to the gaze for the session's first
@@ -1877,11 +2479,25 @@ bool OpenFrame(Kind kind) {
         if (g_fs.shouldRender && (tracked || g_framesRunning > 45) && g_fs.predictedDisplayTime >= g_recentreAfter &&
             g_recentre.exchange(false)) {   // (the request waits until then: the exchange last)
             g_monoAnchored = false;   // the flat picture comes up ahead again
+            g_panelPlace.anchored = false;   // and a menu's panel
+            g_winAnchor.Reset();   // and F1's window
+            ++g_epoch;             // and F3's diorama (it stands in this space)
             g_cYaw = YawOf(g_views[0].pose.orientation);
             const XrVector3f& a = g_views[0].pose.position, &b = g_views[1].pose.position;
             g_cPos = {0.5f * (a.x + b.x), 0.5f * (a.y + b.y), 0.5f * (a.z + b.z)};
             g_bodyX = g_cPos.x; g_bodyZ = g_cPos.z;
             LogF("vrcam: openxr - recentred: yaw %.1f deg, the head at %.2f %.2f %.2f m", g_cYaw * 57.29578f, g_cPos.x, g_cPos.y, g_cPos.z);
+        }
+        {   // what this pair is (vr/views3d.h): the head's camera, F3's room, or F1's window
+            g_pairMode = kind == kPair && g_cfg.views3d ? g_viewsMode : 0;
+            g_winOk = false;
+            if (g_pairMode == 1) {
+                if (g_lastMode != 1) g_winAnchor.Reset();   // coming from another view: in front of the gaze again
+                PlaceWindow();
+            }
+            if (kind == kPair && g_pairMode != g_lastMode)
+                LogF("vrcam: openxr - pairs are drawn as %s now", g_pairMode == kViewsWindow ? "F1's window (views_3d)" : g_pairMode == kViewsRoom ? "F3's room (views_3d)" : "the head's camera (F4, F2)");
+            if (kind == kPair) g_lastMode = g_pairMode;
         }
         static bool told = false;
         if (!told) {
@@ -1906,6 +2522,15 @@ bool OpenFrame(Kind kind) {
     const XrResult sr = xrSyncActions(g_session, &sync);
     if (sr != XR_SESSION_NOT_FOCUSED && sr != XR_ERROR_ACTIONSET_NOT_ATTACHED) Ok(sr, "xrSyncActions");
     Publish(sr == XR_SUCCESS);
+    FlushHaptics();   // after Publish: a click the laser made this frame is felt this frame
+    // F3: the floor in the space the pair is drawn in. The runtime's STAGE has it (the head's height over it is Publish's head);
+    // the eyes' middle in our space less that is the floor there. A head that is not a standing height over it, or no STAGE: not known.
+    g_floorOk = false;
+    if (kind == kPair && g_viewsOk && g_roomSpace && g_actionsOk && g_inNow.head.valid == 1 && g_inNow.head.pos[1] > 0.4f && g_inNow.head.pos[1] < 2.6f) {
+        const float midY = 0.5f * (g_views[0].pose.position.y + g_views[1].pose.position.y);
+        g_floorY = midY - g_inNow.head.pos[1];
+        g_floorOk = std::isfinite(g_floorY);
+    }
     if (!g_fs.shouldRender) ++g_st.noRender;
     return true;
 }
@@ -1925,14 +2550,176 @@ float FlatDistance(bool fresh) {
     return now;
 }
 
+// [openxr] menu_3d (docs/plan_laser_menus.md step 2): a menu open in F4 as a panel of its own in the
+// pair's frame - the interface hud.cpp took out of the picture (kNativePanel), drawn by the toolbar's
+// shader into a swapchain of the layer's size and hung where the flat picture would have stood: as
+// wide, at the panels' distance, turned to where the head looked when it came up (not again for a
+// menu gone a moment, as the tabbed menu's page changes are), brought round in front after a second
+// more than 60 deg off the gaze, as the flat picture is - the player's pick over d2r-pcvr's "placed
+// once, never moved" (2026-10-13); a recentre places it again. The world goes on in stereo behind
+// it, and the laser points at it (g_flatShown).
+uint32_t HangPanel(const XrCompositionLayerBaseHeader** layers, uint32_t nl, uint32_t max, XrCompositionLayerQuad& panel, XrCompositionLayerQuad& pointer) {
+    PanelPlace& P = g_panelPlace;
+    hud::NativePiece piece[hud::kNativePieces];
+    FlatVRGameHudLook look{};
+    FlatVRGameHudPose barPose{};
+    if (nl >= max || !g_viewsOk || !hud::NativeHud(piece, &look, &barPose)) return nl;
+    const hud::NativePiece& src = piece[hud::kNativePanel];
+    if (!src.visible || !src.w || !src.h || !MakeHudPipeline()) return nl;
+    HudOut& o = g_hudOut[hud::kNativePanel];
+    if (!EnsureHudOut(o, src.w, src.h, "menu panel")) return nl;
+    const float cb[12] = {look.encoded ? 1.0f : 0.0f, 0.0f, (float)src.w / (float)src.h, (float)src.w,
+                          0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 0.0f};   // PSMain, whole (no split)
+    if (!DrawHud(o, src.tex, false, cb)) return nl;
+    const double t = UsNow();
+    const bool fresh = !(P.shownUs > 0.0) || t - P.shownUs > 500000.0;   // came up now: placed ahead
+    const float yawNow = YawOf(g_views[0].pose.orientation);
+    float off = yawNow - P.yaw;
+    off = atan2f(sinf(off), cosf(off));
+    bool anchor = fresh || !P.anchored;
+    if (!anchor && fabsf(off) > 1.05f) {
+        if (P.offSince <= 0.0) P.offSince = t;
+        else if (t - P.offSince > 1e6) { anchor = true; Log("vrcam: openxr - the menu's panel brought round in front of the gaze"); }
+    } else {
+        P.offSince = 0.0;
+    }
+    if (anchor) {
+        P.anchored = true;
+        P.offSince = 0.0;
+        P.yaw = yawNow;
+        const XrVector3f& a = g_views[0].pose.position, &b = g_views[1].pose.position;
+        P.pos = {0.5f * (a.x + b.x), 0.5f * (a.y + b.y), 0.5f * (a.z + b.z)};
+    }
+    P.shownUs = t;
+    const XrQuaternionf q = Yaw(P.yaw);
+    const XrVector3f ahead = Rot(q, {0.0f, 0.0f, -FlatDistance(fresh)});
+    panel = {XR_TYPE_COMPOSITION_LAYER_QUAD};
+    panel.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;   // premultiplied: the world through what the menu leaves
+    panel.space = g_space;
+    panel.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+    panel.subImage.swapchain = o.sc;
+    panel.subImage.imageRect = {{0, 0}, {(int32_t)src.w, (int32_t)src.h}};
+    panel.pose.orientation = q;
+    panel.pose.position = Plus(P.pos, ahead);
+    panel.size = {g_cfg.quadWidthM, g_cfg.quadWidthM * (float)src.h / (float)src.w};
+    layers[nl++] = (const XrCompositionLayerBaseHeader*)&panel;
+    g_flatShown = FlatShown{panel.pose, panel.size, true};   // where the next frame's laser points
+    if (nl < max && PointerQuad(panel, &pointer)) layers[nl++] = (const XrCompositionLayerBaseHeader*)&pointer;
+    if (!P.told) {
+        P.told = true;
+        LogF("vrcam: openxr - a menu as a panel in front, the world in stereo behind it: %ux%u, %.2f m wide at %.2f m ([openxr] menu_3d)",
+             src.w, src.h, panel.size.width, FlatDistance(false));
+    }
+    return nl;
+}
+
+// Which of a frame's layers a slot is, for the log: 0 projection, 1 the flat picture or a menu's panel,
+// 2 the pointer, 3 the beam, 4 the dot, 5.. the toolbar and the map, 8.. the gesture zones, then the gesture runes' pictures and trails.
+constexpr int kLayerSlotZone0 = 8, kLayerSlotRune0 = kLayerSlotZone0 + (int)kZonesMax, kLayerSlots = kLayerSlotRune0 + (int)kRuneLayers + 1;
+const char* LayerSlotName(int slot, bool pair, char* b, size_t cap) {
+    static const char* const fixed[kLayerSlotZone0] = {"projection layer", "flat picture", "mouse pointer", "laser beam", "laser dot", "toolbar", "map", "interface"};
+    if (slot < 0 || slot >= kLayerSlots - 1) return "layer";
+    if (slot >= kLayerSlotRune0) { const int k = slot - kLayerSlotRune0; snprintf(b, cap, "gesture rune %s %d", k < (int)runes::kMax ? "picture" : "trail", k % (int)runes::kMax); return b; }
+    if (slot >= kLayerSlotZone0) { snprintf(b, cap, "gesture zone %d", slot - kLayerSlotZone0); return b; }
+    return slot == 1 && pair ? "menu panel" : fixed[slot];
+}
+
+// -- the T-pose measurement's prompt (vr/calibration.cpp, calibration_panel.cpp) -----------------------------------------
+// A panel hung before the face, level, turning with the head's yaw only: the steps and what to do now, painted once per
+// message into a static swapchain of its own (MakeStaticImage), with a green fill laid on its bar's track as wide as the hold
+// has come. Only while a measurement is under way; its pictures go with it. The text is a quad of ours, not a BodyWalk menu
+// and not the game's: the measurement needs nothing but the headset and the controllers.
+struct CalibImage { XrSwapchain sc = XR_NULL_HANDLE; ID3D12Resource* upload = nullptr; ULONGLONG retryAt = 0; };
+CalibImage g_calibImg[calib::kPanelImages + 1];   // the last one is the fill, a solid colour
+XrCompositionLayerQuad g_calibLayer[2];
+
+void DropCalibration() {
+    WaitFence(g_fenceV, 200);   // the uploads' copies are done
+    for (CalibImage& im : g_calibImg) {
+        if (im.sc) { ForgetPending(im.sc); xrDestroySwapchain(im.sc); }
+        if (im.upload) im.upload->Release();
+        im = CalibImage{};
+    }
+}
+
+bool MakeCalibImage(int i) {
+    CalibImage& im = g_calibImg[i];
+    if (im.sc) return true;
+    const ULONGLONG now = GetTickCount64();
+    if (now < im.retryAt) return false;
+    const bool fill = i == calib::kPanelImages;
+    const uint32_t w = fill ? 4 : calib::kPanelW, h = fill ? 4 : calib::kPanelH;
+    std::vector<uint32_t> px((size_t)w * h, 0xFF000000u | (100u << 16) | (215u << 8) | 60u);   // the fill: opaque green
+    if (!fill && !calib::PaintPanel(i, px.data())) {
+        im.retryAt = now + 30000;
+        LogF("vrcam: openxr - the measurement's panel %d could not be painted", i);
+        return false;
+    }
+    const int got = MakeStaticImage(w, h, px.data(), im.upload, im.sc, "calibration");
+    if (got <= 0 && im.sc) { ForgetPending(im.sc); xrDestroySwapchain(im.sc); im.sc = XR_NULL_HANDLE; }
+    if (got <= 0) {
+        im.retryAt = now + (got == 0 ? 500 : 10000);
+        return false;
+    }
+    return true;
+}
+
+uint32_t HangCalibration(const XrCompositionLayerBaseHeader** layers, uint32_t nl, uint32_t max) {
+    const calib::Panel p = calib::PanelNow();
+    if (!p.show) {
+        for (const CalibImage& im : g_calibImg)
+            if (im.sc || im.upload) { DropCalibration(); break; }
+        return nl;
+    }
+    const D2RVR_XrPose& head = g_inNow.head;
+    if (nl + 2 > max || head.valid != 1 || !g_actionsOk || !MakeCalibImage(p.image)) return nl;
+    const XrQuaternionf face = Yaw(YawOf(Q4(head.rot)));
+    const XrVector3f at = Plus(P3(head.pos), Rot(face, {0.0f, -0.04f, -calib::kPanelDistanceM}));
+    const float wM = calib::kPanelWidthM, hM = wM * (float)calib::kPanelH / (float)calib::kPanelW, pxM = wM / (float)calib::kPanelW;
+    XrCompositionLayerQuad& q = g_calibLayer[0];
+    q = {XR_TYPE_COMPOSITION_LAYER_QUAD};
+    q.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;   // premultiplied
+    q.space = g_roomSpace ? g_roomSpace : g_space;   // where the head was located
+    q.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+    q.subImage.swapchain = g_calibImg[p.image].sc;
+    q.subImage.imageRect = {{0, 0}, {(int32_t)calib::kPanelW, (int32_t)calib::kPanelH}};
+    q.pose = {face, at};
+    q.size = {wM, hM};
+    layers[nl++] = (const XrCompositionLayerBaseHeader*)&q;
+    // the bar: its fill from the track's left end, a few pixels in from the track's edge
+    const float full = (float)calib::kTrackW - 6.0f, width = std::clamp(p.progress, 0.0f, 1.0f) * full;
+    if (width >= 2.0f && MakeCalibImage(calib::kPanelImages)) {
+        XrCompositionLayerQuad& b = g_calibLayer[1];
+        b = q;
+        b.subImage.swapchain = g_calibImg[calib::kPanelImages].sc;
+        b.subImage.imageRect = {{0, 0}, {4, 4}};
+        const float cx = ((float)calib::kTrackX + 3.0f + 0.5f * width) - 0.5f * (float)calib::kPanelW;
+        const float cy = 0.5f * (float)calib::kPanelH - ((float)calib::kTrackY + 0.5f * (float)calib::kTrackH);
+        b.pose.position = Plus(at, Rot(face, {cx * pxM, cy * pxM, 0.0f}));
+        b.size = {width * pxM, ((float)calib::kTrackH - 6.0f) * pxM};
+        layers[nl++] = (const XrCompositionLayerBaseHeader*)&b;
+    }
+    return nl;
+}
+
 void CloseFrame() {
     if (g_kind == kNone) return;
+    const double closeUs = UsNow();   // the layers built from here, xrEndFrame from endUs (g_clock)
     XrCompositionLayerProjectionView pv[2] = {{XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW}, {XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW}};
     XrCompositionLayerProjection proj{XR_TYPE_COMPOSITION_LAYER_PROJECTION};
+    XrCompositionLayerQuad winQuad[2] = {{XR_TYPE_COMPOSITION_LAYER_QUAD}, {XR_TYPE_COMPOSITION_LAYER_QUAD}};   // F1 in 3D (views_3d): the window, a quad per eye
     XrCompositionLayerQuad quad{XR_TYPE_COMPOSITION_LAYER_QUAD}, pointer{XR_TYPE_COMPOSITION_LAYER_QUAD};
-    const XrCompositionLayerBaseHeader* layers[4 + kZonesMax] = {};
-    const uint32_t most = std::min<uint32_t>(4 + kZonesMax, g_maxLayers);
+    XrCompositionLayerQuad ptr3d{XR_TYPE_COMPOSITION_LAYER_QUAD};   // F1 / F3 in 3D (pointer_3d): the game's pointer on the ground
+    XrCompositionLayerQuad beam{XR_TYPE_COMPOSITION_LAYER_QUAD}, dot{XR_TYPE_COMPOSITION_LAYER_QUAD};
+    XrCompositionLayerQuad hsPanel{XR_TYPE_COMPOSITION_LAYER_QUAD}, hsBeam{XR_TYPE_COMPOSITION_LAYER_QUAD}, hsDot{XR_TYPE_COMPOSITION_LAYER_QUAD};
+    const uint32_t hsRoom = (g_hsOpen.load() ? 3 : 0) + (calib::PanelNow().show ? 2 : 0) + (skillwheel::Enabled() ? 3 : 0) + (handvitals::PanelOn() ? 1 : 0);   // the settings panel's three layers, the T-pose prompt's two, the skill wheel's three and the hand vitals' one, hung last
+    XrCompositionLayerQuad wheelPanel{XR_TYPE_COMPOSITION_LAYER_QUAD}, wheelBeam{XR_TYPE_COMPOSITION_LAYER_QUAD}, wheelDot{XR_TYPE_COMPOSITION_LAYER_QUAD};
+    XrCompositionLayerQuad vitalsPanel{XR_TYPE_COMPOSITION_LAYER_QUAD};   // [hud] hand_vitals: one layer over the hand
+    XrCompositionLayerColorScaleBiasKHR vitalsScale{XR_TYPE_COMPOSITION_LAYER_COLOR_SCALE_BIAS_KHR};
+    const XrCompositionLayerBaseHeader* layers[8 + kZonesMax + kRuneLayers] = {};
+    const uint32_t most = std::min<uint32_t>(8 + kZonesMax + kRuneLayers, g_maxLayers);
     uint32_t nl = 0;
+    if (g_kind == kPair) g_flatShown.ok = false;   // the laser's surface is gone with the flat picture (a menu's panel: HangPanel)
     if (g_kind == kPair && g_viewsOk)
         for (int e = 0; e < 2; ++e)
             if (g_copied[e]) g_lastEye[e] = LastEye{g_views[e].pose, g_fovUsed[e], g_eyeChain[e].sc, true};   // drawn with these
@@ -1940,6 +2727,22 @@ void CloseFrame() {
     const bool turns = g_cfg.byTurns && (g_copied[0] || g_copied[1]) && g_lastEye[0].ok && g_lastEye[1].ok &&
                        g_lastEye[0].sc == g_eyeChain[0].sc && g_lastEye[1].sc == g_eyeChain[1].sc;
     if (g_fs.shouldRender && g_kind == kPair && ((g_copied[0] && g_copied[1]) || turns) && g_viewsOk) {
+        if (g_pairMode == kViewsWindow && g_winOk) {
+            // F1 in 3D (views_3d): each eye's picture is the game seen through the window from that eye, i.e. the window's own
+            // texture (vr/views3d.h) - hung on the window, left eye's on the left eye only and right's on the right
+            const XrQuaternionf turn = Yaw(g_winAt.yaw);
+            for (int e = 0; e < 2; ++e) {
+                XrCompositionLayerQuad& q = winQuad[e];
+                q.space = g_space;
+                q.eyeVisibility = e == 0 ? XR_EYE_VISIBILITY_LEFT : XR_EYE_VISIBILITY_RIGHT;
+                q.subImage.swapchain = g_eyeChain[e].sc;
+                q.subImage.imageRect = {{0, 0}, {(int32_t)g_eyeChain[e].w, (int32_t)g_eyeChain[e].h}};
+                q.pose.orientation = turn;
+                q.pose.position = {g_winAt.centre.x, g_winAt.centre.y, g_winAt.centre.z};
+                q.size = {g_win.width, g_win.height};
+                layers[nl++] = (const XrCompositionLayerBaseHeader*)&q;
+            }
+        } else {
         for (int e = 0; e < 2; ++e) {
             pv[e].pose = g_lastEye[e].pose;   // the poses and fovs the eyes were drawn with
             pv[e].fov = g_lastEye[e].fov;
@@ -1950,8 +2753,25 @@ void CloseFrame() {
         proj.viewCount = 2;
         proj.views = pv;
         layers[nl++] = (const XrCompositionLayerBaseHeader*)&proj;
-        nl = HangZones(layers, nl, most - std::min<uint32_t>(most - nl, 2));   // the belt's balls; room kept for the two below
+        }
+        // F1 / F3 in 3D: the game's own pointer on the ground where its mouse points
+        if (g_pairMode != kViewsHead && nl < most && g_viewsOk) {
+            const XrVector3f eyes{0.5f * (g_views[0].pose.position.x + g_views[1].pose.position.x), 0.5f * (g_views[0].pose.position.y + g_views[1].pose.position.y),
+                                  0.5f * (g_views[0].pose.position.z + g_views[1].pose.position.z)};
+            if (Pointer3dQuad(eyes, g_views[0].pose.orientation, &ptr3d)) layers[nl++] = (const XrCompositionLayerBaseHeader*)&ptr3d;
+        }
+        // a menu in front, the world in stereo behind it (menu_3d); what is nearer lies over it, in this order
+        if (g_cfg.menu3d) nl = HangPanel(layers, nl, most, quad, pointer);
+        const bool laser = g_cfg.menu3d && g_flatShown.ok;   // (the beam and the dot only over a menu's panel)
+        const uint32_t zonesMax = most - std::min<uint32_t>(most - nl, (laser ? 4 : 2) + hsRoom);   // room kept for those below
+        nl = HangZones(layers, nl, zonesMax);   // the belt's balls
+        nl = HangRunes(layers, nl, zonesMax);   // BodyWalk's gesture runes and the hand's trail (F4, [openxr] runes_draw)
         nl = HangHud(layers, nl, most);   // the toolbar and the map, where FlatVR hung them
+        if (laser) nl = HangLaser(layers, nl, most, beam, dot);
+        nl = HangVitals(layers, nl, most, vitalsPanel);   // life and mana over the hand turned to the face (F4)
+        nl = HangCalibration(layers, nl, most);   // the T-pose measurement's prompt
+        nl = HangSettings(layers, nl, most, hsPanel, hsBeam, hsDot);   // the settings panel, nearest of all
+        nl = HangWheel(layers, nl, most, wheelPanel, wheelBeam, wheelDot);   // the skill wheel, nearest of all
         ++g_st.pairs;
     } else if (g_fs.shouldRender && g_kind == kMono && g_copied[0]) {
         // the picture where the head looked when it came up, level, world-locked
@@ -1967,10 +2787,52 @@ void CloseFrame() {
         const float a = g_quadChain.h ? (float)g_quadChain.w / (float)g_quadChain.h : 16.0f / 9.0f;
         quad.size = {g_cfg.quadWidthM, g_cfg.quadWidthM / a};
         layers[nl++] = (const XrCompositionLayerBaseHeader*)&quad;
+        g_flatShown = FlatShown{quad.pose, quad.size, true};   // where the next frame's laser points
         if (PointerQuad(quad, &pointer)) layers[nl++] = (const XrCompositionLayerBaseHeader*)&pointer;
+        nl = HangLaser(layers, nl, most, beam, dot);
+        const uint32_t zonesMax = most - std::min<uint32_t>(most - nl, hsRoom);
+        nl = HangZones(layers, nl, zonesMax);   // the belt's balls stay where they are over a panel too
+        nl = HangRunes(layers, nl, zonesMax);   // and the gesture runes
+        nl = HangCalibration(layers, nl, most);   // the T-pose measurement's prompt
+        nl = HangSettings(layers, nl, most, hsPanel, hsBeam, hsDot);   // the settings panel, nearest of all
         nl = HangZones(layers, nl, most);   // the belt's balls stay where they are over a panel too
+        nl = HangWheel(layers, nl, most, wheelPanel, wheelBeam, wheelDot);   // the skill wheel, nearest of all
         ++g_st.monos;
     }
+    // A layer the runtime would refuse (a turn off unit length, a place or size that is not a number)
+    // takes the whole frame with it - XR_ERROR_POSE_INVALID, the world dropped for a belt ball: the ones
+    // that cannot be made right are left out, a turn is made unit length, and the layer is named in the
+    // log (xr_layers.h; after bearstonem/d2r-pcvr's motionQuad).
+    auto slotOf = [&](const XrCompositionLayerBaseHeader* l) -> int {
+        const void* p = l;
+        if (p == &proj) return 0;
+        if (p == &quad || p == &winQuad[0] || p == &winQuad[1]) return 1;
+        if (p == &pointer || p == &ptr3d) return 2;
+        if (p == &beam) return 3;
+        if (p == &dot) return 4;
+        for (int i = 0; i < hud::kNativePieces; ++i) if (p == &g_hudOut[i].layer) return 5 + i;
+        for (uint32_t k = 0; k < kZonesMax; ++k) if (p == &g_zoneLayer[k]) return kLayerSlotZone0 + (int)k;
+        for (uint32_t k = 0; k < kRuneLayers; ++k) if (p == &g_runeLayer[k]) return kLayerSlotRune0 + (int)k;
+        return kLayerSlots - 1;
+    };
+    static xrlayers::Telling told;
+    nl = xrlayers::Sanitize(layers, nl, [&](uint32_t, XrCompositionLayerBaseHeader* l, const xrlayers::Check& c) {
+        const bool drop = c.verdict == xrlayers::Verdict::Drop;
+        if (drop && l == (const void*)&quad) g_flatShown.ok = false;   // nothing to point the laser at
+        if (!drop && std::fabs(c.norm2 - 1.0f) <= xrlayers::kToldOff) return;   // float noise, set right quietly
+        const int slot = slotOf(l);
+        uint32_t times = 0;
+        if (!told.Due((uint32_t)slot * 2 + (drop ? 1u : 0u), GetTickCount64(), 10000, &times)) return;
+        char nm[32], num[256];
+        const char* name = LayerSlotName(slot, g_kind == kPair, nm, sizeof nm);
+        xrlayers::Describe(num, sizeof num, l);
+        if (drop)
+            LogF("vrcam: openxr - the %s was left out of the frame, %s (%s) - the runtime would have refused the whole frame (%u time(s) since last told)",
+                 name, xrlayers::WhyName(c.why), num, times);
+        else
+            LogF("vrcam: openxr - the %s%s had a turn off unit length (|q|^2 %.6f): made unit length (%u time(s) since last told)", name,
+                 c.view >= 0 ? (c.view ? " (right view)" : " (left view)") : "", c.norm2, times);
+    });
     // [openxr] brightness: every layer's colour scaled by the runtime (the HUD's too, so it sits in
     // the picture as before). The layers' own structs live on between frames: their link is set
     // every frame, to it or to nothing.
@@ -1980,6 +2842,7 @@ void CloseFrame() {
     scale.colorScale = {bright, bright, bright, 1.0f};
     scale.colorBias = {0.0f, 0.0f, 0.0f, 0.0f};
     for (uint32_t i = 0; i < nl; ++i) ((XrCompositionLayerBaseHeader*)layers[i])->next = scaled ? &scale : nullptr;
+    VitalsScale(vitalsPanel, vitalsScale, bright);   // (the hand vitals' layer has its own: the fade and the soft pulse)
     static int ends = 0;
     if (ends < 3) LogF("vrcam: openxr - frame %d: xrEndFrame with %u layer(s)", ++ends, nl);
     XrFrameEndInfo ei{XR_TYPE_FRAME_END_INFO};
@@ -1987,7 +2850,24 @@ void CloseFrame() {
     ei.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
     ei.layerCount = nl;
     ei.layers = nl ? layers : nullptr;
-    Ok(xrEndFrame(g_session, &ei), "xrEndFrame");
+    const double endUs = UsNow();
+    const XrResult ended = xrEndFrame(g_session, &ei);
+    g_clock.layers = endUs - closeUs;
+    g_clock.submit = UsNow() - endUs;
+    Ok(ended, "xrEndFrame");
+    if (ended == XR_ERROR_POSE_INVALID) {   // the runtime names no layer: each one's numbers, so the log does (every 5 s at most)
+        static xrlayers::Telling diag;
+        uint32_t times = 0;
+        if (diag.Due(0, GetTickCount64(), 5000, &times)) {
+            LogF("vrcam: openxr - xrEndFrame refused the frame (XR_ERROR_POSE_INVALID, %u time(s) since last told) with %u layer(s), none of them off unit "
+                 "length or not a number by our check - each one's numbers:", times, nl);
+            for (uint32_t i = 0; i < nl; ++i) {
+                char nm[32], num[256];
+                xrlayers::Describe(num, sizeof num, layers[i]);
+                LogF("vrcam: openxr -   layer %u, %s: %s", i, LayerSlotName(slotOf(layers[i]), g_kind == kPair, nm, sizeof nm), num);
+            }
+        }
+    }
     g_lastDrawn = g_kind;
     const double now = UsNow();
     g_st.frameUs += now - g_beginUs;
@@ -2007,7 +2887,7 @@ void CloseFrame() {
 
 }  // namespace
 
-void SetLogger(void (*log)(const char*)) { g_log = log; }
+void SetLogger(void (*log)(const char*)) { g_log = log; directinput::SetLogger(log); haptics::SetLogger(log); vrres::SetLogger(log); }
 void SetWindow(HWND wnd) { g_wnd = wnd; }
 
 // The start guard (2026-10-10): players' games died starting native OpenXR - their runtime's own
@@ -2036,6 +2916,7 @@ void GuardClear(const char* why) {
 }
 
 void LoadSettings(const wchar_t* ini) {
+    wcscpy_s(g_iniPath, ini);   // (the settings panel's thread reads and writes the same file)
     auto f = [&](const wchar_t* key, float def) {
         wchar_t b[64], d[64];
         swprintf_s(d, L"%g", def);
@@ -2083,6 +2964,7 @@ void LoadSettings(const wchar_t* ini) {
     g_cfg.stopFlatVR = f(L"stop_flatvr", 1.0f) != 0.0f;
     g_cfg.fovCrop = f(L"fov_crop", 1.0f) != 0.0f;   // on: sharper (square pixels), black above and below (2026-10-10)
     g_cfg.symmetric = f(L"symmetric_fov", 1.0f) != 0.0f;
+    g_cfg.ipdFallbackM = std::clamp(f(L"ipd_fallback_mm", 64.0f), 0.0f, 80.0f) * 0.001f;   // eyes located in one place: this gap (0 = off)
     {   // the menus' distance ([openxr] flat_distance_m; unset, FlatVR's panel distance as before) and the
         // panels': FlatVR's "Screen distance while a panel is open" ([screen] menu_distance_m, D2R VR
         // Settings > UI: F4 body, its default as link.cpp's), 0 = the menus' - it never reached native
@@ -2118,6 +3000,95 @@ void LoadSettings(const wchar_t* ini) {
         g_cfg.byTurns = turns;
     }
     g_cfg.bareHands = f(L"bare_hands", 0.0f) != 0.0f;
+    {   // the laser on the menus (D2R VR Settings > Stereo > Native OpenXR), live
+        g_cfg.laser = f(L"laser", 0.0f) != 0.0f;
+        g_cfg.laserHand = f(L"laser_hand", 1.0f) != 0.0f ? 1 : 0;
+        static int said = 0;   // (off at the start: not a word)
+        const int now = g_cfg.laser ? 1 + g_cfg.laserHand : 0;
+        if (on && now != said) {
+            said = now;
+            LogF("vrcam: openxr - laser on the menus and panels: %s ([openxr] laser, laser_hand)",
+                 !g_cfg.laser ? "off" : g_cfg.laserHand ? "the right hand" : "the left hand");
+        }
+        // the game's item tooltip at once under the laser: its hooks go in with the laser's (panelinput::Install), unticked they pass through
+        g_cfg.laserTooltips = f(L"laser_tooltips", 0.0f) != 0.0f;
+        panelinput::WantTooltips(g_cfg.laserTooltips);
+        static int saidTip = 0;
+        if (on && g_cfg.laser && (int)g_cfg.laserTooltips != saidTip) {
+            saidTip = g_cfg.laserTooltips;
+            LogF("vrcam: openxr - laser: the game's item tooltip %s ([openxr] laser_tooltips)",
+                 g_cfg.laserTooltips ? "at once, with the equipped-item comparison and no Shift" : "after the game's own delay");
+        }
+    }
+    {   // F1 and F3 in real 3D (D2R VR Settings > Stereo > Native OpenXR), live: unticked the flat picture, as before
+        g_cfg.views3d = f(L"views_3d", 1.0f) != 0.0f;
+        static int said = -1;
+        if (on && (int)g_cfg.views3d != said) {
+            said = g_cfg.views3d;
+            Log(g_cfg.views3d ? "vrcam: openxr - F1 (a window onto the game) and F3 (the game on your floor) in 3D with the headset's own eyes ([openxr] views_3d=1)"
+                              : "vrcam: openxr - F1 and F3 as the flat picture ([openxr] views_3d=0)");
+        }
+    }
+    {   // the game's pointer on F1's and F3's ground (D2R VR Settings > Stereo > Native OpenXR), live; only drawn - the mouse is not touched
+        g_cfg.pointer3d = f(L"pointer_3d", 1.0f) != 0.0f;
+        static int said = -1;
+        if (on && (int)g_cfg.pointer3d != said) {
+            said = g_cfg.pointer3d;
+            Log(g_cfg.pointer3d ? "vrcam: openxr - F1 and F3 in 3D: the game's mouse pointer is drawn on the ground where its mouse points ([openxr] pointer_3d=1)"
+                                : "vrcam: openxr - F1 and F3 in 3D: no pointer drawn ([openxr] pointer_3d=0)");
+        }
+    }
+    {   // a menu in F4 as a panel, the world in stereo (D2R VR Settings > UI: F4 body > Menus), live
+        g_cfg.menu3d = f(L"menu_3d", 1.0f) != 0.0f;
+        static int said = -1;
+        if (on && (int)g_cfg.menu3d != said) {
+            said = g_cfg.menu3d;
+            Log(g_cfg.menu3d ? "vrcam: openxr - menus in F4 as a panel in front, the world in stereo behind it ([openxr] menu_3d=1)"
+                             : "vrcam: openxr - menus in F4 as the flat picture ([openxr] menu_3d=0)");
+        }
+    }
+    directinput::LoadSettings(ini);   // [openxr] direct_input and the [direct] layout: the plugin's own controls
+    {   // a settings panel in the headset (both grips squeezed, then a thumbstick click), live
+        g_cfg.headsetSettings = f(L"headset_settings", 0.0f) != 0.0f;
+        static int said = -1;
+        if (on && (int)g_cfg.headsetSettings != said) {
+            said = g_cfg.headsetSettings;
+            Log(g_cfg.headsetSettings ? "vrcam: openxr - settings panel in the headset: both grips squeezed, then a thumbstick click, opens it ([openxr] headset_settings=1)"
+                                      : "vrcam: openxr - settings panel in the headset: off ([openxr] headset_settings=0)");
+        }
+    }
+    {   // BodyWalk's gesture runes and the hand's trail in the headset (D2R VR Settings > Controls > Gestures), live; F4 only
+        g_cfg.runesDraw = f(L"runes_draw", 0.0f) != 0.0f;
+        static int said = 0;   // (off at the start: not a word)
+        if (on && (int)g_cfg.runesDraw != said) {
+            said = g_cfg.runesDraw;
+            Log(g_cfg.runesDraw ? "vrcam: openxr - gesture runes: BodyWalk's runes and the hand's trail are drawn in the headset, F4 only ([openxr] runes_draw=1)"
+                                : "vrcam: openxr - gesture runes: off ([openxr] runes_draw=0)");
+        }
+    }
+    {   // controller vibration (D2R VR Settings > Stereo > Native OpenXR), live; only with a session of ours, so only with [openxr] on
+        g_cfg.haptics = f(L"haptics", 0.0f) != 0.0f;
+        const float sc = f(L"haptics_scale", 1.0f);
+        g_cfg.hapticsScale = std::isfinite(sc) ? std::clamp(sc, 0.1f, 2.0f) : 1.0f;
+        haptics::Configure(on && g_cfg.haptics, g_cfg.hapticsScale);
+    }
+    {   // [render] vr_resolution_px (a square's side) and vr_resolution (the older mode), live: render_size.h reads the two together
+        const int mode = (int)GetPrivateProfileIntW(L"render", L"vr_resolution", 0, ini);
+        const int px = (int)GetPrivateProfileIntW(L"render", L"vr_resolution_px", 0, ini);
+        g_cfg.vrPick = rendersize::FromIni(mode, px);
+        if (!g_headsetPath[0]) {   // what the runtime says of the headset goes beside the ini for D2R VR Settings (WriteHeadsetInfo)
+            wcscpy_s(g_headsetPath, ini);
+            if (wchar_t* slash = wcsrchr(g_headsetPath, L'\\')) slash[1] = 0;
+            wcscat_s(g_headsetPath, L"d2r_vr_headset.ini");
+        }
+    }
+    // [openxr] skill_wheel: the controller's eight skill slots as a wheel in the headset (vr/skill_wheel.h), live; its panel's place is tunable
+    {
+        const bool wheelOn = on && f(L"skill_wheel", 0.0f) != 0.0f;
+        skillwheel::Configure(wheelOn, g_cfg.laserHand, wheelOn ? f(L"skill_wheel_distance_m", 0.8f) : 0.8f, wheelOn ? f(L"skill_wheel_width_m", 0.8f) : 0.8f,
+                              wheelOn && f(L"skill_panel_style", 0.0f) >= 0.5f ? 1 : 0, wheelOn ? f(L"skill_tiles_width_m", 0.9f) : 0.9f, ini,
+                              g_cfg.headsetSettings);   // ([openxr] headset_settings with the tiles' look: the panel has the Settings tab)
+    }
     {
         const float b = f(L"brightness", 1.0f);
         g_cfg.brightness = std::isfinite(b) ? std::clamp(b, 0.2f, 2.0f) : 1.0f;
@@ -2130,11 +3101,27 @@ void LoadSettings(const wchar_t* ini) {
 }
 
 bool On() { return g_cfg.on && g_state.load() != kFailed; }
+bool Views3dOn() { return On() && g_cfg.views3d; }
+void SetPointerAt(PointerAtFn fn) { g_pointerAt = fn; }
+void SetViewsMode(int mode) { g_viewsMode = mode >= kViewsHead && mode <= kViewsRoom ? mode : kViewsHead; }
 bool Running() { return g_running.load(); }
 float LeanM() { return g_cfg.leanM; }
 bool ByTurns() { return g_cfg.on && g_cfg.byTurns; }
 bool StopPending() { return g_stopWanted.load() && g_state.load() != kIdle; }
 void Recenter() { g_recentre.store(true); }
+void SetLaserWanted(bool menus) { g_laserWanted.store(menus); }
+bool LaserOn() { return g_cfg.on && g_cfg.laser; }
+bool Menu3dOn() { return g_cfg.on && g_cfg.menu3d; }
+bool Menu3dWanted() { return g_cfg.menu3d; }
+bool HeadsetSettingsOpen() { return g_hsOpen.load(); }
+bool LaserWanted(int* hand) {
+    *hand = g_cfg.laserHand;
+    return g_cfg.laser;
+}
+void MenuPanelSize(float* widthM, float* distanceM) {
+    *widthM = g_cfg.quadWidthM;
+    *distanceM = g_cfg.panelM > 0.0f ? g_cfg.panelM : g_cfg.quadM;
+}
 void SetPanelOpen(bool open) {
     if (g_panelOpen.exchange(open) == open || !g_cfg.on || !(g_cfg.panelM > 0.0f) || g_cfg.panelM == g_cfg.quadM) return;
     LogF("vrcam: openxr - %s: the flat picture to %.2f m", open ? "a panel open" : "the panel closed", open ? g_cfg.panelM : g_cfg.quadM);
@@ -2169,6 +3156,8 @@ bool BeginPair(ID3D12Device* dev, ID3D12CommandQueue* queue) {
         if (!told) { told = true; LogF("vrcam: openxr - the pair's queue %p is not the session's %p: no stereo pairs, the flat picture only", (void*)queue, (void*)g_queue); }
         return false;
     }
+    g_clock = PairTiming{};
+    const double b0 = UsNow();
     AcquireSRWLockExclusive(&g_lock);
     const bool open = OpenFrame(kPair);
     const bool ok = open && g_viewsOk && g_fs.shouldRender;
@@ -2187,11 +3176,42 @@ bool BeginPair(ID3D12Device* dev, ID3D12CommandQueue* queue) {
         g_pairOpen.store(false);
     }
     ReleaseSRWLockExclusive(&g_lock);
+    g_clock.begin = UsNow() - b0;
     return ok;
 }
 
 bool PairEyes(Eyes* out) {
     if (g_kind != kPair || !g_viewsOk) return false;
+    *out = Eyes{};
+    out->mode = g_pairMode;
+    if (g_pairMode == kViewsWindow) {   // F1: the window's frame (vr/views3d.h) - the camera is the game's, the head only looks through
+        if (!g_winOk) return false;
+        for (int e = 0; e < 2; ++e) {
+            out->pos[e][0] = g_winEyes.mid.x + (e == 0 ? -g_winEyes.half : g_winEyes.half);
+            out->pos[e][1] = g_winEyes.mid.y;
+            out->pos[e][2] = g_winEyes.mid.z;
+            out->quat[e][3] = 1.0f;
+            out->tanL[e] = g_winEyes.tanL[e];
+            out->tanR[e] = g_winEyes.tanR[e];
+            out->tanU[e] = g_winEyes.tanU[e];
+            out->tanD[e] = g_winEyes.tanD[e];
+        }
+        out->winW = g_win.width; out->winH = g_win.height; out->winD = g_win.dist;
+        return true;
+    }
+    if (g_pairMode == kViewsRoom) {   // F3: the eyes as the runtime has them, in the space the layer is submitted in
+        for (int e = 0; e < 2; ++e) {
+            const XrPosef& p = g_views[e].pose;
+            out->pos[e][0] = p.position.x; out->pos[e][1] = p.position.y; out->pos[e][2] = p.position.z;
+            out->quat[e][0] = p.orientation.x; out->quat[e][1] = p.orientation.y; out->quat[e][2] = p.orientation.z; out->quat[e][3] = p.orientation.w;
+            out->tanL[e] = tanf(g_fovUsed[e].angleLeft);
+            out->tanR[e] = tanf(g_fovUsed[e].angleRight);
+            out->tanU[e] = tanf(g_fovUsed[e].angleUp);
+            out->tanD[e] = tanf(g_fovUsed[e].angleDown);
+        }
+        out->floorY = g_floorY; out->floorOk = g_floorOk; out->epoch = g_epoch;
+        return true;
+    }
     const XrQuaternionf back = Yaw(-g_cYaw);
     {   // the body follows the head once it leans farther than lean_m
         const float mx = 0.5f * (g_views[0].pose.position.x + g_views[1].pose.position.x);
@@ -2215,6 +3235,8 @@ bool PairEyes(Eyes* out) {
 }
 
 void PairOver() { g_pairSpent = false; }   // the draw thread, after a pair's last present
+
+PairTiming LastPairTiming() { return g_clock; }
 
 bool PairHeadYaw(float* rad) {
     const ULONGLONG at = g_pairYawAt.load();
@@ -2249,6 +3271,11 @@ void EndPair() {
 }
 
 void OnPresent(ID3D12Device* dev, ID3D12CommandQueue* queue, ID3D12Resource* bb, int pairEye) {
+    {   // [render] vr_resolution: the render size the game is asked for (a post, never a wait), on every present
+        if (bb) { const D3D12_RESOURCE_DESC d = bb->GetDesc(); g_outputSize.store(vrres::Pack({(uint32_t)d.Width, d.Height})); }
+        vrres::Update(g_wnd, g_running.load() && g_state.load() == kCreated, vrres::Unpack(g_vrRecommended.load()), vrres::Unpack(g_vrMaximum.load()),
+                      vrres::Unpack(g_outputSize.load()), g_cfg.on ? g_cfg.vrPick : rendersize::Pick{});
+    }
     if (g_kind != kPair && g_stopWanted.exchange(false)) Stop(false);
     // inside a pair: its own frame - and a pass of two presents its own eye (the replay copied it already)
     if (g_kind == kPair) { if (pairEye >= 0 && bb) CopyEye(pairEye, bb); return; }
@@ -2273,13 +3300,27 @@ void OnPresent(ID3D12Device* dev, ID3D12CommandQueue* queue, ID3D12Resource* bb,
 // BodyWalk come after the session was made (BodyWalk started later): the wish for its
 // Mapping made again - the one at the start found no BodyWalk to take it (2026-10-10).
 void FollowLink() {
+    // a start that found no headset, again once its time has come - not over a running FlatVR
+    if (const ULONGLONG at = g_retryAt.load(); at && g_state.load() == kFailed && GetTickCount64() >= at) {
+        bool flatvr = false;
+        FlatVRCounter(&flatvr);
+        if (!g_cfg.on || g_final) g_retryAt.store(0);
+        else if (flatvr) g_retryAt.store(GetTickCount64() + kRetryMs);
+        else { g_retryAt.store(0); g_state.store(kIdle); }   // the next present starts it
+    }
     static bool had = false;
     if (g_state.load() != kCreated) { had = false; return; }
     uint32_t caps = 0;
-    const bool have = link::HostAlive(&caps) && (caps & BW_LINK_CAP_XR_INPUT);
+    const bool alive = link::HostAlive(&caps) && (caps & BW_LINK_CAP_XR_INPUT);
+    // (direct_input governing - the key set AND the view F4: BodyWalk gets no controllers. In F1, F2, F3 it gets them as if the key were 0.
+    // [openxr] direct_bodywalk_walk: its Mapping stays on the game's headset in F4 too - it walks the hero by the poses it is given there)
+    const bool have = alive && (!directinput::Governing() || directinput::BodyWalkWalks());
     if (have && !had) {
         link::RequestPresenter(true);
         Log("vrcam: openxr - BodyWalk's Game Link is there: its Mapping on the game's headset (Game Link)");
+    } else if (had && alive && !have) {
+        link::RequestPresenter(false);   // F4 with direct_input again: BodyWalk's Mapping off the game's headset, as at the session's start
+        Log("vrcam: openxr - F4 with direct_input: BodyWalk's Mapping off the game's headset again");
     }
     had = have;
 }

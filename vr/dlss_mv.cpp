@@ -138,7 +138,13 @@ bool Inverse(const float* m, float* out) {
 }
 
 // ---- the pass
+// Built twice (2026-10-13): CHECK 1 for mode 1, CHECK 0 for the fix. With one
+// shader for both, the fix took the check's 27 KiB of group-shared sums too -
+// a runtime branch does not drop them - and so fewer groups ran at once.
 const char* kShader = R"(
+#ifndef CHECK
+#define CHECK 0
+#endif
 cbuffer C : register(b0) {
     float4x4 InvCur[3];      // per guess: clip -> world direction, this frame (the view's turn only)
     float4x4 PrevOther[3];   // world direction -> clip, the frame before (the other eye)
@@ -154,10 +160,13 @@ cbuffer C : register(b0) {
 };
 Texture2D<float> Depth : register(t0);
 Texture2D<float2> Game : register(t1);
-RWTexture2D<float2> Out : register(u0);
+#if CHECK
 RWByteAddressBuffer Stats : register(u1);
 #define K 27
 groupshared float s[K][256];
+#else
+RWTexture2D<float2> Out : register(u0);
+#endif
 
 // where the point on this pixel's ray at clip depth z was in an earlier view
 // (this camera at the origin, the earlier ones placed against it)
@@ -183,8 +192,9 @@ void Main(uint3 id : SV_DispatchThreadID, uint gi : SV_GroupIndex, uint3 gid : S
     const float2 uv = (float2(id.xy) + 0.5) / float2(Size);
     const bool far = d >= 0.99998;   // where the game's vectors are the camera's turn (and the jitter) alone
     // the game's vector = its jitter step + Scale (where the point was - uv) + the objects' own motion
-    // Mode 2 (the fix) only: none of the check below - it cost frames (Mode is the same for the whole dispatch)
-    if (Mode == 2) {
+    // the fix (mode 2): none of the check below - it cost frames
+#if !CHECK
+    {
         if (inside) {
             const uint u = Use;
             const float2 tS = Turn(uv, InvCur[u], PrevSame[u]);
@@ -207,7 +217,8 @@ void Main(uint3 id : SV_DispatchThreadID, uint gi : SV_GroupIndex, uint3 gid : S
         }
         return;
     }
-    float2 m[3] = {float2(0.0, 0.0), float2(0.0, 0.0), float2(0.0, 0.0)};
+#else
+    float2 m[3] ={float2(0.0, 0.0), float2(0.0, 0.0), float2(0.0, 0.0)};
     if (inside) {
         m[0] = Turn(uv, InvCur[0], PrevOther[0]);
         m[1] = Turn(uv, InvCur[1], PrevOther[1]);
@@ -280,7 +291,7 @@ void Main(uint3 id : SV_DispatchThreadID, uint gi : SV_GroupIndex, uint3 gid : S
             }
         }
     }
-    // the game's vector = its jitter step + Scale (where the point was - uv) + the objects' own motion
+#endif
 }
 )";
 
@@ -306,7 +317,8 @@ struct Pass {
     bool tried = false, ok = false;
     ComPtr<ID3D12Device> dev;
     ComPtr<ID3D12RootSignature> root;
-    ComPtr<ID3D12PipelineState> pso;
+    ComPtr<ID3D12PipelineState> pso[2];  // the fix, the check: each built when first used
+    bool psoTried[2] = {};
     ComPtr<ID3D12DescriptorHeap> heap;   // 4 per slot: depth, game, out, stats
     UINT inc = 0;
     ComPtr<ID3D12Resource> consts;       // upload, kSlots * 1024
@@ -343,17 +355,15 @@ std::atomic<float> g_sign{-1.0f};   // the game's vector = where the point is - 
 std::atomic<int> g_use{-1};
 std::atomic<float> g_scale{0.0f};
 
+using CompileFn = HRESULT(WINAPI*)(LPCVOID, SIZE_T, LPCSTR, const D3D_SHADER_MACRO*, ID3DInclude*, LPCSTR, LPCSTR, UINT, UINT, ID3DBlob**, ID3DBlob**);
+CompileFn g_compile = nullptr;
+
 bool Build(ID3D12Device* dev) {
     g.tried = true;
     HMODULE comp = LoadLibraryW(L"d3dcompiler_47.dll");
-    using CompileFn = HRESULT(WINAPI*)(LPCVOID, SIZE_T, LPCSTR, const D3D_SHADER_MACRO*, ID3DInclude*, LPCSTR, LPCSTR, UINT, UINT, ID3DBlob**, ID3DBlob**);
-    CompileFn compile = comp ? (CompileFn)GetProcAddress(comp, "D3DCompile") : nullptr;
-    if (!compile) { Log("vrcam: DLSS vectors - no d3dcompiler_47.dll, off"); return false; }
-    ComPtr<ID3DBlob> cs, err;
-    if (FAILED(compile(kShader, strlen(kShader), "dlss_mv", nullptr, nullptr, "Main", "cs_5_0", 0, 0, &cs, &err))) {
-        LogF("vrcam: DLSS vectors - the shader did not compile: %s", err ? (const char*)err->GetBufferPointer() : "?");
-        return false;
-    }
+    g_compile = comp ? (CompileFn)GetProcAddress(comp, "D3DCompile") : nullptr;
+    if (!g_compile) { Log("vrcam: DLSS vectors - no d3dcompiler_47.dll, off"); return false; }
+    ComPtr<ID3DBlob> err;
     D3D12_DESCRIPTOR_RANGE ranges[2] = {};
     ranges[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
     ranges[0].NumDescriptors = 2;
@@ -383,10 +393,6 @@ bool Build(ID3D12Device* dev) {
         Log("vrcam: DLSS vectors - no root signature, off");
         return false;
     }
-    D3D12_COMPUTE_PIPELINE_STATE_DESC pd = {};
-    pd.pRootSignature = g.root.Get();
-    pd.CS = {cs->GetBufferPointer(), cs->GetBufferSize()};
-    if (FAILED(dev->CreateComputePipelineState(&pd, IID_PPV_ARGS(&g.pso)))) { Log("vrcam: DLSS vectors - no pipeline, off"); return false; }
     D3D12_DESCRIPTOR_HEAP_DESC hd = {D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 4 * kSlots, D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE, 0};
     if (FAILED(dev->CreateDescriptorHeap(&hd, IID_PPV_ARGS(&g.heap)))) { Log("vrcam: DLSS vectors - no descriptor heap, off"); return false; }
     g.inc = dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
@@ -422,6 +428,27 @@ bool Build(ID3D12Device* dev) {
     g.ok = true;
     Log("vrcam: DLSS vectors - the pass is built");
     return true;
+}
+
+// The shader for the check (mode 1) or the fix, compiled the first time it is wanted.
+ID3D12PipelineState* Pipeline(bool check) {
+    const int i = check ? 1 : 0;
+    if (g.pso[i] || g.psoTried[i]) return g.pso[i].Get();
+    g.psoTried[i] = true;
+    const D3D_SHADER_MACRO defines[] = {{"CHECK", check ? "1" : "0"}, {nullptr, nullptr}};
+    ComPtr<ID3DBlob> cs, err;
+    if (FAILED(g_compile(kShader, strlen(kShader), "dlss_mv", defines, nullptr, "Main", "cs_5_0", 0, 0, &cs, &err))) {
+        LogF("vrcam: DLSS vectors - the %s shader did not compile: %s", check ? "check" : "fix", err ? (const char*)err->GetBufferPointer() : "?");
+        return nullptr;
+    }
+    D3D12_COMPUTE_PIPELINE_STATE_DESC pd = {};
+    pd.pRootSignature = g.root.Get();
+    pd.CS = {cs->GetBufferPointer(), cs->GetBufferSize()};
+    if (FAILED(g.dev->CreateComputePipelineState(&pd, IID_PPV_ARGS(&g.pso[i])))) {
+        LogF("vrcam: DLSS vectors - no %s pipeline", check ? "check" : "fix");
+        return nullptr;
+    }
+    return g.pso[i].Get();
 }
 
 bool EnsureOut(const D3D12_RESOURCE_DESC& mvDesc) {
@@ -730,11 +757,17 @@ void* BeforeEvaluate(void* cmdListV, const void* paramsV, int eye) {
     for (int k = 0; k < kGuesses; ++k) { transpose(c.invCur[k]); transpose(c.prevOther[k]); transpose(c.prevSame[k]); }
     c.groupsX = (w + 15) / 16;
     const uint32_t groups = c.groupsX * ((h + 15) / 16);
-    if (groups * kSums * 4 > 900000) return nullptr;
     c.size[0] = w;
     c.size[1] = h;
     const int use = g_lag.load();   // the picture's view: this many evaluations back ([render] dlss_mv_lag)
     const bool fix = mode == 2 && EnsureOut(md);
+    // The sums' room (below 900000 in a stats slot) limits the check alone, ~2.1 MPix of scene. It
+    // limited the fix too until 2026-10-13: above that (4K's DLSS Balanced, 2227x1253, and up) DLSS
+    // got the game's vectors, the other eye's, with nothing in the log. The fix keeps no stats, and
+    // when it cannot run nothing would read the check's (only mode 1 does).
+    if (!fix && (mode != 1 || groups * kSums * 4 > 900000)) return nullptr;
+    ID3D12PipelineState* pso = Pipeline(!fix);
+    if (!pso) return nullptr;
     c.mode = fix ? 2 : 1;
     c.use = (uint32_t)use;
     c.scale = g_sign.load();
@@ -804,7 +837,7 @@ void* BeforeEvaluate(void* cmdListV, const void* paramsV, int eye) {
     ID3D12DescriptorHeap* heaps[] = {g.heap.Get()};
     cl->SetDescriptorHeaps(1, heaps);
     cl->SetComputeRootSignature(g.root.Get());
-    cl->SetPipelineState(g.pso.Get());
+    cl->SetPipelineState(pso);
     cl->SetComputeRootConstantBufferView(0, g.consts->GetGPUVirtualAddress() + 1024 * s);
     D3D12_GPU_DESCRIPTOR_HANDLE gpu = g.heap->GetGPUDescriptorHandleForHeapStart();
     gpu.ptr += (UINT64)g.inc * 4 * s;
@@ -825,21 +858,13 @@ void* BeforeEvaluate(void* cmdListV, const void* paramsV, int eye) {
         g.eyeJitter[eye & 1][0] = jx;
         g.eyeJitter[eye & 1][1] = jy;
         params->Set("MotionVectors", g.out.Get());
+        static bool told = false;
+        if (!told) { told = true; LogF("vrcam: DLSS vectors - DLSS now gets the same eye's motion (scene %ux%u)", w, h); }
         return mv;   // the game's own, to put back after the evaluation
     }
     b[0].Transition.StateBefore = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
     b[0].Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_SOURCE;
-    nb = 1;
-    if (fix) {
-        b[1].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-        b[1].Transition.pResource = g.out.Get();
-        b[1].Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-        b[1].Transition.StateBefore = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
-        b[1].Transition.StateAfter = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-        g.outState = b[1].Transition.StateAfter;
-        nb = 2;
-    }
-    cl->ResourceBarrier(nb, b);
+    cl->ResourceBarrier(1, b);
     cl->CopyBufferRegion(g.readback.Get(), kStatsSlot * s, g.stats.Get(), kStatsSlot * s, (UINT64)groups * kSums * 4);
     cl->CopyBufferRegion(g.readback.Get(), kStatsSlot * s + 900000, g.stats.Get(), kStatsSlot * s + 900000, 8 * 48 + 16 * 16);
     b[0].Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_SOURCE;
@@ -863,14 +888,7 @@ void* BeforeEvaluate(void* cmdListV, const void* paramsV, int eye) {
     g.lastJitter[1] = jy;
     g.eyeJitter[eye & 1][0] = jx;
     g.eyeJitter[eye & 1][1] = jy;
-
-    if (!fix) return nullptr;
-    params->Set("MotionVectors", g.out.Get());
-    {
-        static bool told = false;
-        if (!told) { told = true; Log("vrcam: DLSS vectors - DLSS now gets the same eye's motion (the camera's turn, the near depth from the eyes' parallax, the jitter's step)"); }
-    }
-    return mv;   // the game's own, to put back after the evaluation
+    return nullptr;   // the check: DLSS keeps the game's vectors
 }
 
 void AfterEvaluate(const void* paramsV, void* restore) {

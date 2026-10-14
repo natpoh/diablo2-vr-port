@@ -54,7 +54,9 @@
 
 #include <D2RLPlugin/api.h>
 #include <reshade.hpp>
+#include "log_async.h"   // [debug] log_async: the plugin's log lines through a ring and a writer thread (vr/log_queue.h); off = ctx->LogInfo as ever
 #include "game_device_only.h"
+#include "light_bounds.h"
 
 namespace probe {
 void Run(const float hero[3], const wchar_t* outPath);
@@ -62,32 +64,81 @@ void FindHero(const float hero[3], const wchar_t* outPath, const char* tag);
 int FindHeroMatrices(const float hero[3], uintptr_t* out, int max);
 }
 #include "skeletons.h"
+#include "melee_touch.h"   // hit by touch (melee_touch.cpp)
+#include "melee_direct.h"  // the user's experimental direct hit (melee_direct.cpp)
+#include "pad_presence.h"  // pad 0 is never answered "not connected" in VR once the plugin is the pad (the game's reconnect panel)
+#include "stand_still_wire.h"   // [gameplay] attack_in_place: an attack of ours is pressed with the game's Stand Still (stand_still_wire.cpp)
+#include "stand_still.h"        // ... and a click on bare ground in F4 gets Stand Still too (HookMapClick)
+#include "stray_walk_wire.h"    // [gameplay] block_stray_walk / block_stray_clicks: no stray walk, no stray mouse button in the F4 world (stray_walk_wire.cpp)
+#include "view_gate.h"     // everything added after the base mod acts in VR first person (F4) only
+#include "walk_path.h"     // [openxr] direct_bodywalk_walk: BodyWalk's walking stick mixed into the controller's in direct mode (pure part, tested)
+#include "melee_boxes.h"   // [debug] melee_boxes: the capsules of hit by touch drawn in the headset
+#include "blade_shape.h"   // the touch's blade as drawn (dual wield, the sliders)
+#include "weight.h"
+#include "aim_source.h"    // where a staff's aim comes from: the controllers, never the weapon as drawn
+#include "hold.h"
 #include "writewatch.h"
-namespace uitrace { void Register(); bool Arm(const std::wstring& path); void SetSkip(uint64_t pipe); void SetSkipShaders(const uint64_t* hashes, int n); }
+namespace uitrace { void Register(); bool Arm(const std::wstring& path); void SetSkip(uint64_t pipe); void SetSkipShaders(const uint64_t* hashes, int n);
+                    void SetDepthRange(bool on, float range); uint32_t DepthRangeFixes(); int DepthRangeLayouts();
+                    bool DepthFixFor(uint64_t layout, uint32_t param); void FixDepthRangeAt(uint8_t* cb); }
 #include "game_hud_shared.h"
 namespace memdiff { void Step(uintptr_t base, const std::wstring& outPath, void (*log)(const char*)); void Reset(void (*log)(const char*)); }
-namespace hud { void Register(); void SetHide(int mode); void SetInterfaceScale(float s); void SetMenuOpen(bool open); void SetMapMode(int mode); bool LayerFound(); void SetLogger(void (*log)(const char*)); void SetLook(const FlatVRGameHudLook& look); void SetMapCorner(int corner); bool ToggleMapShown();
+namespace hud { void Register(); void SetHide(int mode); void SetInterfaceScale(float s); void SetToolbarCut(float upPct, float downPct, bool tint); void SetMenuOpen(bool open); void SetPanelOut(bool out); void PollMenuReader(); bool FlatVrTakesMenu(); void SetMenuPlace(float widthM, float distanceM, float belowM, uint32_t laser, uint32_t window); int FlatVrLaserState(); void SetMapMode(int mode); bool LayerFound(); void SetLogger(void (*log)(const char*)); void SetLook(const FlatVRGameHudLook& look); void SetMapCorner(int corner); bool ToggleMapShown();
                 void SetPointer(uint32_t mode); void SetPointerDepth(float base, float tilt, float curve, float topScale); int Anchor(int panel); void SetForearm(int panel, bool valid, const float elbow[3], const float wrist[3], const float across[3]);
                 void SetClassicView(bool on); void SetPictureZoom(float bar, float map); bool PictureWanted(); void SetPictureReady(bool ready);
                 bool PictureNow(int i, float box[4], uint64_t* srv); void SetPictureBarMoved(bool moved); void SetPictureBarOffset(float x, float y); void SetPictureMapMoved(bool moved); void SetPictureMapOffset(float x, float y);
-                void SetLabels(bool on); bool LabelsNow(float keepBar[4], float keepMap[4], uint64_t* srv); void SetUiMask(bool on); bool UiMaskNow(); }
+                void SetLabels(bool on); bool LabelsNow(float keepBar[4], float keepMap[4], uint64_t* srv); void SetUiMask(bool on); bool UiMaskNow();
+                void SetGlobes(bool want); bool GlobesNow(float* fit, uint64_t* srv); int GlobesWhy(); }
 #include "d2rcam.h"
 #include "sigscan.h"
 #include "mat4.h"
-namespace gamecmd { void Init(const D2RL::PluginContext* ctx); void Tick(); }   // the game's key commands from BodyWalk (gamecmd.cpp)
-namespace gamestate { void Init(const D2RL::PluginContext* ctx); void Tick(); uint32_t WeaponClass(); uint32_t WeaponSet(); uint32_t WeaponType(); uint32_t HandsHeld(); uint32_t TwoHanded(); uint32_t WeaponHand(); uint32_t HandsKey(); bool MenuOpen(); uint64_t TitleScreenAt(); int ObjectLight(uint32_t txt, uint32_t mode, float rgb[3]); uint64_t LocalPlayer(); void SetViewMode(uint32_t mode); bool AutoMapOpen(); bool SetAutoMap(bool open); void PollPlate(); bool PlateRect(int32_t out[4]); }
+namespace gamecmd { void Init(const D2RL::PluginContext* ctx); void Tick(); void Tap(uint32_t cmd); }   // the game's key commands from BodyWalk (gamecmd.cpp)
+namespace skillwheel { void Init(const D2RL::PluginContext* ctx); void Tick(); void Shutdown(); }   // [openxr] skill_wheel (skill_wheel.cpp)
+namespace skillwheel { bool Enabled(); }
+namespace wheelgame { void Tick(bool on, bool open); }   // the wheel's reads of the controller's skill slots (wheel_game.cpp): a throw by gesture keeps them going for the Throw slot
+namespace gamestate { void Init(const D2RL::PluginContext* ctx); void Tick(); uint32_t WeaponClass(); uint32_t WeaponSet(); uint32_t WeaponType(); uint32_t HandsHeld(); uint32_t TwoHanded(); uint32_t WeaponHand(); uint32_t HandKind(int side); uint32_t HandCode(int side); uint32_t HandsKey(); bool MenuOpen(); void SetLaserPanels(bool on); uint64_t TitleScreenAt(); int ObjectLight(uint32_t txt, uint32_t mode, float rgb[3]); uint64_t LocalPlayer(); void SetViewMode(uint32_t mode); bool AutoMapOpen(); bool SetAutoMap(bool open); void PollPlate(); bool PlateRect(int32_t out[4]); bool SkillAimed(int skill); void BeltCodes(uint32_t out[4]); }
+namespace gamestate { bool HandIsThrowPotion(int side); }   // the held item is one of the six throwing potions (gamestate.cpp)
 #include "d2r_vr_state.h"
 
 #include "MinHook.h"
 #include "crosshair_cursor.h"
 #include "d2r_vr_shared.h"
 #include "link.h"
+#include "direct_feed.h"
 #include "afr_eye_shared.h"
 #include "dlss_mv.h"
 #include "xr.h"
+#include "views3d.h"      // [openxr] views_3d: F1 and F3 with the runtime's eyes (the pure maths)
+#include "pointer3d.h"    // [openxr] pointer_3d: the game's mouse pointer drawn on F1's and F3's ground (the pure maths)
+#include "frame_hitch.h"
+#include "frame_trace.h"   // [debug] frame_trace: where a slow pair's time went, the plugin's part counted apart (vr/frame_trace.h)
+#include "aim_point.h"
+#include "shot_trace_wire.h"
+#include "throw_aim.h"
+#include "throw_cast.h"
+#include "throw_trace.h"
+#include "panel_input.h"
+#include "shoulder_swap_wire.h"   // [hands] shoulder_swap: weapon sets by the grip behind a shoulder
+#include "weight_floor.h"         // [weight]: the floor a let-go weapon falls to is the game's ground under the hero
+#include "weight_wire.h"          // [weight]: the grips that hold the weapon are taken from the layout, read as they really are
+#include "bow_draw.h"
+#include "bow_draw_wire.h"   // [hands] bow_draw: a released draw's shot along its line
+#include "throw_gesture_wire.h"
+#include "throw_born.h"
+#include "potion_hide.h"
+#include "bow_quick.h"          // [bow] quick_release: the action-frame flag of the hero's bow attack row moved earlier (vr/bow_quick.cpp)
+#include "bow_latency.h"       // [debug] bow_latency: the split of the second between a bow's release and its arrow (vr/bow_latency.h)
+#include "calibration.h"
+#include "haptics.h"
+#include "mob_bars.h"
+#include "low_hp_game.h"   // [hud] low_hp_vignette: the red heartbeat vignette at low life (vr/low_hp.h)
+#include "hand_vitals_wire.h"   // [hud] hand_vitals: life and mana on the hand when the palm turns to the face (vr/hand_vitals.h)
+#include "hand_orbs.h"   // [hud] hand_vitals_style orbs: life and mana as 3D balls on the wrists, drawn by the effect (vr/hand_orbs.h)
+#include "render_resolution.h"   // [render] vr_resolution: a render size apart from the window's
 #include <timeapi.h>   // timeBeginPeriod: the pacer's 1 ms sleeps
 #pragma comment(lib, "winmm.lib")
 #include "pad_mirror_shared.h"
+#include "shield_smite_game.h"   // [gameplay] shield_smite: a bash of the left shield casts the game's own Smite
 
 #pragma intrinsic(_ReturnAddress)
 
@@ -95,6 +146,8 @@ using namespace D2RL;
 
 namespace {
 namespace gamefog { void SetPoke(const std::wstring& want); }   // [debug] fog_poke, below
+namespace cavelight { void Load(); }   // [cave_light], below
+namespace engitem { void SetWant(const std::wstring& path); void SetBelt(bool on, float up, float ahead, float arc, float scale, float side, bool grab, const float hold[6]); void SetBallColours(const float (*rgb)[3]); void Frame(bool fullBody); void InstallHook(); float FistCap(int side); bool BeltBusy(int side); }   // [debug] engine_unit, [hands] belt_models, below
 
 const PluginContext* g_ctx = nullptr;
 uintptr_t g_base = 0;
@@ -118,14 +171,16 @@ bool Matches(uint64_t rva, const uint8_t* sig, size_t n) {
 namespace crash { void Install(const char* version); void Uninstall(); void Keep(); void Mirror(const char* text); void Step(const char* name); void Mark(const char* what); }
 
 void Log(const char* text) {
-    if (g_ctx != nullptr) g_ctx->LogInfo(text);
+    frametrace::Scope trace(frametrace::kLog);   // [debug] frame_trace: what the host's log costs the thread that wrote the line (one relaxed load when off)
+    if (g_ctx != nullptr) logasync::Info(g_ctx, text);
     crash::Mirror(text);
 }
 void LogF(const char* fmt, ...);
+void ftraceSetOverMs(float ms);   // [debug] frame_trace_ms (vr/frame_trace.h), below
 // To the game's console as well as the log.
 void Say(const char* text) {
     if (g_ctx == nullptr) return;
-    g_ctx->LogInfo(text);
+    logasync::Info(g_ctx, text);
     crash::Mirror(text);
     g_ctx->WriteConsoleMessage(text, ConsoleMessageKind::Output);
 }
@@ -151,6 +206,8 @@ struct Settings {
     std::atomic<float> pitch{-60.0f};       // camera pitch relative to the game's own (deg); -60 = level, more negative = higher
     std::atomic<int>   rings{4};            // [render] rings: room rings drawn around the hero (cleanroom/drawdist)
     std::atomic<float> modelRadius{1000.0f}; // [render] model_radius: houses, props, units drawn out to this (game: 150)
+    std::atomic<int>   renderPoolMb{64};    // [render] render_pool_mb: the game's Renderer Pool at least this big (game: 12)
+    std::atomic<int>   entityPoolMb{280};   // [render] entity_pool_mb: its Entity System Pool (game: 70) - cleanroom/pools
     std::atomic<int>   hudMap{0};           // [hud] map: 0 in the picture, 1 out of it, into its own texture
     // Per view since the Home page (2026-10-05): [hud_top], [hud_third], [hud_floor], [hud_inside]
     // - the Interface tab of each view - falling back to [hud] where unset.
@@ -169,6 +226,9 @@ struct Settings {
     std::atomic<float> labelsAlphaTop{1.0f}, labelsAlphaThird{1.0f}, labelsAlphaBody{1.0f};
     std::atomic<float> plateAlpha{1.0f};   // [hud] monster_alpha: the name plate over the target monster, 1 = as the game draws it
     std::atomic<float> plateSize{1.0f};    // [hud] monster_size: that plate larger or smaller about its middle, 1 = the game's
+    // [hud] allies_x / allies_y: the allies' portraits (the mercenary, the party) moved on the screen, uv (+x right,
+    // +y DOWN; the ini's allies_y is + up, %)
+    std::atomic<float> alliesX{0.0f}, alliesY{0.0f};
     std::atomic<float> labelsSizeTop{1.0f}, labelsSizeThird{1.0f}, labelsSizeBody{1.0f};
     // bar_x / bar_y per view: the toolbar moved on the screen, uv (+x right, +y DOWN; the ini's bar_y is + up, %)
     std::atomic<float> barXTop{0.0f}, barYTop{0.0f}, barXThird{0.0f}, barYThird{0.0f}, barXFloor{0.0f}, barYFloor{0.0f};
@@ -252,6 +312,7 @@ struct Settings {
     std::atomic<bool>  ceilPictureFire{false};   // [ceiling] fire_from_picture: fire seen in the picture lights it instead - any fire, no scan
     std::atomic<float> ceilTorchBright{0.6f};   // [ceiling] torch_brightness
     std::atomic<float> ceilTorchRadius{20.0f};  // [ceiling] torch_radius: world units where a torch's light is down to half
+    std::atomic<float> ceilFireNearer{0.0f};    // [ceiling] fire_nearer: world units a fire found in the picture is put nearer the eye
     std::atomic<float> ceilTorchDist{80.0f};    // [ceiling] torch_distance: torches farther from the hero fade out (behind walls)
     std::atomic<bool>  ceilMonsters{false};      // [ceiling] monster_lights: the Fallen's torches light the ceiling (off: their units are not even read)
     std::atomic<float> ceilMonsterBright{0.35f}; // [ceiling] monster_brightness: the Fallen's torches, times the torches' glow
@@ -310,11 +371,42 @@ struct Settings {
     std::atomic<bool>  staffTwoHands{true}; // [bow] staff_two_hands: with a staff, aim from the left hand to the right one
     std::atomic<bool>  staffHands{true};    // [hands] follow_staff: with a staff, the wrists turn with it, not with the controllers
     std::atomic<bool>  staffFreeLeft{true}; // [hands] staff_free_left: the right hand holds the staff, the left takes it with the grip
+    std::atomic<bool>  spellAim{true};      // [hands] spell_aim: a spell that flies goes along the hand, no auto-target (mode 4); off = the game's
+    std::atomic<bool>  aimNoChase{true};    // [gameplay] aim_no_chase: the cast's own look at the controller's target (0x1454A0) finds none for a directed cast
+    std::atomic<bool>  bowAim{false};       // [hands] bow_aim: a bow's or crossbow's attack goes along the hand, no auto-target (mode 4)
+    std::atomic<bool>  throwAim{false};     // [hands] throw_aim: the same for javelins and throwing weapons (off: the game's auto-target helps a throw)
+    std::atomic<float> throwAutoaimDeg{15.0f};     // [hands] throw_autoaim_deg: the half-angle of the cone round a throw's line a monster snaps the point in (0 = off)
+    std::atomic<float> throwPotionReachPct{throwaim::kDefaultReachPct}; // [hands] throw_potion_reach_pct: a throwing potion's hand-estimated distance scaled (50 - 1500, 800)
+    std::atomic<bool>  bowLatency{false};   // [debug] bow_latency: one log line for every bow shot - where the time between the release and the arrow goes (vr/bow_latency.h)
+    std::atomic<bool>  throwTrace{true};    // [debug] throw_trace: after a throw's press the log tells what the hero and the missiles do (vr/throw_trace.h)
+    std::atomic<bool>  throwAutoSkill{true}; // [hands] throw_auto_skill: a throw's A press is read by the game as its Throw skill (no skill slot needed)
+    std::atomic<bool>  throwGesture{false}; // [hands] throw_gesture: a javelin thrown by the hand's motion ends in the game's own throw along it (vr/throw_gesture_wire.cpp)
+    std::atomic<bool>  bowRigPose{false};   // [bow] rig_pose: the bow's own string, limbs and arrow follow the drawing hand (skeletons.cpp, vr/bow_rig.h)
+    std::atomic<bool>  bowRigGrip{false};   // [debug] bow_rig_grip: the string hand's grip squeezed draws it, with no draw detector feeding SetBowDraw
+    std::atomic<bool>  bowAimAlong{false};  // [bow] aim_along_hands: while the string is taken the bow, its arrow and the bow hand lie along the line from the string hand to the bow hand (vr/bow_aim.h, skeletons.cpp)
+    std::atomic<float> bowAimBlendMs{120.0f};   // [bow] aim_blend_ms: the turn comes in and goes out over this long (take, release, cancel), 50..400
+    std::atomic<int>   bowAimRoll{0};       // [bow] aim_roll: 0 the bow keeps the roll the controller has, 1 it is kept upright
+    std::atomic<bool>  bowRestClear{true};     // [bow] arrow_rest_clear: where the arrow would pass through the bow hand, wrist or forearm it is lifted off the arm, by as little as clears it, at most 8 cm (vr/bow_aim.h ClearanceLift)
+    std::atomic<float> bowRestCm[3] = {0.0f, 0.0f, 5.0f};   // [bow] arrow_rest_x_cm / y / z: the point the nocked arrow passes the bow hand at, in the hand's own frame: along the bow, across it, up (z: arrow_lift_cm's old key is its default), -10..10 each; all 0 = through the hand's reference point (vr/bow_aim.h SolveRest, skeletons.cpp)
+    std::atomic<bool>  bowRestAims{true};      // [bow] arrow_rest_aims: the shot's aim goes along the line through the rest point too, as the arrow lies; 0 = the shot as before (string hand through the bow hand's reference point)
+    std::atomic<bool>  bowHandPose{false};  // [bow] hand_pose: the free hand of a bow is relaxed and hooks on the string while it is drawn (skeletons.cpp)
+    std::atomic<bool>  bowHookGame{true};   // [bow] hook_game_pose: the string hand takes the game's own draw pose (vr/bow_hook.h) while the string is taken, not the fist table's hook
+    std::atomic<float> bowHook{0.85f};      // [bow] hook_close: how far the fingers close on the string (0..1); 0.70 was too little to see
+    std::atomic<float> bowHookCurl{1.0f};   // [bow] hook_curl_pct: the four fingers' bend in the game's draw pose, % of the measured one (0..150; live)
+    std::atomic<float> bowHookThumbDeg{0.0f};   // [bow] hook_thumb_deg: the thumb turned further in toward the palm (+) or out (-) than the game's draw pose, degrees (-60..60; live)
+    std::atomic<bool>  bowStringAnchor{true};   // [bow] string_anchor: the bow's string is drawn to the first joints of the hooked fingers, not to the grip point in the middle of the palm (vr/bow_hook.h)
+    std::atomic<float> bowAnchorCm[3] = {0.0f, 0.0f, 0.8f};   // [bow] string_anchor_along_cm / across_cm / palm_cm: that point moved along the fingers, toward the thumb side, out of the palm (-15..15; live)
+    std::atomic<bool>  meleeTouch{false};   // [gameplay] melee_touch: the blade touching a monster picks the target and the moment of the game's own attack
+    std::atomic<bool>  meleeTouchUnchecked{false};   // [debug] melee_touch_unchecked: no hostility / wall check from the server (to see whether it is what stops a touch)
+    // [autotarget] s<skill>=1: that skill keeps the game's auto-target whatever spell_aim, bow_aim, throw_aim say - one
+    // that seeks its target itself (Chain Lightning, the user 2026-10-13). Bit n = skill n.
+    std::atomic<uint64_t> autoKeep[16] = {};
     // [fist] <class>_close / <class>_open: how far a free hand closes, % of the full fist, with the
     // grip squeezed / let go - per hero class (skel::kHeroClasses), the rigs bend differently
     std::atomic<float> fistClose[8] = {100.0f, 100.0f, 100.0f, 65.0f, 100.0f, 100.0f, 100.0f, 100.0f};
     std::atomic<float> fistOpen[8] = {20.0f, 20.0f, 20.0f, 20.0f, 20.0f, 20.0f, 20.0f, 20.0f};
     std::atomic<bool>  fist{true};          // [hands] fist: a free hand closes with its controller's grip, relaxes when let go
+    std::atomic<bool>  shieldFist{true};    // [hands] shield_fist: the hand with a shield on it does the same (F4 only; the fingers only)
     std::atomic<float> staffOffset[3] = {0.0f, 0.0f, 0.0f};   // [hands] staff_x/y/z: cm, the staff past the right hand, its axes
     std::atomic<float> staffGrabCm{15.0f};  // [hands] staff_grab_cm: the left grip takes the staff only this near it
     std::atomic<float> leftStaffOffset[3] = {0.0f, 0.0f, 0.0f};
@@ -342,6 +434,45 @@ struct Settings {
     std::atomic<int>   staffHand{0}, staffShaftAxis{-2};
     std::atomic<int>   carryAxis{2};
     std::atomic<float> carryCm{40.0f};       // [hands] carry_cm: how far along it
+    // [weight] (vr/weight.cpp, plan_weapon_weight.md step 1b): a melee weapon held alone has weight - it lags
+    // behind a hard swing, a two-handed one wants both hands - and a hand takes it where its grip closes on
+    // the shaft, passing it from hand to hand. Off: the weapon sits fast in the game's grip, as before.
+    std::atomic<bool>  weightOn{false};      // [weight] on
+    std::atomic<float> weightFeel{50.0f};   // [weight] feel: % of the weapon's mass
+    std::atomic<float> weightStrength{100.0f};   // [weight] strength: % of the hands' strength
+    std::atomic<float> weightGravity{100.0f};    // [weight] gravity_pct: % of g (0 = no gravity, only inertia)
+    std::atomic<float> weightDamping{100.0f};    // [weight] damping_pct: % of the muscles' dampers
+    std::atomic<bool>  weightGravityFeel{true};  // [weight] gravity_feel: the wrists soft enough for the weight to sag them; off = the old stiff wrists
+    std::atomic<float> weightGrabCm{12.0f};  // [weight] grab_cm: how near the shaft a grip takes it
+    std::atomic<float> weightLetGoCm{25.0f}; // [weight] let_go_cm: hands pulled this far apart off their places let go
+    std::atomic<float> weightFist[3] = {0.0f, 0.0f, 0.0f};   // [weight] fist_x/y/z: cm, the closed fist's middle from the right controller, its axes
+    // [weight] grip_fit (vr/grip_fit.h): a hand that took the weapon is laid on its shaft (palm's middle on the axis, knuckles along it, closing with the squeeze), by default
+    // sitting on it as the game's own grip has the base hand (grip_fit_like_base); and EACH HAND has live corrections in the shaft's own frame: right_grip_* / left_grip_* -
+    // x y z in cm (along the shaft, across toward the fingertips, up out of the palm), rx ry rz in degrees (the roll about the shaft, the tilt about across, the tilt about up).
+    std::atomic<bool>  weightGripFit{true};
+    std::atomic<bool>  weightGripLikeBase{true};
+    std::atomic<bool>  weightGripFingers{true};   // [weight] grip_fit_fingers: the taking hand's fingers and thumb take the game's own weapon-grip pose (vr/grip_pose.h)
+    std::atomic<bool>  weightAttachApart{true};   // [weight] attach_apart: the weapon's two attach bones kept carry_cm apart along its axis (in one point the game draws it flat)
+    std::atomic<float> weightGripHand[2][6] = {{0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f}};
+    // [weight] after_drop: what becomes of a weapon let go that has landed - 0 it lies on the floor, 1 after the delay it goes to the hero's back
+    // (vr/weapon_back.h), 2 after the delay it is not drawn at all. The back place per class (long: staffs, spears, polearms, javelins, anything
+    // two-handed; short: the rest), x y z in cm and pitch yaw roll in deg on top of the default.
+    std::atomic<int>   weightAfterDrop{1};
+    std::atomic<float> weightToBackMs{600.0f};
+    std::atomic<bool>  weightTakeHaptic{true};      // [weight] take_haptic: a pulse in a hand entering the take zone behind a shoulder while a weapon is away
+    std::atomic<float> weightTakeHapticPct{40.0f};  // [weight] take_haptic_pct: its strength
+    std::atomic<bool>  weightRecallAny{true};       // [weight] recall_any_hand: the grip of any free hand, anywhere, calls a weapon that is away
+    std::atomic<float> weightThrownFlyMs{3000.0f};  // [weight] thrown_fly_ms: a thrown weapon's model flies at most this long after the release
+    std::atomic<float> weightThrowReachPct{800.0f}; // [weight] throw_reach_pct: the horizontal release velocity x this (a real arm throws a few metres)
+    std::atomic<float> weightThrowMaxCells{48.0f};  // [weight] throw_max_cells: the landing is held to this many cells from the hero (the game refuses > 50 on an axis)
+    std::atomic<float> weightBackTakeCm{25.0f};     // [weight] back_take_cm: a fist this near the weapon stowed on the back takes it with the grip
+    std::atomic<int>   weightThrownModel{0};        // [weight] thrown_model: 0 the model vanishes the moment the game takes the throw, 1 it flies on physically
+    std::atomic<float> weightThrownHandoffMs{0.0f};   // [weight] thrown_handoff_ms: the thrown model flies out of the hand this long (or to the game's action frame) before it hands over to the game's missile and vanishes (0: at once)
+    std::atomic<float> weightThrownHandEmptyMs{900.0f};   // [weight] thrown_hand_empty_ms: the hand stays empty (the weapon not drawn) while the game throws, at most this long
+    std::atomic<bool>  weightPotionFlies{true};     // [weight] potion_model_flies (or [hands] potion_throw_ours): a thrown potion's model flies to its landing, the game's take does not hand it over
+    std::atomic<bool>  weightSlide{true};           // [weight] slide_second_hand: the second hand slides along a long shaft while its grip stays squeezed
+    std::atomic<float> weightBackLong[6] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+    std::atomic<float> weightBackShort[6] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
     std::atomic<bool>  bothAttach{true};     // [hands] both_attach: 0 = the other attach bone left alone (for comparing)   // [hands] carry_axis: moving, the game lays a 2H weapon from the right attach bone to the left - the left one put along this axis   // [hands] sword_hilt_axis: the hilt as the sword bone's axis, +-1..3 (x y z); 0 = from the game's grip
     float weaponAdj[D2RVR_TYPE_COUNT][6] = {};
     float weaponLeft[D2RVR_TYPE_COUNT][3] = {};   // (no longer used: one for every two-handed weapon, leftHold)
@@ -382,6 +513,7 @@ struct Settings {
     std::atomic<float> rightDtMs{0.01f};    // [stereo] right_dt_ms: the frame time the right pass of a pair gets (0 = none)
     std::atomic<bool>  bgFullSpeed{true};   // no Sleep(10) per frame while the game window is not in front
     std::atomic<bool>  gameHeightFog{false};   // [render] game_height_fog: keep the game's own height fog (gamefog::)
+    std::atomic<bool>  gameDepthFog{false};    // [render] game_depth_fog: keep the game's own depth fog (gamefog::)
     std::atomic<int>   solidWalls{1};          // [render] solid_walls: 0 the game's see-through walls, 1 solid but in F1, 2 solid in every view
     std::atomic<float> uiShift{0.0f};       // AFR: the HUD moved apart per eye in the shader, % of the half screen; more = nearer
     std::atomic<float> hudTop{0.70f};       // the HUD is looked for below this height (0 top .. 1 bottom)
@@ -796,7 +928,8 @@ void NoTemporalAA() {
 // plugin's start, before the game reads the file, in VR with the map out of the picture: "AutoMapMode" set
 // to 2 - on the right (the game moves it left while a panel covers the right; seen in the log as the map's
 // box on either side) - unless it is 2 already. The game's own options may change it; the next start sets
-// it again.
+// it again. A read-only Settings.json (players were told to make it so for the window size) has the flag
+// taken off first, as SafeGameWindow does; a file that cannot be written or has no AutoMapMode is logged.
 void MiniMapForHand() {
     if (g_set.platform.load() != 1 || g_set.hudMap.load() != 1) return;
     PWSTR dir = nullptr;
@@ -810,20 +943,29 @@ void MiniMapForHand() {
     fclose(f);
     const size_t at = text.find("\"AutoMapMode\"");
     const size_t colon = at == std::string::npos ? at : text.find(':', at);
-    if (colon == std::string::npos) return;
-    size_t b = colon + 1;
+    size_t b = colon == std::string::npos ? colon : colon + 1;
     while (b < text.size() && (text[b] == ' ' || text[b] == '\t')) ++b;
     size_t e = b;
     while (e < text.size() && isdigit((unsigned char)text[e])) ++e;
-    if (e == b) return;
+    if (b >= text.size() || e == b) {
+        Log("vrcam: the game's Settings.json has no AutoMapMode - its map's side left as the game has it (only the map on the "
+            "right comes into the hand: Options > Automap, the mini map on the right)");
+        return;
+    }
     const int mode = atoi(text.c_str() + b);
     if (mode == 2) return;
     text.replace(b, e - b, "2");
+    const DWORD attr = GetFileAttributesW(path.c_str());
+    const bool readOnly = attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_READONLY);
+    if (readOnly) SetFileAttributesW(path.c_str(), attr & ~FILE_ATTRIBUTE_READONLY);
     if (FILE* w = _wfopen(path.c_str(), L"wb")) {
         fwrite(text.data(), 1, text.size(), w);
         fclose(w);
         LogF("vrcam: the game's AutoMapMode was %d (its map not on the right - only that one comes into the hand) - set to 2, "
-             "the map on the right ([hud] map=0 leaves it alone)", mode);
+             "the map on the right%s ([hud] map=0 leaves it alone)", mode, readOnly ? ", its read-only flag taken off" : "");
+    } else {
+        LogF("vrcam: the game's AutoMapMode is %d (its map not on the right - only that one comes into the hand) and Settings.json "
+             "could not be written: put the mini map on the right in the game's options (Automap)", mode);
     }
 }
 
@@ -898,6 +1040,22 @@ namespace replay { extern std::atomic<int> g_want; extern std::atomic<int> g_ahe
 float g_leftView[16] = {};
 SRWLOCK g_leftViewLock = SRWLOCK_INIT;
 std::atomic<float> g_eyeHalf{0.0f};
+// F1 / F3 in 3D ([openxr] pointer_3d, vr/pointer3d.h): what the game's pointer needs to be drawn where its mouse points - the map from the frame
+// the pair's eyes are in into the game's world, the game's ground, and the left eye's camera as the game's own ScreenToRay has it. Written by
+// the view / projection builds of the left eye, read when the pair's frame is closed, the same thread; a lock anyway.
+struct PointerMap {
+    bool ok = false;
+    int mode = -1;
+    pointer3d::Similarity sim;
+    float groundY = 0.0f;
+    float view[16] = {}, proj[16] = {};
+    ULONGLONG viewAt = 0, projAt = 0;
+};
+PointerMap g_ptrMap;
+SRWLOCK g_ptrLock = SRWLOCK_INIT;
+// TableCamera's diorama and hero as last built (for the map above)
+views3d::Table g_lastTable{};
+views3d::Vec g_lastTableHero{};
 void LoadSettings() {
     g_set.platform.store(IniF(L"mode", L"platform", 1.0f) != 0.0f ? 1 : 0);
 #if D2RVR_FIRST_PERSON
@@ -942,12 +1100,86 @@ void LoadSettings() {
     g_set.pitch.store(std::clamp(IniF(L"camera", L"pitch", -60.0f), -150.0f, 60.0f));
     g_set.rings.store(std::clamp((int)IniF(L"render", L"rings", 4.0f), 1, 8));
     g_set.modelRadius.store(std::clamp(IniF(L"render", L"model_radius", 1000.0f), 10.0f, 10000.0f));
+    g_set.renderPoolMb.store(std::clamp((int)IniF(L"render", L"render_pool_mb", 64.0f), 0, 4096));
+    g_set.entityPoolMb.store(std::clamp((int)IniF(L"render", L"entity_pool_mb", 280.0f), 0, 4096));
     g_set.mouseLook.store(IniB(L"input", L"mouse_look", false));
     g_set.hudHide.store(std::clamp((int)IniF(L"hud", L"hide", 0.0f), 0, 2));
     hud::SetHide(g_set.hudHide.load());
+    mobbars::SetEnabled(IniB(L"hud", L"ordinary_mob_bars", false), (int)IniF(L"debug", L"mob_bars_style", 0.0f));   // the hook goes in from the tick
+    {   // [hud] low_hp_vignette (vr/low_hp.h): a red heartbeat vignette at low life, VR F4 on native OpenXR only
+        lowhp::Config lh;
+        lh.on = IniB(L"hud", L"low_hp_vignette", false);
+        lh.threshold = lowhp::ThresholdFromPercent(IniF(L"hud", L"low_hp_threshold", lh.threshold * 100.0f));
+        lh.intensityStart = IniF(L"hud", L"low_hp_intensity_start", lh.intensityStart);
+        lh.intensityEnd = lowhp::ResolveIntensityEnd(IniF(L"hud", L"low_hp_intensity_end", -1.0f), IniF(L"hud", L"low_hp_strength", -1.0f));   // (the old single strength is the end)
+        lh.saturation = IniF(L"hud", L"low_hp_saturation", lh.saturation);
+        lh.radius = lowhp::RadiusFromPercent(IniF(L"hud", L"low_hp_radius", lh.radius * 100.0f));
+        lh.softness = IniF(L"hud", L"low_hp_softness", lh.softness);
+        lh.roundness = IniF(L"hud", L"low_hp_roundness", IniF(L"debug", L"low_hp_roundness", lh.roundness));
+        lh.gentle = IniB(L"hud", L"low_hp_gentle", false);
+        lh.haptics = IniB(L"hud", L"low_hp_haptics", false);
+        lh.hapticsStrength = IniF(L"hud", L"low_hp_haptics_strength", lh.hapticsStrength);
+        lowhp::Configure(lh);
+    }
+    {   // [hud] hand_vitals (vr/hand_vitals.h): life and mana on the hand when the palm turns to the face, VR F4 on native OpenXR only
+        handvitals::Config hv;
+        // The toolbar's placement list has a fifth entry, "Wrists" ([hud] bar_place = 5): life on the left wrist, mana on the right, drawn by the plugin
+        // (FlatVR is given "not shown", below). Its look is [hud] wrist_look (0 the glass orbs, 1 the game's own globes). The older keys (hand_vitals, hand_vitals_style)
+        // still work without it.
+        const bool wrists = (int)IniF(L"hud", L"bar_place", 2.0f) == 5;
+        hv.on = wrists || IniB(L"hud", L"hand_vitals", false);
+        hv.hand = (int)IniF(L"hud", L"hand_vitals_hand", 0.0f);
+        hv.sizeCm = IniF(L"hud", L"hand_vitals_size_cm", 8.0f);
+        hv.heightCm = IniF(L"hud", L"hand_vitals_height_cm", 6.0f);
+        hv.opacity = IniF(L"hud", L"hand_vitals_opacity", 1.0f);
+        hv.coneDeg = IniF(L"hud", L"hand_vitals_cone", 35.0f);
+        hv.pulse = IniB(L"hud", L"hand_vitals_pulse", false);
+        hv.lowFrac = IniF(L"hud", L"low_hp_threshold", 30.0f) * 0.01f;   // the low-life vignette's threshold: under it the pulse starts
+        hv.flip = IniB(L"debug", L"hand_vitals_flip", false);
+        hv.style = wrists ? (IniF(L"hud", L"wrist_look", 0.0f) >= 0.5f ? handvitals::kStyleGlobes : handvitals::kStyleOrbs)
+                          : (int)IniF(L"hud", L"hand_vitals_style", 0.0f);   // 0 the glass orbs on the wrists, 1 the palm panel, 2 the game's own globes
+        hv.orbHands = (int)IniF(L"hud", L"hand_vitals_orb_hands", 0.0f);
+        {   // the way the liquid fills: hand_vitals_orb_fill 0 - 5 (a fixed direction of the wrist's frame, the default out of the hand); the older hand_vitals_orb_liquid 0 / 1 is 0 / 5
+            const float oldLiquid = IniF(L"hud", L"hand_vitals_orb_liquid", -1.0f);
+            hv.orbFill = (int)IniF(L"hud", L"hand_vitals_orb_fill", oldLiquid < 0.0f ? (float)handvitals::kFillOutOfHand : oldLiquid >= 0.5f ? (float)handvitals::kFillWorldUp : 0.0f);
+        }
+        hv.orbShape = (int)IniF(L"hud", L"hand_vitals_orb_shape", 0.0f);               // 0 a medallion (a dome on a metal base), 1 the full glass ball
+        hv.orbPatina = IniF(L"hud", L"hand_vitals_orb_patina", 55.0f) * 0.01f;         // percent
+        hv.orbMetal = (int)IniF(L"hud", L"hand_vitals_orb_metal", 0.0f);               // 0 gold, 1 bronze, 2 silver
+        hv.orbDiscFaces = (int)IniF(L"hud", L"hand_vitals_orb_disc", 1.0f);            // the game's globe's disc as a ball: 1 fixed on the wrist, 0 turns to the eyes
+        hv.orbSizeCm = IniF(L"hud", L"hand_vitals_orb_size_cm", 5.0f);
+        // The ball's place on each wrist, in the wrist's own frame (cm): along the arm, across (+ toward the thumb), up out of the back of the hand. The older single
+        // hand_vitals_orb_up_cm / _along_cm are what a wrist starts from while its own key is not in the ini.
+        const float oldUp = IniF(L"hud", L"hand_vitals_orb_up_cm", 4.0f), oldAlong = IniF(L"hud", L"hand_vitals_orb_along_cm", 3.0f);
+        hv.orbLeft.alongCm = IniF(L"hud", L"hand_vitals_orb_left_along_cm", oldAlong);
+        hv.orbLeft.sideCm = IniF(L"hud", L"hand_vitals_orb_left_side_cm", 0.0f);
+        hv.orbLeft.upCm = IniF(L"hud", L"hand_vitals_orb_left_up_cm", oldUp);
+        hv.orbRight.alongCm = IniF(L"hud", L"hand_vitals_orb_right_along_cm", oldAlong);
+        hv.orbRight.sideCm = IniF(L"hud", L"hand_vitals_orb_right_side_cm", 0.0f);
+        hv.orbRight.upCm = IniF(L"hud", L"hand_vitals_orb_right_up_cm", oldUp);
+        // the medallion's turn about the wrist's three axes, degrees (anatomical: the same numbers on both hands are the mirror image)
+        hv.orbLeft.rotXDeg = IniF(L"hud", L"hand_vitals_orb_left_rot_x_deg", 0.0f);
+        hv.orbLeft.rotYDeg = IniF(L"hud", L"hand_vitals_orb_left_rot_y_deg", 0.0f);
+        hv.orbLeft.rotZDeg = IniF(L"hud", L"hand_vitals_orb_left_rot_z_deg", 0.0f);
+        hv.orbRight.rotXDeg = IniF(L"hud", L"hand_vitals_orb_right_rot_x_deg", 0.0f);
+        hv.orbRight.rotYDeg = IniF(L"hud", L"hand_vitals_orb_right_rot_y_deg", 0.0f);
+        hv.orbRight.rotZDeg = IniF(L"hud", L"hand_vitals_orb_right_rot_z_deg", 0.0f);
+        for (int k = 0; k < handvitals::kHeroCount; ++k) {   // the depth offset of each hero class (hand_vitals_orb_z_cm_<class>, cm): added to both wrists' Z while that hero plays
+            wchar_t key[64];
+            swprintf_s(key, L"hand_vitals_orb_z_cm_%hs", handvitals::HeroKey(k));
+            hv.orbClassZCm[k] = IniF(L"hud", key, 0.0f);
+        }
+        hv.orbMirror = IniB(L"hud", L"hand_vitals_orb_mirror", false);   // the right wrist takes the left's three numbers (and the three angles)
+        hv.orbOpacity = IniF(L"hud", L"hand_vitals_orb_opacity", 0.95f);
+        handvitals::Configure(hv);
+    }
     g_set.hudMap.store(std::clamp((int)IniF(L"hud", L"map", 0.0f), 0, 1));
     hud::SetMapMode(g_set.hudMap.load());
     hud::SetInterfaceScale(GameInterfaceScale());
+    // [hud] hide = 1 takes the toolbar's strip out of the game's interface layer: that strip is worked out from the layer's size and Safe Screen Percent and fits the game's art only as
+    // far as the 1920 x 1920 picture it was measured on - at the user's 2048 x 2048 (80 %) the horns, the statues' hands and the globes' tops stayed 10 - 55 px over the cut. So the strip
+    // can be made taller above (hide_up_pct) and below (hide_down_pct), percent of the picture's height; [debug] hide_strip_tint paints the strip a see-through magenta to see its edges.
+    hud::SetToolbarCut(IniF(L"hud", L"hide_up_pct", 0.0f), IniF(L"hud", L"hide_down_pct", 0.0f), IniB(L"debug", L"hide_strip_tint", false));
     hud::SetMapCorner((int)IniF(L"hud", L"map_corner", 0.0f));
     g_set.hudClassic.store(std::clamp((int)IniF(L"hud", L"classic", 0.0f), 0, 1));
     g_set.barNear.store(std::clamp(IniF(L"hud", L"bar_near", 0.0f), -20.0f, 20.0f));
@@ -981,6 +1213,8 @@ void LoadSettings() {
     g_set.labelsAlphaBody.store(std::clamp(IniF(L"hud", L"labels_alpha", 1.0f), 0.0f, 1.0f));
     g_set.plateAlpha.store(std::clamp(IniF(L"hud", L"monster_alpha", 1.0f), 0.0f, 1.0f));
     g_set.plateSize.store(std::clamp(IniF(L"hud", L"monster_size", 100.0f), 30.0f, 200.0f) * 0.01f);
+    g_set.alliesX.store(std::clamp(IniF(L"hud", L"allies_x", 0.0f), -100.0f, 100.0f) * 0.01f);
+    g_set.alliesY.store(-std::clamp(IniF(L"hud", L"allies_y", 0.0f), -100.0f, 100.0f) * 0.01f);
     g_set.labelsSizeTop.store(std::clamp(IniF(L"hud_top", L"labels_size", 100.0f), 20.0f, 150.0f) * 0.01f);
     g_set.labelsSizeThird.store(std::clamp(IniF(L"hud_third", L"labels_size", 100.0f), 20.0f, 150.0f) * 0.01f);
     g_set.labelsSizeBody.store(std::clamp(IniF(L"hud", L"labels_size", 100.0f), 20.0f, 150.0f) * 0.01f);
@@ -1005,7 +1239,8 @@ void LoadSettings() {
     g_set.crosshairDepthDown.store(std::clamp(IniF(L"hud_third", L"crosshair_depth_down", g_set.crosshairDepth.load()), -40.0f, 40.0f));
     {   // [hud] how FlatVR shows the toolbar and the map (game_hud_shared.h)
         FlatVRGameHudLook look = FlatVRGameHudDefaultLook();
-        look.bar_anchor = (uint32_t)std::clamp((int)IniF(L"hud", L"bar_place", (float)look.bar_anchor), 0, 4);
+        const int place = (int)IniF(L"hud", L"bar_place", (float)look.bar_anchor);
+        look.bar_anchor = place == 5 ? 0u : (uint32_t)std::clamp(place, 0, 4);   // 5 = the wrists: the plugin draws them, FlatVR hangs no toolbar
         // A set of its own on a forearm (bar_*_arm) and on the body (bar_*_body); the
         // one key of before (bar_*) stands in for both until they are set.
         const wchar_t* set = look.bar_anchor == 1 || look.bar_anchor == 2 ? L"_arm" : L"_body";
@@ -1079,8 +1314,11 @@ void LoadSettings() {
     g_set.convergence.store(std::clamp(IniF(L"stereo", L"convergence", 15.0f), 0.0f, 1000.0f));
     g_set.bgFullSpeed.store(IniB(L"render", L"background_full_speed", true));
     g_set.gameHeightFog.store(IniB(L"render", L"game_height_fog", false));
+    g_set.gameDepthFog.store(IniB(L"render", L"game_depth_fog", false));
     g_ownDepth.store(IniB(L"render", L"own_depth", true));
     g_squareWin.store(IniB(L"openxr", L"square_window", false));
+    lightbounds::Configure(IniB(L"render", L"light_bounds_fix", true) && g_set.platform.load() == 1,
+                           IniB(L"debug", L"log_compute_shaders", false));   // the game's light culling at non-16:10 sizes
     g_set.solidWalls.store(std::clamp((int)IniF(L"render", L"solid_walls", 1.0f), 0, 2));
     g_set.stampPixels.store(IniB(L"stereo", L"stamp_pixels", true));
     g_set.stamps.store(IniB(L"stereo", L"stamps", true));
@@ -1106,6 +1344,7 @@ void LoadSettings() {
     replay::g_replayCopy.store(IniB(L"stereo", L"replay_copy", true));
     replay::g_fxAtHold.store(IniB(L"stereo", L"replay_fx", true));
     xr::LoadSettings(g_iniPath);   // [openxr]: the game in the headset itself (vr/xr.cpp)
+    calib::LoadSettings(g_iniPath);   // [calibration]: the measured height and arm span (vr/calibration.cpp)
     g_xrThirdGaze.store(IniB(L"openxr", L"third_gaze", false));
     g_inputLog.store((int)IniF(L"debug", L"input_log", 1.0f));   // presses and their sources (InputLogF)
     {   // [debug] profile_draw: one 5 s profile of the draw thread each time it turns 1
@@ -1168,6 +1407,33 @@ void LoadSettings() {
         wchar_t poke[256];
         GetPrivateProfileStringW(L"debug", L"fog_poke", L"", poke, (DWORD)std::size(poke), g_iniPath);
         gamefog::SetPoke(poke);
+        wchar_t unit[260];
+        GetPrivateProfileStringW(L"debug", L"engine_unit", L"", unit, (DWORD)std::size(unit), g_iniPath);
+        engitem::SetWant(unit);
+        // [hands] belt_models: the belt's potions as the game's own models on the hero (F4); where: up and the arc's radius in
+        // parts of his eye height, degrees between columns, size, side
+        engitem::SetBelt(IniB(L"hands", L"belt_models", false), std::clamp(IniF(L"hands", L"belt_models_up", 0.57f), 0.0f, 1.5f),
+                         std::clamp(IniF(L"hands", L"belt_models_ahead", 0.13f), -1.0f, 1.0f),
+                         std::clamp(IniF(L"hands", L"belt_models_arc", 35.0f), 0.0f, 90.0f),
+                         std::clamp(IniF(L"hands", L"belt_models_scale", 0.56f), 0.05f, 10.0f), IniF(L"hands", L"belt_models_side", -1.0f),
+                         IniB(L"hands", L"belt_grab", false), [] {
+                             static float h[6];
+                             const wchar_t* const k[6] = {L"belt_hold_x", L"belt_hold_y", L"belt_hold_z", L"belt_hold_pitch", L"belt_hold_yaw", L"belt_hold_roll"};
+                             for (int i = 0; i < 6; ++i) h[i] = std::clamp(IniF(L"hands", k[i], 0.0f), i < 3 ? -30.0f : -180.0f, i < 3 ? 30.0f : 180.0f);
+                             return (const float*)h;
+                         }());
+        {   // [hands] belt_ball_*: the lit ball's colour for each kind of potion (#RRGGBB; empty = the default)
+            const wchar_t* const key[6] = {L"belt_ball_health", L"belt_ball_mana", L"belt_ball_stamina", L"belt_ball_rejuv",
+                                           L"belt_ball_antidote", L"belt_ball_thawing"};
+            const wchar_t* const def[6] = {L"#F21F1A", L"#4DA6FF", L"#F2F2F2", L"#C78CFF", L"#4DE64D", L"#FF8C26"};
+            float rgb[6][3];
+            for (int i = 0; i < 6; ++i) {
+                wchar_t b[32];
+                GetPrivateProfileStringW(L"hands", key[i], L"", b, (DWORD)std::size(b), g_iniPath);
+                if (!b[0] || !ParseHexColor(b, rgb[i])) ParseHexColor(def[i], rgb[i]);
+            }
+            engitem::SetBallColours(rgb);
+        }
         // [debug] skip_pipeline: a game pipeline (hex, as Ctrl+F10's trace prints "last pipe") whose draws are
         // skipped - which pass draws something, found by elimination; nothing in the game's memory changes
         wchar_t sp[64];
@@ -1192,6 +1458,24 @@ void LoadSettings() {
         uitrace::SetSkipShaders(hs, nh);
         static std::wstring toldShaders;
         if (toldShaders != ss) { toldShaders = ss; LogF("vrcam: [render] skip_shaders - %d shader(s) left out", nh); }
+        // [render] depth_fix: the game's linear depth (fog, height fog, AO, reflections, water) over 0 .. depth_range
+        // world units from our camera instead of its own camera's 550 .. 1060 (uitrace.cpp, 2026-10-13; on since the
+        // headset test the same day: the act 2 town's veil gone); 0 = the game's
+        const bool depthFix = IniB(L"render", L"depth_fix", true);
+        const float depthRange = IniF(L"render", L"depth_range", 1000.0f);
+        uitrace::SetDepthRange(depthFix, depthRange);
+        static int toldDepth = -1;
+        static float toldRange = 0.0f;
+        static bool toldFixed = false;
+        if ((int)depthFix != toldDepth || depthRange != toldRange) {
+            toldDepth = depthFix; toldRange = depthRange; toldFixed = false;
+            LogF("vrcam: [render] depth_fix %s, depth_range %.0f (%d root signatures bind b10)", depthFix ? "on" : "off", depthRange,
+                 uitrace::DepthRangeLayouts());
+        }
+        if (depthFix && !toldFixed && uitrace::DepthRangeFixes()) {
+            toldFixed = true;
+            LogF("vrcam: [render] depth_fix - the game's depth range rewritten (%u buffers so far)", uitrace::DepthRangeFixes());
+        }
     }
     g_set.skyOn.store(IniB(L"sky", L"enabled", false));
     LoadSkyActs();
@@ -1216,6 +1500,7 @@ void LoadSettings() {
     g_set.ceilPictureFire.store(IniB(L"ceiling", L"fire_from_picture", false));
     g_set.ceilTorchBright.store(std::clamp(IniF(L"ceiling", L"torch_brightness", 0.6f), 0.0f, 5.0f));
     g_set.ceilTorchRadius.store(std::clamp(IniF(L"ceiling", L"torch_radius", 20.0f), 1.0f, 500.0f));
+    g_set.ceilFireNearer.store(std::clamp(IniF(L"ceiling", L"fire_nearer", 0.0f), 0.0f, 200.0f));
     g_set.ceilTorchDist.store(std::clamp(IniF(L"ceiling", L"torch_distance", 80.0f), 5.0f, 1000.0f));
     g_set.ceilMonsters.store(IniB(L"ceiling", L"monster_lights", false));
     g_set.ceilMonsterBright.store(std::clamp(IniF(L"ceiling", L"monster_brightness", 0.35f), 0.0f, 3.0f));
@@ -1228,11 +1513,24 @@ void LoadSettings() {
     g_set.ceilContrast.store(std::clamp(IniF(L"ceiling", L"contrast", 1.6f), 0.0f, 5.0f));
     LoadCeilingBiomes();
     LoadCeilingTextures();
+    cavelight::Load();
     g_set.armsMode.store(std::clamp((int)IniF(L"arms", L"mode", 0.0f), 0, 2));
     g_set.hideHead.store(IniB(L"arms", L"hide_head", false));
     g_set.armScale.store(std::clamp(IniF(L"arms", L"scale", 1.0f), 0.3f, 3.0f));
     g_set.poseOrderLog.store(IniB(L"debug", L"pose_order", false));
     g_set.frameLog.store(IniB(L"debug", L"frame_log", false));
+    frametrace::SetOn(IniB(L"debug", L"frame_trace", false));   // a slow pair's time and the plugin's part of it (vr/frame_trace.h); measures only
+    ftraceSetOverMs(IniF(L"debug", L"frame_trace_ms", (float)frametrace::kDefaultOverMs));
+    {   // [debug] log_async (vr/log_async.h): the log lines written by a thread of their own; off = each thread writes its own, as ever
+        static int logAsyncWas = 0;
+        const bool want = IniB(L"debug", L"log_async", false);
+        if ((int)want != logAsyncWas) {
+            logAsyncWas = (int)want;
+            const bool ok = logasync::Enable(g_ctx, want);
+            if (want) Log(ok ? "vrcam: log_async on - the log lines are written by a thread of their own, in order ([debug] log_async)" : "vrcam: log_async could not start its thread - the lines are written as before");
+            else Log("vrcam: log_async off - each thread writes its own lines");
+        }
+    }
     g_set.findPrevMatrix.store(IniB(L"debug", L"find_prev_matrix", false));
     g_set.dlssPrevFix.store(IniB(L"render", L"dlss_prev_fix", false));
     g_set.dlssMv.store(std::clamp((int)IniF(L"render", L"dlss_mv", 2.0f), 0, 2));
@@ -1283,7 +1581,7 @@ void LoadSettings() {
     g_set.handsFollowCam.store(std::clamp(IniF(L"arms", L"follow_camera", 100.0f), 0.0f, 100.0f) / 100.0f);
     g_set.bowMode.store(std::clamp((int)IniF(L"bow", L"mode", 4.0f), 0, 4));
     g_set.turnMs.store(std::clamp(IniF(L"bow", L"turn_ms", 80.0f), 20.0f, 400.0f));
-    g_set.aimRange.store(std::clamp(IniF(L"bow", L"range", 20.0f), 3.0f, 60.0f));
+    g_set.aimRange.store(std::clamp(IniF(L"bow", L"range", 20.0f), 3.0f, aimpoint::kMaxCells));
     g_set.aimYawDeg.store(std::clamp(IniF(L"bow", L"aim_yaw", 0.0f), -30.0f, 30.0f));
     g_set.staffAimYawDeg.store(std::clamp(IniF(L"bow", L"staff_aim_yaw", 0.0f), -45.0f, 45.0f));
     {
@@ -1292,6 +1590,35 @@ void LoadSettings() {
     }
     g_set.xbowTwoHands.store(IniB(L"bow", L"xbow_two_hands", true));
     g_set.xbowHand.store(IniF(L"hands", L"xbow_hand", 1.0f) != 0.0f ? 1 : 0);   // the game hangs it on the left wrist (seen 2026-10-05)
+    shoulderwire::Configure(IniB(L"hands", L"shoulder_swap", false), IniF(L"hands", L"shoulder_swap_hand", 0.0f) != 0.0f);   // 0 right, 1 left
+    // 0 the attack, 1..4 B X Y RB, 5..8 with LT; what takes the string: 0 the trigger, 1 the grip, 2 either; the touch point from the bow's own string; the debug view
+    bowdrawwire::Configure(IniB(L"hands", L"bow_draw", false), (int)IniF(L"hands", L"bow_draw_button", 0.0f), (int)IniF(L"hands", L"bow_draw_start", 0.0f),
+                           IniB(L"hands", L"bow_draw_nock", true), IniB(L"debug", L"bow_vectors", false), IniF(L"hands", L"bow_draw_reach_cm", 28.0f), IniF(L"hands", L"bow_draw_nock_shift_cm", 0.0f), IniF(L"hands", L"bow_draw_min_pull_cm", 12.0f),
+                           IniB(L"hands", L"bow_draw_only", true));
+    g_set.bowAimAlong.store(IniB(L"bow", L"aim_along_hands", false));
+    g_set.bowAimBlendMs.store(std::clamp(IniF(L"bow", L"aim_blend_ms", 120.0f), 50.0f, 400.0f));
+    g_set.bowAimRoll.store(IniF(L"bow", L"aim_roll", 0.0f) >= 0.5f ? 1 : 0);
+    {   // [bow] arrow_rest_*: the arrow's rest point in the bow hand's frame. The z of it began as arrow_lift_cm (the arrow lifted off the line,
+        // 0..8, 2.5): when the new key is not there that key is read if it was set to something else than its own default, so nothing set is
+        // lost; else z starts at 5 cm - about the top of the fist - and the arrow is kept clear of the arm besides (arrow_rest_clear)
+        const float legacy = IniF(L"bow", L"arrow_lift_cm", -1.0f);
+        const float zStart = legacy >= 0.0f && std::fabs(legacy - 2.5f) > 1e-3f ? std::clamp(legacy, 0.0f, 8.0f) : 5.0f;
+        g_set.bowRestCm[0].store(std::clamp(IniF(L"bow", L"arrow_rest_x_cm", 0.0f), -10.0f, 10.0f));
+        g_set.bowRestCm[1].store(std::clamp(IniF(L"bow", L"arrow_rest_y_cm", 0.0f), -10.0f, 10.0f));
+        g_set.bowRestCm[2].store(std::clamp(IniF(L"bow", L"arrow_rest_z_cm", zStart), -10.0f, 10.0f));
+        g_set.bowRestClear.store(IniB(L"bow", L"arrow_rest_clear", true));
+        g_set.bowRestAims.store(IniB(L"bow", L"arrow_rest_aims", true));
+        bowdrawwire::SetRestAims(g_set.bowRestAims.load());
+    }
+    g_set.bowHandPose.store(IniB(L"bow", L"hand_pose", false));
+    g_set.bowHook.store(std::clamp(IniF(L"bow", L"hook_close", 85.0f), 0.0f, 100.0f) * 0.01f);
+    g_set.bowHookGame.store(IniB(L"bow", L"hook_game_pose", true));
+    g_set.bowHookCurl.store(std::clamp(IniF(L"bow", L"hook_curl_pct", 100.0f), 0.0f, 150.0f) * 0.01f);
+    g_set.bowHookThumbDeg.store(std::clamp(IniF(L"bow", L"hook_thumb_deg", 0.0f), -60.0f, 60.0f));
+    g_set.bowStringAnchor.store(IniB(L"bow", L"string_anchor", true));
+    g_set.bowAnchorCm[0].store(std::clamp(IniF(L"bow", L"string_anchor_along_cm", 0.0f), -15.0f, 15.0f));
+    g_set.bowAnchorCm[1].store(std::clamp(IniF(L"bow", L"string_anchor_across_cm", 0.0f), -15.0f, 15.0f));
+    g_set.bowAnchorCm[2].store(std::clamp(IniF(L"bow", L"string_anchor_palm_cm", 0.8f), -15.0f, 15.0f));
     // +y: what the grip gave when the crossbow lay right (log 2026-10-05); taken again in
     // another pose it gave another axis and the model jumped a quarter turn
     g_set.xbowStockAxis.store(std::clamp((int)IniF(L"hands", L"xbow_stock_axis", 2.0f), -3, 3));
@@ -1299,17 +1626,79 @@ void LoadSettings() {
     g_set.xbowLine[0].store(std::clamp(IniF(L"hands", L"xbow_line_pitch", 34.0f), -180.0f, 180.0f));
     g_set.xbowLine[1].store(std::clamp(IniF(L"hands", L"xbow_line_yaw", 15.0f), -180.0f, 180.0f));
     g_set.xbowLine[2].store(std::clamp(IniF(L"hands", L"xbow_line_roll", 0.0f), -180.0f, 180.0f));
-    g_set.xbowRangeOne.store(std::clamp(IniF(L"bow", L"xbow_range_one", 5.0f), 2.0f, 60.0f));
-    g_set.xbowRangeTwo.store(std::clamp(IniF(L"bow", L"xbow_range_two", 30.0f), 2.0f, 60.0f));
-    g_set.staffRangeOne.store(std::clamp(IniF(L"bow", L"staff_range_one", 5.0f), 2.0f, 60.0f));
-    g_set.staffRangeTwo.store(std::clamp(IniF(L"bow", L"staff_range_two", 30.0f), 2.0f, 60.0f));
+    g_set.xbowRangeOne.store(std::clamp(IniF(L"bow", L"xbow_range_one", 5.0f), 2.0f, aimpoint::kMaxCells));
+    g_set.xbowRangeTwo.store(std::clamp(IniF(L"bow", L"xbow_range_two", 30.0f), 2.0f, aimpoint::kMaxCells));
+    g_set.staffRangeOne.store(std::clamp(IniF(L"bow", L"staff_range_one", 5.0f), 2.0f, aimpoint::kMaxCells));
+    g_set.staffRangeTwo.store(std::clamp(IniF(L"bow", L"staff_range_two", 30.0f), 2.0f, aimpoint::kMaxCells));
     g_set.bowHand.store(IniF(L"bow", L"set1_left", 1.0f) != 0.0f ? 1 : 0);
     g_set.bowHand2.store(IniF(L"bow", L"set2_left", 0.0f) != 0.0f ? 1 : 0);
     g_set.rangedLeft.store(IniB(L"bow", L"ranged_left", true));
     g_set.staffTwoHands.store(IniB(L"bow", L"staff_two_hands", true));
     g_set.staffHands.store(IniB(L"hands", L"follow_staff", true));
     g_set.staffFreeLeft.store(IniB(L"hands", L"staff_free_left", true));
+    g_set.spellAim.store(IniB(L"hands", L"spell_aim", true));
+    g_set.aimNoChase.store(IniB(L"gameplay", L"aim_no_chase", true));
+    g_set.bowAim.store(IniB(L"hands", L"bow_aim", false));
+    g_set.throwAim.store(IniB(L"hands", L"throw_aim", false));
+    {   // [hands] throw_gesture (the right trigger) and throw_by_grip (the right grip, direct input): either one is "a throw by gesture"
+        // The grip throw is ON by default - but only where it can work: native OpenXR with [openxr] direct_input (the grip is taken from the layout).
+        // Elsewhere (BodyWalk's controls, a flat game) nothing of it is installed, whatever the key says: no hook, no read of the monsters.
+        // (xr::LoadSettings above has the [openxr] keys.)
+        const bool byTrigger = IniB(L"hands", L"throw_gesture", false);
+        const bool byGrip = IniB(L"hands", L"throw_by_grip", true) && xr::On() && directinput::On();
+        g_set.throwGesture.store(byTrigger || byGrip);
+        throwwire::SetModes(byTrigger, byGrip);
+        g_set.throwAutoSkill.store(IniB(L"hands", L"throw_auto_skill", true));
+        g_set.throwTrace.store(IniB(L"debug", L"throw_trace", true));
+        standstill::SetThrowStill(IniB(L"hands", L"throw_stand_still", true));
+        g_set.throwAutoaimDeg.store(std::clamp(IniF(L"hands", L"throw_autoaim_deg", 15.0f), 0.0f, 45.0f));
+        g_set.throwPotionReachPct.store(std::clamp(IniF(L"hands", L"throw_potion_reach_pct", throwaim::kDefaultReachPct), throwaim::kMinReachPct, throwaim::kMaxReachPct));
+        meleetouch::SetThrowWanted((byTrigger || byGrip) && g_set.throwAutoaimDeg.load() > 0.0f);   // the monsters near the hero are read for the cone
+        throwwire::SetPotionMode((int)IniF(L"hands", L"potion_throw_mode", 0.0f));   // 0 the game's throw at the release, 1 when the potion's model lands (vr/throw_land.h)
+        // [hands] potion_throw_ours: ONE switch for the three that make a thrown potion OURS - the weapon-weight model's potion flies the whole trajectory (potion_model_flies), the
+        // game's own missile is not drawn (potion_hide_game), the game's explosion is timed to the landing (throw_direct). On: all three, whatever their own keys say. Off: each key alone.
+        const bool ours = IniB(L"hands", L"potion_throw_ours", false);
+        const bool flies = ours || IniB(L"weight", L"potion_model_flies", true);
+        g_set.weightPotionFlies.store(flies);
+        throwborn::Configure(ours || IniB(L"hands", L"throw_direct", false));   // the potion timed to explode as the model lands (vr/throw_born.h), experimental
+        potionhide::Configure(flies && (ours || IniB(L"hands", L"potion_hide_game", false)));   // the game's own thrown potion not drawn while ours flies (vr/potion_hide.h): only then, or nothing would be seen
+    }
+    g_set.bowLatency.store(IniB(L"debug", L"bow_latency", false));
+    bowquick::Configure(IniB(L"bow", L"quick_release", false), (int)std::lround(IniF(L"bow", L"quick_release_frame", 2.0f)));   // the arrow made earlier inside the same attack (a change of the game's timing)
+    shieldsmite::Configure(IniB(L"gameplay", L"shield_smite", false));
+    g_set.bowRigPose.store(IniB(L"bow", L"rig_pose", false));
+    g_set.bowRigGrip.store(IniB(L"debug", L"bow_rig_grip", false));
+    g_set.meleeTouch.store(IniB(L"gameplay", L"melee_touch", false));
+    g_set.meleeTouchUnchecked.store(IniB(L"debug", L"melee_touch_unchecked", false));
+    meleetouch::SetWanted(g_set.meleeTouch.load());
+    meleetouch::SetThrownTouch(IniB(L"gameplay", L"melee_touch_thrown", true));   // javelins, throwing knives and axes hit by touch too (a point-blank throw; vr/thrown_touch.h)
+    standstill::SetWanted(IniB(L"gameplay", L"attack_in_place", true));   // F4: the plugin's attack presses never walk the hero (vr/stand_still.h)
+    straywalk::SetWalkWanted(IniB(L"gameplay", L"block_stray_walk", true));     // F4: a walk or run to a point out of a click on bare ground is dropped (vr/stray_walk.h)
+    straywalk::SetAttackRunWanted(IniB(L"gameplay", L"block_attack_run", false));   // F4: the run the game starts out of the pad cast of an attack of ours is dropped
+    shottrace::SetWanted(IniB(L"debug", L"shot_trace", false));   // the log tells, shot by shot, what the game does with an attack of ours (vr/shot_trace.h)
+    straywalk::SetClickWanted(IniB(L"gameplay", L"block_stray_clicks", true));  // F4: no mouse button reaches the game in the world with no panel open
+    meleedirect::SetWanted(IniB(L"gameplay", L"melee_direct", false));   // the user's experimental direct hit (vr/melee_direct.h)
+    meleedirect::SetMinIntervalMs((uint32_t)std::clamp(IniF(L"gameplay", L"melee_direct_min_ms", 0.0f), 0.0f, 3000.0f));
+    meleetouch::SetUnchecked(g_set.meleeTouchUnchecked.load());
+    meleeboxes::SetWanted(IniB(L"debug", L"melee_boxes", false));   // the capsules of hit by touch drawn (vr/melee_boxes.h)
+    meleeboxes::SetMarkMs((uint32_t)std::clamp(IniF(L"debug", L"melee_mark_ms", 800.0f), 0.0f, (float)meleeboxes::kMaxMarkMs));   // how long the speed marks and the trail stay (vr/melee_marks.h)
+    meleetouch::SetStrokeTuning(IniF(L"gameplay", L"melee_min_speed", 0.8f), IniF(L"gameplay", L"melee_stroke_start_cm", 8.0f));   // the swing engine's speed and start distance, live (vr/stroke_tuning.h)
+    meleetouch::SetBladeTuning(IniF(L"debug", L"melee_blade_length_pct", 100.0f), IniF(L"debug", L"melee_blade_radius_cm", 0.0f), IniB(L"debug", L"melee_blade_flip", false), IniF(L"debug", L"melee_blade_butt_pct", 100.0f));   // the touch's blade tuned live
+    meleetouch::SetThrownTuning(IniF(L"debug", L"melee_thrown_length_pct", 100.0f), IniF(L"debug", L"melee_thrown_butt_pct", 100.0f));   // ... and the thrown kinds' own, on top
+    {   // [autotarget]: every s<skill> key the section has; unset, the seekers keep it (the settings program's defaults)
+        uint64_t keep[16] = {};
+        for (const int id : {22, 53, 93}) keep[id >> 6] |= 1ull << (id & 63);   // Guided Arrow, Chain Lightning, Bone Spirit
+        static wchar_t sec[8192];
+        const DWORD n = GetPrivateProfileSectionW(L"autotarget", sec, (DWORD)std::size(sec), g_iniPath);
+        for (const wchar_t* e = sec; n && *e; e += wcslen(e) + 1) {
+            int id = -1, v = 0;
+            if (swscanf_s(e, L"s%d = %d", &id, &v) != 2 || id < 0 || id >= 1024) continue;
+            if (v) keep[id >> 6] |= 1ull << (id & 63); else keep[id >> 6] &= ~(1ull << (id & 63));
+        }
+        for (int w = 0; w < 16; ++w) g_set.autoKeep[w].store(keep[w]);
+    }
     g_set.fist.store(IniB(L"hands", L"fist", true));
+    g_set.shieldFist.store(IniB(L"hands", L"shield_fist", true));
 #if D2RVR_FIRST_PERSON
     for (int c = 0; c < 8; ++c) {
         wchar_t close[32], open[32];
@@ -1366,6 +1755,53 @@ void LoadSettings() {
     if (g_set.carryAxis.load() == 0) g_set.carryAxis.store(2);
     g_set.carryCm.store(std::clamp(IniF(L"hands", L"carry_cm", 40.0f), 0.0f, 150.0f));
     g_set.bothAttach.store(IniB(L"hands", L"both_attach", true));
+    g_set.weightOn.store(IniB(L"weight", L"on", false));
+    g_set.weightFeel.store(std::clamp(IniF(L"weight", L"feel", 50.0f), 0.0f, 300.0f));
+    g_set.weightStrength.store(std::clamp(IniF(L"weight", L"strength", 100.0f), 10.0f, 500.0f));
+    g_set.weightGravity.store(std::clamp(IniF(L"weight", L"gravity_pct", 100.0f), 0.0f, 300.0f));
+    g_set.weightDamping.store(std::clamp(IniF(L"weight", L"damping_pct", 100.0f), 0.0f, 200.0f));
+    g_set.weightGravityFeel.store(IniB(L"weight", L"gravity_feel", true));
+    g_set.weightGrabCm.store(std::clamp(IniF(L"weight", L"grab_cm", 12.0f), 3.0f, 40.0f));
+    g_set.weightLetGoCm.store(std::clamp(IniF(L"weight", L"let_go_cm", 25.0f), 5.0f, 80.0f));
+    {
+        static const wchar_t* const kFist[3] = {L"fist_x", L"fist_y", L"fist_z"};
+        for (int k = 0; k < 3; ++k) g_set.weightFist[k].store(std::clamp(IniF(L"weight", kFist[k], 0.0f), -15.0f, 15.0f));
+    }
+    g_set.weightGripFit.store(IniB(L"weight", L"grip_fit", true));
+    g_set.weightGripLikeBase.store(IniB(L"weight", L"grip_fit_like_base", true));
+    g_set.weightGripFingers.store(IniB(L"weight", L"grip_fit_fingers", true));
+    g_set.weightAttachApart.store(IniB(L"weight", L"attach_apart", true));
+    {
+        static const wchar_t* const kRight[6] = {L"right_grip_x", L"right_grip_y", L"right_grip_z", L"right_grip_rx", L"right_grip_ry", L"right_grip_rz"};
+        static const wchar_t* const kLeft[6] = {L"left_grip_x", L"left_grip_y", L"left_grip_z", L"left_grip_rx", L"left_grip_ry", L"left_grip_rz"};
+        for (int k = 0; k < 6; ++k) {
+            const float lim = k < 3 ? 30.0f : 180.0f;   // cm / deg
+            g_set.weightGripHand[0][k].store(std::clamp(IniF(L"weight", kRight[k], 0.0f), -lim, lim));
+            g_set.weightGripHand[1][k].store(std::clamp(IniF(L"weight", kLeft[k], 0.0f), -lim, lim));
+        }
+    }
+    g_set.weightAfterDrop.store(std::clamp((int)IniF(L"weight", L"after_drop", 1.0f), 0, 2));
+    g_set.weightToBackMs.store(std::clamp(IniF(L"weight", L"to_back_delay_ms", 600.0f), 0.0f, 3000.0f));
+    g_set.weightTakeHaptic.store(IniB(L"weight", L"take_haptic", true));
+    g_set.weightTakeHapticPct.store(std::clamp(IniF(L"weight", L"take_haptic_pct", 40.0f), 0.0f, 100.0f));
+    g_set.weightRecallAny.store(IniB(L"weight", L"recall_any_hand", true));
+    g_set.weightThrownFlyMs.store(std::clamp(IniF(L"weight", L"thrown_fly_ms", 3000.0f), 100.0f, 5000.0f));
+    g_set.weightThrowReachPct.store(std::clamp(IniF(L"weight", L"throw_reach_pct", 800.0f), 50.0f, 1500.0f));
+    g_set.weightThrowMaxCells.store(std::clamp(IniF(L"weight", L"throw_max_cells", 48.0f), 10.0f, 48.0f));
+    g_set.weightBackTakeCm.store(std::clamp(IniF(L"weight", L"back_take_cm", 25.0f), 0.0f, 60.0f));
+    g_set.weightThrownModel.store(std::clamp((int)IniF(L"weight", L"thrown_model", 0.0f), 0, 1));
+    g_set.weightThrownHandoffMs.store(std::clamp(IniF(L"weight", L"thrown_handoff_ms", 0.0f), 0.0f, 1500.0f));
+    g_set.weightThrownHandEmptyMs.store(std::clamp(IniF(L"weight", L"thrown_hand_empty_ms", 900.0f), 0.0f, 3000.0f));
+    g_set.weightSlide.store(IniB(L"weight", L"slide_second_hand", true));
+    {
+        static const wchar_t* const kLong[6] = {L"back_long_x", L"back_long_y", L"back_long_z", L"back_long_pitch", L"back_long_yaw", L"back_long_roll"};
+        static const wchar_t* const kShort[6] = {L"back_short_x", L"back_short_y", L"back_short_z", L"back_short_pitch", L"back_short_yaw", L"back_short_roll"};
+        for (int k = 0; k < 6; ++k) {
+            const float lim = k < 3 ? 40.0f : 180.0f;   // cm / deg
+            g_set.weightBackLong[k].store(std::clamp(IniF(L"weight", kLong[k], 0.0f), -lim, lim));
+            g_set.weightBackShort[k].store(std::clamp(IniF(L"weight", kShort[k], 0.0f), -lim, lim));
+        }
+    }
     g_set.staffHand.store(IniF(L"hands", L"staff_hand", 0.0f) != 0.0f ? 1 : 0);
     g_set.staffShaftAxis.store(std::clamp((int)IniF(L"hands", L"staff_shaft_axis", -2.0f), -3, 3));
     g_set.spearShaftAxis.store(std::clamp((int)IniF(L"hands", L"spear_shaft_axis", -2.0f), -3, 3));
@@ -1404,6 +1840,7 @@ std::atomic<float> g_turnYaw{0.0f};     // body turn from the right stick; F11 k
 std::atomic<float> g_heldYaw{0.0f}, g_heldPitch{0.0f};
 extern std::atomic<bool> g_pairNow;
 bool NativeView();
+bool NativeHeadView();
 std::atomic<float> g_rightX{0.0f};      // last right stick X the game polled, -1..1
 // When a poll last got BodyWalk's own pad (PadFromBodyWalk). Some polls of pad 0
 // came back without it (the pad trace flipped 2000 / 0000 within a millisecond)
@@ -1482,7 +1919,7 @@ float TargetYaw() {
     // from xr's own recentre - the native view's own turn. Not D2RVR_Shared's: in a pair that is the
     // room's raw yaw, against g_recenter from whichever block was there at the last F11 - the body
     // stood ~100 deg off the view at game start until a lucky F11 (2026-10-10).
-    if (float rel = 0.0f; NativeView() && xr::PairHeadYaw(&rel)) return WrapDeg(yaw - rel * 57.2957795f);
+    if (float rel = 0.0f; NativeHeadView() && xr::PairHeadYaw(&rel)) return WrapDeg(yaw - rel * 57.2957795f);
     if (g_set.headYaw.load() && HeadYaw(&head)) {
         float p[3]; PredictHead(Shared(), p);
         yaw += g_set.yawSign.load() * g_set.yawScale.load() * WrapDeg(p[0] - g_recenter.load());
@@ -1559,9 +1996,47 @@ bool InsideFree() { return g_enabled.load() && !ThirdPerson() && !FullBody(); } 
 #else
 bool InsideFree() { return false; }
 #endif
-// Native OpenXR ([openxr] on, vr/xr.cpp) draws these views as the headset's own eyes: first
-// person (F4) and third person (F2). The others go to the headset as a flat picture.
-bool NativeView() { return g_set.platform.load() == 1 && (FullBody() || (ThirdPerson() && g_set.vrView.load() == 2)); }
+// Native OpenXR ([openxr] on, vr/xr.cpp) draws these views as the headset's own eyes with the head as the camera: first
+// person (F4) and third person (F2).
+bool NativeHeadView() { return g_set.platform.load() == 1 && (FullBody() || (ThirdPerson() && g_set.vrView.load() == 2)); }
+// ... and, with [openxr] views_3d (docs/plan_native_f1_f3.md), F1 from above in perspective ([top] perspective: through our
+// camera, TopCamera) and F3, the game on your floor (TableCamera), with the eyes too - F1 as a window of the room, F3 as the
+// diorama in it. Without views_3d, or with the game's own orthographic F1, they go to the headset as a flat picture, as ever.
+bool TableView();
+bool TopPersp();
+int NativeMode() {
+    if (g_set.platform.load() != 1 || !xr::Views3dOn()) return xr::kViewsHead;
+    if (TableView()) return xr::kViewsRoom;
+    if (TopPersp()) return xr::kViewsWindow;
+    return xr::kViewsHead;
+}
+bool NativeView() { return NativeHeadView() || NativeMode() != xr::kViewsHead; }
+// [openxr] menu_3d (docs/plan_laser_menus.md step 2): a menu open in first person (VR F4, the camera on)
+// keeps the stereo pairs, the interface hung in front as a panel of its own (hud SetPanelOut, xr.cpp
+// HangPanel) - once hud.cpp has found the interface's layer. Never F1, F2, F3: their flat picture as ever.
+bool MenuAs3d() { return xr::Menu3dOn() && g_enabled.load() && FullBody() && !ThirdPerson() && hud::LayerFound(); }
+// The same on FlatVR (docs/plan_laser_menus.md step 3): no native session - FlatVR holds the headset -
+// and a FlatVR that hangs a menu panel and is drawing (hud FlatVrTakesMenu, its reader block). An older
+// FlatVR, or none: the menus stay in the picture, on FlatVR's screen moved back, as before.
+// Only in a game area, as native's pairs (d2rcam::InWorld): the title and character screens' menus are
+// the picture itself - taken out there, the main menu showed no interface at all (2026-10-13).
+extern std::atomic<bool> g_inWorld;
+bool FlatVrMenuPanel() {
+    return xr::Menu3dWanted() && !xr::On() && !xr::Running() && g_enabled.load() && FullBody() && !ThirdPerson() &&
+           g_inWorld.load() && d2rcam::InWorld() && hud::LayerFound() && hud::FlatVrTakesMenu();
+}
+// [openxr] laser on FlatVR's menu panel: FlatVR's laser is the mouse there; the game keeps its pad layout
+// under it (vr/panel_input.cpp) while FlatVR says it is (hud FlatVrLaserState, every present).
+bool FlatVrLaserWanted() {
+    int hand = 1;
+    return xr::LaserWanted(&hand) && FlatVrMenuPanel();
+}
+// The game's window, from the swap chain (OnReshadePresent): where FlatVR's laser sends the mouse.
+std::atomic<HWND> g_swapWnd{nullptr};
+// The last pair's: a menu open, and out of the picture as a panel (the world in stereo behind it). Any thread.
+std::atomic<bool> g_menu3dNow{false};
+// A menu open that the picture shows (the flat one): the effects that lie over the whole picture stay off.
+bool MenuFlat() { return gamestate::MenuOpen() && !g_menu3dNow.load(); }
 // [openxr] third_gaze: in F2 the camera swings round the hero with the gaze (1, as on FlatVR's
 // screen) or stays behind him on the body's turn while the head looks round (0, default).
 std::atomic<bool> g_xrThirdGaze{false};
@@ -1571,7 +2046,8 @@ std::atomic<bool> g_xrThirdGaze{false};
 bool TableView() { return g_set.platform.load() == 1 && g_set.vrView.load() == 3; }
 // VR view 1 with [top] perspective: the game's view from above, but through our
 // camera - the FlatVR screen's field of view and real stereo (TopCamera).
-bool TopPersp() { return g_set.platform.load() == 1 && g_set.vrView.load() == 1 && g_set.topPersp.load(); }
+// Native OpenXR with views_3d draws F1 in true perspective whatever [top] perspective says: a window onto the game needs our camera.
+bool TopPersp() { return g_set.platform.load() == 1 && g_set.vrView.load() == 1 && (g_set.topPersp.load() || xr::Views3dOn()); }
 // Our camera looking down on a hero the game animates whole, turned by nobody: F1 in perspective and the floor.
 std::atomic<float> g_topUnitsPerM{0.0f};   // F1 in perspective: world units per metre on the screen's plane (TopCamera), 0 = not known yet
 bool Overhead() { return TableView() || TopPersp(); }
@@ -1639,6 +2115,10 @@ float JumpLift() {
     return lift * g_heroScale.load();
 }
 
+// The head as the last view saw it: its centre (before the eyes' half shift) and where it looks
+// along the ground - the belt's potions hang round it (engitem), not round the walking legs.
+std::atomic<float> g_headCentre[3], g_headAhead[3];
+std::atomic<bool> g_headOk{false};
 std::atomic<float> g_eyeWorld[3];   // the camera in the world (third person: its pivot), last view rebuild - the hands hang off it
 // F3: our camera over the game's ground, for the mouse pointer laid on it (FloorPointerTick) - the eyes this
 // high above the hero's ground (world units), and the world-up (y) parts of the view's forward and up.
@@ -1840,8 +2320,10 @@ bool LiveScreen(float* w, float* h, float* d) {
 // The user's eyes above the floor standing: from the height set in BodyWalk
 // (Avatar > Body Height, handed over by Game Link), else [stereo]
 // user_height_m; an adult's eyes sit at ~0.936 of the height. Seated or not:
-// it is the scale, not where the head is now.
+// it is the scale, not where the head is now. With [calibration] use=1 and a stored T-pose measurement, that
+// measured height instead of both (vr/calibration.cpp; 0 = not in use).
 float UserEyeHeightM() {
+    if (const float measured = calib::MeasuredEyeM(); measured > 0.0f) return measured;
     const D2RVR_Shared* sh = Shared();
     if (sh && sh->version == D2RVR_SHARED_VERSION && sh->userHeightMm >= 1100 && sh->userHeightMm <= 2500)
         return 0.936f * sh->userHeightMm * 0.001f;
@@ -2037,8 +2519,12 @@ bool PlateFaded() {
     int32_t r[4];
     return g_inWorld.load() && PlateWanted() && gamestate::PlateRect(r);
 }
+// [hud] allies_x, allies_y: the allies' portraits elsewhere - the interface comes out for that too, the
+// portraits' corner drawn back moved (AlliesBoxUv). The target's plate is kept out of that corner: read too.
+bool AlliesMoved() { return std::abs(g_set.alliesX.load()) > 0.0005f || std::abs(g_set.alliesY.load()) > 0.0005f; }
 bool LabelsWanted() {
     if (PlateFaded()) return true;
+    if (g_inWorld.load() && AlliesMoved()) return true;
     if (FloorView()) return g_inWorld.load() && g_set.labelsAlphaFloor.load() < 0.995f && !LabelBoxNative();
     return LabelsTilted();
 }
@@ -2113,7 +2599,7 @@ V3 Facing(float heading, float down) {
 }
 
 namespace prevscan { void FrameDone(); }
-void VrFrame() { prevscan::FrameDone(); AfrNextFrame(); }
+void VrFrame() { prevscan::FrameDone(); AfrNextFrame(); engitem::Frame(g_enabled.load() && FullBody()); }
 
 // The game's view from above, per eye: orthographic, so moving the camera
 // aside would only slide the picture. Each eye's view is turned instead, half
@@ -2165,12 +2651,16 @@ bool RoomHead(float pos[3], float ang[3]) {
 // F1 in true perspective: the game camera's own direction, from far enough back
 // along it that the ground round the hero fills the FlatVR screen as the game's
 // own picture fills the monitor. The hero sits on the screen's plane (TopScale).
-bool TopCamera(const d2rcam::WorldView& in, V3* eye, V3* fwd, V3* up, V3* right, V3* ahead) {
+// Native OpenXR ([openxr] views_3d, xe: the eyes as a window, xr.h kViewsWindow): the screen is the window of the room - its
+// size and distance - and the eye stands where the head is in front of it: the camera moves with the head the way the window
+// shows (vr/views3d.h WindowWorldEye), turned as the game turns it. FlatVR's screen is not asked.
+bool TopCamera(const d2rcam::WorldView& in, V3* eye, V3* fwd, V3* up, V3* right, V3* ahead, const xr::Eyes* xe = nullptr) {
     const float* G = in.gameView;
     const float* P = in.gameProj;
     const float* L = in.lookAt;
     float sw, sh, sd;
-    if (!LiveScreen(&sw, &sh, &sd)) { sh = 2.0f * tanf(0.5f * CameraFov() * 3.14159265f / 180.0f); sd = 1.0f; }
+    if (xe) { sw = xe->winW; sh = xe->winH; sd = xe->winD; if (!(sw > 0.0f && sh > 0.0f && sd > 0.0f)) return false; }
+    else if (!LiveScreen(&sw, &sh, &sd)) { sh = 2.0f * tanf(0.5f * CameraFov() * 3.14159265f / 180.0f); sd = 1.0f; }
     // The game's half height of view at the hero, world units: orthographic, or a perspective's at his distance.
     const float m5 = fabsf(P[5]);
     if (!(m5 > 1e-6f)) return false;
@@ -2192,20 +2682,42 @@ bool TopCamera(const d2rcam::WorldView& in, V3* eye, V3* fwd, V3* up, V3* right,
     const float heading = atan2f(-fwd->x, -fwd->z);
     *ahead = Facing(heading, 0.0f);
     *eye = V3{L[0], L[1], L[2]} - *fwd * dist;
+    if (xe) {   // the head in front of the window (its frame: x along it, y up, z out towards the viewer), the hero on its middle
+        const views3d::Vec mid{0.5f * (xe->pos[0][0] + xe->pos[1][0]), 0.5f * (xe->pos[0][1] + xe->pos[1][1]), 0.5f * (xe->pos[0][2] + xe->pos[1][2])};
+        const views3d::Vec w = views3d::WindowWorldEye({L[0], L[1], L[2]}, {right->x, right->y, right->z}, {up->x, up->y, up->z},
+                                                       {fwd->x, fwd->y, fwd->z}, dist / sd, mid);
+        *eye = V3{w.x, w.y, w.z};
+    }
     g_topUnitsPerM.store(dist / sd);
     static bool told = false;
-    if (!told) { told = true; LogF("vrcam: from above in true perspective - %s game view, camera %.1f units back, %.2f units per metre", ortho ? "orthographic" : "perspective", dist, dist / sd); }
+    if (!told) {
+        told = true;
+        LogF("vrcam: from above in true perspective - %s game view, camera %.1f units back, %.2f units per metre%s", ortho ? "orthographic" : "perspective", dist,
+             dist / sd, xe ? " - native OpenXR: a window of the room, the eyes look through it" : "");
+    }
     return true;
 }
 
-bool TableCamera(const d2rcam::WorldView& in, V3* eye, V3* fwd, V3* up, V3* right, V3* ahead, float* yawOut) {
+// Native OpenXR ([openxr] views_3d, xe: the eyes as the room has them, xr.h kViewsRoom): the head is the runtime's - its
+// place and its exact turn in the room the layer is submitted in, and the floor the runtime's own when it has a STAGE - so the
+// diorama stands in the room and the picture is what the real eyes see of it (vr/views3d.h). No BodyWalk is asked.
+bool TableCamera(const d2rcam::WorldView& in, V3* eye, V3* fwd, V3* up, V3* right, V3* ahead, float* yawOut, const xr::Eyes* xe = nullptr) {
+    const float d2r = 3.14159265f / 180.0f;
     float p[3], ang[3];
-    if (!RoomHead(p, ang)) {
+    V3 headF{0, 0, -1}, headU{0, 1, 0}, headR{1, 0, 0};   // native: the head's axes in the room
+    if (xe) {
+        const float* q = xe->quat[0];   // the left eye's turn (the eyes are parallel on most headsets: logged at the start)
+        headF = d2rcam::m4::Rotate(q, {0.0f, 0.0f, -1.0f});
+        headU = d2rcam::m4::Rotate(q, {0.0f, 1.0f, 0.0f});
+        headR = d2rcam::m4::Rotate(q, {1.0f, 0.0f, 0.0f});
+        for (int i = 0; i < 3; ++i) p[i] = 0.5f * (xe->pos[0][i] + xe->pos[1][i]);
+        ang[0] = atan2f(-headF.x, -headF.z) / d2r; ang[1] = ang[2] = 0.0f;
+        if (!std::isfinite(ang[0] + p[0] + p[1] + p[2])) return false;
+    } else if (!RoomHead(p, ang)) {
         static bool told = false;
         if (!told) { told = true; Log("vrcam: the game on the floor (F3) needs the head in the room - BodyWalk 1.72+ with the D2R bridge 0.15+"); }
         return false;
     }
-    const float d2r = 3.14159265f / 180.0f;
     const float* G = in.gameView;
     const V3 gameFwd = {-G[2], -G[6], -G[10]};
     const float heading0 = atan2f(-gameFwd.x, -gameFwd.z);
@@ -2225,7 +2737,14 @@ bool TableCamera(const d2rcam::WorldView& in, V3* eye, V3* fwd, V3* up, V3* righ
     const int place = g_set.tablePlace.load();
     const bool pressed = placeSeen != INT_MIN && place != placeSeen;
     placeSeen = place;
-    if (g_tableReanchor.exchange(false) || !A.ok || roomMoved || pressed) {
+    // Native: the runtime's space was recentred (its button, a jump it never told, F11) - the room under the diorama moved.
+    static uint32_t epochSeen = 0;
+    static bool epochKnown = false;
+    bool epochMoved = false;
+    if (xe) { epochMoved = epochKnown && xe->epoch != epochSeen; epochSeen = xe->epoch; epochKnown = true; }
+    else epochKnown = false;
+    if (epochMoved) Log("vrcam: the table - the headset's space was recentred: the game put down again in front of you");
+    if (g_tableReanchor.exchange(false) || !A.ok || roomMoved || pressed || epochMoved) {
         const float t = ang[0] * d2r, ah = g_set.tableAheadM.load();
         A.fx = p[0] - sinf(t) * ah;   // room forward at yaw t is (-sin t, 0, -cos t)
         A.fz = p[2] - cosf(t) * ah;
@@ -2234,10 +2753,10 @@ bool TableCamera(const d2rcam::WorldView& in, V3* eye, V3* fwd, V3* up, V3* righ
         // The real floor: BodyWalk's room is not always the floor's (seen 2026-10-05: the
         // head at 0.72 m standing, the game a metre up). The player stands when the view
         // is taken, so the floor is their standing eye height below the head.
-        A.floorY = p[1] - UserEyeHeightM();
+        A.floorY = xe && xe->floorOk ? xe->floorY : p[1] - UserEyeHeightM();
         A.ok = true;
-        LogF("vrcam: the table - the hero on the floor %.2f m ahead (room %.2f, %.2f), the floor %.2f m below the head (room y %.2f), %.1f units per metre",
-             ah, A.fx, A.fz, p[1] - A.floorY, A.floorY, g_set.tableScale.load());
+        LogF("vrcam: the table - the hero on the floor %.2f m ahead (room %.2f, %.2f), the floor %.2f m below the head (room y %.2f%s), %.1f units per metre",
+             ah, A.fx, A.fz, p[1] - A.floorY, A.floorY, xe ? (xe->floorOk ? ", the headset's own floor" : ", from your height") : "", g_set.tableScale.load());
     }
     // [table] ahead_m moved: the game slides along the line it was put on, at once.
     if (const float ah = g_set.tableAheadM.load(); fabsf(ah - A.ahead) > 1e-4f) {
@@ -2248,18 +2767,30 @@ bool TableCamera(const d2rcam::WorldView& in, V3* eye, V3* fwd, V3* up, V3* righ
     // [table] turn: the world about the hero, the board where it is - so the room-to-game
     // turn grows by it, and the bounds undo it (TableTurn in the shader).
     const float phi = A.phi + g_set.tableTurnDeg.load() * d2r;
-    const float heading = phi + ang[0] * d2r;
-    const float down = std::clamp(-g_set.pitchSign.load() * ang[1] * d2r, -1.55f, 1.55f);
-    const float roll = std::clamp(g_set.rollSign.load() * ang[2], -80.0f, 80.0f) * d2r;
-    *fwd = Facing(heading, down);
-    *ahead = Facing(heading, 0.0f);
-    *right = {cosf(heading), 0.0f, -sinf(heading)};
-    const V3 up0 = d2rcam::m4::Cross(*right, *fwd);
-    *up = up0 * cosf(roll) + *right * sinf(roll);
-    // The head from the anchor, turned into the game's axes (about +y by phi).
-    const float dx = p[0] - A.fx, dz = p[2] - A.fz, c = cosf(phi), sn = sinf(phi), s = g_set.tableScale.load();
+    float heading = phi + ang[0] * d2r;
+    if (xe) {   // the exact turn of the head, turned about the vertical into the game's axes (the F4 branch's toWorld)
+        auto toWorld = [&](V3 v) { const views3d::Vec w = views3d::RoomToWorldDir(phi, {v.x, v.y, v.z}); return V3{w.x, w.y, w.z}; };
+        *fwd = toWorld(headF);
+        *up = toWorld(headU);
+        *right = toWorld(headR);
+        heading = atan2f(-fwd->x, -fwd->z);
+        *ahead = Facing(heading, 0.0f);
+    } else {
+        const float down = std::clamp(-g_set.pitchSign.load() * ang[1] * d2r, -1.55f, 1.55f);
+        const float roll = std::clamp(g_set.rollSign.load() * ang[2], -80.0f, 80.0f) * d2r;
+        *fwd = Facing(heading, down);
+        *ahead = Facing(heading, 0.0f);
+        *right = {cosf(heading), 0.0f, -sinf(heading)};
+        const V3 up0 = d2rcam::m4::Cross(*right, *fwd);
+        *up = up0 * cosf(roll) + *right * sinf(roll);
+    }
+    // The head from the anchor, turned into the game's axes (about +y by phi) and scaled (vr/views3d.h TableEye).
     const float* L = in.lookAt;
-    *eye = V3{L[0] + (dx * c + dz * sn) * s, L[1] + std::max(p[1] - A.floorY - g_set.tableHeightM.load(), 0.05f) * s, L[2] + (-dx * sn + dz * c) * s};
+    const views3d::Table tbl{A.fx, A.fz, A.floorY, phi, g_set.tableScale.load(), g_set.tableHeightM.load(), 0.05f};
+    const views3d::Vec e3 = views3d::TableEye(tbl, {L[0], L[1], L[2]}, {p[0], p[1], p[2]});
+    *eye = V3{e3.x, e3.y, e3.z};
+    g_lastTable = tbl;
+    g_lastTableHero = {L[0], L[1], L[2]};
     *yawOut = (heading0 - heading) / d2r;   // as TargetYaw: + turned right of the game's camera
     {
         TableBox b{};
@@ -2537,8 +3068,9 @@ bool EyesSane(const xr::Eyes& e) {
 }
 bool NativeEyes(xr::Eyes* out) {
     if (!NativeView()) return false;
+    const int want = NativeMode();   // F4 / F2: the head's; F1: a window's; F3: the room's (views_3d)
     xr::Eyes e{};
-    const bool got = xr::PairEyes(&e) && EyesSane(e);
+    const bool got = xr::PairEyes(&e) && e.mode == want && EyesSane(e);
     const ULONGLONG now = GetTickCount64();
     bool ok = got;
     AcquireSRWLockExclusive(&g_goodEyesLock);
@@ -2546,7 +3078,7 @@ bool NativeEyes(xr::Eyes* out) {
         g_goodEyes = e;
         g_goodEyesAt = now;
         *out = e;
-    } else if (g_goodEyesAt && now - g_goodEyesAt < 2000 && xr::Running() && !gamestate::MenuOpen()) {
+    } else if (g_goodEyesAt && g_goodEyes.mode == want && now - g_goodEyesAt < 2000 && xr::Running() && (!gamestate::MenuOpen() || MenuAs3d())) {
         *out = g_goodEyes;
         ok = true;
         static ULONGLONG toldAt = 0;
@@ -2591,7 +3123,26 @@ bool VrViewInner(const d2rcam::WorldView& in, float out[16]) {
     xr::Eyes xe{};
     const bool native = NativeEyes(&xe);
     float nativeIpd = 0.0f;   // world units
-    if (native) {
+    int ptrMode = -1;                 // F1 / F3 in 3D: the laser's map (PointerMap)
+    pointer3d::Similarity ptrSim;
+    if (native && xe.mode == xr::kViewsRoom) {
+        // F3 in the room ([openxr] views_3d): the runtime's eyes where they are in the room, the diorama's map (TableCamera);
+        // the eyes' gap at the diorama's scale, so the parallax is right for a world this small on the floor
+        if (!TableCamera(in, &eye, &fwd, &up, &right, &ahead, &yaw, &xe)) return false;
+        hang = eye;
+        g_floorEyeH.store(eye.y - L[1]); g_floorFwdY.store(fwd.y); g_floorUpY.store(up.y); g_floorCamOk.store(true);
+        const V3 apart = {xe.pos[1][0] - xe.pos[0][0], xe.pos[1][1] - xe.pos[0][1], xe.pos[1][2] - xe.pos[0][2]};
+        nativeIpd = d2rcam::m4::Length(apart) * g_set.tableScale.load();
+        ptrMode = xr::kViewsRoom;
+        ptrSim = pointer3d::ForTable(g_lastTable, g_lastTableHero);
+    } else if (native && xe.mode == xr::kViewsWindow) {
+        // F1 in 3D ([openxr] views_3d): the game's view from above (TopCamera) through a window of the room, the head in front of it
+        if (!TopCamera(in, &eye, &fwd, &up, &right, &ahead, &xe)) return false;
+        hang = eye;
+        nativeIpd = (xe.pos[1][0] - xe.pos[0][0]) * g_topUnitsPerM.load();
+        ptrMode = xr::kViewsWindow;
+        ptrSim = pointer3d::ForWindow({L[0], L[1], L[2]}, {right.x, right.y, right.z}, {up.x, up.y, up.z}, {fwd.x, fwd.y, fwd.z}, g_topUnitsPerM.load());
+    } else if (native) {
         // The head as the runtime has it - its turn, tilt and place in the room, metres from
         // where it was at the recentre - on top of the body's turn (stick, mouse); no neck
         // model, no head prediction: the runtime predicts for the display time.
@@ -2701,6 +3252,9 @@ bool VrViewInner(const d2rcam::WorldView& in, float out[16]) {
     d2rcam::m4::LookTo(eye, fwd, up, view);
     const float hangA[3] = {hang.x, hang.y, hang.z};
     for (int i = 0; i < 3; ++i) g_eyeWorld[i].store(hangA[i]);
+    g_headCentre[0].store(eye.x); g_headCentre[1].store(eye.y); g_headCentre[2].store(eye.z);
+    g_headAhead[0].store(ahead.x); g_headAhead[1].store(ahead.y); g_headAhead[2].store(ahead.z);
+    g_headOk.store(true);
     for (int i = 0; i < 3; ++i) g_eyeFromLook[i].store(hangA[i] - L[i]);
     g_eyeOk.store(true);
 
@@ -2783,6 +3337,18 @@ bool VrViewInner(const d2rcam::WorldView& in, float out[16]) {
     memcpy(out, view, sizeof view);
     cbcmp::NoteView(g_eye.load(), view);
     if (g_eye.load() == 0) { AcquireSRWLockExclusive(&g_leftViewLock); memcpy(g_leftView, view, sizeof view); ReleaseSRWLockExclusive(&g_leftViewLock); }
+    if (g_eye.load() == 0) {   // the laser's map (F1 / F3 in 3D; any other view: none)
+        AcquireSRWLockExclusive(&g_ptrLock);
+        g_ptrMap.ok = ptrMode >= 0;
+        g_ptrMap.mode = ptrMode;
+        if (ptrMode >= 0) {
+            g_ptrMap.sim = ptrSim;
+            g_ptrMap.groundY = L[1];
+            memcpy(g_ptrMap.view, view, sizeof view);
+            g_ptrMap.viewAt = GetTickCount64();
+        }
+        ReleaseSRWLockExclusive(&g_ptrLock);
+    }
     return true;
 }
 
@@ -2845,7 +3411,13 @@ bool VrProjInner(const d2rcam::WorldView& in, float M[16]) {
         M[8] += g_eye.load() == 0 ? shift : -shift;
     }
     }
-    if ((g_eye.load() & 1) == 0) g_projShift.store(shift);
+    if ((g_eye.load() & 1) == 0) {
+        g_projShift.store(shift);
+        AcquireSRWLockExclusive(&g_ptrLock);
+        memcpy(g_ptrMap.proj, M, sizeof g_ptrMap.proj);   // (the laser's map, left eye)
+        g_ptrMap.projAt = GetTickCount64();
+        ReleaseSRWLockExclusive(&g_ptrLock);
+    }
     AcquireSRWLockExclusive(&g_skyLock);
     SkyView& sv = g_skyView[g_eye.load() & 1];
     sv.proj[0] = M[0]; sv.proj[1] = M[5]; sv.proj[2] = M[8]; sv.proj[3] = M[9]; sv.proj_ok = true;
@@ -2859,6 +3431,23 @@ bool VrProjInner(const d2rcam::WorldView& in, float M[16]) {
         if (e == (g_eye.load() & 1) || (e == 1 && replayed))
             g_skyHist[e][g_skyHistAt[e] = (g_skyHistAt[e] + 1) & 3] = g_skyView[e];
     ReleaseSRWLockExclusive(&g_skyLock);
+    return true;
+}
+
+// The game's pointer in F1 and F3 in 3D ([openxr] pointer_3d, vr/xr.cpp Pointer3dQuad): the ground under the pixel the game's mouse is at - the
+// point the game's own mouse code (d2rcam's ScreenToRay, from our left eye) would walk to - in the frame the pair's eyes are in. Only read: the
+// mouse, the clicks and the hero's movement are not touched. The last frame's camera, the same thread as the build.
+bool PointerAtPixel(int mode, float u, float v, xr::PointerAt* out) {
+    PointerMap m;
+    AcquireSRWLockShared(&g_ptrLock);
+    m = g_ptrMap;
+    ReleaseSRWLockShared(&g_ptrLock);
+    const ULONGLONG now = GetTickCount64();
+    if (!m.ok || m.mode != mode || now - m.viewAt > 300 || now - m.projAt > 300) return false;
+    const pointer3d::Under h = pointer3d::GroundUnderPixel(m.sim, m.groundY, m.view, m.proj, u, v);
+    if (!h.hit) return false;
+    out->at[0] = h.at.x; out->at[1] = h.at.y; out->at[2] = h.at.z;
+    out->dist = h.dist;
     return true;
 }
 
@@ -2968,20 +3557,48 @@ int HeldLikeStaff() {
     if (type == D2RVR_TYPE_SWORD && g_set.swordTwoHands.load()) return 2;
     return 0;
 }
-bool StaffAim() {
-    // Only with the body (F4): there the controllers hold the weapon and the line
-    // between them is its line. Anywhere else the hands are just held, and that
-    // line points sideways - a crossbow in third person shot to the left
-    // (2026-10-06); there it aims with one hand, like the bow.
-    if (!FullBody()) return false;
+// Where a staff's aim comes from (vr/aim_source.h): the controllers - never the weapon as the weight model draws it. Only with the body (F4): there the
+// controllers hold the weapon and the line between them is its line. Anywhere else the hands are just held, and that line points sideways - a crossbow in
+// third person shot to the left (2026-10-06); there it aims with one hand, like the bow. Along the staff in the right hand (staff_free_left) too, not only
+// aimed from hand to hand ([bow] staff_two_hands).
+aimsource::Out StaffAimChoice() {
+    aimsource::In in;
+    in.fullBody = FullBody();
     const D2RVR_Shared* sh = Shared();
-    // along the staff in the right hand (staff_free_left) too, not only aimed from hand to hand ([bow] staff_two_hands)
-    const bool staffNow = (g_set.staffTwoHands.load() || g_set.staffFreeLeft.load()) && gamestate::WeaponType() == D2RVR_TYPE_STAFF;
-    if (!(staffNow || XbowLikeStaff()) || !sh || sh->version != D2RVR_SHARED_VERSION) return false;
+    in.sharedOk = sh && sh->version == D2RVR_SHARED_VERSION;
+    in.handsValid = in.sharedOk ? sh->handsValid : 0u;
+    in.staffWeapon = gamestate::WeaponType() == D2RVR_TYPE_STAFF;
+    in.xbowLike = XbowLikeStaff();
+    in.staffTwoHands = g_set.staffTwoHands.load();
+    in.staffFreeLeft = g_set.staffFreeLeft.load();
 #if D2RVR_FIRST_PERSON
-    if (g_set.staffFreeLeft.load() && ArmsMode() == 2) return (sh->handsValid & 1u) && skel::StaffAxis(nullptr);
+    in.armsOnControllers = ArmsMode() == 2;
+    if (in.staffFreeLeft && in.armsOnControllers) {
+        // [weight] on: the model holds the staff and the skeleton hook does not pose it the staff_free_left way, so the hook's axis is not made (it
+        // went stale and the staff's aim was lost: the spells went where the plain hand points, 2026-10-14). The model says which hands hold it.
+        weight::AimInfo wi;
+        weight::Aim(&wi);
+        in.weightHas = weight::Placed() && in.staffWeapon;
+        in.holds[0] = wi.holds[0];
+        in.holds[1] = wi.holds[1];
+        in.carrying = wi.hand;
+        in.drawnFresh = !in.weightHas && skel::StaffAxis(nullptr);
+    }
 #endif
-    return (sh->handsValid & 3u) == 3u;
+    return aimsource::Choose(in);
+}
+bool StaffAim() { return StaffAimChoice().aims; }
+
+// What the aim goes along, told whenever it changes (the log says what a cast went along; "aim:" lines).
+void NoteAimSource(const aimsource::Out& o, int hand) {
+    static std::atomic<int> told{-1};
+    const int key = (o.aims ? 1 : 0) | ((int)o.src << 1) | (hand << 4) | (o.leftOn ? 64 : 0);
+    if (told.exchange(key) == key) return;
+    const char* hn = hand ? "left" : "right";
+    if (!o.aims) LogF("aim: the %s controller's own direction (%s)", hn, o.why);
+    else if (o.src == aimsource::Src::LeftToRight) LogF("aim: left->right controllers (%s)", o.why);
+    else if (o.src == aimsource::Src::Shaft) LogF("aim: the %s controller, along the staff as it grips it (%s)", hn, o.why);
+    else LogF("aim: the drawn staff's axis (%s)", o.why);
 }
 
 bool ShooterActive();
@@ -2998,8 +3615,9 @@ bool HandRay(float* o, float* d) {
         return true;
     }
     const D2RVR_Shared* sh = Shared();
-    const bool staff = StaffAim();
-    const int hand = staff ? 0 : AimHand();
+    const aimsource::Out source = StaffAimChoice();
+    const bool staff = source.aims;
+    const int hand = staff ? source.hand : AimHand();
     if (!sh || sh->version != D2RVR_SHARED_VERSION || !sh->headValid || !(sh->handsValid & (1u << hand)) || !g_eyeOk.load()) return false;
     AcquireSRWLockShared(&g_stickLock); const StickFrame f = g_stickFrame; ReleaseSRWLockShared(&g_stickLock);
     if (!f.valid) return false;
@@ -3007,8 +3625,13 @@ bool HandRay(float* o, float* d) {
     const float* p = hand == 0 ? sh->rightHand : sh->leftHand;
     float staffDir[3] = {sh->rightHand[0] - sh->leftHand[0], sh->rightHand[1] - sh->leftHand[1], sh->rightHand[2] - sh->leftHand[2]};
 #if D2RVR_FIRST_PERSON
-    if (staff && g_set.staffFreeLeft.load() && ArmsMode() == 2) skel::StaffAxis(staffDir);
+    if (staff && source.src == aimsource::Src::Drawn) skel::StaffAxis(staffDir);
+    else if (staff && source.src == aimsource::Src::Shaft) {   // [weight] on, one hand on the staff: the shaft as that controller grips it (fixed by the grip, not by the drawn weapon)
+        weight::AimInfo wi;
+        if (weight::Aim(&wi) && wi.hand == hand) aimsource::TurnBy(q, wi.shaft, staffDir);
+    }
 #endif
+    NoteAimSource(source, hand);
     // Both lines run from the left hand toward the right one - a staff's way, the
     // right hand ahead. A crossbow has the left ahead and the right on the stock.
     if (staff && XbowLikeStaff()) for (float& v : staffDir) v = -v;
@@ -3225,29 +3848,72 @@ struct Calib { double c1 = 0, s1 = 0, c2 = 0, s2 = 0; int n = 0; float angle = 0
 SRWLOCK g_calLock = SRWLOCK_INIT;
 Calib g_cal;
 
-// The aiming hand's direction on the ground, in world terms: atan2(z, x).
+// [hands] bow_draw: the line of a released draw (vr/bow_draw_wire.cpp), in the head's turn frame, on the ground in world
+// terms - the same turn into the world as a hand's (HandRay: x along the camera's right, z back along its forward).
+bool DrawWorldTheta(float* theta) {
+    float h[3];
+    if (!bowdrawwire::AimDir(h)) return false;
+    AcquireSRWLockShared(&g_stickLock); const StickFrame f = g_stickFrame; ReleaseSRWLockShared(&g_stickLock);
+    if (!f.valid) return false;
+    const float dx = h[0] * f.camR[0] - h[2] * f.camF[0], dz = h[0] * f.camR[2] - h[2] * f.camF[2];
+    if (!std::isfinite(dx) || !std::isfinite(dz) || dx * dx + dz * dz < 1e-6f) return false;
+    *theta = atan2f(dz, dx);
+    return true;
+}
+
+// The aiming hand's direction on the ground, in world terms: atan2(z, x). None for a ray
+// straight up or down (no direction on the ground) or not finite: a NaN from the bridge passes
+// HandRay's test (it is not below it) and would go on to the game's free target (2026-10-13).
+bool GestureTheta(float* theta);   // [hands] throw_gesture, below
 bool HandWorldTheta(float* theta) {
+    if (GestureTheta(theta)) return true;   // a throw by gesture is on its way: the hand's motion, not its pointing
     float o[3], d[3];
-    if (!HandRay(o, d)) return false;
+    if (DrawWorldTheta(theta)) return true;   // [hands] bow_draw: a released draw's line, not the hand's
+    if (!HandRay(o, d) || !std::isfinite(d[0]) || !std::isfinite(d[2]) || d[0] * d[0] + d[2] * d[2] < 1e-6f) return false;
     *theta = atan2f(d[2], d[0]);
     return true;
 }
 
 // The aiming hand as a unit vector on the game's grid. The grid's axes are the
 // world's x and z (measured 2026-10-02: 0 deg, not mirrored, agreement 0.98);
-// what the walk teaches overrides that once it is sure.
+// what the walk teaches overrides that once it is sure - not in native OpenXR, where
+// the walk-learned turn is only logged (vr/aim_point.h, GridDir, says why).
 bool HandGridDir(float* gx, float* gy) {
     float theta;
     if (!HandWorldTheta(&theta)) return false;
     AcquireSRWLockShared(&g_calLock); const Calib c = g_cal; ReleaseSRWLockShared(&g_calLock);
-    const float tg = !c.ok ? theta : c.mirror ? c.angle - theta : c.angle + theta;
-    *gx = cosf(tg); *gy = sinf(tg);
+    aimpoint::GridDir(theta, xr::Running(), c.ok, c.mirror != 0, c.angle, gx, gy);
     return true;
 }
 
 // A skill button is down (A, B, X, Y, RB), no menu: the attack or spell it casts goes along the hand.
 std::atomic<bool> g_skillHeld{false};
-bool AimByVector() { return g_enabled.load() && g_set.bowMode.load() == 4 && (g_aHeld.load() || g_skillHeld.load()); }
+// [hands] throw_gesture (vr/throw_gesture_wire.cpp): a javelin thrown by the hand's motion presses the game's own attack once
+// at the release; for the ticks the game takes to read it, the point of that attack is out along the motion. The heading
+// comes in the head's own frame (right, forward) and is made the world's with the camera's axes, as HandRay does the hand's.
+bool GestureAimLive() {
+    float r, f;
+    return g_set.throwGesture.load() && throwwire::Aim(&r, &f);
+}
+bool GestureTheta(float* theta) {
+    float right, fwd;
+    if (!g_set.throwGesture.load() || !throwwire::Aim(&right, &fwd)) return false;
+    AcquireSRWLockShared(&g_stickLock); const StickFrame f = g_stickFrame; ReleaseSRWLockShared(&g_stickLock);
+    if (!f.valid) return false;
+    const float x = right * f.camR[0] + fwd * f.camF[0], z = right * f.camR[2] + fwd * f.camF[2];
+    if (!std::isfinite(x) || !std::isfinite(z) || x * x + z * z < 1e-6f) return false;
+    *theta = atan2f(z, x);
+    throwwire::NoteRead();   // (the wire logs when the game never asks for the aim of a throw's press)
+    return true;
+}
+bool GestureCanAim() {
+    AcquireSRWLockShared(&g_stickLock); const bool ok = g_stickFrame.valid; ReleaseSRWLockShared(&g_stickLock);
+    return ok;
+}
+// [hands] bow_draw: the 0.4 s after a released draw go along its line whatever [bow] mode says.
+bool AimByVector() {
+    return g_enabled.load() && ((g_set.bowMode.load() == 4 && (g_aHeld.load() || g_skillHeld.load() || GestureAimLive())) || bowdrawwire::AimLive());
+}
 
 // The other half of the controller's aim. With the stick at rest the aim
 // function (0x1446C0) takes the attack's direction from the hero's own facing:
@@ -3265,6 +3931,30 @@ UnitFacingFn OrigUnitFacing = nullptr;
 // log: is it this frame's on the first pass of a pair, where the render matrix
 // is a frame old, and does it say where the model is drawn facing?
 std::atomic<void*> g_heroUnit{nullptr};
+// The hero's mode now (the client's player unit the aim function last worked on: +0xC, as every unit has it): the game's answer to a throw's press.
+bool GestureHeroMode(uint32_t* mode) {
+    const uint8_t* u = (const uint8_t*)g_heroUnit.load();
+    if (!u || (uintptr_t)u < 0x10000) return false;
+    __try {
+        if (*(const uint32_t*)u != 0) return false;   // not a player
+        *mode = *(const uint32_t*)(u + 0xC);
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+// The hero's client unit id (potion hide: whose missile is the hero's): the player unit the aim function last worked on. False when it is not known.
+bool GestureHeroId(uint32_t* id) {
+    const uint8_t* u = (const uint8_t*)g_heroUnit.load();
+    if (!u || (uintptr_t)u < 0x10000) return false;
+    __try {
+        if (*(const uint32_t*)u != 0) return false;   // not a player
+        *id = *(const uint32_t*)(u + 8);
+        return *id != 0;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
 // The hero unit found without an attack, for the cave ceiling's torches (worldobj): while
 // it is wanted, every unit the game asks the facing of is tried - a player (type 0)
 // whose place on its path, times 2, is the look-at (2026-10-07: "on entering the cave").
@@ -3309,7 +3999,10 @@ LONGLONG QpcUs() {
 }
 
 void HookUnitFacing(void* unit, float* out) {
+    frametrace::Scope trace(frametrace::kAimHooks);   // [debug] frame_trace: ours, the game's call left out
+    trace.Pause();
     OrigUnitFacing(unit, out);
+    trace.Resume();
     if (unit && g_heroWanted.load() && !g_heroSeen.load() && IsHeroUnit(unit)) g_heroSeen.store(unit);   // until one is found
     if (out && unit && unit == g_heroUnit.load()) {
         g_logicFacingDeg.store(atan2f(out[1], out[0]) * 57.2957795f);
@@ -3326,6 +4019,27 @@ void HookUnitFacing(void* unit, float* out) {
     out[0] = gx; out[1] = gy;
 }
 
+// [hands] spell_aim: a spell that flies (Fire Bolt, Charged Bolt, Teeth...) is never turned to a
+// monster, in mode 4 while its button is held. The controller's cast resolver (0x190440,
+// (manager, unit, assist, float* x, float* y)) sends a cast to the unit the controller has
+// picked for the skill (0x18DDE0, called at 0x19057A) or, failing that, the one under its
+// cursor (HoverUnit, at 0x190583) - only with neither to AttackPoint along the aim (at 0x1906E2);
+// then, with `assist`, it may still bend the point toward a monster near it. For a skill the
+// game's Skills table says flies (gamestate::SkillAimed), and that one call only: those two
+// lookups find nothing and the assist is off - the cast takes AttackPoint along the aim the
+// attack along the hand already gives every attack (HookUnitFacing, HookAttackPoint). bow_aim and
+// throw_aim also put the point aimpoint::kMaxCells (40) out along the hand (whole cells, so far out the
+// steps are fine). Mana, cast rate, the missile: the game's own.
+// From bearstonem/d2r-pcvr (MIT, a fork of 0.152), which found the resolver and its call sites, and that the
+// game's check of a skill's point refuses one more than 50 cells from the hero on either axis (vr/aim_point.h):
+// a point 60 out was refused along every heading within 34 degrees of a cardinal one, and the aim stayed stale.
+// directed: the target lookups find nothing, the assist is off. point: the point too is ours, aimpoint::kMaxCells out
+// (bow_aim, throw_aim); a spell keeps the game's aim, turned to the hand as every attack in mode 4 is (the user,
+// 2026-10-13: "the old aim worked, just keep it from the monsters").
+struct SpellCast { bool directed = false, point = false; float gx = 0.0f, gy = 0.0f; };
+thread_local SpellCast g_spellCast;   // the resolution under way on this thread
+uintptr_t g_spellPointRet = 0;        // where the resolver's AttackPoint call returns (set before its hook goes in)
+
 // The point the attack goes to: AttackPoint (RVA 0x18BAD0, (manager, float
 // out[2], unit, float2 from, float2 dir)) = from + dir * range, with range the
 // default attack distance (~3 cells) or the skill's. The command that carries
@@ -3340,21 +4054,119 @@ const uint8_t kSigAttackPoint[16] = {0x48,0x89,0x5C,0x24,0x08,0x48,0x89,0x6C,0x2
 using AttackPointFn = float* (*)(void* mgr, float* out, void* unit, uint64_t from, uint64_t dir);
 AttackPointFn OrigAttackPoint = nullptr;
 
+bool ThrownInHand();   // (below, by the spell resolver)
+
+// [hands] throw_gesture / throw_by_grip: the point the game's attack takes for a throw released a moment ago (vr/throw_aim.h). A javelin or a
+// throwing weapon: throwaim::kMaxCells (48) out along the line the hand was going - or, with [hands] throw_autoaim_deg above 0, at the hostile
+// monster nearest that line inside that half-angle (the monsters the melee touch reads, the server's own hostility and wall check). A throwing
+// potion: a ground location - the weapon-weight model's landing when it has the throw (vr/throw_source.h; already scaled by [weight]
+// throw_reach_pct, NOT scaled again here), else where a real throw of the hand's peak velocity would land (its height, [hands]
+// throw_potion_reach_pct) - held to [3, 48] cells; the monster snap counts only those within +-25% of that distance. The HEADING is the weight
+// model's too when it has the throw (throwwire::Info / Aim). 0: no throw is live - the old paths go on. 1: *px, *py is the point. 2: a throw is
+// live but no point can be made (no room before the map's edge, or nearer than aimpoint's 3 cells): the game's own point stays, and the old
+// 40-cell paths must NOT go on (a throw is not to fly to the far end of its line because it could not be placed near).
+// The point goes to the game's own attack through the aim hooks; its range, line of sight and relation checks stay the game's.
+int GesturePoint(const float from[2], float gx, float gy, float* px, float* py) {
+    throwwire::ThrowInfo ti;
+    if (!g_set.throwGesture.load() || !ThrownInHand() || !throwwire::Info(&ti)) return 0;
+    const bool potion = gamestate::HandIsThrowPotion((int)gamestate::WeaponHand());
+    const float eye = UserEyeHeightM();
+    const float upm = std::max(1.0f, ViewHeight()) / eye;
+    float cells = throwaim::kMaxCells;
+    throwaim::Reach reach;
+    float handM = 0.0f;
+    if (potion) {
+        handM = std::max(0.05f, eye - ti.handBelowHeadM);
+        // the weight model's landing is final (its reach scale applied, its cap held); the hand's own estimate is scaled by throw_potion_reach_pct here
+        reach = throwaim::ThrowReach(ti.fromWeight ? ti.landingM : 0.0f, ti.horizSpeed, ti.vertSpeed, handM, g_set.throwPotionReachPct.load(), upm);
+        cells = reach.cells;
+    }
+    throwaim::Pick pick;
+    size_t seen = 0;
+    bool polled = false;
+    const float cone = g_set.throwAutoaimDeg.load();
+    if (cone > 0.0f) {
+        meleetouch::ThrowMonster mons[48];
+        throwaim::Monster cm[48];
+        seen = meleetouch::ThrowTargets(mons, 48, &polled);
+        for (size_t i = 0; i < seen; ++i) cm[i] = {mons[i].id, mons[i].x * 0.5f, mons[i].z * 0.5f};   // world units -> cells
+        float lo = 1.0f, hi = throwaim::kMaxCells;
+        if (potion) { throwaim::PotionWindow(cells, &lo, &hi); hi = std::min(hi, throwaim::kMaxCells); }
+        pick = throwaim::PickInCone(from[0], from[1], gx, gy, cone, lo, hi, cm, seen);
+    }
+    bool ok = true;
+    if (pick.found) { *px = pick.x; *py = pick.y; }
+    else ok = aimpoint::Point(from[0], from[1], gx, gy, cells, px, py, throwaim::kMaxCells);
+    static unsigned toldSeq = 0;
+    static bool toldWeight = false;
+    if (ti.seq != toldSeq || ti.fromWeight != toldWeight) {   // once per throw (and again if the weight model's account came in after the first read): what decided
+        toldSeq = ti.seq;
+        toldWeight = ti.fromWeight;
+        char src[200];
+        if (ti.fromWeight)
+            snprintf(src, sizeof src, "SOURCE weight model (%.1f m/s, flight %.2f s, %+.0f deg up, lands %.1f m%s%s)", ti.weightSpeed, ti.flightS, ti.elevationDeg, ti.landingM,
+                     ti.weightCapped ? ", its cell cap held" : "", ti.headingFromVelocity ? ", heading from its velocity" : "");
+        else
+            snprintf(src, sizeof src, "SOURCE hand estimate (the weight model had no valid outcome for this throw, or [weight] is off)");
+        const float finalCells = pick.found ? pick.cells : cells;
+        char how[200];
+        if (pick.found) snprintf(how, sizeof how, "snapped to monster %u, %.1f deg off the line, %.1f cells out", pick.id, pick.angleDeg, pick.cells);
+        else if (cone <= 0.0f) snprintf(how, sizeof how, "along the hand (auto-aim off)");
+        else snprintf(how, sizeof how, "along the hand (%u hostile monster(s) read%s, none in the %.0f deg cone%s)", (unsigned)seen,
+                      polled ? "" : " - no poll lately", cone, potion ? " and distance window" : "");
+        const char* refused = ok ? "" : " - the point was refused (the map's edge, or nearer than 3 cells): the game's own point stays";
+        if (potion && ti.fromWeight)
+            LogF("throw gesture: potion - %s: the landing is final (not scaled again) = %.1f m at %.1f units/m = %.1f cells%s; %s; FINAL distance %.1f cells (%.1f m)%s",
+                 src, reach.metres, upm, cells, reach.clamped ? " (clamped to 3..48)" : "", how, finalCells, finalCells * 2.0f / upm, refused);
+        else if (potion)
+            LogF("throw gesture: potion - %s: hand peak %.1f m/s (%.1f ground, %+.1f up; %.1f at the release), %.2f m high: lands %.1f m, x%.0f%% at %.1f units/m = %.1f cells%s; %s; FINAL distance %.1f cells (%.1f m)%s",
+                 src, ti.speed, ti.horizSpeed, ti.vertSpeed, ti.releaseSpeed, handM, reach.metres, g_set.throwPotionReachPct.load(), upm, cells,
+                 reach.clamped ? " (clamped to 3..48)" : "", how, finalCells, finalCells * 2.0f / upm, refused);
+        else
+            LogF("throw gesture: %s: %s; FINAL distance %.1f cells (%.1f m)%s", src, how, finalCells, finalCells * 2.0f / upm, refused);
+    }
+    return ok ? 1 : 2;
+}
+
 float* HookAttackPoint(void* mgr, float* out, void* unit, uint64_t from, uint64_t dir) {
+    frametrace::Scope trace(frametrace::kAimHooks);   // [debug] frame_trace: ours, the game's call left out
+    trace.Pause();
     float* r = OrigAttackPoint(mgr, out, unit, from, dir);
+    trace.Resume();
+    if (out && g_spellCast.directed && g_spellCast.point && (uintptr_t)_ReturnAddress() == g_spellPointRet) {   // bow_aim's, throw_aim's shot
+        float f[2]; memcpy(f, &from, sizeof f);
+        float px, py;   // none (no room before the edge of the coordinates): the game's own point stays
+        if (const int g = GesturePoint(f, g_spellCast.gx, g_spellCast.gy, &px, &py)) {   // a throw by gesture
+            if (g == 1) { out[0] = px; out[1] = py; }
+            return r;
+        }
+        if (aimpoint::Point(f[0], f[1], g_spellCast.gx, g_spellCast.gy, aimpoint::kMaxCells, &px, &py)) { out[0] = px; out[1] = py; }
+        return r;
+    }
     const uint32_t w = gamestate::WeaponClass();
     float gx, gy;
     const uint32_t type = gamestate::WeaponType();
     const bool thrown = type == D2RVR_TYPE_JAVELIN || type == D2RVR_TYPE_THROWING;
     if (!out || !AimByVector() || (w != 3 && w != 4 && !thrown && !StaffAim()) || !HandGridDir(&gx, &gy)) return r;
     float f[2]; memcpy(f, &from, sizeof f);
+    if (thrown && GestureAimLive()) {   // a throw by gesture: its own point (vr/throw_aim.h), as in the resolver's branch above
+        float tx, ty;
+        if (const int g = GesturePoint(f, gx, gy, &tx, &ty)) {
+            if (g == 1) { out[0] = tx; out[1] = ty; }
+            return r;
+        }
+    }
     // A crossbow or a staff aims finer held in both hands: the point farther out.
     float range = g_set.aimRange.load();
     if (StaffAim()) {
         const bool xbow = type == D2RVR_TYPE_CROSSBOW;
         bool leftOn = true;   // both controllers, the staff between them: always both
 #if D2RVR_FIRST_PERSON
-        if (g_set.staffFreeLeft.load() && ArmsMode() == 2) skel::StaffAxis(nullptr, nullptr, &leftOn);
+        if (g_set.staffFreeLeft.load() && ArmsMode() == 2) {
+            const aimsource::Out as = StaffAimChoice();   // [weight] on: the model's hands on the staff; off: the skeleton hook's answer
+            if (as.src == aimsource::Src::Drawn) skel::StaffAxis(nullptr, nullptr, &leftOn);
+            else leftOn = as.leftOn;
+        }
 #endif
         range = leftOn ? (xbow ? g_set.xbowRangeTwo : g_set.staffRangeTwo).load() : (xbow ? g_set.xbowRangeOne : g_set.staffRangeOne).load();
     }
@@ -3370,6 +4182,7 @@ float* HookAttackPoint(void* mgr, float* out, void* unit, uint64_t from, uint64_
 }
 
 uint64_t HookAttackTarget(void* self, void* unit, float* dir, int* outX, int* outY) {
+    frametrace::Scope trace(frametrace::kAimHooks);   // [debug] frame_trace: ours, the game's call left out
     if (unit) g_heroUnit.store(unit);
     const uintptr_t caller = (uintptr_t)_ReturnAddress() - g_base;
     float use[2];
@@ -3388,8 +4201,9 @@ uint64_t HookAttackTarget(void* self, void* unit, float* dir, int* outX, int* ou
             const bool was = c.ok;
             c.ok = std::max(r1, r2) > 0.8;
             if (!was || c.n % 150 == 0)
-                LogF("target: grid vs world axes %s, %.1f deg %s (agreement %.2f / %.2f over %d steps)", c.ok ? "LEARNED" : "unclear",
-                     c.angle * 57.2957795f, c.mirror ? "mirrored" : "turned", r1, r2, c.n);
+                LogF("target: grid vs world axes %s, %.1f deg %s (agreement %.2f / %.2f over %d steps)%s", c.ok ? "LEARNED" : "unclear",
+                     c.angle * 57.2957795f, c.mirror ? "mirrored" : "turned", r1, r2, c.n,
+                     xr::Running() ? " - not used: native OpenXR aims on the world's axes" : "");
         }
         ReleaseSRWLockExclusive(&g_calLock);
     }
@@ -3402,7 +4216,9 @@ uint64_t HookAttackTarget(void* self, void* unit, float* dir, int* outX, int* ou
         d = use;
         turned = true;
     }
+    trace.Pause();
     const uint64_t r = OrigAttackTarget(self, unit, d, outX, outY);
+    trace.Resume();
     // the log: which caller, what vector, what point - a few times a second per caller
     static uintptr_t lastCaller[4] = {};
     static ULONGLONG lastAt[4] = {};
@@ -3427,6 +4243,17 @@ uint64_t HookAttackTarget(void* self, void* unit, float* dir, int* outX, int* ou
 struct PadTrace { WORD buttons = 0; BYTE lt = 0, rt = 0; ULONGLONG lastAim = 0; };
 PadTrace g_padTrace;
 
+// [debug] bow_latency: the hero's model heading as the camera code last read it (deg, with the steady-clock second it was read at), and the game's pad A as the
+// input hook last made it (the seconds of its last press and release).
+std::atomic<float> g_latYaw{0.0f};
+std::atomic<double> g_latYawS{0.0}, g_latPadDownS{0.0}, g_latPadUpS{0.0};
+void BowLatencyPad(bool a) {
+    static bool was = false;
+    if (!g_set.bowLatency.load(std::memory_order_relaxed) || a == was) { was = a; return; }
+    was = a;
+    (a ? g_latPadDownS : g_latPadUpS).store(throwborn::NowS());
+}
+
 // A stick in our view (x right, y ahead, length <= 1) made the same stick on
 // the game's screen - the convention of XInput after the game's dead zone, and
 // of the keyboard move 0x8A960 (x right, y up): the camera's yaw taken in, or
@@ -3450,19 +4277,16 @@ bool ViewStickToGame(float* px, float* py) {
         *px = sx * f.mirX * mag / sm; *py = sy * f.mirY * mag / sm;
         return true;
     }
-    const float t = g_set.stickSign.load() * g_set.stickAngleScale.load() * g_camYaw.load() * 3.14159265f / 180.0f;
-    float rx = x * cosf(t) - y * sinf(t), ry = x * sinf(t) + y * cosf(t);
-    ry *= g_set.stickSquash.load();
-    const float rm = sqrtf(rx*rx + ry*ry);
-    if (rm < 1e-6f) return false;
-    *px = rx * mag / rm; *py = ry * mag / rm;
-    return true;
+    return walkpath::TurnByYaw(px, py, g_camYaw.load(), g_set.stickSign.load(), g_set.stickAngleScale.load(), g_set.stickSquash.load());
 }
 
 bool DirectWalkNow();
 bool StickHookIn();
 void TurnStick(XINPUT_STATE* s, bool fromBodyWalk) {
     if (!s || !g_enabled.load()) return;
+    // [hands] bow_draw: the string hand's trigger is the draw's while the string is held - BodyWalk's A for it stays from the game
+    // (with direct input the layout never gets it: directinput::Take). The draw's own press comes after this, as the release.
+    if (bowdrawwire::Owned()) s->Gamepad.wButtons &= ~XINPUT_GAMEPAD_A;
     const XINPUT_GAMEPAD in = s->Gamepad;
     // What is kept (held buttons, the right stick, the log) only from BodyWalk's pad while it is live.
     const bool own = fromBodyWalk || GetTickCount64() - g_padMirrorOkAt.load() > 1000;
@@ -3512,8 +4336,10 @@ void TurnStick(XINPUT_STATE* s, bool fromBodyWalk) {
 // game's thread (flat), so the mapping and the counter's watch are atomics.
 std::atomic<const BWPadMirror*> g_padMirror{nullptr};
 
-bool PadMirrorRead(BWPadMirror* out) {
-    if (!g_set.bodywalkPad.load()) return false;
+// BodyWalk's own report, while it is moving (its counter moved in the last second) and a version we know. `evenIfOff`: read it whatever
+// [input] bodywalk_pad says (direct mode's walking, [openxr] direct_bodywalk_walk: the report is the only way its stick comes in there).
+bool BodyWalkReport(BWPadMirror* out, bool evenIfOff) {
+    if (!evenIfOff && !g_set.bodywalkPad.load()) return false;
     const BWPadMirror* p = g_padMirror.load();
     if (!p) {
         static std::atomic<ULONGLONG> lastTry{0};
@@ -3533,6 +4359,59 @@ bool PadMirrorRead(BWPadMirror* out) {
     if (m.counter != seen.load()) { seen.store(m.counter); movedAt.store(GetTickCount64()); }
     if (m.version != BW_PAD_MIRROR_VERSION || GetTickCount64() - movedAt.load() > 1000) return false;
     *out = m;
+    return true;
+}
+
+// Direct mode ([openxr] direct_input, F4): what became of BodyWalk's walking stick, said once per change - combined, ignored, dropped and why
+// (vr/walk_path.h StateLog: the first 40 changes, then at most one line in 5 s). The pad's pollers and the walking hooks all come through here.
+std::atomic<uint8_t> g_walkState{(uint8_t)walkpath::State::NotDirect};
+std::atomic<uint64_t> g_walkRaw{0};   // the two raw left sticks of the last read (controller x y, BodyWalk x y), 16 bits each, for the walking hook's log line
+void NoteWalk(const walkpath::Out& r, const walkpath::Inputs& in) {
+    g_walkState.store((uint8_t)r.state);
+    g_walkRaw.store((uint64_t)(uint16_t)in.ownLX | ((uint64_t)(uint16_t)in.ownLY << 16) | ((uint64_t)(uint16_t)in.bwLX << 32) | ((uint64_t)(uint16_t)in.bwLY << 48));
+    static SRWLOCK lock = SRWLOCK_INIT;
+    static walkpath::StateLog log;
+    if (!TryAcquireSRWLockExclusive(&lock)) return;
+    walkpath::State st = walkpath::State::NotDirect;
+    uint32_t changes = 0;
+    const bool say = log.Step(r.state, GetTickCount64(), &st, &changes);
+    ReleaseSRWLockExclusive(&lock);
+    if (say)
+        LogF("vrcam: BodyWalk's walk - %s (BodyWalk's stick %d %d, the controller's %d %d%s)", walkpath::StateName(st), in.bwLX, in.bwLY, in.ownLX, in.ownLY,
+             changes > 1 ? "; several changes since the last line" : "");
+}
+
+// The pad the game's XInput poll and its walking hooks get from the plugin. [openxr] direct_input (F4, headset frames arriving): the plugin's
+// own pad, and in it - [openxr] direct_bodywalk_walk - BodyWalk's LEFT STICK mixed into the controller's (vr/walk_path.h: each past the game's
+// dead zone, the sum on the unit disc, the stronger one wins when they pull apart); nothing else of BodyWalk's report. Otherwise BodyWalk's
+// report whole, while it moves ([input] bodywalk_pad).
+bool PadMirrorRead(BWPadMirror* out) {
+    directinput::PadOut d{};
+    const bool direct = directinput::PadRead(&d);
+    const bool walks = direct && directinput::BodyWalkWalks();
+    BWPadMirror bw{};
+    walkpath::Inputs in;
+    in.directFeeding = direct;
+    in.settingOn = walks;
+    in.inWorld = g_inWorld.load();
+    in.menuOpen = gamestate::MenuOpen();
+    in.bodywalkPadOn = g_set.bodywalkPad.load();
+    in.reportLive = (direct ? walks : in.bodywalkPadOn) && BodyWalkReport(&bw, walks);
+    in.ownLX = d.lx; in.ownLY = d.ly;
+    in.bwLX = bw.thumb_lx; in.bwLY = bw.thumb_ly;
+    const walkpath::Out r = walkpath::Resolve(in);
+    if (direct) {
+        NoteWalk(r, in);
+        *out = BWPadMirror{};
+        out->version = BW_PAD_MIRROR_VERSION;
+        out->counter = d.counter;
+        out->buttons = d.buttons;
+        out->left_trigger = d.lt; out->right_trigger = d.rt;
+        out->thumb_lx = r.lx; out->thumb_ly = r.ly; out->thumb_rx = d.rx; out->thumb_ry = d.ry;
+        return true;
+    }
+    if (r.source != walkpath::Source::BodyWalkPad) return false;
+    *out = bw;
     return true;
 }
 
@@ -3647,7 +4526,8 @@ bool InteractTargetNow() {
 
 void ApplyActions(XINPUT_STATE* s) {
     static link::Presses presses;   // the game's pad polls only (index 0)
-    const uint32_t held = link::ActionsHeld(presses);
+    uint32_t held = link::ActionsHeld(presses);
+    if (bowdrawwire::Owned()) held &= ~D2RVR_ACT_ATTACK;   // [hands] bow_draw: the string hand's trigger is the draw's, not an attack
     {   // BodyWalk's actions as they are pressed - its gestures among them - for the input log
         static uint32_t was = 0;
         const uint32_t pressed = held & ~was;
@@ -3662,8 +4542,21 @@ void ApplyActions(XINPUT_STATE* s) {
     if ((held & D2RVR_ACT_INTERACT) && !interact) {
         if (!toldMiss) { toldMiss = true; Log("vrcam: pick up - nothing to pick up or open here, A not pressed"); }
     } else toldMiss = false;
-    if (interact != wasInteract) { wasInteract = interact; if (interact) LogF("vrcam: pick up / interact - target %p", (void*)g_interactTarget.load()); }
-    if ((held & D2RVR_ACT_ATTACK) || interact) s->Gamepad.wButtons |= XINPUT_GAMEPAD_A;
+    if (interact != wasInteract) {
+        wasInteract = interact;
+        if (interact) {
+            haptics::Play(haptics::Event::Interact);   // [openxr] haptics: a press with something there to pick up, open or talk to
+            LogF("vrcam: pick up / interact - target %p", (void*)g_interactTarget.load());
+        }
+    }
+    const bool touchPress = meleetouch::PadPressed();   // [gameplay] melee_touch, before the direct-input branch is in the tree
+    // [gameplay] attack_in_place (F4): the game's own Stand Still is held with every attack press of ours, so a press with nothing
+    // under the point is an attack in place and never a walk; the press waits the few ms the command takes to be down
+    const bool attackA = (held & D2RVR_ACT_ATTACK) || touchPress;
+    const standstill::Gate still = standstill::Poll(attackA, touchPress, gamestate::MenuOpen(), s->Gamepad.wButtons, s->Gamepad.bLeftTrigger);
+    if ((attackA && !still.holdBackA) || still.addA || interact) s->Gamepad.wButtons |= XINPUT_GAMEPAD_A;
+    s->Gamepad.wButtons = (WORD)((s->Gamepad.wButtons & ~still.holdBack) | still.add);
+    BowLatencyPad((s->Gamepad.wButtons & XINPUT_GAMEPAD_A) != 0);   // [debug] bow_latency
     // A pad button, not the keyboard's I: a key press flips the game's UI to
     // mouse and keyboard, the way Shift + click did in bow mode 2. Menu (Start)
     // by default: View (Back) opens the map in D2R's pad layout - "the inventory
@@ -3693,7 +4586,7 @@ void ApplyActions(XINPUT_STATE* s) {
     uint8_t* flag = (uint8_t*)d2rsig::Addr(RVA_INTERACT_ON_ATTACK);
     uint8_t now = 0;
     if (!flag || !SafeRead(&now, flag, 1) || now > 1) return;
-    const bool separate = g_set.aAttackOnly.load() || (held & D2RVR_ACT_ATTACK);
+    const bool separate = g_set.aAttackOnly.load() || (held & D2RVR_ACT_ATTACK) || touchPress;
     if (original < 0) { if (!separate && !interact) return; original = now; }
     const uint8_t want = interact ? 1 : separate ? 0 : (uint8_t)original;
     if (now != want) {
@@ -3967,7 +4860,14 @@ float* HookStickGet(void* handler, float* out, uint32_t player) {
         static ULONGLONG lastLog = 0;
         if (on && GetTickCount64() - lastLog >= 2000) {
             lastLog = GetTickCount64();
-            LogF("vrcam: walk straight from BodyWalk (controller mode) v=(%.2f,%.2f)", x, y);
+            // whose stick it is: in direct mode this line used to say "BodyWalk" for the controller's own stick too
+            const walkpath::State st = (walkpath::State)g_walkState.load();
+            const uint64_t raw = g_walkRaw.load();
+            if (st == walkpath::State::NotDirect)
+                LogF("vrcam: walk straight from BodyWalk (controller mode) v=(%.2f,%.2f)", x, y);
+            else
+                LogF("vrcam: walk straight (controller mode) v=(%.2f,%.2f) - %s (raw sticks: the controller's %d %d, BodyWalk's %d %d)", x, y, walkpath::WhoWalks(st),
+                     (int)(int16_t)(raw & 0xFFFF), (int)(int16_t)((raw >> 16) & 0xFFFF), (int)(int16_t)((raw >> 32) & 0xFFFF), (int)(int16_t)((raw >> 48) & 0xFFFF));
         }
     }
     return r;
@@ -4003,19 +4903,42 @@ using ClientIndexFn = int (*)(void* unit);
 using HoverUnitFn = void* (*)(int index);
 MapClickFn OrigMapClick;
 std::atomic<int> g_mapClick{0};   // 0 not in yet, 1 in, 2 not possible
+std::atomic<bool> g_hoverHooked{false};   // spell_aim's hook is on HoverUnit (its bytes checked then): no longer as they were
 
 uint64_t HookMapClick(void* unit, int type, int x, int y, uint64_t flags) {
-    if (unit && (type == 0 || type == 1 || type == 3 || type == 4) && !(flags & 0xFF) &&
-        g_set.flatClickShoot.load() && KeyMoveMode() && ShooterActive()) {
-        const int idx = ((ClientIndexFn)d2rsig::Addr(RVA_CLIENT_INDEX))(unit);
-        if (idx >= 0 && idx < 8 && !((HoverUnitFn)d2rsig::Addr(RVA_HOVER_UNIT))(idx)) {
+    const bool mouseType = type == 0 || type == 1 || type == 3 || type == 4;
+    // nothing under the pointer? the game's own lookup (HoverUnit), asked once for whoever needs it
+    int bareKnown = -1;
+    auto bare = [&]() {
+        if (bareKnown < 0) {
+            const int idx = ((ClientIndexFn)d2rsig::Addr(RVA_CLIENT_INDEX))(unit);
+            bareKnown = idx >= 0 && idx < 8 && !((HoverUnitFn)d2rsig::Addr(RVA_HOVER_UNIT))(idx) ? 1 : 0;
+        }
+        return bareKnown == 1;
+    };
+    if (unit && mouseType && !(flags & 0xFF)) {
+        const bool shooter = g_set.flatClickShoot.load() && KeyMoveMode() && ShooterActive();
+        // VR first person ([gameplay] attack_in_place): a click on bare ground - from a mouse, the laser or a program - is a skill in
+        // place, never a walk (vr/stand_still.h); on a monster, an item, a door or an NPC it stays the game's own click
+        const bool still = standstill::ClickCandidate(standstill::Wanted(), viewgate::F4(), gamestate::MenuOpen(), true, type, flags);
+        if ((shooter || still) && bare()) {
             flags |= 1;
-            static ULONGLONG lastLog = 0;
-            if (const ULONGLONG now = GetTickCount64(); now - lastLog >= 2000) {
-                lastLog = now;
-                LogF("vrcam: flat click type %d, no target - a shot at the crosshair (Stand Still)", type);
+            if (!shooter) standstill::NoteClick(type);
+            else {
+                static ULONGLONG lastLog = 0;
+                if (const ULONGLONG now = GetTickCount64(); now - lastLog >= 2000) {
+                    lastLog = now;
+                    LogF("vrcam: flat click type %d, no target - a shot at the crosshair (Stand Still)", type);
+                }
             }
         }
+    }
+    shottrace::ClickTrace shotTrace(unit, type, x, y, flags);   // [debug] shot_trace: the click, and when it returns (nothing when no shot is watched)
+    // [gameplay] block_stray_walk (F4): a walk or run to a point that comes out of this click is told by the click's type and by
+    // whether anything is under the pointer (vr/stray_walk.h); the guard itself sits on the game's command funnel
+    if (unit && straywalk::WalkWanted() && viewgate::F4()) {
+        straywalk::ClickScope scope(type, mouseType && bare());
+        return OrigMapClick(unit, type, x, y, flags);
     }
     return OrigMapClick(unit, type, x, y, flags);
 }
@@ -4027,9 +4950,12 @@ void InstallMapClickHook() {
     static int misses = 0;
     // Flat with flat_keyboard_move, or VR with vr_keys_walk (F2's mouse look shoots the same way).
     const bool flat = g_set.platform.load() == 0;
-    if (!g_ctx || g_mapClick.load() != 0 || !(flat ? g_set.flatKeyMove.load() : g_set.vrKeyWalk.load())) return;
+    // ... or VR with [gameplay] attack_in_place (F4: a click on bare ground never walks; the hook asks the view where it decides)
+    const bool forShooter = flat ? g_set.flatKeyMove.load() : g_set.vrKeyWalk.load();
+    const bool forF4 = !flat && (standstill::Wanted() || straywalk::WalkWanted() || shottrace::Wanted());
+    if (!g_ctx || g_mapClick.load() != 0 || !(forShooter || forF4)) return;
     if (!Matches(RVA_MAP_CLICK, kSigMapClick, sizeof kSigMapClick) || !Matches(RVA_CLIENT_INDEX, kSigClientIndex, sizeof kSigClientIndex) ||
-        !Matches(RVA_HOVER_UNIT, kSigHoverUnit, sizeof kSigHoverUnit)) {
+        !(g_hoverHooked.load() || Matches(RVA_HOVER_UNIT, kSigHoverUnit, sizeof kSigHoverUnit))) {
         if (flat && g_inWorld.load() && ++misses >= 20) {   // VR: no verdict, the code may run (and decrypt) much later
             g_mapClick.store(2);
             Log("vrcam: flat: click hook NOT possible (0xFE3B0 / 0x9A820 / 0xF1900 not as expected - another build?) - a click on the ground walks");
@@ -4038,8 +4964,318 @@ void InstallMapClickHook() {
     }
     const bool in = d2rsig::Hook(RVA_MAP_CLICK, kSigMapClick, sizeof kSigMapClick, (void*)&HookMapClick, (void**)&OrigMapClick);
     g_mapClick.store(in ? 1 : 2);
-    Log(in ? "vrcam: flat: click hook in - with no target under the crosshair a click is a shot there, never a walk"
-           : "vrcam: flat: click hook FAILED - a click on the ground walks");
+    if (forShooter)
+        Log(in ? "vrcam: flat: click hook in - with no target under the crosshair a click is a shot there, never a walk"
+               : "vrcam: flat: click hook FAILED - a click on the ground walks");
+    else
+        Log(in ? "vrcam: VR: click hook in - in first person (F4) a click on bare ground is an attack in place, never a walk ([gameplay] attack_in_place, block_stray_walk)"
+               : "vrcam: VR: click hook FAILED - a click on the ground walks in first person");
+}
+
+// spell_aim (above HookAttackPoint): the resolver, its two target lookups, and the skill the
+// controller casts - 0x1440D0(handler, client index) reads it as the resolver itself does.
+constexpr uint64_t RVA_SPELL_RESOLVE = 0x190440, RVA_SPELL_TARGET = 0x18DDE0, RVA_CTRL_HANDLER = 0x144640, RVA_CTRL_SKILL = 0x1440D0;
+constexpr uint64_t RVA_SPELL_TARGET_RET = 0x19057F, RVA_SPELL_HOVER_RET = 0x190588, RVA_SPELL_POINT_RET = 0x1906E7;
+// A press casts by the map click (0x14B1A9 and 0x14C21C: the resolver, then MapClick(unit, 7..10, x, y, flags) with
+// its point) - and the click asks the controller's target once more, 0x18DD60(handler, index) (at 0xFE4C4), which
+// jumps on to the same two lookups: they return into the click at 0xFE4C9. A monster there and the cast went to it
+// (2026-10-13: near monsters the bolts flew at them).
+constexpr uint64_t RVA_CLICK_TARGET = 0x18DD60, RVA_CLICK_TARGET_RET = 0xFE4C9;
+// ... and so does the function that makes the cast's flags, 0x1454A0(handler, index, word*), called by the controller's press (0x1450BF) and its hold (0x14C3CA)
+// just before the cast: in controller mode it sets the flags' Stand Still byte to 1 for an ordinary skill, then asks the controller's target the same way
+// (0x18DD60, returning at 0x145534) and, with one that the skill's table row and the reach test (0x190D40) accept, clears the byte - a cast AT that target, which
+// the click may walk the hero up to. docs/shot_run_recon.md.
+constexpr uint64_t RVA_DISPATCH_TARGET_RET = 0x145534;
+// mov [rsp+8], rbx; mov [rsp+10h], rsi; push rdi; sub rsp, 20h
+const uint8_t kSigClickTarget[15] = {0x48,0x89,0x5C,0x24,0x08,0x48,0x89,0x74,0x24,0x10,0x57,0x48,0x83,0xEC,0x20};
+// mov rax, rsp; mov [rax+18h], r8b; mov [rax+10h], rdx; push rbp/rbx/rsi/rdi
+const uint8_t kSigSpellResolve[15] = {0x48,0x8B,0xC4,0x44,0x88,0x40,0x18,0x48,0x89,0x50,0x10,0x55,0x53,0x56,0x57};
+// mov rax, rsp; mov [rax+10h], edx; push rbp/rbx/rsi/rdi; lea rbp, [rax-48h]
+const uint8_t kSigSpellTarget[14] = {0x48,0x8B,0xC4,0x89,0x50,0x10,0x55,0x53,0x56,0x57,0x48,0x8D,0x68,0xB8};
+// push rbx; sub rsp, 20h; mov rax, gs:[58h] (a static's guard)
+const uint8_t kSigCtrlHandler[15] = {0x40,0x53,0x48,0x83,0xEC,0x20,0x65,0x48,0x8B,0x04,0x25,0x58,0x00,0x00,0x00};
+// push rbx; sub rsp, 20h; mov eax, edx; mov rbx, rcx; mov [rsp+30h], rax
+const uint8_t kSigCtrlSkill[16] = {0x40,0x53,0x48,0x83,0xEC,0x20,0x8B,0xC2,0x48,0x8B,0xD9,0x48,0x89,0x44,0x24,0x30};
+using SpellResolveFn = void (*)(void* mgr, void* unit, bool assist, float* x, float* y);
+using SpellTargetFn = void* (*)(void* mgr, int skill);
+using CtrlHandlerFn = void* (*)();
+using CtrlSkillFn = int (*)(void* handler, int index);
+SpellResolveFn OrigSpellResolve = nullptr;
+SpellTargetFn OrigSpellTarget = nullptr;
+HoverUnitFn OrigSpellHover = nullptr;
+uintptr_t g_spellTargetRet = 0, g_spellHoverRet = 0, g_clickTargetRet = 0, g_dispatchTargetRet = 0;
+// A directed resolution's cast, waiting for its click's one ask of the target (this thread, 100 ms at most).
+struct SpellClick { bool directed = false; ULONGLONG at = 0; };
+thread_local SpellClick g_spellClick;
+std::atomic<int> g_spellAimHook{0};   // 0 not in yet, 1 in, 2 not possible
+
+// The skill the controller casts for this hero, the game's own answer; -1 none.
+int SpellSkill(void* unit) {
+    const int idx = ((ClientIndexFn)d2rsig::Addr(RVA_CLIENT_INDEX))(unit);
+    if (idx < 0 || idx >= 8) return -1;
+    void* handler = ((CtrlHandlerFn)d2rsig::Addr(RVA_CTRL_HANDLER))();
+    return handler ? ((CtrlSkillFn)d2rsig::Addr(RVA_CTRL_SKILL))(handler, idx) : -1;
+}
+
+// [hands] bow_aim: with a bow or a crossbow in hand, its basic attack (Attack 0) and its arrow skills go along the
+// hand the same way - the Skills table does not call a basic attack one that flies (the arrow is the weapon's), so
+// spell_aim left the bow's shot to the game's target and aim assist (the user, 2026-10-13). [hands] throw_aim: the
+// same for javelins and throwing weapons (Throw 2), a tick box of its own - in VR a throw is hard to put on a target,
+// the game's auto-target may be wanted there (the user); with one of those in hand it alone decides, spell_aim too.
+// The fork (d2r-pcvr) rewrites the target in the server's Shoot (0x4333F0) instead; here the game's own attack keeps
+// its animation, rate and ammo - the game's rules are not to be broken (the user) - only its target lookups are off.
+bool BowInHand() { const uint32_t w = gamestate::WeaponClass(); return w == D2RVR_WEAPON_BOW || w == D2RVR_WEAPON_CROSSBOW; }
+bool ThrownInHand() { const uint32_t t = gamestate::WeaponType(); return t == D2RVR_TYPE_JAVELIN || t == D2RVR_TYPE_THROWING; }
+// The boxes that make a cast of the pad's skills go along the hand at all (the resolver's and the cast flags' look at the target both ask).
+bool SpellAimWanted(bool drawn) {
+    return g_set.spellAim.load() || g_set.bowAim.load() || g_set.throwAim.load() || g_set.throwGesture.load() || drawn;
+}
+// A cast of `skill` by the hero: does it go along the hand (directed: the game's target and aim assist off), and is its point ours too (point)?
+SpellCast SpellCastFor(int skill, bool drawn) {
+    SpellCast cast;
+    const bool flies = gamestate::SkillAimed(skill);
+    // a released draw's own shot - the attack or a bow skill - goes along the draw line, the game's target and aim assist off
+    // ([autotarget] does not keep them: the line is the player's aim); any other skill pressed then is as the other boxes say
+    const bool shot = drawn && bowdraw::DrawsWith(skill);
+    bool along;
+    if (ThrownInHand()) along = cast.point = (g_set.throwAim.load() || GestureAimLive()) && (skill == 0 || skill == 2 || flies);
+    else if (BowInHand()) along = cast.point = shot || (g_set.bowAim.load() && (skill == 0 || flies)) || (g_set.spellAim.load() && flies);
+    else along = g_set.spellAim.load() && flies;   // a spell: the old aim, only no monster
+    if (along && !shot && skill < 1024 && ((g_set.autoKeep[skill >> 6].load() >> (skill & 63)) & 1)) along = false;   // [autotarget]: the game's
+    if (along && HandGridDir(&cast.gx, &cast.gy)) cast.directed = true;
+    return cast;
+}
+void HookSpellResolve(void* mgr, void* unit, bool assist, float* x, float* y) {
+    SpellCast cast;
+    int skill = -1;
+    const bool drawn = bowdrawwire::AimLive() && BowInHand();   // [hands] bow_draw: the 0.4 s after a released draw
+    // [hands] throw_gesture / throw_by_grip: the 0.5 s after a released throw. Its cast is the controller's own and the unit is the hero the
+    // aim function last worked on (g_heroUnit) even where IsHeroUnit's look-at test says no - the camera's look-at lags a hero who runs.
+    const bool thrownLive = GestureAimLive() && ThrownInHand();
+    if (SpellAimWanted(drawn) && unit && x && y && AimByVector() &&
+        !gamestate::MenuOpen() && (IsHeroUnit(unit) || (thrownLive && unit == g_heroUnit.load())) && (skill = SpellSkill(unit)) >= 0)
+        cast = SpellCastFor(skill, drawn);
+    const SpellCast outer = g_spellCast;   // a resolution inside this one is its own; this one's comes back after
+    g_spellCast = cast;
+    OrigSpellResolve(mgr, unit, cast.directed ? false : assist, x, y);
+    g_spellCast = outer;
+    if (shieldsmite::Casting() && x && y && unit && IsHeroUnit(unit) && SpellSkill(unit) == shieldsmite::kSmiteSkill) shieldsmite::Aim(x, y);   // [gameplay] shield_smite: aimed at the monster
+    g_spellClick = {cast.directed, GetTickCount64()};   // whichever caller: the ones that click do it right after
+    if (x && y)
+        shottrace::Note("cast resolver (from 0x%llX): skill %d, %s, the point (%.1f, %.1f)", (unsigned long long)((uintptr_t)_ReturnAddress() - g_base), skill,
+                        cast.directed ? (cast.point ? "directed, the point far out along the hand" : "directed, the game's aim") : "NOT directed - the game's own aim", *x, *y);
+    if (thrownLive && !cast.directed) {   // a throw gesture's press, and the cast was not aimed along it: say why
+        const bool hero = unit && (IsHeroUnit(unit) || unit == g_heroUnit.load());
+        const char* why = !unit || !x || !y ? "no unit or point" :
+                          !AimByVector() ? "[bow] mode is not 4" :
+                          gamestate::MenuOpen() ? "a menu is open" :
+                          !hero ? "the unit is not recognised as the hero (the camera's look-at lags a walking hero)" :
+                          skill < 0 ? "the controller has no skill for this cast" :
+                          skill != 0 && skill != 2 && !gamestate::SkillAimed(skill) ? "the skill is not the throw (0 / 2) nor one that flies" :
+                          skill < 1024 && ((g_set.autoKeep[skill >> 6].load() >> (skill & 63)) & 1) ? "[autotarget] keeps the game's auto-target for this skill" :
+                          "no heading on the ground";
+        LogF("throw gesture: the cast (skill %d) was NOT aimed along the throw - %s", skill, why);
+    }
+    if (cast.directed) {
+        static ULONGLONG told = 0;
+        if (thrownLive || GetTickCount64() - told > 2000) {
+            told = GetTickCount64();
+            LogF("spell aim: skill %d from 0x%llX, the hand %.2f %.2f -> %.1f %.1f (%s; the game's target and aim assist off for this cast)",
+                 skill, (unsigned long long)((uintptr_t)_ReturnAddress() - g_base), cast.gx, cast.gy, *x, *y,
+                 cast.point ? "the point far out along the hand" : "the game's aim turned to the hand");
+        }
+    }
+}
+
+// The tap's click asking for its target, just after a directed resolution: none, once.
+bool ClickTargetOff(uintptr_t ret) {
+    if (ret != g_clickTargetRet) return false;
+    const ULONGLONG age = GetTickCount64() - g_spellClick.at;
+    const bool off = g_spellClick.directed && age < 100;
+    shottrace::Note("the click's second target lookup: %s (%llu ms after the resolver)", off ? "answered none (a directed cast)" : "the game's own answer", (unsigned long long)age);
+    static ULONGLONG told = 0;
+    if ((off || g_spellAimHook.load() == 1) && GetTickCount64() - told > 2000) {
+        told = GetTickCount64();
+        LogF("spell aim: the map click asks its target - %s", off ? "none (a directed cast)" :
+             g_spellClick.directed ? "the game's (the directed cast too long ago)" : "the game's (not a directed cast)");
+    }
+    g_spellClick = {};
+    return off;
+}
+
+// [gameplay] melee_touch: the press the touch made (melee_touch.cpp) asks the game's target lookups - the resolver's two
+// and the map click's - for the monster the blade touched, for 350 ms; the game's own attack then goes to it (the resolver
+// aims at the unit's place, the click attacks the unit). Looked up by its id then and there, on the game's UI thread.
+void* TouchedTarget(uintptr_t ret) {
+    if ((ret != g_spellTargetRet && ret != g_spellHoverRet && ret != g_clickTargetRet) || !meleetouch::TargetPending()) return nullptr;
+    return (void*)meleetouch::TargetUnit();
+}
+
+// [gameplay] aim_no_chase: the cast flags' own look at the controller's target (0x145534, inside 0x1454A0) for a cast that goes along the hand. The resolver's and the
+// click's looks are none for it already; this one is the game's first, made before them, and with a unit found (a monster near the aim) it clears the flags' Stand Still
+// byte - a cast AT that unit - so the click, which has no target left and no Stand Still, is a plain click on the ground: the hero RUNS to the point (the pad's cast of
+// the log of 2026-10-14 18:05, 3 ms after A went down; and, with the monster in front of the aim, "he runs up to it instead of shooting"). None here, the flags keep
+// their Stand Still and the cast is the same cast in place as one with no monster near. `skill`: the controller's skill where the hook has it (-1: asked of the controller).
+bool DispatchTargetOff(int skill) {
+    if (!g_set.aimNoChase.load() || g_spellAimHook.load() != 1 || !viewgate::F4()) return false;   // F4 only, like the guards of the shot
+    if (shieldsmite::Casting() || meleetouch::TargetPending()) return false;   // casts made to go AT a target keep the game's own
+    void* unit = g_heroUnit.load();
+    const bool drawn = bowdrawwire::AimLive() && BowInHand();
+    if (!unit || !SpellAimWanted(drawn) || !AimByVector() || gamestate::MenuOpen()) return false;
+    if (skill < 0 && (skill = SpellSkill(unit)) < 0) return false;
+    return SpellCastFor(skill, drawn).directed;
+}
+// What the cast flags' look gets back: the game's `answer`, or none when `off`. [debug] shot_trace tells which, and what the game found when it was let ask.
+void* DispatchAnswer(void* answer, bool off, void* peeked = nullptr) {
+    if (shottrace::Active()) {
+        char u[220];
+        shottrace::UnitText(off ? peeked : answer, g_heroUnit.load(), u, sizeof u);
+        shottrace::Note("the cast flags' own look at the controller's target (0x1454A0 clears Stand Still when it finds one): %s%s",
+                        off ? "answered none (a directed cast, [gameplay] aim_no_chase); the game would have answered: " : "the game's answer: ", u);
+    }
+    if (off) {
+        static ULONGLONG told = 0;
+        if (GetTickCount64() - told > 5000) {
+            told = GetTickCount64();
+            Log("spell aim: the cast flags' own look at the controller's target answered none (a directed cast) - the game keeps Stand Still for it, so a monster near the aim does not send the hero after it ([gameplay] aim_no_chase)");
+        }
+    }
+    return off ? nullptr : answer;
+}
+
+void* HookSpellTarget(void* mgr, int skill) {
+    const uintptr_t ret = (uintptr_t)_ReturnAddress();
+    if (ret == g_dispatchTargetRet) {
+        const bool off = DispatchTargetOff(skill);
+        void* t = off && !shottrace::Active() ? nullptr : OrigSpellTarget(mgr, skill);   // asked anyway while a shot is traced: to say what the game found
+        return DispatchAnswer(off ? nullptr : t, off, t);
+    }
+    if (shieldsmite::Casting()) {   // [gameplay] shield_smite: the monster the shield touched is the cast's target
+        if (const int where = ret == g_spellTargetRet ? 1 : ret == g_clickTargetRet ? 2 : 0)
+            if (void* t = shieldsmite::Target(where, skill)) return t;
+    }
+    if (void* t = TouchedTarget(ret)) return t;
+    if ((g_spellCast.directed && ret == g_spellTargetRet) || ClickTargetOff(ret)) return nullptr;
+    return OrigSpellTarget(mgr, skill);
+}
+
+void* HookSpellHover(int index) {
+    const uintptr_t ret = (uintptr_t)_ReturnAddress();
+    if (ret == g_dispatchTargetRet) {
+        const bool off = DispatchTargetOff(-1);
+        void* t = off && !shottrace::Active() ? nullptr : OrigSpellHover(index);
+        return DispatchAnswer(off ? nullptr : t, off, t);
+    }
+    if (shieldsmite::Casting()) {   // [gameplay] shield_smite, as HookSpellTarget
+        if (const int where = ret == g_spellHoverRet ? 1 : ret == g_clickTargetRet ? 2 : 0)
+            if (void* t = shieldsmite::Target(where, -1)) return t;
+    }
+    if (void* t = TouchedTarget(ret)) return t;
+    if ((g_spellCast.directed && ret == g_spellHoverRet) || ClickTargetOff(ret)) return nullptr;
+    return OrigSpellHover(index);
+}
+
+// `fn` ends in a jump to `to` (an E9 rel32 in its first 0x80 bytes): a tail call.
+bool TailJumpsTo(uint64_t fn, uint64_t to) {
+    const uintptr_t f = d2rsig::Addr(fn), t = d2rsig::Addr(to);
+    uint8_t b[0x80];
+    if (!f || !t || !SafeRead(b, (const void*)f, sizeof b)) return false;
+    for (size_t i = 0; i + 5 <= sizeof b; ++i) {
+        int32_t rel;
+        memcpy(&rel, b + i + 1, 4);
+        if (b[i] == 0xE9 && f + i + 5 + rel == t) return true;
+    }
+    return false;
+}
+
+// The call that returns at `ret` goes to `fn` (an E8 rel32 just before it).
+bool CallsTo(uint64_t ret, uint64_t fn) {
+    const uintptr_t r = d2rsig::Addr(ret), f = d2rsig::Addr(fn);
+    uint8_t op = 0;
+    int32_t rel = 0;
+    return r && f && SafeRead(&op, (const void*)(r - 5), 1) && op == 0xE8 && SafeRead(&rel, (const void*)(r - 4), 4) && r + rel == f;
+}
+
+// From the timer once spell_aim is on (and stays in after: off, the hooks pass everything on).
+// The resolver's code is decrypted with the first cast: tried again until then.
+// [hands] throw_auto_skill: a throw by gesture presses the pad's A, which the controller table binds to Attack (skill 0) - the skill skills.txt refuses for a
+// throwing potion (etypea1 tpot) and gives a knife, axe or javelin only for an enemy at the point (TargetableOnly, SearchEnemyXY). With a throwing weapon in
+// hand the game's own mouse path casts Throw (skill 2, a cast at a location) for the plain attack; the pad's path never does. The pad's press runs
+// SelectSlot (0x14A5A0: the cast's skill = the slot's binding, read by SlotSkill 0x117D20 at 0x14A69E) and the game's hand-skill setter (0x118D50: the unit's
+// left skill = the slot's binding, SlotSkill at 0x118DDD). While a throw is live these two reads answer Throw when the binding is Attack: the cast, the
+// controller's state and the unit's left skill are then exactly those of a slot that holds Throw; the game's own checks (the skill is the hero's, the weapon
+// is a throwing one, mana, range, the animation, the stack) all run as for a click. Any other caller of SlotSkill (the interface drawing the slots) and any
+// other binding are answered as they are.
+constexpr uint64_t RVA_SLOT_SKILL = 0x117D20, RVA_SLOT_SKILL_SELECT_RET = 0x14A6A3, RVA_SLOT_SKILL_SET_RET = 0x118DE2;
+// push rbx (REX-prefixed); sub rsp, 20h; movsxd rbx, ecx; cmp ebx, 0Fh; jbe +14h; lea rcx, [rsp+30h]
+const uint8_t kSigSlotSkill[19] = {0x40,0x53,0x48,0x83,0xEC,0x20,0x48,0x63,0xD9,0x83,0xFB,0x0F,0x76,0x14,0x48,0x8D,0x4C,0x24,0x30};
+using SlotSkillFn = int (*)(int slot);
+SlotSkillFn OrigSlotSkill = nullptr;
+uintptr_t g_slotSelectRet = 0, g_slotSetRet = 0;
+std::atomic<int> g_slotSkillHook{0};   // 0 not in yet, 1 in, 2 not possible
+
+int HookSlotSkill(int slot) {
+    const int bound = OrigSlotSkill(slot);
+    if (bound != 0) return bound;   // (the common case first: any other binding is the game's)
+    const uintptr_t ret = (uintptr_t)_ReturnAddress();
+    const bool site = ret == g_slotSelectRet || ret == g_slotSetRet;
+    const int skill = throwcast::SwapSkill(bound, site, g_set.throwAutoSkill.load(), site && ThrownInHand(), site && GestureAimLive());
+    if (skill != bound) {
+        static ULONGLONG told = 0;
+        if (GetTickCount64() - told > 300) {
+            told = GetTickCount64();
+            LogF("throw gesture: the slot's skill (Attack, 0) was read as Throw (%d) by the %s", skill, ret == g_slotSelectRet ? "cast's slot selection" : "unit's hand-skill setter");
+        }
+    }
+    return skill;
+}
+
+bool ThrowAutoSkillReady() { return g_set.throwAutoSkill.load() && g_slotSkillHook.load() == 1; }
+
+void InstallSlotSkillHook() {
+    if (!g_ctx || g_slotSkillHook.load() != 0 || !g_set.throwGesture.load() || !g_set.throwAutoSkill.load()) return;
+    if (!Matches(RVA_SLOT_SKILL, kSigSlotSkill, sizeof kSigSlotSkill)) return;   // the code is decrypted as it runs: tried again
+    if (!CallsTo(RVA_SLOT_SKILL_SELECT_RET, RVA_SLOT_SKILL) || !CallsTo(RVA_SLOT_SKILL_SET_RET, RVA_SLOT_SKILL)) {
+        g_slotSkillHook.store(2);
+        Log("vrcam: throw_auto_skill NOT possible - the controller's slot-skill reads are not where they were (another build?); a throw presses the pad button of the slot that holds Throw");
+        return;
+    }
+    g_slotSelectRet = d2rsig::Addr(RVA_SLOT_SKILL_SELECT_RET);
+    g_slotSetRet = d2rsig::Addr(RVA_SLOT_SKILL_SET_RET);
+    const bool in = d2rsig::Hook(RVA_SLOT_SKILL, kSigSlotSkill, sizeof kSigSlotSkill, (void*)&HookSlotSkill, (void**)&OrigSlotSkill);
+    g_slotSkillHook.store(in ? 1 : 2);
+    Log(in ? "vrcam: throw_auto_skill in - with a throwing weapon in hand a throw's A press is read by the game as its Throw skill (no skill slot needed)"
+           : "vrcam: throw_auto_skill hook FAILED - a throw presses the pad button of the slot that holds Throw");
+}
+
+void InstallSpellAimHooks() {
+    if (!g_ctx || g_spellAimHook.load() != 0 || !(g_set.spellAim.load() || g_set.bowAim.load() || g_set.throwAim.load() || g_set.throwGesture.load() || bowdrawwire::On() || shieldsmite::On() || g_set.meleeTouch.load()) || !OrigAttackPoint) return;   // the point's hook in first
+    if (!Matches(RVA_SPELL_RESOLVE, kSigSpellResolve, sizeof kSigSpellResolve) || !Matches(RVA_SPELL_TARGET, kSigSpellTarget, sizeof kSigSpellTarget) ||
+        !Matches(RVA_HOVER_UNIT, kSigHoverUnit, sizeof kSigHoverUnit) || !Matches(RVA_CLIENT_INDEX, kSigClientIndex, sizeof kSigClientIndex) ||
+        !Matches(RVA_CTRL_HANDLER, kSigCtrlHandler, sizeof kSigCtrlHandler) || !Matches(RVA_CTRL_SKILL, kSigCtrlSkill, sizeof kSigCtrlSkill) ||
+        !Matches(RVA_CLICK_TARGET, kSigClickTarget, sizeof kSigClickTarget))
+        return;
+    if (!CallsTo(RVA_SPELL_TARGET_RET, RVA_SPELL_TARGET) || !CallsTo(RVA_SPELL_HOVER_RET, RVA_HOVER_UNIT) ||
+        !CallsTo(RVA_SPELL_POINT_RET, RVA_ATTACK_POINT) ||
+        !CallsTo(RVA_CLICK_TARGET_RET, RVA_CLICK_TARGET) || !TailJumpsTo(RVA_CLICK_TARGET, RVA_SPELL_TARGET) ||
+        !TailJumpsTo(RVA_CLICK_TARGET, RVA_HOVER_UNIT)) {
+        g_spellAimHook.store(2);
+        Log("vrcam: spell aim NOT possible - the cast resolver's calls are not where they were (another build?); spells keep the game's targeting");
+        return;
+    }
+    g_spellTargetRet = d2rsig::Addr(RVA_SPELL_TARGET_RET);
+    g_spellHoverRet = d2rsig::Addr(RVA_SPELL_HOVER_RET);
+    g_spellPointRet = d2rsig::Addr(RVA_SPELL_POINT_RET);
+    g_clickTargetRet = d2rsig::Addr(RVA_CLICK_TARGET_RET);
+    if (CallsTo(RVA_DISPATCH_TARGET_RET, RVA_CLICK_TARGET)) g_dispatchTargetRet = d2rsig::Addr(RVA_DISPATCH_TARGET_RET);
+    else Log("vrcam: spell aim - the cast flags' look at the controller's target (0x145534) is not where it was (another build?): [gameplay] aim_no_chase does nothing");
+    // the lookups first, the resolver last: nothing is aimed until all three are in
+    bool in = d2rsig::Hook(RVA_SPELL_TARGET, kSigSpellTarget, sizeof kSigSpellTarget, (void*)&HookSpellTarget, (void**)&OrigSpellTarget);
+    if (in) g_hoverHooked.store(in = d2rsig::Hook(RVA_HOVER_UNIT, kSigHoverUnit, sizeof kSigHoverUnit, (void*)&HookSpellHover, (void**)&OrigSpellHover));
+    if (in) in = d2rsig::Hook(RVA_SPELL_RESOLVE, kSigSpellResolve, sizeof kSigSpellResolve, (void*)&HookSpellResolve, (void**)&OrigSpellResolve);
+    g_spellAimHook.store(in ? 1 : 2);
+    Log(in ? "vrcam: spell aim in - a spell that flies goes along the hand, the game's target and aim assist off for that cast"
+           : "vrcam: spell aim hooks FAILED - spells keep the game's targeting");
 }
 
 // Twice a second: says when the game loses or gets back its pads, and when W A
@@ -4101,6 +5337,26 @@ void KeysAsStick(XINPUT_STATE* s, DWORD* r) {
 // stick reached the outer one, which then read the turn as 0.
 thread_local int t_xDepth = 0;
 
+// What answered the game's poll of pad 0, said when it changes (vr/pad_presence.h): the log of 2026-10-14 15:06 had the game's
+// "PLEASE RECONNECT CONTROLLER" panel open right after a 1.36 s stall of the draw thread - one poll that came back "not connected".
+void PadPresenceNote(size_t entry, padpresence::Source now, DWORD origResult, DWORD finalResult) {
+    static padpresence::Tracker tracker;
+    static padpresence::Said said, saidAbsent;
+    padpresence::Source was = padpresence::Source::Absent;
+    const bool changed = tracker.Step(now, &was);
+    if (!changed && finalResult == ERROR_SUCCESS) return;   // (the common poll: nothing to say, nothing built)
+    uint32_t age = 0;
+    const char* why = directinput::WhyNotActive(&age);
+    char direct[400] = "";
+    if (directinput::On()) snprintf(direct, sizeof direct, "; direct input: %s (newest headset frame %u ms old)", why[0] ? why : "feeding", age);
+    if (changed && said.Next())
+        LogF("pad presence: pad 0 %s -> %s (tick %llu, %ls!%s, thread %lu, the real XInput said %lu%s)", padpresence::Name(was), padpresence::Name(now),
+             GetTickCount64(), g_xhooks[entry].dll, g_xhooks[entry].name, GetCurrentThreadId(), origResult, direct);
+    if (finalResult != ERROR_SUCCESS && saidAbsent.Next())
+        LogF("pad presence: pad 0 answered %lu (NOT CONNECTED) to the game - it will open its reconnect panel (tick %llu, %ls!%s, thread %lu%s)",
+             finalResult, GetTickCount64(), g_xhooks[entry].dll, g_xhooks[entry].name, GetCurrentThreadId(), direct);
+}
+
 template <int I> DWORD WINAPI XDetour(DWORD idx, XINPUT_STATE* s) {
     g_xhooks[I].calls++;
     // Flat without a pad: no controller anywhere, so no pad event ever asks
@@ -4109,14 +5365,49 @@ template <int I> DWORD WINAPI XDetour(DWORD idx, XINPUT_STATE* s) {
         if (s) memset(s, 0, sizeof *s);
         return ERROR_DEVICE_NOT_CONNECTED;
     }
+    frametrace::Scope trace(frametrace::kPadHook);   // [debug] frame_trace: ours, the real XInput left out - the poll is on the draw thread
+    trace.Pause();
+    const bool outer = t_xDepth == 0;   // (xinput9_1_0 calls into xinput1_4: the driver's time is told once)
     ++t_xDepth;
-    DWORD r = g_xhooks[I].orig(idx, s);
+    DWORD r;
+    {
+        frametrace::Scope driver(idx == 0 ? frametrace::kXInputPad0 : frametrace::kXInputOther, outer);   // [debug] frame_trace: the Xbox driver's own answer
+        r = g_xhooks[I].orig(idx, s);
+    }
+    const DWORD origResult = r;
     --t_xDepth;
+    trace.Resume();
     // Flat with a real pad let through (flat_no_pad=0): that pad only, its stick
     // turned by the camera below; BodyWalk's stick walks through the keyboard move.
     bool mirror = false;
     if (t_xDepth == 0 && idx == 0 && s && !FlatKeyMode() && PadFromBodyWalk(s)) { r = ERROR_SUCCESS; mirror = true; }
     if (t_xDepth == 0 && idx == 0 && s) KeysAsStick(s, &r);
+    if (t_xDepth == 0 && idx == 0 && s) {   // pad buttons the gestures pulse (directinput::PadPulse): over any pad, or a pad of their own
+        uint16_t pb; uint8_t plt, prt;
+        if (directinput::PadPulses(&pb, &plt, &prt)) {
+            if (r != ERROR_SUCCESS) { memset(s, 0, sizeof *s); r = ERROR_SUCCESS; static DWORD packet = 0x20000000; s->dwPacketNumber = ++packet; }
+            s->Gamepad.wButtons |= pb;
+            s->Gamepad.bLeftTrigger = std::max(s->Gamepad.bLeftTrigger, plt);
+            s->Gamepad.bRightTrigger = std::max(s->Gamepad.bRightTrigger, prt);
+        }
+    }
+    if (t_xDepth == 0 && idx == 0 && s && g_set.platform.load() == 1) {
+        // In VR, once the plugin is the pad, pad 0 is never "not connected": the game takes one such answer for a disconnect, opens
+        // "PLEASE RECONNECT CONTROLLER" (blocks the game) and polls again only 4 s later. A neutral pad stands in while the plugin's
+        // own is missing (a stalled draw thread, a session that lost focus or ended, controllers asleep, BodyWalk gone).
+        using padpresence::Source;
+        static padpresence::NeutralPacket neutral;
+        Source src = Source::Real;
+        if (r != ERROR_SUCCESS && padpresence::MustStayPresent(true, directinput::On(), g_padMirrorOkAt.load() != 0)) {
+            memset(s, 0, sizeof *s);
+            s->dwPacketNumber = neutral.Next();
+            r = ERROR_SUCCESS;
+        }
+        if (r != ERROR_SUCCESS) src = Source::Absent;
+        else if (mirror) src = directinput::Active() ? Source::Direct : Source::BodyWalk;
+        else if (origResult != ERROR_SUCCESS) src = Source::Kept;
+        PadPresenceNote(I, src, origResult, r);
+    }
     if (r == ERROR_SUCCESS && t_xDepth == 0) {
         const XINPUT_GAMEPAD got = s->Gamepad;   // as the pad had it, before vrcam's actions (the input log)
         if (idx == 0) { SampleHeadRate(); ApplyActions(s); }
@@ -4126,8 +5417,13 @@ template <int I> DWORD WINAPI XDetour(DWORD idx, XINPUT_STATE* s) {
             if (lines.load() < 30 && GetTickCount64() - told[I] > 2000) {
                 told[I] = GetTickCount64();
                 lines.fetch_add(1);
+                // (in direct mode the report is the plugin's own pad: "no", with what became of BodyWalk's walking stick)
+                char bwWord[220] = "no";
+                if (mirror && directinput::Active())
+                    snprintf(bwWord, sizeof bwWord, "no - the plugin's own pad; BodyWalk's walk: %s", walkpath::StateName((walkpath::State)g_walkState.load()));
+                else if (mirror) snprintf(bwWord, sizeof bwWord, "yes");
                 LogF("pad diag: %ls!%s pad %u, BodyWalk's pad %s, buttons %04X, right X %d, thread %lu", g_xhooks[I].dll,
-                     g_xhooks[I].name, idx, mirror ? "yes" : "no", s->Gamepad.wButtons, s->Gamepad.sThumbRX, GetCurrentThreadId());
+                     g_xhooks[I].name, idx, bwWord, s->Gamepad.wButtons, s->Gamepad.sThumbRX, GetCurrentThreadId());
             }
         }
         TurnStick(s, mirror);
@@ -4136,6 +5432,25 @@ template <int I> DWORD WINAPI XDetour(DWORD idx, XINPUT_STATE* s) {
     return r;
 }
 void* const kXDetours[] = {(void*)&XDetour<0>, (void*)&XDetour<1>, (void*)&XDetour<2>, (void*)&XDetour<3>, (void*)&XDetour<4>};
+
+// [debug] frame_trace: the game's own rumble. The game has a RumbleManager (Fog\src\RumbleManager.cpp: OnHitRumble, OnHitPlayerRumble, SkillUseRumble...) and Settings.json
+// 'Controller Rumble Enabled': it calls XInputSetState on a hit or a skill use as long as it believes a pad is there - and in VR it does, because pad 0 is kept
+// present (vr/pad_presence.h). The plugin never calls XInputSetState itself (its haptics go to the headset's controllers through OpenXR). This only WATCHES the
+// call - counted and timed in the pair it fell in, passed on untouched - and is put in only while frame_trace is on.
+// Which of the three DLLs the game uses is told by whichever is called first (xinput9_1_0's SetState calls into xinput1_4's: counted once).
+// (If the numbers say it is the driver: Settings.json 'Controller Rumble Enabled' 0, or unplug / close the pad, tells.)
+using XInputSetStateFn = DWORD (WINAPI*)(DWORD, XINPUT_VIBRATION*);
+struct XSetHook { const wchar_t* dll; XInputSetStateFn orig; bool done; };
+XSetHook g_xsets[] = {{L"xinput1_4.dll", nullptr, false}, {L"xinput1_3.dll", nullptr, false}, {L"xinput9_1_0.dll", nullptr, false}};
+template <int I> DWORD WINAPI XSetDetour(DWORD idx, XINPUT_VIBRATION* v) {
+    const bool outer = t_xDepth == 0;
+    frametrace::Scope driver(frametrace::kXInputSet, outer);   // the driver's time is in it: that is what is measured
+    ++t_xDepth;
+    const DWORD r = g_xsets[I].orig(idx, v);
+    --t_xDepth;
+    return r;
+}
+void* const kXSetDetours[] = {(void*)&XSetDetour<0>, (void*)&XSetDetour<1>, (void*)&XSetDetour<2>};
 
 // XInput DLLs are often loaded late, so this runs until each one is in.
 void HookXInput() {
@@ -4150,6 +5465,23 @@ void HookXInput() {
         if (!fn) { snprintf(b, sizeof b, "vrcam: %ls has no %s", h.dll, h.name); Log(b); continue; }
         const bool ok = MH_CreateHook(fn, kXDetours[i], (void**)&h.orig) == MH_OK && MH_EnableHook(fn) == MH_OK;
         snprintf(b, sizeof b, "vrcam: %ls!%s %s", h.dll, h.name, ok ? "hooked" : "hook FAILED");
+        Log(b);
+    }
+}
+
+void HookXInputSet() {
+    if (!frametrace::On()) return;
+    for (size_t i = 0; i < std::size(g_xsets); ++i) {
+        XSetHook& h = g_xsets[i];
+        if (h.done) continue;
+        HMODULE m = GetModuleHandleW(h.dll);
+        if (!m) continue;
+        h.done = true;   // one attempt per export
+        void* fn = (void*)GetProcAddress(m, "XInputSetState");
+        char b[160];
+        if (!fn) { snprintf(b, sizeof b, "vrcam: %ls has no XInputSetState", h.dll); Log(b); continue; }
+        const bool ok = MH_CreateHook(fn, kXSetDetours[i], (void**)&h.orig) == MH_OK && MH_EnableHook(fn) == MH_OK;
+        snprintf(b, sizeof b, "vrcam: %ls!XInputSetState %s ([debug] frame_trace: the game's rumble is counted and timed, passed on untouched)", h.dll, ok ? "watched" : "watch FAILED");
         Log(b);
     }
 }
@@ -4281,7 +5613,9 @@ std::atomic<HCURSOR> g_crossVr{nullptr};   // VR: one more, at [hud_third] cross
 // The size the window's height picks: 32 px below 900, 48 below 1500, 64 above.
 int CrosshairSizeIndex() {
     RECT rc{};
-    const int h = g_gameWnd && GetClientRect(g_gameWnd, &rc) ? rc.bottom : 1080;
+    vrres::Size game;
+    const int h = vrres::GameSize(g_gameWnd, &game) ? (int)game.h   // [render] vr_resolution: the game's picture, not the window
+                  : g_gameWnd && GetClientRect(g_gameWnd, &rc) ? rc.bottom : 1080;
     return h < 900 ? 0 : h < 1500 ? 1 : 2;
 }
 
@@ -4414,10 +5748,18 @@ void InputLogWindow(UINT msg, WPARAM w) {
 }
 
 LRESULT CALLBACK GameWndProc(HWND h, UINT msg, WPARAM w, LPARAM l) {
+    {   // [render] vr_resolution: the size the game is asked for arrives here, on the window's thread (and a mouse position is the game's pixel)
+        LRESULT done = 0;
+        if (vrres::Handle(h, msg, w, l, g_gameWndProc, done)) return done;
+    }
     // the input log: clicks, and keys pressed (not repeats, not the chat line's letters)
     if (g_inputLog.load() > 0 && (msg == WM_LBUTTONDOWN || msg == WM_RBUTTONDOWN || msg == WM_MBUTTONDOWN || msg == WM_XBUTTONDOWN ||
                                   ((msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN) && !(l & (1 << 30)) && !ChatOpen())))
         InputLogWindow(msg, w);
+    // [gameplay] block_stray_clicks (F4): a mouse button the game gets from outside the plugin while it plays in the world with no panel open
+    // (the log of 2026-10-14 16:26: four clicks "from a device" at the rhythm of a bow's draw and release) is dropped before the game sees it.
+    // The mouse look's pointer and [bow] mode 2's own Shift + click are the game's by design.
+    if (straywalk::DropWindowMouse(msg, gamestate::MenuOpen(), g_inWorld.load(), ShooterActive(), g_set.bowMode.load() == 2)) return 0;
     // (Windows keeps a window to its monitor; vrcam let it be bigger in 0.159-0.160 - a window past the
     // screen's edge flickered the fog in the left eye, and one taller than ~2400 crashes the game itself at
     // its title screen: a square now fits the monitor - BigWindowTick; a bigger one: a virtual monitor.)
@@ -4452,8 +5794,11 @@ LRESULT CALLBACK GameWndProc(HWND h, UINT msg, WPARAM w, LPARAM l) {
         if (msg == WM_SETCURSOR && LOWORD(l) == HTCLIENT && CrosshairNow() && OrigSetCursor)
             if (HCURSOR x = Crosshair()) { OrigSetCursor(x); return TRUE; }
         RECT rc{};
-        if (msg >= WM_MOUSEFIRST && msg <= WM_MOUSELAST && msg != WM_MOUSEWHEEL && msg != WM_MOUSEHWHEEL && GetClientRect(h, &rc))
+        if (msg >= WM_MOUSEFIRST && msg <= WM_MOUSELAST && msg != WM_MOUSEWHEEL && msg != WM_MOUSEHWHEEL && GetClientRect(h, &rc)) {
+            vrres::Size game;   // [render] vr_resolution: the middle of the game's picture
+            if (vrres::GameSize(h, &game)) rc.right = (LONG)game.w, rc.bottom = (LONG)game.h;
             l = MAKELPARAM(rc.right / 2, rc.bottom / 2);
+        }
         if (msg == WM_INPUT) {
             RAWINPUTHEADER hdr{};
             UINT size = sizeof hdr;
@@ -4504,6 +5849,11 @@ void BigWindowTick() {
     if (!g_gameWnd || !g_gameWndProc || now - at < 2000) return;
     at = now;
     if (!IniB(L"openxr", L"square_window", false)) { SquareWhy(0, ""); return; }
+    if (xr::On() && rendersize::FromIni((int)IniF(L"render", L"vr_resolution", 0.0f), (int)IniF(L"render", L"vr_resolution_px", 0.0f)).kind !=
+                        rendersize::Kind::Desktop) {
+        SquareWhy(6, "not needed: [render] vr_resolution_px / vr_resolution gives the game a render size of its own, the window keeps its size");
+        return;
+    }
     if (!xr::On()) {
         wchar_t off[48] = L"";
         GetPrivateProfileStringW(L"openxr", L"off_after_crash", L"", off, 48, g_iniPath);
@@ -4595,15 +5945,29 @@ void BigWindowTick() {
                          side < asked ? " - no monitor holds more: a bigger square needs one (BodyWalk's Virtual Monitor) of a higher resolution" : "");
 }
 
+// [render] vr_resolution is asked for only once the hero has stood in a world 3 s, as the square window is: the game died
+// when its screen grew very tall while it built one (its title screen, 2026-10-11). Once asked it stays through the menus.
+bool HeroSettled() {
+    static ULONGLONG since = 0;
+    if (!gamestate::LocalPlayer() || !g_inWorld.load()) { since = 0; return false; }
+    const ULONGLONG now = GetTickCount64();
+    if (!since) since = now;
+    return now - since >= 3000;
+}
+
 void HookGameWindow() {
     BigWindowTick();
+    vrres::SetHeroReady(HeroSettled());
     if (g_gameWndProc) return;
     HWND h = nullptr;
     EnumWindows(FindGameWindow, (LPARAM)&h);
     RECT rc{};
     if (!h || !GetClientRect(h, &rc) || rc.right < 320 || rc.bottom < 200) return;
     g_gameWndProc = (WNDPROC)SetWindowLongPtrW(h, GWLP_WNDPROC, (LONG_PTR)&GameWndProc);
-    if (g_gameWndProc) g_gameWnd = h;
+    if (g_gameWndProc) {
+        g_gameWnd = h;
+        vrres::Attach(h);   // [render] vr_resolution: a size may be asked for this window now
+    }
 }
 
 // The mouse's turn on top of the head: with the shooter controls the pointer's
@@ -4649,6 +6013,21 @@ void ApplyRender() {
         g_renderDirty.store(false);
         LogF("vrcam: render distance - %d room rings, models out to %.0f", d2rcam::GetRenderRadius(), g_set.modelRadius.load());
     }
+}
+
+// [render] render_pool_mb and entity_pool_mb: the game's Renderer Pool (12 MB) and Entity
+// System Pool (70 MB) grown once the game has made them (cleanroom/pools). With more rooms
+// drawn the renderer's ran out in the Act 3 jungle and the game crashed (issue #7). Once per
+// game start - a change in the ini counts at the next. One line in the log.
+void ApplyPools() {
+    static bool done = false, toldWaiting = false;
+    static ULONGLONG since = 0;
+    if (done) return;
+    char line[400];
+    done = d2rcam::GrowPools((unsigned)g_set.renderPoolMb.load(), (unsigned)g_set.entityPoolMb.load(), line, sizeof line);
+    if (!since) since = GetTickCount64();
+    if (done) LogF("vrcam: %s", line);
+    else if (!toldWaiting && GetTickCount64() - since > 120000) { toldWaiting = true; LogF("vrcam: %s (still waiting)", line); }
 }
 
 void ToggleShooter() {
@@ -4803,8 +6182,9 @@ std::string BusyThreads(double spanUs) {
     const double cpu0 = CpuUs(); (void)cpu0;   // calibrates cyclesPerUs on first use
     ULONG64 one = 0; QueryThreadCycleTime(GetCurrentThread(), &one);
     const double perUs = one && CpuUs() > 0.0 ? (double)one / CpuUs() : 0.0;
+    if (perUs <= 0.0) return "?";   // before the snapshot: it was left open here (2026-10-13)
     HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
-    if (snap == INVALID_HANDLE_VALUE || perUs <= 0.0) return "?";
+    if (snap == INVALID_HANDLE_VALUE) return "?";
     THREADENTRY32 te{sizeof te};
     const DWORD pid = GetCurrentProcessId();
     for (BOOL ok = Thread32First(snap, &te); ok; ok = Thread32Next(snap, &te)) {
@@ -5771,11 +7151,22 @@ template <int S> void STDMETHODCALLTYPE HookSetCompRS(ID3D12GraphicsCommandList*
     if (t_list != cl) { t_list = cl; t_rs[0] = nullptr; }
     t_rs[1] = rs; OrigSetCompRS[S](cl, rs);
 }
+// [render] depth_fix (uitrace.cpp): the game's linear depth range in its b10, ours - here, before Note
+// copies the buffer into a camera slot; ReShade tells add-ons of a binding only after this hook ran,
+// and the slot kept the game's range (the act 2 town's line came back with the replay, 2026-10-13).
+void DepthRange(int which, ID3D12GraphicsCommandList* cl, UINT param, uint64_t va) {
+    ID3D12RootSignature* rs = t_list == cl ? t_rs[which] : nullptr;
+    if (!rs || !va || !uitrace::DepthFixFor((uint64_t)(uintptr_t)rs, param)) return;
+    uint64_t room = 0;
+    if (uint8_t* cpu = Cpu(va, &room); cpu && room >= 54 * 16) uitrace::FixDepthRangeAt(cpu);
+}
 template <int S> void STDMETHODCALLTYPE HookSetGfxCBV(ID3D12GraphicsCommandList* cl, UINT p, D3D12_GPU_VIRTUAL_ADDRESS va) {
+    DepthRange(0, cl, p, va);
     const uint64_t to = Note(0, cl, p, va);
     OrigSetGfxCBV[S](cl, p, to ? to : va);
 }
 template <int S> void STDMETHODCALLTYPE HookSetCompCBV(ID3D12GraphicsCommandList* cl, UINT p, D3D12_GPU_VIRTUAL_ADDRESS va) {
+    DepthRange(1, cl, p, va);
     const uint64_t to = Note(1, cl, p, va);
     OrigSetCompCBV[S](cl, p, to ? to : va);
 }
@@ -7238,6 +8629,8 @@ using MiniDumpFn = BOOL(WINAPI*)(HANDLE, DWORD, HANDLE, MINIDUMP_TYPE, PMINIDUMP
 MiniDumpFn g_miniDump = nullptr;
 struct Seen { DWORD tid; DWORD64 pc, target; ULONG_PTR rw; ULONGLONG at; };
 Seen g_lastAv{};   // the last access violation, first chance (it may well have been caught)
+std::atomic<uint32_t> g_avTotal{0};   // how many there were, first chance (caught ones too: each one costs its thread an unwind; [debug] frame_trace tells the ones of a pair)
+uint32_t AvTotal() { return g_avTotal.load(std::memory_order_relaxed); }
 
 // One line to d2r_vr_start.txt, with the time.
 void Line(const char* text) {
@@ -7412,6 +8805,7 @@ void Dump(EXCEPTION_POINTERS* ep) {
 LONG WINAPI Unhandled(EXCEPTION_POINTERS* ep) {
     const DWORD me = GetCurrentThreadId();
     if (g_filterThread.load() == me) return EXCEPTION_CONTINUE_SEARCH;   // a filter chained back to ours
+    logasync::Drain(150);   // [debug] log_async: the lines before the crash are in the log (a writer stuck on the host's file is not waited for long)
     DWORD none = 0;
     const bool first = g_filterThread.compare_exchange_strong(none, me);
     if (first) {
@@ -7429,6 +8823,7 @@ LONG WINAPI Vectored(EXCEPTION_POINTERS* ep) {
     if (!r) return EXCEPTION_CONTINUE_SEARCH;
     switch (r->ExceptionCode) {
     case EXCEPTION_ACCESS_VIOLATION:   // noted only: caught ones are many (SafeRead)
+        g_avTotal.fetch_add(1, std::memory_order_relaxed);
         g_lastAv = {GetCurrentThreadId(), (DWORD64)r->ExceptionAddress, r->NumberParameters >= 2 ? (DWORD64)r->ExceptionInformation[1] : 0,
                     r->NumberParameters >= 1 ? r->ExceptionInformation[0] : 0, GetTickCount64()};
         break;
@@ -7543,6 +8938,96 @@ bool XrIntoShared(D2RVR_Shared* out, const D2RVR_Shared* bridge) {
     return true;
 }
 
+// A pair as the headset's own eyes (native OpenXR's views, in a game; the runtime's frame opened by
+// XrBegin, last). A menu open: the flat picture - or with [openxr] menu_3d in F4 (MenuAs3d) still the
+// pair, the interface taken out of the picture by hud.cpp as a panel for xr.cpp (set here, before the
+// pass draws it, so the frame the menu opens has it already).
+bool NativePairBegin() {
+    const bool menu = gamestate::MenuOpen();
+    xr::SetViewsMode(NativeMode());   // F1 / F3 in 3D (views_3d): what this pair is drawn as
+    const bool native = NativeView() && (!menu || MenuAs3d()) && d2rcam::InWorld() && replay::XrBegin();
+    const bool out = menu && (native || (!xr::Running() && FlatVrMenuPanel()));   // native's panel, or FlatVR's
+    g_menu3dNow.store(out);
+    hud::SetPanelOut(out);
+    {   // [hud] low_hp_vignette: its beat moves on once a pair, so both eyes get the same opacity (F4 on native only: vr/low_hp.h InView)
+        lowhp::Where where;
+        where.cameraOn = g_enabled.load();
+        where.fullBody = FullBody();
+        where.thirdPerson = ThirdPerson();
+        where.native = native;
+        where.inWorld = g_inWorld.load();
+        float tanX = 0.0f, tanY = 0.0f;   // how wide the eyes' view is (the runtime's field of view): the vignette's size is an angle of it
+        xr::Eyes eyes{};
+        if (native && lowhp::Enabled() && NativeEyes(&eyes)) {
+            tanX = lowhp::HalfTan(eyes.tanL[0], eyes.tanR[0], eyes.tanL[1], eyes.tanR[1]);
+            tanY = lowhp::HalfTan(eyes.tanD[0], eyes.tanU[0], eyes.tanD[1], eyes.tanU[1]);
+        }
+        lowhp::Frame(where, menu, tanX, tanY);
+    }
+    return native;
+}
+
+// A pair (or, by turns, a pass) that takes more than 80 ms: one line, at most one a second, with where its
+// time went - after bearstonem/d2r-pcvr's "Frame hitch" line (MIT), made of our own clocks (vr/frame_hitch.h).
+// It tells a headset asleep, a stream stalled and a slow pass from each other, which the 10 s averages
+// cannot. Microseconds: the whole cycle from the last one's end, the game's frame before this pair, XR begin
+// (xrWaitFrame and the rest), the left pass, the right one, XR end; the runtime's shares come from xr.cpp's
+// clocks. Only clock reads on the way - everything else is done when the pair was long.
+void PairHitch(double cycle, double gap, double begin, double left, double right, double end, bool native, bool turns) {
+    if (!(cycle > hitch::kLongUs)) return;
+    static uint64_t lastTold = 0;
+    if (!hitch::Due(cycle, GetTickCount64(), &lastTold)) return;
+    hitch::Pair p;
+    p.cycle = cycle; p.gap = gap; p.begin = begin; p.left = left; p.right = right; p.end = end;
+    p.xr = native; p.turns = turns;
+    if (native) {
+        const xr::PairTiming x = xr::LastPairTiming();
+        p.wait = x.wait; p.submit = x.submit; p.fence = x.fence; p.image = x.image;
+    }
+    char line[640];
+    hitch::Format(line, sizeof line, p);
+    Log(line);
+}
+
+// [debug] frame_trace (vr/frame_trace.h): at every pair's end, with the key on - the costs the plugin's probes added up since the last
+// pair (the pose hook, the hit observer, the aim hooks, the server's lookups, the probe job, the haptic call, the log), the pair's own
+// clocks, and the situation it was in (idle, walking, a swing, a hit landed). A pair over [debug] frame_trace_ms (15) is told, the worst of
+// each second; every 10 s a summary says how the long pairs divide over the situations. Measures only: nothing of it reaches the game.
+extern float g_heroPosNow[3];   // (defined with the hero's facing, below)
+namespace ftrace {
+frametrace::Recorder g_rec;
+}
+void ftraceSetOverMs(float ms) { ftrace::g_rec.SetOverMs((double)ms); }
+void PairTrace(double cycle, double gap, double begin, double left, double right, double end, double cpu, bool native, bool turns) {
+    if (!frametrace::On()) return;
+    static float lastHero[3] = {};
+    static bool haveHero = false;
+    static uint32_t lastAv = 0;
+    frametrace::Sample s;
+    s.p.cycle = cycle; s.p.gap = gap; s.p.begin = begin; s.p.left = left; s.p.right = right; s.p.end = end; s.p.cpu = cpu;
+    s.p.xr = native; s.p.turns = turns;
+    if (native) s.p.wait = xr::LastPairTiming().wait;
+    {   // the hero moved since the last pair (the camera's look-at is on him)
+        const float dx = g_heroPosNow[0] - lastHero[0], dz = g_heroPosNow[2] - lastHero[2];
+        s.p.moving = haveHero && dx * dx + dz * dz > 1e-4f;
+        memcpy(lastHero, g_heroPosNow, sizeof lastHero);
+        haveHero = true;
+    }
+    frametrace::Global().Take(&s.s);
+    const frametrace::LastTimes last{frametrace::Global().Last(frametrace::kSweep), frametrace::Global().Last(frametrace::kPress),
+                                     frametrace::Global().Last(frametrace::kHit)};
+    s.ctx = frametrace::Classify(last, frametrace::NowNs(), s.p.moving);
+    const uint32_t av = crash::AvTotal();
+    s.caughtAv = av - lastAv;
+    lastAv = av;
+    frametrace::Recorder::Lines out;
+    ftrace::g_rec.Pair(GetTickCount64(), s, &out);
+    for (int i = 0; i < out.n; ++i) {
+        if (g_ctx != nullptr) logasync::Info(g_ctx, out.text[i]);   // (not Log: that is a probe, and the line is not what is measured)
+        crash::Mirror(out.text[i]);
+    }
+}
+
 // Native OpenXR, eyes by turns (2026-10-11): one pass a game frame, the eyes in turn. The runtime's
 // frame gets this eye fresh and the other one as it was last drawn, at the pose it was drawn with -
 // the runtime turns it to the head. No replay: the right eye is a pass of its own, never made from
@@ -7553,21 +9038,30 @@ uintptr_t DrawByTurns(int a) {
     static int eye = 1;
     static D2RVR_Shared held;
     static bool told = false;
+    static double lastEnd = 0.0;   // the long-pass line (PairHitch)
+    const double t0 = pairtime::UsNow();
     const D2RVR_Shared* live = link::Head();
     if (live) { memcpy(&held, live, sizeof held); g_pairShared.store(&held); }
     TurnTick();
     g_heldYaw.store(g_mouseYaw.load() + g_turnYaw.load());
     g_heldPitch.store(g_mousePitch.load());
     pairtime::g_drawThread.store(GetCurrentThreadId());
-    const bool native = NativeView() && !gamestate::MenuOpen() && d2rcam::InWorld() && replay::XrBegin();
+    frametrace::MarkDrawThread();   // [debug] frame_trace: the probes on this thread are told apart
+    const bool native = NativePairBegin();
+    const double tb = pairtime::UsNow();
     if (native && XrIntoShared(&held, live)) g_pairShared.store(&held);
     eye = native ? eye ^ 1 : 0;
     g_pairNow.store(native);   // its present goes to the runtime as this eye (XrPresent)
     SetEye(eye);
     d2rcam::Refresh();
     const uintptr_t r = OrigDrawGameScreen(a);
+    const double tr = pairtime::UsNow();
     if (native) replay::XrEnd();   // this eye and the other's last to the runtime
     xr::PairOver();
+    const double t2 = pairtime::UsNow();
+    if (lastEnd > 0.0) PairHitch(t2 - lastEnd, t0 - lastEnd, tb - t0, tr - tb, 0.0, t2 - tr, native, true);
+    if (lastEnd > 0.0) PairTrace(t2 - lastEnd, t0 - lastEnd, tb - t0, tr - tb, 0.0, t2 - tr, -1.0, native, true);   // [debug] frame_trace (the draw thread's CPU is not measured by turns)
+    lastEnd = t2;
     if (live || native) g_pairShared.store(nullptr);
     g_pairNow.store(false);
     if (!told && native) { told = true; Log("vrcam: openxr - eyes by turns ON - one pass a game frame, left and right in turn"); }
@@ -7584,9 +9078,24 @@ uintptr_t HookDrawGameScreen(int a) {
         return r;
     }
     if (depth || !PairWanted()) {
+        if (!depth) {   // no pair: a menu stays in the picture - but for FlatVR's panel (its eyes by turns)
+            const bool out = gamestate::MenuOpen() && FlatVrMenuPanel();
+            g_menu3dNow.store(out);
+            hud::SetPanelOut(out);
+        }
         if (!toldWhy && g_h.blit && AfrOn() && g_set.pairPerTick.load() && !FrameTimeFound()) {
             toldWhy = true;
             Log("vrcam: pair per game frame NOT possible - the frame time was not where expected (another build?); eyes go by turns");
+        }
+        if (!depth && frametrace::On()) {   // [debug] frame_trace: a plain game frame (no pair: a menu, FlatVR's own eyes) is a pass too
+            static double lastEnd = 0.0;
+            frametrace::MarkDrawThread();
+            const double t0 = pairtime::UsNow();
+            const uintptr_t plain = OrigDrawGameScreen(a);
+            const double t1 = pairtime::UsNow();
+            if (lastEnd > 0.0 && t0 - lastEnd < 5e6) PairTrace(t1 - lastEnd, t0 - lastEnd, 0.0, t1 - t0, 0.0, 0.0, -1.0, false, true);
+            lastEnd = t1;
+            return plain;
         }
         return OrigDrawGameScreen(a);
     }
@@ -7607,6 +9116,7 @@ uintptr_t HookDrawGameScreen(int a) {
     static double lastEnd = 0.0, sumGap = 0.0, sumPass[2] = {}, sumPresent[2] = {}, sumEff[2] = {}, maxPair = 0.0, sumCpu = 0.0, sumWall = 0.0;
     const double t0 = pairtime::UsNow(), c0 = pairtime::CpuUs();
     pairtime::g_drawThread.store(GetCurrentThreadId());
+    frametrace::MarkDrawThread();   // [debug] frame_trace: the probes on this thread are told apart
     if (lastEnd > 0.0) sumGap += t0 - lastEnd;
     pairtime::g_presentAt.store(0.0); pairtime::g_effSum.store(0.0);
     cbcmp::PairBegin();
@@ -7615,11 +9125,13 @@ uintptr_t HookDrawGameScreen(int a) {
     // Native OpenXR (first person, one pass two pictures): the runtime's frame - its wait paces
     // the pair, its views are the eyes the camera draws with (VrViewInner, VrProjInner). Before
     // the left pass is taken: the game's lists from other threads while it blocks stay out of it.
-    // (a panel open - inventory, stash, trade, the pause menu: the flat picture, where the head looks)
+    // (a panel open - inventory, stash, trade, the pause menu: the flat picture, where the head looks;
+    // with [openxr] menu_3d in F4 the pair still, the menu hung in front as a panel - NativePairBegin)
     // Two passes too (before the replay is on, 240 pairs into an area): the eyes then come with
     // each pass's present (XrPresent) - stereo at once, not 5 s of the flat picture eye after eye
     // (2026-10-10). Only with the world camera running, as the replay itself.
-    const bool native = NativeView() && !gamestate::MenuOpen() && d2rcam::InWorld() && replay::XrBegin();
+    const bool native = NativePairBegin();
+    const double tb = pairtime::UsNow();   // XR begin is over (the long-pair line)
     if (native && XrIntoShared(&held, live)) g_pairShared.store(&held);   // the game's own head and hands for this pair
     if (replayRight) replay::BeginLeft();
     SetEye(0);
@@ -7643,6 +9155,7 @@ uintptr_t HookDrawGameScreen(int a) {
     SetEye(1);
     d2rcam::Refresh();
     const uintptr_t r = replayRight && replay::RightFromLeft() ? leftR : OrigDrawGameScreen(a);
+    const double tr = pairtime::UsNow();   // the right pass is over (the long-pair line)
     if (native) replay::XrEnd();   // both eyes to the runtime, or an empty frame if one went missing
     xr::PairOver();
     *dt = keep; *rawDt = keepRaw;
@@ -7652,6 +9165,8 @@ uintptr_t HookDrawGameScreen(int a) {
     sumPass[1] += t2 - t1;
     if (const double pa = pairtime::g_presentAt.load(); pa > t1) sumPresent[1] += t2 - pa;
     sumEff[1] += pairtime::g_effSum.load();
+    if (lastEnd > 0.0) PairHitch(t2 - lastEnd, t0 - lastEnd, tb - t0, t1 - tb, tr - t1, t2 - tr, native, false);
+    if (lastEnd > 0.0) PairTrace(t2 - lastEnd, t0 - lastEnd, tb - t0, t1 - tb, tr - t1, t2 - tr, pairtime::CpuUs() - c0, native, false);   // [debug] frame_trace
     if (lastEnd > 0.0) maxPair = std::max(maxPair, t2 - lastEnd);
     lastEnd = t2;
     sumCpu += pairtime::CpuUs() - c0; sumWall += t2 - t0;
@@ -7976,7 +9491,7 @@ bool ApplyView(const char** said) {
     // camera where the head is in the room (TableCamera), the hero whole as from
     // behind; the void black, the headset shows the room there (docs/plan_tabletop_mr.md).
     const bool table = vr && v == 3;   // the game on the floor is F3 since vr_mode_order 2 (as TableView)
-    const bool on = v != 1 || (vr && g_set.topPersp.load());
+    const bool on = v != 1 || (vr && (g_set.topPersp.load() || xr::Views3dOn()));   // (F1 through our camera: [top] perspective, or native OpenXR's 3D F1)
     if (on && !AllHooksIn()) InstallHooks();
     if (on && !g_h.camera) { *said = "vrcam: no camera yet - its hooks are not in (see the log)"; return false; }
     g_view.store(v == 2 || table || (vr && v == 1) ? 2 : 1);
@@ -8037,6 +9552,7 @@ void Recenter() {
     g_facingReset.store(true);   // and the hero's facing is looked for again
     g_tableReanchor.store(true); // and the table view puts the game in front of the head again
     xr::Recenter();              // and native OpenXR's straight ahead taken from the next views
+    bowdrawwire::NoteRecenter(); // and a bow draw under way ends
 #if D2RVR_FIRST_PERSON
     skel::ResetGrip();           // and the weapon's grip taken again
 #endif
@@ -8739,6 +10255,7 @@ bool CameraYawInModel(float* out, float* eyeModel, bool* eyeOk) {
     if (!ok && !held) return false;
     float rows[3][3];
     if (!YawFromMatrix(m, out, eyeModel, eyeOk, rows)) return false;
+    if (g_set.bowLatency.load(std::memory_order_relaxed)) { g_latYaw.store(atan2f(rows[2][0], rows[2][2]) * 57.2957795f); g_latYawS.store(throwborn::NowS()); }
     AcquireSRWLockShared(&g_stickLock); const StickFrame f = g_stickFrame; ReleaseSRWLockShared(&g_stickLock);
     // Facing diagnostics, four times a second while on: the camera's yaw, the
     // model matrix's facing in the world, the yaw handed to the body, and the
@@ -8765,16 +10282,233 @@ bool CameraYawInModel(float* out, float* eyeModel, bool* eyeOk) {
 
 // For the skeleton hook, on every pose: the controllers from the block the
 // camera reads its head from (during a pair, the pair's own copy).
+// The head sample the hands came with and the head in BodyWalk's room (OpenXR stage axes): what puts
+// the controllers in the room for a weapon with weight (vr/weight.cpp). No room from BodyWalk: the head
+// stands at the room's middle, turned as BodyWalk turned it last.
+void HeadInRoom(const D2RVR_Shared* sh, skel::Input* in) {
+    in->sample = sh->counter;
+    if (sh->roomMagic == D2RVR_ROOM_MAGIC) {
+        memcpy(in->headRoom, sh->headRoom, sizeof in->headRoom);
+        in->headYawDeg = sh->headYawRoomDeg;
+    } else {
+        in->headRoom[0] = 0.0f; in->headRoom[1] = sh->headHeightM; in->headRoom[2] = 0.0f;
+        in->headYawDeg = sh->headYawDeg;
+    }
+}
+
 bool FreshHands(skel::Input* in) {
     const D2RVR_Shared* sh = Shared();
     if (!sh || sh->version != D2RVR_SHARED_VERSION || !sh->headValid) return false;
+    HeadInRoom(sh, in);
     in->handsValid = sh->handsValid;
     memcpy(in->hand[0], sh->rightHand, sizeof in->hand[0]); memcpy(in->hand[1], sh->leftHand, sizeof in->hand[1]);
     memcpy(in->rot[0], sh->rightRot, sizeof in->rot[0]); memcpy(in->rot[1], sh->leftRot, sizeof in->rot[1]);
     in->userHeadM = UserEyeHeightM();   // standing, seated or not (see TrueScale)
     in->grip[0] = sh->gripMagic == D2RVR_GRIP_MAGIC ? sh->rightGrip : -1.0f;
     in->grip[1] = sh->gripMagic == D2RVR_GRIP_MAGIC ? sh->leftGrip : -1.0f;
+    // [gameplay] melee_touch: which hand sample this pose is made from, and the world it stands in
+    in->poseStamp = sh->sampleStamp;
+    in->havePoseStamp = sh->sampleStampMagic == D2RVR_SAMPLE_STAMP_MAGIC;
+    in->worldEpoch = g_gen.load();
+    meleetouch::NoteHands(sh, in->worldEpoch);
+    // [weight]: the swap gesture's claim of a grip as of THIS pose (the 10 ms copy may be a press old): that grip takes no weapon off the
+    // floor (it does take one stowed on the back); and the grips as the controllers have them (a grip on the weapon is taken from the
+    // layout, so it reads as let go in in->grip)
+    if (in->weight.on) {
+        for (int side = 0; side < 2; ++side) in->weight.claimed[side] = shoulderwire::Claims(side);
+        float raw[2];
+        in->weight.haveRawGrip = weightwire::RawGrips(raw);
+        if (in->weight.haveRawGrip) { in->weight.rawGrip[0] = raw[0]; in->weight.rawGrip[1] = raw[1]; }
+    }
+    // [hands] shield_fist: the left hand's fingers follow the grip as the controller has it (not what the layout kept after its takes);
+    // no native frame: the shared block's grip is the real one (-1 = skeletons use Input::grip[1])
+    in->shieldGrip = -1.0f;
+    if (in->shieldFist) {
+        float raw[2];
+        if (weightwire::RawGrips(raw)) in->shieldGrip = raw[1];
+    }
     return true;
+}
+
+// The hero's animation mode as the game's client unit has it (Diablo II's unit modes: 1 neutral, 7 and 8 the attacks, 11 the throw), -1 when the unit
+// is not known: it tells [weight] when the game's own throw animation is over (weight::SetHeroModeSource). The same unit the shield's smite uses.
+int HeroAnimMode() {
+    uintptr_t hero = (uintptr_t)g_heroUnit.load();
+    if (!hero || !IsHeroUnit((void*)hero)) hero = (uintptr_t)g_heroSeen.load();
+    if (!hero || !IsHeroUnit((void*)hero)) {
+        const uintptr_t p = (uintptr_t)gamestate::LocalPlayer();   // the SDK's handle of the local player, when it is the unit itself
+        if (p > 0x10000 && IsHeroUnit((void*)p)) hero = p;
+        else return -1;
+    }
+    uint32_t mode = 0;
+    return SafeRead(&mode, (const void*)(hero + 0xC), sizeof mode) && mode < 64 ? (int)mode : -1;
+}
+
+// [debug] bow_latency (vr/bow_latency.h): for every shot the draw gesture releases, one log line - the wire's press, the pad's A, the hero's mode, the body's turn, the server's
+// missile create (throw_born.cpp's read-only look) and the first missile the client shows - as ms after the release. Read only; the camera thread and the input hook leave
+// their stamps (BowLatencyPad, g_latYaw), this runs on the update thread.
+void BowLatencyTick() {
+    static bowlatency::Tracker tr;
+    static bool wasOn = false;
+    static unsigned shots = 0;
+    static double yawStamp = 0.0, lastCreate = 0.0;
+    static uint32_t known[96];
+    static size_t nKnown = 0;
+    static ULONGLONG scanAt = 0;
+    const bool on = g_set.bowLatency.load();
+    if (on != wasOn) {
+        wasOn = on;
+        throwborn::Observe(on);
+        tr.Cancel();
+        shots = bowdrawwire::ShotCount();
+        if (on) Log("bow latency: on ([debug] bow_latency) - one line for every bow shot of the draw gesture: ms after the release to the wire's press, the pad's A, the hero's attack mode, the body's turn, the server's arrow create and the client's missile");
+    }
+    if (!on) return;
+    throwborn::Install();   // (the hook goes in for the read-only look too, once the game's code is there)
+    const double now = throwborn::NowS();
+    if (const double s = g_latYawS.load(); s != yawStamp) { yawStamp = s; tr.Yaw(s, g_latYaw.load()); }
+    tr.HeroMode(now, HeroAnimMode());
+    auto tell = [&](const bowlatency::Result& r) {
+        char line[1200];
+        bowlatency::Line(r, throwborn::Observing(), line, sizeof line);
+        Log(line);
+    };
+    if (const unsigned count = bowdrawwire::ShotCount(); count != shots) {   // a release: the clock starts at it
+        shots = count;
+        if (tr.Active()) tell(tr.Finish());
+        double rel = 0.0, press = 0.0;
+        bowdrawwire::ShotTimes(&rel, &press);
+        tr.Begin(rel);
+        tr.WirePress(press);
+        lastCreate = rel - 0.001;
+        meleetouch::MissileView mv[96];   // the missiles the client has now: a new one is the arrow's
+        const size_t n = meleetouch::MissileScan(mv, 96);
+        nKnown = std::min<size_t>(n, 96);
+        for (size_t i = 0; i < nKnown; ++i) known[i] = mv[i].id;
+        scanAt = 0;
+    }
+    if (!tr.Active()) return;
+    const double t0 = tr.Started();
+    if (const double d = g_latPadDownS.load(); d >= t0) {
+        tr.PadA(d, true);
+        if (const double u = g_latPadUpS.load(); u >= d) tr.PadA(u, false);
+    }
+    {
+        throwborn::Made made[8];
+        const size_t n = throwborn::CreatesSince(lastCreate + 1e-6, made, 8);
+        for (size_t i = 0; i < n; ++i) {
+            bowlatency::AnimInfo anim;
+            if (made[i].animRead) bowlatency::ParseAnimRecord(made[i].anim, made[i].animPtr, &anim);
+            tr.Created(made[i].at, made[i].missileClass, made[i].flags, anim);
+            lastCreate = std::max(lastCreate, made[i].at);
+        }
+    }
+    if (tr.NeedClientAnim() && bowlatency::IsActionMode(HeroAnimMode())) {   // the hero's unit has gone into its attack: the animation record it points at (+0x70)
+        uintptr_t hero = (uintptr_t)g_heroUnit.load();
+        if (!hero || !IsHeroUnit((void*)hero)) hero = (uintptr_t)g_heroSeen.load();
+        uintptr_t rec = 0;
+        uint8_t bytes[bowlatency::kAnimRecordSize];
+        bowlatency::AnimInfo anim;
+        if (hero && SafeRead(&rec, (const void*)(hero + 0x70), sizeof rec) && rec > 0x10000 && SafeRead(bytes, (const void*)rec, sizeof bytes))
+            bowlatency::ParseAnimRecord(bytes, rec, &anim);
+        tr.ClientAnim(anim);
+    }
+    if (GetTickCount64() - scanAt >= 30) {
+        scanAt = GetTickCount64();
+        meleetouch::MissileView mv[96];
+        const size_t n = meleetouch::MissileScan(mv, 96);
+        for (size_t i = 0; i < n; ++i) {
+            bool old = false;
+            for (size_t k = 0; k < nKnown && !old; ++k) old = known[k] == mv[i].id;
+            if (!old) { tr.ClientMissile(now, (int)mv[i].cls); break; }
+        }
+    }
+    if (tr.Over(now)) tell(tr.Finish());
+}
+
+// [bow] quick_release (vr/bow_quick.cpp): ticked about 20 times a second from the update thread - the action-frame flag of the hero's bow attack row is moved while he is in VR first
+// person with a bow in hand, and put back the moment any of that stops. The hero's unit mode tells whether he is mid-attack (a flag is not moved under one).
+void BowQuickTick() {
+    static ULONGLONG at = 0;
+    const ULONGLONG now = GetTickCount64();
+    if (now - at < 50) return;
+    at = now;
+    const bool want = g_enabled.load() && g_inWorld.load() && FullBody() && gamestate::WeaponType() == D2RVR_TYPE_BOW;
+    bowquick::Tick(want, skel::HeroClass(), bowlatency::IsActionMode(HeroAnimMode()), now);
+}
+
+// [debug] throw_trace (vr/throw_trace.h): for 5 s after every released throw, every ~40 ms, the hero's mode and the client's missiles (read only) are diffed
+// into log lines: the hero's throw animation, the potion's missile (whether the game made one at all, how far it flew, when it vanished), and whether any
+// effect missile (the explosion) appeared where it ended.
+void ThrowTraceTick() {
+    static throwtrace::Tracker tracker;
+    static uint64_t armedFor = 0;
+    static ULONGLONG lastRun = 0;
+    if (!g_set.throwTrace.load()) { tracker.Stop(); return; }
+    const uint64_t rel = throwwire::LastThrowTickMs();
+    if (rel && rel != armedFor && GetTickCount64() - rel < 2000) {
+        armedFor = rel;
+        tracker.Arm((double)rel / 1000.0);
+        Log("throw trace: a throw was released - watching the hero and the missiles for 5 s ([debug] throw_trace)");
+    }
+    if (!tracker.Active()) return;
+    const ULONGLONG now = GetTickCount64();
+    if (now - lastRun < 40) return;
+    lastRun = now;
+    meleetouch::MissileView mv[96];
+    throwtrace::Missile mm[96];
+    const size_t n = meleetouch::MissileScan(mv, 96);
+    for (size_t i = 0; i < n; ++i) {
+        mm[i].id = mv[i].id; mm[i].cls = mv[i].cls; mm[i].mode = mv[i].mode; mm[i].flags = mv[i].flags;
+        mm[i].x = mv[i].x; mm[i].z = mv[i].z; mm[i].life = mv[i].life;
+    }
+    throwtrace::Snapshot snap;
+    snap.t = (double)now / 1000.0;
+    uint32_t hm = 0;
+    snap.heroModeKnown = GestureHeroMode(&hm);
+    snap.heroMode = hm;
+    snap.heroKnown = meleetouch::UnitPlace((uintptr_t)g_heroUnit.load(), &snap.hx, &snap.hz);
+    snap.m = mm;
+    snap.n = n;
+    throwtrace::Line lines[24];
+    const size_t k = tracker.Step(snap, lines, 24);
+    for (size_t i = 0; i < k; ++i) Log(lines[i].text);
+}
+
+// [gameplay] melee_touch (melee_touch.cpp): what the module cannot know - a game area, first person on the controllers, no
+// panel - and the weapon in hand; it does the rest from the skeleton hook's posed weapon and hand samples.
+void MeleeTouchTick() {
+#if D2RVR_FIRST_PERSON
+    ThrowTraceTick();
+    BowLatencyTick();   // [debug] bow_latency
+    BowQuickTick();     // [bow] quick_release
+    {   // [hands] throw_autoaim_deg: the monsters near the hero and the server's verdicts, while a thrown weapon is in hand (the touch stands down for it)
+        const bool want = meleetouch::ThrowWanted() && ThrownInHand() && g_enabled.load() && g_inWorld.load() && !gamestate::MenuOpen();
+        meleetouch::ThrowPoll(want ? (uintptr_t)g_heroUnit.load() : 0);
+        // which pad button holds the game's Throw skill: the wheel's reads of the controller's slots, kept going for it when the wheel is off
+        if (throwwire::WantsSlots() && !skillwheel::Enabled()) wheelgame::Tick(true, false);
+    }
+    meleetouch::Frame f;
+    f.ok = g_enabled.load() && g_inWorld.load() && !ThirdPerson() && !Overhead() && g_eyeOk.load() && !gamestate::MenuOpen() && ArmsMode() == 2;
+    f.weaponType = gamestate::WeaponType();
+    f.twoHandsOn = (gamestate::TwoHanded() & D2RVR_TWO_HANDS_ON) != 0;
+    f.epoch = g_gen.load();
+    f.session = gamestate::LocalPlayer();
+    f.upm = std::max(1.0f, ViewHeight()) / UserEyeHeightM();
+    {   // the weapon as drawn: the view the skeleton hook's bones are hung in (the red line's frame), and what each hand's slot holds
+        AcquireSRWLockShared(&g_stickLock); const StickFrame sf = g_stickFrame; ReleaseSRWLockShared(&g_stickLock);
+        f.headOk = sf.valid;
+        for (int i = 0; i < 3; ++i) { f.camR[i] = sf.camR[i]; f.camF[i] = sf.camF[i]; f.eyeWorld[i] = g_eyeWorld[i].load(); }
+        f.kind[0] = gamestate::HandKind(0);
+        f.kind[1] = gamestate::HandKind(1);
+        f.code[0] = gamestate::HandCode(0);
+        f.code[1] = gamestate::HandCode(1);
+    }
+    // [weight] (vr/weight.cpp): the weapon is carried by the hand that holds it; let go (falling, lying, flying back) it strikes nothing
+    f.weightPlaced = weight::Placed();
+    f.weightCarrying = weight::CarryingHand();
+    meleetouch::Tick(f);
+#endif
 }
 
 void PushArms() {
@@ -8784,6 +10518,7 @@ void PushArms() {
     const D2RVR_Shared* sh = Shared();
     skel::Input in;
     if (sh && sh->version == D2RVR_SHARED_VERSION && sh->headValid) {
+        HeadInRoom(sh, &in);
         in.handsValid = sh->handsValid;
         memcpy(in.hand[0], sh->rightHand, sizeof in.hand[0]); memcpy(in.hand[1], sh->leftHand, sizeof in.hand[1]);
         memcpy(in.rot[0], sh->rightRot, sizeof in.rot[0]); memcpy(in.rot[1], sh->leftRot, sizeof in.rot[1]);
@@ -8843,7 +10578,9 @@ void PushArms() {
     // sits in the right slot, and the left is free only in staff_free_left
     // (the hook then keeps it from a fist while it is on the shaft).
     in.fist = own && g_set.fist.load();
+    in.shieldFist = own && g_set.shieldFist.load() && viewgate::F4() && gamestate::LeftShield();   // [hands] shield_fist: F4 only
     for (int c = 0; c < 8; ++c) { in.fistClose[c] = g_set.fistClose[c].load() * 0.01f; in.fistOpen[c] = g_set.fistOpen[c].load() * 0.01f; }
+    for (int side = 0; side < 2; ++side) in.fistCap[side] = engitem::FistCap(side);   // a belt potion in it: round the bottle, not a full fist
     {
         const uint32_t held = gamestate::HandsHeld(), type = gamestate::WeaponType();
         const bool xbowHeld = type == D2RVR_TYPE_CROSSBOW && in.staff;   // held as the staff, see XbowLikeStaff
@@ -8855,6 +10592,92 @@ void PushArms() {
         const bool rightHolds = in.staff && in.staffFreeLeft;
         for (int side = 0; side < 2; ++side)
             in.handFree[side] = rightHolds ? side == 1 : !(held & (1u << side)) && !ranged && !staffBoth;
+    }
+    // [weight] (vr/weight.cpp): a melee weapon held alone (not a second weapon in the other hand) is a body
+    // of its own - heavy, taken by a hand where its grip closes on the shaft, passed from hand to hand. The
+    // staff's and the two-handed weapons' own ways (the left hand on the shaft or hilt) give way to it.
+    {
+        skel::Input::Weight& w = in.weight;
+        const uint32_t type = gamestate::WeaponType(), two = gamestate::TwoHanded(), held = gamestate::HandsHeld();
+        using K = heft::hold::Kind;
+        int kind = -1;
+        switch (type) {
+        case D2RVR_TYPE_SWORD: kind = (int)K::Sword; break;
+        case D2RVR_TYPE_AXE: kind = (int)K::Axe; break;
+        case D2RVR_TYPE_MACE: kind = (int)K::Mace; break;
+        case D2RVR_TYPE_SCEPTER: kind = (int)K::Scepter; break;
+        case D2RVR_TYPE_WAND: kind = (int)K::Wand; break;
+        case D2RVR_TYPE_STAFF: kind = (int)K::Staff; break;
+        case D2RVR_TYPE_POLEARM: kind = (int)K::Polearm; break;
+        case D2RVR_TYPE_SPEAR: kind = (int)K::Spear; break;
+        case D2RVR_TYPE_DAGGER: kind = (int)K::Dagger; break;
+        case D2RVR_TYPE_THROWING: kind = (int)K::Throwing; break;
+        case D2RVR_TYPE_JAVELIN: kind = (int)K::Javelin; break;
+        case D2RVR_TYPE_OTHER: kind = (int)K::Other; break;
+        default: break;   // nothing held, bows and crossbows, claws (on the fist), orbs (in the palm)
+        }
+        // F4 only (vr/view_gate.h): in.mode == 2 is the first-person body on the controllers, and the view test is asked here too
+        w.on = own && in.mode == 2 && viewgate::F4() && g_set.weightOn.load() && kind >= 0 && !(two & D2RVR_LEFT_WEAPON);
+        if (w.on) {
+            w.kind = kind;
+            w.twoHanded = (two & D2RVR_TWO_HANDED) != 0;
+            w.slot = (int)(gamestate::WeaponHand() & 1u);
+            w.otherBusy = (held & (1u << (w.slot ^ 1))) != 0;
+            // a hand with a belt potion (or one lit to be taken) takes nothing; one whose grip is the weapon swap's (behind a shoulder) takes
+            // nothing off the floor and calls nothing back (claimed) - but takes a weapon stowed on the back
+            for (int side = 0; side < 2; ++side) {
+                w.busy[side] = engitem::BeltBusy(side);
+                w.claimed[side] = shoulderwire::Claims(side);
+            }
+            // The weight model's shaft is the weapon bone AS DRAWN with the very ends the hit-by-touch blade has (bladeshape::ForItem, tuned): the bone's Y
+            // toward the tip on the side the blade says (a dagger's blade runs along -Y), the wood so far ahead of the bone's origin and so far behind it
+            // (a short staff 0.66 m each way, the bone being the middle of its grip). The old axis choice ([hands] staff_shaft_axis, spear_shaft_axis,
+            // axe_shaft_axis, sword_hilt_axis) belongs to the logic of weight off.
+            const meleetouch::BladeExtent be = meleetouch::BladeFor(gamestate::HandCode(w.slot), type, (two & D2RVR_TWO_HANDS_ON) != 0);
+            w.tipAxis = be.tipSign < 0 ? -2 : 2;
+            w.shaftTipM = be.tipM;
+            w.shaftButtM = be.buttM;
+            w.backTakeM = g_set.weightBackTakeCm.load() * 0.01f;
+            w.feel = g_set.weightFeel.load() * 0.01f;
+            w.strength = g_set.weightStrength.load() * 0.01f;
+            w.gravity = g_set.weightGravity.load() * 0.01f;
+            w.damping = g_set.weightDamping.load() * 0.01f;
+            w.gravityFeel = g_set.weightGravityFeel.load();
+            w.grabM = g_set.weightGrabCm.load() * 0.01f;
+            w.letGoM = g_set.weightLetGoCm.load() * 0.01f;
+            for (int k = 0; k < 3; ++k) w.fist[k] = g_set.weightFist[k].load() * 0.01f;
+            w.gripFit = g_set.weightGripFit.load();
+            w.gripLikeBase = g_set.weightGripLikeBase.load();
+            w.gripFingers = g_set.weightGripFingers.load();
+            w.attachApart = g_set.weightAttachApart.load();
+            for (int k = 0; k < 6; ++k) { w.gripHand[0][k] = g_set.weightGripHand[0][k].load(); w.gripHand[1][k] = g_set.weightGripHand[1][k].load(); }
+            // [weight] to_back: a long weapon (a staff, a spear, a polearm, a javelin, anything two-handed) lies diagonally across the back, a short one lower
+            w.afterDrop = g_set.weightAfterDrop.load();
+            w.stowAfterS = g_set.weightToBackMs.load() * 0.001f;
+            {   // the ground the player sees under the hero: how far the head is over it (vr/weight_floor.h) - a let-go weapon falls to THAT, not to the room's floor
+                const float upmWorld = std::max(1.0f, ViewHeight()) / UserEyeHeightM();
+                w.headAboveGroundM = weightfloor::HeadAboveGroundM(g_eyeOk.load() ? g_eyeWorld[1].load() : std::nanf(""), g_heroPosNow[1], upmWorld, UserEyeHeightM());
+            }
+            w.takeHaptic = g_set.weightTakeHaptic.load() ? g_set.weightTakeHapticPct.load() * 0.01f : 0.0f;
+            w.recallAny = g_set.weightRecallAny.load();
+            w.thrownFlyMs = g_set.weightThrownFlyMs.load();
+            w.throwReachPct = g_set.weightThrowReachPct.load();
+            w.throwMaxCells = g_set.weightThrowMaxCells.load();
+            w.unitsPerMetre = std::max(1.0f, ViewHeight()) / UserEyeHeightM();   // world units per metre at the hero's size (a cell is two units): the cap in metres
+            w.thrownModel = g_set.weightThrownModel.load();
+            w.thrownHandoffMs = g_set.weightThrownHandoffMs.load();
+            w.thrownHandEmptyMs = g_set.weightThrownHandEmptyMs.load();
+            w.thrownPotion = gamestate::HandIsThrowPotion(w.slot);   // a throwing potion in the hand: with potion_model_flies its model flies to the landing (vr/weight_throw.h)
+            w.potionFlies = g_set.weightPotionFlies.load();
+            w.slide = g_set.weightSlide.load();
+            w.backLong = w.twoHanded || type == D2RVR_TYPE_STAFF || type == D2RVR_TYPE_POLEARM || type == D2RVR_TYPE_SPEAR || type == D2RVR_TYPE_JAVELIN;
+            for (int k = 0; k < 6; ++k) w.back[k] = (w.backLong ? g_set.weightBackLong[k] : g_set.weightBackShort[k]).load();
+            in.staff = false;
+            in.staffFreeLeft = false;
+            in.leftHilt = false;
+            // a hand is free when its slot is empty; the slot's own hand when it lets go of the weapon (skeletons)
+            for (int side = 0; side < 2; ++side) in.handFree[side] = !(held & (1u << side));
+        }
     }
     {   // staff_free_left: once per staff taken up, what the hook made of it
         static bool told = false;
@@ -8887,6 +10710,68 @@ void PushArms() {
     }
     in.weaponType = (int)gamestate::WeaponType();
     in.weaponSide = (int)gamestate::WeaponHand();
+    // The bow's own work - the rig pose, the string's place, the string hand's pose - is F4's alone: the other views keep the game's bow.
+    in.bowRig = own && FullBody() && g_set.bowRigPose.load() && gamestate::WeaponType() == D2RVR_TYPE_BOW;   // [bow] rig_pose
+    in.bowRigGrip = g_set.bowRigGrip.load();
+    in.bowString = own && bowdrawwire::WantsModelString() && gamestate::WeaponType() == D2RVR_TYPE_BOW;   // [hands] bow_draw: the touch point off the posed bow
+    in.bowHandPose = own && FullBody() && g_set.bowHandPose.load() && gamestate::WeaponType() == D2RVR_TYPE_BOW;   // [bow] hand_pose: relaxed, hooked on the string
+    in.bowAim = own && FullBody() && g_set.bowAimAlong.load() && gamestate::WeaponType() == D2RVR_TYPE_BOW;   // [bow] aim_along_hands: F4 only like the rest of the bow's work
+    in.bowAimBlendMs = g_set.bowAimBlendMs.load();
+    in.bowAimRoll = g_set.bowAimRoll.load();
+    for (int i = 0; i < 3; ++i) in.bowRestCm[i] = g_set.bowRestCm[i].load();   // [bow] arrow_rest_*: with the rig pose (the arrow is ours), F4 only like it
+    in.bowRest = in.bowRig && (in.bowRestCm[0] != 0.0f || in.bowRestCm[1] != 0.0f || in.bowRestCm[2] != 0.0f);
+    in.bowRestClear = g_set.bowRestClear.load();
+    in.bowAxis = own && FullBody() && bowdrawwire::DebugWanted() && gamestate::WeaponType() == D2RVR_TYPE_BOW;   // [debug] bow_vectors: the bow's real axis drawn
+    in.bowHook = g_set.bowHook.load();
+    in.bowHookGame = g_set.bowHookGame.load();
+    in.bowHookCurl = g_set.bowHookCurl.load();
+    in.bowHookThumbDeg = g_set.bowHookThumbDeg.load();
+    in.bowStringAnchor = g_set.bowStringAnchor.load();
+    for (int i = 0; i < 3; ++i) in.bowAnchorCm[i] = g_set.bowAnchorCm[i].load();
+    // the hand opposite the bow's aim hand (0 right, 1 left): the hand pose's string hand, and - the bow being in the other - where the
+    // bow's rig and the aim look for the bow when the attach bones cannot tell (an Amazon's quiver shows both)
+    in.bowStringSide = in.bowHandPose || in.bowRig || in.bowString || in.bowAim || in.bowAxis ? AimHand() ^ 1 : -1;
+    if (in.bowString) {   // a held bow that is not the hunter's rig: its layout, once, for the rig work
+        static std::string toldProbe;
+        const std::string probe = skel::BowProbe();
+        if (!probe.empty() && probe != toldProbe) { toldProbe = probe; LogF("vrcam: bow rig: %s", probe.c_str()); }
+    }
+    if (in.bowAim) {   // [bow] aim_along_hands: once for each change, what the aim did (its angle is in the debug's five-a-second line)
+        static const char* toldAim = nullptr;
+        const char* why = nullptr;
+        skel::BowAimState(nullptr, nullptr, nullptr, &why);
+        static std::string toldWho;
+        const std::string who = skel::BowAimWho();   // which wrist it took the bow to be on, and by what
+        if (why != toldAim || who != toldWho) { toldAim = why; toldWho = who; Log(("vrcam: bow aim: " + std::string(why ? why : "") + (who.empty() ? "" : " (" + who + ")")).c_str()); }
+    }
+    if (in.bowRig || in.bowString || in.bowAim || in.bowAxis) {   // every bow skeleton the game poses, whose it is and what the rig did with it: on change, twice a second at most
+        static std::string toldBows;
+        static ULONGLONG toldBowsAt = 0;
+        if (GetTickCount64() - toldBowsAt >= 500) {
+            toldBowsAt = GetTickCount64();
+            const std::string bows = skel::BowRigWho();
+            if (bows != toldBows) { toldBows = bows; Log(("vrcam: bow skeletons: " + bows).c_str()); }
+        }
+    }
+    if (in.bowHandPose) {   // [bow] hand_pose: once for each change, what the string hand's pose did
+        static std::string told;
+        const std::string now = skel::BowHandPoseDiag();
+        if (now != told) { told = now; LogF("vrcam: bow hand pose: %s", now.c_str()); }
+    }
+    {   // [bow] rig_pose: once for each change, what the bow's rig made of the drawn string
+        static const char* told = nullptr;
+        const char* now = in.bowRig ? skel::BowRigStatus() : nullptr;
+        if (now != told) { told = now; if (now) LogF("vrcam: bow rig pose: %s", now); }
+        if (in.bowRig) { const std::string note = skel::BowRigTakeNote(); if (!note.empty()) Log(("vrcam: " + note).c_str()); }   // which bow, which layout, once
+        static std::string toldArrow;
+        if (in.bowRig) {   // what the game's own pose does with the arrow bone, when its range changes
+            std::string a = skel::BowRigDiag();
+            a.resize(std::min<size_t>(a.size(), a.find(" (") == std::string::npos ? a.size() : a.find(" (")));
+            if (a != toldArrow) { toldArrow = a; Log(("vrcam: bow rig pose: " + a).c_str()); }
+        }
+    }
+    in.posedWeapon = meleetouch::Wanted() && FullBody();
+    in.dualBlades = in.posedWeapon && bladeshape::DualWield(gamestate::HandKind(0), gamestate::HandKind(1));   // a blade in each hand: both bones kept   // [gameplay] melee_touch (F4 only): skel::PosedWeapon is made only while asked for
     // The grip is taken again for any change of what the two hands hold, not only of the kind: a barbarian's
     // axe and shield, then the shield for a dagger - still "Axe", the dagger hung where the shield's stance had
     // the left attach bone, out of the left hand (2026-10-06). Kept in the bits above the kind's own key.
@@ -8957,7 +10842,9 @@ void PushArms() {
         Log(ls > 0 ? "vrcam: bind pose read - the body above the pelvis can be held still"
                    : "vrcam: the bind pose did not read as a pose - [body] lock stays off");
     }
-    in.scale = g_set.armScale.load();
+    // a measured arm span fits the arm bones to it (skeletons.cpp) and the hands stay 1:1: [arms] scale counts as 1 then
+    in.armSpanM = calib::MeasuredSpanM();
+    in.scale = in.armSpanM > 0.0f ? 1.0f : g_set.armScale.load();
     in.wrist = g_set.wrist.load();
     in.wristDeg[0] = g_set.wristPitch.load(); in.wristDeg[1] = g_set.wristYaw.load(); in.wristDeg[2] = g_set.wristRoll.load();
     float yaw = 0.0f;
@@ -9106,6 +10993,13 @@ float DayNightMul() {
 // down (2026-10-05). [render] game_height_fog=0 (the default) finds each loaded
 // area's definitions in the heap and sets their density to 0; the game's frame
 // fog follows on the next frame. =1 puts back what was taken.
+// Its depth fog (depthFogDensity) goes too: every area in the open air has it
+// (act 4's plains at 10), from a plane 870..900 out - its camera's distance from
+// the ground, so what lies farther than the middle of the picture is fogged. In
+// the square window that is a grey haze in all four corners, from above (F1) as
+// well; from our camera it lay over the near ground in the bottom corners and up
+// the sides, the hand in front of it clear (act 1, the user's screenshots,
+// 2026-10-12). [render] game_depth_fog=0 (the default) sets it to 0, =1 puts it back.
 // A definition, as floats from the depth fog's colour: colour (3), density,
 // plane; the height fog's colour (3), density, plane - 7 floats before it the
 // volumetric fog's player radius, 5 before its anisotropy. Game areas have the
@@ -9113,7 +11007,12 @@ float DayNightMul() {
 namespace gamefog {
 struct Patch { float* density; float was; };
 SRWLOCK g_lock = SRWLOCK_INIT;
-std::vector<Patch> g_patched;   // what was set to 0, to put back
+// what was set to 0, to put back: [0] the height fog's density, [1] the depth fog's
+enum { kHeight, kDepth };
+constexpr int kField[2] = {8, 3};   // the density's place in the definition
+std::vector<Patch> g_patched[2];
+bool KeepHeight() { return g_set.gameHeightFog.load(); }
+bool KeepDepth() { return g_set.gameDepthFog.load(); }
 // [debug] fog_poke: "k=v k=v", fields by their place from the depth fog's colour (as the
 // log's "fog def" lines number them, | = 0) set to v in every loaded definition - to
 // find which field draws the act 1 caves' veil without restarting. Taken back when changed.
@@ -9130,7 +11029,7 @@ std::atomic<bool> g_busy{false};
 // (planes 105 and 121, a 1 where the density sits) - found by a test, 2026-10-05.
 bool Looks(const float* f) {
     if (!(f[4] >= 500.0f && f[4] <= 5000.0f && f[9] >= 1.0f && f[9] <= 1000.0f)) return false;
-    if (!(f[3] >= 0.0f && f[3] <= 2.0f && f[8] >= 0.0f && f[8] <= 10.0f)) return false;
+    if (!(f[3] >= 0.0f && f[3] <= 20.0f && f[8] >= 0.0f && f[8] <= 10.0f)) return false;   // act 4's plains: depth 10
     for (int k : {0, 1, 2, 5, 6, 7, -17, -16, -15})
         if (!(f[k] >= 0.0f && f[k] <= 1.0f)) return false;
     for (int k : {-14, -13, -12})
@@ -9140,34 +11039,38 @@ bool Looks(const float* f) {
            f[-10] >= 0.0f && f[-10] <= 10.0f && f[-8] >= 0.0f && f[-8] <= 10.0f;
 }
 
-// One heap region: each definition with a height fog gets density 0. -1 if the
-// region went away under the scan.
+// One heap region: each definition's height fog and depth fog, those `take` says,
+// get density 0 (in out[kind]). How many, or -1 if the region went away under the scan.
 // Each definition's floats from -20 to +13 go to `dump` (up to dumpCap), for the log in
 // a cave: the act 1 caves have no height fog, yet a veil's hard edge crosses their floor
 // at a distance from the hero (2026-10-07) - which field it is, is read from these.
 constexpr int kDumpFrom = -20, kDumpN = 34;
-int ScanRegion(float* p, size_t n, Patch* out, int cap, int* defs, float (*dump)[kDumpN], float** where, int dumpCap) {
-    int got = 0;
+int ScanRegion(float* p, size_t n, const bool take[2], Patch (*out)[32], int got[2], int* defs, float (*dump)[kDumpN],
+               float** where, int dumpCap) {
+    got[0] = got[1] = 0;
     __try {
-        for (size_t i = 20; i + 14 < n && got < cap; ++i) {
+        for (size_t i = 20; i + 14 < n && got[0] < 32 && got[1] < 32; ++i) {
             if (!(p[i + 4] >= 500.0f && p[i + 4] <= 5000.0f) || !Looks(p + i)) continue;
             if (*defs < dumpCap) { memcpy(dump[*defs], p + i + kDumpFrom, sizeof dump[0]); where[*defs] = p + i; }
             ++*defs;
-            if (p[i + 8] > 0.0f) {
-                out[got++] = {p + i + 8, p[i + 8]};
-                p[i + 8] = 0.0f;
+            for (int k : {kHeight, kDepth}) {
+                float* d = p + i + kField[k];
+                if (take[k] && *d > 0.0f) {
+                    out[k][got[k]++] = {d, *d};
+                    *d = 0.0f;
+                }
             }
         }
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return -1;
     }
-    return got;
+    return got[0] + got[1];
 }
 
 DWORD WINAPI ScanThread(void*) {
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_LOWEST);
     const ULONGLONG t0 = GetTickCount64();
-    int defs = 0, taken = 0;
+    int defs = 0, taken[2] = {};
     static float dump[24][kDumpN];
     static float* where[24];
     MEMORY_BASIC_INFORMATION mi{};
@@ -9176,20 +11079,25 @@ DWORD WINAPI ScanThread(void*) {
         // guard pages (thread stacks) have PAGE_GUARD in Protect and are skipped with the rest
         if (mi.State != MEM_COMMIT || mi.Type != MEM_PRIVATE || mi.Protect != PAGE_READWRITE || mi.RegionSize > (1ull << 31))
             continue;
-        if (g_set.gameHeightFog.load()) break;   // switched back on meanwhile
-        Patch found[32];
-        const int n = ScanRegion((float*)mi.BaseAddress, mi.RegionSize / sizeof(float), found, 32, &defs, dump, where, 24);
-        if (n <= 0) continue;
-        taken += n;
+        // what is switched back on meanwhile is left alone (Tick puts back what a scan took after that)
+        const bool take[2] = {!KeepHeight(), !KeepDepth()};
+        if (!take[0] && !take[1]) break;
+        Patch found[2][32];
+        int got[2];
+        if (ScanRegion((float*)mi.BaseAddress, mi.RegionSize / sizeof(float), take, found, got, &defs, dump, where, 24) <= 0)
+            continue;
         AcquireSRWLockExclusive(&g_lock);
-        g_patched.insert(g_patched.end(), found, found + n);
+        for (int k : {kHeight, kDepth}) {
+            g_patched[k].insert(g_patched[k].end(), found[k], found[k] + got[k]);
+            taken[k] += got[k];
+        }
         ReleaseSRWLockExclusive(&g_lock);
     }
     static int toldDefs = -1;
-    if (taken || defs != toldDefs) {
+    if (taken[0] || taken[1] || defs != toldDefs) {
         toldDefs = defs;
-        LogF("vrcam: the game's height fog - %d area definitions loaded, %d had it, set to 0 (%.1f s)", defs, taken,
-             (GetTickCount64() - t0) / 1000.0);
+        LogF("vrcam: the game's fog - %d area definitions loaded; set to 0: height fog in %d, depth fog in %d (%.1f s)",
+             defs, taken[kHeight], taken[kDepth], (GetTickCount64() - t0) / 1000.0);
     }
     AcquireSRWLockExclusive(&g_lock);
     g_defs.assign(where, where + std::min(defs, 24));
@@ -9208,9 +11116,9 @@ DWORD WINAPI ScanThread(void*) {
     return 0;
 }
 
-bool PutBack(const Patch& p) {
+bool PutBack(const Patch& p, int kind) {
     __try {
-        if (*p.density == 0.0f && Looks(p.density - 8)) *p.density = p.was;
+        if (*p.density == 0.0f && Looks(p.density - kField[kind])) *p.density = p.was;
         return true;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return false;
@@ -9247,28 +11155,32 @@ void SetPoke(const std::wstring& w) {
 }
 
 // On the update thread: a scan 1, 4 and 12 s after every biome change (an area's
-// definitions are loaded as it is entered), on a thread of its own.
+// definitions are loaded as it is entered), and after either fog's key is set back
+// to 0, on a thread of its own.
 void Tick() {
     ApplyPoke();
     static uint32_t seenGen = ~0u;
     static ULONGLONG due[3] = {};
     const ULONGLONG now = GetTickCount64();
-    static bool wasKept = false;
-    const bool keep = g_set.gameHeightFog.load();
-    if (const uint32_t gen = g_biomeGen.load(); gen != seenGen || (wasKept && !keep)) {
+    static bool wasKept[2] = {false, false};
+    const bool keep[2] = {KeepHeight(), KeepDepth()};
+    if (const uint32_t gen = g_biomeGen.load();
+        gen != seenGen || (wasKept[0] && !keep[0]) || (wasKept[1] && !keep[1])) {
         seenGen = gen;
         due[0] = now + 1000; due[1] = now + 4000; due[2] = now + 12000;
     }
-    wasKept = keep;
-    if (keep) {
-        AcquireSRWLockExclusive(&g_lock);
-        if (!g_patched.empty()) {
-            int back = 0;
-            for (const Patch& p : g_patched) back += PutBack(p) ? 1 : 0;
-            LogF("vrcam: the game's height fog back on ([render] game_height_fog=1) - %d definitions restored", back);
-            g_patched.clear();
-        }
-        ReleaseSRWLockExclusive(&g_lock);
+    wasKept[0] = keep[0]; wasKept[1] = keep[1];
+    AcquireSRWLockExclusive(&g_lock);
+    for (int k : {kHeight, kDepth}) {
+        if (!keep[k] || g_patched[k].empty()) continue;
+        int back = 0;
+        for (const Patch& p : g_patched[k]) back += PutBack(p, k) ? 1 : 0;
+        LogF("vrcam: the game's %s fog back on ([render] game_%s_fog=1) - %d definitions restored",
+             k == kHeight ? "height" : "depth", k == kHeight ? "height" : "depth", back);
+        g_patched[k].clear();
+    }
+    ReleaseSRWLockExclusive(&g_lock);
+    if (keep[0] && keep[1]) {
         for (ULONGLONG& d : due) d = 0;
         return;
     }
@@ -9282,6 +11194,849 @@ void Tick() {
     }
 }
 }  // namespace gamefog
+
+// Light in caves and dungeons, [cave_light] (docs/plan_cave_light.md). Underground the
+// game has no sun: a dungeon is lit by the hero's own light, the torches, and the light
+// that fills it all - beyond the hero's circle only that one. It is the area's vis json
+// iblIntensity: the act 2 tombs 0.12, act 1's caves 2, the maggot lair 12.5. On a headset
+// whose screen loses the darkest shades (an LCD: Meta Quest) a cave was black where an
+// OLED (PS VR2) showed all of it (the user, 2026-10-13). Lifting the black level would
+// have greyed the whole game; this is light - the game multiplies the stone's own
+// colour by it before its tone mapping, so the colours keep their strength.
+// VisualDataSystem::Update (0xF5D1A0) blends the areas' vis data and hands the blend to
+// 0xF5DAD0 (system, ?, const VisualDataComponent*, FrameSettings*), which writes its
+// ambient light (+4) to a global through 0xF690F0 - unless the byte before that global
+// is set: the game's own set-by-hand, which its debug menu's slider sets (0xF2736F); the
+// renderer reads the global (0xE12749). After it, in an area off [sky] outdoor, the hook
+// takes that byte and writes the global itself: the blend's own value times [cave_light]
+// ambient (or ambient_<biome>), at least ambient_min - from the blend, never multiplied in
+// place, and with the byte taken the game no longer writes its own value first, so no
+// frame is drawn with it in between. Back to the game's own (outdoors, unticked) the byte
+// is given back and the global gets the blend's value. A byte the game set itself is left
+// alone. Drawing only - no stat, no light radius, nothing the game plays by.
+// The hook goes in only once the box is ticked: unticked, the game's code is as it was.
+namespace cavelight {
+constexpr uint64_t RVA_VIS_APPLY = 0xF5DAD0;
+const uint8_t kSigVisApply[16] = {0x4C,0x8B,0xDC,0x55,0x41,0x56,0x41,0x57,0x49,0x8D,0x6B,0xA1,0x48,0x81,0xEC,0x00};
+constexpr uint64_t RVA_IBL_BY_HAND = 0x3543AD0, RVA_IBL = 0x3543AD4;
+// The hero's own light, the same way: the blend's +0x40 power, +0x44 attenuation, +0x48 distance
+// scaler, +0x4C two contributions go to five globals, unless the byte 0x34B6DC4 is set (its debug
+// slider 0xF25BD0 sets it). The renderer's unit lights (0x74B324) give the hero's light the power
+// and the attenuation, and its reach as his light radius times the distance scaler (1.333): the
+// circle round him. The ambient light lights only inside it - more of it made the circle brighter,
+// not wider (the user, 2026-10-13), so [cave_light] hero_reach widens it.
+constexpr uint64_t RVA_HERO_BY_HAND = 0x34B6DC4, RVA_HERO_LIGHT = 0x267C724;
+constexpr size_t kIblAt = 4, kHeroAt = 0x40, kHeroN = 5;   // VisualDataComponent (the game's own reflection data)
+using VisApplyFn = void (*)(void*, void*, const uint8_t*, void*);
+VisApplyFn OrigVisApply = nullptr;
+
+std::atomic<bool> g_on{false};          // [cave_light] enabled
+std::atomic<float> g_ambient{2.0f};     // [cave_light] ambient: times the area's own
+std::atomic<float> g_ambientMin{0.0f};  // [cave_light] ambient_min: at least this (0 = no floor)
+std::atomic<float> g_heroReach{1.5f};   // [cave_light] hero_reach: the hero's light circle, times the area's own
+std::atomic<float> g_heroPower{1.0f};   // [cave_light] hero_power: his light's strength, times the area's own
+// [cave_light] hero_falloff: his light's attenuation (5.5), times the area's own. Past x10 the reach made the
+// circle no wider (the user, 2026-10-13), so it stops at 10; this changed nothing either - hidden in the settings.
+std::atomic<float> g_heroFalloff{1.0f};
+struct BiomeCfg { std::string biome; float ambient = -1.0f, reach = -1.0f; };   // -1 = the common one
+SRWLOCK g_lock = SRWLOCK_INIT;
+std::vector<BiomeCfg> g_perBiome;       // [cave_light] ambient_<biome>, hero_reach_<biome>, under g_lock
+std::atomic<uint32_t> g_loadGen{0};
+
+std::atomic<bool> g_hooked{false};
+std::atomic<float*> g_ibl{nullptr}, g_hero{nullptr};
+std::atomic<uint8_t*> g_iblByHand{nullptr}, g_heroByHand{nullptr};
+std::atomic<float> g_mul{1.0f}, g_min{0.0f};   // in the area now: 1 and 0 = the game's own
+std::atomic<float> g_reach{1.0f}, g_power{1.0f}, g_falloff{1.0f};
+std::atomic<float> g_seen{-1.0f}, g_seenReach{-1.0f};   // the blend's own, last frame (for the log)
+bool g_tookIbl = false, g_tookHero = false;    // the set-by-hand bytes are ours (the game's thread only, in the hook)
+
+// n floats from the blend to the globals: the game's own (want false: the byte given back if
+// it was ours) or ours, the byte taken so the game no longer writes its own first. A byte the
+// game set itself is left alone.
+void Put(float* dst, uint8_t* byHand, bool* took, const float* own, const float* ours, size_t n, bool want) {
+    if (!byHand) return;
+    if (!want) {
+        if (*took) { memcpy(dst, own, n * sizeof(float)); *byHand = 0; *took = false; }   // the game's own again, from this frame
+        return;
+    }
+    if (*byHand && !*took) return;
+    memcpy(dst, ours, n * sizeof(float));
+    *byHand = 1;
+    *took = true;
+}
+
+void HookVisApply(void* sys, void* a, const uint8_t* vis, void* fs) {
+    OrigVisApply(sys, a, vis, fs);
+    if (!vis) return;
+    if (float* ibl = g_ibl.load(std::memory_order_relaxed); ibl) {
+        float own;
+        memcpy(&own, vis + kIblAt, sizeof own);
+        if (std::isfinite(own) && own >= 0.0f) {
+            g_seen.store(own, std::memory_order_relaxed);
+            const float mul = g_mul.load(std::memory_order_relaxed), lo = g_min.load(std::memory_order_relaxed);
+            const float ours = std::max(own * mul, lo);
+            Put(ibl, g_iblByHand.load(std::memory_order_relaxed), &g_tookIbl, &own, &ours, 1, mul != 1.0f || lo > 0.0f);
+        }
+    }
+    if (float* hero = g_hero.load(std::memory_order_relaxed); hero) {
+        float own[kHeroN];
+        memcpy(own, vis + kHeroAt, sizeof own);
+        bool sane = true;
+        for (float v : own) sane = sane && std::isfinite(v) && v >= 0.0f;
+        if (sane) {
+            g_seenReach.store(own[2], std::memory_order_relaxed);
+            const float reach = g_reach.load(std::memory_order_relaxed), power = g_power.load(std::memory_order_relaxed);
+            const float falloff = g_falloff.load(std::memory_order_relaxed);
+            const float ours[kHeroN] = {own[0] * power, own[1] * falloff, own[2] * reach, own[3], own[4]};
+            Put(hero, g_heroByHand.load(std::memory_order_relaxed), &g_tookHero, own, ours, kHeroN,
+                reach != 1.0f || power != 1.0f || falloff != 1.0f);
+        }
+    }
+}
+
+// With the other settings: the section's keys, ambient_<biome> and hero_reach_<biome> among them.
+void Load() {
+    g_on.store(IniB(L"cave_light", L"enabled", false));
+    g_ambient.store(std::clamp(IniF(L"cave_light", L"ambient", 2.0f), 0.0f, 20.0f));
+    g_ambientMin.store(std::clamp(IniF(L"cave_light", L"ambient_min", 0.0f), 0.0f, 20.0f));
+    g_heroReach.store(std::clamp(IniF(L"cave_light", L"hero_reach", 1.5f), 0.25f, 10.0f));
+    g_heroPower.store(std::clamp(IniF(L"cave_light", L"hero_power", 1.0f), 0.0f, 50.0f));
+    g_heroFalloff.store(std::clamp(IniF(L"cave_light", L"hero_falloff", 1.0f), 0.01f, 10.0f));
+    std::vector<BiomeCfg> list;
+    wchar_t buf[8192];
+    const DWORD n = GetPrivateProfileSectionW(L"cave_light", buf, (DWORD)std::size(buf), g_iniPath);
+    for (const wchar_t* p = buf; p < buf + n && *p; p += wcslen(p) + 1) {
+        while (*p == L' ' || *p == L'\t') ++p;
+        const wchar_t* eq = wcschr(p, L'=');
+        if (!eq) continue;
+        const bool amb = !wcsncmp(p, L"ambient_", 8), reach = !wcsncmp(p, L"hero_reach_", 11);
+        if (!amb && !reach) continue;
+        std::string biome;
+        for (const wchar_t* q = p + (amb ? 8 : 11); q < eq; ++q)
+            if (*q != L' ' && *q != L'\t' && *q < 128) biome += (char)towlower(*q);
+        if (biome.empty() || (amb && biome == "min")) continue;
+        wchar_t* end = nullptr;
+        const float v = wcstof(eq + 1, &end);
+        if (end == eq + 1 || !std::isfinite(v)) continue;
+        BiomeCfg* c = nullptr;
+        for (BiomeCfg& e : list) if (e.biome == biome) c = &e;
+        if (!c) { list.push_back({biome}); c = &list.back(); }
+        if (amb) c->ambient = std::clamp(v, 0.0f, 20.0f);
+        else c->reach = std::clamp(v, 0.25f, 10.0f);
+    }
+    AcquireSRWLockExclusive(&g_lock); g_perBiome = list; ReleaseSRWLockExclusive(&g_lock);
+    g_loadGen.fetch_add(1);
+}
+
+// Twice a second: the hook once it is wanted and its page is decrypted (quiet until then).
+void Install() {
+    static bool failed = false;
+    if (g_hooked.load() || failed || !g_ctx || !g_on.load()) return;
+    if (!Matches(RVA_VIS_APPLY, kSigVisApply, sizeof kSigVisApply)) return;
+    float* ibl = (float*)d2rsig::Addr(RVA_IBL);
+    uint8_t* iblByHand = (uint8_t*)d2rsig::Addr(RVA_IBL_BY_HAND);
+    float* hero = (float*)d2rsig::Addr(RVA_HERO_LIGHT);
+    uint8_t* heroByHand = (uint8_t*)d2rsig::Addr(RVA_HERO_BY_HAND);
+    if ((!ibl || !iblByHand) && (!hero || !heroByHand)) {
+        failed = true;
+        Log("vrcam: cave light - the game's ambient and hero light not found in this build: [cave_light] does nothing");
+        return;
+    }
+    if (ibl && iblByHand) { g_ibl.store(ibl); g_iblByHand.store(iblByHand); }
+    if (hero && heroByHand) { g_hero.store(hero); g_heroByHand.store(heroByHand); }
+    g_hooked.store(d2rsig::Hook(RVA_VIS_APPLY, kSigVisApply, sizeof kSigVisApply, (void*)&HookVisApply, (void**)&OrigVisApply));
+    failed = !g_hooked.load();
+    if (g_hooked.load())
+        LogF("vrcam: cave light hook in - [cave_light] lights caves and dungeons (ambient %s, hero's light %s)",
+             g_ibl.load() ? "yes" : "NOT FOUND", g_hero.load() ? "yes" : "NOT FOUND");
+    else
+        Log("vrcam: cave light hook FAILED - [cave_light] does nothing");
+}
+
+// Every update: the area's multipliers and floor (only off [sky] outdoor); to the log a
+// second after each change, with the game's own values the hook saw.
+void Tick(const std::string& biome, bool underground) {
+    static uint32_t seenBiome = ~0u, seenLoad = ~0u;
+    static bool seenOn = false, seenUnder = false;
+    static ULONGLONG tellAt = 0;
+    const uint32_t bg = g_biomeGen.load(), lg = g_loadGen.load();
+    const bool on = g_on.load();
+    if (bg != seenBiome || lg != seenLoad || on != seenOn || underground != seenUnder) {
+        seenBiome = bg; seenLoad = lg; seenOn = on; seenUnder = underground;
+        float mul = 1.0f, lo = 0.0f, reach = 1.0f, power = 1.0f, falloff = 1.0f;
+        if (on && underground) {
+            mul = g_ambient.load();
+            lo = g_ambientMin.load();
+            reach = g_heroReach.load();
+            power = g_heroPower.load();
+            falloff = g_heroFalloff.load();
+            AcquireSRWLockShared(&g_lock);
+            for (const BiomeCfg& c : g_perBiome)
+                if (c.biome == biome) {
+                    if (c.ambient >= 0.0f) mul = c.ambient;
+                    if (c.reach >= 0.0f) reach = c.reach;
+                    break;
+                }
+            ReleaseSRWLockShared(&g_lock);
+        }
+        g_mul.store(mul);
+        g_min.store(lo);
+        g_reach.store(reach);
+        g_power.store(power);
+        g_falloff.store(falloff);
+        tellAt = on ? GetTickCount64() + 1000 : 0;
+    }
+    if (tellAt && GetTickCount64() >= tellAt) {
+        tellAt = 0;
+        const float own = g_seen.load(), mul = g_mul.load(), lo = g_min.load();
+        const float ownReach = g_seenReach.load(), reach = g_reach.load(), power = g_power.load(), falloff = g_falloff.load();
+        if (!g_hooked.load()) LogF("vrcam: cave light - '%s': the hook is not in yet", biome.c_str());
+        else if (!underground) LogF("vrcam: cave light - '%s': outdoors, left alone (ambient %.2f, hero's light reach %.3f)",
+                                    biome.c_str(), own, ownReach);
+        else LogF("vrcam: cave light - '%s': ambient %.2f -> %.2f (x%.2f, at least %.2f); hero's light reach %.3f -> %.3f (x%.2f), "
+                  "power x%.2f, falloff x%.2f", biome.c_str(), own, std::max(own * mul, lo), mul, lo, ownReach, ownReach * reach, reach, power,
+                  falloff);
+    }
+}
+}  // namespace cavelight
+
+// Items the game draws itself (2026-10-13). An item's 3D look is a unit of its own:
+// data/hd/items/misc/<asset>.json, a UnitDefinition (data/hd/items/items.json names the asset
+// by item code: hp1 = potion/lesser_healing_potion ... rvl = potion/full_rejuv_potion), with
+// its model, ALB/NRM/ORM textures and the dropped items' skeleton. The game puts one in the
+// renderer's ECS as UnitTranslationLayer::ProcessUnitCreation (0x778E00) does for every unit:
+// EntityContainerDefinition::GetOrLoadDefinition<UnitDefinition> (0x669E70: the FileRequest's
+// path from blz::string(const char*) 0xBF810, +0xB8 = 100, +0xC0 = 1, +0x108 = 1 as the game
+// sets them; RequestMode 0 = there on return; UNIT_TYPE 4 = item), then
+// UnitDefinition::PlaceInstance (0x9661C0) into the registry at 0x2677170 (what 0x9124E0
+// returns, skeletons.cpp's RVA_ECS_REGISTRY), with no UNIT behind it (ProcessUnitCreation
+// skips that part when there is none). The registry may be changed only on the thread that
+// owns it (+0xA0, a thread id) while +0x110 is set ("Getting mutable registry, but that is not
+// currently allowed!", 0x9125C0) - render jobs read it the rest of the time.
+// Step 1, [debug] engine_unit=<the unit's .json path>: four of it round the hero, to see that the
+// game draws them as its own - lit, fogged, hidden by walls. The belt's potions come next.
+namespace engitem {
+constexpr uint64_t RVA_STRING_CTOR = 0xBF810, RVA_LOAD_UNITDEF = 0x669E70, RVA_PLACE = 0x9661C0, RVA_REGISTRY = 0x2677170;
+constexpr uint8_t kStringCtorBytes[] = {0x48, 0x89, 0x5C, 0x24, 0x08, 0x48, 0x89, 0x74, 0x24, 0x10, 0x57, 0x48, 0x83, 0xEC, 0x20, 0x33};
+constexpr uint8_t kLoadBytes[] = {0x48, 0x89, 0x5C, 0x24, 0x20, 0x55, 0x56, 0x57, 0x41, 0x54, 0x41, 0x55, 0x41, 0x56, 0x41, 0x57};
+constexpr uint8_t kPlaceBytes[] = {0x48, 0x8B, 0xC4, 0x55, 0x53, 0x56, 0x57, 0x41, 0x54, 0x41, 0x55, 0x41, 0x56, 0x41, 0x57, 0x48};
+struct Shared { void* p; void* ctrl; };   // blz::shared_ptr
+using StringCtorFn = void* (__fastcall*)(void* str, const char* s);
+using LoadFn = Shared* (__fastcall*)(Shared* out, void* request, int mode, int unitType);
+// a member function: this, then the result's place, then the arguments
+using PlaceFn = Shared* (__fastcall*)(void* def, Shared* out, void* registry, void* part, void* filter,
+                                      const float* pos, const float* rot, const float* v3, bool b);
+
+SRWLOCK g_lock = SRWLOCK_INIT;
+std::string g_want;                       // [debug] engine_unit, under g_lock
+std::atomic<uint32_t> g_wantGen{0};
+uint32_t g_doneGen = 0;                   // the render thread's
+std::vector<Shared> g_placed;             // the render thread's; held for good in step 1 (never let go)
+
+void SetWant(const std::wstring& path) {
+    const std::string p = Utf8(path.c_str());
+    AcquireSRWLockExclusive(&g_lock);
+    const bool changed = p != g_want;
+    g_want = p;
+    ReleaseSRWLockExclusive(&g_lock);
+    if (changed) g_wantGen.fetch_add(1);
+}
+
+bool ReadRegistry(uintptr_t reg, DWORD* owner, uint8_t* open) {
+    __try { *owner = *(const DWORD*)(reg + 0xA0); *open = *(const uint8_t*)(reg + 0x110); return true; }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+
+// The game's calls themselves; no C++ objects in these (SEH).
+bool LoadDef(const char* path, Shared* def) {
+    const auto ctor = (StringCtorFn)d2rsig::Addr(RVA_STRING_CTOR);
+    const auto load = (LoadFn)d2rsig::Addr(RVA_LOAD_UNITDEF);
+    *def = {};
+    __try {
+        alignas(16) uint8_t req[0x200] = {};
+        ctor(req, path);
+        req[0xB8] = 100;
+        *(uint64_t*)(req + 0xC0) = 1;
+        *(uint64_t*)(req + 0x108) = 1;
+        load(def, req, 0, 4);   // the request is the game's now (a by-value argument: it frees it)
+        return def->p != nullptr;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        *def = {};
+        return false;
+    }
+}
+bool PlaceAt(void* def, const float pos[3], Shared* inst) {
+    const auto place = (PlaceFn)d2rsig::Addr(RVA_PLACE);
+    void* reg = (void*)d2rsig::Addr(RVA_REGISTRY);
+    *inst = {};
+    __try {
+        alignas(16) uint8_t part[0x80] = {}, filter[0x100] = {};
+        *(uint32_t*)(filter + 4) = 0x811C9DC5u;   // as the game hands it over (an empty hash)
+        alignas(16) const float rot[4] = {0.0f, 0.0f, 0.0f, 1.0f}, none[4] = {};
+        alignas(16) float at[4] = {pos[0], pos[1], pos[2], 0.0f};
+        place(def, inst, reg, part, filter, at, rot, none, true);
+        return inst->p != nullptr;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        *inst = {};
+        return false;
+    }
+}
+// A UnitInstance's entities: their ids at +0x10, how many at +0x18 (the character screen's
+// heroes walk them so, 0x677A00). The root is the one without a parent.
+uint32_t RootOf(void* inst) {
+    uintptr_t list = 0;
+    uint64_t n = 0;
+    if (!::SafeRead(&list, (const uint8_t*)inst + 0x10, 8) || !::SafeRead(&n, (const uint8_t*)inst + 0x18, 8) || !list || !n || n > 64)
+        return 0xFFFFFFFFu;
+    for (uint64_t i = 0; i < n; ++i) {
+        uint32_t e = 0, parent = 0;
+        uintptr_t comp = 0;
+        if (!::SafeRead(&e, (const void*)(list + i * 4), 4) || !skel::EntityTransform(e, &comp)) continue;
+        if (::SafeRead(&parent, (const void*)(comp + 0xC0), 4) && (parent & 0xFFFFF) == 0xFFFFF) return e;
+    }
+    return 0xFFFFFFFFu;
+}
+// Its local matrix (+0x00): what the game sets for a unit before the frame's poses. The world
+// (+0x40) does NOT follow by itself: Renderer::UpdateSystems works it out only for entities in
+// a view of two more storages (0x68E9A0, without 0x6D9DD0), and a placed unit with nothing
+// behind it is not in it - the belt's bottles stayed where they were placed and were gone as
+// soon as the hero walked (2026-10-13). So the game's own update follows each write:
+// 0xE3A8C0(out, entity, TransformComponent*) - what PlaceInstance itself calls after placing -
+// works out the world from the local and the parent's world, keeps the old world at +0x80 (DLSS's
+// motion vectors) and tells the entity's attachments.
+constexpr uint64_t RVA_UPDATE_WORLD = 0xE3A8C0;
+constexpr uint8_t kUpdateWorldBytes[] = {0x48, 0x8B, 0xC4, 0x48, 0x89, 0x58, 0x08, 0x55, 0x56, 0x57, 0x41, 0x54, 0x41, 0x55, 0x41, 0x56};
+using UpdateWorldFn = void*(__fastcall*)(void* out, uint32_t entity, void* comp);
+bool UpdateWorld(uint32_t e) {
+    uintptr_t comp = 0;
+    if (e == 0xFFFFFFFFu || !skel::EntityTransform(e, &comp)) return false;
+    const auto update = (UpdateWorldFn)d2rsig::Addr(RVA_UPDATE_WORLD);
+    __try {
+        alignas(16) float out[16];
+        update(out, e, (void*)comp);
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+bool WriteLocal(uint32_t e, const float m[16]) {
+    uintptr_t comp = 0;
+    if (e == 0xFFFFFFFFu || !skel::EntityTransform(e, &comp)) return false;
+    __try { memcpy((void*)comp, m, 64); } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    return true;
+}
+// The local laid, then every entity of the instance brought up to date - the root first, its
+// children after it (their world hangs off the root's).
+bool Lay(void* inst, uint32_t root, const float m[16]) {
+    if (!WriteLocal(root, m)) return false;
+    UpdateWorld(root);
+    uintptr_t list = 0;
+    uint64_t n = 0;
+    if (!::SafeRead(&list, (const uint8_t*)inst + 0x10, 8) || !::SafeRead(&n, (const uint8_t*)inst + 0x18, 8) || !list || n > 64) return true;
+    for (uint64_t i = 0; i < n; ++i) {
+        uint32_t e = 0;
+        if (::SafeRead(&e, (const void*)(list + i * 4), 4) && e != root) UpdateWorld(e);
+    }
+    return true;
+}
+
+// Step 1: [debug] engine_unit, four round the hero.
+void RunTest(const std::string& want) {
+    if (g_placed.size() >= 32) { Log("vrcam: engine unit - 32 placed already this run: no more"); return; }
+    const float* h = g_heroPosNow;
+    const float pos[4][3] = {{h[0] + 3.0f, h[1], h[2]}, {h[0] - 3.0f, h[1], h[2]}, {h[0], h[1], h[2] + 3.0f}, {h[0], h[1], h[2] - 3.0f}};
+    Shared def{};
+    int n = 0;
+    const char* why = "placed";
+    if (!LoadDef(want.c_str(), &def)) why = "the definition did not load (wrong path?)";
+    else
+        for (const auto& p : pos) {
+            Shared inst{};
+            if (PlaceAt(def.p, p, &inst)) { g_placed.push_back(inst); ++n; }
+        }
+    if (def.p && !n) why = "PlaceInstance gave nothing";
+    const uint32_t root = n ? RootOf(g_placed.back().p) : 0xFFFFFFFFu;
+    LogF("vrcam: engine unit '%s' - %s: definition %p, %d instance(s) round the hero at %.1f %.1f %.1f (thread %lu), root entity %X",
+         want.c_str(), why, def.p, n, h[0], h[1], h[2], GetCurrentThreadId(), root);
+}
+
+// ---- Step 2: the belt's potions, the game's own models ([hands] belt_models) ----
+// Each potion in the belt's bottom row (gamestate::BeltCodes) is a unit of the game's, placed
+// once and then laid each frame where its column sits on the hero: his model matrix (his
+// TransformComponent's local, skel::HeroTransform) times an offset in his model frame - y up,
+// z ahead (MatYawDeg's axis), x across - in parts of his standing eye height, so every class's
+// belt sits on his own hips. The four go round him on an arc, as a belt does (a straight row
+// across the belly looked wrong, the user's picture, 2026-10-13), each bottle turned to face
+// out. Never let go (how the game's shared_ptr is released safely is not known yet): one not
+// wanted now is laid far under the ground, kept for later.
+struct PotionKind { char code[4]; const char* asset; };
+constexpr PotionKind kPotions[] = {
+    {"hp1", "potion/lesser_healing_potion"}, {"hp2", "potion/light_healing_potion"}, {"hp3", "potion/healing_potion2"},
+    {"hp4", "potion/strong_healing_potion"}, {"hp5", "potion/greater_healing_potion"}, {"mp1", "potion/lesser_mana_potion"},
+    {"mp2", "potion/light_mana_potion"}, {"mp3", "potion/mana_potion2"}, {"mp4", "potion/strong_mana_potion"},
+    {"mp5", "potion/greater_mana_potion"}, {"rvs", "potion/rejuv_potion"}, {"rvl", "potion/full_rejuv_potion"},
+    {"yps", "potion/antidote_potion"}, {"wms", "potion/thawing_potion"}, {"vps", "potion/stamina_potion"},
+};
+constexpr int kKinds = (int)(sizeof kPotions / sizeof kPotions[0]);
+uint32_t Code3(const char* c) { return (uint32_t)(uint8_t)c[0] | (uint32_t)(uint8_t)c[1] << 8 | (uint32_t)(uint8_t)c[2] << 16; }
+int KindOf(uint32_t code) {
+    for (int k = 0; k < kKinds; ++k)
+        if ((code & 0x00FFFFFFu) == Code3(kPotions[k].code)) return k;
+    return -1;
+}
+// ahead: the arc's radius round his middle; arc: degrees from one column to the next; side -1:
+// columns 1 to 4 from his left to his right (his model's x runs to his left)
+// hold: the bottle in the hand against the controller - x y z cm, pitch yaw roll degrees ([hands] belt_hold_*)
+struct Belt { bool on = false; float up = 0.57f, ahead = 0.13f, arc = 35.0f, scale = 0.56f, side = -1.0f; bool grab = false; float hold[6] = {};
+              float holdClose = 0.55f, ballAlpha = 0.35f, ballRadius = 0.06f;
+              float vial[6] = {}, vialClose = 0.55f;    // the thin vials' own (stamina, thawing: [hands] belt_vial_*)
+              float anti[6] = {}, antiClose = 0.55f; };  // the antidote's, the black one ([hands] belt_antidote_*)   // how far the hand closes round a bottle in it, a part ([hands] belt_hold_close %)
+SRWLOCK g_beltLock = SRWLOCK_INIT;
+Belt g_beltSet;                           // [hands] belt_models*, under g_beltLock
+struct Bottle { int kind; Shared inst; uint32_t root; bool parked; bool dead; };
+std::vector<Bottle> g_bottles;            // the render thread's
+Shared g_defs[kKinds] = {};               // the render thread's; loaded once, kept
+bool g_defFailed[kKinds] = {};
+
+void SetBelt(bool on, float up, float ahead, float arc, float scale, float side, bool grab, const float hold[6]) {
+    AcquireSRWLockExclusive(&g_beltLock);
+    g_beltSet = {on, up, ahead, arc, scale, side < 0.0f ? -1.0f : 1.0f, grab};
+    memcpy(g_beltSet.hold, hold, sizeof g_beltSet.hold);
+    g_beltSet.holdClose = std::clamp(IniF(L"hands", L"belt_hold_close", 55.0f), 0.0f, 150.0f) * 0.01f;
+    {   // the thin vials (stamina, thawing, antidote) are held their own way; a key not set takes the flasks' value
+        const wchar_t* const k[6] = {L"belt_vial_x", L"belt_vial_y", L"belt_vial_z", L"belt_vial_pitch", L"belt_vial_yaw", L"belt_vial_roll"};
+        for (int i = 0; i < 6; ++i)
+            g_beltSet.vial[i] = std::clamp(IniF(L"hands", k[i], g_beltSet.hold[i]), i < 3 ? -30.0f : -180.0f, i < 3 ? 30.0f : 180.0f);
+        g_beltSet.vialClose = std::clamp(IniF(L"hands", L"belt_vial_close", g_beltSet.holdClose * 100.0f), 0.0f, 150.0f) * 0.01f;
+        // the antidote (the black one) its own again; not set = the vials' value
+        const wchar_t* const a[6] = {L"belt_antidote_x", L"belt_antidote_y", L"belt_antidote_z", L"belt_antidote_pitch",
+                                     L"belt_antidote_yaw", L"belt_antidote_roll"};
+        for (int i = 0; i < 6; ++i)
+            g_beltSet.anti[i] = std::clamp(IniF(L"hands", a[i], g_beltSet.vial[i]), i < 3 ? -30.0f : -180.0f, i < 3 ? 30.0f : 180.0f);
+        g_beltSet.antiClose = std::clamp(IniF(L"hands", L"belt_antidote_close", g_beltSet.vialClose * 100.0f), 0.0f, 150.0f) * 0.01f;
+    }
+    g_beltSet.ballAlpha = std::clamp(IniF(L"hands", L"belt_ball_alpha", 0.35f), 0.0f, 1.0f);   // the lit ball: how much of it shows
+    g_beltSet.ballRadius = std::clamp(IniF(L"hands", L"belt_ball_radius", 6.0f), 1.0f, 30.0f) * 0.01f;   // and its size, cm
+    ReleaseSRWLockExclusive(&g_beltLock);
+}
+
+void Park(Bottle& b) {
+    if (b.parked) return;
+    const float m[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, g_heroPosNow[0], g_heroPosNow[1] - 5000.0f, g_heroPosNow[2], 1};
+    if (Lay(b.inst.p, b.root, m)) b.parked = true;
+}
+
+// ---- Taking them in the hand ([hands] belt_grab) ----
+// A hand's palm near a bottle on the belt (kGrabM) - it is lit: a see-through ball on it, the
+// ball xr.cpp draws for BodyWalk's zones and the map in the hand, and the bottle a little larger
+// (kHoverScale). The grip pressed there takes it: the bottle sits in the hero's palm and turns
+// with the controller. Tipped over (its top pointing down more than kTipUp allows) while raised to
+// the mouth's height or above (within kRaiseM under it), or at the mouth (kMouthM) - no need to bring it
+// to the face, so nobody knocks the headset (the user, 2026-10-13) - it is drunk: the game's own
+// "potion - belt N" command,
+// as the key would; let go anywhere else it goes back to its place on the belt. The grip has to
+// be let go once before the hand takes another.
+// Hands: BodyWalk's frame (metres from the head, x right, y up, z back, the head's turn only),
+// the frame the hero's arms are posed in; in the world it hangs off g_eyeWorld (the arms' own
+// point), x along the belt frame's -ax (his model's x runs to his left), y along ay, z along -az.
+constexpr float kGrabM = 0.12f, kMouthM = 0.13f, kRaiseM = 0.10f, kTipUp = 0.3f, kHoverScale = 1.05f;
+struct HandGrab { int column = -1; int hover = -1; bool drinking = false; bool needRelease = false; ULONGLONG at = 0; uint32_t code = 0; };
+HandGrab g_grab[2];                       // [0] right, [1] left; the render thread's
+std::atomic<bool> g_holding[2] = {};      // a bottle in that hand now (for the arms' fist, on another thread)
+std::atomic<bool> g_lit[2] = {};          // a bottle lit for that hand to take: it takes no weapon then ([weight])
+// The fist's cap for a hand: how far it closes with a bottle in it, or -1 (none in it)
+// The thin vials - stamina, thawing - against the round flasks (healing, mana, rejuvenation), and the
+// antidote, the black one, apart again: another shape in the hand, a hold of its own (the user's, 2026-10-13).
+// Its hold by shape: 0 a round flask, 1 a thin vial (stamina, thawing), 2 the antidote (the black one).
+int Shape(int kind) { const char c = kind >= 0 ? kPotions[kind].code[0] : 0; return c == 'y' ? 2 : c == 'v' || c == 'w' ? 1 : 0; }
+std::atomic<int> g_holdingShape[2] = {};
+bool BeltBusy(int side) { return side >= 0 && side < 2 && (g_holding[side].load() || g_lit[side].load()); }
+float FistCap(int side) {
+    if (side < 0 || side > 1 || !g_holding[side].load()) return -1.0f;
+    AcquireSRWLockShared(&g_beltLock);
+    const int sh = g_holdingShape[side].load();
+    const float c = sh == 2 ? g_beltSet.antiClose : sh == 1 ? g_beltSet.vialClose : g_beltSet.holdClose;
+    ReleaseSRWLockShared(&g_beltLock);
+    return c;
+}
+SRWLOCK g_hoverLock = SRWLOCK_INIT;
+float g_hoverBalls[4][8] = {};            // x y z (BodyWalk's frame), radius m, alpha, r g b - under g_hoverLock
+int g_hoverCount = 0;
+
+// For xr.cpp: the balls over the bottles a hand is near now, in BodyWalk's frame.
+int HoverSpheres(float (*out)[8], int max) {
+    AcquireSRWLockShared(&g_hoverLock);
+    const int n = std::min(max, g_hoverCount);
+    for (int i = 0; i < n; ++i) memcpy(out[i], g_hoverBalls[i], sizeof out[i]);
+    ReleaseSRWLockShared(&g_hoverLock);
+    return n;
+}
+void SetHover(const float (*balls)[8], int n) {
+    AcquireSRWLockExclusive(&g_hoverLock);
+    g_hoverCount = std::min(n, 4);
+    for (int i = 0; i < g_hoverCount; ++i) memcpy(g_hoverBalls[i], balls[i], sizeof g_hoverBalls[i]);
+    ReleaseSRWLockExclusive(&g_hoverLock);
+}
+
+void Rotate(const float q[4], const float v[3], float o[3]) {
+    // o = q v q*  (x y z w)
+    const float tx = 2.0f * (q[1] * v[2] - q[2] * v[1]), ty = 2.0f * (q[2] * v[0] - q[0] * v[2]), tz = 2.0f * (q[0] * v[1] - q[1] * v[0]);
+    o[0] = v[0] + q[3] * tx + (q[1] * tz - q[2] * ty);
+    o[1] = v[1] + q[3] * ty + (q[2] * tx - q[0] * tz);
+    o[2] = v[2] + q[3] * tz + (q[0] * ty - q[1] * tx);
+}
+
+void Mul(const float a[4], const float b[4], float o[4]) {   // o = a b (x y z w)
+    o[0] = a[3] * b[0] + a[0] * b[3] + a[1] * b[2] - a[2] * b[1];
+    o[1] = a[3] * b[1] - a[0] * b[2] + a[1] * b[3] + a[2] * b[0];
+    o[2] = a[3] * b[2] + a[0] * b[1] - a[1] * b[0] + a[2] * b[3];
+    o[3] = a[3] * b[3] - a[0] * b[0] - a[1] * b[1] - a[2] * b[2];
+}
+// The ball's colour, the potion's own (the user's, 2026-10-13): healing red, mana light blue, stamina
+// white, rejuvenation (both) lilac; antidote green, thawing orange - [hands] belt_ball_*.
+float g_ballRgb[6][3] = {{0.95f, 0.12f, 0.10f}, {0.30f, 0.65f, 1.0f}, {0.95f, 0.95f, 0.95f},
+                         {0.78f, 0.55f, 1.0f}, {0.30f, 0.90f, 0.30f}, {1.0f, 0.55f, 0.15f}};   // under g_beltLock
+void SetBallColours(const float (*rgb)[3]) {
+    AcquireSRWLockExclusive(&g_beltLock);
+    memcpy(g_ballRgb, rgb, sizeof g_ballRgb);
+    ReleaseSRWLockExclusive(&g_beltLock);
+}
+void BallColour(int kind, float rgb[3]) {
+    const char c = kind >= 0 ? kPotions[kind].code[0] : 0;
+    const int i = c == 'h' ? 0 : c == 'm' ? 1 : c == 'v' ? 2 : c == 'r' ? 3 : c == 'y' ? 4 : c == 'w' ? 5 : -1;
+    if (i < 0) { rgb[0] = 1.0f; rgb[1] = 0.85f; rgb[2] = 0.4f; return; }
+    AcquireSRWLockShared(&g_beltLock);
+    memcpy(rgb, g_ballRgb[i], 3 * sizeof(float));
+    ReleaseSRWLockShared(&g_beltLock);
+}
+
+void BeltFrame(bool fullBody) {
+    AcquireSRWLockShared(&g_beltLock);
+    const Belt set = g_beltSet;
+    ReleaseSRWLockShared(&g_beltLock);
+    skel::HeroXform hx;
+    float H[16] = {};
+    float eyeY = 0.0f, lift = 0.0f;
+    const bool show = set.on && fullBody && skel::HeroTransform(&hx) && ::SafeRead(H, (const void*)hx.comp, 64) && H[15] == 1.0f;
+    if (!show) {
+        for (Bottle& b : g_bottles) Park(b);
+        for (HandGrab& g : g_grab) g = HandGrab{};
+        g_holding[0].store(false); g_holding[1].store(false);
+        SetHover(nullptr, 0);
+        return;
+    }
+    if (!skel::HeroEye(&eyeY, &lift) || !(eyeY > 0.5f)) eyeY = 7.0f;
+    uint32_t codes[4];
+    gamestate::BeltCodes(codes);
+    std::vector<char> used(g_bottles.size(), 0);
+    // the hero's axes at unit length for the bottle's own turn; the offsets go along the raw rows (model units)
+    auto unit = [](const float* r, float* o) {
+        const float l = sqrtf(r[0] * r[0] + r[1] * r[1] + r[2] * r[2]);
+        for (int i = 0; i < 3; ++i) o[i] = l > 1e-6f ? r[i] / l : 0.0f;
+    };
+    float ax[3], ay[3], az[3];
+    unit(H + 0, ax); unit(H + 4, ay); unit(H + 8, az);
+    // The frame the belt hangs in: under the head and turned with it ("they look where the legs
+    // go while walking, not where the headset looks", 2026-10-13) - the head's centre put down
+    // on the hero's ground and 9 cm back toward the spine, ahead its look along the ground, the
+    // height a part of the head's height now (it goes down with a crouch). The hero's own frame
+    // until a view has been built.
+    const float k = sqrtf(H[0] * H[0] + H[1] * H[1] + H[2] * H[2]);   // world units a model unit
+    const float eyeW = eyeY * (k > 1e-6f ? k : 1.0f);                  // his standing eyes, world units
+    const float measuredEye = calib::MeasuredEyeM();   // [calibration] use=1: the measured height, else the ini's
+    const float perM = eyeW / std::max(0.5f, measuredEye > 0.0f ? measuredEye : g_set.eyeHeightM.load());   // world units a metre
+    float O[3] = {H[12], H[13], H[14]};
+    float height = set.up * eyeW;
+    if (g_headOk.load()) {
+        const float head[3] = {g_headCentre[0].load(), g_headCentre[1].load(), g_headCentre[2].load()};
+        float f[3] = {g_headAhead[0].load(), g_headAhead[1].load(), g_headAhead[2].load()};
+        const float fu = f[0] * ay[0] + f[1] * ay[1] + f[2] * ay[2];
+        for (int i = 0; i < 3; ++i) f[i] -= fu * ay[i];
+        const float fl = sqrtf(f[0] * f[0] + f[1] * f[1] + f[2] * f[2]);
+        if (fl > 1e-4f && std::isfinite(head[0] + head[1] + head[2])) {
+            for (int i = 0; i < 3; ++i) az[i] = f[i] / fl;
+            // across, the same way round as his model's: x = up x ahead
+            ax[0] = ay[1] * az[2] - ay[2] * az[1]; ax[1] = ay[2] * az[0] - ay[0] * az[2]; ax[2] = ay[0] * az[1] - ay[1] * az[0];
+            const float hLive = (head[0] - H[12]) * ay[0] + (head[1] - H[13]) * ay[1] + (head[2] - H[14]) * ay[2];
+            for (int i = 0; i < 3; ++i) O[i] = head[i] - hLive * ay[i] - 0.09f * perM * az[i];
+            if (hLive > 0.3f * eyeW && hLive < 1.5f * eyeW) height = set.up * hLive;
+        }
+    }
+    // BodyWalk's frame <-> the world (see above)
+    const float eyeAt[3] = {g_eyeWorld[0].load(), g_eyeWorld[1].load(), g_eyeWorld[2].load()};
+    auto toWorldDir = [&](const float v[3], float o[3]) { for (int i = 0; i < 3; ++i) o[i] = -v[0] * ax[i] + v[1] * ay[i] - v[2] * az[i]; };
+    auto toWorld = [&](const float p[3], float o[3]) {
+        float d[3]; toWorldDir(p, d);
+        for (int i = 0; i < 3; ++i) o[i] = eyeAt[i] + d[i] * perM;
+    };
+    auto toBw = [&](const float w[3], float o[3]) {
+        const float d[3] = {(w[0] - eyeAt[0]) / perM, (w[1] - eyeAt[1]) / perM, (w[2] - eyeAt[2]) / perM};
+        o[0] = -(d[0] * ax[0] + d[1] * ax[1] + d[2] * ax[2]);
+        o[1] = d[0] * ay[0] + d[1] * ay[1] + d[2] * ay[2];
+        o[2] = -(d[0] * az[0] + d[1] * az[1] + d[2] * az[2]);
+    };
+
+    // Each column's place on the belt (its bottle's matrix there)
+    float slot[4][16] = {};
+    bool has[4] = {};
+    int kindAt[4] = {-1, -1, -1, -1};
+    for (int c = 0; c < 4; ++c) {
+        const int kk = codes[c] ? KindOf(codes[c]) : -1;
+        if (kk < 0) continue;
+        if (!g_defs[kk].p && !g_defFailed[kk]) {
+            const std::string path = std::string("data/hd/items/misc/") + kPotions[kk].asset + ".json";
+            if (!LoadDef(path.c_str(), &g_defs[kk])) { g_defFailed[kk] = true; LogF("vrcam: belt potions - %s did not load", path.c_str()); continue; }
+        }
+        if (!g_defs[kk].p) continue;
+        // round him: column c at th from straight ahead, on a circle of radius `ahead`
+        const float th = set.side * set.arc * ((float)c - 1.5f) * 3.14159265f / 180.0f;
+        const float st = sinf(th), ct = cosf(th), r = set.ahead * eyeW;
+        const float x = r * st, y = height, z = r * ct;
+        float* m = slot[c];
+        for (int i = 0; i < 3; ++i) {
+            m[i] = (ct * ax[i] - st * az[i]) * set.scale;   // across, turned about his up by th: it faces out
+            m[4 + i] = ay[i] * set.scale;
+            m[8 + i] = (st * ax[i] + ct * az[i]) * set.scale;
+            m[12 + i] = O[i] + x * ax[i] + y * ay[i] + z * az[i];
+        }
+        m[15] = 1.0f;
+        has[c] = true;
+        kindAt[c] = kk;
+    }
+
+    // The hands
+    float hoverBalls[4][8];
+    int nBalls = 0;
+    bool held[4] = {}, gone[4] = {};
+    float heldM[4][16] = {};
+    skel::Input in;
+    const bool hands = set.grab && FreshHands(&in);
+    for (int h = 0; h < 2; ++h) {
+        HandGrab& g = g_grab[h];
+        g.hover = -1;
+        if (!hands || !(in.handsValid & (1u << h)) || in.grip[h] < 0.0f) { if (g.column >= 0 && !g.drinking) g = HandGrab{}; continue; }
+        const bool gripOn = in.grip[h] > 0.6f && !shoulderwire::Claims(h) && !bowdrawwire::HoldsGrip(h) && !(h == 0 && throwwire::GripIsThrows()), gripOff = in.grip[h] < 0.35f;   // a grip behind a shoulder is the weapon swap's
+        if (gripOff) g.needRelease = false;
+        // the hand: the controller (the fist's middle) and its turn; the bottle held at the hold's offset
+        // and turn against it ([hands] belt_hold_*: x y z cm and pitch yaw roll degrees, in its own frame).
+        // The hold is set for the left hand; the right one is its mirror - x across the hand and the
+        // turns about y and z the other way (set on the left, the right one's moved twice as far, 2026-10-13).
+        float hold[6];
+        const int shape = g.column >= 0 ? Shape(kindAt[g.column]) : 0;   // its hold by shape: flask, vial, antidote
+        memcpy(hold, shape == 2 ? set.anti : shape == 1 ? set.vial : set.hold, sizeof hold);
+        if (h == 0) { hold[0] = -hold[0]; hold[4] = -hold[4]; hold[5] = -hold[5]; }
+        const float offB[3] = {hold[0] * 0.01f, hold[1] * 0.01f, hold[2] * 0.01f};
+        float offR[3];
+        Rotate(in.rot[h], offB, offR);
+        // held by the middle of the hero's palm as drawn (tied to the controller it slid out of the hand as the wrist
+        // turned, 2026-10-13); the controller where the arms have not been drawn lately
+        // his model space put in the world by his model matrix (H) - exactly where the hand is drawn; the
+        // controller (through BodyWalk's frame) where the arms have not been drawn lately
+        float palm[3];
+        float pm[3];
+        bool drawn = false;
+#if D2RVR_FIRST_PERSON
+        drawn = skel::HeroPalmModel(h, pm);
+#endif
+        if (drawn) {
+            float offW[3];
+            toWorldDir(offR, offW);
+            for (int i = 0; i < 3; ++i) palm[i] = pm[0] * H[i] + pm[1] * H[4 + i] + pm[2] * H[8 + i] + H[12 + i] + offW[i] * perM;
+        } else {
+            const float palmBw[3] = {in.hand[h][0] + offR[0], in.hand[h][1] + offR[1], in.hand[h][2] + offR[2]};
+            toWorld(palmBw, palm);
+        }
+        const float d2r = 3.14159265f / 360.0f;   // half a degree in radians (half angles)
+        const float qy[4] = {0, sinf(hold[4] * d2r), 0, cosf(hold[4] * d2r)}, qx[4] = {sinf(hold[3] * d2r), 0, 0, cosf(hold[3] * d2r)},
+                    qz[4] = {0, 0, sinf(hold[5] * d2r), cosf(hold[5] * d2r)};
+        float qyx[4], qe[4], qt[4];
+        Mul(qy, qx, qyx); Mul(qyx, qz, qe); Mul(in.rot[h], qe, qt);
+        // the bottle's own axes in the world: up (its top) along the turned +y, ahead along the turned -z
+        const float yAx[3] = {0, 1, 0}, zAx[3] = {0, 0, 1};
+        float cyB[3], czB[3], cy[3], cz[3];
+        Rotate(qt, yAx, cyB); Rotate(qt, zAx, czB);
+        toWorldDir(cyB, cy); toWorldDir(czB, cz);
+        if (g.drinking) {   // drunk: hidden until the belt shows it gone (or a moment passes), then free again
+            if (codes[g.column] != g.code || GetTickCount64() - g.at > 1500) { g = HandGrab{}; g.needRelease = true; }
+            else gone[g.column] = true;
+            continue;
+        }
+        if (g.column >= 0) {
+            if (!has[g.column] || codes[g.column] != g.code) { g = HandGrab{}; g.needRelease = !gripOff; continue; }   // the belt changed under it
+            if (gripOff) { g = HandGrab{}; continue; }   // let go: back on the belt
+            // in the fist, turned with the controller (and the hold); a little low, so the fist holds its middle
+            float* m = heldM[g.column];
+            const float s = set.scale;
+            float up[3] = {cy[0], cy[1], cy[2]}, ah[3] = {-cz[0], -cz[1], -cz[2]};
+            float ac[3] = {up[1] * ah[2] - up[2] * ah[1], up[2] * ah[0] - up[0] * ah[2], up[0] * ah[1] - up[1] * ah[0]};
+            for (int i = 0; i < 3; ++i) {
+                m[i] = ac[i] * s; m[4 + i] = up[i] * s; m[8 + i] = ah[i] * s;
+                m[12 + i] = palm[i] - up[i] * 0.05f * perM;
+            }
+            m[15] = 1.0f;
+            held[g.column] = true;
+            // drunk? tipped over, raised to the mouth's height (or at the mouth)
+            const float top[3] = {palm[0] + up[0] * 0.07f * perM, palm[1] + up[1] * 0.07f * perM, palm[2] + up[2] * 0.07f * perM};
+            const float mouthBw[3] = {0.0f, -0.08f, -0.03f};
+            float mouth[3];
+            toWorld(mouthBw, mouth);
+            const float dm = sqrtf((top[0] - mouth[0]) * (top[0] - mouth[0]) + (top[1] - mouth[1]) * (top[1] - mouth[1]) + (top[2] - mouth[2]) * (top[2] - mouth[2])) / perM;
+            const float upness = up[0] * ay[0] + up[1] * ay[1] + up[2] * ay[2];
+            const float raised = ((top[0] - mouth[0]) * ay[0] + (top[1] - mouth[1]) * ay[1] + (top[2] - mouth[2]) * ay[2]) / perM;
+            if (upness < kTipUp && (dm < kMouthM || raised > -kRaiseM)) {
+                gamecmd::Tap(0x17u + (uint32_t)g.column);
+                haptics::Play(haptics::Event::Drink, haptics::FromSkel(h));   // [openxr] haptics
+                LogF("vrcam: belt potions - the %s hand drinks belt %d (%.3s)", h ? "left" : "right", g.column + 1, kPotions[kindAt[g.column]].code);
+                g.drinking = true;
+                g.at = GetTickCount64();
+                held[g.column] = false;
+                gone[g.column] = true;
+            }
+            continue;
+        }
+        // on the weapon ([weight]): no bottle - and none taken by that grip once it lets go of it
+        if (weight::HoldsWeapon(h)) { if (gripOn) g.needRelease = true; continue; }
+        // free: the nearest bottle on the belt within reach is lit, the grip takes it
+        float best = kGrabM;
+        for (int c = 0; c < 4; ++c) {
+            if (!has[c] || held[c] || gone[c] || g_grab[1 - h].column == c) continue;
+            const float* p = slot[c] + 12;
+            const float d = sqrtf((p[0] - palm[0]) * (p[0] - palm[0]) + (p[1] - palm[1]) * (p[1] - palm[1]) + (p[2] - palm[2]) * (p[2] - palm[2])) / perM;
+            if (d < best) { best = d; g.hover = c; }
+        }
+        if (g.hover >= 0 && gripOn && !g.needRelease) {
+            g.column = g.hover;
+            g.code = codes[g.hover];
+            g.hover = -1;
+            haptics::Play(haptics::Event::BeltTake, haptics::FromSkel(h));   // [openxr] haptics
+            LogF("vrcam: belt potions - the %s hand takes belt %d (%.3s)", h ? "left" : "right", g.column + 1, kPotions[kindAt[g.column]].code);
+        }
+        if (gripOn && g.hover < 0) g.needRelease = true;   // a grip closed on nothing: let go before taking
+        if (g.hover >= 0 && nBalls < 4) {
+            float c[3];
+            toBw(slot[g.hover] + 12, c);
+            hoverBalls[nBalls][0] = c[0]; hoverBalls[nBalls][1] = c[1] + 0.03f; hoverBalls[nBalls][2] = c[2];
+            hoverBalls[nBalls][3] = set.ballRadius; hoverBalls[nBalls][4] = set.ballAlpha;
+            BallColour(kindAt[g.hover], hoverBalls[nBalls] + 5);
+            ++nBalls;
+        }
+    }
+    SetHover(hoverBalls, nBalls);
+    for (int h = 0; h < 2; ++h) g_holding[h].store(g_grab[h].column >= 0 && !g_grab[h].drinking);
+    for (int h = 0; h < 2; ++h) g_lit[h].store(g_grab[h].hover >= 0);
+    for (int h = 0; h < 2; ++h) g_holdingShape[h].store(g_grab[h].column >= 0 ? Shape(kindAt[g_grab[h].column]) : 0);
+    bool lit[4] = {};
+    for (const HandGrab& g : g_grab) if (g.hover >= 0) lit[g.hover] = true;
+
+    // Each bottle laid: in a hand, on the belt (a little larger while a hand is at it), or put away
+    for (int c = 0; c < 4; ++c) {
+        if (!has[c] || gone[c]) continue;
+        const int kk = kindAt[c];
+        size_t at = g_bottles.size();
+        for (size_t i = 0; i < g_bottles.size(); ++i)
+            if (!used[i] && !g_bottles[i].dead && g_bottles[i].kind == kk) { at = i; break; }
+        float m[16];
+        memcpy(m, held[c] ? heldM[c] : slot[c], sizeof m);
+        if (!held[c] && lit[c])
+            for (int i = 0; i < 12; ++i) if (i % 4 != 3) m[i] *= kHoverScale;
+        if (at == g_bottles.size()) {
+            if (g_bottles.size() >= 32) continue;
+            Bottle b{kk, {}, 0xFFFFFFFFu, false, false};
+            if (!PlaceAt(g_defs[kk].p, m + 12, &b.inst)) { LogF("vrcam: belt potions - %.3s: PlaceInstance gave nothing", kPotions[kk].code); continue; }
+            b.root = RootOf(b.inst.p);
+            LogF("vrcam: belt potions - a %.3s placed (instance %p, root entity %X), %zu kept", kPotions[kk].code, b.inst.p, b.root,
+                 g_bottles.size() + 1);
+            g_bottles.push_back(b);
+            used.push_back(0);
+        }
+        used[at] = 1;
+        Bottle& b = g_bottles[at];
+        if (b.root == 0xFFFFFFFFu) b.root = RootOf(b.inst.p);
+        if (Lay(b.inst.p, b.root, m)) b.parked = false;
+        else b.dead = true;   // its entity is gone (an area change can take the registry's units): another is placed next frame
+    }
+    for (size_t i = 0; i < g_bottles.size(); ++i)
+        if (!used[i] && !g_bottles[i].dead) Park(g_bottles[i]);
+    // the dead ones dropped (their instance is never let go - see above)
+    const size_t before = g_bottles.size();
+    g_bottles.erase(std::remove_if(g_bottles.begin(), g_bottles.end(), [](const Bottle& b) { return b.dead; }), g_bottles.end());
+    if (g_bottles.size() != before) LogF("vrcam: belt potions - %zu gone with their entities, %zu kept", before - g_bottles.size(), g_bottles.size());
+}
+
+// When: the registry may be changed between Renderer::RenderToView opening it and
+// UnitTranslationLayer::SimulationTick (0x780120) or Renderer::Tick closing it again - all
+// through one setter, 0x912C90(registry, allowed): +0x110 = allowed, then its queue of
+// deferred changes (+0x78) is worked off. At VrFrame (after CameraTranslation::RenderTick) it
+// was always shut in a game (2026-10-13: "changes not allowed now", open only while an area
+// loaded). So ours runs in that setter, just before the game shuts the window: the game's own
+// units are made by then, the frame's world matrices not yet worked out.
+constexpr uint64_t RVA_SET_MUTABLE = 0x912C90;
+constexpr uint8_t kSetMutableBytes[] = {0x40, 0x53, 0x55, 0x41, 0x57, 0x48, 0x83, 0xEC, 0x20, 0x48, 0x8B, 0xE9};
+using SetMutableFn = void(__fastcall*)(void* registry, bool allowed);
+SetMutableFn g_origSetMutable = nullptr;
+std::atomic<int> g_hook{0};               // 0 not tried, 1 in, -1 failed
+std::atomic<bool> g_fullBody{false};      // VrFrame's: first person with the body (F4) and vrcam's camera on
+
+void Work() {
+    static int checked = 0;   // 1 the game's functions are where 3.3.93787 has them, -1 not
+    static bool told = false;
+    if (!checked) {
+        // (every one is asked, so the line says which. 0xE3A8C0 may carry the potion hide's hook: d2rsig::Check vouches for a function we hooked with the bytes the hook proved)
+        const bool ctor = d2rsig::Check(RVA_STRING_CTOR, kStringCtorBytes, sizeof kStringCtorBytes);
+        const bool load = d2rsig::Check(RVA_LOAD_UNITDEF, kLoadBytes, sizeof kLoadBytes);
+        const bool place = d2rsig::Check(RVA_PLACE, kPlaceBytes, sizeof kPlaceBytes);
+        const bool update = d2rsig::Check(RVA_UPDATE_WORLD, kUpdateWorldBytes, sizeof kUpdateWorldBytes);
+        checked = ctor && load && place && update ? 1 : -1;
+        if (checked > 0)
+            LogF("vrcam: engine unit - ready: the game's four functions are where 3.3.93787 has them (%s) - items can be drawn by the game (the belt potions)",
+                 potionhide::HooksIn() ? "0xE3A8C0 carries the potion hide's hook, vouched for by its original bytes" : "no hook of ours on them");
+        else if (!told) {
+            told = true;
+            LogF("vrcam: engine unit - the game's functions are not where 3.3.93787 has them: no items drawn by the game (string ctor %s, load %s, place %s, update world 0xE3A8C0 %s; "
+                 "the potion hide's hooks are %s)", ctor ? "ok" : "NOT", load ? "ok" : "NOT", place ? "ok" : "NOT", update ? "ok" : "NOT", potionhide::HooksIn() ? "in" : "not in");
+        }
+    }
+    if (checked < 0) return;
+    const uint32_t gen = g_wantGen.load();
+    if (gen != g_doneGen) {
+        g_doneGen = gen;
+        AcquireSRWLockShared(&g_lock);
+        const std::string want = g_want;
+        ReleaseSRWLockShared(&g_lock);
+        if (!want.empty()) RunTest(want);
+    }
+    BeltFrame(g_fullBody.load());
+}
+
+void __fastcall HookSetMutable(void* registry, bool allowed) {
+    if (!allowed && g_inWorld.load() && (uintptr_t)registry == d2rsig::Addr(RVA_REGISTRY)) {
+        DWORD owner = 0;
+        uint8_t open = 0;
+        // still open, and ours to change: the game's own thread
+        if (ReadRegistry((uintptr_t)registry, &owner, &open) && open && owner == GetCurrentThreadId()) Work();
+    }
+    g_origSetMutable(registry, allowed);
+}
+
+// Wanted at all: the belt's models on, or a test asked for. Unticked, nothing is hooked.
+bool Wanted() {
+    AcquireSRWLockShared(&g_beltLock);
+    const bool on = g_beltSet.on;
+    ReleaseSRWLockShared(&g_beltLock);
+    return on || g_wantGen.load() != g_doneGen;
+}
+void InstallHook() {
+    if (g_hook.load() != 0 || !Wanted()) return;
+    const bool in = d2rsig::Hook(RVA_SET_MUTABLE, kSetMutableBytes, sizeof kSetMutableBytes, (void*)&HookSetMutable, (void**)&g_origSetMutable);
+    g_hook.store(in ? 1 : -1);
+    Log(in ? "vrcam: engine items in - the game's own models placed while its registry may be changed (0x912C90)"
+           : "vrcam: engine items hook FAILED (0x912C90 not as in 3.3.93787) - no items drawn by the game");
+}
+
+// From VrFrame, every frame: what the next window gets to know.
+void Frame(bool fullBody) { g_fullBody.store(fullBody); }
+}  // namespace engitem
 
 // Walls the game makes see-through (2026-10-07). From its own camera high above, a wall
 // between it and the hero is drawn at half alpha so the hero stays in sight; from our
@@ -9726,12 +12481,13 @@ void SkyTick() {
                  g_ceilBiome.load() ? ", a cave ceiling ([ceiling] biomes)" : "");
         }
     }
+    cavelight::Tick(biome, g_underground.load());
     {   // the cave ceiling: each change of mind to the log, like the sky's
         const char* cw = nullptr;
         if (!g_set.ceilOn.load()) cw = "[ceiling] enabled=0";
         else if (!g_ceilBiome.load()) cw = "not on [ceiling] biomes";
         else if (!g_enabled.load() || ThirdPerson()) cw = "not first person";
-        else if (gamestate::MenuOpen()) cw = "a menu is open";
+        else if (MenuFlat()) cw = "a menu is open";
         static std::string toldCeil = "?";
         if (std::string(cw ? cw : "") != toldCeil) {
             toldCeil = cw ? cw : "";
@@ -9749,7 +12505,7 @@ void SkyTick() {
     else if (TableView()) why = "the table view (the room round the game)";
     else if (TopPersp()) why = "the view from above";
     else if (palette < 0) why = "not outdoors";
-    else if (gamestate::MenuOpen()) why = "a menu is open";
+    else if (MenuFlat()) why = "a menu is open";   // (a menu as a panel, menu_3d: the world as without one)
     g_skyPalette.store(why ? -1 : palette);
     static std::string toldWhy = "?";
     if (std::string(why ? why : "") != toldWhy) {
@@ -9764,6 +12520,11 @@ void SkyTick() {
 // ReShade's own UI for the effect stays usable; what we write wins each frame.
 namespace fx {
 bool g_registered = false;
+bool g_joined = false;   // reshade::register_addon(g_self) done - by TryRegister, or at the plugin's load for lightbounds
+bool JoinReShade() {
+    if (!g_joined && g_self) g_joined = reshade::register_addon(g_self);
+    return g_joined;
+}
 // The effect's two techniques: [0] the left eye's frames (and mono), [1] the
 // right eye's. The eye of a frame is which one is on, not a uniform: under
 // D3D12 ReShade rewrites the effect's one constant buffer in place at every
@@ -9902,32 +12663,57 @@ void Install() {
 }  // namespace dlsseyes
 
 // The views of the toolbar's and the map's copies bound to the effect (hud::PictureNow), 0 = none yet.
-uint64_t g_pieceBound[3] = {};   // the toolbar, the map, the labels' layer
+uint64_t g_pieceBound[4] = {};   // the toolbar, the map, the labels' layer, the wrists' globes
 
-void Forget(reshade::api::effect_runtime*) { g_tech[0] = g_tech[1] = {0}; replay::g_rightTech = {0}; g_pieceBound[0] = g_pieceBound[1] = g_pieceBound[2] = 0; }
+void Forget(reshade::api::effect_runtime*) { g_tech[0] = g_tech[1] = {0}; replay::g_rightTech = {0}; g_pieceBound[0] = g_pieceBound[1] = g_pieceBound[2] = g_pieceBound[3] = 0; }
 
 void SetFloats(reshade::api::effect_runtime* rt, const char* name, const float* v, size_t n) {
     const reshade::api::effect_uniform_variable u = rt->find_uniform_variable("D2R_DepthFog.fx", name);
     if (u.handle) rt->set_uniform_value_float(u, v, n);
 }
 void SetFloat(reshade::api::effect_runtime* rt, const char* name, float v) { SetFloats(rt, name, &v, 1); }
-// The monster's name plate as uv of the screen (2026-10-12): gamestate has it in the layout's units (the panel's
-// place plus its child Health's); the game's interface scale makes them pixels - the label code's, else asked
-// here, else the screen's height over 1080 - and it stands centred across, as D2R puts it at the top middle.
-// The first few go into the log, to check it against where it shows.
+// The monster's name plate as uv of the screen (2026-10-12): gamestate has it in the layout's units, off the
+// panel's anchor (the top middle of the interface's area). The game's interface scale makes them pixels - the
+// label code's, else asked here: the screen's height over 2160 times the Safe Screen Percent (0.711 = 1920 /
+// 2160 x 0.80 in the logs) - and that area stands in the middle of the screen, so its top is half of what the
+// percent leaves free. A margin round it for the background's caps, drawn outside its rectangle. The first
+// few go into the log, to check against where it shows.
 void PlateBoxUv(const int32_t r[4], uint32_t sw, uint32_t sh, float box[4]) {
     float s = g_uiScaleSeen.load();
     if (!(s > 0.05f && s < 20.0f) && Matches(RVA_UI_SCALE, kSigUiScale, sizeof kSigUiScale)) s = ((UiScaleFn)d2rsig::Addr(RVA_UI_SCALE))();
-    if (!(s > 0.05f && s < 20.0f)) s = sh / 1080.0f;
-    const float w = r[2] * s, h = r[3] * s, x0 = 0.5f * (sw - w), y0 = r[1] * s;
+    if (!(s > 0.05f && s < 20.0f)) s = sh / 2160.0f;
+    const float top = (std::max)(0.0f, 0.5f * (sh - 2160.0f * s));
+    const float mx = 0.5f * r[3] * s, my = 0.15f * r[3] * s;   // the caps
+    const float x0 = 0.5f * sw + r[0] * s - mx, y0 = top + r[1] * s - my, w = r[2] * s + 2.0f * mx, h = r[3] * s + 2.0f * my;
     box[0] = x0 / sw; box[1] = y0 / sh; box[2] = (x0 + w) / sw; box[3] = (y0 + h) / sh;
     static int told = 0;
     static int32_t last[4] = {};
-    if (told < 4 && memcmp(last, r, sizeof last) != 0) {
+    if (told < 8 && memcmp(last, r, sizeof last) != 0) {
         ++told;
         memcpy(last, r, sizeof last);
-        LogF("vrcam: the monster's name plate %d,%d %dx%d (layout) x scale %.3f -> %.0f,%.0f %.0fx%.0f on %ux%u (centred across)",
-             r[0], r[1], r[2], r[3], s, x0, y0, w, h, sw, sh);
+        LogF("vrcam: the monster's name plate %d,%d %dx%d (layout) x scale %.3f, the area's top %.0f -> %.0f,%.0f %.0fx%.0f on %ux%u",
+             r[0], r[1], r[2], r[3], s, top, x0, y0, w, h, sw, sh);
+    }
+}
+// The allies' portraits' corner as uv of the screen (2026-10-12). The game draws the mercenary's and the party's
+// portraits itself, at the top left - no widget of a layout - and the next thing down that side is the chat
+// (HUDMessagePanelHD.json: 40, 910 in the layout's units, off the interface area's top left). So the corner is
+// from the screen's top left to 420 units right of the area's left and 900 units under its top: the portraits
+// and their names, a few of them under one another. The area: the game's interface scale s (PlateBoxUv) is the
+// screen's height over 2160 times the Safe Screen Percent, and the area stands in the middle of the screen.
+void AlliesBoxUv(uint32_t sw, uint32_t sh, float box[4]) {
+    float s = g_uiScaleSeen.load();
+    if (!(s > 0.05f && s < 20.0f) && Matches(RVA_UI_SCALE, kSigUiScale, sizeof kSigUiScale)) s = ((UiScaleFn)d2rsig::Addr(RVA_UI_SCALE))();
+    if (!(s > 0.05f && s < 20.0f)) s = sh / 2160.0f;
+    const float safe = std::clamp(s * 2160.0f / sh, 0.3f, 1.0f);
+    const float left = 0.5f * sw * (1.0f - safe), top = 0.5f * sh * (1.0f - safe);
+    box[0] = 0.0f; box[1] = 0.0f;
+    box[2] = std::clamp((left + 420.0f * s) / sw, 0.0f, 0.5f); box[3] = std::clamp((top + 900.0f * s) / sh, 0.0f, 0.75f);
+    static float told = 0.0f;
+    if (std::abs(told - s) > 0.001f) {
+        told = s;
+        LogF("vrcam: the allies' portraits - the corner 0,0 - %.0f,%.0f on %ux%u (interface scale %.3f, its area %.0f%%), moved %+.0f%% across, %+.0f%% up",
+             box[2] * sw, box[3] * sh, sw, sh, s, safe * 100.0f, g_set.alliesX.load() * 100.0f, -g_set.alliesY.load() * 100.0f);
     }
 }
 void SetInt(reshade::api::effect_runtime* rt, const char* name, int v) {
@@ -9989,6 +12775,33 @@ void SetBool(reshade::api::effect_runtime* rt, const char* name, bool v) {
     const reshade::api::effect_uniform_variable u = rt->find_uniform_variable("D2R_DepthFog.fx", name);
     if (u.handle) rt->set_uniform_value_bool(u, &v, 1);
 }
+// [hud] low_hp_vignette (vr/low_hp.h): this pair's edge tint for D2R_DepthFog.fx, the same in both eyes. Off, or a life
+// that is fine: nothing is sent (and a 0 once after the last tint, so the effect's picture is the game's again).
+void LowHpUniforms(reshade::api::effect_runtime* rt) {
+    static bool sent = false;
+    lowhp::Uniforms u;
+    const bool on = lowhp::Current(&u);
+    if (!on && !sent) return;
+    if (on && rt->find_uniform_variable("D2R_DepthFog.fx", "LowHpAlpha").handle == 0) {
+        static bool told = false;
+        if (!told) { told = true; Log("vrcam: low life vignette - D2R_DepthFog.fx has no LowHpAlpha: it is an older one, copy the new one in (the vignette needs the DLL and the effect together)"); }
+        return;
+    }
+    if (on && u.fov[0] > 0.0f) {
+        static bool toldFov = false;
+        if (!toldFov && rt->find_uniform_variable("D2R_DepthFog.fx", "LowHpFov").handle == 0) {
+            toldFov = true;
+            Log("vrcam: low life vignette - D2R_DepthFog.fx has no LowHpFov: an older one, so the vignette's size follows the picture's own proportions, not the view's angle (copy the new effect in)");
+        }
+    }
+    sent = on;
+    SetFloat(rt, "LowHpAlpha", on ? u.alpha : 0.0f);
+    if (on) {
+        SetFloats(rt, "LowHpShape", u.shape, 4);
+        SetFloats(rt, "LowHpColor", u.color, 3);
+        SetFloats(rt, "LowHpFov", u.fov, 2);
+    }
+}
 
 // Not in the main menu: its scene got the fog of act 2 (its biome is act2_frontend_biome).
 // The HUD's per-eye shift (D2R_DepthFog.fx PS_Hud): only in AFR stereo, in a game area.
@@ -9996,13 +12809,22 @@ bool HudWanted() { return AfrOn() && g_set.uiShift.load() > 0.0f && g_inWorld.lo
 // The crossbow held as the staff, its shot line ([debug] phantom_ray) or its bone's axes ([debug] bone_axes) drawn.
 #if D2RVR_FIRST_PERSON
 bool XbowDrawable() { return g_enabled.load() && g_inWorld.load() && XbowLikeStaff() && StaffAim(); }
+// [debug] bow_vectors: the bow draw's vectors drawn in the headset (bow_draw_wire.cpp builds them, the effect draws them)
+bool BowVectorsWanted() { return bowdrawwire::DebugWanted() && g_enabled.load() && g_inWorld.load(); }
 // the line the attack goes along, for any weapon in hand (only where HandRay has one)
 bool PhantomWanted() { return (g_set.phantomRay.load() || g_set.boneAxes.load()) && g_enabled.load() && g_inWorld.load(); }
 // the axes of whatever weapon is in hand, not only the crossbow's (2026-10-06)
 bool BoneAxesWanted() { return g_set.boneAxes.load() && g_enabled.load() && g_inWorld.load(); }
+// [debug] melee_boxes: the capsules hit by touch tests, only in VR first person (F4)
+bool MeleeBoxesWanted() { return meleeboxes::Wanted() && g_enabled.load() && g_inWorld.load() && FullBody() && !ThirdPerson(); }
+// [hud] hand_vitals_style = orbs: the life and mana balls on the wrists, drawn by the effect, only in VR first person (F4)
+bool HandOrbsWanted() { return handvitals::OrbsOn() && g_enabled.load() && g_inWorld.load() && FullBody() && !ThirdPerson(); }
 #else
 bool PhantomWanted() { return false; }
 bool BoneAxesWanted() { return false; }
+bool BowVectorsWanted() { return false; }
+bool MeleeBoxesWanted() { return false; }
+bool HandOrbsWanted() { return false; }
 #endif
 
 // The frame stamp strip (D2R_DepthFog.fx PS_Stamp): whenever the camera turns
@@ -10018,9 +12840,11 @@ SkyView SkyBack(int e) {   // under g_skyLock
     return h.axes_ok && h.proj_ok ? h : g_skyView[e];
 }
 bool StampWanted() { return g_enabled.load() && g_afrBlock && g_set.stamps.load() && g_set.stampPixels.load(); }
+// [hud] low_hp_vignette rides on D2R_DepthFog.fx: the effect stays on for it in VR first person on native OpenXR.
+bool LowHpWanted() { return lowhp::Enabled() && g_enabled.load() && FullBody() && !ThirdPerson() && xr::Running() && g_inWorld.load(); }
 
 bool FogWanted() {
-    return g_set.fogOn.load() && g_enabled.load() && !Overhead() && g_inWorld.load() && !gamestate::MenuOpen() &&
+    return g_set.fogOn.load() && g_enabled.load() && !Overhead() && g_inWorld.load() && !MenuFlat() &&
            (g_set.fogCaves.load() || !g_underground.load());   // [fog] caves=0: none underground
 }
 // The table (F5): the void black, the game lifted off black - D2R_DepthFog.fx TableKey.
@@ -10029,7 +12853,7 @@ bool TableKeyWanted() { return TableView() && g_inWorld.load() && !gamestate::Me
 // never from above, from behind or on the floor (all three run as ThirdPerson).
 bool CeilWanted() {
     return g_set.ceilOn.load() && g_enabled.load() && !ThirdPerson() && g_inWorld.load() && g_ceilBiome.load() &&
-           !gamestate::MenuOpen();
+           !MenuFlat();
 }
 
 // The pictures of each act as the shader's preprocessor definitions; only what
@@ -10059,13 +12883,15 @@ bool ApplySkyPictures(reshade::api::effect_runtime* rt) {
             set = true;
         }
     }
-    {   // the cave ceiling's pictures, a slot each; an empty slot keeps one that is there (never sampled)
+    {   // the cave ceiling's pictures, a slot each; an empty slot keeps slot 1's (never sampled)
         std::string file[kCeilSlots + 1];
         bool ok[kCeilSlots + 1] = {};
         AcquireSRWLockShared(&g_skyCfgLock);
         for (int k = 1; k <= kCeilSlots; ++k) { file[k] = g_ceilSlot[k]; ok[k] = g_ceilSlotOk[k]; }
         ReleaseSRWLockShared(&g_skyCfgLock);
-        const std::string spare = ok[1] ? file[1] : std::string("D2R_Sky_ours/D2R_Ceiling_act1_caves_walls.png");
+        // With no picture at all, no file (2026-10-13): the act 1 caves' one, named all the same, is
+        // not in the repository, and a source not found fails ReShade's reload. An empty source it skips.
+        const std::string spare = ok[1] ? file[1] : std::string();
         for (int k = 1; k <= kCeilSlots; ++k) {
             char name[24];
             snprintf(name, sizeof name, "D2R_CEILING_%d", k);
@@ -10095,7 +12921,7 @@ void OnFinishEffects(reshade::api::effect_runtime* rt, reshade::api::command_lis
     if (!g_tech[0].handle) { hud::SetPictureReady(false); return; }
     // Off while a menu is open: the fog lies over the whole picture, the
     // inventory and trade panels included, and darkened them.
-    const bool want = FogWanted() || g_skyPalette.load() >= 0 || CeilWanted() || HudWanted() || StampWanted() || hud::PictureWanted() || TableKeyWanted() || PhantomWanted() || BoneAxesWanted();
+    const bool want = FogWanted() || g_skyPalette.load() >= 0 || CeilWanted() || HudWanted() || StampWanted() || hud::PictureWanted() || TableKeyWanted() || PhantomWanted() || BoneAxesWanted() || BowVectorsWanted() || MeleeBoxesWanted() || HandOrbsWanted() || LowHpWanted();
     // The toolbar and the map are taken out of the game's picture to be drawn
     // back at their own size only while this effect runs, and is new enough to.
     {
@@ -10282,10 +13108,12 @@ void Tick() {
 // Only in VR with D2R VR Settings' square window, where the shadow map is the trap: flat mode and VR
 // without it read ReShade's DEPTH as before 0.161 (the effect's OwnDepth) - a flat player's game at the
 // Resolution Scale above 100 had no depth of the window's size, and no sky or fog (2026-10-12).
-bool OwnDepthNow() { return g_ownDepth.load(std::memory_order_relaxed) && g_squareWin.load(std::memory_order_relaxed) && g_set.platform.load() == 1; }
+// A render size ([render] vr_resolution) is square or near it too: 2048 and 4096 are the shadow maps' sizes - so ours then, as
+// with the square window (and the colour-target rule in Bind: a shadow pass binds none).
+bool OwnDepthNow() { return g_ownDepth.load(std::memory_order_relaxed) && (g_squareWin.load(std::memory_order_relaxed) || vrres::Active()) && g_set.platform.load() == 1; }
 namespace scenedepth {
 using namespace reshade::api;
-struct Ds { uint64_t res; uint32_t binds, last, state; };
+struct Ds { uint64_t res; uint32_t binds, last, state; uint32_t colour, colourLast; };   // (colour: binds with a colour target - a shadow pass has none)
 Ds g_ds[16] = {};
 SRWLOCK g_lock = SRWLOCK_INIT;
 resource g_copy{0};
@@ -10293,7 +13121,7 @@ resource_view g_srv{0};
 resource_desc g_copyDesc{};
 uint64_t g_from = 0;   // the depth-stencil copied last (the log, once per change)
 
-void OnBind(command_list* cl, uint32_t, const resource_view*, resource_view dsv) {
+void OnBind(command_list* cl, uint32_t count, const resource_view*, resource_view dsv) {
     if (!dsv.handle || !OwnDepthNow()) return;
     const uint64_t r = cl->get_device()->get_resource_from_view(dsv).handle;
     if (!r) return;
@@ -10304,8 +13132,9 @@ void OnBind(command_list* cl, uint32_t, const resource_view*, resource_view dsv)
         if (!d.res && !slot) slot = &d;
     }
     if (slot) {
-        if (!slot->res) *slot = Ds{r, 0, 0, 0};
+        if (!slot->res) *slot = Ds{r, 0, 0, 0, 0, 0};
         ++slot->binds;
+        if (count) ++slot->colour;
     }
     ReleaseSRWLockExclusive(&g_lock);
 }
@@ -10323,7 +13152,7 @@ void FrameEnd() {
     for (Ds& d : g_ds) {
         if (!d.res) continue;
         if (!d.binds && !d.last) d = Ds{};
-        else { d.last = d.binds; d.binds = 0; }
+        else { d.last = d.binds; d.binds = 0; d.colourLast = d.colour; d.colour = 0; }
     }
     ReleaseSRWLockExclusive(&g_lock);
 }
@@ -10358,6 +13187,9 @@ void Bind(effect_runtime* rt, command_list* cl) {
         if (rd.type != resource_type::texture_2d || (rd.usage & resource_usage::depth_stencil) == 0 || rd.texture.samples != 1) continue;
         const uint32_t rw = rd.texture.width, rh = rd.texture.height;
         if (rw == w && rh == h) {
+            // [render] vr_resolution: a render size can be a shadow map's (2048, 4096). The scene's depth is bound with a colour
+            // target, a shadow pass's never is: while a size is in force an exact match needs one.
+            if (vrres::Active() && std::max(d.colour, d.colourLast) == 0) continue;
             if (n > std::max(best.binds, best.last)) { best = d; bd = rd; }
             continue;
         }
@@ -10420,6 +13252,21 @@ void OnReshadePresent(reshade::api::effect_runtime* rt) {
     // Native OpenXR: the runtime paces the game (xrWaitFrame); a present outside a pair goes
     // to the headset as a flat picture.
     xr::SetWindow((HWND)rt->get_hwnd());   // the swap chain's own window: where the pointer is
+    g_swapWnd.store((HWND)rt->get_hwnd());
+    // No game area (the title and character screens, loading): the interface stays in the picture. A menu out as
+    // a panel when the game was left (Esc, Save and Exit) is not kept there - the draw hook that sets it may not
+    // run in the menus, and the main menu came up with no interface at all (2026-10-13).
+    if (!g_inWorld.load() || !d2rcam::InWorld()) {
+        g_menu3dNow.store(false);
+        hud::SetPanelOut(false);
+    }
+    // FlatVR's laser on the menu panel is the mouse (its reader block): the pad's layout kept under it, as
+    // native's LaserStep keeps it - 300 ms a call; parked, the focus is the pad's again
+    if (FlatVrLaserWanted()) {
+        const int s = hud::FlatVrLaserState();
+        if (s == 1) panelinput::OwnPointer();
+        else if (s == 2) panelinput::UseController();
+    }
     {   // native OpenXR: straight ahead and the body taken again when a game is entered (the hero
         // appears) - the head is wherever it was in the menus; not at an area change, the hero stays
         static bool hadHero = false;
@@ -10429,6 +13276,8 @@ void OnReshadePresent(reshade::api::effect_runtime* rt) {
     }
     // a panel open in a game: the flat picture at the panels' distance from its first frame
     xr::SetPanelOpen(gamestate::MenuOpen() && g_inWorld.load());
+    // [openxr] laser: the flat picture's menus - a panel in a game, or the title and character screens
+    xr::SetLaserWanted(gamestate::MenuOpen() || !g_inWorld.load());
     if (xr::On() || xr::Running() || xr::StopPending())
         replay::XrPresent(rt, (ID3D12Resource*)rt->get_current_back_buffer().handle);
     else pace::Tick();
@@ -10499,6 +13348,7 @@ void OnBeginEffects(reshade::api::effect_runtime* rt, reshade::api::command_list
     if (!g_tech[0].handle) return;
     if (!rt->get_technique_state(g_tech[0]) && !(g_tech[1].handle && rt->get_technique_state(g_tech[1]))) return;
     SetFloat(rt, "NearPlane", g_lastNear.load());
+    LowHpUniforms(rt);   // [hud] low_hp_vignette
     SetFloat(rt, "FogStart", g_underground.load() ? g_set.fogCaveStart.load() : g_set.fogStart.load());
     SetFloat(rt, "FogEnd", g_underground.load() ? g_set.fogCaveEnd.load() : g_set.fogEnd.load());
     SetFloat(rt, "FogStrength", g_underground.load() ? g_set.fogCaveStrength.load() : 1.0f);
@@ -10642,6 +13492,7 @@ void OnBeginEffects(reshade::api::effect_runtime* rt, reshade::api::command_list
             SetBool(rt, "CeilTorches", g_set.ceilTorches.load() || pictureFire);
             SetFloat(rt, "CeilTorchBright", g_set.ceilTorchBright.load());
             SetFloat(rt, "CeilTorchRadius", g_set.ceilTorchRadius.load());
+            SetFloat(rt, "CeilFireNearer", g_set.ceilFireNearer.load());
             SetFloat(rt, "CeilHalo", g_set.ceilHalo.load());
             SetFloat(rt, "CeilTorchWarm", g_set.ceilTorchWarm.load());
             SetFloat(rt, "CeilWallDist", g_set.ceilWall.load());
@@ -10715,10 +13566,15 @@ void OnBeginEffects(reshade::api::effect_runtime* rt, reshade::api::command_list
             float box[4] = {0.0f, 0.0f, 0.0f, 0.0f};
             int32_t r[4];
             const uint32_t sw = renderscale::g_screenW.load(), sh = renderscale::g_screenH.load();
-            if (PlateWanted() && sw && sh && gamestate::PlateRect(r)) PlateBoxUv(r, sw, sh, box);
+            if ((PlateWanted() || AlliesMoved()) && sw && sh && gamestate::PlateRect(r)) PlateBoxUv(r, sw, sh, box);
             SetFloats(rt, "PlateBox", box, 4);
             SetFloat(rt, "PlateAlpha", g_set.plateAlpha.load());
             SetFloat(rt, "PlateScale", g_set.plateSize.load());
+            float allies[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+            if (AlliesMoved() && sw && sh) AlliesBoxUv(sw, sh, allies);
+            SetFloats(rt, "AlliesBox", allies, 4);
+            const float alliesOff[2] = {g_set.alliesX.load(), g_set.alliesY.load()};
+            SetFloats(rt, "AlliesOff", alliesOff, 2);
         }
         if (on || mask) {   // the toolbar and the map in the layer: never faded, never keyed away (TableKey)
             SetFloats(rt, "LabelKeep0", keepBar, 4);
@@ -10774,7 +13630,181 @@ void OnBeginEffects(reshade::api::effect_runtime* rt, reshade::api::command_list
         float o[3], d[3], ga[3], gb[3];
         const bool xbow = XbowLikeStaff() && StaffAim();
         const bool ray = PhantomWanted() && xbow && HandRay(o, d);
-        const bool grab = PhantomWanted() && !xbow && f.valid && skel::GrabLine(ga, gb);
+        const bool grab = PhantomWanted() && !xbow && f.valid && (weight::ShaftEnds(ga, gb) || skel::GrabLine(ga, gb));   // [weight]: its whole shaft
+        {   // [debug] melee_boxes: the capsules, in world units from where the hands hang - the cameras above are theirs too
+            static bool boxesWere = false;
+            float ha[meleeboxes::kMaxCapsules][4], hb[meleeboxes::kMaxCapsules][4];
+            const float eyeAt[3] = {g_eyeWorld[0].load(), g_eyeWorld[1].load(), g_eyeWorld[2].load()};
+            const int nh = MeleeBoxesWanted() ? meleeboxes::Take(GetTickCount64(), eyeAt, ha, hb) : 0;
+            if (nh > 0 || boxesWere) SetBool(rt, "HitboxOn", nh > 0);
+            if (nh > 0) {
+                SetFloats(rt, "HitboxA", &ha[0][0], (size_t)nh * 4);
+                SetFloats(rt, "HitboxB", &hb[0][0], (size_t)nh * 4);
+                SetInt(rt, "HitboxCount", nh);
+            }
+            boxesWere = nh > 0;
+        }
+        {   // [hud] hand_vitals_style orbs (vr/hand_orbs.h): the life and mana balls on the wrists - the hero's arm as posed, the numbers, into the effect's
+            // uniforms (world units, relative to where the hands hang, like the capsules above); the effect ray-casts them per eye with the game's depth
+            static handorbs::State orbState;
+            static bool orbsWere = false;
+            static handorbs::Tracker orbTrack;   // the wrists' frames: the drawn arm, or the last one carried on by the controller
+            static unsigned orbSrcLogged[2] = {};
+            handorbs::Uniforms ou;
+            const bool wantGlobes = HandOrbsWanted() && handvitals::Settings().style == handvitals::kStyleGlobes;
+            hud::SetGlobes(wantGlobes);   // the game's own globes cut out of its interface (hud.cpp), only while that look is on
+            if (HandOrbsWanted() && f.valid) {
+                handorbs::In in;
+                in.cfg = handvitals::Settings();
+                in.vitalsOk = handvitals::Snapshot(&in.v);
+                in.time = pairtime::UsNow() * 1e-6;
+                in.heroClass = skel::HeroClass();   // the class of the hero playing now (the model's folder): its depth offset is on both wrists' Z
+                {   // once per change: which hero, and the offset its class has
+                    static int toldHero = -2;
+                    if (in.heroClass != toldHero) {
+                        toldHero = in.heroClass;
+                        if (in.heroClass >= 0) LogF("vrcam: hero class: %s - the wrist medallions' depth offset for it is %+.1f cm ([hud] hand_vitals_orb_z_cm_%s)", handvitals::HeroName(in.heroClass),
+                                                    handvitals::ClassZCm(in.cfg, in.heroClass), handvitals::HeroKey(in.heroClass));
+                        else Log("vrcam: hero class: not known - the wrist medallions use their own depth, no class offset");
+                    }
+                }
+                const float upm = std::max(1.0f, ViewHeight()) / UserEyeHeightM();
+                // Where the arm is DRAWN, the way a belt bottle rides the palm: the skeleton hook's elbow, wrist and hand frame in the WORLD, made at the very pose with the hero's
+                // own model-to-world (skel::HeroArmWorld) - exact whatever the IK or the [arms] offsets do, and from the same instant as the drawn hand (no camera frame in
+                // between, so no lag when the head turns). Eye-relative metres in the world's own axes: the frame handorbs works in.
+                const float eyeW[3] = {g_eyeWorld[0].load(), g_eyeWorld[1].load(), g_eyeWorld[2].load()};
+                // The wrist's frame every frame (vr/hand_orbs.h Tracker): the drawn arm when the skeleton read it this frame; when it did not (the entity tables are looked for only
+                // twice a second after a miss, the hero is loading, a menu), the LAST drawn frame carried on by the controller's own pose - the hand is held to the controller, so
+                // the wrist and the hand's axes keep their place in the grip's axes and the frame still turns with the hand; then the skeleton's hand-frame forearm through the
+                // head's turn (no wrist bend); then the controller's point alone. Both eyes' passes use these one set of uniforms.
+                const float off[3] = {g_set.handSide.load() * 0.01f, g_set.handUp.load() * 0.01f, -g_set.handFwd.load() * 0.01f};
+                static const float kNoOff[3] = {};
+                auto handToWorldM = [&](const float* v, const float* off3, handorbs::V3* out) {   // hand-frame metres (+ the offset) -> eye-relative world metres
+                    const float vv[3] = {v[0] + off3[0], v[1] + off3[1], v[2] + off3[2]};
+                    float w[3];
+                    world(vv, w);
+                    *out = {w[0], w[1], w[2]};
+                };
+                const D2RVR_Shared* sh = Shared();
+                const bool shOk = sh && sh->version == D2RVR_SHARED_VERSION && sh->headValid;
+                for (int side = 0; side < 2; ++side) {   // the skeleton's: 0 right, 1 left
+                    handorbs::Wrist w;
+                    if (shOk && (sh->handsValid & (side == 0 ? 1u : 2u))) {   // the controller: its point, and its axes from its orientation (the hand frame -> the world)
+                        w.grip.ok = true;
+                        handToWorldM(side == 0 ? sh->rightHand : sh->leftHand, kNoOff, &w.grip.pos);
+                        handorbs::V3 ax[3];
+                        if (handorbs::AxesFromQuat(side == 0 ? sh->rightRot : sh->leftRot, ax)) {
+                            handorbs::V3* dst[3] = {&w.grip.x, &w.grip.y, &w.grip.z};
+                            for (int i = 0; i < 3; ++i) {
+                                const float v[3] = {ax[i].x, ax[i].y, ax[i].z};
+                                float wv[3];
+                                world(v, wv);
+                                *dst[i] = hset::Unit({wv[0], wv[1], wv[2]});
+                            }
+                            w.grip.hasAxes = true;
+                        }
+                        in.grip[side] = w.grip;   // (the point fallback of Step adds the arms' offset the hand is drawn off the controller by)
+                        handToWorldM(side == 0 ? sh->rightHand : sh->leftHand, off, &in.grip[side].pos);
+                    }
+                    skel::HeroArm ha;
+                    unsigned ageMs = 0xFFFFFFFFu;
+                    if (skel::HeroArmWorld(side, &ha, 1000u, &ageMs)) {
+                        handorbs::WorldArm m;
+                        m.elbow = {ha.elbow[0], ha.elbow[1], ha.elbow[2]};
+                        m.wrist = {ha.wrist[0], ha.wrist[1], ha.wrist[2]};
+                        m.across = {ha.across[0], ha.across[1], ha.across[2]};
+                        m.point = {ha.point[0], ha.point[1], ha.point[2]};
+                        m.face = {ha.face[0], ha.face[1], ha.face[2]};
+                        m.hand = ha.hand;
+                        w.drawn = handorbs::ArmFromWorld(eyeW, upm, m);
+                        w.drawnOk = w.drawn.ok;
+                        w.drawnAgeS = (double)ageMs * 0.001;
+                    }
+                    float e[3], wr[3], x[3];
+                    if (skel::HeroForearm(side, e, wr, x)) {
+                        w.forearmOk = w.forearm.ok = true;
+                        handToWorldM(e, off, &w.forearm.elbow);
+                        handToWorldM(wr, off, &w.forearm.wrist);
+                        float xw[3];
+                        world(x, xw);
+                        w.forearm.across = {xw[0], xw[1], xw[2]};
+                    }
+                    const handorbs::Resolved r = orbTrack.Resolve(side, w, in.time);
+                    in.arm[side] = r.arm;
+                    if (r.changed) {   // once per change: where the wrist's frame comes from, and how long the last one lasted
+                        const unsigned n = ++orbSrcLogged[side];
+                        if (n <= 60 || n % 25 == 0) {
+                            const char* why = r.src == handorbs::Src::Drawn ? "" : skel::HeroArmWhy();
+                            char b[420];
+                            int len = snprintf(b, sizeof b, "vrcam: hand vitals - the %s wrist's frame: %s", side == 0 ? "right" : "left", handorbs::SrcName(r.src));
+                            if (r.from != handorbs::Src::None && len > 0 && len < (int)sizeof b)
+                                len += snprintf(b + len, sizeof b - len, " (%s lasted %.2f s)", handorbs::SrcName(r.from), r.lastedS);
+                            if (why && *why && len > 0 && len < (int)sizeof b) len += snprintf(b + len, sizeof b - len, "; the drawn wrist was not read: %s", why);
+                            if (n > 60 && len > 0 && len < (int)sizeof b) snprintf(b + len, sizeof b - len, " (every 25th change is logged now)");
+                            Log(b);
+                        }
+                    }
+                }
+                const handorbs::Set set = handorbs::Step(orbState, in);
+                float fit = 0.0f;
+                uint64_t srv = 0;
+                bool cutOk = true;
+                if (set.globes) {   // the game's own globes: the cut must be there, else nothing is drawn and the log says why (once per reason)
+                    cutOk = hud::GlobesNow(&fit, &srv);
+                    if (!cutOk) {
+                        static int toldWhy = -1;
+                        const int why = hud::GlobesWhy();
+                        if (set.any && why != toldWhy && why >= 2) {
+                            toldWhy = why;
+                            Log(why == 2 ? "vrcam: hand vitals - the game's own globes cannot be cut: its interface layer is too small, or its safe area does not hold them whole (Safe Screen Percent): nothing is drawn"
+                                         : "vrcam: hand vitals - the texture for the game's own globes could not be made: nothing is drawn");
+                        }
+                    } else if (srv != g_pieceBound[3]) {
+                        rt->update_texture_bindings("D2R_GAME_GLOBES", reshade::api::resource_view{srv}, reshade::api::resource_view{srv});
+                        g_pieceBound[3] = srv;
+                    }
+                }
+                static const float kWorldR[3] = {1.0f, 0.0f, 0.0f}, kWorldF[3] = {0.0f, 0.0f, -1.0f};   // identity: forward -z, so (x, y, z) goes through as it is
+                ou = handorbs::Pack(set, kWorldR, kWorldF, upm, in.time, fit);
+                if (set.globes && !cutOk) ou.on = false;
+            } else {
+                orbState.Reset();
+                orbTrack.Reset();
+            }
+            if (ou.on && ou.picture && rt->find_uniform_variable("D2R_DepthFog.fx", "OrbPic").handle == 0) {
+                static bool toldPic = false;
+                if (!toldPic) { toldPic = true; Log("vrcam: hand vitals - D2R_DepthFog.fx has no OrbPic: it is an older one, copy the new one in (the game's own globes need the DLL and the effect together)"); }
+                ou.on = false;
+            }
+            if (ou.on && rt->find_uniform_variable("D2R_DepthFog.fx", "OrbOn").handle == 0) {
+                static bool told = false;
+                if (!told) { told = true; Log("vrcam: hand vitals - D2R_DepthFog.fx has no OrbOn: it is an older one, copy the new one in (the orbs need the DLL and the effect together)"); }
+                ou.on = false;
+            }
+            if (ou.on || orbsWere) SetBool(rt, "OrbOn", ou.on);
+            if (ou.on) {
+                SetFloats(rt, "OrbPos", &ou.pos[0][0], 8);
+                SetFloats(rt, "OrbLook", &ou.look[0][0], 8);
+                SetFloats(rt, "OrbAxis", &ou.axis[0][0], 8);
+                SetFloats(rt, "OrbBack", &ou.back[0][0], 8);
+                SetFloats(rt, "OrbAlong", &ou.along[0][0], 8);
+                SetFloats(rt, "OrbMed", ou.med, 4);
+                if (rt->find_uniform_variable("D2R_DepthFog.fx", "OrbMed").handle == 0) {
+                    static bool toldMed = false;
+                    if (!toldMed) { toldMed = true; Log("vrcam: hand vitals - D2R_DepthFog.fx has no OrbMed: it is an older one, so the balls stay full glass balls (copy the new effect in for the medallion)"); }
+                }
+                if (rt->find_uniform_variable("D2R_DepthFog.fx", "OrbAxis").handle == 0) {
+                    static bool toldAxis = false;
+                    if (!toldAxis) { toldAxis = true; Log("vrcam: hand vitals - D2R_DepthFog.fx has no OrbAxis: it is an older one, so the liquid stays level in the world (copy the new effect in)"); }
+                }
+                SetFloat(rt, "OrbTime", ou.time);
+                const float pic[2] = {ou.picture ? 1.0f : 0.0f, ou.fit};
+                SetFloats(rt, "OrbPic", pic, 2);
+            }
+            if (ou.on && !orbsWere) Log(ou.picture ? "vrcam: hand vitals - the game's own globes are in the picture (life on the left wrist, mana on the right, by the settings)"
+                                                  : "vrcam: hand vitals - the 3D orbs are in the picture (life on the left wrist, mana on the right, by the settings)");
+            orbsWere = ou.on;
+        }
         SetBool(rt, "PhantomOn", ray || grab);
         if (ray) {
             const float upm = std::max(1.0f, ViewHeight()) / UserEyeHeightM();   // world units per metre
@@ -10804,6 +13834,49 @@ void OnBeginEffects(reshade::api::effect_runtime* rt, reshade::api::command_list
                 float d[3]; world(bx[i], d);
                 for (int k = 0; k < 3; ++k) d[k] = o[k] + d[k] * 0.5f * upm;
                 SetFloats(rt, kNames[i], d, 3);
+            }
+        }
+        {   // [debug] bow_vectors: the bow draw's segments and balls (vr/bow_touch.h), from the hands' frame into the world, as the lines above
+            bowtouch::VectorSet vs;
+            bool on = BowVectorsWanted() && f.valid && bowdrawwire::DebugVectors(&vs);
+            // [debug] phantom_ray with [weight] grip_fit: on each fitted hand a yellow dot where it takes the shaft (the grasp point on the red line), a green ring where its palm's
+            // middle really is, and a white line between them - zero corrections and a reaching arm, and the two coincide. (No bow in hand: the bow's vectors own the overlay.)
+            if (!on && PhantomWanted() && f.valid) {
+                for (int side = 0; side < 2; ++side) {
+                    float g[3], p[3];
+                    if (!skel::GripMarks(side, g, p) || vs.nball + 2 > bowtouch::kMaxBalls || vs.nseg >= bowtouch::kMaxSegs) continue;
+                    bowtouch::Ball& dot = vs.ball[vs.nball++];
+                    dot.c = {g[0], g[1], g[2]}; dot.r = 0.012f; dot.rgb[0] = 1.0f; dot.rgb[1] = 0.9f; dot.rgb[2] = 0.1f; dot.fill = 1.0f;
+                    bowtouch::Ball& ring = vs.ball[vs.nball++];
+                    ring.c = {p[0], p[1], p[2]}; ring.r = 0.02f; ring.rgb[0] = 0.2f; ring.rgb[1] = 1.0f; ring.rgb[2] = 0.3f; ring.fill = 0.0f;
+                    bowtouch::Seg& line = vs.seg[vs.nseg++];
+                    line.a = {g[0], g[1], g[2]}; line.b = {p[0], p[1], p[2]}; line.rgb[0] = line.rgb[1] = line.rgb[2] = 1.0f;
+                }
+                on = vs.nball > 0;
+            }
+            SetBool(rt, "DbgOn", on);
+            if (on) {
+                const float upm = std::max(1.0f, ViewHeight()) / UserEyeHeightM();
+                float a[bowtouch::kMaxSegs * 4] = {}, b[bowtouch::kMaxSegs * 4] = {}, sc[bowtouch::kMaxSegs * 4] = {};
+                float ball[bowtouch::kMaxBalls * 4] = {}, bc[bowtouch::kMaxBalls * 4] = {};
+                for (int i = 0; i < vs.nseg; ++i) {
+                    world(&vs.seg[i].a.x, a + i * 4); world(&vs.seg[i].b.x, b + i * 4);
+                    for (int k = 0; k < 3; ++k) { a[i * 4 + k] *= upm; b[i * 4 + k] *= upm; sc[i * 4 + k] = vs.seg[i].rgb[k]; }
+                    sc[i * 4 + 3] = 1.0f;
+                }
+                for (int i = 0; i < vs.nball; ++i) {
+                    world(&vs.ball[i].c.x, ball + i * 4);
+                    for (int k = 0; k < 3; ++k) { ball[i * 4 + k] *= upm; bc[i * 4 + k] = vs.ball[i].rgb[k]; }
+                    ball[i * 4 + 3] = vs.ball[i].r * upm;
+                    bc[i * 4 + 3] = vs.ball[i].fill;
+                }
+                SetFloat(rt, "DbgSegN", (float)vs.nseg);
+                SetFloats(rt, "DbgSegA", a, sizeof a / sizeof a[0]);
+                SetFloats(rt, "DbgSegB", b, sizeof b / sizeof b[0]);
+                SetFloats(rt, "DbgSegC", sc, sizeof sc / sizeof sc[0]);
+                SetFloat(rt, "DbgBallN", (float)vs.nball);
+                SetFloats(rt, "DbgBall", ball, sizeof ball / sizeof ball[0]);
+                SetFloats(rt, "DbgBallC", bc, sizeof bc / sizeof bc[0]);
             }
         }
     }
@@ -10853,7 +13926,8 @@ void OnBeginEffects(reshade::api::effect_runtime* rt, reshade::api::command_list
 // ReShade may load after us; tried twice a second until it is there.
 void TryRegister() {
     if (g_registered || !g_self) return;
-    if (!reshade::register_addon(g_self)) return;
+    if (!JoinReShade()) return;
+    if (lightbounds::Wanted()) lightbounds::Register(&Log);   // (already, from the plugin's load, when ReShade was there then)
     reshade::register_event<reshade::addon_event::reshade_begin_effects>(&OnBeginEffects);
     reshade::register_event<reshade::addon_event::bind_render_targets_and_depth_stencil>(&d2rvr::D3D12Only<&scenedepth::OnBind>::Call);
     reshade::register_event<reshade::addon_event::barrier>(&d2rvr::D3D12Only<&scenedepth::OnBarrier>::Call);
@@ -10982,6 +14056,7 @@ DWORD WINAPI UpdateThread(void*) {
             if (quit) break;
             continue;
         }
+        frametrace::Scope round(frametrace::kUpdateTick);   // [debug] frame_trace: one round of this thread; a long one is a hand that lags
         const ULONGLONG nowMs = GetTickCount64();
         const bool focus = GameFocused();
         if (f12.Pressed(focus)) Toggle();
@@ -11050,16 +14125,44 @@ DWORD WINAPI UpdateThread(void*) {
             if (ClassicNow()) BarOffsetNow(&bx, &by);
             hud::SetPictureBarOffset(bx, by);
         }
-        if (g_inWorld.load() && PlateWanted()) {   // the plate's place, 10 times a second
+        if (g_inWorld.load() && (PlateWanted() || AlliesMoved())) {   // the plate's place: over the monster, it moves with it
             static ULONGLONG nextPlate = 0;
-            if (nowMs >= nextPlate) { nextPlate = nowMs + 100; gamestate::PollPlate(); }
+            if (nowMs >= nextPlate) { nextPlate = nowMs + 10; gamestate::PollPlate(); }
         }
         hud::SetLabels(LabelsWanted());
+        {   // [openxr] menu_3d on FlatVR: is a FlatVR there that hangs a menu panel, where it hangs it, and
+            // Game Link keeps FlatVR's screen and Head Lock as with no menu while it does
+            hud::PollMenuReader();
+            float w = 0.0f, d = 0.0f;
+            xr::MenuPanelSize(&w, &d);
+            int hand = 1;
+            const bool laser = xr::LaserWanted(&hand);
+            hud::SetMenuPlace(w, d, 0.0f, laser ? (uint32_t)(hand ? 2 : 1) : 0u, (uint32_t)(uintptr_t)g_swapWnd.load());
+            link::SetMenuPanel(FlatVrMenuPanel());
+        }
         // the fog leaves the interface alone; the floor's key never takes its text for the void
         hud::SetUiMask((fx::FogWanted() || fx::TableKeyWanted()) && !LabelsWanted());
         SkyTick();
         flog::Tick(g_set.frameLog.load() || GetTickCount64() < flog::g_diagUntil.load());
+        directinput::SetMenuNow(gamestate::MenuOpen() || !g_inWorld.load());   // [openxr] direct_input: the layer in force against the game's
         gamecmd::Tick();   // skills, potions, Alt... held in BodyWalk: pressed on the UI thread
+        if (shieldsmite::On()) {   // [gameplay] shield_smite: a hard bash of the left shield casts the game's own Smite
+            uintptr_t hero = (uintptr_t)g_heroUnit.load();
+            if (!hero || !IsHeroUnit((void*)hero)) hero = (uintptr_t)g_heroSeen.load();
+            if (hero && !IsHeroUnit((void*)hero)) hero = 0;
+            if (!hero) {   // the SDK's handle of the local player, when it is the unit itself
+                const uintptr_t p = (uintptr_t)gamestate::LocalPlayer();
+                if (p > 0x10000 && IsHeroUnit((void*)p)) hero = p;
+            }
+            shieldsmite::Tick(FullBody() && g_enabled.load() && g_inWorld.load() && !gamestate::MenuOpen(), std::max(1.0f, ViewHeight()) / UserEyeHeightM(), hero);
+        }
+        {
+            frametrace::Scope melee(frametrace::kMeleeTick);   // [debug] frame_trace: hit by touch's share of this round
+            MeleeTouchTick();   // [gameplay] melee_touch
+        }
+        skillwheel::Tick();   // [openxr] skill_wheel: the controller's skill slots read on the UI thread (a no-op when off)
+        lowhp::Tick(lowhp::Enabled() && g_enabled.load() && FullBody() && g_inWorld.load());   // [hud] low_hp_vignette: the hero's life, 5 a second (a no-op when off)
+        handvitals::Tick(g_enabled.load() && g_inWorld.load());   // [hud] hand_vitals: the hero's life and mana, 5 a second (a no-op when off or outside F4)
         FloorPointerTick();   // F3: the mouse pointer on the game's ground, as the head moves
         CrosshairDepthTick();   // F2's crosshair: nearer as the camera looks down
         AfrQuietWhenOff();
@@ -11086,7 +14189,7 @@ DWORD WINAPI UpdateThread(void*) {
             // from behind it is wanted (it aims there, or picks items); in first person
             // it aims otherwise and the pointer only gets in the way.
             {
-                const bool menu = gamestate::MenuOpen() || !g_inWorld.load();
+                const bool menu = MenuFlat() || !g_inWorld.load();   // (a menu as a panel: first person goes on round it)
                 const bool firstPerson = g_enabled.load() && !ThirdPerson() && FullBody();   // the mouse views keep it: it is the crosshair
                 hud::SetPointer((menu || !firstPerson) && !CrosshairHidden() ? 1u : 2u);   // [hud_third] crosshair=0: none in F2
                 // its depth over the ground: F1 (from above) and F2 (behind), not over a panel
@@ -11128,10 +14231,15 @@ DWORD WINAPI UpdateThread(void*) {
             xr::FollowLink();
             fx::dlsseyes::Install();
             prevscan::Tick();
+            const int ringsWas = g_set.rings.load();
+            const float modelRadiusWas = g_set.modelRadius.load();
             const bool iniChanged = ReloadIfChanged();
             if (iniChanged) {
                 g_gen.fetch_add(1);
-                g_renderDirty.store(true);
+                // Only when they changed (2026-10-13): SetModelRadius re-sorts the models every frame for
+                // 500 ms, and every save of the ini - any setting, a profile started - began that again.
+                // A first apply still waiting for its hook stays wanted.
+                if (g_set.rings.load() != ringsWas || g_set.modelRadius.load() != modelRadiusWas) g_renderDirty.store(true);
                 g_mouseLookOn.store(MouseLookForView());
             }
             FollowMode();
@@ -11139,16 +14247,32 @@ DWORD WINAPI UpdateThread(void*) {
             GameCodeTick(iniChanged);
             if (!AllHooksIn()) InstallHooks();
             ApplyRender();
+            ApplyPools();
             HookGameWindow();
             UpdateFovFromFlatVR();
             HookXInput();
+            HookXInputSet();   // [debug] frame_trace only
             ReportXInputUse();
             fx::TryRegister();
             InstallBiomeHook();
+            cavelight::Install();   // only once [cave_light] enabled asks for it
             InstallLabelHooks();
+            mobbars::Install(g_ctx);   // only once [hud] ordinary_mob_bars asks for it
             InstallKeyMoveHook();
             InstallStickHook();
             InstallMapClickHook();
+            straywalk::Install();   // the guard on the game's command funnel, once block_stray_walk asks for it
+            shottrace::Install();   // [debug] shot_trace: the game's click-command sender, once asked for
+            InstallSpellAimHooks();
+            InstallSlotSkillHook();   // [hands] throw_auto_skill
+            haptics::Install();   // only once [openxr] haptics asks for it
+            if (meleetouch::Wanted() || meleetouch::ThrowWanted()) meleetouch::Install();   // only once melee_touch, or a throw's auto-aim, asks for it
+            engitem::InstallHook();   // only once belt_models or [debug] engine_unit asks for it
+            {   // native's laser, or FlatVR's on the menu panel
+                const bool laser = xr::LaserOn() || FlatVrLaserWanted();
+                gamestate::SetLaserPanels(laser);   // its extra modal panels count as menus only with the laser
+                if (laser) panelinput::Install();   // the controller layout kept under the laser's mouse
+            }
             HookCursor();
             CrosshairTick();
             FlatPadTick();
@@ -11166,6 +14290,9 @@ DWORD WINAPI UpdateThread(void*) {
 }
 
 }  // namespace
+
+// For xr.cpp (this file's own namespace is not seen from there): the balls over the belt's bottles.
+int D2rvrHoverSpheres(float (*out)[8], int max) { return engitem::HoverSpheres(out, max); }
 
 // ReShade from the game's folder as ReShade64.dll, loaded here - only ever
 // under D2RLoader. As dxgi.dll it broke the plain game: D2R.exe checks the
@@ -11220,7 +14347,7 @@ void LoadReShade() {
              "an antivirus may also block it", err == ERROR_DLL_INIT_FAILED ? "its start said no" : "it could not be loaded");
 }
 
-static const char g_info_version[] = "0.163.0";
+static const char g_info_version[] = "0.165.0";
 
 static const PluginInfo g_info = {
     PluginInfoSize, D2RL_PLUGIN_ABI_VERSION, "d2r-vr-vrcam", "vrcam", g_info_version, "BodyWalkVR",
@@ -11243,8 +14370,16 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     g_iniPath[n] = 0;
     wcscat_s(g_iniPath, L"d2r_vr.ini");
     crash::Install(g_info_version);   // first: a start that dies leaves its last step in d2r_vr_start.txt
+    viewgate::Set(&FullBody);   // before any module that asks: the new behaviours (direct input, gestures, panels, pulses, hooks) act in F4 only
     crash::Step("settings (d2r_vr.ini)");
     xr::SetLogger(&Log);   // before the settings: [openxr] on says so in the log
+    xr::SetPointerAt(&PointerAtPixel);   // F1 / F3 in 3D: the game's pointer drawn where its mouse points on their ground
+    calib::SetLogger(&Log);
+    standstill::SetLogger(&Log);
+    straywalk::SetLogger(&Log);
+    shottrace::SetLogger(&Log);
+    straywalk::SetAttackFn(&standstill::AttackActive);
+    calib::RegisterInput();   // the T-pose measurement takes both triggers from the input layer while it runs
     ReloadIfChanged();
     NoTemporalAA();
     MiniMapForHand();
@@ -11259,6 +14394,10 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
 
     crash::Step("ReShade (ReShade64.dll and its add-ons, FlatVR's depth add-on among them)");
     LoadReShade();
+    // The game makes its pipelines at startup and ReShade does not replay init_pipeline for those made before an
+    // add-on joined: the light culling's replacement (the game's light-bin shader, light_bounds.h) joins now,
+    // not with the rest on the update thread's first tick.
+    if (lightbounds::Wanted() && fx::JoinReShade()) lightbounds::Register(&Log);
     crash::Step("camera callbacks, MinHook, the hero's skeleton");
     d2rcam::SetCallbacks(&VrView, &VrProj);
     d2rcam::SetFrameCallback(&VrFrame);
@@ -11268,6 +14407,23 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     skel::TrackHero(true);   // the hero's SkeletonInstance is how his facing is found (FacingStructural)
     skel::SetFresh(&FreshYawInModel);
     skel::SetFreshHands(&FreshHands);
+    weight::SetLog(&Log);
+    // [weight] with [hands] throw_by_grip: a grip release that is a throw does not drop a thrown weapon (vr/weight_throw.h). The throw gesture
+    // (claude/throw-grip) exports throwwire::GripIsThrows() and throwwire::LastThrowTickMs() (vr/throw_gesture_wire.h); once its branch is in the
+    // tree: registered here. Unregistered, every release is a drop.
+    weight::SetThrowSource(&throwwire::GripIsThrows, &throwwire::LastThrowTickMs);
+    // The weight model's own account of a throw (weight::LastThrow / weight::ThrowOutcome - the heading, a potion's landing, already scaled by [weight]
+    // throw_reach_pct) is the throw gesture's heading and potion distance when it is valid and belongs to the throw (vr/throw_source.h). Unregistered,
+    // the hand's own estimate decides (the test-14 log said "SOURCE hand estimate" for every throw: this registration had been left out of the merge).
+    throwwire::SetWeightSource([](throwsrc::Outcome* o) {
+        weight::ThrowOutcome w;
+        const bool ok = weight::LastThrow(&w);
+        *o = throwsrc::Outcome();
+        o->valid = ok && w.valid; o->preview = w.preview; o->tickMs = w.tickMs; o->releaseTickMs = w.releaseTickMs;
+        for (int i = 0; i < 3; ++i) { o->velocity[i] = w.velocity[i]; o->landing[i] = w.landing[i]; }
+        o->speed = w.speed; o->flightS = w.flightS; o->elevationDeg = w.elevationDeg; o->capped = w.capped;
+        return o->valid;
+    });
     crash::Step("the game's hooks");
     InstallHooks();
     crash::Step("XInput hooks");
@@ -11279,6 +14435,26 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     gamestate::Init(ctx);
     crash::Step("game commands");
     gamecmd::Init(ctx);
+    shoulderwire::Init(ctx);   // the shoulder swap listens to direct_input's frames
+    weightwire::Init(ctx);     // [weight]: so does the grip of a hand on the weapon
+    shoulderwire::SetStowedSource(&weight::BackStowed);   // [weight] after_drop 1 or 2: a weapon that is away is taken by the grip behind the shoulder, not swapped
+    weight::SetHaptic([](int side, float amplitude, int ms) { haptics::Pulse(haptics::FromSkel(side), amplitude, ms); });   // [weight] take_haptic
+    weight::SetHeroModeSource(&HeroAnimMode);   // [weight] thrown_fly_ms: the game's own throw animation over ends the thrown model's flight
+    weight::SetActionFrameSource(&throwborn::ActionFramePassed);   // [hands] throw_direct: the thrown potion's model hands over to the game's missile when it is created
+    shieldsmite::Init(ctx);
+    meleetouch::Init(ctx);
+    skillwheel::Init(ctx);
+    lowhp::Init(ctx);   // [hud] low_hp_vignette reads the hero's life on the UI thread
+    handvitals::Init(ctx);   // [hud] hand_vitals reads the hero's life and mana on the UI thread; listens to direct_input's frames
+    panelinput::Init(ctx);
+    bowdrawwire::Init(ctx, &AimHand, &FullBody);   // the bow draw listens to direct_input's frames, in F4 only
+    bowquick::Init(ctx);   // [bow] quick_release: the log
+    throwwire::Init(ctx, &GestureCanAim);
+    throwwire::SetHeroModeFn(&GestureHeroMode);
+    potionhide::SetHeroIdSource(&GestureHeroId);   // [hands] potion_hide_game: whose potion missile is the hero's
+    throwwire::SetAutoSkillFn(&ThrowAutoSkillReady);
+    meleetouch::SetThrowLink(&throwwire::GripIsThrows, &throwwire::GripHeld, &throwwire::LastThrowTickMs, &throwwire::HoldOffRelease);   // hit by touch with a thrown weapon: the touch and the throw by gesture do not both fire
+    standstill::SetThrowPressFn(&throwwire::PressIsThrow);
     crash::Step("update thread and console command");
     if (HANDLE h = CreateThread(nullptr, 0, UpdateThread, nullptr, 0, &g_updateThreadId)) CloseHandle(h);
     if (!ctx->RegisterConsoleCommand("vrcam", &CmdVrcam, "vrcam - the camera: off / first person / third person (F12)"))
@@ -11288,12 +14464,16 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
 }
 
 D2RL_PLUGIN_EXPORT void D2RLoaderUnloadPlugin() noexcept {
+    bowquick::Shutdown();   // [bow] quick_release: a moved action-frame flag goes back before the plugin does
+    skillwheel::Shutdown();   // [openxr] skill_wheel: its listener out, its threads joined
+    handvitals::Shutdown();   // [hud] hand_vitals: its listener out, its painter joined
     xr::Shutdown();   // the session before anything it runs on goes; FlatVR started again
     g_enabled.store(false);
     d2rcam::SetEnabled(false);
-    if (fx::g_registered) { reshade::unregister_addon(g_self); fx::g_registered = false; }
+    if (fx::g_joined) { reshade::unregister_addon(g_self); fx::g_joined = false; fx::g_registered = false; }
     if (g_gameWnd && g_gameWndProc) SetWindowLongPtrW(g_gameWnd, GWLP_WNDPROC, (LONG_PTR)g_gameWndProc);
     if (g_updateThreadId) PostThreadMessageW(g_updateThreadId, WM_QUIT, 0, 0);
     crash::Uninstall();
+    logasync::Shutdown();   // [debug] log_async: the lines that wait are written, its thread joined, before the context goes
     g_ctx = nullptr;
 }

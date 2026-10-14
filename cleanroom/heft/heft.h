@@ -60,6 +60,9 @@ Body Build(const Piece* pieces, int n, const V3* hands, int nHands, double handM
 struct Muscle {
 	double spring = 3000, damper = 300, maxForce = 300;             // N/m, N s/m, N (per axis)
 	double torqueSpring = 500, torqueDamper = 50, maxTorque = 75;   // N m/rad, N m s/rad, N m
+	// A wrist is soft near the line of its controller and firm far off it: the spring (and its damper, by the root, to keep the damping ratio) is
+	// stiffer by 1 + (turn / torqueSoft)^2 for the turn still to make, in rad. 0 = a plain spring.
+	double torqueSoft = 0;
 };
 
 // One hand on the body.

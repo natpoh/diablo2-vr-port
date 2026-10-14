@@ -36,11 +36,15 @@
 #define MinBodyWalkMinor 79
 #define BodyWalkDownload "https://bodywalkvr.com/api/download/latest?product=bodywalk"
 #define D2RLoaderSite "https://d2rloader.net"
-; The one D2RLoader the mod is made for, fetched only when the player asks (InstallD2RLoader);
-; the SHA-256 is the one d2rloader.net publishes on its download page.
+; The one D2RLoader the mod is made for, fetched only when the player asks (InstallD2RLoader).
+; The SHA-256 is the one d2rloader.net publishes on its download page. On 2026-10-13 its author
+; repacked the 1.3.1 ZIP under the same name (the compression and the order of the files; D2RCore.dll,
+; D2RLoader.exe and d2rloader.mpq are byte for byte the same), so the page lists a new hash as
+; current and the old one as historical: both are accepted, any other file is not.
 #define D2RLoaderZipUrl "https://d2rloader.net/downloads/D2RLoader-1.3.1-beta.zip"
 #define D2RLoaderZip "D2RLoader-1.3.1-beta.zip"
-#define D2RLoaderSha256 "9286c6b5bff7f1043658411dbea305faa9698b6a455e6441668fc6d02c22aad7"
+#define D2RLoaderSha256 "f7bf0287398890b09bcc68b576327e727304bd88f7be80160f9676e8bd6871e2"
+#define D2RLoaderSha256Historical "9286c6b5bff7f1043658411dbea305faa9698b6a455e6441668fc6d02c22aad7"
 ; Per user and writable: BodyWalk writes config.json, imgui.ini and plugins\ beside its exe.
 ; BodyWalk Portable is part of the mod, in the game's folder. It writes nothing
 ; beside itself (1.74 on): settings, configs and plugins go to %LOCALAPPDATA%\BodyWalkVR.
@@ -97,7 +101,8 @@ Source: "payload\bodywalk\game_link.dll"; DestDir: "{localappdata}\BodyWalkVR\pl
 ; The game's manifest as Game Link keeps it (D2R_VR_Settings.exe --game-link-manifest): the
 ; "D2R: ..." actions are in BodyWalk's Mapping from its first start, before the game ran.
 Source: "payload\bodywalk\d2r.txt"; DestDir: "{localappdata}\BodyWalkVR\game_link"; Flags: ignoreversion; Check: IsVR
-; The mod's BodyWalk profile ("D2VR (mod)"), beside the plugin as BodyWalk looks for it:
+; The mod's BodyWalk profile (listed as "<profile_name> (mod)": "0165 (mod)" from 0.165, "D2VR (mod)" before),
+; beside the plugin as BodyWalk looks for it:
 ; BodyWalk applies it on its own terms (a profile the player changed is never
 ; overwritten without asking).
 Source: "payload\bodywalk\profile.json"; DestDir: "{localappdata}\BodyWalkVR\plugins\game_link"; Flags: ignoreversion; Check: IsVR
@@ -229,18 +234,19 @@ begin
 end;
 
 // D2RLoader 1.3.1 into the game's folder, on the player's click: downloaded from
-// d2rloader.net (the download page checks it against the published SHA-256),
+// d2rloader.net (checked against the SHA-256 it publishes, the current or the historical one),
 // unpacked by PowerShell to a folder of its own, and the contents of the folder
 // D2RLoader.exe is in copied beside D2R.exe. A player found the download refused
 // by Edge and Chrome (2026-10-08). True when D2RLoader.exe is there afterwards.
 function InstallD2RLoader(GameDir: String): Boolean;
 var
-  Zip, Unpack, Script, Ps: String;
+  Zip, Unpack, Script, Ps, Sum: String;
   Code: Integer;
 begin
   Result := False;
   DownloadPage.Clear;
-  DownloadPage.Add('{#D2RLoaderZipUrl}', '{#D2RLoaderZip}', '{#D2RLoaderSha256}');
+  // No hash given to the page (it takes one): the file is checked below against the two published ones.
+  DownloadPage.Add('{#D2RLoaderZipUrl}', '{#D2RLoaderZip}', '');
   DownloadPage.Show;
   try
     try
@@ -254,6 +260,18 @@ begin
     DownloadPage.Hide;
   end;
   Zip := ExpandConstant('{tmp}\{#D2RLoaderZip}');
+  try
+    Sum := GetSHA256OfFile(Zip);
+  except
+    Sum := '';
+  end;
+  if not (SameText(Sum, '{#D2RLoaderSha256}') or SameText(Sum, '{#D2RLoaderSha256Historical}')) then
+  begin
+    DeleteFile(Zip);
+    MsgBox('The file downloaded from d2rloader.net is not the D2RLoader 1.3.1 ZIP the site publishes (its SHA-256 differs), ' +
+           'so nothing was installed.' + #13#10#13#10 + 'Try again, or download D2RLoader from the site yourself.', mbError, MB_OK);
+    Exit;
+  end;
   Unpack := ExpandConstant('{tmp}\d2rloader_unpack');
   Script := ExpandConstant('{tmp}\unpack_d2rloader.ps1');
   SaveStringToFile(Script,

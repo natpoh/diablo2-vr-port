@@ -6,7 +6,7 @@ D2R VR is MIT-licensed. Fork it, fix something, and send a pull request.
 |---|---|
 | [KNOWN_ISSUES.md](KNOWN_ISSUES.md) | What is broken or unfinished now, what we know about each problem, and where to start in the code |
 | [ROADMAP.md](ROADMAP.md) | Where the project is going, and which parts anyone can pick up |
-| [WEAPON_WEIGHT.md](WEAPON_WEIGHT.md) | Weapon weight for first person: a model with tests and a Unity bench, not in the game yet |
+| [WEAPON_WEIGHT.md](WEAPON_WEIGHT.md) | Weapon weight for first person: a model with tests and a Unity bench; in the game since 0.165 (Weapon Weight tab, off by default) |
 | [DEVELOPER_NOTES.md](DEVELOPER_NOTES.md) | How the parts fit, how to debug, and what crashes the game |
 
 ## How to help

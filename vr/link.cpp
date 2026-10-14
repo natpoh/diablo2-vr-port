@@ -14,7 +14,11 @@
 #include <cstring>
 #include <cwchar>
 
+#include "direct_feed.h"
 #include "link.h"
+#include "rune_geom.h"
+#include "view_gate.h"
+#include "walk_path.h"
 
 namespace link {
 namespace {
@@ -61,6 +65,7 @@ Block<BW_LinkRequests> g_requests{BW_LINK_REQUESTS_NAME};
 Block<BW_LinkHost> g_host{BW_LINK_HOST_NAME};
 Block<BW_LinkXrInput> g_xrInput{BW_LINK_XRINPUT_NAME};
 Block<BW_LinkVrZones> g_vrZones{BW_LINK_VRZONES_NAME};
+Block<BW_LinkVrRunes> g_vrRunes{BW_LINK_VRRUNES_NAME};
 
 std::atomic<uint32_t> g_manifestSeq{0};   // our Manifest's sequence: Actions of any other are not ours
 
@@ -185,6 +190,7 @@ void Init(void (*log)(const char*), const wchar_t* iniPath, const char* modVersi
 }
 
 const D2RVR_Shared* Head() {
+    if (directinput::Active()) return directinput::HeadShared();   // [openxr] direct_input: the game's own headset, not BodyWalk's
     const BW_LinkTracking* t = g_tracking.Get();
     if (!t) return g_head.load();
     const uint32_t seq = ((const volatile BW_LinkHeader*)&t->header)->sequence;
@@ -204,19 +210,28 @@ const D2RVR_Shared* Head() {
     return g_head.load();
 }
 
+// BodyWalk's, or - [openxr] direct_input with a native session - the plugin's own layout; the gestures' (directinput::Action
+// and Command) go over either of them.
 uint32_t ActionsHeld(Presses& p) {
+    uint32_t held = directinput::InjectedActions();
+    if (directinput::Active()) return held | directinput::LayoutActions();
     BW_LinkActions a;
-    if (!ReadActions(&a)) return 0;
+    if (!ReadActions(&a)) return held;
     Sync(a, p);
     const ULONGLONG now = GetTickCount64();
-    uint32_t held = 0;
     for (uint32_t i = 0; i < kD2RVRActionCount && i < a.count; ++i)
         if (HeldOrPressed(a, p, i, now)) held |= kD2RVRActions[i].bit;
     return held;
 }
 
 void CommandsHeld(uint64_t out[2], Presses& p) {
-    out[0] = out[1] = 0;
+    directinput::InjectedCommands(out);
+    if (directinput::Active()) {
+        uint64_t mine[2];
+        directinput::LayoutCommands(mine);
+        out[0] |= mine[0]; out[1] |= mine[1];
+        return;
+    }
     BW_LinkActions a;
     if (!ReadActions(&a)) return;
     Sync(a, p);
@@ -226,6 +241,9 @@ void CommandsHeld(uint64_t out[2], Presses& p) {
         if (n < a.count && cmd < D2RVR_GAME_COMMANDS && HeldOrPressed(a, p, n, now)) out[cmd / 64] |= 1ull << (cmd % 64);
     }
 }
+
+std::atomic<bool> g_menuPanel{false};
+void SetMenuPanel(bool on) { g_menuPanel.store(on); }
 
 void PublishState(const D2RVR_State& s) {
     BW_LinkGameState* blk = g_gameState.Get();
@@ -239,13 +257,16 @@ void PublishState(const D2RVR_State& s) {
     // The game's main menu (character select: no hero, so no weapon read) is a menu as a panel is -
     // the screen stays put and moves back, not on the eyes (2026-10-06).
     const bool menu = s.menuOpen || s.weaponClass == D2RVR_WEAPON_UNKNOWN;
-    g.headLock = !menu && (s.viewMode == 1 || s.viewMode == 3 || s.viewMode == 4) ? 1 : 0;
+    // [openxr] menu_3d (SetMenuPanel): a menu in a game goes to FlatVR as a panel of its own - the
+    // screen and Head Lock as with none, the world in stereo round it (the Mapping's "D2R Menu" stays)
+    const bool flatMenu = (s.menuOpen && !g_menuPanel.load()) || s.weaponClass == D2RVR_WEAPON_UNKNOWN;
+    g.headLock = !flatMenu && (s.viewMode == 1 || s.viewMode == 3 || s.viewMode == 4) ? 1 : 0;
 #if D2RVR_FIRST_PERSON
     // FlatVR's screen pushed back while a panel is open in first person (view 1, VR F4), so the
     // whole inventory or trade window is in view: from above, behind and on the floor the panel
     // is already far enough away. FlatVR eases there and back, and follows it only while "Screen
     // distance follows the game" is ticked.
-    g.screenDistanceM = menu && s.viewMode == 1 ? MenuDistanceM() : 0.0f;
+    g.screenDistanceM = flatMenu && s.viewMode == 1 ? MenuDistanceM() : 0.0f;
 #endif
     // The Mapping tabs, each on top of "main".
     if (menu) strcpy_s(g.categories, "main, D2R Menu");
@@ -292,6 +313,11 @@ bool HostAlive(uint32_t* caps) {
 }
 
 void PublishXr(const D2RVR_XrInput& in, bool ended) {
+    // The plugin is the input: BodyWalk gets no controllers (and makes no second pad) - unless [openxr] direct_bodywalk_walk lets its walking
+    // through: it walks by the body's motion, which it reads from the head and hand poses, so it is given those, and no control (it presses
+    // nothing a second time: its pad's buttons, actions and commands are ignored anyway, and the controller's own thumbstick is the plugin's).
+    const bool direct = directinput::Active() && !ended;
+    if (direct && !directinput::BodyWalkWalks()) return;
     BW_LinkXrInput* blk = g_xrInput.Get();
     if (!blk) return;
     BW_LinkXrInput x{};
@@ -301,11 +327,17 @@ void PublishXr(const D2RVR_XrInput& in, bool ended) {
     x.head = in.head;
     x.hand[0] = in.hand[0];
     x.hand[1] = in.hand[1];
+    if (direct) { walkpath::ZeroControls(x.hand[0]); walkpath::ZeroControls(x.hand[1]); }
     memcpy(x.profile, in.profile, sizeof x.profile);
     bw::link::Write(blk, x, BW_LINK_XRINPUT_VERSION);
+    if (direct) {
+        static bool told = false;
+        if (!told) { told = true; Log("vrcam: Game Link - direct input: BodyWalk is given the head and hands, controls zeroed, so its body walking can run ([openxr] direct_bodywalk_walk=1)"); }
+    }
 }
 
 uint32_t VrZones(BW_LinkVrZone* out, uint32_t max) {
+    if (directinput::Active()) return 0;   // BodyWalk's zones are not in the picture: it has no hands to place them by
     const BW_LinkVrZones* blk = g_vrZones.Get();
     if (!blk || blk->header.magic != BW_LINK_MAGIC) return 0;
     static BW_LinkVrZones z;   // one reader: xr.cpp's draw, under its lock
@@ -313,6 +345,33 @@ uint32_t VrZones(BW_LinkVrZone* out, uint32_t max) {
     if (z.header.version != BW_LINK_VRZONES_VERSION || D2RVRStampNow() - z.stamp > 5000u) return 0;   // 0.1 ms units: half a second
     const uint32_t n = std::min(std::min<uint32_t>(z.count, BW_LINK_VRZONES_MAX), max);
     memcpy(out, z.zone, n * sizeof *out);
+    return n;
+}
+
+uint32_t VrRunes(BW_LinkVrRune* out, uint32_t max) {
+    // F4 only (vr/view_gate.h); and with the plugin as the input BodyWalk has no hands, so no gestures: none, as the zones
+    if (!viewgate::F4() || directinput::Active()) return 0;
+    const BW_LinkVrRunes* blk = g_vrRunes.Get();
+    if (!blk || blk->header.magic != BW_LINK_MAGIC) return 0;
+    // One reader: xr.cpp's draw, under its lock. A read that cannot get a whole copy (the writer was mid-write all through its tries -
+    // a writer that is preempted there holds the seqlock for a time slice) leaves the last whole copy to be used: it is as fresh as its
+    // own stamp says, and a writer that died mid-write makes it stale in half a second like any other.
+    static BW_LinkVrRunes r, got;
+    static bool have = false;
+    if (bw::link::Read(blk, &got)) { r = got; have = true; }
+    if (!have || r.header.version != BW_LINK_VRRUNES_VERSION) return 0;
+    // 0.1 ms units: half a second. While no rune is on show the stamp stands still (the engine writes once more with count 0 and then
+    // nothing): that is the normal end, not a fault. A block that still said "runes" and went quiet is the engine gone mid-gesture.
+    const bool fresh = D2RVRStampNow() - r.stamp <= 5000u;
+    static runes::Watch watch;
+    switch (watch.Step(fresh, r.count)) {
+        case runes::Event::Appeared: LogF("vrcam: Game Link - BodyWalk's gesture runes come (%u on show)", r.count); break;
+        case runes::Event::WentStale: Log("vrcam: Game Link - BodyWalk's gesture runes went stale (no write for half a second with runes still on show): drawn no more"); break;
+        default: break;
+    }
+    const uint32_t n = fresh ? std::min(std::min<uint32_t>(r.count, BW_LINK_VRRUNES_MAX), max) : 0;
+    if (!n) return 0;
+    memcpy(out, r.rune, n * sizeof *out);
     return n;
 }
 

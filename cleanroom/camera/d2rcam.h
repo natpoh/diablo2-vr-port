@@ -14,6 +14,7 @@
 // Threading: callbacks run on the game's render thread inside the frame; keep
 // them cheap and do not call back into this API from them except InWorld().
 
+#include <cstddef>
 #include <cstdint>
 
 namespace D2RL {
@@ -85,6 +86,16 @@ int  GetRenderRadius();
 // False until Install found the game's setter.
 bool  SetModelRadius(float units);
 float GetModelRadius();   // -1 when unknown
+
+// The game's Renderer Pool (12 MB) and Entity System Pool (70 MB) have a fixed
+// size; more rooms drawn run the renderer's out in dense areas and the game
+// crashes. Makes each at least this many MB (at most 4096), once per pool, by
+// giving the game's own allocator one more block of memory. The game makes them
+// after plugins load: call now and then (twice a second is fine) until it
+// returns true. `line` (filled on every call) says what was done, for the log.
+// A size at or below a pool's own, or 0, leaves it alone; so does anything this
+// layer does not recognise. Uses the addresses Install resolved.
+bool GrowPools(unsigned renderMb, unsigned entityMb, char* line, size_t lineSize);
 
 // Diagnostics for a status line: which hook groups are live.
 struct Status {

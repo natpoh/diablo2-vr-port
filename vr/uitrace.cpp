@@ -12,6 +12,12 @@
 // after the game drew into it - on the game's own command list, where its
 // state is known (render target) - and saved as uitex_<id>_<w>x<h>_<fmt>.raw
 // beside the trace: 16-byte header (w, h, format, row pitch), then the rows.
+//
+// Every full-screen draw (6 vertices at most, one instance) gets a line of its own
+// with both shaders' hashes, its depth and blend state and the root constant buffers
+// bound for it (by register: b10, b13...); their contents, each distinct one once, go
+// to d2r_vr_uitrace_cb.txt beside the trace - what a post pass is told about the
+// camera (the act 2 town's straight veil, 2026-10-13).
 
 #define WIN32_LEAN_AND_MEAN
 #ifndef NOMINMAX
@@ -25,7 +31,9 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 #include <algorithm>
+#include <cmath>
 
 #include <reshade.hpp>
 #include "game_device_only.h"
@@ -38,6 +46,7 @@ using namespace reshade::api;
 std::atomic<int> g_state{0};   // 0 idle, 1 armed (waits for a present), 2 recording until the next one
 std::mutex g_lock;
 std::string g_out;
+std::string g_cbOut;           // the constant buffers' contents (d2r_vr_uitrace_cb.txt)
 std::wstring g_path;
 uint32_t g_seq = 0;
 
@@ -220,6 +229,9 @@ void OnScissor(command_list* cl, uint32_t, uint32_t count, const rect* rects) {
 // (thread-local: a list records on one thread), and the draws on it are skipped until another bind.
 std::mutex g_hashLock;
 std::unordered_map<uint64_t, uint64_t> g_psHash;   // pipeline -> its pixel shader's hash
+// pipeline -> its vertex shader's hash and its depth / blend state, for the full-screen draws' lines
+struct PipeMore { uint64_t vs = 0; char state[40] = {}; };
+std::unordered_map<uint64_t, PipeMore> g_pipeMore;
 constexpr int kSkipMax = 8;
 std::atomic<uint64_t> g_skipHash[kSkipMax];        // the shaders to skip (0 = empty)
 std::atomic<uint64_t> g_skipHandle[64];            // pipelines made of them (0 = empty)
@@ -245,19 +257,212 @@ bool SkipHandle(uint64_t pl) {
     return false;
 }
 void OnInitPipeline(device*, pipeline_layout, uint32_t count, const pipeline_subobject* subs, pipeline pl) {
+    uint64_t ps = 0;
+    PipeMore more;
+    // depth: z<func><w if written>, s if stencil; blend of target 0: b<src>.<dst>.<op> (ReShade's enums)
+    char depth[16] = "z-", blend[24] = "";
     for (uint32_t i = 0; i < count; ++i) {
-        if (subs[i].type != pipeline_subobject_type::pixel_shader || !subs[i].data) continue;
-        const shader_desc* sd = (const shader_desc*)subs[i].data;
-        if (!sd->code || !sd->code_size) continue;
-        const uint64_t h = Fnv(sd->code, sd->code_size);
-        { std::lock_guard<std::mutex> g(g_hashLock); g_psHash[pl.handle] = h; }
-        if (SkipHash(h)) AddSkipHandle(pl.handle);
-        break;
+        if (!subs[i].data) continue;
+        switch (subs[i].type) {
+        case pipeline_subobject_type::pixel_shader:
+        case pipeline_subobject_type::vertex_shader: {
+            const shader_desc* sd = (const shader_desc*)subs[i].data;
+            if (!sd->code || !sd->code_size) break;
+            (subs[i].type == pipeline_subobject_type::pixel_shader ? ps : more.vs) = Fnv(sd->code, sd->code_size);
+            break;
+        }
+        case pipeline_subobject_type::depth_stencil_state: {
+            const depth_stencil_desc* d = (const depth_stencil_desc*)subs[i].data;
+            if (d->depth_enable) snprintf(depth, sizeof depth, "z%u%s", (uint32_t)d->depth_func, d->depth_write_mask ? "w" : "");
+            if (d->stencil_enable) strcat_s(depth, "s");
+            break;
+        }
+        case pipeline_subobject_type::blend_state: {
+            const blend_desc* b = (const blend_desc*)subs[i].data;
+            if (b->blend_enable[0])
+                snprintf(blend, sizeof blend, " b%u.%u.%u", (uint32_t)b->source_color_blend_factor[0], (uint32_t)b->dest_color_blend_factor[0],
+                         (uint32_t)b->color_blend_op[0]);
+            break;
+        }
+        default: break;
+        }
     }
+    snprintf(more.state, sizeof more.state, "%s%s", depth, blend);
+    {
+        std::lock_guard<std::mutex> g(g_hashLock);
+        if (ps) g_psHash[pl.handle] = ps;
+        g_pipeMore[pl.handle] = more;
+    }
+    if (SkipHash(ps)) AddSkipHandle(pl.handle);
 }
 void OnDestroyPipeline(device*, pipeline pl) {
     std::lock_guard<std::mutex> g(g_hashLock);
     g_psHash.erase(pl.handle);
+    g_pipeMore.erase(pl.handle);
+}
+PipeMore More(uint64_t pl) {
+    std::lock_guard<std::mutex> g(g_hashLock);
+    auto it = g_pipeMore.find(pl);
+    return it == g_pipeMore.end() ? PipeMore{} : it->second;
+}
+
+// [render] depth_fix: the depth range of the game's linear depth, made for our camera.
+// The game keeps a linear copy of its depth for its post passes - the fog and its height
+// fog (ps_atmosphere_apply), the ambient occlusion (assao), the reflections (ppr), water,
+// lava, SMAA, the wall fade - as (z - start) / range, from the view constants' word 53
+// (b10[53] = range, 1 / range, start). Its camera from above sets 550 .. 1060 world units.
+// Ours stands a hero's height over the ground: everything is nearer than 550, every pixel's
+// linear depth came out 0 and every post pass put the whole world on one plane 550 units
+// away (2026-10-13). On that plane the height fog's 100-unit band became a pale veil with a
+// straight edge across the act 2 town, and the depth fog (885 on) a haze in the picture's
+// corners. On, each b10 the game binds gets our start and range before the GPU reads it -
+// in the game's upload memory, on the list that binds it, as camfix moves the cameras for
+// the right eye; its own memory and code are not touched.
+std::atomic<bool> g_depthFix{false};
+std::atomic<float> g_depthStart{0.0f}, g_depthRange{1000.0f};
+std::atomic<uint32_t> g_depthPatched{0};
+struct B10Param { std::atomic<uint64_t> layout{0}; std::atomic<uint32_t> param{0}; };
+constexpr int kB10Max = 512;
+B10Param g_b10[kB10Max];                    // the root parameter that binds b10, by layout (append only)
+std::atomic<int> g_b10n{0};
+std::mutex g_b10Lock;                       // for the appends
+bool IsB10(uint64_t layout, uint32_t param) {
+    const int n = g_b10n.load(std::memory_order_acquire);
+    for (int i = 0; i < n; ++i)
+        if (g_b10[i].layout.load(std::memory_order_relaxed) == layout) return g_b10[i].param.load(std::memory_order_relaxed) == param;
+    return false;
+}
+// word 53 of a b10 buffer: the game's range written over with ours. SEH: the game's memory.
+bool WriteRange(float* w, float start, float range) {
+    __try {
+        const float r = w[0], inv = w[1], st = w[2];
+        if (r == range && st == start) return false;                           // done already (a bind before)
+        if (!(r > 0.0f && inv > 0.0f && fabsf(r * inv - 1.0f) < 1e-3f && st >= 0.0f)) return false;   // not the range
+        w[0] = range; w[1] = 1.0f / range; w[2] = start;
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+void FixDepthRange(device* dev, const buffer_range& r) {
+    constexpr uint64_t kAt = 53 * 16;
+    const resource_desc d = dev->get_resource_desc(r.buffer);
+    if (d.type != resource_type::buffer || d.heap == memory_heap::gpu_only || r.offset + kAt + 16 > d.buffer.size) return;
+    void* p = nullptr;
+    if (!dev->map_buffer_region(r.buffer, r.offset + kAt, 16, map_access::read_write, &p) || !p) return;
+    if (WriteRange((float*)p, g_depthStart.load(std::memory_order_relaxed), g_depthRange.load(std::memory_order_relaxed)))
+        g_depthPatched.fetch_add(1, std::memory_order_relaxed);
+    dev->unmap_buffer_region(r.buffer);
+}
+
+// Each pipeline layout's root parameters: what register a root constant buffer view
+// (or root constants) at that index binds - 'b' and the register, 0 for the rest.
+std::mutex g_layoutLock;
+std::unordered_map<uint64_t, std::vector<uint32_t>> g_layouts;   // layout -> per parameter: register + 1 of a CBV / root constants, 0 else
+void OnInitPipelineLayout(device*, uint32_t count, const pipeline_layout_param* params, pipeline_layout layout) {
+    std::vector<uint32_t> regs(count, 0);
+    for (uint32_t i = 0; i < count; ++i) {
+        const pipeline_layout_param& p = params[i];
+        // a root constant buffer view comes as push descriptors, alone or as a range (as ReShade gives the game's)
+        const descriptor_range* cbv = nullptr;
+        if (p.type == pipeline_layout_param_type::push_constants) regs[i] = p.push_constants.dx_register_index + 1;
+        else if (p.type == pipeline_layout_param_type::push_descriptors && p.push_descriptors.type == descriptor_type::constant_buffer)
+            cbv = &p.push_descriptors;
+        else if ((p.type == pipeline_layout_param_type::push_descriptors_with_ranges ||
+                  p.type == pipeline_layout_param_type::push_descriptors_with_ranges_and_flags) &&
+                 p.descriptor_table.count && p.descriptor_table.ranges && p.descriptor_table.ranges[0].type == descriptor_type::constant_buffer)
+            cbv = &p.descriptor_table.ranges[0];
+        if (cbv) regs[i] = cbv->dx_register_index + 1;
+        if (cbv && cbv->dx_register_index == 10) {
+            std::lock_guard<std::mutex> g(g_b10Lock);
+            const int n = g_b10n.load();
+            if (n < kB10Max) {
+                g_b10[n].layout.store(layout.handle); g_b10[n].param.store(i);
+                g_b10n.store(n + 1, std::memory_order_release);
+            }
+        }
+    }
+    std::lock_guard<std::mutex> g(g_layoutLock);
+    g_layouts[layout.handle] = std::move(regs);
+}
+void OnDestroyPipelineLayout(device*, pipeline_layout layout) {
+    for (int i = 0, n = g_b10n.load(); i < n; ++i)
+        if (g_b10[i].layout.load() == layout.handle) g_b10[i].layout.store(0);
+    std::lock_guard<std::mutex> g(g_layoutLock);
+    g_layouts.erase(layout.handle);
+}
+uint32_t RegisterOf(uint64_t layout, uint32_t param) {   // register + 1, 0 = not known
+    std::lock_guard<std::mutex> g(g_layoutLock);
+    auto it = g_layouts.find(layout);
+    return it == g_layouts.end() || param >= it->second.size() ? 0 : it->second[param];
+}
+
+// While recording: the root constant buffers and root constants bound on each list so far.
+struct RootCb { uint64_t layout = 0; buffer_range range{}; std::vector<uint32_t> values; bool cbv = false; };
+std::unordered_map<command_list*, std::unordered_map<uint32_t, RootCb>> g_roots;   // under g_lock
+std::unordered_map<uint64_t, int> g_cbSeen;   // a buffer's contents (hashed) -> its number in the cb file; under g_lock
+constexpr uint32_t kCbBytes = 1024;            // read of each: 64 float4 (the game's post passes use up to cb10[53])
+
+// A constant buffer's bytes, read where the game wrote them (an upload heap); false if it cannot be mapped.
+bool ReadMapped(const void* p, uint8_t* out, uint32_t len) {
+    __try { memcpy(out, p, len); return true; } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+uint32_t ReadCb(device* dev, const buffer_range& r, uint8_t* out) {
+    const resource_desc d = dev->get_resource_desc(r.buffer);
+    if (d.type != resource_type::buffer || r.offset >= d.buffer.size) return 0;
+    const uint32_t len = (uint32_t)std::min<uint64_t>({kCbBytes, d.buffer.size - r.offset, r.size});
+    void* p = nullptr;
+    if (!dev->map_buffer_region(r.buffer, r.offset, len, map_access::read_only, &p) || !p) return 0;
+    const bool ok = ReadMapped(p, out, len);
+    dev->unmap_buffer_region(r.buffer);
+    return ok ? len : 0;
+}
+
+void OnPushDescriptors(command_list* cl, shader_stage, pipeline_layout layout, uint32_t param, const descriptor_table_update& u) {
+    if (u.type != descriptor_type::constant_buffer || !u.count || !u.descriptors) return;
+    if (g_depthFix.load(std::memory_order_relaxed) && IsB10(layout.handle, param))
+        FixDepthRange(cl->get_device(), static_cast<const buffer_range*>(u.descriptors)[0]);
+    if (!Recording()) return;
+    std::lock_guard<std::mutex> g(g_lock);
+    RootCb& r = g_roots[cl][param];
+    r.layout = layout.handle; r.range = static_cast<const buffer_range*>(u.descriptors)[0]; r.cbv = true; r.values.clear();
+}
+
+// One full-screen draw: its shaders, state and constants - a line in the trace, the contents in the cb file.
+void FullScreen(command_list* cl, uint64_t pipe) {   // under g_lock
+    const PipeMore m = More(pipe);
+    char b[160];
+    snprintf(b, sizeof b, "      full-screen: vs %016llx ps %016llx %s, constants", (unsigned long long)m.vs, (unsigned long long)PsHash(pipe), m.state);
+    std::string t = b;
+    auto it = g_roots.find(cl);
+    if (it != g_roots.end()) {
+        std::vector<std::pair<uint32_t, const RootCb*>> roots(it->second.size());
+        size_t n = 0;
+        for (const auto& [param, r] : it->second) roots[n++] = {param, &r};
+        std::sort(roots.begin(), roots.end(), [](auto& a, auto& c) { return a.first < c.first; });
+        for (const auto& [param, r] : roots) {
+            const uint32_t reg = RegisterOf(r->layout, param);
+            uint8_t data[kCbBytes];
+            uint32_t len = 0;
+            if (r->cbv) len = ReadCb(cl->get_device(), r->range, data);
+            else { len = std::min<uint32_t>((uint32_t)r->values.size() * 4, kCbBytes); memcpy(data, r->values.data(), len); }
+            char name[24];
+            if (reg) snprintf(name, sizeof name, "%s%u", r->cbv ? "b" : "rc b", reg - 1);
+            else snprintf(name, sizeof name, "p%u", param);
+            if (!len) { t += std::string(" ") + name + "=?"; continue; }
+            const uint64_t h = Fnv(data, len) ^ ((uint64_t)len << 48);
+            auto [seen, fresh] = g_cbSeen.emplace(h, (int)g_cbSeen.size());
+            snprintf(b, sizeof b, " %s=cb%d", name, seen->second);
+            t += b;
+            if (!fresh) continue;
+            snprintf(b, sizeof b, "cb%d (%s, %u bytes, first seen at %u):\n", seen->second, name, len, g_seq);
+            g_cbOut += b;
+            const float* f = (const float*)data;
+            for (uint32_t k = 0; k + 4 <= len / 4; k += 4) {
+                snprintf(b, sizeof b, "  [%2u] %12.6g %12.6g %12.6g %12.6g\n", k / 4, f[k], f[k + 1], f[k + 2], f[k + 3]);
+                g_cbOut += b;
+            }
+        }
+    }
+    Line(cl, t);
 }
 uint64_t PsHash(uint64_t pl) {
     std::lock_guard<std::mutex> g(g_hashLock);
@@ -291,8 +496,16 @@ void OnBindPipeline(command_list* cl, pipeline_stage stages, pipeline pl) {
     }
     if (Recording()) { std::lock_guard<std::mutex> g(g_lock); ++g_pending[cl].pipelines; }
 }
-void OnPushConstants(command_list* cl, shader_stage, pipeline_layout, uint32_t, uint32_t, uint32_t, const void*) {
-    if (Recording()) { std::lock_guard<std::mutex> g(g_lock); ++g_pending[cl].constants; }
+void OnPushConstants(command_list* cl, shader_stage, pipeline_layout layout, uint32_t param, uint32_t first, uint32_t count, const void* values) {
+    if (!Recording()) return;
+    std::lock_guard<std::mutex> g(g_lock);
+    ++g_pending[cl].constants;
+    if (!values || first + count > kCbBytes / 4) return;
+    RootCb& r = g_roots[cl][param];
+    if (r.cbv || r.layout != layout.handle) r = RootCb{};
+    r.layout = layout.handle;
+    if (r.values.size() < first + count) r.values.resize(first + count);
+    memcpy(r.values.data() + first, values, count * 4);
 }
 void OnExecuteSecondary(command_list* cl, command_list* secondary) {
     if (!Recording()) return;
@@ -321,6 +534,7 @@ bool OnDraw(command_list* cl, uint32_t vertices, uint32_t instances, uint32_t, u
     ++p.draws;
     p.pipe = pipe;
     if (p.watch) { char b[96]; snprintf(b, sizeof b, "      draw %u vertices x %u instances", vertices, instances); Line(cl, b); }
+    if (vertices <= 6 && instances == 1) FullScreen(cl, pipe);
     return false;
 }
 bool OnDrawIndexed(command_list* cl, uint32_t indices, uint32_t instances, uint32_t, int32_t, uint32_t) {
@@ -334,6 +548,7 @@ bool OnDrawIndexed(command_list* cl, uint32_t indices, uint32_t instances, uint3
     ++p.draws;
     p.pipe = pipe;
     if (p.watch) { char b[96]; snprintf(b, sizeof b, "      draw indexed %u indices x %u instances", indices, instances); Line(cl, b); }
+    if (indices <= 6 && instances == 1) FullScreen(cl, pipe);
     return false;
 }
 bool OnDispatch(command_list* cl, uint32_t, uint32_t, uint32_t) {
@@ -397,6 +612,8 @@ void OnPresent(command_queue* queue, swapchain* sc, const rect*, const rect*, ui
     if (s == 1) {
         g_out = "# one frame of the game's GPU work, as recorded (see uitrace.cpp)\n# present before: back buffer " + bb + "\n";
         g_seq = 0; g_pending.clear(); g_described.clear();
+        g_roots.clear(); g_cbSeen.clear();
+        g_cbOut = "# the root constant buffers of the full-screen draws in d2r_vr_uitrace.txt, each distinct one once (see uitrace.cpp)\n";
         g_state.store(2);
         return;
     }
@@ -412,6 +629,13 @@ void OnPresent(command_queue* queue, swapchain* sc, const rect*, const rect*, ui
     }
     SaveGrabs(queue);
     if (FILE* f = _wfopen(g_path.c_str(), L"wb")) { fwrite(g_out.data(), 1, g_out.size(), f); fclose(f); }
+    {   // the constants beside it: <trace>_cb.txt
+        std::wstring cbPath = g_path;
+        const size_t dot = cbPath.find_last_of(L'.');
+        cbPath.insert(dot == std::wstring::npos ? cbPath.size() : dot, L"_cb");
+        if (FILE* f = _wfopen(cbPath.c_str(), L"wb")) { fwrite(g_cbOut.data(), 1, g_cbOut.size(), f); fclose(f); }
+    }
+    g_cbOut.clear(); g_roots.clear(); g_cbSeen.clear();
     g_out.clear();
     g_state.store(0);
 }
@@ -436,6 +660,9 @@ void Register() {
     reshade::register_event<reshade::addon_event::destroy_pipeline>(&d2rvr::D3D12Only<&OnDestroyPipeline>::Call);
     reshade::register_event<reshade::addon_event::bind_scissor_rects>(&d2rvr::D3D12Only<&OnScissor>::Call);
     reshade::register_event<reshade::addon_event::push_constants>(&d2rvr::D3D12Only<&OnPushConstants>::Call);
+    reshade::register_event<reshade::addon_event::push_descriptors>(&d2rvr::D3D12Only<&OnPushDescriptors>::Call);
+    reshade::register_event<reshade::addon_event::init_pipeline_layout>(&d2rvr::D3D12Only<&OnInitPipelineLayout>::Call);
+    reshade::register_event<reshade::addon_event::destroy_pipeline_layout>(&d2rvr::D3D12Only<&OnDestroyPipelineLayout>::Call);
     reshade::register_event<reshade::addon_event::execute_secondary_command_list>(&d2rvr::D3D12Only<&OnExecuteSecondary>::Call);
 }
 
@@ -452,6 +679,21 @@ bool Busy() { return g_state.load() != 0; }
 
 // [debug] skip_pipeline: 0 = off
 void SetSkip(uint64_t pipe) { g_skipPipe.store(pipe); }
+// [render] depth_fix / depth_range: the game's linear depth from 0 to range world units (off: the game's own)
+void SetDepthRange(bool on, float range) {
+    g_depthRange.store(std::clamp(range, 50.0f, 100000.0f));
+    g_depthFix.store(on);
+}
+uint32_t DepthRangeFixes() { return g_depthPatched.load(); }   // b10 buffers rewritten so far
+// From vrcam's own root CBV hook (camfix), which runs before ReShade tells add-ons of the binding:
+// with the right eye replayed, camfix copies a camera buffer - b10 among them, the camera's position
+// at [1] - into its own slot right there, and the copy, not the game's buffer, is what the GPU reads.
+bool DepthFixFor(uint64_t layout, uint32_t param) { return g_depthFix.load(std::memory_order_relaxed) && IsB10(layout, param); }
+void FixDepthRangeAt(uint8_t* cb) {   // cb: the game's b10, in its upload memory
+    if (WriteRange((float*)(cb + 53 * 16), g_depthStart.load(std::memory_order_relaxed), g_depthRange.load(std::memory_order_relaxed)))
+        g_depthPatched.fetch_add(1, std::memory_order_relaxed);
+}
+int DepthRangeLayouts() { return g_b10n.load(); }             // root signatures with a b10 found
 // [render] skip_shaders: up to 8 pixel shader hashes; pipelines already made of them are found again
 void SetSkipShaders(const uint64_t* hashes, int n) {
     for (int i = 0; i < kSkipMax; ++i) g_skipHash[i].store(i < n ? hashes[i] : 0);

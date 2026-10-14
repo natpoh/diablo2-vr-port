@@ -21,15 +21,15 @@ twice on the GPU. It is the fastest true 3D so far, and it still has loose
 ends:
 
 - **A DLSS for each eye** in the one-pass mode
-  ([issue 8](KNOWN_ISSUES.md)).
+  ([issue 7](KNOWN_ISSUES.md)).
   [repo]
 - **Why a signal after every replayed list keeps the GPU from hanging**
-  ([issue 10](KNOWN_ISSUES.md)).
+  ([issue 9](KNOWN_ISSUES.md)).
   [repo]
 - **Reuse the left eye's work in the right eye's replay:** the shadow maps
   and the render graph's passes that do not depend on the eye. [repo]
 - **DLSS jitter shared fairly between the eyes**
-  ([issue 9](KNOWN_ISSUES.md)).
+  ([issue 8](KNOWN_ISSUES.md)).
   [repo]
 - **FlatVR's frame conveyor:** each frame shown at the head pose it was drawn
   for, so a slow frame does not judder. [BodyWalk/FlatVR]
@@ -40,18 +40,15 @@ ends:
   cathedral and catacombs, and the Act 2 sewers and palace. Every other
   dungeon still shows a black void overhead. It is mostly tuning and a stone
   picture per dungeon
-  ([issue 3](KNOWN_ISSUES.md)).
+  ([issue 2](KNOWN_ISSUES.md)).
   [repo]
 - **Vertical walls up to the ceiling** in dungeons whose walls are low and
   cut, such as the Act 2 sewers
-  ([issue 5](KNOWN_ISSUES.md)). [repo]
-- **Fire that glows through the fog** instead of fading with it
   ([issue 4](KNOWN_ISSUES.md)). [repo]
+- **Fire that glows through the fog** instead of fading with it
+  ([issue 3](KNOWN_ISSUES.md)). [repo]
 - **Torchlight on the ceilings**, found cheaply - not by reading the game's
   whole heap. [repo]
-- **Lut Gholein's haze** at night: fix the game's own pass instead of skipping
-  it ([issue 1](KNOWN_ISSUES.md)).
-  [repo]
 - **A night sky in layers:** today the stars drift with the clouds. The plan
   is still stars and moon with clouds drifting over them, 12 pictures, and the
   single band as a fallback. The shader already draws procedural stars
@@ -61,12 +58,19 @@ ends:
 
 ## First person (F4)
 
-- **Weapon weight:** the model and its benches are in, not yet in the game.
-  See [WEAPON_WEIGHT.md](WEAPON_WEIGHT.md). [repo]
-- **Hit by touch:** the blade's touch on a monster's body picks the target and
-  the moment, instead of a swing gesture letting the game choose. [repo]
+- **Weapon weight:** in the game since 0.165 (the Weapon Weight tab, off while
+  it is tuned). To do: the feel of the defaults, two-handed grips on every
+  weapon kind. See [WEAPON_WEIGHT.md](WEAPON_WEIGHT.md)
+  ([issue 17](KNOWN_ISSUES.md)). [repo]
+- **Hit by touch:** in the game since 0.165 (off): the blade's touch on a
+  monster's body picks the target and the moment, instead of a swing gesture
+  letting the game choose. To do: the speed and start defaults, the blades of
+  the thrown kinds ([issue 13](KNOWN_ISSUES.md), [issue 17](KNOWN_ISSUES.md)).
+  [repo]
 - **The weapon stops at monsters** instead of passing through them. [repo]
-- **Gestures for skills:**
+- **Gestures for skills** (the swing, the throw, the bow's draw and the swap
+  over the shoulder are in; a gesture for one skill is not,
+  [issue 15](KNOWN_ISSUES.md)):
   - a gesture or a sequence of gestures for a given skill - first request:
     the Paladin's Zeal;
   - players recording their own movements and mapping them to skills;
@@ -77,10 +81,13 @@ ends:
   [repo + BodyWalk/FlatVR]
 - **Weapon calibration:** good defaults for all 17 Weapon Adjust kinds, and
   two-handed grips tested with every weapon kind
-  ([issue 14](KNOWN_ISSUES.md)). [repo]
+  ([issue 13](KNOWN_ISSUES.md)). [repo]
 - **Attack and pick up as direct game commands**, not through the virtual
-  pad's A button. 68 other commands already go straight to the game (0.144).
-  [repo]
+  pad's A button. 68 other commands already go straight to the game (0.144);
+  Controls without BodyWalk (0.165) gives the game its own gamepad, and Direct
+  hit (experimental) calls the game's attack itself. [repo]
+- **The new controls in F1 - F3 too**, not in first person only
+  ([issue 16](KNOWN_ISSUES.md)). [repo]
 - **The upper body from body trackers** (chest, waist) and forearm twist bones
   that follow the wrist. [repo + BodyWalk/FlatVR]
 - **Walking in the room moves the hero** (native OpenXR): a real step forward or
@@ -91,12 +98,12 @@ ends:
 
 - **The map orb on the hero's palm**, not at the controller. [repo]
 - **The rest of the interface nearer than the screen** in stereo
-  ([issue 7](KNOWN_ISSUES.md)).
+  ([issue 6](KNOWN_ISSUES.md)).
   [repo]
 - **Real font size for item labels on the ground**, instead of a scale.
   [repo]
 - **Monster name plate opacity**
-  ([issue 17](KNOWN_ISSUES.md)).
+  ([issue 19](KNOWN_ISSUES.md)).
   [repo]
 
 ## BodyWalk Game Link
@@ -124,6 +131,8 @@ Still to do:
 
 - **`game_link.h` through CMake's FetchContent** once the SDK repository is
   out; until then it is copied into `external/`.
+- **The VrRunes section of `game_link.h` in the public SDK header**, so the tree
+  builds as it is ([issue 23](KNOWN_ISSUES.md)).
 - **`game_link` inside BodyWalk itself**, so no mod has to install it.
 
 [repo + BodyWalk/FlatVR]
@@ -132,5 +141,5 @@ Still to do:
 
 - **Field offsets found by signature too**, like the code addresses already
   are, so a game update needs no new build
-  ([issue 19](KNOWN_ISSUES.md)).
+  ([issue 21](KNOWN_ISSUES.md)).
   [repo]

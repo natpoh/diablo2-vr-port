@@ -1,5 +1,306 @@
 # What's new in D2R VR
 
+## 0.165
+
+The big step of this version is first person (F4) on **native OpenXR**: the
+plugin can read your controllers itself, your blade can pick the target,
+weapons have weight, you throw with your hand and draw a bow with both. Every
+new option for your hands and for the game's rules works **in VR first person
+(F4) only** - F1, F2, F3 and the flat modes play as before - and is **off until
+you tick it** in D2R VR Settings, unless it says "on". Options marked
+*prototype* are early; *experimental* ones change how the game works inside.
+
+- **Controls without BodyWalk** (Stereo > Native OpenXR, off, prototype). The
+  plugin reads both controllers itself and gives the game its gamepad, its
+  actions and its key commands, so native OpenXR needs no BodyWalk for the
+  controls. BodyWalk can run on for FlatVR, and its walking by the body (steps
+  in place, an arm swing, a lean) still walks the hero, mixed into the
+  controller's left stick ("BodyWalk's walking still walks the hero", on). The
+  layout - the right trigger attacks, the right A picks up and opens, the face
+  buttons and the left trigger are the game's skill buttons, the grips belong
+  to the belt and the weapon - is a table in `[direct]` of d2r_vr.ini, and every
+  control can be rebound. In menus the controllers are the game's own gamepad
+  layout. A long press of a stick click (half a second): the right one asks for
+  the skill panel, the left one opens the inventory; a quick click of the left
+  stick shows and hides the map. The game no longer shows "PLEASE RECONNECT
+  CONTROLLER" after a long frame, and a trigger or button still held when the
+  headset's focus returns is not a press. In this mode START on Home launches
+  the game without starting BodyWalk. F4 only: in F1 - F3 BodyWalk's controls
+  are the controls.
+- **Hit by touch** (Weapon Adjust > Melee: hit by touch, off). In first person
+  the blade you swing through a monster's body picks the target and the moment
+  of the game's own attack: the attack button is pressed on the contact and the
+  monster you touched is its target. The game's animation, reach, hit rolls and
+  attack speed stay the game's. A blade held still or waved slowly does
+  nothing (it must move at least 0.8 m/s - a slider), a monster is hit once per
+  swing, allies and monsters behind a wall are left alone. The blade is built
+  from the weapon as it is drawn - a staff's from butt to head, a dagger's the
+  right way, a blade in each hand for two weapons - and its length, thickness
+  and direction can be tuned live (Debug tab); "Draw the capsules of Hit by
+  touch" shows what is tested, and the blade turns green while a contact would
+  count.
+  - **Thrown weapons too** (on with it): a javelin, a throwing knife or a
+    throwing axe swung through a monster at point blank is the game's own Throw
+    at it. The throw by gesture keeps working and never fires together with the
+    touch; potions are never swung. A javelin's blade runs from the hand to the
+    spearhead (measured on screenshots); the knife's, the axe's and the spear's
+    blades are estimates - tune them on the Debug tab.
+  - **Shield bash casts Smite** (off): with Smite on one of the pad's skill
+    slots and a shield on your left arm, a hard bash through a monster casts one
+    Smite at it - the game's own cast.
+  - **Direct hit** (experimental, off, offline only): the touch calls the game's
+    basic attack itself instead of pressing its button - no animation, no
+    walk-up, no attack-rate wait. For comparing with the normal way.
+- **Weapons have weight** (Weapon Weight tab, off). A weapon you hold alone is
+  heavy - half its real mass to begin with, a slider from none to three times
+  that: it lags behind a hard swing and, with "Gravity feel" (on), sags a few
+  degrees when held out - a two-hander in one hand sinks a lot, two hands hold
+  it much better. A hand holds the weapon while its grip is squeezed, where the
+  grip closed on the shaft; let one grip go and the other keeps it; pass the
+  weapon from hand to hand; on a long shaft the second hand slides along it.
+  Let go of both and the weapon falls to the ground and tips over - and, by
+  default, goes to your back after 0.6 s, where you take it again with a hand
+  behind either shoulder (with Controller vibration on, a pulse tells you are
+  on it) or call it back with a grip. A hand that takes a weapon sits on the
+  shaft like the game's own grip, with live correction sliders for each hand,
+  and its fingers and thumb take the game's own pose for a hand holding that
+  weapon (on). Hit by touch follows the weapon: a weapon no hand holds strikes
+  nothing.
+- **Throwing** (Weapon Adjust > Throws). A javelin or a throwing weapon in your
+  right hand is thrown by a throwing motion: **by the right grip** - with
+  Controls without BodyWalk, on: the grip is the weapon in your hand, swing and
+  let go at the end of the swing - or **by the right trigger** (off). The throw
+  is the game's own attack, aimed along the way your hand was going, and the hero
+  throws with the game's Throw skill by himself, no skill slot needed. A gentle
+  auto-aim (a cone of 15 degrees round the line of your hand, a slider) takes a
+  hostile monster in it; nothing in it, and the throw goes exactly where you
+  threw. Throwing potions use the same gestures and land where a real throw of
+  your hand's speed would, over the real ground ("how far", 800 % of a real
+  throw, never farther than the 48 cells the game accepts). With Weapon Weight on,
+  the model of a javelin or a knife you threw is gone the moment the game takes
+  the throw and the hand stays empty while the game's throw plays; a thrown
+  potion's model flies all the way to where it lands and breaks there (on).
+  - **Throwing potions: our potion only** (experimental, off): one tick makes
+    the potion of the weight model the only one you see. The game's own flying
+    potion is not drawn (only what is drawn: its missile, damage, stack and
+    explosion are the game's), and the game's explosion happens where and when
+    your potion lands. The hide of the game's potion is not proven in the game
+    yet; each of the three things also has a tick of its own.
+- **The bow** (Weapon Adjust > Attack along the hand > Bow, off). Draw the
+  string with both hands: the free hand's trigger (or its grip - a setting) at
+  the bow's string, pull back along the line to the bow and let go. The game's
+  own attack - or the pad button of a skill you pick (Magic, Fire, Cold, Ice,
+  Exploding, Immolation, Freezing, Guided Arrow, Multiple Shot, Strafe) - is
+  pressed once and the arrow goes along your draw. The game's animation, attack
+  rate, mana and arrows are unchanged; the length of the pull adds nothing. A
+  trigger pressed away from the string shoots nothing ("a press away from the
+  string shoots nothing", on). The grab zone round the string and the least pull
+  that shoots are sliders.
+  - **The game's own bow follows your hand** (off): the bow's string, limbs and
+    arrow - of any of the 15 bow models - follow the drawing hand and snap back
+    at the release; a pull too short to shoot lets the string go back softly.
+    The arrow passes the bow hand at a point you set and is kept clear of the
+    hand and the forearm; the bow can lie along the line between your hands, as
+    a real bow does. Another option makes the hand on the string hook its
+    fingers on it, in the game's own draw pose (the Amazon's right hand), with
+    the string - and the arrow's line - held at the first joints of the hooked
+    fingers where the game's draw animation has them; sliders set the curl, the
+    thumb and the string's place.
+  - **Quick release** (experimental, off): the game makes a bow's arrow part-way
+    through its attack animation, about 0.3 s after the release. This option
+    moves that moment earlier (to frame 2) inside the same attack: the animation
+    and the attack rate stay, the arrow, its damage and its mana come about 0.2 s
+    sooner, and a hit on you in those first 0.2 s no longer cancels the shot.
+    Offline only, with a bow in hand; put back exactly when switched off.
+- **A skill panel in the headset** (Stereo > Native OpenXR, off, prototype). The
+  controller's skill slots in front of you, as a wheel or as tiles made like the
+  game's own controller skill dialog (two rows of six plates). Point with the
+  laser and pull the trigger, and from then on that trigger casts the slot - the
+  game's own pad button. "EDIT SKILLS" puts any skill you have into a slot
+  through the game's own setter. **Hold the right stick click for half a second**
+  to open it (a short click is still the weapon swap), hold it again to close it;
+  without Controls without BodyWalk, hold the left grip and click the right
+  stick. The icons come from a cache made out of your own installed game;
+  without it you see names.
+- **Settings in the headset** (UI: F4 body > Menus, off, prototype): both
+  grips squeezed for a moment and a stick click open a panel with the picture's
+  distance and width, brightness, your height, the laser, the game's view F1 -
+  F4, the VR render size and the body measurement. With the skill panel's tiles
+  these pages are the window's second tab, **Settings**, beside **Skills**: the
+  same hold of the right stick click opens it on the tab you used last, and the
+  window flips along Skills, then the Settings pages View, Options, Video and
+  Body by a flick of a thumbstick, a tap of a grip (left back, right on) or the
+  arrow at its edge. Apply writes only what you changed into d2r_vr.ini; nothing
+  in the panel sends a click to the game.
+- **Life and mana on your wrists** (UI: F4 body > Toolbar in the headset > Where
+  > Wrists, off). Two balls like medallions on the back of the wrists - a glass
+  dome on a metal base (gold, bronze or silver, with a patina you set), with
+  liquid that rises and falls with your numbers, drawn with the game's depth so
+  that a hand or a monster in front hides them - or the game's own life and mana
+  globes cut out of its toolbar. Position, rotation and size per wrist, a depth
+  offset for each hero class, which way the liquid fills, a soft heartbeat at low
+  life. It only reads your life and mana. Needs the D2R_DepthFog.fx that comes
+  with this version (Setup puts it in).
+- **Low life: a red heartbeat vignette** (UI: F4 body, off). While your life is
+  under a threshold (30 %) the edges of the view tint red and beat like a heart,
+  faster and redder as your life falls; a gentle mode; the beat can be felt in
+  the controllers too. A colour over the edges only: nothing is scaled, moved or
+  shaken.
+- **Hide the plates of ordinary monsters** (UI: F4 body, off, prototype):
+  champions, uniques, bosses, their minions and NPCs keep theirs. Presentation
+  only. And **Toolbar cut** sliders (UI: F4 body > In the game's picture) make
+  the emptied strip taller, for bits of the toolbar's statues that stay in the
+  picture.
+- **F1 and F3 in real 3D on native OpenXR** (Stereo > Native OpenXR, on). The
+  game on your floor is a diorama in your room that you walk round and lean over,
+  on the headset's own floor; the view from above is a window onto the game that
+  you lean to see round things. The game's own mouse pointer is hung on the
+  ground where its mouse points (on). Menus and loading stay the flat picture.
+  Untick it for the flat picture as before.
+- **VR render size is a slider** (Home > In the headset): any size from 1024 to
+  4096 pixels a side while the game's window keeps its own size - no more dragging
+  the window square. Its left end is the window's size; a tick box takes your
+  headset's recommended size instead. The game is asked once, after you stop
+  dragging. Older settings keep working.
+- **Eyes in one place get a gap** (`[openxr] ipd_fallback_mm`, 64). A runtime that
+  reports both eyes at the same point (no stereo, a double image) now gets a 64 mm
+  gap between them. 0 = off.
+- **Lights no longer vanish in rectangles at a square or wide window** (Render
+  > "Fix the game's lighting at a square or wide window", on). The game finds each
+  light tile's depth range with a shader that is right at 16:10 only; ours does
+  it right at any size (at 16:10 it gives the game's own numbers).
+- **Attacks never walk the hero in F4** (Weapon Adjust, on). Every attack the
+  plugin presses - the trigger, a swing by touch, a throw, a bow's shot - is
+  pressed with the game's own Stand Still, so with nothing under the point it is
+  a swing or a shot in place; a click on bare ground gets it too. Skills that
+  move the hero (Teleport, Charge, Leap, Whirlwind...) and pick-ups are left
+  alone.
+  - **No stray mouse clicks, no stray walks** (on): in the world, with no panel
+    open, the game gets no mouse button the plugin did not send, and a walk or
+    run to a point out of a click on bare ground is dropped - the hero no longer
+    runs forward in the middle of a bow shot. The log names the origin of each.
+  - **A shot along the hand never sends the hero after a monster** (on). Before
+    every pad cast the game looks for a target near the aim and, finding one,
+    takes Stand Still off the cast - so the hero ran up to the monster instead of
+    shooting. That first look now finds no target for a shot along the hand.
+  - "An attack never runs the hero off" (off) is a safety net for the rest.
+- **Smaller things for your hands** (all off, F4):
+  - **Weapon sets over the shoulder**: reach a hand behind either shoulder and
+    press its grip, and the game's own "Swap weapons" is pressed.
+  - **Height calibration: Measure my height and arm span** (Body, or
+    "Calibrate body" on the headset panel's Body page; prototype): stand upright
+    with your arms out level at shoulder height (a T-pose), let go of both
+    triggers, then squeeze both and hold still for 1.2 seconds - a panel in the
+    headset leads you, and the right B cancels. It saves your eye height and
+    your arm span: the eye height sets the world's scale, the span fits the
+    hero's arms (the hands stay 1:1 with the controllers). "Use the measured
+    height and arm span" switches it on and off, "Forget the measurement" clears
+    it. Needs the headset's floor (a room set up) and first person (F4).
+  - **Controller vibration**: a pulse when a blow of yours lands, a belt potion
+    is taken, the laser clicks on a menu or you pick something up.
+  - **Item tooltips at once under the laser**: the game's own tooltip and its
+    comparison with what you wear, with no wait and no Shift.
+  - **Gesture runes in the headset** (prototype): draws the runes BodyWalk scores
+    when you draw a shape in the air, with your hand's trail. It needs a BodyWalk
+    that sends them - not out yet - so for now nothing shows.
+  - The hand with a shield on it closes with the grip (on).
+- **Fixes.** With a bow or a javelin the aim along the hand put the point 60
+  cells out, farther than the game accepts: a shot along north, south, east or
+  west - and anywhere within 34 degrees of them - was thrown away. It is 40
+  cells now. A hand with a belt potion in it no longer takes the staff, spear or
+  two-handed sword. A native OpenXR start that found no headset is tried again
+  every 10 seconds. Settings always opens on Home, which has a large START
+  button now. A bad overlay can no longer black out a frame: it is left out and
+  the log names it. Setup accepts both ZIPs d2rloader.net lists for D2RLoader
+  1.3.1.
+- **Thanks to bearstonem** again: reading the controllers directly, the skill
+  wheel, the weapon swap over the shoulder, the shield's Smite, the item tooltips
+  at once, the controller vibration, hiding the plates of ordinary monsters, the
+  T-pose measurement, the bow's arrow skills and its bones follow what the fork
+  [d2r-pcvr](https://github.com/bearstonem/d2r-pcvr) (MIT) found in the game.
+- **For support** (Debug tab, all off): logs of what the game does with each
+  attack of ours (`shot_trace`), of the long frames and what the plugin spent in
+  them (`frame_trace`), and of where the time goes between a bow's release and
+  its arrow; and the plugin's log written from a thread of its own (`log_async`).
+  Send them in with a stutter or a shot that ran the hero off.
+- **For developers: the source does not build as it is yet.** The rune drawing
+  uses the VrRunes section of BodyWalk's Game Link header, which is not in the
+  released BodyWalk SDK yet. Until it is, build against a header that has it
+  (`-DBODYWALK_SDK_INCLUDE=<folder with bodywalk/game_link.h>`); the README and
+  docs/KNOWN_ISSUES.md (issue 23) say how. It will be fixed in a following
+  release.
+
+## 0.164
+
+- **Spells fly along your hand, no auto-target.** In first person a spell
+  that flies - Fire Bolt, Charged Bolt, Bone Spear, Frozen Orb... - goes
+  where your hand points, as every attack does; the game's auto-target and
+  aim assist are off for that cast, so it no longer turns to a monster.
+  Spells placed on the ground (Blizzard, Fissure, Meteor), summons, curses
+  and auras keep the game's targeting. A new tab, **Auto-target**: "Disable
+  auto-target for spells" (on), and a tick per spell that keeps the game's
+  auto-target for that one - for those that seek their target themselves
+  (Guided Arrow is ticked).
+- **Arrows and throws along the hand** (Weapon Adjust > Attack along the
+  hand, both off): "Arrows along the hand, no auto-target" for bows and
+  crossbows, "Throws along the hand, no auto-target" for javelins and
+  throwing weapons.
+- **Menus as a panel, the world stays in 3D** (UI: F4 body > Menus, on). In
+  first person with native OpenXR, the inventory, the stash, a trader, the
+  skills or the game menu hang in front of you as a panel of their own, and
+  the world stays in stereo around you. On FlatVR it needs BodyWalk 1.80
+  (Setup brings it; with an older one the menus stay flat, as before).
+- **Laser pointer on menus and panels** (native OpenXR, prototype, off):
+  point a controller at the menu panel and it is the mouse.
+- **Belt potions as the game's own models** (UI: F4 body > Belt potions,
+  off): the belt's bottom row hangs on the hero's hips, lit and shaded by the
+  game; "take them in the hand and drink" brings one to your mouth to drink it.
+- **Allies' portraits** can be moved (UI: F4 body > Allies' portraits), and a
+  monster's name plate is read over the monster itself.
+- **No more grey haze in the picture's corners** outdoors: the game's own
+  depth fog, made for its camera from above, is set to 0
+  (World > "The game's own depth fog" brings it back).
+- Fixes: the weapon set (I / II) is told right after a swap to an empty set;
+  our arms and hidden head only on our own standing body, never on other
+  players or our corpse; DLSS gets the stereo-fixed motion vectors at 4K's
+  DLSS Balanced and up as well.
+- **Thanks to bearstonem**: the spells along the hand, the menus as a panel and
+  the laser pointer on menus follow what the fork
+  [d2r-pcvr](https://github.com/bearstonem/d2r-pcvr) (MIT) found in the game.
+- **No more crash in the Act 3 jungle with a far render distance.** With
+  many room rings and models drawn far out, the game's renderer ran out of
+  its 12 MB of memory in Spider Forest and the jungle round it, and the game
+  closed. D2R VR now gives the game's renderer and entity memory the room
+  that `[render] render_pool_mb` (64) and `entity_pool_mb` (280) in
+  d2r_vr.ini ask for - those two settings did nothing before. It is done
+  once at start, through the game's own allocator; the log says how big the
+  pools are ("memory pools: renderer 12 -> 64 MB, entity 70 -> 280 MB").
+- **No more pale veil with a straight edge in Lut Gholein.** The game keeps a
+  copy of its depth for its fog, height fog, ambient occlusion, reflections and
+  water, measured for its camera from above: 550 to 1060 units away. From our
+  camera everything is nearer, so all of it read as one flat wall 550 units
+  off, and the game's height fog drew a veil over the town that ended in a
+  straight line across the picture. D2R VR now gives those effects the depth
+  from our camera (D2R VR Settings > World > Fog: "The game's effects measure depth
+  from our camera", on; `[render] depth_fix`, `depth_range`). Untick it for
+  the old picture.
+- **Brighter caves and dungeons** - D2R VR Settings > Ceiling > Light in
+  caves (`[cave_light]`, off by default). Underground the game has no sun:
+  only the hero's circle of light, the torches, and a light that fills the
+  place inside that circle. On a headset whose screen loses the darkest
+  shades (an LCD, such as Meta Quest) caves were black where an OLED (PS VR2)
+  showed them. The game's own light is turned up, before it makes its colours,
+  so they keep their strength - not a lifted black level:
+  - "Hero's light circle": how far his light reaches, up to 10 times the game's;
+  - "Hero's light strength": how bright it is;
+  - "Fill light": the light inside the circle, times the dungeon's own, and
+    "at least" for the darkest ones (the Act 2 tombs).
+  Drawing only: the light radius and everything the game plays by stay.
+- **"Any fire lights the ceiling": the light over the fire, not behind it.**
+  A flame has no depth, so its light was put on the wall behind it. The new
+  slider "Fire light nearer to you" (Ceiling > Cave ceiling,
+  `[ceiling] fire_nearer`) brings it nearer, along your line of sight.
+
 ## 0.163
 
 - **No more attacks on head turns and while walking.** BodyWalk's strike

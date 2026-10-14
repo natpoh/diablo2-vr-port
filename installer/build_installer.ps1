@@ -18,6 +18,15 @@ param(
     [string]$Portable = ""
 )
 $ErrorActionPreference = "Stop"
+# The BodyWalk profile this installer ships. BodyWalk lists it as "<Name> (mod)" and offers it again whenever
+# profile.json changes; its cloud copy (CloudGameId / CloudProfileId) is how the author improves it without a
+# new mod. 0.165 and later are bound to the profile "0165" (cloud profile 56); the older installers keep "D2VR"
+# (cloud profile 53), so BodyWalk lists both on a PC ("0165 (mod)" and "D2VR (mod)") and each build puts its
+# own first. To bind a later version to another profile, put its Name and CloudProfileId in the one line below.
+# The line holds what installer\bodywalk_profile.json holds ("profile_name", "cloud_game_id", "cloud_profile_id");
+# while they agree, the staged profile.json is that file byte for byte. When they differ, only those three
+# values of the staged copy change (the repository's file stays as it is).
+$BodyWalkProfile = @{ Name = "0165"; CloudGameId = 43; CloudProfileId = 56 }
 $root = Split-Path $PSScriptRoot -Parent
 $payload = Join-Path $PSScriptRoot "payload"
 $addon = $Addon
@@ -33,7 +42,23 @@ Copy-Item (Join-Path $root "d2r_vr.ini") "$payload\plugins\"
 # Game Link manifest (the actions and Mapping tabs vrcam sends, from the same tables), so they
 # are in BodyWalk's Mapping from its first start.
 Copy-Item $GameLink "$payload\bodywalk\game_link.dll"
-Copy-Item (Join-Path $PSScriptRoot "bodywalk_profile.json") "$payload\bodywalk\profile.json"
+$profileSource = Join-Path $PSScriptRoot "bodywalk_profile.json"
+$profileText = [System.IO.File]::ReadAllText($profileSource)
+function Set-ProfileValue([string]$text, [string]$key, [string]$literal) {
+    $rx = [regex]('("' + [regex]::Escape($key) + '"\s*:\s*)("(?:[^"\\]|\\.)*"|-?\d+)')
+    if ($rx.Matches($text).Count -ne 1) { throw "bodywalk_profile.json must hold exactly one ""$key"" value" }
+    return $rx.Replace($text, [System.Text.RegularExpressions.MatchEvaluator]{ param($m) $m.Groups[1].Value + $literal }, 1)
+}
+if (-not $BodyWalkProfile.Name -or $BodyWalkProfile.CloudGameId -lt 0 -or $BodyWalkProfile.CloudProfileId -lt 0) { throw "BodyWalkProfile: a name and non-negative cloud ids are needed" }
+$stagedProfile = $profileText
+$stagedProfile = Set-ProfileValue $stagedProfile "profile_name" (ConvertTo-Json ([string]$BodyWalkProfile.Name) -Compress)
+$stagedProfile = Set-ProfileValue $stagedProfile "cloud_game_id" ([string][int]$BodyWalkProfile.CloudGameId)
+$stagedProfile = Set-ProfileValue $stagedProfile "cloud_profile_id" ([string][int]$BodyWalkProfile.CloudProfileId)
+$profileAsIs = $stagedProfile -ceq $profileText
+if ($profileAsIs) { Copy-Item $profileSource "$payload\bodywalk\profile.json" }
+else { [System.IO.File]::WriteAllText("$payload\bodywalk\profile.json", $stagedProfile, (New-Object System.Text.UTF8Encoding($false))) }
+Write-Host ("BodyWalk profile: '{0} (mod)', cloud game {1} profile {2} - installer\bodywalk_profile.json {3}" -f $BodyWalkProfile.Name,
+    $BodyWalkProfile.CloudGameId, $BodyWalkProfile.CloudProfileId, $(if ($profileAsIs) { "as it is" } else { "with these three values" }))
 $manifest = Start-Process -FilePath (Join-Path $root "build\Release\D2R_VR_Settings.exe") -Wait -PassThru `
     -ArgumentList "--game-link-manifest", "`"$payload\bodywalk\d2r.txt`""
 if ($manifest.ExitCode -ne 0 -or -not (Test-Path "$payload\bodywalk\d2r.txt")) { throw "the Game Link manifest was not written ($($manifest.ExitCode))" }

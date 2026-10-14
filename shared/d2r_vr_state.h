@@ -51,6 +51,11 @@ struct D2RVR_State {
 // Bit 3 (2026-10-06): the left hand's slot holds a weapon of its own - a barbarian's second blade, an
 // assassin's second claw (not a shield, not a quiver): BodyWalk's "D2R Left Hand" mapping tab.
 enum : uint32_t { D2RVR_TWO_HANDED = 1u, D2RVR_TWO_HANDS_ON = 2u, D2RVR_TWO_HANDED_KNOWN = 4u, D2RVR_LEFT_WEAPON = 8u };
+// Bits 8 - 12 of `twoHanded` (2026-10-14; the older readers look at bits 0 - 3 only): the hero's class, as skel::HeroClass() has it from the posed model's folder - 0 amazon, 1 sorceress,
+// 2 necromancer, 3 paladin, 4 barbarian, 5 druid, 6 assassin, 7 warlock - and bit 12 = it is known. D2R VR Settings shows it ("the hero playing now") beside the per-class wrist depth.
+enum : uint32_t { D2RVR_HERO_SHIFT = 8, D2RVR_HERO_MASK = 0xFu << 8, D2RVR_HERO_KNOWN = 1u << 12 };
+inline uint32_t D2RVRHeroBits(int cls) { return cls >= 0 && cls < 16 ? (D2RVR_HERO_KNOWN | ((uint32_t)cls << D2RVR_HERO_SHIFT)) : 0u; }
+inline int D2RVRHeroOf(uint32_t twoHanded) { return (twoHanded & D2RVR_HERO_KNOWN) ? (int)((twoHanded & D2RVR_HERO_MASK) >> D2RVR_HERO_SHIFT) : -1; }
 #pragma pack(pop)
 
 static_assert(sizeof(D2RVR_State) == 104, "D2RVR_State is a wire format");

@@ -497,9 +497,11 @@ uniform float CeilLightRadius < hidden = true; > = 25.0;   // world units from t
 // tools/casc_extract/gen_ceiling_from_ref.py): 4 slots, D2R_CEILING_1..4, the area's in
 // CeilTexSlot - the act 1 caves' rock, the crypts' brick (2026-10-07). One picture spans
 // 4 tiles: 64, the wrap, is a whole number of them. Without a file (CeilTexOn off) the
-// stone is drawn here. A slot vrcam has no file for keeps one that is there, never sampled.
+// stone is drawn here. A slot vrcam has no file for gets none, never sampled: an empty
+// source, which ReShade skips. A file named that is not there failed ReShade's reload
+// ("errors loading some effects") - the pictures are not in the repository (2026-10-13).
 #ifndef D2R_CEILING_1
- #define D2R_CEILING_1 "D2R_Sky_ours/D2R_Ceiling_act1_caves_walls.png"
+ #define D2R_CEILING_1 ""
 #endif
 #ifndef D2R_CEILING_2
  #define D2R_CEILING_2 D2R_CEILING_1
@@ -592,6 +594,11 @@ float CeilRock(float2 q) { return PicRelief() ? PicRock(q) : CeilRockNoise(q); }
 // Positions: the world's x, z wrapped on 64 tiles as the ceiling's; y over the hero's floor.
 uniform bool CeilTorches < hidden = true; > = true;
 uniform float CeilTorchRadius < hidden = true; > = 20.0;    // [ceiling] torch_radius: world units where a torch's light is down to half
+// [ceiling] fire_nearer: world units a fire found in the picture is put nearer the eye, along its
+// own line of sight (it stays on the flame on the screen). A flame is drawn without depth, so
+// the depth at it is the wall's or the floor's behind it: the light on the ceiling sat behind
+// the fire, not over it (the user, 2026-10-13).
+uniform float CeilFireNearer < hidden = true; > = 0.0;
 uniform float CeilTorchBright < hidden = true; > = 0.6;     // [ceiling] torch_brightness
 uniform float CeilTorchMemory < hidden = true; > = 8.0;     // seconds a torch out of sight still lights
 uniform float CeilFireGone < hidden = true; > = 0.3;        // seconds a fire that went out in plain view still lights (a spell's)
@@ -1144,8 +1151,9 @@ float4 TorchCands(float4 pos, int eye)
     float d = own;
     if (below.y > 0.0 && below.y <= 64.0 && below.x > own * 1.1) d = below.x;
     if (d <= 1e-6) return 0.0;
-    const float z = NearPlane / d;                      // along the view
-    if (FogOn && z > FogEnd) return 0.0;
+    const float zBehind = NearPlane / d;                // along the view: what is behind the flame
+    if (FogOn && zBehind > FogEnd) return 0.0;
+    const float z = max(zBehind - CeilFireNearer, min(zBehind, 2.0));   // the flame in front of it (CeilFireNearer)
     const float2 ndc = float2(at.x * 2.0 - 1.0, 1.0 - at.y * 2.0);
     const float4 sp = eye == 0 ? SkyProj0 : SkyProj1;
     const float3 v = float3((ndc.x + sp.z) / sp.x, (ndc.y + sp.w) / sp.y, -1.0) * z;
@@ -1160,7 +1168,7 @@ float4 TorchCands(float4 pos, int eye)
     // square of nearness, so it is taken back by the distance (30 units = as seen).
     // A torch's flame ~ 1; a candle's or an ember's a small part - a small fire, a dim light.
     const float res = BUFFER_HEIGHT / 1350.0;   // more pixels to the same flame on a taller screen
-    const float size = area * (z / 30.0) * (z / 30.0) / (res * res);
+    const float size = area * (zBehind / 30.0) * (zBehind / 30.0) / (res * res);   // as before CeilFireNearer: it moves the light, not dims it
     const float strength = saturate(size / 40.0);
     if (strength < 0.02) return 0.0;
     if (row == 0) return float4(w, strength);
@@ -1581,6 +1589,10 @@ uniform float4 LabelKeep1 < hidden = true; > = float4(0.0, 0.0, 0.0, 0.0);
 uniform float4 PlateBox < hidden = true; > = float4(0.0, 0.0, 0.0, 0.0);
 uniform float PlateAlpha < hidden = true; > = 1.0;
 uniform float PlateScale < hidden = true; > = 1.0;   // vrcam [hud] monster_size: the plate larger or smaller about its middle
+// vrcam [hud] allies_x / allies_y: the corner with the allies' portraits (the mercenary, the party), uv, and where
+// it goes (+y down); an empty box = in place
+uniform float4 AlliesBox < hidden = true; > = float4(0.0, 0.0, 0.0, 0.0);
+uniform float2 AlliesOff < hidden = true; > = float2(0.0, 0.0);
 
 // First person (F4, vrcam [hud] labels_depth_body): each item label on the ground at its own item's depth -
 // its box (uv, x0 y0 x1 y1, where the game drew it) and its shift per eye (uv, + nearer). The rest of the
@@ -1636,6 +1648,12 @@ float4 GameLabels(float2 uv, float eyeSign)
             return float4(p.rgb * PlateAlpha, 1.0 - (1.0 - saturate(p.a)) * PlateAlpha);
         }
         if (InBox(src, PlateBox)) return float4(0.0, 0.0, 0.0, 1.0);   // its old place, left empty
+    }
+    [branch] if (AlliesBox.z > AlliesBox.x)   // the allies' portraits elsewhere; the plate, the labels, the kept pieces stay
+    {
+        const float2 ap = src - AlliesOff;
+        if (InBox(ap, AlliesBox) && !InBox(ap, PlateBox) && !InItemLabel(ap) && !Kept(ap)) return tex2Dlod(GameLayerSmp, float4(ap, 0, 0));
+        if (InBox(src, AlliesBox) && !InBox(src, PlateBox)) return float4(0.0, 0.0, 0.0, 1.0);   // their old place, left empty
     }
     float4 l = tex2Dlod(GameLayerSmp, float4(src, 0, 0));
     if (LabelAlpha < 0.999) l = FadedLabel(l);
@@ -1738,19 +1756,561 @@ float3 Segment(float3 c, float2 p, float3 a3, float3 b3, int eye, float3 col)
     const float d = length(p - (a.xy + ab * t));
     return lerp(c, col, 1.0 - smoothstep(1.0, 2.5, d));
 }
+// vrcam [debug] bow_vectors: the bow draw's vectors (vr/bow_touch.h MakeVectors) - up to 4 segments (A, B, colour) and 6 balls
+// (centre + radius, colour + fill), the same frame as the lines above. A ball is a ring at its projected radius, and its
+// inside tinted by `fill`: the touch sphere is a big faint one, the hands and the string's points small solid ones.
+uniform bool DbgOn < hidden = true; > = false;
+uniform float DbgSegN < hidden = true; > = 0.0;
+uniform float4 DbgSegA[4] < hidden = true; >;
+uniform float4 DbgSegB[4] < hidden = true; >;
+uniform float4 DbgSegC[4] < hidden = true; >;
+uniform float DbgBallN < hidden = true; > = 0.0;
+uniform float4 DbgBall[6] < hidden = true; >;
+uniform float4 DbgBallC[6] < hidden = true; >;
+float3 Ball(float3 c, float2 p, float3 centre, float radius, float3 col, float fill, int eye)
+{
+    const float ahead = PhantomAhead(centre, eye);
+    if (ahead <= 0.05) return c;
+    const float3 mid = PhantomPixel(centre, eye);
+    const float4 sp = eye == 0 ? SkyProj0 : SkyProj1;
+    const float rpx = max(radius / ahead * sp.x * 0.5 * BUFFER_WIDTH, 2.0);   // the projected radius, pixels
+    const float d = length(p - mid.xy);
+    const float ring = 1.0 - smoothstep(1.0, 2.5, abs(d - rpx));
+    const float inside = fill * (1.0 - smoothstep(rpx - 1.0, rpx, d));
+    return lerp(c, col, saturate(max(ring, inside)));
+}
+// vrcam [debug] melee_boxes: the capsules hit by touch tests (vr/melee_boxes.h), see-through and rimmed. Each one runs from
+// HitboxA.xyz to HitboxB.xyz, HitboxA.w its radius, HitboxB.w its colour: 0 the blade (cyan), 1 a monster (yellow), 2 a monster the
+// touch was accepted on, the game's attack key pressed (red), 3 the same by the Direct hit route (magenta), 4 a monster the game's
+// own checks refuse (pale), 5 the second blade when a weapon is held in each hand (teal), 6 a blade (either) while a contact would
+// count - moving at or above [gameplay] melee_min_speed in a stroke (green), 7 a ball where that speed was reached in a swing (white),
+// 8 a ball where the blade fell below it again (orange), 9 / 10 a piece of the tip's trail where a contact would not / would count
+// (cyan / green, thin). World units relative to where the hands
+// hang, like the lines above; each eye takes them from its own
+// camera. HitboxOn = false (the default) leaves the picture exactly as it was.
+uniform bool HitboxOn < hidden = true; > = false;
+uniform int HitboxCount < hidden = true; > = 0;
+uniform float4 HitboxA[32] < hidden = true; >;
+uniform float4 HitboxB[32] < hidden = true; >;
+
+// The ray through this pixel from this eye: PhantomPixel undone.
+float3 PixelRayDir(float2 p, int eye)
+{
+    const float3 R = eye == 0 ? CamRight0 : CamRight1, U = eye == 0 ? CamUp0 : CamUp1, B = eye == 0 ? CamBack0 : CamBack1;
+    const float4 sp = eye == 0 ? SkyProj0 : SkyProj1;
+    const float2 ndc = float2(p.x / BUFFER_WIDTH * 2.0 - 1.0, 1.0 - p.y / BUFFER_HEIGHT * 2.0);
+    return normalize(R * ((ndc.x + sp.z) / sp.x) + U * ((ndc.y + sp.w) / sp.y) - B);
+}
+// A ray against a capsule (Inigo Quilez's): how far along it, < 0 none.
+float CapsuleHit(float3 ro, float3 rd, float3 pa, float3 pb, float r)
+{
+    const float3 ba = pb - pa, oa = ro - pa;
+    const float baba = dot(ba, ba), bard = dot(ba, rd), baoa = dot(ba, oa), rdoa = dot(rd, oa), oaoa = dot(oa, oa);
+    const float a = baba - bard * bard, b = baba * rdoa - baoa * bard, c = baba * oaoa - baoa * baoa - r * r * baba;
+    float h = b * b - a * c;
+    if (h >= 0.0 && abs(a) > 1e-8)
+    {
+        const float t = (-b - sqrt(h)) / a;
+        const float y = baoa + t * bard;
+        if (y > 0.0 && y < baba) return t;
+        const float3 oc = y <= 0.0 ? oa : ro - pb;
+        const float b2 = dot(rd, oc), c2 = dot(oc, oc) - r * r;
+        h = b2 * b2 - c2;
+        if (h > 0.0) return -b2 - sqrt(h);
+    }
+    return -1.0;
+}
+float3 Hitboxes(float3 c, float2 p, int eye)
+{
+    const float3 ro = eye == 0 ? PhantomEye0 : PhantomEye1, rd = PixelRayDir(p, eye);
+    [loop] for (int i = 0; i < min(HitboxCount, 32); ++i)
+    {
+        const float3 a = HitboxA[i].xyz, b = HitboxB[i].xyz;
+        const float r = HitboxA[i].w, kind = HitboxB[i].w;
+        const float t = CapsuleHit(ro, rd, a, b, r);
+        if (t <= 0.0) continue;
+        const float3 q = ro + rd * t, ab = b - a;
+        const float k = saturate(dot(q - a, ab) / max(dot(ab, ab), 1e-6));
+        const float3 n = normalize(q - (a + ab * k));
+        const float rim = 1.0 - abs(dot(n, rd));
+        const float3 col = kind < 0.5 ? float3(0.1, 0.9, 1.0) : kind < 1.5 ? float3(1.0, 0.85, 0.1) : kind < 2.5 ? float3(1.0, 0.1, 0.05)
+                         : kind < 3.5 ? float3(1.0, 0.1, 0.9) : kind < 4.5 ? float3(0.75, 0.8, 0.9) : kind < 5.5 ? float3(0.2, 1.0, 0.6)
+                         : kind < 6.5 ? float3(0.15, 1.0, 0.15) : kind < 7.5 ? float3(1.0, 1.0, 1.0) : kind < 8.5 ? float3(1.0, 0.5, 0.0)
+                         : kind < 9.5 ? float3(0.1, 0.9, 1.0) : float3(0.15, 1.0, 0.15);
+        const float alpha = (kind > 1.5 && kind < 3.5 ? 0.45 : kind > 3.5 && kind < 4.5 ? 0.3 : kind > 5.5 && kind < 6.5 ? 0.35 : kind > 6.5 && kind < 8.5 ? 0.85
+                           : kind > 8.5 && kind < 9.5 ? 0.3 : kind > 9.5 ? 0.6 : 0.15) + 0.6 * rim * rim;
+        c = lerp(c, col, saturate(alpha));
+    }
+    return c;
+}
+
+// vrcam [hud] hand_vitals, style "orbs" (vr/hand_orbs.h, VR first person F4 only): the hero's life (red) and mana (blue) as two glass balls
+// with liquid in them, one on the back of each wrist like a medallion. They are real 3D objects, ray-cast per eye in the world's own
+// frame (the capsules' and the lines' above: world units, relative to where the hands hang, each eye from its own camera), so they have
+// parallax and sit where the wrist is - and the game's depth is read per pixel: a ray stops where the game drew something nearer, so a
+// hand, a sleeve or a monster in front hides a ball, and the part of a ball sunk into the arm is cut by the skin. Each ball is dark glass
+// with a Fresnel rim and a soft highlight, the liquid filling from the bottom to the life / mana fraction with a slow slosh on its
+// surface (horizontal in the world, as a liquid is), mist turning in it, and a halo. The look - the glass, the mist, the halo falling
+// off with the radius - follows FlatVR's map orb (its pixel shader PSOrb, which the user allowed taking for the orb alone).
+// OrbOn = false (the default, and all vrcam sends while the setting is off) leaves the picture exactly as it was.
+//   OrbPos[i]  xyz the ball's middle (world units, relative to where the hands hang), w its radius
+//   OrbLook[i] x fill 0 - 1, y opacity 0 - 1 (the user's, faded with the distance from the eyes; 0 = not drawn), z the low-life heartbeat 0 - 1, w 0 life / 1 mana
+uniform bool OrbOn < hidden = true; > = false;
+uniform float4 OrbPos[2] < hidden = true; >;
+uniform float4 OrbLook[2] < hidden = true; >;
+// OrbAxis[i].xyz (unit, the world's axes): the way the liquid fills - a fixed direction of the wrist's frame the setting chose (along the arm either way, across the hand either
+// way, out of the back of the hand) or the world's up: the level rises along it, the liquid sits on its low side, the surface is the plane across it at the level. Built on the CPU
+// from the wrist's frame in the world and nothing the eyes do: each eye only looks at the same wrist.
+uniform float4 OrbAxis[2] < hidden = true; >;
+// The wrist's frame, unit vectors in the world's axes: OrbBack[i] out of the back of the hand (the medallion's base lies on it, its dome rises along it, the game's globe is a disc
+// facing along it), OrbAlong[i] along the hand toward the knuckles (the picture's up). OrbMed: x 1 = the medallion (a glass dome on a metal base), 0 = the full glass ball; y the
+// patina 0 - 1; z the metal, 0 gold / 1 bronze / 2 silver; w 1 = the game's globe, as a ball, is a disc fixed on the wrist (0: it turns to the eyes, as the first version did).
+uniform float4 OrbBack[2] < hidden = true; >;
+uniform float4 OrbAlong[2] < hidden = true; >;
+uniform float4 OrbMed < hidden = true; > = float4(0.0, 0.55, 0.0, 0.0);
+uniform float OrbTime < hidden = true; > = 0.0;   // seconds, wrapped: the slosh and the mist
+// The other look, "the game's own globes": vrcam cuts the game's life and mana globes out of its interface (vr/hud_globes.h) into one texture - the life
+// globe's square on its left half, the mana globe's on the right, premultiplied colour and alpha = how much of the world shows through, as the pieces
+// above - and OrbPic says so: x 1 = draw that picture on the ball (face-on, upright in the world, the ball's depth and cut as before), y the cut disc's
+// radius over half its square. The picture shows the game's real level of liquid, so OrbLook.x (fill) is not used.
+uniform float2 OrbPic < hidden = true; > = float2(0.0, 0.94);
+texture2D GlobeTex : D2R_GAME_GLOBES;
+sampler2D GlobeSmp { Texture = GlobeTex; AddressU = CLAMP; AddressV = CLAMP; };
+// ORBS-BEGIN (cleanroom/tests/hand_orbs_test.cpp compiles the text between these marks and renders it on a software D3D11 device)
+float OrbHash(float2 p) { return frac(sin(dot(p, float2(127.1, 311.7))) * 43758.5453); }
+float OrbNoise(float2 p)
+{
+    const float2 i = floor(p);
+    float2 f = frac(p);
+    f = f * f * (3.0 - 2.0 * f);
+    return lerp(lerp(OrbHash(i), OrbHash(i + float2(1.0, 0.0)), f.x), lerp(OrbHash(i + float2(0.0, 1.0)), OrbHash(i + float2(1.0, 1.0)), f.x), f.y);
+}
+float OrbFbm(float2 p) { return 0.5 * OrbNoise(p) + 0.3 * OrbNoise(p * 2.07 + 3.1) + 0.2 * OrbNoise(p * 4.3 + 7.7); }
+// The liquid's slow slosh: the surface's height above its still level, in radii (about +-1), at a point of it (u: from the middle, in radii).
+float OrbWave(float2 u, float t)
+{
+    return 0.6 * sin(3.1 * u.x + 1.1 * t) + 0.4 * sin(2.6 * u.y - 0.8 * t + 1.7) + 0.15 * sin(5.3 * (u.x + u.y) + 1.9 * t);
+}
+// The glass of one ball, or of one dome (a half ball whose flat face is the medallion's base), and the liquid in it, along this ray: premultiplied colour and alpha, cover and the opacity
+// in. P its middle, R its radius, [ta, tb] the ray's part in the glass (already cut by what is nearer and, for a dome, by its flat face), t0 where the ray enters the whole sphere.
+// Fa: the way the liquid fills (the level rises along it, the liquid on the low side - a fixed direction of the wrist's frame, from the CPU: nothing here knows where the eyes are
+// but through ro and rd), lo / hi: how far the glass reaches along Fa from its middle (-R .. R for a ball; a dome has less on one side).
+float4 OrbGlass(float3 ro, float3 rd, float3 P, float R, float ta, float tb, float t0, float cover, float4 L, float3 Fa, float lo, float hi, float3 tint)
+{
+    const bool life = L.w < 0.5;
+    const float fill = L.x;
+    const float amp = 0.035 * R * saturate(min(fill, 1.0 - fill) * 5.0);
+    float3 Ub = cross(Fa, float3(0.0, 1.0, 0.0));
+    const float ubl = length(Ub);
+    Ub = ubl > 1e-3 ? Ub / ubl : float3(1.0, 0.0, 0.0);
+    const float3 Vb = cross(Fa, Ub);                       // (Ub, Vb): the surface's own axes, for the slosh
+    const float hA = dot(ro - P, Fa), dA = dot(rd, Fa);    // the eye's height over the ball's middle along Fa, and the ray's climb along Fa
+    float lev = lo + (hi - lo) * fill;                    // from the ball's middle along Fa
+    float tp = 1e9;
+    float lq0 = 0.0, lq1 = 0.0, surf = 0.0;
+    if (fill >= 0.996)
+    {
+        lq0 = ta;
+        lq1 = tb;
+    }
+    else if (fill > 0.004)
+    {
+        const float3 qw = ro + rd * (0.5 * (ta + tb)) - P;
+        lev += amp * OrbWave(float2(dot(qw, Ub), dot(qw, Vb)) / R, OrbTime);
+        if (abs(dA) > 1e-5) tp = (lev - hA) / dA;
+        const bool belowA = hA + dA * ta < lev, belowB = hA + dA * tb < lev;
+        if (belowA && belowB) { lq0 = ta; lq1 = tb; }
+        else if (belowA) { lq0 = ta; lq1 = clamp(tp, ta, tb); }
+        else if (belowB) { lq0 = clamp(tp, ta, tb); lq1 = tb; surf = 1.0; }
+    }
+    const float thick = max(lq1 - lq0, 0.0) / R;          // the liquid along this ray, in radii
+    float la = 1.0 - exp(-thick * 3.5);
+    const float3 deepC = life ? float3(0.34, 0.012, 0.025) : float3(0.03, 0.09, 0.42);
+    const float3 brightC = life ? float3(0.98, 0.12, 0.10) : float3(0.30, 0.62, 1.0);
+    const float3 Ld = normalize(float3(-0.35, 0.78, 0.52));   // the light: fixed in the world, whatever the head or the hand does
+    float3 lcol = float3(0.0, 0.0, 0.0);
+    if (la > 0.0 || surf > 0.5)
+    {
+        const float3 qm = ro + rd * (0.5 * (lq0 + lq1));
+        const float hf = saturate((dot(qm - P, Fa) - lo) / max((hi - lo) * fill, 1e-4));   // 1 at the surface, 0 at the far end from it
+        lcol = lerp(deepC, brightC, 0.30 + 0.70 * hf) * lerp(1.0, 0.62, saturate(thick * 0.9));
+        const float mist = OrbNoise((qm.xz - P.xz) / R * 3.0 + float2(OrbTime * 0.11, -OrbTime * 0.07)) * OrbNoise((qm.xy - P.xy) / R * 4.0 - float2(OrbTime * 0.09, OrbTime * 0.05));
+        lcol *= (0.80 + 0.5 * mist) * (1.0 + 0.55 * L.z);
+        if (surf > 0.5)   // the liquid's top, seen from above: bright, lit, with a lighter ring where it climbs the glass
+        {
+            const float3 qs = ro + rd * lq0;
+            const float2 us = float2(dot(qs - P, Ub), dot(qs - P, Vb)) / R;
+            const float e = 0.05, k = amp / R / (2.0 * e);
+            const float sx = (OrbWave(us + float2(e, 0.0), OrbTime) - OrbWave(us - float2(e, 0.0), OrbTime)) * k;
+            const float sz = (OrbWave(us + float2(0.0, e), OrbTime) - OrbWave(us - float2(0.0, e), OrbTime)) * k;
+            const float3 ns = normalize(Fa - sx * Ub - sz * Vb);
+            float3 top = brightC * (0.62 + 0.32 * saturate(dot(ns, Ld))) * (1.0 + 0.45 * L.z);
+            top += float3(1.0, 0.95, 0.9) * (pow(saturate(dot(reflect(rd, ns), Ld)), 40.0) * 0.35);
+            top += tint * (0.45 * smoothstep(0.78, 1.0, length(qs - P) / R));
+            lcol = lerp(lcol, top, 0.85);
+            la = max(la, 0.92);
+        }
+    }
+
+    // the glass in front: nearly clear, a milky Fresnel rim, a sharp highlight on the upper left and a broad faint one
+    const float3 q0 = ro + rd * max(t0, 0.0);
+    const float3 n0 = normalize(q0 - P);
+    const float ndv = saturate(dot(n0, -rd));
+    const float fres = pow(1.0 - ndv, 3.0);
+    const float sa = saturate(0.05 + 0.50 * fres);
+    const float ndh = saturate(dot(n0, normalize(Ld - rd)));
+    const float spec = pow(ndh, 160.0) * 0.85 + pow(ndh, 18.0) * 0.08;
+    const float3 shell = lerp(float3(0.78, 0.84, 0.92), tint, 0.45) * (0.55 + 0.90 * fres);
+    const float3 C = lcol * (la * (1.0 - sa)) + shell * sa + float3(1.0, 0.97, 0.92) * spec;
+    const float A = saturate(la * (1.0 - sa) + sa + 0.7 * spec);
+    return float4(C * (cover * L.y), A * cover * L.y);
+}
+// One full glass ball seen from this eye (ro) along this ray (rd): premultiplied colour and alpha to lay over the picture (the halo's light is added to the colour only).
+// back: this eye's back axis; sceneZ: the view depth of what the game drew at this pixel (1e9 where nothing was); Bk, Al: the wrist's frame (out of the back of the hand, along it).
+float4 OneOrb(float3 ro, float3 rd, float3 back, float sceneZ, float4 P, float4 L, float4 Ax, float3 Bk, float3 Al)
+{
+    const float R = P.w;
+    const float3 oc = ro - P.xyz;
+    const float b = dot(oc, rd);
+    const float h = b * b - (dot(oc, oc) - R * R);
+    const float fw = max(fwidth(h), 1e-9);                // (taken before any early return: derivatives need every pixel)
+    float4 res = float4(0.0, 0.0, 0.0, 0.0);
+    if (L.y <= 0.001 || R <= 0.0) return res;
+    const float rdv = max(dot(rd, -back), 1e-4);          // view depth gained per unit along the ray
+    const bool life = L.w < 0.5;
+    const float3 tint = life ? float3(1.0, 0.18, 0.12) : float3(0.25, 0.55, 1.0);
+
+    // the halo: strongest at the rim, gone by two radii, not drawn through what is nearer
+    const float dmin = b < 0.0 ? sqrt(max(dot(oc, oc) - b * b, 0.0)) : length(oc);
+    if (dmin > R)
+    {
+        const float d = (dmin - R) / R;
+        const float vis = saturate((sceneZ - max(-b, 0.0) * rdv) / (0.6 * R));
+        const float g = exp(-d * 3.4) * (0.14 + 0.38 * L.z) * vis * (1.0 - smoothstep(1.5, 2.6, d));
+        res.rgb = tint * (g * L.y);
+    }
+    if (h <= 0.0) return res;
+    const float sq = sqrt(h);
+    const float t0 = -b - sq, t1 = -b + sq;
+    if (t1 <= 0.0) return res;
+    const float tScene = sceneZ / rdv;                    // along this ray, where the game's picture has its surface
+    const float ta = max(t0, 0.0);
+    if (ta >= tScene) return res;                         // something nearer hides the whole ball here
+    const float tb = min(t1, tScene + 0.02 * R);          // ... and what is sunk into it is cut by that surface
+    const float cover = saturate(h / fw);                 // a pixel-wide soft edge
+
+    if (OrbPic.x > 0.5)   // the game's own globe: its picture laid on a disc of the ball's radius through its middle
+    {
+        float3 rgt, upv = float3(0.0, 1.0, 0.0);
+        float2 pq;
+        if (OrbMed.w > 0.5)   // fixed on the wrist: the disc lies on the back of the hand (its normal out of it), the picture's up along the hand - it turns with the wrist, not with the eyes
+        {
+            const float dn = dot(rd, Bk);
+            if (abs(dn) < 1e-4) return res;
+            const float tp = dot(P.xyz - ro, Bk) / dn;
+            if (tp <= 0.0 || tp >= tScene) return res;
+            const float3 q = ro + rd * tp - P.xyz;
+            rgt = cross(Al, Bk);
+            pq = float2(dn < 0.0 ? dot(q, rgt) : -dot(q, rgt), dot(q, Al)) / R;   // (seen from under it the picture is mirrored, as a sticker is)
+        }
+        else                  // facing the eyes, upright in the world (the first version)
+        {
+            const float3 vd = normalize(P.xyz - ro);
+            rgt = cross(vd, float3(0.0, 1.0, 0.0));
+            const float rl = length(rgt);
+            rgt = rl > 1e-4 ? rgt / rl : float3(1.0, 0.0, 0.0);
+            upv = cross(rgt, vd);
+            const float3 o = (ro + rd * max(t0, 0.0) - P.xyz) / R;
+            pq = float2(dot(o, rgt), dot(o, upv));
+        }
+        float2 tuv = float2(0.5 + 0.5 * OrbPic.y * pq.x, 0.5 - 0.5 * OrbPic.y * pq.y);
+        tuv.x = 0.5 * ((life ? 0.0 : 1.0) + tuv.x);
+        const float4 pic = tex2Dlod(GlobeSmp, float4(tuv, 0.0, 0.0));
+        const float k = (1.0 - smoothstep(0.90, 1.0, length(pq))) * (OrbMed.w > 0.5 ? 1.0 : cover) * L.y;
+        res.rgb += min(pic.rgb, float3(8.0, 8.0, 8.0)) * (k * (1.0 + 0.35 * L.z));
+        res.a = saturate(1.0 - pic.a) * k;
+        return res;
+    }
+
+    const float4 g = OrbGlass(ro, rd, P.xyz, R, ta, tb, t0, cover, L, normalize(Ax.xyz), -R, R, tint);
+    res.rgb += g.rgb;
+    res.a = g.a;
+    return res;
+}
+
+// ---- the medallion: a glass dome on a metal base ---------------------------------------------------------------------------------------------------------------------------
+// In the wrist's frame (S across, Al along the hand, Bk out of the back of the hand), the middle P on the base's top plane, units of the base's radius Rb = P.w (vr/hand_orbs.h kDomeR ...):
+// the plate (radius 1, 0.20 thick under the plane, a beaded lip with a groove), a raised bezel ring round the dome's foot (to 0.91, 0.09 high) and the dome (a half ball of radius
+// 0.80, its flat face on the plane) with the liquid in it. The metal is gold / bronze / silver, aged by OrbMed.y (the patina: dark verdigris in the crevices and low parts, bright worn
+// metal on the raised edges, a little noise) - all of it worked out from the position in the medallion's OWN frame, so it does not swim as the hand moves.
+float3 OrbMetalBase(float m) { return m < 0.5 ? float3(0.56, 0.37, 0.11) : m < 1.5 ? float3(0.46, 0.24, 0.12) : float3(0.40, 0.42, 0.46); }
+float3 OrbMetalWorn(float m) { return m < 0.5 ? float3(0.98, 0.78, 0.36) : m < 1.5 ? float3(0.92, 0.58, 0.32) : float3(0.76, 0.78, 0.82); }
+float3 OrbMetalDark(float m) { return m < 0.5 ? float3(0.07, 0.05, 0.02) : m < 1.5 ? float3(0.06, 0.04, 0.03) : float3(0.05, 0.05, 0.06); }
+float3 OrbMetalAge(float m) { return m < 0.5 ? float3(0.10, 0.20, 0.13) : m < 1.5 ? float3(0.12, 0.27, 0.20) : float3(0.09, 0.10, 0.13); }       // the dark patina
+float3 OrbMetalAgeLight(float m) { return m < 0.5 ? float3(0.24, 0.43, 0.33) : m < 1.5 ? float3(0.30, 0.55, 0.45) : float3(0.18, 0.20, 0.24); }   // its pale bloom
+// The metal at a point of the medallion. kind: 0 the plate's lip, 1 the bezel's top, 2 the bezel's outer wall, 3 the plate's side, 4 its underside, 5 the floor inside the dome.
+// ql: the point in the medallion's frame over Rb; nW: the surface's normal in the world; Ld: the light.
+float3 OrbMetalColor(float kind, float3 ql, float3 nW, float3 rd)
+{
+    const float m = OrbMed.z, pat = OrbMed.y;
+    const float r = length(ql.xy), ang = atan2(ql.y, ql.x);
+    float crev = 0.0, edge = 0.0, beads = 0.0, groove = 0.0;
+    if (kind < 0.5)                  // the lip: the foot of the bezel is a crevice, a groove, a ring of beads at the rim
+    {
+        crev = 1.0 - smoothstep(0.915, 0.945, r);
+        groove = 1.0 - smoothstep(0.0, 0.010, abs(r - 0.945));
+        beads = smoothstep(0.953, 0.965, r) * (0.5 + 0.5 * cos(ang * 32.0));
+        edge = beads * 0.9 + smoothstep(0.985, 1.0, r) * 0.5;
+    }
+    else if (kind < 1.5)             // the bezel's top: worn bright at its outer edge, a crevice where it meets the glass
+    {
+        crev = 1.0 - smoothstep(0.795, 0.86, r);
+        edge = smoothstep(0.83, 0.905, r);
+    }
+    else if (kind < 2.5) { crev = 1.0 - smoothstep(0.0, 0.07, ql.z); edge = smoothstep(0.05, 0.09, ql.z); }          // the bezel's wall: dark at its foot, bright at its top edge
+    else if (kind < 3.5) { crev = 0.22 + 0.5 * (1.0 - smoothstep(-0.20, -0.02, ql.z)); edge = smoothstep(-0.06, 0.0, ql.z); }   // the plate's side
+    else if (kind < 4.5) { crev = 1.0; }
+    else { crev = 0.65; }            // the floor under the glass
+    const float n = OrbFbm(ql.xy * 9.0 + ql.z * 6.0 + kind * 3.7);
+    const float n2 = OrbFbm(ql.xy * 31.0 + kind * 1.3);
+    // the patina: where it is low, where the noise says, never on a worn edge
+    const float age = saturate(((0.25 + 0.85 * crev + 1.2 * (n - 0.45)) * pat * 1.7 - 0.55 * edge) * 1.25);
+    float3 albedo = lerp(OrbMetalBase(m), OrbMetalWorn(m), saturate(edge * (0.55 + 0.45 * (1.0 - pat))) * 0.9);
+    albedo *= 0.88 + 0.24 * n2;
+    albedo = lerp(albedo, OrbMetalDark(m), saturate(groove * 0.8 + crev * 0.35 * (0.3 + pat)));
+    albedo *= 1.0 - 0.42 * pat * saturate(n * 1.6 - 0.35) * (1.0 - edge);                  // tarnish: darker in patches
+    albedo = lerp(albedo, lerp(OrbMetalAge(m), OrbMetalAgeLight(m), saturate((n2 - 0.35) * 2.0) * saturate(pat * 1.2)), age * 0.92);
+    albedo *= 1.0 - 0.28 * beads * (1.0 - edge);
+    // light: a sun fixed in the world, a sky above and the dark below, a metal's sheen (less where it is aged)
+    const float3 Ld = normalize(float3(-0.35, 0.78, 0.52));
+    const float3 refl = reflect(rd, nW);
+    const float sky = saturate(0.5 + 0.5 * refl.y);
+    const float sheen = (0.35 + 0.65 * (1.0 - age)) * (0.15 + 0.85 * smoothstep(0.1, 0.9, n));
+    const float diff = 0.20 + 0.52 * saturate(dot(nW, Ld)) + 0.22 * saturate(0.5 + 0.5 * nW.y);
+    float3 col = albedo * diff + albedo * sheen * (0.10 + 0.50 * sky * sky) + float3(1.0, 0.93, 0.80) * (pow(saturate(dot(refl, Ld)), 24.0) * 0.30 * sheen);
+    return col;
+}
+// The medallion seen from this eye along this ray: premultiplied colour and alpha, as OneOrb. back / sceneZ as there; Bk, Al the wrist's frame.
+float4 OneMedalCore(float3 ro, float3 rd, float3 back, float sceneZ, float4 P, float4 L, float4 Ax, float3 Bk, float3 Al, float fw)
+{
+    const float Rb = P.w;
+    const float3 oc = ro - P.xyz;
+    const float b = dot(oc, rd);
+    const float Rd0 = 0.80 * Rb;
+    const float h3 = b * b - (dot(oc, oc) - Rd0 * Rd0);
+    float4 res = float4(0.0, 0.0, 0.0, 0.0);
+    const float rdv = max(dot(rd, -back), 1e-4);
+    const bool life = L.w < 0.5;
+    const float3 tint = life ? float3(1.0, 0.18, 0.12) : float3(0.25, 0.55, 1.0);
+    const float tScene = sceneZ / rdv;
+
+    // the wrist's frame, square (the CPU's is; this is for an old or odd one) and the ray in it, in real units (d is a unit vector too)
+    const float3 Bn = normalize(Bk);
+    float3 Aq = Al - Bn * dot(Al, Bn);
+    const float aql = length(Aq);
+    Aq = aql > 1e-4 ? Aq / aql : cross(Bn, float3(1.0, 0.0, 0.0));
+    const float3 Sx = cross(Aq, Bn);
+    const float3 o = float3(dot(oc, Sx), dot(oc, Aq), dot(oc, Bn)), d = float3(dot(rd, Sx), dot(rd, Aq), dot(rd, Bn));
+    const float Rd = Rd0, T = 0.20 * Rb, Hb = 0.09 * Rb, Rz = 0.91 * Rb, Rin = sqrt(Rd * Rd - Hb * Hb);
+
+    // the metal: the nearest of the plate's top (and the floor inside the dome), the bezel's top, its outer wall, the plate's side and its underside
+    float tm = 1e9, kind = -1.0;
+    float3 nl = float3(0.0, 0.0, 1.0);
+    if (abs(d.z) > 1e-6)
+    {
+        float t = -o.z / d.z;                                   // the plane z = 0
+        if (t > 0.0)
+        {
+            const float3 q = o + d * t;
+            const float r = length(q.xy);
+            if (r <= Rb) { tm = t; kind = r >= Rz ? 0.0 : 5.0; nl = float3(0.0, 0.0, d.z < 0.0 ? 1.0 : -1.0); }
+        }
+        t = (Hb - o.z) / d.z;                                   // the bezel ring's top
+        if (t > 0.0 && t < tm)
+        {
+            const float r = length((o + d * t).xy);
+            if (r >= Rin && r <= Rz) { tm = t; kind = 1.0; nl = float3(0.0, 0.0, d.z < 0.0 ? 1.0 : -1.0); }
+        }
+        t = (-T - o.z) / d.z;                                   // the underside
+        if (t > 0.0 && t < tm && d.z > 0.0)
+        {
+            const float r = length((o + d * t).xy);
+            if (r <= Rb) { tm = t; kind = 4.0; nl = float3(0.0, 0.0, -1.0); }
+        }
+    }
+    const float a2 = dot(d.xy, d.xy);
+    if (a2 > 1e-8)
+    {
+        const float b2 = dot(o.xy, d.xy), c0 = dot(o.xy, o.xy);
+        float dc = b2 * b2 - a2 * (c0 - Rz * Rz);               // the bezel's outer wall, z in [0, Hb]
+        if (dc > 0.0)
+        {
+            const float t = (-b2 - sqrt(dc)) / a2;
+            const float z = o.z + d.z * t;
+            if (t > 0.0 && t < tm && z >= 0.0 && z <= Hb) { tm = t; kind = 2.0; const float3 q = o + d * t; nl = float3(q.xy / Rz, 0.0); }
+        }
+        dc = b2 * b2 - a2 * (c0 - Rb * Rb);                     // the plate's side, z in [-T, 0]
+        if (dc > 0.0)
+        {
+            const float t = (-b2 - sqrt(dc)) / a2;
+            const float z = o.z + d.z * t;
+            if (t > 0.0 && t < tm && z >= -T && z <= 0.0) { tm = t; kind = 3.0; const float3 q = o + d * t; nl = float3(q.xy / Rb, 0.0); }
+        }
+    }
+    float3 metal = float3(0.0, 0.0, 0.0);
+    bool metalOn = kind > -0.5 && tm < tScene;
+    if (metalOn)
+    {
+        const float3 ql = (o + d * tm) / Rb;
+        const float3 nW = normalize(Sx * nl.x + Aq * nl.y + Bn * nl.z);
+        metal = OrbMetalColor(kind, ql, nW, rd);
+    }
+
+    if (OrbPic.x > 0.5)   // the game's own globe on this base: its picture as a disc on the plane, under the bezel ring, its up along the hand
+    {
+        float4 disc = float4(0.0, 0.0, 0.0, 0.0);
+        if (abs(d.z) > 1e-6)
+        {
+            const float zp = 0.025 * Rb;
+            const float t = (zp - o.z) / d.z;
+            if (t > 0.0 && t < tm && t < tScene)
+            {
+                const float3 q = o + d * t;
+                const float2 pq = float2(d.z < 0.0 ? q.x : -q.x, q.y) / Rd;
+                float2 tuv = float2(0.5 + 0.5 * OrbPic.y * pq.x, 0.5 - 0.5 * OrbPic.y * pq.y);
+                tuv.x = 0.5 * ((life ? 0.0 : 1.0) + tuv.x);
+                const float4 pic = tex2Dlod(GlobeSmp, float4(tuv, 0.0, 0.0));
+                const float k = (1.0 - smoothstep(0.90, 1.0, length(pq))) * L.y;
+                disc = float4(min(pic.rgb, float3(8.0, 8.0, 8.0)) * (k * (1.0 + 0.35 * L.z)), saturate(1.0 - pic.a) * k);
+            }
+        }
+        res.rgb += disc.rgb + metal * (metalOn ? (1.0 - disc.a) * L.y : 0.0);
+        res.a = saturate(disc.a + (metalOn ? (1.0 - disc.a) * L.y : 0.0));
+        return res;
+    }
+
+    // the glass dome: the sphere's part over the plane, in front of the metal and the scene
+    if (h3 > 0.0)
+    {
+        const float sq = sqrt(h3);
+        const float t0 = -b - sq, t1 = -b + sq;
+        float ta = t0, tb = t1;
+        const float tz = abs(d.z) > 1e-6 ? -o.z / d.z : (o.z >= 0.0 ? -1e9 : 1e9);   // where the ray crosses the plane
+        if (d.z > 0.0) ta = max(ta, tz);
+        else if (d.z < 0.0) tb = min(tb, tz);
+        else if (o.z < 0.0) tb = -1.0;
+        ta = max(ta, 0.0);
+        if (tb > ta && ta < tScene && ta < tm)
+        {
+            const float tbe = min(tb, min(tm, tScene + 0.02 * Rb));
+            const float cover = saturate(h3 / fw);
+            const float3 Fa = normalize(Ax.xyz);
+            const float cb = dot(Fa, Bn), sb = sqrt(saturate(1.0 - cb * cb));
+            const float lo = cb >= 0.0 ? -Rd * sb : -Rd, hi = cb >= 0.0 ? Rd : Rd * sb;   // the half ball's reach along the fill axis: the level runs over exactly that
+            const float4 g = OrbGlass(ro, rd, P.xyz, Rd, ta, tbe, t0, cover, L, Fa, lo, hi, tint);
+            const float3 behind = metalOn ? metal * (L.y * (1.0 - g.a)) : float3(0.0, 0.0, 0.0);
+            res.rgb += g.rgb + behind;
+            res.a = saturate(g.a + (metalOn ? (1.0 - g.a) * L.y : 0.0));
+            return res;
+        }
+    }
+    if (metalOn)
+    {
+        res.rgb += metal * L.y;
+        res.a = L.y;
+    }
+    return res;
+}
+float4 OneMedal(float3 ro, float3 rd, float3 back, float sceneZ, float4 P, float4 L, float4 Ax, float3 Bk, float3 Al)
+{
+    const float Rb = P.w;
+    const float3 oc = ro - P.xyz;
+    const float b = dot(oc, rd);
+    const float Rbound = Rb * 1.03;                       // a sphere round all of it
+    const float h = b * b - (dot(oc, oc) - Rbound * Rbound);
+    const float Rd0 = 0.80 * Rb;
+    const float h3 = b * b - (dot(oc, oc) - Rd0 * Rd0);   // the dome's sphere (the same middle)
+    const float fw = max(fwidth(h3), 1e-9);               // (taken before any early return: derivatives need every pixel)
+    float4 res = float4(0.0, 0.0, 0.0, 0.0);
+    if (L.y <= 0.001 || Rb <= 0.0) return res;
+    const float rdv = max(dot(rd, -back), 1e-4);
+    const float3 tint = L.w < 0.5 ? float3(1.0, 0.18, 0.12) : float3(0.25, 0.55, 1.0);
+    // the halo: round the medallion's own size (a little under the base's radius, so no dark gap shows round a medallion seen from the side), not drawn through what is nearer
+    const float Rh = 0.92 * Rb;
+    const float dmin = b < 0.0 ? sqrt(max(dot(oc, oc) - b * b, 0.0)) : length(oc);
+    const float dh = max(dmin - Rh, 0.0) / Rh;             // (full strength inside that radius too, under the medallion: no dark disc behind one seen from the side)
+    const float vis = saturate((sceneZ - max(-b, 0.0) * rdv) / (0.6 * Rb));
+    const float3 hal = tint * (exp(-dh * 3.4) * (0.14 + 0.38 * L.z) * vis * (1.0 - smoothstep(1.5, 2.6, dh)) * L.y * 0.85);
+    if (h <= 0.0) { res.rgb = hal; return res; }
+    res = OneMedalCore(ro, rd, back, sceneZ, P, L, Ax, Bk, Al, fw);
+    res.rgb += hal * (1.0 - res.a);
+    return res;
+}
+// Both balls, or both medallions, over the colour `c` of this pixel: the farther one first.
+float3 Orbs(float3 c, float3 ro, float3 rd, float3 back, float sceneZ)
+{
+    const int first = length(OrbPos[0].xyz - ro) > length(OrbPos[1].xyz - ro) ? 0 : 1;
+    float4 o;
+    [branch] if (OrbMed.x > 0.5) o = OneMedal(ro, rd, back, sceneZ, OrbPos[first], OrbLook[first], OrbAxis[first], OrbBack[first].xyz, OrbAlong[first].xyz);
+    else o = OneOrb(ro, rd, back, sceneZ, OrbPos[first], OrbLook[first], OrbAxis[first], OrbBack[first].xyz, OrbAlong[first].xyz);
+    c = c * (1.0 - o.a) + o.rgb;
+    [branch] if (OrbMed.x > 0.5) o = OneMedal(ro, rd, back, sceneZ, OrbPos[1 - first], OrbLook[1 - first], OrbAxis[1 - first], OrbBack[1 - first].xyz, OrbAlong[1 - first].xyz);
+    else o = OneOrb(ro, rd, back, sceneZ, OrbPos[1 - first], OrbLook[1 - first], OrbAxis[1 - first], OrbBack[1 - first].xyz, OrbAlong[1 - first].xyz);
+    return c * (1.0 - o.a) + o.rgb;
+}
+// ORBS-END
+
 float3 Phantom(float4 pos, float2 uv, int eye)
 {
     float3 c = tex2D(FogColorSmp, uv).rgb;
+    [branch] if (HitboxOn) c = Hitboxes(c, pos.xy, eye);
+    [branch] if (OrbOn)   // the life and mana balls on the wrists: this eye's ray, the game's depth here
+    {
+        const float d = DepthWidth() < 16 ? 0.0 : DepthAt(UpsideDown ? float2(uv.x, 1.0 - uv.y) : uv).x;
+        c = Orbs(c, eye == 0 ? PhantomEye0 : PhantomEye1, PixelRayDir(pos.xy, eye), eye == 0 ? CamBack0 : CamBack1, d > 1e-6 ? NearPlane / d : 1e9);
+    }
     if (PhantomOn) c = Segment(c, pos.xy, PhantomA, PhantomB, eye, float3(1.0, 0.05, 0.05));
     if (BoneOn) {
         c = Segment(c, pos.xy, BoneO, BoneX, eye, float3(0.1, 1.0, 0.1));
         c = Segment(c, pos.xy, BoneO, BoneY, eye, float3(0.2, 0.4, 1.0));
         c = Segment(c, pos.xy, BoneO, BoneZ, eye, float3(1.0, 0.9, 0.1));
     }
+    if (DbgOn) {
+        [loop] for (int i = 0; i < 4; ++i)
+            if (i < (int)DbgSegN) c = Segment(c, pos.xy, DbgSegA[i].xyz, DbgSegB[i].xyz, eye, DbgSegC[i].rgb);
+        [loop] for (int j = 0; j < 6; ++j)
+            if (j < (int)DbgBallN) c = Ball(c, pos.xy, DbgBall[j].xyz, DbgBall[j].w, DbgBallC[j].rgb, DbgBallC[j].w, eye);
+    }
     return c;
 }
-float3 PS_Phantom(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return Phantom(pos, uv, 0); }
-float3 PS_PhantomR(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return Phantom(pos, uv, 1); }
+// vrcam [hud] low_hp_vignette (vr/low_hp.h, native OpenXR first person only): the edges of the picture tinted deep
+// red while the hero's life is low, the tint beating like a heart. A colour over the picture and nothing else - it
+// never scales or moves the picture, and the middle of it (inside LowHpShape.x) is not touched. vrcam works out
+// the opacity, the shape and the colour on the CPU from the real time and the settings, once a pair, so both eyes
+// beat together; LowHpAlpha = 0 (the default, and all vrcam sends while the setting is off or the life is fine) is
+// the picture bit for bit. The size is an angle of the view: LowHpFov is the picture's half-extent as tangents of
+// the view's half-angle (the headset's field of view), so "the middle 60% stays clear" is 60% of the angle on any
+// headset; 0 = not known, and the picture's own proportions are used.
+// Not a pass of its own - that would copy the whole picture once more per eye every frame: it rides on the last
+// pass that already reads the picture (the debug lines' one, below), after everything else of the interface.
+uniform float LowHpAlpha < hidden = true; > = 0.0;                                       // how much of the colour at the edge now, 0 = off
+uniform float4 LowHpShape < hidden = true; > = float4(0.50, 1.10, 2.5, 0.0);             // inner radius, outer radius, roundness
+uniform float3 LowHpColor < hidden = true; > = float3(0.30, 0.005, 0.005);               // deep red
+uniform float2 LowHpFov < hidden = true; > = float2(0.0, 0.0);                           // half the picture's width and height as tangents of the view's half-angle, 0 = unknown
+// LOWHP-BEGIN (cleanroom/tests/low_hp_test.cpp compiles the text between these marks and runs it against vr/low_hp.h's Apply)
+float3 LowHp(float3 c, float2 uv)
+{
+    [branch] if (LowHpAlpha <= 0.0) return c;
+    float2 p = abs(uv * 2.0 - 1.0);
+    if (LowHpFov.x > 0.0 && LowHpFov.y > 0.0)
+        p = atan(p * LowHpFov) / atan(LowHpFov);   // each axis as the angle it looks at (0 - 1 of the view's half-angle)
+    const float r = pow(pow(p.x, LowHpShape.z) + pow(p.y, LowHpShape.z), 1.0 / LowHpShape.z);
+    const float k = saturate(LowHpAlpha) * smoothstep(LowHpShape.x, LowHpShape.y, r);
+    return k > 0.0 ? lerp(c, LowHpColor, k) : c;
+}
+// LOWHP-END
+float3 PS_Phantom(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return LowHp(Phantom(pos, uv, 0), uv); }
+float3 PS_PhantomR(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return LowHp(Phantom(pos, uv, 1), uv); }
 
 float3 PS_GameHud(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return GameHud(uv, 1.0); }
 float3 PS_GameHudR(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return GameHud(uv, -1.0); }

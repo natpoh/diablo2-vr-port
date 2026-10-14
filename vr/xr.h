@@ -34,12 +34,41 @@ struct Eyes {
     float pos[2][3];
     float quat[2][4];   // x, y, z, w
     float tanL[2], tanR[2], tanU[2], tanD[2];
+    // [openxr] views_3d (vr/views3d.h): what these eyes are measured in. kViewsHead (the default, F4 and F2): above - the head's
+    // frame at the recentre, held to the body. kViewsRoom (F3): the room as the runtime has it - pos/quat raw, in the space the
+    // layer is submitted in, the floor's height there (floorOk: the runtime's STAGE gave it; else not known) and an epoch that
+    // moves whenever that space was recentred or jumped. kViewsWindow (F1): the window's frame (x along the window, y up, z out
+    // of it towards the viewer, metres, from its middle), quat the identity, tan* the frusta through the window's edges, win*
+    // the window's size and distance.
+    int mode;
+    float winW, winH, winD;
+    float floorY;
+    bool floorOk;
+    uint32_t epoch;
 };
+enum { kViewsHead = 0, kViewsWindow = 1, kViewsRoom = 2 };
+
+// [openxr] on and views_3d: F1 and F3 are drawn with the runtime's eyes too, not shown as a flat picture. Live.
+bool Views3dOn();
+// What the pair about to open is drawn as (kViewsHead, kViewsWindow, kViewsRoom); vrcam, before every BeginPair, the same thread.
+void SetViewsMode(int mode);
+
+// [openxr] pointer_3d (docs/plan_native_f1_f3.md): the game's mouse pointer is drawn in F1 and F3 in 3D too. How a click reaches the game is
+// not touched; only the cursor the game shows is hung where the game's mouse points: the pixel of its window (u, v from the top left, 0..1)
+// is a ray through vrcam's left-eye camera and the ray meets the game's ground at the point a click would walk to (vr/pointer3d.h). vrcam
+// answers with that point in the frame the pair's eyes are in (xr::Eyes for `mode`) and its distance from the left eye in metres. False: no
+// camera of that mode yet, or no ground under that pixel (the sky). The draw thread, from CloseFrame.
+struct PointerAt {
+    float at[3];
+    float dist;
+};
+using PointerAtFn = bool (*)(int mode, float u, float v, PointerAt* out);
+void SetPointerAt(PointerAtFn fn);
 
 // Before a pair's left pass (F4, F2): replayed, or two passes before the replay is on (dev
 // and queue null then: the session's own). True: a frame is open and PairEyes has its views.
 bool BeginPair(ID3D12Device* dev, ID3D12CommandQueue* queue);
-bool PairEyes(Eyes* out);
+bool PairEyes(Eyes* out);   // the mode SetViewsMode asked for (a window or the room's, when views_3d); its `mode` says which
 // The head's yaw (radians, + turned left) in the views of the last stereo pair opened, from the
 // last recentre - what PairEyes turns the eyes by, for the body. False with no session, after a
 // flat frame, or when the last pair is older than 250 ms - 2 s when the pairs since did not open
@@ -53,6 +82,12 @@ void CopyEye(int eye, ID3D12Resource* backBuffer);
 bool PairInput(D2RVR_XrInput* out);
 // After the pair: both eyes as one projection layer (none if an eye is missing).
 void EndPair();
+// Where the last pair's time went inside the calls above, microseconds - the draw thread, right after
+// EndPair, for vrcam's long-pair line (vr/frame_hitch.h): BeginPair whole and its xrWaitFrame, EndPair's
+// layers built before xrEndFrame and xrEndFrame itself, and in the whole pair the waits for our copies on
+// the GPU (the fence) and for the runtime's swapchain images. Clocks only - no locks, no calls.
+struct PairTiming { double begin, wait, layers, submit, fence, image; };
+PairTiming LastPairTiming();
 // Every present (ReShade's reshade_present), with the game's device and queue (native):
 // the session starts from the first one ([openxr] on - the menus too), and outside a pair
 // the back buffer goes to the headset as a flat quad, paced by the runtime. pairEye: the eye this
@@ -61,7 +96,8 @@ void EndPair();
 void OnPresent(ID3D12Device* dev, ID3D12CommandQueue* queue, ID3D12Resource* backBuffer, int pairEye = -1);
 // After every pair, native or not (its presents done): the next presents may open flat frames again.
 void PairOver();
-// Twice a second: BodyWalk (Game Link) come after the session was made gets its wish again.
+// Twice a second: BodyWalk (Game Link) come after the session was made gets its wish again,
+// and a start that found no headset is tried again (every 10 s, while FlatVR does not run).
 void FollowLink();
 
 // A session is running: the runtime paces the game (xrWaitFrame), not vrcam.
@@ -78,6 +114,30 @@ void Recenter();
 // A panel (inventory, trade, stash...) is open in a game: the flat picture goes to the panels'
 // distance ([screen] menu_distance_m) while it is, and back after - eased, as FlatVR's screen.
 void SetPanelOpen(bool open);
+// [openxr] laser (docs/plan_laser_menus.md): the flat picture shows menus - a panel open in a game, or
+// no game (the title and character screens) - so a controller pointing at it is the mouse. Never on
+// F1 and F3's flat picture, the world itself. vrcam, every present.
+void SetLaserWanted(bool menus);
+// [openxr] on and laser: the game's controller layout is to be kept under the laser's mouse
+// (vr/panel_input.cpp's hooks wanted).
+bool LaserOn();
+// [openxr] on and menu_3d (docs/plan_laser_menus.md step 2): a menu open in first person keeps the
+// stereo pairs, its interface hung in front as a panel of its own (hud::SetPanelOut) - vrcam decides
+// when (F4 only).
+bool Menu3dOn();
+// [openxr] menu_3d whatever [openxr] on says: on FlatVR a menu goes as a panel too (vrcam, hud.cpp).
+bool Menu3dWanted();
+// [openxr] headset_settings (vr/xr_headset_settings.h): the settings panel in the headset is up. While it is, the
+// hands are the panel's: whatever reads the controllers for the game (BodyWalk through Game Link, the plugin's own
+// input) must read them from PairInput / the published input - already zero there - or hold its output neutral.
+// The panel itself never sends a click or a key to the game.
+bool HeadsetSettingsOpen();
+// [openxr] laser whatever [openxr] on says, and its hand (0 left, 1 right): on FlatVR its laser is the
+// mouse on a menu's panel (hud.cpp hands it the hand).
+bool LaserWanted(int* hand);
+// Where a menu's panel hangs, native or on FlatVR: the flat picture's width ([openxr] flat_width_m) at
+// the panels' distance ([screen] menu_distance_m; 0 there: flat_distance_m).
+void MenuPanelSize(float* widthM, float* distanceM);
 // Session and instance gone, FlatVR started again; from the game's exit paths.
 void Shutdown();
 // A D3D12 device is going (ReShade's destroy_device): the session's own ends with it.

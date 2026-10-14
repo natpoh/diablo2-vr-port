@@ -348,9 +348,15 @@ bool Step(State& s, const Body& b, const Grip* grips, const Controller* from, co
 			ro.jac  = MScale(MAdd(Identity(rel.w), MScale(Skew(sv), -1.0)), 0.5);
 			ro.jacT = MT(ro.jac);
 			const M3 iInvL = MMul(ro.rtT, MMul(iInv, ro.rt));
-			ro.gAng   = h * h * mu.torqueSpring + h * mu.torqueDamper;
+			double firm = 1.0;   // the wrist is firmer for a turn far off the controller's line (Muscle::torqueSoft)
+			if (mu.torqueSoft > 1e-9) {
+				const double turn = 2.0 * Len(sv) / mu.torqueSoft;
+				firm = 1.0 + turn * turn;
+			}
+			const double kTor = mu.torqueSpring * firm, cTor = mu.torqueDamper * std::sqrt(firm);
+			ro.gAng   = h * h * kTor + h * cTor;
 			ro.aAng   = MInv(MAdd(Identity(), MScale(MMul(ro.jac, MMul(iInvL, ro.jacT)), ro.gAng)));
-			ro.bAng   = Add(Mul(sv, -h * mu.torqueSpring), Mul(MV(ro.jac, MV(ro.rtT, tAng)), h * mu.torqueDamper));
+			ro.bAng   = Add(Mul(sv, -h * kTor), Mul(MV(ro.jac, MV(ro.rtT, tAng)), h * cTor));
 			ro.maxAng = mu.maxTorque * h;
 			ro.pAcc   = {};
 		}

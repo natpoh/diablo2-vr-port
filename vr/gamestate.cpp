@@ -33,8 +33,15 @@
 
 #include <D2RLPlugin/api.h>
 
+#include "log_async.h"   // [debug] log_async: the plugin's log lines through a ring and a writer thread (vr/log_queue.h); off = ctx->LogInfo as ever
 #include "d2r_vr_state.h"
 #include "link.h"
+#include "ui_ticket.h"
+#include "panel_input.h"
+#include "shield_smite_game.h"
+#include "render_resolution.h"
+
+namespace skel { int HeroClass(); }   // the hero's class from the posed model's folder (vr/skeletons.cpp): -1 not known
 
 using namespace D2RL;
 
@@ -55,13 +62,14 @@ SharedEvents::ListenerHandle g_uiListener = 0;
 
 HANDLE g_map = nullptr;
 D2RVR_State* g_state = nullptr;
-std::atomic<bool> g_readQueued{false};
+uiticket::Ticket g_readQueued;   // ReadItems() queued (ui_ticket.h: a run that never comes is queued again)
 std::atomic<uint32_t> g_weapon{D2RVR_WEAPON_UNKNOWN};
 std::atomic<uint32_t> g_menu{0};
+std::atomic<bool> g_laserPanels{false};   // [openxr] laser on: d2r-pcvr's extra modal panels are menus too (IsMenuPanel)
 std::atomic<uint32_t> g_set{0};      // 1 / 2: the active weapon set
 std::atomic<uint32_t> g_view{0};     // vrcam's view: 0 off, 1 first person, 2 third person, 3 F1 in perspective, 4 the game on the floor
 
-void Log(const char* msg) { if (g_ctx) g_ctx->LogInfo(msg); }
+void Log(const char* msg) { if (g_ctx) logasync::Info(g_ctx, msg); }
 
 std::string CodeText(uint32_t code) {
     char c[5] = {(char)(code & 0xFF), (char)((code >> 8) & 0xFF), (char)((code >> 16) & 0xFF), (char)((code >> 24) & 0xFF), 0};
@@ -93,12 +101,16 @@ std::atomic<uint32_t> g_held{0};   // bit 0: something in the right hand's slot 
 int g_typeOffset = -2;                       // -2 not tried yet, -1 failed
 DataTables::Bank g_bank = DataTables::Bank::Lod;
 std::vector<std::pair<uint32_t, uint32_t>> g_typeIndex;   // ItemTypes row index -> D2RVR_WeaponType
+std::atomic<bool> g_leftShield{false};   // [gameplay] shield_smite: a shield in the left hand of the active set
+std::vector<uint32_t> g_shieldTypes;     // ItemTypes row indexes of the shields: shie, ashd (paladin), head (necromancer)
 // Weapons.txt "2handed" in an Items row: a byte at an offset the SDK does not
 // name either, found the same way - the one byte that reads 1 for a set of
 // two-handed weapons and 0 for a set of one-handed ones (CalibrateTwoHanded).
 int g_twoOffset = -2;                        // -2 not tried yet, -1 failed
 std::atomic<uint32_t> g_two{0};
 std::atomic<uint32_t> g_from{0};
+std::atomic<uint32_t> g_kindSide[2] = {};      // D2RVR_TYPE_* of each hand's slot alone (0: empty, a shield or a quiver) - for two blades (HandKind)
+std::atomic<uint32_t> g_codeSide[2] = {};      // each hand's item code, four characters (space padded) as one number, a | b << 8 | c << 16 | d << 24 (HandCode)
 std::atomic<uint32_t> g_handsKey{0};          // what is in the two hands, as one number (HandsKey)             // the hand slot the weapon kind came from: 0 right, 1 left              // D2RVR_TWO_HANDED* bits of what is held
 
 constexpr uint32_t Four(const char* s) { return DataTables::MakeFourCC(s[0], s[1], s[2], s[3]); }
@@ -148,6 +160,10 @@ void CalibrateTypes() {
         {"jave", D2RVR_TYPE_JAVELIN}, {"ajav", D2RVR_TYPE_JAVELIN},
         {"h2h ", D2RVR_TYPE_CLAW}, {"h2h2", D2RVR_TYPE_CLAW}, {"orb ", D2RVR_TYPE_ORB}};
     std::string found;
+    for (const char* code : {"shie", "ashd", "head"}) {
+        uint32_t index = 0;
+        if (TypeRow(Four(code), &index)) g_shieldTypes.push_back(index);
+    }
     for (const auto& k : kKinds) {
         uint32_t idx;
         if (TypeRow(Four(k.code), &idx)) g_typeIndex.push_back({idx, k.type});
@@ -238,8 +254,19 @@ int TwoHandedOf(const std::string& code) {
     return bit == 8 ? row[o] != 0 : (int)((row[o] >> bit) & 1u);
 }
 
+// The six throwing potions (Rancid Gas, Oil, Choking Gas, Exploding, Strangling Gas, Fulminating): item codes. They sit in a weapon slot
+// like a javelin and are thrown by the weapon's attack, so they are a thrown weapon here whatever their ItemTypes row says.
+constexpr uint32_t kThrowPotions[6] = {Four("gps "), Four("ops "), Four("gpm "), Four("opm "), Four("gpl "), Four("opl ")};
+bool IsThrowPotionCode(const std::string& code) {
+    if (code.size() != 4) return false;
+    const uint32_t c = Four(code.c_str());
+    for (const uint32_t p : kThrowPotions) if (c == p) return true;
+    return false;
+}
+
 // D2RVR_TYPE_* of one hand's item; 0 for nothing, or a quiver/shield (not a weapon).
 uint32_t KindOf(const std::string& code) {
+    if (IsThrowPotionCode(code)) return D2RVR_TYPE_THROWING;
     if (code.size() != 4 || g_typeOffset < 0) return 0;
     uint32_t size = 0;
     const uint8_t* row = ItemRow(Four(code.c_str()), &size);
@@ -247,6 +274,17 @@ uint32_t KindOf(const std::string& code) {
     uint16_t t; memcpy(&t, row + g_typeOffset, 2);
     for (const auto& [idx, type] : g_typeIndex) if (idx == t) return type;
     return 0;
+}
+
+// A shield: its Items row's type is one of the shield types (not a weapon, so KindOf reads 0 for it).
+bool IsShield(const std::string& code) {
+    if (code.size() != 4 || g_typeOffset < 0) return false;
+    uint32_t size = 0;
+    const uint8_t* row = ItemRow(Four(code.c_str()), &size);
+    uint16_t type = 0;
+    if (!row || (uint32_t)g_typeOffset + sizeof type > size) return false;
+    memcpy(&type, row + g_typeOffset, sizeof type);
+    return std::find(g_shieldTypes.begin(), g_shieldTypes.end(), (uint32_t)type) != g_shieldTypes.end();
 }
 
 void Publish() {
@@ -265,29 +303,82 @@ void Publish() {
     g_state->weaponSet = g_set.load();
     g_state->weaponType = g_type.load();
     g_state->viewMode = g_view.load();
-    g_state->twoHanded = g_two.load();
+    const int hero = skel::HeroClass();
+    g_state->twoHanded = g_two.load() | D2RVRHeroBits(hero);   // (and the hero's class, for D2R VR Settings: bits 8 - 12)
+    {   // once per game start / change of hero
+        static int told = -2;
+        static const char* const kNames[8] = {"Amazon", "Sorceress", "Necromancer", "Paladin", "Barbarian", "Druid", "Assassin", "Warlock"};
+        if (hero != told && hero >= 0 && hero < 8) {
+            told = hero;
+            char b[120];
+            snprintf(b, sizeof b, "gamestate: hero class: %s", kNames[hero]);
+            Log(b);
+        }
+    }
     g_state->version = D2RVR_STATE_VERSION;
     g_state->counter++;
 }
 
 std::atomic<uint64_t> g_player{0};   // the local player's handle, as the SDK gives it (vrcam tries it as the hero unit)
 void CalibrateObjectLights();   // the Objects table's light fields, below
+void ReadSkills();              // which skills fly along the hand, below
 extern int g_objLitOffset;
 
+// The belt's bottom row: the item code in each of its four columns (0 = empty), what the potion
+// keys 1-4 drink. Each belt item comes as x 0..15 (column x % 4, row x / 4) with y 0, or as
+// column x and row y - both read (the d2r-pcvr fork found the same, 2026-10-13).
+std::atomic<uint32_t> g_belt[4] = {};
+Inventory::IterationAction __cdecl BeltItem(const PluginContext*, const Items::ItemInfo* i, void* user) noexcept {
+    auto* bottom = static_cast<uint32_t*>(user);
+    if (!i || i->container != Items::ItemContainer::Belt) return Inventory::IterationAction::Continue;
+    int column = -1, row = -1;
+    if (i->x >= 0 && i->x < 16 && i->y == 0) { column = i->x % 4; row = i->x / 4; }
+    else if (i->x >= 0 && i->x < 4 && i->y >= 0 && i->y < 4) { column = i->x; row = i->y; }
+    if (column >= 0 && row == 0) bottom[column] = i->code;
+    return Inventory::IterationAction::Continue;
+}
+void ReadBelt(const PluginContext* ctx, PlayerHandle player, bool havePlayer) {
+    uint32_t bottom[4] = {};
+    if (havePlayer && g_inventory->forEachInventoryItem) {
+        const Inventory::ItemFilter filter{sizeof filter, 0, Items::ContainerBit(Items::ItemContainer::Belt), 0};
+        if (g_inventory->forEachInventoryItem(ctx, player, &filter, &BeltItem, bottom) != Inventory::Result::Success)
+            return;   // kept as it was
+    }
+    for (int c = 0; c < 4; ++c) g_belt[c].store(bottom[c]);
+}
+
 // On the UI thread: the two hands of the active set.
-void __cdecl ReadItems(const PluginContext* ctx, void*) noexcept {
-    g_readQueued.store(false);
+void __cdecl ReadItems(const PluginContext* ctx, void* user) noexcept {
+    if (!g_readQueued.Claim(uiticket::FromUser(user))) return;   // come after its lease, replaced
     PlayerHandle player = InvalidPlayerHandle;
     const bool havePlayer = g_inventory && g_inventory->getLocalPlayer(ctx, &player) == Inventory::Result::Success && player != InvalidPlayerHandle;
     g_player.store(havePlayer ? player : 0);
+    // The swap count below is one player's (2026-10-13: it went on from the last game's into the
+    // next, another hero's): another player starts it again. With no player (the menus, perhaps
+    // a load) the set is not known - kept for the same player coming back.
+    static PlayerHandle lastPlayer = InvalidPlayerHandle;
+    static uint32_t lastHands[2] = {}, lastOther[2] = {}, keptSet = 0;
+    static bool seen = false;
+    if (havePlayer && player != lastPlayer) {
+        lastPlayer = player;
+        seen = false;
+        lastHands[0] = lastHands[1] = lastOther[0] = lastOther[1] = 0;
+        keptSet = 0;
+        g_set.store(0);
+    }
+    panelinput::UiTick(havePlayer, g_menu.load() != 0);   // the laser's mouse done: the pad's layout back in a game
+    if (g_inventory) ReadBelt(ctx, player, havePlayer);
     if (!g_inventory || !g_items || !havePlayer) {
         g_weapon.store(D2RVR_WEAPON_UNKNOWN);
         g_type.store(D2RVR_TYPE_UNKNOWN);
+        g_leftShield.store(false);
         g_held.store(0);
         g_two.store(0);
+        if (const uint32_t s = g_set.exchange(0)) keptSet = s;
         Publish();
         return;
     }
+    if (keptSet) { g_set.store(keptSet); keptSet = 0; }
     // Body locations 4/5 are the hands as the game asks for them; 11/12 the
     // other set's. Which set is active - I or II - the SDK does not say, so:
     // the item's own body location, if it reads 11/12 while it sits in the
@@ -308,14 +399,16 @@ void __cdecl ReadItems(const PluginContext* ctx, void*) noexcept {
         if (i < 2) { code[i] = CodeText(info.code); ownLoc[i] = info.bodyLocation; }
         else other[i - 2] = CodeText(info.code);
     }
-    static uint32_t lastHands[2] = {}, lastOther[2] = {};
-    static bool seen = false;
     uint32_t set = g_set.load();
     if (ownLoc[0] == 11 || ownLoc[1] == 12) set = 2;                    // the game's own word for it
-    else if (ownLoc[0] == 4 || ownLoc[1] == 5) {
-        // no word: a swap shows as the hands holding what the other set held
+    else if (ownLoc[0] == 4 || ownLoc[1] == 5 || (!id[0] && !id[1])) {
+        // no word: a swap shows as the two pairs trading places - the hands holding what the
+        // other set held, the other set what the hands held. Empty hands count (2026-10-13: a
+        // swap to an empty set was never seen, so the swap back flipped the count the wrong way
+        // round for good); a weapon taken off is no swap - the other set did not take it.
         const bool swapped = seen && (id[0] != lastHands[0] || id[1] != lastHands[1]) &&
-                             id[0] == lastOther[0] && id[1] == lastOther[1];
+                             id[0] == lastOther[0] && id[1] == lastOther[1] &&
+                             id[2] == lastHands[0] && id[3] == lastHands[1];
         if (set == 0) set = 1;
         else if (swapped) set = set == 1 ? 2 : 1;
     }
@@ -342,12 +435,21 @@ void __cdecl ReadItems(const PluginContext* ctx, void*) noexcept {
     if (g_typeOffset == -2) CalibrateTypes();
     if (g_objLitOffset == -2) CalibrateObjectLights();
     if (g_twoOffset == -2 && g_typeOffset >= 0) CalibrateTwoHanded();
+    ReadSkills();
     uint32_t kind = KindOf(code[0]);
     int from = 0;   // the hand the kind came from
     if (!kind && (kind = KindOf(code[1])) != 0) from = 1;
     if (!kind) kind = cls == D2RVR_WEAPON_BOW ? D2RVR_TYPE_BOW : cls == D2RVR_WEAPON_CROSSBOW ? D2RVR_TYPE_CROSSBOW
                     : cls == D2RVR_WEAPON_MELEE ? D2RVR_TYPE_OTHER : D2RVR_TYPE_UNARMED;
     g_type.store(kind);
+    g_kindSide[0].store(KindOf(code[0]));
+    g_kindSide[1].store(KindOf(code[1]));
+    for (int side = 0; side < 2; ++side) {   // the item code as one number (vr/blade_shape.h Code): its blade is per base item
+        uint32_t packed = 0;
+        for (int i = 0; i < 4; ++i) packed |= static_cast<uint32_t>(static_cast<uint8_t>(i < static_cast<int>(code[side].size()) ? code[side][i] : ' ')) << (8 * i);
+        g_codeSide[side].store(code[side].empty() ? 0u : packed);
+    }
+    g_leftShield.store(IsShield(code[1]));
     g_held.store((code[0].empty() ? 0u : 1u) | (code[1].empty() ? 0u : 2u));
     // Two-handed: the weapon's own "2handed"; without the field, a spear, a polearm
     // or a staff (all two-handed in D2) and nothing else. In both hands: the other
@@ -384,6 +486,7 @@ void __cdecl ReadItems(const PluginContext* ctx, void*) noexcept {
         memcpy(g_state->rightCode, code[0].data(), std::min<size_t>(4, code[0].size()));
         memcpy(g_state->leftCode, code[1].data(), std::min<size_t>(4, code[1].size()));
     }
+    shieldsmite::UiRead();   // [gameplay] shield_smite: which pad slot holds Smite (the game's own tables, UI thread)
     Publish();
 }
 
@@ -395,12 +498,22 @@ std::set<std::string> g_panels;   // open panels, UI thread only
 // SkillSelect, QuestLogPanelExpansion, PauseLayoutGarden. The HUD's own panels
 // (HUDPanel, MiniMenuPanel, HireablesPanel, TooltipsPanel, ShowItemsPanel...)
 // stay open all game and are not menus - "Menu" alone matched MiniMenuPanel.
+// With the laser on the menus ([openxr] laser, native OpenXR; SetLaserPanels) the modal ones
+// bearstonem/d2r-pcvr found besides (MIT, its steamvr/native_panels.h) too - the laser has them on
+// the flat picture: an NPC's speech scroll (it may outlive NpcDialogPanel), Inifuss' scroll, the
+// gold and quantity boxes, a confirmation, and the pad layout's tabbed menu (UISwitcher: its page
+// changes closed the menu for a frame, 2026-10-12). Not its ControllerOverlay, which d2r-pcvr counts
+// too: it stayed open after the menu closed (the log, 2026-10-12) - first person would stay flat.
 bool IsMenuPanel(const std::string& n) {
+    const bool laser = g_laserPanels.load();
+    if (laser && n == "UISwitcher") return true;
     if (n.rfind("HUD", 0) == 0 || n.rfind("MiniMenu", 0) == 0) return false;
     static const char* const kMenu[] = {"Vendor", "PlayerInventory", "Bank", "Stash", "HoradricCube", "CharacterStats",
                                         "SkillsTree", "SkillSelect", "QuestLog", "Pause", "Waypoint", "Npc", "NPC",
                                         "Trade", "Gamble", "HirelingInventory", "MercenaryInventory", "Options"};
+    static const char* const kLaserMenu[] = {"ScrollSpeech", "ScrollOfInifuss", "GoldTransfer", "Quantity", "Confirmation"};
     for (const char* k : kMenu) if (n.find(k) != std::string::npos) return true;
+    if (laser) for (const char* k : kLaserMenu) if (n.find(k) != std::string::npos) return true;
     return false;
 }
 
@@ -445,6 +558,9 @@ SharedEvents::UiMessageAction __cdecl OnUiMessage(const PluginContext*, const Sh
             char b[300]; snprintf(b, sizeof b, "gamestate: menu %s (open: %.200s)", menu ? "OPEN" : "closed", list.c_str()); Log(b);
         }
     }
+    // [render] vr_resolution: the game's own graphics Apply can reset its render state without a WM_SIZE - the size is asked for
+    // again once it has settled (render_resolution.h). Not on "ResolutionChanged": our own WM_SIZE sends that, and we would ask for ever.
+    if (!strcmp(target, "OptionsPanelMessage") && !strcmp(command, "AcceptChanges")) vrres::OptionsApplied();
     if (g_state) {
         strncpy_s(g_state->lastUi, key.c_str(), _TRUNCATE);
         Publish();
@@ -510,6 +626,103 @@ void CalibrateObjectLights() {
     Log("gamestate: object lights NOT found in the Objects table - the ceiling's torches stay as seen in the picture");
 }
 
+// Which skills fly along the hand (vrcam, [hands] spell_aim), from the game's own Skills table:
+// a missile that leaves the hero - Skills.txt srvmissile, or one of the server functions that
+// send their own (Charged Bolt, Teeth, Chain Lightning, the streams, Guided Arrow and Bone
+// Spirit, Blade Fury, Twister) - for a skill that needs no unit or corpse to aim at, is not
+// passive and not lobbed (a lobbed bomb lands where it is aimed, at the game's distance).
+// Ground placements, summons, curses and buffs keep the game's targeting. The list and the
+// compiled row's offsets are bearstonem/d2r-pcvr's (MIT, audited against all 429 rows of
+// skills.bin): +0x00 the id (u16), +0x24 the flags (bit 1 lob, 4 passive, 20 TargetableOnly,
+// 24 TargetCorpse), +0x4E srvdofunc (s16), +0x66 srvmissile's row (s16, -1 none) - used only
+// once eight skills read back what skills.txt of 3.3.93787 says of them (SkillsCheckOut).
+constexpr uint32_t kSkillMax = 1024;
+std::atomic<uint64_t> g_skillAimed[kSkillMax / 64] = {};
+std::atomic<uint32_t> g_skillCount{0};   // rows classified; 0 = not (yet)
+constexpr uint32_t kLob = 1u << 1, kPassive = 1u << 4, kTargetableOnly = 1u << 20, kTargetCorpse = 1u << 24;
+
+struct SkillRow { uint16_t id; uint32_t flags; int16_t fn, missile; };
+bool ReadSkillRow(const uint8_t* rows, uint32_t rowSize, uint32_t i, SkillRow* r) {
+    const uint8_t* p = rows + (size_t)i * rowSize;
+    memcpy(&r->id, p, 2); memcpy(&r->flags, p + 0x24, 4); memcpy(&r->fn, p + 0x4E, 2); memcpy(&r->missile, p + 0x66, 2);
+    return r->id == i;
+}
+
+bool Aimed(const SkillRow& r) {
+    if (r.flags & (kLob | kPassive | kTargetableOnly | kTargetCorpse)) return false;
+    if (r.missile >= 0) return true;
+    switch (r.fn) {
+        case 8:     // Teeth, Multiple Shot, Shock Wave: the game's own fan, turned
+        case 10:    // Guided Arrow, Bone Spirit: aimed first, then seeking
+        case 17:    // Charged Bolt
+        case 19:    // Inferno, Arctic Blast
+        case 26:    // Chain Lightning
+        case 48:    // Blade Fury
+        case 118:   // Twister, Tornado
+            return true;
+        default: return false;
+    }
+}
+
+// The offsets above read back what skills.txt (3.3.93787, 2026-10-13) says of eight skills.
+bool SkillsCheckOut(const uint8_t* rows, uint32_t count, uint32_t rowSize) {
+    if (count <= 251 || rowSize < 0x68) return false;
+    SkillRow r{};
+    auto row = [&](uint32_t i) { return ReadSkillRow(rows, rowSize, i, &r); };
+    return row(0) && (r.flags & kTargetableOnly) &&                                   // Attack
+           row(9) && (r.flags & kPassive) &&                                          // Critical Strike
+           row(36) && r.missile >= 0 && !(r.flags & (kLob | kPassive | kTargetableOnly | kTargetCorpse)) &&   // Fire Bolt
+           row(38) && r.missile < 0 && r.fn == 17 &&                                  // Charged Bolt
+           row(53) && r.missile < 0 && r.fn == 26 &&                                  // Chain Lightning
+           row(67) && r.missile < 0 && r.fn == 8 &&                                   // Teeth
+           row(70) && (r.flags & kTargetCorpse) &&                                    // Raise Skeleton
+           row(251) && (r.flags & kLob) && r.missile >= 0;                            // Fire Trauma
+}
+
+// On the UI thread, with the hands; again whenever the table in use is loaded anew. The
+// newest bank that checks out: RotW holds every class, the others the same seven.
+void ReadSkills() {
+    static DataTables::Bank used{};
+    static uint64_t usedRev = 0, refusedRev[4] = {};
+    static bool refused[4] = {};
+    if (!g_tables || !g_tables->getTable) return;
+    for (DataTables::Bank bank : {DataTables::Bank::Rotw, DataTables::Bank::Lod, DataTables::Bank::Classic}) {
+        DataTables::TableView v{};
+        v.structSize = DataTables::TableViewSize;
+        if (g_tables->getTable(g_ctx, bank, DataTables::TableId::Skills, &v) != DataTables::Result::Success || !v.rows || !v.rowSize) continue;
+        if (g_skillCount.load() && bank == used && v.revision == usedRev) return;   // in use, as it was
+        const unsigned b = (unsigned)bank & 3;
+        if (refused[b] && refusedRev[b] == v.revision) continue;
+        const uint8_t* rows = (const uint8_t*)v.rows;
+        char line[640];
+        if (!SkillsCheckOut(rows, v.rowCount, v.rowSize)) {
+            refused[b] = true; refusedRev[b] = v.revision;
+            snprintf(line, sizeof line, "gamestate: skills - bank %u, %u rows of %u bytes, do NOT read as skills.txt - spells keep the game's targeting",
+                     (unsigned)bank, v.rowCount, v.rowSize);
+            Log(line);
+            continue;
+        }
+        uint64_t bits[kSkillMax / 64] = {};
+        const uint32_t n = std::min(v.rowCount, kSkillMax);
+        uint32_t aimed = 0;
+        int at = snprintf(line, sizeof line, "gamestate: skills - bank %u, %u rows of %u bytes; fly along the hand:", (unsigned)bank, v.rowCount, v.rowSize);
+        for (uint32_t i = 0; i < n; ++i) {
+            SkillRow r{};
+            if (!ReadSkillRow(rows, v.rowSize, i, &r) || !Aimed(r)) continue;
+            bits[i >> 6] |= 1ull << (i & 63);
+            ++aimed;
+            if (at > 0 && at < (int)sizeof line - 8) at += snprintf(line + at, sizeof line - at, " %u", i);
+        }
+        for (uint32_t w = 0; w < kSkillMax / 64; ++w) g_skillAimed[w].store(bits[w]);
+        g_skillCount.store(n);
+        used = bank; usedRev = v.revision; refused[b] = false;
+        Log(line);
+        snprintf(line, sizeof line, "gamestate: skills - %u of %u fly along the hand ([hands] spell_aim)", aimed, n);
+        Log(line);
+        return;
+    }
+}
+
 template <class S> const S* Query(const PluginContext* ctx) {
     const S* s = nullptr;
     return ctx->QueryService(&s) == ServiceQueryResult::Success ? s : nullptr;
@@ -551,18 +764,33 @@ void Init(const PluginContext* ctx) {
 
 // vrcam's timer, every 200 ms: queue a read of the hands on the UI thread.
 void Tick() {
-    if (!g_threads || !g_ctx || g_readQueued.exchange(true)) return;
-    if (g_threads->runOnUiThread(g_ctx, &ReadItems, nullptr) != Threads::Result::Success) g_readQueued.store(false);
+    if (!g_threads || !g_ctx) return;
+    bool lost = false;
+    const uint32_t token = g_readQueued.Start(GetTickCount64(), &lost);
+    if (!token) return;
+    static int toldLost = 0;
+    if (lost && toldLost < 10) { ++toldLost; Log("gamestate: the UI thread's read of the hands did not come in a second, queued again"); }
+    if (g_threads->runOnUiThread(g_ctx, &ReadItems, uiticket::ToUser(token)) != Threads::Result::Success) g_readQueued.Claim(token);
 }
 
 uint32_t WeaponClass() { return g_weapon.load(); }
 uint32_t WeaponSet() { return g_set.load(); }
 uint32_t WeaponType() { return g_type.load(); }
+void BeltCodes(uint32_t out[4]) { for (int c = 0; c < 4; ++c) out[c] = g_belt[c].load(); }
 uint32_t HandsHeld() { return g_held.load(); }
 uint32_t TwoHanded() { return g_two.load(); }
 uint32_t WeaponHand() { return g_from.load(); }
+uint32_t HandKind(int side) { return g_kindSide[side & 1].load(); }
+uint32_t HandCode(int side) { return g_codeSide[side & 1].load(); }
+bool HandIsThrowPotion(int side) {
+    const uint32_t c = g_codeSide[side & 1].load();
+    for (const uint32_t p : kThrowPotions) if (c == p) return true;
+    return false;
+}
 uint32_t HandsKey() { return g_handsKey.load(); }
+bool LeftShield() { return g_leftShield.load(); }
 bool MenuOpen() { return g_menu.load() != 0; }
+void SetLaserPanels(bool on) { g_laserPanels.store(on); }   // from the next panel message on
 uint64_t TitleScreenAt() { return g_titleAt.load(); }
 uint64_t LocalPlayer() { return g_player.load(); }
 // An object's light in a mode: its radius (Objects.txt Lit, 0 = none) and colour 0..1.
@@ -574,6 +802,10 @@ int ObjectLight(uint32_t txt, uint32_t mode, float rgb[3]) {
 }
 
 bool AutoMapOpen() { return g_autoMap.load() != 0; }
+// A skill whose missile flies along the hand (ReadSkills); false while the table is not read.
+bool SkillAimed(int skill) {
+    return skill >= 0 && (uint32_t)skill < g_skillCount.load() && ((g_skillAimed[skill >> 6].load() >> (skill & 63)) & 1) != 0;
+}
 
 // On the UI thread, as widget calls must be: the same message the game's own
 // map key sends, so the game opens or closes its map itself.
@@ -591,51 +823,95 @@ void __cdecl DispatchAutoMap(const PluginContext* ctx, void* user) noexcept {
     Log(b);
 }
 
-// The name plate over the target monster: the game's HUDMonsterHealth panel. Its
-// rectangle, read on the UI thread (widget calls must be) a few times a second.
+// The name plate over the target monster: the game's HUDMonsterHealth panel (its layouts, 2026-10-12:
+// data\global\ui\Layouts\HUDMonsterHealthHD.json and Controller\HUDMonsterHealthHD.json). The panel is 0 x 0,
+// anchored at the top middle. With the mouse its child Health is the plate there; with a pad - D2R VR plays
+// with one - the plate hangs over the monster: the child TargetAttached stands where the monster is (its
+// rectangle follows it), and below it Health (the bar with the name, as wide as the name) between its
+// backgrounds NormalMonsterBackground or UniqueMonsterBackground. Every rectangle is local to its parent, in
+// the layout's units. Read on the UI thread (widget calls must be), one read at a time, each frame wanted.
 std::atomic<int32_t> g_plate[4] = {};
 std::atomic<ULONGLONG> g_plateAt{0};
+uiticket::Ticket g_plateReading;   // ReadPlate() queued (ui_ticket.h)
 Widgets::WidgetHandle g_platePanel = Widgets::InvalidHandle;
-void __cdecl ReadPlate(const PluginContext* ctx, void*) noexcept {
-    if (!g_widgets || !g_widgets->findPanel || !g_widgets->getWidgetRect) return;
+// a child's rectangle (found once, the handle kept: a path, it outlives the panel's closing)
+Widgets::Result ChildRect(const PluginContext* ctx, Widgets::WidgetHandle parent, const char* name, Widgets::WidgetHandle* h, Widgets::Rect* out) {
+    *out = Widgets::Rect{};
+    if (parent == Widgets::InvalidHandle) { *h = Widgets::InvalidHandle; return Widgets::Result::NotFound; }
+    Widgets::Result r = Widgets::Result::Success;
+    if (*h == Widgets::InvalidHandle) r = g_widgets->findWidget(ctx, parent, name, h);
+    if (r == Widgets::Result::Success && *h != Widgets::InvalidHandle) r = g_widgets->getWidgetRect(ctx, *h, out);
+    else if (r == Widgets::Result::Success) r = Widgets::Result::NotFound;
+    if (r == Widgets::Result::StaleHandle || r == Widgets::Result::NotFound) *h = Widgets::InvalidHandle;
+    return r;
+}
+// a background's own size is the game's to set; only a sane one goes into the plate
+bool SaneBack(const Widgets::Rect& r) { return r.width > 0 && r.height > 0 && r.width < 4000 && r.height < 600; }
+void __cdecl ReadPlate(const PluginContext* ctx, void* user) noexcept {
+    if (!g_plateReading.Claim(uiticket::FromUser(user))) return;   // come after its lease, replaced
+    if (!g_widgets || !g_widgets->findPanel || !g_widgets->getWidgetRect || !g_widgets->findWidget) return;
     static int told = 0;
-    static Widgets::Rect last{};
+    static int32_t last[4] = {};
+    static Widgets::WidgetHandle target = Widgets::InvalidHandle, health = Widgets::InvalidHandle,
+                                 normal = Widgets::InvalidHandle, unique = Widgets::InvalidHandle;
     Widgets::Result r = Widgets::Result::Success;
     if (g_platePanel == Widgets::InvalidHandle) r = g_widgets->findPanel(ctx, "HUDMonsterHealth", &g_platePanel);
     Widgets::Rect rc{};
     if (r == Widgets::Result::Success && g_platePanel != Widgets::InvalidHandle) r = g_widgets->getWidgetRect(ctx, g_platePanel, &rc);
-    if (r == Widgets::Result::StaleHandle || r == Widgets::Result::NotFound) g_platePanel = Widgets::InvalidHandle;
-    // The panel itself is 0 x 0: the plate is its child "Health" (HUDMonsterHealthHD.json), its rectangle
-    // local to the panel - taken as the plate, the panel's place added (docs/KNOWN_ISSUES.md 17, 2026-10-12).
-    static Widgets::WidgetHandle health = Widgets::InvalidHandle;
-    if (g_platePanel == Widgets::InvalidHandle) health = Widgets::InvalidHandle;
-    Widgets::Rect hc{};
-    Widgets::Result hr = Widgets::Result::NotFound;
-    if (r == Widgets::Result::Success && g_platePanel != Widgets::InvalidHandle && g_widgets->findWidget) {
-        if (health == Widgets::InvalidHandle) g_widgets->findWidget(ctx, g_platePanel, "Health", &health);
-        if (health != Widgets::InvalidHandle) hr = g_widgets->getWidgetRect(ctx, health, &hc);
-        if (hr == Widgets::Result::StaleHandle || hr == Widgets::Result::NotFound) health = Widgets::InvalidHandle;
+    if (r != Widgets::Result::Success) {
+        if (r == Widgets::Result::StaleHandle || r == Widgets::Result::NotFound) g_platePanel = Widgets::InvalidHandle;
+        target = health = normal = unique = Widgets::InvalidHandle;
+        return;
     }
-    const bool ok = hr == Widgets::Result::Success && hc.width > 0 && hc.height > 0;
-    if (ok) {
-        g_plate[0].store(rc.x + hc.x); g_plate[1].store(rc.y + hc.y); g_plate[2].store(hc.width); g_plate[3].store(hc.height);
-        g_plateAt.store(GetTickCount64());
+    Widgets::Rect tc{}, hc{}, nc{}, uc{};
+    const Widgets::Result tr = ChildRect(ctx, g_platePanel, "TargetAttached", &target, &tc);
+    const bool attached = tr == Widgets::Result::Success;   // the pad's layout: the plate over the monster
+    const Widgets::Result hr = ChildRect(ctx, attached ? target : g_platePanel, "Health", &health, &hc);
+    if (attached) {
+        ChildRect(ctx, target, "NormalMonsterBackground", &normal, &nc);
+        ChildRect(ctx, target, "UniqueMonsterBackground", &unique, &uc);
     }
-    if (told < 6 && (!ok || hc.x != last.x || hc.y != last.y || hc.width != last.width || hc.height != last.height)) {
+    if (hr != Widgets::Result::Success || hc.width <= 0 || hc.height <= 0) {
+        if (told < 12) {
+            ++told;
+            char b[200];
+            snprintf(b, sizeof b, "gamestate: the monster's name plate - HUDMonsterHealth at %d,%d, TargetAttached (result %u) at %d,%d, "
+                     "its Health not read (result %u, %dx%d)", rc.x, rc.y, (unsigned)tr, tc.x, tc.y, (unsigned)hr, hc.width, hc.height);
+            Log(b);
+        }
+        return;
+    }
+    // the bar, and the background round it, in the panel's anchor's units (the top middle)
+    const int32_t ox = rc.x + (attached ? tc.x : 0), oy = rc.y + (attached ? tc.y : 0);
+    int32_t x0 = hc.x, y0 = hc.y, x1 = hc.x + hc.width, y1 = hc.y + hc.height;
+    for (const Widgets::Rect* bk : {&nc, &uc}) {
+        if (!SaneBack(*bk)) continue;
+        x0 = (std::min)(x0, bk->x); y0 = (std::min)(y0, bk->y);
+        x1 = (std::max)(x1, bk->x + bk->width); y1 = (std::max)(y1, bk->y + bk->height);
+    }
+    const int32_t plate[4] = {ox + x0, oy + y0, x1 - x0, y1 - y0};
+    for (int i = 0; i < 4; ++i) g_plate[i].store(plate[i]);
+    g_plateAt.store(GetTickCount64());
+    if (told < 12 && memcmp(last, plate, sizeof last) != 0) {
         ++told;
-        last = hc;
-        char b[200];
-        snprintf(b, sizeof b, "gamestate: the monster's name plate - HUDMonsterHealth (result %u) at %d,%d size %dx%d, its Health (result %u) "
-                 "at %d,%d size %dx%d", (unsigned)r, rc.x, rc.y, rc.width, rc.height, (unsigned)hr, hc.x, hc.y, hc.width, hc.height);
+        memcpy(last, plate, sizeof last);
+        char b[400];
+        snprintf(b, sizeof b, "gamestate: the monster's name plate %d,%d %dx%d - HUDMonsterHealth at %d,%d, TargetAttached (result %u) "
+                 "at %d,%d %dx%d, Health at %d,%d %dx%d, NormalMonsterBackground at %d,%d %dx%d, UniqueMonsterBackground at %d,%d %dx%d",
+                 plate[0], plate[1], plate[2], plate[3], rc.x, rc.y, (unsigned)tr, tc.x, tc.y, tc.width, tc.height,
+                 hc.x, hc.y, hc.width, hc.height, nc.x, nc.y, nc.width, nc.height, uc.x, uc.y, uc.width, uc.height);
         Log(b);
     }
 }
 void PollPlate() {
-    if (g_ctx && g_threads && g_threads->runOnUiThread && g_widgets) g_threads->runOnUiThread(g_ctx, &ReadPlate, nullptr);
+    if (!g_ctx || !g_threads || !g_threads->runOnUiThread || !g_widgets) return;
+    const uint32_t token = g_plateReading.Start(GetTickCount64());   // 0: the last read not come yet
+    if (!token) return;
+    if (g_threads->runOnUiThread(g_ctx, &ReadPlate, uiticket::ToUser(token)) != Threads::Result::Success) g_plateReading.Claim(token);
 }
 // The plate's rectangle (x, y, w, h, the panel's own units), if read lately.
 bool PlateRect(int32_t out[4]) {
-    if (GetTickCount64() - g_plateAt.load() > 1000) return false;
+    if (GetTickCount64() - g_plateAt.load() > 250) return false;   // no target, no plate
     for (int i = 0; i < 4; ++i) out[i] = g_plate[i].load();
     return true;
 }

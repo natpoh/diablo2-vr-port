@@ -32,9 +32,11 @@
 
 #include <D2RLPlugin/api.h>
 
+#include "log_async.h"   // [debug] log_async: the plugin's log lines through a ring and a writer thread (vr/log_queue.h); off = ctx->LogInfo as ever
 #include "d2r_vr_shared.h"
 #include "link.h"
 #include "sigscan.h"
+#include "ui_ticket.h"
 
 using namespace D2RL;
 
@@ -53,7 +55,11 @@ using ExecFn = bool (*)(const void* binding, void* table, bool force);
 
 const PluginContext* g_ctx = nullptr;
 const ThreadService* g_threads = nullptr;
-std::atomic<bool> g_queued{false};
+uiticket::Ticket g_queued;   // Apply() queued (ui_ticket.h: a run that never comes is queued again)
+// One-shot presses asked for by vrcam itself (Tap: the belt's potions drunk from the hand),
+// apart from what BodyWalk holds: a bit per command, pressed and let go in one UI-thread run.
+std::atomic<uint64_t> g_taps[2] = {};
+uiticket::Ticket g_tapQueued;
 // The bits Apply() has pressed (UI thread writes, the timer reads): bit n = the game's command n.
 std::atomic<uint64_t> g_applied[2] = {0, 0};
 std::atomic<int> g_ok{-1};            // -1 not found yet, 1 found, 0 faulted (switched off for the session)
@@ -68,7 +74,7 @@ struct Binding { uint32_t cmd; uint16_t key; uint32_t type; };
 static_assert(sizeof(Binding) == kBindingSize, "the game's binding record");
 Binding g_binding[kCommands];
 
-void Log(const char* text) { if (g_ctx) g_ctx->LogInfo(text); }
+void Log(const char* text) { if (g_ctx) logasync::Info(g_ctx, text); }
 
 template <class S> const S* Query(const PluginContext* ctx) {
     const S* s = nullptr;
@@ -159,8 +165,9 @@ void Press(uint32_t cmd, bool down) {
 }
 
 // UI thread.
-void __cdecl Apply(const PluginContext*, void*) noexcept {
-    g_queued.store(false);   // first: a change from now on queues another run
+void __cdecl Apply(const PluginContext*, void* user) noexcept {
+    // first: a change from now on queues another run; a run come after its lease, replaced, does nothing
+    if (!g_queued.Claim(uiticket::FromUser(user))) return;
     uint64_t want[2];
     static link::Presses presses;
     Held(want, presses);
@@ -176,7 +183,30 @@ void __cdecl Apply(const PluginContext*, void*) noexcept {
     store();
 }
 
+// UI thread: the taps asked for, each pressed and let go at once (as a key would be).
+void __cdecl ApplyTaps(const PluginContext*, void* user) noexcept {
+    if (!g_tapQueued.Claim(uiticket::FromUser(user))) return;
+    const uint64_t t[2] = {g_taps[0].exchange(0), g_taps[1].exchange(0)};
+    if (!Ready()) return;
+    const uint64_t held[2] = {g_applied[0].load(), g_applied[1].load()};
+    for (uint32_t n = 0; n < kCommands && g_ok.load() == 1; ++n)
+        if (Bit(t, n) && !Bit(held, n)) { Press(n, true); Press(n, false); }   // one BodyWalk holds already: left to it
+}
+
 }  // namespace
+
+// One press of a game command, as a key's - from any thread; done on the UI thread soon after.
+void Tap(uint32_t cmd) {
+    if (cmd < kCommands) g_taps[cmd / 64].fetch_or(1ull << (cmd % 64));
+}
+
+// True once the game's executor has pressed this command (Apply has run and the command is down in the game); false while it
+// is only asked for, not found, or faulted. vr/stand_still_wire.cpp waits for it before an attack goes out.
+bool Pressed(uint32_t cmd) {
+    if (cmd >= kCommands || g_ok.load() != 1) return false;
+    const uint64_t a = g_applied[cmd / 64].load();
+    return ((a >> (cmd % 64)) & 1) != 0;
+}
 
 // From D2RLoaderLoadPlugin.
 void Init(const PluginContext* ctx) {
@@ -188,11 +218,20 @@ void Init(const PluginContext* ctx) {
 // vrcam's 1 ms timer: a change in what BodyWalk holds goes to the UI thread.
 void Tick() {
     if (!g_ctx || !g_threads || !g_threads->runOnUiThread || g_ok.load() == 0) return;
+    if (g_taps[0].load() || g_taps[1].load()) {
+        if (const uint32_t token = g_tapQueued.Start(GetTickCount64()))
+            if (g_threads->runOnUiThread(g_ctx, &ApplyTaps, uiticket::ToUser(token)) != Threads::Result::Success) g_tapQueued.Claim(token);
+    }
     uint64_t held[2];
     static link::Presses presses;
     Held(held, presses);
-    if (Same(held) || g_queued.exchange(true)) return;
-    if (g_threads->runOnUiThread(g_ctx, &Apply, nullptr) != Threads::Result::Success) g_queued.store(false);
+    if (Same(held)) return;
+    bool lost = false;
+    const uint32_t token = g_queued.Start(GetTickCount64(), &lost);
+    if (!token) return;
+    static int toldLost = 0;
+    if (lost && toldLost < 10) { ++toldLost; Log("vrcam: game commands - the UI thread's run did not come in a second, queued again"); }
+    if (g_threads->runOnUiThread(g_ctx, &Apply, uiticket::ToUser(token)) != Threads::Result::Success) g_queued.Claim(token);
 }
 
 }  // namespace gamecmd

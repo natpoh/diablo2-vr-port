@@ -17,6 +17,7 @@ struct Input {
     float wristDeg[3] = {};     // pitch, yaw, roll on top, in the controller's own axes (mirrored for the left)
     float scale = 1.0f;         // arm reach on top of the hero/user height ratio
     float userHeadM = 1.7f;     // the user's head above the floor
+    float armSpanM = 0.0f;      // > 0: the measured grip-to-grip span (T-pose, [calibration]): the arm bones are fitted to it, scale is 1
     uint32_t handsValid = 0;    // bit 0 right, bit 1 left
     float hand[2][3] = {};      // [0] right, [1] left: metres from the head, x right y up z back
     float rot[2][4] = {};       // controller orientation in that frame, x y z w
@@ -28,7 +29,84 @@ struct Input {
     bool followJump = true;     // the held upper body (and HeroEye's lift) goes up with the hips
     float jumpFrom = 0.3f;      // model units of hip rise taken for the stride's bob, not a jump
     float grip[2] = {-1.0f, -1.0f};   // the controllers' grips 0..1 ([0] right); < 0 unknown (an older bridge): the left stays on a staff
+    // The posed weapon for PosedWeapon() below (melee by touch): wanted only when asked, so nothing is done for it otherwise.
+    bool posedWeapon = false;
+    bool dualBlades = false;    // a melee weapon in each hand's slot: PosedWeapon() then keeps the other hand's weapon bone too (blade[])
+    uint32_t poseStamp = 0;     // the stamp of the hand sample this pose is made from (sampleStamp of the shared block)
+    bool havePoseStamp = false;
+    uint32_t worldEpoch = 0;    // bumped whenever the world frame turns under a still hand (a snap turn, a recenter, a view change)
+    // The head sample the hands came with (BodyWalk's counter) and where that head stood in the room:
+    // what puts the controllers in the room, where a weapon with weight lives (vr/weight.cpp).
+    uint32_t sample = 0;
+    float headRoom[3] = {};     // metres, OpenXR stage axes (no room from BodyWalk: 0, the head's height, 0)
+    float headYawDeg = 0.0f;    // the turn the hands' frame has in the room (positive = left)
 #if D2RVR_FIRST_PERSON
+    // [weight] (vr/weight.cpp): the weapon in hand is a body of its own - heavy, taken by a hand where its
+    // grip closes on the shaft, passed from hand to hand. on: this pose's weapon is held that way.
+    struct Weight {
+        bool on = false;
+        int kind = 0;              // heft::hold::Kind
+        bool twoHanded = false;    // the game's "2handed": a longer, heavier shape
+        int slot = 0;              // the hand slot the game has it in (0 right, 1 left)
+        bool otherBusy = false;    // the other hand holds something of its own (a shield): it takes nothing
+        bool busy[2] = {};         // a belt potion in that hand, or one lit to be taken: it takes nothing
+        int tipAxis = 2;           // the weapon bone's axis toward its tip, +-1..3 (x y z)
+        float feel = 0.5f;         // [weight] feel % / 100: the steel's mass x this (default 50 %)
+        float strength = 1.0f;     // [weight] strength % / 100: the muscles' ceilings x this
+        float gravity = 1.0f;      // [weight] gravity_pct / 100: the steel's weight x this (0 = only inertia)
+        float damping = 1.0f;      // [weight] damping_pct / 100: the muscles' dampers x this
+        bool gravityFeel = false;  // [weight] gravity_feel: the soft wrists (cleanroom/heft/hold.h UseGravityFeel); off = the old stiff ones
+        float grabM = 0.12f;       // [weight] grab_cm: how near the shaft a grip takes it
+        float letGoM = 0.25f;      // [weight] let_go_cm: hands pulled this far apart off their places let go
+        float fist[3] = {};        // [weight] fist_x/y/z: the closed fist's middle from the right controller, its axes, m
+        // The grips as the controllers really have them (direct_input's frame, vr/weight_wire.h): a grip that holds the weapon is taken from
+        // the layout, and a taken one reads as let go in Input::grip - so the weight model reads these when there are any.
+        bool haveRawGrip = false;
+        float rawGrip[2] = {};     // [0] right, [1] left
+        bool claimed[2] = {};      // that hand's grip is another gesture's (the weapon swap behind a shoulder): it takes nothing off the floor and calls
+                                   // nothing back - but it does take a weapon stowed on the back (busy, a belt potion, blocks that too)
+        // [weight] after_drop: what becomes of a weapon let go that has landed. 0 it lies on the floor; 1 after stowAfterS it goes to the hero's back
+        // and is drawn slung there (vr/weapon_back.h); 2 after stowAfterS it is not drawn at all (still the game's equipped weapon).
+        int afterDrop = 0;
+        float stowAfterS = 0.6f;   // [weight] to_back_delay_ms / 1000
+        // Metres from the head to the game's ground under the hero (vr/weight_floor.h): the floor a let-go weapon falls to is that far below the head in the
+        // room, not the room's floor. <= 0: not known - the room's floor.
+        float headAboveGroundM = 0.0f;
+        bool slide = false;           // [weight] slide_second_hand: the second hand slides along a long shaft while its grip stays squeezed (cleanroom/heft/slide.h)
+        // The wood's extent ahead of and behind the weapon bone's origin, metres - the hit-by-touch blade's (bladeshape::ForItem, tuned): the weight model's
+        // shaft is the drawn bone's axis with these ends (vr/weapon_shaft.h). tipAxis (above) is then the blade's: +2, or -2 where the tip lies along -Y.
+        float shaftTipM = 0.0f, shaftButtM = 0.0f;   // 0, 0: not known - the shaft is not measured
+        float backTakeM = 0.25f;      // [weight] back_take_cm / 100: a fist this near the weapon stowed on the back takes it with the grip, anywhere along it
+        float thrownHandoffMs = 350.0f;     // [weight] thrown_handoff_ms: the thrown model flies out of the hand this long (or to the game's action frame) before it hands over to the game's missile and vanishes (0: at once)
+        float thrownHandEmptyMs = 900.0f;  // [weight] thrown_hand_empty_ms: the hand is empty at the most this long after the game took a throw (0: not hidden)
+        int thrownModel = 0;        // [weight] thrown_model: 0 the model vanishes the moment the game takes the throw (its own missile flies), 1 it flies on physically
+        bool thrownPotion = false;  // the weapon in hand is one of the six throwing potions (gamestate::HandIsThrowPotion)
+        bool potionFlies = true;    // [weight] potion_model_flies (or the potion tick): a thrown potion's model is not handed over to the game's missile - it flies to its landing and breaks there
+        float thrownFlyMs = 3000.0f;  // [weight] thrown_fly_ms: a thrown weapon's model flies at most this long after the release (vr/weight_throw.h)
+        // The throw worked out by the weight model (weight::LastThrow, vr/weight_flight.h): the horizontal release velocity scaled by throwReachPct (a real arm
+        // throws a few metres), the landing held to throwMaxCells cells (the game refuses an aim point more than 50 cells off the hero on an axis) - a cell is two
+        // world units, unitsPerMetre = world units per metre at the hero's size (<= 0: not known, the cap is not applied).
+        float throwReachPct = 800.0f, throwMaxCells = 48.0f, unitsPerMetre = 0.0f;
+        float takeHaptic = 0.0f;   // [weight] take_haptic: the pulse (amplitude 0..1) in a hand entering the take zone behind a shoulder while a weapon is away; 0 = none
+        bool recallAny = false;    // [weight] recall_any_hand: the grip of any free hand, anywhere, calls a weapon that is away
+        bool backLong = false;     // the weapon is a long one (a staff, a spear, a polearm, a javelin, anything two-handed): its place on the back
+        float back[6] = {};        // that class's live tuning: x y z in cm, pitch yaw roll in degrees (weaponback::Tuning)
+        // [weight] grip_fit (vr/grip_fit.h): a hand on the weapon is laid on the shaft as drawn. A hand that TOOK it (closed its fist on the shaft: the second hand, one that took it
+        // over from the other, the game's hand taking it up again) has its palm's middle put on the shaft's axis at its grasp point and its knuckle line laid along the shaft - and,
+        // with gripLikeBase, sitting on it the way the game's own grip has the base hand (offset from the axis, lean) - and closes with the controller's squeeze (also with [hands]
+        // fist off). Every hand has its own live corrections in the shaft's own frame, by HAND (0 right, 1 left): x y z in cm (along the shaft toward the tip, across toward the
+        // fingertips, up out of the palm), then the roll about the shaft and the two tilts in degrees. The base hand (the game's, as placed) keeps the game's pose, only these act.
+        bool gripFit = false;
+        bool gripLikeBase = true;
+        // [weight] grip_fit_fingers (vr/grip_pose.h): the hand that took the weapon has the game's own weapon-grip POSE of the fingers and the thumb - read off the game's hand (the
+        // slot's) and put on it mirrored as the hand needs (in the hand's own frame, whatever the rig's axes) - held while it holds the weapon, not driven by the squeeze, opening
+        // as it lets go. Needs gripFit; off: the fingers close with the squeeze as before.
+        bool gripFingers = true;
+        // [weight] attach_apart: the weapon's two attach bones are kept apart along the weapon's own axis ([hands] carry_cm, carry_axis) - the game lays a two-handed weapon along the line
+        // from one to the other, and with both in one point the weapon is squashed flat along its length. Off: both in one point.
+        bool attachApart = true;
+        float gripHand[2][6] = {};
+    } weight;
     bool staff = false;         // mode 2, a staff in hand: it is turned to run through the other hand too
     int staffHand = 1;          // the hand it is attached to: 0 right, 1 left
     float staffOffset[3] = {};  // cm: where the staff runs past the other hand, along that hand's own axes
@@ -42,11 +120,19 @@ struct Input {
     // from the game's hand slots); the left on a staff is not free.
     bool fist = false;
     bool handFree[2] = {};
+    // [hands] shield_fist: the left hand with a shield on it closes with the controller's grip like a free hand - the fingers only,
+    // the shield's bone and the arm stay as the game draws them (vr/shield_fist.h). shieldFist: asked for (box ticked, F4, a shield
+    // in the left slot); shieldGrip: the left grip as the controller really has it (before the layout took any), < 0 not known:
+    // grip[1] then.
+    bool shieldFist = false;
+    float shieldGrip = -1.0f;
     // [fist] <class>_close / <class>_open, % / 100: how far a free hand closes with the grip
     // squeezed and with it let go, per hero class (kHeroClasses) - the rigs differ: the full
     // fist rolled the paladin's fingers into his palm (2026-10-06).
     float fistClose[8] = {1.0f, 1.0f, 1.0f, 0.65f, 1.0f, 1.0f, 1.0f, 1.0f};
     float fistOpen[8] = {0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f};
+    // >= 0: the hand closes at most this far (a part, as fistClose) - a belt potion in it ([hands] belt_hold_close)
+    float fistCap[2] = {-1.0f, -1.0f};
     float staffGrabM = 0.15f;   // the grip takes the staff only with the left hand this close to it (metres)
     float leftStaffAtM = -1.0f;      // >= 0: the left hand takes the shaft at this one place, metres ahead of the right fist (a crossbow); < 0 slides
     float leftStaffRollDeg = 0.0f;   // the left hand on the shaft turned about it (a crossbow's: from below, palm up)
@@ -83,6 +169,57 @@ struct Input {
     bool attacking = false;     // a skill button is down: no grip is taken from the animation then
     float weaponAdj[6] = {};
     char shrinkBone[48] = {};   // [debug] shrink_bone: the hero's bone of this name drawn shrunk to a point - what hangs on it vanishes    // mode 2: the weapon in the hand moved x y z (cm) and turned pitch yaw roll (deg), its own axes
+    // [bow] rig_pose: a bow in hand has its own string, limbs and arrow bones posed by the pull
+    // (SetBowDraw, vr/bow_rig.h) instead of the game's animation; off = the game's animation, always.
+    bool bowRig = false;
+    // [debug] bow_rig_grip: with no SetBowDraw feed, the string hand's squeezed grip is the draw (to try the
+    // posing without the draw detector).
+    bool bowRigGrip = false;
+    // [hands] bow_draw: the posed bow's string place is read (BowString) for the draw's touch point and the debug vectors.
+    bool bowString = false;
+    // [bow] hand_pose: the free hand of a bow is relaxed and hooks on the string while it is drawn, not the game's animation
+    // of it. bowHook: how far the fingers close on the string, 0..1 (the thumb stays loose).
+    bool bowHandPose = false;
+    float bowHook = 0.85f;
+    // [bow] hook_game_pose: with the string taken the Amazon's right hand (the string hand) takes the pose of the game's own bow-draw animation -
+    // fingers hooked, the knuckles open, the thumb turned in (vr/bow_hook.h, measured off the animation) - held as it is whatever the controls
+    // read, instead of the fist table's hook (which looked like a fist). Any other rig keeps the table's hook (bowHook).
+    bool bowHookGame = true;
+    // [bow] hook_curl, hook_thumb_deg (live sliders under hook_game_pose): the pose as it is looked at - the four fingers' bend against the
+    // measured one (1 = as measured), the thumb turned further in (+) or out (-), degrees (vr/bow_hook.h Tune).
+    float bowHookCurl = 1.0f;
+    float bowHookThumbDeg = 0.0f;
+    // [bow] string_anchor: the bow's string is drawn to the first joints of the hooked fingers (index, middle, ring) - where the game's draw
+    // animation has them - not to the controller's grip point in the middle of the palm, a hand's length behind them. bowAnchorCm: moved
+    // from there by this many cm along the fingers, toward the thumb side, out of the palm (live). Eased in and out with the draw
+    // (bowAimBlendMs). Needs hook_game_pose and the Amazon's right hand (the rig the pose was measured on); off = the grip point, as before.
+    bool bowStringAnchor = true;
+    float bowAnchorCm[3] = {0.0f, 0.0f, 0.8f};
+    // [bow] aim_along_hands: while the string is taken, the bow (and its arrow, and the bow hand with it) lies along the line from the
+    // string hand to the bow hand, vr/bow_aim.h: the hand's plan is turned by the turn that takes the bow's axis onto that line.
+    // bowAimBlendMs: the time the turn comes in over and goes out over (take, release, cancel). bowAimRoll: 0 keeps the roll the
+    // controller has, 1 keeps the bow upright. bowAxis: the bow's real axis is wanted for the debug vectors ([debug] bow_vectors),
+    // whether the turn is on or not.
+    bool bowAim = false;
+    float bowAimBlendMs = 120.0f;
+    int bowAimRoll = 0;
+    bool bowAxis = false;
+    // [bow] arrow_rest_x_cm / y / z: the point the nocked arrow passes the bow hand at, FIXED in the bow hand's own frame (vr/bow_aim.h
+    // SolveRest): this far, cm, from the hand's reference point - x along the bow (+ toward the target), y across it (+ toward the
+    // archer's left), z up the limbs - and the arrow (and the bow's turn along the hands) lies on the line from the string hand THROUGH
+    // it. All 0 = through the reference point itself, as it was. bowRest: any of them is not 0, with the rig pose (the arrow is ours).
+    // It comes in and goes out with the draw over bowAimBlendMs. The arrow bone's (and the bow's turn's) pose only.
+    bool bowRest = false;
+    float bowRestCm[3] = {0.0f, 0.0f, 0.0f};
+    // [bow] arrow_rest_clear: where the arrow's line would pass through the bow hand, the wrist or the forearm (the string hand low or far to a
+    // side, the hand turned out) the nock and the arrow are lifted off the arm, up the bow's limb axis, by as little as clears it - at most 8 cm.
+    // Off: the point exactly as the offsets above put it. With bowRest.
+    bool bowRestClear = true;
+    // The hand that takes the string, 0 right 1 left (vrcam: the one opposite the bow's aim hand), for when the draw feed is not
+    // there; -1 = not told. The wrist the game hung the bow on is the last resort for the string hand: a bow with a quiver cannot tell it.
+    // Told while any of the bow's work is on. The bow hand is the other one, which the bow's rig and the aim use when the attach bones
+    // cannot tell (vr/bow_aim.h ChooseBowWrist).
+    int bowStringSide = -1;
 #endif
 };
 
@@ -112,6 +249,30 @@ void ResetGrip();
 // hand frame - metres from the head, x right, y up, z back, head yaw only.
 // False when the arms have not been posed for a quarter of a second.
 bool HeroForearm(int side, float elbow[3], float wrist[3], float across[3]);
+// The palm's middle as last drawn (wrist to middle knuckle, halfway, 3 cm out of the palm), the same frame.
+bool HeroPalm(int side, float palm[3]);
+// [weight] grip_fit, for the debug (vrcam's [debug] phantom_ray): where a fitted hand takes the shaft - the grasp point on its axis - and where its palm's middle really is
+// (after the fit and the arm's reach), both from the eye in the head's turn-only frame, metres (as GrabLine). False when that hand was not fitted in the last 300 ms.
+bool GripMarks(int side, float grasp[3], float palm[3]);
+// [gameplay] shield_smite: the left hand's weapon attach bone (where a shield hangs) as last posed, in the render
+// world: its place, the way its Y axis runs, and where the hero stands (all world units - divide by the units per
+// metre), with the generation of his model. Posed only while WantShield(true) was asked lately; false when it was
+// not posed in the last 100 ms.
+struct ShieldPose { float origin[3]; float axis[3]; float player[3]; uint32_t heroGeneration; };
+void WantShield(bool on);
+bool ShieldAttach(ShieldPose* out);
+// The same point in his model space (as his bones are posed): his model matrix puts it in the world.
+bool HeroPalmModel(int side, float palm[3]);
+// The hero's arm as the hook drew it, in the WORLD (the game's render world, world units; directions unit), made at the very pose from the hero's own model-to-world
+// (his TransformComponent's local matrix read then, as NotePosedWeapon does): the elbow (forearm bone), the wrist (hand bone), the way the palm faces from the forearm and the
+// knuckles' line (`across`), and - with the knuckles found (`hand`) - the hand's own frame: `point` wrist -> middle knuckle, `face` out of the palm (what a belt bottle in the hand
+// is held by). Exactly where the arm is drawn, whatever the IK or the [arms] offsets do; side 0 right, 1 left. False when the arms have not been posed for a quarter of a second,
+// or the hero's transform was not readable.
+// An arm whose world read failed at the last poses is still the last one read, with its age: `ageMs` is how old it is (0xFFFFFFFF: never), the call fails when it is older than `maxAgeMs`.
+struct HeroArm { float elbow[3], wrist[3], across[3], point[3], face[3]; bool hand; };
+bool HeroArmWorld(int side, HeroArm* out, unsigned maxAgeMs = 250, unsigned* ageMs = nullptr);
+// Why the newest pose could not put the arm in the world ("" when it could): the entity tables not found, the transform not read ...
+const char* HeroArmWhy();
 #endif
 // Called by the hook on every pose, before it is used: the camera's yaw and eye
 // point in model space from the hero's model matrix as it is NOW. The 10 ms
@@ -151,6 +312,101 @@ bool GrabLine(float a[3], float b[3]);
 // drawing: its origin from the eye in metres and its three axes, in the head's turn-only
 // frame (x right, y up, z back - as the bridge sends the hands). False when no weapon lately.
 bool GunBone(float origin[3], float axes[3][3]);
+
+// The weapon in hand exactly as the finished pose draws it (the final attach bone, after the hand has been put on the
+// controller), in the game's WORLD units, for melee by touch. origin: the attach bone's place; axis: its +Y, the
+// blade / shaft direction (-Y is the hilt), unit length; hero: the hero model's own origin in the same frame;
+// poseStamp: the hand sample (Input::poseStamp) the pose was made from; worldEpoch and heroGeneration as they
+// were at that pose. Only made while Input::posedWeapon is on; false when no pose of the weapon came in the
+// last 100 ms, or the hero was rebuilt since.
+// blade[side]: the weapon bone of that hand slot AS THE DEBUG'S RED LINE HAS IT - its origin and its three axes in the head's
+// turn-only frame, metres from the eyes (the numbers GunBone() gives, but kept with the pose's stamp): the way to the blade that lies
+// on the drawn weapon (vr/blade_shape.h). Filled for the slot `side` below and, with Input::dualBlades, for the other hand's too.
+struct PosedBlade {
+    bool ok = false;
+    float origin[3]{}, axis[3][3]{};
+};
+struct PosedWeaponPose {
+    float origin[3]{}, axis[3]{}, hero[3]{};
+    uint32_t poseStamp = 0, worldEpoch = 0, heroGeneration = 0;
+    uint32_t weaponType = 0;
+    PosedBlade blade[2];
+    int side = 0;   // the hero's hand slot the bone belongs to (0 right, 1 left)
+};
+bool PosedWeapon(PosedWeaponPose& out);
+#endif
+#if D2RVR_FIRST_PERSON
+// The bow's own rig drawn by the pull ([bow] rig_pose, vr/bow_rig.h). The draw detector feeds this every
+// tick (about 10 ms; a feed older than 150 ms counts as no draw); the string hand and the bow hand are the
+// controllers the arms already follow, so the minimum is drawing (+ stringHand if the bow is not on the left wrist). While drawing - and 0.7 s
+// after - the hero's bow rig is posed by us, never otherwise: no feed, no override.
+struct BowDraw {
+    bool drawing = false;       // the string is nocked and pulled
+    float draw = 0.0f;          // 0..1, how far; used when the hands cannot place the string (a controller lost)
+    bool arrowVisible = true;   // the arrow sits on the string
+    int stringHand = -1;        // the hand that pulls the string, 0 right 1 left (as Input::hand); -1 = the one opposite the bow's wrist
+    // The pull that just ended came to nothing - a cancel: with drawing false, the string goes back to rest over ~0.13 s
+    // (bowrig::kCancelMs), eased, the arrow still on it, and then the game's own animation is left alone. Without it (false),
+    // drawing going false is a shot's release: the string snaps to rest, the arrow is hidden and the rest pose is held for
+    // 0.7 s, so the game's own wind-up, started by the shot, is not played a second time - except that a pull whose largest
+    // `draw` was under 0.25 (bowrig::kShortPull, too short to shoot) is read as a cancel anyway. Hold it true from the cancel
+    // on until the next pull starts (a feed older than 150 ms counts as none).
+    bool cancelled = false;
+    // The feeder may place the string itself: nock and the way the arrow points, in the frame of Input::hand
+    // (metres from the head, x right, y up, z back; direction: the same axes, unit). Off = the controllers.
+    bool anchored = false;
+    float nock[3] = {};
+    float dir[3] = {};
+};
+void SetBowDraw(const BowDraw& d);
+// [bow] hand_pose: the string hand's own trigger and squeeze (0..1), as the controller has them - read by the draw's wire BEFORE the draw
+// takes the control from the layout (a taken control reads as let go in Input::grip). `side` is the hand, 0 right 1 left (as Input::hand).
+// A feed older than 150 ms counts as none, and then the hand follows Input::grip as it always did.
+void SetBowHandControls(int side, float trigger, float squeeze);
+// For vrcam's log: "posed" when the hero's bow was posed within the last second, else why not (a fixed
+// string; it changes only while the string is drawn - nothing is looked at otherwise). It is the HERO's bow that this tells of: the
+// other bow skeletons the game keeps (his other weapon set's, another's) have their own statuses in BowRigWho.
+const char* BowRigStatus();
+// Every bow skeleton posed lately and what the rig did with each: "the hero's bow: long_battle_bow.skeleton, 18 bones (skeleton .., entity ..):
+// posed | other bow skeletons: light_crossbow.skeleton, 15 bones (.., another's, hangs off entity ..): not the hero's". For the log, on change.
+std::string BowRigWho();
+// And for the log: one line for every bow skeleton learned or refused since the last call - which model, which layout
+// (bows are matched by what their bones are: vr/bow_layouts.h), or the bones of one that is not known. Empty when none.
+std::string BowRigTakeNote();
+// Also for the log: how big the game's own pose leaves the bow's arrow bone against its bind pose (lowest and highest
+// seen) - the game shows and hides the arrow, which is part of the bow's mesh, by that size.
+std::string BowRigDiag();
+// [hands] bow_draw: where the posed bow's string rests (the bowString bone of the bow's rig at its bind pose, on the bow as
+// it hangs in the hero's hand now), in the frame of Input::hand - metres from the head, x right, y up, z back, without the ini's
+// hand offset: the frame D2RVR_Shared's hands are in. Read while Input::bowString is on; false when not read within the last
+// 300 ms (no bow, another rig, the hands not placed).
+bool BowString(float out[3]);
+// [bow] aim_along_hands (and [debug] bow_vectors): the bow's own forward axis as the hero's pose has it now - after the turn, if there
+// is one - in the frame of Input::hand (x right, y up, z back, unit), the frame the debug vectors are in. False when not read within
+// 300 ms (no bow, its axes not read, the feature and the debug both off).
+bool BowAxis(float out[3]);
+// How the aim stands, as of the last pose: `blend` how far the turn is in (0..1), `angleDeg` the angle between the bow's forward axis
+// and the line from the string hand to the bow hand now, `rawDeg` the same before the turn (as the controller holds the bow), and
+// `why` what stopped it if nothing turns it. False when [bow] aim_along_hands is off.
+bool BowAimState(float* blend, float* angleDeg, float* rawDeg, const char** why);
+// And which wrist the aim took the bow to be on and how it knew, with the attach bones' sizes ("the left wrist, told by the draw's feed;
+// attach bones R 1.00 L 1.00"). Empty until a pose has been made for it.
+std::string BowAimWho();
+// [bow] arrow_rest_*: the point the arrow rests on, where the aim from the string hand passes the bow hand - fixed in the bow hand's own
+// frame - in the frame of Input::hand (x right, y up, z back, metres from the head, without the ini's hand offset: what D2RVR_Shared's
+// hands are in). False when not made within the last 300 ms (the offsets are 0, no bow, the aim not made). For the draw's aim ([bow]
+// arrow_rest_aims: the shot goes along the line through it, as the arrow lies) and the debug dot.
+bool BowRestPoint(float out[3]);
+// [bow] string_anchor: where the bow's string is held while it is drawn (the fingers' first joints, eased in with the draw) in the same frame as
+// BowRestPoint. False when it is not held there (off, not drawn, not the Amazon's right hand, nothing made in the last 300 ms). For the draw's aim
+// line under arrow_rest_aims: it starts where the arrow does, so the shot goes where the arrow points.
+bool StringAnchorHands(float out[3]);
+// For vrcam's log: what the string hand's pose did last ([bow] hand_pose) - "posed - the right hand, told by the draw's feed", or
+// why it did not. Changes only when that does.
+std::string BowHandPoseDiag();
+// For vrcam's log: a held bow whose skeleton is not the hunter's 13-bone rig (its path, bone count and bone names), empty until one
+// is met. Read only while Input::bowString is on.
+std::string BowProbe();
 #endif
 // Where the game's own pose points the hero, in model space (deg, atan2 of each bone's z row):
 // root, anim, pelvis - for the facing diagnostics in vrcam's log.
@@ -169,6 +425,9 @@ void TrackHero(bool on);
 // Resolved now (cheap: a few reads; a new SkeletonInstance costs one pass over the storage).
 // False with *why set when the chain does not read.
 bool HeroTransform(HeroXform* out, const char** why = nullptr);
+// Any entity's TransformComponent, the same layout (engine items, vrcam's engitem). The storage's
+// array moves when it grows: use the pointer at once, on the registry's own thread.
+bool EntityTransform(uint32_t entity, uintptr_t* comp);
 // Bumped whenever the hero's SkeletonInstance changes: a weapon swap rebuilds his model.
 uint32_t HeroGen();
 void** OrigSlot();

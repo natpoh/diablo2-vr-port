@@ -127,4 +127,33 @@ inline constexpr uint8_t RecalcCheckBytes[] { 0x80, 0x3D, 0xBC, 0x76, 0xE0, 0x02
 inline constexpr Site    ModelRecalcCheck { 0x6AF5B1, RecalcCheckBytes, sizeof(RecalcCheckBytes) };
 inline constexpr uint64_t ModelRecalcEveryFrame = 0x34B6C74;
 
+// ---- Memory pools (Renderer Pool, Entity System Pool) ------------------------
+// Both are TlsfAllocator objects: a fixed buffer handed to a TLSF heap, every
+// method holding the object's SRWLOCK around its tlsf call.
+inline constexpr uint64_t RendererPool  = 0x2810FF0;   // TlsfAllocator, 12 MB (made by 0xF6EFE0)
+inline constexpr uint64_t EntityPool    = 0x2677438;   // TlsfAllocator, 70 MB (getter 0x913F60, buffer by 0xD714E0)
+inline constexpr uint64_t TlsfVtable    = 0x1D6D770;   // TlsfAllocator's vtable
+inline constexpr uint64_t TlsfAllocFree = 0x82DC60;    // TlsfAllocator::Free(void*), vtable slot 4
+inline constexpr uint64_t TlsfFree      = 0x1215C30;   // tlsf_free(tlsf_t, void*)
+namespace tlsfalloc {
+inline constexpr size_t Vtable     = 0x00;
+inline constexpr size_t Buffer     = 0x10;   // the pool's memory; the TLSF control sits at its start
+inline constexpr size_t Size       = 0x18;   // its size in bytes
+inline constexpr size_t Tlsf       = 0x20;   // tlsf_t, == Buffer
+inline constexpr size_t Lock       = 0x28;   // SRWLOCK
+inline constexpr size_t FreeSlot   = 4;      // vtable index of Free
+inline constexpr size_t FreeCallAt = 0x2D;   // Free's `call tlsf_free` (inside its signature)
+}   // namespace tlsfalloc
+namespace tlsf {
+inline constexpr uint64_t Control      = 0x1B90;      // control structure, then the first pool (tlsf_get_pool)
+inline constexpr uint64_t PoolOverhead = 0x10;        // a pool loses two size words: its first block's and the end marker's
+inline constexpr uint64_t MinBlock     = 0x18;
+inline constexpr uint64_t MaxBlock     = 1ull << 34;  // add_pool's limit
+inline constexpr uint64_t FreeBit      = 1;           // in a block's size word
+inline constexpr uint64_t PrevFreeBit  = 2;
+// Block header {prev_phys, size word}; payload at +0x10; the next block at block + 8 + size.
+inline constexpr size_t   SizeWord     = 0x08;
+inline constexpr size_t   Payload      = 0x10;
+}   // namespace tlsf
+
 }   // namespace d2rcam::layout

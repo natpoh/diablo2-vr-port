@@ -41,6 +41,9 @@ void CommandsHeld(uint64_t out[2], Presses& p);
 // GameState from the game's state, whenever it is published (at least 5 times a
 // second while the game runs): BodyWalk takes 3 s of silence for the game gone.
 void PublishState(const D2RVR_State& s);
+// [openxr] menu_3d on FlatVR (vrcam, from its timer): a menu goes to FlatVR as a panel of its own, so
+// FlatVR's screen stays where it is and Head Lock on - the world in stereo round it - as with no menu.
+void SetMenuPanel(bool on);
 
 // Requests: FlatVR started or stopped, its 3D source (BW_LINK_STEREO_*), and who
 // holds the headset (BodyWalk's Mapping follows: the game's own frames, or FlatVR's).
@@ -56,5 +59,9 @@ bool HostAlive(uint32_t* caps = nullptr);
 void PublishXr(const D2RVR_XrInput& in, bool ended);
 // BodyWalk's VR gesture zones to draw now (up to max); 0 when none came for half a second.
 uint32_t VrZones(BW_LinkVrZone* out, uint32_t max);
+// BodyWalk's gesture runes to draw now (up to max): the pictures to hang and the hand's trails (BW_LinkVrRune, the shared block's
+// own layout; vr/rune_geom.h reads it). Nothing outside VR first person (F4), with the plugin as the input (direct_input), when the
+// block is not BodyWalk's version 1, holds none or has not been written for half a second.
+uint32_t VrRunes(BW_LinkVrRune* out, uint32_t max);
 
 }  // namespace link
