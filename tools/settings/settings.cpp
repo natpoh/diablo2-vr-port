@@ -47,6 +47,7 @@
 #include "game_sigs.h"       // the game addresses the mod looks for (the Status tab)
 #include "d2r_vr_version.h"  // D2RVR_VERSION: vrcam's g_info_version, made by tools/settings/version.cmake
 #include "render_size.h"     // [render] vr_resolution_px / vr_resolution: the VR render size, read the way the plugin reads it
+#include "window_json.h"     // the game's windowed size in Settings.json and what each platform does to it (the plugin's policy, tested)
 
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "shell32.lib")
@@ -614,7 +615,8 @@ std::vector<Item> g_items = {
            L"(left trigger held: the second row), the right stick click swaps weapons, the left stick click shows items (Alt) and, as a quick click, the map, "
            L"the menu button opens the inventory; in a menu the controllers are the game's own gamepad (A B X Y, the grips "
            L"are the bumpers) and the laser works as before. Change any of it in d2r_vr.ini, section [direct]. "
-           L"Off: BodyWalk's controls, as before. F4 only: in F1, F2, F3 and the flat modes BodyWalk's controls are the controls, as if this were off."),
+           L"Off: BodyWalk's controls, as before. F4 only: in F1, F2, F3 and the flat modes BodyWalk's controls are the controls, as if this were off - "
+           L"except the left stick's walk in F1-F3 (the box \"Walk with the left stick in F1, F2, F3 too\" below)."),
     Needs(L"openxr", L"direct_input", 1, Toggle(L"direct", L"hold_enabled", L"Long press of a stick click: right = skill panel, left = inventory", 1,
            L"With the controls above: hold the right stick's click for half a second and the skill panel opens (the wheel, when it is "
            L"set to open that way); hold the left stick's click and the inventory opens - or closes, the button is a toggle. A short "
@@ -625,6 +627,22 @@ std::vector<Item> g_items = {
            L"With the controls above: a short click of the left thumbstick shows or hides the map (the same as the left grip with "
            L"the menu button). Held, the left click is still Alt (show items); held for half a second it is the inventory (see "
            L"above). Off: the left click is Alt only, as before. F4 only, like the rest of the controls. Live.")),
+    Needs(L"openxr", L"direct_input", 1, Toggle(L"direct", L"walk_flat_views", L"Walk with the left stick in F1, F2, F3 too (movement only)", 1,
+           L"F1-F3: movement only. With the controls above, the left thumbstick also walks the hero in the other VR views - from above (F1), "
+           L"third person (F2) and the table (F3) - when BodyWalk is not running. Nothing else of the controls acts there: no attack, "
+           L"button, gesture, panel or vibration (those stay F4 only). The walk is the game's own: the same walking code, dead zone and "
+           L"stop BodyWalk's stick uses, the stick turned into the game's frame the way BodyWalk's stick is in that view (F1 from above: "
+           L"forward is up on the screen). Panels and menus keep the stick for themselves. BodyWalk running (its Game Link alive): nothing "
+           L"changes, its gamepad is the gamepad whole, as before. Off: F1-F3 have no walking without BodyWalk, as before. "
+           L"The log (d2r-vr-vrcam.log) says \"walking in VR F1-F3 - ...\" and why when it does not walk. Live.")),
+    Needs(L"openxr", L"direct_input", 1, Toggle(L"direct", L"belt_flick_flat_views", L"Belt potions in F1, F2, F3: left trigger + a flick of a stick", 1,
+           L"F1-F3: movement and potions only. With the controls above, in the other VR views - from above (F1), third person (F2) and the table (F3) - "
+           L"hold the LEFT TRIGGER and flick a thumbstick (either one): LEFT drinks belt column 1, UP column 2, RIGHT column 3, DOWN column 4 - the game's "
+           L"own belt keys 1-4, the same press the hand makes when it drinks a potion from the belt. One flick, one potion: bring the stick back to the "
+           L"middle before the next one; a stick that was already pushed when you pressed the trigger does nothing until it has been to the middle. "
+           L"While the trigger is held the left stick does not walk (the hero stops, so a flick never walks him). The trigger alone does nothing. "
+           L"Works only without BodyWalk (BodyWalk running: its own buttons, nothing changes). First person (F4) is not touched: there the trigger "
+           L"and the sticks are the layout's. Off: no potions from the sticks in F1-F3. The log says \"belt flick - ...\" for each potion and why a flick was not taken. Live.")),
     Needs(L"openxr", L"direct_input", 1, Toggle(L"openxr", L"direct_bodywalk_walk", L"BodyWalk's walking still walks the hero (with the controllers' stick)", 1,
            L"With the controls above: BodyWalk walks by the motion of your body - steps in place, an arm swing, a lean - and turns it into a "
            L"walking stick. On: BodyWalk is still given your head and hands (never a button or a stick of the controllers: it presses nothing "
@@ -667,9 +685,11 @@ std::vector<Item> g_items = {
            L"picture is sharper; above and below it the headset shows black (nothing drawn there, it costs nothing). "
            L"Off: the picture stretched over the headset's whole view - taller, softer up and down."),
     Toggle(L"@window", L"square", L"Square game window (no black bars)", 0,
-           L"Writes the game's own Settings.json: a window, as wide as it is tall (the size below). The headset's eye is about "
-           L"square, so the whole picture fills it - no black bars with the box above ticked. vrcam keeps the window "
-           L"square while the game runs (the game writes a cut size back into its file). Off: the size it had before."),
+           L"In VR (native OpenXR or FlatVR): writes the game's own Settings.json, a window, as wide as it is tall (the size below). "
+           L"The headset's eye is about square, so the whole picture fills it - no black bars with the box above ticked. vrcam keeps "
+           L"the window square while the game runs (the game writes a cut size back into its file). The window you had is kept "
+           L"first; in flat mode (Home > How you play) there is no square: the game uses the window and resolution you set in its "
+           L"own options, and your window comes back at once. Off: the size it had before."),
     Slider(L"openxr", L"window_size", L"Square window: size, px", 640.0f, 4000.0f, 8.0f, 2000.0f,
            L"The square window's side, as far as a monitor holds it (past a monitor's edge the game itself closes): about 2060 "
            L"on a 4K screen. Bigger: make a virtual monitor that size in BodyWalk (Virtual Monitor, no need to make it primary) - "
@@ -903,7 +923,7 @@ std::vector<Item> g_items = {
            L"Off: no panel and no chord. F4 only."),
     // [screen] menu_distance_m: vrcam asks FlatVR for it through Game Link (GameState, host API 6).
     Group(L"Belt potions"),
-    Toggle(L"hands", L"belt_models", L"Potions on the belt, the game's own models", 0,
+    Toggle(L"hands", L"belt_models", L"Potions on the belt, the game's own models", 1,
            L"First person (F4): the potions in the belt's bottom row hang on the hero's hips as the game's own 3D models - "
            L"lit, shaded and fogged like everything else (the game draws them). Off: as before."),
     Needs(L"hands", L"belt_models", 1, Slider(L"hands", L"belt_models_ahead", L"Belt potions: distance from the body", 0.05f, 0.4f, 0.01f, 0.13f,
@@ -915,7 +935,7 @@ std::vector<Item> g_items = {
            L"How far round the body the four spread: degrees on the arc from one column to the next. Live.")),
     Needs(L"hands", L"belt_models", 1, Slider(L"hands", L"belt_models_scale", L"Belt potions: size", 0.2f, 1.5f, 0.02f, 0.56f,
            L"1 = the size the game gives them on the ground. Live.")),
-    Needs(L"hands", L"belt_models", 1, Toggle(L"hands", L"belt_grab", L"Belt potions: take them in the hand and drink", 0,
+    Needs(L"hands", L"belt_models", 1, Toggle(L"hands", L"belt_grab", L"Belt potions: take them in the hand and drink", 1,
            L"A hand at a bottle lights it (a see-through ball, the bottle a little larger); the grip takes it into the hero's hand. "
            L"Brought to the mouth and tipped over it is drunk (the game's own belt key 1-4); let go anywhere else it goes back. "
            L"Switch BodyWalk's belt zones off with it. Live.")),
@@ -1092,7 +1112,7 @@ std::vector<Item> g_items = {
     Toggle(L"hud", L"colors_as_monitor", L"Colours as on the monitor", 1,
            L"Flip it if the toolbar and the map come out too dark or washed out in the headset."),
     Group(L"Toolbar in the headset"),
-    Choice(L"hud", L"bar_place", L"Where", 2, {L"Not shown", L"Left forearm", L"Right forearm", L"Low in front", L"Chest, low", L"Wrists: life left, mana right"},
+    Choice(L"hud", L"bar_place", L"Where", 5, {L"Not shown", L"Left forearm", L"Right forearm", L"Low in front", L"Chest, low", L"Wrists: life left, mana right"},
            L"Where the toolbar taken out of the picture hangs (Hide the game's interface: The toolbar; FlatVR hangs it, native OpenXR hangs it itself). "
            L"On a forearm it lies along the inside of the arm: turn the palm up to read it. \"Wrists\": not the toolbar but only your life and "
            L"mana, as two balls on the back of the wrists like medallions - life on the left, mana on the right (first person, F4; they only read your "
@@ -1276,10 +1296,14 @@ std::vector<Item> g_items = {
            L"was see-through; from above it hid the hero."),
     Toggle(L"render", L"light_bounds_fix", L"Fix the game's lighting at a square or wide window", 1,
            L"The game cuts the picture into 32 x 20 tiles and finds each tile's depth range for its lights with a shader that "
-           L"is right only at a 16:10 window. At a square or wide one (the VR window) it misses rows: lights vanish in hard "
+           L"is right only at a 16:10 window. At a square or wide one (the VR window, 16:9) it misses rows: lights vanish in hard "
            L"rectangles and a roof's shading flickers as the head moves. On: our own shader does that one job right while VR "
            L"renders (at 16:10 the numbers are the same as the game's). Off at once; ticked on again it takes effect at the "
            L"next start of the game. Off: the game's own."),
+    Needs(L"render", L"light_bounds_fix", 1, Toggle(L"render", L"light_bounds_flat", L"... in flat mode too", 1,
+           L"The same fix in flat mode (a monitor or a window, native OpenXR's flat picture too): the game's shader is wrong at "
+           L"16:9 and at a square window as well, not only in VR. Follows the mode at once. Off: flat mode keeps the game's own "
+           L"shader, as before.")),
     Group(L"Render distance"),
     Slider(L"render", L"rings", L"Room rings around the hero", 1, 8, 1, 4, L"Extra room rings around the hero. With fog, 4-6 is enough."),
     Slider(L"render", L"model_radius", L"Model visibility radius", 150, 1000, 50, 200, L"The game's own is 150."),
@@ -1695,6 +1719,17 @@ std::vector<Item> g_items = {
     Needs(L"gameplay", L"melee_direct", 1, Slider(L"gameplay", L"melee_direct_min_ms", L"Direct hit: min gap between hits, ms", 0, 1500, 50, 0,
            L"0: no limit beyond \"a monster is hit once per stroke\". More: after a direct hit, the touches within this time do nothing - "
            L"to keep the rate near the game's own if hits come too fast. Live.")),
+    Toggle(L"hands", L"quick_strike", L"Quick strike: the blow lands earlier in the attack animation (changes the game's timing)", 0,
+           L"A CHANGE OF THE GAME'S TIMING, off by default. The game's melee blow lands at one frame of the hero's attack animation - for a Paladin with a one-hand weapon frame 7 or 8, "
+           L"0.28 - 0.32 s after the animation starts, in your log 317 - 339 ms after the touch pressed the attack (the Direct hit lands in 15 - 50 ms). On: that frame is moved to the "
+           L"frame below in the game's animation table, so the blow - its hit roll, damage and the monster's reaction - comes up to ~0.3 s sooner INSIDE THE SAME ATTACK. The "
+           L"animation's length and the attack rate stay (the next attack can still start only when the animation ends), mana and wear are the game's but happen earlier, and "
+           L"a monster's hit in the first ~0.3 s no longer cancels your blow. It applies to every melee attack of your class - the plain attack and the skills that play it (Zeal, "
+           L"Bash, Berserk, Sacrifice...), the Paladin's Smite too - in VR first person only and offline only (this game's own tables); put back exactly when you switch it "
+           L"off, change view or leave the game. Never the bow's, the crossbow's or a throw's animation. Live. [debug] bow_latency shows the animation row on the press-to-hit line."),
+    Needs(L"hands", L"quick_strike", 1, Slider(L"hands", L"quick_strike_frame", L"Quick strike: the frame the blow lands at", 1, 12, 1, 1,
+           L"The animation frame (a frame is 0.04 s) the blow lands at instead of the original (6 to 14 for the classes' melee attacks). 1 is the earliest the game can act: frame 0 "
+           L"is never looked at when an animation starts. A value at or past the original changes nothing. Live.")),
     Needs(L"openxr", L"on", 1, Toggle(L"gameplay", L"shield_smite", L"Shield bash casts Smite", 0,
            L"Paladin, native OpenXR, first person (F4): with Smite on one of the pad's ten skill slots and a shield on your left "
            L"arm, a hard swing or thrust of the shield through a monster casts one Smite at it - the game's own: the slot's "
@@ -1909,6 +1944,20 @@ std::vector<Item> g_items = {
     NeedsEither(L"hands", L"throw_gesture", L"throw_by_grip", 1, Toggle(L"hands", L"throw_stand_still", L"Throws are pressed with the game's Stand Still", 1,
            L"Like every attack of ours in first person, a throw's press holds the game's Stand Still (Shift), so it can never walk the hero. A throw is a cast at "
            L"a spot and does not walk anyway: unticked, it is pressed without Stand Still. Live.")),
+    Toggle(L"hands", L"quick_throw", L"Quick throw: the missile leaves earlier in the throw animation (changes the game's timing)", 0,
+           L"A CHANGE OF THE GAME'S TIMING, off by default. The game makes a throw's missile - a potion, a javelin, a knife, an axe - at one frame of its throw animation "
+           L"(for an Amazon frame 9 of 16: 0.36 s after the animation starts), so after your own wind-up swing the hero winds up AGAIN before it flies. On: that frame is "
+           L"moved earlier in the game's animation table, so the missile is created ~0.3 s sooner INSIDE THE SAME THROW: the animation's length and the attack rate stay, "
+           L"the stack, mana and damage are the game's but happen earlier, and a monster's hit in those first ~0.3 s no longer cancels the throw (it has left already). "
+           L"It applies to every throw of your class whatever you hold, in VR first person only, and only offline (this game's own tables); it is put back exactly when you "
+           L"switch it off, change view, or leave the game. Never the bow's or a melee attack's animation. Live. [debug] bow_latency shows the missile's create time."),
+    Needs(L"hands", L"quick_throw", 1, Slider(L"hands", L"quick_throw_frame", L"Quick throw: the frame the missile is made at", 1, 12, 1, 1,
+           L"The animation frame (a frame is 0.04 s) the missile is made at instead of the original (7 to 11 for the classes' throws). 1 is the earliest the game can act: "
+           L"frame 0 is never looked at when an animation starts, so it would throw nothing. A value at or past the original changes nothing. Live.")),
+    Needs(L"hands", L"quick_throw", 1, Toggle(L"hands", L"quick_throw_potions", L"Quick throw: throwing potions too", 0,
+           L"Off (the default): a throwing POTION keeps the game's own timing - the quick throw is put back while a potion is in your hand and back on with a javelin, knife or axe. "
+           L"A potion's missile is made at the throw's action frame and flies 25 cells a second, so its explosion comes about when your potion (the weapon-weight model's) lands; "
+           L"cut to the start, it comes ~0.3 s BEFORE your potion lands. On: potions are cut like the rest. Live.")),
     Group(L"Crossbow"),
     Toggle(L"bow", L"xbow_two_hands", L"Crossbow held like the staff", 1,
            L"The right hand holds the crossbow on the stock and aims it alone; the left takes it with the grip (ahead of the right) "
@@ -2224,7 +2273,7 @@ std::vector<Item> g_items = {
     Needs(L"bow", L"mode", 4, Toggle(L"hands", L"spell_aim", L"Disable auto-target for spells", 1,
            L"On: a spell that flies - Fire Bolt, Charged Bolt, Teeth, Frozen Orb, Bone Spear... (as the game's own skill table says) - "
            L"aims along the hand as every attack does here, and the game's auto-target and aim assist are off for that cast: it no "
-           L"longer turns to a monster. "
+           L"longer turns to a monster. F4 only: in F1, F2, F3 and the flat modes the game's auto-target works as always. "
            L"Spells placed on the ground (Blizzard, Fissure, Meteor), summons, curses and auras keep the game's targeting. "
            L"Off: casting as before, with the game's auto-target. Below, a tick keeps the game's auto-target for that one spell - "
            L"one that seeks its target itself, as Chain Lightning.")),
@@ -2264,11 +2313,11 @@ std::vector<Item> g_items = {
            L"bow, yellow = free), the fixed point 16 cm behind the grip (small cyan), the bow's own string (small magenta), the pull "
            L"line (orange) and the draw's aim (blue); and a line of numbers in the log five times a second. Needs the shader "
            L"D2R_DepthFog.fx of the same build. Live."),
-    Toggle(L"debug", L"bow_latency", L"Log where the time goes between a bow's release and its arrow", 0,
-           L"Native OpenXR, \"Bow: draw the string with both hands\" on. One line in the log for every bow shot: the milliseconds after the release to the "
-           L"draw's press, the pad's A reaching the game, the hero's attack mode, the body's turn toward the aim, the game's own arrow being created "
-           L"(read only: the game's missile create is watched, nothing is changed) and the client showing a missile. Nothing is drawn and nothing is "
-           L"changed in the game. Live."),
+    Toggle(L"debug", L"bow_latency", L"Log where the time goes between a release and its arrow / thrown missile", 0,
+           L"Native OpenXR, \"Bow: draw the string with both hands\" or a throw gesture on. One line in the log for every bow shot and every throw: the milliseconds "
+           L"after the release to the gesture's press, the pad's button reaching the game, the hero's attack or throw mode, the body's turn toward the aim, the "
+           L"animation row the action runs on (name, frames, the action frame), the game's own missile being created (read only: the game's missile create is "
+           L"watched, nothing is changed) and the client showing a missile. Nothing is drawn and nothing is changed in the game. Live."),
     Toggle(L"debug", L"melee_boxes", L"Draw the capsules of Hit by touch", 0,
            L"First person (F4) with \"Hit by touch\" on: the blade's capsule (cyan) and the capsule of every monster the touch looks at "
            L"(yellow; pale where the game's own checks refuse it - not hostile, or a wall between), drawn through everything, so they can be "
@@ -2379,6 +2428,9 @@ int S(float v) { return (int)std::lround(v * g_scale); }
 // the change shows on the next start, and the game must be closed when it is
 // written or it puts its own value back on exit.
 std::wstring GameSettingsPath() {
+    // (for tests: a Settings.json of their own, so a test never touches the player's file)
+    wchar_t over[MAX_PATH];
+    if (const DWORD n = GetEnvironmentVariableW(L"D2RVR_GAME_SETTINGS_JSON", over, MAX_PATH); n > 0 && n < MAX_PATH) return over;
     PWSTR dir = nullptr;
     std::wstring p;
     if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_SavedGames, 0, nullptr, &dir))) p = std::wstring(dir) + L"\\Diablo II Resurrected\\Settings.json";
@@ -2410,26 +2462,29 @@ bool ReadGameValue(const Item& it, float* v) {
 
 // The game's windowed size in its Settings.json: "Window Mode" (0 = a window) and
 // "Screen Resolution (Windowed)" "WxH" (D2R VR Settings > Stereo > Square game window).
+// (the file's two keys are read and spliced by shared/window_json.h, which vrcam uses at its start and which has the tests)
 bool ReadGameWindow(int* mode, int* w, int* h) {
     std::string text;
     if (!ReadFileText(GameSettingsPath(), &text)) return false;
-    std::smatch m;
-    *mode = std::regex_search(text, m, std::regex("\"Window Mode\"\\s*:\\s*(-?[0-9]+)")) ? std::stoi(m[1].str()) : -1;
-    if (!std::regex_search(text, m, std::regex("\"Screen Resolution \\(Windowed\\)\"\\s*:\\s*\"([0-9]+)x([0-9]+)\""))) return false;
-    *w = std::stoi(m[1].str());
-    *h = std::stoi(m[2].str());
+    const winjson::Windowed r = winjson::Read(text);
+    *mode = r.mode;
+    if (!r.ok) return false;
+    *w = r.w;
+    *h = r.h;
     return true;
 }
-bool WriteGameWindow(int w, int h) {
+// The windowed size, and "Window Mode" set to `mode` (0 = a window: the square wants one; -1 = left as it is).
+// A read-only Settings.json (players were told to make it so for the window size) has the flag taken off first.
+bool WriteGameWindow(int w, int h, int mode = 0) {
     const std::wstring path = GameSettingsPath();
     std::string text;
     if (!ReadFileText(path, &text)) return false;
-    std::smatch m;
-    if (!std::regex_search(text, m, std::regex("(\"Screen Resolution \\(Windowed\\)\"\\s*:\\s*\")([0-9]+x[0-9]+)(\")"))) return false;
-    std::string out = m.prefix().str() + m[1].str() + std::to_string(w) + "x" + std::to_string(h) + m[3].str() + m.suffix().str();
-    if (std::regex_search(out, m, std::regex("(\"Window Mode\"\\s*:\\s*)(-?[0-9]+)")))
-        out = m.prefix().str() + m[1].str() + "0" + m.suffix().str();
+    bool ok = false;
+    const std::string out = winjson::With(text, w, h, mode, &ok);
+    if (!ok) return false;
     if (out == text) return true;
+    const DWORD attr = GetFileAttributesW(path.c_str());
+    if (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_READONLY)) SetFileAttributesW(path.c_str(), attr & ~FILE_ATTRIBUTE_READONLY);
     std::ofstream f(path, std::ios::binary | std::ios::trunc);
     f << out;
     return (bool)f;
@@ -2685,6 +2740,7 @@ bool BodyWalkTakesGameHeadset() {
     return !exe.empty() && ExeVersion(exe) >= 1078;
 }
 // False: not written (native OpenXR without a BodyWalk for it).
+void ApplyWindowForPlatform();   // (the game's window: VR has the square, flat mode the player's own - below)
 bool WriteStereo3D(float item) {
     static const float kModeOfItem[3] = {4.0f, 0.0f, 2.0f};   // the list's item -> the mode below (native, FlatVR stereo, FlatVR 3D depth)
     const float v = kModeOfItem[std::clamp((int)std::lround(item), 0, 2)];
@@ -2731,6 +2787,11 @@ float ReadSquareWindow() {
     return GetPrivateProfileIntW(L"openxr", L"square_window", 0, g_ini) != 0 ? 1.0f : 0.0f;
 }
 void WriteSquareWindow(bool on) {
+    if (g_platform != 1) {   // flat mode has no square window: the box is only remembered, the game's window stays the player's own
+        WritePrivateProfileStringW(L"openxr", L"square_window", on ? L"1" : L"0", g_ini);
+        ApplyWindowForPlatform();
+        return;
+    }
     int mode = -1, w = 0, h = 0;
     if (!ReadGameWindow(&mode, &w, &h)) {
         // Kept all the same: vrcam makes the window square in a game from our ini (BigWindowTick). It was
@@ -2746,10 +2807,12 @@ void WriteSquareWindow(bool on) {
     const bool running = ProcessRunning(L"D2RLoader.exe") || ProcessRunning(L"D2R.exe");
     int side = 0;
     if (on) {
-        if (w != h) {   // the size it had, for "off"
+        if (w != h) {   // the size it had, and its mode, for "off" and for flat mode (ApplyWindowForPlatform)
             wchar_t b[32];
             swprintf_s(b, L"%dx%d", w, h);
             WritePrivateProfileStringW(L"openxr", L"window_before", b, g_ini);
+            swprintf_s(b, L"%d", mode);
+            WritePrivateProfileStringW(L"openxr", L"window_mode_before", b, g_ini);
         }
         side = std::clamp((int)GetPrivateProfileIntW(L"openxr", L"window_size", 2000, g_ini), 640, 4000);
         side -= side % 8;
@@ -2762,12 +2825,59 @@ void WriteSquareWindow(bool on) {
         GetPrivateProfileStringW(L"openxr", L"window_before", L"", b, 32, g_ini);
         int bw = 0, bh = 0;
         if (swscanf_s(b, L"%dx%d", &bw, &bh) != 2 || bw < 320 || bh < 200 || bw == bh) { bw = 1920; bh = 1080; }
-        if (!WriteGameWindow(bw, bh)) { SetStatus(L"square_window", 1, L"The game's Settings.json could not be written"); return; }
+        const int modeBefore = (int)GetPrivateProfileIntW(L"openxr", L"window_mode_before", -1, g_ini);
+        if (!WriteGameWindow(bw, bh, modeBefore >= 0 ? modeBefore : 0)) { SetStatus(L"square_window", 1, L"The game's Settings.json could not be written"); return; }
     }
     WritePrivateProfileStringW(L"openxr", L"square_window", on ? L"1" : L"0", g_ini);   // vrcam keeps the window to it
     wchar_t msg[256];
     if (on) swprintf_s(msg, L"The game window: %d x %d%s", side, side, running ? L" - set now by vrcam in native OpenXR" : L" from the next start");
     else swprintf_s(msg, L"The game window back to its own size%s", running ? L" from the next start (close the game first: it writes its size back when it quits)" : L" from the next start");
+    SetStatus(L"square_window", running ? 2 : 0, msg);
+}
+
+// The game's window for the platform now chosen (Home > How you play): at once on a switch of it, and on START (LaunchGame). The plugin
+// does the same at its own start (vrcam's ReconcileGameWindow) - that also covers a game started some other way, and the size the game
+// writes back at its quit. VR (native OpenXR and FlatVR alike): with the box ticked, the square for the next start. FLAT has no square
+// window and uses the window the PLAYER set in the game: nothing is chosen or written for it but the player's own window put back
+// where VR's square was (kept in [openxr] window_before and window_mode_before before the square was written; none kept: nothing is
+// written).
+void ApplyWindowForPlatform() {
+    if (g_platform == 1) {
+        if (ReadSquareWindow() != 0.0f) WriteSquareWindow(true);
+        return;
+    }
+    int mode = -1, w = 0, h = 0;
+    if (!ReadGameWindow(&mode, &w, &h)) return;
+    winjson::Windowed now;
+    now.ok = true;
+    now.mode = mode;
+    now.w = w;
+    now.h = h;
+    winjson::Own own;
+    {
+        wchar_t b[32] = L"";
+        GetPrivateProfileStringW(L"openxr", L"window_before", L"", b, 32, g_ini);
+        swscanf_s(b, L"%dx%d", &own.w, &own.h);
+        own.mode = (int)GetPrivateProfileIntW(L"openxr", L"window_mode_before", -1, g_ini);
+    }
+    const winjson::Plan plan = winjson::ForPlatform(false, ReadSquareWindow() != 0.0f, now, own);
+    if (plan.saveOwn && (plan.own.w != own.w || plan.own.h != own.h || plan.own.mode != own.mode)) {   // the player's own window, as it is now
+        wchar_t b[32];
+        swprintf_s(b, L"%dx%d", plan.own.w, plan.own.h);
+        WritePrivateProfileStringW(L"openxr", L"window_before", b, g_ini);
+        swprintf_s(b, L"%d", plan.own.mode);
+        WritePrivateProfileStringW(L"openxr", L"window_mode_before", b, g_ini);
+    }
+    if (plan.unknownOwn) {
+        SetStatus(L"square_window", 2, L"Flat mode: the game's window is a square (VR's) and no window of yours was kept: the game uses it - set the window you want in its Options > Video");
+        return;
+    }
+    if (!plan.write) return;
+    if (!WriteGameWindow(plan.w, plan.h, plan.mode)) { SetStatus(L"square_window", 1, L"The game's Settings.json could not be written"); return; }
+    const bool running = ProcessRunning(L"D2RLoader.exe") || ProcessRunning(L"D2R.exe");
+    wchar_t msg[256];
+    swprintf_s(msg, L"Flat mode: the game window back to your own, %d x %d%s", plan.w, plan.h,
+               running ? L" from the next start (the game writes its window back when it quits - the plugin sets it right at the next start)" : L" from the next start");
     SetStatus(L"square_window", running ? 2 : 0, msg);
 }
 
@@ -3392,6 +3502,7 @@ void FollowWeapon() {
 // The Home page.
 
 void PlatformChanged() {
+    ApplyWindowForPlatform();   // the right window for the next start: flat gets its own back, VR its square (if ticked)
     RebuildTabs();
     g_scrollY = 0;
     LayoutPage();
@@ -3680,6 +3791,7 @@ ULONGLONG g_flatVrStartBy = 0;
 // nobody should have to know to start it first (2026-10-10) - and FlatVR once Game Link is
 // up, unless the game holds the headset itself (native OpenXR: it stops FlatVR anyway).
 void LaunchGame() {
+    ApplyWindowForPlatform();   // START in flat mode never meets VR's square (and in VR the square, if ticked)
     const std::wstring game = GameFolder();
     const std::wstring exe = game + L"D2RLoader.exe";
     ShellExecuteW(g_main, L"open", exe.c_str(), nullptr, game.c_str(), SW_SHOWNORMAL);

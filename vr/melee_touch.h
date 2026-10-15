@@ -65,6 +65,11 @@ using HoldOffFn = void (*)(uint64_t untilTickMs);
 // gripHeld: throwwire::GripHeld - the right grip squeezed, as the gesture reads the controller (the shared block's grip reads 0 while the gesture owns it).
 void SetThrowLink(GripIsThrowsFn gripIsThrows, GripHeldFn gripHeld, LastThrowFn lastThrowTickMs, HoldOffFn holdOff);
 
+// [debug] bow_latency: a text about the hero's animation row (the one his unit points at: name, frames, the action frame) for the press->hit line, written into out; empty when it is not
+// wanted or not readable. Given by vrcam (any thread, read only).
+using AnimNoteFn = size_t (*)(char* out, size_t n);
+void SetAnimNote(AnimNoteFn fn);
+
 // vrcam's FreshHands, on the skeleton hook's thread, on every pose: the hand sample of this pose (the shared block's
 // stamp and head / hand data), and the world epoch (vrcam's g_gen).
 void NoteHands(const D2RVR_Shared* sh, uint32_t epoch);

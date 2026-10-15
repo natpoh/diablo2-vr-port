@@ -76,6 +76,14 @@ tile's block *height*: right only where tiles are square (16:10). At a square wi
 as wide and its lower rows are never read; at a wide one the walk runs past the tile. The lights binned against a
 wrong range vanish in hard rectangles (a roof's shading flickering as the head moves).
 
+It is not a VR matter: any size that is not 16:10 has it. 16:9 (a monitor: tiles 60 x 54 px at 1920x1080) gets a mild
+form - the walk runs a few rows past the tile and skips some blocks inside it (about 9 % of the tiles of a worst-case test
+picture); a square window gets the full one (60 x 96 px at 1920x1920: 581 of 640 tiles wrong in the same picture). So
+`[render] light_bounds_flat` (on) binds the replacement in flat mode ([mode] platform=0) too. What the game draws at in
+flat mode: the window's own size, and with native OpenXR on and a render size set ([render] vr_resolution_px) the
+size asked of the game while the session runs, flat picture or not. The log says it once per change: `light bounds -
+flat mode, the game draws WxH: a light tile is A x B px, square|not square ...; the replacement is bound|ready but not bound`.
+
 - **The match** is by the shader's size (2164) and the FNV-1a 64 of its DXBC container (`7C22D74C89A5305C`) as
   ReShade hands it over in `init_pipeline`. Check it on your machine: `tools/casc_extract` takes
   `data:data\hd\shaders\cs_light_bin_depth_bounds_c.bin` out of the archives (one container, 2164 bytes at offset
@@ -83,8 +91,9 @@ wrong range vanish in hard rectangles (a roof's shading flickering as the head m
   makes. Another build of the game matches nothing and keeps its own shader.
 - **The replacement** is our own HLSL (the game's disassembly, `fxc /dumpbin`, shows what it does; nothing of the
   game's is in the repository), compiled with `d3dcompiler_47` at the first match, made as a second pipeline
-  beside the game's and bound in its place (`bind_pipeline`) while the key is on in VR. Any failure keeps the
-  game's own shader.
+  beside the game's and bound in its place (`bind_pipeline`) while the key is on in VR, and in flat mode with
+  `light_bounds_flat` - live, the mode can change while the game runs; the replacement is made whenever the key was
+  on at the start. Any failure keeps the game's own shader.
 - **It must join ReShade before the game makes its pipelines**: `init_pipeline` is not replayed for those made before
   an add-on joined, so vrcam registers it right after loading `ReShade64.dll` in the plugin's load, not on the update
   thread's first tick. The log says `light bounds - the game's light-bin depth-bounds shader found` when it caught
@@ -201,6 +210,25 @@ window keeps the size it has; the idea and the shape are d2r-pcvr's (MIT).
 - Tests: `vr_resolution_test` (fake windows, the policy over time) and
   `render_pointer_test` (the real hooks on a window of its own).
 
+## Flat mode (`[mode] platform=0`) is not VR
+
+The shipped ini is made for VR (`[openxr] on=1`, `square_window=1`, `[render] vr_resolution_px`, `[stereo] afr=1`). A flat player's
+game must use the window and resolution the player set in the game, and the mod chooses and writes none:
+
+- `xr::LoadSettings` reads `[mode] platform` itself: flat = `on` is 0 whatever the ini says - no OpenXR session, so no render size
+  either (`vrres::Update` gets Desktop).
+- `BigWindowTick` (the square window at run time, native OpenXR), `NoTemporalAA` (the game's TAA -> FXAA in Settings.json) and
+  `SafeGameWindow` (the cut of a tall window) act in VR only.
+- **The square window is VR's** (platform 1, native OpenXR and FlatVR alike), as it was; flat mode has none.
+- **The player's own window comes back in flat mode**, `shared/window_json.h` (`ForPlatform`, tested by `window_json_test`): a window
+  that is not square is the player's own and is kept in `[openxr] window_before` / `window_mode_before` in every mode (so before any
+  square is written); a square one in the file in flat mode (written by the settings for VR, or by the game itself at its quit: it
+  saves the size its window had) is replaced by the kept window, the mode too. **Nothing kept = nothing written** (the game uses what
+  the file says; the log / the settings' status line say so) - the mod never picks a resolution in flat mode. Who calls it: vrcam at
+  its start (`ReconcileGameWindow`, before the game reads the file) and D2R VR Settings on a switch of the platform and on START
+  (`ApplyWindowForPlatform`; VR with the box ticked gets the square written again). A read-only Settings.json has its flag taken off first.
+- D2R VR Settings reads its Settings.json from `D2RVR_GAME_SETTINGS_JSON` when that is set (tests; never the player's file).
+
 ## First person
 
 - **The hero's facing** comes from the renderer's ECS registry.
@@ -246,6 +274,7 @@ window keeps the size it has; the idea and the shape are d2r-pcvr's (MIT).
 - `sigscan_test.exe` tests the signature scanner.
 - `light_bounds_test.exe` tests the light-bounds replacement shader (see above).
 - `vr_resolution_test.exe` and `render_pointer_test.exe` test the render size ([render] vr_resolution).
+- `window_json_test.exe` tests the game's windowed size in Settings.json and what each platform does to it (flat mode: no square).
 - Install your build by copying `d2rl-vrcam.dll` into
   `<game>\d2rloader\plugins` and `D2R_DepthFog.fx` into ReShade's shader
   folder, with the game closed.

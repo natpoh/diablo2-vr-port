@@ -1,5 +1,95 @@
 # What's new in D2R VR
 
+## 0.166
+
+- **The new features are on by default.** 0.165 shipped with the old default
+  settings, so everything it brought - weapon weight, hit by touch, the bow
+  drawn with both hands, the life and mana on your wrists, the belt potions,
+  native OpenXR, controls without BodyWalk - stayed off until you ticked it in
+  D2R VR Settings. The d2r_vr.ini that 0.166 comes with is the author's own
+  tuned configuration, and these are on in it:
+  - **In the headset:** native OpenXR (F1 and F3 in real 3D), controls without
+    BodyWalk, the laser on menus with the item tooltips at once, the skill panel
+    in the tiles' look and the settings panel in the headset, controller
+    vibration, the VR render size 2048, brighter caves ("Light in caves") and
+    "Any fire lights the ceiling"; the lighting fix, now in flat mode too.
+  - **Weapons:** weapon weight; hit by touch (the blade must move at least 6 m/s
+    and 15 cm to start a stroke), the shield bash that casts Smite; the bow drawn
+    with both hands (the string is taken with the trigger or the grip), arrows
+    along the hand, the game's own bow following your hand and lying along your
+    hands, the hand on the string; the weapon swap over the shoulder.
+  - **Life and mana, potions:** the wrist medallions, the red heartbeat at low
+    life (with vibration), the plates of ordinary monsters hidden, the belt
+    potions as the game's own models that you take in the hand and drink.
+  - **Experimental, and on as well:** Quick strike, Quick release (the bow's
+    arrow made earlier in the attack), Quick throw (all three below) and hiding
+    the game's own flying potion. Untick them in D2R VR Settings (Weapon Adjust >
+    Melee / Bow / Throws) if you want the game's own timing back. Direct hit
+    stays off.
+  - Some logging for support is on too (the bow's release-to-arrow times, the
+    list of the game's compute shaders).
+  - **Updating from 0.165:** a player who has not changed d2r_vr.ini gets all of
+    this at once. If you have changed it, Setup asks whether to keep your
+    settings: "No - take this version's default settings" gives you the above and
+    replaces your changes; "Yes" keeps your file and adds only the settings that
+    are new in this version.
+- **Quick strike** (Weapon Adjust > Melee: hit by touch, experimental, on). The
+  game lands a melee blow part-way through the attack animation (a Paladin's
+  sword: frame 7, 0.28 s in; the author measured 0.32 - 0.34 s from the touch to
+  the hit). This moves that moment to the start (frame 1, a slider) inside the
+  same attack: the blow lands about a quarter of a second sooner. The animation's length and the attack rate stay,
+  so the next attack cannot start earlier. The melee rows of the hero's class
+  (and the Paladin's Smite); never the bow, throws, spells or kicks. Offline
+  only, first person only; put back exactly when switched off.
+- **Quick throw** (Weapon Adjust > Throws, experimental, on). The game makes the
+  missile of a throw part-way through the throw animation (an Amazon's: frame 9
+  of 16, about 0.36 s in). This moves that moment to the start (frame 1, a
+  slider) inside the same throw: the missile is made about 0.3 s sooner; the
+  animation and the attack rate stay. Javelins, throwing knives and axes;
+  throwing potions keep the game's timing ("Quick throw: throwing potions too",
+  off), because a potion's explosion has to come about when your potion lands.
+  Offline only; put back exactly when switched off.
+- **Auto-target is turned off in first person (F4) only.** The options that
+  take the game's auto-target away from spells, arrows and throws (Auto-target
+  tab, Weapon Adjust > Attack along the hand) act in F4; in F1, F2, F3 and flat
+  mode the game's own auto-target works as usual.
+- **Attack direction in the views from above and on the floor.** In VR F1 and F3
+  the hero hits and casts where he faces: your hand no longer turns an attack
+  there. In F2 and F4 it goes where you look, as before; flat play is as it was.
+- **F1, F2 and F3 without BodyWalk: walk and drink belt potions** (Stereo >
+  Native OpenXR, with Controls without BodyWalk, on). In the headset's views from
+  above, from behind and on your floor, the controller's left stick walks the hero
+  ("Walk with the left stick in F1, F2, F3 too"), and with the left trigger held a
+  flick of a thumbstick drinks a belt potion - left = 1, up = 2, right = 3, down =
+  4 ("Belt potions in F1, F2, F3"). One flick, one potion; the stick must come back
+  to the middle first. Nothing else of the new controls works there (attacks,
+  buttons, gestures and panels are first person only). With BodyWalk running
+  nothing changes.
+- **Flat mode keeps your own window.** The settings that come with the mod are
+  made for the headset (native OpenXR, a square window, the render size 2048); a
+  player on the monitor ("How you play": Flat) no longer gets them. Flat mode
+  starts no headset session, makes no square window and sizes nothing: the game
+  uses the window and resolution you set in its own Options. Your own window (size
+  and window mode) is remembered before a square one is first made, and put back
+  when you switch to Flat, at START and at the game's start. In VR, native OpenXR
+  and FlatVR alike, the square window stays as it was.
+- **The game's lighting fix works in flat mode too** (Render > "... in flat mode
+  too", on). The game finds each light tile's depth range with a shader that is
+  right at 16:10 only: in the headset 0.165 already replaced it, now the flat
+  window gets the same - on a 16:9 monitor a little, in a square window in full.
+  The log tells the size the game draws at and whether ours is bound.
+- **The game's own flying potion** (hidden while yours flies, experimental, on)
+  is now taken out with the game's own switch for its effect, not only moved
+  under the ground. Only what is drawn changes: the missile, its damage, its
+  stack and its explosion are the game's.
+- **The shipped BodyWalk profile carries no tracker serial.** In 0.165.0 the
+  profile's presets held the author's tracker serial number; it is blanked, and
+  the release scripts now check the profile for serial numbers, MAC addresses and
+  user folders at any depth.
+- **Known:** without BodyWalk, VR F1, F2 and F3 get only the left stick's walk and
+  the belt potions from the controllers; for the full controller there BodyWalk
+  has to be running. A fix is in progress for the next update.
+
 ## 0.165
 
 The big step of this version is first person (F4) on **native OpenXR**: the

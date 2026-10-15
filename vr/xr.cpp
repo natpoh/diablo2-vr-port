@@ -2928,7 +2928,18 @@ void LoadSettings(const wchar_t* ini) {
     // on: live - switched on, the session starts at the next first-person pair (after a
     // failure too: it is tried again); switched off, it ends and FlatVR comes back
     static int was = -1;
-    bool on = f(L"on", 0.0f) != 0.0f;
+    // Flat mode ([mode] platform=0, "Flat: on the monitor, mouse and keyboard"): no session, no render size, no square window - the
+    // game stays on the monitor whatever [openxr] on says (the shipped ini has on=1, for VR). A switch of the platform is live.
+    const bool vrMode = GetPrivateProfileIntW(L"mode", L"platform", 1, ini) != 0;
+    bool on = vrMode && f(L"on", 0.0f) != 0.0f;
+    {
+        static int saidFlat = -1;
+        const int flatWithOn = !vrMode && f(L"on", 0.0f) != 0.0f ? 1 : 0;
+        if (flatWithOn != saidFlat) {
+            saidFlat = flatWithOn;
+            if (flatWithOn) Log("vrcam: openxr - flat mode ([mode] platform=0): [openxr] on=1 is not used - the game stays on the monitor, no headset session, no render size, no square window");
+        }
+    }
     if (!g_guardPath[0]) {   // the first read: did the last start die starting a session?
         wcscpy_s(g_guardPath, ini);
         if (wchar_t* slash = wcsrchr(g_guardPath, L'\\')) slash[1] = 0;

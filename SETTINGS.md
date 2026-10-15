@@ -8,6 +8,13 @@ Keys in the game: **F1 - F4** pick the view, **F12** goes to the next one,
 **F11** makes "straight ahead" wherever you are looking. In this program
 **Ctrl + wheel** zooms the window and **Ctrl + Tab** goes to the next tab.
 
+**What is ticked.** From 0.166 the settings that come with the mod are the
+author's own tuned configuration, so most of the options below that say "off"
+or "off by default" - hit by touch, weapon weight, the bow drawn with both hands,
+controls without BodyWalk, the wrist medallions, the belt potions and others -
+are ticked on a fresh install (and when Setup is told to take the default
+settings). The text says what an option does; the program shows what is ticked.
+
 The pictures show the VR set of tabs. With *Flat* chosen on Home the program
 shows the flat set instead: views F1 - F3 and a *UI: F3 eyes* tab in place of
 the headset-only ones.
@@ -124,7 +131,8 @@ the headset-only ones.
   height (both from BodyWalk), or eye separation and depth by hand.
 - **Timing** - pipeline depth: a smoother head turn for a little more delay.
 - **Native OpenXR** - the game itself in the headset: brightness, the flat
-  picture's distance and width, the square window. *F1 and F3 in real 3D*
+  picture's distance and width, the square window (in VR only: flat mode keeps
+  the window and resolution you set in the game). *F1 and F3 in real 3D*
   (on): the game on your floor is a diorama standing in your room that you walk
   round and lean over, and the view from above is a window onto the game that
   you look through and lean to see round things - with the headset's own eyes,
@@ -285,7 +293,9 @@ The **Fog** group also has *Fix the game's lighting at a square or wide window*
 (on): the game finds each light tile's depth range with a shader that is right at
 a 16:10 window only, so at a square one lights vanished in hard rectangles; ours
 does it right at any size (at 16:10 it gives the game's own numbers). Unticked it
-works at once; ticked again it takes effect at the next start of the game.
+works at once; ticked again it takes effect at the next start of the game. *... in
+flat mode too* (on) gives the flat window the same fix (a little on a 16:9 monitor,
+in full in a square window); the log tells the size the game draws at.
 
 ## Sky
 
@@ -347,7 +357,13 @@ works at once; ticked again it takes effect at the next start of the game.
   basic attack itself - no animation, no walk-up, no attack-rate wait. The blade
   is built from the weapon as it is drawn; its length, thickness and direction
   are sliders on the Debug tab, and *Draw the capsules of Hit by touch* shows
-  what is tested.
+  what is tested. *Quick strike* (experimental, a change of the game's timing): the
+  game lands a melee blow at an action frame of the attack animation (a Paladin's
+  sword: frame 7, 0.28 s in); this moves that frame to the start (a slider, 1 by
+  default) so the blow lands about a quarter of a second sooner inside the same
+  attack. The animation's length and the attack rate stay. The melee rows of the
+  hero's class and the Paladin's Smite, never the bow, throws, spells or kicks;
+  offline only; put back exactly when off.
 - **Bow** (F4, off) - *Draw the string with both hands*: the free hand's trigger
   (or its grip) at the bow's string, pull back along the line to the bow and let
   go; the game's own attack, or the pad button of a skill you pick (Magic, Fire,
@@ -383,6 +399,10 @@ works at once; ticked again it takes effect at the next start of the game.
   game's missile, damage, stack or explosion) and the game's explosion happens
   where yours lands; *Throws are pressed with the game's Stand Still* (on).
   With Weapon Weight on, how far a throw goes is worked out by the weight model.
+  *Quick throw* (experimental, a change of the game's timing): the same for a
+  throw - the missile of a javelin, knife or axe is made at the start of the
+  throw animation (a slider) instead of about 0.36 s in; a throwing potion keeps
+  the game's timing unless *Quick throw: throwing potions too* is ticked.
 - **Crossbow** - the shot line and the left hand's place.
 - **Spears, polearms, two-handed axes, maces and swords** - the left hand takes
   them with the grip.

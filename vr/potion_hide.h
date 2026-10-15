@@ -83,6 +83,39 @@ inline bool HiddenMatrix(const float in[16], float out[16]) {
     return true;
 }
 
+// -- the effect component of an entity. The thrown potion's visual is NOT a mesh: its HD unit definition (data/hd/missiles/mslops.json ... mslgpl.json) is a root entity and ONE entity with a
+// VfxDefinitionComponent, a particle effect (data/hd/vfx/particles/missiles/mslops/vfx_mslops.particles). The renderer keeps the runtime effect component in an entt storage (the one
+// 0x66DBB0 (registry) returns): per entity one 0x30-byte element whose first field points to the component object; the object holds the effect instance at +0x10 (0 until it is made) and
+// the visibility wish at +0x1C, which VfxSetVisible (0xF6A830) stores and applies, and the creation applies too (0xF6AA09). The storage is a sparse set (read: 0x78A5C0 / 0x1D5840 and the
+// loop at 0x750F61 that calls the game's own 0xF6A800 on the same component): pages at +0x08 / +0x10 (a page = 256 u32, page = (entity >> 8) & 0xFFF, slot = entity & 0xFF, the dense index
+// in the low 20 bits, 0xFFFFF = none), the packed entities at +0x20 / +0x28, the elements at +0x38.
+constexpr size_t kStOffPagesBegin = 0x08, kStOffPagesEnd = 0x10, kStOffPackedBegin = 0x20, kStOffPackedEnd = 0x28, kStOffElements = 0x38;
+constexpr size_t kEffectElementSize = 0x30;
+constexpr size_t kEffectOffInstance = 0x10, kEffectOffVisible = 0x1C;
+
+// The element of `entity` in a storage, read through rd(address, out, size) -> bool (guarded in the game, a fake memory in the test). False when the entity has none.
+template <class Rd>
+inline bool StorageElement(Rd&& rd, uintptr_t storage, uint32_t entity, size_t elementSize, uintptr_t* element) {
+    uintptr_t pages = 0, pagesEnd = 0, packed = 0, packedEnd = 0, elements = 0;
+    if (!rd(storage + kStOffPagesBegin, &pages, sizeof pages) || !rd(storage + kStOffPagesEnd, &pagesEnd, sizeof pagesEnd) ||
+        !rd(storage + kStOffPackedBegin, &packed, sizeof packed) || !rd(storage + kStOffPackedEnd, &packedEnd, sizeof packedEnd) ||
+        !rd(storage + kStOffElements, &elements, sizeof elements))
+        return false;
+    if (!pages || !packed || !elements || pagesEnd < pages || packedEnd < packed) return false;
+    const uintptr_t page = (entity >> 8) & 0xFFF;
+    if (page >= (pagesEnd - pages) / sizeof(uintptr_t)) return false;
+    uintptr_t pg = 0;
+    uint32_t sparse = 0;
+    if (!rd(pages + page * sizeof(uintptr_t), &pg, sizeof pg) || !pg) return false;
+    if (!rd(pg + (uintptr_t)(entity & 0xFF) * 4, &sparse, sizeof sparse)) return false;
+    const uint32_t index = sparse & 0xFFFFF;
+    if (index == 0xFFFFF || index >= (packedEnd - packed) / 4) return false;
+    uint32_t packedEntity = 0;
+    if (!rd(packed + (uintptr_t)index * 4, &packedEntity, sizeof packedEntity) || packedEntity != entity) return false;   // the entity itself, generation and all
+    *element = elements + (uintptr_t)index * elementSize;
+    return true;
+}
+
 // -- the entities that are hidden: at most kCapacity (one potion's visual is a handful), each for kTtlMs (a potion's flight, its explosion and a margin; the
 // game destroys the entities with the unit, and a recycled index has a new generation, so a dead id is never met again). Written by the visual-init callback,
 // read by the world-matrix hook, on the renderer's threads: plain atomics, a race costs a frame.

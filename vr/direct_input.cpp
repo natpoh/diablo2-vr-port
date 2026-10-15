@@ -23,6 +23,7 @@
 #include <string>
 #include <algorithm>
 
+#include "belt_flick.h"
 #include "direct_feed.h"
 #include "direct_input.h"
 #include "direct_layout.h"
@@ -69,6 +70,13 @@ void LogF(const char* fmt, ...) {
 // -- the settings ---------------------------------------------------------------------------------------------------
 std::atomic<bool> g_on{false};
 std::atomic<bool> g_bwWalk{true};   // [openxr] direct_bodywalk_walk: BodyWalk's walking passes in direct mode
+std::atomic<bool> g_walkFlat{true}; // [direct] walk_flat_views: the left stick walks in VR F1-F3 (movement only, vr/walk_flat.h)
+std::atomic<bool> g_beltFlat{true}; // [direct] belt_flick_flat_views: left trigger + a flick of a stick drinks a belt column in VR F1-F3 (vr/belt_flick.h)
+std::atomic<BeltSink> g_beltSink{nullptr};
+// The stick of the last frame in a flat view (walkflat::Pack: the stick and the frame's number) and when it came. 0 = none: F4, the key off,
+// the session over - the pad poll gets no walk from here then.
+std::atomic<uint64_t> g_walkWord{0};
+std::atomic<ULONGLONG> g_walkAt{0};
 SRWLOCK g_cfgLock = SRWLOCK_INIT;
 Table g_table = DefaultTable();   // the world layer; the menu layer is the game's own
 bool g_tableChanged = true;       // Feed hands it to the layout once
@@ -123,8 +131,58 @@ struct FeedState {
     uint32_t sharedCounter = 0;
     bool told = false;
     bool panelWas = false;   // Outputs.skillPanel the frame before: the request is its rising edge
+    // the walk in VR F1-F3 (walkflat): the left stick through a release gate of its own, the frame number the pad poll sees
+    ReleaseGate walkGate;
+    bool walkWas = false;
+    uint32_t walkCounter = 0;
+    beltflick::Machine belt;   // the left trigger + a flick: a belt column (VR F1-F3)
 };
 FeedState g_fs;
+
+// VR F1, F2, F3 with [direct] walk_flat_views: the left stick, and nothing else of the controllers, for the game's walking code. The
+// stick is held back (the gate) while the view, the focus or a panel has just changed, until it is let go - a stick held on the way in
+// walks nothing - and it is zero while a panel is up (the stick is the menu's).
+void FeedWalk(const D2RVR_XrInput& in, bool focused, bool menu) {
+    FeedState& s = g_fs;
+    if (!s.walkWas) s.walkGate.Suspend();   // coming in from another view (or the first frame): start masked
+    s.walkWas = true;
+    const D2RVR_XrHand& h = in.hand[0];
+    const bool live = focused && !menu;
+    auto stickOf = [&](const D2RVR_XrHand& hand) {
+        beltflick::Stick st;
+        if (focused && hand.active && std::isfinite(hand.stickX) && std::isfinite(hand.stickY)) { st.x = hand.stickX; st.y = hand.stickY; }
+        return st;
+    };
+    const beltflick::Stick left = stickOf(h), right = stickOf(in.hand[1]);
+    // The belt: the left trigger held and a flick of a stick (vr/belt_flick.h). Its own key; the sink (vrcam) has the last word. While the
+    // trigger is held the left stick does not walk - and is masked after it until it has been let go (the gate's context moves with the trigger).
+    const float trigger = focused && h.active && std::isfinite(h.trigger) ? h.trigger : 0.0f;
+    const beltflick::Machine::Out b = s.belt.Step(trigger, left, right, live && g_beltFlat.load());
+    if (b.column >= 0) {
+        if (const BeltSink sink = g_beltSink.load()) sink((uint32_t)b.column, b.stick, (int)b.dir);
+    }
+    if (!g_walkFlat.load()) {   // the walk's key is off (the belt's is on): no stick is published, and it starts masked when the walk comes back
+        g_walkAt.store(0, std::memory_order_release);
+        g_walkWord.store(0, std::memory_order_release);
+        s.walkWas = false;
+        return;
+    }
+    Controls c;
+    c.stick[0][0] = left.x; c.stick[0][1] = left.y;
+    c = s.walkGate.Step((focused ? 1u : 0u) | (menu ? 2u : 0u) | (b.holding ? 4u : 0u), c);
+    int16_t lx = 0, ly = 0;
+    if (!menu && !b.holding) walkflat::StickToPad(c.stick[0][0], c.stick[0][1], &lx, &ly);
+    g_walkWord.store(walkflat::Pack(lx, ly, ++s.walkCounter), std::memory_order_release);
+    g_walkAt.store(GetTickCount64(), std::memory_order_release);
+}
+
+// Back in F4 (or the keys off, the session over): the walk's stick is gone, the next flat view starts masked, the belt's machine let go.
+void EndWalk() {
+    g_walkAt.store(0, std::memory_order_release);
+    g_walkWord.store(0, std::memory_order_release);
+    g_fs.walkWas = false;
+    g_fs.belt.Reset();
+}
 
 // A command's number from its name in the ini ("Swap weapons", "D2R key: Swap weapons").
 int CmdByName(const char* name) {
@@ -378,6 +436,24 @@ void LoadSettings(const wchar_t* ini) {
                      "walks the hero, mixed into the controller's own (nothing else of its pad, actions or commands is read)"
                    : "vrcam: direct input - [openxr] direct_bodywalk_walk=0: BodyWalk's walking is ignored with the rest of its input (it is given no headset)");
     }
+    const bool walkFlat = GetPrivateProfileIntW(L"direct", L"walk_flat_views", 1, ini) != 0;
+    g_walkFlat.store(walkFlat);
+    static int toldFlat = -1;
+    if (on && (int)walkFlat != toldFlat) {
+        toldFlat = (int)walkFlat;
+        Log(walkFlat ? "vrcam: direct input - [direct] walk_flat_views=1: in VR F1, F2, F3 the left stick walks the hero when BodyWalk is not running "
+                       "(movement only: no attack, button, gesture or panel there; BodyWalk running = its pad as before)"
+                     : "vrcam: direct input - [direct] walk_flat_views=0: VR F1, F2, F3 keep BodyWalk's input alone (no walking without it)");
+    }
+    const bool beltFlat = GetPrivateProfileIntW(L"direct", L"belt_flick_flat_views", 1, ini) != 0;
+    g_beltFlat.store(beltFlat);
+    static int toldBelt = -1;
+    if (on && (int)beltFlat != toldBelt) {
+        toldBelt = (int)beltFlat;
+        Log(beltFlat ? "vrcam: direct input - [direct] belt_flick_flat_views=1: in VR F1, F2, F3 (no BodyWalk running) the left trigger held + a flick of a thumbstick "
+                       "drinks a belt potion: left = column 1, up = 2, right = 3, down = 4 (the game's own belt keys); the left stick does not walk meanwhile"
+                     : "vrcam: direct input - [direct] belt_flick_flat_views=0: no belt potions from the thumbsticks in VR F1, F2, F3");
+    }
     static int toldRebinds = -1;
     if (on && rebound + bad != toldRebinds) {
         toldRebinds = rebound + bad;
@@ -411,6 +487,7 @@ void SessionBegin() {
 
 void SessionEnd() {
     g_lastFeed.store(0);
+    EndWalk();
     ClearHeld();
     AcquireSRWLockExclusive(&g_pubLock);
     g_haveFrame = false;
@@ -486,6 +563,10 @@ void Feed(D2RVR_XrInput* in, bool menu) {
     const uint32_t take[2] = {g_take[0].load(), g_take[1].load()};
     if (f4) HideTaken(in, take);   // (another view: nothing is taken from BodyWalk's hands either)
 
+    // VR F1-F3: the one thing that acts outside F4 - the left stick's walk (walkflat). Nothing of the layout runs there.
+    if (!f4 && g_on.load() && (g_walkFlat.load() || g_beltFlat.load()) && viewgate::Flat()) FeedWalk(*in, focused, menu);
+    else if (s.walkWas || g_walkAt.load()) EndWalk();
+
     if (!direct) return;
 
     AcquireSRWLockExclusive(&g_cfgLock);
@@ -538,6 +619,31 @@ bool PadRead(PadOut* out) {
     *out = {p.buttons, p.lt, p.rt, p.lx, p.ly, p.rx, p.ry, counter};
     return true;
 }
+
+void FlatFacts(walkflat::Inputs* in) {
+    in->keyOn = g_walkFlat.load();
+    in->directOn = g_on.load();
+    in->flatView = viewgate::Flat();
+    const ULONGLONG at = g_walkAt.load(std::memory_order_acquire);
+    in->framesFresh = in->directOn && in->flatView && at && GetTickCount64() - at < kStaleMs;
+}
+
+bool WalkRead(WalkOut* out, walkflat::Inputs* in) {
+    in->keyOn = g_walkFlat.load();
+    in->directOn = g_on.load();
+    in->flatView = viewgate::Flat();
+    in->framesFresh = false;
+    if (!in->keyOn || !in->directOn || !in->flatView) return false;
+    const ULONGLONG at = g_walkAt.load(std::memory_order_acquire);
+    in->framesFresh = at && GetTickCount64() - at < kStaleMs;
+    const uint64_t w = g_walkWord.load(std::memory_order_acquire);
+    walkflat::Unpack(w, &out->lx, &out->ly, &out->counter);
+    if (!in->framesFresh) out->lx = out->ly = 0;
+    return true;
+}
+
+void SetBeltSink(BeltSink sink) { g_beltSink.store(sink); }
+bool BeltFlickOn() { return g_beltFlat.load(); }
 
 bool PadPulses(uint16_t* buttons, uint8_t* lt, uint8_t* rt) {
     *buttons = 0; *lt = 0; *rt = 0;

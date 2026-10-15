@@ -31,6 +31,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -74,6 +75,9 @@ std::atomic<bool> g_gripDown{false};     // ... and the right grip is squeezed o
 std::atomic<float> g_speed{0.0f}, g_horiz{0.0f}, g_vert{0.0f}, g_below{0.0f}, g_relSpeed{0.0f};   // the last throw's hand, for Info
 std::atomic<unsigned> g_seq{0};
 std::atomic<ULONGLONG> g_lastThrow{0};   // GetTickCount64 of the last released throw
+std::atomic<unsigned> g_shotCount{0};    // [debug] bow_latency: the throws whose game button was pressed so far, and the steady-clock seconds (throwborn::NowS()'s base) of the last one's release and press
+std::atomic<double> g_shotReleaseS{0.0}, g_shotPressS{0.0};
+double SteadyS() { return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
 std::atomic<ULONGLONG> g_holdOffUntil{0};   // a hit by touch pressed the attack with this thrown weapon: a release before this tick throws nothing
 bool (*g_heroMode)(uint32_t*) = nullptr;
 bool (*g_autoSkill)() = nullptr;
@@ -268,6 +272,8 @@ void FirePress(const directinput::Frame& f, uint32_t type, bool potion, bool lat
         route = "the A attack (Throw is on no pad skill button: the game takes the attack only for an enemy at the point)";
     }
     if (pressed) {
+        g_shotPressS.store(SteadyS());
+        g_shotCount.fetch_add(1);
         uint32_t m = 0;
         const bool ok = g_heroMode && g_heroMode(&m);
         g.watch.Arm(f.time, ok, m);
@@ -421,6 +427,7 @@ void OnFrame(const directinput::Frame& f, void*) {
     g_below.store(f.head.pos[1] - h.grip.pos[1]);
     g_seq.fetch_add(1);
     g_lastThrow.store(GetTickCount64());
+    g_shotReleaseS.store(SteadyS());
     throwsrc::Choice wc;
     const bool haveWeight = WeightChoice(&wc);   // the weight model's account of this throw (it has it by now: it is worked out on every step while the weapon is held)
     if (haveWeight) {
@@ -572,6 +579,11 @@ bool GripIsThrows() { return g_gripOwns.load() && viewgate::F4(); }
 bool GripHeld() { return g_gripOwns.load() && g_gripDown.load() && viewgate::F4(); }
 
 uint64_t LastThrowTickMs() { return g_lastThrow.load(); }
+unsigned ShotCount() { return g_shotCount.load(); }
+void ShotTimes(double* releaseS, double* pressS) {
+    if (releaseS) *releaseS = g_shotReleaseS.load();
+    if (pressS) *pressS = g_shotPressS.load();
+}
 
 void HoldOffRelease(uint64_t untilTickMs) { g_holdOffUntil.store(untilTickMs); }
 

@@ -12,6 +12,10 @@
 //
 // Nothing registered (the unit tests, the settings program): true, so a module is tested as it acts in F4 and a test
 // that wants the other views registers its own function.
+//
+// THE ONE EXCEPTION, movement (2026-10-15, "now movement in F1-F3 without BodyWalk"): Flat() is true in VR F1, F2, F3 - the views BodyWalk's
+// input still belongs to - and only vr/direct_input.cpp's walk-only feed asks it ([direct] walk_flat_views): the controller's left stick
+// walks the hero there, nothing else of direct input acts (no attack, gesture, panel, pulse, command or action).
 #pragma once
 
 #include <atomic>
@@ -32,6 +36,18 @@ inline void Set(Fn fn) { Slot().store(fn, std::memory_order_release); }
 inline bool F4() {
     const Fn fn = Slot().load(std::memory_order_acquire);
     return fn ? fn() : true;
+}
+
+// VR F1, F2, F3 (not F4, not the flat game). Registered by vrcam next to Set; nothing registered: false (a test that wants the
+// movement in these views registers its own function).
+inline std::atomic<Fn>& FlatSlot() {
+    static std::atomic<Fn> slot{nullptr};
+    return slot;
+}
+inline void SetFlat(Fn fn) { FlatSlot().store(fn, std::memory_order_release); }
+inline bool Flat() {
+    const Fn fn = FlatSlot().load(std::memory_order_acquire);
+    return fn ? fn() : false;
 }
 
 // A module that has to END something when the view changes keeps one of these (its own thread only): Step(F4()) is

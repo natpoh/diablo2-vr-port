@@ -1254,7 +1254,7 @@
             "step_left": "Tracker #1 (F2D4A)",
             "step_right": "None",
             "tracker_name": "HMD",
-            "tracker_serial": "1PASH5D1P17365",
+            "tracker_serial": "",
             "turn_name": "None",
             "turn_serial": "",
             "used": true
@@ -1269,7 +1269,7 @@
             "step_left": "Tracker #1 (F2D4A)",
             "step_right": "None",
             "tracker_name": "HMD",
-            "tracker_serial": "1PASH5D1P17365",
+            "tracker_serial": "",
             "turn_name": "None",
             "turn_serial": "",
             "used": true
@@ -1284,7 +1284,7 @@
             "step_left": "Tracker #0 (5BB2F)",
             "step_right": "Tracker #1 (F2D4A)",
             "tracker_name": "HMD",
-            "tracker_serial": "1PASH5D1P17365",
+            "tracker_serial": "",
             "turn_name": "None",
             "turn_serial": "",
             "used": true

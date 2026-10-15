@@ -6,6 +6,7 @@
 
 #include "d2r_vr_shared.h"
 #include "direct_input.h"
+#include "walk_flat.h"
 
 namespace directinput {
 
@@ -47,6 +48,27 @@ struct PadOut {
 bool PadRead(PadOut* out);
 // Why PadRead gave nothing, in words for the log ("" while Active()); *ageMs: how old the newest headset frame is (0 = none yet).
 const char* WhyNotActive(uint32_t* ageMs);
+// Walking in VR F1, F2, F3 ([direct] walk_flat_views, vr/walk_flat.h): the one thing direct input does outside F4 - the controller's LEFT
+// stick, and nothing else, for the game's walking code (vrcam: PadMirrorRead). Feed keeps the stick per headset frame in these views
+// (through a release gate: a stick held when the view, the focus or a panel changes walks nothing until it is let go).
+// Fills the facts this layer knows into *in (the key, direct input on, a flat view, a frame in the last second) and *out with the stick
+// (XInput's range, `counter` moves with every frame); returns false - *out not filled - unless the key, direct input and the view all
+// say yes. The caller adds what only it knows (BodyWalk running, a game, a panel, the chat) and asks walkflat::Decide. Any thread.
+struct WalkOut {
+    int16_t lx, ly;
+    uint32_t counter;
+};
+bool WalkRead(WalkOut* out, walkflat::Inputs* in);
+// The same facts without the stick, whatever the keys say: keyOn = [direct] walk_flat_views, directOn, flatView, framesFresh (the rest of *in untouched).
+void FlatFacts(walkflat::Inputs* in);
+
+// Belt potions in VR F1-F3 ([direct] belt_flick_flat_views, vr/belt_flick.h): with the left trigger held, a flick of either thumbstick drinks
+// belt column 1 (left), 2 (up), 3 (right) or 4 (down). Feed runs the machine in these views (never in F4: there the layout is in charge) and
+// calls the sink with the column 0..3 - vrcam's: the game's own belt key command (gamecmd::Tap(0x17 + column)), after its own check that no
+// BodyWalk is running, a game is on and no panel or chat is open (the sink says no by doing nothing). Called on the headset frame's thread.
+using BeltSink = void (*)(uint32_t column, int stick, int dir);   // stick 0 left / 1 right; dir 1 left, 2 up, 3 right, 4 down (beltflick::Dir)
+void SetBeltSink(BeltSink sink);
+bool BeltFlickOn();   // [direct] belt_flick_flat_views (the sink asks: it replaces walkflat's key for its own verdict)
 // The pad buttons the gestures pulse now (PadPulse), to be ORed into the pad the game is about to get - any mode, any
 // pad source, a pad that is not there too. False when there are none (the outputs are zero then).
 bool PadPulses(uint16_t* buttons, uint8_t* lt, uint8_t* rt);

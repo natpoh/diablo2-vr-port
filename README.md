@@ -16,13 +16,15 @@ including a free BodyWalk Lite if you don't have BodyWalk.
 **[Open the mod's page on BodyWalkVR](https://bodywalkvr.com/mods/d2r-vr)** - the
 four views in video, the controls and the setup.
 
-**What's new in 0.165:** first person on native OpenXR grows up. The plugin can
-read your controllers itself (*Controls without BodyWalk*, a prototype); the
+**What's new in 0.166:** the features of 0.165 are on by default. The settings
+that come with the mod are now the author's own tuned configuration (0.165 went
+out with the old ones, with everything new off). **In 0.165:** first person on
+native OpenXR grows up. The plugin can read your controllers itself (*Controls without BodyWalk*, a prototype); the
 blade you swing picks the target (*hit by touch*); weapons have weight; you throw
 with your hand and draw a bow with both; a skill wheel and a settings panel hang
 in the headset; life and mana sit on your wrists; F1 and F3 are in real 3D; and an
-attack no longer runs the hero forward. All of it is for first person (F4) and
-off until you tick it in D2R VR Settings. All versions:
+attack no longer runs the hero forward. The hand and weapon features are for
+first person (F4). All versions:
 [CHANGELOG.md](CHANGELOG.md).
 
 **Want to help?** The roadmap, the known problems with what we know about
@@ -132,7 +134,7 @@ Everything else is where the game's own gamepad layout puts it.
 | Reset the centre | Hold the right stick down |
 
 With **Controls without BodyWalk** (D2R VR Settings > Stereo > Native OpenXR,
-off by default, a prototype) the plugin reads the controllers itself in F4, and
+on by default since 0.166, a prototype) the plugin reads the controllers itself in F4, and
 BodyWalk's Mapping is not needed for them:
 
 | Control | Does |
@@ -146,10 +148,13 @@ BodyWalk's Mapping is not needed for them:
 | Menu button | the inventory |
 | Grips | nothing on the pad: the belt's potions, the staff's second hand and, with Weapon Weight, the weapon read them |
 
-Every line is in `[direct]` of d2r_vr.ini and can be rebound.
+Every line is in `[direct]` of d2r_vr.ini and can be rebound. In F1, F2 and F3
+(without BodyWalk running) only two things work: the left stick walks the hero, and
+the left trigger held with a flick of a thumbstick drinks a belt potion (left = 1,
+up = 2, right = 3, down = 4).
 
-**The skill panel and the settings in the headset** (prototype, off; D2R VR
-Settings > Stereo > Native OpenXR). **Hold the right stick click for half a
+**The skill panel and the settings in the headset** (prototype, on by default
+since 0.166; D2R VR Settings > Stereo > Native OpenXR). **Hold the right stick click for half a
 second** and the skill panel opens in front of you - a short click is still the
 weapon swap; hold it again to close the panel. Point a controller at a slot and
 pull the trigger: from then on that trigger casts it. EDIT SKILLS puts a skill

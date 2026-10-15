@@ -71,7 +71,10 @@ int FindHeroMatrices(const float hero[3], uintptr_t* out, int max);
 #include "stand_still.h"        // ... and a click on bare ground in F4 gets Stand Still too (HookMapClick)
 #include "stray_walk_wire.h"    // [gameplay] block_stray_walk / block_stray_clicks: no stray walk, no stray mouse button in the F4 world (stray_walk_wire.cpp)
 #include "view_gate.h"     // everything added after the base mod acts in VR first person (F4) only
+#include "attack_view.h"   // VR F2 and F4: the attack goes where the player looks; VR F1 and F3 (top-down): where the hero faces (pure part, tested)
+#include "window_json.h"   // the game's windowed size in Settings.json and what each platform does to it (shared/, pure, tested)
 #include "walk_path.h"     // [openxr] direct_bodywalk_walk: BodyWalk's walking stick mixed into the controller's in direct mode (pure part, tested)
+#include "belt_flick.h"    // [direct] belt_flick_flat_views: the left trigger + a flick of a thumbstick drinks a belt column in VR F1-F3 (pure part, tested)
 #include "melee_boxes.h"   // [debug] melee_boxes: the capsules of hit by touch drawn in the headset
 #include "blade_shape.h"   // the touch's blade as drawn (dual wield, the sliders)
 #include "weight.h"
@@ -126,7 +129,7 @@ namespace gamestate { bool HandIsThrowPotion(int side); }   // the held item is 
 #include "throw_gesture_wire.h"
 #include "throw_born.h"
 #include "potion_hide.h"
-#include "bow_quick.h"          // [bow] quick_release: the action-frame flag of the hero's bow attack row moved earlier (vr/bow_quick.cpp)
+#include "anim_cut.h"          // [bow] quick_release, [hands] quick_throw: the action-frame flag of the hero's bow attack / throw rows moved earlier (vr/anim_cut.cpp)
 #include "bow_latency.h"       // [debug] bow_latency: the split of the second between a bow's release and its arrow (vr/bow_latency.h)
 #include "calibration.h"
 #include "haptics.h"
@@ -469,6 +472,7 @@ struct Settings {
     std::atomic<int>   weightThrownModel{0};        // [weight] thrown_model: 0 the model vanishes the moment the game takes the throw, 1 it flies on physically
     std::atomic<float> weightThrownHandoffMs{0.0f};   // [weight] thrown_handoff_ms: the thrown model flies out of the hand this long (or to the game's action frame) before it hands over to the game's missile and vanishes (0: at once)
     std::atomic<float> weightThrownHandEmptyMs{900.0f};   // [weight] thrown_hand_empty_ms: the hand stays empty (the weapon not drawn) while the game throws, at most this long
+    std::atomic<bool>  quickThrowPotions{false};    // [hands] quick_throw_potions: quick_throw cuts a throwing potion's animation too (default: a potion keeps its own timing)
     std::atomic<bool>  weightPotionFlies{true};     // [weight] potion_model_flies (or [hands] potion_throw_ours): a thrown potion's model flies to its landing, the game's take does not hand it over
     std::atomic<bool>  weightSlide{true};           // [weight] slide_second_hand: the second hand slides along a long shaft while its grip stays squeezed
     std::atomic<float> weightBackLong[6] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
@@ -893,7 +897,8 @@ float GameInterfaceScale() {
 // ghost (the staff in the hand, 2026-10-09). At the plugin's start, before the game reads the
 // file, it is set to FXAA (1); [stereo] keep_taa=1 leaves it alone.
 void NoTemporalAA() {
-    if (!IniB(L"stereo", L"afr", false) || IniB(L"stereo", L"keep_taa", false)) return;
+    // (VR only: flat mode ([mode] platform=0) keeps the player's own anti-aliasing - the shipped ini has afr=1, for VR)
+    if (g_set.platform.load() != 1 || !IniB(L"stereo", L"afr", false) || IniB(L"stereo", L"keep_taa", false)) return;
     PWSTR dir = nullptr;
     std::wstring path;
     if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_SavedGames, 0, nullptr, &dir))) path = std::wstring(dir) + L"\\Diablo II Resurrected\\Settings.json";
@@ -969,6 +974,62 @@ void MiniMapForHand() {
     }
 }
 
+// The game's windowed size, at the plugin's start - before the game reads Settings.json (shared/window_json.h, the policy and its
+// tests). VR ([mode] platform=1, native OpenXR and FlatVR alike) has the square window (D2R VR Settings' "Square game window", written
+// into Settings.json by the settings, kept by BigWindowTick). FLAT mode (the monitor) has none and uses the window and resolution the
+// PLAYER set in the game: the mod chooses and writes no resolution there. A square left in Settings.json - by the settings for VR, or
+// by the game itself at its quit (it saves the size its window had) - gives way in flat mode to the player's own window ([openxr]
+// window_before, window_mode_before: kept before the square was first written, size and mode); with none kept nothing is written and
+// the log says so. The player's own window is kept in every mode while it is the file's. Flat players of 0.166 started in the square:
+// the shipped ini has square_window=1.
+void ReconcileGameWindow() {
+    PWSTR dir = nullptr;
+    std::wstring path;
+    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_SavedGames, 0, nullptr, &dir))) path = std::wstring(dir) + L"\\Diablo II Resurrected\\Settings.json";
+    if (dir) CoTaskMemFree(dir);
+    FILE* f = path.empty() ? nullptr : _wfopen(path.c_str(), L"rb");
+    if (!f) return;
+    std::string text(1 << 16, ' ');
+    text.resize(fread(text.data(), 1, text.size(), f));
+    fclose(f);
+    const winjson::Windowed now = winjson::Read(text);
+    if (!now.ok) return;
+    winjson::Own own;
+    {
+        wchar_t b[32] = L"";
+        GetPrivateProfileStringW(L"openxr", L"window_before", L"", b, 32, g_iniPath);
+        swscanf_s(b, L"%dx%d", &own.w, &own.h);
+        own.mode = (int)GetPrivateProfileIntW(L"openxr", L"window_mode_before", -1, g_iniPath);
+    }
+    const bool vr = g_set.platform.load() == 1;
+    const winjson::Plan plan = winjson::ForPlatform(vr, IniB(L"openxr", L"square_window", false), now, own);
+    if (plan.saveOwn && (plan.own.w != own.w || plan.own.h != own.h || plan.own.mode != own.mode)) {
+        wchar_t b[32];
+        swprintf_s(b, L"%dx%d", plan.own.w, plan.own.h);
+        WritePrivateProfileStringW(L"openxr", L"window_before", b, g_iniPath);
+        swprintf_s(b, L"%d", plan.own.mode);
+        WritePrivateProfileStringW(L"openxr", L"window_mode_before", b, g_iniPath);
+        LogF("vrcam: the player's own window %dx%d (mode %d) kept in d2r_vr.ini ([openxr] window_before) before a square window", plan.own.w, plan.own.h, plan.own.mode);
+    }
+    if (plan.unknownOwn)
+        LogF("vrcam: flat mode ([mode] platform=0): the game's windowed size is %dx%d (VR's square) and no window of yours was kept: the game uses it - set the "
+             "window you want in the game's Options > Video (the mod chooses no resolution in flat mode)", now.w, now.h);
+    if (!plan.write) return;
+    bool ok = false;
+    const std::string out = winjson::With(text, plan.w, plan.h, plan.mode, &ok);
+    if (!ok || out == text) return;
+    const DWORD attr = GetFileAttributesW(path.c_str());
+    if (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_READONLY)) SetFileAttributesW(path.c_str(), attr & ~FILE_ATTRIBUTE_READONLY);
+    if (FILE* o = _wfopen(path.c_str(), L"wb")) {
+        fwrite(out.data(), 1, out.size(), o);
+        fclose(o);
+        LogF("vrcam: flat mode ([mode] platform=0): the game's windowed size was %dx%d (VR's square) - %s: set to %dx%d%s", now.w, now.h, plan.why, plan.w, plan.h,
+             plan.mode >= 0 ? ", its window mode too" : "");
+    } else {
+        LogF("vrcam: flat mode: the game's windowed size is %dx%d (VR's square) and Settings.json could not be written: set a window in the game's Options > Video", now.w, now.h);
+    }
+}
+
 // D2R itself dies at its title screen with a window taller than about 2400 ("A Fixed sized vector
 // tried to reallocate" in its blz-log.txt, then its own crash handler; 2600 and 3000 tried, 2026-10-11).
 // Players were told on Discord to put 3000x3000 into Settings.json and make it read-only: every start
@@ -976,6 +1037,7 @@ void MiniMapForHand() {
 // start, before the game reads the file: a windowed size taller than 2400 is cut to 2400 (a square
 // stays square), the read-only flag taken off first (it kept the bad size for good).
 void SafeGameWindow() {
+    if (g_set.platform.load() != 1) return;   // flat mode: the game's own window and resolution, nothing of ours written (the cut is VR's, for its squares)
     PWSTR dir = nullptr;
     std::wstring path;
     if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_SavedGames, 0, nullptr, &dir))) path = std::wstring(dir) + L"\\Diablo II Resurrected\\Settings.json";
@@ -1126,7 +1188,7 @@ void LoadSettings() {
         // The toolbar's placement list has a fifth entry, "Wrists" ([hud] bar_place = 5): life on the left wrist, mana on the right, drawn by the plugin
         // (FlatVR is given "not shown", below). Its look is [hud] wrist_look (0 the glass orbs, 1 the game's own globes). The older keys (hand_vitals, hand_vitals_style)
         // still work without it.
-        const bool wrists = (int)IniF(L"hud", L"bar_place", 2.0f) == 5;
+        const bool wrists = (int)IniF(L"hud", L"bar_place", 5.0f) == 5;
         hv.on = wrists || IniB(L"hud", L"hand_vitals", false);
         hv.hand = (int)IniF(L"hud", L"hand_vitals_hand", 0.0f);
         hv.sizeCm = IniF(L"hud", L"hand_vitals_size_cm", 8.0f);
@@ -1239,7 +1301,7 @@ void LoadSettings() {
     g_set.crosshairDepthDown.store(std::clamp(IniF(L"hud_third", L"crosshair_depth_down", g_set.crosshairDepth.load()), -40.0f, 40.0f));
     {   // [hud] how FlatVR shows the toolbar and the map (game_hud_shared.h)
         FlatVRGameHudLook look = FlatVRGameHudDefaultLook();
-        const int place = (int)IniF(L"hud", L"bar_place", (float)look.bar_anchor);
+        const int place = (int)IniF(L"hud", L"bar_place", 5.0f);
         look.bar_anchor = place == 5 ? 0u : (uint32_t)std::clamp(place, 0, 4);   // 5 = the wrists: the plugin draws them, FlatVR hangs no toolbar
         // A set of its own on a forearm (bar_*_arm) and on the body (bar_*_body); the
         // one key of before (bar_*) stands in for both until they are set.
@@ -1317,8 +1379,10 @@ void LoadSettings() {
     g_set.gameDepthFog.store(IniB(L"render", L"game_depth_fog", false));
     g_ownDepth.store(IniB(L"render", L"own_depth", true));
     g_squareWin.store(IniB(L"openxr", L"square_window", false));
-    lightbounds::Configure(IniB(L"render", L"light_bounds_fix", true) && g_set.platform.load() == 1,
-                           IniB(L"debug", L"log_compute_shaders", false));   // the game's light culling at non-16:10 sizes
+    {   // the game's light culling at non-16:10 sizes: made whenever the key is on (read at the game's start), bound in VR, and in flat mode with light_bounds_flat
+        const bool fix = IniB(L"render", L"light_bounds_fix", true), flat = g_set.platform.load() == 0;
+        lightbounds::Configure(fix, !flat || IniB(L"render", L"light_bounds_flat", true), IniB(L"debug", L"log_compute_shaders", false), flat);
+    }
     g_set.solidWalls.store(std::clamp((int)IniF(L"render", L"solid_walls", 1.0f), 0, 2));
     g_set.stampPixels.store(IniB(L"stereo", L"stamp_pixels", true));
     g_set.stamps.store(IniB(L"stereo", L"stamps", true));
@@ -1412,11 +1476,11 @@ void LoadSettings() {
         engitem::SetWant(unit);
         // [hands] belt_models: the belt's potions as the game's own models on the hero (F4); where: up and the arc's radius in
         // parts of his eye height, degrees between columns, size, side
-        engitem::SetBelt(IniB(L"hands", L"belt_models", false), std::clamp(IniF(L"hands", L"belt_models_up", 0.57f), 0.0f, 1.5f),
+        engitem::SetBelt(IniB(L"hands", L"belt_models", true), std::clamp(IniF(L"hands", L"belt_models_up", 0.57f), 0.0f, 1.5f),
                          std::clamp(IniF(L"hands", L"belt_models_ahead", 0.13f), -1.0f, 1.0f),
                          std::clamp(IniF(L"hands", L"belt_models_arc", 35.0f), 0.0f, 90.0f),
                          std::clamp(IniF(L"hands", L"belt_models_scale", 0.56f), 0.05f, 10.0f), IniF(L"hands", L"belt_models_side", -1.0f),
-                         IniB(L"hands", L"belt_grab", false), [] {
+                         IniB(L"hands", L"belt_grab", true), [] {
                              static float h[6];
                              const wchar_t* const k[6] = {L"belt_hold_x", L"belt_hold_y", L"belt_hold_z", L"belt_hold_pitch", L"belt_hold_yaw", L"belt_hold_roll"};
                              for (int i = 0; i < 6; ++i) h[i] = std::clamp(IniF(L"hands", k[i], 0.0f), i < 3 ? -30.0f : -180.0f, i < 3 ? 30.0f : 180.0f);
@@ -1664,7 +1728,10 @@ void LoadSettings() {
         potionhide::Configure(flies && (ours || IniB(L"hands", L"potion_hide_game", false)));   // the game's own thrown potion not drawn while ours flies (vr/potion_hide.h): only then, or nothing would be seen
     }
     g_set.bowLatency.store(IniB(L"debug", L"bow_latency", false));
-    bowquick::Configure(IniB(L"bow", L"quick_release", false), (int)std::lround(IniF(L"bow", L"quick_release_frame", 2.0f)));   // the arrow made earlier inside the same attack (a change of the game's timing)
+    animcut::Configure(animcut::Kind::Bow, IniB(L"bow", L"quick_release", false), (int)std::lround(IniF(L"bow", L"quick_release_frame", 2.0f)));
+    g_set.quickThrowPotions.store(IniB(L"hands", L"quick_throw_potions", false));
+    animcut::Configure(animcut::Kind::Melee, IniB(L"hands", L"quick_strike", false), (int)std::lround(IniF(L"hands", L"quick_strike_frame", 1.0f)));   // the melee blow made earlier inside the attack animation
+    animcut::Configure(animcut::Kind::Throw, IniB(L"hands", L"quick_throw", false), (int)std::lround(IniF(L"hands", L"quick_throw_frame", 1.0f)));   // the thrown missile made earlier inside the throw animation   // the arrow made earlier inside the same attack (a change of the game's timing)
     shieldsmite::Configure(IniB(L"gameplay", L"shield_smite", false));
     g_set.bowRigPose.store(IniB(L"bow", L"rig_pose", false));
     g_set.bowRigGrip.store(IniB(L"debug", L"bow_rig_grip", false));
@@ -1989,6 +2056,9 @@ bool FullBody() { return g_set.platform.load() == 1 && g_set.vrView.load() == 4;
 #else
 bool FullBody() { return false; }
 #endif
+// VR F1, F2, F3 - the views BodyWalk's input belongs to (viewgate::Flat): the only place outside F4 where direct input acts, and only
+// for the left stick's walk ([direct] walk_flat_views).
+bool FlatViews() { return g_set.platform.load() == 1 && !FullBody(); }
 // First person whose hero the game animates (flat, or VR view 3): turned only
 // about the vertical, mouse and W A S D, the interface in the picture.
 #if D2RVR_FIRST_PERSON
@@ -3911,8 +3981,12 @@ bool GestureCanAim() {
     return ok;
 }
 // [hands] bow_draw: the 0.4 s after a released draw go along its line whatever [bow] mode says.
+// VR F1 and F3 (top-down) never (vr/attack_view.h): there the hero hits where HE faces - the game's own aim, the hand and the head turn nothing (the log of
+// 2026-10-15 had "attack vector 0.62 0.79 -> the hand -0.79 -0.62" and 53 "TURNED to the hand" in F1 and F3). VR F2 and F4 look where the player looks, as
+// they did; the flat game is as it was.
 bool AimByVector() {
-    return g_enabled.load() && ((g_set.bowMode.load() == 4 && (g_aHeld.load() || g_skillHeld.load() || GestureAimLive())) || bowdrawwire::AimLive());
+    return attackview::HandMayAim(g_set.platform.load(), g_set.vrView.load()) && g_enabled.load() &&
+           ((g_set.bowMode.load() == 4 && (g_aHeld.load() || g_skillHeld.load() || GestureAimLive())) || bowdrawwire::AimLive());
 }
 
 // The other half of the controller's aim. With the stick at rest the aim
@@ -4296,6 +4370,22 @@ void TurnStick(XINPUT_STATE* s, bool fromBodyWalk) {
                           !gamestate::MenuOpen());
     }
     const bool lt = in.bLeftTrigger >= 128, rt = in.bRightTrigger >= 128;
+    if (lt && walkpath::PushedRaw(in.sThumbLX, in.sThumbLY)) {
+        // The user's report (2026-10-15): the left trigger held and the left stick pushed drank a belt potion, from column 1 whatever the way. Nothing in the
+        // plugin makes a belt press out of a stick (a belt command is pressed only by the hand's reach and by BodyWalk's actions, both logged as "game command
+        // 0x17.."): if this line is there and no "game command 0x17" line is, the game's own pad bindings did it from the pad it was given. Rate-limited.
+        static std::atomic<int> said{0};
+        static std::atomic<ULONGLONG> lastAt{0};
+        const ULONGLONG now = GetTickCount64();
+        if (said.load() < 12 || now - lastAt.load() > 10000) {
+            said.fetch_add(1);
+            lastAt.store(now);
+            LogF("pad diag: the left trigger (%u) held with the left stick pushed (%d %d) - buttons %04X, view %d (%s), the pad is %s, the walking hook %s the stick, direct input %s",
+                 in.bLeftTrigger, in.sThumbLX, in.sThumbLY, in.wButtons, ViewNow(), g_set.platform.load() == 1 ? "VR" : "flat",
+                 fromBodyWalk ? (directinput::Active() ? "the plugin's own" : "BodyWalk's, or the plugin's walk-only (F1-F3)") : "the real XInput pad",
+                 DirectWalkNow() && StickHookIn() ? "keeps" : "does not keep", directinput::Active() ? "feeding" : "not feeding");
+        }
+    }
     if (own && (in.wButtons != g_padTrace.buttons || lt != (g_padTrace.lt >= 128) || rt != (g_padTrace.rt >= 128))) {
         LogF("pad: buttons %04X LT %u RT %u stick %d %d", in.wButtons, in.bLeftTrigger, in.bRightTrigger, in.sThumbLX, in.sThumbLY);
         g_padTrace.buttons = in.wButtons; g_padTrace.lt = in.bLeftTrigger; g_padTrace.rt = in.bRightTrigger;
@@ -4381,13 +4471,94 @@ void NoteWalk(const walkpath::Out& r, const walkpath::Inputs& in) {
              changes > 1 ? "; several changes since the last line" : "");
 }
 
+// BodyWalk is running: its Game Link is alive, or its pad report moves. Asked at most five times a second (the pad is polled much more often).
+bool BodyWalkRunning() {
+    static std::atomic<ULONGLONG> checkedAt{0};
+    static std::atomic<bool> running{false};
+    const ULONGLONG now = GetTickCount64();
+    if (now - checkedAt.load() < 200) return running.load();
+    checkedAt.store(now);
+    BWPadMirror bw{};
+    const bool r = link::HostAlive() || BodyWalkReport(&bw, true);
+    running.store(r);
+    return r;
+}
+
+bool ChatOpen();
+
+// What became of the walk in VR F1-F3, said once per change (vr/walk_flat.h VerdictLog).
+void NoteWalkFlat(walkflat::Verdict v) {
+    static SRWLOCK lock = SRWLOCK_INIT;
+    static walkflat::VerdictLog log;
+    if (!TryAcquireSRWLockExclusive(&lock)) return;
+    walkflat::Verdict say = v;
+    uint32_t changes = 0;
+    const bool due = log.Step(v, GetTickCount64(), &say, &changes);
+    ReleaseSRWLockExclusive(&lock);
+    if (due) LogF("vrcam: walking in VR F1-F3 - %s%s", walkflat::Name(say), changes > 1 ? " (several changes since the last line)" : "");
+}
+
+// VR F1, F2, F3 without BodyWalk ([direct] walk_flat_views, vr/walk_flat.h): the controller's left stick for the game's walking code - the
+// report has that stick and nothing else. It goes the way BodyWalk's stick goes in these views: the pad the game polls (TurnStick turns it
+// into the game's frame while our camera is on, F2 and the 3D F1 and F3; the game's own camera, F1 flat, takes it as it is: up is up on the
+// screen) and the walking hooks' vector (BodyWalkWalk). False = nothing of ours: BodyWalk's pad (or none) as before.
+bool WalkFlatRead(BWPadMirror* out) {
+    directinput::WalkOut w{};
+    walkflat::Inputs in;
+    if (!directinput::WalkRead(&w, &in)) return false;   // the key off, direct input off or another view: the common poll ends here
+    in.bodyWalkRunning = BodyWalkRunning();
+    in.inWorld = g_inWorld.load();
+    in.menuOpen = gamestate::MenuOpen();
+    in.chatOpen = ChatOpen();
+    const walkflat::Verdict v = walkflat::Decide(in);
+    NoteWalkFlat(v);
+    if (v != walkflat::Verdict::Walk) return false;
+    *out = BWPadMirror{};
+    out->version = BW_PAD_MIRROR_VERSION;
+    out->counter = w.counter;
+    out->thumb_lx = w.lx; out->thumb_ly = w.ly;
+    g_walkState.store((uint8_t)walkpath::State::FlatOwn);
+    g_walkRaw.store((uint64_t)(uint16_t)w.lx | ((uint64_t)(uint16_t)w.ly << 16));
+    return true;
+}
+
+// Belt potions in VR F1-F3 ([direct] belt_flick_flat_views, vr/belt_flick.h): directinput::Feed found the left trigger held and a flick of a stick; this
+// is the last word. The same conditions as the walk (no BodyWalk running, a game on, no panel or chat open, headset frames arriving) - then the game's
+// own belt key command through gamecmd::Tap, the very press the hand that drinks a potion from the belt makes (0x17 .. 0x1A: Belt 1 .. 4).
+void BeltFlickSink(uint32_t column, int stick, int dir) {
+    if (column > 3) return;
+    walkflat::Inputs in;
+    directinput::FlatFacts(&in);
+    in.keyOn = directinput::BeltFlickOn();
+    in.bodyWalkRunning = BodyWalkRunning();
+    in.inWorld = g_inWorld.load();
+    in.menuOpen = gamestate::MenuOpen();
+    in.chatOpen = ChatOpen();
+    const walkflat::Verdict v = walkflat::Decide(in);
+    if (v != walkflat::Verdict::Walk) {   // (Walk = nothing in the way)
+        static std::atomic<int> refused{0};
+        if (refused.fetch_add(1) < 10)
+            LogF("vrcam: belt flick - the %s stick flicked %s with the left trigger held, NOT taken: %s", stick ? "right" : "left",
+                 beltflick::DirName((beltflick::Dir)dir), walkflat::Name(v));
+        return;
+    }
+    gamecmd::Tap(0x17u + column);
+    LogF("vrcam: belt flick - the left trigger held, the %s stick flicked %s: belt %u (VR F1-F3, the game's own belt key command 0x%X)", stick ? "right" : "left",
+         beltflick::DirName((beltflick::Dir)dir), column + 1, 0x17u + column);
+}
+
 // The pad the game's XInput poll and its walking hooks get from the plugin. [openxr] direct_input (F4, headset frames arriving): the plugin's
 // own pad, and in it - [openxr] direct_bodywalk_walk - BodyWalk's LEFT STICK mixed into the controller's (vr/walk_path.h: each past the game's
 // dead zone, the sum on the unit disc, the stronger one wins when they pull apart); nothing else of BodyWalk's report. Otherwise BodyWalk's
-// report whole, while it moves ([input] bodywalk_pad).
-bool PadMirrorRead(BWPadMirror* out) {
+// report whole, while it moves ([input] bodywalk_pad). VR F1-F3 with no BodyWalk running: the controller's left stick alone (WalkFlatRead;
+// *walkOnly says so).
+bool PadMirrorRead(BWPadMirror* out, bool* walkOnly = nullptr) {
+    if (walkOnly) *walkOnly = false;
     directinput::PadOut d{};
     const bool direct = directinput::PadRead(&d);
+    if (!direct && WalkFlatRead(out)) { if (walkOnly) *walkOnly = true; return true; }
+    if (!direct && g_walkState.load(std::memory_order_relaxed) != (uint8_t)walkpath::State::NotDirect)
+        g_walkState.store((uint8_t)walkpath::State::NotDirect);   // (BodyWalk's pad is the pad, or none: no stale word for the walking hook's log)
     const bool walks = direct && directinput::BodyWalkWalks();
     BWPadMirror bw{};
     walkpath::Inputs in;
@@ -4415,9 +4586,19 @@ bool PadMirrorRead(BWPadMirror* out) {
     return true;
 }
 
-bool PadFromBodyWalk(XINPUT_STATE* s) {
+bool PadFromBodyWalk(XINPUT_STATE* s, bool realPad = false) {
     BWPadMirror m;
-    if (!PadMirrorRead(&m)) return false;
+    bool walkOnly = false;
+    if (!PadMirrorRead(&m, &walkOnly)) return false;
+    if (walkOnly && realPad) {
+        // VR F1-F3 and a real (or virtual) pad answers: the plugin adds the walk to it - the left stick, while that pad's own stick rests - and
+        // nothing else of the pad is touched. It is the real pad's report still (false), the stick turned below like any pad's.
+        if (walkpath::PushedRaw(m.thumb_lx, m.thumb_ly) && !walkpath::PushedRaw(s->Gamepad.sThumbLX, s->Gamepad.sThumbLY)) {
+            s->Gamepad.sThumbLX = m.thumb_lx; s->Gamepad.sThumbLY = m.thumb_ly;
+            s->dwPacketNumber += m.counter | 1u;   // (the state changed with ours: a new packet for a game that skips equal ones)
+        }
+        return false;
+    }
     s->dwPacketNumber = m.counter;
     s->Gamepad.wButtons = m.buttons;
     s->Gamepad.bLeftTrigger = m.left_trigger;
@@ -4556,7 +4737,7 @@ void ApplyActions(XINPUT_STATE* s) {
     const standstill::Gate still = standstill::Poll(attackA, touchPress, gamestate::MenuOpen(), s->Gamepad.wButtons, s->Gamepad.bLeftTrigger);
     if ((attackA && !still.holdBackA) || still.addA || interact) s->Gamepad.wButtons |= XINPUT_GAMEPAD_A;
     s->Gamepad.wButtons = (WORD)((s->Gamepad.wButtons & ~still.holdBack) | still.add);
-    BowLatencyPad((s->Gamepad.wButtons & XINPUT_GAMEPAD_A) != 0);   // [debug] bow_latency
+    BowLatencyPad((s->Gamepad.wButtons & (XINPUT_GAMEPAD_A | XINPUT_GAMEPAD_B | XINPUT_GAMEPAD_X | XINPUT_GAMEPAD_Y | XINPUT_GAMEPAD_RIGHT_SHOULDER)) != 0);   // [debug] bow_latency: the attack or a skill button
     // A pad button, not the keyboard's I: a key press flips the game's UI to
     // mouse and keyboard, the way Shift + click did in bow mode 2. Menu (Start)
     // by default: View (Back) opens the map in D2R's pad layout - "the inventory
@@ -5052,7 +5233,8 @@ void HookSpellResolve(void* mgr, void* unit, bool assist, float* x, float* y) {
     // [hands] throw_gesture / throw_by_grip: the 0.5 s after a released throw. Its cast is the controller's own and the unit is the hero the
     // aim function last worked on (g_heroUnit) even where IsHeroUnit's look-at test says no - the camera's look-at lags a hero who runs.
     const bool thrownLive = GestureAimLive() && ThrownInHand();
-    if (SpellAimWanted(drawn) && unit && x && y && AimByVector() &&
+    // F4 only: in F1, F2, F3 and the flat modes the game's own auto-target and aim assist stay as they are (the user, 2026-10-15)
+    if (viewgate::F4() && SpellAimWanted(drawn) && unit && x && y && AimByVector() &&
         !gamestate::MenuOpen() && (IsHeroUnit(unit) || (thrownLive && unit == g_heroUnit.load())) && (skill = SpellSkill(unit)) >= 0)
         cast = SpellCastFor(skill, drawn);
     const SpellCast outer = g_spellCast;   // a resolution inside this one is its own; this one's comes back after
@@ -5380,7 +5562,7 @@ template <int I> DWORD WINAPI XDetour(DWORD idx, XINPUT_STATE* s) {
     // Flat with a real pad let through (flat_no_pad=0): that pad only, its stick
     // turned by the camera below; BodyWalk's stick walks through the keyboard move.
     bool mirror = false;
-    if (t_xDepth == 0 && idx == 0 && s && !FlatKeyMode() && PadFromBodyWalk(s)) { r = ERROR_SUCCESS; mirror = true; }
+    if (t_xDepth == 0 && idx == 0 && s && !FlatKeyMode() && PadFromBodyWalk(s, origResult == ERROR_SUCCESS)) { r = ERROR_SUCCESS; mirror = true; }
     if (t_xDepth == 0 && idx == 0 && s) KeysAsStick(s, &r);
     if (t_xDepth == 0 && idx == 0 && s) {   // pad buttons the gestures pulse (directinput::PadPulse): over any pad, or a pad of their own
         uint16_t pb; uint8_t plt, prt;
@@ -5404,7 +5586,7 @@ template <int I> DWORD WINAPI XDetour(DWORD idx, XINPUT_STATE* s) {
             r = ERROR_SUCCESS;
         }
         if (r != ERROR_SUCCESS) src = Source::Absent;
-        else if (mirror) src = directinput::Active() ? Source::Direct : Source::BodyWalk;
+        else if (mirror) src = directinput::Active() ? Source::Direct : g_walkState.load() == (uint8_t)walkpath::State::FlatOwn ? Source::Walk : Source::BodyWalk;
         else if (origResult != ERROR_SUCCESS) src = Source::Kept;
         PadPresenceNote(I, src, origResult, r);
     }
@@ -5421,6 +5603,7 @@ template <int I> DWORD WINAPI XDetour(DWORD idx, XINPUT_STATE* s) {
                 char bwWord[220] = "no";
                 if (mirror && directinput::Active())
                     snprintf(bwWord, sizeof bwWord, "no - the plugin's own pad; BodyWalk's walk: %s", walkpath::StateName((walkpath::State)g_walkState.load()));
+                else if (mirror && g_walkState.load() == (uint8_t)walkpath::State::FlatOwn) snprintf(bwWord, sizeof bwWord, "no - the plugin's left stick only (VR F1-F3, no BodyWalk)");
                 else if (mirror) snprintf(bwWord, sizeof bwWord, "yes");
                 LogF("pad diag: %ls!%s pad %u, BodyWalk's pad %s, buttons %04X, right X %d, thread %lu", g_xhooks[I].dll,
                      g_xhooks[I].name, idx, bwWord, s->Gamepad.wButtons, s->Gamepad.sThumbRX, GetCurrentThreadId());
@@ -5848,6 +6031,7 @@ void BigWindowTick() {
     const ULONGLONG now = GetTickCount64();
     if (!g_gameWnd || !g_gameWndProc || now - at < 2000) return;
     at = now;
+    if (g_set.platform.load() != 1) { SquareWhy(0, ""); return; }   // flat mode ([mode] platform=0): the game stays in the window the player set - no square
     if (!IniB(L"openxr", L"square_window", false)) { SquareWhy(0, ""); return; }
     if (xr::On() && rendersize::FromIni((int)IniF(L"render", L"vr_resolution", 0.0f), (int)IniF(L"render", L"vr_resolution_px", 0.0f)).kind !=
                         rendersize::Kind::Desktop) {
@@ -10344,13 +10528,13 @@ int HeroAnimMode() {
     return SafeRead(&mode, (const void*)(hero + 0xC), sizeof mode) && mode < 64 ? (int)mode : -1;
 }
 
-// [debug] bow_latency (vr/bow_latency.h): for every shot the draw gesture releases, one log line - the wire's press, the pad's A, the hero's mode, the body's turn, the server's
-// missile create (throw_born.cpp's read-only look) and the first missile the client shows - as ms after the release. Read only; the camera thread and the input hook leave
-// their stamps (BowLatencyPad, g_latYaw), this runs on the update thread.
+// [debug] bow_latency (vr/bow_latency.h): for every shot the draw gesture releases and every throw the throw gesture presses, one log line - the wire's press, the pad's button, the hero's
+// mode, the body's turn, the animation row the action runs on, the server's missile create (throw_born.cpp's read-only look) and the first missile the client shows - as ms after
+// the release. Read only; the camera thread and the input hook leave their stamps (BowLatencyPad, g_latYaw), this runs on the update thread.
 void BowLatencyTick() {
     static bowlatency::Tracker tr;
     static bool wasOn = false;
-    static unsigned shots = 0;
+    static unsigned shots = 0, throws = 0;
     static double yawStamp = 0.0, lastCreate = 0.0;
     static uint32_t known[96];
     static size_t nKnown = 0;
@@ -10361,7 +10545,8 @@ void BowLatencyTick() {
         throwborn::Observe(on);
         tr.Cancel();
         shots = bowdrawwire::ShotCount();
-        if (on) Log("bow latency: on ([debug] bow_latency) - one line for every bow shot of the draw gesture: ms after the release to the wire's press, the pad's A, the hero's attack mode, the body's turn, the server's arrow create and the client's missile");
+        throws = throwwire::ShotCount();
+        if (on) Log("bow latency: on ([debug] bow_latency) - one line for every bow shot of the draw gesture and every throw of the throw gesture: ms after the release to the wire's press, the pad's button, the hero's attack or throw mode, the body's turn, the animation row, the server's missile create and the client's missile");
     }
     if (!on) return;
     throwborn::Install();   // (the hook goes in for the read-only look too, once the game's code is there)
@@ -10373,19 +10558,28 @@ void BowLatencyTick() {
         bowlatency::Line(r, throwborn::Observing(), line, sizeof line);
         Log(line);
     };
-    if (const unsigned count = bowdrawwire::ShotCount(); count != shots) {   // a release: the clock starts at it
-        shots = count;
+    auto begin = [&](const char* kind, double rel, double press) {   // a release: the clock starts at it
         if (tr.Active()) tell(tr.Finish());
-        double rel = 0.0, press = 0.0;
-        bowdrawwire::ShotTimes(&rel, &press);
-        tr.Begin(rel);
+        tr.Begin(rel, kind);
         tr.WirePress(press);
         lastCreate = rel - 0.001;
-        meleetouch::MissileView mv[96];   // the missiles the client has now: a new one is the arrow's
+        meleetouch::MissileView mv[96];   // the missiles the client has now: a new one is the arrow's / the thrown thing's
         const size_t n = meleetouch::MissileScan(mv, 96);
         nKnown = std::min<size_t>(n, 96);
         for (size_t i = 0; i < nKnown; ++i) known[i] = mv[i].id;
         scanAt = 0;
+    };
+    if (const unsigned count = bowdrawwire::ShotCount(); count != shots) {
+        shots = count;
+        double rel = 0.0, press = 0.0;
+        bowdrawwire::ShotTimes(&rel, &press);
+        begin("bow", rel, press);
+    }
+    if (const unsigned count = throwwire::ShotCount(); count != throws) {   // a throw's game button pressed by the throw gesture (a potion, a javelin, a knife, an axe)
+        throws = count;
+        double rel = 0.0, press = 0.0;
+        throwwire::ShotTimes(&rel, &press);
+        begin("throw", rel, press);
     }
     if (!tr.Active()) return;
     const double t0 = tr.Started();
@@ -10426,15 +10620,35 @@ void BowLatencyTick() {
     if (tr.Over(now)) tell(tr.Finish());
 }
 
-// [bow] quick_release (vr/bow_quick.cpp): ticked about 20 times a second from the update thread - the action-frame flag of the hero's bow attack row is moved while he is in VR first
-// person with a bow in hand, and put back the moment any of that stops. The hero's unit mode tells whether he is mid-attack (a flag is not moved under one).
-void BowQuickTick() {
+// [debug] bow_latency, for the melee press->hit line (vr/melee_touch.cpp): the animation row the hero's unit points at - which row his attack really runs on and where its action frame is
+// (with [hands] quick_strike on it says 'the flag 1 at frame 1'). Read only; empty when bow_latency is off.
+size_t MeleeAnimNote(char* out, size_t n) {
+    if (!g_set.bowLatency.load()) return 0;
+    uintptr_t hero = (uintptr_t)g_heroUnit.load();
+    if (!hero || !IsHeroUnit((void*)hero)) hero = (uintptr_t)g_heroSeen.load();
+    uintptr_t rec = 0;
+    uint8_t bytes[bowlatency::kAnimRecordSize];
+    bowlatency::AnimInfo anim;
+    if (!hero || !SafeRead(&rec, (const void*)(hero + 0x70), sizeof rec) || rec <= 0x10000 || !SafeRead(bytes, (const void*)rec, sizeof bytes)) return 0;
+    bowlatency::ParseAnimRecord(bytes, rec, &anim);
+    return bowlatency::AnimText(anim, out, n);
+}
+
+// [bow] quick_release and [hands] quick_throw (vr/anim_cut.cpp): ticked about 20 times a second from the update thread - the action-frame flag of the hero's bow attack rows is moved
+// while he is in VR first person with a bow in hand, and that of his throw rows (the Throw skill's potions, javelins, knives, axes - whatever weapon he holds) while he is in VR first
+// person; put back the moment any of that stops. The hero's unit mode tells whether he is mid-animation (a flag is not moved under one).
+void AnimCutTick() {
     static ULONGLONG at = 0;
     const ULONGLONG now = GetTickCount64();
     if (now - at < 50) return;
     at = now;
-    const bool want = g_enabled.load() && g_inWorld.load() && FullBody() && gamestate::WeaponType() == D2RVR_TYPE_BOW;
-    bowquick::Tick(want, skel::HeroClass(), bowlatency::IsActionMode(HeroAnimMode()), now);
+    const bool inF4 = g_enabled.load() && g_inWorld.load() && FullBody();
+    const bool acting = bowlatency::IsActionMode(HeroAnimMode());
+    animcut::Tick(animcut::Kind::Bow, inF4 && gamestate::WeaponType() == D2RVR_TYPE_BOW, skel::HeroClass(), acting, now);
+    animcut::Tick(animcut::Kind::Melee, inF4, skel::HeroClass(), acting, now);   // [hands] quick_strike: the class's melee attack rows (never the bow's or the throw's)
+    // a throwing potion keeps its own timing (the game's missile comes at its action frame and the explosion about when our potion lands): the rows are put back while one is in the hand
+    const bool potionInHand = gamestate::HandIsThrowPotion((int)gamestate::WeaponHand());
+    animcut::Tick(animcut::Kind::Throw, animcut::ThrowCutWanted(inF4, potionInHand, g_set.quickThrowPotions.load()), skel::HeroClass(), acting, now);
 }
 
 // [debug] throw_trace (vr/throw_trace.h): for 5 s after every released throw, every ~40 ms, the hero's mode and the client's missiles (read only) are diffed
@@ -10481,7 +10695,7 @@ void MeleeTouchTick() {
 #if D2RVR_FIRST_PERSON
     ThrowTraceTick();
     BowLatencyTick();   // [debug] bow_latency
-    BowQuickTick();     // [bow] quick_release
+    AnimCutTick();      // [bow] quick_release, [hands] quick_throw
     {   // [hands] throw_autoaim_deg: the monsters near the hero and the server's verdicts, while a thrown weapon is in hand (the touch stands down for it)
         const bool want = meleetouch::ThrowWanted() && ThrownInHand() && g_enabled.load() && g_inWorld.load() && !gamestate::MenuOpen();
         meleetouch::ThrowPoll(want ? (uintptr_t)g_heroUnit.load() : 0);
@@ -10665,7 +10879,8 @@ void PushArms() {
             w.throwMaxCells = g_set.weightThrowMaxCells.load();
             w.unitsPerMetre = std::max(1.0f, ViewHeight()) / UserEyeHeightM();   // world units per metre at the hero's size (a cell is two units): the cap in metres
             w.thrownModel = g_set.weightThrownModel.load();
-            w.thrownHandoffMs = g_set.weightThrownHandoffMs.load();
+            // [hands] quick_throw: the game's missile is made that much sooner, so the model hands over to it sooner by the same time (a handoff of 0 stays 0)
+            w.thrownHandoffMs = std::max(0.0f, g_set.weightThrownHandoffMs.load() - (float)animcut::CutMs(animcut::Kind::Throw));   // (a potion's rows are not cut: CutMs is 0 while one is in hand)
             w.thrownHandEmptyMs = g_set.weightThrownHandEmptyMs.load();
             w.thrownPotion = gamestate::HandIsThrowPotion(w.slot);   // a throwing potion in the hand: with potion_model_flies its model flies to the landing (vr/weight_throw.h)
             w.potionFlies = g_set.weightPotionFlies.load();
@@ -13253,6 +13468,11 @@ void OnReshadePresent(reshade::api::effect_runtime* rt) {
     // to the headset as a flat picture.
     xr::SetWindow((HWND)rt->get_hwnd());   // the swap chain's own window: where the pointer is
     g_swapWnd.store((HWND)rt->get_hwnd());
+    {   // what the game draws at, and the light grid that makes (a line when it changes)
+        uint32_t sw = 0, sh = 0;
+        rt->get_screenshot_width_and_height(&sw, &sh);
+        lightbounds::NoteScreen(sw, sh);
+    }
     // No game area (the title and character screens, loading): the interface stays in the picture. A menu out as
     // a panel when the game was left (Esc, Save and Exit) is not kept there - the draw hook that sets it may not
     // run in the menus, and the main menu came up with no interface at all (2026-10-13).
@@ -14347,7 +14567,7 @@ void LoadReShade() {
              "an antivirus may also block it", err == ERROR_DLL_INIT_FAILED ? "its start said no" : "it could not be loaded");
 }
 
-static const char g_info_version[] = "0.165.0";
+static const char g_info_version[] = "0.166.0";
 
 static const PluginInfo g_info = {
     PluginInfoSize, D2RL_PLUGIN_ABI_VERSION, "d2r-vr-vrcam", "vrcam", g_info_version, "BodyWalkVR",
@@ -14371,6 +14591,8 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     wcscat_s(g_iniPath, L"d2r_vr.ini");
     crash::Install(g_info_version);   // first: a start that dies leaves its last step in d2r_vr_start.txt
     viewgate::Set(&FullBody);   // before any module that asks: the new behaviours (direct input, gestures, panels, pulses, hooks) act in F4 only
+    viewgate::SetFlat(&FlatViews);   // ... except the left stick's walk in VR F1-F3 ([direct] walk_flat_views, vr/walk_flat.h): movement only
+    directinput::SetBeltSink(&BeltFlickSink);   // ... and the belt potions of a thumbstick's flick with the left trigger held ([direct] belt_flick_flat_views, vr/belt_flick.h)
     crash::Step("settings (d2r_vr.ini)");
     xr::SetLogger(&Log);   // before the settings: [openxr] on says so in the log
     xr::SetPointerAt(&PointerAtPixel);   // F1 / F3 in 3D: the game's pointer drawn where its mouse points on their ground
@@ -14383,6 +14605,7 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     ReloadIfChanged();
     NoTemporalAA();
     MiniMapForHand();
+    ReconcileGameWindow();   // flat: no square window left from VR; VR: the player's own window kept first (before SafeGameWindow's cut)
     SafeGameWindow();
     g_mouseLookOn.store(MouseLookForView());
     LogF("vrcam %s: game build %s (%s), made for D2R 3.3.93787 under D2RLoader 1.3.1", g_info_version,
@@ -14448,11 +14671,12 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     handvitals::Init(ctx);   // [hud] hand_vitals reads the hero's life and mana on the UI thread; listens to direct_input's frames
     panelinput::Init(ctx);
     bowdrawwire::Init(ctx, &AimHand, &FullBody);   // the bow draw listens to direct_input's frames, in F4 only
-    bowquick::Init(ctx);   // [bow] quick_release: the log
+    animcut::Init(ctx);   // [bow] quick_release, [hands] quick_throw: the log
     throwwire::Init(ctx, &GestureCanAim);
     throwwire::SetHeroModeFn(&GestureHeroMode);
     potionhide::SetHeroIdSource(&GestureHeroId);   // [hands] potion_hide_game: whose potion missile is the hero's
     throwwire::SetAutoSkillFn(&ThrowAutoSkillReady);
+    meleetouch::SetAnimNote(&MeleeAnimNote);   // [debug] bow_latency: the animation row on the melee press->hit line
     meleetouch::SetThrowLink(&throwwire::GripIsThrows, &throwwire::GripHeld, &throwwire::LastThrowTickMs, &throwwire::HoldOffRelease);   // hit by touch with a thrown weapon: the touch and the throw by gesture do not both fire
     standstill::SetThrowPressFn(&throwwire::PressIsThrow);
     crash::Step("update thread and console command");
@@ -14464,7 +14688,7 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
 }
 
 D2RL_PLUGIN_EXPORT void D2RLoaderUnloadPlugin() noexcept {
-    bowquick::Shutdown();   // [bow] quick_release: a moved action-frame flag goes back before the plugin does
+    animcut::Shutdown();   // [bow] quick_release, [hands] quick_throw: a moved action-frame flag goes back before the plugin does
     skillwheel::Shutdown();   // [openxr] skill_wheel: its listener out, its threads joined
     handvitals::Shutdown();   // [hud] hand_vitals: its listener out, its painter joined
     xr::Shutdown();   // the session before anything it runs on goes; FlatVR started again

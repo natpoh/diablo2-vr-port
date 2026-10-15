@@ -265,9 +265,12 @@ not from a movement. See [ROADMAP.md](ROADMAP.md).
 without BodyWalk, hit by touch, weapon weight, the throws, the bow's draw, the
 skill panel, the wrist medallions, the guards that keep attacks from walking
 the hero - acts in F4 only, so F1, F2, F3 and the flat modes play as they always
-did. The price: in F1 - F3 the controllers are BodyWalk's, so with Controls
-without BodyWalk on and BodyWalk not running there is no controller input in
-those views. Whether F1 - F3 should read the controllers themselves is open.
+did. The price: in F1 - F3 the controllers are BodyWalk's. Since 0.166 the
+controller's left stick walks the hero there and the left trigger with a flick of a
+thumbstick drinks a belt potion (both without BodyWalk running), but nothing else:
+no attack, button, gesture or panel. For the full controller in F1 - F3 BodyWalk
+has to be running; making the plugin read the controllers fully there is in
+progress for the next update.
 The gate is `vr/view_gate.h` (`viewgate::F4()`).
 
 ### 17. Hit by touch and weapon weight need tuning [repo]

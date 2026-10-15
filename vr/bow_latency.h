@@ -9,7 +9,7 @@
 //   - the hero's model heading: when it begins to turn and when it has turned (the body in F4 does not follow the head),
 //   - the server's missile create for the hero (throw_born.cpp's passive look at CreateMissile) and the first missile the client shows that was not there at
 //     the release (meleetouch::MissileScan).
-// The line is: "bow latency: release->wire press 0 ms, ->pad A down 42 (up 136), ->attack mode 7 at 180 (neutral again 910), ->turn began 20, done 750
+// The line is: "bow latency: release->wire press 0 ms, ->pad button down 42 (up 136), ->attack mode 7 at 180 (neutral again 910), ->turn began 20, done 750
 // (146 -> -50 deg), ->arrow created 810 (missile class 11, hero's; 2 creates), ->client shows a missile 830 (class 11)", the times in ms after the release.
 #pragma once
 
@@ -78,6 +78,7 @@ struct Create { double t; int cls; uint32_t flags; AnimInfo anim; };
 
 // What a finished shot comes to, ms after the release (negative = not seen).
 struct Result {
+    char kind[8] = {'b', 'o', 'w'};   // what was shot: "bow" or "throw"
     double wirePressMs = kNone, padDownMs = kNone, padUpMs = kNone;
     double attackModeMs = kNone, neutralAgainMs = kNone;
     int attackMode = 0;
@@ -109,9 +110,11 @@ public:
     }
 
     // A shot is released at t: the clock starts. A release inside a watched shot ends that one first (the caller asked Done/Take before).
-    void Begin(double t) {
+    void Begin(double t, const char* kind = "bow") {
         active_ = true;
         t0_ = t;
+        std::memset(kind_, 0, sizeof kind_);
+        std::strncpy(kind_, kind ? kind : "bow", sizeof kind_ - 1);
         wirePress_ = padDown_ = padUp_ = clientAt_ = kNone;
         clientClass_ = 0;
         clientAnim_ = AnimInfo{};
@@ -145,6 +148,7 @@ public:
         Result r;
         if (!active_) return r;
         active_ = false;
+        std::memcpy(r.kind, kind_, sizeof r.kind);
         auto ms = [&](double t) { return t < 0.0 ? kNone : (t - t0_) * 1000.0; };
         r.wirePressMs = ms(wirePress_);
         r.padDownMs = ms(padDown_);
@@ -180,6 +184,7 @@ private:
     bool active_ = false, haveBase_ = false;
     double t0_ = 0.0, wirePress_ = kNone, padDown_ = kNone, padUp_ = kNone, clientAt_ = kNone;
     int clientClass_ = 0, lastMode_ = -1;
+    char kind_[8] = {'b', 'o', 'w'};
     AnimInfo clientAnim_;
     bool clientAnimTried_ = false;
     float baseYaw_ = 0.0f;
@@ -193,23 +198,24 @@ private:
 // The one line. `hook` says whether the server's create is being watched at all (else "not watched" rather than "none").
 inline size_t Line(const Result& r, bool hook, char* out, size_t n) {
     char b[1100];
-    int k = snprintf(b, sizeof b, "bow latency: release");
+    int k = snprintf(b, sizeof b, "%s latency: release", r.kind);
     auto add = [&](const char* fmt, auto... a) { if (k > 0 && (size_t)k < sizeof b) k += snprintf(b + k, sizeof b - (size_t)k, fmt, a...); };
     auto when = [&](const char* what, double ms) {
         if (ms < 0.0) add(", ->%s not seen", what); else add(", ->%s %.0f ms", what, ms);
     };
     when("wire press", r.wirePressMs);
-    if (r.padDownMs < 0.0) add(", ->pad A down not seen");
-    else if (r.padUpMs < 0.0) add(", ->pad A down %.0f ms", r.padDownMs);
-    else add(", ->pad A down %.0f ms (up %.0f)", r.padDownMs, r.padUpMs);
+    if (r.padDownMs < 0.0) add(", ->pad button down not seen");
+    else if (r.padUpMs < 0.0) add(", ->pad button down %.0f ms", r.padDownMs);
+    else add(", ->pad button down %.0f ms (up %.0f)", r.padDownMs, r.padUpMs);
     if (r.attackModeMs < 0.0) add(", ->attack mode not seen");
     else if (r.neutralAgainMs < 0.0) add(", ->attack mode %d at %.0f ms", r.attackMode, r.attackModeMs);
     else add(", ->attack mode %d at %.0f ms (neutral again %.0f)", r.attackMode, r.attackModeMs, r.neutralAgainMs);
     if (r.turnBeganMs < 0.0) add(", ->no turn of the body (%.0f -> %.0f deg)", r.yawFrom, r.yawTo);
     else if (r.turnDoneMs < 0.0) add(", ->body turn began %.0f ms (%.0f -> %.0f deg), not done", r.turnBeganMs, r.yawFrom, r.yawTo);
     else add(", ->body turn began %.0f ms, done %.0f ms (%.0f -> %.0f deg)", r.turnBeganMs, r.turnDoneMs, r.yawFrom, r.yawTo);
-    if (r.createdMs < 0.0) add(hook ? ", ->arrow created: none by the hero" : ", ->arrow created: create not watched");
-    else add(", ->arrow created %.0f ms (missile class %d, the hero's; %u create%s)", r.createdMs, r.createdClass, (unsigned)r.creates, r.creates == 1 ? "" : "s");
+    const char* made = std::strcmp(r.kind, "bow") == 0 ? "arrow" : "missile";   // what the server creates
+    if (r.createdMs < 0.0) add(hook ? ", ->%s created: none by the hero" : ", ->%s created: create not watched", made);
+    else add(", ->%s created %.0f ms (missile class %d, the hero's; %u create%s)", made, r.createdMs, r.createdClass, (unsigned)r.creates, r.creates == 1 ? "" : "s");
     if (r.clientMs < 0.0) add(", ->client shows a missile: none");
     else add(", ->client shows a missile %.0f ms (class %d)", r.clientMs, r.clientClass);
     {   // the animation record the attack runs on, from the client's unit and from the server's (the owner of the create)

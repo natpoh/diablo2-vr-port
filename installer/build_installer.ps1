@@ -12,10 +12,12 @@
 #   -GameLink <file>  another game_link.dll than the standalone build's
 #   -Portable <dir>   a BodyWalk Portable folder kept from an earlier build, instead of
 #                     making one from Release_main (which may hold a BodyWalk not released yet)
+#   -SkipProfileCheck do not run tools\profile_sanitize.py on the staged BodyWalk profile (it needs Python)
 param(
     [string]$Addon = "C:\wsl\vjoy\Release_main\flatvr\reshade_addon\FlatVR_DepthProvider.addon64",
     [string]$GameLink = "C:\wsl\vjoy\cpp_src\build_standalone\bin\Release\game_link.dll",
-    [string]$Portable = ""
+    [string]$Portable = "",
+    [switch]$SkipProfileCheck
 )
 $ErrorActionPreference = "Stop"
 # The BodyWalk profile this installer ships. BodyWalk lists it as "<Name> (mod)" and offers it again whenever
@@ -59,6 +61,17 @@ if ($profileAsIs) { Copy-Item $profileSource "$payload\bodywalk\profile.json" }
 else { [System.IO.File]::WriteAllText("$payload\bodywalk\profile.json", $stagedProfile, (New-Object System.Text.UTF8Encoding($false))) }
 Write-Host ("BodyWalk profile: '{0} (mod)', cloud game {1} profile {2} - installer\bodywalk_profile.json {3}" -f $BodyWalkProfile.Name,
     $BodyWalkProfile.CloudGameId, $BodyWalkProfile.CloudProfileId, $(if ($profileAsIs) { "as it is" } else { "with these three values" }))
+# Nothing that names a device ships in the profile: no tracker serial, MAC or user folder at ANY depth (0.165.0 carried a tracker
+# serial in a nested preset). tools\profile_sanitize.py --fix cleans installer\bodywalk_profile.json.
+if (-not $SkipProfileCheck) {
+    $py = Get-Command python, py -ErrorAction SilentlyContinue | Where-Object { $_.Source -notmatch 'WindowsApps' } | Select-Object -First 1
+    if (-not $py) { throw "Python is needed to check the BodyWalk profile (tools\profile_sanitize.py): install it, or pass -SkipProfileCheck" }
+    $sanitize = Join-Path $root "tools\profile_sanitize.py"
+    & $py.Source -I $sanitize --selftest
+    if ($LASTEXITCODE -ne 0) { throw "tools\profile_sanitize.py --selftest failed ($LASTEXITCODE)" }
+    & $py.Source -I $sanitize --check "$payload\bodywalk\profile.json"
+    if ($LASTEXITCODE -ne 0) { throw "the BodyWalk profile carries device identifiers: python tools\profile_sanitize.py --fix installer\bodywalk_profile.json" }
+}
 $manifest = Start-Process -FilePath (Join-Path $root "build\Release\D2R_VR_Settings.exe") -Wait -PassThru `
     -ArgumentList "--game-link-manifest", "`"$payload\bodywalk\d2r.txt`""
 if ($manifest.ExitCode -ne 0 -or -not (Test-Path "$payload\bodywalk\d2r.txt")) { throw "the Game Link manifest was not written ($($manifest.ExitCode))" }

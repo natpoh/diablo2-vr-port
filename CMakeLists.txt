@@ -289,11 +289,25 @@ target_compile_options(shot_trace_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 add_executable(stray_walk_test cleanroom/tests/stray_walk_test.cpp)
 target_include_directories(stray_walk_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
 target_compile_options(stray_walk_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# In which views the aiming hand may direct the hero's attack (vr/attack_view.h): VR F2 and F4 look where the player looks, VR F1 and F3 (top-down) keep the hero's own facing.
+add_executable(attack_view_test cleanroom/tests/attack_view_test.cpp)
+target_include_directories(attack_view_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_options(attack_view_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # BodyWalk's walking through the plugin into the game ([openxr] direct_bodywalk_walk, vr/walk_path.h): a fake pad in, the game's stick and
 # command out, in direct mode and not, with and without the stray-walk guard.
 add_executable(walk_path_test cleanroom/tests/walk_path_test.cpp)
 target_include_directories(walk_path_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
 target_compile_options(walk_path_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# Walking with the controller's left stick in VR F1, F2, F3 without BodyWalk ([direct] walk_flat_views, vr/walk_flat.h): the verdict, the
+# stick as a pad stick, the log, and the view gate's flat-views predicate.
+add_executable(walk_flat_test cleanroom/tests/walk_flat_test.cpp)
+target_include_directories(walk_flat_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_options(walk_flat_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# Belt potions in VR F1, F2, F3 ([direct] belt_flick_flat_views, vr/belt_flick.h): the left trigger held and a flick of a thumbstick - the directions,
+# one potion per flick, the middle in between, the trigger, both sticks, a diagonal.
+add_executable(belt_flick_test cleanroom/tests/belt_flick_test.cpp)
+target_include_directories(belt_flick_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_options(belt_flick_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # The settings panel in the headset ([openxr] headset_settings, vr/hset_*.h, vr/xr_headset_settings.h): its model,
 # the chord and the lasers, the ini transaction (backup, conflict) and the picture, tested without a headset.
 add_executable(hset_test tools/hset_test.cpp vr/hset_paint.cpp vr/hset_store.cpp shared/ini_txn.cpp)
@@ -512,6 +526,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/aim_point_test.cpp")
     target_include_directories(aim_point_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
     target_compile_options(aim_point_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/window_json_test.cpp")
+    # The game's windowed size in Settings.json and what each platform does to it (shared/window_json.h): flat mode has no square window.
+    add_executable(window_json_test tools/window_json_test.cpp)
+    target_include_directories(window_json_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared)
+    target_compile_options(window_json_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/vr_resolution_test.cpp")
     # [render] vr_resolution (vr/vr_resolution.h, render_window.h): size selection, when to ask, the pointer's map - fake windows, no game.
     add_executable(vr_resolution_test tools/vr_resolution_test.cpp)
@@ -592,10 +612,10 @@ target_compile_options(bow_hand_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 add_executable(bow_latency_test cleanroom/tests/bow_latency_test.cpp)
 target_compile_options(bow_latency_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 target_sources(d2rl-vrcam PRIVATE vr/bow_draw_wire.cpp)   # [hands] bow_draw (wired to vr/direct_input.h)
-target_sources(d2rl-vrcam PRIVATE vr/bow_quick.cpp)       # [bow] quick_release (the action-frame flag of the hero's bow attack row; the pure part vr/bow_quick.h)
-# ... its pure part: the row's shape check, the move and the way back, the walk over a block (bow_quick_test)
-add_executable(bow_quick_test cleanroom/tests/bow_quick_test.cpp)
-target_compile_options(bow_quick_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+target_sources(d2rl-vrcam PRIVATE vr/anim_cut.cpp)        # [bow] quick_release and [hands] quick_throw (the action-frame flag of the hero's bow attack and throw rows; the pure part vr/anim_cut.h)
+# ... its pure part: the row's shape check, the move and the way back, the walk over a block (anim_cut_test)
+add_executable(anim_cut_test cleanroom/tests/anim_cut_test.cpp)
+target_compile_options(anim_cut_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/body_calibration_test.cpp")
     # The T-pose measurement (vr/body_calibration.h) and the ini patch it saves through (vr/ini_patch.h), on synthetic poses
     add_executable(body_calibration_test cleanroom/tests/body_calibration_test.cpp)

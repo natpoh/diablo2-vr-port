@@ -1,7 +1,7 @@
 #pragma once
 // The game's light culling at render sizes that are not 16:10 (vr/light_bounds_shader.h says what is
 // wrong with it): its compute shader for each lighting tile's depth range, replaced by ours while VR
-// renders. [render] light_bounds_fix. Idea and the shader's match values (size and FNV-1a of the exact
+// renders ([render] light_bounds_fix) and in flat mode too ([render] light_bounds_flat). Idea and the shader's match values (size and FNV-1a of the exact
 // shader of build 3.3.93787): bearstonem/d2r-pcvr, steamvr/light_bounds.cpp (MIT); the shader and the
 // code here are our own.
 //
@@ -15,14 +15,19 @@ namespace lightbounds {
 // The caller has joined ReShade (reshade::register_addon) first.
 void Register(void (*log)(const char*));
 
-// From d2r_vr.ini, on every change: `fix` = [render] light_bounds_fix and VR (the squared window is a VR thing) -
-// the replacement is bound while it is true, live; `logAll` = [debug] log_compute_shaders - a line (size and
-// FNV-1a) for every compute shader the game makes, which is how the match values are checked on a machine. The
-// replacement is made, and the lines written, only for pipelines the game creates after Register: read at its start.
-void Configure(bool fix, bool logAll);
+// From d2r_vr.ini, on every change. `make` = [render] light_bounds_fix: the replacement is made as the game makes its
+// pipeline (read at its start - the pipelines are made then; off at the start = nothing is made, the old behaviour
+// exactly). `bind` = it is bound now, live: in VR with `make`, in flat mode only with [render] light_bounds_flat too.
+// `logAll` = [debug] log_compute_shaders: a line (size and FNV-1a) for every compute shader the game makes, which is
+// how the match values are checked on a machine. `flat` = [mode] platform=0 (for the log).
+void Configure(bool make, bool bind, bool logAll, bool flat);
 
-// Something for Register to do (either of the above is on). The caller registers only then, so with both off the
-// game and ReShade see nothing of this.
+// Something for Register to do (either of `make` and `logAll` is on). The caller registers only then, so with both
+// off the game and ReShade see nothing of this.
 bool Wanted();
+
+// The size the game draws at (the swap chain's), every present: a log line when it or the state changes - what
+// the 32 x 20 light grid makes of it (square tiles = the game's own shader is right) and whether ours is bound.
+void NoteScreen(unsigned w, unsigned h);
 
 }  // namespace lightbounds

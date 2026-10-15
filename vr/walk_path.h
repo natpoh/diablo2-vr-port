@@ -93,6 +93,7 @@ enum class State : uint8_t {
     OwnStronger,
     BodyWalkStronger,
     SameWay,
+    FlatOwn,          // VR F1-F3 without BodyWalk ([direct] walk_flat_views, vr/walk_flat.h): the controller's left stick walks, nothing else of the pad
 };
 
 enum class Source : uint8_t {
@@ -155,6 +156,7 @@ inline const char* StateName(State s) {
     case State::OwnStronger: return "COMBINED - the two pull apart: the controller's stick is the stronger and stays";
     case State::BodyWalkStronger: return "COMBINED - the two pull apart: BodyWalk's stick is the stronger and stays";
     case State::SameWay: return "COMBINED - the two push the same way (BodyWalk may mirror the thumbstick): the stronger of the two, not doubled";
+    case State::FlatOwn: return "VR F1-F3 without BodyWalk - the controller's left stick walks (movement only)";
     }
     return "?";
 }

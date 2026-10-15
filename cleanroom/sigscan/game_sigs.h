@@ -120,6 +120,10 @@ inline constexpr Sig kSigs[] = {
     {"ClientVisualInit", 0x771A10, Kind::Code, "40 55 53 56 57 41 55 41 56 41 57 48 8D AC 24 90 FD FF FF 48 81 EC 70 03 00 00 48 8B 05 ?? ?? ?? ?? 48 33 C4 48 89 85 10 02 00 00 49 8B F1", 0x771A10, 0, 0, 0, 0, "40 55 53 56 57 41 55 41 56 41 57 48 8D AC 24 90 FD FF FF", nullptr, "the game's own thrown potion is not hidden", "Aim and attack"},
     // the renderer's world-matrix function (out, entity, TransformComponent*): the world matrix at +0x40 is what is drawn, hooked
     {"WorldTransform", 0xE3A8C0, Kind::Code, "48 8B C4 48 89 58 08 55 56 57 41 54 41 55 41 56 41 57 48 8D A8 68 FE FF FF 48 81 EC 60 02 00 00", 0xE3A8C0, 0, 0, 0, 0, "48 8B C4 48 89 58 08 55 56 57 41 54 41 55 41 56", nullptr, "the game's own thrown potion is not hidden", "Aim and attack"},
+    // the entt registry's storage of the effect (VFX) component (registry): made if there is none, called
+    {"EcsVfxStorage", 0x66DBB0, Kind::Ref, "E8 ?? ?? ?? ?? 4C 8B F8 C7 44 24 58 FF FF FF FF 33 C0", 0x7C970F, 0, 1, 5, 0, "48 89 5C 24 20 56 57 41 56 48 83 EC 40 48 8B F9", nullptr, "the game's own thrown potion is not hidden", "Aim and attack"},
+    // the effect component's visibility (component, bool): stored and applied to the effect, called
+    {"VfxSetVisible", 0xF6A830, Kind::Code, "88 51 1C 48 8B 49 10 48 85 C9 0F 85 ?? ?? ?? ?? C3", 0xF6A830, 0, 0, 0, 0, "88 51 1C 48 8B 49 10 48 85 C9 0F 85 ?? ?? ?? ??", nullptr, "the game's own thrown potion is not hidden", "Aim and attack"},
     // the game's table sets (DataTables* x 4, 16-byte steps): +0x14D8 is the AnimData.D2 table
     {"AnimTables", 0x2A9A580, Kind::Ref, "48 8D 0D ?? ?? ?? ?? 48 03 C0 48 8B 04 C1 48 8B 80 D8 14 00 00 48 83 C4 28", 0x300760, 0, 3, 7, 0, nullptr, nullptr, "a quicker bow release", "Aim and attack"},
     // the controller skill bank in use (0 or 16), called

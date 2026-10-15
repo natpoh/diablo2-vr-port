@@ -41,10 +41,13 @@ struct Copy {
 SRWLOCK g_lock = SRWLOCK_INIT;
 std::vector<Copy> g_copies;           // under g_lock
 std::atomic<uint32_t> g_copyCount{0};   // g_copies.size(), for the bind's quick look
-std::atomic<bool> g_active{false};
+std::atomic<bool> g_make{false};   // [render] light_bounds_fix: the replacement is made as the game makes its pipeline
+std::atomic<bool> g_bind{false};   // ... and bound now (VR; flat only with [render] light_bounds_flat)
+std::atomic<bool> g_flat{false};   // [mode] platform=0: for the log
 std::atomic<bool> g_logAll{false};
 std::atomic<uint32_t> g_computeBinds{0};
 std::atomic<bool> g_boundTold{false};
+std::atomic<uint64_t> g_noted{0};   // NoteScreen: the last state it told
 thread_local bool t_ours = false;       // our own calls into ReShade: their events are not for us
 void (*g_log)(const char*) = nullptr;
 std::atomic<bool> g_registered{false};
@@ -101,7 +104,7 @@ void OnInitPipeline(device* dev, pipeline_layout layout, uint32_t count, const p
             Line("vrcam: compute shader %zu bytes, FNV-1a %016llX%s", native.code_size, (unsigned long long)hash,
                 sized && hash == kGameShaderHash ? " - the light-bin depth-bounds shader" : "");
         if (!sized || hash != kGameShaderHash) return;   // another shader, or another build of the game: left alone
-        if (!g_active.load(std::memory_order_relaxed)) return;   // off at the game's start: nothing is made (the old behaviour)
+        if (!g_make.load(std::memory_order_relaxed)) return;   // off at the game's start: nothing is made (the old behaviour)
         std::call_once(g_compileOnce, Compile);
         if (g_code.empty()) return;
         shader_desc replaced = native;
@@ -167,18 +170,18 @@ void OnDestroyDevice(device* dev) {
     t_ours = false;
 }
 
-// The game sets a pipeline thousands of times a frame: only a compute one is looked at, and only with the fix on.
+// The game sets a pipeline thousands of times a frame: only a compute one is looked at, and only with the fix bound.
 void OnBindPipeline(command_list* cl, pipeline_stage stages, pipeline original) {
     if (t_ours || (stages & pipeline_stage::compute_shader) == 0) return;
     // A fix that is wanted and a game shader never seen: ReShade joined after the game made its pipelines.
     // The compute binds of a few seconds are plenty for the light bins to have come by (once, then silent).
     const uint32_t n = g_computeBinds.fetch_add(1, std::memory_order_relaxed);
-    if (!g_active.load(std::memory_order_relaxed)) return;
     if (!g_copyCount.load(std::memory_order_relaxed)) {
-        if (n == 20000) Line("vrcam: light bounds - the game's light-bin depth-bounds shader has not been seen (ReShade joined after "
+        if (n == 20000 && g_make.load(std::memory_order_relaxed)) Line("vrcam: light bounds - the game's light-bin depth-bounds shader has not been seen (ReShade joined after "
                             "the game made its pipelines, or this is not build 3.3.93787): the game's own light culling stays");
         return;
     }
+    if (!g_bind.load(std::memory_order_relaxed)) return;
     device* dev = cl->get_device();
     pipeline replacement{};
     AcquireSRWLockShared(&g_lock);
@@ -203,11 +206,30 @@ void Register(void (*log)(const char*)) {
     reshade::register_event<reshade::addon_event::bind_pipeline>(&d2rvr::D3D12Only<&OnBindPipeline>::Call);
 }
 
-void Configure(bool fix, bool logAll) {
-    g_active.store(fix, std::memory_order_relaxed);
+void Configure(bool make, bool bind, bool logAll, bool flat) {
+    g_make.store(make, std::memory_order_relaxed);
+    g_bind.store(make && bind, std::memory_order_relaxed);
     g_logAll.store(logAll, std::memory_order_relaxed);
+    g_flat.store(flat, std::memory_order_relaxed);
 }
 
-bool Wanted() { return g_active.load(std::memory_order_relaxed) || g_logAll.load(std::memory_order_relaxed); }
+bool Wanted() { return g_make.load(std::memory_order_relaxed) || g_logAll.load(std::memory_order_relaxed); }
+
+// What the game draws at, and what that makes of the light grid: a line whenever the size or the state changes
+// (the start, a window or render size change, the switch between VR and flat, the shader found).
+void NoteScreen(unsigned w, unsigned h) {
+    if (!w || !h || !g_make.load(std::memory_order_relaxed)) return;
+    const bool found = g_copyCount.load(std::memory_order_relaxed) != 0, bind = g_bind.load(std::memory_order_relaxed),
+               flat = g_flat.load(std::memory_order_relaxed);
+    const uint64_t key = (uint64_t)w | (uint64_t)h << 16 | (uint64_t)found << 40 | (uint64_t)bind << 41 | (uint64_t)flat << 42;
+    if (g_noted.exchange(key, std::memory_order_relaxed) == key) return;
+    const double tw = w / 32.0, th = h / 20.0;   // the game's grid: 32 x 20 tiles
+    const bool square = tw - th < 0.02 * th && th - tw < 0.02 * th;
+    Line("vrcam: light bounds - %s mode, the game draws %ux%u: a light tile is %.1f x %.1f px, %s; %s", flat ? "flat" : "VR", w, h, tw, th,
+         square ? "square (the game's own shader is right)" : "not square (the game's own shader reads the wrong rows)",
+         !found ? "the game's shader has not been seen (yet): nothing to bind"
+         : bind ? "the replacement is bound"
+                : flat ? "the replacement is ready but not bound in flat mode ([render] light_bounds_flat is off)" : "the replacement is ready but not bound");
+}
 
 }  // namespace lightbounds

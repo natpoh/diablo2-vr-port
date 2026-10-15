@@ -523,6 +523,7 @@ end;
 
 var
   IniTakeNew: Boolean;   // decided on the Ready page, done after the files are in
+  IniChanged: Boolean;   // the player's file differs from the defaults the last Setup put in (or they cannot be compared)
 
 // A value as vrcam reads it: up to an inline ';' comment, trimmed.
 function IniValue(S: String): String;
@@ -569,6 +570,7 @@ var
   Changed: Boolean;
 begin
   IniTakeNew := False;
+  IniChanged := False;
   Ini := Dir + '\d2rloader\plugins\d2r_vr.ini';
   Def := Dir + '\d2rloader\plugins\d2r_vr.default.ini';
   if not FileExists(Ini) then Exit;   // first install: the defaults go in as they are
@@ -599,12 +601,16 @@ begin
       Vals.Free;
     end;
   end;
+  IniChanged := Changed;
   if not Changed then
     IniTakeNew := True
   else
     IniTakeNew := SuppressibleMsgBox('You have changed D2R VR''s settings (d2r_vr.ini).' + #13#10#13#10 +
-      'Yes - keep your settings. What this version adds comes in with its defaults.' + #13#10 +
-      'No - take this version''s default settings.', mbConfirmation, MB_YESNO, IDYES) = IDNO;
+      'D2R VR {#ModVersion} comes with new default settings that turn its features on (weapon weight, hit by touch, the bow drawn with both hands, ' +
+      'the life and mana on your wrists, the belt potions, native OpenXR...).' + #13#10#13#10 +
+      'Yes - keep your settings. Only the settings that are new in this version are added; the features stay as your file has them (off, if it came from an older version).' + #13#10 +
+      'No - take this version''s default settings: the features come on, and your changes are replaced (your old file is kept as d2r_vr.ini.before-{#ModVersion}).',
+      mbConfirmation, MB_YESNO, IDYES) = IDNO;
 end;
 
 procedure ApplyIni(Dir: String);
@@ -616,7 +622,11 @@ begin
   Ini := Dir + '\d2rloader\plugins\d2r_vr.ini';
   Def := Dir + '\d2rloader\plugins\d2r_vr.default.ini';
   if IniTakeNew then
-    FileCopy(Def, Ini, False)
+  begin
+    // taking the defaults replaces the player's changes: the file they chose to replace is kept beside it
+    if IniChanged and FileExists(Ini) then FileCopy(Ini, Ini + '.before-{#ModVersion}', False);
+    FileCopy(Def, Ini, False);
+  end
   else
   begin
     Secs := TStringList.Create;

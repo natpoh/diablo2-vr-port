@@ -27,6 +27,7 @@ enum class Source : uint8_t {
     Direct,      // the plugin's own pad (direct input)
     Kept,        // a neutral pad made to keep the pad present: the plugin's source is missing for now
     Keys,        // the keyboard's W A S D as a pad (shooter controls)
+    Walk,        // VR F1-F3 without BodyWalk: a pad with the controller's left stick and nothing else ([direct] walk_flat_views)
 };
 
 inline const char* Name(Source s) {
@@ -37,6 +38,7 @@ inline const char* Name(Source s) {
     case Source::Direct: return "the plugin's own pad";
     case Source::Kept: return "a neutral pad kept present";
     case Source::Keys: return "the keyboard as a pad";
+    case Source::Walk: return "the plugin's left stick only (F1-F3)";
     }
     return "?";
 }

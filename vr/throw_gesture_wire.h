@@ -111,6 +111,10 @@ bool GripHeld();
 // decide a drop on a grip release no sooner than the next frame (about 11 ms), then compare the release's
 // tick with this value (a throw's tick is at or after the release's frame).
 uint64_t LastThrowTickMs();
+// [debug] bow_latency: the throws whose game button has been pressed so far, and the times (std::chrono::steady_clock seconds, the base of throwborn::NowS()) of the last
+// one's release by the gesture and of its press. Any thread.
+unsigned ShotCount();
+void ShotTimes(double* releaseS, double* pressS);
 
 // Hit by touch with a thrown weapon (vr/melee_touch.h, [gameplay] melee_touch_thrown): the touch pressed the game's own attack at a monster the blade
 // met - that press IS the swing's throw. A release of the gesture before GetTickCount64 reaches `untilTickMs` is therefore not thrown (the log says so):
