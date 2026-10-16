@@ -20,7 +20,9 @@
 #include <cstdint>
 
 #include "melee_bodies.h"
+#include "skill_triggers.h"   // [debug] skill_triggers draws the bash: Why, Verdict (the pure part only)
 #include "stroke_contact.h"
+#include "stroke_tuning.h"
 
 namespace shieldsmite {
 
@@ -56,6 +58,13 @@ constexpr PadPress SlotPress(int slot) {
     if (slot >= 8) return {kPadA, uint8_t(slot == 9 ? 255 : 0)};
     return {buttons[slot % 4], uint8_t(slot >= 4 ? 255 : 0)};
 }
+// How long the slot's button is held. A slot of the left trigger's row (LT + B / X / Y / RB / A) is held 180 ms, the others 65:
+// with LT the game's pad code first prepares the second bank (about 50 ms at the game's own poll, 25 a second) before the button
+// counts, and a 65 ms pulse could end between two polls - the bash then cast nothing. bearstonem/d2r-pcvr (MIT) found it and
+// measured it (steamvr/weapon_skills.h, commit b7190a2: 160 timings of XR frames against 25 Hz polls, 65 ms lost the press in all,
+// 180 in none). The press is let go at once when the game's click has asked for the target (the cast is on its way).
+constexpr uint32_t kPulseMs = 65, kAltBankPulseMs = 180;
+constexpr uint32_t PulseMs(PadPress p) { return p.lt ? kAltBankPulseMs : kPulseMs; }
 // The order the slots are looked at in when Smite sits in more than one: the plain face buttons first.
 constexpr int kSlotOrder[kSlotCount] = {0, 1, 2, 3, 8, 4, 5, 6, 7, 9};
 // skillOf(slot) is the skill the game has on the slot (-1 none); returns the first slot holding Smite, -1 none.
@@ -80,26 +89,49 @@ inline bool Open(const Gate& g) { return g.enabled && g.f4 && g.shield && g.smit
 
 constexpr double kMinGap = 0.45;   // seconds between two requests: a bash is not a machine gun (and the game's own cast has its rate)
 
+// The bash's own two numbers, apart from hit by touch's melee_min_speed / melee_stroke_start_cm: [gameplay] shield_smite_min_speed (m/s, 0.3 .. 8,
+// default 0.8) and shield_smite_stroke_cm (cm, 2 .. 30, default 8) - what the shield always used. The swing engine's parameters for them; at the
+// defaults exactly stroke::Params{}. (The shield's speed is the left HAND's: its movement plus its turn times the shield's length - the shield has
+// no drawn blade of its own in the room, so hit by touch's blade speed does not apply.)
+inline stroke::Params BashParams(float minSpeed = stroke::kDefaultMinSpeed, float startCm = stroke::kDefaultStartCm) { return stroke::ParamsFor({minSpeed, startCm}); }
+
 class Detector {
-    stroke::Engine engine;
+    stroke::Engine engine;     // the one that decides: gated (it forgets the stroke while the gate is shut)
+    stroke::Engine observer;   // the same samples and numbers WITHOUT the gate - for the debug drawing and log only, it decides nothing
     stroke::HitSet hits;
     double lastRequest = -1e9;
 
 public:
+    Detector() : engine(BashParams()), observer(BashParams()) {}
     void Reset() {
         engine.Reset();
+        observer.Reset();
         hits.Clear();
     }
+    void SetParams(const stroke::Params& p) {
+        engine.SetParams(p);
+        observer.SetParams(p);
+    }
+    const stroke::Params& Params() const { return engine.GetParams(); }
     stroke::Diagnostics TakeDiagnostics() { return engine.TakeDiagnostics(); }
 
     // This frame: false with the engine forgotten when the gate is shut; true when the shield is in an energetic
     // stroke (the caller then looks for monsters and calls Pick).
     bool Step(const Gate& gate, const stroke::Sample& sample, stroke::Sweep& sweep) {
+        stroke::Sweep unused;
+        observer.Step(sample, unused);   // (a drawing's numbers: the shield's speed whatever the trigger does)
         stroke::Sample s = sample;
         if (!Open(gate)) s.active = false;
         if (!engine.Step(s, sweep)) return false;
         return true;
     }
+
+    // What the debug drawing shows (melee_boxes): the observer's speed and stroke - the movement as it is, gate or none - and whether a bash
+    // would count NOW (the deciding engine's latest step swept something, which it only does with the gate open).
+    float Speed() const { return observer.LastSpeed(); }
+    bool InStroke() const { return observer.InStroke(); }
+    bool Counting() const { return engine.Counting(); }
+    double SinceRequest(double now) const { return now - lastRequest; }
 
     // The monster to cast at: of those the stroke touched, the one nearest the shield; one per stroke, and not
     // within kMinGap of the last request. `session` changes with the game (a new hero, an area): hits start again.
@@ -153,5 +185,39 @@ public:
     float CellX() const { return gx; }
     float CellY() const { return gy; }
 };
+
+// -- why a bash does not count (the debug line of melee_boxes) -------------------------------------------------------
+// Smite costs this much mana at every level (Skills.txt); the game's own number decides the cast, this only words the log.
+constexpr float kSmiteMana = 2.0f;
+struct Facts {
+    bool enabled = false;          // [gameplay] shield_smite
+    bool playing = false;          // gate.playing && gate.f4 (a game, no menu, focus, F4, the hand tracked)
+    float rightTrigger = 0.0f;
+    bool slot = false;             // Smite sits on a pad slot
+    float speed = 0.0f, minSpeed = 0.8f;   // the shield's speed (the observer's) and the bash speed
+    bool inStroke = false;         // the observer says a stroke is on
+    double sinceRequest = 1e9;     // seconds since the last bash was asked for
+    bool heroKnown = false;        // the hero's unit is known, so monsters can be looked for
+    bool haveNear = false;         // a monster in the scan
+    skilltriggers::Verdict nearVerdict = skilltriggers::Verdict::Unknown;
+    float mana = -1.0f, manaNeed = kSmiteMana;   // the hero's mana (< 0 not read)
+};
+// The skilltriggers::Why bits that apply. 0 = a bash would count (and be asked for). Off: only that (nothing else is ever evaluated).
+inline uint32_t Explain(const Facts& f) {
+    using namespace skilltriggers;
+    if (!f.enabled) return kWhyOff;
+    uint32_t why = 0;
+    if (!f.playing) why |= kWhyNotPlaying;
+    if (f.rightTrigger >= kTriggerDown) why |= kWhyTrigger;
+    if (!f.slot) why |= kWhyNoSlot;
+    if (!(f.speed >= f.minSpeed)) why |= kWhySlow;
+    else if (!f.inStroke) why |= kWhyNoStroke;
+    if (f.sinceRequest < kMinGap) why |= kWhyTooSoon;
+    if (!f.heroKnown) why |= kWhyNoHero;
+    else if (!f.haveNear) why |= kWhyNoMonster;
+    if (f.mana >= 0.0f && f.mana < f.manaNeed) why |= kWhyNoMana;
+    if (f.haveNear && f.nearVerdict == Verdict::Refused) why |= kWhyNotHostile;
+    return why;
+}
 
 }  // namespace shieldsmite

@@ -71,11 +71,16 @@ int FindHeroMatrices(const float hero[3], uintptr_t* out, int max);
 #include "stand_still.h"        // ... and a click on bare ground in F4 gets Stand Still too (HookMapClick)
 #include "stray_walk_wire.h"    // [gameplay] block_stray_walk / block_stray_clicks: no stray walk, no stray mouse button in the F4 world (stray_walk_wire.cpp)
 #include "view_gate.h"     // everything added after the base mod acts in VR first person (F4) only
+#include "interact_press.h"   // [input] interact_one_press: one target per press of "pick up / interact"
+#include "depth_pick.h"    // the depth-stencil our effects copy, picked once and kept (scenedepth::)
 #include "attack_view.h"   // VR F2 and F4: the attack goes where the player looks; VR F1 and F3 (top-down): where the hero faces (pure part, tested)
 #include "window_json.h"   // the game's windowed size in Settings.json and what each platform does to it (shared/, pure, tested)
+#include "turn_mode.h"     // [turn] smooth / snap / speed: how the right stick turns, and what an older ini's snap=0 means (shared/, pure, tested)
+#include "frame_cap.h"     // the game's frame cap in Settings.json: VR's rate is VR's, flat mode has the player's own (shared/, pure, tested)
 #include "walk_path.h"     // [openxr] direct_bodywalk_walk: BodyWalk's walking stick mixed into the controller's in direct mode (pure part, tested)
 #include "belt_flick.h"    // [direct] belt_flick_flat_views: the left trigger + a flick of a thumbstick drinks a belt column in VR F1-F3 (pure part, tested)
 #include "melee_boxes.h"   // [debug] melee_boxes: the capsules of hit by touch drawn in the headset
+#include "skill_triggers.h"   // [debug] skill_triggers: what casts a skill (the shield bash -> Smite so far) drawn in the headset
 #include "blade_shape.h"   // the touch's blade as drawn (dual wield, the sliders)
 #include "weight.h"
 #include "aim_source.h"    // where a staff's aim comes from: the controllers, never the weapon as drawn
@@ -138,6 +143,7 @@ namespace gamestate { bool HandIsThrowPotion(int side); }   // the held item is 
 #include "hand_vitals_wire.h"   // [hud] hand_vitals: life and mana on the hand when the palm turns to the face (vr/hand_vitals.h)
 #include "hand_orbs.h"   // [hud] hand_vitals_style orbs: life and mana as 3D balls on the wrists, drawn by the effect (vr/hand_orbs.h)
 #include "render_resolution.h"   // [render] vr_resolution: a render size apart from the window's
+#include "depth_source.h"   // [render] depth_fix_mode 2: the depth range written once a frame at the game's frame builder
 #include <timeapi.h>   // timeBeginPeriod: the pacer's 1 ms sleeps
 #pragma comment(lib, "winmm.lib")
 #include "pad_mirror_shared.h"
@@ -148,6 +154,7 @@ namespace gamestate { bool HandIsThrowPotion(int side); }   // the held item is 
 using namespace D2RL;
 
 namespace {
+namespace depthsrc { void Configure(bool on); void Tick(); }   // [render] depth_fix_mode 2 (further down, beside SkyTick)
 namespace gamefog { void SetPoke(const std::wstring& want); }   // [debug] fog_poke, below
 namespace cavelight { void Load(); }   // [cave_light], below
 namespace engitem { void SetWant(const std::wstring& path); void SetBelt(bool on, float up, float ahead, float arc, float scale, float side, bool grab, const float hold[6]); void SetBallColours(const float (*rgb)[3]); void Frame(bool fullBody); void InstallHook(); float FistCap(int side); bool BeltBusy(int side); }   // [debug] engine_unit, [hands] belt_models, below
@@ -281,7 +288,7 @@ struct Settings {
     std::atomic<float> stickAngleScale{1.0f}; // approximate mode: the stick turns by camera yaw times this
     std::atomic<bool>  rightTurn{true};     // right stick X turns the body (camera + walking)
     std::atomic<float> turnSpeed{120.0f};   // deg/s at full deflection (smooth turn)
-    std::atomic<float> snapAngle{0.0f};     // >0: snap turn by this many degrees per flick instead
+    std::atomic<float> snapAngle{0.0f};     // >0: snap turn by this many degrees per flick instead (0 while [turn] smooth is on: turnmode::EffectiveSnapAngle)
     std::atomic<float> turnSign{1.0f};      // flip if right turns left
     std::atomic<bool>  afr{false};          // alternate-frame stereo: left eye, right eye, left...
     std::atomic<float> ipd{0.27f};          // eye separation in world units (hero ~7.5 tall = 1.8 m)
@@ -330,6 +337,7 @@ struct Settings {
     std::atomic<bool>  hideHead{false};     // shrink the hero's head away (first person)
     std::atomic<float> armScale{1.0f};      // reach on top of the hero/user height ratio
     std::atomic<bool>  bodywalkPad{true};   // [input] bodywalk_pad: the game's pad is BodyWalk's own report (pad_mirror_shared.h) - no virtual pad needed
+    std::atomic<bool>  interactOnePress{false};   // [input] interact_one_press: one target per press of "pick up / interact" (vr/interact_press.h), F4 only
     std::atomic<int>   inventoryPad{0};     // [input] inventory_button: the pad button "D2R: Inventory" sends - 0 Menu (Start), 1 View (Back)
     std::atomic<bool>  aAttackOnly{false};  // [input] a_attack_only: pad A never picks up or interacts; "D2R: Pick up / interact" does
     std::atomic<bool>  flatKeyMove{true};   // [input] flat_keyboard_move: flat W A S D walk through the game's own keyboard move (0x8A960), no pad
@@ -410,6 +418,10 @@ struct Settings {
     std::atomic<float> fistOpen[8] = {20.0f, 20.0f, 20.0f, 20.0f, 20.0f, 20.0f, 20.0f, 20.0f};
     std::atomic<bool>  fist{true};          // [hands] fist: a free hand closes with its controller's grip, relaxes when let go
     std::atomic<bool>  shieldFist{true};    // [hands] shield_fist: the hand with a shield on it does the same (F4 only; the fingers only)
+    std::atomic<bool>  forearmTwist{true};  // [hands] forearm_twist: the forearm turns with the wrist (F4 only)
+    std::atomic<float> forearmShare{0.5f};  // [hands] forearm_twist_share: how much of the wrist's roll the forearm bone takes, 0..1
+    std::atomic<bool>  shieldForearm{true}; // [shield] forearm: the shield strapped to the left forearm, not hung on the hand (F4 only)
+    std::atomic<float> shieldAdj[6] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};   // [shield] x y z (cm), pitch yaw roll (deg)
     std::atomic<float> staffOffset[3] = {0.0f, 0.0f, 0.0f};   // [hands] staff_x/y/z: cm, the staff past the right hand, its axes
     std::atomic<float> staffGrabCm{15.0f};  // [hands] staff_grab_cm: the left grip takes the staff only this near it
     std::atomic<float> leftStaffOffset[3] = {0.0f, 0.0f, 0.0f};
@@ -1030,6 +1042,62 @@ void ReconcileGameWindow() {
     }
 }
 
+// The game's frame cap ("Framerate Cap" in Settings.json), at the plugin's start - before the game reads the file (shared/frame_cap.h,
+// the policy and its tests). The headset's rate writes a cap in VR (D2R VR Settings: a game frame per headset frame) and that cap must
+// not stay in force in flat mode (the monitor): FLAT uses the player's own - the cap VR wrote goes, the one kept before it ([stereo]
+// cap_before) comes back; none kept: nothing is written, the log says so. In VR only the player's own is kept: a cap in the file that
+// is not the one VR wrote last ([stereo] cap_written) is his.
+void ReconcileFrameCap() {
+    PWSTR dir = nullptr;
+    std::wstring path;
+    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_SavedGames, 0, nullptr, &dir))) path = std::wstring(dir) + L"\\Diablo II Resurrected\\Settings.json";
+    if (dir) CoTaskMemFree(dir);
+    FILE* f = path.empty() ? nullptr : _wfopen(path.c_str(), L"rb");
+    if (!f) return;
+    std::string text(1 << 16, ' ');
+    text.resize(fread(text.data(), 1, text.size(), f));
+    fclose(f);
+    const int now = framecap::Read(text);
+    if (now < 0) return;
+    framecap::State s;
+    s.own = (int)GetPrivateProfileIntW(L"stereo", L"cap_before", -1, g_iniPath);
+    s.written = (int)GetPrivateProfileIntW(L"stereo", L"cap_written", -1, g_iniPath);
+    const bool vr = g_set.platform.load() == 1;
+    framecap::Plan plan;
+    if (vr) {
+        if (now != s.written && now != s.own) { plan.saveOwn = true; plan.own = now; }
+        // what the settings write for this headset rate and 3D mode, and why (one rule: shared/frame_cap.h VrCapFor)
+        const int hz = framecap::HzOfRate((int)IniF(L"stereo", L"headset_rate", 3.0f));
+        const framecap::VrCap c = framecap::VrCapFor(hz, IniB(L"stereo", L"afr", false), IniB(L"stereo", L"pair_per_tick", false), xr::On());
+        LogF("vrcam: frame cap - the game's file has %d; for the headset's %d Hz in this 3D mode D2R VR Settings writes %d%s (%s)", now, hz, c.value,
+             c.factor ? "" : " (none)", framecap::Reason(c.why));
+    } else {
+        plan = framecap::ForFlat(now, s);
+    }
+    if (plan.saveOwn) {
+        wchar_t b[16];
+        swprintf_s(b, L"%d", plan.own);
+        WritePrivateProfileStringW(L"stereo", L"cap_before", b, g_iniPath);
+        LogF("vrcam: the player's own frame cap %d kept in d2r_vr.ini ([stereo] cap_before) before VR's", plan.own);
+    }
+    if (plan.unknownOwn)
+        LogF("vrcam: flat mode ([mode] platform=0): the game's frame cap is %d (VR's rate) and none of yours was kept: the game uses it - set the cap you want in the "
+             "game's Options > Video (the mod chooses no frame cap in flat mode)", now);
+    if (!plan.write) return;
+    bool ok = false;
+    const std::string out = framecap::With(text, plan.value, &ok);
+    if (!ok || out == text) return;
+    const DWORD attr = GetFileAttributesW(path.c_str());
+    if (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_READONLY)) SetFileAttributesW(path.c_str(), attr & ~FILE_ATTRIBUTE_READONLY);
+    if (FILE* o = _wfopen(path.c_str(), L"wb")) {
+        fwrite(out.data(), 1, out.size(), o);
+        fclose(o);
+        LogF("vrcam: flat mode ([mode] platform=0): the game's frame cap was %d (VR's rate) - %s: set to %d", now, plan.why, plan.value);
+    } else {
+        LogF("vrcam: flat mode: the game's frame cap is %d (VR's rate) and Settings.json could not be written: set the cap you want in the game's Options > Video", now);
+    }
+}
+
 // D2R itself dies at its title screen with a window taller than about 2400 ("A Fixed sized vector
 // tried to reallocate" in its blz-log.txt, then its own crash handler; 2600 and 3000 tried, 2026-10-11).
 // Players were told on Discord to put 3000x3000 into Settings.json and make it read-only: every start
@@ -1089,7 +1157,8 @@ namespace cbcmp { extern std::atomic<bool> g_go; void NoteView(int eye, const fl
 namespace rtrace { extern std::atomic<bool> g_go; }
 extern std::atomic<int> g_inputLog;
 extern std::atomic<bool> g_xrThirdGaze; extern std::atomic<int> g_projFix; extern std::atomic<float> g_shiftMul; extern std::atomic<int> g_replayViews; extern std::atomic<int> g_viewMask; extern std::atomic<int> g_replayPositions; extern std::atomic<int> g_replayPrev;
-namespace replay { extern std::atomic<bool> g_fxSync; extern std::atomic<bool> g_dlssBoth; extern std::atomic<bool> g_replayCopy; }
+namespace fx { bool OwnDepthNow(); }   // [render] own_depth in force (fx::scenedepth::)
+namespace replay { extern std::atomic<bool> g_fxSync; extern std::atomic<bool> g_fxFence; extern std::atomic<bool> g_dlssBoth; extern std::atomic<bool> g_replayCopy; }
 namespace replay { extern std::atomic<int> g_peekWant; }
 namespace camfix { extern std::atomic<int> g_scanWant; }
 std::atomic<bool> g_ownDepth{true};   // [render] own_depth (scenedepth::)
@@ -1358,8 +1427,9 @@ void LoadSettings() {
     g_set.stickExact.store(IniB(L"stick", L"exact", true));
     g_set.stickAngleScale.store(std::clamp(IniF(L"stick", L"angle_scale", 1.0f), 0.0f, 4.0f));
     g_set.rightTurn.store(IniB(L"turn", L"right_stick", true));
-    g_set.turnSpeed.store(std::clamp(IniF(L"turn", L"speed", 120.0f), 10.0f, 720.0f));
-    g_set.snapAngle.store(std::clamp(IniF(L"turn", L"snap", 0.0f), 0.0f, 180.0f));
+    g_set.turnSpeed.store(turnmode::Speed(IniF(L"turn", L"speed", turnmode::kSpeedDefault)));
+    // [turn] smooth is its own key (1 smooth at `speed`, 0 a snap of `snap` degrees); an ini without it keeps its mode: snap=0 is smooth turning
+    g_set.snapAngle.store(turnmode::EffectiveSnapAngle(IniF(L"turn", L"snap", 0.0f), IniF(L"turn", L"smooth", -1.0f)));
     g_set.turnSign.store(IniF(L"turn", L"sign", 1.0f) < 0 ? -1.0f : 1.0f);
     g_set.afr.store(IniB(L"stereo", L"afr", false) && g_set.platform.load() == 1);   // on a monitor alternate eyes only flicker
     g_set.ipd.store(std::clamp(IniF(L"stereo", L"ipd", 0.27f), 0.0f, 5.0f));
@@ -1404,6 +1474,7 @@ void LoadSettings() {
     g_replayPositions.store((int)IniF(L"stereo", L"replay_positions", 2.0f));
     g_replayPrev.store((int)IniF(L"stereo", L"replay_prev", 1.0f));
     replay::g_fxSync.store(IniB(L"stereo", L"replay_fx_sync", true));
+    replay::g_fxFence.store(IniB(L"render", L"fx_fence", false));   // our effects' constants kept apart by fences (F4)
     replay::g_dlssBoth.store(IniB(L"stereo", L"replay_dlss", false));
     replay::g_replayCopy.store(IniB(L"stereo", L"replay_copy", true));
     replay::g_fxAtHold.store(IniB(L"stereo", L"replay_fx", true));
@@ -1525,15 +1596,20 @@ void LoadSettings() {
         // [render] depth_fix: the game's linear depth (fog, height fog, AO, reflections, water) over 0 .. depth_range
         // world units from our camera instead of its own camera's 550 .. 1060 (uitrace.cpp, 2026-10-13; on since the
         // headset test the same day: the act 2 town's veil gone); 0 = the game's
-        const bool depthFix = IniB(L"render", L"depth_fix", true);
+        // [render] depth_fix_mode: 0 off (the game's), 1 each b10 as a list binds it (uitrace.cpp, D2R VR's), 2 once a frame at the
+        // game's frame builder (depthsrc, after bearstonem/d2r-pcvr). Without the key: depth_fix says (1 = mode 1). Live.
+        const int depthMode = std::clamp((int)IniF(L"render", L"depth_fix_mode", IniB(L"render", L"depth_fix", true) ? 1.0f : 0.0f), 0, 2);
+        const bool depthFix = depthMode == 1;
         const float depthRange = IniF(L"render", L"depth_range", 1000.0f);
         uitrace::SetDepthRange(depthFix, depthRange);
+        depthsrc::Configure(depthMode == 2);
         static int toldDepth = -1;
         static float toldRange = 0.0f;
         static bool toldFixed = false;
-        if ((int)depthFix != toldDepth || depthRange != toldRange) {
-            toldDepth = depthFix; toldRange = depthRange; toldFixed = false;
-            LogF("vrcam: [render] depth_fix %s, depth_range %.0f (%d root signatures bind b10)", depthFix ? "on" : "off", depthRange,
+        if (depthMode != toldDepth || depthRange != toldRange) {
+            toldDepth = depthMode; toldRange = depthRange; toldFixed = false;
+            static const char* const kModes[3] = {"0 - off, the game's own", "1 - each b10 as it is bound", "2 - once a frame at the game's frame builder"};
+            LogF("vrcam: [render] depth_fix_mode %s, depth_range %.0f (mode 1 only; %d root signatures bind b10)", kModes[depthMode], depthRange,
                  uitrace::DepthRangeLayouts());
         }
         if (depthFix && !toldFixed && uitrace::DepthRangeFixes()) {
@@ -1632,6 +1708,9 @@ void LoadSettings() {
     g_set.flatClickShoot.store(IniB(L"input", L"flat_click_shoot", true));
     g_set.flatCrosshair.store(IniB(L"input", L"flat_crosshair", true));
     g_set.inventoryPad.store(IniF(L"input", L"inventory_button", 0.0f) != 0.0f ? 1 : 0);
+    if (const bool one = IniF(L"input", L"interact_one_press", 0.0f) != 0.0f; one != g_set.interactOnePress.exchange(one))
+        Log(one ? "vrcam: pick up / interact - one target per press (VR first person; [input] interact_one_press)"
+                : "vrcam: pick up / interact - held, it takes whatever is under it ([input] interact_one_press=0)");
     g_set.facingSign.store(IniF(L"arms", L"facing_sign", 1.0f) < 0 ? -1.0f : 1.0f);
     g_set.facingSource.store(IniF(L"hands", L"facing_source", 1.0f) != 0.0f ? 1 : 0);
     g_set.facingHoldMs.store(std::clamp(IniF(L"hands", L"facing_hold_ms", 4000.0f), 0.0f, 60000.0f));
@@ -1733,6 +1812,9 @@ void LoadSettings() {
     animcut::Configure(animcut::Kind::Melee, IniB(L"hands", L"quick_strike", false), (int)std::lround(IniF(L"hands", L"quick_strike_frame", 1.0f)));   // the melee blow made earlier inside the attack animation
     animcut::Configure(animcut::Kind::Throw, IniB(L"hands", L"quick_throw", false), (int)std::lround(IniF(L"hands", L"quick_throw_frame", 1.0f)));   // the thrown missile made earlier inside the throw animation   // the arrow made earlier inside the same attack (a change of the game's timing)
     shieldsmite::Configure(IniB(L"gameplay", L"shield_smite", false));
+    shieldsmite::SetTuning(IniF(L"gameplay", L"shield_smite_min_speed", 0.8f), IniF(L"gameplay", L"shield_smite_stroke_cm", 8.0f));   // the shield bash's own speed and start distance (vr/shield_smite.h BashParams), live
+    skilltriggers::SetWanted(IniB(L"debug", L"skill_triggers", false));   // what casts a skill drawn (vr/skill_triggers.h)
+    skilltriggers::SetMarkMs((uint32_t)std::clamp(IniF(L"debug", L"skill_mark_ms", 800.0f), 0.0f, (float)skilltriggers::kMaxMarkMs));   // how long its speed marks and trail stay
     g_set.bowRigPose.store(IniB(L"bow", L"rig_pose", false));
     g_set.bowRigGrip.store(IniB(L"debug", L"bow_rig_grip", false));
     g_set.meleeTouch.store(IniB(L"gameplay", L"melee_touch", false));
@@ -1766,6 +1848,13 @@ void LoadSettings() {
     }
     g_set.fist.store(IniB(L"hands", L"fist", true));
     g_set.shieldFist.store(IniB(L"hands", L"shield_fist", true));
+    g_set.forearmTwist.store(IniB(L"hands", L"forearm_twist", true));
+    g_set.forearmShare.store(std::clamp(IniF(L"hands", L"forearm_twist_share", 0.5f), 0.0f, 1.0f));
+    g_set.shieldForearm.store(IniB(L"shield", L"forearm", true));
+    {
+        static const wchar_t* const kKeys[6] = {L"x", L"y", L"z", L"pitch", L"yaw", L"roll"};
+        for (int k = 0; k < 6; ++k) g_set.shieldAdj[k].store(std::clamp(IniF(L"shield", kKeys[k], 0.0f), k < 3 ? -40.0f : -180.0f, k < 3 ? 40.0f : 180.0f));
+    }
 #if D2RVR_FIRST_PERSON
     for (int c = 0; c < 8; ++c) {
         wchar_t close[32], open[32];
@@ -4502,6 +4591,30 @@ void NoteWalkFlat(walkflat::Verdict v) {
 // report has that stick and nothing else. It goes the way BodyWalk's stick goes in these views: the pad the game polls (TurnStick turns it
 // into the game's frame while our camera is on, F2 and the 3D F1 and F3; the game's own camera, F1 flat, takes it as it is: up is up on the
 // screen) and the walking hooks' vector (BodyWalkWalk). False = nothing of ours: BodyWalk's pad (or none) as before.
+// ... and the whole controller where [direct] flat_controller is on: the F4 layout's pad (directinput::FlatPadRead - nothing unless every condition holds, BodyWalk
+// not running among them) with the left stick the walk's. False = nothing of ours: the walk alone (WalkFlatRead), or BodyWalk's pad / the real one as before.
+bool FlatControllerRead(BWPadMirror* out) {
+    directinput::FlatPad p{};
+    static std::atomic<int> told{-1};
+    if (!directinput::FlatPadRead(&p)) {
+        if (directinput::FlatControllerOn() && viewgate::Flat() && directinput::On() && told.exchange(0) == 1)
+            Log("vrcam: VR F1-F3 - the plugin's own controller stands down (BodyWalk is running, or no headset frames): its pad as before");
+        return false;
+    }
+    if (told.exchange(1) != 1)
+        Log("vrcam: VR F1-F3, no BodyWalk running - the plugin's own controller is the game's pad (the F4 layout: right trigger attacks, A picks up, B / X / Y skills, "
+            "triggers, sticks, menu button; the left stick walks, the left trigger + a flick of a stick drinks a belt potion)");
+    *out = BWPadMirror{};
+    out->version = BW_PAD_MIRROR_VERSION;
+    out->counter = p.counter;
+    out->buttons = p.buttons;
+    out->left_trigger = p.lt; out->right_trigger = p.rt;
+    out->thumb_lx = p.lx; out->thumb_ly = p.ly; out->thumb_rx = p.rx; out->thumb_ry = p.ry;
+    g_walkState.store((uint8_t)walkpath::State::FlatOwn);
+    g_walkRaw.store((uint64_t)(uint16_t)p.lx | ((uint64_t)(uint16_t)p.ly << 16));
+    return true;
+}
+
 bool WalkFlatRead(BWPadMirror* out) {
     directinput::WalkOut w{};
     walkflat::Inputs in;
@@ -4547,6 +4660,33 @@ void BeltFlickSink(uint32_t column, int stick, int dir) {
          beltflick::DirName((beltflick::Dir)dir), column + 1, 0x17u + column);
 }
 
+// A control was pressed in VR F1-F3 that nothing of the plugin takes there (vr/walk_flat.h kHintEveryMs): with no BodyWalk running the plugin does the walk and
+// the belt there and nothing more - the rest of the controls is F4's (its own layout) or BodyWalk's Mapping. Said in the log, so "the right controller does nothing
+// in F1, F2, F3" has its answer (2026-10-15: BodyWalk was not running for the first four minutes of that run). False = not said (BodyWalk runs, a panel is open...).
+bool FlatPressSink(const char* what) {
+    walkflat::Inputs in;
+    directinput::FlatFacts(&in);
+    in.bodyWalkRunning = BodyWalkRunning();
+    in.inWorld = g_inWorld.load();
+    in.menuOpen = gamestate::MenuOpen();
+    in.chatOpen = ChatOpen();
+    if (walkflat::Decide(in) != walkflat::Verdict::Walk) return false;
+    LogF("vrcam: VR F1-F3, no BodyWalk running: %s pressed - nothing of the plugin takes it here: [direct] flat_controller=0 (Settings: \"Play with the controllers in F1, F2, F3 "
+         "without BodyWalk\") - it does the left stick's walk and the belt's trigger + flick only", what);
+    return true;
+}
+
+// The gate of the plugin's own controller in VR F1-F3 (directinput::SetFlatGate): the key, direct input, a flat view and headset frames are directinput's own; this is
+// BodyWalk - running (its Game Link alive, or its pad report moving) means its pad, its actions and its commands are the game's, as before, and ours stand down.
+// A game on, a panel open, the chat open do not matter to it: the controller plays the menus too (the F4 layout's menu layer is the game's own pad).
+bool FlatControllerGate() {
+    walkflat::Inputs in;
+    directinput::FlatFacts(&in);
+    in.keyOn = directinput::FlatControllerOn();
+    in.bodyWalkRunning = BodyWalkRunning();
+    return walkflat::Decide(in) == walkflat::Verdict::Walk;
+}
+
 // The pad the game's XInput poll and its walking hooks get from the plugin. [openxr] direct_input (F4, headset frames arriving): the plugin's
 // own pad, and in it - [openxr] direct_bodywalk_walk - BodyWalk's LEFT STICK mixed into the controller's (vr/walk_path.h: each past the game's
 // dead zone, the sum on the unit disc, the stronger one wins when they pull apart); nothing else of BodyWalk's report. Otherwise BodyWalk's
@@ -4556,7 +4696,7 @@ bool PadMirrorRead(BWPadMirror* out, bool* walkOnly = nullptr) {
     if (walkOnly) *walkOnly = false;
     directinput::PadOut d{};
     const bool direct = directinput::PadRead(&d);
-    if (!direct && WalkFlatRead(out)) { if (walkOnly) *walkOnly = true; return true; }
+    if (!direct && (FlatControllerRead(out) || WalkFlatRead(out))) { if (walkOnly) *walkOnly = true; return true; }   // VR F1-F3 without BodyWalk: the controller, or the walk alone
     if (!direct && g_walkState.load(std::memory_order_relaxed) != (uint8_t)walkpath::State::NotDirect)
         g_walkState.store((uint8_t)walkpath::State::NotDirect);   // (BodyWalk's pad is the pad, or none: no stale word for the walking hook's log)
     const bool walks = direct && directinput::BodyWalkWalks();
@@ -4591,10 +4731,14 @@ bool PadFromBodyWalk(XINPUT_STATE* s, bool realPad = false) {
     bool walkOnly = false;
     if (!PadMirrorRead(&m, &walkOnly)) return false;
     if (walkOnly && realPad) {
-        // VR F1-F3 and a real (or virtual) pad answers: the plugin adds the walk to it - the left stick, while that pad's own stick rests - and
-        // nothing else of the pad is touched. It is the real pad's report still (false), the stick turned below like any pad's.
-        if (walkpath::PushedRaw(m.thumb_lx, m.thumb_ly) && !walkpath::PushedRaw(s->Gamepad.sThumbLX, s->Gamepad.sThumbLY)) {
-            s->Gamepad.sThumbLX = m.thumb_lx; s->Gamepad.sThumbLY = m.thumb_ly;
+        // VR F1-F3 and a real (or virtual) pad answers as well: the plugin's controller is added to it, never over it (vr/walk_flat.h MergePads) - buttons ORed,
+        // the larger trigger, a stick of ours only where that pad's own stick rests. It is the real pad's report still (false), the sticks turned below like any pad's.
+        walkflat::PadBits p{s->Gamepad.wButtons, s->Gamepad.bLeftTrigger, s->Gamepad.bRightTrigger,
+                            s->Gamepad.sThumbLX, s->Gamepad.sThumbLY, s->Gamepad.sThumbRX, s->Gamepad.sThumbRY};
+        const walkflat::PadBits ours{m.buttons, m.left_trigger, m.right_trigger, m.thumb_lx, m.thumb_ly, m.thumb_rx, m.thumb_ry};
+        if (walkflat::MergePads(&p, ours)) {
+            s->Gamepad.wButtons = p.buttons; s->Gamepad.bLeftTrigger = p.lt; s->Gamepad.bRightTrigger = p.rt;
+            s->Gamepad.sThumbLX = p.lx; s->Gamepad.sThumbLY = p.ly; s->Gamepad.sThumbRX = p.rx; s->Gamepad.sThumbRY = p.ry;
             s->dwPacketNumber += m.counter | 1u;   // (the state changed with ours: a new packet for a game that skips equal ones)
         }
         return false;
@@ -4718,8 +4862,23 @@ void ApplyActions(XINPUT_STATE* s) {
     }
     // Pick up only onto a target: nothing there, nothing pressed - never an attack.
     // Without the hook (another build) it cannot tell, and stays a plain A.
-    const bool interact = (held & D2RVR_ACT_INTERACT) && (InteractTargetNow() || !g_interactHooked.load());
+    bool interact = (held & D2RVR_ACT_INTERACT) && (InteractTargetNow() || !g_interactHooked.load());
     static bool wasInteract = false, toldMiss = false;
+    {   // [input] interact_one_press (F4 only, vr/interact_press.h): the target under the press is the press's - a chest opened by
+        // a press does not also give up its loot, a hold over a pile takes one item; a menu opened or closed is a new context
+        static interactpress::Press press;
+        static uint32_t menuEpoch = 0;
+        static bool menuWas = false;
+        if (const bool menu = gamestate::MenuOpen(); menu != menuWas) { menuWas = menu; ++menuEpoch; }
+        const bool held1 = (held & D2RVR_ACT_INTERACT) != 0;
+        const uintptr_t target = InteractTargetNow() ? g_interactTarget.load() : 0;
+        const interactpress::Press::Result one = press.Poll(held1, target, g_interactHooked.load(), gamestate::LocalPlayer(), menuEpoch);
+        if (g_set.interactOnePress.load() && viewgate::F4()) {
+            interact = one.down;
+            if (one.lost) LogF("vrcam: pick up - the target changed during the press (now %p): A let go until pressed again", (void*)target);
+            if (one.miss) toldMiss = false;   // (each spent press is said, below)
+        }
+    }
     if ((held & D2RVR_ACT_INTERACT) && !interact) {
         if (!toldMiss) { toldMiss = true; Log("vrcam: pick up - nothing to pick up or open here, A not pressed"); }
     } else toldMiss = false;
@@ -7709,6 +7868,25 @@ std::atomic<bool> g_dlssBoth{false};   // [stereo] replay_dlss: 1 both eyes' eva
 // the GPU drew the last right eye's effects - its picture went to FlatVR with the next pair's
 // head stamp, and the right eye juddered as the head turned.
 std::atomic<bool> g_fxSync{true};
+// Our depth copy is bound to the effects ONCE (scenedepth::Bind, 2026-10-16; Bear's d2r-pcvr scene_depth.cpp does it so):
+// bound at every effect pass, ReShade's update_texture_bindings waited for the graphics queue to go idle first
+// (runtime_api.cpp, D3D12) - twice a pair the game's thread waited for the GPU to finish all it had ("effects" 4-8 ms an
+// eye, ~half the pair) and the GPU stood idle while the thread recorded the next frame; once a present in the modes of one
+// picture (98 instead of ~180 fps at 1280x720). Only with own depth (VR + a square window or a render size): 0.164 had no
+// square_window, 0.166 ships it. Now bound again only when the copy's view changes or the effects reload.
+uint64_t g_depthBound = 0;            // the view last bound as D2RVR_DEPTH (0 after the effects reload or the runtime goes)
+std::atomic<uint32_t> g_depthBinds{0}, g_depthKept{0};
+// [render] fx_fence (off; Settings > Stereo 3D, F4 only): what the drain also did, by fences. ReShade writes an effect's
+// constants into one buffer in place at each render, and both eyes' techniques are one effect: a pass could rewrite them
+// before the GPU drew the last one. Within a pair both passes write the same values (each sets both eyes' arrays; the
+// left eye's stamp does not move between them), so only exactness is at stake: on, the right eye's effects wait for the
+// left eye's to be done on the GPU (the replay is queued behind them: the GPU stays busy), the left eye's for the last
+// pair (replay_fx_sync, forced on), and a frame of one picture for the last frame's effects (its stamp, scenedepth::).
+std::atomic<bool> g_fxFence{false};
+thread_local bool t_pairPass = false; // inside a pair's effect pass (the replay fences it, not scenedepth::)
+Pt g_leftFx;                          // the left eye's effects on the GPU (signalled after them)
+bool g_pairFence = false;             // this pair's effects went the fenced way (set at the hold, read at the right eye)
+std::atomic<uint32_t> g_fxFenceWaits{0};
 uint64_t g_rtvRes[8] = {};
 reshade::api::resource_view g_rtv[8] = {};
 // The depth buffer ReShade's effects read (D2R_DepthFog.fx FogDepthTex's binding) and its
@@ -7913,7 +8091,7 @@ void OnBarrier(command_list*, uint32_t count, const resource* res, const resourc
     if (!d) return;
     for (uint32_t i = 0; i < count; ++i)
         if (res[i].handle == d) g_depthState.store((uint32_t)to[i], std::memory_order_relaxed);
-    if (!g_rightDepth.load(std::memory_order_relaxed)) return;
+    if (!g_rightDepth.load(std::memory_order_relaxed) || fx::OwnDepthNow()) return;
     AcquireSRWLockExclusive(&g_dsLock);
     for (uint32_t i = 0; i < count; ++i)
         for (DsSeen& s : g_ds)
@@ -7925,6 +8103,7 @@ void OnBarrier(command_list*, uint32_t count, const resource* res, const resourc
 // one bound most that fits the effects' copy).
 void OnBindDs(command_list* cl, uint32_t, const resource_view*, resource_view dsv) {
     if (!dsv.handle || !g_capturing.load(std::memory_order_relaxed) || !g_rightDepth.load(std::memory_order_relaxed)) return;
+    if (fx::OwnDepthNow()) return;   // own depth: RightDepthIntoCopy has nothing to do, nothing to count for it
     const uint64_t r = cl->get_device()->get_resource_from_view(dsv).handle;
     if (!r) return;
     AcquireSRWLockExclusive(&g_dsLock);
@@ -7946,6 +8125,10 @@ void RightDepthIntoCopy() {
     static int told = -1;   // the last thing logged, once each
     auto tell = [&](int what, const char* text) { if (told != what) { told = what; Log(text); } };
     if (!g_rightDepth.load() || !g_rt) return;
+    // Own depth (scenedepth::): the effects read OUR copy, and scenedepth::Bind copies the right eye's depth-stencil into it
+    // at the right eye's begin-effects anyway (the replay left it there) - a second copy here, a depth decompress with it,
+    // was overwritten before anything read it (2026-10-16).
+    if (fx::OwnDepthNow()) return tell(4, "vrcam: replay - right eye's depth: own depth - scenedepth copies it at the right eye's effects, nothing to do here");
     const uint64_t copy = g_depthRes.load();
     if (!copy) return tell(1, "vrcam: replay - right eye's depth: the effects' depth buffer not known yet");
     device* dev = g_rt->get_device();
@@ -8260,7 +8443,7 @@ ID3D12Resource* BackBuffer(UINT i) {
 
 // The left eye's effects on its back buffer now (the depth is still its own); right: the
 // right eye's technique alone (see g_rightTech).
-bool EffectsAtHold(ID3D12Resource* bb, UINT index, bool right = false) {
+bool EffectsAtHold(ID3D12Resource* bb, UINT index, bool right = false, bool fence = false) {
     using namespace reshade::api;
     if (!g_rt || index >= 8) return false;
     device* dev = g_rt->get_device();
@@ -8276,13 +8459,21 @@ bool EffectsAtHold(ID3D12Resource* bb, UINT index, bool right = false) {
     command_list* cl = q->get_immediate_command_list();
     t_ours = true;   // ReShade's and FlatVR's own signals in here are not the game's: they pass
     cl->barrier(res, resource_usage::present, resource_usage::render_target);
+    t_pairPass = true;
     if (right) g_rt->render_technique(g_rightTech, cl, g_rtv[index], g_rtv[index]);
     else g_rt->render_effects(cl, g_rtv[index], g_rtv[index]);
+    t_pairPass = false;
     cl->barrier(res, resource_usage::render_target, resource_usage::present);
     q->flush_immediate_command_list();
     t_ours = false;
+    if (fence && !right) {   // the right eye's effects rewrite the constants these read: they wait for this point
+        g_why = "after the left eye's effects";
+        g_leftFx = SignalOn((ID3D12CommandQueue*)q->get_native());
+    }
     return true;
 }
+// The fences instead of ReShade's drain, this pair (see g_fxFence).
+bool FxFence() { return g_fxFence.load() && viewgate::F4(); }
 
 // The left pass's Present: its picture copied out, the Present held back (told the game it went).
 bool HoldLeft() {
@@ -8300,8 +8491,10 @@ bool HoldLeft() {
     ID3D12Resource* bb = BackBuffer(holdIndex);
     if (!bb) return false;
     if (g_fxAtHold.load() && g_rt) {   // one present a pair: the left eye goes out from this effect pass
-        if (g_fxSync.load() && g_lastReplay.f) { StepTimer st(kWaitLeft); WaitFor(g_lastReplay); }
-        const bool ok = EffectsAtHold(bb, holdIndex);
+        g_pairFence = FxFence();   // decided once a pair: both eyes the same way
+        if ((g_fxSync.load() || g_pairFence) && g_lastReplay.f) { StepTimer st(kWaitLeft); WaitFor(g_lastReplay); }
+        const bool ok = EffectsAtHold(bb, holdIndex, false, g_pairFence);
+        if (!ok) g_pairFence = false;
         if (ok && g_peekStage == 1) Peek(0, bb);
         if (ok) XrCopy(0, bb);   // native OpenXR: the left eye, as FlatVR's add-on takes it from that effect pass
         bb->Release();
@@ -8715,7 +8908,12 @@ bool RightFromLeft() {
     if (g_fxAtHold.load() && g_rt && g_rightTech.handle)
         if (ID3D12Resource* bb = BackBuffer(bbRight)) {
             RightDepthIntoCopy();   // the effects' depth copy was still the left eye's
-            EffectsAtHold(bb, bbRight, true);
+            if (g_pairFence && g_leftFx.f) {   // the left eye's effects read the constants these overwrite
+                StepTimer st(kWaitLeft);
+                WaitFor(g_leftFx);
+                g_fxFenceWaits.fetch_add(1, std::memory_order_relaxed);
+            }
+            EffectsAtHold(bb, bbRight, true, g_pairFence);
             if (g_peekStage == 1) { Peek(1, bb); g_peekStage = 2; }
             bb->Release();
         }
@@ -8745,6 +8943,8 @@ bool RightFromLeft() {
                  subs.size(), mode, bbRight, camfix::g_nSlots.load(), camfix::g_overflow.load());
             const uint32_t pairs = std::max<uint32_t>(1, g_replays.load());
             LogF("vrcam: replay - slots made after the left values went in: %.2f a pair (copied late)", g_lateSlots.load() / (double)pairs);
+            LogF("vrcam: replay - our depth bound %u times, %u passes kept the binding; [render] fx_fence %d: %u right-eye waits",
+                 g_depthBinds.load(), g_depthKept.load(), g_fxFence.load() ? 1 : 0, g_fxFenceWaits.load());
             LogF("vrcam: replay - the game's lists a pair: %.1f in the left pass (replayed), %.1f outside it on the draw thread, %.1f from other threads (neither replayed)",
                  g_insideLists.load() / (double)pairs, g_outsideDraw.load() / (double)pairs, g_outsideOther.load() / (double)pairs);
             for (int i = 0; i < 8; ++i)
@@ -9629,6 +9829,71 @@ void GameCodeTick(bool iniChanged) {
             t.wSecond, answered, d2rsig::Summary().c_str());
     fputs(d2rsig::Report().c_str(), f);
     fclose(f);
+}
+
+// -- [render] vr_resolution_ui: the game's own client-size query (vr/vr_resolution.h CanvasAnswer, render_resolution.cpp) --------
+// 3.3.93787: 0x6545D0 calls GetClientRect on the game's window and returns {width, height} in rax. The callers that size the
+// interface (7 return addresses) are given the whole game's picture (vr_resolution.h UiCanvas), the two of the cursor clamp in SetCursorPosition
+// the whole picture (the width's call goes through GetWidth 0x7F510, which tail-jumps to the query: its return address is
+// SetCursorPosition's); every other caller its own answer. Found by bearstonem/d2r-pcvr (MIT, vr/panel_input.cpp InstallCanvasSize).
+constexpr uint64_t RVA_CLIENT_SIZE = 0x6545D0;
+const uint8_t kSigClientSize[16] = {0x48,0x83,0xEC,0x38,0xE8,0x97,0xD1,0x2A,0x00,0x48,0x8D,0x54,0x24,0x20,0x48,0x8B};
+constexpr uint64_t kClientSizeUiRets[7] = {0x843ED5, 0x844195, 0x8453A9, 0x846239, 0x14D7E4, 0x14F31D, 0x14F943};
+constexpr uint64_t RVA_CURSOR_HEIGHT_RET = 0x7F4B2, RVA_CURSOR_WIDTH_RET = 0x14FB2A;
+using ClientSizeFn = uint64_t (*)();
+ClientSizeFn OrigClientSize = nullptr;
+uintptr_t g_clientSizeUiRet[7] = {}, g_clientSizeCursorRet[2] = {};
+std::atomic<bool> g_clientSizeOn{true};
+
+uint64_t HookClientSize() {
+    const uintptr_t from = reinterpret_cast<uintptr_t>(_ReturnAddress());
+    const uint64_t native = OrigClientSize();
+    vrres::Asker asker = vrres::Asker::Other;
+    if (from == g_clientSizeCursorRet[0] || from == g_clientSizeCursorRet[1]) asker = vrres::Asker::Cursor;
+    else for (uintptr_t r : g_clientSizeUiRet) if (from == r) { asker = vrres::Asker::Ui; break; }
+    return asker == vrres::Asker::Other ? native : vrres::ClientSizeAnswer(asker, native, g_clientSizeOn.load());
+}
+// The target of a relative CALL (E8) or JMP (E9) at `site` when it is one (0 otherwise).
+uintptr_t BranchTarget(uintptr_t site, uint8_t op) {
+    uint8_t b[5];
+    if (!SafeRead(b, reinterpret_cast<const void*>(site), sizeof b) || b[0] != op) return 0;
+    int32_t rel;
+    memcpy(&rel, b + 1, 4);
+    return site + 5 + (intptr_t)rel;
+}
+// Live (`on`, the ini key); the hook goes in once, after every caller it answers has been checked to be a call of the query.
+void InstallClientSize(bool on) {
+    g_clientSizeOn.store(on);
+    static bool in = false, failed = false;
+    if (in || failed || !on) return;
+    const uintptr_t fn = d2rsig::Addr(RVA_CLIENT_SIZE);
+    if (!fn) return;   // (its code may still be encrypted: asked again)
+    for (int i = 0; i < 7; ++i) {
+        g_clientSizeUiRet[i] = d2rsig::Addr(kClientSizeUiRets[i]);
+        if (!g_clientSizeUiRet[i]) return;
+        if (BranchTarget(g_clientSizeUiRet[i] - 5, 0xE8) != fn) failed = true;
+    }
+    g_clientSizeCursorRet[0] = d2rsig::Addr(RVA_CURSOR_HEIGHT_RET);
+    g_clientSizeCursorRet[1] = d2rsig::Addr(RVA_CURSOR_WIDTH_RET);
+    if (!failed && (!g_clientSizeCursorRet[0] || !g_clientSizeCursorRet[1])) return;
+    if (!failed && BranchTarget(g_clientSizeCursorRet[0] - 5, 0xE8) != fn) failed = true;
+    if (!failed) {   // SetCursorPosition's call of GetWidth, and GetWidth's tail jump (17 bytes in, 3.3.93787) to the query
+        const uintptr_t getWidth = BranchTarget(g_clientSizeCursorRet[1] - 5, 0xE8);
+        if (!getWidth || BranchTarget(getWidth + 0x11, 0xE9) != fn) failed = true;
+    }
+    if (failed) {
+        Log("vrcam: render size - the game's client-size callers are not what 3.3.93787 has: its interface and mouse keep the window's size "
+            "([render] vr_resolution_ui does nothing)");
+        return;
+    }
+    in = d2rsig::Hook(RVA_CLIENT_SIZE, kSigClientSize, sizeof kSigClientSize, (void*)&HookClientSize, (void**)&OrigClientSize);
+    if (!in) {
+        failed = true;
+        Log("vrcam: render size - the game's client-size query could not be hooked: its interface and mouse keep the window's size");
+        return;
+    }
+    Log("vrcam: render size - the game's client-size query is in: with a render size its interface and mouse follow the picture ([render] vr_resolution_ui)");
+    vrres::ClientSizeReflow();   // a size already in force: laid out once more
 }
 
 void InstallHooks() {
@@ -10793,6 +11058,27 @@ void PushArms() {
     // (the hook then keeps it from a fist while it is on the shaft).
     in.fist = own && g_set.fist.load();
     in.shieldFist = own && g_set.shieldFist.load() && viewgate::F4() && gamestate::LeftShield();   // [hands] shield_fist: F4 only
+    in.forearmTwist = own && g_set.forearmTwist.load() && viewgate::F4() ? g_set.forearmShare.load() : -1.0f;   // [hands] forearm_twist: F4 only
+    in.shieldForearm = own && g_set.shieldForearm.load() && viewgate::F4() && gamestate::LeftShield();         // [shield] forearm: F4 only
+    for (int k = 0; k < 6; ++k) in.shieldAdj[k] = g_set.shieldAdj[k].load();
+    {   // what the forearm twist found on this rig and the shield's strap, told when it changes; the rolls with it
+        static std::string toldNote;
+        static int toldStrap = 0;
+        float roll[2];
+        const std::string note = skel::ForearmTwistNote(roll);
+        const int strap = skel::ShieldStrapped();
+        if (in.forearmTwist >= 0.0f && !note.empty() && note != toldNote) {
+            toldNote = note;
+            Log(("vrcam: forearm twist (share " + std::to_string((int)std::lround(in.forearmTwist * 100.0f)) + "%) - the rig's forearm twist bones: " + note).c_str());
+        }
+        if (strap != toldStrap) {
+            toldStrap = strap;
+            LogF("vrcam: shield %s (rolls about the forearms: right %.0f, left %.0f deg)",
+                 strap > 0 ? "strapped to the left forearm, its bind pose there - [shield] forearm" :
+                 strap < 0 ? "NOT strapped to the forearm (the game hides it, or the rig's bind pose did not read) - on the hand as before" :
+                             "on the hand as before", roll[0], roll[1]);
+        }
+    }
     for (int c = 0; c < 8; ++c) { in.fistClose[c] = g_set.fistClose[c].load() * 0.01f; in.fistOpen[c] = g_set.fistOpen[c].load() * 0.01f; }
     for (int side = 0; side < 2; ++side) in.fistCap[side] = engitem::FistCap(side);   // a belt potion in it: round the bottle, not a full fist
     {
@@ -12667,11 +12953,91 @@ int Lights(Light* out) {
 }
 }  // namespace worldobj
 
+// -- [render] depth_fix_mode 2: the game's depth range at its source (vr/depth_source.h) ---------------------------------------
+// After the game's frame-constant builder (BuildFrame 0xE3B590: renderer, frame, camera, time) this frame's upload memory holds
+// word 53 (renderer +0x11BB8 -> +0x350) and the camera constants (renderer +0x11A08 -> +0xD0: the projection uploaded for our
+// camera). The range is written there once, before any pass reads it. Only while our camera is the game's (VR, in a world): the
+// game's camera from above keeps its own range. bearstonem/d2r-pcvr (MIT) found the place and its layout (vr/dlss_depth.cpp).
+namespace depthsrc {
+constexpr uint64_t RVA_BUILD_FRAME = 0xE3B590;
+const uint8_t kSigBuildFrame[11] = {0x4C,0x8B,0xDC,0x53,0x48,0x81,0xEC,0x00,0x02,0x00,0x00};
+// the layout the write relies on, checked in the game's code before the hook goes in
+constexpr uint64_t RVA_FRAME_CAMERA = 0xE34FF3, RVA_FRAME_MAP = 0xE3B63D, RVA_FRAME_RANGE = 0xE3BE07, RVA_FRAME_STORE = 0xE3BE56;
+const uint8_t kSigFrameCamera[7] = {0x48,0x8D,0x8B,0x00,0x1A,0x01,0x00};                 // lea rcx, [rbx+11A00h]
+const uint8_t kSigFrameMap[7] = {0x48,0x8B,0xBE,0xB8,0x1B,0x01,0x00};                    // mov rdi, [rsi+11BB8h]
+const uint8_t kSigFrameRange[20] = {0xF3,0x41,0x0F,0x10,0x94,0x24,0x60,0x01,0x00,0x00,0xF3,0x41,0x0F,0x10,0x8C,0x24,0x64,0x01,0x00,0x00};
+const uint8_t kSigFrameStore[7] = {0x0F,0x11,0x87,0x50,0x03,0x00,0x00};                  // movups [rdi+350h], xmm0
+using BuildFrameFn = void (*)(void* renderer, void* frame, void* camera, float time);
+BuildFrameFn Orig = nullptr;
+std::atomic<bool> g_on{false};
+std::atomic<uint32_t> g_written{0}, g_writtenEver{0}, g_notOurs{0}, g_unread{0}, g_notRange{0};
+bool g_in = false, g_failed = false;
+
+void Hook(void* renderer, void* frame, void* camera, float time) {
+    Orig(renderer, frame, camera, time);
+    if (!g_on.load(std::memory_order_relaxed) || !renderer || !camera) return;
+    if (!g_enabled.load(std::memory_order_relaxed) || !g_inWorld.load(std::memory_order_relaxed)) {
+        g_notOurs.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+    uintptr_t cameraConstants = 0, constants = 0;
+    float projection[16], range[4];
+    auto* r = static_cast<uint8_t*>(renderer);
+    if (!SafeRead(&cameraConstants, r + 0x11A08, sizeof cameraConstants) || cameraConstants < 0x10000 ||
+        !SafeRead(projection, reinterpret_cast<void*>(cameraConstants + 0xD0), sizeof projection) ||
+        !SafeRead(&constants, r + 0x11BB8, sizeof constants) || constants < 0x10000 ||
+        !SafeRead(range, reinterpret_cast<void*>(constants + 0x350), sizeof range)) {
+        g_unread.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+    if (!depthrange::PerspectiveRange(projection, range)) {
+        g_notRange.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+    if (!SafeWriteMem(reinterpret_cast<void*>(constants + 0x350), range, 3 * sizeof(float))) {   // (the fourth lane stays the game's)
+        g_unread.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+    g_written.fetch_add(1, std::memory_order_relaxed);
+    if (g_writtenEver.fetch_add(1, std::memory_order_relaxed) == 0)
+        LogF("vrcam: [render] depth_fix_mode 2 - the first frame written at the source: near %.3f, far %.1f (every pass decodes it alike)",
+             range[2], range[2] + range[0]);
+}
+// Live (mode 2 or not); the hook goes in the first time mode 2 is wanted, after its layout checks.
+void Configure(bool on) {
+    g_on.store(on);
+    if (!on || g_in || g_failed) return;
+    if (!d2rsig::Addr(RVA_BUILD_FRAME)) return;   // (its code may still be encrypted: asked again)
+    if (!d2rsig::Check(RVA_FRAME_CAMERA, kSigFrameCamera, sizeof kSigFrameCamera) || !d2rsig::Check(RVA_FRAME_MAP, kSigFrameMap, sizeof kSigFrameMap) ||
+        !d2rsig::Check(RVA_FRAME_RANGE, kSigFrameRange, sizeof kSigFrameRange) ||
+        !d2rsig::Check(RVA_FRAME_STORE, kSigFrameStore, sizeof kSigFrameStore)) {
+        g_failed = true;
+        Log("vrcam: [render] depth_fix_mode 2 - the game's frame builder is not what 3.3.93787 has: nothing written (mode 1 still works)");
+        return;
+    }
+    g_in = d2rsig::Hook(RVA_BUILD_FRAME, kSigBuildFrame, sizeof kSigBuildFrame, (void*)&Hook, (void**)&Orig);
+    g_failed = !g_in;
+    Log(g_in ? "vrcam: [render] depth_fix_mode 2 - the game's frame builder hooked: the depth range is written once a frame at its source"
+             : "vrcam: [render] depth_fix_mode 2 - the game's frame builder could not be hooked: nothing written");
+}
+// Every 20 s while mode 2 is on: what became of the frames.
+void Tick() {
+    static ULONGLONG at = 0;
+    const ULONGLONG now = GetTickCount64();
+    if (!g_on.load() || !g_in || now - at < 20000) return;
+    at = now;
+    const uint32_t w = g_written.exchange(0), n = g_notOurs.exchange(0), u = g_unread.exchange(0), k = g_notRange.exchange(0);
+    LogF("vrcam: [render] depth_fix_mode 2 - last 20 s: %u frames written; left alone: %u not our camera (not VR / not in a world), "
+         "%u unreadable, %u not the game's kind of projection or range", w, n, u, k);
+}
+}  // namespace depthsrc
+
 void SkyTick() {
     env::Find();
     solidwalls::Tick();
     worldobj::Gather();
     gamefog::Tick();
+    depthsrc::Tick();   // [render] depth_fix_mode 2: what became of the frames, every 20 s
     static uint32_t seenGen = ~0u;
     static std::string biome;
     static int palette = -1;
@@ -12880,7 +13246,7 @@ void Install() {
 // The views of the toolbar's and the map's copies bound to the effect (hud::PictureNow), 0 = none yet.
 uint64_t g_pieceBound[4] = {};   // the toolbar, the map, the labels' layer, the wrists' globes
 
-void Forget(reshade::api::effect_runtime*) { g_tech[0] = g_tech[1] = {0}; replay::g_rightTech = {0}; g_pieceBound[0] = g_pieceBound[1] = g_pieceBound[2] = g_pieceBound[3] = 0; }
+void Forget(reshade::api::effect_runtime*) { g_tech[0] = g_tech[1] = {0}; replay::g_rightTech = {0}; g_pieceBound[0] = g_pieceBound[1] = g_pieceBound[2] = g_pieceBound[3] = 0; replay::g_depthBound = 0; }
 
 void SetFloats(reshade::api::effect_runtime* rt, const char* name, const float* v, size_t n) {
     const reshade::api::effect_uniform_variable u = rt->find_uniform_variable("D2R_DepthFog.fx", name);
@@ -13032,6 +13398,8 @@ bool PhantomWanted() { return (g_set.phantomRay.load() || g_set.boneAxes.load())
 bool BoneAxesWanted() { return g_set.boneAxes.load() && g_enabled.load() && g_inWorld.load(); }
 // [debug] melee_boxes: the capsules hit by touch tests, only in VR first person (F4)
 bool MeleeBoxesWanted() { return meleeboxes::Wanted() && g_enabled.load() && g_inWorld.load() && FullBody() && !ThirdPerson(); }
+// [debug] skill_triggers: what casts a skill (the shield bash -> Smite), the same
+bool SkillTriggersWanted() { return skilltriggers::Wanted() && g_enabled.load() && g_inWorld.load() && FullBody() && !ThirdPerson(); }
 // [hud] hand_vitals_style = orbs: the life and mana balls on the wrists, drawn by the effect, only in VR first person (F4)
 bool HandOrbsWanted() { return handvitals::OrbsOn() && g_enabled.load() && g_inWorld.load() && FullBody() && !ThirdPerson(); }
 #else
@@ -13039,6 +13407,7 @@ bool PhantomWanted() { return false; }
 bool BoneAxesWanted() { return false; }
 bool BowVectorsWanted() { return false; }
 bool MeleeBoxesWanted() { return false; }
+bool SkillTriggersWanted() { return false; }
 bool HandOrbsWanted() { return false; }
 #endif
 
@@ -13136,7 +13505,7 @@ void OnFinishEffects(reshade::api::effect_runtime* rt, reshade::api::command_lis
     if (!g_tech[0].handle) { hud::SetPictureReady(false); return; }
     // Off while a menu is open: the fog lies over the whole picture, the
     // inventory and trade panels included, and darkened them.
-    const bool want = FogWanted() || g_skyPalette.load() >= 0 || CeilWanted() || HudWanted() || StampWanted() || hud::PictureWanted() || TableKeyWanted() || PhantomWanted() || BoneAxesWanted() || BowVectorsWanted() || MeleeBoxesWanted() || HandOrbsWanted() || LowHpWanted();
+    const bool want = FogWanted() || g_skyPalette.load() >= 0 || CeilWanted() || HudWanted() || StampWanted() || hud::PictureWanted() || TableKeyWanted() || PhantomWanted() || BoneAxesWanted() || BowVectorsWanted() || MeleeBoxesWanted() || SkillTriggersWanted() || HandOrbsWanted() || LowHpWanted();
     // The toolbar and the map are taken out of the game's picture to be drawn
     // back at their own size only while this effect runs, and is new enough to.
     {
@@ -13290,7 +13659,8 @@ double g_next = 0.0;
 uint32_t g_lastReplays = 0;
 int g_replayedRecently = 0;   // presents since a replayed pair was seen, capped
 void Tick() {
-    if (!g_set.pace.load() || !g_inWorld.load()) { g_next = 0.0; return; }
+    // (VR only: the headset's rate is not flat mode's - on a monitor the game runs at the player's own cap, nothing of ours holds its presents)
+    if (g_set.platform.load() != 1 || !g_set.pace.load() || !g_inWorld.load()) { g_next = 0.0; return; }
     const uint32_t r = replay::g_replays.load(std::memory_order_relaxed);
     if (r != g_lastReplays) { g_lastReplays = r; g_replayedRecently = 0; }
     else if (g_replayedRecently < 8) ++g_replayedRecently;
@@ -13335,9 +13705,49 @@ resource g_copy{0};
 resource_view g_srv{0};
 resource_desc g_copyDesc{};
 uint64_t g_from = 0;   // the depth-stencil copied last (the log, once per change)
+// The pick, cached (vr/depth_pick.h): the binds are counted only until a depth-stencil is picked, then kept until it is
+// destroyed, the swap chain is made again, the window's (or the render) size changes, or the game stops binding it (not at
+// an area change: a buffer still bound is alive); each pick is logged, and written to
+// d2r_vr_depth.ini beside the ini for D2R VR Settings' status line (World > Fog, "Depth for the effects").
+depthpick::Cache g_cache;
+std::atomic<uint32_t> g_pickState{0};   // the picked buffer's state as the game's last barrier left it
+resource_desc g_pickDesc{};
+
+void ClearCounts() {   // fresh counts after the pick is let go: the old ones stopped at the pick
+    AcquireSRWLockExclusive(&g_lock);
+    for (Ds& d : g_ds) d = Ds{};
+    ReleaseSRWLockExclusive(&g_lock);
+}
+void OnDestroy(device*, resource r) { g_cache.Destroyed(r.handle); }
+// A swap chain made again (a resize: the window, or the render size slider) or going: the game makes its targets again -
+// the pick goes at once (test-38: its memory was freed before the buffer itself, and the next copy crashed in the driver).
+void OnSwapChain(swapchain*, bool) { g_cache.SwapChainChanged(); }
+// d2r_vr_depth.ini [depth]: the pick for Settings (not the ini itself, which vrcam reloads whenever it changes).
+void WritePickStatus(uint64_t res, uint32_t w, uint32_t h) {
+    wchar_t path[MAX_PATH];
+    wcscpy_s(path, g_iniPath);
+    if (wchar_t* slash = wcsrchr(path, L'\\')) slash[1] = 0;
+    wcscat_s(path, L"d2r_vr_depth.ini");
+    SYSTEMTIME t;
+    GetLocalTime(&t);
+    wchar_t b[160], why[96] = L"";
+    MultiByteToWideChar(CP_UTF8, 0, g_cache.why, -1, why, 96);
+    swprintf_s(b, L"%llX", (unsigned long long)res); WritePrivateProfileStringW(L"depth", L"buffer", b, path);
+    swprintf_s(b, L"%u", w); WritePrivateProfileStringW(L"depth", L"width", b, path);
+    swprintf_s(b, L"%u", h); WritePrivateProfileStringW(L"depth", L"height", b, path);
+    swprintf_s(b, L"%02u:%02u:%02u", t.wHour, t.wMinute, t.wSecond); WritePrivateProfileStringW(L"depth", L"picked_at", b, path);
+    WritePrivateProfileStringW(L"depth", L"why", why, path);
+    swprintf_s(b, L"%u", g_cache.picks); WritePrivateProfileStringW(L"depth", L"picks", b, path);
+    swprintf_s(b, L"%u", g_cache.others); WritePrivateProfileStringW(L"depth", L"other_buffers", b, path);
+}
 
 void OnBind(command_list* cl, uint32_t count, const resource_view*, resource_view dsv) {
-    if (!dsv.handle || !OwnDepthNow()) return;
+    if (!dsv.handle) return;
+    if (!g_cache.Counting()) {   // picked: nothing to count - only whether the game binds it this frame (one lookup a bind until it does)
+        if (g_cache.WantsSight()) g_cache.Seen(cl->get_device()->get_resource_from_view(dsv).handle);
+        return;
+    }
+    if (!OwnDepthNow()) return;
     const uint64_t r = cl->get_device()->get_resource_from_view(dsv).handle;
     if (!r) return;
     AcquireSRWLockExclusive(&g_lock);
@@ -13355,6 +13765,11 @@ void OnBind(command_list* cl, uint32_t count, const resource_view*, resource_vie
 }
 void OnBarrier(command_list*, uint32_t count, const resource* res, const resource_usage*, const resource_usage* to) {
     if (!OwnDepthNow()) return;
+    if (const uint64_t p = g_cache.pick.load(std::memory_order_relaxed)) {   // picked: that buffer's state alone, no lock
+        for (uint32_t i = 0; i < count; ++i)
+            if (res[i].handle == p) g_pickState.store((uint32_t)to[i], std::memory_order_relaxed);
+        return;
+    }
     AcquireSRWLockExclusive(&g_lock);
     for (uint32_t i = 0; i < count; ++i)
         for (Ds& d : g_ds)
@@ -13363,6 +13778,9 @@ void OnBarrier(command_list*, uint32_t count, const resource* res, const resourc
 }
 // After each present: the frame's counts become the last ones; one not bound for two frames goes.
 void FrameEnd() {
+    const bool picked = !g_cache.Counting();
+    g_cache.FrameEnd();   // counting: one more frame of counts; picked: not bound in this frame, it goes
+    if (picked) return;   // no counts to roll
     AcquireSRWLockExclusive(&g_lock);
     for (Ds& d : g_ds) {
         if (!d.res) continue;
@@ -13380,6 +13798,41 @@ format SrvFormat(format typeless) {
         default: return format_to_default_typed(typeless);
     }
 }
+// [render] fx_fence, a frame of one picture: a fence on the effects' queue after each present's effects (MarkFx, at
+// ReShade's present event, which comes after them), waited for by the next frame's pass before its constants go in.
+ID3D12Fence* g_fxFence = nullptr;
+HANDLE g_fxEvent = nullptr;
+UINT64 g_fxSignalled = 0;
+bool g_fxMarked = false;   // a mark since the last wait: else nothing to wait for (the first frame, or after a pair)
+std::atomic<uint32_t> g_fxWaitsOne{0};
+bool FxFenceReady(effect_runtime* rt) {
+    if (g_fxFence) return true;
+    ID3D12Device* d = (ID3D12Device*)rt->get_device()->get_native();
+    if (!d || FAILED(d->CreateFence(0, D3D12_FENCE_FLAG_NONE, __uuidof(ID3D12Fence), (void**)&g_fxFence))) { g_fxFence = nullptr; return false; }
+    g_fxEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    return g_fxEvent != nullptr;
+}
+void MarkFx(effect_runtime* rt) {
+    if (!replay::FxFence() || !OwnDepthNow() || !FxFenceReady(rt)) return;
+    command_queue* q = rt->get_command_queue();
+    q->flush_immediate_command_list();   // the effects of this present are in ReShade's list still: on the queue first
+    replay::t_ours = true;   // our signal, not the game's (the replay's queue hooks)
+    ((ID3D12CommandQueue*)q->get_native())->Signal(g_fxFence, ++g_fxSignalled);
+    replay::t_ours = false;
+    g_fxMarked = true;
+}
+// False: no mark to wait for (the first frame, or after a pair).
+bool WaitLastFx(effect_runtime* rt) {
+    if (!g_fxMarked || !g_fxFence) return false;
+    g_fxMarked = false;
+    if (g_fxFence->GetCompletedValue() < g_fxSignalled) {
+        g_fxFence->SetEventOnCompletion(g_fxSignalled, g_fxEvent);
+        WaitForSingleObject(g_fxEvent, 100);
+    }
+    g_fxWaitsOne.fetch_add(1, std::memory_order_relaxed);
+    (void)rt;
+    return true;
+}
 // reshade_begin_effects: the scene's depth into our copy on the effects' own list, bound as DEPTH.
 void Bind(effect_runtime* rt, command_list* cl) {
     static int told = -1;
@@ -13392,11 +13845,22 @@ void Bind(effect_runtime* rt, command_list* cl) {
     // above 100 draws into targets bigger than the window (200: twice), and with none the window's
     // size the effects had no depth at all: no sky, no fog in flat mode since 0.161 (2026-10-12).
     // A square power of two (1024, 2048, 4096) is a shadow map unless it is the window's size.
+    if (const char* why = g_cache.Check(w, h)) {
+        ClearCounts();
+        LogF("vrcam: own depth - the pick let go: %s (counting again; no copy until a buffer the game binds this frame is picked)", why);
+    }
     Ds best{}, scaled{};
     resource_desc bd{}, sd{};
+    if (const uint64_t p = g_cache.pick.load()) {   // the cached pick: no look round
+        // only a buffer the game bound this frame is copied: one it no longer binds may have lost its memory already
+        if (!g_cache.CopyOk()) return tell(5, "vrcam: own depth - the picked buffer is not bound this frame: no copy (the last one stays)");
+        best.res = p;
+        best.state = g_pickState.load(std::memory_order_relaxed);
+        bd = g_pickDesc;
+    } else {
     AcquireSRWLockShared(&g_lock);
     for (const Ds& d : g_ds) {
-        if (!d.res) continue;
+        if (!d.res || !d.binds) continue;   // bound this frame only: a buffer not bound now may be freed already
         const uint32_t n = std::max(d.binds, d.last);
         const resource_desc rd = dev->get_resource_desc({d.res});
         if (rd.type != resource_type::texture_2d || (rd.usage & resource_usage::depth_stencil) == 0 || rd.texture.samples != 1) continue;
@@ -13415,6 +13879,20 @@ void Bind(effect_runtime* rt, command_list* cl) {
     }
     ReleaseSRWLockShared(&g_lock);
     if (!best.res && scaled.res) { best = scaled; bd = sd; }
+    if (best.res) {
+        g_pickDesc = bd;   // (read only once the pick is stored below)
+        g_pickState.store(best.state);
+        const bool first = g_cache.last == 0;
+        if (g_cache.Commit(best.res, best.binds > 0, w, h)) {   // two frames of counts behind it: kept until Check lets it go
+            LogF("vrcam: own depth - picked the depth-stencil %p (%ux%u, bound %u times a frame) after %s: %s; cached - no counting "
+                 "until it is destroyed, the swap chain is made again, the window or render size changes or the game stops binding it (picks %u, of them another buffer %u)",
+                 (void*)best.res, bd.texture.width, bd.texture.height, std::max(best.binds, best.last), g_cache.why,
+                 first ? "the first" : g_cache.sameAsBefore ? "the same buffer as before" : "ANOTHER buffer than before",
+                 g_cache.picks, g_cache.others);
+            WritePickStatus(best.res, bd.texture.width, bd.texture.height);
+        }
+    }
+    }
     if (!best.res) return tell(1, "vrcam: own depth - no depth-stencil of the window's shape bound yet: no depth for the fog and the sky until one is");
     const uint32_t cw = bd.texture.width, ch = bd.texture.height;   // our copy: the source's own size
     const format tl = format_to_typeless(bd.texture.format);
@@ -13449,7 +13927,17 @@ void Bind(effect_runtime* rt, command_list* cl) {
     cl->copy_resource(src, g_copy);
     cl->barrier(src, resource_usage::copy_source, from);
     cl->barrier(g_copy, resource_usage::copy_dest, resource_usage::shader_resource);
-    rt->update_texture_bindings("D2RVR_DEPTH", g_srv, g_srv);   // ours alone: Generic Depth binds DEPTH
+    // ours alone: Generic Depth binds DEPTH. Once (see replay::g_depthBound): ReShade drains the GPU before each binding
+    // (D3D12), and the copy above is what changes every pass, not the view.
+    if (g_srv.handle != replay::g_depthBound) {
+        rt->update_texture_bindings("D2RVR_DEPTH", g_srv, g_srv);
+        replay::g_depthBound = g_srv.handle;
+        replay::g_depthBinds.fetch_add(1, std::memory_order_relaxed);
+    } else {
+        replay::g_depthKept.fetch_add(1, std::memory_order_relaxed);
+        // [render] fx_fence, a frame of one picture: its constants wait for the last frame's effects (a pair: the replay)
+        if (!replay::t_pairPass && replay::FxFence()) WaitLastFx(rt);
+    }
     if (best.res != g_from) {
         g_from = best.res;
         LogF("vrcam: own depth - the effects read the game's depth-stencil %p (%ux%u%s, bound %u times a frame, state %X), "
@@ -13462,6 +13950,7 @@ void Bind(effect_runtime* rt, command_list* cl) {
 
 void OnReshadePresent(reshade::api::effect_runtime* rt) {
     scenedepth::FrameEnd();
+    if (!replay::g_capturing.load()) scenedepth::MarkFx(rt);   // [render] fx_fence: the next frame's pass waits for these effects
     static bool firstSeen = false;
     if (!firstSeen) { firstSeen = true; crash::Mark("the first picture presented (ReShade's present)"); }
     // Native OpenXR: the runtime paces the game (xrWaitFrame); a present outside a pair goes
@@ -13855,7 +14344,10 @@ void OnBeginEffects(reshade::api::effect_runtime* rt, reshade::api::command_list
             static bool boxesWere = false;
             float ha[meleeboxes::kMaxCapsules][4], hb[meleeboxes::kMaxCapsules][4];
             const float eyeAt[3] = {g_eyeWorld[0].load(), g_eyeWorld[1].load(), g_eyeWorld[2].load()};
-            const int nh = MeleeBoxesWanted() ? meleeboxes::Take(GetTickCount64(), eyeAt, ha, hb) : 0;
+            // [debug] skill_triggers (vr/skill_triggers.h) takes its share of the effect's 32 capsules first, melee_boxes what is left
+            const uint64_t boxesNow = GetTickCount64();
+            const int ns = SkillTriggersWanted() ? skilltriggers::Take(boxesNow, eyeAt, ha, hb) : 0;
+            const int nh = ns + (MeleeBoxesWanted() ? meleeboxes::Take(boxesNow, eyeAt, ha + ns, hb + ns, meleeboxes::kMaxCapsules - ns) : 0);
             if (nh > 0 || boxesWere) SetBool(rt, "HitboxOn", nh > 0);
             if (nh > 0) {
                 SetFloats(rt, "HitboxA", &ha[0][0], (size_t)nh * 4);
@@ -14151,6 +14643,9 @@ void TryRegister() {
     reshade::register_event<reshade::addon_event::reshade_begin_effects>(&OnBeginEffects);
     reshade::register_event<reshade::addon_event::bind_render_targets_and_depth_stencil>(&d2rvr::D3D12Only<&scenedepth::OnBind>::Call);
     reshade::register_event<reshade::addon_event::barrier>(&d2rvr::D3D12Only<&scenedepth::OnBarrier>::Call);
+    reshade::register_event<reshade::addon_event::destroy_resource>(&d2rvr::D3D12Only<&scenedepth::OnDestroy>::Call);
+    reshade::register_event<reshade::addon_event::init_swapchain>(&d2rvr::D3D12Only<&scenedepth::OnSwapChain>::Call);
+    reshade::register_event<reshade::addon_event::destroy_swapchain>(&d2rvr::D3D12Only<&scenedepth::OnSwapChain>::Call);
     reshade::register_event<reshade::addon_event::reshade_finish_effects>(&OnFinishEffects);
     reshade::register_event<reshade::addon_event::reshade_present>(&OnReshadePresent);
     reshade::register_event<reshade::addon_event::reshade_reloaded_effects>(&Forget);
@@ -14366,7 +14861,7 @@ DWORD WINAPI UpdateThread(void*) {
         flog::Tick(g_set.frameLog.load() || GetTickCount64() < flog::g_diagUntil.load());
         directinput::SetMenuNow(gamestate::MenuOpen() || !g_inWorld.load());   // [openxr] direct_input: the layer in force against the game's
         gamecmd::Tick();   // skills, potions, Alt... held in BodyWalk: pressed on the UI thread
-        if (shieldsmite::On()) {   // [gameplay] shield_smite: a hard bash of the left shield casts the game's own Smite
+        if (shieldsmite::Watching()) {   // [gameplay] shield_smite: a hard bash of the left shield casts the game's own Smite (and [debug] melee_boxes draws it)
             uintptr_t hero = (uintptr_t)g_heroUnit.load();
             if (!hero || !IsHeroUnit((void*)hero)) hero = (uintptr_t)g_heroSeen.load();
             if (hero && !IsHeroUnit((void*)hero)) hero = 0;
@@ -14466,6 +14961,7 @@ DWORD WINAPI UpdateThread(void*) {
             d2rsig::Resolve(g_ctx);   // what waits for its page to be decrypted
             GameCodeTick(iniChanged);
             if (!AllHooksIn()) InstallHooks();
+            InstallClientSize(IniB(L"render", L"vr_resolution_ui", true));   // [render] vr_resolution_ui (live; the hook goes in once)
             ApplyRender();
             ApplyPools();
             HookGameWindow();
@@ -14567,7 +15063,7 @@ void LoadReShade() {
              "an antivirus may also block it", err == ERROR_DLL_INIT_FAILED ? "its start said no" : "it could not be loaded");
 }
 
-static const char g_info_version[] = "0.166.0";
+static const char g_info_version[] = "0.167.0";
 
 static const PluginInfo g_info = {
     PluginInfoSize, D2RL_PLUGIN_ABI_VERSION, "d2r-vr-vrcam", "vrcam", g_info_version, "BodyWalkVR",
@@ -14592,6 +15088,8 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     crash::Install(g_info_version);   // first: a start that dies leaves its last step in d2r_vr_start.txt
     viewgate::Set(&FullBody);   // before any module that asks: the new behaviours (direct input, gestures, panels, pulses, hooks) act in F4 only
     viewgate::SetFlat(&FlatViews);   // ... except the left stick's walk in VR F1-F3 ([direct] walk_flat_views, vr/walk_flat.h): movement only
+    directinput::SetFlatGate(&FlatControllerGate);   // ... and the plugin's own controller as the game's pad there while BodyWalk is not running ([direct] flat_controller)
+    directinput::SetPressSink(&FlatPressSink);   // ... with it off, a control pressed there that nothing of the plugin takes is said in the log
     directinput::SetBeltSink(&BeltFlickSink);   // ... and the belt potions of a thumbstick's flick with the left trigger held ([direct] belt_flick_flat_views, vr/belt_flick.h)
     crash::Step("settings (d2r_vr.ini)");
     xr::SetLogger(&Log);   // before the settings: [openxr] on says so in the log
@@ -14606,6 +15104,7 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     NoTemporalAA();
     MiniMapForHand();
     ReconcileGameWindow();   // flat: no square window left from VR; VR: the player's own window kept first (before SafeGameWindow's cut)
+    ReconcileFrameCap();     // flat: the player's own frame cap back from VR's rate; VR: his own kept
     SafeGameWindow();
     g_mouseLookOn.store(MouseLookForView());
     LogF("vrcam %s: game build %s (%s), made for D2R 3.3.93787 under D2RLoader 1.3.1", g_info_version,

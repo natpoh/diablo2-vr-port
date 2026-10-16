@@ -52,7 +52,18 @@ inline constexpr Def kDefs[] = {
      1.0f, 0.0f, 1.0f, 1.0f, "", "Left", "Right", 1},
     {L"openxr", L"menu_3d", "Menus as a panel", "The world stays in 3D behind an open menu",
      1.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", 1},
-    // ADD NEW TICK BOXES HERE, one line each (page 0 is full: its sixth row is the game view's F1 - F4 buttons; page 1 has room for three more).
+    // How the right stick turns (shared/turn_mode.h, after bearstonem/d2r-pcvr, MIT): the toggle is its own key, so the angle and
+    // the speed are both kept when it is switched. An older ini has no `smooth` and says snap=0 for smooth turning: the store
+    // reads it that way (hset_store.cpp), and writes `smooth` with `snap` so an angle chosen later does not flip the mode.
+    // The panel's speed starts at 30 (a step of 30 from 30 keeps the default 120 on the grid); the ini takes 10 - 720.
+    {L"turn", L"smooth", "Smooth turning", "Right stick: turn continuously, or one snap a flick",
+     1.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", 1},
+    {L"turn", L"snap", "Snap turn angle", "Degrees per flick, while smooth turning is off",
+     30.0f, 15.0f, 180.0f, 15.0f, "%.0f deg", "", "", 1},
+    {L"turn", L"speed", "Smooth turn speed", "Degrees per second, while smooth turning is on",
+     120.0f, 30.0f, 720.0f, 30.0f, "%.0f deg/s", "", "", 1},
+    // ADD NEW TICK BOXES HERE, one line each (page 0 is full: its sixth row is the game view's F1 - F4 buttons; page 1 is full too: the
+    // next key needs a page of its own - kMaxPages and the tabs' places in the tile window and the panel).
     //
     // -- no row: the Video page. [render] vr_resolution_px = a square's side in pixels (0 = not used), vr_resolution = the older
     //    mode (0 the window's own size, 1 the headset's recommendation, 2..6 a square); shared/render_size.h reads the two together.
@@ -88,10 +99,13 @@ constexpr int IndexOf(const wchar_t* section, const wchar_t* key) {
 constexpr int kKeyMode = IndexOf(L"render", L"vr_resolution");
 constexpr int kKeyPx = IndexOf(L"render", L"vr_resolution_px");
 constexpr int kKeyUse = IndexOf(L"calibration", L"use");
+constexpr int kKeySmooth = IndexOf(L"turn", L"smooth");   // the turn keys: a legacy ini needs care (hset_store.cpp)
+constexpr int kKeySnap = IndexOf(L"turn", L"snap");
 constexpr int kKeyVersion = IndexOf(L"calibration", L"version");
 constexpr int kKeyEye = IndexOf(L"calibration", L"eye_height_m");
 constexpr int kKeySpan = IndexOf(L"calibration", L"arm_span_m");
 static_assert(kKeyMode >= 0 && kKeyPx >= 0 && kKeyUse >= 0 && kKeyVersion >= 0 && kKeyEye >= 0 && kKeySpan >= 0, "the Video and Body pages' keys are in the table");
+static_assert(kKeySmooth >= 0 && kKeySnap >= 0, "the turn keys are in the table");
 
 constexpr bool IsToggle(const Def& d) { return d.min == 0.0f && d.max == 1.0f && d.step == 1.0f; }
 

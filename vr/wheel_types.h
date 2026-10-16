@@ -24,7 +24,7 @@ enum class Style : uint8_t { Wheel = 0, Tiles = 1 };
 enum class Tab : uint8_t { Skills = 0, Settings = 1 };
 
 // A short caption under each slot (which button of the player's controller presses it); empty = none. Set by the controller.
-constexpr int kHintLen = 16;
+constexpr int kHintLen = 20;   // "LT + Left Dpad Dn" (Steam Frame) and its NUL
 struct Hints {
     char text[kSlotCount][kHintLen] = {};
     bool operator==(const Hints& o) const { return std::memcmp(text, o.text, sizeof text) == 0; }

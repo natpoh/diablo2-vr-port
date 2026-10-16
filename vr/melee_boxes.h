@@ -344,6 +344,7 @@ void Update(const Frame& f);
 // melee_touch's timer, when it accepted a touch on monster `id`: kStruckKey (the game's attack key) or kStruckDirect.
 void Struck(uint32_t id, Kind how, uint64_t nowMs);
 // The render thread, for the effect: this frame's capsules as HitboxA / HitboxB (Pack), 0 when there is nothing fresh to draw.
-int Take(uint64_t nowMs, const float eyeWorld[3], float (*a)[4], float (*b)[4]);
+// maxOut: at most that many (the shader's 32 are shared with vr/skill_triggers.h's capsules: that module takes its share first).
+int Take(uint64_t nowMs, const float eyeWorld[3], float (*a)[4], float (*b)[4], int maxOut = kMaxCapsules);
 
 }  // namespace meleeboxes

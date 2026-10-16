@@ -77,6 +77,28 @@ inline int Coordinate(int point, uint32_t from, uint32_t to) {
 inline Pt ToGame(Pt p, Size client, Size game) { return {Coordinate(p.x, client.w, game.w), Coordinate(p.y, client.h, game.h)}; }
 inline Pt ToClient(Pt p, Size client, Size game) { return {Coordinate(p.x, game.w, client.w), Coordinate(p.y, game.h, client.h)}; }
 
+// -- the game's own client-size query ([render] vr_resolution_ui; render_resolution.cpp) ------------------------------
+// The game asks the window's client size for itself (a function that calls GetClientRect, not through WM_SIZE): its interface
+// root, safe area and layout globals, and the clamp of its cursor position. With a render size in force those must see the game's
+// picture, not the window: a 3072-wide picture laid out for a 3840-wide desktop loses the interface's right edge, and a cursor
+// clamped to a 1440-high window never reaches a button at y 1650 (the main menu's bottom row). bearstonem/d2r-pcvr (MIT) found
+// it (steamvr/render_resolution.cpp UiSize / CursorSize, panel_input_mode.h; commits 5107575, de595a6, 448d545, 4c37eb5).
+// The interface and the cursor get the whole picture - the game's own layout at the picture's edges, as it had with a window of
+// the picture's shape (the square window before the render size). d2r-pcvr gives its interface a 16:9 band at the top instead
+// (its toolbar is hidden in VR); with ours shown, the band put the toolbar - orbs and belt - in the MIDDLE of a square picture
+// (test-33, 2026-10-15: 2048x1152 of 2048x2048). d2r-pcvr saw the game's text crash once with the full height of a 3072 square
+// in a first try; ours had the 1920x1920 window's square for months. Every other caller (movies, the renderer) its own answer.
+enum class Asker : uint8_t { Other, Ui, Cursor };
+inline Size UiCanvas(Size render) { return render; }
+// The query's own answer packing: width in the low 32 bits, height in the high (not Pack's).
+inline uint64_t NativeSize(Size s) { return (uint64_t)s.w | (uint64_t)s.h << 32; }
+inline Size FromNative(uint64_t v) { return {(uint32_t)v, (uint32_t)(v >> 32)}; }
+// What the query answers `asker`: `native` is its own answer, `game` the size the game was told (none: no size in force).
+inline uint64_t CanvasAnswer(Asker asker, Size game, uint64_t native, bool on) {
+    if (!on || !game || asker == Asker::Other) return native;
+    return NativeSize(asker == Asker::Ui ? UiCanvas(game) : game);   // (the same today: the whole picture for both)
+}
+
 // -- when to ask ------------------------------------------------------------------------------
 
 inline constexpr uint64_t kAwayMs = 30000;      // the headset away this long: the window's size is given back

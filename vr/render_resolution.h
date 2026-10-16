@@ -36,6 +36,13 @@ void OptionsApplied();
 // xr.cpp: the session is gone (or the game is closing) - the window's own size back.
 void SessionEnded();
 
+// [render] vr_resolution_ui: vrcam's hook on the game's own client-size query asks here what to answer `asker` (vr_resolution.h
+// CanvasAnswer: the interface a 16:9 band of the game's picture, the cursor clamp the whole picture, while a size is in force;
+// `native` is the query's own answer, `on` the ini key). Any thread.
+uint64_t ClientSizeAnswer(Asker asker, uint64_t native, bool on);
+// The hook went in after a size was already in force: the game is told it once more, so its interface is laid out again.
+void ClientSizeReflow();
+
 // A size is in force (asked for; the game may still be taking it) - the depth pick must not take a shadow map for the picture.
 bool Active();
 // The game's pixel space for this window while a size is in force (the window's real client area is another size).

@@ -215,6 +215,7 @@ const D2RVR_Shared* Head() {
 uint32_t ActionsHeld(Presses& p) {
     uint32_t held = directinput::InjectedActions();
     if (directinput::Active()) return held | directinput::LayoutActions();
+    if (directinput::FlatControllerLive()) return held | directinput::FlatActions();   // VR F1-F3, no BodyWalk running: the plugin's own controller (BodyWalk's Mapping would be silent)
     BW_LinkActions a;
     if (!ReadActions(&a)) return held;
     Sync(a, p);
@@ -229,6 +230,12 @@ void CommandsHeld(uint64_t out[2], Presses& p) {
     if (directinput::Active()) {
         uint64_t mine[2];
         directinput::LayoutCommands(mine);
+        out[0] |= mine[0]; out[1] |= mine[1];
+        return;
+    }
+    if (directinput::FlatControllerLive()) {   // VR F1-F3, no BodyWalk running: the plugin's own controller
+        uint64_t mine[2];
+        directinput::FlatCommands(mine);
         out[0] |= mine[0]; out[1] |= mine[1];
         return;
     }

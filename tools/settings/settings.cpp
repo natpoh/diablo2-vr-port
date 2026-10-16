@@ -48,6 +48,8 @@
 #include "d2r_vr_version.h"  // D2RVR_VERSION: vrcam's g_info_version, made by tools/settings/version.cmake
 #include "render_size.h"     // [render] vr_resolution_px / vr_resolution: the VR render size, read the way the plugin reads it
 #include "window_json.h"     // the game's windowed size in Settings.json and what each platform does to it (the plugin's policy, tested)
+#include "turn_mode.h"       // [turn] smooth / snap / speed: how the right stick turns, and what an older ini's snap=0 means (the plugin's rule)
+#include "frame_cap.h"       // the game's frame cap in Settings.json: VR's rate is VR's, flat mode has the player's own (the plugin's policy, tested)
 
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "shell32.lib")
@@ -237,9 +239,14 @@ std::vector<Item> g_items = {
            L"FlatVR 3D depth: one picture, FlatVR makes the second eye from ReShade's depth (works with DLSS). The FlatVR choices "
            L"set the Stereo tab's Real stereo and, while BodyWalk runs, FlatVR's 3D source (BodyWalk 1.76 or later).")),
     Only(kVr, Choice(L"stereo", L"headset_rate", L"Headset refresh rate", 3, {L"72 Hz", L"75 Hz", L"80 Hz", L"90 Hz", L"120 Hz"},
-           L"Sets the game's frame cap (in its own options, Settings.json): one picture a frame (mono, the 3D from the depth) "
-           L"at the headset's rate, real stereo at twice it (each eye at the rate). More pictures than the headset shows make "
-           L"the frame shake. The game reads it when it starts: set it with the game closed (it writes its own options on exit), or restart the game after.")),
+           L"Sets the game's frame cap (in its own options, Settings.json) - the line under it says what is written and why: the rate "
+           L"itself for one picture a frame (mono, the 3D from the depth) and for both eyes from one game frame (one pass, two "
+           L"pictures: FlatVR stereo); twice the rate for eyes by turns (one eye a game frame, each eye at the rate); none for native "
+           L"OpenXR (the headset paces the game itself). More pictures than the headset shows make the frame shake. The game reads it "
+           L"when it starts: set it with the game closed (it writes its own options on exit), or restart the game after. "
+           L"VR only: in flat mode (How you play) the game runs at the frame cap you set in its own options - yours is kept before the "
+           L"rate writes its own, and comes back when you switch to Flat or start the game in flat mode.")),
+    Only(kVr, Status(L"frame_cap", L"")),
     // The render size next to the rate (2026-10-14, the user's wish: the resolution belongs with the headset's choices on Home), as a
     // SLIDER (2026-10-14, the user's wish): the square's side, 1024 - 4096 in steps of 64, [render] vr_resolution_px; the stop under
     // the smallest reads "window's size" (Desktop, 0). The tick box under it is the older mode 1, [render] vr_resolution: the headset's
@@ -249,6 +256,12 @@ std::vector<Item> g_items = {
            (float)rendersize::kStopWindow, (float)rendersize::kSideMax, (float)rendersize::kSideStep, (float)rendersize::kStopWindow, g_resTip))),
     Only(kVr, Toggle(L"@render", L"vr_headset", L"Use the headset's recommended size", 0, g_resTipHeadset)),
     Only(kVr, Status(L"vr_resolution", L"")),
+    Only(kVr, Toggle(L"render", L"vr_resolution_ui", L"Menus and the mouse follow the VR render size", 1,
+           L"With a VR render size apart from the window, the game still sized its interface and limited its mouse to the WINDOW: on a "
+           L"window wider than the picture the menus lost their right edge, and on a window lower than the picture the mouse - the laser - "
+           L"could not reach the bottom (the main menu's Play and Create Character buttons). On: the game's interface is laid out over the "
+           L"whole picture (its toolbar at the picture's bottom, as with a window of the picture's shape) and the mouse reaches all of it. Live. Off: the window's size, as before. "
+           L"(Found by bearstonem/d2r-pcvr.)")),
     Only(kVr, Slider(L"@bodywalk", L"userHeight", L"My height, m", 1.2f, 2.3f, 0.01f, 1.75f,
            L"Your height: the world is scaled to it (Stereo > Scale and depth > Life-size world). The same number as BodyWalk's "
            L"Mapping > Avatar > Body Height, changed in both places; with BodyWalk not running it is kept here. "
@@ -524,8 +537,13 @@ std::vector<Item> g_items = {
     Group(L"Turning (right stick)"),
     Toggle(L"turn", L"right_stick", L"Turn with the right stick", 1,
            L"Right stick X turns the body (the camera and walking); the game no longer gets the right stick."),
-    Needs(L"turn", L"right_stick", 1, Slider(L"turn", L"speed", L"Turn speed, °/s", 10, 360, 5, 120, L"Smooth turn speed at full deflection.")),
-    Needs(L"turn", L"right_stick", 1, Slider(L"turn", L"snap", L"Snap turn, ° (0 = smooth)", 0, 90, 5, 0, L"Above 0 = turn by this many degrees per flick instead of smoothly.")),
+    // [turn] smooth is its own key (as in bearstonem/d2r-pcvr, MIT), so switching keeps the angle and the speed. An ini made before it says
+    // snap=0 for smooth turning: "@turn" reads and writes the pair by that rule (ReadTurnValue / WriteTurnValue, shared/turn_mode.h).
+    Needs(L"turn", L"right_stick", 1, Toggle(L"@turn", L"smooth", L"Smooth turning", 1,
+           L"On: the right stick turns continuously, as fast as you push it up to the speed below. Off: one snap of the angle below "
+           L"each time you flick it. Switching keeps both the speed and the angle.")),
+    Needs(L"turn", L"right_stick", 1, Slider(L"turn", L"speed", L"Smooth turn speed, °/s", 10, 720, 10, 120, L"Degrees per second at full deflection; used while smooth turning is on.")),
+    Needs(L"turn", L"right_stick", 1, Slider(L"@turn", L"snap", L"Snap turn angle, °", 15, 180, 15, 30, L"Degrees turned by one flick; used while smooth turning is off.")),
     Needs(L"turn", L"right_stick", 1, Invert(L"turn", L"sign", L"Reverse turning", 1, L"Tick if pushing right turns you left.")),
     Group(L"Mouse and keyboard (no headset)"),
     Only(kVr, Toggle(L"input", L"mouse_look", L"Mouse look in VR views F2 and F4 too", 0,
@@ -553,6 +571,12 @@ std::vector<Item> g_items = {
            L"The pad button BodyWalk's \"D2R: Inventory\" action sends to the game. In D2R's pad layout View opens the map."),
     Toggle(L"input", L"a_attack_only", L"A button only attacks", 0,
            L"Picking up, opening and talking then go to the BodyWalk action \"D2R: Pick up / interact\"."),
+    Only(kVr, Toggle(L"input", L"interact_one_press", L"Pick up / interact: one thing per press", 0,
+           L"VR first person (F4): \"pick up / interact\" (the right A without BodyWalk, or BodyWalk's action) acts on what is under it "
+           L"when you press it, and on nothing else: a chest opened by a press does not also give you its loot, a press held over a pile "
+           L"takes one item - let go and press again for the next. A press on nothing does nothing, even if something comes under it while "
+           L"held, and a press held while a menu opens or closes counts only after you let go. Off: held, it takes whatever is under it, "
+           L"as before. F1, F2, F3: as before. Live. (After bearstonem/d2r-pcvr, by CalMac91.)")),
     Only(kVr, Group(L"Gestures (native OpenXR)")),
     Only(kVr, Toggle(L"hands", L"shoulder_swap", L"Swap weapon sets: the grip behind the shoulder", 0,
            L"Native OpenXR: reach a hand behind either shoulder and press its grip once - the game's own \"Swap weapons\" "
@@ -604,6 +628,12 @@ std::vector<Item> g_items = {
            L"away - smoothly - and back when it closes. With a square window the game's interface is as wide as the picture: "
            L"farther, its left and right edges come into view. 0 = the distance above. The same setting as \"Screen distance "
            L"while a panel is open\" for FlatVR (UI: F4 body)."),
+    Toggle(L"openxr", L"menus_wait_tracking", L"Menus placed only when the headset is tracked", 1,
+           L"The flat picture (menus, loading, the title screen) and a menu's panel are put in the room only once the headset says your "
+           L"head is tracked - before that a runtime may give a guessed place, and the picture stayed at the floor or behind you. Until "
+           L"then the picture follows your gaze (a headset that never says it is tracked gets 3 seconds). And when the headset's focus "
+           L"comes back after 2 seconds or more away (taken off, the runtime's own menu) they come up in front of you again - for a "
+           L"player who sat down or stood up meanwhile. Live. Off: the first half second follows the gaze, then placed, as before."),
     Slider(L"openxr", L"lean_m", L"Head off the body, m", 0.0f, 0.5f, 0.01f, 0.1f,
            L"First and third person: how far the head may lean away from the hero's body. Farther, the body follows - "
            L"walking in the room never takes the camera out of the hero. 0 = turning only."),
@@ -616,7 +646,17 @@ std::vector<Item> g_items = {
            L"the menu button opens the inventory; in a menu the controllers are the game's own gamepad (A B X Y, the grips "
            L"are the bumpers) and the laser works as before. Change any of it in d2r_vr.ini, section [direct]. "
            L"Off: BodyWalk's controls, as before. F4 only: in F1, F2, F3 and the flat modes BodyWalk's controls are the controls, as if this were off - "
-           L"except the left stick's walk in F1-F3 (the box \"Walk with the left stick in F1, F2, F3 too\" below)."),
+           L"except the controllers in F1-F3 when BodyWalk is not running (the box \"Play with the controllers in F1, F2, F3 without BodyWalk\" below)."),
+    Needs(L"openxr", L"direct_input", 1, Toggle(L"direct", L"flat_controller", L"Play with the controllers in F1, F2, F3 without BodyWalk", 1,
+           L"VR views F1 (from above), F2 (third person) and F3 (the game on the floor) with no BodyWalk running: the plugin's own controllers are the "
+           L"game's gamepad there - the same layout as first person (F4): the right trigger attacks, A picks up or opens, B / X / Y are the gamepad's skill "
+           L"buttons (left trigger held: the second row), the right stick click swaps weapons, the left stick click shows items (Alt) and, as a quick click, "
+           L"the map, the menu button opens the inventory, the sticks are the gamepad's (the left one walks the hero, the left trigger + a flick of a stick "
+           L"drinks a belt potion, see the boxes below); in a menu they are the game's own gamepad. Rebind in d2r_vr.ini, section [direct] (the same lines "
+           L"as F4). What stays F4 only: gestures, hit by touch, the bow's draw, throws, the skill wheel and aiming by the hand (in F1 and F3 the hero "
+           L"attacks where he faces). With BodyWalk running (its Game Link alive, or its gamepad moving) nothing changes: BodyWalk's gamepad is the "
+           L"gamepad, whole. If a real gamepad answers as well, the controllers are added to it, never over it. Off: no buttons from the controllers in "
+           L"F1-F3 without BodyWalk (the walk and the potions only). The log says \"the plugin's own controller is the game's pad\" when it takes over. Live.")),
     Needs(L"openxr", L"direct_input", 1, Toggle(L"direct", L"hold_enabled", L"Long press of a stick click: right = skill panel, left = inventory", 1,
            L"With the controls above: hold the right stick's click for half a second and the skill panel opens (the wheel, when it is "
            L"set to open that way); hold the left stick's click and the inventory opens - or closes, the button is a toggle. A short "
@@ -628,15 +668,15 @@ std::vector<Item> g_items = {
            L"the menu button). Held, the left click is still Alt (show items); held for half a second it is the inventory (see "
            L"above). Off: the left click is Alt only, as before. F4 only, like the rest of the controls. Live.")),
     Needs(L"openxr", L"direct_input", 1, Toggle(L"direct", L"walk_flat_views", L"Walk with the left stick in F1, F2, F3 too (movement only)", 1,
-           L"F1-F3: movement only. With the controls above, the left thumbstick also walks the hero in the other VR views - from above (F1), "
-           L"third person (F2) and the table (F3) - when BodyWalk is not running. Nothing else of the controls acts there: no attack, "
-           L"button, gesture, panel or vibration (those stay F4 only). The walk is the game's own: the same walking code, dead zone and "
+           L"F1-F3: movement. With the controls above, the left thumbstick also walks the hero in the other VR views - from above (F1), "
+           L"third person (F2) and the table (F3) - when BodyWalk is not running (the buttons are the box above; gestures, panels and vibration "
+           L"stay F4 only). The walk is the game's own: the same walking code, dead zone and "
            L"stop BodyWalk's stick uses, the stick turned into the game's frame the way BodyWalk's stick is in that view (F1 from above: "
            L"forward is up on the screen). Panels and menus keep the stick for themselves. BodyWalk running (its Game Link alive): nothing "
            L"changes, its gamepad is the gamepad whole, as before. Off: F1-F3 have no walking without BodyWalk, as before. "
            L"The log (d2r-vr-vrcam.log) says \"walking in VR F1-F3 - ...\" and why when it does not walk. Live.")),
     Needs(L"openxr", L"direct_input", 1, Toggle(L"direct", L"belt_flick_flat_views", L"Belt potions in F1, F2, F3: left trigger + a flick of a stick", 1,
-           L"F1-F3: movement and potions only. With the controls above, in the other VR views - from above (F1), third person (F2) and the table (F3) - "
+           L"F1-F3: potions. With the controls above, in the other VR views - from above (F1), third person (F2) and the table (F3) - "
            L"hold the LEFT TRIGGER and flick a thumbstick (either one): LEFT drinks belt column 1, UP column 2, RIGHT column 3, DOWN column 4 - the game's "
            L"own belt keys 1-4, the same press the hand makes when it drinks a potion from the belt. One flick, one potion: bring the stick back to the "
            L"middle before the next one; a stick that was already pushed when you pressed the trigger does nothing until it has been to the middle. "
@@ -704,6 +744,23 @@ std::vector<Item> g_items = {
            L"(the headset's runtime drives the motors); off: silent, as before. Live. F4 only."),
     Needs(L"openxr", L"haptics", 1, Slider(L"openxr", L"haptics_scale", L"Vibration: strength", 0.2f, 2.0f, 0.05f, 1.0f,
            L"All pulses stronger or weaker; 1 = the usual (a landed blow is about 70% of the motor's strength). Live.")),
+    Toggle(L"openxr", L"frame_profile", L"Steam Frame controllers: their own layout", 1,
+           L"Native OpenXR. When the runtime offers the Steam Frame's controllers as themselves (XR_VALVE_frame_controller_interaction), "
+           L"they get their own buttons instead of the runtime's stand-in for a Quest or an Index controller: the right A and B as "
+           L"before, the left hand's D-pad down and up are its first and second face buttons (X and Y on a Quest controller), the left "
+           L"View and the right Menu buttons are the menu. Other controllers and runtimes without it: nothing changes. Taken when the "
+           L"headset session starts. Off: the runtime's stand-in layout, as before."),
+    Toggle(L"openxr", L"index_grip_force", L"Valve Index: the grip is how hard you squeeze", 0,
+           L"Native OpenXR, Valve Index controllers. The Index reads its grip from the fingers round the handle, so a relaxed hand that "
+           L"only holds the controller counts as a squeezed grip (a weapon or a potion taken, the laser's Shift). On: the grip is the "
+           L"handle's force sensor - only a real squeeze counts. Other controllers: nothing changes. Live. Off: as before."),
+    Needs(L"openxr", L"haptics", 1, Toggle(L"openxr", L"haptics_hand_actions", L"Vibration: a channel of its own for each hand", 1,
+           L"Each controller's motor gets a vibration action of its own, so a pulse can only go to the hand it is for (some runtimes sent "
+           L"a pulse of the shared action to the wrong hand). Taken when the headset session starts. Off: one action for both hands, "
+           L"as before.")),
+    Needs(L"openxr", L"haptics", 1, Toggle(L"openxr", L"haptics_stop", L"Vibration: stop each pulse on time", 1,
+           L"Each pulse is stopped by its own call when its time is up, even while the game is loading or stalls - some controllers "
+           L"(Steam Frame's) went on buzzing past a short pulse. Live. Off: the runtime ends a pulse by itself, as before.")),
     Group(L"Stereo 3D"),
     Toggle(L"stereo", L"afr", L"Real stereo (alternate frames)", 0,
            L"The game draws the left eye, the right eye, the left... Needs the FlatVR addon in the game, "
@@ -714,6 +771,10 @@ std::vector<Item> g_items = {
     Needs(L"stereo", L"pair_per_tick", 1, Slider(L"stereo", L"right_dt_ms", L"Right eye frame time, ms", 0, 2, 0.01f, 0.01f,
            L"The right eye's pass gets this much game time instead of none. Effects that skip a frame of no time "
            L"(butterflies only in the left eye) are drawn then; 0.01 is enough, more moves the world between the eyes.")),
+    Toggle(L"render", L"fx_fence", L"Effects: each eye's values exactly its own", 0,
+           L"The effects (fog, sky, ceiling) wait until the graphics card has drawn the last eye's effects before the next "
+           L"eye's values go in. Both eyes of a pair get the same values anyway; this matters for FlatVR's frame stamps "
+           L"with one picture a frame. Costs a little speed. Live. F4 only."),
     Toggle(L"stereo", L"swap", L"Swap eyes", 0, L"Tick if the eyes come out swapped (depth looks inside out)."),
     Group(L"Scale and depth"),
     Toggle(L"stereo", L"true_scale", L"Life-size world", 1,
@@ -1289,8 +1350,23 @@ std::vector<Item> g_items = {
            L"its camera from above (550 to 1060 units away). From ours everything is nearer and read as one flat wall "
            L"550 away: the act 2 town's straight line with a pale veil above it, the haze in the corners. On: that depth "
            L"runs from our camera. Off: the game's own."),
-    Needs(L"render", L"depth_fix", 1, Slider(L"render", L"depth_range", L"How far that depth reaches", 200, 5000, 50, 1000,
-           L"World units (the hero is ~7.5 tall). Farther counts as sky to the game's fog; shorter is finer near the hero.")),
+    Choice(L"render", L"own_depth", L"Depth for the effects", 1, {L"ReShade's own depth", L"Our own, picked once"},
+           L"Where the fog, the sky and the cave ceiling get the scene's depth. Our own (the default): the game's scene "
+           L"depth-stencil, picked once and kept until it goes away or the window or render size changes, copied for each eye before its "
+           L"effects - one copy on the graphics card an eye, nothing for the game to wait on. Needed in a square window and "
+           L"with a render size: there ReShade alone takes the 4096 shadow map and the fog flickers with a view from above. "
+           L"ReShade's own: ReShade's Generic Depth picks it (fine in a window that is not square). VR only. Live."),
+    Status(L"depth_pick", L""),
+    Needs(L"render", L"depth_fix", 1, Choice(L"render", L"depth_fix_mode", L"How that depth is set", 1,
+           {L"Off (the game's own)", L"In each pass as it is bound", L"Once a frame where the game makes it"},
+           L"In each pass as it is bound (D2R VR's way, as before): every constant buffer the game binds gets our depth range - a pass "
+           L"that gets its constants another way keeps the game's. Once a frame where the game makes it (found by bearstonem/d2r-pcvr): the "
+           L"range is written right after the game builds the frame's constants, before any pass reads them, so every pass - fog, ambient "
+           L"occlusion, particles, grass - reads the same depth; it runs from the near plane of our camera to the game's own far end (the "
+           L"distance below is not used). To compare: the act 1 grass, the act 2 town's veil, the haze in the corners. Off: the game's own "
+           L"depth, as \"The game's effects measure depth from our camera\" unticked. Live.")),
+    Needs(L"render", L"depth_fix", 1, Needs(L"render", L"depth_fix_mode", 1, Slider(L"render", L"depth_range", L"How far that depth reaches", 200, 5000, 50, 1000,
+           L"World units (the hero is ~7.5 tall). Farther counts as sky to the game's fog; shorter is finer near the hero."))),
     Choice(L"render", L"solid_walls", L"Walls in front of the hero", 1, {L"See-through (the game's)", L"Solid, see-through only in F1", L"Solid in every view"},
            L"The game draws a wall between its camera and the hero at half alpha. From inside every wall you look at "
            L"was see-through; from above it hid the hero."),
@@ -1634,6 +1710,20 @@ std::vector<Item> g_items = {
            L"two-handed weapon."),
     Slider(L"hands", L"left_hold_yaw", L"Left hand when it holds: turn about Y, °", -180, 180, 1, 0),
     Slider(L"hands", L"left_hold_roll", L"Left hand when it holds: turn about Z, °", -180, 180, 1, 0),
+    Group(L"Shield (first person)"),
+    Needs(L"arms", L"mode", 2, Toggle(L"shield", L"forearm", L"Shield strapped to the forearm", 1,
+           L"First person (F4): the shield on your left arm is strapped to the forearm as the model was made, not hung on the hand "
+           L"from the game's animation - it goes where the forearm goes and turns as it turns (with \"Forearm turns with the wrist\", "
+           L"rolling the hand rolls the shield). The weapon's sliders above never move it; the ones below do. A shield bash "
+           L"(\"Shield bash casts Smite\") is felt where the shield is drawn. Off: on the hand, as before. Live.")),
+    Needs(L"arms", L"mode", 2, Needs(L"shield", L"forearm", 1, Slider(L"shield", L"x", L"Shield: move along X, cm", -40, 40, 0.5f, 0,
+           L"The shield moved on the forearm, along its own axes."))),
+    Needs(L"arms", L"mode", 2, Needs(L"shield", L"forearm", 1, Slider(L"shield", L"y", L"Shield: move along Y, cm", -40, 40, 0.5f, 0))),
+    Needs(L"arms", L"mode", 2, Needs(L"shield", L"forearm", 1, Slider(L"shield", L"z", L"Shield: move along Z, cm", -40, 40, 0.5f, 0))),
+    Needs(L"arms", L"mode", 2, Needs(L"shield", L"forearm", 1, Slider(L"shield", L"pitch", L"Shield: turn about X, °", -180, 180, 1, 0,
+           L"The shield turned on the forearm about its own axes."))),
+    Needs(L"arms", L"mode", 2, Needs(L"shield", L"forearm", 1, Slider(L"shield", L"yaw", L"Shield: turn about Y, °", -180, 180, 1, 0))),
+    Needs(L"arms", L"mode", 2, Needs(L"shield", L"forearm", 1, Slider(L"shield", L"roll", L"Shield: turn about Z, °", -180, 180, 1, 0))),
     Only(kVr, Group(L"Attack along the hand (A button)")),
     Choice(L"bow", L"mode", L"Aiming", 4,
            {L"Off", L"Left stick while A is held", L"Shift + click along the hand", L"Turn the hero to the hand first",
@@ -1736,6 +1826,19 @@ std::vector<Item> g_items = {
            L"button is pressed for a moment and the monster the shield touched is the cast's target. Reach, mana, cast rate, "
            L"animation, damage, stun and knockback stay the game's. A shield at rest does nothing, nor does a bash with the right "
            L"trigger down. Off: the shield casts nothing. F4 only.")),
+    Needs(L"gameplay", L"shield_smite", 1, Slider(L"gameplay", L"shield_smite_min_speed", L"Shield bash: the least speed, m/s", 0.3f, 8, 0.1f, 0.8f,
+           L"How fast the shield must be moving for a bash to count. A shield moving slower does nothing, however it touches a monster. "
+           L"The default 0.8 is what the shield always used. This is the bash's OWN number - \"Hit by touch: the least blade speed\" does not "
+           L"apply to the shield. The speed is your left hand's: its movement plus its turn times the shield's length (0.4 m), frame to "
+           L"frame. Lower, and the speed that may begin a bash (1.5 x, at most 1.2) and the speed that counts as rest go lower with it; "
+           L"from 0.8 up they are as before. A movement is also a bash only after the shield has moved the distance below within about a "
+           L"tenth of a second. Tick \"Draw what casts skills\" (Debug tab) to see it: the shield turns green while a bash would count, "
+           L"the white and orange balls show where its speed reached this number and fell below it, and the log line shows the speed "
+           L"against it. Only decides when the press goes out - never the cast itself. Live. F4 only.")),
+    Needs(L"gameplay", L"shield_smite", 1, Slider(L"gameplay", L"shield_smite_stroke_cm", L"Shield bash: how far the shield moves to start a bash, cm", 2, 30, 1, 8,
+           L"A movement is a bash - and can cast - only after the shield has moved this far within about a tenth of a second, and fast "
+           L"enough (above). Smaller: a short thrust counts; larger: only a long swing does. Default 8 as it always was; the bash's own number, "
+           L"apart from \"Hit by touch: how far the blade moves to start a stroke\". Live. F4 only.")),
     Group(L"Bow"),
     Only(kVr, Toggle(L"hands", L"bow_draw", L"Bow: draw the string with both hands", 0,
            L"Native OpenXR: with a bow in hand, press the trigger of the hand without the bow at the bow's nock point (about 16 cm "
@@ -2019,6 +2122,13 @@ std::vector<Item> g_items = {
            L"First person (F4): the hand with a shield on it closes into a fist as you squeeze the controller's grip and opens when you "
            L"let go, like a free hand. Only the fingers move - the shield stays on the arm exactly as the game draws it, and a shield "
            L"bash (\"Shield bash casts Smite\") works the same with the hand closed. Off: the game's own animation of the hand.")),
+    Needs(L"arms", L"mode", 2, Toggle(L"hands", L"forearm_twist", L"Forearm turns with the wrist", 1,
+           L"First person (F4): when you roll the controller (palm up, palm down) the forearm turns with it, as a real one does - "
+           L"a little at the elbow, all of it at the wrist - instead of the hand alone screwing round on a still arm. A shield strapped "
+           L"to the forearm turns with it. Off: the forearm keeps the game's animation and only the hand turns, as before. Live.")),
+    Needs(L"arms", L"mode", 2, Needs(L"hands", L"forearm_twist", 1, Slider(L"hands", L"forearm_twist_share", L"Forearm's share of the roll", 0, 1, 0.05f, 0.5f,
+           L"How much of the wrist's roll the forearm takes at the elbow end: 0 = none there (the hand and the wrist end turn), "
+           L"1 = the whole forearm turns as one with the hand. Toward the wrist it always grows to all of it. Live."))),
     Group(L"Staff (held in both hands)"),
     Toggle(L"bow", L"staff_two_hands", L"Staff: aim from the left hand to the right", 1,
            L"With a staff and both controllers: spells and attacks go along the line from your left hand to your right one, "
@@ -2334,6 +2444,21 @@ std::vector<Item> g_items = {
            L"With \"Draw the capsules of Hit by touch\" on: how long the white / orange balls (where the blade's speed reached the least "
            L"speed and where it fell below it) and the tip's trail stay in the picture after a swing. 0 = no marks and no trail, the "
            L"blade's colour only. Live."),
+    Toggle(L"debug", L"skill_triggers", L"Draw what casts skills", 0,
+           L"First person (F4): draws and logs the triggers that cast a skill, so they can be tuned by eye - for now the SHIELD BASH that "
+           L"casts Smite (\"Shield bash casts Smite\"): the shield's capsule (the one the bash tests monsters with) on the left arm in violet, "
+           L"green while a bash would count (a stroke on, at or above \"Shield bash: the least speed\", the right trigger up, Smite on a pad "
+           L"slot...); a WHITE ball at the shield's centre where its speed reached that speed and an ORANGE one where it fell below it; its "
+           L"path as a thin trail, cyan where a bash would not count and green where it would; the monsters near it (yellow) and the one a "
+           L"bash pressed Smite on, red. Five times a second the log gets a \"skill trigger shield bash:\" line: the shield's speed against "
+           L"the bash speed and its start distance, the right trigger, the pad button of Smite's slot, the mana against Smite's cost, the "
+           L"nearest monster, and why a bash would not count (too slow, no stroke yet, right trigger down, no Smite slot, no mana, not hostile...). "
+           L"It works with the shield bash off too (the line then says so). Other skill triggers (the bow's draw, a throw) can join it later. A drawing and a log only - it changes "
+           L"nothing in when anything fires. Apart from \"Draw the capsules of Hit by touch\", which is for the melee blade. Needs the "
+           L"D2R_DepthFog.fx of the same build (the old one draws the shield's capsule green). Live. F4 only."),
+    Slider(L"debug", L"skill_mark_ms", L"Skill triggers: how long the speed marks and the trail stay, ms (0 = none)", 0, 3000, 100, 800,
+           L"With \"Draw what casts skills\" on: how long the white / orange balls and the shield's trail stay in the picture after a bash. "
+           L"0 = no marks and no trail, the capsule's colour only. Live."),
     Slider(L"debug", L"melee_blade_length_pct", L"Hit by touch: the blade's length from the weapon bone to its tip, % of the weapon's own", 50, 150, 5, 100,
            L"Tunes the blade of Hit by touch - the capsule drawn by \"Draw the capsules of Hit by touch\" is the blade the touch tests - to "
            L"the weapon as you see it: 100 = the length the plugin has for this weapon, from the weapon bone (for a staff, spear or two-handed "
@@ -2907,7 +3032,35 @@ void WriteRenderSize(const Item& it, float v) {
     UpdateResolutionTexts();
 }
 
+// "@turn" items: [turn] smooth and snap, read and written by the plugin's rule (shared/turn_mode.h). An ini without `smooth` says
+// snap=0 for smooth turning, so the toggle shows what the plugin does and the angle shows 30 for that 0; a new angle is written with
+// the mode it is chosen in (the explicit `smooth`), so it never flips an older profile to snap turning.
+float TurnKey(const wchar_t* key, float missing) {
+    wchar_t b[64];
+    GetPrivateProfileStringW(L"turn", key, L"", b, 64, g_ini);
+    if (!b[0]) return missing;
+    wchar_t* end = nullptr;
+    const float v = wcstof(b, &end);
+    return end != b && std::isfinite(v) ? v : missing;
+}
+float ReadTurnValue(const Item& it) {
+    const float snap = TurnKey(L"snap", 0.0f), smooth = TurnKey(L"smooth", -1.0f);
+    return wcscmp(it.key, L"smooth") == 0 ? (turnmode::Smooth(snap, smooth) ? 1.0f : 0.0f) : turnmode::SnapDegrees(snap);
+}
+void WriteTurnValue(const Item& it, float v) {
+    const bool smoothNow = turnmode::Smooth(TurnKey(L"snap", 0.0f), TurnKey(L"smooth", -1.0f));
+    wchar_t buf[32];
+    if (wcscmp(it.key, L"smooth") == 0) {
+        WritePrivateProfileStringW(L"turn", L"smooth", v != 0.0f ? L"1" : L"0", g_ini);
+        return;
+    }
+    swprintf_s(buf, L"%d", (int)std::lround(std::clamp(v, turnmode::kSnapMin, turnmode::kSnapMax)));
+    WritePrivateProfileStringW(L"turn", L"snap", buf, g_ini);
+    WritePrivateProfileStringW(L"turn", L"smooth", smoothNow ? L"1" : L"0", g_ini);
+}
+
 float ReadValue(const Item& it) {
+    if (wcscmp(it.section, L"@turn") == 0) return ReadTurnValue(it);
     if (wcscmp(it.section, L"@render") == 0) return ReadRenderSize(it);
     if (wcscmp(it.section, L"@preset") == 0) return (float)MatchPreset();
     if (wcscmp(it.section, L"@stereo3d") == 0) return ReadStereo3D();
@@ -2941,8 +3094,10 @@ float ReadValue(const Item& it) {
 
 void ShowPreset();
 void ApplyFrameCap();
+void WriteVrFrameCap(int value);
 void RefreshControls();
 void WriteValue(const Item& it, float v) {
+    if (wcscmp(it.section, L"@turn") == 0) { WriteTurnValue(it, v); return; }
     if (wcscmp(it.section, L"@render") == 0) { WriteRenderSize(it, v); return; }
     if (wcscmp(it.section, L"@preset") == 0) return;   // ApplyPreset, from the drop-down
     if (wcscmp(it.section, L"@stereo3d") == 0) {
@@ -2950,7 +3105,11 @@ void WriteValue(const Item& it, float v) {
         ApplyFrameCap(); ShowPreset(); return;
     }
     if (wcscmp(it.section, L"@reshade") == 0) { WriteReShadeValue(it, v); ShowPreset(); return; }
-    if (wcscmp(it.section, L"@game") == 0) { WriteGameValue(it, v); return; }
+    if (wcscmp(it.section, L"@game") == 0) {
+        if (wcscmp(it.key, L"Framerate Cap") == 0 && g_platform == 1) WriteVrFrameCap((int)std::lround(v));   // VR's own cap: the player's kept first
+        else WriteGameValue(it, v);
+        return;
+    }
     if (wcscmp(it.section, L"@window") == 0) { WriteSquareWindow(v != 0.0f); return; }
     if (wcscmp(it.section, L"@bodywalk") == 0) { WriteBodyWalkValue(it, v); return; }
     wchar_t buf[64];
@@ -2969,18 +3128,88 @@ void WriteValue(const Item& it, float v) {
 // eyes from one game frame, [stereo] pair_per_tick) the rate itself.
 const Item* PresetItem(const wchar_t* section, const wchar_t* key);
 void RefreshControls();
+// The cap belongs to VR (shared/frame_cap.h, tested by frame_cap_test): the player's own cap in the file is kept ([stereo] cap_before)
+// before VR writes its own, what VR wrote is kept too ([stereo] cap_written) to tell it from a cap the player set, and flat mode
+// puts the player's own back - at once on a switch of the platform, on START, and at the plugin's start (vrcam's ReconcileFrameCap).
+// Nothing kept: nothing is written in flat mode.
+framecap::State FrameCapState() {
+    framecap::State s;
+    s.own = (int)GetPrivateProfileIntW(L"stereo", L"cap_before", -1, g_ini);
+    s.written = (int)GetPrivateProfileIntW(L"stereo", L"cap_written", -1, g_ini);
+    return s;
+}
+void SaveFrameCapState(const framecap::Plan& p) {
+    wchar_t b[16];
+    if (p.saveOwn) { swprintf_s(b, L"%d", p.own); WritePrivateProfileStringW(L"stereo", L"cap_before", b, g_ini); }
+    if (p.saveWritten) { swprintf_s(b, L"%d", p.written); WritePrivateProfileStringW(L"stereo", L"cap_written", b, g_ini); }
+}
+// The cap in the game's file, -1 when there is none to read.
+int FrameCapInFile() {
+    std::string text;
+    return ReadFileText(GameSettingsPath(), &text) ? framecap::Read(text) : -1;
+}
+bool WriteFrameCapToFile(int value) {
+    const std::wstring path = GameSettingsPath();
+    std::string text;
+    if (!ReadFileText(path, &text)) return false;
+    bool ok = false;
+    const std::string out = framecap::With(text, value, &ok);
+    if (!ok) return false;
+    if (out == text) return true;
+    const DWORD attr = GetFileAttributesW(path.c_str());
+    if (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_READONLY)) SetFileAttributesW(path.c_str(), attr & ~FILE_ATTRIBUTE_READONLY);
+    std::ofstream f(path, std::ios::binary | std::ios::trunc);
+    f << out;
+    return (bool)f;
+}
+// VR's cap (the headset's rate for the 3D choice, or the "Game frame cap" slider): the player's own kept first.
+void WriteVrFrameCap(int value) {
+    const framecap::Plan p = framecap::ForVr(FrameCapInFile(), FrameCapState(), value);
+    SaveFrameCapState(p);
+    if (p.write) WriteFrameCapToFile(p.value);
+}
+// Flat mode: the cap is the player's own - VR's goes, the one kept comes back (none kept: nothing is written).
+void RestoreFrameCapForFlat() {
+    const framecap::Plan p = framecap::ForFlat(FrameCapInFile(), FrameCapState());
+    SaveFrameCapState(p);
+    if (p.write && !WriteFrameCapToFile(p.value)) SetStatus(L"perf_restart", 1, L"The game's Settings.json could not be written (your frame cap)");
+}
+// The cap the headset's rate and the 3D choice make (shared/frame_cap.h VrCapFor - one rule for the write, this status line and vrcam's log).
+framecap::VrCap VrCapNow(int* hz = nullptr) {
+    const int h = framecap::HzOfRate((int)GetPrivateProfileIntW(L"stereo", L"headset_rate", 3, g_ini));
+    if (hz) *hz = h;
+    return framecap::VrCapFor(h, GetPrivateProfileIntW(L"stereo", L"afr", 0, g_ini) != 0,
+                              GetPrivateProfileIntW(L"stereo", L"pair_per_tick", 0, g_ini) != 0,
+                              GetPrivateProfileIntW(L"openxr", L"on", 0, g_ini) != 0);
+}
+// "Frame cap in the game's file: 240. For this choice VR writes 240 = 120 Hz x 2: eyes by turns ..." under the headset rate: what is written and why.
+void UpdateFrameCapStatus() {
+    if (g_platform != 1) return;
+    int hz = 0;
+    const framecap::VrCap c = VrCapNow(&hz);
+    const int inFile = FrameCapInFile();
+    const char* r = framecap::Reason(c.why);
+    std::wstring line = L"Frame cap in the game's file: " + (inFile >= 0 ? std::to_wstring(inFile) : std::wstring(L"unknown")) + L". For this choice VR writes " +
+                        (c.value ? std::to_wstring(c.value) : std::wstring(L"none (0)")) +
+                        (c.factor ? L" = " + std::to_wstring(hz) + L" Hz x " + std::to_wstring(c.factor) : std::wstring()) + L": " + std::wstring(r, r + strlen(r)) + L".";
+    SetStatus(L"frame_cap", inFile == c.value ? 0 : 3, line.c_str());   // (green: the file has it; grey: it does not yet)
+}
+void LogLine(const std::wstring& line);
 void ApplyFrameCap() {
-    static const int kHz[5] = {72, 75, 80, 90, 120};
-    const int i = std::clamp((int)GetPrivateProfileIntW(L"stereo", L"headset_rate", 3, g_ini), 0, 4);
-    const bool byTurns = GetPrivateProfileIntW(L"stereo", L"afr", 0, g_ini) != 0 &&
-                         GetPrivateProfileIntW(L"stereo", L"pair_per_tick", 0, g_ini) == 0;
-    // Native OpenXR: the headset paces the game itself (xrWaitFrame) - no cap of the game's own,
-    // which could only make it miss the headset's frames (2026-10-10)
-    const bool native = GetPrivateProfileIntW(L"openxr", L"on", 0, g_ini) != 0;
-    if (const Item* cap = PresetItem(L"@game", L"Framerate Cap")) {
-        WriteGameValue(*cap, native ? 0.0f : (float)(byTurns ? 2 * kHz[i] : kHz[i]));
-        RefreshControls();
-    }
+    if (g_platform != 1) return;   // flat mode has no cap of ours
+    int hz = 0;
+    const framecap::VrCap c = VrCapNow(&hz);
+    WriteVrFrameCap(c.value);
+    const char* r = framecap::Reason(c.why);
+    LogLine(L"frame cap: " + (c.value ? std::to_wstring(c.value) : std::wstring(L"none (0)")) + L" written for the headset's " + std::to_wstring(hz) + L" Hz x " +
+            std::to_wstring(c.factor) + L" - " + std::wstring(r, r + strlen(r)));
+    RefreshControls();
+    UpdateFrameCapStatus();
+}
+// A switch of the platform (and START in flat mode): flat gets its own cap back, VR the headset's rate again.
+void ApplyFrameCapForPlatform() {
+    if (g_platform == 1) ApplyFrameCap();
+    else RestoreFrameCapForFlat();
 }
 
 int Steps(const Item& it) { return (int)std::lround((it.max - it.min) / it.step); }
@@ -3501,8 +3730,10 @@ void FollowWeapon() {
 // ---------------------------------------------------------------------------
 // The Home page.
 
+void ApplyFrameCapForPlatform();
 void PlatformChanged() {
     ApplyWindowForPlatform();   // the right window for the next start: flat gets its own back, VR its square (if ticked)
+    ApplyFrameCapForPlatform();   // ... and the right frame cap: flat its own, VR the headset's rate
     RebuildTabs();
     g_scrollY = 0;
     LayoutPage();
@@ -3672,6 +3903,36 @@ void UpdateResolutionTexts() {
     SetStatus(L"vr_resolution", state, line.c_str());
 }
 
+// World > Fog, "Depth for the effects": the buffer vrcam picked, its size and when and why it was last picked (d2r_vr_depth.ini
+// beside d2r_vr.ini, written at each pick), or that ReShade's own depth is in use.
+void UpdateDepthStatus() {
+    wchar_t path[MAX_PATH];
+    wcscpy_s(path, g_ini);
+    if (wchar_t* slash = wcsrchr(path, L'\\')) slash[1] = 0;
+    wcscat_s(path, L"d2r_vr_depth.ini");
+    std::wstring line;
+    int state = kUnknown;
+    if (!GetPrivateProfileIntW(L"render", L"own_depth", 1, g_ini)) {
+        line = L"Depth: ReShade's own (Generic Depth's pick).";
+    } else {
+        wchar_t buf[64] = L"", at[16] = L"", why[96] = L"";
+        GetPrivateProfileStringW(L"depth", L"buffer", L"", buf, 64, path);
+        GetPrivateProfileStringW(L"depth", L"picked_at", L"", at, 16, path);
+        GetPrivateProfileStringW(L"depth", L"why", L"", why, 96, path);
+        const int w = (int)GetPrivateProfileIntW(L"depth", L"width", 0, path), h = (int)GetPrivateProfileIntW(L"depth", L"height", 0, path);
+        const int picks = (int)GetPrivateProfileIntW(L"depth", L"picks", 0, path), others = (int)GetPrivateProfileIntW(L"depth", L"other_buffers", 0, path);
+        if (!buf[0]) {
+            line = L"Depth: our own - nothing picked yet (the game in VR with a square window or a render size picks it).";
+        } else {
+            line = L"Depth: our own, buffer " + std::wstring(buf) + L", " + std::to_wstring(w) + L" x " + std::to_wstring(h) +
+                   L"; last picked at " + at + L" (" + why + L"); picks " + std::to_wstring(picks) + L", another buffer " +
+                   std::to_wstring(others) + L" times.";
+            state = kOk;
+        }
+    }
+    SetStatus(L"depth_pick", state, line.c_str());
+}
+
 // The Weapon Adjust tab's list: each kind, green with its numbers where
 // [weapon_<kind>] moves or turns the weapon at all, grey where it is untouched;
 // the kind the sliders edit now is marked.
@@ -3792,6 +4053,7 @@ ULONGLONG g_flatVrStartBy = 0;
 // up, unless the game holds the headset itself (native OpenXR: it stops FlatVR anyway).
 void LaunchGame() {
     ApplyWindowForPlatform();   // START in flat mode never meets VR's square (and in VR the square, if ticked)
+    if (g_platform != 1) RestoreFrameCapForFlat();   // ... nor VR's frame cap (in VR START changes nothing: the rate was written when it was chosen)
     const std::wstring game = GameFolder();
     const std::wstring exe = game + L"D2RLoader.exe";
     ShellExecuteW(g_main, L"open", exe.c_str(), nullptr, game.c_str(), SW_SHOWNORMAL);
@@ -3890,8 +4152,10 @@ void BodyWalkRows() {
 void RefreshStatus() {
     LaunchButton();   // flat and VR alike
     BodyWalkRows();
+    UpdateDepthStatus();   // World > Fog: the depth our effects read (any tab: it is a no-op without its row)
     if (g_platform != 1 || g_tab != 0) return;
     UpdateResolutionTexts();   // the render size's status line and tips (the game may have written the headset's numbers meanwhile)
+    UpdateFrameCapStatus();    // the frame cap in the file and the one VR writes for this choice
     D2RLoaderStatus();
     const std::wstring dir = BodyWalkDir();
     // Standalone or Steam build: whichever settings file was written last.

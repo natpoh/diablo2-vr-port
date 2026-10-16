@@ -104,7 +104,25 @@ void Setup() {
         (void*)g_gameBegin, (void*)g_gameEnd);
 }
 
+std::atomic<uint32_t> g_clientSizeTold{0};   // [render] vr_resolution_ui: said once for the interface (1) and the cursor (2)
+
 }  // namespace
+
+uint64_t ClientSizeAnswer(Asker asker, uint64_t native, bool on) {
+    const uint64_t answer = CanvasAnswer(asker, g_window.Logical(g_attached.load()), native, on);
+    if (answer != native) {   // said once for the interface and once for the cursor
+        const uint32_t bit = asker == Asker::Ui ? 1u : 2u;
+        if (!(g_clientSizeTold.fetch_or(bit) & bit)) {
+            const Size n = FromNative(native), a = FromNative(answer);
+            Say("vrcam: render size - the game's %s is given %ux%u, not the window's %ux%u ([render] vr_resolution_ui)",
+                asker == Asker::Ui ? "interface (the whole picture)" : "cursor clamp (the whole picture)", a.w, a.h, n.w, n.h);
+        }
+    }
+    return answer;
+}
+void ClientSizeReflow() {
+    if (const HWND h = g_attached.load(); h && g_window.Logical(h)) g_window.Request(h, g_window.Logical(h), true);
+}
 
 void SetLogger(void (*log)(const char*)) { g_log = log; }
 void Attach(HWND window) { g_attached.store(window); }

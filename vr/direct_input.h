@@ -162,6 +162,8 @@ struct PadPress {
     uint8_t lt, rt;
 };
 void PadPulse(const PadPress& p, uint32_t holdMs = 65);
+// Ends at once every pulse of exactly these buttons and triggers (the game has taken the press: no need to hold it longer).
+void PadPulseEnd(const PadPress& p);
 
 // A gesture that takes a control from the layout (the dominant grip held behind the head belongs to the shoulder
 // swap, not to the belt or to RB): while it is taken the layout sees it as let go. Hand 0 left, 1 right; mask of

@@ -25,13 +25,21 @@
 // appended; a reader of 1 never reaches them, a reader of 2 seeing 1 uses its
 // own defaults.
 // 3: the pointer's depth in a stereo pair (FlatVRGameHudPointerDepth) appended.
-#define FLATVR_GAME_HUD_VERSION 3u
+// 4: the menu panel's place (FlatVRGameHudMenu) appended. A reader drops a block
+// newer than its own, so a mod writes 4 only to a FlatVR whose reader block
+// (FlatVRGameHudReader) says it reads 4, and 3 otherwise.
+#define FLATVR_GAME_HUD_VERSION 4u
 #define FLATVR_GAME_HUD_PANELS 4u
 
 // What a panel is, so FlatVR can pick where to hang it.
 #define FLATVR_HUD_KIND_NONE 0u
 #define FLATVR_HUD_KIND_TOOLBAR 1u  // orbs, belt, skills: a wide strip
 #define FLATVR_HUD_KIND_MAP 2u      // the corner map
+// The game's whole interface while a menu or panel is open (inventory, stash,
+// trade, the game menu...), taken out of the picture so the world goes on in
+// stereo behind it: hung in front of the player (FlatVRGameHudMenu). Slot 2; a
+// FlatVR before it reads two slots and never sees it.
+#define FLATVR_HUD_KIND_MENU 3u
 
 #pragma pack(push, 4)
 struct FlatVRGameHudPanel {
@@ -121,6 +129,24 @@ struct FlatVRGameHudPointerDepth {
   float top_scale;
 };
 
+// Where FlatVR hangs the menu panel (FLATVR_HUD_KIND_MENU): ahead, where the
+// head looks when it comes up, at distance_m, width_m wide, its middle below_m
+// under the eyes, level; brought round in front once the head has been more
+// than 60 deg off it for a second. The mod's settings, as the rest of the look.
+// laser: FlatVR's laser is the game's mouse on the panel - the hand's aim moves
+// the cursor in `window` (the panel is that window's client area), its trigger
+// clicks, with its grip held it right-clicks; the other hand's trigger is Ctrl,
+// its grip Shift. What it holds is hidden from the Mapping while it points at
+// the panel; a stick or a face button parks it (the pad navigates the menu).
+struct FlatVRGameHudMenu {
+  float width_m;
+  float distance_m;
+  float below_m;
+  uint32_t laser;        // 0 none, 1 the left hand's, 2 the right hand's
+  uint32_t window;       // the game's window, an HWND (window handles fit 32 bits)
+  uint32_t reserved[3];
+};
+
 struct FlatVRGameHud {
   uint32_t version;      // FLATVR_GAME_HUD_VERSION
   uint32_t source_pid;   // the process that owns the handles
@@ -132,6 +158,25 @@ struct FlatVRGameHud {
   FlatVRGameHudPose pose[FLATVR_GAME_HUD_PANELS];
   // version 3
   FlatVRGameHudPointerDepth pointer_depth;
+  // version 4
+  FlatVRGameHudMenu menu;
+};
+
+// FlatVR -> the game mod: what this FlatVR reads, in a mapping of its own made
+// by FlatVR, so a mod can tell whether a menu it takes out of its picture will
+// be shown at all. counter moves with every frame FlatVR draws: a mod takes the
+// menu out only while it moved within the last second, and keeps it in its
+// picture (as before) otherwise - a menu never vanishes.
+#define FLATVR_GAME_HUD_READER_NAME L"Local\\BodyWalkVR_GameHudReader"
+struct FlatVRGameHudReader {
+  uint32_t version;   // the newest FlatVRGameHud version it reads
+  uint32_t kinds;     // 1 << FLATVR_HUD_KIND_* of every kind it hangs
+  uint32_t counter;   // moves with every frame FlatVR draws
+  // FlatVRGameHudMenu::laser's state: 0 idle, 1 it is the game's mouse on the
+  // menu now (the game keeps its pad layout under that mouse - FlatVR waits a
+  // moment after this turns 1 before the first move), 2 parked: the pad
+  // navigates the menu.
+  uint32_t laser;
 };
 #pragma pack(pop)
 
@@ -139,8 +184,10 @@ static_assert(sizeof(FlatVRGameHudPanel) == 32, "FlatVRGameHudPanel is a wire fo
 static_assert(sizeof(FlatVRGameHudLook) == 80, "FlatVRGameHudLook is a wire format");
 static_assert(sizeof(FlatVRGameHudPose) == 48, "FlatVRGameHudPose is a wire format");
 static_assert(sizeof(FlatVRGameHudPointerDepth) == 16, "FlatVRGameHudPointerDepth is a wire format");
-static_assert(sizeof(FlatVRGameHud) == 16 + 32 * FLATVR_GAME_HUD_PANELS + 80 + 48 * FLATVR_GAME_HUD_PANELS + 16,
+static_assert(sizeof(FlatVRGameHudMenu) == 32, "FlatVRGameHudMenu is a wire format");
+static_assert(sizeof(FlatVRGameHud) == 16 + 32 * FLATVR_GAME_HUD_PANELS + 80 + 48 * FLATVR_GAME_HUD_PANELS + 16 + 32,
               "FlatVRGameHud is a wire format");
+static_assert(sizeof(FlatVRGameHudReader) == 16, "FlatVRGameHudReader is a wire format");
 
 // What FlatVR uses when the mod sends no look (version 1): the defaults the
 // mod's settings start from too.

@@ -46,6 +46,7 @@
 #include "grip_pose.h"
 #include "skeletons.h"
 #include "shield_fist.h"
+#include "forearm_twist.h"
 #include "view_gate.h"
 #include "frame_trace.h"   // [debug] frame_trace: what the pose hook costs a pair
 #include "body_calibration.h"
@@ -301,6 +302,11 @@ struct Hero {
     std::vector<Finger> fingers[2];
     bool bindOk = false;
     int cls = -1;   // kHeroClasses, from the model's folder
+    // [hands] forearm_twist: the rig's forearm twist bones (a name with "twist" under the forearm, not under the hand: the paladin's
+    // and amazon's *_lwr_arm_twist_01/02), each with how far along the forearm it sits in the bind pose (0 the elbow, 1 the wrist).
+    struct Twist { int bone; float t; };
+    std::vector<Twist> twist[2];
+    std::string twistNote;   // what was found, for the log (once per rig)
 };
 
 std::atomic<int> g_lockState{0};
@@ -328,6 +334,9 @@ std::atomic<float> g_eyeY{0.0f}, g_lift{0.0f}, g_rawLift{0.0f};
 ShieldPose g_shieldPose{};
 ULONGLONG g_shieldAt = 0;
 std::atomic<ULONGLONG> g_shieldWantedAt{0};
+SRWLOCK g_twistNoteLock = SRWLOCK_INIT;
+std::string g_twistNote;                // [hands] forearm_twist: the last rig's twist bones, for the log
+std::atomic<int> g_shieldStrapped{0};   // [shield] forearm: 1 strapped this pose, -1 asked but not (hidden, no bind pose), 0 not asked
 #endif
 #if D2RVR_FIRST_PERSON
 std::atomic<int> g_gunAxis{0};   // GunAxis
@@ -616,6 +625,26 @@ bool Learn(uintptr_t self, Hero* h) {
     }
     const bool arms = h->upr[0] > 0 && h->lwr[0] > 0 && h->hand[0] > 0 && h->upr[1] > 0 && h->lwr[1] > 0 && h->hand[1] > 0;
     if (!arms) return false;
+    // Forearm twist bones: named so, under the forearm and not under the hand; where along the forearm once the bind pose is read.
+    for (int side = 0; side < 2; ++side) {
+        int found = 0;
+        for (int i = 0; i < count; ++i) {
+            std::string lo = names[i];
+            for (char& ch : lo) ch = (char)tolower((unsigned char)ch);
+            if (lo.find("twist") == std::string::npos) continue;
+            bool underArm = false, underHand = false;
+            for (int b = h->parent[i]; b >= 0; b = h->parent[b]) {
+                if (b == h->hand[side]) underHand = true;
+                if (b == h->lwr[side]) { underArm = true; break; }
+            }
+            if (underArm && !underHand) { h->twist[side].push_back({i, 0.5f}); ++found; }
+            else if (lo.find(side == 0 ? "r_" : "l_") == 0 || lo.find(side == 0 ? "_r_" : "_l_") != std::string::npos ||
+                     lo.find(side == 0 ? "right" : "left") != std::string::npos)
+                h->twistNote += std::string(h->twistNote.empty() ? "" : ", ") + names[i] + " (under " +
+                                (h->parent[i] >= 0 ? names[h->parent[i]] : std::string("nothing")) + ", not the forearm: left alone)";
+        }
+        (void)found;
+    }
 
     // The neck: from the head down through the bones named neck (neck_bind_jnt,
     // C_Neck_neck1..3, neck_main_00_M_JNT) to the lowest one. Hidden with the
@@ -680,6 +709,16 @@ bool Learn(uintptr_t self, Hero* h) {
     else ok = false;
     h->bindOk = ok;
     g_lockState.store(ok ? 1 : -1);
+    for (int side = 0; side < 2; ++side) {
+        const V3 E = Pos(h->bind[h->lwr[side]]), W = Pos(h->bind[h->hand[side]]), EW = Sub(W, E);
+        const float ll = Dot(EW, EW);
+        for (Hero::Twist& t : h->twist[side]) {
+            if (ok && ll > 1e-8f) t.t = std::clamp(Dot(Sub(Pos(h->bind[t.bone]), E), EW) / ll, 0.0f, 1.0f);
+            h->twistNote += std::string(h->twistNote.empty() ? "" : ", ") + names[t.bone] + " at " + std::to_string((int)std::lround(t.t * 100.0f)) + "%";
+        }
+    }
+    if (h->twistNote.empty()) h->twistNote = "none - the forearm bone itself turns";
+    AcquireSRWLockExclusive(&g_twistNoteLock); g_twistNote = h->twistNote; ReleaseSRWLockExclusive(&g_twistNoteLock);
 
     // Standing heights from the bind pose (the animation's would bob with the
     // stride). Eyes 5.65 (sorceress) .. 7.04 (druid) in the F10 dumps; a rig
@@ -883,6 +922,102 @@ void Reach(const Hero& h, int side, V3 T, bool turn, float c, float s, const std
     if (turn) pole = {pole.x * c + pole.z * s, pole.y, -pole.x * s + pole.z * c};
     const V3 E = Elbow(S, L1, L2, T, pole);
     AimChain(h, u, l, k, E, T, baseW, newW);
+}
+
+// [hands] forearm_twist (vr/forearm_twist.h): Reach aims the forearm by the smallest turn from the animation's, so it kept the
+// animation's roll and the controller's whole roll landed on the hand - the wrist screwed round on a still arm. Here the hand's
+// roll about the forearm's line, against how the bind pose holds the hand on the forearm, is shared: the forearm bone turns
+// `share` of it about its own line through the elbow (the wrist, on that line, stays), a twist bone along it more the nearer the
+// wrist; the hand and all under it stay as the controller put them. Returns the roll read (degrees, continuous), 0 for none.
+float g_twistLast[2] = {NAN, NAN};   // the last frame's roll, per side (the pose thread's)
+std::atomic<float> g_twistOut[2];    // for the log
+void Rows3(const Mat& m, float out[9]) {
+    for (int r = 0; r < 3; ++r) for (int c = 0; c < 3; ++c) out[r * 3 + c] = m.m[r * 4 + c];
+}
+float TwistForearm(const Hero& h, int side, float share, std::vector<Mat>& newW) {
+    const int n = h.count, l = h.lwr[side], k = h.hand[side];
+    const V3 E = Pos(newW[l]), W = Pos(newW[k]);
+    if (!(Len(Sub(W, E)) > 1e-4f)) { g_twistLast[side] = NAN; return 0.0f; }
+    const V3 a = Norm(Sub(W, E));
+    const Mat ref = Mul(Mul(h.bind[k], InvAffine(h.bind[l])), newW[l]);   // the hand as the bind pose holds it on this forearm
+    float r9[9], n9[9];
+    Rows3(ref, r9);
+    Rows3(newW[k], n9);
+    const float axis[3] = {a.x, a.y, a.z};
+    const float roll = forearmtwist::Unwrap(g_twistLast[side], forearmtwist::TwistDeg(r9, n9, axis));
+    if (!std::isfinite(roll)) return 0.0f;
+    g_twistLast[side] = roll;
+    g_twistOut[side].store(roll);
+    const std::vector<Mat> before = newW;
+    const float base = forearmtwist::Share(share, 0.0f) * roll;
+    TurnAboutSelf(newW[l], TurnAbout(a, base));
+    std::vector<char> fromL(n, 0);
+    fromL[l] = 1;
+    Propagate(h, before, newW, fromL, l);
+    for (const Hero::Twist& t : h.twist[side]) {
+        const float extra = forearmtwist::Share(share, t.t) * roll - base;
+        if (std::fabs(extra) < 0.01f) continue;
+        const std::vector<Mat> was = newW;
+        TurnAboutSelf(newW[t.bone], TurnAbout(a, extra));
+        std::vector<char> fromT(n, 0);
+        fromT[t.bone] = 1;
+        Propagate(h, was, newW, fromT, t.bone);
+    }
+    std::vector<char> inK(n, 0);   // the hand and everything under it: the controller's, as before
+    inK[k] = 1;
+    newW[k] = before[k];
+    for (int i = k + 1; i < n; ++i)
+        if (h.parent[i] >= 0 && inK[h.parent[i]]) { inK[i] = 1; newW[i] = before[i]; }
+    return roll;
+}
+
+// [shield] forearm: the shield strapped to the left forearm, not hung on the hand. Its attach bone is set from the rig's own bind
+// pose of it against the forearm (bearstonem/d2r-pcvr's shield follow takes the same bind relationship, to the wrist), turned
+// with the forearm's twist where it sits ([hands] forearm_twist: the forearm bone's share and more toward the wrist) - no game
+// animation, no Weapon Adjust of the other hand's weapon - then [shield] x y z (cm) and pitch yaw roll (deg) in its own axes.
+// A shield the game hides (its attach bone shrunk to a point: a weapon swap) stays the game's. True when it was set.
+bool StrapShield(const Hero& h, const Input& in, const std::vector<Mat>& oldW, std::vector<Mat>& newW, float roll) {
+    const int n = h.count, wb = h.weapon[1], l = h.lwr[1], k = h.hand[1];
+    if (wb < 0 || l < 0 || k < 0 || !h.bindOk) return false;
+    const Mat anim = Mul(oldW[wb], InvAffine(oldW[k]));
+    if (Len({anim.m[0], anim.m[1], anim.m[2]}) < 0.3f) return false;   // hidden by the game
+    const Mat local = Mul(h.bind[wb], InvAffine(h.bind[l]));
+    const float size = Len({local.m[0], local.m[1], local.m[2]});
+    if (!(size > 0.3f && size < 3.0f)) return false;
+    Mat arm = newW[l];
+    const V3 E = Pos(newW[l]), W = Pos(newW[k]);
+    if (roll != 0.0f && in.forearmTwist >= 0.0f && Len(Sub(W, E)) > 1e-4f) {
+        const V3 bE = Pos(h.bind[l]), bEW = Sub(Pos(h.bind[k]), bE);
+        const float ll = Dot(bEW, bEW);
+        const float t = ll > 1e-8f ? std::clamp(Dot(Sub(Pos(h.bind[wb]), bE), bEW) / ll, 0.0f, 1.0f) : 1.0f;
+        TurnAboutSelf(arm, TurnAbout(Norm(Sub(W, E)), (forearmtwist::Share(in.forearmTwist, t) - forearmtwist::Share(in.forearmTwist, 0.0f)) * roll));
+    }
+    const std::vector<Mat> before = newW;
+    newW[wb] = Mul(local, arm);
+    const float* a = in.shieldAdj;
+    if (a[0] != 0.0f || a[1] != 0.0f || a[2] != 0.0f || a[3] != 0.0f || a[4] != 0.0f || a[5] != 0.0f) {   // as Weapon Adjust moves a weapon
+        const float headY = in.haveEye ? in.eyeModel[1] : Pos(newW[h.head >= 0 ? h.head : 0]).y;
+        const float upm = std::clamp(headY / std::max(0.8f, in.userHeadM), 2.0f, 8.0f) * in.scale;   // model units per metre
+        auto turn = [](int axis, float deg) {   // row-vector rotation about one of the bone's own axes
+            Mat r{}; r.m[0] = r.m[5] = r.m[10] = r.m[15] = 1.0f;
+            const float t = deg * 0.0174532925f, c = cosf(t), s = sinf(t);
+            const int i = (axis + 1) % 3, j = (axis + 2) % 3;
+            r.m[i * 4 + i] = c; r.m[i * 4 + j] = s; r.m[j * 4 + i] = -s; r.m[j * 4 + j] = c;
+            return r;
+        };
+        V3 shift{0, 0, 0};
+        for (int r = 0; r < 3; ++r) {
+            const V3 ax = Norm(V3{newW[wb].m[r * 4], newW[wb].m[r * 4 + 1], newW[wb].m[r * 4 + 2]});
+            shift = Add(shift, Scale(ax, a[r] * 0.01f * upm));
+        }
+        const V3 p = Pos(newW[wb]);
+        newW[wb] = Mul(Mul(Mul(turn(0, a[3]), turn(1, a[4])), turn(2, a[5])), newW[wb]);   // turned in its own frame, about its own origin
+        newW[wb].m[12] = p.x + shift.x; newW[wb].m[13] = p.y + shift.y; newW[wb].m[14] = p.z + shift.z;
+    }
+    std::vector<char> fromS(n, 0);
+    fromS[wb] = 1;
+    Propagate(h, before, newW, fromS, wb);
+    return true;
 }
 
 // a's rotation part turned toward b's by t (rows blended, made square again,
@@ -1602,6 +1737,8 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
     // The animation after the turn: what the arms re-derive their children from.
     const std::vector<Mat> baseW = newW;
 
+    float twistRoll[2] = {0.0f, 0.0f};   // [hands] forearm_twist: each hand's roll about its forearm, as TwistForearm read it
+    bool twistDid[2] = {false, false};
     // Model space: y up, faces +z, its left is +x. The two arms' subtrees are
     // disjoint, and each pass re-derives only its own side.
     for (int side = 0; side < 2; ++side) {
@@ -1622,6 +1759,7 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
                 ApplyWrist(newW[k], wr);
                 std::vector<char> fromK(n, 0); fromK[k] = 1;
                 Propagate(h, baseW, newW, fromK, k);
+                if (in.forearmTwist >= 0.0f && h.bindOk) { twistRoll[side] = TwistForearm(h, side, in.forearmTwist, newW); twistDid[side] = true; }   // [hands] forearm_twist
             }
         } else if (in.lockUpper && h.bindOk) {
             // No controller for it and no animation either: the arm hangs
@@ -1635,6 +1773,9 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
             AimChain(h, u, l, k, E, T, baseW, newW);
         }
     }
+
+    for (int side = 0; side < 2; ++side)
+        if (!twistDid[side]) { g_twistLast[side] = NAN; g_twistOut[side].store(NAN); }   // read afresh when it comes back
 
     // The grip, taken once per weapon while not attacking (see Grip).
     Grip grip;
@@ -1821,6 +1962,7 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
                 const int wb = h.weapon[side], holder = freeStaff && side == staffSide ? 0 : side;
                 if (wb < 0 || !(in.handsValid & (1u << holder))) continue;
                 if (gun && side == staffSide) continue;   // the crossbow's [weapon_crossbow] is the controller's (above)
+                if (side == 1 && in.shieldForearm) continue;   // [shield] forearm: the shield has its own (StrapShield)
                 V3 shift{0, 0, 0};
                 for (int r = 0; r < 3; ++r) {
                     const V3 axis = Norm(V3{newW[wb].m[r * 4], newW[wb].m[r * 4 + 1], newW[wb].m[r * 4 + 2]});
@@ -2695,6 +2837,14 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
                 else BlendBoneHanded(newW[b], poseW[b], poseE[side], &newW[b]);
             }
         if (side == 1) leftFisted = true;   // (the shield fist leaves a hand that is posed)
+    }
+    // [shield] forearm: the shield strapped to the left forearm (StrapShield) - after everything that places the arms and the weapons,
+    // before the shield's place is told to shield_smite (its capsule follows the shield as drawn).
+    if (in.shieldForearm && in.mode == 2 && (in.handsValid & 2u)) {
+        const bool strapped = StrapShield(h, in, oldW, newW, twistRoll[1]);
+        g_shieldStrapped.store(strapped ? 1 : -1);
+    } else {
+        g_shieldStrapped.store(0);
     }
     // [hands] shield_fist: the left hand with a shield on it follows the controller's real grip too - the fingers only. Fist() rebuilds
     // the finger chains below the wrist (not the weapon attach bone the shield hangs on) after the arm is placed, so the shield and the
@@ -3608,6 +3758,16 @@ bool HeroPalm(int side, float palm[3]) {
 }
 
 void WantShield(bool on) { if (on) g_shieldWantedAt.store(GetTickCount64()); }
+std::string ForearmTwistNote(float roll[2]) {
+#if D2RVR_FIRST_PERSON
+    roll[0] = g_twistOut[0].load(); roll[1] = g_twistOut[1].load();
+#else
+    roll[0] = roll[1] = NAN;
+#endif
+    AcquireSRWLockShared(&g_twistNoteLock); std::string note = g_twistNote; ReleaseSRWLockShared(&g_twistNoteLock);
+    return note;
+}
+int ShieldStrapped() { return g_shieldStrapped.load(); }
 bool ShieldAttach(ShieldPose* out) {
     AcquireSRWLockShared(&g_gunBoneLock);
     const ShieldPose pose = g_shieldPose;

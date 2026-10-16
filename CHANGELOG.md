@@ -1,5 +1,80 @@
 # What's new in D2R VR
 
+## 0.167
+
+- **A faster picture in the headset.** In native OpenXR the fog, the sky and the
+  cave ceilings need the scene's depth. 0.166 bound it at every effect pass, and
+  each binding made ReShade wait for the graphics card, twice a frame. Now the
+  game's depth buffer is picked once (and again only when it goes away or the
+  window or render size changes), copied for each eye and bound once. In the author's headset
+  (native OpenXR, a 1920 window) the rate went from about 62 pairs a second to
+  about 106. World > Fog > "Depth for the effects" (our own, picked once - the
+  default; ReShade's own to compare). The `[render] own_depth=0` workaround that
+  one player with an RTX 5090 used is no longer needed.
+- **The full controller in VR F1, F2 and F3 without BodyWalk** (Stereo > Native
+  OpenXR > "Play with the controllers in F1, F2, F3 without BodyWalk", on). In
+  0.166 only the left stick's walk and the belt potions worked there. Now the
+  plugin's own controller is the game's gamepad in those views too - the layout
+  of first person without its panels (the skill panel, the settings panel): the
+  triggers, the buttons, both sticks, the game's actions and key commands, through
+  the game's own gamepad code, no driver. With BodyWalk running nothing changes:
+  its gamepad is the gamepad whole. A real pad that answers keeps its buttons; the
+  controllers are only added to it.
+- **Settings from the fork d2r-pcvr** (bearstonem, MIT):
+  - **Turning** (Controls, and the headset panel's Options page): smooth turning
+    on or off, its speed (10 - 720 degrees a second) and the snap angle (15 - 180).
+    The mode is a switch of its own, so changing it keeps both numbers.
+  - **Depth for the effects, how it is set** (World > Fog): "in each pass as it is
+    bound" (as before) or "once a frame where the game makes it", which every
+    pass - fog, ambient occlusion, particles, grass - reads alike; or off. The
+    default is as before.
+  - **Controllers:** the Steam Frame's own layout (on) and, for the Valve Index,
+    the grip as how hard you squeeze (off).
+  - **Shield Smite** is pressed 180 ms on a slot of the left trigger's row (65
+    before): the game's pad code needs about 50 ms to prepare that row, and a short
+    press could end between two of its polls and the bash cast nothing.
+  - **Pick up / interact: one thing per press** (Input, first person, on): a press
+    acts on what is under it then and nothing else, so a chest opened by a press
+    does not also give you its loot.
+  - **Vibration:** a channel of its own for each hand and each pulse stopped on time
+    (both on, under "Controller vibration").
+  - **Menus placed only when the headset is tracked** (on): until it says so they
+    follow your gaze; and **menus and the mouse follow the VR render size** (on):
+    the game's interface is laid out over the whole picture and its mouse reaches
+    all of it - no menu edge lost, the main menu's bottom row can be clicked when
+    the window and the picture differ in size.
+- **The shield on the forearm** (Weapon Adjust > Shield (first person), on). The
+  shield no longer hangs on the hand; it is strapped to the left forearm as the
+  rig has it, with six sliders (move along X, Y, Z; turn about X, Y, Z). And **the
+  forearm turns with the wrist** (Weapon Adjust, on): when you roll a controller the
+  forearm turns with it - a little at the elbow, all of it at the wrist - instead
+  of the hand screwing round on a still arm; a slider sets the forearm's share.
+- **Shield bash: its own speed and start distance** (Weapon Adjust > Shield bash
+  casts Smite): the least speed (0.8 m/s) and how far the shield moves to start a
+  bash are numbers of the bash's own, apart from hit by touch's. And
+  **Draw what casts skills** (Debug, off) draws the shield's capsule, the speed
+  marks and the trail in the headset and logs why a bash did or did not count.
+- **The frame cap belongs to VR.** Flat mode keeps your own "Framerate Cap" of the
+  game; the headset's rate no longer locks it. VR's cap is worked out from the 3D
+  choice (native OpenXR 0 - the headset paces the game; eyes by turns twice the
+  headset's rate; the other choices the rate itself), and Home shows what is
+  written and why. Your own cap is kept before VR writes its own and put back when
+  you switch to Flat.
+- **The settings that come with the mod are the author's again**: turning is smooth
+  at 180 degrees a second, the fog starts nearer (at 30, full at 200), the VR render
+  size is 1920, and the bow's release-to-arrow log is off.
+  - **Updating:** a player who has not changed d2r_vr.ini gets all of this at once.
+    If you have, Setup asks whether to keep your settings: "Yes" keeps your file and
+    adds only the settings that are new in this version; "No - take this version's
+    default settings" replaces your changes and keeps the old file as
+    d2r_vr.ini.before-0.167.0.
+- **Thanks to bearstonem** again: the turn settings, the depth at its source, the
+  Steam Frame's layout and the Index grip, the Smite press, the one-press interact,
+  the vibration channels, the menus waiting for the headset, the menus and the mouse
+  on the VR render size, the shield on the forearm and our own depth bound once
+  follow what the fork [d2r-pcvr](https://github.com/bearstonem/d2r-pcvr) (MIT)
+  found in the game.
+
 ## 0.166
 
 - **The new features are on by default.** 0.165 shipped with the old default

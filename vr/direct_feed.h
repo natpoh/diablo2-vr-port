@@ -66,6 +66,29 @@ void FlatFacts(walkflat::Inputs* in);
 // belt column 1 (left), 2 (up), 3 (right) or 4 (down). Feed runs the machine in these views (never in F4: there the layout is in charge) and
 // calls the sink with the column 0..3 - vrcam's: the game's own belt key command (gamecmd::Tap(0x17 + column)), after its own check that no
 // BodyWalk is running, a game is on and no panel or chat is open (the sink says no by doing nothing). Called on the headset frame's thread.
+// The plugin's own controller in VR F1-F3 without BodyWalk ([direct] flat_controller, vr/walk_flat.h): the layout of F4 - the right trigger attacks, A picks
+// up, B / X / Y are the skills, the triggers, the sticks, the stick clicks, the menu button ... - minus what only F4 has (the skill panel's long press), as a
+// pad, D2R actions and game key commands, in a flat view. Feed runs a layout of its own for it; the readers below give its newest outputs, and only when
+// everything holds: the key, direct input on, a flat view, a headset frame in the last second, and the gate (vrcam's: no BodyWalk running) says yes. With
+// BodyWalk running they give nothing - its pad, its actions and commands are then the game's, exactly as before.
+using FlatGate = bool (*)();
+void SetFlatGate(FlatGate gate);
+bool FlatControllerOn();      // [direct] flat_controller
+bool FlatControllerLive();    // the key, direct input on, a flat view, fresh frames, and the gate says yes
+struct FlatPad {
+    uint16_t buttons;
+    uint8_t lt, rt;
+    int16_t lx, ly, rx, ry;
+    uint32_t counter;
+};
+bool FlatPadRead(FlatPad* out);               // false unless FlatControllerLive()
+uint32_t FlatActions();                       // D2RVRAction bits the layout holds, 0 unless live
+void FlatCommands(uint64_t out[2]);           // the game's commands (bit n = command n) it holds, zero unless live
+
+// A control (the right trigger, a grip, a button of either hand) was pressed in these views and nothing of the plugin takes it (walkflat::kHintEveryMs
+// apart at most): vrcam's sink says in the log, once the same conditions as the walk hold, that the walk and the belt are all it does there without BodyWalk.
+using PressSink = bool (*)(const char* what);   // true = said (the window starts); false = not now (BodyWalk runs, a panel is open...: asked again)
+void SetPressSink(PressSink sink);
 using BeltSink = void (*)(uint32_t column, int stick, int dir);   // stick 0 left / 1 right; dir 1 left, 2 up, 3 right, 4 down (beltflick::Dir)
 void SetBeltSink(BeltSink sink);
 bool BeltFlickOn();   // [direct] belt_flick_flat_views (the sink asks: it replaces walkflat's key for its own verdict)

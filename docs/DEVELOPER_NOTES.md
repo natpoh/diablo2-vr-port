@@ -227,6 +227,15 @@ game must use the window and resolution the player set in the game, and the mod 
   the file says; the log / the settings' status line say so) - the mod never picks a resolution in flat mode. Who calls it: vrcam at
   its start (`ReconcileGameWindow`, before the game reads the file) and D2R VR Settings on a switch of the platform and on START
   (`ApplyWindowForPlatform`; VR with the box ticked gets the square written again). A read-only Settings.json has its flag taken off first.
+- **The frame cap is VR's too** (`shared/frame_cap.h`, `frame_cap_test`): the headset's rate (`[stereo] headset_rate`) writes the game's own
+  `Framerate Cap` in Settings.json, and `pace::Tick` holds the game's presents to it - both VR only (`pace::Tick` returns in flat mode).
+  The player's own cap is kept before VR writes its own (`[stereo] cap_before`), what VR wrote last too (`cap_written`: it tells VR's
+  cap from one the player set); flat mode puts the kept cap back - on a switch of the platform and on START in D2R VR Settings
+  (`ApplyFrameCapForPlatform`, `RestoreFrameCapForFlat`), and at the plugin's start (`ReconcileFrameCap`: also repairs what the game
+  writes back at its quit). Nothing kept = nothing written. The settings' "Game frame cap" slider in VR counts as VR's cap.
+  What VR writes (`framecap::VrCapFor`, one rule for the settings' write and status line and vrcam's log): none (0) under native OpenXR,
+  twice the headset's rate for eyes by turns (afr on, pair_per_tick off: one eye a game frame), the rate itself for one pass two
+  pictures (the right eye is replayed: ONE present a pair - `pace::Tick` counts it so, the log's `presents/s` equals `pairs/s`) and for mono.
 - D2R VR Settings reads its Settings.json from `D2RVR_GAME_SETTINGS_JSON` when that is set (tests; never the player's file).
 
 ## First person
@@ -275,6 +284,7 @@ game must use the window and resolution the player set in the game, and the mod 
 - `light_bounds_test.exe` tests the light-bounds replacement shader (see above).
 - `vr_resolution_test.exe` and `render_pointer_test.exe` test the render size ([render] vr_resolution).
 - `window_json_test.exe` tests the game's windowed size in Settings.json and what each platform does to it (flat mode: no square).
+- `frame_cap_test.exe` tests the game's frame cap in Settings.json: VR's rate is VR's, flat mode has the player's own.
 - Install your build by copying `d2rl-vrcam.dll` into
   `<game>\d2rloader\plugins` and `D2R_DepthFog.fx` into ReShade's shader
   folder, with the game closed.

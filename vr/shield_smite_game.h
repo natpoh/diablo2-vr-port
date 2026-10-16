@@ -22,6 +22,11 @@ void Init(const D2RL::PluginContext* ctx);
 // [gameplay] shield_smite from the ini (vrcam's settings load): off = nothing below does anything.
 void Configure(bool on);
 bool On();
+// [gameplay] shield_smite_min_speed (m/s, 0.3 .. 8, default 0.8) and shield_smite_stroke_cm (cm, 2 .. 30, default 8) from the ini - the bash's own two numbers,
+// apart from hit by touch's (what the shield always used; live): the speed the shield must reach for a bash to count and how far it must move to start one.
+void SetTuning(float minSpeedMetresPerSecond, float strokeCm);
+// On(), or [debug] skill_triggers is on (the shield is drawn and described then, with shield_smite off too): vrcam's timer calls Tick while this is true.
+bool Watching();
 
 // vrcam's timer (every 10 ms or so): `play` = a game area, first person, no menu; `upm` = world units per metre;
 // `hero` = the hero's client unit (0 when not known). Reads the left hand and the shield, looks for a monster

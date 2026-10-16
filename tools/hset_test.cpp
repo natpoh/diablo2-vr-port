@@ -24,6 +24,7 @@
 #include "hset_paint.h"
 #include "hset_store.h"
 #include "ini_txn.h"
+#include "turn_mode.h"
 
 using namespace hset;
 
@@ -1969,6 +1970,139 @@ static void Dump(const std::string& dir) {
     WriteBmp(dir + "/hset_page3_body_none.bmp", px);
 }
 
+// -- 11. [turn] smooth / snap / speed ---------------------------------------------------------------------------
+// The rule is shared/turn_mode.h (the camera, the panel and D2R VR Settings use it); the cases are bearstonem/d2r-pcvr's
+// (steamvr/vr_settings_test.cpp, vr_settings_store_test.cpp; MIT) with this mod's one difference: an ini that says nothing about
+// turning is smooth turning (its snap default is 0), as it always was here.
+static std::wstring TurnText(const std::wstring& path, const wchar_t* key) { return ini::Read(path.c_str(), L"turn", key).text; }
+
+static void TestTurn() {
+    using namespace turnmode;
+    CHECK(EffectiveSnapAngle(30, -1) == 30 && EffectiveSnapAngle(0, -1) == 0, "an older ini keeps its mode: snap above 0 snaps, snap 0 is smooth");
+    CHECK(EffectiveSnapAngle(45, 1) == 0 && EffectiveSnapAngle(45, 0) == 45, "an explicit smooth selects the mode without losing the angle");
+    CHECK(EffectiveSnapAngle(0, 0) == 30 && EffectiveSnapAngle(0, 1) == 0, "smooth off over an older snap=0: the default angle; smooth on: smooth");
+    CHECK(Smooth(0.0f, -1.0f) && !Smooth(30.0f, -1.0f) && Smooth(30.0f, 1.0f) && !Smooth(0.0f, 0.0f), "the mode");
+    CHECK(Smooth(0.0f, NAN) && !Smooth(30.0f, NAN), "a smooth that is not a number is a missing one");
+    CHECK(SnapDegrees(NAN) == 30 && SnapDegrees(0) == 30 && SnapDegrees(-20) == 15 && SnapDegrees(7) == 15 && SnapDegrees(999) == 180 && SnapDegrees(45) == 45,
+          "the snap angle's bounds are one for the camera and the panel");
+    CHECK(Speed(NAN) == 120 && Speed(5) == 10 && Speed(9999) == 720 && Speed(120) == 120 && Speed(450) == 450, "the speed's bounds");
+
+    // the panel's rows
+    const int sm = kKeySmooth, sn = kKeySnap, sp = KeyOf(L"speed");
+    CHECK(sm >= 0 && sn >= 0 && sp >= 0, "the three keys are in the table");
+    CHECK(kDefs[sm].page == kPageOptions && kDefs[sn].page == kPageOptions && kDefs[sp].page == kPageOptions, "on the Options page");
+    CHECK(IsToggle(kDefs[sm]) && kDefs[sm].def == 1.0f, "smooth turning is a toggle, on as shipped");
+    CHECK(kDefs[sn].min == kSnapMin && kDefs[sn].max == kSnapMax && kDefs[sn].step == 15.0f && kDefs[sn].def == kSnapDefault, "the angle: 15 - 180 by 15, default 30");
+    CHECK(kDefs[sp].max == kSpeedMax && kDefs[sp].step == 30.0f && kDefs[sp].def == kSpeedDefault && Normalize(sp, kSpeedDefault) == kSpeedDefault, "the speed: up to 720 by 30, the default on the grid");
+    CHECK(RowsOn(kPageOptions) == kRowsPerPage, "the Options page is full");
+
+    const std::wstring path = g_dir + L"\\turn.ini";
+    const std::wstring backup = path + L".before-headset-menu";
+    static const char kLegacy[] = "; keep me\r\n[turn]\r\nright_stick=1\r\nspeed=120\r\nsnap=0\r\nsign=-1\r\n[other]\r\nx=1\r\n";
+    auto apply = [&](Model& m, std::initializer_list<Hit> clicks, Result* got = nullptr) {
+        for (const Hit& h : clicks) m.Click(h);
+        const Action a = m.Click({Kind::Apply, -1, 0});
+        std::string why;
+        const Result r = a.what == Do::Save ? store::SaveRequest(path.c_str(), a.request, &why) : Result::None;
+        if (got) *got = r;
+        return a;
+    };
+
+    // 1. an older smooth profile (no smooth key, snap=0)
+    DeleteFileW(backup.c_str());
+    Spit(path, kLegacy);
+    Snapshot s = store::LoadSnapshot(path.c_str());
+    CHECK(s.values[sm] == 1.0f && s.values[sn] == 30.0f && s.values[sp] == 120.0f, "the older smooth profile shows smooth, an angle of 30 and the speed");
+    CHECK(s.file[sn] == 0.0f && s.file[sm] == 1.0f, "the file's own snap is kept apart for the conflict check");
+    // 1a. into snap turning: only `smooth` is written, the old snap=0 stays, and the plugin turns 30 degrees
+    Model m;
+    m.Open(s);
+    Result r = Result::None;
+    Action a = apply(m, {{Kind::Change, sm, 1}}, &r);
+    CHECK(a.request.changed == Bit(sm) && r == Result::Saved, "only the mode changed");
+    CHECK(TurnText(path, L"smooth") == L"0" && TurnText(path, L"snap") == L"0", "smooth=0 is written, snap=0 stays");
+    Snapshot s1 = store::LoadSnapshot(path.c_str());
+    CHECK(s1.values[sm] == 0.0f && s1.values[sn] == 30.0f, "reloaded: snap turning, 30 degrees");
+    CHECK(EffectiveSnapAngle(0.0f, 0.0f) == 30.0f, "an explicit off overrides the older snap=0 in the camera too");
+    CHECK(Slurp(path).find("; keep me") != std::string::npos && Slurp(path).find("x=1") != std::string::npos, "comments and other keys kept");
+    CHECK(Exists(backup) && Slurp(backup) == std::string(kLegacy), "the original is kept, byte for byte");
+
+    // 1b. a new angle in an older smooth profile: smooth is written with it, the mode does not flip
+    Spit(path, kLegacy);
+    Snapshot s2 = store::LoadSnapshot(path.c_str());
+    Model m2;
+    m2.Open(s2);
+    a = apply(m2, {{Kind::Change, sn, 1}}, &r);
+    CHECK(a.request.changed == Bit(sn) && r == Result::Saved, "only the angle changed (smooth is added by the store)");
+    CHECK(TurnText(path, L"snap") == L"45" && TurnText(path, L"smooth") == L"1", "snap=45 and smooth=1: the older profile stays smooth, explicitly");
+    Snapshot s3 = store::LoadSnapshot(path.c_str());
+    CHECK(s3.values[sm] == 1.0f && s3.values[sn] == 45.0f && EffectiveSnapAngle(s3.file[sn], s3.file[sm]) == 0.0f, "reloaded: still smooth, 45 waiting");
+
+    // 2. an older snap profile (snap=45, no smooth key): the toggle round trip keeps the angle
+    Spit(path, "[turn]\r\nright_stick=1\r\nspeed=120\r\nsnap=45\r\n");
+    Snapshot s4 = store::LoadSnapshot(path.c_str());
+    CHECK(s4.values[sm] == 0.0f && s4.values[sn] == 45.0f, "an older snap profile shows snap turning at 45");
+    for (int mode = 1; mode >= 0; --mode) {
+        Snapshot cur = store::LoadSnapshot(path.c_str());
+        Model t;
+        t.Open(cur);
+        apply(t, {{Kind::Change, sm, 1}}, &r);
+        const Snapshot now = store::LoadSnapshot(path.c_str());
+        CHECK(r == Result::Saved && now.values[sm] == (float)mode && now.values[sn] == 45.0f, "the toggle round trip keeps the custom angle");
+        CHECK(TurnText(path, L"smooth") == (mode ? L"1" : L"0") && TurnText(path, L"snap") == L"45", "in the file too");
+        CHECK(EffectiveSnapAngle(now.file[sn], now.file[sm]) == (mode ? 0.0f : 45.0f), "and the camera takes the mode");
+    }
+
+    // 3. the speed, and a value outside the panel's range
+    Spit(path, "[turn]\r\nright_stick=1\r\nspeed=10\r\nsmooth=1\r\nsnap=30\r\n");
+    Snapshot s5 = store::LoadSnapshot(path.c_str());
+    CHECK(s5.values[sp] == kDefs[sp].min && s5.file[sp] == 10.0f, "speed 10 is shown as the panel's lowest, and not changed by showing it");
+    Model t5;
+    t5.Open(s5);
+    a = apply(t5, {{Kind::Change, sp, 1}}, &r);
+    CHECK(r == Result::Saved && TurnText(path, L"speed") == L"60", "a step of 30 from the panel's lowest");
+    Spit(path, "[turn]\r\nright_stick=1\r\nspeed=120\r\nsmooth=1\r\nsnap=30\r\n");
+    Snapshot s6 = store::LoadSnapshot(path.c_str());
+    Model t6;
+    t6.Open(s6);
+    apply(t6, {{Kind::Change, sp, 1}, {Kind::Change, sp, 1}, {Kind::Change, sp, -1}}, &r);
+    CHECK(r == Result::Saved && TurnText(path, L"speed") == L"150" && TurnText(path, L"snap") == L"30" && TurnText(path, L"smooth") == L"1", "speed 120 + 30: only that key");
+
+    // 4. nothing about turning in the file: smooth turning, as it always was
+    Spit(path, "[other]\r\nx=1\r\n");
+    Snapshot s7 = store::LoadSnapshot(path.c_str());
+    CHECK(s7.values[sm] == 1.0f && s7.values[sn] == 30.0f && s7.values[sp] == 120.0f, "no turn keys: smooth, 30, 120");
+    Model t7;
+    t7.Open(s7);
+    apply(t7, {{Kind::Change, sm, 1}}, &r);
+    CHECK(r == Result::Saved && TurnText(path, L"smooth") == L"0", "and the keys are added");
+    CHECK(store::LoadSnapshot(path.c_str()).values[sm] == 0.0f, "snap turning from then on");
+
+    // 5. conflicts: a key changed outside after the panel read it
+    Spit(path, "[turn]\r\nright_stick=1\r\nspeed=120\r\nsnap=45\r\n");
+    Snapshot s8 = store::LoadSnapshot(path.c_str());
+    Model t8;
+    t8.Open(s8);
+    t8.Click({Kind::Change, sn, 1});
+    const Action a8 = t8.Click({Kind::Apply, -1, 0});
+    Spit(path, "[turn]\r\nright_stick=1\r\nspeed=120\r\nsnap=90\r\n");
+    CHECK(store::SaveRequest(path.c_str(), a8.request) == Result::Conflict, "the angle was changed outside meanwhile: a conflict");
+    CHECK(TurnText(path, L"snap") == L"90" && TurnText(path, L"smooth").empty(), "and nothing was written (no smooth key either)");
+    Spit(path, "[turn]\r\nright_stick=1\r\nspeed=120\r\nsnap=45\r\nsmooth=1\r\n");
+    CHECK(store::SaveRequest(path.c_str(), a8.request) == Result::Conflict, "the mode was added outside meanwhile: a conflict");
+    // the key still missing is no conflict (it means what the panel saw)
+    Spit(path, "[turn]\r\nright_stick=1\r\nspeed=120\r\nsnap=45\r\n");
+    CHECK(store::SaveRequest(path.c_str(), a8.request) == Result::Saved && TurnText(path, L"snap") == L"60" && TurnText(path, L"smooth") == L"0", "unchanged since the read: saved, the mode written with the angle");
+
+    // 6. the page: the three rows hit on the Options page
+    int found = 0;
+    for (int row = 0; row < kRowsPerPage; ++row) {
+        const int key = KeyAt(kPageOptions, row);
+        if (key == sm || key == sn || key == sp) ++found;
+    }
+    CHECK(found == 3, "the three rows are on the page");
+}
+
 int main(int argc, char** argv) {
     if (argc == 3 && !strcmp(argv[1], "--dump")) { Dump(argv[2]); return 0; }
     wchar_t tmp[MAX_PATH];
@@ -1994,6 +2128,7 @@ int main(int argc, char** argv) {
     TestIniPages();
     TestPaintPages();
     TestViewRow();
+    TestTurn();
 
     // the temp folder's files go
     WIN32_FIND_DATAW fd;

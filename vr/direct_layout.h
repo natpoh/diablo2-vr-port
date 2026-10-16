@@ -180,6 +180,15 @@ inline Table DefaultTable(bool stickMap = true) {
     return t;
 }
 
+// The same table without what only F4 has: the plugin's own skill panel (the wheel / the tiles, asked for by a long press) - VR F1-F3 have none. What is
+// left is the game's own: pad buttons, triggers, the sticks, actions (attack, interact, inventory, map, swap, views, recentre) and key commands. A control
+// whose hold line was only that panel stops being hold-or-tap, so its plain line acts at once.
+inline Table WithoutPanels(Table t) {
+    auto strip = [](Binding* b) { for (Out& o : b->out) if (o.kind == kOutSkillPanel) o = Out{}; };
+    for (int i = 0; i < kCtlCount; ++i) { strip(&t.plain[i]); strip(&t.chord[i]); strip(&t.hold[i]); }
+    return t;
+}
+
 // In a menu (a panel open, or no game: the title and character screens) the pad is the game's own controller layout,
 // control for control: A B X Y, the sticks, the stick clicks, the grips as bumpers, the triggers, the menu as Start.
 inline Table MenuTable() {

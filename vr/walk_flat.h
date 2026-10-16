@@ -2,13 +2,13 @@
 // XInput, no clock of its own; the unit test is cleanroom/tests/walk_flat_test.cpp, the wiring is vr/direct_input.cpp (the stick, per
 // headset frame) and vr/vrcam.cpp (PadMirrorRead: the pad the game's walking code is given).
 //
-// The rule of the plugin is "everything new acts in F4 only" (vr/view_gate.h). This is the one deliberate exception, and it is only
-// MOVEMENT: in F1 (from above), F2 (third person) and F3 (the table) the picture is the game's camera seen as a screen, a window or a
-// diorama, and BodyWalk was the only thing that could walk the hero there. With direct input on and no BodyWalk, the controller's left
-// stick walks the hero - through the game's own walking code, exactly as BodyWalk's stick does (the pad's left stick, or the walking
-// hooks' vector: the game's dead zone, the game's own stick command, the game's own stop), turned into the game's frame the same way
-// BodyWalk's stick is in that view. Nothing else of direct input acts there: no attack, no button, no gesture, panel, pulse, command
-// or action - the pad the game gets has the left stick and nothing more.
+// The rule of the plugin is "everything new acts in F4 only" (vr/view_gate.h). The exception, decided with the user (2026-10-15): the CONTROLS,
+// where BodyWalk is not running. In F1 (from above), F2 (third person) and F3 (the table) the picture is the game's camera seen as a screen, a
+// window or a diorama, and BodyWalk was the only thing that could play it there. With direct input on and no BodyWalk the plugin's own
+// controller is the game's pad: the layout of F4 (the right trigger attacks, A picks up, B / X / Y the skills ...), the left stick walks the hero
+// through the game's own walking code exactly as BodyWalk's stick does, the left trigger + a flick of a stick drinks a belt potion
+// (vr/belt_flick.h). What stays F4's only: the gestures, hit by touch, the bow's draw, throws, the plugin's panels (the skill wheel), aiming by
+// the hand (the attack goes where the hero faces in F1 / F3, vr/attack_view.h).
 //
 // BodyWalk running (its Game Link is alive, or its pad report moves) means nothing changes: it has the controllers in these views, its
 // pad is the pad, whole, as it always was.
@@ -63,9 +63,60 @@ inline Verdict Decide(const Inputs& in) {
     return Verdict::Walk;
 }
 
+// -- the pad the game gets in VR F1-F3 -------------------------------------------------------------------------------------------
+// The rule (2026-10-15): BodyWalk running = nothing of ours touches the pad - its report whole, or the real / virtual pad as it answers, with every
+// button, trigger and stick (AsBefore). BodyWalk NOT running: the plugin's own controller is the pad in these views - the layout of F4 (the right
+// trigger attacks, A picks up, B / X / Y the skills, the triggers, the sticks ...) without what only F4 has - and the walk and the belt on the left
+// stick are part of it. The pad is `ours` (OurPad); where a real pad (or BodyWalk's virtual one, its Game Link not alive) answers the poll as well,
+// ours is added to it, never over it: buttons ORed, triggers the larger, a stick of ours taken only where that pad's own stick rests (RealPlusOurs).
+// With the controller switched off ([direct] flat_controller=0) `ours` is the walk alone: the left stick and nothing else.
+struct PadBits {
+    uint16_t buttons = 0;
+    uint8_t lt = 0, rt = 0;
+    int16_t lx = 0, ly = 0, rx = 0, ry = 0;
+};
+enum class PadSource : uint8_t { AsBefore, OurPad, RealPlusOurs };
+
+inline PadSource ChooseSource(Verdict v, bool padAnswers) {
+    if (v != Verdict::Walk) return PadSource::AsBefore;
+    return padAnswers ? PadSource::RealPlusOurs : PadSource::OurPad;
+}
+
+// The game's own dead zone (0x1210DA0: 10349 of 32767): a stick past it is pushed.
+inline bool StickPushed(int x, int y) { return (long long)x * x + (long long)y * y > 10349ll * 10349ll; }
+
+// Ours added to an answering pad. True = the pad was changed.
+inline bool MergePads(PadBits* pad, const PadBits& ours) {
+    bool changed = false;
+    if ((pad->buttons | ours.buttons) != pad->buttons) { pad->buttons |= ours.buttons; changed = true; }
+    if (ours.lt > pad->lt) { pad->lt = ours.lt; changed = true; }
+    if (ours.rt > pad->rt) { pad->rt = ours.rt; changed = true; }
+    if (StickPushed(ours.lx, ours.ly) && !StickPushed(pad->lx, pad->ly)) { pad->lx = ours.lx; pad->ly = ours.ly; changed = true; }
+    if (StickPushed(ours.rx, ours.ry) && !StickPushed(pad->rx, pad->ry)) { pad->rx = ours.rx; pad->ry = ours.ry; changed = true; }
+    return changed;
+}
+
+// The walk alone as a pad: the left stick and nothing else.
+inline PadBits WalkPad(int16_t lx, int16_t ly) { PadBits p; p.lx = lx; p.ly = ly; return p; }
+
+// The pad the game is given: `base` is what answers (BodyWalk's report, a real or virtual pad; ignored for OurPad), `ours` the plugin's.
+inline PadBits Compose(PadSource src, const PadBits& base, const PadBits& ours) {
+    switch (src) {
+    case PadSource::AsBefore: return base;
+    case PadSource::RealPlusOurs: { PadBits p = base; MergePads(&p, ours); return p; }
+    case PadSource::OurPad: return ours;
+    }
+    return base;
+}
+
+// A control pressed in VR F1-F3 that nothing of ours takes there (the right trigger, a grip, a button of either hand): said in the log, at most once in
+// kHintEveryMs, so "the right controller does nothing here" is answered by the log - the walk and the belt are all the plugin does in these views without
+// BodyWalk; the rest of the controls is F4's (the plugin's own layout) or BodyWalk's Mapping.
+constexpr uint64_t kHintEveryMs = 30000;
+
 inline const char* Name(Verdict v) {
     switch (v) {
-    case Verdict::Walk: return "the controller's left stick walks the hero (movement only; BodyWalk is not running)";
+    case Verdict::Walk: return "the plugin's own controller plays here (the left stick walks the hero, the buttons and triggers as in F4; BodyWalk is not running)";
     case Verdict::Off: return "off ([direct] walk_flat_views=0 or [openxr] direct_input=0): BodyWalk's input as before";
     case Verdict::NotFlatView: return "not VR F1, F2, F3";
     case Verdict::BodyWalk: return "BodyWalk is running: its pad and its walking as they were (the controller's stick is not added)";

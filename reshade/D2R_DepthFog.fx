@@ -1785,7 +1785,7 @@ float3 Ball(float3 c, float2 p, float3 centre, float radius, float3 col, float f
 // own checks refuse (pale), 5 the second blade when a weapon is held in each hand (teal), 6 a blade (either) while a contact would
 // count - moving at or above [gameplay] melee_min_speed in a stroke (green), 7 a ball where that speed was reached in a swing (white),
 // 8 a ball where the blade fell below it again (orange), 9 / 10 a piece of the tip's trail where a contact would not / would count
-// (cyan / green, thin). World units relative to where the hands
+// (cyan / green, thin), 11 a skill trigger's own capsule (vr/skill_triggers.h, [debug] skill_triggers: the left shield's, violet; green - kind 6 - while a bash would count). World units relative to where the hands
 // hang, like the lines above; each eye takes them from its own
 // camera. HitboxOn = false (the default) leaves the picture exactly as it was.
 uniform bool HitboxOn < hidden = true; > = false;
@@ -1836,9 +1836,9 @@ float3 Hitboxes(float3 c, float2 p, int eye)
         const float3 col = kind < 0.5 ? float3(0.1, 0.9, 1.0) : kind < 1.5 ? float3(1.0, 0.85, 0.1) : kind < 2.5 ? float3(1.0, 0.1, 0.05)
                          : kind < 3.5 ? float3(1.0, 0.1, 0.9) : kind < 4.5 ? float3(0.75, 0.8, 0.9) : kind < 5.5 ? float3(0.2, 1.0, 0.6)
                          : kind < 6.5 ? float3(0.15, 1.0, 0.15) : kind < 7.5 ? float3(1.0, 1.0, 1.0) : kind < 8.5 ? float3(1.0, 0.5, 0.0)
-                         : kind < 9.5 ? float3(0.1, 0.9, 1.0) : float3(0.15, 1.0, 0.15);
+                         : kind < 9.5 ? float3(0.1, 0.9, 1.0) : kind < 10.5 ? float3(0.15, 1.0, 0.15) : float3(0.6, 0.35, 1.0);
         const float alpha = (kind > 1.5 && kind < 3.5 ? 0.45 : kind > 3.5 && kind < 4.5 ? 0.3 : kind > 5.5 && kind < 6.5 ? 0.35 : kind > 6.5 && kind < 8.5 ? 0.85
-                           : kind > 8.5 && kind < 9.5 ? 0.3 : kind > 9.5 ? 0.6 : 0.15) + 0.6 * rim * rim;
+                           : kind > 8.5 && kind < 9.5 ? 0.3 : kind > 9.5 && kind < 10.5 ? 0.6 : 0.15) + 0.6 * rim * rim;
         c = lerp(c, col, saturate(alpha));
     }
     return c;

@@ -97,6 +97,11 @@ void Tick(const Frame& f);
 
 // ---- the game's side -----------------------------------------------------------------------------------------
 
+// The server's verdict on a monster as the touch last asked it (not older than 0.7 s): 1 hostile and unwalled, 0 refused (not hostile, or a wall
+// between), -1 none (hit by touch is off, or the monster is not among the ones it asks about). Read only; any thread. For [debug] melee_boxes'
+// shield line (vr/shield_smite.cpp): the shield bash itself leaves the hostility to the game.
+int HostileVerdict(uint32_t id);
+
 // The target lookups of the press in flight: a touched monster is waiting for its attack to be aimed.
 bool TargetPending();
 // Inside one of the game's target lookups (its UI thread): the client unit of the touched monster, looked up by its id

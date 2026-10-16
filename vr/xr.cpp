@@ -52,6 +52,8 @@ int D2rvrHoverSpheres(float (*out)[8], int max);
 #include "hset_store.h"
 #include "calibration.h"
 #include "haptics.h"
+#include "haptic_stop.h"   // [openxr] haptics_stop: each pulse stopped by an explicit call when its time is up (a thread of its own)
+#include "anchor_gate.h"   // [openxr] menus_wait_tracking: the flat picture and the menu panel placed only with the head tracked
 #include "frame_trace.h"   // [debug] frame_trace: what the runtime's haptic call costs a pair
 #include "laser_tooltip.h"
 #include "render_resolution.h"
@@ -60,6 +62,7 @@ int D2rvrHoverSpheres(float (*out)[8], int max);
 #include "skill_wheel.h"   // [openxr] skill_wheel: the skill wheel in the headset (vr/xr_skill_wheel.h is its layer)
 #include "rune_shader.h"   // [openxr] runes_draw: BodyWalk's gesture runes in the headset (vr/xr_runes.h is their layer; rune_geom.h the maths)
 #include "wheel_paint.h"
+#include "xr_profiles.h"   // [openxr] frame_profile, index_grip_force: Steam Frame's own layout, the Index grip by force
 #include "hand_vitals_wire.h"   // [hud] hand_vitals: life and mana on the hand when the palm turns to the face (vr/xr_hand_vitals.h is its layer)
 
 namespace xr {
@@ -91,6 +94,9 @@ struct Cfg {
     float quadWidthM = 2.4f;  // and this wide
     float leanM = 0.10f;      // the head may move this far from the body sideways (lean_m); farther, the body follows
     bool byTurns = false;     // eyes by turns ([stereo] afr without pair_per_tick): one eye a game frame
+    bool frameProfile = true; // frame_profile: Steam Frame's controllers in their own layout when the runtime offers it (vr/xr_profiles.h); taken at a session start
+    bool indexGripForce = false;   // index_grip_force: an Index hand's grip is how hard it squeezes (squeeze/force), not the fingers round the handle
+    bool menusWaitTracking = true;   // menus_wait_tracking: the flat picture / menu panel placed only once the head is tracked, again after a focus loss (vr/anchor_gate.h)
     bool bareHands = false;   // bare_hands: a hand without a controller (the runtime's hand tracking) works as one; 0: it presses and places nothing
     float handHoldMs = 1000.0f;   // hand_hold_ms: a controller that loses its place this long is held where it was by the head
     float brightness = 1.0f;  // brightness: everything in the headset times this (the runtime's colour scale), 1 = as drawn
@@ -104,6 +110,8 @@ struct Cfg {
     bool runesDraw = false;   // runes_draw: BodyWalk's gesture runes and the hand's trail drawn in the headset, F4 only (vr/xr_runes.h)
     bool haptics = false;     // haptics: pulses in the controllers (vr/haptics.cpp; the output action is made either way)
     float hapticsScale = 1.0f;   // haptics_scale: their strength times this
+    bool hapticsHands = true; // haptics_hand_actions: a vibration action of its own for each hand, no hand filter (taken at a session start)
+    bool hapticsStop = true;  // haptics_stop: each pulse stopped by xrStopHapticFeedback when its time is up (live)
     rendersize::Pick vrPick;  // [render] vr_resolution_px / vr_resolution: the render size the game is given (render_size.h); Desktop = the window's own
 };
 Cfg g_cfg;
@@ -243,6 +251,10 @@ HANDLE g_fenceEvt = nullptr;
 float g_monoYaw = 0.0f;
 XrVector3f g_monoPos{};
 bool g_monoAnchored = false;
+// [openxr] menus_wait_tracking (vr/anchor_gate.h), the frame loop's: may the flat picture and a menu's panel be placed in the room now
+bool g_anchorReady = true;
+anchorgate::Ready g_anchorGate;
+anchorgate::Refocus g_refocus;
 int g_lastDrawn = 0;   // the kind of the last frame that went out
 // A panel open in a game (inventory, trade, stash...; vrcam's SetPanelOpen): the flat picture
 // stands at FlatVR's "Screen distance while a panel is open" ([screen] menu_distance_m) instead -
@@ -430,7 +442,17 @@ XrActionSet g_actSet = XR_NULL_HANDLE;
 XrAction g_aGrip = XR_NULL_HANDLE, g_aAim = XR_NULL_HANDLE, g_aTrigger = XR_NULL_HANDLE, g_aTriggerClick = XR_NULL_HANDLE,
          g_aSqueeze = XR_NULL_HANDLE, g_aStick = XR_NULL_HANDLE, g_aStickClick = XR_NULL_HANDLE, g_aPrimary = XR_NULL_HANDLE,
          g_aSecondary = XR_NULL_HANDLE, g_aMenu = XR_NULL_HANDLE;
+XrAction g_aSqueezeForce = XR_NULL_HANDLE;   // the Index grip's force ([openxr] index_grip_force); bound on Index only
+bool g_frameExt = false;   // XR_VALVE_frame_controller_interaction enabled in this instance ([openxr] frame_profile)
 XrAction g_aHaptic = XR_NULL_HANDLE;   // output: a pulse in a controller ([openxr] haptics, vr/haptics.cpp)
+// [openxr] haptics_hand_actions: instead of the one action filtered by hand, an action per hand ([0] left, [1] right) with only that
+// hand's motor bound - some runtimes routed a hand-filtered pulse to the wrong hand (bearstonem/d2r-pcvr, steamvr/haptic_actions.h).
+XrAction g_aHapticHand[2] = {};
+// [openxr] haptics_stop: the timer that stops each pulse (vr/haptic_stop.h); kept for the process's life. g_hapticStopLock guards the
+// session and actions it uses: Teardown takes it exclusively and clears g_hapticStopOk before they go.
+hapticstop::Timer* const g_hapticTimer = new hapticstop::Timer;
+SRWLOCK g_hapticStopLock = SRWLOCK_INIT;
+bool g_hapticStopOk = false;
 XrPath g_handPath[2] = {XR_NULL_PATH, XR_NULL_PATH};   // /user/hand/left, /user/hand/right
 XrSpace g_gripSpace[2] = {}, g_aimSpace[2] = {}, g_viewSpace = XR_NULL_HANDLE;
 // What BodyWalk gets is in the room's STAGE space, the floor at 0, as FlatVR gives it (its jump
@@ -498,11 +520,24 @@ bool MakeActions() {
     g_aPrimary = MakeAction("primary", "A / X", XR_ACTION_TYPE_BOOLEAN_INPUT);
     g_aSecondary = MakeAction("secondary", "B / Y", XR_ACTION_TYPE_BOOLEAN_INPUT);
     g_aMenu = MakeAction("menu", "Menu", XR_ACTION_TYPE_BOOLEAN_INPUT);
+    g_aSqueezeForce = MakeAction("squeeze_force", "Grip force", XR_ACTION_TYPE_FLOAT_INPUT);
     // Made and bound whether [openxr] haptics is ticked or not (it switches live, and an action cannot be
     // added to an attached set): ticked off, nothing is ever played through it.
-    g_aHaptic = MakeAction("haptic", "Vibration", XR_ACTION_TYPE_VIBRATION_OUTPUT);
+    g_aHaptic = g_aHapticHand[0] = g_aHapticHand[1] = XR_NULL_HANDLE;
+    if (g_cfg.hapticsHands) {   // one per hand, no subaction filter: the binding alone says which motor
+        for (int h = 0; h < 2; ++h) {
+            XrActionCreateInfo ci{XR_TYPE_ACTION_CREATE_INFO};
+            strcpy_s(ci.actionName, h ? "haptic_right" : "haptic_left");
+            strcpy_s(ci.localizedActionName, h ? "Right hand vibration" : "Left hand vibration");
+            ci.actionType = XR_ACTION_TYPE_VIBRATION_OUTPUT;
+            if (!Ok(xrCreateAction(g_actSet, &ci, &g_aHapticHand[h]), "xrCreateAction(haptic hand)")) g_aHapticHand[h] = XR_NULL_HANDLE;
+        }
+        if (!g_aHapticHand[0] || !g_aHapticHand[1]) g_aHapticHand[0] = g_aHapticHand[1] = XR_NULL_HANDLE;
+    }
+    if (!g_aHapticHand[0]) g_aHaptic = MakeAction("haptic", "Vibration", XR_ACTION_TYPE_VIBRATION_OUTPUT);
+    LogF("vrcam: openxr - vibration: %s", g_aHapticHand[0] ? "an action for each hand ([openxr] haptics_hand_actions)" : "one action, by hand");
 #define BOTH(a, p) {a, "/user/hand/left/input/" p}, {a, "/user/hand/right/input/" p}
-#define MOTORS(a) {a, "/user/hand/left/output/haptic"}, {a, "/user/hand/right/output/haptic"}   // every profile we suggest has a motor
+#define MOTORS(a) {a, "/user/hand/left/output/haptic"}, {a, "/user/hand/right/output/haptic"},                   {g_aHapticHand[0], "/user/hand/left/output/haptic"}, {g_aHapticHand[1], "/user/hand/right/output/haptic"}   // every profile we suggest has a motor (a null action is left out)
     Suggest("/interaction_profiles/oculus/touch_controller",
             {BOTH(g_aGrip, "grip/pose"), BOTH(g_aAim, "aim/pose"), BOTH(g_aTrigger, "trigger/value"), BOTH(g_aSqueeze, "squeeze/value"),
              BOTH(g_aStick, "thumbstick"), BOTH(g_aStickClick, "thumbstick/click"),
@@ -512,7 +547,7 @@ bool MakeActions() {
     Suggest("/interaction_profiles/valve/index_controller",
             {BOTH(g_aGrip, "grip/pose"), BOTH(g_aAim, "aim/pose"), BOTH(g_aTrigger, "trigger/value"), BOTH(g_aTriggerClick, "trigger/click"),
              BOTH(g_aSqueeze, "squeeze/value"), BOTH(g_aStick, "thumbstick"), BOTH(g_aStickClick, "thumbstick/click"),
-             BOTH(g_aPrimary, "a/click"), BOTH(g_aSecondary, "b/click"), MOTORS(g_aHaptic)});
+             BOTH(g_aPrimary, "a/click"), BOTH(g_aSecondary, "b/click"), BOTH(g_aSqueezeForce, "squeeze/force"), MOTORS(g_aHaptic)});
     Suggest("/interaction_profiles/htc/vive_controller",
             {BOTH(g_aGrip, "grip/pose"), BOTH(g_aAim, "aim/pose"), BOTH(g_aTrigger, "trigger/value"), BOTH(g_aTriggerClick, "trigger/click"),
              BOTH(g_aSqueeze, "squeeze/click"), BOTH(g_aStick, "trackpad"), BOTH(g_aStickClick, "trackpad/click"), BOTH(g_aMenu, "menu/click"), MOTORS(g_aHaptic)});
@@ -523,6 +558,22 @@ bool MakeActions() {
             {BOTH(g_aGrip, "grip/pose"), BOTH(g_aAim, "aim/pose"), BOTH(g_aTrigger, "select/click"), BOTH(g_aMenu, "menu/click"), MOTORS(g_aHaptic)});
 #undef BOTH
 #undef MOTORS
+    if (g_frameExt) {   // Steam Frame's own layout (vr/xr_profiles.h): the left hand's D-pad down / up are its face buttons
+        std::vector<XrActionSuggestedBinding> b;
+        for (const xrprofiles::Binding& fb : xrprofiles::kFrameBindings) {
+            using xrprofiles::Act;
+            const XrAction a = fb.act == Act::Grip ? g_aGrip : fb.act == Act::Aim ? g_aAim : fb.act == Act::Trigger ? g_aTrigger
+                             : fb.act == Act::Squeeze ? g_aSqueeze : fb.act == Act::Stick ? g_aStick : fb.act == Act::StickClick ? g_aStickClick
+                             : fb.act == Act::Primary ? g_aPrimary : fb.act == Act::Secondary ? g_aSecondary : fb.act == Act::Menu ? g_aMenu : g_aHaptic;
+            if (a) b.push_back({a, Path(fb.path)});
+        }
+        XrInteractionProfileSuggestedBinding sb{XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING};
+        sb.interactionProfile = Path(xrprofiles::kFrameProfile);
+        sb.countSuggestedBindings = (uint32_t)b.size();
+        sb.suggestedBindings = b.data();
+        const XrResult r = xrSuggestInteractionProfileBindings(g_inst, &sb);
+        LogF("vrcam: openxr - Steam Frame controllers: their own layout %s", XR_SUCCEEDED(r) ? "suggested" : Res(r));
+    }
     for (int h = 0; h < 2; ++h) {
         XrActionSpaceCreateInfo ai{XR_TYPE_ACTION_SPACE_CREATE_INFO};
         ai.subactionPath = g_handPath[h];
@@ -757,6 +808,11 @@ void Publish(bool focused) {
         HoldPose(o.aim, g_hold[h][1], in.head, focused);
         o.trigger = FloatOf(g_aTrigger, h, &act);
         o.squeeze = FloatOf(g_aSqueeze, h, &act);
+        if (g_cfg.indexGripForce) {   // [openxr] index_grip_force: an Index hand's grip by force (vr/xr_profiles.h)
+            bool forceActive = false;
+            const float force = FloatOf(g_aSqueezeForce, h, &forceActive);
+            o.squeeze = xrprofiles::Grip(true, g_inNow.profile[h], o.squeeze, force, forceActive);
+        }
         o.stickX = o.stickY = 0.0f;
         {
             XrActionStateGetInfo gi{XR_TYPE_ACTION_STATE_GET_INFO};
@@ -810,25 +866,51 @@ void Publish(bool focused) {
 // [openxr] haptics (vr/haptics.cpp): the pulses that wait, played on the output action - once a frame, after
 // the actions are synced. xrApplyHapticFeedback replaces what the motor plays; a session without the input
 // focus (the headset off the head, the dashboard open) is not given any: haptics::Flush drops what waits.
-bool ApplyHaptic(int hand, float amplitude, int durationMs) {
+XrHapticActionInfo HapticInfo(int hand) {   // the hand's own action ([openxr] haptics_hand_actions), else the shared one filtered by hand
     XrHapticActionInfo ai{XR_TYPE_HAPTIC_ACTION_INFO};
-    ai.action = g_aHaptic;
-    ai.subactionPath = g_handPath[hand & 1];
+    if (g_aHapticHand[hand & 1]) ai.action = g_aHapticHand[hand & 1];
+    else { ai.action = g_aHaptic; ai.subactionPath = g_handPath[hand & 1]; }
+    return ai;
+}
+// The stop timer's call, on its own thread (vr/haptic_stop.h): only while the session and its actions are there.
+void StopHaptic(int hand) {
+    AcquireSRWLockShared(&g_hapticStopLock);
+    if (g_hapticStopOk) {
+        const XrHapticActionInfo ai = HapticInfo(hand);
+        const XrResult r = xrStopHapticFeedback(g_session, &ai);
+        static std::atomic<int> told{0};
+        if (told.fetch_add(1) < 2) LogF("vrcam: haptics - the %s hand's pulse stopped by its timer (%s)", hand ? "right" : "left", Res(r));
+    }
+    ReleaseSRWLockShared(&g_hapticStopLock);
+}
+bool ApplyHaptic(int hand, float amplitude, int durationMs) {
+    const XrHapticActionInfo ai = HapticInfo(hand);
     XrHapticVibration v{XR_TYPE_HAPTIC_VIBRATION};
     v.duration = (XrDuration)durationMs * 1000000;   // ns
     v.frequency = XR_FREQUENCY_UNSPECIFIED;
     v.amplitude = amplitude;
     frametrace::Scope trace(frametrace::kHaptic);   // [debug] frame_trace: the runtime's call - some runtimes make a round trip of it
-    return Ok(xrApplyHapticFeedback(g_session, &ai, (const XrHapticBaseHeader*)&v), "xrApplyHapticFeedback");
+    const bool ok = Ok(xrApplyHapticFeedback(g_session, &ai, (const XrHapticBaseHeader*)&v), "xrApplyHapticFeedback");
+    if (ok && g_cfg.hapticsStop && g_hapticTimer->Start(&StopHaptic)) g_hapticTimer->Arm(hand & 1, (uint32_t)std::max(durationMs, 1));
+    return ok;
 }
 void FlushHaptics() {
-    const bool can = g_actionsOk && g_aHaptic && g_session && g_ss == XR_SESSION_STATE_FOCUSED;
+    const bool can = g_actionsOk && (g_aHaptic || g_aHapticHand[0]) && g_session && g_ss == XR_SESSION_STATE_FOCUSED;
+    if (const bool ok = g_actionsOk && g_session && (g_aHaptic || g_aHapticHand[0]); ok != g_hapticStopOk) {
+        AcquireSRWLockExclusive(&g_hapticStopLock);
+        g_hapticStopOk = ok;
+        ReleaseSRWLockExclusive(&g_hapticStopLock);
+    }
     haptics::Flush(GetTickCount64(), can, &ApplyHaptic);
 }
 
 // -- start: instance, system, session (a worker thread) ------------------------
 void Teardown() {   // under g_lock or before the session exists
     g_running.store(false);
+    g_hapticTimer->Cancel();   // [openxr] haptics_stop: no stop called on what goes below
+    AcquireSRWLockExclusive(&g_hapticStopLock);
+    g_hapticStopOk = false;
+    ReleaseSRWLockExclusive(&g_hapticStopLock);
     for (PendingImage& q : g_pendingImg) q = PendingImage{};   // their swapchains go now
     g_lastEye[0] = g_lastEye[1] = LastEye{};
     if (g_ptr.sc) xrDestroySwapchain(g_ptr.sc);
@@ -857,7 +939,7 @@ void Teardown() {   // under g_lock or before the session exists
     if (g_viewSpace) { xrDestroySpace(g_viewSpace); g_viewSpace = XR_NULL_HANDLE; }
     if (g_roomSpace) { xrDestroySpace(g_roomSpace); g_roomSpace = XR_NULL_HANDLE; }
     if (g_actSet) { xrDestroyActionSet(g_actSet); g_actSet = XR_NULL_HANDLE; }   // its actions go with it
-    g_aHaptic = XR_NULL_HANDLE;
+    g_aHaptic = g_aHapticHand[0] = g_aHapticHand[1] = XR_NULL_HANDLE;
     g_actionsOk = false;
     directinput::SessionEnd();
     for (XrHandTrackerEXT& t : g_handTracker) { if (t && g_xrDestroyHandTracker) g_xrDestroyHandTracker(t); t = XR_NULL_HANDLE; }
@@ -889,12 +971,13 @@ bool StartSession() {
     if (!Ok(xrEnumerateInstanceExtensionProperties(nullptr, 0, &n, nullptr), "xrEnumerateInstanceExtensionProperties")) return false;
     std::vector<XrExtensionProperties> ext(n, {XR_TYPE_EXTENSION_PROPERTIES});
     xrEnumerateInstanceExtensionProperties(nullptr, n, &n, ext.data());
-    bool d3d12 = false, hands = false, handSource = false, colorScale = false;
+    bool d3d12 = false, hands = false, handSource = false, colorScale = false, frame = false;
     for (const auto& e : ext) {
         if (!strcmp(e.extensionName, XR_KHR_D3D12_ENABLE_EXTENSION_NAME)) d3d12 = true;
         if (!strcmp(e.extensionName, XR_KHR_COMPOSITION_LAYER_COLOR_SCALE_BIAS_EXTENSION_NAME)) colorScale = true;
         if (!strcmp(e.extensionName, XR_EXT_HAND_TRACKING_EXTENSION_NAME)) hands = true;
         if (!strcmp(e.extensionName, XR_EXT_HAND_TRACKING_DATA_SOURCE_EXTENSION_NAME)) handSource = true;
+        if (!strcmp(e.extensionName, xrprofiles::kFrameExtension)) frame = true;
     }
     if (!d3d12) { Log("vrcam: openxr - the runtime has no XR_KHR_D3D12_enable: no session"); return false; }
     {
@@ -912,6 +995,10 @@ bool StartSession() {
     if (hands && handSource) exts.push_back(XR_EXT_HAND_TRACKING_DATA_SOURCE_EXTENSION_NAME);
     if (colorScale) exts.push_back(XR_KHR_COMPOSITION_LAYER_COLOR_SCALE_BIAS_EXTENSION_NAME);
     g_colorScaleExt = colorScale;
+    g_frameExt = xrprofiles::WantFrame(g_cfg.frameProfile, frame);
+    if (g_frameExt) exts.push_back(xrprofiles::kFrameExtension);
+    if (frame) Log(g_frameExt ? "vrcam: openxr - Steam Frame controllers offered: their own layout (left D-pad down / up = X / Y)"
+                              : "vrcam: openxr - Steam Frame controllers offered, not taken ([openxr] frame_profile=0): the runtime's stand-in layout");
     Log(colorScale ? "vrcam: openxr - colour scale: yes ([openxr] brightness works)"
                    : "vrcam: openxr - the runtime has no XR_KHR_composition_layer_color_scale_bias: [openxr] brightness does nothing");
     XrInstanceCreateInfo ci{XR_TYPE_INSTANCE_CREATE_INFO};
@@ -2273,6 +2360,7 @@ void Poll() {
                     directinput::SessionBegin();
                     g_running.store(true); g_recentre.store(true); g_recentreAfter = 0; g_framesRunning = 0; g_st = Stats{};
                     g_monoAnchored = false; g_lastDrawn = kNone;   // the flat picture comes up anew, held to the gaze at first
+                    g_anchorGate.Reset(); g_refocus.Reset();
                 }
             } else if (g_ss == XR_SESSION_STATE_STOPPING) {
                 EndSessionNow("the runtime stopped it");
@@ -2421,6 +2509,23 @@ bool OpenFrame(Kind kind) {
             }
         }
         for (int e = 0; e < 2; ++e) g_fovUsed[e] = Cropped(g_views[e].fov);
+        {   // [openxr] menus_wait_tracking: placing waits for a tracked head with the focus; the focus back after a while places anew
+            const bool tracked = (vs.viewStateFlags & XR_VIEW_STATE_POSITION_TRACKED_BIT) && (vs.viewStateFlags & XR_VIEW_STATE_ORIENTATION_TRACKED_BIT);
+            const bool focused = g_ss == XR_SESSION_STATE_FOCUSED;
+            const ULONGLONG now = GetTickCount64();
+            const bool ready = g_anchorGate.Step(tracked, focused, now);
+            const bool again = g_refocus.Step(focused, now);
+            const bool was = g_anchorReady;
+            g_anchorReady = !g_cfg.menusWaitTracking || ready;
+            if (g_cfg.menusWaitTracking && was != g_anchorReady)
+                LogF("vrcam: openxr - the flat picture and menu panels: %s", g_anchorReady ? (tracked && focused ? "placed (the head is tracked)" :
+                     "placed without tracking after 3 s (the runtime never says the head is tracked)") : "follow the gaze until the head is tracked");
+            if (g_cfg.menusWaitTracking && again) {
+                g_monoAnchored = false;
+                g_panelPlace.anchored = false;
+                Log("vrcam: openxr - the input focus is back after a while: the flat picture and a menu's panel come up in front again");
+            }
+        }
         if (kind == kMono) {
             // Put where the head looks when it comes up; held to the gaze for the session's first
             // half second (the runtime's first poses may not be the head's yet - it came up behind
@@ -2432,7 +2537,7 @@ bool OpenFrame(Kind kind) {
             const float yawNow = YawOf(g_views[0].pose.orientation);
             float off = yawNow - g_monoYaw;
             off = atan2f(sinf(off), cosf(off));
-            bool anchor = g_lastDrawn != kMono || !g_monoAnchored || framesIn < 45;
+            bool anchor = g_lastDrawn != kMono || !g_monoAnchored || framesIn < 45 || !g_anchorReady;
             if (!anchor && fabsf(off) > 1.05f) {
                 if (offSince <= 0.0) offSince = t1;
                 else if (t1 - offSince > 1e6) { anchor = true; Log("vrcam: openxr - the flat picture brought round in front of the gaze"); }
@@ -2576,7 +2681,7 @@ uint32_t HangPanel(const XrCompositionLayerBaseHeader** layers, uint32_t nl, uin
     const float yawNow = YawOf(g_views[0].pose.orientation);
     float off = yawNow - P.yaw;
     off = atan2f(sinf(off), cosf(off));
-    bool anchor = fresh || !P.anchored;
+    bool anchor = fresh || !P.anchored || !g_anchorReady;   // ([openxr] menus_wait_tracking: held to the gaze until the head is tracked)
     if (!anchor && fabsf(off) > 1.05f) {
         if (P.offSince <= 0.0) P.offSince = t;
         else if (t - P.offSince > 1e6) { anchor = true; Log("vrcam: openxr - the menu's panel brought round in front of the gaze"); }
@@ -3011,6 +3116,17 @@ void LoadSettings(const wchar_t* ini) {
         g_cfg.byTurns = turns;
     }
     g_cfg.bareHands = f(L"bare_hands", 0.0f) != 0.0f;
+    g_cfg.frameProfile = f(L"frame_profile", 1.0f) != 0.0f;   // (taken at the next session start)
+    {
+        g_cfg.indexGripForce = f(L"index_grip_force", 0.0f) != 0.0f;   // live
+        static int said = 0;   // (off at the start: not a word)
+        if (on && (int)g_cfg.indexGripForce != said) {
+            said = g_cfg.indexGripForce;
+            Log(g_cfg.indexGripForce ? "vrcam: openxr - Valve Index: the grip is how hard you squeeze ([openxr] index_grip_force)"
+                                     : "vrcam: openxr - Valve Index: the grip is the fingers round the handle, as before");
+        }
+    }
+    g_cfg.menusWaitTracking = f(L"menus_wait_tracking", 1.0f) != 0.0f;   // live
     {   // the laser on the menus (D2R VR Settings > Stereo > Native OpenXR), live
         g_cfg.laser = f(L"laser", 0.0f) != 0.0f;
         g_cfg.laserHand = f(L"laser_hand", 1.0f) != 0.0f ? 1 : 0;
@@ -3082,6 +3198,8 @@ void LoadSettings(const wchar_t* ini) {
         const float sc = f(L"haptics_scale", 1.0f);
         g_cfg.hapticsScale = std::isfinite(sc) ? std::clamp(sc, 0.1f, 2.0f) : 1.0f;
         haptics::Configure(on && g_cfg.haptics, g_cfg.hapticsScale);
+        g_cfg.hapticsHands = f(L"haptics_hand_actions", 1.0f) != 0.0f;   // (taken at the next session start)
+        g_cfg.hapticsStop = f(L"haptics_stop", 1.0f) != 0.0f;            // live
     }
     {   // [render] vr_resolution_px (a square's side) and vr_resolution (the older mode), live: render_size.h reads the two together
         const int mode = (int)GetPrivateProfileIntW(L"render", L"vr_resolution", 0, ini);

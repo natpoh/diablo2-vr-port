@@ -73,13 +73,26 @@ std::atomic<bool> g_bwWalk{true};   // [openxr] direct_bodywalk_walk: BodyWalk's
 std::atomic<bool> g_walkFlat{true}; // [direct] walk_flat_views: the left stick walks in VR F1-F3 (movement only, vr/walk_flat.h)
 std::atomic<bool> g_beltFlat{true}; // [direct] belt_flick_flat_views: left trigger + a flick of a stick drinks a belt column in VR F1-F3 (vr/belt_flick.h)
 std::atomic<BeltSink> g_beltSink{nullptr};
+std::atomic<PressSink> g_pressSink{nullptr};
+ULONGLONG g_pressHintAt = 0;   // FeedWalk's thread only
 // The stick of the last frame in a flat view (walkflat::Pack: the stick and the frame's number) and when it came. 0 = none: F4, the key off,
 // the session over - the pad poll gets no walk from here then.
 std::atomic<uint64_t> g_walkWord{0};
 std::atomic<ULONGLONG> g_walkAt{0};
+std::atomic<ULONGLONG> g_frameAt{0};   // the newest headset frame in a flat view that FeedWalk saw (whatever the keys): fresh within kStaleMs
+// The plugin's own controller in VR F1-F3 ([direct] flat_controller): its layout's newest outputs (pad, actions, commands), when they were made and in which layer.
+std::atomic<bool> g_flatCtl{true};
+std::atomic<FlatGate> g_flatGateFn{nullptr};
+SRWLOCK g_flatLock = SRWLOCK_INIT;
+Outputs g_flatOut;                      // under g_flatLock
+uint32_t g_flatCounter = 0;             // under g_flatLock
+int g_flatOutMenu = 0;                  // under g_flatLock: the layer of g_flatOut
+std::atomic<ULONGLONG> g_flatAt{0};
 SRWLOCK g_cfgLock = SRWLOCK_INIT;
 Table g_table = DefaultTable();   // the world layer; the menu layer is the game's own
 bool g_tableChanged = true;       // Feed hands it to the layout once
+Table g_flatTable = WithoutPanels(DefaultTable());   // the same without the skill panel's long press: VR F1-F3's controller
+bool g_flatTableChanged = true;
 
 // -- the sources of the gestures --------------------------------------------------------------------------------------
 std::atomic<uint16_t> g_cmdSrc[layout::kCommands];   // bit per Source: who holds the command
@@ -136,14 +149,36 @@ struct FeedState {
     bool walkWas = false;
     uint32_t walkCounter = 0;
     beltflick::Machine belt;   // the left trigger + a flick: a belt column (VR F1-F3)
+    // the plugin's own controller in VR F1-F3: a layout of its own, its release gate, what FeedWalk made of the left stick for its pad
+    Layout flatLayout;
+    ReleaseGate flatGate;
+    bool flatWas = false;
+    uint32_t flatCtx = ~0u;
+    int16_t walkLX = 0, walkLY = 0;
+    bool beltHolding = false;
 };
 FeedState g_fs;
 
 // VR F1, F2, F3 with [direct] walk_flat_views: the left stick, and nothing else of the controllers, for the game's walking code. The
 // stick is held back (the gate) while the view, the focus or a panel has just changed, until it is let go - a stick held on the way in
 // walks nothing - and it is zero while a panel is up (the stick is the menu's).
+// A control pressed that nothing of ours takes in VR F1-F3 (the walk is the left stick, the belt the left trigger and a flick).
+const char* PressedElsewhere(const D2RVR_XrInput& in) {
+    const D2RVR_XrHand& l = in.hand[0];
+    const D2RVR_XrHand& r = in.hand[1];
+    constexpr uint32_t kBtn = kPrimary | kSecondary | kStick | kMenuButton;
+    if (std::isfinite(r.trigger) && r.trigger >= 0.6f) return "right trigger";
+    if (std::isfinite(r.squeeze) && r.squeeze >= 0.6f) return "right grip";
+    if (std::isfinite(l.squeeze) && l.squeeze >= 0.6f) return "left grip";
+    if (r.buttons & kBtn) return "a right-hand button";
+    if (l.buttons & kBtn) return "a left-hand button";
+    return nullptr;
+}
+
 void FeedWalk(const D2RVR_XrInput& in, bool focused, bool menu) {
     FeedState& s = g_fs;
+    g_frameAt.store(GetTickCount64(), std::memory_order_release);
+    s.walkLX = s.walkLY = 0;
     if (!s.walkWas) s.walkGate.Suspend();   // coming in from another view (or the first frame): start masked
     s.walkWas = true;
     const D2RVR_XrHand& h = in.hand[0];
@@ -161,6 +196,15 @@ void FeedWalk(const D2RVR_XrInput& in, bool focused, bool menu) {
     if (b.column >= 0) {
         if (const BeltSink sink = g_beltSink.load()) sink((uint32_t)b.column, b.stick, (int)b.dir);
     }
+    s.beltHolding = b.holding;
+    if (live && !g_flatCtl.load()) {   // the controller is off: a control pressed that nothing of ours takes here is said (rarely) in the log
+        if (const char* what = PressedElsewhere(in)) {
+            const ULONGLONG now = GetTickCount64();
+            if (!g_pressHintAt || now - g_pressHintAt >= walkflat::kHintEveryMs) {
+                if (const PressSink sink = g_pressSink.load()) { if (sink(what)) g_pressHintAt = now; }
+            }
+        }
+    }
     if (!g_walkFlat.load()) {   // the walk's key is off (the belt's is on): no stick is published, and it starts masked when the walk comes back
         g_walkAt.store(0, std::memory_order_release);
         g_walkWord.store(0, std::memory_order_release);
@@ -172,16 +216,25 @@ void FeedWalk(const D2RVR_XrInput& in, bool focused, bool menu) {
     c = s.walkGate.Step((focused ? 1u : 0u) | (menu ? 2u : 0u) | (b.holding ? 4u : 0u), c);
     int16_t lx = 0, ly = 0;
     if (!menu && !b.holding) walkflat::StickToPad(c.stick[0][0], c.stick[0][1], &lx, &ly);
+    s.walkLX = lx; s.walkLY = ly;
     g_walkWord.store(walkflat::Pack(lx, ly, ++s.walkCounter), std::memory_order_release);
     g_walkAt.store(GetTickCount64(), std::memory_order_release);
 }
 
-// Back in F4 (or the keys off, the session over): the walk's stick is gone, the next flat view starts masked, the belt's machine let go.
+// Back in F4 (or the keys off, the session over): the walk's stick is gone, the next flat view starts masked, the belt's machine and the controller's
+// layout let go.
 void EndWalk() {
     g_walkAt.store(0, std::memory_order_release);
     g_walkWord.store(0, std::memory_order_release);
+    g_frameAt.store(0, std::memory_order_release);
+    g_flatAt.store(0, std::memory_order_release);
+    AcquireSRWLockExclusive(&g_flatLock);
+    g_flatOut = Outputs{};
+    ReleaseSRWLockExclusive(&g_flatLock);
     g_fs.walkWas = false;
+    g_fs.flatWas = false;
     g_fs.belt.Reset();
+    g_fs.flatLayout.Reset();
 }
 
 // A command's number from its name in the ini ("Swap weapons", "D2R key: Swap weapons").
@@ -286,6 +339,39 @@ void HideTaken(D2RVR_XrInput* in, const uint32_t take[2]) {
     }
 }
 
+// The plugin's own controller in VR F1-F3 ([direct] flat_controller, vr/walk_flat.h): the F4 layout over the frame's controls - through a release gate of its
+// own, in the menu layer while a panel is open - minus the skill panel's long press. Its pad takes the left stick from FeedWalk (the walk's own gate and the
+// belt's hold: while the left trigger is held for a flick the sticks are the flick's, not the game's); the actions and the game's key commands it holds go the
+// way BodyWalk's would (link::ActionsHeld / CommandsHeld). Called by Feed in a flat view, after FeedWalk; nothing of the F4 world is touched.
+void FeedFlatController(const D2RVR_XrInput& in, bool focused, bool menu) {
+    FeedState& s = g_fs;
+    if (!g_flatCtl.load()) {   // off: nothing published, and it starts fresh when it comes back
+        if (s.flatWas || g_flatAt.load()) { g_flatAt.store(0, std::memory_order_release); s.flatWas = false; s.flatLayout.Reset(); }
+        return;
+    }
+    AcquireSRWLockExclusive(&g_cfgLock);
+    if (g_flatTableChanged) { s.flatLayout.SetWorld(g_flatTable); g_flatTableChanged = false; }
+    ReleaseSRWLockExclusive(&g_cfgLock);
+    if (!s.flatWas) { s.flatGate.Suspend(); s.flatLayout.Reset(); s.flatCtx = ~0u; }   // coming in from another view: the controls held on the way in do nothing until let go
+    s.flatWas = true;
+    const uint32_t ctx = (focused ? 1u : 0u) | (menu ? 2u : 0u);
+    if (ctx != s.flatCtx) { s.flatCtx = ctx; s.flatLayout.Cancel(); }   // (a press under way is not a tap, nor a hold)
+    const Controls c = s.flatGate.Step(ctx, ControlsOf(in));
+    Outputs o = s.flatLayout.Step(menu ? Mode::Menu : Mode::World, c, GetTickCount64(), false, 0);
+    if (!menu) {   // the world: the left stick is the walk's (or nothing, with the walk off)
+        o.pad.lx = s.walkLX;
+        o.pad.ly = s.walkLY;
+    }
+    if (s.beltHolding) { o.pad.lx = o.pad.ly = o.pad.rx = o.pad.ry = 0; }   // a flick's trigger is held: the sticks are the belt's
+    o.skillPanel = false;
+    AcquireSRWLockExclusive(&g_flatLock);
+    g_flatOut = o;
+    g_flatOutMenu = menu ? 1 : 0;
+    ++g_flatCounter;
+    ReleaseSRWLockExclusive(&g_flatLock);
+    g_flatAt.store(GetTickCount64(), std::memory_order_release);
+}
+
 }  // namespace
 
 // -- the public API (direct_input.h) ----------------------------------------------------------------------------------
@@ -359,6 +445,14 @@ void PadPulse(const PadPress& p, uint32_t holdMs) {
     ReleaseSRWLockExclusive(&g_pulseLock);
 }
 
+void PadPulseEnd(const PadPress& p) {
+    const ULONGLONG now = GetTickCount64();
+    AcquireSRWLockExclusive(&g_pulseLock);
+    for (Pulse& q : g_pulses)
+        if (q.until > now && q.buttons == p.buttons && q.lt == p.lt && q.rt == p.rt) q.until = now;
+    ReleaseSRWLockExclusive(&g_pulseLock);
+}
+
 void Take(int hand, uint32_t buttons, Source) {
     if (hand < 0 || hand > 1 || !ViewOk()) return;
     g_take[hand].fetch_or(buttons);
@@ -417,6 +511,8 @@ void LoadSettings(const wchar_t* ini) {
     AcquireSRWLockExclusive(&g_cfgLock);
     g_table = t;
     g_tableChanged = true;
+    g_flatTable = WithoutPanels(t);   // VR F1-F3's controller: the same rebinding, without the skill panel's long press
+    g_flatTableChanged = true;
     ReleaseSRWLockExclusive(&g_cfgLock);
     static int was = -1;
     if ((int)on != was) {
@@ -444,6 +540,15 @@ void LoadSettings(const wchar_t* ini) {
         Log(walkFlat ? "vrcam: direct input - [direct] walk_flat_views=1: in VR F1, F2, F3 the left stick walks the hero when BodyWalk is not running "
                        "(movement only: no attack, button, gesture or panel there; BodyWalk running = its pad as before)"
                      : "vrcam: direct input - [direct] walk_flat_views=0: VR F1, F2, F3 keep BodyWalk's input alone (no walking without it)");
+    }
+    const bool flatCtl = GetPrivateProfileIntW(L"direct", L"flat_controller", 1, ini) != 0;
+    g_flatCtl.store(flatCtl);
+    static int toldCtl = -1;
+    if (on && (int)flatCtl != toldCtl) {
+        toldCtl = (int)flatCtl;
+        Log(flatCtl ? "vrcam: direct input - [direct] flat_controller=1: in VR F1, F2, F3, when BodyWalk is not running, the plugin's own controller is the game's pad - the F4 layout "
+                      "(the right trigger attacks, A picks up, B / X / Y the skills, the triggers, the sticks, the menu button ...) without what only F4 has; BodyWalk running = its pad as before"
+                    : "vrcam: direct input - [direct] flat_controller=0: VR F1, F2, F3 without BodyWalk have no controller buttons (the walk and the belt potions only)");
     }
     const bool beltFlat = GetPrivateProfileIntW(L"direct", L"belt_flick_flat_views", 1, ini) != 0;
     g_beltFlat.store(beltFlat);
@@ -564,8 +669,10 @@ void Feed(D2RVR_XrInput* in, bool menu) {
     if (f4) HideTaken(in, take);   // (another view: nothing is taken from BodyWalk's hands either)
 
     // VR F1-F3: the one thing that acts outside F4 - the left stick's walk (walkflat). Nothing of the layout runs there.
-    if (!f4 && g_on.load() && (g_walkFlat.load() || g_beltFlat.load()) && viewgate::Flat()) FeedWalk(*in, focused, menu);
-    else if (s.walkWas || g_walkAt.load()) EndWalk();
+    if (!f4 && g_on.load() && (g_walkFlat.load() || g_beltFlat.load() || g_flatCtl.load()) && viewgate::Flat()) {
+        FeedWalk(*in, focused, menu);
+        FeedFlatController(*in, focused, menu);
+    } else if (s.walkWas || s.flatWas || g_walkAt.load() || g_flatAt.load() || g_frameAt.load()) EndWalk();
 
     if (!direct) return;
 
@@ -624,7 +731,7 @@ void FlatFacts(walkflat::Inputs* in) {
     in->keyOn = g_walkFlat.load();
     in->directOn = g_on.load();
     in->flatView = viewgate::Flat();
-    const ULONGLONG at = g_walkAt.load(std::memory_order_acquire);
+    const ULONGLONG at = g_frameAt.load(std::memory_order_acquire);
     in->framesFresh = in->directOn && in->flatView && at && GetTickCount64() - at < kStaleMs;
 }
 
@@ -642,7 +749,54 @@ bool WalkRead(WalkOut* out, walkflat::Inputs* in) {
     return true;
 }
 
+// -- the plugin's own controller in VR F1-F3 --------------------------------------------------------------------------
+void SetFlatGate(FlatGate gate) { g_flatGateFn.store(gate); }
+bool FlatControllerOn() { return g_flatCtl.load(); }
+
+bool FlatControllerLive() {
+    if (!g_flatCtl.load() || !g_on.load() || !viewgate::Flat()) return false;
+    const ULONGLONG at = g_flatAt.load(std::memory_order_acquire);
+    if (!at || GetTickCount64() - at >= kStaleMs) return false;
+    const FlatGate gate = g_flatGateFn.load();
+    return gate && gate();
+}
+
+namespace {
+// The other layer's outputs are let go until the next frame (a panel has just opened or closed, vrcam's SetMenuNow knows before the headset frame does).
+bool FlatInStep() {
+    const int now = g_menuNow.load();
+    return now < 0 || now == g_flatOutMenu;
+}
+}  // namespace
+
+bool FlatPadRead(FlatPad* out) {
+    if (!FlatControllerLive()) return false;
+    AcquireSRWLockShared(&g_flatLock);
+    const Pad p = FlatInStep() ? g_flatOut.pad : Pad{};
+    const uint32_t counter = g_flatCounter;
+    ReleaseSRWLockShared(&g_flatLock);
+    *out = {p.buttons, p.lt, p.rt, p.lx, p.ly, p.rx, p.ry, counter};
+    return true;
+}
+
+uint32_t FlatActions() {
+    if (!FlatControllerLive()) return 0;
+    AcquireSRWLockShared(&g_flatLock);
+    const uint32_t a = FlatInStep() ? g_flatOut.actions : 0u;
+    ReleaseSRWLockShared(&g_flatLock);
+    return a;
+}
+
+void FlatCommands(uint64_t out[2]) {
+    out[0] = out[1] = 0;
+    if (!FlatControllerLive()) return;
+    AcquireSRWLockShared(&g_flatLock);
+    if (FlatInStep()) { out[0] = g_flatOut.commands[0]; out[1] = g_flatOut.commands[1]; }
+    ReleaseSRWLockShared(&g_flatLock);
+}
+
 void SetBeltSink(BeltSink sink) { g_beltSink.store(sink); }
+void SetPressSink(PressSink sink) { g_pressSink.store(sink); g_pressHintAt = 0; }
 bool BeltFlickOn() { return g_beltFlat.load(); }
 
 bool PadPulses(uint16_t* buttons, uint8_t* lt, uint8_t* rt) {

@@ -871,6 +871,14 @@ void Tick(const Frame& f) {
 #endif  // D2RVR_FIRST_PERSON
 }
 
+int HostileVerdict(uint32_t id) {
+    switch (Verdicted(id, GetTickCount64())) {
+        case Know::Yes: return 1;
+        case Know::No: return 0;
+        default: return -1;
+    }
+}
+
 bool TargetPending() { return viewgate::F4() && g_press.Pending(GetTickCount64()); }
 
 uintptr_t TargetUnit() {

@@ -55,14 +55,14 @@ void Struck(uint32_t id, Kind how, uint64_t nowMs) {
     g_scene.Struck(id, how, nowMs);
 }
 
-int Take(uint64_t nowMs, const float eyeWorld[3], float (*a)[4], float (*b)[4]) {
-    if (!Wanted()) return 0;
+int Take(uint64_t nowMs, const float eyeWorld[3], float (*a)[4], float (*b)[4], int maxOut) {
+    if (!Wanted() || maxOut <= 0) return 0;
     Capsule caps[kMaxCapsules];
     float upm;
     int n;
     {
         std::lock_guard<std::mutex> lock(g_mutex);
-        n = g_scene.Capsules(nowMs, caps, kMaxCapsules);
+        n = g_scene.Capsules(nowMs, caps, std::min(maxOut, kMaxCapsules));
         upm = g_scene.Upm();
     }
     return n > 0 ? Pack(caps, n, upm, eyeWorld, a, b) : 0;

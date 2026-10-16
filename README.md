@@ -16,7 +16,11 @@ including a free BodyWalk Lite if you don't have BodyWalk.
 **[Open the mod's page on BodyWalkVR](https://bodywalkvr.com/mods/d2r-vr)** - the
 four views in video, the controls and the setup.
 
-**What's new in 0.166:** the features of 0.165 are on by default. The settings
+**What's new in 0.167:** a faster picture in native OpenXR (our own depth, picked
+once), the full controller in VR F1, F2 and F3 without BodyWalk, a shield on the
+forearm, and settings from the fork d2r-pcvr (turning, the Steam Frame's layout,
+vibration for each hand, menus that follow the VR render size). **In 0.166:** the
+features of 0.165 are on by default. The settings
 that come with the mod are now the author's own tuned configuration (0.165 went
 out with the old ones, with everything new off). **In 0.165:** first person on
 native OpenXR grows up. The plugin can read your controllers itself (*Controls without BodyWalk*, a prototype); the
@@ -149,9 +153,9 @@ BodyWalk's Mapping is not needed for them:
 | Grips | nothing on the pad: the belt's potions, the staff's second hand and, with Weapon Weight, the weapon read them |
 
 Every line is in `[direct]` of d2r_vr.ini and can be rebound. In F1, F2 and F3
-(without BodyWalk running) only two things work: the left stick walks the hero, and
-the left trigger held with a flick of a thumbstick drinks a belt potion (left = 1,
-up = 2, right = 3, down = 4).
+(without BodyWalk running) the same controller is the game's gamepad too, without
+first person's skill panel, settings panel and gestures; the left trigger held with a
+flick of a thumbstick drinks a belt potion (left = 1, up = 2, right = 3, down = 4).
 
 **The skill panel and the settings in the headset** (prototype, on by default
 since 0.166; D2R VR Settings > Stereo > Native OpenXR). **Hold the right stick click for half a
@@ -239,7 +243,10 @@ menu panels, the spell resolver and its call sites. So, in 0.165, do reading the
 controllers directly, the skill wheel, the weapon swap over the shoulder, the
 shield's Smite, the item tooltips at once, the controller vibration, hiding the
 plates of ordinary monsters, the T-pose measurement, and the bow's arrow skills
-and bones.
+and bones. And, in 0.167, the turn settings, the Steam Frame's layout, the Smite
+press, the one-press interact, the vibration channels, the menus that wait for the
+headset and follow the VR render size, the depth set at its source, the shield on
+the forearm and our own depth bound once.
 
 ## Licences
 

@@ -232,12 +232,42 @@ inline constexpr Sig kSigs[] = {
     {"UiRightUp", 0x840120, Kind::Code, "48 89 74 24 20 55 48 8D AC 24 E0 FD FF FF 48 81 EC 20 03 00 00 48 8B 05 ?? ?? ?? ?? 48 33 C4 48 89 85 10 02 00 00 48 8B F1 E8 ?? ?? ?? ?? 84 C0 74 07 B0 01 E9 ?? ?? ?? ?? B1 01 E8 ?? ?? ?? ?? 8B 56 08 8B 4E 04 E8 ?? ?? ?? ?? 32 C0 38 05 ?? ?? ?? ??", 0x840120, 0, 0, 0, 0, "48 89 74 24 20 55 48 8D AC 24 E0 FD FF FF 48 81 EC 20 03 00 00", nullptr, "laser pointer in menus", "Laser menus"},
     // UISystem mouse wheel, hooked
     {"UiScroll", 0x840DC0, Kind::Code, "48 89 74 24 20 55 48 8D AC 24 E0 FD FF FF 48 81 EC 20 03 00 00 48 8B 05 ?? ?? ?? ?? 48 33 C4 48 89 85 10 02 00 00 48 8B F1 E8 ?? ?? ?? ?? 84 C0 0F 85 ?? ?? ?? ?? E8 ?? ?? ?? ?? 84 C0", 0x840DC0, 0, 0, 0, 0, "48 89 74 24 20 55 48 8D AC 24 E0 FD FF FF 48 81 EC 20 03 00 00", nullptr, "laser pointer in menus", "Laser menus"},
+    // the game's client-size query (GetClientRect of its window), hooked
+    {"ClientSize", 0x6545D0, Kind::Code, "48 83 EC 38 E8 ?? ?? ?? ?? 48 8D 54 24 20 48 8B C8 E8 ?? ?? ?? ?? 8B 44 24 28 89 44 24 40", 0x6545D0, 0, 0, 0, 0, "48 83 EC 38 E8 ?? ?? ?? ?? 48 8D 54 24 20 48 8B C8", nullptr, "menus and the mouse follow the VR render size", "Laser menus"},
+    // return address of a UI root / layout ClientSize call
+    {"ClientSizeUiRet1", 0x843ED5, Kind::Code, "48 89 44 24 40 8B F0 B8 00 05 00 00 B9 D0 02 00 00 3B F0", 0x843ED5, 0, 0, 0, 0, "48 89 44 24 40 8B F0 B8 00 05 00 00", nullptr, "menus and the mouse follow the VR render size", "Laser menus"},
+    // return address of a UI root / layout ClientSize call
+    {"ClientSizeUiRet2", 0x844195, Kind::Code, "4C 8B C0 48 89 44 24 60 48 8B D8 49 C1 E8 20 45 8B C8 C7 44 24 28 01 00 00 00", 0x844195, 0, 0, 0, 0, "4C 8B C0 48 89 44 24 60", nullptr, "menus and the mouse follow the VR render size", "Laser menus"},
+    // return address of a UI root / layout ClientSize call
+    {"ClientSizeUiRet3", 0x8453A9, Kind::Code, "4C 8D 44 24 40 48 89 44 24 60 41 8B D7 48 C7 44 24 40 00 00 00 00 48 8D 4C 24 50", 0x8453A9, 0, 0, 0, 0, "4C 8D 44 24 40 48 89 44 24 60", nullptr, "menus and the mouse follow the VR render size", "Laser menus"},
+    // return address of a UI root / layout ClientSize call
+    {"ClientSizeUiRet4", 0x846239, Kind::Code, "48 89 44 24 30 B9 00 05 00 00 3B C1 0F 4C C1 B9 D0 02 00 00 89 44 24 30", 0x846239, 0, 0, 0, 0, "48 89 44 24 30 B9 00 05 00 00", nullptr, "menus and the mouse follow the VR render size", "Laser menus"},
+    // return address of a UI layout-global ClientSize call
+    {"ClientSizeUiRet5", 0x14D7E4, Kind::Code, "48 89 84 24 B0 01 00 00 66 44 0F 6E 94 24 B4 01 00 00 45 0F 5B D2", 0x14D7E4, 0, 0, 0, 0, "48 89 84 24 B0 01 00 00", nullptr, "menus and the mouse follow the VR render size", "Laser menus"},
+    // return address of a UI cursor-scale ClientSize call
+    {"ClientSizeUiRet6", 0x14F31D, Kind::Code, "48 89 44 24 40 66 0F 6E 74 24 44 0F 5B F6 E8 ?? ?? ?? ?? 48 C1 E8 20", 0x14F31D, 0, 0, 0, 0, "48 89 44 24 40 66 0F 6E 74 24 44", nullptr, "menus and the mouse follow the VR render size", "Laser menus"},
+    // return address of a UI cursor-scale ClientSize call
+    {"ClientSizeUiRet7", 0x14F943, Kind::Code, "48 89 44 24 20 66 0F 6E 74 24 24 0F 5B F6 E8 ?? ?? ?? ?? 48 C1 E8 20", 0x14F943, 0, 0, 0, 0, "48 89 44 24 20 66 0F 6E 74 24 24", nullptr, "menus and the mouse follow the VR render size", "Laser menus"},
+    // return address of the cursor clamp's height ClientSize call (GetHeight)
+    {"CursorHeightRet", 0x7F4B2, Kind::Code, "48 C1 E8 20 48 83 C4 28 C3 8B 05 ?? ?? ?? ?? 48 83 C4 28 C3", 0x7F4B2, 0, 0, 0, 0, "48 C1 E8 20 48 83 C4 28", nullptr, "menus and the mouse follow the VR render size", "Laser menus"},
+    // return address in SetCursorPosition of GetWidth, which tail-jumps to ClientSize
+    {"CursorWidthRet", 0x14FB2A, Kind::Code, "8B 1D ?? ?? ?? ?? FF C8 33 FF 85 DB 79 04 8B DF EB 05", 0x14FB2A, 0, 0, 0, 0, "8B 1D ?? ?? ?? ?? FF C8", nullptr, "menus and the mouse follow the VR render size", "Laser menus"},
     // call IsControllerLayout in the item tooltip's producer: the result is the queued tooltip's delay flag (return address checked)
     {"TooltipDelay", 0x2C3DCA, Kind::Code, "E8 ?? ?? ?? ?? 4C 8D 44 24 20 88 85 14 01 00 00 48 8D 54 24 21", 0x2C3DCA, 0, 0, 0, 0, "E8 ?? ?? ?? ?? 4C 8D 44 24 20 88 85 14 01 00 00", nullptr, "item tooltips at once under the laser", "Laser menus"},
     // mov ecx, 10h; call KeyState in the tooltip's equipped-item comparison: Shift shows it (return address checked)
     {"TooltipCompare", 0x2C3F07, Kind::Code, "B9 10 00 00 00 E8 ?? ?? ?? ?? 85 C0 75 08 38 87 32 06 00 00 74 72 48 83 7D 80 00", 0x2C3F07, 0, 0, 0, 0, "B9 10 00 00 00 E8 ?? ?? ?? ?? 85 C0 75 08 38 87 32 06 00 00 74 72", nullptr, "item tooltips at once under the laser", "Laser menus"},
     // key-state query (virtual key): GetAsyncKeyState's top bit, hooked
     {"KeyState", 0x120A100, Kind::Code, "48 83 EC 28 FF 15 ?? ?? ?? ?? C1 E8 0F 83 E0 01 48 83 C4 28 C3", 0x120A100, 0, 0, 0, 0, "48 83 EC 28 FF 15 ?? ?? ?? ?? C1 E8 0F 83 E0 01 48 83 C4 28 C3", nullptr, "item tooltips at once under the laser", "Laser menus"},
+    // the frame-constant builder (renderer, frame, camera, time), hooked
+    {"BuildFrame", 0xE3B590, Kind::Code, "4C 8B DC 53 48 81 EC 00 02 00 00 48 8B 05 ?? ?? ?? ?? 48 33 C4", 0xE3B590, 0, 0, 0, 0, "4C 8B DC 53 48 81 EC 00 02 00 00", nullptr, "depth range at the source (depth_fix_mode 2)", "Laser menus"},
+    // lea rcx, [rbx+11A00h]: the renderer's camera constants (checked)
+    {"FrameCamera", 0xE34FF3, Kind::Code, "48 8D 8B 00 1A 01 00 41 0F 45 E8 48 8D 83 C0 1A 01 00 48 89 4C 24 40", 0xE34FF3, 0, 0, 0, 0, "48 8D 8B 00 1A 01 00 41 0F 45 E8", nullptr, "depth range at the source (depth_fix_mode 2)", "Laser menus"},
+    // mov rdi, [rsi+11BB8h]: the frame constants' upload (checked)
+    {"FrameMap", 0xE3B63D, Kind::Code, "48 8B BE B8 1B 01 00 0F 28 0D ?? ?? ?? ?? F3 0F 10 C8 0F 11 0F", 0xE3B63D, 0, 0, 0, 0, "48 8B BE B8 1B 01 00 0F 28 0D ?? ?? ?? ??", nullptr, "depth range at the source (depth_fix_mode 2)", "Laser menus"},
+    // the depth range's two floats loaded in the builder (checked)
+    {"FrameRange", 0xE3BE07, Kind::Code, "F3 41 0F 10 94 24 60 01 00 00 F3 41 0F 10 8C 24 64 01 00 00 0F 28 84 24 10 01 00 00", 0xE3BE07, 0, 0, 0, 0, "F3 41 0F 10 94 24 60 01 00 00 F3 41 0F 10 8C 24 64 01 00 00", nullptr, "depth range at the source (depth_fix_mode 2)", "Laser menus"},
+    // movups [rdi+350h]: word 53 stored (checked)
+    {"FrameStore", 0xE3BE56, Kind::Code, "0F 11 87 50 03 00 00 8B 86 F4 93 00 00 48 69 C8 A0 01 00 00 0F 29 84 24 10 01 00 00", 0xE3BE56, 0, 0, 0, 0, "0F 11 87 50 03 00 00 8B 86 F4 93 00 00", nullptr, "depth range at the source (depth_fix_mode 2)", "Laser menus"},
     // TlsfAllocator 'Renderer Pool' (12 MB), read by its alloc
     {"RendererPool", 0x2810FF0, Kind::Ref, "48 8D 0D ?? ?? ?? ?? FF 50 08 48 8B D8 48 85 C0 75 13", 0xF6F082, 0, 3, 7, 0, nullptr, nullptr, "bigger renderer pool", "Memory pools"},
     // TlsfAllocator 'Entity System Pool' (70 MB), its getter's static

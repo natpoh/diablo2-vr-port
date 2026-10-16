@@ -126,6 +126,16 @@ struct Input {
     // grip[1] then.
     bool shieldFist = false;
     float shieldGrip = -1.0f;
+    // [hands] forearm_twist: the forearm turns with the wrist (vr/forearm_twist.h) - the controller's roll about the forearm, read
+    // against the rig's bind pose, is shared: the forearm bone forearmTwist of it (0..1), a twist bone along the forearm more the nearer
+    // the wrist, the hand the rest. < 0: off (the forearm keeps the animation's roll, as before). vrcam: F4 only.
+    float forearmTwist = -1.0f;
+    // [shield] forearm: the shield on the left arm is strapped to the forearm, not hung on the hand - the rig's own bind pose of its
+    // attach bone against the forearm (no animation, no Weapon Adjust of the weapon in the other hand), turned with the forearm's twist
+    // where it sits, then [shield] x y z (cm) / pitch yaw roll (deg) in the attach bone's own axes. vrcam: F4 only, a shield in the
+    // left slot.
+    bool shieldForearm = false;
+    float shieldAdj[6] = {};
     // [fist] <class>_close / <class>_open, % / 100: how far a free hand closes with the grip
     // squeezed and with it let go, per hero class (kHeroClasses) - the rigs differ: the full
     // fist rolled the paladin's fingers into his palm (2026-10-06).
@@ -260,6 +270,11 @@ bool GripMarks(int side, float grasp[3], float palm[3]);
 // not posed in the last 100 ms.
 struct ShieldPose { float origin[3]; float axis[3]; float player[3]; uint32_t heroGeneration; };
 void WantShield(bool on);
+// [hands] forearm_twist: the rig's forearm twist bones as found (for the log), and each hand's roll about its forearm as last read
+// (degrees; NaN while not twisted). [shield] forearm: 1 strapped to the forearm in the last pose, -1 asked but not (the game hides
+// it, no bind pose), 0 not asked.
+std::string ForearmTwistNote(float roll[2]);
+int ShieldStrapped();
 bool ShieldAttach(ShieldPose* out);
 // The same point in his model space (as his bones are posed): his model matrix puts it in the world.
 bool HeroPalmModel(int side, float palm[3]);

@@ -6,7 +6,7 @@
 //  - the hint under the tile: which control of the player's own controllers presses that pad button in direct input's DEFAULT
 //    layout (vr/direct_layout.h: B = the right hand's B, X = the left hand's first face button, Y = its second, RB = the right grip
 //    with B). The face buttons are named as the controller names them - Touch has A B on the right and X Y on the left, Index has
-//    A B on both - so the hint depends on the interaction profile each hand runs (xr.cpp ReadProfiles). A controller with no face
+//    A B on both, Steam Frame A B on the right and a D-pad's down / up on the left - so the hint depends on the interaction profile each hand runs (xr.cpp ReadProfiles). A controller with no face
 //    buttons (Vive, Windows Mixed Reality, the simple profile) or a profile not known gets no hint on those; A is the layout's right
 //    trigger (every controller has one) and RT no control at all. The caller shows hints only
 //    while direct input is on and its [direct] table is not rebound for those buttons (vr/skill_wheel.cpp): the hint is a statement
@@ -20,13 +20,14 @@
 
 namespace tiles {
 
-enum class Profile : uint8_t { None, Touch, Index, Vive, Wmr, Simple, Other };
+enum class Profile : uint8_t { None, Touch, Index, Vive, Wmr, Simple, Other, Frame };   // (Frame last: the numbers before it stay)
 
 // The interaction profile path the runtime reports for a hand ("/interaction_profiles/oculus/touch_controller"), or "" / null.
 inline Profile ProfileOf(const char* path) {
     if (!path || !*path) return Profile::None;
     if (std::strstr(path, "touch_controller")) return Profile::Touch;     // oculus/ and meta/ (Touch, Touch Plus, Touch Pro)
     if (std::strstr(path, "index_controller")) return Profile::Index;
+    if (std::strstr(path, "frame_controller")) return Profile::Frame;      // Steam Frame's own layout ([openxr] frame_profile, vr/xr_profiles.h)
     if (std::strstr(path, "vive_controller")) return Profile::Vive;
     if (std::strstr(path, "motion_controller")) return Profile::Wmr;
     if (std::strstr(path, "simple_controller")) return Profile::Simple;
@@ -37,6 +38,9 @@ inline Profile ProfileOf(const char* path) {
 inline const char* FaceButton(Profile p, int hand, bool second) {
     if (p == Profile::Touch) return hand == 0 ? (second ? "Y" : "X") : (second ? "B" : "A");
     if (p == Profile::Index) return second ? "B" : "A";
+    // Steam Frame: A B on the right; the left hand's face buttons are its D-pad's down (first) and up (second) - bearstonem/d2r-pcvr's
+    // controller_labels.h (MIT) names them so. Short, to fit a tile's hint ("LT + Left Dpad Dn").
+    if (p == Profile::Frame) return hand == 0 ? (second ? "Dpad Up" : "Dpad Dn") : (second ? "B" : "A");
     return nullptr;
 }
 

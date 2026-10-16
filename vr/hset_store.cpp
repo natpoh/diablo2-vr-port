@@ -14,6 +14,7 @@
 
 #include "hset_store.h"
 #include "ini_txn.h"
+#include "turn_mode.h"
 
 namespace hset::store {
 namespace {
@@ -116,15 +117,29 @@ Snapshot LoadSnapshot(const wchar_t* path) {
         s.file[i] = v;
         s.values[i] = Normalize(i, v);
     }
+    if (s.ready) {   // [turn] smooth / snap: an ini without `smooth` says snap=0 for smooth turning (shared/turn_mode.h)
+        const float snapRaw = Parse(ini::Read(path, kDefs[kKeySnap].section, kDefs[kKeySnap].key), 0.0f);
+        const float smoothKey = Parse(ini::Read(path, kDefs[kKeySmooth].section, kDefs[kKeySmooth].key), -1.0f);
+        const float smooth = turnmode::Smooth(snapRaw, smoothKey) ? 1.0f : 0.0f;
+        s.file[kKeySnap] = snapRaw;                  // as the file has it (0: a legacy "smooth"), what a conflict is judged by
+        s.values[kKeySnap] = Normalize(kKeySnap, turnmode::SnapDegrees(snapRaw));
+        s.file[kKeySmooth] = s.values[kKeySmooth] = smooth;
+    }
     return s;
 }
 
 Result SaveRequest(const wchar_t* path, const Request& r, std::string* why) {
     std::vector<ini::Change> changes;
+    uint32_t write = r.changed;
+    // A new snap angle in an ini that says snap=0 for smooth turning (no `smooth` key) must not turn it into a snap profile:
+    // `smooth` is written with it, as the mode the panel showed. (Switching the mode alone writes `smooth` alone.)
+    if ((write & (1u << kKeySnap)) && !(write & (1u << kKeySmooth))) write |= 1u << kKeySmooth;
     for (int i = 0; i < kCount; ++i)
-        if (r.changed & (1u << i)) {
+        if (write & (1u << i)) {
             const Def& d = kDefs[i];
-            changes.push_back({d.section, d.key, Text(d.def), Text(r.base[i]), Text(r.values[i])});
+            // A key that is missing in the file means what the panel saw when it read it (the default, or for the turn keys what the
+            // legacy rule made of it), so a key that is still missing is no conflict.
+            changes.push_back({d.section, d.key, Text(r.base[i]), Text(r.base[i]), Text(r.values[i])});
         }
     if (changes.empty()) return Result::Saved;
     switch (ini::Commit(path, changes, L".before-headset-menu", why)) {

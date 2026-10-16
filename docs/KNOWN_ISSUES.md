@@ -259,7 +259,7 @@ gestures for the game's attack, throw and weapon swap, but there is no gesture
 for a particular skill (Zeal, say). The skill panel casts a skill from a slot,
 not from a movement. See [ROADMAP.md](ROADMAP.md).
 
-### 16. The new controls and options are for first person (F4) only [repo]
+### 16. The new controls and options are mostly for first person (F4) [repo]
 
 *By design, and open to change.* Everything added after the base mod - Controls
 without BodyWalk, hit by touch, weapon weight, the throws, the bow's draw, the
@@ -267,10 +267,9 @@ skill panel, the wrist medallions, the guards that keep attacks from walking
 the hero - acts in F4 only, so F1, F2, F3 and the flat modes play as they always
 did. The price: in F1 - F3 the controllers are BodyWalk's. Since 0.166 the
 controller's left stick walks the hero there and the left trigger with a flick of a
-thumbstick drinks a belt potion (both without BodyWalk running), but nothing else:
-no attack, button, gesture or panel. For the full controller in F1 - F3 BodyWalk
-has to be running; making the plugin read the controllers fully there is in
-progress for the next update.
+thumbstick drinks a belt potion (both without BodyWalk running); since 0.167 the
+plugin's own controller is the game's gamepad in F1 - F3 too, without first person's
+skill panel, settings panel and gestures (BodyWalk running: its gamepad whole).
 The gate is `vr/view_gate.h` (`viewgate::F4()`).
 
 ### 17. Hit by touch and weapon weight need tuning [repo]

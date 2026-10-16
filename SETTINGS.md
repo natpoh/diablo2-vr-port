@@ -107,11 +107,18 @@ the headset-only ones.
 
 - **Walking (left stick)** - walk where you look, exact mode, reverse, turn
   strength, diagonal correction.
-- **Turning (right stick)** - turning on the right stick, its speed, snap turn
-  in degrees (0 = smooth), reverse.
+- **Turning (right stick)** - turning on the right stick; **smooth turning**
+  on or off (off = one snap per flick), the **smooth turn speed** (10 - 720 °/s),
+  the **snap turn angle** (15 - 180°), reverse. The mode is its own switch, so
+  changing it keeps both the speed and the angle. The same three are in the
+  headset (settings panel > Options). An older d2r_vr.ini that says snap = 0 for
+  smooth turning keeps working as smooth turning.
 - **Mouse and keyboard** - mouse look in the VR views F2 and F4 as well.
 - **Input** - the gamepad straight from BodyWalk, which button *D2R: Inventory*
-  presses, the A button only attacks.
+  presses, the A button only attacks. *Pick up / interact: one thing per press*
+  (VR first person): a press acts on what is under it then and nothing else - a
+  chest opened by a press does not also give you its loot, a hold over a pile
+  takes one item; let go and press again for the next.
 - **Gestures (native OpenXR)** - *Swap weapon sets*: reach a hand behind either
   shoulder and press its grip once, and the game's own *Swap weapons* is pressed;
   which hand (right by default). Off by default. *Draw gesture runes and trails
@@ -131,7 +138,10 @@ the headset-only ones.
   height (both from BodyWalk), or eye separation and depth by hand.
 - **Timing** - pipeline depth: a smoother head turn for a little more delay.
 - **Native OpenXR** - the game itself in the headset: brightness, the flat
-  picture's distance and width, the square window (in VR only: flat mode keeps
+  picture's distance and width (*Menus placed only when the headset is
+  tracked*, on: the picture and a menu's panel follow your gaze until the
+  headset says it is tracked, and come up in front again when the headset's
+  focus returns after a while), the square window (in VR only: flat mode keeps
   the window and resolution you set in the game). *F1 and F3 in real 3D*
   (on): the game on your floor is a diorama standing in your room that you walk
   round and lean over, and the view from above is a window onto the game that
@@ -142,7 +152,10 @@ the headset-only ones.
   clicks and the mouse are untouched. (The *VR render size* - a
   slider from 1024 to 4096 pixels a side, or the headset's own recommendation by
   a tick box, while the game window keeps its size - is on Home, under "In the
-  headset".) *Laser pointer on menus
+  headset", with *Menus and the mouse follow the VR render size* (on): the
+  game's interface is laid out over the whole picture and its mouse reaches
+  all of it, so no menu edge is lost and the main menu's bottom
+  row can be clicked when the window and the picture differ in size.) *Laser pointer on menus
   and panels* (a prototype): point a controller at the menus or a panel and its
   trigger clicks, with the grip held it right-clicks; the other hand's trigger
   and grip are Ctrl and Shift. *Item tooltips at once under the laser*: the
@@ -150,7 +163,18 @@ the headset-only ones.
   Shift. *Controller vibration*: a short pulse in the hand
   when a blow of yours lands, a belt potion is taken or drunk, the laser clicks
   on a menu, or you pick something up or open it (the pulses only watch the
-  game); its strength has a slider. Off: silent.
+  game); its strength has a slider. Off: silent. *Steam Frame controllers:
+  their own layout* (on): when the runtime offers the Frame's controllers as
+  themselves, the left hand's D-pad down and up are its two face buttons (X and
+  Y on a Quest controller) and the left View / right Menu buttons the menu;
+  taken when the headset session starts. *Valve Index: the grip is how hard you
+  squeeze* (off): an Index hand's grip is the handle's force sensor, so a
+  relaxed hand round the handle no longer counts as a squeezed grip.
+  With it, *a channel of its own
+  for each hand* (on: each controller's motor has its own vibration action, so a
+  pulse cannot go to the other hand) and *stop each pulse on time* (on: a pulse
+  is stopped by its own call when its time is up, even while the game loads -
+  some controllers buzzed on past a short pulse).
   - **Controls without BodyWalk** (a prototype, off, VR first person F4 only):
     the plugin reads both controllers itself and gives the game its gamepad, its
     actions and its key commands, so BodyWalk's buttons, gestures and tracking
@@ -162,8 +186,13 @@ the headset-only ones.
     (swap weapon sets, show items). *Quick click of the left stick: show / hide
     the map*. *BodyWalk's walking still walks the hero*: BodyWalk is given your
     head and hands (no buttons), and its left stick - nothing else - is mixed
-    into the controller's own. F1 - F3 and the flat modes keep BodyWalk's
-    controls, as before.
+    into the controller's own. *Play with the controllers in F1, F2, F3 without
+    BodyWalk* (on, from 0.167): in those views the plugin's own controller is the
+    game's gamepad too - the first person layout without its panels: triggers,
+    buttons, both sticks, the game's actions and key commands. With BodyWalk
+    running (its Game Link alive, or its gamepad moving) nothing changes there; a
+    real pad that answers keeps its buttons, ours are added to it. The flat modes
+    keep BodyWalk's controls, as before.
   - **Skill wheel** (a prototype, off, needs Controls without BodyWalk for the
     long press): the controller's skill slots in front of you. *Skill panel
     style*: a **Wheel** of eight wedges, or **Tiles**, a window made like the
@@ -285,7 +314,16 @@ The toolbar while the game lies on your floor, and the item labels.
 ![World](screenshots/settings_09_world.png)
 
 - **Fog** - distance fog, where it starts and where it is full, falloff, a depth
-  blur, the fog colour in caves, the game's own height fog.
+  blur, the fog colour in caves, the game's own height fog. *How that depth is
+  set* (under *The game's effects measure depth from our camera*): in each pass
+  as it is bound (as before), or once a frame where the game makes it (after
+  bearstonem/d2r-pcvr: every pass - fog, ambient occlusion, particles, grass -
+  reads the same depth); compare the two on the act 1 grass and the act 2 town. *Depth for the effects*:
+**Our own, picked once** (the default) - the game's scene depth buffer is picked
+once, kept until it goes away or the window or render size changes, copied for each eye before its
+effects and bound once, so ReShade does not wait for the graphics card at every
+effect pass - or **ReShade's own** (Generic Depth picks it; fine in a window that is
+not square). A line under it says which buffer, how big and why it was last picked.
 - **Render distance** - how many rings of rooms round the hero are drawn, and
   how far models stay visible.
 
@@ -324,6 +362,12 @@ in full in a square window); the log tells the size the game draws at.
 
 ![Weapon Adjust](screenshots/settings_11_weapon_adjust.png)
 
+- **Shield (first person)** - *Shield strapped to the forearm* (on): the shield
+  sits on the left forearm as the rig has it, not on the hand, and turns with the
+  forearm; six sliders move it along and turn it about X, Y and Z. *Forearm turns
+  with the wrist* (on): rolling a controller turns the forearm with it - a little at
+  the elbow, all of it at the wrist - and *Forearm's share of the roll* sets how much
+  the elbow end takes.
 - **Weapon in hand** - follows the weapon your hero holds now; move and turn it
   in the hand, and where the left hand takes a two-handed weapon (one setting
   for all of them).
@@ -353,7 +397,8 @@ in full in a square window); the log tells the size the game draws at.
   with it): a javelin, knife or axe swung through a monster is the game's Throw at
   it, point blank; potions never. *Shield bash casts Smite* (off): with Smite on a
   pad skill slot, a hard bash of the shield through a monster casts one Smite at
-  it. *Direct hit* (experimental, off, offline only): the touch calls the game's
+  it. *Shield bash: the least speed* (0.8 m/s) and *how far the shield moves to start
+  a bash* (8 cm) are the bash's own numbers, apart from hit by touch's. *Direct hit* (experimental, off, offline only): the touch calls the game's
   basic attack itself - no animation, no walk-up, no attack-rate wait. The blade
   is built from the weapon as it is drawn; its length, thickness and direction
   are sliders on the Debug tab, and *Draw the capsules of Hit by touch* shows
@@ -597,7 +642,8 @@ Lightning and Bone Spirit are ticked).
 
 For finding problems: draw the line the left hand takes, draw the weapon's
 axes, log every frame, find who writes the hero matrix. Leave these off to play.
-New, all off: *Draw the capsules of Hit by touch* and the blade's length,
+New, all off: *Draw what casts skills* (the shield bash's capsule, speed marks and trail
+in the headset, and a line in the log of why a bash did or did not count); *Draw the capsules of Hit by touch* and the blade's length,
 thickness and direction (and the thrown kinds' own); *Log what the game does with
 each attack of ours* (`shot_trace`); *Log the long frames and what the plugin
 spent in them* (`frame_trace`) and *Write the plugin's log from a thread of its
