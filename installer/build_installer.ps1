@@ -113,3 +113,14 @@ $version = $m.Matches[0].Groups[1].Value
 Write-Host "D2R VR $version"
 & $iscc "/DModVersion=$version" (Join-Path $PSScriptRoot "D2R_VR_Setup.iss")
 if ($LASTEXITCODE -ne 0) { throw "ISCC failed ($LASTEXITCODE)" }
+
+# Every built installer also lands in <main checkout>\releases (git-ignored), with its SHA-256 beside it -
+# the same folder whichever worktree built it, so the file to upload is never searched for under .claude.
+$common = (& git -C $root rev-parse --path-format=absolute --git-common-dir).Trim()
+$releases = Join-Path (Split-Path $common -Parent) "releases"
+New-Item -ItemType Directory -Force $releases | Out-Null
+$setup = Join-Path $PSScriptRoot "Output\D2R_VR_Setup_v$version.exe"
+Copy-Item $setup $releases -Force
+$hash = (Get-FileHash $setup -Algorithm SHA256).Hash
+Set-Content -Path (Join-Path $releases "D2R_VR_Setup_v$version.exe.sha256") -Value "$hash  D2R_VR_Setup_v$version.exe" -Encoding ascii
+Write-Host "releases: $releases\D2R_VR_Setup_v$version.exe  SHA-256 $hash"

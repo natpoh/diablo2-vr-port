@@ -21,6 +21,7 @@ __pycache__/
 # the installer's staging and its output
 /installer/payload/
 /installer/Output/
+/releases/
 
 # Blizzard's own files, wherever they turn up: the game's formats, and the skies
 # taken from its menus (kept on this machine, never published - 2026-10-05)
