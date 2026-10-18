@@ -10,9 +10,10 @@ glued to the controller.
 
 Later, a hit should land where the blade actually touches the monster.
 
-**Status:** in the game behind a setting, being tested: `[weight] on=1` in
-d2r_vr.ini, or Weapon Adjust > "Weapon weight" in D2R VR Settings (off by
-default). With it on, in F4 with the arms on the controllers:
+**Status:** in the game since 0.165, being tuned: `[weight] on=1` in
+d2r_vr.ini, or Weapon Weight > "Weapons have weight; take and pass them with the
+grip" in D2R VR Authentic Settings (off in the program; on in the settings that
+come with the mod since 0.166). With it on, in F4 with the arms on the controllers:
 
 - a melee weapon held alone is heavy: it lags behind a hard swing, and a
   two-handed one in one hand swings round like a flail - it wants both hands;
@@ -38,12 +39,18 @@ default). With it on, in F4 with the arms on the controllers:
   Only its drawing moves - the weapon stays the game's equipped one - and away it
   strikes nothing.
 
-- `[hands] shoulder_draw` (Settings > Weapon Weight, off by default) makes the shoulders holsters instead (`docs/SHOULDER_DRAW.md`): a weapon let go lies where it
-  fell - never to the back, no grip calls it back from afar - and a grip pressed behind the shoulder of its side draws it into the hand that reached (the left hand
-  at the right shoulder too: a cross draw). The weapon swap is not pressed from the zone then.
+- `[hands] shoulder_draw` (Settings > Weapon Weight > "The shoulders hold your weapons", off in the program, on in the settings that come with the mod) makes the
+  shoulders holsters instead: a weapon let go lies where it fell in the world (it does not walk with the hero), the grip of either hand calls it back while it flies
+  or lies there, after `shoulder_draw_stow_ms` (1000) on the floor it goes to the back, and a grip squeezed behind either shoulder draws it into the hand that
+  reached (a cross draw too). The weapon swap is not pressed from the zone then. With it: the shield follows the sword to the other arm (`shoulder_draw_shield`),
+  the shield is put away and drawn behind the left shoulder (`shoulder_draw_shield_stow`), and a bow or crossbow is put away and drawn behind a shoulder
+  (`shoulder_draw_ranged`, `shoulder_draw_ranged_swap`) - d2r_vr.ini [hands] says how.
 
-An attack is still a gesture: swing fast, and the game strikes its own
-target. The weapon is only drawn where the hands have it.
+With Hit by touch (`[gameplay] melee_touch`, the Strikes tab; on in the settings that
+come with the mod) the blade as drawn picks the target and the moment: the hand that
+carries the weapon swings it, a weapon no hand holds strikes nothing. Without it the
+right trigger attacks (`[direct] right_trigger = action:attack`), and the weapon is only
+drawn where the hands have it.
 
 ## Who takes a hand's grip, and the belt potions (`[belt] grab_nearest`, `[belt] grab_trigger`)
 
@@ -151,7 +158,7 @@ down, a hand shaken for 20 s keeps the weapon finite and near), the old wrists p
 
 ## The hero's strength (`[weight] hero_strength`)
 
-Off by default: every hero then has the same weight. Ticked, the hero's Strength decides how heavy a weapon feels (`vr/hero_strength.h`, pure maths):
+Off in the program (on in the settings that come with the mod): unticked, every hero has the same weight. Ticked, the hero's Strength decides how heavy a weapon feels (`vr/hero_strength.h`, pure maths):
 
 | | |
 |---|---|
@@ -279,7 +286,7 @@ mirrored). 0 is the placement the library derives (the palm's middle on the axis
 The second hand took a weapon the other hand held anywhere within `grab_cm` of its shaft - on a sword's blade as well as its hilt. With the tick a sword's, a dagger's, a scepter's, an axe's or
 a mace's second hand takes it only on the hilt (the haft, for an axe or a mace): from the pommel to the guard and `hiltMargin` (3 cm) past it. A grip beyond takes nothing; `TakeZone`
 (so the belt potions' priority, `vr/grab_priority.h`) says nothing there either, and the press is free for a potion. A staff, a spear, a polearm, a javelin, a wand, a throwing weapon and
-the unnamed kind keep the whole shaft. Unticked (the default): as ever. The first hand and a weapon that lies or falls are not touched; a second hand that slides (a ticked
+the unnamed kind keep the whole shaft. Unticked (the program's default; the settings that come with the mod have it on): as ever. The first hand and a weapon that lies or falls are not touched; a second hand that slides (a ticked
 `slide_second_hand_<kind>`) slides over the whole shaft.
 
 - Where the guard is: the game does not say. The weight model's shape for the kind has the hilt as its first piece (`ShapeOf`: a two-handed sword's handle 36 cm, a one-handed one's 20, a
@@ -298,7 +305,8 @@ the unnamed kind keep the whole shaft. Unticked (the default): as ever. The firs
    lower ceiling on angular speed. Tune them on the bench, by eye.
 2. **A visual mode for the bench:** two weapons side by side on one movement,
    to look at rather than only count.
-3. **Wire it into the game.** In the game, the model would work like this:
+3. **Wire it into the game** - DONE in 0.165 (`vr/weight.cpp`); the hero's
+   Strength since 0.168 (`[weight] hero_strength`, above). The plan was:
    - The hero's hand stands on the virtual grip, not on the controller
      (`vr/skeletons.cpp`).
    - Mass and centre of mass come from the weapon kind. They could be scaled
@@ -311,7 +319,7 @@ the unnamed kind keep the whole shaft. Unticked (the default): as ever. The firs
      weapon along.
    - There is a "feel the weight" slider, which can switch it off. A hand that
      is not where you feel it can make people sick.
-4. **Hit by touch.** The blade is a capsule along the weapon's bone. Monster
+4. **Hit by touch** - DONE in 0.165 (`[gameplay] melee_touch`, the Strikes tab). The plan was: the blade is a capsule along the weapon's bone. Monster
    hit boxes are capsules on their skeletons: vrcam already hooks every
    model's skeleton pose. A swept test between frames finds the touch. The
    hard part is getting from a skeleton back to the game's unit, so the

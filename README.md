@@ -93,7 +93,7 @@ In Diablo II: Resurrected, Options > Video:
 | NVIDIA DLSS | On or off - both work in stereo: each eye gets its own DLSS (in *Stereo - one pass, two pictures* the two eyes share one) |
 | Framerate Cap | 180 (90 for each eye) |
 | **Anti-Aliasing** | FXAA or MSAA - **not TAA**: it builds each frame from the ones before it and mixes the two eyes |
-| Ambient Occlusion Quality | Medium |
+| Ambient Occlusion Quality | Any, Max included. It was Medium against dark ground at grazing angles; since 0.164 the game's ambient occlusion reads its depth from our camera (`[render] depth_fix`), and nothing in the mod depends on its quality |
 
 ![Options > Video](screenshots/game_video_settings.jpg)
 
@@ -128,12 +128,114 @@ round the game** colour (pure black or green). In Virtual Desktop turn on
 passthrough with that colour as its colour key: the background is cut out and
 the game stands in your real room.
 
-## Controls in F1 - F3
+## First start in the headset
 
-From above, from behind and on the floor the game is played as with a gamepad:
-BodyWalk turns the VR controllers into an Xbox pad.
+From 0.171, the first time you stand in the world in first person (F4) on native
+OpenXR with *Controls without BodyWalk*, a guide comes up in front of you:
 
-| On the pad | On the VR controllers |
+1. **Measure yourself.** Without a stored measurement it offers the T-pose
+   measurement first: push the right stick **up** to measure now, **down** to
+   go on without it. Stand upright, arms out sideways at shoulder height, let go
+   of both triggers, then squeeze both and hold still until it says *Saved*
+   (the right B cancels). Your eye height sets the world's scale, your arm span
+   fits the hero's arms.
+2. **What to press for what.** Five short pages: walking and fighting, what
+   opens the inventory, the map, the pause menu and the skill panel, the
+   settings in the headset, the belt, weapons and the bow, and the F views.
+   Right stick **up**: the next page, **down**: back, **held up a second**:
+   close.
+
+The guide presses nothing and takes no button: the game runs on behind it (the
+right stick's up and down do nothing in the world), and it hides while a menu,
+the skill panel or the settings panel is open. Finished or closed, it does not
+come back by itself. To see it again: the settings in the headset, page **Body**,
+*First-start guide*; or untick *First-start guide seen* in D2R VR Authentic
+Settings > Body. *Show the first-start guide* unticked keeps it away
+(`[onboarding]` in d2r_vr.ini). The idea of offering the measurement at the first
+start is from bearstonem's [d2r-pcvr](https://github.com/bearstonem/d2r-pcvr) (MIT).
+
+## Controls in F4 (first person)
+
+> **Preview.** F4 is an early look, not a finished way to play the game: the
+> weapons are not calibrated yet, so how a weapon sits in the hands and where
+> it aims may be off for many of them. Weapon Adjust in D2R VR Authentic Settings lets you
+> fix one by hand meanwhile.
+
+On native OpenXR the plugin reads the controllers itself (**Controls without
+BodyWalk**, D2R VR Authentic Settings > Stereo > Native OpenXR, on in the settings
+that come with the mod). The layout in the world, as it comes:
+
+| Control | Press | Held half a second | With the same hand's grip held |
+|---|---|---|---|
+| Left stick | walk | | |
+| Right stick | left / right: turn (smooth, 180 degrees a second; snap turning in Controls) | | |
+| Right trigger | attack (but see *Hit by touch* below) | | |
+| Right A | pick up, open, talk | | |
+| Right B | the game's skill button B | | RB, the fourth skill button |
+| Left X, left Y | the game's skill buttons X and Y | | |
+| Left trigger | LT: held, B X Y RB are the second row of skills | | |
+| Right stick click | swap weapon sets I / II | the skill panel (again: closes it) | |
+| Left stick click | the items on the ground named (Alt) while held; a quick click: the map | the inventory | recentre ("ahead" is where you look) |
+| Menu button (PS VR2: the right controller's Options) | the inventory | the pause menu (Esc) | the map |
+| Grips | nothing on the pad: they take a belt potion, hold the weapon, take a bow's string, a staff's second hand, the shoulders | | |
+
+In a menu the controllers are the game's own gamepad (A B X Y, the sticks and
+their clicks, the grips as bumpers, the triggers, the menu button as Start), and
+the right controller's laser is the mouse: point and pull the trigger. Every line
+of the layout is in `[direct]` of d2r_vr.ini and can be rebound - by hand, from
+the lists in D2R VR Authentic Settings > Controls > Buttons of the controllers, or
+on the Left and Right pages of the settings in the headset. With *Controls without
+BodyWalk* off, BodyWalk's Mapping makes the controls, as before 0.165.
+
+**Hit by touch** (Strikes tab, or the Melee page in the headset; on in the settings
+that come with the mod). A sword, axe or mace hits the monster you swing it
+through, and its trigger does not attack (*Trigger does not attack*); a bow and a
+crossbow keep the trigger. The blade has to move at 6 m/s and 15 cm to count, in
+those settings. A hard bash of the shield casts Smite when Smite is on one of the
+skill buttons.
+
+**The skill panel** (*Skill wheel* in D2R VR Authentic Settings > Stereo > Native
+OpenXR, in the tiles' look). **Hold the right stick click for half a second** and it
+opens in front of you; a short click is still the weapon swap, and the same hold
+closes it (B, Y or Menu too). Point a controller at a plate and pull the trigger:
+from then on that trigger casts its skill. EDIT SKILLS -> a plate -> a skill puts a
+skill you have on it. *Skill panel: skills on
+the right trigger and on A* (off) makes the right trigger and A the game's own RT
+and A skill slots.
+
+**The settings in the headset** (*Settings panel in the headset*, UI: F4 body >
+Menus). With the skill panel in the tiles' look they are its **SETTINGS** tab: the
+long press opens the window on the tab you used last, and both grips squeezed for
+a moment, then a click of a thumbstick, open it on SETTINGS. Flip the pages - View,
+Options, Video, Body, Life, Look, HUD, Belt, Melee, Left, Right - with a flick of a
+thumbstick left or right, a tap of a grip (left back, right on) or the arrow at the
+window's edge; point and pull the trigger to change a row, then Apply. View has
+the game view's F1 - F4 buttons, Body the T-pose measurement and the first-start
+guide.
+
+**The belt.** The belt's potions hang at your hips. A hand at a bottle lights it
+and the grip takes it; bring it to your mouth and tip it, and you drink; let it go
+anywhere else and it goes back. Where the belt hangs: the Belt page in the headset.
+Life and mana sit on your wrists.
+
+**Weapons, shield, bow, throws.** A weapon has weight: hold it with the grip; let go
+with both grips and it falls (a grip calls it back), and a second on the floor it
+hangs on your back - a grip behind either shoulder draws it again. An empty hand's
+grip behind the left shoulder puts the shield away and draws it. The bow: take the
+string with the free hand's trigger or grip, pull back, let go; while the string is
+drawn B loads the next arrow skill and A the one before, or point the free hand's
+trigger at one of the energy orbs along the bow. The crossbow shoots with the
+trigger. A javelin or throwing weapon: hold it with the grip, swing and let go; with
+a javelin, the trigger tapped behind a shoulder picks the throw's skill (right hand
+the next, left the one before). Spells go where your hand, wand or staff points.
+
+**In F1, F2 and F3** the same controller is the game's gamepad when BodyWalk is not
+running (*Controls without BodyWalk* on): the same layout without the skill panel,
+the pause menu, the gestures and the hand's aim; the left stick walks, and the left
+trigger held with a flick of a thumbstick drinks a belt potion (left = 1, up = 2,
+right = 3, down = 4). With BodyWalk running, its gamepad is the gamepad:
+
+| On the pad | On the VR controllers (BodyWalk) |
 |---|---|
 | Left stick (walk) | Left stick |
 | D-pad up / down / left / right | Hold the left grip + left stick up / down / left / right |
@@ -143,79 +245,35 @@ BodyWalk turns the VR controllers into an Xbox pad.
 
 Everything else is where the game's own gamepad layout puts it.
 
-## Controls in F4 (first person)
+**The F keys.** F1 - F4 on the keyboard switch the view (the game window in focus),
+F12 goes to the next one and F11 recentres; in the headset the View page has F1 - F4.
 
-> **Preview.** F4 is an early look, not a finished way to play the game: the
-> weapons are not calibrated yet, so how a weapon sits in the hands and where
-> it aims may be off for many of them. Weapon Adjust in D2R VR Authentic Settings lets you
-> fix one by hand meanwhile.
-
-| Action | How |
-|---|---|
-| Potions | On your belt: reach for them - set up in BodyWalk's Mapping as gestures |
-| Bow, crossbow, fireballs and other spells | Right trigger - the shot goes where your hand points |
-| Sword, axe and other melee | Swing it: a Strike Zone in BodyWalk's Mapping |
-| Inventory | Hold the left stick down |
-| Map | Click the left stick |
-| Swap weapon sets | Click the right stick |
-| Reset the centre | Hold the right stick down |
-
-With **Controls without BodyWalk** (D2R VR Authentic Settings > Stereo > Native OpenXR,
-on by default since 0.166, a prototype) the plugin reads the controllers itself in F4, and
-BodyWalk's Mapping is not needed for them:
-
-| Control | Does |
-|---|---|
-| Left stick, right stick | walk, turn |
-| Right trigger | attack |
-| Right A | pick up, open, talk |
-| Right B, left X, left Y, left trigger | the game's skill buttons B, X, Y and LT |
-| Right stick click | swap weapon sets; held half a second: the skill panel |
-| Left stick click | show items (Alt); a quick click: the map; held half a second: the inventory |
-| Menu button (PS VR2: the right controller's Options) | the inventory; held half a second: the pause menu (Esc) |
-| Grips | nothing on the pad: the belt's potions, the staff's second hand and, with Weapon Weight, the weapon read them |
-
-Every line is in `[direct]` of d2r_vr.ini and can be rebound - by hand, or from a list
-in D2R VR Authentic Settings > Controls > Buttons of the controllers. In F1, F2 and F3
-(without BodyWalk running) the same controller is the game's gamepad too, without
-first person's skill panel, settings panel and gestures; the left trigger held with a
-flick of a thumbstick drinks a belt potion (left = 1, up = 2, right = 3, down = 4).
-
-**The skill panel and the settings in the headset** (prototype, on by default
-since 0.166; D2R VR Authentic Settings > Stereo > Native OpenXR). **Hold the right stick click for half a
-second** and the skill panel opens in front of you - a short click is still the
-weapon swap; hold it again to close the panel. Point a controller at a slot and
-pull the trigger: from then on that trigger casts it. EDIT SKILLS puts a skill
-into a slot. With the tiles' look and *Settings panel in the headset* ticked, the
-window has a second tab, **Settings**, and the same hold opens it on the tab you
-used last. Flip along Skills and the Settings pages View, Options, Video and Body
-with a flick of a thumbstick, a tap of a grip (left back, right on) or the arrow at
-the window's edge. Without *Controls without BodyWalk* the panel opens with the
-left grip held and a click of the right stick.
-
-**Height calibration** (prototype; D2R VR Authentic Settings > Body > *Measure my height and
-arm span*, or *Calibrate body* on the headset panel's Body page). Stand upright
-with your arms out level at shoulder height (a T-pose), let go of both triggers,
-then squeeze both and hold still for 1.2 seconds; a panel in the headset leads
-you, and the right B cancels. It saves your eye height and arm span (`[calibration]`
-in d2r_vr.ini): the eye height sets the world's scale and the span fits the hero's
-arms, while the hands stay 1:1 with the controllers. *Use the measured height and
-arm span* switches it on and off; *Forget the measurement* clears it. It needs the
-headset's floor (a room set up) and first person (F4).
+**Height calibration** (D2R VR Authentic Settings > Body > *Measure my height and
+arm span*, or *Calibrate body* on the headset settings' Body page, or the
+first-start guide). Stand upright with your arms out level at shoulder height (a
+T-pose), let go of both triggers, then squeeze both and hold still for 1.2 seconds;
+a panel in the headset leads you, and the right B cancels. It saves your eye height
+and arm span (`[calibration]` in d2r_vr.ini): the eye height sets the world's scale
+and the span fits the hero's arms, while the hands stay 1:1 with the controllers.
+*Use the measured height and arm span* switches it on and off; *Forget the
+measurement* clears it. It needs the headset's floor (a room set up) and first
+person (F4).
 
 ## Requirements
 
 - Diablo II: Resurrected 3.3.93787 under D2RLoader 1.3.1 (other builds need
   their addresses checked; the plugin says so in its log)
 - ReShade with add-on support, its Generic Depth add-on on
-- For the headset: BodyWalk 1.78 or later with FlatVR and its Game Link plugin (Setup puts it in).
-  Native OpenXR with *Controls without BodyWalk* needs no BodyWalk
+- For the headset: native OpenXR with *Controls without BodyWalk* needs no BodyWalk; for
+  FlatVR, BodyWalk 1.79 or later with its Game Link plugin (Setup puts it in; 1.83 for FlatVR
+  with the plugin's own layout, *Game Link direct*)
 
 ## Settings
 
-`D2R_VR_Settings.exe`, next to `D2R.exe` (Setup also puts a **D2R VR** shortcut on
-the desktop). Changes apply at once while the game runs. Start the game from it
-too: Home > **Launch Diablo II (D2RLoader)** - no need to open the game's folder.
+**D2R VR Authentic Settings** (`D2R_VR_Settings.exe`, next to `D2R.exe`; Setup puts a
+shortcut of that name on the desktop and in the Start menu). Most changes apply at once
+while the game runs. Start the game from it too: Home > **START** - no need to open the
+game's folder.
 Every tab, with a picture and what it is for: [SETTINGS.md](SETTINGS.md).
 
 ![D2R VR Authentic Settings](screenshots/settings_00_home.png)

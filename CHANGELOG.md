@@ -1,5 +1,23 @@
 # What's new in D2R VR
 
+## 0.171 (in work)
+
+- **A first-start guide in the headset** ([onboarding], D2R VR Authentic Settings > Body > First-start guide). The first time you stand in the world
+  in first person (F4) on native OpenXR with Controls without BodyWalk, a panel in front of you offers the T-pose measurement (when none is stored:
+  the right stick up measures, down goes on), then five short pages of what to press to open what: walking and fighting, the inventory, the map,
+  the pause menu, the skill panel, the settings in the headset, the belt, weapons, the bow and the F views. The right stick up turns the page,
+  down goes back, held up a second closes it. It presses nothing and takes no button (the game never gets the right stick, and the turn is its
+  left / right only), the game runs on behind it, and it hides while a menu, the skill panel, the settings panel or the measurement is up.
+  Finished or closed it is done ([onboarding] done=1); the headset settings' Body page has a *First-start guide* button to see it again, and
+  *Show the first-start guide* unticked keeps it away. An ini from before 0.171 counts as done when a measurement is stored. The idea of
+  offering the measurement at the first start is bearstonem/d2r-pcvr's (MIT); the flow is vr/first_start.h (first_start_test).
+- **The texts checked against the code** (docs/text_audit_0.171.md): the tooltips of D2R VR Authentic Settings, the comments of d2r_vr.ini,
+  README, SETTINGS.md and docs/. Among them: the hero's own effects (Bone Armor) say they do not work yet; the game's Ambient Occlusion can
+  be Max (since 0.164 it reads its depth from our camera, and nothing depends on Medium); the controls in README are the plugin's own layout
+  as it is now; a Quality preset says that it switches Native OpenXR off; tabs that no longer exist (Bow, Javelin, Hands) are named as they
+  are now. Corrections to the notes below: in 0.170 "Bow tab > A spell's aim distance" is Weapon Adjust > Aim distance by the arm, and the
+  hero's own effects are off in the settings that come with the mod; in 0.166 Quick strike is on the Strikes tab.
+
 ## 0.170
 
 The main points (details below and in docs/d2rloader_mod.md):
