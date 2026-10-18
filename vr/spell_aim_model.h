@@ -9,8 +9,10 @@
 //     carried by [weight] - the drawn weapon lags, sags and slides (vr/aim_source.h), so not that: the shaft toward the tip as the carrying hand's
 //                      grip holds it, turned by that controller (weight::AimInfo::shaft) - the same weapon axis, fixed by the grip. Grip.
 //                      Both hands on it (test-54: "with both hands the ray follows the hand that took it first - it must go along the vector
-//                      between the hands, where the staff looks"): from the rear hand to the front one - the front being the side the grip's
-//                      shaft points to. Hands.
+//                      between the hands, where the staff looks"): the staff as the weight model holds it between the two grips - its butt to
+//                      its tip (weight::ShaftEnds), from the tip. Not the line between the two CONTROLLERS (0.170: "with both hands the ray goes
+//                      off to the side, not along the staff"): each grip sits a fist's offset from its controller, turned with it, so with
+//                      the hands near each other that line ran tens of degrees off the drawn staff. Hands.
 //   otherwise, the casting hand as drawn (the rig's hand bone and its first knuckles):
 //     the fingers - wrist -> middle knuckle - while they lie within the old rule's 0.7 of level (as HandRay's knuckles). Fingers.
 //     the palm - out of it - when the fingers point up or down (a hand raised, palm to the target). Palm.
@@ -35,7 +37,7 @@ enum class Src { None, Weapon, Grip, Hands, Fingers, Palm };
 
 // sin 5 degrees: a line steeper than this (its part on the ground shorter) has no heading the game can take (d2r-pcvr's dead zone)
 constexpr float kSteepSin = 0.0871557f;
-// both hands on a staff: nearer than this (metres) the two give no line - the carrying hand's grip aims
+// both hands on a staff: a drawn shaft shorter than this (metres, butt to tip) gives no line - the carrying hand's grip aims
 constexpr float kHandsMinM = 0.05f;
 // the fingers count as level while |their up part| is below this - HandRay's own rule for the knuckles (-Y) against -Z
 constexpr float kLevelY = 0.7f;
@@ -45,9 +47,10 @@ struct In {
     // [weight] carries it: the grip's shaft toward the tip, in the head's turn-only frame (x right, y up, z back), and the controller it starts at
     bool weightCarries = false;
     float gripDir[3] = {0, 0, -1}, gripFrom[3] = {};
-    // [weight]: both hands hold it, both tracked - the two controllers (same frame)
+    // [weight]: both hands hold it, both tracked - and the staff between them as the weight model draws it: its butt and its tip (same frame)
     bool bothHands = false;
-    float handAt[2][3] = {};
+    bool shaftOk = false;
+    float shaftButt[3] = {}, shaftTip[3] = {};
     // the weapon as the skeleton hook drew it: its attach bone's origin and +Y (head frame, metres from the eyes)
     bool weaponOk = false;
     float weaponOrigin[3] = {}, weaponTip[3] = {0, 1, 0};
@@ -84,13 +87,11 @@ inline Out Choose(const In& in) {
         return true;
     };
     if (in.caster) {   // (upright, or not posed lately: the hand that holds it aims)
-        if (in.weightCarries && in.bothHands) {   // along the staff between the hands, toward the side the grip's shaft points to
-            float d[3], back[3], front[3];
-            for (int i = 0; i < 3; ++i) { d[i] = in.handAt[1][i] - in.handAt[0][i]; back[i] = in.handAt[0][i]; front[i] = in.handAt[1][i]; }
-            if (d[0] * in.gripDir[0] + d[1] * in.gripDir[1] + d[2] * in.gripDir[2] < 0.0f)
-                for (int i = 0; i < 3; ++i) { d[i] = -d[i]; front[i] = back[i]; }
+        if (in.weightCarries && in.bothHands && in.shaftOk) {   // the staff as drawn between the two grips, butt -> tip, from its tip
+            float d[3];
+            for (int i = 0; i < 3; ++i) d[i] = in.shaftTip[i] - in.shaftButt[i];
             const float l = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
-            if (l >= kHandsMinM && take(Src::Hands, front, d, "both hands on it: from the rear hand to the front one")) return o;
+            if (Finite3(in.shaftButt) && l >= kHandsMinM && take(Src::Hands, in.shaftTip, d, "both hands on it: the staff as drawn between the grips, butt to tip")) return o;
         }
         if (in.weightCarries) {
             if (take(Src::Grip, in.gripFrom, in.gripDir, "[weight] carries it: its shaft toward the tip as the grip holds it")) return o;
@@ -114,7 +115,7 @@ inline const char* Name(Src s) {
     switch (s) {
         case Src::Weapon: return "the weapon as drawn";
         case Src::Grip: return "the weapon's grip ([weight])";
-        case Src::Hands: return "the staff between both hands ([weight])";
+        case Src::Hands: return "the staff as drawn between both hands ([weight])";
         case Src::Fingers: return "the drawn hand's fingers";
         case Src::Palm: return "the drawn palm";
         default: return "the controller (the old aim)";

@@ -334,18 +334,18 @@ all?), or whether the game overwrites it afterwards (its per-frame queue sets it
 alpha after our tick). Start in `vr/own_effects.cpp` (`Tick`) and
 `docs/own_effects_recon.md`; the log lines are "own effects: ...".
 
-### 26. A staff in both hands: the spell's ray starts at the wrist and goes to the side [repo]
+### 26. A staff in both hands: the spell's ray started at the wrist and went to the side [repo] - FIXED in 0.171
 
-**What you see:** with a staff (or another weapon the spell is aimed along) held in both hands, the
-ray of the spell starts at the wrist instead of the palm and points off to the side instead of along
-the staff.
+**What it was:** with a staff (or another weapon the spell is aimed along) held in both hands, the ray of
+the spell started at the wrist instead of the palm and pointed off to the side instead of along the staff.
+A regression from the 0.170 grip changes: the two-handed hold took the line between the two controllers, and
+each grip sits a fist's width from its controller, so with the hands near each other that line ran far off
+the drawn staff.
 
-**Where it stands:** a regression from the 0.170 grip changes. It is in the 0.170 build as it is and
-will be fixed in 0.171.
-
-**To fix, in 0.171:** the aim source for the two-handed staff (`vr/aim_source.h`, `vr/aim_point.h`)
-and the staff's pose with the second hand (`vr/skeletons.cpp`); `aim_source_test` and
-`staff_flat_test` are the places to extend first.
+**What was fixed (0.171):** the aim now follows the staff as the weight model draws it between the grips, butt
+to tip (`weight::ShaftEnds`), and starts at its tip; with no drawn shaft lately, or one under 5 cm, the carrying
+hand's grip aims as before. One hand on the staff is unchanged. `vr/spell_aim_model.h`, `vr/vrcam.cpp`
+(`SpellModelAim`), `spell_aim_model_test` (43 checks). To check in the game.
 
 ---
 

@@ -4405,11 +4405,11 @@ spellmodel::Out SpellModelAim() {
                 hand = wi.hand;
                 aimsource::TurnBy(wi.hand == 0 ? sh->rightRot : sh->leftRot, wi.shaft, in.gripDir);
                 memcpy(in.gripFrom, wi.hand == 0 ? sh->rightHand : sh->leftHand, sizeof in.gripFrom);
-                // both hands on it, both tracked: the staff between them (from the rear hand to the front one), not the first hand's grip alone
+                // both hands on it, both tracked: the staff as the weight model draws it between the two grips (butt -> tip), not the first hand's
+                // grip alone, nor the line between the controllers (each grip sits a fist's offset from its controller: 0.170, "the ray goes off to the side")
                 if (wi.holds[0] && wi.holds[1] && (sh->handsValid & 3u) == 3u) {
                     in.bothHands = true;
-                    memcpy(in.handAt[0], sh->rightHand, sizeof in.handAt[0]);
-                    memcpy(in.handAt[1], sh->leftHand, sizeof in.handAt[1]);
+                    in.shaftOk = weight::ShaftEnds(in.shaftButt, in.shaftTip);
                 }
             }
         } else if (cp.weapon) {
@@ -17193,7 +17193,7 @@ void LoadReShade() {
              "an antivirus may also block it", err == ERROR_DLL_INIT_FAILED ? "its start said no" : "it could not be loaded");
 }
 
-static const char g_info_version[] = "0.170.0";
+static const char g_info_version[] = "0.171.0";
 
 // Who this is. D2RLoader prints "<name> <version> by <author>" for every plugin, and d2r-pcvr (a fork of our 0.152) carries the
 // same id, name and author as we did - "vrcam ... by BodyWalkVR" told a support log nothing. The id stays (the log file
