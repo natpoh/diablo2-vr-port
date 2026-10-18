@@ -27,6 +27,8 @@
 //     can go) start over: the dwell, and any press in progress, are void until the grip is let go.
 #pragma once
 
+#include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 
@@ -36,6 +38,43 @@ namespace shoulderswap {
 constexpr float kAbsXMin = 0.10f, kAbsXMax = 0.48f;
 constexpr float kYMin = -0.38f, kYMax = 0.16f;
 constexpr float kZMin = 0.025f, kZMax = 0.38f;
+
+// The reach as a box, one shared by everything that asks (the swap gesture, the weapon's draw, the shield's put-away, the bow's put-away): the fixed numbers above - unless
+// [hands] shoulder_zone_body is on: then BodyZone's, the one that fits the body. Serg's hand behind his neck (x -0.07, y 0.02, z 0.26) was outside it: 10 cm from the middle is
+// the zone's edge, and a hand reaching back over the shoulder passes nearer the spine than that.
+struct Zone {
+    float absXMin = kAbsXMin, absXMax = kAbsXMax, yMin = kYMin, yMax = kYMax, zMin = kZMin, zMax = kZMax;
+};
+inline std::atomic<float>* ZoneCells() {
+    static std::atomic<float> cells[6] = {kAbsXMin, kAbsXMax, kYMin, kYMax, kZMin, kZMax};
+    return cells;
+}
+inline void SetZone(const Zone& z) {
+    std::atomic<float>* c = ZoneCells();
+    c[0].store(z.absXMin); c[1].store(z.absXMax); c[2].store(z.yMin); c[3].store(z.yMax); c[4].store(z.zMin); c[5].store(z.zMax);
+}
+inline Zone GetZone() {
+    const std::atomic<float>* c = ZoneCells();
+    Zone z;
+    z.absXMin = c[0].load(); z.absXMax = c[1].load(); z.yMin = c[2].load(); z.yMax = c[3].load(); z.zMin = c[4].load(); z.zMax = c[5].load();
+    return z;
+}
+inline void ResetZone() { SetZone(Zone{}); }
+// The zone that fits a body: the fixed one was made for a standing eye height of about kBodyRefEyeM; the box scales with the eye height (the measured one when the T-pose measurement is used,
+// else the user's height setting) - the shoulders, the neck, the reach back all go with it - clamped to a body that is not a child's nor a giant's - and it begins at the SPINE (x 0) instead of
+// 10 cm out: the left side's is the left shoulder's, the right side's the right one's, the line between them the middle of the back.
+constexpr float kBodyRefEyeM = 1.65f;
+inline Zone BodyZone(float eyeHeightM) {
+    const float r = std::isfinite(eyeHeightM) && eyeHeightM > 0.0f ? std::clamp(eyeHeightM / kBodyRefEyeM, 0.85f, 1.25f) : 1.0f;
+    Zone z;
+    z.absXMin = 0.0f;
+    z.absXMax = kAbsXMax * r;
+    z.yMin = kYMin * r;
+    z.yMax = kYMax * r;
+    z.zMin = kZMin * r;
+    z.zMax = kZMax * r;
+    return z;
+}
 // The grip, 0..1: down above kGripDown, up again below kGripUp.
 constexpr float kGripDown = 0.55f, kGripUp = 0.20f;
 constexpr double kDwellS = 0.12;      // in the reach this long before the press
@@ -48,8 +87,9 @@ inline bool Finite3(const float p[3]) { return std::isfinite(p[0]) && std::isfin
 // Is the hand (x right, y up, z back, from the head, the head's turn frame) behind a shoulder?
 inline bool Near(const float p[3]) {
     if (!Finite3(p)) return false;
+    const Zone z = GetZone();
     const float ax = std::fabs(p[0]);
-    return ax >= kAbsXMin && ax <= kAbsXMax && p[1] >= kYMin && p[1] <= kYMax && p[2] >= kZMin && p[2] <= kZMax;
+    return ax >= z.absXMin && ax <= z.absXMax && p[1] >= z.yMin && p[1] <= z.yMax && p[2] >= z.zMin && p[2] <= z.zMax;
 }
 
 // The head's turn alone - yaw about the vertical, no pitch or roll - from a room pose, the way

@@ -74,4 +74,14 @@ bool RawGrips(float out[2]) {
     return true;
 }
 
+bool RawTriggers(float out[2]) {
+    if (!weight::Placed()) return false;
+    if (GetTickCount64() - g_counterAt.load(std::memory_order_relaxed) > kStaleMs) return false;
+    directinput::Frame f;
+    if (!directinput::Latest(&f) || f.version != directinput::kVersion) return false;
+    out[0] = std::clamp(f.hand[1].trigger, 0.0f, 1.0f);   // right
+    out[1] = std::clamp(f.hand[0].trigger, 0.0f, 1.0f);   // left
+    return true;
+}
+
 }  // namespace weightwire

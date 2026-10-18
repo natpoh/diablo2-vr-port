@@ -50,6 +50,16 @@ struct OrbSpot {
     float rotXDeg = 0.0f, rotYDeg = 0.0f, rotZDeg = 0.0f;
 };
 
+// The medallion on the wrist that wears the shield (vr/hand_orbs.h Centre, Step): the shield covers the back of the wrist, so the ball rolls round the hand's axis to the other
+// side of it - the inner side - and rolls back when the shield leaves that arm. These are the coefficients of that place, ON TOP of the wrist's own OrbSpot (so a change of the wrist's
+// place moves this one too): `turnDeg` is the roll, the offsets are in the wrist's frame AS ROLLED (so `upCm` is always out of the skin where the ball now sits), the three angles are
+// added to the wrist's own turn. Anatomical like OrbSpot: the same numbers on either wrist are the mirror image (the shield is on the left arm, or on the right one after a hand swap).
+struct OrbUnderShield {
+    float turnDeg = 180.0f;   // the roll about the hand's axis: + sends the back of the hand toward the thumb, - toward the little finger; 180 is the opposite side of the wrist
+    float alongCm = 0.0f, sideCm = 0.0f, upCm = 0.0f;
+    float rotXDeg = 0.0f, rotYDeg = 0.0f, rotZDeg = 0.0f;
+};
+
 // The hero classes as the game's model folders name them (skel::kHeroClasses, vr/skeletons.h: the index skel::HeroClass() gives, -1 when it is not known). `key` is the ini's suffix.
 constexpr int kHeroCount = 8;
 inline const char* HeroKey(int c) {
@@ -78,6 +88,10 @@ struct Config {
     OrbSpot orbLeft;              // [hud] hand_vitals_orb_left_along_cm / _side_cm / _up_cm: the ball on the left wrist (the older _up_cm / _along_cm keys are its start)
     OrbSpot orbRight;             // [hud] hand_vitals_orb_right_along_cm / _side_cm / _up_cm: the ball on the right wrist
     bool orbMirror = false;       // [hud] hand_vitals_orb_mirror: the right wrist takes the left's numbers (its own are kept, not used)
+    // The wrist that wears a shield turns its ball to the other side of the wrist (VR F4 only): [hud] hand_vitals_orb_under_shield, and its coefficients hand_vitals_orb_shield_turn_deg /
+    // _along_cm / _side_cm / _up_cm / _rot_x_deg / _rot_y_deg / _rot_z_deg (OrbUnderShield). Unticked: the ball stays on the back of the hand under a shield, as before.
+    bool orbUnderShield = true;
+    OrbUnderShield orbShield;
     // The wrist's bone and the arm's model differ with the class, so one depth (Z) fits one hero: an offset per hero class, cm, added to the Z of BOTH wrists (whatever their own
     // Z, the mirror or not) while that hero plays - [hud] hand_vitals_orb_z_cm_<class> (amazon, sorceress, ...). 0 = the class has no value of its own: the wrists' Z as it is.
     float orbClassZCm[kHeroCount] = {};
@@ -130,6 +144,13 @@ inline Config Sanitized(Config c) {
         s->rotYDeg = Clamp(s->rotYDeg, kOrbRotMin, kOrbRotMax, 0.0f);
         s->rotZDeg = Clamp(s->rotZDeg, kOrbRotMin, kOrbRotMax, 0.0f);
     }
+    c.orbShield.turnDeg = Clamp(c.orbShield.turnDeg, kOrbRotMin, kOrbRotMax, 180.0f);
+    c.orbShield.alongCm = Clamp(c.orbShield.alongCm, kOrbSpotMin, kOrbSpotMax, 0.0f);
+    c.orbShield.sideCm = Clamp(c.orbShield.sideCm, kOrbSpotMin, kOrbSpotMax, 0.0f);
+    c.orbShield.upCm = Clamp(c.orbShield.upCm, kOrbSpotMin, kOrbSpotMax, 0.0f);
+    c.orbShield.rotXDeg = Clamp(c.orbShield.rotXDeg, kOrbRotMin, kOrbRotMax, 0.0f);
+    c.orbShield.rotYDeg = Clamp(c.orbShield.rotYDeg, kOrbRotMin, kOrbRotMax, 0.0f);
+    c.orbShield.rotZDeg = Clamp(c.orbShield.rotZDeg, kOrbRotMin, kOrbRotMax, 0.0f);
     for (float& z : c.orbClassZCm) z = Clamp(z, -kOrbClassZMax, kOrbClassZMax, 0.0f);
     c.orbOpacity = Clamp(c.orbOpacity, kOrbOpacityMin, kOrbOpacityMax, 0.95f);
     c.orbFill = c.orbFill < kFillElbow || c.orbFill > kFillWorldUp ? kFillOutOfHand : c.orbFill;

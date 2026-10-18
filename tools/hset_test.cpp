@@ -10,6 +10,7 @@
 #endif
 #include <windows.h>
 
+#include <intrin.h>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
@@ -20,6 +21,9 @@
 #include <vector>
 
 #include "hset_panel.h"
+#include "hset_life.h"
+#include "hset_scene.h"
+#include "low_hp.h"
 #include "view_gate.h"
 #include "hset_paint.h"
 #include "hset_store.h"
@@ -154,12 +158,17 @@ static void TestDefs() {
         CHECK(seen.insert(std::wstring(d.section) + L"/" + d.key).second, "a key twice in the table");
         CHECK(d.page == kNoPage || (d.page >= 0 && d.page < kMaxPages), "page in range, or no row (a hand-drawn page's key)");
         if (d.page >= 0 && d.page < kMaxPages) ++perPage[d.page];
+        if (d.type == DefType::Choice) {   // a pick of the key bindings' list: 0 .. Custom, whatever the table's range columns say (TestKeys)
+            CHECK(IsBindKey(i) && d.page != kNoPage && d.label[0] && d.detail[0], "a choice is a binding row, with a label and a detail");
+            CHECK(Normalize(i, NAN) == d.def && Normalize(i, -5.0f) == 0.0f && Normalize(i, 1000.0f) == (float)keys::CustomPick(), "a pick is clamped to the list and Custom");
+            continue;
+        }
         CHECK(d.min <= d.def && d.def <= d.max, "default inside its range");
         CHECK(d.max > d.min && d.step > 0.0f, "range and step make sense");
         CHECK(Normalize(i, d.def) == d.def || std::fabs(Normalize(i, d.def) - d.def) < 1e-4f, "the default is on the grid");
         CHECK(Normalize(i, Normalize(i, 1.2345f)) == Normalize(i, 1.2345f), "Normalize is idempotent");
         CHECK(Normalize(i, NAN) == d.def && Normalize(i, INFINITY) == d.def, "not a number is the default");
-        CHECK(Normalize(i, d.min - 100.0f) == d.min && Normalize(i, d.max + 100.0f) == d.max, "clamped to the range");
+        CHECK(std::fabs(Normalize(i, d.min - 100.0f) - d.min) < 1e-4f && std::fabs(Normalize(i, d.max + 100.0f) - d.max) < 1e-4f, "clamped to the range");
         if (IsToggle(d)) CHECK(d.off[0] && d.on[0], "a toggle has two faces");
         else CHECK(d.fmt[0] == '%', "a stepper has a format");
         CHECK(d.label[0] && d.detail[0], "label and detail");
@@ -168,7 +177,7 @@ static void TestDefs() {
     CHECK(perPage[kPageView] <= kRowsPerPage - 1, "the first page keeps its last row for the game view buttons");
     CHECK(RowsOn(kPageView) > 0 && RowsOn(kPageOptions) > 0, "the two table pages have rows");
     CHECK(RowsOn(kPageVideo) == 0 && RowsOn(kPageBody) == 0, "the two hand-drawn pages have no table rows (they draw their own)");
-    CHECK(PageCount() == 4 && PageCount() <= kMaxPages, "four pages, they fit the tabs");
+    CHECK(PageCount() == 10 && PageCount() <= kMaxPages, "ten pages (View, Options, Video, Body, Life, Look, HUD, Belt, Left, Right), they fit the tabs");
     // the keys the hand-drawn pages work on are in the table, with no row, named as the plugin reads them
     const int hidden[6] = {kKeyMode, kKeyPx, kKeyUse, kKeyVersion, kKeyEye, kKeySpan};
     for (int k : hidden) CHECK(k >= 0 && k < kCount && kDefs[k].page == kNoPage, "a hand-drawn page's key has no row");
@@ -273,7 +282,7 @@ static void TestModel() {
     n.Click({Kind::Change, md, -1});
     n.Click({Kind::Change, md, -1});
     Action sv = n.Click({Kind::Apply, -1, 0});
-    CHECK(sv.what == Do::Save && sv.request.changed == (1u << md), "only the changed key goes");
+    CHECK(sv.what == Do::Save && sv.request.changed == Bit(md), "only the changed key goes");
     CHECK(std::fabs(sv.request.base[md] - 2.5f) < 1e-4f && std::fabs(sv.request.values[md] - 2.3f) < 1e-4f, "base is the file's, values the draft");
     CHECK(sv.request.sequence != 0, "a sequence number");
     // the answer
@@ -526,7 +535,7 @@ static void TestClicks() {
         CHECK(std::fabs(r.c.model.Get()[md] - (before + kDefs[md].step)) < 1e-4f, "plus moved the draft by a step");
         CHECK(r.c.model.Dirty(), "dirty");
         FrameOut o = r.Click(1, kApply);
-        CHECK(o.action.what == Do::Save && o.action.request.changed == (1u << md), "Apply hands over only the changed key");
+        CHECK(o.action.what == Do::Save && o.action.request.changed == Bit(md), "Apply hands over only the changed key");
         CHECK(r.c.model.Busy(), "waiting for the answer");
         // the trigger's down state never reaches the game
         r.PullTrigger(1, true);
@@ -806,7 +815,7 @@ static Request Req(std::initializer_list<std::pair<int, float>> edits, const Sna
     Request r;
     r.base = s.file;
     r.values = s.values;
-    for (auto& e : edits) { r.values[e.first] = e.second; r.changed |= 1u << e.first; }
+    for (auto& e : edits) { r.values[e.first] = e.second; r.changed |= Bit(e.first); }
     r.sequence = 1;
     return r;
 }
@@ -1005,7 +1014,6 @@ static void TestPaint() {
 }
 
 // -- 10. the Video page ------------------------------------------------------------------------------------
-static constexpr uint32_t Bit(int key) { return 1u << key; }
 static Snapshot SnapWith(std::initializer_list<std::pair<int, double>> v, bool ready = true) {
     Snapshot s = Snap(ready);
     for (auto& e : v) s.values[e.first] = s.file[e.first] = (float)e.second;
@@ -1105,7 +1113,7 @@ static void TestVideoPure() {
 
 static void TestVideoModel() {
     using namespace hset::video;
-    const uint32_t both = Bit(kKeyMode) | Bit(kKeyPx);
+    const Mask both = Bit(kKeyMode) | Bit(kKeyPx);
     {   // the window's own size -> 2048: only the side changes (the mode is 0 already)
         Model m = OnPage(Snap(), kPageVideo);
         CHECK(m.page == kPageVideo && m.DraftPick() == Pick{} && !m.Dirty() && !m.VideoEdited(), "opens on the file's choice");
@@ -1968,6 +1976,58 @@ static void Dump(const std::string& dir) {
     bn.Click({Kind::Tab, kPageBody, 0});
     Paint(bn, {}, px);
     WriteBmp(dir + "/hset_page3_body_none.bmp", px);
+    // the Belt page with a change waiting, under the beam
+    Model bb;
+    bb.Open(Snap());
+    bb.Click({Kind::Tab, kPageBelt, 0});
+    bb.Click({Kind::Change, KeyAt(kPageBelt, 2), 1});
+    Centre(kInc(3), &u, &v);
+    Paint(bb, HitTest(kPageBelt, u, v), px);
+    WriteBmp(dir + "/hset_page4_belt.bmp", px);
+    // the Left / Right pages: a made-up set of picks, one change waiting on the Left page, one line left as the file has it (Custom) on the Right
+    Snapshot ks = Snap();
+    const int shipped[kBindCount] = {19, 2, 3, 6, 3, 7, 1, 2, 13, 10, 9, 3};
+    for (int slot = 0; slot < kBindCount; ++slot) ks.values[kKeyBindFirst + slot] = ks.file[kKeyBindFirst + slot] = (float)shipped[slot];
+    ks.values[kKeyBindFirst + 7] = ks.file[kKeyBindFirst + 7] = (float)keys::CustomPick();
+    ks.bind[7] = "pad:LT, pad:X";
+    ks.values[kKeyDirectOn] = ks.file[kKeyDirectOn] = 1.0f;
+    Model kl;
+    kl.Open(ks);
+    kl.Click({Kind::Tab, kPageKeysL, 0});
+    kl.Click({Kind::Change, kKeyBindFirst + 5, 1});
+    Centre(kInc(5), &u, &v);
+    Paint(kl, HitTest(kPageKeysL, u, v), px);
+    WriteBmp(dir + "/hset_page5_left.bmp", px);
+    Model kr;
+    kr.Open(ks);
+    kr.Click({Kind::Tab, kPageKeysR, 0});
+    Paint(kr, {}, px);
+    WriteBmp(dir + "/hset_page6_right.bmp", px);
+
+    // the low-life vignette's pages: as shipped, and with a few rows changed and not applied yet
+    Model lm;
+    lm.Open(Snap());
+    lm.Click({Kind::Tab, kPageLife, 0});
+    Paint(lm, {}, px);
+    WriteBmp(dir + "/hset_page4_life_clean.bmp", px);
+    lm.Click({Kind::Change, IndexOf(L"hud", L"low_hp_vignette"), 1});
+    lm.Click({Kind::Change, IndexOf(L"hud", L"low_hp_threshold"), 1});
+    lm.Click({Kind::Change, IndexOf(L"hud", L"low_hp_radius"), 1});
+    Centre(kInc(2), &u, &v);
+    Paint(lm, HitTest(kPageLife, u, v), px);
+    WriteBmp(dir + "/hset_page4_life_edited.bmp", px);
+    lm.Click({Kind::Tab, kPageLook, 0});
+    lm.Click({Kind::Change, IndexOf(L"hud", L"low_hp_haptics"), 1});
+    Centre(kToggle(3), &u, &v);
+    Paint(lm, HitTest(kPageLook, u, v), px);
+    WriteBmp(dir + "/hset_page5_look.bmp", px);
+
+    // the HUD page: the toolbar type, the monster's bar over its head and its gap, the plate's height, the ordinary plates
+    Model hm;
+    hm.Open(Snap());
+    hm.Click({Kind::Tab, kPageHud, 0});
+    Paint(hm, {}, px);
+    WriteBmp(dir + "/hset_page6_hud.bmp", px);
 }
 
 // -- 11. [turn] smooth / snap / speed ---------------------------------------------------------------------------
@@ -2103,6 +2163,848 @@ static void TestTurn() {
     CHECK(found == 3, "the three rows are on the page");
 }
 
+// -- 12. The Belt page, the live keys ----------------------------------------------------------------------------------------------
+// The belt's keys are D2R VR Settings' own ([hands] belt_models_*, belt_grab_cm): the panel writes the same keys, a moment after each change
+// (Def::live), where the plugin follows the ini as it does for the sliders there.
+static void TestBelt() {
+    CHECK(StepDecimals(0.01f) == 2 && StepDecimals(0.05f) == 2 && StepDecimals(0.5f) == 1 && StepDecimals(0.02f) == 2 && StepDecimals(0.0001f) == 4 && StepDecimals(5.0f) == 0 && StepDecimals(15.0f) == 0 && StepDecimals(1.0f) == 0, "a step's decimals");
+    {   // on a grid that starts below zero a step is no float noise: the written text is the clean number
+        const int across = KeyOf(L"belt_models_across");
+        CHECK(Normalize(across, 0.0f + 0.01f) == 0.01f && Normalize(across, -0.3f) == -0.3f && Normalize(across, 0.3f) == 0.3f && Normalize(across, 0.004f) == 0.0f, "-0.3 + 31 * 0.01 is 0.01");
+    }
+
+    // the table
+    const char* const beltKeys[6] = {"belt_models_up", "belt_models_ahead", "belt_models_across", "belt_models_turn", "belt_grab_cm", "grab_trigger"};
+    CHECK(RowsOn(kPageBelt) == 6, "six rows on the Belt page");
+    for (int r = 0; r < 6; ++r) {
+        const int bk = KeyAt(kPageBelt, r);
+        CHECK(bk >= 0 && !wcscmp(kDefs[bk].section, r == 5 ? L"belt" : L"hands") && kDefs[bk].live, "a Belt row: [hands] (the last, the two-button take, [belt]), live");
+        char name[48];
+        snprintf(name, sizeof name, "%ls", kDefs[bk].key);
+        CHECK(!strcmp(name, beltKeys[r]), "the Belt page's keys in their order");
+    }
+    CHECK(kDefs[kKeyBeltOn].page == kNoPage && !kDefs[kKeyBeltOn].live && IsToggle(kDefs[kKeyBeltOn]), "belt_models: the Belt page's note, not live");
+    int live = 0;
+    for (int i = 0; i < kCount; ++i) live += kDefs[i].live ? 1 : 0;
+    CHECK(live == 6 && kLiveMask != 0 && (kLiveMask & Bit(KeyOf(L"brightness"))) == 0 && (kLiveMask & Bit(kKeySmooth)) == 0, "six live keys, the belt's - not the others");
+    CHECK(kCount <= 64, "the masks are 64 bits");
+    CHECK(kDefs[KeyAt(kPageBelt, 0)].min == 0.3f && kDefs[KeyAt(kPageBelt, 4)].min == 4.0f && kDefs[KeyAt(kPageBelt, 4)].max == 30.0f && kDefs[KeyAt(kPageBelt, 4)].def == 12.0f, "the belt's ranges are D2R VR Settings'");
+    CHECK(IsToggle(kDefs[KeyAt(kPageBelt, 5)]) && kDefs[KeyAt(kPageBelt, 5)].def == 0.0f && kKeyDirectOn >= 0, "the two-button take is a tick, off as the plugin has it ([belt] grab_trigger)");
+    for (int i = 0; i < kCount; ++i)   // a default is on its grid (what a missing key shows is what the file means)
+        CHECK(std::fabs(Normalize(i, kDefs[i].def) - kDefs[i].def) < 1e-4f, "every default is on its grid");
+
+    // the tabs: apart, inside the atlas, every one hit
+    for (int i = 0; i < kPageCount; ++i) {
+        CHECK(Inside(kTab(i)), "a tab inside the atlas");
+        if (i + 1 < kPageCount) CHECK(!Overlap(kTab(i), kTab(i + 1)), "tabs apart");
+        float u, v;
+        Centre(kTab(i), &u, &v);
+        CHECK((HitTest(kPageView, u, v) == Hit{Kind::Tab, i, 0}), "every tab is hit");
+    }
+    for (int r = 0; r < 6; ++r) {   // minus and plus of every row of the Belt page (the tick: the whole row is one button)
+        const int key = KeyAt(kPageBelt, r);
+        float u, v;
+        if (IsToggle(kDefs[key])) {
+            Centre(kToggle(r), &u, &v);
+            CHECK((HitTest(kPageBelt, u, v) == Hit{Kind::Change, key, 1}), "the tick");
+            continue;
+        }
+        Centre(kDec(r), &u, &v);
+        CHECK((HitTest(kPageBelt, u, v) == Hit{Kind::Change, key, -1}), "minus");
+        Centre(kInc(r), &u, &v);
+        CHECK((HitTest(kPageBelt, u, v) == Hit{Kind::Change, key, 1}), "plus");
+    }
+
+    // live: written by themselves
+    {
+        Snapshot s = Snap();
+        Model m = OnPage(s, kPageBelt);
+        const int up = KeyAt(kPageBelt, 0);
+        CHECK(m.Live(1000.0).what == Do::Nothing && !m.Dirty(), "nothing changed, nothing to write");
+        m.Click({Kind::Change, up, 1});
+        CHECK(m.Dirty() && m.LiveOnly(), "a live change is a live-only draft");
+        CHECK(m.Live(1000.0).what == Do::Nothing && m.Live(1200.0).what == Do::Nothing, "not at once: it waits for the change to settle");
+        const Action a = m.Live(1000.0 + Model::kLiveSettleMs + 1.0);
+        CHECK(a.what == Do::Save && a.request.changed == Bit(up) && a.request.sequence != 0, "then only that key goes");
+        CHECK(m.Busy() && m.Live(5000.0).what == Do::Nothing, "one at a time");
+        Snapshot ans = s;
+        ans.values[up] = ans.file[up] = s.values[up] + 0.01f;
+        ans.sequence = a.request.sequence;
+        ans.result = Result::Saved;
+        m.Observe(ans);
+        CHECK(!m.Busy() && !m.Dirty() && m.result == Result::Saved, "Saved: clean");
+        CHECK(m.Live(9000.0).what == Do::Nothing, "and quiet");
+    }
+    {   // a held button keeps changing: written at the latest kLiveMaxMs after the first change
+        Snapshot s = Snap();
+        Model m = OnPage(s, kPageBelt);
+        const int up = KeyAt(kPageBelt, 0);
+        double t = 2000.0;
+        bool saved = false;
+        double savedAt = 0;
+        m.Click({Kind::Change, up, 1});
+        for (int i = 0; i < 20 && !saved; ++i) {
+            t += 110.0;
+            m.Click({Kind::Change, up, 1});
+            const Action a = m.Live(t);
+            if (a.what == Do::Save) { saved = true; savedAt = t; CHECK(a.request.values[up] > s.values[up] + 0.015f, "it carries what was changed so far"); }
+        }
+        CHECK(saved && savedAt - 2110.0 <= Model::kLiveMaxMs + 120.0, "a held button is written while it is held, not only after");
+    }
+    {   // a non-live change waits for Apply; the live one goes alone
+        Model m = OnPage(Snap(), kPageBelt);
+        const int up = KeyAt(kPageBelt, 0), br = KeyOf(L"brightness");
+        m.Click({Kind::Tab, kPageView, 0});
+        m.Click({Kind::Change, br, 1});
+        m.Click({Kind::Tab, kPageBelt, 0});
+        m.Click({Kind::Change, up, 1});
+        CHECK(m.Dirty() && !m.LiveOnly(), "a brightness change too: not live-only");
+        m.Live(100.0);
+        const Action a = m.Live(100.0 + Model::kLiveSettleMs + 1.0);
+        CHECK(a.what == Do::Save && a.request.changed == Bit(up), "the live key goes, brightness is not in it");
+        Snapshot ans = Snap();
+        ans.values[up] = ans.file[up] = Snap().values[up] + 0.01f;
+        ans.sequence = a.request.sequence;
+        ans.result = Result::Saved;
+        m.Observe(ans);
+        CHECK(m.Dirty() && m.Edited(br) && !m.Edited(up), "brightness stays in the draft, waiting for Apply");
+        CHECK(m.Click({Kind::Apply, -1, 0}).request.changed == Bit(br), "and Apply writes only that");
+    }
+    {   // not ready (no ini): nothing is written
+        Model m;
+        m.Open(Snap(false));
+        m.Click({Kind::Tab, kPageBelt, 0});
+        m.Click({Kind::Change, KeyAt(kPageBelt, 0), 1});
+        CHECK(!m.Dirty() && m.Live(1000.0).what == Do::Nothing && m.Live(5000.0).what == Do::Nothing, "no ini, no edits, no writes");
+    }
+    {   // the panel of its own: a change of a live key comes out of Step as a Save by itself
+        Rig r;
+        r.Open();
+        r.Click(1, kTab(kPageBelt));
+        const int up = KeyAt(kPageBelt, 0);
+        r.Click(1, kInc(0));
+        CHECK(r.c.model.Dirty() && r.c.model.LiveOnly() && r.c.model.page == kPageBelt, "a belt change waiting in the panel of its own");
+        bool saved = false;
+        for (int i = 0; i < 60 && !saved; ++i) {
+            const FrameOut o = r.Step();
+            if (o.action.what == Do::Save) {
+                saved = true;
+                CHECK(o.action.request.changed == Bit(up), "only that key");
+            }
+        }
+        CHECK(saved, "the panel of its own writes a live key by itself");
+    }
+
+    // acceleration: a held stepper on a wide range goes faster after a while; a narrow one never does
+    {
+        Model m = OnPage(Snap(), kPageView);
+        const int wide = KeyAt(kPageView, 0), br = KeyOf(L"brightness");   // the panel distance: 75 steps
+        CHECK(Wide({Kind::Change, wide, 1}) && Wide({Kind::Change, KeyAt(kPageBelt, 2), 1}) && !Wide({Kind::Change, br, 1}) && !Wide({Kind::Change, kKeySmooth, 1}) && !Wide({Kind::Tab, 1, 0}),
+              "wide ranges accelerate, narrow ones and toggles do not");
+        Clicker c;
+        const Hit hold{Kind::Change, wide, 1};
+        double t = 100.0;
+        const float v0 = m.Get()[wide];
+        c.Step(m, hold, true, true, true, true, 500.0f, t);   // the press: one step
+        CHECK(std::fabs(m.Get()[wide] - (v0 + kDefs[wide].step)) < 1e-4f, "one step at the press");
+        float last = m.Get()[wide], biggest = 0.0f;
+        for (int i = 0; i < 40; ++i) {
+            t += kRepeatMs;
+            if (i == 0) t = 100.0 + kRepeatFirstMs;
+            c.Step(m, hold, true, false, true, true, 500.0f, t);
+            biggest = std::max(biggest, m.Get()[wide] - last);
+            last = m.Get()[wide];
+        }
+        CHECK(biggest >= 4.9f * kDefs[wide].step && last <= kDefs[wide].max, "after ten repeats it goes five steps at a time");
+        Clicker n;
+        Model b = OnPage(Snap(), kPageView);
+        const Hit nb{Kind::Change, br, 1};
+        const float b0 = b.Get()[br];
+        double t2 = 100.0;
+        n.Step(b, nb, true, true, true, true, 500.0f, t2);
+        t2 = 100.0 + kRepeatFirstMs;
+        float lastB = b.Get()[br], bigB = 0.0f;
+        for (int i = 0; i < 20; ++i) {
+            n.Step(b, nb, true, false, true, true, 500.0f, t2);
+            bigB = std::max(bigB, b.Get()[br] - lastB);
+            lastB = b.Get()[br];
+            t2 += kRepeatMs;
+        }
+        CHECK(bigB <= kDefs[br].step + 1e-4f && lastB > b0, "a narrow range keeps its step");
+    }
+
+    // the store: the belt's keys in the file
+    {
+        const std::wstring path = g_dir + L"\\belt.ini";
+        const std::wstring backup = path + L".before-headset-menu";
+        DeleteFileW(backup.c_str());
+        static const char kBelt[] =
+            "; keep\r\n[hands]\r\nbelt_models=1\r\nbelt_models_up=0.63\r\nbelt_models_ahead=0.14\r\nbelt_models_arc=31\r\nbelt_models_scale=0.62\r\nbelt_grab_cm=20\r\n"
+            "[other]\r\nx=1\r\n";
+        Spit(path, kBelt);
+        const Snapshot s0 = store::LoadSnapshot(path.c_str());
+        CHECK(std::fabs(s0.values[KeyAt(kPageBelt, 0)] - 0.63f) < 1e-4f && std::fabs(s0.values[KeyAt(kPageBelt, 3)]) < 1e-4f && s0.values[kKeyBeltOn] == 1.0f &&
+                  std::fabs(s0.values[KeyAt(kPageBelt, 4)] - 20.0f) < 1e-4f,
+              "the belt's keys and belt_models are read (a missing belt_models_turn is 0)");
+        Model bm;
+        bm.Open(s0);
+        bm.Click({Kind::Tab, kPageBelt, 0});
+        const int across = KeyAt(kPageBelt, 2), turn = KeyAt(kPageBelt, 3), grab = KeyAt(kPageBelt, 4);
+        bm.Click({Kind::Change, across, 1});
+        bm.Click({Kind::Change, turn, -1});
+        bm.Click({Kind::Change, grab, -1});
+        bm.Click({Kind::Change, grab, -1});
+        bm.Live(10.0);
+        const Action ba = bm.Live(10.0 + Model::kLiveSettleMs + 1.0);
+        CHECK(ba.what == Do::Save && ba.request.changed == (Bit(across) | Bit(turn) | Bit(grab)), "three live keys together");
+        std::string why;
+        CHECK(store::SaveRequest(path.c_str(), ba.request, &why) == Result::Saved, "saved");
+        CHECK(ini::Read(path.c_str(), L"hands", L"belt_models_across").text == L"0.01" && ini::Read(path.c_str(), L"hands", L"belt_models_turn").text == L"-5" &&
+                  ini::Read(path.c_str(), L"hands", L"belt_grab_cm").text == L"18", "belt_models_across 0.01, belt_models_turn -5, belt_grab_cm 18");
+        CHECK(ini::Read(path.c_str(), L"hands", L"belt_models_up").text == L"0.63" && ini::Read(path.c_str(), L"other", L"x").text == L"1", "the keys not touched are as they were");
+        CHECK(Slurp(path).find("; keep") != std::string::npos && Exists(backup) && Slurp(backup) == std::string(kBelt), "comments kept, the original backed up");
+        // the file changed outside after the panel read it: a conflict for that key
+        const Snapshot s1 = store::LoadSnapshot(path.c_str());
+        Model c;
+        c.Open(s1);
+        c.Click({Kind::Tab, kPageBelt, 0});
+        c.Click({Kind::Change, KeyAt(kPageBelt, 0), 1});
+        c.Live(10.0);
+        const Action ca = c.Live(10.0 + Model::kLiveSettleMs + 1.0);
+        WritePrivateProfileStringW(L"hands", L"belt_models_up", L"0.7", path.c_str());
+        WritePrivateProfileStringW(nullptr, nullptr, nullptr, path.c_str());
+        CHECK(store::SaveRequest(path.c_str(), ca.request) == Result::Conflict, "the belt's height was changed outside: a conflict");
+        CHECK(TmpFiles() == 0, "no temp file left");
+    }
+    // the two-button take: [belt] grab_trigger, a tick of its own section, written live like the sliders
+    {
+        const std::wstring path = g_dir + L"\\belt_trigger.ini";
+        Spit(path, "[hands]\r\nbelt_models=1\r\n[belt]\r\ngrab_nearest=1\r\n");
+        const Snapshot s0 = store::LoadSnapshot(path.c_str());
+        CHECK(s0.values[kKeyGrabTrigger] == 0.0f, "missing: off, as the plugin has it");
+        Model tm;
+        tm.Open(s0);
+        tm.Click({Kind::Tab, kPageBelt, 0});
+        tm.Click({Kind::Change, kKeyGrabTrigger, 1});
+        CHECK(tm.Get()[kKeyGrabTrigger] == 1.0f && tm.LiveOnly(), "one click switches it on, a live change");
+        tm.Live(10.0);
+        const Action ta = tm.Live(10.0 + Model::kLiveSettleMs + 1.0);
+        CHECK(ta.what == Do::Save && ta.request.changed == Bit(kKeyGrabTrigger), "it is written by itself, alone");
+        CHECK(store::SaveRequest(path.c_str(), ta.request) == Result::Saved && ini::Read(path.c_str(), L"belt", L"grab_trigger").text == L"1" &&
+                  ini::Read(path.c_str(), L"belt", L"grab_nearest").text == L"1", "grab_trigger=1 in [belt], the neighbour untouched");
+        // the line under the page: without the plugin's own controls the trigger is not read
+        Snapshot on = Snap();
+        on.values[kKeyGrabTrigger] = on.file[kKeyGrabTrigger] = 1.0f;
+        on.values[kKeyDirectOn] = on.file[kKeyDirectOn] = 0.0f;
+        CHECK(std::string(StatusText(OnPage(on, kPageBelt))).find("Controls without BodyWalk") != std::string::npos, "trigger + grip with the plugin's controls off: the page says it needs them");
+        on.values[kKeyDirectOn] = on.file[kKeyDirectOn] = 1.0f;
+        CHECK(std::string(StatusText(OnPage(on, kPageBelt))).find("Each change applies by itself") != std::string::npos, "and with them on, the usual line");
+    }
+
+    // the pictures: every page painted, all different; the Belt page's line says its changes apply by themselves
+    {
+        std::vector<std::vector<uint32_t>> pages(kPageCount);
+        for (int p = 0; p < kPageCount; ++p) {
+            Model m = OnPage(Snap(), p);
+            CHECK(Paint(m, {}, pages[p]) && pages[p].size() == (size_t)kW * kH, "a page painted");
+        }
+        for (int a = 0; a < kPageCount; ++a)
+            for (int b = a + 1; b < kPageCount; ++b) CHECK(pages[a] != pages[b], "every page looks different");
+        CHECK(std::string(StatusText(OnPage(Snap(), kPageBelt))).find("Each change applies by itself") != std::string::npos, "the Belt page says its changes apply by themselves");
+        Snapshot off = Snap();
+        off.values[kKeyBeltOn] = off.file[kKeyBeltOn] = 0.0f;
+        CHECK(std::string(StatusText(OnPage(off, kPageBelt))).find("off") != std::string::npos, "and when the belt's potions are off, that they are");
+    }
+}
+
+// -- 13. The Left / Right pages: key bindings -------------------------------------------------------------------------------------
+// A row is a line of [direct]; its value a pick of the list D2R VR Settings shows (vr/direct_remap.h), read and written by that list's own Current /
+// Choose, so the two programs cannot disagree about a line. What is tested here is the panel around it.
+static int PickOf(const char* ini) {
+    const auto& picks = keys::rm::Picks();
+    for (size_t i = 0; i < picks.size(); ++i)
+        if (!strcmp(picks[i].ini, ini)) return (int)i;
+    return -1;
+}
+static std::string DirectText(const std::wstring& path, const wchar_t* key, bool* present = nullptr) {
+    const ini::Text t = ini::Read(path.c_str(), L"direct", key);
+    if (present) *present = t.present;
+    return std::string(t.text.begin(), t.text.end());
+}
+static int KeyRow(int slot) { return kKeyBindFirst + slot; }
+
+static void TestKeys() {
+    const int nPicks = keys::PickCount();
+    // the table: twelve rows on two pages, the keys the slots name
+    CHECK(kBindCount == keys::kSlotCount && IsBindKey(kKeyBindFirst) && IsBindKey(kKeyBindFirst + kBindCount - 1) && !IsBindKey(kKeyBindFirst + kBindCount), "twelve binding keys in a row");
+    CHECK(RowsOn(kPageKeysL) == 6 && RowsOn(kPageKeysR) == 6 && !strcmp(kPageNames[kPageKeysL], "Left") && !strcmp(kPageNames[kPageKeysR], "Right"), "Left and Right: six rows each");
+    for (int slot = 0; slot < kBindCount; ++slot) {
+        const Def& d = kDefs[KeyRow(slot)];
+        const std::string want = keys::KeyOf(slot);
+        char have[48];
+        snprintf(have, sizeof have, "%ls", d.key);
+        CHECK(want == have && !wcscmp(d.section, L"direct"), "the row's key is the list's own key for the slot");
+        CHECK(d.type == DefType::Choice && !d.live && d.page == (slot < 6 ? kPageKeysL : kPageKeysR), "a Choice row, not live, on its hand's page");
+        CHECK(KeyAt(d.page, slot % 6) == KeyRow(slot), "in the slot's order on the page");
+    }
+    CHECK(keys::KeyOf(5) == "left_menu_hold" && keys::KeyOf(10) == "right_stick_hold", "the two long presses");
+    // the names: every pick of the list has a short one that fits the box, no two alike
+    CHECK(nPicks > 20 && nPicks == (int)(sizeof keys::kShort / sizeof keys::kShort[0]), "a short name for every pick, and none for a pick that is not in the list");
+    std::set<std::string> names;
+    for (int p = 0; p < nPicks; ++p) {
+        const char* s = keys::ShortName(keys::rm::Picks()[p].ini);
+        CHECK(s != nullptr && strlen(s) <= 14, "a short name, fitting the value box");
+        CHECK(names.insert(keys::PickName(p)).second, "no two picks called alike");
+    }
+    CHECK(keys::PickName(keys::CustomPick()) == "Custom (ini)" && keys::PickName(-1) == "Custom (ini)", "past the list: Custom");
+    CHECK(Normalize(KeyRow(0), 2.4f) == 2.0f && Normalize(KeyRow(0), -3.0f) == 0.0f && Normalize(KeyRow(0), 999.0f) == (float)keys::CustomPick() && Normalize(KeyRow(0), NAN) == kDefs[KeyRow(0)].def, "a pick is a whole number from 0 to Custom");
+
+    const std::wstring path = g_dir + L"\\keys.ini";
+    const std::wstring backup = path + L".before-headset-menu";
+    auto apply = [&](Model& m, std::initializer_list<Hit> clicks, Result* got = nullptr) {
+        for (const Hit& h : clicks) m.Click(h);
+        const Action a = m.Click({Kind::Apply, -1, 0});
+        std::string why;
+        const Result r = a.what == Do::Save ? store::SaveRequest(path.c_str(), a.request, &why) : Result::None;
+        if (got) *got = r;
+        return a;
+    };
+    const int lt = KeyRow(0), lstick = KeyRow(3), lmenu = KeyRow(4), lhold = KeyRow(5), rt = KeyRow(6), ra = KeyRow(7), rhold = KeyRow(10);
+
+    // 1. an ini with no [direct]: every row shows what the plugin does (the list's reading of the defaults)
+    DeleteFileW(backup.c_str());
+    Spit(path, "; mine\r\n[openxr]\r\nlaser=1\r\n");
+    Snapshot s = store::LoadSnapshot(path.c_str());
+    CHECK(s.values[lt] == (float)PickOf("pad:LT") && s.values[rt] == (float)PickOf("action:attack") && s.values[ra] == (float)PickOf("action:interact"), "the triggers and A as shipped");
+    CHECK(s.values[lmenu] == (float)PickOf("action:inventory") && s.values[lhold] == (float)PickOf("action:pause") && s.values[rhold] == (float)PickOf("action:skillpanel"), "the menu button, its pause menu on a long press, the wheel on the right stick's");
+    CHECK(s.values[lstick] == (float)PickOf("cmd:0x25, action:map"), "the left stick: Alt, and the map on a tap");
+    CHECK(s.bind[0].empty() && s.bind[5].empty(), "no line in the file: no text");
+    // ... and with the plugin's two toggles off, the standard follows them
+    Spit(path, "[direct]\r\npause_button=0\r\nleft_stick_map=0\r\n");
+    Snapshot t = store::LoadSnapshot(path.c_str());
+    CHECK(t.values[lhold] == (float)PickOf("none") && t.values[lstick] == (float)PickOf("cmd:0x25"), "pause_button=0 and left_stick_map=0: the standard is without them");
+
+    // 2. lines: a pick of the list, Nothing, a line the list has no name for (Custom), a line the plugin would not read
+    Spit(path, "[direct]\r\nleft_trigger = action:swap\r\nright_trigger=none\r\nright_a = pad:LT, pad:X\r\nright_b=banana\r\nleft_x=cmd:Show items (Alt)\r\n");
+    s = store::LoadSnapshot(path.c_str());
+    CHECK(s.values[lt] == (float)PickOf("action:swap") && s.values[rt] == (float)PickOf("none"), "a pick, and Nothing");
+    CHECK(s.values[ra] == (float)keys::CustomPick() && s.bind[7] == "pad:LT, pad:X", "two outputs: Custom, and its text kept as the file has it");
+    CHECK(s.values[KeyRow(8)] == (float)PickOf("pad:B"), "a line the plugin cannot read is the standard (as the plugin does)");
+    CHECK(s.values[KeyRow(1)] == (float)PickOf("cmd:0x25"), "the game's key by its name is the same pick as by its number");
+
+    // 3. the pages and the stepping: a click on > / < goes round the list, Custom to either end
+    Model m;
+    m.Open(s);
+    m.Click({Kind::Tab, kPageKeysR, 0});
+    CHECK(m.page == kPageKeysR && !m.Dirty(), "the Right page opens");
+    m.Click({Kind::Change, rt, 1});
+    CHECK(m.Get()[rt] == (float)PickOf("none") + 1.0f && m.Edited(rt) && m.Dirty() && !m.LiveOnly(), "> goes to the next pick, and waits for Apply");
+    m.Click({Kind::Change, rt, -1});
+    CHECK(m.Get()[rt] == (float)PickOf("none") && !m.Edited(rt), "and back");
+    for (int i = 0; i < nPicks; ++i) m.Click({Kind::Change, rt, 1});
+    CHECK(m.Get()[rt] == (float)PickOf("none"), "all the way round");
+    m.Click({Kind::Change, ra, 1});
+    CHECK(m.Get()[ra] == 0.0f, "Custom + goes to the first pick");
+    m.Click({Kind::Tab, kPageKeysR, 0});
+    Model m3;
+    m3.Open(s);
+    m3.Click({Kind::Change, ra, -1});
+    CHECK(m3.Get()[ra] == (float)(nPicks - 1), "Custom - goes to the last pick");
+    Model m4;
+    Snapshot first = s;
+    first.values[rt] = first.file[rt] = 0.0f;
+    m4.Open(first);
+    m4.Click({Kind::Change, rt, -1});
+    CHECK(m4.Get()[rt] == (float)(nPicks - 1), "the first pick - goes to the last");
+
+    // 4. what the rows say
+    {
+        Snapshot on = s;
+        on.values[kKeyDirectOn] = on.file[kKeyDirectOn] = 1.0f;   // the plugin's own controls are on
+        Model v;
+        v.Open(on);
+        v.Click({Kind::Tab, kPageKeysL, 0});
+        CHECK(ChoiceLabel((int)s.values[lt]) == "Swap weapons" && ChoiceDetail(v, lt) == "[direct] left_trigger = action:swap", "a row: the pick's name, and the ini line under the control's name");
+        v.Click({Kind::Tab, kPageKeysR, 0});
+        CHECK(ChoiceLabel((int)s.values[ra]) == "Custom (ini)" && ChoiceDetail(v, ra) == "[direct] right_a = pad:LT, pad:X", "Custom: the file's own text");
+        CHECK(std::string(StatusText(v)).find("Chords") != std::string::npos, "the Keys pages say what stays in the ini");
+        Snapshot off = s;
+        off.values[kKeyDirectOn] = off.file[kKeyDirectOn] = 0.0f;
+        Model w;
+        w.Open(off);
+        w.Click({Kind::Tab, kPageKeysL, 0});
+        CHECK(std::string(StatusText(w)).find("do nothing") != std::string::npos, "and when the plugin's own controls are off, that the buttons do nothing");
+    }
+
+    // 5. Apply: the pick's text; the standard takes the key out; Nothing is written as none; comments and other keys stay; the original is kept
+    static const char kFile[] = "; keep me\r\n[openxr]\r\nlaser=1\r\n[direct]\r\nleft_trigger = action:swap\r\nright_a = pad:LT, pad:X\r\nhold_ms=500\r\n[other]\r\nx=1\r\n";
+    Spit(path, kFile);
+    DeleteFileW(backup.c_str());
+    s = store::LoadSnapshot(path.c_str());
+    const int swapPick = PickOf("action:swap");
+    Model a1;
+    a1.Open(s);
+    Result r = Result::None;
+    Action act = apply(a1, {{Kind::Tab, kPageKeysL, 0}, {Kind::Change, lt, -1}}, &r);   // Swap weapons, one back in the list
+    CHECK(act.what == Do::Save && act.request.changed == Bit(lt) && r == Result::Saved, "only the one row changed");
+    bool present = false;
+    CHECK(DirectText(path, L"left_trigger", &present) == keys::PickIni(swapPick - 1) && present, "its text is the pick's");
+    CHECK(Slurp(path).find("; keep me") != std::string::npos && Slurp(path).find("x=1") != std::string::npos && Slurp(path).find("hold_ms=500") != std::string::npos && DirectText(path, L"right_a") == "pad:LT, pad:X", "comments, other keys and a Custom line stay");
+    CHECK(Exists(backup) && Slurp(backup) == std::string(kFile), "the original is kept, byte for byte");
+    s = store::LoadSnapshot(path.c_str());
+    CHECK(s.values[lt] == (float)(swapPick - 1), "reloaded: the pick before Swap weapons");
+    // back to the standard: the key goes
+    Model a2;
+    a2.Open(s);
+    a2.Click({Kind::Tab, kPageKeysL, 0});
+    for (int i = 0; i < 40 && a2.Get()[lt] != (float)PickOf("pad:LT"); ++i) a2.Click({Kind::Change, lt, 1});
+    act = apply(a2, {}, &r);
+    CHECK(r == Result::Saved && !ini::Read(path.c_str(), L"direct", L"left_trigger").present, "the pick the plugin does anyway: the key goes");
+    s = store::LoadSnapshot(path.c_str());
+    CHECK(s.values[lt] == (float)PickOf("pad:LT") && s.bind[0].empty(), "and it reads as the standard");
+    // Nothing is written as none
+    Model a3;
+    a3.Open(s);
+    a3.Click({Kind::Tab, kPageKeysL, 0});
+    for (int i = 0; i < 40 && a3.Get()[lt] != (float)PickOf("none"); ++i) a3.Click({Kind::Change, lt, 1});
+    act = apply(a3, {}, &r);
+    CHECK(r == Result::Saved && DirectText(path, L"left_trigger") == "none", "Nothing is written as none");
+    CHECK(store::LoadSnapshot(path.c_str()).values[lt] == (float)PickOf("none"), "and it reads as Nothing");
+
+    // 6. the pause menu on a long press follows pause_button: with it off the standard is none, and Pause menu is a line
+    Spit(path, "[direct]\r\npause_button=0\r\n");
+    s = store::LoadSnapshot(path.c_str());
+    Model a4;
+    a4.Open(s);
+    a4.Click({Kind::Tab, kPageKeysL, 0});
+    for (int i = 0; i < 40 && a4.Get()[lhold] != (float)PickOf("action:pause"); ++i) a4.Click({Kind::Change, lhold, 1});
+    act = apply(a4, {}, &r);
+    CHECK(r == Result::Saved && DirectText(path, L"left_menu_hold") == "action:pause", "pause_button=0: the long press as the pause menu is written");
+
+    // 7. a conflict: the line was changed outside after the panel read it
+    Spit(path, "[direct]\r\nleft_trigger=action:swap\r\n");
+    s = store::LoadSnapshot(path.c_str());
+    Model a5;
+    a5.Open(s);
+    a5.Click({Kind::Tab, kPageKeysL, 0});
+    a5.Click({Kind::Change, lt, 1});
+    Spit(path, "[direct]\r\nleft_trigger=action:map\r\n");
+    const Action c5 = a5.Click({Kind::Apply, -1, 0});
+    CHECK(c5.what == Do::Save && store::SaveRequest(path.c_str(), c5.request) == Result::Conflict && DirectText(path, L"left_trigger") == "action:map", "changed outside meanwhile: refused, the outside edit stays");
+    // a key that is still missing is no conflict
+    Spit(path, "[direct]\r\nhold_ms=500\r\n");
+    s = store::LoadSnapshot(path.c_str());
+    Model a6;
+    a6.Open(s);
+    a6.Click({Kind::Tab, kPageKeysR, 0});
+    a6.Click({Kind::Change, ra, 1});
+    const Action c6 = a6.Click({Kind::Apply, -1, 0});
+    CHECK(c6.what == Do::Save && store::SaveRequest(path.c_str(), c6.request) == Result::Saved && DirectText(path, L"right_a", &present).size() > 0 && present, "a missing line stays missing until written: no conflict");
+
+    // 8. every pick on every row reads back as that pick - the panel and the list agree on all of them
+    int roundTrips = 0, bad = 0;
+    for (int slot = 0; slot < kBindCount; ++slot)
+        for (int pick = 0; pick < nPicks; ++pick) {
+            Spit(path, "[direct]\r\nhold_ms=500\r\n");
+            Snapshot cur = store::LoadSnapshot(path.c_str());
+            Request req;
+            req.base = cur.values;
+            req.values = cur.values;
+            req.values[KeyRow(slot)] = (float)pick;
+            req.changed = Differ(cur.values[KeyRow(slot)], (float)pick) ? Bit(KeyRow(slot)) : 0;
+            req.sequence = 1;
+            req.bind = cur.bind;
+            if (!req.changed) { ++roundTrips; continue; }
+            const Result sr = store::SaveRequest(path.c_str(), req);
+            const Snapshot after = store::LoadSnapshot(path.c_str());
+            ++roundTrips;
+            if (sr != Result::Saved || after.values[KeyRow(slot)] != (float)pick) ++bad;
+        }
+    CHECK(roundTrips == kBindCount * nPicks && bad == 0, "every pick of the list on every row reads back as itself");
+
+    // 9. the buttons of the pages are hit
+    for (int slot = 0; slot < kBindCount; ++slot) {
+        const int page = slot < 6 ? kPageKeysL : kPageKeysR;
+        float u, v;
+        Centre(kDec(slot % 6), &u, &v);
+        CHECK((HitTest(page, u, v) == Hit{Kind::Change, KeyRow(slot), -1}), "< of a binding row");
+        Centre(kInc(slot % 6), &u, &v);
+        CHECK((HitTest(page, u, v) == Hit{Kind::Change, KeyRow(slot), 1}), "> of a binding row");
+    }
+}
+
+// -- 17. the HUD page: the toolbar type (bar_place + hide), the monster plate's height, the ordinary plates ---------------------------
+static std::wstring HudText(const std::wstring& path, const wchar_t* key) { return ini::Read(path.c_str(), L"hud", key).text; }
+static void TestHud() {
+    const int place = kKeyBarPlace, hide = kKeyHide;
+    const int height = IndexOf(L"hud", L"monster_height"), plates = IndexOf(L"hud", L"ordinary_mob_bars");
+    CHECK(place >= 0 && hide >= 0 && height >= 0 && plates >= 0, "the four keys are in the table");
+    CHECK(kDefs[place].page == kPageHud && kDefs[height].page == kPageHud && kDefs[plates].page == kPageHud && kDefs[hide].page == kNoPage,
+          "three rows on the HUD page, hide has none");
+    CHECK(RowsOn(kPageHud) == 3 && !std::strcmp(kPageNames[kPageHud], "HUD"), "the page");
+    // The bar hung in the room is for D2R VR Settings only (Serg, 2026-10-17: it is not wanted in the headset): no row, no key of the panel's at all
+    CHECK(IndexOf(L"hud", L"monster_over_head") < 0 && IndexOf(L"hud", L"monster_bar_room") < 0 && IndexOf(L"hud", L"monster_bar_gap_cm") < 0, "the plate over the head's tick and gap (and the room bar's) are not in the headset's table");
+    bool barKey = false;
+    for (int k = 0; k < kCount; ++k) if (std::wstring(kDefs[k].key).find(L"monster_bar") != std::wstring::npos || std::wstring(kDefs[k].key).find(L"monster_over") != std::wstring::npos) barKey = true;
+    CHECK(!barKey, "no key of the bar in the room anywhere in the table");
+    CHECK(kDefs[place].min == 0.0f && kDefs[place].max == 5.0f && kDefs[hide].min == 0.0f && kDefs[hide].max == 2.0f, "the plugin's ranges for bar_place and hide");
+    CHECK(kDefs[height].min == -60.0f && kDefs[height].max == 40.0f && IsToggle(kDefs[plates]), "the plate's height as the plugin clamps it; the plates are a tick");
+    CHECK(Inside(kTab(kPageHud)) && !Overlap(kTab(kPageVideo), kTab(kPageHud)) && !Overlap(kTab(kPageBody), kTab(kPageHud)), "its tab is inside the atlas, apart");
+
+    const std::wstring path = g_dir + L"\\hud.ini";
+    auto apply = [&](Model& m, std::initializer_list<Hit> clicks, Action* got = nullptr) {
+        for (const Hit& h : clicks) m.Click(h);
+        const Action a = m.Click({Kind::Apply, -1, 0});
+        if (got) *got = a;
+        return a.what == Do::Save ? store::SaveRequest(path.c_str(), a.request) : Result::None;
+    };
+    const Hit more{Kind::Change, place, 1}, less{Kind::Change, place, -1};
+
+    // 1. the shipped values: wrists
+    Spit(path, "[hud]\r\nhide=1\r\nbar_place=5\r\n[other]\r\nx=1\r\n");
+    Snapshot s = store::LoadSnapshot(path.c_str());
+    CHECK(s.values[hide] == 1.0f && s.values[place] == 5.0f && !std::strcmp(ValueName(s.values, place), "Wrists"), "hide 1, bar_place 5 reads as Wrists");
+    CHECK(ValueName(s.values, height) == nullptr && ValueName(s.values, plates) == nullptr, "only the toolbar's row is a name");
+    Model m;
+    m.Open(s);
+    m.Click({Kind::Tab, kPageHud, 0});
+    // 1a. one step on: the chest; only bar_place is written (hide is 1 already)
+    Action a;
+    Result r = Result::None;
+    m.Open(store::LoadSnapshot(path.c_str()));
+    r = apply(m, {more}, &a);
+    CHECK(a.request.changed == Bit(place) && r == Result::Saved, "Wrists to Chest, low writes bar_place alone");
+    CHECK(HudText(path, L"bar_place") == L"4" && HudText(path, L"hide") == L"1", "bar_place=4, hide stays 1");
+    CHECK(Slurp(path).find("x=1") != std::string::npos, "the other section is kept");
+    CHECK(!std::strcmp(ValueName(store::LoadSnapshot(path.c_str()).values, place), "Chest, low"), "reloaded as Chest, low");
+
+    // 2. an ini with hide 0 (the toolbar in the picture, whatever bar_place says): the row says so, and a place takes it out
+    Spit(path, "[hud]\r\nhide=0\r\nbar_place=5\r\n");
+    Snapshot s2 = store::LoadSnapshot(path.c_str());
+    CHECK(!std::strcmp(ValueName(s2.values, place), "In the picture"), "hide 0 reads as In the picture, though bar_place is 5");
+    Model m2;
+    m2.Open(s2);
+    m2.Click(more);
+    CHECK(!m2.Dirty() && m2.Get()[hide] == 0.0f, "past the last type nothing moves");
+    m2.Click(less);
+    CHECK(m2.Dirty() && m2.Get()[hide] == 1.0f && m2.Get()[place] == 0.0f && m2.Edited(place), "one step back: Not shown, the toolbar cut out (hide 1)");
+    r = apply(m2, {less, less, less, less, less, less}, &a);   // Right forearm, Left forearm, Low in front, Chest, Wrists, then the first
+    CHECK(m2.Get()[hide] == 1.0f && m2.Get()[place] == 5.0f && r == Result::Saved, "back to the first type: Wrists");
+    CHECK(HudText(path, L"hide") == L"1" && HudText(path, L"bar_place") == L"5", "hide=1 written with it: a place always works");
+    CHECK(a.request.changed == Bit(hide), "(bar_place was 5 in the file already: only hide changed)");
+
+    // 3. into the picture: hide goes to 0, bar_place stays as it was
+    Spit(path, "[hud]\r\nhide=2\r\nbar_place=3\r\n");
+    Snapshot s3 = store::LoadSnapshot(path.c_str());
+    Model m3;
+    m3.Open(s3);
+    CHECK(!std::strcmp(ValueName(m3.Get(), place), "Low in front") && m3.Get()[hide] == 2.0f, "hide 2, bar_place 3: Low in front");
+    r = apply(m3, {more, more, more, more}, &a);   // Left forearm, Right forearm, Not shown, In the picture
+    CHECK(m3.Get()[hide] == 0.0f && !std::strcmp(ValueName(m3.Get(), place), "In the picture") && r == Result::Saved, "four steps on: In the picture");
+    CHECK(HudText(path, L"hide") == L"0", "hide=0 written");
+
+    // 4. a step past the end is no edit; a held trigger repeats the toolbar's stepper too
+    Model m4;
+    m4.Open(store::LoadSnapshot(path.c_str()));
+    m4.Click(more);
+    CHECK(!m4.Dirty(), "a step past the end is no edit");
+    CHECK(Repeats(more), "the toolbar stepper repeats under a held trigger");
+
+    // 5. the plate's height: steps of 5, written as a signed number; the ordinary plates: a tick
+    Spit(path, "[hud]\r\nhide=1\r\nbar_place=5\r\n");
+    Model m5;
+    m5.Open(store::LoadSnapshot(path.c_str()));
+    CHECK(m5.Get()[height] == 0.0f && m5.Get()[plates] == 0.0f, "no keys: height 0, plates shown");
+    r = apply(m5, {{Kind::Change, height, -1}, {Kind::Change, height, -1}, {Kind::Change, plates, 1}}, &a);
+    CHECK(r == Result::Saved && a.request.changed == (Bit(height) | Bit(plates)), "two keys changed");
+    CHECK(HudText(path, L"monster_height") == L"-10" && HudText(path, L"ordinary_mob_bars") == L"1" && HudText(path, L"hide") == L"1", "monster_height=-10, ordinary_mob_bars=1, the rest as it was");
+    Model m6;
+    m6.Open(store::LoadSnapshot(path.c_str()));
+    for (int i = 0; i < 40; ++i) m6.Click({Kind::Change, height, -1});
+    CHECK(m6.Get()[height] == -60.0f, "the height stops at -60");
+    for (int i = 0; i < 40; ++i) m6.Click({Kind::Change, height, 1});
+    CHECK(m6.Get()[height] == 40.0f, "and at 40");
+
+    // 5a. the bar in the room is D2R VR Settings' own: an Apply of the panel leaves its keys in the file as they are
+    Spit(path, "[hud]\r\nhide=1\r\nbar_place=5\r\nmonster_over_head=1\r\nmonster_bar_gap_cm=60\r\n");
+    Model m7;
+    m7.Open(store::LoadSnapshot(path.c_str()));
+    r = apply(m7, {{Kind::Change, plates, 1}}, &a);
+    CHECK(r == Result::Saved && a.request.changed == Bit(plates), "only the ordinary-plates tick changed");
+    CHECK(HudText(path, L"ordinary_mob_bars") == L"1" && HudText(path, L"monster_over_head") == L"1" && HudText(path, L"monster_bar_gap_cm") == L"60",
+          "monster_over_head and its gap are as D2R VR Settings left them");
+
+    // 6. the page paints, with the toolbar's name in the value box
+    std::vector<uint32_t> hud, other;
+    Model pm;
+    pm.Open(store::LoadSnapshot(path.c_str()));
+    pm.Click({Kind::Tab, kPageHud, 0});
+    CHECK(Paint(pm, {}, hud), "the HUD page paints");
+    pm.Click({Kind::Tab, kPageOptions, 0});
+    Paint(pm, {}, other);
+    CHECK(hud != other, "and differs from another page");
+    pm.Click({Kind::Tab, kPageHud, 0});
+    bool named = false;
+    for (const Item& it : Compose(pm, {}, {})) if (it.type == Item::Type::Text && it.text == "Wrists") named = true;
+    CHECK(named, "the scene has the type's name in the value box");
+    pm.Click(more);
+    bool moved = false;
+    for (const Item& it : Compose(pm, {}, {})) if (it.type == Item::Type::Text && it.text == "Chest, low") moved = true;
+    CHECK(moved, "and the next name after a step");
+}
+
+// -- 12. the low-life vignette's two pages ([hud] low_hp_*, vr/low_hp.h) ---------------------------------------------
+// The rows are the plugin's keys in the ini's units; what a button can reach must be what the plugin takes as it is, and the writes must
+// be the same keys D2R VR Settings edits.
+struct LowKey {
+    const wchar_t* key;
+    float scale;                  // the ini's unit -> the plugin's (percent -> a fraction)
+    float lowhp::Config::*field;
+};
+static bool NearF(float a, float b, float e = 1e-5f) { return std::fabs(a - b) <= e; }
+
+static void TestLowLife() {
+    using lowhp::Config;
+    const Config d;
+    const LowKey keys[] = {
+        {L"low_hp_threshold", 0.01f, &Config::threshold},
+        {L"low_hp_intensity_start", 1.0f, &Config::intensityStart},
+        {L"low_hp_intensity_end", 1.0f, &Config::intensityEnd},
+        {L"low_hp_saturation", 1.0f, &Config::saturation},
+        {L"low_hp_radius", 0.01f, &Config::radius},
+        {L"low_hp_softness", 1.0f, &Config::softness},
+        {L"low_hp_roundness", 1.0f, &Config::roundness},
+        {L"low_hp_haptics_strength", 1.0f, &Config::hapticsStrength},
+    };
+    for (const LowKey& k : keys) {
+        const int i = IndexOf(L"hud", k.key);
+        CHECK(i >= 0, "the key has a row");
+        if (i < 0) continue;
+        const Def& def = kDefs[i];
+        CHECK(!IsToggle(def) && (kDefs[i].page == kPageLife || kDefs[i].page == kPageLook), "a stepper on one of the two pages");
+        CHECK(NearF(def.def * k.scale, d.*(k.field)), "the row's default is the plugin's");
+        // the ends of the row are the ends the plugin clamps to, and every place a button can reach is taken as it is
+        Config lo, hi;
+        lo.*(k.field) = (def.min - 0.5f * def.step) * k.scale;
+        hi.*(k.field) = (def.max + 0.5f * def.step) * k.scale;
+        CHECK(NearF(lowhp::Sanitized(lo).*(k.field), def.min * k.scale), "the row's lowest is the plugin's lowest");
+        CHECK(NearF(lowhp::Sanitized(hi).*(k.field), def.max * k.scale), "the row's highest is the plugin's highest");
+        bool taken = true, grid = true;
+        const int n = (int)std::lround((def.max - def.min) / def.step);
+        for (int s = 0; s <= n; ++s) {
+            const float v = Normalize(i, def.min + (float)s * def.step);
+            grid = grid && NearF(v, def.min + (float)s * def.step, 1e-4f);
+            Config c;
+            c.*(k.field) = v * k.scale;
+            taken = taken && NearF(lowhp::Sanitized(c).*(k.field), v * k.scale);
+        }
+        CHECK(grid && taken, "every step is on the grid and is a value the plugin keeps as it is");
+        CHECK(std::strlen(def.label) <= 30 && std::strlen(def.detail) <= 52, "the texts fit the row");
+    }
+    // the three ticks: off as shipped, like the plugin
+    for (const wchar_t* key : {L"low_hp_vignette", L"low_hp_gentle", L"low_hp_haptics"}) {
+        const int i = IndexOf(L"hud", key);
+        CHECK(i >= 0 && IsToggle(kDefs[i]) && kDefs[i].def == 0.0f && !d.on && !d.gentle && !d.haptics, "a tick, off as the plugin has it");
+        CHECK(i >= 0 && std::strlen(kDefs[i].label) <= 30 && std::strlen(kDefs[i].detail) <= 52, "the tick's texts fit the row");
+    }
+    CHECK(kDefs[KeyAt(kPageLife, 0)].key == std::wstring(L"low_hp_vignette"), "the first row of the Life page is the tick that switches it on");
+    CHECK(RowsOn(kPageLife) == 6 && RowsOn(kPageLook) == 5, "six rows on Life, five on Look: all eleven keys");
+    CHECK(!std::strcmp(kPageNames[kPageLife], "Life") && !std::strcmp(kPageNames[kPageLook], "Look") && !std::strcmp(kPageNames[kPageHud], "HUD") && PageCount() == 10, "the tabs");
+    CHECK(IsLifePage(kPageLife) && IsLifePage(kPageLook) && !IsLifePage(kPageView) && !IsLifePage(kPageOptions) && !IsLifePage(kPageVideo) && !IsLifePage(kPageBody) &&
+              !IsLifePage(-1) && !IsLifePage(99),
+          "only those two pages ask for the preview");
+    CHECK(kCount <= 64, "all the keys have a bit in the change mask");
+
+    // the tab strip: six tabs under the title, each a tab, none off the sheet
+    for (int i = 0; i < kPageCount; ++i) {
+        float u, v;
+        Centre(kTab(i), &u, &v);
+        CHECK((HitTest(0, u, v) == Hit{Kind::Tab, i, 0}) && Inside(kTab(i)), "a tab of the six");
+    }
+
+    // the pages' pictures say what the rows are
+    {
+        Model m;
+        m.Open(Snap());
+        m.Click({Kind::Tab, kPageLife, 0});
+        const Scene sc = Compose(m, {});
+        auto has = [&](const char* t) { for (const Item& it : sc) if (it.text == t) return true; return false; };
+        CHECK(has("Low life: red vignette") && has("Off") && has("Comes on under") && has("30%") && has("0.25") && has("0.85") && has("0.80") && has("40%") && has("Life") && has("Look"),
+              "the Life page shows its rows and the tabs");
+        m.Click({Kind::Tab, kPageLook, 0});
+        const Scene sl = Compose(m, {});
+        auto hasL = [&](const char* t) { for (const Item& it : sl) if (it.text == t) return true; return false; };
+        CHECK(hasL("Soft edge") && hasL("Shape") && hasL("Gentle") && hasL("Pulse strength") && hasL("0.80") && hasL("2.50") && hasL("1.0"), "the Look page shows its rows");
+    }
+
+    // the draft as the plugin's settings (the preview): the defaults are the plugin's, an edit shows before any Apply
+    {
+        const lowhp::Config dc = LifeConfig(Defaults());
+        CHECK(!dc.on && NearF(dc.threshold, d.threshold) && NearF(dc.intensityStart, d.intensityStart) && NearF(dc.intensityEnd, d.intensityEnd) && NearF(dc.saturation, d.saturation) &&
+                  NearF(dc.radius, d.radius) && NearF(dc.softness, d.softness) && NearF(dc.roundness, d.roundness) && !dc.gentle && !dc.haptics && NearF(dc.hapticsStrength, d.hapticsStrength),
+              "the defaults of the rows are the plugin's settings, off");
+        Model pm;
+        pm.Open(Snap());
+        pm.Click({Kind::Tab, kPageLife, 0});
+        pm.Click({Kind::Change, IndexOf(L"hud", L"low_hp_vignette"), 1});
+        pm.Click({Kind::Change, IndexOf(L"hud", L"low_hp_threshold"), 1});
+        pm.Click({Kind::Change, IndexOf(L"hud", L"low_hp_radius"), -1});
+        pm.Click({Kind::Tab, kPageLook, 0});
+        pm.Click({Kind::Change, IndexOf(L"hud", L"low_hp_gentle"), 1});
+        pm.Click({Kind::Change, IndexOf(L"hud", L"low_hp_haptics_strength"), 1});
+        const lowhp::Config pc = LifeConfig(pm.Get());
+        CHECK(pc.on && pc.gentle && NearF(pc.threshold, 0.35f) && NearF(pc.radius, 0.35f) && NearF(pc.hapticsStrength, 1.1f) && pm.Dirty(),
+              "an edit is in the preview's settings at once, in the plugin's units, before it is applied");
+        Snapshot odd = Snap();   // a hand-edited file out of range: the preview takes what the plugin would
+        odd.values[IndexOf(L"hud", L"low_hp_radius")] = 500.0f;
+        const lowhp::Config oc = LifeConfig(odd.values);
+        CHECK(oc.radius <= lowhp::kRadiusMax + 1e-6f, "out of range is clamped like the plugin's");
+    }
+
+    // a change of a few rows, Apply, and the ini has the same keys D2R VR Settings edits, the rest untouched
+    const std::wstring path = g_dir + L"\\lowlife.ini";
+    const std::wstring backup = path + L".before-headset-menu";
+    DeleteFileW(backup.c_str());
+    static const char kHud[] = "; keep me\r\n[hud]\r\nmap=1\r\nlow_hp_threshold=30\r\nlow_hp_intensity_end=0.85\r\n[other]\r\nx=1\r\n";
+    Spit(path, kHud);
+    Snapshot s = store::LoadSnapshot(path.c_str());
+    CHECK(s.ready && NearF(s.values[IndexOf(L"hud", L"low_hp_threshold")], 30.0f) && NearF(s.values[IndexOf(L"hud", L"low_hp_radius")], 40.0f), "the file's values are read, a missing key is the default");
+    Model m;
+    m.Open(s);
+    m.Click({Kind::Tab, kPageLife, 0});
+    const int kVig = IndexOf(L"hud", L"low_hp_vignette"), kThr = IndexOf(L"hud", L"low_hp_threshold"), kEnd = IndexOf(L"hud", L"low_hp_intensity_end"),
+              kRad = IndexOf(L"hud", L"low_hp_radius"), kSat = IndexOf(L"hud", L"low_hp_saturation");
+    m.Click({Kind::Change, kVig, 1});
+    m.Click({Kind::Change, kThr, 1});
+    m.Click({Kind::Change, kThr, 1});
+    m.Click({Kind::Change, kEnd, -1});
+    m.Click({Kind::Change, kRad, 1});
+    CHECK(m.Dirty() && m.Get()[kVig] == 1.0f && NearF(m.Get()[kThr], 40.0f) && NearF(m.Get()[kEnd], 0.8f) && NearF(m.Get()[kRad], 45.0f) && m.Edited(kThr) && !m.Edited(kSat), "the draft");
+    Action a = m.Click({Kind::Apply, -1, 0});
+    CHECK(a.what == Do::Save && a.request.changed == (Bit(kVig) | Bit(kThr) | Bit(kEnd) | Bit(kRad)), "Apply writes the four keys that changed");
+    std::string why;
+    CHECK(store::SaveRequest(path.c_str(), a.request, &why) == Result::Saved, "saved");
+    CHECK(HudText(path, L"low_hp_vignette") == L"1" && HudText(path, L"low_hp_threshold") == L"40" && HudText(path, L"low_hp_intensity_end") == L"0.8" && HudText(path, L"low_hp_radius") == L"45",
+          "the keys of D2R VR Settings: [hud] low_hp_vignette, low_hp_threshold, low_hp_intensity_end, low_hp_radius");
+    const std::string after = Slurp(path);
+    CHECK(after.find("; keep me") != std::string::npos && after.find("map=1") != std::string::npos && after.find("x=1") != std::string::npos && after.find("low_hp_saturation") == std::string::npos,
+          "the comment and the other keys stay; a key not changed is not written");
+    // the Look page: the beat in the controllers and its strength, after the panel took the answer
+    Snapshot ans = store::LoadSnapshot(path.c_str());
+    ans.sequence = a.request.sequence;
+    ans.result = Result::Saved;
+    m.Observe(ans);
+    CHECK(!m.Dirty(), "the panel took the answer");
+    m.Click({Kind::Tab, kPageLook, 0});
+    const int kHap = IndexOf(L"hud", L"low_hp_haptics"), kHs = IndexOf(L"hud", L"low_hp_haptics_strength"), kGen = IndexOf(L"hud", L"low_hp_gentle");
+    m.Click({Kind::Change, kHap, 1});
+    m.Click({Kind::Change, kHs, 1});
+    m.Click({Kind::Change, kGen, 1});
+    m.Click({Kind::Change, kGen, 1});   // (toggled twice: back as it was)
+    Action b = m.Click({Kind::Apply, -1, 0});
+    CHECK(b.what == Do::Save && b.request.changed == (Bit(kHap) | Bit(kHs)), "the Look page: two keys");
+    CHECK(store::SaveRequest(path.c_str(), b.request, &why) == Result::Saved && HudText(path, L"low_hp_haptics") == L"1" && HudText(path, L"low_hp_haptics_strength") == L"1.1", "and they are in the file");
+    // D2R VR Settings changed a key after the panel read it: a conflict, nothing written
+    Snapshot s2 = store::LoadSnapshot(path.c_str());
+    Model c;
+    c.Open(s2);
+    c.Click({Kind::Tab, kPageLife, 0});
+    c.Click({Kind::Change, kThr, 1});
+    Action ca = c.Click({Kind::Apply, -1, 0});
+    std::string edited = Slurp(path);
+    edited.replace(edited.find("low_hp_threshold=40"), 19, "low_hp_threshold=33");
+    Spit(path, edited);
+    CHECK(store::SaveRequest(path.c_str(), ca.request, &why) == Result::Conflict && Slurp(path) == edited, "the desktop slider moved the key meanwhile: a conflict, nothing written");
+    // through the ini's thread
+    const std::wstring tpath = g_dir + L"\\lowlife_thread.ini";
+    Spit(tpath, kHud);
+    store::Start(tpath.c_str());
+    Snapshot ts = store::Read();
+    Model tm;
+    tm.Open(ts);
+    tm.Click({Kind::Tab, kPageLook, 0});
+    tm.Click({Kind::Change, IndexOf(L"hud", L"low_hp_roundness"), 1});
+    Action ta = tm.Click({Kind::Apply, -1, 0});
+    CHECK(ta.what == Do::Save && store::Submit(ta.request), "the thread takes the request (the values are on their grids)");
+    Snapshot got;
+    for (int i = 0; i < 80; ++i) {
+        got = store::Read();
+        if (got.sequence == ta.request.sequence && got.result != Result::Saving) break;
+        Sleep(50);
+    }
+    CHECK(got.result == Result::Saved && NearF(got.values[IndexOf(L"hud", L"low_hp_roundness")], 2.75f) && HudText(tpath, L"low_hp_roundness") == L"2.75", "and saves it");
+    store::Stop();
+    store::Join(3000);
+}
+
+// -- 13. the low-life pages' "Preview 5 s" button -------------------------------------------------------------------------
+static void TestPreviewButton() {
+    CHECK(RowsOn(kPageLook) <= kRowsPerPage && RowsOn(kPageLife) <= kRowsPerPage, "the button is in the bottom bar: no table row is lost");
+    CHECK(Inside(kPreviewBtn) && !Overlap(kPreviewBtn, kStatus) && !Overlap(kPreviewBtn, kApply) && !Overlap(kPreviewBtn, kClose) && !Overlap(kPreviewBtn, kRecentre) &&
+              kPreviewBtn.y == kClose.y && kPreviewBtn.h == kClose.h && kPreviewBtn.x > kRecentre.x + kRecentre.w && kPreviewBtn.x + kPreviewBtn.w < kClose.x,
+          "in the bottom bar between Recentre and Close, clear of the others");
+    bool rowsClear = true;
+    for (int r = 0; r < kRowsPerPage; ++r) rowsClear = rowsClear && !Overlap(kPreviewBtn, kToggle(r)) && !Overlap(kPreviewBtn, kInc(r)) && !Overlap(kPreviewBtn, kDec(r));
+    CHECK(rowsClear, "and clear of every row");
+    float u, v;
+    Centre(kPreviewBtn, &u, &v);
+    for (int p = 0; p < PageCount(); ++p) CHECK((HitTest(p, u, v) == Hit{Kind::Preview, -1, 0}) == IsLifePage(p), "the button is on the two low-life pages and nowhere else");
+    // the model: an action for the plugin - nothing of the draft, the ini or the result changes, and no ini is needed
+    Model o;
+    o.Open(Snap());
+    for (int page : {kPageLife, kPageLook}) {
+        CHECK(o.Click({Kind::Tab, page, 0}).what == Do::Nothing && o.page == page && !o.Dirty(), "opening a page does nothing at all");
+        const Action a = o.Click({Kind::Preview, -1, 0});
+        CHECK(a.what == Do::Preview && a.request.changed == 0 && !o.Dirty() && o.result == Result::None, "the button is an action and touches nothing");
+        CHECK(o.Click({Kind::Preview, -1, 0}).what == Do::Preview, "and again: a second press is a second action");
+    }
+    o.Click({Kind::Tab, kPageOptions, 0});
+    CHECK(o.Click({Kind::Preview, -1, 0}).what == Do::Nothing, "on another page it is nothing");
+    Model n;
+    n.Open(Snap(false));
+    n.Click({Kind::Tab, kPageLife, 0});
+    CHECK(n.Click({Kind::Preview, -1, 0}).what == Do::Preview, "it needs no ini");
+    Model closed;
+    CHECK(closed.Click({Kind::Preview, -1, 0}).what == Do::Nothing, "a closed panel plays nothing");
+    // a draft with changes keeps them: the press is not an Apply
+    Model d;
+    d.Open(Snap());
+    d.Click({Kind::Tab, kPageLook, 0});
+    d.Click({Kind::Change, IndexOf(L"hud", L"low_hp_haptics_strength"), 1});
+    d.Click({Kind::Preview, -1, 0});
+    CHECK(d.Dirty() && NearF(d.Get()[IndexOf(L"hud", L"low_hp_haptics_strength")], 1.1f), "the draft is as it was");
+    // the picture
+    {
+        auto has = [&](int page, const char* label) {
+            Model m;
+            m.Open(Snap());
+            m.Click({Kind::Tab, page, 0});
+            bool button = false;
+            for (const Item& it : Compose(m, {}))
+                if (it.type == Item::Type::Button && it.text == label) button = it.r.x == kPreviewBtn.x && it.r.y == kPreviewBtn.y && it.r.w == kPreviewBtn.w && it.enabled;
+            return button;
+        };
+        CHECK(has(kPageLife, "Preview 5 s") && has(kPageLook, "Preview 5 s"), "the Life and the Look page show the button, in the bottom bar");
+        CHECK(!has(kPageView, "Preview 5 s") && !has(kPageHud, "Preview 5 s") && !has(kPageOptions, "Preview 5 s"), "no other page does");
+        CHECK(!has(kPageLook, "Play 5 s"), "the old row's button is gone");
+        CHECK(std::strlen("Preview 5 s") <= 12, "the label fits the button's width");
+    }
+    // the standalone panel's hands: a trigger on the button is the action; on another page the same place is not
+    {
+        Rig r;
+        r.Open();
+        r.c.model.Click({Kind::Tab, kPageLook, 0});
+        const FrameOut f = r.Click(1, kPreviewBtn);
+        CHECK(f.action.what == Do::Preview && r.c.Open(), "the panel hands the plugin the action and stays open");
+        r.c.model.Click({Kind::Tab, kPageLife, 0});
+        const FrameOut life = r.Click(1, kPreviewBtn);
+        CHECK(life.action.what == Do::Preview, "the Life page has it too");
+        r.c.model.Click({Kind::Tab, kPageHud, 0});
+        const FrameOut g = r.Click(1, kPreviewBtn);
+        CHECK(g.action.what != Do::Preview, "the same place on another page is not the button");
+    }
+}
+
 int main(int argc, char** argv) {
     if (argc == 3 && !strcmp(argv[1], "--dump")) { Dump(argv[2]); return 0; }
     wchar_t tmp[MAX_PATH];
@@ -2129,6 +3031,11 @@ int main(int argc, char** argv) {
     TestPaintPages();
     TestViewRow();
     TestTurn();
+    TestBelt();
+    TestKeys();
+    TestHud();
+    TestLowLife();
+    TestPreviewButton();
 
     // the temp folder's files go
     WIN32_FIND_DATAW fd;

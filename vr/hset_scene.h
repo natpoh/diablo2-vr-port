@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "hset_model.h"
+#include "hset_names.h"
 
 namespace hset {
 
@@ -43,13 +44,36 @@ inline const char* StatusText(const Model& m, bool window = false) {
         case Result::Conflict: return "The ini was changed elsewhere. Its current values are shown.";
         default: break;
     }
-    if (m.Dirty()) return m.page == kPageVideo && m.VideoEdited() ? "Not applied yet. Apply asks the game for this size; Close drops it."
-                                                                    : "Unsaved changes. Apply saves them, Close drops them.";
+    if (m.Dirty()) {
+        if (m.LiveOnly()) return "A change applies by itself in a moment.";   // the belt: written as D2R VR Settings' sliders are
+        return m.page == kPageVideo && m.VideoEdited() ? "Not applied yet. Apply asks the game for this size; Close drops it."
+                                                       : "Unsaved changes. Apply saves them, Close drops them.";
+    }
     if (m.page == kPageVideo) return "Pick a size, then Apply. It takes effect once your hero is in the world.";
     if (m.page == kPageBody) return "Calibrate body hides this panel; it comes back when the measurement is done.";
+    if (m.page == kPageKeysL || m.page == kPageKeysR)
+        return m.Get()[kKeyDirectOn] > 0.5f ? "Pick what a button does, then Apply. Chords and the other long presses: D2R VR Settings."
+                                            : "Controls without BodyWalk is off: these buttons do nothing (BodyWalk's mapping is the controls).";
+    if (m.page == kPageBelt && m.Get()[kKeyBeltOn] > 0.5f && m.Get()[kKeyGrabTrigger] > 0.5f && m.Get()[kKeyDirectOn] < 0.5f)
+        return "Needs Controls without BodyWalk (off now): until then the grip alone takes a potion.";   // the plugin reads the trigger itself, or not at all
+    if (m.page == kPageBelt) return m.Get()[kKeyBeltOn] > 0.5f ? "Each change applies by itself: look at your belt, then move it again."
+                                                                 : "The potions on the belt are off (D2R VR Settings > UI: F4 body): these do nothing.";
     return window ? "Point and pull the trigger. B, Close or a long press of the right stick closes this window."
                   : "Point and pull the trigger. Squeeze both grips and click a stick, or press B, to close.";
 }
+
+// What a Choice row says and shows: the pick's name ("Custom (ini)" for a line the list does not name); and under the control's name, the ini
+// line itself (what the pick writes, or the custom text as the file has it).
+inline std::string ChoiceLabel(int index) { return keys::PickName(index); }
+inline std::string ChoiceDetail(const Model& m, int key) {
+    const int index = (int)std::lround(m.Get()[key]);
+    std::string text = index < keys::CustomPick() ? keys::PickIni(index) : m.BindRaw(key);
+    if (index >= keys::CustomPick() && text.empty()) text = "(a line the list does not name)";
+    return std::string(kDefs[key].detail) + " = " + text;
+}
+
+// The line under the rows as text (StatusText for the pages whose line is a fixed one).
+inline std::string StatusLine(const Model& m, bool window = false) { return StatusText(m, window); }
 
 struct ComposeOptions {
     bool title = true;               // "HEADSET SETTINGS" and "D2R VR" over the tabs (the skill panel's window has its own title)
@@ -171,24 +195,34 @@ inline Scene Compose(const Model& m, const Hit& hover, const ComposeOptions& opt
         if (key < 0) break;
         const Def& d = kDefs[key];
         const int y = kRowY0 + r * kRowStep;
+        const bool rowEdit = canEdit;
         b.Fill({32, y - 5, 960, kRowStep - 2}, r % 2 ? Role::RowB : Role::RowA);
         b.Text(d.label, {48, y - 2, 520, 32}, Face::Bold, Role::Text);
-        b.Text(d.detail, {48, y + 28, 530, 28}, Face::Small, Role::Quiet);
+        b.Text(d.type == DefType::Choice ? ChoiceDetail(m, key) : std::string(d.detail), {48, y + 28, 530, 28}, Face::Small, Role::Quiet);
         const float v = m.Get()[key];
-        if (IsToggle(d)) {
-            b.Button(kToggle(r), v > 0.5f ? d.on : d.off, {Kind::Change, key, 1}, v > 0.5f, canEdit, m.Edited(key) ? Role::Warn : Role::Text);
+        if (d.type == DefType::Choice) {
+            b.Button(kDec(r), "<", {Kind::Change, key, -1}, false, rowEdit);
+            b.Fill(kVal(r), Role::Back);
+            b.Text(ChoiceLabel((int)std::lround(v)), kVal(r), Face::Bold, m.Edited(key) ? Role::Warn : Role::Text, Align::Center);
+            b.Button(kInc(r), ">", {Kind::Change, key, 1}, false, rowEdit);
+        } else if (IsToggle(d)) {
+            b.Button(kToggle(r), v > 0.5f ? d.on : d.off, {Kind::Change, key, 1}, v > 0.5f, rowEdit, m.Edited(key) ? Role::Warn : Role::Text);
         } else {
             char s[48];
             std::snprintf(s, sizeof s, d.fmt, (double)v);
-            b.Button(kDec(r), "-", {Kind::Change, key, -1}, false, canEdit);
+            if (const char* name = ValueName(m.Get(), key)) std::snprintf(s, sizeof s, "%s", name);   // a row that is a name (the toolbar type), not a number
+            b.Button(kDec(r), "-", {Kind::Change, key, -1}, false, rowEdit);
             b.Fill(kVal(r), Role::Back);
             b.Text(s, kVal(r), Face::Bold, m.Edited(key) ? Role::Warn : Role::Text, Align::Center);   // amber: changed, not applied yet
-            b.Button(kInc(r), "+", {Kind::Change, key, 1}, false, canEdit);
+            b.Button(kInc(r), "+", {Kind::Change, key, 1}, false, rowEdit);
         }
     }
 
-    const char* line = opt.status ? opt.status : StatusText(m, opt.window);
-    b.Text(line, kStatus, Face::Normal, m.Dirty() && !opt.status ? Role::Warn : Role::Quiet);
+    // -- the low-life pages' own button: the vignette and the beat for five seconds with the rows as they stand (opening a page shows and plays nothing) ----------
+    if (IsLifePage(m.page)) b.Button(kPreviewBtn, "Preview 5 s", {Kind::Preview, -1, 0}, false, true, Role::Accent);
+
+    const std::string line = opt.status ? std::string(opt.status) : StatusLine(m, opt.window);
+    b.Text(line, kStatus, Face::Normal, m.Dirty() && !opt.status && !m.LiveOnly() ? Role::Warn : Role::Quiet);
     b.Button(kRecentre, "Recentre view", {Kind::Recentre, -1, 0});
     b.Button(kClose, "Close", {Kind::Close, -1, 0});
     b.Button(kApply, "Apply", {Kind::Apply, -1, 0}, true, m.ready && m.Dirty() && !m.Busy());

@@ -21,4 +21,7 @@ void Init(const D2RL::PluginContext* ctx);
 // block's grips are then the real ones.
 bool RawGrips(float out[2]);
 
+// The triggers the same way (hand 0 right, 1 left, 0..1) - only the grip library's loose hold reads them.
+bool RawTriggers(float out[2]);
+
 }  // namespace weightwire

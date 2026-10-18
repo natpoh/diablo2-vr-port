@@ -121,7 +121,15 @@ the headset-only ones.
   takes one item; let go and press again for the next.
 - **Gestures (native OpenXR)** - *Swap weapon sets*: reach a hand behind either
   shoulder and press its grip once, and the game's own *Swap weapons* is pressed;
-  which hand (right by default). Off by default. *Draw gesture runes and trails
+  which hand (right by default). Off by default.
+  On *Weapon Weight*, *The shoulders hold your weapons* makes the same zones a holster instead: a weapon you let
+  go lies where it fell in the world (it does not walk with you), the grip of either hand calls it back, after a
+  second (a slider) it goes to your back, and a grip pressed behind a shoulder draws it into that hand. With a
+  shield: *... and the shield follows the sword to the other arm* (on) and *... and the shield can be put away and
+  drawn from behind the left shoulder* (off) are two ticks of their own. With a bow or crossbow: *A bow or
+  crossbow can be put away and drawn from behind a shoulder* (off), and under it *... and a bow is drawn into the
+  hand that reached* (off; the bow is then held, drawn on and aimed from that hand - the crossbow always comes
+  back into its own). *Draw gesture runes and trails
   in the headset* (a prototype): the runes BodyWalk scores when you draw a shape
   in the air, shown like a spell rune with a glowing trail of your hand. It needs
   a BodyWalk that sends them (not out yet): nothing shows until then. The
@@ -137,6 +145,17 @@ the headset-only ones.
 - **Scale and depth** - a life-size world from your eye distance and your
   height (both from BodyWalk), or eye separation and depth by hand.
 - **Timing** - pipeline depth: a smoother head turn for a little more delay.
+- **FlatVR like native OpenXR** (FlatVR only; each off = as before,
+  docs/flatvr_sync.md) - *Pictures on FlatVR's frames*: each picture starts on
+  FlatVR's next frame with the head FlatVR hands out then, as native starts
+  each pair on the headset's own wait (a pair too slow for a frame goes on
+  every other one: an even half rate; or on every new head); the game's frame
+  cap goes to twice the rate. *The horizon is the real horizon* (F4): the
+  camera's pitch and roll are the headset's own. *The camera moves with your
+  head* (F4): leaning and crouching move the camera, from where the head was
+  at F11. *One centre with BodyWalk*: straight ahead from FlatVR's room at
+  F11, and BodyWalk's own Reset Center recentres the game too. *Straight
+  ahead when a game starts*: a recentre when the hero appears.
 - **Native OpenXR** - the game itself in the headset: brightness, the flat
   picture's distance and width (*Menus placed only when the headset is
   tracked*, on: the picture and a menu's panel follow your gaze until the
@@ -181,10 +200,23 @@ the headset-only ones.
     are not used meanwhile (FlatVR and BodyWalk can run on for the picture). The
     layout is a table in `[direct]` of d2r_vr.ini - one line per control, each
     can be rebound; in menus the controllers are the game's own gamepad layout.
-    *Long press of a stick click* (half a second): the right one asks for the
-    skill panel, the left one opens the inventory; a quick click is what it was
-    (swap weapon sets, show items). *Quick click of the left stick: show / hide
-    the map*. *BodyWalk's walking still walks the hero*: BodyWalk is given your
+    *Long presses* (half a second): the right stick click asks for the
+    skill panel, the left one opens the inventory, **the left menu button is the
+    pause menu** (the game gets Esc: its pause menu, or the open panels close; on
+    PS VR2 the "left menu button" is the Options button of the right controller -
+    SteamVR gives a game no Create button);
+    a quick click is what it was (swap weapon sets, show items, the inventory
+    when you let go of the menu button). *Quick click of the left stick: show / hide
+    the map*. **Controls > Buttons of the controllers** is the same table as a
+    list: one row a button (the right hand, the left hand, a long press, the grip
+    held, and the *finger on a control* - a touch, not a press, where the
+    controller reports it: Touch, PS VR2, Index), a drop-down of what it does - attack, pick up, inventory, map, *show
+    items on the ground (Alt)*, *pause menu (Esc)*, the skill panel, swap weapons,
+    the gamepad's buttons, the game's character screen, skill tree and more - so
+    nothing has to be typed into the ini; the standard choice is not written to
+    the file, and a line you wrote by hand that the list cannot name shows as
+    *Custom* and is left alone. *Pause menu (Esc): long press of the left menu
+    button* takes that default away (the menu button is then the inventory at once). *BodyWalk's walking still walks the hero*: BodyWalk is given your
     head and hands (no buttons), and its left stick - nothing else - is mixed
     into the controller's own. *Play with the controllers in F1, F2, F3 without
     BodyWalk* (on, from 0.167): in those views the plugin's own controller is the
@@ -193,6 +225,22 @@ the headset-only ones.
     running (its Game Link alive, or its gamepad moving) nothing changes there; a
     real pad that answers keeps its buttons, ours are added to it. The flat modes
     keep BodyWalk's controls, as before.
+  - **Room-scale walking** (off, native OpenXR, VR first person F4 only): walk
+    in your room and the hero walks the same way. Your steps become the game's own
+    walking stick (the one the left stick uses), so the game's pathing, walls,
+    walk / run and speed stay the game's; the view stays with your head and the
+    hero catches up under it. Turning your head, nodding or a lean inside the
+    *dead zone* (0.12 m) walks nothing. The stick asks for your own walking speed
+    (the game's walk speed follows the tilt; the hero's full-stick speed is learned
+    as you play), so a steady walk is one steady tilt - slow walks too with
+    `[input] direct_walk=1` (the default); through the gamepad's dead zone the game's
+    slowest walk is faster than a room step and the hero walks and waits. A brisk
+    stride can reach a run (Run / Run Lock on); it never turns the hero. The
+    controller's stick wins while pushed. Blocked (a wall, a monster) and walking
+    on, the view leaves the hero by at most *the farthest the view leaves a
+    blocked hero* (0.6 m), then the room slides with you. A panel or the chat
+    open: no walk. F11 puts the hero under your head again. Debug: *Log the
+    room-scale walk once a second* (`[debug] roomscale_log`).
   - **Skill wheel** (a prototype, off, needs Controls without BodyWalk for the
     long press): the controller's skill slots in front of you. *Skill panel
     style*: a **Wheel** of eight wedges, or **Tiles**, a window made like the
@@ -205,6 +253,15 @@ the headset-only ones.
     held and a click of the pointing hand's stick. Distance and width are
     sliders. The icons come from a cache made out of your own installed game
     (`tools/skill_icons`, never shipped); without it the panel shows names.
+    *Skill editor: categories* (on): EDIT SKILLS -> a slot gets a strip of tabs
+    over the list - All, your class's three skill trees, General / Items - from
+    the game's own tables (run `tools/skill_icons/prepare_skill_icons.py` again
+    after an update; without the trees there is only the one list). *Skill panel:
+    a RUN / WALK button* (off): a button on the panel's first page that presses
+    the game's own run / walk command and shows which one it is on. The command
+    itself is a pick of the button lists: *Run / walk switch* in Controls > Buttons
+    of the controllers and the headset's Left / Right pages, *D2R key: Run / walk
+    switch* in BodyWalk's bindings. Idea after bearstonem/d2r-pcvr (MIT).
 
 ## UI: F1 above
 
@@ -216,8 +273,10 @@ the headset-only ones.
   game's own way), size, distance, position; the tilt of the item labels; the
   depth of the mouse pointer at the top, middle and bottom of the screen, and
   how small it gets at the top.
-- **Every view** - the game's interface size (restart), how near it floats,
-  its top edge.
+- **Every view** - the game's interface size (restart; VR starts it at 80 % where
+  you have chosen none - at the game's default 100 % the edges are cut off in the
+  headset - and the box "VR: start the interface at 80 %" turns that off; flat
+  mode keeps your own size), how near it floats, its top edge.
 - **Item labels on the ground** - their opacity and size.
 
 ## UI: F2 behind
@@ -250,14 +309,27 @@ The toolbar while the game lies on your floor, and the item labels.
   picture with depth, so a hand, a sleeve or a monster in front hides them - or the
   game's own life and mana globes, cut out of its toolbar as it draws them (with the
   real level of liquid) and laid on the same base (or, as a ball, a disc that is
-  fixed on the wrist or turns to your eyes). **Fill direction** picks which way the
+  fixed on the wrist or turns to your eyes). A **wrist status** (a tick of its own, off by
+  default, after bearstonem/d2r-pcvr, MIT): hold the back of a wrist to your face and
+  small icons and counters come up beside the medallions - by default the left wrist
+  shows what is ON you (auras and buffs under green rims, curses and ailments first
+  under red ones), the right what you COMMAND (the mercenary, a red 0 when it is dead,
+  and how many skeletons, mages, golems, wolves, ravens, vines, sentries, hydras, demons
+  you have); which wrist shows what, its size, height, place along the arm, the angle it
+  needs and its opacity are settings (docs/wrist_status.md). **Fill direction** picks which way the
   liquid fills - along the arm either way, across the hand to either side, out of
   the hand (the default: from the skin up), or level in the world - each a fixed
   direction of the wrist's frame, never of your head. Next to the position, each wrist's medallion has a
   **rotation** about the wrist's three axes (X round the arm, Y across the hand, Z up
   off the hand, -180 to 180 degrees; the base, the dome and the fill direction turn
   together about its middle; the same numbers on the other wrist are the mirror
-  image, and the mirror tick carries them over). The wrist bone and the arm's model differ with
+  image, and the mirror tick carries them over). **Under a shield** (VR F4; ticked
+  by default): the wrist that wears the shield - the left arm, or the right one after
+  *The shoulders hold your weapons* has swapped your hands - rolls its ball half a
+  turn round the arm to the inner side of the wrist so the shield does not cover it,
+  and rolls it back, in a third of a second, when the shield leaves that arm. Its
+  own sliders (turn round the arm, 180 by default; X, Y, Z in cm; rotation X, Y, Z)
+  are added to the wrist's numbers and are the same on either wrist. The wrist bone and the arm's model differ with
   the class, so under **Wrists: depth per hero** each class (Amazon ... Warlock) has a
   depth (Z) offset, -5 to 5 cm, added to both wrists' Z while that hero plays; the
   line above the rows says which hero the game has now. Which wrist (or both on one), the size, the opacity and a soft
@@ -275,12 +347,27 @@ The toolbar while the game lies on your floor, and the item labels.
   - **Settings panel in the headset** (a prototype, off): both grips squeezed for a
     third of a second, then a stick click. Pages: the game's view (F1 - F4),
     options (the picture's distance and width, brightness, your height, the
-    laser), the VR render size and the body measurement. With the skill panel in
-    the Tiles look these pages are its second tab, *Settings*, beside *Skills*:
+    laser, how the right stick turns), the VR render size, the body measurement,
+    the low-life vignette (two pages, Life and Look), the HUD (the toolbar's type,
+    the health bar over the monster's head and its gap, the plate's height on the
+    screen, the ordinary plates' tick), a page that changes by itself, a moment
+    after each press, the way the sliders here do: **Belt** (height, distance,
+    right / left, turn, how near a hand must be to a potion to take it, and the
+    tick *trigger + grip*), and two pages for what the buttons do, **Left** and
+    **Right** (a list for each button, as in Controls > Buttons of the controllers
+    here). The keys are the same ones this window writes, so both stay in step.
+    With the skill panel in the Tiles look these pages are its second tab,
+    *Settings*, beside *Skills*:
     flick a stick left or right, tap a grip, or click the arrow at the window's
     edge to flip. *Apply* writes only what you changed into d2r_vr.ini.
 - **Belt potions** - the belt's bottom row on the hero's hips as the game's own
-  models (off); *take them in the hand and drink*, and where each is held.
+  models (off); *take them in the hand and drink*, and where each is held. Where the
+  belt hangs: height, distance from the body, degrees between the potions, size, two
+  sliders for *right (+) / left (-)* and *turn round him* (0 = as before), and *grab
+  reach*, how near a hand must be to a potion to take it (a wide one steals the grip
+  meant for the weapon). All but the degrees between the potions and the size are in
+  the headset (settings panel > Belt), where the tick *Potion: trigger + grip* is too
+  (a potion needs the trigger squeezed with the grip; the grip alone is the weapon's).
 - **Panels** - how far the screen moves back while the inventory or a trade
   window is open, so the whole panel is in view.
 - **In the game's picture** - the corner map and which parts of the game's
@@ -291,9 +378,31 @@ The toolbar while the game lies on your floor, and the item labels.
   (a square 2048 picture at Safe Screen Percent 80 wants about 3 - 4 higher); a
   tick **Show the cut strip** paints the strip a see-through magenta so its edges
   can be seen while tuning.
-- **Names over monsters** - the plate the game hangs over the monster you target:
-  its opacity and size, and a tick to take the plates of ordinary monsters off
-  the screen (a champion's, a unique's, a boss's and the NPCs' stay).
+- **Monster plates** (once "Names over monsters") - the plate the game hangs over the monster you target. It stays the
+  game's own: nothing is cut out of the picture or drawn again, only what the game is told about it changes. Its opacity
+  and size; in first person a tick, *Plate over the monster's head*, that lifts it (or lowers it) in the game's own anchor
+  call so that its lower edge hangs the *gap* (cm) over the monster's head whatever the distance - the game's own gap is
+  the same few pixels at any distance, some 7 cm over a head 1.5 m away and 45 cm over one 10 m away - centred over the
+  monster; without that tick a slider for its height on the screen; and a tick to take the plates of ordinary monsters off
+  the screen (a champion's, a unique's, a boss's and the NPCs' stay). The plate has its own look, apart from the item
+  labels on the ground: none of the Item labels sliders (opacity, size, size far away, at their items, stereo depth on
+  top) moves, fades or sizes it, and its own sliders do nothing to the labels. It has the item labels' rules too:
+  *size far away* (a monster 10 m off and farther gets that share of the size, 1.5 m and nearer all of it), *at its
+  monster* (set at its monster's depth by the distance, as *at their items*) and a *stereo depth* of its own. The plate
+  cut out and hung in the room as a layer of its own is still in the plugin, off: `[hud] monster_bar_room` in the ini.
+- **Item condition figure** - the little knight at the top right whose sword, armour, bracers and boots go red as your
+  items wear out (the game's own durability warning, shown from half worn; its widget is `DurabilityWarning` in the
+  `HUDWarnings` panel). It hangs at the very corner of the interface, at the edge of the headset's view; in first person
+  it can be moved (*left / right* and *up / down*, % of the picture), sized, or hidden. All at their defaults: where the
+  game puts it. Needs the new D2R_DepthFog.fx in ReShade.
+- **Toolbar (life, mana, belt) in first person** - one choice, *Toolbar type*: watches
+  on the wrists (life and mana), the whole toolbar on the chest, low in front or on a
+  forearm, not shown, or left in the picture in front of your eyes. It sets *Hide the
+  game's interface* and *Where* together, so a place always works. F1 - F3 keep the
+  toolbar in the picture where the game draws it; with a panel open (inventory, trade,
+  menu) the game's whole interface is back in every view. The same choice, the plate's
+  height and the ordinary plates' tick are on the *HUD* page of the settings panel in
+  the headset.
 - **Item labels on the ground** - opacity and size.
 - **Low life: red heartbeat vignette** (native OpenXR, off) - while your life
   is under a threshold (30% to begin with) the edges of what you see tint deep red
@@ -307,7 +416,16 @@ The toolbar while the game lies on your floor, and the item labels.
   rounded square). A *gentle* mode is slower and softer, and the beat can be felt
   in the controllers too (Controller vibration on), stronger the lower your life
   - with a strength slider of its own. The middle of your view stays clear.
-  Needs the new D2R_DepthFog.fx in ReShade.
+  Needs the new D2R_DepthFog.fx in ReShade. The same keys are on the **Life** and
+  **Look** pages of the settings panel in the headset (Settings tab of the skill
+  window): switch it on and tune it with the headset on. Opening one of those pages
+  changes nothing - no red, no buzz. The **Preview 5 s** button in the bottom bar
+  (on both pages) shows the vignette as if your life were half way down and plays the
+  beat in both controllers, with the rows as they stand, for five seconds; then it
+  stops by itself. Pressing it again starts the five seconds again; leaving the page
+  or closing the panel stops it. Apply saves, as on the other pages. On a PlayStation
+  VR2 (SteamVR) the gentle beat is lifted to what its controllers show; `[openxr]
+  haptics_motor` in d2r_vr.ini changes that (0 by the headset, 1 plain, 2 weak).
 
 ## World
 
@@ -387,28 +505,7 @@ in full in a square window); the log tells the size the game draws at.
   Still off the cast; that first look now finds none for a shot along the hand)
   and *An attack never runs the hero off* (off: a net for the run the game starts
   out of a pad cast).
-- **Melee: hit by touch** (F4, off) - the blade you swing through a monster's
-  body picks the target and the moment of the game's own attack (the attack
-  button is pressed on the contact, the monster you touched is its target). The
-  game's animation, reach, hit rolls and attack speed stay the game's. *The least
-  blade speed that hits* (0.8 m/s) and *how far the blade moves to start a
-  stroke* (8 cm) are sliders; a monster is hit once per stroke, allies and
-  monsters behind a wall are left alone. *Thrown weapons hit by touch too* (on
-  with it): a javelin, knife or axe swung through a monster is the game's Throw at
-  it, point blank; potions never. *Shield bash casts Smite* (off): with Smite on a
-  pad skill slot, a hard bash of the shield through a monster casts one Smite at
-  it. *Shield bash: the least speed* (0.8 m/s) and *how far the shield moves to start
-  a bash* (8 cm) are the bash's own numbers, apart from hit by touch's. *Direct hit* (experimental, off, offline only): the touch calls the game's
-  basic attack itself - no animation, no walk-up, no attack-rate wait. The blade
-  is built from the weapon as it is drawn; its length, thickness and direction
-  are sliders on the Debug tab, and *Draw the capsules of Hit by touch* shows
-  what is tested. *Quick strike* (experimental, a change of the game's timing): the
-  game lands a melee blow at an action frame of the attack animation (a Paladin's
-  sword: frame 7, 0.28 s in); this moves that frame to the start (a slider, 1 by
-  default) so the blow lands about a quarter of a second sooner inside the same
-  attack. The animation's length and the attack rate stay. The melee rows of the
-  hero's class and the Paladin's Smite, never the bow, throws, spells or kicks;
-  offline only; put back exactly when off.
+- **Melee: hit by touch, Direct hit, Quick strike, the shield bash** - moved to the Strikes tab (below), with the strike rules.
 - **Bow** (F4, off) - *Draw the string with both hands*: the free hand's trigger
   (or its grip) at the bow's string, pull back along the line to the bow and let
   go; the game's own attack, or the pad button of a skill you pick (Magic, Fire,
@@ -448,10 +545,56 @@ in full in a square window); the log tells the size the game draws at.
   throw - the missile of a javelin, knife or axe is made at the start of the
   throw animation (a slider) instead of about 0.36 s in; a throwing potion keeps
   the game's timing unless *Quick throw: throwing potions too* is ticked.
-- **Crossbow** - the shot line and the left hand's place.
+- **Crossbow** - the shot line and the left hand's place; in VR F4 four ticks for the
+  left hand (from d2r-pcvr): *left grip lets go cleanly*, *left wrist follows the
+  controller*, *take the grip right after a swap*, *left palm under the drawn barrel*
+  (with *palm below the barrel, cm* and *palm behind the limbs, cm*). The shot is not
+  changed by any of them.
+  The shot line (*shot line, tilt* / *turn*) on the author's rig, 2026-10-16 (light
+  crossbow, gun frame): bolts fly straight with tilt 0 / turn -46, and go left with
+  turn 0. The drawn barrel itself lies about 34 degrees above the controller's forward
+  and 4-10 degrees to the side - near the old 30-34 / 15. The -46 / 0 line points about
+  60 degrees into the ground, but its heading on the ground (all the game's aim uses)
+  matched the barrel's within a few degrees in the usual hold (median 1, 72 samples);
+  raised or rolled, the two parted by 10-90 degrees.
 - **Spears, polearms, two-handed axes, maces and swords** - the left hand takes
   them with the grip.
 - **All 17 kinds** - green = adjusted; click one to edit it.
+
+## Strikes
+
+Everything that decides whether, and how, a touch of your blade becomes an attack, in one place (F4, hit by touch). The settings and their ini keys are the same as ever - this
+tab holds what used to sit in Weapon Adjust's *Melee: hit by touch* group, and the touch's debug ticks are repeated at the bottom (the same keys as on the Debug tab; ticking one
+ticks the other). The blade's geometry stays in Weapon Adjust and Debug.
+
+- **Hit by touch** (F4, off) - the blade you swing through a monster's body picks the target and the moment of the game's own attack (the attack button is pressed on the
+  contact, the monster you touched is its target). The game's animation, reach, hit rolls and attack speed stay the game's. *The least blade speed that hits* (0.8 m/s)
+  and *how far the blade moves to start a stroke* (8 cm) are sliders; a monster is hit once per stroke, allies and monsters behind a wall are left alone. *Thrown weapons
+  hit by touch too* (on with it): a javelin, knife or axe swung through a monster is the game's Throw at it, point blank; potions never.
+- **Which contact counts as a strike** - rules on top of the swing engine, for every kind of weapon (single kinds can be switched off in the table). They only decide whether
+  a contact counts as an attack: the game's attack, damage and rolls are not touched, nothing is scaled; a refused contact does not use the monster up, so the next blow
+  counts. *Toward the monster* (on): the point of the blade that touches must be moving toward the monster - the angle between its velocity and the line to the nearest point
+  of the monster's body axis is under *how far off the line to it still counts* (60 degrees). An overhead blow down, an uppercut from below, a sideways sweep into the
+  monster and a thrust count; the wind-up (the head going up and back, away from a monster in front of you), the pull-back after a blow and a graze along its side do not.
+  *Only the head of the weapon strikes* (on, for maces and scepters): the contact must be on the outer part of the blade (*the head is the outer 40 %*), not the shaft or the
+  handle. *A swing must be big enough* (on): the head must have travelled at least the kind's amplitude in the stroke before it touched - a real swing, not a flick or a tap.
+  *Piercing weapons: least swing amplitude, cm* (8) is the base - a dagger's or a spear's short jab counts; *Edged weapons: x piercing* (1.4, 11.2 cm), *Blunt weapons: x piercing*
+  (2, 16 cm - a hammer needs a real swing, a shove of the head into the monster over that distance counts too) and *Staffs: x piercing* (1.75, 14 cm) multiply it, and the
+  cm they make is in each label. A stroke begins only after the blade has moved *how far the blade moves to start a stroke*, so an amplitude under that adds nothing.
+- **Each kind of weapon** - a table, a row for each of the 15 kinds the touch swings (bows and crossbows are shot, not swung): *Swing x* (the kind's own amplitude factor, 0 =
+  follow its family), *= cm* (what that comes to), *Speed* (its own least blade speed, m/s) and *Start cm* (its own start distance; 0 = the general one for both), and two
+  ticks, *Toward* and *Head*. Click a number, type, press Enter.
+- **Direct hit** (experimental, off, offline only) - the touch calls the game's basic attack itself - no animation, no walk-up, no attack-rate wait.
+- **Quick strike** (experimental, a change of the game's timing) - the game lands a melee blow at an action frame of the attack animation (a Paladin's sword: frame 7, 0.28 s
+  in); this moves that frame to the start (a slider, 1 by default) so the blow lands about a quarter of a second sooner inside the same attack. The animation's length and the
+  attack rate stay. The melee rows of the hero's class and the Paladin's Smite, never the bow, throws, spells or kicks; offline only; put back exactly when off.
+- **Shield bash** (off) - *Shield bash casts Smite*: with Smite on a pad skill slot, a hard bash of the shield through a monster casts one Smite at it. *The least speed*
+  (0.8 m/s) and *how far the shield moves to start a bash* (8 cm) are the bash's own numbers, apart from hit by touch's.
+- **Debug** - *Draw the capsules of Hit by touch* shows what is tested and why a contact did not count. The blade, the trail and the marks are green only while a contact would
+  count; at a contact that was refused there is a ball on the touching point, an arrow along its way, a thin line to the nearest point of the monster's axis, and the monster's
+  capsule tinted: **red** - not toward the monster (**blue** with *Not toward the monster in red* unticked), **amber** - the swing too small for the kind, too slow where it touched, or
+  never a stroke, **grey** - not the head. A contact that counted leaves green marks and the monster's own red flash. The log says why, a line for each refused contact (the
+  kind, the angle, the speed or the amplitude). Also: how long the marks stay, *Draw what casts skills* (the shield bash) and the blade's length, thickness and direction.
 
 ## Weapon Weight
 
@@ -619,6 +762,19 @@ weapons and potions (Weapon Adjust > Throws) land where this says while Weapon W
 swings it (passed to the other hand, that hand does), and a weapon no hand holds
 - falling, tipping over, lying on the floor, flying back - strikes nothing.
 
+**Flail: the head on its chain (F4)** - its own tick, with or without the weight above. **A flail's
+head swings free on its chain** (off): with a Flail, Knout, Scourge, Khalim's Flail or Khalim's Will in
+hand the spiked head hangs on its chain, swings out and lags as you move the hand (and your body in the
+room - not the hero walking by the stick or a snap turn), and settles when you stop; a hit by touch makes
+it bounce back off the monster. It is the game's own model with its chain's bones moved, nothing drawn over
+it. With hit by touch the BALL strikes, not the handle: a sphere the size of the model's head where the chain has it, judged
+by the ball's own speed and way (a swung ball hits, a limp one does not); the attack it presses is the game's own. Live sliders: **Flail:
+damping** (100 % = a free swing halves in about 2 s), **Flail: how much the hand swings it** (100 % = real,
+0 = carried stiffly), **Flail: bounce off a hit** (100 % = back at about a third of its speed, 0 = none).
+**Flail: the ball's weight** (100 % = the model's own): heavier, a swing carries on longer, a hit turns the ball back less (it pushes through), and
+with *Weapons have weight* on the whole flail is heavier by the ball's part of it (about nine tenths), so it lags behind the hand and sags more.
+Off: the chain keeps the game's animation, as before. `[flail] chain`, `damping_pct`, `swing_pct`, `hit_pct`, `ball_weight_pct`.
+
 ## Fists
 
 ![Fists](screenshots/settings_12_fists.png)
@@ -636,17 +792,33 @@ targeting. Below, a tick for each spell keeps the game's auto-target for that
 one - for spells that seek their target themselves (Guided Arrow, Chain
 Lightning and Bone Spirit are ticked).
 
+*Aim spells by the drawn hand or staff* (on, VR first person F4): the line a
+spell goes along comes from the hero as he is drawn, with no correction slider: a
+staff, wand or orb in hand aims along itself, toward its head (with the weapon's
+weight on: along the shaft as your grip holds it); with none, the hand's fingers
+(wrist to middle knuckle) - or out of the palm when the fingers point up or down.
+A staff held upright aims with its hand. A bow, crossbow, javelin or throwing
+weapon keeps its own line. Off, or with no fresh pose: the controller's own line
+and the *aim correction* sliders, as before. After d2r-pcvr (bearstonem, MIT).
+With both hands on a staff (the weapon's weight on) the line runs along the staff
+between them, from the rear hand to the front one. How far out the spell's point
+goes (finer steps the farther): a staff its two *Staff aim point* sliders, a wand
+or orb *Wand or orb aim point* (20 cells), bare hands *Bare hands aim point* (5)
+(Bow tab, below 3 = the game's own point).
+Debug > Aim rays > *Spell's ray* shows where it goes, live: green from the model,
+orange the old line, to the floor (a full ball) or 8 m out (a ring).
+
 ## Debug
 
 ![Debug](screenshots/settings_13_debug.png)
 
 For finding problems: draw the line the left hand takes, draw the weapon's
 axes, log every frame, find who writes the hero matrix. Leave these off to play.
-New, all off: *Draw what casts skills* (the shield bash's capsule, speed marks and trail
+New, all off (the touch's and the skill triggers' ticks are repeated at the bottom of the Strikes tab): *Draw what casts skills* (the shield bash's capsule, speed marks and trail
 in the headset, and a line in the log of why a bash did or did not count); *Draw the capsules of Hit by touch* and the blade's length,
 thickness and direction (and the thrown kinds' own); *Log what the game does with
 each attack of ours* (`shot_trace`); *Log the long frames and what the plugin
 spent in them* (`frame_trace`) and *Write the plugin's log from a thread of its
-own* (`log_async`) for a stutter; *Log where the time goes between a bow's release
+own* (`log_async`) for a stutter; *Log the room-scale walk once a second* (`roomscale_log`); *Log where the time goes between a bow's release
 and its arrow*; the bow's draw vectors in the headset. After a throw the log tells
 for five seconds what the game does with it (`throw_trace`, on, read only).

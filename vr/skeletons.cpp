@@ -30,6 +30,7 @@
 #include <cstdio>
 #include <cstring>
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 #include <string_view>
@@ -40,11 +41,17 @@
 #include "bow_hook.h"
 #include "bow_hand.h"
 #include "bow_rig.h"
+#include "granny_mesh.h"   // [bow] arrow_fx: the arrow mesh's box off the model in memory
 #include "bone_guard.h"
 #include "bow_touch.h"
+#include "flail_chain.h"   // [flail] chain: the flail's head swings free on its chain
 #include "grip_fit.h"
 #include "grip_pose.h"
+#include "grip_rig.h"
 #include "skeletons.h"
+#include "shield_arm.h"
+#include "shield_arm_wire.h"
+#include "ranged_hand_wire.h"
 #include "shield_fist.h"
 #include "forearm_twist.h"
 #include "view_gate.h"
@@ -54,6 +61,7 @@
 #include "weapon_back.h"
 #include "weapon_shaft.h"
 #include "weight.h"
+#include "xbow_grip.h"   // [hands] xbow_grip_latch / xbow_grip_wide / xbow_support_model: the crossbow's left hand
 
 namespace skel {
 
@@ -277,6 +285,9 @@ struct Hero {
     // R_weapon_attach / L_weapon_attach, under each wrist: where the game hangs
     // what the hand holds (the sorceress's staff hangs on the left one).
     int weapon[2] = {-1, -1};
+    // "shield_attach": the bone the game's shield effects name as their target (the Paladin's Holy Shield: targetbone shield_attach) - where the shield on the screen hangs. Under the arm, not under the
+    // hand: the upper-body pass re-hangs it in its bind pose on its parent every pose, so a shield strapped only by L_weapon_attach never left the left arm on the screen (-1: the rig has none).
+    int shield = -1;
     // two_hand_weapon_attach (the barbarian's rig, under the body, not a wrist): the game hangs a
     // two-handed weapon on it in some animations - walking with a great axe (2026-10-06).
     int twoHand = -1;
@@ -294,6 +305,7 @@ struct Hero {
     // what the body above the pelvis is held in instead of the animation.
     std::vector<Mat> bind;
     std::vector<char> inHand;   // under a hand (fingers, weapon): keeps the animation's grip
+    std::vector<std::string> boneNames;   // the skeleton's bone names, by index (for the log: which bones the string anchor is made of)
     // The fingers of each hand, for the fist: chains of bones from the wrist
     // out (a metacarpal first where the rig has one - it is not bent).
     // kind: which finger this chain is by its first bone's name (bowhook::Kind: the Amazon's "R_ind_finger_01_bind_jnt" ...), -1 when the rig's
@@ -337,12 +349,56 @@ std::atomic<ULONGLONG> g_shieldWantedAt{0};
 SRWLOCK g_twistNoteLock = SRWLOCK_INIT;
 std::string g_twistNote;                // [hands] forearm_twist: the last rig's twist bones, for the log
 std::atomic<int> g_shieldStrapped{0};   // [shield] forearm: 1 strapped this pose, -1 asked but not (hidden, no bind pose), 0 not asked
+std::atomic<float> g_shieldAdjSeen[6] = {};                       // [shield] x y z (cm) pitch yaw roll (deg) as the last strap was given them (ShieldAdjNote)
+std::atomic<float> g_shieldAdjMoveCm{0.0f}, g_shieldAdjTurnDeg{0.0f};   // ... and how far they moved / turned the shield from the plain strap
 #endif
 #if D2RVR_FIRST_PERSON
 std::atomic<int> g_gunAxis{0};   // GunAxis
 struct GunBoneOut { float o[3], ax[3][3]; ULONGLONG at; };
 SRWLOCK g_gunBoneLock = SRWLOCK_INIT;
 GunBoneOut g_gunBone{};
+// [hands] xbow_support_model / [debug] xbow_barrel_line: the hero's crossbow's barrel in its attach bone's frame, as its own skeleton
+// was last posed (NoteCrossbowBarrel), and what was drawn of it - under g_gunBoneLock.
+//   g_xbowBarrel    from the item's own transform (its TransformComponent's local, relative to its parent) - what [bow] aim_along_hands
+//                   uses for a bow. For the crossbow it is NOT how it is drawn (test-41, 2026-10-16: the line crossed the model at ~45 deg,
+//                   the palm's place at the right limb's tip): kept for the log's comparison and the debug drawing (orange) only.
+//   g_xbowRendered  from the item's world matrix as the renderer makes it (0xE3A8C0, potion_hide's hook -> XbowRendered) against our
+//                   attach bone in the world at the pose (g_xbowAttach) - bearstonem/d2r-pcvr's way (skeletons.cpp CrossbowRendered,
+//                   crossbow_pose.h RenderedGeometry): it holds whatever the renderer puts between the item and the wrist. The hand uses this.
+struct XbowBarrelOut { xbowgrip::M inAttach; uint32_t gen = 0; ULONGLONG at = 0; };
+XbowBarrelOut g_xbowBarrel{}, g_xbowRendered{};
+// what XbowRendered needs of the crossbow's skeleton (NoteCrossbowBarrel) and of our pose (PoseBody): its cog's place in its world
+// array, the barrel in the cog's frame; our attach bone in the world, and the model units per metre
+struct XbowSource { uintptr_t self = 0; int cog = -1, count = 0; xbowgrip::M barrelInCog; uint32_t gen = 0; ULONGLONG at = 0; };
+XbowSource g_xbowSource{};
+struct XbowAttach { xbowgrip::M world; float upm = 0.0f; uint32_t gen = 0; ULONGLONG at = 0; };
+XbowAttach g_xbowAttach{};
+std::atomic<uint32_t> g_xbowEntity{0xFFFFFFFFu};             // the hero's crossbow's entity (XbowRendered's one cheap test)
+struct XbowDebugOut { float a[3], b[3], p[3]; bool rendered; ULONGLONG at; };
+XbowDebugOut g_xbowDebug{};
+// [debug] xbow_barrel_line: where the shot goes - from the muzzle along the direction the aim uses (the drawn barrel, or the hand-set
+// line), to where it meets the floor or 8 m out; same frame as the barrel's. barrel: the drawn barrel's direction (else the hand-set line).
+struct XbowRayOut { float a[3], b[3]; bool barrel, floor; ULONGLONG at; };
+XbowRayOut g_xbowRay{};
+// [debug] xbow_barrel_line: where the left palm's middle (wrist to middle knuckle, halfway) really is as the pose leaves it, and how far
+// from its place - a white ring on the overlay, and the log every 3 s (same frame as the barrel's)
+struct XbowPalmOut { float p[3]; float cm; ULONGLONG at; };
+// [hands] xbow_support_game: the game's own fore-grip on the crossbow - in its own idle pose the game holds the crossbow in both hands
+// (palms 0.80 model units apart, "the hold"): the hand it does NOT hang the crossbow on has its palm's middle on the crossbow's fore-grip.
+// Learned from the game's pose (oldW), in the crossbow attach bone's frame, averaged over the first samples per weapon and hero model;
+// and how that palm faces against the barrel (cup under the stock / wrap it from the side / over the top), for the log.
+struct XbowForeGrip { uint64_t key = 0; int n = 0; V3 sum{}; V3 palm{}; V3 facing{}, across{}; bool told = false; };
+constexpr int kForeGripSamples = 30;
+XbowPalmOut g_xbowPalm{};
+SRWLOCK g_xbowNoteLock = SRWLOCK_INIT;
+std::string g_xbowNote;                                       // for vrcam's log (XbowNoteTake)
+void XbowNote(const std::string& line) {
+    AcquireSRWLockExclusive(&g_xbowNoteLock);
+    if (g_xbowNote.size() < 3000) g_xbowNote += (g_xbowNote.empty() ? "" : "\n") + line;
+    ReleaseSRWLockExclusive(&g_xbowNoteLock);
+}
+std::atomic<bool> g_xbowBarrelOn{false};                     // asked for (Set): a crossbow held the gun's way in F4 with either key on
+std::atomic<const char*> g_xbowBarrelWhy{"not asked for"};   // the barrel's reading, for the log (XbowBarrelWhy)
 // The posed weapon in world units (PosedWeapon, melee by touch); written by NotePosedWeapon at the end of a pose.
 SRWLOCK g_posedLock = SRWLOCK_INIT;
 PosedWeaponPose g_posed{};
@@ -394,6 +450,8 @@ struct WeightRel {
     gripfit::Tuning base;
     bool baseOk = false;
     int baseType = -1;
+    // ... and the same grip as the shaft lies against the hand (vr/grip_fit.h AxisOf, in the hand's own frame, metres): what the grip library lays a hand that takes the weapon by
+    gripfit::AxisInHand baseAxis;
 };
 SRWLOCK g_weightLock = SRWLOCK_INIT;
 WeightRel g_weightRel;
@@ -403,6 +461,8 @@ SRWLOCK g_inLock = SRWLOCK_INIT;
 Input g_in;
 std::atomic<FreshFn> g_fresh{nullptr};
 std::atomic<FreshHandsFn> g_freshHands{nullptr};
+std::atomic<GripHandStepFn> g_gripHandStep{nullptr};   // [weight] grip_model 1: the grip library's hand step (SetGripHandStep)
+std::atomic<GripAbiFn> g_gripAbi{nullptr};
 
 // ---- The hero's transform in the renderer's ECS (docs/doll_binding.md, 2026-10-06) ----
 // The renderer keeps its world in an entt registry, a global (D2RLoader layout 0x2677170 -
@@ -605,6 +665,7 @@ bool Learn(uintptr_t self, Hero* h) {
             {&h->spine, {"spine_01_bind_jnt", "spine_01", "spine_01_M_JNT"}},
             {&h->weapon[0], {"R_weapon_attach", "R_weapon_attach", "R_weapon_attach"}},
             {&h->weapon[1], {"L_weapon_attach", "L_weapon_attach", "L_weapon_attach"}},
+            {&h->shield, {"shield_attach", "shield_attach", "shield_attach"}},
             {&h->twoHand, {"two_hand_weapon_attach", "two_hand_weapon_attach", "two_hand_weapon_attach"}},
         };
         for (const Alias& a : kAliases) {
@@ -625,6 +686,48 @@ bool Learn(uintptr_t self, Hero* h) {
     }
     const bool arms = h->upr[0] > 0 && h->lwr[0] > 0 && h->hand[0] > 0 && h->upr[1] > 0 && h->lwr[1] > 0 && h->hand[1] > 0;
     if (!arms) return false;
+    {   // what a held weapon or shield could hang on in this rig, told for the first few heroes: every bone named weapon / attach / shield / buckler / hold, with its parent
+        static std::atomic<int> told{0};
+        if (told.fetch_add(1) < 6) {
+            std::string list;
+            for (int i = 0; i < count; ++i) {
+                std::string lo = names[i];
+                for (char& ch : lo) ch = (char)tolower((unsigned char)ch);
+                if (lo.find("weapon") == std::string::npos && lo.find("attach") == std::string::npos && lo.find("shield") == std::string::npos &&
+                    lo.find("buckler") == std::string::npos && lo.find("hold") == std::string::npos) continue;
+                const int p = h->parent[i];
+                list += (list.empty() ? "" : ", ") + names[i] + " #" + std::to_string(i) + " (under " + (p >= 0 ? names[p] : std::string("nothing")) + ")";
+            }
+            char head[200];
+            snprintf(head, sizeof head, "hero rig %s: %d bones; the shield is strapped by the left attach bone %s (#%d) - bones that could carry a weapon or a shield: ",
+                     h->cls >= 0 ? kHeroClasses[h->cls] : "?", count, h->weapon[1] >= 0 ? names[h->weapon[1]].c_str() : "NOT FOUND", h->weapon[1]);
+            // (the log line has room for some 300 characters: the list in pieces, so that none of it is cut off - which bone the shield really hangs on is read from it)
+            {   // the bone the shield effects name: whether this rig has it, and what it hangs under (the strap acts on it as well as on the left attach bone)
+                char sh[260];
+                snprintf(sh, sizeof sh, "hero rig %s: shield_attach %s%s%s%s", h->cls >= 0 ? kHeroClasses[h->cls] : "?", h->shield >= 0 ? "found, #" : "NOT FOUND (the shield is strapped by the left attach bone only)",
+                         h->shield >= 0 ? std::to_string(h->shield).c_str() : "", h->shield >= 0 ? ", under " : "",
+                         h->shield >= 0 && h->parent[h->shield] >= 0 ? names[h->parent[h->shield]].c_str() : "");
+                weight::Say(sh);
+            }
+            if (list.empty()) {
+                weight::Say((std::string(head) + "none by name").c_str());
+            } else {
+                size_t at = 0;
+                int piece = 0;
+                while (at < list.size()) {
+                    size_t end = std::min(list.size(), at + 200);
+                    if (end < list.size()) {
+                        const size_t comma = list.rfind(", ", end);
+                        if (comma != std::string::npos && comma > at) end = comma + 2;
+                    }
+                    const std::string part = list.substr(at, end - at);
+                    weight::Say((std::string(piece == 0 ? head : "hero rig (cont.): ") + part).c_str());
+                    at = end;
+                    ++piece;
+                }
+            }
+        }
+    }
     // Forearm twist bones: named so, under the forearm and not under the hand; where along the forearm once the bind pose is read.
     for (int side = 0; side < 2; ++side) {
         int found = 0;
@@ -659,6 +762,7 @@ bool Learn(uintptr_t self, Hero* h) {
         }
     }
 
+    h->boneNames = names;
     // Fingers: each child of a wrist except the weapon attach and the _END
     // marker, followed out while a bone has exactly one child. Thumbs are
     // tmb (paladin rig) or thumb (the other two).
@@ -976,25 +1080,57 @@ float TwistForearm(const Hero& h, int side, float share, std::vector<Mat>& newW)
 // with the forearm's twist where it sits ([hands] forearm_twist: the forearm bone's share and more toward the wrist) - no game
 // animation, no Weapon Adjust of the other hand's weapon - then [shield] x y z (cm) and pitch yaw roll (deg) in its own axes.
 // A shield the game hides (its attach bone shrunk to a point: a weapon swap) stays the game's. True when it was set.
-bool StrapShield(const Hero& h, const Input& in, const std::vector<Mat>& oldW, std::vector<Mat>& newW, float roll) {
-    const int n = h.count, wb = h.weapon[1], l = h.lwr[1], k = h.hand[1];
-    if (wb < 0 || l < 0 || k < 0 || !h.bindOk) return false;
-    const Mat anim = Mul(oldW[wb], InvAffine(oldW[k]));
+// [hands] shoulder_draw (vr/shield_arm.h): `side` is the arm it is strapped to, 1 the left (as above), 0 the right - the same shield reflected in the body's plane and carried
+// by the right forearm the same way (shieldmirror::RightArmMatrix), the handedness of the left attach bone kept, the user's corrections mirrored.
+bool StrapShield(const Hero& h, const Input& in, const std::vector<Mat>& oldW, std::vector<Mat>& newW, float roll, int side = 1, int bone = -1) {
+    const int n = h.count, wb = bone >= 0 ? bone : h.weapon[1], l = h.lwr[side], k = h.hand[side];   // (bone: the game's left attach bone, or shield_attach - the same strap for either)
+    const int gameHand = h.hand[1];   // the game hangs the shield on the left wrist: whether it hides it is read there
+    if (wb < 0 || l < 0 || k < 0 || gameHand < 0 || !h.bindOk) return false;
+    const Mat anim = Mul(oldW[wb], InvAffine(oldW[gameHand]));
     if (Len({anim.m[0], anim.m[1], anim.m[2]}) < 0.3f) return false;   // hidden by the game
-    const Mat local = Mul(h.bind[wb], InvAffine(h.bind[l]));
-    const float size = Len({local.m[0], local.m[1], local.m[2]});
-    if (!(size > 0.3f && size < 3.0f)) return false;
+    Mat local{};
+    shieldmirror::Axes axes;
+    float planeX = 0.0f;
+    V3 bindShield = Pos(h.bind[wb]);   // where the shield stands in the bind pose, against the forearm it is strapped to (reflected for the right one)
+    if (side == 1) {
+        local = Mul(h.bind[wb], InvAffine(h.bind[l]));
+        const float size = Len({local.m[0], local.m[1], local.m[2]});
+        if (!(size > 0.3f && size < 3.0f)) return false;
+    } else {
+        if (h.lwr[1] < 0) return false;
+        weaponback::Mat bl, br, bs;
+        memcpy(bl.m, h.bind[h.lwr[1]].m, sizeof bl.m); memcpy(br.m, h.bind[l].m, sizeof br.m); memcpy(bs.m, h.bind[wb].m, sizeof bs.m);
+        planeX = shieldmirror::PlaneX(bl, br);
+        const float size = Len({h.bind[wb].m[0], h.bind[wb].m[1], h.bind[wb].m[2]});
+        if (!(size > 0.3f && size < 3.0f)) return false;
+        const V3 pe = Pos(h.bind[h.lwr[1]]), pw = Pos(h.bind[h.hand[1] >= 0 ? h.hand[1] : k]);
+        axes = shieldmirror::FaceAxes(bs, {pe.x, pe.y, pe.z}, {pw.x, pw.y, pw.z});
+        bindShield.x = 2.0f * planeX - bindShield.x;
+    }
     Mat arm = newW[l];
     const V3 E = Pos(newW[l]), W = Pos(newW[k]);
     if (roll != 0.0f && in.forearmTwist >= 0.0f && Len(Sub(W, E)) > 1e-4f) {
         const V3 bE = Pos(h.bind[l]), bEW = Sub(Pos(h.bind[k]), bE);
         const float ll = Dot(bEW, bEW);
-        const float t = ll > 1e-8f ? std::clamp(Dot(Sub(Pos(h.bind[wb]), bE), bEW) / ll, 0.0f, 1.0f) : 1.0f;
+        const float t = ll > 1e-8f ? std::clamp(Dot(Sub(bindShield, bE), bEW) / ll, 0.0f, 1.0f) : 1.0f;
         TurnAboutSelf(arm, TurnAbout(Norm(Sub(W, E)), (forearmtwist::Share(in.forearmTwist, t) - forearmtwist::Share(in.forearmTwist, 0.0f)) * roll));
     }
     const std::vector<Mat> before = newW;
-    newW[wb] = Mul(local, arm);
-    const float* a = in.shieldAdj;
+    if (side == 1) {
+        newW[wb] = Mul(local, arm);
+    } else {
+        weaponback::Mat bs, br, an, out;
+        memcpy(bs.m, h.bind[wb].m, sizeof bs.m); memcpy(br.m, h.bind[l].m, sizeof br.m); memcpy(an.m, arm.m, sizeof an.m);
+        const double d = boneguard::Det(oldW[wb].m);
+        const int want = d < -1e-9 ? -1 : d > 1e-9 ? 1 : -1;   // the left attach bone's own handedness (a mirror)
+        if (!shieldmirror::RightArmMatrix(bs, br, an, planeX, axes.acrossRow, want, &out)) return false;
+        memcpy(newW[wb].m, out.m, sizeof newW[wb].m);
+    }
+    float mirrored[6];
+    shieldmirror::MirrorAdjust(in.shieldAdj, axes.acrossRow, mirrored);
+    const float* a = side == 1 ? in.shieldAdj : mirrored;
+    const Mat plain = newW[wb];   // the strap without the user's corrections (for ShieldAdjNote)
+    float moveCm = 0.0f, turnDeg = 0.0f;
     if (a[0] != 0.0f || a[1] != 0.0f || a[2] != 0.0f || a[3] != 0.0f || a[4] != 0.0f || a[5] != 0.0f) {   // as Weapon Adjust moves a weapon
         const float headY = in.haveEye ? in.eyeModel[1] : Pos(newW[h.head >= 0 ? h.head : 0]).y;
         const float upm = std::clamp(headY / std::max(0.8f, in.userHeadM), 2.0f, 8.0f) * in.scale;   // model units per metre
@@ -1013,7 +1149,14 @@ bool StrapShield(const Hero& h, const Input& in, const std::vector<Mat>& oldW, s
         const V3 p = Pos(newW[wb]);
         newW[wb] = Mul(Mul(Mul(turn(0, a[3]), turn(1, a[4])), turn(2, a[5])), newW[wb]);   // turned in its own frame, about its own origin
         newW[wb].m[12] = p.x + shift.x; newW[wb].m[13] = p.y + shift.y; newW[wb].m[14] = p.z + shift.z;
+        moveCm = Len(Sub(Pos(newW[wb]), Pos(plain))) / upm * 100.0f;
+        float tr = 0.0f;   // the angle between the two orientations (the rows are orthogonal): cos = (trace - 1) / 2
+        for (int r = 0; r < 3; ++r) tr += Dot(Norm(V3{plain.m[r * 4], plain.m[r * 4 + 1], plain.m[r * 4 + 2]}), Norm(V3{newW[wb].m[r * 4], newW[wb].m[r * 4 + 1], newW[wb].m[r * 4 + 2]}));
+        turnDeg = acosf(std::clamp((tr - 1.0f) * 0.5f, -1.0f, 1.0f)) * 57.29578f;
     }
+    for (int q = 0; q < 6; ++q) g_shieldAdjSeen[q].store(a[q]);
+    g_shieldAdjMoveCm.store(moveCm);
+    g_shieldAdjTurnDeg.store(turnDeg);
     std::vector<char> fromS(n, 0);
     fromS[wb] = 1;
     Propagate(h, before, newW, fromS, wb);
@@ -1056,6 +1199,8 @@ struct StaffHold {
 };
 SRWLOCK g_staffLock = SRWLOCK_INIT;
 StaffHold g_staff;
+// [hands] xbow_grip_latch: the crossbow's own grip latch (vr/xbow_grip.h), under g_staffLock - the staves' StaffEase is not it.
+xbowgrip::Latch g_xbowLatch;
 
 // The hero's forearms as drawn, for FlatVR (the toolbar lies on one): the
 // elbow (forearm bone) and the wrist (hand bone), and the way the palm faces,
@@ -1070,6 +1215,12 @@ std::atomic<const char*> g_armWorldWhy{"not yet posed"};   // why the last pose 
 
 SRWLOCK g_forearmLock = SRWLOCK_INIT;
 ForearmOut g_forearm[2] = {};
+// [hands] spell_aim_model (CastPoseNow): each hand and the weapon's attach bone as the finished pose draws them, head frame, metres from the eye
+struct CastHandOut { float palm[3], fingers[3], face[3]; ULONGLONG at; };
+struct CastWeaponOut { int side; float origin[3], tip[3]; ULONGLONG at; };
+SRWLOCK g_castLock = SRWLOCK_INIT;
+CastHandOut g_castHand[2] = {};
+CastWeaponOut g_castWeapon = {};
 
 // ToModel's inverse: a model-space vector to the hand frame.
 void FromModel(V3 o, float c, float s, float out[3]) {
@@ -1098,6 +1249,44 @@ float StaffEase(float grip, bool inReach, bool busy) {
     const float t = g_staff.t;
     ReleaseSRWLockExclusive(&g_staffLock);
     return t * t * (3.0f - 2.0f * t);
+}
+
+// [hands] xbow_grip_latch: StaffEase for a crossbow, by its own latch (xbowgrip::Latch): held while the grip is, let go at once
+// when the weapon or the hero's model changes (no easing from the old weapon's place), on lost tracking and with no grip from
+// the bridge (the hand free - before, it jumped onto the stock); a squeeze from before (the shoulder swap's) takes nothing.
+float XbowEase(float grip, bool inReach, bool busy, bool tracked, uint64_t hero, uint32_t weapon) {
+    LARGE_INTEGER f, now;
+    QueryPerformanceFrequency(&f); QueryPerformanceCounter(&now);
+    AcquireSRWLockExclusive(&g_staffLock);
+    const float dt = g_staff.last ? std::clamp((float)((double)(now.QuadPart - g_staff.last) / (double)f.QuadPart), 0.0f, kStaffEaseS) : kStaffEaseS;
+    g_staff.last = now.QuadPart;
+    if (!g_xbowLatch.Current(hero, weapon)) g_staff.t = 0.0f;
+    g_staff.on = g_xbowLatch.Step(hero, weapon, tracked, grip, inReach, busy);
+    g_staff.pressed = g_xbowLatch.pressed;
+    g_staff.t = std::clamp(g_staff.t + (g_staff.on ? dt : -dt) / kStaffEaseS, 0.0f, 1.0f);
+    const float t = g_staff.t;
+    ReleaseSRWLockExclusive(&g_staffLock);
+    return t * t * (3.0f - 2.0f * t);
+}
+void XbowLatchReset() {
+    AcquireSRWLockExclusive(&g_staffLock);
+    if (g_xbowLatch.known) { g_xbowLatch.Reset(); g_staff.on = g_staff.pressed = false; g_staff.t = 0.0f; }
+    ReleaseSRWLockExclusive(&g_staffLock);
+}
+
+// The palm's middle (wrist to middle knuckle, halfway) in the hand bone's own frame: from the rig's bind pose - the hand's own bones,
+// whatever its fingers do this frame (xbowgrip::PalmInHand) - else from `pose` as it stands. One definition for every hand put on a
+// shaft by its palm here (the crossbow's support hand, a sword's hilt, a spear's or a staff's shaft laid by its bone's axis).
+V3 PalmInHandOf(const Hero& h, int side, const std::vector<Mat>& pose) {
+    const int k = h.hand[side], m = h.mid[side];
+    if (k < 0 || m < 0) return {0.0f, 0.0f, 0.0f};
+    if (h.bindOk && k < (int)h.bind.size() && m < (int)h.bind.size()) {
+        xbowgrip::M hb, kb;
+        memcpy(hb.m, h.bind[k].m, sizeof hb.m); memcpy(kb.m, h.bind[m].m, sizeof kb.m);
+        xbowgrip::V p;
+        if (xbowgrip::PalmInHand(hb, kb, &p)) return {p.x, p.y, p.z};
+    }
+    return Through(InvAffine(pose[k]), Scale(Add(Pos(pose[k]), Pos(pose[m])), 0.5f));
 }
 
 // [hands] fist: a free hand's fingers from the bind pose (an open hand), each
@@ -1256,6 +1445,167 @@ void BlendBoneHanded(const Mat& a, const Mat& b, float t, Mat* out) {
     *out = r;
 }
 
+// ---- [weight] grip_model 1: the grip library's hand (vr/grip_rig.h; the C interface is shared/d2r_vr_grip.h) ----
+// The library decides where a hand sits on the wood and how its fingers close; the hook gives it the hand's rig (the finger bones in the hand's own proper frame, open and closed), the
+// hand as the weight model has it and the shaft as drawn, and lays the hand and the fingers it answers with on the bones. The pose of the second eye of a pair gets the first's answer:
+// one library step a sample.
+struct LibGripHand {
+    uint64_t key = 0;
+    bool rigOk = false;
+    const char* why = nullptr;
+    D2rgRig rig{};
+    std::vector<int> mirror;
+    D2rgHandState st{};
+    D2rgHandOut out{};
+    uint32_t sample = 0;
+    bool have = false;
+    LARGE_INTEGER at{};
+    bool haveAt = false;
+};
+SRWLOCK g_libGripLock = SRWLOCK_INIT;
+LibGripHand g_libGrip[2];
+
+// What the hook keeps of the library's answer for a hand in this pose: the hand to lay, and the fingers for the stage after the hand is laid.
+struct LibGripResult {
+    bool ok = false;
+    D2rgHandOut out{};
+    D2rgRig rig{};
+    std::vector<int> mirror;
+};
+
+// A hand's rig for the library: its finger bones in the hand's proper frame, open (the bind pose) and closed (the game's grip pose where it was read - for the hand it was read off as it
+// is, for the other by the relabelling - else the fist table's); the bones before a finger's first bending one (a metacarpal) are not bent. nullptr when it is built; else why not.
+const char* LibBuildRig(const Hero& h, int side, const GripPoseKept& kept, const Input& in, const std::vector<Mat>& now, float upm, LibGripHand* L) {
+    if (!h.bindOk || h.hand[side] < 0 || h.mid[side] < 0 || h.fingers[side].empty()) return "no bind pose, or the hand has no fingers";
+    if (h.fingers[side].size() > (size_t)D2RG_MAX_FINGERS) return "the hand has more fingers than the library takes";
+    size_t total = 0;
+    for (const Hero::Finger& f : h.fingers[side]) total += f.bones.size();
+    if (total < 1 || total > (size_t)D2RG_MAX_BONES) return "the hand has more finger bones than the library takes";
+    grippose::M3 eBind, eNow;
+    if (!HandFrameAt(h, side, h.bind, &eBind) || !HandFrameAt(h, side, now, &eNow)) return "no hand frame";
+    const grippose::M3 epBind = griprig::ProperFrame(eBind, side);
+    const V3 palmBind = Scale(Add(Pos(h.bind[h.hand[side]]), Pos(h.bind[h.mid[side]])), 0.5f);
+    // the closed pose: every finger bone's orientation as coordinates in the hook's hand frame, in list order
+    std::vector<grippose::M3> closed;
+    const auto coordsOf = [&](const std::vector<Mat>& w) {
+        closed.clear();
+        for (const Hero::Finger& f : h.fingers[side])
+            for (const int b : f.bones) {
+                grippose::M3 u;
+                if (!grippose::Orientation(w[b].m, &u)) return false;
+                closed.push_back(grippose::Coords(u, eNow));
+            }
+        return true;
+    };
+    bool have = false;
+    if (kept.ok && kept.skel == h.skel && kept.type == in.weaponType) {
+        if (kept.side == side && kept.coords.size() == total) {
+            closed = kept.coords;
+            have = true;
+        } else if (kept.side != side) {
+            std::vector<Mat> tmp = now;
+            if (GripPoseOnto(h, side, kept, now, tmp) == nullptr) have = coordsOf(tmp);
+        }
+    }
+    if (!have) {   // no game pose: the fist table's
+        std::vector<Mat> tmp = now;
+        const int cls = h.cls >= 0 ? h.cls : 3;
+        Fist(h, side, 1.0f, in.fistClose[cls], in.fistOpen[cls], now, tmp);
+        if (!coordsOf(tmp)) return "a finger bone has no axes";
+    }
+    std::vector<griprig::Bone> bones;
+    size_t idx = 0;
+    for (size_t fi = 0; fi < h.fingers[side].size(); ++fi) {
+        const Hero::Finger& f = h.fingers[side][fi];
+        for (size_t j = 0; j < f.bones.size(); ++j, ++idx) {
+            const int b = f.bones[j];
+            griprig::Bone bo;
+            bo.finger = (int)fi;
+            bo.parent = j == 0 ? -1 : (int)bones.size() - 1;
+            grippose::M3 u;
+            if (!grippose::Orientation(h.bind[b].m, &u)) return "a finger bone has no axes";
+            bo.open = griprig::CoordsInProper(grippose::Coords(u, eBind), side);
+            bo.closed = (int)j < f.firstBend ? bo.open : griprig::CoordsInProper(closed[idx], side);
+            const V3 d = Sub(Pos(h.bind[b]), palmBind);
+            const grippose::V dv{d.x, d.y, d.z};
+            bo.pos = {grippose::Dot(dv, epBind.Row(0)), grippose::Dot(dv, epBind.Row(1)), grippose::Dot(dv, epBind.Row(2))};
+            bones.push_back(bo);
+        }
+    }
+    if (!griprig::BuildRig(bones, (int)h.fingers[side].size(), (double)upm, &L->rig, &L->mirror)) return "the hand's bones do not make a rig (a bone a mirror in one pose and not in the other, or a bad chain)";
+    return nullptr;
+}
+
+// One step of hand `side` for this sample (the second eye of a pair gets the first's answer). hin: everything but dt (set here). nullptr when `res` is the library's answer; else why not.
+const char* LibGripRun(const Hero& h, int side, const Input& in, const GripPoseKept& kept, const std::vector<Mat>& now, float upm, D2rgHandIn hin, LibGripResult* res) {
+    const GripHandStepFn step = g_gripHandStep.load();
+    if (!step) return "no hand step registered";
+    AcquireSRWLockExclusive(&g_libGripLock);
+    LibGripHand& L = g_libGrip[side];
+    const uint64_t key = ((uint64_t)h.skel * 0x9E3779B97F4A7C15ull) ^ ((uint64_t)(uint32_t)(in.weaponType + 7) << 40) ^ ((uint64_t)(side + 1) << 56) ^
+                         (kept.ok ? (((uint64_t)(kept.side + 3) << 16) ^ ((uint64_t)(uint32_t)kept.type << 24) ^ 0x1) : 0x55);
+    if (L.key != key) {   // another hero, hand, weapon, or the game's pose has come: the rig again, the grab afresh
+        L.key = key;
+        L.why = LibBuildRig(h, side, kept, in, now, upm, &L);
+        L.rigOk = L.why == nullptr;
+        L.st = D2rgHandState{};
+        L.have = false;
+        L.haveAt = false;
+    }
+    if (!L.rigOk) {
+        const char* why = L.why;
+        ReleaseSRWLockExclusive(&g_libGripLock);
+        return why;
+    }
+    if (!(L.have && L.sample == in.sample)) {
+        LARGE_INTEGER t, f;
+        QueryPerformanceCounter(&t);
+        QueryPerformanceFrequency(&f);
+        const double dt = L.haveAt ? std::clamp((double)(t.QuadPart - L.at.QuadPart) / (double)f.QuadPart, 0.0, 0.05) : 0.0;
+        L.at = t;
+        L.haveAt = true;
+        hin.size = sizeof hin;
+        hin.dt = dt;
+        {   // the fingers as the hand has them now: the grab closes them from there
+            grippose::M3 eNow;
+            std::vector<grippose::M3> coords;
+            bool ok = HandFrameAt(h, side, now, &eNow);
+            for (const Hero::Finger& f : h.fingers[side])
+                for (const int b : f.bones) {
+                    grippose::M3 u;
+                    if (!ok || !grippose::Orientation(now[b].m, &u)) { ok = false; continue; }
+                    coords.push_back(griprig::CoordsInProper(grippose::Coords(u, eNow), side));
+                }
+            D2rgQ q[D2RG_MAX_BONES];
+            if (ok && griprig::LocalsFromCoords(L.rig, L.mirror, coords, q)) {
+                hin.hasFingersFrom = 1;
+                for (int i = 0; i < L.rig.nBones; ++i) hin.fingersFrom[i] = q[i];
+            }
+        }
+        if (step(hin, L.rig, &L.st, &L.out) < 0) {
+            ReleaseSRWLockExclusive(&g_libGripLock);
+            return "the library refused the step";
+        }
+        L.sample = in.sample;
+        L.have = true;
+    }
+    res->ok = true;
+    res->out = L.out;
+    res->rig = L.rig;
+    res->mirror = L.mirror;
+    ReleaseSRWLockExclusive(&g_libGripLock);
+    return nullptr;
+}
+
+// A hand that holds nothing: its library state is forgotten, the next grab starts afresh.
+void LibGripForget(int side) {
+    AcquireSRWLockExclusive(&g_libGripLock);
+    g_libGrip[side].st = D2rgHandState{};
+    g_libGrip[side].have = false;
+    g_libGrip[side].haveAt = false;
+    ReleaseSRWLockExclusive(&g_libGripLock);
+}
+
 // [bow] hook_game_pose: the string hand's fingers as the game's own bow-draw animation holds them (vr/bow_hook.h: the measured rotation of
 // every finger bone, bind pose -> the hold of the draw, in the bone's own frame). Laid on the chains below the wrist bone `newW[hand]` as it
 // stands now, into `hook` (a copy of the finger bones' matrices, nothing else touched): the knuckles open, the last two joints of each finger
@@ -1316,15 +1666,95 @@ int BowSideOf(const Hero& h, const std::vector<Mat>& oldW, float* sizes = nullpt
     if (sizes) { sizes[0] = size[0]; sizes[1] = size[1]; }
     return size[1] > 0.7f && size[0] < 0.3f ? 1 : size[0] > 0.7f && size[1] < 0.3f ? 0 : -1;
 }
+// [hands] shoulder_draw_ranged: a bow or crossbow that is put away is not drawn. Its attach bone is the one the game shows (the other is shrunk); with both shown (an Amazon's quiver in the
+// other slot) the slot's (Input::rangedBone). Shrunk to a point and what hangs on it follows (Propagate); a hero without that bone draws it as the game does.
+void HideRanged(const Hero& h, const Input& in, const std::vector<Mat>& oldW, std::vector<Mat>& newW) {
+    int side = BowSideOf(h, oldW);
+    if (side < 0) side = in.rangedBone == 0 ? 0 : 1;
+    const int wb = h.weapon[side];
+    if (wb < 0) return;
+    const std::vector<Mat> before = newW;
+    for (int r = 0; r < 3; ++r)
+        for (int c = 0; c < 3; ++c) newW[wb].m[r * 4 + c] *= 0.001f;
+    std::vector<char> fromS(h.count, 0);
+    fromS[wb] = 1;
+    Propagate(h, before, newW, fromS, wb);
+}
 // The wrist the bow hangs on for the bow's rig and the aim: BowSideOf's when the attach bones tell, else the hand opposite the string
 // hand the draw detector names, else the one opposite vrcam's string side (Input::bowStringSide - the bow is in the aim hand).
 // An Amazon's quiver sits in the other slot and both attach bones are shown, so the bones alone never told hers. `sizes` get the bones'.
 bowaim::BowWrist BowWristNow(const Hero& h, const Input& in, const std::vector<Mat>& oldW, float sizes[2]) {
     sizes[0] = sizes[1] = -1.0f;
     BowSideOf(h, oldW, sizes);
+    // [hands] shoulder_draw_ranged_swap: a bow drawn into the other hand is held in THAT hand, whatever attach bone the game shows (BowCarry moves it there)
+    if (in.rangedHolster && in.rangedBow && in.rangedSwap && (in.rangedSide == 0 || in.rangedSide == 1)) return {in.rangedSide, bowaim::SideBy::AimHand};
     bool drawing = false;
     const int fed = BowFeedSide(&drawing);
     return bowaim::ChooseBowWrist(sizes[0], sizes[1], fed, in.bowStringSide == 0 || in.bowStringSide == 1 ? in.bowStringSide ^ 1 : -1);
+}
+// The side of the attach bone the bow's MESH hangs on: the game's own - the bone it shows, else (both shown: an Amazon's quiver in the other slot) the slot's (Input::rangedBone). With the
+// swap the bow is held in the other wrist but the mesh stays on this bone (BowCarry moves the bone there); without it, the wrist the bow is in.
+int BowBoneSide(const Hero& h, const Input& in, const std::vector<Mat>& oldW, int wristSide) {
+    if (!(in.rangedHolster && in.rangedBow && in.rangedSwap)) return wristSide;
+    const int shown = BowSideOf(h, oldW);
+    return shown >= 0 ? shown : (in.rangedBone & 1);
+}
+// [hands] shoulder_draw_ranged_swap: the bow's attach bone (the game hangs the item on `boneSide`'s, in `boneSide`'s hand) carried to the OTHER hand, mirrored: the bone keeps its relation to
+// the hand it has been put in (the pose the game and the arms gave it), seen from the other hand - the two hands are each other's mirror image in the bind pose, so a point of the one
+// hand's frame goes to the same point of the other's through  bind[from] * Reflect * inv(bind[to])  (the plane between the hands). That is the bow reflected in the body's plane; the left
+// attach bone is a mirror (negative determinant) and the item on it is drawn from a matrix of that handedness only (inside out otherwise), so it is reflected once more through the bow's own
+// plane of symmetry (its side axis, local) - which leaves the bow where it is and gives the matrix its handedness back. Children of the bone follow (Propagate). False: nothing done.
+bool BowCarry(const Hero& h, const std::vector<Mat>& oldW, std::vector<Mat>& newW, int boneSide, int toWrist, const float sideAxis[3]) {
+    if (boneSide < 0 || toWrist < 0 || boneSide == toWrist || !h.bindOk) return false;
+    const int mb = h.weapon[boneSide], from = h.hand[boneSide], to = h.hand[toWrist];
+    if (mb < 0 || from < 0 || to < 0 || h.hand[0] < 0 || h.hand[1] < 0) return false;
+    const float x0 = 0.5f * (Pos(h.bind[h.hand[0]]).x + Pos(h.bind[h.hand[1]]).x);
+    Mat reflect{};
+    reflect.m[0] = -1.0f; reflect.m[5] = 1.0f; reflect.m[10] = 1.0f; reflect.m[15] = 1.0f; reflect.m[12] = 2.0f * x0;
+    const Mat rel = Mul(newW[mb], InvAffine(newW[from]));
+    Mat m = Mul(Mul(Mul(rel, h.bind[from]), Mul(reflect, InvAffine(h.bind[to]))), newW[to]);
+    // the handedness the bone had (a mirror on the left, a proper one on the right); a bone shrunk to a point keeps its sign
+    const double was = boneguard::Det(oldW[mb].m);
+    const int want = was < -1e-12 ? -1 : was > 1e-12 ? 1 : (boneSide == 1 ? -1 : 1);
+    const double now = boneguard::Det(m.m);
+    if ((now < 0.0 ? -1 : 1) != want) {
+        V3 sd = sideAxis ? Norm(V3{sideAxis[0], sideAxis[1], sideAxis[2]}) : V3{1.0f, 0.0f, 0.0f};   // (no bow rig read yet: its first local axis)
+        Mat refl{};
+        const float a[3] = {sd.x, sd.y, sd.z};
+        for (int i = 0; i < 3; ++i)
+            for (int j = 0; j < 3; ++j) refl.m[i * 4 + j] = (i == j ? 1.0f : 0.0f) - 2.0f * a[i] * a[j];
+        refl.m[15] = 1.0f;
+        m = Mul(refl, m);
+    }
+    for (float v : m.m)
+        if (!std::isfinite(v)) return false;
+    const std::vector<Mat> before = newW;
+    newW[mb] = m;
+    std::vector<char> fromS(h.count, 0);
+    fromS[mb] = 1;
+    Propagate(h, before, newW, fromS, mb);
+    return true;
+}
+// ... and the fingers go with it: each hand's finger pose as the game animated it (the bow hand's grip on the bow, the string hand's) is laid on the OTHER hand, mirrored (GripPoseOnto, the
+// weight model's way of passing a weapon's grip to the hand that takes it) - the hand the bow was drawn into closes on it, the other has the game's string hand. A hand whose pose cannot be
+// taken or laid (no fingers found, the two hands do not answer each other) keeps what it has.
+thread_local bool g_fingersCarried = false;   // this pose: CarryBowFingers has laid the hands' finger poses on the other hands - the string anchor reads them from newW, not from the game's own (the other hand's)
+bool CarryBowFingers(const Hero& h, const std::vector<Mat>& oldW, std::vector<Mat>& newW, int a, int b) {
+    if (a < 0 || b < 0 || a == b || !h.bindOk) return false;
+    bool any = false;
+    std::vector<Mat> laid = newW;
+    for (int pass = 0; pass < 2; ++pass) {
+        const int from = pass ? b : a, to = pass ? a : b;
+        GripPoseKept kept;
+        if (!TakeGripPose(h, from, oldW, 0, &kept)) continue;
+        std::vector<Mat> one = newW;   // (read off the game's own hands, put on the other as it stands now)
+        if (GripPoseOnto(h, to, kept, newW, one)) continue;
+        for (const Hero::Finger& f : h.fingers[to])
+            for (const int bone : f.bones) laid[bone] = one[bone];
+        any = true;
+    }
+    newW = laid;   // (only finger bones differ)
+    return any;
 }
 // The final attach bone `w` (model space, as ours left it) into the game's world: the hero's own model-to-world
 // (his TransformComponent's local matrix, set before this very pose - a later copy displaced fast swings) times the
@@ -1390,11 +1820,11 @@ bool BowAxesNow(float f[3], float u[3], float s[3]) {
     return fresh;
 }
 
-// [bow] string_anchor: the bow's string is held at the first joints of the hooked fingers, not at the controller's grip point (the middle of
-// the palm, about a hand's length behind them - the string ran past the back of the hand and hooked nothing). The three joints (index, middle,
-// ring: vr/bow_hook.h kAnchorJoint) as HookPose puts them on the string hand's wrist as it stands now - the fingers sit on the wrist rigidly,
-// so this does not wait for them to be posed, which comes later in the pose - moved by the sliders along the hand's own axes. The Amazon's
-// right hand only, with hook_game_pose; anything else keeps the grip point.
+// [bow] string_anchor: the bow's string is held at the first joints of the fingers (index, middle, ring: vr/bow_hook.h kAnchorJoint), not at the controller's grip point
+// (the middle of the palm, about a hand's length behind them - the string then met the base of the hand and hooked nothing). With hand_pose + hook_game_pose the joints are
+// those of the hooked pose HookPose lays on the string hand's wrist as it stands now (the fingers sit on the wrist rigidly, so this does not wait for them to be posed,
+// which comes later in the pose) - the Amazon's right hand; that path is exactly as it was. With hand_pose OFF the fingers are the game's own animation of them (which,
+// for a bow in hand, is the hook already), put on the wrist as it stands now. Either way the sliders move the point along the hand's own axes.
 bowhook::Tune HookTune(const Input& in) {
     bowhook::Tune t;
     t.curl = in.bowHookCurl;
@@ -1402,16 +1832,29 @@ bowhook::Tune HookTune(const Input& in) {
     return t;
 }
 
-bool HookAnchor(const Hero& h, int side, const Input& in, const std::vector<Mat>& newW, float upm, V3* out, const char** why) {
-    static thread_local std::vector<Mat> scratch;   // (HookPose writes the finger bones only; nothing else of it is read)
-    if (scratch.size() != newW.size()) scratch.assign(newW.size(), Mat{});
-    if (!HookPose(h, side, newW, scratch, HookTune(in))) { *why = "the hooked pose is not known for this hand (the Amazon's right hand only)"; return false; }
+bool FingerAnchor(const Hero& h, int side, const Input& in, const std::vector<Mat>& oldW, const std::vector<Mat>& newW, float upm, V3* out, std::string* source, const char** why) {
+    static thread_local std::vector<Mat> laid;   // the finger bones' world matrices as they will stand on the wrist as it stands now (nothing else of it is read)
+    if (laid.size() != newW.size()) laid.assign(newW.size(), Mat{});
+    if (in.bowHandPose) {   // the hooked pose of hand_pose + hook_game_pose (StringAnchorNow has seen to the second)
+        if (!HookPose(h, side, newW, laid, HookTune(in))) { *why = "the hooked pose is not known for this hand (the Amazon's right hand only)"; return false; }
+    } else {                // hand_pose off: the game's own animation of the fingers, on the wrist as it stands now (each bone's animated local on its parent)
+        // (a bow drawn into the other hand, shoulder_draw_ranged_swap: the fingers on this wrist are the other hand's pose laid on it - newW has them)
+        const std::vector<Mat>& anim = g_fingersCarried ? newW : oldW;
+        for (const Hero::Finger& f : h.fingers[side])
+            for (size_t j = 0; j < f.bones.size(); ++j) {
+                const int b = f.bones[j], pa = h.parent[b];
+                const Mat parent = j == 0 ? newW[(size_t)h.hand[side]] : laid[(size_t)pa];
+                laid[(size_t)b] = Mul(Mul(anim[(size_t)b], InvAffine(anim[(size_t)pa])), parent);
+            }
+    }
     bowhook::Vec joints[3];
+    int bones[3] = {-1, -1, -1};
     int count = 0;
     for (const Hero::Finger& f : h.fingers[side])
         if (bowhook::InAnchor(f.kind) && (int)f.bones.size() > bowhook::kAnchorJoint && count < 3) {
-            const V3 p = Pos(scratch[f.bones[bowhook::kAnchorJoint]]);
-            joints[count++] = {p.x, p.y, p.z};
+            const V3 q = Pos(laid[f.bones[bowhook::kAnchorJoint]]);
+            bones[count] = f.bones[bowhook::kAnchorJoint];
+            joints[count++] = {q.x, q.y, q.z};
         }
     const int k = h.hand[side], m = h.mid[side], i = h.ind[side], p = h.pnk[side];
     if (count < 1 || k < 0 || m < 0 || i < 0 || p < 0) { *why = "the fingers' joints were not found"; return false; }
@@ -1420,6 +1863,14 @@ bool HookAnchor(const Hero& h, int side, const Input& in, const std::vector<Mat>
     bowhook::Vec point;
     if (!bowhook::AnchorPoint(joints, count, frame, in.bowAnchorCm[0], in.bowAnchorCm[1], in.bowAnchorCm[2], upm, &point)) { *why = "the hand has no frame"; return false; }
     *out = {point.x, point.y, point.z};
+    if (source) {
+        const auto name = [&](int b) { return b >= 0 && b < (int)h.boneNames.size() ? h.boneNames[(size_t)b].c_str() : "?"; };
+        char text[300];
+        snprintf(text, sizeof text, "the first joints of the index, middle and ring fingers (bones %s, %s, %s), %s",
+                 name(bones[0]), count > 1 ? name(bones[1]) : "-", count > 2 ? name(bones[2]) : "-",
+                 in.bowHandPose ? "as the hooked pose lays them (hand_pose on)" : "as the game animates them (hand_pose off)");
+        *source = text;
+    }
     return true;
 }
 
@@ -1434,11 +1885,12 @@ struct StringAnchor {
 bowaim::Blend g_anchorBlend;   // (under g_bowAimLock, as is what follows)
 float g_anchorHands[3] = {};   // the string's place in the hands' frame, for the draw's aim line (StringAnchorHands)
 ULONGLONG g_anchorAt = 0;
+std::string g_anchorWho;       // what the anchor is made of, for the log (StringAnchorWho)
 
 StringAnchor StringAnchorNow(const Hero& h, const Input& in, const std::vector<Mat>& oldW, const std::vector<Mat>& newW, float c, float s) {
     StringAnchor a;
     if (!in.bowStringAnchor) return a;
-    if (!in.bowHookGame || !in.bowHandPose) { a.why = "needs the string hand's pose and the game's draw pose (hand_pose, hook_game_pose)"; return a; }
+    if (in.bowHandPose && !in.bowHookGame) { a.why = "with the string hand's pose on it needs the game's draw pose (hook_game_pose)"; return a; }
     if (h.head < 0) { a.why = "no head bone"; return a; }
     float sizes[2];
     const int bowSide = BowWristNow(h, in, oldW, sizes).side;
@@ -1452,7 +1904,13 @@ StringAnchor StringAnchorNow(const Hero& h, const Input& in, const std::vector<M
     const float upm = std::clamp(head.y / std::max(0.8f, in.userHeadM), 2.0f, 8.0f) * in.scale;   // model units per metre
     V3 joint{};
     const char* why = "";
-    const bool have = HookAnchor(h, side, in, newW, upm, &joint, &why);
+    std::string source;
+    const bool have = FingerAnchor(h, side, in, oldW, newW, upm, &joint, &source, &why);
+    if (have) {
+        AcquireSRWLockExclusive(&g_bowAimLock);
+        g_anchorWho = source;
+        ReleaseSRWLockExclusive(&g_bowAimLock);
+    }
     float eased;
     AcquireSRWLockExclusive(&g_bowAimLock);
     a.blend = g_anchorBlend.StepSparse(drawing && have, GetTickCount64(), in.bowAimBlendMs);
@@ -1500,7 +1958,8 @@ void AimBow(const Hero& h, const Input& in, const std::vector<Mat>& oldW, const 
         else snprintf(more, sizeof more, "; string held at the grip point (%s)", anchor.why);
         st.who += more;
     }
-    if (bowSide < 0 || h.head < 0 || h.weapon[bowSide] < 0 || h.hand[bowSide] < 0) {
+    const int boneSide = BowBoneSide(h, in, oldW, bowSide);
+    if (bowSide < 0 || h.head < 0 || h.weapon[boneSide] < 0 || h.hand[bowSide] < 0) {
         st.why = bowSide < 0 ? "the wrist the bow hangs on is not known (the attach bones cannot tell, and neither the draw feed nor the aim hand)" : "the hero's wrist bones were not found";
         publish();
         return;
@@ -1508,7 +1967,7 @@ void AimBow(const Hero& h, const Input& in, const std::vector<Mat>& oldW, const 
     if ((in.handsValid & 3u) != 3u) { st.why = "a controller is not tracked"; publish(); return; }
     float af[3], au[3], as[3];
     if (!BowAxesNow(af, au, as)) { st.why = "the bow's own axes are not read yet (its rig is not a known layout, or not the hero's)"; publish(); return; }
-    const int wb = h.weapon[bowSide], k = h.hand[bowSide];
+    const int wb = h.weapon[boneSide], k = h.hand[bowSide];   // (the bone the mesh hangs on; the wrist the bow is held by)
     auto rig = [](V3 v) { return bowrig::V3{v.x, v.y, v.z}; };
     auto back = [](bowrig::V3 v) { return V3{v.x, v.y, v.z}; };
     auto asRig = [](const Mat& m) { bowrig::Mat r; memcpy(r.m, m.m, sizeof r.m); return r; };
@@ -1619,6 +2078,290 @@ void AimBow(const Hero& h, const Input& in, const std::vector<Mat>& oldW, const 
     memcpy(g_aimAxis, axis, sizeof axis);
     g_aimAxisAt = now;
     ReleaseSRWLockExclusive(&g_bowAimLock);
+}
+#endif
+
+#if D2RVR_FIRST_PERSON
+// ---- [flail] chain: the flail's head swings free on its chain (vr/flail_chain.h) ----
+// The hero's flail (Flail, Knout, Scourge, Khalim's Flail and Will) has its chain as a line of bones; the game moves them only by its own
+// keyframed animations, so with the arm on a controller the head stands stiff against the handle. Ticked (F4 only), the chain bones of the
+// hero's OWN flail are posed from a small simulation each pose: the first link stays where the handle has it, the head hangs and swings with the
+// hand's motion, and a hit by touch (meleetouch: FlailHit) kicks it back. It swings in the ROOM (OpenXR stage, metres), where the weight model's
+// weapon lives too: the real hand, the real body's steps and turns swing it; the hero walking by the stick, a snap turn, the game's camera do not. Only those bones' matrices of this one skeleton; the
+// game's attack, its reach and rolls, the handle and every other weapon are not touched. Unticked or any other view: nothing runs, nothing is
+// written - the game's pose of the chain, as before.
+static_assert(sizeof(flailchain::Mat) == sizeof(Mat), "the chain's matrices are the game's bone matrices");
+
+std::atomic<bool> g_flailOn{false};                  // Set(): [flail] chain with the arms on the controllers (vrcam: F4 only)
+std::atomic<float> g_flailDamping{0.6f}, g_flailSwing{1.0f}, g_flailHit{1.0f}, g_flailWeight{1.0f};
+std::atomic<uint32_t> g_flailHits[2];                // FlailHit: a hit by touch of the weapon in that hand slot (0 right, 1 left)
+std::atomic<const char*> g_flailWhy{"no flail posed yet"};
+std::atomic<ULONGLONG> g_flailPosedAt{0};
+SRWLOCK g_flailNoteLock = SRWLOCK_INIT;
+std::string g_flailNote;                             // the models learned, once each, for vrcam's log
+
+// What this pose of the hero gives the flail's: the hands' attach bones as ours left them, his model-to-world, and his model space in the room.
+struct FlailHands {
+    ULONGLONG at = 0;
+    uintptr_t hero = 0;
+    uint32_t gen = 0;
+    bool attachOk[2] = {};                           // [0] right, [1] left: the bone is there and not shrunk to a point (a hand holding nothing)
+    Mat attach[2]{};
+    Mat heroModel{};                                 // his TransformComponent's local matrix: model space -> the game's world (which wrist: PoseFlail)
+    Mat toRoom{};                                    // model space -> the room (metres, y up): the hands' own mapping (ControllerPoint) run backwards,
+                                                     // then the head's place and turn in the room (weight.cpp's HeadOf / ToRoom)
+};
+SRWLOCK g_flailLock = SRWLOCK_INIT;
+FlailHands g_flailHands;
+
+void NoteFlailHands(uintptr_t self, const Hero& h, const Input& in, const std::vector<Mat>& newW) {
+    FlailHands f;
+    HeroXform hx;
+    if (h.head < 0 || !HeroTransform(&hx) || hx.self != self || (hx.parent & 0xFFFFFu) != 0xFFFFFu || !SafeCopy(f.heroModel.m, (const void*)hx.comp, sizeof f.heroModel.m)) return;
+    for (int side = 0; side < 2; ++side) {
+        if (h.weapon[side] < 0) continue;
+        f.attach[side] = newW[h.weapon[side]];
+        f.attachOk[side] = Len(V3{f.attach[side].m[0], f.attach[side].m[1], f.attach[side].m[2]}) > 0.05f && boneguard::Finite(f.attach[side].m);
+    }
+    const V3 head = in.haveEye ? V3{in.eyeModel[0], in.eyeModel[1], in.eyeModel[2]} : Pos(newW[h.head]);
+    const float upm = std::clamp(head.y / std::max(0.8f, in.userHeadM), 2.0f, 8.0f) * in.scale;   // model units per metre
+    flailchain::Mat room;
+    if (!flailchain::RoomFrame({head.x, head.y, head.z}, upm, cosf(in.yawInModel), sinf(in.yawInModel), {in.headRoom[0], in.headRoom[1], in.headRoom[2]},
+                               in.headYawDeg, &room)) return;
+    memcpy(f.toRoom.m, room.m, sizeof f.toRoom.m);
+    f.at = GetTickCount64();
+    f.hero = self;
+    f.gen = HeroGen();
+    AcquireSRWLockExclusive(&g_flailLock);
+    g_flailHands = f;
+    ReleaseSRWLockExclusive(&g_flailLock);
+}
+
+// A flail skeleton met: its chains learned from the bind pose, or why not. (Every skeleton of a flail's size gets an entry - most of them are
+// monsters' - so the chains and their state hang off it only for a flail.)
+struct FlailState {
+    std::string model;
+    int count = 0;
+    int chains = 0;
+    flailchain::ChainRig rig[flailchain::kMaxChains];
+    flailchain::Sim sim[flailchain::kMaxChains];
+    int lowest = 0, highest = -1;                    // the chains' bones span these indices (written as one block, the rest as the game had it)
+    const char* why = nullptr;
+    uint32_t entity = 0;
+    bool entityKnown = false;
+    ULONGLONG lookupAt = 0;
+    int side = -1;                                   // the wrist it hangs on (0 right, 1 left), as last read
+    uint32_t hitsSeen[2] = {};
+    LARGE_INTEGER lastAt{};
+    uint32_t gen = 0;
+    ULONGLONG kickAt = 0;                            // the last hit's kick (the log's status holds it 0.4 s: vrcam reads it every 10 ms)
+    flailchain::Head head;                           // the ball (hit by touch strikes with it): measured per model
+    int strikes = 0;                                 // the chain whose ball strikes (Khalim's: the middle one)
+};
+// The striking ball of the hero's flail as the last pose of it left it, in the ITEM's model space with the item's place on its attach bone: the
+// hero's pose (PoseBody, PosedBlade::ball) carries it onto the attach bone as THAT pose has it, so the ball comes with the hand sample the
+// touch matches it to (the chain's own motion is a frame old at most).
+struct FlailBall {
+    ULONGLONG at = 0;
+    uint32_t gen = 0;
+    int side = -1;                                   // the wrist slot it hangs on (0 right, 1 left)
+    Mat itemLocal{};                                 // the item's transform against that attach bone
+    V3 centre{}, dir{};                              // the ball's centre and the last link's direction (toward the ball)
+    float radius = 0.0f;                             // model units
+};
+SRWLOCK g_flailBallLock = SRWLOCK_INIT;
+FlailBall g_flailBall;
+struct FlailEntry {
+    uintptr_t bones = 0;
+    std::unique_ptr<FlailState> flail;               // a flail's: else none
+};
+SRWLOCK g_flailRigLock = SRWLOCK_INIT;
+std::map<std::pair<uintptr_t, uintptr_t>, FlailEntry> g_flails;
+
+void NoteFlail(const std::string& line) {
+    AcquireSRWLockExclusive(&g_flailNoteLock);
+    if (g_flailNote.size() < 1500) g_flailNote += (g_flailNote.empty() ? "" : " | ") + line;
+    ReleaseSRWLockExclusive(&g_flailNoteLock);
+}
+
+void LearnFlail(uintptr_t self, uintptr_t bones, int count, FlailEntry* entry) {
+    uintptr_t object = 0, name = 0;
+    Get(self, &object); Get(object + 8, &name);
+    const std::string path = Str(name);
+    if (!flailchain::IsFlailModel(path)) return;
+    entry->flail = std::make_unique<FlailState>();
+    FlailState* e = entry->flail.get();
+    e->model = path.substr(path.rfind('/') == std::string::npos ? 0 : path.rfind('/') + 1);
+    e->count = count;
+    std::string names[flailchain::kMaxBones];
+    std::string_view views[flailchain::kMaxBones];
+    int parents[flailchain::kMaxBones] = {};
+    flailchain::Mat bind[flailchain::kMaxBones];
+    bool read = count >= 2 && count <= flailchain::kMaxBones;
+    for (int i = 0; i < count && read; ++i) {
+        uintptr_t nm = 0;
+        const uintptr_t at = bones + (uintptr_t)i * 0xA4;
+        Mat inverse;
+        read = Get(at, &nm) && Get(at + 8, &parents[i]) && SafeCopy(inverse.m, (const void*)(at + 0x50), sizeof inverse.m);   // the bind pose: the inverse of the world matrix at +0x50
+        names[i] = read ? Str(nm) : std::string();
+        views[i] = names[i];
+        if (read) { const Mat world = InvAffine(inverse); memcpy(bind[i].m, world.m, sizeof world.m); }
+    }
+    if (!read) { e->why = "a flail whose bones do not read"; NoteFlail("flail chain: " + e->model + "'s bones do not read"); return; }
+    flailchain::Layout layout;
+    const char* why = nullptr;
+    if (!flailchain::FindChains(views, parents, count, &layout, &why)) {
+        e->why = "a flail with no chain of bones - the game's animation";
+        NoteFlail("flail chain: " + e->model + ", " + std::to_string(count) + " bones: " + (why ? why : "no chain"));
+        return;
+    }
+    std::string text;
+    for (int c = 0; c < layout.chains; ++c) {
+        flailchain::ChainRig r;
+        if (!flailchain::Learn(layout.chain[c], parents, bind, count, &r, &why)) {
+            text += std::string(text.empty() ? "" : "; ") + "a chain from " + names[layout.chain[c].bone[0]] + " refused (" + (why ? why : "?") + ")";
+            continue;
+        }
+        e->rig[e->chains++] = r;
+        for (int k = 0; k < r.bones; ++k) { e->lowest = e->highest < 0 ? r.bone[k] : std::min(e->lowest, r.bone[k]); e->highest = std::max(e->highest, r.bone[k]); }
+        char b[200];
+        snprintf(b, sizeof b, "%s%s .. %s (%d bones, %d places, %.2f long) off %s", text.empty() ? "" : "; ", names[r.bone[0]].c_str(), names[r.bone[r.bones - 1]].c_str(),
+                 r.bones, r.particles, r.bindLength, names[r.parent].c_str());
+        text += b;
+    }
+    if (!e->chains) e->why = "a flail whose chains did not learn - the game's animation";
+    e->head = flailchain::HeadOf(e->model);
+    e->strikes = flailchain::StrikingChain(e->rig, e->chains, views, count);
+    if (e->chains) {
+        char b[160];
+        snprintf(b, sizeof b, "; the ball that strikes: past %s, %.3f along the last link, radius %.3f (model units)", names[e->rig[e->strikes].bone[e->rig[e->strikes].bones - 1]].c_str(),
+                 e->head.along, e->head.radius);
+        text += e->head.ok ? b : "; no ball known for this model (hit by touch keeps the handle's blade)";
+    }
+    NoteFlail("flail chain: " + e->model + ", " + std::to_string(count) + " bones: " + std::to_string(e->chains) + " chain(s): " + text);
+}
+
+void PoseFlail(uintptr_t self) {
+    if (!g_flailOn.load(std::memory_order_relaxed)) return;
+    uintptr_t model = 0, skeleton = 0, bones = 0;
+    int count = 0;
+    if (!Get(self + 0x08, &model) || !Get(model + 0x08, &skeleton) || !Get(skeleton + 8, &count) || count < 8 || count > flailchain::kMaxBones ||
+        !Get(skeleton + 0xC, &bones) || !bones) return;   // anything but a skeleton the size of a flail's leaves here
+    const ULONGLONG now = GetTickCount64();
+    AcquireSRWLockExclusive(&g_flailRigLock);
+    struct Unlock { ~Unlock() { ReleaseSRWLockExclusive(&g_flailRigLock); } } unlock;
+    const auto key = std::make_pair(self, skeleton);
+    auto it = g_flails.find(key);
+    if (it == g_flails.end() || it->second.bones != bones) {
+        FlailEntry e;
+        e.bones = bones;
+        LearnFlail(self, bones, count, &e);
+        if (g_flails.size() > 4096) g_flails.clear();
+        it = g_flails.insert_or_assign(key, std::move(e)).first;
+    }
+    if (!it->second.flail) return;
+    FlailState& held = *it->second.flail;
+    auto why = [&](const char* w) { g_flailWhy.store(w); };
+    if (!held.chains) { why(held.why ? held.why : "a flail with no chain"); return; }
+    HeroXform hero;
+    if (!HeroTransform(&hero)) { why("the hero's transform is not known"); return; }
+    // Whose is it? Only the hero's own flail: its entity hangs off his (an NPC's, a dropped one, another player's never does).
+    Mat itemLocal, itemWorld;
+    bool haveWorld = false;
+    {
+        AcquireSRWLockExclusive(&ecs::g_lock);
+        struct EcsUnlock { ~EcsUnlock() { ReleaseSRWLockExclusive(&ecs::g_lock); } } ecsUnlock;
+        uintptr_t existing = 0;
+        bool found = held.entityKnown && ecs::SkeletonOf(held.entity, &existing) && existing == self;
+        if (!found) {
+            held.entityKnown = false;
+            if (held.lookupAt && now - held.lookupAt < 500) return;   // looked for twice a second at most
+            held.lookupAt = now;
+            found = held.entityKnown = ecs::EntityOf(self, &held.entity);
+            if (!found) { why("the flail's entity is not found yet"); return; }
+        }
+        uint32_t index = 0, parent = 0;
+        uintptr_t components = 0;
+        if (!ecs::Dense(ecs::g_xs, held.entity, &index) || !Get(ecs::g_xs + 0x38, &components) || !components ||
+            !Get(components + (uintptr_t)index * kTransformSize + 0xC0, &parent)) { why("the flail entity's transform is not found"); return; }
+        if (!flailchain::Wanted(true, true, (parent & 0xFFFFF) == (hero.entity & 0xFFFFF))) return;   // not the hero's: the game's pose, says nothing
+        if (!SafeCopy(itemLocal.m, (const void*)(components + (uintptr_t)index * kTransformSize), sizeof itemLocal.m)) { why("the flail entity's transform did not read"); return; }
+        haveWorld = SafeCopy(itemWorld.m, (const void*)(components + (uintptr_t)index * kTransformSize + 0x40), sizeof itemWorld.m) && boneguard::Finite(itemWorld.m);
+    }
+    FlailHands hands;
+    AcquireSRWLockShared(&g_flailLock); hands = g_flailHands; ReleaseSRWLockShared(&g_flailLock);
+    if (!hands.at || now - hands.at >= 150 || hands.hero != g_heroSelf.load() || hands.gen != HeroGen()) {
+        why("the hero's pose has not placed the hands lately");
+        return;
+    }
+    // The wrist it hangs on: of the attach bones shown, the one that puts the item where the game has it (its world matrix); kept unless the
+    // other is clearly nearer. Unreadable: the left-hand model (flail_lh) on the left, any other on the right.
+    {
+        float d[2] = {1e30f, 1e30f};
+        for (int side = 0; side < 2; ++side)
+            if (hands.attachOk[side] && haveWorld) d[side] = Len(Sub(Pos(Mul(Mul(itemLocal, hands.attach[side]), hands.heroModel)), Pos(itemWorld)));
+        int side = held.side;
+        if (d[0] < 1e29f || d[1] < 1e29f) {
+            const int nearer = d[0] <= d[1] ? 0 : 1;
+            if (side < 0 || !hands.attachOk[side] || d[nearer] * 2.0f < d[side]) side = nearer;
+        } else {
+            side = held.model.find("_lh") != std::string::npos ? 1 : 0;
+        }
+        if (side < 0 || !hands.attachOk[side]) { why("the wrist the flail hangs on is not shown"); return; }
+        held.side = side;
+    }
+    // item model -> the room: the simulation's frame (metres, y up)
+    const Mat toRoom = Mul(Mul(itemLocal, hands.attach[held.side]), hands.toRoom);
+    if (!boneguard::Finite(toRoom.m)) { why("the flail's place in the room is not numbers"); return; }
+    if (held.gen != HeroGen()) {   // a new hero model: started again where the game has it
+        held.gen = HeroGen();
+        for (int c = 0; c < held.chains; ++c) held.sim[c].live = false;
+    }
+    flailchain::Mat toSim, fromSim;
+    memcpy(toSim.m, toRoom.m, sizeof toSim.m);
+    if (!flailchain::Inverse(toSim, &fromSim)) { why("the flail's frame has no inverse"); return; }
+    // the time since the last pose of it (the first, or one after a pause, starts the chain where the game has it)
+    LARGE_INTEGER qpc, freq;
+    QueryPerformanceCounter(&qpc); QueryPerformanceFrequency(&freq);
+    const float dt = held.lastAt.QuadPart ? (float)((double)(qpc.QuadPart - held.lastAt.QuadPart) / (double)freq.QuadPart) : 1.0f;
+    held.lastAt = qpc;
+    // a hit by touch of the weapon in its hand slot since the last pose
+    const uint32_t hits = g_flailHits[held.side].load();
+    const bool kick = hits != held.hitsSeen[held.side] && dt <= 0.25f;
+    held.hitsSeen[0] = g_flailHits[0].load(); held.hitsSeen[1] = g_flailHits[1].load();
+    flailchain::Params p;
+    p.damping = g_flailDamping.load();
+    p.swing = g_flailSwing.load();
+    p.hit = g_flailHit.load();
+    p.weight = g_flailWeight.load();
+    const flailchain::V3 gravity{0.0f, -9.81f, 0.0f};   // the room's y is up
+    uintptr_t world = 0, matrices = 0;
+    int worldCount = 0;
+    if (!Get(self + 0x20, &world) || !Get(world, &worldCount) || worldCount != held.count || !Get(world + 4, &matrices) || !matrices) { why("its pose matrices are not the skeleton's"); return; }
+    flailchain::Mat pose[flailchain::kMaxBones];
+    if (!SafeCopy(pose, (const void*)matrices, sizeof(Mat) * (size_t)held.count)) { why("its pose matrices did not read"); return; }
+    bool started = false;
+    for (int c = 0; c < held.chains; ++c)
+        started = flailchain::Drive(held.rig[c], held.sim[c], toSim, fromSim, dt, gravity, 1.0f, kick, p, pose) == flailchain::Done::Started || started;   // a 1 m jump: started again
+    for (int i = held.lowest; i <= held.highest; ++i)
+        if (!boneguard::Finite(pose[i].m)) { why("the chain's pose did not come out as numbers"); for (int c = 0; c < held.chains; ++c) held.sim[c].live = false; return; }
+    if (held.highest < held.lowest ||
+        !SafeWrite((void*)(matrices + (size_t)held.lowest * sizeof(Mat)), pose + held.lowest, (size_t)(held.highest - held.lowest + 1) * sizeof(Mat))) {
+        why("the chain's pose could not be written");
+        return;
+    }
+    g_flailPosedAt.store(now);
+    {   // hit by touch: the ball that strikes, where this pose has it
+        FlailBall b;
+        flailchain::V3 centre, dir;
+        if (flailchain::Ball(held.rig[held.strikes], pose, held.head, &centre, &dir)) {
+            b.at = now; b.gen = HeroGen(); b.side = held.side; b.itemLocal = itemLocal;
+            b.centre = {centre.x, centre.y, centre.z}; b.dir = {dir.x, dir.y, dir.z}; b.radius = held.head.radius;
+        }
+        AcquireSRWLockExclusive(&g_flailBallLock); g_flailBall = b; ReleaseSRWLockExclusive(&g_flailBallLock);
+    }
+    if (kick) held.kickAt = now;
+    why(started ? "posed - the chain started where the game has it" : held.kickAt && now - held.kickAt < 400 ? "posed - the head kicked back by a hit" : "posed - swinging free");
 }
 #endif
 
@@ -1823,8 +2566,12 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
         // taken in a pose with the hands off it (4.48 units apart, not the 0.80 of the
         // hold) put the model a metre off (2026-10-05). Such a one is not taken; the last
         // good one stands in for it.
+        // [hands] xbow_grip_wide: placed by the controller (gun frame, a fixed stock axis) the pose only gives the attach relation,
+        // so a wide one (the idle after a swap from a shield set) is taken too, while the attach bone is shown (xbowgrip::WideCaptureAllowed).
         static Grip goodXbow;
-        if (in.gunStock && Len(Sub(pw[0], pw[1])) > 1.0f) {
+        const bool controllerPlaced = in.xbowWide && in.gunFrame && in.stockAxis != 0 && abs(in.stockAxis) <= 3;
+        const float mountScale = grip.scale[grip.hand >= 0 ? grip.hand : in.staffHand == 0 ? 0 : 1];
+        if (in.gunStock && !xbowgrip::WideCaptureAllowed(Len(Sub(pw[0], pw[1])), controllerPlaced, mountScale)) {
             if (goodXbow.ok && goodXbow.type == in.weaponType) grip = goodXbow;
             else grip.ok = false;
         } else if (in.gunStock) {
@@ -1835,7 +2582,7 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
     // [weight] grip_fit_fingers: the game's weapon-grip pose of the fingers, read off the hand the game holds the weapon in (the slot's) - from the game's own matrices, so whatever
     // the weight model does to that hand (it lets go, the other carries the weapon) does not touch it - while the hero is calm (a swing's hand is not a grip) and the game shows the
     // weapon on that wrist (a hidden attach bone: nothing is held there). Kept for the weapon type; refreshed each calm pose, so it is the base hand's pose as it is drawn.
-    if (wo.on && in.mode == 2 && in.weight.gripFit && in.weight.gripFingers && !in.attacking && h.bindOk) {
+    if (wo.on && in.mode == 2 && ((in.weight.gripFit && in.weight.gripFingers) || wo.gripLib) && !in.attacking && h.bindOk) {
         const int bs = wo.slot & 1;
         if (h.weapon[bs] >= 0 && h.hand[bs] >= 0) {
             const Mat a = Mul(oldW[h.weapon[bs]], InvAffine(oldW[h.hand[bs]]));
@@ -1933,7 +2680,35 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
         // [weapon_crossbow] x/y/z until the stock runs through the palm; the line the
         // bolt and the left hand keep to runs from the palm along the stock.
         gunAt = ControllerPoint(h, 0, in, newW, c, s);
-        const V3 at = Add(gunAt, Add(Scale(gunR, a[0] * 0.01f * upm), Add(Scale(gunU, a[1] * 0.01f * upm), Scale(gunF, a[2] * 0.01f * upm))));
+        // [hands] xbow_hold_grip: the crossbow's GRIP in the right palm - where the game's own hand holds it (its palm's middle in the
+        // attach bone's frame, grip.palm of the wrist the game hangs it on: a rigid child of that hand, so the same in any pose) - not the
+        // attach bone's origin (test-58..66: "it holds the crossbow by the wrist, not the hand"). Off: the origin in the palm, as before.
+        V3 held = gunAt;
+        {
+            const int gs = staffSide & 1;
+            const V3 g = {grip.palm[gs][0], grip.palm[gs][1], grip.palm[gs][2]};
+            const float gripCm = Len(RotOnly(g, staff)) / upm * 100.0f;   // how far the game's palm is from the attach bone's origin
+            const bool use = in.xbowHoldGrip && grip.ok && std::isfinite(gripCm) && gripCm > 0.3f && gripCm < 25.0f;
+            if (use) {
+                xbowgrip::M sm;
+                memcpy(sm.m, staff.m, sizeof sm.m);
+                const xbowgrip::V o = xbowgrip::OriginForGrip(sm, {g.x, g.y, g.z}, {gunAt.x, gunAt.y, gunAt.z});
+                held = {o.x, o.y, o.z};
+            }
+            static int toldGrip = -1;   // which point is used, once per weapon and choice
+            const int key = (in.weaponType & 0x0FFFFFFF) * 2 + (use ? 1 : 0);
+            if (key != toldGrip && grip.ok) {
+                toldGrip = key;
+                char t[300];
+                snprintf(t, sizeof t, "crossbow right hand: %s - the game's own palm sits %.1f cm from the crossbow's attach bone (the %s wrist's)%s",
+                         use ? "the crossbow's grip (the game's own palm on it) in the right palm ([hands] xbow_hold_grip)"
+                             : "the crossbow's attach bone in the right palm (as before)",
+                         gripCm, gs ? "left" : "right",
+                         in.xbowHoldGrip && !use ? " - not used: out of 0.3 .. 25 cm or no grip" : "");
+                XbowNote(t);
+            }
+        }
+        const V3 at = Add(held, Add(Scale(gunR, a[0] * 0.01f * upm), Add(Scale(gunU, a[1] * 0.01f * upm), Scale(gunF, a[2] * 0.01f * upm))));
         staff.m[12] = at.x; staff.m[13] = at.y; staff.m[14] = at.z;
         newW[wb] = staff;
         std::vector<char> fromStaff(n, 0);
@@ -1981,10 +2756,21 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
     // string is taken (and the bow's real axis is read for the debug): the bow hand is turned and its arm solved again, above.
     // [bow] string_anchor: where the string is held (the string hand's wrist is final here: the arms are placed above), for the aim and for the
     // bow's own rig below (NoteBowHands).
+    g_fingersCarried = false;
+    if (in.mode == 2 && in.rangedHolster && in.rangedBow && in.rangedSwap && !in.rangedStowed && (in.rangedSide == 0 || in.rangedSide == 1)) {
+        // [hands] shoulder_draw_ranged_swap: the bow was drawn into the other hand: its attach bone is carried there before anything is posed round it
+        const int boneSide = BowBoneSide(h, in, oldW, in.rangedSide);
+        float sideAxis[3], f[3], u[3];
+        const bool axes = BowAxesNow(f, u, sideAxis);
+        if (BowCarry(h, oldW, newW, boneSide, in.rangedSide, axes ? sideAxis : nullptr)) g_fingersCarried = CarryBowFingers(h, oldW, newW, boneSide, in.rangedSide);
+    }
     StringAnchor anchor;
     if (in.bowStringAnchor && in.mode == 2 && (in.bowAim || in.bowAxis || in.bowRest || in.bowRig || in.bowString)) anchor = StringAnchorNow(h, in, oldW, newW, c, s);
     if ((in.bowAim || in.bowAxis || in.bowRest) && in.mode == 2 && in.holdGrip && grip.ok && !gun) AimBow(h, in, oldW, baseW, newW, c, s, turn, n, anchor);
     bool weightDrew = false;     // [weight]: the weight block below set the weapon bones (both attach bones are W): nothing after moves them
+    LibGripResult libGripRes[2];  // [weight] grip_model 1: the grip library's answer for each hand in this pose (the hand laid in the weight block, the fingers after it)
+    for (int sd = 0; sd < 2; ++sd)
+        if (!wo.on || !wo.holds[sd]) LibGripForget(sd);   // a hand that holds nothing: its next grab starts afresh
     // [weight] (vr/weight.cpp): the weapon is carried by the hand weight::Apply says (its controller was
     // moved onto the weapon), in the relation that hand took it in: where the game's grip and Weapon
     // Adjust put it in the slot's fist, or where the hand closed on the shaft. A hand fully on it beside
@@ -2143,7 +2929,8 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
         // the axis and lean, measured below), then its own corrections. The base hand (the game's hand as placed, grabs 0) is the game's pose, only its corrections act. Only the
         // hand moves - the arm is reached to it again and its fingers follow; the weapon is set again after, so it is where it was (the relation to each hand was taken above,
         // from the hand as the controller has it: the sliders never shift the weapon).
-        if (in.weight.gripFit && !wo.free && !onBack) {
+        const bool libGrip = wo.gripLib && g_gripHandStep.load() != nullptr && !freeStaff;   // [weight] grip_model 1: the grip library lays the hands on the shaft
+        if ((in.weight.gripFit || libGrip) && !wo.free && !onBack) {
             const int ax = std::abs(in.weight.tipAxis) - 1;
             const float tipSign = in.weight.tipAxis < 0 ? -1.0f : 1.0f;
             const gripfit::Shaft gs = ax >= 0 && ax <= 2
@@ -2167,11 +2954,121 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
             };
             // the base grip's relation to the shaft, as last measured for this weapon (cm and degrees, the right hand's convention)
             gripfit::Tuning baseRel;
+            gripfit::AxisInHand baseAxis;
             bool baseKnown = false;
             AcquireSRWLockShared(&g_weightLock);
-            if (g_weightRel.baseOk && g_weightRel.baseType == in.weaponType) { baseRel = g_weightRel.base; baseKnown = true; }
+            if (g_weightRel.baseOk && g_weightRel.baseType == in.weaponType) { baseRel = g_weightRel.base; baseAxis = g_weightRel.baseAxis; baseKnown = true; }
             ReleaseSRWLockShared(&g_weightLock);
             bool moved = false;
+            // the base hand as it is drawn now: how it sits on the shaft (the palm's offset across and up the hand, the lean of its knuckle line) - what the hands that take it copy
+            const auto measureBase = [&](int side) {
+                bool okRel = false;
+                const gripfit::Tuning rel = gripfit::InCm(gripfit::Relation(handGeom(side), gs, &okRel), ucm);
+                if (okRel && std::fabs(rel.off[1]) < 20.0f && std::fabs(rel.off[2]) < 20.0f) {   // (a hand 20 cm off the axis is no base grip)
+                    baseRel = rel;
+                    baseAxis = gripfit::AxisOf(handGeom(side), gs, upmM);
+                    baseKnown = true;
+                    AcquireSRWLockExclusive(&g_weightLock);
+                    g_weightRel.base = rel;
+                    g_weightRel.baseAxis = baseAxis;
+                    g_weightRel.baseOk = true;
+                    g_weightRel.baseType = in.weaponType;
+                    ReleaseSRWLockExclusive(&g_weightLock);
+                }
+            };
+            // [weight] grip_model 1: the hand the grip library lays on the shaft - the hand as the weight model has it and the shaft as drawn go in, the hand to lay comes out as the
+            // same kind of fit (a turn about the palm and a shift) and its fingers wait in libGripRes for the finger stage. nullptr when it did; else why not (the hand is then ours).
+            const auto libFit = [&](int side, const GripPoseKept& kept, gripfit::Out* fo) -> const char* {
+                const gripfit::Hand gh = handGeom(side);
+                grippose::M3 e;
+                if (!HandFrameAt(h, side, newW, &e)) return "no hand frame";
+                const grippose::M3 ep = griprig::ProperFrame(e, side);
+                const auto toM = [&](float x, float y, float z) { return D2rgV3{(double)((x - headM.x) / upmM), (double)((y - headM.y) / upmM), (double)((z - headM.z) / upmM)}; };
+                D2rgHandIn hin{};
+                hin.holds = 1;
+                hin.mode = wo.gripMode[side];
+                hin.handPos = toM(gh.palm.x, gh.palm.y, gh.palm.z);
+                hin.handRot = griprig::QuatOfRows(ep);
+                hin.roll = wo.gripRoll[side];
+                hin.flags = D2RG_HAND_FACES_AXIS;
+                // The shaft against the hand (interface version 2): the way the game's own grip has it when the base hand has been measured on this weapon (the lean of the knuckles, the axis
+                // under the fingers - the hand's frame is the library's proper one: its second axis runs the other way on a right hand), else the palm's middle ON the axis, as the grip fit lays
+                // a hand with no base to copy. A library of version 1 is given neither (the loader clears them) and lays the palm's surface on the wood's, palmDepth below.
+                hin.hasAxisInHand = 1;
+                if (baseKnown && baseAxis.ok) {
+                    const double ys = side == 0 ? -1.0 : 1.0;
+                    hin.lineInHand = {baseAxis.line.x, ys * baseAxis.line.y, baseAxis.line.z};
+                    hin.axisInHand = {baseAxis.toAxis.x, ys * baseAxis.toAxis.y, baseAxis.toAxis.z};
+                }
+                const V3 dir = Norm(V3{gs.dir.x, gs.dir.y, gs.dir.z});
+                const int upAxis = (ax + 1) % 3;
+                hin.shaft.at = toM(gs.at.x, gs.at.y, gs.at.z);
+                hin.shaft.dir = {dir.x, dir.y, dir.z};
+                hin.shaft.up = {W.m[upAxis * 4], W.m[upAxis * 4 + 1], W.m[upAxis * 4 + 2]};
+                hin.shaft.butt = wo.shaftButtT;
+                hin.shaft.tip = wo.shaftTipT;
+                hin.shaft.nPieces = std::min(wo.nPieces, D2RG_MAX_PIECES);
+                for (int i = 0; i < hin.shaft.nPieces; ++i) hin.shaft.pieces[i] = {wo.pieceT0[i], wo.pieceT1[i], wo.pieceR[i]};
+                const V3 palm{gh.palm.x, gh.palm.y, gh.palm.z};
+                const V3 rel = Sub(palm, V3{gs.at.x, gs.at.y, gs.at.z});
+                const float along = Dot(rel, dir);
+                if (baseKnown) {   // the palm's depth: how far the game's own grip has the palm's middle off the axis (across the palm), less the wood's radius there
+                    const float tp = along / upmM;
+                    float rad = 0.015f, best = -1.0f;
+                    for (int i = 0; i < hin.shaft.nPieces; ++i)
+                        if (tp >= wo.pieceT0[i] && tp <= wo.pieceT1[i]) best = std::max(best, wo.pieceR[i]);
+                    if (best >= 0.0f) rad = best;
+                    else if (hin.shaft.nPieces > 0) rad = wo.pieceR[0];
+                    const float depth = -baseRel.off[2] * 0.01f - rad;
+                    if (depth > 0.004f && depth < 0.05f) hin.palmDepth = depth;
+                }
+                LibGripResult res;
+                if (const char* why = LibGripRun(h, side, in, kept, newW, upmM, hin, &res)) return why;
+                const V3 pm = Add(headM, Scale(V3{(float)res.out.handPos.x, (float)res.out.handPos.y, (float)res.out.handPos.z}, upmM));
+                {   // said once for each hand, weapon and way of laying: where the library put the palm against the shaft (what a test of the hold is judged by)
+                    static uint32_t toldKey[2] = {0xFFFFFFFFu, 0xFFFFFFFFu};
+                    const bool fromBase = baseKnown && baseAxis.ok;
+                    const GripAbiFn abiFn = g_gripAbi.load();
+                    const int abi = abiFn ? abiFn() : D2RG_ABI_VERSION;
+                    const uint32_t key = ((uint32_t)in.weaponType << 4) | (fromBase ? 2u : 0u) | (abi >= 2 ? 1u : 0u);
+                    if (toldKey[side] != key) {
+                        toldKey[side] = key;
+                        const V3 relNew = Sub(pm, V3{gs.at.x, gs.at.y, gs.at.z});
+                        const float cmNow = Len(Sub(relNew, Scale(dir, Dot(relNew, dir)))) / ucm;
+                        char b[300];
+                        if (abi < 2)
+                            snprintf(b, sizeof b, "grip library - the %s hand is laid by its palm's surface on the wood's (interface 1): the palm's middle stands %.1f cm from the axis", side ? "left" : "right", cmNow);
+                        else if (fromBase)
+                            snprintf(b, sizeof b, "grip library - the %s hand is laid as the game's own grip has the shaft: %.1f cm toward the fingertips and %.1f cm out of the palm from the palm's middle, the knuckles %.0f deg off it; the palm's middle stands %.1f cm from the axis",
+                                     side ? "left" : "right", baseAxis.toAxis.x * 100.0f, baseAxis.toAxis.z * 100.0f, acosf(std::clamp(std::fabs(baseAxis.line.y), 0.0f, 1.0f)) * 57.2958f, cmNow);
+                        else
+                            snprintf(b, sizeof b, "grip library - the %s hand is laid with the palm's middle on the shaft's axis (no base grip measured on this weapon yet): it stands %.1f cm from it", side ? "left" : "right", cmNow);
+                        weight::Say(b);
+                    }
+                }
+                const grippose::M3 et = griprig::RowsOfQuat(res.out.handRot);
+                const grippose::M3 rr = grippose::Mul(grippose::Transpose(ep), et);
+                gripfit::Out o;
+                o.ok = true;
+                o.pivot = gh.palm;
+                for (int i = 0; i < 9; ++i) o.r.m[i] = rr.m[i];
+                o.shift = {pm.x - palm.x, pm.y - palm.y, pm.z - palm.z};
+                const float tHold = (float)res.out.t * upmM;
+                o.grasp = {gs.at.x + dir.x * tHold, gs.at.y + dir.y * tHold, gs.at.z + dir.z * tHold};
+                o.anchor = {pm.x, pm.y, pm.z};
+                const V3 perp = Sub(rel, Scale(dir, along));
+                o.offAxis = Len(perp);
+                const V3 kn = Norm(V3{gh.knuckles.x, gh.knuckles.y, gh.knuckles.z});
+                o.alignDeg = acosf(std::clamp(fabsf(Dot(kn, dir)), 0.0f, 1.0f)) * 57.2957795f;
+                {   // the user's corrections for this hand (right_grip_* / left_grip_*: the same keys, the same frame and signs as for ours) on top of where the library laid it
+                    gripfit::Tuning user;
+                    for (int i = 0; i < 3; ++i) { user.off[i] = in.weight.gripHand[side][i]; user.rot[i] = in.weight.gripHand[side][3 + i]; }
+                    o = gripfit::WithCorrections(gh, gs, o, user, ucm);
+                }
+                *fo = o;
+                libGripRes[side] = std::move(res);
+                return nullptr;
+            };
             for (int pass = 0; pass < 2 && ax >= 0 && ax <= 2; ++pass) {   // the base hand first (its relation is what the others copy), then the hands that took it
                 for (int side = 0; side < 2; ++side) {
                     const int k = h.hand[side], mk = h.mid[side], ik = h.ind[side], pk = h.pnk[side];
@@ -2180,11 +3077,35 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
                     if ((pass == 0) != isBase) continue;
                     gripfit::Tuning user;
                     for (int i = 0; i < 3; ++i) { user.off[i] = in.weight.gripHand[side][i]; user.rot[i] = in.weight.gripHand[side][3 + i]; }
-                    const gripfit::Plan plan = gripfit::PlanFor(wo.grabs[side], user, in.weight.gripLikeBase, baseKnown ? &baseRel : nullptr);
+                    gripfit::Plan plan = gripfit::PlanFor(wo.grabs[side], user, in.weight.gripLikeBase, baseKnown ? &baseRel : nullptr);
                     gripfit::Out fo;
+                    bool libDone = false;   // the grip library laid this hand
+                    if (libGrip) {
+                        if (isBase && wo.on01[side] >= 1.0f) measureBase(side);   // before it is laid: how the game's own grip sits on the shaft (the library's palm depth comes from it)
+                        GripPoseKept kept;
+                        AcquireSRWLockShared(&g_gripPoseLock); kept = g_gripPose; ReleaseSRWLockShared(&g_gripPoseLock);
+                        static const char* told[2] = {nullptr, nullptr};   // why the library could not lay this hand, said once for each reason
+                        const char* why = libFit(side, kept, &fo);
+                        if (why) {
+                            if (told[side] != why) {
+                                char b[260];
+                                snprintf(b, sizeof b, "grip library - the %s hand is ours this time: %s", side ? "left" : "right", why);
+                                weight::Say(b);
+                                told[side] = why;
+                            }
+                            libGripRes[side] = LibGripResult{};
+                        } else {
+                            libDone = true;
+                            told[side] = nullptr;
+                            plan.act = true;
+                            plan.mode = gripfit::Mode{true, true};
+                            plan.likeBase = false;
+                            plan.tune = gripfit::Tuning{};
+                        }
+                    }
                     if (plan.act) {
                         const gripfit::Hand gh = handGeom(side);
-                        fo = gripfit::Solve(gh, gs, plan.tune, plan.mode, ucm);
+                        if (!libDone) fo = gripfit::Solve(gh, gs, plan.tune, plan.mode, ucm);
                         if (!fo.ok) continue;
                         const float t01 = std::clamp(wo.on01[side], 0.0f, 1.0f), e = t01 * t01 * (3.0f - 2.0f * t01);   // eased on with the hand's own ease onto the weapon
                         const V3 wristP = Pos(newW[k]);
@@ -2228,19 +3149,7 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
                         if (plan.likeBase) for (int i = 0; i < 3; ++i) { note.like[i] = baseRel.off[i]; note.like[3 + i] = baseRel.rot[i]; }
                         weight::NoteGripFit(note);
                     }
-                    if (isBase && wo.on01[side] >= 1.0f) {   // the base hand as it is drawn now (its corrections in): how it sits on the shaft - what the hands that take it copy
-                        bool okRel = false;
-                        const gripfit::Tuning rel = gripfit::InCm(gripfit::Relation(handGeom(side), gs, &okRel), ucm);
-                        if (okRel && std::fabs(rel.off[1]) < 20.0f && std::fabs(rel.off[2]) < 20.0f) {   // (a hand 20 cm off the axis is no base grip)
-                            baseRel = rel;
-                            baseKnown = true;
-                            AcquireSRWLockExclusive(&g_weightLock);
-                            g_weightRel.base = rel;
-                            g_weightRel.baseOk = true;
-                            g_weightRel.baseType = in.weaponType;
-                            ReleaseSRWLockExclusive(&g_weightLock);
-                        }
-                    }
+                    if (isBase && wo.on01[side] >= 1.0f) measureBase(side);   // the base hand as it is drawn now (its corrections in; the library's too, with its answer laid): how it sits on the shaft - what the hands that take it copy
                 }
             }
             if (moved)
@@ -2285,6 +3194,7 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
     // held it goes onto the shaft - in the game's grip round it, slid along it
     // to where the controller is - and eases back off when let go.
     bool leftOnStaff = false;   // its fingers keep the game's grip round the shaft, no fist
+    if (!(freeStaff && gun && in.xbowLatch)) XbowLatchReset();   // [hands] xbow_grip_latch: no crossbow in the gun's hold - a fresh latch next time
     if (freeStaff) {
         const int wb = h.weapon[staffSide], lk = h.hand[1], rk = h.hand[0];
         Mat staff = newW[wb];
@@ -2306,6 +3216,192 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
         // holds it - the left hand goes on it, the bolt along it (vrcam HandRay): the
         // model and what shoots and is taken are one ("they must coincide", 2026-10-05).
         if (gun) { axis = gunStock; origin = gunAt; }
+        // [hands] xbow_support_model / [debug] xbow_barrel_line: the crossbow's barrel as drawn (NoteCrossbowBarrel: its bolt_helper, on the
+        // attach bone as placed above) and the left palm's place under it (xbowgrip::Support). Only the left hand goes there: axis and
+        // origin stay the shot's line (g_staff.dir below, vrcam HandRay) - the bolt flies as before.
+        bool onBarrel = false;
+        V3 barrelAt{}, barrelDir{};
+        bool haveBarrelDir = false;
+        V3 barrelUp{}, barrelCenter{};
+        // [hands] xbow_support_game: learn the game's own fore-grip from its pose (oldW) while it holds the crossbow in both hands
+        static XbowForeGrip fore;
+        static GripPoseKept foreFingers;   // [hands] xbow_support_close: the game's support hand's fingers on the fore-grip (grip_pose.h)
+        bool onFore = false;
+        if (gun) {
+            const uint64_t key = ((uint64_t)HeroGen() << 32) | (uint32_t)in.weaponType;
+            if (fore.key != key) { fore = XbowForeGrip{}; fore.key = key; foreFingers = GripPoseKept{}; }
+            const int holder = staffSide & 1, other = holder ^ 1;
+            const int hh = h.hand[holder], ho = h.hand[other];
+            if (fore.n < kForeGripSamples && !in.attacking && hh >= 0 && ho >= 0 && h.mid[0] >= 0 && h.mid[1] >= 0 && h.ind[other] >= 0 && h.pnk[other] >= 0) {
+                const V3 ph = Scale(Add(Pos(oldW[hh]), Pos(oldW[h.mid[holder]])), 0.5f), po = Scale(Add(Pos(oldW[ho]), Pos(oldW[h.mid[other]])), 0.5f);
+                const Mat att = Mul(oldW[wb], InvAffine(oldW[hh]));
+                const bool shown = Len({att.m[0], att.m[1], att.m[2]}) > 0.7f;   // the crossbow on the holder's wrist, not hidden
+                if (shown && Len(Sub(ph, po)) <= 1.0f) {   // the game's hold: both hands on it
+                    const Mat toStaff = InvAffine(oldW[wb]);
+                    fore.sum = Add(fore.sum, Through(toStaff, po));
+                    ++fore.n;
+                    fore.palm = Scale(fore.sum, 1.0f / (float)fore.n);
+                    // the palm's facing: out of the palm = (wrist -> middle knuckle) x (little -> index knuckle), away on the right hand
+                    const V3 pt = Sub(Pos(oldW[h.mid[other]]), Pos(oldW[ho])), ac = Sub(Pos(oldW[h.ind[other]]), Pos(oldW[h.pnk[other]]));
+                    const V3 out = Scale(Norm(Cross(pt, ac)), other == 0 ? -1.0f : 1.0f);
+                    fore.facing = Norm(RotOnly(out, toStaff));
+                    fore.across = Norm(RotOnly(ac, toStaff));
+                    GripPoseKept fingers;   // its fingers as the game closes them on the fore-grip (the last sample of the hold)
+                    if (TakeGripPose(h, other, oldW, in.weaponType, &fingers)) foreFingers = std::move(fingers);
+                }
+            }
+            onFore = in.xbowSupportGame && fore.n >= kForeGripSamples;
+            if (onFore) { barrelAt = Through(staff, fore.palm); onBarrel = true; }
+        }
+        // [hands] xbow_aim_barrel (from bearstonem/d2r-pcvr: vr/crossbow.cpp, steamvr/crossbow_pose.h - the full barrel direction of the
+        // held model's bolt_helper): the shot goes along the barrel as the renderer draws it, fresh within 100 ms of the pose like his
+        // (Fresh); else - and with the tick off - along the hand-set shot line ([hands] xbow_line_*). Only the direction the game's own
+        // attack is aimed by (g_staff.dir -> vrcam HandRay -> the aim point); the game's missile, damage, ammunition and cadence are its own.
+        bool aimBarrel = false;
+        V3 aimDir{};
+        V3 muzzle{};            // the front of the stock on the drawn barrel (the debug ray's start)
+        bool haveMuzzle = false;
+        if (gun && (in.xbowModel || in.xbowBarrelDebug || in.xbowAimBarrel)) {
+            const V3 head = in.haveEye ? V3{in.eyeModel[0], in.eyeModel[1], in.eyeModel[2]} : Pos(newW[h.head]);
+            const float upm = std::clamp(head.y / std::max(0.8f, in.userHeadM), 2.0f, 8.0f) * in.scale;   // model units per metre
+            const ULONGLONG now = GetTickCount64();
+            {   // our attach bone in the world, for XbowRendered (the hero's model-to-world, as NotePosedWeapon takes it)
+                HeroXform hx; Mat model;
+                if (HeroTransform(&hx) && hx.self == self && (hx.parent & 0xFFFFFu) == 0xFFFFFu && SafeCopy(model.m, (const void*)hx.comp, sizeof model)) {
+                    XbowAttach a;
+                    const Mat w = Mul(staff, model);
+                    memcpy(a.world.m, w.m, sizeof a.world.m);
+                    a.upm = upm; a.gen = HeroGen(); a.at = now;
+                    AcquireSRWLockExclusive(&g_gunBoneLock); g_xbowAttach = a; ReleaseSRWLockExclusive(&g_gunBoneLock);
+                }
+            }
+            AcquireSRWLockShared(&g_gunBoneLock); const XbowBarrelOut rendered = g_xbowRendered, own = g_xbowBarrel; ReleaseSRWLockShared(&g_gunBoneLock);
+            // the renderer's placing for the hand; the item's own transform only to draw (orange) when that is not seen. The renderer's barrel
+            // in the attach bone's frame is the crossbow's own (rigid): once seen for this weapon and hero model it is kept - a render frame
+            // or two without it (test-67's log, 13:18:59.83) flipped the hand and the aim to the shot line for 30 ms.
+            static XbowBarrelOut heldRendered{};
+            static uint64_t heldKey = 0;
+            const uint64_t barrelKey = ((uint64_t)HeroGen() << 32) | (uint32_t)in.weaponType;
+            if (rendered.at && now - rendered.at <= 300 && rendered.gen == HeroGen()) { heldRendered = rendered; heldKey = barrelKey; }
+            const bool fromRenderer = heldKey == barrelKey && heldRendered.at != 0;
+            XbowBarrelOut b = fromRenderer ? heldRendered : own;
+            if (fromRenderer) b.at = now;
+            xbowgrip::M placed;
+            memcpy(placed.m, staff.m, sizeof placed.m);
+            xbowgrip::Line line;
+            const bool barrelOk = b.at && now - b.at <= 500 && b.gen == HeroGen() && xbowgrip::FromBolt(xbowgrip::Mul(b.inAttach, placed), &line);
+            if (barrelOk) {
+                // the place by the crossbow alone: 6 cm behind the front of the stock (where the limbs meet it), 7 below the barrel, + the adjustments
+                const xbowgrip::V p = xbowgrip::SupportAt(line, xbowgrip::kBackM + in.xbowBackM, xbowgrip::kDropM + in.xbowDropM, upm);
+                if (!onFore) barrelAt = {p.x, p.y, p.z};   // the game's fore-grip, when learned, is the place; else under the drawn barrel
+                barrelDir = {line.dir.x, line.dir.y, line.dir.z};
+                haveBarrelDir = fromRenderer;
+                if (fromRenderer) {
+                    barrelUp = {line.up.x, line.up.y, line.up.z};
+                    barrelCenter = {line.center.x, line.center.y, line.center.z};
+                    // the game's support hand is its RIGHT one: our left takes the fore-grip mirrored across the crossbow's own upright plane
+                    if (onFore) {
+                        const xbowgrip::V side = xbowgrip::Cross(line.dir, line.up);
+                        const xbowgrip::V m = xbowgrip::MirrorPoint({barrelAt.x, barrelAt.y, barrelAt.z}, line.center, side);
+                        barrelAt = {m.x, m.y, m.z};
+                    }
+                }
+                if (onFore && !fore.told && fromRenderer) {   // how the game's support palm faces the barrel, once a weapon: cup / wrap / over
+                    fore.told = true;
+                    const V3 upA = Norm(RotOnly({line.up.x, line.up.y, line.up.z}, InvAffine(staff)));   // the barrel's up in the attach bone's frame
+                    const float deg = acosf(std::clamp(Dot(fore.facing, upA), -1.0f, 1.0f)) * 57.2957795f;
+                    const V3 at = Through(staff, fore.palm);
+                    const xbowgrip::V rel = xbowgrip::Sub({at.x, at.y, at.z}, line.center);
+                    const float along = xbowgrip::Dot(rel, line.dir) / upm * 100.0f, below = -xbowgrip::Dot(rel, line.up) / upm * 100.0f;
+                    char t[300];
+                    snprintf(t, sizeof t, "crossbow fore-grip (the game's own two-handed hold, %d samples): the palm's middle %.1f cm %s the front of the stock, %.1f cm %s the barrel; "
+                             "the palm faces %.0f deg from the barrel's up - %s", fore.n, std::fabs(along), along < 0.0f ? "behind" : "ahead of",
+                             std::fabs(below), below >= 0.0f ? "below" : "above", deg,
+                             deg < 50.0f ? "it cups the stock from below" : deg < 130.0f ? "it wraps the stock from the side" : "it holds it from above");
+                    XbowNote(t);
+                }
+                muzzle = {line.center.x, line.center.y, line.center.z};
+                haveMuzzle = fromRenderer;
+                if (in.xbowAimBarrel && fromRenderer && std::isfinite(barrelDir.x + barrelDir.y + barrelDir.z) && Len(barrelDir) > 0.5f) {
+                    aimBarrel = true;
+                    aimDir = Norm(barrelDir);
+                }
+            }
+            if (in.xbowAimBarrel) {   // which line the shot goes along, on change (at most every half second)
+                static int toldAim = -1;
+                static ULONGLONG toldAimAt = 0;
+                if ((aimBarrel ? 1 : 0) != toldAim && now - toldAimAt >= 500) {
+                    toldAim = aimBarrel ? 1 : 0;
+                    toldAimAt = now;
+                    XbowNote(aimBarrel ? "crossbow aim (xbow_aim_barrel): along the drawn barrel"
+                                       : "crossbow aim (xbow_aim_barrel): the drawn barrel is not fresh (not read, or older than 100 ms) - along the hand-set shot line");
+                }
+            }
+            if (barrelOk) {
+                const V3 p = barrelAt;
+                // (No longer tied to the shot line: Serg turns that for the shot, 64 deg off the barrel in test-42, and the hand stayed off the
+                // barrel. The barrel as the renderer draws it was right there; the 3 s log line still gives the angle between them.)
+                onBarrel = onFore || (in.xbowModel && fromRenderer && std::isfinite(p.x + p.y + p.z));
+                if (in.xbowBarrelDebug) {   // from the eye in the head's turn-only frame, metres, less the hands' offset (as the bow's vectors)
+                    auto back = [&](V3 q) {
+                        const V3 d = Scale(Sub(q, head), 1.0f / upm);
+                        const V3 m = {d.x * c - d.z * s, d.y, d.x * s + d.z * c};
+                        return V3{-m.x - in.handOffset[0], m.y - in.handOffset[1], -m.z - in.handOffset[2]};
+                    };
+                    const V3 cen = {line.center.x, line.center.y, line.center.z};
+                    const V3 A = back(Add(cen, Scale(barrelDir, -0.4f * upm))), B = back(Add(cen, Scale(barrelDir, 0.3f * upm))), P = back(barrelAt);
+                    const XbowDebugOut dbg{{A.x, A.y, A.z}, {B.x, B.y, B.z}, {P.x, P.y, P.z}, fromRenderer, now};
+                    AcquireSRWLockExclusive(&g_gunBoneLock); g_xbowDebug = dbg; ReleaseSRWLockExclusive(&g_gunBoneLock);
+                    // and in the log, every 3 s: the points in the same frame (cm: x right, y up, z back), to lay against the picture
+                    static ULONGLONG toldAt = 0;
+                    if (now - toldAt >= 3000) {
+                        toldAt = now;
+                        const V3 C = back(cen), R = back(gunAt), S = back(Add(gunAt, Scale(gunStock, 0.3f * upm))), O = back(Pos(staff));
+                        const V3 dirH = Sub(B, A), stockH = Sub(S, R);
+                        const float lenD = Len(dirH), lenS = Len(stockH);
+                        const float angle = lenD > 1e-6f && lenS > 1e-6f ? acosf(std::clamp(Dot(dirH, stockH) / (lenD * lenS), -1.0f, 1.0f)) * 57.2957795f : -1.0f;
+                        const V3 dirA = Norm(RotOnly(barrelDir, InvAffine(staff)));   // the barrel in the attach bone's own axes
+                        char t[600];
+                        snprintf(t, sizeof t, "crossbow barrel (%s), head frame cm (x right, y up, z back): front of stock %.1f %.1f %.1f, barrel dir %.2f %.2f %.2f "
+                                 "(attach bone axes %.2f %.2f %.2f), palm place %.1f %.1f %.1f, right palm %.1f %.1f %.1f, attach bone %.1f %.1f %.1f, "
+                                 "shot line dir %.2f %.2f %.2f - barrel vs shot line %.0f deg; scale %.2f",
+                                 fromRenderer ? "as the renderer draws it" : "from the item's own transform - NOT how it is drawn",
+                                 C.x * 100, C.y * 100, C.z * 100, dirH.x / std::max(lenD, 1e-6f), dirH.y / std::max(lenD, 1e-6f), dirH.z / std::max(lenD, 1e-6f),
+                                 dirA.x, dirA.y, dirA.z, P.x * 100, P.y * 100, P.z * 100, R.x * 100, R.y * 100, R.z * 100, O.x * 100, O.y * 100, O.z * 100,
+                                 stockH.x / std::max(lenS, 1e-6f), stockH.y / std::max(lenS, 1e-6f), stockH.z / std::max(lenS, 1e-6f), angle, line.scale);
+                        XbowNote(t);
+                    }
+                }
+            }
+        }
+        if (gun && in.xbowBarrelDebug) {   // the shot's ray, live: from the muzzle (else 40 cm ahead of the right palm) along what the aim uses
+            const V3 head = in.haveEye ? V3{in.eyeModel[0], in.eyeModel[1], in.eyeModel[2]} : Pos(newW[h.head]);
+            const float upm = std::clamp(head.y / std::max(0.8f, in.userHeadM), 2.0f, 8.0f) * in.scale;   // model units per metre
+            auto back = [&](V3 q) {   // the barrel's frame: from the eye, head turn only, metres, less the hands' offset
+                const V3 d = Scale(Sub(q, head), 1.0f / upm);
+                const V3 m = {d.x * c - d.z * s, d.y, d.x * s + d.z * c};
+                return V3{-m.x - in.handOffset[0], m.y - in.handOffset[1], -m.z - in.handOffset[2]};
+            };
+            const V3 dirM = aimBarrel ? aimDir : Norm(axis);   // axis: the hand-set shot line here (the gun's)
+            const V3 start = haveMuzzle ? muzzle : Add(gunAt, Scale(Norm(axis), 0.4f * upm));
+            const V3 A = back(start), T = back(Add(start, Scale(dirM, upm)));
+            V3 D = Sub(T, A);
+            const float dl = Len(D);
+            if (dl > 1e-6f && std::isfinite(dl)) {
+                D = Scale(D, 1.0f / dl);
+                // the floor: the user's eye height below the eye (the frame's y is from the eye), less the hands' offset as above
+                const float floorY = -std::max(0.8f, in.userHeadM) - in.handOffset[1];
+                float len = 8.0f;
+                bool floor = false;
+                if (D.y < -0.02f) {
+                    const float t = (floorY - A.y) / D.y;
+                    if (t > 0.0f && t < len) { len = t; floor = true; }
+                }
+                const V3 B = Add(A, Scale(D, len));
+                const XbowRayOut ray{{A.x, A.y, A.z}, {B.x, B.y, B.z}, aimBarrel, floor, GetTickCount64()};
+                AcquireSRWLockExclusive(&g_gunBoneLock); g_xbowRay = ray; ReleaseSRWLockExclusive(&g_gunBoneLock);
+            }
+        }
         const V3 atR = Through(staff, inR);
         const float tR = gun ? 0.0f : Dot(Sub(atR, origin), axis);   // the right palm, along the shaft
         // A crossbow's palms in the game's grip need not lie along its stock: the gap
@@ -2333,9 +3429,12 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
                               : in.leftHilt ? tR + std::clamp(Dot(Sub(C, origin), axis) - tR, (in.leftHiltAtM - in.leftHiltSlideM) * upm,
                                                               (in.leftHiltAtM + in.leftHiltSlideM) * upm)
                                             : std::clamp(Dot(Sub(C, origin), axis), tR - kStaffReach * gap, tR + kStaffReach * gap);
-                inReach = Len(Sub(C, Add(origin, Scale(axis, t)))) <= in.staffGrabM * upm;
+                inReach = Len(Sub(C, onBarrel ? barrelAt : Add(origin, Scale(axis, t)))) <= in.staffGrabM * upm;
             }
-            const float e = (in.handsValid & 2u) ? StaffEase(in.grip[1], inReach, in.fistCap[1] >= 0.0f) : 1.0f;
+            // [hands] xbow_grip_latch: the crossbow's own latch - a lost left controller frees the hand (it is 1, on the stock, otherwise)
+            const float e = gun && in.xbowLatch ? XbowEase(in.grip[1], inReach, in.fistCap[1] >= 0.0f, (in.handsValid & 2u) != 0,
+                                                           ((uint64_t)HeroGen() << 48) ^ (uint64_t)self, (uint32_t)in.weaponType)
+                          : (in.handsValid & 2u) ? StaffEase(in.grip[1], inReach, in.fistCap[1] >= 0.0f) : 1.0f;
             leftOnStaff = e >= 0.5f;
             // Held in both hands, the staff is held between them: it runs from
             // the right fist through the left controller, and the right wrist's
@@ -2391,7 +3490,8 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
                 along = std::clamp(Dot(Sub(ControllerPoint(h, 1, in, newW, c, s), origin), axis) - tR, -kStaffReach * gap, kStaffReach * gap);
                 if (fabsf(along) < 0.3f * gap) along = along < 0.0f ? -0.3f * gap : 0.3f * gap;
             }
-            const V3 onShaft = Add(origin, Scale(axis, tR + along));
+            const V3 onShaft = onBarrel ? barrelAt : Add(origin, Scale(axis, tR + along));
+            const V3 handAxis = onBarrel && haveBarrelDir ? barrelDir : axis;   // what the hand lies along (the barrel as drawn, or the shaft / the shot's line)
             // The hand on it: turned only so that the line through its fist lies
             // along the shaft; its roll about the shaft stays the controller's -
             // whole, the fist went round the shaft whenever the right hand
@@ -2400,6 +3500,10 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
             const Mat inHand = InvAffine(grip.inStaff[1]);   // staff frame -> the left hand's own
             V3 alongInHand = RotOnly(shaftInStaff, inHand), palmInHand = Through(inHand, {0.0f, 0.0f, 0.0f});
             const Mat freeHand = newW[lk];
+            // [hands] xbow_wrist_tracked: a crossbow's left hand keeps the controller's turn (it may hold the stock from below or above -
+            // turned into the game's grip round the line it went through a near half turn under it); its palm's middle (wrist to middle
+            // knuckle, halfway) goes on the place.
+            const bool trackedWrist = gun && in.xbowWrist && h.mid[1] >= 0;
             // A two-handed sword hangs on the RIGHT wrist and the game's animation keeps the left
             // hand off it: the bone's origin is in the right fist, half a metre from the left one,
             // and the left hand stood that far off the hilt (2026-10-06). The left hand's own fist
@@ -2410,14 +3514,37 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
             if ((in.leftHilt || (in.shaftAxis != 0 && !gun)) && h.ind[1] >= 0 && h.pnk[1] >= 0 && h.mid[1] >= 0) {
                 const Mat toHand = InvAffine(freeHand);
                 alongInHand = RotOnly(Sub(Pos(newW[h.pnk[1]]), Pos(newW[h.ind[1]])), toHand);
-                palmInHand = Through(toHand, Scale(Add(Pos(freeHand), Pos(newW[h.mid[1]])), 0.5f));
+                palmInHand = PalmInHandOf(h, 1, newW);   // the palm's middle from the hand's own bones (the bind pose), not this frame's fingers
             }
+            // the crossbow's support hand by its palm's middle too (test-57: "it holds by the wrist, not the palm's centre")
+            if (trackedWrist) palmInHand = PalmInHandOf(h, 1, newW);
+            // [hands] xbow_support_close: on the game's fore-grip the left hand takes the game's own support hand's turn (mirrored: that is its right
+            // hand) - the palm the way the game's palm faces the stock, the knuckles along the stock as its knuckles - and later its fingers.
+            const bool closeOn = gun && onFore && haveBarrelDir && in.xbowSupportClose && h.bindOk && h.mid[1] >= 0 && h.ind[1] >= 0 && h.pnk[1] >= 0;
+            if (closeOn) palmInHand = PalmInHandOf(h, 1, newW);
             Mat onStaff = freeHand;
-            TurnAboutSelf(onStaff, RotBetween(RotOnly(alongInHand, freeHand), axis));
+            bool closeTurned = false;
+            if (closeOn) {
+                // the left hand's own out-of-the-palm and knuckle line, in its bone's frame, from its bind pose (toward the cross product on the left)
+                const Mat toBind = InvAffine(h.bind[lk]);
+                const V3 pt = Sub(Pos(h.bind[h.mid[1]]), Pos(h.bind[lk])), ac = Sub(Pos(h.bind[h.ind[1]]), Pos(h.bind[h.pnk[1]]));
+                const V3 outL = RotOnly(Cross(pt, ac), toBind), acL = RotOnly(ac, toBind);
+                // the game's support palm and knuckles, from the crossbow's frame into the model, mirrored across its upright plane
+                const xbowgrip::V side = xbowgrip::Cross({barrelDir.x, barrelDir.y, barrelDir.z}, {barrelUp.x, barrelUp.y, barrelUp.z});
+                const V3 fW = RotOnly(fore.facing, staff), aW = RotOnly(fore.across, staff);
+                const xbowgrip::V outW = xbowgrip::MirrorDir({fW.x, fW.y, fW.z}, side), acW = xbowgrip::MirrorDir({aW.x, aW.y, aW.z}, side);
+                xbowgrip::M hm, turned;
+                memcpy(hm.m, onStaff.m, sizeof hm.m);
+                if (xbowgrip::HandTurnTo(hm, {outL.x, outL.y, outL.z}, {acL.x, acL.y, acL.z}, outW, acW, &turned)) {
+                    memcpy(onStaff.m, turned.m, sizeof onStaff.m);
+                    closeTurned = true;
+                }
+            }
+            if (!trackedWrist && !closeTurned) TurnAboutSelf(onStaff, RotBetween(RotOnly(alongInHand, freeHand), handAxis));
             // [hands] xbow_left_roll: turned about the shaft on top (a crossbow's stock
             // is held from below, palm up - the controller's own roll left it on the side).
             if (const float deg = in.leftStaffRollDeg; deg != 0.0f) {
-                const V3 k = axis;
+                const V3 k = handAxis;
                 const float t = deg * 0.0174532925f, cs = cosf(t), sn = sinf(t), C = 1.0f - cs;
                 Mat r{};   // row-vector form of the turn about k
                 r.m[0] = cs + k.x * k.x * C;       r.m[1] = k.y * k.x * C + k.z * sn; r.m[2] = k.z * k.x * C - k.y * sn;
@@ -2458,6 +3585,71 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
                 fromHand[lk] = 1;
                 Propagate(h, oldW, newW, fromHand, lk);   // the fingers
             }
+            // [hands] xbow_support_close: the fingers closed on the stock as the game's support hand closes them (its pose carried onto the left
+            // hand by grip_pose.h, the way the weapon weight's grip fingers are) - once the hand is on it
+            if (closeOn && e >= 0.5f) {
+                static int toldFingers = -1;
+                const char* why = !foreFingers.ok || foreFingers.skel != h.skel ? "no pose read off the game's support hand yet" : nullptr;
+                if (!why) {
+                    std::vector<Mat> posed = newW;
+                    why = GripPoseOnto(h, 1, foreFingers, newW, posed);
+                    if (!why)
+                        for (const Hero::Finger& f : h.fingers[1])
+                            for (const int b : f.bones) newW[b] = posed[b];
+                }
+                const int now = why ? 0 : 1;
+                if (now != toldFingers) {
+                    toldFingers = now;
+                    XbowNote(why ? std::string("crossbow left hand: the fingers keep the game's grip of that hand - ") + why
+                                 : std::string("crossbow left hand: closed on the stock - the palm turned and the fingers set as the game's own support hand holds the fore-grip (mirrored)"));
+                }
+            }
+            // [debug] xbow_barrel_line: where the left palm's middle really is now (the pose's own wrist and middle knuckle) against its place
+            if (gun && h.mid[1] >= 0 && e > 0.99f) {   // which point the left hand is on, once per weapon and choice: the palm's middle, measured
+                static int toldLeft = -1;
+                const int key = (in.weaponType & 0x0FFFFFFF) * 8 + (onFore ? 4 : 0) + (onBarrel ? 2 : 0) + (trackedWrist ? 1 : 0);
+                if (key != toldLeft) {
+                    toldLeft = key;
+                    const float headY = in.haveEye ? in.eyeModel[1] : Pos(newW[h.head]).y;
+                    const float upm = std::clamp(headY / std::max(0.8f, in.userHeadM), 2.0f, 8.0f) * in.scale;
+                    const V3 wrist = Pos(newW[lk]), palm = Scale(Add(wrist, Pos(newW[h.mid[1]])), 0.5f);
+                    // the arm's reach against where its wrist was sent (a place beyond it leaves the palm short of it)
+                    const float armCm = (Len(Sub(Pos(newW[h.lwr[1]]), Pos(newW[h.upr[1]]))) + Len(Sub(Pos(newW[lk]), Pos(newW[h.lwr[1]])))) / upm * 100.0f;
+                    const float sentCm = Len(Sub(Pos(onStaff), Pos(newW[h.upr[1]]))) / upm * 100.0f;
+                    char t[360];
+                    snprintf(t, sizeof t, "crossbow left hand: on %s, by its palm's middle (from the hand's bind pose) - the palm's middle %.1f cm from the place, the wrist %.1f cm; "
+                             "the arm reaches %.0f cm, its wrist was sent %.0f cm from the shoulder%s%s",
+                             onFore ? "the game's own fore-grip" : onBarrel ? "the place under the drawn barrel" : "the shot line", Len(Sub(palm, onShaft)) / upm * 100.0f,
+                             Len(Sub(wrist, onShaft)) / upm * 100.0f, armCm, sentCm, sentCm > armCm ? " - OUT OF REACH" : "",
+                             trackedWrist ? "" : " (the hand turned into the game's grip)");
+                    XbowNote(t);
+                }
+            }
+            if (gun && in.xbowBarrelDebug && h.mid[1] >= 0) {
+                const V3 head = in.haveEye ? V3{in.eyeModel[0], in.eyeModel[1], in.eyeModel[2]} : Pos(newW[h.head]);
+                const float upm = std::clamp(head.y / std::max(0.8f, in.userHeadM), 2.0f, 8.0f) * in.scale;   // model units per metre
+                auto back = [&](V3 q) {   // the barrel's frame: from the eye, head turn only, metres, less the hands' offset
+                    const V3 d = Scale(Sub(q, head), 1.0f / upm);
+                    const V3 m = {d.x * c - d.z * s, d.y, d.x * s + d.z * c};
+                    return V3{-m.x - in.handOffset[0], m.y - in.handOffset[1], -m.z - in.handOffset[2]};
+                };
+                const V3 wrist = Pos(newW[lk]), palm = Scale(Add(wrist, Pos(newW[h.mid[1]])), 0.5f);
+                const float cm = Len(Sub(palm, onShaft)) / upm * 100.0f, wristCm = Len(Sub(wrist, onShaft)) / upm * 100.0f;
+                const V3 P = back(palm), W = back(wrist), T = back(onShaft);
+                const ULONGLONG now = GetTickCount64();
+                const XbowPalmOut po{{P.x, P.y, P.z}, cm, now};
+                AcquireSRWLockExclusive(&g_gunBoneLock); g_xbowPalm = po; ReleaseSRWLockExclusive(&g_gunBoneLock);
+                static ULONGLONG toldPalmAt = 0;
+                if (now - toldPalmAt >= 3000) {
+                    toldPalmAt = now;
+                    char t[360];
+                    snprintf(t, sizeof t, "crossbow left hand (held %.2f, %s, %s): palm's middle %.1f cm from its place, the wrist %.1f cm - head frame cm: place %.1f %.1f %.1f, "
+                             "palm %.1f %.1f %.1f, wrist %.1f %.1f %.1f", e, onBarrel ? "under the drawn barrel" : "on the shot line",
+                             trackedWrist ? "the wrist as the controller" : "the game's grip turn", cm, wristCm, T.x * 100, T.y * 100, T.z * 100,
+                             P.x * 100, P.y * 100, P.z * 100, W.x * 100, W.y * 100, W.z * 100);
+                    XbowNote(t);
+                }
+            }
             // The staff where the hands put it: the left wrist re-derived it
             // (the game hangs it under that wrist).
             newW[wb] = staff;
@@ -2466,7 +3658,7 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
             Propagate(h, oldW, newW, fromStaff, wb);
             // For the aim: the shaft from the left hand's side toward the right
             // one, back in the head's turn-only frame (ToModel undone).
-            const V3 d = Scale(axis, -1.0f);
+            const V3 d = Scale(aimBarrel ? aimDir : axis, -1.0f);   // [hands] xbow_aim_barrel: the drawn barrel, else the shaft / the shot line
             const V3 m = {d.x * c - d.z * s, d.y, d.x * s + d.z * c};
             AcquireSRWLockExclusive(&g_staffLock);
             g_staff.dir[0] = -m.x; g_staff.dir[1] = m.y; g_staff.dir[2] = -m.z;
@@ -2494,7 +3686,8 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
                 AcquireSRWLockExclusive(&g_gunBoneLock); g_grabLine = g; ReleaseSRWLockExclusive(&g_gunBoneLock);
             }
         }
-    } else if (in.staff && in.mode == 2 && (in.handsValid & 3u) == 3u) {
+    // [hands] xbow_grip_latch: a crossbow waiting for its grip is not put into both hands this way (it has no letting go)
+    } else if (in.staff && in.mode == 2 && (in.handsValid & 3u) == 3u && !(in.gunStock && in.xbowLatch)) {
         const int hold = in.staffHand == 0 ? 0 : 1, wb = h.weapon[hold], other = h.hand[hold ^ 1];
         if (wb >= 0 && other >= 0) {
             auto apply = [](const Mat& m, V3 v) {   // a point through a row-vector matrix
@@ -2598,6 +3791,15 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
                 f.palmModel[0] = P.x; f.palmModel[1] = P.y; f.palmModel[2] = P.z;
                 for (int i = 0; i < 3; ++i) f.palm[i] -= in.handOffset[i];
                 f.palmOk = true;
+                // [hands] spell_aim_model: this hand as drawn, for the aim (CastPoseNow) - the palm's middle (halfway to the middle knuckle), the
+                // fingers and the way out of the palm, from the eye in the head's turn-only frame, as GunBone (the hands' offset left in: where it is drawn)
+                CastHandOut ch{};
+                const V3 mid{W.x + point.x * 0.5f, W.y + point.y * 0.5f, W.z + point.z * 0.5f};
+                FromModel(V3{(mid.x - head.x) / upm, (mid.y - head.y) / upm, (mid.z - head.z) / upm}, c, s, ch.palm);
+                FromModel(pointU, c, s, ch.fingers);
+                FromModel(faceU, c, s, ch.face);
+                ch.at = GetTickCount64();
+                AcquireSRWLockExclusive(&g_castLock); g_castHand[side] = ch; ReleaseSRWLockExclusive(&g_castLock);
             }
             for (int i = 0; i < 3; ++i) { f.elbow[i] -= in.handOffset[i]; f.wrist[i] -= in.handOffset[i]; }
             f.at = GetTickCount64();
@@ -2748,6 +3950,14 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
         }
         g.at = GetTickCount64();
         AcquireSRWLockExclusive(&g_gunBoneLock); g_gunBone = g; ReleaseSRWLockExclusive(&g_gunBoneLock);
+        {   // [hands] spell_aim_model: the same bone for the aim of a staff, wand or orb - its origin and +Y, and the wrist it is on
+            CastWeaponOut cw{};
+            cw.side = axesSide;
+            memcpy(cw.origin, g.o, sizeof cw.origin);
+            memcpy(cw.tip, g.ax[1], sizeof cw.tip);
+            cw.at = Len(V3{w.m[4], w.m[5], w.m[6]}) > 0.001f && std::isfinite(o.x + o.y + o.z) ? g.at : 0;
+            AcquireSRWLockExclusive(&g_castLock); g_castWeapon = cw; ReleaseSRWLockExclusive(&g_castLock);
+        }
         // ([weight] the weight model's shaft is measured in the weight block above, from W - the bone this one is for a weapon it holds, either wrist.)
         if (in.posedWeapon) {
             // The weapon bones as drawn, for melee by touch's blades (vr/blade_shape.h): the same numbers as g above for this hand, and,
@@ -2763,6 +3973,23 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
                     b.axis[i][0] = d.x; b.axis[i][1] = d.y; b.axis[i][2] = d.z;
                 }
                 b.ok = std::isfinite(bo.x + bo.y + bo.z) && Len(V3{bone.m[4], bone.m[5], bone.m[6]}) > 0.001f;
+                // [flail] chain: a flail's ball swinging on its chain is what strikes - its centre, the last link's way and its radius, carried by
+                // this pose's attach bone (the ball's place on the item is the last chain pose's)
+                if (b.ok && g_flailOn.load(std::memory_order_relaxed)) {
+                    AcquireSRWLockShared(&g_flailBallLock); const FlailBall fb = g_flailBall; ReleaseSRWLockShared(&g_flailBallLock);
+                    if (fb.at && GetTickCount64() - fb.at < 150 && fb.gen == HeroGen() && fb.side == slot) {
+                        const Mat toModel = Mul(fb.itemLocal, bone);
+                        const V3 cm = Add(RotOnly(fb.centre, toModel), Pos(toModel));
+                        const V3 c2 = back(Scale(Sub(cm, head), 1.0f / upm)), d2 = back(Norm(RotOnly(fb.dir, toModel)));
+                        const float r = fb.radius * Len(V3{toModel.m[0], toModel.m[1], toModel.m[2]}) / upm;
+                        if (std::isfinite(c2.x + c2.y + c2.z + d2.x + d2.y + d2.z + r) && r > 0.0f && Len(d2) > 0.5f) {
+                            b.ball = true;
+                            b.ballCentre[0] = c2.x; b.ballCentre[1] = c2.y; b.ballCentre[2] = c2.z;
+                            b.ballDir[0] = d2.x; b.ballDir[1] = d2.y; b.ballDir[2] = d2.z;
+                            b.ballRadius = r;
+                        }
+                    }
+                }
             };
             keep(axesSide, w);
             const int other = axesSide ^ 1;
@@ -2780,20 +4007,55 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
     // off it is free (the game's grip stays only in the hand the game hangs it on).
     // [weight] grip_fit: the hand that took the weapon closes round it with the controller's squeeze (vr/grip_fit.h Close) even with [hands] fist off - it is on the
     // shaft by the weapon's own rule - and fully closed no longer: the fingers tighten with the grip.
-    bool leftFisted = false;   // the free-hand rule closed the left hand in this pose
+    bool leftFisted = false, rightFisted = false;   // the free-hand rule closed that hand in this pose
     // [weight] grip_fit_fingers (vr/grip_pose.h): the hand that took the weapon has the game's own weapon-grip pose of the fingers and the thumb - the pose of the hand the game holds it
     // in, read above, put on this hand in its own frame - instead of closing with the squeeze: fixed while it holds the weapon, easing as it takes it and lets go. Until it is
     // fully on (poseE < 1) the fist rule below still draws the hand it comes from (or goes to); fully on, the fist rule leaves it alone. A pose that cannot be put on (the rig's two
     // hands do not answer each other, no pose read yet for this weapon): the fingers close with the squeeze as before.
     float poseE[2] = {0.0f, 0.0f};
     std::vector<Mat> poseW;   // the pose as it would stand: a copy of newW with the taking hand's finger bones set
+    // [weight] grip_model 1: a hand the grip library laid has the library's fingers - the rotations it answered with, laid on the bones in the hand's frame as it stands now (the generic fist
+    // rule below still draws the hand until the library's fingers begin, as for the game's pose)
+    bool libFingers[2] = {false, false};
+    if (wo.on && in.mode == 2 && h.bindOk)
+        for (int side = 0; side < 2; ++side) {
+            const LibGripResult& L = libGripRes[side];
+            const float t = std::clamp(wo.on01[side], 0.0f, 1.0f);
+            if (!L.ok || !L.out.fingersOn || !(t > 0.0f) || (side == 1 && leftOnStaff)) continue;
+            grippose::M3 e;
+            std::vector<grippose::M3> rows;
+            if (!HandFrameAt(h, side, newW, &e) || !griprig::Compose(L.rig, L.mirror, griprig::ProperFrame(e, side), L.out.finger, &rows)) continue;
+            std::vector<Mat> laid = poseW.empty() ? newW : poseW;
+            size_t idx = 0;
+            bool ok = true;
+            for (const Hero::Finger& f : h.fingers[side])
+                for (const int b : f.bones) {
+                    const int pa = h.parent[b];
+                    if (pa < 0 || idx >= rows.size()) { ok = false; break; }
+                    Mat nw = Mul(Mul(h.bind[b], InvAffine(h.bind[pa])), laid[pa]);
+                    for (int r = 0; r < 3; ++r) {
+                        const float len = (float)boneguard::RowLen(newW[b].m, r);
+                        for (int c2 = 0; c2 < 3; ++c2) nw.m[r * 4 + c2] = len * rows[idx].m[r * 3 + c2];
+                        nw.m[r * 4 + 3] = 0.0f;
+                    }
+                    nw.m[15] = 1.0f;
+                    for (float v : nw.m)
+                        if (!std::isfinite(v)) ok = false;
+                    laid[b] = nw;
+                    ++idx;
+                }
+            if (!ok) continue;
+            poseW = std::move(laid);
+            poseE[side] = t * t * (3.0f - 2.0f * t);
+            libFingers[side] = true;
+        }
     if (wo.on && in.mode == 2 && in.weight.gripFit && in.weight.gripFingers && h.bindOk) {
         GripPoseKept kept;
         AcquireSRWLockShared(&g_gripPoseLock); kept = g_gripPose; ReleaseSRWLockShared(&g_gripPoseLock);
         static int told[2] = {0, 0};   // 0 nothing said, 1 the pose took, 2 it could not (said once for each change)
         for (int side = 0; side < 2; ++side) {
             const float t = std::clamp(wo.on01[side], 0.0f, 1.0f);
-            if (side == wo.slot || !(t > 0.0f) || (side == 1 && leftOnStaff)) continue;   // (the slot's hand has the game's pose; staff_free_left's left keeps the game's grip)
+            if (side == wo.slot || !(t > 0.0f) || (side == 1 && leftOnStaff) || libFingers[side]) continue;   // (the slot's hand has the game's pose; staff_free_left's left keeps the game's grip; the library's hand has the library's)
             const char* why = nullptr;
             if (!kept.ok || kept.skel != h.skel || kept.type != in.weaponType || kept.side != (wo.slot & 1)) why = "no pose read off the game's hand for this weapon yet";
             else {
@@ -2814,18 +4076,20 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
             told[side] = 1;
         }
     }
-    if ((in.fist || (in.weight.gripFit && wo.on)) && in.mode == 2)
+    if ((in.fist || ((in.weight.gripFit || wo.gripLib) && wo.on)) && in.mode == 2)
         for (int side = 0; side < 2; ++side) {
             if (poseE[side] >= 1.0f) continue;   // fully in the game's grip pose: the squeeze does not drive it
             const bool onWeapon = wo.on && wo.holds[side] && side != wo.slot;
-            const bool free = wo.on ? (side == wo.slot ? !wo.holds[side] : in.handFree[side] || onWeapon) : in.handFree[side];
+            // (shoulder_draw handles the shield: the left hand is tied to the game's left slot only while the shield is on the left arm)
+            const bool freeSide = in.handFree[side] || (in.shieldHolster && in.shieldArm >= 0 && side == 1 && in.shieldArm != 1);
+            const bool free = wo.on ? (side == wo.slot ? !wo.holds[side] : freeSide || onWeapon) : freeSide;
             if (!in.fist && !onWeapon) continue;   // (fist off: only a hand on the weapon, by grip_fit)
             if (free && (in.handsValid & (1u << side)) && (in.grip[side] >= 0.0f || onWeapon) && !(side == 1 && leftOnStaff)) {   // on a shaft: the game's grip, not our fist (it wraps better, 2026-10-06)
                 const float squeeze = in.weight.haveRawGrip ? in.weight.rawGrip[side] : in.grip[side];
-                Fist(h, side, onWeapon ? (in.weight.gripFit ? gripfit::Close(squeeze) : 1.0f) : in.grip[side],
+                Fist(h, side, onWeapon ? ((in.weight.gripFit || wo.gripLib) ? gripfit::Close(squeeze) : 1.0f) : in.grip[side],
                      in.fistCap[side] >= 0.0f ? std::min(in.fistClose[h.cls >= 0 ? h.cls : 3], in.fistCap[side]) : in.fistClose[h.cls >= 0 ? h.cls : 3],
                      in.fistOpen[h.cls >= 0 ? h.cls : 3], oldW, newW);
-                if (side == 1) leftFisted = true;
+                if (side == 1) leftFisted = true; else rightFisted = true;
             }
         }
     // ... and the pose over it, by how far the hand is on the weapon (smoothstep): the fingers and the thumb of the taking hand, bone by bone
@@ -2836,32 +4100,57 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
                 if (poseE[side] >= 1.0f) newW[b] = poseW[b];
                 else BlendBoneHanded(newW[b], poseW[b], poseE[side], &newW[b]);
             }
-        if (side == 1) leftFisted = true;   // (the shield fist leaves a hand that is posed)
+        if (side == 1) leftFisted = true; else rightFisted = true;   // (the shield fist leaves a hand that is posed)
     }
     // [shield] forearm: the shield strapped to the left forearm (StrapShield) - after everything that places the arms and the weapons,
     // before the shield's place is told to shield_smite (its capsule follows the shield as drawn).
-    if (in.shieldForearm && in.mode == 2 && (in.handsValid & 2u)) {
-        const bool strapped = StrapShield(h, in, oldW, newW, twistRoll[1]);
-        g_shieldStrapped.store(strapped ? 1 : -1);
+    // [hands] shoulder_draw (vr/shield_arm.h): the shield is on the arm shieldArm says - it follows the sword, so after a cross draw it is on the right forearm, mirrored.
+    // g_shieldStrapped: 1 the left forearm, 3 the right, 2 put away (the attach bone shrunk to a point, as the game shrinks one that holds nothing; it is still the game's equipped shield).
+    const int shieldSide = in.shieldArm == 0 ? 0 : 1;
+    // The shield's bones: the game's left attach bone and shield_attach (which of them draws it on the screen is not the same in every rig, and the upper-body pass puts shield_attach back
+    // on the left forearm every pose): whatever is done to the shield is done to both, each from its own bind pose. The one shield_attach names comes last (its numbers stand in the log).
+    const int shieldBones[2] = {h.weapon[1], h.shield >= 0 && h.shield != h.weapon[1] ? h.shield : -1};
+    const auto hideShield = [&]() {   // the bones shrunk to a point, as the game shrinks one that holds nothing; what hangs on them follows
+        for (const int wb : shieldBones) {
+            if (wb < 0) continue;
+            const std::vector<Mat> before = newW;
+            for (int r = 0; r < 3; ++r)
+                for (int c = 0; c < 3; ++c) newW[wb].m[r * 4 + c] *= 0.001f;
+            std::vector<char> fromS(n, 0);
+            fromS[wb] = 1;
+            Propagate(h, before, newW, fromS, wb);
+        }
+    };
+    if (in.shieldForearm && in.mode == 2 && in.shieldArm == 2 && (shieldBones[0] >= 0 || shieldBones[1] >= 0)) {
+        hideShield();
+        g_shieldStrapped.store(2);
+    } else if (in.shieldForearm && in.mode == 2 && (in.handsValid & (1u << shieldSide))) {
+        bool strapped = false;
+        for (const int wb : shieldBones)
+            if (wb >= 0) strapped = StrapShield(h, in, oldW, newW, twistRoll[shieldSide], shieldSide, wb) || strapped;
+        g_shieldStrapped.store(strapped ? (shieldSide == 0 ? 3 : 1) : -1);
+        // [debug] shield_blink: the bone the shield hangs on is shrunk to a point for half a second in every two - if the shield on the screen blinks, it is this bone that draws it, and the
+        // strap, the corrections, the put-away and the jump to the other arm all act on it; if it does not, the shield on the screen hangs on something else
+        if (strapped && in.shieldBlink && (GetTickCount64() % 2000) < 500) hideShield();   // (the shield is the left side's bones' on either arm)
     } else {
         g_shieldStrapped.store(0);
     }
     // [hands] shield_fist: the left hand with a shield on it follows the controller's real grip too - the fingers only. Fist() rebuilds
     // the finger chains below the wrist (not the weapon attach bone the shield hangs on) after the arm is placed, so the shield and the
     // arm stay as the game draws them (vr/shield_fist.h). The weight model's inputs are not touched: that hand is told to it as busy.
-    if (in.shieldFist) {
+    if (in.shieldFist && in.shieldArm != 2) {   // (put away: no shield on any hand)
         shieldfist::Want want;
         want.on = true;
         want.f4 = viewgate::F4();   // (a view change shows in the very next pose)
         want.shield = true;         // vrcam set shieldFist for a shield in the left slot (gamestate::LeftShield())
         want.arms = in.mode == 2;
-        want.tracked = (in.handsValid & 2u) != 0;
-        want.rawGrip = in.shieldGrip;
-        want.layoutGrip = in.grip[1];
-        want.closedAlready = leftFisted;
+        want.tracked = (in.handsValid & (1u << shieldSide)) != 0;   // the hand of the arm the shield is on (the left one unless shoulder_draw moved it)
+        want.rawGrip = in.shieldRaw[shieldSide];
+        want.layoutGrip = in.grip[shieldSide];
+        want.closedAlready = shieldSide == 1 ? leftFisted : rightFisted;
         if (const float g = shieldfist::Grip(want); g >= 0.0f)
-            Fist(h, 1, g,
-                 in.fistCap[1] >= 0.0f ? std::min(in.fistClose[h.cls >= 0 ? h.cls : 3], in.fistCap[1]) : in.fistClose[h.cls >= 0 ? h.cls : 3],
+            Fist(h, shieldSide, g,
+                 in.fistCap[shieldSide] >= 0.0f ? std::min(in.fistClose[h.cls >= 0 ? h.cls : 3], in.fistCap[shieldSide]) : in.fistClose[h.cls >= 0 ? h.cls : 3],
                  in.fistOpen[h.cls >= 0 ? h.cls : 3], oldW, newW);
     }
 
@@ -3019,6 +4308,12 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
         AcquireSRWLockExclusive(&g_gunBoneLock); g_shieldPose = pose; g_shieldAt = at; ReleaseSRWLockExclusive(&g_gunBoneLock);
     }
     if (handPosedSide >= 0) g_handPoseCurlOut.store(Curl(h, handPosedSide, newW));   // [bow] hand_pose: the fingers as they are written
+#endif
+    // [hands] shoulder_draw_ranged: the bow or crossbow put away behind a shoulder is not drawn - the attach bone it hangs on (the one the game shows, else the slot's) is shrunk to a point,
+    // as the game shrinks one that holds nothing; it is still the game's equipped weapon.
+#if D2RVR_FIRST_PERSON
+    if (in.rangedStowed && in.mode == 2) HideRanged(h, in, oldW, newW);
+    if (in.flailChain && in.mode == 2) NoteFlailHands(self, h, in, newW);   // [flail] chain: the hands as the flail's chain hangs off them
 #endif
     // A bone that is not a number (a NaN carried down a chain by some turn that had no direction) would take its whole subtree out of the picture; the game's own pose of it stands in.
     {
@@ -3206,6 +4501,18 @@ static_assert(sizeof(bowrig::Mat) == sizeof(Mat), "the rig's matrices are the ga
 
 std::atomic<bool> g_bowRigOn{false};                 // Set(): [bow] rig_pose with the arms on the controllers
 std::atomic<bool> g_bowStringOn{false};              // Set(): [hands] bow_draw wants the posed bow's string place (BowString)
+std::atomic<bool> g_bowStaveOn{false};               // Set(): [bow] quiver_orbs wants the bow's stave (BowStave)
+std::atomic<bool> g_bowArrowOn{false};               // Set(): [bow] arrow_fx wants the bow's arrow as it is drawn (BowArrow)
+// The arrow as it is drawn in the frame of the hands: its nock and head (3 + 3), whether our pose drew it, when; and how its head was found (for the log).
+SRWLOCK g_bowArrowLock = SRWLOCK_INIT;
+float g_bowArrowAt[6] = {};
+bool g_bowArrowDrawn = false;
+ULONGLONG g_bowArrowStamp = 0;
+std::string g_bowArrowWho;
+// The bow's stave in the frame of the hands: the riser's middle, the upper limb's end, the unit direction toward the archer (3 + 3 + 3), and when.
+SRWLOCK g_bowStaveLock = SRWLOCK_INIT;
+float g_bowStaveAt[9] = {};
+ULONGLONG g_bowStaveStamp = 0;
 // Where the posed bow's string rests, in the frame of the hands (metres from the head; Input::hand's, no ini offset), and when.
 SRWLOCK g_bowStringLock = SRWLOCK_INIT;
 float g_bowStringAt[3] = {};
@@ -3273,7 +4580,7 @@ void NoteBowHands(uintptr_t self, const Hero& h, const Input& in, const std::vec
             const int stringSide = bowSide ^ 1;
             b.placed = true;
             b.bowSide = bowSide;
-            b.attach = newW[h.weapon[bowSide]];
+            b.attach = newW[h.weapon[BowBoneSide(h, in, oldW, bowSide)]];
             b.head = in.haveEye ? V3{in.eyeModel[0], in.eyeModel[1], in.eyeModel[2]} : Pos(newW[h.head]);
             b.upm = std::clamp(b.head.y / std::max(0.8f, in.userHeadM), 2.0f, 8.0f) * in.scale;
             b.yawCos = c;
@@ -3307,6 +4614,8 @@ void NoteBowHands(uintptr_t self, const Hero& h, const Input& in, const std::vec
 // A bow skeleton met: the rig learned from its bind pose, or why it was not.
 struct BowRigEntry {
     bowrig::Rig rig;
+    float arrowAhead = 0.0f;                         // [bow] arrow_fx: the arrow mesh's far end ahead of the nock, cog frame (bowrig::MeshAhead; 0 = not read)
+    std::string arrowMesh;                           // ... and the mesh it was read off, for the log
     uintptr_t bones = 0;
     bool isBow = false;                              // a held bow's model, whatever its rig
     const char* why = nullptr;                       // set when rig is not usable
@@ -3386,9 +4695,20 @@ void LearnBow(uintptr_t self, uintptr_t bones, int count, BowRigEntry* e) {
             e->why = "a known layout, but its bind pose did not read as a bow";
             NoteBow("bow rig: " + model + " matched '" + resolved.layout->name + "' but its bind pose was refused: " + (learnWhy ? learnWhy : "unreadable"));
         } else {
+            // [bow] arrow_fx: the arrowhead off the arrow mesh's own box (granny_mesh.h), read once with the rig
+            uintptr_t instance = 0, skel = 0;
+            grannymesh::Box box;
+            auto rd = [](uintptr_t at, void* to, size_t n) { return SafeCopy(to, (const void*)at, n); };
+            if (Get(self + 0x08, &instance) && Get(instance + 0x08, &skel) && grannymesh::ArrowBox(rd, instance, skel, &box)) {
+                e->arrowAhead = bowrig::MeshAhead(e->rig, bind[resolved.cog], box.min, box.max);
+                e->arrowMesh = box.mesh;
+            }
+            char arrow[200];
+            if (e->arrowAhead > 0.0f) snprintf(arrow, sizeof arrow, "; arrow mesh %s, its far end %.2f ahead of the nock (the riser %.2f)", e->arrowMesh.c_str(), e->arrowAhead, e->rig.reach);
+            else snprintf(arrow, sizeof arrow, "; the arrow mesh not read");
             NoteBow("bow rig: " + model + " is '" + resolved.layout->name + "', " + std::to_string(count) + " bones; limbs " + names[resolved.bend[0]] + " / " +
                     names[resolved.bend[1]] + ", string ends " + names[resolved.tip[0]] + " / " + names[resolved.tip[1]] + ", nock " + names[resolved.nock] +
-                    ", arrow " + names[resolved.arrow]);
+                    ", arrow " + names[resolved.arrow] + arrow);
         }
     }
 }
@@ -3414,6 +4734,82 @@ void PublishBowString(const BowHands& hands, ULONGLONG now, const bowrig::Mat& c
     ReleaseSRWLockExclusive(&g_bowStringLock);
 }
 
+// [bow] quiver_orbs: the same for the bow's stave - the riser's middle and the end of a limb at rest, and the way the archer is (the rig's `back`, from the grip toward the nock), from
+// the cog's frame to the frame of the hands. The orbs sit on it and follow the bow, wherever the hand takes it. A bow has no top and bottom of its own: how it hangs in the hand
+// decides which of its two limbs points up (the rig's "upper" one may well hang down), so the stave runs along the limb whose end is the HIGHER of the two in the hands' frame
+// (y up) - the orbs go above the hand, not below it.
+void PublishBowStave(const BowHands& hands, ULONGLONG now, const bowrig::Mat& cog, const bowrig::Mat& itemLocal, bowrig::V3 grip, bowrig::V3 tipA, bowrig::V3 tipB, bowrig::V3 back) {
+    if (!hands.placed || hands.hero != g_heroSelf.load() || now - hands.at >= 150 || !(hands.upm > 1e-3f)) return;
+    bowrig::Mat attach;
+    memcpy(attach.m, hands.attach.m, sizeof attach.m);
+    const bowrig::Mat toHero = bowrig::Mul(cog, bowrig::Mul(itemLocal, attach));
+    const float len = bowrig::Length(tipA - grip);
+    if (!(len > 1e-6f) || !bowrig::Finite(grip) || !bowrig::Finite(tipA) || !bowrig::Finite(tipB) || !bowrig::Finite(back)) return;
+    auto toHands = [&](bowrig::V3 v, bowdraw::Vec* out) {
+        const bowrig::V3 p = bowrig::Point(toHero, v);
+        if (!bowrig::Finite(p)) return false;
+        *out = bowtouch::ModelToHands({p.x, p.y, p.z}, {hands.offset[0], hands.offset[1], hands.offset[2]}, {hands.head.x, hands.head.y, hands.head.z}, hands.upm, hands.yawCos, hands.yawSin);
+        return bowdraw::Finite(*out);
+    };
+    bowdraw::Vec g, tA, tB, b;
+    if (!toHands(grip, &g) || !toHands(tipA, &tA) || !toHands(tipB, &tB) || !toHands(grip + bowrig::Unit(back) * (len * 0.2f), &b)) return;
+    static int tipWas = -1;   // (the pose hook's one thread)
+    tipWas = bowtouch::HigherEnd(tA, tB, tipWas);
+    const bowdraw::Vec t = tipWas == 0 ? tA : tB;   // the limb that points up
+    const bowdraw::Vec d = bowdraw::Normalized(b - g);
+    if (!(bowdraw::Length(d) > 0.5f)) return;
+    AcquireSRWLockExclusive(&g_bowStaveLock);
+    g_bowStaveAt[0] = g.x; g_bowStaveAt[1] = g.y; g_bowStaveAt[2] = g.z;
+    g_bowStaveAt[3] = t.x; g_bowStaveAt[4] = t.y; g_bowStaveAt[5] = t.z;
+    g_bowStaveAt[6] = d.x; g_bowStaveAt[7] = d.y; g_bowStaveAt[8] = d.z;
+    g_bowStaveStamp = now;
+    ReleaseSRWLockExclusive(&g_bowStaveLock);
+}
+
+// [bow] arrow_fx: the bow's own arrow as `arrowSkel` (the arrow bone's matrix as the pose leaves it, the bow's skeleton space) draws it, in the frame of the hands.
+// The arrow's two ends in the bind pose (cog frame): the nock (the string's rest place) and the head - the farthest of the arrow's own bones along the arrow (the
+// rig's -back), or, when they do not reach past the riser, the riser itself (the arrow passes the bow there). Both are carried by the arrow bone from its bind
+// place to where the pose has it, then to the hero and the hands as the string's place is. A hidden arrow (its bone at a thousandth: let go) is not published.
+void PublishBowArrow(const BowHands& hands, ULONGLONG now, const bowrig::Rig& rig, float meshAhead, const std::string& meshName, const bowrig::Mat& cog, const bowrig::Mat& itemLocal,
+                     const bowrig::Mat& arrowSkel, bool drawn) {
+    if (!hands.placed || hands.hero != g_heroSelf.load() || now - hands.at >= 150 || !(hands.upm > 1e-3f)) return;
+    const bowrig::Resolved& R = rig.r;
+    bowrig::ArrowEnds ends;
+    if (!bowrig::ArrowEndsOf(rig, &ends, meshAhead)) return;
+    const bool fromMesh = ends.fromMesh, fromBones = ends.fromBones;
+    const int farthest = ends.bone;
+    const bowrig::V3 nockBind = ends.nock, headBind = ends.head;
+    // the arrow bone's size against its bind size: a hidden arrow (kArrowHidden) is not drawn
+    const bowrig::Mat bind = bowrig::Mul(rig.rest[R.arrow], cog);
+    const float bindSize = bowrig::Length({bind.m[0], bind.m[1], bind.m[2]}), size = bowrig::Length({arrowSkel.m[0], arrowSkel.m[1], arrowSkel.m[2]});
+    if (!(bindSize > 1e-6f) || !(size > 0.5f * bindSize)) return;
+    bowrig::Mat toLocal;
+    if (!bowrig::Inverse(rig.rest[R.arrow], &toLocal)) return;
+    bowrig::Mat attach;
+    memcpy(attach.m, hands.attach.m, sizeof attach.m);
+    const bowrig::Mat toHero = bowrig::Mul(itemLocal, attach);
+    auto toHands = [&](bowrig::V3 v, bowdraw::Vec* out) {
+        const bowrig::V3 local = bowrig::Point(toLocal, v), skel = bowrig::Point(arrowSkel, local), p = bowrig::Point(toHero, skel);
+        if (!bowrig::Finite(p)) return false;
+        *out = bowtouch::ModelToHands({p.x, p.y, p.z}, {hands.offset[0], hands.offset[1], hands.offset[2]}, {hands.head.x, hands.head.y, hands.head.z}, hands.upm, hands.yawCos, hands.yawSin);
+        return bowdraw::Finite(*out);
+    };
+    bowdraw::Vec n, h;
+    if (!toHands(nockBind, &n) || !toHands(headBind, &h) || !(bowdraw::Length(h - n) > 0.02f)) return;
+    char who[260];
+    if (fromMesh) snprintf(who, sizeof who, "the head at the arrow mesh's far end (%s), %.0f cm ahead of the nock", meshName.c_str(), bowdraw::Length(h - n) * 100.0f);
+    else snprintf(who, sizeof who, fromBones ? "the arrow mesh not read; its own bones reach %.0f cm ahead of the nock (bone %d)"
+                                             : "the arrow mesh not read and its own bones do not reach past the riser: the head at the riser, %.0f cm ahead of the nock (bone %d the farthest)",
+                  bowdraw::Length(h - n) * 100.0f, farthest);
+    AcquireSRWLockExclusive(&g_bowArrowLock);
+    g_bowArrowAt[0] = n.x; g_bowArrowAt[1] = n.y; g_bowArrowAt[2] = n.z;
+    g_bowArrowAt[3] = h.x; g_bowArrowAt[4] = h.y; g_bowArrowAt[5] = h.z;
+    g_bowArrowDrawn = drawn;
+    g_bowArrowStamp = now;
+    if (g_bowArrowWho.empty() || g_bowArrowWho.compare(0, 20, who, 20) != 0) g_bowArrowWho = who;
+    ReleaseSRWLockExclusive(&g_bowArrowLock);
+}
+
 // A held bow's skeleton that is NOT the hunter's 13-bone rig (the Hydra Bow, for one): said once per skeleton, so the log tells
 // which layouts exist - the path and the bone count are what bow-rig-pose needs to learn them. Read only while the bow draw wants
 // the string (it is the debugging case), and each skeleton instance once.
@@ -3422,12 +4818,13 @@ SRWLOCK g_bowProbeLock = SRWLOCK_INIT;
 std::string g_bowProbeText;
 
 void PoseBowRig(uintptr_t self) {
-    const bool rigOn = g_bowRigOn.load(std::memory_order_relaxed), stringOn = g_bowStringOn.load(std::memory_order_relaxed), aimOn = g_bowAimOn.load(std::memory_order_relaxed);
-    if (!rigOn && !stringOn && !aimOn) return;
+    const bool rigOn = g_bowRigOn.load(std::memory_order_relaxed), stringOn = g_bowStringOn.load(std::memory_order_relaxed), aimOn = g_bowAimOn.load(std::memory_order_relaxed),
+               staveOn = g_bowStaveOn.load(std::memory_order_relaxed), arrowOn = g_bowArrowOn.load(std::memory_order_relaxed);
+    if (!rigOn && !stringOn && !aimOn && !staveOn && !arrowOn) return;
     const ULONGLONG now = GetTickCount64();
     // the common case: the string is not drawn (and nobody wants to know where it rests or which way the bow points): nothing is looked at
     const bool holding = rigOn && bowrig::Holding(g_bowDrawnAt.load(), now);
-    if (!holding && !stringOn && !aimOn) return;
+    if (!holding && !stringOn && !aimOn && !staveOn && !arrowOn) return;
     BowDraw feed;
     BowHands hands;
     ULONGLONG feedAt;
@@ -3521,6 +4918,11 @@ void PoseBowRig(uintptr_t self) {
             ReleaseSRWLockExclusive(&g_bowAimLock);
         }
     }
+    if (staveOn) {   // [bow] quiver_orbs: the stave, from the rig's bind pose (the riser = the middle of the limbs' hinges, the upper limb's end = where the string is tied to it)
+        const bowrig::V3 grip = (bowrig::Position(held.rig.rest[R.bend[0]]) + bowrig::Position(held.rig.rest[R.bend[1]])) * 0.5f;
+        PublishBowStave(hands, now, cog, itemLocal, grip, bowrig::Position(held.rig.rest[R.tip[0]]), bowrig::Position(held.rig.rest[R.tip[1]]), held.rig.back);
+    }
+    if (arrowOn && !holding) PublishBowArrow(hands, now, held.rig, held.arrowAhead, held.arrowMesh, cog, itemLocal, native[R.arrow], false);   // [bow] arrow_fx: the arrow as the game's own pose has it (nocked at rest)
     if (!holding && !stringOn) { held.last = "its axes are read; the string is not drawn"; return; }   // only the bow's axes were wanted
     {   // the arrow bone's size in the game's pose against the bind pose's (rows of the matrices)
         const bowrig::Mat bind = bowrig::Mul(held.rig.rest[R.arrow], cog);
@@ -3613,9 +5015,222 @@ void PoseBowRig(uintptr_t self) {
     if (SafeWrite((void*)(matrices + (size_t)R.lowest * sizeof(Mat)), posed.data() + R.lowest, (size_t)(R.highest - R.lowest + 1) * sizeof(Mat))) {
         g_bowPosedAt.store(now);
         held.last = how;
+        if (arrowOn) PublishBowArrow(hands, now, held.rig, held.arrowAhead, held.arrowMesh, cog, itemLocal, posed[R.arrow], drawing);   // [bow] arrow_fx: the arrow as our pose draws it
     } else {
         held.last = "the pose could not be written";
     }
+}
+
+// [hands] xbow_support_model / [debug] xbow_barrel_line: the barrel of the crossbow in the hero's hand, read off its own skeleton -
+// the bolt_helper bone's line through the front of the stock (between L_bowBend and R_bowBend), from the bind pose (xbowgrip::
+// BarrelInCog), carried by the cog bone as the game poses it now and by the item's transform relative to its attach bone (the frame
+// [bow] aim_along_hands reads a bow's axes in): published in the attach bone's frame for PoseBody, which puts it on the attach bone as
+// ours placed it. Only the hero's own crossbow (its entity hangs off his); read only while asked for. Nothing of it is written.
+struct XbowRigEntry {
+    uintptr_t bones = 0;
+    bool ok = false;                 // a crossbow whose barrel was read
+    int cog = -1, count = 0;
+    xbowgrip::M barrelInCog;
+    std::string model;
+    uint32_t entity = 0;
+    bool entityKnown = false, hero = false;
+    ULONGLONG lookupAt = 0, ownerAt = 0;
+    // [debug] xbow_barrel_line: the crossbow's own loaded bolt (its "bolt" bone, the model's, not a missile): its bind place in the cog's
+    // frame and the limbs' span (for scale), to tell in the log when the game's own animation moves it off the crossbow
+    int bolt = -1;
+    xbowgrip::V boltBindInCog;
+    float span = 0.0f;
+    bool boltAway = false;
+    ULONGLONG boltToldAt = 0;
+};
+std::atomic<bool> g_xbowBoltDiag{false};   // [debug] xbow_barrel_line: the loaded bolt's line in the log (Set)
+SRWLOCK g_xbowRigLock = SRWLOCK_INIT;
+std::map<std::pair<uintptr_t, uintptr_t>, XbowRigEntry> g_xbowRigs;
+
+void LearnCrossbow(uintptr_t self, uintptr_t bones, int count, XbowRigEntry* e) {
+    uintptr_t object = 0, name = 0;
+    Get(self, &object); Get(object + 8, &name);
+    const std::string path = Str(name);
+    if (path.find("/items/weapon/") == std::string::npos || path.find("dropped") != std::string::npos) return;
+    int cog = -1, bolt = -1, left = -1, right = -1, trigger = -1;
+    for (int i = 0; i < count; ++i) {
+        uintptr_t nm = 0;
+        if (!Get(bones + (uintptr_t)i * 0xA4, &nm)) return;
+        const std::string bone = Str(nm);
+        if (bone == "cog") cog = i;
+        else if (bone == "bolt_helper") bolt = i;
+        else if (bone == "L_bowBend") left = i;
+        else if (bone == "R_bowBend") right = i;
+        else if (bone == "bolt") e->bolt = i;
+        else if (bone == "trigger") trigger = i;   // hangs below the stock: which way is down
+    }
+    if (bolt < 0) return;   // not a crossbow (a bow has an arrow_helper)
+    e->model = path.substr(path.rfind('/') == std::string::npos ? 0 : path.rfind('/') + 1);
+    e->count = count;
+    auto inverse = [&](int i, xbowgrip::M* m) { return i >= 0 && SafeCopy(m->m, (const void*)(bones + (uintptr_t)i * 0xA4 + 0x50), sizeof m->m); };
+    xbowgrip::M ic, ib, il, ir;
+    if (!inverse(cog, &ic) || !inverse(bolt, &ib) || !inverse(left, &il) || !inverse(right, &ir)) {
+        NoteBow("crossbow barrel: " + e->model + " has a bolt_helper but not cog / L_bowBend / R_bowBend that read - the left hand stays on the line set by eye");
+        return;
+    }
+    xbowgrip::M it;
+    const bool haveTrigger = inverse(trigger, &it);
+    if (!xbowgrip::BarrelInCog(ic, ib, il, ir, &e->barrelInCog, haveTrigger ? &it : nullptr)) {
+        NoteBow("crossbow barrel: " + e->model + "'s bolt_helper / limbs did not make a line - the left hand stays on the line set by eye");
+        return;
+    }
+    e->cog = cog;
+    {   // the loaded bolt's bind place in the cog's frame, and the limbs' span
+        xbowgrip::M boltInverse, boltBind, cogBind, left, right;
+        if (inverse(e->bolt, &boltInverse) && xbowgrip::Inverse(boltInverse, &boltBind) && xbowgrip::Inverse(ic, &cogBind) &&
+            xbowgrip::Inverse(il, &left) && xbowgrip::Inverse(ir, &right)) {
+            e->boltBindInCog = xbowgrip::Place(xbowgrip::Mul(boltBind, ic));
+            const xbowgrip::V d = xbowgrip::Sub(xbowgrip::Place(left), xbowgrip::Place(right));
+            e->span = std::sqrt(xbowgrip::Dot(d, d));
+        } else {
+            e->bolt = -1;
+        }
+    }
+    e->ok = true;
+    NoteBow("crossbow barrel: " + e->model + " read (" + std::to_string(count) + " bones): its bolt_helper's line through the front of the stock, up square to the limbs" +
+            (haveTrigger ? ", the trigger below" : " (no trigger bone: up on the bolt_helper's +Y side)"));
+}
+
+void NoteCrossbowBarrel(uintptr_t self) {
+    if (!g_xbowBarrelOn.load(std::memory_order_relaxed) || self == g_heroSelf.load(std::memory_order_relaxed)) return;
+    uintptr_t model = 0, skeleton = 0, bones = 0;
+    int count = 0;
+    if (!Get(self + 0x08, &model) || !Get(model + 0x08, &skeleton) || !Get(skeleton + 8, &count) || count < 4 || count > 64 ||
+        !Get(skeleton + 0xC, &bones) || !bones) return;
+    const ULONGLONG now = GetTickCount64();
+    AcquireSRWLockExclusive(&g_xbowRigLock);
+    struct Unlock { ~Unlock() { ReleaseSRWLockExclusive(&g_xbowRigLock); } } unlock;
+    const auto key = std::make_pair(self, skeleton);
+    auto it = g_xbowRigs.find(key);
+    if (it == g_xbowRigs.end() || it->second.bones != bones) {
+        XbowRigEntry e;
+        e.bones = bones;
+        LearnCrossbow(self, bones, count, &e);
+        if (g_xbowRigs.size() > 4096) g_xbowRigs.clear();
+        it = g_xbowRigs.insert_or_assign(key, e).first;
+    }
+    XbowRigEntry& held = it->second;
+    if (!held.ok) return;
+    HeroXform hero;
+    if (!HeroTransform(&hero)) { g_xbowBarrelWhy.store("the hero's transform is not known"); return; }
+    xbowgrip::M itemLocal;
+    {   // whose: its entity hangs off the hero's (another player's, a preview's or a dropped one never does); looked up twice a second at most
+        AcquireSRWLockExclusive(&ecs::g_lock);
+        struct EcsUnlock { ~EcsUnlock() { ReleaseSRWLockExclusive(&ecs::g_lock); } } ecsUnlock;
+        uintptr_t existing = 0;
+        bool found = held.entityKnown && ecs::SkeletonOf(held.entity, &existing) && existing == self;
+        if (!found) {
+            held.entityKnown = false;
+            if (held.lookupAt && now - held.lookupAt < 500) return;
+            held.lookupAt = now;
+            found = held.entityKnown = ecs::EntityOf(self, &held.entity);
+            if (!found) { g_xbowBarrelWhy.store("the crossbow's entity is not found yet"); return; }
+        }
+        uint32_t index = 0, parent = 0;
+        uintptr_t components = 0;
+        if (!ecs::Dense(ecs::g_xs, held.entity, &index) || !Get(ecs::g_xs + 0x38, &components) || !components ||
+            !Get(components + (uintptr_t)index * kTransformSize + 0xC0, &parent)) {
+            g_xbowBarrelWhy.store("the crossbow entity's transform is not found");
+            return;
+        }
+        if ((parent & 0xFFFFF) != (hero.entity & 0xFFFFF)) return;   // not the hero's: says nothing (his own speaks)
+        if (!SafeCopy(itemLocal.m, (const void*)(components + (uintptr_t)index * kTransformSize), sizeof itemLocal.m)) {
+            g_xbowBarrelWhy.store("the crossbow entity's transform did not read");
+            return;
+        }
+    }
+    uintptr_t world = 0, matrices = 0;
+    int worldCount = 0;
+    xbowgrip::M cog;
+    if (!Get(self + 0x20, &world) || !Get(world, &worldCount) || worldCount != held.count || !Get(world + 4, &matrices) || !matrices ||
+        !SafeCopy(cog.m, (const void*)(matrices + (uintptr_t)held.cog * sizeof(Mat)), sizeof cog.m)) {
+        g_xbowBarrelWhy.store("the crossbow's pose matrices did not read");
+        return;
+    }
+    const xbowgrip::M inAttach = xbowgrip::Mul(xbowgrip::Mul(held.barrelInCog, cog), itemLocal);
+    // [debug] xbow_barrel_line: does the game's own animation of the crossbow move its loaded bolt off it (a second bolt seen flying)?
+    // The bolt bone against its bind place, in the cog's frame, as a part of the limbs' span; told when it leaves and when it is back.
+    if (g_xbowBoltDiag.load(std::memory_order_relaxed) && held.bolt >= 0 && held.bolt < worldCount && held.span > 1e-4f) {
+        xbowgrip::M boltNow, cogInverse;
+        if (SafeCopy(boltNow.m, (const void*)(matrices + (uintptr_t)held.bolt * sizeof(Mat)), sizeof boltNow.m) && xbowgrip::Inverse(cog, &cogInverse)) {
+            const xbowgrip::V d = xbowgrip::Sub(xbowgrip::Place(xbowgrip::Mul(boltNow, cogInverse)), held.boltBindInCog);
+            const float off = std::sqrt(xbowgrip::Dot(d, d)) / held.span;
+            const float size = std::sqrt(boltNow.m[0] * boltNow.m[0] + boltNow.m[1] * boltNow.m[1] + boltNow.m[2] * boltNow.m[2]);
+            const bool away = off > 0.15f || size < 0.3f;
+            if (away != held.boltAway && now - held.boltToldAt > 150) {
+                held.boltAway = away;
+                held.boltToldAt = now;
+                char b[260];
+                snprintf(b, sizeof b, "crossbow's own loaded bolt (%s, its \"bolt\" bone - the model's, not the missile): %s - %.2f of the limbs' span from its place, size %.2f",
+                         held.model.c_str(), away ? "the game's animation takes it OFF the crossbow" : "back on the crossbow", off, size);
+                XbowNote(b);
+            }
+        }
+    }
+    xbowgrip::Line check;
+    if (!xbowgrip::FromBolt(inAttach, &check)) { g_xbowBarrelWhy.store("the crossbow's barrel did not come out as a line"); return; }
+    AcquireSRWLockExclusive(&g_gunBoneLock);
+    g_xbowBarrel = {inAttach, HeroGen(), now};
+    g_xbowSource.self = self; g_xbowSource.cog = held.cog; g_xbowSource.count = held.count;
+    g_xbowSource.barrelInCog = held.barrelInCog; g_xbowSource.gen = HeroGen(); g_xbowSource.at = now;
+    ReleaseSRWLockExclusive(&g_gunBoneLock);
+    g_xbowEntity.store(held.entity);
+    g_xbowBarrelWhy.store(now - g_xbowRendered.at < 500 ? "read off the hero's crossbow, placed as the renderer draws it"
+                                                         : "read off the hero's crossbow; the renderer's placing of it is not seen (yet) - the left hand stays on the line set by eye");
+}
+
+// The world-matrix function's result for an entity (potion_hide's hook on 0xE3A8C0 calls this after the original, renderer's thread): for
+// the hero's crossbow, the relation between the item's world matrix as drawn and our attach bone in the world at the pose is learned, and
+// the barrel put into the attach bone's frame through it (g_xbowRendered). The world translation is taken off both before the inverse
+// (world coordinates run large). Once a hero model, it is compared in the log with the item's own transform (g_xbowBarrel).
+void XbowRenderedIn(uint32_t entity, uintptr_t component, uintptr_t out) {
+    (void)component;
+    if (entity == 0xFFFFFFFFu || entity != g_xbowEntity.load(std::memory_order_relaxed)) return;
+    const ULONGLONG now = GetTickCount64();
+    AcquireSRWLockShared(&g_gunBoneLock);
+    const XbowSource src = g_xbowSource; const XbowAttach att = g_xbowAttach; const XbowBarrelOut approx = g_xbowBarrel;
+    ReleaseSRWLockShared(&g_gunBoneLock);
+    const uint32_t gen = HeroGen();
+    if (!src.at || now - src.at > 500 || src.gen != gen || !att.at || now - att.at > 100 || att.gen != gen || src.cog < 0) return;
+    uintptr_t world = 0, matrices = 0;
+    int count = 0;
+    xbowgrip::M cog, item;
+    if (!Get(src.self + 0x20, &world) || !Get(world, &count) || count != src.count || !Get(world + 4, &matrices) || !matrices ||
+        !SafeCopy(cog.m, (const void*)(matrices + (uintptr_t)src.cog * sizeof(Mat)), sizeof cog.m) || !SafeCopy(item.m, (const void*)out, sizeof item.m))
+        return;
+    xbowgrip::M relation;
+    if (!xbowgrip::RenderedRelation(item, att.world, &relation)) return;
+    const xbowgrip::M inAttach = xbowgrip::Mul(xbowgrip::Mul(src.barrelInCog, cog), relation);
+    xbowgrip::Line line;
+    if (!xbowgrip::FromBolt(inAttach, &line)) return;
+    AcquireSRWLockExclusive(&g_gunBoneLock);
+    g_xbowRendered = {inAttach, gen, now};
+    ReleaseSRWLockExclusive(&g_gunBoneLock);
+    static std::atomic<uint32_t> told{0xFFFFFFFFu};
+    if (told.exchange(gen) != gen && att.upm > 1e-3f) {   // once a hero model: how far off the item's own transform was
+        xbowgrip::Line own;
+        char b[300];
+        if (approx.at && approx.gen == gen && xbowgrip::FromBolt(approx.inAttach, &own)) {
+            const xbowgrip::V d = xbowgrip::Sub(own.center, line.center);
+            const float cm = std::sqrt(xbowgrip::Dot(d, d)) / att.upm * 100.0f;
+            const float deg = std::acos(std::clamp(xbowgrip::Dot(own.dir, line.dir), -1.0f, 1.0f)) * 57.2957795f;
+            snprintf(b, sizeof b, "crossbow barrel: the renderer's placing is seen; the item's own transform put the front of the stock %.1f cm and the barrel %.1f deg off it "
+                     "(the hand uses the renderer's)", cm, deg);
+        } else {
+            snprintf(b, sizeof b, "crossbow barrel: the renderer's placing is seen (the hand uses it)");
+        }
+        XbowNote(b);
+    }
+}
+std::string XbowNoteTakeIn() {
+    std::string s;
+    AcquireSRWLockExclusive(&g_xbowNoteLock); s.swap(g_xbowNote); ReleaseSRWLockExclusive(&g_xbowNoteLock);
+    return s;
 }
 #endif
 
@@ -3655,6 +5270,16 @@ void Arms(uintptr_t self) {
         }
     }
     if (in.mode == 2) if (const FreshHandsFn f = g_freshHands.load()) f(&in);
+    // [hands] shoulder_draw, the shield: which arm it is on (or put away), stepped once per head sample, before the weight model asks which hand is busy with it
+    shieldarmwire::Apply(&in);
+    // [hands] shoulder_draw_ranged: a bow or crossbow put away behind a shoulder (stepped once per head sample). While it is away nothing is posed round it: no bow aim, string, rig or
+    // hand pose, no staff or gun - the hands are free; it is hidden at the end of the pose (HideRanged).
+    rangedwire::Apply(&in);
+    if (in.rangedStowed) {
+        in.staff = false;
+        in.gunStock = false;
+        in.bowAim = in.bowAxis = in.bowRest = in.bowRig = in.bowString = in.bowStave = in.bowHandPose = false;
+    }
     // [weight]: the weapon stepped (once per head sample) and the hands on it moved to where it has them
     weight::Out wo;
     weight::Apply(&in, &wo);
@@ -3685,6 +5310,31 @@ bool StaffAxis(float dir[3], float* handGap, bool* leftOn) {
 }
 
 int GunAxis() { return g_gunAxis.load(); }
+bool XbowBarrelDebug(float a[3], float b[3], float support[3], bool* rendered) {
+    AcquireSRWLockShared(&g_gunBoneLock); const XbowDebugOut g = g_xbowDebug; ReleaseSRWLockShared(&g_gunBoneLock);
+    if (!g.at || GetTickCount64() - g.at > 300) return false;
+    memcpy(a, g.a, sizeof g.a); memcpy(b, g.b, sizeof g.b); memcpy(support, g.p, sizeof g.p);
+    if (rendered) *rendered = g.rendered;
+    return true;
+}
+const char* XbowBarrelWhy() { return g_xbowBarrelWhy.load(); }
+bool XbowPalmDebug(float p[3], float* cm) {
+    AcquireSRWLockShared(&g_gunBoneLock); const XbowPalmOut g = g_xbowPalm; ReleaseSRWLockShared(&g_gunBoneLock);
+    if (!g.at || GetTickCount64() - g.at > 300) return false;
+    memcpy(p, g.p, sizeof g.p);
+    if (cm) *cm = g.cm;
+    return true;
+}
+bool XbowShotRay(float a[3], float b[3], bool* barrel, bool* floor) {
+    AcquireSRWLockShared(&g_gunBoneLock); const XbowRayOut g = g_xbowRay; ReleaseSRWLockShared(&g_gunBoneLock);
+    if (!g.at || GetTickCount64() - g.at > 300) return false;
+    memcpy(a, g.a, sizeof g.a); memcpy(b, g.b, sizeof g.b);
+    if (barrel) *barrel = g.barrel;
+    if (floor) *floor = g.floor;
+    return true;
+}
+void XbowRendered(uint32_t entity, uintptr_t component, uintptr_t out) { XbowRenderedIn(entity, component, out); }
+std::string XbowNoteTake() { return XbowNoteTakeIn(); }
 bool GrabLine(float a[3], float b[3]) {
     AcquireSRWLockShared(&g_gunBoneLock); const GrabLineOut g = g_grabLine; ReleaseSRWLockShared(&g_gunBoneLock);
     if (!g.at || GetTickCount64() - g.at > 300) return false;
@@ -3701,6 +5351,26 @@ bool PosedWeapon(PosedWeaponPose& out) {
     if (!at || GetTickCount64() - at > 100 || p.heroGeneration != HeroGen()) return false;
     out = p;
     return true;
+}
+bool CastPoseNow(CastPose* out, unsigned maxAgeMs) {
+    AcquireSRWLockShared(&g_castLock);
+    const CastHandOut hand[2] = {g_castHand[0], g_castHand[1]};
+    const CastWeaponOut weapon = g_castWeapon;
+    ReleaseSRWLockShared(&g_castLock);
+    const ULONGLONG now = GetTickCount64();
+    auto fresh = [&](ULONGLONG at) { return at && now - at <= maxAgeMs; };
+    *out = CastPose{};
+    for (int side = 0; side < 2; ++side) {
+        out->hand[side] = fresh(hand[side].at);
+        memcpy(out->palm[side], hand[side].palm, sizeof out->palm[side]);
+        memcpy(out->fingers[side], hand[side].fingers, sizeof out->fingers[side]);
+        memcpy(out->face[side], hand[side].face, sizeof out->face[side]);
+    }
+    out->weapon = fresh(weapon.at);
+    out->weaponSide = weapon.side;
+    memcpy(out->weaponOrigin, weapon.origin, sizeof out->weaponOrigin);
+    memcpy(out->weaponTip, weapon.tip, sizeof out->weaponTip);
+    return out->hand[0] || out->hand[1] || out->weapon;
 }
 bool GunBone(float origin[3], float axes[3][3]) {
     AcquireSRWLockShared(&g_gunBoneLock); const GunBoneOut g = g_gunBone; ReleaseSRWLockShared(&g_gunBoneLock);
@@ -3768,6 +5438,11 @@ std::string ForearmTwistNote(float roll[2]) {
     return note;
 }
 int ShieldStrapped() { return g_shieldStrapped.load(); }
+void ShieldAdjNote(float seen[6], float* moveCm, float* turnDeg) {
+    for (int q = 0; q < 6; ++q) seen[q] = g_shieldAdjSeen[q].load();
+    *moveCm = g_shieldAdjMoveCm.load();
+    *turnDeg = g_shieldAdjTurnDeg.load();
+}
 bool ShieldAttach(ShieldPose* out) {
     AcquireSRWLockShared(&g_gunBoneLock);
     const ShieldPose pose = g_shieldPose;
@@ -3863,6 +5538,16 @@ const char* BowRigStatus() {
 
 std::string BowRigWho() { return bowcensus::Text(BowCensus(), GetTickCount64()); }
 
+void FlailHit(int side) { if (side == 0 || side == 1) g_flailHits[side].fetch_add(1); }
+const char* FlailStatus() { return g_flailWhy.load(); }
+std::string FlailTakeNote() {
+    std::string s;
+    AcquireSRWLockExclusive(&g_flailNoteLock);
+    s.swap(g_flailNote);
+    ReleaseSRWLockExclusive(&g_flailNoteLock);
+    return s;
+}
+
 std::string BowProbe() {
     AcquireSRWLockShared(&g_bowProbeLock);
     std::string t = g_bowProbeText;
@@ -3934,6 +5619,13 @@ bool BowRestPoint(float out[3]) {
     return fresh;
 }
 
+std::string StringAnchorWho() {
+    AcquireSRWLockShared(&g_bowAimLock);
+    std::string who = g_anchorWho;
+    ReleaseSRWLockShared(&g_bowAimLock);
+    return who;
+}
+
 bool StringAnchorHands(float out[3]) {
     AcquireSRWLockShared(&g_bowAimLock);
     const bool fresh = g_anchorAt && GetTickCount64() - g_anchorAt < 300;
@@ -3947,6 +5639,37 @@ std::string BowAimWho() {
     std::string who = g_aimStat.who;
     ReleaseSRWLockShared(&g_bowAimLock);
     return who;
+}
+
+bool BowStave(float grip[3], float tip[3], float back[3]) {
+    AcquireSRWLockShared(&g_bowStaveLock);
+    const bool fresh = g_bowStaveStamp && GetTickCount64() - g_bowStaveStamp < 300;
+    if (fresh) {
+        memcpy(grip, g_bowStaveAt, 3 * sizeof(float));
+        memcpy(tip, g_bowStaveAt + 3, 3 * sizeof(float));
+        memcpy(back, g_bowStaveAt + 6, 3 * sizeof(float));
+    }
+    ReleaseSRWLockShared(&g_bowStaveLock);
+    return fresh;
+}
+
+bool BowArrow(float nock[3], float head[3], bool* drawn) {
+    AcquireSRWLockShared(&g_bowArrowLock);
+    const bool fresh = g_bowArrowStamp && GetTickCount64() - g_bowArrowStamp < 300;
+    if (fresh) {
+        memcpy(nock, g_bowArrowAt, 3 * sizeof(float));
+        memcpy(head, g_bowArrowAt + 3, 3 * sizeof(float));
+        if (drawn) *drawn = g_bowArrowDrawn;
+    }
+    ReleaseSRWLockShared(&g_bowArrowLock);
+    return fresh;
+}
+
+std::string BowArrowWho() {
+    AcquireSRWLockShared(&g_bowArrowLock);
+    std::string s = g_bowArrowWho;
+    ReleaseSRWLockShared(&g_bowArrowLock);
+    return s;
 }
 
 bool BowString(float out[3]) {
@@ -3988,7 +5711,17 @@ void Set(const Input& in) {
 #endif
 #if D2RVR_FIRST_PERSON
     g_bowRigOn.store(in.bowRig && in.mode == 2);
+    const bool barrel = (in.xbowModel || in.xbowBarrelDebug || in.xbowAimBarrel) && in.gunStock && in.mode == 2;
+    if (g_xbowBarrelOn.exchange(barrel) && !barrel) g_xbowBarrelWhy.store("not asked for");
+    g_xbowBoltDiag.store(in.xbowBarrelDebug && in.gunStock && in.mode == 2);
     g_bowStringOn.store(in.bowString && in.mode == 2);
+    g_bowStaveOn.store(in.bowStave && in.mode == 2);
+    g_bowArrowOn.store(in.bowArrow && in.mode == 2);
+    g_flailOn.store(in.flailChain && in.mode == 2);
+    g_flailDamping.store(std::clamp(in.flailDamping, 0.0f, 20.0f));
+    g_flailSwing.store(std::clamp(in.flailSwing, 0.0f, 2.0f));
+    g_flailHit.store(std::clamp(in.flailHit, 0.0f, 2.0f));
+    g_flailWeight.store(std::clamp(in.flailWeight, 0.25f, 4.0f));
 #endif
 }
 
@@ -4011,6 +5744,8 @@ void __cdecl Hook(uintptr_t self, float a, float b, bool c) {
     Arms(self);
 #if D2RVR_FIRST_PERSON
     PoseBowRig(self);   // [bow] rig_pose: the hero's bow, after his pose has told it where the hands are
+    PoseFlail(self);    // [flail] chain: the hero's flail's chain swings free
+    NoteCrossbowBarrel(self);   // [hands] xbow_support_model: the hero's crossbow's barrel, read (nothing written)
 #endif
     if (GetTickCount64() < g_dumpUntil.load()) {
         AcquireSRWLockExclusive(&g_lock);
@@ -4200,6 +5935,7 @@ bool HeroTransform(HeroXform* out, const char** why) {
 
 void SetFresh(FreshFn fn) { g_fresh.store(fn); }
 void SetFreshHands(FreshHandsFn fn) { g_freshHands.store(fn); }
+void SetGripHandStep(GripHandStepFn fn, GripAbiFn abi) { g_gripHandStep.store(fn); g_gripAbi.store(abi); }
 
 void SetHeroPos(float x, float y, float z) {
     if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z)) return;

@@ -73,6 +73,9 @@ struct D2RVR_Shared {
     uint32_t roomMagic;      // D2RVR_ROOM_MAGIC
     float    headRoom[3];
     float    headYawRoomDeg;
+    // 1: this head is FlatVR's own, handed out at one of its frames (Game Link's BW_LINK_TRACK_FLATVR_STAMP) - sampleStamp
+    // names it and FlatVR's frame clock moves with it ([flatvr] frame_sync starts a pair on it).
+    uint32_t flatVrStamped;
 };
 
 #define D2RVR_GRIP_MAGIC 0x50495247u   // "GRIP"

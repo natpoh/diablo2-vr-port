@@ -71,6 +71,16 @@ double Smooth(double u) {
 
 }   // namespace
 
+namespace {
+const Engine* g_engine = nullptr;   // the weight-physics library, when one is loaded (vr/weight_lib.cpp)
+}   // namespace
+void SetEngine(const Engine* engine) { g_engine = engine; }
+const Engine* GetEngine() { return g_engine; }
+
+const GripEngine* g_gripEngine = nullptr;   // the grip library, when one is loaded (vr/grip_lib.cpp)
+void SetGripEngine(const GripEngine* engine) { g_gripEngine = engine; }
+const GripEngine* GetGripEngine() { return g_gripEngine; }
+
 const char* KindName(Kind k) {
 	static const char* const names[] = { "dagger", "sword",  "axe",     "mace",     "scepter", "wand",
 	                                     "staff",  "polearm", "spear", "javelin", "throwing", "other" };
@@ -154,6 +164,8 @@ void Hold::Build(const Settings& s) {
 		const Piece& p = shape_.pieces[i];
 		pieces[n++]    = { Add(line_.at, Rotate(q, p.a)), Add(line_.at, Rotate(q, p.b)), p.radius, p.mass * std::max(0.0, s.weight) };
 	}
+	for (int i = 0; i < n; ++i) pieces_[i] = pieces[i];   // (a library that moves the body wants the steel as it is)
+	nPieces_ = n;
 	V3  hands[2];
 	int nh = 0;
 	for (int h = 0; h < 2; ++h)
@@ -166,10 +178,13 @@ void Hold::Build(const Settings& s) {
 		st_.com      = com;
 	}
 	body_ = b;
+	builtWeight_ = s.weight;
 }
 
 void Hold::Place(int hand, Kind kind, bool twoHanded, const Line& line, const HandIn in[2], const Settings& s) {
 	hand   = hand & 1;
+	twoHanded_ = twoHanded;
+	kind_  = kind;
 	shape_ = ShapeOf(kind, twoHanded);
 	line_  = line;
 	const double l = Len(line_.dir);
@@ -182,6 +197,8 @@ void Hold::Place(int hand, Kind kind, bool twoHanded, const Line& line, const Ha
 		on_[h]      = h == hand ? 1 : 0;
 		grips_[h]   = Grip {};
 		pressed_[h] = in[h].grip > 0.6f;   // a grip already held is not a new press
+		line_state_[h] = LineState {};
+		lineQuiet_[h]  = h == hand;
 	}
 	st_       = State {};
 	haveLast_ = false;
@@ -193,6 +210,18 @@ void Hold::Place(int hand, Kind kind, bool twoHanded, const Line& line, const Ha
 	Build(s);
 	heft::Place(st_, body_, grips_[hand], in[hand].pose);
 	placed_ = true;
+}
+
+void Hold::Transport(const Q& yaw, const V3& shift) {
+	if (!placed_) return;
+	if (Away()) {
+		st_.com    = Add(Rotate(yaw, st_.com), shift);
+		st_.rot    = QNorm(QMul(yaw, st_.rot));
+		st_.vel    = Rotate(yaw, st_.vel);
+		st_.angVel = Rotate(yaw, st_.angVel);
+	} else if (free_ == Free::Flying) {
+		flyFrom_ = { Add(Rotate(yaw, flyFrom_.pos), shift), QNorm(QMul(yaw, flyFrom_.rot)) };
+	}
 }
 
 void Hold::MarkThrown() {
@@ -255,6 +284,15 @@ void Hold::StartFly(int hand) {
 	lyingFor_ = 0;
 }
 
+// Drawn from a shoulder (drawMode): it flies into `hand` like a weapon called back, but from the shoulder point and already turned as it will sit in the
+// hand - it slides out of the shoulder, it does not tumble from where it lay. The floor holds no copy from this instant.
+void Hold::StartDraw(int hand, const HandIn& in, const Settings& s) {
+	StartFly(hand);
+	const Grip home    = FlyGrip(hand, in, s);
+	const Q    goalRot = QNorm(QMul(in.pose.rot, QConj(home.rot)));
+	flyFrom_           = { Sub(in.drawFrom, Rotate(goalRot, home.at)), goalRot };
+}
+
 // How the weapon sits in the hand it flies into. The game's hand: where the game holds it (the body's frame IS that fist). The other
 // hand: the fist on the shaft at the game's grip point, turned the least that lays the fist along the shaft - as a grip that closed there.
 Grip Hold::FlyGrip(int hand, const HandIn& in, const Settings& s) const {
@@ -269,14 +307,60 @@ Grip Hold::FlyGrip(int hand, const HandIn& in, const Settings& s) const {
 	return g;
 }
 
+double Hold::HiltEnd(const Settings& s) const {
+	if (!s.hiltOnly) return shape_.tip;
+	switch (kind_) {
+	case Kind::Dagger: case Kind::Sword: case Kind::Axe: case Kind::Mace: case Kind::Scepter: break;
+	default: return shape_.tip;   // a staff, a spear, a polearm ...: no blade to keep off, the whole shaft
+	}
+	double end = shape_.butt + s.hiltLen;
+	if (!(s.hiltLen > 0.0)) {   // the shape's own: the end of its first piece
+		if (shape_.nPieces < 2) return shape_.tip;
+		end = std::max(shape_.pieces[0].a.y, shape_.pieces[0].b.y);
+	}
+	return std::clamp(end, shape_.butt, shape_.tip);
+}
+
+bool Hold::PastHilt(int hand, double along, const Settings& s) const {
+	return s.hiltOnly && free_ == Free::Held && holds_[hand ^ 1] && along > HiltEnd(s) + std::max(0.0, s.hiltMargin);
+}
+
+Hold::TakeAt Hold::TakeZone(int hand, const HandIn& in, const Settings& s, double* metres) const {
+	if (metres) *metres = 1e9;
+	if (!placed_ || hand < 0 || hand > 1 || !in.tracked || holds_[hand]) return TakeAt::Nowhere;
+	if (thrown_ && !holds_[0] && !holds_[1]) return TakeAt::Nowhere;   // a thrown weapon in the air is nobody's to take
+	if (free_ == Free::Flying) return TakeAt::Nowhere;
+	if (free_ == Free::Stowed) {
+		const double d = StowDistance(hand, in, s);
+		if (metres) *metres = d;
+		if ((!s.drawMode && in.behind) || (s.drawMode && in.draw && !in.busy) || (s.backTake > 0.0 && d <= s.backTake)) return TakeAt::Back;
+		if (s.drawMode) return TakeAt::Nowhere;   // from the shoulder (or at the weapon on the back) from then on: no grip anywhere else calls it
+		return (hand == first_ || s.recallAny) && !in.claimed ? TakeAt::Recall : TakeAt::Nowhere;
+	}
+	const Pose gp  = BodyPose();
+	const V3   off = FistOffset(hand, s);
+	const V3 fist = Rotate(QConj(gp.rot), Sub(Add(in.pose.pos, Rotate(in.pose.rot, off)), gp.pos));
+	const double raw = Dot(Sub(fist, line_.at), line_.dir);
+	const double t = std::clamp(raw, shape_.butt, shape_.tip);
+	const double d = Len(Sub(fist, Add(line_.at, Mul(line_.dir, t))));
+	if (metres) *metres = d;
+	if (d <= s.grabDistance && !PastHilt(hand, raw, s)) return TakeAt::Shaft;   // (past the hilt of a sword the second hand takes nothing: that grip is free for something else)
+	if (s.drawMode) {   // the shoulder draws it; else (recallFloorAny) the grip of any free hand pressed anywhere calls it back from where it lies
+		if (in.draw && !in.busy && Away()) return TakeAt::Back;
+		return s.recallFloorAny && Away() && !in.busy && !in.claimed && in.callable ? TakeAt::Recall : TakeAt::Nowhere;
+	}
+	return free_ != Free::Held && hand == first_ && !in.claimed ? TakeAt::Recall : TakeAt::Nowhere;   // a weapon off the hands is called back into the game's hand from afar
+}
+
 bool Hold::TryGrab(int hand, const HandIn& in, const Settings& s) {
 	const Pose gp  = BodyPose();
 	const V3   off = FistOffset(hand, s);
 	// the fist's middle in the body's frame, and the nearest point of the shaft to it
 	const V3 fist = Rotate(QConj(gp.rot), Sub(Add(in.pose.pos, Rotate(in.pose.rot, off)), gp.pos));
-	const double t = std::clamp(Dot(Sub(fist, line_.at), line_.dir), shape_.butt, shape_.tip);
+	const double raw = Dot(Sub(fist, line_.at), line_.dir);
+	const double t = std::clamp(raw, shape_.butt, shape_.tip);
 	const V3 on = Add(line_.at, Mul(line_.dir, t));
-	if (Len(Sub(fist, on)) > s.grabDistance) return false;
+	if (Len(Sub(fist, on)) > s.grabDistance || PastHilt(hand, raw, s)) return false;
 	// the hand in the body's frame, turned the least that lays the line through its fist along the shaft
 	Q qh = QMul(QConj(gp.rot), in.pose.rot);
 	V3 f = Rotate(qh, in.fistLine);
@@ -352,6 +436,8 @@ void Hold::Fall(double dt, const Settings& s) {
 void Hold::Step(const HandIn in[2], double dt, const Settings& s, HandOut out[2]) {
 	for (int h = 0; h < 2; ++h) out[h] = { false, 0, in[h].pose, grabs_[h] };
 	if (!placed_) return;
+	// The steel's mass multiplier moved (the Weight slider, the hero's strength): the body is built again with it, about the same centre of mass and the same motion.
+	if (free_ == Free::Held && std::fabs(s.weight - builtWeight_) > 1e-6) Build(s);
 
 	// The controllers' velocities, where not given: their change since the last step (the muscles damp
 	// toward the controller's motion - toward rest, a swing was dragged a metre behind).
@@ -367,13 +453,60 @@ void Hold::Step(const HandIn in[2], double dt, const Settings& s, HandOut out[2]
 		}
 	}
 
+	// A grip library (Settings::gripModel 1), asked first, from the state it left on the last step: whether each hand keeps its hold (its grip - and, for the second hand of a long
+	// shaft, its trigger too), and how that second hand sits on the shaft: tight (where it is) or loose (it slides along with a lag and turns about it). A hand the library cannot
+	// take a step for is held by ours.
+	const GripEngine* ge = s.gripModel == 1 ? g_gripEngine : nullptr;
+	LineOut lo[2];
+	bool    lineOk[2] = {}, lineSecond[2] = {};
+	if (ge) {
+		const bool longShaft = shape_.tip - shape_.butt >= slide::kMinShaft;
+		const Pose gp        = BodyPose();
+		for (int h = 0; h < 2; ++h) {
+			if (!in[h].tracked) {
+				line_state_[h] = LineState {};
+				continue;
+			}
+			lineSecond[h] = s.slide && free_ == Free::Held && holds_[0] && holds_[1] && h == (main_ ^ 1) && longShaft && on_[h] >= 1.0 && !sticky_[h];
+			const V3 off  = FistOffset(h, s);
+			const V3 fist = Rotate(QConj(gp.rot), Sub(Add(in[h].pose.pos, Rotate(in[h].pose.rot, off)), gp.pos));   // the fist in the body's frame
+			LineIn li;
+			li.grip    = in[h].grip;
+			li.trigger = in[h].trigger;
+			li.holds   = holds_[h] && free_ == Free::Held;
+			li.second  = lineSecond[h];
+			li.raw     = Dot(Sub(fist, line_.at), line_.dir);
+			li.butt    = shape_.butt;
+			li.tip     = shape_.tip;
+			if (holds_[h]) {
+				const V3 on = Add(grips_[h].at, Rotate(grips_[h].rot, off));
+				li.t        = Dot(Sub(on, line_.at), line_.dir);
+				// the controller's turn about the shaft against the grip the hand took it in
+				Q dq = QNorm(QMul(QMul(QConj(gp.rot), in[h].pose.rot), QConj(grips_[h].rot)));
+				if (dq.w < 0) dq = { -dq.x, -dq.y, -dq.z, -dq.w };
+				li.rollRaw = 2.0 * std::atan2(Dot(V3 { dq.x, dq.y, dq.z }, line_.dir), dq.w);
+			} else {
+				const double tt = std::clamp(li.raw, shape_.butt, shape_.tip);
+				li.inReach      = !in[h].busy && (free_ == Free::Held || free_ == Free::Lying) && Len(Sub(fist, Add(line_.at, Mul(line_.dir, tt)))) <= s.grabDistance;
+			}
+			lineOk[h] = ge->Line(line_state_[h], li, dt, &lo[h]);
+			if (!lineOk[h]) lineSecond[h] = false;
+			if (lineOk[h] && lineQuiet_[h]) {   // the hand it was placed in: no pulse for the first closing
+				lo[h].events &= ~2u;
+				if (!lo[h].events) { lo[h].hapticAmp = 0; lo[h].hapticMs = 0; }
+				lineQuiet_[h] = false;
+			}
+		}
+	}
+
 	// The grips (pressed past 0.6, let go under 0.4). A grip let go: that hand lets go - at once. A grip
 	// pressed: a free hand near the shaft takes it there; the game's hand away from it calls it back.
 	bool changed = false;
 	for (int h = 0; h < 2; ++h) {
 		const HandIn& c   = in[h];
 		const bool    was = pressed_[h];
-		const bool    down = c.grip < 0 ? was : c.grip > 0.6f ? true : c.grip < 0.4f ? false : was;
+		bool          down = c.grip < 0 ? was : c.grip > 0.6f ? true : c.grip < 0.4f ? false : was;
+		if (lineSecond[h]) down = lo[h].hold;   // the grip library: held by the grip or the trigger
 		pressed_[h]        = down;
 		if (!down && was) {
 			sticky_[h] = false;
@@ -385,8 +518,13 @@ void Hold::Step(const HandIn in[2], double dt, const Settings& s, HandOut out[2]
 			// the game's hand pressed anywhere else calls it back, as from the floor.
 			if (!c.tracked || !down || was || holds_[h] || c.busy) continue;
 			// at the weapon where it hangs (anywhere along it, a generous radius) or behind a shoulder: that hand takes it
-			if (c.behind || (s.backTake > 0.0 && StowDistance(h, c, s) <= s.backTake)) StartFly(h);
-			else if ((h == first_ || s.recallAny) && !c.claimed) StartFly(h);
+			if ((!s.drawMode && c.behind) || (s.drawMode && c.draw) || (s.backTake > 0.0 && StowDistance(h, c, s) <= s.backTake)) StartFly(h);
+			else if (!s.drawMode && (h == first_ || s.recallAny) && !c.claimed) StartFly(h);   // (drawMode: from the shoulder from then on)
+			continue;
+		}
+		// drawMode: a hand behind the shoulder of this weapon's side draws it - whether it falls, tips over or lies; the grip may be the zone's claim (that press is a draw)
+		if (s.drawMode && c.draw && c.tracked && down && !was && !holds_[h] && !c.busy && Away()) {
+			StartDraw(h, c, s);
 			continue;
 		}
 		if (!c.tracked || !down || was || holds_[h] || c.busy || c.claimed || free_ == Free::Flying) continue;
@@ -397,8 +535,8 @@ void Hold::Step(const HandIn in[2], double dt, const Settings& s, HandOut out[2]
 				main_   = h;
 				st_.vel = st_.angVel = {};
 			}
-		} else if (free_ != Free::Held && h == first_) {
-			StartFly(h);   // called back into the game's hand
+		} else if (free_ != Free::Held && ((h == first_ && !s.drawMode) || (s.drawMode && s.recallFloorAny && c.callable))) {
+			StartFly(h);   // called back into the game's hand (drawMode with recallFloorAny: into the hand whose grip it was, either)
 		}
 	}
 	// The second hand slides along a long shaft the first also holds, while its grip stays squeezed (heft/slide.h): its grasp point follows the
@@ -422,13 +560,26 @@ void Hold::Step(const HandIn in[2], double dt, const Settings& s, HandOut out[2]
 			si.dt     = dt;
 			si.tau    = s.slideTau;
 			si.letGo  = s.letGo;
-			const slide::Out so = slide::Step(si);
-			if (so.release) {
-				holds_[h]  = false;
-				sticky_[h] = false;
-				changed    = true;
+			if (lineOk[h] && lineSecond[h]) {
+				// the grip library's modes: tight - the point stays where it is; loose - it goes where the library has it (the lag, the ends). Pulled away from the axis it lets go
+				// in both, off an end in the loose one.
+				const bool away = si.perp > si.letGo || (lo[h].mode == 2 && (si.raw < si.butt - si.margin || si.raw > si.tip + si.margin));
+				if (away) {
+					holds_[h]  = false;
+					sticky_[h] = false;
+					changed    = true;
+				} else if (lo[h].mode == 2) {
+					grips_[h].at = Sub(Add(line_.at, Mul(line_.dir, lo[h].t)), Rotate(grips_[h].rot, off));
+				}
 			} else {
-				grips_[h].at = Sub(Add(line_.at, Mul(line_.dir, so.t)), Rotate(grips_[h].rot, off));
+				const slide::Out so = slide::Step(si);
+				if (so.release) {
+					holds_[h]  = false;
+					sticky_[h] = false;
+					changed    = true;
+				} else {
+					grips_[h].at = Sub(Add(line_.at, Mul(line_.dir, so.t)), Rotate(grips_[h].rot, off));
+				}
 			}
 		}
 	}
@@ -499,10 +650,15 @@ void Hold::Step(const HandIn in[2], double dt, const Settings& s, HandOut out[2]
 		if (haveLast_ && Len(Sub(in[main_].pose.pos, last_[main_].pose.pos)) > 0.5) {
 			heft::Place(st_, body_, grips_[main_], in[main_].pose);
 		} else if (dt > 0 && k > 0) {
-			World w;
-			w.snapDistance = s.snap;
-			w.gravity.y    = -9.81 * s.gravity;
-			heft::Step(st_, body_, g, from, to, k, std::min(dt, 0.1), w);
+			const Engine* engine = s.model == 1 ? g_engine : nullptr;   // a weight-physics library moves the body, when one is loaded
+			if (engine) {
+				engine->Step(st_, body_, pieces_, nPieces_, twoHanded_, g, from, to, k, std::min(dt, 0.1), s);
+			} else {
+				World w;
+				w.snapDistance = s.snap;
+				w.gravity.y    = -9.81 * s.gravity;
+				heft::Step(st_, body_, g, from, to, k, std::min(dt, 0.1), w);
+			}
 		}
 	}
 	// A weapon that has landed and lain long enough goes to the hero's back (the mod draws it there).
@@ -530,6 +686,13 @@ void Hold::Step(const HandIn in[2], double dt, const Settings& s, HandOut out[2]
 		out[h].holds = holds_[h];
 		out[h].on    = on_[h];
 		out[h].grabs = grabs_[h];
+		if (lineOk[h]) {
+			out[h].mode      = lo[h].mode;
+			out[h].roll      = lo[h].roll;
+			out[h].events    = lo[h].events;
+			out[h].hapticAmp = lo[h].hapticAmp;
+			out[h].hapticMs  = lo[h].hapticMs;
+		}
 		if (on_[h] > 0) {
 			const Pose   p = OnWeapon(h);
 			const double e = Smooth(on_[h]);

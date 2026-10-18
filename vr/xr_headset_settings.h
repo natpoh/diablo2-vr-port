@@ -101,6 +101,8 @@ void HsStep(D2RVR_XrInput& in, bool focused) {
     }
     if (out.justClosed) Log("vrcam: openxr - headset settings: closed (what was held stays released until let go)");
     g_hsOpen.store(out.open);
+    lowhp::SetPreview(out.open && hset::IsLifePage(g_hs.model.page), hset::LifeConfig(g_hs.model.Get()),
+                      g_hs.model.page);   // on a vignette page: its rows are the preview's draft; nothing shows until "Preview 5 s"
 
     switch (out.action.what) {
         case hset::Do::Save:
@@ -112,6 +114,9 @@ void HsStep(D2RVR_XrInput& in, bool focused) {
         case hset::Do::Recentre:
             Recenter();
             Log("vrcam: openxr - headset settings: Recentre view");
+            break;
+        case hset::Do::Preview:   // "Preview 5 s" on the Life and Look pages: the vignette and the beat for five seconds with the rows as they stand (vr/low_hp.h PreviewWindow)
+            lowhp::PlayPreview();
             break;
         case hset::Do::View:   // F1 - F4: the controller's own view path (vr/hset_view.h); the view leaves F4, so the panel closes with it
             if (hsetview::Press(out.action.view))

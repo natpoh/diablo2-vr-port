@@ -227,4 +227,19 @@ private:
     uint64_t lastAt_ = 0;
 };
 
+// -- BodyWalk's walk through Game Link (its Output "Game Link": bodywalk/game_link.h Walk, link::Walk) ------------------------------
+// With that Output BodyWalk puts no walk on its pad: the report's left stick is the Mapping's alone (at rest unless a gesture holds
+// it), and the walk comes in the Walk block - the very stick its Xbox output would have pushed, /32767 (the same dead zone, curve and
+// speed). It goes back onto the report's left stick the way BodyWalk's own pad does it (VirtualJoystickService::update: a stick the
+// Mapping holds wins, else the walk; vigem_set_joystick truncates x * 32767), so from here on nothing can tell it from the Xbox
+// output's walk: the mix above in direct mode, the report whole elsewhere, the walking hooks, the game's walk and run.
+inline int16_t LinkAxis(float v) { return (int16_t)(int)(std::clamp(v, -1.0f, 1.0f) * 32767.0f); }
+// True = the walk is now the report's left stick. `live`: link::Walk had one (BodyWalk's Output is Game Link, the block fresh).
+inline bool WithLinkWalk(int16_t* lx, int16_t* ly, bool live, float wx, float wy) {
+    if (!live || *lx != 0 || *ly != 0) return false;
+    *lx = LinkAxis(wx);
+    *ly = LinkAxis(wy);
+    return true;
+}
+
 }  // namespace walkpath

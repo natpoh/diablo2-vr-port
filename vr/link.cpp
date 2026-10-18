@@ -66,6 +66,7 @@ Block<BW_LinkHost> g_host{BW_LINK_HOST_NAME};
 Block<BW_LinkXrInput> g_xrInput{BW_LINK_XRINPUT_NAME};
 Block<BW_LinkVrZones> g_vrZones{BW_LINK_VRZONES_NAME};
 Block<BW_LinkVrRunes> g_vrRunes{BW_LINK_VRRUNES_NAME};
+Block<BW_LinkWalk> g_walk{BW_LINK_WALK_NAME};
 
 std::atomic<uint32_t> g_manifestSeq{0};   // our Manifest's sequence: Actions of any other are not ours
 
@@ -151,6 +152,7 @@ void ToShared(const BW_LinkTracking& t, D2RVR_Shared* o) {
     o->sampleStamp = t.stamp;
     o->sampleStampMagic = D2RVR_SAMPLE_STAMP_MAGIC;
     o->userHeightMm = t.userHeightMm;
+    o->flatVrStamped = (t.flags & BW_LINK_TRACK_FLATVR_STAMP) ? 1u : 0u;
 }
 
 // Actions of our Manifest, consistent; false when there are none.
@@ -190,7 +192,10 @@ void Init(void (*log)(const char*), const wchar_t* iniPath, const char* modVersi
 }
 
 const D2RVR_Shared* Head() {
-    if (directinput::Active()) return directinput::HeadShared();   // [openxr] direct_input: the game's own headset, not BodyWalk's
+    // [openxr] direct_input with a native session: the game's own headset, not BodyWalk's. Fed by FlatVR's raw controllers instead
+    // ([direct] flatvr_controls): the controls are the layout's, the head and hands stay BodyWalk's - its recentred yaw and FlatVR's stamps
+    // are what the FlatVR camera and the arms are made from.
+    if (directinput::Active() && !directinput::FedByLink()) return directinput::HeadShared();
     const BW_LinkTracking* t = g_tracking.Get();
     if (!t) return g_head.load();
     const uint32_t seq = ((const volatile BW_LinkHeader*)&t->header)->sequence;
@@ -208,6 +213,12 @@ const D2RVR_Shared* Head() {
     }
     ReleaseSRWLockExclusive(&g_headLock);
     return g_head.load();
+}
+
+bool RawTracking(BW_LinkTracking* out) {
+    const BW_LinkTracking* t = g_tracking.Get();
+    if (!t || t->header.magic != BW_LINK_MAGIC) return false;
+    return bw::link::Read(t, out);
 }
 
 // BodyWalk's, or - [openxr] direct_input with a native session - the plugin's own layout; the gestures' (directinput::Action
@@ -341,6 +352,20 @@ void PublishXr(const D2RVR_XrInput& in, bool ended) {
         static bool told = false;
         if (!told) { told = true; Log("vrcam: Game Link - direct input: BodyWalk is given the head and hands, controls zeroed, so its body walking can run ([openxr] direct_bodywalk_walk=1)"); }
     }
+}
+
+bool Walk(float* x, float* y) {
+    *x = *y = 0.0f;
+    const BW_LinkWalk* blk = g_walk.Get();
+    if (!blk || blk->header.magic != BW_LINK_MAGIC) return false;
+    BW_LinkWalk w;   // a copy each: read from every pad poll, any thread
+    if (!bw::link::Read(blk, &w)) return false;
+    if (w.header.version != BW_LINK_WALK_VERSION || !(w.flags & BW_LINK_WALK_ACTIVE)) return false;
+    if (D2RVRStampNow() - w.stamp > 5000u) return false;   // 0.1 ms units: half a second
+    if (!std::isfinite(w.stickX) || !std::isfinite(w.stickY)) return false;
+    *x = std::clamp(w.stickX, -1.0f, 1.0f);
+    *y = std::clamp(w.stickY, -1.0f, 1.0f);
+    return true;
 }
 
 uint32_t VrZones(BW_LinkVrZone* out, uint32_t max) {

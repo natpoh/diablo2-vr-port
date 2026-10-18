@@ -12,6 +12,7 @@ namespace {
 std::atomic<bool> g_wanted{false};
 std::atomic<LogSink> g_sink{nullptr};
 std::atomic<uint32_t> g_markMs{kDefaultMarkMs};
+std::atomic<bool> g_dirRed{true};
 std::mutex g_mutex;
 Scene g_scene;
 uint64_t g_lastLogMs = 0;
@@ -39,6 +40,7 @@ void Update(const Frame& f) {
         std::lock_guard<std::mutex> lock(g_mutex);
         Frame g = f;
         g.markMs = g_markMs.load();   // the speed marks' time is the module's setting, not the feeder's
+        g.directionColour = DirectionColour();   // ... and so is the colour of "not toward the monster"
         g_scene.Set(g);
         if (f.nowMs - g_lastLogMs >= kLogMs) {
             g_lastLogMs = f.nowMs;
@@ -54,6 +56,15 @@ void Struck(uint32_t id, Kind how, uint64_t nowMs) {
     std::lock_guard<std::mutex> lock(g_mutex);
     g_scene.Struck(id, how, nowMs);
 }
+
+void Touched(const ContactMark& mark) {
+    if (!Wanted()) return;
+    std::lock_guard<std::mutex> lock(g_mutex);
+    g_scene.Touched(mark);
+}
+
+void SetDirectionRed(bool on) { g_dirRed.store(on); }
+int DirectionColour() { return g_dirRed.load(std::memory_order_relaxed) ? kCRed : kCBlue; }
 
 int Take(uint64_t nowMs, const float eyeWorld[3], float (*a)[4], float (*b)[4], int maxOut) {
     if (!Wanted() || maxOut <= 0) return 0;

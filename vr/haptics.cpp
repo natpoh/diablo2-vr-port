@@ -50,8 +50,13 @@ constexpr uint32_t kMaxAgeMs = 150;      // a pulse not played within this is a 
 
 std::atomic<uint32_t> g_posted{0};       // bit per Event: posted at least once (the log tells it once)
 std::atomic<uint32_t> g_hits{0};
+std::atomic<uint32_t> g_posts{0};        // pulses posted into a mailbox (the stats line tells how many of them got played)
+std::atomic<int> g_motorChoice{0}, g_headsetMotor{(int)Motor::Plain};
+std::atomic<int> g_motorToldFor{-1};     // what the log said last: choice * 4 + the motor in effect
+std::atomic<bool> g_headsetKnown{false};
+char g_headsetName[96] = "";             // (set once by SetHeadset, only read for the log)
 uint32_t g_told = 0;                     // (the frame loop's)
-uint32_t g_played = 0, g_limited = 0, g_dropped = 0, g_refused = 0, g_hitsTold = 0;
+uint32_t g_played = 0, g_limited = 0, g_dropped = 0, g_refused = 0, g_stale = 0, g_hitsTold = 0, g_postsTold = 0;
 uint64_t g_statsAt = 0;
 
 struct RatchetGuard {
@@ -68,6 +73,7 @@ const uint8_t kSigHitFlags[16] = {0x48,0x89,0x5C,0x24,0x10,0x48,0x89,0x6C,0x24,0
 using HitFlagsFn = uint16_t (*)(uintptr_t game, uintptr_t attacker, uintptr_t defender, int accuracy, bool force, int offset);
 HitFlagsFn OrigHitFlags = nullptr;
 std::atomic<bool> g_hitIn{false};
+std::atomic<HitHandFn> g_hitHand{nullptr};
 
 // A unit's first dword is its type: 0 is a player (the SDK's UnitType::Player). The game reads the
 // attacker itself right before, so the pointer is good; the guard is for a build that is not ours.
@@ -88,7 +94,8 @@ uint16_t HookHitFlags(uintptr_t game, uintptr_t attacker, uintptr_t defender, in
     if ((r & 1) && (pulse || timed || traced) && attacker > 0x10000 && IsPlayerUnit(attacker)) {
         if (pulse) {
             g_hits.fetch_add(1, std::memory_order_relaxed);
-            Play(Event::Hit);
+            const HitHandFn hf = g_hitHand.load(std::memory_order_relaxed);
+            Play(Event::Hit, hf ? hf() : -1);   // the hand that holds the weapon (or the shield that bashed)
         }
         frametrace::Note(frametrace::kHit);   // [debug] frame_trace: a player's blow landed
         if (timed) hitlatency::Landed();   // the press -> hit times of hit by touch and the shield's Smite (vr/hit_latency.h): a clock read and atomics
@@ -99,10 +106,35 @@ uint16_t HookHitFlags(uintptr_t game, uintptr_t attacker, uintptr_t defender, in
 }   // namespace
 
 void SetLogger(void (*log)(const char*)) { g_log = log; }
+void SetHitHandSource(HitHandFn fn) { g_hitHand.store(fn); }
 
 void Sink(int hand, float amplitude, float durationMs, float /*frequencyHz*/) {
     Pulse(hand, amplitude, std::isfinite(durationMs) ? (int)std::clamp(durationMs, 0.0f, 1000.0f) : 0);
 }
+
+static void TellMotor() {   // the log says which motor the pulses are made for, once, and again if the ini's choice changes it
+    if (!g_headsetKnown.load()) return;
+    const int choice = g_motorChoice.load();
+    const Motor m = MotorChosen(choice, (Motor)g_headsetMotor.load());
+    const int code = choice * 4 + (int)m;
+    if (g_motorToldFor.exchange(code) == code) return;
+    LogF("vrcam: haptics - motor: %s (headset \"%s\", [openxr] haptics_motor=%d %s): %s", m == Motor::Weak ? "weak" : "plain", g_headsetName, choice,
+         choice == 1 ? "plain" : choice == 2 ? "weak" : "by the headset",
+         m == Motor::Weak ? "the low-life beat is lifted to 0.55 - 1.00 for at least 45 ms (the hit's own strength and length), everything else as it was"
+                          : "every pulse as it is made");
+}
+
+void SetHeadset(const char* systemName) {
+    snprintf(g_headsetName, sizeof g_headsetName, "%s", systemName ? systemName : "");
+    g_headsetMotor.store((int)MotorOfHeadset(systemName));
+    g_headsetKnown.store(true);
+    TellMotor();
+}
+void SetMotorChoice(int choice) {
+    g_motorChoice.store(choice == 1 || choice == 2 ? choice : 0);
+    TellMotor();
+}
+Motor CurrentMotor() { return MotorChosen(g_motorChoice.load(std::memory_order_relaxed), (Motor)g_headsetMotor.load(std::memory_order_relaxed)); }
 
 void Configure(bool on, float scale) {
 #ifdef HAPTICS_DIRECT_INPUT
@@ -124,6 +156,7 @@ void Pulse(int hand, float amplitude, int durationMs) {
     const float a = Scaled(amplitude, g_scale.load(std::memory_order_relaxed));
     if (a <= 0.0f) return;
     g_box[hand].Post(a, ClampDuration(durationMs), (uint32_t)GetTickCount64());
+    g_posts.fetch_add(1, std::memory_order_relaxed);
 }
 
 void Play(Event e, int hand) {
@@ -156,7 +189,11 @@ void Flush(uint64_t nowMs, bool canPlay, ApplyFn apply) {
     canPlay = canPlay && viewgate::F4();   // (a pulse that waits when the view changes is dropped, not played late)
     for (int h = 0; h < 2; ++h) {
         Request r;
-        if (!g_box[h].Take(now32, kMaxAgeMs, &r)) continue;
+        bool stale = false;
+        if (!g_box[h].Take(now32, kMaxAgeMs, &r, &stale)) {
+            if (stale) ++g_stale;
+            continue;
+        }
         if (!canPlay || !apply || !g_on.load(std::memory_order_relaxed)) { ++g_dropped; continue; }
         if (!g_limiter.Allow(h, r.amplitude, r.durationMs, nowMs)) { ++g_limited; continue; }
         if (apply(h, r.amplitude, (int)r.durationMs)) ++g_played;
@@ -173,12 +210,13 @@ void Flush(uint64_t nowMs, bool canPlay, ApplyFn apply) {
             }
     }
     if (nowMs - g_statsAt >= 10000) {
-        const uint32_t hits = g_hits.load(std::memory_order_relaxed);
-        if (g_played || g_limited || g_dropped || g_refused || hits != g_hitsTold)
-            LogF("vrcam: haptics - last 10 s: %u pulses played, %u held back by the limiter, %u dropped (no input focus), %u refused by the runtime, %u hits landed",
-                 g_played, g_limited, g_dropped, g_refused, hits - g_hitsTold);
-        g_played = g_limited = g_dropped = g_refused = 0;
+        const uint32_t hits = g_hits.load(std::memory_order_relaxed), posts = g_posts.load(std::memory_order_relaxed);
+        if (g_played || g_limited || g_dropped || g_refused || g_stale || hits != g_hitsTold)
+            LogF("vrcam: haptics - last 10 s: %u pulses played, %u held back by the limiter, %u dropped (no input focus), %u refused by the runtime, %u hits landed (%u pulses posted, %u of them too old to play)",
+                 g_played, g_limited, g_dropped, g_refused, hits - g_hitsTold, posts - g_postsTold, g_stale);
+        g_played = g_limited = g_dropped = g_refused = g_stale = 0;
         g_hitsTold = hits;
+        g_postsTold = posts;
         g_statsAt = nowMs;
     }
 }

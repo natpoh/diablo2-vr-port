@@ -10,6 +10,7 @@
 #
 #   -Addon <file>     another FlatVR addon than Release_main's (one the bundled BodyWalk knows)
 #   -GameLink <file>  another game_link.dll than the standalone build's
+#   -WeightLibs <dir> where d2r_vr_weight.dll and d2r_vr_grip.dll are (the private weight_physics build)
 #   -Portable <dir>   a BodyWalk Portable folder kept from an earlier build, instead of
 #                     making one from Release_main (which may hold a BodyWalk not released yet)
 #   -SkipProfileCheck do not run tools\profile_sanitize.py on the staged BodyWalk profile (it needs Python)
@@ -17,6 +18,7 @@ param(
     [string]$Addon = "C:\wsl\vjoy\Release_main\flatvr\reshade_addon\FlatVR_DepthProvider.addon64",
     [string]$GameLink = "C:\wsl\vjoy\cpp_src\build_standalone\bin\Release\game_link.dll",
     [string]$Portable = "",
+    [string]$WeightLibs = "C:\wsl\weight_physics\build\Release",
     [switch]$SkipProfileCheck
 )
 $ErrorActionPreference = "Stop"
@@ -40,6 +42,11 @@ New-Item -ItemType Directory -Force "$payload\plugins", "$payload\shaders", "$pa
 
 foreach ($f in "d2rl-vrcam.dll", "D2R_VR_Settings.exe") { Copy-Item (Join-Path $root "build\Release\$f") "$payload\plugins\" }
 Copy-Item (Join-Path $root "d2r_vr.ini") "$payload\plugins\"
+# the optional weight-physics and grip libraries (binaries only; their source is not in this repository)
+foreach ($f in "d2r_vr_weight.dll", "d2r_vr_grip.dll") {
+    $src = Join-Path $WeightLibs $f
+    if (Test-Path $src) { Copy-Item $src "$payload\plugins\" } else { Write-Warning "$f not found in $WeightLibs - the installer goes without it" }
+}
 # BodyWalk's side: its Game Link plugin, the mod's BodyWalk profile beside it, and the game's
 # Game Link manifest (the actions and Mapping tabs vrcam sends, from the same tables), so they
 # are in BodyWalk's Mapping from its first start.

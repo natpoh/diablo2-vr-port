@@ -578,6 +578,21 @@ void DrawStatus(Canvas& cv, Fonts& fonts, const View& v) {
     CapsCentred(cv, fonts, hint, 0.5f * (hl.l + hl.r), Rect{hl.l, hl.t, hl.r, hl.b}, 22, 1.5f, kSilverDim, false);
 }
 
+// The RUN / WALK tile, right of the first row: the game's own run / walk switch. A copper plate that goes red when the game says it is on RUN,
+// the state in big letters on it, the control's name under it.
+void DrawRunTile(Canvas& cv, Fonts& fonts, const View& v) {
+    const Rect r = tiles::kRunRect;
+    PlateLook k;
+    k.red = v.run == wheel::kRunning;
+    k.hot = v.hover == wheel::kRunWalk;
+    DrawPlate(cv, r, k);
+    const char* state = v.run == wheel::kRunning ? "RUN" : v.run == wheel::kWalking ? "WALK" : "RUN /\nWALK";
+    Text(cv, fonts, state, Rect{r.l + 10.0f, r.t + 22.0f, r.r - 10.0f, r.b - 22.0f}, v.run == wheel::kRunUnknown ? 30 : 42, true,
+         k.red ? Col{255, 214, 200} : Col{238, 232, 224});
+    DrawTileMarks(cv, r, k);
+    Text(cv, fonts, "RUN / WALK", tiles::kRunNameRect, 22, false, kSilver);
+}
+
 // Two rows of six: the game's twelve slots, with the mark under each tile, the skill's name and the hint for the controller.
 void DrawRows(Canvas& cv, Fonts& fonts, const View& v) {
     const bool pickSlot = v.page == Page::PickSlot;
@@ -601,9 +616,30 @@ void DrawRows(Canvas& cv, Fonts& fonts, const View& v) {
     }
 }
 
+// The category strip over the grid: All, the class's three trees, General / Items - the one shown gold on a warm plate, the one under the beam lit,
+// a tab with no skill in it dim. Each shows how many skills it holds.
+void DrawStrip(Canvas& cv, Fonts& fonts, const View& v) {
+    for (int c = 0; c < wheel::kCategories; ++c) {
+        const Rect r = tiles::StripRect(c);
+        const int count = v.catCount[c];
+        const bool on = v.category == c, enabled = count > 0 || on, hot = v.hover == wheel::CategoryCell(c) && count > 0 && !on;
+        if (hot) RoundRect(cv, Rect{r.l - 6.0f, r.t - 6.0f, r.r + 6.0f, r.b + 6.0f}, 12.0f, kGoldBright, 0.20f, Col{0, 0, 0}, 0.0f, 0.0f);
+        RoundRect(cv, r, 9.0f, on ? Col{64, 50, 28} : hot ? Col{52, 42, 26} : Col{22, 22, 26}, 0.99f, on ? kGoldBright : hot ? kGold : enabled ? Col{96, 98, 108} : Col{52, 52, 58}, 1.0f,
+                  on ? 3.5f : 2.5f);
+        Bar(cv, r.l + 4.0f, r.t + 4.0f, r.r - 4.0f, r.t + 8.0f, Col{255, 255, 255}, on ? 0.10f : 0.05f);
+        Bar(cv, r.l + 4.0f, r.b - 7.0f, r.r - 4.0f, r.b - 4.0f, Col{0, 0, 0}, 0.30f);
+        char name[wheel::kNameLen + 12];
+        if (c == wheel::kCatAll) std::snprintf(name, sizeof name, "All  (%d)", count);
+        else if (c == wheel::kCatGeneral) std::snprintf(name, sizeof name, "General / Items  (%d)", count);
+        else std::snprintf(name, sizeof name, "%s  (%d)", v.treeName[c - 1][0] ? v.treeName[c - 1] : "-", count);
+        Text(cv, fonts, name, Rect{r.l + 8.0f, r.t + 2.0f, r.r - 8.0f, r.b - 6.0f}, 21, true, on ? kGoldBright : hot ? kGold : enabled ? kSilver : Col{92, 92, 100});
+    }
+}
+
 // The skills the player can put on the slot: tiles of the same make, red where the skill is already on a button, the gold frame on the one
 // this slot holds now.
 void DrawGrid(Canvas& cv, Fonts& fonts, const View& v) {
+    if (v.catStrip) DrawStrip(cv, fonts, v);
     if (!v.options) {
         CapsCentred(cv, fonts, "No skills to choose from", 0.5f * kW, Rect{200, 380, 1400, 460}, 40, 3.0f, kSilverDim, false);
         return;
@@ -729,7 +765,10 @@ void Render(const View& v, std::vector<uint32_t>& px) {
         return;
     }
     if (v.page == Page::PickSkill) DrawGrid(cv, fonts, v);
-    else DrawRows(cv, fonts, v);
+    else {
+        DrawRows(cv, fonts, v);
+        if (v.runWalk && v.page == Page::Wheel) DrawRunTile(cv, fonts, v);
+    }
     DrawStatus(cv, fonts, v);
     DrawButtons(cv, fonts, v);
 }

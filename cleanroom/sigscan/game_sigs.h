@@ -334,8 +334,30 @@ inline constexpr Sig kSigs[] = {
     {"AssignSkill", 0x1185C0, Kind::Code, "40 53 55 56 57 41 56 41 57 48 83 EC 78 48 8B 05 ?? ?? ?? ?? 48 33 C4 48 89 44 24 68 48 63 F1 41 8B D9", 0x1185C0, 0, 0, 0, 0, "40 53 55 56 57 41 56 41 57", nullptr, "assign skills from the wheel", "Skill wheel"},
     // clears a controller slot's skill, called
     {"ClearSkill", 0x118B40, Kind::Code, "40 57 48 83 EC 30 48 63 F9 83 FF 0F 76 14 48 8D 4C 24 40 C6 44 24 40 00", 0x118B40, 0, 0, 0, 0, "40 57 48 83 EC 30 48 63 F9", nullptr, "assign skills from the wheel", "Skill wheel"},
+    // u32 the game's run / walk switch (Always run): its key command 0x23 flips it, read-only here
+    {"RunLock", 0x2A2375C, Kind::Ref, "83 3D ?? ?? ?? ?? 00 88 44 24 31 74 15 E8 ?? ?? ?? ?? 84 C0", 0x8AFF1, 0, 2, 7, 0, nullptr, nullptr, "RUN / WALK shows its state", "Skill wheel"},
     // the unit's stat (unit, stat id, layer) - a jump thunk: life is 6, its maximum 7, mana 8, its maximum 9, in 1/256, called read-only
     {"Stat", 0x2F5020, Kind::Code, "FF 25 ?? ?? ?? ?? 90 90 90 90 48 89 74 24 20 57 48 83 EC 20 41 0F B7 E8 8B FA 48 8B D9", 0x2F5020, 0, 0, 0, 0, "FF 25 ?? ?? ?? ?? 90 90 90 90", nullptr, "low life vignette, life and mana on the hand", "Low life, hand vitals"},
+    // the opacity animator's target setter (component, alpha, seconds), hooked
+    {"FadeTarget", 0xEEA920, Kind::Code, "F3 0F 10 19 0F 2E CB 7A 02 74 2E F3 0F 10 41 10 0F 2E C1", 0xEEA920, 0, 0, 0, 0, "F3 0F 10 19 0F 2E CB 7A 02 74 2E F3 0F 10 41 10", nullptr, "roofs kept in first person", "Roofs, hanging props"},
+    // FadeTargetComponent's hide branch: alpha 0, then call FadeTarget (returns at +14)
+    {"RoofHideCall", 0xF5220D, Kind::Code, "0F 28 D6 0F 57 C9 48 8B CD E8 ?? ?? ?? ?? 45 32 FF 48 83 C3 78", 0xF5220D, 0, 0, 0, 0, "0F 28 D6 0F 57 C9 48 8B CD E8 ?? ?? ?? ?? 45 32 FF", nullptr, "roofs kept in first person", "Roofs, hanging props"},
+    // the partial ragdoll's motion preparation (self, transform, settings, dt), hooked
+    {"PropPrepare", 0x994C00, Kind::Code, "48 8B C4 55 56 41 55 48 8D A8 E8 FC FF FF 48 81 EC 00 04 00 00 0F 29 78 98", 0x994C00, 0, 0, 0, 0, "48 8B C4 55 56 41 55 48 8D A8 E8 FC FF FF", nullptr, "hanging props once a pair", "Roofs, hanging props"},
+    // the partial ragdoll's simulation (self, dt), hooked
+    {"PropSimulate", 0x998B60, Kind::Code, "40 53 48 83 EC 40 0F 29 74 24 30 0F 57 C0 0F 28 F1 48 8B D9", 0x998B60, 0, 0, 0, 0, "40 53 48 83 EC 40 0F 29 74 24 30 0F 57 C0 0F 28 F1", nullptr, "hanging props once a pair", "Roofs, hanging props"},
+    // the partial ragdoll Step's calls of Prepare (returns at +5) and Simulate (returns at +17)
+    {"PropStepCalls", 0x8290A9, Kind::Code, "E8 ?? ?? ?? ?? 48 8B 4E 48 0F 28 CE E8 ?? ?? ?? ?? 48 8B 4E 48 4C 8D 86 80 00 00 00", 0x8290A9, 0, 0, 0, 0, "E8 ?? ?? ?? ?? 48 8B 4E 48 0F 28 CE E8 ?? ?? ?? ?? 48 8B 4E 48", nullptr, "hanging props once a pair", "Roofs, hanging props"},
+    // a model material's builder (model, file, mesh, Granny material, flags, pass), hooked
+    {"RoofMaterialBuild", 0xF99C40, Kind::Code, "48 89 5C 24 08 48 89 6C 24 10 48 89 74 24 18 57 41 56 41 57 48 83 EC 40 49 8B F9 49 8B F0", 0xF99C40, 0, 0, 0, 0, "48 89 5C 24 08 48 89 6C 24 10 48 89 74 24 18 57 41 56 41 57 48 83 EC 40", nullptr, "roof undersides", "Roofs, hanging props"},
+    // Granny's member lookup by name (type, object, name, out: definition, value), hooked
+    {"GrannyFindMember", 0x16153A0, Kind::Code, "48 89 5C 24 08 48 89 6C 24 10 48 89 74 24 18 57 48 83 EC 40 49 8B D9 49 8B F8 48 8B F2 48 8B E9 E8 ?? ?? ?? ?? 84 C0 75 42 48 8D 4C 24 30 E8 ?? ?? ?? ?? 4C 8B 54 24 30 4D 85 D2 74 2E 48 8B 44 24 38 4C 8D 05 ?? ?? ?? ?? 48 89 44 24 28 BA 43 00 00 00 48 8D 05 ?? ?? ?? ?? 41 B9 66 18 00 00", 0x16153A0, 0, 0, 0, 0, "48 89 5C 24 08 48 89 6C 24 10 48 89 74 24 18 57 48 83 EC 40", nullptr, "roof undersides", "Roofs, hanging props"},
+    // a model's materials built: the six arguments, then the call of RoofMaterialBuild
+    {"RoofMatBuildCall", 0xFA17A8, Kind::Code, "4C 8B CF 89 44 24 28 41 8B 04 24 89 44 24 20 E8 ?? ?? ?? ?? 48 89 44 24 30", 0xFA17A8, 0, 0, 0, 0, "4C 8B CF 89 44 24 28 41 8B 04 24 89 44 24 20 E8 ?? ?? ?? ??", nullptr, "roof undersides", "Roofs, hanging props"},
+    // the builder asks the material for a member (IsDoubleSided) and reads its byte
+    {"RoofMatFlagCall", 0xF9AEDA, Kind::Code, "49 8B 56 24 4C 8D 8D F0 03 00 00 49 8B 4E 1C 4C 8D 05 ?? ?? ?? ?? 40 88 74 24 45 E8 ?? ?? ?? ?? 84 C0 74 10 48 8B 85 F8 03 00 00 0F B6 00 88 44 24 42", 0xF9AEDA, 0, 0, 0, 0, "49 8B 56 24 4C 8D 8D F0 03 00 00 49 8B 4E 1C 4C 8D 05 ?? ?? ?? ?? 40 88 74 24 45 E8 ?? ?? ?? ?? 84 C0 74 10 48 8B 85 F8 03 00 00 0F B6 00", nullptr, "roof undersides", "Roofs, hanging props"},
+    // the lookup hands back (definition, value) as pointers
+    {"GrannyFindResult", 0x16317C3, Kind::Code, "48 85 FF 74 07 48 89 1F 48 89 77 08 B0 01 EB DB", 0x16317C3, 0, 0, 0, 0, "48 85 FF 74 07 48 89 1F 48 89 77 08 B0 01", nullptr, "roof undersides", "Roofs, hanging props"},
 };
 
 }   // namespace d2rsig

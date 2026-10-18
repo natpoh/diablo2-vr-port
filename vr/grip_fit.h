@@ -172,6 +172,36 @@ inline Out Solve(const Hand& hand, const Shaft& shaft, const Tuning& t, const Mo
     return out;
 }
 
+// The hand as a transform leaves it: its wrist, palm's middle and axes carried (p' = pivot + (p - pivot) * r + shift; the axes turned by r).
+inline Hand Carried(const Hand& h, const Out& o) {
+    Hand c = h;
+    c.wrist = Add(o.pivot, Add(Apply(Sub(h.wrist, o.pivot), o.r), o.shift));
+    c.palm = Add(o.pivot, Add(Apply(Sub(h.palm, o.pivot), o.r), o.shift));
+    c.point = Apply(h.point, o.r);
+    c.knuckles = Apply(h.knuckles, o.r);
+    c.out = Apply(h.out, o.r);
+    return c;
+}
+
+// [weight] grip_model 1: the user's corrections (right_grip_* / left_grip_*) on a hand the grip library has laid. `laid` is the transform the library's answer makes of `hand` (the hand
+// as the weight model has it); the corrections act exactly as they do on the game's own base hand and on a hand the grip fit lays - in the shaft's own frame at the grasp point (along the
+// shaft, across toward the fingertips, up out of the palm; the roll about the shaft and the two tilts, the left hand's turns mirrored) - on the hand as the library leaves it, about the
+// point of the axis its palm stands at, without snapping or aligning it again. The result is one transform of `hand`: the library's, then the corrections'. No corrections: `laid` itself.
+inline Out WithCorrections(const Hand& hand, const Shaft& shaft, const Out& laid, const Tuning& user, float unitsPerCm) {
+    if (!laid.ok || !user.Any()) return laid;
+    const Out u = Solve(Carried(hand, laid), shaft, user, Mode{false, false}, unitsPerCm);
+    if (!u.ok) return laid;
+    Out o = laid;
+    o.r = Then(laid.r, u.r);
+    o.shift = Add(laid.shift, u.shift);
+    o.anchor = u.anchor;
+    o.axes[0] = u.axes[0];
+    o.axes[1] = u.axes[1];
+    o.axes[2] = u.axes[2];
+    o.ok = Finite(o.shift) && std::isfinite(o.r.m[0] + o.r.m[4] + o.r.m[8]);
+    return o;
+}
+
 // How a hand sits on the shaft, as the Tuning that carries a hand FITTED on it (palm's middle on the axis, knuckle line along it) to this hand's pose - measured on the hand
 // the game laid (the base grip: its own animation), so another hand given the same Tuning (by Solve with snap and align) sits on the shaft the same way: the same offset of the
 // palm from the axis across and up the hand, the same lean of the knuckle line. Expressed for the right hand (the left's turns are un-mirrored): the same numbers on either side
@@ -205,6 +235,29 @@ inline Tuning Relation(const Hand& hand, const Shaft& shaft, bool* ok = nullptr)
     t.rot[2] = c * 57.2957795f;
     if (ok) *ok = Finite({t.off[1], t.off[2], t.rot[0]}) && std::isfinite(t.rot[1] + t.rot[2]);
     return t;
+}
+
+// How the shaft lies against the hand, in the hand's own frame - f along the fingers, k along the knuckles (squared to f), n out of the palm: grip_pose.h HandFrame's rows, so the numbers are
+// the same on a hand and on its mirror image. line: the shaft's direction in it; toAxis: the vector from the palm's middle to the nearest point of the axis (square to the line), metres
+// (unitsPerM: the input units in a metre). Measured on the hand the game laid, this is what the game's own grip has - the lean of the knuckles on the shaft, and the axis' place across
+// the hand (under the fingers, not under the palm's middle). The grip library (shared/d2r_vr_grip.h, interface version 2) lays a hand that takes the weapon the same way, as the
+// grip fit above does with the Relation's offsets and lean. ok false: the hand or the shaft is no use.
+struct AxisInHand {
+    V3 line, toAxis;
+    bool ok = false;
+};
+inline AxisInHand AxisOf(const Hand& hand, const Shaft& shaft, float unitsPerM) {
+    AxisInHand a;
+    V3 d, f, n;
+    if (!(unitsPerM > 1e-9f) || !Finite(hand.palm) || !Finite(shaft.at) || !Unit(shaft.dir, &d) || !Unit(hand.point, &f) || !Unit(hand.out, &n)) return a;
+    V3 k;
+    if (!Unit(Sub(hand.knuckles, Mul(f, Dot(hand.knuckles, f))), &k)) return a;
+    const V3 grasp = Add(shaft.at, Mul(d, Dot(Sub(hand.palm, shaft.at), d)));
+    const V3 v = Mul(Sub(grasp, hand.palm), 1.0f / unitsPerM);
+    a.line = {Dot(d, f), Dot(d, k), Dot(d, n)};
+    a.toAxis = {Dot(v, f), Dot(v, k), Dot(v, n)};
+    a.ok = Finite(a.line) && Finite(a.toAxis);
+    return a;
 }
 
 // What the skeleton hook does to a hand on the weapon, from the state it is in. grabs: how many times that hand has closed its fist on the shaft (weight::Out::grabs; 0 = the

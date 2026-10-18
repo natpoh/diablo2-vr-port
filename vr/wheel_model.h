@@ -51,6 +51,16 @@ struct View {
     int flipPlace = 0;   // where the window stands along its pages (vr/wheel_flip.h: 0 Skills, 1 + the Settings page): the dots, the arrows
     hset::Model settings;
     hset::Hit settingsHover;
+    // The editor's category strip ([openxr] skill_categories; idea after bearstonem/d2r-pcvr, MIT): `catStrip` it is shown (on, and the cache
+    // told which skill is on which tree), `category` the tab shown (kCatAll, the trees 1..3, kCatGeneral), how many skills each holds, the trees'
+    // names in the game's own text.
+    bool catStrip = false;
+    int category = kCatAll;
+    int catCount[kCategories] = {};
+    char treeName[3][kNameLen] = {};
+    // RUN / WALK ([openxr] skill_run_walk): the control is there, and what the game says its switch is on now (RunState).
+    bool runWalk = false;
+    uint8_t run = kRunUnknown;
 };
 
 struct In {
@@ -69,6 +79,8 @@ struct In {
     int setTab = -1;              // the tab to show now while it is up (a Tab's value; the top level only); -1 none
     bool close = false;           // the Settings tab asks for the window to close (its Close button, Calibrate body, a view change)
     const Hints* hints = nullptr; // the captions under the slots (tiles); null = none
+    bool categories = false;      // [openxr] skill_categories: the editor has the category strip (when the snapshot knows the trees)
+    bool runWalk = false;         // [openxr] skill_run_walk: the RUN / WALK control is there
     uint64_t nowMs = 0;           // GetTickCount64, the snapshot's clock
     const Snapshot* snap = nullptr;
     Reply reply;                  // the newest answer to a request
@@ -79,6 +91,7 @@ struct Out {
     bool request = false;         // `req` is to be carried out on the game's UI thread
     Request req;
     int flip = 0;                 // an arrow at the window's edge was clicked: -1 one place back, +1 on (the controller moves it: it knows the Settings page)
+    bool runWalk = false;         // RUN / WALK was clicked: the host presses the game's own run / walk switch (command kRunWalkCommand), once
 };
 
 class Model {
@@ -90,7 +103,10 @@ class Model {
     Request pending_;
     double pendingAt_ = 0;
     Skill previous_;                   // what the edited slot held when it was chosen
-    Skill choices_[kCatalogMax];
+    Skill catalog_[kCatalogMax];       // every skill the editor was opened with (the snapshot's catalog then)
+    int catalogCount_ = 0;
+    bool catKnown_ = false;            // the category strip is shown on this editor
+    Skill choices_[kCatalogMax];       // ... and the ones of the category shown (all of them for All): what the pages are cut from
     int choiceCount_ = 0;
     int editBank_ = -1;
     double statusUntil_ = 0;
@@ -108,8 +124,30 @@ class Model {
         v_.editSlot = -1;
         v_.result = Result::None;
         v_.status[0] = 0;
+        catKnown_ = false;
     }
     int PerPage() const { return v_.style == Style::Tiles ? tiles::kGridCount : kOptionsPerPage; }
+    // The category a skill is in: its tree 1..3, else General / Items (also a skill the cache did not place: it is on no tree we know).
+    static int CategoryOf(const Skill& s) { return s.tree >= 1 && s.tree <= 3 ? int(s.tree) : int(kCatGeneral); }
+    // The skills of one category (All: all of them), page 0.
+    void Filter(int category) {
+        v_.category = category;
+        v_.editPage = 0;
+        choiceCount_ = 0;
+        for (int i = 0; i < catalogCount_; ++i)
+            if (category == kCatAll || CategoryOf(catalog_[i]) == category) choices_[choiceCount_++] = catalog_[i];
+    }
+    // The editor opens on a slot: the catalog as it is now, the categories counted, All shown.
+    void OpenEditor(const In& in, const Snapshot& snap) {
+        catalogCount_ = (int)std::min<uint32_t>(snap.count, (uint32_t)kCatalogMax);
+        for (int i = 0; i < catalogCount_; ++i) catalog_[i] = snap.catalog[i];
+        catKnown_ = in.categories && snap.treesKnown;
+        for (int c = 0; c < kCategories; ++c) v_.catCount[c] = 0;
+        v_.catCount[kCatAll] = catalogCount_;
+        for (int i = 0; i < catalogCount_; ++i) ++v_.catCount[CategoryOf(catalog_[i])];
+        for (int t = 0; t < 3; ++t) std::snprintf(v_.treeName[t], kNameLen, "%s", snap.treeName[t]);
+        Filter(kCatAll);
+    }
     void Options() {
         const int per = PerPage();
         v_.editPages = std::max(1, (choiceCount_ + per - 1) / per);
@@ -133,6 +171,8 @@ public:
         v_.revision = rev + 1;
         pending_ = Request{};
         choiceCount_ = 0;
+        catalogCount_ = 0;
+        catKnown_ = false;
         editBank_ = -1;
         settingsSeen_ = ~0ull;
     }
@@ -251,9 +291,11 @@ public:
                 v_.editSlot = -1;
                 pending_ = Request{};
             }
+            const bool strip = catKnown_ && v_.page == Page::PickSkill;
+            const bool run = in.runWalk && v_.page == Page::Wheel && (v_.style != Style::Tiles || v_.tab == Tab::Skills);
             const int hover = !in.pointer ? int(kNone)
-                              : v_.style == Style::Tiles ? tiles::HitTest(v_.page, in.u, in.v, v_.hover, v_.options, v_.tabs, v_.tab == Tab::Settings)
-                                                         : HitTest(v_.page, in.u, in.v, v_.hover, v_.options);
+                              : v_.style == Style::Tiles ? tiles::HitTest(v_.page, in.u, in.v, v_.hover, v_.options, v_.tabs, v_.tab == Tab::Settings, strip, run)
+                                                         : HitTest(v_.page, in.u, in.v, v_.hover, v_.options, strip, run);
             int shown = hover;
             if ((shown == kFlipPrev && v_.flipPlace <= 0) || (shown == kFlipNext && v_.flipPlace >= kFlipPlaces - 1)) shown = kNone;   // (no arrow there)
             if (shown != v_.hover && shown != kNone && out.feedback == Feedback::None) out.feedback = Feedback::Hover;
@@ -275,6 +317,9 @@ public:
         v_.ready = fresh;
         v_.editable = fresh && snap.editable;
         v_.bank = snap.bank;
+        v_.catStrip = catKnown_ && v_.page == Page::PickSkill;
+        v_.runWalk = in.runWalk;
+        v_.run = fresh ? snap.run : uint8_t(kRunUnknown);
         v_.result = pending_.op != Op::None ? Result::Pending : v_.result;
         if (fresh) for (int i = 0; i < kSlotCount; ++i) v_.slot[i] = snap.slot[i];
         else for (int i = 0; i < kSlotCount; ++i) v_.slot[i] = Skill{};
@@ -289,8 +334,11 @@ private:
         if (a.open != b.open || a.page != b.page || a.hover != b.hover || a.selected != b.selected || a.editSlot != b.editSlot ||
             a.editPage != b.editPage || a.editPages != b.editPages || a.options != b.options || a.ready != b.ready ||
             a.editable != b.editable || a.bank != b.bank || a.result != b.result || a.style != b.style || !(a.hints == b.hints) ||
-            a.tabs != b.tabs || a.tab != b.tab || std::strncmp(a.status, b.status, sizeof a.status) != 0)
+            a.tabs != b.tabs || a.tab != b.tab || a.catStrip != b.catStrip || a.category != b.category || a.runWalk != b.runWalk || a.run != b.run ||
+            std::strncmp(a.status, b.status, sizeof a.status) != 0)
             return true;
+        for (int c = 0; c < kCategories; ++c) if (a.catCount[c] != b.catCount[c]) return true;
+        for (int t = 0; t < 3; ++t) if (std::strncmp(a.treeName[t], b.treeName[t], kNameLen) != 0) return true;
         for (int i = 0; i < kSlotCount; ++i) if (!(a.slot[i] == b.slot[i])) return true;
         for (int i = 0; i < kOptionsMax; ++i) if (!(a.option[i] == b.option[i])) return true;
         return false;
@@ -321,6 +369,11 @@ private:
             } else if (h == kClose) {
                 CloseNow();
                 out->feedback = Feedback::Closed;
+            } else if (h == kRunWalk) {   // the game's run / walk switch: pressed once, the panel stays up, the state is read back from the game
+                if (in.runWalk) {
+                    out->runWalk = true;
+                    out->feedback = Feedback::Selected;
+                }
             } else if (h == kCentre) {
                 v_.selected = -1;
                 CloseNow();
@@ -351,8 +404,7 @@ private:
                 v_.editSlot = h;
                 v_.editPage = 0;
                 previous_ = snap.slot[h];
-                choiceCount_ = (int)std::min<uint32_t>(snap.count, (uint32_t)kCatalogMax);
-                for (int i = 0; i < choiceCount_; ++i) choices_[i] = snap.catalog[i];
+                OpenEditor(in, snap);
                 v_.page = Page::PickSkill;
                 out->feedback = Feedback::Hover;
             } else {
@@ -367,6 +419,14 @@ private:
                 v_.editPage = std::max(0, v_.editPage - 1);
             } else if (h == kNext) {
                 v_.editPage = std::min(v_.editPages - 1, v_.editPage + 1);
+            } else if (h >= kCategory0 && h < kCategory0 + kCategories) {   // a category tab: only one with skills in it
+                const int c = h - kCategory0;
+                if (catKnown_ && v_.catCount[c] > 0) {
+                    if (c != v_.category) Filter(c);
+                    out->feedback = Feedback::Hover;
+                } else {
+                    out->feedback = Feedback::Refused;
+                }
             } else if ((h == kCentre || (h >= 0 && h < v_.options)) && fresh && snap.editable && v_.editSlot >= 0) {
                 Request r;
                 r.sequence = ++sequence_;

@@ -38,6 +38,8 @@ bool g_stop = false;
 std::wstring g_dir;
 bool g_manifestRead = false;
 std::unordered_map<int32_t, Entry> g_entries;
+std::unordered_map<int, TreeLine> g_trees;   // by class
+bool g_treeData = false;                     // some manifest row names a class: the cache was made with the trees in it
 std::unordered_map<int32_t, std::shared_ptr<const Image>> g_images;   // a null entry: asked for, not there (yet)
 std::deque<int32_t> g_pending;
 std::atomic<uint32_t> g_revision{0};
@@ -78,7 +80,15 @@ void ReadManifestLocked() {
         std::string line;
         while (g_entries.size() < 8192 && std::getline(in, line)) {
             Entry e;
-            if (ParseLine(line, &e)) g_entries[e.id] = e;
+            if (ParseLine(line, &e)) {
+                g_entries[e.id] = e;
+                if (e.cls >= 0) g_treeData = true;
+            }
+        }
+        std::ifstream trees(std::filesystem::path(g_dir) / L"trees.tsv");
+        while (g_trees.size() < 32 && std::getline(trees, line)) {
+            TreeLine t;
+            if (ParseTreeLine(line, &t)) g_trees[t.cls] = t;
         }
     } catch (...) {}   // no cache, or one that cannot be read: names only
 }
@@ -135,29 +145,60 @@ void Run() {
 
 }  // namespace
 
+namespace {
+
+// A line split at its tabs (the trailing CR / LF dropped).
+std::vector<std::string> Fields(const std::string& line) {
+    std::string s = line;
+    while (!s.empty() && (s.back() == '\r' || s.back() == '\n')) s.pop_back();
+    std::vector<std::string> out;
+    size_t from = 0;
+    for (;;) {
+        const size_t t = s.find('\t', from);
+        out.push_back(s.substr(from, t == std::string::npos ? std::string::npos : t - from));
+        if (t == std::string::npos || out.size() >= 8) break;
+        from = t + 1;
+    }
+    return out;
+}
+
+// A small non-negative number, or `bad`.
+int Small(const std::string& s, int most, int bad) {
+    if (s.empty() || s.size() > 3) return bad;
+    int v = 0;
+    for (const char c : s) {
+        if (c < '0' || c > '9') return bad;
+        v = v * 10 + (c - '0');
+    }
+    return v <= most ? v : bad;
+}
+
+}  // namespace
+
 bool ParseLine(const std::string& line, Entry* out) {
-    if (line.size() < 4 || line[0] != 's') return false;
-    const size_t t1 = line.find('\t');
-    if (t1 == std::string::npos || t1 < 2 || t1 > 6) return false;
+    const std::vector<std::string> f = Fields(line);
+    if (f.size() < 2 || f[0].size() < 2 || f[0].size() > 6 || f[0][0] != 's') return false;
     int32_t id = 0;
-    for (size_t i = 1; i < t1; ++i) {
-        if (line[i] < '0' || line[i] > '9') return false;
-        id = id * 10 + (line[i] - '0');
+    for (size_t i = 1; i < f[0].size(); ++i) {
+        if (f[0][i] < '0' || f[0][i] > '9') return false;
+        id = id * 10 + (f[0][i] - '0');
     }
-    if (id < 0 || id > 4095) return false;
-    size_t t2 = line.find('\t', t1 + 1);
-    std::string file = line.substr(t1 + 1, t2 == std::string::npos ? std::string::npos : t2 - t1 - 1);
-    while (!file.empty() && (file.back() == '\r' || file.back() == '\n')) file.pop_back();
-    if (!Hex64Png(file)) return false;
-    std::string key;
-    if (t2 != std::string::npos) {
-        key = line.substr(t2 + 1);
-        while (!key.empty() && (key.back() == '\r' || key.back() == '\n')) key.pop_back();
-        if (!KeyOk(key)) key.clear();
-    }
+    if (id < 0 || id > 4095 || !Hex64Png(f[1])) return false;
     out->id = id;
-    out->file = file;
-    out->key = key;
+    out->file = f[1];
+    out->key = f.size() > 2 && KeyOk(f[2]) ? f[2] : std::string();
+    out->cls = f.size() > 3 ? Small(f[3], 15, -1) : -1;
+    out->page = f.size() > 4 && out->cls >= 0 ? Small(f[4], 3, 0) : 0;
+    return true;
+}
+
+bool ParseTreeLine(const std::string& line, TreeLine* out) {
+    const std::vector<std::string> f = Fields(line);
+    if (f.size() < 2) return false;
+    const int cls = Small(f[0], 15, -1);
+    if (cls < 0) return false;
+    out->cls = cls;
+    for (int t = 0; t < 3; ++t) out->key[t] = (size_t)t + 1 < f.size() && KeyOk(f[t + 1]) ? f[t + 1] : std::string();
     return true;
 }
 
@@ -177,6 +218,29 @@ std::string NameKey(int32_t skillId) {
     ReadManifestLocked();
     const auto it = g_entries.find(skillId);
     return it == g_entries.end() ? std::string() : it->second.key;
+}
+
+bool HasTrees() {
+    std::lock_guard<std::mutex> lock(g_lock);
+    ReadManifestLocked();
+    return g_treeData && !g_trees.empty();
+}
+
+bool SkillTree(int32_t skillId, int* cls, int* page) {
+    std::lock_guard<std::mutex> lock(g_lock);
+    ReadManifestLocked();
+    const auto it = g_entries.find(skillId);
+    if (it == g_entries.end()) return false;
+    *cls = it->second.cls;
+    *page = it->second.page;
+    return true;
+}
+
+std::string TreeKey(int cls, int tree) {
+    std::lock_guard<std::mutex> lock(g_lock);
+    ReadManifestLocked();
+    const auto it = g_trees.find(cls);
+    return tree >= 1 && tree <= 3 && it != g_trees.end() ? it->second.key[tree - 1] : std::string();
 }
 
 std::shared_ptr<const Image> Get(int32_t skillId) {
@@ -209,6 +273,8 @@ void Shutdown() {
     g_pending.clear();
     g_images.clear();
     g_entries.clear();
+    g_trees.clear();
+    g_treeData = false;
     g_manifestRead = false;   // (read again at the next use: a cache made since is found)
     g_stop = false;
     g_revision.fetch_add(1);

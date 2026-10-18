@@ -71,6 +71,7 @@ std::atomic<float> g_right{0.0f}, g_fwd{1.0f};
 std::atomic<ULONGLONG> g_liveUntil{0};   // GetTickCount64, ms
 std::atomic<bool> g_read{false};         // a hook asked for the aim since the last throw's press
 std::atomic<bool> g_gripOwns{false};     // a throw_by_grip gesture owns the right grip this frame
+std::atomic<bool> g_trigOwns{false};     // a throw_gesture (trigger) gesture owns the right trigger this frame
 std::atomic<bool> g_gripDown{false};     // ... and the right grip is squeezed on the weapon (the frame's own value: the gesture's Take hides it from the shared block)
 std::atomic<float> g_speed{0.0f}, g_horiz{0.0f}, g_vert{0.0f}, g_below{0.0f}, g_relSpeed{0.0f};   // the last throw's hand, for Info
 std::atomic<unsigned> g_seq{0};
@@ -187,6 +188,7 @@ void Reset() {
     g.controlDown = false;
     g.taking = false;
     g_gripOwns.store(false);
+    g_trigOwns.store(false);
     g_gripDown.store(false);
     g_wantSlots.store(false);
     g.press.Stop();
@@ -369,6 +371,7 @@ void OnFrame(const directinput::Frame& f, void*) {
     }
     g.taking = take;
     g_gripOwns.store(take && byGrip);
+    g_trigOwns.store(take && !byGrip);
     g_gripDown.store(take && byGrip && g.controlDown);   // (f is the frame as the controllers made it, before the Take above hid the grip from the shared block)
     g_wantSlots.store(take);   // (the controller's skill slots are wanted while a throw could come)
     if (take) { RefreshSlots(false); DiagSlot(thrown); } else g.slotSeen = -2;
@@ -533,6 +536,7 @@ void SetModes(bool byTrigger, bool byGrip) {
     if (mode == kOff) {
         g_liveUntil.store(0);
         g_gripOwns.store(false);
+        g_trigOwns.store(false);
         g_gripDown.store(false);
     }
 }
@@ -575,6 +579,8 @@ bool Info(ThrowInfo* out) {
 }
 
 bool GripIsThrows() { return g_gripOwns.load() && viewgate::F4(); }
+
+bool TriggerIsThrows() { return g_trigOwns.load() && viewgate::F4(); }
 
 bool GripHeld() { return g_gripOwns.load() && g_gripDown.load() && viewgate::F4(); }
 

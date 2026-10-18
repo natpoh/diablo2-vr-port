@@ -86,10 +86,32 @@ inline bool CullAnswer(int style, float out[2]) {
     return style != 1;
 }
 
+// [hud] monster_height: the plate of a monster (or an NPC: unit type 1) moved up (+) or down (-) by this percent
+// of the screen's height. The same call, the same one caller; nothing else about the unit is touched. The plate
+// is the game's: only where its anchor is changes, by the pixels the game itself would have added.
+template <class Read>
+bool IsMonsterUnit(uintptr_t unit, Read read) {
+    uint32_t type = 0;
+    return unit >= kMinPointer && read(unit + kUnitType, type) && type == kUnitMonster;
+}
+constexpr float kHeightMin = -60.0f, kHeightMax = 40.0f;
+inline float ClampHeight(float pct) { return pct < kHeightMin ? kHeightMin : pct > kHeightMax ? kHeightMax : pct == pct ? pct : 0.0f; }
+// The anchor's screen y (pixels, down) moved up by `pct` percent of the viewport's height; a viewport not known
+// (0, or not a size) counts as 1080 high.
+inline float ShiftedY(float y, float pct, float viewportH) {
+    const float h = viewportH >= 100.0f && viewportH <= 20000.0f ? viewportH : 1080.0f;
+    return y - ClampHeight(pct) * 0.01f * h;
+}
+
 // [hud] ordinary_mob_bars, and [debug] mob_bars_style (vr/mob_bars.cpp: how the plate is taken off the screen).
 void SetEnabled(bool on, int style = 0);
-// Twice a second from the main tick: once the setting is on, the hook goes in as soon as the game's
-// code reads (it waits for its page to be decrypted). Nothing is hooked while the setting is off.
+// [hud] monster_height, percent (0 = the game's own place). Applied in VR F4 only.
+void SetHeight(float pct);
+// The game's viewport in pixels, from the camera callback each frame (vrcam): what the percent of monster_height is of, and where the
+// fixed point of monster_bar_room (vr/plate_world.h) is.
+void NoteViewport(float widthPx, float heightPx);
+// Twice a second from the main tick: once a setting asks for it (ordinary_mob_bars on, monster_height not 0, or monster_bar_room),
+// the hook goes in as soon as the game's code reads (it waits for its page to be decrypted). Nothing is hooked otherwise.
 void Install(const D2RL::PluginContext* ctx);
 bool Hooked();
 

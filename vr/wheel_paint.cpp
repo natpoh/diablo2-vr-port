@@ -119,6 +119,7 @@ void PaintRing(Canvas& cv, const View& v) {
 const char* FooterText(Cell c) {
     switch (c) {
     case kEdit: return "EDIT SKILLS";
+    case kRunWalk: return "RUN / WALK";
     case kClose: return "CLOSE";
     case kBack: return "BACK";
     case kPrev: return "PREVIOUS";
@@ -127,17 +128,26 @@ const char* FooterText(Cell c) {
     }
 }
 
+// What the game says its run / walk switch is on ("" when it is not known).
+const char* RunState(const View& v) { return v.run == kRunning ? "now: RUN" : v.run == kWalking ? "now: WALK" : ""; }
+
 void PaintFooter(Canvas& cv, Fonts& fonts, const View& v) {
     RoundRect(cv, Px({0.02f, 0.894f, 0.98f, 0.99f}), 16.0f, Col{16, 14, 11}, 0.88f, kGoldDim, 0.8f, 1.5f);
-    for (int i = 0; i < FooterCount(v.page); ++i) {
-        const Cell c = FooterCell(v.page, i);
+    for (int i = 0; i < FooterCount(v.page, v.runWalk); ++i) {
+        const Cell c = FooterCell(v.page, i, v.runWalk);
         bool enabled = true;
         if (c == kEdit) enabled = v.editable;
         if (c == kPrev) enabled = v.editPage > 0;
         if (c == kNext) enabled = v.editPage + 1 < v.editPages;
         const bool hot = v.hover == c && enabled;
-        const Rect r = Px(FooterRect(v.page, i));
+        const Rect r = Px(FooterRect(v.page, i, v.runWalk));
         RoundRect(cv, r, 12.0f, hot ? Col{74, 56, 32} : Col{38, 33, 27}, 0.97f, hot ? kGoldBright : kGoldDim, 1.0f, 2.0f);
+        if (c == kRunWalk && RunState(v)[0]) {   // the button and, under it, what the game's switch is on now
+            const float mid = 0.5f * (r.t + r.b);
+            Text(cv, fonts, FooterText(c), Rect{r.l, r.t + 2.0f, r.r, mid + 4.0f}, 24, true, enabled ? kText : Col{110, 102, 88});
+            Text(cv, fonts, RunState(v), Rect{r.l, mid - 2.0f, r.r, r.b - 2.0f}, 18, false, kGoldBright);
+            continue;
+        }
         Text(cv, fonts, FooterText(c), r, 28, true, enabled ? kText : Col{110, 102, 88});
     }
 }
@@ -171,6 +181,25 @@ void PaintWheelContent(Canvas& cv, Fonts& fonts, const View& v) {
     }
 }
 
+// The category strip: All, the class's three trees, General / Items - the one shown gold, a tab with no skill in it dim.
+void PaintStrip(Canvas& cv, Fonts& fonts, const View& v) {
+    for (int c = 0; c < kCategories; ++c) {
+        const Rect r = Px(CategoryRect(c));
+        const int count = v.catCount[c];
+        const bool on = v.category == c, enabled = count > 0 || on, hot = v.hover == CategoryCell(c) && count > 0;
+        RoundRect(cv, r, 10.0f, on ? Col{70, 54, 30} : hot ? Col{58, 46, 28} : Col{32, 28, 23}, 0.97f, on || hot ? kGoldBright : kGoldDim, 1.0f, on ? 3.0f : 2.0f);
+        char name[kNameLen + 4];
+        if (c == kCatAll) std::snprintf(name, sizeof name, "All");
+        else if (c == kCatGeneral) std::snprintf(name, sizeof name, "General / Items");
+        else std::snprintf(name, sizeof name, "%s", v.treeName[c - 1][0] ? v.treeName[c - 1] : "-");
+        const Col ink = on ? kGoldBright : enabled ? kText : Col{100, 93, 80};
+        Text(cv, fonts, name, Rect{r.l + 4.0f, r.t + 2.0f, r.r - 4.0f, r.b - 20.0f}, 19, true, ink);
+        char n[16];
+        std::snprintf(n, sizeof n, "%d", count);
+        Text(cv, fonts, n, Rect{r.l, r.b - 22.0f, r.r, r.b - 3.0f}, 16, false, enabled ? kTextDim : Col{90, 84, 72});
+    }
+}
+
 void PaintList(Canvas& cv, Fonts& fonts, const View& v) {
     RoundRect(cv, Px({0.01f, 0.01f, 0.99f, 0.855f}), 22.0f, Col{20, 17, 14}, 0.93f, kGoldDim, 1.0f, 2.5f);
     char title[96];
@@ -181,6 +210,7 @@ void PaintList(Canvas& cv, Fonts& fonts, const View& v) {
         std::snprintf(now, sizeof now, "Now: %s", v.slot[v.editSlot].id >= 0 ? v.slot[v.editSlot].name : "nothing");
         Text(cv, fonts, now, Px({0.05f, 0.095f, 0.62f, 0.145f}), 22, false, kTextDim, 1.0f, true);
     }
+    if (v.catStrip) PaintStrip(cv, fonts, v);
     const bool hotClear = v.hover == kCentre;
     const Rect clear = Px(kClearRect);
     RoundRect(cv, clear, 12.0f, hotClear ? Col{74, 56, 32} : Col{38, 33, 27}, 0.97f, hotClear ? kGoldBright : kGoldDim, 1.0f, 2.0f);

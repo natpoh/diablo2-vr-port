@@ -27,6 +27,7 @@
 #include "direct_feed.h"
 #include "direct_input.h"
 #include "direct_layout.h"
+#include "direct_remap.h"
 #include "view_gate.h"
 
 namespace directinput {
@@ -70,6 +71,8 @@ void LogF(const char* fmt, ...) {
 // -- the settings ---------------------------------------------------------------------------------------------------
 std::atomic<bool> g_on{false};
 std::atomic<bool> g_bwWalk{true};   // [openxr] direct_bodywalk_walk: BodyWalk's walking passes in direct mode
+std::atomic<bool> g_flatVrCtl{true};   // [direct] flatvr_controls: in FlatVR the layout runs on BodyWalk's raw controllers (flat_raw.h)
+std::atomic<bool> g_fedByLink{false};  // the frames come from Game Link (FlatVR), not from a native session
 std::atomic<bool> g_walkFlat{true}; // [direct] walk_flat_views: the left stick walks in VR F1-F3 (movement only, vr/walk_flat.h)
 std::atomic<bool> g_beltFlat{true}; // [direct] belt_flick_flat_views: left trigger + a flick of a stick drinks a belt column in VR F1-F3 (vr/belt_flick.h)
 std::atomic<BeltSink> g_beltSink{nullptr};
@@ -108,6 +111,9 @@ std::atomic<ULONGLONG> g_pulseLatest{0};   // the latest expiry: the XInput deto
 std::atomic<HapticSink> g_hapticSink{nullptr};
 std::atomic<ULONGLONG> g_uiUpUntil{0};   // SetUiUp: a panel of ours is up until then
 std::atomic<ULONGLONG> g_panelAt{0};     // a long press asked for the skill panel at this tick (TakeSkillPanelToggle)
+std::atomic<ULONGLONG> g_pauseAt{0};     // a press asked for the pause menu (Esc) at this tick (TakePauseToggle)
+std::atomic<ULONGLONG> g_quiverAt{0};    // a button asked for a step of the javelin quiver at this tick (TakeQuiverStep) ...
+std::atomic<int> g_quiverDir{0};         // ... in this direction, +1 next, -1 previous
 
 // -- the listeners ------------------------------------------------------------------------------------------------------
 struct Listener { FrameFn fn; void* user; };
@@ -144,6 +150,8 @@ struct FeedState {
     uint32_t sharedCounter = 0;
     bool told = false;
     bool panelWas = false;   // Outputs.skillPanel the frame before: the request is its rising edge
+    bool pauseWas = false;   // Outputs.pause the frame before (the same)
+    uint8_t quiverWas = 0;   // Outputs.quiver the frame before: a step is its rising edge
     // the walk in VR F1-F3 (walkflat): the left stick through a release gate of its own, the frame number the pad poll sees
     ReleaseGate walkGate;
     bool walkWas = false;
@@ -237,16 +245,8 @@ void EndWalk() {
     g_fs.flatLayout.Reset();
 }
 
-// A command's number from its name in the ini ("Swap weapons", "D2R key: Swap weapons").
-int CmdByName(const char* name) {
-    static const char kPrefix[] = "D2R key: ";
-    for (const D2RVRCommand& c : kD2RVRCommands) {
-        const char* n = c.action;
-        if (EqNoCase(name, n)) return c.cmd;
-        if (!std::strncmp(n, kPrefix, sizeof kPrefix - 1) && EqNoCase(name, n + sizeof kPrefix - 1)) return c.cmd;
-    }
-    return -1;
-}
+// A command's number from its name in the ini ("Swap weapons", "D2R key: Swap weapons"): vr/direct_remap.h, the same as D2R VR Settings' button list.
+int CmdByName(const char* name) { return remap::CmdByName(name); }
 
 std::string NarrowAscii(const wchar_t* w) {
     std::string s;
@@ -265,7 +265,8 @@ void ClearHeld() {
     ReleaseSRWLockExclusive(&g_pulseLock);
 }
 
-Frame MakeFrame(const D2RVR_XrInput& in, bool menu, bool direct, uint32_t counter, uint32_t session, uint32_t epoch, bool otherView = false) {
+Frame MakeFrame(const D2RVR_XrInput& in, bool menu, bool direct, uint32_t counter, uint32_t session, uint32_t epoch, bool otherView = false,
+                const uint32_t* touches = nullptr) {
     Frame f{};
     f.version = kVersion;
     f.counter = counter;
@@ -290,12 +291,13 @@ Frame MakeFrame(const D2RVR_XrInput& in, bool menu, bool direct, uint32_t counte
         o.stick[0] = s.stickX; o.stick[1] = s.stickY;
         o.buttons = s.buttons;
         o.active = s.active;
+        o.touches = touches ? touches[h] : 0u;
     }
     return f;
 }
 
-// The controls the layout sees: the hand's analog values and buttons.
-Controls ControlsOf(const D2RVR_XrInput& in) {
+// The controls the layout sees: the hand's analog values and buttons, and (touches: the TouchBit bits of each hand) the finger on the controls that report it.
+Controls ControlsOf(const D2RVR_XrInput& in, const uint32_t* touches = nullptr) {
     Controls c;
     auto clamp01 = [](float v) { return std::isfinite(v) ? std::clamp(v, 0.0f, 1.0f) : 0.0f; };
     for (int h = 0; h < 2; ++h) {
@@ -309,6 +311,11 @@ Controls ControlsOf(const D2RVR_XrInput& in) {
         c.v[left ? kLMenu : kRMenu] = (s.buttons & kMenuButton) ? 1.0f : 0.0f;
         c.stick[h][0] = std::isfinite(s.stickX) ? s.stickX : 0.0f;
         c.stick[h][1] = std::isfinite(s.stickY) ? s.stickY : 0.0f;
+        const uint32_t t = touches ? touches[h] : 0u;
+        c.touch[left ? kLTrigger : kRTrigger] = (t & kTouchTrigger) != 0;
+        c.touch[left ? kLX : kRA] = (t & kTouchPrimary) != 0;
+        c.touch[left ? kLY : kRB] = (t & kTouchSecondary) != 0;
+        c.touch[left ? kLStick : kRStick] = (t & kTouchStick) != 0;
     }
     return c;
 }
@@ -364,6 +371,8 @@ void FeedFlatController(const D2RVR_XrInput& in, bool focused, bool menu) {
     }
     if (s.beltHolding) { o.pad.lx = o.pad.ly = o.pad.rx = o.pad.ry = 0; }   // a flick's trigger is held: the sticks are the belt's
     o.skillPanel = false;
+    o.pause = false;
+    o.quiver = 0;
     AcquireSRWLockExclusive(&g_flatLock);
     g_flatOut = o;
     g_flatOutMenu = menu ? 1 : 0;
@@ -378,6 +387,8 @@ void FeedFlatController(const D2RVR_XrInput& in, bool focused, bool menu) {
 
 bool On() { return g_on.load(); }
 bool BodyWalkWalks() { return g_on.load() && g_bwWalk.load(); }
+bool FlatVrControlsOn() { return g_on.load() && g_flatVrCtl.load(); }
+bool FedByLink() { return g_fedByLink.load(); }
 bool Governing() { return g_on.load() && ViewOk(); }
 bool Active() {
     const ULONGLONG at = g_lastFeed.load();
@@ -465,6 +476,19 @@ bool TakeSkillPanelToggle() {
     return at && GetTickCount64() - at < 1000;
 }
 
+bool TakePauseToggle() {
+    if (!ViewOk()) { g_pauseAt.store(0); return false; }   // F4 only
+    const ULONGLONG at = g_pauseAt.exchange(0);
+    return at && GetTickCount64() - at < 1000;
+}
+
+int TakeQuiverStep() {
+    if (!ViewOk()) { g_quiverAt.store(0); g_quiverDir.store(0); return 0; }   // F4 only
+    const ULONGLONG at = g_quiverAt.exchange(0);
+    const int dir = g_quiverDir.exchange(0);
+    return at && GetTickCount64() - at < 1000 ? dir : 0;
+}
+
 void SetHapticSink(HapticSink sink) { g_hapticSink.store(sink); }
 void Haptic(int hand, float amplitude, float durationMs, float frequencyHz) {
     if (hand < 0 || hand > 1 || !(amplitude > 0.0f) || !(durationMs > 0.0f) || !ViewOk()) return;
@@ -480,34 +504,20 @@ void LoadSettings(const wchar_t* ini) {
     const bool on = GetPrivateProfileIntW(L"openxr", L"direct_input", 0, ini) != 0;
     // the [direct] table: a key unset keeps the default, empty or "none" unbinds
     const bool stickMap = GetPrivateProfileIntW(L"direct", L"left_stick_map", 1, ini) != 0;   // a quick click of the left stick: the map
-    Table t = DefaultTable(stickMap);
-    int rebound = 0, bad = 0;
-    auto read = [&](const char* key, Binding* into) {
+    const bool pauseButton = GetPrivateProfileIntW(L"direct", L"pause_button", 1, ini) != 0;  // a long press of the left menu button: the pause menu
+    // (vr/direct_layout.h TableFromIni - the same function D2R VR Settings' button list reads the table with)
+    const IniGet get = [&](const char* key, std::string* text) {
         wchar_t wkey[64];
         MultiByteToWideChar(CP_ACP, 0, key, -1, wkey, 64);
         GetPrivateProfileStringW(L"direct", wkey, L"\x01", b, 320, ini);
-        if (b[0] == L'\x01' && !b[1]) return;
-        const std::string text = NarrowAscii(b);
-        Binding parsed;
-        if (ParseBinding(text.c_str(), &CmdByName, &parsed)) { *into = parsed; ++rebound; }
-        else { ++bad; LogF("vrcam: direct input - [direct] %s = %s: not understood, the default stays", key, text.c_str()); }
+        if (b[0] == L'\x01' && !b[1]) return false;
+        *text = NarrowAscii(b);
+        return true;
     };
-    for (int i = 0; i < kCtlCount; ++i) {
-        const Ctl c = (Ctl)i;
-        read(Name(c), &t.plain[i]);
-        if (c == kLGrip || c == kRGrip) continue;
-        char chord[64];
-        snprintf(chord, sizeof chord, "%s+%s", Name(GripOf(HandOf(c))), Name(c));
-        read(chord, &t.chord[i]);
-    }
-    // hold-or-tap (vr/hold_tap.h): a "<control>_hold" line gives a control a long press
-    t.holdEnabled = GetPrivateProfileIntW(L"direct", L"hold_enabled", 1, ini) != 0;
-    t.holdMs = holdtap::ClampHoldMs((long)GetPrivateProfileIntW(L"direct", L"hold_ms", (int)holdtap::kDefaultHoldMs, ini));
-    for (int i = 0; i < kCtlCount; ++i) {
-        char hold[64];
-        snprintf(hold, sizeof hold, "%s_hold", Name((Ctl)i));
-        read(hold, &t.hold[i]);
-    }
+    int rebound = 0, bad = 0;
+    const Table t = TableFromIni(get, &CmdByName, &rebound, &bad, [](const char* key, const std::string& text) {
+        LogF("vrcam: direct input - [direct] %s = %s: not understood, the default stays", key, text.c_str());
+    });
     AcquireSRWLockExclusive(&g_cfgLock);
     g_table = t;
     g_tableChanged = true;
@@ -531,6 +541,15 @@ void LoadSettings(const wchar_t* ini) {
         Log(bwWalk ? "vrcam: direct input - [openxr] direct_bodywalk_walk=1: BodyWalk is still given the head and hands (its controls zeroed) and ITS LEFT STICK "
                      "walks the hero, mixed into the controller's own (nothing else of its pad, actions or commands is read)"
                    : "vrcam: direct input - [openxr] direct_bodywalk_walk=0: BodyWalk's walking is ignored with the rest of its input (it is given no headset)");
+    }
+    const bool flatVrCtl = GetPrivateProfileIntW(L"direct", L"flatvr_controls", 1, ini) != 0;
+    g_flatVrCtl.store(flatVrCtl);
+    static int toldFlatVr = -1;
+    if (on && (int)flatVrCtl != toldFlatVr) {
+        toldFlatVr = (int)flatVrCtl;
+        Log(flatVrCtl ? "vrcam: direct input - [direct] flatvr_controls=1: in FlatVR the plugin's own layout runs on BodyWalk's raw controllers (Game Link, "
+                        "BodyWalk with raw controls): BodyWalk's Mapping, pad buttons, actions and commands are ignored there, as in native OpenXR"
+                      : "vrcam: direct input - [direct] flatvr_controls=0: in FlatVR BodyWalk's Mapping and pad are the controls, as before");
     }
     const bool walkFlat = GetPrivateProfileIntW(L"direct", L"walk_flat_views", 1, ini) != 0;
     g_walkFlat.store(walkFlat);
@@ -564,11 +583,41 @@ void LoadSettings(const wchar_t* ini) {
         toldRebinds = rebound + bad;
         LogF("vrcam: direct input - the layout: %d control(s) rebound in [direct], %d line(s) not understood", rebound, bad);
     }
+    {   // the touch lines, and where the game's run / walk switch (command 0x23) was put - which trigger it is on (a press, a long press, the grip held, a touch): said once per change
+        static std::string toldTouch, toldRunWalk;
+        std::string touch, runWalk;
+        auto add = [](std::string& s, const std::string& what) { if (!s.empty()) s += "; "; s += what; };
+        auto runs = [](const Binding& b) { for (const Out& o : b.out) if (o.kind == kOutCommand && o.value == 0x23) return true; return false; };
+        for (int i = 0; i < layout::kCtlCount; ++i) {
+            const layout::Ctl c = (layout::Ctl)i;
+            const std::string n = layout::Name(c);
+            if (runs(t.plain[i])) add(runWalk, "a press of " + n);
+            if (runs(t.hold[i])) add(runWalk, "a long press of " + n);
+            if (c != layout::kLGrip && c != layout::kRGrip && runs(t.chord[i])) add(runWalk, "a press of " + n + " with the same hand's grip held");
+            if (runs(t.touch[i])) add(runWalk, "a touch of " + n);
+            if (layout::HasTouch(c) && layout::FormatBinding(t.touch[i]) != "none") add(touch, n + "_touch = " + layout::FormatBinding(t.touch[i]));
+        }
+        if (on && touch != toldTouch) {
+            toldTouch = touch;
+            if (touch.empty()) Log("vrcam: direct input - no touch lines in [direct] now");
+            else LogF("vrcam: direct input - touch lines (the finger arriving on the control, once per touch, F4 only; a Touch, PS VR2 or Index controller reports it): %s", touch.c_str());
+        }
+        if (on && runWalk != toldRunWalk) {
+            toldRunWalk = runWalk;
+            LogF("vrcam: direct input - Run / walk switch (the game's command 0x23) is on: %s", runWalk.empty() ? "no button now" : runWalk.c_str());
+        }
+    }
     static int toldMap = -1;
     if (on && (int)stickMap != toldMap) {
         toldMap = (int)stickMap;
         Log(stickMap ? "vrcam: direct input - a quick click of the left stick shows / hides the map ([direct] left_stick_map=1; held it is still Alt)"
                      : "vrcam: direct input - the left stick's click is Alt only ([direct] left_stick_map=0)");
+    }
+    static int toldPause = -1;
+    if (on && (int)pauseButton != toldPause) {
+        toldPause = (int)pauseButton;
+        Log(pauseButton ? "vrcam: direct input - a long press of the left menu button (PS VR2: the Options button of the RIGHT controller - SteamVR gives a Touch game that one as the left menu button and no Create button) is the pause menu (Esc) ([direct] pause_button=1, left_menu_hold); a tap is the inventory"
+                        : "vrcam: direct input - no pause button on the left menu button ([direct] pause_button=0): the menu button is the inventory at once");
     }
     static int toldHold = -1;
     if (on && (int)(t.holdEnabled ? t.holdMs : 0) != toldHold) {
@@ -581,7 +630,8 @@ void LoadSettings(const wchar_t* ini) {
 
 void SetMenuNow(bool menu) { g_menuNow.store(menu ? 1 : 0, std::memory_order_relaxed); }
 
-void SessionBegin() {
+void SessionBegin(bool fromLink) {
+    g_fedByLink.store(fromLink);
     ClearHeld();
     ++g_fs.session;
     g_session.store(g_fs.session);
@@ -591,6 +641,7 @@ void SessionBegin() {
 }
 
 void SessionEnd() {
+    g_fedByLink.store(false);
     g_lastFeed.store(0);
     EndWalk();
     ClearHeld();
@@ -630,7 +681,7 @@ void SharedFromXr(const D2RVR_XrInput& in, uint32_t counter, D2RVR_Shared* out) 
     out->sampleStampMagic = D2RVR_SAMPLE_STAMP_MAGIC;
 }
 
-void Feed(D2RVR_XrInput* in, bool menu) {
+void Feed(D2RVR_XrInput* in, bool menu, const uint32_t touches[2]) {
     if (!in) return;
     FeedState& s = g_fs;
     const bool f4 = ViewOk();
@@ -651,7 +702,7 @@ void Feed(D2RVR_XrInput* in, bool menu) {
     const uint32_t ctx = (focused ? 1u : 0u) | (menu ? 2u : 0u) | (direct ? 4u : 0u) | (f4 ? 0u : 8u);
     if (ctx != s.ctx) { s.ctx = ctx; ++s.epoch; s.layout.Cancel(); }   // (a press under way is not a tap, nor a hold)
     ++s.counter;
-    Frame f = MakeFrame(*in, menu, direct, s.counter, s.session, s.epoch, !f4);
+    Frame f = MakeFrame(*in, menu, direct, s.counter, s.session, s.epoch, !f4, touches);
     if (GetTickCount64() < g_uiUpUntil.load()) f.flags |= kUiUp;
     AcquireSRWLockExclusive(&g_pubLock);
     g_frame = f;
@@ -683,11 +734,22 @@ void Feed(D2RVR_XrInput* in, bool menu) {
     bool taken[kCtlCount] = {};
     TakenControls(take, taken);
     // (the controls after HideTaken: a taken one is zero already; the gate keeps it masked once the gesture lets go)
-    const Controls c = s.gate.Step(s.epoch, ControlsOf(*in), taken);
+    const Controls c = s.gate.Step(s.epoch, ControlsOf(*in, touches), taken);
     const Mode mode = menu ? Mode::Menu : Mode::World;
     const Outputs o = s.layout.Step(mode, c, GetTickCount64(), (f.flags & kUiUp) != 0, NoShotMask(take));   // (a bow's draw-only mode: shots dropped, the rest as bound)
     if (o.skillPanel && !s.panelWas) g_panelAt.store(GetTickCount64());   // a long press asks for the skill panel, once
     s.panelWas = o.skillPanel;
+    if (o.pause && !s.pauseWas) {   // a press asks for the pause menu, once
+        g_pauseAt.store(GetTickCount64());
+        static int told = 0;   // (a deliberate press, so a line each; vrcam's "Esc sent" or "NOT sent" follows it - which of the two never came is the answer to "nothing happens")
+        if (told++ < 60) Log("vrcam: direct input - the pause button was held: Esc is asked for");
+    }
+    s.pauseWas = o.pause;
+    if (const uint8_t edge = (uint8_t)(o.quiver & ~s.quiverWas)) {   // a button bound to the javelin quiver's step: once per press
+        g_quiverDir.store(edge & 1 ? +1 : -1);
+        g_quiverAt.store(GetTickCount64());
+    }
+    s.quiverWas = o.quiver;
 
     D2RVR_Shared* sh = &g_ring[g_ringNext++ % kRing];
     s.sharedCounter++;

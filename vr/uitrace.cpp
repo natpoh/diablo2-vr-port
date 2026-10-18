@@ -642,32 +642,48 @@ void OnPresent(command_queue* queue, swapchain* sc, const rect*, const rect*, ui
 
 }  // namespace
 
-void Register() {
-    reshade::register_event<reshade::addon_event::begin_render_pass>(&d2rvr::D3D12Only<&OnBeginRenderPass>::Call);
-    reshade::register_event<reshade::addon_event::end_render_pass>(&d2rvr::D3D12Only<&OnEndRenderPass>::Call);
-    reshade::register_event<reshade::addon_event::bind_render_targets_and_depth_stencil>(&d2rvr::D3D12Only<&OnBindRenderTargets>::Call);
-    reshade::register_event<reshade::addon_event::clear_render_target_view>(&d2rvr::D3D12Only<&OnClear>::Call);
-    reshade::register_event<reshade::addon_event::draw>(&d2rvr::D3D12Only<&OnDraw>::Call);
-    reshade::register_event<reshade::addon_event::draw_indexed>(&d2rvr::D3D12Only<&OnDrawIndexed>::Call);
-    reshade::register_event<reshade::addon_event::dispatch>(&d2rvr::D3D12Only<&OnDispatch>::Call);
-    reshade::register_event<reshade::addon_event::draw_or_dispatch_indirect>(&d2rvr::D3D12Only<&OnIndirect>::Call);
-    reshade::register_event<reshade::addon_event::copy_resource>(&d2rvr::D3D12Only<&OnCopy>::Call);
-    reshade::register_event<reshade::addon_event::copy_texture_region>(&d2rvr::D3D12Only<&OnCopyRegion>::Call);
-    reshade::register_event<reshade::addon_event::resolve_texture_region>(&d2rvr::D3D12Only<&OnResolve>::Call);
-    reshade::register_event<reshade::addon_event::present>(&d2rvr::D3D12Only<&OnPresent>::Call);
-    reshade::register_event<reshade::addon_event::bind_pipeline>(&d2rvr::D3D12Only<&OnBindPipeline>::Call);
+// Every event registered here makes ReShade call it at each such call of the game's - thousands a frame for the draws, the
+// pipeline and scissor binds, the push constants - even when the handler returns at once; and with a push_descriptors handler
+// ReShade looks up the buffer of every root constant buffer the game binds under its resource lock (2026-10-18, an outside
+// profile of mono at ~155 fps: 5.5% of the game's draw thread in that lock alone). So only what is wanted is registered, at
+// the plugin's start: the pipelines and layouts always (once each, at creation - the b10 search and the shader hashes);
+// the per-call ones only for the Ctrl+F10 trace ([debug] ui_trace), the draws and pipeline binds also for
+// [render] skip_shaders / [debug] skip_pipeline, and push_descriptors also for depth_fix when vrcam's own root CBV hook
+// (camfix, with the replay's hooks) is not there to fix the depth range before the binding.
+bool g_traceOn = false;
+void Register(bool trace, bool skip, bool depthViaReShade) {
+    g_traceOn = trace;
     reshade::register_event<reshade::addon_event::init_pipeline>(&d2rvr::D3D12Only<&OnInitPipeline>::Call);
     reshade::register_event<reshade::addon_event::destroy_pipeline>(&d2rvr::D3D12Only<&OnDestroyPipeline>::Call);
-    reshade::register_event<reshade::addon_event::bind_scissor_rects>(&d2rvr::D3D12Only<&OnScissor>::Call);
-    reshade::register_event<reshade::addon_event::push_constants>(&d2rvr::D3D12Only<&OnPushConstants>::Call);
-    reshade::register_event<reshade::addon_event::push_descriptors>(&d2rvr::D3D12Only<&OnPushDescriptors>::Call);
     reshade::register_event<reshade::addon_event::init_pipeline_layout>(&d2rvr::D3D12Only<&OnInitPipelineLayout>::Call);
     reshade::register_event<reshade::addon_event::destroy_pipeline_layout>(&d2rvr::D3D12Only<&OnDestroyPipelineLayout>::Call);
-    reshade::register_event<reshade::addon_event::execute_secondary_command_list>(&d2rvr::D3D12Only<&OnExecuteSecondary>::Call);
+    if (trace) {
+        reshade::register_event<reshade::addon_event::begin_render_pass>(&d2rvr::D3D12Only<&OnBeginRenderPass>::Call);
+        reshade::register_event<reshade::addon_event::end_render_pass>(&d2rvr::D3D12Only<&OnEndRenderPass>::Call);
+        reshade::register_event<reshade::addon_event::bind_render_targets_and_depth_stencil>(&d2rvr::D3D12Only<&OnBindRenderTargets>::Call);
+        reshade::register_event<reshade::addon_event::clear_render_target_view>(&d2rvr::D3D12Only<&OnClear>::Call);
+        reshade::register_event<reshade::addon_event::dispatch>(&d2rvr::D3D12Only<&OnDispatch>::Call);
+        reshade::register_event<reshade::addon_event::draw_or_dispatch_indirect>(&d2rvr::D3D12Only<&OnIndirect>::Call);
+        reshade::register_event<reshade::addon_event::copy_resource>(&d2rvr::D3D12Only<&OnCopy>::Call);
+        reshade::register_event<reshade::addon_event::copy_texture_region>(&d2rvr::D3D12Only<&OnCopyRegion>::Call);
+        reshade::register_event<reshade::addon_event::resolve_texture_region>(&d2rvr::D3D12Only<&OnResolve>::Call);
+        reshade::register_event<reshade::addon_event::present>(&d2rvr::D3D12Only<&OnPresent>::Call);
+        reshade::register_event<reshade::addon_event::bind_scissor_rects>(&d2rvr::D3D12Only<&OnScissor>::Call);
+        reshade::register_event<reshade::addon_event::push_constants>(&d2rvr::D3D12Only<&OnPushConstants>::Call);
+        reshade::register_event<reshade::addon_event::execute_secondary_command_list>(&d2rvr::D3D12Only<&OnExecuteSecondary>::Call);
+    }
+    if (trace || skip) {
+        reshade::register_event<reshade::addon_event::draw>(&d2rvr::D3D12Only<&OnDraw>::Call);
+        reshade::register_event<reshade::addon_event::draw_indexed>(&d2rvr::D3D12Only<&OnDrawIndexed>::Call);
+        reshade::register_event<reshade::addon_event::bind_pipeline>(&d2rvr::D3D12Only<&OnBindPipeline>::Call);
+    }
+    if (trace || depthViaReShade)
+        reshade::register_event<reshade::addon_event::push_descriptors>(&d2rvr::D3D12Only<&OnPushDescriptors>::Call);
 }
 
 // Records the next whole frame into path.
 bool Arm(const std::wstring& path) {
+    if (!g_traceOn) return false;   // its events are not registered: [debug] ui_trace=1 and a restart
     int idle = 0;
     if (!g_state.compare_exchange_strong(idle, 1)) return false;
     std::lock_guard<std::mutex> g(g_lock);

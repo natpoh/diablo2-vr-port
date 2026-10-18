@@ -42,6 +42,26 @@ inline bool WantFrame(bool option, bool offered) { return option && offered; }
 inline bool IsIndex(const char* profile) { return profile && std::strstr(profile, "/valve/index_controller") != nullptr; }
 inline bool IsFrame(const char* profile) { return profile && std::strcmp(profile, kFrameProfile) == 0; }
 
+// PS VR2 on SteamVR (the headset's name ends in "playstation_vr2") runs as a Touch controller, and SteamVR's own remapping for it
+// (PlayStation VR2 App\SteamVR_Plug-In\resources\input\playstation_vr2_sense_controller_remapping.json, the layout from oculus_touch)
+// turns the Touch LEFT menu button (application_menu) into the RIGHT controller's OPTIONS button; the left controller's CREATE button
+// is mapped to nothing for a Touch game, so it never arrives (the report of 2026-10-17: "hold the left menu button" did nothing).
+// So the menu action's press from the left hand is, on this headset, the Options button in the right hand: the plugin reports it in the
+// right hand (the menu button there), where the player's hand is.
+inline bool IsPs2Headset(const char* systemName) {
+    if (!systemName) return false;
+    static const char kName[] = "playstation_vr2";
+    auto lower = [](char c) { return c >= 'A' && c <= 'Z' ? (char)(c + ('a' - 'A')) : c; };
+    for (const char* s = systemName; *s; ++s) {
+        size_t i = 0;
+        while (kName[i] && s[i] && lower(s[i]) == kName[i]) ++i;
+        if (!kName[i]) return true;
+    }
+    return false;
+}
+inline bool IsTouch(const char* profile) { return profile && std::strstr(profile, "/oculus/touch_controller") != nullptr; }
+inline bool MenuIsRightOptions(const char* systemName, const char* leftProfile) { return IsPs2Headset(systemName) && IsTouch(leftProfile); }
+
 // A hand's grip, 0..1: its squeeze value, or - Index with index_grip_force ticked and the force action live - the force.
 inline float Grip(bool forceOption, const char* profile, float value, float force, bool forceActive) {
     return forceOption && forceActive && IsIndex(profile) ? force : value;

@@ -1,5 +1,5 @@
 // stroke_tuning.h - the two numbers of the swing engine (vr/stroke_contact.h) the user sets live ([gameplay] melee_min_speed and
-// melee_stroke_start_cm, Weapon Adjust > Melee: hit by touch): how fast the blade must be moving for a contact to count, and how far the
+// melee_stroke_start_cm, Settings > Strikes): how fast the blade must be moving for a contact to count, and how far the
 // blade must have moved for a movement to be a stroke at all. "The blade" is the weapon as drawn (stroke::Sample::room: its two ends in the
 // room, the faster one - the tip of a sword - and at a touch the point that touches, stroke::ContactSpeed); only a caller with no such blade
 // (the shield's thrust) has the engine fall back on the hand's travel plus its turn times a lever. Pure maths: no game calls, no globals.

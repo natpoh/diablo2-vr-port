@@ -14,6 +14,19 @@
 //   white ball   where the blade's speed REACHED [gameplay] melee_min_speed in a swing (vr/melee_marks.h): the tip's place at the moment
 //                a contact started to count; orange ball: where it fell below that again. Each stays [debug] melee_mark_ms (800)
 //   trail        the tip's path over the same time as a thin tube: cyan where a contact would not count, green where it would
+//   The strike rules (vr/strike_direction.h: toward the monster, the head, the amplitude) colour the blade, the trail and each contact. The colours, one for each way a movement or a contact
+//   is judged (a contact is "toward" when the point's velocity is within [gameplay] melee_toward_deg of the direction to the monster's axis):
+//     GREEN  (0.15, 1.0, 0.15)  counts - the blade (a glass capsule), the trail, and at a contact the ball / arrow / line below
+//     RED    (1.0, 0.15, 0.1)   not TOWARD the monster: moving away from it or across it - the wind-up, the pull-back, a graze (the user's wish; with [debug] melee_direction_red=0: BLUE (0.15, 0.3, 1.0), which
+//                               cannot be taken for the monster's red flash of a pressed blow)
+//     AMBER  (1.0, 0.72, 0.1)   a swing too small or too slow: the head has not travelled the kind's amplitude yet / the touching part is slower than the least speed / the blade entered the
+//                               monster in a movement that never became a stroke
+//     GREY   (0.7, 0.7, 0.7)    not the head: the shaft or the handle touched a weapon whose head strikes (maces, scepters)
+//   While the blade moves it is judged against the monster nearest its tip (within 3 m): green only while a contact would count now, blue while it moves not toward it, amber while the
+//   swing is not big enough yet (the trail follows; no monster near: the direction cannot be judged and the blade is green when the engine counts, as it was).
+//   AT A CONTACT (a monster touched in a stroke, whatever came of it), for [debug] melee_mark_ms: a ball on the touching point of the blade, an arrow along its velocity (18 cm), a thin line from
+//   it to the nearest point of the monster's axis - in the verdict's colour - and, for a refusal, the monster's capsule tinted in it. A touch that counted is those three in green and the
+//   monster's red / magenta flash as before; the log says the angle and the verdict (throttled).
 // The nearest three monsters of the scan are always drawn, whatever the game says of them (pale if refused); with more than fit
 // (kMaxCapsules) the farthest are left out - and the marks and the trail take their places before the farther monsters do.
 // It is a drawing only: nothing here feeds back into the detector.
@@ -49,7 +62,24 @@ static_assert(kMaxCapsules - 2 - static_cast<int>(kMaxStrikes) >= kNearestAlways
 
 // The shader's HitboxB.w: the colour.
 enum Kind : int { kBlade = 0, kMonster = 1, kStruckKey = 2, kStruckDirect = 3, kRefused = 4, kBlade2 = 5, kBladeHot = 6,
-                  kMarkReached = 7, kMarkSlowed = 8, kTrailCold = 9, kTrailHot = 10 };
+                  kMarkReached = 7, kMarkSlowed = 8, kTrailCold = 9, kTrailHot = 10 /* 11 is vr/skill_triggers.h's (violet) */ };
+
+// The strike rules' colours (the effect's kinds from 16: colour * 4 + style): the colour of the verdict, and how it is drawn - a solid ball, a see-through capsule (a blade, a monster tinted),
+// a thin tube (the trail, an arrow, a line).
+enum Colour : int { kCBlue = 0, kCAmber = 1, kCGrey = 2, kCGreen = 3, kCRed = 4 };
+enum Style : int { kBall = 0, kGlass = 1, kTube = 2 };
+constexpr int TouchKind(int colour, int style) { return 16 + 4 * colour + style; }
+inline Kind KindOfTouch(int colour, int style) { return static_cast<Kind>(TouchKind(colour, style)); }
+
+// A contact (the marks of the list above).
+constexpr size_t kTouchSlots = 4;
+constexpr float kTouchArrowM = 0.18f;        // the arrow along the point's velocity
+constexpr float kTouchRadiusM = 0.035f;      // the ball
+constexpr float kTouchArrowRadiusM = 0.014f;
+constexpr float kTouchLineRadiusM = 0.007f;
+constexpr uint64_t kTouchDedupMs = 120;      // the same verdict within this time and ...
+constexpr float kTouchDedupM = 0.06f;        // ... this far is one mark (one pass's sweeps)
+constexpr float kTargetReachM = 3.0f;        // the monster a moving blade is judged against: the nearest to its tip within this
 
 // What the server's checks said of a monster (melee_touch's Verdicted): not asked yet / refused / hostile with nothing between.
 enum class Verdict : uint8_t { Unknown, Refused, Hostile };
@@ -88,11 +118,24 @@ struct BladeIn {
     bool inStroke = false;           // the engine says a stroke is on
     float speed = 0.0f;              // the engine's speed of this pose's step, m/s: stroke::Engine::LastSpeed - the value its gate is on
     bool counting = false;           // the engine's step swept something: a contact would count right now (stroke::Engine::Counting)
+    strikedir::Look look = strikedir::Look::Cold;   // what that movement is under the strike rules (Hot / Away / Small); Cold with counting = Hot (a feeder that does not judge)
     float sweepSpeed = 0.0f;         // the speed of the last sweep the engine made, m/s ...
     uint64_t sweepMs = 0;            // ... and when (0 = none yet)
 };
+// A contact with a monster (melee_touch.cpp), for the drawing: the touching point of the blade, its velocity's direction (unit, or zero), the nearest point of the monster's axis, the colour of the
+// verdict (Colour), whether to tint the monster's capsule, and which monster.
+struct ContactMark {
+    stroke::Vec at, dir, onAxis;
+    bool haveAxis = false, tint = false;
+    int colour = kCGreen;
+    uint32_t monsterId = 0;
+    stroke::Body body;               // the monster's capsule when it was touched (the tint outlives a monster that dies)
+    bool haveBody = false;
+    uint64_t ms = 0;
+};
 struct Frame {
     uint64_t nowMs = 0;
+    int directionColour = kCRed;     // the colour of "not toward the monster": kCRed, or kCBlue ([debug] melee_direction_red=0)
     float upm = 4.0f;                // world units per metre of the frame below
     float floorY = 0.0f;             // metres: the hero's floor in that frame (the heights in the log are over it)
     float minSpeed = 0.8f;           // the speed a contact needs ([gameplay] melee_min_speed), for the log
@@ -110,13 +153,16 @@ public:
         upm_ = f.upm;
         floorY_ = f.floorY;
         markMs_ = std::min(f.markMs, kMaxMarkMs);
+        dirColour_ = f.directionColour == kCRed ? kCRed : kCBlue;
         for (int i = 0; i < 2; ++i) {
             const BladeIn& in = f.blades[i];
             Blade& b = blades_[i];
             const bool sameHand = b.have && b.side == in.side;   // the slot's blade is still the same hand's: its marks and trail go on
+            // what the movement is: a feeder that judges says (Hot / Away / Small); one that only says "counting" means Hot
+            const strikedir::Look look = in.counting && in.look == strikedir::Look::Cold ? strikedir::Look::Hot : in.counting ? in.look : strikedir::Look::Cold;
             if (in.have && markMs_) {
                 if (!sameHand) tracks_[i].Clear();
-                tracks_[i].Feed(f.nowMs, in.blade.tip, in.counting);
+                tracks_[i].Feed(f.nowMs, in.blade.tip, look);
             } else {
                 tracks_[i].Clear();
             }
@@ -126,6 +172,7 @@ public:
             b.inStroke = in.inStroke;
             b.speed = in.speed;
             b.counting = in.have && in.counting;
+            b.look = in.have ? look : strikedir::Look::Cold;
             b.sweepSpeed = in.sweepSpeed;
             b.sweepMs = in.sweepMs;
             if (in.have) b.peak.Note(in.speed);
@@ -148,6 +195,19 @@ public:
         strikes_[nextStrike_++ % strikes_.size()] = s;
     }
 
+    // A contact with a monster (melee_touch.cpp): where the touching point of the blade was, its way, the nearest point of the monster's axis, and the verdict in colour (ContactMark). The same verdict
+    // again within kTouchDedupMs and kTouchDedupM is one mark. The monster's capsule is copied from the scene now (the tint outlives a monster that dies).
+    void Touched(ContactMark m) {
+        if (!stroke::Finite(m.at)) return;
+        if (!stroke::Finite(m.dir)) m.dir = {};
+        if (!stroke::Finite(m.onAxis)) m.haveAxis = false;
+        for (const ContactMark& t : touches_)
+            if (t.ms && t.colour == m.colour && t.monsterId == m.monsterId && m.ms >= t.ms && m.ms - t.ms < kTouchDedupMs && stroke::Length(t.at - m.at) < kTouchDedupM) return;
+        for (size_t i = 0; i < count_ && !m.haveBody; ++i)
+            if (monsters_[i].id == m.monsterId) { m.body = monsters_[i].body; m.haveBody = true; }
+        touches_[nextTouch_++ % touches_.size()] = m;
+    }
+
     // The capsules to draw at nowMs: the blades first, ordinary monsters nearest the hero first, struck monsters last (drawn on top).
     int Capsules(uint64_t nowMs, Capsule* out, int max) const {
         const bool anyBlade = blades_[0].have || blades_[1].have;
@@ -156,8 +216,12 @@ public:
         int n = 0;
         const int cap = std::min(max, kMaxCapsules);
         for (int i = 0; i < 2; ++i)
-            if (blades_[i].have && n < cap)   // green while a contact would count (the engine's step swept something), else cyan / teal
-                out[n++] = {blades_[i].blade.base, blades_[i].blade.tip, blades_[i].blade.radius, blades_[i].counting ? kBladeHot : i == 0 ? kBlade : kBlade2};
+            if (blades_[i].have && n < cap) {   // green while a contact would count, blue (not toward the monster) / amber (a swing too small yet) while the engine counts the movement but the rules do not, else cyan / teal
+                const Kind k = !blades_[i].counting ? (i == 0 ? kBlade : kBlade2)
+                             : blades_[i].look == strikedir::Look::Away ? KindOfTouch(dirColour_, kGlass)
+                             : blades_[i].look == strikedir::Look::Small ? KindOfTouch(kCAmber, kGlass) : kBladeHot;
+                out[n++] = {blades_[i].blade.base, blades_[i].blade.tip, blades_[i].blade.radius, k};
+            }
         // the monsters in a struck window are drawn last, in their flash's colour
         int struck = 0;
         Capsule hit[kMaxStrikes];
@@ -183,8 +247,29 @@ public:
         int nMarks = 0;
         Capsule trail[2 * kTrailSegments];
         int nTrail = 0;
+        Capsule touch[4 * kTouchSlots];   // the contacts: a ball, an arrow, a line to the axis and (a refusal) the monster's tint each, newest first
+        int nTouch = 0;
         if (markMs_) {
-            const int room = std::max(0, cap - n - struck - static_cast<int>(std::min<size_t>(m, kNearestAlways)));
+            const int roomAll = std::max(0, cap - n - struck - static_cast<int>(std::min<size_t>(m, kNearestAlways)));
+            for (size_t k = 0; k < touches_.size(); ++k) {
+                const ContactMark& t = touches_[(nextTouch_ + touches_.size() - 1 - k) % touches_.size()];
+                if (!t.ms || nowMs < t.ms || nowMs - t.ms >= markMs_) continue;
+                const stroke::Vec up{0.0f, kMarkHalfM, 0.0f}, d = stroke::Normalized(t.dir);
+                const bool arrow = stroke::Length(d) > 0.5f;
+                stroke::Body body = t.body;
+                bool haveBody = t.haveBody;
+                for (size_t i = 0; i < count_; ++i) if (monsters_[i].id == t.monsterId) { body = monsters_[i].body; haveBody = true; break; }   // alive: where it is now
+                const bool tint = t.tint && haveBody;
+                const int need = 1 + (arrow ? 1 : 0) + (t.haveAxis ? 1 : 0) + (tint ? 1 : 0);
+                if (nTouch + need > roomAll) break;   // (the newest first: the older ones go)
+                const int colour = t.colour == kCBlue || t.colour == kCRed ? dirColour_ : t.colour;   // "not toward" is the debug's colour: blue, or red when asked
+                // pushed ball, arrow, line, tint - and handed out in reverse below: oldest contact first, and within one the tint under the line under the arrow under the ball (drawn last: on top)
+                touch[nTouch++] = {t.at - up, t.at + up, kTouchRadiusM, KindOfTouch(colour, kBall)};
+                if (arrow) touch[nTouch++] = {t.at, t.at + d * kTouchArrowM, kTouchArrowRadiusM, KindOfTouch(colour, kTube)};
+                if (t.haveAxis) touch[nTouch++] = {t.at, t.onAxis, kTouchLineRadiusM, KindOfTouch(colour, kTube)};
+                if (tint) touch[nTouch++] = {body.bottom, body.top, body.radius * 1.03f, KindOfTouch(colour, kGlass)};
+            }
+            const int room = roomAll - nTouch;   // what is left for the speed marks and the trail
             for (int i = 0; i < 2; ++i) {
                 if (!blades_[i].have) continue;
                 Mark mk[kMarkSlots];
@@ -200,19 +285,24 @@ public:
                 if (!blades_[i].have) continue;
                 TrailSegment seg[kTrailSegments];
                 const size_t k = tracks_[i].Trail(nowMs, markMs_, seg, static_cast<size_t>(each));
-                for (size_t j = 0; j < k; ++j) trail[nTrail++] = {seg[j].a, seg[j].b, kTrailRadiusM, seg[j].hot ? kTrailHot : kTrailCold};
+                for (size_t j = 0; j < k; ++j) {
+                    const Kind kd = seg[j].look == strikedir::Look::Hot ? kTrailHot : seg[j].look == strikedir::Look::Away ? KindOfTouch(dirColour_, kTube)
+                                  : seg[j].look == strikedir::Look::Small ? KindOfTouch(kCAmber, kTube) : kTrailCold;
+                    trail[nTrail++] = {seg[j].a, seg[j].b, kTrailRadiusM, kd};
+                }
             }
         }
         // Room for the struck ones and the marks, then the nearest monsters first: with two blades and four strikes there are still
         // kNearestAlways places (static_assert above), so the nearest monsters are never the ones left out.
-        const int reserved = struck + nMarks + nTrail;
+        const int reserved = struck + nMarks + nTrail + nTouch;
         for (size_t k = 0; k < m && n < cap - reserved; ++k) {
             const Monster& mo = monsters_[order[k]];
             out[n++] = {mo.body.bottom, mo.body.top, mo.body.radius, mo.verdict == Verdict::Refused ? kRefused : kMonster};
         }
         for (int k = 0; k < struck && n < cap; ++k) out[n++] = hit[k];
         for (int k = 0; k < nTrail && n < cap; ++k) out[n++] = trail[k];
-        for (int k = 0; k < nMarks && n < cap; ++k) out[n++] = marks[k];   // on top
+        for (int k = 0; k < nMarks && n < cap; ++k) out[n++] = marks[k];
+        for (int k = nTouch - 1; k >= 0 && n < cap; --k) out[n++] = touch[k];   // the contacts on top of everything (each one's ball last of its capsules, on top of its tint)
         return n;
     }
 
@@ -273,7 +363,9 @@ public:
             // the blade's speed is the engine's own, the one its gate is on: COUNTS = a contact would count now (a stroke on, at or above the
             // speed a contact needs), below = a stroke on but too slow, no stroke = the movement has not become a stroke
             w += std::snprintf(buf + w, size - static_cast<size_t>(w), " %c %.2f m r %.3f: %.1f m/s (peak %.1f, needs %.1f) %s,", b.side ? 'L' : 'R', stroke::Length(b.blade.tip - b.blade.base),
-                               b.blade.radius, b.speed, peak, minSpeed_, b.counting ? "COUNTS" : b.inStroke ? "below" : "no stroke");
+                               b.blade.radius, b.speed, peak, minSpeed_,
+                               b.counting ? (b.look == strikedir::Look::Away ? "COUNTS but not toward a monster" : b.look == strikedir::Look::Small ? "COUNTS but the swing is small" : "COUNTS")
+                                          : b.inStroke ? "below" : "no stroke");
             if (w > 0 && static_cast<size_t>(w) < size) {
                 if (ago >= 0.0 && ago < 60.0) w += std::snprintf(buf + w, size - static_cast<size_t>(w), " sweep %.1f m/s %.1f s ago;", b.sweepSpeed, ago);
                 else w += std::snprintf(buf + w, size - static_cast<size_t>(w), " no sweep yet;");
@@ -302,7 +394,7 @@ public:
 
 private:
     struct Strike { uint32_t id = 0; Kind kind = kStruckKey; uint64_t at = 0; stroke::Body body; bool haveBody = false; };
-    struct Blade { bool have = false; int side = 0; stroke::Blade blade; bool inStroke = false; bool counting = false; float speed = 0.0f; float sweepSpeed = 0.0f; uint64_t sweepMs = 0; PeakTracker peak; };
+    struct Blade { bool have = false; int side = 0; stroke::Blade blade; bool inStroke = false; bool counting = false; strikedir::Look look = strikedir::Look::Cold; float speed = 0.0f; float sweepSpeed = 0.0f; uint64_t sweepMs = 0; PeakTracker peak; };
     static bool Active(const Strike& t, uint64_t nowMs) { return t.at && nowMs >= t.at && nowMs - t.at < kStruckMs; }
     uint64_t at_ = 0;
     float upm_ = 4.0f, floorY_ = 0.0f, minSpeed_ = 0.8f;
@@ -313,6 +405,9 @@ private:
     size_t count_ = 0;
     std::array<Strike, kMaxStrikes> strikes_{};
     size_t nextStrike_ = 0;
+    std::array<ContactMark, kTouchSlots> touches_{};
+    size_t nextTouch_ = 0;
+    int dirColour_ = kCBlue;
 };
 
 // ---- the frame conversion -----------------------------------------------------------------------------------------------------
@@ -343,6 +438,12 @@ void SetMarkMs(uint32_t ms);
 void Update(const Frame& f);
 // melee_touch's timer, when it accepted a touch on monster `id`: kStruckKey (the game's attack key) or kStruckDirect.
 void Struck(uint32_t id, Kind how, uint64_t nowMs);
+// melee_touch's timer, at a CONTACT with a monster, whatever came of it: the touching point, its way, the nearest point of the monster's axis, the verdict's colour (ContactMark). Drawn for
+// [debug] melee_mark_ms; nothing when the module is off.
+void Touched(const ContactMark& mark);
+// [debug] melee_direction_red, from the ini (every read; default on): "not toward the monster" is drawn in red; off, in blue. DirectionColour: what the feeder puts in Frame::directionColour.
+void SetDirectionRed(bool on);
+int DirectionColour();
 // The render thread, for the effect: this frame's capsules as HitboxA / HitboxB (Pack), 0 when there is nothing fresh to draw.
 // maxOut: at most that many (the shader's 32 are shared with vr/skill_triggers.h's capsules: that module takes its share first).
 int Take(uint64_t nowMs, const float eyeWorld[3], float (*a)[4], float (*b)[4], int maxOut = kMaxCapsules);

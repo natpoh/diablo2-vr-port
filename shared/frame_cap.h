@@ -39,8 +39,11 @@ inline std::string With(const std::string& text, int value, bool* ok = nullptr, 
 //  - native OpenXR: none (0) - the headset paces the game itself (xrWaitFrame), a cap of the game's own could only make it miss frames;
 //  - real stereo by alternate frames ("eyes by turns", afr on and pair_per_tick off): one eye a game frame = TWICE the rate;
 //  - everything else - "one pass, two pictures" (both eyes from one game frame, the right one replayed: ONE present a pair), mono, the 3D
-//    from the depth: the rate itself, a game frame a headset frame (vrcam's pacer holds the presents to it as well).
-enum class Why { Native, EyesByTurns, OnePass, Mono };
+//    from the depth: the rate itself, a game frame a headset frame (vrcam's pacer holds the presents to it as well);
+//  - FlatVR with [flatvr] frame_sync: FlatVR's own frames start each game frame (vrcam waits for its next head, as native waits in
+//    xrWaitFrame), so the game's cap must not be a third clock beside them: TWICE the rate, only a stop for a game running away (the
+//    menus, FlatVR gone - vrcam's pacer takes over then).
+enum class Why { Native, EyesByTurns, OnePass, Mono, FlatVrFrames };
 struct VrCap {
     int value = 0;      // what is written (0 = none)
     int factor = 1;     // times the headset's rate (0 under native)
@@ -50,10 +53,11 @@ inline int HzOfRate(int rateIndex) {   // [stereo] headset_rate 0..4
     static const int kHz[5] = {72, 75, 80, 90, 120};
     return kHz[rateIndex < 0 ? 0 : rateIndex > 4 ? 4 : rateIndex];
 }
-inline VrCap VrCapFor(int hz, bool afr, bool pairPerTick, bool native) {
+inline VrCap VrCapFor(int hz, bool afr, bool pairPerTick, bool native, bool flatVrSync = false) {
     VrCap c;
     if (native) { c.value = 0; c.factor = 0; c.why = Why::Native; return c; }
     if (afr && !pairPerTick) { c.value = 2 * hz; c.factor = 2; c.why = Why::EyesByTurns; return c; }
+    if (flatVrSync) { c.value = 2 * hz; c.factor = 2; c.why = Why::FlatVrFrames; return c; }
     c.value = hz;
     c.factor = 1;
     c.why = afr ? Why::OnePass : Why::Mono;
@@ -64,6 +68,7 @@ inline const char* Reason(Why w) {
     case Why::Native: return "native OpenXR: the headset paces the game itself, no cap of the game's own";
     case Why::EyesByTurns: return "eyes by turns draw one eye a game frame: twice the rate";
     case Why::OnePass: return "both eyes from one game frame (one pass, two pictures): a game frame a headset frame";
+    case Why::FlatVrFrames: return "FlatVR's own frames start each game frame ([flatvr] frame_sync): the cap only stops a game running away";
     default: return "one picture a frame (mono, the 3D from the depth): a game frame a headset frame";
     }
 }

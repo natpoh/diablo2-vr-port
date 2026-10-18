@@ -24,8 +24,19 @@ void SetLogger(void (*log)(const char*));
 void Configure(bool on, float scale);
 bool Enabled();
 
+// The motor the controllers have (haptics_pattern.h Motor): xr.cpp says which headset the runtime named (once per session) and what the ini's
+// [openxr] haptics_motor chose (0 by the headset, 1 plain, 2 weak; live). The callers whose gentle pulses a weak motor does not show (the low-life
+// beat) lift them through haptics::ForMotor(CurrentMotor(), ...); every other pulse is what it was.
+void SetHeadset(const char* systemName);
+void SetMotorChoice(int choice);
+Motor CurrentMotor();
+
 void Pulse(int hand, float amplitude, int durationMs);
 void Play(Event e, int hand = -1);
+// The hand a landed blow buzzes: kLeft / kRight, -1 = the pattern's own (the right hand). vrcam registers it - the hand that holds the weapon (a weapon drawn into the left
+// hand buzzes the left), the shield's arm for a bash. Read on the game's server thread: atomics only. Unregistered: the pattern's own.
+using HitHandFn = int (*)();
+void SetHitHandSource(HitHandFn fn);
 // The string hand draws, the other holds the bow. Call every frame the bow is drawn with the
 // draw 0..1 (0 when not drawn) from one thread; ticks come by themselves. BowNock / BowRelease are
 // Play(...) and re-arm the count.

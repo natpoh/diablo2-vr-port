@@ -6,6 +6,7 @@
 #include <D2RLPlugin/api.h>
 
 #include "bow_touch.h"
+#include "direct_input.h"
 
 namespace bowdrawwire {
 
@@ -78,11 +79,44 @@ bool HoldsGrip(int hand);
 // A recentre (F11, BodyWalk's, a view change): a draw under way ends with no shot.
 void NoteRecenter();
 
+// What the draw knows each frame, for what rides on it (the quiver, vr/bow_quiver_wire.cpp). The hook is called on the draw thread, in the draw's own frame listener, after
+// the detector stepped - every frame the draw listens, also with `active` false (the box is unticked, or any view but F4: the receiver lets go of what it holds).
+struct DrawInfo {
+    bool active = false;      // the bow draw is on and this is F4
+    bool allowed = false;     // the headset has the focus, no menu or panel is up, a bow is in hand
+    bool drawing = false;     // the string is taken
+    int bowHand = 0;          // direct_input's hand that holds the bow (0 left, 1 right)
+    int button = 0;           // [hands] bow_draw_button: what the release presses (0 the attack, 1..4 B X Y RB, 5..8 with LT)
+    bool haveArrow = false;   // `rest` and `stringHand` are placed (while the string is taken and the head is tracked)
+    bowtouch::Vec rest;       // where the arrow rests on the bow hand (the model's rest point when read, else the hand's own), the hands' frame
+    bowtouch::Vec stringHand; // the string hand, the same frame
+};
+using DrawHook = void (*)(const DrawInfo& s, const directinput::Frame& f);
+void SetDrawHook(DrawHook fn);
+
+// Holds the draw's start back: asked every frame, on the draw thread, before the detector steps - true while the free hand is at something that is not the string (an orb on the bow:
+// vr/bow_quiver_wire.cpp). The string hand's trigger and grip then read as let go to the detector, so the string is not taken there; a draw already taken is not touched.
+using StartBlockFn = bool (*)();
+void SetStartBlock(StartBlockFn fn);
+
+// Called on the draw thread at every release that shoots, just BEFORE the game's attack button is pressed for it (vr/bow_quiver_wire.cpp: [bow] quiver_plain_no_mana decides there whether
+// this release is the plain attack).
+using ReleaseFn = void (*)();
+void SetReleaseHook(ReleaseFn fn);
+
 // [debug] bow_vectors: the last frame's vectors in the hands' frame (metres from the head, the head's turn frame: what
 // D2RVR_Shared's hands are in), for the effect that draws them in the headset. False when the switch is off or the frames
 // stopped (a quarter of a second).
 bool DebugVectors(bowtouch::VectorSet* out);
 // The box is ticked and [debug] bow_vectors is on: the effect that draws them is wanted.
 bool DebugWanted();
+
+// [debug] bow_aim_ray: where the arrow goes, as a long ray (the effect draws it: green when the line goes through the bow model's arrow rest point, orange when it is the plain hand-set line).
+// SetAimRay is the switch (live); AimRayWanted is true when it is on and the draw is on in F4; AimRayLine gives the last frame's line in the hands' frame (metres from the head, y up): the
+// arrow's release point and the unit direction the shot goes along (the detector's aim), while the string is drawn and for the 0.4 s after a shot; false otherwise or a quarter of a second
+// after the frames stop. The effect clips it at the floor (bowtouch::MakeAimRay).
+void SetAimRay(bool on);
+bool AimRayWanted();
+bool AimRayLine(bowtouch::Vec* start, bowtouch::Vec* dir, bool* fromModel);
 
 }  // namespace bowdrawwire

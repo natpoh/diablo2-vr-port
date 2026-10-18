@@ -18,7 +18,7 @@
 // pages' Close button. Calibrate body closes it for the measurement and brings it back on the Body page when that is over.
 //
 // The window flips like pages (vr/wheel_flip.h): a flick of a thumbstick left / right, or a tap of the left / right grip, moves one place along
-// SKILLS | SETTINGS: View | Options | Video | Body (stopping at the ends), and so does a click on the arrow at the window's edge; dots at its foot
+// SKILLS | SETTINGS: View | Options | Video | Body | Belt | Left | Right (stopping at the ends), and so does a click on the arrow at the window's edge; dots at its foot
 // show where it stands. With the tab strip the window takes both thumbsticks while it is up (the hero neither walks nor turns with them) and after it
 // closes until each is back in the middle.
 //
@@ -58,6 +58,8 @@ struct Settings {
     int openMode = 0;           // [openxr] skill_wheel_open: 0 the chord (left grip + click), 1 the long press of the right stick click
     float holdS = 0.50f;        // how long a long press is ([direct] hold_ms: the same time that opened it closes it)
     bool settingsTab = false;   // [openxr] headset_settings: the tiles' window has the Settings tab (the wheel's look has none)
+    bool categories = true;     // [openxr] skill_categories: the editor has the category strip (All, the class's trees, General / Items) when the cache knows the trees
+    bool runWalk = false;       // [openxr] skill_run_walk (off by default): a RUN / WALK control (a tile in the tiles' look, a button on the wheel): the game's own run / walk switch
 };
 
 // The panel's size in metres for these settings: the wheel is square, the tiles' window is wide.
@@ -95,6 +97,7 @@ struct Step {
     uint16_t buttons = 0;
     uint8_t lt = 0;
     Feedback feedback = Feedback::None;
+    bool runWalk = false;                 // RUN / WALK was clicked: press the game's run / walk switch (kRunWalkCommand) once
     bool request = false;                 // a request for the game's UI thread
     Request req;
     Layer layer;
@@ -282,6 +285,7 @@ public:
                 if (settingsAct.what == hset::Do::Close || settingsAct.what == hset::Do::Calibrate || settingsAct.what == hset::Do::View) closeAsked = true;
                 if (settingsAct.what == hset::Do::Calibrate) resume_ = true;
             }
+            if (settingsAct.what == hset::Do::Nothing) settingsAct = settings_.Live(f.time * 1000.0);   // the belt writes itself a moment after the last change
         }
 
         // a flick or a tap (the window up on the top level, the tab strip there): one place along the pages
@@ -315,9 +319,12 @@ public:
         in.reply = reply;
         in.style = cfg_.style;
         in.hints = &cfg_.hints;
+        in.categories = cfg_.categories;
+        in.runWalk = cfg_.runWalk;
         const Out mo = model_.Step(in);
         out.feedback = mo.feedback;
         out.request = mo.request;
+        out.runWalk = mo.runWalk;
         out.req = mo.req;
         const bool open = model_.Open();
         if (tabsOn) {

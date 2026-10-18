@@ -9,6 +9,7 @@
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
+#include <map>
 #include <mutex>
 #include <vector>
 
@@ -24,6 +25,42 @@ std::wstring Text(float v) {
     swprintf_s(b, L"%.6g", (double)v);
     return b;
 }
+
+std::string Narrow(const std::wstring& w) {   // an ini line's text: ASCII (what the table's words are)
+    std::string s;
+    for (wchar_t c : w) s.push_back(c < 128 ? (char)c : '?');
+    return s;
+}
+std::wstring Widen(const std::string& s) { return std::wstring(s.begin(), s.end()); }
+
+// The [direct] keys for vr/direct_remap.h's reading and choosing: a key asked for is read once from the file (its text as the file has it, ""
+// and absent told apart by `present`), so the whole table the plugin builds from the ini costs one read a key.
+struct DirectLines {
+    explicit DirectLines(const wchar_t* path) : path_(path) {}
+    directinput::layout::IniGet Getter() {
+        return [this](const char* key, std::string* text) {
+            std::string k = key;
+            for (char& c : k) c = (char)std::tolower((unsigned char)c);
+            auto it = seen_.find(k);
+            if (it == seen_.end()) {
+                const ini::Text t = ini::Read(path_, L"direct", Widen(k).c_str());
+                it = seen_.emplace(k, std::make_pair(t.present, Narrow(t.text))).first;
+            }
+            if (!it->second.first) return false;
+            *text = it->second.second;
+            return true;
+        };
+    }
+    // The line of a key as the file has it ("" if it is not there).
+    std::string Raw(const char* key) {
+        std::string t;
+        Getter()(key, &t);
+        return t;
+    }
+private:
+    const wchar_t* path_;
+    std::map<std::string, std::pair<bool, std::string>> seen_;
+};
 
 float Parse(const ini::Text& t, float fallback) {
     if (!t.present) return fallback;
@@ -75,7 +112,7 @@ DWORD WINAPI Run(void*) {
             std::string why;
             const Result r = SaveRequest(path.c_str(), req, &why);
             Say("vrcam: openxr - headset settings: Apply %s (%u key%s)%s%s", r == Result::Saved ? "saved" : r == Result::Conflict ? "refused, the ini changed elsewhere" : "FAILED",
-                (unsigned)__popcnt(req.changed), __popcnt(req.changed) == 1 ? "" : "s", why.empty() || r == Result::Saved ? "" : ": ", r == Result::Saved ? "" : why.c_str());
+                (unsigned)__popcnt64(req.changed), __popcnt64(req.changed) == 1 ? "" : "s", why.empty() || r == Result::Saved ? "" : ": ", r == Result::Saved ? "" : why.c_str());
             Snapshot s = LoadSnapshot(path.c_str());
             const ini::Stamp st = ini::StampOf(path.c_str());
             s.sequence = req.sequence;
@@ -111,8 +148,18 @@ DWORD WINAPI Run(void*) {
 Snapshot LoadSnapshot(const wchar_t* path) {
     Snapshot s;
     s.ready = ini::StampOf(path).exists;
+    DirectLines lines(path);
+    DirectLines* direct = &lines;
     for (int i = 0; i < kCount; ++i) {
         const Def& d = kDefs[i];
+        if (IsBindKey(i)) {   // a [direct] line: the pick it is by the list's reading (the plugin's default when the line is not there), and its text as the file has it
+            if (s.ready) {
+                const std::string key = keys::KeyOf(BindSlot(i));
+                s.bind[BindSlot(i)] = direct->Raw(key.c_str());
+                s.file[i] = s.values[i] = (float)keys::CurrentPick(direct->Getter(), BindSlot(i));
+            }
+            continue;
+        }
         const float v = s.ready ? Parse(ini::Read(path, d.section, d.key), d.def) : d.def;
         s.file[i] = v;
         s.values[i] = Normalize(i, v);
@@ -130,13 +177,23 @@ Snapshot LoadSnapshot(const wchar_t* path) {
 
 Result SaveRequest(const wchar_t* path, const Request& r, std::string* why) {
     std::vector<ini::Change> changes;
-    uint32_t write = r.changed;
+    DirectLines direct(path);   // the file as it is now: the list's standard (pause_button, left_stick_map) is what the file says at the write
+    Mask write = r.changed;
     // A new snap angle in an ini that says snap=0 for smooth turning (no `smooth` key) must not turn it into a snap profile:
     // `smooth` is written with it, as the mode the panel showed. (Switching the mode alone writes `smooth` alone.)
-    if ((write & (1u << kKeySnap)) && !(write & (1u << kKeySmooth))) write |= 1u << kKeySmooth;
+    if ((write & Bit(kKeySnap)) && !(write & Bit(kKeySmooth))) write |= Bit(kKeySmooth);
     for (int i = 0; i < kCount; ++i)
-        if (write & (1u << i)) {
+        if (write & Bit(i)) {
             const Def& d = kDefs[i];
+            if (IsBindKey(i)) {   // a [direct] line: the list's own change (its text, or the key out when the pick is what the plugin does anyway), judged against the line as the panel read it
+                directinput::remap::Change ch;
+                if (!keys::Choose(direct.Getter(), BindSlot(i), (int)std::lround(r.values[i]), &ch)) continue;   // Custom is not a thing to write
+                const std::wstring was = Widen(r.bind[BindSlot(i)]);
+                ini::Change c{d.section, Widen(ch.key), was, was, Widen(ch.text)};
+                c.erase = ch.erase;
+                changes.push_back(c);
+                continue;
+            }
             // A key that is missing in the file means what the panel saw when it read it (the default, or for the turn keys what the
             // legacy rule made of it), so a key that is still missing is no conflict.
             changes.push_back({d.section, d.key, Text(r.base[i]), Text(r.base[i]), Text(r.values[i])});
@@ -190,9 +247,9 @@ Snapshot Read() {
 }
 
 bool Submit(const Request& r) {
-    if (!r.sequence || !r.changed || (kCount < 32 && (r.changed >> kCount))) return false;
+    if (!r.sequence || !r.changed || (kCount < 64 && (r.changed >> kCount))) return false;
     for (int i = 0; i < kCount; ++i)
-        if (r.changed & (1u << i))
+        if (r.changed & Bit(i))
             if (!std::isfinite(r.base[i]) || !std::isfinite(r.values[i]) || Normalize(i, r.values[i]) != r.values[i]) return false;
     std::lock_guard<std::mutex> lock(g.m);
     if (g.busy || !g.running) return false;

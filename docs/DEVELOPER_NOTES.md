@@ -236,7 +236,36 @@ game must use the window and resolution the player set in the game, and the mod 
   What VR writes (`framecap::VrCapFor`, one rule for the settings' write and status line and vrcam's log): none (0) under native OpenXR,
   twice the headset's rate for eyes by turns (afr on, pair_per_tick off: one eye a game frame), the rate itself for one pass two
   pictures (the right eye is replayed: ONE present a pair - `pace::Tick` counts it so, the log's `presents/s` equals `pairs/s`) and for mono.
-- D2R VR Settings reads its Settings.json from `D2RVR_GAME_SETTINGS_JSON` when that is set (tests; never the player's file).
+- **The interface size starts at 80 in VR** (`shared/safe_screen.h`, `safe_screen_test`): the game's `Safe Screen Percent` is 100 by default and at
+  100 the interface is cut off at the edges in the headset (a player lowered it to 70 by hand). VR (platform 1, native OpenXR and FlatVR alike) sets
+  80 when the file says 100 - any other number is the player's own and stays, an 80 of his included - with `[hud] safe_screen_vr=1` (the box "VR: start
+  the interface at 80 %", on by default). The 100 he had is kept in `[hud] safe_screen_before`, what VR wrote in `safe_screen_written`; flat mode (and
+  the box off) puts the kept number back, and forgets that VR wrote anything once nothing of it can come back (a game running at the switch writes its
+  80 back at its quit - the plugin's start deals with it), so an 80 the player sets in flat later is his. Who calls it: vrcam at its start
+  (`ReconcileSafeScreen`, before the game reads the file; `hud::SetInterfaceScale` is read again after a write: the toolbar's cut and the hand's
+  globes follow the file's number - `safescreen::Scale`) and D2R VR Settings on a switch of the platform, START and the box (`ApplySafeScreenForPlatform`) -
+  only with the game CLOSED (the game reads the file at its start and writes its own copy back at its quit, and the toolbar's cut would follow a
+  number a running game does not have). A size picked on the slider is the player's (VR's mark is forgotten; a 100 comes back to 80 at the next VR
+  start unless the box is off). No key in the file (a new player's first run: the game writes Settings.json when it quits) = nothing written, the
+  log says so; the installer does not touch Settings.json. `hud_rects_test` and `hand_orbs_test` pin the 80 % layouts (toolbar rows 1397..1735 at
+  1920, 1490..1851 at 2048; the globes).
+  **Why 80 and not less / more** - the numbers of the game's own panel layouts (`data\global\ui\Layouts\_profileHD.json`, `Controller\_profileHD.json`,
+  the panels' layouts; read from its archives with `tools\casc_extract`, only the numbers are here): units of a 2160-high screen, `k = H / 2160 * s` pixels
+  a unit (measured on a real dump, see `hud_globes.h`), in a frame as wide as the PICTURE: `W / k = aspect * 2160 / s` units. Two side panels at once - a
+  trader / the mercenary / a player's trade left, the inventory right - are 1162 units wide each in the PC (mouse) layout, the left at 236 from the frame's
+  left edge, the right at 1394 from its right edge; the left's content ends ~1396 in, the inventory's starts 93 into its frame: they meet at a frame
+  2697 units wide (`kTwoPanelsUnits`) - a SQUARE picture at `2160 / s = 2697`: **80.09 %**. Above it the panels lie over one another (the outer columns of
+  one are under the other); in the controller layout (panels about the middle: the inventory's rect from -8 to +1400 from the middle, its grid's last
+  column ending at +1188; the trader's from -1366, its grid at -1204) the picture's half width, `1080 * aspect / s` units, must reach 1204: **89 %** - at
+  100 % the inventory's last column (`+1090 .. +1188`) is off the picture, and the cursor cannot go there either. Our own cursor path was checked end to
+  end and is not the cause: the laser maps its whole picture to the whole client area, the game's own `ScreenToClient` / `ClientToScreen` calls are mapped
+  by `vrres::Coordinate` (first and last pixel to first and last), its cursor clamp and its interface root get the whole picture (`CanvasAnswer`), the menu
+  panel shows the whole interface layer. `safescreen::FitPercent(aspect)` is that limit (square 80, the headset's own 2496 x 2688: 74, 16:9: no limit);
+  VR starts at `VrValueFor(aspect)` = the smaller of 80 and it, and rewrites its own number (never a player's) when the picture's shape changes; the
+  plugin's log (`interface size N%: two open side panels ... fit the picture / are too big`) and the settings' line under the box say whether the size in
+  the file fits the picture now.
+- D2R VR Settings reads its Settings.json from `D2RVR_GAME_SETTINGS_JSON` when that is set (tests; never the player's file; the game running or not
+  is then nobody's concern: `ApplySafeScreenForPlatform` does not wait for it).
 
 ## First person
 

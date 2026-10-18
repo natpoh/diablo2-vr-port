@@ -22,14 +22,23 @@ void LoadSettings(const wchar_t* iniPath);
 // its actions or its commands is read. 0 = direct mode ignores BodyWalk whole, as it did. Any thread.
 bool BodyWalkWalks();
 
+// [direct] flatvr_controls (default 1) with direct input on: in FlatVR the layout and the F4 gestures run on BodyWalk's raw controllers, which
+// Game Link's Tracking carries from a BodyWalk that sends them (version 2, BW_LINK_TRACK_CONTROLS - vr/flat_raw.h; vrcam's FlatRawTick feeds
+// them here once a game frame, SessionBegin(true)). BodyWalk's Mapping, pad buttons, actions and commands are ignored then, as in native
+// OpenXR; the head and the hands the camera and the arms read stay BodyWalk's (link::Head). An older BodyWalk: its pad as before. Any thread.
+bool FlatVrControlsOn();
+// The frames come from Game Link (FlatVR) rather than from a native session: SessionBegin(true) until SessionEnd. Any thread.
+bool FedByLink();
+
 // xr.cpp: a native session began (frames follow) / ended (everything the session held is let go, the newest frame gone).
-void SessionBegin();
+void SessionBegin(bool fromLink = false);   // fromLink: FlatVR's raw controllers through Game Link (vrcam's FlatRawTick)
 void SessionEnd();
 
 // xr.cpp, once per headset frame in Publish, after the laser took what it takes: the frame to the gesture listeners and,
 // with direct mode on, to the layout. `menu` = a panel is open in the game or there is no game (vrcam's SetLaserWanted).
 // *in is changed: a control a gesture took (Take) reads as let go in it, so BodyWalk does not see it either.
-void Feed(D2RVR_XrInput* in, bool menu);
+// `touches`: the TouchBit bits of the left and the right hand (nullptr = none reported).
+void Feed(D2RVR_XrInput* in, bool menu, const uint32_t touches[2] = nullptr);
 
 // vrcam, every millisecond (its timer): the game shows a menu or panel now, or no game (the title and character screens).
 // Between the game opening a menu and the next headset frame the layout in force is still the world's: until Feed has

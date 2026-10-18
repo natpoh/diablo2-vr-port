@@ -1,5 +1,161 @@
 # What's new in D2R VR
 
+## 0.168
+
+The main points (details below and in SETTINGS.md):
+
+- **No more frozen game in native OpenXR.** test builds after 0.167 could freeze for good a
+  minute into play: the right eye's replayed lists went to the GPU in one batch. They go
+  in the game's own calls now ([debug] replay_marks 3; 1 = each list with a mark, the safe
+  fallback), about 1 ms less of the game's thread a stereo pair than one by one. A stall
+  guard ([debug] stall_guard) keeps our work from waiting on a GPU queue that stands still,
+  and a lost device writes its report before the game ends.
+- **Weapons with weight and a real grip.** The hero's Strength against the weapon's
+  requirement decides how heavy it feels; an optional weight-physics library and an
+  optional grip library ([weight] hands_model, grip_model) move the held weapon and close
+  the hand on its shaft; the second hand takes a sword only on its hilt.
+- **A flail's ball on its chain** swings free, is what strikes with hit by touch, with
+  its own weight ([flail] chain, ball_weight_pct).
+- **Behind the shoulders**: weapons, the bow and the crossbow are put away and drawn back
+  there; a dropped weapon lies in the world and comes back to a grip. The shield is always
+  on the arm opposite the weapon and is put away behind the left shoulder - carry it there
+  with the grip held and let go.
+- **Bow**: energy orbs along the stave pick the arrow skill (always shown, the white one is
+  the plain shot); the arrow burns, freezes or crackles by the chosen skill (a slider moves
+  the effect along the arrow); with too little mana the release is the plain shot and the
+  arrow's effect goes out; the string sits in the crook of the fingers.
+- **Crossbow**: held by its own grip in the right palm, the left hand closes on the stock's
+  fore-grip, the shot follows the drawn barrel.
+- **Spells** aimed by the drawn hand or staff; both hands on a staff aim along it.
+- **Wrists**: summons, mercenary, buffs, auras and curses beside the medallions; life and
+  mana on the palm.
+- **Skill panel**: the skills by the class's three trees; Run / Walk is a command you bind to
+  any button, and a button can act on a touch.
+- **The monster's own plate over its head**, the item condition figure movable, roofs kept
+  with their underside, a wounded mercenary tinted red, room-scale walking.
+- **PS VR2**: the pause on the right Options button; vibration in the hand that hits.
+- **FlatVR**: BodyWalk through Game Link drives the plugin's own controller layout.
+- The settings that come with the mod are the author's again.
+
+
+- **Wrist status: summons, mercenary, buffs, auras, curses, from d2r-pcvr** (bearstonem,
+  MIT; VR first person F4 only, native OpenXR; its own tick - Settings > UI: F4 body >
+  Toolbar in the headset > Where = Wrists > "Wrist status", off by default; the game is
+  only read, nothing is changed). Small icons and counters come up beside the medallions
+  when the back of a wrist is turned to your eyes: the left wrist shows what is ON you -
+  the auras and buffs you have (a chip each under a green rim: Might, Holy Shield, Frozen
+  Armor, Battle Orders, a potion, a shrine ...), the curses and ailments that hurt you
+  first under a red one (Amplify Damage, Decrepify, Chilled, Poisoned ...) - and the right
+  wrist what you COMMAND: your mercenary (a red 0 while it is dead) and how many skeletons,
+  mages, golems, revived monsters, valkyrie, decoy, ravens, wolves, grizzly, oak sage,
+  vines, shadows, sentries, traps, hydras and demons you have. Which wrist shows what, the
+  panel's size, height over the wrist, place along the arm, how squarely the wrist must face
+  you and its opacity are settings, live; the skill icons are the skill wheel's local icon
+  cache (without it, initials). Read from the game's own pet lists and its own state check on
+  the local server's hero, each layout behind its byte guard (another build: nothing shown).
+  The idea, the pet lists' layout, the state check and the table of states are
+  bearstonem/d2r-pcvr's (MIT, v0.3.18), audited again against this build (docs/wrist_status.md).
+- **Buttons on a touch** (Controls > Buttons of the controllers > *the finger on a
+  control*, VR first person F4 only; nothing bound by default): the two triggers, X
+  Y A B and the two thumbsticks can do something when your finger ARRIVES on them
+  (the capacitive touch a Touch controller, PS VR2 on SteamVR and an Index
+  controller report), instead of or besides their press - once per touch, nothing
+  repeated while the finger stays; not in a menu or with a panel of the mod's own
+  up. Made for the game's run / walk switch (*Run / walk switch* in the list:
+  a press or a touch of the button you like). `[direct] <control>_touch`.
+- **Skill panel: the skills by the class's trees, and a RUN / WALK button** (Stereo >
+  Native OpenXR, under the skill wheel; each its own tick, the categories on, the
+  button off; VR first person F4 only; unticked = the panel as it was; idea after
+  bearstonem/d2r-pcvr (MIT)):
+  - *Skill editor: categories* - EDIT SKILLS -> a slot shows a strip over the
+    skills: All, your class's three skill trees (named as the game names them, in
+    your language) and General / Items, each with its count. Which skill is on
+    which tree comes from the game's own tables, read once into the icon cache by
+    `tools/skill_icons/prepare_skill_icons.py` - run it again after this update,
+    an older cache has no trees and the editor keeps its one list.
+  - *Skill panel: a RUN / WALK button* (off: put the command on a button of your
+    own instead - *Run / walk switch* in Controls > Buttons of the controllers and
+    in the headset's Left / Right pages, *D2R key: Run / walk switch* in BodyWalk's
+    bindings) - a tile beside the first row of the tiles,
+    a button in the footer of the wheel; the trigger on it presses the game's own
+    run / walk command and the panel stays open; it shows which one the game is
+    on. Nothing of the game's moving or casting is done by the plugin.
+- **The crossbow's left hand, from d2r-pcvr** (bearstonem, MIT; VR first person
+  F4 only, each its own tick under Weapon Adjust > Crossbow, unticked = as before;
+  the shot and the bolt are not changed):
+  - *Left grip lets go cleanly*: held while the left grip is (squeeze first and
+    bring the hand, or the other way round); let go at once on a weapon swap, a
+    model change or lost tracking - no jump of the hand onto the stock; a squeeze
+    still held from the shoulder swap takes nothing; and the crossbow is never put
+    into both hands while it waits for its grip.
+  - *Left wrist follows the controller*: the hand keeps your controller's turn on
+    the stock (from below, palm up, or from above), its palm's middle on the place.
+  - *Take the grip right after a swap*: no shot needed after a swap from a shield set.
+  - *Left palm under the drawn barrel*: under each crossbow's own barrel as the
+    model has it (its bolt helper bone), at the front of the stock - 6 cm behind
+    where the limbs meet it, 7 cm below the barrel (two fine adjustments around 0)
+    - not on the shot line set by eye.
+  - *The right hand holds it by its grip*: the crossbow sits in the right palm by
+    its own grip (where the game's own hand holds it), not by the bone it hangs
+    on - it looked held by the wrist.
+  - *Left hand on the game's own fore-grip*: where the game's other hand holds the
+    crossbow in its own two-handed hold, learned from the game's pose.
+  - *The left hand closes on the stock*: there it takes the game's own support
+    hand's turn and fingers (mirrored), the palm toward the stock.
+  - *Shoot along the drawn barrel* (from bearstonem/d2r-pcvr): the bolt goes where
+    the crossbow you see points, raised or rolled - no hand correction. Only the
+    direction of the game's own attack is steered; its bolt, damage, ammunition and
+    rate of fire are the game's. While the barrel is not read, the shot line sliders.
+  - Debug: *Crossbow: draw the barrel as modelled* (a cyan line and a magenta ball).
+- **Spells aimed by the drawn hand or staff** (Auto-target > "Aim spells by the
+  drawn hand or staff", on; VR first person F4 only; unticked = as before). The
+  line a spell goes along now comes from the hero as he is drawn, not from the
+  controller turned by hand-set corrections: a staff, wand or orb aims along its
+  own axis toward its head (with the weapon's weight on, along the shaft as the
+  grip holds it); an empty hand along its fingers, or out of the palm when the
+  fingers point up or down. A staff held upright aims with its hand. The game's
+  own cast - the skill, mana, the missile - is unchanged; only its target point
+  is steered, as before. With no fresh pose the old aim and its *aim correction*
+  sliders stay. Debug > Aim rays > "Spell's ray" (`[debug] spell_aim_ray`):
+  where the spell goes, live - green from the model, orange the old line - to
+  the floor (a full ball) or 8 m out (a ring), as the crossbow's ray. The idea of aiming along the
+  posed weapon's shaft is from d2r-pcvr (bearstonem, MIT).
+  - *Both hands on a staff* (weight on): the spell goes along the staff between
+    the hands, from the rear hand to the front one - no longer along the hand
+    that took it first.
+  - *How far out the spell's point goes* by what is held (Bow tab): a wand or
+    orb 20 cells (`[bow] caster_range`), bare hands 5 (`[bow] hand_range`), a
+    staff its own *Staff aim point* sliders, one hand / two. The game's own point
+    was about 3 cells - steps of 20 degrees.
+
+
+- **From d2r-pcvr 0.3.17** (bearstonem, MIT), written again here on our signatures,
+  each with its own tick and in VR F4 only:
+  - **The roof stays when you walk into a building** (World > "Keep the roof when you
+    walk into a building", on). For its camera high above, the game fades out the roof
+    of a building the hero walks into (Kurast Docks, the huts in town): from the eyes
+    that showed the sky through the ceiling. Now its request to fade the roof out is
+    answered with the roof kept. F1, F2 and F3 keep the game's cut-aways; nothing else
+    that fades is touched.
+  - **The underside of a kept roof, not the sky** (World > "Roofs: their underside, not the
+    sky", on; from d2r-pcvr 0.3.18). The game draws a roof only from above. Now the
+    materials of the roofs - a roof model's materials named "roof", no list by hand -
+    are built double-sided when an area loads, so from under the roof its underside
+    is drawn. It shows from the next area you go to.
+  - **Hanging lanterns move once a stereo pair** (Stereo > "Hanging lanterns move once a
+    pair", on). Where the right eye is drawn by a second pass of the game's draw (no
+    replay, or the first seconds in a new area before the replay starts) the props the
+    game swings - lanterns, chains, signs - were stepped again with the right eye's tiny
+    time and twitched. They are stepped in the left eye's pass only now, and both eyes
+    get that pose. With the replay drawing the right eye (the default) the game's draw
+    runs once and nothing changes.
+  - **A wounded mercenary is tinted red** (UI: F4 body > "Wounded mercenary tinted red", off
+    until you tick it; under 50 % of its life, both adjustable). Drawn by our effect
+    over the finished picture: what the game drew inside the merc's body takes the
+    red, the ground and what stands in front of it do not. The merc and its life are
+    only read; unlike d2r-pcvr's version nothing is set on the merc in the game. Needs
+    the new D2R_DepthFog.fx.
+
 ## 0.167
 
 - **A faster picture in the headset.** In native OpenXR the fog, the sky and the
@@ -68,11 +224,46 @@
     adds only the settings that are new in this version; "No - take this version's
     default settings" replaces your changes and keeps the old file as
     d2r_vr.ini.before-0.167.0.
+- **The string at the fingers with the relaxed hand off, too.** With "The hand that takes the string: relaxed" unticked, the string ran to the controller's grip point, the middle
+  of the palm, so it met the base of the hand. Now it runs to the fingers' first joints there as well - those of the fingers as the game animates them; with the tick on nothing
+  changes. The log says which bones it is made of.
+- **The quiver: pick the arrow of the next shot** (Weapon Adjust > Bow, "Quiver", on; a bow). With the string drawn a button of the string hand picks it (B and A;
+  `quiver_next` and `quiver_prev` in `[direct]` change them), or an energy orb along the bow (below): Magic, Fire, Cold, Exploding, Ice, Guided, Freezing or Immolation
+  Arrow, Multiple Shot, Strafe - **only the ones the hero has learned** (points or items) - and, first, what the slot held before (the plain attack). None learned: a short
+  buzz and nothing else. It is the game's own skill setter on the slot the shot presses, the same as picking the skill in the panel; the shot is the game's own, as ever. The
+  arrow glows in the skill's colour and the controller ticks at each change. **The quiver behind the shoulder is gone** (a free hand reached behind a shoulder, trigger for the
+  next, A / X for the previous; the "Quiver: reach behind the shoulder" box and `quiver_reach`): not wanted, and the shoulders are the weapon swap's. The crossbow has no quiver now. The idea is the fork d2r-pcvr's quiver button (bearstonem, MIT, from aSuperGod);
+  there the shot calls the skill directly, here the game's own attack does.
+- **Fire, frost and arcane light on the arrow** (Weapon Adjust > Bow, "Arrow effects", on; a bow with the quiver). From the moment an arrow skill is chosen - by an orb, a button or the
+  game's own slot - the arrow in the bow, nocked at rest and through the draw, burns, freezes or crackles by it (the plain shot has none): flames and rising embers for Fire, Exploding and Immolation Arrow; frost, ice crystals, glints and a falling mist for Cold, Ice and Freezing Arrow; a
+  violet glow with sparks circling the shaft for Magic Arrow. Light the effect draws in the picture (real 3D with parallax, hidden by a hand or a sleeve in front of it; nothing of the
+  game's is created), a few hundredths of a millisecond per eye on a fast card (measured). Guided Arrow, Multiple Shot and Strafe keep the small coloured glow;
+  "Arrow effects" unticked, every skill does. Size and brightness sliders. Needs the new D2R_DepthFog.fx. The idea is the fork d2r-pcvr's quiver preview (bearstonem, MIT, v0.3.17),
+  which makes the game's own missile on the string; this draws our own light instead.
+- **No mana for the chosen arrow: the plain arrow** (Weapon Adjust > Bow, "Quiver: no mana for the chosen arrow - shoot the plain arrow", on). With an arrow skill chosen and too little mana
+  to pay it the game refuses the release ("not enough mana", nothing shot); now the release is the game's plain attack, and the skill stays chosen, so with the mana back the next release is
+  the skill again. Whether the hero can pay is the game's own arithmetic on the game's own numbers (the skill's row in Skills.txt and its level against the hero's mana), not a guess. Unticked:
+  the game's refusal, as it was.
+- **The arrow's effect goes out when the mana is short** (Weapon Adjust > Bow, "Arrow effects: out while the mana is short for the chosen arrow", on). With an arrow skill chosen that the hero
+  cannot pay - by the game's own numbers, the same as the plain-arrow release's - the arrow looks plain (the fire, frost or arcane light and the small glow go out, eased) and lights again when
+  the mana is back; at rest as well as while you pull. Unticked: the effect stays whatever the mana.
+- **The white orb is always there.** The orb of the plain attack was missing when the game came up with an arrow already chosen on the attack button (the quiver had never seen the plain
+  attack there); it is the first orb whenever the game offers the plain attack to bind. And the log now says, at every release with an arrow skill chosen, which skill is on the A slot
+  and how much mana the hero has, and when the A slot's skill changes without the quiver asking - so a plain shot where a skill was chosen can be told from the plugin's doing: the plugin
+  only presses the game's own attack and never picks the plain attack by itself.
+- **Energy orbs along the bow** (Weapon Adjust > Bow, "Quiver: energy orbs", on). A row of glowing orbs hangs along the bow's stave - one for the plain shot, one for every bow
+  skill you have learned, each in its skill's colour; the skill of the next shot is the bigger, brighter one. Pull the trigger of your free hand at an orb and that skill is the next
+  shot's - the game's own skill setter, the same as picking it in the skill panel. At an orb the trigger is the orb's (no shot, no draw; the grip does nothing there) and the string
+  is not taken there; anywhere else the trigger and the draw are as ever. A trigger that took an orb stays the orb's until you let go. "Orbs: pick with the trigger" unticked: the
+  grip picks, as the orbs first did.
+  The orbs sit on the bow's own bones (along the limb that points up) and follow it; they never go: at rest, while the string is drawn, at the release, in a menu (the skill that is loaded marked; no orb is taken then, only with the string at rest). The orb your hand is at grows, brightens and is not
+  hidden by the hand; the grab radius is bigger than the orb. Ten sliders under "Quiver: energy orbs" set the size, the grab radius, the start on the stave, the spacing, the
+  shift of the row and its turn about three axes (degrees, pivoting on its first orb, so the row can be tilted off the stave; 0 = along the stave). Needs the new D2R_DepthFog.fx.
 - **Thanks to bearstonem** again: the turn settings, the depth at its source, the
   Steam Frame's layout and the Index grip, the Smite press, the one-press interact,
   the vibration channels, the menus waiting for the headset, the menus and the mouse
-  on the VR render size, the shield on the forearm and our own depth bound once
-  follow what the fork [d2r-pcvr](https://github.com/bearstonem/d2r-pcvr) (MIT)
+  on the VR render size, the shield on the forearm, our own depth bound once and the
+  quiver follow what the fork [d2r-pcvr](https://github.com/bearstonem/d2r-pcvr) (MIT)
   found in the game.
 
 ## 0.166
@@ -310,7 +501,10 @@ you tick it** in D2R VR Settings, unless it says "on". Options marked
   under a threshold (30 %) the edges of the view tint red and beat like a heart,
   faster and redder as your life falls; a gentle mode; the beat can be felt in
   the controllers too. A colour over the edges only: nothing is scaled, moved or
-  shaken.
+  shaken. In the headset's settings panel (Life and Look pages) nothing shows or
+  buzzes until you press **Preview 5 s**, which plays the vignette and the beat
+  for five seconds with the rows as they stand. On a PlayStation VR2 (SteamVR) the
+  gentle beat is lifted to what its controllers show (`[openxr] haptics_motor`).
 - **Hide the plates of ordinary monsters** (UI: F4 body, off, prototype):
   champions, uniques, bosses, their minions and NPCs keep theirs. Presentation
   only. And **Toolbar cut** sliders (UI: F4 body > In the game's picture) make

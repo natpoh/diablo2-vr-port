@@ -186,6 +186,7 @@ public:
         if (primed_ && in.focused) {
             act = clicker_.Step(model, hover, ph[ptr_].hit, rise[ptr_], held[ptr_], ph[ptr_].dist > 0.0f, ph[ptr_].u * (float)kW, in.ms);
         }
+        if (act.what == Do::Nothing) act = model.Live(in.ms);   // the belt writes itself a moment after the last change
         if (act.what == Do::Calibrate) {   // the hands go to the measurement; the panel comes back when it is done
             FrameOut r = shut(Do::Calibrate);
             resume_ = true;

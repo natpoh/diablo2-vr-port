@@ -1589,10 +1589,21 @@ uniform float4 LabelKeep1 < hidden = true; > = float4(0.0, 0.0, 0.0, 0.0);
 uniform float4 PlateBox < hidden = true; > = float4(0.0, 0.0, 0.0, 0.0);
 uniform float PlateAlpha < hidden = true; > = 1.0;
 uniform float PlateScale < hidden = true; > = 1.0;   // vrcam [hud] monster_size: the plate larger or smaller about its middle
+// First person (F4): the plate at its OWN depth - vrcam [hud] monster_near_body, uv, + nearer - not on the item labels' (LabelBase, labels_near_body: the item
+// settings moved the bars over the monsters with them; Serg, 2026-10-17). PlateOwn false (the other views, the labels' tilted plane): the plate goes with the layer.
+uniform bool PlateOwn < hidden = true; > = false;
+uniform float PlateShift < hidden = true; > = 0.0;
 // vrcam [hud] allies_x / allies_y: the corner with the allies' portraits (the mercenary, the party), uv, and where
 // it goes (+y down); an empty box = in place
 uniform float4 AlliesBox < hidden = true; > = float4(0.0, 0.0, 0.0, 0.0);
 uniform float2 AlliesOff < hidden = true; > = float2(0.0, 0.0);
+// vrcam [hud] durability_*: the item-condition figure (the knight whose parts go red as the items wear; the game's HUDWarnings > DurabilityWarning), first person
+// only: its box (uv), where it goes (+y down), its size about its middle, or gone. DurabilityOn false: in place, as the game draws it (vr/durability_figure.h)
+uniform bool DurabilityOn < hidden = true; > = false;
+uniform float4 DurabilityBox < hidden = true; > = float4(0.0, 0.0, 0.0, 0.0);
+uniform float2 DurabilityOff < hidden = true; > = float2(0.0, 0.0);
+uniform float DurabilityScale < hidden = true; > = 1.0;
+uniform bool DurabilityHide < hidden = true; > = false;
 
 // First person (F4, vrcam [hud] labels_depth_body): each item label on the ground at its own item's depth -
 // its box (uv, x0 y0 x1 y1, where the game drew it) and its shift per eye (uv, + nearer). The rest of the
@@ -1637,8 +1648,29 @@ float4 GameLabels(float2 uv, float eyeSign)
         }
     }
     const float2 src = uv - float2(eyeSign * (LabelBase + LabelTilt * uv.y), 0.0);
+    [branch] if (DurabilityOn && DurabilityBox.z > DurabilityBox.x && !DurabilityHide)   // the item-condition figure where it was moved to, over whatever else is there (vr/durability_figure.h MovedFigure)
+    {
+        const float2 dc = 0.5 * (DurabilityBox.xy + DurabilityBox.zw);
+        const float2 dq = dc + ((src - DurabilityOff) - dc) / max(DurabilityScale, 0.05);   // the figure's own pixel shown here
+        if (InBox(dq, DurabilityBox)) return tex2Dlod(GameLayerSmp, float4(dq, 0, 0));
+    }
+    [branch] if (PlateOwn && PlateBox.z > PlateBox.x)   // the plate at its own depth, sized and faded: none of the labels' shift (vr/plate_look.h LayerPixel)
+    {
+        const float2 c = 0.5 * (PlateBox.xy + PlateBox.zw);
+        const float2 ps = c + ((uv - float2(eyeSign * PlateShift, 0.0)) - c) / PlateScale;   // the plate's own pixel shown here
+        if (InBox(ps, PlateBox))
+        {
+            const float4 p = tex2Dlod(GameLayerSmp, float4(ps, 0, 0));
+            return float4(p.rgb * PlateAlpha, 1.0 - (1.0 - saturate(p.a)) * PlateAlpha);
+        }
+    }
     if (src.x < 0.0 || src.x > 1.0 || Kept(src) || InItemLabel(src)) return float4(0.0, 0.0, 0.0, 1.0);
-    [branch] if (abs(PlateScale - 1.0) > 0.005 && PlateBox.z > PlateBox.x)
+    if (DurabilityOn && InBox(src, DurabilityBox)) return float4(0.0, 0.0, 0.0, 1.0);   // the item-condition figure's old place, left empty (OldPlaceEmpty)
+    [branch] if (PlateOwn && PlateBox.z > PlateBox.x)
+    {
+        if (InBox(src, PlateBox)) return float4(0.0, 0.0, 0.0, 1.0);   // its place on the labels' plane, left empty
+    }
+    else if (abs(PlateScale - 1.0) > 0.005 && PlateBox.z > PlateBox.x)
     {
         const float2 c = 0.5 * (PlateBox.xy + PlateBox.zw);
         const float2 ps = c + (src - c) / PlateScale;   // the plate's own pixel shown here
@@ -1657,7 +1689,7 @@ float4 GameLabels(float2 uv, float eyeSign)
     }
     float4 l = tex2Dlod(GameLayerSmp, float4(src, 0, 0));
     if (LabelAlpha < 0.999) l = FadedLabel(l);
-    if (PlateAlpha < 0.999 && InBox(src, PlateBox)) l = float4(l.rgb * PlateAlpha, 1.0 - (1.0 - saturate(l.a)) * PlateAlpha);
+    if (!PlateOwn && PlateAlpha < 0.999 && InBox(src, PlateBox)) l = float4(l.rgb * PlateAlpha, 1.0 - (1.0 - saturate(l.a)) * PlateAlpha);
     return l;
 }
 
@@ -1785,7 +1817,9 @@ float3 Ball(float3 c, float2 p, float3 centre, float radius, float3 col, float f
 // own checks refuse (pale), 5 the second blade when a weapon is held in each hand (teal), 6 a blade (either) while a contact would
 // count - moving at or above [gameplay] melee_min_speed in a stroke (green), 7 a ball where that speed was reached in a swing (white),
 // 8 a ball where the blade fell below it again (orange), 9 / 10 a piece of the tip's trail where a contact would not / would count
-// (cyan / green, thin), 11 a skill trigger's own capsule (vr/skill_triggers.h, [debug] skill_triggers: the left shield's, violet; green - kind 6 - while a bash would count). World units relative to where the hands
+// (cyan / green, thin), 11 a skill trigger's own capsule (vr/skill_triggers.h, [debug] skill_triggers: the left shield's, violet; green - kind 6 - while a bash would count),
+// 16 and up the strike rules' colours (vr/melee_boxes.h TouchKind, kind = 16 + 4 * colour + style: the colour 0 blue - not toward the monster, 1 amber - a swing too small or too slow, 2 grey - not
+// the head, 3 green - counts, 4 red - not toward the monster (the default; blue - colour 0 - with [debug] melee_direction_red=0); the style 0 a solid ball, 1 a see-through capsule, 2 a thin tube). World units relative to where the hands
 // hang, like the lines above; each eye takes them from its own
 // camera. HitboxOn = false (the default) leaves the picture exactly as it was.
 uniform bool HitboxOn < hidden = true; > = false;
@@ -1833,13 +1867,21 @@ float3 Hitboxes(float3 c, float2 p, int eye)
         const float k = saturate(dot(q - a, ab) / max(dot(ab, ab), 1e-6));
         const float3 n = normalize(q - (a + ab * k));
         const float rim = 1.0 - abs(dot(n, rd));
-        const float3 col = kind < 0.5 ? float3(0.1, 0.9, 1.0) : kind < 1.5 ? float3(1.0, 0.85, 0.1) : kind < 2.5 ? float3(1.0, 0.1, 0.05)
-                         : kind < 3.5 ? float3(1.0, 0.1, 0.9) : kind < 4.5 ? float3(0.75, 0.8, 0.9) : kind < 5.5 ? float3(0.2, 1.0, 0.6)
-                         : kind < 6.5 ? float3(0.15, 1.0, 0.15) : kind < 7.5 ? float3(1.0, 1.0, 1.0) : kind < 8.5 ? float3(1.0, 0.5, 0.0)
-                         : kind < 9.5 ? float3(0.1, 0.9, 1.0) : kind < 10.5 ? float3(0.15, 1.0, 0.15) : float3(0.6, 0.35, 1.0);
-        const float alpha = (kind > 1.5 && kind < 3.5 ? 0.45 : kind > 3.5 && kind < 4.5 ? 0.3 : kind > 5.5 && kind < 6.5 ? 0.35 : kind > 6.5 && kind < 8.5 ? 0.85
-                           : kind > 8.5 && kind < 9.5 ? 0.3 : kind > 9.5 && kind < 10.5 ? 0.6 : 0.15) + 0.6 * rim * rim;
-        c = lerp(c, col, saturate(alpha));
+        float3 col = kind < 0.5 ? float3(0.1, 0.9, 1.0) : kind < 1.5 ? float3(1.0, 0.85, 0.1) : kind < 2.5 ? float3(1.0, 0.1, 0.05)
+                   : kind < 3.5 ? float3(1.0, 0.1, 0.9) : kind < 4.5 ? float3(0.75, 0.8, 0.9) : kind < 5.5 ? float3(0.2, 1.0, 0.6)
+                   : kind < 6.5 ? float3(0.15, 1.0, 0.15) : kind < 7.5 ? float3(1.0, 1.0, 1.0) : kind < 8.5 ? float3(1.0, 0.5, 0.0)
+                   : kind < 9.5 ? float3(0.1, 0.9, 1.0) : kind < 10.5 ? float3(0.15, 1.0, 0.15) : float3(0.6, 0.35, 1.0);
+        float alpha = kind > 1.5 && kind < 3.5 ? 0.45 : kind > 3.5 && kind < 4.5 ? 0.3 : kind > 5.5 && kind < 6.5 ? 0.35 : kind > 6.5 && kind < 8.5 ? 0.85
+                    : kind > 8.5 && kind < 9.5 ? 0.3 : kind > 9.5 && kind < 10.5 ? 0.6 : 0.15;
+        if (kind > 15.5)   // the strike rules' colours (vr/melee_boxes.h TouchKind): kind = 16 + 4 * colour + style
+        {
+            const float cs = kind - 16.0 + 0.5;
+            const float ci = floor(cs / 4.0);
+            const float st = floor(cs - ci * 4.0);
+            col = ci < 0.5 ? float3(0.15, 0.3, 1.0) : ci < 1.5 ? float3(1.0, 0.72, 0.1) : ci < 2.5 ? float3(0.7, 0.7, 0.7) : ci < 3.5 ? float3(0.15, 1.0, 0.15) : float3(1.0, 0.15, 0.1);
+            alpha = st < 0.5 ? 0.85 : st < 1.5 ? 0.35 : 0.6;
+        }
+        c = lerp(c, col, saturate(alpha + 0.6 * rim * rim));
     }
     return c;
 }
@@ -2260,6 +2302,279 @@ float3 Orbs(float3 c, float3 ro, float3 rd, float3 back, float sceneZ)
 }
 // ORBS-END
 
+// vrcam [hud] merc_tint (vr/merc_tint.h, VR first person F4 only): the hero's mercenary tinted red while it is below the threshold of
+// its life. What the game drew inside the merc's body capsule - the one hit by touch sweeps: MonStats' footprint and height of its class
+// at its place - takes the red, found by putting this pixel's drawn point back in the world by the game's depth; the ground under it (the
+// capsule ends a radius above the floor) and what stands in front of it stay as they are. A colour over the finished picture and nothing
+// else; MercOn = false (the default, and all vrcam sends while the setting is off or the merc is well) is the picture bit for bit.
+//   MercA  xyz the capsule's bottom (world units, relative to where the hands hang, like the capsules above), w its radius
+//   MercB  xyz its top, w the strength 0 - 1
+uniform bool MercOn < hidden = true; > = false;
+uniform float4 MercA < hidden = true; > = float4(0.0, 0.0, 0.0, 0.0);
+uniform float4 MercB < hidden = true; > = float4(0.0, 0.0, 0.0, 0.0);
+// MERC-BEGIN (cleanroom/tests/merc_tint_test.cpp compiles the text between these marks and runs it on WARP against vr/merc_tint.h)
+// How much of the tint the drawn point q gets: 1 well inside the capsule, 0 outside, a soft edge over the outer fifth of the radius.
+float MercInside(float3 q)
+{
+    const float3 a = MercA.xyz, ab = MercB.xyz - MercA.xyz;
+    const float k = saturate(dot(q - a, ab) / max(dot(ab, ab), 1e-8));
+    const float r = MercA.w;
+    return r > 0.0 ? smoothstep(r, 0.8 * r, length(q - (a + ab * k))) : 0.0;
+}
+// Toward the red by amount: the brightness kept in the red, green and blue let down.
+float3 MercTinted(float3 c, float amount)
+{
+    const float luma = dot(c, float3(0.2126, 0.7152, 0.0722));
+    return lerp(c, float3(max(c.r, luma * 1.25), c.g * 0.3, c.b * 0.3), saturate(amount));
+}
+// MERC-END
+// along: the drawn point's distance along the view's axis (the game's depth); from far (nothing drawn) nothing.
+float3 MercTint(float3 c, float3 ro, float3 rd, float3 back, float along)
+{
+    const float cosA = dot(rd, -back);
+    if (along >= 1e8 || cosA < 1e-4) return c;
+    return MercTinted(c, MercB.w * MercInside(ro + rd * (along / cosA)));
+}
+// vrcam [bow] quiver_orbs (vr/bow_orbs.h, VR first person F4 only, a bow in hand): a row of energy orbs along the bow's stave, one for every bow skill the hero has and one for the
+// plain shot. Real 3D points, ray-cast per eye in the world's own frame (the hand orbs' above: world units, relative to where the hands hang, each eye from its own camera), so they
+// have parallax and follow the bow - and the game's depth is read per pixel, so a hand, a sleeve or a monster in front of an orb hides it. Each is a soft glowing ball in its skill's
+// colour with a white-hot heart and a halo, drawn as light over the picture (a screen blend: it adds and never overbrights). The skill the slot holds now is bigger and brighter and
+// beats slowly. The orb the free hand is at (hover 1) grows to 1.6 times, goes white-hot and bright, and is not hidden by the hand that reaches into it; the orbs the hand is nearing
+// show a part of that, so the player sees the one ahead of the grab. QvN = 0 (the default, and all vrcam sends while the setting is off, the bow is drawn or not in hand) leaves the
+// picture exactly as it was.
+//   QvPos[i]  xyz the orb's middle (world units, relative to where the hands hang), w its radius
+//   QvCol[i]  rgb its colour, w = 2 * current + hover: current 1 = the skill the slot holds now; hover 0 - 1 = how near the free hand is (1: it is at the orb)
+uniform float QvN < hidden = true; > = 0.0;
+uniform float4 QvPos[12] < hidden = true; >;
+uniform float4 QvCol[12] < hidden = true; >;
+uniform float QvTime < hidden = true; > = 0.0;   // seconds, wrapped: the slow beat of the current orb
+// QUIVER-ORBS-BEGIN (cleanroom/tests/bow_orbs_fx_test.cpp compiles the text between these marks and runs it on a software D3D11 device)
+float3 QuiverOrbs(float3 c, float3 ro, float3 rd, float3 back, float sceneZ)
+{
+    const float rdv = max(dot(rd, -back), 1e-4);                       // view depth gained per unit along the ray
+    [loop] for (int i = 0; i < 12; ++i)
+    {
+        if (i >= (int)QvN) break;
+        const float3 oc = ro - QvPos[i].xyz;
+        const float b = dot(oc, rd);
+        if (b >= 0.0) continue;                                         // the orb is behind this eye
+        const float s = QvCol[i].w;
+        const float cur = s > 1.5 ? 1.0 : 0.0;
+        const float hov = saturate(s - 2.0 * cur);
+        const float R = QvPos[i].w * (1.0 + 0.25 * cur + 0.60 * hov);
+        if (R <= 0.0) continue;
+        float vis = saturate((sceneZ - (-b) * rdv) / (0.8 * R));        // something nearer than the orb's middle hides it (a soft edge) ...
+        vis = max(vis, 0.75 * hov);                                     // ... but not the orb the hand is in: it is under the hand that is taking it
+        if (vis <= 0.0) continue;
+        const float x = sqrt(max(dot(oc, oc) - b * b, 0.0)) / R;        // the ray's distance from the middle, in radii
+        if (x > 3.2) continue;
+        const float pulse = 1.0 + cur * 0.12 * sin(QvTime * 5.0 + (float)i);
+        const float core = 1.0 - smoothstep(0.35, 1.0, x);              // the body of the ball
+        const float hot = pow(saturate(1.0 - x), 2.5);                  // the white-hot heart
+        const float rim = smoothstep(0.55, 0.9, x) * (1.0 - smoothstep(0.9, 1.05, x));   // a brighter edge
+        const float halo = x > 1.0 ? exp(-(x - 1.0) * 2.4) * (1.0 - smoothstep(1.8, 3.2, x)) : 0.0;
+        const float bright = (0.65 + 0.45 * cur + 1.10 * hov) * pulse;
+        const float3 col = lerp(QvCol[i].rgb, float3(1.0, 1.0, 1.0), 0.35 * hov);   // the orb the hand is at goes toward white
+        const float3 light = col * (core * 0.8 + rim * (0.5 + 0.8 * hov) + halo * 0.55) + float3(1.0, 1.0, 1.0) * (hot * (0.5 + 0.3 * hov));
+        c = 1.0 - (1.0 - c) * (1.0 - saturate(light * (bright * vis)));  // screen: adds light, never overbrights
+    }
+    return c;
+}
+// QUIVER-ORBS-END
+// vrcam [bow] arrow_fx (vr/bow_quiver.h Element, VR first person F4 only, a bow in hand, the string drawn): the nocked arrow burns, freezes or crackles by the skill that is loaded -
+// Fire / Exploding / Immolation Arrow flames and embers, Cold / Ice / Freezing Arrow frost, crystals and a falling mist, Magic Arrow an arcane glow with sparks circling the shaft. Our own
+// procedural light (no textures, no particles of the game's): each pixel's ray is ray-cast per eye in the world's own frame, like the quiver orbs above (world units, relative to where the
+// hands hang, each eye from its own camera), so it has parallax; the game's depth is read per pixel, so a hand, a sleeve or a monster in front of the arrow hides it. The body of the effect
+// is a short march through a noisy density round the arrow's head; sparks, glints and crystals are exact (a ray to a point or a short segment), so they never grain. A pixel whose ray
+// passes nowhere near the head or the shaft costs a handful of instructions and stops. The result is added as light (a screen blend: it adds and never overbrights). AfOn = 0 (the default,
+// and all vrcam sends while the setting is off, the string is not drawn or the skill has no element) leaves the picture exactly as it was.
+//   AfOn      0 off, 1 fire, 2 frost, 3 arcane
+//   AfA       xyz the arrow's nock end (the string hand), w the effect's size: the radius of the flame round the head (world units)
+//   AfB       xyz the arrow's head, w the strength (1 = the base brightness; a heavier skill, and the swell when a skill is loaded, are more)
+//   AfTime    seconds, wrapped: the flames rise, the mist falls and the sparks fly with it
+uniform float AfOn < hidden = true; > = 0.0;
+uniform float4 AfA < hidden = true; > = float4(0.0, 0.0, 0.0, 0.0);
+uniform float4 AfB < hidden = true; > = float4(0.0, 0.0, 0.0, 1.0);
+uniform float AfTime < hidden = true; > = 0.0;
+// ARROWFX-BEGIN (cleanroom/tests/bow_arrow_fx_test.cpp compiles the text between these marks and runs it on a software D3D11 device)
+float AfHash(float3 p)
+{
+    p = frac(p * 0.1031);
+    p += dot(p, p.yzx + 33.33);
+    return frac((p.x + p.y) * p.z);
+}
+float3 AfHash3(float i, float k)
+{
+    return float3(AfHash(float3(i, k, 1.3)), AfHash(float3(i, k, 5.7)), AfHash(float3(i, k, 9.1)));
+}
+// a smooth wobbling field, 0 - 1, from four sines (cheap: the march asks for it twice a step): domain-warped waves, no lattice
+float AfNoise(float3 x)
+{
+    return 0.5 + 0.25 * (sin(x.x * 1.9 + sin(x.y * 2.3 + x.z * 1.1) * 1.6) + sin(x.y * 2.1 + sin(x.z * 2.7 + x.x * 0.9) * 1.6));
+}
+// the ray's nearest approach to a segment (from A along the unit u for L): the ray's distance t to it and the gap
+void AfNearest(float3 ro, float3 rd, float3 A, float3 u, float L, out float t, out float gap)
+{
+    const float3 w0 = ro - A;
+    const float b = dot(rd, u), d = dot(rd, w0), e = dot(u, w0);
+    const float den = 1.0 - b * b;
+    float s = den > 1e-4 ? (e - b * d) / den : 0.5 * L;
+    s = clamp(s, 0.0, L);
+    t = b * s - d;
+    gap = length(w0 + rd * t - u * s);
+}
+// a soft point of light: the ray's squared gap to it, 0 for one behind the eye or hidden by what is nearer (sceneZ, in view depth; rdv the depth gained per unit of the ray)
+float AfPoint(float3 ro, float3 rd, float3 P, float sigma, float sceneZ, float rdv)
+{
+    const float3 rel = P - ro;
+    const float t = dot(rel, rd);
+    if (t <= 0.0 || t * rdv > sceneZ) return 0.0;
+    return exp(-(dot(rel, rel) - t * t) / (sigma * sigma));
+}
+// fire: flames that rise from the head and lick up above it, thin behind it. q the point's offset from the shaft (the head's, past it), sh how far behind the head it is
+float3 AfFire(float3 p, float3 q, float3 B, float sh, float R, float t)
+{
+    const float sl = q.y * (q.y > 0.0 ? 0.45 : 1.6);                       // up the flame is long, down it is short
+    const float re = sqrt(dot(q.xz, q.xz) + sl * sl);
+    const float3 pn = p / R;
+    const float n1 = AfNoise(pn * 1.3 + float3(0.0, -t * 2.2, 0.0));       // the pattern climbs: the noise is looked up lower as the time goes
+    const float n2 = AfNoise(pn * 2.6 + float3(3.1, -t * 3.6, 1.7));
+    const float head = exp(-sh / (2.0 * R));                                 // 1 at the head, thin behind it
+    float d = saturate(1.0 - re / (R * (0.20 + 0.80 * head) * (0.65 + 0.7 * n1)));
+    const float ty = clamp(p.y - B.y, 0.0, 2.0 * R);                         // the tongue above the head
+    const float tw = 1.0 - ty / (2.0 * R);
+    const float3 tv = float3(p.x - B.x, p.y - B.y - ty, p.z - B.z);
+    d = max(d, saturate(1.0 - length(tv) / (R * (0.12 + 0.55 * tw) * (0.5 + 0.9 * n2))) * (0.55 + 0.8 * n1));
+    const float h = d * d * (0.8 + 0.5 * n2) * (0.15 + 0.85 * head);           // (what burns behind the head is only a glow: no knots on the shaft)
+    return float3(saturate(h * 2.2), saturate(h * h * 1.7), saturate(h * h * h * 1.2)) * 1.65;
+}
+// frost: a pale sheath that thickens toward the head, an edge of ice, a cold mist that falls
+float3 AfFrost(float3 p, float3 q, float sh, float R, float t)
+{
+    const float r = length(q);
+    const float3 pn = p / R;
+    const float n1 = AfNoise(pn * 1.8 + float3(0.0, t * 0.8, 0.0));
+    const float head = exp(-sh / (2.4 * R));
+    const float rad = R * (0.18 + 0.82 * head) * (0.75 + 0.5 * n1);
+    const float body = saturate(1.0 - r / rad);
+    const float rim = pow(saturate(1.0 - abs(r / rad - 0.82) * 5.0), 2.0) * head;
+    const float sm = q.y * (q.y > 0.0 ? 1.8 : 0.5);                         // the mist hangs below, it does not rise
+    const float rm = sqrt(dot(q.xz, q.xz) + sm * sm);
+    const float mist = smoothstep(0.3, 0.95, AfNoise(pn * 0.9 + float3(0.0, t * 0.6, 4.0))) * pow(saturate(1.0 - rm / (2.4 * R)), 2.0) * (0.3 + 0.7 * head);
+    return float3(0.30, 0.62, 1.0) * body * body * 0.85 + float3(0.80, 0.95, 1.0) * (body * body * body * 0.5 + rim * 0.35) + float3(0.45, 0.70, 1.0) * mist * 0.22;
+}
+// arcane: a violet-blue glow thickening toward the head
+float3 AfArcane(float3 p, float3 q, float sh, float R, float t)
+{
+    const float r = length(q);
+    const float n = AfNoise(p / R * 2.4 + float3(0.0, 0.0, t * 4.0));
+    const float head = exp(-sh / (2.0 * R));
+    const float glow = saturate(1.0 - r / (R * (0.10 + 0.90 * head) * (0.8 + 0.4 * n)));
+    return float3(0.45, 0.38, 1.0) * glow * glow * 1.3 + float3(0.8, 0.85, 1.0) * glow * glow * glow * glow * 0.9;
+}
+// every component a finite number (not NaN, not infinite): its exponent is not all ones
+bool AfFinite(float4 v) { return all((asuint(v) & 0x7F800000u) != 0x7F800000u); }
+float3 QuiverArrowFx(float3 c, float3 ro, float3 rd, float3 back, float sceneZ)
+{
+    // Numbers that are not numbers (a pose not read, a NaN from the hands' frame) draw nothing; every loop below has a fixed count,
+    // so whatever comes in, the cost per pixel is bounded.
+    // (the exponent's bits: the compiler may fold isnan and a NaN's comparisons away, the bits it cannot)
+    if (!AfFinite(AfA) || !AfFinite(AfB) || !AfFinite(float4(ro, sceneZ)) || !AfFinite(float4(rd, AfTime))) return c;
+    const float3 A = AfA.xyz, B = AfB.xyz;
+    const float3 ab = B - A;
+    const float L = length(ab);
+    const float R = min(AfA.w, L);                                          // never bigger than the arrow itself (a wild size setting)
+    if (!(R > 0.0) || L < 1e-3 || !(AfB.w > 0.0)) return c;
+    const float3 u = ab / L;
+    const float t = AfTime;
+    const float3 C = B - u * R;                                             // the middle of the effect: the head, a little back along the shaft
+    const float Rh = 3.8 * R;                                               // ... and how far it reaches
+    const float tC = dot(C - ro, rd);
+    if (tC <= 0.0) return c;                                                // (an arrow behind the eye)
+    const float3 cr = C - ro - rd * tC;
+    const float gapC = length(cr);
+    float tS, gapS;
+    AfNearest(ro, rd, A, u, L, tS, gapS);
+    const bool nearHead = gapC < Rh, nearShaft = gapS < 0.9 * R && tS > 0.0;
+    if (!nearHead && !nearShaft) return c;                                  // (most pixels stop here)
+    const float rdv = max(dot(rd, -back), 1e-4);                            // view depth gained per unit along the ray
+    float3 light = float3(0.0, 0.0, 0.0);
+    if (nearHead)
+    {   // the body: a short march through the sphere round the head
+        const float span = sqrt(max(Rh * Rh - gapC * gapC, 0.0));
+        const float t0 = max(tC - span, 0.02);
+        const float dt = (tC + span - t0) / 10.0;
+        float3 body = float3(0.0, 0.0, 0.0);
+        [loop] for (int i = 0; i < 10; ++i)
+        {
+            const float ti = t0 + dt * ((float)i + 0.5);
+            const float vis = saturate((sceneZ - ti * rdv) / (0.8 * R));   // something nearer than the point hides it (a soft edge)
+            if (vis <= 0.0) continue;
+            const float3 p = ro + rd * ti;
+            const float s = clamp(dot(p - A, u), 0.0, L);
+            const float3 q = p - (A + u * s);
+            const float sh = L - s;
+            float3 l;
+            [branch] if (AfOn < 1.5) l = AfFire(p, q, B, sh, R, t);
+            else if (AfOn < 2.5) l = AfFrost(p, q, sh, R, t);
+            else l = AfArcane(p, q, sh, R, t);
+            body += l * (vis * (1.0 - smoothstep(0.55 * Rh, Rh, length(p - C))));   // (fading out toward the sphere's edge: no seam)
+        }
+        light += body * (dt / R);
+    }
+    // the shaft's own line and the exact extras (sparks, crystals, glints)
+    const float3 pS = ro + rd * tS;
+    const float shaftVis = (nearShaft && tS * rdv <= sceneZ) ? (0.22 + 0.78 * exp(-(L - clamp(dot(pS - A, u), 0.0, L)) / (5.0 * R))) : 0.0;   // (a line along the shaft, brightest at the head)
+    const float3 e1 = normalize(cross(u, abs(u.y) < 0.9 ? float3(0.0, 1.0, 0.0) : float3(1.0, 0.0, 0.0)));
+    const float3 e2 = cross(u, e1);
+    [branch] if (AfOn < 1.5)
+    {   // embers: eight sparks that rise from round the head, each its own rate and fade
+        light += float3(1.0, 0.42, 0.08) * shaftVis * exp(-gapS * gapS / (0.02 * R * R)) * 0.55;
+        [unroll] for (int k = 0; k < 8; ++k)
+        {
+            const float3 h = AfHash3((float)k, 3.0);
+            const float ph = frac(t * (0.25 + 0.5 * h.x) + h.y);
+            const float3 P = B + (e1 * (h.z * 2.0 - 1.0) + e2 * (h.x * 2.0 - 1.0)) * (1.2 * R) + float3(sin(t * 3.0 + h.y * 20.0) * 0.18 * R, ph * 3.0 * R, 0.0);
+            light += float3(1.0, 0.62, 0.18) * AfPoint(ro, rd, P, (0.045 + 0.04 * h.z) * R, sceneZ, rdv) * sin(3.14159 * ph) * 2.4;
+        }
+    }
+    else if (AfOn < 2.5)
+    {   // crystals: seven short bright shards standing out of the head, and glints that twinkle
+        light += float3(0.75, 0.93, 1.0) * shaftVis * exp(-gapS * gapS / (0.015 * R * R)) * 0.6;
+        [unroll] for (int k = 0; k < 7; ++k)
+        {
+            const float3 h = AfHash3((float)k, 6.0);
+            const float3 n = normalize((e1 * (h.x * 2.0 - 1.0) + e2 * (h.y * 2.0 - 1.0)) + u * (h.z * 1.2 - 0.3));
+            const float3 S0 = B - u * (h.z * 1.7 * R) + n * (0.12 * R);
+            const float len = (0.8 + 0.8 * h.x) * R;
+            float ts, gs;
+            AfNearest(ro, rd, S0, n, len, ts, gs);
+            if (ts > 0.0 && ts * rdv <= sceneZ)
+                light += float3(0.85, 0.97, 1.0) * exp(-gs * gs / (0.05 * R * 0.05 * R)) * (0.55 + 0.45 * sin(t * 3.0 + h.y * 30.0)) * 1.1;
+        }
+        [unroll] for (int j = 0; j < 8; ++j)
+        {
+            const float3 h = AfHash3((float)j, 8.0);
+            const float3 P = B - u * (h.x * 2.4 * R) + (e1 * (h.y * 2.0 - 1.0) + e2 * (h.z * 2.0 - 1.0)) * (1.3 * R);
+            light += float3(0.9, 0.98, 1.0) * AfPoint(ro, rd, P, 0.06 * R, sceneZ, rdv) * pow(0.5 + 0.5 * sin(t * 5.0 + h.x * 50.0), 3.0) * 2.6;
+        }
+    }
+    else
+    {   // arcane: a hot core along the whole shaft, and sparks circling it near the head
+        const float flow = pow(0.5 + 0.5 * sin(dot(pS - A, u) / R * 3.0 - t * 10.0), 3.0);   // the energy runs up the shaft to the head
+        light += float3(0.8, 0.86, 1.0) * shaftVis * exp(-gapS * gapS / (0.012 * R * R)) * (0.45 + 0.9 * flow) * 0.8;
+        [unroll] for (int k = 0; k < 3; ++k)
+        {
+            const float a = t * 7.0 + (float)k * 2.094 + 0.7 * (float)k;
+            const float along = (float)k * 0.9 * R;
+            const float3 P = B - u * along + (e1 * cos(a) + e2 * sin(a)) * (0.5 * R);
+            light += float3(0.72, 0.92, 1.0) * AfPoint(ro, rd, P, 0.08 * R, sceneZ, rdv) * 2.0;
+        }
+    }
+    return 1.0 - (1.0 - c) * (1.0 - saturate(light * AfB.w));              // screen: adds light, never overbrights
+}
+// ARROWFX-END
+
 float3 Phantom(float4 pos, float2 uv, int eye)
 {
     float3 c = tex2D(FogColorSmp, uv).rgb;
@@ -2268,6 +2583,21 @@ float3 Phantom(float4 pos, float2 uv, int eye)
     {
         const float d = DepthWidth() < 16 ? 0.0 : DepthAt(UpsideDown ? float2(uv.x, 1.0 - uv.y) : uv).x;
         c = Orbs(c, eye == 0 ? PhantomEye0 : PhantomEye1, PixelRayDir(pos.xy, eye), eye == 0 ? CamBack0 : CamBack1, d > 1e-6 ? NearPlane / d : 1e9);
+    }
+    [branch] if (MercOn)   // the wounded merc: this eye's ray, the game's depth here
+    {
+        const float d = DepthWidth() < 16 ? 0.0 : DepthAt(UpsideDown ? float2(uv.x, 1.0 - uv.y) : uv).x;
+        c = MercTint(c, eye == 0 ? PhantomEye0 : PhantomEye1, PixelRayDir(pos.xy, eye), eye == 0 ? CamBack0 : CamBack1, d > 1e-6 ? NearPlane / d : 1e9);
+    }
+    [branch] if (QvN > 0.5)   // the bow quiver's orbs: this eye's ray, the game's depth here
+    {
+        const float d = DepthWidth() < 16 ? 0.0 : DepthAt(UpsideDown ? float2(uv.x, 1.0 - uv.y) : uv).x;
+        c = QuiverOrbs(c, eye == 0 ? PhantomEye0 : PhantomEye1, PixelRayDir(pos.xy, eye), eye == 0 ? CamBack0 : CamBack1, d > 1e-6 ? NearPlane / d : 1e9);
+    }
+    [branch] if (AfOn > 0.5)   // the nocked arrow's fire, frost or arcane glow: this eye's ray, the game's depth here
+    {
+        const float d = DepthWidth() < 16 ? 0.0 : DepthAt(UpsideDown ? float2(uv.x, 1.0 - uv.y) : uv).x;
+        c = QuiverArrowFx(c, eye == 0 ? PhantomEye0 : PhantomEye1, PixelRayDir(pos.xy, eye), eye == 0 ? CamBack0 : CamBack1, d > 1e-6 ? NearPlane / d : 1e9);
     }
     if (PhantomOn) c = Segment(c, pos.xy, PhantomA, PhantomB, eye, float3(1.0, 0.05, 0.05));
     if (BoneOn) {

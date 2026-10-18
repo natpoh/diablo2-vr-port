@@ -38,6 +38,7 @@ struct Change {
     std::wstring fallback;       // what a missing key means to the editor
     std::wstring base;           // as the editor saw it (the fallback's text when it was missing)
     std::wstring value;
+    bool erase = false;          // the key goes out of the file (value is not used); it reads back as missing
 };
 
 enum class Result { Saved, Failed, Conflict };

@@ -21,6 +21,8 @@
 #include "direct_input.h"
 #include "hset_store.h"
 #include "hset_view.h"
+#include "hset_life.h"
+#include "low_hp_game.h"   // the Settings tab's vignette pages show the vignette as a preview
 #include "skill_wheel.h"
 #include "tiles_labels.h"
 #include "view_gate.h"
@@ -126,6 +128,9 @@ void SettingsAct(const wheel::Step& s) {
         calib::RequestMeasure();
         Log("vrcam: openxr - skill panel, Settings: Calibrate body (the window is back when the measurement is over)");
         break;
+    case hset::Do::Preview:     // "Preview 5 s" on the Life and Look pages: the vignette and the beat for five seconds with the rows as they stand (vr/low_hp.h PreviewWindow)
+        lowhp::PlayPreview();
+        break;
     case hset::Do::View:        // F1 - F4 by the controller's own view path (vr/hset_view.h); the view leaves F4, so the window has closed
         if (hsetview::Press(s.settings.view))
             Log("vrcam: openxr - skill panel, Settings: game view changed (F4 is the way back: the F4 key, D2R VR Settings > Home, or a view action bound in BodyWalk / [direct])");
@@ -178,10 +183,14 @@ void OnFrame(const directinput::Frame& f, void*) {
     // the cast: the game's own pad buttons, pulsed while the trigger is down (the modifier and the button each held as the game wants)
     if (s.casting && (s.buttons || s.lt)) directinput::PadPulse(directinput::PadPress{s.buttons, s.lt, 0}, wheel::kHoldMs);
     if (s.request) wheelgame::Submit(s.req);
+    // RUN / WALK: the game's own key command, through the game's own executor (vr/gamecmd.cpp), pressed once - as its key would
+    if (s.runWalk) directinput::Tap((uint32_t)wheel::kRunWalkCommand);
     Haptic(s.feedback, g_ctl.Config().pointerHand);
     g_layer = s.layer;
     g_view = g_ctl.ViewNow();
     const bool open = g_ctl.Open();
+    lowhp::SetPreview(open && tabs && g_ctl.FlipPlace() > 0 && hset::IsLifePage(g_ctl.FlipPlace() - 1), hset::LifeConfig(g_ctl.SettingsModel().Get()),
+                      g_ctl.FlipPlace() - 1);   // the Settings tab is on a vignette page: its rows are the preview's draft; nothing shows until "Preview 5 s"
     if (open && (!g_wasOpen || g_view.style != g_openStyle)) g_openRevision = g_view.revision;   // (another look: its picture must be painted before it is shown)
     g_openStyle = g_view.style;
     // the gesture detectors read the same raw frame: while the wheel is up they treat it like a menu (a 250 ms lease, set every frame)
@@ -219,6 +228,10 @@ void Configure(bool on, int pointerHand, float distanceM, float widthM, int styl
     cfg.openMode = ini && GetPrivateProfileIntW(L"openxr", L"skill_wheel_open", 1, ini) != 0 && LongPressCanCome(ini) ? 1 : 0;
     cfg.holdS = ini ? std::min(1.5f, std::max(0.2f, float(GetPrivateProfileIntW(L"direct", L"hold_ms", 500, ini)) / 1000.0f)) : 0.5f;
     cfg.settingsTab = on && settingsTab && ini && cfg.style == wheel::Style::Tiles;
+    // the two additions of the editor and the panel (idea after bearstonem/d2r-pcvr, MIT): the category strip (on unless the ini says 0) and the RUN / WALK
+    // control (off unless the ini says 1: the same command is a pick of the button lists - "Run / walk switch" - which is how it is meant to be used)
+    cfg.categories = !ini || GetPrivateProfileIntW(L"openxr", L"skill_categories", 1, ini) != 0;
+    cfg.runWalk = ini && GetPrivateProfileIntW(L"openxr", L"skill_run_walk", 0, ini) != 0;
     const bool hints = on && cfg.style == wheel::Style::Tiles && DefaultLayoutIn(ini);
     {
         std::lock_guard<std::mutex> lock(g_lock);

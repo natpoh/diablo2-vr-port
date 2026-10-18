@@ -40,6 +40,8 @@ namespace {
 constexpr uint64_t kLocalIndex = 0x8B2D0, kClientPlayer = 0x9A480, kButtonSlot = 0x1448C0, kControllerBank = 0x1195C0,
                    kSkillLookup = 0x33DCD0, kSkillPositive = 0x33A660, kAssignSkill = 0x1185C0, kClearSkill = 0x118B40,
                    kControllerSkills = 0x2A48A90, kIsController = 0x77E10;
+// the game's run / walk switch ("Always run": the dword its key command 0x23 flips), read for the RUN / WALK control's caption
+constexpr uint64_t kRunLock = 0x2A2375C;
 // code whose bytes prove a layout (found = the offsets below are the build's)
 constexpr uint64_t kSkillNodeLayout = 0x33DD09, kSkillListHead = 0x34B70E, kSkillPositiveLevel = 0x33A68E, kSkillLeftFlag = 0x2389C0;
 // the layouts: the player unit's skill list head, a skill node, a Skills row, a controller binding record
@@ -84,6 +86,8 @@ std::atomic<bool> g_dead{false};        // a call into the game faulted: off for
 std::map<int32_t, std::string> g_names; // UI thread only
 std::map<int32_t, ULONGLONG> g_nameMiss; // UI thread only: a name the game's text service did not give, tried again after kMissMs
 constexpr ULONGLONG kMissMs = 5000;
+std::map<std::string, std::string> g_textByKey;   // UI thread only: the skill trees' names, by their string key
+std::map<std::string, ULONGLONG> g_keyMiss;
 
 void Log(const char* text) { if (g_ctx) logasync::Info(g_ctx, text); }
 
@@ -166,8 +170,29 @@ void Fault(const char* what) {
     Log(b);
 }
 
+// The game's own text for a string key ("d2r:" is added), in the player's language; cached, a miss asked again after kMissMs.
+bool Localize(const std::string& key, std::string* out) {
+    const auto hit = g_textByKey.find(key);
+    if (hit != g_textByKey.end()) { *out = hit->second; return true; }
+    const auto miss = g_keyMiss.find(key);
+    if (miss != g_keyMiss.end() && GetTickCount64() - miss->second < kMissMs) return false;
+    if (g_strings && g_strings->getStringByKey) {
+        const std::string full = "d2r:" + key;
+        char buf[256] = {};
+        uint32_t required = 0;
+        if (g_strings->getStringByKey(g_ctx, full.c_str(), buf, sizeof buf, &required) == Localization::Result::Success && buf[0]) {
+            g_keyMiss.erase(key);
+            *out = g_textByKey.emplace(key, buf).first->second;
+            return true;
+        }
+    }
+    g_keyMiss[key] = GetTickCount64();
+    return false;
+}
+
 class RealGame final : public wheel::Game {
     uintptr_t player_ = 0;
+    int class_ = -1;
     bool ok_ = false;
 
 public:
@@ -180,6 +205,7 @@ public:
         if (!CallInt(kLocalIndex, &index) || index < 0 || index >= 8 || !CallPlayer(index, &player_) || !player_) return;
         uint32_t head[4] = {};
         if (!Rd(player_, &head) || head[0] != 0) return;   // unit type 0: a player
+        class_ = head[1] < 16 ? (int)head[1] : -1;         // (the unit's class: the game's own index of the player's class)
         ok_ = true;
     }
     bool Ok() const { return ok_; }
@@ -265,6 +291,30 @@ public:
         std::snprintf(out, (size_t)n, "%s", it->second.c_str());
         return true;
     }
+    // The skill trees: from the cache the player made from their own game (which class and tree page each skill is on, the trees' name keys) and
+    // the player's class from the unit. Nothing of the game's table is in the plugin.
+    int PlayerClass() override { return class_; }
+    bool TreesKnown() override { return class_ >= 0 && wheelicons::HasTrees(); }
+    int Tree(int32_t id, int32_t owner) override {
+        if (!TreesKnown()) return wheel::kTreeUnknown;
+        if (owner != -1) return 0;   // an item's skill is General / Items
+        int cls = -1, page = 0;
+        if (!wheelicons::SkillTree(id, &cls, &page)) return 0;   // no row in the cache: a command of the game's, on no tree
+        return cls == class_ && page >= 1 && page <= 3 ? page : 0;
+    }
+    bool TreeName(int tree, char* out, int n) override {
+        const std::string key = wheelicons::TreeKey(class_, tree);
+        std::string text;
+        if (key.empty() || !Localize(key, &text)) return false;
+        std::snprintf(out, (size_t)n, "%s", text.c_str());
+        return true;
+    }
+    int RunState() override {
+        const uintptr_t a = d2rsig::Addr(kRunLock);
+        uint32_t v = 0;
+        if (!a || !Rd(a, &v)) return wheel::kRunUnknown;
+        return v ? wheel::kRunning : wheel::kWalking;
+    }
     void DoAssign(int slotIndex, bool left, int32_t skill, int32_t owner) override {
         if (!CallAssign(slotIndex, left, skill, owner)) Fault("the game's setter");
     }
@@ -276,7 +326,9 @@ public:
 // -- the UI thread's work -----------------------------------------------------------------------------------------------------
 
 bool SameContent(const wheel::Snapshot& a, const wheel::Snapshot& b) {
-    if (a.session != b.session || a.ready != b.ready || a.editable != b.editable || a.bank != b.bank || a.count != b.count) return false;
+    if (a.session != b.session || a.ready != b.ready || a.editable != b.editable || a.bank != b.bank || a.count != b.count ||
+        a.playerClass != b.playerClass || a.treesKnown != b.treesKnown || a.run != b.run || std::memcmp(a.treeName, b.treeName, sizeof a.treeName) != 0)
+        return false;
     for (int i = 0; i < wheel::kSlotCount; ++i) if (!(a.slot[i] == b.slot[i])) return false;
     for (uint32_t i = 0; i < a.count && i < (uint32_t)wheel::kCatalogMax; ++i) if (!(a.catalog[i] == b.catalog[i])) return false;
     return true;
@@ -318,6 +370,11 @@ void CaptureNow() {
                               s.count, wheelicons::Available() ? ", icons from the local cache" : ", no icon cache (names only)");
                 Log(b);
                 // which index of the game's table each of the twelve slots is (A and LT + A from the game's own lookup, RT by elimination)
+                if (!s.treesKnown)
+                    Log("vrcam: skill wheel - the icon cache has no skill-tree data (or the class is not known): the editor has no category strip; run "
+                        "tools/skill_icons/prepare_skill_icons.py again to make it");
+                else
+                    Log("vrcam: skill wheel - the editor's categories: All, the class's three skill trees, General / Items (from the icon cache)");
                 int idx[wheel::kSlotCount];
                 if (wheel::SlotIndices(g, idx)) {
                     std::snprintf(b, sizeof b, "vrcam: skill wheel - the game's slot indices: B %d X %d Y %d RB %d | with LT: B %d X %d Y %d RB %d | A %d RT %d | LT + A %d LT + RT %d (-1 = not told)",

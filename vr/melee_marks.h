@@ -20,6 +20,7 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "strike_direction.h"   // Look: what the blade's movement is (counts / not toward the monster / too small a swing)
 #include "stroke_contact.h"
 
 namespace meleeboxes {
@@ -46,6 +47,7 @@ struct Mark {
 struct TrailSegment {
     stroke::Vec a, b;
     bool hot = false;              // a contact would count along it
+    strikedir::Look look = strikedir::Look::Cold;   // Cold / Hot (= hot) / Away (moving, but not toward the monster) / Small (toward it, the swing not big enough yet)
 };
 
 class Track {
@@ -54,8 +56,12 @@ public:
 
     // One pose: where the blade's tip is and whether a contact would count now. Poses go forward in time (a step back starts afresh);
     // a tip that is not finite is ignored.
-    void Feed(uint64_t nowMs, stroke::Vec tip, bool counting) {
+    void Feed(uint64_t nowMs, stroke::Vec tip, bool counting) { Feed(nowMs, tip, counting ? strikedir::Look::Hot : strikedir::Look::Cold); }
+    // The same with what the movement is (strikedir::Look): the marks (reached / slowed) follow Hot only - a movement the rules refuse is not "a contact would count" - and the trail takes
+    // the look's colour.
+    void Feed(uint64_t nowMs, stroke::Vec tip, strikedir::Look look) {
         if (!stroke::Finite(tip)) return;
+        const bool counting = look == strikedir::Look::Hot;
         if (have_ && nowMs < lastMs_) Clear();
         lastMs_ = nowMs;
         if (!have_) {                              // the first pose is the baseline: no turn to speak of
@@ -73,8 +79,8 @@ public:
                 pending_ = false;
             }
         }
-        if (n_ == 0 || counting != Newest().hot || stroke::Length(tip - Newest().tip) >= kTrailStepM) {
-            pts_[head_] = {tip, nowMs, counting};
+        if (n_ == 0 || look != Newest().look || stroke::Length(tip - Newest().tip) >= kTrailStepM) {
+            pts_[head_] = {tip, nowMs, look};
             head_ = (head_ + 1) % kTrailPoints;
             n_ = std::min(n_ + 1, kTrailPoints);
         }
@@ -103,14 +109,14 @@ public:
         std::array<const Point*, kTrailPoints> kept{};       // the ends, both sides of every change of the flag, and a point per chord
         size_t q = 0;
         for (size_t i = 0; i < m; ++i) {
-            const bool edge = i == 0 || i + 1 == m || young[i]->hot != young[i - 1]->hot || young[i]->hot != young[i + 1]->hot;
+            const bool edge = i == 0 || i + 1 == m || young[i]->look != young[i - 1]->look || young[i]->look != young[i + 1]->look;
             if (edge || stroke::Length(young[i]->tip - kept[q - 1]->tip) >= kTrailChordM) kept[q++] = young[i];
         }
         size_t n = 0;
         for (size_t i = q; i-- > 1 && n < max;) {
             const stroke::Vec a = kept[i - 1]->tip, b = kept[i]->tip;
             if (stroke::Length(b - a) < kTrailMinSegM) continue;
-            out[n++] = {a, b, kept[i - 1]->hot};
+            out[n++] = {a, b, kept[i - 1]->look == strikedir::Look::Hot, kept[i - 1]->look};
         }
         return n;
     }
@@ -120,7 +126,7 @@ public:
     size_t PointCount() const { return n_; }
 
 private:
-    struct Point { stroke::Vec tip; uint64_t ms = 0; bool hot = false; };
+    struct Point { stroke::Vec tip; uint64_t ms = 0; strikedir::Look look = strikedir::Look::Cold; };
     const Point& At(size_t k) const { return pts_[(head_ + kTrailPoints - n_ + k) % kTrailPoints]; }   // oldest first
     const Point& Newest() const { return pts_[(head_ + kTrailPoints - 1) % kTrailPoints]; }
     bool have_ = false, state_ = false, pending_ = false;

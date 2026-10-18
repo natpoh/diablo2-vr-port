@@ -43,6 +43,12 @@ public:
     virtual bool Name(int32_t id, char* out, int n) = 0;                    // the game's own text for a skill
     virtual void DoAssign(int slotIndex, bool left, int32_t skill, int32_t owner) = 0;   // the game's setter
     virtual void DoClear(int slotIndex) = 0;                                              // the game's clearer
+    // The skill trees (kCategories), from the player's own game. Defaults: nothing known, so an editor without them has the one list.
+    virtual int PlayerClass() { return -1; }                                // the player's class (the game's own index), -1 not known
+    virtual bool TreesKnown() { return false; }                             // which skill is on which tree, and the trees' names, are known
+    virtual int Tree(int32_t id, int32_t owner) { (void)id; (void)owner; return kTreeUnknown; }   // 1..3 the class's tree, 0 General / Items, -1 not known
+    virtual bool TreeName(int tree, char* out, int n) { (void)tree; (void)out; (void)n; return false; }   // the game's own name of tree 1..3
+    virtual int RunState() { return kRunUnknown; }                          // RunState: the game's run / walk switch now
 };
 
 // The catalog lists the town portal once (the scroll and the tome are one entry, as the game's own list does) and has no
@@ -157,6 +163,9 @@ inline bool Capture(Game& g, Snapshot* s) {
             SetName(g, &k);
             catalog.push_back(k);
         }
+        // the skill trees: each entry's tree (a skill an item grants is General / Items whatever the game's table says of the skill)
+        if (g.TreesKnown())
+            for (Skill& k : catalog) k.tree = (int8_t)(k.owner != -1 ? 0 : std::min(3, std::max(0, g.Tree(k.id, k.owner))));
         std::sort(catalog.begin() + 1, catalog.end(), [](const Skill& a, const Skill& b) {
             const int c = std::strncmp(a.name, b.name, kNameLen);
             return c ? c < 0 : a.owner < b.owner;
@@ -164,6 +173,13 @@ inline bool Capture(Game& g, Snapshot* s) {
         if (catalog.size() > (size_t)kCatalogMax) catalog.resize(kCatalogMax);
     }
     for (int i = 0; i < kSlotCount; ++i) s->slot[i] = slot[i];
+    s->playerClass = g.PlayerClass();
+    s->treesKnown = haveList && s->playerClass >= 0 && g.TreesKnown();
+    for (int t = 0; t < 3; ++t) {
+        s->treeName[t][0] = 0;
+        if (s->treesKnown && (!g.TreeName(t + 1, s->treeName[t], kNameLen) || !s->treeName[t][0])) std::snprintf(s->treeName[t], kNameLen, "Tree %d", t + 1);
+    }
+    s->run = (uint8_t)g.RunState();
     s->count = (uint32_t)catalog.size();
     for (size_t i = 0; i < catalog.size(); ++i) s->catalog[i] = catalog[i];
     s->bank = bank;

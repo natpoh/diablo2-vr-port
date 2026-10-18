@@ -20,9 +20,15 @@
 #include <cstdio>
 #include <cstring>
 
+#include "grip_zone.h"
+#include "hero_strength.h"
+#include "world_anchor.h"
 #include "hold.h"
+#include "shoulder_draw.h"
 #include "shoulder_grip.h"
 #include "shoulder_swap.h"
+#include "slide.h"
+#include "slide_kinds.h"
 #include "weight_flight.h"
 #include "weight_floor.h"
 #include "weight_throw.h"
@@ -44,6 +50,9 @@ bool g_haveSample = false;
 uint32_t g_sample = 0;              // the head sample it was last stepped on
 LARGE_INTEGER g_stepAt{};
 hh::HandOut g_out[2];
+StrengthNote g_strengthNote;         // what the hero's strength did on the last step (under g_lock)
+uint64_t g_strKey = 0;               // ... the weapon and the steel factor it was last told for (< 0: told that the Strength was not read); forgotten with the weapon
+double g_strSteel = -1.0;
 float g_outHand[2][3] = {}, g_outRot[2][4] = {};   // that step's hands in BodyWalk's frame (the pair's second eye)
 float g_outBody[3] = {}, g_outBodyRot[4] = {0, 0, 0, 1};   // and the body's frame
 bool g_free = false;                // no hand held it at that step
@@ -54,6 +63,7 @@ double g_drawnButt = -0.1, g_drawnTip = 0.9;   // the wood's ends along it (SetD
 bool g_drawnNew = false;
 std::atomic<uint32_t> g_holding{0};   // bit per hand on the weapon
 std::atomic<int> g_carrying{-1};      // the hand that carries it
+std::atomic<unsigned> g_wielding{0};  // the hands that hold it or that it flies into, a bit each
 std::atomic<bool> g_placed{false};    // a weapon held that way
 struct EndsOut { float butt[3], tip[3]; ULONGLONG at; };
 EndsOut g_ends{};
@@ -63,6 +73,8 @@ ThrownFly g_thrownFly;                             // a thrown weapon's visit, u
 bool g_thrownFlies = false;                        // ... and it is a potion whose model flies to its landing (wt.thrownPotion && wt.potionFlies, latched at the release)
 EmptyHand g_emptyHand;                             // the hand stays empty while the game throws
 std::atomic<HeroModeFn> g_heroMode{nullptr};
+std::atomic<LibraryFn> g_libraryEnsure{nullptr};   // weightlib::Ensure (vrcam)
+std::atomic<LibraryFn> g_gripEnsure{nullptr};      // griplib::Ensure (vrcam)
 std::atomic<ActionFrameFn> g_actionFrame{nullptr};
 std::atomic<GripIsThrowsFn> g_gripIsThrows{nullptr};
 std::atomic<LastThrowFn> g_lastThrow{nullptr};
@@ -73,6 +85,7 @@ bool g_backNew = false;
 float g_boneAlong = 0.0f;
 std::atomic<bool> g_stowed{false};
 std::atomic<ULONGLONG> g_takenUntil{0};
+std::atomic<uint32_t> g_takeZone[2] = {};   // per hand, from the last step: where a grip pressed now would take the weapon (hh::Hold::TakeZone): the zone in the low byte, the fist's distance in mm above
 std::atomic<HapticFn> g_haptic{nullptr};
 shouldergrip::ZoneTick g_zoneTick[2];   // a hand entering the take zone while a weapon is away (under g_lock)
 std::atomic<const char*> g_unmeasured{nullptr};   // why the drawn shaft was not measured, once told (NoteShaftUnmeasured)
@@ -165,6 +178,23 @@ void WorkOutThrow(const skel::Input::Weight& wt, const Head& head, double floorY
     o.tickMs = nowMs;
     o.massKg = (float)steelKg;
     if (TrailPeak(nowMs, &com, &peak)) {
+        if (wt.handsModel == 1) {   // the weight-physics library's launch velocity from the last steps (oldest first), when it gives one
+            if (const hh::Engine* engine = hh::GetEngine()) {
+                uint64_t ts[kTrail];
+                V3 vs[kTrail];
+                int n = 0;
+                const int first = (g_trailAt - g_trailN + kTrail) % kTrail;
+                for (int k = 0; k < g_trailN; ++k) {
+                    const TrailSample& sm = g_trail[(first + k) % kTrail];
+                    if (sm.t > nowMs) continue;
+                    ts[n] = sm.t;
+                    vs[n] = sm.vel;
+                    ++n;
+                }
+                V3 v2;
+                if (engine->ThrowVelocity(ts, vs, n, nowMs, &v2)) peak = v2;
+            }
+        }
         const Q inv = heft::QConj(head.yaw);
         weightflight::In fi;
         const V3 p = heft::Rotate(inv, heft::Sub(com, head.pos)), v = heft::Rotate(inv, peak);
@@ -191,6 +221,12 @@ void WorkOutThrow(const skel::Input::Weight& wt, const Head& head, double floorY
 
 }  // namespace
 
+// The room's axes against the game's world, of the last pose: a weapon that lies on the floor is carried by how they moved since (vr/world_anchor.h).
+namespace {
+worldanchor::Snap g_worldWas;
+bool g_worldTold = false;
+}  // namespace
+
 void SetLog(LogFn fn) { g_log.store(fn); }
 void SetThrowSource(GripIsThrowsFn gripIsThrows, LastThrowFn lastThrowTickMs) {
     g_gripIsThrows.store(gripIsThrows);
@@ -211,13 +247,20 @@ void Apply(skel::Input* in, Out* out) {
         TrailClear();
         g_flightPending = false;
         g_key = 0;
+        g_strKey = 0;
+        g_strSteel = -1.0;
+        g_strengthNote = StrengthNote{};
         g_holding.store(0);
         g_carrying.store(-1);
+        g_wielding.store(0);
         g_placed.store(false);
         g_stowed.store(false);
         g_takenUntil.store(0);
+        g_takeZone[0].store(0);
+        g_takeZone[1].store(0);
         g_zoneTick[0].Reset();
         g_zoneTick[1].Reset();
+        g_worldWas = worldanchor::Snap{};
         g_gripWas[0] = g_gripWas[1] = false;
         g_fitLogged[0].store(0xFFFFFFFFu);
         g_fitLogged[1].store(0xFFFFFFFFu);
@@ -229,14 +272,60 @@ void Apply(skel::Input* in, Out* out) {
     s.strength = std::max(0.05f, wt.strength);
     s.gravity = std::max(0.0f, wt.gravity);
     s.damping = std::max(0.0f, wt.damping);
+    // [weight] hero_strength (vr/hero_strength.h): the hero's Strength against the weapon's requirement scales the steel's mass and the hands' strength - the two numbers every model
+    // takes the same way (the library gets them as the masses of the steel and its `strength`). A Strength that was not read leaves both as they are.
+    herostr::Out hstr;
+    if (wt.heroStrength) {
+        herostr::In hsIn;
+        hsIn.str = wt.heroStr;
+        hsIn.req = wt.reqStr;
+        hsIn.classPct = wt.strengthClassPct;
+        hsIn.effectPct = wt.strengthEffect;
+        hsIn.kind = wt.kind;
+        hsIn.twoHanded = wt.twoHanded;
+        hstr = herostr::Factor(hsIn);
+        if (hstr.known) {
+            s.weight *= (float)hstr.steel;
+            s.strength = std::max(0.05f, wt.strength * (float)hstr.hands);
+        }
+    }
     if (wt.gravityFeel) hh::UseGravityFeel(s);
+    // [weight] hands_model 1: the weight-physics library moves the held body, when it is loaded (vr/weight_lib.h; asked for now - it is loaded when first wanted); without it ours
+    if (wt.handsModel == 1 && !hh::GetEngine()) {
+        const LibraryFn ensure = g_libraryEnsure.load();
+        if (ensure) ensure();
+    }
+    const bool library = wt.handsModel == 1 && hh::GetEngine() != nullptr;
+    if (library) {
+        s.model = 1;
+        s.modelFlags = wt.handsModelFlags;
+    }
+    // [weight] grip_model 1: the grip library holds the hands (vr/grip_lib.h), when it is loaded - else ours
+    if (wt.gripModel == 1 && !hh::GetGripEngine()) {
+        const LibraryFn ensure = g_gripEnsure.load();
+        if (ensure) ensure();
+    }
+    const bool gripLib = wt.gripModel == 1 && hh::GetGripEngine() != nullptr;
+    s.gripModel = gripLib ? 1 : 0;
+    {
+        static int lastGrip = -1;
+        const int now = gripLib ? 1 : wt.gripModel == 1 ? 2 : 0;
+        if (now != lastGrip) {
+            lastGrip = now;
+            LogF("vrcam: weight - %s", now == 1 ? "the grip library holds the hands (grip or trigger holds the second hand, tight or loose; its pose of the fingers; its pulses)"
+                 : now == 2 ? "grip_model 1 asked, there is no grip library: our own way of holding" : "our own way of holding the weapon");
+        }
+    }
     {   // the feel's sliders, told when they change (the log shows what a test ran with)
         static float lastG = -1.0f, lastD = -1.0f, lastS = -1.0f;
         static int lastF = -1;
-        if (wt.gravity != lastG || wt.damping != lastD || wt.strength != lastS || (int)wt.gravityFeel != lastF) {
-            lastG = wt.gravity; lastD = wt.damping; lastS = wt.strength; lastF = wt.gravityFeel ? 1 : 0;
-            LogF("vrcam: weight - gravity %.0f %%, damping %.0f %%, hands' strength %.0f %%, %s wrists", wt.gravity * 100.0f, wt.damping * 100.0f,
-                 wt.strength * 100.0f, wt.gravityFeel ? "soft (gravity feel)" : "stiff (the old)");
+        const int now = (wt.gravityFeel ? 1 : 0) | (library ? 2 : 0) | (wt.handsModel == 1 && !library ? 4 : 0) | (wt.handsModelFlags ? 8 : 0);
+        if (wt.gravity != lastG || wt.damping != lastD || wt.strength != lastS || now != lastF) {
+            lastG = wt.gravity; lastD = wt.damping; lastS = wt.strength; lastF = now;
+            LogF("vrcam: weight - gravity %.0f %%, damping %.0f %%, hands' strength %.0f %%, %s%s%s", wt.gravity * 100.0f, wt.damping * 100.0f,
+                 wt.strength * 100.0f, library ? "the weight-physics library moves the weapon" : wt.gravityFeel ? "soft wrists (gravity feel)" : "stiff wrists (the old)",
+                 library && wt.handsModelFlags ? ", its weight in the palm" : "",
+                 wt.handsModel == 1 && !library ? " - hands_model 1 asked, there is no library: our own physics" : "");
         }
     }
     s.grabDistance = wt.grabM;
@@ -244,24 +333,86 @@ void Apply(skel::Input* in, Out* out) {
     s.fist = {wt.fist[0], wt.fist[1], wt.fist[2]};
     s.stowAfter = wt.afterDrop >= 1 ? (double)std::max(0.0f, wt.stowAfterS) : -1.0;   // 0: it lies on the floor as ever
     s.recallAny = wt.recallAny;
-    s.slide = wt.slide;
+    s.drawMode = wt.drawMode;   // [hands] shoulder_draw: it lies where it fell (in the world), the grip of either hand calls it back, after the delay it goes to the back, a shoulder draws it
+    if (s.drawMode) {
+        s.stowAfter = (double)std::max(0.0f, wt.drawStowS);
+        s.recallFloorAny = true;
+        s.recallAny = false;
+    }
+    static_assert(gripzone::kCount == 5, "Input::Weight::hiltCm has a place for each of the zone's kinds");
+    s.hiltOnly = wt.hiltOnly;   // [weight] grip_hilt_only: the second hand takes a sword (an axe, a mace ...) only on its hilt
+    {
+        const int zone = gripzone::IndexOf((uint32_t)in->weaponType);
+        s.hiltLen = zone >= 0 && zone < 5 ? std::clamp((double)wt.hiltCm[zone], 0.0, (double)gripzone::kMaxCm) * 0.01 : 0.0;
+    }
+    s.slide = wt.slide && slidekinds::Allows(wt.slideKinds, (uint32_t)in->weaponType);   // [weight] slide_second_hand_<kind>: a staff's second hand slides, a sword's holds where it closed
     s.backTake = std::clamp((double)wt.backTakeM, 0.0, 0.8);
     s.floor = weightfloor::RoomFloorY(in->headRoom[1], wt.headAboveGroundM);   // the ground the player sees, not the room's floor
 
     const Head head = HeadOf(*in);
     hh::HandIn hi[2];
+    int drawZone[2] = {-1, -1};   // the shoulder each hand is behind when it may draw the weapon (0 right, 1 left)
+    bool wearsShieldAt[2] = {false, false};   // the hand is busy with the shield (for the log's reason)
     for (int side = 0; side < 2; ++side) {
         const int at = (in->handsValid & (1u << side)) ? side : slot;   // a hand not tracked: its pose stands in, unused
         hi[side].tracked = (in->handsValid & (1u << side)) != 0;
         hi[side].pose = ToRoom(head, in->hand[at], in->rot[at]);
         hi[side].grip = wt.haveRawGrip ? wt.rawGrip[side] : in->grip[side];   // (a grip taken from the layout reads as let go in in->grip)
-        hi[side].busy = wt.busy[side] || (side != slot && wt.otherBusy);
+        hi[side].trigger = wt.haveRawTrigger ? wt.rawTrigger[side] : -1.0f;
+        // the other hand holds something of its own (the shield strapped to it). With [hands] shoulder_draw handling the shield nobody is busy with it: the hand that takes the
+        // weapon is the one the shield leaves (it goes to the other forearm as the weapon is drawn)
+        // (the hand that wears the shield is busy with it - unless the shield FOLLOWS the sword: it moves to the other arm as the weapon is taken - or is put away)
+        const bool wearsShield = wt.shieldArm == 0 || wt.shieldArm == 1 ? (!wt.shieldFollow && side == wt.shieldArm) : wt.shieldArm == 2 ? false : (side != slot && wt.otherBusy);
+        wearsShieldAt[side] = wearsShield;
+        hi[side].busy = wt.busy[side] || wearsShield;
         hi[side].claimed = wt.claimed[side];
         // behind a shoulder: the swap gesture's volume (vr/shoulder_swap.h; the hands are in the head's turn frame already)
-        hi[side].behind = wt.afterDrop >= 1 && hi[side].tracked && shoulderswap::Near(in->hand[side]);
+        hi[side].behind = !wt.drawMode && wt.afterDrop >= 1 && hi[side].tracked && shoulderswap::Near(in->hand[side]);   // (drawMode: the draw flag below says it)
         hi[side].fistLine = FistLine(*in, side);
+        // [hands] shoulder_draw: behind either shoulder (whichever hand it is - a cross draw): its grip press draws the weapon from there
+        if (wt.drawMode && hi[side].tracked) {
+            const shoulderdraw::Side zone = shoulderdraw::ZoneSide(in->hand[side]);
+            // (a javelin or a throwing weapon is thrown from the game's hand only - the throw gesture reads that controller - so only that hand draws one)
+            const bool throwsKind = wt.kind == (int)hh::Kind::Javelin || wt.kind == (int)hh::Kind::Throwing;
+            // (shield_stow: the left shoulder is the shield's, the weapon is drawn from the right one only)
+            hi[side].callable = side == slot || !throwsKind;   // (a javelin or a throwing weapon is called and drawn into the game's hand only)
+            if (zone != shoulderdraw::Side::None && !(wt.shieldZone && zone == shoulderdraw::Side::Left) && (side == slot || !throwsKind)) {
+                float from[3];
+                const float ident[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+                shoulderdraw::DrawPoint(zone, from);
+                hi[side].draw = true;
+                drawZone[side] = zone == shoulderdraw::Side::Right ? 0 : 1;
+                hi[side].drawFrom = ToRoom(head, from, ident).pos;
+            }
+        }
     }
     const uint64_t key = ((uint64_t)(uint32_t)in->weaponType << 32) | ((uint64_t)wt.kind << 8) | (wt.twoHanded ? 2u : 0u) | (uint64_t)slot;
+    {   // what the hero's strength did, told once for each weapon and again when the factors move by more than 3 % (a level, a point, another piece of gear)
+        uint64_t& lastKey = g_strKey;
+        double& lastSteel = g_strSteel;
+        StrengthNote n;
+        n.on = hstr.known;
+        n.reqFromGame = hstr.reqFromGame;
+        n.str = wt.heroStr;
+        n.req = (int)std::lround(hstr.req);
+        n.classPct = wt.strengthClassPct;
+        n.effectPct = wt.strengthEffect;
+        n.ratio = (float)hstr.ratio;
+        n.steel = (float)hstr.steel;
+        n.hands = (float)hstr.hands;
+        g_strengthNote = n;
+        if (hstr.known && (key != lastKey || std::fabs(hstr.steel - lastSteel) > 0.03)) {
+            lastKey = key;
+            lastSteel = hstr.steel;
+            LogF("vrcam: weight - the hero's strength: Str %d x %.0f %% (his class) = %.0f against the weapon's requirement %d%s -> ratio %.2f, the steel x%.2f, the hands' strength x%.2f (strength matters %.0f %%)",
+                 wt.heroStr, (double)wt.strengthClassPct, hstr.capacity, (int)std::lround(hstr.req), hstr.reqFromGame ? " (the game's table)" : " (typical for its kind: the table is not read)", hstr.ratio,
+                 hstr.steel, hstr.hands, (double)wt.strengthEffect);
+        } else if (!hstr.known && wt.heroStrength && (key != lastKey || lastSteel >= 0.0)) {
+            lastKey = key;
+            lastSteel = -1.0;
+            LogF("vrcam: weight - hero_strength is ticked but the hero's Strength was not read: the weapon weighs as ever");
+        }
+    }
     // The weapon put in the slot's fist, where the game holds it (a new weapon, the arms back on the controllers, a thrown one's successor);
     // the shaft along the fist until it is measured off the pose.
     const auto place = [&](const char* why) {
@@ -276,9 +427,16 @@ void Apply(skel::Input* in, Out* out) {
         g_fitLogged[0].store(0xFFFFFFFFu);   // a new weapon (or a fresh one in the hand): its takes are told afresh
         g_fitLogged[1].store(0xFFFFFFFFu);
         for (int side = 0; side < 2; ++side) g_out[side] = {};
-        LogF("vrcam: weight - %s%s in the %s hand, %.2f kg (x %.2f), the other hand %s%s", wt.twoHanded ? "two-handed " : "",
-             hh::KindName((hh::Kind)wt.kind), HandName(slot), hh::ShapeOf((hh::Kind)wt.kind, wt.twoHanded).Mass(), s.weight,
-             wt.otherBusy ? "holds something of its own" : "may take it with its grip", why);
+        const hh::Shape shape = hh::ShapeOf((hh::Kind)wt.kind, wt.twoHanded);
+        const bool longShaft = shape.tip - shape.butt >= heft::slide::kMinShaft;
+        char zoneText[120] = "";   // [weight] grip_hilt_only: where the second hand takes it
+        const hh::Shape& cur = g_hold.WeaponShape();   // (as the hold has it: scaled onto the drawn weapon once that is known)
+        if (s.hiltOnly && g_hold.HiltEnd(s) < cur.tip - 1e-9)
+            snprintf(zoneText, sizeof zoneText, "; its second hand takes it only on the hilt (%.0f cm from the pommel, %s)", (g_hold.HiltEnd(s) - cur.butt) * 100.0, s.hiltLen > 0.0 ? "the Settings' length" : "the model's");
+        LogF("vrcam: weight - %s%s in the %s hand, %.2f kg (x %.2f), the other hand %s%s%s%s", wt.twoHanded ? "two-handed " : "",
+             hh::KindName((hh::Kind)wt.kind), HandName(slot), shape.Mass(), s.weight,
+             wt.otherBusy ? "holds something of its own" : "may take it with its grip", why,
+             !longShaft ? "" : s.slide ? "; its second hand slides along the shaft" : "; its second hand holds where it closed (no slide for this kind)", zoneText);
     };
     if (!g_hold.Placed() || key != g_key) {
         g_throw.Reset();
@@ -406,12 +564,34 @@ void Apply(skel::Input* in, Out* out) {
         g_sample = in->sample;
         g_haveSample = true;
         const hh::HandOut was[2] = {g_out[0], g_out[1]};
+        const bool awayWas = g_hold.Away();
         const int mainWas = g_hold.Main();
         const bool heldWas = g_hold.Held(), flyWas = g_hold.Flying(), stowWas = g_hold.Stowed();
         // on the back: where the skeleton drew it last pose (a frame late is fine); the weapon flies from there when taken
         if (stowWas && g_backNew) g_hold.SetStowPose(ToRoom(head, g_backBody, g_backRot));
         g_backNew = false;
+        {   // the game's world moves under the room (the hero walks, the sticks turn him): a weapon that lies on the floor stays where it is in the WORLD
+            const worldanchor::Snap now = worldanchor::Make(in->headRoom, in->headYawDeg, wt.worldEye, wt.worldCamR, wt.worldCamF, wt.worldUpm);
+            const bool carry = s.drawMode && (g_hold.Away() || g_hold.Flying());
+            if (!carry) g_worldTold = false;
+            if (carry && !(wt.worldOk && now.ok)) {
+                if (!g_worldTold) { g_worldTold = true; LogF("vrcam: weight - the camera's frame in the world is not known: a weapon on the floor moves with the hero"); }
+            } else if (carry && g_worldWas.ok) {
+                const worldanchor::Move mv = worldanchor::Between(g_worldWas, now);
+                const double jump = std::hypot(mv.sx, mv.sz);
+                if (mv.ok && jump < 1.5 && std::fabs(mv.delta) < 1.0) {   // (a jump of more than that is a new area or a teleport: the weapon stays in the room's place)
+                    if (jump > 1e-4 || std::fabs(mv.delta) > 1e-4) g_hold.Transport(heft::QFromAxisAngle({0, 1, 0}, mv.delta), {mv.sx, 0.0, mv.sz});
+                }
+            }
+            g_worldWas = wt.worldOk ? now : worldanchor::Snap{};
+        }
         g_hold.Step(hi, dt, s, g_out);
+        if (gripLib) {   // the pulses the grip library gives a hand: coming within reach of the shaft, closing on it, letting go
+            const HapticFn pulse = g_haptic.load();
+            for (int side = 0; side < 2; ++side)
+                if (pulse && g_out[side].events && g_out[side].hapticAmp > 0.0 && g_out[side].hapticMs > 0)
+                    pulse(side, (float)std::min(1.0, g_out[side].hapticAmp), g_out[side].hapticMs);
+        }
         g_free = !g_hold.Held();
         FromRoom(head, g_hold.BodyPose(), g_outBody, g_outBodyRot);
         {   // the weapon's centre and velocity on this step; a thrown kind in the hand: the throw it would make if let go now (weight::LastThrow)
@@ -439,7 +619,19 @@ void Apply(skel::Input* in, Out* out) {
                 LogF("vrcam: weight - the %s hand %s from the back", HandName(g_hold.FlyHand()),
                      g_hold.FlyHand() == g_hold.First() ? "calls it back" : "takes it behind the shoulder");
         } else if (!flyWas && g_hold.Flying()) {
-            LogF("vrcam: weight - the %s grip calls it back", HandName(slot));
+            if (s.drawMode && hi[g_hold.FlyHand()].draw)
+                LogF("vrcam: weight - the %s hand draws it from behind the %s shoulder%s", HandName(g_hold.FlyHand()), HandName(drawZone[g_hold.FlyHand()] == 0 ? 0 : 1),
+                     drawZone[g_hold.FlyHand()] == g_hold.FlyHand() ? "" : " (a cross draw)");
+            else if (s.drawMode)
+                LogF("vrcam: weight - the %s grip calls it back from where it lay", HandName(g_hold.FlyHand()));
+            else
+                LogF("vrcam: weight - the %s grip calls it back", HandName(slot));
+        }
+        for (int side = 0; side < 2; ++side) {   // where a grip pressed now would take the weapon: the belt potions ask (weight::TakeZone) so that a hand in the weapon's zone takes the weapon
+            double metres = 1e9;
+            const hh::Hold::TakeAt at = g_hold.TakeZone(side, hi[side], s, &metres);
+            const uint32_t mm = metres >= 65.0 ? 0xFFFFFFu : (uint32_t)std::lround(std::max(0.0, metres) * 1000.0);
+            g_takeZone[side].store((uint32_t)at | (mm << 8));
         }
         {   // [weight] take_haptic: a hand enters the take zone behind a shoulder while the weapon is away - a short pulse, so the hand feels where to grab
             const HapticFn pulse = g_haptic.load();
@@ -448,20 +640,34 @@ void Apply(skel::Input* in, Out* out) {
                 // the take zone: behind a shoulder, or at the weapon where it hangs (a fist within back_take_cm of its drawn shaft)
                 const double dist = g_hold.StowDistance(side, hi[side], s);
                 const bool atBack = s.backTake > 0.0 && dist <= s.backTake;
-                const bool tick = g_zoneTick[side].Step(g_hold.Stowed(), hi[side].behind || atBack, hi[side].busy, nowMs);
+                // shoulder_draw: the weapon is away on the floor (or still falling) and the hand enters its shoulder's zone; otherwise the weapon on the back and either shoulder
+                const bool away = s.drawMode ? (g_hold.Away() || g_hold.Stowed()) : g_hold.Stowed();
+                const bool tick = g_zoneTick[side].Step(away, s.drawMode ? (hi[side].draw || atBack) : (hi[side].behind || atBack), hi[side].busy, nowMs);
                 if (tick && pulse && wt.takeHaptic > 0.0f) pulse(side, std::min(1.0f, wt.takeHaptic), kTickMs);
                 // a grip squeezed while the weapon is away and still not taken: say why, so the next test shows it
                 const float gv = hi[side].grip;
                 const bool down = gv > 0.6f ? true : gv < 0.4f ? false : g_gripWas[side];
                 if (down && !g_gripWas[side] && stowWas && g_hold.Stowed()) {
                     const char* why = !hi[side].tracked ? "the hand is not tracked"
-                                    : hi[side].busy ? "the hand holds something of its own (a belt potion, or the shield's hand)"
+                                    : hi[side].busy ? (wearsShieldAt[side] ? "the hand wears the shield and the shield does not follow the sword (shoulder_draw_shield is off)" : "the hand holds something of its own (a belt potion)")
                                     : hi[side].behind || atBack ? "(inside the zone: it should have been taken)"
                                     : hi[side].claimed ? "the grip is the weapon swap's claim, and the hand is outside the zone"
                                     : (side == g_hold.First() || s.recallAny) ? "(a call-back: it should have been called)"
                                     : "outside the zone, and only the hand the game holds it in calls it from afar (recall_any_hand is off)";
                     LogF("vrcam: stowed weapon: the %s hand is %.0f cm from it, zone %.0f cm, behind a shoulder %s - not taken: %s", HandName(side), dist * 100.0,
                          s.backTake * 100.0, hi[side].behind ? "yes" : "no", why);
+                }
+                // shoulder_draw: a grip squeezed while the weapon is away and not drawn - say why (the next test shows it)
+                if (s.drawMode && down && !g_gripWas[side] && awayWas && !g_hold.Flying() && !g_hold.Held()) {
+                    const shoulderdraw::Side zone = hi[side].tracked ? shoulderdraw::ZoneSide(in->hand[side]) : shoulderdraw::Side::None;
+                    const char* why = !hi[side].tracked ? "the hand is not tracked"
+                                    : hi[side].busy ? (wearsShieldAt[side] ? "the hand wears the shield and the shield does not follow the sword (shoulder_draw_shield is off)" : "the hand holds something of its own (a belt potion)")
+                                    : zone == shoulderdraw::Side::None ? "the hand is not behind a shoulder"
+                                    : wt.shieldZone && zone == shoulderdraw::Side::Left ? "the left shoulder is the shield's (shoulder_draw_shield_stow): the weapon is drawn from the right one"
+                                    : !hi[side].draw ? "a javelin or a throwing weapon is drawn into the game's hand only (the throw reads that controller)"
+                                    : g_hold.Thrown() ? "it was thrown: it ends by itself"
+                                    : "(inside its zone: it should have been drawn)";
+                    LogF("vrcam: shoulder draw: the %s hand squeezed its grip, the weapon (away) was not drawn: %s", HandName(side), why);
                 }
                 g_gripWas[side] = down;
             }
@@ -508,6 +714,23 @@ void Apply(skel::Input* in, Out* out) {
     memcpy(out->body, g_outBody, sizeof out->body);
     memcpy(out->bodyRot, g_outBodyRot, sizeof out->bodyRot);
     out->asPlaced = g_hold.AsPlaced() && !g_out[slot ^ 1].holds;
+    out->gripLib = gripLib;
+    for (int side = 0; side < 2; ++side) {
+        out->gripMode[side] = g_out[side].mode;
+        out->gripRoll[side] = (float)g_out[side].roll;
+    }
+    {   // the wood as the weight model has it, from the weapon bone's origin
+        const hh::Shape& sh = g_hold.WeaponShape();
+        const double along = g_shaftKey == g_key ? g_boneAlong : 0.0;
+        out->nPieces = std::min(3, sh.nPieces);
+        for (int i = 0; i < out->nPieces; ++i) {
+            out->pieceT0[i] = (float)(std::min(sh.pieces[i].a.y, sh.pieces[i].b.y) - along);
+            out->pieceT1[i] = (float)(std::max(sh.pieces[i].a.y, sh.pieces[i].b.y) - along);
+            out->pieceR[i] = (float)sh.pieces[i].radius;
+        }
+        out->shaftButtT = (float)(sh.butt - along);
+        out->shaftTipT = (float)(sh.tip - along);
+    }
     out->stowed = g_hold.Stowed();
     out->hidden = g_emptyHand.Active();
     {   // the middle of the shaft from the weapon bone: the shape counts from where the fist passes the shaft, the bone stands boneAlong ahead of that
@@ -517,6 +740,7 @@ void Apply(skel::Input* in, Out* out) {
     g_stowed.store(out->stowed);
     g_holding.store(holding);
     g_carrying.store(g_free ? -1 : out->main);
+    g_wielding.store(g_hold.Flying() ? 1u << g_hold.FlyHand() : g_hold.Held() ? (g_out[0].holds ? 1u : 0u) | (g_out[1].holds ? 2u : 0u) : 0u);   // the shield keeps to the other forearm ([hands] shoulder_draw, vr/shield_arm.h)
     g_placed.store(true);
     ReleaseSRWLockExclusive(&g_lock);
 }
@@ -554,6 +778,8 @@ bool LastThrow(ThrowOutcome* out) {
 
 void SetHaptic(HapticFn fn) { g_haptic.store(fn); }
 void SetHeroModeSource(HeroModeFn fn) { g_heroMode.store(fn); }
+void SetLibrarySource(LibraryFn ensure) { g_libraryEnsure.store(ensure); }
+void SetGripLibrarySource(LibraryFn ensure) { g_gripEnsure.store(ensure); }
 void SetActionFrameSource(ActionFrameFn fn) { g_actionFrame.store(fn); }
 
 void SetDrawnShaft(const float at[3], const float dir[3], float butt, float tip, float boneAlong) {
@@ -602,11 +828,25 @@ void NoteGripFit(const GripFitNote& n) {
         LogF("vrcam: weight - grip fit, the %s hand (the game's grip, kept)%s%s", HandName(n.side), t, miss);
 }
 
+bool LastStrength(StrengthNote* out) {
+    AcquireSRWLockShared(&g_lock);
+    const StrengthNote n = g_strengthNote;
+    ReleaseSRWLockShared(&g_lock);
+    if (out) *out = n;
+    return n.on;
+}
+
 bool BackStowed() { return g_stowed.load() || GetTickCount64() < g_takenUntil.load(); }
 
 bool HoldsWeapon(int side) { return side >= 0 && side < 2 && (g_holding.load() & (1u << side)) != 0; }
 int CarryingHand() { return g_carrying.load(); }
+unsigned WieldingHands() { return g_wielding.load(); }
 bool Placed() { return g_placed.load(); }
+int TakeZone(int side, float* cm) {
+    const uint32_t v = g_takeZone[side & 1].load();
+    if (cm) *cm = (v >> 8) >= 0xFFFFFFu ? 1e6f : (float)(v >> 8) * 0.1f;
+    return (int)(v & 0xFF);
+}
 
 bool Aim(AimInfo* out) {
     AimInfo a;
@@ -644,15 +884,20 @@ void SetDrawnShaft(const float*, const float*, float, float, float) {}
 bool LastThrow(ThrowOutcome* out) { if (out) *out = ThrowOutcome{}; return false; }
 void SetHaptic(HapticFn) {}
 void SetHeroModeSource(HeroModeFn) {}
+void SetLibrarySource(LibraryFn) {}
+void SetGripLibrarySource(LibraryFn) {}
 void SetActionFrameSource(ActionFrameFn) {}
 void SetBackBody(const float*, const float*) {}
 void NoteGripFit(const GripFitNote&) {}
 void NoteShaftUnmeasured(const char*) {}
 void Say(const char*) {}
+bool LastStrength(StrengthNote* out) { if (out) *out = StrengthNote{}; return false; }
 bool BackStowed() { return false; }
 bool HoldsWeapon(int) { return false; }
 int CarryingHand() { return -1; }
+unsigned WieldingHands() { return 0u; }
 bool Placed() { return false; }
+int TakeZone(int, float* cm) { if (cm) *cm = 1e6f; return 0; }
 bool ShaftEnds(float*, float*) { return false; }
 bool Aim(AimInfo* out) { if (out) *out = AimInfo{}; return false; }
 void SetLog(LogFn) {}

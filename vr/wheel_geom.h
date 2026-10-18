@@ -11,6 +11,8 @@
 #include <cmath>
 #include <cstdint>
 
+#include "wheel_types.h"
+
 namespace wheel {
 
 constexpr float kPi = 3.14159265358979323846f;
@@ -37,7 +39,10 @@ enum Cell : int {
     kTabSettings = 39,   // tiles: ... and SETTINGS, when the key is on
     kFlipPrev = 40,      // tiles with the tab strip: the arrow at the window's left edge (one place back)
     kFlipNext = 41,      // ... and at its right edge (one place on)
+    kCategory0 = 42,     // PickSkill: the category strip's tabs, 42..46 (wheel::kCatAll .. kCatGeneral): All, the class's three trees, General / Items
+    kRunWalk = 47,       // Wheel: RUN / WALK (the game's own run / walk switch)
 };
+constexpr int CategoryCell(int category) { return kCategory0 + category; }
 
 struct Rect {
     float l, t, r, b;
@@ -51,25 +56,32 @@ constexpr float kCentreR = 0.10f, kRingIn = 0.135f, kRingOut = 0.39f;
 constexpr float kWedge = kPi / 4.0f;
 constexpr float kWedgeHold = 0.035f;   // radians a pointer may stray into the next wedge before the hover moves (jitter)
 
-inline int FooterCount(Page page) { return page == Page::Wheel ? 2 : page == Page::PickSlot ? 1 : 3; }
-inline Cell FooterCell(Page page, int index) {
-    if (page == Page::Wheel) return index == 0 ? kEdit : kClose;
+// The wheel page's footer has a third button, RUN / WALK, between EDIT SKILLS and CLOSE, when `runWalk` ([openxr] skill_run_walk) is on.
+inline int FooterCount(Page page, bool runWalk = false) { return page == Page::Wheel ? (runWalk ? 3 : 2) : page == Page::PickSlot ? 1 : 3; }
+inline Cell FooterCell(Page page, int index, bool runWalk = false) {
+    if (page == Page::Wheel) return runWalk ? (index == 0 ? kEdit : index == 1 ? kRunWalk : kClose) : (index == 0 ? kEdit : kClose);
     if (page == Page::PickSlot) return kBack;
     return index == 0 ? kPrev : index == 1 ? kNext : kBack;
 }
-inline Rect FooterRect(Page page, int index) {
-    const int n = FooterCount(page);
+inline Rect FooterRect(Page page, int index, bool runWalk = false) {
+    const int n = FooterCount(page, runWalk);
     const float gap = 0.02f, span = 0.94f, w = (span - gap * (n - 1)) / n;
     const float l = 0.03f + index * (w + gap);
     return {l, 0.905f, l + w, 0.978f};
 }
 
-// The editor's list entry i (0..7), and the CLEAR SLOT button above it.
+// The editor's list entry i (0..7): two columns, under the category strip; and the CLEAR SLOT button above it.
 inline Rect OptionRect(int i) {
-    const float x = 0.05f + (i % 2) * 0.46f, y = 0.23f + (i / 2) * 0.145f;
-    return {x, y, x + 0.44f, y + 0.13f};
+    const float x = 0.05f + (i % 2) * 0.46f, y = 0.30f + (i / 2) * 0.135f;
+    return {x, y, x + 0.44f, y + 0.12f};
 }
 constexpr Rect kClearRect{0.64f, 0.115f, 0.95f, 0.195f};
+// The category strip (All, the three trees, General / Items) between the title and the list: five tabs side by side. It is there only
+// when the player's cache knows the trees; the band is left empty otherwise, so the list stays where it is.
+inline Rect CategoryRect(int category) {
+    const float x = 0.05f + category * 0.184f;
+    return {x, 0.205f, x + 0.174f, 0.285f};
+}
 
 // The centre of wedge k, as an angle clockwise from straight up.
 inline float WedgeAngle(int k) { return (k + 0.5f) * kWedge; }
@@ -96,12 +108,16 @@ inline int WedgeAt(float u, float v, int previous) {
 
 // What a point on the panel hits on this page. `options`: how many entries the PickSkill page shows. `previous`: the hover
 // last frame (for WedgeAt's hold).
-inline int HitTest(Page page, float u, float v, int previous, int options) {
+// `strip`: the category strip is shown (PickSkill); `runWalk`: the wheel page's RUN / WALK button is there.
+inline int HitTest(Page page, float u, float v, int previous, int options, bool strip = false, bool runWalk = false) {
     if (!std::isfinite(u) || !std::isfinite(v) || u < 0.0f || u >= 1.0f || v < 0.0f || v >= 1.0f) return kNone;
-    for (int i = 0; i < FooterCount(page); ++i)
-        if (FooterRect(page, i).Has(u, v)) return FooterCell(page, i);
+    for (int i = 0; i < FooterCount(page, runWalk); ++i)
+        if (FooterRect(page, i, runWalk).Has(u, v)) return FooterCell(page, i, runWalk);
     if (page == Page::PickSkill) {
         if (kClearRect.Has(u, v)) return kCentre;
+        if (strip)
+            for (int c = 0; c < kCategories; ++c)
+                if (CategoryRect(c).Has(u, v)) return CategoryCell(c);
         for (int i = 0; i < kOptionsPerPage && i < options; ++i)
             if (OptionRect(i).Has(u, v)) return i;
         return kNone;

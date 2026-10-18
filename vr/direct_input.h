@@ -56,6 +56,16 @@ enum Button : uint32_t {
     kSqueeze = 1u << 5,     // the grip past 0.8
 };
 
+// The finger ON a control (capacitive touch), pressed or not, where the controller reports it: a Touch controller (and PS VR2, which SteamVR runs as
+// one) and an Index controller do for the trigger, the face buttons and the thumbstick; a Vive, a WMR or a simple controller reports none of these, and
+// their bits stay 0. xr.cpp reads them; the layout's "<control>_touch" lines act on their rising edge ([direct], vr/direct_layout.h).
+enum TouchBit : uint32_t {
+    kTouchPrimary = 1u << 0,     // A on the right controller, X on the left
+    kTouchSecondary = 1u << 1,   // B / Y
+    kTouchStick = 1u << 2,       // the thumbstick
+    kTouchTrigger = 1u << 3,     // the trigger
+};
+
 struct Hand {
     Pose grip;              // the controller as held
     Pose aim;               // where it points
@@ -63,6 +73,7 @@ struct Hand {
     float stick[2];         // x right, y up, -1..1
     uint32_t buttons;       // Button bits
     uint32_t active;        // 1 while a controller is in the hand (0: bare hands, or not tracked)
+    uint32_t touches;       // TouchBit bits: the finger on a control (0 where the controller does not report it)
 };
 
 enum FrameFlags : uint32_t {
@@ -126,6 +137,15 @@ void SetUiUp(bool up);
 // its own open gesture is the long press, [openxr] skill_wheel_open=1). A request older than a second is dropped, so a
 // panel that was not listening does not open late. Any thread.
 bool TakeSkillPanelToggle();
+
+// A button bound to action:quivernext / action:quiverprev was pressed (the javelin quiver, vr/quiver_wire.cpp): +1 next, -1 previous, 0 none; ONCE per press,
+// then 0 until the next. A press older than a second is dropped. Any thread.
+int TakeQuiverStep();
+
+// A press (a long press of the left menu button by default - on PS VR2 the Options button of the right controller - [direct] left_menu_hold = action:pause) asked for the PAUSE MENU - Esc, as the keyboard's:
+// true ONCE per request, then false until the next; a request older than a second is dropped. vrcam taps the key when it takes it (the game's own pause
+// menu, or its panels closed, whichever Esc does at that moment). F4 only. Any thread.
+bool TakePauseToggle();
 
 // -- what a gesture does ---------------------------------------------------------------------------------------------
 // Outside F4 (viewgate::F4() false) Command, Tap, Action (down), PadPulse, Take and Haptic do nothing and what is held is

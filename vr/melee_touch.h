@@ -17,12 +17,17 @@
 //                   ClickTarget) from inside that press: the touched client unit, looked up by its id then and there
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
+
+#include "melee_bodies.h"
+#include "unit_scan.h"
 
 namespace D2RL {
 struct PluginContext;
 }
 struct D2RVR_Shared;
+namespace strikedir { struct Rule; }
 
 // F4 ONLY (vr/view_gate.h): the touch, its press, its window and the Direct hit act in VR first person only; a view change ends them at once.
 namespace meleetouch {
@@ -32,6 +37,12 @@ void Init(const D2RL::PluginContext* ctx);
 // [gameplay] melee_touch, from the ini (every read). Off: nothing is read, hooked or pressed.
 void SetWanted(bool on);
 bool Wanted();
+// [hud] wrist_status (vr/wrist_status.h): the lookup hook is put in for it too, and learns the server's game by the hero's unit id `SetStatusHero` is given. ServerLookup: the server's game
+// and the game's own unit lookup (the original, not the hook), false until the game is learned. For read-only reads on the game's thread.
+void SetStatusWanted(bool on);
+bool StatusWanted();
+void SetStatusHero(uint32_t id);
+bool ServerLookup(uintptr_t* game, uintptr_t* lookup);
 // [debug] melee_blade_length_pct (50..150, the tip side), melee_blade_radius_cm (0 = the weapon's own, else 0.5..15), melee_blade_flip,
 // melee_blade_butt_pct (0..150, the side behind the bone): the touch's blade tuned live. What is drawn ([debug] melee_boxes) is the blade
 // the touch tests; the game's reach and rolls are not touched.
@@ -43,6 +54,12 @@ void SetThrownTuning(float lengthPct, float buttPct);
 // (vr/stroke_tuning.h): a blade moving slower than the first does nothing, a movement is a stroke only after the second. One threshold for
 // every weapon. Only when the touch presses the game's own attack - never its reach, rolls or the attack itself.
 void SetStrokeTuning(float minSpeed, float startCm);
+// [gameplay] melee_toward*, melee_head_only*, melee_amplitude*, melee_amp_* (vr/strike_direction.h): what a contact must be to count as an attack - toward the monster (the touching point's velocity
+// within melee_toward_deg of the direction to the monster's axis), with the head of the weapon (maces, scepters), by a swing of at least the kind's amplitude. Only decides whether a contact
+// counts as an attack: the game's attack, damage and rolls are the game's. Every rule off: every contact counts as it did. F4 only, as the whole touch.
+void SetStrikeRule(const strikedir::Rule& rule);
+// [gameplay] melee_min_speed_<kind>, melee_stroke_start_cm_<kind>: the engine's two numbers for one weapon kind (strikedir::KindIndex), 0 = the general ones (SetStrokeTuning).
+void SetKindTuning(int kind, float minSpeed, float startCm);
 // The blade the touch sweeps for the item in a hand, as it is NOW (the kind's and base item's constants with the live tuning on top): how far the wood
 // runs ahead of the weapon bone's origin (tipM, on the side tipSign says of the bone's +Y) and behind it (buttM). [weight]'s shaft takes the same ends
 // from the same bone, so its line lies on this blade's axis. code: the item's code (bladeshape::Code), 0 = unknown; type: D2RVR_WeaponType.
@@ -132,6 +149,12 @@ void ThrowPoll(uintptr_t heroUnit);
 // unwalled, up to max. *polled (optional): the list is fresh at all - false is "no poll lately", not "no monster".
 size_t ThrowTargets(ThrowMonster* out, size_t max, bool* polled = nullptr);
 
+// ---- the monsters near a point, for the shield bash (vr/unit_scan.h) --------------------------------------------------------------
+// The live client monsters within reachUnits game WORLD units of the grid point (heroX, heroZ), each with its capsule (the nearest cap
+// when more are there): the very scan hit by touch makes, from the client's unit hash and the game's own MonStats rows. Read-only, guarded.
+// vrcam's timer thread only (the rows are kept for it).
+size_t MonstersNear(float heroX, float heroZ, float reachUnits, float upm, float floorM, unitscan::Near* out, size_t cap);
+
 // ---- [debug] throw_trace (vr/throw_trace.h): what the game does after a throw's press ------------------------------------------
 // Read-only: the client's missile units (the game's type 3 row of its unit hash) - class (the missiles.txt row), mode, place in game WORLD units
 // (twice the cell), and the client's own count of the frames the missile has left to live (the float the game keeps in the missile's data; -1 when
@@ -147,5 +170,18 @@ size_t MissileScan(MissileView* out, size_t max);
 bool MissileInHash(uintptr_t unit, unsigned* seen);
 // A unit's place on the grid in game world units (its path's coordinates), false when it could not be read.
 bool UnitPlace(uintptr_t unit, float* x, float* z);
+
+// ---- [hud] merc_tint (vr/merc_tint.h): the hero's mercenary among the client's monsters -----------------------------------------
+// Read-only, any thread (the reads and the MonStats call guarded): the first live monster of one of these classes in the client's
+// unit hash - its address, id, class, place on the grid (game WORLD units) and its MonStats row. False when there is none.
+struct HirelingView {
+    uintptr_t unit = 0;
+    uint32_t id = 0, cls = 0;
+    float x = 0.0f, z = 0.0f;
+    MonsterRow row{};
+};
+bool FindHireling(const uint32_t* classes, size_t count, HirelingView* out);
+// That unit's place now, while it is still that monster (the same id) and alive; false otherwise.
+bool HirelingPlace(uintptr_t unit, uint32_t id, float* x, float* z);
 
 }  // namespace meleetouch

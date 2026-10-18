@@ -23,6 +23,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <mutex>
 #include <cstdio>
 #include <cstring>
 
@@ -63,6 +64,12 @@ std::atomic<int> g_toldFail{0};
 Heartbeat g_beat;
 std::atomic<float> g_alpha{0.0f};
 std::atomic<uint64_t> g_frameAt{0};   // when Frame last stepped (GetTickCount64)
+std::atomic<uint64_t> g_pageUntil{0};      // the settings panel is on a vignette page until then (SetPreview): nothing shows or plays for that alone
+std::mutex g_previewLock;
+Config g_previewCfg;                       // the panel's draft, under g_previewLock
+int g_previewPage = -1;                    // which of the pages, under g_previewLock
+PreviewWindow g_window;                    // the "Preview 5 s" button's five seconds (and the red's fade-out after them)
+bool g_toldFirstPlay = false, g_toldFirstPreview = false;   // the first heartbeat pulse of each kind is told once, with its numbers (the draw thread's)
 double g_lastSeconds = 0.0;
 bool g_wasActive = false;
 ULONGLONG g_toldEdge = 0;
@@ -159,6 +166,20 @@ Config CurrentConfig() {
     return c;
 }
 
+bool PageLeased() { return GetTickCount64() < g_pageUntil.load(std::memory_order_relaxed); }
+// The preview's five seconds are running (the life shown as half down, the pulse), and the picture is the preview's (those five seconds and the red's fade-out after).
+bool PreviewRunning() { return PageLeased() && g_window.Active(GetTickCount64()); }
+bool PreviewShown() { return PageLeased() && g_window.Showing(GetTickCount64()); }
+
+// The settings the picture is drawn with: the ini's, or - while the preview is up - the panel's draft.
+Config ActiveConfig() {
+    if (PreviewShown()) {
+        std::lock_guard<std::mutex> lock(g_previewLock);
+        return PreviewConfig(g_previewCfg);
+    }
+    return CurrentConfig();
+}
+
 }  // namespace
 
 void Init(const PluginContext* ctx) {
@@ -190,7 +211,28 @@ void Configure(const Config& config) {
     }
 }
 
-bool Enabled() { return g_on.load(std::memory_order_relaxed); }
+bool Enabled() { return g_on.load(std::memory_order_relaxed) || PreviewShown(); }
+
+void SetPreview(bool on, const Config& draft, int page) {
+    {
+        std::lock_guard<std::mutex> lock(g_previewLock);
+        if (on) {
+            g_previewCfg = Sanitized(draft);
+            if (page != g_previewPage) g_window.Stop();   // another page: the preview of the one before is over
+            g_previewPage = page;
+        } else {
+            g_window.Stop();   // left the page, or closed the panel
+            g_previewPage = -1;
+        }
+    }
+    g_pageUntil.store(on ? GetTickCount64() + 300 : 0, std::memory_order_relaxed);
+}
+
+void PlayPreview() {
+    if (!PageLeased()) return;
+    g_window.Start(GetTickCount64());
+    Log("vrcam: low life vignette - preview: the vignette and the beat in the controllers for 5 s, with the settings panel's rows as they stand");
+}
 
 void Tick(bool wantRead) {
     if (!wantRead || !g_on.load(std::memory_order_relaxed) || !g_ctx || !g_threads || !g_threads->runOnUiThread || g_dead.load()) return;
@@ -205,7 +247,13 @@ void Tick(bool wantRead) {
 void Frame(const Where& where, bool menuOpen, float tanX, float tanY) {
     g_tanX.store(tanX);
     g_tanY.store(tanY);
-    const Config cfg = CurrentConfig();   // (off: Step keeps nothing and gives nothing)
+    if (!PageLeased()) g_window.Stop();   // the panel is gone (a host that stopped calling): a preview does not wait for it to come back
+    const bool running = PreviewRunning(), shown = PreviewShown();
+    Config cfg = CurrentConfig();   // (off: Step keeps nothing and gives nothing)
+    if (shown) {
+        std::lock_guard<std::mutex> lock(g_previewLock);
+        cfg = PreviewConfig(g_previewCfg);
+    }
     const double now = Seconds();
     Heartbeat::In in;
     in.inView = InView(where);
@@ -218,6 +266,12 @@ void Frame(const Where& where, bool menuOpen, float tanX, float tanY) {
     in.dead = ((life >> 33) & 1) != 0;
     const uint32_t bits = (uint32_t)life;
     memcpy(&in.frac, &bits, sizeof in.frac);
+    if (running) {   // the preview's five seconds: as if the life were half way down
+        in.lifeKnown = true;
+        in.dead = false;
+        in.menu = false;
+        in.frac = PreviewFrac(Sanitized(cfg).threshold);
+    }
     const Heartbeat::Out out = g_beat.Step(cfg, in);
     g_alpha.store(out.alpha);
     g_frameAt.store(GetTickCount64());
@@ -233,20 +287,39 @@ void Frame(const Where& where, bool menuOpen, float tanX, float tanY) {
             Log(b);
         }
     }
-    if (cfg.haptics && haptics::Enabled() && out.amount >= kHapticFrom && (out.beat.lub || out.beat.dub)) {
+    // The pulse in the hands. In play: the tick, the beat of the life, as ever. In the settings panel: only the preview's five seconds (the draft's strength, whatever
+    // the tick says); the red's fade-out after them is quiet, it is not the life's beat. On a weak motor (the PlayStation VR2 Sense under SteamVR) the gentle pulse is lifted
+    // to what it shows (haptics::ForMotor); on any other the numbers go through as they are.
+    const bool afterPreview = shown && !running;
+    if ((out.beat.lub || out.beat.dub) && haptics::Enabled() && PulseAllowed(cfg.haptics && out.amount >= kHapticFrom, afterPreview)) {
         const Haptic h = HapticFor(!out.beat.lub, out.severity, cfg);
-        haptics::Pulse(haptics::kLeft, h.amplitude, h.ms);
-        haptics::Pulse(haptics::kRight, h.amplitude, h.ms);
+        const haptics::Motor motor = haptics::CurrentMotor();
+        const haptics::Request r = haptics::ForMotor(motor, h.amplitude, (uint32_t)h.ms);
+        bool& told = running ? g_toldFirstPreview : g_toldFirstPlay;
+        if (!told) {   // the numbers, once for the life's beat and once for the preview's
+            told = true;
+            const Haptic lub = HapticFor(false, out.severity, cfg), dub = HapticFor(true, out.severity, cfg);
+            const haptics::Request rl = haptics::ForMotor(motor, lub.amplitude, (uint32_t)lub.ms), rd = haptics::ForMotor(motor, dub.amplitude, (uint32_t)dub.ms);
+            char b[420];
+            snprintf(b, sizeof b,
+                     "vrcam: low life vignette - the first %s beat in the controllers: lub %.2f for %u ms, dub %.2f for %u ms (the setting makes %.2f for %d ms and %.2f for %d ms; "
+                     "%s motor; strength %.2f, [openxr] haptics_scale on top; no frequency asked, the runtime's)",
+                     running ? "preview" : "real", rl.amplitude, (unsigned)rl.durationMs, rd.amplitude, (unsigned)rd.durationMs, lub.amplitude, lub.ms, dub.amplitude, dub.ms,
+                     motor == haptics::Motor::Weak ? "weak" : "plain", cfg.hapticsStrength);
+            Log(b);
+        }
+        haptics::Pulse(haptics::kLeft, r.amplitude, (int)r.durationMs);
+        haptics::Pulse(haptics::kRight, r.amplitude, (int)r.durationMs);
     }
 }
 
 bool Current(Uniforms* out) {
-    if (!g_on.load(std::memory_order_relaxed)) return false;
+    if (!Enabled()) return false;
     // No pair stepped it lately (the view changed, a load, the headset away): nothing, rather than a frozen tint.
     if (GetTickCount64() - g_frameAt.load(std::memory_order_relaxed) > 250) return false;
     const float a = g_alpha.load(std::memory_order_relaxed);
     if (!(a > 0.0f)) return false;
-    *out = MakeUniforms(a, CurrentConfig(), g_tanX.load(std::memory_order_relaxed), g_tanY.load(std::memory_order_relaxed));
+    *out = MakeUniforms(a, ActiveConfig(), g_tanX.load(std::memory_order_relaxed), g_tanY.load(std::memory_order_relaxed));
     return true;
 }
 

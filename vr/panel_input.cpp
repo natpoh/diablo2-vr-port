@@ -53,6 +53,7 @@
 #include "laser_tooltip.h"
 #include "view_gate.h"
 #include "panel_input.h"
+#include "plate_world.h"   // [hud] monster_bar_room: the plate hangs on the anchor only in the pad's layout
 #include "sigscan.h"
 
 using namespace D2RL;
@@ -118,6 +119,7 @@ In g_in{};   // the timer thread's: which hooks are in
 std::atomic<bool> g_ready{false};
 std::atomic<ULONGLONG> g_until{0};   // GetTickCount64: the laser owns the pointer until then
 std::atomic<bool> g_pointing{false};  // the focus follows the pointer (not the pad)
+std::atomic<int> g_padLayout{-1};     // UiTick: the game's layout now - 1 the controller's, 0 the mouse's, -1 not known
 thread_local bool t_pointer = false;  // inside the UI's pointer handling, the laser's
 
 KeyFn g_origKey = nullptr;
@@ -328,7 +330,24 @@ void UseController() {
 void WantTooltips(bool on) { g_tipWanted.store(on); }
 void ItemHover(bool hovering) { g_hover.Update(GetTickCount64(), hovering); }
 
+// [hud] monster_bar_room: the monster's plate hangs on the anchor the game is given only in its controller layout; in the mouse layout it sits at the
+// top and ignores it (a test of test-54: "the bar stays at the top"). While the world bar is on and the game has been in the mouse layout for half a second
+// with no panel open and the laser not the mouse, the pad's layout is asked for (the same request as below; no oftener than every 3 s).
+static void KeepPadForPlate(bool inGame, bool menu) {
+    static uint64_t since = 0, last = 0;
+    if (!plateworld::ShouldAskPad(plateworld::Active() || (plateworld::LiftWanted() && viewgate::F4()), inGame, menu, Owns(), g_padLayout.load(), GetTickCount64(), &since, &last)) return;
+    static std::atomic<int> told{0};
+    if (told.fetch_add(1) < 6) Log("vrcam: monster_over_head - the game has been in its mouse layout (the plate would sit at the top, ignoring its anchor): the controller layout asked for");
+    g_origRequest(1);
+}
+
+int PadLayout() { return g_ready.load(std::memory_order_acquire) ? g_padLayout.load() : -1; }
+
 void UiTick(bool inGame, bool menu) {
+    if (g_ready.load()) {
+        g_padLayout.store(g_origIsController() ? 1 : 0);
+        KeepPadForPlate(inGame, menu);
+    }
     static ULONGLONG done = 0;   // the lease answered (its last OwnPointer)
     const ULONGLONG at = g_ownedAt.load();
     if (!g_ready.load() || !at || at == done || Owns() || menu || !inGame) return;

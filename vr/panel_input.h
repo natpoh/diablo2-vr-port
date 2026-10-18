@@ -35,5 +35,7 @@ void ItemHover(bool hovering);
 // keyboard-and-mouse layout right after the laser was the mouse - the controller layout asked
 // for once, so the pad's targeting (attack, pick-up) is there before the next pad press.
 void UiTick(bool inGame, bool menu);
+// The game's layout as UiTick last saw it: 1 the controller's, 0 the mouse's, -1 not known (the hooks are not in, or no read yet).
+int PadLayout();
 
 }  // namespace panelinput

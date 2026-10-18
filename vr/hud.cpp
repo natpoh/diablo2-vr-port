@@ -63,6 +63,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <cmath>
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
@@ -78,6 +79,7 @@
 #include "hud_globes.h"   // where the game's own life and mana globes are in its interface layer (the wrists' medallions)
 #include "hud_rects.h"    // the toolbar's strip in that layer (the box taken out of the picture), with the cut sliders
 #include "hud_native.h"
+#include "plate_world.h"   // [hud] monster_bar_room: where the plate stands in the layer (BoxOf)
 
 #include "flatvr_menu_shared.h"   // FlatVR's menu piece, whichever FlatVR header the build sees
 
@@ -412,6 +414,67 @@ bool CopyPanel(command_list* cl, resource layer, uint32_t w, uint32_t h) {
     return true;
 }
 
+// [hud] monster_bar_room (vr/plate_world.h): the plate the game hangs over the targeted monster - its name and health bar - cut out of the interface
+// for xr.cpp, which hangs it in the room above the monster, and emptied in the layer. The plate stands at a FIXED point of the picture while this is on
+// (vr/mob_bars.cpp gives the game that point as the monster's), so its box (vrcam, from the plate's widgets, uv of the layer) does not lag it.
+// The box is taken a little larger, in steps (a name's length changes the plate's width; a texture of its own size for each would be made every target).
+// Local: FlatVR never sees it. Under g_lock.
+std::atomic<bool> g_plateWant{false};
+std::atomic<int32_t> g_plateLayout[4] = {};    // the plate's rect in the layout's units (gamestate PlateRect) ...
+std::atomic<float> g_plateScale{0.0f};         // ... and the interface scale to turn it into pixels (0: not known)
+struct PlateTex { resource tex{}; uint32_t w = 0, h = 0; bool fresh = true; };
+PlateTex g_plateTex;
+std::atomic<bool> g_plateNow{false};           // cut by the last interface pass
+std::atomic<ULONGLONG> g_plateAt{0};
+constexpr uint32_t kPlateStepX = 128, kPlateStepY = 32;
+
+// The box in pixels of a w x h layer (plateworld::BoxOf), grown to whole steps about its middle and kept in the layer. Empty when there is no box.
+rect PlateRectPx(uint32_t w, uint32_t h) {
+    const int32_t lay[4] = {g_plateLayout[0].load(), g_plateLayout[1].load(), g_plateLayout[2].load(), g_plateLayout[3].load()};
+    float box[4];
+    if (!plateworld::BoxOf(lay, g_plateScale.load(), w, h, box)) return rect{};
+    const float l = box[0], t = box[1], r = box[2], b = box[3];
+    if (!(r > l && b > t) || r < 0.0f || b < 0.0f || l > (float)w || t > (float)h) return rect{};
+    const float cx = 0.5f * (l + r), cy = 0.5f * (t + b);
+    float bw = std::ceil((r - l) / (float)kPlateStepX) * (float)kPlateStepX;
+    float bh = std::ceil((b - t) / (float)kPlateStepY) * (float)kPlateStepY;
+    bw = std::min(bw, (float)w);
+    bh = std::min(bh, (float)h);
+    const float x0 = std::clamp(cx - 0.5f * bw, 0.0f, (float)w - bw);
+    const float y0 = std::clamp(cy - 0.5f * bh, 0.0f, (float)h - bh);
+    return rect{(int32_t)x0, (int32_t)y0, (int32_t)(x0 + bw), (int32_t)(y0 + bh)};
+}
+
+bool CopyPlate(command_list* cl, resource layer, const rect& r) {
+    device* dev = cl->get_device();
+    const uint32_t w = (uint32_t)(r.right - r.left), h = (uint32_t)(r.bottom - r.top);
+    if (!w || !h) return false;
+    if (!g_plateTex.tex.handle || g_plateTex.w != w || g_plateTex.h != h) {
+        if (g_plateTex.tex.handle) g_retired.push_back({g_plateTex.tex, {}, nullptr, g_frames});   // xr.cpp may still draw from it
+        g_plateTex = PlateTex{};
+        const resource_desc d(w, h, 1, 1, format::r16g16b16a16_float, 1, memory_heap::default_, resource_usage::copy_dest | resource_usage::shader_resource);
+        if (!dev->create_resource(d, nullptr, resource_usage::copy_dest, &g_plateTex.tex)) {
+            g_plateTex = PlateTex{};
+            static bool told = false;
+            if (!told) { told = true; Log("hud: the monster's plate texture could not be made - the plate stays in the picture"); }
+            return false;
+        }
+        g_plateTex.w = w; g_plateTex.h = h;
+        char line[160];
+        snprintf(line, sizeof line, "hud: the monster's plate is cut out of the interface for the room ([hud] monster_bar_room): %ux%u from %d,%d of a layer", w, h, r.left, r.top);
+        Log(line);
+    }
+    const subresource_box from{(uint32_t)r.left, (uint32_t)r.top, 0, (uint32_t)r.right, (uint32_t)r.bottom, 1};
+    const subresource_box to{0, 0, 0, w, h, 1};
+    cl->barrier(layer, resource_usage::render_target, resource_usage::copy_source);
+    if (!g_plateTex.fresh) cl->barrier(g_plateTex.tex, resource_usage::shader_resource, resource_usage::copy_dest);
+    cl->copy_texture_region(layer, 0, &from, g_plateTex.tex, 0, &to, filter_mode::min_mag_mip_point);
+    cl->barrier(g_plateTex.tex, resource_usage::copy_dest, resource_usage::shader_resource);
+    cl->barrier(layer, resource_usage::copy_source, resource_usage::render_target);
+    g_plateTex.fresh = false;
+    return true;
+}
+
 // The game's own life and mana globes, cut out of the interface layer for the wrists (vr/hud_globes.h): ONE texture, the life globe's square on the
 // left and the mana globe's on the right, copied while vrcam asks for them (SetGlobes) and the effect runs. Local: FlatVR never sees it. Under g_lock.
 std::atomic<bool> g_globesWant{false};
@@ -598,6 +661,18 @@ void OnBind(command_list* cl, uint32_t count, const resource_view* rtvs, resourc
             static const float kTint[4] = {0.30f, 0.0f, 0.30f, 0.70f};
             cl->clear_render_target_view(layerRtv, g_cutTint.load() ? kTint : kEmpty, 1, &bar);
         }
+        {   // [hud] monster_bar_room: the monster's plate out of the picture, for the room (not while a menu is up)
+            bool cut = false;
+            if (!panel && g_plateWant.load() && !g_menu.load()) {
+                const rect pr = PlateRectPx(it->second.w, it->second.h);
+                if (pr.right > pr.left && pr.bottom > pr.top && CopyPlate(cl, dev->get_resource_from_view(layerRtv), pr)) {
+                    cl->clear_render_target_view(layerRtv, kEmpty, 1, &pr);
+                    cut = true;
+                }
+            }
+            g_plateNow.store(cut);
+            if (cut) g_plateAt.store(GetTickCount64());
+        }
         // From above: the rest of it out whole, for the effect to lay on the tilted plane.
         if (!panel) {
             g_panelNow.store(false);
@@ -760,6 +835,26 @@ bool NativeHud(NativePiece out[kNativePieces], FlatVRGameHudLook* look, FlatVRGa
     p.visible = p.tex && !g_panel.fresh && g_panelOut.load() && g_panelNow.load() && GetTickCount64() - g_panelAt.load() < 500;
     *look = g_look;
     *barPose = g_pose[kBar];
+    return true;
+}
+
+// [hud] monster_bar_room: vrcam's tick says whether the plate is to be cut now and where its box is (uv of the layer).
+void SetPlateCut(bool want, const int32_t layout[4], float scale) {
+    if (want && layout) {
+        for (int i = 0; i < 4; ++i) g_plateLayout[i].store(layout[i]);
+        g_plateScale.store(scale);
+    }
+    g_plateWant.store(want && layout);
+}
+// The cut plate for xr.cpp: its texture (left in the shader-resource state on the game's queue), its size, whether the last pass cut it.
+bool PlatePiece(NativePiece* out, bool* encoded) {
+    if (!out) return false;
+    std::lock_guard<std::mutex> g(g_lock);
+    out->tex = (ID3D12Resource*)(uintptr_t)g_plateTex.tex.handle;
+    out->w = g_plateTex.w;
+    out->h = g_plateTex.h;
+    out->visible = out->tex && !g_plateTex.fresh && g_plateNow.load() && GetTickCount64() - g_plateAt.load() < 150;
+    if (encoded) *encoded = g_look.encoded != 0;
     return true;
 }
 

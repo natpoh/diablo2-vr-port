@@ -171,6 +171,7 @@ double Apart(const std::vector<Sample>& a, const std::vector<Sample>& b, const W
 int Hands(int argc, char** argv);   // below: the hands that take the weapon
 int Feel(int argc, char** argv);    // below: gravity - a swing down against a swing up
 int Gravity();                      // below: the gravity feel's checks
+int Draw();                         // below: the shoulder draw's checks (Settings::drawMode)
 
 int Synthetic() {
 	PrintHead();
@@ -240,6 +241,7 @@ int Synthetic() {
 		EXPECT(snapped && Len(Sub(HandPose(st, b, g).pos, far.pose.pos)) < 1e-6, "a sword 3 m away was not put back in the hand");
 	}
 	Gravity();
+	Draw();
 	return Hands(0, nullptr);
 }
 
@@ -673,6 +675,382 @@ double Shaken(hh::Kind k, bool two, const hh::Settings& s, double second, bool* 
 		worst = std::fmax(worst, Len(Sub(tip, at(t).pos)));
 	}
 	return worst;
+}
+
+// [hands] shoulder_draw (Settings::drawMode): a hand behind a shoulder draws a weapon that is away; with recallFloorAny the grip of any hand calls it back from where it lies; after stowAfter
+// it goes to the back and only a shoulder (or a hand at it) takes it; the world's move carries it (Transport).
+int Draw() {
+	std::printf("shoulder draw (Settings::drawMode):\n");
+	hh::Settings st;
+	st.drawMode  = true;
+	st.stowAfter = -1;    // (the base checks below: it lies; the stow and the call have blocks of their own)
+	const V3 r { 0.15, 1.3, -0.4 }, shoulderR { 0.24, 1.45, 0.15 }, shoulderL { -0.24, 1.45, 0.15 };
+	const V3 atR { 0.25, 1.4, 0.25 }, atL { -0.25, 1.4, 0.25 };   // a hand behind the right / left shoulder
+	hh::HandIn in[2];
+	hh::HandOut out[2];
+	// a sword placed in the right fist; the grip squeezed and let go: it falls, lands and lies
+	auto dropped = [&](hh::Hold& w, double lieFor) {
+		in[0] = Hand(r, {}, 0);
+		in[1] = Hand({ -0.3, 1.0, 0.0 }, {}, 0);
+		w.Place(0, hh::Kind::Sword, false, { {}, kAlong }, in, st);
+		for (double t = 0; t < 0.3; t += kDt) w.Step(in, kDt, st, out);
+		in[0].grip = 1;
+		for (double t = 0; t < 0.2; t += kDt) w.Step(in, kDt, st, out);
+		in[0].grip = 0;
+		for (double t = 0; t < lieFor; t += kDt) w.Step(in, kDt, st, out);
+		in[0].pose = { { 0.25, 1.1, -0.4 }, {} };   // (the hands away from it afterwards)
+	};
+	auto draw = [&](int hand, const V3& from, bool claimed) {   // that hand: behind its shoulder, with the draw flag, its grip pressed
+		in[hand].pose.pos = hand == 0 ? atR : atL;
+		in[hand].draw     = true;
+		in[hand].drawFrom = from;
+		in[hand].claimed  = claimed;
+		in[hand].grip     = 1;
+	};
+	auto reset = [&](int hand) {
+		in[hand].draw    = false;
+		in[hand].claimed = false;
+		in[hand].grip    = 0;
+	};
+	{   // lying (no stow, no recallFloorAny): not called back by the game's hand from afar
+		hh::Hold w;
+		dropped(w, 4.0);
+		EXPECT(w.Landed() && !w.Stowed() && w.Away(), "(draw) it did not lie where it fell: landed %d stowed %d away %d", w.Landed(), w.Stowed(), w.Away());
+		in[0].pose.pos = { 0.3, 1.6, -0.3 };
+		in[0].grip = 1;
+		w.Step(in, kDt, st, out);
+		EXPECT(w.Landed() && !w.Flying(), "(draw) the game's hand called the weapon back from afar");
+		double d = 0;
+		EXPECT(w.TakeZone(0, in[0], st, &d) == hh::Hold::TakeAt::Nowhere, "(draw) the zone of the game's hand far from it is not nowhere");
+		in[0].grip = 0;
+		w.Step(in, kDt, st, out);
+		// the control: without drawMode the same press calls it back
+		hh::Hold c;
+		hh::Settings old = st;
+		old.drawMode     = false;
+		old.stowAfter    = -1;
+		in[0] = Hand(r, {}, 0);
+		in[1] = Hand({ -0.3, 1.0, 0.0 }, {}, 0);
+		c.Place(0, hh::Kind::Sword, false, { {}, kAlong }, in, old);
+		for (double t = 0; t < 0.3; t += kDt) c.Step(in, kDt, old, out);
+		in[0].grip = 1;
+		for (double t = 0; t < 0.2; t += kDt) c.Step(in, kDt, old, out);
+		in[0].grip = 0;
+		for (double t = 0; t < 3.0; t += kDt) c.Step(in, kDt, old, out);
+		in[0].pose.pos = { 0.3, 1.6, -0.3 };
+		in[0].grip = 1;
+		c.Step(in, kDt, old, out);
+		EXPECT(c.Flying(), "(control) without drawMode the game's hand did not call it back");
+	}
+	{   // the game's (right) hand draws it from the right shoulder: the floor copy is gone in that instant, it flies from the shoulder into the fist, as the game holds it
+		hh::Hold w;
+		dropped(w, 3.0);
+		EXPECT(w.Landed(), "(draw) setup: it lies");
+		V3 fb, ft;
+		w.Ends(&fb, &ft);
+		EXPECT(fb.y < 0.1 && ft.y < 0.1, "(draw) setup: it lies on the floor");
+		in[1].pose.pos = { -0.3, 1.0, -0.2 };
+		in[0].pose.pos = atR;
+		w.Step(in, kDt, st, out);   // behind the shoulder, the grip open: nothing
+		EXPECT(w.Landed(), "(draw) a hand in the zone with its grip open drew the weapon");
+		draw(0, shoulderR, true);   // (the zone's claim on the grip: that press is a draw)
+		w.Step(in, kDt, st, out);
+		EXPECT(w.Flying() && w.FlyHand() == 0 && !w.Landed() && !w.Away(), "(draw) the grip pressed behind the right shoulder did not draw the weapon");
+		const Pose b0 = w.BodyPose();
+		EXPECT(b0.pos.y > 1.0 && Len(Sub(b0.pos, shoulderR)) < 0.12, "(draw) it did not come out of the shoulder: %.2f m from it, %.2f up", Len(Sub(b0.pos, shoulderR)), b0.pos.y);
+		for (double t = 0; t < 0.4; t += kDt) w.Step(in, kDt, st, out);
+		EXPECT(w.Held() && out[0].holds && out[0].grabs == 0 && w.AsPlaced() && w.Main() == 0, "(draw) the right hand did not get the weapon as the game holds it");
+		EXPECT(Len(Sub(w.BodyPose().pos, in[0].pose.pos)) < 0.05, "(draw) the weapon is %.2f m from the fist it flew into", Len(Sub(w.BodyPose().pos, in[0].pose.pos)));
+		// let go again: it falls and lies where it fell, nobody calls it back
+		reset(0);
+		in[0].pose.pos = { 0.25, 1.1, -0.4 };
+		for (double t = 0; t < 3.0; t += kDt) w.Step(in, kDt, st, out);
+		EXPECT(w.Landed() && !w.Held(), "(draw) it did not fall and lie when let go again");
+	}
+	{   // the cross draw: the LEFT hand at the right shoulder takes the right slot's weapon into the left hand
+		hh::Hold w;
+		dropped(w, 3.0);
+		in[1].pose.pos = atR;   // the left hand behind the RIGHT shoulder
+		in[1].draw     = true;
+		in[1].drawFrom = shoulderR;
+		in[1].claimed  = true;
+		in[1].grip     = 1;
+		w.Step(in, kDt, st, out);
+		EXPECT(w.Flying() && w.FlyHand() == 1, "(cross) the left grip behind the right shoulder did not draw the weapon into the left hand");
+		for (double t = 0; t < 0.4; t += kDt) w.Step(in, kDt, st, out);
+		EXPECT(w.Held() && out[1].holds && !out[0].holds && w.Main() == 1, "(cross) the weapon is not in the left hand");
+		EXPECT(out[1].grabs >= 1 && !w.AsPlaced(), "(cross) the left hand's weapon is as placed (grabs %u)", out[1].grabs);
+		EXPECT(Len(Sub(w.OnWeapon(1).pos, in[1].pose.pos)) < 0.05, "(cross) the left fist is not on the weapon");
+		reset(1);
+		in[1].pose.pos = { -0.3, 1.0, 0.0 };
+		w.Step(in, kDt, st, out);
+	}
+	{   // no draw flag (the other shoulder's weapon is not this one's), a busy hand, a grip already held when the hand came in: nothing is drawn
+		hh::Hold w;
+		dropped(w, 3.0);
+		in[0].pose.pos = atR;
+		in[0].claimed  = true;
+		in[0].grip     = 1;   // the zone's claim, but the flag is off (the weapon's shoulder is the other)
+		w.Step(in, kDt, st, out);
+		EXPECT(w.Landed(), "(draw) a press in a zone that is not the weapon's shoulder drew it");
+		reset(0);
+		w.Step(in, kDt, st, out);
+		in[0].busy = true;
+		draw(0, shoulderR, true);
+		w.Step(in, kDt, st, out);
+		EXPECT(w.Landed(), "(draw) a hand with a potion drew the weapon");
+		reset(0);
+		in[0].busy = false;
+		w.Step(in, kDt, st, out);
+		in[0].grip = 1;   // the grip is already held when the hand comes into the zone: no new press
+		w.Step(in, kDt, st, out);
+		in[0].pose.pos = atR;
+		in[0].draw     = true;
+		in[0].drawFrom = shoulderR;
+		w.Step(in, kDt, st, out);
+		EXPECT(w.Landed(), "(draw) a grip held on entering the zone drew the weapon");
+		reset(0);
+		w.Step(in, kDt, st, out);
+		in[0].draw     = true;
+		in[0].drawFrom = shoulderR;
+		in[0].grip     = 1;
+		w.Step(in, kDt, st, out);
+		EXPECT(w.Flying(), "(draw) a fresh press after the let go did not draw it");
+	}
+	{   // a weapon in a hand is not drawn by the other hand's press at a shoulder (it is not away)
+		hh::Hold w;
+		in[0] = Hand(r, {}, 0);
+		in[1] = Hand({ -0.3, 1.0, 0.0 }, {}, 0);
+		w.Place(0, hh::Kind::Sword, false, { {}, kAlong }, in, st);
+		for (double t = 0; t < 0.3; t += kDt) w.Step(in, kDt, st, out);
+		draw(1, shoulderR, true);
+		in[1].pose.pos = atR;
+		w.Step(in, kDt, st, out);
+		EXPECT(w.Held() && out[0].holds && !out[1].holds && !w.Flying(), "(draw) a weapon in the right hand was drawn by the left");
+		double d = 0;
+		EXPECT(w.TakeZone(1, in[1], st, &d) == hh::Hold::TakeAt::Nowhere, "(draw) the zone of a weapon that is held is not nowhere");
+		reset(1);
+		w.Step(in, kDt, st, out);
+	}
+	{   // a thrown weapon is nobody's to draw
+		hh::Hold th;
+		dropped(th, 0.0);
+		th.MarkThrown();
+		draw(0, shoulderR, true);
+		th.Step(in, kDt, st, out);
+		EXPECT(!th.Flying() && !th.Away(), "(draw) a thrown weapon was drawn");
+		reset(0);
+	}
+	{   // still falling in the air: drawn from the shoulder at once; the zone says so
+		hh::Hold w;
+		in[0] = Hand(r, {}, 0);
+		in[1] = Hand({ -0.3, 1.0, 0.0 }, {}, 0);
+		w.Place(0, hh::Kind::Sword, false, { {}, kAlong }, in, st);
+		for (double t = 0; t < 0.3; t += kDt) w.Step(in, kDt, st, out);
+		in[0].grip = 1;
+		for (double t = 0; t < 0.2; t += kDt) w.Step(in, kDt, st, out);
+		in[0].grip = 0;
+		w.Step(in, kDt, st, out);   // let go: it falls
+		EXPECT(w.Falling() && w.Away(), "(draw) setup: it falls");
+		in[1].pose.pos = atL;
+		in[1].draw     = true;
+		in[1].drawFrom = shoulderL;
+		double d = 0;
+		EXPECT(w.TakeZone(1, in[1], st, &d) == hh::Hold::TakeAt::Back, "(draw) the zone of a hand behind the shoulder with the weapon away is not the back's");
+		in[1].claimed = true;
+		in[1].grip    = 1;
+		w.Step(in, kDt, st, out);
+		EXPECT(w.Flying() && w.FlyHand() == 1, "(draw) the weapon in the air was not drawn");
+		// the grip let go before it arrives: it falls again (as a weapon called back)
+		in[1].grip = 0;
+		w.Step(in, kDt, st, out);
+		EXPECT(w.Falling(), "(draw) the grip let go in the flight did not let it fall");
+	}
+	{   // recallFloorAny: the grip of EITHER hand, pressed anywhere, calls a weapon that is away (in the air, lying) back into that hand
+		hh::Settings rs = st;
+		rs.recallFloorAny = true;
+		{   // the game's (right) hand, pressed far from it and not behind a shoulder: it flies into the right fist
+			hh::Hold w;
+			dropped(w, 1.0);
+			EXPECT(w.Landed() && w.Away(), "(recall) setup: it lies");
+			in[0].pose.pos = { 0.3, 1.6, -0.3 };
+			in[0].grip = 1;
+			double d = 0;
+			EXPECT(w.TakeZone(0, in[0], rs, &d) == hh::Hold::TakeAt::Recall, "(recall) the zone of the game's hand far from it is not the call");
+			w.Step(in, kDt, rs, out);
+			EXPECT(w.Flying() && w.FlyHand() == 0 && !w.Landed(), "(recall) the right grip did not call the weapon back");
+			for (double t = 0; t < 0.4; t += kDt) w.Step(in, kDt, rs, out);
+			EXPECT(w.Held() && out[0].holds && w.AsPlaced(), "(recall) it did not arrive in the right fist");
+			in[0].grip = 0;
+		}
+		{   // the LEFT hand's grip calls it into the left fist (a hand the game does not hold it in)
+			hh::Hold w;
+			dropped(w, 1.0);
+			in[1].pose.pos = { -0.3, 1.6, -0.3 };
+			in[1].grip = 1;
+			double d = 0;
+			EXPECT(w.TakeZone(1, in[1], rs, &d) == hh::Hold::TakeAt::Recall, "(recall) the zone of the left hand far from it is not the call");
+			w.Step(in, kDt, rs, out);
+			EXPECT(w.Flying() && w.FlyHand() == 1, "(recall) the left grip did not call the weapon back");
+			for (double t = 0; t < 0.4; t += kDt) w.Step(in, kDt, rs, out);
+			EXPECT(w.Held() && out[1].holds && !out[0].holds && w.Main() == 1, "(recall) it did not arrive in the left fist");
+			in[1].grip = 0;
+		}
+		{   // not by a claimed grip (a zone's), a busy hand, a grip already held, or without the setting; a thrown weapon in the air is nobody's
+			hh::Hold w;
+			dropped(w, 1.0);
+			in[1].pose.pos = { -0.3, 1.6, -0.3 };
+			in[1].claimed = true;
+			in[1].grip = 1;
+			w.Step(in, kDt, rs, out);
+			EXPECT(w.Landed(), "(recall) a claimed grip called the weapon back");
+			in[1].claimed = false;
+			in[1].grip = 0;
+			w.Step(in, kDt, rs, out);
+			in[1].busy = true;
+			in[1].grip = 1;
+			w.Step(in, kDt, rs, out);
+			EXPECT(w.Landed(), "(recall) a hand with a potion called the weapon back");
+			in[1].busy = false;
+			w.Step(in, kDt, rs, out);   // the grip was already held
+			EXPECT(w.Landed(), "(recall) a grip held since the busy hand was free called it");
+			in[1].grip = 0;
+			w.Step(in, kDt, rs, out);
+			in[1].grip = 1;
+			w.Step(in, kDt, st, out);   // without the setting
+			EXPECT(w.Landed(), "(recall) without recallFloorAny the grip called it");
+			in[1].grip = 0;
+			hh::Hold th;
+			dropped(th, 0.0);
+			th.MarkThrown();
+			in[1].pose.pos = { -0.3, 1.6, -0.3 };
+			in[1].grip = 1;
+			th.Step(in, kDt, rs, out);
+			EXPECT(!th.Flying(), "(recall) a thrown weapon in the air was called back");
+			in[1].grip = 0;
+		}
+		{   // a hand AT the shaft takes it up there (not a call); the call is for the others
+			hh::Hold w;
+			dropped(w, 1.0);
+			V3 b, t;
+			w.Ends(&b, &t);
+			in[1].pose.pos = Add(Mul(Add(b, t), 0.5), V3 { 0.0, 0.03, 0.0 });
+			in[1].grip = 1;
+			w.Step(in, kDt, rs, out);
+			EXPECT(w.Held() && out[1].holds && !w.Flying(), "(recall) a hand at the shaft did not take it up where it lies");
+			in[1].grip = 0;
+		}
+		{   // a hand behind a shoulder still DRAWS (from the shoulder), it does not call it from the floor
+			hh::Hold w;
+			dropped(w, 1.0);
+			draw(0, shoulderR, true);
+			w.Step(in, kDt, rs, out);
+			EXPECT(w.Flying() && w.FlyHand() == 0, "(recall) the shoulder's draw did not work with recallFloorAny");
+			reset(0);
+		}
+	}
+	{   // it lies stowAfter seconds, then goes to the back; from then on a shoulder (or a hand at the weapon on the back) takes it, no grip elsewhere
+		hh::Settings ss = st;
+		ss.recallFloorAny = true;
+		ss.recallAny      = true;   // (legacy's "any hand anywhere" - not for the back in drawMode)
+		ss.stowAfter      = 0.6;
+		hh::Hold w;
+		dropped(w, 1.0);   // (with st: it lands and lies, the stow timer not running)
+		EXPECT(w.Landed() && !w.Stowed(), "(stow) setup: it lies");
+		for (double t = 0; t < 0.4; t += kDt) w.Step(in, kDt, ss, out);
+		EXPECT(w.Landed() && !w.Stowed(), "(stow) it stowed before the delay");
+		for (double t = 0; t < 0.8 && !w.Stowed(); t += kDt) w.Step(in, kDt, ss, out);
+		EXPECT(w.Stowed() && w.Away() == false, "(stow) it did not go to the back after lying for the delay");
+		w.SetStowPose({ { 0.0, 1.2, 0.2 }, {} });
+		w.Step(in, kDt, ss, out);
+		// a grip pressed far from it, away from the shoulders: nothing, whichever hand
+		for (int h = 0; h < 2; ++h) {
+			in[h].pose.pos = { h ? -0.3 : 0.3, 1.0, -0.5 };
+			in[h].grip = 1;
+			double d = 0;
+			EXPECT(w.TakeZone(h, in[h], ss, &d) == hh::Hold::TakeAt::Nowhere, "(stow) the zone of hand %d far from the back is not nowhere", h);
+			w.Step(in, kDt, ss, out);
+			EXPECT(w.Stowed() && !w.Flying(), "(stow) a grip elsewhere called the weapon from the back (hand %d)", h);
+			in[h].grip = 0;
+			w.Step(in, kDt, ss, out);
+		}
+		// a hand behind a shoulder (the draw flag): it comes off the back into that hand, either hand, either shoulder
+		in[1].pose.pos = atR;
+		in[1].draw     = true;
+		in[1].drawFrom = shoulderR;
+		double d = 0;
+		EXPECT(w.TakeZone(1, in[1], ss, &d) == hh::Hold::TakeAt::Back, "(stow) the zone of a hand behind a shoulder is not the back's");
+		in[1].claimed = true;
+		in[1].grip = 1;
+		w.Step(in, kDt, ss, out);
+		EXPECT(w.Flying() && w.FlyHand() == 1, "(stow) the grip behind the shoulder did not take the weapon off the back");
+		const Pose from = w.BodyPose();
+		EXPECT(Len(Sub(from.pos, V3 { 0.0, 1.2, 0.2 })) < 0.5, "(stow) it did not fly from the back: %.2f m from it", Len(Sub(from.pos, V3 { 0.0, 1.2, 0.2 })));
+		for (double t = 0; t < 0.4; t += kDt) w.Step(in, kDt, ss, out);
+		EXPECT(w.Held() && out[1].holds, "(stow) it did not arrive in the left fist");
+		reset(1);
+		// a hand near the weapon where it hangs takes it with the grip (backTake), also away from the shoulder zones
+		hh::Hold b;
+		dropped(b, 1.0);
+		for (double t = 0; t < 1.0 && !b.Stowed(); t += kDt) b.Step(in, kDt, ss, out);
+		b.SetStowPose({ { 0.0, 1.2, 0.2 }, {} });
+		b.Step(in, kDt, ss, out);
+		V3 e0, e1;
+		b.Ends(&e0, &e1);
+		in[0].pose.pos = Add(Mul(Add(e0, e1), 0.5), V3 { 0.0, 0.05, 0.0 });
+		in[0].grip = 1;
+		b.Step(in, kDt, ss, out);
+		EXPECT(b.Flying() && b.FlyHand() == 0, "(stow) a hand at the weapon on the back did not take it");
+		in[0].grip = 0;
+	}
+	{   // the world moves under the room: a weapon that is away stays where it is in the world; a held one and a stowed one are not touched
+		hh::Hold w;
+		dropped(w, 1.0);
+		const Pose before = w.BodyPose();
+		EXPECT(w.Landed(), "(world) setup: it lies");
+		// the hero walked 2 m: the world slid 2 m under the room (the weapon is 2 m behind in the room's axes now), and he turned 90 degrees about the vertical
+		const Q yaw = heft::QFromAxisAngle({ 0, 1, 0 }, 1.5707963267948966);
+		w.Transport(yaw, { 0.0, 0.0, 2.0 });
+		const Pose after = w.BodyPose();
+		const V3 want = Add(Rotate(yaw, before.pos), V3 { 0.0, 0.0, 2.0 });
+		EXPECT(Len(Sub(after.pos, want)) < 1e-6, "(world) it was not carried by the move: %.4f m off", Len(Sub(after.pos, want)));
+		EXPECT(std::fabs(after.pos.y - before.pos.y) < 1e-9 && w.Landed(), "(world) the height changed or it stopped lying");
+		V3 b, t;
+		w.Ends(&b, &t);
+		EXPECT(std::fabs(b.y - t.y) < 0.05, "(world) the lying weapon is no longer flat: %.3f m between the ends' heights", std::fabs(b.y - t.y));
+		// the controllers do not move with it: a hand that was at the shaft is 2 m off now
+		hh::Hold held;
+		in[0] = Hand(r, {}, 0);
+		in[1] = Hand({ -0.3, 1.0, 0.0 }, {}, 0);
+		held.Place(0, hh::Kind::Sword, false, { {}, kAlong }, in, st);
+		const Pose hp = held.BodyPose();
+		held.Transport(yaw, { 0.0, 0.0, 2.0 });
+		EXPECT(Len(Sub(held.BodyPose().pos, hp.pos)) < 1e-9, "(world) a weapon in the hand was carried by the world's move");
+		hh::Settings ss = st;
+		ss.stowAfter = 0.2;
+		hh::Hold sw;
+		dropped(sw, 1.0);
+		for (double tt = 0; tt < 0.6 && !sw.Stowed(); tt += kDt) sw.Step(in, kDt, ss, out);
+		sw.SetStowPose({ { 0.0, 1.2, 0.2 }, {} });
+		sw.Step(in, kDt, ss, out);
+		const Pose sp = sw.BodyPose();
+		sw.Transport(yaw, { 0.0, 0.0, 2.0 });
+		EXPECT(sw.Stowed() && Len(Sub(sw.BodyPose().pos, sp.pos)) < 1e-9, "(world) a weapon on the back was carried by the world's move");
+		// a falling weapon keeps its velocity turned with the world
+		hh::Hold fall;
+		in[0] = Hand(r, {}, 0);
+		fall.Place(0, hh::Kind::Sword, false, { {}, kAlong }, in, st);
+		for (double tt = 0; tt < 0.3; tt += kDt) fall.Step(in, kDt, st, out);
+		in[0].grip = 1;
+		for (double tt = 0; tt < 0.2; tt += kDt) fall.Step(in, kDt, st, out);
+		in[0].grip = 0;
+		fall.Step(in, kDt, st, out);
+		EXPECT(fall.Falling(), "(world) setup: it falls");
+		const Pose fp = fall.BodyPose();
+		fall.Transport(yaw, { 0.0, 0.0, 0.0 });
+		EXPECT(fall.Falling() && Len(Sub(fall.BodyPose().pos, Rotate(yaw, fp.pos))) < 1e-6, "(world) a falling weapon was not turned with the world");
+	}
+	return g_fails ? 1 : 0;
 }
 
 int Gravity() {
@@ -1322,6 +1700,65 @@ int Hands(int argc = 0, char** argv = nullptr) {
 			for (double t = 0; t < 0.4; t += kDt) w.Step(in, kDt, st, out);
 			EXPECT(w.Held() && out[1].holds && !out[0].holds && w.Main() == 1, "(back) it did not come into the left hand");
 		}
+		{   // TakeZone (the belt potions ask it, vr/grab_priority.h): where a grip pressed NOW would take the weapon - the very rules of Step, changing nothing
+			hh::Hold w;
+			stowedHold(w);
+			V3 butt, tip;
+			w.Ends(&butt, &tip);
+			const V3 mid = Mul(Add(butt, tip), 0.5), axis = Mul(Sub(tip, butt), 1.0 / Len(Sub(tip, butt)));
+			const V3 off = Cross(axis, V3 { 0, 1, 0 });
+			const V3 side = Mul(off, 1.0 / std::max(1e-9, Len(off)));
+			double d = -1;
+			EXPECT(w.TakeZone(1, Hand(mid, {}, 0), st, &d) == hh::Hold::TakeAt::Back && d < 1e-6, "(zone) a fist on the stowed shaft: the back, %.3f m", d);
+			EXPECT(w.TakeZone(1, Hand(Add(mid, Mul(side, 0.10)), {}, 0), st, &d) == hh::Hold::TakeAt::Back && std::fabs(d - 0.10) < 1e-6, "(zone) 10 cm from it: the back, %.3f m", d);
+			EXPECT(w.TakeZone(1, Hand(Add(mid, Mul(side, 0.30)), {}, 0), st, &d) == hh::Hold::TakeAt::Nowhere && std::fabs(d - 0.30) < 1e-6, "(zone) 30 cm from it (the zone is 25): nowhere, %.3f m", d);
+			// the weapon is away: the hand the game holds it in (first_ = the right) calls it back from afar; the other hand does not (recall_any_hand off); with it on, it does
+			EXPECT(w.TakeZone(0, Hand(Add(mid, Mul(side, 0.60)), {}, 0), st, &d) == hh::Hold::TakeAt::Recall && std::fabs(d - 0.60) < 1e-6, "(zone) the game's hand far from the stowed weapon: a recall, %.3f m", d);
+			EXPECT(w.TakeZone(1, Hand(Add(mid, Mul(side, 0.60)), {}, 0), st, &d) == hh::Hold::TakeAt::Nowhere, "(zone) the other hand far from it: nowhere");
+			{
+				hh::Settings any = st;
+				any.recallAny    = true;
+				EXPECT(w.TakeZone(1, Hand(Add(mid, Mul(side, 0.60)), {}, 0), any, &d) == hh::Hold::TakeAt::Recall, "(zone) recall_any_hand: the other hand's grip calls it too");
+				hh::HandIn claimed = Hand(Add(mid, Mul(side, 0.60)), {}, 0);
+				claimed.claimed = true;
+				EXPECT(w.TakeZone(1, claimed, any, &d) == hh::Hold::TakeAt::Nowhere, "(zone) a claimed grip (the swap's) calls nothing back");
+			}
+			hh::HandIn behind = Hand(Add(mid, Mul(side, 0.60)), {}, 0);
+			behind.behind = true;
+			EXPECT(w.TakeZone(1, behind, st, &d) == hh::Hold::TakeAt::Back, "(zone) behind a shoulder: the back, whatever the distance");
+			EXPECT(w.TakeZone(1, Hand(mid, {}, 0, false), st, &d) == hh::Hold::TakeAt::Nowhere, "(zone) a hand that is not tracked takes nothing");
+			EXPECT(w.Stowed(), "(zone) asking changed nothing");
+		}
+		{   // TakeZone: the second hand on the held shaft; the hand that holds it; a weapon on the floor
+			hh::Hold w;
+			hh::HandIn in[2] = { Hand({ 0.15, 1.3, -0.4 }, {}, 0), Hand({ -0.3, 1.0, 0.0 }, {}, 0) };
+			hh::HandOut out[2];
+			w.Place(0, hh::Kind::Spear, false, { {}, kAlong }, in, st);
+			w.Step(in, kDt, st, out);
+			EXPECT(w.Held() && out[0].holds, "(zone) setup: the spear is in the right hand");
+			double d = -1;
+			const V3 onShaft { 0.15, 1.3, -0.7 };   // 30 cm ahead of the right fist, on the line the shaft runs
+			EXPECT(w.TakeZone(1, Hand(onShaft, {}, 0), st, &d) == hh::Hold::TakeAt::Shaft && d < 0.02, "(zone) the left fist on the shaft: the shaft, %.3f m", d);
+			EXPECT(w.TakeZone(1, Hand(Add(onShaft, { 0.0, -0.08, 0.0 }), {}, 0), st, &d) == hh::Hold::TakeAt::Shaft && std::fabs(d - 0.08) < 0.01, "(zone) 8 cm below it: the shaft, %.3f m", d);
+			EXPECT(w.TakeZone(1, Hand(Add(onShaft, { 0.0, -0.20, 0.0 }), {}, 0), st, &d) == hh::Hold::TakeAt::Nowhere && std::fabs(d - 0.20) < 0.01, "(zone) 20 cm below it (the zone is 12): nowhere, %.3f m", d);
+			EXPECT(w.TakeZone(0, in[0], st, &d) == hh::Hold::TakeAt::Nowhere, "(zone) the hand that holds it: nowhere (it holds it)");
+			EXPECT(w.TakeZone(1, Hand({ -0.3, 1.0, 0.0 }, {}, 0), st, &d) == hh::Hold::TakeAt::Nowhere, "(zone) the left hand at the hip, far from the shaft: nowhere");
+			hh::Hold none;
+			EXPECT(none.TakeZone(1, Hand(onShaft, {}, 0), st, &d) == hh::Hold::TakeAt::Nowhere && d > 1e8, "(zone) no weapon placed: nowhere");
+			// on the floor
+			hh::Hold f;
+			hh::Settings floor = st;
+			floor.stowAfter    = -1;   // it lies where it landed (after_drop 0)
+			dropped(f, floor);
+			lie(f, floor, 3.0);
+			EXPECT(f.Landed(), "(zone) setup: the weapon lies");
+			V3 fb, ft;
+			f.Ends(&fb, &ft);
+			const V3 fmid = Mul(Add(fb, ft), 0.5);
+			EXPECT(f.TakeZone(1, Hand(fmid, {}, 0), st, &d) == hh::Hold::TakeAt::Shaft && d < 0.02, "(zone) a fist on the weapon that lies: the shaft, %.3f m", d);
+			EXPECT(f.TakeZone(1, Hand(Add(fmid, { 0.0, 0.5, 0.0 }), {}, 0), st, &d) == hh::Hold::TakeAt::Nowhere, "(zone) half a metre over it, the other hand: nowhere");
+			EXPECT(f.TakeZone(0, Hand(Add(fmid, { 0.0, 0.5, 0.0 }), {}, 0), st, &d) == hh::Hold::TakeAt::Recall, "(zone) half a metre over it, the game's hand: its grip calls it back");
+		}
 		{   // 30 cm from the shaft is outside the 25 cm zone: nothing (and the left is not the game's hand); a claimed grip at the weapon still takes it; a busy hand does not
 			hh::Hold w;
 			stowedHold(w);
@@ -1544,6 +1981,11 @@ int main(int argc, char** argv) {
 	if (argc >= 3 && std::strcmp(argv[1], "compare") == 0) return Compare(argv[2]);
 	if (argc >= 2 && std::strcmp(argv[1], "hands") == 0) return Hands(argc - 2, argv + 2);
 	if (argc >= 2 && std::strcmp(argv[1], "feel") == 0) return Feel(argc - 2, argv + 2);
+	if (argc >= 2 && std::strcmp(argv[1], "draw") == 0) {
+		Draw();
+		std::printf(g_fails ? "%d check(s) FAILED\n" : "all checks passed\n", g_fails);
+		return g_fails ? 1 : 0;
+	}
 	if (argc >= 2 && std::strcmp(argv[1], "gravity") == 0) {
 		Gravity();
 		std::printf(g_fails ? "%d check(s) FAILED\n" : "all checks passed\n", g_fails);

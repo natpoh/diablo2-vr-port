@@ -36,18 +36,25 @@
 #include "d2r_vr_shared.h"
 #include "link.h"
 #include "direct_feed.h"
+#include "room_walk_wire.h"
 #include "afr_eye_shared.h"
 
 // vrcam.cpp: the balls over the belt's bottles a hand is at (x y z in BodyWalk's frame, radius m, alpha, r g b)
 int D2rvrHoverSpheres(float (*out)[8], int max);
 #include "hud_native.h"
+#include "plate_world.h"   // [hud] monster_bar_room: the monster's health bar over its head, in the room (HangPlate)
+#include "rtv_slots.h"     // the render-target views of the interface chains, handed out and given back (EnsureHudOut)
 #include "reshade_shield.h"
 #include "panel_input.h"
 #include "xr_layers.h"
 #include "focus_gate.h"
+#include "xr_failure.h"   // when the runtime fails and the session is given up (xr_failure.h)
+#include "gpu_fault.h"   // the D3D12 device lost: told at once, nothing touched after it (vr/gpu_fault.h)
 #include "view_gate.h"
 #include "views3d.h"   // [openxr] views_3d: F1 as a window, F3 as the room (the pure maths)
 #include "hset_panel.h"   // the in-headset settings panel ([openxr] headset_settings): vr/xr_headset_settings.h
+#include "hset_life.h"
+#include "low_hp_game.h"   // its low-life pages show the vignette as a preview (lowhp::SetPreview)
 #include "hset_paint.h"
 #include "hset_store.h"
 #include "calibration.h"
@@ -64,6 +71,7 @@ int D2rvrHoverSpheres(float (*out)[8], int max);
 #include "wheel_paint.h"
 #include "xr_profiles.h"   // [openxr] frame_profile, index_grip_force: Steam Frame's own layout, the Index grip by force
 #include "hand_vitals_wire.h"   // [hud] hand_vitals: life and mana on the hand when the palm turns to the face (vr/xr_hand_vitals.h is its layer)
+#include "wrist_status_wire.h"   // [hud] wrist_status: companions and effects over a wrist turned to the eyes (vr/xr_wrist_status.h is its two layers)
 
 namespace xr {
 void GuardSet();
@@ -192,6 +200,9 @@ struct HudOut {
     XrCompositionLayerQuad layer{XR_TYPE_COMPOSITION_LAYER_QUAD};
 };
 HudOut g_hudOut[hud::kNativePieces];
+constexpr int kRtvs = 32;            // the render-target heap of these chains' images (g_rtvHeap) ...
+rtvslots::Slots<kRtvs> g_rtvSlots;   // ... its places: a chain takes one for each image and gives them back when it goes (vr/rtv_slots.h)
+HudOut g_plateOut;   // the monster's health bar hung over its head (HangPlate): a swapchain of its own, ONE size (plateworld::kChainW x kChainH), made once, kept to the session's end
 // BodyWalk's gesture zones ticked "VR" (HangZones): one atlas swapchain, a ball in a
 // cell of it for each zone, and a quad layer each.
 constexpr uint32_t kZoneCell = 256, kZoneCols = 4, kZonesMax = 16;
@@ -278,6 +289,8 @@ PanelPlace g_panelPlace;
 // lean goes - the head may lean round it, and walking off in the room drags it along
 // instead of taking the camera out of the hero (2026-10-10). Room space, set at the recentre.
 float g_bodyX = 0.0f, g_bodyZ = 0.0f;
+std::atomic<ULONGLONG> g_bodyHeldAt{0};   // [openxr] roomscale_walk: the room walk holds the body still (HoldBody, a 2.5 s lease: longer than the walker's own 2 s gap,
+                                          // so a hitch never lets lean_m drag the body behind its back - the view jumped and the hero chased it)
 
 // Recentre: the yaw and the point between the eyes taken as straight ahead.
 std::atomic<bool> g_recentre{true};
@@ -304,6 +317,8 @@ XrVector3f g_cPos{};
 struct Stats { uint32_t frames = 0, pairs = 0, monos = 0, noRender = 0, noViews = 0; double waitUs = 0, waitMax = 0, frameUs = 0; ULONGLONG since = 0; } g_st;
 double g_beginUs = 0.0;
 PairTiming g_clock{};   // the pair's time inside our calls (xr.h LastPairTiming), reset by BeginPair
+xrfail::Streak g_failStreak[3];   // xrWaitFrame, xrBeginFrame, xrEndFrame: the runtime's failed frames in a row (xr_failure.h)
+xrfail::Restarts g_restarts;      // sessions made again after a failure
 
 double UsNow() {
     static LARGE_INTEGER f = [] { LARGE_INTEGER q; QueryPerformanceFrequency(&q); return q; }();
@@ -321,11 +336,25 @@ const char* Res(XrResult r) {
 // A failed call to the log, once per call site and result.
 bool Ok(XrResult r, const char* what) {
     if (XR_SUCCEEDED(r)) return true;
+    gpufault::Check(g_dev, what);   // a call failed: is the device gone? (the first time it is, the report is written)
     static std::vector<std::pair<const char*, int>> told;
     for (const auto& t : told) if (t.first == what && t.second == (int)r) return false;
     if (told.size() < 64) told.push_back({what, (int)r});
     LogF("vrcam: openxr - %s failed: %s", what, Res(r));
     return false;
+}
+
+// The game's D3D12 device is gone (vr/gpu_fault.h): nothing of D3D12 or the runtime is touched again - the game ends in a moment on its own failed check, and a call
+// on a removed device only fails (or waits for a runtime that is failing too).
+bool DeviceLost() {
+    if (!gpufault::Removed()) return false;
+    static bool told = false;
+    if (!told) {
+        told = true;
+        g_running.store(false);
+        Log("vrcam: openxr - the D3D12 device was removed: no frame is submitted and nothing is copied from now on (the report is just above, and in d2r_vr_gpu_fault.txt in the logs folder)");
+    }
+    return true;
 }
 
 const char* StateName(XrSessionState s) {
@@ -443,6 +472,12 @@ XrAction g_aGrip = XR_NULL_HANDLE, g_aAim = XR_NULL_HANDLE, g_aTrigger = XR_NULL
          g_aSqueeze = XR_NULL_HANDLE, g_aStick = XR_NULL_HANDLE, g_aStickClick = XR_NULL_HANDLE, g_aPrimary = XR_NULL_HANDLE,
          g_aSecondary = XR_NULL_HANDLE, g_aMenu = XR_NULL_HANDLE;
 XrAction g_aSqueezeForce = XR_NULL_HANDLE;   // the Index grip's force ([openxr] index_grip_force); bound on Index only
+// The finger ON a control (capacitive touch): bound on the controllers that have it (Touch - PS VR2 on SteamVR is one - and Index), nothing on the others.
+// Read into g_touch (vr/direct_input.h TouchBit) for the layout's "<control>_touch" lines; BodyWalk is not given them.
+XrAction g_aTouchTrigger = XR_NULL_HANDLE, g_aTouchStick = XR_NULL_HANDLE, g_aTouchPrimary = XR_NULL_HANDLE, g_aTouchSecondary = XR_NULL_HANDLE;
+uint32_t g_touch[2] = {};     // the last frame's TouchBit bits of each hand
+int g_touchLooked[2] = {};    // frames a controller was in the hand with no touch input reported (told once)
+bool g_touchSaid[2] = {};     // this hand's touch inputs told in the log
 bool g_frameExt = false;   // XR_VALVE_frame_controller_interaction enabled in this instance ([openxr] frame_profile)
 XrAction g_aHaptic = XR_NULL_HANDLE;   // output: a pulse in a controller ([openxr] haptics, vr/haptics.cpp)
 // [openxr] haptics_hand_actions: instead of the one action filtered by hand, an action per hand ([0] left, [1] right) with only that
@@ -473,6 +508,8 @@ int g_bareSaid[2] = {-1, -1};
 bool g_actionsOk = false;
 bool g_inSent = false;     // XrInput written this session: its end is told too
 D2RVR_XrInput g_inNow{};   // the last frame's, for vrcam's own arms
+bool g_menuIsOptions = false;   // PS VR2 under the Touch profile: the left menu action is the RIGHT controller's Options button (told in the log; nothing is moved)
+char g_systemName[XR_MAX_SYSTEM_NAME_SIZE] = {};   // the runtime's name for the headset ("SteamVR/OpenXR : playstation_vr2"): the log's reading of a controller that shows as another
 
 XrPath Path(const char* s) {
     XrPath p = XR_NULL_PATH;
@@ -492,14 +529,24 @@ XrAction MakeAction(const char* name, const char* shown, XrActionType type) {
 }
 // One controller's bindings: (action, path) pairs, both hands spelled out. A
 // profile the runtime does not know is refused whole: logged, the others go on.
-void Suggest(const char* profile, std::initializer_list<std::pair<XrAction, const char*>> list) {
+// `touch`: the profile's touch inputs, on top. A runtime that refuses the whole list over them (a path it does not have) is asked again without them, so the
+// controller's buttons, sticks and poses never depend on the touch.
+void Suggest(const char* profile, std::initializer_list<std::pair<XrAction, const char*>> list,
+             std::initializer_list<std::pair<XrAction, const char*>> touch = {}) {
     std::vector<XrActionSuggestedBinding> b;
     for (const auto& [a, path] : list) if (a) b.push_back({a, Path(path)});
+    const size_t base = b.size();
+    for (const auto& [a, path] : touch) if (a) b.push_back({a, Path(path)});
     XrInteractionProfileSuggestedBinding sb{XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING};
     sb.interactionProfile = Path(profile);
     sb.countSuggestedBindings = (uint32_t)b.size();
     sb.suggestedBindings = b.data();
-    const XrResult r = xrSuggestInteractionProfileBindings(g_inst, &sb);
+    XrResult r = xrSuggestInteractionProfileBindings(g_inst, &sb);
+    if (XR_FAILED(r) && b.size() > base) {
+        LogF("vrcam: openxr - touch inputs for %s refused (%s): the profile goes without them", profile, Res(r));
+        sb.countSuggestedBindings = (uint32_t)base;
+        r = xrSuggestInteractionProfileBindings(g_inst, &sb);
+    }
     if (XR_FAILED(r)) LogF("vrcam: openxr - bindings for %s refused: %s", profile, Res(r));
 }
 
@@ -521,6 +568,10 @@ bool MakeActions() {
     g_aSecondary = MakeAction("secondary", "B / Y", XR_ACTION_TYPE_BOOLEAN_INPUT);
     g_aMenu = MakeAction("menu", "Menu", XR_ACTION_TYPE_BOOLEAN_INPUT);
     g_aSqueezeForce = MakeAction("squeeze_force", "Grip force", XR_ACTION_TYPE_FLOAT_INPUT);
+    g_aTouchTrigger = MakeAction("touch_trigger", "Trigger touch", XR_ACTION_TYPE_BOOLEAN_INPUT);
+    g_aTouchStick = MakeAction("touch_stick", "Thumbstick touch", XR_ACTION_TYPE_BOOLEAN_INPUT);
+    g_aTouchPrimary = MakeAction("touch_primary", "A / X touch", XR_ACTION_TYPE_BOOLEAN_INPUT);
+    g_aTouchSecondary = MakeAction("touch_secondary", "B / Y touch", XR_ACTION_TYPE_BOOLEAN_INPUT);
     // Made and bound whether [openxr] haptics is ticked or not (it switches live, and an action cannot be
     // added to an attached set): ticked off, nothing is ever played through it.
     g_aHaptic = g_aHapticHand[0] = g_aHapticHand[1] = XR_NULL_HANDLE;
@@ -543,11 +594,15 @@ bool MakeActions() {
              BOTH(g_aStick, "thumbstick"), BOTH(g_aStickClick, "thumbstick/click"),
              {g_aPrimary, "/user/hand/left/input/x/click"}, {g_aPrimary, "/user/hand/right/input/a/click"},
              {g_aSecondary, "/user/hand/left/input/y/click"}, {g_aSecondary, "/user/hand/right/input/b/click"},
-             {g_aMenu, "/user/hand/left/input/menu/click"}, MOTORS(g_aHaptic)});
+             {g_aMenu, "/user/hand/left/input/menu/click"}, MOTORS(g_aHaptic)},
+            {BOTH(g_aTouchTrigger, "trigger/touch"), BOTH(g_aTouchStick, "thumbstick/touch"),
+             {g_aTouchPrimary, "/user/hand/left/input/x/touch"}, {g_aTouchPrimary, "/user/hand/right/input/a/touch"},
+             {g_aTouchSecondary, "/user/hand/left/input/y/touch"}, {g_aTouchSecondary, "/user/hand/right/input/b/touch"}});
     Suggest("/interaction_profiles/valve/index_controller",
             {BOTH(g_aGrip, "grip/pose"), BOTH(g_aAim, "aim/pose"), BOTH(g_aTrigger, "trigger/value"), BOTH(g_aTriggerClick, "trigger/click"),
              BOTH(g_aSqueeze, "squeeze/value"), BOTH(g_aStick, "thumbstick"), BOTH(g_aStickClick, "thumbstick/click"),
-             BOTH(g_aPrimary, "a/click"), BOTH(g_aSecondary, "b/click"), BOTH(g_aSqueezeForce, "squeeze/force"), MOTORS(g_aHaptic)});
+             BOTH(g_aPrimary, "a/click"), BOTH(g_aSecondary, "b/click"), BOTH(g_aSqueezeForce, "squeeze/force"), MOTORS(g_aHaptic)},
+            {BOTH(g_aTouchTrigger, "trigger/touch"), BOTH(g_aTouchStick, "thumbstick/touch"), BOTH(g_aTouchPrimary, "a/touch"), BOTH(g_aTouchSecondary, "b/touch")});
     Suggest("/interaction_profiles/htc/vive_controller",
             {BOTH(g_aGrip, "grip/pose"), BOTH(g_aAim, "aim/pose"), BOTH(g_aTrigger, "trigger/value"), BOTH(g_aTriggerClick, "trigger/click"),
              BOTH(g_aSqueeze, "squeeze/click"), BOTH(g_aStick, "trackpad"), BOTH(g_aStickClick, "trackpad/click"), BOTH(g_aMenu, "menu/click"), MOTORS(g_aHaptic)});
@@ -662,6 +717,52 @@ bool BoolOf(XrAction a, int h, bool* active) {
     *active = true;
     return st.currentState != XR_FALSE;
 }
+// What the runtime bound our actions to, in its own words, per action: "menu: Left Hand Menu Button". A controller that shows as another
+// (PS VR2 on SteamVR presents itself as Touch: the log of 2026-10-17 had nothing for its Create / Options buttons) says here whether the
+// menu action reached any button at all, and which. One line a change (the profile is read again whenever the runtime says it changed).
+void LogBoundSources() {
+    struct Act { const char* name; XrAction action; };
+    const Act acts[] = {{"menu", g_aMenu}, {"primary (A / X)", g_aPrimary}, {"secondary (B / Y)", g_aSecondary}, {"stick click", g_aStickClick},
+                        {"trigger", g_aTrigger}, {"squeeze (grip)", g_aSqueeze}, {"touch of the trigger", g_aTouchTrigger}, {"touch of the stick", g_aTouchStick},
+                        {"touch of A / X", g_aTouchPrimary}, {"touch of B / Y", g_aTouchSecondary}};
+    static std::string told;   // the last text logged: a profile read twice with the same bindings is told once
+    std::string text;
+    for (const Act& a : acts) {
+        if (!a.action) continue;
+        text += a.name;
+        text += ": ";
+        XrBoundSourcesForActionEnumerateInfo bi{XR_TYPE_BOUND_SOURCES_FOR_ACTION_ENUMERATE_INFO};
+        bi.action = a.action;
+        uint32_t n = 0;
+        std::vector<XrPath> paths;
+        if (XR_SUCCEEDED(xrEnumerateBoundSourcesForAction(g_session, &bi, 0, &n, nullptr)) && n) {
+            paths.resize(n);
+            if (XR_FAILED(xrEnumerateBoundSourcesForAction(g_session, &bi, n, &n, paths.data()))) paths.clear();
+        }
+        if (paths.empty()) text += "nothing bound";
+        for (size_t i = 0; i < paths.size(); ++i) {
+            XrInputSourceLocalizedNameGetInfo li{XR_TYPE_INPUT_SOURCE_LOCALIZED_NAME_GET_INFO};
+            li.sourcePath = paths[i];
+            li.whichComponents = XR_INPUT_SOURCE_LOCALIZED_NAME_USER_PATH_BIT | XR_INPUT_SOURCE_LOCALIZED_NAME_COMPONENT_BIT;
+            uint32_t len = 0;
+            char name[160] = {};
+            if (XR_SUCCEEDED(xrGetInputSourceLocalizedName(g_session, &li, 0, &len, nullptr)) && len > 1 && len <= sizeof name)
+                xrGetInputSourceLocalizedName(g_session, &li, (uint32_t)sizeof name, &len, name);
+            uint32_t pl = 0;
+            char path[96] = {};
+            xrPathToString(g_inst, paths[i], (uint32_t)sizeof path, &pl, path);
+            text += (i ? ", " : "");
+            text += name[0] ? name : "(no name)";
+            text += " [";
+            text += path;
+            text += "]";
+        }
+        text += " | ";
+    }
+    if (text == told) return;
+    told = text;
+    LogF("vrcam: openxr - what the runtime bound our actions to (headset %s): %s", g_systemName[0] ? g_systemName : "?", text.c_str());
+}
 // The interaction profile each hand runs now (after the runtime says it changed).
 void ReadProfiles() {
     for (int h = 0; h < 2; ++h) {
@@ -674,6 +775,15 @@ void ReadProfiles() {
     LogF("vrcam: openxr - controllers: left %s, right %s", g_inNow.profile[0][0] ? g_inNow.profile[0] : "none",
          g_inNow.profile[1][0] ? g_inNow.profile[1] : "none");
     skillwheel::SetProfiles(g_inNow.profile[0], g_inNow.profile[1]);   // (the skill panel's tiles name the controller's own buttons)
+    const bool optionsIsMenu = xrprofiles::MenuIsRightOptions(g_systemName, g_inNow.profile[0]);
+    if (optionsIsMenu != g_menuIsOptions) {
+        g_menuIsOptions = optionsIsMenu;
+        if (optionsIsMenu)
+            Log("vrcam: openxr - PS VR2 on SteamVR runs as a Touch controller, and SteamVR's own remapping (playstation_vr2_sense_controller_remapping.json) gives a Touch game the "
+                "RIGHT controller's OPTIONS button as the LEFT menu button; the left CREATE button is not delivered at all. So on PS VR2 the menu button of this layout "
+                "(a tap: the inventory, held: the pause menu, with the left grip: the map) is the Options button of the right controller");
+    }
+    if (g_inNow.profile[0][0] || g_inNow.profile[1][0]) LogBoundSources();
 }
 // This frame's head and hands, at its display time, to Game Link's XrInput.
 bool BareHand(int h) {
@@ -767,6 +877,7 @@ void LaserTeardown();
 void WheelTeardown();   // the skill wheel's picture, below (xr_skill_wheel.h)
 void RunesTeardown();   // the gesture runes' atlas, below (xr_runes.h)
 void VitalsTeardown();   // the hand vitals panel's picture, below (xr_hand_vitals.h)
+void WristStatusTeardown();   // the wrist status panels' pictures, below (xr_wrist_status.h)
 void HsStep(D2RVR_XrInput& in, bool focused);   // the settings panel, below (xr_headset_settings.h)
 void HsTeardown();
 void DropCalibration();   // the T-pose measurement's pictures, below
@@ -829,12 +940,46 @@ void Publish(bool focused) {
         if (BoolOf(g_aTriggerClick, h, &clickBound) || (!clickBound && o.trigger > 0.8f)) b |= BW_LINK_XRB_TRIGGER;
         if (o.squeeze > 0.8f) b |= BW_LINK_XRB_SQUEEZE;
         o.buttons = b;
+        {   // the finger on a control (capacitive touch), where the runtime reports it: the layout's "<control>_touch" lines read it (F4 only, once per touch)
+            bool tAct = false;
+            uint32_t t = 0;
+            if (BoolOf(g_aTouchPrimary, h, &tAct)) t |= directinput::kTouchPrimary;
+            if (BoolOf(g_aTouchSecondary, h, &tAct)) t |= directinput::kTouchSecondary;
+            if (BoolOf(g_aTouchStick, h, &tAct)) t |= directinput::kTouchStick;
+            if (BoolOf(g_aTouchTrigger, h, &tAct)) t |= directinput::kTouchTrigger;
+            g_touch[h] = t;
+            if (tAct && !g_touchSaid[h]) {   // said once per hand: which inputs and which controller
+                g_touchSaid[h] = true;
+                std::string which;
+                const struct { XrAction a; const char* n; } all[] = {{g_aTouchTrigger, "trigger"}, {g_aTouchStick, "thumbstick"}, {g_aTouchPrimary, h ? "A" : "X"}, {g_aTouchSecondary, h ? "B" : "Y"}};
+                for (const auto& x : all) { bool active = false; BoolOf(x.a, h, &active); if (active) which += (which.empty() ? "" : ", ") + std::string(x.n); }
+                LogF("vrcam: openxr - the %s hand's controller (profile %s) reports touch on: %s ([direct] <control>_touch lines)", h ? "right" : "left",
+                     g_inNow.profile[h][0] ? g_inNow.profile[h] : "none", which.c_str());
+            } else if (!tAct && o.active && !g_touchSaid[h] && g_touchLooked[h] >= 0 && ++g_touchLooked[h] == 240 && directinput::On()) {
+                LogF("vrcam: openxr - the %s hand's controller (profile %s) reports no touch: a [direct] <control>_touch line does nothing for it", h ? "right" : "left",
+                     g_inNow.profile[h][0] ? g_inNow.profile[h] : "none");
+                g_touchLooked[h] = -1;
+            }
+        }
+        {   // the menu button's presses, told with the profile that carried them: PS VR2 on SteamVR runs as a Touch controller, and whether its
+            // Create / Options buttons arrive as the menu button was unknown (2026-10-17). The first 60 presses; a press of the plugin's own
+            // long-press pause is told on its own line ("direct input: pause ...").
+            static bool menuWas[2] = {};
+            static int menuTold = 0;
+            const bool menuNow = (b & BW_LINK_XRB_MENU) != 0;
+            if (menuNow && !menuWas[h] && menuTold++ < 60)
+                LogF("vrcam: openxr - the %s hand's menu button pressed (%s, profile %s, headset %s)", h ? "right" : "left",
+                     g_menuIsOptions ? "/user/hand/left/input/menu/click = PS VR2's RIGHT controller's Options button" : h ? "/user/hand/right/input/menu/click" : "/user/hand/left/input/menu/click",
+                     g_inNow.profile[h][0] ? g_inNow.profile[h] : "none", g_systemName[0] ? g_systemName : "?");
+            menuWas[h] = menuNow;
+        }
         o.active = act || o.grip.valid ? 1u : 0u;
         LogHandSeen(h, gripSeen, focused, act);
         const bool bare = BareHand(h);
         if (bare && !g_cfg.bareHands) {   // no controller in it: nothing pressed, no hand for BodyWalk
             o = D2RVR_XrHand{};
             b = 0;
+            g_touch[h] = 0;
         }
         if (g_bareSaid[h] != (int)bare) {
             g_bareSaid[h] = bare;
@@ -855,7 +1000,7 @@ void Publish(bool focused) {
     HsStep(in, focused);      // the settings panel, when it is up, has both hands: nothing of them goes on
     FeedCalibration(in, located, focused);
     LaserStep(in, focused);   // what the laser takes is not BodyWalk's
-    directinput::Feed(&in, g_laserWanted.load());   // the gestures' listeners, and [openxr] direct_input's pad, actions, commands and head
+    directinput::Feed(&in, g_laserWanted.load(), g_touch);   // the gestures' listeners, and [openxr] direct_input's pad, actions, commands and head (and the finger's touch)
     g_lastPublishTime = g_fs.predictedDisplayTime;
     in.stamp = D2RVRStampNow();
     in.counter++;
@@ -890,7 +1035,12 @@ bool ApplyHaptic(int hand, float amplitude, int durationMs) {
     v.frequency = XR_FREQUENCY_UNSPECIFIED;
     v.amplitude = amplitude;
     frametrace::Scope trace(frametrace::kHaptic);   // [debug] frame_trace: the runtime's call - some runtimes make a round trip of it
-    const bool ok = Ok(xrApplyHapticFeedback(g_session, &ai, (const XrHapticBaseHeader*)&v), "xrApplyHapticFeedback");
+    const XrResult applied = xrApplyHapticFeedback(g_session, &ai, (const XrHapticBaseHeader*)&v);
+    const bool ok = Ok(applied, "xrApplyHapticFeedback");
+    static std::atomic<int> told{0};
+    if (told.fetch_add(1) < 4)   // the first calls, as the runtime gets them: what a controller that stays still was sent
+        LogF("vrcam: haptics - xrApplyHapticFeedback: %s hand, amplitude %.2f, %d ms, frequency unspecified (the runtime's own) -> %s", hand ? "right" : "left", amplitude,
+             durationMs, Res(applied));
     if (ok && g_cfg.hapticsStop && g_hapticTimer->Start(&StopHaptic)) g_hapticTimer->Arm(hand & 1, (uint32_t)std::max(durationMs, 1));
     return ok;
 }
@@ -905,8 +1055,16 @@ void FlushHaptics() {
 }
 
 // -- start: instance, system, session (a worker thread) ------------------------
+void WaitFence(UINT64 v, DWORD ms);   // (the copy list, below)
+void SweepGraveyard(bool all);
 void Teardown() {   // under g_lock or before the session exists
     g_running.store(false);
+    gpufault::Note("xr: teardown");
+    if (!gpufault::Removed() && g_queue && g_fence) {   // our lists done before the swapchains they draw into go (Poll's loss path had no wait; Stop's is the same one)
+        g_queue->Signal(g_fence, ++g_fenceV);
+        WaitFence(g_fenceV, 500);
+    }
+    SweepGraveyard(true);
     g_hapticTimer->Cancel();   // [openxr] haptics_stop: no stop called on what goes below
     AcquireSRWLockExclusive(&g_hapticStopLock);
     g_hapticStopOk = false;
@@ -922,11 +1080,15 @@ void Teardown() {   // under g_lock or before the session exists
     WheelTeardown();   // the skill wheel closed, its picture gone
     RunesTeardown();   // the gesture runes' atlas
     VitalsTeardown();  // the hand vitals panel's picture gone
+    WristStatusTeardown();   // the wrist status panels' pictures gone
     g_panelPlace = PanelPlace{};
     g_gate[0] = g_gate[1] = focusgate::Gate{};   // a new session: what is down at its start is held back too
     for (HudOut& o : g_hudOut) { if (o.sc) xrDestroySwapchain(o.sc); o = HudOut{}; }   // (a menu's panel's too)
     if (g_zoneOut.sc) xrDestroySwapchain(g_zoneOut.sc);
     g_zoneOut = HudOut{};
+    if (g_plateOut.sc) xrDestroySwapchain(g_plateOut.sc);   // (the only place the monster bar's chain goes: the session's end)
+    g_plateOut = HudOut{};
+    g_rtvSlots.Reset();   // every chain that held places is gone
     for (Chain* c : {&g_eyeChain[0], &g_eyeChain[1], &g_quadChain}) {
         if (c->sc) xrDestroySwapchain(c->sc);
         *c = Chain{};
@@ -941,6 +1103,7 @@ void Teardown() {   // under g_lock or before the session exists
     if (g_actSet) { xrDestroyActionSet(g_actSet); g_actSet = XR_NULL_HANDLE; }   // its actions go with it
     g_aHaptic = g_aHapticHand[0] = g_aHapticHand[1] = XR_NULL_HANDLE;
     g_actionsOk = false;
+    g_menuIsOptions = false;
     directinput::SessionEnd();
     for (XrHandTrackerEXT& t : g_handTracker) { if (t && g_xrDestroyHandTracker) g_xrDestroyHandTracker(t); t = XR_NULL_HANDLE; }
     g_xrCreateHandTracker = nullptr; g_xrDestroyHandTracker = nullptr; g_xrLocateHandJoints = nullptr;
@@ -1035,8 +1198,10 @@ bool StartSession() {
         LogF("vrcam: openxr - hand tracking: %s", !hands ? "not in this runtime" : !hp.supportsHandTracking ? "not on this headset"
                                                  : handSource ? "yes, with its data source (a bare hand told from a controller)" : "yes");
         if (sp.graphicsProperties.maxLayerCount) g_maxLayers = sp.graphicsProperties.maxLayerCount;
+        strcpy_s(g_systemName, sp.systemName);
         LogF("vrcam: openxr - headset %s, %u layers at most, swapchains up to %ux%u", sp.systemName, sp.graphicsProperties.maxLayerCount,
              sp.graphicsProperties.maxSwapchainImageWidth, sp.graphicsProperties.maxSwapchainImageHeight);
+        haptics::SetHeadset(sp.systemName);   // which motor the controllers have (a PlayStation VR2 Sense needs the gentle pulses lifted: haptics_pattern.h Motor)
         maxSwapchain = {sp.graphicsProperties.maxSwapchainImageWidth, sp.graphicsProperties.maxSwapchainImageHeight};
     }
     {
@@ -1158,6 +1323,9 @@ bool MakeCopyList() {
     g_fenceEvt = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     if (FAILED(g_dev->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, g_alloc[0], nullptr, __uuidof(ID3D12GraphicsCommandList), (void**)&g_list))) return false;
     g_list->Close();
+    for (int i = 0; i < kAllocs; ++i) g_alloc[i]->SetName(L"d2rvr xr copy allocator");   // (the names DRED prints for what the GPU was running)
+    g_list->SetName(L"d2rvr xr copy list");
+    g_fence->SetName(L"d2rvr xr copy fence");
     return true;
 }
 void WaitFence(UINT64 v, DWORD ms) {
@@ -1166,6 +1334,32 @@ void WaitFence(UINT64 v, DWORD ms) {
     g_fence->SetEventOnCompletion(v, g_fenceEvt);
     WaitForSingleObject(g_fenceEvt, ms);
     g_clock.fence += UsNow() - t;
+}
+
+// Before a swapchain of ours goes: the lists we submitted that draw into or copy into its images are done (2026-10-17, the device lost: a
+// resource freed under work the GPU had not run yet is a page fault).
+void SettleGpu() { if (g_fence && g_fenceV) WaitFence(g_fenceV, 200); }
+
+// A buffer the GPU may still read is not released at once, and not after a wait that may run out: it waits here for the fence of the last
+// list submitted so far, and goes when the fence has passed it (every OpenList looks).
+struct Grave { ID3D12Resource* r; UINT64 v; };
+std::vector<Grave> g_graveyard;
+void Retire(ID3D12Resource*& r) {
+    if (!r) return;
+    gpufault::Note("xr: an upload buffer retired", (uint64_t)(uintptr_t)r, g_fenceV);
+    if (g_fence && g_fence->GetCompletedValue() < g_fenceV) g_graveyard.push_back({r, g_fenceV});
+    else r->Release();
+    r = nullptr;
+}
+void SweepGraveyard(bool all = false) {
+    if (g_graveyard.empty()) return;
+    const UINT64 done = g_fence ? g_fence->GetCompletedValue() : ~0ull;
+    size_t keep = 0;
+    for (const Grave& g : g_graveyard) {
+        if (all || done >= g.v) g.r->Release();
+        else g_graveyard[keep++] = g;
+    }
+    g_graveyard.resize(keep);
 }
 
 D3D12_RESOURCE_BARRIER Tr(ID3D12Resource* r, D3D12_RESOURCE_STATES from, D3D12_RESOURCE_STATES to) {
@@ -1182,7 +1376,13 @@ D3D12_RESOURCE_BARRIER Tr(ID3D12Resource* r, D3D12_RESOURCE_STATES from, D3D12_R
 bool EnsureChain(Chain& c, const D3D12_RESOURCE_DESC& d, const char* what) {
     if (c.sc && c.w == (uint32_t)d.Width && c.h == d.Height && c.bbFmt == d.Format) return true;
     if (c.bad && c.w == (uint32_t)d.Width && c.h == d.Height && c.bbFmt == d.Format) return false;
-    if (c.sc) { xrDestroySwapchain(c.sc); c.sc = XR_NULL_HANDLE; c.img.clear(); }
+    if (c.sc) {
+        SettleGpu();
+        gpufault::Note("xr: picture swapchain destroyed", (uint64_t)(uintptr_t)c.sc, ((uint64_t)c.w << 32) | c.h);
+        xrDestroySwapchain(c.sc);
+        c.sc = XR_NULL_HANDLE;
+        c.img.clear();
+    }
     c.w = (uint32_t)d.Width; c.h = d.Height; c.bbFmt = d.Format; c.bad = false;
     g_aspect.store(c.h ? (float)c.w / (float)c.h : 0.0f);
     c.fmt = PickFormat(d.Format);
@@ -1211,6 +1411,7 @@ bool EnsureChain(Chain& c, const D3D12_RESOURCE_DESC& d, const char* what) {
     c.img.assign(n, {XR_TYPE_SWAPCHAIN_IMAGE_D3D12_KHR});
     xrEnumerateSwapchainImages(c.sc, n, &n, (XrSwapchainImageBaseHeader*)c.img.data());
     vrres::SwapchainMade(c.w, c.h, true);
+    gpufault::Note("xr: picture swapchain made", (uint64_t)(uintptr_t)c.sc, ((uint64_t)c.w << 32) | c.h);
     LogF("vrcam: openxr - %s swapchain %ux%u %s (back buffer %s), %u images", what, c.w, c.h, FormatName(c.fmt), FormatName(d.Format), n);
     if (Family(d.Format) == 3) Log("vrcam: openxr -   a 10-bit back buffer has no sRGB twin: the headset may show it too bright");
     return true;
@@ -1219,12 +1420,27 @@ bool EnsureChain(Chain& c, const D3D12_RESOURCE_DESC& d, const char* what) {
 // Our list, opened on the next allocator of the ring / submitted on the game's queue.
 int g_openAlloc = 0;
 ID3D12GraphicsCommandList* OpenList() {
-    if (!MakeCopyList()) return nullptr;
+    if (!MakeCopyList() || gpufault::Removed()) return nullptr;
+    SweepGraveyard();
     const int a = g_allocAt;
-    g_allocAt = (g_allocAt + 1) % kAllocs;
-    WaitFence(g_allocDone[a], 100);
-    g_alloc[a]->Reset();
-    g_list->Reset(g_alloc[a], nullptr);
+    // The allocator's last list must be done before it is reset: a reset under a list the GPU still runs removes the device. It used to be
+    // waited for 100 ms and reset whether done or not; now a wait that runs out leaves this piece out of the frame, and the ring is asked again next time.
+    if (g_fence && g_fence->GetCompletedValue() < g_allocDone[a]) {
+        WaitFence(g_allocDone[a], 100);
+        if (g_fence->GetCompletedValue() < g_allocDone[a]) {
+            static ULONGLONG toldAt = 0;
+            const ULONGLONG now = GetTickCount64();
+            if (!toldAt || now - toldAt > 10000) {
+                toldAt = now;
+                LogF("vrcam: openxr - the GPU is more than 100 ms behind our copy list %d (fence %llu of %llu): a piece is left out of this frame, not drawn over a list still running",
+                     a, (unsigned long long)g_fence->GetCompletedValue(), (unsigned long long)g_allocDone[a]);
+            }
+            gpufault::Note("xr: the GPU is behind our copy list: a piece left out", (uint64_t)a, g_allocDone[a]);
+            return nullptr;
+        }
+    }
+    if (FAILED(g_alloc[a]->Reset()) || FAILED(g_list->Reset(g_alloc[a], nullptr))) return nullptr;
+    g_allocAt = (a + 1) % kAllocs;
     g_openAlloc = a;
     return g_list;
 }
@@ -1287,7 +1503,7 @@ ULONGLONG g_ptrRetryAt = 0;   // the pointer's image ran out of its wait: made a
 // came after. 1 made, 0 the image's wait ran out (make it again later), -1 failed.
 int MakeStaticImage(uint32_t w, uint32_t h, const uint32_t* rgba, ID3D12Resource*& upload, XrSwapchain& sc, const char* what) {
     const UINT pitch = (w * 4 + 255) & ~255u;
-    if (upload) { upload->Release(); upload = nullptr; }
+    Retire(upload);   // (the copy that read it may not have run yet: a new cursor shape came a frame after the last)
     D3D12_HEAP_PROPERTIES hp{}; hp.Type = D3D12_HEAP_TYPE_UPLOAD;
     D3D12_RESOURCE_DESC rd{}; rd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER; rd.Width = (UINT64)pitch * h; rd.Height = 1;
     rd.DepthOrArraySize = 1; rd.MipLevels = 1; rd.SampleDesc.Count = 1; rd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
@@ -1315,6 +1531,7 @@ int MakeStaticImage(uint32_t w, uint32_t h, const uint32_t* rgba, ID3D12Resource
     uint32_t idx = 0;
     if (!cnt) return -1;
     if (const int got = NextImage(sc, &idx, what); got <= 0) return got;
+    bool copied = false;
     if (ID3D12GraphicsCommandList* l = OpenList()) {
         ID3D12Resource* t = img[idx].texture;
         D3D12_RESOURCE_BARRIER rb = Tr(t, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_DEST);
@@ -1327,14 +1544,22 @@ int MakeStaticImage(uint32_t w, uint32_t h, const uint32_t* rgba, ID3D12Resource
         rb = Tr(t, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_RENDER_TARGET);
         l->ResourceBarrier(1, &rb);
         SubmitList();
+        copied = true;
     }
     XrSwapchainImageReleaseInfo ri{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
     snprintf(b, sizeof b, "xrReleaseSwapchainImage(%s)", what);
-    return Ok(xrReleaseSwapchainImage(sc, &ri), b) ? 1 : -1;
+    if (!Ok(xrReleaseSwapchainImage(sc, &ri), b)) return -1;
+    return copied ? 1 : 0;   // no list could be opened (the GPU is behind): the image holds nothing yet - made again later, not shown empty for good
 }
 
 bool MakePointerImage(HCURSOR cur) {
-    if (g_ptr.sc) { ForgetPending(g_ptr.sc); xrDestroySwapchain(g_ptr.sc); g_ptr.sc = XR_NULL_HANDLE; }
+    if (g_ptr.sc) {
+        ForgetPending(g_ptr.sc);
+        SettleGpu();
+        gpufault::Note("xr: pointer swapchain destroyed", (uint64_t)(uintptr_t)g_ptr.sc);
+        xrDestroySwapchain(g_ptr.sc);
+        g_ptr.sc = XR_NULL_HANDLE;
+    }
     g_ptr.ok = false;
     g_ptr.shape = cur;
     ICONINFO ii{};
@@ -1479,7 +1704,7 @@ cbuffer Hud : register(b0) {
   float g_zoom;   // the map on the orb, 1 = its width across the ball
   float g_alpha;  // the orb's glass, rim and halo (the map's lines keep theirs)
   float g_split;  // the toolbar in two halves side by side: 0 no, 1 the turned half below, 2 above (bar_split)
-  float g_pad3;
+  float g_opacity;  // the whole picture's opacity, premultiplied (the monster bar's [hud] monster_alpha); 0 = whole - the other callers pass 0
 };
 Texture2D<float4> g_src : register(t0);
 SamplerState g_smp : register(s0);
@@ -1512,7 +1737,8 @@ float4 PSMain(float4 pos : SV_Position) : SV_Target {
   float3 straight = cover > 1e-4 ? saturate(max(c.rgb, 0.0) / cover) : 0.0;
   if (g_encoded > 0.5)
     straight = pow(straight, 2.2);
-  return float4(straight * cover, cover);
+  const float k = g_opacity > 0.0 ? saturate(g_opacity) : 1.0;
+  return float4(straight * cover, cover) * k;
 }
 
 float Hash(float2 p) { return frac(sin(dot(p, float2(127.1, 311.7))) * 43758.5453); }
@@ -1627,9 +1853,8 @@ ID3D12PipelineState* g_hudPso[3] = {};   // the flat piece, the orb, a gesture z
 ID3D12DescriptorHeap* g_srvHeap = nullptr;   // shader-visible, a ring: two pieces a frame
 ID3D12DescriptorHeap* g_rtvHeap = nullptr;
 UINT g_srvInc = 0, g_rtvInc = 0;
-constexpr int kSrvRing = 16, kRtvs = 32;
+constexpr int kSrvRing = 64;   // (was 16: as many as the allocators - a slot is rewritten only after the list that read it is done; room to spare now)
 uint32_t g_srvAt = 0;
-int g_rtvAt = 0;
 bool g_hudFailed = false;
 
 bool MakeHudPipeline() {
@@ -1699,6 +1924,17 @@ bool MakeHudPipeline() {
         ok = ok && SUCCEEDED(g_dev->CreateDescriptorHeap(&rd, __uuidof(ID3D12DescriptorHeap), (void**)&g_rtvHeap));
         g_srvInc = g_dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
         g_rtvInc = g_dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+        if (ok) {   // every slot a valid (null) view: the gesture zones' balls bind slot 0 and read nothing from it, and a table over a slot nobody wrote is undefined
+            D3D12_SHADER_RESOURCE_VIEW_DESC nv{};
+            nv.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+            nv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+            nv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+            nv.Texture2D.MipLevels = 1;
+            D3D12_CPU_DESCRIPTOR_HANDLE h = g_srvHeap->GetCPUDescriptorHandleForHeapStart();
+            for (int i = 0; i < kSrvRing; ++i, h.ptr += g_srvInc) g_dev->CreateShaderResourceView(nullptr, &nv, h);
+            g_srvHeap->SetName(L"d2rvr xr srv ring");
+            g_rtvHeap->SetName(L"d2rvr xr rtv heap");
+        }
     }
     if (!ok) { Log("vrcam: openxr - interface in the room: the pipeline could not be made - the toolbar and the map stay off"); return false; }
     g_hudFailed = false;
@@ -1708,7 +1944,16 @@ bool MakeHudPipeline() {
 
 bool EnsureHudOut(HudOut& o, uint32_t w, uint32_t h, const char* what) {
     if (o.sc && o.w == w && o.h == h) return true;
-    if (o.sc) { xrDestroySwapchain(o.sc); o.sc = XR_NULL_HANDLE; o.img.clear(); }
+    if (o.sc) {
+        ForgetPending(o.sc);   // (an image of it whose wait ran out is waited for no more: a new chain may get the same handle)
+        SettleGpu();           // (our lists that draw into its images are done before they go, and before their views are written over)
+        gpufault::Note("xr: interface swapchain destroyed", (uint64_t)(uintptr_t)o.sc, ((uint64_t)o.w << 32) | o.h);
+        xrDestroySwapchain(o.sc);
+        o.sc = XR_NULL_HANDLE;
+        gpufault::Note("xr: render-target slots given back", (uint64_t)o.rtv0, (uint64_t)o.img.size());
+        g_rtvSlots.Give(o.rtv0, (int)o.img.size());
+        o.img.clear();
+    }
     o.w = w; o.h = h;
     bool srgb = false;
     for (int64_t f : g_formats) if (f == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB) srgb = true;
@@ -1721,9 +1966,17 @@ bool EnsureHudOut(HudOut& o, uint32_t w, uint32_t h, const char* what) {
     xrEnumerateSwapchainImages(o.sc, 0, &n, nullptr);
     std::vector<XrSwapchainImageD3D12KHR> img(n, {XR_TYPE_SWAPCHAIN_IMAGE_D3D12_KHR});
     xrEnumerateSwapchainImages(o.sc, n, &n, (XrSwapchainImageBaseHeader*)img.data());
-    if (g_rtvAt + (int)n > kRtvs) g_rtvAt = 0;   // (the old chain's views go with it)
-    o.rtv0 = g_rtvAt;
-    g_rtvAt += (int)n;
+    o.rtv0 = g_rtvSlots.Take((int)n);
+    if (o.rtv0 < 0) {   // the heap is full: no view of anybody else's is taken over (that drew into the wrong chain's image)
+        xrDestroySwapchain(o.sc);
+        o.sc = XR_NULL_HANDLE;
+        o.rtv0 = 0;
+        static bool told = false;
+        if (!told) { told = true; LogF("vrcam: openxr - interface in the room: no room in the render-target heap for the %s's %u images - it stays out", what, n); }
+        return false;
+    }
+    gpufault::Note("xr: interface swapchain made", (uint64_t)(uintptr_t)o.sc, ((uint64_t)w << 32) | h);
+    gpufault::Note("xr: render-target slots taken", (uint64_t)o.rtv0, n);
     for (uint32_t i = 0; i < n; ++i) {
         o.img.push_back(img[i].texture);
         D3D12_RENDER_TARGET_VIEW_DESC rv{};
@@ -1738,7 +1991,10 @@ bool EnsureHudOut(HudOut& o, uint32_t w, uint32_t h, const char* what) {
 }
 
 // One piece drawn into its swapchain's next image, on our list on the game's queue.
-bool DrawHud(HudOut& o, ID3D12Resource* src, bool orb, const float cb[12]) {
+// dw x dh: the corner of the image drawn into (0 = all of it): a chain larger than the picture, the monster bar's.
+bool DrawHud(HudOut& o, ID3D12Resource* src, bool orb, const float cb[12], uint32_t dw = 0, uint32_t dh = 0) {
+    if (!dw || dw > o.w) dw = o.w;
+    if (!dh || dh > o.h) dh = o.h;
     uint32_t idx = 0;
     XrSwapchainImageReleaseInfo ri{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
     if (NextImage(o.sc, &idx, "interface") <= 0) return false;
@@ -1763,8 +2019,8 @@ bool DrawHud(HudOut& o, ID3D12Resource* src, bool orb, const float cb[12]) {
     l->SetGraphicsRoot32BitConstants(0, 12, cb, 0);
     l->SetGraphicsRootDescriptorTable(1, gpu);
     l->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
-    const D3D12_VIEWPORT vp{0.0f, 0.0f, (float)o.w, (float)o.h, 0.0f, 1.0f};
-    const D3D12_RECT sc{0, 0, (LONG)o.w, (LONG)o.h};
+    const D3D12_VIEWPORT vp{0.0f, 0.0f, (float)dw, (float)dh, 0.0f, 1.0f};
+    const D3D12_RECT sc{0, 0, (LONG)dw, (LONG)dh};
     l->RSSetViewports(1, &vp);
     l->RSSetScissorRects(1, &sc);
     l->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
@@ -1926,6 +2182,47 @@ uint32_t HangHud(const XrCompositionLayerBaseHeader** layers, uint32_t nl, uint3
         q.size = {quadW, quadW * (float)outH / (float)outW};
         layers[nl++] = (const XrCompositionLayerBaseHeader*)&q;
     }
+    return nl;
+}
+
+// [hud] monster_bar_room (vr/plate_world.h): the game's own health bar and name of the monster you target, cut out of its interface (hud.cpp), hung in
+// the room above that monster's head: turned to the head about the vertical (upright), its width by the distance, its foot the player's gap over the head.
+// The place comes from vrcam's tick in the head's turn-only frame (metres from the eyes: x right, y up, z back), put in the room the way the belt's balls are.
+uint32_t HangPlate(const XrCompositionLayerBaseHeader** layers, uint32_t nl, uint32_t max) {
+    if (nl >= max || !g_actionsOk || !g_inNow.head.valid || !plateworld::Active()) return nl;
+    hud::NativePiece src;
+    bool encoded = true;
+    plateworld::Anchor a;
+    const float alpha = plateworld::Opacity();   // [hud] monster_alpha: the bar in the room is faded like the plate in the picture
+    if (!plateworld::OpacityVisible(alpha)) return nl;
+    if (!hud::PlatePiece(&src, &encoded) || !src.visible || !src.w || !src.h || !plateworld::GetAnchor(&a, GetTickCount64())) return nl;
+    // ONE swapchain for every bar, made at the first (plateworld::kChainW x kChainH) and kept: the bar is drawn into its corner, the layer's image rect says which
+    plateworld::Fit fit;
+    if (!plateworld::FitInto(src.w, src.h, &fit)) return nl;
+    if (!MakeHudPipeline() || !EnsureHudOut(g_plateOut, plateworld::kChainW, plateworld::kChainH, "monster bar")) return nl;
+    const float width = plateworld::WidthM(a.distM, a.sizePct);
+    const float height = width * (float)src.h / (float)src.w;
+    const XrVector3f hp = P3(g_inNow.head.pos);
+    XrVector3f at = Plus(hp, Rot(Yaw(YawOf(Q4(g_inNow.head.rot))), P3(a.head)));
+    at.y += a.gapM + 0.5f * height;   // the bar's foot a gap over the head, not its middle
+    XrVector3f z = Minus(hp, at);     // turned to the head, but upright
+    z.y = 0.0f;
+    z = Unit(z);
+    const XrVector3f x = Unit(CrossV({0.0f, 1.0f, 0.0f}, z));
+    const float seconds = (float)(GetTickCount64() % 3600000ull) / 1000.0f;
+    const float cb[12] = {encoded ? 1.0f : 0.0f, seconds, (float)src.w / (float)src.h, (float)fit.w, 0.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 0.0f, plateworld::ShaderOpacity(alpha)};
+    if (!DrawHud(g_plateOut, src.tex, false, cb, fit.w, fit.h)) return nl;
+    XrCompositionLayerQuad& q = g_plateOut.layer;
+    q = {XR_TYPE_COMPOSITION_LAYER_QUAD};
+    q.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;   // premultiplied, as the toolbar
+    q.space = g_roomSpace ? g_roomSpace : g_space;
+    q.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+    q.subImage.swapchain = g_plateOut.sc;
+    q.subImage.imageRect = {{0, 0}, {(int32_t)fit.w, (int32_t)fit.h}};
+    q.pose.orientation = FromAxes(x, {0.0f, 1.0f, 0.0f}, z);
+    q.pose.position = at;
+    q.size = {width, height};
+    layers[nl++] = (const XrCompositionLayerBaseHeader*)&q;
     return nl;
 }
 
@@ -2216,7 +2513,7 @@ void LaserImages() {
     const ULONGLONG now = GetTickCount64();
     auto make = [&](LaserImage& i, uint32_t w, uint32_t h, const char* what, auto shade) {
         if (i.state != 0 || now < i.retryAt) return;
-        if (i.sc) { ForgetPending(i.sc); xrDestroySwapchain(i.sc); i.sc = XR_NULL_HANDLE; }
+        if (i.sc) { ForgetPending(i.sc); SettleGpu(); gpufault::Note("xr: laser swapchain destroyed", (uint64_t)(uintptr_t)i.sc); xrDestroySwapchain(i.sc); i.sc = XR_NULL_HANDLE; }
         std::vector<uint32_t> px((size_t)w * h);
         for (uint32_t y = 0; y < h; ++y)
             for (uint32_t x = 0; x < w; ++x) {
@@ -2296,13 +2593,18 @@ uint32_t HangLaser(const XrCompositionLayerBaseHeader** layers, uint32_t nl, uin
 #include "xr_skill_wheel.h"         // the skill wheel in the headset ([openxr] skill_wheel): uses what is above
 #include "xr_runes.h"               // BodyWalk's gesture runes in the headset ([openxr] runes_draw): uses what is above
 #include "xr_hand_vitals.h"        // the hand vitals panel ([hud] hand_vitals): uses what is above
+#include "xr_wrist_status.h"       // the wrist status panels ([hud] wrist_status): uses what is above
 
 bool CopyInto(Chain& c, ID3D12Resource* bb) {
     if (!MakeCopyList()) return false;
     uint32_t idx = 0;
     if (NextImage(c.sc, &idx, "picture") <= 0) return false;
     ID3D12Resource* dst = c.img[idx].texture;
-    if (!OpenList()) return false;
+    if (!OpenList()) {   // (the image acquired is given back, or the chain runs out of images)
+        XrSwapchainImageReleaseInfo none{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
+        xrReleaseSwapchainImage(c.sc, &none);
+        return false;
+    }
     D3D12_RESOURCE_BARRIER b[2] = {Tr(bb, D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_COPY_SOURCE),
                                    Tr(dst, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_DEST)};
     g_list->ResourceBarrier(2, b);
@@ -2317,6 +2619,36 @@ bool CopyInto(Chain& c, ID3D12Resource* bb) {
     SubmitList();
     XrSwapchainImageReleaseInfo ri{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
     return Ok(xrReleaseSwapchainImage(c.sc, &ri), "xrReleaseSwapchainImage");
+}
+
+void EndSessionNow(const char* why);
+
+// The runtime failed (xr_failure.h; 2026-10-17: Virtual Desktop's xrBeginFrame answered XR_ERROR_RUNTIME_FAILURE for as long as the game lived): the session is
+// given up - nothing more is submitted, the game goes on flat (FlatVR started again where it was ours to stop), and with the device alive a new session is made after
+// 5 s (FollowLink: while FlatVR does not run), at most three times in ten minutes. A lost device is not a runtime to ask again: nothing of D3D12 or the runtime
+// is touched after it. Under g_lock, with no frame open.
+void GiveUp(const char* what, XrResult r) {
+    const bool lost = gpufault::Check(g_dev, what);   // was it the device? (the report is written if so)
+    LogF("vrcam: openxr - %s failed with %s: the runtime cannot go on - the session is given up and nothing more is submitted%s", what, Res(r),
+         lost ? "; the D3D12 device is gone with it" : "");
+    for (xrfail::Streak& s : g_failStreak) s.Reset();
+    if (lost) {
+        g_running.store(false);
+        g_state.store(kFailed);
+        g_retryAt.store(0);
+        return;
+    }
+    EndSessionNow("the runtime failed");
+    Teardown();
+    g_state.store(kFailed);
+    if (g_flatVrStopped) { link::RequestFlatVR(true); g_flatVrStopped = false; Log("vrcam: openxr - FlatVR started again"); }
+    if (g_restarts.Allow(GetTickCount64())) {
+        g_retryAt.store(GetTickCount64() + 5000);
+        Log("vrcam: openxr - the game is flat until a new session is made in 5 s (not over a running FlatVR)");
+    } else {
+        g_retryAt.store(0);
+        Log("vrcam: openxr - the runtime has failed three times in ten minutes: no new session this run, the game stays flat (switching [openxr] on off and on again tries once more)");
+    }
 }
 
 void EndSessionNow(const char* why) {
@@ -2450,7 +2782,9 @@ bool OpenFrame(Kind kind) {
     const double t0 = UsNow();
     g_fs = {XR_TYPE_FRAME_STATE};
     XrFrameWaitInfo wi{XR_TYPE_FRAME_WAIT_INFO};
-    if (!Ok(xrWaitFrame(g_session, &wi, &g_fs), "xrWaitFrame")) return false;
+    const XrResult wr = xrWaitFrame(g_session, &wi, &g_fs);
+    const bool waitGone = g_failStreak[0].Note(wr, GetTickCount64());
+    if (!Ok(wr, "xrWaitFrame")) { if (waitGone) GiveUp("xrWaitFrame", wr); return false; }
     if (++g_framesRunning == 90) GuardClear("the session runs: 90 frames");
     const double t1 = UsNow();
     g_st.waitUs += t1 - t0;
@@ -2459,7 +2793,8 @@ bool OpenFrame(Kind kind) {
     if (crumb) LogF("vrcam: openxr -   should render %d, display period %.2f ms; xrBeginFrame", (int)g_fs.shouldRender, g_fs.predictedDisplayPeriod / 1e6);
     XrFrameBeginInfo bi{XR_TYPE_FRAME_BEGIN_INFO};
     const XrResult br = xrBeginFrame(g_session, &bi);
-    if (br != XR_FRAME_DISCARDED && !Ok(br, "xrBeginFrame")) return false;
+    const bool beginGone = g_failStreak[1].Note(br, GetTickCount64());
+    if (br != XR_FRAME_DISCARDED && !Ok(br, "xrBeginFrame")) { if (beginGone) GiveUp("xrBeginFrame", br); return false; }
     g_beginUs = t1;
     g_kind = kind;
     g_copied[0] = g_copied[1] = false;
@@ -2817,12 +3152,14 @@ void CloseFrame() {
     XrCompositionLayerQuad ptr3d{XR_TYPE_COMPOSITION_LAYER_QUAD};   // F1 / F3 in 3D (pointer_3d): the game's pointer on the ground
     XrCompositionLayerQuad beam{XR_TYPE_COMPOSITION_LAYER_QUAD}, dot{XR_TYPE_COMPOSITION_LAYER_QUAD};
     XrCompositionLayerQuad hsPanel{XR_TYPE_COMPOSITION_LAYER_QUAD}, hsBeam{XR_TYPE_COMPOSITION_LAYER_QUAD}, hsDot{XR_TYPE_COMPOSITION_LAYER_QUAD};
-    const uint32_t hsRoom = (g_hsOpen.load() ? 3 : 0) + (calib::PanelNow().show ? 2 : 0) + (skillwheel::Enabled() ? 3 : 0) + (handvitals::PanelOn() ? 1 : 0);   // the settings panel's three layers, the T-pose prompt's two, the skill wheel's three and the hand vitals' one, hung last
+    const uint32_t hsRoom = (g_hsOpen.load() ? 3 : 0) + (calib::PanelNow().show ? 2 : 0) + (skillwheel::Enabled() ? 3 : 0) + (handvitals::PanelOn() ? 1 : 0) + (wriststatus::Enabled() ? 2 : 0);   // the settings panel's three layers, the T-pose prompt's two, the skill wheel's three, the hand vitals' one and the wrist status' two, hung last
     XrCompositionLayerQuad wheelPanel{XR_TYPE_COMPOSITION_LAYER_QUAD}, wheelBeam{XR_TYPE_COMPOSITION_LAYER_QUAD}, wheelDot{XR_TYPE_COMPOSITION_LAYER_QUAD};
     XrCompositionLayerQuad vitalsPanel{XR_TYPE_COMPOSITION_LAYER_QUAD};   // [hud] hand_vitals: one layer over the hand
     XrCompositionLayerColorScaleBiasKHR vitalsScale{XR_TYPE_COMPOSITION_LAYER_COLOR_SCALE_BIAS_KHR};
-    const XrCompositionLayerBaseHeader* layers[8 + kZonesMax + kRuneLayers] = {};
-    const uint32_t most = std::min<uint32_t>(8 + kZonesMax + kRuneLayers, g_maxLayers);
+    XrCompositionLayerQuad wsPanel[2] = {{XR_TYPE_COMPOSITION_LAYER_QUAD}, {XR_TYPE_COMPOSITION_LAYER_QUAD}};   // [hud] wrist_status: one layer over each wrist
+    XrCompositionLayerColorScaleBiasKHR wsScale[2] = {{XR_TYPE_COMPOSITION_LAYER_COLOR_SCALE_BIAS_KHR}, {XR_TYPE_COMPOSITION_LAYER_COLOR_SCALE_BIAS_KHR}};
+    const XrCompositionLayerBaseHeader* layers[10 + kZonesMax + kRuneLayers] = {};
+    const uint32_t most = std::min<uint32_t>(10 + kZonesMax + kRuneLayers, g_maxLayers);
     uint32_t nl = 0;
     if (g_kind == kPair) g_flatShown.ok = false;   // the laser's surface is gone with the flat picture (a menu's panel: HangPanel)
     if (g_kind == kPair && g_viewsOk)
@@ -2872,8 +3209,10 @@ void CloseFrame() {
         nl = HangZones(layers, nl, zonesMax);   // the belt's balls
         nl = HangRunes(layers, nl, zonesMax);   // BodyWalk's gesture runes and the hand's trail (F4, [openxr] runes_draw)
         nl = HangHud(layers, nl, most);   // the toolbar and the map, where FlatVR hung them
+        nl = HangPlate(layers, nl, most);   // the targeted monster's health bar over its head ([hud] monster_bar_room)
         if (laser) nl = HangLaser(layers, nl, most, beam, dot);
         nl = HangVitals(layers, nl, most, vitalsPanel);   // life and mana over the hand turned to the face (F4)
+        nl = HangWristStatus(layers, nl, most, wsPanel);   // companions and effects over a wrist turned to the eyes (F4)
         nl = HangCalibration(layers, nl, most);   // the T-pose measurement's prompt
         nl = HangSettings(layers, nl, most, hsPanel, hsBeam, hsDot);   // the settings panel, nearest of all
         nl = HangWheel(layers, nl, most, wheelPanel, wheelBeam, wheelDot);   // the skill wheel, nearest of all
@@ -2948,6 +3287,7 @@ void CloseFrame() {
     scale.colorBias = {0.0f, 0.0f, 0.0f, 0.0f};
     for (uint32_t i = 0; i < nl; ++i) ((XrCompositionLayerBaseHeader*)layers[i])->next = scaled ? &scale : nullptr;
     VitalsScale(vitalsPanel, vitalsScale, bright);   // (the hand vitals' layer has its own: the fade and the soft pulse)
+    WristStatusScale(wsPanel, wsScale, bright);       // (so have the wrist status' two: the fade)
     static int ends = 0;
     if (ends < 3) LogF("vrcam: openxr - frame %d: xrEndFrame with %u layer(s)", ++ends, nl);
     XrFrameEndInfo ei{XR_TYPE_FRAME_END_INFO};
@@ -2960,6 +3300,7 @@ void CloseFrame() {
     g_clock.layers = endUs - closeUs;
     g_clock.submit = UsNow() - endUs;
     Ok(ended, "xrEndFrame");
+    const bool endGone = g_failStreak[2].Note(ended, GetTickCount64());
     if (ended == XR_ERROR_POSE_INVALID) {   // the runtime names no layer: each one's numbers, so the log does (every 5 s at most)
         static xrlayers::Telling diag;
         uint32_t times = 0;
@@ -2988,11 +3329,12 @@ void CloseFrame() {
         g_st = Stats{};
         g_st.since = GetTickCount64();
     }
+    if (endGone) GiveUp("xrEndFrame", ended);   // (the frame is closed: nothing of it is open to tear down under)
 }
 
 }  // namespace
 
-void SetLogger(void (*log)(const char*)) { g_log = log; directinput::SetLogger(log); haptics::SetLogger(log); vrres::SetLogger(log); }
+void SetLogger(void (*log)(const char*)) { g_log = log; directinput::SetLogger(log); roomwalkwire::SetLogger(log); haptics::SetLogger(log); vrres::SetLogger(log); }
 void SetWindow(HWND wnd) { g_wnd = wnd; }
 
 // The start guard (2026-10-10): players' games died starting native OpenXR - their runtime's own
@@ -3175,6 +3517,7 @@ void LoadSettings(const wchar_t* ini) {
         }
     }
     directinput::LoadSettings(ini);   // [openxr] direct_input and the [direct] layout: the plugin's own controls
+    roomwalkwire::LoadSettings(ini);  // [openxr] roomscale_walk: your steps in the room walk the hero (vr/room_walk.h)
     {   // a settings panel in the headset (both grips squeezed, then a thumbstick click), live
         g_cfg.headsetSettings = f(L"headset_settings", 0.0f) != 0.0f;
         static int said = -1;
@@ -3200,6 +3543,7 @@ void LoadSettings(const wchar_t* ini) {
         haptics::Configure(on && g_cfg.haptics, g_cfg.hapticsScale);
         g_cfg.hapticsHands = f(L"haptics_hand_actions", 1.0f) != 0.0f;   // (taken at the next session start)
         g_cfg.hapticsStop = f(L"haptics_stop", 1.0f) != 0.0f;            // live
+        haptics::SetMotorChoice((int)f(L"haptics_motor", 0.0f));         // live: 0 by the headset's name, 1 plain, 2 weak (the low-life beat lifted for the PlayStation VR2 Sense)
     }
     {   // [render] vr_resolution_px (a square's side) and vr_resolution (the older mode), live: render_size.h reads the two together
         const int mode = (int)GetPrivateProfileIntW(L"render", L"vr_resolution", 0, ini);
@@ -3235,6 +3579,7 @@ void SetPointerAt(PointerAtFn fn) { g_pointerAt = fn; }
 void SetViewsMode(int mode) { g_viewsMode = mode >= kViewsHead && mode <= kViewsRoom ? mode : kViewsHead; }
 bool Running() { return g_running.load(); }
 float LeanM() { return g_cfg.leanM; }
+void HoldBody() { g_bodyHeldAt.store(GetTickCount64()); }
 bool ByTurns() { return g_cfg.on && g_cfg.byTurns; }
 bool StopPending() { return g_stopWanted.load() && g_state.load() != kIdle; }
 void Recenter() { g_recentre.store(true); }
@@ -3260,6 +3605,7 @@ void Stop(bool final);
 // The session started on the game's device and queue (a worker thread), once.
 void Start(ID3D12Device* dev, ID3D12CommandQueue* queue) {
     if (g_state.load() != kIdle || !dev || !queue) return;
+    gpufault::Watch(dev);   // (vrcam does it from every present; here too, for a session that starts first)
     g_dev = dev;
     g_queue = queue;
     g_state.store(kStarting);
@@ -3272,6 +3618,7 @@ void Start(ID3D12Device* dev, ID3D12CommandQueue* queue) {
 bool BeginPair(ID3D12Device* dev, ID3D12CommandQueue* queue) {
     if (g_stopWanted.exchange(false)) Stop(false);
     if (!On()) return false;
+    if (gpufault::Check(g_dev, "the start of a pair") && DeviceLost()) { g_pairOpen.store(false); return false; }   // (one call a pair into the runtime: is the device there?)
     if (g_state.load() == kIdle) { if (dev && queue) Start(dev, queue); return false; }
     if (g_state.load() != kCreated) { g_pairYawAt.store(0); return false; }
     // Two passes before the replay is on (or without it): it has no device and queue yet - the
@@ -3342,7 +3689,8 @@ bool PairEyes(Eyes* out) {
         return true;
     }
     const XrQuaternionf back = Yaw(-g_cYaw);
-    {   // the body follows the head once it leans farther than lean_m
+    out->epoch = g_epoch;   // (the room walk starts fresh at a recentre)
+    if (GetTickCount64() - g_bodyHeldAt.load() >= 2500) {   // the body follows the head once it leans farther than lean_m (unless the room walk holds it)
         const float mx = 0.5f * (g_views[0].pose.position.x + g_views[1].pose.position.x);
         const float mz = 0.5f * (g_views[0].pose.position.z + g_views[1].pose.position.z);
         const float dx = mx - g_bodyX, dz = mz - g_bodyZ, d = sqrtf(dx * dx + dz * dz);
@@ -3382,7 +3730,7 @@ bool PairInput(D2RVR_XrInput* out) {
 }
 
 void CopyEye(int eye, ID3D12Resource* bb) {
-    if (g_kind != kPair || !bb || eye < 0 || eye > 1 || g_copied[eye]) return;
+    if (g_kind != kPair || !bb || eye < 0 || eye > 1 || g_copied[eye] || DeviceLost()) return;
     AcquireSRWLockExclusive(&g_lock);
     if (g_session && EnsureChain(g_eyeChain[eye], bb->GetDesc(), eye ? "right eye's" : "left eye's"))
         g_copied[eye] = CopyInto(g_eyeChain[eye], bb);
@@ -3394,7 +3742,7 @@ void EndPair() {
     g_pairOpen.store(false);
     if (g_pairYawAt.load()) g_pairYawAt.store(GetTickCount64());   // the timer's 250 ms from the pair's end
     AcquireSRWLockExclusive(&g_lock);
-    if (g_session) CloseFrame();
+    if (g_session && !DeviceLost()) CloseFrame();   // (a removed device: the frame is not ended - the runtime fails too, and the game is on its way out)
     g_kind = kNone;
     ReleaseSRWLockExclusive(&g_lock);
 }
@@ -3405,6 +3753,7 @@ void OnPresent(ID3D12Device* dev, ID3D12CommandQueue* queue, ID3D12Resource* bb,
         vrres::Update(g_wnd, g_running.load() && g_state.load() == kCreated, vrres::Unpack(g_vrRecommended.load()), vrres::Unpack(g_vrMaximum.load()),
                       vrres::Unpack(g_outputSize.load()), g_cfg.on ? g_cfg.vrPick : rendersize::Pick{});
     }
+    if (DeviceLost()) return;
     if (g_kind != kPair && g_stopWanted.exchange(false)) Stop(false);
     // inside a pair: its own frame - and a pass of two presents its own eye (the replay copied it already)
     if (g_kind == kPair) { if (pairEye >= 0 && bb) CopyEye(pairEye, bb); return; }
@@ -3480,4 +3829,21 @@ void DeviceGone(ID3D12Device* dev) {
     if (dev && dev == g_dev && g_state.load() != kIdle) Shutdown();
 }
 
+// FlatVR there to take the pictures: its head sample moved within the last 1.5 s (looked at twice a second at most - the
+// mapping is opened each time). For pace::Tick ([stereo] pace_flatvr_only): with nothing to hand the pictures to, nothing to
+// pace them to. One caller, the present's thread.
+bool FlatVrRunning() {
+    static ULONGLONG at = 0, movedAt = 0;
+    static uint32_t last = 0;
+    static bool state = false;
+    const ULONGLONG now = GetTickCount64();
+    if (at && now - at < 500) return state;
+    at = now;
+    bool running = false;
+    const uint32_t c = FlatVRCounter(&running);
+    if (running && c != last) movedAt = now;
+    last = c;
+    state = running && movedAt && now - movedAt < 1500;
+    return state;
+}
 }  // namespace xr

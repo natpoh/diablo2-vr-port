@@ -12,8 +12,11 @@
 #include <cmath>
 #include <cctype>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <functional>
+#include <string>
 
 #include "direct_input.h"
 #include "hold_tap.h"
@@ -38,6 +41,9 @@ enum Ctl : uint8_t {
 inline int HandOf(Ctl c) { return c >= kRTrigger ? 1 : 0; }   // 0 left, 1 right
 inline Ctl GripOf(int hand) { return hand ? kRGrip : kLGrip; }
 inline bool IsAnalog(Ctl c) { return c == kLTrigger || c == kRTrigger || c == kLGrip || c == kRGrip; }
+// The controls a controller can report the finger ON (capacitive touch): the triggers, the face buttons and the thumbsticks - not the grips or the menu
+// buttons. They carry "<control>_touch" lines (Table::touch).
+inline bool HasTouch(Ctl c) { return c == kLTrigger || c == kRTrigger || c == kLX || c == kLY || c == kRA || c == kRB || c == kLStick || c == kRStick; }
 inline const char* Name(Ctl c) {
     static const char* const n[kCtlCount] = {"left_trigger", "left_grip", "left_x", "left_y", "left_stick", "left_menu",
                                              "right_trigger", "right_grip", "right_a", "right_b", "right_stick", "right_menu"};
@@ -48,6 +54,7 @@ inline const char* Name(Ctl c) {
 struct Controls {
     float v[kCtlCount] = {};
     float stick[2][2] = {};
+    bool touch[kCtlCount] = {};   // the finger on the control (capacitive touch, HasTouch ones only; pressed or not)
 };
 
 // The controls whose shots are dropped this frame (bit per Ctl), from the frame's takes (Take with kNoShotTrigger / kNoShotSqueeze; hand 0
@@ -75,6 +82,7 @@ class ReleaseGate {
 public:
     void Suspend() {
         for (bool& m : mask_) m = true;
+        for (bool& m : touchMask_) m = true;
         stick_[0] = stick_[1] = true;
         started_ = true;
     }
@@ -84,6 +92,10 @@ public:
             if (taken && taken[i]) mask_[i] = true;
             else if (c.v[i] <= kReleased) mask_[i] = false;
             if (mask_[i]) c.v[i] = 0.0f;
+            // (a finger on a control when the context changes is not a touch BEGIN: it reads as off until it has been lifted)
+            if (taken && taken[i]) touchMask_[i] = true;
+            else if (!c.touch[i]) touchMask_[i] = false;
+            if (touchMask_[i]) c.touch[i] = false;
         }
         for (int h = 0; h < 2; ++h) {
             if (std::max(std::fabs(c.stick[h][0]), std::fabs(c.stick[h][1])) <= kStickReleased) stick_[h] = false;
@@ -96,6 +108,7 @@ private:
     uint32_t context_ = 0;
     bool started_ = false;
     bool mask_[kCtlCount] = {};
+    bool touchMask_[kCtlCount] = {};
     bool stick_[2] = {};
 };
 
@@ -104,7 +117,9 @@ private:
 // bit (shared/d2r_vr_shared.h, the same numbers - direct_input.cpp asserts it); a command is the game's own key
 // command (the index in its table 0x22A7930).
 // kOutSkillPanel is a request, not a button: "toggle the skill panel" (directinput::TakeSkillPanelToggle).
-enum OutKind : uint8_t { kOutNone, kOutPad, kOutLT, kOutRT, kOutAction, kOutCommand, kOutSkillPanel };
+// kOutPause is a request too: "the pause menu" - Esc, as the keyboard's (directinput::TakePauseToggle; vrcam taps the key).
+// kOutQuiver is one as well: "step the javelin quiver's choice" - value 1 next, 2 previous (directinput::TakeQuiverStep; action:quivernext / action:quiverprev).
+enum OutKind : uint8_t { kOutNone, kOutPad, kOutLT, kOutRT, kOutAction, kOutCommand, kOutSkillPanel, kOutPause, kOutQuiver };
 struct Out {
     OutKind kind = kOutNone;
     uint32_t value = 0;
@@ -125,10 +140,13 @@ struct Binding {
 // that, not its plain one, while the grip is held at the moment it is pressed.
 // A control with a "hold" binding is hold-or-tap (vr/hold_tap.h) while `holdEnabled`: its plain outputs wait for the
 // release (a tap), its hold outputs fire once after `holdMs`; a command it holds (Alt) is held at once.
+// A control with a "touch" binding (HasTouch ones; none by default) gives it once for every BEGIN of the finger's touch - a pulse as long as a tap's, nothing
+// repeated while the finger stays - in the world layer of F4 only (no menu, no panel of ours up). It is its own line: the press of the same control keeps its.
 struct Table {
     Binding plain[kCtlCount];
     Binding chord[kCtlCount];
     Binding hold[kCtlCount];
+    Binding touch[kCtlCount];
     bool holdEnabled = true;                       // [direct] hold_enabled
     uint32_t holdMs = holdtap::kDefaultHoldMs;     // [direct] hold_ms
 };
@@ -138,6 +156,8 @@ inline Out OutPadBtn(uint16_t bit) { return {kOutPad, bit}; }
 inline Out OutAction(uint32_t bit) { return {kOutAction, bit}; }
 inline Out OutCmd(uint32_t cmd) { return {kOutCommand, cmd}; }
 inline Out OutSkillPanel() { return {kOutSkillPanel, 0}; }
+inline Out OutPause() { return {kOutPause, 0}; }
+inline Out OutQuiver(uint32_t dir) { return {kOutQuiver, dir}; }   // 1 next, 2 previous
 
 // An output that would shoot: the game's attack (action:attack), the pad's A (the attack on the pad) and the analog RT. [hands] bow_draw_only
 // drops these - and only these - from a control pressed away from the string; a pad B / X / Y / RB (a skill slot), a key command, any other
@@ -157,7 +177,9 @@ inline bool IsShot(const Out& o) {
 // and a two-handed grip read them. Chords on the grip: the map, the recentre, and RB (the fourth skill slot).
 // stickMap ([direct] left_stick_map, default on): a quick click of the left stick also shows / hides the map. Alt
 // (show items) stays what the click does while it is held, so the click's own line is Alt at once plus the map as a tap.
-inline Table DefaultTable(bool stickMap = true) {
+// pauseButton ([direct] pause_button, default on): a long press of the left menu button is the pause menu (Esc); a tap is the inventory as before. Off: the
+// menu button is the inventory the moment it is pressed, as it was before the pause button existed.
+inline Table DefaultTable(bool stickMap = true, bool pauseButton = true) {
     Table t;
     t.plain[kRTrigger] = Bind(OutAction(act::kAttack));
     t.plain[kRA] = Bind(OutAction(act::kInteract));
@@ -177,6 +199,10 @@ inline Table DefaultTable(bool stickMap = true) {
     // on the right, the map on the left; held at once, the left click is Alt)
     t.hold[kRStick] = Bind(OutSkillPanel());
     t.hold[kLStick] = Bind(OutAction(act::kInventory));
+    // a long press of the left menu button: the pause menu (Esc) - a tap is the inventory, as it was. A Touch controller has no right menu button (the
+    // system button is the runtime's), so the left one carries both. (PS VR2 on SteamVR is a Touch controller whose "left menu" is the Options button of
+    // the RIGHT controller - SteamVR's own remapping; its Create button does not arrive. Nothing here is moved for it: the log and the help say so.)
+    if (pauseButton) t.hold[kLMenu] = Bind(OutPause());
     return t;
 }
 
@@ -184,8 +210,9 @@ inline Table DefaultTable(bool stickMap = true) {
 // left is the game's own: pad buttons, triggers, the sticks, actions (attack, interact, inventory, map, swap, views, recentre) and key commands. A control
 // whose hold line was only that panel stops being hold-or-tap, so its plain line acts at once.
 inline Table WithoutPanels(Table t) {
-    auto strip = [](Binding* b) { for (Out& o : b->out) if (o.kind == kOutSkillPanel) o = Out{}; };
-    for (int i = 0; i < kCtlCount; ++i) { strip(&t.plain[i]); strip(&t.chord[i]); strip(&t.hold[i]); }
+    // (and the pause menu's long press: Esc is F4's, the keyboard's is the game's in the other views; and the javelin quiver's steps: F4's alone)
+    auto strip = [](Binding* b) { for (Out& o : b->out) if (o.kind == kOutSkillPanel || o.kind == kOutPause || o.kind == kOutQuiver) o = Out{}; };
+    for (int i = 0; i < kCtlCount; ++i) { strip(&t.plain[i]); strip(&t.chord[i]); strip(&t.hold[i]); strip(&t.touch[i]); }
     return t;
 }
 
@@ -218,6 +245,8 @@ struct Outputs {
     uint32_t actions = 0;      // D2RVRAction bits
     uint64_t commands[2] = {}; // bit n = the game's command n
     bool skillPanel = false;   // a toggle of the skill panel is asked for (true while the request's press is on: act on its edge)
+    bool pause = false;        // the pause menu (Esc) is asked for (the same: act on its edge)
+    uint8_t quiver = 0;        // the javelin quiver's step is asked for: bit 0 next, bit 1 previous (true while the press is on: act on its edge)
 };
 
 // The layout. One per session; Step once per headset frame with the controls AFTER the gate.
@@ -226,11 +255,11 @@ public:
     Layout() : world_(DefaultTable()), menu_(MenuTable()) {}
     void SetWorld(const Table& t) { world_ = t; }
     const Table& World() const { return world_; }
-    void Reset() { for (bool& d : down_) d = false; Cancel(); }
+    void Reset() { for (bool& d : down_) d = false; touchSeen_ = false; Cancel(); }
     // The context changed under the controls (a menu, the focus, the session): a press under way is forgotten, no tap.
     void Cancel() {
         for (int& l : latch_) l = -1;
-        for (int i = 0; i < kCtlCount; ++i) { ht_[i].Cancel(); htOn_[i] = false; suppress_[i] = false; }
+        for (int i = 0; i < kCtlCount; ++i) { ht_[i].Cancel(); htOn_[i] = false; suppress_[i] = false; touchUntil_[i] = 0; }
     }
 
     // nowMs: a monotonic clock in ms (hold-or-tap). uiUp: a panel of the plugin's own is up - a control with a hold line
@@ -296,6 +325,17 @@ public:
             const Binding& b = l >= kCtlCount ? t.chord[l - kCtlCount] : t.plain[l];
             for (const Out& o : b.out) if (!(drop && IsShot(o))) Apply(o, IsAnalog(ctl) ? c.v[i] : 1.0f, r);
         }
+        // the touch lines: the finger arriving on a control is one pulse of the line's outputs (the world layer only; a panel of ours up, or a menu, gives nothing)
+        for (int i = 0; i < kCtlCount; ++i) {
+            const bool on = c.touch[i] && HasTouch((Ctl)i);
+            const bool edge = on && !touchDown_[i] && touchSeen_;   // (the first frame only learns where the fingers are)
+            touchDown_[i] = on;
+            if (mode != Mode::World || uiUp || !HasOut(t.touch[i])) { touchUntil_[i] = 0; continue; }
+            if (edge) touchUntil_[i] = nowMs + holdtap::kPulseMs;
+            if (nowMs < touchUntil_[i])
+                for (const Out& o : t.touch[i].out) if (!(((noShot >> i) & 1u) && IsShot(o))) Apply(o, 1.0f, r);
+        }
+        touchSeen_ = true;
         return r;
     }
 
@@ -316,6 +356,8 @@ private:
         case kOutAction: r.actions |= o.value; break;
         case kOutCommand: if (o.value < kCommands) r.commands[o.value / 64] |= 1ull << (o.value % 64); break;
         case kOutSkillPanel: r.skillPanel = true; break;
+        case kOutPause: r.pause = true; break;
+        case kOutQuiver: r.quiver |= (uint8_t)o.value; break;
         default: break;
         }
     }
@@ -327,6 +369,9 @@ private:
     holdtap::Machine ht_[kCtlCount];
     bool htOn_[kCtlCount] = {};        // the press in progress (or its tap) is hold-or-tap's
     bool suppress_[kCtlCount] = {};    // a panel came up under the press: nothing until it is let go
+    bool touchDown_[kCtlCount] = {};   // the finger was on the control last frame
+    uint64_t touchUntil_[kCtlCount] = {};   // a touch line's pulse runs until this tick
+    bool touchSeen_ = false;           // a frame has been seen: the fingers' places are known
 };
 
 // -- the ini's [direct] table -------------------------------------------------------------------------------------------
@@ -334,8 +379,9 @@ private:
 // left_grip+left_menu = action:map       with the same hand's grip held
 // left_stick = cmd:0x25, pad:L3          a command by its number (hex or decimal) or by its name ("Show items (Alt)")
 // right_b = none                         unbound
+// right_b_touch = cmd:0x23               the finger ARRIVING on the control (capacitive touch; trigger, X Y A B, thumbstick), once per touch, F4 only
 // Outputs: pad:A B X Y LB RB LT RT L3 R3 Start Back Up Down Left Right; action:attack interact inventory map swap
-// view1 .. view5 viewnext recenter; cmd:<n or name>; none.
+// view1 .. view5 viewnext recenter; quivernext quiverprev (the javelin quiver: the next / previous skill, F4 only); cmd:<n or name>; none.
 
 inline bool EqNoCase(const char* a, const char* b) {
     for (; *a && *b; ++a, ++b) if (std::tolower((unsigned char)*a) != std::tolower((unsigned char)*b)) return false;
@@ -371,6 +417,9 @@ inline bool ParseOut(const char* tok, int (*cmdByName)(const char*), Out* out) {
     if (EqNoCase(kind, "action")) {
         for (const Named& n : acts) if (EqNoCase(arg, n.name)) { *out = {kOutAction, n.value}; return true; }
         if (EqNoCase(arg, "skillpanel")) { *out = OutSkillPanel(); return true; }
+        if (EqNoCase(arg, "pause") || EqNoCase(arg, "escape") || EqNoCase(arg, "esc")) { *out = OutPause(); return true; }
+        if (EqNoCase(arg, "quivernext")) { *out = OutQuiver(1); return true; }
+        if (EqNoCase(arg, "quiverprev")) { *out = OutQuiver(2); return true; }
         return false;
     }
     if (EqNoCase(kind, "cmd")) {
@@ -411,6 +460,98 @@ inline bool ParseBinding(const char* text, int (*cmdByName)(const char*), Bindin
     }
     *out = b;
     return true;
+}
+
+// An output as the ini writes it (the inverse of ParseOut): "pad:B", "action:attack", "cmd:0x25", "none".
+inline std::string FormatOut(const Out& o) {
+    static const struct { uint32_t value; const char* name; } pads[] = {
+        {pad::kA, "A"}, {pad::kB, "B"}, {pad::kX, "X"}, {pad::kY, "Y"}, {pad::kLeftBumper, "LB"}, {pad::kRightBumper, "RB"},
+        {pad::kLeftStick, "L3"}, {pad::kRightStick, "R3"}, {pad::kStart, "Start"}, {pad::kBack, "Back"}, {pad::kUp, "Up"},
+        {pad::kDown, "Down"}, {pad::kLeft, "Left"}, {pad::kRight, "Right"}};
+    static const struct { uint32_t value; const char* name; } acts[] = {
+        {act::kAttack, "attack"}, {act::kInteract, "interact"}, {act::kInventory, "inventory"}, {act::kMap, "map"}, {act::kSwap, "swap"},
+        {act::kView1, "view1"}, {act::kView2, "view2"}, {act::kView3, "view3"}, {act::kView4, "view4"}, {act::kView5, "view5"},
+        {act::kViewNext, "viewnext"}, {act::kRecenter, "recenter"}};
+    char b[48];
+    switch (o.kind) {
+    case kOutPad: for (const auto& n : pads) if (n.value == o.value) return std::string("pad:") + n.name; break;
+    case kOutLT: return "pad:LT";
+    case kOutRT: return "pad:RT";
+    case kOutAction: for (const auto& n : acts) if (n.value == o.value) return std::string("action:") + n.name; break;
+    case kOutCommand: std::snprintf(b, sizeof b, "cmd:0x%02X", (unsigned)o.value); return b;
+    case kOutSkillPanel: return "action:skillpanel";
+    case kOutPause: return "action:pause";
+    case kOutQuiver: return o.value == 2 ? "action:quiverprev" : "action:quivernext";
+    case kOutNone: break;
+    }
+    return "none";
+}
+// A binding as one ini value: "pad:B, cmd:0x25"; an empty one is "none".
+inline std::string FormatBinding(const Binding& bd) {
+    std::string s;
+    for (const Out& o : bd.out) {
+        if (o.kind == kOutNone) continue;
+        if (!s.empty()) s += ", ";
+        s += FormatOut(o);
+    }
+    return s.empty() ? "none" : s;
+}
+inline bool SameOut(const Out& a, const Out& b) { return a.kind == b.kind && a.value == b.value; }
+inline bool SameBinding(const Binding& a, const Binding& b) {
+    for (int i = 0; i < kMaxOuts; ++i) if (!SameOut(a.out[i], b.out[i])) return false;
+    return true;
+}
+
+// -- the [direct] table from the ini, shared by the plugin (LoadSettings) and D2R VR Settings' button list (vr/direct_remap.h) -------
+// `get`: a key of the [direct] section -> its text; false when the key is not in the file. A key unset keeps the default, an empty value or
+// "none" unbinds, a value that does not parse is reported to `onBad` (key, text) and the default stays. `rebound` / `bad` count both.
+using IniGet = std::function<bool(const char* key, std::string* text)>;
+using IniBad = std::function<void(const char* key, const std::string& text)>;
+inline long IniLong(const IniGet& get, const char* key, long def) {
+    std::string s;
+    if (!get(key, &s)) return def;
+    return std::strtol(s.c_str(), nullptr, 10);
+}
+inline bool StickMapOn(const IniGet& get) { return IniLong(get, "left_stick_map", 1) != 0; }
+inline bool PauseButtonOn(const IniGet& get) { return IniLong(get, "pause_button", 1) != 0; }
+// The table the keys leave alone: the defaults the toggles ([direct] left_stick_map, pause_button) make.
+inline Table DefaultsFromIni(const IniGet& get) { return DefaultTable(StickMapOn(get), PauseButtonOn(get)); }
+inline Table TableFromIni(const IniGet& get, int (*cmdByName)(const char*), int* rebound = nullptr, int* bad = nullptr, const IniBad& onBad = nullptr) {
+    Table t = DefaultsFromIni(get);
+    int nRebound = 0, nBad = 0;
+    auto read = [&](const char* key, Binding* into) {
+        std::string text;
+        if (!get(key, &text)) return;
+        Binding parsed;
+        if (ParseBinding(text.c_str(), cmdByName, &parsed)) { *into = parsed; ++nRebound; }
+        else { ++nBad; if (onBad) onBad(key, text); }
+    };
+    for (int i = 0; i < kCtlCount; ++i) {
+        const Ctl c = (Ctl)i;
+        read(Name(c), &t.plain[i]);
+        if (c == kLGrip || c == kRGrip) continue;
+        char chord[64];
+        std::snprintf(chord, sizeof chord, "%s+%s", Name(GripOf(HandOf(c))), Name(c));
+        read(chord, &t.chord[i]);
+    }
+    // the finger on a control: a "<control>_touch" line (the controls that have a touch: HasTouch)
+    for (int i = 0; i < kCtlCount; ++i) {
+        if (!HasTouch((Ctl)i)) continue;
+        char touch[64];
+        std::snprintf(touch, sizeof touch, "%s_touch", Name((Ctl)i));
+        read(touch, &t.touch[i]);
+    }
+    // hold-or-tap (vr/hold_tap.h): a "<control>_hold" line gives a control a long press
+    t.holdEnabled = IniLong(get, "hold_enabled", 1) != 0;
+    t.holdMs = holdtap::ClampHoldMs(IniLong(get, "hold_ms", (long)holdtap::kDefaultHoldMs));
+    for (int i = 0; i < kCtlCount; ++i) {
+        char hold[64];
+        std::snprintf(hold, sizeof hold, "%s_hold", Name((Ctl)i));
+        read(hold, &t.hold[i]);
+    }
+    if (rebound) *rebound = nRebound;
+    if (bad) *bad = nBad;
+    return t;
 }
 
 // -- the head and the hands as D2RVR_Shared wants them ---------------------------------------------------------------

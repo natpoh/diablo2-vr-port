@@ -16,6 +16,20 @@ constexpr int kCatalogMax = 128;
 constexpr int kNameLen = 48;
 constexpr int kOptionsMax = 24;   // the most skills the editor shows on one page (the wheel's list shows 8, the tiles' grid 24)
 
+// The editor's skill categories (idea after bearstonem/d2r-pcvr, MIT): All, the class's three skill trees, and General / Items (everything
+// that is no tree's: the game's own commands, the town portal, the skills an item grants). Which tree a skill is on, and the trees' names,
+// come from the player's own game (the icon cache: tools/skill_icons reads SkillPage from skilldesc.txt and the names' keys from
+// charstats.txt), not from a table in the plugin; without the cache the editor has the one list, All.
+constexpr int kCategories = 5;
+enum Category : int { kCatAll = 0, kCatTree1 = 1, kCatTree2 = 2, kCatTree3 = 3, kCatGeneral = 4 };
+// What a skill's `tree` says: -1 not known (no cache), 0 General / Items, 1..3 the class's tree.
+constexpr int kTreeUnknown = -1;
+// The game's own "Run / walk switch" key command (the 0x23 of its command table): the RUN / WALK control presses it - the game's own
+// executor, as the key would.
+constexpr int kRunWalkCommand = 0x23;
+// What the game says of it now (Snapshot::run): the switch is "Always run".
+enum RunState : uint8_t { kRunUnknown = 0, kWalking = 1, kRunning = 2 };
+
 // The panel's look ([openxr] skill_panel_style): the same model, cast and game side behind both.
 enum class Style : uint8_t { Wheel = 0, Tiles = 1 };
 
@@ -65,11 +79,12 @@ struct Skill {
     int32_t id = -1;       // the Skills row's id; -1 nothing
     int32_t owner = -1;    // -1 the character's own, else the item that grants it
     int32_t level = 0;
+    int8_t tree = kTreeUnknown;   // the skill tree of the player's class it is on (1..3), 0 General / Items, -1 not known: see kCategories
     bool known = false;    // read from the game
     bool available = false;   // the player has it now (not a mana or cooldown check: those stay the game's)
     char name[kNameLen] = {};
     bool operator==(const Skill& o) const {
-        return id == o.id && owner == o.owner && level == o.level && known == o.known && available == o.available &&
+        return id == o.id && owner == o.owner && level == o.level && tree == o.tree && known == o.known && available == o.available &&
                std::strncmp(name, o.name, kNameLen) == 0;
     }
 };
@@ -85,6 +100,12 @@ struct Snapshot {
     Skill slot[kSlotCount];
     uint32_t count = 0;
     Skill catalog[kCatalogMax];
+    // The skill trees (kCategories): the player's class, whether the cache told which skill is on which tree, and the trees' names in the
+    // game's own text (the player's language). treesKnown false = the editor has no category strip.
+    int32_t playerClass = -1;
+    bool treesKnown = false;
+    char treeName[3][kNameLen] = {};
+    uint8_t run = kRunUnknown;   // RunState: the game's run / walk switch as it stands now
 };
 
 inline bool Fresh(const Snapshot& s, uint64_t now, uint64_t session, uint64_t maxAgeMs = 900) {

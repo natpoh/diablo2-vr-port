@@ -8,21 +8,37 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <string>
 
 #include "hset_body.h"
 #include "hset_defs.h"
+#include "hset_keys.h"
 #include "hset_video.h"
+#include "toolbar_type.h"   // the HUD page's toolbar type: a step over bar_place and hide (shared/)
 
 namespace hset {
 
 // -- values ----------------------------------------------------------------------------
+// How many decimals a step has (0.01 -> 2, 0.5 -> 1, 5 -> 0): a value on the grid is rounded to them, so -0.3 + 31 * 0.01 is 0.01, not 0.00999999.
+inline int StepDecimals(float step) {
+    int n = 0;
+    float s = std::fabs(step);
+    while (n < 6 && std::fabs(s - std::round(s)) > 1e-5f) { s *= 10.0f; ++n; }
+    return n;
+}
 inline float Normalize(int key, float v) {
     const Def& d = kDefs[key];
     if (!std::isfinite(v)) return d.def;
+    if (d.type == DefType::Choice) return std::clamp(std::round(v), 0.0f, (float)keys::CustomPick());   // a pick of the list, or Custom one past it
     v = std::clamp(v, d.min, d.max);
     if (IsToggle(d)) return v > 0.5f ? 1.0f : 0.0f;
     if (d.step > 0.0f) {   // on the grid that starts at min
         v = d.min + std::round((v - d.min) / d.step) * d.step;
+        if (const int n = StepDecimals(d.step)) {
+            float k = 1.0f;
+            for (int i = 0; i < n; ++i) k *= 10.0f;
+            v = std::round(v * k) / k;
+        }
         v = std::clamp(v, d.min, d.max);
     }
     return v;
@@ -34,9 +50,9 @@ inline Values Defaults() {
 }
 // Two values apart by more than what a click moves (a tenth of the smallest step).
 inline bool Differ(float a, float b) { return std::fabs(a - b) > 1e-3f; }
-inline uint32_t Changed(const Values& a, const Values& b) {
-    uint32_t m = 0;
-    for (int i = 0; i < kCount; ++i) if (Differ(a[i], b[i])) m |= 1u << i;
+inline Mask Changed(const Values& a, const Values& b) {
+    Mask m = 0;
+    for (int i = 0; i < kCount; ++i) if (Differ(a[i], b[i])) m |= Bit(i);
     return m;
 }
 
@@ -50,12 +66,16 @@ struct Snapshot {
     bool ready = false;          // the ini is there
     uint64_t sequence = 0;       // of the last Apply this answers
     Result result = Result::None;
+    // The binding keys (kKeyBindFirst ...) as the file has their lines, "" when a line is not there: values[] holds the choice each is
+    // (kCustom: none of the list's), this is what a conflict is judged by and what a custom one shows.
+    std::array<std::string, kBindCount> bind;
 };
 // An Apply: `base` is what the panel saw in the file when its draft began, `values` the draft; only `changed` is written.
 struct Request {
     Values base{}, values{};
-    uint32_t changed = 0;
+    Mask changed = 0;
     uint64_t sequence = 0;
+    std::array<std::string, kBindCount> bind;   // the binding lines the draft began from (the base of a binding key's conflict check)
 };
 
 // -- the atlas: the painted panel, in pixels -----------------------------------------------
@@ -64,7 +84,8 @@ struct Rect {
     int x, y, w, h;
     bool Contains(float px, float py) const { return px >= x && px < x + w && py >= y && py < y + h; }
 };
-constexpr Rect kTab(int i) { return {32 + i * 232, 84, 220, 52}; }
+constexpr int kTabStep = 960 / kPageCount;   // the tabs share the 960 pixels under the title (four 232, six 160 ...)
+constexpr Rect kTab(int i) { return {32 + i * kTabStep, 84, kTabStep - 8, 52}; }
 constexpr int kRowY0 = 156, kRowStep = 66, kRowH = 56;
 constexpr Rect kDec(int row) { return {584, kRowY0 + row * kRowStep, 72, kRowH}; }
 constexpr Rect kVal(int row) { return {664, kRowY0 + row * kRowStep, 248, kRowH}; }
@@ -96,13 +117,15 @@ constexpr Rect kBodyStored = {32, 322, 960, 38};
 constexpr Rect kBodyUse = {32, 360, 960, 30};
 constexpr Rect kBodyStep(int i) { return {48, 408 + i * 32, 944, 30}; }
 constexpr Rect kRecentre = {32, 620, 280, 68};
+// The two low-life pages' own button, between Recentre and Close: the vignette and the beat in the controllers for five seconds, with the rows as they stand.
+constexpr Rect kPreviewBtn = {324, 620, 200, 68};
 constexpr Rect kClose = {532, 620, 220, 68};
 constexpr Rect kApply = {772, 620, 220, 68};
 // The panel in the room: its width in metres (the height follows the atlas), and where it stands from the eyes.
 constexpr float kWidthM = 1.2f, kHeightM = kWidthM * kH / kW;
 constexpr float kAheadM = 1.0f, kBelowM = 0.05f;
 
-enum class Kind { None, Tab, Change, Apply, Close, Recentre, Preset, Slider, Calibrate, Forget, View };
+enum class Kind { None, Tab, Change, Apply, Close, Recentre, Preset, Slider, Calibrate, Forget, View, Preview };
 struct Hit {
     Kind kind = Kind::None;
     int index = -1;   // a tab's page, a Change's key, a Preset's number, a Slider's side along the track (-1: a stepper at its end), a View's number (1 = F1 ... 4 = F4)
@@ -130,6 +153,7 @@ inline Hit HitTest(int page, float u, float v) {
     if (kApply.Contains(x, y)) return {Kind::Apply, -1, 0};
     if (kClose.Contains(x, y)) return {Kind::Close, -1, 0};
     if (kRecentre.Contains(x, y)) return {Kind::Recentre, -1, 0};
+    if (IsLifePage(page) && kPreviewBtn.Contains(x, y)) return {Kind::Preview, -1, 0};
     if (page == kPageView)
         for (int i = 0; i < kViews; ++i) if (kViewBtn(i).Contains(x, y)) return {Kind::View, i + 1, 0};
     if (page == kPageVideo) {
@@ -158,7 +182,7 @@ inline Hit HitTest(int page, float u, float v) {
 }
 
 // -- the panel's state ---------------------------------------------------------------------------
-enum class Do { Nothing, Save, Close, Recentre, Calibrate, View };
+enum class Do { Nothing, Save, Close, Recentre, Calibrate, View, Preview };
 struct Action {
     Do what = Do::Nothing;
     Request request;   // with Save
@@ -169,11 +193,12 @@ class Model {
     Values base_ = Defaults(), baseFile_ = Defaults(), draft_ = Defaults();
     Values seen_ = Defaults(), seenFile_ = Defaults();   // the file as the store last read it (the Body page's measurement, a Forget's base)
     uint64_t serial_ = 0, pending_ = 0;
-    uint32_t pendingMask_ = 0;   // the keys the Apply in flight writes
+    Mask pendingMask_ = 0;       // the keys the Apply in flight writes
     video::Env env_;
     int view_ = 0;               // the game's view now, 1 = F1 ... 4 = F4, 0 = not known
-
-    static constexpr uint32_t Bit(int key) { return 1u << key; }
+    std::array<std::string, kBindCount> bindBase_;   // the binding keys' lines as the file had them when the draft began
+    Values liveSeen_ = Defaults();   // the draft as the last Live call saw it
+    double editAt_ = 0, firstAt_ = 0;   // the last / the first change of a live key that is not written yet (ms; 0: none)
     void Seen(const Snapshot& s) {
         const body::Stored was = Measured();
         seen_ = s.values;
@@ -199,7 +224,14 @@ public:
     const Values& Get() const { return draft_; }
     bool Dirty() const { return Changed(base_, draft_) != 0; }
     bool Busy() const { return pending_ != 0; }
-    bool Edited(int key) const { return key >= 0 && key < kCount && Differ(base_[key], draft_[key]); }   // changed since the file was read
+    bool Edited(int key) const {   // changed since the file was read
+        if (key == kKeyBarPlace && Differ(base_[kKeyHide], draft_[kKeyHide])) return true;   // the toolbar type is both keys
+        return key >= 0 && key < kCount && Differ(base_[key], draft_[key]);
+    }
+    // What the file says of a binding key's line when the draft began ("" if it is not there), for a Custom one to show.
+    const std::string& BindRaw(int key) const { return bindBase_[BindSlot(key)]; }
+    // Only live keys (Def::live) are changed: they are written by themselves, nothing waits for Apply.
+    bool LiveOnly() const { return (Changed(base_, draft_) & ~kLiveMask) == 0; }
     // The render size the draft makes, and the one the file has.
     video::Pick DraftPick() const { return video::PickOf(draft_[kKeyMode], draft_[kKeyPx]); }
     video::Pick FilePick() const { return video::PickOf(base_[kKeyMode], base_[kKeyPx]); }
@@ -227,6 +259,9 @@ public:
         page = 0;
         base_ = draft_ = s.values;
         baseFile_ = s.file;
+        bindBase_ = s.bind;
+        liveSeen_ = draft_;
+        editAt_ = firstAt_ = 0;
         Seen(s);
         ready = s.ready;
         result = s.result == Result::Saving ? Result::None : s.result;
@@ -261,7 +296,7 @@ public:
         Seen(s);
         if (pending_) {
             if (s.sequence == pending_ && s.result != Result::Saving) {
-                const uint32_t mine = pendingMask_;
+                const Mask mine = pendingMask_;
                 pending_ = 0;
                 pendingMask_ = 0;
                 result = s.result;
@@ -269,6 +304,7 @@ public:
                 if (s.result == Result::Conflict) {
                     base_ = draft_ = s.values;
                     baseFile_ = s.file;
+                    bindBase_ = s.bind;
                 } else if (s.result == Result::Saved) {
                     // what was written, and every key nobody was editing, comes from the file; an edit made meanwhile to a key this
                     // save did not carry (a Forget while a size is picked) stays in the draft
@@ -276,13 +312,15 @@ public:
                         if ((mine & Bit(i)) || !Differ(base_[i], draft_[i])) {
                             base_[i] = draft_[i] = s.values[i];
                             baseFile_[i] = s.file[i];
+                            if (IsBindKey(i)) bindBase_[BindSlot(i)] = s.bind[BindSlot(i)];
                         }
                 }
                 ++revision;
             }
-        } else if (!Dirty() && (Changed(base_, s.values) || Changed(baseFile_, s.file) || ready != s.ready)) {
+        } else if (!Dirty() && (Changed(base_, s.values) || Changed(baseFile_, s.file) || s.bind != bindBase_ || ready != s.ready)) {
             base_ = draft_ = s.values;
             baseFile_ = s.file;
+            bindBase_ = s.bind;
             ready = s.ready;
             ++revision;
         }
@@ -307,10 +345,24 @@ public:
                 return a;
             case Kind::Change: {
                 if (!ready || Busy() || hit.index < 0 || hit.index >= kCount) return a;
+                if (hit.index == kKeyBarPlace) {   // the HUD page's toolbar type: a step over bar_place and hide together (shared/toolbar_type.h)
+                    int h = (int)std::lround(draft_[kKeyHide]), p = (int)std::lround(draft_[kKeyBarPlace]);
+                    const float wasHide = draft_[kKeyHide], wasPlace = draft_[kKeyBarPlace];
+                    toolbartype::Step(hit.delta, &h, &p);
+                    draft_[kKeyHide] = Normalize(kKeyHide, (float)h);
+                    draft_[kKeyBarPlace] = Normalize(kKeyBarPlace, (float)p);
+                    if (Differ(wasHide, draft_[kKeyHide]) || Differ(wasPlace, draft_[kKeyBarPlace])) { result = Result::None; ++revision; }
+                    return a;
+                }
                 const Def& d = kDefs[hit.index];
                 float& v = draft_[hit.index];
                 const float was = v;
-                v = IsToggle(d) ? (v > 0.5f ? 0.0f : 1.0f) : Normalize(hit.index, v + (float)hit.delta * d.step);
+                if (d.type == DefType::Choice) {   // round the list: past the last is the first, and a Custom line goes to either end
+                    const int n = keys::PickCount(), at = (int)std::lround(v);
+                    v = (float)(at >= n ? (hit.delta > 0 ? 0 : n - 1) : ((at + (hit.delta > 0 ? 1 : n - 1)) % n));
+                } else {
+                    v = IsToggle(d) ? (v > 0.5f ? 0.0f : 1.0f) : Normalize(hit.index, v + (float)hit.delta * d.step);
+                }
                 if (Differ(was, v)) { result = Result::None; ++revision; }
                 return a;
             }
@@ -318,6 +370,10 @@ public:
                 if (hit.index < 1 || hit.index > kViews || hit.index == view_) return a;
                 a.what = Do::View;
                 a.view = hit.index;
+                return a;
+            case Kind::Preview:   // the plugin shows the vignette and plays the beat for five seconds: nothing of the ini, nothing of the draft is touched
+                if (!IsLifePage(page)) return a;
+                a.what = Do::Preview;
                 return a;
             case Kind::Preset:
                 if (!ready || Busy() || hit.index < 0 || hit.index >= video::kPresetCount) return a;
@@ -340,7 +396,7 @@ public:
                 return a;
             case Kind::Forget: {   // clears the stored measurement: [calibration] version, eye_height_m, arm_span_m (what the PC window's button does)
                 if (!ready || Busy() || !Measured().any) return a;
-                const uint32_t mask = Bit(kKeyVersion) | Bit(kKeyEye) | Bit(kKeySpan);
+                const Mask mask = Bit(kKeyVersion) | Bit(kKeyEye) | Bit(kKeySpan);
                 pending_ = ++serial_;
                 pendingMask_ = mask;
                 result = Result::Saving;
@@ -367,9 +423,39 @@ public:
                 a.request.values = draft_;
                 a.request.changed = pendingMask_;
                 a.request.sequence = pending_;
+                a.request.bind = bindBase_;
                 return a;
             default: return a;
         }
+    }
+
+    // The live keys (Def::live: the belt) are written by themselves, as D2R VR Settings' sliders are: a moment
+    // (kLiveSettleMs) after the last change, or at the latest kLiveMaxMs after the first one waiting, so a held button moves the thing
+    // while it is held. Only the live keys go; what else is changed waits for Apply. Called every frame the panel is up; `ms` a clock.
+    static constexpr double kLiveSettleMs = 300.0, kLiveMaxMs = 700.0;
+    Action Live(double ms) {
+        Action a;
+        if (!open || !ready) return a;
+        const Mask live = Changed(base_, draft_) & kLiveMask;
+        if (!live) { firstAt_ = editAt_ = 0; liveSeen_ = draft_; return a; }
+        if (firstAt_ == 0) firstAt_ = editAt_ = ms;
+        for (int i = 0; i < kCount; ++i)
+            if ((live & Bit(i)) && Differ(liveSeen_[i], draft_[i])) { editAt_ = ms; break; }
+        liveSeen_ = draft_;
+        if (Busy()) return a;
+        if (ms - editAt_ < kLiveSettleMs && ms - firstAt_ < kLiveMaxMs) return a;
+        firstAt_ = editAt_ = 0;
+        pending_ = ++serial_;
+        pendingMask_ = live;
+        result = Result::Saving;
+        ++revision;
+        a.what = Do::Save;
+        a.request.base = baseFile_;
+        a.request.values = draft_;
+        a.request.changed = live;
+        a.request.sequence = pending_;
+        a.request.bind = bindBase_;
+        return a;
     }
 };
 

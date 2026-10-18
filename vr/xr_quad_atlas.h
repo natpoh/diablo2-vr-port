@@ -50,10 +50,12 @@ bool QuadAtlasUpload(QuadAtlas& A, uint32_t w, uint32_t h, const std::vector<uin
     char b[96];
     if (A.sc && (A.w != w || A.h != h)) {   // another size: made anew
         ForgetPending(A.sc);
+        SettleGpu();
+        gpufault::Note("xr: quad atlas swapchain destroyed", (uint64_t)(uintptr_t)A.sc, ((uint64_t)A.w << 32) | A.h);
         xrDestroySwapchain(A.sc);
         A.sc = XR_NULL_HANDLE;
         A.shown = false;
-        for (int i = 0; i < 3; ++i) if (A.upload[i]) { WaitFence(A.done[i], 100); A.upload[i]->Release(); A.upload[i] = nullptr; A.done[i] = 0; }
+        for (int i = 0; i < 3; ++i) if (A.upload[i]) { Retire(A.upload[i]); A.done[i] = 0; }   // (not released under a copy that may not have run)
     }
     if (!A.sc) {
         int64_t fmt = 0;
@@ -101,6 +103,7 @@ bool QuadAtlasUpload(QuadAtlas& A, uint32_t w, uint32_t h, const std::vector<uin
             A.retryAt = GetTickCount64() + 1000;
             return false;
         }
+        A.upload[k]->SetName(L"d2rvr quad atlas upload");
     }
     uint8_t* dst = nullptr;
     D3D12_RANGE none{0, 0};
@@ -110,6 +113,7 @@ bool QuadAtlasUpload(QuadAtlas& A, uint32_t w, uint32_t h, const std::vector<uin
     uint32_t idx = 0;
     if (NextImage(A.sc, &idx, what) <= 0) return false;   // (its wait ran out: again next time)
     A.at = (k + 1) % 3;
+    bool copied = false;
     if (ID3D12GraphicsCommandList* l = OpenList()) {
         ID3D12Resource* t = A.img[idx].texture;
         D3D12_RESOURCE_BARRIER rb = Tr(t, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_DEST);
@@ -125,10 +129,12 @@ bool QuadAtlasUpload(QuadAtlas& A, uint32_t w, uint32_t h, const std::vector<uin
         l->ResourceBarrier(1, &rb);
         SubmitList();
         A.done[k] = g_fenceV;
+        copied = true;
     }
     XrSwapchainImageReleaseInfo ri{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
     snprintf(b, sizeof b, "xrReleaseSwapchainImage(%s)", what);
     if (!Ok(xrReleaseSwapchainImage(A.sc, &ri), b)) return false;
+    if (!copied) return false;   // no list could be opened (the GPU is behind): the picture is not on the image - painted again next time, not taken for shown
     A.shown = true;
     return true;
 }

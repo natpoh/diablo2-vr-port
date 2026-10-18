@@ -15,6 +15,14 @@ void Init(const D2RL::PluginContext* ctx);
 // LoadSettings, any thread; applied at the next frame.
 void Configure(bool on, bool leftHand);
 
+// [hands] shoulder_draw (vr/shoulder_draw.h; read in LoadSettings): the zone behind each shoulder is a holster, not the weapon swap - "Swap weapons" is never pressed
+// from it (whatever shoulder_swap says), and a grip pressed behind EITHER shoulder with EITHER hand is the zone's (the weight model draws the weapon with it, vr/weight.cpp).
+void SetDraw(bool on);
+// shoulder_draw claims the grips behind the shoulders only while the weight model has a weapon to draw (weight::Placed, registered once by vrcam): with a bow in hand, or the
+// weight box off, the zone is nothing. Unregistered (null): always.
+using WeaponFn = bool (*)();
+void SetWeaponSource(WeaponFn weaponPlaced);
+
 // Is this hand's grip the gesture's now (hand 0 right, 1 left, as D2RVR_Shared)? True while the hand is behind a
 // shoulder with its grip down, and until that press is let go: a belt potion must not be taken with it. False
 // when the box is unticked, and a quarter of a second after the last frame.

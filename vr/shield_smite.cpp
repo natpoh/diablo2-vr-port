@@ -6,8 +6,9 @@
 //   1. vrcam's timer (Tick): the left controller's pose (direct_input.h's frame) and the shield's attach bone as
 //      the finished pose draws it (skeletons.cpp ShieldAttach) go to the swing engine. Nothing is looked up in the
 //      game until the shield is in a hard stroke.
-//   2. A stroke: the client monsters round the hero are read (the room lists, as the cave ceiling's torches are),
-//      their bodies built from the MonStats row (melee_bodies.h) and tested against the shield's capsule.
+//   2. A stroke: the client monsters round the hero are read (the client's unit hash - hit by touch's own scan,
+//      meleetouch::MonstersNear / unit_scan.h), their bodies built from the MonStats row (melee_bodies.h) and tested
+//      against the shield's capsule.
 //   3. One touched: the pad slot Smite sits in (UiRead: the game's own controller tables, read on the UI thread)
 //      is pressed through direct_input.h's PadPulse - a finger on the button: 65 ms, 180 ms on the left trigger's row
 //      (shield_smite.h PulseMs), let go as soon as the game's click has asked for the target. That is all we press.
@@ -35,16 +36,17 @@
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
-#include <unordered_map>
 
 #include <D2RLPlugin/api.h>
 
 #include "log_async.h"   // [debug] log_async: the plugin's log lines through a ring and a writer thread (vr/log_queue.h); off = ctx->LogInfo as ever
 #include "d2r_vr_build.h"
 #include "hand_vitals_game.h"   // the hero's mana, for the debug line
+#include "hit_claim.h"
 #include "hit_latency.h"
 #include "melee_touch.h"        // HostileVerdict: the server's word on the nearest monster, for the debug line
 #include "shield_smite.h"
+#include "shield_arm_wire.h"     // [hands] shoulder_draw: the shield may be on the right arm, or put away
 #include "skill_triggers.h"     // [debug] skill_triggers: the shield's capsule, marks, trail and line
 #include "shield_smite_game.h"
 #include "sigscan.h"
@@ -68,7 +70,7 @@ bool MenuOpen();
 namespace shieldsmite {
 namespace {
 
-constexpr uint64_t RVA_CTRL_BANK = 0x1195C0, RVA_BUTTON_SLOT = 0x1448C0, RVA_CTRL_TABLE = 0x2A48A90, RVA_MONSTATS = 0x975B0;
+constexpr uint64_t RVA_CTRL_BANK = 0x1195C0, RVA_BUTTON_SLOT = 0x1448C0, RVA_CTRL_TABLE = 0x2A48A90;
 constexpr uint32_t kRecordSize = 28;   // the controller table's record: skill (s32), owner (s32), ...
 constexpr int kMaxMonsters = 48;
 
@@ -136,14 +138,6 @@ bool CallSlot(uintptr_t fn, int buttons, bool alternate, int* out) noexcept {
         return false;
     }
 }
-bool CallRow(uintptr_t fn, int bank, int cls, uintptr_t* out) noexcept {
-    __try {
-        *out = ((uintptr_t(*)(uint8_t, int))fn)((uint8_t)bank, cls);
-        return true;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return false;
-    }
-}
 
 // A client monster unit still the one we looked at: type 1, its id, not dying or dead.
 bool UnitIs(uintptr_t unit, uint32_t id) {
@@ -151,7 +145,7 @@ bool UnitIs(uintptr_t unit, uint32_t id) {
     return Rd(unit, &type) && type == 1 && Rd(unit + 8, &uid) && uid == id && Rd(unit + 0xC, &mode) && mode != 0 && mode != 12;
 }
 
-// -- the monsters round the hero (the timer thread; reads only, as the cave ceiling's torches do) -----------------------
+// -- the monsters round the hero (the timer thread; reads only) --------------------------------------------------------
 struct Unit {
     uintptr_t ptr = 0;
     uint32_t id = 0, cls = 0;
@@ -159,72 +153,22 @@ struct Unit {
     float d2 = 0;   // squared distance to the hero on the grid, game WORLD units (twice the cell) - the drawing sorts by it
 };
 
-meleetouch::MonsterRow RowOf(uintptr_t unit, uint32_t cls, bool* ok) {
-    static std::unordered_map<uint32_t, meleetouch::MonsterRow> cache;   // the timer thread only
-    *ok = false;
-    uint8_t bank = 0;
-    if (cls > 4095 || !Rd(unit + 0x1BD, &bank) || bank > 3) return {};
-    const uint32_t key = (uint32_t(bank) << 16) | cls;
-    if (const auto it = cache.find(key); it != cache.end()) {
-        *ok = it->second.footprintA != 0;
-        return it->second;
-    }
-    meleetouch::MonsterRow row;
-    const uintptr_t fn = d2rsig::Addr(RVA_MONSTATS);
-    uintptr_t ptr = 0;
-    uint8_t f[16] = {};
-    if (fn && CallRow(fn, bank, (int)cls, &ptr) && ptr > 0x10000 && Rd(f, (const void*)ptr, sizeof f) && f[8] >= 1 && f[8] <= 8 && f[9] >= 1 && f[9] <= 8)
-        row = {f[8], f[9], f[13]};
-    cache[key] = row;   // a row that does not read is remembered too: the game's table is asked once per kind
-    *ok = row.footprintA != 0;
-    return row;
-}
-
-// The monsters in the hero's room and the rooms next to it, within `reach` metres: their capsules (render metres).
+// The monsters within `reach` metres of the hero: their capsules (render metres). It is hit by touch's own scan (meleetouch::MonstersNear,
+// the client's unit hash, vr/unit_scan.h): the bash and the touch see one world. (The room lists this once walked found a monster once
+// in a whole test with one standing 0.9 m away - see unit_scan.h.)
 int Gather(uintptr_t hero, float upm, float floorM, float reachM, Monster* out, Unit* units, int cap) {
-    uintptr_t path = 0, room = 0, nearRooms = 0;
-    uint32_t nNear = 0;
+    uintptr_t path = 0;
     uint16_t hp[4] = {};
-    if (!Rd(hero + 0x38, &path) || !Rd(path + 0x20, &room) || !Rd(room, &nearRooms) || !Rd(room + 0x40, &nNear) || !Rd(path, &hp) || !nearRooms ||
-        nNear > 64)
-        return 0;
+    if (cap <= 0 || !Rd(hero + 0x38, &path) || !Rd(path, &hp)) return 0;
     const float heroX = 2.0f * (hp[1] + hp[0] / 65536.0f), heroZ = 2.0f * (hp[3] + hp[2] / 65536.0f);
-    uintptr_t rooms[65];
-    uint32_t nRooms = 0;
-    rooms[nRooms++] = room;
-    for (uint32_t r = 0; r < nNear; ++r) {
-        uintptr_t rm = 0;
-        if (Rd(nearRooms + r * 8, &rm) && rm && rm != room) rooms[nRooms++] = rm;
+    unitscan::Near found[kMaxMonsters];
+    const size_t n = meleetouch::MonstersNear(heroX, heroZ, reachM * upm, upm, floorM, found, std::min<size_t>(size_t(cap), kMaxMonsters));
+    for (size_t i = 0; i < n; ++i) {
+        out[i].id = found[i].id;
+        out[i].body = found[i].body;
+        units[i] = {found[i].unit, found[i].id, found[i].cls, found[i].x * 0.5f, found[i].z * 0.5f, found[i].d2};
     }
-    int n = 0;
-    for (uint32_t r = 0; r < nRooms && n < cap; ++r) {
-        uintptr_t u = 0;
-        if (!Rd(rooms[r] + 0xA8, &u)) continue;
-        for (int k = 0; u && k < 512 && n < cap; ++k) {
-            uint32_t type = 0, cls = 0, id = 0, mode = 0;
-            uintptr_t up = 0, next = 0;
-            if (!Rd(u, &type) || !Rd(u + 0x158, &next)) break;
-            if (type == 1 && Rd(u + 4, &cls) && Rd(u + 8, &id) && Rd(u + 0xC, &mode) && mode != 0 && mode != 12 && Rd(u + 0x38, &up) && up > 0x10000) {
-                uint16_t p[4] = {};
-                if (Rd(up, &p)) {
-                    const float gx = 2.0f * (p[1] + p[0] / 65536.0f), gz = 2.0f * (p[3] + p[2] / 65536.0f);
-                    if (std::hypot(gx - heroX, gz - heroZ) <= reachM * upm) {
-                        bool ok = false;
-                        const meleetouch::MonsterRow row = RowOf(u, cls, &ok);
-                        stroke::Body body;
-                        if (ok && meleetouch::BodyFor(row, gx, gz, floorM, upm, body)) {
-                            out[n].id = id;
-                            out[n].body = body;
-                            units[n] = {u, id, cls, gx * 0.5f, gz * 0.5f, (gx - heroX) * (gx - heroX) + (gz - heroZ) * (gz - heroZ)};
-                            ++n;
-                        }
-                    }
-                }
-            }
-            u = next;
-        }
-    }
-    return n;
+    return int(n);
 }
 
 }  // namespace
@@ -345,7 +289,9 @@ void Tick(bool play, float upm, uintptr_t hero) {
         LogF("shield smite: the bash speed is %.2f m/s, a stroke begins at %.2f m/s and after %.0f cm ([gameplay] shield_smite_min_speed, shield_smite_stroke_cm)", speed,
              detector.Params().beginSpeed, cm);
     }
-    const bool shield = gamestate::LeftShield();
+    // [hands] shoulder_draw: the shield is on the arm shieldarmwire says (-1: not handled, the left one) - the right one after a cross draw of the sword
+    const int wear = shieldarmwire::Arm();
+    const bool shield = gamestate::LeftShield() && !shieldarmwire::Stowed();   // (put away at the left shoulder: nothing to bash with)
     if (shield && play) skel::WantShield(true);   // the skeleton hook poses the shield for us only while it is asked
     directinput::Frame f;
     if (!directinput::Latest(&f)) {
@@ -355,7 +301,9 @@ void Tick(bool play, float upm, uintptr_t hero) {
     if (f.counter == lastCounter) return;   // the frame we have already seen
     lastCounter = f.counter;
 
-    const directinput::Hand &left = f.hand[0], &right = f.hand[1];
+    // (direct_input's hands: 0 left, 1 right.) `left` is the hand the shield is on - the right one after a hand swap - and `right` the other: the trigger that cancels a bash.
+    const bool onRight = BashSide(wear) == 0;
+    const directinput::Hand &left = f.hand[onRight ? 1 : 0], &right = f.hand[onRight ? 0 : 1];
     Gate gate;
     gate.enabled = on;   // (off with only the debug drawing on: the engine stays shut, nothing counts, nothing is pressed)
     gate.shield = shield;
@@ -372,7 +320,7 @@ void Tick(bool play, float upm, uintptr_t hero) {
     sample.time = f.time;
     sample.active = posed && scaled;
     sample.epoch = (uint64_t(f.session) << 32) | f.epoch;
-    sample.context = (uint64_t(pose.heroGeneration) << 32) | (gamestate::HandsKey() ^ (gamestate::WeaponSet() << 30));
+    sample.context = ((uint64_t(pose.heroGeneration) << 32) | (gamestate::HandsKey() ^ (gamestate::WeaponSet() << 30))) ^ (uint64_t)(wear + 2) << 52;   // (the shield on another arm is another stroke)
     sample.hand.p = {left.grip.pos[0], left.grip.pos[1], left.grip.pos[2]};
     sample.hand.q = {left.grip.rot[0], left.grip.rot[1], left.grip.rot[2], left.grip.rot[3]};
     if (sample.active) {
@@ -408,6 +356,7 @@ void Tick(bool play, float upm, uintptr_t hero) {
                     g_castUnit = u.ptr;
                     ReleaseSRWLockExclusive(&g_lock);
                     g_casting.store(true);
+                    hitclaim::Press(BashSide(wear), (int64_t)GetTickCount64());   // the blow is the shield arm's: the game's hit comes after its click closed the cast, so the press says whose it is (vr/hit_claim.h)
                     const PadPress p = SlotPress(slot);
                     g_pressed.store((uint32_t)p.buttons | (uint32_t)p.lt << 16);
                     directinput::PadPulse({p.buttons, p.lt, 0}, PulseMs(p));

@@ -25,6 +25,16 @@ enum Hand : int { kLeft = 0, kRight = 1 };
 inline int FromSkel(int side) { return side ? kLeft : kRight; }
 inline int Other(int hand) { return hand ? kLeft : kRight; }
 
+// The controller a landed blow buzzes (what the hit observer asks, vr/haptics.cpp), -1 = the event's own (the right hand). Skeleton sides in (0 right, 1 left), haptics hands out.
+//   claimed:  the side that ASKED for this blow (vr/hit_claim.h): the controller whose blade touched the monster (either hand), the arm that wears the shield for a bash. A claim is
+//             the hand of the blow whatever the weight model holds - a Barbarian's left blade, a weapon drawn into the left hand, a shield on either arm.
+//   else:     no press of ours made it (the game's own attack button, a thrown weapon in the air): the hand that holds the weapon (`carrySide`) while the weight model has one placed,
+//             else -1 - the right, where the throw gesture's weapon is thrown from too.
+inline int HitHand(int claimedSide, int carrySide, bool weaponPlaced) {
+    if (claimedSide == 0 || claimedSide == 1) return FromSkel(claimedSide);
+    return weaponPlaced && (carrySide == 0 || carrySide == 1) ? FromSkel(carrySide) : -1;
+}
+
 constexpr float kMinAmplitude = 0.04f;   // weaker is not felt (and not worth a call)
 constexpr uint32_t kMinDurationMs = 10;
 constexpr uint32_t kMaxDurationMs = 300;
@@ -45,6 +55,39 @@ struct Request {
     uint32_t durationMs = 0;
 };
 
+// The motors. A Quest's Touch controller feels every pulse above kMinAmplitude. The PlayStation VR2 Sense controllers under SteamVR (the runtime names the headset
+// "playstation_vr2", the controllers run the Touch profile) took the hit (0.72 for 45 ms) but not the low-life heartbeat (0.14 - 0.47 for 28 - 40 ms): the gentle,
+// short pulses are below what that motor shows. A pulse meant to be gentle is lifted for it to kWeakFloorAmp .. 1 (the order kept: the strongest stays the strongest, a
+// quiet one is still the quieter) and lasts at least kWeakFloorMs - the hit's own. Plain is untouched, bit for bit.
+enum class Motor : int { Plain = 0, Weak = 1 };
+constexpr float kWeakFloorAmp = 0.55f;
+constexpr uint32_t kWeakFloorMs = 45;
+inline Motor MotorOfHeadset(const char* systemName) {   // "SteamVR/OpenXR : playstation_vr2": any case, anywhere in the name
+    if (!systemName) return Motor::Plain;
+    static const char key[] = "playstation";
+    for (const char* p = systemName; *p; ++p) {
+        size_t i = 0;
+        while (key[i] && p[i] && (p[i] | 0x20) == key[i]) ++i;
+        if (!key[i]) return Motor::Weak;
+    }
+    return Motor::Plain;
+}
+// The ini's [openxr] haptics_motor: 0 by the headset's name (the default), 1 plain, 2 weak.
+inline Motor MotorChosen(int choice, Motor ofHeadset) { return choice == 1 ? Motor::Plain : choice == 2 ? Motor::Weak : ofHeadset; }
+inline Request ForMotor(Motor motor, float amplitude, uint32_t durationMs) {
+    Request r;
+    if (!(amplitude >= kMinAmplitude)) return r;   // nothing to play stays nothing (NaN too)
+    const float a = amplitude > 1.0f ? 1.0f : amplitude;
+    if (motor != Motor::Weak) {
+        r.amplitude = a;
+        r.durationMs = durationMs;
+        return r;
+    }
+    r.amplitude = kWeakFloorAmp + (1.0f - kWeakFloorAmp) * (a - kMinAmplitude) / (1.0f - kMinAmplitude);
+    r.durationMs = durationMs < kWeakFloorMs ? kWeakFloorMs : durationMs;
+    return r;
+}
+
 // One hand's pending pulse. Post from any thread, lock-free; Take from the frame loop. Pulses posted
 // between two Takes are one: the strongest amplitude, the longest duration. A pulse nobody took in
 // maxAgeMs (the session had no focus, no frame came) is dropped - it would be a ghost by then.
@@ -62,8 +105,9 @@ public:
             if (v_.compare_exchange_weak(old, now, std::memory_order_acq_rel, std::memory_order_relaxed)) return;
         }
     }
-    bool Take(uint32_t nowMs, uint32_t maxAgeMs, Request* out) {
+    bool Take(uint32_t nowMs, uint32_t maxAgeMs, Request* out, bool* stale = nullptr) {   // stale: set when a pulse was there but too old to play (a ghost)
         const uint64_t v = v_.exchange(0, std::memory_order_acq_rel);
+        if (stale) *stale = v && Stale(Stamp(v), nowMs, maxAgeMs);
         if (!v || Stale(Stamp(v), nowMs, maxAgeMs)) return false;
         out->amplitude = Amp(v);
         out->durationMs = Dur(v);

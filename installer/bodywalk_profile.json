@@ -1279,7 +1279,7 @@
             "hmd_name": "Auto-detect HMD",
             "hmd_serial": "HMD",
             "openvr_hmd_id": -1,
-            "output_mode": "Keyboard",
+            "output_mode": "Xbox Controller (vJoy)",
             "squat_serial": "",
             "step_left": "Tracker #0 (5BB2F)",
             "step_right": "Tracker #1 (F2D4A)",

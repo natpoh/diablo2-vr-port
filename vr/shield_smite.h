@@ -186,6 +186,13 @@ public:
     float CellY() const { return gy; }
 };
 
+// -- the blow a bash makes ---------------------------------------------------------------------------------------------
+// The game rolls the bash's hit AFTER the click has asked for the target - 25 to 53 ms after our press in the user's log - when the cast above is already finished (Finish at the
+// click), so "a cast of ours is on its way" cannot tell the hit observer whose blow it is. The press says so instead: it claims the blow for the arm that wears the shield
+// (vr/hit_claim.h), which the observer reads when the blow lands. `wearArm` is shieldarmwire::Arm(): 0 the right forearm, 1 the left, -1 not handled ([hands] shoulder_draw off) -
+// then the shield is on the LEFT arm, as the game has it. Returns the skeleton side, 0 right / 1 left.
+inline int BashSide(int wearArm) { return wearArm == 0 ? 0 : 1; }
+
 // -- why a bash does not count (the debug line of melee_boxes) -------------------------------------------------------
 // Smite costs this much mana at every level (Skills.txt); the game's own number decides the cast, this only words the log.
 constexpr float kSmiteMana = 2.0f;

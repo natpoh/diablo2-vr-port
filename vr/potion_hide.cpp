@@ -224,8 +224,12 @@ __declspec(noinline) void HookVisualInit(uintptr_t assets, uintptr_t definition,
     g_origVisual(assets, definition, entity, unit);
 }
 
+std::atomic<XformObserver> g_observer{nullptr};
+std::atomic<bool> g_otherWants{false};
+
 __declspec(noinline) uintptr_t HookXform(uintptr_t out, uint32_t entity, uintptr_t component) {
     const uintptr_t r = g_origXform(out, entity, component);
+    if (const XformObserver fn = g_observer.load(std::memory_order_relaxed)) fn(entity, component, out);   // a reader (the crossbow's barrel): only reads
     if (g_set.Live() == 0 || g_faulted.load(std::memory_order_relaxed)) return r;
     if (g_set.Has(entity, GetTickCount64()) && viewgate::F4()) {
         const int w = PutHidden(out, component);
@@ -273,7 +277,7 @@ void Install() {
                 "this throw, or draws it some way the visual-init callback does not see); the game's potion was drawn as ever");
     }
     if (g_set.Live() != 0) g_set.Prune(now);
-    if (!g_wanted.load() || g_state.load() != 0 || !g_ctx || now < retryAt) return;
+    if (!(g_wanted.load() || g_otherWants.load()) || g_state.load() != 0 || !g_ctx || now < retryAt) return;
     retryAt = now + (tries < 30 ? 2000 : 30000);   // the renderer's code is plain from the start, but the signature search may still be waiting
     if (!d2rsig::Addr(RVA_VISUAL_INIT) || !d2rsig::Addr(RVA_WORLD_XFORM)) return;   // not found (yet)
     if (!d2rsig::Check(RVA_VISUAL_INIT, kSigVisualInit, sizeof kSigVisualInit) || !d2rsig::Check(RVA_WORLD_XFORM, kSigXform, sizeof kSigXform)) {
@@ -321,5 +325,11 @@ bool Arm(uint64_t nowMs, double flightS) {
 }
 
 void Disarm() { g_window.Cancel(); }
+
+void SetXformObserver(XformObserver fn) { g_observer.store(fn); }
+void WantHooks(bool want) {
+    if (g_otherWants.exchange(want) != want && want && !g_wanted.load())
+        Log("potion hide: its hooks are wanted by the crossbow's barrel ([hands] xbow_support_model) - put in even with the potion hide off; they change nothing");
+}
 
 }  // namespace potionhide

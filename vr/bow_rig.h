@@ -329,4 +329,43 @@ inline V3 EasedDirection(V3 drawn, V3 rest, uint64_t sinceMs) {
     return Length(mix) > 1e-3f ? Unit(mix) : rest;
 }
 
+// [bow] arrow_fx: how far ahead of the nock (cog frame, along the way the arrow points: -back) the arrow MESH reaches - the far end of its bounding box
+// (granny_mesh.h ArrowBox: bbMin / bbMax, in the bow's bind frame, the frame `bindCog` - the cog's bind world matrix - is in). The arrowhead. 0 when it does not read.
+inline float MeshAhead(const Rig& rig, const Mat& bindCog, const float mn[3], const float mx[3]) {
+    if (!rig.valid) return 0.0f;
+    Mat toCog;
+    if (!Inverse(bindCog, &toCog)) return 0.0f;
+    const V3 fwd = Unit(rig.back * -1.0f);
+    float ahead = 0.0f;
+    for (int c = 0; c < 8; ++c) {
+        const V3 corner{(c & 1) ? mx[0] : mn[0], (c & 2) ? mx[1] : mn[1], (c & 4) ? mx[2] : mn[2]};
+        const float d = Dot(Point(toCog, corner) - rig.restNock, fwd);
+        if (std::isfinite(d) && d > ahead) ahead = d;
+    }
+    return ahead;
+}
+
+// [bow] arrow_fx: the arrow's two ends in the bind pose (cog frame), from the bow's own model: the nock (the string's rest place) and the head - the far end of
+// the arrow's mesh along the way it points (`meshAhead`, MeshAhead), else the farthest of the arrow's own bones (the arrow, its release helper, what hangs below
+// them), else - when neither reaches past the riser - the riser itself (the arrow passes the bow there: the part of it that is surely there). bone: the farthest
+// arrow bone (-1 none); fromMesh / fromBones: where the head came from.
+struct ArrowEnds { V3 nock, head; int bone = -1; bool fromMesh = false, fromBones = false; };
+inline bool ArrowEndsOf(const Rig& rig, ArrowEnds* out, float meshAhead = 0.0f) {
+    if (!out || !rig.valid) return false;
+    const V3 fwd = Unit(rig.back * -1.0f);
+    float ahead = 0.0f;
+    int farthest = -1;
+    for (int i = 0; i < rig.r.count; ++i) {
+        if (rig.r.role[i] != kArrow) continue;
+        const float d = Dot(Position(rig.rest[i]) - rig.restNock, fwd);
+        if (std::isfinite(d) && d > ahead) { ahead = d; farthest = i; }
+    }
+    out->bone = farthest;
+    out->fromMesh = std::isfinite(meshAhead) && meshAhead > rig.reach;
+    out->fromBones = !out->fromMesh && ahead > rig.reach;
+    out->nock = rig.restNock;
+    out->head = rig.restNock + fwd * (out->fromMesh ? meshAhead : out->fromBones ? ahead : rig.reach);
+    return Finite(out->nock) && Finite(out->head) && Length(out->head - out->nock) > 0.0f;
+}
+
 }  // namespace bowrig

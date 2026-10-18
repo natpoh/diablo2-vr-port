@@ -75,7 +75,10 @@ constexpr int kButtonCount = (int)(sizeof kButtons / sizeof kButtons[0]);
 const D2RL::PluginContext* g_ctx = nullptr;
 HandFn g_bowHand = nullptr;
 ViewFn g_f4 = nullptr;
-std::atomic<bool> g_on{false}, g_model{true}, g_debug{false};
+DrawHook g_hook = nullptr;
+StartBlockFn g_startBlock = nullptr;
+ReleaseFn g_releaseHook = nullptr;
+std::atomic<bool> g_on{false}, g_model{true}, g_debug{false}, g_aimRay{false};
 std::atomic<unsigned> g_shotCount{0};      // [debug] bow_latency: the releases so far, and when the last one was and when its button was pressed
 std::atomic<double> g_shotReleaseS{0.0}, g_shotPressS{0.0};   // (std::chrono::steady_clock seconds: throwborn::NowS()'s base)
 std::atomic<bool> g_only{false};   // [hands] bow_draw_only: a press away from the string shoots nothing (in the zone the trigger is the draw's, away its shots are dropped)
@@ -106,6 +109,8 @@ struct Aim {
 } g_aim;
 bowtouch::VectorSet g_vectors;   // [debug] bow_vectors: the last frame's, in the hands' frame
 ULONGLONG g_vectorsAt = 0;
+struct RayLine { bowtouch::Vec start, dir; bool fromModel = false; } g_ray;   // [debug] bow_aim_ray: the last frame's shot line, in the hands' frame
+ULONGLONG g_rayAt = 0;
 
 void Log(const char* text) { if (g_ctx) logasync::Info(g_ctx, text); }
 
@@ -114,6 +119,7 @@ struct Run {
     bowdraw::Detector det;
     uint32_t session = 0, epoch = 0;
     bool seen = false, pressHeld = false;
+    bool lastDrawing = false;   // the detector had the string taken at the last step
     int told = 0;
     double dbgAt = 0.0;
     double lostAt = 0.0;     // a hand is lost and the draw held since then (frame time), 0 = not
@@ -144,6 +150,7 @@ void LetGo(Run& r) {
     g_keepAt.store(0);
     AcquireSRWLockExclusive(&g_lock);
     g_vectorsAt = 0;
+    g_rayAt = 0;
     ReleaseSRWLockExclusive(&g_lock);
 }
 
@@ -154,6 +161,7 @@ void Say(Run& r, const char* text) {
 void OnFrame(const directinput::Frame& f, void*) {
     static Run r;
     if (!Active()) {   // unticked, or any view but F4: nothing is held, nothing is taken, the detector forgets a draw under way
+        if (g_hook) g_hook(DrawInfo{}, f);
         if (r.seen) {
             LetGo(r);
             const int told = r.told;
@@ -197,6 +205,8 @@ void OnFrame(const directinput::Frame& f, void*) {
     in.stringHand = V(str.grip.pos);
     in.trigger = str.trigger;
     in.grip = str.squeeze;
+    // [bow] quiver_orbs: the free hand is at an orb on the bow - its trigger and grip are the orb's, the string is not taken there (a draw already taken goes on)
+    if (g_startBlock && !r.lastDrawing && g_startBlock()) { in.trigger = 0.0f; in.grip = 0.0f; }
     // a change of weapon, set, hands or bow hand under the string ends the draw
     in.context = ((uint64_t)gamestate::WeaponSet() << 56) ^ ((uint64_t)gamestate::WeaponType() << 48) ^ ((uint64_t)bowVr << 44) ^
                  gamestate::HandsKey();
@@ -237,7 +247,7 @@ void OnFrame(const directinput::Frame& f, void*) {
     bowdraw::Vec restRoom;
     bool haveRest = false;
 #ifdef BOWDRAW_RIG_FEED
-    if (haveHead && (g_restAims.load() || debug)) {
+    if (haveHead && (g_restAims.load() || debug || g_aimRay.load())) {
         float p[3];
         if (skel::BowRestPoint(p)) { haveRest = true; restRoom = bowtouch::HandsToRoom(V(p), head, yaw); }
     }
@@ -258,6 +268,7 @@ void OnFrame(const directinput::Frame& f, void*) {
         if (restLen > 0.02f && gripLen > 0.02f) in.bowHand = in.stringHand + toRest * (gripLen / restLen);
     }
     const bowdraw::Output o = r.det.Step(in, params);
+    r.lastDrawing = o.drawing;
     in.bowHand = bowGrip;
     char b[1024];
 
@@ -306,6 +317,21 @@ void OnFrame(const directinput::Frame& f, void*) {
     } else {
         g_ownedAt.store(0);
         g_gripAt.store(0);
+    }
+
+    if (g_hook) {   // what rides on the draw (the quiver): whether the string is taken, which button the release presses, where the arrow lies
+        DrawInfo ds;
+        ds.active = true;
+        ds.allowed = in.allowed;
+        ds.drawing = o.drawing;
+        ds.bowHand = bowX;
+        ds.button = g_button.load();
+        if (haveHead && o.drawing) {
+            ds.haveArrow = true;
+            ds.rest = bowtouch::RoomToHands(haveRest ? restRoom : bowGrip, head, yaw);
+            ds.stringHand = bowtouch::RoomToHands(in.stringHand, head, yaw);
+        }
+        g_hook(ds, f);
     }
 
     if (o.evNear) directinput::Haptic(strX, 0.15f, 15.0f);
@@ -360,6 +386,7 @@ void OnFrame(const directinput::Frame& f, void*) {
                  bt.name, o.aim.x, o.aim.y, o.aim.z, bowdraw::Length(in.bowHand - in.stringHand));
         Say(r, b);
         const double releasedS = SteadyS();
+        if (g_releaseHook) g_releaseHook();   // (the quiver may turn this release into the plain attack: it must know before the button goes down)
         directinput::Haptic(strX, 0.80f, 45.0f);
         directinput::Haptic(bowX, 0.35f, 30.0f);
         if (bt.buttons == 0) {
@@ -377,6 +404,26 @@ void OnFrame(const directinput::Frame& f, void*) {
         r.pressHeld = false;
     }
 
+    if (g_aimRay.load()) {
+        // [debug] bow_aim_ray: while the string is drawn (and 0.4 s after a shot) the line the shot goes along, from the arrow's release point - the model's arrow rest point when it is read,
+        // else the bow hand's own point - in the hands' frame; the effect clips it at the floor. Green when the line goes through the model's rest point (arrow_rest_aims), else orange.
+        bool have = false;
+        RayLine ray;
+        if (haveHead && o.aimOwned) {
+            const bowdraw::Vec aim = o.aim;
+            const float len = bowdraw::Length(aim);
+            if (std::isfinite(len) && len > 1e-6f) {
+                ray.start = bowtouch::RoomToHands(haveRest ? restRoom : bowGrip, head, yaw);
+                ray.dir = bowdraw::ToHeadTurn(aim * (1.0f / len), yaw);
+                ray.fromModel = haveRest && g_restAims.load();
+                have = true;
+            }
+        }
+        AcquireSRWLockExclusive(&g_lock);
+        g_ray = ray;
+        g_rayAt = have ? GetTickCount64() : 0;
+        ReleaseSRWLockExclusive(&g_lock);
+    }
     if (debug) {
         // The vectors in the hands' frame (metres from the head, the head's turn): what the effect draws in the headset.
         if (haveHead) {
@@ -466,6 +513,11 @@ void Init(const D2RL::PluginContext* ctx, HandFn bowHand, ViewFn f4) {
 
 void SetRestAims(bool on) { g_restAims.store(on); }
 
+void SetDrawHook(DrawHook fn) { g_hook = fn; }
+
+void SetStartBlock(StartBlockFn fn) { g_startBlock = fn; }
+void SetReleaseHook(ReleaseFn fn) { g_releaseHook = fn; }
+
 void Configure(bool on, int button, int start, bool model, bool debug, float reachCm, float nockShiftCm, float minPullCm, bool drawOnly) {
     const bool wasOnly = g_only.exchange(drawOnly);
     if (button < 0 || button >= kButtonCount) button = 0;
@@ -543,6 +595,21 @@ bool AimDir(float out[3]) {
 void NoteRecenter() { g_recentre.store(true); }
 
 bool DebugWanted() { return Active() && g_debug.load(); }
+
+void SetAimRay(bool on) { g_aimRay.store(on); }
+bool AimRayWanted() { return Active() && g_aimRay.load(); }
+bool AimRayLine(bowtouch::Vec* start, bowtouch::Vec* dir, bool* fromModel) {
+    if (!Active() || !g_aimRay.load() || !start || !dir) return false;
+    AcquireSRWLockShared(&g_lock);
+    const bool fresh = g_rayAt && GetTickCount64() - g_rayAt < kFreshMs;
+    const RayLine ray = g_ray;
+    ReleaseSRWLockShared(&g_lock);
+    if (!fresh) return false;
+    *start = ray.start;
+    *dir = ray.dir;
+    if (fromModel) *fromModel = ray.fromModel;
+    return true;
+}
 
 bool DebugVectors(bowtouch::VectorSet* out) {
     if (!Active() || !g_debug.load() || !out) return false;

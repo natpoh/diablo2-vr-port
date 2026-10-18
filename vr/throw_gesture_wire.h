@@ -102,6 +102,9 @@ bool Info(ThrowInfo* out);
 // frame a release of the right grip is either a throw (the game's own throw takes the weapon out of the hand: do not
 // drop it) or the weapon being put down (drop it).
 bool GripIsThrows();
+// True while a throw_gesture (the TRIGGER mode, [hands] throw_gesture without throw_by_grip) owns the right trigger: a thrown weapon wielded, in play. The
+// javelin quiver (vr/quiver_wire.cpp) leaves the right trigger alone then.
+bool TriggerIsThrows();
 // True while GripIsThrows() and the right grip is squeezed on the weapon - the gesture's own reading of the controller's value (0.60 down, 0.40 up),
 // taken from the frame as the controller made it. NOT the shared block's grip: a control the gesture Takes reads as let go there (and for BodyWalk), so
 // with a thrown weapon in hand that grip is always 0. Hit by touch with a thrown weapon asks this ("the weapon is in the hand").

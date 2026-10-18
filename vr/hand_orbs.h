@@ -163,12 +163,17 @@ inline V3 FillAxis(int fill, const Place& p) {
 inline handvitals::OrbSpot SpotFor(const Config& cfg, int side) { return side == 1 || cfg.orbMirror ? cfg.orbLeft : cfg.orbRight; }
 
 // The ball's middle on the back of the hand of `side` (0 right, 1 left). `lateralM` shifts it across the hand on top of the spot's own Y (both balls on one wrist side by side).
-inline Place Centre(const Arm& arm, const Grip& grip, const Config& cfg, int side, float lateralM = 0.0f, float zClassCm = 0.0f) {
+// `under` (0 - 1, handorbs::Eased of State::under): how far the wrist is under a shield - the frame is rolled about the hand's axis by cfg.orbShield.turnDeg * under (+ sends the back of
+// the hand toward the thumb on either hand, like the medallion's own turn) and the shield's offsets are added in that rolled frame, so at 1 the ball sits on the other side of the wrist
+// and at 0 it is exactly where it always was. A wrist whose frame is not known (the controller's point alone) cannot roll.
+inline Place Centre(const Arm& arm, const Grip& grip, const Config& cfg, int side, float lateralM = 0.0f, float zClassCm = 0.0f, float under = 0.0f) {
     Place p;
     const handvitals::OrbSpot spot = SpotFor(cfg, side);
     const auto cm = [](float v) { return std::clamp(std::isfinite(v) ? v : 0.0f, handvitals::kOrbSpotMin, handvitals::kOrbSpotMax) * 0.01f; };
     // (the hero class's depth offset goes on the wrist's own Z, either wrist: the arm's model is the class's)
     const float up = cm(spot.upCm + (std::isfinite(zClassCm) ? zClassCm : 0.0f)), along = cm(spot.alongCm), across = cm(spot.sideCm);
+    const float u = std::isfinite(under) ? std::clamp(under, 0.0f, 1.0f) : 0.0f;
+    const handvitals::OrbUnderShield& us = cfg.orbShield;
     if (arm.ok && Finite(arm.elbow) && Finite(arm.wrist) && Finite(arm.across)) {
         V3 forearm = hset::Sub(arm.wrist, arm.elbow);
         const float fl = Len(forearm);
@@ -180,11 +185,15 @@ inline Place Centre(const Arm& arm, const Grip& grip, const Config& cfg, int sid
         V3 a = hset::Sub(arm.across, hset::Mul(axis, hset::Dot(arm.across, axis)));   // out of the palm, square to the axis
         const float l = Len(a);
         if (!(l > 1e-3f)) return p;
-        const V3 back = hset::Mul(a, -1.0f / l);                                      // out of the back of the hand
+        V3 back = hset::Mul(a, -1.0f / l);                                            // out of the back of the hand
+        if (u > 0.0f) {   // under a shield: rolled about the hand's axis through the wrist (anatomical: + toward the thumb, so the right hand's turn is the left's mirror image)
+            const float turn = std::clamp(std::isfinite(us.turnDeg) ? us.turnDeg : 0.0f, handvitals::kOrbRotMin, handvitals::kOrbRotMax);
+            back = hset::Unit(RotateAbout(back, axis, turn * u * (side == 1 ? 1.0f : -1.0f)));
+        }
         const V3 lateral = Cross(axis, back);   // (toward the thumb on the left hand, toward the little finger on the right one - a hand's own handedness)
         const V3 thumb = side == 1 ? lateral : hset::Mul(lateral, -1.0f);
-        p.c = hset::Add(hset::Add(arm.wrist, hset::Mul(axis, along)),
-                        hset::Add(hset::Add(hset::Mul(back, up), hset::Mul(thumb, across)), hset::Mul(lateral, lateralM)));
+        p.c = hset::Add(hset::Add(arm.wrist, hset::Mul(axis, along + u * cm(us.alongCm))),
+                        hset::Add(hset::Add(hset::Mul(back, up + u * cm(us.upCm)), hset::Mul(thumb, across + u * cm(us.sideCm))), hset::Mul(lateral, lateralM)));
         p.ok = Finite(p.c);
         p.hasArm = true;
         p.armAxis = forearm;
@@ -198,6 +207,29 @@ inline Place Centre(const Arm& arm, const Grip& grip, const Config& cfg, int sid
         p.ok = Finite(p.c);
     }
     return p;
+}
+
+// The wrist's own turn with the shield's three angles added in (u as in Centre): handed to TurnFrame on the rolled frame, so the whole medallion with its tilt is rolled with the wrist
+// and the shield's angles tune it on the new side. u 0 gives the spot exactly as it is. Angles are wrapped into -180 .. 180 (TurnFrame holds them there).
+inline handvitals::OrbSpot SpotUnder(handvitals::OrbSpot s, const handvitals::OrbUnderShield& us, float under) {
+    const float u = std::isfinite(under) ? std::clamp(under, 0.0f, 1.0f) : 0.0f;
+    if (u <= 0.0f) return s;
+    const auto add = [u](float own, float extra) {
+        const float v = (std::isfinite(own) ? own : 0.0f) + u * (std::isfinite(extra) ? extra : 0.0f);
+        return std::remainder(v, 360.0f);
+    };
+    s.rotXDeg = add(s.rotXDeg, us.rotXDeg);
+    s.rotYDeg = add(s.rotYDeg, us.rotYDeg);
+    s.rotZDeg = add(s.rotZDeg, us.rotZDeg);
+    return s;
+}
+
+// Which wrist wears the shield (skeleton side: 0 right, 1 left; -1 none): `strap` is skel::ShieldStrapped() (3 strapped to the RIGHT forearm - the hand swap, vr/shield_arm.h; 1 the left;
+// -1 asked but not strapped; 0 not asked) and `leftShield` a shield in the game's left slot (gamestate::LeftShield()). A shield is on the left arm - strapped there or on the hand, as the game
+// has it - unless the hand swap strapped it to the right one.
+inline int ShieldWrist(int strap, bool leftShield) {
+    if (!leftShield || strap == 2) return -1;   // (2: [hands] shoulder_draw_shield_stow has put it away - no shield on either wrist)
+    return strap == 3 ? 0 : 1;
 }
 
 // ---- the drawn arm, from the skeleton's world ---------------------------------------------------------------------------------------------
@@ -365,9 +397,17 @@ constexpr float kBeatFadeS = 0.8f;       // the heartbeat fades in and out over 
 constexpr float kThrob = 0.05f;          // the life ball swells by this at the top of a beat
 constexpr float kGapM = 0.004f;          // between two balls on one wrist
 
+constexpr float kUnderShieldS = 0.30f;   // a ball rolls to the other side of the wrist (and back) in this long, eased at both ends
+inline float Eased(float t) {            // smoothstep of the 0 - 1 ramp State::under: slow out of the old place, slow into the new one
+    t = std::clamp(std::isfinite(t) ? t : 0.0f, 0.0f, 1.0f);
+    return t * t * (3.0f - 2.0f * t);
+}
+
 struct State {
     float fill[2] = {0.0f, 0.0f};
     bool haveFill = false;
+    float under[2] = {0.0f, 0.0f};   // [skeleton side] 0 - 1 ramp: the wrist is under a shield (1) or not (0), walking at 1 / kUnderShieldS a second
+    bool haveUnder = false;
     double lastTime = -1.0;
     float phase = 0.0f, beat = 0.0f;
     void Reset() { *this = State{}; }
@@ -380,6 +420,7 @@ struct In {
     Arm arm[2];              // [0] right, [1] left
     Grip grip[2];
     double time = 0.0;       // seconds, any origin, monotonic
+    int shieldWrist = -1;    // the wrist that wears the shield (ShieldWrist; the caller gives -1 outside VR F4): its ball rolls to the other side of the wrist when cfg.orbUnderShield is ticked
     int heroClass = -1;      // the hero playing now (skel::HeroClass(): 0 amazon ... 7 warlock), -1 not known: its depth offset (Config::orbClassZCm) goes on both wrists' Z
 };
 
@@ -406,6 +447,11 @@ inline Set Step(State& st, const In& in) {
     float dt = 0.0f;
     if (std::isfinite(in.time) && st.lastTime >= 0.0 && in.time > st.lastTime) dt = std::min((float)(in.time - st.lastTime), 0.1f);
     if (std::isfinite(in.time)) st.lastTime = in.time;
+    for (int s = 0; s < 2; ++s) {   // under a shield or not: a ramp the ball's roll follows (the first look is taken as it is, no slide when a game starts with a shield on)
+        const float want = cfg.orbUnderShield && in.shieldWrist == s ? 1.0f : 0.0f, step = dt / kUnderShieldS;
+        st.under[s] = !st.haveUnder ? want : want > st.under[s] ? std::min(st.under[s] + step, want) : std::max(st.under[s] - step, want);
+    }
+    st.haveUnder = true;
     if (!in.vitalsOk || !in.v.known) {
         st.haveFill = false;   // (the next numbers are shown as they are, not eased from the old ones)
         return out;
@@ -433,9 +479,10 @@ inline Set Step(State& st, const In& in) {
         o.glow = kind == kLife ? glow : 0.0f;
         o.radius = baseR * (1.0f + (kind == kLife ? kThrob * glow : 0.0f));
         const float lateral = both ? (kind == kLife ? -1.0f : 1.0f) * (baseR + 0.5f * kGapM) : 0.0f;
-        Place p = Centre(in.arm[o.side], in.grip[o.side], cfg, o.side, lateral, handvitals::ClassZCm(cfg, in.heroClass));
+        const float under = Eased(st.under[o.side & 1]);
+        Place p = Centre(in.arm[o.side], in.grip[o.side], cfg, o.side, lateral, handvitals::ClassZCm(cfg, in.heroClass), under);
         if (!p.ok) continue;
-        TurnFrame(p, SpotFor(cfg, o.side), o.side);   // the medallion's own turn: its back, its along and the fill direction go with it
+        TurnFrame(p, SpotUnder(SpotFor(cfg, o.side), cfg.orbShield, under), o.side);   // the medallion's own turn: its back, its along and the fill direction go with it
         o.c = p.c;
         o.axis = FillAxis(cfg.orbFill, p);                                              // a fixed direction of the wrist's frame (the world's up without one)
         o.back = p.hasArm ? p.back : V3{0.0f, 1.0f, 0.0f};

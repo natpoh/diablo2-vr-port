@@ -32,11 +32,14 @@
 
 #include "log_async.h"   // [debug] log_async: the plugin's log lines through a ring and a writer thread (vr/log_queue.h); off = ctx->LogInfo as ever
 #include "d2r_vr_shared.h"
+#include "hit_claim.h"
 #include "hit_latency.h"
 #include "blade_shape.h"
 #include "stroke_tuning.h"
+#include "strike_direction.h"
 #include "thrown_touch.h"
 #include "touch_why.h"
+#include "unit_scan.h"
 #include "melee_bodies.h"
 #include "melee_boxes.h"
 #include "melee_direct.h"
@@ -171,62 +174,36 @@ struct Scan {
     uint32_t heroId = 0;
 };
 
-struct RowEntry { meleetouch::MonsterRow row; bool ok = false; ULONGLONG at = 0; };
-std::unordered_map<uint32_t, RowEntry> g_rows;   // the timer's thread only
+unitscan::RowCache g_rows;   // (unit_scan.h) the timer's thread only: hit by touch's scan and the shield bash's are both made on it
 
-bool RowFor(uint8_t bank, uint32_t cls, meleetouch::MonsterRow* out) {
-    const uint32_t key = (static_cast<uint32_t>(bank) << 16) | cls;
-    const ULONGLONG now = GetTickCount64();
-    auto it = g_rows.find(key);
-    if (it != g_rows.end() && (it->second.ok || now - it->second.at < 5000)) {
-        if (it->second.ok) *out = it->second.row;
-        return it->second.ok;
-    }
-    RowEntry e;
-    e.at = now;
+// A class's MonStats row as the game's own getter gives it, read now (any thread; the reads and the call guarded).
+bool RowNow(uint8_t bank, uint32_t cls, meleetouch::MonsterRow* out) {
     uintptr_t row = 0;
     uint8_t f[16] = {};
     const uintptr_t fn = d2rsig::Addr(RVA_MONSTATS);
-    if (fn && cls <= 4095 && bank <= 3 && CallStats(fn, bank, static_cast<int>(cls), &row) && Read(f, row, sizeof f)) {
-        e.row = {f[8], f[9], f[13]};
-        e.ok = f[8] >= 1 && f[8] <= 8 && f[9] >= 1 && f[9] <= 8;
-    }
-    g_rows[key] = e;
-    if (e.ok) *out = e.row;
-    return e.ok;
+    if (!fn || cls > 4095 || bank > 3 || !CallStats(fn, bank, static_cast<int>(cls), &row) || !Read(f, row, sizeof f)) return false;
+    *out = {f[8], f[9], f[13]};
+    return f[8] >= 1 && f[8] <= 8 && f[9] >= 1 && f[9] <= 8;
 }
 
-constexpr size_t kUnitBytes = 0x1C0;
-struct UnitBytes { uint8_t b[kUnitBytes]; };
-uint32_t U32(const UnitBytes& u, size_t o) { uint32_t v; memcpy(&v, u.b + o, 4); return v; }
-uintptr_t U64(const UnitBytes& u, size_t o) { uintptr_t v; memcpy(&v, u.b + o, 8); return v; }
+bool RowFor(uint8_t bank, uint32_t cls, meleetouch::MonsterRow* out) {   // (a row that did not read is asked again after 5 s)
+    return g_rows.Get(bank, cls, GetTickCount64(), [](uint8_t b, uint32_t c, meleetouch::MonsterRow* r) { return RowNow(b, c, r); }, out);
+}
+
+// The client's unit hash is walked by unit_scan.h (pure, tested) - the one walk of everything that looks at the monsters round the hero.
+constexpr size_t kUnitBytes = unitscan::kUnitBytes;
+using UnitBytes = unitscan::Unit;
+uint32_t U32(const UnitBytes& u, size_t o) { return unitscan::Field32(u, o); }
+uintptr_t U64(const UnitBytes& u, size_t o) { return unitscan::Field64(u, o); }
 
 // A unit's place on the grid in game world units (twice the cell): the 16.16 coordinates of its path.
 bool GridOf(const UnitBytes& u, float* x, float* z) {
-    uint16_t p[4];
-    if (!Read(p, U64(u, 0x38), sizeof p)) return false;
-    *x = 2.0f * (p[1] + p[0] / 65536.0f);
-    *z = 2.0f * (p[3] + p[2] / 65536.0f);
-    return true;
+    return unitscan::Place([](void* d, uintptr_t s, size_t n) { return Read(d, s, n); }, u, x, z);
 }
 
 // The units of one type in the client's hash, one after the other: calls fn(unit address, bytes) until it says stop.
 template <class F> void EachUnit(int type, F&& fn) {
-    const uintptr_t table = d2rsig::Addr(RVA_UNITS);
-    if (!table) return;
-    uintptr_t bucket[128];
-    if (!Read(bucket, table + static_cast<uintptr_t>(type) * 0x400, sizeof bucket)) return;
-    unsigned visited = 0;
-    for (const uintptr_t head : bucket) {
-        uintptr_t at = head;
-        for (unsigned chain = 0; at && chain < 64 && visited < 2048; ++chain, ++visited) {
-            UnitBytes u;
-            if (!Read(u.b, at, sizeof u.b)) break;
-            if (U32(u, 0) != static_cast<uint32_t>(type)) break;   // not a unit of this row: stop this chain
-            if (!fn(at, u)) return;
-            at = U64(u, 0x158);
-        }
-    }
+    unitscan::EachUnit([](void* d, uintptr_t s, size_t n) { return Read(d, s, n); }, d2rsig::Addr(RVA_UNITS), type, fn);
 }
 
 // The hero's own client unit (the player near the hero's feet on the grid) and the monsters within reach of the swing.
@@ -242,28 +219,15 @@ bool ScanUnits(float heroX, float heroZ, float upm, float floorM, Scan* out) {
         return true;
     });
     if (!out->heroId) return false;
-    EachUnit(1, [&](uintptr_t, const UnitBytes& u) {
-        const uint32_t mode = U32(u, 0xC);
-        if (mode == 0 || mode == 12) return true;   // dying, dead
-        float x, z;
-        if (!GridOf(u, &x, &z)) return true;
-        const float d2 = (x - heroX) * (x - heroX) + (z - heroZ) * (z - heroZ);
-        if (d2 > 24.0f * 24.0f) return true;
-        const uint8_t bank = u.b[0x1BD];
-        const uint32_t cls = U32(u, 4);
-        meleetouch::MonsterRow row;
-        if (!RowFor(bank, cls, &row)) return true;
-        Cand c;
-        c.id = U32(u, 8);
-        c.cls = cls;
-        c.d2 = d2;
-        if (!meleetouch::BodyFor(row, x, z, floorM, upm, c.body)) return true;
-        if (out->n < out->c.size()) { out->c[out->n++] = c; return true; }
-        size_t farthest = 0;   // full: the farthest goes
-        for (size_t i = 1; i < out->n; ++i) if (out->c[i].d2 > out->c[farthest].d2) farthest = i;
-        if (c.d2 < out->c[farthest].d2) out->c[farthest] = c;
-        return true;
-    });
+    unitscan::Near found[std::tuple_size<decltype(Scan::c)>::value];   // the monsters within 24 game units: unit_scan.h, the walk the shield bash shares
+    const size_t n = MonstersNear(heroX, heroZ, 24.0f, upm, floorM, found, std::tuple_size<decltype(Scan::c)>::value);
+    for (size_t i = 0; i < n; ++i) {
+        out->c[i].id = found[i].id;
+        out->c[i].cls = found[i].cls;
+        out->c[i].d2 = found[i].d2;
+        out->c[i].body = found[i].body;
+    }
+    out->n = n;
     return true;
 }
 
@@ -287,6 +251,8 @@ std::array<uint32_t, 48> g_probeIds;
 size_t g_probeCount = 0;
 std::atomic<uintptr_t> g_serverGame{0};
 std::atomic<uint32_t> g_heroId{0};
+std::atomic<bool> g_statusWanted{false};      // [hud] wrist_status (vr/wrist_status.h): the lookup is observed for it too (the server's game, for the read-only reads of the hero's pets and states)
+std::atomic<uint32_t> g_statusHeroId{0};      // ... and the hero's unit id it learns the game by (the client's own read of it, vr/wrist_status_game.cpp)
 uiticket::Ticket g_probeTicket;
 std::atomic<int> g_serverHook{0};   // 0 not tried, 1 in, 2 not possible
 
@@ -295,7 +261,8 @@ uintptr_t HookLookup(uintptr_t game, int type, uint32_t id) {
     trace.Pause();
     const uintptr_t unit = g_origLookup(game, type, id);
     trace.Resume();
-    if (type == 0 && unit && id == g_heroId.load(std::memory_order_relaxed) && game != g_serverGame.load(std::memory_order_relaxed)) {
+    const uint32_t statusHero = g_statusHeroId.load(std::memory_order_relaxed);
+    if (type == 0 && unit && (id == g_heroId.load(std::memory_order_relaxed) || (statusHero && id == statusHero)) && game != g_serverGame.load(std::memory_order_relaxed)) {
         uintptr_t back = 0;
         uint32_t head[3];
         if (Read(head, unit, sizeof head) && head[0] == 0 && head[2] == id && Read(&back, unit + 0xD8, sizeof back) && back == game)
@@ -381,6 +348,14 @@ std::atomic<float> g_tuneLength{100.0f}, g_tuneRadius{0.0f}, g_tuneButt{100.0f};
 std::atomic<float> g_thrownLength{100.0f}, g_thrownButt{100.0f};
 // The engine's two numbers the user sets live ([gameplay] melee_min_speed, melee_stroke_start_cm, stroke::ParamsFor).
 std::atomic<float> g_minSpeed{stroke::kDefaultMinSpeed}, g_startCm{stroke::kDefaultStartCm};
+// ... per weapon kind, 0 = the general ones ([gameplay] melee_min_speed_<kind>, melee_stroke_start_cm_<kind>); and the strike rules (toward the monster, the head, the amplitude: [gameplay] melee_toward*, melee_head_only*, melee_amp*, vr/strike_direction.h).
+std::atomic<float> g_kindSpeed[strikedir::kKinds], g_kindStart[strikedir::kKinds];
+std::mutex g_ruleMutex;
+strikedir::Rule g_strikeRule;   // under g_ruleMutex
+strikedir::Rule CurrentRule() { std::lock_guard<std::mutex> lock(g_ruleMutex); return g_strikeRule; }
+// Per hand (the timer's thread only): how far the head has gone in the stroke that is on (the amplitude), and its way over the last few poses (the debug's look of the blade).
+strikedir::StrokeTravel g_travel[2];
+strikedir::TipWay g_tipWay[2];
 std::atomic<bool> g_tuneFlip{false};
 
 // The blade's shape for the item in a hand as the touch tests it NOW: the kind's and the base item's constants, the general sliders on top, and for a
@@ -394,7 +369,7 @@ bladeshape::Shape TunedShape(uint32_t code, uint32_t kind, bool twoHandsOn) {
 uint32_t g_lastPoseStamp = 0;
 ULONGLONG g_lastScanAt = 0, g_lastReportAt = 0, g_lastToldAt = 0;
 Scan g_scan;
-struct Counters { unsigned sweeps = 0, touched = 0, pressed = 0, notHostile = 0, noVerdict = 0, noHero = 0, noHand = 0, slowPart = 0; } g_n;
+struct Counters { unsigned sweeps = 0, touched = 0, pressed = 0, notHostile = 0, noVerdict = 0, noHero = 0, noHand = 0, slowPart = 0, away = 0, notHead = 0, small = 0; } g_n;
 
 void Cancel() {
     g_engine[0].Reset();
@@ -448,7 +423,9 @@ void LatencyPoll(ULONGLONG now) {
     }
 }
 
-void Approve(uint32_t id, bool allowDirect = true) {
+// `hand`: the controller whose blade touched (skeleton side, 0 right / 1 left) - it claims the blow the game is about to roll (vr/hit_claim.h), so the buzz of the hit is that hand's, whichever hand
+// swung: a Barbarian's second blade, a weapon drawn into the left hand.
+void Approve(uint32_t id, bool allowDirect, int hand) {
     frametrace::Note(frametrace::kPress);   // [debug] frame_trace: a touch was accepted - the game's attack is asked for (key or direct)
     const ULONGLONG now = GetTickCount64();
     // [gameplay] melee_direct (the user's experimental option, vr/melee_direct.h): the touch calls the game's attack itself.
@@ -459,6 +436,7 @@ void Approve(uint32_t id, bool allowDirect = true) {
         if (route == meleedirect::Route::Skip) return;
         if (route == meleedirect::Route::Direct) {
             hitlatency::Press(hitlatency::kMeleeDirect);   // the clock starts before the request can run
+            hitclaim::Press(hand, static_cast<int64_t>(now));
             g_latDirect.Press();
             meleedirect::Request req;
             req.game = g_serverGame.load();
@@ -473,6 +451,7 @@ void Approve(uint32_t id, bool allowDirect = true) {
     meleeboxes::Struck(id, meleeboxes::kStruckKey, now);   // [debug] melee_boxes: the drawing only
     if (g_press.Begin(id, now)) {
         SendPress(true);
+        hitclaim::Press(hand, static_cast<int64_t>(now));
         hitlatency::Press(hitlatency::kMelee);
         g_lat.Press();
     }
@@ -492,7 +471,36 @@ struct SideBlade {
     uint32_t code = 0;          // the item's code (bladeshape::Code)
     bladeshape::Shape shape;
     stroke::Sample s;
+    bool ball = false;          // [flail] chain: the blade is the flail's ball on its chain (skel::PosedBlade::ball)
 };
+
+// [debug] melee_boxes: the log line of a refused contact, throttled: a line each 250 ms for each of the reasons (0 not toward the monster, 1 not the head, 2 a swing too small, 3 too slow where it
+// touched, 4 a movement that never became a stroke). `always`: told whatever the debug says (the first dozen, for the log of the first test). False: not now.
+bool TellRefusal(int reason, ULONGLONG now, bool always) {
+    static ULONGLONG at[5] = {};
+    if (reason < 0 || reason > 4) return false;
+    if (!always && (!meleeboxes::Wanted() || now - at[reason] < 250)) return false;
+    at[reason] = now;
+    return true;
+}
+
+// [debug] melee_boxes: a contact's marks - a ball on the touching point, an arrow along its velocity, a line to the nearest point of the monster's axis, and for a refusal the monster's capsule
+// tinted - in the verdict's colour (meleeboxes::Colour). Read-only drawing.
+void MarkContact(const strikedir::Judgement& jd, uint32_t monsterId, const stroke::Body& body, int colour, bool tint, ULONGLONG now) {
+    if (!meleeboxes::Wanted() || !jd.haveWay) return;
+    meleeboxes::ContactMark m;
+    m.at = jd.at;
+    m.dir = jd.dir;
+    m.onAxis = jd.onAxis;
+    m.haveAxis = jd.haveAxis;
+    m.colour = colour;
+    m.tint = tint;
+    m.monsterId = monsterId;
+    m.body = body;
+    m.haveBody = true;
+    m.ms = now;
+    meleeboxes::Touched(m);
+}
 
 void FeedBoxes(ULONGLONG now, const SideBlade (&sb)[2], float upm, float floorM, const stroke::Vec& grid) {
     static ULONGLONG scanAt = 0;
@@ -510,6 +518,7 @@ void FeedBoxes(ULONGLONG now, const SideBlade (&sb)[2], float upm, float floorM,
                                      k == Know::No ? meleeboxes::Verdict::Refused : k == Know::Yes ? meleeboxes::Verdict::Hostile : meleeboxes::Verdict::Unknown};
             }
     }
+    const strikedir::Rule rule = CurrentRule();
     meleeboxes::Frame f;
     f.nowMs = now;
     f.upm = upm;
@@ -519,19 +528,67 @@ void FeedBoxes(ULONGLONG now, const SideBlade (&sb)[2], float upm, float floorM,
         meleeboxes::BladeIn& b = f.blades[i];
         b.have = sb[i].ok;
         if (!b.have) continue;
+        const int side = sb[i].side & 1;
         b.side = sb[i].side;
         b.blade = sb[i].s.blade;
         b.inStroke = g_engine[sb[i].side].InStroke();
         b.speed = g_engine[sb[i].side].LastSpeed();     // the engine's own speed of this pose's step - the value its gate is on
         b.counting = g_engine[sb[i].side].Counting();   // ... and whether that step swept something: a contact would count now
+        // What that movement is under the strike rules, against the monster nearest the tip (within kTargetReachM, the game's own checks not refusing it): green only while a contact would count
+        const stroke::Blade& bl = sb[i].s.blade;
+        const meleeboxes::Monster* nearest = nullptr;
+        float best = meleeboxes::kTargetReachM;
+        for (size_t k = 0; k < count; ++k) {
+            if (monsters[k].verdict == meleeboxes::Verdict::Refused) continue;
+            const float d = meleeboxes::Scene::PointSegmentDistance(bl.tip, monsters[k].body.bottom, monsters[k].body.top) - monsters[k].body.radius;
+            if (d < best) { best = d; nearest = &monsters[k]; }
+        }
+        b.look = strikedir::LookOf(rule, strikedir::KindIndex(sb[i].kind), b.counting, bl.tip, g_tipWay[side].Way(), nearest ? &nearest->body : nullptr, g_travel[side].Meters());
         b.sweepSpeed = g_sweepSpeed[sb[i].side];
         b.sweepMs = g_sweepAt[sb[i].side];
     }
     f.monsters = monsters;
     f.count = count;
     meleeboxes::Update(f);
+    // A touch that never became a stroke: the blade ENTERS a monster's body in a movement the engine does not count - shorter than the stroke's start distance, or slower than the least
+    // speed (a blade at rest that a monster walks into does not count as a swing at all). An amber ball where it met the monster, and a line in the log; the monsters the game's own
+    // checks refuse are left out. (A touch with a stroke on is told where it is judged, in Tick: too slow where it touched, or one of the strike rules.)
+    static uint32_t inside[2][8] = {};
+    static size_t insideN[2] = {};
+    for (int i = 0; i < 2; ++i) {
+        if (!sb[i].ok) { insideN[i] = 0; continue; }
+        const int side = sb[i].side & 1;
+        const stroke::Blade& bl = sb[i].s.blade;
+        const stroke::Vec way = g_tipWay[side].Way();
+        uint32_t nowInside[8];
+        size_t nn = 0;
+        for (size_t k = 0; k < count && nn < 8; ++k) {
+            const meleeboxes::Monster& mo = monsters[k];
+            float s = 0.0f;
+            const float reach = mo.body.radius + bl.radius;
+            if (stroke::SegmentDistanceSquared(bl.base, bl.tip, mo.body.bottom, mo.body.top, &s) > reach * reach) continue;
+            nowInside[nn++] = mo.id;
+            bool was = false;
+            for (size_t q = 0; q < insideN[i]; ++q) was = was || inside[i][q] == mo.id;
+            if (was || mo.verdict == meleeboxes::Verdict::Refused) continue;
+            if (g_engine[side].Counting() || g_engine[side].LastSpeed() < 0.3f) continue;   // (counted - or judged in Tick - or nobody swung into it)
+            strikedir::Judgement jd;
+            jd.haveWay = true;
+            jd.at = bl.base + (bl.tip - bl.base) * s;
+            jd.dir = way;
+            jd.onAxis = strikedir::NearestOnAxis(mo.body, jd.at);
+            jd.haveAxis = true;
+            MarkContact(jd, mo.id, mo.body, meleeboxes::kCAmber, false, now);
+            if (TellRefusal(4, now, false)) {
+                const stroke::Params& p = g_engine[side].GetParams();
+                LogF("melee touch: %c hand, the %s entered monster %u without a stroke - not counted: the blade moves %.1f m/s (a stroke needs %.1f m/s and %.0f cm of movement first)", side ? 'L' : 'R',
+                     strikedir::KindName(strikedir::KindIndex(sb[i].kind)), mo.id, g_engine[side].LastSpeed(), p.strokeSpeed, p.onsetExcursion * 100.0f);
+            }
+        }
+        for (size_t q = 0; q < nn; ++q) inside[i][q] = nowInside[q];
+        insideN[i] = nn;
+    }
 }
-
 uint32_t KeyOf(uint32_t type, bool two, int side, uint32_t heroGen) {
     uint32_t h = 2166136261u;
     for (const uint32_t v : {type, two ? 1u : 0u, static_cast<uint32_t>(side), heroGen}) { h ^= v; h *= 16777619u; }
@@ -553,6 +610,17 @@ void SetWanted(bool on) {
     hitlatency::Want(hitlatency::kMelee, on);   // the hit observer (vr/haptics.cpp) is put in for the press -> hit log too
 }
 bool Wanted() { return g_wanted.load(); }
+void SetStatusWanted(bool on) { g_statusWanted.store(on); }
+bool StatusWanted() { return g_statusWanted.load(); }
+void SetStatusHero(uint32_t id) { g_statusHeroId.store(id); }
+bool ServerLookup(uintptr_t* game, uintptr_t* lookup) {
+    const uintptr_t g = g_serverGame.load();
+    const uintptr_t fn = g_origLookup ? reinterpret_cast<uintptr_t>(g_origLookup) : d2rsig::Addr(RVA_LOOKUP);
+    if (!g || !fn) return false;
+    *game = g;
+    *lookup = fn;
+    return true;
+}
 void SetUnchecked(bool on) { g_unchecked.store(on); }
 void SetAnimNote(AnimNoteFn fn) { g_animNote.store(fn); }
 void SetThrownTouch(bool on) {
@@ -569,6 +637,29 @@ void SetStrokeTuning(float minSpeed, float startCm) {
     const stroke::StrokeTuning t = stroke::Clamp({minSpeed, startCm});
     g_minSpeed.store(t.minSpeed);
     g_startCm.store(t.startCm);
+}
+void SetStrikeRule(const strikedir::Rule& rule) {
+    const strikedir::Rule r = strikedir::Clamp(rule);
+    bool changed = false;
+    {
+        std::lock_guard<std::mutex> lock(g_ruleMutex);
+        changed = g_strikeRule.toward != r.toward || g_strikeRule.towardKinds != r.towardKinds || g_strikeRule.towardDeg != r.towardDeg || g_strikeRule.head != r.head ||
+                  g_strikeRule.headKinds != r.headKinds || g_strikeRule.headPct != r.headPct || g_strikeRule.amplitude != r.amplitude || g_strikeRule.pierceCm != r.pierceCm ||
+                  g_strikeRule.edgedX != r.edgedX || g_strikeRule.bluntX != r.bluntX || g_strikeRule.staffX != r.staffX || g_strikeRule.kindX != r.kindX;
+        g_strikeRule = r;
+    }
+    if (!changed || !g_wanted.load()) return;
+    char kinds[200] = "";
+    for (int k = 0, w = 0; k < strikedir::kKinds && w < 170; ++k)
+        w += snprintf(kinds + w, sizeof kinds - static_cast<size_t>(w), "%s%s %.0f", w ? ", " : "", strikedir::KindName(k), strikedir::AmplitudeCm(r, k));
+    LogF("melee touch: the strike rules - toward the monster %s (within %.0f deg of the direction to its axis), the head only %s (the outer %.0f%% of the blade), the swing's amplitude %s; least cm: %s",
+         r.toward ? "on" : "off", r.towardDeg, r.head ? "on" : "off", r.headPct, r.amplitude ? "on" : "off", r.amplitude ? kinds : "-");
+}
+void SetKindTuning(int kind, float minSpeed, float startCm) {
+    if (kind < 0 || kind >= strikedir::kKinds) return;
+    const float s = std::isfinite(minSpeed) && minSpeed >= 0.3f ? std::min(minSpeed, 8.0f) : 0.0f, c = std::isfinite(startCm) && startCm >= 2.0f ? std::min(startCm, 30.0f) : 0.0f;
+    g_kindSpeed[kind].store(s);
+    g_kindStart[kind].store(c);
 }
 void SetBladeTuning(float lengthPct, float radiusCm, bool flip, float buttPct) {
     const bladeshape::Tuning t = bladeshape::Clamp({lengthPct, radiusCm, flip, buttPct});
@@ -695,7 +786,9 @@ void Tick(const Frame& f) {
             if (!pb.ok) continue;
             const uint32_t kind = k == 0 ? f.weaponType : f.kind[side];
             const bool two = k == 0 && f.twoHandsOn;
-            const bladeshape::Shape shape = TunedShape(f.code[side], kind, two);   // (the kind's, the general sliders, a thrown kind's own on top)
+            // [flail] chain: a flail's ball on its chain strikes, not its handle - a ball as thick as the model's, where the chain has it
+            const bool ball = pb.ball && head.ok;
+            const bladeshape::Shape shape = ball ? bladeshape::BallShape(pb.ballRadius) : TunedShape(f.code[side], kind, two);   // (the kind's, the general sliders, a thrown kind's own on top)
             SideBlade& sb = blades[nb];
             bladeshape::RoomFrame roomFrame;
             bool haveRoomFrame = false;
@@ -707,7 +800,7 @@ void Tick(const Frame& f) {
             }
             if (head.ok) {
                 bladeshape::Bone bone;
-                for (int i = 0; i < 3; ++i) { bone.origin[i] = pb.origin[i]; bone.axisY[i] = pb.axis[1][i]; }
+                for (int i = 0; i < 3; ++i) { bone.origin[i] = ball ? pb.ballCentre[i] : pb.origin[i]; bone.axisY[i] = ball ? pb.ballDir[i] : pb.axis[1][i]; }
                 sb.s.blade = bladeshape::FromBone(head, bone, shape);
                 // the same blade in the room, for the stroke's speed and onset: the BLADE's motion as drawn, not the controller's (stroke::Sample::room)
                 if (haveRoomFrame) { sb.s.room = bladeshape::RoomFromBone(roomFrame, bone, shape); sb.s.haveRoom = true; }
@@ -724,6 +817,11 @@ void Tick(const Frame& f) {
             sb.s.context = KeyOf(kind, two, hand, pose.heroGeneration);
             sb.s.scale = upm;
             sb.s.lever = shape.length;   // the tip side: a butt behind the grip does not make the stroke's turn count for more
+            if (ball) {   // the ball swings as far from the hand as the handle and the chain hold it
+                const float d[3] = {pb.ballCentre[0] - pb.origin[0], pb.ballCentre[1] - pb.origin[1], pb.ballCentre[2] - pb.origin[2]};
+                sb.s.lever = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]) + pb.ballRadius;
+            }
+            sb.ball = ball;
             sb.ok = true;
             sb.side = hand;
             sb.kind = kind;
@@ -738,19 +836,20 @@ void Tick(const Frame& f) {
             static uint32_t toldKey = 0;
             uint32_t key = head.ok ? 2166136261u : 1u;
             for (const SideBlade& sb : blades)
-                if (sb.ok) for (const uint32_t v : {static_cast<uint32_t>(sb.side), sb.kind, sb.code, static_cast<uint32_t>(sb.shape.tipSign + 2),
+                if (sb.ok) for (const uint32_t v : {static_cast<uint32_t>(sb.side), sb.kind, sb.code, static_cast<uint32_t>(sb.shape.tipSign + 2), static_cast<uint32_t>(sb.ball),
                                                      static_cast<uint32_t>(sb.shape.length * 1000.0f), static_cast<uint32_t>(sb.shape.butt * 1000.0f),
                                                      static_cast<uint32_t>(sb.shape.radius * 10000.0f)}) { key ^= v; key *= 16777619u; }
             if (key != toldKey) {
                 toldKey = key;
-                char b[400];
+                char b[600];
                 int w = snprintf(b, sizeof b, "melee touch: blades (%s) -", head.ok ? "weapon bone as drawn" : "NO VIEW YET - the hero model's matrix");
                 for (const SideBlade& sb : blades)
                     if (sb.ok && w > 0 && static_cast<size_t>(w) < sizeof b)
-                        w += snprintf(b + w, sizeof b - static_cast<size_t>(w), " %c hand item '%c%c%c%c' kind %u: tip %.2f m and butt %.2f m from the bone, r %.1f cm, tip along the bone's %cY;",
+                        w += snprintf(b + w, sizeof b - static_cast<size_t>(w), " %c hand item '%c%c%c%c' kind %u: tip %.2f m and butt %.2f m from the bone, r %.1f cm, tip along the bone's %cY%s;",
                                       sb.side ? 'L' : 'R', sb.code ? static_cast<char>(sb.code & 255) : '?', static_cast<char>((sb.code >> 8) & 255) ? static_cast<char>((sb.code >> 8) & 255) : ' ',
                                       static_cast<char>((sb.code >> 16) & 255) ? static_cast<char>((sb.code >> 16) & 255) : ' ', static_cast<char>((sb.code >> 24) & 255) ? static_cast<char>((sb.code >> 24) & 255) : ' ',
-                                      sb.kind, sb.shape.length, sb.shape.butt, sb.shape.radius * 100.0f, sb.shape.tipSign < 0 ? '-' : '+');
+                                      sb.kind, sb.shape.length, sb.shape.butt, sb.shape.radius * 100.0f, sb.shape.tipSign < 0 ? '-' : '+',
+                                      sb.ball ? " - the flail's ball on its chain (the 'bone' is the ball's centre), not the handle" : "");
                 Log(b);
             }
         }
@@ -759,19 +858,29 @@ void Tick(const Frame& f) {
     // Ahead of any touch: who is near, and what the server says of each (hostile? a wall between?).
     const float heroY = pose.hero[1] / upm;
     const stroke::Vec grid = meleetouch::GridPlane({pose.hero[0], pose.hero[1], pose.hero[2]});   // game units
-    {   // the user's two numbers of the engine ([gameplay] melee_min_speed, melee_stroke_start_cm), live: applied when they change
-        static float appliedSpeed = -1.0f, appliedStart = -1.0f;
-        const float minSpeed = g_minSpeed.load(), startCm = g_startCm.load();
-        if (minSpeed != appliedSpeed || startCm != appliedStart) {
-            appliedSpeed = minSpeed;
-            appliedStart = startCm;
-            const stroke::Params p = stroke::ParamsFor({minSpeed, startCm});
-            g_engine[0].SetParams(p);
-            g_engine[1].SetParams(p);
-            LogF("melee touch: the stroke's gate - a contact counts from %.2f m/s (a stroke may begin at %.2f, it ends at rest under %.2f), after %.0f cm of movement",
-                 p.strokeSpeed, p.beginSpeed, p.quietSpeed, p.onsetExcursion * 100.0f);
+    {   // the user's two numbers of the engine ([gameplay] melee_min_speed, melee_stroke_start_cm - and, for the kind in a hand, melee_min_speed_<kind>, melee_stroke_start_cm_<kind>),
+        // live: each hand's engine has the numbers of the weapon in that hand, applied when they change
+        static float appliedSpeed[2] = {-1.0f, -1.0f}, appliedStart[2] = {-1.0f, -1.0f};
+        const stroke::StrokeTuning general{g_minSpeed.load(), g_startCm.load()};
+        for (const SideBlade& sb : blades) {
+            if (!sb.ok) continue;
+            const int ki = strikedir::KindIndex(sb.kind);
+            strikedir::KindTuning own;
+            if (ki >= 0) own = {g_kindSpeed[ki].load(), g_kindStart[ki].load()};
+            const stroke::StrokeTuning t = strikedir::Effective(general, own);
+            const int hand = sb.side & 1;
+            if (t.minSpeed == appliedSpeed[hand] && t.startCm == appliedStart[hand]) continue;
+            appliedSpeed[hand] = t.minSpeed;
+            appliedStart[hand] = t.startCm;
+            const stroke::Params p = stroke::ParamsFor(t);
+            g_engine[hand].SetParams(p);
+            LogF("melee touch: the stroke's gate, %c hand (%s%s) - a contact counts from %.2f m/s (a stroke may begin at %.2f, it ends at rest under %.2f), after %.0f cm of movement",
+                 hand ? 'L' : 'R', ki >= 0 ? strikedir::KindName(ki) : "thrown", own.minSpeed >= 0.3f || own.startCm >= 2.0f ? ", its own numbers" : "", p.strokeSpeed, p.beginSpeed, p.quietSpeed,
+                 p.onsetExcursion * 100.0f);
         }
     }
+    // The strike rules (vr/strike_direction.h): toward the monster, the head, the amplitude - per kind
+    const strikedir::Rule rule = CurrentRule();
     if (now - g_lastScanAt >= 100) {
         g_lastScanAt = now;
         if (ScanUnits(grid.x, grid.z, upm, heroY, &g_scan)) {
@@ -813,7 +922,12 @@ void Tick(const Frame& f) {
         if (!sb.ok) continue;
         const int side = sb.side;
         stroke::Sweep sweep;
-        if (!g_engine[side].Step(sb.s, sweep)) continue;
+        const bool swept = g_engine[side].Step(sb.s, sweep);
+        // the head's travel in the stroke that is on (the amplitude), and the tip's way over the last few poses (the debug's look) - every pose, swept or not. The travel is measured in the room
+        // frame like the engine's speed (the hero walking adds nothing), the way in the world frame the monsters are in.
+        g_travel[side].Feed(sb.s.time, sb.s.haveRoom ? sb.s.room.tip : sb.s.blade.tip, g_engine[side].StrokeId());
+        g_tipWay[side].Feed(sb.s.time, sb.s.blade.tip);
+        if (!swept) continue;
         ++g_n.sweeps;
         frametrace::Note(frametrace::kSweep);   // [debug] frame_trace: the blade moved fast enough to be swept
         g_sweepSpeed[side] = sweep.speed;   // (for the [debug] melee_boxes log)
@@ -821,31 +935,71 @@ void Tick(const Frame& f) {
         if (!haveFresh) { haveFresh = true; freshOk = ScanUnits(grid.x, grid.z, upm, heroY, &fresh); }
         if (!freshOk) { ++g_n.noHero; continue; }
         const Cand* first = nullptr;
+        bool touchedAny = false;   // [flail] chain: the blade met a body in this sweep (counted as an attack or not): the flail's head is kicked back
         float firstT = 2.0f, firstSpeed = 0.0f;
+        strikedir::Judgement firstJd;
         const float least = g_engine[side].GetParams().strokeSpeed;
         for (size_t i = 0; i < fresh.n; ++i) {
             const Cand& c = fresh.c[i];
             const stroke::Contact touch = stroke::TouchOf(sweep, c.body);
             const float t = touch.t;
+            if (t >= 0.0f) touchedAny = true;
             if (t < 0.0f || t >= firstT || g_hits[side].Contains(f.session, sweep.stroke, c.id)) continue;
             // The speed that counts is the blade's where it TOUCHES (the two ends' velocities blended at the contact point, stroke::ContactSpeed): the
             // tip of a blade that swings about the hand is fast, its grip end is not. A touch at a part moving slower than the least speed waits - the
             // monster is not used up: a later sweep of the stroke may touch it with a faster part.
             const float at = touch.speed;
-            if (at < least) { ++g_n.slowPart; continue; }
+            const int kindIdx = strikedir::KindIndex(sb.kind);
+            // The strike rules' verdict on this contact (vr/strike_direction.h): toward the monster, the head, the amplitude - and where the touching point was, its way, the angle to the axis (for the
+            // debug's marks and the log). A refused contact does not use the monster up: a later contact of the stroke, or the next stroke, counts. Only whether the contact counts as an attack - the
+            // game's attack, damage and rolls are not touched.
+            const strikedir::Judgement jd = strikedir::Judge(sb.ball ? strikedir::ForBall(rule) : rule, kindIdx, sweep, touch, c.body, g_travel[side].Meters());
+            if (at < least) {
+                ++g_n.slowPart;
+                // [debug] melee_boxes: an amber ball (and the arrow, the line, the tint) where the blade met the monster too slowly, and a line (kind, speed, the way)
+                MarkContact(jd, c.id, c.body, meleeboxes::kCAmber, true, now);
+                if (TellRefusal(3, now, false))
+                    LogF("melee touch: %c hand, a contact with monster %u is not counted - too slow: the %s moves %.1f m/s where it touched, the least is %.1f m/s%s", side ? 'L' : 'R', c.id,
+                         strikedir::KindName(kindIdx), at, least, jd.haveWay ? (jd.dir.y >= 0.0f ? " (going up)" : " (going down)") : "");
+                continue;
+            }
+            if (jd.why != strikedir::Why::Counts) {
+                const int reason = jd.why == strikedir::Why::Away ? 0 : jd.why == strikedir::Why::NotHead ? 1 : 2;
+                (reason == 0 ? g_n.away : reason == 1 ? g_n.notHead : g_n.small)++;
+                const int colour = reason == 0 ? meleeboxes::kCBlue : reason == 1 ? meleeboxes::kCGrey : meleeboxes::kCAmber;
+                MarkContact(jd, c.id, c.body, colour, true, now);   // [debug] melee_boxes: the marks, the monster tinted
+                static unsigned told = 0;
+                const bool firstOnes = told < 12;   // (the first twelve are told whatever the debug says; then, with [debug] melee_boxes, one each 250 ms for each reason)
+                if (TellRefusal(reason, now, firstOnes)) {
+                    if (firstOnes) ++told;
+                    char detail[160];
+                    if (reason == 0) snprintf(detail, sizeof detail, "its point moves %.0f deg from the direction to the monster's axis (it must be within %.0f)", jd.haveAxis ? jd.angleDeg : 0.0f, rule.towardDeg);
+                    else if (reason == 1) snprintf(detail, sizeof detail, "it touched at %.0f%% of the blade's length, the head is the outer %.0f%%", jd.along * 100.0f, rule.headPct);
+                    else snprintf(detail, sizeof detail, "the head has travelled %.0f cm in this stroke, the %s needs %.0f", jd.travelCm, strikedir::KindName(kindIdx), jd.needCm);
+                    LogF("melee touch: %c hand, a contact with monster %u is not counted - %s: %s; %.1f m/s where it touched%s", side ? 'L' : 'R', c.id, strikedir::WhyText(jd.why), detail, at,
+                         firstOnes && told == 12 ? " (the first twelve are told always; more with [debug] melee_boxes, throttled)" : "");
+                }
+                continue;
+            }
             const Know k = Verdicted(c.id, now);
             if (k == Know::No) { ++g_n.notHostile; continue; }
             if (k == Know::Unknown) { ++g_n.noVerdict; continue; }
             first = &c;
             firstT = t;
             firstSpeed = at;
+            firstJd = jd;
+        }
+        if (touchedAny) {   // [flail] chain: once a stroke - the look only (vr/flail_chain.h); nothing of the attack
+            static uint64_t kickedStroke[2] = {~0ull, ~0ull};
+            if (kickedStroke[side] != sweep.stroke) { kickedStroke[side] = sweep.stroke; skel::FlailHit(side); }
         }
         if (first) {
             ++g_n.touched;
             if (g_hits[side].Insert(f.session, sweep.stroke, first->id) && first->id != approvedId) {
                 ++g_n.pressed;
                 approvedId = first->id;
-                Approve(first->id, !thrown);
+                MarkContact(firstJd, first->id, first->body, meleeboxes::kCGreen, false, now);   // [debug] melee_boxes: a counted contact: the ball, the arrow and the line in green
+                Approve(first->id, !thrown, side);
                 if (thrown)   // one throw per swing: the throw by gesture's release of this swing is dropped (the touch's press is the throw)
                     if (const HoldOffFn hold = g_holdOff.load()) hold(meleetouch::HoldOffUntil(now));
                 if (g_n.pressed <= 20)
@@ -862,8 +1016,8 @@ void Tick(const Frame& f) {
     if (now - g_lastReportAt >= 10000) {
         g_lastReportAt = now;
         if (g_n.sweeps || g_n.touched || g_n.noHand) {
-            LogF("melee touch: %u sweeps, %u touches, %u pressed, %u at a part of the blade moving slower than the least speed, %u not hostile or behind a wall, %u without a verdict yet, %u without the hero, %u without a hand sample%s",
-                 g_n.sweeps, g_n.touched, g_n.pressed, g_n.slowPart, g_n.notHostile, g_n.noVerdict, g_n.noHero, g_n.noHand,
+            LogF("melee touch: %u sweeps, %u touches, %u pressed, %u at a part of the blade moving slower than the least speed, %u not toward the monster, %u not the head, %u a swing too small (not counted), %u not hostile or behind a wall, %u without a verdict yet, %u without the hero, %u without a hand sample%s",
+                 g_n.sweeps, g_n.touched, g_n.pressed, g_n.slowPart, g_n.away, g_n.notHead, g_n.small, g_n.notHostile, g_n.noVerdict, g_n.noHero, g_n.noHand,
                  g_serverGame.load() ? "" : " (the server's game not learned yet)");
             g_n = {};
         }
@@ -898,7 +1052,7 @@ bool PadPressed() {
 void Install() {
     static ULONGLONG retryAt = 0;
     static unsigned tries = 0;
-    if ((!g_wanted.load() && !g_throwWanted.load()) || g_serverHook.load() == 1 || !g_ctx || GetTickCount64() < retryAt) return;
+    if ((!g_wanted.load() && !g_throwWanted.load() && !g_statusWanted.load()) || g_serverHook.load() == 1 || !g_ctx || GetTickCount64() < retryAt) return;
     retryAt = GetTickCount64() + (tries < 30 ? 2000 : 30000);   // the server's code is decrypted as it runs: tried again
     if (!d2rsig::Addr(RVA_LOOKUP) || !d2rsig::Addr(RVA_RELATION) || !d2rsig::Addr(RVA_LINE) || !d2rsig::Addr(RVA_UNITS) ||
         !d2rsig::Addr(RVA_FIND_UNIT) || !d2rsig::Addr(RVA_MONSTATS))
@@ -980,6 +1134,11 @@ void ThrowPoll(uintptr_t heroUnit) {
     }
 }
 
+size_t MonstersNear(float heroX, float heroZ, float reachUnits, float upm, float floorM, unitscan::Near* out, size_t cap) {
+    return unitscan::Monsters([](void* d, uintptr_t s, size_t n) { return Read(d, s, n); }, d2rsig::Addr(RVA_UNITS), heroX, heroZ, reachUnits, upm, floorM,
+                              [](uint8_t bank, uint32_t cls, MonsterRow* row) { return RowFor(bank, cls, row); }, out, cap);
+}
+
 size_t MissileScan(MissileView* out, size_t max) {
     size_t n = 0;
     if (!out || !max) return 0;
@@ -1014,6 +1173,34 @@ bool MissileInHash(uintptr_t unit, unsigned* seen) {
 bool UnitPlace(uintptr_t unit, float* x, float* z) {
     UnitBytes u;
     return unit && x && z && Read(u.b, unit, sizeof u.b) && GridOf(u, x, z);
+}
+
+bool FindHireling(const uint32_t* classes, size_t count, HirelingView* out) {
+    if (!out || !classes || !count) return false;
+    bool found = false;
+    EachUnit(1, [&](uintptr_t at, const UnitBytes& u) {
+        const uint32_t mode = U32(u, 0xC), cls = U32(u, 4);
+        if (mode == 0 || mode == 12) return true;   // dying, dead
+        bool hireling = false;
+        for (size_t i = 0; i < count; ++i) hireling = hireling || classes[i] == cls;
+        if (!hireling) return true;
+        HirelingView v;
+        v.unit = at;
+        v.id = U32(u, 8);
+        v.cls = cls;
+        if (!GridOf(u, &v.x, &v.z) || !RowNow(u.b[0x1BD], cls, &v.row)) return true;
+        *out = v;
+        found = true;
+        return false;
+    });
+    return found;
+}
+
+bool HirelingPlace(uintptr_t unit, uint32_t id, float* x, float* z) {
+    UnitBytes u;
+    if (!unit || !x || !z || !Read(u.b, unit, sizeof u.b) || U32(u, 0) != 1 || U32(u, 8) != id) return false;
+    const uint32_t mode = U32(u, 0xC);
+    return mode != 0 && mode != 12 && GridOf(u, x, z);
 }
 
 size_t ThrowTargets(ThrowMonster* out, size_t max, bool* polled) {

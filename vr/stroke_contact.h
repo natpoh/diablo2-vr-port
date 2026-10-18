@@ -220,6 +220,8 @@ public:
     // stroke begun and the speed at or above Params::strokeSpeed). A repeated sample leaves both as they were.
     float LastSpeed() const { return lastSpeed_; }
     bool Counting() const { return counting_; }
+    // The number of the stroke that is on (what Sweep::stroke says), 0 when none: a stroke ends at a rest, a reversal, a drop.
+    uint64_t StrokeId() const { return st_.stroke; }
 
     // Feeds one sample. True with `out` filled when the stroke has swept something this step.
     bool Step(const Sample& in, Sweep& out) {

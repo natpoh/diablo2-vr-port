@@ -148,17 +148,20 @@ void CaseShift() {
 }
 
 constexpr uint64_t kKeyMove = 0x8A960;
+constexpr uint64_t kRunLock = 0x2A2375C;   // a data address found through a reference in the same page of code as the keyboard move
 
 void CaseWaiting() {
 	Protect(kKeyMove, PAGE_NOACCESS);
 	d2rsig::Resolve(&g_ctx);
 	EXPECT(!d2rsig::AllFound(), "%s", d2rsig::Summary().c_str());
 	EXPECT(d2rsig::Rva(kKeyMove) == 0, "the keyboard move before its page reads");
+	EXPECT(d2rsig::Rva(kRunLock) == 0, "the run flag before the page of the code that names it reads");
 	EXPECT(d2rsig::Summary().find("waiting") != std::string::npos && d2rsig::Summary().find("not found") == std::string::npos, "%s",
 	       d2rsig::Summary().c_str());
 	Protect(kKeyMove, PAGE_EXECUTE_READ);
 	Sleep(300);
 	EXPECT(d2rsig::Rva(kKeyMove) == kKeyMove, "the keyboard move once its page reads");
+	EXPECT(d2rsig::Rva(kRunLock) == kRunLock, "the run flag once its page reads (an entry is looked at again when its address is asked for)");
 	EXPECT(d2rsig::AllFound(), "%s", d2rsig::Summary().c_str());
 }
 

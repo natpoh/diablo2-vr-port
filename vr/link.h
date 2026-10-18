@@ -25,6 +25,9 @@ void Init(void (*log)(const char*), const wchar_t* iniPath, const char* modVersi
 // pointer stays good for a good while (a ring of copies), never for ever.
 const D2RVR_Shared* Head();
 
+// A consistent copy of BodyWalk's Tracking block as it is now (vr/flat_raw.h makes the FlatVR controllers from it); false when there is none.
+bool RawTracking(BW_LinkTracking* out);
+
 // Presses seen so far, one per reader: a press shorter than the reader's
 // polling still reads as held, for kTapMs from when this reader saw it.
 constexpr unsigned kTapMs = 50;
@@ -53,6 +56,11 @@ void RequestPresenter(bool game);
 
 // BodyWalk with Game Link is running; caps: BW_LINK_CAP_* of that BodyWalk.
 bool HostAlive(uint32_t* caps = nullptr);
+
+// BodyWalk's walk when its Output is "Game Link" (the Walk block): the stick its virtual pad would have had, -1..1, x right, y
+// forward. False (both 0): its Output is something else - the walk is on its pad report then - or the block has not been written
+// for half a second. vrcam's BodyWalkReport puts it on the report's left stick (vr/walk_path.h WithLinkWalk).
+bool Walk(float* x, float* y);
 
 // Native OpenXR: this headset frame's head and controllers to BodyWalk; ended =
 // the session is over (the last word: BodyWalk's Mapping goes back to FlatVR).

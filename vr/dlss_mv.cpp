@@ -44,6 +44,8 @@
 #include <cstdio>
 #include <cstring>
 #include <mutex>
+#include <utility>
+#include <vector>
 
 using Microsoft::WRL::ComPtr;
 
@@ -312,7 +314,10 @@ static_assert(sizeof(Consts) == 624, "the cbuffer's layout");
 constexpr UINT64 kStatsSlot = 1u << 20;   // per slot: 108 bytes a group (below 900000), then the sample places
 constexpr int kSums = 27;                  // floats a group
 
-constexpr int kSlots = 8;   // in-flight constants and stats, round robin
+// In-flight constants, descriptors and stats, round robin. The pass is recorded into the game's own list, and a slot is written by the CPU at recording time and read
+// by the GPU when the list RUNS - with nothing that says the older list has run by the time the ring comes round. Eight was four game frames of two evaluations; a GPU a
+// few frames behind (a stream that stalls, a hitch) rewrote a slot a list was still reading (2026-10-17, the device losses: audited, not proven the cause). 32: sixteen frames.
+constexpr int kSlots = 32;
 struct Pass {
     bool tried = false, ok = false;
     ComPtr<ID3D12Device> dev;
@@ -328,6 +333,7 @@ struct Pass {
     ComPtr<ID3D12Resource> readback;     // readback, kSlots * kStatsSlot
     uint8_t* readPtr = nullptr;
     ComPtr<ID3D12Resource> out;          // R16G16_FLOAT, the game's vectors' size
+    std::vector<std::pair<ComPtr<ID3D12Resource>, uint32_t>> retired;   // an `out` of another size, kept until no list that names it can still be running (evals)
     D3D12_RESOURCE_STATES outState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
     UINT64 outW = 0;
     UINT outH = 0;
@@ -453,6 +459,8 @@ ID3D12PipelineState* Pipeline(bool check) {
 
 bool EnsureOut(const D3D12_RESOURCE_DESC& mvDesc) {
     if (g.out && g.outW == mvDesc.Width && g.outH == mvDesc.Height) return true;
+    // the old one is not released under lists that were recorded with it and may not have run (a resize: a page fault there is a lost device)
+    if (g.out) g.retired.emplace_back(std::move(g.out), g.evals);
     g.out.Reset();
     D3D12_HEAP_PROPERTIES hp = {D3D12_HEAP_TYPE_DEFAULT};
     D3D12_RESOURCE_DESC d = mvDesc;
@@ -708,6 +716,7 @@ void* BeforeEvaluate(void* cmdListV, const void* paramsV, int eye) {
     }
     if (!g.ok) return nullptr;
     ++g.evals;
+    g.retired.erase(std::remove_if(g.retired.begin(), g.retired.end(), [](const auto& r) { return g.evals - r.second > 128; }), g.retired.end());
     ReadStats();
 
     ID3D12Resource *depth = nullptr, *mv = nullptr;

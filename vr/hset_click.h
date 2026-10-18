@@ -12,10 +12,20 @@
 
 namespace hset {
 
+// A held stepper on a wide range (at least this many steps from end to end: an angle, a distance) goes five steps at a time after kAccelAfter
+// repeats, so the end of the range is seconds away, not a minute.
+constexpr int kWideSteps = 60, kAccelAfter = 10, kAccelBy = 5;
+inline bool Wide(const Hit& h) {
+    if (h.kind != Kind::Change || h.index < 0 || h.index >= kCount || IsToggle(kDefs[h.index])) return false;
+    const Def& d = kDefs[h.index];
+    return d.step > 0.0f && (d.max - d.min) / d.step >= (float)kWideSteps;
+}
+
 class Clicker {
     Hit hold_;
     double nextRepeat_ = 0;
     bool held_ = false;   // a trigger pressed on a button is still down
+    int repeats_ = 0;     // how many times the held button has repeated
 
 public:
     void Reset() { *this = Clicker{}; }
@@ -29,9 +39,12 @@ public:
             hold_ = hover;
             nextRepeat_ = ms + kRepeatFirstMs;
             held_ = true;
+            repeats_ = 0;
         } else if (held_ && held && Repeats(hold_) && hover == hold_) {
             if (ms >= nextRepeat_) {
-                act = m.Click(hover);
+                Hit h = hover;
+                if (++repeats_ > kAccelAfter && Wide(h)) h.delta *= kAccelBy;
+                act = m.Click(h);
                 nextRepeat_ += kRepeatMs;
                 if (nextRepeat_ < ms) nextRepeat_ = ms + kRepeatMs;
             }

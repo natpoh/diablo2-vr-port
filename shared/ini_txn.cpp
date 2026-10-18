@@ -78,7 +78,7 @@ Result Commit(const wchar_t* path, const std::vector<Change>& changes, const wch
     if (!CopyFileW(path, temp.c_str(), FALSE)) { say("the temp copy could not be made"); return Result::Failed; }
     bool ok = true;
     for (const Change& c : changes)
-        if (!WritePrivateProfileStringW(c.section.c_str(), c.key.c_str(), c.value.c_str(), temp.c_str())) { ok = false; break; }
+        if (!WritePrivateProfileStringW(c.section.c_str(), c.key.c_str(), c.erase ? nullptr : c.value.c_str(), temp.c_str())) { ok = false; break; }
     WritePrivateProfileStringW(nullptr, nullptr, nullptr, temp.c_str());   // flush the profile cache
     if (!ok) { DeleteFileW(temp.c_str()); say("the temp copy could not be written"); return Result::Failed; }
     if (StampOf(path) != before) { DeleteFileW(temp.c_str()); say("the ini changed while the copy was made"); return Result::Conflict; }
@@ -97,7 +97,7 @@ Result Commit(const wchar_t* path, const std::vector<Change>& changes, const wch
     WritePrivateProfileStringW(nullptr, nullptr, nullptr, path);
     for (const Change& c : changes) {
         const Text now = ReadRaw(path, c.section.c_str(), c.key.c_str());
-        if (!now.present || !SameValue(now.text, c.value)) { say("a key did not read back as written"); return Result::Failed; }
+        if (c.erase ? now.present : (!now.present || !SameValue(now.text, c.value))) { say("a key did not read back as written"); return Result::Failed; }
     }
     return Result::Saved;
 }

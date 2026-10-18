@@ -40,6 +40,7 @@
 #include "panel_input.h"
 #include "shield_smite_game.h"
 #include "render_resolution.h"
+#include "sigscan.h"
 
 namespace skel { int HeroClass(); }   // the hero's class from the posed model's folder (vr/skeletons.cpp): -1 not known
 
@@ -254,6 +255,93 @@ int TwoHandedOf(const std::string& code) {
     return bit == 8 ? row[o] != 0 : (int)((row[o] >> bit) & 1u);
 }
 
+// [weight] hero_strength (vr/hero_strength.h): the weapon's Strength requirement - Weapons.txt "reqstr" - in its Items row, a field the SDK does not name either; found the way the
+// two above are: the offset and width at which a set of weapons whose requirements the game's own tables fix (a few of each tier) all read exactly those numbers. A build or a
+// mod that changes them finds no field: the requirement is then a typical one for the weapon's kind (vr/hero_strength.h NominalReq).
+int g_reqOffset = -2;                        // -2 not tried yet, -1 failed
+int g_reqWidth = 0;                          // bytes: 1, 2 or 4
+std::atomic<int> g_reqSide[2] = {{-1}, {-1}};   // each hand's weapon: its requirement, -1 not known
+std::atomic<int> g_heroStrength{-1};         // the hero's Strength stat, -1 not read
+std::atomic<bool> g_statFaulted{false};      // the stat getter faulted: not called again until the game restarts
+std::atomic<bool> g_wantStrength{false};     // [weight] hero_strength is ticked: only then is the stat read at all (SetWantHeroStrength)
+
+void CalibrateReqStr() {
+    g_reqOffset = -1;
+    if (!g_tables || g_typeOffset < 0) return;
+    static const struct { const char* code; uint32_t req; } kAnchors[] = {
+        {"axe ", 32}, {"lax ", 35}, {"2hs ", 35}, {"clm ", 47}, {"mpi ", 49}, {"lsd ", 55}, {"pik ", 60}, {"wax ", 67}, {"mau ", 69}, {"hal ", 75}, {"gma ", 99}, {"gsd ", 100}};
+    struct Probe { const uint8_t* row; uint32_t size; uint32_t want; };
+    std::vector<Probe> probes;
+    for (const auto& a : kAnchors) {
+        uint32_t size = 0;
+        if (const uint8_t* r = ItemRow(Four(a.code), &size)) probes.push_back({r, size, a.req});
+    }
+    if (probes.size() < 8) {
+        char b[160]; snprintf(b, sizeof b, "gamestate: strength requirement not looked for - only %d of %d probe weapons in the tables", (int)probes.size(), (int)std::size(kAnchors)); Log(b);
+        return;
+    }
+    uint32_t size = UINT32_MAX;
+    for (const Probe& p : probes) size = std::min(size, p.size);
+    for (const int width : {2, 4, 1}) {
+        std::vector<uint32_t> found;
+        for (uint32_t o = 0; o + (uint32_t)width <= size; o += (uint32_t)width) {
+            bool all = true;
+            for (const Probe& p : probes) {
+                uint32_t v = 0;
+                memcpy(&v, p.row + o, (size_t)width);
+                if (v != p.want) { all = false; break; }
+            }
+            if (all) found.push_back(o);
+        }
+        if (found.size() == 1) { g_reqOffset = (int)found[0]; g_reqWidth = width; break; }
+        if (found.size() > 1) {   // more than one place says the same: not a field to trust
+            char b[160]; snprintf(b, sizeof b, "gamestate: strength requirement: %d places fit at width %d - not used", (int)found.size(), width); Log(b);
+            return;
+        }
+    }
+    char b[220];
+    if (g_reqOffset >= 0) snprintf(b, sizeof b, "gamestate: strength requirement at row offset 0x%X (%d bytes, bank %u, %d probe weapons)", g_reqOffset, g_reqWidth, (unsigned)g_bank, (int)probes.size());
+    else snprintf(b, sizeof b, "gamestate: the strength requirement field was not found (%d probe weapons) - a typical one for the weapon's kind is used", (int)probes.size());
+    Log(b);
+}
+
+// The item's Strength requirement; -1 not known (no field found, or no such row).
+int ReqStrOf(const std::string& code) {
+    if (code.size() != 4 || g_reqOffset < 0) return -1;
+    uint32_t size = 0;
+    const uint8_t* row = ItemRow(Four(code.c_str()), &size);
+    if (!row || (uint32_t)(g_reqOffset + g_reqWidth) > size) return -1;
+    uint32_t v = 0;
+    memcpy(&v, row + g_reqOffset, (size_t)g_reqWidth);
+    return v <= 1000 ? (int)v : -1;
+}
+
+// The hero's Strength: the game's unit stat getter (stat 0), found through the same three signatures as the life and mana read (vr/hand_vitals_game.cpp, vr/low_hp.cpp). Plain data
+// only: __try cannot sit in a function that unwinds C++ objects. -1 when it cannot be read.
+int ReadHeroStrength() noexcept {
+    constexpr uint64_t kLocalIndex = 0x8B2D0, kClientPlayer = 0x9A480, kStat = 0x2F5020;
+    const uintptr_t indexFn = d2rsig::Addr(kLocalIndex), playerFn = d2rsig::Addr(kClientPlayer), statFn = d2rsig::Addr(kStat);
+    if (!indexFn || !playerFn || !statFn) return -1;
+    __try {
+        const int index = reinterpret_cast<int (*)()>(indexFn)();
+        if (index < 0 || index >= 8) return -1;
+        const uintptr_t player = reinterpret_cast<uintptr_t (*)(int)>(playerFn)(index);
+        if (player < 0x10000) return -1;
+        if (*reinterpret_cast<const volatile uint32_t*>(player) != 0) return -1;   // a player unit: its type is 0
+        const uint8_t* thunk = reinterpret_cast<const uint8_t*>(statFn);
+        if (thunk[0] == 0xFF && thunk[1] == 0x25) {   // a jump thunk through a slot the loader fills in: a slot still empty is not a getter
+            int32_t disp;
+            memcpy(&disp, thunk + 2, sizeof disp);
+            if (*reinterpret_cast<const volatile uintptr_t*>(statFn + 6 + (intptr_t)disp) < 0x10000) return -1;
+        }
+        const int v = reinterpret_cast<int (*)(uintptr_t, int, int)>(statFn)(player, 0, 0);
+        return v >= 0 && v <= 2000 ? v : -1;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        g_statFaulted.store(true);
+        return -1;
+    }
+}
+
 // The six throwing potions (Rancid Gas, Oil, Choking Gas, Exploding, Strangling Gas, Fulminating): item codes. They sit in a weapon slot
 // like a javelin and are thrown by the weapon's attack, so they are a thrown weapon here whatever their ItemTypes row says.
 constexpr uint32_t kThrowPotions[6] = {Four("gps "), Four("ops "), Four("gpm "), Four("opm "), Four("gpl "), Four("opl ")};
@@ -374,6 +462,9 @@ void __cdecl ReadItems(const PluginContext* ctx, void* user) noexcept {
         g_leftShield.store(false);
         g_held.store(0);
         g_two.store(0);
+        g_heroStrength.store(-1);
+        g_reqSide[0].store(-1);
+        g_reqSide[1].store(-1);
         if (const uint32_t s = g_set.exchange(0)) keptSet = s;
         Publish();
         return;
@@ -436,6 +527,24 @@ void __cdecl ReadItems(const PluginContext* ctx, void* user) noexcept {
     if (g_objLitOffset == -2) CalibrateObjectLights();
     if (g_twoOffset == -2 && g_typeOffset >= 0) CalibrateTwoHanded();
     ReadSkills();
+    if (!g_wantStrength.load()) {                                                      // [weight] hero_strength unticked: nothing of the game is asked
+        g_heroStrength.store(-1);
+        g_reqSide[0].store(-1);
+        g_reqSide[1].store(-1);
+    } else {
+        if (g_reqOffset == -2 && g_typeOffset >= 0) CalibrateReqStr();
+        for (int side = 0; side < 2; ++side) g_reqSide[side].store(ReqStrOf(code[side]));   // [weight] hero_strength: each hand's weapon's Strength requirement ...
+        if (!g_statFaulted.load()) {                                                       // ... and the hero's Strength
+            const int str = ReadHeroStrength();
+            const int was = g_heroStrength.exchange(str);
+            if ((was < 0) != (str < 0)) {
+                char b[160];
+                if (str >= 0) snprintf(b, sizeof b, "gamestate: the hero's Strength is read: %d", str);
+                else snprintf(b, sizeof b, "gamestate: the hero's Strength cannot be read now");
+                Log(b);
+            }
+        }
+    }
     uint32_t kind = KindOf(code[0]);
     int from = 0;   // the hand the kind came from
     if (!kind && (kind = KindOf(code[1])) != 0) from = 1;
@@ -782,6 +891,9 @@ uint32_t TwoHanded() { return g_two.load(); }
 uint32_t WeaponHand() { return g_from.load(); }
 uint32_t HandKind(int side) { return g_kindSide[side & 1].load(); }
 uint32_t HandCode(int side) { return g_codeSide[side & 1].load(); }
+void SetWantHeroStrength(bool on) { g_wantStrength.store(on); }              // [weight] hero_strength: ticked or not - only then is the stat (and the weapon's requirement) read
+int HeroStrength() { return g_heroStrength.load(); }                          // ... the hero's Strength stat, -1 not read
+int HandRequiredStrength(int side) { return g_reqSide[side & 1].load(); }    // ... the Strength requirement of the weapon in a hand (0 right, 1 left), -1 not known
 bool HandIsThrowPotion(int side) {
     const uint32_t c = g_codeSide[side & 1].load();
     for (const uint32_t p : kThrowPotions) if (c == p) return true;
@@ -831,6 +943,8 @@ void __cdecl DispatchAutoMap(const PluginContext* ctx, void* user) noexcept {
 // backgrounds NormalMonsterBackground or UniqueMonsterBackground. Every rectangle is local to its parent, in
 // the layout's units. Read on the UI thread (widget calls must be), one read at a time, each frame wanted.
 std::atomic<int32_t> g_plate[4] = {};
+std::atomic<int32_t> g_plateAnchor[2] = {};   // where the plate hangs from: the panel's place plus TargetAttached's (the pad's layout), off the same top middle
+std::atomic<bool> g_plateAttached{false};     // ... and TargetAttached was there to read (else the anchor is the panel's own place)
 std::atomic<ULONGLONG> g_plateAt{0};
 uiticket::Ticket g_plateReading;   // ReadPlate() queued (ui_ticket.h)
 Widgets::WidgetHandle g_platePanel = Widgets::InvalidHandle;
@@ -891,6 +1005,9 @@ void __cdecl ReadPlate(const PluginContext* ctx, void* user) noexcept {
     }
     const int32_t plate[4] = {ox + x0, oy + y0, x1 - x0, y1 - y0};
     for (int i = 0; i < 4; ++i) g_plate[i].store(plate[i]);
+    g_plateAnchor[0].store(ox);
+    g_plateAnchor[1].store(oy);
+    g_plateAttached.store(attached);
     g_plateAt.store(GetTickCount64());
     if (told < 12 && memcmp(last, plate, sizeof last) != 0) {
         ++told;
@@ -913,6 +1030,71 @@ void PollPlate() {
 bool PlateRect(int32_t out[4]) {
     if (GetTickCount64() - g_plateAt.load() > 250) return false;   // no target, no plate
     for (int i = 0; i < 4; ++i) out[i] = g_plate[i].load();
+    return true;
+}
+
+// Where the plate hangs from (x, y, the panel's own units off the top middle: the panel's place plus TargetAttached's), if read lately. [hud]
+// monster_bar_room checks it against the point it gave the game (plateworld::AnchorAtFixed): the game's default before a target and its mouse
+// layout both leave it at the panel's own place, and the plate there is not one to cut out.
+bool PlateAnchor(int32_t out[2]) {
+    if (GetTickCount64() - g_plateAt.load() > 250 || !g_plateAttached.load()) return false;
+    out[0] = g_plateAnchor[0].load();
+    out[1] = g_plateAnchor[1].load();
+    return true;
+}
+
+// The item-condition figure (vr/durability_figure.h): the game's HUDWarnings panel - top right of the interface area, rect -40, 12 in its layout - and its child
+// DurabilityWarning, a DurabilityWidget (data\global\ui\Layouts\HUDWarningsHD.json). Their rects as the widget service gives them (layout units, local to the
+// parent), read on the UI thread a few times a second while the figure is moved or hidden ([hud] durability_*); the first few changes go into the log, to check
+// against where the figure shows.
+std::atomic<int32_t> g_durPanel[4] = {}, g_durWidget[4] = {};
+std::atomic<bool> g_durWidgetRead{false};
+std::atomic<ULONGLONG> g_durAt{0};
+uiticket::Ticket g_durReading;   // ReadDurability() queued (ui_ticket.h)
+Widgets::WidgetHandle g_durPanelH = Widgets::InvalidHandle, g_durWidgetH = Widgets::InvalidHandle;
+void __cdecl ReadDurability(const PluginContext* ctx, void* user) noexcept {
+    if (!g_durReading.Claim(uiticket::FromUser(user))) return;   // come after its lease, replaced
+    if (!g_widgets || !g_widgets->findPanel || !g_widgets->getWidgetRect || !g_widgets->findWidget) return;
+    static int told = 0;
+    static int32_t last[9] = {};
+    Widgets::Result r = Widgets::Result::Success;
+    if (g_durPanelH == Widgets::InvalidHandle) r = g_widgets->findPanel(ctx, "HUDWarnings", &g_durPanelH);
+    Widgets::Rect rc{};
+    if (r == Widgets::Result::Success && g_durPanelH != Widgets::InvalidHandle) r = g_widgets->getWidgetRect(ctx, g_durPanelH, &rc);
+    if (r != Widgets::Result::Success) {   // no such panel now (a menu, the title): nothing read
+        if (r == Widgets::Result::StaleHandle || r == Widgets::Result::NotFound) g_durPanelH = Widgets::InvalidHandle;
+        g_durWidgetH = Widgets::InvalidHandle;
+        g_durAt.store(0);
+        return;
+    }
+    Widgets::Rect dc{};
+    const Widgets::Result dr = ChildRect(ctx, g_durPanelH, "DurabilityWarning", &g_durWidgetH, &dc);
+    const bool read = dr == Widgets::Result::Success;
+    g_durPanel[0].store(rc.x); g_durPanel[1].store(rc.y); g_durPanel[2].store(rc.width); g_durPanel[3].store(rc.height);
+    g_durWidget[0].store(read ? dc.x : 0); g_durWidget[1].store(read ? dc.y : 0); g_durWidget[2].store(read ? dc.width : 0); g_durWidget[3].store(read ? dc.height : 0);
+    g_durWidgetRead.store(read);
+    g_durAt.store(GetTickCount64());
+    const int32_t now[9] = {rc.x, rc.y, rc.width, rc.height, read ? dc.x : 0, read ? dc.y : 0, read ? dc.width : 0, read ? dc.height : 0, read ? 1 : 0};
+    if (told < 12 && memcmp(last, now, sizeof last) != 0) {
+        ++told;
+        memcpy(last, now, sizeof last);
+        char b[300];
+        snprintf(b, sizeof b, "gamestate: the item-condition figure - HUDWarnings at %d,%d %dx%d, DurabilityWarning (result %u) at %d,%d %dx%d",
+                 rc.x, rc.y, rc.width, rc.height, (unsigned)dr, dc.x, dc.y, dc.width, dc.height);
+        Log(b);
+    }
+}
+void PollDurability() {
+    if (!g_ctx || !g_threads || !g_threads->runOnUiThread || !g_widgets) return;
+    const uint32_t token = g_durReading.Start(GetTickCount64());   // 0: the last read not come yet
+    if (!token) return;
+    if (g_threads->runOnUiThread(g_ctx, &ReadDurability, uiticket::ToUser(token)) != Threads::Result::Success) g_durReading.Claim(token);
+}
+// The panel's rect and the figure widget's (x, y, width, height), if read lately; widgetRead false = the panel is there and the widget could not be found.
+bool DurabilityRect(int32_t panel[4], int32_t widget[4], bool* widgetRead) {
+    if (GetTickCount64() - g_durAt.load() > 1500) return false;
+    for (int i = 0; i < 4; ++i) { panel[i] = g_durPanel[i].load(); widget[i] = g_durWidget[i].load(); }
+    *widgetRead = g_durWidgetRead.load();
     return true;
 }
 

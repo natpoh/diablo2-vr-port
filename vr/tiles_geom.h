@@ -74,6 +74,13 @@ inline PRect LtArrowsRect() {
     return {c.l + 22.0f, c.b + 10.0f, c.r - 22.0f, c.b + 54.0f};
 }
 
+// -- the RUN / WALK tile ---------------------------------------------------------------------------------------------------------------
+// A tile of its own at the right of the first row, level with it ([openxr] skill_run_walk): the game's own run / walk switch, with what the
+// game says it is now on it. A little smaller than the slots' tiles; its caption is under it, where a slot's name goes.
+constexpr float kRunTile = 160.0f;
+constexpr PRect kRunRect{kRowLeft + kRowWidth + 26.0f, 168.0f, kRowLeft + kRowWidth + 26.0f + kRunTile, 168.0f + kRunTile};
+constexpr PRect kRunNameRect{kRunRect.l - 10.0f, kRunRect.b + 10.0f, kRunRect.r + 10.0f, kRunRect.b + 64.0f};
+
 // -- the window's bands --------------------------------------------------------------------------------------------------------------
 constexpr PRect kTitlePlate{60.0f, 36.0f, 1540.0f, 108.0f};      // the recessed plate the title is cut in
 constexpr PRect kPanel{40.0f, 124.0f, 1560.0f, 1066.0f};         // the near-black panel
@@ -119,8 +126,18 @@ inline void SheetPoint(float u, float v, float* su, float* sv) {
 
 // -- the editor's grid ----------------------------------------------------------------------------------------------------------------
 constexpr int kGridCols = 8, kGridRows = 3, kGridCount = kGridCols * kGridRows;
-constexpr float kCellTile = 160.0f, kCellGap = 16.0f, kCellH = 210.0f, kCellRowGap = 12.0f;
-constexpr float kGridLeft = 0.5f * (kW - (kGridCols * kCellTile + (kGridCols - 1) * kCellGap)), kGridTop = 144.0f;
+constexpr float kCellTile = 150.0f, kCellGap = 16.0f, kCellH = 200.0f, kCellRowGap = 12.0f;
+constexpr float kGridLeft = 0.5f * (kW - (kGridCols * kCellTile + (kGridCols - 1) * kCellGap)), kGridTop = 202.0f;   // (under the category strip)
+
+// -- the category strip --------------------------------------------------------------------------------------------------------------
+// All, the class's three skill trees and General / Items: five tabs across the top of the panel, over the grid. They are there only when the
+// player's cache knows the trees (the band is left empty otherwise, so the grid stays where it is).
+constexpr float kStripTop = 136.0f, kStripBottom = 188.0f, kStripLeft = 60.0f, kStripGap = 14.0f;
+constexpr float kStripTabW = (kW - 2.0f * kStripLeft - (wheel::kCategories - 1) * kStripGap) / wheel::kCategories;
+inline PRect StripRect(int category) {
+    const float l = kStripLeft + category * (kStripTabW + kStripGap);
+    return {l, kStripTop, l + kStripTabW, kStripBottom};
+}
 // A cell is the tile and the skill's name under it (the whole is what the pointer picks).
 inline PRect GridRect(int i) {
     const float l = kGridLeft + (i % kGridCols) * (kCellTile + kCellGap), t = kGridTop + (i / kGridCols) * (kCellH + kCellRowGap);
@@ -161,6 +178,11 @@ inline PRect Inflate(const PRect& r, float d) { return {r.l - d, r.t - d, r.r + 
 inline bool RectOf(Page page, int cell, int options, PRect* out) {
     for (int i = 0; i < ButtonCount(page); ++i)
         if (ButtonCell(page, i) == cell) { *out = ButtonRect(page, i); return true; }
+    if (cell == wheel::kRunWalk && page == Page::Wheel) { *out = kRunRect; return true; }
+    if (page == Page::PickSkill && cell >= wheel::kCategory0 && cell < wheel::kCategory0 + wheel::kCategories) {
+        *out = StripRect(cell - wheel::kCategory0);
+        return true;
+    }
     if (page == Page::PickSkill) {
         if (cell >= 0 && cell < kGridCount && cell < options) { *out = GridRect(cell); return true; }
         return false;
@@ -172,8 +194,10 @@ inline bool RectOf(Page page, int cell, int options, PRect* out) {
 // What a point on the window hits on this page: the cell (a slot 0..11, a grid entry, a button), or kNone. `previous` is the hover of
 // the frame before (or kNone): a point just outside its edge keeps it, so a pointer shaking over a gap does not flicker. `tabs`: the strip
 // is there (the top level only); `settings`: and the Settings tab is the one shown - then only the strip is hit here (the pages are the
-// settings model's: vr/hset_model.h HitTest on SheetPoint).
-inline int HitTest(Page page, float u, float v, int previous, int options, bool tabs = false, bool settings = false) {
+// settings model's: vr/hset_model.h HitTest on SheetPoint). `strip`: the category strip is shown (the editor's grid page); `runWalk`: the RUN / WALK
+// tile is there (the top level's Skills tab).
+inline int HitTest(Page page, float u, float v, int previous, int options, bool tabs = false, bool settings = false, bool strip = false,
+                   bool runWalk = false) {
     if (!std::isfinite(u) || !std::isfinite(v) || u < 0.0f || u >= 1.0f || v < 0.0f || v >= 1.0f) return wheel::kNone;
     const float x = u * kW, y = v * kH;
     if (tabs && page == Page::Wheel) {
@@ -185,7 +209,11 @@ inline int HitTest(Page page, float u, float v, int previous, int options, bool 
     }
     for (int i = 0; i < ButtonCount(page); ++i)
         if (Has(ButtonRect(page, i), x, y)) return ButtonCell(page, i);
+    if (page == Page::Wheel && runWalk && Has(kRunRect, x, y)) return wheel::kRunWalk;
     if (page == Page::PickSkill) {
+        if (strip)
+            for (int c = 0; c < wheel::kCategories; ++c)
+                if (Has(StripRect(c), x, y)) return wheel::CategoryCell(c);
         for (int i = 0; i < kGridCount && i < options; ++i)
             if (Has(GridRect(i), x, y)) return i;
     } else {

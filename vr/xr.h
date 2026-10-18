@@ -25,6 +25,7 @@ void SetWindow(HWND__* wnd);
 // first-person pair, switched off ends it and gives the headset back to FlatVR.
 void LoadSettings(const wchar_t* iniPath);
 bool On();
+bool FlatVrRunning();   // FlatVR's head sample moving (pace::Tick, [stereo] pace_flatvr_only)
 
 // The eyes for the frame open now, recentred: metres and a rotation in the head's
 // frame at the last recentre (x right, y up, z back), and each eye's field of view
@@ -104,6 +105,9 @@ void FollowLink();
 bool Running();
 // [openxr] lean_m: how far the head may move off the body (0: not at all - a neck model then).
 float LeanM();
+// [openxr] roomscale_walk (vr/room_walk_wire.cpp), every view build it owns: the body stays where it is - no lean_m drag - for 2.5 s
+// from the call; the room walk keeps its own point in the eyes' frame then (the hero's place). A recentre still puts the body under the head.
+void HoldBody();
 // Native OpenXR with the eyes by turns ([stereo] afr without pair_per_tick): one pass a game frame,
 // one eye, the other handed in again as it was last drawn.
 bool ByTurns();

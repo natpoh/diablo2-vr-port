@@ -32,6 +32,14 @@ struct Out {
     // attach bone to a point - until the game's throw animation is over (then the game's own next one is in the hand, and ours is drawn again).
     bool hidden = false;
     float midM = 0.0f;
+    // [weight] grip_model 1 and a grip library loaded: the hands are held the library's way. Each hand's grip mode (0 none, 1 tight, 2 loose) and its turn about the shaft against the
+    // grip it took it in (rad); the shaft's wood as the weight model has it, in metres along the weapon bone's tip axis from the bone's origin (up to three cylinders and the ends).
+    bool gripLib = false;
+    int gripMode[2] = {};
+    float gripRoll[2] = {};
+    int nPieces = 0;
+    float pieceT0[3] = {}, pieceT1[3] = {}, pieceR[3] = {};
+    float shaftButtT = 0.0f, shaftTipT = 0.0f;
 };
 
 // Steps the weapon once per new head sample and moves the controllers of the hands on it to where the
@@ -76,6 +84,19 @@ void SetHaptic(HapticFn fn);
 // with thrown_model 1, when its animation is over (vr/weight_throw.h ThrownFly). Unregistered: a thrown model ends when it lands or thrown_fly_ms is up.
 using HeroModeFn = int (*)();
 void SetHeroModeSource(HeroModeFn fn);
+// [weight] hands_model 1: loads the weight-physics library if it is not loaded yet (vrcam registers weightlib::Ensure; true = a library is in use). Unregistered: there is none, ours.
+using LibraryFn = bool (*)();
+void SetLibrarySource(LibraryFn ensure);
+// [weight] grip_model 1: the same for the grip library (vrcam registers griplib::Ensure).
+void SetGripLibrarySource(LibraryFn ensure);
+// [weight] hero_strength (vr/hero_strength.h): what the hero's strength did to the weapon last time the model stepped, for the log and the tests. on: the box is ticked and the
+// Strength was read (steel and hands are then the factors the model took); reqFromGame: the requirement is the game's own, not a typical one for the kind.
+struct StrengthNote {
+    bool on = false, reqFromGame = false;
+    int str = -1, req = 0;
+    float classPct = 100.0f, effectPct = 100.0f, ratio = 1.0f, steel = 1.0f, hands = 1.0f;
+};
+bool LastStrength(StrengthNote* out);   // true when the box is ticked and the Strength was read
 // [weight] thrown_handoff_ms: the game's own animation has passed its ACTION frame - the throw's release point, where its own missile is born. The thrown
 // model flies out of the hand along the throw and hands over to that missile there (vanishes; the hand stays empty), or at the fixed handoff time, whichever
 // comes first. Unregistered (the default: the unit's animation frame is not read - its layout is not verified), the fixed time alone hands over.
@@ -88,8 +109,16 @@ bool BackStowed();
 bool HoldsWeapon(int side);
 // The hand that carries it now (0 right, 1 left); -1 when none does (no weapon held so, or let go).
 int CarryingHand();
+// The hands that hold the weapon or that it flies into, a bit each (1 right, 2 left); 0 when none (let go, falling, lying). The shield keeps to the other forearm ([hands] shoulder_draw,
+// vr/shield_arm.h): whenever this is the shield's hand alone, the shield jumps.
+unsigned WieldingHands();
 // A weapon is held that way ([weight] on, a melee weapon in hand) - in a hand or not.
 bool Placed();
+// Where a grip pressed now by that hand (0 right, 1 left) would take the weapon, from the last step (any thread): 0 nowhere, 1 the shaft (the second hand on the held weapon, or a weapon on the floor / in
+// the air within [weight] grab_cm of the fist), 2 the weapon on the back (behind a shoulder, or within back_take_cm of its drawn shaft). *cm: the fist's distance to that shaft in centimetres (1e6 when
+// none). 3 = the weapon is away (on the back, or on the floor / in the air) and this hand's grip would CALL IT BACK from afar - the game's hand, and on the back any hand with recall_any_hand: the
+// hand is not at the weapon. Read by the belt potions (vr/grab_priority.h): a hand in the weapon's zone takes the weapon, not a potion.
+int TakeZone(int side, float* cm);
 // What the AIM of a staff is taken from (vr/aim_source.h): the controllers, never the weapon as it is drawn. holds: that hand holds the weapon now; hand: the
 // one that carries it (-1 none: let go, falling, lying, on the back); shaft: the shaft toward the tip in THAT hand's own (controller's) frame, as it grips it - fixed by
 // the grip, so the weapon's lag, sag and slide do not move it. True when a hand carries the weapon and the model stepped lately.

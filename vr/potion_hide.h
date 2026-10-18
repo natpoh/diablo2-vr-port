@@ -218,5 +218,11 @@ bool HooksIn();
 // when the option is not ready.
 bool Arm(uint64_t nowMs, double flightS);
 void Disarm();
+// Another reader of the world-matrix function's results ([hands] xbow_support_model: the crossbow as the renderer places it, skel::XbowRendered):
+// called after the original for every entity, on the renderer's thread - it must be cheap and only read. WantHooks(true) puts the two hooks in
+// (as Configure(true) does) even with the potion hide off; the hooks still do nothing to any entity of their own then.
+using XformObserver = void (*)(uint32_t entity, uintptr_t component, uintptr_t out);
+void SetXformObserver(XformObserver fn);
+void WantHooks(bool want);
 
 }  // namespace potionhide

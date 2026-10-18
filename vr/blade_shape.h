@@ -257,6 +257,19 @@ inline stroke::Blade FromBone(const HeadFrame& h, const Bone& b, const Shape& sh
     return {origin - dir * shape.butt, origin + dir * shape.length, shape.radius};
 }
 
+// [flail] chain: a flail's ball swinging on its chain is the blade - a ball, not the handle's capsule: a segment of 1 cm along the last link,
+// centred on the ball, as thick as the ball (its radius from the model's mesh, flail_chain.h HeadOf). Its "bone" is the ball: origin its centre,
+// axisY the last link's way. Every point of it moves with the ball, so the contact's speed, its way and the swing's travel are the ball's.
+constexpr float kBallHalf = 0.005f;
+inline Shape BallShape(float radiusM) {
+    Shape s;
+    s.length = kBallHalf;
+    s.butt = kBallHalf;
+    s.radius = radiusM;
+    s.tipSign = 1;
+    return s;
+}
+
 // The same blade in the ROOM (tracking) frame - the frame the hand's samples are in (room_pose.h RoomPose) - so the stroke engine can measure the
 // BLADE's own motion there (Sample::room): world turning or the hero walking cannot power it, as they cannot power the hand's. The bone is in the
 // head's turn-only frame (metres from the eyes, x right, y up, z back), exactly the frame the shared block's hands are in; head: where the head is

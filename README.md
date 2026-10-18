@@ -16,7 +16,14 @@ including a free BodyWalk Lite if you don't have BodyWalk.
 **[Open the mod's page on BodyWalkVR](https://bodywalkvr.com/mods/d2r-vr)** - the
 four views in video, the controls and the setup.
 
-**What's new in 0.167:** a faster picture in native OpenXR (our own depth, picked
+**What's new in 0.168:** no more frozen game in native OpenXR (the right eye goes
+to the GPU in the game's own calls); weapons with weight by the hero's Strength
+and a two-handed hilt grip; a flail's ball on a real chain; weapons, the bow, the
+crossbow and the shield put away behind your shoulders; energy orbs along the bow
+that pick the arrow skill, and arrows that burn, freeze or crackle; the crossbow
+held by its grip; spells aimed by the hand or staff; buffs, auras, curses and
+summons on your wrist; skills by the class's trees; Run / Walk on any button.
+**In 0.167:** a faster picture in native OpenXR (our own depth, picked
 once), the full controller in VR F1, F2 and F3 without BodyWalk, a shield on the
 forearm, and settings from the fork d2r-pcvr (turning, the Steam Frame's layout,
 vibration for each hand, menus that follow the VR render size). **In 0.166:** the
@@ -149,10 +156,11 @@ BodyWalk's Mapping is not needed for them:
 | Right B, left X, left Y, left trigger | the game's skill buttons B, X, Y and LT |
 | Right stick click | swap weapon sets; held half a second: the skill panel |
 | Left stick click | show items (Alt); a quick click: the map; held half a second: the inventory |
-| Menu button | the inventory |
+| Menu button (PS VR2: the right controller's Options) | the inventory; held half a second: the pause menu (Esc) |
 | Grips | nothing on the pad: the belt's potions, the staff's second hand and, with Weapon Weight, the weapon read them |
 
-Every line is in `[direct]` of d2r_vr.ini and can be rebound. In F1, F2 and F3
+Every line is in `[direct]` of d2r_vr.ini and can be rebound - by hand, or from a list
+in D2R VR Settings > Controls > Buttons of the controllers. In F1, F2 and F3
 (without BodyWalk running) the same controller is the game's gamepad too, without
 first person's skill panel, settings panel and gestures; the left trigger held with a
 flick of a thumbstick drinks a belt potion (left = 1, up = 2, right = 3, down = 4).

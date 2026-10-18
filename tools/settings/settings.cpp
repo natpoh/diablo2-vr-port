@@ -49,7 +49,12 @@
 #include "render_size.h"     // [render] vr_resolution_px / vr_resolution: the VR render size, read the way the plugin reads it
 #include "window_json.h"     // the game's windowed size in Settings.json and what each platform does to it (the plugin's policy, tested)
 #include "turn_mode.h"       // [turn] smooth / snap / speed: how the right stick turns, and what an older ini's snap=0 means (the plugin's rule)
+#include "bw_output.h"      // BodyWalk's Output in its settings file: does its pad reach the game (the Status row, tested)
+#include "bw_path.h"        // how BodyWalk's input reaches the game: Game Link direct, or its gamepad and Mapping (the Status row, tested)
 #include "frame_cap.h"       // the game's frame cap in Settings.json: VR's rate is VR's, flat mode has the player's own (the plugin's policy, tested)
+#include "toolbar_type.h"   // the toolbar's type: one choice over [hud] hide and bar_place (the headset panel has it too)
+#include "../../vr/direct_remap.h"   // [direct]: the list of controller buttons ("@remap" rows), read and written by the plugin's own parser (tested)
+#include "safe_screen.h"     // the game's interface size in Settings.json: VR starts it at 80 where the player chose none, flat mode has his own (the plugin's policy, tested)
 
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "shell32.lib")
@@ -91,6 +96,7 @@ struct Item {
     bool hidden = false;                     // left out of the page for now (the update row until there is one)
     int col = -1;                            // Group: the column it goes in (0 left); -1 = the shortest column so far (LayoutPage)
     bool big = false;                        // Button: a large one (the Home page's START)
+    int cell = -1;                           // a row of a table (the Strikes tab's kinds): which cell, 0 = the row's label, which starts the row; the others sit beside it (a slider shows its number box only)
     struct ShowFor { const wchar_t* section = nullptr; const wchar_t* key = nullptr; unsigned mask = 0; int item = -1; } showFor;
     bool off = false;                        // left out while showFor's key has a value not in its mask (UpdateEnabled)
     const wchar_t* oldKey = nullptr;         // Slider / Choice: while its own key is not in the ini yet it starts from this older key of the same section (ReadValue)
@@ -208,6 +214,46 @@ wchar_t g_resTip[2600] = L"The size of the game's picture in the headset, a squa
                          L"Drag it to any size from 1024 to 4096; the left end is the game window's own size.";
 wchar_t g_resTipHeadset[900] = L"Take the size the headset's runtime recommends per eye, its own shape.";
 
+// "@remap" rows: one button of a controller, its action chosen from a list (vr/direct_remap.h - the same list and the same ini keys the plugin
+// reads, [direct] right_trigger, left_stick_hold, left_grip+left_menu ...). The list's names, once; the last is "Custom" - a line written by
+// hand that the list has no name for, which it leaves alone.
+const std::vector<const wchar_t*>& RemapNames() {
+    static std::deque<std::wstring> text;
+    static std::vector<const wchar_t*> names;
+    if (names.empty()) {
+        for (const directinput::remap::Pick& p : directinput::remap::Picks()) text.emplace_back(p.label, p.label + std::strlen(p.label));
+        text.emplace_back(L"Custom (written by hand in d2r_vr.ini)");
+        for (const std::wstring& s : text) names.push_back(s.c_str());
+    }
+    return names;
+}
+// What a touch row adds to its tip: the finger ARRIVING on the control, not a press.
+constexpr const wchar_t* kTouchTip =
+    L" TOUCH, not a press: this fires once when your finger ARRIVES on the control (the capacitive touch of a Touch controller - PS VR2 on SteamVR is "
+    L"one - or an Index controller), nothing more while it stays, and once again the next time it arrives. It is on top of what pressing the same control "
+    L"does (the touch comes first). A Vive, WMR or simple controller reports no touch: nothing happens there. First person (F4), in the world only - not in "
+    L"a menu or with a panel of the mod's own up. Nothing is bound by default; to put the game's run / walk switch here pick \"Run / walk switch\". "
+    L"The log (d2r-vr-vrcam.log) says which touch inputs your controller reports.";
+Item RemapRow(const wchar_t* key, const wchar_t* label, const wchar_t* touchTip = nullptr) {
+    static std::deque<std::wstring> tips;   // (the tooltip holds the pointer)
+    std::wstring tip = L"What this does, from the list; it is written to d2r_vr.ini, section [direct], as \"";
+    tip += key;
+    tip += L" = ...\". The standard choice is not written at all (the line goes), so a new default still reaches you; \"Nothing\" is written as "
+           L"none. \"Custom\" is a line you wrote by hand that this list has no name for (two outputs, a key command not in the list): it is left "
+           L"as it is until you pick something here. A pad button (Gamepad B, X, Y, RB...) is the game's own skill button; \"Pause menu (Esc)\" taps the "
+           L"keyboard's Esc for the game. Live. Works in F4 and, for the controllers in F1 - F3 without BodyWalk, there too (the pause menu and "
+           L"the skill panel are F4's).";
+    if (touchTip) tip += touchTip;
+    tips.push_back(tip);
+    Item i = Slider(L"@remap", key, label, 0, (float)RemapNames().size() - 1, 1, 0, tips.back().c_str());
+    i.kind = Kind::Choice;
+    i.choices = RemapNames();
+    return i;
+}
+// The rows of the list that need the controls without BodyWalk (and, for a long press, hold_enabled).
+Item DirectNeeds(Item i) { return Needs(L"openxr", L"direct_input", 1, i); }
+Item LongPressNeeds(Item i) { return Needs(L"direct", L"hold_enabled", 1, DirectNeeds(i)); }
+
 // Order = layout order: a Tab starts a tab, a Group a group on it.
 std::vector<Item> g_items = {
     Tab(L"Home"),
@@ -324,11 +370,13 @@ std::vector<Item> g_items = {
     Status(L"bw_running", L"BodyWalk running"),
     Status(L"game_link", L"Game Link plugin"),
     Status(L"universal", L"Universal tracking output"),
+    Status(L"bw_output", L"BodyWalk's Output"),
     Status(L"flatvr_on", L"FlatVR switched on"),
     Status(L"head_lock", L"Head Lock follows the game"),
     Status(L"frame_gen", L"Frame generation off"),
     Status(L"flatvr_running", L"FlatVR running"),
     Status(L"head", L"Head tracking reaches the game"),
+    Status(L"bw_path", L"BodyWalk's path to the game"),
     Status(L"game", L"The game runs with the mod"),
     Button(L"@update", L"check_now", L"Check for updates",
            L"Asks bodywalkvr.com now, even with the check at start switched off. Nothing is downloaded."),
@@ -362,6 +410,11 @@ std::vector<Item> g_items = {
            L"Stops FlatVR in BodyWalk. The same as STOP FLATVR on BodyWalk's FlatVR tab."))),
 
     Tab(L"Performance"),
+    Group(L"Processor"),
+    Toggle(L"render", L"vcache", L"Game on the cores with the big cache (Ryzen X3D)", 0,
+           L"On a Ryzen with 3D V-Cache on one of its two core groups (7900X3D, 7950X3D, 9900X3D, 9950X3D) the game's threads "
+           L"are asked to run on the cores with the big L3 cache, and its drawing thread gets a higher priority - D2R's frame is "
+           L"bound by that one thread. Other processors: nothing changes. The log says which cores were taken. Live."),
     Group(L"Quality"),
     Choice(L"@preset", L"preset", L"Quality preset", 2, {L"Potato", L"Low", L"Medium", L"High", L"Custom"},
            L"Sets the settings below at once. Potato: as Low, but the 3D made from ReShade's depth instead of real stereo "
@@ -580,6 +633,7 @@ std::vector<Item> g_items = {
     Only(kVr, Group(L"Gestures (native OpenXR)")),
     Only(kVr, Toggle(L"hands", L"shoulder_swap", L"Swap weapon sets: the grip behind the shoulder", 0,
            L"Native OpenXR: reach a hand behind either shoulder and press its grip once - the game's own \"Swap weapons\" "
+           L"(not while \"The shoulders hold your weapons\" is ticked on Weapon Weight: then that zone draws instead) "
            L"(weapon set I / II) is pressed, as its key would be, with all of the game's gates. The hand has to rest there "
            L"for a moment first; the grip pressed there is the swap's and takes no belt potion; reaching back without the grip "
            L"(a javelin's wind-up) does nothing. The game's weapon set says whether it took: a swap that did not is not "
@@ -594,6 +648,58 @@ std::vector<Item> g_items = {
            L"picture flashes and fades (the gesture's own binding fires - that is set in BodyWalk, not here); a stray attempt just "
            L"fades. BodyWalk recognises the shape and decides what to show; this only draws it, in the headset, over the game. "
            L"Off, or in the other views (F1 - F3), or with no BodyWalk: nothing is drawn, the game as before. Live."))),
+    // What each button of the controllers does (2026-10-16, players' wish: the pause menu, and rebinding without the ini). The same keys as
+    // d2r_vr.ini [direct]; the rows are greyed unless the controls without BodyWalk are on (Stereo > Native OpenXR).
+    Only(kVr, Group(L"Buttons of the controllers: right hand")),
+    DirectNeeds(RemapRow(L"right_trigger", L"Right trigger")),
+    DirectNeeds(RemapRow(L"right_a", L"Right A")),
+    DirectNeeds(RemapRow(L"right_b", L"Right B")),
+    DirectNeeds(RemapRow(L"right_stick", L"Right stick click")),
+    DirectNeeds(RemapRow(L"right_menu", L"Right menu button (Vive, WMR; a Touch has none)")),
+    DirectNeeds(RemapRow(L"right_grip", L"Right grip (the belt and two hands use it)")),
+    Only(kVr, Group(L"Buttons of the controllers: left hand")),
+    DirectNeeds(RemapRow(L"left_trigger", L"Left trigger")),
+    DirectNeeds(RemapRow(L"left_x", L"Left X")),
+    DirectNeeds(RemapRow(L"left_y", L"Left Y")),
+    DirectNeeds(RemapRow(L"left_stick", L"Left stick click")),
+    DirectNeeds(RemapRow(L"left_menu", L"Left menu button (PS VR2: the right Options)")),
+    DirectNeeds(RemapRow(L"left_grip", L"Left grip (the belt and two hands use it)")),
+    Only(kVr, Group(L"Buttons of the controllers: a long press")),
+    Needs(L"direct", L"hold_enabled", 1, DirectNeeds(Toggle(L"direct", L"pause_button", L"Pause menu (Esc): long press of the left menu button (PS VR2: Options)", 1,
+           L"With the controls without BodyWalk, first person (F4): hold the left menu button for half a second and the game gets Esc - its own "
+           L"pause menu (or the open panels close, whatever Esc does at that moment). A short press is the inventory, as before (it opens when "
+           L"you let go). On PS VR2 (SteamVR runs its controllers as Touch controllers) the \"left menu button\" is the OPTIONS button of the RIGHT controller: "
+           L"SteamVR's own remapping gives a game that one and no Create button, so hold Options. The list below puts the pause menu on any other button "
+           L"(\"Pause menu (Esc)\"). Unticked: the menu button opens the inventory the moment it is pressed, as it did before the pause button. "
+           L"A Touch controller has no right menu button (that one is the system's). Needs the long presses (\"Long presses\" in "
+           L"the Native OpenXR group). In d2r_vr.ini: pause_button, left_menu_hold = action:pause. The log (d2r-vr-vrcam.log) says \"the ... hand's menu button "
+           L"pressed\" with the path and the headset for each press, and what happened to the Esc. Live. F4 only."))),
+    LongPressNeeds(RemapRow(L"left_menu_hold", L"Left menu button (long press; PS VR2: the right Options)")),
+    LongPressNeeds(RemapRow(L"left_stick_hold", L"Left stick click (long press)")),
+    LongPressNeeds(RemapRow(L"right_stick_hold", L"Right stick click (long press)")),
+    LongPressNeeds(RemapRow(L"right_menu_hold", L"Right menu button (long press)")),
+    LongPressNeeds(RemapRow(L"left_x_hold", L"Left X (long press)")),
+    LongPressNeeds(RemapRow(L"left_y_hold", L"Left Y (long press)")),
+    LongPressNeeds(RemapRow(L"right_a_hold", L"Right A (long press)")),
+    LongPressNeeds(RemapRow(L"right_b_hold", L"Right B (long press)")),
+    Only(kVr, Group(L"Buttons of the controllers: with the grip held")),
+    DirectNeeds(RemapRow(L"left_grip+left_menu", L"Left grip + menu button")),
+    DirectNeeds(RemapRow(L"left_grip+left_stick", L"Left grip + stick click")),
+    DirectNeeds(RemapRow(L"left_grip+left_x", L"Left grip + X")),
+    DirectNeeds(RemapRow(L"left_grip+left_y", L"Left grip + Y")),
+    DirectNeeds(RemapRow(L"right_grip+right_menu", L"Right grip + menu button")),
+    DirectNeeds(RemapRow(L"right_grip+right_stick", L"Right grip + stick click")),
+    DirectNeeds(RemapRow(L"right_grip+right_a", L"Right grip + A")),
+    DirectNeeds(RemapRow(L"right_grip+right_b", L"Right grip + B")),
+    Only(kVr, Group(L"Buttons of the controllers: the finger on a control (touch)")),
+    DirectNeeds(RemapRow(L"right_trigger_touch", L"Right trigger (touch)", kTouchTip)),
+    DirectNeeds(RemapRow(L"right_a_touch", L"Right A (touch)", kTouchTip)),
+    DirectNeeds(RemapRow(L"right_b_touch", L"Right B (touch)", kTouchTip)),
+    DirectNeeds(RemapRow(L"right_stick_touch", L"Right stick (touch)", kTouchTip)),
+    DirectNeeds(RemapRow(L"left_trigger_touch", L"Left trigger (touch)", kTouchTip)),
+    DirectNeeds(RemapRow(L"left_x_touch", L"Left X (touch)", kTouchTip)),
+    DirectNeeds(RemapRow(L"left_y_touch", L"Left Y (touch)", kTouchTip)),
+    DirectNeeds(RemapRow(L"left_stick_touch", L"Left stick (touch)", kTouchTip)),
 
     Only(kVr, Tab(L"Stereo")),
     // Native OpenXR (Performance > 3D in the headset > Native OpenXR): applied at once while the game runs.
@@ -637,32 +743,64 @@ std::vector<Item> g_items = {
     Slider(L"openxr", L"lean_m", L"Head off the body, m", 0.0f, 0.5f, 0.01f, 0.1f,
            L"First and third person: how far the head may lean away from the hero's body. Farther, the body follows - "
            L"walking in the room never takes the camera out of the hero. 0 = turning only."),
+    Toggle(L"openxr", L"roomscale_walk", L"Room-scale walking: your steps in the room walk the hero (F4)", 0,
+           L"Native OpenXR, VR first person (F4) only. Walk in your room and the hero walks the same way: the plugin gives the game's own walking "
+           L"stick - the one the controller's left stick uses - the direction and the speed of your steps, so the game's pathing, walls, walk / run "
+           L"and speed stay the game's; the hero is never moved or put anywhere by the plugin. The view stays with your head the whole time and "
+           L"the hero catches up under it. Turning your head, nodding or a small lean (the dead zone below) walks nothing. The stick asks the game "
+           L"for your own walking speed (its walk speed follows the stick's tilt; the hero's speed at a full stick is learned as you play), so a "
+           L"steady walk is one steady tilt and the hero walks with you - slow walks too while \"walk straight\" ([input] direct_walk, on by "
+           L"default) is on; without it the gamepad's dead zone makes the game's slowest walk faster than a step in a room, and the hero walks and "
+           L"waits. A brisk stride can reach a run when the game's Run / Run Lock is on. Turning is never done by it: the hero's facing stays as it is. "
+           L"The controller's left stick wins while it is pushed (the view goes with the hero then, as always). When the hero is blocked (a wall, a "
+           L"monster) and you walk on, the view leaves him by at most the limit below; past it the room slides with you, as \"Head off the body\" "
+           L"does. A panel or the chat open: no walk, your place is kept. F11 or the headset's own recentre puts the hero under your head again. "
+           L"Off: walking in the room does not move the hero (the body follows the head past \"Head off the body\", as before). FlatVR: nothing - "
+           L"its camera has no head place to walk by. The log says \"room walk - live / holds / stands down\" and why. Live."),
+    Needs(L"openxr", L"roomscale_walk", 1, Slider(L"openxr", L"roomscale_dead_zone_m", L"Room-scale walking: dead zone, m", 0.03f, 0.5f, 0.01f, 0.12f,
+           L"How far the top of your neck may move off the hero's place before he walks: leaning and swaying inside it walk nothing. "
+           L"Smaller: he follows every small step (and a lean); larger: only real steps walk him. Live.")),
+    Needs(L"openxr", L"roomscale_walk", 1, Slider(L"openxr", L"roomscale_cap_m", L"Room-scale walking: the farthest the view leaves a blocked hero, m", 0.2f, 2.0f, 0.05f, 0.6f,
+           L"When the hero cannot follow (a wall, a monster, a door) and you walk on, the view goes ahead of him at most this far; past it the room "
+           L"slides with you - the view stays this far from him, without a jump. Step back and he walks under your head again. Live.")),
     Toggle(L"openxr", L"direct_input", L"Controls without BodyWalk (the plugin reads the controllers itself)", 0,
            L"Native OpenXR only. The plugin reads the sticks, triggers, grips and buttons of both controllers and gives the game "
            L"its own gamepad, actions and key commands - BodyWalk is not needed for the controls. While this is on, BodyWalk's "
            L"gamepad buttons, gestures and actions are ignored (it can stay on for FlatVR); its walking is the exception, see the box below. Layout: the left stick walks, the "
            L"right stick turns; the right trigger attacks, A picks up or opens, B / X / Y are the gamepad's skill buttons "
            L"(left trigger held: the second row), the right stick click swaps weapons, the left stick click shows items (Alt) and, as a quick click, the map, "
-           L"the menu button opens the inventory; in a menu the controllers are the game's own gamepad (A B X Y, the grips "
-           L"are the bumpers) and the laser works as before. Change any of it in d2r_vr.ini, section [direct]. "
+           L"the menu button opens the inventory (held for half a second: the game's pause menu, Esc; on PS VR2 the menu button is the Options button of the RIGHT controller); in a menu the controllers are the game's own gamepad (A B X Y, the grips "
+           L"are the bumpers) and the laser works as before. Change any of it in the lists under Controls > Buttons of the controllers, or in d2r_vr.ini, section [direct]. "
            L"Off: BodyWalk's controls, as before. F4 only: in F1, F2, F3 and the flat modes BodyWalk's controls are the controls, as if this were off - "
            L"except the controllers in F1-F3 when BodyWalk is not running (the box \"Play with the controllers in F1, F2, F3 without BodyWalk\" below)."),
     Needs(L"openxr", L"direct_input", 1, Toggle(L"direct", L"flat_controller", L"Play with the controllers in F1, F2, F3 without BodyWalk", 1,
            L"VR views F1 (from above), F2 (third person) and F3 (the game on the floor) with no BodyWalk running: the plugin's own controllers are the "
            L"game's gamepad there - the same layout as first person (F4): the right trigger attacks, A picks up or opens, B / X / Y are the gamepad's skill "
            L"buttons (left trigger held: the second row), the right stick click swaps weapons, the left stick click shows items (Alt) and, as a quick click, "
-           L"the map, the menu button opens the inventory, the sticks are the gamepad's (the left one walks the hero, the left trigger + a flick of a stick "
+           L"the map, the menu button opens the inventory (the pause menu's long press is F4's), the sticks are the gamepad's (the left one walks the hero, the left trigger + a flick of a stick "
            L"drinks a belt potion, see the boxes below); in a menu they are the game's own gamepad. Rebind in d2r_vr.ini, section [direct] (the same lines "
            L"as F4). What stays F4 only: gestures, hit by touch, the bow's draw, throws, the skill wheel and aiming by the hand (in F1 and F3 the hero "
            L"attacks where he faces). With BodyWalk running (its Game Link alive, or its gamepad moving) nothing changes: BodyWalk's gamepad is the "
            L"gamepad, whole. If a real gamepad answers as well, the controllers are added to it, never over it. Off: no buttons from the controllers in "
            L"F1-F3 without BodyWalk (the walk and the potions only). The log says \"the plugin's own controller is the game's pad\" when it takes over. Live.")),
-    Needs(L"openxr", L"direct_input", 1, Toggle(L"direct", L"hold_enabled", L"Long press of a stick click: right = skill panel, left = inventory", 1,
+    Needs(L"openxr", L"direct_input", 1, Toggle(L"direct", L"flatvr_controls", L"FlatVR: the controllers by this layout (BodyWalk's Mapping not needed)", 1,
+           L"In FlatVR the controllers work as in native OpenXR: BodyWalk hands the controllers to the game as they are (Game Link, BodyWalk with raw "
+           L"controls - 1.83 with the D2R VR link), and the layout above - the buttons, the triggers, the sticks, rebindable in Controls > Buttons of the "
+           L"controllers - and everything of first person (the belt, gestures, the bow, the quivers, the shoulders, the pause menu) runs on them. BodyWalk's "
+           L"Mapping and its gamepad are not read at all then (Game Link direct: no double presses); in F1, F2, F3 the controllers act as without BodyWalk "
+           L"(the box above). BodyWalk's walk comes through Game Link - its Output \"Game Link\" (BodyWalk's Engine: FlatVR + D2R VR) - into the "
+           L"controllers' stick (the box \"BodyWalk's walking still walks the hero\"). The camera and the arms keep BodyWalk's head and hands, as before. "
+           L"An older BodyWalk sends no raw controllers: its Mapping stays the controls (the log says so). Status says \"BodyWalk: Game Link direct\". "
+           L"Off: BodyWalk's Mapping and gamepad in FlatVR, as before. Live.")),
+    Needs(L"openxr", L"direct_input", 1, Toggle(L"direct", L"hold_enabled", L"Long presses: stick click (right = skill panel, left = inventory), left menu button = pause menu", 1,
            L"With the controls above: hold the right stick's click for half a second and the skill panel opens (the wheel, when it is "
-           L"set to open that way); hold the left stick's click and the inventory opens - or closes, the button is a toggle. A short "
-           L"click is what it was: the right one swaps weapons (when you let go), the left one shows the items (Alt). In d2r_vr.ini "
-           L"[direct]: hold_ms for the time, right_stick_hold and left_stick_hold for what they do. Off: a click acts the moment "
-           L"it is pressed, there are no long presses.")),
+           L"set to open that way); hold the left stick's click and the inventory opens - or closes, the button is a toggle; hold the "
+           L"left menu button (PS VR2: the right controller's Options) and the game gets Esc, its pause menu (the box \"Pause menu (Esc)\" in Controls > Buttons of the controllers). "
+           L"A short click is what it was: the right stick swaps weapons (when you let go), the left one shows the items (Alt), the "
+           L"menu button opens the inventory (when you let go). In d2r_vr.ini [direct]: hold_ms for the time, right_stick_hold, "
+           L"left_stick_hold and left_menu_hold for what they do (any button can have a long press: Controls > Buttons of the controllers). "
+           L"Off: a click acts the moment it is pressed, there are no long presses (and so no pause button, unless you put the "
+           L"pause menu on a plain button in that list).")),
     Needs(L"openxr", L"direct_input", 1, Toggle(L"direct", L"left_stick_map", L"Quick click of the left stick: show / hide the map", 1,
            L"With the controls above: a short click of the left thumbstick shows or hides the map (the same as the left grip with "
            L"the menu button). Held, the left click is still Alt (show items); held for half a second it is the inventory (see "
@@ -717,6 +855,18 @@ std::vector<Item> g_items = {
            L"How wide the wheel is (it is square). Live."))),
     ShowFor(L"openxr", L"skill_panel_style", 1u << 1, Needs(L"openxr", L"skill_wheel", 1, Slider(L"openxr", L"skill_tiles_width_m", L"Skill tiles: width, m", 0.5f, 1.6f, 0.05f, 0.9f,
            L"How wide the tiles' window is (its height follows). Live."))),
+    Needs(L"openxr", L"skill_wheel", 1, Toggle(L"openxr", L"skill_categories", L"Skill editor: categories (All, the class's skill trees, General / Items)", 1,
+           L"EDIT SKILLS -> a slot: a strip over the list of skills with the tabs All, your class's three skill trees (named as the game "
+           L"names them, in your language) and General / Items (the town portal, the basic attack, a skill an item gives), each with its "
+           L"count. Which tree a skill is on comes from the game's own tables, read once by tools/skill_icons/prepare_skill_icons.py "
+           L"(run it again after updating the mod, an older icon cache has no trees: then there is only the one list). Off: the one "
+           L"list of every skill, as before. Live. Idea after bearstonem/d2r-pcvr (MIT).")),
+    Needs(L"openxr", L"skill_wheel", 1, Toggle(L"openxr", L"skill_run_walk", L"Skill panel: a RUN / WALK button", 0,
+           L"A RUN / WALK button on the skill panel's first page (a tile beside the first row in Tiles, a button in the footer of the "
+           L"Wheel). Pointing at it and pulling the trigger presses the game's own run / walk command, the one on the controller, and "
+           L"the panel stays open; it shows which one the game is on now. Off (the default): no button - put the command on a button of "
+           L"yours instead: Controls > Buttons of the controllers (and the headset's Left / Right pages) offer \"Run / walk switch\", "
+           L"and BodyWalk's bindings offer \"D2R key: Run / walk switch\". Live. Idea after bearstonem/d2r-pcvr (MIT).")),
     Toggle(L"openxr", L"symmetric_fov", L"Labels over monsters meet in both eyes", 1,
            L"Each eye drawn as wide to the left as to the right: the game's interface (the names over monsters and items) "
            L"is the same in both eyes and meets. Off: each eye's own view, a little fewer pixels, the names apart."),
@@ -771,11 +921,20 @@ std::vector<Item> g_items = {
     Needs(L"stereo", L"pair_per_tick", 1, Slider(L"stereo", L"right_dt_ms", L"Right eye frame time, ms", 0, 2, 0.01f, 0.01f,
            L"The right eye's pass gets this much game time instead of none. Effects that skip a frame of no time "
            L"(butterflies only in the left eye) are drawn then; 0.01 is enough, more moves the world between the eyes.")),
+    Needs(L"stereo", L"pair_per_tick", 1, Toggle(L"stereo", L"props_once_a_pair", L"Hanging lanterns move once a pair (F4)", 0,
+           L"Props the game swings - hanging lanterns, chains, signs - are stepped in the left eye's pass only, and both eyes get "
+           L"that pose. Where the right eye is drawn by a second pass (no replay, or before the replay starts in a new area) they "
+           L"were stepped again with the tiny right-eye time and twitched. VR F4 only; the other views as before. Idea: "
+           L"bearstonem/d2r-pcvr. Off: as before.")),
     Toggle(L"render", L"fx_fence", L"Effects: each eye's values exactly its own", 0,
            L"The effects (fog, sky, ceiling) wait until the graphics card has drawn the last eye's effects before the next "
            L"eye's values go in. Both eyes of a pair get the same values anyway; this matters for FlatVR's frame stamps "
            L"with one picture a frame. Costs a little speed. Live. F4 only."),
     Toggle(L"stereo", L"swap", L"Swap eyes", 0, L"Tick if the eyes come out swapped (depth looks inside out)."),
+    Toggle(L"stereo", L"pace_flatvr_only", L"Hold frames to the headset only while FlatVR runs", 1,
+           L"In FlatVR modes the plugin holds the game's pictures to the headset's rate so FlatVR gets them evenly. With FlatVR "
+           L"(BodyWalk) not running nothing takes them: ticked, the game then runs as fast as it can. Unticked: held to the "
+           L"headset's rate always, as before. Live."),
     Group(L"Scale and depth"),
     Toggle(L"stereo", L"true_scale", L"Life-size world", 1,
            L"Eye distance and the screen plane from the FlatVR screen and your height. "
@@ -797,6 +956,33 @@ std::vector<Item> g_items = {
            L"Takes effect within a second."),
     Needs(L"stereo", L"stamps", 1, Slider(L"stereo", L"pipeline_depth", L"Pipeline depth (smoother head turns)", 0, 3, 1, 0,
            L"How many of an eye's views the shown frame lags the newest one. Try 0, 1 and 2 for the smoothest head turn.")),
+    Group(L"FlatVR like native OpenXR"),
+    Choice(L"flatvr", L"frame_sync", L"FlatVR: pictures on FlatVR's frames", 0,
+           {L"Off - our own timer (as before)", L"On - every other frame when a pair does not fit (even)", L"On - every frame FlatVR has a head for"},
+           L"FlatVR only (no native session). Each picture starts on FlatVR's next frame, with the head FlatVR hands out then - as "
+           L"native OpenXR starts each pair on the headset's own wait. Before, the game ran on a timer of ours and its own frame cap "
+           L"while FlatVR showed at the headset's rate: the pictures came 1, 2, 1, 1, 2 times each and walking, the hands and animations "
+           L"jerked. A pair that takes longer than a headset frame goes on every other frame (an even 45 of 90, as a runtime halves a "
+           L"game that misses) - or, with the third choice, on every new head (more pictures, unevenly). The game's own frame cap is "
+           L"written as twice the rate then (only a stop for a game running away). No head from FlatVR: our timer as before. Live."),
+    ShowFor(L"flatvr", L"frame_sync", (1u << 1) | (1u << 2), Slider(L"flatvr", L"frame_sync_late", L"FlatVR frames: a head is late after, share of a frame", 0.1f, 1.0f, 0.05f, 0.5f,
+           L"A head from FlatVR older than this share of a frame when the last pair ends is let go and the next one waited for. Live.")),
+    Toggle(L"flatvr", L"head_level", L"FlatVR: the horizon is the real horizon", 0,
+           L"FlatVR, F4 only. The camera's pitch and roll are the headset's own against gravity, as in native OpenXR. Before, the "
+           L"camera's pitch was the game's camera plus [camera] pitch plus the head's pitch since the last F11: any amount apart "
+           L"from the head turned into a lean of the world on every head turn (FlatVR hangs the picture at the head's full pose), "
+           L"and BodyWalk's roll came out too small when looking up or down. Off: as before. Live."),
+    Toggle(L"flatvr", L"head_position", L"FlatVR: the camera moves with your head", 0,
+           L"FlatVR, F4 only. Leaning, crouching, a step aside move the camera as far in the game (at the hero's size), from where "
+           L"the head was at the last recentre (F11) - as native OpenXR does. Off: turns only, and the world moves along with the "
+           L"head when it leans. Live."),
+    Toggle(L"flatvr", L"room_centre", L"FlatVR: one centre with BodyWalk", 0,
+           L"FlatVR. Straight ahead is taken from the room FlatVR places its screen in, at our recentre (F11). BodyWalk's own "
+           L"Reset Center (its button or key) no longer turns the world away from FlatVR's screen: it recentres the game too. "
+           L"Off: as before (after BodyWalk's reset an F11 was needed). Live."),
+    Toggle(L"flatvr", L"recenter_on_enter", L"FlatVR: straight ahead when a game starts", 0,
+           L"FlatVR. When the hero appears (a game entered), straight ahead is where you look then - as native OpenXR does. "
+           L"Off: straight ahead stays where it was (where the headset looked when BodyWalk started, or the last F11)."),
 
     // The interface, one tab per view (F1 - F4 on the Home page). [hud_top],
     // [hud_third], [hud_floor] and [hud_inside] are that view's own; unset, the old shared
@@ -842,6 +1028,7 @@ std::vector<Item> g_items = {
            L"Real stereo only: the HUD is moved apart per eye by the shader, % of the half screen.")),
     Slider(L"stereo", L"ui_top", L"Interface top edge", 0.4f, 1, 0.01f, 0.7f,
            L"The HUD is looked for below this height: 0 = top of the screen, 1 = bottom."),
+    Group(L"Monster plates"),
     Toggle(L"hud", L"ordinary_mob_bars", L"Hide the plates of ordinary monsters (prototype)", 0, kOrdinaryBarsTip),
 
     Group(L"Item labels on the ground"),
@@ -945,7 +1132,7 @@ std::vector<Item> g_items = {
     Slider(L"hud_inside", L"map_zoom", L"Corner map size", 0.3f, 3, 0.05f, 1,
            L"The corner map in the picture this much bigger (1 = as the game draws it), grown from its own corner. "
            L"For it top left, set the game's mini map to the left in its options. Needs D2R_DepthFog.fx on in ReShade."),
-    Group(L"Names over monsters"),
+    Group(L"Monster plates"),
     Toggle(L"hud", L"ordinary_mob_bars", L"Hide the plates of ordinary monsters (prototype)", 0, kOrdinaryBarsTip),
 
     Only(kVr, Tab(L"UI: F4 body")),
@@ -994,12 +1181,34 @@ std::vector<Item> g_items = {
            L"How high on the hero they hang, in parts of his eye height (0.57 = the hips). Live.")),
     Needs(L"hands", L"belt_models", 1, Slider(L"hands", L"belt_models_arc", L"Belt potions: degrees between them", 10, 60, 1, 35,
            L"How far round the body the four spread: degrees on the arc from one column to the next. Live.")),
+    Needs(L"hands", L"belt_models", 1, Slider(L"hands", L"belt_models_across", L"Belt potions: right (+) / left (-)", -0.3f, 0.3f, 0.01f, 0,
+           L"The whole belt shifted across the hero, in parts of his eye height: + to his right, - to his left. The headset settings panel's Belt page "
+           L"writes the same key. Live.")),
+    Needs(L"hands", L"belt_models", 1, Slider(L"hands", L"belt_models_turn", L"Belt potions: turn round him, °", -90, 90, 1, 0,
+           L"The arc of potions swung round the hero: + to his right, - to his left. The headset settings panel's Belt page writes the same key. Live.")),
     Needs(L"hands", L"belt_models", 1, Slider(L"hands", L"belt_models_scale", L"Belt potions: size", 0.2f, 1.5f, 0.02f, 0.56f,
            L"1 = the size the game gives them on the ground. Live.")),
+    Needs(L"hands", L"belt_models", 1, Slider(L"hands", L"belt_grab_cm", L"Belt potions: grab reach, cm", 4, 30, 1, 12,
+           L"How near a hand's palm must be to a potion to light it and take it with the grip. A wide reach steals the grip meant for the weapon: "
+           L"narrower, or the belt lower or farther to the side (the sliders above), and the weapon is yours again. The headset settings panel's "
+           L"Belt page writes the same key. Live.")),
     Needs(L"hands", L"belt_models", 1, Toggle(L"hands", L"belt_grab", L"Belt potions: take them in the hand and drink", 1,
            L"A hand at a bottle lights it (a see-through ball, the bottle a little larger); the grip takes it into the hero's hand. "
            L"Brought to the mouth and tipped over it is drunk (the game's own belt key 1-4); let go anywhere else it goes back. "
            L"Switch BodyWalk's belt zones off with it. Live.")),
+    Needs(L"hands", L"belt_grab", 1, Toggle(L"belt", L"grab_nearest", L"Grip: the nearer of a belt potion and the weapon wins", 1,
+           L"A grip press that could take a belt potion OR the weapon goes to the NEARER one: your palm's distance to the bottle against your fist's distance to the weapon (the shaft of "
+           L"a weapon your other hand holds - a staff, a two-hander, a crossbow, the second hand; one lying on the floor; the weapon stowed on your back). A tie goes to the weapon; "
+           L"a hand behind a shoulder is the weapon swap's. A potion is lit (the ball) and taken only when it is the nearer one; where the weapon is nearer no potion is lit and the "
+           L"weapon takes the grip. The log says, for every grip press, who took it and why. Unticked: as before - a potion in reach wins over the weapon. First person (F4). Live.")),
+    Needs(L"hands", L"belt_grab", 1, Toggle(L"belt", L"grab_trigger", L"Take a belt potion with trigger + grip", 0,
+           L"On: a belt potion is taken only with the trigger squeezed together with the grip. The grip alone never takes a potion - it goes to the weapon or the shoulder swap - and a "
+           L"bottle in reach is only lit (the ball), it does not keep the grip from the weapon. Needs the controller's trigger from direct input; without it the grip alone takes, as "
+           L"before. Off (the default): the grip alone takes a potion. Live.")),
+    Needs(L"hands", L"belt_grab", 1, Toggle(L"belt", L"hold_takes_trigger", L"Bottle in hand: the triggers are not the game's", 1,
+           L"While a belt bottle is in a hand (taken, or being drunk) the controller's triggers do not reach the game: the LEFT one (whichever hand holds the bottle) - the game reads it as "
+           L"Shift on a belt key, and Shift + a belt key is not a drink, so a potion taken with trigger + grip was not drunk - and a right hand's own trigger (no attack out of a drink). A trigger "
+           L"taken stays out until you let it go. Unticked: the triggers pass on as before. First person (F4). Live.")),
     Needs(L"hands", L"belt_grab", 1, Slider(L"hands", L"belt_hold_close", L"In the hand: the fist closes to, %", 0, 150, 5, 55,
            L"How far the hand closes round a bottle it holds (100 = the full fist of the grip): enough to hold it, not through it. Live.")),
     Needs(L"hands", L"belt_grab", 1, Slider(L"hands", L"belt_hold_x", L"In the hand: x, cm", -15, 15, 0.5f, 0,
@@ -1076,15 +1285,44 @@ std::vector<Item> g_items = {
            L"there, 0 = where the game leaves them. Their interface layer is taken out of the picture for it; the toolbar "
            L"and the map stay."),
     Slider(L"hud", L"labels_near_body", L"Item labels: stereo depth on top, all", -20, 20, 0.1f, 0,
-           L"Every label (and the rest of the interface left in the picture: names over monsters, chat) nearer (+) or "
-           L"farther (-) by the same amount, on top of the slider above."),
-    Group(L"Names over monsters"),
+           L"Every label (and the rest of the interface left in the picture, chat) nearer (+) or "
+           L"farther (-) by the same amount, on top of the slider above. The name and bar over a monster have a depth of their own "
+           L"(Monster plates, below) - none of the item labels' settings touch them."),
+    Group(L"Monster plates"),
     // [hud] monster_alpha, monster_size: the plate over the monster - HUDMonsterHealth's TargetAttached with a pad (gamestate ReadPlate)
     Slider(L"hud", L"monster_alpha", L"Name over a monster: opacity", 0, 1, 0.05f, 1,
            L"The name plate the game shows for the monster you target (box, frame and name alike): 1 = as the game draws it, "
            L"0 = gone. Every view. Needs D2R_DepthFog.fx on in ReShade."),
     Slider(L"hud", L"monster_size", L"Name over a monster: size, %", 30, 200, 5, 100,
            L"That plate smaller or larger about its middle. 100 = the game's own. Every view."),
+    // [hud] monster_far (vr/plate_look.h DistanceK): the item labels' rule, for the monster's plate
+    Slider(L"hud", L"monster_far", L"Name over a monster: size far away, % of the size above", 20, 100, 5, 100,
+           L"First person (F4). Nearer plates larger, farther ones smaller, as the item labels (Item labels: size far away): the size above for a monster 1.5 m "
+           L"away and nearer, this much of it for one 10 m away and farther, smoothly in between. 100 = the same size at any distance. Live."),
+    // [hud] monster_over_head (vr/plate_world.h LiftAnchor): the game's own plate, lifted over the monster's head in the game's own anchor call (vr/mob_bars.cpp)
+    Toggle(L"hud", L"monster_over_head", L"Plate over the monster's head (prototype)", 0,
+           L"First person (F4). The name and health bar the game hangs over the monster you target stay the game's own - nothing is cut out or drawn again - but are "
+           L"lifted (or lowered) so that their lower edge hangs the gap below over the monster's head, whatever the distance. The game's own gap is the same few pixels "
+           L"at any distance: some 7 cm over a head 1.5 m away, 45 cm over one 10 m away. The plate stays centred over the monster, as the game draws it. While on it "
+           L"replaces the height slider. Needs the game's controller layout (the one D2R VR plays in). Off: the plate where the game puts it. Live."),
+    Needs(L"hud", L"monster_over_head", 1, Slider(L"hud", L"monster_bar_gap_cm", L"Plate: gap over the head, cm", -50, 150, 1, 15,
+           L"How far over the monster's head the plate's lower edge hangs; below 0 it lowers into the head. The head's height is worked out from the game's own anchor "
+           L"of the plate and the monster's place. Live.")),
+    // [hud] monster_height: the plate's anchor moved in the game's own call (vr/mob_bars.cpp), first person (F4) only
+    Needs(L"hud", L"monster_over_head", 0, Slider(L"hud", L"monster_height", L"Name over a monster: height, %", -60, 40, 1, 0,
+           L"First person (F4) only, while the plate over the monster's head (above) is off. The name and health bar over the monster you target, higher (+) or lower (-): "
+           L"% of the screen's height; the whole plate moves, still following its monster. Too high, or cut off at the top of your view? "
+           L"Lower it (try -15 to -30). 0 = where the game puts it. Monsters and NPCs; the plate that hangs over the monster "
+           L"(the game's controller layout, the one D2R VR plays in). Live. Needs no ReShade effect.")),
+    // [hud] monster_depth_body (vr/plate_look.h DepthShift): the item labels' "at their items", for the monster's plate
+    Slider(L"hud", L"monster_depth_body", L"Name over a monster: at its monster, %", 0, 150, 5, 0,
+           L"First person (F4) in stereo. The game draws the plate in both eyes on the same spot, so in the headset it floats far off, not on its monster. Here it is "
+           L"set at its monster's depth, by the monster's distance from you, as the item labels are (Item labels: at their items): 100 = exactly there, 0 = where the "
+           L"game leaves it (the stereo depth below). Live."),
+    // [hud] monster_near_body (vr/plate_look.h): the plate at its own stereo depth, apart from the item labels' (labels_near_body)
+    Slider(L"hud", L"monster_near_body", L"Name over a monster: stereo depth", -20, 20, 0.1f, 1.6f,
+           L"First person (F4) in stereo: the name and bar over the monster you target nearer (+) or farther (-), % of the half screen - its own, "
+           L"apart from the item labels' (\"Item labels: stereo depth on top\" above does not move it). Live."),
     Toggle(L"hud", L"ordinary_mob_bars", L"Hide the plates of ordinary monsters (prototype)", 0, kOrdinaryBarsTip),
     Group(L"Low life: red heartbeat vignette"),
     // [hud] low_hp_vignette, low_hp_threshold, low_hp_intensity_start / _end, low_hp_saturation, low_hp_radius, low_hp_softness,
@@ -1128,6 +1366,15 @@ std::vector<Item> g_items = {
     LowLife(Needs(L"openxr", L"haptics", 1, Needs(L"hud", L"low_hp_haptics", 1, Slider(L"hud", L"low_hp_haptics_strength", L"Heartbeat in the controllers: strength", 0.1f, 2, 0.05f, 1,
            L"A scale on the pulse's strength: 1 = about half the motor's strength at the lowest life, and weaker the higher your "
            L"life. The pulse is never stronger than four fifths of the motor, so 2 is plenty. Live.")))),
+    Needs(L"openxr", L"on", 1, Toggle(L"hud", L"merc_tint", L"Wounded mercenary tinted red (F4)", 0,
+           L"VR first person (F4). While your mercenary is under the threshold below of its life, the effect tints its body red, "
+           L"so you see when it needs a potion. Drawn by the plugin over the finished picture: the merc is found and its life only "
+           L"READ, nothing in the game is changed (no state set on the merc, unlike d2r-pcvr's version of the idea). Needs the new "
+           L"D2R_DepthFog.fx in ReShade, copied in with the DLL. Idea: bearstonem/d2r-pcvr. Off: the picture exactly as before. Live.")),
+    Needs(L"openxr", L"on", 1, Needs(L"hud", L"merc_tint", 1, Slider(L"hud", L"merc_tint_threshold", L"Mercenary tint: under, % of its life", 10, 90, 1, 50,
+           L"The red comes on while the mercenary's life is under this share of its maximum. Live."))),
+    Needs(L"openxr", L"on", 1, Needs(L"hud", L"merc_tint", 1, Slider(L"hud", L"merc_tint_strength", L"Mercenary tint: strength", 0.1f, 1, 0.05f, 0.6f,
+           L"How far the mercenary's colours go toward the red: 1 = fully red. Live."))),
     Group(L"Allies' portraits"),
     // [hud] allies_x, allies_y: the game draws the portraits itself, no layout's widget - vrcam moves their corner (AlliesBoxUv)
     Slider(L"hud", L"allies_x", L"Allies' portraits: left / right, %", -20, 80, 1, 0,
@@ -1135,6 +1382,18 @@ std::vector<Item> g_items = {
            L"0 = where the game puts them. Every view. Needs D2R_DepthFog.fx on in ReShade."),
     Slider(L"hud", L"allies_y", L"Allies' portraits: up / down, %", -80, 20, 1, 0,
            L"The same up (+) or down (-): % of the screen's height."),
+    Group(L"Item condition figure"),
+    // [hud] durability_*: the game's HUDWarnings > DurabilityWarning (the knight whose sword, bracers and boots go red as the items wear), vrcam moves its box (vr/durability_figure.h)
+    Slider(L"hud", L"durability_x", L"Item condition figure: left / right, %", -80, 20, 1, 0,
+           L"First person (F4) only. The little knight at the top right whose sword, armour, bracers and boots go red as your items wear out (the game's own "
+           L"durability warning, shown from half worn) hangs at the very corner of the interface - at the edge of your view, half behind it. Here it is moved: "
+           L"% of the picture's width, + right (it is at the right edge, so the useful way is left, -). 0 = where the game puts it. Needs D2R_DepthFog.fx on in ReShade. Live."),
+    Slider(L"hud", L"durability_y", L"Item condition figure: up / down, %", -80, 20, 1, 0,
+           L"The same up (+) or down (-): % of the picture's height. The figure is at the top, so down (-) brings it into view."),
+    Slider(L"hud", L"durability_scale", L"Item condition figure: size, %", 30, 300, 5, 100,
+           L"The figure smaller or larger about its middle. 100 = the game's own."),
+    Toggle(L"hud", L"durability_hide", L"Hide the item condition figure", 0,
+           L"First person (F4) only. The figure is not shown at all. Off: the figure where the sliders above put it."),
     Group(L"Panels (inventory, trade...)"),
     Slider(L"screen", L"menu_distance_m", L"Screen distance while a panel is open (inventory, trade...), m", 0, 8, 0.1f, 1.6f,
            L"While the inventory, a trader, the stash or another panel is open in first person (F4), FlatVR moves its "
@@ -1144,11 +1403,31 @@ std::vector<Item> g_items = {
            L"the Game Link plugin and FlatVR's \"Screen distance follows the game\" (on by default). With native OpenXR "
            L"the flat picture a panel is shown on goes this far, in any view (Stereo > Native OpenXR)."),
     // Here from "UI: F1 above" (every view; nobody found it there, 2026-10-12): the square window's panels need it.
-    Slider(L"@game", L"Safe Screen Percent", L"Game interface size, % (restart)", 50, 100, 1, 100,
+    Slider(L"@game", L"Safe Screen Percent", L"Game interface size, % (restart)", 50, 100, 1, 80,
            L"Below 100 the game lays its whole interface out in a smaller box in the middle of the screen - in every view. "
-           L"With the square game window (Stereo > Native OpenXR) the inventory, the stash and the other panels are wider "
-           L"than the window and come out cut at the sides: lower this until they fit (about 75-85). "
+           L"At 100, the game's default, the edges of the interface are cut off in the headset (the inventory, the stash and the other panels are "
+           L"wider than the picture; with a trader or the mercenary open beside the inventory the outer columns of both cannot be reached): VR starts "
+           L"it at 80 where you have chosen no other size (the box below; 74 for the headset's own, taller picture) - the most two side panels fit "
+           L"a square picture at. A size of yours other than 100 stays as it is (the line below the box says whether it fits); flat mode keeps your own. "
            L"Read when the game starts: change it with the game closed, or the game puts its own value back on exit."),
+    Only(kVr, Toggle(L"hud", L"safe_screen_vr", L"VR: start the interface at 80 %", 1,
+           L"On: when the game's interface size is 100 (its default), D2R VR sets 80 for VR - at 100 the edges of the interface are cut off in the "
+           L"headset - when the game starts, or at once with the game closed. The size you had is kept and comes back in flat mode. Any size of "
+           L"yours other than 100 is left alone. Off: the game's interface size is never touched (and an 80 D2R VR set goes back to what you had)."
+           L"With it on a 100 of yours does not stay in VR: untick it to keep 100.")),
+    // (two side panels open - a trader or the mercenary left, the inventory right - need room: the line says whether this size gives it, for the shape of the picture)
+    Only(kVr, Status(L"safe_screen_fit", L"")),
+    Group(L"Toolbar (life, mana, belt) in first person"),
+    // The toolbar's type (shared/toolbar_type.h): one choice over [hud] hide and [hud] bar_place; the headset panel has the same
+    Choice(L"@toolbar", L"type", L"Toolbar type (first person, F4)", 0,
+           {toolbartype::kLongW[0], toolbartype::kLongW[1], toolbartype::kLongW[2], toolbartype::kLongW[3], toolbartype::kLongW[4], toolbartype::kLongW[5], toolbartype::kLongW[6]},
+           L"The game's bottom panel is its toolbar: the life and mana globes, the belt and the skill buttons. This one choice sets Hide the game's "
+           L"interface and Where (below) together, so a place always works. Where it is, view by view: F1, F2, F3 and the flat modes - in the picture "
+           L"where the game draws it (those tabs size or move it; set to 'Hung in the room' a view follows this choice like F4). F4: 'Watches' - cut out "
+           L"of the picture, your life and mana as two balls on the wrists (needs D2R_DepthFog.fx in ReShade). 'Chest', 'low in front', 'forearm' - "
+           L"cut out and hung there as the whole toolbar (its size and place are the sliders below). 'In the picture' - left where the game draws it: "
+           L"it moves with your head, at the bottom of your view, in front of your eyes. With a panel open (inventory, stash, trader, the game's menu) "
+           L"the game's whole interface is back in every view, the toolbar with it: in the picture, or at the bottom of the menu panel. Live."),
     Group(L"In the game's picture"),
     Choice(L"hud", L"map", L"Corner map", 0, {L"In the picture", L"Out of the picture (its own texture)"},
            L"The game draws the corner map under a scissor of its own: its draws go to a texture of their own, the labels "
@@ -1158,7 +1437,7 @@ std::vector<Item> g_items = {
     Choice(L"hud", L"hide", L"Hide the game's interface", 0, {L"Nothing", L"The toolbar", L"All of it"},
            L"The game draws its whole interface into a layer of its own. \"The toolbar\" empties only the toolbar's strip "
            L"(found from the screen's size and the game's interface size); "
-           L"labels over monsters, tooltips and shops stay. \"All of it\": the world alone."),
+           L"labels over monsters, tooltips and shops stay. \"All of it\": the world alone. 'Toolbar type' above sets this and Where together."),
     // The strip \"The toolbar\" empties is worked out from the picture's size and the game's interface size; the two sliders make it taller (vr/hud_rects.h)
     ShowFor(L"hud", L"hide", 1u << 1, Slider(L"hud", L"hide_up_pct", L"Toolbar cut: higher, % of the picture", -5, 15, 0.1f, 0,
            L"How much HIGHER the strip that \"The toolbar\" empties reaches, in percent of the picture's height. These two sliders act on what the game draws as its toolbar "
@@ -1177,7 +1456,7 @@ std::vector<Item> g_items = {
            L"Where the toolbar taken out of the picture hangs (Hide the game's interface: The toolbar; FlatVR hangs it, native OpenXR hangs it itself). "
            L"On a forearm it lies along the inside of the arm: turn the palm up to read it. \"Wrists\": not the toolbar but only your life and "
            L"mana, as two balls on the back of the wrists like medallions - life on the left, mana on the right (first person, F4; they only read your "
-           L"life and mana; the rest of the toolbar is not shown in the headset then). Needs the new D2R_DepthFog.fx in ReShade."),
+           L"life and mana; the rest of the toolbar is not shown in the headset then). Needs the new D2R_DepthFog.fx in ReShade. 'Toolbar type' above sets this and Hide the game's interface together"),
     // On the wrists (bar_place 5): the look and the place of the two balls (vr/hand_orbs.h)
     ShowFor(L"hud", L"bar_place", kBarWrist, Choice(L"hud", L"wrist_look", L"Look", 0,
            {L"3D glass balls with liquid", L"The game's own globes (cut out of its toolbar)"},
@@ -1242,11 +1521,56 @@ std::vector<Item> g_items = {
            L"Turns the whole medallion about its own middle, round the axis across the hand: + turns its face toward the elbow, - toward the knuckles. Anatomical: the same number on the other wrist is the mirror image. Live."))),
     ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"hud", L"hand_vitals_orb_mirror", 0, Slider(L"hud", L"hand_vitals_orb_right_rot_z_deg", L"Right wrist rotation Z, up off the hand, °", -180, 180, 1, 0,
            L"Turns the whole medallion about its own middle, round the axis out of the back of the hand (like turning a watch face on the wrist): + turns its \"up\" from the knuckles toward the little finger. Anatomical: the same number on the other wrist is the mirror image. Live."))),
+    // The wrist under a shield (the left arm, or the right one after the shoulder draw swaps the hands) rolls its ball to the other side of the wrist so the shield does not cover it; VR F4 only
+    ShowFor(L"hud", L"bar_place", kBarWrist, Toggle(L"hud", L"hand_vitals_orb_under_shield", L"Under a shield: the ball goes to the other side of the wrist", 1,
+           L"The wrist that wears the shield (the left arm, or the right one after the shoulder draw swaps your hands) rolls its ball half a turn round the arm to the inner side of the wrist, so the shield "
+           L"does not cover it, and rolls it back when the shield leaves that arm - a short smooth turn. Only in VR F4. Unticked: the ball stays on the back of the hand under a shield. The sliders below "
+           L"tune the new place and are added to the wrist's own numbers above. Live.")),
+    ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"hud", L"hand_vitals_orb_under_shield", 1, Slider(L"hud", L"hand_vitals_orb_shield_turn_deg", L"Under a shield: turn round the arm, °", -180, 180, 1, 180,
+           L"How far the ball rolls round the wrist's axis when a shield is on that arm. 180 is the opposite side of the wrist (the inner side); a smaller number stops short of it. + sends the back of the "
+           L"hand over the thumb side, - over the little finger side (the same on both wrists, so the roll is the mirror image). Live."))),
+    ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"hud", L"hand_vitals_orb_under_shield", 1, Slider(L"hud", L"hand_vitals_orb_shield_along_cm", L"Under a shield: X, along the arm, cm", -10, 10, 0.5f, 0,
+           L"Added to the wrist's own X while a shield is on that arm: + toward the knuckles, - toward the elbow. Live."))),
+    ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"hud", L"hand_vitals_orb_under_shield", 1, Slider(L"hud", L"hand_vitals_orb_shield_side_cm", L"Under a shield: Y, across the hand, cm", -10, 10, 0.5f, 0,
+           L"Added to the wrist's own Y while a shield is on that arm, measured in the rolled frame: at the full half turn + points toward the little finger (the thumb has gone round to the other side). Live."))),
+    ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"hud", L"hand_vitals_orb_under_shield", 1, Slider(L"hud", L"hand_vitals_orb_shield_up_cm", L"Under a shield: Z, up off the skin, cm", -10, 10, 0.5f, 0,
+           L"Added to the wrist's own Z while a shield is on that arm, measured out of the skin where the ball now sits: + floats it higher, - sinks it. Live."))),
+    ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"hud", L"hand_vitals_orb_under_shield", 1, Slider(L"hud", L"hand_vitals_orb_shield_rot_x_deg", L"Under a shield: rotation X, round the arm, °", -180, 180, 1, 0,
+           L"Added to the wrist's own rotation X while a shield is on that arm (see the wrist rotation sliders above for the meaning). Live."))),
+    ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"hud", L"hand_vitals_orb_under_shield", 1, Slider(L"hud", L"hand_vitals_orb_shield_rot_y_deg", L"Under a shield: rotation Y, across the hand, °", -180, 180, 1, 0,
+           L"Added to the wrist's own rotation Y while a shield is on that arm. Live."))),
+    ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"hud", L"hand_vitals_orb_under_shield", 1, Slider(L"hud", L"hand_vitals_orb_shield_rot_z_deg", L"Under a shield: rotation Z, up off the skin, °", -180, 180, 1, 0,
+           L"Added to the wrist's own rotation Z while a shield is on that arm. Live."))),
     ShowFor(L"hud", L"bar_place", kBarWrist, Slider(L"hud", L"hand_vitals_orb_opacity", L"Opacity", 0.3f, 1, 0.05f, 0.95f,
            L"How solid the balls are. They also fade when a hand is held far from your eyes. Live.")),
     ShowFor(L"hud", L"bar_place", kBarWrist, Toggle(L"hud", L"hand_vitals_pulse", L"Soft heartbeat at low life", 0,
            L"While your life is under the low-life threshold (the one of the red heartbeat vignette above) the life ball glows and swells softly like a "
            L"heart (50 - 72 beats a minute, never flashing). Live.")),
+    // The wrist status (vr/wrist_status.h): what the hero has, as small icons and counters over a wrist turned to the eyes - a feature of its own, its tick first, the rest live only while it is ticked
+    ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"openxr", L"on", 1, Toggle(L"hud", L"wrist_status", L"Wrist status: summons, mercenary, buffs, auras, curses (F4)", 0,
+           L"Small icons and counters that come up beside the medallions when the BACK of a wrist is turned to your eyes (VR first person, F4, native OpenXR). By default the left wrist shows "
+           L"what is ON you - the auras and buffs you have (Might, Holy Shield, Frozen Armor, Battle Orders, a potion, a shrine ...) with the curses and ailments that hurt you (Amplify "
+           L"Damage, Decrepify, Chilled, Poisoned ...) under a red rim - and the right wrist what you COMMAND: how many skeletons, mages, golems, wolves, ravens, vines, sentries, hydras, "
+           L"demons you have, and your mercenary (a red 0 when it is dead). Read from the game's own lists, nothing is changed. The skill icons come from the local icon cache (see the skill "
+           L"wheel); without it the chips show initials. Needs the plugin and the effect of this version; the wrists as such are the medallions above. Live."))),
+    ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"openxr", L"on", 1, Needs(L"hud", L"wrist_status", 1, Toggle(L"hud", L"wrist_status_companions", L"Show the summons and the mercenary", 1,
+           L"Counters for your skeletons, mages, golems, revived monsters, valkyrie, decoy, ravens, wolves, grizzly, spirit, vines, shadows, sentries, traps, hydras, demons and the mercenary. Live.")))),
+    ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"openxr", L"on", 1, Needs(L"hud", L"wrist_status", 1, Toggle(L"hud", L"wrist_status_effects", L"Show the buffs, auras and curses", 1,
+           L"One chip for each effect that is on you: the helpful ones (auras, buffs, potions, shrines) under a green rim, the harmful ones (curses, ailments) first under a red one, a form or a "
+           L"trade-off under a gold one. More than the panel holds: the last chip says how many are left. Live.")))),
+    ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"openxr", L"on", 1, Needs(L"hud", L"wrist_status", 1, Choice(L"hud", L"wrist_status_sides", L"Which wrist shows what", 0,
+           {L"Effects on the left, summons on the right", L"Summons on the left, effects on the right", L"Both on both wrists"},
+           L"Where the two kinds of chips come up. A wrist with nothing to show does not come up at all. Live.")))),
+    ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"openxr", L"on", 1, Needs(L"hud", L"wrist_status", 1, Slider(L"hud", L"wrist_status_size_cm", L"Panel width, cm", 6, 16, 0.5f, 10,
+           L"How wide the panel is; the chips are a sixth of it. Live.")))),
+    ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"openxr", L"on", 1, Needs(L"hud", L"wrist_status", 1, Slider(L"hud", L"wrist_status_height_cm", L"Panel height over the wrist, cm", -5, 15, 0.5f, 7,
+           L"How far above the wrist the panel hangs (and 3 cm toward your eyes, always turned to them). Live.")))),
+    ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"openxr", L"on", 1, Needs(L"hud", L"wrist_status", 1, Slider(L"hud", L"wrist_status_along_cm", L"Panel along the arm, cm", -10, 10, 0.5f, 0,
+           L"Moves the panel along the forearm: + toward the elbow, - toward the fingers. 0 hangs it over the controller. Live.")))),
+    ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"openxr", L"on", 1, Needs(L"hud", L"wrist_status", 1, Slider(L"hud", L"wrist_status_cone", L"How squarely the wrist must face you, degrees", 20, 60, 1, 40,
+           L"The back of the hand must point this close to your eyes for the panel to come up (a little wider to stay up), with the wrist raised in front of your face. Live.")))),
+    ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"openxr", L"on", 1, Needs(L"hud", L"wrist_status", 1, Slider(L"hud", L"wrist_status_opacity", L"Panel opacity", 0.3f, 1, 0.05f, 1,
+           L"How solid the chips are. Live.")))),
     // The wrist medallions' depth per hero class: the wrist bone and the arm's model differ with the class, so one Z fits one hero
     ShowFor(L"hud", L"bar_place", kBarWrist, Status(L"hero_class", L"The hero playing now")),
     ShowFor(L"hud", L"bar_place", kBarWrist, Slider(L"hud", L"hand_vitals_orb_z_cm_amazon", L"Amazon: depth (Z) offset, cm", -5, 5, 0.1f, 0,
@@ -1370,6 +1694,17 @@ std::vector<Item> g_items = {
     Choice(L"render", L"solid_walls", L"Walls in front of the hero", 1, {L"See-through (the game's)", L"Solid, see-through only in F1", L"Solid in every view"},
            L"The game draws a wall between its camera and the hero at half alpha. From inside every wall you look at "
            L"was see-through; from above it hid the hero."),
+    Toggle(L"render", L"keep_roofs", L"Keep the roof when you walk into a building (F4)", 0,
+           L"For its camera high above the game takes away the roof of a building the hero walks into (Kurast Docks, the "
+           L"town's huts); from the eyes that showed the sky through the ceiling. On: the game's request to fade the roof out "
+           L"is answered with the roof kept, in VR F4 only - F1, F2, F3 keep the game's cut-aways. Nothing else that fades is "
+           L"touched. Idea: bearstonem/d2r-pcvr. Off: the game's own."),
+    Toggle(L"render", L"roofs_two_sided", L"Roofs: their underside, not the sky", 0,
+           L"The game draws a roof only from above, so from under a kept roof the sky showed through it. On: the materials of the "
+           L"roofs (a roof model's material named \"roof\") are built double-sided, and their underside is drawn. A material is "
+           L"built when its area loads: the change shows in the next area you go to (what is loaded now keeps its sides until the "
+           L"game loads it again, at the latest the next start). VR only. Nothing else is changed. From bearstonem/d2r-pcvr (MIT). "
+           L"Off: the game's own."),
     Toggle(L"render", L"light_bounds_fix", L"Fix the game's lighting at a square or wide window", 1,
            L"The game cuts the picture into 32 x 20 tiles and finds each tile's depth range for its lights with a shader that "
            L"is right only at a 16:10 window. At a square or wide one (the VR window, 16:9) it misses rows: lights vanish in hard "
@@ -1724,6 +2059,9 @@ std::vector<Item> g_items = {
            L"The shield turned on the forearm about its own axes."))),
     Needs(L"arms", L"mode", 2, Needs(L"shield", L"forearm", 1, Slider(L"shield", L"yaw", L"Shield: turn about Y, °", -180, 180, 1, 0))),
     Needs(L"arms", L"mode", 2, Needs(L"shield", L"forearm", 1, Slider(L"shield", L"roll", L"Shield: turn about Z, °", -180, 180, 1, 0))),
+    Needs(L"arms", L"mode", 2, Needs(L"shield", L"forearm", 1, Toggle(L"debug", L"shield_blink", L"Blink the strapped shield (a check: does the shield you see move with these?)", 0,
+           L"A test, not a setting: the bone the strapped shield hangs on is hidden for half a second in every two. If the shield on the screen blinks, it is the one these sliders, the "
+           L"put-away behind the left shoulder and the jump to the other arm act on. If it does not blink, the shield you see hangs on something else - say so. Live."))),
     Only(kVr, Group(L"Attack along the hand (A button)")),
     Choice(L"bow", L"mode", L"Aiming", 4,
            {L"Off", L"Left stick while A is held", L"Shift + click along the hand", L"Turn the hero to the hand first",
@@ -1763,82 +2101,6 @@ std::vector<Item> g_items = {
            L"found, it takes Stand Still off the cast so the hero can attack that monster. A shot along the hand has its target taken away (that is the aim), "
            L"and what is left is a click on the ground: a run to the point. With this on, that first question gets no target either, so the cast keeps Stand Still "
            L"and is the same shot in place as with no monster near. Aim point, damage, animation and rate stay the game's. Off: as before. Live."),
-    Group(L"Melee: hit by touch"),
-    Toggle(L"gameplay", L"melee_touch", L"Hit by touch", 0,
-           L"First person (F4), the arms on the controllers, a melee weapon (or bare fists) in hand: the blade you swing through a "
-           L"monster's body picks the target and the moment of the game's own attack - it is pressed on the contact and aimed at "
-           L"the monster you touched. The game does the rest: its animation, its reach (out of reach it walks the hero up, as a "
-           L"click on a monster does), its hit rolls and speed. A blade held still or waved slowly does nothing; a swing hits "
-           L"a monster once. The skill on the attack button is what is pressed - a spell there is cast at the monster you touched. "
-           L"Works with BodyWalk's tracking and with native OpenXR. Off: as before. F4 only."),
-    Needs(L"gameplay", L"melee_touch", 1, Slider(L"gameplay", L"melee_min_speed", L"Hit by touch: the least blade speed that hits, m/s", 0.3f, 8, 0.1f, 0.8f,
-           L"How fast the blade must be moving for a contact to count. A blade moving slower than this does nothing, however it touches "
-           L"a monster - so a gentle poke hits only if this is low. The same number for every weapon (the weapon's own blade is its only "
-           L"difference); the default 0.8 is what it always was. The speed is the BLADE's, measured on the weapon as drawn, frame to frame "
-           L"(the faster of its two ends - the tip of a sword - and at a touch the speed of the point that touches: the tip of a blade "
-           L"swinging about your hand is fast, the end you hold is not) - not your hand's, so a grip at the root or in the middle, a big arc "
-           L"with a still wrist and a poke all read what the blade really does. A monster is hit once per stroke, at its first contact. A "
-           L"normal swing's tip reads about 3-6 m/s: tick \"Draw the capsules of Hit by touch\" (Debug tab) and the blade turns green while its "
-           L"fastest part moves at least that fast (a touch counts with the part that touches, the tip), back to cyan when it slows; the log line "
-           L"\"melee boxes:\" shows the blade's speed and its peak against this "
-           L"number. Lower, and the speed that may begin a stroke and the speed that counts as rest go lower with it; from 0.8 up the rest "
-           L"is as before. Only decides when the touch presses the game's own attack - never its reach, rolls or the attack itself. "
-           L"Live. F4 only.")),
-    Needs(L"gameplay", L"melee_touch", 1, Slider(L"gameplay", L"melee_stroke_start_cm", L"Hit by touch: how far the blade moves to start a stroke, cm", 2, 30, 1, 8,
-           L"A movement is a stroke - and can hit - only after the blade (its faster end: the tip of a sword, as drawn - not the hand) has "
-           L"moved this far within about a tenth of a second, and fast enough (above). Smaller: a short jab counts; larger: only a long swing does. "
-           L"A blade moving slower than the least speed above does nothing, a monster is hit once per stroke. Default 8 as before. "
-           L"Live. F4 only.")),
-    Needs(L"gameplay", L"melee_touch", 1, Toggle(L"gameplay", L"melee_touch_thrown", L"Thrown weapons hit by touch too (a point-blank throw)", 1,
-           L"A javelin, a throwing knife or a throwing axe in hand is swung like any weapon: its blade through a monster's body presses the "
-           L"game's own attack at it - for a thrown weapon that is the game's Throw at that monster, point blank, with the ammunition spent as "
-           L"the game spends it (never the Direct hit route). Throwing potions are not swung. The throw by gesture (\"Hands\": throw by the "
-           L"grip or the trigger) stays as it is and does not fire together with the touch: with the grip throw on, the touch counts only "
-           L"while the right grip is squeezed on the weapon; for 0.7 s after a throw is released the touch stands down; and a touch that "
-           L"pressed the attack drops the release of the same swing (one throw per swing). The blade's size per weapon is an estimate - "
-           L"tune it with the Debug tab's blade sliders and \"Draw the capsules of Hit by touch\". Unticked: a thrown weapon does nothing "
-           L"by touch, as before. Live. F4 only.")),
-    Needs(L"gameplay", L"melee_touch", 1, Toggle(L"gameplay", L"melee_direct",
-           L"Direct hit (experimental, offline only)", 0,
-           L"EXPERIMENTAL, for comparing with the other way. Off: the touch presses the game's own attack, as above. On: at the touch the "
-           L"plugin calls the game's own basic attack on the game's server itself - no animation, no wait for the game's attack rate, "
-           L"no walking up to the monster (the blade's contact is the reach), no start checks (mana, ammunition present, town). Still "
-           L"the game's: the hit roll, the damage, the weapon's wear. Only against a monster the game calls hostile and with no wall "
-           L"between. Offline only: with no local game server found, or after a fault, it falls back to the game's own key. "
-           L"Off: as before. Live. F4 only, like hit by touch.")),
-    Needs(L"gameplay", L"melee_direct", 1, Slider(L"gameplay", L"melee_direct_min_ms", L"Direct hit: min gap between hits, ms", 0, 1500, 50, 0,
-           L"0: no limit beyond \"a monster is hit once per stroke\". More: after a direct hit, the touches within this time do nothing - "
-           L"to keep the rate near the game's own if hits come too fast. Live.")),
-    Toggle(L"hands", L"quick_strike", L"Quick strike: the blow lands earlier in the attack animation (changes the game's timing)", 0,
-           L"A CHANGE OF THE GAME'S TIMING, off by default. The game's melee blow lands at one frame of the hero's attack animation - for a Paladin with a one-hand weapon frame 7 or 8, "
-           L"0.28 - 0.32 s after the animation starts, in your log 317 - 339 ms after the touch pressed the attack (the Direct hit lands in 15 - 50 ms). On: that frame is moved to the "
-           L"frame below in the game's animation table, so the blow - its hit roll, damage and the monster's reaction - comes up to ~0.3 s sooner INSIDE THE SAME ATTACK. The "
-           L"animation's length and the attack rate stay (the next attack can still start only when the animation ends), mana and wear are the game's but happen earlier, and "
-           L"a monster's hit in the first ~0.3 s no longer cancels your blow. It applies to every melee attack of your class - the plain attack and the skills that play it (Zeal, "
-           L"Bash, Berserk, Sacrifice...), the Paladin's Smite too - in VR first person only and offline only (this game's own tables); put back exactly when you switch it "
-           L"off, change view or leave the game. Never the bow's, the crossbow's or a throw's animation. Live. [debug] bow_latency shows the animation row on the press-to-hit line."),
-    Needs(L"hands", L"quick_strike", 1, Slider(L"hands", L"quick_strike_frame", L"Quick strike: the frame the blow lands at", 1, 12, 1, 1,
-           L"The animation frame (a frame is 0.04 s) the blow lands at instead of the original (6 to 14 for the classes' melee attacks). 1 is the earliest the game can act: frame 0 "
-           L"is never looked at when an animation starts. A value at or past the original changes nothing. Live.")),
-    Needs(L"openxr", L"on", 1, Toggle(L"gameplay", L"shield_smite", L"Shield bash casts Smite", 0,
-           L"Paladin, native OpenXR, first person (F4): with Smite on one of the pad's ten skill slots and a shield on your left "
-           L"arm, a hard swing or thrust of the shield through a monster casts one Smite at it - the game's own: the slot's "
-           L"button is pressed for a moment and the monster the shield touched is the cast's target. Reach, mana, cast rate, "
-           L"animation, damage, stun and knockback stay the game's. A shield at rest does nothing, nor does a bash with the right "
-           L"trigger down. Off: the shield casts nothing. F4 only.")),
-    Needs(L"gameplay", L"shield_smite", 1, Slider(L"gameplay", L"shield_smite_min_speed", L"Shield bash: the least speed, m/s", 0.3f, 8, 0.1f, 0.8f,
-           L"How fast the shield must be moving for a bash to count. A shield moving slower does nothing, however it touches a monster. "
-           L"The default 0.8 is what the shield always used. This is the bash's OWN number - \"Hit by touch: the least blade speed\" does not "
-           L"apply to the shield. The speed is your left hand's: its movement plus its turn times the shield's length (0.4 m), frame to "
-           L"frame. Lower, and the speed that may begin a bash (1.5 x, at most 1.2) and the speed that counts as rest go lower with it; "
-           L"from 0.8 up they are as before. A movement is also a bash only after the shield has moved the distance below within about a "
-           L"tenth of a second. Tick \"Draw what casts skills\" (Debug tab) to see it: the shield turns green while a bash would count, "
-           L"the white and orange balls show where its speed reached this number and fell below it, and the log line shows the speed "
-           L"against it. Only decides when the press goes out - never the cast itself. Live. F4 only.")),
-    Needs(L"gameplay", L"shield_smite", 1, Slider(L"gameplay", L"shield_smite_stroke_cm", L"Shield bash: how far the shield moves to start a bash, cm", 2, 30, 1, 8,
-           L"A movement is a bash - and can cast - only after the shield has moved this far within about a tenth of a second, and fast "
-           L"enough (above). Smaller: a short thrust counts; larger: only a long swing does. Default 8 as it always was; the bash's own number, "
-           L"apart from \"Hit by touch: how far the blade moves to start a stroke\". Live. F4 only.")),
     Group(L"Bow"),
     Only(kVr, Toggle(L"hands", L"bow_draw", L"Bow: draw the string with both hands", 0,
            L"Native OpenXR: with a bow in hand, press the trigger of the hand without the bow at the bow's nock point (about 16 cm "
@@ -1939,21 +2201,21 @@ std::vector<Item> g_items = {
     Needs(L"bow", L"hand_pose", 1, Needs(L"bow", L"hook_game_pose", 1, Slider(L"bow", L"hook_thumb_deg", L"String hand: thumb in (+) / out (-), °", -60, 60, 1, 0,
            L"The thumb's base turned further in toward the palm and the fingers (+) or out (-) than the game's own draw pose has it, degrees. "
            L"0 = as the game's animation. Live."))),
-    Needs(L"bow", L"hand_pose", 1, Needs(L"bow", L"hook_game_pose", 1, Toggle(L"bow", L"string_anchor", L"The string is held at the fingers' first joints", 1,
-           L"On: while the string is drawn it runs to the first joints of the hooked index, middle and ring fingers - where the game's own draw "
-           L"animation has them - instead of to the controller's grip point in the middle of the palm, a hand's length behind them (the string "
-           L"passed beside the hand and hooked nothing). The arrow's nock and its line, and the bow's turn along the hands, start there. It comes "
-           L"in and goes out with the draw. The Amazon's right hand only (needs the game's draw pose above); the three offsets below move it. "
-           L"Off: the grip point, as before. Live. F4 only."))),
-    Needs(L"bow", L"string_anchor", 1, Needs(L"bow", L"hand_pose", 1, Needs(L"bow", L"hook_game_pose", 1, Slider(L"bow", L"string_anchor_along_cm", L"String at the fingers: along them, cm", -15, 15, 0.5f, 0,
+    Toggle(L"bow", L"string_anchor", L"The string is held at the fingers' first joints", 1,
+           L"On: while the string is drawn it runs to the first joints of the index, middle and ring fingers instead of to the controller's grip point in the middle of "
+           L"the palm, a hand's length behind them (the string then met the base of the hand and hooked nothing). With the string hand's pose on (above) the joints are "
+           L"those of the hooked pose - the game's own draw pose, the Amazon's right hand; with it OFF they are those of the fingers as the game animates them, which "
+           L"for a bow in hand is the hook already. The arrow's nock and its line, and the bow's turn along the hands, start there. It comes in and goes out with the "
+           L"draw; the three offsets below move it. Off: the grip point, as before. Live. F4 only."),
+    Needs(L"bow", L"string_anchor", 1, Slider(L"bow", L"string_anchor_along_cm", L"String at the fingers: along them, cm", -15, 15, 0.5f, 0,
            L"The string's place moved along the fingers: + toward the fingertips, - toward the wrist. 0 = at the middle of the first joints of "
-           L"index, middle and ring. Live.")))),
-    Needs(L"bow", L"string_anchor", 1, Needs(L"bow", L"hand_pose", 1, Needs(L"bow", L"hook_game_pose", 1, Slider(L"bow", L"string_anchor_across_cm", L"String at the fingers: across them, cm", -15, 15, 0.5f, 0,
+           L"index, middle and ring. Live.")),
+    Needs(L"bow", L"string_anchor", 1, Slider(L"bow", L"string_anchor_across_cm", L"String at the fingers: across them, cm", -15, 15, 0.5f, 0,
            L"The string's place moved across the hand: + toward the thumb and the index finger, - toward the little finger (the same on both "
-           L"hands). Live.")))),
-    Needs(L"bow", L"string_anchor", 1, Needs(L"bow", L"hand_pose", 1, Needs(L"bow", L"hook_game_pose", 1, Slider(L"bow", L"string_anchor_palm_cm", L"String at the fingers: out of the palm, cm", -15, 15, 0.5f, 0.8f,
+           L"hands). Live.")),
+    Needs(L"bow", L"string_anchor", 1, Slider(L"bow", L"string_anchor_palm_cm", L"String at the fingers: out of the palm, cm", -15, 15, 0.5f, 0.8f,
            L"The string's place moved out of the palm, the way the fingers curl: + into the crook of the curled fingers, - toward the back of "
-           L"the hand. 0.8 puts it on the finger's inner side, not through the middle of the bone. Live.")))),
+           L"the hand. 0.8 puts it on the finger's inner side, not through the middle of the bone. Live.")),
     Toggle(L"bow", L"quick_release", L"Quick release: the arrow leaves earlier in the attack (changes the game's timing)", 0,
            L"A CHANGE OF THE GAME'S TIMING, off by default. The game makes a bow's arrow at one frame of its attack animation (for an Amazon frame 6 of 14: "
            L"0.24 s after the animation starts, ~0.3 s after the release). On: that frame is moved earlier in the game's animation table, so the arrow is created "
@@ -1964,6 +2226,74 @@ std::vector<Item> g_items = {
     Needs(L"bow", L"quick_release", 1, Slider(L"bow", L"quick_release_frame", L"Quick release: the frame the arrow is made at", 1, 12, 1, 2,
            L"The animation frame (a frame is 0.04 s) the arrow is made at instead of the original (6 for an Amazon's bow; 7 to 11 for the others). 1 = the "
            L"arrow leaves at once, 2 = as soon as the draw starts. A value at or past the original changes nothing. Live.")),
+    Toggle(L"bow", L"quiver", L"Quiver: pick the arrow of the next shot (a bow)", 0,
+           L"On: the bow skill the next shot fires - Magic, Fire, Cold, Exploding, Ice, Guided, Freezing or Immolation Arrow, Multiple Shot, Strafe - is picked "
+           L"without the skill panel, from the skills the hero has learned (points or items; none learned: a short buzz and nothing else). It is the game's own skill "
+           L"setter, the one the skill panel uses: the same as picking the skill there, on the slot the shot presses (a bow's release: \"Bow draw: the release presses\" "
+           L"below). The arrow glows in the skill's colour while the string is drawn and the controller ticks at each change. The shot is the game's own - mana, "
+           L"arrows, attack rate unchanged. With the string draw: a button of the string hand while the string is drawn (B = the next, A = the previous; the [direct] "
+           L"quiver_next / quiver_prev lines of the ini change that), or the energy orbs along the bow below. Idea from the fork d2r-pcvr (bearstonem, MIT). "
+           L"Needs the game's controller layout. F4 only. Live."),
+    Needs(L"bow", L"quiver", 1, Toggle(L"bow", L"quiver_orbs", L"Quiver: energy orbs along the bow - touch one to pick the arrow", 0,
+           L"On: with a bow in hand, a row of glowing orbs hangs along its stave - one for the plain shot and one for every bow skill the hero has learned (points or "
+           L"items), each in its skill's colour; the skill the next shot fires is the bigger, brighter one. Reach the free hand to an orb and pull its trigger (below: or "
+           L"squeeze the grip): that skill is the next shot's (the game's own skill setter, as picking it in the skill panel; no direct cast). At an orb the trigger is the "
+           L"orb's - no shot, no draw - and the string is not taken there; anywhere else the trigger and the string are as always. The orbs sit on the bow's own stave "
+           L"(read off its bones, so they follow the bow) and never go: at rest, while the string is drawn, at the release (nothing is taken from them then). Needs the game's controller layout and the effect D2R_DepthFog.fx of "
+           L"this version. F4 only. Live.")),
+    Needs(L"bow", L"quiver", 1, Needs(L"bow", L"quiver_orbs", 1, Toggle(L"bow", L"quiver_orb_trigger", L"Orbs: pick with the trigger (off: with the grip)", 1,
+           L"On: the free hand's TRIGGER at an orb picks it; the grip does nothing there. The trigger a press took an orb with stays the orb's until you let go, so moving "
+           L"the hand off the orb with it down does not start the game's attack. Off: the grip picks, as the orbs first did (the trigger is then the string's and the "
+           L"game's as ever). Live."))),
+    Needs(L"bow", L"quiver", 1, Needs(L"bow", L"quiver_orbs", 1, Slider(L"bow", L"quiver_orb_size_cm", L"Orbs: size (radius), cm", 0.8f, 6.0f, 0.1f, 2.2f,
+           L"How big each orb is drawn: its radius. The orb the skill slot holds is a quarter bigger, the one your hand is at is 1.6 times. Live."))),
+    Needs(L"bow", L"quiver", 1, Needs(L"bow", L"quiver_orbs", 1, Slider(L"bow", L"quiver_orb_reach_cm", L"Orbs: grab radius, cm", 2.0f, 20.0f, 0.5f, 7.5f,
+           L"How near your hand's grip point (the middle of the palm) has to be to an orb's middle for the orb to be the one your hand is at - it grows and brightens, and the "
+           L"grip takes it. Bigger than the orb on purpose: the fingers reach further than the palm's point. Where two reaches overlap the nearer orb wins. The log says how "
+           L"far the hand was when it found, left or took an orb. Live."))),
+    Needs(L"bow", L"quiver", 1, Needs(L"bow", L"quiver_orbs", 1, Slider(L"bow", L"quiver_orb_start_cm", L"Orbs: start up the stave, cm", 0.0f, 60.0f, 1.0f, 18.0f,
+           L"Where the first orb (the plain shot) hangs, measured from the bow's grip along its stave toward the limb that points up. The others follow it up the stave. Live."))),
+    Needs(L"bow", L"quiver", 1, Needs(L"bow", L"quiver_orbs", 1, Slider(L"bow", L"quiver_orb_spacing_cm", L"Orbs: distance between orbs, cm", 2.0f, 20.0f, 0.5f, 6.5f,
+           L"How far apart the orbs hang along the stave. A row that does not fit between the start and the limb's end is squeezed to fit. Live."))),
+    Needs(L"bow", L"quiver", 1, Needs(L"bow", L"quiver_orbs", 1, Slider(L"bow", L"quiver_orb_x_cm", L"Orbs: shift across the bow (x), cm", -20.0f, 20.0f, 0.5f, 0.0f,
+           L"The whole row moved across the bow, + to the right of an upright bow. Along the bow's own axes, so it follows the bow when it is tilted. Live."))),
+    Needs(L"bow", L"quiver", 1, Needs(L"bow", L"quiver_orbs", 1, Slider(L"bow", L"quiver_orb_y_cm", L"Orbs: shift along the stave (y), cm", -20.0f, 20.0f, 0.5f, 0.0f,
+           L"The whole row moved along the stave, + toward the limb that points up (up for an upright bow). Live."))),
+    Needs(L"bow", L"quiver", 1, Needs(L"bow", L"quiver_orbs", 1, Slider(L"bow", L"quiver_orb_z_cm", L"Orbs: shift toward the archer (z), cm", -20.0f, 20.0f, 0.5f, 0.0f,
+           L"The whole row moved toward you (+) or away from you (-), on top of the clearance that keeps the orbs off the limb. Live."))),
+    Needs(L"bow", L"quiver", 1, Needs(L"bow", L"quiver_orbs", 1, Slider(L"bow", L"quiver_orb_rot_x_deg", L"Orbs: turn about x (across the bow), °", -180.0f, 180.0f, 1.0f, 0.0f,
+           L"The row turned about the axis across the bow, on its first orb (where the shifts above put it): + swings the far end of the row toward you, - away from you. The turns "
+           L"are about the bow's own axes, so they follow the bow when it is tilted. Applied in the order x, y, z. 0 = the row lies along the stave. Live."))),
+    Needs(L"bow", L"quiver", 1, Needs(L"bow", L"quiver_orbs", 1, Slider(L"bow", L"quiver_orb_rot_y_deg", L"Orbs: turn about y (along the stave), °", -180.0f, 180.0f, 1.0f, 0.0f,
+           L"The row turned about the stave's own axis, on its first orb. A row lying along the stave does not move for this alone; it swings a row that the x or z turn has "
+           L"tilted round the stave (+ toward the right of an upright bow, when the tilt is toward you). Applied after x, before z. Live."))),
+    Needs(L"bow", L"quiver", 1, Needs(L"bow", L"quiver_orbs", 1, Slider(L"bow", L"quiver_orb_rot_z_deg", L"Orbs: turn about z (toward the archer), °", -180.0f, 180.0f, 1.0f, 0.0f,
+           L"The row turned about the axis that points at you, on its first orb: + leans the far end of the row to the left of an upright bow, - to the right. Applied last, "
+           L"after x and y. 0 = the row lies along the stave. Live."))),
+    Needs(L"bow", L"quiver", 1, Needs(L"bow", L"arrow_fx", 1, Toggle(L"bow", L"arrow_fx_needs_mana", L"Arrow effects: out while the mana is short for the chosen arrow", 1,
+           L"On: with an arrow skill chosen that the hero cannot pay - by the game's own numbers, the same as for the plain arrow below - the arrow looks plain: the fire, the frost or the arcane "
+           L"light goes out (and the small coloured glow), and lights again when the mana is back, at rest as much as while you pull. It is believed after 0.3 s and eases over 0.2 s, so it does "
+           L"not flicker when the mana is at the edge. Off: the effect stays whatever the mana. F4 only. Live."))),
+    Needs(L"bow", L"quiver", 1, Toggle(L"bow", L"quiver_plain_no_mana", L"Quiver: no mana for the chosen arrow - shoot the plain arrow", 1,
+           L"On: with an arrow skill chosen (an orb, a button, the skill panel) and too little mana to pay it, the release is the game's plain attack: a normal arrow flies instead "
+           L"of the game's refusal (the hero saying \"not enough mana\" and nothing shot). The skill stays chosen, so when the mana is back the next release is the skill again. Whether the "
+           L"hero can pay is the game's own arithmetic on the game's own numbers - the skill's row in Skills.txt and its level against the hero's mana, less what our last cast took if the "
+           L"mana read has not caught up - never a guess; a skill this does not know is left to the game. The plain attack is pressed the game's way (its own attack button, the cast reading "
+           L"the slot as Attack): its checks, animation and arrows are the game's; nothing is called on the server. Off: the game's refusal, as it is. F4 only. Live.")),
+    Needs(L"bow", L"quiver", 1, Toggle(L"bow", L"arrow_fx", L"Arrow effects: fire, frost and arcane light on the arrow", 1,
+           L"On: the arrow burns, freezes or crackles by the skill that is chosen - from the moment you choose it (an orb, a button, the game's own slot), nocked at rest, and through the "
+           L"draw; the plain shot has none - flames and rising embers for Fire, Exploding and "
+           L"Immolation Arrow; frost, ice crystals, glints and a falling mist for Cold, Ice and Freezing Arrow; an arcane glow with sparks circling the shaft for Magic Arrow. "
+           L"It is light the effect draws in the picture (D2R_DepthFog.fx of this version; nothing of the game's is created), in front of what is behind it and hidden by what is "
+           L"nearer: a hand, a sleeve. The skills that have no element of their own (the plain shot, Guided Arrow, Multiple Shot, Strafe) keep the small coloured glow, and with "
+           L"this off every skill does (while the string is drawn). It costs a few hundredths of a millisecond per eye on a fast card. The idea is bearstonem/d2r-pcvr's (MIT). F4 only. Live.")),
+    Needs(L"bow", L"quiver", 1, Needs(L"bow", L"arrow_fx", 1, Slider(L"bow", L"arrow_fx_size_pct", L"Arrow effects: size, %", 30.0f, 300.0f, 5.0f, 100.0f,
+           L"How big the flames, the frost and the glow are: 100 is a flame 4.5 cm round the arrow's head. Live."))),
+    Needs(L"bow", L"quiver", 1, Needs(L"bow", L"arrow_fx", 1, Slider(L"bow", L"arrow_fx_bright_pct", L"Arrow effects: brightness, %", 20.0f, 300.0f, 5.0f, 100.0f,
+           L"How bright the effect is, on every skill together. The heavier skills (Exploding, Immolation, Ice, Freezing) are a little brighter than the rest already. Live."))),
+    Needs(L"bow", L"quiver", 1, Needs(L"bow", L"arrow_fx", 1, Slider(L"bow", L"arrow_fx_along_cm", L"Arrow effects: along the arrow, cm", -20.0f, 60.0f, 0.5f, 0.0f,
+           L"Moves the effect's centre along the arrow's shaft: more is forward, toward the arrowhead; less is back toward the string. 0 = where it is found. "
+           L"Fire, frost and arcane alike, on the arrow at rest and on the drawn one. Live."))),
     Needs(L"hands", L"bow_draw", 0, Group(L"Bow without the string draw (the A button, mode above)")),
     Needs(L"hands", L"bow_draw", 0, Needs(L"bow", L"mode", 4, Toggle(L"hands", L"bow_aim", L"Arrows along the hand, no auto-target", 0,
            L"On: with a bow or a crossbow in hand, the attack and the bow's arrow skills go exactly along the hand: the game's "
@@ -2047,6 +2377,19 @@ std::vector<Item> g_items = {
     NeedsEither(L"hands", L"throw_gesture", L"throw_by_grip", 1, Toggle(L"hands", L"throw_stand_still", L"Throws are pressed with the game's Stand Still", 1,
            L"Like every attack of ours in first person, a throw's press holds the game's Stand Still (Shift), so it can never walk the hero. A throw is a cast at "
            L"a spot and does not walk anyway: unticked, it is pressed without Stand Still. Live.")),
+    Needs(L"openxr", L"on", 1, Needs(L"openxr", L"direct_input", 1, Toggle(L"hands", L"javelin_quiver", L"Javelin quiver: choose the skill of the next throw", 1,
+           L"Native OpenXR with \"Controls without BodyWalk\", first person (F4). With a javelin or a throwing weapon in your weapon hand and a skill it allows learned "
+           L"(an Amazon's Poison Javelin, Lightning Bolt, Plague Javelin, Lightning Fury and the spear skills Jab, Power Strike, Impale, Charged Strike, Fend, Lightning Strike; "
+           L"a Barbarian's Double Throw with a thrown weapon in each hand; a Necromancer's Poison Dagger with a throwing knife), you pick the skill of the next throw from "
+           L"your quiver: reach a hand behind a shoulder (the javelin bag on your back) and tap its trigger - the right hand steps to the NEXT skill, the left to the PREVIOUS one, "
+           L"with a pulse in that hand (two pulses: back at the plain Throw). Only skills the hero has and the weapon in hand allows are offered; the choice is dropped when "
+           L"the weapon changes. The game's own cast does it: the pad's attack is read as the chosen skill, so mana, range, ammunition and the attack rate stay the game's. "
+           L"A blow in reach (Jab ...) is for the plain attack and the hit by touch; a throw by gesture stays the Throw then. A button bound in [direct] to "
+           L"action:quivernext / action:quiverprev steps it from anywhere. Needs the skill panel's reads (they run by themselves while a thrown weapon is in hand). On by "
+           L"default; it does nothing without native OpenXR and \"Controls without BodyWalk\". F4 only."))),
+    Needs(L"hands", L"javelin_quiver", 1, Toggle(L"hands", L"javelin_quiver_reach", L"Javelin quiver: tap a trigger with a hand behind the shoulder", 1,
+           L"On: the reach behind a shoulder (the volume of the weapon swap over the shoulder) with a trigger tap steps the choice - the trigger of a hand in the reach "
+           L"is the quiver's, not the attack's. Off: only a button bound to action:quivernext / action:quiverprev in [direct] steps it. Live.")),
     Toggle(L"hands", L"quick_throw", L"Quick throw: the missile leaves earlier in the throw animation (changes the game's timing)", 0,
            L"A CHANGE OF THE GAME'S TIMING, off by default. The game makes a throw's missile - a potion, a javelin, a knife, an axe - at one frame of its throw animation "
            L"(for an Amazon frame 9 of 16: 0.36 s after the animation starts), so after your own wind-up swing the hero winds up AGAIN before it flies. On: that frame is "
@@ -2067,9 +2410,27 @@ std::vector<Item> g_items = {
            L"and then it aims along the line from the right hand to the left. Off: as a bow, the game's own animation."),
     Needs(L"bow", L"xbow_two_hands", 1, Choice(L"hands", L"xbow_hand", L"The game hangs the crossbow on", 1, {L"the right wrist", L"the left wrist"},
            L"For its grip: if the crossbow sits wrong or turns away when the left hand takes it, try the other.")),
-    Needs(L"bow", L"xbow_two_hands", 1, Slider(L"hands", L"xbow_line_pitch", L"Crossbow: shot line, tilt up/down, °", -180, 180, 1, 34,
-           L"Turns the line the bolt flies along and the left hand takes - the red line ([debug] phantom_ray) - not the model. Lay it on the crossbow.")),
-    Needs(L"bow", L"xbow_two_hands", 1, Slider(L"hands", L"xbow_line_yaw", L"Crossbow: shot line, turn left/right, °", -180, 180, 1, 15)),
+    Needs(L"bow", L"xbow_two_hands", 1, Toggle(L"hands", L"xbow_hold_grip", L"Crossbow: the right hand holds it by its grip", 0,
+           L"The crossbow sits in the right palm by its own grip - where the game's own hand holds it (the palm's place on the crossbow as the "
+           L"game's animation has it) - not by the bone it hangs on, which put the grip half a hand off the palm: it looked held by the wrist. "
+           L"The log says once how far the two are apart. Unticked: as before. F4 only.")),
+    Needs(L"bow", L"xbow_two_hands", 1, Toggle(L"hands", L"xbow_support_game", L"Crossbow: left hand on the game's own fore-grip", 0,
+           L"The left hand takes the crossbow where the game's own other hand holds it in the game's two-handed hold - learned from the game's "
+           L"pose a moment after the crossbow is in hand, nothing set by hand. Until then (and unticked) the place under the drawn barrel, or the "
+           L"shot line. The log says once where it is and how the game's palm faces the stock. F4 only.")),
+    Needs(L"hands", L"xbow_support_game", 1, Toggle(L"hands", L"xbow_support_close", L"Crossbow: the left hand closes on the stock", 0,
+           L"On the game's own fore-grip the left hand takes the game's own support hand's turn and finger pose (mirrored: in the game that is the "
+           L"right hand) - the palm toward the stock, the fingers closed round it - instead of the controller's turn with an open hand. "
+           L"Unticked: as before. F4 only.")),
+    Needs(L"bow", L"xbow_two_hands", 1, Toggle(L"hands", L"xbow_aim_barrel", L"Crossbow: shoot along the drawn barrel", 0,
+           L"The bolt goes where the crossbow you see points: along its barrel as the model is drawn (its bolt helper bone, as bearstonem/d2r-pcvr "
+           L"aims) - no correction by hand, raised or rolled alike. The game's own bolt, damage, ammunition and rate of fire are unchanged: only the "
+           L"direction of the game's attack is steered, as the shot line does. While the barrel is not read (an unknown model, a moment after a swap) "
+           L"the shot line below is used. Unticked: the shot line. F4 only.")),
+    Needs(L"bow", L"xbow_two_hands", 1, Needs(L"hands", L"xbow_aim_barrel", 0, Slider(L"hands", L"xbow_line_pitch", L"Crossbow: shot line, tilt up/down, °", -180, 180, 1, 34,
+           L"Turns the line the bolt flies along and the left hand takes - the red line ([debug] phantom_ray) - not the model. Lay it on the crossbow. "
+           L"With \"shoot along the drawn barrel\" ticked it is only the stand-in while the barrel is not read."))),
+    Needs(L"bow", L"xbow_two_hands", 1, Needs(L"hands", L"xbow_aim_barrel", 0, Slider(L"hands", L"xbow_line_yaw", L"Crossbow: shot line, turn left/right, °", -180, 180, 1, 15))),
     Needs(L"bow", L"xbow_two_hands", 1, Slider(L"hands", L"xbow_left_at_cm", L"Crossbow: left hand ahead, cm", 5, 80, 1, 30,
            L"The one place the left hand takes the crossbow (under the stock, just behind the bow); it does not slide. "
            L"The grip takes it only with the left hand that near this place.")),
@@ -2079,6 +2440,28 @@ std::vector<Item> g_items = {
            L"The left hand on the crossbow moved along its own axes, until it sits under the stock.")),
     Needs(L"bow", L"xbow_two_hands", 1, Slider(L"hands", L"xbow_left_y", L"Crossbow: left hand Y, cm", -20, 20, 0.5f, 0)),
     Needs(L"bow", L"xbow_two_hands", 1, Slider(L"hands", L"xbow_left_z", L"Crossbow: left hand Z, cm", -20, 20, 0.5f, 0)),
+    Needs(L"bow", L"xbow_two_hands", 1, Toggle(L"hands", L"xbow_grip_latch", L"Crossbow: left grip lets go cleanly", 0,
+           L"The left hand holds the crossbow while the left grip is squeezed - it may be squeezed first and then brought to the stock. It lets go at once "
+           L"when you swap weapons or the hero's model changes, and when the left controller loses tracking (the hand stays free: no jump onto the stock). "
+           L"A squeeze still held from the shoulder weapon swap takes nothing: let go and squeeze again. No grip reading from the bridge = not held. "
+           L"Unticked: as before (the grip takes it near the place; a lost controller puts the hand on the stock). F4 only. The shot is not changed.")),
+    Needs(L"bow", L"xbow_two_hands", 1, Toggle(L"hands", L"xbow_wrist_tracked", L"Crossbow: left wrist follows the controller", 0,
+           L"The left hand on the crossbow keeps your controller's turn - hold the stock from below, palm up, or from above, as you like - and its palm's "
+           L"middle sits on the place. Unticked: the hand is turned into the game's grip round the stock (the roll slider turns it). "
+           L"The left hand X/Y/Z and roll sliders still act on top. F4 only.")),
+    Needs(L"hands", L"xbow_wrist_tracked", 1, Toggle(L"hands", L"xbow_grip_wide", L"Crossbow: take the grip right after a swap", 0,
+           L"The game's grip of the crossbow is taken even from a pose with the hands far apart (the idle right after a swap from a shield set), "
+           L"since the crossbow is placed by the controller anyway - before, the left hand could not take it until a pose with the hands together "
+           L"(a shot). Needs \"left wrist follows the controller\". F4 only.")),
+    Needs(L"bow", L"xbow_two_hands", 1, Toggle(L"hands", L"xbow_support_model", L"Crossbow: left palm under the drawn barrel", 0,
+           L"The left palm goes under the crossbow's barrel as the model is drawn (its bolt helper bone), \"palm behind the limbs\" behind the front "
+           L"of the stock and \"palm below the barrel\" under it - each crossbow its own. Unticked: on the shot line set by eye. "
+           L"The bolt still flies along the shot line: only the hand moves. The log says whether the barrel was read (\"crossbow barrel\"). F4 only.")),
+    Needs(L"hands", L"xbow_support_model", 1, Slider(L"hands", L"xbow_support_drop_adj_cm", L"Crossbow: palm lower (+) / higher, cm", -10, 10, 0.5f, 0,
+           L"A fine adjustment around 0: the palm's middle sits 7 cm under the drawn barrel (as d2r-pcvr); + lower, - higher.")),
+    Needs(L"hands", L"xbow_support_model", 1, Slider(L"hands", L"xbow_support_back_adj_cm", L"Crossbow: palm back (+) / forward, cm", -10, 20, 0.5f, 0,
+           L"A fine adjustment around 0: the palm sits 6 cm behind the front of the stock, where the bow's limbs meet it (as d2r-pcvr); "
+           L"+ farther back, - forward. With the palm under the drawn barrel ticked, \"left hand ahead\" is not used.")),
     Needs(L"bow", L"mode", 4, Slider(L"bow", L"xbow_range_one", L"Crossbow aim point, one hand, cells", 2, 40, 1, 5,
            L"How far out along the aim the attack point is with the right hand alone: nearer = rougher, the crossbow sways more.")),
     Needs(L"bow", L"mode", 4, Slider(L"bow", L"xbow_range_two", L"Crossbow aim point, two hands, cells", 2, 40, 1, 30,
@@ -2090,8 +2473,17 @@ std::vector<Item> g_items = {
            L"The staff's, with the right hand alone.")),
     Needs(L"bow", L"mode", 4, Slider(L"bow", L"staff_range_two", L"Staff aim point, two hands, cells", 2, 40, 1, 30,
            L"The staff's, with the left hand on it too.")),
+#if D2RVR_FIRST_PERSON
+    Needs(L"hands", L"spell_aim_model", 1, Slider(L"bow", L"caster_range", L"Wand or orb aim point, cells", 0, 40, 1, 20,
+           L"VR first person (F4), with Auto-target's \"Aim spells by the drawn hand or staff\": how far out along the wand or orb a spell's point goes - "
+           L"farther = finer steps of the aim (the game's own point is about 3 cells, a 20-degree staircase). Below 3: the game's own point. A staff has the two above.")),
+    Needs(L"hands", L"spell_aim_model", 1, Slider(L"bow", L"hand_range", L"Bare hands aim point, cells", 0, 40, 1, 5,
+           L"The same for a spell cast with bare hands (or with any weapon that is not a staff, wand or orb): how far out along the hand its point goes. "
+           L"Below 3: the game's own point.")),
+#endif
     Slider(L"bow", L"staff_aim_yaw", L"Staff aim correction, ° (+ = right)", -45, 45, 1, 0,
-           L"The same for a staff, in place of the one above: turns its aim about the vertical, if spells land beside where the staff points."),
+           L"The same for a staff, in place of the one above: turns its aim about the vertical, if spells land beside where the staff points. "
+           L"In VR F4 with Auto-target's \"Aim spells by the drawn hand or staff\" on, only when that has no fresh pose (the staff's own axis needs no correction)."),
     Group(L"Which hand aims"),
     Toggle(L"bow", L"ranged_left", L"Bows and crossbows: always the left hand", 1,
            L"A bow or crossbow is always aimed with the left hand, whatever the weapon set."),
@@ -2171,6 +2563,187 @@ std::vector<Item> g_items = {
            L"hand (negative: the other way)."))),
     Needs(L"arms", L"mode", 2, Needs(L"hands", L"sword_two_hands", 1, Slider(L"hands", L"sword_slide_cm", L"Two-handed sword: left hand slides, cm", 0, 20, 0.5f, 4,
            L"How far the left hand may slide along the hilt either way with the controller. 0: it stays in one place."))),
+    // Strikes (2026-10-16, the user's wish): every setting that decides whether, and how, a touch of the blade becomes an attack, in one place. Moved here from Weapon Adjust (hit by touch, direct hit, quick
+    // strike, the shield bash) and the Debug tab's touch ticks (duplicated in the group at the bottom). The ini keys are the same as ever, only the place changed; the blade's geometry stays in Weapon Adjust.
+    Only(kVr, Tab(L"Strikes")),
+    Group(L"Hit by touch"),
+    Toggle(L"gameplay", L"melee_touch", L"Hit by touch", 0,
+           L"First person (F4), the arms on the controllers, a melee weapon (or bare fists) in hand: the blade you swing through a "
+           L"monster's body picks the target and the moment of the game's own attack - it is pressed on the contact and aimed at "
+           L"the monster you touched. The game does the rest: its animation, its reach (out of reach it walks the hero up, as a "
+           L"click on a monster does), its hit rolls and speed. A blade held still or waved slowly does nothing; a swing hits "
+           L"a monster once. The skill on the attack button is what is pressed - a spell there is cast at the monster you touched. "
+           L"Works with BodyWalk's tracking and with native OpenXR. Off: as before. F4 only."),
+    Needs(L"gameplay", L"melee_touch", 1, Slider(L"gameplay", L"melee_min_speed", L"Hit by touch: the least blade speed that hits, m/s", 0.3f, 8, 0.1f, 0.8f,
+           L"How fast the blade must be moving for a contact to count. A blade moving slower than this does nothing, however it touches "
+           L"a monster - so a gentle poke hits only if this is low. The same number for every weapon (the weapon's own blade is its only "
+           L"difference); the default 0.8 is what it always was. The speed is the BLADE's, measured on the weapon as drawn, frame to frame "
+           L"(the faster of its two ends - the tip of a sword - and at a touch the speed of the point that touches: the tip of a blade "
+           L"swinging about your hand is fast, the end you hold is not) - not your hand's, so a grip at the root or in the middle, a big arc "
+           L"with a still wrist and a poke all read what the blade really does. A monster is hit once per stroke, at its first contact. A "
+           L"normal swing's tip reads about 3-6 m/s: tick \"Draw the capsules of Hit by touch\" (Debug group below) and the blade turns green while its "
+           L"fastest part moves at least that fast (a touch counts with the part that touches, the tip), back to cyan when it slows; the log line "
+           L"\"melee boxes:\" shows the blade's speed and its peak against this "
+           L"number. Lower, and the speed that may begin a stroke and the speed that counts as rest go lower with it; from 0.8 up the rest "
+           L"is as before. Only decides when the touch presses the game's own attack - never its reach, rolls or the attack itself. "
+           L"Live. F4 only.")),
+    Needs(L"gameplay", L"melee_touch", 1, Slider(L"gameplay", L"melee_stroke_start_cm", L"Hit by touch: how far the blade moves to start a stroke, cm", 2, 30, 1, 8,
+           L"A movement is a stroke - and can hit - only after the blade (its faster end: the tip of a sword, as drawn - not the hand) has "
+           L"moved this far within about a tenth of a second, and fast enough (above). Smaller: a short jab counts; larger: only a long swing does. "
+           L"A blade moving slower than the least speed above does nothing, a monster is hit once per stroke. Default 8 as before. "
+           L"Live. F4 only.")),
+    Needs(L"gameplay", L"melee_touch", 1, Toggle(L"gameplay", L"melee_touch_thrown", L"Thrown weapons hit by touch too (a point-blank throw)", 1,
+           L"A javelin, a throwing knife or a throwing axe in hand is swung like any weapon: its blade through a monster's body presses the "
+           L"game's own attack at it - for a thrown weapon that is the game's Throw at that monster, point blank, with the ammunition spent as "
+           L"the game spends it (never the Direct hit route). Throwing potions are not swung. The throw by gesture (\"Hands\": throw by the "
+           L"grip or the trigger) stays as it is and does not fire together with the touch: with the grip throw on, the touch counts only "
+           L"while the right grip is squeezed on the weapon; for 0.7 s after a throw is released the touch stands down; and a touch that "
+           L"pressed the attack drops the release of the same swing (one throw per swing). The blade's size per weapon is an estimate - "
+           L"tune it with the blade sliders of the Debug group below and \"Draw the capsules of Hit by touch\". Unticked: a thrown weapon does nothing "
+           L"by touch, as before. Live. F4 only.")),
+    Group(L"Which contact counts as a strike"),
+    Needs(L"gameplay", L"melee_touch", 1, Toggle(L"gameplay", L"melee_toward", L"Toward the monster: the blade must move at it", 1,
+           L"For every kind of weapon (single kinds can be switched off in the table below): a contact counts as an attack only while the point of the blade that touches the monster is "
+           L"moving TOWARD it - the angle between that point's velocity and the line from the point to the nearest point of the monster's body axis is under the angle below. An overhead "
+           L"blow down, an uppercut from below, a sideways sweep into the monster and a thrust all go toward it. The wind-up (the head going up and back, away from a monster in front of you), "
+           L"the pull-back after a blow and a graze along its side do not count - and do not use the monster up: the blow that follows does. Only decides whether a contact counts as an "
+           L"attack: the game's own attack, its damage, rolls and reach are the game's, nothing is scaled. Unticked: every contact counts, as before. With \"Draw the capsules of Hit by "
+           L"touch\" (Debug group below) a refused contact is RED (BLUE with the tick unticked). Live. F4 only.")),
+    Needs(L"gameplay", L"melee_touch", 1, Needs(L"gameplay", L"melee_toward", 1, Slider(L"gameplay", L"melee_toward_deg", L"Toward the monster: the widest angle, deg", 20, 89, 1, 60,
+           L"How far off the straight line to the monster a movement may be and still count as toward it: 60 = the cosine of the angle between the two directions above 0.5. Lower: only a "
+           L"movement straight at the monster counts; higher: a glancing blow counts too; 89: anything that is not away from it. Live."))),
+    Needs(L"gameplay", L"melee_touch", 1, Needs(L"gameplay", L"melee_amplitude", 1, Slider(L"gameplay", L"melee_amp_blunt_x", L"Blunt weapons: x piercing", 0.5f, 6, 0.05f, 2.0f,
+           L"The least swing amplitude of maces, hammers, clubs and scepters as a multiple of the piercing weapons' (below): 2 x 8 cm = 16 cm - a hammer needs a real swing, a flick or a tap "
+           L"does nothing, a shove of the head into the monster over that distance counts. The cm it makes is in the label. Each kind can have a number of its own in the table. Live."))),
+    Needs(L"gameplay", L"melee_touch", 1, Toggle(L"gameplay", L"melee_head_only", L"Only the head of the weapon strikes (maces, scepters)", 1,
+           L"For the kinds ticked in the table (maces, hammers, clubs and scepters by default): a contact counts only when the HEAD of the weapon touches the monster - the outer part of the "
+           L"blade, not the shaft or the handle. A touch with the shaft is refused (GREY in the debug) and does not use the monster up. Live. F4 only.")),
+    Needs(L"gameplay", L"melee_touch", 1, Needs(L"gameplay", L"melee_head_only", 1, Slider(L"gameplay", L"melee_head_pct", L"The head is the outer part of the blade, %", 10, 100, 5, 40,
+           L"The head is this part of the blade's length, counted from the tip: 40 = the outer two fifths. Live."))),
+    Needs(L"gameplay", L"melee_touch", 1, Toggle(L"gameplay", L"melee_amplitude", L"A swing must be big enough (the head's travel in the stroke)", 1,
+           L"For a contact to count, the head must have travelled at least the kind's amplitude in this stroke before it touched: a real swing, not a flick of the wrist or a tap. The base is "
+           L"the piercing weapons' number below (a dagger's or a spear's short jab can count); edged weapons, blunt weapons and staffs need it times their factor; any kind can have a factor "
+           L"of its own in the table. Not a speed - the least speed above, and each kind's own in the table, is separate. Unticked: no swing size is asked. Live. F4 only.")),
+    Needs(L"gameplay", L"melee_touch", 1, Needs(L"gameplay", L"melee_amplitude", 1, Slider(L"gameplay", L"melee_amp_pierce_cm", L"Piercing: least swing amplitude, cm", 1, 60, 1, 8,
+           L"Wands, spears, daggers, claws, orbs, bare fists, javelins, throwing weapons and the rest: the least swing amplitude in cm - the base for all the other kinds. 8 = a jab of a "
+           L"hand's width. Live."))),
+    Needs(L"gameplay", L"melee_touch", 1, Needs(L"gameplay", L"melee_amplitude", 1, Slider(L"gameplay", L"melee_amp_edged_x", L"Edged weapons: x piercing", 0.5f, 6, 0.05f, 1.4f,
+           L"Swords, axes and polearms: the least swing amplitude as a multiple of the piercing weapons'. 1.4 x 8 cm = 11.2 cm. The cm it makes is in the label. Live."))),
+    Needs(L"gameplay", L"melee_touch", 1, Needs(L"gameplay", L"melee_amplitude", 1, Slider(L"gameplay", L"melee_amp_staff_x", L"Staffs: x piercing", 0.5f, 6, 0.05f, 1.75f,
+           L"Staffs: the least swing amplitude as a multiple of the piercing weapons'. 1.75 x 8 cm = 14 cm. The cm it makes is in the label. Live."))),
+    Group(L"Each kind of weapon (type a number; 0 = follow the general one)"),
+    Group(L"Direct hit (experimental)"),
+    Needs(L"gameplay", L"melee_touch", 1, Toggle(L"gameplay", L"melee_direct",
+           L"Direct hit (experimental, offline only)", 0,
+           L"EXPERIMENTAL, for comparing with the other way. Off: the touch presses the game's own attack, as above. On: at the touch the "
+           L"plugin calls the game's own basic attack on the game's server itself - no animation, no wait for the game's attack rate, "
+           L"no walking up to the monster (the blade's contact is the reach), no start checks (mana, ammunition present, town). Still "
+           L"the game's: the hit roll, the damage, the weapon's wear. Only against a monster the game calls hostile and with no wall "
+           L"between. Offline only: with no local game server found, or after a fault, it falls back to the game's own key. "
+           L"Off: as before. Live. F4 only, like hit by touch.")),
+    Needs(L"gameplay", L"melee_direct", 1, Slider(L"gameplay", L"melee_direct_min_ms", L"Direct hit: min gap between hits, ms", 0, 1500, 50, 0,
+           L"0: no limit beyond \"a monster is hit once per stroke\". More: after a direct hit, the touches within this time do nothing - "
+           L"to keep the rate near the game's own if hits come too fast. Live.")),
+    Group(L"Quick strike"),
+    Toggle(L"hands", L"quick_strike", L"Quick strike: the blow lands earlier in the attack animation (changes the game's timing)", 0,
+           L"A CHANGE OF THE GAME'S TIMING, off by default. The game's melee blow lands at one frame of the hero's attack animation - for a Paladin with a one-hand weapon frame 7 or 8, "
+           L"0.28 - 0.32 s after the animation starts, in your log 317 - 339 ms after the touch pressed the attack (the Direct hit lands in 15 - 50 ms). On: that frame is moved to the "
+           L"frame below in the game's animation table, so the blow - its hit roll, damage and the monster's reaction - comes up to ~0.3 s sooner INSIDE THE SAME ATTACK. The "
+           L"animation's length and the attack rate stay (the next attack can still start only when the animation ends), mana and wear are the game's but happen earlier, and "
+           L"a monster's hit in the first ~0.3 s no longer cancels your blow. It applies to every melee attack of your class - the plain attack and the skills that play it (Zeal, "
+           L"Bash, Berserk, Sacrifice...), the Paladin's Smite too - in VR first person only and offline only (this game's own tables); put back exactly when you switch it "
+           L"off, change view or leave the game. Never the bow's, the crossbow's or a throw's animation. Live. [debug] bow_latency shows the animation row on the press-to-hit line."),
+    Needs(L"hands", L"quick_strike", 1, Slider(L"hands", L"quick_strike_frame", L"Quick strike: the frame the blow lands at", 1, 12, 1, 1,
+           L"The animation frame (a frame is 0.04 s) the blow lands at instead of the original (6 to 14 for the classes' melee attacks). 1 is the earliest the game can act: frame 0 "
+           L"is never looked at when an animation starts. A value at or past the original changes nothing. Live.")),
+    Group(L"Shield bash"),
+    Needs(L"openxr", L"on", 1, Toggle(L"gameplay", L"shield_smite", L"Shield bash casts Smite", 0,
+           L"Paladin, native OpenXR, first person (F4): with Smite on one of the pad's ten skill slots and a shield on your left "
+           L"arm, a hard swing or thrust of the shield through a monster casts one Smite at it - the game's own: the slot's "
+           L"button is pressed for a moment and the monster the shield touched is the cast's target. Reach, mana, cast rate, "
+           L"animation, damage, stun and knockback stay the game's. A shield at rest does nothing, nor does a bash with the right "
+           L"trigger down. Off: the shield casts nothing. F4 only.")),
+    Needs(L"gameplay", L"shield_smite", 1, Slider(L"gameplay", L"shield_smite_min_speed", L"Shield bash: the least speed, m/s", 0.3f, 8, 0.1f, 0.8f,
+           L"How fast the shield must be moving for a bash to count. A shield moving slower does nothing, however it touches a monster. "
+           L"The default 0.8 is what the shield always used. This is the bash's OWN number - \"Hit by touch: the least blade speed\" does not "
+           L"apply to the shield. The speed is your left hand's: its movement plus its turn times the shield's length (0.4 m), frame to "
+           L"frame. Lower, and the speed that may begin a bash (1.5 x, at most 1.2) and the speed that counts as rest go lower with it; "
+           L"from 0.8 up they are as before. A movement is also a bash only after the shield has moved the distance below within about a "
+           L"tenth of a second. Tick \"Draw what casts skills\" (Debug group below) to see it: the shield turns green while a bash would count, "
+           L"the white and orange balls show where its speed reached this number and fell below it, and the log line shows the speed "
+           L"against it. Only decides when the press goes out - never the cast itself. Live. F4 only.")),
+    Needs(L"gameplay", L"shield_smite", 1, Slider(L"gameplay", L"shield_smite_stroke_cm", L"Shield bash: how far the shield moves to start a bash, cm", 2, 30, 1, 8,
+           L"A movement is a bash - and can cast - only after the shield has moved this far within about a tenth of a second, and fast "
+           L"enough (above). Smaller: a short thrust counts; larger: only a long swing does. Default 8 as it always was; the bash's own number, "
+           L"apart from \"Hit by touch: how far the blade moves to start a stroke\". Live. F4 only.")),
+    Group(L"Debug (the same ticks as on the Debug tab)"),
+    Toggle(L"debug", L"melee_boxes", L"Draw the capsules of Hit by touch", 0,
+           L"First person (F4) with \"Hit by touch\" on: the blade's capsule (cyan) and the capsule of every monster the touch looks at "
+           L"(yellow; pale where the game's own checks refuse it - not hostile, or a wall between), drawn through everything, so they can be "
+           L"seen against the monsters. The monster a touch was accepted on shows red for half a second when the game's own attack key "
+           L"was pressed for it, magenta when \"Direct hit\" took it. Five times a second the log gets a line of numbers: the nearest "
+           L"monsters' capsule size and height, how far the blade's tip is from them, the stroke speed. A drawing and a log only - "
+           L"it changes nothing in what the touch does. Live. The nearest three monsters are always drawn, hostile or not (pale where "
+           L"the game refuses them); with two melee weapons held (a Barbarian's, an Assassin's claws) both blades are drawn, the "
+           L"second one teal. While a contact would count (a stroke on, the blade at or above \"Hit by touch: the least blade speed\") "
+           L"the blade is green; a swing leaves marks: a WHITE ball where the blade's speed reached that least speed (and the start "
+           L"distance was met), an ORANGE ball where it fell below it again, and the tip's path as a thin trail, cyan where a contact "
+           L"would not count and green where it would - tune the least speed and the start distance by where they land in your swing. "
+           L"A contact is judged by the strike rules (the Strikes tab): the blade, the trail and the marks are green only while a contact with the monster nearest the blade would count now. "
+           L"At every contact that was REFUSED, for \"Hit by touch: how long the speed marks and the trail stay\": a BALL on the point of the blade that touched, an ARROW along the way that point "
+           L"was moving, a thin LINE from it to the nearest point of the monster's body axis, and the monster's capsule tinted with the colour of the reason - RED: not toward the monster (a "
+           L"wind-up, a pull-back, a graze; BLUE instead with \"Not toward the monster in red\" unticked - red is also the monster's flash when a blow is pressed); AMBER: the swing "
+           L"was too small for this kind, or too slow where it touched, or the blade entered the monster in a movement that never became a stroke; GREY: not the head (the shaft or the handle of "
+           L"a mace touched). A contact that counted leaves green marks and the monster's own red / magenta flash. The log says why, one line for each refused contact (the kind, the angle, the "
+           L"speed or the amplitude), at most one every 250 ms for each reason; the first twelve are always told."),
+    Slider(L"debug", L"melee_mark_ms", L"Hit by touch: how long the speed marks and the trail stay, ms (0 = none)", 0, 3000, 100, 800,
+           L"With \"Draw the capsules of Hit by touch\" on: how long the white / orange balls (where the blade's speed reached the least "
+           L"speed and where it fell below it) and the tip's trail stay in the picture after a swing. 0 = no marks and no trail, the "
+           L"blade's colour only. Live."),
+    Toggle(L"debug", L"melee_direction_red", L"Hit by touch: not toward the monster in red (off: blue)", 1,
+           L"With \"Draw the capsules of Hit by touch\" on: the colour of a contact the direction rule refused (the blade was moving away from the monster or across it - a wind-up, a pull-back, "
+           L"a graze). On (the default): RED. Off: BLUE - red is also the monster's flash when a blow is pressed, which a blue refusal cannot be taken for. The other reasons keep their "
+           L"colours: amber - the swing too small or too slow, grey - not the head. A drawing only. Live."),
+    Toggle(L"debug", L"skill_triggers", L"Draw what casts skills", 0,
+           L"First person (F4): draws and logs the triggers that cast a skill, so they can be tuned by eye - for now the SHIELD BASH that "
+           L"casts Smite (\"Shield bash casts Smite\"): the shield's capsule (the one the bash tests monsters with) on the left arm in violet, "
+           L"green while a bash would count (a stroke on, at or above \"Shield bash: the least speed\", the right trigger up, Smite on a pad "
+           L"slot...); a WHITE ball at the shield's centre where its speed reached that speed and an ORANGE one where it fell below it; its "
+           L"path as a thin trail, cyan where a bash would not count and green where it would; the monsters near it (yellow) and the one a "
+           L"bash pressed Smite on, red. Five times a second the log gets a \"skill trigger shield bash:\" line: the shield's speed against "
+           L"the bash speed and its start distance, the right trigger, the pad button of Smite's slot, the mana against Smite's cost, the "
+           L"nearest monster, and why a bash would not count (too slow, no stroke yet, right trigger down, no Smite slot, no mana, not hostile...). "
+           L"It works with the shield bash off too (the line then says so). Other skill triggers (the bow's draw, a throw) can join it later. A drawing and a log only - it changes "
+           L"nothing in when anything fires. Apart from \"Draw the capsules of Hit by touch\", which is for the melee blade. Needs the "
+           L"D2R_DepthFog.fx of the same build (the old one draws the shield's capsule green). Live. F4 only."),
+    Slider(L"debug", L"skill_mark_ms", L"Skill triggers: how long the speed marks and the trail stay, ms (0 = none)", 0, 3000, 100, 800,
+           L"With \"Draw what casts skills\" on: how long the white / orange balls and the shield's trail stay in the picture after a bash. "
+           L"0 = no marks and no trail, the capsule's colour only. Live."),
+    Slider(L"debug", L"melee_blade_length_pct", L"Hit by touch: the blade's length from the weapon bone to its tip, % of the weapon's own", 50, 150, 5, 100,
+           L"Tunes the blade of Hit by touch - the capsule drawn by \"Draw the capsules of Hit by touch\" is the blade the touch tests - to "
+           L"the weapon as you see it: 100 = the length the plugin has for this weapon, from the weapon bone (for a staff, spear or two-handed "
+           L"weapon the middle of the grip, not the end of the weapon) along the weapon to its tip. It only tunes where the touch counts a "
+           L"hit; it never changes the game's reach, rolls or attack. First person (F4) only. Live."),
+    Slider(L"debug", L"melee_blade_butt_pct", L"Hit by touch: the blade's length behind the weapon bone (the butt end), % of the weapon's own", 0, 150, 5, 100,
+           L"The other side of the weapon bone: how far the blade runs behind the grip to the butt of the staff, spear or pole-arm. 100 = what "
+           L"the plugin has for this weapon (a staff: as far behind as before), 0 = none, so that only the tip side counts. Same rules as the "
+           L"length: only where the touch counts a hit, never the game's reach or rolls. First person (F4) only. Live."),
+    Slider(L"debug", L"melee_blade_radius_cm", L"Hit by touch: the blade's thickness (radius), cm (0 = the weapon's own)", 0, 15, 0.5f, 0,
+           L"0: the radius the plugin has for this weapon (a staff's is thin, an axe's wide). Else the blade's radius in cm, 0.5 to 15. "
+           L"Only where the touch counts a hit - never the game's reach or rolls. First person (F4) only. Live."),
+    Slider(L"debug", L"melee_thrown_length_pct", L"Hit by touch: a thrown weapon's blade, tip side (javelin, throwing knife and axe), %", 50, 250, 5, 100,
+           L"The tip side of the blade of a JAVELIN, THROWING KNIFE or THROWING AXE only, on top of the general length above - those blades are "
+           L"estimates (the javelin's head side, 1.04 m from the weapon bone along its -Y, was measured on two screenshots; the others were not "
+           L"seen). With \"Draw the capsules of Hit by touch\" on, the capsule's far end - the HEAD side - should reach the weapon's real point, "
+           L"the spearhead's; raise or lower this until it does. Only where the touch counts a hit - never the game's reach or rolls. "
+           L"First person (F4) only. Live."),
+    Slider(L"debug", L"melee_thrown_butt_pct", L"Hit by touch: a thrown weapon's blade, butt side (behind the weapon bone), %", 0, 300, 10, 100,
+           L"The side of the blade behind the weapon bone - the BUTT end, behind the hand - for a javelin, throwing knife or throwing axe only "
+           L"(the javelin's is 0.30 m, a guess; the bone is at the hand). Same rules as the head side. First person (F4) only. Live."),
+    Toggle(L"debug", L"melee_blade_flip", L"Hit by touch: the blade runs the other way along the weapon", 0,
+           L"On: the blade's tip lies on the other side of the weapon bone than the plugin assumes, for every weapon (the dagger's "
+           L"already runs the other way by default). For a weapon whose capsule points away from its drawn blade. Only where the touch "
+           L"counts a hit. First person (F4) only. Live."),
     // [weight] (vr/weight.cpp): weapons with weight, taken where the grip closes on the shaft, passed from hand to hand
     Only(kVr, Tab(L"Weapon Weight")),
     Group(L"Weight (F4, the arms on the controllers)"),
@@ -2199,6 +2772,60 @@ std::vector<Item> g_items = {
     Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Slider(L"weight", L"damping_pct", L"Damping, %", 0, 200, 5, 100,
            L"How much the wrists damp the weapon's motion against the controller's (100 = nearly critical, so it settles without a wobble). "
            L"The damper follows the controller's speed, it is not a drag: lower, the weapon rings and lags more in a swing, higher, it follows more tightly."))),
+    // [weight] hands_model: the weight-physics library (d2r_vr_weight.dll beside the plugin, vr/weight_lib.h); greyed out while there is none
+    Hide(Slider(L"@weightlib", L"found", L"", 0, 1, 1, 0)),
+    Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Status(L"weight_lib", L""))),
+    Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Needs(L"@weightlib", L"found", 1, Toggle(L"weight", L"hands_model", L"Move the weapon with the weight-physics library (A/B)", 0,
+           L"Ticked: the weapon and the hands are moved by the weight-physics library (d2r_vr_weight.dll, beside the plugin) instead of the mod's own physics. "
+           L"Gravity %, Damping %, Weight % and Hands' strength % work with either. Switch it while you hold the weapon to compare. Greyed out while the library is not "
+           L"there: the mod then has only its own physics.")))),
+    Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Needs(L"@weightlib", L"found", 1, Needs(L"weight", L"hands_model", 1, Toggle(L"weight", L"hands_model_palm",
+           L"Library: the weapon's weight in the palm", 0,
+           L"Takes the weapon's centre of mass into the palm while it is held: a heavy weapon turns about your hand, nothing sags, a swing needs far less effort. "
+           L"A comfort setting; unticked, the weight sits where the steel is. Only with the library."))))),
+    // [weight] grip_model: the grip library (d2r_vr_grip.dll beside the plugin, vr/grip_lib.h); greyed out while there is none
+    Hide(Slider(L"@griplib", L"found", L"", 0, 1, 1, 0)),
+    Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Status(L"grip_lib", L""))),
+    Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Needs(L"@griplib", L"found", 1, Toggle(L"weight", L"grip_model", L"Hold the weapon the grip library's way (A/B)", 0,
+           L"Ticked: how a hand takes hold of the shaft and looks while it does is the grip library's (d2r_vr_grip.dll, beside the plugin) instead of the mod's own: the hand sits on the wood "
+           L"with its palm touching it, the fingers close until they meet it, the second hand of a long shaft is held by its grip - tight, where it is - or, with the grip let go and the "
+           L"trigger squeezed, loose: it slides along the shaft and turns about it; the hand feels a pulse when it comes within reach, closes and lets go. The weight, the aim and the "
+           L"game's own attacks are not touched. Greyed out while the library is not there: the mod then has only its own way.")))),
+    Group(L"Where the second hand takes the weapon (F4)"),
+    Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Toggle(L"weight", L"grip_hilt_only", L"Swords, axes, maces: the second hand takes only the hilt", 0,
+           L"Ticked: with one hand holding a sword, a dagger, a scepter, an axe or a mace, the OTHER hand takes it only on its hilt (the haft, for an axe or a mace), from the pommel to the "
+           L"guard and a few centimetres past - not on the blade or the head. A grip there takes nothing, so it is free for something else (a belt potion, for one). The staff, the spear, "
+           L"the polearm and the other long weapons keep the whole shaft. Works with the mod's own way of holding and with the grip library. Unticked: the second hand takes the weapon "
+           L"anywhere along it, as ever. The guard's place is not in the game's data, so it comes from the weight model's shape for the kind, scaled onto the weapon as it is drawn; the "
+           L"lengths below set it by hand. The log says where the hilt ends for each weapon."))),
+    Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Needs(L"weight", L"grip_hilt_only", 1, Slider(L"weight", L"grip_hilt_cm_sword", L"Sword: the hilt, cm (0 = from the model)", 0, 150, 1, 0,
+           L"Live. How long the hilt is, in centimetres from the pommel to the guard: the second hand takes the weapon only up to here (and a few centimetres past it). 0: the weight model's own - the first piece of its shape for this kind, scaled onto the weapon as it is drawn (a two-handed sword about 30 cm, a one-handed one about 17).")))),
+    Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Needs(L"weight", L"grip_hilt_only", 1, Slider(L"weight", L"grip_hilt_cm_axe", L"Axe: the haft, cm (0 = from the model)", 0, 150, 1, 0,
+           L"Live. How long the hilt is, in centimetres from the pommel to the guard: the second hand takes the weapon only up to here (and a few centimetres past it). 0: the weight model's own - the first piece of its shape for this kind, scaled onto the weapon as it is drawn (a two-handed axe about 90 cm).")))),
+    Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Needs(L"weight", L"grip_hilt_only", 1, Slider(L"weight", L"grip_hilt_cm_mace", L"Mace, hammer: the haft, cm (0 = from the model)", 0, 150, 1, 0,
+           L"Live. How long the hilt is, in centimetres from the pommel to the guard: the second hand takes the weapon only up to here (and a few centimetres past it). 0: the weight model's own - the first piece of its shape for this kind, scaled onto the weapon as it is drawn (a maul about 90 cm).")))),
+    Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Needs(L"weight", L"grip_hilt_only", 1, Slider(L"weight", L"grip_hilt_cm_scepter", L"Scepter: the shaft, cm (0 = from the model)", 0, 150, 1, 0,
+           L"Live. How long the hilt is, in centimetres from the pommel to the guard: the second hand takes the weapon only up to here (and a few centimetres past it). 0: the weight model's own - the first piece of its shape for this kind, scaled onto the weapon as it is drawn.")))),
+    Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Needs(L"weight", L"grip_hilt_only", 1, Slider(L"weight", L"grip_hilt_cm_dagger", L"Dagger: the hilt, cm (0 = from the model)", 0, 150, 1, 0,
+           L"Live. How long the hilt is, in centimetres from the pommel to the guard: the second hand takes the weapon only up to here (and a few centimetres past it). 0: the weight model's own - the first piece of its shape for this kind, scaled onto the weapon as it is drawn (about 10 cm).")))),
+    Group(L"The hero's strength (F4)"),
+    Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Toggle(L"weight", L"hero_strength", L"The hero's strength decides how heavy a weapon feels", 0,
+           L"Ticked: the hero's Strength (the game's stat: points, gear and all) against the weapon's own Strength requirement (the game's Weapons table) scales how heavy it feels - the "
+           L"steel's mass (the lag behind a swing, the sag held out, the swing's inertia) and the hands' strength (a two-hander in one hand sags and lags less in a strong hand, so the second "
+           L"hand is needed less). A Barbarian with plenty of Strength swings a Great Sword or a Maul easily; a Sorceress with little feels the same weapon heavy. It works with the mod's "
+           L"own physics and with the weight-physics library alike. Unticked: the weight is the same for every hero, as ever. The class multipliers and \"Strength matters\" below tune it; "
+           L"the log says what it did for each weapon."))),
+    Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Needs(L"weight", L"hero_strength", 1, Slider(L"weight", L"strength_effect", L"Strength matters, %", 0, 200, 5, 100,
+           L"How much the hero's strength moves the weight. 100: twice the margin over the requirement halves the lag; 0: not at all (the same as unticked); 200: twice as much.")))),
+    Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Needs(L"weight", L"hero_strength", 1, Slider(L"weight", L"str_amazon", L"Amazon: strength multiplier, %", 10, 300, 5, 100,
+           L"The hero's Strength stat times this is what counts: a class that is stronger than its stat says gets more, a weaker one less. Barbarian highest by default.")))),
+    Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Needs(L"weight", L"hero_strength", 1, Slider(L"weight", L"str_assassin", L"Assassin: strength multiplier, %", 10, 300, 5, 100)))),
+    Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Needs(L"weight", L"hero_strength", 1, Slider(L"weight", L"str_barbarian", L"Barbarian: strength multiplier, %", 10, 300, 5, 130)))),
+    Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Needs(L"weight", L"hero_strength", 1, Slider(L"weight", L"str_druid", L"Druid: strength multiplier, %", 10, 300, 5, 95)))),
+    Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Needs(L"weight", L"hero_strength", 1, Slider(L"weight", L"str_necromancer", L"Necromancer: strength multiplier, %", 10, 300, 5, 90)))),
+    Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Needs(L"weight", L"hero_strength", 1, Slider(L"weight", L"str_paladin", L"Paladin: strength multiplier, %", 10, 300, 5, 110)))),
+    Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Needs(L"weight", L"hero_strength", 1, Slider(L"weight", L"str_sorceress", L"Sorceress: strength multiplier, %", 10, 300, 5, 80)))),
+    Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Needs(L"weight", L"hero_strength", 1, Slider(L"weight", L"str_warlock", L"Warlock: strength multiplier, %", 10, 300, 5, 95)))),
     Group(L"Taking and passing (the grip)"),
     Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Slider(L"weight", L"grab_cm", L"A grip takes the weapon within, cm", 3, 40, 1, 12,
            L"A hand holds the weapon while its grip is squeezed. Squeeze it with your fist this near the shaft (between its butt "
@@ -2213,7 +2840,48 @@ std::vector<Item> g_items = {
            L"Two hands on a long shaft (a staff, a spear, a polearm, a two-handed sword, axe or mace): the first hand holds where it took it, and the "
            L"second hand - while its grip stays squeezed - slides along the shaft with its controller, as the left hand did on a staff before. The "
            L"weapon turns along the line between the hands, as ever. Off the end of the shaft, or pulled away from it, that hand lets go. Off: the "
-           L"second hand holds where its grip closed."))),
+           L"second hand holds where its grip closed, on every weapon. On: it slides on the kinds of weapon ticked in the list below - a staff's, a spear's and a polearm's "
+           L"second hand runs along the pole, a sword's, an axe's or a maul's stays on the hilt."))),
+    Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Needs(L"weight", L"slide_second_hand", 1, Toggle(L"weight", L"slide_second_hand_sword", L"Swords (two-handed)", 0,
+           L"Ticked: with both hands on this kind of weapon the second hand slides along the shaft with its controller while its grip stays squeezed (with the grip library also "
+           L"loose by the trigger); off an end, or pulled away, it lets go. Unticked: the second hand holds where it closed - tight, the point and the turn fixed - and the weapon turns "
+           L"with the line between the hands. A staff's, a spear's and a polearm's second hand runs along the pole; a sword's, an axe's or a maul's stays on the hilt. Works with the "
+           L"mod's own way of holding and with the grip library alike.")))),
+    Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Needs(L"weight", L"slide_second_hand", 1, Toggle(L"weight", L"slide_second_hand_axe", L"Axes (two-handed)", 0,
+           L"Ticked: with both hands on this kind of weapon the second hand slides along the shaft with its controller while its grip stays squeezed (with the grip library also "
+           L"loose by the trigger); off an end, or pulled away, it lets go. Unticked: the second hand holds where it closed - tight, the point and the turn fixed - and the weapon turns "
+           L"with the line between the hands. A staff's, a spear's and a polearm's second hand runs along the pole; a sword's, an axe's or a maul's stays on the hilt. Works with the "
+           L"mod's own way of holding and with the grip library alike.")))),
+    Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Needs(L"weight", L"slide_second_hand", 1, Toggle(L"weight", L"slide_second_hand_mace", L"Maces, hammers (two-handed)", 0,
+           L"Ticked: with both hands on this kind of weapon the second hand slides along the shaft with its controller while its grip stays squeezed (with the grip library also "
+           L"loose by the trigger); off an end, or pulled away, it lets go. Unticked: the second hand holds where it closed - tight, the point and the turn fixed - and the weapon turns "
+           L"with the line between the hands. A staff's, a spear's and a polearm's second hand runs along the pole; a sword's, an axe's or a maul's stays on the hilt. Works with the "
+           L"mod's own way of holding and with the grip library alike.")))),
+    Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Needs(L"weight", L"slide_second_hand", 1, Toggle(L"weight", L"slide_second_hand_staff", L"Staffs", 1,
+           L"Ticked: with both hands on this kind of weapon the second hand slides along the shaft with its controller while its grip stays squeezed (with the grip library also "
+           L"loose by the trigger); off an end, or pulled away, it lets go. Unticked: the second hand holds where it closed - tight, the point and the turn fixed - and the weapon turns "
+           L"with the line between the hands. A staff's, a spear's and a polearm's second hand runs along the pole; a sword's, an axe's or a maul's stays on the hilt. Works with the "
+           L"mod's own way of holding and with the grip library alike.")))),
+    Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Needs(L"weight", L"slide_second_hand", 1, Toggle(L"weight", L"slide_second_hand_polearm", L"Polearms", 1,
+           L"Ticked: with both hands on this kind of weapon the second hand slides along the shaft with its controller while its grip stays squeezed (with the grip library also "
+           L"loose by the trigger); off an end, or pulled away, it lets go. Unticked: the second hand holds where it closed - tight, the point and the turn fixed - and the weapon turns "
+           L"with the line between the hands. A staff's, a spear's and a polearm's second hand runs along the pole; a sword's, an axe's or a maul's stays on the hilt. Works with the "
+           L"mod's own way of holding and with the grip library alike.")))),
+    Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Needs(L"weight", L"slide_second_hand", 1, Toggle(L"weight", L"slide_second_hand_spear", L"Spears", 1,
+           L"Ticked: with both hands on this kind of weapon the second hand slides along the shaft with its controller while its grip stays squeezed (with the grip library also "
+           L"loose by the trigger); off an end, or pulled away, it lets go. Unticked: the second hand holds where it closed - tight, the point and the turn fixed - and the weapon turns "
+           L"with the line between the hands. A staff's, a spear's and a polearm's second hand runs along the pole; a sword's, an axe's or a maul's stays on the hilt. Works with the "
+           L"mod's own way of holding and with the grip library alike.")))),
+    Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Needs(L"weight", L"slide_second_hand", 1, Toggle(L"weight", L"slide_second_hand_javelin", L"Javelins", 0,
+           L"Ticked: with both hands on this kind of weapon the second hand slides along the shaft with its controller while its grip stays squeezed (with the grip library also "
+           L"loose by the trigger); off an end, or pulled away, it lets go. Unticked: the second hand holds where it closed - tight, the point and the turn fixed - and the weapon turns "
+           L"with the line between the hands. A staff's, a spear's and a polearm's second hand runs along the pole; a sword's, an axe's or a maul's stays on the hilt. Works with the "
+           L"mod's own way of holding and with the grip library alike.")))),
+    Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Needs(L"weight", L"slide_second_hand", 1, Toggle(L"weight", L"slide_second_hand_other", L"Other weapons", 0,
+           L"Ticked: with both hands on this kind of weapon the second hand slides along the shaft with its controller while its grip stays squeezed (with the grip library also "
+           L"loose by the trigger); off an end, or pulled away, it lets go. Unticked: the second hand holds where it closed - tight, the point and the turn fixed - and the weapon turns "
+           L"with the line between the hands. A staff's, a spear's and a polearm's second hand runs along the pole; a sword's, an axe's or a maul's stays on the hilt. Works with the "
+           L"mod's own way of holding and with the grip library alike.")))),
     Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Toggle(L"weight", L"attach_apart", L"Keep the weapon's two attach bones apart (the staff is not flat)", 1,
            L"The game lays a two-handed weapon (a staff, a spear, a polearm, a two-handed sword, axe or mace) along the line between its two attach bones - one on each wrist, "
            L"both hands on the haft. A weapon with weight is drawn where the model has it, and with both bones put in ONE point that line has no length: the weapon is drawn "
@@ -2248,7 +2916,7 @@ std::vector<Item> g_items = {
            L"any roll: X along the shaft (toward the tip), Y across (toward the fingertips), Z up (out of the palm). The rotations are about the same axes: X the roll about the "
            L"shaft, Y the tilt about the across axis (the fingers up / down), Z the tilt about the up axis (the fingers sideways). It acts whichever state the right hand is in: the "
            L"game's hand as placed (these move it from the game's pose), or a hand that took the weapon (on top of the fit and the base grip's relation); one hand or two; "
-           L"carrying it or not. The weapon never moves with these - only the hand. The left hand's turns are mirrored from the right's.")))),
+           L"carrying it or not. The weapon never moves with these - only the hand. The left hand's turns are mirrored from the right's. They work with the grip library too (\"Hold the weapon the grip library's way\"): the same numbers, the same frame - the moves put the hand exactly where they put ours, the turns orbit it about the shaft.")))),
     Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Needs(L"weight", L"grip_fit", 1, Slider(L"weight", L"right_grip_y", L"Right hand Y: across (+ toward the fingertips), cm", -30, 30, 0.5f, 0)))),
     Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Needs(L"weight", L"grip_fit", 1, Slider(L"weight", L"right_grip_z", L"Right hand Z: up (+ out of the palm), cm", -30, 30, 0.5f, 0)))),
     Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Needs(L"weight", L"grip_fit", 1, Slider(L"weight", L"right_grip_rx", L"Right hand rotation X: roll about the shaft, deg", -180, 180, 1, 0)))),
@@ -2312,6 +2980,37 @@ std::vector<Item> g_items = {
            L"To take it back, in both: reach a hand behind either shoulder and squeeze the grip - it flies into that hand (the grip behind the "
            L"shoulder is the weapon swap only while nothing is away); or squeeze the grip of a free hand anywhere else, and it flies into that "
            L"hand. A weapon that is away strikes nothing."))),
+    // [hands] shoulder_draw (vr/shoulder_draw.h)
+    Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Toggle(L"hands", L"shoulder_draw", L"The shoulders hold your weapons: draw from behind a shoulder", 0,
+           L"A weapon you let go (or throw) lies where it fell IN THE WORLD - it does not walk with you - and the grip of EITHER hand, squeezed anywhere, calls it back "
+           L"into that hand while it is in the air or lies there. After the delay below it goes to the back (the choice above is not used), and from then on you "
+           L"reach a hand behind EITHER shoulder and squeeze the grip to DRAW it: it flies into the hand that reached - either hand does (the left hand at the right "
+           L"shoulder takes it into the left hand: a cross draw, for a tired arm). A short pulse in a hand that enters a shoulder where something is to draw. Behind "
+           L"the shoulder the grip no longer swaps weapon sets: the game's own swap stays on its key. Off: as before (the swap behind the shoulder, the choice above)."))),
+    Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Needs(L"hands", L"shoulder_draw", 1, Slider(L"hands", L"shoulder_draw_stow_ms", L"Delay on the floor before it goes to the back, ms", 0, 5000, 50, 1000,
+           L"How long a weapon you let go lies on the floor - where the grip of either hand calls it back from afar - before it goes to the back and has to be drawn from behind a shoulder. 0: at once. Live.")))),
+    Needs(L"arms", L"mode", 2, Needs(L"hands", L"shoulder_draw", 1, Toggle(L"hands", L"shoulder_draw_shield", L"... and the shield follows the sword to the other arm", 1,
+           L"With a shield in the left hand: it stays strapped to the forearm, no grip holds it, and sword and shield are always on OPPOSITE arms: whenever the sword ends up in "
+           L"the hand that wears the shield - drawn into it, taken up by it, passed into it - the shield jumps to the other forearm (mirrored on the right, where it blocks and "
+           L"bashes (Smite) as well). A sword let go leaves it where it is. Nothing changes in the game's slots. Off: the shield stays on the left arm, and the hand that wears "
+           L"it cannot take the weapon. Live."))),
+    Needs(L"arms", L"mode", 2, Needs(L"hands", L"shoulder_draw", 1, Toggle(L"hands", L"shoulder_draw_shield_stow", L"... and the shield can be put away and drawn from behind the left shoulder", 0,
+           L"A grip squeezed behind the LEFT shoulder by a hand that holds nothing PUTS THE SHIELD AWAY (it is not drawn and bashes nothing; it is still your equipped shield) - or, as with a "
+           L"weapon, carry it there: the hand that wears the shield holds its grip (squeezed anywhere, or held already) and LETS GO behind the left shoulder. The "
+           L"same grip while it is away DRAWS it onto the arm of the hand that reached - the right hand puts it on the right forearm, mirrored. Independent of the tick above: "
+           L"with both, a shield drawn while the sword is in the other hand sits opposite it. With this on the left shoulder is the shield's and the weapon is drawn from the "
+           L"right one only. A short pulse in a hand that enters the left shoulder while the shield is away. Live."))),
+    Needs(L"arms", L"mode", 2, Needs(L"hands", L"shoulder_draw", 1, Toggle(L"hands", L"shoulder_draw_ranged", L"A bow or crossbow can be put away and drawn from behind a shoulder", 0,
+           L"A grip squeezed behind EITHER shoulder by a hand that is not holding the string (or a potion) PUTS THE BOW OR CROSSBOW AWAY (it is not drawn, no string, no aim; it is still "
+           L"your equipped weapon); the same grip while it is away draws it back, into its own hand. Independent of the shield ticks. A short pulse in a hand that enters a shoulder "
+           L"while it is away. Live."))),
+    Needs(L"arms", L"mode", 2, Toggle(L"hands", L"shoulder_zone_body", L"The shoulder zones fit your body (and reach to the spine)", 0,
+           L"The reach behind a shoulder - for the weapon-set swap, the weapon's draw, the shield's and the bow's put-away - scaled by your eye height (the T-pose measurement when it is used, else "
+           L"your height setting) and begun at the spine instead of 10 cm out: a hand reaching back over the neck lands in it. Off: the fixed reach, as before. Live.")),
+    Needs(L"arms", L"mode", 2, Needs(L"hands", L"shoulder_draw", 1, Needs(L"hands", L"shoulder_draw_ranged", 1, Toggle(L"hands", L"shoulder_draw_ranged_swap", L"... and a bow is drawn into the hand that reached", 0,
+           L"A BOW put away with one hand and drawn with the other goes into the hand that reached: a cross draw, for a tired arm. It is then held, drawn on, aimed and fed from that hand "
+           L"- the mirror image of the left-hand bow; the string, the quiver and the orbs go to the other hand. A crossbow always comes back into its own hand (its stock and grip are "
+           L"wired to the hands the game gives them). Off: a bow always comes back into the hand the settings hold it in. Live.")))),
     AwayShow(Slider(L"weight", L"to_back_delay_ms", L"Delay on the floor before it goes away, ms", 0, 3000, 50, 600,
            L"How long a weapon that has landed lies on the floor before it goes to the back or vanishes. 0: at once.")),
     AwayShow(Toggle(L"weight", L"recall_any_hand", L"The grip of any free hand calls it back", 1,
@@ -2349,6 +3048,30 @@ std::vector<Item> g_items = {
     Toggle(L"debug", L"phantom_ray", L"Draw the weapon's shaft (red line)", 0,
            L"With weight on: the red line runs along the whole shaft as the weight model holds it - where a grip can take it. "
            L"The same switch as Debug's \"Draw the line the left hand takes\"."),
+    // [flail] chain (vr/flail_chain.h): its own tick, independent of the weight above (2026-10-18, the user's wish: "the weight on a chain hangs and swings")
+    Group(L"Flail: the head on its chain (F4)"),
+    Needs(L"arms", L"mode", 2, Toggle(L"flail", L"chain", L"A flail's head swings free on its chain", 0,
+           L"Flail, Knout, Scourge, Khalim's Flail and Khalim's Will: the spiked head hangs on its chain and swings as you move the hand - gravity "
+           L"pulls it down, a swing throws it out and it lags behind, it settles when you stop - and when the weapon hits a monster by touch the head "
+           L"bounces back off it. It is the game's own flail model: its chain's bones are moved, nothing is drawn over it. With hit by touch (Strikes) "
+           L"it is the BALL that strikes - a sphere as big as the model's head, where the chain has it, judged by the ball's own speed and way (a swung "
+           L"ball hits, a limp one does not); the handle strikes nothing. The attack it presses is the game's own: its reach, damage and rolls are as "
+           L"before. First person (F4) only. Unticked: the chain keeps the game's animation (stiff in the hand) and the touch the handle's blade, "
+           L"as before. Live.")),
+    Needs(L"arms", L"mode", 2, Needs(L"flail", L"chain", 1, Slider(L"flail", L"damping_pct", L"Flail: damping, %", 0, 500, 5, 100,
+           L"Live. How fast a swing of the head dies down against the hand (the links rubbing): 100 = a free swing halves in about 2 seconds; "
+           L"less, it swings on longer; more, it settles quickly. 0: it never settles by itself."))),
+    Needs(L"arms", L"mode", 2, Needs(L"flail", L"chain", 1, Slider(L"flail", L"swing_pct", L"Flail: how much the hand swings it, %", 0, 200, 5, 100,
+           L"Live. How much of the hand's motion the head feels: 100 = real, it lags and swings out as a weight on a chain does; less, it is carried "
+           L"along more stiffly (0: it only hangs under gravity); more, it swings out further than it would."))),
+    Needs(L"arms", L"mode", 2, Needs(L"flail", L"chain", 1, Slider(L"flail", L"ball_weight_pct", L"Flail: the ball's weight, %", 25, 400, 5, 100,
+           L"Live. How heavy the ball is against the model's own (100 = as before). Heavier: a swing carries on longer and dies down slower (the links' "
+           L"rubbing slows a heavy ball less), a hit by touch turns it back less - it pushes through instead of bouncing - and, with \"Weapons have weight\" "
+           L"on, the whole flail weighs more by the ball's part of it (about nine tenths of a flail is its iron ball): it lags behind the hand and sags more. "
+           L"Lighter: the other way. Only the look and the weight model's feel; the game's attack and damage are as before."))),
+    Needs(L"arms", L"mode", 2, Needs(L"flail", L"chain", 1, Slider(L"flail", L"hit_pct", L"Flail: bounce off a hit, %", 0, 200, 5, 100,
+           L"Live. When the weapon hits a monster by touch (Strikes: hit by touch), the head bounces back off it: 100 = it comes back at about a third of "
+           L"its speed; 0 = no bounce (it swings through); 200 = it is thrown back harder. Only the look - the hit itself is the game's."))),
     Only(kVr, Tab(L"Fists")),
     Group(L"Amazon"),
     Needs(L"arms", L"mode", 2, Slider(L"fist", L"amazon_close", L"Grip squeezed, %", 0, 150, 1, 100, 
@@ -2387,6 +3110,15 @@ std::vector<Item> g_items = {
            L"Spells placed on the ground (Blizzard, Fissure, Meteor), summons, curses and auras keep the game's targeting. "
            L"Off: casting as before, with the game's auto-target. Below, a tick keeps the game's auto-target for that one spell - "
            L"one that seeks its target itself, as Chain Lightning.")),
+#if D2RVR_FIRST_PERSON
+    Toggle(L"hands", L"spell_aim_model", L"Aim spells by the drawn hand or staff", 0,
+           L"VR first person (F4) only. On: the line a spell goes along comes from the hero as he is drawn, with no correction: a staff, wand or orb "
+           L"in hand aims along itself, toward its head (with the weapon's weight on: along the shaft as your grip holds it); with none, along the hand's "
+           L"fingers - or out of the palm when the fingers point up or down. A staff held upright aims with its hand. The attack along the hand ([bow] "
+           L"mode 4) goes the same way. A bow, crossbow, javelin or throwing weapon keeps its own line. The game's own cast - skill, mana, missile - "
+           L"is not changed, only where it is aimed. Off, or no fresh pose: the controller's line and the aim correction sliders (Bow tab), as before. "
+           L"After d2r-pcvr (bearstonem, MIT). Debug > Aim rays: \"Spell's ray\" shows it."),
+#endif
     Group(L"Amazon (ticked: the game's auto-target)"),
     Spell(L"s6", L"Magic Arrow"), Spell(L"s7", L"Fire Arrow"), Spell(L"s11", L"Cold Arrow"), Spell(L"s12", L"Multiple Shot"),
     Spell(L"s15", L"Poison Javelin"), Spell(L"s16", L"Exploding Arrow"), Spell(L"s20", L"Lightning Bolt"), Spell(L"s21", L"Ice Arrow"),
@@ -2409,11 +3141,32 @@ std::vector<Item> g_items = {
     Spell(L"s395", L"Miasma Bolt"),
     Tab(L"Debug"),
     Group(L"Debug"),
+    Choice(L"debug", L"replay_marks", L"Replay: how the right eye's lists go to the GPU", 1,
+           {L"0 - one batch a queue (hung, test-60..62)", L"1 - each list with a GPU mark (safe, default)", L"2 - each list, no marks",
+            L"3 - in the game's own calls", L"4 - the game's calls, a mark after each"},
+           L"Stereo from one pass: how the game's replayed command lists are sent to the GPU for the right eye. "
+           L"1 (the default): each list on its own with a signal after it, so a hang's log names the list the GPU stopped at; every pair ~35 separate "
+           L"submissions (~0.4 ms of the game's thread). 0: each queue's run of lists in one submission - on 2026-10-18 the graphics queue then ran a list "
+           L"that never ended, 30 s to 3 min in. 2: each list on its own without the signals. 3: the same lists in the same calls as the game made them, no "
+           L"marks - the game's own number of submissions (the first time, restart the game). 4: that with a signal after each call. Live."),
+    Toggle(L"debug", L"ui_trace", L"Ctrl+F10 frame trace (slows every frame; restart the game)", 0,
+           L"Ctrl+F10 writes one frame of the game's render targets and draws to d2r_vr_uitrace.txt. For that the plugin "
+           L"watches every draw the game makes - ReShade then calls it thousands of times a frame, and looks up every "
+           L"constant buffer the game binds: mono ran ~5-8% slower. Off (the default): Ctrl+F10 does nothing. Read at the game's start."),
 #if D2RVR_FIRST_PERSON
     Toggle(L"debug", L"phantom_ray", L"Draw the line the left hand takes", 0,
            L"A red line along which the left hand takes the weapon in hand and slides (staff, spear, polearm, two-handed "
            L"sword); with a crossbow also where the bolt flies (Crossbow: shot line sliders turn it). "
            L"\"Draw the axes of the weapon in hand\" draws it too."),
+    Toggle(L"debug", L"xbow_barrel_line", L"Crossbow: draw the barrel as modelled", 0,
+           L"In VR F4 with a crossbow held the gun's way: a cyan line along the crossbow's barrel as the model has it (its bolt helper, "
+           L"40 cm back and 30 cm ahead of the front of the stock) and a magenta ball where \"left palm under the drawn barrel\" puts the palm. "
+           L"Cyan = as the renderer draws the crossbow; orange = the renderer's placing is not seen yet (the hand then stays on the shot line). "
+           L"Every 3 s the log gives the points (\"crossbow barrel\"). "
+           L"And where the shot goes, live: a ray from the muzzle - green along the drawn barrel (\"shoot along the drawn barrel\"), orange along "
+           L"the shot line (unticked, or the barrel not read) - to the floor (a full ball) or 8 m out (a ring); the game aims by its heading. "
+           L"With \"Draw the line the left hand takes\" the red shot line is drawn too: if the two lie together, the shot line sliders already "
+           L"match the model. Needs the shader D2R_DepthFog.fx of the same build. Live."),
     Toggle(L"debug", L"bone_axes", L"Draw the axes of the weapon in hand", 0,
            L"The bone the game hangs the weapon in hand on: its own axes from its origin, 0.5 m each - X green, Y blue, Z yellow; and the red line the left hand takes it by. "
            L"Weapon Adjust's \"Turn about X / Y / Z\" turn the weapon about these."),
@@ -2439,11 +3192,22 @@ std::vector<Item> g_items = {
            L"second one teal. While a contact would count (a stroke on, the blade at or above \"Hit by touch: the least blade speed\") "
            L"the blade is green; a swing leaves marks: a WHITE ball where the blade's speed reached that least speed (and the start "
            L"distance was met), an ORANGE ball where it fell below it again, and the tip's path as a thin trail, cyan where a contact "
-           L"would not count and green where it would - tune the least speed and the start distance by where they land in your swing."),
+           L"would not count and green where it would - tune the least speed and the start distance by where they land in your swing. "
+           L"A contact is judged by the strike rules (the Strikes tab): the blade, the trail and the marks are green only while a contact with the monster nearest the blade would count now. "
+           L"At every contact that was REFUSED, for \"Hit by touch: how long the speed marks and the trail stay\": a BALL on the point of the blade that touched, an ARROW along the way that point "
+           L"was moving, a thin LINE from it to the nearest point of the monster's body axis, and the monster's capsule tinted with the colour of the reason - RED: not toward the monster (a "
+           L"wind-up, a pull-back, a graze; BLUE instead with \"Not toward the monster in red\" unticked - red is also the monster's flash when a blow is pressed); AMBER: the swing "
+           L"was too small for this kind, or too slow where it touched, or the blade entered the monster in a movement that never became a stroke; GREY: not the head (the shaft or the handle of "
+           L"a mace touched). A contact that counted leaves green marks and the monster's own red / magenta flash. The log says why, one line for each refused contact (the kind, the angle, the "
+           L"speed or the amplitude), at most one every 250 ms for each reason; the first twelve are always told."),
     Slider(L"debug", L"melee_mark_ms", L"Hit by touch: how long the speed marks and the trail stay, ms (0 = none)", 0, 3000, 100, 800,
            L"With \"Draw the capsules of Hit by touch\" on: how long the white / orange balls (where the blade's speed reached the least "
            L"speed and where it fell below it) and the tip's trail stay in the picture after a swing. 0 = no marks and no trail, the "
            L"blade's colour only. Live."),
+    Toggle(L"debug", L"melee_direction_red", L"Hit by touch: not toward the monster in red (off: blue)", 1,
+           L"With \"Draw the capsules of Hit by touch\" on: the colour of a contact the direction rule refused (the blade was moving away from the monster or across it - a wind-up, a pull-back, "
+           L"a graze). On (the default): RED. Off: BLUE - red is also the monster's flash when a blow is pressed, which a blue refusal cannot be taken for. The other reasons keep their "
+           L"colours: amber - the swing too small or too slow, grey - not the head. A drawing only. Live."),
     Toggle(L"debug", L"skill_triggers", L"Draw what casts skills", 0,
            L"First person (F4): draws and logs the triggers that cast a skill, so they can be tuned by eye - for now the SHIELD BASH that "
            L"casts Smite (\"Shield bash casts Smite\"): the shield's capsule (the one the bash tests monsters with) on the left arm in violet, "
@@ -2502,6 +3266,10 @@ std::vector<Item> g_items = {
            L"A pair longer than this is a long one for \"Log the long frames and what the plugin spent in them\". 15 ms is a little over one frame at "
            L"72 Hz (13.9 ms); at 90 Hz (11.1 ms) 15 catches every missed frame. Raise it if the game runs at 40-50 frames a second anyway "
            L"(a mean pair of 20 ms), so that only the real stutters are told. Live."),
+    Toggle(L"debug", L"roomscale_log", L"Log the room-scale walk once a second", 0,
+           L"With \"Room-scale walking\" on (Stereo > Native OpenXR): a line a second in the log while it is live - how far your head is off the "
+           L"hero's place, the stick it gives the game, walking yes / no, blocked yes / no (at the limit: the room slides), your head's and the "
+           L"hero's speed, whether the controller's stick is held and which pad the game reads. Changes nothing in play. Live."),
     Toggle(L"debug", L"log_async", L"Write the plugin's log from a thread of its own", 0,
            L"For a stutter that comes with a swing or a hit. Every press writes a handful of lines to the log (the pad poll alone: seven), and a second of "
            L"swinging 20 to 50, each written by the game's own thread in the middle of a frame - about a millisecond a line on the machine this was found "
@@ -2509,9 +3277,48 @@ std::vector<Item> g_items = {
            L"in order, so the game's thread does not wait. Every line is kept; a line that waited more than 50 ms says so at its end (the log stamps the "
            L"time it is WRITTEN); what waits is written at a crash and at unload. It changes nothing in play. Off: each thread writes its own lines, as "
            L"always. Live."),
+    Toggle(L"debug", L"dred", L"Say why the GPU's device was lost (DRED)", 1,
+           L"The game ends - after a failed check in its own DX12 code, a moment before the headset's runtime logs \"HRESULT failure [887a0005]\" - when the "
+           L"graphics device is removed (a GPU hang, a page fault, a driver reset). On: Windows' DRED is asked for before the game makes its device, and the "
+           L"moment the device goes the log (d2r-vr-vrcam.log) and d2rloader\\logs\\d2r_vr_gpu_fault.txt say why: the reason, what each command list had "
+           L"done when the GPU stopped, the address of a page fault and what was allocated or freed there, and the plugin's own last events that touch the "
+           L"GPU's memory. Send that file in. It costs the runtime a marker between commands. Needs a game restart. Off: the device loss is still told, "
+           L"with its reason only."),
+    Toggle(L"debug", L"d3d12_validation", L"D3D12 debug layer: errors in the log (slow)", 0,
+           L"To find what takes the graphics device down. Needs Windows' optional feature Graphics Tools. On: before the game makes its device the D3D12 debug layer is switched "
+           L"on, and its errors and warnings go to the log (d2r-vr-vrcam.log) in its own words - a barrier that names the wrong state, a copy past the end of a buffer, a "
+           L"resource released while a list that names it has not run. The game runs much slower: for a test, not for play. Needs a game restart. (d2r_vr.ini: 2 also "
+           L"checks every shader access on the GPU, ten times slower again - for a flat repro only.)"),
+    Toggle(L"debug", L"stall_guard", L"Free a GPU queue that stands still for good", 1,
+           L"Two hangs left the game's graphics queue standing for good - no device removal, the game alive and frozen, its drawing thread inside ReShade's "
+           L"flush. On: while the queue has not moved for a quarter of a second the plugin's optional work that would wait on it (the copy to the headset, an "
+           L"eye's ReShade effects, a depth copy) is not started; after eight seconds with the picture stopped, the plugin signals its own cross-queue fences from "
+           L"the CPU, and says each in the log (\"stall guard\"). A queue that runs a command list which never ends is not freed by this: see the next switch. "
+           L"Needs a game restart. Off: as before. (d2r_vr.ini: stall_skip_ms, stall_unstick_ms; stall_unstick_game also signals the game's own fences.)"),
+    Toggle(L"debug", L"stall_remove", L"Hang report: take the device away after 20 s of a hung queue", 0,
+           L"For the graphics queue that stands for good (see \"Free a GPU queue...\"; needs that on). Switched on: after 20 s with the picture stopped and the queue "
+           L"still, the plugin takes the graphics device away on purpose, so that Windows' DRED (\"Say why the GPU's device was lost\" - on) writes into "
+           L"d2rloader\\logs\\d2r_vr_gpu_fault.txt which command list the queue was in. The game ends, as after a driver reset - for a test of the hang, not for play. "
+           L"Needs a game restart."),
     Toggle(L"debug", L"matrix_writer", L"Find who writes the hero matrix", 0,
            L"Switched on: for 3 s, while walking, marks where the game writes the hero's model matrix "
            L"(d2r_vr_matrix_writers.csv beside the ini, a summary in the log). Turn it off and on again for another run."),
+#if D2RVR_FIRST_PERSON
+    // the rays of where an aim goes - the bow's, the crossbow's and the spell's, drawn alike (green from the model, orange the fallback)
+    Group(L"Aim rays"),
+    Toggle(L"debug", L"spell_aim_ray", L"Spell's ray", 0,
+           L"VR first person (F4), no bow, crossbow or thrown weapon in hand: where a spell goes, live - a ray from where its aim starts (the staff, wand or "
+           L"orb, or the palm), along the direction the aim uses, to the floor (a full ball) or 8 m out (a ring). Green: from the model (Auto-target: "
+           L"\"Aim spells by the drawn hand or staff\") - it should lie along the staff, wand or orb, or along the hand's fingers. Orange: the old line "
+           L"(the controller and the aim correction sliders) - unticked, or no fresh pose. The game aims by its heading on the ground. Needs the shader "
+           L"D2R_DepthFog.fx of the same build. Live."),
+    Toggle(L"debug", L"bow_aim_ray", L"Bow: draw where the arrow goes (a ray from the bow)", 0,
+           L"Native OpenXR, \"Bow: draw the string with both hands\" on, a bow in hand (first person, F4). While the string is drawn - and for a moment after the shot - a long ray in the "
+           L"headset: from the arrow's release point (the bow model's own arrow rest point when it is read, else the bow hand's point) along the line the bow code shoots along (the string "
+           L"hand through that point; the game itself takes only its heading on the ground), to where it meets the floor (a full ball) or 8 m out (a ring). Green = the line goes "
+           L"through the bow model's arrow rest point (\"The shot goes through the arrow's rest point too\" on); orange = the plain hand-set line (no rest point read, or that setting off). "
+           L"Nothing is changed in the game. Needs the shader D2R_DepthFog.fx of the same build. Live."),
+#endif
 };
 
 wchar_t g_ini[MAX_PATH], g_uiIni[MAX_PATH];
@@ -3059,7 +3866,67 @@ void WriteTurnValue(const Item& it, float v) {
     WritePrivateProfileStringW(L"turn", L"smooth", smoothNow ? L"1" : L"0", g_ini);
 }
 
+Item* FindItem(const wchar_t* section, const wchar_t* key);
+void RefreshControls();
+// "@toolbar" type: the toolbar's type over [hud] hide and [hud] bar_place (shared/toolbar_type.h).
+float ReadToolbarType();
+void WriteToolbarType(float v);
+
+// "@remap" items: a button of the controllers, [direct] <key> of d2r_vr.ini, through vr/direct_remap.h (the plugin's own table parser). The whole
+// section is read once per call (GetPrivateProfileSection: one read of the file, not forty) into a map the parser asks; keys are not case-sensitive in an ini.
+std::string AsciiOf(const wchar_t* w) {
+    std::string s;
+    for (; *w; ++w) s.push_back(*w < 128 ? (char)*w : '?');
+    return s;
+}
+directinput::remap::Section DirectSection() {
+    directinput::remap::Section m;
+    std::vector<wchar_t> buf(32768);
+    const DWORD n = GetPrivateProfileSectionW(L"direct", buf.data(), (DWORD)buf.size(), g_ini);
+    for (const wchar_t* p = buf.data(); (DWORD)(p - buf.data()) < n && *p; p += wcslen(p) + 1) directinput::remap::AddLine(m, AsciiOf(p));
+    return m;
+}
+const directinput::remap::Row* RemapRowOf(const Item& it) {
+    const std::string key = AsciiOf(it.key);
+    for (const directinput::remap::Row& r : directinput::remap::Rows())
+        if (directinput::remap::KeyOf(r) == key) return &r;
+    return nullptr;
+}
+float ReadRemapValue(const Item& it) {
+    const directinput::remap::Row* r = RemapRowOf(it);
+    if (!r) return 0.0f;
+    const directinput::remap::Section m = DirectSection();
+    return (float)directinput::remap::Current(directinput::remap::Getter(m), *r);
+}
+void RefreshControls();
+void WriteRemapValue(const Item& it, float v) {
+    const directinput::remap::Row* r = RemapRowOf(it);
+    if (!r) return;
+    const directinput::remap::Section m = DirectSection();
+    directinput::remap::Change c;
+    if (!directinput::remap::Choose(directinput::remap::Getter(m), *r, (int)std::lround(v), &c)) { RefreshControls(); return; }   // "Custom": nothing to write, the list shows the ini again
+    const std::wstring key(c.key.begin(), c.key.end());
+    const std::wstring text(c.text.begin(), c.text.end());
+    WritePrivateProfileStringW(L"direct", key.c_str(), c.erase ? nullptr : text.c_str(), g_ini);
+}
+
+// The weight-physics library: d2r_vr_weight.dll beside the plugin (and d2r_vr.ini). Optional; "found" greys out its tick while it is not there.
+bool LibFileFound(const wchar_t* name) {
+    wchar_t path[MAX_PATH];
+    wcscpy_s(path, g_ini);
+    if (wchar_t* slash = wcsrchr(path, L'\\')) slash[1] = 0;
+    wcscat_s(path, name);
+    return GetFileAttributesW(path) != INVALID_FILE_ATTRIBUTES;
+}
+bool WeightLibFound() { return LibFileFound(L"d2r_vr_weight.dll"); }
+bool GripLibFound() { return LibFileFound(L"d2r_vr_grip.dll"); }
+
 float ReadValue(const Item& it) {
+    if (wcscmp(it.section, L"@weightlib") == 0) return WeightLibFound() ? 1.0f : 0.0f;
+
+    if (wcscmp(it.section, L"@toolbar") == 0) return ReadToolbarType();
+    if (wcscmp(it.section, L"@remap") == 0) return ReadRemapValue(it);
+    if (wcscmp(it.section, L"@griplib") == 0) return GripLibFound() ? 1.0f : 0.0f;
     if (wcscmp(it.section, L"@turn") == 0) return ReadTurnValue(it);
     if (wcscmp(it.section, L"@render") == 0) return ReadRenderSize(it);
     if (wcscmp(it.section, L"@preset") == 0) return (float)MatchPreset();
@@ -3095,8 +3962,14 @@ float ReadValue(const Item& it) {
 void ShowPreset();
 void ApplyFrameCap();
 void WriteVrFrameCap(int value);
+void ApplySafeScreenForPlatform();
+void SyncTwins(const Item& from);
+void RefreshStrikeCm();
 void RefreshControls();
 void WriteValue(const Item& it, float v) {
+    if (wcscmp(it.section, L"@toolbar") == 0) { WriteToolbarType(v); return; }
+    if (wcscmp(it.section, L"@remap") == 0) { WriteRemapValue(it, v); return; }
+    if (wcscmp(it.section, L"@weightlib") == 0 || wcscmp(it.section, L"@griplib") == 0) return;   // a fact about the folder, not a setting
     if (wcscmp(it.section, L"@turn") == 0) { WriteTurnValue(it, v); return; }
     if (wcscmp(it.section, L"@render") == 0) { WriteRenderSize(it, v); return; }
     if (wcscmp(it.section, L"@preset") == 0) return;   // ApplyPreset, from the drop-down
@@ -3108,6 +3981,8 @@ void WriteValue(const Item& it, float v) {
     if (wcscmp(it.section, L"@game") == 0) {
         if (wcscmp(it.key, L"Framerate Cap") == 0 && g_platform == 1) WriteVrFrameCap((int)std::lround(v));   // VR's own cap: the player's kept first
         else WriteGameValue(it, v);
+        // a size the player picks here is his, whatever it is - an 80 of his is not VR's 80 (100, the game's default, VR starts at 80 again: the box below keeps it)
+        if (wcscmp(it.key, L"Safe Screen Percent") == 0) WritePrivateProfileStringW(L"hud", L"safe_screen_written", L"-1", g_ini);
         return;
     }
     if (wcscmp(it.section, L"@window") == 0) { WriteSquareWindow(v != 0.0f); return; }
@@ -3118,7 +3993,27 @@ void WriteValue(const Item& it, float v) {
     WritePrivateProfileStringW(SectionOf(it), it.key, buf, FileOf(it));
     if (wcscmp(it.section, L"openxr") == 0 && wcscmp(it.key, L"window_size") == 0 && ReadSquareWindow() != 0.0f) WriteSquareWindow(true);   // the new size at once
     if (wcscmp(it.section, L"stereo") == 0 && (wcscmp(it.key, L"headset_rate") == 0 || wcscmp(it.key, L"afr") == 0 || wcscmp(it.key, L"pair_per_tick") == 0)) ApplyFrameCap();
+    if (wcscmp(it.section, L"flatvr") == 0 && wcscmp(it.key, L"frame_sync") == 0) ApplyFrameCap();   // FlatVR's frames pace the game: the cap goes to 2 x the rate
+    if (wcscmp(it.section, L"hud") == 0 && wcscmp(it.key, L"safe_screen_vr") == 0) ApplySafeScreenForPlatform();   // ticked: 80 now (game closed); unticked: the player's own back
     ShowPreset();   // a key of a preset changed by hand: Custom (or the preset it now matches)
+    SyncTwins(it);   // the same key shown on another tab (the Strikes tab's debug ticks are the Debug tab's)
+    if (wcscmp(it.section, L"gameplay") == 0 && wcsncmp(it.key, L"melee_amp", 9) == 0) RefreshStrikeCm();   // the swing amplitudes in cm
+}
+
+float ReadToolbarType() {
+    const Item* hide = FindItem(L"hud", L"hide");
+    const Item* place = FindItem(L"hud", L"bar_place");
+    return hide && place ? (float)toolbartype::TypeOf((int)std::lround(ReadValue(*hide)), (int)std::lround(ReadValue(*place))) : 0.0f;
+}
+void WriteToolbarType(float v) {
+    const Item* hide = FindItem(L"hud", L"hide");
+    const Item* place = FindItem(L"hud", L"bar_place");
+    if (!hide || !place) return;
+    int h = (int)std::lround(ReadValue(*hide)), p = (int)std::lround(ReadValue(*place));
+    toolbartype::Choose((int)std::lround(v), &h, &p);
+    WriteValue(*hide, (float)h);
+    WriteValue(*place, (float)p);
+    RefreshControls();   // the two drop-downs below show what the type made of them
 }
 
 // The game's frame cap (its Settings.json) from the headset's rate: a game frame per
@@ -3180,7 +4075,8 @@ framecap::VrCap VrCapNow(int* hz = nullptr) {
     if (hz) *hz = h;
     return framecap::VrCapFor(h, GetPrivateProfileIntW(L"stereo", L"afr", 0, g_ini) != 0,
                               GetPrivateProfileIntW(L"stereo", L"pair_per_tick", 0, g_ini) != 0,
-                              GetPrivateProfileIntW(L"openxr", L"on", 0, g_ini) != 0);
+                              GetPrivateProfileIntW(L"openxr", L"on", 0, g_ini) != 0,
+                              GetPrivateProfileIntW(L"flatvr", L"frame_sync", 0, g_ini) != 0);
 }
 // "Frame cap in the game's file: 240. For this choice VR writes 240 = 120 Hz x 2: eyes by turns ..." under the headset rate: what is written and why.
 void UpdateFrameCapStatus() {
@@ -3210,6 +4106,83 @@ void ApplyFrameCap() {
 void ApplyFrameCapForPlatform() {
     if (g_platform == 1) ApplyFrameCap();
     else RestoreFrameCapForFlat();
+}
+
+// The game's interface size ("Safe Screen Percent"): VR starts it at 80 where the player chose none, flat mode has his own (shared/safe_screen.h, tested by
+// safe_screen_test; the plugin does the same at its start, vrcam's ReconcileSafeScreen). The player's value before VR's is kept in [hud] safe_screen_before,
+// what VR wrote in [hud] safe_screen_written. Only with the game CLOSED: the game reads the file at its start and writes its own copy back at its quit, and
+// the toolbar's cut follows the number in the file - a running game's picture would not match it. The plugin deals with it at the game's next start.
+bool SafeScreenVrBox() { return GetPrivateProfileIntW(L"hud", L"safe_screen_vr", 1, g_ini) != 0; }
+safescreen::State SafeScreenState() {
+    safescreen::State s;
+    s.own = (int)GetPrivateProfileIntW(L"hud", L"safe_screen_before", -1, g_ini);
+    s.written = (int)GetPrivateProfileIntW(L"hud", L"safe_screen_written", -1, g_ini);
+    return s;
+}
+void SaveSafeScreenState(const safescreen::Plan& p) {
+    wchar_t b[16];
+    if (p.saveOwn) { swprintf_s(b, L"%d", p.own); WritePrivateProfileStringW(L"hud", L"safe_screen_before", b, g_ini); }
+    if (p.saveWritten) { swprintf_s(b, L"%d", p.written); WritePrivateProfileStringW(L"hud", L"safe_screen_written", b, g_ini); }
+    if (p.clearWritten) WritePrivateProfileStringW(L"hud", L"safe_screen_written", L"-1", g_ini);
+}
+// The shape (width over height) of the picture the game's interface is laid out in, as the ini says it: native OpenXR's render size (a square, or the
+// headset's own shape when its box is ticked and the game has told it), else the game's window (FlatVR: its picture; a square when D2R VR's square window is on).
+float PictureAspectNow(const std::string& settingsJson) {
+    const rendersize::Pick pick = rendersize::FromIni((int)GetPrivateProfileIntW(L"render", L"vr_resolution", 0, g_ini),
+                                                     (int)GetPrivateProfileIntW(L"render", L"vr_resolution_px", 0, g_ini));
+    const bool native = GetPrivateProfileIntW(L"openxr", L"on", 0, g_ini) != 0;
+    wchar_t hs[MAX_PATH];   // what the headset's runtime recommended at the game's last headset session (d2r_vr_headset.ini beside the ini)
+    wcscpy_s(hs, g_ini);
+    if (wchar_t* slash = wcsrchr(hs, L'\\')) slash[1] = 0;
+    wcscat_s(hs, L"d2r_vr_headset.ini");
+    const int rw = (int)GetPrivateProfileIntW(L"headset", L"recommended_w", 0, hs), rh = (int)GetPrivateProfileIntW(L"headset", L"recommended_h", 0, hs);
+    const winjson::Windowed win = winjson::Read(settingsJson);
+    return safescreen::PictureAspect(native && pick.kind == rendersize::Kind::Square, native && pick.kind == rendersize::Kind::Headset, rw, rh,
+                                     ReadSquareWindow() != 0.0f, win.ok ? win.w : 0, win.ok ? win.h : 0);
+}
+void ApplySafeScreenForPlatform() {
+    // (a test's own Settings.json - D2RVR_GAME_SETTINGS_JSON - is nobody's running game's)
+    const bool testFile = GetEnvironmentVariableW(L"D2RVR_GAME_SETTINGS_JSON", nullptr, 0) > 0;
+    if (!testFile && (ProcessRunning(L"D2RLoader.exe") || ProcessRunning(L"D2R.exe"))) return;   // (the plugin's start does it)
+    std::string text;
+    if (!ReadFileText(GameSettingsPath(), &text)) return;
+    const int now = safescreen::Read(text);
+    if (now < 0) return;
+    const safescreen::Plan p = g_platform == 1 && SafeScreenVrBox() ? safescreen::ForVr(now, SafeScreenState(), true, safescreen::VrValueFor(PictureAspectNow(text)))
+                                                                    : safescreen::ForFlat(now, SafeScreenState(), false);
+    SaveSafeScreenState(p);
+    if (!p.write) return;
+    bool ok = false;
+    const std::string out = safescreen::With(text, p.value, &ok);
+    if (!ok || out == text) return;
+    const std::wstring path = GameSettingsPath();
+    const DWORD attr = GetFileAttributesW(path.c_str());
+    if (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_READONLY)) SetFileAttributesW(path.c_str(), attr & ~FILE_ATTRIBUTE_READONLY);
+    std::ofstream f(path, std::ios::binary | std::ios::trunc);
+    f << out;
+    RefreshControls();   // (the slider shows the number now in the file)
+}
+
+// Two side panels (a trader, the mercenary or a player's trade on the left, the inventory on the right) need room side by side: whether the
+// game's interface size in the file gives it, for the shape of the picture (shared/safe_screen.h, the numbers of the game's own layout).
+// Above the limit the panels lie over one another or run off the picture's edges - the outer columns cannot be seen or pointed at.
+void UpdateSafeScreenStatus() {
+    if (g_platform != 1) return;
+    std::string text;
+    const int pct = ReadFileText(GameSettingsPath(), &text) ? safescreen::Read(text) : -1;
+    if (pct < 0) {
+        SetStatus(L"safe_screen_fit", 3, L"The game's interface size is not in its Settings.json yet (the game writes the file when it quits the first time).");
+        return;
+    }
+    const float aspect = PictureAspectNow(text);   // (FlatVR has no render size: its picture is the window)
+    const int fit = safescreen::FitPercent(aspect);
+    wchar_t line[300];
+    if (safescreen::PanelsFit(pct, aspect))
+        swprintf_s(line, L"Interface size %d %%: two side panels (trader or mercenary + inventory) fit this picture (up to %d %%).", pct, fit);
+    else
+        swprintf_s(line, L"Interface size %d %%: too big - two open side panels (trader or mercenary + inventory) overlap or run off this picture's edge. %d %% or less.",
+                   pct, fit);
+    SetStatus(L"safe_screen_fit", safescreen::PanelsFit(pct, aspect) ? 0 : 2, line);
 }
 
 int Steps(const Item& it) { return (int)std::lround((it.max - it.min) / it.step); }
@@ -3253,6 +4226,74 @@ LRESULT CALLBACK ValueEditProc(HWND wnd, UINT msg, WPARAM w, LPARAM l, UINT_PTR,
     }
     if (msg == WM_CHAR && (w == VK_RETURN || w == L'\n')) return 0;   // no beep
     return DefSubclassProc(wnd, msg, w, l);
+}
+
+// The same key on two tabs (the Strikes tab's debug ticks are the Debug tab's): the other control shows what was just written.
+void SyncTwins(const Item& from) {
+    if (!from.key || !from.section) return;
+    for (Item& o : g_items) {
+        if (&o == &from || !o.key || !o.ctl || !o.section || wcscmp(o.key, from.key) != 0 || wcscmp(o.section, from.section) != 0) continue;
+        const float v = ReadValue(o);
+        switch (o.kind) {
+        case Kind::Slider:
+            SendMessageW(o.ctl, TBM_SETPOS, TRUE, ToPos(o, v));
+            ShowValue(o, v);
+            break;
+        case Kind::Toggle:
+        case Kind::Invert:
+            SendMessageW(o.ctl, BM_SETCHECK, (o.kind == Kind::Toggle ? v != 0.0f : v < 0.0f) ? BST_CHECKED : BST_UNCHECKED, 0);
+            break;
+        case Kind::Choice: SendMessageW(o.ctl, CB_SETCURSEL, ToPos(o, v), 0); break;
+        default: break;
+        }
+    }
+}
+
+// The Strikes tab's table: one row for each weapon kind the touch swings, in vr/strike_direction.h's order (strikedir::KindName - the plugin reads melee_<key>_<name> for each of them).
+constexpr int kStrikeKindCount = 15;
+const wchar_t* const kStrikeKinds[kStrikeKindCount] = {L"sword", L"axe", L"mace", L"scepter", L"wand", L"staff", L"polearm", L"spear", L"dagger", L"claw", L"orb", L"unarmed", L"other", L"javelin", L"throwing"};
+const wchar_t* const kStrikeLabels[kStrikeKindCount] = {L"Swords", L"Axes", L"Maces", L"Scepters", L"Wands", L"Staffs", L"Polearms", L"Spears", L"Daggers", L"Claws", L"Orbs", L"Fists", L"Other", L"Javelins", L"Throwing"};
+// 0 piercing, 1 edged, 2 blunt, 3 staff (strikedir::FamilyOf): which factor a kind follows while it has none of its own.
+const int kStrikeFamily[kStrikeKindCount] = {1, 1, 2, 2, 0, 3, 1, 0, 0, 0, 0, 0, 0, 0, 0};
+constexpr const wchar_t* kStrikeTableGroup = L"Each kind of weapon (type a number; 0 = follow the general one)";
+
+float StrikeIni(const wchar_t* key, float def, float lo, float hi) {
+    wchar_t buf[64], dflt[32];
+    swprintf_s(dflt, L"%g", def);
+    GetPrivateProfileStringW(L"gameplay", key, dflt, buf, 64, g_ini);
+    wchar_t* end = nullptr;
+    const float v = wcstof(buf, &end);
+    return end != buf && std::isfinite(v) ? std::clamp(v, lo, hi) : def;
+}
+
+// The swing amplitudes as the plugin works them out (strikedir::AmplitudeCm): the piercing cm times the kind's factor - its own, or its family's. Shown in the table's cm column and in the
+// labels of the three family sliders.
+void RefreshStrikeCm() {
+    const bool on = GetPrivateProfileIntW(L"gameplay", L"melee_amplitude", 1, g_ini) != 0;
+    const float base = StrikeIni(L"melee_amp_pierce_cm", 8.0f, 1.0f, 60.0f);
+    const float family[4] = {1.0f, StrikeIni(L"melee_amp_edged_x", 1.4f, 0.5f, 6.0f), StrikeIni(L"melee_amp_blunt_x", 2.0f, 0.5f, 6.0f), StrikeIni(L"melee_amp_staff_x", 1.75f, 0.5f, 6.0f)};
+    for (int k = 0; k < kStrikeKindCount; ++k) {
+        wchar_t key[48], text[32], now[32];
+        swprintf_s(key, L"melee_amp_x_%s", kStrikeKinds[k]);
+        const float own = StrikeIni(key, 0.0f, 0.0f, 8.0f);
+        if (on) swprintf_s(text, L"%.1f", base * (own >= 0.25f ? own : family[kStrikeFamily[k]]));
+        else wcscpy_s(text, L"-");
+        swprintf_s(key, L"st_cm_%s", kStrikeKinds[k]);
+        for (Item& it : g_items)
+            if (it.kind == Kind::Status && it.cell >= 0 && it.ctl && wcscmp(it.key, key) == 0) {
+                GetWindowTextW(it.ctl, now, 32);
+                if (wcscmp(now, text) != 0) SetWindowTextW(it.ctl, text);
+            }
+    }
+    const wchar_t* const sliders[3] = {L"melee_amp_edged_x", L"melee_amp_blunt_x", L"melee_amp_staff_x"};
+    for (int f = 0; f < 3; ++f)
+        for (Item& it : g_items)
+            if (it.kind == Kind::Slider && it.name && it.key && it.section && wcscmp(it.section, L"gameplay") == 0 && wcscmp(it.key, sliders[f]) == 0) {
+                wchar_t text[160];
+                if (on) swprintf_s(text, L"%s = %.1f cm", it.label, base * family[f + 1]);
+                else wcscpy_s(text, it.label);
+                SetWindowTextW(it.name, text);
+            }
 }
 
 // Created hidden and with no size: LayoutPage places and shows them.
@@ -3305,9 +4346,9 @@ void Build(HWND page) {
         case Kind::Status:
             it.modes &= groupModes;
             // the weapon list's rows take clicks (SS_NOTIFY): one picks that kind for the sliders
-            it.ctl = Make(page, L"STATIC", it.label, SS_LEFT | SS_NOPREFIX | (it.key[0] == L'w' && it.key[1] == L'k' ? SS_NOTIFY : 0),
+            it.ctl = Make(page, L"STATIC", it.label, SS_LEFT | SS_NOPREFIX | ((it.key[0] == L'w' && it.key[1] == L'k') || it.cell >= 0 ? SS_NOTIFY : 0),
                           it.key[0] == L'w' && it.key[1] == L'k' ? id : -1);   // wraps to two lines
-            it.color = GetSysColor(COLOR_GRAYTEXT);
+            it.color = GetSysColor(it.cell >= 0 ? COLOR_WINDOWTEXT : COLOR_GRAYTEXT);   // (a table's cells are plain text)
             break;
         case Kind::File:
         case Kind::Color:
@@ -3360,6 +4401,7 @@ void Build(HWND page) {
         it.tab = tab;
         AddTip(it.name, it.tip);
         AddTip(it.ctl, it.tip);
+        if (it.cell >= 0 && it.kind == Kind::Slider) AddTip(it.value, it.tip);   // (a table's slider shows its number box only)
     }
     g_tabCount = tab + 1;
     for (Item& it : g_items)
@@ -3511,6 +4553,16 @@ void LayoutPage() {
         for (size_t i = g.first + 1; i < g.end; ++i) {
             const Item& it = g_items[i];
             if (!(it.modes & PlatformBit()) || it.hidden || it.off) continue;
+            if (it.cell >= 0) {   // a row of a table: its cells side by side (cell 0, the label, starts the row and takes its height; a slider shows its number box only)
+                const int labelCol = colW * 27 / 100, cw = (colW - labelCol) / 6;
+                const int cx = it.cell == 0 ? x : x + labelCol + (it.cell - 1) * cw, w2 = (it.cell == 0 ? labelCol : cw) - S(4);
+                const int ry = it.cell == 0 ? y : y - rowH;
+                if (it.kind == Kind::Status) places.push_back({it.ctl, cx, ry + S(6), w2, S(20)});
+                else if (it.kind == Kind::Slider) places.push_back({it.value, cx, ry + S(5), w2, S(22)});
+                else places.push_back({it.ctl, cx + std::max(0, w2 / 2 - S(8)), ry + S(4), S(24), S(24)});
+                if (it.cell == 0) y += rowH;
+                continue;
+            }
             switch (it.kind) {
             case Kind::Radio:   // a row each
                 for (size_t k = 0; k < it.radios.size(); ++k)
@@ -3647,6 +4699,7 @@ void SelectTab(int t) {
     SendMessageW(g_tabs, TCM_SETCURSEL, t, 0);
     g_scrollY = 0;
     RefreshControls();   // a key shown on two tabs (Performance and its own) changed on the other
+    RefreshStrikeCm();
     LayoutPage();
 }
 
@@ -3734,6 +4787,7 @@ void ApplyFrameCapForPlatform();
 void PlatformChanged() {
     ApplyWindowForPlatform();   // the right window for the next start: flat gets its own back, VR its square (if ticked)
     ApplyFrameCapForPlatform();   // ... and the right frame cap: flat its own, VR the headset's rate
+    ApplySafeScreenForPlatform();   // ... and the right interface size: flat its own, VR 80 where the player chose none
     RebuildTabs();
     g_scrollY = 0;
     LayoutPage();
@@ -3933,6 +4987,48 @@ void UpdateDepthStatus() {
     SetStatus(L"depth_pick", state, line.c_str());
 }
 
+// Weapon weight, "Move the weapon with the weight-physics library": whether d2r_vr_weight.dll is beside the plugin, and what the tick does with or without it. The tick is greyed
+// out (UpdateEnabled) the moment the file appears or goes, also while the program is open.
+void UpdateEnabled();
+void UpdateWeightLibStatus() {
+    static int last = -1;
+    const bool there = WeightLibFound();
+    std::wstring line;
+    int state;
+    if (there) {
+        line = L"Weight-physics library: d2r_vr_weight.dll is beside the plugin - the tick below moves the weapon with it.";
+        state = kOk;
+    } else {
+        line = L"Weight-physics library: not found beside the plugin (d2r_vr_weight.dll) - the mod keeps its own weight physics, the tick below is unavailable.";
+        state = kWarn;
+    }
+    SetStatus(L"weight_lib", state, line.c_str());
+    if (last != (int)there) {
+        last = (int)there;
+        UpdateEnabled();
+    }
+}
+
+// Weapon weight, "Hold the weapon the grip library's way": the same for d2r_vr_grip.dll.
+void UpdateGripLibStatus() {
+    static int last = -1;
+    const bool there = GripLibFound();
+    std::wstring line;
+    int state;
+    if (there) {
+        line = L"Grip library: d2r_vr_grip.dll is beside the plugin - the tick below holds the weapon its way.";
+        state = kOk;
+    } else {
+        line = L"Grip library: not found beside the plugin (d2r_vr_grip.dll) - the mod keeps its own way of holding, the tick below is unavailable.";
+        state = kWarn;
+    }
+    SetStatus(L"grip_lib", state, line.c_str());
+    if (last != (int)there) {
+        last = (int)there;
+        UpdateEnabled();
+    }
+}
+
 // The Weapon Adjust tab's list: each kind, green with its numbers where
 // [weapon_<kind>] moves or turns the weapon at all, grey where it is untouched;
 // the kind the sliders edit now is marked.
@@ -4054,6 +5150,7 @@ ULONGLONG g_flatVrStartBy = 0;
 void LaunchGame() {
     ApplyWindowForPlatform();   // START in flat mode never meets VR's square (and in VR the square, if ticked)
     if (g_platform != 1) RestoreFrameCapForFlat();   // ... nor VR's frame cap (in VR START changes nothing: the rate was written when it was chosen)
+    ApplySafeScreenForPlatform();   // ... nor VR's interface size (and in VR the game starts at 80 where the player chose none; the game is not running yet)
     const std::wstring game = GameFolder();
     const std::wstring exe = game + L"D2RLoader.exe";
     ShellExecuteW(g_main, L"open", exe.c_str(), nullptr, game.c_str(), SW_SHOWNORMAL);
@@ -4138,11 +5235,12 @@ extern std::atomic<bool> g_rsBusy;   // Install ReShade (below)
 extern std::wstring g_rsError;
 
 void LaunchButton();
+std::wstring Widen(const std::string& s);   // UTF-8 to UTF-16 (below)
 // Without BodyWalk (native OpenXR with its own controls) the BodyWalk and FlatVR rows of the Status block tell the player nothing
 // he can use - and show red - so they are left out (2026-10-14, the user's wish); back as soon as one of the two is off.
 void BodyWalkRows() {
-    static const wchar_t* const kRows[] = {L"bw_installed", L"vigem", L"bw_running", L"game_link", L"universal",
-                                           L"flatvr_on", L"head_lock", L"frame_gen", L"flatvr_running", L"head"};
+    static const wchar_t* const kRows[] = {L"bw_installed", L"vigem", L"bw_running", L"game_link", L"universal", L"bw_output",
+                                           L"flatvr_on", L"head_lock", L"frame_gen", L"flatvr_running", L"head", L"bw_path"};
     const bool none = GetPrivateProfileIntW(L"openxr", L"on", 0, g_ini) != 0 && GetPrivateProfileIntW(L"openxr", L"direct_input", 0, g_ini) != 0;
     bool changed = false;
     for (const wchar_t* k : kRows)
@@ -4153,6 +5251,9 @@ void RefreshStatus() {
     LaunchButton();   // flat and VR alike
     BodyWalkRows();
     UpdateDepthStatus();   // World > Fog: the depth our effects read (any tab: it is a no-op without its row)
+    UpdateSafeScreenStatus();   // UI: F4 body: do two side panels fit the picture at the interface size in the file
+    UpdateWeightLibStatus();   // Weapon weight: the weight-physics library beside the plugin
+    UpdateGripLibStatus();     // ... and the grip library
     if (g_platform != 1 || g_tab != 0) return;
     UpdateResolutionTexts();   // the render size's status line and tips (the game may have written the headset's numbers meanwhile)
     UpdateFrameCapStatus();    // the frame cap in the file and the one VR writes for this choice
@@ -4313,6 +5414,19 @@ void RefreshStatus() {
     };
     flag(L"universal", "universal_tracking_output", true, kBad, L"Universal tracking output on",
          L"Universal tracking output is off - switch it on in BodyWalk (Startup tab)");
+    // BodyWalk's Output (bw_output.h): up to BodyWalk 1.83 its buttons reach the game in FlatVR only with Xbox Controller (or Game Link).
+    {
+        const std::string mode = have ? bwout::Mode(text) : std::string();
+        const std::wstring m = Widen(mode);
+        switch (bwout::Judge(mode)) {
+        case bwout::Verdict::Unknown: SetStatus(L"bw_output", kUnknown, L"BodyWalk's Output"); break;
+        case bwout::Verdict::Ok: SetStatus(L"bw_output", kOk, (L"BodyWalk's Output: " + m).c_str()); break;
+        case bwout::Verdict::Warn:
+            SetStatus(L"bw_output", kWarn, (L"BodyWalk's Output is " + m + L": in FlatVR its buttons may not reach the game - pick "
+                                            L"\"Xbox Controller (vJoy)\" on BodyWalk's Main tab (untick Hide locomotion on Startup to see it)").c_str());
+            break;
+        }
+    }
     if (have && PluginOff(text, "flatvr")) SetStatus(L"flatvr_on", kBad, L"FlatVR is switched off in BodyWalk's plugin list");
     else flag(L"flatvr_on", "flat_vr_enabled", true, kBad, L"FlatVR switched on", L"FlatVR is off in BodyWalk - switch it on");
     flag(L"head_lock", "flat_vr_head_lock_from_game", true, kWarn, L"Head Lock follows the game",
@@ -4339,6 +5453,20 @@ void RefreshStatus() {
     SetStatus(L"head", tracked ? kOk : kWarn,
               tracked ? L"Head tracking reaches the game" :
               live ? L"BodyWalk sends tracking, but the headset is not tracking" : L"No head tracking from BodyWalk yet");
+    {   // Game Link direct, or BodyWalk's gamepad and Mapping (bw_path.h)
+        bwpath::Facts pf;
+        pf.trackingLive = live;
+        pf.trackingVersion = tr.header.version;
+        pf.trackingFlags = tr.flags;
+        BW_LinkWalk wk{};
+        pf.walkLive = ReadBlock(BW_LINK_WALK_NAME, &wk, sizeof wk) && wk.header.magic == BW_LINK_MAGIC && Moving(BW_LINK_WALK_NAME, wk.header.sequence) &&
+                      (wk.flags & BW_LINK_WALK_ACTIVE) != 0;
+        pf.directInput = GetPrivateProfileIntW(L"openxr", L"direct_input", 0, g_ini) != 0;
+        pf.flatVrControls = GetPrivateProfileIntW(L"direct", L"flatvr_controls", 1, g_ini) != 0;
+        const bwpath::Path path = bwpath::Decide(pf);
+        const bwpath::Tone tone = bwpath::ToneOf(path);
+        SetStatus(L"bw_path", tone == bwpath::Tone::Ok ? kOk : tone == bwpath::Tone::Warn ? kWarn : kUnknown, bwpath::Text(path));
+    }
     D2RVR_State st{};
     const bool game = ReadBlock(D2RVR_STATE_NAME, &st, sizeof st) && Moving(D2RVR_STATE_NAME, st.counter);
     SetStatus(L"game", game ? kOk : kUnknown, game ? L"The game runs with the mod" : L"The game is not running (or the mod is not loaded)");
@@ -4367,6 +5495,61 @@ std::wstring Wide(const char* s) {
 }
 
 const wchar_t* Keep(std::wstring s) { return g_sigText.emplace_back(std::move(s)).c_str(); }
+
+// The Strikes tab's table, after its group: a header and one row for each weapon kind the touch swings - the kind, its swing amplitude (x the piercing weapons'), the cm that makes, its least speed, its
+// start distance, "toward" and "head only". Built here because the keys are made from the kind's name (kStrikeKinds, strikedir's order).
+void AddStrikeTable() {
+    size_t at = 0;
+    while (at < g_items.size() && !(g_items[at].kind == Kind::Group && wcscmp(g_items[at].label, kStrikeTableGroup) == 0)) ++at;
+    if (at == g_items.size()) return;
+    std::vector<Item> rows;
+    const auto cell = [](int c, Item i) { i.cell = c; return i; };
+    const wchar_t* const head[7] = {L"Weapon", L"Swing x", L"= cm", L"Speed", L"Start cm", L"Toward", L"Head"};
+    const wchar_t* const headTip[7] = {
+        L"The kinds of weapon the touch swings (the game's own kinds: Maces are maces, hammers, clubs and flails). A bow or a crossbow is shot, not swung. The numbers of a row are for that kind alone; "
+        L"0 in a number box = follow the general one.",
+        L"The kind's least swing amplitude as a multiple of the piercing weapons' (\"Piercing weapons: least swing amplitude, cm\"). 0 = follow the kind's family: edged, blunt or staff, "
+        L"or the piercing x1. 0.25 to 8. Type a number and press Enter.",
+        L"What the kind's least swing amplitude comes to, in cm: the piercing weapons' cm times the kind's factor (its own, or its family's). A dash: the swing size is not asked.",
+        L"The least blade speed, m/s, for a contact of this kind to count. 0 = the general one (\"Hit by touch: the least blade speed that hits\"). 0.3 to 8.",
+        L"How far the blade moves to start a stroke, cm, for this kind. 0 = the general one (\"Hit by touch: how far the blade moves to start a stroke\"). 2 to 30.",
+        L"Ticked: a contact of this kind must be toward the monster (\"Toward the monster\" above). Unticked: this kind counts whichever way the blade moves.",
+        L"Ticked: only the head of this kind of weapon strikes - the outer part of the blade; a touch with the shaft or the handle is refused. Maces and scepters by default."};
+    for (int c = 0; c < 7; ++c) {
+        Item h = Status(Keep(L"st_h" + std::to_wstring(c)), head[c]);
+        h.tip = headTip[c];
+        rows.push_back(cell(c, h));
+    }
+    for (int k = 0; k < kStrikeKindCount; ++k) {
+        const std::wstring n = kStrikeKinds[k];
+        const wchar_t* const label = kStrikeLabels[k];
+        const auto tip = [&](const wchar_t* what) { return Keep(std::wstring(label) + L": " + what); };
+        const wchar_t* const familyName[4] = {L"piercing (x1)", L"edged", L"blunt", L"staff"};
+        Item name = Status(Keep(L"st_n_" + n), label);
+        name.tip = tip(L"one row of numbers for this kind alone. 0 in a number box = follow the general one.");
+        rows.push_back(cell(0, name));
+        rows.push_back(cell(1, Needs(L"gameplay", L"melee_touch", 1, Needs(L"gameplay", L"melee_amplitude", 1,
+            Slider(L"gameplay", Keep(L"melee_amp_x_" + n), L"", 0, 8, 0.05f, 0,
+                   Keep(std::wstring(label) + L": the least swing amplitude, x the piercing weapons'. 0 (or under 0.25) = follow the family this kind belongs to: " + familyName[kStrikeFamily[k]] +
+                        L". Live."))))));
+        Item cm = Status(Keep(L"st_cm_" + n), L"");
+        cm.tip = tip(L"the least swing amplitude in cm: the piercing weapons' cm times this row's factor (or its family's).");
+        rows.push_back(cell(2, cm));
+        rows.push_back(cell(3, Needs(L"gameplay", L"melee_touch", 1,
+            Slider(L"gameplay", Keep(L"melee_min_speed_" + n), L"", 0, 8, 0.1f, 0,
+                   tip(L"the least blade speed, m/s, for a contact to count. 0 (or under 0.3) = the general one. Only decides whether a contact counts; the game's damage is the game's. Live.")))));
+        rows.push_back(cell(4, Needs(L"gameplay", L"melee_touch", 1,
+            Slider(L"gameplay", Keep(L"melee_stroke_start_cm_" + n), L"", 0, 30, 1, 0,
+                   tip(L"how far the blade moves to start a stroke, cm. A longer one refuses short fake swings for this kind. 0 (or under 2) = the general one. Live.")))));
+        rows.push_back(cell(5, Needs(L"gameplay", L"melee_touch", 1, Needs(L"gameplay", L"melee_toward", 1,
+            Toggle(L"gameplay", Keep(L"melee_toward_" + n), L"", 1,
+                   tip(L"a contact must be toward the monster (the rule above) to count. Unticked: it counts whichever way the blade moves. Live."))))));
+        rows.push_back(cell(6, Needs(L"gameplay", L"melee_touch", 1, Needs(L"gameplay", L"melee_head_only", 1,
+            Toggle(L"gameplay", Keep(L"melee_head_only_" + n), L"", k == 2 || k == 3 ? 1.0f : 0.0f,
+                   tip(L"only the head of the weapon strikes (the outer part of the blade); a touch with the shaft or the handle is refused. Live."))))));
+    }
+    g_items.insert(g_items.begin() + (std::ptrdiff_t)at + 1, rows.begin(), rows.end());
+}
 
 // The tab goes last, after Debug.
 void AddGameCodeTab() {
@@ -5308,6 +6491,7 @@ LRESULT CALLBACK PageProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
                 if (it.kind == Kind::Toggle) WriteValue(it, on ? 1.0f : 0.0f);
                 else WriteValue(it, on ? -1.0f : 1.0f);
                 if (wcscmp(it.section, L"@ui") == 0) FollowWeapon();
+                if (wcscmp(it.section, L"direct") == 0) RefreshControls();   // left_stick_map, pause_button: what the button list calls "the standard" moved
                 UpdateEnabled();
                 if (wcscmp(it.section, L"update") == 0) StartUpdateCheck();   // switched on, or the other channel
             }
@@ -5342,7 +6526,8 @@ LRESULT CALLBACK WndProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
         CarryBarKeys();
         Build(g_page);
         UpdateEnabled();
-        g_platform = GetPrivateProfileIntW(L"mode", L"platform", 1, g_ini) != 0 ? 1 : 0;
+        RefreshStrikeCm();
+        g_platform =GetPrivateProfileIntW(L"mode", L"platform", 1, g_ini) != 0 ? 1 : 0;
         g_tab = std::clamp(g_tab, 0, std::max(0, g_tabCount - 1));
         RebuildTabs();
         ApplyScale();
@@ -5532,6 +6717,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
     wchar_t buf[32];
     GetPrivateProfileStringW(L"window", L"zoom", L"1", buf, 32, g_uiIni);
     g_zoom = std::clamp(std::round(wcstof(buf, nullptr) * 10.0f) / 10.0f, 0.7f, 2.0f);
+    AddStrikeTable();
     AddGameCodeTab();
     g_tab = 0;   // always the Home page first (2026-10-14, the user's wish); the tab last used is no longer restored
     SetWeaponSection(GetPrivateProfileIntW(L"weapon", L"weapon", 1, g_uiIni) + 1);   // the kind last picked by hand

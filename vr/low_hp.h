@@ -31,6 +31,7 @@
 // steamvr/hand_vitals.h) on a wrist panel; this is a different thing (an overlay on the picture) and written here.
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 
@@ -108,6 +109,11 @@ inline Life LifeFromStats(int32_t life, int32_t maxLife) {
     l.frac = std::min(1.0f, (float)((double)life / (double)maxLife));
     return l;
 }
+
+// While the in-headset settings panel is on one of the vignette's pages the vignette is shown as if the life were this far down
+// from the threshold to nothing (0.5: half way), so the player sees what the rows change without losing a hero's life.
+constexpr float kPreviewSeverity = 0.5f;
+inline float PreviewFrac(float threshold) { return threshold * (1.0f - kPreviewSeverity); }
 
 // A read older than this is not the hero's life any more.
 constexpr double kStaleMs = 1500.0;
@@ -298,6 +304,29 @@ inline Haptic HapticFor(bool dub, float severity, const Config& config) {
     const float a = kHapticOfAlpha * PeakAlpha(severity, c) * c.hapticsStrength * (dub ? kDubSofter : 1.0f);
     return Haptic{std::min(a, kHapticMax), dub ? 28 : 40};
 }
+
+// The settings panel's "Preview 5 s" button (the bottom bar of the Life and the Look page). Opening a page changes nothing - no red, no pulse in the hands.
+// A press shows the vignette and plays the beat, both with the panel's rows as they stand (whatever the ticks say: a preview that stays dark because the
+// tick is off shows nothing), for five seconds, and then it stops by itself - the red fades out for a moment (kPreviewTailMs) and the hands are quiet at
+// once. A second press starts the five seconds again; leaving the page or closing the panel stops it. In play none of this exists.
+constexpr uint64_t kPreviewMs = 5000, kPreviewTailMs = 1600;
+class PreviewWindow {   // a clock in ms (GetTickCount64); any thread
+    std::atomic<uint64_t> until_{0};
+public:
+    void Start(uint64_t nowMs) { until_.store(nowMs + kPreviewMs, std::memory_order_relaxed); }
+    void Stop() { until_.store(0, std::memory_order_relaxed); }
+    bool Active(uint64_t nowMs) const { return nowMs < until_.load(std::memory_order_relaxed); }                             // the five seconds: life shown as half down, the pulse
+    bool Showing(uint64_t nowMs) const { const uint64_t u = until_.load(std::memory_order_relaxed); return u && nowMs < u + kPreviewTailMs; }   // and the red's fade-out after
+};
+// The panel's rows as the preview plays them: the vignette on, the beat in the hands on.
+inline Config PreviewConfig(const Config& draft) {
+    Config c = Sanitized(draft);
+    c.on = true;
+    c.haptics = true;
+    return c;
+}
+// May the heartbeat pulse in the hands now? In play the setting's tick decides, as ever; the red's fade-out after a preview is quiet (it is not the life's beat).
+inline bool PulseAllowed(bool tick, bool afterPreview) { return tick && !afterPreview; }
 
 // ---- the vignette's shape (mirrored in reshade/D2R_DepthFog.fx) ----------------------------------------------
 

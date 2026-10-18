@@ -47,15 +47,21 @@ constexpr ULONGLONG kClaimMs = 250;       // a claim older than this is stale (n
 
 const D2RL::PluginContext* g_ctx = nullptr;
 std::atomic<bool> g_on{false};
+std::atomic<bool> g_draw{false};            // [hands] shoulder_draw: the zone is a holster for both hands (the weight model draws), the swap is off
 std::atomic<int> g_hand{0};                 // 0 right, 1 left
 std::atomic<ULONGLONG> g_claimUntil[2] = {};   // [0 right, 1 left]: GetTickCount64
+std::atomic<WeaponFn> g_weapon{nullptr};       // shoulder_draw: the weight model has a weapon (null: always)
 std::atomic<StowedFn> g_stowed{nullptr};       // [weight] to_back: a weapon is stowed on the back (null: never)
 
 void Log(const char* text) { if (g_ctx) logasync::Info(g_ctx, text); }
 
+bool Active() { return g_on.load() || g_draw.load(); }
+
 // The draw thread's (OnFrame) alone.
 struct State {
     shoulderswap::Gesture gesture;
+    shoulderswap::Gesture holster[2];   // shoulder_draw: one claim for each hand (0 right, 1 left)
+    shoulderswap::Heading holsterHeading;
     shoulderswap::Pending pending;
     shoulderswap::Heading heading;
     uint32_t session = 0, epoch = 0;
@@ -67,7 +73,7 @@ void Release() { g_claimUntil[0].store(0); g_claimUntil[1].store(0); }
 
 void OnFrame(const directinput::Frame& f, void*) {
     static State s;
-    if (!g_on.load()) {
+    if (!Active()) {
         if (s.seen) { s = State{}; Release(); }
         return;
     }
@@ -80,6 +86,35 @@ void OnFrame(const directinput::Frame& f, void*) {
     } else if (f.epoch != s.epoch) {
         s.epoch = f.epoch;
         s.gesture.Reset();
+        s.holster[0].Reset();
+        s.holster[1].Reset();
+    }
+    if (g_draw.load()) {
+        // The zone is a holster: both hands, each its own claim of a grip pressed behind a shoulder (and until it is let go). Nothing is swapped; the weight model reads
+        // the same hand frames and the real grips and draws the weapon (vr/weight.cpp).
+        const bool focused = (f.flags & directinput::kFocused) != 0;
+        const WeaponFn weaponFn = g_weapon.load();
+        const bool menu = (f.flags & (directinput::kInMenu | directinput::kOtherView)) != 0 || !viewgate::F4() || (weaponFn && !weaponFn());
+        if (f.head.valid == 1) s.holsterHeading.Update(f.head.rot);
+        for (int xr = 0; xr < 2; ++xr) {   // direct_input's: 0 left, 1 right
+            const int side = xr ? 0 : 1;   // 0 right, 1 left (the ini's, D2RVR_Shared's)
+            const directinput::Hand& h = f.hand[xr];
+            shoulderswap::Input in;
+            in.time = f.time;
+            in.hand = side;
+            in.tracked = focused && f.head.valid == 1 && h.active && h.grip.valid == 1 && s.holsterHeading.Relative(f.head.pos, h.grip.pos, in.pos);
+            in.grip = h.squeeze;
+            in.allowed = focused && !menu && !(xr == 1 && throwwire::GripIsThrows());
+            in.canSwap = false;   // (the swap is never asked for)
+            const shoulderswap::Output out = s.holster[side].Step(in);
+            if (out.claim) {
+                directinput::Take(xr, directinput::kSqueeze | directinput::kTakeSqueeze, directinput::kSrcShoulderSwap);
+                g_claimUntil[side].store(GetTickCount64() + kClaimMs);
+            } else {
+                g_claimUntil[side].store(0);
+            }
+        }
+        return;
     }
     const int hand = g_hand.load() ? 1 : 0;   // 0 right, 1 left (the ini's, D2RVR_Shared's)
     const int xrHand = hand ? 0 : 1;          // direct_input's: 0 left, 1 right
@@ -170,10 +205,18 @@ void Configure(bool on, bool leftHand) {
 }
 
 bool Claims(int hand) {
-    if (hand < 0 || hand > 1 || !g_on.load() || !viewgate::F4()) return false;
+    if (hand < 0 || hand > 1 || !Active() || !viewgate::F4()) return false;
     return GetTickCount64() < g_claimUntil[hand].load();
 }
 
 void SetStowedSource(StowedFn stowedOnBack) { g_stowed.store(stowedOnBack); }
+void SetWeaponSource(WeaponFn weaponPlaced) { g_weapon.store(weaponPlaced); }
+
+void SetDraw(bool on) {
+    const bool was = g_draw.exchange(on);
+    if (!on) Release();
+    if (was != on) Log(on ? "vrcam: shoulder draw on - the zone behind each shoulder holds that hand's item; \"Swap weapons\" is not pressed from it"
+                          : "vrcam: shoulder draw off");
+}
 
 }  // namespace shoulderwire

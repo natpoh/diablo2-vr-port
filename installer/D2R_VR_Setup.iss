@@ -84,6 +84,10 @@ SelectDirBrowseLabel=If this is not your game's folder, click Browse.
 [Files]
 Source: "payload\plugins\d2rl-vrcam.dll"; DestDir: "{app}\d2rloader\plugins"; Flags: ignoreversion
 Source: "payload\plugins\D2R_VR_Settings.exe"; DestDir: "{app}"; Flags: ignoreversion
+; The optional weight-physics and grip libraries ([weight] hands_model / grip_model), built apart from this
+; repository (C:\wsl\weight_physics); without them the plugin keeps its own way of moving and holding.
+Source: "payload\plugins\d2r_vr_weight.dll"; DestDir: "{app}\d2rloader\plugins"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "payload\plugins\d2r_vr_grip.dll"; DestDir: "{app}\d2rloader\plugins"; Flags: ignoreversion skipifsourcedoesntexist
 ; MIT, with the third-party notices MinHook's and ReShade's licences ask for in a binary
 Source: "..\LICENSE"; DestDir: "{app}"; DestName: "D2R_VR_LICENSE.txt"; Flags: ignoreversion
 ; The player's own settings stay through an update (IniChoice in [Code]); the
