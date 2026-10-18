@@ -1,5 +1,23 @@
 # What's new in D2R VR
 
+## Next
+
+- **The hero crouches when you crouch, from d2r-pcvr** (bearstonem, MIT; VR first person F4
+  only; its own tick - Settings > Body > "Hero crouches when you crouch (F4)", `[body] crouch`,
+  off by default). Crouch in your room and the camera already went down with your head; now
+  the hero's body goes down as far, his knees bent again - thigh and shin at their own
+  lengths - and his feet kept where the game's animation puts them, so looking down you see
+  your crouched legs, not your chest in your face. How deep is the camera's own drop at the
+  camera's own scale (the hero's bind-pose eyes over your measured or set eye height), no
+  deeper than his legs fold: nothing tuned by hand. A dip of less than *Crouch: head lower
+  than this, cm* (`crouch_cm`, 20) below your height at the last recenter leaves him
+  standing; he stands up again once the head is back within half of it, eased in and out,
+  and stands if the head's height is lost for a quarter second. Only the drawn bones: where
+  he stands, his hit box, his walking and every game state stay the game's. The legs are
+  found in each rig by its own bones (a foot or ankle under a knee and a hip), d2r-pcvr's
+  way. Unticked, and in F1, F2, F3 and the flat views: exactly as before. Tested in
+  cleanroom/tests/crouch_test.cpp; not yet seen in the headset.
+
 ## 0.169
 
 - **The weight and grip libraries out of the plugins folder.** 0.168.0 put d2r_vr_weight.dll and d2r_vr_grip.dll

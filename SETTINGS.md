@@ -98,6 +98,14 @@ the headset-only ones.
   Options, Video, Body; dots show where you are).
 - **Body** - no game animation above the pelvis in F4 (your body drives it),
   legs stay under the body, how the hero turns to where you look.
+  *Hero crouches when you crouch (F4)* (`[body] crouch`, off): crouch in the
+  room and the hero's drawn body goes down with your head, knees bent, feet on
+  the ground - his place, hit box and walking stay the game's. It needs a camera
+  that follows your head's height (native OpenXR, or FlatVR with the head's
+  position). *Crouch: head lower than this, cm* (`crouch_cm`, 20): how far below
+  your height at the last recenter the head must go; he stands again within half
+  of it. Recenter where you play (seated: recenter seated). The idea is
+  bearstonem/d2r-pcvr's (MIT).
 - **Hands** - the hands turn with the controllers; tilt, turn and roll offsets
   for your controllers' grip.
 

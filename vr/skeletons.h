@@ -13,6 +13,7 @@ struct Input {
     bool hideHead = false;      // shrink the hero's head away (first person)
     bool lockUpper = false;     // nothing above the pelvis follows the game's animation: bind pose, then ours
     bool legsUnder = false;     // with lockUpper: pelvis and legs kept under that body - no lunge ahead, no hip turn
+    float crouchDrop = 0.0f;    // [body] crouch (F4): the body this far down (model units), the legs bent to keep the feet; 0 = as the game poses it
     bool wrist = false;         // mode 2: the hands turn with the controllers, not only follow the forearm
     float wristDeg[3] = {};     // pitch, yaw, roll on top, in the controller's own axes (mirrored for the left)
     float scale = 1.0f;         // arm reach on top of the hero/user height ratio
@@ -402,6 +403,9 @@ int LockState();
 // rawLift: the hips' rise before the stride's bob is cut). False until a pose
 // of the hero has been seen in the last second.
 bool HeroEye(float* eyeY, float* lift, float* rawLift = nullptr);
+// [body] crouch: whether the hero's legs were found to bend (1 both, 0 not - the body is not taken down; -1 not asked yet) and
+// how far the body was last taken down (model units, 0 standing).
+int CrouchLegs(float* applied);
 #if D2RVR_FIRST_PERSON
 // staff_free_left: the staff as last posed - its direction (from the left
 // hand's place on it toward the right hand, as the game's grip has them) in
