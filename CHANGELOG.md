@@ -1,5 +1,12 @@
 # What's new in D2R VR
 
+## 0.169
+
+- **The weight and grip libraries out of the plugins folder.** 0.168.0 put d2r_vr_weight.dll and d2r_vr_grip.dll
+  in d2rloader\plugins, where D2RLoader took them for plugins and logged "2 plugins rejected" on every start
+  (harmless, but it looked like an error). They are in d2rloader\d2r_vr_libs now; Setup removes the old copies,
+  and the plugin looks there first (beside the plugin still works).
+
 ## 0.168
 
 The main points (details below and in SETTINGS.md):

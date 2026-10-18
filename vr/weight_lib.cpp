@@ -56,7 +56,12 @@ std::wstring PathOfFile() {
     if (!n || n >= sizeof buf / sizeof buf[0]) return kFile;
     std::wstring p(buf, n);
     const size_t slash = p.find_last_of(L"\\/");
-    return (slash == std::wstring::npos ? std::wstring() : p.substr(0, slash + 1)) + kFile;
+    const std::wstring dir = slash == std::wstring::npos ? std::wstring() : p.substr(0, slash + 1);
+    // d2rloader\d2r_vr_libs\ (0.168.1): out of d2rloader\plugins, where D2RLoader took it for a plugin and logged
+    // "2 plugins rejected" for every player; beside the plugin is still looked at (0.168.0 and the test builds)
+    const std::wstring libs = dir + L"..\\d2r_vr_libs\\" + kFile;
+    if (GetFileAttributesW(libs.c_str()) != INVALID_FILE_ATTRIBUTES) return libs;
+    return dir + kFile;
 }
 
 bool FileThere(const std::wstring& path) {
@@ -167,8 +172,8 @@ bool Probe() {
     const bool there = FileThere(PathOfFile());
     if (g_status != Status::Loaded && g_toldMissing != (there ? 1 : 0)) {
         g_toldMissing = there ? 1 : 0;
-        if (there) Say("vrcam: weight library - d2r_vr_weight.dll is beside the plugin; it is loaded when [weight] hands_model 1 asks for it");
-        else Say("vrcam: weight library - there is no d2r_vr_weight.dll beside the plugin: [weight] hands_model 1 keeps our own physics");
+        if (there) Say("vrcam: weight library - d2r_vr_weight.dll is in d2rloader\\d2r_vr_libs (or beside the plugin); it is loaded when [weight] hands_model 1 asks for it");
+        else Say("vrcam: weight library - there is no d2r_vr_weight.dll in d2rloader\\d2r_vr_libs (or beside the plugin): [weight] hands_model 1 keeps our own physics");
     }
     ReleaseSRWLockExclusive(&g_lock);
     return there;
@@ -190,7 +195,7 @@ bool Ensure() {
     if (!FileThere(path)) {
         if (g_toldMissing != 0) {
             g_toldMissing = 0;
-            Say("vrcam: weight library - there is no d2r_vr_weight.dll beside the plugin: [weight] hands_model 1 keeps our own physics");
+            Say("vrcam: weight library - there is no d2r_vr_weight.dll in d2rloader\\d2r_vr_libs (or beside the plugin): [weight] hands_model 1 keeps our own physics");
         }
         g_status = Status::Missing;
         ReleaseSRWLockExclusive(&g_lock);
@@ -234,7 +239,7 @@ bool Ensure() {
     g_name   = name && name() ? name() : "unnamed";
     g_status = Status::Loaded;
     hh::SetEngine(&g_engine);
-    Say("vrcam: weight library - %s loaded from beside the plugin: [weight] hands_model 1 moves the held weapon with it", g_name.c_str());
+    Say("vrcam: weight library - %s loaded from in d2rloader\\d2r_vr_libs (or beside the plugin): [weight] hands_model 1 moves the held weapon with it", g_name.c_str());
     ReleaseSRWLockExclusive(&g_lock);
     return true;
 }

@@ -86,8 +86,10 @@ Source: "payload\plugins\d2rl-vrcam.dll"; DestDir: "{app}\d2rloader\plugins"; Fl
 Source: "payload\plugins\D2R_VR_Settings.exe"; DestDir: "{app}"; Flags: ignoreversion
 ; The optional weight-physics and grip libraries ([weight] hands_model / grip_model), built apart from this
 ; repository (C:\wsl\weight_physics); without them the plugin keeps its own way of moving and holding.
-Source: "payload\plugins\d2r_vr_weight.dll"; DestDir: "{app}\d2rloader\plugins"; Flags: ignoreversion skipifsourcedoesntexist
-Source: "payload\plugins\d2r_vr_grip.dll"; DestDir: "{app}\d2rloader\plugins"; Flags: ignoreversion skipifsourcedoesntexist
+; In d2rloader\d2r_vr_libs, not in d2rloader\plugins: there D2RLoader took them for plugins and logged
+; "2 plugins rejected" (0.168.0); the plugin looks for them in d2r_vr_libs first.
+Source: "payload\plugins\d2r_vr_weight.dll"; DestDir: "{app}\d2rloader\d2r_vr_libs"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "payload\plugins\d2r_vr_grip.dll"; DestDir: "{app}\d2rloader\d2r_vr_libs"; Flags: ignoreversion skipifsourcedoesntexist
 ; MIT, with the third-party notices MinHook's and ReShade's licences ask for in a binary
 Source: "..\LICENSE"; DestDir: "{app}"; DestName: "D2R_VR_LICENSE.txt"; Flags: ignoreversion
 ; The player's own settings stay through an update (IniChoice in [Code]); the
@@ -117,6 +119,7 @@ Source: "payload\bodywalk_portable\imgui.ini"; DestDir: "{#PortableDir}"; Flags:
 Source: "payload\bodywalk_portable\force_lite_mode.txt"; DestDir: "{#PortableDir}"; Flags: ignoreversion; Check: PortableFresh
 
 [UninstallDelete]
+Type: dirifempty; Name: "{app}\d2rloader\d2r_vr_libs"
 ; the portable BodyWalk goes with the mod; its settings in %LOCALAPPDATA%\BodyWalkVR
 ; are shared with any BodyWalk and stay
 Type: filesandordirs; Name: "{#PortableDir}"; Check: UsePortable
@@ -126,6 +129,9 @@ Type: files; Name: "{app}\d2rloader\plugins\d2r_vr*"
 Type: files; Name: "{app}\FlatVR_DepthProvider.log"
 
 [InstallDelete]
+; 0.168.0 put the weight and grip libraries among the plugins; they live in d2rloader\d2r_vr_libs now
+Type: files; Name: "{app}\d2rloader\plugins\d2r_vr_weight.dll"
+Type: files; Name: "{app}\d2rloader\plugins\d2r_vr_grip.dll"
 ; the settings program lived beside the mod until 2026-10-05; it sits next to D2R.exe now
 Type: files; Name: "{app}\d2rloader\plugins\d2r_vr_settings.exe"
 ; the lowercase name before 2026-10-06: Windows keeps an existing file's case, so
