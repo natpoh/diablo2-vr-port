@@ -3748,7 +3748,7 @@ void LoadSettings(const wchar_t* ini) {
                 was = 0;
                 Log("vrcam: openxr - THE LAST START DIED while native OpenXR was starting (the start guard was still there): "
                     "native OpenXR is switched OFF ([openxr] on=0) - the game goes on FlatVR. Switch it on again in D2R VR Authentic Settings > "
-                    "Performance > 3D in the headset; if it dies again, send Collect logs");
+                    "Home > 3D in the headset; if it dies again, send Collect logs");
             }
         }
     }
