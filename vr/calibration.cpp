@@ -193,7 +193,7 @@ void LoadSettings(const wchar_t* iniPath) {
     const int measure = (int)ReadFloat(L"measure", 0.0f);
     const int before = g_measure.exchange(measure);
     if (before != INT_MIN && before != measure) {
-        LogF("vrcam: calibration - D2R VR Settings asked for a measurement");
+        LogF("vrcam: calibration - D2R VR Authentic Settings asked for a measurement");
         RequestMeasure();
     }
 }

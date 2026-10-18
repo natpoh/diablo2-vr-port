@@ -96,6 +96,25 @@ inline bool MergePads(PadBits* pad, const PadBits& ours) {
     return changed;
 }
 
+// A gamepad in the player's hands, next to the VR controllers (the Discord report of 2026-10-18: "every button works except the thumbsticks - I cannot walk or
+// turn", a PS VR2 player who also held a gamepad): the plugin's pad - F4's whole layout, the F1-F3 controller, FlatVR's raw controls - used to be THE pad the game
+// polled, so the physical pad's report was thrown away; and the game's walking is not the pad's stick but a hook that takes the plugin's stick (vr/vrcam.cpp
+// HookStickGet / BodyWalkWalk) while the pad's own left stick is kept from the game. So a real pad joins in two places:
+//  - the pad the game polls: MergePads - buttons ORed, the larger trigger, a stick of ours only where the real pad's own stick rests (its pushed stick wins);
+//  - the stick the walking hook is given: FoldRealStick - the real pad's left stick where it is pushed past the game's dead zone, else ours.
+// It joins only when the XInput poll answered AND BodyWalk's own pad is not in charge: BodyWalk's virtual Xbox pad also answers that poll (ViGEm), and what
+// it carries - its Mapping, its gestures - is exactly what direct input has taken out of the game ("nothing is pressed twice").
+inline bool RealPadJoins(bool xinputAnswered, bool bodyWalkInCharge) { return xinputAnswered && !bodyWalkInCharge; }
+constexpr uint64_t kRealPadFreshMs = 150;   // the real pad's last report counts for the walking hook this long (the game polls every frame)
+inline bool RealPadFresh(uint64_t nowMs, uint64_t seenAtMs) { return seenAtMs != 0 && nowMs >= seenAtMs && nowMs - seenAtMs <= kRealPadFreshMs; }
+// The stick (x y) the walking hook is given: the real pad's, if it is fresh and pushed; ours otherwise. True = it was replaced.
+inline bool FoldRealStick(int16_t* x, int16_t* y, bool realFresh, int16_t realX, int16_t realY) {
+    if (!realFresh || !StickPushed(realX, realY)) return false;
+    *x = realX;
+    *y = realY;
+    return true;
+}
+
 // The walk alone as a pad: the left stick and nothing else.
 inline PadBits WalkPad(int16_t lx, int16_t ly) { PadBits p; p.lx = lx; p.ly = ly; return p; }
 

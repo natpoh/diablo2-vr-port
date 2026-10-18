@@ -18,7 +18,9 @@ shared-memory headers are in `external/`.
 
 ## Debugging
 
-- **The log:** `<game>\d2rloader\logs\d2r-vr-vrcam.log`.
+- **The log:** `<game>\d2rloader\logs\d2r-vr-vrcam.log` (D2RLoader's log of the plugin). What vrcam writes itself (`d2r_vr_start.txt`, `d2r_vr_crash.txt`,
+  `d2r_vr_hang.txt`, `d2r_vr_gpu_fault.txt`, the profile and trace files) and D2R VR Settings' `d2r_vr_launch.txt` are in `<game>\mods\D2R-VR\d2rloader\logs`
+  (the `..\logs` of the plugin's folder); ReShade's log is `<game>\mods\D2R-VR\reshade\ReShade.log`.
   - Every 10 s it prints the presents per second and the game's busiest
     threads, and in stereo the pairs per second and where a pair's time goes.
   - It names every biome you enter (`vrcam: biome '...'`).
@@ -313,7 +315,11 @@ game must use the window and resolution the player set in the game, and the mod 
 - `light_bounds_test.exe` tests the light-bounds replacement shader (see above).
 - `vr_resolution_test.exe` and `render_pointer_test.exe` test the render size ([render] vr_resolution).
 - `window_json_test.exe` tests the game's windowed size in Settings.json and what each platform does to it (flat mode: no square).
+- The shared VR mod launcher (`docs/launcher_authentic.md`): `python tools/start_helper_test.py <D2R_VR_Settings.exe> <fake_loader.exe>` tests
+  `D2R_VR_Settings.exe --start` in a scratch folder with a fake D2RLoader (the game must be closed); `python tools/make_vrmod_manifest.py --selftest`
+  tests the generator of the mod's `vrmod-manifest.json`; `python installer/tests/mod_layout_test.py <short scratch folder>` runs Setup and the
+  uninstaller (`installer/mod_layout.inc` and friends) for real, in a scratch folder.
 - `frame_cap_test.exe` tests the game's frame cap in Settings.json: VR's rate is VR's, flat mode has the player's own.
 - Install your build by copying `d2rl-vrcam.dll` into
-  `<game>\d2rloader\plugins` and `D2R_DepthFog.fx` into ReShade's shader
-  folder, with the game closed.
+  `<game>\mods\D2R-VR\d2rloader\plugins` and `D2R_DepthFog.fx` into the mod's
+  `reshade\reshade-shaders\Shaders`, with the game closed (the mod layout: `docs/d2rloader_mod.md`).

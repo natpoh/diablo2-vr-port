@@ -25,6 +25,12 @@ class Press {
         down_ = true;
         return true;
     }
+    // The timer's thread: only the target window is opened on monster `id`, with no press of the attack key - the cast of another skill is pressed some other way (a pad slot: [hands]
+    // double_swing_by_hands) and the game's lookups answer with the touched monster just the same.
+    void OpenWindow(uint32_t id, uint64_t now) {
+        targetId_.store(id);
+        targetUntil_.store(now + kTargetMs);
+    }
     // The timer's thread: true when the press goes UP now - its time is over, or `force` (the caller sends the release).
     bool Release(uint64_t now, bool force) {
         if (down_ && (force || now >= until_)) {

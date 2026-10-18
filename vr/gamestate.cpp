@@ -39,6 +39,7 @@
 #include "ui_ticket.h"
 #include "panel_input.h"
 #include "shield_smite_game.h"
+#include "double_swing_game.h"
 #include "render_resolution.h"
 #include "sigscan.h"
 
@@ -109,6 +110,7 @@ std::vector<uint32_t> g_shieldTypes;     // ItemTypes row indexes of the shields
 // two-handed weapons and 0 for a set of one-handed ones (CalibrateTwoHanded).
 int g_twoOffset = -2;                        // -2 not tried yet, -1 failed
 std::atomic<uint32_t> g_two{0};
+std::atomic<uint32_t> g_stickBits{0};   // bits 13 - 15 of the state block's twoHanded: did the runtime bind the thumbsticks (vr/xr_stick_check.h; xr.cpp sets it)
 std::atomic<uint32_t> g_from{0};
 std::atomic<uint32_t> g_kindSide[2] = {};      // D2RVR_TYPE_* of each hand's slot alone (0: empty, a shield or a quiver) - for two blades (HandKind)
 std::atomic<uint32_t> g_codeSide[2] = {};      // each hand's item code, four characters (space padded) as one number, a | b << 8 | c << 16 | d << 24 (HandCode)
@@ -392,7 +394,7 @@ void Publish() {
     g_state->weaponType = g_type.load();
     g_state->viewMode = g_view.load();
     const int hero = skel::HeroClass();
-    g_state->twoHanded = g_two.load() | D2RVRHeroBits(hero);   // (and the hero's class, for D2R VR Settings: bits 8 - 12)
+    g_state->twoHanded = g_two.load() | D2RVRHeroBits(hero) | g_stickBits.load();   // (and the hero's class, for D2R VR Settings: bits 8 - 12; the thumbstick check: 13 - 15)
     {   // once per game start / change of hero
         static int told = -2;
         static const char* const kNames[8] = {"Amazon", "Sorceress", "Necromancer", "Paladin", "Barbarian", "Druid", "Assassin", "Warlock"};
@@ -596,6 +598,7 @@ void __cdecl ReadItems(const PluginContext* ctx, void* user) noexcept {
         memcpy(g_state->leftCode, code[1].data(), std::min<size_t>(4, code[1].size()));
     }
     shieldsmite::UiRead();   // [gameplay] shield_smite: which pad slot holds Smite (the game's own tables, UI thread)
+    doubleswing::UiRead();   // [hands] double_swing_by_hands: which pad slots hold Double Swing and Frenzy, the hero's level in them (UI thread; nothing when off)
     Publish();
 }
 
@@ -902,6 +905,7 @@ bool HandIsThrowPotion(int side) {
 uint32_t HandsKey() { return g_handsKey.load(); }
 bool LeftShield() { return g_leftShield.load(); }
 bool MenuOpen() { return g_menu.load() != 0; }
+void SetStickBits(uint32_t bits) { g_stickBits.store(bits & (7u << 13)); }
 void SetLaserPanels(bool on) { g_laserPanels.store(on); }   // from the next panel message on
 uint64_t TitleScreenAt() { return g_titleAt.load(); }
 uint64_t LocalPlayer() { return g_player.load(); }

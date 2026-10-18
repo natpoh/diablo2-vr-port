@@ -68,6 +68,14 @@ ends:
   the thrown kinds ([issue 13](KNOWN_ISSUES.md), [issue 17](KNOWN_ISSUES.md)).
   [repo]
 - **The weapon stops at monsters** instead of passing through them. [repo]
+- **Dim the hero's own effects around him** (a player's request, 2026-10-18): in first person
+  Bone Armor wraps the eyes and is blinding; an opacity / brightness slider for it, and maybe
+  for the other self-buffs (Frozen / Shiver / Chilling Armor, Holy Shield, Cyclone Armor,
+  Energy Shield, auras at the feet). Visual only, F4 only, its own tick. Check d2r-pcvr first. [repo]
+- **Aim distance by arm** (players' request, 2026-10-18): for spells held in one hand, the arm's
+  reach sets the aim point - near for a wide Teeth / spread, far for a tight cone, as Shift+click
+  near or far does in flat D2; a staff in both hands always far; bows and crossbows unchanged.
+  In work. [repo]
 - **Gestures for skills** (the swing, the throw, the bow's draw and the swap
   over the shoulder are in; a gesture for one skill is not,
   [issue 15](KNOWN_ISSUES.md)):

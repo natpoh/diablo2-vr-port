@@ -153,6 +153,10 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/potion_hide_test.cpp")   
     add_executable(potion_hide_test cleanroom/tests/potion_hide_test.cpp)
     target_compile_options(potion_hide_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/own_effects_test.cpp")   # [render] dim_own_effects: the hero's own effects fainter (vr/own_effects.h, pure; the table is generated from the game's tables)
+    add_executable(own_effects_test cleanroom/tests/own_effects_test.cpp)
+    target_compile_options(own_effects_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/throw_gesture_wire_test.cpp" AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/vr/direct_input.h")
     add_executable(throw_gesture_wire_test cleanroom/tests/throw_gesture_wire_test.cpp vr/throw_gesture_wire.cpp)
     target_include_directories(throw_gesture_wire_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr ${CMAKE_CURRENT_SOURCE_DIR}/shared ${FLATVR_SHARED_DIR} ${BODYWALK_SRC} ${BODYWALK_SDK_INCLUDE})
@@ -196,6 +200,9 @@ target_compile_options(xbow_grip_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # [hands] spell_aim_model (vr/spell_aim_model.h): which part of the hero as drawn aims a spell - the staff, wand or orb, the weight model's grip, the fingers, the palm.
 add_executable(spell_aim_model_test cleanroom/tests/spell_aim_model_test.cpp)
 target_compile_options(spell_aim_model_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# The aim point's distance from the stretch of the aiming arm ([bow] aim_distance_by_arm, vr/arm_reach.h): the extension, the cells, the smoothing, pure.
+add_executable(arm_reach_test cleanroom/tests/arm_reach_test.cpp)
+target_compile_options(arm_reach_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # Where a staff's aim comes from (vr/aim_source.h): the controllers, never the weapon as the weight model draws it, pure.
 add_executable(aim_source_test cleanroom/tests/aim_source_test.cpp)
 target_compile_options(aim_source_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
@@ -305,9 +312,10 @@ target_include_directories(world_anchor_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
 target_compile_options(world_anchor_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 
 
-add_library(d2rl-vrcam SHARED vr/vrcam.cpp vr/xr.cpp vr/link.cpp vr/reshade_shield.cpp vr/dlss_mv.cpp vr/skeletons.cpp vr/weight.cpp vr/gamestate.cpp vr/gamecmd.cpp vr/direct_input.cpp vr/panel_input.cpp vr/throw_gesture_wire.cpp vr/throw_born.cpp vr/potion_hide.cpp vr/probe.cpp vr/uitrace.cpp vr/light_bounds.cpp vr/hud.cpp vr/memdiff.cpp vr/writewatch.cpp vr/hset_paint.cpp vr/hset_store.cpp shared/ini_txn.cpp vr/render_resolution.cpp vr/melee_touch.cpp vr/melee_direct.cpp vr/skill_wheel.cpp vr/wheel_game.cpp vr/wheel_paint.cpp vr/tiles_paint.cpp vr/wheel_icons.cpp vr/stand_still_wire.cpp vr/room_walk_wire.cpp vr/stray_walk_wire.cpp vr/shot_trace_wire.cpp vr/hset_view.cpp vr/gpu_fault.cpp vr/ecl_hook.cpp vr/vrcam.rc vr/quiver_wire.cpp vr/vcache.cpp)
+add_library(d2rl-vrcam SHARED vr/vrcam.cpp vr/xr.cpp vr/link.cpp vr/reshade_shield.cpp vr/dlss_mv.cpp vr/skeletons.cpp vr/weight.cpp vr/gamestate.cpp vr/gamecmd.cpp vr/direct_input.cpp vr/panel_input.cpp vr/throw_gesture_wire.cpp vr/throw_born.cpp vr/potion_hide.cpp vr/probe.cpp vr/uitrace.cpp vr/light_bounds.cpp vr/fog_spare.cpp vr/hud.cpp vr/memdiff.cpp vr/writewatch.cpp vr/hset_paint.cpp vr/hset_store.cpp shared/ini_txn.cpp vr/render_resolution.cpp vr/melee_touch.cpp vr/melee_direct.cpp vr/skill_wheel.cpp vr/wheel_game.cpp vr/wheel_paint.cpp vr/tiles_paint.cpp vr/wheel_icons.cpp vr/stand_still_wire.cpp vr/room_walk_wire.cpp vr/stray_walk_wire.cpp vr/shot_trace_wire.cpp vr/hset_view.cpp vr/gpu_fault.cpp vr/ecl_hook.cpp vr/vrcam.rc vr/quiver_wire.cpp vr/vcache.cpp)
 target_include_directories(d2rl-vrcam PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared ${FLATVR_SHARED_DIR} ${RESHADE_SDK_INCLUDE} ${BODYWALK_SRC} ${BODYWALK_SDK_INCLUDE})
 target_sources(d2rl-vrcam PRIVATE vr/shoulder_swap_wire.cpp vr/shield_arm_wire.cpp vr/ranged_hand_wire.cpp)   # [hands] shoulder_swap (wired to vr/direct_input.h)
+target_sources(d2rl-vrcam PRIVATE vr/own_effects.cpp)   # [render] dim_own_effects: the hero's own effects (Bone Armor ...) fainter, visual only (hooks the game's overlay creation to look)
 target_sources(d2rl-vrcam PRIVATE vr/weight_wire.cpp)   # [weight]: a grip on the weapon is not a chord's modifier (wired to vr/direct_input.h)
 target_sources(d2rl-vrcam PRIVATE vr/belt_trigger_wire.cpp)   # [belt] hold_takes_trigger: the triggers while a belt bottle is in a hand (the game reads the left one as Shift)
 target_sources(d2rl-vrcam PRIVATE vr/weight_lib.cpp)    # [weight] hands_model 1: the weight-physics library d2r_vr_weight.dll, when it is beside the plugin (shared/d2r_vr_weight.h)
@@ -393,6 +401,22 @@ target_sources(d2rl-vrcam PRIVATE vr/shield_smite.cpp)
 add_executable(shield_smite_test cleanroom/tests/shield_smite_test.cpp)
 target_include_directories(shield_smite_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared)
 target_compile_options(shield_smite_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# [hands] double_swing_by_hands: with a weapon in each hand the second hand's touch on the monster the first hand just struck casts the game's own Double Swing / Frenzy
+# (vr/double_swing.h decides: pairs, window, skill, mana; double_swing_game.cpp reads the pad slots, the skills' levels and the mana, and tells the log): double_swing_test
+target_sources(d2rl-vrcam PRIVATE vr/double_swing_game.cpp)
+add_executable(double_swing_test cleanroom/tests/double_swing_test.cpp)
+target_compile_options(double_swing_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# [gameplay] melee_touch_only: with hit by touch live the trigger does not attack - the plugin's own layout leaves the trigger's attack out (vr/melee_trigger.h decides, melee_trigger_wire.cpp
+# feeds it direct_input.h's frames and reads the pad's A slot): melee_trigger_test
+target_sources(d2rl-vrcam PRIVATE vr/melee_trigger_wire.cpp)
+add_executable(melee_trigger_test cleanroom/tests/melee_trigger_test.cpp)
+target_include_directories(melee_trigger_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_options(melee_trigger_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# [openxr] skill_rt_a: the right trigger and the right A as the game's RT and A skill slots (vr/slot_controls.h, pure; skill_wheel.cpp wires it): which slot each control
+# presses, the left trigger as the second layer, the plain slots left to the layout, the slot mapping against the game's table: slot_controls_test
+add_executable(slot_controls_test cleanroom/tests/slot_controls_test.cpp)
+target_include_directories(slot_controls_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_options(slot_controls_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # The monsters round the hero from the client's unit hash (vr/unit_scan.h, pure): ONE scan for hit by touch and the shield bash.
 add_executable(unit_scan_test cleanroom/tests/unit_scan_test.cpp)
 target_include_directories(unit_scan_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared)
@@ -467,6 +491,10 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/xr_profiles_test.cpp")   
     target_include_directories(xr_profiles_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
     target_compile_options(xr_profiles_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 endif()
+# Is the thumbstick bound by the OpenXR runtime? (vr/xr_stick_check.h: the verdict from the counts of bound sources, the spare action, the state-block bits, the words)
+add_executable(xr_stick_check_test cleanroom/tests/xr_stick_check_test.cpp)
+target_include_directories(xr_stick_check_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_options(xr_stick_check_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # In which views the aiming hand may direct the hero's attack (vr/attack_view.h): VR F2 and F4 look where the player looks, VR F1 and F3 (top-down) keep the hero's own facing.
 # One target per press of "pick up / interact" ([input] interact_one_press; vr/interact_press.h)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/interact_press_test.cpp")   # (not in the public tree's allow-list)
@@ -485,6 +513,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/anchor_gate_test.cpp")   
     add_executable(anchor_gate_test cleanroom/tests/anchor_gate_test.cpp)
     target_include_directories(anchor_gate_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
     target_compile_options(anchor_gate_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
+# D2R VR as the D2RLoader mod D2R-VR: its folders (shared/mod_layout.h)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/mod_layout_test.cpp")   # (not in the public tree's allow-list)
+    add_executable(mod_layout_test cleanroom/tests/mod_layout_test.cpp)
+    target_include_directories(mod_layout_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared)
+    target_compile_options(mod_layout_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 endif()
 add_executable(attack_view_test cleanroom/tests/attack_view_test.cpp)
 target_include_directories(attack_view_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
@@ -560,6 +594,11 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/vcache_test.cpp")
     target_include_directories(vcache_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
     target_compile_options(vcache_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/replay_pause_test.cpp")
+    add_executable(replay_pause_test cleanroom/tests/replay_pause_test.cpp)
+    target_include_directories(replay_pause_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+    target_compile_options(replay_pause_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/haptics_view_test.cpp")
     add_executable(haptics_view_test cleanroom/tests/haptics_view_test.cpp vr/haptics.cpp vr/direct_input.cpp)
     target_include_directories(haptics_view_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr ${CMAKE_CURRENT_SOURCE_DIR}/shared ${BODYWALK_SDK_INCLUDE})
@@ -573,6 +612,18 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/views3d_test.cpp")
     target_compile_options(views3d_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 endif()
 # The laser as the game's mouse in F1 and F3 in 3D (vr/pointer3d.h): the ray against the game's ground and the pixel the game's own ScreenToRay turns back.
+# The eye distance of native OpenXR's stereo pair (vr/eye_gap.h): the runtime's, a fallback for eyes in one place, or the player's own number.
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/ipd_test.cpp")
+    add_executable(ipd_test tools/ipd_test.cpp)
+    target_include_directories(ipd_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+    target_compile_options(ipd_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
+# The frame both eyes are drawn and submitted in, for canted displays (vr/eye_frame.h)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/eye_frame_test.cpp")
+    add_executable(eye_frame_test tools/eye_frame_test.cpp)
+    target_include_directories(eye_frame_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+    target_compile_options(eye_frame_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/pointer3d_test.cpp")
     add_executable(pointer3d_test cleanroom/tests/pointer3d_test.cpp)
     target_include_directories(pointer3d_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr ${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/camera)
@@ -656,6 +707,35 @@ target_sources(d2rl-vrcam PRIVATE vr/low_hp.cpp)
 # [hud] merc_tint (vr/merc_tint.h): the wounded merc tinted red by the effect. The decisions and the effect's own HLSL (the MERC
 # marks in reshade/D2R_DepthFog.fx, run on WARP against the C++ mirror) are tested. Run: merc_tint_test.exe
 target_sources(d2rl-vrcam PRIVATE vr/merc_tint.cpp)
+# [sky] arcane_sky (shared/arcane_sky.h, after bearstonem/d2r-pcvr, MIT): the BC4 decoder, the visual files' one change, the PNG
+# (read back by WIC), the receipt, and the effect's own HLSL (the ARCANE marks in reshade/D2R_DepthFog.fx) on WARP against a C++
+# mirror; the game's own files too when releases/art/bear_arcane holds them (never in the repository). Run: arcane_sky_test.exe
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/arcane_sky_test.cpp")   # (not in the public tree's allow-list)
+    add_executable(arcane_sky_test cleanroom/tests/arcane_sky_test.cpp)
+    target_include_directories(arcane_sky_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared)
+    target_compile_definitions(arcane_sky_test PRIVATE ARCANE_FX_PATH="${CMAKE_CURRENT_SOURCE_DIR}/reshade/D2R_DepthFog.fx"
+                               ARCANE_ART_DIR="${CMAKE_CURRENT_SOURCE_DIR}/releases/art/bear_arcane")
+    target_link_libraries(arcane_sky_test PRIVATE d3d11 d3dcompiler windowscodecs ole32)
+    target_compile_options(arcane_sky_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
+# ... and D2R_VR_Settings' maker of those pictures (tools/settings/arcane_assets.cpp) against the game's own archives, read only,
+# writing into a folder of the test's own. Run: arcane_assets_test.exe <game folder> <empty scratch folder> [<releases/art/bear_arcane>]
+# [fog] spare_effects (vr/fog_spare.h): the opaque share of a pixel from the game's transparent resolve (vr/fog_spare_math.h), and the
+# effect's own HLSL (the FOGSPARE marks in reshade/D2R_DepthFog.fx) on WARP against it. Run: fog_spare_test.exe
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/fog_spare_test.cpp")   # (not in the public tree's allow-list)
+    add_executable(fog_spare_test cleanroom/tests/fog_spare_test.cpp)
+    target_include_directories(fog_spare_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+    target_compile_definitions(fog_spare_test PRIVATE FOGSPARE_FX_PATH="${CMAKE_CURRENT_SOURCE_DIR}/reshade/D2R_DepthFog.fx")
+    target_link_libraries(fog_spare_test PRIVATE d3d11 d3dcompiler)
+    target_compile_options(fog_spare_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/arcane_assets_test.cpp")   # (not in the public tree's allow-list)
+    add_executable(arcane_assets_test cleanroom/tests/arcane_assets_test.cpp tools/settings/arcane_assets.cpp)
+    target_include_directories(arcane_assets_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared ${CMAKE_CURRENT_SOURCE_DIR}/tools/settings)
+    target_compile_definitions(arcane_assets_test PRIVATE UNICODE _UNICODE)
+    target_link_libraries(arcane_assets_test PRIVATE casc_static windowscodecs ole32)
+    target_compile_options(arcane_assets_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
 add_executable(merc_tint_test cleanroom/tests/merc_tint_test.cpp)
 target_include_directories(merc_tint_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr ${CMAKE_CURRENT_SOURCE_DIR}/shared)
 target_compile_definitions(merc_tint_test PRIVATE MERC_FX_PATH="${CMAKE_CURRENT_SOURCE_DIR}/reshade/D2R_DepthFog.fx")
@@ -791,10 +871,34 @@ unset(STAMP)
 add_custom_command(OUTPUT "${D2RVR_GEN_DIR}/d2r_vr_version.stamp"
     BYPRODUCTS "${D2RVR_GEN_DIR}/d2r_vr_version.h"
     COMMAND ${CMAKE_COMMAND} "-DSRC=${CMAKE_CURRENT_SOURCE_DIR}/vr/vrcam.cpp" "-DOUT=${D2RVR_GEN_DIR}/d2r_vr_version.h"
-            "-DSTAMP=${D2RVR_GEN_DIR}/d2r_vr_version.stamp" -P "${D2RVR_VERSION_SCRIPT}"
+            "-DSTAMP=${D2RVR_GEN_DIR}/d2r_vr_version.stamp" "-DD2RVR_FIRST_PERSON=${D2RVR_FIRST_PERSON}" -P "${D2RVR_VERSION_SCRIPT}"
     DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/vr/vrcam.cpp" "${D2RVR_VERSION_SCRIPT}"
     COMMENT "D2R VR version from vrcam.cpp" VERBATIM)
-add_executable(d2r_vr_settings WIN32 tools/settings/settings.cpp tools/settings/settings.rc "${D2RVR_GEN_DIR}/d2r_vr_version.stamp")
+# One target owns the generated header; the plugin (vr/vrcam.rc: its VERSIONINFO) and the settings program (its Home page and
+# VERSIONINFO) both wait for it.
+add_custom_target(d2r_vr_version_h DEPENDS "${D2RVR_GEN_DIR}/d2r_vr_version.stamp")
+add_dependencies(d2rl-vrcam d2r_vr_version_h)
+target_include_directories(d2rl-vrcam PRIVATE ${D2RVR_GEN_DIR})
+# CascLib (MIT, Ladislav Zezula): D2R_VR_Settings reads the Arcane Sanctuary's star layers out of the
+# player's own game, read only ([sky] arcane_sky, tools/settings/arcane_assets.cpp). Settings only - never
+# the plugin. A checkout in third_party/CascLib, else the commit tools/casc_extract was built with
+# (FETCHCONTENT_SOURCE_DIR_CASCLIB points it at another checkout).
+set(CASC_BUILD_SHARED_LIB OFF CACHE BOOL "" FORCE)
+set(CASC_BUILD_STATIC_LIB ON CACHE BOOL "" FORCE)
+set(CASC_UNICODE ON CACHE BOOL "" FORCE)   # Settings is a UNICODE program: CascLib's paths are wide too
+set(CMAKE_POLICY_VERSION_MINIMUM 3.5)      # CascLib's own CMakeLists asks for a CMake older than 3.5, which CMake 4 refuses
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/CascLib/CMakeLists.txt")
+    add_subdirectory(third_party/CascLib casclib EXCLUDE_FROM_ALL)
+else()
+    include(FetchContent)
+    FetchContent_Declare(CascLib GIT_REPOSITORY https://github.com/ladislav-zezula/CascLib.git
+        GIT_TAG 38a34665624b8775bb875274b36191b21c38d97b EXCLUDE_FROM_ALL)   # the CascLib of tools/casc_extract (2026-10)
+    FetchContent_MakeAvailable(CascLib)
+endif()
+unset(CMAKE_POLICY_VERSION_MINIMUM)
+add_executable(d2r_vr_settings WIN32 tools/settings/settings.cpp tools/settings/arcane_assets.cpp tools/settings/settings.rc)
+add_dependencies(d2r_vr_settings d2r_vr_version_h)
+target_link_libraries(d2r_vr_settings PRIVATE casc_static)
 target_compile_options(d2r_vr_settings PRIVATE /utf-8 /W3 /EHsc)
 # The file players see next to D2R.exe: capitals, like the game's own (2026-10-06). Its window state stays in
 # d2r_vr_settings.ini.
@@ -802,6 +906,19 @@ set_target_properties(d2r_vr_settings PROPERTIES OUTPUT_NAME "D2R_VR_Settings")
 target_compile_definitions(d2r_vr_settings PRIVATE UNICODE _UNICODE)
 target_include_directories(d2r_vr_settings PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared ${FLATVR_SHARED_DIR} ${D2RVR_GEN_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/sigscan ${BODYWALK_SDK_INCLUDE})   # d2r_vr_state.h: the weapon in hand; afr_eye_shared.h: is FlatVR running; game_link.h: BodyWalk
 # Our own debugging tools (not in the public tree).
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/settings/fake_loader.cpp")
+    # Stands in for D2RLoader.exe in tools/start_helper_test.py (D2R_VR_Settings.exe --start): records its arguments and environment, starts nothing.
+    add_executable(fake_loader tools/settings/fake_loader.cpp)
+    target_compile_options(fake_loader PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/installer/tests/fake_launcher_setup.cpp")
+    # Stand-ins for the launcher's Setup that D2R VR's Setup carries (installer/tests/mod_layout_test.py): they record how they were started, and exit 0 or 5.
+    add_executable(fake_launcher_setup installer/tests/fake_launcher_setup.cpp)
+    target_compile_options(fake_launcher_setup PRIVATE /utf-8 /W4 /EHsc /permissive-)
+    add_executable(fake_launcher_setup_fail installer/tests/fake_launcher_setup.cpp)
+    target_compile_definitions(fake_launcher_setup_fail PRIVATE FAKE_EXIT=5)
+    target_compile_options(fake_launcher_setup_fail PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/probe_test.cpp")
     # The skeleton probe against a fake Granny skeleton in its own memory.
     add_executable(probe_test tools/probe_test.cpp vr/probe.cpp)
@@ -824,6 +941,25 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/frame_cap_test.cpp")
     add_executable(frame_cap_test tools/frame_cap_test.cpp)
     target_include_directories(frame_cap_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared)
     target_compile_options(frame_cap_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/reshade_env_test.cpp")
+    # Another mod's RESHADE_* variables the plugin clears in the game's process before ReShade64.dll loads (shared/reshade_env.h).
+    add_executable(reshade_env_test tools/reshade_env_test.cpp)
+    target_include_directories(reshade_env_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared)
+    target_compile_options(reshade_env_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+    target_compile_definitions(reshade_env_test PRIVATE VRCAM_CPP="${CMAKE_CURRENT_SOURCE_DIR}/vr/vrcam.cpp")   # (the order in LoadReShade is checked in the source)
+endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/reshade_as_test.cpp")
+    # Home > "Keep ReShade as dxgi.dll" / "ReShade for D2R VR only" (shared/reshade_as.h): the files they move, in the mod layout and before it, on real files in %TEMP%.
+    add_executable(reshade_as_test tools/reshade_as_test.cpp)
+    target_include_directories(reshade_as_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared)
+    target_compile_options(reshade_as_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/reshade_paths_test.cpp")
+    # D2R VR's folders in the search paths of the ReShade a player has as dxgi.dll (shared/reshade_paths.h): append-only, idempotent, byte-exact on the rest.
+    add_executable(reshade_paths_test tools/reshade_paths_test.cpp)
+    target_include_directories(reshade_paths_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared)
+    target_compile_options(reshade_paths_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 endif()
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/safe_screen_test.cpp")
     # The game's interface size in Settings.json ("Safe Screen Percent") and what D2R VR does to it (shared/safe_screen.h): VR starts it at 80 where the player chose none, flat mode has his own.
@@ -880,6 +1016,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/ecl_hook_test.cpp")
     target_include_directories(ecl_hook_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
     target_link_libraries(ecl_hook_test PRIVATE minhook d3d12 dxgi)
     target_compile_options(ecl_hook_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/xr_busy_test.cpp")
+    # A runtime call that never returns (xrWaitFrame under a headset another app holds) does not hold the draw thread (vr/bounded_call.h); FlatVR over the headset (vr/flatvr_gate.h)
+    add_executable(xr_busy_test tools/xr_busy_test.cpp)
+    target_include_directories(xr_busy_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+    target_compile_options(xr_busy_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 endif()
 # The light-bounds replacement shader on a software D3D11 device against a scan of every pixel; with the game's own
 # shader (extracted on your machine) as the argument it also shows the bug and that square tiles are the same bit for bit.

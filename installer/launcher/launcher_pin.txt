@@ -1,0 +1,15 @@
+# The shared "D2R VR Launcher" that D2R VR's Setup carries (installer\launcher_bundle.inc) and installs silently when it is missing or older.
+# build_installer.ps1 carries exactly this file, UNMODIFIED, as its repository publishes it (https://github.com/natpoh/d2r-vr-launcher/releases:
+# D2R_VR_Launcher_Setup_<version>.exe + its .sha256), looks for it in installer\launcher\cache\ (git-ignored) and stops when it is not there or its
+# SHA-256 is not the one below. Once per release: put the new Setup in cache\, change the three values.
+#
+# 0.3.1: the Setup of commit 84ddda4 of the launcher repository (claude/launcher-ui): the mods list is in the order they were installed on this computer; the mod's own
+# settings button is big, right after Play, named for the mod ("D2R VR Authentic Settings": settings_app.label of the manifest, else "<name> Settings"); each installed mod
+# has an Uninstall button on its card and its row; and the install window reads the installed version (from the manifest, or the plugin's version resource when the manifest
+# fails validation), never offers a downgrade and pre-ticks nothing unless it is a real install or update. (Two earlier builds with the same version number - one with a
+# "Close Steam" button, one with commit 4148184 - are obsolete; only the SHA-256 below is valid.)
+# Its own finish page offers "Choose the mods to install" and "Open D2R VR Launcher" (unticked); both are skipifsilent, so the silent call this Setup makes
+# (/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS=, unchanged) shows and starts nothing.
+version=0.3.1
+file=D2R_VR_Launcher_Setup_0.3.1.exe
+sha256=C9A1D259DA707FE87D7F33D1B7DDD279A57DBFF994098F25BC251FDCCC1AF123

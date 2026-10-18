@@ -23,15 +23,15 @@
 
 namespace hset {
 
-constexpr int kMaxPages = 10;
+constexpr int kMaxPages = 11;
 constexpr int kRowsPerPage = 6;
-// A page is a line more here, in kPageNames and in kMaxPages / kPageCount (the tabs share the panel's width: hset_model.h kTabStep). After HUD come the
-// belt's page and the two key-binding pages (Left, Right).
+// A page is a line more here, in kPageNames and in kMaxPages / kPageCount (the tabs share the panel's width in proportion to their names:
+// hset_model.h kTab). After HUD come the belt's page, the hit-by-touch page (Melee) and the two key-binding pages (Left, Right).
 enum Page : int {
     kPageView = 0, kPageOptions = 1, kPageVideo = 2, kPageBody = 3, kPageLife = 4, kPageLook = 5, kPageHud = 6,
-    kPageBelt = 7, kPageKeysL = 8, kPageKeysR = 9
+    kPageBelt = 7, kPageMelee = 8, kPageKeysL = 9, kPageKeysR = 10
 };
-constexpr int kPageCount = 10;
+constexpr int kPageCount = 11;
 constexpr int kNoPage = -1;   // a key with no row of its own: a hand-drawn page reads and writes it
 
 // A set of keys, one bit a key of the table below (what an Apply writes, what a draft has changed).
@@ -134,7 +134,20 @@ inline constexpr Def kDefs[] = {
      0.0f, 0.0f, 1.0f, 1.0f, "", "Grip", "Trigger + grip", kPageBelt, true},
     // (the spread, [hands] belt_models_arc, and the potions' size, [hands] belt_models_scale, are in D2R VR Settings only)
     //
-    // pages 8 and 9, Left and Right: the key bindings, lines of [direct] (the plugin's own controls, vr/direct_layout.h): the value is a pick of the
+    // page 8, Melee: the "Hit by touch" group of D2R VR Settings > Strikes - the tick, its two numbers and the trigger's tick, the same keys, ranges and defaults as there
+    // ([gameplay] melee_touch, melee_min_speed, melee_stroke_start_cm, melee_touch_only; the plugin follows the ini live, vr/vrcam.cpp, vr/stroke_tuning.h). Live, F4 only.
+    // The rest of the Strikes tab (thrown weapons, which contact counts, the kinds, the direct hit) stays in D2R VR Settings.
+    {L"gameplay", L"melee_touch", "Hit by touch", "The blade you swing through a monster hits it (F4)",
+     0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageMelee, true},
+    {L"gameplay", L"melee_min_speed", "Least blade speed that hits", "Below it a touch does nothing, m/s",
+     0.8f, 0.3f, 20.0f, 0.1f, "%.1f m/s", "", "", kPageMelee, true},
+    {L"gameplay", L"melee_stroke_start_cm", "Blade moves to start a stroke", "How far it must move to begin one, cm",
+     8.0f, 2.0f, 30.0f, 1.0f, "%.0f cm", "", "", kPageMelee, true},
+    // The trigger does not attack (a part of hit by touch, on with it - the way back): only the blade's touch does; a bow and a crossbow keep it ([gameplay] melee_touch_only, vr/melee_trigger.h; the plugin's own controls, F4).
+    {L"gameplay", L"melee_touch_only", "Trigger does not attack", "Only the blade's touch attacks; a bow shoots (F4)",
+     1.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageMelee, true},
+    //
+    // pages 9 and 10, Left and Right: the key bindings, lines of [direct] (the plugin's own controls, vr/direct_layout.h): the value is a pick of the
     // list D2R VR Settings shows (vr/direct_remap.h, named for the box in vr/hset_keys.h), min / max / def are not used (the list's length is
     // the range, 0 = the first pick, one past the last = a line the list does not name, "Custom"). Not live: a binding is applied with Apply.
     // The keys are the rows of hset::keys::kSlots, in that order (a test holds the two together). Chords and the other long presses stay
@@ -209,13 +222,14 @@ constexpr int kKeyBarPlace = IndexOf(L"hud", L"bar_place");   // the toolbar typ
 constexpr int kKeyHide = IndexOf(L"hud", L"hide");
 constexpr int kKeyBeltOn = IndexOf(L"hands", L"belt_models");     // the Belt page's note
 constexpr int kKeyBeltUp = IndexOf(L"hands", L"belt_models_up");
+constexpr int kKeyMeleeTouch = IndexOf(L"gameplay", L"melee_touch");   // the Melee page's tick: its two numbers do nothing without it
 constexpr int kKeyGrabTrigger = IndexOf(L"belt", L"grab_trigger");   // the two-button take: the Belt page's last row (it reads the trigger through direct input)
 constexpr int kKeyVersion = IndexOf(L"calibration", L"version");
 constexpr int kKeyEye = IndexOf(L"calibration", L"eye_height_m");
 constexpr int kKeySpan = IndexOf(L"calibration", L"arm_span_m");
 static_assert(kKeyMode >= 0 && kKeyPx >= 0 && kKeyUse >= 0 && kKeyVersion >= 0 && kKeyEye >= 0 && kKeySpan >= 0, "the Video and Body pages' keys are in the table");
 static_assert(kKeySmooth >= 0 && kKeySnap >= 0, "the turn keys are in the table");
-static_assert(kKeyBeltOn >= 0 && kKeyBeltUp >= 0 && kKeyGrabTrigger >= 0, "the belt's keys are in the table");
+static_assert(kKeyBeltOn >= 0 && kKeyBeltUp >= 0 && kKeyGrabTrigger >= 0 && kKeyMeleeTouch >= 0, "the belt's and the melee page's keys are in the table");
 constexpr int kKeyDirectOn = IndexOf(L"openxr", L"direct_input");   // the Keys pages' note
 constexpr int kKeyBindFirst = IndexOf(L"direct", L"left_trigger");  // the twelve binding keys, one after the other (vr/hset_keys.h kSlots)
 constexpr int kBindCount = 12;
@@ -236,7 +250,7 @@ static_assert(kKeyBarPlace >= 0 && kKeyHide >= 0, "the toolbar type's keys are i
 constexpr bool IsToggle(const Def& d) { return d.min == 0.0f && d.max == 1.0f && d.step == 1.0f; }
 
 constexpr int PageCount() { return kPageCount; }
-constexpr const char* kPageNames[kMaxPages] = {"View", "Options", "Video", "Body", "Life", "Look", "HUD", "Belt", "Left", "Right"};
+constexpr const char* kPageNames[kMaxPages] = {"View", "Options", "Video", "Body", "Life", "Look", "HUD", "Belt", "Melee", "Left", "Right"};
 // The low-life vignette's two pages: while one is open the plugin previews the vignette (vr/low_hp_game.h SetPreview).
 constexpr bool IsLifePage(int page) { return page == kPageLife || page == kPageLook; }
 

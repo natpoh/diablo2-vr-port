@@ -190,7 +190,7 @@ Sorceress'; a sword chopped 60 deg in 0.4 s trails 9.9 deg today, 8.0 with the f
 ## An optional weight-physics library (`[weight] hands_model`)
 
 The mod's own physics above is all the mod needs. A separate library can move the held weapon instead: `d2r_vr_weight.dll`, a file that is **not part of this
-repository** and not needed to build or run the mod. It sits beside the plugin (`d2rl-vrcam.dll`); when it is there, `[weight] hands_model=1` (Settings >
+repository** and not needed to build or run the mod. It sits in `d2rloader\d2r_vr_libs` next to the plugin's `plugins` folder (for the D2RLoader mod D2R-VR: `mods\D2R-VR\d2rloader\d2r_vr_libs`), or beside the plugin (`d2rl-vrcam.dll`); when it is there, `[weight] hands_model=1` (Settings >
 Weapon Weight > "Move the weapon with the weight-physics library (A/B)") hands the step of the held body to it. Without the file the tick is greyed out, a
 status line says so and `hands_model=1` is our own physics, step for step.
 
@@ -206,7 +206,7 @@ status line says so and `hands_model=1` is our own physics, step for step.
 
 ## An optional grip library (`[weight] grip_model`)
 
-Like the weight library above, a second optional file, `d2r_vr_grip.dll` beside the plugin, can decide how a hand takes hold of the shaft and looks while it does. Its C interface is
+Like the weight library above, a second optional file, `d2r_vr_grip.dll` in the same folder, can decide how a hand takes hold of the shaft and looks while it does. Its C interface is
 `shared/d2r_vr_grip.h` (version 2; a library of version 1 is still used, see "Where the hand sits on the shaft" below); the library is not part of this repository and not needed. Settings > Weapon Weight > "Hold the weapon the grip library's way (A/B)" is greyed out, with a
 status line saying so, while the file is not there; `grip_model=1` is then our own way, step for step.
 

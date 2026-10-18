@@ -54,6 +54,8 @@ enum : uint32_t { D2RVR_TWO_HANDED = 1u, D2RVR_TWO_HANDS_ON = 2u, D2RVR_TWO_HAND
 // Bits 8 - 12 of `twoHanded` (2026-10-14; the older readers look at bits 0 - 3 only): the hero's class, as skel::HeroClass() has it from the posed model's folder - 0 amazon, 1 sorceress,
 // 2 necromancer, 3 paladin, 4 barbarian, 5 druid, 6 assassin, 7 warlock - and bit 12 = it is known. D2R VR Settings shows it ("the hero playing now") beside the per-class wrist depth.
 enum : uint32_t { D2RVR_HERO_SHIFT = 8, D2RVR_HERO_MASK = 0xFu << 8, D2RVR_HERO_KNOWN = 1u << 12 };
+// Bits 13 - 15 (2026-10-18): did the OpenXR runtime bind the thumbsticks? 13 = the check has a verdict, 14 = it bound nothing to the stick, 15 = a spare stick action is read
+// instead (vr/xr_stick_check.h: xrstick::Bits / FromBits; D2R VR Settings > Home > Status shows it).
 inline uint32_t D2RVRHeroBits(int cls) { return cls >= 0 && cls < 16 ? (D2RVR_HERO_KNOWN | ((uint32_t)cls << D2RVR_HERO_SHIFT)) : 0u; }
 inline int D2RVRHeroOf(uint32_t twoHanded) { return (twoHanded & D2RVR_HERO_KNOWN) ? (int)((twoHanded & D2RVR_HERO_MASK) >> D2RVR_HERO_SHIFT) : -1; }
 #pragma pack(pop)

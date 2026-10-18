@@ -1,8 +1,8 @@
 #pragma once
 // Flipping the skill panel's window like pages: a FLICK of a thumbstick to the left or right, or a TAP of a grip (the left one back, the
 // right one forward - what a shoulder button does in a menu), moves one step along the window's pages:
-//   Skills | Settings: View | Options | Video | Body | Life | Look | HUD | Belt | Left | Right
-// (eleven places: the Skills tab, then the Settings tab's ten pages), and stops at the ends - one flick, one page, no wrap-around.
+//   Skills | Settings: View | Options | Video | Body | Life | Look | HUD | Belt | Melee | Left | Right
+// (twelve places: the Skills tab, then the Settings tab's eleven pages), and stops at the ends - one flick, one page, no wrap-around.
 // Pure: no Windows, no OpenXR, no game; a frame's stick and grip values in, a step (-1, 0, +1) out (cleanroom/tests/headset_tabs_test.cpp).
 //
 // The flick has a dead zone and a re-arm: the stick must be pushed past kFlickOn, mostly sideways (more along x than along y), and then

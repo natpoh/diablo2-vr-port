@@ -50,6 +50,8 @@ std::atomic<bool> g_orbMirror{false};
 std::atomic<bool> g_orbUnderShield{true};                                         // the wrist under a shield rolls its ball to the other side (OrbUnderShield)
 std::atomic<float> g_orbShield[7] = {180.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};   // [turn deg; along, side, up cm; rotation x, y, z deg]
 std::atomic<float> g_orbClassZ[kHeroCount] = {};   // the depth offset of each hero class, cm
+std::atomic<float> g_orbShieldClassUp[kHeroCount] = {}, g_orbShieldClassAlong[kHeroCount] = {};   // each hero class's depth and along offset under a shield, cm
+std::atomic<float> g_orbShieldClassRot[3][kHeroCount] = {};                                          // ... and its turn about X / Y / Z there, degrees
 std::atomic<int> g_orbFill{kFillOutOfHand}, g_orbShape{kShapeMedallion}, g_orbMetal{0}, g_orbDisc{1};
 std::atomic<float> g_orbPatina{0.55f};
 
@@ -86,6 +88,13 @@ Config Current() {
     c.orbShield.rotYDeg = g_orbShield[5].load(std::memory_order_relaxed);
     c.orbShield.rotZDeg = g_orbShield[6].load(std::memory_order_relaxed);
     for (int k = 0; k < kHeroCount; ++k) c.orbClassZCm[k] = g_orbClassZ[k].load(std::memory_order_relaxed);
+    for (int k = 0; k < kHeroCount; ++k) c.orbShieldClassUpCm[k] = g_orbShieldClassUp[k].load(std::memory_order_relaxed);
+    for (int k = 0; k < kHeroCount; ++k) c.orbShieldClassAlongCm[k] = g_orbShieldClassAlong[k].load(std::memory_order_relaxed);
+    for (int k = 0; k < kHeroCount; ++k) {
+        c.orbShieldClassRotXDeg[k] = g_orbShieldClassRot[0][k].load(std::memory_order_relaxed);
+        c.orbShieldClassRotYDeg[k] = g_orbShieldClassRot[1][k].load(std::memory_order_relaxed);
+        c.orbShieldClassRotZDeg[k] = g_orbShieldClassRot[2][k].load(std::memory_order_relaxed);
+    }
     c.orbOpacity = g_orbOpacity.load(std::memory_order_relaxed);
     c.orbFill = g_orbFill.load(std::memory_order_relaxed);
     c.orbShape = g_orbShape.load(std::memory_order_relaxed);
@@ -329,6 +338,13 @@ void Configure(const Config& config) {
     g_orbShield[5].store(c.orbShield.rotYDeg);
     g_orbShield[6].store(c.orbShield.rotZDeg);
     for (int k = 0; k < kHeroCount; ++k) g_orbClassZ[k].store(c.orbClassZCm[k]);
+    for (int k = 0; k < kHeroCount; ++k) g_orbShieldClassUp[k].store(c.orbShieldClassUpCm[k]);
+    for (int k = 0; k < kHeroCount; ++k) g_orbShieldClassAlong[k].store(c.orbShieldClassAlongCm[k]);
+    for (int k = 0; k < kHeroCount; ++k) {
+        g_orbShieldClassRot[0][k].store(c.orbShieldClassRotXDeg[k]);
+        g_orbShieldClassRot[1][k].store(c.orbShieldClassRotYDeg[k]);
+        g_orbShieldClassRot[2][k].store(c.orbShieldClassRotZDeg[k]);
+    }
     g_orbOpacity.store(c.orbOpacity);
     g_orbFill.store(c.orbFill);
     g_orbShape.store(c.orbShape);

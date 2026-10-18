@@ -294,6 +294,59 @@ and not the cast, but it has not been checked for each of these: if a skill that
 moves the hero stops working on a mouse click, untick the option and tell us.
 (The pad's own presses of those skills are left alone.)
 
+### 24. The crossbow's new hold and the hand-over are off, and do not work yet [repo]
+
+**What you see:** in the author's test of 2026-10-18 the crossbow's grip in the hand is
+still off (the hand does not sit on the crossbow right), and passing the crossbow from
+hand to hand does not work.
+
+**Where it stands:** the code of a new hold is in the 0.170 build but **off** in the
+settings that come with it: the barrel along the controller (`[hands] xbow_barrel_forward`),
+the left hand on the game's own fore-grip and closed on the stock (`xbow_support_game`,
+`xbow_support_close`) and the hand-over (`xbow_handover`: take it with the free hand at
+the fore-grip and let go with the other, or a new squeeze of the free hand's grip within
+25 cm of the holding palm). 0.170 ships the old crossbow settings (`xbow_hold_grip` 1,
+`xbow_aim_barrel` 1, `xbow_line_yaw` -46, `xbow_left_at_cm` 5, `xbow_left_x/y/z`
+-5.5 / 2.5 / -1.5). Note that `xbow_hold_grip` (on) now puts the holding palm on the
+game's *trigger-hand* palm (the roles were crossed before), which may be what is off.
+
+**To fix, later:** `vr/skeletons.cpp` (`PoseBody`: the hold; `XbowHolderStep`: the
+hand-over) and `vr/xbow_grip.h` (the pure parts, `cleanroom/tests/xbow_grip_test.cpp`).
+The log says what happened: "crossbow holding hand: ...", "crossbow hand-over: ...",
+"crossbow laid by its own barrel ..." and, for the stow behind the shoulder, "ranged
+holster - the right hand's grip at ... outside the shoulder box".
+
+### 25. The hero's own effects: "Fade" is set, but nothing changes on screen [repo]
+
+**What you see:** with *Draw the hero's own effects fainter* ticked, Bone Armor still wraps round
+the eyes as before. In the author's test (2026-10-18) the log shows the whole chain to its end - the
+string object at the global reads "Fade", and "bonearmorfront" (entity ...) - body group - "Fade"
+set to 30 % on the effect (VfxSetFloat 0xF6A380) - and yet the picture does not change.
+
+**Where it stands:** in the 0.170 build, but **off** in the settings that come with it
+(`[render] dim_own_effects` 0; `dim_own_effects_pct` and `dim_own_auras_pct` are the percentages).
+The first version took the effect's playback speed for its opacity (the bones slowed down, nothing
+faded); the second sets the effect's named float parameter "Fade" the way the game's own per-frame
+unit update does, and that call is accepted.
+
+**To find out, later:** how that effect's material uses "Fade" (does Bone Armor's shader read it at
+all?), or whether the game overwrites it afterwards (its per-frame queue sets it from the unit's
+alpha after our tick). Start in `vr/own_effects.cpp` (`Tick`) and
+`docs/own_effects_recon.md`; the log lines are "own effects: ...".
+
+### 26. A staff in both hands: the spell's ray starts at the wrist and goes to the side [repo]
+
+**What you see:** with a staff (or another weapon the spell is aimed along) held in both hands, the
+ray of the spell starts at the wrist instead of the palm and points off to the side instead of along
+the staff.
+
+**Where it stands:** a regression from the 0.170 grip changes. It is in the 0.170 build as it is and
+will be fixed in 0.171.
+
+**To fix, in 0.171:** the aim source for the two-handed staff (`vr/aim_source.h`, `vr/aim_point.h`)
+and the staff's pose with the second hand (`vr/skeletons.cpp`); `aim_source_test` and
+`staff_flat_test` are the places to extend first.
+
 ---
 
 ## Settings app and smaller things

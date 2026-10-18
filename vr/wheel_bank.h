@@ -49,6 +49,9 @@ public:
     virtual int Tree(int32_t id, int32_t owner) { (void)id; (void)owner; return kTreeUnknown; }   // 1..3 the class's tree, 0 General / Items, -1 not known
     virtual bool TreeName(int tree, char* out, int n) { (void)tree; (void)out; (void)n; return false; }   // the game's own name of tree 1..3
     virtual int RunState() { return kRunUnknown; }                          // RunState: the game's run / walk switch now
+    // [openxr] skill_rt_a: the right trigger and A are slot controls, so the list offers the basic attack (kSkillAttack) beside Interact - the way to
+    // put a slot back to the plain action. Off: the list is what it was.
+    virtual bool OfferAttack() { return false; }
 };
 
 // The catalog lists the town portal once (the scroll and the tome are one entry, as the game's own list does) and has no
@@ -112,6 +115,7 @@ inline bool Capture(Game& g, Snapshot* s) {
     if (bank != 0 && bank != 16) return false;
     int idx[kSlotCount];
     if (!SlotIndices(g, idx)) return false;
+    const bool attackOffered = g.OfferAttack();
     Skill slot[kSlotCount];
     for (int i = 0; i < kSlotCount; ++i) {
         if (idx[i] < 0) continue;   // (a slot this cannot place: not known, not shown as one)
@@ -134,7 +138,7 @@ inline bool Capture(Game& g, Snapshot* s) {
             k.available = g.HasSkill(kSkillScroll, -1, &level) && level > 0;
             if (!k.available) k.available = g.HasSkill(kSkillTome, -1, &level);
         } else {
-            k.available = k.id >= kSkillInteract || g.HasSkill(k.id, k.owner, &level);
+            k.available = k.id >= kSkillInteract || (k.id == kSkillAttack && attackOffered) || g.HasSkill(k.id, k.owner, &level);
         }
         k.level = level;
         SetName(g, &k);
@@ -149,6 +153,13 @@ inline bool Capture(Game& g, Snapshot* s) {
         interact.known = interact.available = true;
         SetName(g, &interact);
         catalog.push_back(interact);
+        if (attackOffered) {   // the basic attack, second: the way to put a slot back to the plain action
+            Skill attack;
+            attack.id = kSkillAttack;
+            attack.known = attack.available = true;
+            SetName(g, &attack);
+            catalog.push_back(attack);
+        }
         for (const Learned& l : learned) {
             const int32_t id = CatalogId(l.id);
             if (id < 0) continue;
@@ -166,7 +177,7 @@ inline bool Capture(Game& g, Snapshot* s) {
         // the skill trees: each entry's tree (a skill an item grants is General / Items whatever the game's table says of the skill)
         if (g.TreesKnown())
             for (Skill& k : catalog) k.tree = (int8_t)(k.owner != -1 ? 0 : std::min(3, std::max(0, g.Tree(k.id, k.owner))));
-        std::sort(catalog.begin() + 1, catalog.end(), [](const Skill& a, const Skill& b) {
+        std::sort(catalog.begin() + (attackOffered ? 2 : 1), catalog.end(), [](const Skill& a, const Skill& b) {
             const int c = std::strncmp(a.name, b.name, kNameLen);
             return c ? c < 0 : a.owner < b.owner;
         });
@@ -217,8 +228,12 @@ inline Result Apply(Game& g, const Request& r, const Snapshot& chosenFrom, uint6
     if (old.skill != r.prevSkill || old.owner != r.prevOwner) return refuse("the slot changed meanwhile");
     if (r.op == Op::Assign) {
         if (r.skill < 0 || !Offered(chosenFrom, r.skill, r.owner)) return refuse("that skill is not available");
-        bool left = r.skill == kSkillInteract || r.skill == 358 || r.skill == 370;
-        if (!left && r.skill != kSkillTownPortal) {
+        bool left = r.skill == kSkillInteract || r.skill == kSkillLoot || r.skill == kSkillCubeLoot;
+        if (r.skill == kSkillAttack) {   // the basic attack: a left-hand row of the player's own list if the game has it there, else the command it is
+            int32_t level = 0;
+            bool flag = false;
+            left = g.HasSkill(kSkillAttack, -1, &level) && g.LeftFlag(kSkillAttack, -1, &flag) ? flag : true;
+        } else if (!left && r.skill != kSkillTownPortal) {
             int32_t level = 0;
             bool flag = false;
             if (!g.HasSkill(r.skill, r.owner, &level) || !g.LeftFlag(r.skill, r.owner, &flag)) return refuse("that skill is not available");

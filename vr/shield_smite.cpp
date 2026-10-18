@@ -193,7 +193,7 @@ bool Casting() { return g_casting.load() && viewgate::F4(); }
 bool On() { return g_on.load(); }
 bool Watching() { return g_on.load() || skilltriggers::Wanted(); }
 void SetTuning(float minSpeed, float strokeCm) {
-    const stroke::StrokeTuning t = stroke::Clamp({minSpeed, strokeCm});   // 0.3 .. 8 m/s, 2 .. 30 cm; a number that is not one is the default
+    const stroke::StrokeTuning t = BashTuning(minSpeed, strokeCm);   // 0.3 .. 8 m/s, 2 .. 30 cm; a number that is not one is the default
     g_minSpeed.store(t.minSpeed);
     g_startCm.store(t.startCm);
 }

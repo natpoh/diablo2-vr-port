@@ -92,6 +92,15 @@ void Apply(skel::Input* in) {
             g_down[side] = g >= 0.0f ? down : false;
             h.inZone = h.tracked && shoulderdraw::ZoneSide(in->hand[side]) != shoulderdraw::Side::None;
             h.busy = in->shieldBusy[side] || in->rangedBusy[side];
+            if (h.press) {   // every grip press, for the log: where the hand was against the shoulder box (0.170: "the crossbow does not go behind the back")
+                const shoulderswap::Zone z = shoulderswap::GetZone();
+                char b[300];
+                snprintf(b, sizeof b, "vrcam: ranged holster - the %s hand's grip at x %.0f y %.0f z %.0f cm from the head (x right, y up, z back): %s the shoulder box "
+                         "(|x| %.0f..%.0f, y %.0f..%.0f, z %.0f..%.0f)%s", Side(side), in->hand[side][0] * 100.0f, in->hand[side][1] * 100.0f, in->hand[side][2] * 100.0f,
+                         h.inZone ? "INSIDE" : "outside", z.absXMin * 100.0f, z.absXMax * 100.0f, z.yMin * 100.0f, z.yMax * 100.0f, z.zMin * 100.0f, z.zMax * 100.0f,
+                         h.busy ? " - but the hand is busy (a potion, or the string)" : "");
+                Log(b);
+            }
         }
         const rangedhand::Out out = g_holster.Step(si);
         if (out.event == rangedhand::Event::PutAway) {

@@ -83,6 +83,7 @@ std::atomic<uint64_t> g_reply{0};       // sequence << 8 | Result
 uiticket::Ticket g_capQueued, g_reqQueued;
 std::atomic<ULONGLONG> g_nextCapture{0};
 std::atomic<bool> g_dead{false};        // a call into the game faulted: off for the session
+std::atomic<bool> g_offerAttack{false}; // [openxr] skill_rt_a: the editor's list has the basic attack (SetOfferAttack)
 std::map<int32_t, std::string> g_names; // UI thread only
 std::map<int32_t, ULONGLONG> g_nameMiss; // UI thread only: a name the game's text service did not give, tried again after kMissMs
 constexpr ULONGLONG kMissMs = 5000;
@@ -309,6 +310,7 @@ public:
         std::snprintf(out, (size_t)n, "%s", text.c_str());
         return true;
     }
+    bool OfferAttack() override { return g_offerAttack.load(); }
     int RunState() override {
         const uintptr_t a = d2rsig::Addr(kRunLock);
         uint32_t v = 0;
@@ -459,6 +461,8 @@ void Tick(bool on, bool open) {
             if (g_threads->runOnUiThread(g_ctx, &CaptureJob, uiticket::ToUser(token)) != Threads::Result::Success) g_capQueued.Claim(token);
     }
 }
+
+void SetOfferAttack(bool on) { g_offerAttack.store(on); }
 
 void Submit(const wheel::Request& r) {
     std::lock_guard<std::mutex> lock(g_lock);

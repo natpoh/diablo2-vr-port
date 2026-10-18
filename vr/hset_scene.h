@@ -52,12 +52,15 @@ inline const char* StatusText(const Model& m, bool window = false) {
     if (m.page == kPageVideo) return "Pick a size, then Apply. It takes effect once your hero is in the world.";
     if (m.page == kPageBody) return "Calibrate body hides this panel; it comes back when the measurement is done.";
     if (m.page == kPageKeysL || m.page == kPageKeysR)
-        return m.Get()[kKeyDirectOn] > 0.5f ? "Pick what a button does, then Apply. Chords and the other long presses: D2R VR Settings."
+        return m.Get()[kKeyDirectOn] > 0.5f ? "Pick what a button does, then Apply. Chords and the other long presses: D2R VR Authentic Settings."
                                             : "Controls without BodyWalk is off: these buttons do nothing (BodyWalk's mapping is the controls).";
+    if (m.page == kPageMelee)
+        return m.Get()[kKeyMeleeTouch] > 0.5f ? "Each change applies by itself. First person (F4) only."
+                                              : "Hit by touch is off: tick it, and the rows below apply.";
     if (m.page == kPageBelt && m.Get()[kKeyBeltOn] > 0.5f && m.Get()[kKeyGrabTrigger] > 0.5f && m.Get()[kKeyDirectOn] < 0.5f)
         return "Needs Controls without BodyWalk (off now): until then the grip alone takes a potion.";   // the plugin reads the trigger itself, or not at all
     if (m.page == kPageBelt) return m.Get()[kKeyBeltOn] > 0.5f ? "Each change applies by itself: look at your belt, then move it again."
-                                                                 : "The potions on the belt are off (D2R VR Settings > UI: F4 body): these do nothing.";
+                                                                 : "The potions on the belt are off (D2R VR Authentic Settings > UI: F4 body): these do nothing.";
     return window ? "Point and pull the trigger. B, Close or a long press of the right stick closes this window."
                   : "Point and pull the trigger. Squeeze both grips and click a stick, or press B, to close.";
 }

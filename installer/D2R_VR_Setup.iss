@@ -5,33 +5,63 @@
 ;   - finds Diablo II: Resurrected (Steam, Battle.net or the folder you pick);
 ;   - checks D2RLoader is there (the mod runs under it; we do not ship it) and
 ;     switches on its allow_global_extensions;
-;   - puts the mod in <game>\d2rloader\plugins, the fog/sky shader and our sky
-;     pictures in <game>\reshade-shaders;
-;   - ReShade: downloads the current ReShade with add-on support from reshade.me,
-;     installs it headless, then renames its dxgi.dll to ReShade64.dll - the
+;   - installs D2R VR as THE D2RLoader mod D2R-VR (shared\mod_layout.h): everything of ours is in <game>\mods\D2R-VR -
+;       d2rloader\plugins\      d2rl-vrcam.dll, d2r_vr.ini (+ the defaults, the headset's and the depth's ini, Settings' window
+;                               file), the skill-icon cache
+;       d2rloader\d2r_vr_libs\  the optional weight and grip libraries (not among the plugins: D2RLoader would reject them)
+;       d2rloader\logs\         the plugin's own logs, D2R VR Authentic Settings' launch log
+;       reshade\               ReShade with its ini and presets, the fog/sky shader, our sky pictures, FlatVR's add-on
+;       BodyWalkVR\            BodyWalk Portable (VR, when no BodyWalk is installed)
+;       D2R-VR.mpq\modinfo.json, vrmod-manifest.json + launcher_icon.png (for the shared launcher), D2R_VR_LICENSE.txt
+;     Outside that folder: D2R VR Authentic Settings beside D2R.exe (the launcher's START and Settings button name it), D2RLoader's own
+;     d2rloader\config\d2rloader.toml (allow_global_extensions; default_mod = D2R-VR when no mod was the default) and BodyWalk's
+;     files in %LOCALAPPDATA%\BodyWalkVR. So another VR mod (bearstonem's d2r-pcvr as mods\D2R-PCVR) sits beside it without one file
+;     in the other's way; D2RLoader runs the one it is told (D2RLoader.exe -mod D2R-VR, D2R VR Authentic Settings' START). An earlier install
+;     (0.169 and older: the plugin in <game>\d2rloader\plugins, ReShade beside D2R.exe, the libraries in d2rloader\d2r_vr_libs,
+;     BodyWalk Portable in <game>\BodyWalkVR) is moved into the mod once, the player's settings and their backups with it;
+;   - writes vrmod-manifest.json and launcher_icon.png into the mod's folder (tools\make_vrmod_manifest.py,
+;     staged by build_installer.ps1): that is all the shared "D2R VR Launcher" needs to list and start the mod.
+;     Nothing is written into another mod's folder (d2r-pcvr's mods\D2R-PCVR); the uninstaller removes only mods\D2R-VR;
+;   - carries the launcher's own Setup (build_installer.ps1; installer\launcher\launcher_pin.txt) and, after the mod is in, runs it
+;     silently as the original user when the launcher is missing or older (launcher_bundle.inc); the uninstaller leaves the launcher installed;
+;   - ReShade: D2R VR Authentic Settings has the button (Install ReShade): it downloads the current ReShade with add-on support
+;     from reshade.me, installs it headless, renames its dxgi.dll to ReShade64.dll - the
 ;     plain D2R.exe refuses an unsigned dxgi.dll, vrcam loads ReShade64.dll
-;     itself under D2RLoader (vr\vrcam.cpp, LoadReShade);
+;     itself under D2RLoader (vr\vrcam.cpp, LoadReShade) - and moves it into the mod's reshade folder.
+;     A dxgi.dll that is next to D2R.exe already is the PLAYER'S OWN ReShade and is used as it is: Setup and the uninstaller never rename, move,
+;     replace or delete it. D2R VR's effect and pictures (mods\D2R-VR\reshade) reach it through two search paths added to ITS ReShade.ini
+;     (D2R_VR_Settings.exe --reshade-paths add, at the end of Setup; append-only, a copy kept as ReShade.ini.before_d2rvr; the uninstaller
+;     takes them out again), and the plugin loads FlatVR's add-on from the mod's folder (mod_layout.inc PlaceReShade);
 ;   - VR only: BodyWalk. None installed: the BodyWalk Portable this Setup
 ;     carries (vjoy installer\make_bodywalk_portable.ps1; LITE on its first
-;     start) goes into <game>\BodyWalkVR, with ViGEmBus and a
+;     start) goes into <game>\mods\D2R-VR\BodyWalkVR, with ViGEmBus and a
 ;     Start menu shortcut; running this Setup again refreshes that copy.
 ;     Installed: used as it is when it is at least 1.79 (its strike gestures no longer
 ;     go off on head turns or steps; 1.78 for the gesture zones in the headset and the
 ;     Input Source the game asks for, host API 9/10; 1.77 for the add-on's present
 ;     stamp); an older one (Steam's 1.74, an old standalone) is left
-;     alone and the portable copy goes in beside the game instead - D2R VR Settings
+;     alone and the portable copy goes in beside it instead - D2R VR Authentic Settings
 ;     starts the newest BodyWalk it finds. Then
 ;     BodyWalk's Game Link plugin goes into BodyWalk's plugins (the old D2R
 ;     Bridge plugin out), the game's Game Link manifest into BodyWalk's
 ;     game_link folder (the mod's actions are in BodyWalk's Mapping from its
 ;     first start), BodyWalk's settings are set for the mod
 ;     (D2R_VR_Settings.exe --setup-bodywalk), and the FlatVR depth addon goes
-;     beside the game;
+;     into the mod's reshade folder;
 ;   - writes the chosen way to play into d2r_vr.ini ([mode] platform).
 
 #ifndef ModVersion
   #define ModVersion "0.0"
 #endif
+; D2R VR as a D2RLoader mod (shared/mod_layout.h: the same names): ModName / ModDir (the folder id, never changes),
+; ModDisplay / ModTagline (what players see: installer, Installed apps, shortcuts, modinfo.json's description, the launcher's card)
+#include "mod_names.inc"
+; the installer's file name: D2R_VR_Setup_v<version>.exe, unless build_installer.ps1 -OutputName says another (a test build)
+#ifndef OutputName
+  #define OutputName "D2R_VR_Setup_v" + ModVersion
+#endif
+; where build_installer.ps1 stages what the installer packs (installer\tests\mod_layout_test.iss: a scratch folder laid out the same)
+#define PayloadDir "payload"
 #define MinBodyWalkMajor 1
 #define MinBodyWalkMinor 79
 #define BodyWalkDownload "https://bodywalkvr.com/api/download/latest?product=bodywalk"
@@ -46,14 +76,14 @@
 #define D2RLoaderSha256 "f7bf0287398890b09bcc68b576327e727304bd88f7be80160f9676e8bd6871e2"
 #define D2RLoaderSha256Historical "9286c6b5bff7f1043658411dbea305faa9698b6a455e6441668fc6d02c22aad7"
 ; Per user and writable: BodyWalk writes config.json, imgui.ini and plugins\ beside its exe.
-; BodyWalk Portable is part of the mod, in the game's folder. It writes nothing
+; BodyWalk Portable is part of the mod, in the mod's folder (an earlier install's, beside D2R.exe, is moved there). It writes nothing
 ; beside itself (1.74 on): settings, configs and plugins go to %LOCALAPPDATA%\BodyWalkVR.
-#define PortableDir "{app}\BodyWalkVR"
+#define PortableDir "{app}\" + ModDir + "\BodyWalkVR"
 #define ViGEmSetup "ViGEmBus_1.22.0_x64_x86_arm64.exe"
 
 [Setup]
 AppId={{8C1F3A52-6D0B-4E47-9B7E-2D5A0C9E4F31}
-AppName=D2R VR
+AppName={#ModDisplay}
 AppVersion={#ModVersion}
 AppPublisher=BodyWalkVR
 AppPublisherURL=https://bodywalkvr.com
@@ -71,37 +101,25 @@ PrivilegesRequired=admin
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir=Output
-OutputBaseFilename=D2R_VR_Setup_v{#ModVersion}
+OutputBaseFilename={#OutputName}
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
-UninstallDisplayName=D2R VR {#ModVersion}
+UninstallDisplayName={#ModDisplay} {#ModVersion}
 
 [Messages]
-SelectDirLabel3=Setup will install D2R VR into the folder of Diablo II: Resurrected - the one with D2R.exe and D2RLoader.exe.
+SelectDirLabel3=Setup will install D2R VR into the folder of Diablo II: Resurrected - the one with D2R.exe and D2RLoader.exe. D2R VR is a D2RLoader mod: it goes into its own folder there, mods\D2R-VR ({#SettingsDisplay} stays next to D2R.exe).
 SelectDirBrowseLabel=If this is not your game's folder, click Browse.
 
 [Files]
-Source: "payload\plugins\d2rl-vrcam.dll"; DestDir: "{app}\d2rloader\plugins"; Flags: ignoreversion
+; D2R VR Authentic Settings beside D2R.exe (the only file of the mod outside its folder: the launcher's START and Settings button name it there)
 Source: "payload\plugins\D2R_VR_Settings.exe"; DestDir: "{app}"; Flags: ignoreversion
-; The optional weight-physics and grip libraries ([weight] hands_model / grip_model), built apart from this
-; repository (C:\wsl\weight_physics); without them the plugin keeps its own way of moving and holding.
-; In d2rloader\d2r_vr_libs, not in d2rloader\plugins: there D2RLoader took them for plugins and logged
-; "2 plugins rejected" (0.168.0); the plugin looks for them in d2r_vr_libs first.
-Source: "payload\plugins\d2r_vr_weight.dll"; DestDir: "{app}\d2rloader\d2r_vr_libs"; Flags: ignoreversion skipifsourcedoesntexist
-Source: "payload\plugins\d2r_vr_grip.dll"; DestDir: "{app}\d2rloader\d2r_vr_libs"; Flags: ignoreversion skipifsourcedoesntexist
-; MIT, with the third-party notices MinHook's and ReShade's licences ask for in a binary
-Source: "..\LICENSE"; DestDir: "{app}"; DestName: "D2R_VR_LICENSE.txt"; Flags: ignoreversion
-; The player's own settings stay through an update (IniChoice in [Code]); the
-; shipped defaults go beside them as d2r_vr.default.ini, which tells the next
-; update whether the player changed anything.
-Source: "payload\plugins\d2r_vr.ini"; DestDir: "{app}\d2rloader\plugins"; Flags: onlyifdoesntexist
-Source: "payload\plugins\d2r_vr.ini"; DestDir: "{app}\d2rloader\plugins"; DestName: "d2r_vr.default.ini"; Flags: ignoreversion
-Source: "payload\shaders\D2R_DepthFog.fx"; DestDir: "{app}\reshade-shaders\Shaders"; Flags: ignoreversion
-Source: "payload\sky\*.png"; DestDir: "{app}\reshade-shaders\Textures\D2R_Sky_ours"; Flags: ignoreversion
-; VR: the headset side.
-Source: "payload\game\FlatVR_DepthProvider.addon64"; DestDir: "{app}"; Flags: ignoreversion; Check: IsVR
-Source: "payload\game\FlatVR_Keepalive.addonfx"; DestDir: "{app}"; Flags: ignoreversion; Check: IsVR
+; The mod's own files, all in <game>\mods\D2R-VR: the plugin and its ini, the libraries, the shader, the sky, FlatVR's add-on, the licence,
+; and the shared VR mod launcher's vrmod-manifest.json with its icon (mod_files.inc; installer\tests\mod_layout_test.iss includes the same lines)
+#include "mod_files.inc"
+; The shared VR mod launcher's own Setup, carried inside (build_installer.ps1 -LauncherSetup; no line in a build that carries none), unpacked into
+; {tmp} only when it is needed (launcher_bundle.inc)
+#include "launcher_bundle_files.inc"
 ; BodyWalk Game Link (vjoy plugins/game_link): the game talks to BodyWalk through it (vr/link.cpp).
 Source: "payload\bodywalk\game_link.dll"; DestDir: "{localappdata}\BodyWalkVR\plugins\game_link"; Flags: ignoreversion; Check: IsVR
 ; The game's manifest as Game Link keeps it (D2R_VR_Settings.exe --game-link-manifest): the
@@ -119,43 +137,34 @@ Source: "payload\bodywalk_portable\imgui.ini"; DestDir: "{#PortableDir}"; Flags:
 Source: "payload\bodywalk_portable\force_lite_mode.txt"; DestDir: "{#PortableDir}"; Flags: ignoreversion; Check: PortableFresh
 
 [UninstallDelete]
-Type: dirifempty; Name: "{app}\d2rloader\d2r_vr_libs"
-; the portable BodyWalk goes with the mod; its settings in %LOCALAPPDATA%\BodyWalkVR
-; are shared with any BodyWalk and stay
+; the portable BodyWalk goes with the mod (it is in the mod's folder now, which RemoveMod removes whole; this covers an uninstall log written
+; before the move); its settings in %LOCALAPPDATA%\BodyWalkVR are shared with any BodyWalk and stay
 Type: filesandordirs; Name: "{#PortableDir}"; Check: UsePortable
-; the mod's own files in the game that it wrote while running: its settings
-; (d2r_vr.ini, D2R_VR_Settings' window file), logs and dumps; FlatVR's add-on log
-Type: files; Name: "{app}\d2rloader\plugins\d2r_vr*"
-Type: files; Name: "{app}\FlatVR_DepthProvider.log"
 
 [InstallDelete]
-; 0.168.0 put the weight and grip libraries among the plugins; they live in d2rloader\d2r_vr_libs now
-Type: files; Name: "{app}\d2rloader\plugins\d2r_vr_weight.dll"
-Type: files; Name: "{app}\d2rloader\plugins\d2r_vr_grip.dll"
-; the settings program lived beside the mod until 2026-10-05; it sits next to D2R.exe now
-Type: files; Name: "{app}\d2rloader\plugins\d2r_vr_settings.exe"
-; the lowercase name before 2026-10-06: Windows keeps an existing file's case, so
-; it goes first and D2R_VR_Settings.exe comes in under its own name
-Type: files; Name: "{app}\d2r_vr_settings.exe"
+; (the earlier names of the settings program's shortcuts are in mod_shortcuts.inc)
 ; the D2R Bridge plugin, BodyWalk's side up to 0.157: Game Link does its work now, and the
 ; two together would register every action twice (gone again after BodyWalk is closed,
 ; SetBodyWalkSettings, if it was running now)
 Type: filesandordirs; Name: "{localappdata}\BodyWalkVR\plugins\d2r_bridge"
 
-; A shortcut on the desktop too, so nobody hunts for the game's folder (on by default).
-[Tasks]
-Name: "desktopicon"; Description: "Create a desktop shortcut to D2R VR Settings"; GroupDescription: "Shortcuts:"
+; the rest of what Setup and the uninstaller take away of the mod (mod_delete.inc: its own [InstallDelete] and [UninstallDelete])
+#include "mod_delete.inc"
+
+; the settings program's and the game's shortcuts, the desktop task, and the earlier names of those shortcuts (mod_shortcuts.inc: its own [Tasks], [Icons], [InstallDelete],
+; [UninstallDelete]; installer\tests\mod_layout_test.iss includes the same lines)
+#include "mod_shortcuts.inc"
 
 [Icons]
-Name: "{autoprograms}\D2R VR Settings"; Filename: "{app}\D2R_VR_Settings.exe"; WorkingDir: "{app}"
-Name: "{autodesktop}\D2R VR"; Filename: "{app}\D2R_VR_Settings.exe"; WorkingDir: "{app}"; Tasks: desktopicon
 Name: "{autoprograms}\BodyWalk VR"; Filename: "{#PortableDir}\BodyWalkVR.exe"; WorkingDir: "{#PortableDir}"; Check: UsePortable
 
 
 [Run]
 ; shellexec: started the way Explorer starts it - a player got "CreateProcess failed; code 740,
 ; the requested operation requires elevation" from the plain CreateProcess (0.147, 2026-10-08)
-Filename: "{app}\D2R_VR_Settings.exe"; WorkingDir: "{app}"; Description: "Open D2R VR Settings"; Flags: postinstall nowait skipifsilent shellexec
+Filename: "{app}\D2R_VR_Settings.exe"; WorkingDir: "{app}"; Description: "Open {#SettingsDisplay}"; Flags: postinstall nowait skipifsilent shellexec
+; The shared VR mod launcher, when the player has it (per user, installed on its own): offered, never ticked - Setup does not need it
+Filename: "{code:LauncherExePath}"; Description: "Open D2R VR Launcher"; Flags: postinstall nowait skipifsilent shellexec unchecked; Check: LauncherInstalled
 
 [Code]
 var
@@ -176,6 +185,13 @@ end;
 function UsePortable: Boolean;
 begin
   Result := IsVR and BodyWalkPortable;
+end;
+
+// BodyWalk Portable of ours is there already: in the mod's folder, or (0.169 and older) beside D2R.exe, where MovePortableIntoMod finds it. Either way
+// it is not "fresh": the player's own LITE / PRO choice stays.
+function PortableThere: Boolean;
+begin
+  Result := FileExists(ExpandConstant('{#PortableDir}') + '\BodyWalkVR.exe') or FileExists(WizardDirValue + '\BodyWalkVR\BodyWalkVR.exe');
 end;
 
 function PortableFresh: Boolean;
@@ -225,23 +241,13 @@ begin
     end;
 end;
 
-// allow_global_extensions = true in <game>\d2rloader\config\d2rloader.toml:
-// D2RLoader loads plugins from <game>\d2rloader\plugins only with it.
-procedure EnableGlobalExtensions(GameDir: String);
-var
-  Path: String;
-  Text: AnsiString;
-  S: String;
-begin
-  Path := GameDir + '\d2rloader\config\d2rloader.toml';
-  if not LoadStringFromFile(Path, Text) then Exit;
-  S := String(Text);
-  if Pos('allow_global_extensions = false', S) > 0 then
-  begin
-    StringChangeEx(S, 'allow_global_extensions = false', 'allow_global_extensions = true', True);
-    SaveStringToFile(Path, AnsiString(S), False);
-  end;
-end;
+// ---------------------------------------------------------------- the D2RLoader mod D2R-VR
+// Its folders, MoveEarlierInstall, modinfo.json, default_mod, allow_global_extensions, the uninstaller's RemoveMod and the launcher
+// lookup are in mod_layout.inc - the same file installer\tests\mod_layout_test.iss runs for real in a scratch folder.
+#include "mod_layout.inc"
+// The shared "D2R VR Launcher": installed silently, as the original user, when it is missing or older than the one this Setup carries
+// (BundleLauncher after the mod is in; launcher_bundle.inc - installer\tests\mod_layout_test.iss runs it for real with a stand-in).
+#include "launcher_bundle.inc"
 
 // D2RLoader 1.3.1 into the game's folder, on the player's click: downloaded from
 // d2rloader.net (checked against the SHA-256 it publishes, the current or the historical one),
@@ -392,7 +398,7 @@ begin
   if BodyWalkPortable then
   begin
     BodyWalkDir := ExpandConstant('{#PortableDir}');
-    BodyWalkFresh := not FileExists(BodyWalkDir + '\BodyWalkVR.exe');
+    BodyWalkFresh := not PortableThere;
     Version := '';
     Exit;
   end;
@@ -478,183 +484,13 @@ begin
   end;
 end;
 
-// ReShade as the mod wants it: ReShade64.dll, no dxgi.dll left beside the game.
-procedure PlaceReShade(GameDir: String);
-var
-  KeepDxgi: Boolean;
-  Code: Integer;
-  Raw: AnsiString;
-  Ini: String;
-  Target: String;
-begin
-  if (ReShadeSetup <> '') and not FileExists(GameDir + '\ReShade64.dll') then
-  begin
-    // ReShade's setup needs an exe that is there: without D2RLoader yet (not installed,
-    // or skipped on the folder page) it quit with code 1 (a player, 0.144, 2026-10-08).
-    // D2R.exe beside it gives the same dxgi.dll in the same folder.
-    Target := GameDir + '\D2RLoader.exe';
-    if not FileExists(Target) then Target := GameDir + '\D2R.exe';
-    if not Exec(ReShadeSetup, '"' + Target + '" --api dxgi --headless', '', SW_SHOW, ewWaitUntilTerminated, Code) or (Code <> 0) then
-      MsgBox('ReShade''s installer did not finish (code ' + IntToStr(Code) + '). Install ReShade with add-on support for D2RLoader.exe ' +
-             '(DirectX 10/11/12) from reshade.me, then rename dxgi.dll in the game''s folder to ReShade64.dll.', mbError, MB_OK)
-    else
-      // ours: the uninstaller takes it away again (CurUninstallStepChanged)
-      SaveStringToFile(GameDir + '\d2rloader\plugins\d2r_vr_reshade_ours.txt', 'ReShade was installed by D2R VR Setup.', False);
-  end;
-  // ReShade's headless setup writes its search paths as '...\Shaders\**\**', which
-  // ReShade 6.8 itself cannot resolve (error 123 in ReShade.log): no effect loads,
-  // so no fog and no sky. '...\**' is what it reads (2026-10-06).
-  if LoadStringFromFile(GameDir + '\ReShade.ini', Raw) then
-  begin
-    Ini := String(Raw);
-    if StringChangeEx(Ini, '\**\**', '\**', True) > 0 then
-      SaveStringToFile(GameDir + '\ReShade.ini', AnsiString(Ini), False);
-  end;
-  // D2R VR Settings > Home > "Keep ReShade as dxgi.dll" ([reshade] as_dxgi=1): the player's own ReShade
-  // setup (2D presets, another mod that wants dxgi.dll) - its dxgi.dll stays as it is (2026-10-11).
-  KeepDxgi := GetIniInt('reshade', 'as_dxgi', 0, 0, 1, GameDir + '\d2rloader\plugins\d2r_vr.ini') = 1;
-  if FileExists(GameDir + '\dxgi.dll') and not KeepDxgi then
-  begin
-    if FileExists(GameDir + '\ReShade64.dll') then
-      DeleteFile(GameDir + '\dxgi.dll')   // a ReShade the old way beside the one vrcam loads: one is enough
-    else if not RenameFile(GameDir + '\dxgi.dll', GameDir + '\ReShade64.dll') then
-      MsgBox('Could not rename dxgi.dll to ReShade64.dll in the game''s folder - do it by hand, or D2R.exe will not start.', mbError, MB_OK);
-  end;
-end;
+// ReShade in the mod's reshade folder (PlaceReShade): in mod_layout.inc, which installer\tests\mod_layout_test.iss runs for real.
+// (It is called after the files are in, CurStepChanged; ReShadeSetup above is the host's variable it reads.)
 
 // ---------------------------------------------------------------- d2r_vr.ini
-//
-// An update never wipes a tuned d2r_vr.ini. The defaults the last Setup put in
-// (d2r_vr.default.ini) say whether the player changed anything: unchanged -> the
-// new defaults go in silently; changed, or no defaults to compare with (before
-// 0.138) -> asked: keep (the keys this version added go in with their defaults;
-// vrcam reads a missing key as its default anyway) or take the new defaults.
-// [mode] platform is the wizard's own choice and never counts as a change.
-
-var
-  IniTakeNew: Boolean;   // decided on the Ready page, done after the files are in
-  IniChanged: Boolean;   // the player's file differs from the defaults the last Setup put in (or they cannot be compared)
-
-// A value as vrcam reads it: up to an inline ';' comment, trimmed.
-function IniValue(S: String): String;
-var
-  P: Integer;
-begin
-  P := Pos(';', S);
-  if P > 0 then S := Copy(S, 1, P - 1);
-  Result := Trim(S);
-end;
-
-// The keys of an ini file in three parallel lists: section, key, value.
-function ReadIniKeys(FileName: String; Secs, Keys, Vals: TStringList): Boolean;
-var
-  Lines: TArrayOfString;
-  I, P: Integer;
-  S, Sec: String;
-begin
-  Result := LoadStringsFromFile(FileName, Lines);
-  if not Result then Exit;
-  Sec := '';
-  for I := 0 to GetArrayLength(Lines) - 1 do
-  begin
-    S := Trim(Lines[I]);
-    if (S = '') or (S[1] = ';') or (S[1] = '#') then Continue;
-    if (S[1] = '[') and (Pos(']', S) > 0) then
-    begin
-      Sec := Trim(Copy(S, 2, Pos(']', S) - 2));
-      Continue;
-    end;
-    P := Pos('=', S);
-    if P < 2 then Continue;
-    Secs.Add(Sec);
-    Keys.Add(Trim(Copy(S, 1, P - 1)));
-    Vals.Add(IniValue(Copy(S, P + 1, Length(S))));
-  end;
-end;
-
-procedure DecideIni(Dir: String);
-var
-  Ini, Def, V: String;
-  Secs, Keys, Vals: TStringList;
-  I: Integer;
-  Changed: Boolean;
-begin
-  IniTakeNew := False;
-  IniChanged := False;
-  Ini := Dir + '\d2rloader\plugins\d2r_vr.ini';
-  Def := Dir + '\d2rloader\plugins\d2r_vr.default.ini';
-  if not FileExists(Ini) then Exit;   // first install: the defaults go in as they are
-  Changed := True;                     // no defaults from an earlier Setup: cannot tell
-  if FileExists(Def) then
-  begin
-    Secs := TStringList.Create;
-    Keys := TStringList.Create;
-    Vals := TStringList.Create;
-    try
-      if ReadIniKeys(Def, Secs, Keys, Vals) then
-      begin
-        Changed := False;
-        for I := 0 to Secs.Count - 1 do
-        begin
-          if (CompareText(Secs[I], 'mode') = 0) and (CompareText(Keys[I], 'platform') = 0) then Continue;
-          V := GetIniString(Secs[I], Keys[I], '<none>', Ini);
-          if (V <> '<none>') and (IniValue(V) <> Vals[I]) then
-          begin
-            Changed := True;
-            Break;
-          end;
-        end;
-      end;
-    finally
-      Secs.Free;
-      Keys.Free;
-      Vals.Free;
-    end;
-  end;
-  IniChanged := Changed;
-  if not Changed then
-    IniTakeNew := True
-  else
-    IniTakeNew := SuppressibleMsgBox('You have changed D2R VR''s settings (d2r_vr.ini).' + #13#10#13#10 +
-      'D2R VR {#ModVersion} comes with new default settings that turn its features on (weapon weight, hit by touch, the bow drawn with both hands, ' +
-      'the life and mana on your wrists, the belt potions, native OpenXR...).' + #13#10#13#10 +
-      'Yes - keep your settings. Only the settings that are new in this version are added; the features stay as your file has them (off, if it came from an older version).' + #13#10 +
-      'No - take this version''s default settings: the features come on, and your changes are replaced (your old file is kept as d2r_vr.ini.before-{#ModVersion}).',
-      mbConfirmation, MB_YESNO, IDYES) = IDNO;
-end;
-
-procedure ApplyIni(Dir: String);
-var
-  Ini, Def: String;
-  Secs, Keys, Vals: TStringList;
-  I: Integer;
-begin
-  Ini := Dir + '\d2rloader\plugins\d2r_vr.ini';
-  Def := Dir + '\d2rloader\plugins\d2r_vr.default.ini';
-  if IniTakeNew then
-  begin
-    // taking the defaults replaces the player's changes: the file they chose to replace is kept beside it
-    if IniChanged and FileExists(Ini) then FileCopy(Ini, Ini + '.before-{#ModVersion}', False);
-    FileCopy(Def, Ini, False);
-  end
-  else
-  begin
-    Secs := TStringList.Create;
-    Keys := TStringList.Create;
-    Vals := TStringList.Create;
-    try
-      if ReadIniKeys(Def, Secs, Keys, Vals) then
-        for I := 0 to Secs.Count - 1 do
-          if GetIniString(Secs[I], Keys[I], '<none>', Ini) = '<none>' then
-            SetIniString(Secs[I], Keys[I], Vals[I], Ini);
-    finally
-      Secs.Free;
-      Keys.Free;
-      Vals.Free;
-    end;
-  end;
-  SetIniString('mode', 'platform', PlatformValue(''), Ini);
-end;
+// An update never wipes a tuned d2r_vr.ini (DecideIni on the Ready page, ApplyIni after the files are in): ini_choice.inc, which
+// installer\tests\mod_layout_test.iss runs for real. Needs PlatformValue (above) and ModVersion.
+#include "ini_choice.inc"
 
 // ---------------------------------------------------------------- wizard
 
@@ -723,7 +559,7 @@ begin
     BodyWalkPortable := False;
     BodyWalkFresh := False;
     DownloadPage.Clear;
-    // ReShade: no longer installed here - D2R VR Settings has the button (Home > Status >
+    // ReShade: no longer installed here - D2R VR Authentic Settings has the button (Home > Status >
     // Install ReShade), after D2RLoader: its headless setup quit with code 1 for a player
     // whose folder had no D2RLoader.exe yet (0.144, 2026-10-08).
     if IsVR then
@@ -736,11 +572,11 @@ begin
         if Version = '' then Name := 'of an unknown version' else Name := Version;
         if BodyWalkSteam then Name := 'from Steam is ' + Name else Name := 'is ' + Name;
         MsgBox('Your BodyWalk ' + Name + ', older than D2R VR needs ({#MinBodyWalkMajor}.{#MinBodyWalkMinor}). ' +
-               'Setup puts BodyWalk Portable {#MinBodyWalkMajor}.{#MinBodyWalkMinor} in the game''s folder, and D2R VR Settings starts that one. ' +
+               'Setup puts BodyWalk Portable {#MinBodyWalkMajor}.{#MinBodyWalkMinor} in D2R VR''s own folder (mods\D2R-VR\BodyWalkVR), and {#SettingsDisplay} starts that one. ' +
                'Your BodyWalk stays as it is.', mbInformation, MB_OK);
         BodyWalkPortable := True;
         BodyWalkDir := ExpandConstant('{#PortableDir}');
-        BodyWalkFresh := not FileExists(BodyWalkDir + '\BodyWalkVR.exe');
+        BodyWalkFresh := not PortableThere;
       end;
     end;
     if (ReShadeSetup <> '') or (BodyWalkSetup <> '') then
@@ -765,16 +601,44 @@ begin
   end;
 end;
 
+// [sky] arcane_sky: the Arcane Sanctuary's sky pictures out of the player's own game - D2R_VR_Settings reads
+// the game's archives (read only) and writes reshade-shaders\Textures\D2R_Arcane into the mod's ReShade folder
+// (mods\D2R-VR\reshade) and the level's visual files without the game's flat star cards into mods\D2R-VR\D2R-VR.mpq\data
+// (after bearstonem/d2r-pcvr, whose installer makes them too). Once here, after ReShade, the mod's modinfo.json and the ini;
+// the program makes them again at its start when they are missing or the game has changed. All of it is inside the mod, so
+// the uninstaller's RemoveMod takes it with the rest. Whatever comes back, Setup goes on.
+procedure PrepareAssets(Dir: String);
+var
+  Code: Integer;
+begin
+  WizardForm.StatusLabel.Caption := 'Making the Arcane Sanctuary sky from your game...';
+  if Exec(Dir + '\D2R_VR_Settings.exe', '--prepare-assets', Dir, SW_HIDE, ewWaitUntilTerminated, Code) then
+    Log('D2R_VR_Settings --prepare-assets: ' + IntToStr(Code) + ' (0 made, 1 could not, 2 no ReShade folder)')
+  else
+    Log('D2R_VR_Settings --prepare-assets did not start: ' + SysErrorMessage(Code));
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   Dir, Version, Args: String;
   Code: Integer;
 begin
+  if CurStep = ssInstall then
+  begin
+    MoveEarlierInstall(ExpandConstant('{app}'));   // before the files go in: the player's settings into the mod first
+    MoveLibsIntoMod(ExpandConstant('{app}'));      // ... and the libraries a 0.168 build of the mod left among its plugins, into d2r_vr_libs
+    MovePortableIntoMod(ExpandConstant('{app}'));  // ... and BodyWalk Portable from beside D2R.exe
+    Exit;
+  end;
   if CurStep <> ssPostInstall then Exit;
   Dir := ExpandConstant('{app}');
   EnableGlobalExtensions(Dir);
+  WriteModInfo(Dir);
+  SetDefaultMod(Dir);
   PlaceReShade(Dir);
   ApplyIni(Dir);
+  PrepareAssets(Dir);   // [sky] arcane_sky: the Arcane Sanctuary's pictures, made from the player's own game into the mod (after ApplyIni: the mod's ini is there)
+  BundleLauncher;   // the mod is in: the launcher, when it is missing or older (never blocks, never asks; also in a silent run)
   if not IsVR then Exit;
   if UsePortable then
     InstallViGEm
@@ -796,18 +660,11 @@ end;
 // Everything the mod put in the game goes. ReShade only when this Setup
 // installed it (d2r_vr_reshade_ours.txt): a ReShade the player had before stays.
 // The game's own files, D2RLoader and the player's screenshots are never touched.
+// Nor is another VR mod's folder (d2r-pcvr as mods\D2R-PCVR): only mods\D2R-VR goes (RemoveMod in mod_layout.inc).
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
-var
-  Dir: String;
 begin
   if CurUninstallStep <> usUninstall then Exit;
-  Dir := ExpandConstant('{app}');
-  if FileExists(Dir + '\d2rloader\plugins\d2r_vr_reshade_ours.txt') then
-  begin
-    DeleteFile(Dir + '\ReShade64.dll');
-    DeleteFile(Dir + '\ReShade.ini');
-    DeleteFile(Dir + '\ReShadePreset.ini');
-    DeleteFile(Dir + '\ReShade.log');
-    DelTree(Dir + '\reshade-shaders', True, True, True);
-  end;
+  // the mod's folder goes whole (its ReShade, ini, presets, logs, the settings, the launcher's manifest and icon) and the
+  // default_mod it set; a ReShade of the player's own beside the game is not in it
+  RemoveMod(ExpandConstant('{app}'));
 end;

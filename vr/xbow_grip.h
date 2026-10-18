@@ -86,6 +86,51 @@ struct Latch {
     }
 };
 
+// ---- xbow_handover ----
+// The crossbow passed from hand to hand: the hand that does not hold it squeezes its grip anew (a press seen let go first) with its palm
+// within reach of the crossbow's grip - where the holding hand's palm is - and the crossbow is in THAT hand; the other one lets go and is
+// free (it may take the fore-grip as the support hand afterwards, with a press of its own). Visual and aim only: the game's slots and
+// attack are untouched. grip: each controller's squeeze 0..1 (< 0 none); tracked: each controller; nearM: the taking hand's grip point to
+// the crossbow's grip, metres. Step returns true when the holder changed.
+struct Handover {
+    int holder = 0;                     // 0 right, 1 left
+    bool pressed[2] = {}, armed[2] = {};
+    void Reset(int home) { *this = Handover{}; holder = home & 1; }
+    // supportHeld: the other hand holds the crossbow now (its grip on the fore-grip, the support latch): then the holding hand LETTING GO
+    // of its grip passes it - the way a person hands a thing over (0.170: Serg took it at the fore-grip with the free hand, never near the
+    // grip; the near-the-grip squeeze below is kept too).
+    bool Step(const float grip[2], const bool tracked[2], float nearM, float reachM, bool supportHeld = false) {
+        bool fresh[2] = {}, released[2] = {};
+        for (int s = 0; s < 2; ++s) {
+            const float g = grip[s];
+            if (!tracked[s] || !std::isfinite(g) || g < 0.0f) { pressed[s] = false; armed[s] = false; continue; }
+            if (g < 0.4f) armed[s] = true;
+            const bool p = g > 0.6f || (g >= 0.4f && pressed[s]);
+            fresh[s] = p && !pressed[s] && armed[s];
+            released[s] = !p && pressed[s];
+            pressed[s] = p;
+        }
+        const int taker = holder ^ 1;
+        const bool letGo = supportHeld && released[holder] && tracked[taker];
+        if (letGo || (fresh[taker] && std::isfinite(nearM) && nearM <= reachM)) {
+            holder = taker;
+            armed[taker ^ 1] = false;   // the hand that let go starts afresh: a squeeze still held takes nothing back
+            return true;
+        }
+        return false;
+    }
+};
+
+// How near the taking hand counts for Handover::Step: its grip point to the crossbow's grip (the holding palm) gripM, and to the support
+// hand's place on the fore-grip supportM (< 0 none yet). It takes the crossbow only nearer the grip than the fore-grip - a squeeze at the
+// fore-grip is the support's - and within reachM; else "far" (infinity). Two real controllers cannot bring their grip points much closer
+// than 10-15 cm (0.170: a 12 cm reach never fired), so the reach is wider than that and the fore-grip decides.
+inline float HandoverNear(float gripM, float supportM, float reachM) {
+    if (!std::isfinite(gripM) || gripM > reachM) return INFINITY;
+    if (std::isfinite(supportM) && supportM >= 0.0f && supportM <= gripM) return INFINITY;
+    return gripM;
+}
+
 // ---- xbow_grip_wide ----
 // The game's grip of a crossbow used to be refused while the animation held the hands more than 1.0 model unit apart (a stride,
 // the idle after a swap): placed by that pose, the model was a metre off. Placed by the controller (xbow_gun_frame with a fixed

@@ -33,3 +33,4 @@ __pycache__/
 *_storm.png
 /build_public/
 promo/
+/installer/launcher/cache/

@@ -42,6 +42,15 @@ inline bool WantFrame(bool option, bool offered) { return option && offered; }
 inline bool IsIndex(const char* profile) { return profile && std::strstr(profile, "/valve/index_controller") != nullptr; }
 inline bool IsFrame(const char* profile) { return profile && std::strcmp(profile, kFrameProfile) == 0; }
 
+// A controller that has a thumbstick (or a trackpad) and that vr/xr.cpp suggested one for: the profiles of MakeActions with a stick binding. Not the simple controller
+// (a trigger and a menu button), not a profile we do not know: there the missing stick is no fault of the binding (vr/xr_stick_check.h).
+inline bool HasThumbstick(const char* profile) {
+    if (!profile || !*profile) return false;
+    for (const char* p : {"/oculus/touch_controller", "/valve/index_controller", "/htc/vive_controller", "/microsoft/motion_controller"})
+        if (std::strstr(profile, p)) return true;
+    return IsFrame(profile);
+}
+
 // PS VR2 on SteamVR (the headset's name ends in "playstation_vr2") runs as a Touch controller, and SteamVR's own remapping for it
 // (PlayStation VR2 App\SteamVR_Plug-In\resources\input\playstation_vr2_sense_controller_remapping.json, the layout from oculus_touch)
 // turns the Touch LEFT menu button (application_menu) into the RIGHT controller's OPTIONS button; the left controller's CREATE button

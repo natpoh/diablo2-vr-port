@@ -18,6 +18,7 @@
 #include <commdlg.h>
 #include <shlobj.h>
 #include <shellapi.h>   // CommandLineToArgvW: the installer's --setup-bodywalk
+#include "arcane_assets.h"   // [sky] arcane_sky: the Arcane Sanctuary's sky pictures out of the player's own game (CascLib)
 #include <tlhelp32.h>
 #pragma comment(lib, "version.lib")   // GetFileVersionInfo: which BodyWalk is new enough
 #include <winhttp.h>    // the update check, D2RLoader's download
@@ -49,11 +50,15 @@
 #include "render_size.h"     // [render] vr_resolution_px / vr_resolution: the VR render size, read the way the plugin reads it
 #include "window_json.h"     // the game's windowed size in Settings.json and what each platform does to it (the plugin's policy, tested)
 #include "turn_mode.h"       // [turn] smooth / snap / speed: how the right stick turns, and what an older ini's snap=0 means (the plugin's rule)
+#include "mod_layout.h"      // D2R VR as the D2RLoader mod D2R-VR: its ini and ReShade under <game>\mods\D2R-VR (shared/mod_layout.h)
+#include "reshade_as.h"      // Home: the ReShade the player has as dxgi.dll is used as it is; the buttons for it, tested (shared/reshade_as.h)
+#include "reshade_paths.h"   // D2R VR's two search paths in that ReShade's ReShade.ini: append-only text edits, tested (shared/reshade_paths.h)
 #include "bw_output.h"      // BodyWalk's Output in its settings file: does its pad reach the game (the Status row, tested)
 #include "bw_path.h"        // how BodyWalk's input reaches the game: Game Link direct, or its gamepad and Mapping (the Status row, tested)
 #include "frame_cap.h"       // the game's frame cap in Settings.json: VR's rate is VR's, flat mode has the player's own (the plugin's policy, tested)
 #include "toolbar_type.h"   // the toolbar's type: one choice over [hud] hide and bar_place (the headset panel has it too)
 #include "../../vr/direct_remap.h"   // [direct]: the list of controller buttons ("@remap" rows), read and written by the plugin's own parser (tested)
+#include "../../vr/xr_stick_check.h" // is the thumbstick bound by SteamVR? the plugin's verdict (state block bits 13 - 15) in words
 #include "safe_screen.h"     // the game's interface size in Settings.json: VR starts it at 80 where the player chose none, flat mode has his own (the plugin's policy, tested)
 
 #pragma comment(lib, "comctl32.lib")
@@ -66,6 +71,10 @@
 #pragma comment(linker, "\"/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
 
 namespace {
+
+// What players call this program: the Start menu entry and the desktop shortcut, the window's title, the captions of its message boxes, Setup's finish page - the mod's own
+// settings (D2R VR Authentic's). A display name only: the file stays D2R_VR_Settings.exe, the ini and the ids as they are.
+constexpr const wchar_t* kAppName = L"D2R VR Authentic Settings";
 
 // Tab and Group are headers; Invert: a tick box that writes -1 / 1; Choice: a
 // drop-down for a small integer; File: a picture path; Color: #RRGGBB or empty.
@@ -347,21 +356,34 @@ std::vector<Item> g_items = {
     Status(L"reshade", L"ReShade and the mod's effect"),
     // Install ReShade: shown while there is no ReShade64.dll beside D2R.exe (RefreshStatus).
     Hide(Button(L"@run", L"reshade_get", L"Install ReShade",
-           L"Downloads the current ReShade with add-on support from reshade.me, installs it into the game's folder for "
-           L"DirectX 10/11/12 and renames its dxgi.dll to ReShade64.dll, which the mod loads itself (the plain D2R.exe "
-           L"refuses a dxgi.dll). The fog, the sky, the ceiling and the depth for FlatVR need it.")),
-    // ReShade's file for players with a ReShade setup of their own (2D presets, other mods that want dxgi.dll):
-    // one button at a time, by which file is there (RefreshStatus); [reshade] as_dxgi keeps the choice, and
-    // D2R VR Setup leaves a dxgi.dll alone with it.
-    Hide(Button(L"@run", L"reshade_dxgi", L"Keep ReShade as dxgi.dll (my own ReShade setup)",
-           L"IMPORTANT - only if you use ReShade outside D2R VR too (your own presets in the normal 2D game, another mod "
-           L"that wants dxgi.dll): renames ReShade64.dll to dxgi.dll, so the game loads ReShade itself at every start, and "
-           L"D2R VR Setup leaves it so on updates. D2R VR works with it too (under D2RLoader). If the game does not start "
-           L"with it, press \"ReShade for D2R VR only\". Takes effect at the next start of the game.")),
-    Hide(Button(L"@run", L"reshade_r64", L"ReShade for D2R VR only (rename dxgi.dll to ReShade64.dll)",
-           L"Renames dxgi.dll to ReShade64.dll, which D2R VR loads itself under D2RLoader - the way D2R VR Setup puts it. "
-           L"The game started without D2RLoader has no ReShade then. Takes effect at the next start of the game.")),
+           L"Downloads the current ReShade with add-on support from reshade.me, installs it for DirectX 10/11/12 and puts it "
+           L"in the mod as mods\\D2R-VR\\reshade\\ReShade64.dll (renamed from dxgi.dll: the plain D2R.exe refuses a dxgi.dll), "
+           L"which the mod loads itself. Shown only while there is no ReShade (no dxgi.dll next to D2R.exe either). "
+           L"The fog, the sky, the ceiling and the depth for FlatVR need it.")),
+    // A ReShade the player has as dxgi.dll is used as it is (shared/reshade_as.h): Setup and these buttons never rename, move or delete it. It needs D2R VR's two
+    // search paths in its ReShade.ini to find the mod's effect and pictures (D2R_VR_Settings.exe --reshade-paths, run by Setup); the one explicit choice is
+    // to put it aside (dxgi.dll.off) so that D2R VR's own ReShade can be installed. By the files there (RefreshStatus).
+    Hide(Button(L"@run", L"reshade_paths", L"Add D2R VR's folders to my ReShade (its search paths)",
+           L"The ReShade you have as dxgi.dll next to D2R.exe looks for effects and pictures in the game's folder, not in mods\\D2R-VR\\reshade where D2R VR's "
+           L"effect (D2R_DepthFog.fx) and pictures are. This adds D2R VR's two folders to EffectSearchPaths and TextureSearchPaths in your ReShade.ini - "
+           L"two list items at the end, nothing else of the file changes (a copy is kept as ReShade.ini.before_d2rvr; D2R VR's uninstaller takes them out "
+           L"again). D2R VR Setup does this by itself; press it if you installed ReShade after D2R VR. The game must be closed. Takes effect at the next "
+           L"start of the game.")),
+    Hide(Button(L"@run", L"reshade_aside", L"Put my dxgi.dll aside (dxgi.dll.off) - D2R VR gets its own ReShade",
+           L"Your ReShade stays as it is while it is dxgi.dll; D2R VR uses it. Only press this if you want D2R VR to have a ReShade of its own "
+           L"(mods\\D2R-VR\\reshade) instead: dxgi.dll is renamed to dxgi.dll.off (nothing is deleted, nothing replaced), then Install ReShade is offered. "
+           L"The game started without D2RLoader has no ReShade then. \"Bring my dxgi.dll back\" undoes it. Takes effect at the next start of the game.")),
+    Hide(Button(L"@run", L"reshade_back", L"Bring my dxgi.dll back (dxgi.dll.off)",
+           L"Renames dxgi.dll.off back to dxgi.dll - the ReShade you put aside. Takes effect at the next start of the game.")),
     Status(L"reshade_note", L"IMPORTANT"),
+    Status(L"arcane_sky", L"Arcane Sanctuary sky: not made yet"),
+    Button(L"@run", L"arcane_make", L"Make the Arcane Sanctuary sky now",
+           L"Reads the star layers and clouds out of your game's own files (read only) and makes the pictures the mod draws the "
+           L"Arcane Sanctuary's sky with (D2R_Arcane, in ReShade's reshade-shaders\\Textures: mods\\D2R-VR\\reshade for the mod), and "
+           L"takes the game's flat star cards out of the level's files in mods\\D2R-VR\\D2R-VR.mpq (the game's own files stay as "
+           L"they are). This program does it by itself when it opens; "
+           L"press this after the game was updated or a picture was deleted. Nothing already right is written again. The game "
+           L"may be running: it finds the pictures within 2 seconds."),
     Only(kVr, InColumn(2, Group(L"Status"))),   // the right column, under "The game and ReShade" (2026-10-14, the user's wish)
     Status(L"depth_addon", L"FlatVR depth add-on"),
     Status(L"game_video", L"The game's video settings"),
@@ -378,6 +400,7 @@ std::vector<Item> g_items = {
     Status(L"head", L"Head tracking reaches the game"),
     Status(L"bw_path", L"BodyWalk's path to the game"),
     Status(L"game", L"The game runs with the mod"),
+    Only(kVr, Status(L"xr_stick", L"Thumbsticks (native OpenXR)")),   // did SteamVR bind them? (vr/xr_stick_check.h; the plugin's verdict is in the state block)
     Button(L"@update", L"check_now", L"Check for updates",
            L"Asks bodywalkvr.com now, even with the check at start switched off. Nothing is downloaded."),
     // The version and the update check (StartUpdateCheck). [update] is the settings program's
@@ -575,6 +598,18 @@ std::vector<Item> g_items = {
     Needs(L"arms", L"mode", 2, Needs(L"hands", L"wrist", 1, Slider(L"hands", L"yaw", L"Hand left / right, °", -180, 180, 5, 0, L"On top of the controller, in its own axes."))),
     Needs(L"arms", L"mode", 2, Needs(L"hands", L"wrist", 1, Slider(L"hands", L"roll", L"Hand roll, °", -180, 180, 5, 0,
            L"Turns the hand about the forearm; mirrored for the left hand."))),
+    Only(kVr, Group(L"Effects around the hero (F4)")),
+    Only(kVr, Toggle(L"render", L"dim_own_effects", L"Draw the hero's own effects fainter", 0,
+           L"Bone Armor wraps round the eyes of the first-person view and blinds. On: the effects that sit on the hero - the overlays of his own states (Bone Armor, Frozen / "
+           L"Shiver / Chilling Armor, Energy Shield, Cyclone Armor, Blade Shield, Fade ...), each with its casting flash, and the aura rings at his feet - are faded to the percentages "
+           L"below, with the effect's own \"Fade\" parameter (the one the game fades an overlay with when its unit fades; 0 % hides the effect). Not yet seen working in the game - a first version "
+           L"did nothing - so it is off in the settings that come with the mod. Visual only: the buff and its numbers are the game's; monsters', mercenaries' and other players' effects, hits and "
+           L"skills' casts are drawn as ever. Holy Shield is a colour on the shield, not an overlay: not covered. An effect already on when you tick this is dimmed when it is cast "
+           L"again; the log says, for every effect, what was found and dimmed. First person (F4) only. Live.")),
+    Needs(L"render", L"dim_own_effects", 1, Only(kVr, Slider(L"render", L"dim_own_effects_pct", L"Own effects left, %", 0, 100, 5, 30,
+           L"The value the effect's Fade parameter gets: 100 = as the game draws them, 0 = hidden (the effect is switched off). Bone Armor and the armors. Live."))),
+    Needs(L"render", L"dim_own_effects", 1, Only(kVr, Slider(L"render", L"dim_own_auras_pct", L"Aura rings at the feet left, %", 0, 100, 5, 50,
+           L"The rings of the paladin and barbarian auras and the like, at the hero's feet. The value the effect's Fade parameter gets: 100 = as the game draws them, 0 = hidden. Live."))),
 
 #endif
     Tab(L"Controls"),
@@ -734,6 +769,12 @@ std::vector<Item> g_items = {
            L"away - smoothly - and back when it closes. With a square window the game's interface is as wide as the picture: "
            L"farther, its left and right edges come into view. 0 = the distance above. The same setting as \"Screen distance "
            L"while a panel is open\" for FlatVR (UI: F4 body)."),
+    Toggle(L"openxr", L"busy_guard", L"Never hang on a busy headset (native OpenXR)", 1,
+           L"A runtime waits for a headset another app holds for good: FlatVR through BodyWalk Lite, then back to Native, and the game stood until Task Manager. On: the "
+           L"runtime's two blocking calls (the frame wait and the session's start) run on a thread of their own, and the game waits for them a fraction of a second; if they "
+           L"have not come the headset gets no picture that frame and the game goes on flat (the log says so, and when the headset answers). And no headset session is "
+           L"started over a FlatVR that holds the headset and cannot be stopped (BodyWalk Lite has no Game Link): the Status column says to close BodyWalk and restart "
+           L"SteamVR, and it is tried again while FlatVR runs. Needs a game restart. Off: as before. (d2r_vr.ini: wait_frame_ms.)"),
     Toggle(L"openxr", L"menus_wait_tracking", L"Menus placed only when the headset is tracked", 1,
            L"The flat picture (menus, loading, the title screen) and a menu's panel are put in the room only once the headset says your "
            L"head is tracked - before that a runtime may give a guessed place, and the picture stayed at the floor or behind you. Until "
@@ -867,6 +908,13 @@ std::vector<Item> g_items = {
            L"the panel stays open; it shows which one the game is on now. Off (the default): no button - put the command on a button of "
            L"yours instead: Controls > Buttons of the controllers (and the headset's Left / Right pages) offer \"Run / walk switch\", "
            L"and BodyWalk's bindings offer \"D2R key: Run / walk switch\". Live. Idea after bearstonem/d2r-pcvr (MIT).")),
+    Needs(L"openxr", L"skill_wheel", 1, Toggle(L"openxr", L"skill_rt_a", L"Skill panel: skills on the right trigger and on A", 0,
+           L"In first person, with the controls driven by the mod (direct input): the right trigger casts the skill on the game's RT slot and the right A "
+           L"the skill on its A slot - the game's own buttons, so its mana, cooldown and animation - and with the left trigger held, LT + RT and LT + A. Put a "
+           L"skill on them in the panel's EDIT SKILLS (the Tiles look): point at the RT or A plate, pick a skill; pick \"Attack\" there to put the slot back. A slot with "
+           L"nothing, Attack or Interact on it leaves its control as it is today (the trigger is the attack, A interacts). A slot you picked on the "
+           L"panel's first page still owns the trigger. Hit by touch's \"the trigger no longer attacks\" withholds only the plain attack: a skill on RT casts. "
+           L"Off (the default): the trigger and A are what the layout makes of them. Live.")),
     Toggle(L"openxr", L"symmetric_fov", L"Labels over monsters meet in both eyes", 1,
            L"Each eye drawn as wide to the left as to the right: the game's interface (the names over monsters and items) "
            L"is the same in both eyes and meets. Off: each eye's own view, a little fewer pixels, the names apart."),
@@ -874,6 +922,26 @@ std::vector<Item> g_items = {
            L"Each eye's view cut to the game window's shape: square pixels, all the window's lines on a smaller angle, so the "
            L"picture is sharper; above and below it the headset shows black (nothing drawn there, it costs nothing). "
            L"Off: the picture stretched over the headset's whole view - taller, softer up and down."),
+    // The eye distance (IPD) of native OpenXR's stereo pair: the runtime's own (automatic) or the player's, for a headset that did not pick it up.
+    Toggle(L"openxr", L"ipd_auto", L"Eye distance: from the headset", 1,
+           L"On (the default): the distance between the two eyes of the stereo picture is what the headset's runtime says (the position of each "
+           L"eye's view). Off: the number of your own below - the two eyes keep their middle and their turns and stand that far apart. Use it "
+           L"when the headset's was not picked up (a runtime that puts both eyes in one place gets 64 mm: the line below says what it reports) or "
+           L"was picked up wrong: the world looks too small / too big, or two images do not merge. Your IPD is on the headset's wheel or in its "
+           L"software too (the picture there is the headset's own); this is the distance the GAME's two cameras are drawn at. Native OpenXR only, "
+           L"live; FlatVR has its own (Stereo > Scale and depth)."),
+    Needs(L"openxr", L"ipd_auto", 0, Slider(L"openxr", L"ipd_mm", L"Eye distance, mm", 50.0f, 80.0f, 0.5f, 63.0f,
+           L"The distance between your eyes in millimetres (about 63 for an adult; the headset's own is the line below). The game's two cameras are "
+           L"drawn this far apart, about the middle of your head. Live.")),
+    Status(L"ipd_measured", L""),
+    // Headsets whose displays are canted (each eye's view turned outward: Pimax, Varjo, Index and others): the game's camera is one turn for both eyes.
+    Toggle(L"openxr", L"canted_eyes", L"Canted displays: both eyes in the head's frame", 1,
+           L"For headsets whose two displays are turned outward (Pimax, Varjo, Valve Index and some others). The game's camera is one view for "
+           L"both eyes, but each eye used to be handed to the headset with its own turn, so on such a headset the eyes came out crossed and the "
+           L"centre stretched (until a Steam menu was opened over the game). On: when the headset's two views differ by more than a quarter of a "
+           L"degree both eyes are drawn and handed over in the head's frame, each with the frustum that covers its own view (the headset turns "
+           L"them to its displays). Headsets with parallel displays are not touched. Off: as before. Live. The game's log says whether yours "
+           L"are canted (\"each eye's own view from the head's frame\")."),
     Toggle(L"@window", L"square", L"Square game window (no black bars)", 0,
            L"In VR (native OpenXR or FlatVR): writes the game's own Settings.json, a window, as wide as it is tall (the size below). "
            L"The headset's eye is about square, so the whole picture fills it - no black bars with the box above ticked. vrcam keeps "
@@ -1161,7 +1229,7 @@ std::vector<Item> g_items = {
            L"panel opens in front of you - the flat picture's distance and width, brightness, your height, the laser, the VR render size "
            L"(Video page: presets and a slider; applying it makes the game rebuild its picture, a few seconds frozen) and Calibrate body "
            L"(Body page: the T-pose measurement, started from the headset) and the game view F1 - F4 (F1 - F3 close the panel; back to "
-           L"F4 by the F4 key, D2R VR Settings > Home, or a view action in BodyWalk's mapping). Point a controller at "
+           L"F4 by the F4 key, D2R VR Authentic Settings > Home, or a view action in BodyWalk's mapping). Point a controller at "
            L"it and pull the trigger; Apply writes only what you changed into d2r_vr.ini (the original is kept once as "
            L"d2r_vr.ini.before-headset-menu; a change made elsewhere meanwhile is shown, not overwritten). With the skill panel in the "
            L"Tiles look (Skill panel style: Tiles) these pages are its Settings tab, beside Skills: the right stick's long press opens "
@@ -1541,6 +1609,120 @@ std::vector<Item> g_items = {
            L"Added to the wrist's own rotation Y while a shield is on that arm. Live."))),
     ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"hud", L"hand_vitals_orb_under_shield", 1, Slider(L"hud", L"hand_vitals_orb_shield_rot_z_deg", L"Under a shield: rotation Z, up off the skin, °", -180, 180, 1, 0,
            L"Added to the wrist's own rotation Z while a shield is on that arm. Live."))),
+    // Under a shield, per hero class: the forearm's model - and so how deep the inner side of the wrist lies - differs with the class: a depth and an along offset for each, added to the shield's own above
+    ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"hud", L"hand_vitals_orb_under_shield", 1, Status(L"hero_class_shield", L"The hero playing now"))),
+    ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"hud", L"hand_vitals_orb_under_shield", 1, Slider(L"hud", L"hand_vitals_orb_shield_up_cm_amazon", L"Amazon, under a shield: depth (Z), cm", -5, 5, 0.1f, 0,
+           L"Added - while a Amazon wears a shield - to the shield's own Z above, measured out of the skin where the ball now sits, on the inner side of the wrist: + floats it off the arm, - sinks it in. The forearm's model differs "
+           L"with the class, so one depth fits one hero only. 0 = no value of its own: the shield's Z above, as before. Edit the row of the hero you play - the line above says which one the game has now. Live."))),
+    ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"hud", L"hand_vitals_orb_under_shield", 1, Slider(L"hud", L"hand_vitals_orb_shield_along_cm_amazon", L"Amazon, under a shield: along the arm, cm", -5, 5, 0.1f, 0,
+           L"Added - while a Amazon wears a shield - to the shield's own X above: + toward the knuckles, - toward the elbow, in the rolled frame. 0 = no value of its own. Live."))),
+    ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"hud", L"hand_vitals_orb_under_shield", 1, Slider(L"hud", L"hand_vitals_orb_shield_rot_x_deg_amazon", L"Amazon, under a shield: rotation X, round the arm, °", -180, 180, 1, 0,
+           L"Added - while a Amazon wears a shield - to the shield's own rotation X above and to the wrist's own: the medallion turned round the arm along the hand (+ turns the medallion's face toward the thumb). Anatomical: the same number on the other wrist is the mirror image. "
+           L"It eases in and out with the roll. 0 = no value of its own. Live."))),
+    ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"hud", L"hand_vitals_orb_under_shield", 1, Slider(L"hud", L"hand_vitals_orb_shield_rot_y_deg_amazon", L"Amazon, under a shield: rotation Y, across the hand, °", -180, 180, 1, 0,
+           L"Added - while a Amazon wears a shield - to the shield's own rotation Y above and to the wrist's own: the medallion turned round the axis across the hand (+ turns its face toward the elbow). Anatomical: the same number on the other wrist is the mirror image. "
+           L"It eases in and out with the roll. 0 = no value of its own. Live."))),
+    ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"hud", L"hand_vitals_orb_under_shield", 1, Slider(L"hud", L"hand_vitals_orb_shield_rot_z_deg_amazon", L"Amazon, under a shield: rotation Z, up off the skin, °", -180, 180, 1, 0,
+           L"Added - while a Amazon wears a shield - to the shield's own rotation Z above and to the wrist's own: the medallion turned round the axis out of the skin where the ball now sits (like turning a watch face). Anatomical: the same number on the other wrist is the mirror image. "
+           L"It eases in and out with the roll. 0 = no value of its own. Live."))),
+    ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"hud", L"hand_vitals_orb_under_shield", 1, Slider(L"hud", L"hand_vitals_orb_shield_up_cm_sorceress", L"Sorceress, under a shield: depth (Z), cm", -5, 5, 0.1f, 0,
+           L"Added - while a Sorceress wears a shield - to the shield's own Z above, measured out of the skin where the ball now sits, on the inner side of the wrist: + floats it off the arm, - sinks it in. The forearm's model differs "
+           L"with the class, so one depth fits one hero only. 0 = no value of its own: the shield's Z above, as before. Edit the row of the hero you play - the line above says which one the game has now. Live."))),
+    ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"hud", L"hand_vitals_orb_under_shield", 1, Slider(L"hud", L"hand_vitals_orb_shield_along_cm_sorceress", L"Sorceress, under a shield: along the arm, cm", -5, 5, 0.1f, 0,
+           L"Added - while a Sorceress wears a shield - to the shield's own X above: + toward the knuckles, - toward the elbow, in the rolled frame. 0 = no value of its own. Live."))),
+    ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"hud", L"hand_vitals_orb_under_shield", 1, Slider(L"hud", L"hand_vitals_orb_shield_rot_x_deg_sorceress", L"Sorceress, under a shield: rotation X, round the arm, °", -180, 180, 1, 0,
+           L"Added - while a Sorceress wears a shield - to the shield's own rotation X above and to the wrist's own: the medallion turned round the arm along the hand (+ turns the medallion's face toward the thumb). Anatomical: the same number on the other wrist is the mirror image. "
+           L"It eases in and out with the roll. 0 = no value of its own. Live."))),
+    ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"hud", L"hand_vitals_orb_under_shield", 1, Slider(L"hud", L"hand_vitals_orb_shield_rot_y_deg_sorceress", L"Sorceress, under a shield: rotation Y, across the hand, °", -180, 180, 1, 0,
+           L"Added - while a Sorceress wears a shield - to the shield's own rotation Y above and to the wrist's own: the medallion turned round the axis across the hand (+ turns its face toward the elbow). Anatomical: the same number on the other wrist is the mirror image. "
+           L"It eases in and out with the roll. 0 = no value of its own. Live."))),
+    ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"hud", L"hand_vitals_orb_under_shield", 1, Slider(L"hud", L"hand_vitals_orb_shield_rot_z_deg_sorceress", L"Sorceress, under a shield: rotation Z, up off the skin, °", -180, 180, 1, 0,
+           L"Added - while a Sorceress wears a shield - to the shield's own rotation Z above and to the wrist's own: the medallion turned round the axis out of the skin where the ball now sits (like turning a watch face). Anatomical: the same number on the other wrist is the mirror image. "
+           L"It eases in and out with the roll. 0 = no value of its own. Live."))),
+    ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"hud", L"hand_vitals_orb_under_shield", 1, Slider(L"hud", L"hand_vitals_orb_shield_up_cm_necromancer", L"Necromancer, under a shield: depth (Z), cm", -5, 5, 0.1f, 0,
+           L"Added - while a Necromancer wears a shield - to the shield's own Z above, measured out of the skin where the ball now sits, on the inner side of the wrist: + floats it off the arm, - sinks it in. The forearm's model differs "
+           L"with the class, so one depth fits one hero only. 0 = no value of its own: the shield's Z above, as before. Edit the row of the hero you play - the line above says which one the game has now. Live."))),
+    ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"hud", L"hand_vitals_orb_under_shield", 1, Slider(L"hud", L"hand_vitals_orb_shield_along_cm_necromancer", L"Necromancer, under a shield: along the arm, cm", -5, 5, 0.1f, 0,
+           L"Added - while a Necromancer wears a shield - to the shield's own X above: + toward the knuckles, - toward the elbow, in the rolled frame. 0 = no value of its own. Live."))),
+    ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"hud", L"hand_vitals_orb_under_shield", 1, Slider(L"hud", L"hand_vitals_orb_shield_rot_x_deg_necromancer", L"Necromancer, under a shield: rotation X, round the arm, °", -180, 180, 1, 0,
+           L"Added - while a Necromancer wears a shield - to the shield's own rotation X above and to the wrist's own: the medallion turned round the arm along the hand (+ turns the medallion's face toward the thumb). Anatomical: the same number on the other wrist is the mirror image. "
+           L"It eases in and out with the roll. 0 = no value of its own. Live."))),
+    ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"hud", L"hand_vitals_orb_under_shield", 1, Slider(L"hud", L"hand_vitals_orb_shield_rot_y_deg_necromancer", L"Necromancer, under a shield: rotation Y, across the hand, °", -180, 180, 1, 0,
+           L"Added - while a Necromancer wears a shield - to the shield's own rotation Y above and to the wrist's own: the medallion turned round the axis across the hand (+ turns its face toward the elbow). Anatomical: the same number on the other wrist is the mirror image. "
+           L"It eases in and out with the roll. 0 = no value of its own. Live."))),
+    ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"hud", L"hand_vitals_orb_under_shield", 1, Slider(L"hud", L"hand_vitals_orb_shield_rot_z_deg_necromancer", L"Necromancer, under a shield: rotation Z, up off the skin, °", -180, 180, 1, 0,
+           L"Added - while a Necromancer wears a shield - to the shield's own rotation Z above and to the wrist's own: the medallion turned round the axis out of the skin where the ball now sits (like turning a watch face). Anatomical: the same number on the other wrist is the mirror image. "
+           L"It eases in and out with the roll. 0 = no value of its own. Live."))),
+    ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"hud", L"hand_vitals_orb_under_shield", 1, Slider(L"hud", L"hand_vitals_orb_shield_up_cm_paladin", L"Paladin, under a shield: depth (Z), cm", -5, 5, 0.1f, 0,
+           L"Added - while a Paladin wears a shield - to the shield's own Z above, measured out of the skin where the ball now sits, on the inner side of the wrist: + floats it off the arm, - sinks it in. The forearm's model differs "
+           L"with the class, so one depth fits one hero only. 0 = no value of its own: the shield's Z above, as before. Edit the row of the hero you play - the line above says which one the game has now. Live."))),
+    ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"hud", L"hand_vitals_orb_under_shield", 1, Slider(L"hud", L"hand_vitals_orb_shield_along_cm_paladin", L"Paladin, under a shield: along the arm, cm", -5, 5, 0.1f, 0,
+           L"Added - while a Paladin wears a shield - to the shield's own X above: + toward the knuckles, - toward the elbow, in the rolled frame. 0 = no value of its own. Live."))),
+    ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"hud", L"hand_vitals_orb_under_shield", 1, Slider(L"hud", L"hand_vitals_orb_shield_rot_x_deg_paladin", L"Paladin, under a shield: rotation X, round the arm, °", -180, 180, 1, 0,
+           L"Added - while a Paladin wears a shield - to the shield's own rotation X above and to the wrist's own: the medallion turned round the arm along the hand (+ turns the medallion's face toward the thumb). Anatomical: the same number on the other wrist is the mirror image. "
+           L"It eases in and out with the roll. 0 = no value of its own. Live."))),
+    ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"hud", L"hand_vitals_orb_under_shield", 1, Slider(L"hud", L"hand_vitals_orb_shield_rot_y_deg_paladin", L"Paladin, under a shield: rotation Y, across the hand, °", -180, 180, 1, 0,
+           L"Added - while a Paladin wears a shield - to the shield's own rotation Y above and to the wrist's own: the medallion turned round the axis across the hand (+ turns its face toward the elbow). Anatomical: the same number on the other wrist is the mirror image. "
+           L"It eases in and out with the roll. 0 = no value of its own. Live."))),
+    ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"hud", L"hand_vitals_orb_under_shield", 1, Slider(L"hud", L"hand_vitals_orb_shield_rot_z_deg_paladin", L"Paladin, under a shield: rotation Z, up off the skin, °", -180, 180, 1, 0,
+           L"Added - while a Paladin wears a shield - to the shield's own rotation Z above and to the wrist's own: the medallion turned round the axis out of the skin where the ball now sits (like turning a watch face). Anatomical: the same number on the other wrist is the mirror image. "
+           L"It eases in and out with the roll. 0 = no value of its own. Live."))),
+    ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"hud", L"hand_vitals_orb_under_shield", 1, Slider(L"hud", L"hand_vitals_orb_shield_up_cm_barbarian", L"Barbarian, under a shield: depth (Z), cm", -5, 5, 0.1f, 0,
+           L"Added - while a Barbarian wears a shield - to the shield's own Z above, measured out of the skin where the ball now sits, on the inner side of the wrist: + floats it off the arm, - sinks it in. The forearm's model differs "
+           L"with the class, so one depth fits one hero only. 0 = no value of its own: the shield's Z above, as before. Edit the row of the hero you play - the line above says which one the game has now. Live."))),
+    ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"hud", L"hand_vitals_orb_under_shield", 1, Slider(L"hud", L"hand_vitals_orb_shield_along_cm_barbarian", L"Barbarian, under a shield: along the arm, cm", -5, 5, 0.1f, 0,
+           L"Added - while a Barbarian wears a shield - to the shield's own X above: + toward the knuckles, - toward the elbow, in the rolled frame. 0 = no value of its own. Live."))),
+    ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"hud", L"hand_vitals_orb_under_shield", 1, Slider(L"hud", L"hand_vitals_orb_shield_rot_x_deg_barbarian", L"Barbarian, under a shield: rotation X, round the arm, °", -180, 180, 1, 0,
+           L"Added - while a Barbarian wears a shield - to the shield's own rotation X above and to the wrist's own: the medallion turned round the arm along the hand (+ turns the medallion's face toward the thumb). Anatomical: the same number on the other wrist is the mirror image. "
+           L"It eases in and out with the roll. 0 = no value of its own. Live."))),
+    ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"hud", L"hand_vitals_orb_under_shield", 1, Slider(L"hud", L"hand_vitals_orb_shield_rot_y_deg_barbarian", L"Barbarian, under a shield: rotation Y, across the hand, °", -180, 180, 1, 0,
+           L"Added - while a Barbarian wears a shield - to the shield's own rotation Y above and to the wrist's own: the medallion turned round the axis across the hand (+ turns its face toward the elbow). Anatomical: the same number on the other wrist is the mirror image. "
+           L"It eases in and out with the roll. 0 = no value of its own. Live."))),
+    ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"hud", L"hand_vitals_orb_under_shield", 1, Slider(L"hud", L"hand_vitals_orb_shield_rot_z_deg_barbarian", L"Barbarian, under a shield: rotation Z, up off the skin, °", -180, 180, 1, 0,
+           L"Added - while a Barbarian wears a shield - to the shield's own rotation Z above and to the wrist's own: the medallion turned round the axis out of the skin where the ball now sits (like turning a watch face). Anatomical: the same number on the other wrist is the mirror image. "
+           L"It eases in and out with the roll. 0 = no value of its own. Live."))),
+    ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"hud", L"hand_vitals_orb_under_shield", 1, Slider(L"hud", L"hand_vitals_orb_shield_up_cm_druid", L"Druid, under a shield: depth (Z), cm", -5, 5, 0.1f, 0,
+           L"Added - while a Druid wears a shield - to the shield's own Z above, measured out of the skin where the ball now sits, on the inner side of the wrist: + floats it off the arm, - sinks it in. The forearm's model differs "
+           L"with the class, so one depth fits one hero only. 0 = no value of its own: the shield's Z above, as before. Edit the row of the hero you play - the line above says which one the game has now. Live."))),
+    ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"hud", L"hand_vitals_orb_under_shield", 1, Slider(L"hud", L"hand_vitals_orb_shield_along_cm_druid", L"Druid, under a shield: along the arm, cm", -5, 5, 0.1f, 0,
+           L"Added - while a Druid wears a shield - to the shield's own X above: + toward the knuckles, - toward the elbow, in the rolled frame. 0 = no value of its own. Live."))),
+    ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"hud", L"hand_vitals_orb_under_shield", 1, Slider(L"hud", L"hand_vitals_orb_shield_rot_x_deg_druid", L"Druid, under a shield: rotation X, round the arm, °", -180, 180, 1, 0,
+           L"Added - while a Druid wears a shield - to the shield's own rotation X above and to the wrist's own: the medallion turned round the arm along the hand (+ turns the medallion's face toward the thumb). Anatomical: the same number on the other wrist is the mirror image. "
+           L"It eases in and out with the roll. 0 = no value of its own. Live."))),
+    ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"hud", L"hand_vitals_orb_under_shield", 1, Slider(L"hud", L"hand_vitals_orb_shield_rot_y_deg_druid", L"Druid, under a shield: rotation Y, across the hand, °", -180, 180, 1, 0,
+           L"Added - while a Druid wears a shield - to the shield's own rotation Y above and to the wrist's own: the medallion turned round the axis across the hand (+ turns its face toward the elbow). Anatomical: the same number on the other wrist is the mirror image. "
+           L"It eases in and out with the roll. 0 = no value of its own. Live."))),
+    ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"hud", L"hand_vitals_orb_under_shield", 1, Slider(L"hud", L"hand_vitals_orb_shield_rot_z_deg_druid", L"Druid, under a shield: rotation Z, up off the skin, °", -180, 180, 1, 0,
+           L"Added - while a Druid wears a shield - to the shield's own rotation Z above and to the wrist's own: the medallion turned round the axis out of the skin where the ball now sits (like turning a watch face). Anatomical: the same number on the other wrist is the mirror image. "
+           L"It eases in and out with the roll. 0 = no value of its own. Live."))),
+    ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"hud", L"hand_vitals_orb_under_shield", 1, Slider(L"hud", L"hand_vitals_orb_shield_up_cm_assassin", L"Assassin, under a shield: depth (Z), cm", -5, 5, 0.1f, 0,
+           L"Added - while a Assassin wears a shield - to the shield's own Z above, measured out of the skin where the ball now sits, on the inner side of the wrist: + floats it off the arm, - sinks it in. The forearm's model differs "
+           L"with the class, so one depth fits one hero only. 0 = no value of its own: the shield's Z above, as before. Edit the row of the hero you play - the line above says which one the game has now. Live."))),
+    ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"hud", L"hand_vitals_orb_under_shield", 1, Slider(L"hud", L"hand_vitals_orb_shield_along_cm_assassin", L"Assassin, under a shield: along the arm, cm", -5, 5, 0.1f, 0,
+           L"Added - while a Assassin wears a shield - to the shield's own X above: + toward the knuckles, - toward the elbow, in the rolled frame. 0 = no value of its own. Live."))),
+    ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"hud", L"hand_vitals_orb_under_shield", 1, Slider(L"hud", L"hand_vitals_orb_shield_rot_x_deg_assassin", L"Assassin, under a shield: rotation X, round the arm, °", -180, 180, 1, 0,
+           L"Added - while a Assassin wears a shield - to the shield's own rotation X above and to the wrist's own: the medallion turned round the arm along the hand (+ turns the medallion's face toward the thumb). Anatomical: the same number on the other wrist is the mirror image. "
+           L"It eases in and out with the roll. 0 = no value of its own. Live."))),
+    ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"hud", L"hand_vitals_orb_under_shield", 1, Slider(L"hud", L"hand_vitals_orb_shield_rot_y_deg_assassin", L"Assassin, under a shield: rotation Y, across the hand, °", -180, 180, 1, 0,
+           L"Added - while a Assassin wears a shield - to the shield's own rotation Y above and to the wrist's own: the medallion turned round the axis across the hand (+ turns its face toward the elbow). Anatomical: the same number on the other wrist is the mirror image. "
+           L"It eases in and out with the roll. 0 = no value of its own. Live."))),
+    ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"hud", L"hand_vitals_orb_under_shield", 1, Slider(L"hud", L"hand_vitals_orb_shield_rot_z_deg_assassin", L"Assassin, under a shield: rotation Z, up off the skin, °", -180, 180, 1, 0,
+           L"Added - while a Assassin wears a shield - to the shield's own rotation Z above and to the wrist's own: the medallion turned round the axis out of the skin where the ball now sits (like turning a watch face). Anatomical: the same number on the other wrist is the mirror image. "
+           L"It eases in and out with the roll. 0 = no value of its own. Live."))),
+    ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"hud", L"hand_vitals_orb_under_shield", 1, Slider(L"hud", L"hand_vitals_orb_shield_up_cm_warlock", L"Warlock, under a shield: depth (Z), cm", -5, 5, 0.1f, 0,
+           L"Added - while a Warlock wears a shield - to the shield's own Z above, measured out of the skin where the ball now sits, on the inner side of the wrist: + floats it off the arm, - sinks it in. The forearm's model differs "
+           L"with the class, so one depth fits one hero only. 0 = no value of its own: the shield's Z above, as before. Edit the row of the hero you play - the line above says which one the game has now. Live."))),
+    ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"hud", L"hand_vitals_orb_under_shield", 1, Slider(L"hud", L"hand_vitals_orb_shield_along_cm_warlock", L"Warlock, under a shield: along the arm, cm", -5, 5, 0.1f, 0,
+           L"Added - while a Warlock wears a shield - to the shield's own X above: + toward the knuckles, - toward the elbow, in the rolled frame. 0 = no value of its own. Live."))),
+    ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"hud", L"hand_vitals_orb_under_shield", 1, Slider(L"hud", L"hand_vitals_orb_shield_rot_x_deg_warlock", L"Warlock, under a shield: rotation X, round the arm, °", -180, 180, 1, 0,
+           L"Added - while a Warlock wears a shield - to the shield's own rotation X above and to the wrist's own: the medallion turned round the arm along the hand (+ turns the medallion's face toward the thumb). Anatomical: the same number on the other wrist is the mirror image. "
+           L"It eases in and out with the roll. 0 = no value of its own. Live."))),
+    ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"hud", L"hand_vitals_orb_under_shield", 1, Slider(L"hud", L"hand_vitals_orb_shield_rot_y_deg_warlock", L"Warlock, under a shield: rotation Y, across the hand, °", -180, 180, 1, 0,
+           L"Added - while a Warlock wears a shield - to the shield's own rotation Y above and to the wrist's own: the medallion turned round the axis across the hand (+ turns its face toward the elbow). Anatomical: the same number on the other wrist is the mirror image. "
+           L"It eases in and out with the roll. 0 = no value of its own. Live."))),
+    ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"hud", L"hand_vitals_orb_under_shield", 1, Slider(L"hud", L"hand_vitals_orb_shield_rot_z_deg_warlock", L"Warlock, under a shield: rotation Z, up off the skin, °", -180, 180, 1, 0,
+           L"Added - while a Warlock wears a shield - to the shield's own rotation Z above and to the wrist's own: the medallion turned round the axis out of the skin where the ball now sits (like turning a watch face). Anatomical: the same number on the other wrist is the mirror image. "
+           L"It eases in and out with the roll. 0 = no value of its own. Live."))),
     ShowFor(L"hud", L"bar_place", kBarWrist, Slider(L"hud", L"hand_vitals_orb_opacity", L"Opacity", 0.3f, 1, 0.05f, 0.95f,
            L"How solid the balls are. They also fade when a hand is held far from your eyes. Live.")),
     ShowFor(L"hud", L"bar_place", kBarWrist, Toggle(L"hud", L"hand_vitals_pulse", L"Soft heartbeat at low life", 0,
@@ -1653,6 +1835,10 @@ std::vector<Item> g_items = {
     Needs(L"fog", L"enabled", 1, Slider(L"fog", L"curve", L"Falloff", 0.3f, 4, 0.05f, 1.6f, L"1 = linear; more = a clearer middle distance.")),
     Needs(L"fog", L"enabled", 1, Slider(L"fog", L"blur", L"Depth blur, px (0 = off)", 0, 12, 0.5f, 3,
            L"The fog over a 5x5 grid this many pixels apart: holes and specks in the depth melt away.")),
+    Needs(L"fog", L"enabled", 1, Toggle(L"fog", L"spare_effects", L"Fog spares fire, spells and smoke (test)", 0,
+           L"Fire, spells, smoke and glows are fogged only as much as the scene behind them is not: a torch or a Fire Bolt in "
+           L"front of a far wall stays bright instead of fogged like the wall. The game's own transparent layers of each "
+           L"frame are copied for it (VR F4 only). Applies when the game is started again; off = the fog as before.")),
     Needs(L"fog", L"enabled", 1, Toggle(L"fog", L"caves", L"Fog in caves and dungeons", 1,
            L"Off: no fog underground (every area that is not outdoors); the open air keeps it.")),
     Needs(L"fog", L"caves", 1, Slider(L"fog", L"caves_start", L"Fog start in caves", 0, 1000, 5, 150,
@@ -1727,6 +1913,14 @@ std::vector<Item> g_items = {
     Needs(L"sky", L"enabled", 1, Slider(L"sky", L"clouds", L"Clouds (0 = clear)", 0, 2, 0.05f, 1, L"Times each area's own cloud cover.")),
     Needs(L"sky", L"enabled", 1, Toggle(L"sky", L"drift", L"The sky turns slowly (clouds drift)", 0,
            L"The painted sky goes slowly round you. Off: it stands still - the stars painted into the night skies went round with the clouds.")),
+    Toggle(L"sky", L"arcane_sky", L"Arcane Sanctuary: its own stars all round", 1,
+           L"In the Arcane Sanctuary the void round the platforms shows the game's own star layers and clouds in every "
+           L"direction, below the platforms too (after bearstonem/d2r-pcvr). The pictures are made from your game's files "
+           L"when this program opens (Home: Arcane Sanctuary sky) and live inside the mod (mods\\D2R-VR); nothing of the game is changed. Not in the views from "
+           L"above. Works with the outdoor sky off too. Off: the void as the game draws it."),
+    Needs(L"sky", L"arcane_sky", 1, Toggle(L"sky", L"arcane_fog", L"Arcane Sanctuary: fog fades into its sky", 0,
+           L"The distance fog ([fog] on, the Fog tab) in the Arcane Sanctuary too: the far platforms dissolve into the sky behind "
+           L"them - its dark and its nebula, not its stars. Off: no fog under that sky, the platforms sharp to the end.")),
     Group(L"Day and night"),
     Toggle(L"sky", L"day_night", L"Sky follows the game's day and night", 1,
            L"The sky and the outdoor fog darken at dusk and brighten at dawn with the game's own light, at the same pace."),
@@ -2411,17 +2605,27 @@ std::vector<Item> g_items = {
     Needs(L"bow", L"xbow_two_hands", 1, Choice(L"hands", L"xbow_hand", L"The game hangs the crossbow on", 1, {L"the right wrist", L"the left wrist"},
            L"For its grip: if the crossbow sits wrong or turns away when the left hand takes it, try the other.")),
     Needs(L"bow", L"xbow_two_hands", 1, Toggle(L"hands", L"xbow_hold_grip", L"Crossbow: the right hand holds it by its grip", 0,
-           L"The crossbow sits in the right palm by its own grip - where the game's own hand holds it (the palm's place on the crossbow as the "
-           L"game's animation has it) - not by the bone it hangs on, which put the grip half a hand off the palm: it looked held by the wrist. "
-           L"The log says once how far the two are apart. Unticked: as before. F4 only.")),
+           L"The crossbow sits in the holding palm by its trigger grip - where the game's own trigger hand holds it in the game's two-handed "
+           L"hold (learned from the game's pose a moment after the crossbow is in hand) - not by the bone it hangs on. "
+           L"The log says once how far the two are apart. Unticked: as before. F4 only. Still being corrected: in a test (2026-10-18) the crossbow's grip was still off.")),
     Needs(L"bow", L"xbow_two_hands", 1, Toggle(L"hands", L"xbow_support_game", L"Crossbow: left hand on the game's own fore-grip", 0,
-           L"The left hand takes the crossbow where the game's own other hand holds it in the game's two-handed hold - learned from the game's "
+           L"The left hand takes the crossbow at its fore-grip, where the game's own hand that carries it holds it in the game's two-handed hold - learned from the game's "
            L"pose a moment after the crossbow is in hand, nothing set by hand. Until then (and unticked) the place under the drawn barrel, or the "
-           L"shot line. The log says once where it is and how the game's palm faces the stock. F4 only.")),
+           L"shot line. The log says once where it is and how the game's palm faces the stock. F4 only. Not finished: in a test (2026-10-18) it did not work yet, so it is off in the settings that come with the mod.")),
     Needs(L"hands", L"xbow_support_game", 1, Toggle(L"hands", L"xbow_support_close", L"Crossbow: the left hand closes on the stock", 0,
-           L"On the game's own fore-grip the left hand takes the game's own support hand's turn and finger pose (mirrored: in the game that is the "
-           L"right hand) - the palm toward the stock, the fingers closed round it - instead of the controller's turn with an open hand. "
-           L"Unticked: as before. F4 only.")),
+           L"On the game's own fore-grip the left hand takes the game's own fore-grip hand's turn and finger pose (the game's left hand; "
+           L"mirrored when the right hand supports) - the palm toward the stock, the fingers closed round it - instead of the controller's turn with an open hand. "
+           L"Unticked: as before. F4 only. Not finished: in a test (2026-10-18) it did not work yet, so it is off in the settings that come with the mod.")),
+    Needs(L"bow", L"xbow_two_hands", 1, Toggle(L"hands", L"xbow_barrel_forward", L"Crossbow: its barrel along the controller", 0,
+           L"The crossbow is laid by its own drawn barrel: the barrel points where the controller points and the crossbow's top is the controller's "
+           L"top - not by a bone axis, which tilted it about 34 degrees up and a little aside in the hand. Until the barrel is read (a moment after "
+           L"the crossbow is in hand) as before. F4 only. Not finished: in a test (2026-10-18) it did not work yet, so it is off in the settings that come with the mod.")),
+    Needs(L"bow", L"xbow_two_hands", 1, Toggle(L"hands", L"xbow_handover", L"Crossbow: pass it from hand to hand", 0,
+           L"Take the crossbow with the free hand anywhere (the fore-grip) and let go of the grip of the hand that held it: it stays in the other "
+           L"hand. Or squeeze the free hand's grip anew near the holding hand (within 25 cm, nearer it than the fore-grip), and the "
+           L"crossbow is in that hand; the other one lets go and is free - squeeze it at the fore-grip to support the crossbow there (mirrored). "
+           L"The shot follows the barrel of the hand that holds it. Only how it is held and aimed: the game's weapon slots and attack are its "
+           L"own. Another weapon or the tick off: back in the right hand. F4 only. Not finished: in a test (2026-10-18) the hand-over did not work yet, so it is off in the settings that come with the mod.")),
     Needs(L"bow", L"xbow_two_hands", 1, Toggle(L"hands", L"xbow_aim_barrel", L"Crossbow: shoot along the drawn barrel", 0,
            L"The bolt goes where the crossbow you see points: along its barrel as the model is drawn (its bolt helper bone, as bearstonem/d2r-pcvr "
            L"aims) - no correction by hand, raised or rolled alike. The game's own bolt, damage, ammunition and rate of fire are unchanged: only the "
@@ -2480,6 +2684,16 @@ std::vector<Item> g_items = {
     Needs(L"hands", L"spell_aim_model", 1, Slider(L"bow", L"hand_range", L"Bare hands aim point, cells", 0, 40, 1, 5,
            L"The same for a spell cast with bare hands (or with any weapon that is not a staff, wand or orb): how far out along the hand its point goes. "
            L"Below 3: the game's own point.")),
+    Group(L"Aim distance by the arm"),
+    Needs(L"bow", L"mode", 4, Toggle(L"bow", L"aim_distance_by_arm", L"A spell's aim distance follows how far the arm is stretched", 0,
+           L"VR first person (F4), spells only: a wand, an orb, a staff held in one hand, bare hands. As in flat Diablo, where a click near the hero spreads Teeth wide and one "
+           L"far away keeps it in a tight cone: here an arm held at the body gives the near distance below, an arm stretched out along the aim gives the weapon's own "
+           L"distance (the wand, orb and bare-hand sliders above; for a staff the two-hand one). The stretch is measured on your own arm - the drawn shoulder and the length to the grip, "
+           L"fitted to your T-pose span or your height - and smoothed a little. A staff with only one hand on it follows the arm too; a staff held in BOTH hands always aims at its far "
+           L"distance, the tightest cone, whatever the arm does. A bow, a crossbow and throws keep their fixed distance. It only chooses where the game's own spell is aimed, as a "
+           L"click would. Off: the distances above, as before. Live.")),
+    Needs(L"bow", L"aim_distance_by_arm", 1, Slider(L"bow", L"aim_near_cells", L"Aim point with the arm at the body, cells", 3, 20, 1, 3,
+           L"How near a spell's aim point comes with the arm at the body (the far end is the weapon's own distance). Smaller = a wider fan of Teeth and the like. Live.")),
 #endif
     Slider(L"bow", L"staff_aim_yaw", L"Staff aim correction, ° (+ = right)", -45, 45, 1, 0,
            L"The same for a staff, in place of the one above: turns its aim about the vertical, if spells land beside where the staff points. "
@@ -2574,7 +2788,7 @@ std::vector<Item> g_items = {
            L"click on a monster does), its hit rolls and speed. A blade held still or waved slowly does nothing; a swing hits "
            L"a monster once. The skill on the attack button is what is pressed - a spell there is cast at the monster you touched. "
            L"Works with BodyWalk's tracking and with native OpenXR. Off: as before. F4 only."),
-    Needs(L"gameplay", L"melee_touch", 1, Slider(L"gameplay", L"melee_min_speed", L"Hit by touch: the least blade speed that hits, m/s", 0.3f, 8, 0.1f, 0.8f,
+    Needs(L"gameplay", L"melee_touch", 1, Slider(L"gameplay", L"melee_min_speed", L"Hit by touch: the least blade speed that hits, m/s", 0.3f, 20, 0.1f, 0.8f,
            L"How fast the blade must be moving for a contact to count. A blade moving slower than this does nothing, however it touches "
            L"a monster - so a gentle poke hits only if this is low. The same number for every weapon (the weapon's own blade is its only "
            L"difference); the default 0.8 is what it always was. The speed is the BLADE's, measured on the weapon as drawn, frame to frame "
@@ -2601,6 +2815,14 @@ std::vector<Item> g_items = {
            L"pressed the attack drops the release of the same swing (one throw per swing). The blade's size per weapon is an estimate - "
            L"tune it with the blade sliders of the Debug group below and \"Draw the capsules of Hit by touch\". Unticked: a thrown weapon does nothing "
            L"by touch, as before. Live. F4 only.")),
+    Needs(L"gameplay", L"melee_touch", 1, Toggle(L"gameplay", L"melee_touch_only", L"The trigger does not attack (only the blade's touch; a bow or a crossbow shoots with it)", 1,
+           L"A part of hit by touch, on with it: a trigger that attacks lets you skip the swing and just pull it, which is a bug of hit by touch, not an option. First person (F4), hit by touch on, the plugin's own "
+           L"controls (Stereo > Native OpenXR > Controls without BodyWalk): the trigger's attack is not passed to the game - only the blade's touch attacks. That is every weapon the touch swings: melee weapons, "
+           L"bare hands and throwing weapons (javelins, throwing knives and axes - the touch or the throw gesture throws them); only a BOW and a CROSSBOW keep the trigger (they are shot, not swung). "
+           L"Spells and skills on the other buttons (B, X, Y, RB, the skill wheel) are as they were. Only OUR controller press is withheld; nothing of the game is blocked or hooked, and everything else the "
+           L"trigger is bound to works as bound (a skill button, a command). The trigger works as ever where hit by touch does not run: no tracking, a menu or a panel up, another view, a throwing weapon with its "
+           L"touch off, a throwing potion. With BodyWalk's own input (not the plugin's) the trigger is BodyWalk's and this cannot reach it. The log says what it decided (\"melee touch only: ...\"). "
+           L"Unticked: the trigger attacks as it did before - the way back. Live. F4 only.")),
     Group(L"Which contact counts as a strike"),
     Needs(L"gameplay", L"melee_touch", 1, Toggle(L"gameplay", L"melee_toward", L"Toward the monster: the blade must move at it", 1,
            L"For every kind of weapon (single kinds can be switched off in the table below): a contact counts as an attack only while the point of the blade that touches the monster is "
@@ -2632,6 +2854,20 @@ std::vector<Item> g_items = {
     Needs(L"gameplay", L"melee_touch", 1, Needs(L"gameplay", L"melee_amplitude", 1, Slider(L"gameplay", L"melee_amp_staff_x", L"Staffs: x piercing", 0.5f, 6, 0.05f, 1.75f,
            L"Staffs: the least swing amplitude as a multiple of the piercing weapons'. 1.75 x 8 cm = 14 cm. The cm it makes is in the label. Live."))),
     Group(L"Each kind of weapon (type a number; 0 = follow the general one)"),
+    Group(L"Two weapons: Double Swing by the hands (F4)"),
+    Needs(L"gameplay", L"melee_touch", 1, Toggle(L"hands", L"double_swing_by_hands", L"Double Swing by the two hands", 0,
+           L"A Barbarian with a melee weapon in each hand, hit by touch on (F4 only). The first hand's touch on a monster is the game's normal attack, as ever. When the OTHER hand then touches the SAME monster "
+           L"within the time below, that second strike is the game's own Double Swing instead of a normal attack: its pad button is pressed once (the skill must sit on one of the pad's ten skill slots - B, X, Y, RB "
+           L"with and without LT, A, LT + A) and the touched monster is handed to the cast as its target, the way the shield bash casts Smite. Only when the hero has a level in the skill and the mana for it "
+           L"(the game's own numbers: the skill's cost at its level against the hero's mana); otherwise the second touch is a normal attack too. Frenzy the same way when it is the skill on a slot. The swings, the "
+           L"damage, the animation and the mana are the game's; nothing is called that attacks. A pair is spent by the dual skill: the next touch starts a new one. With Double Swing on the attack button itself "
+           L"every touch casts it already and this adds nothing. The log says every decision once (\"double swing: ...\"). Unticked: both hands' touches are normal attacks, as before. Live.")),
+    Needs(L"gameplay", L"melee_touch", 1, Needs(L"hands", L"double_swing_by_hands", 1, Slider(L"hands", L"double_swing_window_ms", L"Double Swing: the other hand within, ms", 200, 2000, 50, 700,
+           L"How long after one hand's strike on a monster the other hand's strike on the same monster is the second of a pair - the dual skill's. 700 ms is about one swing of the arm and back. Longer: a slower "
+           L"second blow still counts; shorter: only a quick one-two does. Live."))),
+    Needs(L"gameplay", L"melee_touch", 1, Needs(L"hands", L"double_swing_by_hands", 1, Choice(L"hands", L"double_swing_skill", L"Double Swing: the skill pressed first", 0,
+           {L"Double Swing, then Frenzy", L"Frenzy, then Double Swing"},
+           L"Which of the two the second hand presses when both sit on pad slots: the first one that the hero has a level in and can pay. With only one of them on a slot, that one. Live."))),
     Group(L"Direct hit (experimental)"),
     Needs(L"gameplay", L"melee_touch", 1, Toggle(L"gameplay", L"melee_direct",
            L"Direct hit (experimental, offline only)", 0,
@@ -2776,7 +3012,7 @@ std::vector<Item> g_items = {
     Hide(Slider(L"@weightlib", L"found", L"", 0, 1, 1, 0)),
     Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Status(L"weight_lib", L""))),
     Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Needs(L"@weightlib", L"found", 1, Toggle(L"weight", L"hands_model", L"Move the weapon with the weight-physics library (A/B)", 0,
-           L"Ticked: the weapon and the hands are moved by the weight-physics library (d2r_vr_weight.dll, beside the plugin) instead of the mod's own physics. "
+           L"Ticked: the weapon and the hands are moved by the weight-physics library (d2r_vr_weight.dll, in d2rloader\\d2r_vr_libs) instead of the mod's own physics. "
            L"Gravity %, Damping %, Weight % and Hands' strength % work with either. Switch it while you hold the weapon to compare. Greyed out while the library is not "
            L"there: the mod then has only its own physics.")))),
     Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Needs(L"@weightlib", L"found", 1, Needs(L"weight", L"hands_model", 1, Toggle(L"weight", L"hands_model_palm",
@@ -2787,7 +3023,7 @@ std::vector<Item> g_items = {
     Hide(Slider(L"@griplib", L"found", L"", 0, 1, 1, 0)),
     Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Status(L"grip_lib", L""))),
     Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Needs(L"@griplib", L"found", 1, Toggle(L"weight", L"grip_model", L"Hold the weapon the grip library's way (A/B)", 0,
-           L"Ticked: how a hand takes hold of the shaft and looks while it does is the grip library's (d2r_vr_grip.dll, beside the plugin) instead of the mod's own: the hand sits on the wood "
+           L"Ticked: how a hand takes hold of the shaft and looks while it does is the grip library's (d2r_vr_grip.dll, in d2rloader\\d2r_vr_libs) instead of the mod's own: the hand sits on the wood "
            L"with its palm touching it, the fingers close until they meet it, the second hand of a long shaft is held by its grip - tight, where it is - or, with the grip let go and the "
            L"trigger squeezed, loose: it slides along the shaft and turns about it; the hand feels a pulse when it comes within reach, closes and lets go. The weight, the aim and the "
            L"game's own attacks are not touched. Greyed out while the library is not there: the mod then has only its own way.")))),
@@ -3497,11 +3733,11 @@ std::wstring ReadPath(const Item& it) {
     return buf;
 }
 
-// reshade-shaders\Textures next to the game: the ini sits in <game>\d2rloader\plugins.
+// reshade-shaders\Textures of D2R VR's own ReShade files (ReShadeFiles: the mod's reshade\, or the game's folder before the mod layout).
+std::wstring ReShadeFiles();
+std::wstring ReShadeFolder();
 std::wstring TexturesDir() {
-    std::wstring d = g_ini;
-    for (int up = 0; up < 3; ++up) { const size_t s = d.find_last_of(L'\\'); if (s == std::wstring::npos) return L""; d.resize(s); }
-    return d + L"\\reshade-shaders\\Textures";
+    return ReShadeFiles() + L"reshade-shaders\\Textures";
 }
 
 // A picture under the Textures folder is kept relative to it, anything else as a full path.
@@ -3606,13 +3842,39 @@ int MatchPreset() {
     return kPresets;
 }
 
-// "@reshade" generic_depth: ReShade's Generic Depth add-on, on unless its name is in
-// [ADDON] DisabledAddons of the ReShade.ini beside the game (read when the game starts).
 std::wstring GameFolder();
+// D2R VR installed as the D2RLoader mod D2R-VR: its d2r_vr.ini is <game>\mods\D2R-VR\d2rloader\plugins\d2r_vr.ini (g_ini).
+bool ModInstall() {
+    const std::wstring plugins = modlayout::ModPlugins(GameFolder());
+    return _wcsnicmp(g_ini, plugins.c_str(), plugins.size()) == 0;
+}
+// The folder ReShade and its files are in: the mod's reshade\ when the mod has its own ReShade64.dll, else the game's folder
+// (as vrcam's ReShadeDir decides, from the plugin's side).
+std::wstring ReShadeFolder() {
+    const std::wstring game = GameFolder();
+    const std::wstring mod = ModInstall() ? modlayout::ModRoot(game) : std::wstring();
+    const bool modReShade = !mod.empty() && GetFileAttributesW((mod + modlayout::kReShadeFolder + L"ReShade64.dll").c_str()) != INVALID_FILE_ATTRIBUTES;
+    return modlayout::ReShadeDir(game, mod, modReShade);
+}
+// Where D2R VR's OWN ReShade files are - D2R_DepthFog.fx, the sky / ceiling / Arcane pictures, FlatVR's add-on (the plugin's OurFilesDir): the mod's reshade\
+// whenever D2R VR is the mod - whether ReShade is its own ReShade64.dll there (ReShadeFolder) or a dxgi.dll of the player's beside the game, which finds
+// them through two search paths in its ReShade.ini (shared/reshade_paths.h) - else the game's folder.
+std::wstring ReShadeFiles() {
+    const std::wstring game = GameFolder();
+    return modlayout::OurFilesDir(game, ModInstall() ? modlayout::ModRoot(game) : std::wstring());
+}
+int ReShadePathsCheck();   // (below) are D2R VR's two folders in the search paths of the player's dxgi.dll ReShade? 0 yes, 1 no, 2 no dxgi.dll / not the mod
+// Where ReShade's files are for the Home buttons (shared/reshade_as.h): the game's folder, and the mod's reshade\ when D2R VR is the mod.
+reshadeas::Where ReShadeWhere() {
+    const std::wstring game = GameFolder();
+    return {game, ModInstall() ? modlayout::ModReShade(game) : std::wstring()};
+}
+// "@reshade" generic_depth: ReShade's Generic Depth add-on, on unless its name is in
+// [ADDON] DisabledAddons of the ReShade.ini in ReShade's folder (read when the game starts).
 constexpr const wchar_t* kGenericDepth = L"Generic Depth";
 std::vector<std::wstring> DisabledAddons() {
     wchar_t buf[2048] = {};
-    GetPrivateProfileStringW(L"ADDON", L"DisabledAddons", L"", buf, 2048, (GameFolder() + L"ReShade.ini").c_str());
+    GetPrivateProfileStringW(L"ADDON", L"DisabledAddons", L"", buf, 2048, (ReShadeFolder() + L"ReShade.ini").c_str());
     std::vector<std::wstring> out;
     std::wstring cur;
     for (const wchar_t* c = buf;; ++c) {
@@ -3632,7 +3894,7 @@ float ReadReShadeValue(const Item&) {
     return 1.0f;
 }
 void WriteReShadeValue(const Item&, float v) {
-    const std::wstring ini = GameFolder() + L"ReShade.ini";
+    const std::wstring ini = ReShadeFolder() + L"ReShade.ini";
     if (GetFileAttributesW(ini.c_str()) == INVALID_FILE_ATTRIBUTES) return;   // no ReShade: nothing to switch
     std::wstring list;
     for (const std::wstring& a : DisabledAddons()) {
@@ -3749,7 +4011,7 @@ void WriteSquareWindow(bool on) {
         side = std::clamp((int)GetPrivateProfileIntW(L"openxr", L"window_size", 2000, g_ini), 640, 4000);
         side -= side % 8;
         if (!WriteGameWindow(side, side)) { SetStatus(L"square_window", 1, L"The game's Settings.json could not be written"); return; }
-        const std::wstring rs = GameFolder() + L"ReShade.ini";
+        const std::wstring rs = ReShadeFolder() + L"ReShade.ini";
         if (GetPrivateProfileIntW(L"DEPTH", L"UseAspectRatioHeuristics", 1, rs.c_str()) == 2)
             WritePrivateProfileStringW(L"DEPTH", L"UseAspectRatioHeuristics", L"1", rs.c_str());
     } else {
@@ -3822,6 +4084,7 @@ float ReadRenderSize(const Item& it) {
     return (float)rendersize::StopOf(rendersize::FromIni(mode == 1 ? 0 : mode, px));
 }
 void UpdateResolutionTexts();
+void UpdateSessionNote();
 void WriteRenderSize(const Item& it, float v) {
     const int mode = (int)GetPrivateProfileIntW(L"render", L"vr_resolution", 0, g_ini);
     wchar_t buf[16];
@@ -3910,13 +4173,15 @@ void WriteRemapValue(const Item& it, float v) {
     WritePrivateProfileStringW(L"direct", key.c_str(), c.erase ? nullptr : text.c_str(), g_ini);
 }
 
-// The weight-physics library: d2r_vr_weight.dll beside the plugin (and d2r_vr.ini). Optional; "found" greys out its tick while it is not there.
+// The weight-physics and grip libraries: d2r_vr_weight.dll / d2r_vr_grip.dll in d2rloader\d2r_vr_libs, or beside the plugin (and d2r_vr.ini) as the plugin
+// looks for them (vr/weight_lib.cpp, vr/grip_lib.cpp: <the plugin's folder>\..\d2r_vr_libs first - 0.169 moved them out of the plugins, where D2RLoader took
+// them for plugins). For the D2RLoader mod D2R-VR that is mods\D2R-VR\d2rloader\d2r_vr_libs. Optional; "found" greys out its tick while it is not there.
 bool LibFileFound(const wchar_t* name) {
-    wchar_t path[MAX_PATH];
-    wcscpy_s(path, g_ini);
-    if (wchar_t* slash = wcsrchr(path, L'\\')) slash[1] = 0;
-    wcscat_s(path, name);
-    return GetFileAttributesW(path) != INVALID_FILE_ATTRIBUTES;
+    wchar_t dir[MAX_PATH];
+    wcscpy_s(dir, g_ini);
+    if (wchar_t* slash = wcsrchr(dir, L'\\')) slash[1] = 0;
+    const std::wstring libs = std::wstring(dir) + L"..\\d2r_vr_libs\\" + name;
+    return GetFileAttributesW(libs.c_str()) != INVALID_FILE_ATTRIBUTES || GetFileAttributesW((std::wstring(dir) + name).c_str()) != INVALID_FILE_ATTRIBUTES;
 }
 bool WeightLibFound() { return LibFileFound(L"d2r_vr_weight.dll"); }
 bool GripLibFound() { return LibFileFound(L"d2r_vr_grip.dll"); }
@@ -4957,6 +5222,25 @@ void UpdateResolutionTexts() {
     SetStatus(L"vr_resolution", state, line.c_str());
 }
 
+// The "Native OpenXR" row: why the game has no headset session (vrcam writes [session] note into d2r_vr_headset.ini beside d2r_vr.ini - FlatVR holds the headset and nothing
+// can stop it); gone with the note.
+void UpdateSessionNote() {
+    static bool shown = false;
+    wchar_t path[MAX_PATH];
+    wcscpy_s(path, g_ini);
+    if (wchar_t* slash = wcsrchr(path, L'\\')) slash[1] = 0;
+    wcscat_s(path, L"d2r_vr_headset.ini");
+    wchar_t note[256] = L"";
+    GetPrivateProfileStringW(L"session", L"note", L"", note, 256, path);
+    if (note[0]) {
+        SetStatus(L"native_xr", kBad, (std::wstring(L"No headset session: ") + note).c_str());
+        shown = true;
+    } else if (shown) {
+        shown = false;
+        SetStatus(L"native_xr", kUnknown, L"Native OpenXR (the first 3D choice above) needs a BodyWalk that takes the game's headset (1.78 or later) or \"Controls without BodyWalk\"");
+    }
+}
+
 // World > Fog, "Depth for the effects": the buffer vrcam picked, its size and when and why it was last picked (d2r_vr_depth.ini
 // beside d2r_vr.ini, written at each pick), or that ReShade's own depth is in use.
 void UpdateDepthStatus() {
@@ -4996,10 +5280,10 @@ void UpdateWeightLibStatus() {
     std::wstring line;
     int state;
     if (there) {
-        line = L"Weight-physics library: d2r_vr_weight.dll is beside the plugin - the tick below moves the weapon with it.";
+        line = L"Weight-physics library: d2r_vr_weight.dll is in d2rloader\\d2r_vr_libs - the tick below moves the weapon with it.";
         state = kOk;
     } else {
-        line = L"Weight-physics library: not found beside the plugin (d2r_vr_weight.dll) - the mod keeps its own weight physics, the tick below is unavailable.";
+        line = L"Weight-physics library: not found in d2rloader\\d2r_vr_libs (d2r_vr_weight.dll) - the mod keeps its own weight physics, the tick below is unavailable.";
         state = kWarn;
     }
     SetStatus(L"weight_lib", state, line.c_str());
@@ -5016,10 +5300,10 @@ void UpdateGripLibStatus() {
     std::wstring line;
     int state;
     if (there) {
-        line = L"Grip library: d2r_vr_grip.dll is beside the plugin - the tick below holds the weapon its way.";
+        line = L"Grip library: d2r_vr_grip.dll is in d2rloader\\d2r_vr_libs - the tick below holds the weapon its way.";
         state = kOk;
     } else {
-        line = L"Grip library: not found beside the plugin (d2r_vr_grip.dll) - the mod keeps its own way of holding, the tick below is unavailable.";
+        line = L"Grip library: not found in d2rloader\\d2r_vr_libs (d2r_vr_grip.dll) - the mod keeps its own way of holding, the tick below is unavailable.";
         state = kWarn;
     }
     SetStatus(L"grip_lib", state, line.c_str());
@@ -5096,6 +5380,9 @@ std::wstring BodyWalkExe() {
     wchar_t self[MAX_PATH];
     DWORD n = GetModuleFileNameW(nullptr, self, MAX_PATH);
     while (n && self[n - 1] != L'\\') --n;
+    // D2R VR as the D2RLoader mod D2R-VR keeps its BodyWalk Portable in mods\D2R-VR\BodyWalkVR; an earlier install's is beside this program
+    const std::wstring inMod = ModInstall() ? modlayout::ModRoot(GameFolder()) + L"BodyWalkVR\\BodyWalkVR.exe" : std::wstring();
+    if (!inMod.empty() && Exists(inMod)) found.push_back(inMod);
     const std::wstring portable = std::wstring(self, n) + L"BodyWalkVR\\BodyWalkVR.exe";
     if (Exists(portable)) found.push_back(portable);
     for (const wchar_t* key : {L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{5E9E3C51-4043-4245-8B24-817C647DE553}_is1",
@@ -5143,22 +5430,40 @@ Item* FindItem(const wchar_t* section, const wchar_t* key);
 void StartBodyWalk();
 // FlatVR started by Launch once BodyWalk's Game Link is up (FollowLaunch): until this tick, 0 = not wanted.
 ULONGLONG g_flatVrStartBy = 0;
+// `--start`: the START button without the window (StartHeadless below). Nothing may open a message box then: it says
+// what it has to say on stdout and in the launch log (StartSay).
+bool g_headless = false;
+void StartSay(const std::wstring& line);
 // The game under D2RLoader, from its own folder (this program sits beside D2R.exe). For VR,
 // BodyWalk with it - the head, the buttons and the gestures go through its Game Link, and
 // nobody should have to know to start it first (2026-10-10) - and FlatVR once Game Link is
 // up, unless the game holds the headset itself (native OpenXR: it stops FlatVR anyway).
-void LaunchGame() {
+// 0 started, 3 D2RLoader.exe could not be started (the window ignores the answer; `--start` returns it).
+int LaunchGame() {
     ApplyWindowForPlatform();   // START in flat mode never meets VR's square (and in VR the square, if ticked)
     if (g_platform != 1) RestoreFrameCapForFlat();   // ... nor VR's frame cap (in VR START changes nothing: the rate was written when it was chosen)
     ApplySafeScreenForPlatform();   // ... nor VR's interface size (and in VR the game starts at 80 where the player chose none; the game is not running yet)
     const std::wstring game = GameFolder();
     const std::wstring exe = game + L"D2RLoader.exe";
-    ShellExecuteW(g_main, L"open", exe.c_str(), nullptr, game.c_str(), SW_SHOWNORMAL);
-    if (g_platform != 1) return;
+    // installed as the D2RLoader mod D2R-VR: D2RLoader is told to run that mod (its plugins load only then)
+    const std::wstring args = ModInstall() ? modlayout::LaunchArguments() : std::wstring();
+    {   // (ShellExecuteEx: `--start` must not meet an error box of the shell's - a D2RLoader.exe that is not a program says so by the exit code)
+        SHELLEXECUTEINFOW sei{sizeof sei};
+        sei.fMask = SEE_MASK_NOASYNC | (g_headless ? SEE_MASK_FLAG_NO_UI : 0);
+        sei.hwnd = g_main;
+        sei.lpVerb = L"open";
+        sei.lpFile = exe.c_str();
+        sei.lpParameters = args.empty() ? nullptr : args.c_str();
+        sei.lpDirectory = game.c_str();
+        sei.nShow = SW_SHOWNORMAL;
+        if (!ShellExecuteExW(&sei)) return 3;
+    }
+    if (g_platform != 1) return 0;
     const bool native = GetPrivateProfileIntW(L"openxr", L"on", 0, g_ini) != 0;
     const bool noBodyWalk = native && GetPrivateProfileIntW(L"openxr", L"direct_input", 0, g_ini) != 0;   // native with its own controls: BodyWalk is not needed
     if (!noBodyWalk && RunningBodyWalkExe().empty()) StartBodyWalk();
     g_flatVrStartBy = native ? 0 : GetTickCount64() + 60000;
+    return 0;
 }
 // Every timer tick: FlatVR's Start asked once Game Link is up (BodyWalk loaded with it),
 // if FlatVR is not running already; given up after a minute.
@@ -5195,7 +5500,8 @@ void StartBodyWalk() {
         const std::wstring t = L"BodyWalk " + VersionText(v) + L" (" + exe + L") is older than D2R VR needs (" +
                                VersionText(kMinBodyWalkMajor * 1000 + kMinBodyWalkMinor) +
                                L").\n\nRun D2R VR Setup again: it puts BodyWalk Portable in the game's folder, and this button starts that one.";
-        MessageBoxW(g_main, t.c_str(), L"D2R VR", MB_OK | MB_ICONWARNING);
+        if (g_headless) StartSay(L"warning: " + t.substr(0, t.find(L"\n\n")));   // started without BodyWalk; the game still starts
+        else MessageBoxW(g_main, t.c_str(), L"D2R VR", MB_OK | MB_ICONWARNING);
         return;
     }
     const std::wstring dir = exe.substr(0, exe.find_last_of(L'\\'));
@@ -5247,15 +5553,50 @@ void BodyWalkRows() {
         if (Item* it = FindItem(L"@status", k); it && it->hidden != none) { it->hidden = none; changed = true; }
     if (changed) LayoutPage();
 }
+// The eye distance beside its box and slider (Stereo > Native OpenXR): what the headset's runtime measured - the game writes [headset] ipd_mm to
+// d2r_vr_headset.ini at a headset session (vr/xr.cpp NoteMeasuredIpd) - and whose number is in use: the headset's or the player's.
+void UpdateIpdStatus() {
+    if (g_platform != 1) return;
+    wchar_t path[MAX_PATH];
+    wcscpy_s(path, g_ini);
+    if (wchar_t* slash = wcsrchr(path, L'\\')) slash[1] = 0;
+    wcscat_s(path, L"d2r_vr_headset.ini");
+    wchar_t b[32] = L"", m[32] = L"";
+    GetPrivateProfileStringW(L"headset", L"ipd_mm", L"", b, 32, path);
+    GetPrivateProfileStringW(L"openxr", L"ipd_mm", L"63", m, 32, g_ini);
+    const bool known = b[0] != 0;
+    const float measured = known ? wcstof(b, nullptr) : 0.0f;
+    float manual = wcstof(m, nullptr);
+    if (!std::isfinite(manual)) manual = 63.0f;
+    manual = std::clamp(manual, 40.0f, 90.0f);
+    const bool autoOn = GetPrivateProfileIntW(L"openxr", L"ipd_auto", 1, g_ini) != 0;
+    wchar_t line[320];
+    int state = 3;   // grey: nothing to say yet
+    if (!known) {
+        swprintf_s(line, L"The headset's eye distance is read when the game starts a headset session; not known yet.%s", autoOn ? L"" : L" Yours is in use.");
+    } else if (measured < 20.0f) {
+        swprintf_s(line, L"The headset reports no distance between the eyes (it puts both in one place). %s", autoOn ? L"64 mm is used: tick off \"from the headset\" and set yours." : L"Yours is in use.");
+        state = autoOn ? 2 : 0;
+    } else if (autoOn) {
+        swprintf_s(line, L"The headset reports %.1f mm between the eyes (read at the game's last headset session). In use: the headset's.", measured);
+        state = 0;
+    } else {
+        swprintf_s(line, L"The headset reports %.1f mm between the eyes (read at the game's last headset session). In use: yours, %.1f mm.", measured, manual);
+        state = 0;
+    }
+    SetStatus(L"ipd_measured", state, line);
+}
 void RefreshStatus() {
     LaunchButton();   // flat and VR alike
     BodyWalkRows();
     UpdateDepthStatus();   // World > Fog: the depth our effects read (any tab: it is a no-op without its row)
     UpdateSafeScreenStatus();   // UI: F4 body: do two side panels fit the picture at the interface size in the file
+    UpdateIpdStatus();          // Stereo > Native OpenXR: the eye distance the headset reports and the one in use
     UpdateWeightLibStatus();   // Weapon weight: the weight-physics library beside the plugin
     UpdateGripLibStatus();     // ... and the grip library
     if (g_platform != 1 || g_tab != 0) return;
     UpdateResolutionTexts();   // the render size's status line and tips (the game may have written the headset's numbers meanwhile)
+    UpdateSessionNote();       // ... and why there is no headset session, if the game said so (FlatVR holds the headset)
     UpdateFrameCapStatus();    // the frame cap in the file and the one VR writes for this choice
     D2RLoaderStatus();
     const std::wstring dir = BodyWalkDir();
@@ -5270,50 +5611,57 @@ void RefreshStatus() {
             cfg = p;
         }
     }
-    // ReShade as the mod wants it beside the game (this program sits next to
-    // D2R.exe): ReShade64.dll, which vrcam loads itself - a dxgi.dll is refused
-    // by the plain D2R.exe and makes vrcam step aside - plus the mod's effect.
-    // And FlatVR's depth add-on, which ReShade loads from the same folder.
+    // ReShade, and D2R VR's files in it. Two ways, by what is next to D2R.exe (shared/reshade_as.h, shared/reshade_paths.h):
+    //  - no dxgi.dll: D2R VR's own ReShade64.dll in mods\D2R-VR\reshade, which vrcam loads itself (the plain D2R.exe refuses a dxgi.dll), with the mod's effect;
+    //  - a dxgi.dll (the player's own ReShade): it is used as it is, and found D2R VR's effect and pictures through two search paths in its ReShade.ini.
+    // And FlatVR's depth add-on, which sits with the rest in the mod's reshade\ (ReShade loads it from there, or vrcam does for a dxgi.dll ReShade).
     {
         wchar_t exe[MAX_PATH];
         DWORD n = GetModuleFileNameW(nullptr, exe, MAX_PATH);
         while (n && exe[n - 1] != L'\\') --n;
-        const std::wstring game(exe, n);
-        const bool r64 = Exists(game + L"ReShade64.dll"), dx = Exists(game + L"dxgi.dll");
-        const bool asDxgi = GetPrivateProfileIntW(L"reshade", L"as_dxgi", 0, g_ini) != 0;
-        if (dx && !Exists(game + L"reshade-shaders\\Shaders\\D2R_DepthFog.fx"))
+        const std::wstring root(exe, n);
+        const std::wstring own = ReShadeFolder();     // where D2R VR's own ReShade64.dll is: the mod's reshade\ once it has one, else the game's folder
+        const std::wstring files = ReShadeFiles();    // where D2R VR's effect, pictures and add-on are: the mod's reshade\ (the game's folder before the mod layout)
+        const bool r64 = Exists(own + L"ReShade64.dll"), dx = Exists(root + L"dxgi.dll");
+        const bool mod = ModInstall();
+        const bool fx = Exists(files + L"reshade-shaders\\Shaders\\D2R_DepthFog.fx");
+        const bool pathsIn = dx && mod && ReShadePathsCheck() == 0;
+        if (dx && !fx)
             SetStatus(L"reshade", kBad, L"ReShade is there (dxgi.dll), the mod's effect D2R_DepthFog.fx is not - run D2R VR Setup again");
+        else if (dx && mod && !pathsIn)
+            SetStatus(L"reshade", kWarn, L"Your ReShade (dxgi.dll next to D2R.exe) is used as it is, but its ReShade.ini does not list D2R VR's folders yet "
+                                         L"(mods\\D2R-VR\\reshade): no fog, sky or ceiling through it. Press \"Add D2R VR's folders to my ReShade\" (game closed)");
+        else if (dx && mod)
+            SetStatus(L"reshade", kOk, L"Your ReShade (dxgi.dll next to D2R.exe) is used as it is; its search paths reach D2R VR's effect and pictures in mods\\D2R-VR\\reshade");
         else if (dx)
-            SetStatus(L"reshade", asDxgi ? kOk : kWarn,
-                      asDxgi ? L"ReShade as dxgi.dll (your own setup): the game loads it itself, D2R VR works with it"
-                             : L"ReShade as dxgi.dll: the game loads it itself, D2R VR works with it - D2R VR Setup renames it "
-                               L"to ReShade64.dll on an update unless you press \"Keep ReShade as dxgi.dll\"");
+            SetStatus(L"reshade", kOk, L"ReShade as dxgi.dll: the game loads it itself, D2R VR works with it");
         else if (!r64) {
             if (!g_rsBusy.load())
                 SetStatus(L"reshade", kBad, g_rsError.empty() ? L"ReShade not installed - press Install ReShade" : g_rsError.c_str());
         }
-        else if (!Exists(game + L"reshade-shaders\\Shaders\\D2R_DepthFog.fx"))
+        else if (!fx)
             SetStatus(L"reshade", kBad, L"ReShade is there, the mod's effect D2R_DepthFog.fx is not - run D2R VR Setup again");
         else
-            SetStatus(L"reshade", kOk, L"ReShade and the mod's effect installed");
-        if (Item* b = FindItem(L"@run", L"reshade_get")) {
-            const bool hide = r64 || dx;
-            if (b->hidden != hide) { b->hidden = hide; LayoutPage(); }
-        }
-        // one of the two renames, by the file there; with dxgi.dll not kept yet, "keep" stays offered
-        if (Item* b = FindItem(L"@run", L"reshade_dxgi")) {
-            const bool hide = !((r64 && !dx) || (dx && !asDxgi));
-            if (b->hidden != hide) { b->hidden = hide; LayoutPage(); }
-        }
-        if (Item* b = FindItem(L"@run", L"reshade_r64")) {
+            SetStatus(L"reshade", kOk, mod ? L"D2R VR's own ReShade and the mod's effect installed (mods\\D2R-VR\\reshade)" : L"ReShade and the mod's effect installed");
+        // which buttons, by the files there (shared/reshade_as.h, tested)
+        const reshadeas::Buttons show = reshadeas::ButtonsShown(ReShadeWhere(), pathsIn);
+        for (const auto& [key, want] : {std::pair<const wchar_t*, bool>{L"reshade_get", show.install}, {L"reshade_paths", show.paths},
+                                        {L"reshade_aside", show.aside}, {L"reshade_back", show.back}})
+            if (Item* b = FindItem(L"@run", key)) {
+                const bool hide = !want;
+                if (b->hidden != hide) { b->hidden = hide; LayoutPage(); }
+            }
+        // the note: only while there is a dxgi.dll of the player's to say something about
+        SetStatus(L"reshade_note", kUnknown,
+                  mod ? L"D2R VR does not rename, move or delete your dxgi.dll. To give D2R VR a ReShade of its own instead, put yours aside (the button above)."
+                      : L"A ReShade you have as dxgi.dll is used as it is.");
+        if (Item* nt = FindItem(L"@status", L"reshade_note")) {
             const bool hide = !dx;
-            if (b->hidden != hide) { b->hidden = hide; LayoutPage(); }
+            if (nt->hidden != hide) { nt->hidden = hide; LayoutPage(); }
         }
-        SetStatus(L"reshade_note", kWarn,
-                  L"Your own ReShade (2D presets, a mod that wants dxgi.dll)? Press \"Keep ReShade as dxgi.dll\".");
-        const bool addon = Exists(game + L"FlatVR_DepthProvider.addon64");
+        const bool addon = Exists(files + L"FlatVR_DepthProvider.addon64");
         SetStatus(L"depth_addon", addon ? kOk : kBad, addon ? L"FlatVR depth add-on installed"
-                                                            : L"FlatVR depth add-on missing beside the game - run D2R VR Setup again");
+                                                            : L"FlatVR depth add-on missing from the mod's reshade folder - run D2R VR Setup again");
     }
 
     // The game's own video settings (Saved Games\Diablo II Resurrected\Settings.json,
@@ -5470,11 +5818,19 @@ void RefreshStatus() {
     D2RVR_State st{};
     const bool game = ReadBlock(D2RVR_STATE_NAME, &st, sizeof st) && Moving(D2RVR_STATE_NAME, st.counter);
     SetStatus(L"game", game ? kOk : kUnknown, game ? L"The game runs with the mod" : L"The game is not running (or the mod is not loaded)");
+    {   // did the OpenXR runtime bind the thumbsticks? (the plugin checks the sources of its stick action against the buttons'; no conclusion = the game or the controllers are not there yet)
+        const bool native = GetPrivateProfileIntW(L"openxr", L"on", 0, g_ini) != 0;
+        const xrstick::Verdict v = game && native ? xrstick::FromBits(st.twoHanded) : xrstick::Verdict::Unknown;
+        SetStatus(L"xr_stick", v == xrstick::Verdict::Bound ? kOk : v == xrstick::Verdict::UnboundSpare ? kWarn : v == xrstick::Verdict::Unbound ? kBad : kUnknown,
+                  !native ? L"Native OpenXR is off" : !game ? L"The game is not running" : xrstick::StatusText(v));
+    }
     {   // the hero playing now (the plugin puts the class of the posed hero's model in bits 8 - 12 of the state block's twoHanded): the per-class wrist depth is edited by it
         static const wchar_t* const kHero[8] = {L"Amazon", L"Sorceress", L"Necromancer", L"Paladin", L"Barbarian", L"Druid", L"Assassin", L"Warlock"};
         const int hero = game ? D2RVRHeroOf(st.twoHanded) : -1;
-        if (hero >= 0 && hero < 8) SetStatus(L"hero_class", kOk, (std::wstring(kHero[hero]) + L" - edit its row below").c_str());
-        else SetStatus(L"hero_class", kUnknown, game ? L"Not known yet (the hero has not been drawn in first person yet)" : L"The game is not running");
+        for (const wchar_t* key : {L"hero_class", L"hero_class_shield"}) {   // (the per-class depth rows and the under-a-shield rows each have the line)
+            if (hero >= 0 && hero < 8) SetStatus(key, kOk, (std::wstring(kHero[hero]) + L" - edit its row below").c_str());
+            else SetStatus(key, kUnknown, game ? L"Not known yet (the hero has not been drawn in first person yet)" : L"The game is not running");
+        }
     }
 }
 
@@ -5511,7 +5867,7 @@ void AddStrikeTable() {
         L"The kind's least swing amplitude as a multiple of the piercing weapons' (\"Piercing weapons: least swing amplitude, cm\"). 0 = follow the kind's family: edged, blunt or staff, "
         L"or the piercing x1. 0.25 to 8. Type a number and press Enter.",
         L"What the kind's least swing amplitude comes to, in cm: the piercing weapons' cm times the kind's factor (its own, or its family's). A dash: the swing size is not asked.",
-        L"The least blade speed, m/s, for a contact of this kind to count. 0 = the general one (\"Hit by touch: the least blade speed that hits\"). 0.3 to 8.",
+        L"The least blade speed, m/s, for a contact of this kind to count. 0 = the general one (\"Hit by touch: the least blade speed that hits\"). 0.3 to 20.",
         L"How far the blade moves to start a stroke, cm, for this kind. 0 = the general one (\"Hit by touch: how far the blade moves to start a stroke\"). 2 to 30.",
         L"Ticked: a contact of this kind must be toward the monster (\"Toward the monster\" above). Unticked: this kind counts whichever way the blade moves.",
         L"Ticked: only the head of this kind of weapon strikes - the outer part of the blade; a touch with the shaft or the handle is refused. Maces and scepters by default."};
@@ -5536,7 +5892,7 @@ void AddStrikeTable() {
         cm.tip = tip(L"the least swing amplitude in cm: the piercing weapons' cm times this row's factor (or its family's).");
         rows.push_back(cell(2, cm));
         rows.push_back(cell(3, Needs(L"gameplay", L"melee_touch", 1,
-            Slider(L"gameplay", Keep(L"melee_min_speed_" + n), L"", 0, 8, 0.1f, 0,
+            Slider(L"gameplay", Keep(L"melee_min_speed_" + n), L"", 0, 20, 0.1f, 0,
                    tip(L"the least blade speed, m/s, for a contact to count. 0 (or under 0.3) = the general one. Only decides whether a contact counts; the game's damage is the game's. Live.")))));
         rows.push_back(cell(4, Needs(L"gameplay", L"melee_touch", 1,
             Slider(L"gameplay", Keep(L"melee_stroke_start_cm_" + n), L"", 0, 30, 1, 0,
@@ -5644,7 +6000,7 @@ struct UpdateResult {
 int g_updateGen = 0;
 std::wstring g_updateUrl;         // what Download opens
 
-void LogLine(const std::wstring& line) { OutputDebugStringW((L"[D2R VR Settings] " + line + L"\n").c_str()); }
+void LogLine(const std::wstring& line) { OutputDebugStringW((L"[D2R VR Authentic Settings] " + line + L"\n").c_str()); }
 
 // Only our own site's pages are opened: https://bodywalkvr.com/..., plain characters.
 bool SafeUrl(const std::wstring& u) {
@@ -6090,6 +6446,8 @@ void ReShadeThread(HWND wnd, std::wstring game) {
         if (!out) { fail(L"Could not save the ReShade setup to " + exe); return; }
     }
     PostReShade(wnd, kUnknown, L"Installing ReShade into the game's folder...", false);
+    const std::wstring modReShade = ModInstall() ? modlayout::ModReShade(game) : std::wstring();
+    const std::wstring pluginsDir = ModInstall() ? modlayout::ModPlugins(game) : game + L"d2rloader\\plugins";
     // One script: the headless setup for D2RLoader.exe (D2R.exe while there is none - the
     // setup quits with code 1 for an exe that is not there), the search paths ReShade 6.8
     // cannot read ('\**\**' -> '\**'), dxgi.dll -> ReShade64.dll, our mark for the uninstaller.
@@ -6103,7 +6461,11 @@ void ReShadeThread(HWND wnd, std::wstring game) {
         L"; $d = Join-Path $g 'dxgi.dll'; $r = Join-Path $g 'ReShade64.dll'" +
         L"; if (Test-Path -LiteralPath $d) { if (Test-Path -LiteralPath $r) { Remove-Item -LiteralPath $d -Force } else { Rename-Item -LiteralPath $d -NewName 'ReShade64.dll' } }" +
         L"; if (-not (Test-Path -LiteralPath $r)) { exit 3 }" +
-        L"; $m = Join-Path $g 'd2rloader\\plugins'; if (Test-Path -LiteralPath $m) { Set-Content -LiteralPath (Join-Path $m 'd2r_vr_reshade_ours.txt') -Value 'ReShade was installed by D2R VR Settings.' }" +
+        // installed as the D2RLoader mod D2R-VR: ReShade and its ini go into the mod's own reshade\ (vrcam's ReShadeDir loads it from there)
+        L"; $mr = " + PsQuote(modReShade) + L"; if ($mr) { New-Item -ItemType Directory -Force -Path $mr | Out-Null" +
+        L"; Move-Item -LiteralPath $r -Destination (Join-Path $mr 'ReShade64.dll') -Force" +
+        L"; if ((Test-Path -LiteralPath $ini) -and -not (Test-Path -LiteralPath (Join-Path $mr 'ReShade.ini'))) { Move-Item -LiteralPath $ini -Destination (Join-Path $mr 'ReShade.ini') } }" +
+        L"; $m = " + PsQuote(pluginsDir) + L"; if (Test-Path -LiteralPath $m) { Set-Content -LiteralPath (Join-Path $m 'd2r_vr_reshade_ours.txt') -Value 'ReShade was installed by D2R VR Settings.' }" +
         L"; exit 0";
     const std::wstring args = L"-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -EncodedCommand " + EncodedCommand(script);
     bool writable = false;
@@ -6147,6 +6509,7 @@ void StartReShadeInstall() {
     }
 }
 
+void StartArcaneSky();
 void OnReShadeProgress(D2RLProgress* raw) {
     std::unique_ptr<D2RLProgress> p(raw);
     SetStatus(L"reshade", p->state, p->text.c_str());
@@ -6154,7 +6517,7 @@ void OnReShadeProgress(D2RLProgress* raw) {
     g_rsBusy.store(false);
     g_rsError = p->state == kOk ? L"" : p->text;
     if (Item* b = FindItem(L"@run", L"reshade_get")) EnableWindow(b->ctl, TRUE);
-    if (p->state == kOk) RefreshStatus();   // the button goes away with ReShade there
+    if (p->state == kOk) { RefreshStatus(); StartArcaneSky(); }   // the button goes away with ReShade there; the Arcane sky has its folder now
 }
 
 // ---------------------------------------------------------------------------
@@ -6202,12 +6565,15 @@ void CollectThread(HWND wnd, std::wstring game, bool running) {
 $g=__GAME__; $z=__ZIP__; $n=__NAME__
 $t=Join-Path $env:TEMP $n; New-Item -ItemType Directory -Force $t | Out-Null
 function C($p,$sub){ if(Test-Path -LiteralPath $p){ $d=Join-Path $t $sub; New-Item -ItemType Directory -Force $d | Out-Null; Copy-Item -LiteralPath $p -Destination $d -Force } }
-$pl=Join-Path $g 'd2rloader\plugins'; $lg=Join-Path $g 'd2rloader\logs'
+$pl=Join-Path $g 'd2rloader\plugins'; $lg=Join-Path $g 'd2rloader\logs'; $rs=$g; $mlg=$null; $md=__MOD__
+if($md){ $pl=Join-Path $md 'd2rloader\plugins'; $mlg=Join-Path $md 'd2rloader\logs'; $rs=Join-Path $md 'reshade' }
 Get-ChildItem -LiteralPath $lg -File | Where-Object { ($_.Extension -in '.log','.txt','.csv') -and $_.Length -lt 50MB } | ForEach-Object { C $_.FullName 'd2rloader_logs' }
+if($mlg){ Get-ChildItem -LiteralPath $mlg -File | Where-Object { ($_.Extension -in '.log','.txt','.csv') -and $_.Length -lt 50MB } | ForEach-Object { C $_.FullName 'mod_logs' } }
+foreach($f in 'd2r_vr_about.json','d2r_vr_start.txt','d2r_vr_crash.txt'){ C (Join-Path $pl $f) 'plugins' }
 foreach($f in 'd2r_vr.ini','d2r_vr.default.ini','d2r_vr_frames.csv','d2r_vr_uitrace.txt'){ C (Join-Path $pl $f) 'plugins' }
 Get-ChildItem -LiteralPath (Join-Path $g 'd2rloader\crashes') -File -Filter '*.log' | Sort-Object LastWriteTime -Descending | Select-Object -First 3 | ForEach-Object { C $_.FullName 'd2rloader_crashes' }
 Get-ChildItem -LiteralPath $lg -File -Filter '*.dmp' | Where-Object { $_.LastWriteTime -gt (Get-Date).AddDays(-1) -and $_.Length -lt 50MB } | ForEach-Object { C $_.FullName 'd2rloader_logs' }
-foreach($f in 'ReShade.log','ReShade.ini','ReShadePreset.ini','FlatVR_DepthProvider.log'){ C (Join-Path $g $f) 'game' }
+foreach($f in 'ReShade.log','ReShade.ini','ReShadePreset.ini','FlatVR_DepthProvider.log'){ C (Join-Path $rs $f) 'game' }
 $ev=Get-WinEvent -FilterHashtable @{LogName='Application'; ProviderName='Application Error','Application Hang'; StartTime=(Get-Date).AddDays(-14)} -MaxEvents 400 | Where-Object { $_.Message -match 'D2R|D2RLoader|Diablo' } | Select-Object -First 3
 if($ev){ $ev | Format-List TimeCreated,ProviderName,Id,Message | Out-String -Width 400 | Set-Content -LiteralPath (Join-Path $t 'windows_crash_events.txt') -Encoding UTF8 }
 C (Join-Path $env:USERPROFILE 'Saved Games\Diablo II Resurrected\Settings.json') 'game'
@@ -6223,7 +6589,7 @@ foreach($f in 'usersettings.json','usersettings_steam.json'){
     $o | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path (Join-Path $t 'bodywalk') $f) -Encoding UTF8 } }
 $i=@('D2R VR logs '+$n,'')
 function V($p){ if(Test-Path -LiteralPath $p){ $e=Get-Item -LiteralPath $p; '{0}: {1} ({2:yyyy-MM-dd HH:mm})' -f $p,$e.VersionInfo.FileVersion,$e.LastWriteTime } else { $p+': none' } }
-foreach($p in (Join-Path $pl 'd2rl-vrcam.dll'),(Join-Path $g 'D2R_VR_Settings.exe'),(Join-Path $g 'FlatVR_DepthProvider.addon64'),(Join-Path $g 'ReShade64.dll'),(Join-Path $g 'D2RLoader.exe'),(Join-Path $g 'BodyWalkVR\BodyWalkVR.exe')){ $i+=V $p }
+foreach($p in (Join-Path $pl 'd2rl-vrcam.dll'),(Join-Path $g 'D2R_VR_Settings.exe'),(Join-Path $rs 'FlatVR_DepthProvider.addon64'),(Join-Path $rs 'ReShade64.dll'),(Join-Path $g 'D2RLoader.exe'),(Join-Path $(if($md){$md}else{$g}) 'BodyWalkVR\BodyWalkVR.exe')){ $i+=V $p }
 Get-Process BodyWalkVR,D2R,D2RLoader | ForEach-Object { $i+=('running: '+$_.ProcessName+' '+$_.Path+' '+$_.MainModule.FileVersionInfo.FileVersion) }
 $i+=''
 Get-CimInstance Win32_OperatingSystem | ForEach-Object { $i+=('Windows: '+$_.Caption+' '+$_.Version+', RAM '+[math]::Round($_.TotalVisibleMemorySize/1MB,1)+' GB') }
@@ -6238,6 +6604,7 @@ if(Test-Path -LiteralPath $z){ exit 0 } else { exit 2 })PS";
         if (at != std::wstring::npos) script.replace(at, wcslen(key), PsQuote(value));
     };
     put(L"__GAME__", game);
+    put(L"__MOD__", ModInstall() ? modlayout::ModRoot(game) : std::wstring());   // D2R VR as the D2RLoader mod: its plugin folder, logs and ReShade are the mod's
     put(L"__ZIP__", zip);
     put(L"__NAME__", name);
     const std::wstring args = L"-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -EncodedCommand " + EncodedCommand(script);
@@ -6259,29 +6626,153 @@ if(Test-Path -LiteralPath $z){ exit 0 } else { exit 2 })PS";
     PostCollect(wnd, kOk, L"Saved on your desktop: " + std::wstring(name) + L".zip - post it in our Discord (#diablo-2-vr)", true);
 }
 
-// ReShade's file (Home > The game and ReShade, 2026-10-11): dxgi.dll for players with a ReShade
-// setup of their own - the game loads it at every start, and D2R VR Setup leaves it with [reshade]
-// as_dxgi=1 - or ReShade64.dll, D2R VR's way (vrcam loads it under D2RLoader). Both there: the
-// other dxgi.dll is put aside as dxgi.dll.off, never deleted.
-void ReShadeAs(bool dxgi) {
+// ReShade the player has as dxgi.dll (Home > The game and ReShade; shared/reshade_as.h, shared/reshade_paths.h): D2R VR uses it as it is. Nothing of ours - not
+// Setup, not the uninstaller, not these buttons - renames, moves or deletes it. For D2R VR's effect and pictures (in mods\D2R-VR\reshade) to reach it, two list
+// items are added to EffectSearchPaths and TextureSearchPaths of the ReShade.ini it reads (append-only, once, a copy kept as ReShade.ini.before_d2rvr); Setup runs
+// this at the end, the uninstaller takes them out again, the Home button does it for a ReShade installed later.
+std::string Utf8Narrow(const std::wstring& w) {
+    if (w.empty()) return std::string();
+    std::string s(static_cast<size_t>(WideCharToMultiByte(CP_UTF8, 0, w.data(), (int)w.size(), nullptr, 0, nullptr, nullptr)), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, w.data(), (int)w.size(), s.data(), (int)s.size(), nullptr, nullptr);
+    return s;
+}
+// The ReShade.ini a dxgi.dll in the game's folder reads - ReShade's own rule (its dll_main.cpp get_base_path): [INSTALL] BasePath in <game>\ReShade.ini names another base
+// folder (relative to the dll's, the game's), else the game's folder is the base.
+std::wstring ReShadeIniOfDxgi(const std::wstring& game, bool* redirected) {
+    *redirected = false;
+    std::string text;
+    if (ReadFileText(game + L"ReShade.ini", &text)) {
+        const std::string bp = reshadepaths::InstallBasePath(text);
+        if (!bp.empty()) {
+            std::wstring full = Widen(bp);
+            if (full.size() < 2 || (full[1] != L':' && full.rfind(L"\\\\", 0) != 0)) full = game + full;   // (relative to the game's folder, the dll's)
+            wchar_t buf[2 * MAX_PATH];
+            const DWORD n = GetFullPathNameW(full.c_str(), (DWORD)std::size(buf), buf, nullptr);
+            if (n && n < std::size(buf)) full = buf;
+            const DWORD a = GetFileAttributesW(full.c_str());
+            if (a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_DIRECTORY)) {
+                *redirected = true;
+                return modlayout::WithSlash(full) + L"ReShade.ini";
+            }
+        }
+    }
+    return game + L"ReShade.ini";
+}
+struct PathForms {
+    reshadepaths::Entries use;                      // what is written: relative to the base when that is the game's folder, else absolute
+    std::vector<reshadepaths::Entries> all;         // both spellings: what is taken out again
+};
+PathForms ReShadePathForms(const std::wstring& game, const std::wstring& iniPath) {
+    const std::wstring mod = modlayout::ModReShade(game);
+    PathForms f;
+    const reshadepaths::Entries rel = reshadepaths::EntriesFor(".\\" + Utf8Narrow(mod.substr(game.size())));
+    const reshadepaths::Entries abs = reshadepaths::EntriesFor(Utf8Narrow(mod));
+    f.all = {rel, abs};
+    const bool baseIsGame = _wcsnicmp(iniPath.c_str(), game.c_str(), game.size()) == 0 && iniPath.find(L'\\', game.size()) == std::wstring::npos;
+    f.use = baseIsGame ? rel : abs;
+    return f;
+}
+// The text of an ini without its UTF-8 mark (kept apart); false for a UTF-16 file, which this does not edit.
+bool SplitIniText(const std::string& raw, std::string* bom, std::string* body) {
+    if (raw.size() >= 2 && ((unsigned char)raw[0] == 0xFF || (unsigned char)raw[0] == 0xFE) && ((unsigned char)raw[1] == 0xFE || (unsigned char)raw[1] == 0xFF)) return false;
+    const bool utf8 = raw.size() >= 3 && (unsigned char)raw[0] == 0xEF && (unsigned char)raw[1] == 0xBB && (unsigned char)raw[2] == 0xBF;
+    *bom = utf8 ? raw.substr(0, 3) : std::string();
+    *body = utf8 ? raw.substr(3) : raw;
+    return true;
+}
+bool WriteWhole(const std::wstring& path, const std::string& data) {   // beside it first, then moved over: ReShade never meets half a file
+    const std::wstring tmp = path + L".d2rvr.tmp";
+    {
+        std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+        out.write(data.data(), (std::streamsize)data.size());
+        if (!out) { out.close(); DeleteFileW(tmp.c_str()); return false; }
+    }
+    if (!MoveFileExW(tmp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING)) { DeleteFileW(tmp.c_str()); return false; }
+    return true;
+}
+// Exit codes (also of --reshade-paths add): 0 they are in (or were), 1 could not write, 2 nothing to do (not the mod, or no dxgi.dll next to D2R.exe), 3 the game runs
+// (ReShade writes its ini back when the game ends: an edit now would be lost).
+int ReShadePathsAdd() {
     const std::wstring game = GameFolder();
-    const std::wstring r64 = game + L"ReShade64.dll", dx = game + L"dxgi.dll";
-    bool ok = true;
-    if (dxgi) {
-        if (!Exists(dx)) ok = MoveFileExW(r64.c_str(), dx.c_str(), 0) != 0;
-    } else if (Exists(r64)) {
-        ok = MoveFileExW(dx.c_str(), (game + L"dxgi.dll.off").c_str(), MOVEFILE_REPLACE_EXISTING) != 0;
-    } else {
-        ok = MoveFileExW(dx.c_str(), r64.c_str(), 0) != 0;
+    if (!ModInstall() || !Exists(game + L"dxgi.dll")) return 2;
+    if (ProcessRunning(L"D2R.exe") || ProcessRunning(L"D2RLoader.exe")) return 3;
+    bool redirected = false;
+    const std::wstring ini = ReShadeIniOfDxgi(game, &redirected);
+    std::string raw, bom, body;
+    const bool had = ReadFileText(ini, &raw);
+    if (had && !SplitIniText(raw, &bom, &body)) { LogLine(L"reshade paths: " + ini + L" is not a UTF-8 / ANSI file - not edited"); return 1; }
+    const PathForms f = ReShadePathForms(game, ini);
+    bool changed = false;
+    const std::string out = reshadepaths::Add(body, f.use, &changed);
+    if (!changed) { LogLine(L"reshade paths: already in " + ini); return 0; }
+    if (had && !Exists(ini + L".before_d2rvr")) CopyFileW(ini.c_str(), (ini + L".before_d2rvr").c_str(), TRUE);   // the player's file as it was, once
+    if (!had) { const size_t cut = ini.find_last_of(L'\\'); if (cut != std::wstring::npos) CreateDirectoryW(ini.substr(0, cut).c_str(), nullptr); }
+    if (!WriteWhole(ini, bom + out)) { LogLine(L"reshade paths: could not write " + ini); return 1; }
+    LogLine(L"reshade paths: D2R VR's two folders added to " + ini);
+    return 0;
+}
+// 0 taken out (or not there), 1 could not write. Never needs a dxgi.dll to be there; the backup goes when the file is back to it.
+int ReShadePathsRemove() {
+    const std::wstring game = GameFolder();
+    if (!ModInstall()) return 2;
+    int rc = 0;
+    bool redirected = false;
+    const std::wstring first = ReShadeIniOfDxgi(game, &redirected);
+    std::vector<std::wstring> inis{first};
+    if (redirected) inis.push_back(game + L"ReShade.ini");
+    for (const std::wstring& ini : inis) {
+        std::string raw, bom, body;
+        if (!ReadFileText(ini, &raw) || !SplitIniText(raw, &bom, &body)) continue;
+        bool changed = false;
+        const std::string out = reshadepaths::Remove(body, ReShadePathForms(game, ini).all, &changed);
+        if (!changed) continue;
+        if (!WriteWhole(ini, bom + out)) { rc = 1; continue; }
+        std::string backup;
+        if (ReadFileText(ini + L".before_d2rvr", &backup) && backup == bom + out) DeleteFileW((ini + L".before_d2rvr").c_str());   // nothing else changed: the copy is not needed
+        LogLine(L"reshade paths: D2R VR's folders taken out of " + ini);
     }
-    if (ok) WritePrivateProfileStringW(L"reshade", L"as_dxgi", dxgi ? L"1" : L"0", g_ini);
-    LogLine(std::wstring(L"reshade: ") + (dxgi ? L"kept as dxgi.dll" : L"ReShade64.dll for D2R VR only") + (ok ? L"" : L" - FAILED"));
-    if (!ok) {
-        const DWORD e = GetLastError();
-        MessageBoxW(g_main, (L"Could not rename ReShade's file in the game's folder (error " + std::to_wstring(e) +
-                             L"). The folder may need administrator rights, or the game is running - close it and try again.").c_str(),
-                    L"D2R VR Settings", MB_OK | MB_ICONWARNING);
+    return rc;
+}
+// 0 both are in, 1 not, 2 no dxgi.dll beside the game (or not the mod).
+int ReShadePathsCheck() {
+    const std::wstring game = GameFolder();
+    if (!ModInstall() || !Exists(game + L"dxgi.dll")) return 2;
+    bool redirected = false;
+    const std::wstring ini = ReShadeIniOfDxgi(game, &redirected);
+    std::string raw, bom, body;
+    if (!ReadFileText(ini, &raw) || !SplitIniText(raw, &bom, &body)) return 1;
+    const PathForms f = ReShadePathForms(game, ini);
+    for (const reshadepaths::Entries& e : f.all)
+        if (reshadepaths::Has(body, e)) return 0;
+    return 1;
+}
+void ReShadePathsButton() {
+    const int rc = ReShadePathsAdd();
+    if (rc == 3)
+        MessageBoxW(g_main, L"The game is running: ReShade writes its ReShade.ini back when the game ends, so a change now would be lost. Close the game and press the button again.",
+                    kAppName, MB_OK | MB_ICONINFORMATION);
+    else if (rc == 1)
+        MessageBoxW(g_main, L"Could not change your ReShade.ini (it may be read-only, in a folder that needs administrator rights, or not a plain text file). Nothing was changed.",
+                    kAppName, MB_OK | MB_ICONWARNING);
+    RefreshStatus();
+}
+// The one explicit choice: the player's dxgi.dll renamed to dxgi.dll.off (and back). Asks first; deletes and replaces nothing.
+void ReShadeAside(bool back) {
+    if (!back &&
+        MessageBoxW(g_main,
+                    L"Put your ReShade (dxgi.dll next to D2R.exe) aside as dxgi.dll.off?\n\nNothing is deleted. D2R VR then has no ReShade until you press Install ReShade, which "
+                    L"gives it one of its own in mods\\D2R-VR\\reshade. The game started without D2RLoader has no ReShade meanwhile. \"Bring my dxgi.dll back\" undoes this.",
+                    kAppName, MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) != IDYES)
+        return;
+    if (ProcessRunning(L"D2R.exe") || ProcessRunning(L"D2RLoader.exe")) {
+        MessageBoxW(g_main, L"The game is running - close it first.", kAppName, MB_OK | MB_ICONINFORMATION);
+        return;
     }
+    const reshadeas::Result r = reshadeas::Apply(back ? reshadeas::Act::Back : reshadeas::Act::Aside, ReShadeWhere());
+    LogLine(std::wstring(L"reshade: ") + r.did + (r.ok ? L"" : L" - FAILED"));
+    if (!r.ok)
+        MessageBoxW(g_main, (L"Could not rename the file (error " + std::to_wstring(r.error) + L"). Nothing was changed. The folder may need administrator rights.").c_str(),
+                    kAppName, MB_OK | MB_ICONWARNING);
     RefreshStatus();
 }
 
@@ -6291,6 +6782,48 @@ void ForgetCalibration() {
     WritePrivateProfileStringW(L"calibration", L"version", L"0", g_ini);
     WritePrivateProfileStringW(L"calibration", L"eye_height_m", L"0", g_ini);
     WritePrivateProfileStringW(L"calibration", L"arm_span_m", L"0", g_ini);
+}
+
+// [sky] arcane_sky: the pictures made from the game's own files (arcane_assets.cpp), on a thread of its own -
+// opening the game's archives takes a moment. At the start, and when the tick is switched on.
+constexpr UINT WM_APP_ARCANE = WM_APP + 43;
+std::atomic<bool> g_arcaneBusy{false};
+
+// Where the pictures go, the way the plugin finds them (its ReShadeDir()): ReShade's own folder - the mod's reshade\ in the D2RLoader mod
+// D2R-VR (mods\D2R-VR\reshade, ReShade's base there), the game's folder otherwise - and, in the mod, the mod's own data folder for the
+// level's visual files. The game's archives are read from the game's folder.
+arcane::Result PrepareArcane() {
+    const std::wstring game = GameFolder();
+    return arcane::Prepare(game, ReShadeFiles(), ModInstall() ? modlayout::ModRoot(game) : std::wstring());
+}
+
+void ArcaneThread(HWND wnd) {
+    const arcane::Result r = PrepareArcane();
+    LogLine(L"arcane sky: " + r.text);
+    const int state = r.state == arcane::kMade ? kOk : r.state == arcane::kNotHere ? kWarn : kBad;
+    auto* p = new D2RLProgress{state, L"Arcane Sanctuary sky: " + r.text, true};
+    if (!PostMessageW(wnd, WM_APP_ARCANE, 0, (LPARAM)p)) delete p;
+}
+
+void StartArcaneSky() {
+    if (GetPrivateProfileIntW(L"sky", L"arcane_sky", 1, g_ini) == 0) {
+        SetStatus(L"arcane_sky", kUnknown, L"Arcane Sanctuary sky: off ([sky] arcane_sky, the Sky tab)");
+        return;
+    }
+    if (g_arcaneBusy.exchange(true)) return;
+    SetStatus(L"arcane_sky", kUnknown, L"Arcane Sanctuary sky: making it from the game's files...");
+    try {
+        std::thread(ArcaneThread, g_main).detach();
+    } catch (const std::exception&) {
+        g_arcaneBusy.store(false);
+        SetStatus(L"arcane_sky", kBad, L"Arcane Sanctuary sky: could not be started");
+    }
+}
+
+void OnArcaneDone(D2RLProgress* raw) {
+    std::unique_ptr<D2RLProgress> p(raw);
+    g_arcaneBusy.store(false);
+    SetStatus(L"arcane_sky", p->state, p->text.c_str());
 }
 
 void StartCollectLogs() {
@@ -6479,9 +7012,11 @@ LRESULT CALLBACK PageProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
                 else if (wcscmp(it.key, L"d2r_launch") == 0) LaunchGame();
                 else if (wcscmp(it.key, L"d2rloader_get") == 0) StartD2RLoaderInstall();
                 else if (wcscmp(it.key, L"reshade_get") == 0) StartReShadeInstall();
-                else if (wcscmp(it.key, L"reshade_dxgi") == 0) ReShadeAs(true);
-                else if (wcscmp(it.key, L"reshade_r64") == 0) ReShadeAs(false);
+                else if (wcscmp(it.key, L"reshade_paths") == 0) ReShadePathsButton();
+                else if (wcscmp(it.key, L"reshade_aside") == 0) ReShadeAside(false);
+                else if (wcscmp(it.key, L"reshade_back") == 0) ReShadeAside(true);
                 else if (wcscmp(it.key, L"collect_logs") == 0) StartCollectLogs();
+                else if (wcscmp(it.key, L"arcane_make") == 0) StartArcaneSky();
                 else if (wcscmp(it.key, L"calibration_forget") == 0) ForgetCalibration();
                 else if (BW_LinkRequests* r = LinkRequests()) bw::link::Request(r, &r->flatvrRunning, wcscmp(it.key, L"flatvr_start") == 0 ? 1 : 0);
             } else if (HIWORD(w) == BN_CLICKED && it.kind == Kind::Button) {
@@ -6494,6 +7029,7 @@ LRESULT CALLBACK PageProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
                 if (wcscmp(it.section, L"direct") == 0) RefreshControls();   // left_stick_map, pause_button: what the button list calls "the standard" moved
                 UpdateEnabled();
                 if (wcscmp(it.section, L"update") == 0) StartUpdateCheck();   // switched on, or the other channel
+                if (wcscmp(it.section, L"sky") == 0 && wcscmp(it.key, L"arcane_sky") == 0) StartArcaneSky();
             }
         }
         return 0;
@@ -6535,12 +7071,14 @@ LRESULT CALLBACK WndProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
         FollowWeapon();
         RefreshStatus();
         StartUpdateCheck();
+        StartArcaneSky();
         return 0;
     }
     case WM_APP_UPDATE: OnUpdateResult((UpdateResult*)l); return 0;
     case WM_APP_D2RL: OnD2RLProgress((D2RLProgress*)l); return 0;
     case WM_APP_RESHADE: OnReShadeProgress((D2RLProgress*)l); return 0;
     case WM_APP_COLLECT: OnCollectProgress((D2RLProgress*)l); return 0;
+    case WM_APP_ARCANE: OnArcaneDone((D2RLProgress*)l); return 0;
     case WM_TIMER: {
         FollowLaunch();
         FollowWeapon();
@@ -6670,6 +7208,123 @@ int WriteGameLinkManifest(const wchar_t* path) {
     return f.good() ? 0 : 1;
 }
 
+// The program sits next to the game's exe (where players look for it, 2026-10-05); the ini is the mod's:
+// <game>\mods\D2R-VR\d2rloader\plugins\d2r_vr.ini (D2R VR as the D2RLoader mod D2R-VR, shared/mod_layout.h), else the global plugin's in
+// <game>\d2rloader\plugins (an install from before the mod layout). An ini right next to it wins (the oldest place).
+// Sets g_ini and g_uiIni (they may name files that are not there: the caller looks).
+void FindIni() {
+    DWORD n = GetModuleFileNameW(nullptr, g_ini, MAX_PATH);
+    while (n && g_ini[n - 1] != L'\\') --n;
+    g_ini[n] = 0;
+    {
+        wchar_t here[MAX_PATH];
+        wcscpy_s(here, g_ini);
+        wcscat_s(g_ini, L"d2r_vr.ini");
+        if (GetFileAttributesW(g_ini) == INVALID_FILE_ATTRIBUTES) {   // D2R VR as the D2RLoader mod D2R-VR (shared/mod_layout.h)
+            const std::wstring mod = modlayout::ModPlugins(here) + L"d2r_vr.ini";
+            wcscpy_s(g_ini, mod.c_str());
+        }
+        if (GetFileAttributesW(g_ini) == INVALID_FILE_ATTRIBUTES) {   // the global plugin, as before
+            wcscpy_s(g_ini, here);
+            wcscat_s(g_ini, L"d2rloader\\plugins\\d2r_vr.ini");
+        }
+    }
+    wcscpy_s(g_uiIni, g_ini);
+    g_uiIni[wcslen(g_uiIni) - wcslen(L"d2r_vr.ini")] = 0;
+    wcscat_s(g_uiIni, L"d2r_vr_settings.ini");
+}
+
+// D2R_VR_Settings.exe --start
+//
+// The shared VR mod launcher's way to start D2R VR Authentic (docs/launcher_authentic.md): the START button without the window. The
+// launcher runs this with what it chose for this start in the environment - XR_RUNTIME_JSON (the OpenXR runtime, only for this start) and
+// VRMOD_* (who was started, for the logs) - and D2RLoader.exe, so the game, inherits it.
+// What it does, as the button does: reads [mode] platform from d2r_vr.ini; sets the game's window for it (flat: the player's own; VR: the
+// square, if ticked); starts `D2RLoader.exe -mod D2R-VR` from the game's folder (the plugin loads only under that mod; an install from
+// before the mod layout is started without it, as before); in VR also BodyWalk (not with native OpenXR and "Controls without BodyWalk") and, for
+// FlatVR, asks FlatVR to start once BodyWalk's Game Link is up (it waits up to a minute for that; native OpenXR returns at once). It does
+// not wait for the game to end, opens no window and no message box.
+// What it says goes to stdout (a pipe or a console, when there is one) and to d2rloader\logs\d2r_vr_launch.txt.
+// Exit code: 0 started; 1 no d2r_vr.ini (not in the mod); 2 no D2RLoader.exe; 3 D2RLoader.exe could not be started; 4 the game runs.
+void StartSay(const std::wstring& line) {
+    SYSTEMTIME t;
+    GetLocalTime(&t);
+    wchar_t stamp[32];
+    swprintf_s(stamp, L"%04d-%02d-%02d %02d:%02d:%02d ", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond);
+    auto utf8 = [](const std::wstring& w) {
+        std::string s(static_cast<size_t>(WideCharToMultiByte(CP_UTF8, 0, w.data(), (int)w.size(), nullptr, 0, nullptr, nullptr)), '\0');
+        WideCharToMultiByte(CP_UTF8, 0, w.data(), (int)w.size(), s.data(), (int)s.size(), nullptr, nullptr);
+        return s;
+    };
+    const std::string text = utf8(line) + "\r\n";
+    const HANDLE out = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (out && out != INVALID_HANDLE_VALUE && GetFileType(out) != FILE_TYPE_UNKNOWN) {
+        DWORD w = 0;
+        WriteFile(out, text.data(), (DWORD)text.size(), &w, nullptr);
+    }
+    // the D2RLoader mod D2R-VR keeps its own logs (mods\D2R-VR\d2rloader\logs, where vrcam's start/crash files are too); an earlier install's global folder
+    const std::wstring base = ModInstall() ? modlayout::ModRoot(GameFolder()) : GameFolder();
+    const std::wstring dir = base + L"d2rloader\\logs\\";
+    CreateDirectoryW((base + L"d2rloader").c_str(), nullptr);
+    CreateDirectoryW(dir.c_str(), nullptr);
+    const HANDLE f = CreateFileW((dir + L"d2r_vr_launch.txt").c_str(), FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_ALWAYS,
+                                 FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return;
+    const std::string logged = utf8(stamp) + text;
+    DWORD w = 0;
+    WriteFile(f, logged.data(), (DWORD)logged.size(), &w, nullptr);
+    CloseHandle(f);
+}
+std::wstring EnvText(const wchar_t* name) {
+    wchar_t b[400];
+    const DWORD n = GetEnvironmentVariableW(name, b, 400);
+    return n > 0 && n < 400 ? std::wstring(b, n) : std::wstring();
+}
+int StartHeadless() {
+    g_headless = true;
+    // run from a console, a GUI-subsystem program has no stdout: take the parent's (a pipe the launcher gave us is already there)
+    const HANDLE so = GetStdHandle(STD_OUTPUT_HANDLE);
+    if ((!so || so == INVALID_HANDLE_VALUE) && AttachConsole(ATTACH_PARENT_PROCESS)) {
+        const HANDLE con = CreateFileW(L"CONOUT$", GENERIC_WRITE, FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+        if (con != INVALID_HANDLE_VALUE) SetStdHandle(STD_OUTPUT_HANDLE, con);
+    }
+    CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);   // ShellExecute asks for it
+    FindIni();
+    const std::wstring game = GameFolder();
+    StartSay(L"start: D2R VR " D2RVR_VERSION_W L" in " + game + L", settings " + g_ini);
+    const std::wstring by = EnvText(L"VRMOD_ACTIVE_ID");
+    if (!by.empty())
+        StartSay(L"start: by the VR mod launcher as " + by + L" " + EnvText(L"VRMOD_ACTIVE_VERSION") + L", runtime " + EnvText(L"VRMOD_RUNTIME") +
+                 L", store " + EnvText(L"VRMOD_STORE") + (EnvText(L"XR_RUNTIME_JSON").empty() ? L"" : L", XR_RUNTIME_JSON " + EnvText(L"XR_RUNTIME_JSON")));
+    if (GetFileAttributesW(g_ini) == INVALID_FILE_ATTRIBUTES) {
+        StartSay(L"start: there is no d2r_vr.ini in mods\\D2R-VR\\d2rloader\\plugins (nor in d2rloader\\plugins) - not started");
+        return 1;
+    }
+    if (!Exists(game + L"D2RLoader.exe")) {
+        StartSay(L"start: D2RLoader.exe is not in the game's folder - D2R VR runs only under it - not started");
+        return 2;
+    }
+    if (ProcessRunning(L"D2RLoader.exe") || ProcessRunning(L"D2R.exe")) {
+        StartSay(L"start: the game is running already - not started");
+        return 4;
+    }
+    g_platform = GetPrivateProfileIntW(L"mode", L"platform", 1, g_ini) != 0 ? 1 : 0;
+    const int r = LaunchGame();
+    if (r) {
+        StartSay(L"start: D2RLoader.exe could not be started - not started");
+        return r;
+    }
+    StartSay(std::wstring(L"start: D2RLoader.exe ") + (ModInstall() ? L"-mod D2R-VR " : L"") + L"started (" + (g_platform == 1 ? L"VR" : L"flat") + L")");
+    // FlatVR: its Start goes to BodyWalk once Game Link is up (the window does this on a timer; here we wait)
+    while (g_flatVrStartBy) {
+        FollowLaunch();
+        if (!g_flatVrStartBy) break;
+        Sleep(500);
+    }
+    StartSay(L"start: done");
+    return 0;
+}
+
 }  // namespace
 
 int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
@@ -6681,37 +7336,48 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
             LocalFree(argv);
             return r;
         }
+        if (argv && argc >= 2 && wcscmp(argv[1], L"--prepare-assets") == 0) {
+            // D2R VR Setup, once at the end ([sky] arcane_sky): the Arcane Sanctuary's sky pictures out of the
+            // player's own game. 0 = made or up to date, 2 = no ReShade folder to put them in, 1 = could not.
+            // Setup goes on whatever comes back: the program makes them again at its next start.
+            LocalFree(argv);
+            FindIni();   // the mod's d2r_vr.ini (mods\D2R-VR\d2rloader\plugins), as the window finds it - not a path of the global layout
+            if (GetPrivateProfileIntW(L"sky", L"arcane_sky", 1, g_ini) == 0) return 0;   // unticked: nothing made
+            const arcane::Result r = PrepareArcane();
+            LogLine(L"arcane sky: " + r.text);
+            return r.state == arcane::kMade ? 0 : r.state == arcane::kNotHere ? 2 : 1;
+        }
+        if (argv && argc >= 3 && wcscmp(argv[1], L"--reshade-paths") == 0) {
+            // D2R VR Setup (add, once at the end) and its uninstaller (remove): D2R VR's two folders in the search paths of the ReShade the player has as dxgi.dll
+            // (shared/reshade_paths.h; the dxgi.dll itself is never touched). add: 0 they are in, 1 could not write, 2 nothing to do (no dxgi.dll), 3 the game runs;
+            // remove: 0 out (or never in), 1 could not write; check: 0 in, 1 not, 2 no dxgi.dll. Setup goes on whatever comes back.
+            const std::wstring verb = argv[2];
+            LocalFree(argv);
+            FindIni();
+            if (verb == L"add") return ReShadePathsAdd();
+            if (verb == L"remove") return ReShadePathsRemove();
+            if (verb == L"check") return ReShadePathsCheck();
+            return 64;
+        }
         if (argv && argc >= 3 && wcscmp(argv[1], L"--game-link-manifest") == 0) {   // the installer's build
             const int r = WriteGameLinkManifest(argv[2]);
             LocalFree(argv);
             return r;
+        }
+        if (argv && argc >= 2 && wcscmp(argv[1], L"--start") == 0) {   // the shared VR mod launcher: START without the window
+            LocalFree(argv);
+            return StartHeadless();
         }
         if (argv) LocalFree(argv);
     }
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);   // ShellExecute of the download page asks for it
 
-    // The program sits next to the game's exe (where players look for it, 2026-10-05); the
-    // ini stays in d2rloader\plugins beside the mod. An ini right next to it wins (the old place).
-    DWORD n = GetModuleFileNameW(nullptr, g_ini, MAX_PATH);
-    while (n && g_ini[n - 1] != L'\\') --n;
-    g_ini[n] = 0;
-    {
-        wchar_t here[MAX_PATH];
-        wcscpy_s(here, g_ini);
-        wcscat_s(g_ini, L"d2r_vr.ini");
-        if (GetFileAttributesW(g_ini) == INVALID_FILE_ATTRIBUTES) {
-            wcscpy_s(g_ini, here);
-            wcscat_s(g_ini, L"d2rloader\\plugins\\d2r_vr.ini");
-        }
-    }
-    wcscpy_s(g_uiIni, g_ini);
-    g_uiIni[wcslen(g_uiIni) - wcslen(L"d2r_vr.ini")] = 0;
-    wcscat_s(g_uiIni, L"d2r_vr_settings.ini");
+    FindIni();
     if (GetFileAttributesW(g_ini) == INVALID_FILE_ATTRIBUTES) {
-        MessageBoxW(nullptr, L"There is no d2r_vr.ini in d2rloader\\plugins next to this program.\n"
+        MessageBoxW(nullptr, L"There is no d2r_vr.ini in mods\\D2R-VR\\d2rloader\\plugins (nor in d2rloader\\plugins) next to this program.\n"
                              L"Put this program next to the game's D2R.exe, with the mod installed.",
-                    L"D2R VR Settings", MB_ICONWARNING);
+                    kAppName, MB_ICONWARNING);
         return 1;
     }
     wchar_t buf[32];
@@ -6740,7 +7406,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
     wc.lpszClassName = L"D2RVRSettingsPage";
     RegisterClassW(&wc);
 
-    HWND wnd = CreateWindowExW(WS_EX_CONTROLPARENT, L"D2RVRSettings", L"D2R VR Settings " D2RVR_VERSION_W, WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
+    HWND wnd = CreateWindowExW(WS_EX_CONTROLPARENT, L"D2RVRSettings", (std::wstring(kAppName) + L" " D2RVR_VERSION_W).c_str(), WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
                                CW_USEDEFAULT, CW_USEDEFAULT, 800, 600, nullptr, nullptr, inst, nullptr);
     {   // the saved size (or three columns wide), no bigger than the monitor's work area, centred on it
         MONITORINFO mi{sizeof mi};

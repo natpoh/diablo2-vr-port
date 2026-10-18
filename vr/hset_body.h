@@ -44,7 +44,7 @@ inline std::string MeasuredText(const Stored& s) {
 inline std::string UseText(const Stored& s) {
     if (!s.valid) return "Until you measure, the height from BodyWalk or \"Your height\" and the arm scale apply.";
     return s.use ? "In use: the world's scale and the hero's arms follow it."
-                 : "Not in use: the box \"Use the measured height and arm span\" is unticked in D2R VR Settings.";
+                 : "Not in use: the box \"Use the measured height and arm span\" is unticked in D2R VR Authentic Settings.";
 }
 
 }  // namespace hset::body

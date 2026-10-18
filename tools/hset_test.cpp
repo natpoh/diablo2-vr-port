@@ -177,7 +177,7 @@ static void TestDefs() {
     CHECK(perPage[kPageView] <= kRowsPerPage - 1, "the first page keeps its last row for the game view buttons");
     CHECK(RowsOn(kPageView) > 0 && RowsOn(kPageOptions) > 0, "the two table pages have rows");
     CHECK(RowsOn(kPageVideo) == 0 && RowsOn(kPageBody) == 0, "the two hand-drawn pages have no table rows (they draw their own)");
-    CHECK(PageCount() == 10 && PageCount() <= kMaxPages, "ten pages (View, Options, Video, Body, Life, Look, HUD, Belt, Left, Right), they fit the tabs");
+    CHECK(PageCount() == 11 && PageCount() <= kMaxPages, "eleven pages (View, Options, Video, Body, Life, Look, HUD, Belt, Melee, Left, Right), they fit the tabs");
     // the keys the hand-drawn pages work on are in the table, with no row, named as the plugin reads them
     const int hidden[6] = {kKeyMode, kKeyPx, kKeyUse, kKeyVersion, kKeyEye, kKeySpan};
     for (int k : hidden) CHECK(k >= 0 && k < kCount && kDefs[k].page == kNoPage, "a hand-drawn page's key has no row");
@@ -1984,6 +1984,14 @@ static void Dump(const std::string& dir) {
     Centre(kInc(3), &u, &v);
     Paint(bb, HitTest(kPageBelt, u, v), px);
     WriteBmp(dir + "/hset_page4_belt.bmp", px);
+    // the Melee page: his numbers (6.0 m/s, 15 cm), the speed one step up and waiting to be written
+    Model mm;
+    mm.Open(SnapWith({{kKeyMeleeTouch, 1}, {KeyAt(kPageMelee, 1), 6.0}, {KeyAt(kPageMelee, 2), 15.0}}));
+    mm.Click({Kind::Tab, kPageMelee, 0});
+    mm.Click({Kind::Change, KeyAt(kPageMelee, 1), 1});
+    Centre(kInc(1), &u, &v);
+    Paint(mm, HitTest(kPageMelee, u, v), px);
+    WriteBmp(dir + "/hset_page8_melee.bmp", px);
     // the Left / Right pages: a made-up set of picks, one change waiting on the Left page, one line left as the file has it (Custom) on the Right
     Snapshot ks = Snap();
     const int shipped[kBindCount] = {19, 2, 3, 6, 3, 7, 1, 2, 13, 10, 9, 3};
@@ -2186,7 +2194,7 @@ static void TestBelt() {
     CHECK(kDefs[kKeyBeltOn].page == kNoPage && !kDefs[kKeyBeltOn].live && IsToggle(kDefs[kKeyBeltOn]), "belt_models: the Belt page's note, not live");
     int live = 0;
     for (int i = 0; i < kCount; ++i) live += kDefs[i].live ? 1 : 0;
-    CHECK(live == 6 && kLiveMask != 0 && (kLiveMask & Bit(KeyOf(L"brightness"))) == 0 && (kLiveMask & Bit(kKeySmooth)) == 0, "six live keys, the belt's - not the others");
+    CHECK(live == 10 && kLiveMask != 0 && (kLiveMask & Bit(KeyOf(L"brightness"))) == 0 && (kLiveMask & Bit(kKeySmooth)) == 0, "ten live keys, the belt's and the Melee page's - not the others");
     CHECK(kCount <= 64, "the masks are 64 bits");
     CHECK(kDefs[KeyAt(kPageBelt, 0)].min == 0.3f && kDefs[KeyAt(kPageBelt, 4)].min == 4.0f && kDefs[KeyAt(kPageBelt, 4)].max == 30.0f && kDefs[KeyAt(kPageBelt, 4)].def == 12.0f, "the belt's ranges are D2R VR Settings'");
     CHECK(IsToggle(kDefs[KeyAt(kPageBelt, 5)]) && kDefs[KeyAt(kPageBelt, 5)].def == 0.0f && kKeyDirectOn >= 0, "the two-button take is a tick, off as the plugin has it ([belt] grab_trigger)");
@@ -2809,7 +2817,7 @@ static void TestLowLife() {
     }
     CHECK(kDefs[KeyAt(kPageLife, 0)].key == std::wstring(L"low_hp_vignette"), "the first row of the Life page is the tick that switches it on");
     CHECK(RowsOn(kPageLife) == 6 && RowsOn(kPageLook) == 5, "six rows on Life, five on Look: all eleven keys");
-    CHECK(!std::strcmp(kPageNames[kPageLife], "Life") && !std::strcmp(kPageNames[kPageLook], "Look") && !std::strcmp(kPageNames[kPageHud], "HUD") && PageCount() == 10, "the tabs");
+    CHECK(!std::strcmp(kPageNames[kPageLife], "Life") && !std::strcmp(kPageNames[kPageLook], "Look") && !std::strcmp(kPageNames[kPageHud], "HUD") && PageCount() == 11, "the tabs");
     CHECK(IsLifePage(kPageLife) && IsLifePage(kPageLook) && !IsLifePage(kPageView) && !IsLifePage(kPageOptions) && !IsLifePage(kPageVideo) && !IsLifePage(kPageBody) &&
               !IsLifePage(-1) && !IsLifePage(99),
           "only those two pages ask for the preview");
@@ -3005,6 +3013,79 @@ static void TestPreviewButton() {
     }
 }
 
+// -- 14. The Melee page: the "Hit by touch" group of D2R VR Settings > Strikes -----------------------------------------------------------------
+// The tick and its two numbers, the same [gameplay] keys, ranges and defaults as the desktop program (tools/settings/settings.cpp), written live.
+static void TestMelee() {
+    CHECK(RowsOn(kPageMelee) == 4 && !strcmp(kPageNames[kPageMelee], "Melee"), "four rows on the Melee page");
+    const int on = KeyAt(kPageMelee, 0), speed = KeyAt(kPageMelee, 1), start = KeyAt(kPageMelee, 2), only = KeyAt(kPageMelee, 3);
+    CHECK(!wcscmp(kDefs[only].section, L"gameplay") && !wcscmp(kDefs[only].key, L"melee_touch_only") && IsToggle(kDefs[only]) && kDefs[only].def == 1.0f && kDefs[only].live,
+          "the trigger's tick: [gameplay] melee_touch_only, on as shipped, live");
+    CHECK(on == kKeyMeleeTouch && !wcscmp(kDefs[on].section, L"gameplay") && !wcscmp(kDefs[on].key, L"melee_touch") && IsToggle(kDefs[on]) && kDefs[on].def == 0.0f && kDefs[on].live,
+          "the tick: [gameplay] melee_touch, off as shipped, live");
+    CHECK(!wcscmp(kDefs[speed].section, L"gameplay") && !wcscmp(kDefs[speed].key, L"melee_min_speed") && kDefs[speed].min == 0.3f && kDefs[speed].max == 20.0f &&
+              kDefs[speed].step == 0.1f && kDefs[speed].def == 0.8f && kDefs[speed].live,
+          "the least blade speed: 0.3 - 20 m/s by 0.1, 0.8 as shipped, live");
+    CHECK(!wcscmp(kDefs[start].section, L"gameplay") && !wcscmp(kDefs[start].key, L"melee_stroke_start_cm") && kDefs[start].min == 2.0f && kDefs[start].max == 30.0f &&
+              kDefs[start].step == 1.0f && kDefs[start].def == 8.0f && kDefs[start].live,
+          "how far the blade moves to start a stroke: 2 - 30 cm by 1, 8 as shipped, live");
+    CHECK(Normalize(speed, 6.0f) == 6.0f && Normalize(start, 15.0f) == 15.0f && Normalize(speed, 0.8f) == 0.8f && Normalize(speed, 6.04f) == 6.0f &&
+              Normalize(speed, 20.0f) == 20.0f && Normalize(speed, 25.0f) == 20.0f && Normalize(speed, 19.96f) == 20.0f && Normalize(speed, 12.3f) == 12.3f,
+          "6.0 m/s and 15 cm are on the grid, the speed goes up to 20 and no further");
+    CHECK(Wide({Kind::Change, speed, 1}) && !Wide({Kind::Change, start, 1}) && !Wide({Kind::Change, on, 1}), "the speed (77 steps) goes faster when held, the 28 steps of the stroke do not");
+
+    // the tabs share the strip by the length of their names: all inside the atlas, apart, none too narrow for its name, the long names wider
+    int narrowest = 1 << 20;
+    for (int i = 0; i < kPageCount; ++i) {
+        CHECK(Inside(kTab(i)), "a tab inside the atlas");
+        if (i + 1 < kPageCount) CHECK(!Overlap(kTab(i), kTab(i + 1)) && kTab(i).x + kTab(i).w < kTab(i + 1).x, "tabs apart, in order");
+        narrowest = std::min(narrowest, kTab(i).w);
+    }
+    CHECK(narrowest >= 60 && kTab(kPageCount - 1).x + kTab(kPageCount - 1).w <= 32 + 960, "no tab narrower than 60 pixels, the strip ends where the rows do");
+    CHECK(kTab(kPageOptions).w > kTab(kPageView).w && kTab(kPageView).w > kTab(kPageHud).w && kTab(kPageMelee).w > kTab(kPageBody).w, "a longer name has the wider tab");
+    for (int i = 0; i < kPageCount; ++i) {
+        float u, v;
+        Centre(kTab(i), &u, &v);
+        CHECK((HitTest(kPageView, u, v) == Hit{Kind::Tab, i, 0}), "every tab is hit");
+    }
+
+    // his ini ([gameplay]: 6.0 m/s, 15 cm): shown as it is, a step is written alone and live, the neighbours stay
+    const std::wstring path = g_dir + L"\\melee.ini";
+    const std::wstring backup = path + L".before-headset-menu";
+    DeleteFileW(backup.c_str());
+    static const char kFile[] = "; keep\r\n[gameplay]\r\nmelee_touch=1\r\nmelee_min_speed=6.0\r\nmelee_stroke_start_cm=15\r\nmelee_touch_thrown=1\r\n";
+    Spit(path, kFile);
+    const Snapshot s0 = store::LoadSnapshot(path.c_str());
+    CHECK(s0.values[on] == 1.0f && std::fabs(s0.values[speed] - 6.0f) < 1e-4f && std::fabs(s0.values[start] - 15.0f) < 1e-4f, "his values are shown");
+    Model m = OnPage(s0, kPageMelee);
+    m.Click({Kind::Change, speed, 1});
+    CHECK(std::fabs(m.Get()[speed] - 6.1f) < 1e-4f && m.Dirty() && m.LiveOnly(), "+ is 6.1, a live change");
+    m.Live(10.0);
+    const Action a = m.Live(10.0 + Model::kLiveSettleMs + 1.0);
+    CHECK(a.what == Do::Save && a.request.changed == Bit(speed), "written by itself, that key alone");
+    CHECK(store::SaveRequest(path.c_str(), a.request) == Result::Saved, "saved");
+    CHECK(ini::Read(path.c_str(), L"gameplay", L"melee_min_speed").text == L"6.1" && ini::Read(path.c_str(), L"gameplay", L"melee_stroke_start_cm").text == L"15" &&
+              ini::Read(path.c_str(), L"gameplay", L"melee_touch").text == L"1" && ini::Read(path.c_str(), L"gameplay", L"melee_touch_thrown").text == L"1",
+          "melee_min_speed=6.1, the other keys of the group as they were");
+    CHECK(Slurp(path).find("; keep") != std::string::npos && Exists(backup) && Slurp(backup) == std::string(kFile), "the comment is kept, the original backed up once");
+    // the tick and the stroke length through the desktop program's own numbers: 8 cm is the default and is not written when it is not changed
+    Model t = OnPage(store::LoadSnapshot(path.c_str()), kPageMelee);
+    t.Click({Kind::Change, on, 1});
+    t.Click({Kind::Change, start, -1});
+    t.Live(20.0);
+    const Action b = t.Live(20.0 + Model::kLiveSettleMs + 1.0);
+    CHECK(b.what == Do::Save && b.request.changed == (Bit(on) | Bit(start)), "the tick and the stroke length go together");
+    CHECK(store::SaveRequest(path.c_str(), b.request) == Result::Saved && ini::Read(path.c_str(), L"gameplay", L"melee_touch").text == L"0" &&
+              ini::Read(path.c_str(), L"gameplay", L"melee_stroke_start_cm").text == L"14", "melee_touch=0, the stroke 14 cm");
+    // a file without the keys: the shipped values
+    Spit(path, "[openxr]\r\nlaser=1\r\n");
+    const Snapshot s1 = store::LoadSnapshot(path.c_str());
+    CHECK(s1.values[on] == 0.0f && std::fabs(s1.values[speed] - 0.8f) < 1e-4f && std::fabs(s1.values[start] - 8.0f) < 1e-4f, "no keys: off, 0.8 m/s, 8 cm");
+    // the line under the page
+    CHECK(std::string(StatusText(OnPage(s1, kPageMelee))).find("off") != std::string::npos, "with the tick off the page says so");
+    CHECK(std::string(StatusText(OnPage(s0, kPageMelee))).find("applies by itself") != std::string::npos, "with it on, that a change applies by itself");
+    CHECK(TmpFiles() == 0, "no temp file left");
+}
+
 int main(int argc, char** argv) {
     if (argc == 3 && !strcmp(argv[1], "--dump")) { Dump(argv[2]); return 0; }
     wchar_t tmp[MAX_PATH];
@@ -3033,6 +3114,7 @@ int main(int argc, char** argv) {
     TestTurn();
     TestBelt();
     TestKeys();
+    TestMelee();
     TestHud();
     TestLowLife();
     TestPreviewButton();

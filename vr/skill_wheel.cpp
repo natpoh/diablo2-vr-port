@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <cstdio>
 #include <mutex>
 
 #include <D2RLPlugin/api.h>
@@ -38,6 +39,7 @@ namespace {
 const D2RL::PluginContext* g_ctx = nullptr;
 std::atomic<bool> g_on{false};
 std::atomic<bool> g_open{false};
+std::atomic<bool> g_triggerSkill{false};   // TriggerCastsSkill
 bool g_registered = false;
 
 std::mutex g_lock;               // the controller, the snapshot copy, what the layer reads
@@ -52,6 +54,8 @@ wheel::View g_view;
 uint32_t g_openRevision = 0;
 wheel::Style g_openStyle = wheel::Style::Wheel;
 bool g_wasOpen = false;
+uint32_t g_lastTake[2] = {0, 0};   // what this panel took from each hand last frame (so TakenLastFrame's rest is the others')
+unsigned g_slotPresses = 0;        // the slot controls' presses told in the log so far
 // The painter is made on first use and never destroyed: its thread is joined by Release (Configure off, the session's end, the
 // plugin's unload), never by a static destructor - a join under the loader lock at process exit can hang.
 wheelpaint::Async& Painter() {
@@ -95,7 +99,7 @@ bool LongPressCanCome(const wchar_t* ini) {
 
 // g_cfg + the profiles -> the controller (under g_lock).
 void ApplyLocked() {
-    g_cfg.hints = tiles::BuildHints(g_profile[0], g_profile[1], g_showHints);
+    g_cfg.hints = tiles::BuildHints(g_profile[0], g_profile[1], g_showHints, g_cfg.slotControls);
     g_ctl.Configure(g_cfg);
 }
 
@@ -133,7 +137,7 @@ void SettingsAct(const wheel::Step& s) {
         break;
     case hset::Do::View:        // F1 - F4 by the controller's own view path (vr/hset_view.h); the view leaves F4, so the window has closed
         if (hsetview::Press(s.settings.view))
-            Log("vrcam: openxr - skill panel, Settings: game view changed (F4 is the way back: the F4 key, D2R VR Settings > Home, or a view action bound in BodyWalk / [direct])");
+            Log("vrcam: openxr - skill panel, Settings: game view changed (F4 is the way back: the F4 key, D2R VR Authentic Settings > Home, or a view action bound in BodyWalk / [direct])");
         break;
     default: break;
     }
@@ -167,6 +171,10 @@ void OnFrame(const directinput::Frame& f, void*) {
     // a bow wielded in F4 with the draw on shoots by a draw only: the pointing hand's trigger is the bow draw's (kept from the layout), so
     // the picked slot is not cast with it either (the draw's own release still presses its skill slot)
     g_ctl.SetCastBlocked(bowdrawwire::KeepsTrigger(g_cfg.pointerHand));
+    {   // the right trigger / A as slot controls ([openxr] skill_rt_a): another gesture that holds them (a bottle, a javelin, the string) keeps them
+        const uint32_t others = directinput::TakenLastFrame(1) & ~g_lastTake[1];
+        g_ctl.SetControlsTaken((others & (directinput::kTrigger | directinput::kTakeTrigger)) != 0, (others & directinput::kPrimary) != 0);
+    }
     const bool tabs = wheel::TabsOn(g_cfg);
     wheel::SettingsIn host;
     if (tabs) {   // the Settings tab's side: the ini as its thread reads it, the picture's sizes, the T-pose measurement
@@ -178,10 +186,28 @@ void OnFrame(const directinput::Frame& f, void*) {
     const wheel::Step s = g_ctl.Frame(f, g_snap, GetTickCount64(), wheelgame::ReplyNow(), f4, request, tabs ? &host : nullptr);
     StoreFor(tabs && s.wantStore);
     if (tabs) SettingsAct(s);
-    for (int h = 0; h < 2; ++h)
+    for (int h = 0; h < 2; ++h) {
         if (s.take[h]) directinput::Take(h, s.take[h], directinput::kSrcOther0);
-    // the cast: the game's own pad buttons, pulsed while the trigger is down (the modifier and the button each held as the game wants)
-    if (s.casting && (s.buttons || s.lt)) directinput::PadPulse(directinput::PadPress{s.buttons, s.lt, 0}, wheel::kHoldMs);
+        g_lastTake[h] = s.take[h];
+    }
+    // the cast: the game's own pad buttons, pulsed while the trigger is down (the modifier and the button each held as the game wants); with the slot
+    // controls the right trigger is the pad's RT, held by its pulse the same way
+    if (s.casting && (s.buttons || s.lt || s.rt)) directinput::PadPulse(directinput::PadPress{s.buttons, s.lt, s.rt}, wheel::kHoldMs);
+    static bool toldSlots = false;
+    if (g_ctl.Config().slotControls && !toldSlots) {
+        toldSlots = true;
+        Log("vrcam: skill panel - slot controls on ([openxr] skill_rt_a=1): in first person with direct input the right trigger casts the game's RT slot and the right A its A slot "
+            "(the left trigger held: LT + RT, LT + A) when that slot holds a skill; a slot with nothing or the plain Attack on it leaves the control to the layout");
+    }
+    for (int c = 0; c < 2; ++c) {   // (the first few presses of the slot controls, told: which control pressed which slot holding what)
+        const int slot = s.slotStarted[c];
+        if (slot < 0 || g_slotPresses >= 12) continue;
+        ++g_slotPresses;
+        char b[260];
+        std::snprintf(b, sizeof b, "vrcam: skill panel - the right %s pressed the %s slot, which holds %s (the game casts it)%s", c == 0 ? "A" : "trigger",
+                      wheel::kSlotDefs[slot].label, g_snap.slot[slot].name, g_slotPresses == 12 ? " - no more of these lines" : "");
+        Log(b);
+    }
     if (s.request) wheelgame::Submit(s.req);
     // RUN / WALK: the game's own key command, through the game's own executor (vr/gamecmd.cpp), pressed once - as its key would
     if (s.runWalk) directinput::Tap((uint32_t)wheel::kRunWalkCommand);
@@ -189,6 +215,17 @@ void OnFrame(const directinput::Frame& f, void*) {
     g_layer = s.layer;
     g_view = g_ctl.ViewNow();
     const bool open = g_ctl.Open();
+    {   // each time the editor's grid comes up: whether the category strip is there, and if not why (the one line that tells a missing strip's cause)
+        static bool wasGrid = false;
+        const bool grid = open && g_view.page == wheel::Page::PickSkill;
+        if (grid && !wasGrid) {
+            char b[260];
+            std::snprintf(b, sizeof b, "vrcam: skill panel - the editor on slot %d: category strip %s ([openxr] skill_categories %d, the snapshot knows the trees %d, class %d, %u skills)",
+                          g_view.editSlot, g_view.catStrip ? "shown" : "NOT shown", g_ctl.Config().categories ? 1 : 0, g_snap.treesKnown ? 1 : 0, (int)g_snap.playerClass, (unsigned)g_snap.count);
+            Log(b);
+        }
+        wasGrid = grid;
+    }
     lowhp::SetPreview(open && tabs && g_ctl.FlipPlace() > 0 && hset::IsLifePage(g_ctl.FlipPlace() - 1), hset::LifeConfig(g_ctl.SettingsModel().Get()),
                       g_ctl.FlipPlace() - 1);   // the Settings tab is on a vignette page: its rows are the preview's draft; nothing shows until "Preview 5 s"
     if (open && (!g_wasOpen || g_view.style != g_openStyle)) g_openRevision = g_view.revision;   // (another look: its picture must be painted before it is shown)
@@ -198,6 +235,7 @@ void OnFrame(const directinput::Frame& f, void*) {
     else if (g_wasOpen) directinput::SetUiUp(false);
     g_wasOpen = open;
     g_open.store(open);
+    g_triggerSkill.store(g_ctl.TriggerCastsSkill());
 }
 
 }  // namespace
@@ -232,6 +270,10 @@ void Configure(bool on, int pointerHand, float distanceM, float widthM, int styl
     // control (off unless the ini says 1: the same command is a pick of the button lists - "Run / walk switch" - which is how it is meant to be used)
     cfg.categories = !ini || GetPrivateProfileIntW(L"openxr", L"skill_categories", 1, ini) != 0;
     cfg.runWalk = ini && GetPrivateProfileIntW(L"openxr", L"skill_run_walk", 0, ini) != 0;
+    // the right trigger and the right A as the game's RT and A slots (off unless the ini says 1: the layout's trigger is the attack and its A interact, as ever);
+    // it acts in first person with direct input only (vr/slot_controls.h), and the editor's list then has the basic attack to put a slot back
+    cfg.slotControls = on && ini && GetPrivateProfileIntW(L"openxr", L"skill_rt_a", 0, ini) != 0;
+    wheelgame::SetOfferAttack(cfg.slotControls);
     const bool hints = on && cfg.style == wheel::Style::Tiles && DefaultLayoutIn(ini);
     {
         std::lock_guard<std::mutex> lock(g_lock);
@@ -274,6 +316,7 @@ void Configure(bool on, int pointerHand, float distanceM, float widthM, int styl
 }
 
 bool Enabled() { return g_on.load(); }
+bool TriggerCastsSkill() { return g_on.load() && g_triggerSkill.load(); }
 bool SettingsTabOn() { return g_on.load() && g_settingsTab.load(); }
 void SetSettingsHost(const hset::video::Env& env) {
     std::lock_guard<std::mutex> lock(g_lock);
@@ -315,6 +358,8 @@ void Release() {
         g_snapRevision = 0;
         g_wasOpen = false;
         g_open.store(false);
+        g_triggerSkill.store(false);
+        g_lastTake[0] = g_lastTake[1] = 0;
         if (g_storeOn) {
             hset::store::Stop();
             g_storeOn = false;

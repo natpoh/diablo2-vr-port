@@ -23,14 +23,17 @@
 namespace stroke {
 
 inline constexpr float kDefaultMinSpeed = 0.8f, kDefaultStartCm = 8.0f;
+// The least blade speed the ini may ask for: 0.3 .. 20 m/s (Settings > Strikes, the headset panel's Melee page, melee_min_speed_<kind>). A normal swing's tip reads
+// 3 - 6 m/s; the top is for a player who wants only a hard whip to count.
+inline constexpr float kMinSpeedFloor = 0.3f, kMinSpeedCeil = 20.0f;
 
 struct StrokeTuning {
-    float minSpeed = kDefaultMinSpeed;   // m/s, 0.3 .. 8
+    float minSpeed = kDefaultMinSpeed;   // m/s, 0.3 .. 20
     float startCm = kDefaultStartCm;     // cm, 2 .. 30
 };
 
 inline StrokeTuning Clamp(StrokeTuning t) {
-    t.minSpeed = std::isfinite(t.minSpeed) ? std::clamp(t.minSpeed, 0.3f, 8.0f) : kDefaultMinSpeed;
+    t.minSpeed = std::isfinite(t.minSpeed) ? std::clamp(t.minSpeed, kMinSpeedFloor, kMinSpeedCeil) : kDefaultMinSpeed;
     t.startCm = std::isfinite(t.startCm) ? std::clamp(t.startCm, 2.0f, 30.0f) : kDefaultStartCm;
     return t;
 }

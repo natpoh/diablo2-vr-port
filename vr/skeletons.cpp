@@ -367,6 +367,12 @@ GunBoneOut g_gunBone{};
 //                   crossbow_pose.h RenderedGeometry): it holds whatever the renderer puts between the item and the wrist. The hand uses this.
 struct XbowBarrelOut { xbowgrip::M inAttach; uint32_t gen = 0; ULONGLONG at = 0; };
 XbowBarrelOut g_xbowBarrel{}, g_xbowRendered{};
+// the renderer's barrel kept per weapon and hero model (rigid: the crossbow's own), and whose ((HeroGen << 32) | weapon key) - the pose thread's
+XbowBarrelOut g_xbowHeldBarrel{};
+uint64_t g_xbowHeldKey = 0;
+// [hands] xbow_handover: the support hand holds the crossbow now (its latch, last pose), and for which weapon, model and holder
+bool g_xbowSupportHeld = false;
+uint64_t g_xbowSupportHeldKey = 0;
 // what XbowRendered needs of the crossbow's skeleton (NoteCrossbowBarrel) and of our pose (PoseBody): its cog's place in its world
 // array, the barrel in the cog's frame; our attach bone in the world, and the model units per metre
 struct XbowSource { uintptr_t self = 0; int cog = -1, count = 0; xbowgrip::M barrelInCog; uint32_t gen = 0; ULONGLONG at = 0; };
@@ -387,8 +393,12 @@ struct XbowPalmOut { float p[3]; float cm; ULONGLONG at; };
 // (palms 0.80 model units apart, "the hold"): the hand it does NOT hang the crossbow on has its palm's middle on the crossbow's fore-grip.
 // Learned from the game's pose (oldW), in the crossbow attach bone's frame, averaged over the first samples per weapon and hero model;
 // and how that palm faces against the barrel (cup under the stock / wrap it from the side / over the top), for the log.
-struct XbowForeGrip { uint64_t key = 0; int n = 0; V3 sum{}; V3 palm{}; V3 facing{}, across{}; bool told = false; };
+// The game's two hands on its crossbow (0.170: "the grip point broke"): the hand it HANGS the crossbow on (the left) holds the fore-grip
+// mid-stock under the prod; its other hand (the right) holds the trigger grip at the back (the log: 37 cm behind the front of the stock).
+// palm/facing/across: the fore-grip hand's; trigPalm: the trigger hand's palm's middle - both in the attach bone's frame.
+struct XbowForeGrip { uint64_t key = 0; int n = 0; V3 sum{}; V3 palm{}; V3 facing{}, across{}; V3 trigSum{}, trigPalm{}; bool told = false; };
 constexpr int kForeGripSamples = 30;
+XbowForeGrip g_xbowFore;   // the pose thread's
 XbowPalmOut g_xbowPalm{};
 SRWLOCK g_xbowNoteLock = SRWLOCK_INIT;
 std::string g_xbowNote;                                       // for vrcam's log (XbowNoteTake)
@@ -406,6 +416,10 @@ ULONGLONG g_posedAt = 0;
 // [debug] the line the left hand takes the weapon by (staff, spear, sword), the same frame
 struct GrabLineOut { float a[3], b[3]; ULONGLONG at; };
 GrabLineOut g_grabLine{};
+// [bow] aim_distance_by_arm: the shoulders and the reach as the last pose drew them (ArmReach)
+struct ArmReachOut { float shoulder[3], length; ULONGLONG at; };
+SRWLOCK g_armReachLock = SRWLOCK_INIT;
+ArmReachOut g_armReach[2] = {};
 // [weight] grip_fit, for the debug: the grasp point on the axis and the palm's middle as drawn, per hand, the same frame (GripMarks)
 struct GripMarkOut { float grasp[3], palm[3]; ULONGLONG at; };
 SRWLOCK g_gripMarkLock = SRWLOCK_INIT;
@@ -993,8 +1007,8 @@ V3 ControllerPoint(const Hero& h, int side, const Input& in, const std::vector<M
 // point ahead (as a bow aims, vrcam HandRay) and -Z is the top: with -Z taken for
 // ahead the crossbow's stock stood straight up (seen with its axes drawn, 2026-10-05).
 // The raw controller, without the [hands] wrist offsets.
-bool GunFrame(const Input& in, float c, float s, V3* F, V3* U, V3* R) {
-    const float* cq = in.rot[0];
+bool GunFrame(const Input& in, float c, float s, V3* F, V3* U, V3* R, int side = 0) {   // side: the controller that holds it ([hands] xbow_handover)
+    const float* cq = in.rot[side & 1];
     Q4 q = {cq[0], cq[1], cq[2], cq[3]};
     const float ql = sqrtf(q.x*q.x + q.y*q.y + q.z*q.z + q.w*q.w);
     if (!(ql > 0.5f)) return false;
@@ -1003,6 +1017,61 @@ bool GunFrame(const Input& in, float c, float s, V3* F, V3* U, V3* R) {
     const float a[3] = {f.x, f.y, f.z}, b[3] = {u.x, u.y, u.z}, d[3] = {r.x, r.y, r.z};
     *F = Norm(ToModel(a, c, s)); *U = Norm(ToModel(b, c, s)); *R = Norm(ToModel(d, c, s));
     return true;
+}
+
+// [hands] xbow_handover: which controller holds the crossbow (0 right - the home - or 1 left), for this pose. The hand that does not hold it
+// takes it with a new squeeze of its grip at the holding palm - within kHandoverReachM of it and nearer it than the support hand's place on
+// the fore-grip (xbowgrip::HandoverNear; 0.170: a 12 cm reach between the two controllers' grip points never fired) - and the other lets go
+// (xbowgrip::Handover). Back to the right hand on another weapon or hero model, or with the tick off. Visual and aim only.
+constexpr float kHandoverReachM = 0.25f;
+std::atomic<int> g_xbowHolder{0};
+V3 g_xbowSupportAt{};            // the support hand's place on the crossbow last pose (model space), for the hand-over's "nearer the grip"
+uint64_t g_xbowSupportKey = 0;   // whose: hero model, weapon, holder (0 = none)
+int XbowHolderStep(const Hero& h, const Input& in, const std::vector<Mat>& newW, float c, float s) {
+    static xbowgrip::Handover m;
+    static uint64_t key = ~0ull;
+    const uint64_t k = ((uint64_t)HeroGen() << 32) | (uint32_t)in.weaponType;
+    if (!in.gunStock || !in.xbowHandover || in.mode != 2) {
+        if (m.holder != 0) XbowNote("crossbow hand-over: back in the right hand (the tick off, or no crossbow held the gun's way)");
+        m.Reset(0); key = k; g_xbowHolder.store(0);
+        return 0;
+    }
+    if (k != key) {
+        if (m.holder != 0) XbowNote("crossbow hand-over: another weapon or hero model - back in the right hand");
+        key = k; m.Reset(0);
+    }
+    const bool tracked[2] = {(in.handsValid & 1u) != 0, (in.handsValid & 2u) != 0};
+    float nearM = INFINITY, gripM = NAN, supportM = -1.0f;
+    if (tracked[0] && tracked[1] && h.head >= 0 && h.hand[0] >= 0 && h.hand[1] >= 0) {
+        const V3 head = in.haveEye ? V3{in.eyeModel[0], in.eyeModel[1], in.eyeModel[2]} : Pos(newW[h.head]);
+        const float upm = std::clamp(head.y / std::max(0.8f, in.userHeadM), 2.0f, 8.0f) * in.scale;   // model units per metre
+        const int taker = m.holder ^ 1;
+        const V3 t = ControllerPoint(h, taker, in, newW, c, s);
+        gripM = Len(Sub(ControllerPoint(h, m.holder, in, newW, c, s), t)) / upm;
+        if (g_xbowSupportKey == (k ^ ((uint64_t)m.holder << 63)) && g_xbowSupportKey != 0) supportM = Len(Sub(g_xbowSupportAt, t)) / upm;
+        nearM = xbowgrip::HandoverNear(gripM, supportM, kHandoverReachM);
+    }
+    const float g[2] = {in.grip[0], in.grip[1]};
+    const bool supportHeld = g_xbowSupportHeld && g_xbowSupportHeldKey == (k ^ ((uint64_t)m.holder << 63));
+    {   // every squeeze of the free hand, for the log: how far from the grip and from the fore-grip, and whether it takes the crossbow
+        static bool was = false;
+        const int taker = m.holder ^ 1;
+        const bool now = tracked[taker] && g[taker] > 0.6f;
+        if (now && !was) {
+            char t[220];
+            snprintf(t, sizeof t, "crossbow hand-over: the %s hand squeezed %.0f cm from the crossbow's grip, %s - %s", taker ? "left" : "right",
+                     gripM * 100.0f, supportM >= 0.0f ? (std::to_string((int)std::lround(supportM * 100.0f)) + " cm from the fore-grip").c_str() : "no fore-grip place yet",
+                     std::isfinite(nearM) ? "near enough (taken unless the grip was still held from before)"
+                                          : gripM > kHandoverReachM ? "too far from the grip (25 cm)" : "nearer the fore-grip: the support's squeeze");
+            XbowNote(t);
+        }
+        was = now;
+    }
+    if (m.Step(g, tracked, nearM, kHandoverReachM, supportHeld))
+        XbowNote(m.holder ? "crossbow hand-over: the left hand took it by its grip - it is held in the left hand, the right one is its support"
+                          : "crossbow hand-over: the right hand took it by its grip - back in the right hand, the left one is its support");
+    g_xbowHolder.store(m.holder);
+    return m.holder;
 }
 
 // Row-vector form of the turn by deg about the unit axis k.
@@ -2477,6 +2546,28 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
             Propagate(h, before, newW, fromHand, k);   // fingers, weapon bones: their offsets from the hand as they were
         }
     }
+    // [bow] aim_distance_by_arm: the arms as they stand now (shoulders after the turn, bones after the fit), for ArmReach - read, nothing is changed
+    if (in.mode == 2) {
+        const V3 head = in.haveEye ? V3{in.eyeModel[0], in.eyeModel[1], in.eyeModel[2]} : (h.head >= 0 ? Pos(newW[h.head]) : V3{0, 0, 0});
+        const float upmArm = std::clamp(head.y / std::max(0.8f, in.userHeadM), 2.0f, 8.0f) * in.scale;   // model units per metre, as ControllerPoint has it
+        for (int side = 0; side < 2; ++side) {
+            const int u = h.upr[side], l = h.lwr[side], k = h.hand[side];
+            if (u < 0 || l < 0 || k < 0 || !(head.y > 0.0f)) continue;
+            const V3 S = Pos(newW[u]);
+            const float chain = Len(Sub(Pos(newW[l]), S)) + Len(Sub(Pos(newW[k]), Pos(newW[l])));
+            const float palm = h.bindOk && h.mid[side] >= 0 ? 0.5f * Len(Sub(Pos(h.bind[h.mid[side]]), Pos(h.bind[k]))) : 0.0f;   // the grip is that far past the wrist
+            const V3 d = Sub(S, head);
+            const float mx = d.x * c - d.z * s, mz = d.x * s + d.z * c;   // ToModel run backwards: the turn out, then x and z flipped
+            ArmReachOut o;
+            o.shoulder[0] = -mx / upmArm; o.shoulder[1] = d.y / upmArm; o.shoulder[2] = -mz / upmArm;
+            o.length = (chain + palm) / upmArm;
+            o.at = GetTickCount64();
+            if (!std::isfinite(o.shoulder[0] + o.shoulder[1] + o.shoulder[2] + o.length) || !(o.length > 0.05f)) continue;
+            AcquireSRWLockExclusive(&g_armReachLock);
+            g_armReach[side] = o;
+            ReleaseSRWLockExclusive(&g_armReachLock);
+        }
+    }
     // The animation after the turn: what the arms re-derive their children from.
     const std::vector<Mat> baseW = newW;
 
@@ -2598,7 +2689,11 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
     // the game hangs it on (the left one, on the sorceress) - held there the way
     // the game's grip has it: the staff relative to the right wrist.
     const int staffSide = in.staffHandAuto && grip.ok && grip.hand >= 0 ? grip.hand : in.staffHand == 0 ? 0 : 1;
-    const bool freeStaff = in.staff && in.staffFreeLeft && in.mode == 2 && in.holdGrip && grip.ok && (in.handsValid & 1u) &&
+    // [hands] xbow_handover: which controller holds the crossbow (0 right, the home; 1 left) - the other hand is its support. The free hand
+    // takes it by its grip with a new squeeze at the holding palm (xbowgrip::Handover); the game's slots and attack are not touched.
+    const int gunHolder = XbowHolderStep(h, in, newW, c, s);
+    const int holdSide = in.gunStock ? gunHolder : 0;
+    const bool freeStaff = in.staff && in.staffFreeLeft && in.mode == 2 && in.holdGrip && grip.ok && (in.handsValid & (1u << holdSide)) &&
                            h.head >= 0 && h.weapon[staffSide] >= 0;
     // Held weapons sit in that grip, not in this frame's animation (a bow keeps the animation: it draws).
     if (in.mode == 2 && in.holdGrip && grip.ok) {
@@ -2632,7 +2727,7 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
     // crossbow hung from a point beside the hand (2026-10-05). The shot is the
     // controller's -Z (vrcam HandRay), whatever the model.
     V3 gunF{}, gunU{}, gunR{}, gunAt{}, gunStock{};
-    const bool gun = freeStaff && in.gunStock && in.gunFrame && h.hand[0] >= 0 && GunFrame(in, c, s, &gunF, &gunU, &gunR);
+    const bool gun = freeStaff && in.gunStock && in.gunFrame && h.hand[holdSide] >= 0 && GunFrame(in, c, s, &gunF, &gunU, &gunR, holdSide);
     if (gun) {
         const int wb = h.weapon[staffSide];
         Mat staff = newW[wb];
@@ -2667,6 +2762,29 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
             const V3 r = Scale(Norm(RotOnly(row[i], T)), len[i]);
             staff.m[i * 4] = r.x; staff.m[i * 4 + 1] = r.y; staff.m[i * 4 + 2] = r.z;
         }
+        // [hands] xbow_barrel_forward: laid by its OWN barrel - the drawn barrel (its bolt_helper, the renderer's placing, kept per weapon) along
+        // where the controller points, the crossbow's up along the controller's top - instead of a bone axis set by hand (xbow_stock_axis), which
+        // left the barrel ~34 deg above the controller's forward and 4-10 deg aside (0.170: it pointed up-left and twisted in the hand; the shot
+        // needed a -46 deg line). Until the barrel is read: as before. [weapon_crossbow]'s turn is not added on top then.
+        {
+            const uint64_t bk = ((uint64_t)HeroGen() << 32) | (uint32_t)in.weaponType;
+            bool laid = false;
+            if (in.xbowBarrelForward && g_xbowHeldKey == bk && g_xbowHeldBarrel.at) {
+                const xbowgrip::M& ia = g_xbowHeldBarrel.inAttach;
+                xbowgrip::M sm, turned;
+                memcpy(sm.m, staff.m, sizeof sm.m);
+                if (xbowgrip::HandTurnTo(sm, xbowgrip::Row(ia, 2), xbowgrip::Row(ia, 1), {gunF.x, gunF.y, gunF.z}, {gunU.x, gunU.y, gunU.z}, &turned)) {
+                    memcpy(staff.m, turned.m, sizeof staff.m);
+                    laid = true;
+                }
+            }
+            static int toldLaid = -1;
+            if (in.xbowBarrelForward && (laid ? 1 : 0) != toldLaid) {
+                toldLaid = laid ? 1 : 0;
+                XbowNote(laid ? "crossbow laid by its own barrel: the drawn barrel along the controller's forward, its up along the controller's top ([hands] xbow_barrel_forward)"
+                              : "crossbow laid by the bone axis as before - its drawn barrel is not read yet ([hands] xbow_barrel_forward)");
+            }
+        }
         // [hands] xbow_line_*: the line alone turned, set by eye onto the model as drawn
         const float* lt = in.lineTurnDeg;
         const Mat line = Mul(Mul(TurnAbout(gunF, lt[2]), TurnAbout(gunR, lt[0])), TurnAbout(gunU, lt[1]));
@@ -2679,16 +2797,19 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
         // The bone's origin in the palm, moved along the controller's axes by
         // [weapon_crossbow] x/y/z until the stock runs through the palm; the line the
         // bolt and the left hand keep to runs from the palm along the stock.
-        gunAt = ControllerPoint(h, 0, in, newW, c, s);
+        gunAt = ControllerPoint(h, holdSide, in, newW, c, s);
         // [hands] xbow_hold_grip: the crossbow's GRIP in the right palm - where the game's own hand holds it (its palm's middle in the
         // attach bone's frame, grip.palm of the wrist the game hangs it on: a rigid child of that hand, so the same in any pose) - not the
         // attach bone's origin (test-58..66: "it holds the crossbow by the wrist, not the hand"). Off: the origin in the palm, as before.
         V3 held = gunAt;
         {
-            const int gs = staffSide & 1;
-            const V3 g = {grip.palm[gs][0], grip.palm[gs][1], grip.palm[gs][2]};
-            const float gripCm = Len(RotOnly(g, staff)) / upm * 100.0f;   // how far the game's palm is from the attach bone's origin
-            const bool use = in.xbowHoldGrip && grip.ok && std::isfinite(gripCm) && gripCm > 0.3f && gripCm < 25.0f;
+            // the game's TRIGGER hand's palm on the crossbow (its other hand than the one it hangs it on), learned from the game's own two-handed
+            // hold (g_xbowFore, below); 0.169 put the fore-grip hand's palm here - the right hand held it mid-stock under the prod
+            const int gs = (staffSide & 1) ^ 1;
+            const bool learned = g_xbowFore.n >= kForeGripSamples && g_xbowFore.key == (((uint64_t)HeroGen() << 32) | (uint32_t)in.weaponType);
+            const V3 g = g_xbowFore.trigPalm;
+            const float gripCm = Len(RotOnly(g, staff)) / upm * 100.0f;   // how far the game's trigger palm is from the attach bone's origin
+            const bool use = in.xbowHoldGrip && learned && std::isfinite(gripCm) && gripCm > 0.3f && gripCm < 40.0f;
             if (use) {
                 xbowgrip::M sm;
                 memcpy(sm.m, staff.m, sizeof sm.m);
@@ -2697,14 +2818,14 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
             }
             static int toldGrip = -1;   // which point is used, once per weapon and choice
             const int key = (in.weaponType & 0x0FFFFFFF) * 2 + (use ? 1 : 0);
-            if (key != toldGrip && grip.ok) {
+            if (key != toldGrip && grip.ok && (use || !in.xbowHoldGrip || learned)) {
                 toldGrip = key;
                 char t[300];
-                snprintf(t, sizeof t, "crossbow right hand: %s - the game's own palm sits %.1f cm from the crossbow's attach bone (the %s wrist's)%s",
-                         use ? "the crossbow's grip (the game's own palm on it) in the right palm ([hands] xbow_hold_grip)"
-                             : "the crossbow's attach bone in the right palm (as before)",
+                snprintf(t, sizeof t, "crossbow holding hand: %s - the game's trigger palm sits %.1f cm from the crossbow's attach bone (its %s hand's)%s",
+                         use ? "the crossbow's trigger grip (the game's own trigger hand's palm on it) in the holding palm ([hands] xbow_hold_grip)"
+                             : "the crossbow's attach bone in the holding palm (as before)",
                          gripCm, gs ? "left" : "right",
-                         in.xbowHoldGrip && !use ? " - not used: out of 0.3 .. 25 cm or no grip" : "");
+                         in.xbowHoldGrip && !use ? " - not used: out of 0.3 .. 40 cm" : "");
                 XbowNote(t);
             }
         }
@@ -3196,7 +3317,10 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
     bool leftOnStaff = false;   // its fingers keep the game's grip round the shaft, no fist
     if (!(freeStaff && gun && in.xbowLatch)) XbowLatchReset();   // [hands] xbow_grip_latch: no crossbow in the gun's hold - a fresh latch next time
     if (freeStaff) {
-        const int wb = h.weapon[staffSide], lk = h.hand[1], rk = h.hand[0];
+        // the support hand: the left one, or with the crossbow passed into the left hand ([hands] xbow_handover) the right one
+        const int sp = gun ? holdSide ^ 1 : 1;
+        const int foreOther = staffSide & 1;   // the game's own fore-grip hand: the one it hangs the crossbow on
+        const int wb = h.weapon[staffSide], lk = h.hand[sp], rk = h.hand[sp ^ 1];
         Mat staff = newW[wb];
         // The shaft is one of the staff bone's own axes - the one nearest the
         // line between the palms in the game's grip (that line itself ran
@@ -3224,23 +3348,27 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
         bool haveBarrelDir = false;
         V3 barrelUp{}, barrelCenter{};
         // [hands] xbow_support_game: learn the game's own fore-grip from its pose (oldW) while it holds the crossbow in both hands
-        static XbowForeGrip fore;
+        XbowForeGrip& fore = g_xbowFore;
         static GripPoseKept foreFingers;   // [hands] xbow_support_close: the game's support hand's fingers on the fore-grip (grip_pose.h)
+        static std::vector<Mat> foreRel;    // the same, each finger bone in that hand's own frame (our support hand on the game's side)
         bool onFore = false;
         if (gun) {
             const uint64_t key = ((uint64_t)HeroGen() << 32) | (uint32_t)in.weaponType;
-            if (fore.key != key) { fore = XbowForeGrip{}; fore.key = key; foreFingers = GripPoseKept{}; }
-            const int holder = staffSide & 1, other = holder ^ 1;
+            if (fore.key != key) { fore = XbowForeGrip{}; fore.key = key; foreFingers = GripPoseKept{}; foreRel.clear(); }
+            // `other`: the game's fore-grip hand (the one it hangs the crossbow on) - learned for our support hand; `holder`: its trigger hand
+            const int other = staffSide & 1, holder = other ^ 1;
             const int hh = h.hand[holder], ho = h.hand[other];
             if (fore.n < kForeGripSamples && !in.attacking && hh >= 0 && ho >= 0 && h.mid[0] >= 0 && h.mid[1] >= 0 && h.ind[other] >= 0 && h.pnk[other] >= 0) {
                 const V3 ph = Scale(Add(Pos(oldW[hh]), Pos(oldW[h.mid[holder]])), 0.5f), po = Scale(Add(Pos(oldW[ho]), Pos(oldW[h.mid[other]])), 0.5f);
-                const Mat att = Mul(oldW[wb], InvAffine(oldW[hh]));
-                const bool shown = Len({att.m[0], att.m[1], att.m[2]}) > 0.7f;   // the crossbow on the holder's wrist, not hidden
+                const Mat att = Mul(oldW[wb], InvAffine(oldW[ho]));
+                const bool shown = Len({att.m[0], att.m[1], att.m[2]}) > 0.7f;   // the crossbow on the wrist the game hangs it on, not hidden
                 if (shown && Len(Sub(ph, po)) <= 1.0f) {   // the game's hold: both hands on it
                     const Mat toStaff = InvAffine(oldW[wb]);
                     fore.sum = Add(fore.sum, Through(toStaff, po));
+                    fore.trigSum = Add(fore.trigSum, Through(toStaff, ph));
                     ++fore.n;
                     fore.palm = Scale(fore.sum, 1.0f / (float)fore.n);
+                    fore.trigPalm = Scale(fore.trigSum, 1.0f / (float)fore.n);
                     // the palm's facing: out of the palm = (wrist -> middle knuckle) x (little -> index knuckle), away on the right hand
                     const V3 pt = Sub(Pos(oldW[h.mid[other]]), Pos(oldW[ho])), ac = Sub(Pos(oldW[h.ind[other]]), Pos(oldW[h.pnk[other]]));
                     const V3 out = Scale(Norm(Cross(pt, ac)), other == 0 ? -1.0f : 1.0f);
@@ -3248,6 +3376,9 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
                     fore.across = Norm(RotOnly(ac, toStaff));
                     GripPoseKept fingers;   // its fingers as the game closes them on the fore-grip (the last sample of the hold)
                     if (TakeGripPose(h, other, oldW, in.weaponType, &fingers)) foreFingers = std::move(fingers);
+                    foreRel.clear();         // and each finger bone against that hand, for our hand on the same side
+                    for (const Hero::Finger& f : h.fingers[other])
+                        for (const int bone : f.bones) foreRel.push_back(Mul(oldW[bone], InvAffine(oldW[ho])));
                 }
             }
             onFore = in.xbowSupportGame && fore.n >= kForeGripSamples;
@@ -3279,8 +3410,8 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
             // the renderer's placing for the hand; the item's own transform only to draw (orange) when that is not seen. The renderer's barrel
             // in the attach bone's frame is the crossbow's own (rigid): once seen for this weapon and hero model it is kept - a render frame
             // or two without it (test-67's log, 13:18:59.83) flipped the hand and the aim to the shot line for 30 ms.
-            static XbowBarrelOut heldRendered{};
-            static uint64_t heldKey = 0;
+            XbowBarrelOut& heldRendered = g_xbowHeldBarrel;
+            uint64_t& heldKey = g_xbowHeldKey;
             const uint64_t barrelKey = ((uint64_t)HeroGen() << 32) | (uint32_t)in.weaponType;
             if (rendered.at && now - rendered.at <= 300 && rendered.gen == HeroGen()) { heldRendered = rendered; heldKey = barrelKey; }
             const bool fromRenderer = heldKey == barrelKey && heldRendered.at != 0;
@@ -3300,7 +3431,7 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
                     barrelUp = {line.up.x, line.up.y, line.up.z};
                     barrelCenter = {line.center.x, line.center.y, line.center.z};
                     // the game's support hand is its RIGHT one: our left takes the fore-grip mirrored across the crossbow's own upright plane
-                    if (onFore) {
+                    if (onFore && sp != foreOther) {
                         const xbowgrip::V side = xbowgrip::Cross(line.dir, line.up);
                         const xbowgrip::V m = xbowgrip::MirrorPoint({barrelAt.x, barrelAt.y, barrelAt.z}, line.center, side);
                         barrelAt = {m.x, m.y, m.z};
@@ -3419,8 +3550,8 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
             // [hands] staff_grab_cm: how near the shaft (within its length) the
             // left hand has to be for the grip to take the staff.
             bool inReach = false;
-            if (in.handsValid & 2u) {
-                const V3 C = ControllerPoint(h, 1, in, newW, c, s);
+            if (in.handsValid & (1u << sp)) {
+                const V3 C = ControllerPoint(h, sp, in, newW, c, s);
                 const float headY = in.haveEye ? in.eyeModel[1] : Pos(newW[h.head]).y;
                 const float upm = std::clamp(headY / std::max(0.8f, in.userHeadM), 2.0f, 8.0f) * in.scale;   // model units per metre
                 // a crossbow is taken at its one place only (leftStaffAtM), a sword's hilt
@@ -3432,10 +3563,14 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
                 inReach = Len(Sub(C, onBarrel ? barrelAt : Add(origin, Scale(axis, t)))) <= in.staffGrabM * upm;
             }
             // [hands] xbow_grip_latch: the crossbow's own latch - a lost left controller frees the hand (it is 1, on the stock, otherwise)
-            const float e = gun && in.xbowLatch ? XbowEase(in.grip[1], inReach, in.fistCap[1] >= 0.0f, (in.handsValid & 2u) != 0,
-                                                           ((uint64_t)HeroGen() << 48) ^ (uint64_t)self, (uint32_t)in.weaponType)
-                          : (in.handsValid & 2u) ? StaffEase(in.grip[1], inReach, in.fistCap[1] >= 0.0f) : 1.0f;
+            const float e = gun && in.xbowLatch ? XbowEase(in.grip[sp], inReach, in.fistCap[sp] >= 0.0f, (in.handsValid & (1u << sp)) != 0,
+                                                           ((uint64_t)HeroGen() << 48) ^ ((uint64_t)sp << 44) ^ (uint64_t)self, (uint32_t)in.weaponType)
+                          : (in.handsValid & (1u << sp)) ? StaffEase(in.grip[sp], inReach, in.fistCap[sp] >= 0.0f) : 1.0f;
             leftOnStaff = e >= 0.5f;
+            if (gun) {   // [hands] xbow_handover: the support hand holds it - the holding hand letting go then passes it
+                g_xbowSupportHeld = e >= 0.5f;
+                g_xbowSupportHeldKey = ((((uint64_t)HeroGen() << 32) | (uint32_t)in.weaponType)) ^ ((uint64_t)(holdSide & 1) << 63);
+            }
             // Held in both hands, the staff is held between them: it runs from
             // the right fist through the left controller, and the right wrist's
             // own turn no longer swings it. Turned about the shaft's point in the
@@ -3444,9 +3579,9 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
             // Not a crossbow: it points where the right controller does, the left hand only holds it.
             // Nor a two-handed sword: the hands sit a fist apart on its hilt, and the line between
             // the controllers that close turned the blade with every tremor.
-            if (!gun && !in.leftHilt && e > 0.0f && (in.handsValid & 2u) && rk >= 0) {
+            if (!gun && !in.leftHilt && e > 0.0f && (in.handsValid & (1u << sp)) && rk >= 0) {
                 const V3 pR = Add(origin, Scale(axis, tR));
-                V3 toL = Sub(ControllerPoint(h, 1, in, newW, c, s), pR);
+                V3 toL = Sub(ControllerPoint(h, sp, in, newW, c, s), pR);
                 if (Dot(toL, axis) < 0.0f) toL = Scale(toL, -1.0f);   // the left hand past the right one: the same line
                 if (Len(toL) > 0.3f * gap) {
                     const Mat R = RotBetween(axis, Add(Scale(axis, 1.0f - e), Scale(Norm(toL), e)));
@@ -3483,27 +3618,31 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
                 const float headY = in.haveEye ? in.eyeModel[1] : Pos(newW[h.head]).y;
                 const float upm = std::clamp(headY / std::max(0.8f, in.userHeadM), 2.0f, 8.0f) * in.scale;   // model units per metre
                 along = in.leftHiltAtM * upm;
-                if (in.handsValid & 2u)
-                    along = std::clamp(Dot(Sub(ControllerPoint(h, 1, in, newW, c, s), origin), axis) - tR,
+                if (in.handsValid & (1u << sp))
+                    along = std::clamp(Dot(Sub(ControllerPoint(h, sp, in, newW, c, s), origin), axis) - tR,
                                        (in.leftHiltAtM - in.leftHiltSlideM) * upm, (in.leftHiltAtM + in.leftHiltSlideM) * upm);
-            } else if (in.handsValid & 2u) {
-                along = std::clamp(Dot(Sub(ControllerPoint(h, 1, in, newW, c, s), origin), axis) - tR, -kStaffReach * gap, kStaffReach * gap);
+            } else if (in.handsValid & (1u << sp)) {
+                along = std::clamp(Dot(Sub(ControllerPoint(h, sp, in, newW, c, s), origin), axis) - tR, -kStaffReach * gap, kStaffReach * gap);
                 if (fabsf(along) < 0.3f * gap) along = along < 0.0f ? -0.3f * gap : 0.3f * gap;
             }
             const V3 onShaft = onBarrel ? barrelAt : Add(origin, Scale(axis, tR + along));
+        if (gun) {   // [hands] xbow_handover: the support hand's place, for the next pose's "nearer the grip than the fore-grip"
+            g_xbowSupportAt = onShaft;
+            g_xbowSupportKey = ((((uint64_t)HeroGen() << 32) | (uint32_t)in.weaponType)) ^ ((uint64_t)(holdSide & 1) << 63);
+        }
             const V3 handAxis = onBarrel && haveBarrelDir ? barrelDir : axis;   // what the hand lies along (the barrel as drawn, or the shaft / the shot's line)
             // The hand on it: turned only so that the line through its fist lies
             // along the shaft; its roll about the shaft stays the controller's -
             // whole, the fist went round the shaft whenever the right hand
             // twisted the staff. Then moved so the fist's middle (the staff's
             // origin in the game's grip) sits on the shaft.
-            const Mat inHand = InvAffine(grip.inStaff[1]);   // staff frame -> the left hand's own
+            const Mat inHand = InvAffine(grip.inStaff[sp]);   // staff frame -> the left hand's own
             V3 alongInHand = RotOnly(shaftInStaff, inHand), palmInHand = Through(inHand, {0.0f, 0.0f, 0.0f});
             const Mat freeHand = newW[lk];
             // [hands] xbow_wrist_tracked: a crossbow's left hand keeps the controller's turn (it may hold the stock from below or above -
             // turned into the game's grip round the line it went through a near half turn under it); its palm's middle (wrist to middle
             // knuckle, halfway) goes on the place.
-            const bool trackedWrist = gun && in.xbowWrist && h.mid[1] >= 0;
+            const bool trackedWrist = gun && in.xbowWrist && h.mid[sp] >= 0;
             // A two-handed sword hangs on the RIGHT wrist and the game's animation keeps the left
             // hand off it: the bone's origin is in the right fist, half a metre from the left one,
             // and the left hand stood that far off the hilt (2026-10-06). The left hand's own fist
@@ -3511,28 +3650,30 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
             // the pommel, below the right fist), through the palm's middle (wrist to middle knuckle).
             // The same for every shaft laid by its bone's axis (spear, polearm, axe, mace): the game's
             // left hand is not on it either.
-            if ((in.leftHilt || (in.shaftAxis != 0 && !gun)) && h.ind[1] >= 0 && h.pnk[1] >= 0 && h.mid[1] >= 0) {
+            if ((in.leftHilt || (in.shaftAxis != 0 && !gun)) && h.ind[sp] >= 0 && h.pnk[sp] >= 0 && h.mid[sp] >= 0) {
                 const Mat toHand = InvAffine(freeHand);
-                alongInHand = RotOnly(Sub(Pos(newW[h.pnk[1]]), Pos(newW[h.ind[1]])), toHand);
-                palmInHand = PalmInHandOf(h, 1, newW);   // the palm's middle from the hand's own bones (the bind pose), not this frame's fingers
+                alongInHand = RotOnly(Sub(Pos(newW[h.pnk[sp]]), Pos(newW[h.ind[sp]])), toHand);
+                palmInHand = PalmInHandOf(h, sp, newW);   // the palm's middle from the hand's own bones (the bind pose), not this frame's fingers
             }
             // the crossbow's support hand by its palm's middle too (test-57: "it holds by the wrist, not the palm's centre")
-            if (trackedWrist) palmInHand = PalmInHandOf(h, 1, newW);
+            if (trackedWrist) palmInHand = PalmInHandOf(h, sp, newW);
             // [hands] xbow_support_close: on the game's fore-grip the left hand takes the game's own support hand's turn (mirrored: that is its right
             // hand) - the palm the way the game's palm faces the stock, the knuckles along the stock as its knuckles - and later its fingers.
-            const bool closeOn = gun && onFore && haveBarrelDir && in.xbowSupportClose && h.bindOk && h.mid[1] >= 0 && h.ind[1] >= 0 && h.pnk[1] >= 0;
-            if (closeOn) palmInHand = PalmInHandOf(h, 1, newW);
+            const bool closeOn = gun && onFore && haveBarrelDir && in.xbowSupportClose && h.bindOk && h.mid[sp] >= 0 && h.ind[sp] >= 0 && h.pnk[sp] >= 0;
+            if (closeOn) palmInHand = PalmInHandOf(h, sp, newW);
             Mat onStaff = freeHand;
             bool closeTurned = false;
             if (closeOn) {
                 // the left hand's own out-of-the-palm and knuckle line, in its bone's frame, from its bind pose (toward the cross product on the left)
                 const Mat toBind = InvAffine(h.bind[lk]);
-                const V3 pt = Sub(Pos(h.bind[h.mid[1]]), Pos(h.bind[lk])), ac = Sub(Pos(h.bind[h.ind[1]]), Pos(h.bind[h.pnk[1]]));
-                const V3 outL = RotOnly(Cross(pt, ac), toBind), acL = RotOnly(ac, toBind);
+                const V3 pt = Sub(Pos(h.bind[h.mid[sp]]), Pos(h.bind[lk])), ac = Sub(Pos(h.bind[h.ind[sp]]), Pos(h.bind[h.pnk[sp]]));
+                const V3 outL = RotOnly(Scale(Cross(pt, ac), sp == 0 ? -1.0f : 1.0f), toBind), acL = RotOnly(ac, toBind);   // (away from it on the right hand)
                 // the game's support palm and knuckles, from the crossbow's frame into the model, mirrored across its upright plane
                 const xbowgrip::V side = xbowgrip::Cross({barrelDir.x, barrelDir.y, barrelDir.z}, {barrelUp.x, barrelUp.y, barrelUp.z});
                 const V3 fW = RotOnly(fore.facing, staff), aW = RotOnly(fore.across, staff);
-                const xbowgrip::V outW = xbowgrip::MirrorDir({fW.x, fW.y, fW.z}, side), acW = xbowgrip::MirrorDir({aW.x, aW.y, aW.z}, side);
+                const bool mirror = sp != foreOther;   // our support hand on the other side than the game's: its mirror image
+                const xbowgrip::V outW = mirror ? xbowgrip::MirrorDir({fW.x, fW.y, fW.z}, side) : xbowgrip::V{fW.x, fW.y, fW.z};
+                const xbowgrip::V acW = mirror ? xbowgrip::MirrorDir({aW.x, aW.y, aW.z}, side) : xbowgrip::V{aW.x, aW.y, aW.z};
                 xbowgrip::M hm, turned;
                 memcpy(hm.m, onStaff.m, sizeof hm.m);
                 if (xbowgrip::HandTurnTo(hm, {outL.x, outL.y, outL.z}, {acL.x, acL.y, acL.z}, outW, acW, &turned)) {
@@ -3577,7 +3718,7 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
             }
             if (e > 0.0f) {
                 const V3 F = Pos(freeHand), O = Pos(onStaff);
-                Reach(h, 1, Add(F, Scale(Sub(O, F), e)), turn, c, s, baseW, newW);
+                Reach(h, sp, Add(F, Scale(Sub(O, F), e)), turn, c, s, baseW, newW);
                 Mat m = BlendRot(freeHand, onStaff, e);
                 m.m[12] = newW[lk].m[12]; m.m[13] = newW[lk].m[13]; m.m[14] = newW[lk].m[14];
                 newW[lk] = m;
@@ -3590,11 +3731,16 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
             if (closeOn && e >= 0.5f) {
                 static int toldFingers = -1;
                 const char* why = !foreFingers.ok || foreFingers.skel != h.skel ? "no pose read off the game's support hand yet" : nullptr;
-                if (!why) {
+                if (!why && sp == foreOther) {   // our support hand on the game's own side: its fingers as they were on that hand
+                    size_t i = 0;
+                    for (const Hero::Finger& f : h.fingers[sp])
+                        for (const int b : f.bones) { if (i < foreRel.size()) newW[b] = Mul(foreRel[i], newW[lk]); ++i; }
+                    if (i != foreRel.size()) why = "the hand's fingers changed";
+                } else if (!why) {
                     std::vector<Mat> posed = newW;
-                    why = GripPoseOnto(h, 1, foreFingers, newW, posed);
+                    why = GripPoseOnto(h, sp, foreFingers, newW, posed);
                     if (!why)
-                        for (const Hero::Finger& f : h.fingers[1])
+                        for (const Hero::Finger& f : h.fingers[sp])
                             for (const int b : f.bones) newW[b] = posed[b];
                 }
                 const int now = why ? 0 : 1;
@@ -3605,17 +3751,17 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
                 }
             }
             // [debug] xbow_barrel_line: where the left palm's middle really is now (the pose's own wrist and middle knuckle) against its place
-            if (gun && h.mid[1] >= 0 && e > 0.99f) {   // which point the left hand is on, once per weapon and choice: the palm's middle, measured
+            if (gun && h.mid[sp] >= 0 && e > 0.99f) {   // which point the left hand is on, once per weapon and choice: the palm's middle, measured
                 static int toldLeft = -1;
                 const int key = (in.weaponType & 0x0FFFFFFF) * 8 + (onFore ? 4 : 0) + (onBarrel ? 2 : 0) + (trackedWrist ? 1 : 0);
                 if (key != toldLeft) {
                     toldLeft = key;
                     const float headY = in.haveEye ? in.eyeModel[1] : Pos(newW[h.head]).y;
                     const float upm = std::clamp(headY / std::max(0.8f, in.userHeadM), 2.0f, 8.0f) * in.scale;
-                    const V3 wrist = Pos(newW[lk]), palm = Scale(Add(wrist, Pos(newW[h.mid[1]])), 0.5f);
+                    const V3 wrist = Pos(newW[lk]), palm = Scale(Add(wrist, Pos(newW[h.mid[sp]])), 0.5f);
                     // the arm's reach against where its wrist was sent (a place beyond it leaves the palm short of it)
-                    const float armCm = (Len(Sub(Pos(newW[h.lwr[1]]), Pos(newW[h.upr[1]]))) + Len(Sub(Pos(newW[lk]), Pos(newW[h.lwr[1]])))) / upm * 100.0f;
-                    const float sentCm = Len(Sub(Pos(onStaff), Pos(newW[h.upr[1]]))) / upm * 100.0f;
+                    const float armCm = (Len(Sub(Pos(newW[h.lwr[sp]]), Pos(newW[h.upr[sp]]))) + Len(Sub(Pos(newW[lk]), Pos(newW[h.lwr[sp]])))) / upm * 100.0f;
+                    const float sentCm = Len(Sub(Pos(onStaff), Pos(newW[h.upr[sp]]))) / upm * 100.0f;
                     char t[360];
                     snprintf(t, sizeof t, "crossbow left hand: on %s, by its palm's middle (from the hand's bind pose) - the palm's middle %.1f cm from the place, the wrist %.1f cm; "
                              "the arm reaches %.0f cm, its wrist was sent %.0f cm from the shoulder%s%s",
@@ -3625,7 +3771,7 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
                     XbowNote(t);
                 }
             }
-            if (gun && in.xbowBarrelDebug && h.mid[1] >= 0) {
+            if (gun && in.xbowBarrelDebug && h.mid[sp] >= 0) {
                 const V3 head = in.haveEye ? V3{in.eyeModel[0], in.eyeModel[1], in.eyeModel[2]} : Pos(newW[h.head]);
                 const float upm = std::clamp(head.y / std::max(0.8f, in.userHeadM), 2.0f, 8.0f) * in.scale;   // model units per metre
                 auto back = [&](V3 q) {   // the barrel's frame: from the eye, head turn only, metres, less the hands' offset
@@ -3633,7 +3779,7 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
                     const V3 m = {d.x * c - d.z * s, d.y, d.x * s + d.z * c};
                     return V3{-m.x - in.handOffset[0], m.y - in.handOffset[1], -m.z - in.handOffset[2]};
                 };
-                const V3 wrist = Pos(newW[lk]), palm = Scale(Add(wrist, Pos(newW[h.mid[1]])), 0.5f);
+                const V3 wrist = Pos(newW[lk]), palm = Scale(Add(wrist, Pos(newW[h.mid[sp]])), 0.5f);
                 const float cm = Len(Sub(palm, onShaft)) / upm * 100.0f, wristCm = Len(Sub(wrist, onShaft)) / upm * 100.0f;
                 const V3 P = back(palm), W = back(wrist), T = back(onShaft);
                 const ULONGLONG now = GetTickCount64();
@@ -5382,6 +5528,13 @@ bool GunBone(float origin[3], float axes[3][3]) {
 void ResetGrip() {
     AcquireSRWLockExclusive(&g_gripLock); g_grip.ok = false; ReleaseSRWLockExclusive(&g_gripLock);
     AcquireSRWLockExclusive(&g_gripPoseLock); g_gripPose.ok = false; ReleaseSRWLockExclusive(&g_gripPoseLock);   // (the finger pose read off the game's hand goes with the grip)
+}
+bool ArmReach(int side, float shoulder[3], float* lengthM) {
+    AcquireSRWLockShared(&g_armReachLock); const ArmReachOut o = g_armReach[side & 1]; ReleaseSRWLockShared(&g_armReachLock);
+    if (!o.at || GetTickCount64() - o.at > 500) return false;
+    memcpy(shoulder, o.shoulder, sizeof o.shoulder);
+    if (lengthM) *lengthM = o.length;
+    return true;
 }
 bool GripMarks(int side, float grasp[3], float palm[3]) {
     AcquireSRWLockShared(&g_gripMarkLock); const GripMarkOut g = g_gripMark[side & 1]; ReleaseSRWLockShared(&g_gripMarkLock);

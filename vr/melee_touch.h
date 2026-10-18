@@ -50,7 +50,7 @@ void SetBladeTuning(float lengthPct, float radiusCm, bool flip, float buttPct);
 // [debug] melee_thrown_length_pct (50..250, the tip side) and melee_thrown_butt_pct (0..300, the side behind the bone): the same tuning for the thrown
 // kinds ONLY (javelin, throwing knife and axe), on top of the general one - their blades are estimates and the general sliders move every weapon.
 void SetThrownTuning(float lengthPct, float buttPct);
-// [gameplay] melee_min_speed (m/s, 0.3-8, default 0.8) and melee_stroke_start_cm (cm, 2-30, default 8): the swing engine's two numbers, live
+// [gameplay] melee_min_speed (m/s, 0.3-20, default 0.8) and melee_stroke_start_cm (cm, 2-30, default 8): the swing engine's two numbers, live
 // (vr/stroke_tuning.h): a blade moving slower than the first does nothing, a movement is a stroke only after the second. One threshold for
 // every weapon. Only when the touch presses the game's own attack - never its reach, rolls or the attack itself.
 void SetStrokeTuning(float minSpeed, float startCm);
@@ -121,9 +121,15 @@ int HostileVerdict(uint32_t id);
 
 // The target lookups of the press in flight: a touched monster is waiting for its attack to be aimed.
 bool TargetPending();
+
+// Hit by touch is on, in first person, and swung a weapon - melee, bare hands, a throwing weapon with [gameplay] melee_touch_thrown on (never a bow or a crossbow) - posed, tracked, striking - at most
+// `maxAgeMs` ago; *weaponType (optional): its D2RVR_WeaponType. Any thread. For [gameplay] melee_touch_only: the trigger need not attack while the blade does (vr/melee_trigger_wire.cpp). False when the
+// touch is off, stands down (another view, a menu, no pose, the weapon let go, a throwing weapon with its touch off, a throwing potion) or never ran.
+bool Live(uint64_t maxAgeMs, uint32_t* weaponType = nullptr);
 // Inside one of the game's target lookups (its UI thread): the client unit of the touched monster, looked up by its id
 // now, 0 for none.
-uintptr_t TargetUnit();
+// where: 1 = the cast resolver's / the hover's lookup, 2 = the map click's (the click is what carries the target to the game; the pad press of a dual cast - [hands] double_swing_by_hands - is let go there), 0 = not said.
+uintptr_t TargetUnit(int where = 0);
 
 // The press as vrcam's pad hook asks it (only while direct_input.h is not in the tree): hold pad A now.
 bool PadPressed();

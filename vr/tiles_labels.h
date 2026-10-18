@@ -69,12 +69,25 @@ inline Glyph GlyphOf(int slot) {
 // The controller control that presses slot 0..11 in the default layout, for these two hands' profiles. False: no hint.
 //   B, X, Y, RB: as the first paragraph says. A: the layout's attack, on the right trigger (so LT + A is LT + the right trigger).
 //   RT: no control of a VR controller is bound to it.
-inline bool HandHint(int slot, Profile left, Profile right, char* out, int n) {
+// With the slot controls on ([openxr] skill_rt_a, vr/slot_controls.h) the right hand's A presses A and its trigger presses RT (each with the left trigger for the
+// second row): "Right A", "R trigger" - which hold wherever the rest of the layout is rebound, since the panel takes those two controls itself.
+inline bool HandHint(int slot, Profile left, Profile right, char* out, int n, bool slotControls = false) {
     if (!out || n <= 0) return false;
     out[0] = 0;
     if (slot < 0 || slot >= wheel::kSlotCount) return false;
     const int base = wheel::BaseSlot(slot);
     const char* lt = wheel::kSlotDefs[slot].alt ? "LT + " : "";
+    if (slotControls && (base == 8 || base == 9)) {
+        if (right == Profile::None) return false;
+        if (base == 9) {
+            std::snprintf(out, n, "%sR trigger", lt);
+            return true;
+        }
+        const char* a = FaceButton(right, 1, false);
+        if (!a) return false;
+        std::snprintf(out, n, "%sRight %s", lt, a);
+        return true;
+    }
     if (base == 8) {
         if (right == Profile::None) return false;
         std::snprintf(out, n, "%sR trigger", lt);
@@ -94,10 +107,11 @@ inline bool HandHint(int slot, Profile left, Profile right, char* out, int n) {
 }
 
 // The hints for a pair of profiles; `show` false (direct input off, or its layout rebound) leaves them all empty.
-inline wheel::Hints BuildHints(Profile left, Profile right, bool show) {
+inline wheel::Hints BuildHints(Profile left, Profile right, bool show, bool slotControls = false) {
     wheel::Hints h;
-    if (!show) return h;
-    for (int s = 0; s < wheel::kSlotCount; ++s) HandHint(s, left, right, h.text[s], wheel::kHintLen);
+    if (!show && !slotControls) return h;
+    for (int s = 0; s < wheel::kSlotCount; ++s)
+        if (show || wheel::BaseSlot(s) >= 8) HandHint(s, left, right, h.text[s], wheel::kHintLen, slotControls);   // (the slot controls' two are true whatever the layout is)
     return h;
 }
 

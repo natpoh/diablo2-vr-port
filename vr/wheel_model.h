@@ -55,13 +55,23 @@ struct View {
     // told which skill is on which tree), `category` the tab shown (kCatAll, the trees 1..3, kCatGeneral), how many skills each holds, the trees'
     // names in the game's own text.
     bool catStrip = false;
+    bool catWanted = false;   // the key is on and the grid is up but the strip is not (the snapshot does not know the trees): the painter says so in the strip's place
     int category = kCatAll;
     int catCount[kCategories] = {};
     char treeName[3][kNameLen] = {};
     // RUN / WALK ([openxr] skill_run_walk): the control is there, and what the game says its switch is on now (RunState).
     bool runWalk = false;
     uint8_t run = kRunUnknown;
+    // [openxr] skill_rt_a: the right trigger casts the RT slot and the right A the A slot (vr/slot_controls.h), so a click on those two tiles is not the layout's.
+    bool slotControls = false;
 };
+
+// The slot the first page marks as the trigger's: the picked one; else, with the slot controls on, the RT slot when it holds a skill (the right trigger
+// pulls that); else A - the basic attack the layout's trigger is.
+inline int TriggerSlot(const View& v) {
+    if (v.selected >= 0) return v.selected;
+    return v.slotControls && v.ready && CastsSkill(v.slot[9]) ? 9 : 8;
+}
 
 struct In {
     double time = 0;              // seconds, monotonic
@@ -81,6 +91,7 @@ struct In {
     const Hints* hints = nullptr; // the captions under the slots (tiles); null = none
     bool categories = false;      // [openxr] skill_categories: the editor has the category strip (when the snapshot knows the trees)
     bool runWalk = false;         // [openxr] skill_run_walk: the RUN / WALK control is there
+    bool slotControls = false;    // [openxr] skill_rt_a: the right trigger and the right A cast the RT and A slots
     uint64_t nowMs = 0;           // GetTickCount64, the snapshot's clock
     const Snapshot* snap = nullptr;
     Reply reply;                  // the newest answer to a request
@@ -137,7 +148,8 @@ class Model {
         for (int i = 0; i < catalogCount_; ++i)
             if (category == kCatAll || CategoryOf(catalog_[i]) == category) choices_[choiceCount_++] = catalog_[i];
     }
-    // The editor opens on a slot: the catalog as it is now, the categories counted, All shown.
+    // The editor opens on a slot: the catalog as it is now, the categories counted, All shown. (Also when the trees became known after it opened:
+    // the strip then comes up on the page that is on screen.)
     void OpenEditor(const In& in, const Snapshot& snap) {
         catalogCount_ = (int)std::min<uint32_t>(snap.count, (uint32_t)kCatalogMax);
         for (int i = 0; i < catalogCount_; ++i) catalog_[i] = snap.catalog[i];
@@ -317,8 +329,15 @@ public:
         v_.ready = fresh;
         v_.editable = fresh && snap.editable;
         v_.bank = snap.bank;
+        // the grid is up and the strip was not there at the editor's opening (the trees were not known to the snapshot then) but the key is on
+        // and they are now: the categories are taken up here, on the page that is showing, not at the next editor
+        if (v_.open && v_.page == Page::PickSkill && !catKnown_ && in.categories && fresh && snap.treesKnown) {
+            OpenEditor(in, snap);
+        }
         v_.catStrip = catKnown_ && v_.page == Page::PickSkill;
+        v_.catWanted = in.categories && !catKnown_ && v_.open && v_.page == Page::PickSkill;
         v_.runWalk = in.runWalk;
+        v_.slotControls = in.slotControls;
         v_.run = fresh ? snap.run : uint8_t(kRunUnknown);
         v_.result = pending_.op != Op::None ? Result::Pending : v_.result;
         if (fresh) for (int i = 0; i < kSlotCount; ++i) v_.slot[i] = snap.slot[i];
@@ -334,7 +353,7 @@ private:
         if (a.open != b.open || a.page != b.page || a.hover != b.hover || a.selected != b.selected || a.editSlot != b.editSlot ||
             a.editPage != b.editPage || a.editPages != b.editPages || a.options != b.options || a.ready != b.ready ||
             a.editable != b.editable || a.bank != b.bank || a.result != b.result || a.style != b.style || !(a.hints == b.hints) ||
-            a.tabs != b.tabs || a.tab != b.tab || a.catStrip != b.catStrip || a.category != b.category || a.runWalk != b.runWalk || a.run != b.run ||
+            a.tabs != b.tabs || a.tab != b.tab || a.catStrip != b.catStrip || a.catWanted != b.catWanted || a.category != b.category || a.runWalk != b.runWalk || a.run != b.run || a.slotControls != b.slotControls ||
             std::strncmp(a.status, b.status, sizeof a.status) != 0)
             return true;
         for (int c = 0; c < kCategories; ++c) if (a.catCount[c] != b.catCount[c]) return true;
@@ -385,8 +404,9 @@ private:
                     v_.selected = -1;
                     CloseNow();
                     out->feedback = Feedback::Selected;
-                } else if (how == Cast::None) {
-                    Status(in.time, "That slot cannot be cast from here", 3.0);
+                } else if (how == Cast::None) {   // RT: nothing the trigger can pick - with the slot controls it is the right trigger itself
+                    Status(in.time, !in.slotControls ? "That slot cannot be cast from here"
+                                    : kSlotDefs[h].alt ? "Hold the left trigger and pull the right one" : "Pull the right trigger", 3.0);
                     out->feedback = Feedback::Refused;
                 } else if (fresh && s.known && s.id >= 0 && s.available) {
                     v_.selected = h;

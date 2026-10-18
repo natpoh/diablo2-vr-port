@@ -1,8 +1,9 @@
-# D2R VR Settings - a tour of the tabs
+# D2R VR Authentic Settings - a tour of the tabs
 
-`D2R_VR_Settings.exe` sits next to `D2R.exe` (Start menu: *D2R VR Settings*).
+`D2R_VR_Settings.exe` sits next to `D2R.exe` (Start menu: *D2R VR Authentic Settings*).
 Every change applies at once while the game runs; nothing needs a restart unless
-the label says so. The settings live in `d2rloader\plugins\d2r_vr.ini`.
+the label says so. D2R VR is a D2RLoader mod: everything of it, the settings too, is in `mods\D2R-VR` in the game's folder
+(`mods\D2R-VR\d2rloader\plugins\d2r_vr.ini`; before 0.170 the file was in `d2rloader\plugins`, Setup moves it with your settings).
 
 Keys in the game: **F1 - F4** pick the view, **F12** goes to the next one,
 **F11** makes "straight ahead" wherever you are looking. In this program
@@ -50,7 +51,13 @@ the headset-only ones.
   mod's effect, FlatVR's depth add-on, BodyWalk, the Xbox controller driver, the
   Game Link plugin, BodyWalk's settings for the mod, FlatVR running, head
   tracking reaching the game, the game running with the mod. Green is fine;
-  red or orange says what to do.
+  red or orange says what to do. *Thumbsticks (native OpenXR)* says whether
+  SteamVR bound the sticks (orange: read through a spare action; red: SteamVR's
+  way out is named). *Arcane Sanctuary sky* says how making its pictures went.
+  D2R VR's own ReShade is `mods\D2R-VR\reshade\ReShade64.dll` (*Install ReShade*). A `dxgi.dll` next to `D2R.exe` is **your own ReShade and is used as it is**:
+  nothing of D2R VR renames, moves or deletes it. Its `ReShade.ini` gets two search paths for D2R VR's effect and pictures (Setup does it; *Add D2R VR's folders to my ReShade*
+  does it later, game closed; the uninstaller takes them out again). *Put my dxgi.dll aside* (it asks first) renames it to `dxgi.dll.off`, so that D2R VR can have a
+  ReShade of its own; *Bring my dxgi.dll back* undoes it.
 
 ## Camera
 
@@ -100,6 +107,16 @@ the headset-only ones.
   legs stay under the body, how the hero turns to where you look.
 - **Hands** - the hands turn with the controllers; tilt, turn and roll offsets
   for your controllers' grip.
+- **Effects around the hero** (F4) - *Draw the hero's own effects fainter* (in the build, but off in
+  the settings that come with the mod, and not working yet: the log shows the effect's "Fade"
+  parameter being set, but nothing changes on screen - docs/KNOWN_ISSUES.md): meant for the
+  overlays of his own states - Bone Armor (which wraps round the eyes), Frozen / Shiver /
+  Chilling Armor, Energy Shield, Cyclone Armor, Blade Shield, Fade, with their casting flash - to
+  be faded with the effect's own "Fade" parameter (the one the game fades an overlay with) to
+  the percentage you set (*Own effects left*, 30 %; 100 = as the game draws them, 0 = hidden),
+  and the aura rings at his feet to *Aura rings at the feet left* (50 %). Visual only: the buff
+  and its numbers are the game's; monsters', mercenaries' and other players' effects, and every
+  overlay that is not a state's, are untouched.
 
 ## Controls
 
@@ -262,6 +279,26 @@ the headset-only ones.
     itself is a pick of the button lists: *Run / walk switch* in Controls > Buttons
     of the controllers and the headset's Left / Right pages, *D2R key: Run / walk
     switch* in BodyWalk's bindings. Idea after bearstonem/d2r-pcvr (MIT).
+    *Skill panel: skills on the right trigger and on A* (off): in first person with
+    the mod's own controls, the right trigger casts the skill on the game's RT slot
+    and the right A the one on its A slot - and with the left trigger held, LT + RT
+    and LT + A - through the game's own buttons, so its mana, cooldown and animation.
+    Put a skill on them in EDIT SKILLS (the Tiles look): point at the RT or A plate,
+    pick a skill; *Attack* in the list puts the slot back. A slot with nothing, Attack
+    or Interact on it leaves its control as it is (the trigger attacks, A interacts).
+    With Hit by touch's "the trigger no longer attacks", only the plain attack on the
+    trigger is withheld - a skill on RT casts.
+  *Eye distance: from the headset* (on): the distance between the two eyes of the
+  pair is what the headset's runtime reports; untick it to set your own (50 - 80 mm,
+  live) for a headset whose IPD was not picked up or was picked up wrong - the line
+  under it says what the headset reports and which is in use. *Canted displays: both
+  eyes in the head's frame* (on): on a headset whose displays are canted (Pimax,
+  Varjo, Index and others) both eyes are drawn and submitted in the head's frame,
+  where the right eye used to come out crossed with the centre stretched; parallel
+  headsets are unchanged. *Never hang on a busy headset* (on, restart): the
+  runtime's frame wait and session start get a time limit, so the game goes on flat
+  instead of hanging when another app holds the headset (FlatVR through BodyWalk
+  Lite); Home > Status then says to close BodyWalk and restart SteamVR.
 
 ## UI: F1 above
 
@@ -329,7 +366,13 @@ The toolbar while the game lies on your floor, and the item labels.
   turn round the arm to the inner side of the wrist so the shield does not cover it,
   and rolls it back, in a third of a second, when the shield leaves that arm. Its
   own sliders (turn round the arm, 180 by default; X, Y, Z in cm; rotation X, Y, Z)
-  are added to the wrist's numbers and are the same on either wrist. The wrist bone and the arm's model differ with
+  are added to the wrist's numbers and are the same on either wrist; and under them each
+  hero class (Amazon ... Warlock) has its own **depth (Z)** and **along the arm (X)** under a
+  shield, -5 to 5 cm, and its own **rotation X, Y, Z** of the medallion there, -180 to 180
+  degrees, added to those while that hero wears a shield (the forearm's model, and so how
+  deep the inner side of the wrist lies and how the medallion sits on it, differs with the
+  class; 0 = none of its own; they ease in and out with the roll).
+  The wrist bone and the arm's model differ with
   the class, so under **Wrists: depth per hero** each class (Amazon ... Warlock) has a
   depth (Z) offset, -5 to 5 cm, added to both wrists' Z while that hero plays; the
   line above the rows says which hero the game has now. Which wrist (or both on one), the size, the opacity and a soft
@@ -353,9 +396,11 @@ The toolbar while the game lies on your floor, and the item labels.
     screen, the ordinary plates' tick), a page that changes by itself, a moment
     after each press, the way the sliders here do: **Belt** (height, distance,
     right / left, turn, how near a hand must be to a potion to take it, and the
-    tick *trigger + grip*), and two pages for what the buttons do, **Left** and
-    **Right** (a list for each button, as in Controls > Buttons of the controllers
-    here). The keys are the same ones this window writes, so both stay in step.
+    tick *trigger + grip*), **Melee** (*Hit by touch*, the least blade speed that
+    hits and how far the blade moves to start a stroke - the same three as in
+    Strikes here, changing by themselves too), and two pages for what the buttons
+    do, **Left** and **Right** (a list for each button, as in Controls > Buttons of
+    the controllers here). The keys are the same ones this window writes, so both stay in step.
     With the skill panel in the Tiles look these pages are its second tab,
     *Settings*, beside *Skills*:
     flick a stick left or right, tap a grip, or click the arrow at the window's
@@ -432,7 +477,9 @@ The toolbar while the game lies on your floor, and the item labels.
 ![World](screenshots/settings_09_world.png)
 
 - **Fog** - distance fog, where it starts and where it is full, falloff, a depth
-  blur, the fog colour in caves, the game's own height fog. *How that depth is
+  blur, the fog colour in caves, the game's own height fog. *Fog spares fire,
+  spells and smoke* (test, off): a torch or a Fire Bolt in front of a far wall is
+  no longer fogged like the wall (VR F4; read at the game's start). *How that depth is
   set* (under *The game's effects measure depth from our camera*): in each pass
   as it is bound (as before), or once a frame where the game makes it (after
   bearstonem/d2r-pcvr: every pass - fog, ambient occlusion, particles, grass -
@@ -459,6 +506,15 @@ in full in a square window); the log tells the size the game draws at.
 
 - **Sky** - a sky outdoors (drawn by our ReShade effect), clouds, slowly
   drifting clouds.
+- **Arcane Sanctuary: its own stars all round** - in the Arcane Sanctuary the
+  game's own star layers and clouds in every direction round the platforms
+  (after bearstonem/d2r-pcvr; on). The pictures are made from your game's files
+  when D2R VR Authentic Settings opens - *Arcane Sanctuary sky* on Home says how that went;
+  *Make the Arcane Sanctuary sky now* there makes them again (after a game update).
+  Under it *Arcane Sanctuary: fog fades into its sky* (on in the settings that come with the mod): the distance fog (World > Fog)
+  in the Arcane Sanctuary too - the far platforms dissolve into the sky behind them (its
+  dark and its nebula, not its stars). Off: no fog under that sky, the platforms sharp to
+  the end, as before.
 - **Day and night** - the sky follows the game's day and night, how dark the
   night sky gets, which game light counts as full day and full night.
 - **Act 1 - Act 5** - per act (Act 5 twice: ruins and snow): brightness, the sky
@@ -549,7 +605,17 @@ in full in a square window); the log tells the size the game draws at.
   left hand (from d2r-pcvr): *left grip lets go cleanly*, *left wrist follows the
   controller*, *take the grip right after a swap*, *left palm under the drawn barrel*
   (with *palm below the barrel, cm* and *palm behind the limbs, cm*). The shot is not
-  changed by any of them.
+  changed by any of them. *Pass it from hand to hand*, *Its barrel along the controller*,
+  *left hand on the game's own fore-grip* and *the left hand closes on the stock* are NOT
+  FINISHED and off in the settings that come with the mod: in a test (2026-10-18) the
+  crossbow's grip was still off and the hand-over did not work, to be fixed later
+  (docs/KNOWN_ISSUES.md). What they are meant to do: pass the crossbow by taking it with the
+  free hand at the fore-grip and letting go with the other (or a new squeeze of the free
+  hand's grip near the holding hand's, within 25 cm); lay it by its own drawn barrel along
+  the controller instead of a bone axis, which tilted it about 34 degrees up and a little
+  aside; and put the hands on the game's own roles - the holding palm on the trigger grip
+  at the back, the support hand on the fore-grip under the prod. The old crossbow settings
+  ship.
   The shot line (*shot line, tilt* / *turn*) on the author's rig, 2026-10-16 (light
   crossbow, gun frame): bolts fly straight with tilt 0 / turn -46, and go left with
   turn 0. The drawn barrel itself lies about 34 degrees above the controller's forward
@@ -569,8 +635,13 @@ ticks the other). The blade's geometry stays in Weapon Adjust and Debug.
 
 - **Hit by touch** (F4, off) - the blade you swing through a monster's body picks the target and the moment of the game's own attack (the attack button is pressed on the
   contact, the monster you touched is its target). The game's animation, reach, hit rolls and attack speed stay the game's. *The least blade speed that hits* (0.8 m/s)
-  and *how far the blade moves to start a stroke* (8 cm) are sliders; a monster is hit once per stroke, allies and monsters behind a wall are left alone. *Thrown weapons
+  and *how far the blade moves to start a stroke* (8 cm) are sliders - the tick and the two sliders are on the settings panel in the headset too (page Melee); a monster is hit once per stroke, allies and monsters behind a wall are left alone. *Thrown weapons
   hit by touch too* (on with it): a javelin, knife or axe swung through a monster is the game's Throw at it, point blank; potions never.
+  *The trigger does not attack* (on with it; also on the headset panel's Melee page; the tick is the way back): a trigger that attacks lets you skip the swing and just pull it, which is a bug of hit by touch.
+  With the plugin's own controls (Controls without BodyWalk) and hit by touch swinging a weapon, the trigger's attack is not passed to the game - only the blade's touch attacks. That is every weapon the touch
+  swings: melee weapons, bare hands and throwing weapons (the touch or the throw gesture throws them); only a bow and a crossbow keep the trigger. Spells and skills on the other buttons are as they were.
+  Only our own controller press is withheld, and every other output the trigger is bound to works. The trigger works as ever where hit by touch does not run (no tracking, a menu or panel up, another view,
+  a throwing weapon with its touch off, a throwing potion). With BodyWalk's own input the trigger is BodyWalk's and this cannot reach it. The log says what it decided.
 - **Which contact counts as a strike** - rules on top of the swing engine, for every kind of weapon (single kinds can be switched off in the table). They only decide whether
   a contact counts as an attack: the game's attack, damage and rolls are not touched, nothing is scaled; a refused contact does not use the monster up, so the next blow
   counts. *Toward the monster* (on): the point of the blade that touches must be moving toward the monster - the angle between its velocity and the line to the nearest point
@@ -584,6 +655,11 @@ ticks the other). The blade's geometry stays in Weapon Adjust and Debug.
 - **Each kind of weapon** - a table, a row for each of the 15 kinds the touch swings (bows and crossbows are shot, not swung): *Swing x* (the kind's own amplitude factor, 0 =
   follow its family), *= cm* (what that comes to), *Speed* (its own least blade speed, m/s) and *Start cm* (its own start distance; 0 = the general one for both), and two
   ticks, *Toward* and *Head*. Click a number, type, press Enter.
+- **Two weapons: Double Swing by the hands** (F4, off; a Barbarian with a melee weapon in each hand) - *Double Swing by the two hands*: the first hand's touch on a monster is the game's normal attack;
+  when the other hand then touches the same monster within *the other hand within, ms* (700) the second strike is the game's own Double Swing instead - its pad button is pressed once and the monster
+  you touched is its target, the way the shield bash casts Smite. The skill has to sit on one of the pad's ten skill slots, the hero has to have a level in it and the mana for it (the game's own
+  numbers); otherwise the second touch is a normal attack too. *The skill pressed first*: with Frenzy on a slot as well, which of the two. The swings, damage, animation and mana are the game's.
+  The log says every decision once.
 - **Direct hit** (experimental, off, offline only) - the touch calls the game's basic attack itself - no animation, no walk-up, no attack-rate wait.
 - **Quick strike** (experimental, a change of the game's timing) - the game lands a melee blow at an action frame of the attack animation (a Paladin's sword: frame 7, 0.28 s
   in); this moves that frame to the start (a slider, 1 by default) so the blow lands about a quarter of a second sooner inside the same attack. The animation's length and the
@@ -807,6 +883,13 @@ or orb *Wand or orb aim point* (20 cells), bare hands *Bare hands aim point* (5)
 (Bow tab, below 3 = the game's own point).
 Debug > Aim rays > *Spell's ray* shows where it goes, live: green from the model,
 orange the old line, to the floor (a full ball) or 8 m out (a ring).
+*A spell's aim distance follows how far the arm is stretched* (off, Bow tab,
+VR first person F4): as in flat Diablo, where a click near the hero spreads Teeth wide
+and a far one keeps it in a tight cone - an arm held at the body aims the spell near
+(*Aim point with the arm at the body*, 3 cells), an arm stretched out along the aim
+aims it at the weapon's own distance. Spells only: a wand, an orb, bare hands, a staff
+with one hand on it; a staff held in both hands always aims at its far distance, and a
+bow, a crossbow and throws keep their fixed distance.
 
 ## Debug
 

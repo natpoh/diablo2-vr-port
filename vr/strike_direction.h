@@ -304,7 +304,7 @@ private:
 // ---- the engine's two numbers for one kind ----
 
 struct KindTuning {
-    float minSpeed = 0.0f;   // m/s: 0.3 .. 8; below that = the general number
+    float minSpeed = 0.0f;   // m/s: 0.3 .. 20; below that = the general number
     float startCm = 0.0f;    // cm: 2 .. 30; below that = the general number
 };
 inline stroke::StrokeTuning Effective(stroke::StrokeTuning general, KindTuning k) {

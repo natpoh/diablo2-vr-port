@@ -561,8 +561,9 @@ void DrawStatus(Canvas& cv, Fonts& fonts, const View& v) {
     } else if (!v.ready) {
         std::snprintf(line, sizeof line, "Skills unavailable");
     } else if (v.page == Page::Wheel) {
-        if (v.selected >= 0 && v.slot[v.selected].known && v.slot[v.selected].id >= 0)
-            std::snprintf(line, sizeof line, "Trigger casts: %s  (%s)", v.slot[v.selected].name, wheel::kSlotDefs[v.selected].label);
+        const int ts = wheel::TriggerSlot(v);   // (the picked slot; with the slot controls the RT slot too, when it holds a skill)
+        if (ts != 8 && v.slot[ts].known && v.slot[ts].id >= 0)
+            std::snprintf(line, sizeof line, "Trigger casts: %s  (%s)", v.slot[ts].name, wheel::kSlotDefs[ts].label);
         else
             std::snprintf(line, sizeof line, "Trigger: the basic attack  (A)");
     } else if (v.page == Page::PickSkill && v.editPages > 1) {
@@ -606,7 +607,7 @@ void DrawRows(Canvas& cv, Fonts& fonts, const View& v) {
         k.dim = k.red && !sk.available;
         k.dead = v.ready && !sk.known;
         k.hot = v.hover == s;
-        k.active = v.page == Page::Wheel && (v.selected == s || (s == 8 && v.selected < 0));
+        k.active = v.page == Page::Wheel && wheel::TriggerSlot(v) == s;
         DrawTile(cv, fonts, r, k, placed ? &sk : nullptr, pickSlot && placed && sk.id < 0);
         DrawGlyph(cv, fonts, tiles::GlyphOf(s), tiles::GlyphRect(s));
         if (placed && sk.id >= 0) Text(cv, fonts, sk.name, tiles::NameRect(s), 22, false, sk.available ? kSilver : kSilverDim);
@@ -640,6 +641,9 @@ void DrawStrip(Canvas& cv, Fonts& fonts, const View& v) {
 // this slot holds now.
 void DrawGrid(Canvas& cv, Fonts& fonts, const View& v) {
     if (v.catStrip) DrawStrip(cv, fonts, v);
+    else if (v.catWanted)   // the key is on but the game side does not know the trees: say so where the strip would be, instead of an empty band
+        Text(cv, fonts, "Skill categories need the icon cache's skill trees - run tools/skill_icons/prepare_skill_icons.py again", Rect{tiles::kStripLeft, tiles::kStripTop, kW - tiles::kStripLeft, tiles::kStripBottom},
+             21, false, kSilverDim);
     if (!v.options) {
         CapsCentred(cv, fonts, "No skills to choose from", 0.5f * kW, Rect{200, 380, 1400, 460}, 40, 3.0f, kSilverDim, false);
         return;

@@ -57,6 +57,7 @@
 #include "log_async.h"   // [debug] log_async: the plugin's log lines through a ring and a writer thread (vr/log_queue.h); off = ctx->LogInfo as ever
 #include "game_device_only.h"
 #include "light_bounds.h"
+#include "fog_spare.h"      // [fog] spare_effects: the fog spares fire, spells and smoke (the game's transparent targets at its resolve)
 
 namespace probe {
 void Run(const float hero[3], const wchar_t* outPath);
@@ -70,6 +71,7 @@ int FindHeroMatrices(const float hero[3], uintptr_t* out, int max);
 #include "pad_presence.h"  // pad 0 is never answered "not connected" in VR once the plugin is the pad (the game's reconnect panel)
 #include "stand_still_wire.h"   // [gameplay] attack_in_place: an attack of ours is pressed with the game's Stand Still (stand_still_wire.cpp)
 #include "stand_still.h"        // ... and a click on bare ground in F4 gets Stand Still too (HookMapClick)
+#include "reshade_env.h"        // another mod's RESHADE_* variables, cleared in this process before ReShade64.dll loads (LoadReShade)
 #include "stray_walk_wire.h"    // [gameplay] block_stray_walk / block_stray_clicks: no stray walk, no stray mouse button in the F4 world (stray_walk_wire.cpp)
 #include "view_gate.h"     // everything added after the base mod acts in VR first person (F4) only
 #include "vcache.h"        // [render] vcache: the game's threads on the big-L3 cores (Ryzen X3D with two CCDs)
@@ -134,9 +136,11 @@ namespace gamestate { bool HandIsThrowPotion(int side); }   // the held item is 
 #include "gpu_fault.h"   // [debug] dred: the D3D12 device lost, told at once with what the GPU was doing (vr/gpu_fault.h)
 #include "stall_guard.h"  // [debug] stall_guard: a queue that stands still for good (vr/stall_guard.h)
 #include "ecl_hook.h"     // [debug] replay_marks 3, 4: the game's own ExecuteCommandLists calls (vr/ecl_hook.h)
+#include "replay_pause.h" // when the replay may run: 240 settled pairs in a loaded area (vr/replay_pause.h)
 #include "replay_groups.h"  // ... and the replay's submissions made of them (vr/replay_groups.h)
 #include "frame_trace.h"   // [debug] frame_trace: where a slow pair's time went, the plugin's part counted apart (vr/frame_trace.h)
 #include "aim_point.h"
+#include "arm_reach.h"
 #include "spell_aim_model.h"
 #include "shot_trace_wire.h"
 #include "throw_aim.h"
@@ -158,6 +162,7 @@ namespace gamestate { bool HandIsThrowPotion(int side); }   // the held item is 
 #include "quiver_wire.h"
 #include "throw_born.h"
 #include "potion_hide.h"
+#include "own_effects.h"          // [render] dim_own_effects: the hero's own effects (Bone Armor ...) drawn fainter in first person
 #include "grab_priority.h"   // [belt] grab_nearest, grab_trigger: a grip press and the belt potion or the weapon
 #include "anim_cut.h"          // [bow] quick_release, [hands] quick_throw: the action-frame flag of the hero's bow attack / throw rows moved earlier (vr/anim_cut.cpp)
 #include "bow_latency.h"       // [debug] bow_latency: the split of the second between a bow's release and its arrow (vr/bow_latency.h)
@@ -178,11 +183,14 @@ namespace hud { void SetPlateCut(bool want, const int32_t layout[4], float scale
 #include "wrist_status_wire.h"   // [hud] wrist_status: the hero's companions and the effects on it, over a wrist turned to the eyes (vr/wrist_status.h)
 #include "hand_orbs.h"   // [hud] hand_vitals_style orbs: life and mana as 3D balls on the wrists, drawn by the effect (vr/hand_orbs.h)
 #include "render_resolution.h"   // [render] vr_resolution: a render size apart from the window's
+#include "mod_layout.h"   // D2R VR as the D2RLoader mod D2R-VR: ReShade from the mod's own folder (shared/mod_layout.h)
 #include "depth_source.h"   // [render] depth_fix_mode 2: the depth range written once a frame at the game's frame builder
 #include <timeapi.h>   // timeBeginPeriod: the pacer's 1 ms sleeps
 #pragma comment(lib, "winmm.lib")
 #include "pad_mirror_shared.h"
 #include "shield_smite_game.h"   // [gameplay] shield_smite: a bash of the left shield casts the game's own Smite
+#include "melee_trigger_wire.h"   // [gameplay] melee_touch_only: with hit by touch live the trigger does not attack (the plugin's own controls)
+#include "double_swing_game.h"   // [hands] double_swing_by_hands: with a weapon in each hand the second hand's touch casts the game's own Double Swing / Frenzy
 #include "hit_claim.h"   // whose blow just landed: the presses claim it, the hit observer's hand source takes it (the controller that buzzes)
 
 #pragma intrinsic(_ReturnAddress)
@@ -359,6 +367,8 @@ struct Settings {
     std::atomic<float> lightNight{65.0f};
     std::atomic<float> nightBright{0.25f};  // [sky] night_brightness: the sky and the fog at full night, times their day brightness
     std::atomic<bool>  skyAlways{false};    // whatever the biome (testing): caves get a sky too
+    std::atomic<bool>  arcaneSky{true};     // [sky] arcane_sky: the Arcane Sanctuary's own star layers all round (after bearstonem/d2r-pcvr), [sky] enabled or not
+    std::atomic<bool>  arcaneFog{false};    // [sky] arcane_fog: the fog in the Arcane Sanctuary too, fading into its sky (off: no fog under that sky, as before)
     std::atomic<bool>  skyHidePanels{true}; // no sky while a side panel shifts the picture
     std::atomic<bool>  fogCaves{true};      // [fog] caves: the fog in caves and dungeons too (every area off [sky] outdoor)
     std::atomic<bool>  ceilOn{false};       // [ceiling] enabled: a vault over the void in caves (first person only)
@@ -428,6 +438,8 @@ struct Settings {
     // [bow] caster_range / hand_range: how far out along the hand a spell's point goes ([hands] spell_aim_model on, F4), cells - a wand or orb / bare
     // hands (a staff: staff_range_one / staff_range_two); below 3 the game's own point
     std::atomic<float> casterRange{20.0f}, handRange{5.0f};
+    std::atomic<bool>  aimByArm{false};     // [bow] aim_distance_by_arm: a spell's aim point (wand, orb, a staff in one hand, bare hands) follows how far the aiming arm is stretched (vr/arm_reach.h), F4 only
+    std::atomic<float> aimNearCells{3.0f};  // [bow] aim_near_cells: the distance with the arm at the body (the far end is the weapon's own)
     std::atomic<float> aimRange{20.0f};     // mode 4 with a bow: the attack point this many grid cells along the hand       // mode 3: how long the stick turns the hero before A goes through
     std::atomic<int>   bowHand{1};          // 0 right, 1 left: the aiming hand of weapon set I
     std::atomic<int>   bowHand2{0};         // the same for weapon set II
@@ -497,6 +509,8 @@ struct Settings {
     std::atomic<bool>  xbowHoldGrip{false};    // [hands] xbow_hold_grip
     std::atomic<bool>  xbowSupportGame{false}; // [hands] xbow_support_game
     std::atomic<bool>  xbowSupportClose{false}; // [hands] xbow_support_close
+    std::atomic<bool>  xbowHandover{false};     // [hands] xbow_handover
+    std::atomic<bool>  xbowBarrelForward{false}; // [hands] xbow_barrel_forward
     std::atomic<float> xbowLeftAtCm{30.0f};                      // [hands] xbow_left_at_cm: where the left hand holds the crossbow, cm ahead of the right fist                       // [hands] xbow_left_roll: degrees about the stock (from below = palm up)   // [hands] left_staff_x/y/z: cm, staff_free_left's left hand on the staff, its axes
     // Two-handed weapons held like the staff (plan_two_handed_grip.md, 0.138): the right hand
     // holds, the left takes it with the grip. [hands] polearm_two_hands: spears and polearms,
@@ -836,14 +850,51 @@ void LoadCaveFog() {
     AcquireSRWLockExclusive(&g_skyCfgLock); g_caveFog = f; ReleaseSRWLockExclusive(&g_skyCfgLock);
 }
 
-// A bare name is looked for where ReShade looks (reshade-shaders\Textures next to the game).
+// The folder ReShade lives in (shared/mod_layout.h): the mod's own reshade\ when this plugin runs as the D2RLoader mod D2R-VR
+// (<game>\mods\D2R-VR\d2rloader\plugins) and that folder has ReShade64.dll; else the game's folder, as before. Its shaders,
+// textures, ReShade.ini and add-ons are there. Taken once, with this plugin's own path.
+const std::wstring& ReShadeDir() {
+    static const std::wstring dir = [] {
+        wchar_t self[MAX_PATH] = L"", game[MAX_PATH] = L"";
+        HMODULE me = g_self;
+        if (!me) GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCWSTR)&ReShadeDir, &me);
+        DWORD n = GetModuleFileNameW(me, self, MAX_PATH);
+        while (n && self[n - 1] != L'\\') --n;
+        self[n] = 0;
+        n = GetModuleFileNameW(nullptr, game, MAX_PATH);
+        while (n && game[n - 1] != L'\\') --n;
+        game[n] = 0;
+        const std::wstring mod = modlayout::ModRootOfPluginDir(self);
+        const bool modReShade = !mod.empty() && GetFileAttributesW((mod + modlayout::kReShadeFolder + L"ReShade64.dll").c_str()) != INVALID_FILE_ATTRIBUTES;
+        return modlayout::ReShadeDir(game, mod, modReShade);
+    }();
+    return dir;
+}
+
+// Where D2R VR's OWN ReShade files are (shared/mod_layout.h OurFilesDir): the mod's reshade\ whenever the plugin runs as the mod D2R-VR - D2R_DepthFog.fx, the
+// sky / ceiling / Arcane pictures and FlatVR's add-on ship there, and ReShade finds them there both when it is the mod's own ReShade64.dll (that folder is its
+// base, ReShadeDir) and when it is a dxgi.dll the player has beside the game (two search paths in its ReShade.ini, shared/reshade_paths.h; its base is the
+// game's folder). Else the game's folder, as before the mod layout.
+const std::wstring& OurFilesDir() {
+    static const std::wstring dir = [] {
+        wchar_t self[MAX_PATH] = L"", game[MAX_PATH] = L"";
+        HMODULE me = g_self;
+        if (!me) GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCWSTR)&OurFilesDir, &me);
+        DWORD n = GetModuleFileNameW(me, self, MAX_PATH);
+        while (n && self[n - 1] != L'\\') --n;
+        self[n] = 0;
+        n = GetModuleFileNameW(nullptr, game, MAX_PATH);
+        while (n && game[n - 1] != L'\\') --n;
+        game[n] = 0;
+        return modlayout::OurFilesDir(game, modlayout::ModRootOfPluginDir(self));
+    }();
+    return dir;
+}
+
+// A bare name is looked for where ReShade looks for D2R VR's pictures (reshade-shaders\Textures of D2R VR's own files, OurFilesDir).
 bool SkyFileExists(const std::wstring& name) {
     if (name.find(L':') != std::wstring::npos || name.rfind(L"\\\\", 0) == 0) return GetFileAttributesW(name.c_str()) != INVALID_FILE_ATTRIBUTES;
-    wchar_t dir[MAX_PATH];
-    DWORD n = GetModuleFileNameW(nullptr, dir, MAX_PATH);
-    while (n && dir[n - 1] != L'\\') --n;
-    dir[n] = 0;
-    return GetFileAttributesW((std::wstring(dir) + L"reshade-shaders\\Textures\\" + name).c_str()) != INVALID_FILE_ATTRIBUTES;
+    return GetFileAttributesW((OurFilesDir() + L"reshade-shaders\\Textures\\" + name).c_str()) != INVALID_FILE_ATTRIBUTES;
 }
 
 void LoadCrosshairFile();   // [input] crosshair (the flat crosshair's picture), with the cursor code
@@ -1159,7 +1210,7 @@ void ReconcileFrameCap() {
         const int hz = framecap::HzOfRate((int)IniF(L"stereo", L"headset_rate", 3.0f));
         const framecap::VrCap c = framecap::VrCapFor(hz, IniB(L"stereo", L"afr", false), IniB(L"stereo", L"pair_per_tick", false), xr::On(),
                                                      IniF(L"flatvr", L"frame_sync", 0.0f) != 0.0f);
-        LogF("vrcam: frame cap - the game's file has %d; for the headset's %d Hz in this 3D mode D2R VR Settings writes %d%s (%s)", now, hz, c.value,
+        LogF("vrcam: frame cap - the game's file has %d; for the headset's %d Hz in this 3D mode D2R VR Authentic Settings writes %d%s (%s)", now, hz, c.value,
              c.factor ? "" : " (none)", framecap::Reason(c.why));
     } else {
         plan = framecap::ForFlat(now, s);
@@ -1326,7 +1377,7 @@ void SafeGameWindow() {
         fwrite(text.data(), 1, text.size(), o);
         fclose(o);
         LogF("vrcam: the game's windowed size was %dx%d - taller than the main monitor holds (%d; D2R builds its title screen at "
-             "that size and closes past ~2400): set to %s%s (D2R VR Settings' square window grows it in a game)", w, h, limit, size.c_str(),
+             "that size and closes past ~2400): set to %s%s (D2R VR Authentic Settings' square window grows it in a game)", w, h, limit, size.c_str(),
              attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_READONLY) ? ", its read-only flag taken off" : "");
     } else {
         LogF("vrcam: the game's windowed size is %dx%d - taller than ~2400 D2R itself closes at its title screen, and Settings.json "
@@ -1344,6 +1395,7 @@ extern std::atomic<bool> g_xrThirdGaze; extern std::atomic<int> g_projFix; exter
 namespace fx { bool OwnDepthNow(); }   // [render] own_depth in force (fx::scenedepth::)
 namespace replay { extern std::atomic<int> g_marksOn; extern std::atomic<bool> g_fxSync; extern std::atomic<bool> g_fxFence; extern std::atomic<bool> g_dlssBoth; extern std::atomic<bool> g_replayCopy; }
 namespace replay { extern std::atomic<int> g_peekWant; }
+namespace replay { void AreaChanged(); }   // the game set a biome: an area loads (see Wanted)
 namespace camfix { extern std::atomic<int> g_scanWant; }
 std::atomic<bool> g_ownDepth{true};   // [render] own_depth (scenedepth::)
 std::atomic<bool> g_squareWin{false};   // [openxr] square_window: D2R VR Settings' square game window
@@ -1416,6 +1468,7 @@ void LoadSettings() {
     g_set.rings.store(std::clamp((int)IniF(L"render", L"rings", 4.0f), 1, 8));
     g_set.modelRadius.store(std::clamp(IniF(L"render", L"model_radius", 1000.0f), 10.0f, 10000.0f));
     g_set.renderPoolMb.store(std::clamp((int)IniF(L"render", L"render_pool_mb", 64.0f), 0, 4096));
+    owneffects::Configure(IniB(L"render", L"dim_own_effects", false), IniF(L"render", L"dim_own_effects_pct", 30.0f), IniF(L"render", L"dim_own_auras_pct", 50.0f));   // the hero's own effects fainter (vr/own_effects.h), F4 only
     g_set.entityPoolMb.store(std::clamp((int)IniF(L"render", L"entity_pool_mb", 280.0f), 0, 4096));
     g_set.mouseLook.store(IniB(L"input", L"mouse_look", false));
     g_set.hudHide.store(std::clamp((int)IniF(L"hud", L"hide", 0.0f), 0, 2));
@@ -1493,6 +1546,19 @@ void LoadSettings() {
             wchar_t key[64];
             swprintf_s(key, L"hand_vitals_orb_z_cm_%hs", handvitals::HeroKey(k));
             hv.orbClassZCm[k] = IniF(L"hud", key, 0.0f);
+        }
+        for (int k = 0; k < handvitals::kHeroCount; ++k) {   // the depth and the along offset of each hero class under a shield (hand_vitals_orb_shield_up_cm_<class> / _along_cm_<class>, cm), on top of the shield's own
+            wchar_t key[80];
+            swprintf_s(key, L"hand_vitals_orb_shield_up_cm_%hs", handvitals::HeroKey(k));
+            hv.orbShieldClassUpCm[k] = IniF(L"hud", key, 0.0f);
+            swprintf_s(key, L"hand_vitals_orb_shield_along_cm_%hs", handvitals::HeroKey(k));
+            hv.orbShieldClassAlongCm[k] = IniF(L"hud", key, 0.0f);
+            swprintf_s(key, L"hand_vitals_orb_shield_rot_x_deg_%hs", handvitals::HeroKey(k));   // ... and the medallion's turn about X / Y / Z there, degrees
+            hv.orbShieldClassRotXDeg[k] = IniF(L"hud", key, 0.0f);
+            swprintf_s(key, L"hand_vitals_orb_shield_rot_y_deg_%hs", handvitals::HeroKey(k));
+            hv.orbShieldClassRotYDeg[k] = IniF(L"hud", key, 0.0f);
+            swprintf_s(key, L"hand_vitals_orb_shield_rot_z_deg_%hs", handvitals::HeroKey(k));
+            hv.orbShieldClassRotZDeg[k] = IniF(L"hud", key, 0.0f);
         }
         hv.orbMirror = IniB(L"hud", L"hand_vitals_orb_mirror", false);   // the right wrist takes the left's three numbers (and the three angles)
         // the wrist that wears a shield (the left arm, or the right one after a hand swap) turns its ball to the other side of the wrist (VR F4 only); the coefficients of that place
@@ -1766,6 +1832,7 @@ void LoadSettings() {
     g_set.uiShift.store(std::clamp(IniF(L"stereo", L"ui_near", 0.0f), 0.0f, 20.0f));
     g_set.hudTop.store(std::clamp(IniF(L"stereo", L"ui_top", 0.70f), 0.0f, 1.0f));
     g_set.fogOn.store(IniB(L"fog", L"enabled", false));
+    fogspare::SetWanted(IniB(L"fog", L"spare_effects", false));   // the game's pipelines are looked at only with it on at the game's start
     g_set.fogStart.store(std::clamp(IniF(L"fog", L"start", 150.0f), 0.0f, 100000.0f));
     g_set.fogEnd.store(std::clamp(IniF(L"fog", L"end", 600.0f), g_set.fogStart.load() + 1.0f, 200000.0f));
     // caves: their own range, the open air's when not set (caves are smaller, their fog nearer)
@@ -1867,6 +1934,8 @@ void LoadSettings() {
     g_set.lightNight.store(std::clamp(IniF(L"sky", L"light_night", 65.0f), 0.0f, 254.0f));
     g_set.nightBright.store(std::clamp(IniF(L"sky", L"night_brightness", 0.25f), 0.0f, 1.0f));
     g_set.skyAlways.store(IniB(L"sky", L"always", false));
+    g_set.arcaneSky.store(IniB(L"sky", L"arcane_sky", true));
+    g_set.arcaneFog.store(IniB(L"sky", L"arcane_fog", false));
     g_set.skyHidePanels.store(IniB(L"sky", L"hide_with_panels", true));
     LoadOutdoorBiomes();
     g_set.ceilOn.store(IniB(L"ceiling", L"enabled", false));
@@ -2053,6 +2122,8 @@ void LoadSettings() {
     g_set.staffRangeOne.store(std::clamp(IniF(L"bow", L"staff_range_one", 5.0f), 2.0f, aimpoint::kMaxCells));
     g_set.casterRange.store(std::clamp(IniF(L"bow", L"caster_range", 20.0f), 0.0f, aimpoint::kMaxCells));
     g_set.handRange.store(std::clamp(IniF(L"bow", L"hand_range", 5.0f), 0.0f, aimpoint::kMaxCells));
+    g_set.aimByArm.store(IniB(L"bow", L"aim_distance_by_arm", false));
+    g_set.aimNearCells.store(std::clamp(IniF(L"bow", L"aim_near_cells", 3.0f), armreach::kNearMinCells, 20.0f));
     g_set.staffRangeTwo.store(std::clamp(IniF(L"bow", L"staff_range_two", 30.0f), 2.0f, aimpoint::kMaxCells));
     g_set.bowHand.store(IniF(L"bow", L"set1_left", 1.0f) != 0.0f ? 1 : 0);
     g_set.bowHand2.store(IniF(L"bow", L"set2_left", 0.0f) != 0.0f ? 1 : 0);
@@ -2112,6 +2183,8 @@ void LoadSettings() {
     g_set.flailHitPct.store(std::clamp(IniF(L"flail", L"hit_pct", 100.0f), 0.0f, 200.0f));
     g_set.flailWeightPct.store(std::clamp(IniF(L"flail", L"ball_weight_pct", 100.0f), 25.0f, 400.0f));
     g_set.meleeTouch.store(IniB(L"gameplay", L"melee_touch", false));
+    meleetrigger::Configure(IniB(L"gameplay", L"melee_touch_only", true));   // F4, hit by touch swinging a weapon (anything but a bow or a crossbow): the trigger's attack is not passed to the game - part of hit by touch, ON by default; 0 = the old way (the plugin's own controls only; vr/melee_trigger.h)
+    doubleswing::Configure(IniB(L"hands", L"double_swing_by_hands", false), IniF(L"hands", L"double_swing_window_ms", 700.0f), (int)IniF(L"hands", L"double_swing_skill", 0.0f));   // F4, hit by touch with a weapon in each hand: the second hand's touch casts the game's own Double Swing / Frenzy (vr/double_swing.h)
     g_set.meleeTouchUnchecked.store(IniB(L"debug", L"melee_touch_unchecked", false));
     meleetouch::SetWanted(g_set.meleeTouch.load());
     meleetouch::SetThrownTouch(IniB(L"gameplay", L"melee_touch_thrown", true));   // javelins, throwing knives and axes hit by touch too (a point-blank throw; vr/thrown_touch.h)
@@ -2236,6 +2309,8 @@ void LoadSettings() {
     g_set.xbowHoldGrip.store(IniB(L"hands", L"xbow_hold_grip", false));
     g_set.xbowSupportGame.store(IniB(L"hands", L"xbow_support_game", false));
     g_set.xbowSupportClose.store(IniB(L"hands", L"xbow_support_close", false));
+    g_set.xbowHandover.store(IniB(L"hands", L"xbow_handover", false));
+    g_set.xbowBarrelForward.store(IniB(L"hands", L"xbow_barrel_forward", false));
     g_set.xbowBarrelLine.store(IniB(L"debug", L"xbow_barrel_line", false));
     g_set.polearmTwoHands.store(IniB(L"hands", L"polearm_two_hands", true));
     g_set.swordTwoHands.store(IniB(L"hands", L"sword_two_hands", true));
@@ -3033,7 +3108,7 @@ extern std::atomic<bool> g_inWorld;
 namespace replay { extern std::atomic<int> g_want; extern std::atomic<bool> g_on; extern std::atomic<int> g_ahead; extern std::atomic<uint32_t> g_replays; }
 void flog::StartDiag() {
     g_diagUntil.store(GetTickCount64() + 10000);
-    LogF("vrcam: diagnostic capture (D2R VR Settings, Collect logs): 10 s of d2r_vr_frames.csv - stereo %d, pair per frame %d, "
+    LogF("vrcam: diagnostic capture (D2R VR Authentic Settings, Collect logs): 10 s of d2r_vr_frames.csv - stereo %d, pair per frame %d, "
          "replay want %d on %d ahead %d (pairs replayed so far %u), pace %d at %d Hz, pipeline depth %d, stamps %d, in world %d",
          AfrOn() ? 1 : 0, IniB(L"stereo", L"pair_per_tick", false) ? 1 : 0, replay::g_want.load(), replay::g_on.load() ? 1 : 0,
          replay::g_ahead.load(), replay::g_replays.load(), g_set.pace.load() ? 1 : 0, g_set.headsetHz.load(),
@@ -4361,7 +4436,8 @@ void NoteSpellModel(const spellmodel::Out& m) {
 #endif
 
 bool ShooterActive();
-bool HandRay(float* o, float* d) {
+// dRaw (optional): the same ray as the pointing hand gives it, before [bow] aim_yaw turns it and before it is tipped toward the ground - what [bow] aim_distance_by_arm measures the arm along.
+bool HandRay(float* o, float* d, float* dRaw = nullptr) {
     // Mouse look and W A S D (flat first person): no hands - the blow or the
     // shot goes where the camera looks, a little down so it meets the ground.
     if (ShooterActive() && g_eyeOk.load()) {
@@ -4370,7 +4446,7 @@ bool HandRay(float* o, float* d) {
         if (!f.valid || fl < 1e-3f) return false;
         const float dw[3] = {f.camF[0] / fl, -0.08f, f.camF[2] / fl};
         const float l = sqrtf(1.0f + 0.08f * 0.08f);
-        for (int i = 0; i < 3; ++i) { d[i] = dw[i] / l; o[i] = g_eyeWorld[i].load(); }
+        for (int i = 0; i < 3; ++i) { d[i] = dw[i] / l; o[i] = g_eyeWorld[i].load(); if (dRaw) dRaw[i] = d[i]; }
         return true;
     }
 #if D2RVR_FIRST_PERSON
@@ -4446,6 +4522,10 @@ bool HandRay(float* o, float* d) {
     float dw[3];
     for (int i = 0; i < 3; ++i) dw[i] = h[0] * f.camR[i] - h[2] * f.camF[i];
     dw[1] += h[1];
+    if (dRaw) {
+        const float rl = sqrtf(dw[0]*dw[0] + dw[1]*dw[1] + dw[2]*dw[2]);
+        for (int i = 0; i < 3; ++i) dRaw[i] = rl > 1e-6f ? dw[i] / rl : 0.0f;
+    }
     // [bow] aim_yaw: the shots land a little to one side of where the hand points
     // (the controller's axes are not quite the arrow's), so the aim is turned
     // about the vertical by a set angle. On the ground plane the camera spans,
@@ -4986,6 +5066,107 @@ int GesturePoint(const float from[2], float gx, float gy, float* px, float* py) 
     return ok ? 1 : 2;
 }
 
+// The distance of the plain aim point (the attack's own point along the hand, mode 4) for the weapon in hand: [bow] range, or a staff's / crossbow's by the hands on it
+// (`twoHands`, when asked: both hands are on it).
+float AimRangeCells(uint32_t type, bool* twoHands = nullptr) {
+    float range = g_set.aimRange.load();
+    if (twoHands) *twoHands = false;
+    if (StaffAim()) {
+        const bool xbow = type == D2RVR_TYPE_CROSSBOW;
+        bool leftOn = true;   // both controllers, the staff between them: always both
+#if D2RVR_FIRST_PERSON
+        if (g_set.staffFreeLeft.load() && ArmsMode() == 2) {
+            const aimsource::Out as = StaffAimChoice();   // [weight] on: the model's hands on the staff; off: the skeleton hook's answer
+            if (as.src == aimsource::Src::Drawn) skel::StaffAxis(nullptr, nullptr, &leftOn);
+            else leftOn = as.leftOn;
+        }
+#endif
+        range = leftOn ? (xbow ? g_set.xbowRangeTwo : g_set.staffRangeTwo).load() : (xbow ? g_set.xbowRangeOne : g_set.staffRangeOne).load();
+        if (twoHands) *twoHands = leftOn;
+    }
+    return range;
+}
+
+#if D2RVR_FIRST_PERSON
+bool BowInHandNow() { const uint32_t w = gamestate::WeaponClass(); return w == D2RVR_WEAPON_BOW || w == D2RVR_WEAPON_CROSSBOW; }
+// [bow] aim_distance_by_arm (vr/arm_reach.h): how far the aiming arm is stretched along the aim, 0..1, from the aiming hand's ray (HandRay: the grip and the way it points) and the
+// drawn arm's own shoulder and length (skel::ArmReach, in the head's turn-only frame, carried to the world as HandRay does the grip). The hand HandRay uses: the aiming hand; a
+// staff held in one hand aimed along its shaft is the right one's. False in anything but VR first person, or with no fresh pose of the arms.
+bool ArmExtensionNow(float* e) {
+    if (!viewgate::F4() || !g_eyeOk.load()) return false;
+    float o[3], d[3], dRaw[3];
+    if (!HandRay(o, d, dRaw)) return false;   // the arm is measured along the hand's own pointing: [bow] aim_yaw turns the shot, not the arm
+    float S[3], len = 0.0f;
+    if (!skel::ArmReach(StaffAim() ? 0 : AimHand(), S, &len)) return false;
+    AcquireSRWLockShared(&g_stickLock); const StickFrame f = g_stickFrame; ReleaseSRWLockShared(&g_stickLock);
+    if (!f.valid) return false;
+    const float upm = std::max(1.0f, ViewHeight()) / UserEyeHeightM();
+    float shoulder[3];
+    for (int i = 0; i < 3; ++i) shoulder[i] = g_eyeWorld[i].load() + upm * (S[0] * f.camR[i] - S[2] * f.camF[i]);
+    shoulder[1] += upm * S[1];
+    return armreach::Extension(o, shoulder, dRaw, len * upm, e);
+}
+SRWLOCK g_armLock = SRWLOCK_INIT;
+armreach::Smoother g_armSmooth;
+std::atomic<float> g_armLiveExt{-1.0f}, g_armLiveCells{0.0f};   // the last value the point had (for the log and the debug rays); ext < 0: never
+std::atomic<ULONGLONG> g_armLiveAt{0};
+
+// The aim point's distance of a SPELL (a wand, an orb, a staff with one hand on it, bare hands - never a bow, a crossbow or a staff held in both hands: the callers ask only for these).
+// `baseCells`: what the weapon asks today. With [bow] aim_distance_by_arm, in VR first person, with a fresh pose of the arms: between [bow] aim_near_cells (the arm at the body) and
+// `farCells` (the arm stretched along the aim; for a staff the two-hand distance, staff_range_two, the most it ever aims), by the smoothed extension; else baseCells, as before.
+float ArmAimCells(float baseCells, float farCells) {
+    if (!g_set.aimByArm.load()) return baseCells;
+    float e;
+    if (!ArmExtensionNow(&e)) return baseCells;
+    AcquireSRWLockExclusive(&g_armLock);
+    const float smooth = g_armSmooth.Step(e, QpcUs() * 1e-6);
+    ReleaseSRWLockExclusive(&g_armLock);
+    const float cells = armreach::Cells(smooth, g_set.aimNearCells.load(), farCells);
+    g_armLiveExt.store(smooth);
+    g_armLiveCells.store(cells);
+    g_armLiveAt.store(GetTickCount64());
+    static ULONGLONG told = 0;
+    if (GetTickCount64() - told > 1000) {
+        told = GetTickCount64();
+        LogF("aim by arm: the arm is %.0f%% stretched along the aim (%.0f%% now) -> the spell's aim point %.1f cells out (between %.1f at the body and %.1f, the weapon's own)", smooth * 100.0f, e * 100.0f, cells,
+             std::min(g_set.aimNearCells.load(), farCells), farCells);
+    }
+    return cells;
+}
+// The far end of a staff under the arm: the two-hand distance, the most it ever aims (a staff in both hands always aims there), never nearer than what it asks with one.
+float StaffFarCells(float oneHandCells) { return std::max(oneHandCells, g_set.staffRangeTwo.load()); }
+// For the debug ray of a spell: the distances the arm decides between, for the weapon in hand - a wand, an orb, bare hands or a staff not aimed as one (HookAttackPoint's second branch) and
+// a staff aimed along its shaft with one hand on it (its third). False for everything else - a bow, a crossbow, a staff in both hands, a thrown weapon.
+bool SpellArmCells(float* base, float* farCells) {
+    const uint32_t t = gamestate::WeaponType();
+    if (BowInHandNow() || t == D2RVR_TYPE_CROSSBOW || t == D2RVR_TYPE_JAVELIN || t == D2RVR_TYPE_THROWING) return false;
+    if (SpellModelWanted() && !StaffAim()) {
+        const spellmodel::Hold hold = t == D2RVR_TYPE_STAFF ? spellmodel::Hold::Staff : t == D2RVR_TYPE_WAND || t == D2RVR_TYPE_ORB ? spellmodel::Hold::OneHandCaster : spellmodel::Hold::Hand;
+        *base = *farCells = spellmodel::Cells(hold, g_set.handRange.load(), g_set.casterRange.load(), g_set.staffRangeOne.load());
+        if (hold == spellmodel::Hold::Staff) *farCells = StaffFarCells(*base);
+        return true;
+    }
+    bool two = false;
+    const float range = AimRangeCells(t, &two);
+    if (!StaffAim() || t != D2RVR_TYPE_STAFF || two) return false;
+    *base = range;
+    *farCells = StaffFarCells(range);
+    return true;
+}
+// For the debug rays: the end of the ray in metres on the ground along its direction - the live aim distance, or 0 when the feature is off or the arm is not read now.
+float ArmRayMetres(float baseCells, float farCells) {
+    if (!g_set.aimByArm.load() || !viewgate::F4() || !(farCells > 0.0f)) return 0.0f;
+    const float cells = ArmAimCells(baseCells, farCells);
+    if (GetTickCount64() - g_armLiveAt.load() > 300) return 0.0f;
+    return armreach::CellsToMetres(cells, std::max(1.0f, ViewHeight()) / UserEyeHeightM());
+}
+#else
+float ArmAimCells(float baseCells, float) { return baseCells; }
+float StaffFarCells(float oneHandCells) { return oneHandCells; }
+float ArmRayMetres(float, float) { return 0.0f; }
+bool SpellArmCells(float*, float*) { return false; }
+#endif
+
 float* HookAttackPoint(void* mgr, float* out, void* unit, uint64_t from, uint64_t dir) {
     frametrace::Scope trace(frametrace::kAimHooks);   // [debug] frame_trace: ours, the game's call left out
     trace.Pause();
@@ -4998,7 +5179,7 @@ float* HookAttackPoint(void* mgr, float* out, void* unit, uint64_t from, uint64_
             if (g == 1) { out[0] = px; out[1] = py; }
             return r;
         }
-        if (aimpoint::Point(f[0], f[1], g_spellCast.gx, g_spellCast.gy, aimpoint::kMaxCells, &px, &py)) { out[0] = px; out[1] = py; }
+        if (aimpoint::Point(f[0], f[1], g_spellCast.gx, g_spellCast.gy, aimpoint::kMaxCells, &px, &py)) { out[0] = px; out[1] = py; }   // (a bow's, a javelin's: the fixed distance; [bow] aim_distance_by_arm is for spells)
         return r;
     }
 #if D2RVR_FIRST_PERSON
@@ -5008,7 +5189,8 @@ float* HookAttackPoint(void* mgr, float* out, void* unit, uint64_t from, uint64_
     if (out && g_spellCast.directed && !g_spellCast.point && (uintptr_t)_ReturnAddress() == g_spellPointRet && SpellModelWanted() && !StaffAim()) {
         const uint32_t t = gamestate::WeaponType();
         const spellmodel::Hold hold = t == D2RVR_TYPE_STAFF ? spellmodel::Hold::Staff : t == D2RVR_TYPE_WAND || t == D2RVR_TYPE_ORB ? spellmodel::Hold::OneHandCaster : spellmodel::Hold::Hand;
-        const float cells = spellmodel::Cells(hold, g_set.handRange.load(), g_set.casterRange.load(), g_set.staffRangeOne.load());
+        const float asked = spellmodel::Cells(hold, g_set.handRange.load(), g_set.casterRange.load(), g_set.staffRangeOne.load());
+        const float cells = ArmAimCells(asked, hold == spellmodel::Hold::Staff ? StaffFarCells(asked) : asked);   // [bow] aim_distance_by_arm: a spell's point follows the arm
         float f[2]; memcpy(f, &from, sizeof f);
         float px, py;
         if (aimpoint::Point(f[0], f[1], g_spellCast.gx, g_spellCast.gy, cells, &px, &py)) { out[0] = px; out[1] = py; }
@@ -5035,19 +5217,9 @@ float* HookAttackPoint(void* mgr, float* out, void* unit, uint64_t from, uint64_
         }
     }
     // A crossbow or a staff aims finer held in both hands: the point farther out.
-    float range = g_set.aimRange.load();
-    if (StaffAim()) {
-        const bool xbow = type == D2RVR_TYPE_CROSSBOW;
-        bool leftOn = true;   // both controllers, the staff between them: always both
-#if D2RVR_FIRST_PERSON
-        if (g_set.staffFreeLeft.load() && ArmsMode() == 2) {
-            const aimsource::Out as = StaffAimChoice();   // [weight] on: the model's hands on the staff; off: the skeleton hook's answer
-            if (as.src == aimsource::Src::Drawn) skel::StaffAxis(nullptr, nullptr, &leftOn);
-            else leftOn = as.leftOn;
-        }
-#endif
-        range = leftOn ? (xbow ? g_set.xbowRangeTwo : g_set.staffRangeTwo).load() : (xbow ? g_set.xbowRangeOne : g_set.staffRangeOne).load();
-    }
+    bool twoHands = false;
+    float range = AimRangeCells(type, &twoHands);
+    if (StaffAim() && type == D2RVR_TYPE_STAFF && !twoHands) range = ArmAimCells(range, StaffFarCells(range));   // [bow] aim_distance_by_arm: a staff with one hand on it is a spell's, up to staff_range_two; a bow, a crossbow, two hands on a staff keep theirs
     static ULONGLONG told = 0;
     if (GetTickCount64() - told > 250) {
         told = GetTickCount64();
@@ -5434,11 +5606,48 @@ bool FlatControllerGate() {
 // dead zone, the sum on the unit disc, the stronger one wins when they pull apart); nothing else of BodyWalk's report. Otherwise BodyWalk's
 // report whole, while it moves ([input] bodywalk_pad). VR F1-F3 with no BodyWalk running: the controller's left stick alone (WalkFlatRead;
 // *walkOnly says so).
-bool PadMirrorRead(BWPadMirror* out, bool* walkOnly = nullptr) {
+// A physical gamepad next to the VR controllers (vr/walk_flat.h RealPadJoins; the Discord report of 2026-10-18: "every button works except the thumbsticks"). The game's
+// poll of XInput pad 0 notes the real pad's sticks here (PadFromBodyWalk, before the plugin's pad is read), and the pad the plugin gives the walking hook follows the real
+// pad's left stick where it is pushed - the hook is how the game walks while the pad's own left stick is kept from it. Cleared (zero, no time) when none joins.
+std::atomic<uint64_t> g_realSticks{0};   // left x, left y, right x, right y of the real pad's last report, 16 bits each
+std::atomic<ULONGLONG> g_realAt{0};      // when (GetTickCount64); 0 = no real pad joins
+void NoteRealPad(const XINPUT_GAMEPAD* pad) {
+    if (!pad) { g_realAt.store(0); return; }
+    g_realSticks.store((uint64_t)(uint16_t)pad->sThumbLX | ((uint64_t)(uint16_t)pad->sThumbLY << 16) | ((uint64_t)(uint16_t)pad->sThumbRX << 32) | ((uint64_t)(uint16_t)pad->sThumbRY << 48));
+    g_realAt.store(GetTickCount64());
+}
+// Said when a real pad really joins the plugin's pad (not whenever one answers: a flat game with a pad of its own and no VR controllers is nobody's news): once when it
+// appears, again after 5 s without it, at most 6 lines.
+void TellRealPad() {
+    static ULONGLONG lastAt = 0;
+    static int lines = 0;
+    const ULONGLONG now = GetTickCount64();
+    const bool fresh = lastAt == 0 || now - lastAt > 5000;
+    lastAt = now;
+    if (!fresh || lines >= 6) return;
+    ++lines;
+    Log("vrcam: a physical gamepad answers the game's XInput poll (pad 0) next to the VR controllers: its buttons are added to the controllers', the larger trigger counts, "
+        "and its sticks win where they are pushed (the left one walks, the right one turns) - it used to be dropped while the plugin's own pad was the pad");
+}
+void FoldRealLeftStick(BWPadMirror* out) {
+    const uint64_t v = g_realSticks.load(std::memory_order_relaxed);
+    int16_t x = out->thumb_lx, y = out->thumb_ly;
+    if (walkflat::FoldRealStick(&x, &y, walkflat::RealPadFresh(GetTickCount64(), g_realAt.load()), (int16_t)(v & 0xFFFF), (int16_t)((v >> 16) & 0xFFFF))) {
+        out->thumb_lx = x;
+        out->thumb_ly = y;
+    }
+}
+
+bool PadMirrorRead(BWPadMirror* out, bool* walkOnly = nullptr, bool* pluginPad = nullptr) {
     if (walkOnly) *walkOnly = false;
+    if (pluginPad) *pluginPad = false;
     directinput::PadOut d{};
     const bool direct = directinput::PadRead(&d);
-    if (!direct && (FlatControllerRead(out) || WalkFlatRead(out))) { if (walkOnly) *walkOnly = true; return true; }   // VR F1-F3 without BodyWalk: the controller, or the walk alone
+    if (!direct && (FlatControllerRead(out) || WalkFlatRead(out))) {   // VR F1-F3 without BodyWalk: the controller, or the walk alone
+        FoldRealLeftStick(out);   // (a real pad's pushed left stick walks - the walking hook reads this)
+        if (walkOnly) *walkOnly = true;
+        return true;
+    }
     if (!direct && g_walkState.load(std::memory_order_relaxed) != (uint8_t)walkpath::State::NotDirect)
         g_walkState.store((uint8_t)walkpath::State::NotDirect);   // (BodyWalk's pad is the pad, or none: no stale word for the walking hook's log)
     const bool walks = direct && directinput::BodyWalkWalks();
@@ -5467,6 +5676,8 @@ bool PadMirrorRead(BWPadMirror* out, bool* walkOnly = nullptr) {
         out->buttons = d.buttons;
         out->left_trigger = d.lt; out->right_trigger = d.rt;
         out->thumb_lx = r.lx; out->thumb_ly = r.ly; out->thumb_rx = d.rx; out->thumb_ry = d.ry;
+        FoldRealLeftStick(out);   // (a real pad's pushed left stick walks - the walking hook reads this)
+        if (pluginPad) *pluginPad = true;
         return true;
     }
     if (r.source != walkpath::Source::BodyWalkPad || GameLinkDirect()) return false;   // (Game Link direct: BodyWalk's gamepad is never the game's)
@@ -5524,14 +5735,34 @@ void FlatRawTick() {
 
 bool PadFromBodyWalk(XINPUT_STATE* s, bool realPad = false) {
     BWPadMirror m;
-    bool walkOnly = false;
-    if (!PadMirrorRead(&m, &walkOnly)) return false;
+    bool walkOnly = false, pluginPad = false;
+    // a physical gamepad answered the poll too, and BodyWalk's own virtual one is not what answered: its report joins the plugin's pad (noted first, so the walking hook's stick
+    // - read below and from the hooks - follows its pushed left stick)
+    const bool real = walkflat::RealPadJoins(realPad, BodyWalkPadInCharge());
+    NoteRealPad(real ? &s->Gamepad : nullptr);
+    if (!PadMirrorRead(&m, &walkOnly, &pluginPad)) return false;
+    if (real && pluginPad) {
+        // direct input's own pad (F4, FlatVR's raw controls; the F1-F3 controller comes through walkOnly below) is the pad the game polls - and the real pad's report used to be
+        // thrown away whole: its buttons, its triggers, both sticks (the 2026-10-18 report: "every button works except the thumbsticks" - the buttons were the VR controllers').
+        // The same merge as in F1-F3 (vr/walk_flat.h MergePads): buttons ORed, the larger trigger, a stick of ours only where the real pad's own stick rests.
+        walkflat::PadBits p{s->Gamepad.wButtons, s->Gamepad.bLeftTrigger, s->Gamepad.bRightTrigger,
+                            s->Gamepad.sThumbLX, s->Gamepad.sThumbLY, s->Gamepad.sThumbRX, s->Gamepad.sThumbRY};
+        const walkflat::PadBits ours{m.buttons, m.left_trigger, m.right_trigger, m.thumb_lx, m.thumb_ly, m.thumb_rx, m.thumb_ry};
+        walkflat::MergePads(&p, ours);
+        TellRealPad();
+        s->dwPacketNumber += m.counter | 1u;   // (ours moves every headset frame: a new packet for a game that skips equal ones)
+        s->Gamepad.wButtons = p.buttons; s->Gamepad.bLeftTrigger = p.lt; s->Gamepad.bRightTrigger = p.rt;
+        s->Gamepad.sThumbLX = p.lx; s->Gamepad.sThumbLY = p.ly; s->Gamepad.sThumbRX = p.rx; s->Gamepad.sThumbRY = p.ry;
+        g_padMirrorOkAt.store(GetTickCount64());
+        return true;   // the plugin's pad with the real one in it (the sticks turned below as the plugin's own are)
+    }
     if (walkOnly && realPad) {
         // VR F1-F3 and a real (or virtual) pad answers as well: the plugin's controller is added to it, never over it (vr/walk_flat.h MergePads) - buttons ORed,
         // the larger trigger, a stick of ours only where that pad's own stick rests. It is the real pad's report still (false), the sticks turned below like any pad's.
         walkflat::PadBits p{s->Gamepad.wButtons, s->Gamepad.bLeftTrigger, s->Gamepad.bRightTrigger,
                             s->Gamepad.sThumbLX, s->Gamepad.sThumbLY, s->Gamepad.sThumbRX, s->Gamepad.sThumbRY};
         const walkflat::PadBits ours{m.buttons, m.left_trigger, m.right_trigger, m.thumb_lx, m.thumb_ly, m.thumb_rx, m.thumb_ry};
+        TellRealPad();
         if (walkflat::MergePads(&p, ours)) {
             s->Gamepad.wButtons = p.buttons; s->Gamepad.bLeftTrigger = p.lt; s->Gamepad.bRightTrigger = p.rt;
             s->Gamepad.sThumbLX = p.lx; s->Gamepad.sThumbLY = p.ly; s->Gamepad.sThumbRX = p.rx; s->Gamepad.sThumbRY = p.ry;
@@ -6246,7 +6477,7 @@ bool ClickTargetOff(uintptr_t ret) {
 // aims at the unit's place, the click attacks the unit). Looked up by its id then and there, on the game's UI thread.
 void* TouchedTarget(uintptr_t ret) {
     if ((ret != g_spellTargetRet && ret != g_spellHoverRet && ret != g_clickTargetRet) || !meleetouch::TargetPending()) return nullptr;
-    return (void*)meleetouch::TargetUnit();
+    return (void*)meleetouch::TargetUnit(ret == g_clickTargetRet ? 2 : 1);
 }
 
 // [gameplay] aim_no_chase: the cast flags' own look at the controller's target (0x145534, inside 0x1454A0) for a cast that goes along the hand. The resolver's and the
@@ -6839,11 +7070,7 @@ void CrosshairTick() {
     AcquireSRWLockShared(&g_crossLock); std::wstring f = g_crossFile; ReleaseSRWLockShared(&g_crossLock);
     std::wstring full = f;
     if (!f.empty() && f.find(L':') == std::wstring::npos && f.rfind(L"\\\\", 0) != 0) {
-        wchar_t dir[MAX_PATH];
-        DWORD n = GetModuleFileNameW(nullptr, dir, MAX_PATH);
-        while (n && dir[n - 1] != L'\\') --n;
-        dir[n] = 0;
-        full = std::wstring(dir) + L"reshade-shaders\\Textures\\" + f;
+        full = OurFilesDir() + L"reshade-shaders\\Textures\\" + f;
     }
     if (vrSide) {
         std::vector<uint8_t> px;
@@ -7024,7 +7251,7 @@ void BigWindowTick() {
         wchar_t off[48] = L"";
         GetPrivateProfileStringW(L"openxr", L"off_after_crash", L"", off, 48, g_iniPath);
         SquareWhy(1, "ticked, but native OpenXR is not running ([openxr] on=0%s%s, or its session did not start): the window keeps "
-                  "its start size on its monitor - D2R VR Settings > Performance > 3D in the headset > Native OpenXR",
+                  "its start size on its monitor - D2R VR Authentic Settings > Performance > 3D in the headset > Native OpenXR",
                   off[0] ? ", switched off by the start guard after a crash at " : "", Utf8(off).c_str());
         return;
     }
@@ -7106,7 +7333,7 @@ void BigWindowTick() {
                   side, side, x, y, pk.hereName, (int)c.right, (int)c.bottom, r.left, r.top, GetDpiForWindow(g_gameWnd));
     SetWindowPos(g_gameWnd, nullptr, x, y, side + fw, side + fh, SWP_NOZORDER | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS);
     static int told = 0;
-    if (told++ < 8) LogF("vrcam: openxr - the game's window %dx%d made %dx%d at %d,%d on %ls (D2R VR Settings' square window, %d asked%s)",
+    if (told++ < 8) LogF("vrcam: openxr - the game's window %dx%d made %dx%d at %d,%d on %ls (D2R VR Authentic Settings' square window, %d asked%s)",
                          (int)c.right, (int)c.bottom, side, side, x, y, pk.hereName, asked,
                          side < asked ? " - no monitor holds more: a bigger square needs one (BodyWalk's Virtual Monitor) of a higher resolution" : "");
 }
@@ -7227,6 +7454,7 @@ uintptr_t HookSetBiome(const char* name) {
     for (size_t i = 0; b[i] && b[i] != '.' && i + 1 < sizeof bare; ++i) bare[i] = (char)tolower((unsigned char)b[i]);
     AcquireSRWLockExclusive(&g_biomeLock); memcpy(g_biome, bare, sizeof bare); ReleaseSRWLockExclusive(&g_biomeLock);
     g_biomeGen.fetch_add(1);
+    replay::AreaChanged();   // the replay pauses for the new area, its last pair finished on the GPU first
     return OrigSetBiome(name);
 }
 
@@ -9709,18 +9937,37 @@ void Register() {
 // game's code may not be decrypted yet.
 // Only in a loaded area and after 2 s of it: a menu or a loading screen has nothing to gain,
 // and the game frees and makes resources then (it hung at an area change, 2026-10-09).
-int g_worldPairs = 0;
+// When the replay may run: vr/replay_pause.h (240 settled pairs in a loaded area). An area change the world flags do not show
+// (2026-10-18, act2_arcane -> act2_palace_cells through a portal, 0.170): the area loaded inside one 421 ms game frame and InWorld
+// never went false - no pause, the replay ran on through the first frames of the new area while the game freed and made
+// resources each frame (its frame fences pass before our replay on the queue), and the GPU hung ~40 ms later (DEVICE_HUNG, the
+// direct queue stopped at the next left pass's "Depth Pass"). Now the settle starts again also when the game sets a biome
+// (HookSetBiome -> AreaChanged, which first lets the last replay finish on the GPU, before the game can free what it drew with)
+// and after a game frame of over 150 ms between two pairs.
+replaypause::Settle g_settle;
+std::atomic<uint32_t> g_areaChanges{0};
+std::atomic<uint32_t> g_areaWaits{0};
+void AreaChanged() {
+    g_areaChanges.fetch_add(1);
+    // the last replay finished on the GPU: its own event (this may be another thread than the pairs'), 200 ms at most
+    const Pt last = g_lastReplay;
+    if (!last.f || last.f->GetCompletedValue() >= last.v) return;
+    if (HANDLE e = CreateEventW(nullptr, FALSE, FALSE, nullptr)) {
+        if (SUCCEEDED(last.f->SetEventOnCompletion(last.v, e))) WaitForSingleObject(e, 200);
+        CloseHandle(e);
+        g_areaWaits.fetch_add(1);
+    }
+}
 bool Wanted() {
     if (!g_on.load() || !g_want.load()) return false;
-    if (!g_inWorld.load() || !d2rcam::InWorld()) {
-        if (g_worldPairs >= 240) Log("vrcam: replay - paused (no world: a menu or an area change)");
-        g_worldPairs = 0;
-        return false;
-    }
-    if (g_worldPairs < 240) {
-        if (++g_worldPairs < 240) return false;
-        Log("vrcam: replay - on (the area settled)");
-    }
+    const bool wasSettled = g_settle.Settled();
+    replaypause::Why stopped;
+    const bool settled = g_settle.Step(g_areaChanges.load(), pairtime::UsNow(), g_inWorld.load() && d2rcam::InWorld(), &stopped);
+    if (stopped == replaypause::Why::kNoWorld) Log("vrcam: replay - paused (no world: a menu or an area change)");
+    else if (stopped == replaypause::Why::kArea) Log("vrcam: replay - paused (the game set a biome: an area loads) - two passes until it has settled");
+    else if (stopped == replaypause::Why::kLongFrame) Log("vrcam: replay - paused (a game frame of over 150 ms: a load) - two passes until the area has settled");
+    if (!settled) return false;
+    if (!wasSettled) Log("vrcam: replay - on (the area settled)");
     static int hooked = -1;
     if (hooked < 0) {
         hooked = d2rsig::Hook(RVA_GAME_PRESENT, kSigGamePresent, sizeof kSigGamePresent, (void*)&HookGamePresent, (void**)&OrigGamePresent) ? 1 : 0;
@@ -10887,7 +11134,7 @@ void GameCodeTick(bool iniChanged) {
     if (iniChanged || answered < 0) {
         const int scan = (int)GetPrivateProfileIntW(L"status", L"scan", 0, g_iniPath);
         if (answered >= 0 && scan != answered) {
-            Log("vrcam: Scan pressed in D2R VR Settings - the game's addresses not found yet are looked for again");
+            Log("vrcam: Scan pressed in D2R VR Authentic Settings - the game's addresses not found yet are looked for again");
             d2rsig::Resolve(g_ctx, true);
         }
         if (scan != answered) written = ~0u;   // the program waits for its number in the file
@@ -12552,6 +12799,8 @@ void PushArms() {
         in.xbowHoldGrip = f4 && g_set.xbowHoldGrip.load();
         in.xbowSupportGame = f4 && g_set.xbowSupportGame.load();
         in.xbowSupportClose = f4 && g_set.xbowSupportClose.load();
+        in.xbowHandover = f4 && g_set.xbowHandover.load();
+        in.xbowBarrelForward = f4 && g_set.xbowBarrelForward.load();
         static std::string toldBarrel;   // what the barrel's reading says, on change
         // the barrel as drawn needs the renderer's world-matrix function hooked (potion_hide's hook, shared; it only reads for us)
         potionhide::WantHooks(in.xbowModel || in.xbowBarrelDebug || in.xbowAimBarrel);
@@ -12633,6 +12882,10 @@ void StartProbe() {
 // outdoor biome, no menu and no side panel. Each change of mind goes to the log
 // with its reason - the biome names of caves and dungeons are learnt from it.
 std::atomic<int> g_skyPalette{-1};   // kPalettes index while the sky shows, else -1
+// [sky] arcane_sky (after bearstonem/d2r-pcvr v0.3.18, MIT): in the Arcane Sanctuary the game's own star
+// layers and cloud noise all round the void, from pictures D2R_VR_Settings makes out of the player's game files.
+std::atomic<bool> g_arcaneSky{false};     // it shows now
+std::atomic<bool> g_arcaneReady{false};   // reshade-shaders\Textures\D2R_Arcane\stars.png and clouds.png are there
 std::atomic<int> g_fogAct{0};        // the area's act for the fog colour, caves too; 0 = unknown
 std::atomic<bool> g_underground{false};   // in the world, off the outdoor list: the fog takes [fog] color_caves
 std::atomic<bool> g_inWorld{false};  // a game area is loaded: not the main menu (its own "frontend" biome), not before any
@@ -13820,7 +14073,7 @@ void __fastcall HookSetMutable(void* registry, bool allowed) {
         DWORD owner = 0;
         uint8_t open = 0;
         // still open, and ours to change: the game's own thread
-        if (ReadRegistry((uintptr_t)registry, &owner, &open) && open && owner == GetCurrentThreadId()) Work();
+        if (ReadRegistry((uintptr_t)registry, &owner, &open) && open && owner == GetCurrentThreadId()) { Work(); owneffects::Tick(); }   // (the hero's own effects: their opacity, vr/own_effects.cpp)
     }
     g_origSetMutable(registry, allowed);
 }
@@ -13830,7 +14083,7 @@ bool Wanted() {
     AcquireSRWLockShared(&g_beltLock);
     const bool on = g_beltSet.on;
     ReleaseSRWLockShared(&g_beltLock);
-    return on || g_wantGen.load() != g_doneGen;
+    return on || g_wantGen.load() != g_doneGen || owneffects::Wanted();
 }
 void InstallHook() {
     if (g_hook.load() != 0 || !Wanted()) return;
@@ -14434,6 +14687,7 @@ void Tick() {
 }
 }  // namespace depthsrc
 
+namespace fx { bool FogWanted(); }   // (below, with the effect)
 void SkyTick() {
     env::Find();
     solidwalls::Tick();
@@ -14492,6 +14746,44 @@ void SkyTick() {
     else if (palette < 0) why = "not outdoors";
     else if (MenuFlat()) why = "a menu is open";   // (a menu as a panel, menu_3d: the world as without one)
     g_skyPalette.store(why ? -1 : palette);
+    {   // [sky] arcane_sky: the pictures looked for every 2 s (D2R_VR_Settings may make them while the game runs)
+        static ULONGLONG lookedAt = 0;
+        static bool toldReady = false;
+        const ULONGLONG t = GetTickCount64();
+        if (!lookedAt || t - lookedAt >= 2000) {
+            lookedAt = t;
+            const bool ready = SkyFileExists(L"D2R_Arcane\\stars.png") && SkyFileExists(L"D2R_Arcane\\clouds.png");
+            if (g_arcaneReady.exchange(ready) != ready || !toldReady) {
+                toldReady = true;
+                g_skyCfgGen.fetch_add(1);   // D2R_ARCANE_SKY follows (ApplySkyPictures)
+                LogF("vrcam: Arcane sky pictures %s", ready ? "found (reshade-shaders\\Textures\\D2R_Arcane)"
+                                                          : "not made yet - D2R_VR_Settings makes them from the game's files");
+            }
+        }
+    }
+    // The Arcane Sanctuary's own sky: a part of the level, not an added outdoor sky - [sky] enabled and the
+    // outdoor list do not count, the views from above and menus do, as for the sky.
+    const char* arcaneWhy = nullptr;
+    if (biome != "act2_arcane") arcaneWhy = "not in the Arcane Sanctuary";
+    else if (!g_set.arcaneSky.load()) arcaneWhy = "[sky] arcane_sky=0";
+    else if (!g_arcaneReady.load()) arcaneWhy = "its pictures are not made yet (D2R_VR_Settings makes them from the game's files)";
+    else if (!g_enabled.load()) arcaneWhy = "the VR camera is off (F12)";
+    else if (TableView()) arcaneWhy = "the table view (the room round the game)";
+    else if (TopPersp()) arcaneWhy = "the view from above";
+    else if (MenuFlat()) arcaneWhy = "a menu is open";
+    g_arcaneSky.store(arcaneWhy == nullptr);
+    // [fog] spare_effects: off as soon as the fog or F4 is (the effects' pass, which also sets it, may not run then)
+    fogspare::Configure(fogspare::Wanted() && fx::FogWanted() && viewgate::F4());
+    {
+        static std::string toldArcane = "?";
+        if (std::string(arcaneWhy ? arcaneWhy : "") != toldArcane) {
+            const bool wasThere = toldArcane != "?" && toldArcane != "not in the Arcane Sanctuary";
+            toldArcane = arcaneWhy ? arcaneWhy : "";
+            if (!arcaneWhy) LogF("vrcam: Arcane sky on - the game's own star layers and clouds all round ([sky] arcane_sky); %s",
+                                 g_set.arcaneFog.load() ? "the fog fades into it ([sky] arcane_fog=1)" : "no fog under it ([sky] arcane_fog=0)");
+            else if (biome == "act2_arcane" || wasThere) LogF("vrcam: Arcane sky off - %s", arcaneWhy);
+        }
+    }
     static std::string toldWhy = "?";
     if (std::string(why ? why : "") != toldWhy) {
         toldWhy = why ? why : "";
@@ -14971,7 +15263,8 @@ bool StampWanted() { return g_enabled.load() && g_afrBlock && g_set.stamps.load(
 bool LowHpWanted() { return lowhp::Enabled() && g_enabled.load() && FullBody() && !ThirdPerson() && xr::Running() && g_inWorld.load(); }
 
 bool FogWanted() {
-    return g_set.fogOn.load() && g_enabled.load() && !Overhead() && g_inWorld.load() && !MenuFlat() &&
+    // under the Arcane Sanctuary's sky only with [sky] arcane_fog: the shader then takes the fog's colour from that sky
+    return (!g_arcaneSky.load() || g_set.arcaneFog.load()) && g_set.fogOn.load() && g_enabled.load() && !Overhead() && g_inWorld.load() && !MenuFlat() &&
            (g_set.fogCaves.load() || !g_underground.load());   // [fog] caves=0: none underground
 }
 // The table (F5): the void black, the game lifted off black - D2R_DepthFog.fx TableKey.
@@ -15031,6 +15324,17 @@ bool ApplySkyPictures(reshade::api::effect_runtime* rt) {
             set = true;
         }
     }
+    {   // [sky] arcane_sky: its textures compiled in only once both pictures are there - a source not found fails ReShade's reload
+        const char* want = g_arcaneReady.load() ? "1" : "0";
+        char have[16] = {};
+        size_t size = sizeof have;
+        const bool known = rt->get_preprocessor_definition_for_effect("D2R_DepthFog.fx", "D2R_ARCANE_SKY", have, &size);
+        if (known ? strcmp(have, want) != 0 : want[0] == '1') {   // never set and not wanted: the effect's own 0
+            rt->set_preprocessor_definition_for_effect("D2R_DepthFog.fx", "D2R_ARCANE_SKY", want);
+            LogF("vrcam: Arcane sky pictures D2R_ARCANE_SKY = %s", want);
+            set = true;
+        }
+    }
     if (set) Forget(rt);
     return set;
 }
@@ -15048,7 +15352,7 @@ void OnFinishEffects(reshade::api::effect_runtime* rt, reshade::api::command_lis
     if (!g_tech[0].handle) { hud::SetPictureReady(false); return; }
     // Off while a menu is open: the fog lies over the whole picture, the
     // inventory and trade panels included, and darkened them.
-    const bool want = FogWanted() || g_skyPalette.load() >= 0 || CeilWanted() || HudWanted() || StampWanted() || hud::PictureWanted() || TableKeyWanted() || PhantomWanted() || BoneAxesWanted() || BowVectorsWanted() || BowQuiverWanted() || MercTintWanted() || BowAimRayWanted() || XbowBarrelWanted() || SpellRayWanted() || MeleeBoxesWanted() || SkillTriggersWanted() || HandOrbsWanted() || LowHpWanted() || BowOrbsWanted() || BowArrowFxWanted();
+    const bool want = FogWanted() || g_skyPalette.load() >= 0 || g_arcaneSky.load() || CeilWanted() || HudWanted() || StampWanted() || hud::PictureWanted() || TableKeyWanted() || PhantomWanted() || BoneAxesWanted() || BowVectorsWanted() || BowQuiverWanted() || MercTintWanted() || BowAimRayWanted() || XbowBarrelWanted() || SpellRayWanted() || MeleeBoxesWanted() || SkillTriggersWanted() || HandOrbsWanted() || LowHpWanted() || BowOrbsWanted() || BowArrowFxWanted();
     // The toolbar and the map are taken out of the game's picture to be drawn
     // back at their own size only while this effect runs, and is new enough to.
     {
@@ -15718,9 +16022,14 @@ void OnBeginEffects(reshade::api::effect_runtime* rt, reshade::api::command_list
     AcquireSRWLockShared(&g_skyLock);
     sv[0] = SkyBack(AfrOn() ? 0 : eye); sv[1] = SkyBack(AfrOn() ? 1 : eye);
     ReleaseSRWLockShared(&g_skyLock);
-    bool sky = pal >= 0;
+    const bool arcane = g_arcaneSky.load();   // [sky] arcane_sky: the Arcane Sanctuary's own sky, in place of any other
+    bool sky = pal >= 0 || arcane;
     for (const SkyView& v : sv) sky = sky && v.proj_ok && v.axes_ok && v.proj[0] != 0.0f && v.proj[1] != 0.0f;
     SetBool(rt, "SkyOn", sky);
+    // [fog] spare_effects: in VR F4 with our fog on, the game's transparent targets of this frame for the fog to spare
+    fogspare::Configure(fogspare::Wanted() && FogWanted() && viewgate::F4());
+    SetBool(rt, "SpareOn", fogspare::Bind(rt));
+    SetBool(rt, "ArcaneSkyOn", sky && arcane);
     {   // the cave ceiling: a plane CeilHeight over the hero's floor, met by each eye's ray
         bool ceil = !sky && CeilWanted();
         for (const SkyView& v : sv) ceil = ceil && v.proj_ok && v.axes_ok && v.proj[0] != 0.0f && v.proj[1] != 0.0f;
@@ -15982,8 +16291,10 @@ void OnBeginEffects(reshade::api::effect_runtime* rt, reshade::api::command_list
                     static int toldHero = -2;
                     if (in.heroClass != toldHero) {
                         toldHero = in.heroClass;
-                        if (in.heroClass >= 0) LogF("vrcam: hero class: %s - the wrist medallions' depth offset for it is %+.1f cm ([hud] hand_vitals_orb_z_cm_%s)", handvitals::HeroName(in.heroClass),
-                                                    handvitals::ClassZCm(in.cfg, in.heroClass), handvitals::HeroKey(in.heroClass));
+                        if (in.heroClass >= 0) LogF("vrcam: hero class: %s - the wrist medallions' depth offset for it is %+.1f cm ([hud] hand_vitals_orb_z_cm_%s); under a shield %+.1f cm deep, %+.1f cm along, turned %+.0f / %+.0f / %+.0f degrees ([hud] hand_vitals_orb_shield_up_cm_%s / _along_cm_%s / _rot_x_deg_%s ...)",
+                                                    handvitals::HeroName(in.heroClass), handvitals::ClassZCm(in.cfg, in.heroClass), handvitals::HeroKey(in.heroClass), handvitals::ClassShieldUpCm(in.cfg, in.heroClass),
+                                                    handvitals::ClassShieldAlongCm(in.cfg, in.heroClass), handvitals::ClassShieldRotDeg(in.cfg, in.heroClass).xDeg, handvitals::ClassShieldRotDeg(in.cfg, in.heroClass).yDeg,
+                                                    handvitals::ClassShieldRotDeg(in.cfg, in.heroClass).zDeg, handvitals::HeroKey(in.heroClass), handvitals::HeroKey(in.heroClass), handvitals::HeroKey(in.heroClass));
                         else Log("vrcam: hero class: not known - the wrist medallions use their own depth, no class offset");
                     }
                 }
@@ -16249,6 +16560,10 @@ void OnBeginEffects(reshade::api::effect_runtime* rt, reshade::api::command_list
                     const float floorY = -std::max(0.8f, UserEyeHeightM());   // the floor: the user's eye height below the eye (the frame's y is from the eye)
                     float len = 8.0f;
                     bool floor = false;
+                    float armBase = 0.0f, armFarCells = 0.0f;
+                    if (SpellArmCells(&armBase, &armFarCells))
+                        if (const float m = ArmRayMetres(armBase, armFarCells); m > 0.0f)   // [bow] aim_distance_by_arm (a spell's): the ray ends where the aim point is, on the ground along it
+                            len = std::clamp(m / std::max(sqrtf(D[0] * D[0] + D[2] * D[2]), 0.05f), 1.0f, 60.0f);
                     if (D[1] < -0.02f) {
                         const float t = (floorY - A[1]) / D[1];
                         if (t > 0.0f && t < len) { len = t; floor = true; }
@@ -16352,7 +16667,6 @@ void OnBeginEffects(reshade::api::effect_runtime* rt, reshade::api::command_list
         }
     }
     if (!sky) return;
-    const SkyPalette& p = kPalettes[pal];
     for (int e = 0; e < 2; ++e) {
         char n[16];
         snprintf(n, sizeof n, "SkyProj%d", e); SetFloats(rt, n, sv[e].proj, 4);
@@ -16360,6 +16674,8 @@ void OnBeginEffects(reshade::api::effect_runtime* rt, reshade::api::command_list
         snprintf(n, sizeof n, "CamUp%d", e); SetFloats(rt, n, sv[e].axes + 3, 3);
         snprintf(n, sizeof n, "CamBack%d", e); SetFloats(rt, n, sv[e].axes + 6, 3);
     }
+    if (arcane || pal < 0) return;   // the Arcane sky: no palette, sun, daylight or drift in the void
+    const SkyPalette& p = kPalettes[pal];
     SetFloats(rt, "SkyZenith", p.zenith, 3);
     SetFloats(rt, "SkyHorizon", p.horizon, 3);
     const float el = p.sunElevDeg * 0.0174532925f, az = p.sunAzDeg * 0.0174532925f;
@@ -16383,6 +16699,7 @@ void TryRegister() {
     if (g_registered || !g_self) return;
     if (!JoinReShade()) return;
     if (lightbounds::Wanted()) lightbounds::Register(&Log);   // (already, from the plugin's load, when ReShade was there then)
+    if (fogspare::Wanted()) fogspare::Register(&Log);
     reshade::register_event<reshade::addon_event::reshade_begin_effects>(&OnBeginEffects);
     reshade::register_event<reshade::addon_event::bind_render_targets_and_depth_stencil>(&d2rvr::D3D12Only<&scenedepth::OnBind>::Call);
     reshade::register_event<reshade::addon_event::barrier>(&d2rvr::D3D12Only<&scenedepth::OnBarrier>::Call);
@@ -16422,13 +16739,9 @@ void TryRegister() {
     crash::Mark("joined ReShade (its present events)");
     // Both read ReShade's depth, which Generic Depth provides (FlatVR's addon
     // only corrects its pick); without it the shader sees no depth and stays off.
-    wchar_t ini[MAX_PATH];
-    DWORD n = GetModuleFileNameW(nullptr, ini, MAX_PATH);
-    while (n && ini[n - 1] != L'\\') --n;
-    ini[n] = 0;
-    wcscat_s(ini, L"ReShade.ini");
+    const std::wstring ini = ReShadeDir() + L"ReShade.ini";
     wchar_t off[512] = {};
-    GetPrivateProfileStringW(L"ADDON", L"DisabledAddons", L"", off, 512, ini);
+    GetPrivateProfileStringW(L"ADDON", L"DisabledAddons", L"", off, 512, ini.c_str());
     if (wcsstr(off, L"Generic Depth"))
         Log("vrcam: ReShade's Generic Depth add-on is OFF (ReShade.ini DisabledAddons) - the fog and the sky get no depth and stay off; tick it on ReShade's Add-ons tab");
 }
@@ -16755,6 +17068,7 @@ DWORD WINAPI UpdateThread(void*) {
             haptics::Install();   // only once [openxr] haptics asks for it
             if (meleetouch::Wanted() || meleetouch::ThrowWanted() || meleetouch::StatusWanted()) meleetouch::Install();   // only once melee_touch, a throw's auto-aim or the wrist status asks for it
             engitem::InstallHook();   // only once belt_models or [debug] engine_unit asks for it
+            owneffects::Install();    // [render] dim_own_effects: its two hooks only LOOK at the creation of overlays (in whether it is ticked or not, so a buff cast before it is ticked is known); a status line while it is on
             {   // native's laser, or FlatVR's on the menu panel
                 const bool laser = xr::LaserOn() || FlatVrLaserWanted();
                 gamestate::SetLaserPanels(laser);   // its extra modal panels count as menus only with the laser
@@ -16787,9 +17101,34 @@ int D2rvrHoverSpheres(float (*out)[8], int max) { return engitem::HoverSpheres(o
 // with "Failed to initialize graphics system" (blz-log: "LoadLibrary(dxgi.dll)
 // Failed", 0x80090006). Loaded under any other name ReShade hooks dxgi and
 // D3D12 itself; plugins load before the game builds its renderer, so it is in
-// time. With a dxgi.dll still in the folder (the game ships none: it is
-// ReShade the old way) that one loads later by itself, and a second ReShade
-// is not wanted.
+// time. With a dxgi.dll in the folder (the game ships none: it is the player's
+// own ReShade) the game loads that one itself, before any plugin, and it is
+// USED as it is - never renamed, moved or deleted by anything of ours; a
+// second ReShade (ReShade64.dll as well) would refuse to start (error 1114),
+// so this returns before it loads ours.
+// What a dxgi.dll ReShade cannot find by itself is D2R VR's FlatVR depth
+// add-on in the mod's reshade\ folder (ReShade has ONE add-on folder, the
+// game's; D2R_DepthFog.fx and the pictures reach it through two search paths
+// that Setup adds to its ReShade.ini, shared/reshade_paths.h): the add-on is
+// loaded from here, the way ReShade loads it from its own folder (it registers
+// itself with the ReShade of the process; the plugin joins ReShade the same
+// way, at its load, before the game builds its renderer).
+void LoadOurAddonForDxgiReShade(const wchar_t* gameDir) {
+    const std::wstring files = OurFilesDir();
+    if (_wcsicmp(files.c_str(), gameDir) == 0) return;   // not the mod: the files are in the game's folder, where ReShade looks
+    const std::wstring addon = files + L"FlatVR_DepthProvider.addon64";
+    if (GetFileAttributesW(addon.c_str()) == INVALID_FILE_ATTRIBUTES) { Log("vrcam: no FlatVR_DepthProvider.addon64 in the mod's reshade folder - no FlatVR depth"); return; }
+    if (GetFileAttributesW((std::wstring(gameDir) + L"FlatVR_DepthProvider.addon64").c_str()) != INVALID_FILE_ATTRIBUTES) {
+        Log("vrcam: FlatVR_DepthProvider.addon64 is beside the game too - the player's ReShade loads that one");
+        return;
+    }
+    const HMODULE m = LoadLibraryW(addon.c_str());
+    char utf8[MAX_PATH * 3] = "";
+    WideCharToMultiByte(CP_UTF8, 0, addon.c_str(), -1, utf8, sizeof utf8, nullptr, nullptr);
+    if (m) LogF("vrcam: FlatVR depth add-on loaded from the mod's reshade folder for the dxgi.dll ReShade: %s", utf8);
+    else LogF("vrcam: FlatVR depth add-on could not be loaded from %s (error %lu)", utf8, GetLastError());
+}
+
 void LoadReShade() {
     wchar_t dir[MAX_PATH];
     DWORD n = GetModuleFileNameW(nullptr, dir, MAX_PATH);
@@ -16797,15 +17136,35 @@ void LoadReShade() {
     dir[n] = 0;
     std::wstring proxy = std::wstring(dir) + L"dxgi.dll";
     if (GetFileAttributesW(proxy.c_str()) != INVALID_FILE_ATTRIBUTES) {
-        Log("vrcam: ReShade as dxgi.dll beside the game - the game loads it itself, vrcam joins it (D2R VR Settings > Home: "
-            "\"Keep ReShade as dxgi.dll\" for a ReShade setup of your own, or \"ReShade for D2R VR only\")");
+        Log("vrcam: ReShade as dxgi.dll beside the game (the player's own) - the game loads it itself, vrcam joins it and uses it as it is; "
+            "ReShade64.dll is not loaded as well (a second ReShade would refuse to start). Its ReShade.ini needs D2R VR's two search paths "
+            "(D2R VR Setup / Settings > Home add them)");
+        LoadOurAddonForDxgiReShade(dir);
         return;
     }
+    // ReShade's own folder (ReShadeDir): the mod's reshade\ (D2RLoader mod D2R-VR) or the game's. For the mod's, ReShade is told
+    // that folder is its base (RESHADE_BASE_PATH_OVERRIDE, read once by ReShade at its start): its ReShade.ini, presets,
+    // shaders and add-ons are the mod's own, and another VR mod's ReShade setup is never seen.
+    const std::wstring base = ReShadeDir();
+    const bool fromMod = _wcsicmp(base.c_str(), dir) != 0;
     wchar_t path[MAX_PATH];
-    wcscpy_s(path, dir);
+    wcscpy_s(path, base.c_str());
     wcscat_s(path, L"ReShade64.dll");
     if (GetFileAttributesW(path) == INVALID_FILE_ATTRIBUTES) { Log("vrcam: no ReShade64.dll beside the game - no fog, sky or FlatVR picture"); return; }
-    if (LoadLibraryW(path)) { Log("vrcam: ReShade loaded from ReShade64.dll"); return; }
+    // The order is the point (shared/reshade_env.h, PrepareProcess; pinned by tools/reshade_env_test.cpp): FIRST every RESHADE_*
+    // variable this process inherited is cleared - another mod's (d2r-pcvr's RESHADE_BASE_PATH_OVERRIDE sent our ReShade to its folder
+    // and it refused to start, 2026-10-18) - and only THEN our own RESHADE_BASE_PATH_OVERRIDE is set, for the mod's reshade\ (the
+    // mod layout); in the game's own folder none is set. ReShade reads these once, at its start (LoadLibraryW below).
+    for (const reshadeenv::Step& st : reshadeenv::PrepareProcess(fromMod ? base : std::wstring()))
+        if (st.kind == reshadeenv::Step::Clear)
+            LogF("vrcam: ReShade - %s=%s was set for this game (left by another mod?): cleared for the game's process only, so our "
+                 "ReShade uses its own folder", Utf8(st.name.c_str()).c_str(), Utf8(st.value.c_str()).c_str());
+    if (LoadLibraryW(path)) {
+        char utf8[MAX_PATH * 3] = "";
+        WideCharToMultiByte(CP_UTF8, 0, base.c_str(), -1, utf8, sizeof utf8, nullptr, nullptr);
+        LogF("vrcam: ReShade loaded from ReShade64.dll%s%s", fromMod ? " - the D2RLoader mod's own, its base " : "", fromMod ? utf8 : "");
+        return;
+    }
     const DWORD err = GetLastError();
     LogF("vrcam: ReShade64.dll did not load (error %lu)", err);
     // Who is ReShade here already (ReShade refuses a second copy in a process: error 1114, its own
@@ -16834,16 +17193,82 @@ void LoadReShade() {
              "an antivirus may also block it", err == ERROR_DLL_INIT_FAILED ? "its start said no" : "it could not be loaded");
 }
 
-static const char g_info_version[] = "0.169.0";
+static const char g_info_version[] = "0.170.0";
+
+// Who this is. D2RLoader prints "<name> <version> by <author>" for every plugin, and d2r-pcvr (a fork of our 0.152) carries the
+// same id, name and author as we did - "vrcam ... by BodyWalkVR" told a support log nothing. The id stays (the log file
+// d2rloader\logs\d2r-vr-vrcam.log, the plugin's settings and its place in D2RLoader's records are keyed by it); the name is what
+// is shown, so it says D2R VR. The same facts are in the DLL's VERSIONINFO (vr/vrcam.rc) for a launcher to read without loading it.
+static const char g_info_id[] = "d2r-vr-vrcam";
+static const char g_info_name[] = "D2R VR";
+#if defined(D2RVR_FIRST_PERSON) && !D2RVR_FIRST_PERSON
+static const char g_info_edition[] = "public";
+#else
+static const char g_info_edition[] = "full";
+#endif
 
 static const PluginInfo g_info = {
-    PluginInfoSize, D2RL_PLUGIN_ABI_VERSION, "d2r-vr-vrcam", "vrcam", g_info_version, "BodyWalkVR",
+    PluginInfoSize, D2RL_PLUGIN_ABI_VERSION, g_info_id, g_info_name, g_info_version, "BodyWalkVR",
     "D2R in a headset or as a first-person game: head-driven camera through BodyWalk Game Link, mouse look and W A S D. "
     "F12 off / first / third person, F11 recenter, F9 mouse look.",
     PluginFlags::Shared | PluginFlags::NativeHooks, {0, 0, 0, 0},
 };
 
 D2RL_PLUGIN_EXPORT const PluginInfo* D2RLoaderGetPluginInfo() noexcept { return &g_info; }
+
+// What the shared VR mod launcher gave this start (docs/launcher_authentic.md): VRMOD_ACTIVE_ID / _VERSION, VRMOD_RUNTIME, VRMOD_STORE,
+// VRMOD_GAME_BUILD in the game's environment. "" for a game started the old way.
+static std::string LauncherEnv(const char* name) {
+    char buf[300];
+    const DWORD n = GetEnvironmentVariableA(name, buf, sizeof buf);
+    return n > 0 && n < sizeof buf ? std::string(buf, n) : std::string();
+}
+static std::string JsonText(const std::string& s) {
+    std::string o = "\"";
+    for (const unsigned char c : s) {
+        if (c == '"' || c == '\\') { o += '\\'; o += static_cast<char>(c); }
+        else if (c < 0x20) o += ' ';
+        else o += static_cast<char>(c);
+    }
+    return o + "\"";
+}
+// One log line saying which mod this is and who started it, and d2r_vr_about.json beside d2r_vr.ini: the same, for the launcher's
+// report and for support. (A D2RLoader mod's own folder is the plugin's: the launcher never swaps this file.)
+static void ReportIdentity(const PluginContext* ctx) {
+    const std::string byId = LauncherEnv("VRMOD_ACTIVE_ID"), byVer = LauncherEnv("VRMOD_ACTIVE_VERSION"), runtime = LauncherEnv("VRMOD_RUNTIME"),
+                      store = LauncherEnv("VRMOD_STORE"), xr = LauncherEnv("XR_RUNTIME_JSON");
+    // as the D2RLoader mod D2R-VR (<game>\mods\D2R-VR\d2rloader\plugins) or as the global plugin of an install from before the mod layout
+    wchar_t dir[MAX_PATH];
+    wcscpy_s(dir, g_iniPath);
+    if (wchar_t* s = wcsrchr(dir, L'\\')) s[1] = 0;
+    const bool asMod = !modlayout::ModRootOfPluginDir(dir).empty();
+    const char* layout = asMod ? "D2RLoader mod D2R-VR" : "global plugin";
+    if (byId.empty())
+        LogF("vrcam: mod d2r-vr %s (%s edition, %s), started without the VR mod launcher", g_info_version, g_info_edition, layout);
+    else
+        LogF("vrcam: mod d2r-vr %s (%s edition, %s), started by the VR mod launcher as %s %s - runtime %s, store %s%s%s", g_info_version, g_info_edition,
+             layout, byId.c_str(), byVer.c_str(), runtime.empty() ? "?" : runtime.c_str(), store.empty() ? "?" : store.c_str(),
+             xr.empty() ? "" : ", XR_RUNTIME_JSON ", xr.c_str());
+    if (!byId.empty() && byId != "d2r-vr")
+        LogF("vrcam: WARNING the launcher says %s is the active mod, but this plugin is d2r-vr - the game folder holds a mix of two mods", byId.c_str());
+
+    std::string j = "{\n  \"schema\": \"vrmod-about/1\",\n  \"mod\": \"d2r-vr\",\n  \"name\": \"D2R VR\",\n";
+    j += "  \"version\": " + JsonText(g_info_version) + ",\n  \"edition\": " + JsonText(g_info_edition) + ",\n";
+    j += "  \"layout\": " + JsonText(asMod ? "d2rloader-mod" : "global-plugin") + ",\n";
+    j += "  \"plugin_id\": " + JsonText(g_info_id) + ",\n  \"built\": " + JsonText(std::string(__DATE__) + " " + __TIME__) + ",\n";
+    j += "  \"game_build\": " + JsonText(ctx && ctx->buildVersion ? ctx->buildVersion : "") + ",\n";
+    j += "  \"pid\": " + std::to_string(GetCurrentProcessId()) + ",\n";
+    j += "  \"launcher\": {\"active_id\": " + JsonText(byId) + ", \"active_version\": " + JsonText(byVer) + ", \"runtime\": " + JsonText(runtime) +
+         ", \"store\": " + JsonText(store) + "}\n}\n";
+    wchar_t path[MAX_PATH];
+    wcscpy_s(path, dir);
+    wcscat_s(path, L"d2r_vr_about.json");
+    const HANDLE f = CreateFileW(path, GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return;   // a read-only folder is not a reason to complain
+    DWORD written = 0;
+    WriteFile(f, j.data(), static_cast<DWORD>(j.size()), &written, nullptr);
+    CloseHandle(f);
+}
 
 D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     if (ctx == nullptr) return true;
@@ -16884,6 +17309,7 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     g_mouseLookOn.store(MouseLookForView());
     LogF("vrcam %s: game build %s (%s), made for D2R 3.3.93787 under D2RLoader 1.3.1", g_info_version,
          ctx->buildVersion ? ctx->buildVersion : "?", ctx->buildName ? ctx->buildName : "?");
+    ReportIdentity(ctx);
     // Every game address this build has, before any hook rewrites the bytes it is found by.
     crash::Step("game addresses (signatures)");
     d2rsig::SetShiftTest(GetPrivateProfileIntW(L"debug", L"sig_shift_test", 0, g_iniPath));
@@ -16895,6 +17321,7 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     // add-on joined: the light culling's replacement (the game's light-bin shader, light_bounds.h) joins now,
     // not with the rest on the update thread's first tick.
     if (lightbounds::Wanted() && fx::JoinReShade()) lightbounds::Register(&Log);
+    if (fogspare::Wanted() && fx::JoinReShade()) fogspare::Register(&Log);   // (the same: the game's resolve pipeline is made at its start)
     crash::Step("camera callbacks, MinHook, the hero's skeleton");
     d2rcam::SetCallbacks(&VrView, &VrProj);
     d2rcam::SetFrameCallback(&VrFrame);
@@ -16941,6 +17368,8 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     gamecmd::Init(ctx);
     shoulderwire::Init(ctx);   // the shoulder swap listens to direct_input's frames
     weightwire::Init(ctx);     // [weight]: so does the grip of a hand on the weapon
+    owneffects::Init(ctx);     // [render] dim_own_effects: the hero's own effects fainter (its two hooks only look, so they are in whether it is ticked or not)
+    owneffects::SetHeroSource(+[]() -> uintptr_t { return (uintptr_t)g_heroUnit.load(); }, &GestureHeroId);   // the hero as the aim function knows him, besides the game's own getter
     belttrigger::Init(ctx);    // [belt] hold_takes_trigger: and the triggers of a hand that holds a belt bottle
     shoulderwire::SetWeaponSource([]() -> bool { return weight::Placed() || (g_set.shieldStow.load() && shieldarmwire::Arm() >= 0) || rangedwire::Side() >= 0; });   // [hands] shoulder_draw claims the grip behind a shoulder only while the weight model has a weapon or the shield can be put away
     shieldarmwire::SetHaptic([](int side, float amplitude, int ms) { haptics::Pulse(haptics::FromSkel(side), amplitude, ms); });   // the left shoulder, with the shield put away
@@ -16959,6 +17388,8 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     weight::SetHeroModeSource(&HeroAnimMode);   // [weight] thrown_fly_ms: the game's own throw animation over ends the thrown model's flight
     weight::SetActionFrameSource(&throwborn::ActionFramePassed);   // [hands] throw_direct: the thrown potion's model hands over to the game's missile when it is created
     shieldsmite::Init(ctx);
+    meleetrigger::Init(ctx);   // melee_touch_only listens to direct_input's frames
+    doubleswing::Init(ctx);
     meleetouch::Init(ctx);
     skillwheel::Init(ctx);
     lowhp::Init(ctx);   // [hud] low_hp_vignette reads the hero's life on the UI thread

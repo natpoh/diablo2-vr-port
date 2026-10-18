@@ -102,6 +102,7 @@ std::atomic<uint16_t> g_cmdSrc[layout::kCommands];   // bit per Source: who hold
 std::atomic<ULONGLONG> g_tapUntil[layout::kCommands];
 std::atomic<uint16_t> g_actSrc[kActionBits];
 std::atomic<uint32_t> g_take[2];                      // this frame's takes: Button bits | kTakeTrigger | kTakeSqueeze
+std::atomic<uint32_t> g_takenLast[2];                 // the takes of the frame before: what TakenLastFrame says
 
 struct Pulse { uint16_t buttons; uint8_t lt, rt; ULONGLONG until; };
 SRWLOCK g_pulseLock = SRWLOCK_INIT;
@@ -469,6 +470,8 @@ void Take(int hand, uint32_t buttons, Source) {
     g_take[hand].fetch_or(buttons);
 }
 
+uint32_t TakenLastFrame(int hand) { return hand < 0 || hand > 1 ? 0u : g_takenLast[hand].load(); }
+
 void SetUiUp(bool up) { g_uiUpUntil.store(up ? GetTickCount64() + 250 : 0); }
 
 bool TakeSkillPanelToggle() {
@@ -717,6 +720,7 @@ void Feed(D2RVR_XrInput* in, bool menu, const uint32_t touches[2]) {
     ReleaseSRWLockShared(&g_listenLock);
     for (const Listener& l : ls) if (l.fn) l.fn(f, l.user);
     const uint32_t take[2] = {g_take[0].load(), g_take[1].load()};
+    g_takenLast[0].store(take[0]); g_takenLast[1].store(take[1]);   // (next frame's listeners ask: TakenLastFrame)
     if (f4) HideTaken(in, take);   // (another view: nothing is taken from BodyWalk's hands either)
 
     // VR F1-F3: the one thing that acts outside F4 - the left stick's walk (walkflat). Nothing of the layout runs there.

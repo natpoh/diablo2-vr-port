@@ -42,6 +42,9 @@ void SetSettingsHost(const hset::video::Env& env);
 // xr.cpp ReadProfiles: the interaction profile path each hand runs now ("" / null = none). The tiles name the controller's own buttons by it.
 void SetProfiles(const char* left, const char* right);
 bool Enabled();
+// [openxr] skill_rt_a: this frame the right trigger is the game's RT slot and that slot holds a skill (the panel's slot controls own the trigger). The melee rule
+// (vr/melee_trigger.h) asks, so that only the plain attack on the trigger is withheld. False where the key is off or the panel is not in charge. (Any thread.)
+bool TriggerCastsSkill();
 
 // vrcam's timer, every millisecond or so: cheap when off; queues the UI thread's reads.
 void Tick();

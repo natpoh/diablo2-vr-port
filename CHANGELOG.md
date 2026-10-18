@@ -1,5 +1,145 @@
 # What's new in D2R VR
 
+## 0.170
+
+The main points (details below and in docs/d2rloader_mod.md):
+
+- **D2R VR is a D2RLoader mod now.** Everything of it lives in one folder, `mods\D2R-VR` in the game's folder: the plugin, `d2r_vr.ini`, its logs, ReShade with its
+  ini and presets, the effect, FlatVR's add-on, the weight and grip libraries, BodyWalk Portable, the licence. Nothing of it is in `d2rloader\plugins` or beside
+  `D2R.exe` any more (but `D2R_VR_Settings.exe`, which stays where you look for it), so it no longer shares file names with bearstonem's d2r-pcvr
+  (the mod `D2R-PCVR`) and the two cannot replace each other - D2RLoader's `-mod` picks which one runs. Setup writes the mod's `modinfo.json` and sets
+  `default_mod = "D2R-VR"` when no mod was the default, so a plain start of D2RLoader still runs D2R VR; the shortcut "D2R VR Authentic" and START run
+  `D2RLoader.exe -mod D2R-VR`. An update from 0.169 and older moves what was yours once - your `d2r_vr.ini` byte for byte, its backups, your ReShade if D2R VR
+  installed it, the sky and ceiling pictures, the libraries, BodyWalk Portable - and removes the old global plugin (D2RLoader would load it under every mod);
+  a ReShade of your own beside the game stays. The uninstaller removes `mods\D2R-VR` and the `default_mod` it set, nothing else. docs/d2rloader_mod.md has the table
+  of where every file is and who reads it.
+- **The shared D2R VR Launcher.** Setup carries the D2R VR Launcher (the VR mods of a game folder in one window, with their updates) and installs it quietly, for
+  you only, when it is missing or older; it never blocks Setup. The mod answers it with `vrmod-manifest.json` and an icon in its folder, and Play runs
+  `D2R_VR_Settings.exe --start` (the START button without the window; exit code and a log line say what happened). The uninstaller leaves the launcher installed.
+- **Another mod's ReShade settings no longer break ours.** d2r-pcvr keeps its ReShade in its own folder and points ReShade there with the
+  `RESHADE_BASE_PATH_OVERRIDE` environment variable; left set, our ReShade looked there too, found no ReShade.ini and refused to start (error 1114), so no headset
+  session came up. Every `RESHADE_*` variable the game inherited is now cleared in the game's process before ReShade loads (only there), then D2R VR's own
+  is set to its folder.
+- **A ReShade you already have is used as it is.** A `dxgi.dll` next to `D2R.exe` is your own ReShade: Setup, the uninstaller and the Home buttons no longer rename, move or
+  delete it (the old Setup turned it into ReShade64.dll or removed it). D2R VR's effect and pictures are in the mod's folder (`mods\D2R-VR\reshade`) and your ReShade looks in the
+  game's, so Setup adds two items to the end of `EffectSearchPaths` and `TextureSearchPaths` in your `ReShade.ini` (a copy is kept as `ReShade.ini.before_d2rvr`; the uninstaller
+  takes them out again, your file comes back byte for byte), and the plugin loads FlatVR's add-on from the mod's folder. Tested with a real ReShade 6.8.0 (a small D3D11 probe
+  program lets it initialise and reads its log). Without a dxgi.dll D2R VR has a ReShade of its own in the mod, as before. The two old Home buttons are replaced by *Add D2R VR's
+  folders to my ReShade* and, as the one explicit choice, *Put my dxgi.dll aside* (`dxgi.dll.off`, asks first, deletes nothing).
+- **Thumbsticks: tell when SteamVR bound nothing to them** (native OpenXR, our own controls). A binding saved by SteamVR for another mod, or an older version, can leave
+  the thumbstick action without a source while the buttons work: no walking, no turning, and nothing said why. D2R VR now counts the bound sources, reads a spare
+  stick action when the first has none, and Home > Status > *Thumbsticks* says green, orange or red - with SteamVR's way out (Settings > Controllers > Manage Controller
+  Bindings > D2RLoader > default). And a real gamepad next to the plugin's own pad is no longer overwritten in direct mode: buttons are ORed, the larger trigger and the
+  pushed sticks win, and it walks. docs/direct_input.md.
+- **Native OpenXR never hangs the game on a busy headset.** A player went from FlatVR's 3D depth through BodyWalk Lite back to Native OpenXR: the headset stayed empty and the game
+  stood until Task Manager - the runtime's frame wait never returned while FlatVR held the headset. The two blocking runtime calls, the frame wait and the session's start, now run on
+  a thread of their own and the game waits for them a fraction of a second ([openxr] wait_frame_ms, 150); if they have not come, that frame gets no picture in the headset and the
+  game goes on flat (the log says so, and when the headset answers). And no headset session is started over a FlatVR that holds the headset and cannot be stopped (BodyWalk Lite has
+  no Game Link): Home > Status says "close BodyWalk and restart SteamVR", and it is tried again every 10 s while FlatVR runs. On by default ("Never hang on a busy headset",
+  [openxr] busy_guard); needs a game restart.
+- **Native OpenXR: the eye distance as a setting, and canted displays.** The distance between the two eyes of the stereo pair is the headset's own, as the runtime reports it
+  (default: Stereo > Native OpenXR > "Eye distance: from the headset", [openxr] ipd_auto 1). Untick it to set your own (50 - 80 mm, [openxr] ipd_mm, live) for a headset whose IPD
+  was not picked up or was picked up wrong: the two cameras keep their middle and their turns and stand that far apart. The settings show what the headset reports. And on headsets
+  whose displays are canted (Pimax, Varjo, Index and others) both eyes are now drawn and submitted in the head's frame ([openxr] canted_eyes, on): the right eye used to be drawn with
+  one turn and submitted with another, and the eyes came out crossed with the centre stretched (a SteamVR player's report). Parallel headsets are unchanged, bit for bit. The log says
+  once which eye distance is used and how the eyes are turned.
+- **A spell's aim distance can follow how far your arm is stretched** (own tick, off: Bow tab > "A spell's aim distance follows how far the arm is stretched", [bow]
+  aim_distance_by_arm; VR first person). As in flat Diablo, where a click near the hero spreads Teeth wide and a far one keeps it in a tight cone: an arm held at the body aims
+  the spell near ([bow] aim_near_cells, 3), an arm stretched out along the aim aims it at the weapon's own distance. Spells only - a wand, an orb, bare hands, a staff with one
+  hand on it; a staff held in both hands always aims at its far distance (the tightest cone), and a bow, a crossbow and throws keep their fixed distance. The stretch is measured
+  on your own arm (the drawn shoulder and the length to the grip, fitted to your T-pose span or your height) and smoothed a little. It only chooses where the game's own spell is
+  aimed, as a click would. Live.
+- **Hit by touch in the headset's panel, and the least blade speed up to 20 m/s.** The headset settings have a Melee page (after Belt): the Hit by touch tick, the least blade
+  speed that hits and how far the blade moves to start a stroke - the same keys, ranges and defaults as D2R VR Authentic Settings > Strikes, written live. The least blade speed (the general
+  slider and each weapon kind's own) goes up to 20 m/s (it stopped at 8); the step (0.1) and the shipped value stay. The shield bash keeps its own 0.3 - 8 m/s.
+- **The crossbow: a new hold and a hand-over are in the build, but OFF, and not working yet** ([hands] xbow_barrel_forward, xbow_handover, xbow_support_game, xbow_support_close - all 0 in the settings that
+  come with the mod; VR first person F4). The crossbow can be laid by its own drawn barrel along the controller, its hands can be on the game's own roles (the holding palm on the trigger grip at the back, the
+  support hand on the fore-grip under the prod), and it can be passed from hand to hand - take it with the free hand at the fore-grip and let go with the other, or squeeze the free hand's grip near the
+  holding hand's - with every try logged ("crossbow hand-over: ...", "ranged holster - the right hand's grip at ..."). In the author's test of 2026-10-18 the crossbow's grip was still off and the hand-over did
+  not work: it is to be fixed later, and 0.170 ships the old crossbow settings (docs/KNOWN_ISSUES.md). The ticks stay in D2R VR Authentic Settings (Weapon Adjust > Crossbow), marked as not finished.
+- **The hero's own effects, faded: in the build, but OFF and not working yet** ([render] dim_own_effects, dim_own_effects_pct, dim_own_auras_pct; off in the settings that come with the mod;
+  Body tab > "Draw the hero's own effects fainter"; VR first person F4). A player's request: Bone Armor wraps round the eyes of the first-person view and blinds. The overlays of the hero's
+  own states - Bone Armor (and its casting flash), Frozen / Shiver / Chilling Armor, Energy Shield, Cyclone Armor, Blade Shield, Fade - and the aura rings at his feet are to be faded with the
+  effect's own "Fade" parameter, the one the game fades an overlay with, to a percentage you set (100 = as the game draws them, 0 = hidden). Two tests in the game: the first did nothing (the
+  hooks that watch the creation of overlays went in after the buffs of the session were cast; they now go in at the start, ticked or not, and the log says what they see); the second proved the
+  whole chain - the hero's key, the overlay names, the entities, the effect lookup - but the lever was the effect's playback speed, not its fade. Now the log shows the "Fade" parameter being
+  set on the effect (the game's name object reads "Fade"; "bonearmorfront ... \"Fade\" set to 30 % on effect ..."), and still nothing changes on screen. So it works up to setting Fade, and no
+  further: to be looked into later (docs/KNOWN_ISSUES.md, docs/own_effects_recon.md). Visual only: the buff and its numbers are the game's.
+- **Known issue: a staff in both hands - the spell's ray starts at the wrist and goes to the side.** A regression from the 0.170 grip changes. To be fixed in 0.171 (docs/KNOWN_ISSUES.md, entry 26). The other known issues of this build are the crossbow's new hold and hand-over (entry 24) and the hero's own
+  effects (entry 25), both in the build but off.
+- **Double Swing by the two hands** ([hands] double_swing_by_hands, off; Strikes tab > "Two weapons: Double Swing by the hands"; VR first person F4, hit by touch on, a melee weapon in
+  each hand - a Barbarian). The first hand's touch on a monster is the game's normal attack, as ever; when the OTHER hand then touches the SAME monster within 700 ms
+  ([hands] double_swing_window_ms) the second strike is the game's own Double Swing instead (or Frenzy; [hands] double_swing_skill says which first when both are on a slot): its pad
+  button is pressed once and the monster is handed to the cast as its target, the way the shield bash casts Smite. Only when the hero has a level in the skill, it sits on one of
+  the pad's ten skill slots and the mana is there; otherwise the second touch is a normal attack too. The swings, the damage, the animation and the mana are the game's. The log says
+  every decision once ("double swing: ..."). Not yet tried in the game (docs/double_swing.md).
+- **For developers: how the game draws its sky and fog** (docs/game_render_sky_fog.md, no code): what bearstonem's Arcane sky is (a data change plus ReShade, not drawn in the
+  scene), the game's own fog fields and fog pass, its pass order (the fog comes after the transparent resolve, so the game has the same fire problem ours had), its skyboxes, and a
+  staged plan to draw the fog and sky before the transparent resolve.
+- **The settings program is called "D2R VR Authentic Settings".** It is the mod's own settings (the shared D2R VR Launcher and Setup's last page have other things with "D2R VR" in
+  the name, and the page offered "Open D2R VR Settings" next to "Open D2R VR Launcher"). The Start menu entry, the desktop shortcut, the last Setup page's "Open ...", the
+  window's title and its message boxes carry the new name; the shortcuts of the old names ("D2R VR Settings" in the Start menu; "D2R VR", "D2R VR Authentic" and "D2R VR Settings" on
+  the desktop - for all users and for you) are removed when you update, and the uninstaller takes whatever is left. A display name only: the file is still D2R_VR_Settings.exe, and the
+  ini, the ids and the launcher's entry are as they were. (The desktop no longer has a "D2R VR Authentic" shortcut: that name opened the settings program; the Start menu's
+  "D2R VR Authentic" starts the game with the mod.)
+- **The fog spares fire, spells and smoke** (test, off: [fog] spare_effects, World > Fog). Our fog is laid over the
+  finished picture by the scene's depth, and the game's flames, spells and smoke have no depth of their own: a torch
+  or a Fire Bolt in front of a far wall was fogged like the wall. With it on, the game's own transparent layers of
+  each frame are copied at its transparent resolve, and the fog covers only the share of each pixel that is the
+  scene behind them. VR F4; read at the game's start. See docs/game_render_sky_fog.md.
+
+- **The Arcane Sanctuary's own sky all round.** In the Arcane Sanctuary the void round the floating platforms shows
+  the game's own star layers and cloud noise in every direction, below the platforms too, through our ReShade effect
+  ([sky] arcane_sky, on; the Sky tab). The pictures are made on your machine from your own game's files - D2R VR
+  Settings reads them (read only) when it opens, after it installs ReShade and with "Make the Arcane Sanctuary sky
+  now" on Home, and Setup runs it once; nothing of Blizzard's is shipped. Not in the
+  views from above; works with the outdoor sky off too. No fog there while it shows, unless you tick "Arcane Sanctuary: fog
+  fades into its sky" ([sky] arcane_fog, on in the settings that come with the mod): then the far platforms dissolve into the sky behind them - its dark and its
+  nebula, not its stars. The pictures go into the mod's
+  own ReShade folder (mods\D2R-VR\reshade), and the level's flat star cards are taken out in the mod's own data folder
+  (mods\D2R-VR\D2R-VR.mpq\data; the game's files are not touched, and a file you changed stays). The idea, the
+  effect and the way the pictures are made are taken from bearstonem/d2r-pcvr (MIT), v0.3.18 - thanks.
+- **No more hang at a portal into a new area** (native OpenXR; nothing to set). A player's 0.170 test hung twice going through a portal in an act (Arcane Sanctuary into the Palace
+  Cells): the new area loaded inside one 421 ms frame of the game without the menu or loading-screen flags ever showing, so the right eye's replay - which waits 240 pairs
+  after every area change, because the game frees and makes pictures while one loads - did not wait, ran on through the first frames of the new area and the GPU stopped. The
+  replay now also stops when the game sets the area (the last replay is first let finish on the GPU, 200 ms at most) and after any game frame of over 150 ms, whatever the world
+  flags say, and starts again after 240 settled pairs. The log says why: "replay - paused (the game set a biome: an area loads)" or "(a game frame of over 150 ms: a load)",
+  and "replay - on (the area settled)".
+- **The wrist medallions' depth and turn for each hero under a shield** (VR first person F4 only; live; 0 = as before). With a shield on the forearm the ball
+  rolls to the inner side of the wrist, and how deep that side lies differs with the hero's model - so for each class (Amazon ... Warlock) there are now two
+  sliders under *Under a shield*: **depth (Z)** and **along the arm (X)**, -5 to 5 cm, added to the shield's own Z and X and to the wrist's, in the rolled frame
+  and with the roll (`hand_vitals_orb_shield_up_cm_<class>`, `hand_vitals_orb_shield_along_cm_<class>`; the line above the rows says which hero the game has
+  now). They act on the wrist that wears the shield only, and only while it does. The place itself still comes from the drawn arm (the hand's frame as the
+  skeleton poses it, rolled half a turn about the arm); the model gives no thickness of the forearm, so the depth per hero is what you set.
+  - *The medallion's turn per hero under a shield*: three more sliders for each class, **rotation X, Y, Z**, -180 to 180 degrees
+    (`hand_vitals_orb_shield_rot_x_deg_<class>`, `_rot_y_deg_<class>`, `_rot_z_deg_<class>`), added to the shield's own rotation sliders and to the wrist's own
+    turn - anatomical like them (the same numbers on either wrist are the mirror image), easing in and out with the roll, for the wrist that wears the shield
+    only. 0 = as before.
+
+- **With Hit by touch the trigger no longer attacks** ([gameplay] melee_touch_only, on; Strikes > Hit by touch > "The trigger does not attack", and the headset panel's Melee page; VR first
+  person F4 with Controls without BodyWalk). A player's report: with Hit by touch on and a melee weapon in hand the right trigger still attacked, so the swing could be skipped - a
+  bug of Hit by touch, not a choice. While the blade's touch is live the trigger's attack is not passed to the game for any weapon the touch swings - melee weapons, bare hands and
+  throwing weapons (the touch or the throw gesture throws those) - and only a bow and a crossbow keep the trigger, because they are shot and not swung. Spells and skills on the other
+  buttons are as they were, and the trigger works as ever where Hit by touch does not run (no tracking, a menu or panel up, another view). Only the plugin's own controller press is
+  withheld; nothing of the game is blocked or hooked. Untick it for the old behaviour. The log says what it decided ("melee touch only: ..."). docs/melee_touch_only.md.
+
+- **The skill panel's category strip: shown as soon as the categories are known, a dim note when it cannot be shown, and a log line that says why** (Stereo > Native OpenXR, the skill
+  editor's categories tick, on). A player has never seen the strip of the three trees over the skill grid in the editor, and nothing in the code explains it - so this is not a fix, it is
+  a way to see the cause. If the editor opens before the game side knows the class's trees, the strip now comes up as soon as they are known, on the page that is showing, not at the
+  next editor; if it cannot be shown at all, a dim line where it would be says that the skill categories need the icon cache's skill trees (run prepare_skill_icons.py again); and each
+  time the grid comes up one log line says whether the strip is shown and, if not, which of its conditions failed ("skill panel - the editor on slot N: category strip NOT shown (...)").
+  docs/skill_wheel.md.
+
+- **Skills on the right trigger and on A** ([openxr] skill_rt_a, off; Stereo > Native OpenXR > "Skill panel: skills on the right trigger and on A"; VR first person F4 with the mod's own controls).
+  The right trigger casts the skill on the game's own RT slot and the right A the one on its A slot - and with the left trigger held, LT + RT and LT + A - through the game's own
+  buttons, so its mana, cooldown and animation. Put a skill on them in the skill panel's EDIT SKILLS (the Tiles look; the plates are named "Right A" and "R trigger"): point at the RT or
+  A plate and pick a skill; "Attack" in the list puts the slot back. A slot with nothing, Attack or Interact on it leaves its control as it is, so the trigger attacks and A interacts as
+  ever; a slot picked on the panel's first page, a bottle in the hand, a javelin, the bow's string and a held grip keep the control for themselves. With Hit by touch's "the trigger no
+  longer attacks" only the plain attack on the trigger is withheld - a skill on RT casts. docs/skill_wheel.md.
+- **The settings that come with the mod are the author's again** (d2r_vr.ini as tuned on the author's rig: for example the VR render size 1536, the monster's plate nearer and smaller far away, the
+  Arcane Sanctuary's fog and the hero's own effects dimmed switched on). His calibration, platform, debug switches and update channel are not part of it, and the crossbow ships with its old settings
+  (see above).
+
 ## 0.169
 
 - **The weight and grip libraries out of the plugins folder.** 0.168.0 put d2r_vr_weight.dll and d2r_vr_grip.dll

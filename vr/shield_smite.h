@@ -15,6 +15,7 @@
 // taken: the cast goes through the game's own click instead, see shield_smite.cpp.
 #pragma once
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -93,7 +94,12 @@ constexpr double kMinGap = 0.45;   // seconds between two requests: a bash is no
 // default 0.8) and shield_smite_stroke_cm (cm, 2 .. 30, default 8) - what the shield always used. The swing engine's parameters for them; at the
 // defaults exactly stroke::Params{}. (The shield's speed is the left HAND's: its movement plus its turn times the shield's length - the shield has
 // no drawn blade of its own in the room, so hit by touch's blade speed does not apply.)
-inline stroke::Params BashParams(float minSpeed = stroke::kDefaultMinSpeed, float startCm = stroke::kDefaultStartCm) { return stroke::ParamsFor({minSpeed, startCm}); }
+// The bash's least speed stays 0.3 .. 8 m/s (its own slider's range) although hit by touch's goes up to 20: the shield's speed is the hand's, a bash is no whip.
+inline constexpr float kBashSpeedCeil = 8.0f;
+inline stroke::StrokeTuning BashTuning(float minSpeed, float startCm) {
+    return stroke::Clamp({std::isfinite(minSpeed) ? std::min(minSpeed, kBashSpeedCeil) : minSpeed, startCm});
+}
+inline stroke::Params BashParams(float minSpeed = stroke::kDefaultMinSpeed, float startCm = stroke::kDefaultStartCm) { return stroke::ParamsFor(BashTuning(minSpeed, startCm)); }
 
 class Detector {
     stroke::Engine engine;     // the one that decides: gated (it forgets the stroke while the gate is shut)

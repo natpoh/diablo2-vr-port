@@ -54,6 +54,9 @@ struct OrbSpot {
 // side of it - the inner side - and rolls back when the shield leaves that arm. These are the coefficients of that place, ON TOP of the wrist's own OrbSpot (so a change of the wrist's
 // place moves this one too): `turnDeg` is the roll, the offsets are in the wrist's frame AS ROLLED (so `upCm` is always out of the skin where the ball now sits), the three angles are
 // added to the wrist's own turn. Anatomical like OrbSpot: the same numbers on either wrist are the mirror image (the shield is on the left arm, or on the right one after a hand swap).
+struct OrbTurn {   // three angles, degrees: about the hand's axis, the across axis, the axis out of the back of the hand
+    float xDeg = 0.0f, yDeg = 0.0f, zDeg = 0.0f;
+};
 struct OrbUnderShield {
     float turnDeg = 180.0f;   // the roll about the hand's axis: + sends the back of the hand toward the thumb, - toward the little finger; 180 is the opposite side of the wrist
     float alongCm = 0.0f, sideCm = 0.0f, upCm = 0.0f;
@@ -95,6 +98,13 @@ struct Config {
     // The wrist's bone and the arm's model differ with the class, so one depth (Z) fits one hero: an offset per hero class, cm, added to the Z of BOTH wrists (whatever their own
     // Z, the mirror or not) while that hero plays - [hud] hand_vitals_orb_z_cm_<class> (amazon, sorceress, ...). 0 = the class has no value of its own: the wrists' Z as it is.
     float orbClassZCm[kHeroCount] = {};
+    // The wrist under a shield, per hero class ([hud] hand_vitals_orb_shield_up_cm_<class> / _along_cm_<class>, cm): added to the shield's own depth and along offsets (orbShield.upCm / alongCm)
+    // of the ball rolled to the inner side while that hero plays - the forearm's model, and so the depth of the inner side of the wrist under a shield, differs with the class. 0 = no value of its own.
+    float orbShieldClassUpCm[kHeroCount] = {};
+    float orbShieldClassAlongCm[kHeroCount] = {};
+    // ... and the three angles of the medallion's turn there ([hud] hand_vitals_orb_shield_rot_x_deg_<class> / _y_ / _z_, degrees), added to the shield's own (orbShield.rotXDeg ...) and to the wrist's own turn,
+    // anatomical like those (the same numbers on either wrist are the mirror image), easing in and out with the roll. 0 = no value of its own.
+    float orbShieldClassRotXDeg[kHeroCount] = {}, orbShieldClassRotYDeg[kHeroCount] = {}, orbShieldClassRotZDeg[kHeroCount] = {};
     float orbOpacity = 0.95f;     // [hud] hand_vitals_orb_opacity
     int orbFill = 4;              // (kFillOutOfHand) [hud] hand_vitals_orb_fill: the way the liquid fills, a fixed direction of the wrist's frame (kFill*); the older hand_vitals_orb_liquid 0 / 1 is 0 / 5
     int orbShape = 0;             // [hud] hand_vitals_orb_shape: 0 a medallion (a glass dome on a metal base), 1 the full glass ball (kShape*)
@@ -152,6 +162,11 @@ inline Config Sanitized(Config c) {
     c.orbShield.rotYDeg = Clamp(c.orbShield.rotYDeg, kOrbRotMin, kOrbRotMax, 0.0f);
     c.orbShield.rotZDeg = Clamp(c.orbShield.rotZDeg, kOrbRotMin, kOrbRotMax, 0.0f);
     for (float& z : c.orbClassZCm) z = Clamp(z, -kOrbClassZMax, kOrbClassZMax, 0.0f);
+    for (float& z : c.orbShieldClassUpCm) z = Clamp(z, -kOrbClassZMax, kOrbClassZMax, 0.0f);
+    for (float& z : c.orbShieldClassAlongCm) z = Clamp(z, -kOrbClassZMax, kOrbClassZMax, 0.0f);
+    for (float& a : c.orbShieldClassRotXDeg) a = Clamp(a, kOrbRotMin, kOrbRotMax, 0.0f);
+    for (float& a : c.orbShieldClassRotYDeg) a = Clamp(a, kOrbRotMin, kOrbRotMax, 0.0f);
+    for (float& a : c.orbShieldClassRotZDeg) a = Clamp(a, kOrbRotMin, kOrbRotMax, 0.0f);
     c.orbOpacity = Clamp(c.orbOpacity, kOrbOpacityMin, kOrbOpacityMax, 0.95f);
     c.orbFill = c.orbFill < kFillElbow || c.orbFill > kFillWorldUp ? kFillOutOfHand : c.orbFill;
     c.orbShape = c.orbShape == kShapeBall ? kShapeBall : kShapeMedallion;
@@ -165,6 +180,23 @@ inline Config Sanitized(Config c) {
 // wrists' Z is the one they have, as before the classes had values of their own.
 inline float ClassZCm(const Config& c, int heroClass) {
     return heroClass >= 0 && heroClass < kHeroCount ? Clamp(c.orbClassZCm[heroClass], -kOrbClassZMax, kOrbClassZMax, 0.0f) : 0.0f;
+}
+
+// The depth and the along offsets (cm) the hero now playing adds under a shield: its own, 0 for a class not known or with none.
+inline float ClassShieldUpCm(const Config& c, int heroClass) {
+    return heroClass >= 0 && heroClass < kHeroCount ? Clamp(c.orbShieldClassUpCm[heroClass], -kOrbClassZMax, kOrbClassZMax, 0.0f) : 0.0f;
+}
+inline float ClassShieldAlongCm(const Config& c, int heroClass) {
+    return heroClass >= 0 && heroClass < kHeroCount ? Clamp(c.orbShieldClassAlongCm[heroClass], -kOrbClassZMax, kOrbClassZMax, 0.0f) : 0.0f;
+}
+// The three angles (degrees, X / Y / Z) the hero now playing adds to the medallion's turn under a shield: its own, 0 for a class not known or with none.
+inline OrbTurn ClassShieldRotDeg(const Config& c, int heroClass) {
+    OrbTurn t;
+    if (heroClass < 0 || heroClass >= kHeroCount) return t;
+    t.xDeg = Clamp(c.orbShieldClassRotXDeg[heroClass], kOrbRotMin, kOrbRotMax, 0.0f);
+    t.yDeg = Clamp(c.orbShieldClassRotYDeg[heroClass], kOrbRotMin, kOrbRotMax, 0.0f);
+    t.zDeg = Clamp(c.orbShieldClassRotZDeg[heroClass], kOrbRotMin, kOrbRotMax, 0.0f);
+    return t;
 }
 
 // ---- the hero's numbers ----------------------------------------------------------------------------------------------

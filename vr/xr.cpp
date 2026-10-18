@@ -49,9 +49,13 @@ int D2rvrHoverSpheres(float (*out)[8], int max);
 #include "xr_layers.h"
 #include "focus_gate.h"
 #include "xr_failure.h"   // when the runtime fails and the session is given up (xr_failure.h)
+#include "bounded_call.h"   // [openxr] busy_guard: xrWaitFrame and xrBeginSession on a thread of their own, waited for with a limit (bounded_call.h)
+#include "flatvr_gate.h"    // ... and no session over a FlatVR that holds the headset and cannot be stopped (flatvr_gate.h)
 #include "gpu_fault.h"   // the D3D12 device lost: told at once, nothing touched after it (vr/gpu_fault.h)
 #include "view_gate.h"
 #include "views3d.h"   // [openxr] views_3d: F1 as a window, F3 as the room (the pure maths)
+#include "eye_gap.h"   // [openxr] ipd_auto / ipd_mm: the eye distance of the stereo pair - the runtime's or the player's (the pure maths)
+#include "eye_frame.h"   // [openxr] canted_eyes: both eyes drawn and submitted in the head's frame when the displays are canted (the pure maths)
 #include "hset_panel.h"   // the in-headset settings panel ([openxr] headset_settings): vr/xr_headset_settings.h
 #include "hset_life.h"
 #include "low_hp_game.h"   // its low-life pages show the vignette as a preview (lowhp::SetPreview)
@@ -70,8 +74,11 @@ int D2rvrHoverSpheres(float (*out)[8], int max);
 #include "rune_shader.h"   // [openxr] runes_draw: BodyWalk's gesture runes in the headset (vr/xr_runes.h is their layer; rune_geom.h the maths)
 #include "wheel_paint.h"
 #include "xr_profiles.h"   // [openxr] frame_profile, index_grip_force: Steam Frame's own layout, the Index grip by force
+#include "xr_stick_check.h"   // is the thumbstick bound by the runtime? (the report of 2026-10-18: SteamVR kept a binding saved for the program)
 #include "hand_vitals_wire.h"   // [hud] hand_vitals: life and mana on the hand when the palm turns to the face (vr/xr_hand_vitals.h is its layer)
 #include "wrist_status_wire.h"   // [hud] wrist_status: companions and effects over a wrist turned to the eyes (vr/xr_wrist_status.h is its two layers)
+
+namespace gamestate { void SetStickBits(uint32_t bits); }   // the thumbstick check's verdict for D2R VR Settings (vr/gamestate.cpp, the state block)
 
 namespace xr {
 void GuardSet();
@@ -96,7 +103,12 @@ struct Cfg {
     bool fovCrop = true;      // fov_crop: each eye's fov narrowed to the window's aspect (sharper, black above and below)
     bool symmetric = true;    // each eye's fov made as wide to the left as to the right (symmetric_fov)
     float ipdFallbackM = 0.064f;   // ipd_fallback_mm: the gap given to two views the runtime located in one place (0 = none)
+    bool ipdAuto = true;           // ipd_auto: the eye distance from the runtime's view poses (1), or the player's own number (0) - vr/eye_gap.h
+    float ipdManualM = 0.063f;     // ipd_mm: the player's eye distance, metres (taken when ipd_auto is 0), live
+    bool cantedEyes = true;        // canted_eyes: canted displays - both eyes drawn and submitted in the head's frame (vr/eye_frame.h); 0 = as before, live
     bool stopFlatVR = true;   // FlatVR stopped before the session, started again after
+    bool busyGuard = true;    // busy_guard: the runtime's blocking calls with a limit, no session over a FlatVR that holds the headset (unticked: as before)
+    unsigned waitFrameMs = 150;   // wait_frame_ms: how long the draw thread waits for xrWaitFrame (and xrBeginSession) before the VR frame is left out
     float quadM = 2.0f;       // outside a pair: the flat picture this far ahead, metres
     float panelM = 1.6f;      // and while a panel is open in a game ([screen] menu_distance_m), 0 = quadM
     float quadWidthM = 2.4f;  // and this wide
@@ -147,12 +159,98 @@ void WriteHeadsetInfo(const char* name, vrres::Size recommended, vrres::Size max
     GetPrivateProfileStringW(L"headset", L"name", L"", had, 96, g_headsetPath);
     if (wname[0] && wcscmp(wname, had) != 0) WritePrivateProfileStringW(L"headset", L"name", wname, g_headsetPath);
 }
+// D2R VR Settings > Status, the "Native OpenXR" row: why there is no session (2026-10-18: FlatVR holds the headset and nothing can stop it). [session] note in the
+// same file; empty = deleted.
+void WriteSessionNote(const wchar_t* text) {
+    if (!g_headsetPath[0]) return;
+    wchar_t had[256] = L"";
+    GetPrivateProfileStringW(L"session", L"note", L"", had, 256, g_headsetPath);
+    if (wcscmp(had, text ? text : L"") == 0) return;
+    WritePrivateProfileStringW(L"session", L"note", text && text[0] ? text : nullptr, g_headsetPath);
+}
+// The eye distance the runtime measured (how far apart xrLocateViews' two poses are, before anything of ours), kept for D2R VR Settings to show
+// beside the slider: [headset] ipd_mm in d2r_vr_headset.ini, millimetres with one decimal; 0 = the runtime locates both eyes in one place (it
+// reports no distance). Written when it moved by 0.3 mm, at most every 2 s (a runtime that follows a headset's IPD wheel moves it in steps).
+void NoteMeasuredIpd(float gapM) {
+    static float written = -1.0f;
+    static ULONGLONG at = 0;
+    const float mm = std::isfinite(gapM) && gapM >= eyegap::kOneSpotM ? gapM * 1000.0f : 0.0f;
+    const ULONGLONG now = GetTickCount64();
+    if (!g_headsetPath[0] || (written >= 0.0f && (std::fabs(mm - written) < 0.3f || now - at < 2000))) return;
+    written = mm;
+    at = now;
+    wchar_t b[24];
+    swprintf_s(b, L"%.1f", mm);
+    WritePrivateProfileStringW(L"headset", L"ipd_mm", b, g_headsetPath);
+}
+// The log: once, which eye distance is used and what the runtime measured; again when the player's choice changes.
+void TellIpd(const eyegap::Choice& pick, float measuredM) {
+    static int saidWhy = -1;
+    static float saidGap = -1.0f;
+    if ((int)pick.why == saidWhy && std::fabs(pick.gapM - saidGap) < 0.0005f) return;
+    saidWhy = (int)pick.why;
+    saidGap = pick.gapM;
+    const float mm = measuredM * 1000.0f;
+    switch (pick.why) {
+    case eyegap::Why::Manual:
+        LogF("vrcam: openxr - eye distance: YOURS, %.1f mm ([openxr] ipd_auto=0, ipd_mm); the runtime measured %.1f mm%s", pick.gapM * 1000.0f, mm,
+             mm < 20.0f ? " (it locates both eyes in one place)" : "");
+        break;
+    case eyegap::Why::Fallback:
+        LogF("vrcam: openxr - eye distance: the runtime located the eyes %.1f mm apart: %.0f mm is used instead ([openxr] ipd_fallback_mm) - "
+             "set your own in D2R VR Authentic Settings > Stereo > Native OpenXR (Eye distance)", mm, pick.gapM * 1000.0f);
+        break;
+    default:
+        LogF("vrcam: openxr - eye distance: automatic, the runtime's %.1f mm ([openxr] ipd_auto=1)", mm);
+        break;
+    }
+}
+// The log, once a session: the eyes as the runtime gave them (the gap, the angle between their turns, each eye's turn from the head's frame, each fov)
+// and what the pair is drawn and submitted with (vr/eye_frame.h) - the first thing an "eyes crossed, the centre stretched" report needs: are the
+// headset's displays canted. Called before the canted frame replaces the turns: `q` are the runtime's own.
+bool g_eyesTold = false;
+void TellEyes(const XrView views[2], const eyeframe::Quat q[2], const eyeframe::Frame& fr) {
+    if (g_eyesTold) return;
+    g_eyesTold = true;
+    const float k = 57.29578f;
+    const XrVector3f &a = views[0].pose.position, &b = views[1].pose.position;
+    const float gap = sqrtf((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y) + (a.z - b.z) * (a.z - b.z));
+    const XrFovf &fl = views[0].fov, &fr2 = views[1].fov;
+    LogF("vrcam: openxr - eyes %.1f mm apart, %.2f deg between their views; left fov %.1f %.1f %.1f %.1f, right %.1f %.1f %.1f %.1f (left right up down, deg)%s",
+         gap * 1000.0f, fr.cantRad * k, fl.angleLeft * k, fl.angleRight * k, fl.angleUp * k, fl.angleDown * k, fr2.angleLeft * k, fr2.angleRight * k,
+         fr2.angleUp * k, fr2.angleDown * k, g_cfg.fovCrop ? " - cropped to the window's aspect" : "");
+    const eyeframe::Quat head = eyeframe::Mean(q[0], q[1]);
+    float yl, pl, rl, yr, pr, rr;
+    eyeframe::Relative(head, q[0], &yl, &pl, &rl);
+    eyeframe::Relative(head, q[1], &yr, &pr, &rr);
+    LogF("vrcam: openxr - each eye's own view from the head's frame (the mean of the two turns): left yaw %+.2f pitch %+.2f roll %+.2f, right yaw %+.2f "
+         "pitch %+.2f roll %+.2f deg (yaw + = turned to the left, so outward is + for the left eye and - for the right)", yl, pl, rl, yr, pr, rr);
+    if (fr.canted)
+        LogF("vrcam: openxr - the displays are canted (%.2f deg between the views): both eyes drawn and submitted in the head's frame, fov left %.1f %.1f %.1f %.1f, "
+             "right %.1f %.1f %.1f %.1f (left right up down, deg; each covers its own view) - [openxr] canted_eyes",
+             fr.cantRad * k, fr.fov[0].l * k, fr.fov[0].r * k, fr.fov[0].u * k, fr.fov[0].d * k, fr.fov[1].l * k, fr.fov[1].r * k, fr.fov[1].u * k, fr.fov[1].d * k);
+    else if (fr.cantRad >= eyeframe::kCantMinRad)
+        LogF("vrcam: openxr - the displays are canted (%.2f deg between the views) but [openxr] canted_eyes is 0: the camera is turned as the left eye "
+             "for both and each eye is submitted with its own turn, as before - the eyes can come out crossed", fr.cantRad * k);
+    else
+        LogF("vrcam: openxr - the eyes' views are parallel (%.2f deg between them): each eye drawn and submitted as the runtime gave it", fr.cantRad * k);
+}
 // XR_KHR_composition_layer_color_scale_bias: the runtime scales each layer's colour - the brightness
 // slider at no cost of ours. Without it the picture is as the game draws it.
 bool g_colorScaleExt = false;
 bool g_final = false;                 // the game is closing: no session again
 std::atomic<bool> g_stopWanted{false};  // [openxr] on went to 0 while a session runs: the draw thread ends it
 
+// [openxr] busy_guard: xrWaitFrame has no time limit and the headset may be another app's (FlatVR over BodyWalk Lite on SteamVR: it never returned, with the session lock held,
+// the game hung until Task Manager, 2026-10-18). The two calls that can block the draw thread - xrWaitFrame, xrBeginSession - run on a thread of their own; the draw thread
+// waits for them g_cfg.waitFrameMs and leaves the VR frame out if they have not come (the game goes on flat), and takes the result when they do. One runner each for a
+// session: a call stuck in one is left to it (and the session is not destroyed under it: Teardown).
+struct WaitOut { XrResult r = XR_ERROR_RUNTIME_FAILURE; XrFrameState fs{XR_TYPE_FRAME_STATE}; };
+bounded::Runner<WaitOut>* g_waitRunner = nullptr;
+bounded::Runner<XrResult>* g_beginRunner = nullptr;
+bool g_beginPending = false;       // xrBeginSession asked for and not answered yet
+double g_waitPendingAt = 0.0;      // UsNow when xrWaitFrame was first found not back (0 = it came)
+double g_waitToldAt = 0.0;
 enum State { kIdle, kStarting, kCreated, kFailed };
 std::atomic<int> g_state{kIdle};
 SRWLOCK g_lock = SRWLOCK_INIT;   // the session's calls: the draw thread's frames against Shutdown
@@ -439,14 +537,32 @@ uint32_t FlatVRCounter(bool* running) {
 }
 // Stopped through Game Link (BodyWalk's request_flatvr_running), then until its
 // head sample stands still for half a second (5 s at most): FlatVR holds the headset.
-void StopFlatVR() {
+// Does it hold the headset? Its head sample moves (a FlatVR left open with none stands still).
+bool FlatVRMoves() {
+    bool running = false;
+    const uint32_t a = FlatVRCounter(&running);
+    for (int i = 0; i < 6; ++i) {
+        Sleep(100);
+        if (FlatVRCounter(&running) != a) return true;
+    }
+    return false;
+}
+// True: the session may start; false: FlatVR holds the headset and nothing can stop it ([openxr] busy_guard).
+bool StopFlatVR() {
     bool running = false;
     uint32_t last = FlatVRCounter(&running);
-    if (!running) { Log("vrcam: openxr - FlatVR is not running"); return; }
+    if (!running) { Log("vrcam: openxr - FlatVR is not running"); return true; }
     uint32_t caps = 0;
-    if (!link::HostAlive(&caps) || !(caps & BW_LINK_CAP_FLATVR_RUNNING)) {
+    const bool canStop = link::HostAlive(&caps) && (caps & BW_LINK_CAP_FLATVR_RUNNING);
+    if (!canStop) {
+        const bool moves = g_cfg.busyGuard && FlatVRMoves();
+        if (flatgate::Decide(true, false, moves, g_cfg.busyGuard) == flatgate::Act::Refuse) {
+            Log("vrcam: openxr - FlatVR runs, holds the headset (its head sample moves) and BodyWalk's Game Link is not there to stop it (BodyWalk Lite?): no session is started "
+                "(a second one gets no frames); tried again every 10 s while FlatVR runs");
+            return false;
+        }
         Log("vrcam: openxr - FlatVR runs but BodyWalk's Game Link is not there to stop it - the session may not get the headset");
-        return;
+        return true;
     }
     link::RequestFlatVR(false);
     g_flatVrStopped = true;
@@ -460,6 +576,7 @@ void StopFlatVR() {
     }
     LogF("vrcam: openxr - FlatVR stopped through Game Link (%.1f s)", (GetTickCount64() - t0) / 1000.0);
     Sleep(300);
+    return true;
 }
 
 // -- the controllers: our own actions, published for BodyWalk -------------------
@@ -472,6 +589,14 @@ XrAction g_aGrip = XR_NULL_HANDLE, g_aAim = XR_NULL_HANDLE, g_aTrigger = XR_NULL
          g_aSqueeze = XR_NULL_HANDLE, g_aStick = XR_NULL_HANDLE, g_aStickClick = XR_NULL_HANDLE, g_aPrimary = XR_NULL_HANDLE,
          g_aSecondary = XR_NULL_HANDLE, g_aMenu = XR_NULL_HANDLE;
 XrAction g_aSqueezeForce = XR_NULL_HANDLE;   // the Index grip's force ([openxr] index_grip_force); bound on Index only
+// A spare thumbstick, bound to the same inputs as g_aStick under a name no saved binding knows (vr/xr_stick_check.h): SteamVR keeps bindings per program and per
+// action, so a binding saved for D2RLoader.exe by another mod can leave g_aStick with no source. Read in its place only where the runtime says the first has
+// none and the spare has (g_stickSpare), nowhere else.
+XrAction g_aStickSpare = XR_NULL_HANDLE;
+bool g_stickSpare = false;                                  // the spare is the thumbstick (xrstick::UseSpare)
+xrstick::Verdict g_stickVerdict = xrstick::Verdict::Unknown;
+ULONGLONG g_stickCheckAt = 0;                               // the next look while the verdict is unknown (tick count)
+int g_stickChecks = 0;
 // The finger ON a control (capacitive touch): bound on the controllers that have it (Touch - PS VR2 on SteamVR is one - and Index), nothing on the others.
 // Read into g_touch (vr/direct_input.h TouchBit) for the layout's "<control>_touch" lines; BodyWalk is not given them.
 XrAction g_aTouchTrigger = XR_NULL_HANDLE, g_aTouchStick = XR_NULL_HANDLE, g_aTouchPrimary = XR_NULL_HANDLE, g_aTouchSecondary = XR_NULL_HANDLE;
@@ -563,6 +688,7 @@ bool MakeActions() {
     g_aTriggerClick = MakeAction("trigger_click", "Trigger click", XR_ACTION_TYPE_BOOLEAN_INPUT);
     g_aSqueeze = MakeAction("squeeze", "Grip", XR_ACTION_TYPE_FLOAT_INPUT);
     g_aStick = MakeAction("stick", "Thumbstick", XR_ACTION_TYPE_VECTOR2F_INPUT);
+    g_aStickSpare = MakeAction("thumbstick_xy", "Thumbstick (spare)", XR_ACTION_TYPE_VECTOR2F_INPUT);
     g_aStickClick = MakeAction("stick_click", "Thumbstick press", XR_ACTION_TYPE_BOOLEAN_INPUT);
     g_aPrimary = MakeAction("primary", "A / X", XR_ACTION_TYPE_BOOLEAN_INPUT);
     g_aSecondary = MakeAction("secondary", "B / Y", XR_ACTION_TYPE_BOOLEAN_INPUT);
@@ -591,7 +717,7 @@ bool MakeActions() {
 #define MOTORS(a) {a, "/user/hand/left/output/haptic"}, {a, "/user/hand/right/output/haptic"},                   {g_aHapticHand[0], "/user/hand/left/output/haptic"}, {g_aHapticHand[1], "/user/hand/right/output/haptic"}   // every profile we suggest has a motor (a null action is left out)
     Suggest("/interaction_profiles/oculus/touch_controller",
             {BOTH(g_aGrip, "grip/pose"), BOTH(g_aAim, "aim/pose"), BOTH(g_aTrigger, "trigger/value"), BOTH(g_aSqueeze, "squeeze/value"),
-             BOTH(g_aStick, "thumbstick"), BOTH(g_aStickClick, "thumbstick/click"),
+             BOTH(g_aStick, "thumbstick"), BOTH(g_aStickSpare, "thumbstick"), BOTH(g_aStickClick, "thumbstick/click"),
              {g_aPrimary, "/user/hand/left/input/x/click"}, {g_aPrimary, "/user/hand/right/input/a/click"},
              {g_aSecondary, "/user/hand/left/input/y/click"}, {g_aSecondary, "/user/hand/right/input/b/click"},
              {g_aMenu, "/user/hand/left/input/menu/click"}, MOTORS(g_aHaptic)},
@@ -600,15 +726,15 @@ bool MakeActions() {
              {g_aTouchSecondary, "/user/hand/left/input/y/touch"}, {g_aTouchSecondary, "/user/hand/right/input/b/touch"}});
     Suggest("/interaction_profiles/valve/index_controller",
             {BOTH(g_aGrip, "grip/pose"), BOTH(g_aAim, "aim/pose"), BOTH(g_aTrigger, "trigger/value"), BOTH(g_aTriggerClick, "trigger/click"),
-             BOTH(g_aSqueeze, "squeeze/value"), BOTH(g_aStick, "thumbstick"), BOTH(g_aStickClick, "thumbstick/click"),
+             BOTH(g_aSqueeze, "squeeze/value"), BOTH(g_aStick, "thumbstick"), BOTH(g_aStickSpare, "thumbstick"), BOTH(g_aStickClick, "thumbstick/click"),
              BOTH(g_aPrimary, "a/click"), BOTH(g_aSecondary, "b/click"), BOTH(g_aSqueezeForce, "squeeze/force"), MOTORS(g_aHaptic)},
             {BOTH(g_aTouchTrigger, "trigger/touch"), BOTH(g_aTouchStick, "thumbstick/touch"), BOTH(g_aTouchPrimary, "a/touch"), BOTH(g_aTouchSecondary, "b/touch")});
     Suggest("/interaction_profiles/htc/vive_controller",
             {BOTH(g_aGrip, "grip/pose"), BOTH(g_aAim, "aim/pose"), BOTH(g_aTrigger, "trigger/value"), BOTH(g_aTriggerClick, "trigger/click"),
-             BOTH(g_aSqueeze, "squeeze/click"), BOTH(g_aStick, "trackpad"), BOTH(g_aStickClick, "trackpad/click"), BOTH(g_aMenu, "menu/click"), MOTORS(g_aHaptic)});
+             BOTH(g_aSqueeze, "squeeze/click"), BOTH(g_aStick, "trackpad"), BOTH(g_aStickSpare, "trackpad"), BOTH(g_aStickClick, "trackpad/click"), BOTH(g_aMenu, "menu/click"), MOTORS(g_aHaptic)});
     Suggest("/interaction_profiles/microsoft/motion_controller",
             {BOTH(g_aGrip, "grip/pose"), BOTH(g_aAim, "aim/pose"), BOTH(g_aTrigger, "trigger/value"), BOTH(g_aSqueeze, "squeeze/click"),
-             BOTH(g_aStick, "thumbstick"), BOTH(g_aStickClick, "thumbstick/click"), BOTH(g_aMenu, "menu/click"), MOTORS(g_aHaptic)});
+             BOTH(g_aStick, "thumbstick"), BOTH(g_aStickSpare, "thumbstick"), BOTH(g_aStickClick, "thumbstick/click"), BOTH(g_aMenu, "menu/click"), MOTORS(g_aHaptic)});
     Suggest("/interaction_profiles/khr/simple_controller",
             {BOTH(g_aGrip, "grip/pose"), BOTH(g_aAim, "aim/pose"), BOTH(g_aTrigger, "select/click"), BOTH(g_aMenu, "menu/click"), MOTORS(g_aHaptic)});
 #undef BOTH
@@ -621,6 +747,7 @@ bool MakeActions() {
                              : fb.act == Act::Squeeze ? g_aSqueeze : fb.act == Act::Stick ? g_aStick : fb.act == Act::StickClick ? g_aStickClick
                              : fb.act == Act::Primary ? g_aPrimary : fb.act == Act::Secondary ? g_aSecondary : fb.act == Act::Menu ? g_aMenu : g_aHaptic;
             if (a) b.push_back({a, Path(fb.path)});
+            if (fb.act == Act::Stick && g_aStickSpare) b.push_back({g_aStickSpare, Path(fb.path)});   // the spare thumbstick, same input
         }
         XrInteractionProfileSuggestedBinding sb{XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING};
         sb.interactionProfile = Path(xrprofiles::kFrameProfile);
@@ -720,25 +847,32 @@ bool BoolOf(XrAction a, int h, bool* active) {
 // What the runtime bound our actions to, in its own words, per action: "menu: Left Hand Menu Button". A controller that shows as another
 // (PS VR2 on SteamVR presents itself as Touch: the log of 2026-10-17 had nothing for its Create / Options buttons) says here whether the
 // menu action reached any button at all, and which. One line a change (the profile is read again whenever the runtime says it changed).
+std::vector<XrPath> BoundSources(XrAction action) {
+    std::vector<XrPath> paths;
+    if (!action || !g_session) return paths;
+    XrBoundSourcesForActionEnumerateInfo bi{XR_TYPE_BOUND_SOURCES_FOR_ACTION_ENUMERATE_INFO};
+    bi.action = action;
+    uint32_t n = 0;
+    if (XR_SUCCEEDED(xrEnumerateBoundSourcesForAction(g_session, &bi, 0, &n, nullptr)) && n) {
+        paths.resize(n);
+        if (XR_FAILED(xrEnumerateBoundSourcesForAction(g_session, &bi, n, &n, paths.data()))) paths.clear();
+    }
+    return paths;
+}
+std::string g_boundTold;   // the last text of LogBoundSources: a profile read twice with the same bindings is told once - and again in the next session (Teardown clears it)
 void LogBoundSources() {
     struct Act { const char* name; XrAction action; };
-    const Act acts[] = {{"menu", g_aMenu}, {"primary (A / X)", g_aPrimary}, {"secondary (B / Y)", g_aSecondary}, {"stick click", g_aStickClick},
+    const Act acts[] = {{"thumbstick", g_aStick}, {"thumbstick (spare action)", g_aStickSpare}, {"stick click", g_aStickClick},
+                        {"menu", g_aMenu}, {"primary (A / X)", g_aPrimary}, {"secondary (B / Y)", g_aSecondary},
                         {"trigger", g_aTrigger}, {"squeeze (grip)", g_aSqueeze}, {"touch of the trigger", g_aTouchTrigger}, {"touch of the stick", g_aTouchStick},
                         {"touch of A / X", g_aTouchPrimary}, {"touch of B / Y", g_aTouchSecondary}};
-    static std::string told;   // the last text logged: a profile read twice with the same bindings is told once
+    std::string& told = g_boundTold;
     std::string text;
     for (const Act& a : acts) {
         if (!a.action) continue;
         text += a.name;
         text += ": ";
-        XrBoundSourcesForActionEnumerateInfo bi{XR_TYPE_BOUND_SOURCES_FOR_ACTION_ENUMERATE_INFO};
-        bi.action = a.action;
-        uint32_t n = 0;
-        std::vector<XrPath> paths;
-        if (XR_SUCCEEDED(xrEnumerateBoundSourcesForAction(g_session, &bi, 0, &n, nullptr)) && n) {
-            paths.resize(n);
-            if (XR_FAILED(xrEnumerateBoundSourcesForAction(g_session, &bi, n, &n, paths.data()))) paths.clear();
-        }
+        const std::vector<XrPath> paths = BoundSources(a.action);
         if (paths.empty()) text += "nothing bound";
         for (size_t i = 0; i < paths.size(); ++i) {
             XrInputSourceLocalizedNameGetInfo li{XR_TYPE_INPUT_SOURCE_LOCALIZED_NAME_GET_INFO};
@@ -763,6 +897,26 @@ void LogBoundSources() {
     told = text;
     LogF("vrcam: openxr - what the runtime bound our actions to (headset %s): %s", g_systemName[0] ? g_systemName : "?", text.c_str());
 }
+// Did the runtime bind the thumbstick? (vr/xr_stick_check.h): the sources of the stick action against the buttons'. Looked at when the profile is read, and
+// again every few seconds until there is a verdict (the first minute: a runtime may bind a moment after it says the profile changed). Told once per change in
+// the log, shown in D2R VR Settings (Home > Status, through the state block), and - where the spare thumbstick action has a source and the first has none - the
+// spare is the thumbstick (Publish reads g_stickSpare).
+void CheckSticks() {
+    if (!g_session || !g_actionsOk) return;
+    xrstick::Facts f;
+    f.stick = (int)BoundSources(g_aStick).size();
+    f.stickSpare = (int)BoundSources(g_aStickSpare).size();
+    for (XrAction a : {g_aTrigger, g_aSqueeze, g_aPrimary, g_aSecondary, g_aStickClick, g_aMenu}) f.buttons += (int)BoundSources(a).size();
+    f.stickExpected = xrprofiles::HasThumbstick(g_inNow.profile[0]) || xrprofiles::HasThumbstick(g_inNow.profile[1]);   // (the simple controller has none to bind)
+    const xrstick::Verdict v = xrstick::Decide(f);
+    if (v == xrstick::Verdict::Unknown) return;   // no conclusion: nothing (else) is bound yet
+    if (v != g_stickVerdict) {
+        g_stickVerdict = v;
+        LogF("vrcam: openxr - thumbsticks: %s (sources bound: thumbstick %d, spare thumbstick %d, the other controls %d)", xrstick::LogText(v), f.stick, f.stickSpare, f.buttons);
+    }
+    g_stickSpare = xrstick::UseSpare(v);
+    gamestate::SetStickBits(xrstick::Bits(v));
+}
 // The interaction profile each hand runs now (after the runtime says it changed).
 void ReadProfiles() {
     for (int h = 0; h < 2; ++h) {
@@ -783,7 +937,10 @@ void ReadProfiles() {
                 "RIGHT controller's OPTIONS button as the LEFT menu button; the left CREATE button is not delivered at all. So on PS VR2 the menu button of this layout "
                 "(a tap: the inventory, held: the pause menu, with the left grip: the map) is the Options button of the right controller");
     }
-    if (g_inNow.profile[0][0] || g_inNow.profile[1][0]) LogBoundSources();
+    if (g_inNow.profile[0][0] || g_inNow.profile[1][0]) {
+        LogBoundSources();
+        CheckSticks();
+    }
 }
 // This frame's head and hands, at its display time, to Game Link's XrInput.
 bool BareHand(int h) {
@@ -902,6 +1059,10 @@ void FeedCalibration(const D2RVR_XrInput& in, const bool located[2], bool focuse
 
 void Publish(bool focused) {
     if (!g_actionsOk) return;
+    if (g_stickVerdict == xrstick::Verdict::Unknown && g_stickChecks < 40 && (g_inNow.profile[0][0] || g_inNow.profile[1][0])) {   // no verdict on the thumbsticks yet: a look every 3 s, for two minutes
+        const ULONGLONG now = GetTickCount64();
+        if (now >= g_stickCheckAt) { g_stickCheckAt = now + 3000; ++g_stickChecks; CheckSticks(); }
+    }
     D2RVR_XrInput& in = g_inNow;
     in.version = D2RVR_XR_INPUT_VERSION;
     in.focused = focused ? 1u : 0u;
@@ -927,7 +1088,7 @@ void Publish(bool focused) {
         o.stickX = o.stickY = 0.0f;
         {
             XrActionStateGetInfo gi{XR_TYPE_ACTION_STATE_GET_INFO};
-            gi.action = g_aStick; gi.subactionPath = g_handPath[h];
+            gi.action = g_stickSpare ? g_aStickSpare : g_aStick; gi.subactionPath = g_handPath[h];   // (the spare only where the runtime bound nothing to the first: CheckSticks)
             XrActionStateVector2f st{XR_TYPE_ACTION_STATE_VECTOR2F};
             if (XR_SUCCEEDED(xrGetActionStateVector2f(g_session, &gi, &st)) && st.isActive) { o.stickX = st.currentState.x; o.stickY = st.currentState.y; act = true; }
         }
@@ -1071,6 +1232,7 @@ void Teardown() {   // under g_lock or before the session exists
     ReleaseSRWLockExclusive(&g_hapticStopLock);
     for (PendingImage& q : g_pendingImg) q = PendingImage{};   // their swapchains go now
     g_lastEye[0] = g_lastEye[1] = LastEye{};
+    g_eyesTold = false;   // the next session says its eyes again
     if (g_ptr.sc) xrDestroySwapchain(g_ptr.sc);
     g_ptr = Pointer{};
     LaserTeardown();   // its buttons and keys let go, its images gone
@@ -1104,6 +1266,13 @@ void Teardown() {   // under g_lock or before the session exists
     g_aHaptic = g_aHapticHand[0] = g_aHapticHand[1] = XR_NULL_HANDLE;
     g_actionsOk = false;
     g_menuIsOptions = false;
+    g_stickSpare = false;                              // a new session: the bindings are the runtime's to say again, and are told again
+    g_stickVerdict = xrstick::Verdict::Unknown;
+    g_stickCheckAt = 0;
+    g_stickChecks = 0;
+    g_boundTold.clear();
+    g_aStickSpare = XR_NULL_HANDLE;
+    gamestate::SetStickBits(0);
     directinput::SessionEnd();
     for (XrHandTrackerEXT& t : g_handTracker) { if (t && g_xrDestroyHandTracker) g_xrDestroyHandTracker(t); t = XR_NULL_HANDLE; }
     g_xrCreateHandTracker = nullptr; g_xrDestroyHandTracker = nullptr; g_xrLocateHandJoints = nullptr;
@@ -1118,6 +1287,25 @@ void Teardown() {   // under g_lock or before the session exists
         g_inSent = false;
     }
     if (g_space) { xrDestroySpace(g_space); g_space = XR_NULL_HANDLE; }
+    const bool stuck = (g_waitRunner && g_waitRunner->Running()) || (g_beginRunner && g_beginRunner->Running());
+    if (stuck && (g_session || g_inst)) {   // a runtime call of ours has not returned: the session and the instance are destroyed on a thread that may wait for good, not here
+        struct Gone { XrSession s; XrInstance i; };
+        Gone* gone = new Gone{g_session, g_inst};
+        LogF("vrcam: openxr - a runtime call (%s) has not returned: the session is destroyed on a thread of its own, the game does not wait for it",
+             g_waitRunner && g_waitRunner->Running() ? "xrWaitFrame" : "xrBeginSession");
+        if (HANDLE h = CreateThread(nullptr, 0, [](void* p) -> DWORD {
+                Gone* g = (Gone*)p;
+                if (g->s) xrDestroySession(g->s);
+                if (g->i) xrDestroyInstance(g->i);
+                delete g;
+                return 0;
+            }, gone, 0, nullptr)) CloseHandle(h);
+        g_session = XR_NULL_HANDLE;
+        g_inst = XR_NULL_HANDLE;
+    }
+    delete g_waitRunner; g_waitRunner = nullptr;   // (a call still stuck in one finishes on its own, nobody collects it)
+    delete g_beginRunner; g_beginRunner = nullptr;
+    g_beginPending = false; g_waitPendingAt = 0.0;
     if (g_session) { xrDestroySession(g_session); g_session = XR_NULL_HANDLE; }
     if (g_inst) { xrDestroyInstance(g_inst); g_inst = XR_NULL_HANDLE; }
     g_kind = kNone;
@@ -1287,7 +1475,13 @@ void LogModules() {
 
 DWORD WINAPI StartThread(void*) {
     const ULONGLONG t0 = GetTickCount64();
-    if (g_cfg.stopFlatVR) StopFlatVR();
+    if (g_cfg.stopFlatVR && !StopFlatVR()) {   // FlatVR holds the headset and cannot be stopped: no session over it
+        WriteSessionNote(L"FlatVR (BodyWalk) still has the headset - close BodyWalk and restart SteamVR");
+        GuardClear("no session started: FlatVR has the headset, the game lives");
+        g_retryAt.store(GetTickCount64() + kRetryMs);
+        g_state.store(kFailed);
+        return 0;
+    }
     AcquireSRWLockExclusive(&g_lock);
     const bool ok = StartSession();
     if (!ok) Teardown();
@@ -1307,6 +1501,7 @@ DWORD WINAPI StartThread(void*) {
         return 0;
     }
     g_retryAt.store(0);
+    WriteSessionNote(L"");   // (a note of an earlier refusal goes)
     LogModules();
     if (!directinput::Governing() || directinput::BodyWalkWalks()) link::RequestPresenter(true);   // BodyWalk's Mapping on the game's own headset ("Game Link"; not while direct_input governs (the key set, view F4): it gets no controllers then - except for its walking: [openxr] direct_bodywalk_walk gives it the poses)
     LogF("vrcam: openxr - ready in %.1f s, waiting for the runtime's go", (GetTickCount64() - t0) / 1000.0);
@@ -2654,13 +2849,58 @@ void GiveUp(const char* what, XrResult r) {
 void EndSessionNow(const char* why) {
     directinput::SessionEnd();   // what the session held in the game is let go
     g_pairYawAt.store(0);
-    if (g_running.exchange(false) && g_session) Ok(xrEndSession(g_session), "xrEndSession");
+    const bool wasRunning = g_running.exchange(false);
+    if (wasRunning && g_session) {
+        if ((g_waitRunner && g_waitRunner->Running()) || (g_beginRunner && g_beginRunner->Running()))
+            Log("vrcam: openxr - xrEndSession left out: a runtime call of ours has not returned");
+        else
+            Ok(xrEndSession(g_session), "xrEndSession");
+    }
     LogF("vrcam: openxr - session ended (%s)", why);
+}
+
+// xrBeginSession when the runtime says ready. [openxr] busy_guard (on): on a thread of its own, waited for g_cfg.waitFrameMs; if the runtime does not answer, the draw thread
+// goes on (flat) and the answer is taken at a later Poll. Off: the call is made here, as before.
+void BeginSession() {
+    XrSessionBeginInfo bi{XR_TYPE_SESSION_BEGIN_INFO};
+    bi.primaryViewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
+    XrResult r;
+    if (g_cfg.busyGuard) {
+        if (!g_beginRunner) g_beginRunner = new bounded::Runner<XrResult>();
+        if (!g_beginPending) Log("vrcam: openxr - xrBeginSession (on a thread of its own: the game does not wait for it for good)");
+        const XrSession s = g_session;
+        const double t0 = UsNow();
+        if (g_beginRunner->Run([s, bi]() mutable { return xrBeginSession(s, &bi); }, g_beginPending ? 0u : g_cfg.waitFrameMs, &r) == bounded::Wait::Pending) {
+            static double pendingSince = 0.0;
+            if (!g_beginPending) {
+                pendingSince = UsNow();
+                LogF("vrcam: openxr - xrBeginSession has not answered in %u ms: the game goes on flat, the answer is taken when it comes (is another app - FlatVR, "
+                     "BodyWalk Lite - holding the headset?)", g_cfg.waitFrameMs);
+            } else if (UsNow() - pendingSince > 15e6) {
+                GuardClear("the runtime does not start the session, the game lives");   // (a kill after this is not a crash of the start)
+            }
+            g_beginPending = true;
+            return;
+        }
+        if (g_beginPending) LogF("vrcam: openxr - xrBeginSession answered (%s)", Res(r));
+        else LogF("vrcam: openxr - xrBeginSession answered in %.0f ms (%s)", (UsNow() - t0) / 1000.0, Res(r));
+        g_beginPending = false;
+    } else {
+        Log("vrcam: openxr - xrBeginSession");
+        r = xrBeginSession(g_session, &bi);
+    }
+    if (Ok(r, "xrBeginSession")) {
+        directinput::SessionBegin();
+        g_running.store(true); g_recentre.store(true); g_recentreAfter = 0; g_framesRunning = 0; g_st = Stats{};
+        g_monoAnchored = false; g_lastDrawn = kNone;   // the flat picture comes up anew, held to the gaze at first
+        g_anchorGate.Reset(); g_refocus.Reset();
+    }
 }
 
 // The runtime's events: begin when it says ready, end when it says stopping, give
 // the headset back to FlatVR when the session or the instance is lost.
 void Poll() {
+    if (g_beginPending && !g_running.load() && g_session) BeginSession();   // asked for earlier and not answered: has it come?
     XrEventDataBuffer ev{XR_TYPE_EVENT_DATA_BUFFER};
     while (g_inst && xrPollEvent(g_inst, &ev) == XR_SUCCESS) {
         if (ev.type == XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED) {
@@ -2685,15 +2925,7 @@ void Poll() {
                 }
             }
             if (g_ss == XR_SESSION_STATE_READY) {
-                XrSessionBeginInfo bi{XR_TYPE_SESSION_BEGIN_INFO};
-                bi.primaryViewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
-                Log("vrcam: openxr - xrBeginSession");
-                if (Ok(xrBeginSession(g_session, &bi), "xrBeginSession")) {
-                    directinput::SessionBegin();
-                    g_running.store(true); g_recentre.store(true); g_recentreAfter = 0; g_framesRunning = 0; g_st = Stats{};
-                    g_monoAnchored = false; g_lastDrawn = kNone;   // the flat picture comes up anew, held to the gaze at first
-                    g_anchorGate.Reset(); g_refocus.Reset();
-                }
+                BeginSession();
             } else if (g_ss == XR_SESSION_STATE_STOPPING) {
                 EndSessionNow("the runtime stopped it");
             } else if (g_ss == XR_SESSION_STATE_EXITING || g_ss == XR_SESSION_STATE_LOSS_PENDING) {
@@ -2781,8 +3013,39 @@ bool OpenFrame(Kind kind) {
     if (crumb) LogF("vrcam: openxr - frame %d (%s): xrWaitFrame", ++crumbs, kind == kPair ? "pair" : "flat");
     const double t0 = UsNow();
     g_fs = {XR_TYPE_FRAME_STATE};
-    XrFrameWaitInfo wi{XR_TYPE_FRAME_WAIT_INFO};
-    const XrResult wr = xrWaitFrame(g_session, &wi, &g_fs);
+    XrResult wr;
+    if (g_cfg.busyGuard) {
+        // [openxr] busy_guard: the call on a thread of its own; not back in g_cfg.waitFrameMs - this frame is left out and the game goes on flat (a call that is still out is only
+        // looked at, not waited for again: the game would stand 150 ms in every present)
+        if (!g_waitRunner) g_waitRunner = new bounded::Runner<WaitOut>();
+        const bool out = g_waitRunner->Running();
+        const XrSession s = g_session;
+        WaitOut o;
+        if (g_waitRunner->Run([s]() { WaitOut w; XrFrameWaitInfo wi{XR_TYPE_FRAME_WAIT_INFO}; w.r = xrWaitFrame(s, &wi, &w.fs); return w; },
+                              out ? 0u : g_cfg.waitFrameMs, &o) == bounded::Wait::Pending) {
+            const double now = UsNow();
+            if (!g_waitPendingAt) {
+                g_waitPendingAt = out ? now : t0;
+                g_waitToldAt = now;
+                LogF("vrcam: openxr - xrWaitFrame has not returned in %u ms (session %s): the VR frame is left out and the game goes on flat; the call is waited for on a thread of its own "
+                     "(is another app - FlatVR, BodyWalk Lite - holding the headset?)", g_cfg.waitFrameMs, StateName(g_ss));
+            } else if (now - g_waitToldAt > 10e6) {
+                g_waitToldAt = now;
+                LogF("vrcam: openxr - xrWaitFrame has still not returned after %.0f s: the game runs flat", (now - g_waitPendingAt) / 1e6);
+                if (now - g_waitPendingAt > 15e6) GuardClear("the runtime gives no frames, the game lives");   // (a kill after this is not a crash of the start)
+            }
+            return false;
+        }
+        if (g_waitPendingAt) {
+            LogF("vrcam: openxr - xrWaitFrame returned after %.1f s: VR frames again", (UsNow() - g_waitPendingAt) / 1e6);
+            g_waitPendingAt = 0.0;
+        }
+        wr = o.r;
+        g_fs = o.fs;
+    } else {
+        XrFrameWaitInfo wi{XR_TYPE_FRAME_WAIT_INFO};
+        wr = xrWaitFrame(g_session, &wi, &g_fs);
+    }
     const bool waitGone = g_failStreak[0].Note(wr, GetTickCount64());
     if (!Ok(wr, "xrWaitFrame")) { if (waitGone) GiveUp("xrWaitFrame", wr); return false; }
     if (++g_framesRunning == 90) GuardClear("the session runs: 90 frames");
@@ -2822,28 +3085,57 @@ bool OpenFrame(Kind kind) {
         g_viewsOk = true;
         if (!(vs.viewStateFlags & XR_VIEW_STATE_POSITION_VALID_BIT))
             for (XrView& v : g_views) v.pose.position = g_cPos;   // rotation only: the head held where it was taken
-        {   // Two views in one place are no stereo: a runtime that locates both eyes at the same point (no position for the
-            // eyes, only the head's turn - what a Meta Air Link player's log showed, 2026-10-14: "eyes 0 mm apart", a double
-            // image that never merged) gets the eyes' own gap, about the middle, along each view's right. [openxr]
-            // ipd_fallback_mm (default 64; 0 = off).
+        {   // The eye distance (vr/eye_gap.h). Auto: the runtime's poses as they are - but two views in one place are no stereo: a runtime
+            // that locates both eyes at the same point (no position for the eyes, only the head's turn - what a Meta Air Link player's log
+            // showed, 2026-10-14: "eyes 0 mm apart", a double image that never merged) gets the eyes' own gap, about the middle, along each
+            // view's right ([openxr] ipd_fallback_mm, default 64; 0 = off). Manual ([openxr] ipd_auto=0, ipd_mm): the player's number over
+            // whatever the runtime says, for a headset whose IPD was not taken up. The eyes keep their midpoint and their turns. What the
+            // runtime measured is kept for the settings (d2r_vr_headset.ini [headset] ipd_mm) and the log.
             const XrVector3f &a = g_views[0].pose.position, &b = g_views[1].pose.position;
-            const float gap = sqrtf((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y) + (a.z - b.z) * (a.z - b.z));
-            if (g_cfg.ipdFallbackM > 0.0f && gap < 0.02f) {
-                const XrVector3f mid{0.5f * (a.x + b.x), 0.5f * (a.y + b.y), 0.5f * (a.z + b.z)};
+            const float measured = sqrtf((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y) + (a.z - b.z) * (a.z - b.z));
+            NoteMeasuredIpd(measured);
+            const eyegap::Choice pick = eyegap::Choose(measured, g_cfg.ipdAuto, g_cfg.ipdManualM, g_cfg.ipdFallbackM);
+            if (pick.place) {
+                float pos[2][3], right[2][3];
                 for (int e = 0; e < 2; ++e) {
-                    const XrVector3f right = Rot(g_views[e].pose.orientation, {1.0f, 0.0f, 0.0f});
-                    const float side = (e == 0 ? -0.5f : 0.5f) * g_cfg.ipdFallbackM;
-                    g_views[e].pose.position = {mid.x + right.x * side, mid.y + right.y * side, mid.z + right.z * side};
+                    const XrVector3f& p = g_views[e].pose.position;
+                    const XrVector3f r = Rot(g_views[e].pose.orientation, {1.0f, 0.0f, 0.0f});
+                    pos[e][0] = p.x; pos[e][1] = p.y; pos[e][2] = p.z;
+                    right[e][0] = r.x; right[e][1] = r.y; right[e][2] = r.z;
                 }
-                static bool told = false;
-                if (!told) {
-                    told = true;
-                    LogF("vrcam: openxr - the runtime located the eyes %.1f mm apart: %.0f mm is used instead ([openxr] ipd_fallback_mm)",
-                         gap * 1000.0f, g_cfg.ipdFallbackM * 1000.0f);
+                eyegap::Place(pos, right, pick.gapM);
+                for (int e = 0; e < 2; ++e) g_views[e].pose.position = {pos[e][0], pos[e][1], pos[e][2]};
+            }
+            TellIpd(pick, measured);
+        }
+        {   // The frame both eyes are drawn and submitted in (vr/eye_frame.h). vrcam builds the game's camera from ONE turn - the first eye's - so an
+            // eye submitted with its own turn on a headset whose displays are canted came out turned wrong by the angle between them (the eyes read
+            // as crossed, the centre stretched). Canted ([openxr] canted_eyes): both eyes carry the head's turn (the mean of the two) and the frustum
+            // of their own view as seen from it; parallel eyes: as they always were.
+            eyeframe::Quat q[2];
+            eyeframe::Fov want[2];
+            for (int e = 0; e < 2; ++e) {
+                const XrQuaternionf& o = g_views[e].pose.orientation;
+                q[e] = eyeframe::Normalized({o.x, o.y, o.z, o.w});
+                const XrFovf c = Cropped(g_views[e].fov);
+                want[e] = {c.angleLeft, c.angleRight, c.angleUp, c.angleDown};
+            }
+            const eyeframe::Frame fr = eyeframe::Make(q, want, g_cfg.cantedEyes);
+            TellEyes(g_views, q, fr);
+            for (int e = 0; e < 2; ++e) g_fovUsed[e] = {fr.fov[e].l, fr.fov[e].r, fr.fov[e].u, fr.fov[e].d};
+            if (fr.canted) {   // (the eyes on the head's right, as the game's camera puts them)
+                const float one[3] = {1.0f, 0.0f, 0.0f};
+                float axis[3], pos[2][3];
+                eyeframe::Rotate(fr.ref, one, axis);
+                for (int e = 0; e < 2; ++e) {
+                    const XrVector3f& p = g_views[e].pose.position;
+                    pos[e][0] = p.x; pos[e][1] = p.y; pos[e][2] = p.z;
                 }
+                if (eyegap::PlaceAlong(pos, axis, eyegap::Gap(pos[0], pos[1])))
+                    for (int e = 0; e < 2; ++e) g_views[e].pose.position = {pos[e][0], pos[e][1], pos[e][2]};
+                for (int e = 0; e < 2; ++e) g_views[e].pose.orientation = {fr.ref.x, fr.ref.y, fr.ref.z, fr.ref.w};
             }
         }
-        for (int e = 0; e < 2; ++e) g_fovUsed[e] = Cropped(g_views[e].fov);
         {   // [openxr] menus_wait_tracking: placing waits for a tracked head with the focus; the focus back after a while places anew
             const bool tracked = (vs.viewStateFlags & XR_VIEW_STATE_POSITION_TRACKED_BIT) && (vs.viewStateFlags & XR_VIEW_STATE_ORIENTATION_TRACKED_BIT);
             const bool focused = g_ss == XR_SESSION_STATE_FOCUSED;
@@ -2938,19 +3230,6 @@ bool OpenFrame(Kind kind) {
             if (kind == kPair && g_pairMode != g_lastMode)
                 LogF("vrcam: openxr - pairs are drawn as %s now", g_pairMode == kViewsWindow ? "F1's window (views_3d)" : g_pairMode == kViewsRoom ? "F3's room (views_3d)" : "the head's camera (F4, F2)");
             if (kind == kPair) g_lastMode = g_pairMode;
-        }
-        static bool told = false;
-        if (!told) {
-            told = true;
-            const XrVector3f& a = g_views[0].pose.position, &b = g_views[1].pose.position;
-            const float ipd = sqrtf((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y) + (a.z - b.z) * (a.z - b.z));
-            const XrQuaternionf& qa = g_views[0].pose.orientation, &qb = g_views[1].pose.orientation;
-            const float dot = std::min(1.0f, fabsf(qa.x * qb.x + qa.y * qb.y + qa.z * qb.z + qa.w * qb.w));
-            const float r2d = 57.29578f;
-            LogF("vrcam: openxr - eyes %.1f mm apart, %.2f deg between their views; left fov %.1f %.1f %.1f %.1f, right %.1f %.1f %.1f %.1f (left right up down, deg)%s",
-                 ipd * 1000.0f, 2.0f * acosf(dot) * r2d, g_views[0].fov.angleLeft * r2d, g_views[0].fov.angleRight * r2d, g_views[0].fov.angleUp * r2d,
-                 g_views[0].fov.angleDown * r2d, g_views[1].fov.angleLeft * r2d, g_views[1].fov.angleRight * r2d, g_views[1].fov.angleUp * r2d,
-                 g_views[1].fov.angleDown * r2d, g_cfg.fovCrop ? " - cropped to the window's aspect" : "");
         }
     } else {
         ++g_st.noViews;
@@ -3403,7 +3682,7 @@ void LoadSettings(const wchar_t* ini) {
                 on = false;
                 was = 0;
                 Log("vrcam: openxr - THE LAST START DIED while native OpenXR was starting (the start guard was still there): "
-                    "native OpenXR is switched OFF ([openxr] on=0) - the game goes on FlatVR. Switch it on again in D2R VR Settings > "
+                    "native OpenXR is switched OFF ([openxr] on=0) - the game goes on FlatVR. Switch it on again in D2R VR Authentic Settings > "
                     "Performance > 3D in the headset; if it dies again, send Collect logs");
             }
         }
@@ -3420,9 +3699,14 @@ void LoadSettings(const wchar_t* ini) {
     GetPrivateProfileStringW(L"openxr", L"space", L"local", sp, 32, ini);
     g_cfg.stage = _wcsicmp(sp, L"stage") == 0;   // (taken when a session starts)
     g_cfg.stopFlatVR = f(L"stop_flatvr", 1.0f) != 0.0f;
+    g_cfg.busyGuard = f(L"busy_guard", 1.0f) != 0.0f;   // the runtime's blocking calls with a limit; no session over a FlatVR that cannot be stopped
+    g_cfg.waitFrameMs = (unsigned)std::clamp(f(L"wait_frame_ms", 150.0f), 20.0f, 2000.0f);
     g_cfg.fovCrop = f(L"fov_crop", 1.0f) != 0.0f;   // on: sharper (square pixels), black above and below (2026-10-10)
     g_cfg.symmetric = f(L"symmetric_fov", 1.0f) != 0.0f;
     g_cfg.ipdFallbackM = std::clamp(f(L"ipd_fallback_mm", 64.0f), 0.0f, 80.0f) * 0.001f;   // eyes located in one place: this gap (0 = off)
+    g_cfg.ipdAuto = f(L"ipd_auto", 1.0f) != 0.0f;                                          // the eye distance: the runtime's (1) or the player's own (0), live
+    g_cfg.ipdManualM = eyegap::ClampGap(f(L"ipd_mm", eyegap::kDefaultM * 1000.0f) * 0.001f);
+    g_cfg.cantedEyes = f(L"canted_eyes", 1.0f) != 0.0f;   // canted displays: both eyes in the head's frame (1), or the old way (0)
     {   // the menus' distance ([openxr] flat_distance_m; unset, FlatVR's panel distance as before) and the
         // panels': FlatVR's "Screen distance while a panel is open" ([screen] menu_distance_m, D2R VR
         // Settings > UI: F4 body, its default as link.cpp's), 0 = the menus' - it never reached native
@@ -3784,7 +4068,7 @@ void FollowLink() {
         FlatVRCounter(&flatvr);
         if (!g_cfg.on || g_final) g_retryAt.store(0);
         else if (flatvr) g_retryAt.store(GetTickCount64() + kRetryMs);
-        else { g_retryAt.store(0); g_state.store(kIdle); }   // the next present starts it
+        else { g_retryAt.store(0); WriteSessionNote(L""); g_state.store(kIdle); }   // the next present starts it
     }
     static bool had = false;
     if (g_state.load() != kCreated) { had = false; return; }

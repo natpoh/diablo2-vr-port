@@ -84,8 +84,20 @@ struct Rect {
     int x, y, w, h;
     bool Contains(float px, float py) const { return px >= x && px < x + w && py >= y && py < y + h; }
 };
-constexpr int kTabStep = 960 / kPageCount;   // the tabs share the 960 pixels under the title (four 232, six 160 ...)
-constexpr Rect kTab(int i) { return {32 + i * kTabStep, 84, kTabStep - 8, 52}; }
+// The tabs share the 960 pixels under the title in proportion to their names (the letters + 3): "Options" gets a wide one, "HUD" a narrow one, so a
+// page more does not squeeze the long names out of their tab (eleven pages at an even 87 pixels would not hold "Options" in either painter).
+constexpr int NameLen(const char* s) {
+    int n = 0;
+    while (s[n]) ++n;
+    return n;
+}
+constexpr int TabWeightTo(int i) {   // the weights of the first i tabs
+    int w = 0;
+    for (int k = 0; k < i; ++k) w += NameLen(kPageNames[k]) + 3;
+    return w;
+}
+constexpr int kTabX(int i) { return 32 + 960 * TabWeightTo(i) / TabWeightTo(kPageCount); }
+constexpr Rect kTab(int i) { return {kTabX(i), 84, kTabX(i + 1) - kTabX(i) - 8, 52}; }
 constexpr int kRowY0 = 156, kRowStep = 66, kRowH = 56;
 constexpr Rect kDec(int row) { return {584, kRowY0 + row * kRowStep, 72, kRowH}; }
 constexpr Rect kVal(int row) { return {664, kRowY0 + row * kRowStep, 248, kRowH}; }

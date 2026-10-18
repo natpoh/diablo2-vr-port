@@ -124,6 +124,14 @@ inline constexpr Sig kSigs[] = {
     {"EcsVfxStorage", 0x66DBB0, Kind::Ref, "E8 ?? ?? ?? ?? 4C 8B F8 C7 44 24 58 FF FF FF FF 33 C0", 0x7C970F, 0, 1, 5, 0, "48 89 5C 24 20 56 57 41 56 48 83 EC 40 48 8B F9", nullptr, "the game's own thrown potion is not hidden", "Aim and attack"},
     // the effect component's visibility (component, bool): stored and applied to the effect, called
     {"VfxSetVisible", 0xF6A830, Kind::Code, "88 51 1C 48 8B 49 10 48 85 C9 0F 85 ?? ?? ?? ?? C3", 0xF6A830, 0, 0, 0, 0, "88 51 1C 48 8B 49 10 48 85 C9 0F 85 ?? ?? ?? ??", nullptr, "the game's own thrown potion is not hidden", "Aim and attack"},
+    // UnitTranslationLayer::BeginCreateOverlayInstance(this, return slot, unit key, UNIT*, TOVERLAYNODE*), hooked to look
+    {"OverlayBegin", 0x762900, Kind::Code, "4C 89 44 24 18 55 53 56 57 41 54 41 55 41 56 41 57 48 8D AC 24 28 FC FF FF 48 81 EC D8 04 00 00", 0x762900, 0, 0, 0, 0, "4C 89 44 24 18 55 53 56 57 41 54 41 55 41 56 41 57", nullptr, "the hero's own effects are not dimmed", "Aim and attack"},
+    // UnitTranslationLayer::FinalizeCreateOverlayInstance(this, return slot, OverlayCreationState*), hooked to look
+    {"OverlayFinalize", 0x768780, Kind::Code, "48 89 5C 24 20 55 56 57 41 54 41 55 41 56 41 57 48 8D AC 24 20 FF FF FF 48 81 EC E0 01 00 00", 0x768780, 0, 0, 0, 0, "48 89 5C 24 20 55 56 57 41 54 41 55 41 56 41 57", nullptr, "the hero's own effects are not dimmed", "Aim and attack"},
+    // the effect component's named float parameter (component, the name's global, float): true when the effect took it - the game's own way to fade an overlay, called
+    {"VfxSetFloat", 0xF6A380, Kind::Code, "40 53 56 48 81 EC 88 00 00 00 48 8B 05 ?? ?? ?? ?? 48 33 C4 48 89 44 24 78 48 8B D9 F3 0F 11 54 24 38", 0xF6A380, 0, 0, 0, 0, "40 53 56 48 81 EC 88 00 00 00 48 8B 05 ?? ?? ?? ??", nullptr, "the hero's own effects are not dimmed", "Aim and attack"},
+    // the global holding the string object "Fade", the parameter name the game sets to the unit's alpha on the effects of its overlays (its address is what the setter takes)
+    {"OverlayFadeName", 0x341D348, Kind::Ref, "48 8D 15 ?? ?? ?? ?? 4C 89 85 40 01 00 00 0F 28 D6 E8 ?? ?? ?? ??", 0x76D13F, 0, 3, 7, 0, nullptr, nullptr, "the hero's own effects are not dimmed", "Aim and attack"},
     // the game's table sets (DataTables* x 4, 16-byte steps): +0x14D8 is the AnimData.D2 table
     {"AnimTables", 0x2A9A580, Kind::Ref, "48 8D 0D ?? ?? ?? ?? 48 03 C0 48 8B 04 C1 48 8B 80 D8 14 00 00 48 83 C4 28", 0x300760, 0, 3, 7, 0, nullptr, nullptr, "a quicker bow release", "Aim and attack"},
     // the controller skill bank in use (0 or 16), called

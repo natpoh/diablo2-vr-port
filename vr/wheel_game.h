@@ -20,6 +20,9 @@ void Init(const D2RL::PluginContext* ctx);
 // while the wheel is `open`) and a waiting request.
 void Tick(bool on, bool open);
 
+// [openxr] skill_rt_a: the editor's list offers the basic attack (wheel::kSkillAttack) beside Interact, the way to put a slot back to the plain action.
+void SetOfferAttack(bool on);
+
 // The draw thread: a request for the UI thread (the one in flight is replaced by a newer one only after its answer).
 void Submit(const wheel::Request& r);
 wheel::Reply ReplyNow();

@@ -120,7 +120,7 @@ void HsStep(D2RVR_XrInput& in, bool focused) {
             break;
         case hset::Do::View:   // F1 - F4: the controller's own view path (vr/hset_view.h); the view leaves F4, so the panel closes with it
             if (hsetview::Press(out.action.view))
-                LogF("vrcam: openxr - headset settings: game view F%d (the panel closes with it; F4 is the way back: the F4 key, D2R VR Settings > Home, or a view action bound in BodyWalk / [direct])", out.action.view);
+                LogF("vrcam: openxr - headset settings: game view F%d (the panel closes with it; F4 is the way back: the F4 key, D2R VR Authentic Settings > Home, or a view action bound in BodyWalk / [direct])", out.action.view);
             break;
         case hset::Do::Calibrate:   // the panel hides; the measurement's own prompt leads the player, and the panel comes back when it ends
             calib::RequestMeasure();

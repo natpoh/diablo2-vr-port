@@ -237,6 +237,10 @@ struct Input {
     bool xbowSupportGame = false;
     // [hands] xbow_support_close: on that fore-grip the left hand turned and its fingers closed as the game's own support hand holds it (mirrored)
     bool xbowSupportClose = false;
+    // [hands] xbow_handover: the crossbow passed from hand to hand - the free hand takes it with a new squeeze at its grip; the support hand mirrored
+    bool xbowHandover = false;
+    // [hands] xbow_barrel_forward: the crossbow laid by its own drawn barrel along the controller's forward (its up along the controller's top)
+    bool xbowBarrelForward = false;
     // A two-handed weapon in both hands (not a bow or crossbow): the game moves it from one
     // wrist's attach bone to the other's in some animations (a great axe went to the left hand
     // while walking, 2026-10-06) - both attach bones are put where the holding hand has it.
@@ -346,6 +350,11 @@ bool HeroPalm(int side, float palm[3]);
 // [weight] grip_fit, for the debug (vrcam's [debug] phantom_ray): where a fitted hand takes the shaft - the grasp point on its axis - and where its palm's middle really is
 // (after the fit and the arm's reach), both from the eye in the head's turn-only frame, metres (as GrabLine). False when that hand was not fitted in the last 300 ms.
 bool GripMarks(int side, float grasp[3], float palm[3]);
+// [bow] aim_distance_by_arm (vr/arm_reach.h): where each shoulder of the drawn hero stands, and how far it is from there to the controller's grip - the arm as drawn, which is the
+// player's own: its bones are fitted to the measured T-pose span ([calibration]), else to the height. `shoulder`: metres from the eye in the head's turn-only frame (x right, y up, z
+// back) - the hands' frame, so a hand's position minus it is the arm. `lengthM`: the shoulder to the grip, straight, metres. side 0 right, 1 left. False when the arms have not been
+// posed for half a second (no body, not first person with the arms on the controllers).
+bool ArmReach(int side, float shoulder[3], float* lengthM);
 // [gameplay] shield_smite: the left hand's weapon attach bone (where a shield hangs) as last posed, in the render
 // world: its place, the way its Y axis runs, and where the hero stands (all world units - divide by the units per
 // metre), with the generation of his model. Posed only while WantShield(true) was asked lately; false when it was

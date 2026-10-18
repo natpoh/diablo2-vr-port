@@ -198,6 +198,10 @@ constexpr uint32_t kNoShotTrigger = 1u << 10, kNoShotSqueeze = 1u << 11;
 // neither walks nor turns with it. The skill panel's Settings tab takes both sticks while it is up (they flip its tabs and pages).
 constexpr uint32_t kTakeStick = 1u << 12;
 void Take(int hand, uint32_t buttons, Source src);
+// What every listener together took from this hand in the frame BEFORE this one (the same mask Take takes): a listener that must not act on a control
+// another gesture holds (a bottle in the hand, the bow's draw, a javelin) asks, and gets an answer that does not depend on the order the listeners
+// were registered in. A listener's own earlier takes are in it. Any thread.
+uint32_t TakenLastFrame(int hand);
 
 // A pulse in a controller: amplitude 0..1, duration in ms, frequency in Hz (0 = the runtime's default). Out of
 // direct mode too. Forwarded to the sink xr.cpp registers (xrApplyHapticFeedback on /user/hand/{left,right}/output/

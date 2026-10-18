@@ -1,0 +1,148 @@
+{
+  "schema": "vrmod-manifest/1",
+  "id": "d2r-vr",
+  "name": "D2R VR Authentic",
+  "version": "@VERSION@",
+  "publisher": "BodyWalkVR",
+  "homepage": "https://bodywalkvr.com/mods/d2r-vr",
+  "support": "https://discord.gg/kVYjEdJx3e",
+  "license": "MIT",
+  "description": "Diablo II as it is, in VR: the game's own rules, your body and hands.",
+  "icon": "launcher_icon.png",
+  "d2rloader_mod": {
+    "name": "D2R-VR"
+  },
+  "game": {
+    "id": "d2r",
+    "builds": [
+      "3.3.93787"
+    ],
+    "stores": [
+      "steam",
+      "battlenet"
+    ],
+    "processes": [
+      "D2R.exe",
+      "D2RLoader.exe"
+    ]
+  },
+  "requires": [
+    {
+      "id": "d2rloader",
+      "version": "1.3.1-beta",
+      "provider": "launcher",
+      "note": "File hashes of the 1.3.1-beta files unpacked from the reviewed ZIP (x-archive: the two archive hashes both mods' installers accept).",
+      "files": [
+        {
+          "path": "{game}/D2RLoader.exe",
+          "sha256_any_of": [
+            "93021dad48533bcfca8a95c69a0cc00cdb9008a3ce6ceba1d04c7aca71985a10"
+          ]
+        },
+        {
+          "path": "{game}/D2RCore.dll",
+          "sha256_any_of": [
+            "2a868d013d2e0830bd2d9e04b918b19e46a73cf726c833e70d089b948fdeb5a2"
+          ]
+        },
+        {
+          "path": "{game}/d2rloader.mpq",
+          "sha256_any_of": [
+            "1f02aa4e3179cb8a8417125160aa3ef18003ea81ee1a4f54e0a76fd3f22d933b"
+          ]
+        }
+      ],
+      "x-archive": {
+        "url": "https://d2rloader.net/downloads/D2RLoader-1.3.1-beta.zip",
+        "sha256_any_of": [
+          "f7bf0287398890b09bcc68b576327e727304bd88f7be80160f9676e8bd6871e2",
+          "9286c6b5bff7f1043658411dbea305faa9698b6a455e6441668fc6d02c22aad7"
+        ]
+      }
+    }
+  ],
+  "launch": {
+    "options": [
+      {
+        "id": "default",
+        "label": "Play D2R VR Authentic",
+        "kind": "exec",
+        "exe": "{game}/D2R_VR_Settings.exe",
+        "args": [
+          "--start"
+        ],
+        "cwd": "{game}",
+        "via": "auto",
+        "stores": [
+          "steam",
+          "battlenet"
+        ],
+        "runtimes": [
+          "system",
+          "steamvr",
+          "vdxr",
+          "file"
+        ],
+        "env": [
+          {
+            "unset": [
+              "SteamOverlayGameId"
+            ]
+          },
+          {
+            "stores": [
+              "steam"
+            ],
+            "unset": [
+              "SteamAppId",
+              "SteamGameId"
+            ],
+            "set": {
+              "SteamAppId": "2536520",
+              "SteamGameId": "2536520"
+            }
+          },
+          {
+            "stores": [
+              "battlenet"
+            ],
+            "unset": [
+              "SteamAppId",
+              "SteamGameId"
+            ]
+          }
+        ],
+        "x-note": "--start is the START button of D2R VR Authentic Settings without the window: D2RLoader.exe -mod D2R-VR, and BodyWalk / FlatVR when the ini asks for them. The runtime picked in the launcher reaches it as XR_RUNTIME_JSON."
+      }
+    ]
+  },
+  "settings_app": {
+    "exe": "{game}/D2R_VR_Settings.exe",
+    "label": "D2R VR Authentic Settings",
+    "hint": "also in the headset: both grips, then a thumbstick click"
+  },
+  "logs": [
+    "{game}/mods/D2R-VR/d2rloader/logs/d2r-vr-vrcam.log",
+    "{game}/d2rloader/logs/d2r-vr-vrcam.log",
+    "{game}/d2rloader/logs/d2rloader.log",
+    "{game}/mods/D2R-VR/d2rloader/logs/d2r_vr_launch.txt",
+    "{game}/mods/D2R-VR/d2rloader/logs/d2r_vr_start.txt",
+    "{game}/mods/D2R-VR/d2rloader/logs/d2r_vr_crash.txt",
+    "{game}/mods/D2R-VR/reshade/ReShade.log",
+    "{game}/mods/D2R-VR/reshade/FlatVR_DepthProvider.log",
+    "{game}/ReShade.log"
+  ],
+  "update": {
+    "kind": "http-json",
+    "url": "https://bodywalkvr.com/api/version?product=d2r_vr",
+    "opens": "homepage"
+  },
+  "uninstall": {
+    "exe": "{game}/unins000.exe",
+    "args": [
+      "/SILENT"
+    ],
+    "needs_admin": true
+  },
+  "x-mod-files": "@MOD_FILES@"
+}

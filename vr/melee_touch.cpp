@@ -35,6 +35,8 @@
 #include "hit_claim.h"
 #include "hit_latency.h"
 #include "blade_shape.h"
+#include "double_swing.h"
+#include "double_swing_game.h"   // [hands] double_swing_by_hands: the second hand's touch may be the game's Double Swing / Frenzy
 #include "stroke_tuning.h"
 #include "strike_direction.h"
 #include "thrown_touch.h"
@@ -80,6 +82,8 @@ LookupFn g_origLookup = nullptr;
 const PluginContext* g_ctx = nullptr;
 const ThreadService* g_threads = nullptr;
 std::atomic<bool> g_wanted{false}, g_unchecked{false};
+std::atomic<ULONGLONG> g_liveAt{0};   // the last time Tick had a weapon it swings (melee, bare hands, a throwing weapon) posed and striking: GetTickCount64
+std::atomic<uint32_t> g_liveKind{0};  // ... and its D2RVR_WeaponType
 std::atomic<bool> g_throwWanted{false};   // [hands] throw_autoaim_deg: the monsters near the hero are wanted for a throw's auto-aim
 // [gameplay] melee_touch_thrown: a javelin, throwing knife or throwing axe is swung too (a point-blank throw by the game's own attack), and what
 // the touch needs of the throw by gesture (vr/throw_gesture_wire.h), by function pointers so this module does not depend on it (vrcam wires them).
@@ -375,6 +379,7 @@ void Cancel() {
     g_engine[0].Reset();
     g_engine[1].Reset();
     g_lastPoseStamp = 0;
+    doubleswing::Forget();   // the touch stands down (another view, a menu, another weapon): the pairs of strikes are forgotten
 }
 
 void ReleasePress(ULONGLONG now, bool force) {
@@ -455,6 +460,27 @@ void Approve(uint32_t id, bool allowDirect, int hand) {
         hitlatency::Press(hitlatency::kMelee);
         g_lat.Press();
     }
+}
+
+// [hands] double_swing_by_hands (vr/double_swing.h): the second hand of a pair touched the monster the first hand struck - the game's own Double Swing (or Frenzy) instead of its attack key. The pad button of
+// the slot the skill sits in is pressed (a finger on it: 65 ms, 180 on the left trigger's row), as the shield bash's Smite is, and the window in which the game's target lookups answer with the touched
+// monster is opened just the same, so the cast goes to the monster the blade touched. The swings, the mana, the damage and the animation are the game's; nothing is called that attacks.
+std::atomic<uint32_t> g_dualPad{0};   // the pad press of the last dual cast (buttons | lt << 16), let go when the game's click has asked for the target
+void ApproveDual(uint32_t id, int hand, const doubleswing::Press& p) {
+    frametrace::Note(frametrace::kPress);
+    const ULONGLONG now = GetTickCount64();
+    meleeboxes::Struck(id, meleeboxes::kStruckKey, now);   // [debug] melee_boxes: the drawing only
+    if (g_press.Down()) ReleasePress(now, true);   // the first hand's attack key is let go before the skill's button goes down: two pad buttons at once are not a press the game reads
+    g_press.OpenWindow(id, now);
+    hitclaim::Press(hand, static_cast<int64_t>(now));   // the blow is the second hand's
+    hitlatency::Press(hitlatency::kMelee);
+    g_lat.Press();
+#ifdef MELEE_TOUCH_DIRECT
+    g_dualPad.store(static_cast<uint32_t>(p.buttons) | static_cast<uint32_t>(p.lt) << 16);
+    directinput::PadPulse({p.buttons, p.lt, 0}, p.holdMs);
+#else
+    (void)p;
+#endif
 }
 
 // ---- [debug] melee_boxes (vr/melee_boxes.h): what is handed over for drawing and for the log ------------------------------------
@@ -657,7 +683,7 @@ void SetStrikeRule(const strikedir::Rule& rule) {
 }
 void SetKindTuning(int kind, float minSpeed, float startCm) {
     if (kind < 0 || kind >= strikedir::kKinds) return;
-    const float s = std::isfinite(minSpeed) && minSpeed >= 0.3f ? std::min(minSpeed, 8.0f) : 0.0f, c = std::isfinite(startCm) && startCm >= 2.0f ? std::min(startCm, 30.0f) : 0.0f;
+    const float s = std::isfinite(minSpeed) && minSpeed >= stroke::kMinSpeedFloor ? std::min(minSpeed, stroke::kMinSpeedCeil) : 0.0f, c = std::isfinite(startCm) && startCm >= 2.0f ? std::min(startCm, 30.0f) : 0.0f;
     g_kindSpeed[kind].store(s);
     g_kindStart[kind].store(c);
 }
@@ -709,6 +735,7 @@ void Tick(const Frame& f) {
     const ULONGLONG now = GetTickCount64();
     ReleasePress(now, false);
     LatencyPoll(now);
+    doubleswing::Tick();   // [hands] double_swing_by_hands: the hero's mana is read for its decisions (cheap when off)
     if (g_wanted.load()) meleedirect::Install();   // only while hit by touch and [gameplay] melee_direct are both on
     // F4 only (vr/view_gate.h). f.ok is vrcam's - a game area, first person on the controllers, no panel - and the view test is
     // here too, so the module does not depend on the caller's being right: another view = not ok, and what a touch had under way
@@ -764,6 +791,8 @@ void Tick(const Frame& f) {
             return;
         }
     }
+    g_liveKind.store(f.weaponType);     // [gameplay] melee_touch_only: a weapon the touch swings (melee, bare hands, a throwing weapon with its touch on) is in a hand, posed and striking -
+    g_liveAt.store(now);                // the trigger need not attack (vr/melee_trigger_wire.cpp asks Live; a bow or a crossbow is never here)
     if (pose.poseStamp == g_lastPoseStamp) return;   // nothing new since the last time
     g_lastPoseStamp = pose.poseStamp;
     const float upm = std::clamp(f.upm, 1.0f, 12.0f);
@@ -918,6 +947,16 @@ void Tick(const Frame& f) {
     Scan fresh;
     bool haveFresh = false, freshOk = false;
     uint32_t approvedId = 0;
+    struct Pending {   // what a blade touched in this pass, to be pressed once every blade has said (below the loop)
+        int side;
+        const Cand* c;
+        strikedir::Judgement jd;
+        float speed;
+        uint64_t stroke;
+        float sweepSpeed;
+    };
+    Pending pend[2];
+    int npend = 0;
     for (const SideBlade& sb : blades) {
         if (!sb.ok) continue;
         const int side = sb.side;
@@ -995,19 +1034,43 @@ void Tick(const Frame& f) {
         }
         if (first) {
             ++g_n.touched;
-            if (g_hits[side].Insert(f.session, sweep.stroke, first->id) && first->id != approvedId) {
-                ++g_n.pressed;
-                approvedId = first->id;
-                MarkContact(firstJd, first->id, first->body, meleeboxes::kCGreen, false, now);   // [debug] melee_boxes: a counted contact: the ball, the arrow and the line in green
-                Approve(first->id, !thrown, side);
-                if (thrown)   // one throw per swing: the throw by gesture's release of this swing is dropped (the touch's press is the throw)
-                    if (const HoldOffFn hold = g_holdOff.load()) hold(meleetouch::HoldOffUntil(now));
-                if (g_n.pressed <= 20)
-                    LogF("melee touch: %c hand, stroke %llu hit monster %u (class %u) - the blade at %.1f m/s (%.1f where it touched) - the game's attack pressed on it%s", side ? 'L' : 'R',
-                         static_cast<unsigned long long>(sweep.stroke), first->id, first->cls, sweep.speed, firstSpeed,
-                         thrown ? " (a thrown weapon: a point-blank throw; the throw by gesture's release of this swing is held off)" : "");
+            // (the press is made below, once every blade of this pass has said what it touched: two blades on one monster in one pass are a pair for [hands] double_swing_by_hands)
+            if (g_hits[side].Insert(f.session, sweep.stroke, first->id) && npend < 2) pend[npend++] = {side, first, firstJd, firstSpeed, sweep.stroke, sweep.speed};
+        }
+    }
+
+    // What each blade touched in this pass becomes the game's attack. A monster that both blades met is pressed once. [hands] double_swing_by_hands: with a weapon in each hand, the strike of the SECOND hand on
+    // the monster the first hand struck within the window is the game's Double Swing (or Frenzy) instead of the attack key - vr/double_swing.h decides, the game does the swings. Two blades that met one monster
+    // in one pass are the pair at once (the first only noted: the second says); everything else is as it was.
+    const bool dualBlades = blades[0].ok && blades[1].ok && !thrown;
+    for (int i = 0; i < npend; ++i) {
+        const Pending& p = pend[i];
+        if (p.c->id == approvedId) continue;   // (the other blade's contact with this monster was pressed in this pass)
+        ++g_n.pressed;
+        approvedId = p.c->id;
+        MarkContact(p.jd, p.c->id, p.c->body, meleeboxes::kCGreen, false, now);   // [debug] melee_boxes: a counted contact: the ball, the arrow and the line in green
+        doubleswing::Press dual;
+        int hand = p.side;
+#ifdef MELEE_TOUCH_DIRECT
+        if (doubleswing::On()) {
+            const Pending* next = i + 1 < npend && pend[i + 1].c->id == p.c->id ? &pend[i + 1] : nullptr;
+            if (next && dualBlades) {
+                doubleswing::Note(p.side, p.c->id, now);
+                dual = doubleswing::Strike(next->side, p.c->id, now, true);
+                if (dual.dual) hand = next->side;
+            } else {
+                dual = doubleswing::Strike(p.side, p.c->id, now, dualBlades);
             }
         }
+#endif
+        if (dual.dual) ApproveDual(p.c->id, hand, dual);
+        else Approve(p.c->id, !thrown, p.side);
+        if (thrown)   // one throw per swing: the throw by gesture's release of this swing is dropped (the touch's press is the throw)
+            if (const HoldOffFn hold = g_holdOff.load()) hold(meleetouch::HoldOffUntil(now));
+        if (g_n.pressed <= 20)
+            LogF("melee touch: %c hand, stroke %llu hit monster %u (class %u) - the blade at %.1f m/s (%.1f where it touched) - %s pressed on it%s", p.side ? 'L' : 'R',
+                 static_cast<unsigned long long>(p.stroke), p.c->id, p.c->cls, p.sweepSpeed, p.speed, dual.dual ? (dual.skillId == doubleswing::kDoubleSwing ? "the game's Double Swing" : "the game's Frenzy") : "the game's attack",
+                 thrown ? " (a thrown weapon: a point-blank throw; the throw by gesture's release of this swing is held off)" : "");
     }
 
     // [debug] melee_boxes: AFTER the engine's steps, so the colour and the numbers are those of this pose's step (read-only)
@@ -1035,10 +1098,25 @@ int HostileVerdict(uint32_t id) {
 
 bool TargetPending() { return viewgate::F4() && g_press.Pending(GetTickCount64()); }
 
-uintptr_t TargetUnit() {
+bool Live(uint64_t maxAgeMs, uint32_t* weaponType) {
+    if (!g_wanted.load() || !viewgate::F4()) return false;
+    const ULONGLONG at = g_liveAt.load();
+    if (at == 0 || GetTickCount64() - at > maxAgeMs) return false;
+    if (weaponType) *weaponType = g_liveKind.load();
+    return true;
+}
+
+uintptr_t TargetUnit(int where) {
     const uint32_t id = viewgate::F4() ? g_press.Target(GetTickCount64()) : 0;
     if (!id) return 0;
-    return ClientUnit(id, 1);
+    const uintptr_t unit = ClientUnit(id, 1);
+#ifdef MELEE_TOUCH_DIRECT
+    if (unit && where == 2)   // the map click has asked for the target: a dual cast's button need not be held longer (the cast is on its way)
+        if (const uint32_t pad = g_dualPad.exchange(0)) directinput::PadPulseEnd({static_cast<uint16_t>(pad & 0xFFFF), static_cast<uint8_t>(pad >> 16), 0});
+#else
+    (void)where;
+#endif
+    return unit;
 }
 
 bool PadPressed() {

@@ -1,0 +1,316 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://example.invalid/vr-mod-launcher/schema/vrmod-manifest.1.schema.json",
+  "title": "VR mod manifest, schema vrmod-manifest/1",
+  "description": "What a mod for the shared VR mod launcher declares: everything it puts in the game folder (plugin, ini, shaders, textures, ReShade configuration, an OpenXR loader), what it needs, how it is started. The launcher's C++ validator (src/manifest.cpp) enforces this and a few rules JSON Schema cannot say: no duplicate dst, a folder src goes with a folder dst, the package on disk matches. Keys starting with x- are free for extensions.",
+  "type": "object",
+  "required": ["schema", "id", "name", "version", "game"],
+  "additionalProperties": false,
+  "patternProperties": { "^x-": {} },
+  "properties": {
+    "schema": { "const": "vrmod-manifest/1" },
+    "id": { "$ref": "#/definitions/id" },
+    "name": { "$ref": "#/definitions/text" },
+    "version": { "$ref": "#/definitions/version" },
+    "edition": { "type": "string" },
+    "publisher": { "type": "string" },
+    "homepage": { "type": "string" },
+    "support": { "type": "string" },
+    "license": { "type": "string" },
+    "description": { "type": "string" },
+    "build": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": { "^x-": {} },
+      "properties": { "commit": { "type": "string" }, "date": { "type": "string" }, "channel": { "type": "string" } }
+    },
+    "game": {
+      "type": "object",
+      "required": ["id"],
+      "additionalProperties": false,
+      "patternProperties": { "^x-": {} },
+      "properties": {
+        "id": { "$ref": "#/definitions/text" },
+        "builds": { "type": "array", "items": { "$ref": "#/definitions/text" } },
+        "stores": { "type": "array", "items": { "enum": ["steam", "battlenet"] } },
+        "processes": { "type": "array", "items": { "$ref": "#/definitions/text" } }
+      }
+    },
+    "exclusive_group": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,59}$" },
+    "d2rloader_mod": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": false,
+      "patternProperties": { "^x-": {} },
+      "properties": { "name": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" } }
+    },
+    "icon": { "type": "string", "pattern": "^(?!.*\\.\\.)(?![/\\\\])[^:]+$" },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": { "^x-": {} },
+      "properties": {
+        "plugin_id": { "$ref": "#/definitions/text" },
+        "plugin_file": { "$ref": "#/definitions/text" },
+        "product_name": { "$ref": "#/definitions/text" },
+        "dll_sha256": { "type": "array", "items": { "$ref": "#/definitions/sha256" } },
+        "markers": { "type": "array", "items": { "$ref": "#/definitions/text" } },
+        "about_file": { "$ref": "#/definitions/text" },
+        "log": { "$ref": "#/definitions/text" }
+      }
+    },
+    "requires": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id"],
+        "additionalProperties": false,
+        "patternProperties": { "^x-": {} },
+        "properties": {
+          "id": { "$ref": "#/definitions/text" },
+          "version": { "$ref": "#/definitions/text" },
+          "provider": { "enum": ["launcher", "mod", "user"] },
+          "optional": { "type": "boolean" },
+          "note": { "type": "string" },
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["path"],
+              "additionalProperties": false,
+              "patternProperties": { "^x-": {} },
+              "properties": {
+                "path": { "$ref": "#/definitions/gamePath" },
+                "sha256_any_of": { "type": "array", "items": { "$ref": "#/definitions/sha256" } }
+              }
+            }
+          }
+        }
+      }
+    },
+    "files": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["dst", "role"],
+        "additionalProperties": false,
+        "patternProperties": { "^x-": {} },
+        "properties": {
+          "src": { "$ref": "#/definitions/relPath" },
+          "dst": { "$ref": "#/definitions/gamePathGlob" },
+          "role": { "enum": ["program", "asset", "config", "shared", "generated"] },
+          "seed": { "$ref": "#/definitions/relPath" },
+          "sha256": { "$ref": "#/definitions/sha256" },
+          "optional": { "type": "boolean" },
+          "tag": { "type": "string" },
+          "note": { "type": "string" }
+        },
+        "if": { "properties": { "role": { "const": "generated" } } },
+        "then": { "not": { "required": ["src"] } },
+        "else": { "required": ["src"] }
+      }
+    },
+    "external": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["dst"],
+        "additionalProperties": false,
+        "patternProperties": { "^x-": {} },
+        "properties": {
+          "dst": { "type": "string", "pattern": "^\\{(game|localappdata|appdata|programfiles|steam|saved_games)\\}/." },
+          "note": { "type": "string" }
+        }
+      }
+    },
+    "settings_app": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "patternProperties": { "^x-": {} },
+      "if": { "type": "object" },
+      "then": { "required": ["exe"] },
+      "properties": {
+        "exe": { "$ref": "#/definitions/text" },
+        "args": { "type": "array", "items": { "type": "string" } },
+        "requires_active": { "type": "boolean" },
+        "hint": { "type": "string" },
+        "label": { "$ref": "#/definitions/text" }
+      }
+    },
+    "settings_hint": { "type": "string" },
+    "launch": {
+      "type": "object",
+      "required": ["options"],
+      "additionalProperties": false,
+      "patternProperties": { "^x-": {} },
+      "properties": {
+        "options": { "type": "array", "minItems": 1, "items": { "$ref": "#/definitions/launchOption" } }
+      }
+    },
+    "hooks": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": { "^x-": {} },
+      "properties": {
+        "pre_activate": { "type": "array", "items": { "$ref": "#/definitions/hook" } },
+        "post_activate": { "type": "array", "items": { "$ref": "#/definitions/hook" } },
+        "pre_deactivate": { "type": "array", "items": { "$ref": "#/definitions/hook" } },
+        "post_deactivate": { "type": "array", "items": { "$ref": "#/definitions/hook" } }
+      }
+    },
+    "preconditions": { "type": "array", "items": { "$ref": "#/definitions/precondition" } },
+    "import": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": { "^x-": {} },
+      "properties": {
+        "backups": {
+          "type": "object",
+          "additionalProperties": false,
+          "patternProperties": { "^x-": {} },
+          "properties": {
+            "globs": { "type": "array", "items": { "$ref": "#/definitions/gamePathGlob" } },
+            "record": {
+              "type": "object",
+              "required": ["file", "paths_at"],
+              "additionalProperties": false,
+              "properties": { "file": { "$ref": "#/definitions/text" }, "paths_at": { "$ref": "#/definitions/text" } }
+            }
+          }
+        }
+      }
+    },
+    "logs": { "type": "array", "items": { "$ref": "#/definitions/text" } },
+    "update": {
+      "type": "object",
+      "required": ["kind"],
+      "additionalProperties": false,
+      "patternProperties": { "^x-": {} },
+      "properties": {
+        "kind": { "enum": ["http-json", "github-release"] },
+        "url": { "type": "string" },
+        "repo": { "type": "string" },
+        "tag": { "type": "string" },
+        "opens": { "type": "string" }
+      }
+    },
+    "uninstall": {
+      "type": "object",
+      "required": ["exe"],
+      "additionalProperties": false,
+      "patternProperties": { "^x-": {} },
+      "properties": {
+        "exe": { "$ref": "#/definitions/text" },
+        "args": { "type": "array", "items": { "type": "string" } },
+        "needs_admin": { "type": "boolean" }
+      }
+    },
+    "x-mod-files": {
+      "description": "EXTENSION (D2R VR Authentic; an x- key the launcher's own validator ignores): the files Setup puts in the mod's folder, made from the staged payload by tools/make_vrmod_manifest.py (installer/mod_files.inc is the list). path: relative to the mod's folder, '/' separators. sha256: the file as shipped. optional: may be absent (a library that is not shipped, a VR-only add-on). user_edits: the player's copy may differ (d2r_vr.ini). The manifest and its icon are not listed (a manifest cannot hold its own hash).",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "sha256"],
+        "additionalProperties": false,
+        "properties": {
+          "path": { "$ref": "#/definitions/relPath" },
+          "sha256": { "$ref": "#/definitions/sha256" },
+          "optional": { "type": "boolean" },
+          "user_edits": { "type": "boolean" }
+        }
+      }
+    }
+  },
+  "definitions": {
+    "text": { "type": "string", "minLength": 1 },
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,39}$" },
+    "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.-]+)?$" },
+    "sha256": { "type": "string", "pattern": "^[0-9a-fA-F]{64}$" },
+    "relPath": {
+      "type": "string",
+      "description": "relative to the manifest's folder; a trailing / makes it a folder",
+      "pattern": "^(?![/\\\\])(?!.*(^|[/\\\\])\\.\\.([/\\\\]|$))[^:*?\"<>|]+$"
+    },
+    "gamePath": {
+      "type": "string",
+      "description": "{game}/... with no .. part",
+      "pattern": "^\\{game\\}[/\\\\](?!(.*[/\\\\])?\\.\\.([/\\\\]|$))[^:*?\"<>|]+$"
+    },
+    "gamePathGlob": {
+      "type": "string",
+      "description": "{game}/..., a generated entry or an import glob may use * and ?",
+      "pattern": "^\\{game\\}[/\\\\](?!(.*[/\\\\])?\\.\\.([/\\\\]|$))[^:\"<>|]+$"
+    },
+    "hook": {
+      "type": "object",
+      "required": ["exe"],
+      "additionalProperties": false,
+      "patternProperties": { "^x-": {} },
+      "properties": {
+        "exe": { "$ref": "#/definitions/text" },
+        "args": { "type": "array", "items": { "type": "string" } },
+        "timeout_s": { "type": "integer" }
+      }
+    },
+    "precondition": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "patternProperties": { "^x-": {} },
+      "properties": {
+        "type": { "enum": ["process_absent", "file_exists", "file_sha256_any_of", "toml_value", "game_build_in"] },
+        "names": { "type": "array", "items": { "$ref": "#/definitions/text" } },
+        "file": { "$ref": "#/definitions/text" },
+        "sha256_any_of": { "type": "array", "items": { "$ref": "#/definitions/sha256" } },
+        "key": { "$ref": "#/definitions/text" },
+        "equals": {},
+        "builds": { "type": "array", "items": { "$ref": "#/definitions/text" } },
+        "severity": { "enum": ["block", "warn"] },
+        "applies_to": { "type": "array", "items": { "enum": ["install", "repair", "activate", "deactivate", "start"] } },
+        "message": { "type": "string" }
+      },
+      "allOf": [
+        { "if": { "properties": { "type": { "const": "process_absent" } } }, "then": { "required": ["names"] } },
+        { "if": { "properties": { "type": { "const": "file_exists" } } }, "then": { "required": ["file"] } },
+        { "if": { "properties": { "type": { "const": "file_sha256_any_of" } } }, "then": { "required": ["file", "sha256_any_of"] } },
+        { "if": { "properties": { "type": { "const": "toml_value" } } }, "then": { "required": ["file", "key", "equals"] } },
+        { "if": { "properties": { "type": { "const": "game_build_in" } } }, "then": { "required": ["builds"] } }
+      ]
+    },
+    "envRule": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": { "^x-": {} },
+      "properties": {
+        "stores": { "type": "array", "items": { "enum": ["steam", "battlenet"] } },
+        "set": { "type": "object", "additionalProperties": { "type": "string" } },
+        "unset": { "type": "array", "items": { "$ref": "#/definitions/text" } }
+      }
+    },
+    "launchOption": {
+      "type": "object",
+      "required": ["id", "label", "kind"],
+      "additionalProperties": false,
+      "patternProperties": { "^x-": {} },
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,39}$" },
+        "label": { "$ref": "#/definitions/text" },
+        "kind": { "enum": ["exec", "url"] },
+        "exe": { "$ref": "#/definitions/text" },
+        "url": { "$ref": "#/definitions/text" },
+        "args": { "type": "array", "items": { "type": "string" } },
+        "cwd": { "$ref": "#/definitions/text" },
+        "via": { "enum": ["auto", "direct", "explorer"] },
+        "stores": { "type": "array", "items": { "enum": ["steam", "battlenet"] } },
+        "runtimes": { "type": "array", "items": { "enum": ["system", "steamvr", "vdxr", "file"] } },
+        "env": { "type": "array", "items": { "$ref": "#/definitions/envRule" } },
+        "needs": { "type": "array", "items": { "$ref": "#/definitions/precondition" } }
+      },
+      "allOf": [
+        { "if": { "properties": { "kind": { "const": "exec" } } }, "then": { "required": ["exe"] } },
+        { "if": { "properties": { "kind": { "const": "url" } } }, "then": { "required": ["url"] } }
+      ]
+    }
+  }
+}

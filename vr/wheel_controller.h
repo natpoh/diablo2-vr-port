@@ -18,7 +18,7 @@
 // pages' Close button. Calibrate body closes it for the measurement and brings it back on the Body page when that is over.
 //
 // The window flips like pages (vr/wheel_flip.h): a flick of a thumbstick left / right, or a tap of the left / right grip, moves one place along
-// SKILLS | SETTINGS: View | Options | Video | Body | Belt | Left | Right (stopping at the ends), and so does a click on the arrow at the window's edge; dots at its foot
+// SKILLS | SETTINGS: View | Options | Video | Body | Life | Look | HUD | Belt | Melee | Left | Right (stopping at the ends), and so does a click on the arrow at the window's edge; dots at its foot
 // show where it stands. With the tab strip the window takes both thumbsticks while it is up (the hero neither walks nor turns with them) and after it
 // closes until each is back in the middle.
 //
@@ -38,6 +38,7 @@
 #include "direct_input.h"
 #include "hset_click.h"
 #include "hset_model.h"
+#include "slot_controls.h"
 #include "tiles_geom.h"
 #include "wheel_cast.h"
 #include "wheel_geom.h"
@@ -60,6 +61,7 @@ struct Settings {
     bool settingsTab = false;   // [openxr] headset_settings: the tiles' window has the Settings tab (the wheel's look has none)
     bool categories = true;     // [openxr] skill_categories: the editor has the category strip (All, the class's trees, General / Items) when the cache knows the trees
     bool runWalk = false;       // [openxr] skill_run_walk (off by default): a RUN / WALK control (a tile in the tiles' look, a button on the wheel): the game's own run / walk switch
+    bool slotControls = false;  // [openxr] skill_rt_a (off by default): the right trigger is the game's RT slot and the right A its A slot (vr/slot_controls.h)
 };
 
 // The panel's size in metres for these settings: the wheel is square, the tiles' window is wide.
@@ -93,9 +95,10 @@ struct Layer {
 
 struct Step {
     uint32_t take[2] = {0, 0};            // directinput::Take masks for the layout
-    bool casting = false;                 // the picked slot's pad buttons are down (CastGate)
+    bool casting = false;                 // the picked slot's pad buttons are down (CastGate), or a slot control's press is the game's (SlotControls)
     uint16_t buttons = 0;
-    uint8_t lt = 0;
+    uint8_t lt = 0, rt = 0;
+    int slotStarted[2] = {-1, -1};        // a slot control's press began this frame: the slot (8..11) it pressed, per control (A, right trigger); for the log
     Feedback feedback = Feedback::None;
     bool runWalk = false;                 // RUN / WALK was clicked: press the game's run / walk switch (kRunWalkCommand) once
     bool request = false;                 // a request for the game's UI thread
@@ -109,11 +112,14 @@ class Controller {
     Settings cfg_;
     Model model_;
     CastGate cast_;
+    SlotControls slots_;
     Pose panel_;
     bool gripDown_[2] = {false, false};
     bool stickWas_ = false, triggerWas_ = false, backWas_ = false;
     bool standing_ = false;            // not in F4 (stood down)
     bool castBlocked_ = false;         // SetCastBlocked
+    bool triggerTaken_ = false, aTaken_ = false;   // SetControlsTaken
+    bool triggerSkill_ = false;        // TriggerCastsSkill
     bool closeArmed_ = false;          // the right stick click was let go since the panel opened: a long press of it closes the panel
     double closeHoldAt_ = -1.0;        // when that long press began (< 0: not pressed)
     struct Held {
@@ -146,7 +152,14 @@ public:
     // The pointing hand's trigger belongs to something else this frame (the bow draw keeps it: a bow in hand shoots by a draw only, or the
     // string is taken with it): the picked slot is not cast with it. Set before every Frame; false = as before.
     void SetCastBlocked(bool blocked) { castBlocked_ = blocked; }
+    // A gesture other than this panel holds the right trigger / the right A this frame (a bottle in the hand, a javelin, the bow's string: the frame
+    // before's takes, directinput::TakenLastFrame): the slot controls leave that control to it. Set before every Frame; false = free.
+    void SetControlsTaken(bool trigger, bool a) { triggerTaken_ = trigger; aTaken_ = a; }
     const Settings& Config() const { return cfg_; }
+    // This frame the right trigger is the game's RT slot (or LT + RT with the left trigger held) and that slot holds a skill: a pull of it casts that skill,
+    // and the layout's attack does not see it (the melee rule asks - vr/melee_trigger.h). False where the slot controls are off, in another view, with a
+    // panel up, a slot picked, a gesture or the grip holding the trigger: the trigger is the layout's.
+    bool TriggerCastsSkill() const { return triggerSkill_; }
     const View& ViewNow() const { return model_.Current(); }
     int Selected() const { return model_.Selected(); }
     bool Open() const { return model_.Open(); }
@@ -160,6 +173,8 @@ public:
     void Reset() {
         model_.Reset();
         cast_.Reset();
+        slots_.Reset();
+        triggerSkill_ = false;
         settings_ = hset::Model{};
         clicker_.Reset();
         chord_.Reset();
@@ -321,6 +336,7 @@ public:
         in.hints = &cfg_.hints;
         in.categories = cfg_.categories;
         in.runWalk = cfg_.runWalk;
+        in.slotControls = cfg_.slotControls;
         const Out mo = model_.Step(in);
         out.feedback = mo.feedback;
         out.request = mo.request;
@@ -370,6 +386,38 @@ public:
         out.buttons = co.buttons;
         out.lt = co.lt;
 
+        // the right trigger and the right A as the game's RT and A slots ([openxr] skill_rt_a): direct input in F4, the panel closed, the window not
+        // measuring; the trigger is the picked slot's while one is picked (or the bow's, or a gesture's), the A a gesture's when one holds it
+        uint32_t slotTake[2] = {0, 0};
+        if (cfg_.slotControls) {
+            SlotControls::In si;
+            si.time = f.time;
+            si.allowed = allowedUi && !open && !wasOpen && (f.flags & (kDirect | kUiUp | kOtherView)) == kDirect;
+            si.triggerFree = !castBlocked_ && !triggerTaken_ && model_.Selected() < 0 && !co.casting;
+            si.aFree = !aTaken_ && !co.casting;
+            si.trigger = f.hand[1].trigger;
+            si.leftTrigger = f.hand[0].trigger;
+            si.a = (f.hand[1].buttons & kPrimary) != 0;
+            si.gripHeld = gripDown_[1];
+            si.skillMask = SkillMask(snap, nowMs, f.session);
+            const SlotControls::Out so = slots_.Step(si);
+            triggerSkill_ = si.allowed && si.triggerFree && !si.gripHeld && (si.skillMask & (1u << SlotOfControl(Control::Trigger, slots_.LeftDown()))) != 0;
+            if (so.casting) {
+                out.casting = true;
+                out.buttons |= so.buttons;
+                out.lt = std::max(out.lt, so.lt);
+                out.rt = so.rt;
+                if (so.takeA) slotTake[1] |= kPrimary;
+                if (so.takeTrigger) slotTake[1] |= kTrigger | kTakeTrigger;
+                if (so.takeLeftTrigger) slotTake[0] |= kTrigger | kTakeTrigger;
+            }
+            out.slotStarted[0] = so.started[0];
+            out.slotStarted[1] = so.started[1];
+        } else {
+            slots_.Reset();
+            triggerSkill_ = false;
+        }
+
         // what is taken from the layout: the wheel's controls, the cast's triggers, the chord's click, then what was held
         for (int h = 0; h < 2; ++h) {
             const Hand& hd = f.hand[h];
@@ -400,7 +448,7 @@ public:
         }
         if (co.takeTrigger) out.take[P] |= kTakeTrigger;
         if (co.takeLeftTrigger) out.take[0] |= kTakeTrigger;
-        for (int h = 0; h < 2; ++h) out.take[h] |= Mask(gate_[h]);
+        for (int h = 0; h < 2; ++h) out.take[h] |= Mask(gate_[h]) | slotTake[h];
 
         // the headset layer
         out.layer.show = open;

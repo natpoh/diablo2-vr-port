@@ -16,7 +16,22 @@ including a free BodyWalk Lite if you don't have BodyWalk.
 **[Open the mod's page on BodyWalkVR](https://bodywalkvr.com/mods/d2r-vr)** - the
 four views in video, the controls and the setup.
 
-**What's new in 0.168:** no more frozen game in native OpenXR (the right eye goes
+**What's new in 0.170:** D2R VR is a D2RLoader mod now - everything of it in
+`mods\D2R-VR`, so it no longer shares files with the other VR mod and D2RLoader's
+`-mod` picks which one runs (Setup moves an old install, your settings with it);
+the shared D2R VR Launcher comes with Setup; the Arcane Sanctuary's own sky all
+round, made from your own game's files, with an optional fog that fades into it; SteamVR thumbsticks that are bound to
+nothing are told and read through a spare action, and a real gamepad joins the
+plugin's pad; the ReShade settings of another mod no longer stop ours, and a ReShade
+you already have (dxgi.dll) is used as it is; native OpenXR never hangs the game on a
+busy headset, takes your own eye distance and draws canted displays right; a spell's
+aim distance can follow your arm's reach (off); Hit by touch in the headset's panel,
+and with it the trigger no longer attacks (a bow or a crossbow keeps it); skills on the right trigger and on A (off);
+the wrist orbs under a shield
+can be set per hero class (depth, along the arm and turn); the hero's own effects (Bone Armor) can
+be faded (in the build, off, not working yet); a Barbarian's Double Swing by the two hands (off); the fog can
+spare fire, spells and smoke (a test, off); no more hang at a portal into a new area. **In 0.169:** the weight and grip
+libraries out of the plugins folder. **In 0.168:** no more frozen game in native OpenXR (the right eye goes
 to the GPU in the game's own calls); weapons with weight by the hero's Strength
 and a two-handed hilt grip; a flail's ball on a real chain; weapons, the bow, the
 crossbow and the shield put away behind your shoulders; energy orbs along the bow
@@ -51,8 +66,9 @@ Tell us what works, what doesn't and what you would like to see.
 > account banned. This project is not made, endorsed or supported by Blizzard
 > Entertainment.
 
-It is a [D2RLoader](https://d2rloader.net) plugin (`d2rl-vrcam.dll`) and a ReShade
-effect (`D2R_DepthFog.fx`). For the headset it talks to BodyWalk through BodyWalk
+It is a [D2RLoader](https://d2rloader.net) mod, `mods\D2R-VR` in the game's folder: a plugin
+(`d2rl-vrcam.dll`) and a ReShade effect (`D2R_DepthFog.fx`) with everything that goes with them
+(`docs/d2rloader_mod.md`). For the headset it talks to BodyWalk through BodyWalk
 Game Link (`external/bodywalk/game_link.h`, BodyWalk's `game_link` plugin), which
 hands it the head and the hands; FlatVR (in BodyWalk) shows the picture in the
 headset. Without a headset it plays flat on a monitor with mouse
@@ -87,7 +103,7 @@ In Diablo II: Resurrected, Options > Video:
 
 For a square picture in the headset, either:
 
-- **Native OpenXR's VR render size:** in D2R VR Settings > Home > In the headset
+- **Native OpenXR's VR render size:** in D2R VR Authentic Settings > Home > In the headset
   drag *Resolution (VR render size)* to a size from 1024 to 4096 pixels a side,
   or tick *Use the headset's recommended size*. The game draws at that size
   whatever its window is; the window keeps its own size, no dragging (new: if
@@ -107,7 +123,7 @@ default).
 
 ### The game in your room (F3, on the floor)
 
-In D2R VR Settings > Camera > *F3 The game on your floor*, pick a **Background
+In D2R VR Authentic Settings > Camera > *F3 The game on your floor*, pick a **Background
 round the game** colour (pure black or green). In Virtual Desktop turn on
 passthrough with that colour as its colour key: the background is cut out and
 the game stands in your real room.
@@ -131,7 +147,7 @@ Everything else is where the game's own gamepad layout puts it.
 
 > **Preview.** F4 is an early look, not a finished way to play the game: the
 > weapons are not calibrated yet, so how a weapon sits in the hands and where
-> it aims may be off for many of them. Weapon Adjust in D2R VR Settings lets you
+> it aims may be off for many of them. Weapon Adjust in D2R VR Authentic Settings lets you
 > fix one by hand meanwhile.
 
 | Action | How |
@@ -144,7 +160,7 @@ Everything else is where the game's own gamepad layout puts it.
 | Swap weapon sets | Click the right stick |
 | Reset the centre | Hold the right stick down |
 
-With **Controls without BodyWalk** (D2R VR Settings > Stereo > Native OpenXR,
+With **Controls without BodyWalk** (D2R VR Authentic Settings > Stereo > Native OpenXR,
 on by default since 0.166, a prototype) the plugin reads the controllers itself in F4, and
 BodyWalk's Mapping is not needed for them:
 
@@ -160,13 +176,13 @@ BodyWalk's Mapping is not needed for them:
 | Grips | nothing on the pad: the belt's potions, the staff's second hand and, with Weapon Weight, the weapon read them |
 
 Every line is in `[direct]` of d2r_vr.ini and can be rebound - by hand, or from a list
-in D2R VR Settings > Controls > Buttons of the controllers. In F1, F2 and F3
+in D2R VR Authentic Settings > Controls > Buttons of the controllers. In F1, F2 and F3
 (without BodyWalk running) the same controller is the game's gamepad too, without
 first person's skill panel, settings panel and gestures; the left trigger held with a
 flick of a thumbstick drinks a belt potion (left = 1, up = 2, right = 3, down = 4).
 
 **The skill panel and the settings in the headset** (prototype, on by default
-since 0.166; D2R VR Settings > Stereo > Native OpenXR). **Hold the right stick click for half a
+since 0.166; D2R VR Authentic Settings > Stereo > Native OpenXR). **Hold the right stick click for half a
 second** and the skill panel opens in front of you - a short click is still the
 weapon swap; hold it again to close the panel. Point a controller at a slot and
 pull the trigger: from then on that trigger casts it. EDIT SKILLS puts a skill
@@ -177,7 +193,7 @@ with a flick of a thumbstick, a tap of a grip (left back, right on) or the arrow
 the window's edge. Without *Controls without BodyWalk* the panel opens with the
 left grip held and a click of the right stick.
 
-**Height calibration** (prototype; D2R VR Settings > Body > *Measure my height and
+**Height calibration** (prototype; D2R VR Authentic Settings > Body > *Measure my height and
 arm span*, or *Calibrate body* on the headset panel's Body page). Stand upright
 with your arms out level at shoulder height (a T-pose), let go of both triggers,
 then squeeze both and hold still for 1.2 seconds; a panel in the headset leads
@@ -202,7 +218,7 @@ the desktop). Changes apply at once while the game runs. Start the game from it
 too: Home > **Launch Diablo II (D2RLoader)** - no need to open the game's folder.
 Every tab, with a picture and what it is for: [SETTINGS.md](SETTINGS.md).
 
-![D2R VR Settings](screenshots/settings_00_home.png)
+![D2R VR Authentic Settings](screenshots/settings_00_home.png)
 
 ## Building
 

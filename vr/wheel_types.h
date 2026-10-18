@@ -71,9 +71,16 @@ constexpr SlotDef kSlotDefs[kSlotCount] = {
 constexpr int BaseSlot(int slot) { return slot >= 10 ? slot - 2 : slot >= 4 && slot < 8 ? slot - 4 : slot; }
 
 // The game's special skill ids the wheel treats apart.
+constexpr int32_t kSkillAttack = 0;          // the basic attack (the Skills row 0): a slot can hold it
 constexpr int32_t kSkillInteract = 357;      // the pick-up / interact command, bindable to a slot
+constexpr int32_t kSkillLoot = 358;          // the game's other two commands of the same kind (the same arrow on their tiles)
+constexpr int32_t kSkillCubeLoot = 370;
 constexpr int32_t kSkillTownPortal = 359;    // one entry for the scroll (219) and the tome (220)
 constexpr int32_t kSkillScroll = 219, kSkillTome = 220;
+
+// A slot that holds nothing, the basic attack or one of the game's pick-up commands has no skill on it: its button is the plain action (the arrow
+// the tiles draw), which the layout's own controls already do. Anything else is a skill the slot casts.
+constexpr bool IsPlainAction(int32_t id) { return id < 0 || id == kSkillAttack || id == kSkillInteract || id == kSkillLoot || id == kSkillCubeLoot; }
 
 struct Skill {
     int32_t id = -1;       // the Skills row's id; -1 nothing
@@ -88,6 +95,9 @@ struct Skill {
                std::strncmp(name, o.name, kNameLen) == 0;
     }
 };
+
+// A slot whose content is a skill its button casts: read from the game, placed, not the plain action, and the player still has it.
+inline bool CastsSkill(const Skill& k) { return k.known && !IsPlainAction(k.id) && k.available; }
 
 // What the UI thread read: the eight slots as the game's controller table has them, and the skills the player can assign.
 struct Snapshot {

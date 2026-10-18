@@ -93,6 +93,66 @@ uniform bool ShowCeilingCut <
 // right eye's present wrote it before the GPU had run the left eye's effect,
 // and the left eye drew the right eye's sky.
 uniform bool SkyOn < hidden = true; > = false;
+uniform bool ArcaneSkyOn < hidden = true; > = false;   // [sky] arcane_sky: in the Arcane Sanctuary the game's own star layers all round
+
+// The Arcane Sanctuary's sky - after bearstonem/d2r-pcvr (MIT), v0.3.18. Its
+// pictures are made on the player's machine from that player's own game (D2R_VR_Settings,
+// "prepare assets": the game's t_fx_stars_far/mid/near as R/G/B and its
+// t_fx_cloud_noise_03), never shipped. vrcam sets D2R_ARCANE_SKY 1 once both
+// files are there: a texture source not found fails ReShade's reload.
+#ifndef D2R_ARCANE_SKY
+ #define D2R_ARCANE_SKY 0
+#endif
+#if D2R_ARCANE_SKY
+texture2D ArcaneStarsTex < source = "D2R_Arcane/stars.png"; > { Width = 1024; Height = 512; Format = RGBA8; };
+sampler2D ArcaneStarsSmp { Texture = ArcaneStarsTex; AddressU = WRAP; AddressV = WRAP; };
+texture2D ArcaneCloudsTex < source = "D2R_Arcane/clouds.png"; > { Width = 512; Height = 512; Format = RGBA8; };
+sampler2D ArcaneCloudsSmp { Texture = ArcaneCloudsTex; AddressU = WRAP; AddressV = WRAP; };
+
+// Sampled by the world direction on three planes (triplanar): all six directions,
+// below the floating platforms too, no card edge, no seam, no pole. Only the
+// direction counts, so the head's movement brings no star nearer.
+// ARCANE-BEGIN (cleanroom/tests/arcane_sky_test.cpp compiles the text between these marks and runs it on WARP against a C++ mirror)
+float3 ArcaneStars(float3 p, float3 weights)
+{
+    return tex2Dlod(ArcaneStarsSmp, float4(p.yz, 0, 0)).rgb * weights.x
+         + tex2Dlod(ArcaneStarsSmp, float4(p.zx, 0, 0)).rgb * weights.y
+         + tex2Dlod(ArcaneStarsSmp, float4(p.xy, 0, 0)).rgb * weights.z;
+}
+float ArcaneClouds(float3 p, float3 weights)
+{
+    return tex2Dlod(ArcaneCloudsSmp, float4(p.yz, 0, 0)).r * weights.x
+         + tex2Dlod(ArcaneCloudsSmp, float4(p.zx, 0, 0)).r * weights.y
+         + tex2Dlod(ArcaneCloudsSmp, float4(p.xy, 0, 0)).r * weights.z;
+}
+float3 ArcaneSky(float3 dir)
+{
+    float3 weights = pow(abs(dir), 8.0);
+    weights /= max(dot(weights, float3(1, 1, 1)), 0.0001);
+    const float3 maps = ArcaneStars(dir * 1.8 + float3(0.13, 0.37, 0.61), weights);
+    const float stars = dot(maps, float3(0.38, 0.55, 0.8));
+    const float broad = ArcaneClouds(dir * 0.7 + float3(0.1, 0.3, 0.7), weights);
+    const float detail = ArcaneClouds(dir * 2.4 + float3(0.6, 0.8, 0.2), weights);
+    const float density = smoothstep(0.18, 0.78, broad) * (0.25 + 0.75 * detail);
+    const float tint = smoothstep(-0.8, 0.8, dot(dir, normalize(float3(0.6, 0.2, -0.7))));
+    const float3 nebula = lerp(float3(0.025, 0.05, 0.17), float3(0.015, 0.14, 0.11), tint);
+    return float3(0.001, 0.002, 0.006) + nebula * density + stars * float3(0.8, 0.9, 1.0);
+}
+// ARCANE-END
+// [sky] arcane_fog: the fog's colour under that sky - the sky behind the point without its stars (the dark and the
+// nebula only), so a far platform dissolves into the void round it, not into a speckle of stars
+float3 ArcaneHaze(float3 dir)
+{
+    float3 weights = pow(abs(dir), 8.0);
+    weights /= max(dot(weights, float3(1, 1, 1)), 0.0001);
+    const float broad = ArcaneClouds(dir * 0.7 + float3(0.1, 0.3, 0.7), weights);
+    const float detail = ArcaneClouds(dir * 2.4 + float3(0.6, 0.8, 0.2), weights);
+    const float density = smoothstep(0.18, 0.78, broad) * (0.25 + 0.75 * detail);
+    const float tint = smoothstep(-0.8, 0.8, dot(dir, normalize(float3(0.6, 0.2, -0.7))));
+    const float3 nebula = lerp(float3(0.025, 0.05, 0.17), float3(0.015, 0.14, 0.11), tint);
+    return float3(0.001, 0.002, 0.006) + nebula * density;
+}
+#endif
 // The camera's axes in the world (y up); it looks along -CamBack. 0 = left eye, 1 = right.
 uniform float3 CamRight0 < hidden = true; > = float3(1.0, 0.0, 0.0);
 uniform float3 CamUp0 < hidden = true; > = float3(0.0, 1.0, 0.0);
@@ -293,6 +353,33 @@ sampler2D FogColorSmp { Texture = FogColorTex; };
 sampler2D FogDepthSmp { Texture = FogDepthTex; MinFilter = POINT; MagFilter = POINT; };
 sampler2D FogDepthRsSmp { Texture = FogDepthRsTex; MinFilter = POINT; MagFilter = POINT; };
 uniform bool OwnDepth < hidden = true; > = false;
+
+// [fog] spare_effects (vrcam, vr/fog_spare.h): the game's own transparent targets of this frame, copied at its
+// transparent resolve - the weighted-blended accumulation and revealage, the additive target, and the resolve's
+// result. Read at the game's render size as the depth is (DepthScale). SpareOn only while this frame's copies are there.
+uniform bool SpareOn < hidden = true; > = false;
+texture2D SpareAccumTex : D2RVR_SPARE_ACCUM;
+texture2D SpareRevealTex : D2RVR_SPARE_REVEAL;
+texture2D SpareGlowTex : D2RVR_SPARE_GLOW;
+texture2D SpareResolvedTex : D2RVR_SPARE_RESOLVED;
+sampler2D SpareAccumSmp { Texture = SpareAccumTex; MinFilter = POINT; MagFilter = POINT; };
+sampler2D SpareRevealSmp { Texture = SpareRevealTex; MinFilter = POINT; MagFilter = POINT; };
+sampler2D SpareGlowSmp { Texture = SpareGlowTex; MinFilter = POINT; MagFilter = POINT; };
+sampler2D SpareResolvedSmp { Texture = SpareResolvedTex; MinFilter = POINT; MagFilter = POINT; };
+// FOGSPARE-BEGIN (cleanroom/tests/fog_spare_test.cpp compiles the text between these marks and runs it on WARP against vr/fog_spare_math.h)
+// How much of a pixel is the game's opaque scene, 0..1, from its ps_transparent_resolve's own sums:
+// R = a * S + (1 - a) * T + A, T = accum.rgb / accum.a * reveal.yzw, a = reveal.x - what the effects add is
+// E = (1 - a) * T + A, and the opaque share (R - E) / R by luminance. Only that much is fogged: a flame or a
+// spell in front of a far wall is not fogged as the wall.
+float OpaqueShare(float3 r, float4 accum, float4 reveal, float3 glow)
+{
+    float3 e = glow;
+    if (accum.w > 0.0) e += (1.0 - saturate(reveal.x)) / accum.w * accum.rgb * reveal.yzw;
+    const float3 lum = float3(0.2126, 0.7152, 0.0722);
+    const float lr = dot(max(r, 0.0), lum), le = dot(max(e, 0.0), lum);
+    return lr > 1e-6 ? saturate(1.0 - le / lr) : 1.0;
+}
+// FOGSPARE-END
 // The part of the depth buffer the game draws the scene into (vrcam, from the game's
 // viewport): 1 without an upscaler; DLSS draws at 0.5 - 0.67 of the screen into the top
 // left of a screen-size buffer, so every read of the depth goes through DepthAt (2026-10-08).
@@ -408,6 +495,9 @@ float3 PaintedSky(float3 dir)
 
 float3 Sky(float3 dir)
 {
+#if D2R_ARCANE_SKY
+    if (ArcaneSkyOn) return ArcaneSky(dir);
+#endif
     if (SkyTex > 0.5) return PaintedSky(dir) * SkyBrightness;
     const float h = dir.y;
     float3 c = SkyGradient(h);
@@ -1393,7 +1483,8 @@ float3 DepthFogWorld(float4 pos, float2 uv, int eye)
                 sky = Sky(dir);
                 // with the act's own fog colour the sky's low part sinks into it too:
                 // the fogged land meets the sky without an edge
-                if (FogOn && FogFixed) sky = lerp(sky, FogColor, 1.0 - smoothstep(-0.03, 0.2, dir.y));
+                // (not under the Arcane Sanctuary's sky: it is all round, below too, and its fog is the sky itself)
+                if (FogOn && FogFixed && !ArcaneSkyOn) sky = lerp(sky, FogColor, 1.0 - smoothstep(-0.03, 0.2, dir.y));
                 back = true;
             } else ceilMode = 3;
         }
@@ -1463,6 +1554,10 @@ float3 DepthFogWorld(float4 pos, float2 uv, int eye)
         }
         const float3 fogDir = normalize(float3(dir.x, clamp(dir.y, -0.1, 0.15), dir.z));
         if (SkyOn && !FogFixed) fogColour = (SkyTex > 0.5 ? PaintedSky(fogDir) : SkyGradient(fogDir.y)) * SkyBrightness + dither;
+#if D2R_ARCANE_SKY
+        // [sky] arcane_fog: the Arcane Sanctuary's fog is its sky straight behind the point (vrcam turns FogOn on there only then)
+        if (ArcaneSkyOn) fogColour = ArcaneHaze(dir) + dither;
+#endif
     }
     if (!FogOn) return colour;
 
@@ -1488,6 +1583,13 @@ float3 DepthFogWorld(float4 pos, float2 uv, int eye)
         t = (sum + t0) / (wsum + 1.0);
     }
     if (ShowDistance) return t.xxx;
+    // [fog] spare_effects: only the opaque scene's share of the pixel is fogged (the game's transparent
+    // effects of this frame, vr/fog_spare.h)
+    if (SpareOn) {
+        const float4 sp = float4(uv * DepthScale, 0.0, 0.0);   // the game's targets, as its depth: at its render size (DLSS), never upside down
+        t *= OpaqueShare(tex2Dlod(SpareResolvedSmp, sp).rgb, tex2Dlod(SpareAccumSmp, sp), tex2Dlod(SpareRevealSmp, sp),
+                         tex2Dlod(SpareGlowSmp, sp).rgb);
+    }
     // In a cave a torch's halo is laid over the far floor too, and the fog took it away with
     // the floor: the floor's edge stood as a black cut-out in the middle of the glow
     // (2026-10-07). The halo is warm - red well over blue - and the cave's rock is not: what
