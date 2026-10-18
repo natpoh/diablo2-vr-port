@@ -297,7 +297,9 @@ public:
                 if (ph.dist > 0.0f) tiles::SheetPoint(ph.u, ph.v, &su, &sv);
                 if (pointer) settingsHover = hset::HitTest(settings_.page, su, sv);
                 settingsAct = clicker_.Step(settings_, settingsHover, pointer, click, trig, ph.dist > 0.0f, su * float(tiles::kSheetW), f.time * 1000.0);
-                if (settingsAct.what == hset::Do::Close || settingsAct.what == hset::Do::Calibrate || settingsAct.what == hset::Do::View) closeAsked = true;
+                if (settingsAct.what == hset::Do::Close || settingsAct.what == hset::Do::Calibrate || settingsAct.what == hset::Do::View ||
+                    settingsAct.what == hset::Do::Guide)
+                    closeAsked = true;
                 if (settingsAct.what == hset::Do::Calibrate) resume_ = true;
             }
             if (settingsAct.what == hset::Do::Nothing) settingsAct = settings_.Live(f.time * 1000.0);   // the belt writes itself a moment after the last change

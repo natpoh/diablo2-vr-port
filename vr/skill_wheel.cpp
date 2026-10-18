@@ -20,6 +20,7 @@
 #include "bow_draw_wire.h"
 #include "calibration.h"
 #include "direct_input.h"
+#include "first_start_wire.h"   // the Settings tab's Body page: the first-start guide again
 #include "hset_store.h"
 #include "hset_view.h"
 #include "hset_life.h"
@@ -131,6 +132,10 @@ void SettingsAct(const wheel::Step& s) {
     case hset::Do::Calibrate:   // the window has closed; the plugin's own prompt leads the player, and the window comes back when it is over
         calib::RequestMeasure();
         Log("vrcam: openxr - skill panel, Settings: Calibrate body (the window is back when the measurement is over)");
+        break;
+    case hset::Do::Guide:       // the window has closed; the first-start guide's pages come up (vr/first_start.cpp)
+        firststart::Reopen();
+        Log("vrcam: openxr - skill panel, Settings: First-start guide");
         break;
     case hset::Do::Preview:     // "Preview 5 s" on the Life and Look pages: the vignette and the beat for five seconds with the rows as they stand (vr/low_hp.h PreviewWindow)
         lowhp::PlayPreview();

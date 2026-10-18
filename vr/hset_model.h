@@ -120,11 +120,12 @@ constexpr Rect kSlEnds = {112, 416, 800, 26};
 constexpr Rect kVidCost = {32, 450, 960, 30};
 constexpr Rect kVidLimit = {32, 482, 960, 30};
 constexpr Rect kVidNote = {32, 516, 960, 30};
-// The Body page: what it is for, the two buttons, what is stored, and the steps.
+// The Body page: what it is for, the three buttons (the measurement, its Forget, the first-start guide again), what is stored, and the steps.
 constexpr Rect kBodyTitle = {32, 148, 960, 36};
 constexpr Rect kBodyWhy = {32, 184, 960, 30};
-constexpr Rect kCalibrate = {32, 228, 540, 76};
-constexpr Rect kForget = {588, 228, 404, 76};
+constexpr Rect kCalibrate = {32, 228, 300, 76};
+constexpr Rect kForget = {344, 228, 320, 76};
+constexpr Rect kGuideBtn = {676, 228, 316, 76};   // the first-start guide (vr/first_start.h) again: the panel closes and the guide's pages come up
 constexpr Rect kBodyStored = {32, 322, 960, 38};
 constexpr Rect kBodyUse = {32, 360, 960, 30};
 constexpr Rect kBodyStep(int i) { return {48, 408 + i * 32, 944, 30}; }
@@ -137,7 +138,7 @@ constexpr Rect kApply = {772, 620, 220, 68};
 constexpr float kWidthM = 1.2f, kHeightM = kWidthM * kH / kW;
 constexpr float kAheadM = 1.0f, kBelowM = 0.05f;
 
-enum class Kind { None, Tab, Change, Apply, Close, Recentre, Preset, Slider, Calibrate, Forget, View, Preview };
+enum class Kind { None, Tab, Change, Apply, Close, Recentre, Preset, Slider, Calibrate, Forget, View, Preview, Guide };
 struct Hit {
     Kind kind = Kind::None;
     int index = -1;   // a tab's page, a Change's key, a Preset's number, a Slider's side along the track (-1: a stepper at its end), a View's number (1 = F1 ... 4 = F4)
@@ -178,6 +179,7 @@ inline Hit HitTest(int page, float u, float v) {
     if (page == kPageBody) {
         if (kCalibrate.Contains(x, y)) return {Kind::Calibrate, -1, 0};
         if (kForget.Contains(x, y)) return {Kind::Forget, -1, 0};
+        if (kGuideBtn.Contains(x, y)) return {Kind::Guide, -1, 0};
         return {};
     }
     for (int r = 0; r < kRowsPerPage; ++r) {
@@ -194,7 +196,7 @@ inline Hit HitTest(int page, float u, float v) {
 }
 
 // -- the panel's state ---------------------------------------------------------------------------
-enum class Do { Nothing, Save, Close, Recentre, Calibrate, View, Preview };
+enum class Do { Nothing, Save, Close, Recentre, Calibrate, View, Preview, Guide };
 struct Action {
     Do what = Do::Nothing;
     Request request;   // with Save
@@ -352,6 +354,7 @@ public:
         switch (hit.kind) {
             case Kind::Close: a.what = Do::Close; return a;
             case Kind::Recentre: a.what = Do::Recentre; return a;
+            case Kind::Guide: a.what = Do::Guide; return a;   // the first-start guide: nothing of the ini (the plugin shows it once the panel is closed)
             case Kind::Tab:
                 if (hit.index >= 0 && hit.index < PageCount() && hit.index != page) { page = hit.index; ++revision; }
                 return a;

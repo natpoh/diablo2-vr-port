@@ -167,6 +167,7 @@ namespace gamestate { bool HandIsThrowPotion(int side); }   // the held item is 
 #include "anim_cut.h"          // [bow] quick_release, [hands] quick_throw: the action-frame flag of the hero's bow attack / throw rows moved earlier (vr/anim_cut.cpp)
 #include "bow_latency.h"       // [debug] bow_latency: the split of the second between a bow's release and its arrow (vr/bow_latency.h)
 #include "calibration.h"
+#include "first_start_wire.h"     // [onboarding]: the first-start guide in the headset (vr/first_start.h)
 #include "flatvr_pose.h"     // [flatvr]: FlatVR as good as native OpenXR - the roll back, the head's move, pairs on FlatVR's frames (docs/flatvr_sync.md)
 #include "haptics.h"
 #include "mob_bars.h"
@@ -1783,6 +1784,7 @@ void LoadSettings() {
     replay::g_fxAtHold.store(IniB(L"stereo", L"replay_fx", true));
     xr::LoadSettings(g_iniPath);   // [openxr]: the game in the headset itself (vr/xr.cpp)
     calib::LoadSettings(g_iniPath);   // [calibration]: the measured height and arm span (vr/calibration.cpp)
+    firststart::LoadSettings(g_iniPath);   // [onboarding]: the first-start guide (vr/first_start.cpp)
     g_xrThirdGaze.store(IniB(L"openxr", L"third_gaze", false));
     g_inputLog.store((int)IniF(L"debug", L"input_log", 1.0f));   // presses and their sources (InputLogF)
     {   // [debug] profile_draw: one 5 s profile of the draw thread each time it turns 1
@@ -17294,11 +17296,13 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     xr::SetLogger(&Log);   // before the settings: [openxr] on says so in the log
     xr::SetPointerAt(&PointerAtPixel);   // F1 / F3 in 3D: the game's pointer drawn where its mouse points on their ground
     calib::SetLogger(&Log);
+    firststart::SetLogger(&Log);
     standstill::SetLogger(&Log);
     straywalk::SetLogger(&Log);
     shottrace::SetLogger(&Log);
     straywalk::SetAttackFn(&standstill::AttackActive);
     calib::RegisterInput();   // the T-pose measurement takes both triggers from the input layer while it runs
+    firststart::RegisterInput();   // the first-start guide reads the right stick's up and down (it takes nothing)
     ReloadIfChanged();
     NoTemporalAA();
     MiniMapForHand();

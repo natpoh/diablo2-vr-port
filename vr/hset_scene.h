@@ -174,6 +174,7 @@ inline Scene Compose(const Model& m, const Hit& hover, const ComposeOptions& opt
         b.Text("Your real eye height sets the world's scale, your arm span the hero's arms.", kBodyWhy, Face::Small, Role::Quiet);
         b.Button(kCalibrate, "Calibrate body", {Kind::Calibrate, -1, 0}, true, canEdit, Role::Accent);
         b.Button(kForget, "Forget measurement", {Kind::Forget, -1, 0}, false, canEdit && st.any);
+        b.Button(kGuideBtn, "First-start guide", {Kind::Guide, -1, 0});
         b.Text(body::MeasuredText(st), kBodyStored, Face::Bold, st.valid ? Role::Accent : Role::Quiet);
         b.Text(body::UseText(st), kBodyUse, Face::Small, st.valid && !st.use ? Role::Warn : Role::Quiet);
         static const char* const steps[] = {

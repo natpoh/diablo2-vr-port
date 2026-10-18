@@ -562,6 +562,8 @@ target_link_libraries(hset_test PRIVATE user32 gdi32)
 target_compile_options(hset_test PRIVATE /utf-8 /W4 /EHsc /permissive- /D_CRT_SECURE_NO_WARNINGS)
 # The T-pose measurement of the eye height and arm span (vr/body_calibration.h is its pure detector, tested below)
 target_sources(d2rl-vrcam PRIVATE vr/calibration.cpp vr/calibration_panel.cpp vr/calibration_input.cpp)
+# [onboarding] the first-start guide in the headset: the measurement offered, then what to press for what (the flow vr/first_start.h, tested: first_start_test)
+target_sources(d2rl-vrcam PRIVATE vr/first_start.cpp vr/first_start_panel.cpp)
 # Controller haptics ([openxr] haptics): the mailbox, the hit observer and the flush; the logic is vr/haptics_pattern.h, tested without a headset.
 target_sources(d2rl-vrcam PRIVATE vr/haptics.cpp)
 add_executable(haptics_test cleanroom/tests/haptics_test.cpp)
@@ -1116,3 +1118,8 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/body_calibration_test.cpp
     target_include_directories(calibration_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
     target_compile_options(calibration_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 endif()
+# The first-start guide's flow (vr/first_start.h: when it shows, which page, the stick's flicks, done / skip) and its pages' words
+# (vr/first_start_pages.h), on synthetic frames: first_start_test
+add_executable(first_start_test cleanroom/tests/first_start_test.cpp)
+target_include_directories(first_start_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_options(first_start_test PRIVATE /utf-8 /W4 /EHsc /permissive-)

@@ -1282,6 +1282,9 @@ static void TestPagesHit() {
     CHECK(HitTest(kPageBody, u, v).kind == Kind::Calibrate && HitTest(kPageVideo, u, v).kind != Kind::Calibrate, "Calibrate body, on its page");
     Centre(kForget, &u, &v);
     CHECK(HitTest(kPageBody, u, v).kind == Kind::Forget, "Forget measurement");
+    CHECK(Inside(kGuideBtn) && !Overlap(kGuideBtn, kCalibrate) && !Overlap(kGuideBtn, kForget) && !Overlap(kGuideBtn, kBodyStored), "the first-start guide's button, beside them");
+    Centre(kGuideBtn, &u, &v);
+    CHECK(HitTest(kPageBody, u, v).kind == Kind::Guide && HitTest(kPageVideo, u, v).kind != Kind::Guide, "First-start guide, on the Body page only");
     CHECK(HitTest(kPageBody, 0.5f, (kBodyStep(1).y + 5.0f) / kH).kind == Kind::None, "the steps are text");
     for (int p = 0; p < kPageCount; ++p) {
         Centre(kTab(p), &u, &v);
@@ -1320,6 +1323,14 @@ static void TestBodyModel() {
         CHECK(busy.Click({Kind::Calibrate, -1, 0}).what == Do::Nothing, "not while an Apply is in flight");
         Model closed;
         CHECK(closed.Click({Kind::Calibrate, -1, 0}).what == Do::Nothing, "a closed panel does nothing");
+    }
+    {   // First-start guide: the plugin shows it once the panel is closed; nothing of the ini, so even without one
+        Model m = OnPage(Snap(), kPageBody);
+        CHECK(m.Click({Kind::Guide, -1, 0}).what == Do::Guide && !m.Dirty() && !m.Busy(), "First-start guide asks for the guide, the draft untouched");
+        Model nr = OnPage(Snap(false), kPageBody);
+        CHECK(nr.Click({Kind::Guide, -1, 0}).what == Do::Guide, "with no ini too (the guide needs none to show)");
+        Model closed;
+        CHECK(closed.Click({Kind::Guide, -1, 0}).what == Do::Nothing, "a closed panel does nothing");
     }
     {   // Forget clears the three keys the PC window's button clears, and nothing else
         Model m = OnPage(stored, kPageBody);
@@ -1397,6 +1408,15 @@ static void TestBodyModel() {
 
 // -- 12. the hands: Calibrate body, coming back, the slider drag --------------------------------------------------
 static void TestPagesHands() {
+    {   // First-start guide: the panel closes for the guide and does not come back by itself
+        Rig r;
+        r.Open();
+        r.Click(1, kTab(kPageBody));
+        FrameOut o = r.Click(1, kGuideBtn);
+        CHECK(o.action.what == Do::Guide && !o.open && o.justClosed, "First-start guide closes the panel and asks for the guide");
+        CHECK(o.pad[1].trigger == 0.0f && !(o.pad[1].buttons & kTrigger), "the trigger that pressed it is not the game's");
+        CHECK(!r.c.Open() && !r.c.Resuming(), "nothing waits to come back");
+    }
     {   // the button hands the hands to the measurement; the panel comes back when it ends
         Rig r;
         r.Open();

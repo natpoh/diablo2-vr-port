@@ -197,6 +197,7 @@ public:
             r.action.view = act.view;
             return r;
         }
+        if (act.what == Do::Guide) return shut(Do::Guide);   // the first-start guide comes up once the panel is out of the way
         if (act.what == Do::Close || closeNow) return shut(Do::Close);
         o.action = act;
 

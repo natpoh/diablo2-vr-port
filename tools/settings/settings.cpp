@@ -578,6 +578,19 @@ std::vector<Item> g_items = {
            L"somewhere safe. F4 only.")),
     Only(kVr, Button(L"@run", L"calibration_forget", L"Forget the measurement",
            L"Clears the stored measurement: the height from BodyWalk / \"My height\" and \"Arm length (scale)\" apply again.")),
+    // [onboarding] (vr/first_start.h): the guide in the headset at the first start in F4 - the T-pose measurement offered first, then what to press for what
+    Only(kVr, Group(L"First-start guide (in the headset)")),
+    Only(kVr, Toggle(L"onboarding", L"show", L"Show the first-start guide", 1,
+           L"The first time you stand in the world in first person (F4) with Native OpenXR and Controls without BodyWalk, a panel in front of you "
+           L"offers the T-pose measurement (when none is stored), then shows in five short pages what to press to open what: the inventory, the "
+           L"map, the skill panel, the belt, the settings in the headset, the pause menu and the F views. Right stick up: the next page; down: back; "
+           L"held up a second: closed. It never presses anything and takes no button: the game runs on behind it (the right stick's up and down "
+           L"do nothing in the world). Finished or closed, it ticks \"First-start guide seen\". Unticked: it never comes up by itself; the headset "
+           L"settings' Body page has a First-start guide button either way. Live.")),
+    Needs(L"onboarding", L"show", 1, Only(kVr, Toggle(L"onboarding", L"done", L"First-start guide seen", 0,
+           L"Ticked by the game when you finish or close the guide. Untick it to see the guide again the next time you stand in the world in F4 "
+           L"(with the game running: in a few seconds). Not in the file at all (settings from before 0.171): seen if a measurement is stored, "
+           L"not seen otherwise. Live."))),
     Group(L"Body"),
     Only(kVr, Toggle(L"body", L"lock", L"No game animation above the pelvis (F4)", 1,
            L"Nothing above the pelvis follows the game's animation: arms and hands come from the controllers, "

@@ -62,6 +62,7 @@ int D2rvrHoverSpheres(float (*out)[8], int max);
 #include "hset_paint.h"
 #include "hset_store.h"
 #include "calibration.h"
+#include "first_start_wire.h"   // the first-start guide's page before the face ([onboarding], vr/first_start.cpp)
 #include "haptics.h"
 #include "haptic_stop.h"   // [openxr] haptics_stop: each pulse stopped by an explicit call when its time is up (a thread of its own)
 #include "anchor_gate.h"   // [openxr] menus_wait_tracking: the flat picture and the menu panel placed only with the head tracked
@@ -1038,6 +1039,7 @@ void WristStatusTeardown();   // the wrist status panels' pictures, below (xr_wr
 void HsStep(D2RVR_XrInput& in, bool focused);   // the settings panel, below (xr_headset_settings.h)
 void HsTeardown();
 void DropCalibration();   // the T-pose measurement's pictures, below
+void DropGuide();         // the first-start guide's pictures, below
 
 // The T-pose measurement (vr/calibration.cpp) gets this frame's head and hands in the room's space, as the runtime located them.
 void FeedCalibration(const D2RVR_XrInput& in, const bool located[2], bool focused) {
@@ -1239,6 +1241,7 @@ void Teardown() {   // under g_lock or before the session exists
     HsTeardown();      // the settings panel's picture and its thread
     calib::Stop();     // a T-pose measurement under way ends with the session
     DropCalibration();
+    DropGuide();       // the first-start guide's pages
     WheelTeardown();   // the skill wheel closed, its picture gone
     RunesTeardown();   // the gesture runes' atlas
     VitalsTeardown();  // the hand vitals panel's picture gone
@@ -3421,6 +3424,67 @@ uint32_t HangCalibration(const XrCompositionLayerBaseHeader** layers, uint32_t n
     return nl;
 }
 
+// -- the first-start guide's page (vr/first_start.cpp, first_start_panel.cpp) ------------------------------------------------
+// The same kind of panel as the measurement's prompt above, and hung the same way: before the face, level, turning with the head's yaw only,
+// a little under the eyes; one picture a page, painted once into a static swapchain of its own (MakeStaticImage). Only while the guide
+// shows a page; its pictures go when it closes. Nothing of the input: the guide reads the frame through vr/direct_input.h's listener.
+CalibImage g_guideImg[firststart::kPageCount];
+XrCompositionLayerQuad g_guideLayer;
+
+void DropGuide() {
+    WaitFence(g_fenceV, 200);   // the uploads' copies are done
+    for (CalibImage& im : g_guideImg) {
+        if (im.sc) { ForgetPending(im.sc); xrDestroySwapchain(im.sc); }
+        if (im.upload) im.upload->Release();
+        im = CalibImage{};
+    }
+}
+
+bool MakeGuideImage(int i) {
+    CalibImage& im = g_guideImg[i];
+    if (im.sc) return true;
+    const ULONGLONG now = GetTickCount64();
+    if (now < im.retryAt) return false;
+    std::vector<uint32_t> px((size_t)firststart::kPanelW * firststart::kPanelH, 0u);
+    if (!firststart::PaintPanel(i, px.data())) {
+        im.retryAt = now + 30000;
+        LogF("vrcam: openxr - the first-start guide's page %d could not be painted", i);
+        return false;
+    }
+    const int got = MakeStaticImage(firststart::kPanelW, firststart::kPanelH, px.data(), im.upload, im.sc, "first-start guide");
+    if (got <= 0 && im.sc) { ForgetPending(im.sc); xrDestroySwapchain(im.sc); im.sc = XR_NULL_HANDLE; }
+    if (got <= 0) {
+        im.retryAt = now + (got == 0 ? 500 : 10000);
+        return false;
+    }
+    return true;
+}
+
+uint32_t HangGuide(const XrCompositionLayerBaseHeader** layers, uint32_t nl, uint32_t max) {
+    const firststart::Panel p = firststart::PanelNow();
+    if (!p.show || p.page < 0 || p.page >= firststart::kPageCount) {
+        for (const CalibImage& im : g_guideImg)
+            if (im.sc || im.upload) { DropGuide(); break; }
+        return nl;
+    }
+    const D2RVR_XrPose& head = g_inNow.head;
+    if (nl + 1 > max || head.valid != 1 || !g_actionsOk || !MakeGuideImage(p.page)) return nl;
+    const XrQuaternionf face = Yaw(YawOf(Q4(head.rot)));
+    const XrVector3f at = Plus(P3(head.pos), Rot(face, {0.0f, -firststart::kPanelBelowM, -firststart::kPanelDistanceM}));
+    const float wM = firststart::kPanelWidthM, hM = wM * (float)firststart::kPanelH / (float)firststart::kPanelW;
+    XrCompositionLayerQuad& q = g_guideLayer;
+    q = {XR_TYPE_COMPOSITION_LAYER_QUAD};
+    q.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;   // premultiplied
+    q.space = g_roomSpace ? g_roomSpace : g_space;   // where the head was located
+    q.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+    q.subImage.swapchain = g_guideImg[p.page].sc;
+    q.subImage.imageRect = {{0, 0}, {(int32_t)firststart::kPanelW, (int32_t)firststart::kPanelH}};
+    q.pose = {face, at};
+    q.size = {wM, hM};
+    layers[nl++] = (const XrCompositionLayerBaseHeader*)&q;
+    return nl;
+}
+
 void CloseFrame() {
     if (g_kind == kNone) return;
     const double closeUs = UsNow();   // the layers built from here, xrEndFrame from endUs (g_clock)
@@ -3431,7 +3495,7 @@ void CloseFrame() {
     XrCompositionLayerQuad ptr3d{XR_TYPE_COMPOSITION_LAYER_QUAD};   // F1 / F3 in 3D (pointer_3d): the game's pointer on the ground
     XrCompositionLayerQuad beam{XR_TYPE_COMPOSITION_LAYER_QUAD}, dot{XR_TYPE_COMPOSITION_LAYER_QUAD};
     XrCompositionLayerQuad hsPanel{XR_TYPE_COMPOSITION_LAYER_QUAD}, hsBeam{XR_TYPE_COMPOSITION_LAYER_QUAD}, hsDot{XR_TYPE_COMPOSITION_LAYER_QUAD};
-    const uint32_t hsRoom = (g_hsOpen.load() ? 3 : 0) + (calib::PanelNow().show ? 2 : 0) + (skillwheel::Enabled() ? 3 : 0) + (handvitals::PanelOn() ? 1 : 0) + (wriststatus::Enabled() ? 2 : 0);   // the settings panel's three layers, the T-pose prompt's two, the skill wheel's three, the hand vitals' one and the wrist status' two, hung last
+    const uint32_t hsRoom = (g_hsOpen.load() ? 3 : 0) + (calib::PanelNow().show ? 2 : 0) + (firststart::PanelNow().show ? 1 : 0) + (skillwheel::Enabled() ? 3 : 0) + (handvitals::PanelOn() ? 1 : 0) + (wriststatus::Enabled() ? 2 : 0);   // the settings panel's three layers, the T-pose prompt's two, the first-start guide's one, the skill wheel's three, the hand vitals' one and the wrist status' two, hung last
     XrCompositionLayerQuad wheelPanel{XR_TYPE_COMPOSITION_LAYER_QUAD}, wheelBeam{XR_TYPE_COMPOSITION_LAYER_QUAD}, wheelDot{XR_TYPE_COMPOSITION_LAYER_QUAD};
     XrCompositionLayerQuad vitalsPanel{XR_TYPE_COMPOSITION_LAYER_QUAD};   // [hud] hand_vitals: one layer over the hand
     XrCompositionLayerColorScaleBiasKHR vitalsScale{XR_TYPE_COMPOSITION_LAYER_COLOR_SCALE_BIAS_KHR};
@@ -3493,6 +3557,7 @@ void CloseFrame() {
         nl = HangVitals(layers, nl, most, vitalsPanel);   // life and mana over the hand turned to the face (F4)
         nl = HangWristStatus(layers, nl, most, wsPanel);   // companions and effects over a wrist turned to the eyes (F4)
         nl = HangCalibration(layers, nl, most);   // the T-pose measurement's prompt
+        nl = HangGuide(layers, nl, most);   // the first-start guide's page (never with the prompt or a panel of ours up)
         nl = HangSettings(layers, nl, most, hsPanel, hsBeam, hsDot);   // the settings panel, nearest of all
         nl = HangWheel(layers, nl, most, wheelPanel, wheelBeam, wheelDot);   // the skill wheel, nearest of all
         ++g_st.pairs;

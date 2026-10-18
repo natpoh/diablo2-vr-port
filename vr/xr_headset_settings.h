@@ -126,6 +126,10 @@ void HsStep(D2RVR_XrInput& in, bool focused) {
             calib::RequestMeasure();
             Log("vrcam: openxr - headset settings: Calibrate body (the panel hides until the measurement is over)");
             break;
+        case hset::Do::Guide:   // the panel has closed; the first-start guide's pages come up (vr/first_start.cpp)
+            firststart::Reopen();
+            Log("vrcam: openxr - headset settings: First-start guide");
+            break;
         default: break;
     }
 
