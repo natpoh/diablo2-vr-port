@@ -5722,6 +5722,7 @@ void FlatRawTick() {
             }
             D2RVR_XrInput in;
             flatraw::ToXrInput(t, flatraw::Step(clock, t.stamp), ++counter, D2RVRStampNow(), &in);
+            directinput::ShapeSticks(&in);   // the thumbsticks' dead zones ([direct] stick_deadzone_*_pct, vr/stick_shape.h), as native OpenXR's
             directinput::Feed(&in, gamestate::MenuOpen() || !g_inWorld.load());
         }
     }

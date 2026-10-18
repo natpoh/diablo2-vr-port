@@ -30,6 +30,16 @@ bool FlatVrControlsOn();
 // The frames come from Game Link (FlatVR) rather than from a native session: SessionBegin(true) until SessionEnd. Any thread.
 bool FedByLink();
 
+// [direct] stick_deadzone_left_pct / stick_deadzone_right_pct (0 - 50, default 0) and stick_outer_left_pct / stick_outer_right_pct (60 - 100,
+// default 100): each thumbstick's radial dead zone with rescaling and its outer edge (vr/stick_shape.h), read live by LoadSettings whatever
+// direct_input says. Applied ONCE, where a VR controller's stick comes into the plugin - xr.cpp's Publish right after the runtime's value is read
+// (native OpenXR: the laser, the settings panel, the Frame, the layout's pad, the F1-F3 walk and belt flick, and BodyWalk through Game Link all get
+// the shaped stick), and vrcam's FlatRawTick (FlatVR's raw controllers) - so every reader agrees and nothing is shaped twice. Not applied to a real
+// XInput gamepad, nor to BodyWalk's own pad or walk (already BodyWalk's processing: its body walking is not a thumbstick). The defaults change nothing.
+// Hand 0 left, 1 right. Any thread.
+void ShapeStick(int hand, float* x, float* y);
+void ShapeSticks(D2RVR_XrInput* in);   // both hands' sticks of a frame
+
 // xr.cpp: a native session began (frames follow) / ended (everything the session held is let go, the newest frame gone).
 void SessionBegin(bool fromLink = false);   // fromLink: FlatVR's raw controllers through Game Link (vrcam's FlatRawTick)
 void SessionEnd();

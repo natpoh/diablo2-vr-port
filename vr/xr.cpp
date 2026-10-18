@@ -1091,6 +1091,7 @@ void Publish(bool focused) {
             gi.action = g_stickSpare ? g_aStickSpare : g_aStick; gi.subactionPath = g_handPath[h];   // (the spare only where the runtime bound nothing to the first: CheckSticks)
             XrActionStateVector2f st{XR_TYPE_ACTION_STATE_VECTOR2F};
             if (XR_SUCCEEDED(xrGetActionStateVector2f(g_session, &gi, &st)) && st.isActive) { o.stickX = st.currentState.x; o.stickY = st.currentState.y; act = true; }
+            directinput::ShapeStick(h, &o.stickX, &o.stickY);   // [direct] stick_deadzone_*_pct / stick_outer_*_pct (vr/stick_shape.h): once, here - every reader below gets it
         }
         uint32_t b = 0;
         if (BoolOf(g_aPrimary, h, &act)) b |= BW_LINK_XRB_PRIMARY;

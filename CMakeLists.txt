@@ -554,6 +554,11 @@ target_compile_options(walk_flat_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 add_executable(belt_flick_test cleanroom/tests/belt_flick_test.cpp)
 target_include_directories(belt_flick_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
 target_compile_options(belt_flick_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# The thumbsticks' dead zones against drift ([direct] stick_deadzone_*_pct, stick_outer_*_pct, vr/stick_shape.h): the defaults change nothing, a drift reads as
+# centred, radial not per axis, no jump at either edge, the outer saturation, and the readers after it (the belt flick, the pad's stick) keep their thresholds.
+add_executable(stick_shape_test cleanroom/tests/stick_shape_test.cpp)
+target_include_directories(stick_shape_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_options(stick_shape_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # The settings panel in the headset ([openxr] headset_settings, vr/hset_*.h, vr/xr_headset_settings.h): its model,
 # the chord and the lasers, the ini transaction (backup, conflict) and the picture, tested without a headset.
 add_executable(hset_test tools/hset_test.cpp vr/hset_paint.cpp vr/hset_store.cpp shared/ini_txn.cpp)

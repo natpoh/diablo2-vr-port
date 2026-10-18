@@ -633,6 +633,24 @@ std::vector<Item> g_items = {
     Needs(L"turn", L"right_stick", 1, Slider(L"turn", L"speed", L"Smooth turn speed, °/s", 10, 720, 10, 120, L"Degrees per second at full deflection; used while smooth turning is on.")),
     Needs(L"turn", L"right_stick", 1, Slider(L"@turn", L"snap", L"Snap turn angle, °", 15, 180, 15, 30, L"Degrees turned by one flick; used while smooth turning is off.")),
     Needs(L"turn", L"right_stick", 1, Invert(L"turn", L"sign", L"Reverse turning", 1, L"Tick if pushing right turns you left.")),
+    // The thumbsticks' dead zones against stick drift (a player's wish, 2026-10-18): [direct] keys, read live by the plugin (vr/stick_shape.h, vr/direct_input.cpp)
+    // whatever "Controls without BodyWalk" says - the VR controllers' sticks, native OpenXR and FlatVR's raw controllers alike. 0 % and 100 % = as before.
+    Only(kVr, Group(L"Thumbsticks: dead zone (stick drift)")),
+    Only(kVr, Slider(L"direct", L"stick_deadzone_left_pct", L"Left stick dead zone, %", 0, 50, 1, 0,
+           L"A left stick that drifts (walks or moves the menu by itself, or the belt flick does not re-arm): raise this until it rests. "
+           L"Inside this much of a full push the stick reads as centred; past it the push starts again from zero, so there is no jump, "
+           L"and it is measured on the stick's length, so diagonals are cut no sooner than a straight push. 0 = none (as before). "
+           L"The VR controllers only (native OpenXR, and FlatVR with its raw controllers), not a gamepad. Live.")),
+    Only(kVr, Slider(L"direct", L"stick_outer_left_pct", L"Left stick full push at, %", 60, 100, 1, 100,
+           L"A left stick that never quite reaches a full push: from this much of its throw on it counts as fully pushed (the walk runs, a "
+           L"flick counts). 100 = only the rim (as before). Live.")),
+    Only(kVr, Slider(L"direct", L"stick_deadzone_right_pct", L"Right stick dead zone, %", 0, 50, 1, 0,
+           L"A right stick that drifts (the view turns by itself, or a snap turn or flick does not re-arm): raise this until it rests. "
+           L"Inside this much of a full push the stick reads as centred; past it the push starts again from zero, so there is no jump. "
+           L"0 = none (as before). The VR controllers only, not a gamepad. Live.")),
+    Only(kVr, Slider(L"direct", L"stick_outer_right_pct", L"Right stick full push at, %", 60, 100, 1, 100,
+           L"A right stick that never quite reaches a full push: from this much of its throw on it counts as fully pushed (the fastest smooth "
+           L"turn, a snap). 100 = only the rim (as before). Live.")),
     Group(L"Mouse and keyboard (no headset)"),
     Only(kVr, Toggle(L"input", L"mouse_look", L"Mouse look in VR views F2 and F4 too", 0,
            L"Flat and VR view F3 always start with it, and VR F2 too while the switch below is on. The mouse turns the view "

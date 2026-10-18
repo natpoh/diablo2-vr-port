@@ -113,6 +113,11 @@ ends:
 - **Monster name plate opacity**
   ([issue 19](KNOWN_ISSUES.md)).
   [repo]
+- **Thumbstick dead zones against stick drift** (built, not yet tried with a
+  controller): a radial dead zone and an outer edge per stick, in %, for the VR
+  controllers' sticks (`[direct] stick_deadzone_*_pct`, `stick_outer_*_pct`;
+  Controls > Thumbsticks: dead zone). Left: a test on controllers that really
+  drift, and the same sliders in the headset's settings panel. [repo]
 
 ## BodyWalk Game Link
 

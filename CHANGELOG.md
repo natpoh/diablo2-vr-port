@@ -1,5 +1,17 @@
 # What's new in D2R VR
 
+## Unreleased
+
+- **Thumbstick dead zones against stick drift** (a player's wish: "are you able to add stick dead zone %'s like to counter stick drifts people might have on their
+  controllers"). Each VR controller's thumbstick has a dead zone and an outer edge of its own, in % of a full push: D2R VR Settings > Controls > *Thumbsticks: dead
+  zone (stick drift)*, `[direct] stick_deadzone_left_pct`, `stick_deadzone_right_pct` (0 - 50) and `stick_outer_left_pct`, `stick_outer_right_pct` (60 - 100). The dead
+  zone is radial (the stick's length decides, so a diagonal is not cut sooner than a straight push, and the direction is kept) and rescaled: past it the push starts
+  again from zero - no jump - and it reaches a full push at the outer edge, which saturates. It is applied once, where the stick comes in (native OpenXR, and
+  FlatVR's raw controllers through Game Link), so everything that reads the stick agrees: the walk in every view, the right stick's turn and snap, the belt flick and
+  the skill panel's flick, the room walk's "the stick wins", the plugin's own gamepad and BodyWalk through Game Link. A real gamepad and BodyWalk's own pad are left as they
+  are. The defaults (0 and 100) change nothing, bit for bit. Only the controllers' values are shaped - nothing of the game. Live; the log says "the left thumbstick: ..."
+  when a value changes. Unit test: cleanroom/tests/stick_shape_test.cpp (vr/stick_shape.h).
+
 ## 0.170
 
 The main points (details below and in docs/d2rloader_mod.md):

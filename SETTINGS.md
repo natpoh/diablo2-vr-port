@@ -130,6 +130,17 @@ the headset-only ones.
   changing it keeps both the speed and the angle. The same three are in the
   headset (settings panel > Options). An older d2r_vr.ini that says snap = 0 for
   smooth turning keeps working as smooth turning.
+- **Thumbsticks: dead zone (stick drift)** (VR) - for each VR controller's stick a
+  **dead zone** (0 - 50 %, default 0) and where it counts as a **full push**
+  (60 - 100 %, default 100). A stick that drifts - the hero walks, the view turns
+  or a menu moves by itself, a flick does not re-arm - rests again once its dead
+  zone covers the drift (5 - 15 % is usual). The zone is round (the stick's length
+  decides, so diagonals are not cut sooner) and past it the push starts again from
+  zero, so there is no jump. It applies to everything that reads the stick (walking,
+  turning, the belt and skill panel flicks, BodyWalk through Game Link) - native
+  OpenXR, and FlatVR with the plugin's own controls; not a gamepad. 0 and 100 change
+  nothing. Live. In d2r_vr.ini: `[direct] stick_deadzone_left_pct`,
+  `stick_deadzone_right_pct`, `stick_outer_left_pct`, `stick_outer_right_pct`.
 - **Mouse and keyboard** - mouse look in the VR views F2 and F4 as well.
 - **Input** - the gamepad straight from BodyWalk, which button *D2R: Inventory*
   presses, the A button only attacks. *Pick up / interact: one thing per press*
