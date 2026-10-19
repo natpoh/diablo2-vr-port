@@ -149,6 +149,7 @@ namespace gamestate { bool HandIsThrowPotion(int side); }   // the held item is 
 #include "panel_input.h"
 #include "shoulder_swap_wire.h"   // [hands] shoulder_swap: weapon sets by the grip behind a shoulder
 #include "shield_arm_wire.h"      // [hands] shoulder_draw, the shield: which forearm it is strapped to, or put away
+#include "stowed_block.h"         // [hands] shield_stow_no_block: a shield put away does not block (the game's block check told the hero has none)
 #include "ranged_hand_wire.h"     // [hands] shoulder_draw_ranged: a bow or crossbow put away behind a shoulder, drawn into the hand that reached
 #include "shoulder_swap.h"
 #include "weight_floor.h"         // [weight]: the floor a let-go weapon falls to is the game's ground under the hero
@@ -2046,6 +2047,7 @@ void LoadSettings() {
     g_set.shoulderDraw.store(IniB(L"hands", L"shoulder_draw", false));
     g_set.shieldDraw.store(IniB(L"hands", L"shoulder_draw_shield", true));
     g_set.shieldStow.store(IniB(L"hands", L"shoulder_draw_shield_stow", false));
+    stowedblock::Configure(IniB(L"hands", L"shield_stow_no_block", false));
     g_set.rangedHolster.store(IniB(L"hands", L"shoulder_draw_ranged", false));
     g_set.rangedSwap.store(IniB(L"hands", L"shoulder_draw_ranged_swap", false));
     g_set.shoulderDrawStowMs.store(std::clamp(IniF(L"hands", L"shoulder_draw_stow_ms", 1000.0f), 0.0f, 5000.0f));
@@ -17066,6 +17068,7 @@ DWORD WINAPI UpdateThread(void*) {
             InstallSpellAimHooks();
             InstallSlotSkillHook();   // [hands] throw_auto_skill
             haptics::Install();   // only once [openxr] haptics asks for it
+            stowedblock::Install();   // only once [hands] shield_stow_no_block asks for it
             if (meleetouch::Wanted() || meleetouch::ThrowWanted() || meleetouch::StatusWanted()) meleetouch::Install();   // only once melee_touch, a throw's auto-aim or the wrist status asks for it
             engitem::InstallHook();   // only once belt_models or [debug] engine_unit asks for it
             owneffects::Install();    // [render] dim_own_effects: its two hooks only LOOK at the creation of overlays (in whether it is ticked or not, so a buff cast before it is ticked is known); a status line while it is on
@@ -17374,6 +17377,7 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     shoulderwire::SetWeaponSource([]() -> bool { return weight::Placed() || (g_set.shieldStow.load() && shieldarmwire::Arm() >= 0) || rangedwire::Side() >= 0; });   // [hands] shoulder_draw claims the grip behind a shoulder only while the weight model has a weapon or the shield can be put away
     shieldarmwire::SetHaptic([](int side, float amplitude, int ms) { haptics::Pulse(haptics::FromSkel(side), amplitude, ms); });   // the left shoulder, with the shield put away
     shieldarmwire::SetLog(&Log);
+    stowedblock::SetLog(&Log);
     rangedwire::SetLog(&Log);
     rangedwire::SetHaptic([](int side, float amplitude, int ms) { haptics::Pulse(haptics::FromSkel(side), amplitude, ms); });
     shieldarmwire::SetWielderSource(&weight::WieldingHands);   // [hands] shoulder_draw, the shield: weapon and shield are always on opposite arms

@@ -269,6 +269,10 @@ target_compile_options(shoulder_draw_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # the shield's arm: the holster and the right forearm's mirrored strap (vr/shield_arm.h), pure; and its wiring (vr/shield_arm_wire.cpp) through skel::Input
 add_executable(shield_arm_test cleanroom/tests/shield_arm_test.cpp)
 target_compile_options(shield_arm_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# [hands] shield_stow_no_block: the shield put away does not block - the pure rule (vr/stowed_block.h); the hook (vr/stowed_block.cpp) is in d2rl-vrcam below
+add_executable(stowed_block_test cleanroom/tests/stowed_block_test.cpp)
+target_include_directories(stowed_block_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_options(stowed_block_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 add_executable(shield_arm_wire_test cleanroom/tests/shield_arm_wire_test.cpp vr/shield_arm_wire.cpp)
 target_include_directories(shield_arm_wire_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared)
 target_compile_definitions(shield_arm_wire_test PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
@@ -564,6 +568,8 @@ target_compile_options(hset_test PRIVATE /utf-8 /W4 /EHsc /permissive- /D_CRT_SE
 target_sources(d2rl-vrcam PRIVATE vr/calibration.cpp vr/calibration_panel.cpp vr/calibration_input.cpp)
 # Controller haptics ([openxr] haptics): the mailbox, the hit observer and the flush; the logic is vr/haptics_pattern.h, tested without a headset.
 target_sources(d2rl-vrcam PRIVATE vr/haptics.cpp)
+# [hands] shield_stow_no_block: the hook on the game's block check (the rule is vr/stowed_block.h, stowed_block_test above)
+target_sources(d2rl-vrcam PRIVATE vr/stowed_block.cpp)
 add_executable(haptics_test cleanroom/tests/haptics_test.cpp)
 target_include_directories(haptics_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
 target_compile_options(haptics_test PRIVATE /utf-8 /W4 /EHsc /permissive-)

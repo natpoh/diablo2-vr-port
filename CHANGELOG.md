@@ -2,6 +2,10 @@
 
 ## 0.171
 
+- **New, off by default: a shield put away does not block** ([hands] shield_stow_no_block; D2R VR Authentic Settings, under "... and the shield can be put away and
+  drawn from behind the left shoulder"). With the shield away behind the left shoulder the game rolls no block for the hero - as for a hero with no shield - and goes
+  on to its own dodge check. Drawn, the shield blocks by the game's own chance and roll as ever; its Defense stays. The game's block check is the one bearstonem's
+  d2r-pcvr found (MIT); a build where it is not found leaves blocking as it is and says so in the log.
 - **Fixed: a staff held in both hands aimed off to the side** (spell aim by the drawn hand or staff, the weapon's weight on, VR F4). The spell and the spell's ray now go along the staff as it
   is drawn between the two grips, butt to tip, from its tip. In 0.170 they went along the line between the two controllers, and each grip sits a fist's width from its controller - with the
   hands near each other that line ran far off the staff. (Known issue 26 of 0.170, docs/KNOWN_ISSUES.md.)

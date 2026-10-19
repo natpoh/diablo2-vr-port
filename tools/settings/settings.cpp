@@ -3236,6 +3236,11 @@ std::vector<Item> g_items = {
            L"same grip while it is away DRAWS it onto the arm of the hand that reached - the right hand puts it on the right forearm, mirrored. Independent of the tick above: "
            L"with both, a shield drawn while the sword is in the other hand sits opposite it. With this on the left shoulder is the shield's and the weapon is drawn from the "
            L"right one only. A short pulse in a hand that enters the left shoulder while the shield is away. Live."))),
+    Needs(L"arms", L"mode", 2, Needs(L"hands", L"shoulder_draw", 1, Needs(L"hands", L"shoulder_draw_shield_stow", 1, Toggle(L"hands", L"shield_stow_no_block",
+           L"... and a shield put away does not block", 0,
+           L"While the shield is away behind the left shoulder the game rolls no block for you: it treats the hero as one with no shield and goes on to its own dodge check. "
+           L"Drawn onto an arm, the shield blocks as ever - the game's own chance, roll, animation and Faster Block Rate; nothing is decided by where you hold it. The shield's "
+           L"Defense stays (it is still equipped), and the character screen still shows its block chance. Off: a shield put away still blocks, as the game has it. Live.")))),
     Needs(L"arms", L"mode", 2, Needs(L"hands", L"shoulder_draw", 1, Toggle(L"hands", L"shoulder_draw_ranged", L"A bow or crossbow can be put away and drawn from behind a shoulder", 0,
            L"A grip squeezed behind EITHER shoulder by a hand that is not holding the string (or a potion) PUTS THE BOW OR CROSSBOW AWAY (it is not drawn, no string, no aim; it is still "
            L"your equipped weapon); the same grip while it is away draws it back, into its own hand. Independent of the shield ticks. A short pulse in a hand that enters a shoulder "
