@@ -196,6 +196,8 @@ namespace hud { void SetPlateCut(bool want, const int32_t layout[4], float scale
 #include "double_swing_game.h"   // [hands] double_swing_by_hands: with a weapon in each hand the second hand's touch casts the game's own Double Swing / Frenzy
 #include "melee_arm.h"        // [gameplay] melee_skill_armed: which skills arm (the log names them)
 #include "melee_arm_game.h"   // [gameplay] melee_skill_armed: a melee skill's button arms it; every hit by touch is then that skill (vr/melee_arm.h)
+#include "armed_icon.h"       // [gameplay] melee_skill_armed_icon: the armed skill's icon in the mana medallion (vr/armed_icon.h)
+#include "wheel_icons.h"      // ... the game's own skill icon, as the skill panel's tiles draw it
 #include "hit_claim.h"   // whose blow just landed: the presses claim it, the hit observer's hand source takes it (the controller that buzzes)
 
 #pragma intrinsic(_ReturnAddress)
@@ -2193,6 +2195,7 @@ void LoadSettings() {
     meleetrigger::Configure(IniB(L"gameplay", L"melee_touch_only", true));   // F4, hit by touch swinging a weapon (anything but a bow or a crossbow): the trigger's attack is not passed to the game - part of hit by touch, ON by default; 0 = the old way (the plugin's own controls only; vr/melee_trigger.h)
     doubleswing::Configure(IniB(L"hands", L"double_swing_by_hands", false), IniF(L"hands", L"double_swing_window_ms", 700.0f), (int)IniF(L"hands", L"double_swing_skill", 0.0f));   // F4, hit by touch with a weapon in each hand: the second hand's touch casts the game's own Double Swing / Frenzy (vr/double_swing.h)
     meleearm::Configure(IniB(L"gameplay", L"melee_skill_armed", false));   // F4, hit by touch: a melee attack skill's pad button arms it instead of casting it; every touch is then that skill, the plain attack when the mana is short (vr/melee_arm.h)
+    meleearm::ConfigureIcon(IniB(L"gameplay", L"melee_skill_armed_icon", true));   // F4: the armed skill's icon on the bottom of the mana medallion, faint when the mana is short (vr/armed_icon.h)
     g_set.meleeTouchUnchecked.store(IniB(L"debug", L"melee_touch_unchecked", false));
     meleetouch::SetWanted(g_set.meleeTouch.load());
     meleetouch::SetThrownTouch(IniB(L"gameplay", L"melee_touch_thrown", true));   // javelins, throwing knives and axes hit by touch too (a point-blank throw; vr/thrown_touch.h)
@@ -15064,7 +15067,13 @@ void Install() {
 // The views of the toolbar's and the map's copies bound to the effect (hud::PictureNow), 0 = none yet.
 uint64_t g_pieceBound[4] = {};   // the toolbar, the map, the labels' layer, the wrists' globes
 
-void Forget(reshade::api::effect_runtime*) { g_tech[0] = g_tech[1] = {0}; replay::g_rightTech = {0}; g_pieceBound[0] = g_pieceBound[1] = g_pieceBound[2] = g_pieceBound[3] = 0; replay::g_depthBound = 0; }
+// The armed skill's icon uploaded into the effect's OrbIconTex ([gameplay] melee_skill_armed_icon): which skill, from which decode of the icon cache, into which texture variable. -1: none
+// (a reload of the effects makes the texture anew: Forget says so, and the icon is uploaded again).
+int g_iconUpSkill = -1, g_iconTry = -1;
+uint32_t g_iconUpRev = 0;
+uint64_t g_iconUpVar = 0;
+
+void Forget(reshade::api::effect_runtime*) { g_tech[0] = g_tech[1] = {0}; replay::g_rightTech = {0}; g_pieceBound[0] = g_pieceBound[1] = g_pieceBound[2] = g_pieceBound[3] = 0; replay::g_depthBound = 0; g_iconUpSkill = g_iconTry = -1; }
 
 void SetFloats(reshade::api::effect_runtime* rt, const char* name, const float* v, size_t n) {
     const reshade::api::effect_uniform_variable u = rt->find_uniform_variable("D2R_DepthFog.fx", name);
@@ -16552,6 +16561,53 @@ void OnBeginEffects(reshade::api::effect_runtime* rt, reshade::api::command_list
                 SetFloat(rt, "OrbTime", ou.time);
                 const float pic[2] = {ou.picture ? 1.0f : 0.0f, ou.fit};
                 SetFloats(rt, "OrbPic", pic, 2);
+            }
+            {   // [gameplay] melee_skill_armed_icon (vr/armed_icon.h): the armed melee skill's icon on the bottom of the mana medallion - full while the hero can pay the next hit, faint when
+                // he cannot. The game's own icon (vr/wheel_icons.h, the skill panel's), baked to a circle and uploaded into OrbIconTex once per skill; OrbIcon says whether and how strong.
+                static armedicon::Fader iconFade;
+                static double iconLast = 0.0;
+                static bool iconWas = false;
+                const double nowS = pairtime::UsNow() * 1e-6;
+                const float dt = iconLast > 0.0 ? (float)(nowS - iconLast) : 0.0f;
+                iconLast = nowS;
+                const handvitals::Config hc = handvitals::Settings();
+                armedicon::In ii;
+                ii.on = meleearm::IconOn();
+                ii.armedOn = meleearm::On();
+                ii.f4 = viewgate::F4();
+                ii.medallion = ou.on && !ou.picture && hc.style == handvitals::kStyleOrbs && hc.orbShape == handvitals::kShapeMedallion;
+                ii.armed = ii.on && ii.armedOn ? meleearm::Armed(&ii.enough) : -1;
+                armedicon::Out io = iconFade.Step(ii, dt);
+                if (io.show) {
+                    const reshade::api::effect_texture_variable tv = rt->find_texture_variable("D2R_DepthFog.fx", "OrbIconTex");
+                    const uint32_t rev = wheelicons::Revision();
+                    if (!tv.handle) {
+                        static bool told = false;
+                        if (!told) { told = true; Log("vrcam: melee armed - D2R_DepthFog.fx has no OrbIconTex: it is an older one, copy the new one in (the armed skill's icon needs the DLL and the effect together)"); }
+                        io.show = false;
+                    } else if ((io.skill != g_iconUpSkill || tv.handle != g_iconUpVar) && (io.skill != g_iconTry || rev != g_iconUpRev || tv.handle != g_iconUpVar)) {
+                        // a try per skill, and again when the cache decoded something (Revision) or the effects were reloaded - not every frame while an icon is missing
+                        g_iconUpSkill = -1;
+                        g_iconTry = io.skill;
+                        g_iconUpRev = rev;
+                        g_iconUpVar = tv.handle;
+                        const std::shared_ptr<const wheelicons::Image> img = wheelicons::Get(io.skill);   // (null while the worker decodes it, and for a skill the cache has no icon for)
+                        static std::vector<uint8_t> baked;
+                        if (img && armedicon::Bake(img->rgba.data(), img->width, img->height, baked)) {
+                            rt->update_texture(tv, armedicon::kTex, armedicon::kTex, baked.data());
+                            g_iconUpSkill = io.skill;
+                            LogF("vrcam: melee armed - %s's icon is in the mana medallion (%ux%u from the icon cache)", meleearm::Name(io.skill), img->width, img->height);
+                        } else if (!wheelicons::Available()) {
+                            static bool told = false;
+                            if (!told) { told = true; Log("vrcam: melee armed - no skill icons on this machine (d2r_vr_skill_icons, made by tools/skill_icons/prepare_skill_icons.py from the installed game): the mana medallion shows no icon"); }
+                        }
+                    }
+                    if (io.skill != g_iconUpSkill) io.show = false;   // its icon is not in the texture (yet): nothing rather than the last skill's
+                }
+                float iu[4];
+                armedicon::Uniform(io, iu);
+                if (io.show || iconWas) SetFloats(rt, "OrbIcon", iu, 4);
+                iconWas = io.show;
             }
             if (ou.on && !orbsWere) Log(ou.picture ? "vrcam: hand vitals - the game's own globes are in the picture (life on the left wrist, mana on the right, by the settings)"
                                                   : "vrcam: hand vitals - the 3D orbs are in the picture (life on the left wrist, mana on the right, by the settings)");

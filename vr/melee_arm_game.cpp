@@ -19,6 +19,7 @@
 
 #include <D2RLPlugin/api.h>
 
+#include "armed_icon.h"   // Ready: the icon's strength is the hit's own decision
 #include "bow_mana.h"
 #include "direct_input.h"
 #include "double_swing_game.h"   // ReadPadSlots, ReadHeroLevel: the pad's slots and the hero's levels, as double swing reads them
@@ -37,6 +38,7 @@ constexpr int kFaceSlots = 8;   // B X Y RB, LT + B X Y RB (shield_smite.h SlotP
 
 const D2RL::PluginContext* g_ctx = nullptr;
 std::atomic<bool> g_on{false};
+std::atomic<bool> g_icon{true};   // [gameplay] melee_skill_armed_icon
 std::atomic<int> g_hook{0};   // vrcam's slot-skill hook: 0 not yet, 1 in, 2 not possible
 std::atomic<int> g_slot[kFaceSlots];       // the skill on each face-button slot (-1 none / not read)
 std::atomic<int> g_owner[kFaceSlots];      // ... its owner in the controller record (for the level's lookup)
@@ -49,9 +51,9 @@ SRWLOCK g_lock = SRWLOCK_INIT;   // the pad's thread's state, and the press in f
 Arm g_arm;
 PadFilter g_filter;
 InFlight g_flight;
-// The timer's thread: our last armed hit (its mana is not in the read at once).
-uint64_t g_lastCastAt = 0;
-float g_lastCost = 0.0f;
+// Our last armed hit (its mana is not in the read at once): written at the touch's press, read there and by the effect's thread for the icon ([gameplay] melee_skill_armed_icon).
+std::atomic<uint64_t> g_lastCastAt{0};
+std::atomic<float> g_lastCost{0.0f};
 
 void Log(const char* text) {
     if (g_ctx) logasync::Info(g_ctx, text);
@@ -70,6 +72,15 @@ const char* SlotName(int slot) {
     return slot >= 0 && slot < kFaceSlots ? k[slot] : "?";
 }
 
+// The hero's mana in points now (negative: not read): the latest read, less what our last armed hit took if the read has not caught up.
+float ManaNow(uint64_t now) {
+    handvitals::Vitals vit;
+    double ageMs = 0.0;
+    if (!handvitals::game::Latest(&vit, &ageMs) || !vit.known || ageMs >= 3000.0) return -1.0f;
+    const uint64_t at = g_lastCastAt.load();
+    return bowmana::Estimate(vit.mana, ageMs, at ? (double)(now - at) : -1.0, g_lastCost.load());
+}
+
 }  // namespace
 
 void Init(const D2RL::PluginContext* ctx) { g_ctx = ctx; }
@@ -83,6 +94,17 @@ void Configure(bool on) {
 }
 
 bool On() { return g_on.load(); }
+
+void ConfigureIcon(bool on) {
+    const bool was = g_icon.exchange(on);
+    static bool told = false;
+    if (told && on == was) return;
+    told = true;
+    if (on) Log("melee armed: the armed skill's icon lies in the mana medallion on the wrist - full while the hero can pay the next hit, half see-through when he cannot ([gameplay] melee_skill_armed_icon; with melee_skill_armed on and the vitals' medallions, F4)");
+    else Log("melee armed: no icon in the mana medallion ([gameplay] melee_skill_armed_icon=0)");
+}
+
+bool IconOn() { return g_icon.load(); }
 
 void SetHookState(int state) {
     if (g_hook.exchange(state) != state && state == 2 && g_on.load()) Log("melee armed: NOT possible - the game's slot-skill reads are not where they were (another build?); the skill buttons cast as ever");
@@ -164,19 +186,15 @@ void OnPress(bool melee) {
     if (!g_on.load()) return;
     const uint64_t now = GetTickCount64();
     const int armed = melee ? g_armed.load() : -1;
-    float mana = -1.0f;
-    handvitals::Vitals vit;
-    double ageMs = 0.0;
-    if (armed >= 0 && handvitals::game::Latest(&vit, &ageMs) && vit.known && ageMs < 3000.0)
-        mana = bowmana::Estimate(vit.mana, ageMs, g_lastCastAt ? (double)(now - g_lastCastAt) : -1.0, g_lastCost);
+    const float mana = armed >= 0 ? ManaNow(now) : -1.0f;
     const int level = g_levelFor.load() == armed ? g_level.load() : -1;
     const Hit h = Decide(armed, level, mana);
     AcquireSRWLockExclusive(&g_lock);
     g_flight.Set(h.skill, now);
     ReleaseSRWLockExclusive(&g_lock);
     if (h.skill > kAttack) {
-        g_lastCastAt = now;
-        g_lastCost = h.cost > 0.0f ? h.cost : 0.0f;
+        g_lastCost.store(h.cost > 0.0f ? h.cost : 0.0f);
+        g_lastCastAt.store(now);
     }
     if (armed < 0) return;
     static unsigned told = 0;
@@ -188,6 +206,16 @@ void OnPress(bool melee) {
         else snprintf(m, sizeof m, "the mana not read");
         LogF("melee armed: a hit by touch - %s (%s, level %d%s, %.2f mana; %s)", WhyName(h.why), Name(armed), level, h.levelGuessed ? " - not read, the first level's cost stands in" : "", h.cost, m);
     }
+}
+
+int Armed(bool* ready) {
+    *ready = false;
+    if (!g_on.load()) return -1;
+    const int armed = g_armed.load();
+    if (armed < 0) return -1;
+    const int level = g_levelFor.load() == armed ? g_level.load() : -1;
+    *ready = armedicon::Ready(armed, level, ManaNow(GetTickCount64()));
+    return armed;
 }
 
 int PressSkill() {

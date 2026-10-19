@@ -15,6 +15,13 @@
   move the hero), spells, buffs and warcries cast from their buttons as ever; a bow, a crossbow and a thrown weapon are not touched, nor F1 - F3 and the flat modes. It needs the plain attack on
   the attack button (A); a skill bound as a key command (cmd:) is not taken. The log says what was armed and what each touch was ("melee armed: ..."). Unticked: the skill buttons cast as
   before. Not tried in the game yet. Unit test: cleanroom/tests/melee_arm_test.cpp (vr/melee_arm.h).
+- **New: the armed melee skill in the mana medallion** ([gameplay] melee_skill_armed_icon, on by default but drawn only while melee_skill_armed is on; Settings > Strikes, under the
+  melee_skill_armed tick: "Show the armed skill in the mana medallion"; VR first person F4). The author's design: the armed skill's icon - the game's own, the one the skill panel's tiles and
+  the skill wheel draw (the player's own icon cache) - lies on the bottom of the MANA medallion on the wrist, under the blue liquid and the glass (the skill spends mana, so it belongs there),
+  cut to a circle with a soft edge inside the dome, never out of it. Full strength while the hero can pay the next hit (the very check the hit makes: the skill's Skills.txt cost at his level
+  against his mana); half see-through when he cannot - the next hit will be the plain attack - and bright again, eased, when the mana is back. Nothing armed: no icon. The medallion shape of
+  the glass orbs only (the full ball, the game's own globes and the palm panel have no bottom to lie on). Unticked: the medallion exactly as before. Needs the new D2R_DepthFog.fx with the
+  DLL (OrbIcon, OrbIconTex; an older effect: no icon, and the log says so). Not tried in the game yet. Unit test: cleanroom/tests/armed_icon_test.cpp (vr/armed_icon.h).
 
 ## 0.172
 

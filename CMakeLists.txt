@@ -422,6 +422,10 @@ target_compile_options(double_swing_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 target_sources(d2rl-vrcam PRIVATE vr/melee_arm_game.cpp)
 add_executable(melee_arm_test cleanroom/tests/melee_arm_test.cpp)
 target_compile_options(melee_arm_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# [gameplay] melee_skill_armed_icon: the armed skill's icon on the bottom of the mana medallion (vr/armed_icon.h decides what is drawn and how strong, the circle it is cut to and the
+# bake of the game's icon; vrcam uploads it into D2R_DepthFog.fx OrbIconTex and the effect lays it under the liquid): armed_icon_test
+add_executable(armed_icon_test cleanroom/tests/armed_icon_test.cpp)
+target_compile_options(armed_icon_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # [gameplay] melee_touch_only: with hit by touch live the trigger does not attack - the plugin's own layout leaves the trigger's attack out (vr/melee_trigger.h decides, melee_trigger_wire.cpp
 # feeds it direct_input.h's frames and reads the pad's A slot): melee_trigger_test
 target_sources(d2rl-vrcam PRIVATE vr/melee_trigger_wire.cpp)

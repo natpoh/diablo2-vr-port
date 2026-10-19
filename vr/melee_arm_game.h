@@ -17,6 +17,9 @@ void Init(const D2RL::PluginContext* ctx);
 // [gameplay] melee_skill_armed from the ini (every read). Off: nothing below does anything, the armed skill is forgotten.
 void Configure(bool on);
 bool On();
+// [gameplay] melee_skill_armed_icon from the ini (every read): the armed skill's icon in the mana medallion (vr/armed_icon.h; drawn only while melee_skill_armed is on too). Default on.
+void ConfigureIcon(bool on);
+bool IconOn();
 // vrcam's slot-skill hook (the one [bow] quiver_plain_no_mana and the throw use) is in (1), not yet (0) or not possible (2). Without it a press is never taken: it could arm nothing.
 void SetHookState(int state);
 
@@ -32,6 +35,9 @@ void FilterPad(uint16_t* buttons, uint8_t lt, bool armable);
 // hit by touch (melee_touch.cpp Approve), the game's attack press of an accepted touch, just BEFORE its button goes down: decides whether this press is the armed skill or the plain attack. `melee` false: a
 // thrown weapon's touch (a point-blank throw) - never the armed skill.
 void OnPress(bool melee);
+// [gameplay] melee_skill_armed_icon (vr/armed_icon.h): the armed skill (-1 none, or off), and whether the hero can pay a hit with it now (`ready`: the same decision OnPress makes, from the
+// latest mana read). Any thread (the effect's, every frame).
+int Armed(bool* ready);
 // vrcam's slot-skill hook, at the cast's two reads of the attack slot when that slot holds the plain attack: the skill this touch's press is to be read as (0: as the game has it).
 int PressSkill();
 

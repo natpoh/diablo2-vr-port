@@ -2899,6 +2899,11 @@ std::vector<Item> g_items = {
            L"plain attack and the skill stays armed. The same button again, or a button with the plain attack on it, disarms; another melee skill's button arms that one. Spells, buffs, warcries, "
            L"Whirlwind, Charge and Leap Attack cast from their buttons as ever, and a bow, a crossbow or a thrown weapon is not touched. Needs the plain attack on the attack button (A). The log says "
            L"what was armed and what each touch was (\"melee armed: ...\"). Not tried in the game yet. Unticked: the skill buttons cast as before. Live.")),
+    Needs(L"gameplay", L"melee_touch", 1, Needs(L"gameplay", L"melee_skill_armed", 1, Toggle(L"gameplay", L"melee_skill_armed_icon", L"Show the armed skill in the mana medallion", 1,
+           L"The armed skill's icon - the game's own, the one the skill panel shows - lies on the bottom of the MANA medallion on your wrist, under the blue liquid, cut to a circle inside the "
+           L"glass. Full while the hero can pay the next hit with it (the same check the hit makes: the skill's mana cost at his level against his mana); half see-through when he cannot - the "
+           L"next hit will be the plain attack - and bright again when the mana is back. Nothing armed: no icon. Needs the life and mana on the hands as the medallions (Hand vitals: the glass "
+           L"orbs look, the medallion shape) and the skill icons made from your game (the skill wheel's). Unticked: the medallion exactly as before. Not tried in the game yet. Live. F4 only."))),
     Group(L"Two weapons: Double Swing by the hands (F4)"),
     Needs(L"gameplay", L"melee_touch", 1, Toggle(L"hands", L"double_swing_by_hands", L"Double Swing by the two hands", 0,
            L"A Barbarian with a melee weapon in each hand, hit by touch on (F4 only). The first hand's touch on a monster is the game's normal attack, as ever. When the OTHER hand then touches the SAME monster "

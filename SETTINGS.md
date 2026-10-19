@@ -720,6 +720,10 @@ ticks the other). The blade's geometry stays in Weapon Adjust and Debug.
   Barbarian's Bash, Stun, Concentrate, Berserk, Frenzy, Double Swing; the Paladin's Zeal, Smite, Sacrifice, Vengeance, Conversion; the Amazon's spear skills; the Druid's Maul, Fire Claws,
   Hunger, Rabies, Fury, Feral Rage; the Assassin's martial arts; Poison Dagger; Cleave. Whirlwind, Charge, Leap Attack, spells, buffs and warcries cast from their buttons as ever; a bow, a
   crossbow or a thrown weapon is not touched. Needs the plain attack on the attack button (A).
+  - *Show the armed skill in the mana medallion* (on; `[gameplay] melee_skill_armed_icon`, under the tick above): the armed skill's icon - the game's own, as the skill panel shows it -
+    lies on the bottom of the mana medallion on the wrist, under the liquid, cut to a circle inside the glass. Full while the hero can pay the next hit; half see-through when he cannot (the
+    next hit is the plain attack), bright again when the mana is back. Nothing armed: no icon. Needs the hand vitals as the medallions (the glass orbs look, the medallion shape) and the skill
+    icons made from your game. Unticked: the medallion as before.
 - **Two weapons: Double Swing by the hands** (F4, off; a Barbarian with a melee weapon in each hand) - *Double Swing by the two hands*: the first hand's touch on a monster is the game's normal attack;
   when the other hand then touches the same monster within *the other hand within, ms* (700) the second strike is the game's own Double Swing instead - its pad button is pressed once and the monster
   you touched is its target, the way the shield bash casts Smite. The skill has to sit on one of the pad's ten skill slots, the hero has to have a level in it and the mana for it (the game's own
