@@ -570,6 +570,11 @@ target_compile_options(belt_flick_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 add_executable(stick_shape_test cleanroom/tests/stick_shape_test.cpp)
 target_include_directories(stick_shape_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
 target_compile_options(stick_shape_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# The right stick's up / down tilt in VR F2 ([camera] stick_pitch_f2, vr/stick_pitch.h): nothing at rest or inside the dead zone, a turn never tilts,
+# the speed and its square past the dead zone, the sign, the limits (a [camera] pitch outside them never pulled in), the ini's ranges.
+add_executable(stick_pitch_test cleanroom/tests/stick_pitch_test.cpp)
+target_include_directories(stick_pitch_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_options(stick_pitch_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # The settings panel in the headset ([openxr] headset_settings, vr/hset_*.h, vr/xr_headset_settings.h): its model,
 # the chord and the lasers, the ini transaction (backup, conflict) and the picture, tested without a headset.
 add_executable(hset_test tools/hset_test.cpp vr/hset_paint.cpp vr/hset_store.cpp shared/ini_txn.cpp)

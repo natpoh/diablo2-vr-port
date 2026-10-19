@@ -1,5 +1,17 @@
 # What's new in D2R VR
 
+## Next
+
+- **New, off by default: the right stick's up / down tilts the view in VR F2** (GitHub issue 11, a player's wish: "there is no up/down camera with a
+  controller in VRmode" - with an Xbox pad on "Mono - a flat screen" only the mouse and the headset tilted it). D2R VR Authentic Settings > Camera > F2 Third
+  person > *Right stick up / down tilts the view*, `[camera] stick_pitch_f2=1`: pushing the right stick up looks higher, down looks lower, on top of the horizon
+  (`[camera] pitch`); left / right still turns. The turn's dead zone (a quarter of a push) applies and a push more sideways than up / down only turns, so a turn
+  does not tilt by accident. `stick_pitch_speed` (degrees per second at a full push, 60), `stick_pitch_min` / `stick_pitch_max` (the highest and lowest look, in
+  `[camera] pitch`'s degrees: -90 and 0; the camera is clamped there, a `[camera] pitch` already outside is left where it is) and `stick_pitch_sign` (-1 = up
+  looks down). F11 puts the tilt back. Needs `[turn] right_stick` (the right stick is the plugin's, the game never sees it). F2 only: F1, F3, F4 and flat mode
+  as before; not with native OpenXR's headset view, where the headset has the pitch. Off, nothing changes, bit for bit. Unit test:
+  cleanroom/tests/stick_pitch_test.cpp (vr/stick_pitch.h).
+
 ## 0.172
 
 - **New: a first-start guide in the headset**, on by default for a new player. The first time you stand in the world in VR first person (F4) with the

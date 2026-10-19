@@ -81,7 +81,17 @@ the headset-only ones.
   default), the horizon, and which head movements the camera follows: turn,
   look up and down, roll - each can be reversed.
 - **F1 From above** - stereo from above and how deep the top-down 3D is.
-- **F2 Third person** - how far behind and how high the camera is.
+- **F2 Third person** - how far behind and how high the camera is. *Right
+  stick up / down tilts the view* (VR, off by default, `[camera]
+  stick_pitch_f2`): with a gamepad or the VR controllers - on *Mono - a flat
+  screen* too - the right stick's up / down looks higher / lower on top of the
+  horizon, left / right still turns. A push more sideways than up / down only
+  turns, inside the turn's dead zone nothing moves, and F11 puts the tilt back.
+  Its speed (`stick_pitch_speed`, degrees per second at a full push), how high
+  and how low it goes (`stick_pitch_min` / `stick_pitch_max`, in the horizon's
+  degrees: lower looks higher, -60 is the horizon) and *Reverse stick tilt*
+  (`stick_pitch_sign`). Needs *Turn with the right stick*. Not with native
+  OpenXR's headset view, where the headset has the pitch.
 - **First person** - the near clip that hides your hero's own head, the eye
   height (from the hero's class, or fixed), where the eyes sit, turning the
   head about the neck, the camera rising when the hero jumps.

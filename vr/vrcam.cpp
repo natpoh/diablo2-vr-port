@@ -80,6 +80,7 @@ int FindHeroMatrices(const float hero[3], uintptr_t* out, int max);
 #include "attack_view.h"   // VR F2 and F4: the attack goes where the player looks; VR F1 and F3 (top-down): where the hero faces (pure part, tested)
 #include "window_json.h"   // the game's windowed size in Settings.json and what each platform does to it (shared/, pure, tested)
 #include "turn_mode.h"     // [turn] smooth / snap / speed: how the right stick turns, and what an older ini's snap=0 means (shared/, pure, tested)
+#include "stick_pitch.h"   // [camera] stick_pitch_f2: the right stick's up / down tilts the camera in VR F2 (pure part, tested)
 #include "frame_cap.h"     // the game's frame cap in Settings.json: VR's rate is VR's, flat mode has the player's own (shared/, pure, tested)
 #include "safe_screen.h"   // the game's interface size in Settings.json: VR starts it at 80 where the player chose none, flat mode has his own (shared/, pure, tested)
 #include "flat_raw.h"      // [direct] flatvr_controls: BodyWalk's raw controllers (Game Link) as the plugin's own controls in FlatVR (pure part, tested)
@@ -261,6 +262,10 @@ struct Settings {
     std::atomic<bool>  followJump{true};    // the camera goes up when the animation lifts the hero (Leap)
     std::atomic<float> jumpFrom{0.3f};      // hip rise (model units) still taken for the stride's bob
     std::atomic<float> pitch{-60.0f};       // camera pitch relative to the game's own (deg); -60 = level, more negative = higher
+    std::atomic<bool>  stickPitchF2{false}; // [camera] stick_pitch_f2: VR F2, the right stick's up / down tilts the camera (vr/stick_pitch.h)
+    std::atomic<float> stickPitchSpeed{stickpitch::kSpeedDefault};   // deg/s at a full push
+    std::atomic<float> stickPitchMin{stickpitch::kMinDefault}, stickPitchMax{stickpitch::kMaxDefault};   // the highest / lowest the stick takes the camera, [camera] pitch's units
+    std::atomic<float> stickPitchSign{1.0f};   // flip if pushing up looks down
     std::atomic<int>   rings{4};            // [render] rings: room rings drawn around the hero (cleanroom/drawdist)
     std::atomic<float> modelRadius{1000.0f}; // [render] model_radius: houses, props, units drawn out to this (game: 150)
     std::atomic<int>   renderPoolMb{64};    // [render] render_pool_mb: the game's Renderer Pool at least this big (game: 12)
@@ -1468,6 +1473,13 @@ void LoadSettings() {
     g_set.followJump.store(IniB(L"camera", L"follow_jump", true));
     g_set.jumpFrom.store(std::clamp(IniF(L"camera", L"jump_from", 0.3f), 0.0f, 3.0f));
     g_set.pitch.store(std::clamp(IniF(L"camera", L"pitch", -60.0f), -150.0f, 60.0f));
+    g_set.stickPitchF2.store(IniB(L"camera", L"stick_pitch_f2", false));
+    g_set.stickPitchSpeed.store(stickpitch::Speed(IniF(L"camera", L"stick_pitch_speed", stickpitch::kSpeedDefault)));
+    {
+        const stickpitch::Limits l = stickpitch::FromIni(IniF(L"camera", L"stick_pitch_min", stickpitch::kMinDefault), IniF(L"camera", L"stick_pitch_max", stickpitch::kMaxDefault));
+        g_set.stickPitchMin.store(l.min); g_set.stickPitchMax.store(l.max);
+    }
+    g_set.stickPitchSign.store(IniF(L"camera", L"stick_pitch_sign", 1.0f) < 0 ? -1.0f : 1.0f);
     g_set.rings.store(std::clamp((int)IniF(L"render", L"rings", 4.0f), 1, 8));
     g_set.modelRadius.store(std::clamp(IniF(L"render", L"model_radius", 1000.0f), 10.0f, 10000.0f));
     g_set.renderPoolMb.store(std::clamp((int)IniF(L"render", L"render_pool_mb", 64.0f), 0, 4096));
@@ -2460,6 +2472,10 @@ extern std::atomic<bool> g_pairNow;
 bool NativeView();
 bool NativeHeadView();
 std::atomic<float> g_rightX{0.0f};      // last right stick X the game polled, -1..1
+std::atomic<float> g_rightY{0.0f};      // ... and its Y, + up ([camera] stick_pitch_f2)
+// [camera] stick_pitch_f2: the right stick's tilt on top of [camera] pitch (deg, + looks lower), VR F2 only; F11 forgets it.
+// Held for a pair as g_heldPitch is.
+std::atomic<float> g_stickPitch{0.0f}, g_heldStickPitch{0.0f};
 // When a poll last got BodyWalk's own pad (PadFromBodyWalk). Some polls of pad 0
 // came back without it (the pad trace flipped 2000 / 0000 within a millisecond)
 // and wrote the right stick back to 0 between BodyWalk's: the body did not turn
@@ -2584,11 +2600,16 @@ float TargetRoll() {
     return std::clamp(g_set.rollSign.load() * (p[2] - level), -80.0f, 80.0f);
 }
 
+// [camera] stick_pitch_f2: the right stick tilts the camera in VR F2 only (not F1 in perspective, the table, F4, nor flat mode).
+bool StickPitchOn() { return g_set.stickPitchF2.load() && g_set.rightTurn.load() && g_set.platform.load() == 1 && g_set.vrView.load() == 2; }
+
 // Pitch relative to the game's own steep camera: ini level point, the mouse's
-// extra, and the head looking up (more negative) or down. Kept short of the
-// vertical, where the rotation would flip.
+// extra, the right stick's in VR F2 ([camera] stick_pitch_f2), and the head
+// looking up (more negative) or down. Kept short of the vertical, where the
+// rotation would flip.
 float TargetPitch() {
     float pitch = g_set.pitch.load() + (g_pairNow.load() ? g_heldPitch.load() : g_mousePitch.load());
+    if (StickPitchOn()) pitch += g_pairNow.load() ? g_heldStickPitch.load() : g_stickPitch.load();
     const D2RVR_Shared* sh = Shared();
     if (g_set.headPitch.load() && sh && sh->version == D2RVR_SHARED_VERSION && sh->headValid && sh->pitchValid && std::isfinite(sh->headPitchDeg))
     {
@@ -5374,7 +5395,7 @@ void TurnStick(XINPUT_STATE* s, bool fromBodyWalk) {
     // A menu (inventory, trade, stash...) gets the pad as it is: the left stick
     // moves its cursor on the screen, so turning it by the camera's yaw sent the
     // cursor the wrong way, and the right stick is the menu's too.
-    if (gamestate::MenuOpen()) { if (own) g_rightX.store(0.0f); return; }
+    if (gamestate::MenuOpen()) { if (own) { g_rightX.store(0.0f); g_rightY.store(0.0f); } return; }
     AimByMouse(s);
     AimByTurn(s);
     const bool aimed = BowStick(s);
@@ -5386,7 +5407,7 @@ void TurnStick(XINPUT_STATE* s, bool fromBodyWalk) {
     } } out{in, s->Gamepad, s, aimed};
     if (g_set.rightTurn.load()) {
         // The right stick is ours while on: it turns the body, the game never sees it.
-        if (own) g_rightX.store(s->Gamepad.sThumbRX / 32767.0f);
+        if (own) { g_rightX.store(s->Gamepad.sThumbRX / 32767.0f); g_rightY.store(s->Gamepad.sThumbRY / 32767.0f); }
         s->Gamepad.sThumbRX = 0; s->Gamepad.sThumbRY = 0;
     }
     // Walking straight from BodyWalk (HookStickGet / HookKeyMove): the pad's left
@@ -10837,6 +10858,7 @@ uintptr_t DrawByTurns(int a) {
     TurnTick();
     g_heldYaw.store(g_mouseYaw.load() + g_turnYaw.load());
     g_heldPitch.store(g_mousePitch.load());
+    g_heldStickPitch.store(g_stickPitch.load());
     pairtime::g_drawThread.store(GetCurrentThreadId());
     frametrace::MarkDrawThread();   // [debug] frame_trace: the probes on this thread are told apart
     const bool native = NativePairBegin();
@@ -10903,6 +10925,7 @@ uintptr_t HookDrawGameScreen(int a) {
     TurnTick();   // the turn up to this very moment, not to the last timer tick
     g_heldYaw.store(g_mouseYaw.load() + g_turnYaw.load());
     g_heldPitch.store(g_mousePitch.load());
+    g_heldStickPitch.store(g_stickPitch.load());
     g_pairNow.store(true);
     if (const D2RVR_Shared* hs = Shared())
         flog::Line("S,%u,%.4f,%.3f,%.3f,%.3f,%.3f,%u", flog::Pass(), flog::Dt(), g_heldYaw.load(), hs->headYawDeg, hs->headPitchDeg, hs->headRollDeg, hs->sampleStamp);
@@ -11458,6 +11481,7 @@ void Recenter() {
         }
     }
     g_mouseYaw.store(0.0f); g_mousePitch.store(0.0f);
+    g_stickPitch.store(0.0f);    // and the right stick's tilt ([camera] stick_pitch_f2)
     g_facingReset.store(true);   // and the hero's facing is looked for again
     g_tableReanchor.store(true); // and the table view puts the game in front of the head again
     xr::Recenter();              // and native OpenXR's straight ahead taken from the next views
@@ -11490,7 +11514,18 @@ void TurnTick() {
     const float dt = (float)std::min(now - last, 0.1);
     last = now;
     struct Unlock { ~Unlock() { ReleaseSRWLockExclusive(&g_turnLock); } } unlock;
-    if (!g_enabled.load() || !g_set.rightTurn.load()) { g_rightX.store(0.0f); return; }
+    if (!g_enabled.load() || !g_set.rightTurn.load()) { g_rightX.store(0.0f); g_rightY.store(0.0f); return; }
+    // [camera] stick_pitch_f2 (VR F2): the stick's up / down tilts, at the turn's dead zone; a push more sideways than up / down
+    // is a turn and does not tilt (vr/stick_pitch.h). Off: the tilt forgotten, the camera as before.
+    if (!g_set.stickPitchF2.load()) g_stickPitch.store(0.0f);
+    else if (StickPitchOn()) {
+        const float step = stickpitch::Step(g_rightX.load(), g_rightY.load(), dt, g_set.stickPitchSpeed.load(), g_set.stickPitchSign.load());
+        if (step != 0.0f) {
+            const stickpitch::Limits l{g_set.stickPitchMin.load(), g_set.stickPitchMax.load()};
+            g_stickPitch.store(stickpitch::Apply(g_stickPitch.load(), step, g_set.pitch.load(), l));
+            g_gen.fetch_add(1);
+        }
+    }
     const float x = g_set.turnSign.load() * g_rightX.load();
     const float dead = 0.25f, a = fabsf(x);
     const float snap = g_set.snapAngle.load();

@@ -499,6 +499,19 @@ std::vector<Item> g_items = {
     Group(L"F2  Third person"),
     Slider(L"third", L"distance", L"Camera back", 0, 30, 0.5f, 7, L"How far back from the eye point. World units, about 0.24 m each."),
     Slider(L"third", L"height", L"Camera height", 0, 20, 0.1f, 6.5f, L"Eye point above the ground. World units, about 0.24 m each."),
+    // [camera] stick_pitch_f2 (GitHub issue 11, a player's wish): the right stick's up / down tilts the view in VR F2 - a pad on "Mono - a flat
+    // screen" had only the mouse and the headset for it. Off = as before (vr/stick_pitch.h).
+    Only(kVr, Toggle(L"camera", L"stick_pitch_f2", L"Right stick up / down tilts the view", 0,
+           L"In F2 the right stick's up / down looks higher / lower, on top of the Horizon above; left / right still turns. A push "
+           L"more sideways than up / down only turns, and the turn's dead zone applies. F11 puts the tilt back. Needs \"Turn with the "
+           L"right stick\" (Controls tab). Off = as before.")),
+    Only(kVr, Needs(L"camera", L"stick_pitch_f2", 1, Slider(L"camera", L"stick_pitch_speed", L"Stick tilt speed, °/s", 10, 360, 5, 60,
+           L"Degrees per second at a full push; a small push tilts slower."))),
+    Only(kVr, Needs(L"camera", L"stick_pitch_f2", 1, Slider(L"camera", L"stick_pitch_min", L"Stick tilt: highest look", -120, 30, 1, -90,
+           L"The highest the stick takes the camera, in the Horizon's degrees (lower = looks higher, -60 = the horizon)."))),
+    Only(kVr, Needs(L"camera", L"stick_pitch_f2", 1, Slider(L"camera", L"stick_pitch_max", L"Stick tilt: lowest look", -120, 30, 1, 0,
+           L"The lowest the stick takes the camera, in the Horizon's degrees (0 = the game's own steep camera)."))),
+    Only(kVr, Needs(L"camera", L"stick_pitch_f2", 1, Invert(L"camera", L"stick_pitch_sign", L"Reverse stick tilt", 1, L"Tick if pushing up looks down."))),
 #if D2RVR_FIRST_PERSON
     Group(L"F4  First person"),
     Slider(L"camera", L"near", L"Near clip (hides the hero's head)", 0, 5, 0.1f, 1.5f,
