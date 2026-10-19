@@ -18,14 +18,15 @@ shared-memory headers are in `external/`.
 
 ## Debugging
 
-- **The log:** `<game>\d2rloader\logs\d2r-vr-vrcam.log` (D2RLoader's log of the plugin). What vrcam writes itself (`d2r_vr_start.txt`, `d2r_vr_crash.txt`,
+- **The log:** `d2r-vr-vrcam.log`, D2RLoader's log of the plugin: `<game>\mods\D2R-VR\d2rloader\logs\` or `<game>\d2rloader\logs\`
+  (where D2RLoader writes it for a mod's plugin is not checked in the game yet; the launcher manifest names both). What vrcam writes itself (`d2r_vr_start.txt`, `d2r_vr_crash.txt`,
   `d2r_vr_hang.txt`, `d2r_vr_gpu_fault.txt`, the profile and trace files) and D2R VR Settings' `d2r_vr_launch.txt` are in `<game>\mods\D2R-VR\d2rloader\logs`
-  (the `..\logs` of the plugin's folder); ReShade's log is `<game>\mods\D2R-VR\reshade\ReShade.log`.
+  (the `..\logs` of the plugin's folder); ReShade's log is `<game>\mods\D2R-VR\reshade\ReShade.log` (a ReShade of your own as `dxgi.dll`: the game's folder).
   - Every 10 s it prints the presents per second and the game's busiest
     threads, and in stereo the pairs per second and where a pair's time goes.
   - It names every biome you enter (`vrcam: biome '...'`).
 - **A hang:** a watchdog writes every thread's stack to `d2r_vr_hang.txt`
-  beside the log.
+  in `<game>\mods\D2R-VR\d2rloader\logs`.
 - **The live ini:** most keys in `d2r_vr.ini` apply while the game runs, so
   you can test without restarting. The `[debug]` section has the switches for
   experiments.

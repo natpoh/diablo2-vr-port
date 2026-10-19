@@ -28,6 +28,7 @@
 #include "direct_input.h"
 #include "direct_layout.h"
 #include "direct_remap.h"
+#include "stick_shape.h"
 #include "view_gate.h"
 
 namespace directinput {
@@ -75,6 +76,10 @@ std::atomic<bool> g_flatVrCtl{true};   // [direct] flatvr_controls: in FlatVR th
 std::atomic<bool> g_fedByLink{false};  // the frames come from Game Link (FlatVR), not from a native session
 std::atomic<bool> g_walkFlat{true}; // [direct] walk_flat_views: the left stick walks in VR F1-F3 (movement only, vr/walk_flat.h)
 std::atomic<bool> g_beltFlat{true}; // [direct] belt_flick_flat_views: left trigger + a flick of a stick drinks a belt column in VR F1-F3 (vr/belt_flick.h)
+// [direct] stick_deadzone_*_pct / stick_outer_*_pct: each thumbstick's dead zone and outer edge (vr/stick_shape.h), 0 left, 1 right - in force whatever
+// direct_input says (native OpenXR with BodyWalk's input too: BodyWalk is given the shaped stick)
+std::atomic<float> g_stickInner[2] = {stickshape::kInnerDefaultPct / 100.0f, stickshape::kInnerDefaultPct / 100.0f};
+std::atomic<float> g_stickOuter[2] = {stickshape::kOuterDefaultPct / 100.0f, stickshape::kOuterDefaultPct / 100.0f};
 std::atomic<BeltSink> g_beltSink{nullptr};
 std::atomic<PressSink> g_pressSink{nullptr};
 ULONGLONG g_pressHintAt = 0;   // FeedWalk's thread only
@@ -581,6 +586,26 @@ void LoadSettings(const wchar_t* ini) {
                        "drinks a belt potion: left = column 1, up = 2, right = 3, down = 4 (the game's own belt keys); the left stick does not walk meanwhile"
                      : "vrcam: direct input - [direct] belt_flick_flat_views=0: no belt potions from the thumbsticks in VR F1, F2, F3");
     }
+    {   // the thumbsticks' dead zones against drift (vr/stick_shape.h): said once per change, whatever direct_input is
+        static float told[2][2] = {{-1.0f, -1.0f}, {-1.0f, -1.0f}};
+        const wchar_t* const innerKey[2] = {L"stick_deadzone_left_pct", L"stick_deadzone_right_pct"};
+        const wchar_t* const outerKey[2] = {L"stick_outer_left_pct", L"stick_outer_right_pct"};
+        for (int h = 0; h < 2; ++h) {
+            const stickshape::Zone z = stickshape::FromPercent((float)GetPrivateProfileIntW(L"direct", innerKey[h], (int)stickshape::kInnerDefaultPct, ini),
+                                                               (float)GetPrivateProfileIntW(L"direct", outerKey[h], (int)stickshape::kOuterDefaultPct, ini));
+            g_stickInner[h].store(z.inner);
+            g_stickOuter[h].store(z.outer);
+            if (z.inner != told[h][0] || z.outer != told[h][1]) {
+                const bool first = told[h][0] < 0.0f;
+                told[h][0] = z.inner; told[h][1] = z.outer;
+                if (!first || !stickshape::IsIdentity(z))
+                    LogF("vrcam: direct input - the %s thumbstick: %s ([direct] %ls=%d, %ls=%d)", h ? "right" : "left",
+                         stickshape::IsIdentity(z) ? "no dead zone of ours, as the runtime gives it"
+                                                   : "a radial dead zone of ours: the middle up to the dead zone, from there 0 again up to a full push at the outer edge",
+                         innerKey[h], (int)std::lround(z.inner * 100.0f), outerKey[h], (int)std::lround(z.outer * 100.0f));
+            }
+        }
+    }
     static int toldRebinds = -1;
     if (on && rebound + bad != toldRebinds) {
         toldRebinds = rebound + bad;
@@ -629,6 +654,16 @@ void LoadSettings(const wchar_t* ini) {
                                 "inventory ([direct] hold_enabled, hold_ms)", t.holdMs);
         else Log("vrcam: direct input - no long presses ([direct] hold_enabled=0): a stick click acts at once");
     }
+}
+
+void ShapeStick(int hand, float* x, float* y) {
+    if (hand < 0 || hand > 1 || !x || !y) return;
+    stickshape::Apply(stickshape::Zone{g_stickInner[hand].load(std::memory_order_relaxed), g_stickOuter[hand].load(std::memory_order_relaxed)}, x, y);
+}
+
+void ShapeSticks(D2RVR_XrInput* in) {
+    if (!in) return;
+    for (int h = 0; h < 2; ++h) ShapeStick(h, &in->hand[h].stickX, &in->hand[h].stickY);
 }
 
 void SetMenuNow(bool menu) { g_menuNow.store(menu ? 1 : 0, std::memory_order_relaxed); }

@@ -1,5 +1,35 @@
 # What's new in D2R VR
 
+## 0.172
+
+- **New: a first-start guide in the headset**, on by default for a new player. The first time you stand in the world in VR first person (F4) with the
+  plugin's own controls, the skill panel's Settings window comes up on its new Guide page: the T-pose measurement offered first (when none is stored), then
+  five short pages of what to press for the inventory, the map, the skill panel, the belt, the settings in the headset, the pause menu and the F views. It is
+  drawn and paged like the other pages of that window (the laser: Back, Next, Done) and hangs where the window hangs, not before the face. Done or closed, it
+  does not come up by itself again ([onboarding] done=1); the Guide page, or Settings > Body > "Show the first-start guide", shows it any time. The idea of
+  offering the measurement at the first start is bearstonem/d2r-pcvr's (MIT).
+- **D2R VR Launcher 0.3.2** comes with this Setup: each mod's card has its own icon - D2R VR Unleashed's own (bearstonem's) and Authentic's crystal mask.
+  A launcher 0.3.1 is updated by this Setup; nothing else in it changed.
+- **Thumbstick dead zones against stick drift** (a player's wish: "are you able to add stick dead zone %'s like to counter stick drifts people might have on their
+  controllers"). Each VR controller's thumbstick has a dead zone and an outer edge of its own, in % of a full push: D2R VR Settings > Controls > *Thumbsticks: dead
+  zone (stick drift)*, `[direct] stick_deadzone_left_pct`, `stick_deadzone_right_pct` (0 - 50) and `stick_outer_left_pct`, `stick_outer_right_pct` (60 - 100). The dead
+  zone is radial (the stick's length decides, so a diagonal is not cut sooner than a straight push, and the direction is kept) and rescaled: past it the push starts
+  again from zero - no jump - and it reaches a full push at the outer edge, which saturates. It is applied once, where the stick comes in (native OpenXR, and
+  FlatVR's raw controllers through Game Link), so everything that reads the stick agrees: the walk in every view, the right stick's turn and snap, the belt flick and
+  the skill panel's flick, the room walk's "the stick wins", the plugin's own gamepad and BodyWalk through Game Link. A real gamepad and BodyWalk's own pad are left as they
+  are. The defaults (0 and 100) change nothing, bit for bit. Only the controllers' values are shaped - nothing of the game. Live; the log says "the left thumbstick: ..."
+  when a value changes. Unit test: cleanroom/tests/stick_shape_test.cpp (vr/stick_shape.h).
+- **Fixed: the Kurast sewer stairs** (Act 3: Kurast Bazaar and Upper Kurast, down to the Sewers; VR F4). A takes the stairs standing:
+  when the game finds nothing to interact with there, the sewer stairs the head faces nearby are offered to A - only if the game's own
+  reach and line-of-sight test accepts them, so never through a wall or farther than the game reaches; travel and quests are the game's.
+  Before, the player had to crouch and look at the stairs. And with "Roofs: their underside, not the sky" on, the entrance's walls and
+  stairs are drawn from behind too, instead of the sky through them. From bearstonem/d2r-pcvr (MIT). The black end of the stairwell
+  (the model has no wall there) is not in this version.
+- **New, off by default: a shield put away does not block** ([hands] shield_stow_no_block; D2R VR Authentic Settings, under "... and the shield can be put away and
+  drawn from behind the left shoulder"). With the shield away behind the left shoulder the game rolls no block for the hero - as for a hero with no shield - and goes
+  on to its own dodge check. Drawn, the shield blocks by the game's own chance and roll as ever; its Defense stays. The game's block check is the one bearstonem's
+  d2r-pcvr found (MIT); a build where it is not found leaves blocking as it is and says so in the log.
+
 ## 0.171
 
 - **Fixed: a staff held in both hands aimed off to the side** (spell aim by the drawn hand or staff, the weapon's weight on, VR F4). The spell and the spell's ray now go along the staff as it
@@ -7,8 +37,23 @@
   hands near each other that line ran far off the staff. (Known issue 26 of 0.170, docs/KNOWN_ISSUES.md.)
 - **On in the settings that come with the mod** (the author's own settings, as he has them): skills on the right trigger and on A ([openxr] skill_rt_a), the RUN / WALK button on the skill
   panel ([openxr] skill_run_walk) and a spell's aim distance that follows how far the arm is stretched ([bow] aim_distance_by_arm). Each is still its own tick in D2R VR Authentic Settings
-  (the two skill panel ticks: Stereo > Native OpenXR, in the skill panel rows under "Skill panel style"; the aim distance: Bow tab), and an update that keeps your own settings file changes none
+  (the two skill panel ticks: Stereo > Native OpenXR, in the skill panel rows under "Skill panel style"; the aim distance: Weapon Adjust > Aim distance by the arm), and an update that keeps your own settings file changes none
   of your values.
+- **A first-start guide in the headset** ([onboarding], D2R VR Authentic Settings > Body > First-start guide). The first time you stand in the world
+  in first person (F4) on native OpenXR with Controls without BodyWalk, a panel in front of you offers the T-pose measurement (when none is stored:
+  the right stick up measures, down goes on), then five short pages of what to press to open what: walking and fighting, the inventory, the map,
+  the pause menu, the skill panel, the settings in the headset, the belt, weapons, the bow and the F views. The right stick up turns the page,
+  down goes back, held up a second closes it. It presses nothing and takes no button (the game never gets the right stick, and the turn is its
+  left / right only), the game runs on behind it, and it hides while a menu, the skill panel, the settings panel or the measurement is up.
+  Finished or closed it is done ([onboarding] done=1); the headset settings' Body page has a *First-start guide* button to see it again, and
+  *Show the first-start guide* unticked keeps it away. An ini from before 0.171 counts as done when a measurement is stored. The idea of
+  offering the measurement at the first start is bearstonem/d2r-pcvr's (MIT); the flow is vr/first_start.h (first_start_test).
+- **The texts checked against the code** (docs/text_audit_0.171.md): the tooltips of D2R VR Authentic Settings, the comments of d2r_vr.ini,
+  README, SETTINGS.md and docs/. Among them: the hero's own effects (Bone Armor) say they do not work yet; the game's Ambient Occlusion can
+  be Max (since 0.164 it reads its depth from our camera, and nothing depends on Medium); the controls in README are the plugin's own layout
+  as it is now; a Quality preset says that it switches Native OpenXR off; tabs that no longer exist (Bow, Javelin, Hands) are named as they
+  are now. Corrections to the notes below: in 0.170 "Bow tab > A spell's aim distance" is Weapon Adjust > Aim distance by the arm, and the
+  hero's own effects are off in the settings that come with the mod; in 0.166 Quick strike is on the Strikes tab.
 
 ## 0.170
 

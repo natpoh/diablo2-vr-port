@@ -8,8 +8,10 @@
 # has an Uninstall button on its card and its row; and the install window reads the installed version (from the manifest, or the plugin's version resource when the manifest
 # fails validation), never offers a downgrade and pre-ticks nothing unless it is a real install or update. (Two earlier builds with the same version number - one with a
 # "Close Steam" button, one with commit 4148184 - are obsolete; only the SHA-256 below is valid.)
+# 0.3.2: 0.3.1 plus the cards' icons (commit 19b6887 of claude/launcher-unleashed-icon): D2R VR Unleashed's own icon (bearstonem's launcher_icon.png) and
+# Authentic's crystal mask. A player with 0.3.1 gets it from this Setup (older -> the carried one).
 # Its own finish page offers "Choose the mods to install" and "Open D2R VR Launcher" (unticked); both are skipifsilent, so the silent call this Setup makes
 # (/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS=, unchanged) shows and starts nothing.
-version=0.3.1
-file=D2R_VR_Launcher_Setup_0.3.1.exe
-sha256=C9A1D259DA707FE87D7F33D1B7DDD279A57DBFF994098F25BC251FDCCC1AF123
+version=0.3.2
+file=D2R_VR_Launcher_Setup_0.3.2.exe
+sha256=F5412C8BCE7152005D8964ADF43F2847494B70261D4F83EE47CD26598B19DA9A

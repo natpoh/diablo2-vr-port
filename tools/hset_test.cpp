@@ -89,6 +89,7 @@ struct Rig {
     bool calibrating = false;
     video::Env env;
     int view = 4;
+    int openGuide = -1;            // the first-start guide asks for the panel on its Guide page (the page to start on)
     FrameOut last;
     FrameOut Step(double dt = 11.0) {
         FrameIn f;
@@ -99,6 +100,7 @@ struct Rig {
         f.calibrating = calibrating;
         f.env = env;
         f.view = view;
+        f.openGuide = openGuide;
         f.head = head;
         for (int h = 0; h < 2; ++h) { f.aim[h] = aim[h]; f.present[h] = present[h]; f.pad[h] = pad[h]; }
         f.snapshot = snap;
@@ -176,8 +178,8 @@ static void TestDefs() {
     for (int p = 0; p < kMaxPages; ++p) CHECK(perPage[p] <= kRowsPerPage, "no more rows than the page has room for");
     CHECK(perPage[kPageView] <= kRowsPerPage - 1, "the first page keeps its last row for the game view buttons");
     CHECK(RowsOn(kPageView) > 0 && RowsOn(kPageOptions) > 0, "the two table pages have rows");
-    CHECK(RowsOn(kPageVideo) == 0 && RowsOn(kPageBody) == 0, "the two hand-drawn pages have no table rows (they draw their own)");
-    CHECK(PageCount() == 11 && PageCount() <= kMaxPages, "eleven pages (View, Options, Video, Body, Life, Look, HUD, Belt, Melee, Left, Right), they fit the tabs");
+    CHECK(RowsOn(kPageVideo) == 0 && RowsOn(kPageBody) == 0 && RowsOn(kPageGuide) == 0, "the three hand-drawn pages have no table rows (they draw their own)");
+    CHECK(PageCount() == 12 && PageCount() <= kMaxPages, "twelve pages (View, Options, Video, Body, Life, Look, HUD, Belt, Melee, Left, Right, Guide), they fit the tabs");
     // the keys the hand-drawn pages work on are in the table, with no row, named as the plugin reads them
     const int hidden[6] = {kKeyMode, kKeyPx, kKeyUse, kKeyVersion, kKeyEye, kKeySpan};
     for (int k : hidden) CHECK(k >= 0 && k < kCount && kDefs[k].page == kNoPage, "a hand-drawn page's key has no row");
@@ -1282,6 +1284,9 @@ static void TestPagesHit() {
     CHECK(HitTest(kPageBody, u, v).kind == Kind::Calibrate && HitTest(kPageVideo, u, v).kind != Kind::Calibrate, "Calibrate body, on its page");
     Centre(kForget, &u, &v);
     CHECK(HitTest(kPageBody, u, v).kind == Kind::Forget, "Forget measurement");
+    CHECK(Inside(kGuideBtn) && !Overlap(kGuideBtn, kCalibrate) && !Overlap(kGuideBtn, kForget) && !Overlap(kGuideBtn, kBodyStored), "the first-start guide's button, beside them");
+    Centre(kGuideBtn, &u, &v);
+    CHECK(HitTest(kPageBody, u, v).kind == Kind::Guide && HitTest(kPageVideo, u, v).kind != Kind::Guide, "First-start guide, on the Body page only");
     CHECK(HitTest(kPageBody, 0.5f, (kBodyStep(1).y + 5.0f) / kH).kind == Kind::None, "the steps are text");
     for (int p = 0; p < kPageCount; ++p) {
         Centre(kTab(p), &u, &v);
@@ -1320,6 +1325,15 @@ static void TestBodyModel() {
         CHECK(busy.Click({Kind::Calibrate, -1, 0}).what == Do::Nothing, "not while an Apply is in flight");
         Model closed;
         CHECK(closed.Click({Kind::Calibrate, -1, 0}).what == Do::Nothing, "a closed panel does nothing");
+    }
+    {   // First-start guide: its own page, in the same panel (TestGuide has the rest); nothing of the ini, so even without one
+        Model m = OnPage(Snap(), kPageBody);
+        CHECK(m.Click({Kind::Guide, -1, 0}).what == Do::Nothing && m.page == kPageGuide && !m.Dirty() && !m.Busy(), "First-start guide opens the Guide page, the draft untouched");
+        Model nr = OnPage(Snap(false), kPageBody);
+        nr.Click({Kind::Guide, -1, 0});
+        CHECK(nr.page == kPageGuide, "with no ini too (the guide needs none to show)");
+        Model closed;
+        CHECK(closed.Click({Kind::Guide, -1, 0}).what == Do::Nothing, "a closed panel does nothing");
     }
     {   // Forget clears the three keys the PC window's button clears, and nothing else
         Model m = OnPage(stored, kPageBody);
@@ -1397,6 +1411,15 @@ static void TestBodyModel() {
 
 // -- 12. the hands: Calibrate body, coming back, the slider drag --------------------------------------------------
 static void TestPagesHands() {
+    {   // First-start guide: the panel stays, on the Guide page (the panel still has both hands)
+        Rig r;
+        r.Open();
+        r.Click(1, kTab(kPageBody));
+        FrameOut o = r.Click(1, kGuideBtn);
+        CHECK(o.open && !o.justClosed && o.action.what == Do::Nothing && r.c.model.page == kPageGuide, "First-start guide shows the guide's page in the panel");
+        CHECK(o.pad[1].trigger == 0.0f && !(o.pad[1].buttons & kTrigger), "the trigger that pressed it is not the game's");
+        CHECK(r.c.Open() && !r.c.Resuming(), "nothing waits to come back");
+    }
     {   // the button hands the hands to the measurement; the panel comes back when it ends
         Rig r;
         r.Open();
@@ -1984,6 +2007,16 @@ static void Dump(const std::string& dir) {
     Centre(kInc(3), &u, &v);
     Paint(bb, HitTest(kPageBelt, u, v), px);
     WriteBmp(dir + "/hset_page4_belt.bmp", px);
+    // the Guide page: the measurement's offer, and the densest page (the belt, weapons, bow)
+    for (int sub : {0, 4}) {
+        Model gm;
+        gm.open = false;
+        gm.Open(Snap());
+        gm.OpenGuide(sub);
+        Centre(kGuideNext, &u, &v);
+        Paint(gm, HitTest(kPageGuide, u, v), px);
+        WriteBmp(dir + "/hset_page11_guide_" + std::to_string(sub) + ".bmp", px);
+    }
     // the Melee page: his numbers (6.0 m/s, 15 cm), the speed one step up and waiting to be written
     Model mm;
     mm.Open(SnapWith({{kKeyMeleeTouch, 1}, {KeyAt(kPageMelee, 1), 6.0}, {KeyAt(kPageMelee, 2), 15.0}}));
@@ -2817,7 +2850,7 @@ static void TestLowLife() {
     }
     CHECK(kDefs[KeyAt(kPageLife, 0)].key == std::wstring(L"low_hp_vignette"), "the first row of the Life page is the tick that switches it on");
     CHECK(RowsOn(kPageLife) == 6 && RowsOn(kPageLook) == 5, "six rows on Life, five on Look: all eleven keys");
-    CHECK(!std::strcmp(kPageNames[kPageLife], "Life") && !std::strcmp(kPageNames[kPageLook], "Look") && !std::strcmp(kPageNames[kPageHud], "HUD") && PageCount() == 11, "the tabs");
+    CHECK(!std::strcmp(kPageNames[kPageLife], "Life") && !std::strcmp(kPageNames[kPageLook], "Look") && !std::strcmp(kPageNames[kPageHud], "HUD") && PageCount() == 12, "the tabs");
     CHECK(IsLifePage(kPageLife) && IsLifePage(kPageLook) && !IsLifePage(kPageView) && !IsLifePage(kPageOptions) && !IsLifePage(kPageVideo) && !IsLifePage(kPageBody) &&
               !IsLifePage(-1) && !IsLifePage(99),
           "only those two pages ask for the preview");
@@ -3013,6 +3046,20 @@ static void TestPreviewButton() {
     }
 }
 
+static int GdiWidth(const std::string& text, int cell, int weight) {   // the panel's own painter's font (hset_paint.cpp), in pixels
+    HDC dc = CreateCompatibleDC(nullptr);
+    HFONT f = CreateFontW(cell, 0, 0, 0, weight, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY, DEFAULT_PITCH, L"Segoe UI");
+    HGDIOBJ old = SelectObject(dc, f);
+    wchar_t w[512]{};
+    MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, w, 512);
+    SIZE sz{};
+    GetTextExtentPoint32W(dc, w, (int)wcslen(w), &sz);
+    SelectObject(dc, old);
+    DeleteObject(f);
+    DeleteDC(dc);
+    return sz.cx;
+}
+
 // -- 14. The Melee page: the "Hit by touch" group of D2R VR Settings > Strikes -----------------------------------------------------------------
 // The tick and its two numbers, the same [gameplay] keys, ranges and defaults as the desktop program (tools/settings/settings.cpp), written live.
 static void TestMelee() {
@@ -3040,7 +3087,8 @@ static void TestMelee() {
         if (i + 1 < kPageCount) CHECK(!Overlap(kTab(i), kTab(i + 1)) && kTab(i).x + kTab(i).w < kTab(i + 1).x, "tabs apart, in order");
         narrowest = std::min(narrowest, kTab(i).w);
     }
-    CHECK(narrowest >= 60 && kTab(kPageCount - 1).x + kTab(kPageCount - 1).w <= 32 + 960, "no tab narrower than 60 pixels, the strip ends where the rows do");
+    CHECK(kTab(kPageCount - 1).x + kTab(kPageCount - 1).w <= 32 + 960, "the strip ends where the rows do");
+    for (int i = 0; i < kPageCount; ++i) CHECK(GdiWidth(kPageNames[i], 30, FW_SEMIBOLD) <= kTab(i).w - 8, "a tab's name fits it in the panel's own painter");
     CHECK(kTab(kPageOptions).w > kTab(kPageView).w && kTab(kPageView).w > kTab(kPageHud).w && kTab(kPageMelee).w > kTab(kPageBody).w, "a longer name has the wider tab");
     for (int i = 0; i < kPageCount; ++i) {
         float u, v;
@@ -3086,6 +3134,200 @@ static void TestMelee() {
     CHECK(TmpFiles() == 0, "no temp file left");
 }
 
+// -- 15. The Guide page: the first-start guide inside the settings (vr/first_start.h) -------------------------------------------------------------
+// One page of the settings like the others: the same scene, both painters, the laser. Back / Next page it, the offer measures, Done ends it, and the window
+// that holds it says so when it closes with the page having been on show.
+static void TestGuide() {
+    namespace fs = firststart;
+    // the table: the last page, drawn by hand, with a name that fits
+    CHECK(kPageGuide == kPageCount - 1 && !strcmp(kPageNames[kPageGuide], "Guide") && RowsOn(kPageGuide) == 0, "Guide: the last tab, no rows of the key table");
+    CHECK(kMaxPages >= kPageCount, "the tabs have room");
+
+    // the buttons: inside the atlas, apart from each other and from the rows' area, hit only on this page
+    CHECK(Inside(kGuideBack) && Inside(kGuideNext) && Inside(kGuideTitle) && Inside(kGuideAt) && !Overlap(kGuideBack, kGuideNext) && !Overlap(kGuideTitle, kGuideAt), "the guide's places are on the sheet");
+    CHECK(kGuideBack.y >= kGuideBottom && kGuideBack.y + kGuideBack.h <= kStatus.y && kGuideNext.y + kGuideNext.h <= kStatus.y, "Back and Next stand between the rows and the status line");
+    CHECK(!Overlap(kGuideBack, kRecentre) && !Overlap(kGuideNext, kApply) && !Overlap(kGuideNext, kClose), "and apart from the panel's own buttons");
+    {
+        float u, v;
+        Centre(kGuideBack, &u, &v);
+        CHECK((HitTest(kPageGuide, u, v) == Hit{Kind::GuideBack, -1, -1}) && HitTest(kPageBody, u, v).kind == Kind::None, "Back, on the Guide page only");
+        Centre(kGuideNext, &u, &v);
+        CHECK((HitTest(kPageGuide, u, v) == Hit{Kind::GuideNext, -1, 1}) && HitTest(kPageBody, u, v).kind == Kind::None, "Next, on the Guide page only");
+        Centre(kTab(kPageGuide), &u, &v);
+        CHECK((HitTest(kPageView, u, v) == Hit{Kind::Tab, kPageGuide, 0}), "the Guide tab is hit");
+    }
+
+    // the model: paging, the offer, Done
+    {
+        Model m = OnPage(Snap(), kPageBody);
+        CHECK(m.Click({Kind::Guide, -1, 0}).what == Do::Nothing && m.page == kPageGuide && m.guide == 1 && m.GuideShown() && !m.Dirty(), "the Body page's button: the guide's first page, in the same window, nothing of the ini");
+        Model nr = OnPage(Snap(false), kPageBody);
+        nr.Click({Kind::Guide, -1, 0});
+        CHECK(nr.page == kPageGuide, "with no ini too (the guide needs none to show)");
+        Model closed;
+        CHECK(closed.Click({Kind::Guide, -1, 0}).what == Do::Nothing && closed.page == 0, "a closed panel does nothing");
+        for (int p = 2; p <= fs::kGuidePages; ++p) {
+            CHECK(m.Click({Kind::GuideNext, -1, 1}).what == Do::Nothing && m.guide == p, "Next: the next page");
+        }
+        const Action done = m.Click({Kind::GuideNext, -1, 1});
+        CHECK(done.what == Do::GuideDone && m.GuideFinished(), "Next on the last page is Done: it ends the guide");
+        m.Click({Kind::GuideBack, -1, -1});
+        CHECK(m.guide == fs::kGuidePages - 1, "Back: one page back");
+        for (int p = 0; p < fs::kGuidePages; ++p) m.Click({Kind::GuideBack, -1, -1});
+        CHECK(m.guide == 1 && m.Click({Kind::GuideBack, -1, -1}).what == Do::Nothing && m.guide == 1, "the first page has nothing before it");
+        Model t = OnPage(Snap(), kPageView);
+        t.Click({Kind::Tab, kPageGuide, 0});
+        CHECK(t.page == kPageGuide && t.GuideShown(), "the tab shows the page where it was left (the first)");
+        Model other = OnPage(Snap(), kPageVideo);
+        other.Click({Kind::GuideNext, -1, 1});
+        CHECK(other.guide == 1 && !other.GuideShown(), "Next on another page is nothing");
+        Model f = OnPage(Snap(), kPageBody);
+        CHECK(!f.GuideShown(), "a panel opened fresh has not shown the guide");
+    }
+    {   // the offer: Not now goes on, Measure now hands the hands to the measurement and the panel comes back on the guide's first page
+        Model m = OnPage(Snap(), kPageBody);
+        m.OpenGuide(fs::kOfferPage);
+        CHECK(m.guide == fs::kOfferPage, "opened on the offer");
+        m.Click({Kind::GuideBack, -1, -1});
+        CHECK(m.guide == 1, "Not now: the guide's first page");
+        Model n = OnPage(Snap(), kPageBody);
+        n.OpenGuide(fs::kOfferPage);
+        const Action a = n.Click({Kind::GuideNext, -1, 1});
+        CHECK(a.what == Do::Calibrate && !n.GuideFinished(), "Measure now asks for the measurement");
+        n.Close();
+        n.Resume(Snap());
+        CHECK(n.open && n.page == kPageGuide && n.guide == 1 && n.GuideShown(), "back from it: on the guide's first page");
+        Model body = OnPage(Snap(), kPageBody);
+        body.Click({Kind::Calibrate, -1, 0});
+        body.Close();
+        body.Resume(Snap());
+        CHECK(body.page == kPageBody, "the Body page's own Calibrate still comes back on the Body page");
+        Model nr = OnPage(Snap(false), kPageBody);
+        nr.OpenGuide(fs::kOfferPage);
+        CHECK(nr.Click({Kind::GuideNext, -1, 1}).what == Do::Nothing && nr.guide == fs::kOfferPage, "no ini, nowhere to put the measurement: no");
+    }
+
+    // the scene: every page of the guide fits its places and its words are all there
+    for (int sub = 0; sub < fs::kPageCount; ++sub) {
+        Model m = OnPage(Snap(), kPageGuide);
+        m.OpenGuide(sub);
+        const Scene scene = Compose(m, {}, ComposeOptions{true, false, nullptr});
+        const fs::PageText& page = fs::kPages[sub];
+        CHECK(GuideEnd(sub) <= kGuideBottom, "the rows end above Back and Next");
+        bool title = false, status = false;
+        int texts = 0;
+        for (const Item& it : scene) {
+            CHECK(it.r.x >= 0 && it.r.y >= 0 && it.r.x + it.r.w <= kW && it.r.y + it.r.h <= kH, "everything is on the sheet");
+            if (it.type == Item::Type::Text && it.text == page.title) title = true;
+            if (it.type == Item::Type::Text && it.text == page.nav) status = true;
+            if (it.type != Item::Type::Text) continue;
+            ++texts;
+            if (it.r.y >= kGuideTop && it.r.y < kGuideBottom) {   // a line of a row: one line, fits its box in the panel's own painter
+                CHECK(it.face == Face::Small && GdiWidth(it.text, 22, FW_NORMAL) <= it.r.w - 4, "a row's line fits its place");
+            }
+        }
+        CHECK(title && status, "the title and the foot are there");
+        CHECK(GdiWidth(page.title, 30, FW_SEMIBOLD) <= kGuideTitle.w - 8, "the title fits");
+        CHECK(GdiWidth(page.nav, 26, FW_NORMAL) <= kStatus.w - 8, "the foot fits the status line");
+        CHECK(texts >= 6, "the page has its words");
+        // every word of every row is on the page: the lines of a row, joined, are its text
+        for (int r = 0; r < fs::kRowsMax && page.rows[r].does && *page.rows[r].does; ++r) {
+            std::string joined;
+            const std::vector<GuideRowLayout> rows = GuideRows(sub);
+            for (const std::string& l : rows[r].text) joined += (joined.empty() ? "" : " ") + l;
+            CHECK(joined == page.rows[r].does, "the lines of a row are its text, nothing lost");
+        }
+    }
+    for (const char* label : {"Measure now", "Not now", "Done", "Next", "Back"}) CHECK(GdiWidth(label, 30, FW_SEMIBOLD) <= kGuideNext.w - 24, "a button's word fits it");
+    {   // the buttons by the page: Back is off on the first page, Measure now needs the ini
+        auto button = [](const Scene& s, const std::string& label) -> const Item* {
+            for (const Item& it : s)
+                if (it.type == Item::Type::Button && it.text == label) return &it;
+            return nullptr;
+        };
+        Model m = OnPage(Snap(), kPageGuide);
+        m.OpenGuide(1);
+        Scene s = Compose(m, {}, {});
+        CHECK(button(s, "Back") && !button(s, "Back")->enabled && button(s, "Next") && button(s, "Next")->enabled && !button(s, "Done"), "page 1: Back off, Next");
+        m.OpenGuide(fs::kGuidePages);
+        s = Compose(m, {}, {});
+        CHECK(button(s, "Back")->enabled && button(s, "Done") && !button(s, "Next"), "the last page: Back, Done");
+        m.OpenGuide(fs::kOfferPage);
+        s = Compose(m, {}, {});
+        CHECK(button(s, "Not now") && button(s, "Measure now") && button(s, "Measure now")->enabled && !button(s, "Back"), "the offer: Not now, Measure now");
+        Model nr = OnPage(Snap(false), kPageGuide);
+        nr.OpenGuide(fs::kOfferPage);
+        s = Compose(nr, {}, {});
+        CHECK(button(s, "Measure now") && !button(s, "Measure now")->enabled, "without the ini the measurement is off");
+    }
+    {   // the pictures: every page is its own, and the panel's painter draws them all
+        std::vector<std::vector<uint32_t>> pics(fs::kPageCount);
+        for (int sub = 0; sub < fs::kPageCount; ++sub) {
+            Model m = OnPage(Snap(), kPageGuide);
+            m.OpenGuide(sub);
+            CHECK(Paint(m, {}, pics[sub]) && pics[sub].size() == (size_t)kW * kH, "a guide page painted");
+        }
+        for (int a = 0; a < fs::kPageCount; ++a)
+            for (int b = a + 1; b < fs::kPageCount; ++b) CHECK(pics[a] != pics[b], "every guide page looks different");
+    }
+
+    // the panel of its own: the guide asks for it, and it says when the guide's page was on show as it closes
+    {
+        Rig r;
+        r.openGuide = 1;
+        r.snap = Snap(false);
+        r.Run(200);
+        CHECK(!r.c.Open(), "no ini read yet: it waits (the offer's measurement needs one)");
+        r.snap = Snap();
+        FrameOut o = r.Step();
+        CHECK(r.c.Open() && o.justOpened && o.guideOpened && r.c.model.page == kPageGuide && r.c.model.guide == 1, "asked: it comes up on the guide's first page");
+        r.openGuide = -1;
+        r.Run(100);
+        CHECK(r.c.Open(), "and stays up (the request is taken)");
+        // Next to the end, Done: the panel closes, finished
+        r.Click(1, kGuideNext);
+        CHECK(r.c.model.guide == 2, "Next with the laser pages it");
+        for (int p = 3; p <= fs::kGuidePages; ++p) r.Click(1, kGuideNext);
+        o = r.Click(1, kGuideNext);
+        CHECK(o.action.what == Do::GuideDone && !o.open && o.justClosed && o.guideEnd == 1, "Done: the panel closes, the guide is finished");
+    }
+    {   // closed another way with the guide's page on show: skipped; nothing of the guide shown: nothing said
+        Rig r;
+        r.openGuide = 1;
+        r.Step();
+        r.openGuide = -1;
+        r.Run(100);
+        FrameOut o = r.Click(1, kClose);
+        CHECK(!r.c.Open() && o.guideEnd == 2, "Close with the guide on show: it was skipped");
+        Rig q;
+        q.Open();
+        o = q.Click(1, kClose);
+        CHECK(!q.c.Open() && o.guideEnd == 0, "an ordinary panel says nothing of the guide");
+        Rig b;   // glanced at it by the Body page's button and closed
+        b.Open();
+        b.Click(1, kTab(kPageBody));
+        b.Click(1, kGuideBtn);
+        CHECK(b.c.Open() && b.c.model.page == kPageGuide, "the Body page's button stays in the panel");
+        o = b.Click(1, kClose);
+        CHECK(!b.c.Open() && o.guideEnd == 2, "closed from the guide: skipped (done)");
+    }
+    {   // the offer's measurement: the panel hides, comes back on the guide's page, and the hiding is no end
+        Rig r;
+        r.openGuide = fs::kOfferPage;
+        r.Step();
+        r.openGuide = -1;
+        r.Run(100);
+        CHECK(r.c.Open() && r.c.model.guide == fs::kOfferPage, "the offer first");
+        FrameOut o = r.Click(1, kGuideNext);
+        CHECK(o.action.what == Do::Calibrate && !o.open && o.guideEnd == 0 && r.c.Resuming(), "Measure now: the panel hides for the measurement, the guide is not over");
+        r.Run(200);
+        CHECK(!r.c.Open(), "it stays away while the measurement runs");
+        r.calibrating = false;
+        r.Run(200);
+        CHECK(r.c.Open() && r.c.model.page == kPageGuide && r.c.model.guide == 1, "after it: back on the guide's first page");
+    }
+}
+
 int main(int argc, char** argv) {
     if (argc == 3 && !strcmp(argv[1], "--dump")) { Dump(argv[2]); return 0; }
     wchar_t tmp[MAX_PATH];
@@ -3115,6 +3357,7 @@ int main(int argc, char** argv) {
     TestBelt();
     TestKeys();
     TestMelee();
+    TestGuide();
     TestHud();
     TestLowLife();
     TestPreviewButton();

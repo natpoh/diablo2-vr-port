@@ -269,6 +269,17 @@ target_compile_options(shoulder_draw_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # the shield's arm: the holster and the right forearm's mirrored strap (vr/shield_arm.h), pure; and its wiring (vr/shield_arm_wire.cpp) through skel::Input
 add_executable(shield_arm_test cleanroom/tests/shield_arm_test.cpp)
 target_compile_options(shield_arm_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# [hands] shield_stow_no_block: the shield put away does not block - the pure rule (vr/stowed_block.h); the hook (vr/stowed_block.cpp) is in d2rl-vrcam below
+# The Kurast sewer stairs: their single-sided walls two-sided (vr/roof_sides.h) and A taking the stairs standing (vr/sewer_interaction.h), both pure
+add_executable(roof_sides_sewer_test cleanroom/tests/roof_sides_sewer_test.cpp)
+target_include_directories(roof_sides_sewer_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_options(roof_sides_sewer_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+add_executable(sewer_interaction_test cleanroom/tests/sewer_interaction_test.cpp)
+target_include_directories(sewer_interaction_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_options(sewer_interaction_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+add_executable(stowed_block_test cleanroom/tests/stowed_block_test.cpp)
+target_include_directories(stowed_block_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_options(stowed_block_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 add_executable(shield_arm_wire_test cleanroom/tests/shield_arm_wire_test.cpp vr/shield_arm_wire.cpp)
 target_include_directories(shield_arm_wire_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared)
 target_compile_definitions(shield_arm_wire_test PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
@@ -554,6 +565,11 @@ target_compile_options(walk_flat_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 add_executable(belt_flick_test cleanroom/tests/belt_flick_test.cpp)
 target_include_directories(belt_flick_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
 target_compile_options(belt_flick_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# The thumbsticks' dead zones against drift ([direct] stick_deadzone_*_pct, stick_outer_*_pct, vr/stick_shape.h): the defaults change nothing, a drift reads as
+# centred, radial not per axis, no jump at either edge, the outer saturation, and the readers after it (the belt flick, the pad's stick) keep their thresholds.
+add_executable(stick_shape_test cleanroom/tests/stick_shape_test.cpp)
+target_include_directories(stick_shape_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_options(stick_shape_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # The settings panel in the headset ([openxr] headset_settings, vr/hset_*.h, vr/xr_headset_settings.h): its model,
 # the chord and the lasers, the ini transaction (backup, conflict) and the picture, tested without a headset.
 add_executable(hset_test tools/hset_test.cpp vr/hset_paint.cpp vr/hset_store.cpp shared/ini_txn.cpp)
@@ -562,8 +578,13 @@ target_link_libraries(hset_test PRIVATE user32 gdi32)
 target_compile_options(hset_test PRIVATE /utf-8 /W4 /EHsc /permissive- /D_CRT_SECURE_NO_WARNINGS)
 # The T-pose measurement of the eye height and arm span (vr/body_calibration.h is its pure detector, tested below)
 target_sources(d2rl-vrcam PRIVATE vr/calibration.cpp vr/calibration_panel.cpp vr/calibration_input.cpp)
+# [onboarding] the first-start guide in the headset: when it asks the settings window for its Guide tab (the flow vr/first_start.h, tested: first_start_test; the page
+# is vr/hset_scene.h's, tested in hset_test)
+target_sources(d2rl-vrcam PRIVATE vr/first_start.cpp)
 # Controller haptics ([openxr] haptics): the mailbox, the hit observer and the flush; the logic is vr/haptics_pattern.h, tested without a headset.
 target_sources(d2rl-vrcam PRIVATE vr/haptics.cpp)
+# [hands] shield_stow_no_block: the hook on the game's block check (the rule is vr/stowed_block.h, stowed_block_test above)
+target_sources(d2rl-vrcam PRIVATE vr/stowed_block.cpp)
 add_executable(haptics_test cleanroom/tests/haptics_test.cpp)
 target_include_directories(haptics_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
 target_compile_options(haptics_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
@@ -1116,3 +1137,8 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/body_calibration_test.cpp
     target_include_directories(calibration_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
     target_compile_options(calibration_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 endif()
+# The first-start guide's flow (vr/first_start.h: when it asks the settings window for its Guide tab, how it ends) and its pages' words
+# (vr/first_start_pages.h), on synthetic frames: first_start_test
+add_executable(first_start_test cleanroom/tests/first_start_test.cpp)
+target_include_directories(first_start_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_options(first_start_test PRIVATE /utf-8 /W4 /EHsc /permissive-)

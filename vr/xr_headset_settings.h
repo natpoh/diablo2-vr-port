@@ -51,6 +51,7 @@ void HsStep(D2RVR_XrInput& in, bool focused) {
     // what it had stays released until let go
     if (skillwheel::SettingsTabOn()) skillwheel::SetSettingsHost(HsEnv());
     const bool on = g_cfg.headsetSettings && g_iniPath[0] && viewgate::F4() && !skillwheel::SettingsTabOn();
+    firststart::SetStandalone(on, g_hs.Open());   // the first-start guide can ask this panel for its Guide page while it is the host (vr/first_start.cpp)
     if (!on && !g_hs.Busy() && !g_hsStoreOn) return;   // off, and nothing of it left: no cost
     hset::FrameIn f;
     f.ms = UsNow() / 1000.0;
@@ -59,6 +60,7 @@ void HsStep(D2RVR_XrInput& in, bool focused) {
     f.laserHand = g_cfg.laserHand;
     f.calibrating = calib::Running();   // a T-pose measurement has the hands (the panel's "Calibrate body", or D2R VR Settings' button)
     f.env = HsEnv();
+    f.openGuide = on ? firststart::OpenRequest() : -1;
     f.view = on ? 4 : 0;   // the panel is F4's: the view it stands in is F4 (viewgate has no number)
     bool grips = true;
     for (int h = 0; h < 2; ++h) {
@@ -72,7 +74,7 @@ void HsStep(D2RVR_XrInput& in, bool focused) {
         f.present[h] = o.active != 0;
         grips = grips && o.squeeze > hset::kReleaseAt;
     }
-    const bool wake = on && (grips || g_hs.Open() || g_hs.Resuming());   // the chord is arming, the panel is up, or it will come back after a measurement
+    const bool wake = on && (grips || g_hs.Open() || g_hs.Resuming() || f.openGuide >= 0);   // the chord is arming, the panel is up, it will come back after a measurement, or the guide asks for it
     if (wake && !g_hsStoreOn) {   // its ini is read now, so the panel has values the moment it opens
         hset::store::SetLogger(g_log);
         hset::store::Start(g_iniPath);
@@ -100,6 +102,11 @@ void HsStep(D2RVR_XrInput& in, bool focused) {
         Log("vrcam: openxr - headset settings: opened (both hands are the panel's; nothing of them goes to the game)");
     }
     if (out.justClosed) Log("vrcam: openxr - headset settings: closed (what was held stays released until let go)");
+    if (out.guideOpened) {
+        firststart::OpenRequestTaken();
+        Log("vrcam: openxr - headset settings: up on the Guide page (the first-start guide asked for it)");
+    }
+    if (out.guideEnd) firststart::PanelEnded(out.guideEnd == 1);   // the guide's page was on show and the panel closed
     g_hsOpen.store(out.open);
     lowhp::SetPreview(out.open && hset::IsLifePage(g_hs.model.page), hset::LifeConfig(g_hs.model.Get()),
                       g_hs.model.page);   // on a vignette page: its rows are the preview's draft; nothing shows until "Preview 5 s"
@@ -125,6 +132,9 @@ void HsStep(D2RVR_XrInput& in, bool focused) {
         case hset::Do::Calibrate:   // the panel hides; the measurement's own prompt leads the player, and the panel comes back when it ends
             calib::RequestMeasure();
             Log("vrcam: openxr - headset settings: Calibrate body (the panel hides until the measurement is over)");
+            break;
+        case hset::Do::GuideDone:   // the guide's last page: the panel has closed, the guide is over (out.guideEnd told it)
+            Log("vrcam: openxr - headset settings: the first-start guide's Done");
             break;
         default: break;
     }

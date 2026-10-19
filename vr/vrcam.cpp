@@ -149,6 +149,8 @@ namespace gamestate { bool HandIsThrowPotion(int side); }   // the held item is 
 #include "panel_input.h"
 #include "shoulder_swap_wire.h"   // [hands] shoulder_swap: weapon sets by the grip behind a shoulder
 #include "shield_arm_wire.h"      // [hands] shoulder_draw, the shield: which forearm it is strapped to, or put away
+#include "stowed_block.h"         // [hands] shield_stow_no_block: a shield put away does not block (the game's block check told the hero has none)
+#include "sewer_interaction.h"     // the Kurast sewer stairs taken with A while standing (the game's Interact query, when it finds none)
 #include "ranged_hand_wire.h"     // [hands] shoulder_draw_ranged: a bow or crossbow put away behind a shoulder, drawn into the hand that reached
 #include "shoulder_swap.h"
 #include "weight_floor.h"         // [weight]: the floor a let-go weapon falls to is the game's ground under the hero
@@ -167,6 +169,7 @@ namespace gamestate { bool HandIsThrowPotion(int side); }   // the held item is 
 #include "anim_cut.h"          // [bow] quick_release, [hands] quick_throw: the action-frame flag of the hero's bow attack / throw rows moved earlier (vr/anim_cut.cpp)
 #include "bow_latency.h"       // [debug] bow_latency: the split of the second between a bow's release and its arrow (vr/bow_latency.h)
 #include "calibration.h"
+#include "first_start_wire.h"     // [onboarding]: the first-start guide in the headset (vr/first_start.h)
 #include "flatvr_pose.h"     // [flatvr]: FlatVR as good as native OpenXR - the roll back, the head's move, pairs on FlatVR's frames (docs/flatvr_sync.md)
 #include "haptics.h"
 #include "mob_bars.h"
@@ -1783,6 +1786,7 @@ void LoadSettings() {
     replay::g_fxAtHold.store(IniB(L"stereo", L"replay_fx", true));
     xr::LoadSettings(g_iniPath);   // [openxr]: the game in the headset itself (vr/xr.cpp)
     calib::LoadSettings(g_iniPath);   // [calibration]: the measured height and arm span (vr/calibration.cpp)
+    firststart::LoadSettings(g_iniPath);   // [onboarding]: the first-start guide (vr/first_start.cpp)
     g_xrThirdGaze.store(IniB(L"openxr", L"third_gaze", false));
     g_inputLog.store((int)IniF(L"debug", L"input_log", 1.0f));   // presses and their sources (InputLogF)
     {   // [debug] profile_draw: one 5 s profile of the draw thread each time it turns 1
@@ -2046,6 +2050,7 @@ void LoadSettings() {
     g_set.shoulderDraw.store(IniB(L"hands", L"shoulder_draw", false));
     g_set.shieldDraw.store(IniB(L"hands", L"shoulder_draw_shield", true));
     g_set.shieldStow.store(IniB(L"hands", L"shoulder_draw_shield_stow", false));
+    stowedblock::Configure(IniB(L"hands", L"shield_stow_no_block", false));
     g_set.rangedHolster.store(IniB(L"hands", L"shoulder_draw_ranged", false));
     g_set.rangedSwap.store(IniB(L"hands", L"shoulder_draw_ranged_swap", false));
     g_set.shoulderDrawStowMs.store(std::clamp(IniF(L"hands", L"shoulder_draw_stow_ms", 1000.0f), 0.0f, 5000.0f));
@@ -5722,6 +5727,7 @@ void FlatRawTick() {
             }
             D2RVR_XrInput in;
             flatraw::ToXrInput(t, flatraw::Step(clock, t.stamp), ++counter, D2RVRStampNow(), &in);
+            directinput::ShapeSticks(&in);   // the thumbsticks' dead zones ([direct] stick_deadzone_*_pct, vr/stick_shape.h), as native OpenXR's
             directinput::Feed(&in, gamestate::MenuOpen() || !g_inWorld.load());
         }
     }
@@ -6512,6 +6518,102 @@ void* DispatchAnswer(void* answer, bool off, void* peeked = nullptr) {
     return off ? nullptr : answer;
 }
 
+// ---- the Kurast sewer stairs (vr/sewer_interaction.h) ----------------------------------------------------------------------------
+// The game's Interact query (the controller's target for skill 357, this same lookup) feeds both its "(A) Interact" prompt and the
+// A press. When it finds nothing in Kurast Bazaar or Upper Kurast, VR F4, the sewer warp the head faces nearby is offered - if the
+// game's own reach and line-of-sight test (0x348650) accepts it. Any target the game found keeps priority. From bearstonem/d2r-pcvr
+// (MIT, v0.3.20: vr/vrcam.cpp NearbySewerInteraction), with its audit of the layout it reads.
+constexpr int kInteractSkill = 357;
+constexpr uint64_t RVA_SEWER_LOCAL_INDEX = 0x8B2D0, RVA_SEWER_CLIENT_PLAYER = 0x9A480, RVA_SEWER_REACH = 0x348650;
+
+bool SewerLayoutReady() {
+    static std::atomic<bool> ready{false};
+    if (ready.load()) return true;
+    static thread_local ULONGLONG tried = 0;
+    const ULONGLONG now = GetTickCount64();
+    if (now - tried < 1000) return false;
+    tried = now;
+    // The room's first unit and the next one (+0x160), its neighbours, the dynamic path's room, a tile's static x/y, and the reach and
+    // line test inside 0x348650 - untouched instructions inside each, as 3.3.93787 has them.
+    static const uint8_t first[] = {0x48,0x8B,0x81,0xA8,0,0,0,0xC3};
+    static const uint8_t next[] = {0x48,0x8B,0x81,0x60,0x01,0,0};
+    static const uint8_t neighbors[] = {0x8B,0x41,0x40,0x41,0x89,0,0x48,0x8B,0x01,0x48,0x89,0x02,0xC3};
+    static const uint8_t dynamic[] = {0x48,0x8B,0x41,0x20,0xC3};
+    static const uint8_t sy[] = {0x48,0x8B,0x46,0x38,0x8B,0x58,0x14};
+    static const uint8_t sx[] = {0x48,0x8B,0x46,0x38,0x8B,0x40,0x10};
+    static const uint8_t range[] = {0x4D,0x8B,0xF1,0x45,0x8B,0xF8,0x48,0x8B,0xF2,0x48,0x8B,0xF9};
+    static const uint8_t line[] = {0x41,0xB8,0x04,0x08,0,0,0x48,0x8B,0xD6,0x48,0x8B,0xCF,0xE8,0x5B,0x7B,0,0};
+    const bool found = Matches(0x2EFD90, first, sizeof first) && Matches(0x34B4CE, next, sizeof next) && Matches(0x2EFDE0, neighbors, sizeof neighbors) &&
+                       Matches(0x341C30, dynamic, sizeof dynamic) && Matches(0x18A88D, sy, sizeof sy) && Matches(0x18A8B8, sx, sizeof sx) &&
+                       Matches(0x348668, range, sizeof range) && Matches(0x348734, line, sizeof line);
+    static std::atomic<bool> told{false};
+    if (found) { ready.store(true); Log("vrcam: Kurast sewer stairs - the game's room lists and its reach/line test verified: A takes the stairs standing"); }
+    else if (!told.exchange(true)) Log("vrcam: Kurast sewer stairs - the game's layout is not 3.3.93787's (another build?): the game's own selection only");
+    return found;
+}
+
+// The client's local hero (the game's LocalIndex and ClientPlayer) and its area, by D2RLoader's own accessor. 0 when not there.
+uintptr_t SewerHero() noexcept {
+    const uintptr_t indexFn = d2rsig::Addr(RVA_SEWER_LOCAL_INDEX), playerFn = d2rsig::Addr(RVA_SEWER_CLIENT_PLAYER);
+    if (!indexFn || !playerFn) return 0;
+    __try {
+        const int index = reinterpret_cast<int (*)()>(indexFn)();
+        if (index < 0 || index >= 8) return 0;
+        const uintptr_t unit = reinterpret_cast<uintptr_t (*)(int)>(playerFn)(index);
+        if (unit < 0x10000 || *reinterpret_cast<const volatile uint32_t*>(unit) != 0) return 0;
+        return unit;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return 0;
+    }
+}
+D2RL::Reimplementations::GetLevelIdFromUnitFn SewerGetLevel() noexcept {   // apart from SewerLevel: a static's guard and __try don't mix (C2712)
+    static const auto getLevel = []() -> D2RL::Reimplementations::GetLevelIdFromUnitFn {
+        const HMODULE core = GetModuleHandleW(L"D2RCore.dll");
+        return core ? reinterpret_cast<D2RL::Reimplementations::GetLevelIdFromUnitFn>(
+                          GetProcAddress(core, MAKEINTRESOURCEA(D2RL::Reimplementations::GetLevelIdFromUnitInfo.ordinal)))
+                    : nullptr;
+    }();
+    return getLevel;
+}
+int SewerLevel(uintptr_t hero) noexcept {
+    const auto getLevel = SewerGetLevel();
+    if (!getLevel || !hero) return 0;
+    __try { return getLevel(reinterpret_cast<const void*>(hero)); } __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
+}
+
+uintptr_t NearbySewerWarp() {
+    if (!g_enabled.load() || !FullBody() || gamestate::MenuOpen()) return 0;
+    const uintptr_t hero = SewerHero();
+    const int level = SewerLevel(hero);
+    if (!sewerinteraction::Area(level) || !SewerLayoutReady()) return 0;
+    float bx = 0.0f, bz = 0.0f;   // the camera's back axis: the head looks along its negative
+    bool axes = false;
+    AcquireSRWLockShared(&g_skyLock);
+    const SkyView& view = g_skyView[g_eye.load() & 1];
+    if (view.axes_ok) { bx = view.axes[6]; bz = view.axes[8]; axes = true; }
+    ReleaseSRWLockShared(&g_skyLock);
+    if (!axes || !std::isfinite(bx) || !std::isfinite(bz) || bx * bx + bz * bz < 1e-6f) return 0;
+    float gx = 0.0f, gy = 0.0f;
+    AcquireSRWLockShared(&g_calLock); const Calib c = g_cal; ReleaseSRWLockShared(&g_calLock);
+    aimpoint::GridDir(atan2f(-bz, -bx), xr::Running(), c.ok, c.mirror != 0, c.angle, &gx, &gy);
+    const uintptr_t reach = d2rsig::Addr(RVA_SEWER_REACH);
+    const sewerinteraction::Result r = sewerinteraction::Find(hero, level, gx, gy,
+        [](uintptr_t at, auto& value) { return at >= 0x10000 && at <= UINTPTR_MAX - sizeof value && SafeRead(&value, reinterpret_cast<const void*>(at), sizeof value); },
+        [reach](uintptr_t local, uintptr_t tile) {
+            // the game's own reach AND line test: never through a wall, never farther than the game reaches
+            if (!reach) return false;
+            __try { return reinterpret_cast<int (*)(uintptr_t, uintptr_t, int, void*)>(reach)(local, tile, 0, nullptr) != 0; }
+            __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+        });
+    static thread_local ULONGLONG reported = 0;
+    if (const ULONGLONG now = GetTickCount64(); (r.warps || r.unit) && now - reported >= 1000) {
+        reported = now;
+        LogF("vrcam: Kurast sewer stairs - area %d: %u near, %u faced, %s (id %u, %.2f cells; %u units, %u tiles looked at)", level, r.warps, r.facing,
+             r.unit ? "offered to A" : "none in reach", r.id, r.distance, r.visited, r.tiles);
+    }
+    return r.unit;
+}
+
 void* HookSpellTarget(void* mgr, int skill) {
     const uintptr_t ret = (uintptr_t)_ReturnAddress();
     if (ret == g_dispatchTargetRet) {
@@ -6525,7 +6627,9 @@ void* HookSpellTarget(void* mgr, int skill) {
     }
     if (void* t = TouchedTarget(ret)) return t;
     if ((g_spellCast.directed && ret == g_spellTargetRet) || ClickTargetOff(ret)) return nullptr;
-    return OrigSpellTarget(mgr, skill);
+    void* t = OrigSpellTarget(mgr, skill);
+    if (!t && skill == kInteractSkill) t = reinterpret_cast<void*>(NearbySewerWarp());   // the Kurast sewer stairs, standing
+    return t;
 }
 
 void* HookSpellHover(int index) {
@@ -17066,6 +17170,7 @@ DWORD WINAPI UpdateThread(void*) {
             InstallSpellAimHooks();
             InstallSlotSkillHook();   // [hands] throw_auto_skill
             haptics::Install();   // only once [openxr] haptics asks for it
+            stowedblock::Install();   // only once [hands] shield_stow_no_block asks for it
             if (meleetouch::Wanted() || meleetouch::ThrowWanted() || meleetouch::StatusWanted()) meleetouch::Install();   // only once melee_touch, a throw's auto-aim or the wrist status asks for it
             engitem::InstallHook();   // only once belt_models or [debug] engine_unit asks for it
             owneffects::Install();    // [render] dim_own_effects: its two hooks only LOOK at the creation of overlays (in whether it is ticked or not, so a buff cast before it is ticked is known); a status line while it is on
@@ -17193,7 +17298,7 @@ void LoadReShade() {
              "an antivirus may also block it", err == ERROR_DLL_INIT_FAILED ? "its start said no" : "it could not be loaded");
 }
 
-static const char g_info_version[] = "0.171.0";
+static const char g_info_version[] = "0.172.0";
 
 // Who this is. D2RLoader prints "<name> <version> by <author>" for every plugin, and d2r-pcvr (a fork of our 0.152) carries the
 // same id, name and author as we did - "vrcam ... by BodyWalkVR" told a support log nothing. The id stays (the log file
@@ -17294,11 +17399,13 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     xr::SetLogger(&Log);   // before the settings: [openxr] on says so in the log
     xr::SetPointerAt(&PointerAtPixel);   // F1 / F3 in 3D: the game's pointer drawn where its mouse points on their ground
     calib::SetLogger(&Log);
+    firststart::SetLogger(&Log);
     standstill::SetLogger(&Log);
     straywalk::SetLogger(&Log);
     shottrace::SetLogger(&Log);
     straywalk::SetAttackFn(&standstill::AttackActive);
     calib::RegisterInput();   // the T-pose measurement takes both triggers from the input layer while it runs
+    firststart::RegisterInput();   // the first-start guide reads the right stick's up and down (it takes nothing)
     ReloadIfChanged();
     NoTemporalAA();
     MiniMapForHand();
@@ -17374,6 +17481,7 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     shoulderwire::SetWeaponSource([]() -> bool { return weight::Placed() || (g_set.shieldStow.load() && shieldarmwire::Arm() >= 0) || rangedwire::Side() >= 0; });   // [hands] shoulder_draw claims the grip behind a shoulder only while the weight model has a weapon or the shield can be put away
     shieldarmwire::SetHaptic([](int side, float amplitude, int ms) { haptics::Pulse(haptics::FromSkel(side), amplitude, ms); });   // the left shoulder, with the shield put away
     shieldarmwire::SetLog(&Log);
+    stowedblock::SetLog(&Log);
     rangedwire::SetLog(&Log);
     rangedwire::SetHaptic([](int side, float amplitude, int ms) { haptics::Pulse(haptics::FromSkel(side), amplitude, ms); });
     shieldarmwire::SetWielderSource(&weight::WieldingHands);   // [hands] shoulder_draw, the shield: weapon and shield are always on opposite arms

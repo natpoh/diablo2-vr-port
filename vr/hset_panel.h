@@ -34,6 +34,7 @@ struct FrameIn {
                                    // handed over to it comes back when this goes false
     video::Env env;                // the picture's sizes, for the Video page
     int view = 0;                  // the game's view now (1 = F1 ... 4 = F4, 0 = not known), for the lit button of the View row
+    int openGuide = -1;            // the first-start guide asks the panel to come up on its Guide page: the page to start on (vr/first_start.h), -1 none
 };
 
 struct FrameOut {
@@ -41,6 +42,8 @@ struct FrameOut {
     bool open = false;
     bool justOpened = false, justClosed = false;
     Action action;                 // Save / Recentre / Close to carry out (Close is done already; for the log)
+    bool guideOpened = false;      // it came up on the guide's page, as asked (openGuide)
+    int guideEnd = 0;              // it closed with the Guide page having been on show: 1 Done was pressed, 2 it was closed otherwise
     Pose panel;                    // where it stands
     bool beam = false;             // draw a beam from `hand`
     bool hit = false;              // and a dot where it meets the panel
@@ -61,7 +64,8 @@ class Controller {
     int ptr_ = 1;
     bool resume_ = false;                     // "Calibrate body" closed it: it comes back on the Body page when the measurement is done
 
-    void Close(const Pad raw[2], FrameOut* o) {
+    void Close(const Pad raw[2], FrameOut* o, Do how = Do::Close) {
+        if (model.GuideShown() && how != Do::Calibrate) o->guideEnd = model.GuideFinished() ? 1 : 2;   // (a measurement's hiding is no end: the panel comes back)
         model.Close();
         open_ = false;
         gate_.Arm(raw);
@@ -109,7 +113,8 @@ public:
         if (!open_) {
             if (armed) { gate_.Hold(0, kStick); gate_.Hold(1, kStick); }   // (a click already down stays the game's own, let go)
             const bool back = resume_ && in.head.valid;   // the measurement is done: the panel stands in front of the player again
-            if (back || (armed && clickEdge && in.head.valid)) {
+            const bool guide = !back && in.openGuide >= 0 && in.head.valid && in.snapshot.ready;   // the first-start guide asks for it (the ini is read: the offer can measure)
+            if (back || guide || (armed && clickEdge && in.head.valid)) {
                 open_ = true;
                 panel_ = {};
                 const Q q = YawQ(YawOf(in.head.q));
@@ -117,6 +122,10 @@ public:
                 panel_.p = Add(in.head.p, Rot(q, {0.0f, -kBelowM, -kAheadM}));
                 panel_.valid = true;
                 if (back) model.Resume(in.snapshot); else model.Open(in.snapshot);
+                if (guide) {
+                    model.OpenGuide(in.openGuide);
+                    o.guideOpened = true;
+                }
                 resume_ = false;
                 hover = {};
                 clicker_.Reset();
@@ -145,7 +154,7 @@ public:
         // closed from here: its controls stay zero until let go
         auto shut = [&](Do how) {
             o.action.what = how;
-            Close(in.pad, &o);
+            Close(in.pad, &o, how);
             o.open = false;
             for (int h = 0; h < 2; ++h) o.pad[h] = in.pad[h];
             gate_.Apply(o.pad);
@@ -197,6 +206,7 @@ public:
             r.action.view = act.view;
             return r;
         }
+        if (act.what == Do::GuideDone) return shut(Do::GuideDone);   // the guide's last page: the panel closes, the guide is over
         if (act.what == Do::Close || closeNow) return shut(Do::Close);
         o.action = act;
 

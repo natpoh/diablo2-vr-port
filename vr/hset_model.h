@@ -14,6 +14,7 @@
 #include "hset_defs.h"
 #include "hset_keys.h"
 #include "hset_video.h"
+#include "first_start.h"    // the Guide page: how many pages the first-start guide has
 #include "toolbar_type.h"   // the HUD page's toolbar type: a step over bar_place and hide (shared/)
 
 namespace hset {
@@ -107,6 +108,13 @@ constexpr Rect kToggle(int row) { return {584, kRowY0 + row * kRowStep, 408, kRo
 constexpr int kViews = 4;
 constexpr Rect kViewBtn(int i) { return {584 + i * 104, kRowY0 + kViewRow * kRowStep, 96, kRowH}; }
 constexpr Rect kStatus = {32, 566, 960, 40};
+// The Guide page (the first-start guide, vr/first_start.h): its title and "2 / 5", its rows from kGuideTop to kGuideBottom (vr/hset_scene.h lays them out by
+// how many lines each takes), and Back / Next under them (on the measurement's offer: Not now / Measure now; on the last page: Done).
+constexpr Rect kGuideTitle = {32, 146, 720, 38};
+constexpr Rect kGuideAt = {752, 146, 240, 38};
+constexpr int kGuideTop = 190, kGuideBottom = 510;
+constexpr Rect kGuideBack = {32, 516, 230, 46};
+constexpr Rect kGuideNext = {762, 516, 230, 46};
 // The Video page: a title row, a line about the sizes, eight presets in two rows of four, the slider (a stepper at each end),
 // the cost, and two notes. The slider's track is one hit zone; its stops run from kSlX0 to kSlX1 (the thumb's centre).
 constexpr Rect kVidTitle = {32, 148, 960, 36};
@@ -120,11 +128,12 @@ constexpr Rect kSlEnds = {112, 416, 800, 26};
 constexpr Rect kVidCost = {32, 450, 960, 30};
 constexpr Rect kVidLimit = {32, 482, 960, 30};
 constexpr Rect kVidNote = {32, 516, 960, 30};
-// The Body page: what it is for, the two buttons, what is stored, and the steps.
+// The Body page: what it is for, the three buttons (the measurement, its Forget, the first-start guide again), what is stored, and the steps.
 constexpr Rect kBodyTitle = {32, 148, 960, 36};
 constexpr Rect kBodyWhy = {32, 184, 960, 30};
-constexpr Rect kCalibrate = {32, 228, 540, 76};
-constexpr Rect kForget = {588, 228, 404, 76};
+constexpr Rect kCalibrate = {32, 228, 300, 76};
+constexpr Rect kForget = {344, 228, 320, 76};
+constexpr Rect kGuideBtn = {676, 228, 316, 76};   // the first-start guide (vr/first_start.h) again: the Guide page, from its first page
 constexpr Rect kBodyStored = {32, 322, 960, 38};
 constexpr Rect kBodyUse = {32, 360, 960, 30};
 constexpr Rect kBodyStep(int i) { return {48, 408 + i * 32, 944, 30}; }
@@ -137,7 +146,7 @@ constexpr Rect kApply = {772, 620, 220, 68};
 constexpr float kWidthM = 1.2f, kHeightM = kWidthM * kH / kW;
 constexpr float kAheadM = 1.0f, kBelowM = 0.05f;
 
-enum class Kind { None, Tab, Change, Apply, Close, Recentre, Preset, Slider, Calibrate, Forget, View, Preview };
+enum class Kind { None, Tab, Change, Apply, Close, Recentre, Preset, Slider, Calibrate, Forget, View, Preview, Guide, GuideBack, GuideNext };
 struct Hit {
     Kind kind = Kind::None;
     int index = -1;   // a tab's page, a Change's key, a Preset's number, a Slider's side along the track (-1: a stepper at its end), a View's number (1 = F1 ... 4 = F4)
@@ -175,9 +184,15 @@ inline Hit HitTest(int page, float u, float v) {
         if (kSlTrack.Contains(x, y)) return SliderAt(x);
         return {};
     }
+    if (page == kPageGuide) {   // what Back and Next do depends on the guide's page (the model's): the offer's Not now / Measure now, the last page's Done
+        if (kGuideBack.Contains(x, y)) return {Kind::GuideBack, -1, -1};
+        if (kGuideNext.Contains(x, y)) return {Kind::GuideNext, -1, 1};
+        return {};
+    }
     if (page == kPageBody) {
         if (kCalibrate.Contains(x, y)) return {Kind::Calibrate, -1, 0};
         if (kForget.Contains(x, y)) return {Kind::Forget, -1, 0};
+        if (kGuideBtn.Contains(x, y)) return {Kind::Guide, -1, 0};
         return {};
     }
     for (int r = 0; r < kRowsPerPage; ++r) {
@@ -194,7 +209,7 @@ inline Hit HitTest(int page, float u, float v) {
 }
 
 // -- the panel's state ---------------------------------------------------------------------------
-enum class Do { Nothing, Save, Close, Recentre, Calibrate, View, Preview };
+enum class Do { Nothing, Save, Close, Recentre, Calibrate, View, Preview, GuideDone };   // GuideDone: the last page's Done - the window closes, the guide is over
 struct Action {
     Do what = Do::Nothing;
     Request request;   // with Save
@@ -209,6 +224,8 @@ class Model {
     video::Env env_;
     int view_ = 0;               // the game's view now, 1 = F1 ... 4 = F4, 0 = not known
     std::array<std::string, kBindCount> bindBase_;   // the binding keys' lines as the file had them when the draft began
+    int resumePage_ = kPageBody;   // where the panel comes back from the measurement it handed the hands to: the Body page, or the Guide's
+    bool guideShown_ = false, guideDone_ = false;   // the Guide page has been on show since the panel opened / Done was pressed
     Values liveSeen_ = Defaults();   // the draft as the last Live call saw it
     double editAt_ = 0, firstAt_ = 0;   // the last / the first change of a live key that is not written yet (ms; 0: none)
     void Seen(const Snapshot& s) {
@@ -230,6 +247,7 @@ class Model {
 public:
     bool open = false, ready = false;
     int page = 0;
+    int guide = 1;           // the Guide page's page: firststart::kOfferPage (0) or 1 .. kGuidePages
     Result result = Result::None;
     uint64_t revision = 0;   // moves with everything the picture shows
 
@@ -266,9 +284,23 @@ public:
         ++revision;
     }
 
+    // The first-start guide's page (vr/first_start.h): the window comes up on it (the guide asks for it on the first start, or the Body page's button).
+    void OpenGuide(int sub) {
+        page = kPageGuide;
+        guide = std::clamp(sub, firststart::kOfferPage, firststart::kGuidePages);
+        guideShown_ = true;
+        ++revision;
+    }
+    // The Guide page was on show since the panel opened (so that closing the panel ends the guide), and Done was pressed.
+    bool GuideShown() const { return guideShown_; }
+    bool GuideFinished() const { return guideDone_; }
+
     void Open(const Snapshot& s) {
         open = true;
         page = 0;
+        guide = 1;
+        guideShown_ = guideDone_ = false;
+        resumePage_ = kPageBody;
         base_ = draft_ = s.values;
         baseFile_ = s.file;
         bindBase_ = s.bind;
@@ -282,9 +314,10 @@ public:
         pendingMask_ = 0;
         ++revision;
     }
-    // The panel comes back after the measurement it handed the hands to: on the Body page, with what the player had not
-    // applied still in the draft (a fresh start when there was nothing).
+    // The panel comes back after the measurement it handed the hands to: on the page it asked from (the Body page; the Guide's offer: the guide's
+    // first page), with what the player had not applied still in the draft (a fresh start when there was nothing).
     void Resume(const Snapshot& s) {
+        const int back = resumePage_, sub = guide;
         if (!Dirty()) {
             Open(s);
         } else {
@@ -295,7 +328,9 @@ public:
             pendingMask_ = 0;
             serial_ = std::max(serial_, s.sequence);
         }
-        page = kPageBody;
+        resumePage_ = kPageBody;
+        page = back;
+        if (back == kPageGuide) OpenGuide(sub);
         result = Result::None;
         ++revision;
     }
@@ -352,8 +387,37 @@ public:
         switch (hit.kind) {
             case Kind::Close: a.what = Do::Close; return a;
             case Kind::Recentre: a.what = Do::Recentre; return a;
+            case Kind::Guide: OpenGuide(1); return a;   // the first-start guide: its page, here, from the first (nothing of the ini)
+            case Kind::GuideBack:   // the offer's Not now goes on to the guide; the first page has nothing before it
+                if (page != kPageGuide) return a;
+                if (guide == firststart::kOfferPage) guide = 1;
+                else if (guide > 1) --guide;
+                else return a;
+                ++revision;
+                return a;
+            case Kind::GuideNext:
+                if (page != kPageGuide) return a;
+                if (guide == firststart::kOfferPage) {   // Measure now: the measurement writes the ini; the panel comes back on the guide's first page
+                    if (!ready || Busy()) return a;
+                    resumePage_ = kPageGuide;
+                    guide = 1;
+                    a.what = Do::Calibrate;
+                    return a;
+                }
+                if (guide >= firststart::kGuidePages) {   // Done
+                    guideDone_ = true;
+                    a.what = Do::GuideDone;
+                    return a;
+                }
+                ++guide;
+                ++revision;
+                return a;
             case Kind::Tab:
-                if (hit.index >= 0 && hit.index < PageCount() && hit.index != page) { page = hit.index; ++revision; }
+                if (hit.index >= 0 && hit.index < PageCount() && hit.index != page) {
+                    page = hit.index;
+                    if (page == kPageGuide) guideShown_ = true;
+                    ++revision;
+                }
                 return a;
             case Kind::Change: {
                 if (!ready || Busy() || hit.index < 0 || hit.index >= kCount) return a;

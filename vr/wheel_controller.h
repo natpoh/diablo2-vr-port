@@ -16,9 +16,12 @@
 // runs); the old settings panel's chord - both grips a third of a second, then a thumbstick click - opens it on the Settings tab (on the
 // Skills tab it switches to Settings, on Settings it closes). Closing is the window's own: the long press again, B / Y / menu, or the
 // pages' Close button. Calibrate body closes it for the measurement and brings it back on the Body page when that is over.
+// The last page, Guide, is the first-start guide (vr/first_start.h): the guide asks for the window (SettingsIn::openGuide) and it comes up on that page, on
+// the offer of the measurement or the first page; Back and Next page it with the laser, Done (or any way of closing the window with the page having been on
+// show) ends the guide (Step::guideEnd); the offer's Measure now hides the window like Calibrate body and brings it back on the guide's first page.
 //
 // The window flips like pages (vr/wheel_flip.h): a flick of a thumbstick left / right, or a tap of the left / right grip, moves one place along
-// SKILLS | SETTINGS: View | Options | Video | Body | Life | Look | HUD | Belt | Melee | Left | Right (stopping at the ends), and so does a click on the arrow at the window's edge; dots at its foot
+// SKILLS | SETTINGS: View | Options | Video | Body | Life | Look | HUD | Belt | Melee | Left | Right | Guide (stopping at the ends), and so does a click on the arrow at the window's edge; dots at its foot
 // show where it stands. With the tab strip the window takes both thumbsticks while it is up (the hero neither walks nor turns with them) and after it
 // closes until each is back in the middle.
 //
@@ -78,6 +81,7 @@ struct SettingsIn {
     int view = 4;                 // the game's view, 1 = F1 ... 4 = F4 (the window is F4's)
     bool calibrating = false;     // the T-pose measurement runs (or is about to): the window is not to be had, and comes back when it is over
     bool chordOn = true;          // both grips and a thumbstick click open it on the Settings tab
+    int openGuide = -1;           // the first-start guide asks for the window on Settings > Guide (vr/first_start.h): the guide's page to start on, -1 none
 };
 
 constexpr float kBeamM = 1.5f;   // the beam's length where it hits nothing
@@ -105,7 +109,9 @@ struct Step {
     Request req;
     Layer layer;
     hset::Action settings;                // the Settings tab asks for: Save (a request for the ini's thread), Recentre, Calibrate, View
-    bool wantStore = false;               // the ini's thread should be running: the window is up, or comes back, or its chord is arming
+    bool wantStore = false;               // the ini's thread should be running: the window is up, or comes back, or its chord is arming, or the guide asks for it
+    bool guideOpened = false;             // the window came up on the Guide page, as SettingsIn::openGuide asked
+    int guideEnd = 0;                     // the window closed with the Guide page having been on show: 1 Done was pressed, 2 it was closed otherwise
 };
 
 class Controller {
@@ -265,8 +271,10 @@ public:
             setTab = int(Tab::Settings);
         }
         const bool resumeNow = tabsOn && resume_ && !wasOpen && allowedUi && f.head.valid == 1;   // Calibrate body: the measurement is over
+        // the first-start guide asks for the window (its first start): up on Settings > Guide once the ini is read (the offer can measure)
+        const bool guideNow = tabsOn && !resumeNow && host->openGuide >= 0 && !wasOpen && allowedUi && f.head.valid == 1 && host->ini.ready;
         const bool toggle = allowedUi && (wasOpen || f.head.valid == 1) &&   // (a held place is not a place to hang it)
-                            ((stickEdge && chordHeld) || request || holdClose || chordToggle || resumeNow);
+                            ((stickEdge && chordHeld) || request || holdClose || chordToggle || resumeNow || guideNow);
         if (toggle && !wasOpen) panel_ = PanelFor(f.head, cfg_);
 
         // the pointing hand's ray against the panel
@@ -297,7 +305,9 @@ public:
                 if (ph.dist > 0.0f) tiles::SheetPoint(ph.u, ph.v, &su, &sv);
                 if (pointer) settingsHover = hset::HitTest(settings_.page, su, sv);
                 settingsAct = clicker_.Step(settings_, settingsHover, pointer, click, trig, ph.dist > 0.0f, su * float(tiles::kSheetW), f.time * 1000.0);
-                if (settingsAct.what == hset::Do::Close || settingsAct.what == hset::Do::Calibrate || settingsAct.what == hset::Do::View) closeAsked = true;
+                if (settingsAct.what == hset::Do::Close || settingsAct.what == hset::Do::Calibrate || settingsAct.what == hset::Do::View ||
+                    settingsAct.what == hset::Do::GuideDone)
+                    closeAsked = true;
                 if (settingsAct.what == hset::Do::Calibrate) resume_ = true;
             }
             if (settingsAct.what == hset::Do::Nothing) settingsAct = settings_.Live(f.time * 1000.0);   // the belt writes itself a moment after the last change
@@ -318,7 +328,7 @@ public:
         in.time = f.time;
         in.allowed = allowedUi;
         in.tabs = tabsOn;
-        in.openTab = settingsChord || resumeNow ? int(Tab::Settings) : -1;
+        in.openTab = settingsChord || resumeNow || guideNow ? int(Tab::Settings) : -1;
         in.setTab = setTab;
         in.close = closeAsked;
         in.session = f.session;
@@ -360,11 +370,16 @@ public:
                     resume_ = false;
                 } else {
                     settings_.Open(host->ini);
+                    if (guideNow) {
+                        settings_.OpenGuide(host->openGuide);
+                        out.guideOpened = true;
+                    }
                 }
                 settings_.SetEnv(host->env);
                 settings_.SetView(host->view);
                 clicker_.Reset();
             } else if (!open && wasOpen) {
+                if (settings_.GuideShown() && !resume_) out.guideEnd = settings_.GuideFinished() ? 1 : 2;   // (the measurement's hiding is no end: it comes back)
                 settings_.Close();
                 clicker_.Reset();
             }
@@ -372,7 +387,7 @@ public:
             model_.SetPlace(open ? FlipPlace() : 0);
             out.settings = settingsAct;
             if (settingsAct.what == hset::Do::Save && out.feedback == Feedback::None) out.feedback = Feedback::Applied;
-            out.wantStore = open || resume_ || chord_.Arming() || toggle;
+            out.wantStore = open || resume_ || chord_.Arming() || toggle || host->openGuide >= 0;
         }
 
         // the trigger's cast, while the wheel is closed

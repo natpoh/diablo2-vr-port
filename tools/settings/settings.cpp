@@ -440,11 +440,13 @@ std::vector<Item> g_items = {
            L"bound by that one thread. Other processors: nothing changes. The log says which cores were taken. Live."),
     Group(L"Quality"),
     Choice(L"@preset", L"preset", L"Quality preset", 2, {L"Potato", L"Low", L"Medium", L"High", L"Custom"},
-           L"Sets the settings below at once. Potato: as Low, but the 3D made from ReShade's depth instead of real stereo "
+           L"Sets the settings below at once. Potato: as Low, but no ceiling, the 3D made from ReShade's depth instead of real stereo "
            L"(one frame a picture, not two) and the headset at 72 Hz, the game capped at it; the others 90 Hz. "
-           L"Low: 1 room ring, models out to 150, near fog (30 to 100; in caves 60 to 100), no ceiling. "
-           L"Medium: 2 rings, 200, fog 30 to 200 (in caves 100 to 200), ceiling on. High: 3 rings, 400, finer ceiling relief and torches lighting "
-           L"the ceiling (heavy on the CPU). Low, Medium and High keep real stereo. Changing any of them by hand shows Custom."),
+           L"Low: 1 room ring, models out to 150, near fog (30 to 100; in caves 60 to 100), ceiling on with coarse relief (8 steps). "
+           L"Medium: 2 rings, 200, fog 30 to 200 (in caves 100 to 200), ceiling on. High: 3 rings, 400, fog 30 to 250, finer ceiling relief and torches lighting "
+           L"the ceiling (heavy on the CPU). Every preset also sets the 3D in the headset: FlatVR stereo (Low, Medium, High) or FlatVR 3D depth "
+           L"(Potato) - it switches Native OpenXR off (set it again on the Home page). With Native OpenXR on this shows Custom. "
+           L"Changing any of them by hand shows Custom."),
     Slider(L"render", L"rings", L"Room rings around the hero", 1, 8, 1, 4, L"Extra room rings around the hero. With fog, 4-6 is enough."),
     Slider(L"render", L"model_radius", L"Model visibility radius", 150, 1000, 50, 200, L"The game's own is 150."),
     Toggle(L"fog", L"enabled", L"Distance fog", 0,
@@ -482,7 +484,7 @@ std::vector<Item> g_items = {
            L"The field of view follows the size and distance of the FlatVR screen in BodyWalk, like an OpenXR game's view.")),
     Needs(L"camera", L"fov_from_flatvr", 0, Slider(L"camera", L"fov", L"Field of view, °", 20, 120, 1, 60,
            L"Vertical field of view of the game camera, used when the box above is off.")),
-    Slider(L"camera", L"pitch", L"Horizon (lower = looks higher)", -120, 30, 1, -45,
+    Slider(L"camera", L"pitch", L"Horizon (lower = looks higher)", -120, 30, 1, -60,
            L"Pitch on top of the game's own camera, degrees. -60 = level with the horizon."),
     Only(kVr, Toggle(L"head", L"yaw_from_head", L"Turn with the headset", 1, L"Needs BodyWalk with the Game Link plugin.")),
     Only(kVr, Needs(L"head", L"yaw_from_head", 1, Invert(L"head", L"yaw_sign", L"Reverse turning", -1, L"Tick if turning the head left turns the view right."))),
@@ -506,7 +508,7 @@ std::vector<Item> g_items = {
            L"the druid the tallest). The world's scale follows it."),
     Needs(L"camera", L"height_auto", 1, Slider(L"camera", L"eye_offset", L"Eye height correction", -2, 2, 0.05f, 0,
            L"Added to the hero's eye height. World units, about 0.24 m each.")),
-    Needs(L"camera", L"height_auto", 0, Slider(L"camera", L"height", L"Fixed eye height", 0, 15, 0.1f, 6.5f,
+    Needs(L"camera", L"height_auto", 0, Slider(L"camera", L"height", L"Fixed eye height", 0, 15, 0.1f, 8,
            L"Eye point above the ground under the hero, used when the class height is off. World units, about 0.24 m each.")),
     Slider(L"camera", L"distance", L"Camera ahead (-) / behind (+)", -5, 10, 0.1f, -1,
            L"Camera behind the eye point; below 0 = in front of the face."),
@@ -578,6 +580,19 @@ std::vector<Item> g_items = {
            L"somewhere safe. F4 only.")),
     Only(kVr, Button(L"@run", L"calibration_forget", L"Forget the measurement",
            L"Clears the stored measurement: the height from BodyWalk / \"My height\" and \"Arm length (scale)\" apply again.")),
+    // [onboarding] (vr/first_start.h): the guide in the headset at the first start in F4 - the T-pose measurement offered first, then what to press for what
+    Only(kVr, Group(L"First-start guide (in the headset)")),
+    Only(kVr, Toggle(L"onboarding", L"show", L"Show the first-start guide", 1,
+           L"The first time you stand in the world in first person (F4) with Native OpenXR and Controls without BodyWalk, a panel in front of you "
+           L"offers the T-pose measurement (when none is stored), then shows in five short pages what to press to open what: the inventory, the "
+           L"map, the skill panel, the belt, the settings in the headset, the pause menu and the F views. It is the Guide page of the headset settings (the window "
+           L"the long press of the right stick click opens): Next and Back with the laser, Done on the last page. It never presses anything and takes no button "
+           L"of its own: the game runs on behind it. Finished or closed (closing the window closes it), it ticks \"First-start guide seen\". Unticked: it never "
+           L"comes up by itself; the headset settings' Body page has a First-start guide button, and the Guide tab shows it, either way. Live.")),
+    Needs(L"onboarding", L"show", 1, Only(kVr, Toggle(L"onboarding", L"done", L"First-start guide seen", 0,
+           L"Ticked by the game when you finish or close the guide. Untick it to see the guide again the next time you stand in the world in F4 "
+           L"(with the game running: in a few seconds). Not in the file at all (settings from before 0.171): seen if a measurement is stored, "
+           L"not seen otherwise. Live."))),
     Group(L"Body"),
     Only(kVr, Toggle(L"body", L"lock", L"No game animation above the pelvis (F4)", 1,
            L"Nothing above the pelvis follows the game's animation: arms and hands come from the controllers, "
@@ -599,11 +614,11 @@ std::vector<Item> g_items = {
     Needs(L"arms", L"mode", 2, Needs(L"hands", L"wrist", 1, Slider(L"hands", L"roll", L"Hand roll, °", -180, 180, 5, 0,
            L"Turns the hand about the forearm; mirrored for the left hand."))),
     Only(kVr, Group(L"Effects around the hero (F4)")),
-    Only(kVr, Toggle(L"render", L"dim_own_effects", L"Draw the hero's own effects fainter", 0,
+    Only(kVr, Toggle(L"render", L"dim_own_effects", L"Draw the hero's own effects fainter (not working yet)", 0,
+           L"NOT WORKING YET (0.170): the log shows the effect's \"Fade\" being set, but nothing changes on screen. "
            L"Bone Armor wraps round the eyes of the first-person view and blinds. On: the effects that sit on the hero - the overlays of his own states (Bone Armor, Frozen / "
            L"Shiver / Chilling Armor, Energy Shield, Cyclone Armor, Blade Shield, Fade ...), each with its casting flash, and the aura rings at his feet - are faded to the percentages "
-           L"below, with the effect's own \"Fade\" parameter (the one the game fades an overlay with when its unit fades; 0 % hides the effect). Not yet seen working in the game - a first version "
-           L"did nothing - so it is off in the settings that come with the mod. Visual only: the buff and its numbers are the game's; monsters', mercenaries' and other players' effects, hits and "
+           L"below, with the effect's own \"Fade\" parameter (the one the game fades an overlay with when its unit fades; 0 % hides the effect). Off in the settings that come with the mod. Visual only: the buff and its numbers are the game's; monsters', mercenaries' and other players' effects, hits and "
            L"skills' casts are drawn as ever. Holy Shield is a colour on the shield, not an overlay: not covered. An effect already on when you tick this is dimmed when it is cast "
            L"again; the log says, for every effect, what was found and dimmed. First person (F4) only. Live.")),
     Needs(L"render", L"dim_own_effects", 1, Only(kVr, Slider(L"render", L"dim_own_effects_pct", L"Own effects left, %", 0, 100, 5, 30,
@@ -633,9 +648,28 @@ std::vector<Item> g_items = {
     Needs(L"turn", L"right_stick", 1, Slider(L"turn", L"speed", L"Smooth turn speed, °/s", 10, 720, 10, 120, L"Degrees per second at full deflection; used while smooth turning is on.")),
     Needs(L"turn", L"right_stick", 1, Slider(L"@turn", L"snap", L"Snap turn angle, °", 15, 180, 15, 30, L"Degrees turned by one flick; used while smooth turning is off.")),
     Needs(L"turn", L"right_stick", 1, Invert(L"turn", L"sign", L"Reverse turning", 1, L"Tick if pushing right turns you left.")),
+    // The thumbsticks' dead zones against stick drift (a player's wish, 2026-10-18): [direct] keys, read live by the plugin (vr/stick_shape.h, vr/direct_input.cpp)
+    // whatever "Controls without BodyWalk" says - the VR controllers' sticks, native OpenXR and FlatVR's raw controllers alike. 0 % and 100 % = as before.
+    Only(kVr, Group(L"Thumbsticks: dead zone (stick drift)")),
+    Only(kVr, Slider(L"direct", L"stick_deadzone_left_pct", L"Left stick dead zone, %", 0, 50, 1, 0,
+           L"A left stick that drifts (walks or moves the menu by itself, or the belt flick does not re-arm): raise this until it rests. "
+           L"Inside this much of a full push the stick reads as centred; past it the push starts again from zero, so there is no jump, "
+           L"and it is measured on the stick's length, so diagonals are cut no sooner than a straight push. 0 = none (as before). "
+           L"The VR controllers only (native OpenXR, and FlatVR with its raw controllers), not a gamepad. Live.")),
+    Only(kVr, Slider(L"direct", L"stick_outer_left_pct", L"Left stick full push at, %", 60, 100, 1, 100,
+           L"A left stick that never quite reaches a full push: from this much of its throw on it counts as fully pushed (the walk runs, a "
+           L"flick counts). 100 = only the rim (as before). Live.")),
+    Only(kVr, Slider(L"direct", L"stick_deadzone_right_pct", L"Right stick dead zone, %", 0, 50, 1, 0,
+           L"A right stick that drifts (the view turns by itself, or a snap turn or flick does not re-arm): raise this until it rests. "
+           L"Inside this much of a full push the stick reads as centred; past it the push starts again from zero, so there is no jump. "
+           L"0 = none (as before). The VR controllers only, not a gamepad. Live.")),
+    Only(kVr, Slider(L"direct", L"stick_outer_right_pct", L"Right stick full push at, %", 60, 100, 1, 100,
+           L"A right stick that never quite reaches a full push: from this much of its throw on it counts as fully pushed (the fastest smooth "
+           L"turn, a snap). 100 = only the rim (as before). Live.")),
     Group(L"Mouse and keyboard (no headset)"),
     Only(kVr, Toggle(L"input", L"mouse_look", L"Mouse look in VR views F2 and F4 too", 0,
-           L"Flat and VR view F3 always start with it, and VR F2 too while the switch below is on. The mouse turns the view "
+           L"Flat F2 and F3 always start with it, and VR F2 too while the switch below is on; never VR F3 (the game on the floor) "
+           L"or F1 in real geometry / 3D. The mouse turns the view "
            L"(the pointer stays in the middle as a crosshair, clicks go where you look), W A S D walk. F9 switches it in "
            L"the game - off frees the pointer for menus.")),
     Slider(L"input", L"mouse_speed", L"Mouse speed, ° per pixel", 0.02f, 1, 0.01f, 0.15f),
@@ -1008,7 +1042,7 @@ std::vector<Item> g_items = {
            L"Eye distance and the screen plane from the FlatVR screen and your height. "
            L"The two sliders below it are then unused."),
     Needs(L"stereo", L"true_scale", 1, Slider(L"stereo", L"eye_mm", L"My eye distance, mm", 45, 80, 0.5f, 63)),
-    Needs(L"stereo", L"true_scale", 0, Slider(L"stereo", L"ipd", L"Eye separation", 0, 1, 0.01f, 0.2f,
+    Needs(L"stereo", L"true_scale", 0, Slider(L"stereo", L"ipd", L"Eye separation", 0, 1, 0.01f, 0.27f,
            L"World units (the hero is ~7.5 tall, so 0.27 is about 6.4 cm). More = stronger 3D.")),
     Needs(L"stereo", L"true_scale", 0, Slider(L"stereo", L"convergence", L"Depth behind the screen", 0, 100, 0.5f, 15,
            L"The distance that sits on the FlatVR screen; farther goes deeper behind it. "
@@ -1812,7 +1846,7 @@ std::vector<Item> g_items = {
     ShowFor(L"hud", L"bar_place", kBarBody, Slider(L"hud", L"bar_spin_body", L"Rotate Z (in its plane), °", -180, 180, 1, 0, L"Spins the strip flat; 180 = the other way round.")),
     Group(L"Map in the headset"),
     Choice(L"hud", L"map_place", L"Where", 1, {L"Not shown", L"Left hand", L"Right hand", L"Low in front", L"Chest, low"},
-           L"Where FlatVR hangs the corner map taken out of the picture (Corner map: Out of the picture). "
+           L"Where the corner map taken out of the picture hangs (Corner map: Out of the picture; FlatVR hangs it, native OpenXR hangs it itself). "
            L"The left hand by default: the right one is usually the working hand. "
            L"Show or hide it from a button or a gesture: BodyWalk's app action \"FlatVR Game Map\"."),
     Toggle(L"hud", L"map_orb", L"A magic orb", 1, L"A see-through glass ball in the palm with the map laid over it. Off: a flat panel."),
@@ -1889,7 +1923,8 @@ std::vector<Item> g_items = {
            L"The game draws a roof only from above, so from under a kept roof the sky showed through it. On: the materials of the "
            L"roofs (a roof model's material named \"roof\") are built double-sided, and their underside is drawn. A material is "
            L"built when its area loads: the change shows in the next area you go to (what is loaded now keeps its sides until the "
-           L"game loads it again, at the latest the next start). VR only. Nothing else is changed. From bearstonem/d2r-pcvr (MIT). "
+           L"game loads it again, at the latest the next start). The same for the walls and stairs of the Kurast sewer entrances "
+           L"(Act 3), whose backs showed the sky from the stairs. VR only. Nothing else is changed. From bearstonem/d2r-pcvr (MIT). "
            L"Off: the game's own."),
     Toggle(L"render", L"light_bounds_fix", L"Fix the game's lighting at a square or wide window", 1,
            L"The game cuts the picture into 32 x 20 tiles and finds each tile's depth range for its lights with a shader that "
@@ -1965,7 +2000,7 @@ std::vector<Item> g_items = {
     Group(L"Cave ceiling"),
     Toggle(L"ceiling", L"enabled", L"Ceiling in caves (via ReShade)", 0,
            L"A stone vault over the black void in caves, at its true depth in both eyes. "
-           L"First person only; for now the caves of act 1."),
+           L"First person only; for now act 1's caves, crypts, barracks, catacombs and cathedral and act 2's sewers and palace."),
     Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"scale", L"Tile size", 1, 100, 0.5f, 10,
            L"World units per tile of the relief; the stone picture spans 4 tiles.")),
     Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"steps", L"Relief steps", 4, 32, 1, 12,
@@ -2044,7 +2079,7 @@ std::vector<Item> g_items = {
            L"2 its coloured parts (bricks in grey mortar). Needs a picture.")),
     Needs(L"ceiling", L"enabled", 1, File(L"ceiling", L"texture_act1_caves", L"Picture", L"D2R_Sky_ours\\D2R_Ceiling_act1_caves_walls.png",
            L"A square picture that tiles. A bare name is looked for in reshade-shaders\\Textures; a full path works too. "
-           L"Empty (x) = D2R_Ceiling_act1_caves.png, else the caves' stone.")),
+           L"Empty (x) = the common picture ([ceiling] texture, the act 1 caves' stone); missing too, the shader's own stone.")),
     Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"tex_size_act1_caves", L"Picture size (0 = 4 tiles)", 0, 200, 1, 0,
            L"World units one picture spans: smaller = finer bricks or stones. 0 = four tiles (Tile size above).")),
     Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"contrast_act1_caves", L"Stone contrast", 0, 4, 0.05f, 1.6f,
@@ -2067,7 +2102,7 @@ std::vector<Item> g_items = {
            L"2 its coloured parts (bricks in grey mortar). Needs a picture.")),
     Needs(L"ceiling", L"enabled", 1, File(L"ceiling", L"texture_act1_crypt", L"Picture", L"D2R_Sky_ours\\D2R_Ceiling_act1_crypt.png",
            L"A square picture that tiles. A bare name is looked for in reshade-shaders\\Textures; a full path works too. "
-           L"Empty (x) = D2R_Ceiling_act1_crypt.png, else the caves' stone.")),
+           L"Empty (x) = the common picture ([ceiling] texture, the act 1 caves' stone); missing too, the shader's own stone.")),
     Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"tex_size_act1_crypt", L"Picture size (0 = 4 tiles)", 0, 200, 1, 0,
            L"World units one picture spans: smaller = finer bricks or stones. 0 = four tiles (Tile size above).")),
     Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"contrast_act1_crypt", L"Stone contrast", 0, 4, 0.05f, 1.6f,
@@ -2091,7 +2126,7 @@ std::vector<Item> g_items = {
            L"2 its coloured parts (bricks in grey mortar). Needs a picture.")),
     Needs(L"ceiling", L"enabled", 1, File(L"ceiling", L"texture_act1_barracks", L"Picture", L"D2R_Sky_ours\\D2R_Ceiling_act1_crypt.png",
            L"A square picture that tiles. A bare name is looked for in reshade-shaders\\Textures; a full path works too. "
-           L"Empty (x) = D2R_Ceiling_act1_barracks.png, else the caves' stone.")),
+           L"Empty (x) = the common picture ([ceiling] texture, the act 1 caves' stone); missing too, the shader's own stone.")),
     Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"tex_size_act1_barracks", L"Picture size (0 = 4 tiles)", 0, 200, 1, 0,
            L"World units one picture spans: smaller = finer bricks or stones. 0 = four tiles (Tile size above).")),
     Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"contrast_act1_barracks", L"Stone contrast", 0, 4, 0.05f, 1.6f,
@@ -2114,7 +2149,7 @@ std::vector<Item> g_items = {
            L"2 its coloured parts (bricks in grey mortar). Needs a picture.")),
     Needs(L"ceiling", L"enabled", 1, File(L"ceiling", L"texture_act1_catacombs", L"Picture", L"D2R_Sky_ours\\D2R_Ceiling_act1_crypt_brick.png",
            L"A square picture that tiles. A bare name is looked for in reshade-shaders\\Textures; a full path works too. "
-           L"Empty (x) = D2R_Ceiling_act1_catacombs.png, else the caves' stone.")),
+           L"Empty (x) = the common picture ([ceiling] texture, the act 1 caves' stone); missing too, the shader's own stone.")),
     Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"tex_size_act1_catacombs", L"Picture size (0 = 4 tiles)", 0, 200, 1, 0,
            L"World units one picture spans: smaller = finer bricks or stones. 0 = four tiles (Tile size above).")),
     Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"contrast_act1_catacombs", L"Stone contrast", 0, 4, 0.05f, 1.2f,
@@ -2137,7 +2172,7 @@ std::vector<Item> g_items = {
            L"2 its coloured parts (bricks in grey mortar). Needs a picture.")),
     Needs(L"ceiling", L"enabled", 1, File(L"ceiling", L"texture_act1_cathedral", L"Picture", L"D2R_Sky_ours\\D2R_Ceiling_act1_barracks_smooth.png",
            L"A square picture that tiles. A bare name is looked for in reshade-shaders\\Textures; a full path works too. "
-           L"Empty (x) = D2R_Ceiling_act1_cathedral.png, else the caves' stone.")),
+           L"Empty (x) = the common picture ([ceiling] texture, the act 1 caves' stone); missing too, the shader's own stone.")),
     Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"tex_size_act1_cathedral", L"Picture size (0 = 4 tiles)", 0, 200, 1, 0,
            L"World units one picture spans: smaller = finer bricks or stones. 0 = four tiles (Tile size above).")),
     Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"contrast_act1_cathedral", L"Stone contrast", 0, 4, 0.05f, 1.2f,
@@ -2170,7 +2205,7 @@ std::vector<Item> g_items = {
            L"2 its coloured parts (bricks in grey mortar). Needs a picture.")),
     Needs(L"ceiling", L"enabled", 1, File(L"ceiling", L"texture_act2_sewer", L"Picture", L"D2R_Sky_ours\\D2R_Ceiling_act1_barracks_smooth.png",
            L"A square picture that tiles. A bare name is looked for in reshade-shaders\\Textures; a full path works too. "
-           L"Empty (x) = D2R_Ceiling_act2_sewer.png, else the caves' stone.")),
+           L"Empty (x) = the common picture ([ceiling] texture, the act 1 caves' stone); missing too, the shader's own stone.")),
     Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"tex_size_act2_sewer", L"Picture size (0 = 4 tiles)", 0, 200, 1, 0,
            L"World units one picture spans: smaller = finer bricks or stones. 0 = four tiles (Tile size above).")),
     Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"contrast_act2_sewer", L"Stone contrast", 0, 4, 0.05f, 1.2f,
@@ -2203,7 +2238,7 @@ std::vector<Item> g_items = {
            L"2 its coloured parts (bricks in grey mortar). Needs a picture.")),
     Needs(L"ceiling", L"enabled", 1, File(L"ceiling", L"texture_act2_palace_clean", L"Picture", L"D2R_Sky_ours\\D2R_Ceiling_act1_crypt_brick.png",
            L"A square picture that tiles. A bare name is looked for in reshade-shaders\\Textures; a full path works too. "
-           L"Empty (x) = D2R_Ceiling_act2_palace_clean.png, else the caves' stone.")),
+           L"Empty (x) = the common picture ([ceiling] texture, the act 1 caves' stone); missing too, the shader's own stone.")),
     Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"tex_size_act2_palace_clean", L"Picture size (0 = 4 tiles)", 0, 200, 1, 0,
            L"World units one picture spans: smaller = finer bricks or stones. 0 = four tiles (Tile size above).")),
     Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"contrast_act2_palace_clean", L"Stone contrast", 0, 4, 0.05f, 1.2f,
@@ -2411,7 +2446,7 @@ std::vector<Item> g_items = {
            L"The string's place moved out of the palm, the way the fingers curl: + into the crook of the curled fingers, - toward the back of "
            L"the hand. 0.8 puts it on the finger's inner side, not through the middle of the bone. Live.")),
     Toggle(L"bow", L"quick_release", L"Quick release: the arrow leaves earlier in the attack (changes the game's timing)", 0,
-           L"A CHANGE OF THE GAME'S TIMING, off by default. The game makes a bow's arrow at one frame of its attack animation (for an Amazon frame 6 of 14: "
+           L"A CHANGE OF THE GAME'S TIMING (off when the key is missing; on in the settings that come with the mod). The game makes a bow's arrow at one frame of its attack animation (for an Amazon frame 6 of 14: "
            L"0.24 s after the animation starts, ~0.3 s after the release). On: that frame is moved earlier in the game's animation table, so the arrow is created "
            L"~0.2 s sooner INSIDE THE SAME ATTACK: the animation's length and the attack rate stay (the next attack cannot start earlier), the damage, mana and "
            L"arrows are the game's, but they happen earlier, and a monster's hit in those first ~0.2 s no longer cancels the shot (it has left already). "
@@ -2547,7 +2582,7 @@ std::vector<Item> g_items = {
            L"(\"explode where and when the potion lands\" below, experimental). With it ticked the three are on whatever their own ticks say; unticked, each one "
            L"decides by itself (the separate ticks stay for tuning). The weapon-weight tab must be on, the throw by gesture or by grip too. VR first person only. Live.")),
     NeedsEither(L"hands", L"throw_gesture", L"throw_by_grip", 1, Toggle(L"hands", L"potion_hide_game", L"The game's own flying potion is not drawn (while yours flies; experimental)", 0,
-           L"EXPERIMENTAL, off by default: its hide has not been proven in the game. A thrown potion's model is yours; the game also draws its own potion flying to the spot - a second one, a moment late. This takes that one out of the "
+           L"EXPERIMENTAL (off when the key is missing; on in the settings that come with the mod): its hide has not been proven in the game. A thrown potion's model is yours; the game also draws its own potion flying to the spot - a second one, a moment late. This takes that one out of the "
            L"picture: only what is DRAWN changes - the game's missile still flies, hits, spends the stack and explodes as ever; its explosion is drawn. Only the hero's "
            L"own thrown potion in the throw you just made, in VR first person, and only while your potion flies (the weapon-weight tab on and \"Your potion flies "
            L"all the way\" ticked, or the tick above); another's missile, a trap's, an arrow are never touched. Needs the renderer's two functions to be found; if "
@@ -2585,7 +2620,7 @@ std::vector<Item> g_items = {
            L"On: the reach behind a shoulder (the volume of the weapon swap over the shoulder) with a trigger tap steps the choice - the trigger of a hand in the reach "
            L"is the quiver's, not the attack's. Off: only a button bound to action:quivernext / action:quiverprev in [direct] steps it. Live.")),
     Toggle(L"hands", L"quick_throw", L"Quick throw: the missile leaves earlier in the throw animation (changes the game's timing)", 0,
-           L"A CHANGE OF THE GAME'S TIMING, off by default. The game makes a throw's missile - a potion, a javelin, a knife, an axe - at one frame of its throw animation "
+           L"A CHANGE OF THE GAME'S TIMING (off when the key is missing; on in the settings that come with the mod). The game makes a throw's missile - a potion, a javelin, a knife, an axe - at one frame of its throw animation "
            L"(for an Amazon frame 9 of 16: 0.36 s after the animation starts), so after your own wind-up swing the hero winds up AGAIN before it flies. On: that frame is "
            L"moved earlier in the game's animation table, so the missile is created ~0.3 s sooner INSIDE THE SAME THROW: the animation's length and the attack rate stay, "
            L"the stack, mana and damage are the game's but happen earlier, and a monster's hit in those first ~0.3 s no longer cancels the throw (it has left already). "
@@ -2809,7 +2844,7 @@ std::vector<Item> g_items = {
     Needs(L"gameplay", L"melee_touch", 1, Toggle(L"gameplay", L"melee_touch_thrown", L"Thrown weapons hit by touch too (a point-blank throw)", 1,
            L"A javelin, a throwing knife or a throwing axe in hand is swung like any weapon: its blade through a monster's body presses the "
            L"game's own attack at it - for a thrown weapon that is the game's Throw at that monster, point blank, with the ammunition spent as "
-           L"the game spends it (never the Direct hit route). Throwing potions are not swung. The throw by gesture (\"Hands\": throw by the "
+           L"the game spends it (never the Direct hit route). Throwing potions are not swung. The throw by gesture (Weapon Adjust > Throws: by the "
            L"grip or the trigger) stays as it is and does not fire together with the touch: with the grip throw on, the touch counts only "
            L"while the right grip is squeezed on the weapon; for 0.7 s after a throw is released the touch stands down; and a touch that "
            L"pressed the attack drops the release of the same swing (one throw per swing). The blade's size per weapon is an estimate - "
@@ -2861,7 +2896,7 @@ std::vector<Item> g_items = {
            L"with and without LT, A, LT + A) and the touched monster is handed to the cast as its target, the way the shield bash casts Smite. Only when the hero has a level in the skill and the mana for it "
            L"(the game's own numbers: the skill's cost at its level against the hero's mana); otherwise the second touch is a normal attack too. Frenzy the same way when it is the skill on a slot. The swings, the "
            L"damage, the animation and the mana are the game's; nothing is called that attacks. A pair is spent by the dual skill: the next touch starts a new one. With Double Swing on the attack button itself "
-           L"every touch casts it already and this adds nothing. The log says every decision once (\"double swing: ...\"). Unticked: both hands' touches are normal attacks, as before. Live.")),
+           L"every touch casts it already and this adds nothing. The log says every decision once (\"double swing: ...\"). Not tried in the game yet. Unticked: both hands' touches are normal attacks, as before. Live.")),
     Needs(L"gameplay", L"melee_touch", 1, Needs(L"hands", L"double_swing_by_hands", 1, Slider(L"hands", L"double_swing_window_ms", L"Double Swing: the other hand within, ms", 200, 2000, 50, 700,
            L"How long after one hand's strike on a monster the other hand's strike on the same monster is the second of a pair - the dual skill's. 700 ms is about one swing of the arm and back. Longer: a slower "
            L"second blow still counts; shorter: only a quick one-two does. Live."))),
@@ -2882,7 +2917,7 @@ std::vector<Item> g_items = {
            L"to keep the rate near the game's own if hits come too fast. Live.")),
     Group(L"Quick strike"),
     Toggle(L"hands", L"quick_strike", L"Quick strike: the blow lands earlier in the attack animation (changes the game's timing)", 0,
-           L"A CHANGE OF THE GAME'S TIMING, off by default. The game's melee blow lands at one frame of the hero's attack animation - for a Paladin with a one-hand weapon frame 7 or 8, "
+           L"A CHANGE OF THE GAME'S TIMING (off when the key is missing; on in the settings that come with the mod). The game's melee blow lands at one frame of the hero's attack animation - for a Paladin with a one-hand weapon frame 7 or 8, "
            L"0.28 - 0.32 s after the animation starts, in your log 317 - 339 ms after the touch pressed the attack (the Direct hit lands in 15 - 50 ms). On: that frame is moved to the "
            L"frame below in the game's animation table, so the blow - its hit roll, damage and the monster's reaction - comes up to ~0.3 s sooner INSIDE THE SAME ATTACK. The "
            L"animation's length and the attack rate stay (the next attack can still start only when the animation ends), mana and wear are the game's but happen earlier, and "
@@ -3170,7 +3205,7 @@ std::vector<Item> g_items = {
     Group(L"A thrown weapon"),
     Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Choice(L"weight", L"thrown_model", L"A thrown weapon's model", 0,
            {L"Vanishes when the game throws", L"Flies on until it lands"},
-           L"With the throw by the grip (Javelin tab): letting the grip go as a throw lets the weapon's model leave the hand and fall with the motion it "
+           L"With the throw by the grip (Weapon Adjust > Throws): letting the grip go as a throw lets the weapon's model leave the hand and fall with the motion it "
            L"had, like any weapon you drop - but it does not lie on the floor or go to the back. The game then throws a missile of its own, and a model "
            L"flying on beside it is a second weapon. Vanishes: the model is gone the moment the game takes the throw (the hero goes into its throw), and "
            L"a fresh one stands in the hand, drawn by the game. Flies on: the model keeps falling until it lands, the game's throw animation is over, or "
@@ -3200,7 +3235,7 @@ std::vector<Item> g_items = {
     Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Slider(L"weight", L"throw_reach_pct", L"Throws: how far, % of the real throw", 50, 1500, 10, 800,
            L"The weight model works the throw out itself: the weapon's peak velocity of the last 0.15 s before the release - as the hand really moved it, "
            L"a heavy weapon leaves slower than a light one - flown over the real ground. A real arm throws a few metres; a game screen wants tens. This scales "
-           L"the HORIZONTAL part of that velocity (the fall stays real), and the javelin tab's throws land where it says. Light and fast goes far, heavy "
+           L"the HORIZONTAL part of that velocity (the fall stays real), and the throws of Weapon Adjust > Throws land where it says. Light and fast goes far, heavy "
            L"goes short. Lower it if a gentle swing goes too far."))),
     Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Slider(L"weight", L"throw_max_cells", L"Throws: the farthest, cells", 10, 48, 1, 48,
            L"A throw never lands farther than this from the hero. The game's own command check refuses an aim point more than 50 cells off the hero on an "
@@ -3236,6 +3271,11 @@ std::vector<Item> g_items = {
            L"same grip while it is away DRAWS it onto the arm of the hand that reached - the right hand puts it on the right forearm, mirrored. Independent of the tick above: "
            L"with both, a shield drawn while the sword is in the other hand sits opposite it. With this on the left shoulder is the shield's and the weapon is drawn from the "
            L"right one only. A short pulse in a hand that enters the left shoulder while the shield is away. Live."))),
+    Needs(L"arms", L"mode", 2, Needs(L"hands", L"shoulder_draw", 1, Needs(L"hands", L"shoulder_draw_shield_stow", 1, Toggle(L"hands", L"shield_stow_no_block",
+           L"... and a shield put away does not block", 0,
+           L"While the shield is away behind the left shoulder the game rolls no block for you: it treats the hero as one with no shield and goes on to its own dodge check. "
+           L"Drawn onto an arm, the shield blocks as ever - the game's own chance, roll, animation and Faster Block Rate; nothing is decided by where you hold it. The shield's "
+           L"Defense stays (it is still equipped), and the character screen still shows its block chance. Off: a shield put away still blocks, as the game has it. Live.")))),
     Needs(L"arms", L"mode", 2, Needs(L"hands", L"shoulder_draw", 1, Toggle(L"hands", L"shoulder_draw_ranged", L"A bow or crossbow can be put away and drawn from behind a shoulder", 0,
            L"A grip squeezed behind EITHER shoulder by a hand that is not holding the string (or a potion) PUTS THE BOW OR CROSSBOW AWAY (it is not drawn, no string, no aim; it is still "
            L"your equipped weapon); the same grip while it is away draws it back, into its own hand. Independent of the shield ticks. A short pulse in a hand that enters a shoulder "
@@ -3352,7 +3392,7 @@ std::vector<Item> g_items = {
            L"in hand aims along itself, toward its head (with the weapon's weight on: along the shaft as your grip holds it); with none, along the hand's "
            L"fingers - or out of the palm when the fingers point up or down. A staff held upright aims with its hand. The attack along the hand ([bow] "
            L"mode 4) goes the same way. A bow, crossbow, javelin or throwing weapon keeps its own line. The game's own cast - skill, mana, missile - "
-           L"is not changed, only where it is aimed. Off, or no fresh pose: the controller's line and the aim correction sliders (Bow tab), as before. "
+           L"is not changed, only where it is aimed. Off, or no fresh pose: the controller's line and the aim correction sliders (Weapon Adjust), as before."
            L"After d2r-pcvr (bearstonem, MIT). Debug > Aim rays: \"Spell's ray\" shows it."),
 #endif
     Group(L"Amazon (ticked: the game's auto-target)"),

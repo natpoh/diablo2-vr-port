@@ -59,6 +59,20 @@ the headset-only ones.
   does it later, game closed; the uninstaller takes them out again). *Put my dxgi.dll aside* (it asks first) renames it to `dxgi.dll.off`, so that D2R VR can have a
   ReShade of its own; *Bring my dxgi.dll back* undoes it.
 
+## Performance
+
+- **Processor** - *Game on the cores with the big cache (Ryzen X3D)* (off): on a
+  Ryzen with 3D V-Cache on one core group the game's threads run on those cores
+  and its drawing thread gets a higher priority. Other processors: nothing changes.
+- **Quality** - *Quality preset* (Potato, Low, Medium, High, Custom) sets the rest
+  at once (its tooltip says what each one sets); a change by hand shows Custom.
+  The rest: room rings round the hero, the model visibility radius, distance fog
+  (start and full, outdoors and in caves), the sky outdoors, ReShade's depth map
+  (restart), the cave ceiling with its relief steps, *Torches light the ceiling*
+  (CPU heavy) and *Any fire lights the ceiling*; in VR the game's own frame cap.
+  The render distance, the headset rate and the frame cap take effect when the
+  game starts again.
+
 ## Camera
 
 ![Camera](screenshots/settings_01_camera.png)
@@ -94,27 +108,47 @@ the headset-only ones.
   off is the height from BodyWalk / *My height* and *Arm length (scale)*, as
   before; *Forget the measurement* clears it. Needs the headset's floor (a room
   set up), not a seated-only space. With the settings panel in the headset
-  (Stereo > Native OpenXR) the same measurement starts from its *Body* page:
-  *Calibrate body*, *Forget measurement*, and the numbers stored. Its first
+  (UI: F4 body > Menus) the same measurement starts from its *Body* page:
+  *Calibrate body*, *Forget measurement*, *First-start guide* (the guide below,
+  again), and the numbers stored. Its first
   page also switches the game view, F1 - F4, as the F keys do (the panel is
   F4's: F1 - F3 close it, and F4 is back with the F4 key or the Home page).
   With the skill panel in the tiles' look these pages are its *Settings* tab,
   beside *Skills*: the long press of the right stick click opens the window on
   the tab it was last on. The window flips like pages: flick a thumbstick left or
   right, tap a grip, or click the arrow at its edge (Skills | Settings: View,
-  Options, Video, Body; dots show where you are).
+  Options, Video, Body, Life, Look, HUD, Belt, Melee, Left, Right; dots show
+  where you are).
+- **First-start guide (in the headset)** (native OpenXR with *Controls without
+  BodyWalk*, F4; `[onboarding]`, from 0.171) - *Show the first-start guide* (on): the first
+  time you stand in the world in F4, the settings window in the headset (the one
+  the long press of the right stick click opens) comes up on its last page, *Guide*,
+  and offers the T-pose measurement (when none is stored: *Measure now* / *Not now*),
+  then five short pages of what to press to open what - the inventory, the map, the
+  skill panel, the belt, the settings in the headset, the pause menu, the F views.
+  *Next* and *Back* with the laser, *Done* on the last page. It presses nothing and
+  takes no button of its own, the game runs on behind it, and it waits while a menu or
+  a panel of the mod is open. Finished or closed (closing the window closes the
+  guide), it ticks *First-start guide seen* (`done`);
+  untick that to see it again, or press *First-start guide* on the headset
+  settings' Body page (or open its *Guide* tab). Unticked, *Show the first-start
+  guide* keeps it from coming up by itself. An ini from before 0.171 (no `done`): seen if a measurement is
+  stored. The idea of offering the measurement at the first start is bearstonem's
+  d2r-pcvr (MIT).
 - **Body** - no game animation above the pelvis in F4 (your body drives it),
   legs stay under the body, how the hero turns to where you look.
 - **Hands** - the hands turn with the controllers; tilt, turn and roll offsets
   for your controllers' grip.
-- **Effects around the hero** (F4) - *Draw the hero's own effects fainter* (in the build, but off in
-  the settings that come with the mod, and not working yet: the log shows the effect's "Fade"
-  parameter being set, but nothing changes on screen - docs/KNOWN_ISSUES.md): meant for the
+- **Effects around the hero** (F4) - *Draw the hero's own effects fainter* (`[render] dim_own_effects`;
+  **not working yet** in 0.170: in the build, but off in the settings that come with the mod - the log
+  shows the effect's "Fade" parameter being set, but nothing changes on screen, docs/KNOWN_ISSUES.md
+  issue 25): meant for the
   overlays of his own states - Bone Armor (which wraps round the eyes), Frozen / Shiver /
   Chilling Armor, Energy Shield, Cyclone Armor, Blade Shield, Fade, with their casting flash - to
   be faded with the effect's own "Fade" parameter (the one the game fades an overlay with) to
-  the percentage you set (*Own effects left*, 30 %; 100 = as the game draws them, 0 = hidden),
-  and the aura rings at his feet to *Aura rings at the feet left* (50 %). Visual only: the buff
+  the percentage you set (*Own effects left*, `dim_own_effects_pct`, 30 % in the program, 50 % in
+  the settings that come with the mod; 100 = as the game draws them, 0 = hidden), and the aura
+  rings at his feet to *Aura rings at the feet left* (`dim_own_auras_pct`, 50 %; 60 % shipped). Visual only: the buff
   and its numbers are the game's; monsters', mercenaries' and other players' effects, and every
   overlay that is not a state's, are untouched.
 
@@ -130,6 +164,17 @@ the headset-only ones.
   changing it keeps both the speed and the angle. The same three are in the
   headset (settings panel > Options). An older d2r_vr.ini that says snap = 0 for
   smooth turning keeps working as smooth turning.
+- **Thumbsticks: dead zone (stick drift)** (VR) - for each VR controller's stick a
+  **dead zone** (0 - 50 %, default 0) and where it counts as a **full push**
+  (60 - 100 %, default 100). A stick that drifts - the hero walks, the view turns
+  or a menu moves by itself, a flick does not re-arm - rests again once its dead
+  zone covers the drift (5 - 15 % is usual). The zone is round (the stick's length
+  decides, so diagonals are not cut sooner) and past it the push starts again from
+  zero, so there is no jump. It applies to everything that reads the stick (walking,
+  turning, the belt and skill panel flicks, BodyWalk through Game Link) - native
+  OpenXR, and FlatVR with the plugin's own controls; not a gamepad. 0 and 100 change
+  nothing. Live. In d2r_vr.ini: `[direct] stick_deadzone_left_pct`,
+  `stick_deadzone_right_pct`, `stick_outer_left_pct`, `stick_outer_right_pct`.
 - **Mouse and keyboard** - mouse look in the VR views F2 and F4 as well.
 - **Input** - the gamepad straight from BodyWalk, which button *D2R: Inventory*
   presses, the A button only attacks. *Pick up / interact: one thing per press*
@@ -274,12 +319,13 @@ the headset-only ones.
     over the list - All, your class's three skill trees, General / Items - from
     the game's own tables (run `tools/skill_icons/prepare_skill_icons.py` again
     after an update; without the trees there is only the one list). *Skill panel:
-    a RUN / WALK button* (off): a button on the panel's first page that presses
+    a RUN / WALK button* (off in the program; on in the settings that come with the mod since 0.171): a button on the panel's first page that presses
     the game's own run / walk command and shows which one it is on. The command
     itself is a pick of the button lists: *Run / walk switch* in Controls > Buttons
     of the controllers and the headset's Left / Right pages, *D2R key: Run / walk
     switch* in BodyWalk's bindings. Idea after bearstonem/d2r-pcvr (MIT).
-    *Skill panel: skills on the right trigger and on A* (off): in first person with
+    *Skill panel: skills on the right trigger and on A* (off in the program; on in the
+    settings that come with the mod since 0.171): in first person with
     the mod's own controls, the right trigger casts the skill on the game's RT slot
     and the right A the one on its A slot - and with the left trigger held, LT + RT
     and LT + A - through the game's own buttons, so its mana, cooldown and animation.
@@ -578,6 +624,14 @@ in full in a square window); the log tells the size the game draws at.
   fingers' first joints* (on): the nock, the arrow's line and the bow's turn along
   the hands start where the game's draw animation has the hooked fingers, not at
   the middle of the palm (the Amazon's right hand; sliders move that point).
+  *Quiver: pick the arrow of the next shot* (`[bow] quiver`; on in the settings that
+  come with the mod): with the string drawn, B picks the next arrow skill and A the
+  previous (`[direct] quiver_next` / `quiver_prev`) - only skills the hero has learned;
+  *Quiver: energy orbs along the bow* (the same): an orb on the stave for the plain shot
+  and one for each learned bow skill, the free hand's trigger at an orb picks it; *Arrow
+  effects: fire, frost and arcane light on the arrow* (on), by the chosen skill; *no mana for
+  the chosen arrow - shoot the plain arrow* (on), and the effect goes out while the mana
+  is short. The crossbow has no quiver.
   *Quick release* (experimental): moves the game's arrow-making
   frame of the hero's bow attack earlier (frame 2 by default) - the arrow, its
   damage and its mana come about 0.2 s sooner inside the same attack; the
@@ -601,6 +655,10 @@ in full in a square window); the log tells the size the game draws at.
   throw - the missile of a javelin, knife or axe is made at the start of the
   throw animation (a slider) instead of about 0.36 s in; a throwing potion keeps
   the game's timing unless *Quick throw: throwing potions too* is ticked.
+  *Javelin quiver* (on; native OpenXR with Controls without BodyWalk): with a
+  javelin or throwing weapon and a skill it allows learned, reach a hand behind a
+  shoulder and tap its trigger - the right hand steps to the next skill of the
+  throw, the left to the previous one (two pulses: back at the plain Throw).
 - **Crossbow** - the shot line and the left hand's place; in VR F4 four ticks for the
   left hand (from d2r-pcvr): *left grip lets go cleanly*, *left wrist follows the
   controller*, *take the grip right after a swap*, *left palm under the drawn barrel*
@@ -880,11 +938,12 @@ With both hands on a staff (the weapon's weight on) the line runs along the staf
 between them, from the rear hand to the front one. How far out the spell's point
 goes (finer steps the farther): a staff its two *Staff aim point* sliders, a wand
 or orb *Wand or orb aim point* (20 cells), bare hands *Bare hands aim point* (5)
-(Bow tab, below 3 = the game's own point).
+(Weapon Adjust > Staff: aim point and correction; below 3 = the game's own point).
 Debug > Aim rays > *Spell's ray* shows where it goes, live: green from the model,
 orange the old line, to the floor (a full ball) or 8 m out (a ring).
-*A spell's aim distance follows how far the arm is stretched* (off, Bow tab,
-VR first person F4): as in flat Diablo, where a click near the hero spreads Teeth wide
+*A spell's aim distance follows how far the arm is stretched* (Weapon Adjust >
+Aim distance by the arm, `[bow] aim_distance_by_arm`; off in the program, on in the
+settings that come with the mod since 0.171; VR first person F4): as in flat Diablo, where a click near the hero spreads Teeth wide
 and a far one keeps it in a tight cone - an arm held at the body aims the spell near
 (*Aim point with the arm at the body*, 3 cells), an arm stretched out along the aim
 aims it at the weapon's own distance. Spells only: a wand, an orb, bare hands, a staff
@@ -904,4 +963,11 @@ each attack of ours* (`shot_trace`); *Log the long frames and what the plugin
 spent in them* (`frame_trace`) and *Write the plugin's log from a thread of its
 own* (`log_async`) for a stutter; *Log the room-scale walk once a second* (`roomscale_log`); *Log where the time goes between a bow's release
 and its arrow*; the bow's draw vectors in the headset. After a throw the log tells
-for five seconds what the game does with it (`throw_trace`, on, read only).
+for five seconds what the game does with it (`[debug] throw_trace`, read only;
+on when the key is missing, off in the settings that come with the mod).
+
+## Status
+
+*The game's code*: whether the mod found each of its addresses in the game (by
+signature, grouped by area). After a game or D2RLoader update, start the game
+and press *Scan*: what is not found yet is looked for again.

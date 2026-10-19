@@ -62,6 +62,7 @@ int D2rvrHoverSpheres(float (*out)[8], int max);
 #include "hset_paint.h"
 #include "hset_store.h"
 #include "calibration.h"
+#include "first_start_wire.h"   // the first-start guide asks the settings panel for its Guide page ([onboarding], vr/first_start.cpp)
 #include "haptics.h"
 #include "haptic_stop.h"   // [openxr] haptics_stop: each pulse stopped by an explicit call when its time is up (a thread of its own)
 #include "anchor_gate.h"   // [openxr] menus_wait_tracking: the flat picture and the menu panel placed only with the head tracked
@@ -1091,6 +1092,7 @@ void Publish(bool focused) {
             gi.action = g_stickSpare ? g_aStickSpare : g_aStick; gi.subactionPath = g_handPath[h];   // (the spare only where the runtime bound nothing to the first: CheckSticks)
             XrActionStateVector2f st{XR_TYPE_ACTION_STATE_VECTOR2F};
             if (XR_SUCCEEDED(xrGetActionStateVector2f(g_session, &gi, &st)) && st.isActive) { o.stickX = st.currentState.x; o.stickY = st.currentState.y; act = true; }
+            directinput::ShapeStick(h, &o.stickX, &o.stickY);   // [direct] stick_deadzone_*_pct / stick_outer_*_pct (vr/stick_shape.h): once, here - every reader below gets it
         }
         uint32_t b = 0;
         if (BoolOf(g_aPrimary, h, &act)) b |= BW_LINK_XRB_PRIMARY;
@@ -3683,7 +3685,7 @@ void LoadSettings(const wchar_t* ini) {
                 was = 0;
                 Log("vrcam: openxr - THE LAST START DIED while native OpenXR was starting (the start guard was still there): "
                     "native OpenXR is switched OFF ([openxr] on=0) - the game goes on FlatVR. Switch it on again in D2R VR Authentic Settings > "
-                    "Performance > 3D in the headset; if it dies again, send Collect logs");
+                    "Home > 3D in the headset; if it dies again, send Collect logs");
             }
         }
     }

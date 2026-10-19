@@ -3,8 +3,9 @@
 // d2r_vr.ini). One line a key; a new tick box of a feature is one line more. Pages are the panel's tabs
 // (at most kMaxPages, at most kRowsPerPage rows each); a toggle is a key with min 0, max 1, step 1.
 //
-// Ten pages: View, Options, Life, Look, HUD, Belt, Left and Right are rows of this table; Video (the VR render size, vr/hset_video.h) and Body (the
-// T-pose measurement, vr/hset_body.h) are drawn by hand and own the keys at the end of the table, which have no row (kNoPage):
+// Twelve pages: View, Options, Life, Look, HUD, Belt, Melee, Left and Right are rows of this table; Video (the VR render size, vr/hset_video.h), Body (the
+// T-pose measurement, vr/hset_body.h) and Guide (the first-start guide, vr/first_start.h; vr/hset_scene.h) are drawn by hand; Video and Body own the keys
+// at the end of the table, which have no row (kNoPage):
 // the panel still reads them and writes the ones that changed, with the same conflict check as every other key.
 // Life and Look are the low-life vignette's ([hud] low_hp_*, vr/low_hp.h; D2R VR Settings > UI: F4 body > Low life has the same keys):
 // the rows' ranges, steps and defaults are the plugin's (a test keeps them equal), and while one of the two pages is open the plugin
@@ -23,15 +24,15 @@
 
 namespace hset {
 
-constexpr int kMaxPages = 11;
+constexpr int kMaxPages = 12;
 constexpr int kRowsPerPage = 6;
 // A page is a line more here, in kPageNames and in kMaxPages / kPageCount (the tabs share the panel's width in proportion to their names:
 // hset_model.h kTab). After HUD come the belt's page, the hit-by-touch page (Melee) and the two key-binding pages (Left, Right).
 enum Page : int {
     kPageView = 0, kPageOptions = 1, kPageVideo = 2, kPageBody = 3, kPageLife = 4, kPageLook = 5, kPageHud = 6,
-    kPageBelt = 7, kPageMelee = 8, kPageKeysL = 9, kPageKeysR = 10
+    kPageBelt = 7, kPageMelee = 8, kPageKeysL = 9, kPageKeysR = 10, kPageGuide = 11
 };
-constexpr int kPageCount = 11;
+constexpr int kPageCount = 12;
 constexpr int kNoPage = -1;   // a key with no row of its own: a hand-drawn page reads and writes it
 
 // A set of keys, one bit a key of the table below (what an Apply writes, what a draft has changed).
@@ -250,7 +251,7 @@ static_assert(kKeyBarPlace >= 0 && kKeyHide >= 0, "the toolbar type's keys are i
 constexpr bool IsToggle(const Def& d) { return d.min == 0.0f && d.max == 1.0f && d.step == 1.0f; }
 
 constexpr int PageCount() { return kPageCount; }
-constexpr const char* kPageNames[kMaxPages] = {"View", "Options", "Video", "Body", "Life", "Look", "HUD", "Belt", "Melee", "Left", "Right"};
+constexpr const char* kPageNames[kMaxPages] = {"View", "Options", "Video", "Body", "Life", "Look", "HUD", "Belt", "Melee", "Left", "Right", "Guide"};
 // The low-life vignette's two pages: while one is open the plugin previews the vignette (vr/low_hp_game.h SetPreview).
 constexpr bool IsLifePage(int page) { return page == kPageLife || page == kPageLook; }
 

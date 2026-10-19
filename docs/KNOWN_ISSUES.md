@@ -1,6 +1,6 @@
 # Known issues
 
-What is broken or unfinished right now (D2R VR 0.165), what we already know
+What is broken or unfinished right now (D2R VR 0.172), what we already know
 about each problem and where in the code to start. Pick one, fork, fix it and
 send a pull request - or tell us on Discord what you found.
 
@@ -96,8 +96,13 @@ corridor should still glow through the haze; instead, it goes dull and grey.
 - Or take the game's own emissive or bloom target as the mask of what glows.
 - Keep the game's halo round a flame as well, not only the flame itself.
 
-**Where to start:** the fog in `DepthFogWorld` and the `[fog]` section of
-`d2r_vr.ini`.
+**A test since 0.170** (off): `[fog] spare_effects` (World > Fog > *Fog spares
+fire, spells and smoke*). The game's transparent layers of each frame are copied at
+its transparent resolve, and the fog covers only the share of each pixel that is
+the scene behind them. VR F4; read at the game's start. Not on by default yet.
+
+**Where to start:** the fog in `DepthFogWorld`, `vr/fog_spare.cpp` and the `[fog]`
+section of `d2r_vr.ini`.
 
 ### 4. Some dungeons need vertical walls up to the ceiling (the Act 2 sewers) [repo]
 
@@ -181,6 +186,10 @@ still on the screen.
 - **The cure, found by trying:** a GPU signal after every replayed command
   list. Nobody knows yet why it works. Understanding it may also unlock issue
   8.
+- **Since 0.168** the replayed lists go in the game's own submit calls, with no
+  signals of ours but the queue switches' (`[debug] replay_marks=3`, the shipped
+  value). `replay_marks=1` (a signal after each list) is the safe fallback. All the
+  lists in one batch with no signals (`replay_marks=0`) still hangs.
 - **Also open:**
   - Copying the left eye's depth (`[stereo] replay_depth`) is broken: one
     resource state lost the shadows, another removed the device.
@@ -257,7 +266,10 @@ reproduction.
 Hit by touch, the throw, the bow's draw and the swap over the shoulder are
 gestures for the game's attack, throw and weapon swap, but there is no gesture
 for a particular skill (Zeal, say). The skill panel casts a skill from a slot,
-not from a movement. See [ROADMAP.md](ROADMAP.md).
+not from a movement. Two touches cast a skill: the shield bash casts Smite, and
+since 0.170 *Double Swing by the two hands* (`[hands] double_swing_by_hands`, off,
+not yet tried in the game) makes the other hand's touch on the same monster the
+game's Double Swing or Frenzy. See [ROADMAP.md](ROADMAP.md).
 
 ### 16. The new controls and options are mostly for first person (F4) [repo]
 
@@ -274,9 +286,12 @@ The gate is `vr/view_gate.h` (`viewgate::F4()`).
 
 ### 17. Hit by touch and weapon weight need tuning [repo]
 
-- The least blade speed that hits (`[gameplay] melee_min_speed`, 0.8 m/s) is low:
-  in a measured session a swing's tip read about 2 - 6 m/s and a poke about
-  1 m/s, so 0.8 counts nearly every movement. Try 2 - 3 and tell us. The
+- The least blade speed that hits (`[gameplay] melee_min_speed`): the plugin's
+  own default is 0.8 m/s, which counts nearly every movement (in a measured
+  session a swing's tip read about 2 - 6 m/s and a poke about 1 m/s). The
+  settings that come with the mod have 6 m/s and a 15 cm start
+  (`melee_stroke_start_cm`) since 0.166; the slider goes up to 20 m/s since
+  0.170. Tell us what works for you. The
   blade turns green while a contact would count; the marks in a swing
   (`[debug] melee_boxes`) show where.
 - The feel of weapon weight (`[weight]`: a sword sags about 4 degrees held out
@@ -331,8 +346,9 @@ unit update does, and that call is accepted.
 
 **To find out, later:** how that effect's material uses "Fade" (does Bone Armor's shader read it at
 all?), or whether the game overwrites it afterwards (its per-frame queue sets it from the unit's
-alpha after our tick). Start in `vr/own_effects.cpp` (`Tick`) and
-`docs/own_effects_recon.md`; the log lines are "own effects: ...".
+alpha after our tick). Start in `vr/own_effects.cpp` (`Tick`); the log lines are
+"own effects: ...". (`docs/own_effects_recon.md`, which the CHANGELOG names, is not in
+this repository.)
 
 ### 26. A staff in both hands: the spell's ray started at the wrist and went to the side [repo] - FIXED in 0.171
 
@@ -347,11 +363,24 @@ to tip (`weight::ShaftEnds`), and starts at its tip; with no drawn shaft lately,
 hand's grip aims as before. One hand on the staff is unchanged. `vr/spell_aim_model.h`, `vr/vrcam.cpp`
 (`SpellModelAim`), `spell_aim_model_test` (43 checks). To check in the game.
 
+### 27. The Kurast sewer stairs: the sky shows at the far end of the stairwell [repo]
+
+**What you see:** going down the sewer stairs in Kurast Bazaar or Upper Kurast in VR first person, the far, open end
+of the stairwell shows the sky (a flat grey-blue) instead of darkness. The model has no wall there: the flat game's
+camera never looks into it.
+
+**What we know:** bearstonem/d2r-pcvr closes it with a black backdrop it generates at install time from the
+player's own game archives; that part was not ported in 0.172 (the walls and stairs drawn two-sided were:
+`vr/roof_sides.h`, [render] roofs_two_sided). Also not ported: a VR "ENTER SEWERS" prompt.
+
 ---
 
 ## Settings app and smaller things
 
 ### 19. "Monster name plate opacity" does nothing, so it is hidden [repo] - DONE 2026-10-12, to check in the game
+
+*Now:* the opacity slider is shown on UI: F4 body > Monster plates; on the UI: F1,
+F2 and F3 tabs it is still hidden.
 
 - `[hud] monster_alpha` fades the rectangle of the `HUDMonsterHealth` panel,
   but that panel is 0 x 0. The plate is its child widget "Health" (layout
@@ -386,15 +415,19 @@ We have seen each of these once and not since:
   game screen twice per tick (stereo pairs) also runs that code twice.
 - **A brown rectangle under a torch's halo** over the void.
 - **Two potions fly with Weapon Weight on.** A thrown potion's model flies to
-  where it lands (on) and the game's own flying potion is drawn beside it; hiding
-  the game's one (`[hands] potion_hide_game`, experimental, off) is not proven in
-  the game yet.
-- **The skill tiles' RT slots** (RT and LT + RT) are shown and editable but not
-  cast: no control of the layout is bound to RT.
+  where it lands (on) and the game's own flying potion is drawn beside it. Hiding
+  the game's one (`[hands] potion_hide_game`, experimental) is off in the program
+  but on in the settings that come with the mod since 0.166 (done with the game's
+  own switch for its effect); not proven in the game yet.
+- **The skill tiles' RT slots** (RT and LT + RT) are shown and editable, but
+  cast only with *Skill panel: skills on the right trigger and on A* (0.170,
+  `[openxr] skill_rt_a`; on in the shipped settings since 0.171). Without it no control of the layout is bound to
+  RT.
 - **The bow's arrow comes about 0.3 s after the release.** The game makes it at
   an action frame of its own attack animation (an Amazon's: frame 6 of 14). Quick
-  release (experimental) moves that frame earlier; it changes the game's timing,
-  so it is off.
+  release (experimental, `[bow] quick_release`) moves that frame earlier; it
+  changes the game's timing, so it is off in the program, but on in the settings
+  that come with the mod since 0.166.
 - **Grass and clutter** are placed around the game's original camera from
   above.
 

@@ -20,6 +20,7 @@
 #include "bow_draw_wire.h"
 #include "calibration.h"
 #include "direct_input.h"
+#include "first_start_wire.h"   // the Settings tab's Guide page: the first-start guide asks for the window, and is told when it is over
 #include "hset_store.h"
 #include "hset_view.h"
 #include "hset_life.h"
@@ -132,6 +133,9 @@ void SettingsAct(const wheel::Step& s) {
         calib::RequestMeasure();
         Log("vrcam: openxr - skill panel, Settings: Calibrate body (the window is back when the measurement is over)");
         break;
+    case hset::Do::GuideDone:   // the guide's last page: the window has closed, the guide is over (the controller told it: Step::guideEnd)
+        Log("vrcam: openxr - skill panel, Settings: the first-start guide's Done");
+        break;
     case hset::Do::Preview:     // "Preview 5 s" on the Life and Look pages: the vignette and the beat for five seconds with the rows as they stand (vr/low_hp.h PreviewWindow)
         lowhp::PlayPreview();
         break;
@@ -182,10 +186,16 @@ void OnFrame(const directinput::Frame& f, void*) {
         host.env = g_env;
         host.view = 4;   // (the window is F4's)
         host.calibrating = calib::Running();
+        host.openGuide = firststart::OpenRequest();   // the first-start guide asks for the window on its Guide tab (vr/first_start.cpp)
     }
     const wheel::Step s = g_ctl.Frame(f, g_snap, GetTickCount64(), wheelgame::ReplyNow(), f4, request, tabs ? &host : nullptr);
     StoreFor(tabs && s.wantStore);
     if (tabs) SettingsAct(s);
+    if (s.guideOpened) {
+        firststart::OpenRequestTaken();
+        Log("vrcam: openxr - skill panel: the window is up on Settings > Guide (the first-start guide asked for it)");
+    }
+    if (s.guideEnd) firststart::PanelEnded(s.guideEnd == 1);   // the guide's page was on show and the window closed
     for (int h = 0; h < 2; ++h) {
         if (s.take[h]) directinput::Take(h, s.take[h], directinput::kSrcOther0);
         g_lastTake[h] = s.take[h];

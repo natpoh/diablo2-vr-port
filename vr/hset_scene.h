@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 
+#include "first_start_pages.h"   // the Guide page's words
 #include "hset_model.h"
 #include "hset_names.h"
 
@@ -36,6 +37,7 @@ using Scene = std::vector<Item>;
 // The line under the rows for a model's state. `window`: the pages are the skill panel's Settings tab (it is closed by B, its Close
 // button or the long press of the right stick click, not by the grips and a click).
 inline const char* StatusText(const Model& m, bool window = false) {
+    if (m.page == kPageGuide) return firststart::kPages[std::clamp(m.guide, 0, firststart::kPageCount - 1)].nav;   // the guide's own foot, whatever else is going on
     if (!m.ready) return "d2r_vr.ini was not found. Nothing can be changed.";
     switch (m.result) {
         case Result::Saving: return "Saving...";
@@ -83,6 +85,62 @@ struct ComposeOptions {
     bool window = false;             // the skill panel's Settings tab: its status line says how that window is closed
     const char* status = nullptr;    // replaces the line under the rows
 };
+
+// The first-start guide's page: the text of a row is set in lines as long as their place takes (a line is one item of the scene, so both painters set it
+// as they set any line), the rows follow each other by how many lines each has. Counted in letters: the Small face is about 7.5 pixels a letter in the
+// panel's own painter, 8 with capitals and digits among them (a test measures every line of every page against its place); the tiles' window sets
+// what is too long smaller.
+constexpr int kGuideLineH = 24, kGuideRowPad = 10;
+constexpr int kGuideControlChars = 26, kGuideTextChars = 84, kGuideWideChars = 110;   // a control's name / its text beside it / a text across the page
+constexpr Rect kGuideControlBox = {44, 0, 216, kGuideLineH}, kGuideTextBox = {270, 0, 722, kGuideLineH}, kGuideWideBox = {44, 0, 948, kGuideLineH};
+inline std::vector<std::string> WrapWords(const std::string& text, int maxChars) {
+    std::vector<std::string> lines;
+    std::string cur;
+    size_t at = 0;
+    while (at <= text.size()) {
+        size_t end = text.find(' ', at);
+        if (end == std::string::npos) end = text.size();
+        const std::string word = text.substr(at, end - at);
+        at = end + 1;
+        if (word.empty()) continue;
+        if (cur.empty()) cur = word;
+        else if ((int)(cur.size() + 1 + word.size()) <= maxChars) cur += " " + word;
+        else { lines.push_back(cur); cur = word; }
+    }
+    if (!cur.empty()) lines.push_back(cur);
+    if (lines.empty()) lines.push_back("");
+    return lines;
+}
+struct GuideRowLayout {
+    std::vector<std::string> control, text;   // the lines of each column
+    bool named = false;                        // a control's name stands in the left column (the text is beside it, not across)
+    int lines = 1, y = 0, h = 0;               // how many lines the row takes, where it starts and how tall it is (the sheet's pixels)
+};
+// The rows of page `sub` of the guide (firststart::kPages), top to bottom from kGuideTop.
+inline std::vector<GuideRowLayout> GuideRows(int sub) {
+    std::vector<GuideRowLayout> out;
+    const firststart::PageText& t = firststart::kPages[std::clamp(sub, 0, firststart::kPageCount - 1)];
+    int y = kGuideTop;
+    for (int r = 0; r < firststart::kRowsMax; ++r) {
+        const firststart::Row& row = t.rows[r];
+        if (!row.does || !*row.does) break;
+        GuideRowLayout l;
+        l.named = row.control && *row.control;
+        if (l.named) l.control = WrapWords(row.control, kGuideControlChars);
+        l.text = WrapWords(row.does, l.named ? kGuideTextChars : kGuideWideChars);
+        l.lines = std::max({1, (int)l.control.size(), (int)l.text.size()});
+        l.y = y;
+        l.h = l.lines * kGuideLineH + kGuideRowPad;
+        y += l.h;
+        out.push_back(std::move(l));
+    }
+    return out;
+}
+// Where the rows of page `sub` end (the sheet's y): they must end above kGuideBottom.
+inline int GuideEnd(int sub) {
+    const std::vector<GuideRowLayout> rows = GuideRows(sub);
+    return rows.empty() ? kGuideTop : rows.back().y + rows.back().h;
+}
 
 namespace scene_detail {
 
@@ -174,6 +232,7 @@ inline Scene Compose(const Model& m, const Hit& hover, const ComposeOptions& opt
         b.Text("Your real eye height sets the world's scale, your arm span the hero's arms.", kBodyWhy, Face::Small, Role::Quiet);
         b.Button(kCalibrate, "Calibrate body", {Kind::Calibrate, -1, 0}, true, canEdit, Role::Accent);
         b.Button(kForget, "Forget measurement", {Kind::Forget, -1, 0}, false, canEdit && st.any);
+        b.Button(kGuideBtn, "First-start guide", {Kind::Guide, -1, 0});
         b.Text(body::MeasuredText(st), kBodyStored, Face::Bold, st.valid ? Role::Accent : Role::Quiet);
         b.Text(body::UseText(st), kBodyUse, Face::Small, st.valid && !st.use ? Role::Warn : Role::Quiet);
         static const char* const steps[] = {
@@ -183,6 +242,28 @@ inline Scene Compose(const Model& m, const Hit& hover, const ComposeOptions& opt
             "4. Right B cancels. This panel comes back when it is done, with the numbers.",
         };
         for (int i = 0; i < 4; ++i) b.Text(steps[i], kBodyStep(i), Face::Small, Role::Quiet);
+    }
+    if (m.page == kPageGuide) {
+        // -- the first-start guide (vr/first_start.h): a page of its words, Back and Next under it -----------------------------------------
+        const int sub = std::clamp(m.guide, 0, firststart::kPageCount - 1);
+        const firststart::PageText& t = firststart::kPages[sub];
+        const bool offer = sub == firststart::kOfferPage, last = sub == firststart::kGuidePages;
+        b.Text(t.title, kGuideTitle, Face::Bold, Role::Accent);
+        if (!offer) {
+            char at[24];
+            std::snprintf(at, sizeof at, "%d / %d", sub, firststart::kGuidePages);
+            b.Text(at, kGuideAt, Face::Small, Role::Quiet, Align::Right);
+        }
+        int r = 0;
+        for (const GuideRowLayout& l : GuideRows(sub)) {
+            b.Fill({32, l.y, 960, l.h - 2}, r++ % 2 ? Role::RowB : Role::RowA);
+            for (size_t k = 0; k < l.control.size(); ++k)
+                b.Text(l.control[k], {kGuideControlBox.x, l.y + kGuideRowPad / 2 + (int)k * kGuideLineH, kGuideControlBox.w, kGuideLineH}, Face::Small, Role::Accent);
+            const Rect box = l.named ? kGuideTextBox : kGuideWideBox;
+            for (size_t k = 0; k < l.text.size(); ++k) b.Text(l.text[k], {box.x, l.y + kGuideRowPad / 2 + (int)k * kGuideLineH, box.w, kGuideLineH}, Face::Small, Role::Text);
+        }
+        b.Button(kGuideBack, offer ? "Not now" : "Back", {Kind::GuideBack, -1, -1}, false, offer || sub > 1);
+        b.Button(kGuideNext, offer ? "Measure now" : last ? "Done" : "Next", {Kind::GuideNext, -1, 1}, true, !offer || canEdit, Role::Accent);
     }
     if (m.page == kPageView) {
         // -- the game's view: F1 from above, F2 third person, F3 the game on your floor, F4 first person -------------------------
@@ -225,7 +306,7 @@ inline Scene Compose(const Model& m, const Hit& hover, const ComposeOptions& opt
     if (IsLifePage(m.page)) b.Button(kPreviewBtn, "Preview 5 s", {Kind::Preview, -1, 0}, false, true, Role::Accent);
 
     const std::string line = opt.status ? std::string(opt.status) : StatusLine(m, opt.window);
-    b.Text(line, kStatus, Face::Normal, m.Dirty() && !opt.status && !m.LiveOnly() ? Role::Warn : Role::Quiet);
+    b.Text(line, kStatus, Face::Normal, m.Dirty() && !opt.status && !m.LiveOnly() && m.page != kPageGuide ? Role::Warn : Role::Quiet);
     b.Button(kRecentre, "Recentre view", {Kind::Recentre, -1, 0});
     b.Button(kClose, "Close", {Kind::Close, -1, 0});
     b.Button(kApply, "Apply", {Kind::Apply, -1, 0}, true, m.ready && m.Dirty() && !m.Busy());
