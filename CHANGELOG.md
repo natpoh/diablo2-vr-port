@@ -2,6 +2,12 @@
 
 ## 0.171
 
+- **Fixed: the Kurast sewer stairs** (Act 3: Kurast Bazaar and Upper Kurast, down to the Sewers; VR F4). A takes the stairs standing:
+  when the game finds nothing to interact with there, the sewer stairs the head faces nearby are offered to A - only if the game's own
+  reach and line-of-sight test accepts them, so never through a wall or farther than the game reaches; travel and quests are the game's.
+  Before, the player had to crouch and look at the stairs. And with "Roofs: their underside, not the sky" on, the entrance's walls and
+  stairs are drawn from behind too, instead of the sky through them. From bearstonem/d2r-pcvr (MIT). The black end of the stairwell
+  (the model has no wall there) is not in this version.
 - **New, off by default: a shield put away does not block** ([hands] shield_stow_no_block; D2R VR Authentic Settings, under "... and the shield can be put away and
   drawn from behind the left shoulder"). With the shield away behind the left shoulder the game rolls no block for the hero - as for a hero with no shield - and goes
   on to its own dodge check. Drawn, the shield blocks by the game's own chance and roll as ever; its Defense stays. The game's block check is the one bearstonem's

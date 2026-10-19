@@ -1889,7 +1889,8 @@ std::vector<Item> g_items = {
            L"The game draws a roof only from above, so from under a kept roof the sky showed through it. On: the materials of the "
            L"roofs (a roof model's material named \"roof\") are built double-sided, and their underside is drawn. A material is "
            L"built when its area loads: the change shows in the next area you go to (what is loaded now keeps its sides until the "
-           L"game loads it again, at the latest the next start). VR only. Nothing else is changed. From bearstonem/d2r-pcvr (MIT). "
+           L"game loads it again, at the latest the next start). The same for the walls and stairs of the Kurast sewer entrances "
+           L"(Act 3), whose backs showed the sky from the stairs. VR only. Nothing else is changed. From bearstonem/d2r-pcvr (MIT). "
            L"Off: the game's own."),
     Toggle(L"render", L"light_bounds_fix", L"Fix the game's lighting at a square or wide window", 1,
            L"The game cuts the picture into 32 x 20 tiles and finds each tile's depth range for its lights with a shader that "

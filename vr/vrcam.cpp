@@ -150,6 +150,7 @@ namespace gamestate { bool HandIsThrowPotion(int side); }   // the held item is 
 #include "shoulder_swap_wire.h"   // [hands] shoulder_swap: weapon sets by the grip behind a shoulder
 #include "shield_arm_wire.h"      // [hands] shoulder_draw, the shield: which forearm it is strapped to, or put away
 #include "stowed_block.h"         // [hands] shield_stow_no_block: a shield put away does not block (the game's block check told the hero has none)
+#include "sewer_interaction.h"     // the Kurast sewer stairs taken with A while standing (the game's Interact query, when it finds none)
 #include "ranged_hand_wire.h"     // [hands] shoulder_draw_ranged: a bow or crossbow put away behind a shoulder, drawn into the hand that reached
 #include "shoulder_swap.h"
 #include "weight_floor.h"         // [weight]: the floor a let-go weapon falls to is the game's ground under the hero
@@ -6514,6 +6515,98 @@ void* DispatchAnswer(void* answer, bool off, void* peeked = nullptr) {
     return off ? nullptr : answer;
 }
 
+// ---- the Kurast sewer stairs (vr/sewer_interaction.h) ----------------------------------------------------------------------------
+// The game's Interact query (the controller's target for skill 357, this same lookup) feeds both its "(A) Interact" prompt and the
+// A press. When it finds nothing in Kurast Bazaar or Upper Kurast, VR F4, the sewer warp the head faces nearby is offered - if the
+// game's own reach and line-of-sight test (0x348650) accepts it. Any target the game found keeps priority. From bearstonem/d2r-pcvr
+// (MIT, v0.3.20: vr/vrcam.cpp NearbySewerInteraction), with its audit of the layout it reads.
+constexpr int kInteractSkill = 357;
+constexpr uint64_t RVA_SEWER_LOCAL_INDEX = 0x8B2D0, RVA_SEWER_CLIENT_PLAYER = 0x9A480, RVA_SEWER_REACH = 0x348650;
+
+bool SewerLayoutReady() {
+    static std::atomic<bool> ready{false};
+    if (ready.load()) return true;
+    static thread_local ULONGLONG tried = 0;
+    const ULONGLONG now = GetTickCount64();
+    if (now - tried < 1000) return false;
+    tried = now;
+    // The room's first unit and the next one (+0x160), its neighbours, the dynamic path's room, a tile's static x/y, and the reach and
+    // line test inside 0x348650 - untouched instructions inside each, as 3.3.93787 has them.
+    static const uint8_t first[] = {0x48,0x8B,0x81,0xA8,0,0,0,0xC3};
+    static const uint8_t next[] = {0x48,0x8B,0x81,0x60,0x01,0,0};
+    static const uint8_t neighbors[] = {0x8B,0x41,0x40,0x41,0x89,0,0x48,0x8B,0x01,0x48,0x89,0x02,0xC3};
+    static const uint8_t dynamic[] = {0x48,0x8B,0x41,0x20,0xC3};
+    static const uint8_t sy[] = {0x48,0x8B,0x46,0x38,0x8B,0x58,0x14};
+    static const uint8_t sx[] = {0x48,0x8B,0x46,0x38,0x8B,0x40,0x10};
+    static const uint8_t range[] = {0x4D,0x8B,0xF1,0x45,0x8B,0xF8,0x48,0x8B,0xF2,0x48,0x8B,0xF9};
+    static const uint8_t line[] = {0x41,0xB8,0x04,0x08,0,0,0x48,0x8B,0xD6,0x48,0x8B,0xCF,0xE8,0x5B,0x7B,0,0};
+    const bool found = Matches(0x2EFD90, first, sizeof first) && Matches(0x34B4CE, next, sizeof next) && Matches(0x2EFDE0, neighbors, sizeof neighbors) &&
+                       Matches(0x341C30, dynamic, sizeof dynamic) && Matches(0x18A88D, sy, sizeof sy) && Matches(0x18A8B8, sx, sizeof sx) &&
+                       Matches(0x348668, range, sizeof range) && Matches(0x348734, line, sizeof line);
+    static std::atomic<bool> told{false};
+    if (found) { ready.store(true); Log("vrcam: Kurast sewer stairs - the game's room lists and its reach/line test verified: A takes the stairs standing"); }
+    else if (!told.exchange(true)) Log("vrcam: Kurast sewer stairs - the game's layout is not 3.3.93787's (another build?): the game's own selection only");
+    return found;
+}
+
+// The client's local hero (the game's LocalIndex and ClientPlayer) and its area, by D2RLoader's own accessor. 0 when not there.
+uintptr_t SewerHero() noexcept {
+    const uintptr_t indexFn = d2rsig::Addr(RVA_SEWER_LOCAL_INDEX), playerFn = d2rsig::Addr(RVA_SEWER_CLIENT_PLAYER);
+    if (!indexFn || !playerFn) return 0;
+    __try {
+        const int index = reinterpret_cast<int (*)()>(indexFn)();
+        if (index < 0 || index >= 8) return 0;
+        const uintptr_t unit = reinterpret_cast<uintptr_t (*)(int)>(playerFn)(index);
+        if (unit < 0x10000 || *reinterpret_cast<const volatile uint32_t*>(unit) != 0) return 0;
+        return unit;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return 0;
+    }
+}
+int SewerLevel(uintptr_t hero) noexcept {
+    static const auto getLevel = []() -> D2RL::Reimplementations::GetLevelIdFromUnitFn {
+        const HMODULE core = GetModuleHandleW(L"D2RCore.dll");
+        return core ? reinterpret_cast<D2RL::Reimplementations::GetLevelIdFromUnitFn>(
+                          GetProcAddress(core, MAKEINTRESOURCEA(D2RL::Reimplementations::GetLevelIdFromUnitInfo.ordinal)))
+                    : nullptr;
+    }();
+    if (!getLevel || !hero) return 0;
+    __try { return getLevel(reinterpret_cast<const void*>(hero)); } __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
+}
+
+uintptr_t NearbySewerWarp() {
+    if (!g_enabled.load() || !FullBody() || gamestate::MenuOpen()) return 0;
+    const uintptr_t hero = SewerHero();
+    const int level = SewerLevel(hero);
+    if (!sewerinteraction::Area(level) || !SewerLayoutReady()) return 0;
+    float bx = 0.0f, bz = 0.0f;   // the camera's back axis: the head looks along its negative
+    bool axes = false;
+    AcquireSRWLockShared(&g_skyLock);
+    const SkyView& view = g_skyView[g_eye.load() & 1];
+    if (view.axes_ok) { bx = view.axes[6]; bz = view.axes[8]; axes = true; }
+    ReleaseSRWLockShared(&g_skyLock);
+    if (!axes || !std::isfinite(bx) || !std::isfinite(bz) || bx * bx + bz * bz < 1e-6f) return 0;
+    float gx = 0.0f, gy = 0.0f;
+    AcquireSRWLockShared(&g_calLock); const Calib c = g_cal; ReleaseSRWLockShared(&g_calLock);
+    aimpoint::GridDir(atan2f(-bz, -bx), xr::Running(), c.ok, c.mirror != 0, c.angle, &gx, &gy);
+    const uintptr_t reach = d2rsig::Addr(RVA_SEWER_REACH);
+    const sewerinteraction::Result r = sewerinteraction::Find(hero, level, gx, gy,
+        [](uintptr_t at, auto& value) { return at >= 0x10000 && at <= UINTPTR_MAX - sizeof value && SafeRead(&value, reinterpret_cast<const void*>(at), sizeof value); },
+        [reach](uintptr_t local, uintptr_t tile) {
+            // the game's own reach AND line test: never through a wall, never farther than the game reaches
+            if (!reach) return false;
+            __try { return reinterpret_cast<int (*)(uintptr_t, uintptr_t, int, void*)>(reach)(local, tile, 0, nullptr) != 0; }
+            __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+        });
+    static thread_local ULONGLONG reported = 0;
+    if (const ULONGLONG now = GetTickCount64(); (r.warps || r.unit) && now - reported >= 1000) {
+        reported = now;
+        LogF("vrcam: Kurast sewer stairs - area %d: %u near, %u faced, %s (id %u, %.2f cells; %u units, %u tiles looked at)", level, r.warps, r.facing,
+             r.unit ? "offered to A" : "none in reach", r.id, r.distance, r.visited, r.tiles);
+    }
+    return r.unit;
+}
+
 void* HookSpellTarget(void* mgr, int skill) {
     const uintptr_t ret = (uintptr_t)_ReturnAddress();
     if (ret == g_dispatchTargetRet) {
@@ -6527,7 +6620,9 @@ void* HookSpellTarget(void* mgr, int skill) {
     }
     if (void* t = TouchedTarget(ret)) return t;
     if ((g_spellCast.directed && ret == g_spellTargetRet) || ClickTargetOff(ret)) return nullptr;
-    return OrigSpellTarget(mgr, skill);
+    void* t = OrigSpellTarget(mgr, skill);
+    if (!t && skill == kInteractSkill) t = reinterpret_cast<void*>(NearbySewerWarp());   // the Kurast sewer stairs, standing
+    return t;
 }
 
 void* HookSpellHover(int index) {

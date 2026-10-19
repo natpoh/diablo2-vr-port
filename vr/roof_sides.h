@@ -78,8 +78,29 @@ inline bool RoofToken(std::string_view s) {
     return false;
 }
 
-// A roof material of a roof model of the environment (both made plain by Canonical first).
+// The Kurast sewer entrances (Act 3: Kurast Bazaar 80, Upper Kurast 81 -> Sewers Level 1): the entrance shell and the stairs are
+// single-sided, so from the eyes on the stairs their backs are culled and the sky shows through. These exact model families (the
+// .model and its _lod0 - _lod4) and their audited materials only - from bearstonem/d2r-pcvr (MIT, v0.3.20: vr/roof_material_rules.h,
+// docs/KURAST_SEWER_ENTRANCES.md). Two-sided restores the backs; the open end of the stairwell has no wall to restore.
+inline bool SewerSelected(std::string_view model, std::string_view material) {
+    constexpr std::string_view kurast = "data/hd/env/model/act3/kurast/";
+    if (!model.starts_with(kurast)) return false;
+    const std::string_view relative = model.substr(kurast.size());
+    const auto matches = [&](std::string_view stem) {
+        if (!relative.starts_with(stem)) return false;
+        const std::string_view suffix = relative.substr(stem.size());
+        return suffix == ".model" || (suffix.size() == 11 && suffix.starts_with("_lod") && suffix[4] >= '0' && suffix[4] <= '4' && suffix.substr(5) == ".model");
+    };
+    if (matches("act3_kurast_architecture/sewer_entrance02")) return material == "roof_lip_corner01" || material == "elevation_walls_a";
+    if (matches("act3_kurast_stairs/stairs_sewers01"))
+        return material == "kurast_stairs_a" || material == "kurast_stairs_b" || material == "elevation_walls_a" ||
+               material == "pasted__sewer_column_corner" || material == "pasted__sewer_wall05";
+    return false;
+}
+
+// A roof material of a roof model of the environment, or a Kurast sewer entrance's (both made plain by Canonical first).
 inline bool Selected(std::string_view model, std::string_view material) {
+    if (SewerSelected(model, material)) return true;
     constexpr std::string_view prefix = "data/hd/env/model/act";
     if (!model.starts_with(prefix) || model.size() <= prefix.size() + 2) return false;
     const char act = model[prefix.size()];

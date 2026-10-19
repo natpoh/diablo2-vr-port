@@ -270,6 +270,13 @@ target_compile_options(shoulder_draw_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 add_executable(shield_arm_test cleanroom/tests/shield_arm_test.cpp)
 target_compile_options(shield_arm_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # [hands] shield_stow_no_block: the shield put away does not block - the pure rule (vr/stowed_block.h); the hook (vr/stowed_block.cpp) is in d2rl-vrcam below
+# The Kurast sewer stairs: their single-sided walls two-sided (vr/roof_sides.h) and A taking the stairs standing (vr/sewer_interaction.h), both pure
+add_executable(roof_sides_sewer_test cleanroom/tests/roof_sides_sewer_test.cpp)
+target_include_directories(roof_sides_sewer_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_options(roof_sides_sewer_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+add_executable(sewer_interaction_test cleanroom/tests/sewer_interaction_test.cpp)
+target_include_directories(sewer_interaction_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_options(sewer_interaction_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 add_executable(stowed_block_test cleanroom/tests/stowed_block_test.cpp)
 target_include_directories(stowed_block_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
 target_compile_options(stowed_block_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
