@@ -39,4 +39,9 @@ void Note(int hand, uint32_t id, uint64_t nowMs);
 // The touch stands down (another view, a menu, another weapon): the pairs are forgotten.
 void Forget();
 
+// Shared with [gameplay] melee_skill_armed (vr/melee_arm_game.cpp), UI thread only: the skill (and its owner) the game has on each of the pad's ten skill slots, in shield_smite.h's SlotPress order (B X Y RB,
+// LT + B X Y RB, A, LT + A); false, with *why, when the controller tables do not read as ten slots. And the hero's total level in a skill (-1 not read, 0 not learned).
+bool ReadPadSlots(int skills[10], int owners[10], const char** why);
+int ReadHeroLevel(int id, int owner);
+
 }  // namespace doubleswing

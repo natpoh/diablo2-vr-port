@@ -2889,6 +2889,16 @@ std::vector<Item> g_items = {
     Needs(L"gameplay", L"melee_touch", 1, Needs(L"gameplay", L"melee_amplitude", 1, Slider(L"gameplay", L"melee_amp_staff_x", L"Staffs: x piercing", 0.5f, 6, 0.05f, 1.75f,
            L"Staffs: the least swing amplitude as a multiple of the piercing weapons'. 1.75 x 8 cm = 14 cm. The cm it makes is in the label. Live."))),
     Group(L"Each kind of weapon (type a number; 0 = follow the general one)"),
+    Group(L"Melee skills armed by their button (F4)"),
+    Needs(L"gameplay", L"melee_touch", 1, Toggle(L"gameplay", L"melee_skill_armed", L"A melee skill's button arms it: every hit is that skill", 0,
+           L"Hit by touch on (F4 only), a melee weapon or fists swung. A press of a pad skill button (B, X, Y, RB, with or without LT) whose slot holds a melee attack skill - Bash, Stun, Concentrate, "
+           L"Berserk, Frenzy, Double Swing; Zeal, Smite, Sacrifice, Vengeance, Conversion; Jab, Fend, Impale, Power Strike, Charged Strike, Lightning Strike; Maul, Fire Claws, Hunger, Rabies, Fury, "
+           L"Feral Rage; Tiger Strike, Dragon Talon, Dragon Claw, Fists of Fire, Cobra Strike, Claws of Thunder, Blades of Ice, Dragon Tail, Royal Strike; Poison Dagger; Cleave (the skills the game's "
+           L"Skills.txt gives melee range) - no longer casts it: it ARMS it, like the bow's chosen arrow skill (a short buzz in both hands). Every touch of your blade is then the game's attack with "
+           L"that skill: its mana, cooldown, weapon check and animation are the game's, the monster you touched its target, one touch one cast. When the hero cannot pay its mana, that touch is the "
+           L"plain attack and the skill stays armed. The same button again, or a button with the plain attack on it, disarms; another melee skill's button arms that one. Spells, buffs, warcries, "
+           L"Whirlwind, Charge and Leap Attack cast from their buttons as ever, and a bow, a crossbow or a thrown weapon is not touched. Needs the plain attack on the attack button (A). The log says "
+           L"what was armed and what each touch was (\"melee armed: ...\"). Not tried in the game yet. Unticked: the skill buttons cast as before. Live.")),
     Group(L"Two weapons: Double Swing by the hands (F4)"),
     Needs(L"gameplay", L"melee_touch", 1, Toggle(L"hands", L"double_swing_by_hands", L"Double Swing by the two hands", 0,
            L"A Barbarian with a melee weapon in each hand, hit by touch on (F4 only). The first hand's touch on a monster is the game's normal attack, as ever. When the OTHER hand then touches the SAME monster "

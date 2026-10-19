@@ -194,6 +194,8 @@ namespace hud { void SetPlateCut(bool want, const int32_t layout[4], float scale
 #include "shield_smite_game.h"   // [gameplay] shield_smite: a bash of the left shield casts the game's own Smite
 #include "melee_trigger_wire.h"   // [gameplay] melee_touch_only: with hit by touch live the trigger does not attack (the plugin's own controls)
 #include "double_swing_game.h"   // [hands] double_swing_by_hands: with a weapon in each hand the second hand's touch casts the game's own Double Swing / Frenzy
+#include "melee_arm.h"        // [gameplay] melee_skill_armed: which skills arm (the log names them)
+#include "melee_arm_game.h"   // [gameplay] melee_skill_armed: a melee skill's button arms it; every hit by touch is then that skill (vr/melee_arm.h)
 #include "hit_claim.h"   // whose blow just landed: the presses claim it, the hit observer's hand source takes it (the controller that buzzes)
 
 #pragma intrinsic(_ReturnAddress)
@@ -2190,6 +2192,7 @@ void LoadSettings() {
     g_set.meleeTouch.store(IniB(L"gameplay", L"melee_touch", false));
     meleetrigger::Configure(IniB(L"gameplay", L"melee_touch_only", true));   // F4, hit by touch swinging a weapon (anything but a bow or a crossbow): the trigger's attack is not passed to the game - part of hit by touch, ON by default; 0 = the old way (the plugin's own controls only; vr/melee_trigger.h)
     doubleswing::Configure(IniB(L"hands", L"double_swing_by_hands", false), IniF(L"hands", L"double_swing_window_ms", 700.0f), (int)IniF(L"hands", L"double_swing_skill", 0.0f));   // F4, hit by touch with a weapon in each hand: the second hand's touch casts the game's own Double Swing / Frenzy (vr/double_swing.h)
+    meleearm::Configure(IniB(L"gameplay", L"melee_skill_armed", false));   // F4, hit by touch: a melee attack skill's pad button arms it instead of casting it; every touch is then that skill, the plain attack when the mana is short (vr/melee_arm.h)
     g_set.meleeTouchUnchecked.store(IniB(L"debug", L"melee_touch_unchecked", false));
     meleetouch::SetWanted(g_set.meleeTouch.load());
     meleetouch::SetThrownTouch(IniB(L"gameplay", L"melee_touch_thrown", true));   // javelins, throwing knives and axes hit by touch too (a point-blank throw; vr/thrown_touch.h)
@@ -6718,6 +6721,15 @@ int HookSlotSkill(int slot) {
             LogF("throw gesture: the slot's skill (Attack, 0) was read as %s (%d) by the %s", quivered && skill == chosen ? "the quiver's skill" : "Throw", skill,
                  ret == g_slotSelectRet ? "cast's slot selection" : "unit's hand-skill setter");
         }
+    } else if (site && !ThrownInHand()) {   // [gameplay] melee_skill_armed: the touch's attack press is read as the armed melee skill - decided at the press (vr/melee_arm_game.cpp: the plain attack when the mana is short)
+        if (const int armed = meleearm::PressSkill(); armed > 0) {
+            skill = armed;
+            static ULONGLONG told = 0;
+            if (GetTickCount64() - told > 300) {
+                told = GetTickCount64();
+                LogF("melee armed: the slot's skill (Attack, 0) was read as %s (%d) by the %s", meleearm::Name(armed), armed, ret == g_slotSelectRet ? "cast's slot selection" : "unit's hand-skill setter");
+            }
+        }
     }
     return skill;
 }
@@ -6725,10 +6737,11 @@ int HookSlotSkill(int slot) {
 bool ThrowAutoSkillReady() { return g_set.throwAutoSkill.load() && g_slotSkillHook.load() == 1; }
 
 void InstallSlotSkillHook() {
-    if (!g_ctx || g_slotSkillHook.load() != 0 || !((g_set.throwGesture.load() && g_set.throwAutoSkill.load()) || quiverwire::On() || bowquiverwire::PlainWanted())) return;
+    if (!g_ctx || g_slotSkillHook.load() != 0 || !((g_set.throwGesture.load() && g_set.throwAutoSkill.load()) || quiverwire::On() || bowquiverwire::PlainWanted() || meleearm::On())) return;
     if (!Matches(RVA_SLOT_SKILL, kSigSlotSkill, sizeof kSigSlotSkill)) return;   // the code is decrypted as it runs: tried again
     if (!CallsTo(RVA_SLOT_SKILL_SELECT_RET, RVA_SLOT_SKILL) || !CallsTo(RVA_SLOT_SKILL_SET_RET, RVA_SLOT_SKILL)) {
         g_slotSkillHook.store(2);
+        meleearm::SetHookState(2);   // [gameplay] melee_skill_armed needs the hook
         Log("vrcam: throw_auto_skill NOT possible - the controller's slot-skill reads are not where they were (another build?); a throw presses the pad button of the slot that holds Throw");
         return;
     }
@@ -6737,6 +6750,7 @@ void InstallSlotSkillHook() {
     const bool in = d2rsig::Hook(RVA_SLOT_SKILL, kSigSlotSkill, sizeof kSigSlotSkill, (void*)&HookSlotSkill, (void**)&OrigSlotSkill);
     g_slotSkillHook.store(in ? 1 : 2);
     bowquiverwire::SetPlainHookReady(in);   // [bow] quiver_plain_no_mana needs the hook
+    meleearm::SetHookState(in ? 1 : 2);     // [gameplay] melee_skill_armed too
     Log(in ? "vrcam: throw_auto_skill in - with a throwing weapon in hand a throw's A press is read by the game as its Throw skill (no skill slot needed), or as the skill chosen from the quiver"
            : "vrcam: throw_auto_skill hook FAILED - a throw presses the pad button of the slot that holds Throw");
 }
@@ -6875,6 +6889,10 @@ template <int I> DWORD WINAPI XDetour(DWORD idx, XINPUT_STATE* s) {
     bool mirror = false;
     if (t_xDepth == 0 && idx == 0 && s && !FlatKeyMode() && PadFromBodyWalk(s, origResult == ERROR_SUCCESS)) { r = ERROR_SUCCESS; mirror = true; }
     if (t_xDepth == 0 && idx == 0 && s) KeysAsStick(s, &r);
+    // [gameplay] melee_skill_armed (F4): a skill button's press that arms a melee skill is taken out of the pad the game polls - before the gestures' own pulses are added, so a pulse of ours (the
+    // shield bash's Smite, double swing's) is never taken. Armable while hit by touch swings a melee weapon (never a bow, a crossbow or a thrown weapon).
+    if (t_xDepth == 0 && idx == 0 && s && r == ERROR_SUCCESS && meleearm::On() && g_set.platform.load() == 1)
+        meleearm::FilterPad(&s->Gamepad.wButtons, s->Gamepad.bLeftTrigger, meleetouch::Live(500) && !ThrownInHand());
     if (t_xDepth == 0 && idx == 0 && s) {   // pad buttons the gestures pulse (directinput::PadPulse): over any pad, or a pad of their own
         uint16_t pb; uint8_t plt, prt;
         if (directinput::PadPulses(&pb, &plt, &prt)) {
@@ -17498,6 +17516,7 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     shieldsmite::Init(ctx);
     meleetrigger::Init(ctx);   // melee_touch_only listens to direct_input's frames
     doubleswing::Init(ctx);
+    meleearm::Init(ctx);   // [gameplay] melee_skill_armed: the log
     meleetouch::Init(ctx);
     skillwheel::Init(ctx);
     lowhp::Init(ctx);   // [hud] low_hp_vignette reads the hero's life on the UI thread

@@ -40,6 +40,7 @@
 #include "panel_input.h"
 #include "shield_smite_game.h"
 #include "double_swing_game.h"
+#include "melee_arm_game.h"
 #include "render_resolution.h"
 #include "sigscan.h"
 
@@ -599,6 +600,7 @@ void __cdecl ReadItems(const PluginContext* ctx, void* user) noexcept {
     }
     shieldsmite::UiRead();   // [gameplay] shield_smite: which pad slot holds Smite (the game's own tables, UI thread)
     doubleswing::UiRead();   // [hands] double_swing_by_hands: which pad slots hold Double Swing and Frenzy, the hero's level in them (UI thread; nothing when off)
+    meleearm::UiRead();      // [gameplay] melee_skill_armed: the skills on the pad's face-button slots, the hero's level in the armed one (UI thread; nothing when off)
     Publish();
 }
 

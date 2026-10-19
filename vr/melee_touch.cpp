@@ -37,6 +37,7 @@
 #include "blade_shape.h"
 #include "double_swing.h"
 #include "double_swing_game.h"   // [hands] double_swing_by_hands: the second hand's touch may be the game's Double Swing / Frenzy
+#include "melee_arm_game.h"   // [gameplay] melee_skill_armed: the touch's press may be read as the armed melee skill
 #include "stroke_tuning.h"
 #include "strike_direction.h"
 #include "thrown_touch.h"
@@ -455,6 +456,7 @@ void Approve(uint32_t id, bool allowDirect, int hand) {
     }
     meleeboxes::Struck(id, meleeboxes::kStruckKey, now);   // [debug] melee_boxes: the drawing only
     if (g_press.Begin(id, now)) {
+        meleearm::OnPress(allowDirect);   // [gameplay] melee_skill_armed: this press is the armed skill or the plain attack (never for a thrown weapon: allowDirect false)
         SendPress(true);
         hitclaim::Press(hand, static_cast<int64_t>(now));
         hitlatency::Press(hitlatency::kMelee);
@@ -736,6 +738,7 @@ void Tick(const Frame& f) {
     ReleasePress(now, false);
     LatencyPoll(now);
     doubleswing::Tick();   // [hands] double_swing_by_hands: the hero's mana is read for its decisions (cheap when off)
+    meleearm::Tick();      // [gameplay] melee_skill_armed: the same, while a skill is armed
     if (g_wanted.load()) meleedirect::Install();   // only while hit by touch and [gameplay] melee_direct are both on
     // F4 only (vr/view_gate.h). f.ok is vrcam's - a game area, first person on the controllers, no panel - and the view test is
     // here too, so the module does not depend on the caller's being right: another view = not ok, and what a touch had under way

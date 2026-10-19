@@ -1,5 +1,21 @@
 # What's new in D2R VR
 
+## Next
+
+- **New, off by default: melee skills armed by their button** ([gameplay] melee_skill_armed; D2R VR Authentic Settings > Strikes > "A melee skill's button arms it: every hit is that skill";
+  VR first person F4, with hit by touch). The author's wish: "for the Barbarian's and the Paladin's attack skills (and whoever else has them), when we bind a skill to a button, pressing it does
+  not activate it but remembers it as the chosen one, like the Amazon's, and on every blow it fires and spends mana; if there is not enough mana, a normal blow." With a melee weapon (or fists)
+  swung by touch, a press of a pad skill button (B, X, Y, RB, with or without LT) whose slot holds a melee attack skill is not passed to the game: it arms that skill (a short buzz in both
+  hands). Every touch the game's attack is pressed for is then read by the game as the armed skill - through the same slot-skill hook the bow's "no mana: the plain arrow" uses - so the cast is
+  the game's own: its mana, cooldown, weapon check, animation, and the touched monster as its target; one touch, one cast. A touch the hero cannot pay (the skill's cost in the game's Skills.txt
+  at his level, against his mana) is the plain attack, and the skill stays armed. The same button again, or a button with the plain attack on it, disarms; another melee skill's button arms
+  that one. The skills are derived from the game's Skills.txt (a class skill for the attack button whose range is melee, h2h): Jab, Power Strike, Impale, Charged Strike, Fend, Lightning
+  Strike, Poison Dagger, Sacrifice, Smite, Zeal, Vengeance, Conversion, Bash, Double Swing, Stun, Concentrate, Frenzy, Berserk, Feral Rage, Maul, Rabies, Fire Claws, Hunger, Fury, Tiger
+  Strike, Dragon Talon, Fists of Fire, Dragon Claw, Cobra Strike, Claws of Thunder, Dragon Tail, Blades of Ice, Royal Strike and Cleave. Whirlwind, Charge, Leap Attack and Dragon Flight (they
+  move the hero), spells, buffs and warcries cast from their buttons as ever; a bow, a crossbow and a thrown weapon are not touched, nor F1 - F3 and the flat modes. It needs the plain attack on
+  the attack button (A); a skill bound as a key command (cmd:) is not taken. The log says what was armed and what each touch was ("melee armed: ..."). Unticked: the skill buttons cast as
+  before. Not tried in the game yet. Unit test: cleanroom/tests/melee_arm_test.cpp (vr/melee_arm.h).
+
 ## 0.172
 
 - **New: a first-start guide in the headset**, on by default for a new player. The first time you stand in the world in VR first person (F4) with the

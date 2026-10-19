@@ -713,6 +713,13 @@ ticks the other). The blade's geometry stays in Weapon Adjust and Debug.
 - **Each kind of weapon** - a table, a row for each of the 15 kinds the touch swings (bows and crossbows are shot, not swung): *Swing x* (the kind's own amplitude factor, 0 =
   follow its family), *= cm* (what that comes to), *Speed* (its own least blade speed, m/s) and *Start cm* (its own start distance; 0 = the general one for both), and two
   ticks, *Toward* and *Head*. Click a number, type, press Enter.
+- **Melee skills armed by their button** (F4, off; `[gameplay] melee_skill_armed`) - *A melee skill's button arms it: every hit is that skill*: a pad skill button (B, X, Y, RB, with or
+  without LT) whose slot holds a melee attack skill no longer casts it - its press ARMS the skill, like the bow's chosen arrow skill (a short buzz in both hands). Every touch of your blade is
+  then the game's attack with that skill - its mana, cooldown, weapon check and animation are the game's, the touched monster its target, one touch one cast; a touch the hero cannot pay is the
+  plain attack and the skill stays armed. The same button again, or one with the plain attack on it, disarms. The skills are the ones the game's Skills.txt gives melee range (h2h): the
+  Barbarian's Bash, Stun, Concentrate, Berserk, Frenzy, Double Swing; the Paladin's Zeal, Smite, Sacrifice, Vengeance, Conversion; the Amazon's spear skills; the Druid's Maul, Fire Claws,
+  Hunger, Rabies, Fury, Feral Rage; the Assassin's martial arts; Poison Dagger; Cleave. Whirlwind, Charge, Leap Attack, spells, buffs and warcries cast from their buttons as ever; a bow, a
+  crossbow or a thrown weapon is not touched. Needs the plain attack on the attack button (A).
 - **Two weapons: Double Swing by the hands** (F4, off; a Barbarian with a melee weapon in each hand) - *Double Swing by the two hands*: the first hand's touch on a monster is the game's normal attack;
   when the other hand then touches the same monster within *the other hand within, ms* (700) the second strike is the game's own Double Swing instead - its pad button is pressed once and the monster
   you touched is its target, the way the shield bash casts Smite. The skill has to sit on one of the pad's ten skill slots, the hero has to have a level in it and the mana for it (the game's own

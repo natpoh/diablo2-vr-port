@@ -232,6 +232,33 @@ void Tick() {
     if (g_on.load()) handvitals::game::Tick(true);   // the hero's mana, five times a second, on the UI thread
 }
 
+// -- the pad's ten skill slots (the UI thread): shared with [gameplay] melee_skill_armed (melee_arm_game.cpp) --------------------------------
+bool ReadPadSlots(int skills[shieldsmite::kSlotCount], int owners[shieldsmite::kSlotCount], const char** why) {
+    auto no = [why](const char* text) {
+        *why = text;
+        return false;
+    };
+    const uintptr_t bankFn = d2rsig::Addr(RVA_CTRL_BANK), slotFn = d2rsig::Addr(RVA_BUTTON_SLOT), table = d2rsig::Addr(RVA_CTRL_TABLE);
+    if (!bankFn || !slotFn || !table) return no("the game's controller tables not found (yet)");
+    int bank = -1;
+    if (!CallInt(bankFn, &bank) || (bank != 0 && bank != 16)) return no("the controller bank is not 0 or 16");
+    unsigned used = 0;
+    for (int i = 0; i < shieldsmite::kSlotCount; ++i) {
+        const shieldsmite::PadPress p = shieldsmite::SlotPress(i);
+        int slot = -1;
+        // A customised layout that gives two buttons one slot is refused: the press would cast the wrong skill.
+        if (!CallSlot(slotFn, p.buttons, p.lt != 0, &slot) || slot < 0 || slot >= 16 || (used & (1u << slot))) return no("the pad buttons do not map to ten slots");
+        used |= 1u << slot;
+        int32_t record[2] = {};
+        if (!Rd(table + uintptr_t(bank + slot) * kRecordSize, &record) || record[0] < -1 || record[0] > 4095) return no("a controller record does not read");
+        skills[i] = record[0];
+        owners[i] = record[1];
+    }
+    return true;
+}
+
+int ReadHeroLevel(int id, int owner) { return ReadLevel(id, owner); }
+
 // -- which pad slots hold the two skills (the UI thread) ---------------------------------------------------------------------------
 void UiRead() {
     if (!g_on.load()) return;
@@ -248,23 +275,9 @@ void UiRead() {
             LogF("double swing: the pad slots cannot be read (%s) - the second hand's touch is a normal attack", why);
         }
     };
-    const uintptr_t bankFn = d2rsig::Addr(RVA_CTRL_BANK), slotFn = d2rsig::Addr(RVA_BUTTON_SLOT), table = d2rsig::Addr(RVA_CTRL_TABLE);
-    if (!bankFn || !slotFn || !table) return fail("the game's controller tables not found (yet)");
-    int bank = -1;
-    if (!CallInt(bankFn, &bank) || (bank != 0 && bank != 16)) return fail("the controller bank is not 0 or 16");
     int skills[shieldsmite::kSlotCount], owners[shieldsmite::kSlotCount];
-    unsigned used = 0;
-    for (int i = 0; i < shieldsmite::kSlotCount; ++i) {
-        const shieldsmite::PadPress p = shieldsmite::SlotPress(i);
-        int slot = -1;
-        // A customised layout that gives two buttons one slot is refused: the press would cast the wrong skill.
-        if (!CallSlot(slotFn, p.buttons, p.lt != 0, &slot) || slot < 0 || slot >= 16 || (used & (1u << slot))) return fail("the pad buttons do not map to ten slots");
-        used |= 1u << slot;
-        int32_t record[2] = {};
-        if (!Rd(table + uintptr_t(bank + slot) * kRecordSize, &record) || record[0] < -1 || record[0] > 4095) return fail("a controller record does not read");
-        skills[i] = record[0];
-        owners[i] = record[1];
-    }
+    const char* why = "";
+    if (!ReadPadSlots(skills, owners, &why)) return fail(why);
     toldWhy = false;
     constexpr int kAttackSlot = 8;   // the pad's A: the attack button (shield_smite.h's order)
     g_attack.store(skills[kAttackSlot]);
