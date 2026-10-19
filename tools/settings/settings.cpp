@@ -239,7 +239,7 @@ const std::vector<const wchar_t*>& RemapNames() {
 // What a touch row adds to its tip: the finger ARRIVING on the control, not a press.
 constexpr const wchar_t* kTouchTip =
     L" TOUCH, not a press: this fires once when your finger ARRIVES on the control (the capacitive touch of a Touch controller - PS VR2 on SteamVR is "
-    L"one - or an Index controller), nothing more while it stays, and once again the next time it arrives. It is on top of what pressing the same control "
+    L"one - or an Index controller), nothing more while it stays, and once again the next time it arrives - a game key such as Show items (Alt) is held while the finger stays and let go with it. It is on top of what pressing the same control "
     L"does (the touch comes first). A Vive, WMR or simple controller reports no touch: nothing happens there. First person (F4), in the world only - not in "
     L"a menu or with a panel of the mod's own up. Nothing is bound by default; to put the game's run / walk switch here pick \"Run / walk switch\". "
     L"The log (d2r-vr-vrcam.log) says which touch inputs your controller reports.";

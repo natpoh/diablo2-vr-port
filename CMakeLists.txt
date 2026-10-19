@@ -474,6 +474,10 @@ target_compile_options(direct_input_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 add_executable(direct_remap_test cleanroom/tests/direct_remap_test.cpp)
 target_include_directories(direct_remap_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared ${CMAKE_CURRENT_SOURCE_DIR}/vr ${BODYWALK_SDK_INCLUDE})
 target_compile_options(direct_remap_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# A game key (Show items, Alt) on a long press or a touch line is held as long as the control (vr/direct_layout.h, vr/hold_tap.h, pure).
+add_executable(hold_line_test cleanroom/tests/hold_line_test.cpp)
+target_include_directories(hold_line_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_options(hold_line_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # The game must never think its pad left (vr/pad_presence.h): when pad 0 is answered present, and what the log says.
 add_executable(pad_presence_test cleanroom/tests/pad_presence_test.cpp)
 target_include_directories(pad_presence_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)

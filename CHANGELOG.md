@@ -1,5 +1,13 @@
 # What's new in D2R VR
 
+## Next
+
+- **Fixed: "Show items on the ground (Alt)" on a long press or a touch only flashed** (a player: "it only shows them for a split second then goes away, even
+  if you hold the button down"). A game key bound to a button's long-press line (D2R VR Settings > Controls > "a long press") or to a touch line was sent as a
+  0.1 s pulse; it is now held from the long press (or the finger's touch) until the button is let go (or the finger lifted), as on a button's plain line -
+  so the game's "Show items: hold" keeps the labels up, and "toggle" still toggles once per press. A menu, the focus going or a view change lets it go.
+  Actions and the rest on those lines stay one pulse. Unit test: cleanroom/tests/hold_line_test.cpp.
+
 ## 0.172
 
 - **New: a first-start guide in the headset**, on by default for a new player. The first time you stand in the world in VR first person (F4) with the
