@@ -36,7 +36,8 @@ void UiRead();
 void Tick();
 
 // vrcam's XInput hook, every poll of pad 0 (the pad as the layout, BodyWalk or a real pad made it - before the gestures' own pulses are added): takes the press of a skill button that arms out of
-// it. `armable`: F4, hit by touch swinging a melee weapon (not a thrown one) - vrcam knows. `buttons` XInput wButtons, changed in place; `lt` the left trigger.
+// it. `armable`: F4, hit by touch swinging a melee weapon (not a thrown one) - vrcam knows; a press that DISARMS is taken without it too (F4, the hook in). One press, one toggle (melee_arm.h
+// PadFilter: a poll of pad 0 without the plugin's pad between two with it is no release). `buttons` XInput wButtons, changed in place; `lt` the left trigger.
 void FilterPad(uint16_t* buttons, uint8_t lt, bool armable);
 
 // hit by touch (melee_touch.cpp Approve), the game's attack press of an accepted touch, just BEFORE its button goes down: decides whether this press is the armed skill or the plain attack. `melee` false: a

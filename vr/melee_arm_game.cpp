@@ -188,7 +188,9 @@ void UiRead() {
 }
 
 void FilterPad(uint16_t* buttons, uint8_t lt, bool armable) {
-    const bool live = armable && g_on.load() && g_hook.load() == 1 && viewgate::F4();
+    const bool can = g_on.load() && g_hook.load() == 1 && viewgate::F4();   // a press that disarms is taken whenever this holds; one that arms only while the touch is live too
+    const bool live = armable && can;
+    const uint64_t now = GetTickCount64();
     AcquireSRWLockExclusive(&g_lock);
     if (g_clear.exchange(false)) {
         g_arm.Clear();
@@ -202,7 +204,8 @@ void FilterPad(uint16_t* buttons, uint8_t lt, bool armable) {
     } else {
         untick = -1;
     }
-    const Step s = g_filter.Poll(*buttons, lt, live, g_arm, [](int slot) { return slot >= 0 && slot < kFaceSlots ? g_slot[slot].load() : -1; });
+    const int32_t before = g_arm.Armed();
+    const Step s = g_filter.Poll(*buttons, lt, live, can, now, g_arm, [](int slot) { return slot >= 0 && slot < kFaceSlots ? g_slot[slot].load() : -1; });
     if (s.event) {
         g_armed.store(g_arm.Armed());
         if (s.outcome == Outcome::Armed || s.outcome == Outcome::Switched) {
@@ -210,7 +213,7 @@ void FilterPad(uint16_t* buttons, uint8_t lt, bool armable) {
             g_level.store(-1);   // (read again by the UI thread within a fifth of a second)
             g_levelFor.store(-1);
         } else {
-            g_flight.Clear();
+            g_flight.Clear();   // a hit pressed before the disarm and read after it is the plain attack: the toggle is never lost to a press in flight
         }
     }
     ReleaseSRWLockExclusive(&g_lock);
@@ -218,11 +221,11 @@ void FilterPad(uint16_t* buttons, uint8_t lt, bool armable) {
     if (untick >= 0) LogF("melee armed: %s unticked in the list ([melee_armed] s%d=0) - disarmed, every hit by touch is the plain attack", Name(untick), (int)untick);
     if (!s.event) return;
     const bool armedNow = s.outcome != Outcome::Disarmed;
-    directinput::Haptic(0, armedNow ? 0.5f : 0.25f, armedNow ? 40.0f : 25.0f);   // a short buzz in both hands: the press was the arming's, not a cast
-    directinput::Haptic(1, armedNow ? 0.5f : 0.25f, armedNow ? 40.0f : 25.0f);
+    directinput::Haptic(0, 0.5f, armedNow ? 40.0f : 30.0f);   // a short buzz in both hands: the press was the arming's, not a cast - the disarm's as strong as the arm's, a little shorter
+    directinput::Haptic(1, 0.5f, armedNow ? 40.0f : 30.0f);
     if (armedNow) LogF("melee armed: %s (pad %s) %s - every hit by touch is %s now, the plain attack when the mana is short; the same button again, or the plain attack's, disarms", Name(s.skill), SlotName(s.slot),
                        OutcomeName(s.outcome), Name(s.skill));
-    else LogF("melee armed: disarmed (pad %s, %s) - every hit by touch is the plain attack", SlotName(s.slot), Name(s.skill));
+    else LogF("melee armed: %s disarmed (pad %s, its slot %s) - every hit by touch is the plain attack", Name(before), SlotName(s.slot), s.skill < 0 ? "not read" : Name(s.skill));
 }
 
 void OnPress(bool melee) {
@@ -233,7 +236,7 @@ void OnPress(bool melee) {
     const int level = g_levelFor.load() == armed ? g_level.load() : -1;
     const Hit h = Decide(armed, level, mana);
     AcquireSRWLockExclusive(&g_lock);
-    g_flight.Set(h.skill, now);
+    g_flight.Set(g_arm.Armed() == armed || h.skill == kAttack ? h.skill : kAttack, now);   // (disarmed, or another armed, by a press between the read above and here: the plain attack)
     ReleaseSRWLockExclusive(&g_lock);
     if (h.skill > kAttack) {
         g_lastCost.store(h.cost > 0.0f ? h.cost : 0.0f);

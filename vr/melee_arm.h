@@ -4,7 +4,7 @@
 // The author's words (2026-10-19): "for the Barbarian's and the Paladin's attack skills (and whoever else has them), when we bind a skill to a button, pressing it does not activate it but remembers it
 // as the chosen one, like the Amazon's, and on every blow it fires and spends mana; if there is not enough mana, a normal blow." So, in VR first person (F4) with hit by touch swinging a melee weapon:
 //   - a press of a pad skill button (B X Y RB, with and without LT) whose slot holds a melee attack skill is not passed to the game: that skill becomes the ARMED one (Press). The same button again, or a
-//     button whose slot holds the plain attack (Attack, 0), disarms; another melee skill's button re-arms with that one. Any other skill's press (a spell, a buff, a warcry) is the game's, as ever.
+//     button whose slot holds the plain attack (Attack, 0), disarms (one press, one toggle - PadFilter); another melee skill's button re-arms with that one. Any other skill's press (a spell, a buff, a warcry) is the game's, as ever.
 //   - every touch the game's attack is pressed for then reads the attack slot's skill as the armed one (vrcam's slot-skill hook, the bow's [bow] quiver_plain_no_mana path the other way round): the game's
 //     whole cast is the skill's - its checks, weapon, mana, cooldown, animation, the touched monster as its target. One touch, one press, one cast: never more hits than swings.
 //   - a touch the hero cannot pay (Decide: the game's own arithmetic on the skill's Skills.txt row, the skill's level and the hero's mana, bow_mana.h) is the plain attack, the skill staying armed.
@@ -156,30 +156,38 @@ inline const char* OutcomeName(Outcome o) {
 }
 class Arm {
 public:
-    // A press of a skill button whose slot holds `skill` (-1 none). Pass: the press is the game's (a spell, an unticked skill, an empty slot, the plain attack with nothing armed).
-    Outcome Press(int32_t skill) {
+    // A press of a skill button whose slot (0..7, -1 not known) holds `skill` (-1 none, not read). Pass: the press is the game's (a spell, an unticked skill, an empty slot, the plain attack
+    // with nothing armed). The armed skill's own press disarms: a slot that holds it (the button that armed it, or another with the same skill), or the button that armed it while its slot
+    // is not read just then (the UI thread's read is five times a second and can miss) - never a cast of it by the game instead of the toggle.
+    Outcome Press(int32_t skill, int slot = -1) {
+        if (Disarms(skill, slot)) {
+            Clear();
+            return Outcome::Disarmed;
+        }
         if (allowed_.Has(skill)) {
-            if (armed_ == skill) {
-                armed_ = -1;
-                return Outcome::Disarmed;
-            }
             const bool had = armed_ >= 0;
             armed_ = skill;
+            slot_ = slot;
             return had ? Outcome::Switched : Outcome::Armed;
-        }
-        if (skill == kAttack && armed_ >= 0) {
-            armed_ = -1;
-            return Outcome::Disarmed;
         }
         return Outcome::Pass;
     }
+    // Press would disarm: the armed skill's slot, the arming button while its slot is not read, the plain attack's button. PadFilter takes such a press even when it could not arm now.
+    bool Disarms(int32_t skill, int slot) const {
+        if (armed_ < 0) return false;
+        return skill == armed_ || skill == kAttack || (skill < 0 && slot >= 0 && slot == slot_);
+    }
     int32_t Armed() const { return armed_; }   // -1 none
-    void Clear() { armed_ = -1; }
+    int ArmedSlot() const { return slot_; }    // the slot whose press armed it (-1 none, not known)
+    void Clear() {
+        armed_ = -1;
+        slot_ = -1;
+    }
     // The list's ticks (live): an armed skill that is unticked now is disarmed (true then).
     bool SetAllowed(Allowed a) {
         allowed_ = a;
         if (armed_ >= 0 && !allowed_.Has(armed_)) {
-            armed_ = -1;
+            Clear();
             return true;
         }
         return false;
@@ -187,6 +195,7 @@ public:
 
 private:
     int32_t armed_ = -1;
+    int slot_ = -1;
     Allowed allowed_ = Allowed::Defaults();
 };
 
@@ -199,7 +208,12 @@ inline constexpr uint8_t kLtDown = 30;   // XINPUT_GAMEPAD_TRIGGER_THRESHOLD: th
 
 // Every poll of the game's pad: the buttons as they would go to the game, the left trigger. A button that goes down while `armable` (F4, hit by touch swinging a melee weapon, the hook in) on a slot
 // whose skill Press does not pass is the arming's: it is taken out of what the game sees (strip) until it is let go - the game never sees that press. A button already down when it became armable,
-// and every other button, is left alone.
+// and every other button, is left alone. `disarmable` (F4, the hook in; the touch need not be live this moment): a press that disarms (Arm::Disarms) is taken even when it could not arm.
+// ONE PRESS, ONE TOGGLE: a button up in a poll counts as let go only kLetGoMs after its last poll down (the game polls about 25 times a second; a hand's re-press takes longer than that).
+// Some polls of pad 0 come back without the plugin's pad (vrcam.cpp, g_padMirrorOkAt: "the pad trace flipped 2000 / 0000 within a millisecond" - 0x2000 is B); read as a release, each made
+// the held button a new press, so one press toggled armed, disarmed, armed... and the second press of the author's test (2026-10-19: "a second press must take the skill off") ended armed
+// as often as not.
+inline constexpr uint64_t kLetGoMs = 45;
 struct Step {
     uint16_t strip = 0;       // the bits to take out of the game's pad this poll
     bool event = false;       // a press was the arming's this poll
@@ -209,22 +223,32 @@ struct Step {
 };
 class PadFilter {
 public:
-    // skillOf(slot) -> the game's skill on that slot (-1 none, not known).
+    // skillOf(slot) -> the game's skill on that slot (-1 none, not known). nowMs: a monotonic clock in ms.
     template <class F>
-    Step Poll(uint16_t buttons, uint8_t lt, bool armable, Arm& arm, F skillOf) {
+    Step Poll(uint16_t buttons, uint8_t lt, bool armable, bool disarmable, uint64_t nowMs, Arm& arm, F skillOf) {
         Step r;
         const uint16_t down = buttons & kMask;
         for (int i = 0; i < 4; ++i) {
             const uint16_t b = kButtons[i];
-            if (held_ & b) {
-                if (down & b) r.strip |= b;
-                else held_ &= (uint16_t)~b;
+            if (!(down & b)) {
+                if ((seen_ & b) && (nowMs - downAt_[i] >= kLetGoMs || nowMs < downAt_[i])) {   // let go (a clock that went back: let go too)
+                    seen_ &= (uint16_t)~b;
+                    held_ &= (uint16_t)~b;
+                }
                 continue;
             }
-            if (!(down & b) || (prev_ & b) || !armable) continue;
+            const bool edge = !(seen_ & b);
+            seen_ |= b;
+            downAt_[i] = nowMs;
+            if (held_ & b) {
+                r.strip |= b;
+                continue;
+            }
+            if (!edge || !(armable || disarmable)) continue;
             const int slot = i + (lt > kLtDown ? 4 : 0);
             const int32_t skill = skillOf(slot);
-            const Outcome o = arm.Press(skill);
+            if (!armable && !arm.Disarms(skill, slot)) continue;
+            const Outcome o = arm.Press(skill, slot);
             if (o == Outcome::Pass) continue;
             held_ |= b;
             r.strip |= b;
@@ -233,13 +257,13 @@ public:
             r.slot = slot;
             r.skill = skill;
         }
-        prev_ = down;
         return r;
     }
-    void Reset() { prev_ = held_ = 0; }
+    void Reset() { seen_ = held_ = 0; }
 
 private:
-    uint16_t prev_ = 0, held_ = 0;
+    uint16_t seen_ = 0, held_ = 0;   // down (let go only when up kLetGoMs after its last poll down), and taken by the arming
+    uint64_t downAt_[4] = {};        // each button's last poll down
 };
 
 // ---- the hit: the skill, or the plain attack --------------------------------------------------------------------------------------

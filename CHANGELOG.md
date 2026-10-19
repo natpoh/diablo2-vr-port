@@ -15,6 +15,12 @@
   move the hero), spells, buffs and warcries cast from their buttons as ever; a bow, a crossbow and a thrown weapon are not touched, nor F1 - F3 and the flat modes. It needs the plain attack on
   the attack button (A); a skill bound as a key command (cmd:) is not taken. The log says what was armed and what each touch was ("melee armed: ..."). Unticked: the skill buttons cast as
   before. Not tried in the game yet. Unit test: cleanroom/tests/melee_arm_test.cpp (vr/melee_arm.h).
+- **Fixed: a second press of an armed skill's button disarms it** ([gameplay] melee_skill_armed; the author's test of 0.173: "a second press must take the skill off - otherwise we have
+  no way to unselect it"). Some of the game's polls of the pad come back without the plugin's controller in them for a millisecond; each read as a release, so one held press toggled armed,
+  off, armed... and often ended armed again. A button now counts as let go only when it stays up past the next poll: one press, one toggle. The same button again (or any button whose slot
+  holds the same skill, or the plain attack) disarms - also when the slot was not read that moment, and also when the touch is not live just then (the press is taken, never cast by the game);
+  a hit already in flight is then the plain attack. The disarm's buzz is as strong as the arm's. Another melee skill's button still arms that one. The bow is unchanged: its arrow skill is
+  picked from the quiver (next / previous, the orbs, the plain shot among them), not toggled by a press. Unit test: cleanroom/tests/melee_arm_test.cpp.
 - **New: the armed melee skill in the mana medallion** ([gameplay] melee_skill_armed_icon, on by default but drawn only while melee_skill_armed is on; Settings > Strikes, under the
   melee_skill_armed tick: "Show the armed skill in the mana medallion"; VR first person F4). The author's design: the armed skill's icon - the game's own, the one the skill panel's tiles and
   the skill wheel draw (the player's own icon cache) - lies on the bottom of the MANA medallion on the wrist, under the blue liquid and the glass (the skill spends mana, so it belongs there),

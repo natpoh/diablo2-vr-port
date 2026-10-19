@@ -96,11 +96,12 @@ void List() {
     int slots[8] = {151, 106, -1, kAttack, -1, -1, -1, -1};
     auto skillOf = [&](int s) { return s >= 0 && s < 8 ? slots[s] : -1; };
     a.SetAllowed(Allowed::Defaults());
-    Step s = f.Poll(kPadB, 0, true, a, skillOf);
+    uint64_t t = 1000;
+    Step s = f.Poll(kPadB, 0, true, true, t += 100, a, skillOf);
     Check(!s.event && s.strip == 0, "Whirlwind unticked: B goes to the game");
-    f.Poll(0, 0, true, a, skillOf);
+    f.Poll(0, 0, true, true, t += 100, a, skillOf);
     a.SetAllowed(al);
-    s = f.Poll(kPadB, 0, true, a, skillOf);
+    s = f.Poll(kPadB, 0, true, true, t += 100, a, skillOf);
     Check(s.event && s.strip == kPadB && a.Armed() == 151, "Whirlwind ticked: B arms it, taken from the game");
     // the hit: the game's arithmetic on Whirlwind's row
     Hit h = Decide(151, 1, 20.0f);
@@ -114,37 +115,151 @@ void Pad() {
     PadFilter f;
     int slots[8] = {106, 36, -1, kAttack, 126, 151, 147, 0};   // B Zeal, X Fire Bolt, Y nothing, RB Attack; LT: B Bash, X Whirlwind, Y Frenzy, RB Attack
     auto skillOf = [&](int s) { return s >= 0 && s < 8 ? slots[s] : -1; };
-    Step s = f.Poll(kPadB, 0, true, a, skillOf);
+    uint64_t t = 1000;
+    // a poll 100 ms after the last (a button up in it is let go: kLetGoMs); `disarmable` as `armable` unless said
+    auto poll = [&](uint16_t buttons, uint8_t lt, bool armable) { return f.Poll(buttons, lt, armable, armable, t += 100, a, skillOf); };
+    Step s = poll(kPadB, 0, true);
     Check(s.event && s.strip == kPadB && s.outcome == Outcome::Armed && s.slot == 0 && a.Armed() == 106, "B down: Zeal armed, B taken from the game");
-    s = f.Poll(kPadB, 0, true, a, skillOf);
+    s = poll(kPadB, 0, true);
     Check(!s.event && s.strip == kPadB && a.Armed() == 106, "B held: still taken, nothing new");
-    s = f.Poll(kPadB, 0, false, a, skillOf);
+    s = poll(kPadB, 0, false);
     Check(s.strip == kPadB, "B held while no longer armable: still taken until let go (the game never sees half a press)");
-    s = f.Poll(0, 0, true, a, skillOf);
+    s = poll(0, 0, true);
     Check(!s.event && s.strip == 0, "B up");
-    s = f.Poll(kPadX, 0, true, a, skillOf);
+    s = poll(kPadX, 0, true);
     Check(!s.event && s.strip == 0 && a.Armed() == 106, "X: Fire Bolt is the game's");
-    s = f.Poll(kPadX | kPadB, 0, true, a, skillOf);
+    s = poll(kPadX | kPadB, 0, true);
     Check(s.event && s.strip == kPadB && s.outcome == Outcome::Disarmed && a.Armed() == -1, "B again (X still held): disarmed, only B taken");
-    f.Poll(0, 0, true, a, skillOf);
-    s = f.Poll(kPadB, 255, true, a, skillOf);
+    poll(0, 0, true);
+    s = poll(kPadB, 255, true);
     Check(s.event && s.slot == 4 && a.Armed() == 126, "LT + B: the second bank's Bash");
-    f.Poll(0, 0, true, a, skillOf);
-    s = f.Poll(kPadX, 255, true, a, skillOf);
+    poll(0, 0, true);
+    s = poll(kPadX, 255, true);
     Check(!s.event && s.strip == 0 && a.Armed() == 126, "LT + X: Whirlwind is the game's");
-    f.Poll(0, 0, true, a, skillOf);
-    s = f.Poll(kPadRB, 0, true, a, skillOf);
+    poll(0, 0, true);
+    s = poll(kPadRB, 0, true);
     Check(s.event && s.outcome == Outcome::Disarmed && s.strip == kPadRB, "RB, the plain attack: disarms");
-    f.Poll(0, 0, true, a, skillOf);
-    s = f.Poll(kPadB, 0, false, a, skillOf);
+    poll(0, 0, true);
+    s = poll(kPadB, 0, false);
     Check(!s.event && s.strip == 0 && a.Armed() == -1, "not armable (another weapon, view, the touch off): B is the game's");
-    s = f.Poll(kPadB, 0, true, a, skillOf);
+    s = poll(kPadB, 0, true);
     Check(!s.event && s.strip == 0, "a button already down when it became armable is left to the game");
-    f.Poll(0, 0, true, a, skillOf);
-    s = f.Poll(0x1000, 0, true, a, skillOf);
+    poll(0, 0, true);
+    s = poll(0x1000, 0, true);
     Check(!s.event && s.strip == 0, "A (the touch's own attack) is never taken");
-    s = f.Poll(kPadB | kPadY, 0, true, a, skillOf);
+    s = poll(kPadB | kPadY, 0, true);
     Check(s.event && s.strip == kPadB && a.Armed() == 106, "B and an empty Y together: only B");
+}
+
+// The press sequences of the author's test (2026-10-19, "a second press must take the skill off - otherwise we have no way to unselect it"): arm, the same button again -> off, another skill's
+// button -> that one, a button held across many polls -> one toggle, the polls of pad 0 that come back without the plugin's pad (B flickering 2000 / 0000) -> still one toggle.
+void Toggle() {
+    Arm a;
+    PadFilter f;
+    int slots[8] = {126, 139, 36, kAttack, 126, -1, -1, -1};   // B Bash, X Stun, Y a spell, RB Attack; LT + B Bash too
+    auto skillOf = [&](int s) { return s >= 0 && s < 8 ? slots[s] : -1; };
+    uint64_t t = 5000;
+    auto at = [&](uint64_t dt, uint16_t buttons, uint8_t lt = 0, bool armable = true, bool disarmable = true) { return f.Poll(buttons, lt, armable, disarmable, t += dt, a, skillOf); };
+    // arm, hold across frames: one toggle
+    Step s = at(10, kPadB);
+    Check(s.event && s.outcome == Outcome::Armed && a.Armed() == 126, "B: Bash armed");
+    int events = 0;
+    for (int i = 0; i < 30; ++i) {
+        s = at(11, kPadB);
+        events += s.event;
+        Check(s.strip == kPadB, "B held: taken in every poll");
+    }
+    Check(events == 0 && a.Armed() == 126, "B held across 30 polls: still one toggle, Bash armed");
+    s = at(11, 0);
+    Check(!s.event && s.strip == 0, "B let go");
+    at(60, 0);
+    // the same button again: off
+    s = at(100, kPadB);
+    Check(s.event && s.outcome == Outcome::Disarmed && s.strip == kPadB && a.Armed() == -1, "B again: disarmed, the press taken (the game never casts Bash)");
+    for (int i = 0; i < 10; ++i) Check(!at(16, kPadB).event, "... held: nothing more");
+    at(16, 0);
+    at(60, 0);
+    // the flicker: polls without the plugin's pad between its own while B is held
+    s = at(100, kPadB);
+    Check(s.event && s.outcome == Outcome::Armed && a.Armed() == 126, "B: armed again");
+    events = 0;
+    for (int i = 0; i < 20; ++i) {
+        events += at(1, 0).event;           // a poll without the plugin's pad, a millisecond later
+        s = at(15, kPadB);                  // the plugin's again
+        events += s.event;
+        Check(s.strip == kPadB, "B held through the flicker: taken");
+    }
+    Check(events == 0 && a.Armed() == 126, "B held, the pad trace flipping 2000 / 0000: one press, one toggle - still armed");
+    at(1, 0);
+    at(60, 0);
+    s = at(100, kPadB);
+    Check(s.event && s.outcome == Outcome::Disarmed && a.Armed() == -1, "the second press through the same flicker: disarmed");
+    for (int i = 0; i < 10; ++i) {
+        events += at(1, 0).event;
+        events += at(15, kPadB).event;
+    }
+    Check(events == 0 && a.Armed() == -1, "... and it stays off while held");
+    at(1, 0);
+    at(60, 0);
+    // another skill's button switches; then a button holding the same skill disarms
+    at(100, kPadB);
+    at(100, 0);
+    s = at(100, kPadX);
+    Check(s.event && s.outcome == Outcome::Switched && a.Armed() == 139 && s.slot == 1, "X: Stun armed instead of Bash");
+    at(100, 0);
+    s = at(100, kPadB);
+    Check(s.event && s.outcome == Outcome::Switched && a.Armed() == 126, "B: Bash again");
+    at(100, 0);
+    s = at(100, kPadB, 255);
+    Check(s.event && s.outcome == Outcome::Disarmed && s.slot == 4 && a.Armed() == -1, "LT + B, Bash too: another button with the same skill disarms");
+    at(100, 0);
+    // the slot not read at the second press (the UI thread's read missed): the arming button still disarms, another unread one is the game's
+    s = at(100, kPadB);
+    Check(s.event && a.Armed() == 126 && a.ArmedSlot() == 0, "B: Bash armed, from slot 0");
+    at(100, 0);
+    slots[0] = slots[2] = -1;
+    s = at(100, kPadY);
+    Check(!s.event && s.strip == 0 && a.Armed() == 126, "Y not read: the game's, Bash stays armed");
+    at(100, 0);
+    s = at(100, kPadB);
+    Check(s.event && s.outcome == Outcome::Disarmed && a.Armed() == -1, "B not read: the button that armed it disarms");
+    at(100, 0);
+    slots[0] = 126;
+    slots[2] = 36;
+    // the touch not live at the second press (armable off, disarmable on): the disarm is still taken; an arm is not
+    at(100, kPadB);
+    at(100, 0);
+    s = at(100, kPadX, 0, false, true);
+    Check(!s.event && s.strip == 0 && a.Armed() == 126, "not armable: X (Stun) is the game's, Bash stays");
+    at(100, 0, 0, false, true);
+    s = at(100, kPadB, 0, false, true);
+    Check(s.event && s.outcome == Outcome::Disarmed && s.strip == kPadB && a.Armed() == -1, "not armable: B still disarms Bash, the press taken");
+    at(100, 0, 0, false, true);
+    s = at(100, kPadB, 0, false, true);
+    Check(!s.event && s.strip == 0 && a.Armed() == -1, "... and with nothing armed the press is the game's");
+    at(100, 0);
+    s = at(100, kPadB, 0, false, false);
+    Check(!s.event && s.strip == 0, "nothing disarmable (not F4, the hook out): the game's");
+    at(100, 0);
+    // a real double tap (let go 60 ms): two presses
+    s = at(100, kPadB);
+    Check(s.event && a.Armed() == 126, "tap: armed");
+    at(10, 0);
+    at(60, 0);
+    s = at(10, kPadB);
+    Check(s.event && s.outcome == Outcome::Disarmed, "tap again after 70 ms up: disarmed");
+    // the press in flight: the toggle is the Arm's, the answer the InFlight's
+    InFlight fl;
+    at(100, 0);
+    at(100, 0);
+    at(100, kPadB);
+    fl.Set(Decide(a.Armed(), 5, 50.0f).skill, 10000);
+    Check(fl.Answer(10010) == 126, "a hit in flight: Bash");
+    at(100, 0);
+    s = at(100, kPadB);
+    if (s.outcome == Outcome::Disarmed) fl.Clear();   // (melee_arm_game.cpp FilterPad)
+    Check(a.Armed() == -1 && fl.Answer(10020) == kAttack, "B while the hit is in flight: disarmed, and the hit's reads are the plain attack");
+    Check(Decide(a.Armed(), 5, 50.0f).skill == kAttack, "the next hit: the plain attack");
 }
 
 void Hits() {
@@ -190,6 +305,7 @@ int main() {
     Press();
     List();
     Pad();
+    Toggle();
     Hits();
     Flight();
     if (g_fail) {
