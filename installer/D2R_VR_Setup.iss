@@ -85,7 +85,7 @@
 AppId={{8C1F3A52-6D0B-4E47-9B7E-2D5A0C9E4F31}
 AppName={#ModDisplay}
 AppVersion={#ModVersion}
-AppPublisher=BodyWalkVR
+AppPublisher=natpoh
 AppPublisherURL=https://bodywalkvr.com
 ; The mod's own icon (tools/gen_icon.py) on the setup exe, in the wizard and in
 ; Installed apps; the wizard pictures are that icon on white, 100% and 200%.
@@ -97,6 +97,9 @@ AppendDefaultDirName=no
 DirExistsWarning=no
 DisableProgramGroupPage=yes
 UsePreviousAppDir=yes
+; The folder page always shows, an update too: the game may have moved, or a PC may hold several copies of it (one for
+; online play, one for offline) - the player picks which one gets the mod. Inno's default (auto) skipped it on an update.
+DisableDirPage=no
 PrivilegesRequired=admin
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
@@ -108,7 +111,7 @@ WizardStyle=modern
 UninstallDisplayName={#ModDisplay} {#ModVersion}
 
 [Messages]
-SelectDirLabel3=Setup will install D2R VR into the folder of Diablo II: Resurrected - the one with D2R.exe and D2RLoader.exe. D2R VR is a D2RLoader mod: it goes into its own folder there, mods\D2R-VR ({#SettingsDisplay} stays next to D2R.exe).
+SelectDirLabel3=Setup will install D2R VR into the folder of Diablo II: Resurrected - the one with D2R.exe and D2RLoader.exe. If you have more than one copy of the game, pick the one you want the mod in. D2R VR is a D2RLoader mod: it goes into its own folder there, mods\D2R-VR ({#SettingsDisplay} stays next to D2R.exe).
 SelectDirBrowseLabel=If this is not your game's folder, click Browse.
 
 [Files]
@@ -503,6 +506,10 @@ begin
   ModePage.Add('VR: in the headset, with BodyWalk and FlatVR');
   ModePage.Values[1] := True;
   DownloadPage := CreateDownloadPage('Downloading', 'Setup is downloading what D2R VR needs.', nil);
+  // An update offers the folder of the last install; if the game is no longer there (moved), the folder the game's
+  // own installer names now (Steam, Battle.net) is offered instead.
+  if not IsGameDir(WizardForm.DirEdit.Text) then
+    WizardForm.DirEdit.Text := DefaultGameDir('');
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;

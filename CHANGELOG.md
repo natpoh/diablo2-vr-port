@@ -1,5 +1,85 @@
 # What's new in D2R VR
 
+## 0.173
+
+- **The map in the hand with the game's map in the middle** (a player: native OpenXR drew the map across the view, no map in the hand). The map comes into the
+  hand only from a top corner; the plugin put the game's map on the right in Settings.json at its start, which holds only when it runs before the game reads the
+  file, and the game's options could put it back in the middle for the session. Now, in VR with `[hud] map=1`, the game's live map mode is read and a map in the
+  middle (the whole-screen map) is put in its corner by the game's own setter - the right one, or the left with `[hud] map_corner=1` - in native OpenXR and FlatVR
+  alike, for the running game only. A map already on the right or the left is never touched: nothing changes for those players; no new key. On another game build
+  (the setter's bytes not as 3.3.93787 has them) nothing is done and the log says so. The setter and its globals are bearstonem/d2r-pcvr's finding (MIT).
+
+- **New, off by default: the right stick's up / down tilts the view in VR F2** (GitHub issue 11, a player's wish: "there is no up/down camera with a
+  controller in VRmode" - with an Xbox pad on "Mono - a flat screen" only the mouse and the headset tilted it). D2R VR Authentic Settings > Camera > F2 Third
+  person > *Right stick up / down tilts the view*, `[camera] stick_pitch_f2=1`: pushing the right stick up looks higher, down looks lower, on top of the horizon
+  (`[camera] pitch`); left / right still turns. The turn's dead zone (a quarter of a push) applies and a push more sideways than up / down only turns, so a turn
+  does not tilt by accident. `stick_pitch_speed` (degrees per second at a full push, 60), `stick_pitch_min` / `stick_pitch_max` (the highest and lowest look, in
+  `[camera] pitch`'s degrees: -90 and 0; the camera is clamped there, a `[camera] pitch` already outside is left where it is) and `stick_pitch_sign` (-1 = up
+  looks down). F11 puts the tilt back. Needs `[turn] right_stick` (the right stick is the plugin's, the game never sees it). F2 only: F1, F3, F4 and flat mode
+  as before; not with native OpenXR's headset view, where the headset has the pitch. Off, nothing changes, bit for bit. Unit test:
+  cleanroom/tests/stick_pitch_test.cpp (vr/stick_pitch.h).
+- **Fixed: "Show items on the ground (Alt)" on a long press or a touch only flashed** (a player: "it only shows them for a split second then goes away, even
+  if you hold the button down"). A game key bound to a button's long-press line (D2R VR Settings > Controls > "a long press") or to a touch line was sent as a
+  0.1 s pulse; it is now held from the long press (or the finger's touch) until the button is let go (or the finger lifted), as on a button's plain line -
+  so the game's "Show items: hold" keeps the labels up, and "toggle" still toggles once per press. A menu, the focus going or a view change lets it go.
+  Actions and the rest on those lines stay one pulse. Unit test: cleanroom/tests/hold_line_test.cpp.
+- **New, off by default: melee skills armed by their button** ([gameplay] melee_skill_armed; D2R VR Authentic Settings > Strikes > "A melee skill's button arms it: every hit is that skill";
+  VR first person F4, with hit by touch). The author's wish: "for the Barbarian's and the Paladin's attack skills (and whoever else has them), when we bind a skill to a button, pressing it does
+  not activate it but remembers it as the chosen one, like the Amazon's, and on every blow it fires and spends mana; if there is not enough mana, a normal blow." With a melee weapon (or fists)
+  swung by touch, a press of a pad skill button (B, X, Y, RB, with or without LT) whose slot holds a melee attack skill is not passed to the game: it arms that skill (a short buzz in both
+  hands). Every touch the game's attack is pressed for is then read by the game as the armed skill - through the same slot-skill hook the bow's "no mana: the plain arrow" uses - so the cast is
+  the game's own: its mana, cooldown, weapon check, animation, and the touched monster as its target; one touch, one cast. A touch the hero cannot pay (the skill's cost in the game's Skills.txt
+  at his level, against his mana) is the plain attack, and the skill stays armed. The same button again, or a button with the plain attack on it, disarms; another melee skill's button arms
+  that one. The skills are derived from the game's Skills.txt (a class skill for the attack button whose range is melee, h2h): Jab, Power Strike, Impale, Charged Strike, Fend, Lightning
+  Strike, Poison Dagger, Sacrifice, Smite, Zeal, Vengeance, Conversion, Bash, Double Swing, Stun, Concentrate, Frenzy, Berserk, Feral Rage, Maul, Rabies, Fire Claws, Hunger, Fury, Tiger
+  Strike, Dragon Talon, Fists of Fire, Dragon Claw, Cobra Strike, Claws of Thunder, Dragon Tail, Blades of Ice, Royal Strike and Cleave. Whirlwind, Charge, Leap Attack and Dragon Flight (they
+  move the hero), spells, buffs and warcries cast from their buttons as ever; a bow, a crossbow and a thrown weapon are not touched, nor F1 - F3 and the flat modes. It needs the plain attack on
+  the attack button (A); a skill bound as a key command (cmd:) is not taken. The log says what was armed and what each touch was ("melee armed: ..."). Unticked: the skill buttons cast as
+  before. Not tried in the game yet. Unit test: cleanroom/tests/melee_arm_test.cpp (vr/melee_arm.h).
+- **New: the armed melee skill in the mana medallion** ([gameplay] melee_skill_armed_icon, on by default but drawn only while melee_skill_armed is on; Settings > Strikes, under the
+  melee_skill_armed tick: "Show the armed skill in the mana medallion"; VR first person F4). The author's design: the armed skill's icon - the game's own, the one the skill panel's tiles and
+  the skill wheel draw (the player's own icon cache) - lies on the bottom of the MANA medallion on the wrist, under the blue liquid and the glass (the skill spends mana, so it belongs there),
+  cut to a circle with a soft edge inside the dome, never out of it. Full strength while the hero can pay the next hit (the very check the hit makes: the skill's Skills.txt cost at his level
+  against his mana); half see-through when he cannot - the next hit will be the plain attack - and bright again, eased, when the mana is back. Nothing armed: no icon. The medallion shape of
+  the glass orbs only (the full ball, the game's own globes and the palm panel have no bottom to lie on). Unticked: the medallion exactly as before. Needs the new D2R_DepthFog.fx with the
+  DLL (OrbIcon, OrbIconTex; an older effect: no icon, and the log says so). Not tried in the game yet. Unit test: cleanroom/tests/armed_icon_test.cpp (vr/armed_icon.h).
+- **The skill arming on the headset panel** (the author: "put its toggle into the overlay's options"): the in-headset settings panel's Melee page has two more rows, "Skill button arms the
+  skill" ([gameplay] melee_skill_armed) and "Armed skill in the mana" ([gameplay] melee_skill_armed_icon) - the same keys and defaults as D2R VR Authentic Settings, applied by themselves. The
+  list of skills, the icon's sliders and the bow's icon stay in D2R VR Authentic Settings (the page is full: six rows). vr/hset_defs.h.
+- **Double Swing as a combo** ([hands] double_swing_combo, off; Settings > Strikes, under "Double Swing by the two hands"; live). The author: "it fires on the next blow at the target, but it
+  must be every next blow, like a combo - I strike, first it is an ordinary blow, and every next one must be like a double swing". Ticked: the first touch on a monster is the normal attack
+  and every following touch on the same monster - either hand - within the window of the last one is the game's Double Swing (or Frenzy): normal, double, double, double...; another monster
+  or a longer pause starts a new combo; a touch the hero cannot pay is a normal attack and the combo goes on. Unticked: the pairs, as before. Not tried in the game yet. vr/double_swing.h.
+- **The skill icon in the mana medallion: size, depth and two opacities** ([gameplay] melee_skill_armed_icon_size_pct / _depth_pct / _opacity_pct / _faint_pct; Settings > Strikes, under
+  "Show the armed skill in the mana medallion"; live). The author's wish after trying it: its size (30 - 100 % of the medallion's inner circle, 87.5 as it was) and how deep it lies (100 = on
+  the bottom, as it was; 0 = as high as the dome lets it - its rim just under the glass, over a low mana's liquid). The height is the dome's own shape, and the effect finds the icon by the
+  same ray step it finds the floor with, so it keeps the medallion's parallax; the liquid under a lifted icon is hidden by it. Two opacities: with the mana for the next hit (100) and
+  without (35, the old "half see-through"; 0 = out until the mana is back). Needs the new D2R_DepthFog.fx (OrbIconLift; an older one: the icon stays on the bottom).
+- **The Amazon's chosen bow skill in the mana medallion** ([bow] quiver_icon, on; Settings > Bow, under the quiver's ticks). The author: "the same for the Amazon - when I choose a skill the
+  icon must show inside the mana". The bow skill chosen from the quiver (an orb, a quiver button, the skill panel) shows its icon there while a bow is in hand: full while the hero can pay a
+  shot with it (the release's own check), faint when not; the plain arrow: none. The same sliders as the melee icon. Needs [bow] quiver on. Not tried in the game yet.
+- **Which melee skills are armed: a tick each** ([melee_armed] s<skill>; Settings > Strikes, "Armed by its button:" in the group "Melee skills armed by their button", a row per class; live). The 34 melee attacks, ticked by default, and the four
+  attacks that move the hero - Whirlwind, Leap Attack, Charge, Dragon Flight - unticked by default. An unticked skill's button casts it as before; unticking the armed skill disarms it.
+- **Whirlwind armed** (the author ticked it and it "did not work"): it was not in the list at all - Whirlwind, Charge, Leap Attack and Dragon Flight were left out as movement skills, so
+  their button passed to the game and cast them as ever, and a hit by touch stayed the plain attack. Ticked now, Whirlwind's button arms it and a hit by touch is the game's own cast of it
+  through the same path as the others (the attack button read as Whirlwind, the touched monster its target; its mana by the game's numbers, 12.5 at level 1, else the plain attack): the
+  game whirls the hero to the monster's place. One more fix it needed: hit by touch's attack is held with the game's Stand Still ([gameplay] attack_in_place), which would pin a mover in
+  place - a touch the game reads as Whirlwind, Leap Attack, Charge or Dragon Flight is no longer held (vr/stand_still_wire.cpp). Not tried in the game yet: whether the game's Whirlwind from
+  a short press on a monster whirls far enough to feel right is for the headset to say. Unit tests: cleanroom/tests/melee_arm_test.cpp, armed_icon_test.cpp.
+- **On in the settings that come with the mod** (the author's own, as he plays): melee skills armed by their button with the icon in the mana
+  medallion (100 % of the inner circle, 10 mm over its floor, 91 % opacity), Double Swing by the two hands as a combo, and the toolbar cut at 0 %.
+  Each is still its own tick in D2R VR Authentic Settings; an update that keeps your own settings file changes none of your values.
+- **The skill icon over the medallion's floor, mm** ([gameplay] melee_skill_armed_icon_lift_mm, 0 - 10; Settings > Strikes): the icon lies this
+  far over where its depth puts it, so the medallion's floor texture does not show through it (the author: they overlapped).
+- **Fixed: "Collect logs for support" and antivirus software** (a player: his game's programs were gone after pressing it). The packing
+  script now runs from a file in TEMP (no hidden PowerShell with an encoded command, which antivirus programs take for malware), and it
+  removes nothing but its own folder there (TEMP\D2R_VR_logs_*).
+- **Setup always asks for the game's folder**, an update too (GitHub issue 10): a game moved to another drive, or several copies of it (online and
+  offline), and Setup puts the mod where you choose. A last folder without the game in it is replaced by the one Steam or Battle.net names now.
+- **D2R VR Launcher 0.3.4** comes with this Setup: before Play it checks that the game was started once without mods (its own settings file in
+  Saved Games) - a brand-new install of the game crashed at the logo with any mod until it had been started plainly once. And the launcher's
+  publisher, like the mod's author, is natpoh now (the plugin's "by" in D2RLoader's log, the programs' copyright, Setup).
+
 ## 0.172
 
 - **New: a first-start guide in the headset**, on by default for a new player. The first time you stand in the world in VR first person (F4) with the

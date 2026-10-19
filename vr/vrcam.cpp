@@ -80,6 +80,7 @@ int FindHeroMatrices(const float hero[3], uintptr_t* out, int max);
 #include "attack_view.h"   // VR F2 and F4: the attack goes where the player looks; VR F1 and F3 (top-down): where the hero faces (pure part, tested)
 #include "window_json.h"   // the game's windowed size in Settings.json and what each platform does to it (shared/, pure, tested)
 #include "turn_mode.h"     // [turn] smooth / snap / speed: how the right stick turns, and what an older ini's snap=0 means (shared/, pure, tested)
+#include "stick_pitch.h"   // [camera] stick_pitch_f2: the right stick's up / down tilts the camera in VR F2 (pure part, tested)
 #include "frame_cap.h"     // the game's frame cap in Settings.json: VR's rate is VR's, flat mode has the player's own (shared/, pure, tested)
 #include "safe_screen.h"   // the game's interface size in Settings.json: VR starts it at 80 where the player chose none, flat mode has his own (shared/, pure, tested)
 #include "flat_raw.h"      // [direct] flatvr_controls: BodyWalk's raw controllers (Game Link) as the plugin's own controls in FlatVR (pure part, tested)
@@ -118,7 +119,7 @@ namespace gamecmd { void Init(const D2RL::PluginContext* ctx); void Tick(); void
 namespace skillwheel { void Init(const D2RL::PluginContext* ctx); void Tick(); void Shutdown(); }   // [openxr] skill_wheel (skill_wheel.cpp)
 namespace skillwheel { bool Enabled(); }
 namespace wheelgame { void Tick(bool on, bool open); }   // the wheel's reads of the controller's skill slots (wheel_game.cpp): a throw by gesture keeps them going for the Throw slot
-namespace gamestate { void Init(const D2RL::PluginContext* ctx); void Tick(); uint32_t WeaponClass(); uint32_t WeaponSet(); uint32_t WeaponType(); uint32_t HandsHeld(); uint32_t TwoHanded(); uint32_t WeaponHand(); uint32_t HandKind(int side); uint32_t HandCode(int side); void SetWantHeroStrength(bool on); int HeroStrength(); int HandRequiredStrength(int side); uint32_t HandsKey(); bool MenuOpen(); void SetLaserPanels(bool on); uint64_t TitleScreenAt(); int ObjectLight(uint32_t txt, uint32_t mode, float rgb[3]); uint64_t LocalPlayer(); void SetViewMode(uint32_t mode); bool AutoMapOpen(); bool SetAutoMap(bool open); void PollPlate(); bool PlateRect(int32_t out[4]); bool PlateAnchor(int32_t out[2]); void PollDurability(); bool DurabilityRect(int32_t panel[4], int32_t widget[4], bool* widgetRead); bool SkillAimed(int skill); void BeltCodes(uint32_t out[4]); }
+namespace gamestate { void Init(const D2RL::PluginContext* ctx); void Tick(); uint32_t WeaponClass(); uint32_t WeaponSet(); uint32_t WeaponType(); uint32_t HandsHeld(); uint32_t TwoHanded(); uint32_t WeaponHand(); uint32_t HandKind(int side); uint32_t HandCode(int side); void SetWantHeroStrength(bool on); int HeroStrength(); int HandRequiredStrength(int side); uint32_t HandsKey(); bool MenuOpen(); void SetLaserPanels(bool on); uint64_t TitleScreenAt(); int ObjectLight(uint32_t txt, uint32_t mode, float rgb[3]); uint64_t LocalPlayer(); void SetViewMode(uint32_t mode); bool AutoMapOpen(); bool SetAutoMap(bool open); void SetMapSide(int corner); void PollPlate(); bool PlateRect(int32_t out[4]); bool PlateAnchor(int32_t out[2]); void PollDurability(); bool DurabilityRect(int32_t panel[4], int32_t widget[4], bool* widgetRead); bool SkillAimed(int skill); void BeltCodes(uint32_t out[4]); }
 namespace gamestate { bool HandIsThrowPotion(int side); }   // the held item is one of the six throwing potions (gamestate.cpp)
 #include "d2r_vr_state.h"
 
@@ -194,6 +195,10 @@ namespace hud { void SetPlateCut(bool want, const int32_t layout[4], float scale
 #include "shield_smite_game.h"   // [gameplay] shield_smite: a bash of the left shield casts the game's own Smite
 #include "melee_trigger_wire.h"   // [gameplay] melee_touch_only: with hit by touch live the trigger does not attack (the plugin's own controls)
 #include "double_swing_game.h"   // [hands] double_swing_by_hands: with a weapon in each hand the second hand's touch casts the game's own Double Swing / Frenzy
+#include "melee_arm.h"        // [gameplay] melee_skill_armed: which skills arm (the log names them)
+#include "melee_arm_game.h"   // [gameplay] melee_skill_armed: a melee skill's button arms it; every hit by touch is then that skill (vr/melee_arm.h)
+#include "armed_icon.h"       // [gameplay] melee_skill_armed_icon: the armed skill's icon in the mana medallion (vr/armed_icon.h)
+#include "wheel_icons.h"      // ... the game's own skill icon, as the skill panel's tiles draw it
 #include "hit_claim.h"   // whose blow just landed: the presses claim it, the hit observer's hand source takes it (the controller that buzzes)
 
 #pragma intrinsic(_ReturnAddress)
@@ -261,6 +266,10 @@ struct Settings {
     std::atomic<bool>  followJump{true};    // the camera goes up when the animation lifts the hero (Leap)
     std::atomic<float> jumpFrom{0.3f};      // hip rise (model units) still taken for the stride's bob
     std::atomic<float> pitch{-60.0f};       // camera pitch relative to the game's own (deg); -60 = level, more negative = higher
+    std::atomic<bool>  stickPitchF2{false}; // [camera] stick_pitch_f2: VR F2, the right stick's up / down tilts the camera (vr/stick_pitch.h)
+    std::atomic<float> stickPitchSpeed{stickpitch::kSpeedDefault};   // deg/s at a full push
+    std::atomic<float> stickPitchMin{stickpitch::kMinDefault}, stickPitchMax{stickpitch::kMaxDefault};   // the highest / lowest the stick takes the camera, [camera] pitch's units
+    std::atomic<float> stickPitchSign{1.0f};   // flip if pushing up looks down
     std::atomic<int>   rings{4};            // [render] rings: room rings drawn around the hero (cleanroom/drawdist)
     std::atomic<float> modelRadius{1000.0f}; // [render] model_radius: houses, props, units drawn out to this (game: 150)
     std::atomic<int>   renderPoolMb{64};    // [render] render_pool_mb: the game's Renderer Pool at least this big (game: 12)
@@ -644,6 +653,7 @@ struct Settings {
     std::atomic<float> uiShift{0.0f};       // AFR: the HUD moved apart per eye in the shader, % of the half screen; more = nearer
     std::atomic<float> hudTop{0.70f};       // the HUD is looked for below this height (0 top .. 1 bottom)
 } g_set;
+std::atomic<float> g_iconLiftMm{1.0f};   // [gameplay] melee_skill_armed_icon_lift_mm: the skill icon in the mana medallion this many mm over its depth
 
 wchar_t g_iniPath[MAX_PATH];
 FILETIME g_iniTime{};
@@ -1468,6 +1478,13 @@ void LoadSettings() {
     g_set.followJump.store(IniB(L"camera", L"follow_jump", true));
     g_set.jumpFrom.store(std::clamp(IniF(L"camera", L"jump_from", 0.3f), 0.0f, 3.0f));
     g_set.pitch.store(std::clamp(IniF(L"camera", L"pitch", -60.0f), -150.0f, 60.0f));
+    g_set.stickPitchF2.store(IniB(L"camera", L"stick_pitch_f2", false));
+    g_set.stickPitchSpeed.store(stickpitch::Speed(IniF(L"camera", L"stick_pitch_speed", stickpitch::kSpeedDefault)));
+    {
+        const stickpitch::Limits l = stickpitch::FromIni(IniF(L"camera", L"stick_pitch_min", stickpitch::kMinDefault), IniF(L"camera", L"stick_pitch_max", stickpitch::kMaxDefault));
+        g_set.stickPitchMin.store(l.min); g_set.stickPitchMax.store(l.max);
+    }
+    g_set.stickPitchSign.store(IniF(L"camera", L"stick_pitch_sign", 1.0f) < 0 ? -1.0f : 1.0f);
     g_set.rings.store(std::clamp((int)IniF(L"render", L"rings", 4.0f), 1, 8));
     g_set.modelRadius.store(std::clamp(IniF(L"render", L"model_radius", 1000.0f), 10.0f, 10000.0f));
     g_set.renderPoolMb.store(std::clamp((int)IniF(L"render", L"render_pool_mb", 64.0f), 0, 4096));
@@ -1598,6 +1615,9 @@ void LoadSettings() {
     // can be made taller above (hide_up_pct) and below (hide_down_pct), percent of the picture's height; [debug] hide_strip_tint paints the strip a see-through magenta to see its edges.
     hud::SetToolbarCut(IniF(L"hud", L"hide_up_pct", 0.0f), IniF(L"hud", L"hide_down_pct", 0.0f), IniB(L"debug", L"hide_strip_tint", false));
     hud::SetMapCorner((int)IniF(L"hud", L"map_corner", 0.0f));
+    // The same while the game runs: the game's map put back in the middle (its options) is put in a corner again, by the game's own
+    // setter (vr/minimap_side.h) - the start's Settings.json rewrite (MiniMapForHand) holds only when the plugin runs before the game reads it.
+    gamestate::SetMapSide(g_set.platform.load() == 1 && g_set.hudMap.load() == 1 ? std::clamp((int)IniF(L"hud", L"map_corner", 0.0f), 0, 2) : -1);
     g_set.hudClassic.store(std::clamp((int)IniF(L"hud", L"classic", 0.0f), 0, 1));
     g_set.barNear.store(std::clamp(IniF(L"hud", L"bar_near", 0.0f), -20.0f, 20.0f));
     g_set.classicTop.store(std::clamp((int)IniF(L"hud_top", L"classic", (float)g_set.hudClassic.load()), 0, 1));
@@ -2082,6 +2102,7 @@ void LoadSettings() {
         // [bow] quiver_plain_no_mana: an arrow skill the hero cannot pay (too little mana by the game's own numbers) shoots the plain arrow at the release instead of the game's refusal; live
         bowquiverwire::SetPlainNoMana(IniB(L"bow", L"quiver_plain_no_mana", true));
         bowquiverwire::SetArrowFxNeedsMana(IniB(L"bow", L"arrow_fx_needs_mana", true));   // [bow] arrow_fx_needs_mana: the arrow's effect goes out while the hero cannot pay the chosen skill
+        bowquiverwire::SetIcon(IniB(L"bow", L"quiver_icon", true));   // [bow] quiver_icon: the chosen arrow skill's icon in the mana medallion (vr/armed_icon.h)
     }
     g_set.bowAimAlong.store(IniB(L"bow", L"aim_along_hands", false));
     g_set.bowAimBlendMs.store(std::clamp(IniF(L"bow", L"aim_blend_ms", 120.0f), 50.0f, 400.0f));
@@ -2189,7 +2210,23 @@ void LoadSettings() {
     g_set.flailWeightPct.store(std::clamp(IniF(L"flail", L"ball_weight_pct", 100.0f), 25.0f, 400.0f));
     g_set.meleeTouch.store(IniB(L"gameplay", L"melee_touch", false));
     meleetrigger::Configure(IniB(L"gameplay", L"melee_touch_only", true));   // F4, hit by touch swinging a weapon (anything but a bow or a crossbow): the trigger's attack is not passed to the game - part of hit by touch, ON by default; 0 = the old way (the plugin's own controls only; vr/melee_trigger.h)
-    doubleswing::Configure(IniB(L"hands", L"double_swing_by_hands", false), IniF(L"hands", L"double_swing_window_ms", 700.0f), (int)IniF(L"hands", L"double_swing_skill", 0.0f));   // F4, hit by touch with a weapon in each hand: the second hand's touch casts the game's own Double Swing / Frenzy (vr/double_swing.h)
+    doubleswing::Configure(IniB(L"hands", L"double_swing_by_hands", false), IniF(L"hands", L"double_swing_window_ms", 700.0f), (int)IniF(L"hands", L"double_swing_skill", 0.0f),
+                           IniB(L"hands", L"double_swing_combo", false));   // F4, hit by touch with a weapon in each hand: the second hand's touch casts the game's own Double Swing / Frenzy (vr/double_swing.h)
+    meleearm::Configure(IniB(L"gameplay", L"melee_skill_armed", false));   // F4, hit by touch: a melee attack skill's pad button arms it instead of casting it; every touch is then that skill, the plain attack when the mana is short (vr/melee_arm.h)
+    g_iconLiftMm.store(std::clamp(IniF(L"gameplay", L"melee_skill_armed_icon_lift_mm", 1.0f), 0.0f, 10.0f));   // the icon over the floor, mm: off the medallion's texture (the author: they overlapped)
+    meleearm::ConfigureIcon(IniB(L"gameplay", L"melee_skill_armed_icon", true), IniF(L"gameplay", L"melee_skill_armed_icon_size_pct", armedicon::kSizeDefPct),
+                            IniF(L"gameplay", L"melee_skill_armed_icon_depth_pct", armedicon::kDepthDefPct), IniF(L"gameplay", L"melee_skill_armed_icon_opacity_pct", armedicon::kOpacityDefPct),
+                            IniF(L"gameplay", L"melee_skill_armed_icon_faint_pct", armedicon::kFaintDefPct));   // F4: the armed skill's icon in the mana medallion, faint when the mana is short; its size, depth, opacity with and without the mana (vr/armed_icon.h)
+    {   // [melee_armed]: every s<skill> key the section has (the [autotarget] way); unset, the list's default (vr/melee_arm.h kRows: the 34 melee attacks ticked, the movement attacks not)
+        meleearm::Allowed allowed = meleearm::Allowed::Defaults();
+        static wchar_t sec[4096];
+        const DWORD n = GetPrivateProfileSectionW(L"melee_armed", sec, (DWORD)std::size(sec), g_iniPath);
+        for (const wchar_t* e = sec; n && *e; e += wcslen(e) + 1) {
+            int id = -1, v = 0;
+            if (swscanf_s(e, L"s%d = %d", &id, &v) == 2) allowed.Set(id, v);
+        }
+        meleearm::ConfigureList(allowed.Bits());
+    }
     g_set.meleeTouchUnchecked.store(IniB(L"debug", L"melee_touch_unchecked", false));
     meleetouch::SetWanted(g_set.meleeTouch.load());
     meleetouch::SetThrownTouch(IniB(L"gameplay", L"melee_touch_thrown", true));   // javelins, throwing knives and axes hit by touch too (a point-blank throw; vr/thrown_touch.h)
@@ -2460,6 +2497,10 @@ extern std::atomic<bool> g_pairNow;
 bool NativeView();
 bool NativeHeadView();
 std::atomic<float> g_rightX{0.0f};      // last right stick X the game polled, -1..1
+std::atomic<float> g_rightY{0.0f};      // ... and its Y, + up ([camera] stick_pitch_f2)
+// [camera] stick_pitch_f2: the right stick's tilt on top of [camera] pitch (deg, + looks lower), VR F2 only; F11 forgets it.
+// Held for a pair as g_heldPitch is.
+std::atomic<float> g_stickPitch{0.0f}, g_heldStickPitch{0.0f};
 // When a poll last got BodyWalk's own pad (PadFromBodyWalk). Some polls of pad 0
 // came back without it (the pad trace flipped 2000 / 0000 within a millisecond)
 // and wrote the right stick back to 0 between BodyWalk's: the body did not turn
@@ -2584,11 +2625,16 @@ float TargetRoll() {
     return std::clamp(g_set.rollSign.load() * (p[2] - level), -80.0f, 80.0f);
 }
 
+// [camera] stick_pitch_f2: the right stick tilts the camera in VR F2 only (not F1 in perspective, the table, F4, nor flat mode).
+bool StickPitchOn() { return g_set.stickPitchF2.load() && g_set.rightTurn.load() && g_set.platform.load() == 1 && g_set.vrView.load() == 2; }
+
 // Pitch relative to the game's own steep camera: ini level point, the mouse's
-// extra, and the head looking up (more negative) or down. Kept short of the
-// vertical, where the rotation would flip.
+// extra, the right stick's in VR F2 ([camera] stick_pitch_f2), and the head
+// looking up (more negative) or down. Kept short of the vertical, where the
+// rotation would flip.
 float TargetPitch() {
     float pitch = g_set.pitch.load() + (g_pairNow.load() ? g_heldPitch.load() : g_mousePitch.load());
+    if (StickPitchOn()) pitch += g_pairNow.load() ? g_heldStickPitch.load() : g_stickPitch.load();
     const D2RVR_Shared* sh = Shared();
     if (g_set.headPitch.load() && sh && sh->version == D2RVR_SHARED_VERSION && sh->headValid && sh->pitchValid && std::isfinite(sh->headPitchDeg))
     {
@@ -5374,7 +5420,7 @@ void TurnStick(XINPUT_STATE* s, bool fromBodyWalk) {
     // A menu (inventory, trade, stash...) gets the pad as it is: the left stick
     // moves its cursor on the screen, so turning it by the camera's yaw sent the
     // cursor the wrong way, and the right stick is the menu's too.
-    if (gamestate::MenuOpen()) { if (own) g_rightX.store(0.0f); return; }
+    if (gamestate::MenuOpen()) { if (own) { g_rightX.store(0.0f); g_rightY.store(0.0f); } return; }
     AimByMouse(s);
     AimByTurn(s);
     const bool aimed = BowStick(s);
@@ -5386,7 +5432,7 @@ void TurnStick(XINPUT_STATE* s, bool fromBodyWalk) {
     } } out{in, s->Gamepad, s, aimed};
     if (g_set.rightTurn.load()) {
         // The right stick is ours while on: it turns the body, the game never sees it.
-        if (own) g_rightX.store(s->Gamepad.sThumbRX / 32767.0f);
+        if (own) { g_rightX.store(s->Gamepad.sThumbRX / 32767.0f); g_rightY.store(s->Gamepad.sThumbRY / 32767.0f); }
         s->Gamepad.sThumbRX = 0; s->Gamepad.sThumbRY = 0;
     }
     // Walking straight from BodyWalk (HookStickGet / HookKeyMove): the pad's left
@@ -6718,6 +6764,15 @@ int HookSlotSkill(int slot) {
             LogF("throw gesture: the slot's skill (Attack, 0) was read as %s (%d) by the %s", quivered && skill == chosen ? "the quiver's skill" : "Throw", skill,
                  ret == g_slotSelectRet ? "cast's slot selection" : "unit's hand-skill setter");
         }
+    } else if (site && !ThrownInHand()) {   // [gameplay] melee_skill_armed: the touch's attack press is read as the armed melee skill - decided at the press (vr/melee_arm_game.cpp: the plain attack when the mana is short)
+        if (const int armed = meleearm::PressSkill(); armed > 0) {
+            skill = armed;
+            static ULONGLONG told = 0;
+            if (GetTickCount64() - told > 300) {
+                told = GetTickCount64();
+                LogF("melee armed: the slot's skill (Attack, 0) was read as %s (%d) by the %s", meleearm::Name(armed), armed, ret == g_slotSelectRet ? "cast's slot selection" : "unit's hand-skill setter");
+            }
+        }
     }
     return skill;
 }
@@ -6725,10 +6780,11 @@ int HookSlotSkill(int slot) {
 bool ThrowAutoSkillReady() { return g_set.throwAutoSkill.load() && g_slotSkillHook.load() == 1; }
 
 void InstallSlotSkillHook() {
-    if (!g_ctx || g_slotSkillHook.load() != 0 || !((g_set.throwGesture.load() && g_set.throwAutoSkill.load()) || quiverwire::On() || bowquiverwire::PlainWanted())) return;
+    if (!g_ctx || g_slotSkillHook.load() != 0 || !((g_set.throwGesture.load() && g_set.throwAutoSkill.load()) || quiverwire::On() || bowquiverwire::PlainWanted() || meleearm::On())) return;
     if (!Matches(RVA_SLOT_SKILL, kSigSlotSkill, sizeof kSigSlotSkill)) return;   // the code is decrypted as it runs: tried again
     if (!CallsTo(RVA_SLOT_SKILL_SELECT_RET, RVA_SLOT_SKILL) || !CallsTo(RVA_SLOT_SKILL_SET_RET, RVA_SLOT_SKILL)) {
         g_slotSkillHook.store(2);
+        meleearm::SetHookState(2);   // [gameplay] melee_skill_armed needs the hook
         Log("vrcam: throw_auto_skill NOT possible - the controller's slot-skill reads are not where they were (another build?); a throw presses the pad button of the slot that holds Throw");
         return;
     }
@@ -6737,6 +6793,7 @@ void InstallSlotSkillHook() {
     const bool in = d2rsig::Hook(RVA_SLOT_SKILL, kSigSlotSkill, sizeof kSigSlotSkill, (void*)&HookSlotSkill, (void**)&OrigSlotSkill);
     g_slotSkillHook.store(in ? 1 : 2);
     bowquiverwire::SetPlainHookReady(in);   // [bow] quiver_plain_no_mana needs the hook
+    meleearm::SetHookState(in ? 1 : 2);     // [gameplay] melee_skill_armed too
     Log(in ? "vrcam: throw_auto_skill in - with a throwing weapon in hand a throw's A press is read by the game as its Throw skill (no skill slot needed), or as the skill chosen from the quiver"
            : "vrcam: throw_auto_skill hook FAILED - a throw presses the pad button of the slot that holds Throw");
 }
@@ -6875,6 +6932,10 @@ template <int I> DWORD WINAPI XDetour(DWORD idx, XINPUT_STATE* s) {
     bool mirror = false;
     if (t_xDepth == 0 && idx == 0 && s && !FlatKeyMode() && PadFromBodyWalk(s, origResult == ERROR_SUCCESS)) { r = ERROR_SUCCESS; mirror = true; }
     if (t_xDepth == 0 && idx == 0 && s) KeysAsStick(s, &r);
+    // [gameplay] melee_skill_armed (F4): a skill button's press that arms a melee skill is taken out of the pad the game polls - before the gestures' own pulses are added, so a pulse of ours (the
+    // shield bash's Smite, double swing's) is never taken. Armable while hit by touch swings a melee weapon (never a bow, a crossbow or a thrown weapon).
+    if (t_xDepth == 0 && idx == 0 && s && r == ERROR_SUCCESS && meleearm::On() && g_set.platform.load() == 1)
+        meleearm::FilterPad(&s->Gamepad.wButtons, s->Gamepad.bLeftTrigger, meleetouch::Live(500) && !ThrownInHand());
     if (t_xDepth == 0 && idx == 0 && s) {   // pad buttons the gestures pulse (directinput::PadPulse): over any pad, or a pad of their own
         uint16_t pb; uint8_t plt, prt;
         if (directinput::PadPulses(&pb, &plt, &prt)) {
@@ -10837,6 +10898,7 @@ uintptr_t DrawByTurns(int a) {
     TurnTick();
     g_heldYaw.store(g_mouseYaw.load() + g_turnYaw.load());
     g_heldPitch.store(g_mousePitch.load());
+    g_heldStickPitch.store(g_stickPitch.load());
     pairtime::g_drawThread.store(GetCurrentThreadId());
     frametrace::MarkDrawThread();   // [debug] frame_trace: the probes on this thread are told apart
     const bool native = NativePairBegin();
@@ -10903,6 +10965,7 @@ uintptr_t HookDrawGameScreen(int a) {
     TurnTick();   // the turn up to this very moment, not to the last timer tick
     g_heldYaw.store(g_mouseYaw.load() + g_turnYaw.load());
     g_heldPitch.store(g_mousePitch.load());
+    g_heldStickPitch.store(g_stickPitch.load());
     g_pairNow.store(true);
     if (const D2RVR_Shared* hs = Shared())
         flog::Line("S,%u,%.4f,%.3f,%.3f,%.3f,%.3f,%u", flog::Pass(), flog::Dt(), g_heldYaw.load(), hs->headYawDeg, hs->headPitchDeg, hs->headRollDeg, hs->sampleStamp);
@@ -11458,6 +11521,7 @@ void Recenter() {
         }
     }
     g_mouseYaw.store(0.0f); g_mousePitch.store(0.0f);
+    g_stickPitch.store(0.0f);    // and the right stick's tilt ([camera] stick_pitch_f2)
     g_facingReset.store(true);   // and the hero's facing is looked for again
     g_tableReanchor.store(true); // and the table view puts the game in front of the head again
     xr::Recenter();              // and native OpenXR's straight ahead taken from the next views
@@ -11490,7 +11554,18 @@ void TurnTick() {
     const float dt = (float)std::min(now - last, 0.1);
     last = now;
     struct Unlock { ~Unlock() { ReleaseSRWLockExclusive(&g_turnLock); } } unlock;
-    if (!g_enabled.load() || !g_set.rightTurn.load()) { g_rightX.store(0.0f); return; }
+    if (!g_enabled.load() || !g_set.rightTurn.load()) { g_rightX.store(0.0f); g_rightY.store(0.0f); return; }
+    // [camera] stick_pitch_f2 (VR F2): the stick's up / down tilts, at the turn's dead zone; a push more sideways than up / down
+    // is a turn and does not tilt (vr/stick_pitch.h). Off: the tilt forgotten, the camera as before.
+    if (!g_set.stickPitchF2.load()) g_stickPitch.store(0.0f);
+    else if (StickPitchOn()) {
+        const float step = stickpitch::Step(g_rightX.load(), g_rightY.load(), dt, g_set.stickPitchSpeed.load(), g_set.stickPitchSign.load());
+        if (step != 0.0f) {
+            const stickpitch::Limits l{g_set.stickPitchMin.load(), g_set.stickPitchMax.load()};
+            g_stickPitch.store(stickpitch::Apply(g_stickPitch.load(), step, g_set.pitch.load(), l));
+            g_gen.fetch_add(1);
+        }
+    }
     const float x = g_set.turnSign.load() * g_rightX.load();
     const float dead = 0.25f, a = fabsf(x);
     const float snap = g_set.snapAngle.load();
@@ -15046,7 +15121,13 @@ void Install() {
 // The views of the toolbar's and the map's copies bound to the effect (hud::PictureNow), 0 = none yet.
 uint64_t g_pieceBound[4] = {};   // the toolbar, the map, the labels' layer, the wrists' globes
 
-void Forget(reshade::api::effect_runtime*) { g_tech[0] = g_tech[1] = {0}; replay::g_rightTech = {0}; g_pieceBound[0] = g_pieceBound[1] = g_pieceBound[2] = g_pieceBound[3] = 0; replay::g_depthBound = 0; }
+// The armed skill's icon uploaded into the effect's OrbIconTex ([gameplay] melee_skill_armed_icon): which skill, from which decode of the icon cache, into which texture variable. -1: none
+// (a reload of the effects makes the texture anew: Forget says so, and the icon is uploaded again).
+int g_iconUpSkill = -1, g_iconTry = -1;
+uint32_t g_iconUpRev = 0;
+uint64_t g_iconUpVar = 0;
+
+void Forget(reshade::api::effect_runtime*) { g_tech[0] = g_tech[1] = {0}; replay::g_rightTech = {0}; g_pieceBound[0] = g_pieceBound[1] = g_pieceBound[2] = g_pieceBound[3] = 0; replay::g_depthBound = 0; g_iconUpSkill = g_iconTry = -1; }
 
 void SetFloats(reshade::api::effect_runtime* rt, const char* name, const float* v, size_t n) {
     const reshade::api::effect_uniform_variable u = rt->find_uniform_variable("D2R_DepthFog.fx", name);
@@ -16535,6 +16616,67 @@ void OnBeginEffects(reshade::api::effect_runtime* rt, reshade::api::command_list
                 const float pic[2] = {ou.picture ? 1.0f : 0.0f, ou.fit};
                 SetFloats(rt, "OrbPic", pic, 2);
             }
+            {   // [gameplay] melee_skill_armed_icon (vr/armed_icon.h): the armed melee skill's icon on the bottom of the mana medallion - full while the hero can pay the next hit, faint when
+                // he cannot. The game's own icon (vr/wheel_icons.h, the skill panel's), baked to a circle and uploaded into OrbIconTex once per skill; OrbIcon says whether and how strong.
+                static armedicon::Fader iconFade;
+                static double iconLast = 0.0;
+                static bool iconWas = false;
+                const double nowS = pairtime::UsNow() * 1e-6;
+                const float dt = iconLast > 0.0 ? (float)(nowS - iconLast) : 0.0f;
+                iconLast = nowS;
+                const handvitals::Config hc = handvitals::Settings();
+                armedicon::In ii;
+                // whose: the bow skill chosen from the quiver while a bow is in hand ([bow] quiver_icon), else the armed melee skill ([gameplay] melee_skill_armed_icon)
+                bool meleeReady = false, bowReady = false;
+                int bowSkill = -1;
+                const int meleeSkill = meleearm::IconOn() && meleearm::On() ? meleearm::Armed(&meleeReady) : -1;
+                bowquiverwire::ChosenIcon(&bowSkill, &bowReady);
+                const armedicon::Source src = armedicon::Pick(meleeSkill, meleeReady, bowSkill, bowReady);
+                ii.on = ii.armedOn = (meleearm::IconOn() && meleearm::On()) || bowSkill >= 0;
+                ii.f4 = viewgate::F4();
+                ii.medallion = ou.on && !ou.picture && hc.style == handvitals::kStyleOrbs && hc.orbShape == handvitals::kShapeMedallion;
+                ii.armed = src.skill;
+                ii.enough = src.enough;
+                const armedicon::Place place = meleearm::IconPlace();   // the sliders (melee_skill_armed_icon_*): the bow's icon lies the same way
+                ii.full = place.opacity;
+                ii.faint = place.faint;
+                armedicon::Out io = iconFade.Step(ii, dt);
+                if (io.show) {
+                    const reshade::api::effect_texture_variable tv = rt->find_texture_variable("D2R_DepthFog.fx", "OrbIconTex");
+                    const uint32_t rev = wheelicons::Revision();
+                    if (!tv.handle) {
+                        static bool told = false;
+                        if (!told) { told = true; Log("vrcam: melee armed - D2R_DepthFog.fx has no OrbIconTex: it is an older one, copy the new one in (the armed skill's icon needs the DLL and the effect together)"); }
+                        io.show = false;
+                    } else if ((io.skill != g_iconUpSkill || tv.handle != g_iconUpVar) && (io.skill != g_iconTry || rev != g_iconUpRev || tv.handle != g_iconUpVar)) {
+                        // a try per skill, and again when the cache decoded something (Revision) or the effects were reloaded - not every frame while an icon is missing
+                        g_iconUpSkill = -1;
+                        g_iconTry = io.skill;
+                        g_iconUpRev = rev;
+                        g_iconUpVar = tv.handle;
+                        const std::shared_ptr<const wheelicons::Image> img = wheelicons::Get(io.skill);   // (null while the worker decodes it, and for a skill the cache has no icon for)
+                        static std::vector<uint8_t> baked;
+                        if (img && armedicon::Bake(img->rgba.data(), img->width, img->height, baked)) {
+                            rt->update_texture(tv, armedicon::kTex, armedicon::kTex, baked.data());
+                            g_iconUpSkill = io.skill;
+                            LogF("vrcam: skill icon - skill %d (%s) is in the mana medallion (%ux%u from the icon cache)", io.skill, meleearm::IsMelee(io.skill) ? meleearm::Name(io.skill) : "the bow's chosen skill", img->width, img->height);
+                        } else if (!wheelicons::Available()) {
+                            static bool told = false;
+                            if (!told) { told = true; Log("vrcam: melee armed - no skill icons on this machine (d2r_vr_skill_icons, made by tools/skill_icons/prepare_skill_icons.py from the installed game): the mana medallion shows no icon"); }
+                        }
+                    }
+                    if (io.skill != g_iconUpSkill) io.show = false;   // its icon is not in the texture (yet): nothing rather than the last skill's
+                }
+                float iu[4];
+                armedicon::Uniform(io, iu, place);
+                if (io.show || iconWas) {
+                    SetFloats(rt, "OrbIcon", iu, 4);
+                    SetFloats(rt, "OrbIconLift", &place.lift, 1);   // (an older effect has none: the icon stays on the bottom)
+                    const float liftM = g_iconLiftMm.load() * 0.001f;
+                    SetFloats(rt, "OrbIconLiftM", &liftM, 1);
+                }
+                iconWas = io.show;
+            }
             if (ou.on && !orbsWere) Log(ou.picture ? "vrcam: hand vitals - the game's own globes are in the picture (life on the left wrist, mana on the right, by the settings)"
                                                   : "vrcam: hand vitals - the 3D orbs are in the picture (life on the left wrist, mana on the right, by the settings)");
             orbsWere = ou.on;
@@ -17298,7 +17440,7 @@ void LoadReShade() {
              "an antivirus may also block it", err == ERROR_DLL_INIT_FAILED ? "its start said no" : "it could not be loaded");
 }
 
-static const char g_info_version[] = "0.172.0";
+static const char g_info_version[] = "0.173.0";
 
 // Who this is. D2RLoader prints "<name> <version> by <author>" for every plugin, and d2r-pcvr (a fork of our 0.152) carries the
 // same id, name and author as we did - "vrcam ... by BodyWalkVR" told a support log nothing. The id stays (the log file
@@ -17313,7 +17455,7 @@ static const char g_info_edition[] = "full";
 #endif
 
 static const PluginInfo g_info = {
-    PluginInfoSize, D2RL_PLUGIN_ABI_VERSION, g_info_id, g_info_name, g_info_version, "BodyWalkVR",
+    PluginInfoSize, D2RL_PLUGIN_ABI_VERSION, g_info_id, g_info_name, g_info_version, "natpoh",
     "D2R in a headset or as a first-person game: head-driven camera through BodyWalk Game Link, mouse look and W A S D. "
     "F12 off / first / third person, F11 recenter, F9 mouse look.",
     PluginFlags::Shared | PluginFlags::NativeHooks, {0, 0, 0, 0},
@@ -17498,6 +17640,7 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     shieldsmite::Init(ctx);
     meleetrigger::Init(ctx);   // melee_touch_only listens to direct_input's frames
     doubleswing::Init(ctx);
+    meleearm::Init(ctx);   // [gameplay] melee_skill_armed: the log
     meleetouch::Init(ctx);
     skillwheel::Init(ctx);
     lowhp::Init(ctx);   // [hud] low_hp_vignette reads the hero's life on the UI thread

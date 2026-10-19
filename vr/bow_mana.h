@@ -39,9 +39,9 @@ inline const Row* Find(int32_t id) {
     return nullptr;
 }
 
-// The cost of `id` at `level` in the game's fixed point (1/256 of a mana point); -1 for a skill that is not one of these and for a level below 1 (not known).
-inline int64_t CostRaw(int32_t id, int32_t level) {
-    const Row* r = Find(id);
+// The cost of row `r` at `level` in the game's fixed point (1/256 of a mana point); -1 for no row and for a level below 1 (not known). Any Skills.txt row: [gameplay] melee_skill_armed's
+// rows (vr/melee_arm.h) are paid the same way.
+inline int64_t RowCostRaw(const Row* r, int32_t level) {
     if (!r || level < 1) return -1;
     int64_t v = (int64_t)r->mana + (int64_t)r->lvlMana * (int64_t)(level - 1);
     if (v < 0) v = 0;
@@ -49,17 +49,21 @@ inline int64_t CostRaw(int32_t id, int32_t level) {
     const int64_t least = (int64_t)r->minMana << 8;
     return cost < least ? least : cost;
 }
+// Whether the hero cannot pay a cost (RowCostRaw) with `manaPoints` (the hero's mana in points; negative or not a number: not known). False for anything not known.
+inline bool ShortOf(int64_t cost, float manaPoints) {
+    if (cost < 0 || !std::isfinite(manaPoints) || manaPoints < 0.0f) return false;
+    return (int64_t)std::floor((double)manaPoints * 256.0 + 0.5) < cost;
+}
+
+// The cost of `id` at `level`; -1 for a skill that is not one of these and for a level below 1 (not known).
+inline int64_t CostRaw(int32_t id, int32_t level) { return RowCostRaw(Find(id), level); }
 inline float CostPoints(int32_t id, int32_t level) {
     const int64_t c = CostRaw(id, level);
     return c < 0 ? -1.0f : (float)c / 256.0f;
 }
 
 // Whether the hero cannot pay `id` at `level` with `manaPoints` (the hero's mana in points; negative or not a number: not known). False for anything not known - then the game decides alone.
-inline bool Short(int32_t id, int32_t level, float manaPoints) {
-    const int64_t cost = CostRaw(id, level);
-    if (cost < 0 || !std::isfinite(manaPoints) || manaPoints < 0.0f) return false;
-    return (int64_t)std::floor((double)manaPoints * 256.0 + 0.5) < cost;
-}
+inline bool Short(int32_t id, int32_t level, float manaPoints) { return ShortOf(CostRaw(id, level), manaPoints); }
 
 // The mana the hero has at the release, from the newest read (a read comes five times a second, on the game's UI thread, so it may be up to a quarter of a second old): when a cast of ours was
 // pressed after that read was taken (or so soon before it that the game had not yet taken the mana), what it cost is not in the number yet, and is taken off. `readAgeMs` how old the read is,

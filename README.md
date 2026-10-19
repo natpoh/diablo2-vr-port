@@ -16,7 +16,7 @@ including a free BodyWalk Lite if you don't have BodyWalk.
 **[Open the mod's page on BodyWalkVR](https://bodywalkvr.com/mods/d2r-vr)** - the
 four views in video, the controls and the setup.
 
-**What's new in 0.172:** a first-start guide in the headset for a new player (a page of the skill panel's Settings window); thumbstick dead zones against stick drift; the Kurast sewer stairs taken standing with A; a shield put away behind the shoulder can stop blocking (its own tick, off); the launcher shows each mod's own icon. **In 0.171:** a staff held in both hands aims the spell along the staff again. **In 0.170:** D2R VR is a D2RLoader mod now - everything of it in
+**What's new in 0.173:** melee skills armed by their button - every blow is the skill, its icon in the mana medallion; the map in the hand with the game's map in the middle; the right stick tilts the view in F2; Setup always asks for the game's folder. **In 0.172:** a first-start guide in the headset for a new player (a page of the skill panel's Settings window); thumbstick dead zones against stick drift; the Kurast sewer stairs taken standing with A; a shield put away behind the shoulder can stop blocking (its own tick, off); the launcher shows each mod's own icon. **In 0.171:** a staff held in both hands aims the spell along the staff again. **In 0.170:** D2R VR is a D2RLoader mod now - everything of it in
 `mods\D2R-VR`, so it no longer shares files with the other VR mod and D2RLoader's
 `-mod` picks which one runs (Setup moves an old install, your settings with it);
 the shared D2R VR Launcher comes with Setup; the Arcane Sanctuary's own sky all

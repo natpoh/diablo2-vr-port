@@ -50,6 +50,7 @@ const D2RL::PluginContext* g_ctx = nullptr;
 std::atomic<bool> g_on{false};
 std::atomic<float> g_window{(float)kDefaultWindowMs};
 std::atomic<int> g_prefer{0};
+std::atomic<bool> g_combo{false};   // [hands] double_swing_combo
 // What the UI thread read (UiRead): the pad slot of each skill, its level, the skill on A.
 std::atomic<int> g_slot[kSkillCount] = {{-1}, {-1}};
 std::atomic<int> g_level[kSkillCount] = {{-1}, {-1}};
@@ -205,15 +206,18 @@ Facts Gather(uint64_t nowMs) {
 
 void Init(const D2RL::PluginContext* ctx) { g_ctx = ctx; }
 
-void Configure(bool on, float windowMs, int prefer) {
+void Configure(bool on, float windowMs, int prefer, bool combo) {
     const bool was = g_on.exchange(on);
     const float w = (float)ClampWindowMs(windowMs);
     const int p = prefer == 1 ? 1 : 0;
-    const bool changed = on != was || (on && (w != g_window.load() || p != g_prefer.load()));
+    const bool changed = on != was || (on && (w != g_window.load() || p != g_prefer.load() || combo != g_combo.load()));
     g_window.store(w);
     g_prefer.store(p);
+    g_combo.store(combo);
     if (changed) {
-        if (on) LogF("double swing: on - with a weapon in each hand, the second hand's touch on the monster the first hand struck within %.0f ms is %s (it must sit on a pad slot, with a level and the mana)", w,
+        if (on && combo) LogF("double swing: on, as a COMBO ([hands] double_swing_combo) - with a weapon in each hand, the first touch on a monster is the normal attack and every following touch on it, "
+                              "either hand, no more than %.0f ms after the last, is %s (it must sit on a pad slot, with a level and the mana)", w, p == 1 ? "Frenzy, or Double Swing" : "Double Swing, or Frenzy");
+        else if (on) LogF("double swing: on - with a weapon in each hand, the second hand's touch on the monster the first hand struck within %.0f ms is %s (it must sit on a pad slot, with a level and the mana)", w,
                      p == 1 ? "Frenzy, or Double Swing" : "Double Swing, or Frenzy");
         else Log("double swing: off ([hands] double_swing_by_hands)");
     }
@@ -232,6 +236,33 @@ void Tick() {
     if (g_on.load()) handvitals::game::Tick(true);   // the hero's mana, five times a second, on the UI thread
 }
 
+// -- the pad's ten skill slots (the UI thread): shared with [gameplay] melee_skill_armed (melee_arm_game.cpp) --------------------------------
+bool ReadPadSlots(int skills[shieldsmite::kSlotCount], int owners[shieldsmite::kSlotCount], const char** why) {
+    auto no = [why](const char* text) {
+        *why = text;
+        return false;
+    };
+    const uintptr_t bankFn = d2rsig::Addr(RVA_CTRL_BANK), slotFn = d2rsig::Addr(RVA_BUTTON_SLOT), table = d2rsig::Addr(RVA_CTRL_TABLE);
+    if (!bankFn || !slotFn || !table) return no("the game's controller tables not found (yet)");
+    int bank = -1;
+    if (!CallInt(bankFn, &bank) || (bank != 0 && bank != 16)) return no("the controller bank is not 0 or 16");
+    unsigned used = 0;
+    for (int i = 0; i < shieldsmite::kSlotCount; ++i) {
+        const shieldsmite::PadPress p = shieldsmite::SlotPress(i);
+        int slot = -1;
+        // A customised layout that gives two buttons one slot is refused: the press would cast the wrong skill.
+        if (!CallSlot(slotFn, p.buttons, p.lt != 0, &slot) || slot < 0 || slot >= 16 || (used & (1u << slot))) return no("the pad buttons do not map to ten slots");
+        used |= 1u << slot;
+        int32_t record[2] = {};
+        if (!Rd(table + uintptr_t(bank + slot) * kRecordSize, &record) || record[0] < -1 || record[0] > 4095) return no("a controller record does not read");
+        skills[i] = record[0];
+        owners[i] = record[1];
+    }
+    return true;
+}
+
+int ReadHeroLevel(int id, int owner) { return ReadLevel(id, owner); }
+
 // -- which pad slots hold the two skills (the UI thread) ---------------------------------------------------------------------------
 void UiRead() {
     if (!g_on.load()) return;
@@ -248,23 +279,9 @@ void UiRead() {
             LogF("double swing: the pad slots cannot be read (%s) - the second hand's touch is a normal attack", why);
         }
     };
-    const uintptr_t bankFn = d2rsig::Addr(RVA_CTRL_BANK), slotFn = d2rsig::Addr(RVA_BUTTON_SLOT), table = d2rsig::Addr(RVA_CTRL_TABLE);
-    if (!bankFn || !slotFn || !table) return fail("the game's controller tables not found (yet)");
-    int bank = -1;
-    if (!CallInt(bankFn, &bank) || (bank != 0 && bank != 16)) return fail("the controller bank is not 0 or 16");
     int skills[shieldsmite::kSlotCount], owners[shieldsmite::kSlotCount];
-    unsigned used = 0;
-    for (int i = 0; i < shieldsmite::kSlotCount; ++i) {
-        const shieldsmite::PadPress p = shieldsmite::SlotPress(i);
-        int slot = -1;
-        // A customised layout that gives two buttons one slot is refused: the press would cast the wrong skill.
-        if (!CallSlot(slotFn, p.buttons, p.lt != 0, &slot) || slot < 0 || slot >= 16 || (used & (1u << slot))) return fail("the pad buttons do not map to ten slots");
-        used |= 1u << slot;
-        int32_t record[2] = {};
-        if (!Rd(table + uintptr_t(bank + slot) * kRecordSize, &record) || record[0] < -1 || record[0] > 4095) return fail("a controller record does not read");
-        skills[i] = record[0];
-        owners[i] = record[1];
-    }
+    const char* why = "";
+    if (!ReadPadSlots(skills, owners, &why)) return fail(why);
     toldWhy = false;
     constexpr int kAttackSlot = 8;   // the pad's A: the attack button (shield_smite.h's order)
     g_attack.store(skills[kAttackSlot]);
@@ -304,7 +321,7 @@ Press Strike(int hand, uint32_t id, uint64_t nowMs, bool dualWield) {
     if (!g_on.load()) return p;
     const Facts f = Gather(nowMs);
     const double window = ClampWindowMs(g_window.load());
-    const Verdict v = g_tracker.Strike(hand, id, nowMs, dualWield, window, f);
+    const Verdict v = g_tracker.Strike(hand, id, nowMs, dualWield, window, f, g_combo.load());
     Tell(hand, id, v, f, window);
     if (v.dual) {
         const shieldsmite::PadPress pp = shieldsmite::SlotPress(v.slot);

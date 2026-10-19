@@ -1,6 +1,6 @@
 # Known issues
 
-What is broken or unfinished right now (D2R VR 0.172), what we already know
+What is broken or unfinished right now (D2R VR 0.173), what we already know
 about each problem and where in the code to start. Pick one, fork, fix it and
 send a pull request - or tell us on Discord what you found.
 

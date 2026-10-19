@@ -20,11 +20,11 @@ BEGIN
     BEGIN
         BLOCK "040904b0"
         BEGIN
-            VALUE "CompanyName", "BodyWalkVR"
+            VALUE "CompanyName", "natpoh"
             VALUE "FileDescription", "D2R VR - the VR layer (a D2RLoader plugin)"
             VALUE "FileVersion", D2RVR_VERSION
             VALUE "InternalName", D2RVR_MOD_ID
-            VALUE "LegalCopyright", "Copyright (c) 2026 BodyWalkVR. MIT licence."
+            VALUE "LegalCopyright", "Copyright (c) 2026 natpoh. MIT licence."
             VALUE "OriginalFilename", "d2rl-vrcam.dll"
             VALUE "ProductName", "D2R VR"
             VALUE "ProductVersion", D2RVR_VERSION

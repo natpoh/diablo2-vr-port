@@ -417,6 +417,18 @@ target_compile_options(shield_smite_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 target_sources(d2rl-vrcam PRIVATE vr/double_swing_game.cpp)
 add_executable(double_swing_test cleanroom/tests/double_swing_test.cpp)
 target_compile_options(double_swing_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# [hands] double_swing_combo (vr/double_swing.h Tracker: the combo - every blow after the first on a monster is the dual skill - and the pairs as they were): double_swing_combo_test
+add_executable(double_swing_combo_test cleanroom/tests/double_swing_combo_test.cpp)
+target_compile_options(double_swing_combo_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# [gameplay] melee_skill_armed: a melee attack skill's pad button arms the skill instead of casting it; every hit by touch is then the game's attack with it, the plain attack when the mana is short
+# (vr/melee_arm.h decides: the skills, the press, the pad buttons taken, the hit; melee_arm_game.cpp reads the pad slots, the level and the mana, vrcam's slot-skill hook answers): melee_arm_test
+target_sources(d2rl-vrcam PRIVATE vr/melee_arm_game.cpp)
+add_executable(melee_arm_test cleanroom/tests/melee_arm_test.cpp)
+target_compile_options(melee_arm_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# [gameplay] melee_skill_armed_icon: the armed skill's icon on the bottom of the mana medallion (vr/armed_icon.h decides what is drawn and how strong, the circle it is cut to and the
+# bake of the game's icon; vrcam uploads it into D2R_DepthFog.fx OrbIconTex and the effect lays it under the liquid): armed_icon_test
+add_executable(armed_icon_test cleanroom/tests/armed_icon_test.cpp)
+target_compile_options(armed_icon_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # [gameplay] melee_touch_only: with hit by touch live the trigger does not attack - the plugin's own layout leaves the trigger's attack out (vr/melee_trigger.h decides, melee_trigger_wire.cpp
 # feeds it direct_input.h's frames and reads the pad's A slot): melee_trigger_test
 target_sources(d2rl-vrcam PRIVATE vr/melee_trigger_wire.cpp)
@@ -474,6 +486,10 @@ target_compile_options(direct_input_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 add_executable(direct_remap_test cleanroom/tests/direct_remap_test.cpp)
 target_include_directories(direct_remap_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared ${CMAKE_CURRENT_SOURCE_DIR}/vr ${BODYWALK_SDK_INCLUDE})
 target_compile_options(direct_remap_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# A game key (Show items, Alt) on a long press or a touch line is held as long as the control (vr/direct_layout.h, vr/hold_tap.h, pure).
+add_executable(hold_line_test cleanroom/tests/hold_line_test.cpp)
+target_include_directories(hold_line_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_options(hold_line_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # The game must never think its pad left (vr/pad_presence.h): when pad 0 is answered present, and what the log says.
 add_executable(pad_presence_test cleanroom/tests/pad_presence_test.cpp)
 target_include_directories(pad_presence_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
@@ -570,6 +586,11 @@ target_compile_options(belt_flick_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 add_executable(stick_shape_test cleanroom/tests/stick_shape_test.cpp)
 target_include_directories(stick_shape_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
 target_compile_options(stick_shape_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# The right stick's up / down tilt in VR F2 ([camera] stick_pitch_f2, vr/stick_pitch.h): nothing at rest or inside the dead zone, a turn never tilts,
+# the speed and its square past the dead zone, the sign, the limits (a [camera] pitch outside them never pulled in), the ini's ranges.
+add_executable(stick_pitch_test cleanroom/tests/stick_pitch_test.cpp)
+target_include_directories(stick_pitch_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_options(stick_pitch_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # The settings panel in the headset ([openxr] headset_settings, vr/hset_*.h, vr/xr_headset_settings.h): its model,
 # the chord and the lasers, the ini transaction (backup, conflict) and the picture, tested without a headset.
 add_executable(hset_test tools/hset_test.cpp vr/hset_paint.cpp vr/hset_store.cpp shared/ini_txn.cpp)
@@ -1142,3 +1163,7 @@ endif()
 add_executable(first_start_test cleanroom/tests/first_start_test.cpp)
 target_include_directories(first_start_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
 target_compile_options(first_start_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# The corner map for the hand kept in a corner (vr/minimap_side.h: the game's map-mode setter's globals from its own bytes, when it is asked for): minimap_side_test
+add_executable(minimap_side_test cleanroom/tests/minimap_side_test.cpp)
+target_include_directories(minimap_side_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_options(minimap_side_test PRIVATE /utf-8 /W4 /EHsc /permissive-)

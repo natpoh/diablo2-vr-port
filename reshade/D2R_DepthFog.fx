@@ -2020,6 +2020,17 @@ uniform float OrbTime < hidden = true; > = 0.0;   // seconds, wrapped: the slosh
 uniform float2 OrbPic < hidden = true; > = float2(0.0, 0.94);
 texture2D GlobeTex : D2R_GAME_GLOBES;
 sampler2D GlobeSmp { Texture = GlobeTex; AddressU = CLAMP; AddressV = CLAMP; };
+// [gameplay] melee_skill_armed_icon (vr/armed_icon.h): the ARMED melee skill's icon - the game's own, baked by vrcam into OrbIconTex (premultiplied, already cut to a circle
+// with a soft edge, nothing outside it) - lying on the bottom of the MANA medallion's dome, under the liquid and the glass. OrbIcon: x 1 = draw it, y its strength (1: the hero can pay the
+// next hit; less: he cannot, the next hit is the plain attack), z the circle's radius over the base's (inside the dome's foot, 0.80), w the soft edge (a fraction of that radius). x 0 (the
+// default, and all vrcam sends while it is off or nothing is armed) leaves the medallion exactly as it was. The medallion only (OrbMed.x 1), never the full ball or the game's globes.
+uniform float4 OrbIcon < hidden = true; > = float4(0.0, 0.0, 0.70, 0.10);
+// [gameplay] melee_skill_armed_icon_depth (vr/armed_icon.h Placement): the icon's height over the floor, over the base's radius - 0 on the bottom (the default, as it first was), up to where its
+// circle's rim nearly meets the glass. The effect finds it by the same ray-plane step it finds the floor with, so it lies in the liquid with the medallion's own parallax.
+uniform float OrbIconLift < hidden = true; > = 0.0;
+uniform float OrbIconLiftM < hidden = true; > = 0.0;   // [gameplay] melee_skill_armed_icon_lift_mm: the icon this many metres over where the depth puts it, off the floor's texture
+texture2D OrbIconTex { Width = 128; Height = 128; Format = RGBA8; };
+sampler2D OrbIconSmp { Texture = OrbIconTex; AddressU = CLAMP; AddressV = CLAMP; MinFilter = LINEAR; MagFilter = LINEAR; };
 // ORBS-BEGIN (cleanroom/tests/hand_orbs_test.cpp compiles the text between these marks and renders it on a software D3D11 device)
 float OrbHash(float2 p) { return frac(sin(dot(p, float2(127.1, 311.7))) * 43758.5453); }
 float OrbNoise(float2 p)
@@ -2303,11 +2314,33 @@ float4 OneMedalCore(float3 ro, float3 rd, float3 back, float sceneZ, float4 P, f
     }
     float3 metal = float3(0.0, 0.0, 0.0);
     bool metalOn = kind > -0.5 && tm < tScene;
+    float ma = 1.0;   // the alpha of what lies behind the glass here (the metal: 1; the icon alone, over nothing of the medallion: its own)
     if (metalOn)
     {
         const float3 ql = (o + d * tm) / Rb;
         const float3 nW = normalize(Sx * nl.x + Aq * nl.y + Bn * nl.z);
         metal = OrbMetalColor(kind, ql, nW, rd);
+    }
+    float ia = 0.0, ti = -1.0;   // the armed skill's icon here: its strength in, and where along the ray (-1 none)
+    [branch] if (OrbIcon.x > 0.5 && !life && OrbPic.x < 0.5)   // the mana medallion: the icon lies flat in the dome, on its floor or lifted OrbIconLift over it, its up along the hand
+    {
+        const float zi = max(OrbIconLift, 0.0) * Rb + max(OrbIconLiftM, 0.0);
+        if (zi <= 1e-4 * Rb) { if (metalOn && kind > 4.5) ti = tm; }                           // on the bottom: the floor's own hit, as it first was
+        else if (d.z < -1e-6) { const float t = (zi - o.z) / d.z; if (t > 0.0 && t < tm && t < tScene) ti = t; }   // lifted: the plane z = zi, seen from above, before the floor
+        if (ti > 0.0)
+        {
+            const float2 pq = (o.xy + d.xy * ti) / (Rb * max(OrbIcon.z, 1e-3));
+            const float r = length(pq);
+            if (r < 1.0)
+            {
+                const float4 ic = tex2Dlod(OrbIconSmp, float4(0.5 + 0.5 * pq.x, 0.5 - 0.5 * pq.y, 0.0, 0.0));   // (premultiplied)
+                const float k = (1.0 - smoothstep(1.0 - OrbIcon.w, 1.0, r)) * saturate(OrbIcon.y);           // the circle's soft edge again (vr/armed_icon.h CircleCover), the strength
+                const float shade = 0.80 + 0.20 * saturate(dot(Bn, normalize(float3(-0.35, 0.78, 0.52))));     // the medallion's own light, a little (the floor's normal: the plane's)
+                ia = saturate(ic.a * k);
+                if (metalOn) metal = metal * (1.0 - ia) + ic.rgb * (k * shade);
+                else { metal = ic.rgb * (k * shade); ma = ia; metalOn = ia > 0.0; }
+            }
+        }
     }
 
     if (OrbPic.x > 0.5)   // the game's own globe on this base: its picture as a disc on the plane, under the bezel ring, its up along the hand
@@ -2346,22 +2379,24 @@ float4 OneMedalCore(float3 ro, float3 rd, float3 back, float sceneZ, float4 P, f
         ta = max(ta, 0.0);
         if (tb > ta && ta < tScene && ta < tm)
         {
-            const float tbe = min(tb, min(tm, tScene + 0.02 * Rb));
+            float tbe = min(tb, min(tm, tScene + 0.02 * Rb));
+            if (ia > 0.0) tbe = lerp(tbe, min(tbe, ti), ia);   // a lifted icon hides the liquid under it (on the bottom ti is tm: no change)
             const float cover = saturate(h3 / fw);
             const float3 Fa = normalize(Ax.xyz);
             const float cb = dot(Fa, Bn), sb = sqrt(saturate(1.0 - cb * cb));
             const float lo = cb >= 0.0 ? -Rd * sb : -Rd, hi = cb >= 0.0 ? Rd : Rd * sb;   // the half ball's reach along the fill axis: the level runs over exactly that
-            const float4 g = OrbGlass(ro, rd, P.xyz, Rd, ta, tbe, t0, cover, L, Fa, lo, hi, tint);
+            float4 g = OrbGlass(ro, rd, P.xyz, Rd, ta, tbe, t0, cover, L, Fa, lo, hi, tint);
+            g *= 1.0 - 0.6 * ia;   // the icon shows through the liquid over it (the liquid's own colour still on it): seen, not drowned at full mana
             const float3 behind = metalOn ? metal * (L.y * (1.0 - g.a)) : float3(0.0, 0.0, 0.0);
             res.rgb += g.rgb + behind;
-            res.a = saturate(g.a + (metalOn ? (1.0 - g.a) * L.y : 0.0));
+            res.a = saturate(g.a + (metalOn ? (1.0 - g.a) * L.y * ma : 0.0));
             return res;
         }
     }
     if (metalOn)
     {
         res.rgb += metal * L.y;
-        res.a = L.y;
+        res.a = L.y * ma;
     }
     return res;
 }

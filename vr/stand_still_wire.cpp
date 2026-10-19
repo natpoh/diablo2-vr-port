@@ -25,6 +25,7 @@
 #include "wheel_types.h"
 
 namespace gamecmd { bool Pressed(uint32_t cmd); }   // vr/gamecmd.cpp
+namespace meleearm { int PressSkill(); }   // vr/melee_arm_game.cpp: the skill a touch's press is read as ([gameplay] melee_skill_armed), 0 as the game has it
 
 namespace standstill {
 namespace {
@@ -165,7 +166,10 @@ Gate Poll(bool attackA, bool touch, bool menu, uint16_t padButtons, uint8_t lt) 
     uint16_t wantedButtons = 0;
     Why attackWhy = Why::Held;
     if (attackA) {
-        const int32_t id = SlotSkill(kPadA, alt);
+        int32_t id = SlotSkill(kPadA, alt);
+        if (touch) {   // [gameplay] melee_skill_armed: the game reads this press as the armed skill - a Whirlwind, a Leap Attack, a Charge, a Dragon Flight must move the hero, not stand still
+            if (const int armed = meleearm::PressSkill(); armed > 0) id = armed;
+        }
         attackWhy = id < 0 ? Why::Held : SkillWhy(id);   // the default attack is a basic attack unless the slot says otherwise
         if (attackWhy == Why::Held && !g_throwStill.load() && g_isThrowPress && g_isThrowPress()) attackWhy = Why::Throw;
         wanted = attackWhy == Why::Held;

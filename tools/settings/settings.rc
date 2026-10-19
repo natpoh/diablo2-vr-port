@@ -18,11 +18,11 @@ BEGIN
     BEGIN
         BLOCK "040904b0"
         BEGIN
-            VALUE "CompanyName", "BodyWalkVR"
+            VALUE "CompanyName", "natpoh"
             VALUE "FileDescription", "D2R VR Authentic Settings"
             VALUE "FileVersion", D2RVR_VERSION
             VALUE "InternalName", "d2r-vr-settings"
-            VALUE "LegalCopyright", "Copyright (c) 2026 BodyWalkVR. MIT licence."
+            VALUE "LegalCopyright", "Copyright (c) 2026 natpoh. MIT licence."
             VALUE "OriginalFilename", "D2R_VR_Settings.exe"
             VALUE "ProductName", "D2R VR"
             VALUE "ProductVersion", D2RVR_VERSION

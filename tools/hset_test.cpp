@@ -2227,7 +2227,7 @@ static void TestBelt() {
     CHECK(kDefs[kKeyBeltOn].page == kNoPage && !kDefs[kKeyBeltOn].live && IsToggle(kDefs[kKeyBeltOn]), "belt_models: the Belt page's note, not live");
     int live = 0;
     for (int i = 0; i < kCount; ++i) live += kDefs[i].live ? 1 : 0;
-    CHECK(live == 10 && kLiveMask != 0 && (kLiveMask & Bit(KeyOf(L"brightness"))) == 0 && (kLiveMask & Bit(kKeySmooth)) == 0, "ten live keys, the belt's and the Melee page's - not the others");
+    CHECK(live == 12 && kLiveMask != 0 && (kLiveMask & Bit(KeyOf(L"brightness"))) == 0 && (kLiveMask & Bit(kKeySmooth)) == 0, "twelve live keys, the belt's and the Melee page's (the skill arming's two too) - not the others");
     CHECK(kCount <= 64, "the masks are 64 bits");
     CHECK(kDefs[KeyAt(kPageBelt, 0)].min == 0.3f && kDefs[KeyAt(kPageBelt, 4)].min == 4.0f && kDefs[KeyAt(kPageBelt, 4)].max == 30.0f && kDefs[KeyAt(kPageBelt, 4)].def == 12.0f, "the belt's ranges are D2R VR Settings'");
     CHECK(IsToggle(kDefs[KeyAt(kPageBelt, 5)]) && kDefs[KeyAt(kPageBelt, 5)].def == 0.0f && kKeyDirectOn >= 0, "the two-button take is a tick, off as the plugin has it ([belt] grab_trigger)");
@@ -3063,12 +3063,17 @@ static int GdiWidth(const std::string& text, int cell, int weight) {   // the pa
 // -- 14. The Melee page: the "Hit by touch" group of D2R VR Settings > Strikes -----------------------------------------------------------------
 // The tick and its two numbers, the same [gameplay] keys, ranges and defaults as the desktop program (tools/settings/settings.cpp), written live.
 static void TestMelee() {
-    CHECK(RowsOn(kPageMelee) == 4 && !strcmp(kPageNames[kPageMelee], "Melee"), "four rows on the Melee page");
+    CHECK(RowsOn(kPageMelee) == 6 && !strcmp(kPageNames[kPageMelee], "Melee"), "six rows on the Melee page (the touch's four, then the skill arming and its icon)");
     const int on = KeyAt(kPageMelee, 0), speed = KeyAt(kPageMelee, 1), start = KeyAt(kPageMelee, 2), only = KeyAt(kPageMelee, 3);
     CHECK(!wcscmp(kDefs[only].section, L"gameplay") && !wcscmp(kDefs[only].key, L"melee_touch_only") && IsToggle(kDefs[only]) && kDefs[only].def == 1.0f && kDefs[only].live,
           "the trigger's tick: [gameplay] melee_touch_only, on as shipped, live");
     CHECK(on == kKeyMeleeTouch && !wcscmp(kDefs[on].section, L"gameplay") && !wcscmp(kDefs[on].key, L"melee_touch") && IsToggle(kDefs[on]) && kDefs[on].def == 0.0f && kDefs[on].live,
           "the tick: [gameplay] melee_touch, off as shipped, live");
+    const int armed = KeyAt(kPageMelee, 4), icon = KeyAt(kPageMelee, 5);
+    CHECK(armed == kKeyMeleeArmed && !wcscmp(kDefs[armed].key, L"melee_skill_armed") && IsToggle(kDefs[armed]) && kDefs[armed].def == 0.0f && kDefs[armed].live,
+          "the skill arming: [gameplay] melee_skill_armed, off as shipped, live");
+    CHECK(icon >= 0 && !wcscmp(kDefs[icon].key, L"melee_skill_armed_icon") && IsToggle(kDefs[icon]) && kDefs[icon].def == 1.0f && kDefs[icon].live,
+          "its icon in the mana: [gameplay] melee_skill_armed_icon, on as shipped, live");
     CHECK(!wcscmp(kDefs[speed].section, L"gameplay") && !wcscmp(kDefs[speed].key, L"melee_min_speed") && kDefs[speed].min == 0.3f && kDefs[speed].max == 20.0f &&
               kDefs[speed].step == 0.1f && kDefs[speed].def == 0.8f && kDefs[speed].live,
           "the least blade speed: 0.3 - 20 m/s by 0.1, 0.8 as shipped, live");

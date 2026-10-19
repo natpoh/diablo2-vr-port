@@ -6,6 +6,12 @@
 //   - the first hand's touch on a monster is the game's normal attack, as ever;
 //   - the OTHER hand's touch on the SAME monster within a window (a slider, 0.7 s) is the dual skill instead of a normal attack - when it sits on a pad slot, the hero has a level in it and can pay its mana;
 //   - otherwise the second touch is a normal attack too. A pair is spent by the dual skill: the next touch starts a new pair.
+// The author's addition (2026-10-19, after trying it), a tick of its own ([hands] double_swing_combo, off: the pairs above, as they were): a COMBO - "I strike, first it is an ordinary blow,
+// and every next one must be like a double swing". With it the pair is never spent:
+//   - the opening touch on a monster is the game's normal attack;
+//   - every following touch on the SAME monster, by either hand, no longer than the window after the combo's last touch, is the dual skill (with the slot, the level and the mana as above; a
+//     touch that cannot be the dual skill is a normal attack and the combo goes on);
+//   - a touch on another monster, or one later than the window, opens a new combo (a normal attack again).
 // The press is the game's own pad button of the slot the skill sits in (as the shield bash's Smite does); the game does the swings, the damage, the animation, the mana. Nothing is called that attacks. With
 // the game's own rule on top: the dual skills carry the Skills.txt flag AttackNoMana, so a press the hero cannot pay is the game's plain attack anyway.
 //
@@ -78,10 +84,10 @@ struct Facts {
 enum class Why : uint8_t {
     Off,               // [hands] double_swing_by_hands is off
     NotDual,           // not a melee weapon in each hand
-    First,             // the first hand of a pair: a normal attack; the other hand has the window
-    OtherMonster,      // the other hand's last strike was on another monster: this one is a first
-    TooLate,           // the other hand's last strike is older than the window: this one is a first
-    Dual,              // the second hand, in the window, on the same monster: the dual skill is pressed
+    First,             // the first hand of a pair (the combo's opening blow): a normal attack; the window starts
+    OtherMonster,      // the other hand's (the combo's) last strike was on another monster: this one is a first
+    TooLate,           // the other hand's (the combo's) last strike is older than the window: this one is a first
+    Dual,              // the second hand (a following blow of the combo), in the window, on the same monster: the dual skill is pressed
     AlreadyOnAttack,   // the attack button already carries Double Swing / Frenzy: every touch casts it already
     NoSlot,            // neither skill sits on the pad's ten slots
     NotLearned,        // a skill sits on a slot but the hero has no level in it
@@ -91,10 +97,10 @@ inline const char* WhyText(Why w) {
     switch (w) {
         case Why::Off: return "off";
         case Why::NotDual: return "not a weapon in each hand";
-        case Why::First: return "the first hand of a pair";
-        case Why::OtherMonster: return "the other hand struck another monster";
-        case Why::TooLate: return "the other hand's strike was too long ago";
-        case Why::Dual: return "the second hand within the window on the same monster";
+        case Why::First: return "the first blow (of a pair / a combo)";
+        case Why::OtherMonster: return "the last blow was on another monster - a new pair / combo";
+        case Why::TooLate: return "the last blow was too long ago - a new pair / combo";
+        case Why::Dual: return "the second hand of a pair / a following blow of the combo, on the same monster within the window";
         case Why::AlreadyOnAttack: return "the attack button already carries it";
         case Why::NoSlot: return "neither skill is on a pad slot";
         case Why::NotLearned: return "the hero has no level in it";
@@ -110,7 +116,7 @@ struct Verdict {
     int slot = -1;           // Dual: its pad slot
     int level = 0;           // Dual / NoMana: the level the cost was worked out at
     bool levelGuessed = false;   // the level could not be read: the first level's cost (the dearest) stood in
-    double gapMs = -1.0;     // since the other hand's last strike, when there was one
+    double gapMs = -1.0;     // since the other hand's (the combo's) last strike, when there was one
     float cost = -1.0f, mana = -1.0f;
 };
 
@@ -165,18 +171,25 @@ inline void Choose(const Facts& f, Verdict* v) {
     }
 }
 
-// ---- the pairs ----------------------------------------------------------------------------------------------------------------------
-// Each hand remembers its last accepted strike (the monster, when). A strike of a hand is the SECOND of a pair when the other hand's last strike was on the same monster no longer ago than the window.
-// A pair the dual skill took is spent (both memories are cleared); a second strike that could not be a dual skill is the first of a new pair for its own hand. The timer's thread only.
+// ---- the pairs, or the combo -------------------------------------------------------------------------------------------------------
+// Pairs (combo false): each hand remembers its last accepted strike (the monster, when). A strike of a hand is the SECOND of a pair when the other hand's last strike was on the same monster no longer
+// ago than the window. A pair the dual skill took is spent (both memories are cleared); a second strike that could not be a dual skill is the first of a new pair for its own hand.
+// Combo (combo true, [hands] double_swing_combo): the combo remembers its last accepted strike, either hand's. A strike is a FOLLOWING one when that last strike was on the same monster no longer ago
+// than the window: the dual skill (Choose). Every strike - dual or not - is the combo's last one then. Another monster, or a gap over the window: this strike opens a new combo (a normal attack).
+// The timer's thread only.
 class Tracker {
 public:
-    void Reset() { last_[0] = last_[1] = Mem{}; }
+    void Reset() { last_[0] = last_[1] = chain_ = Mem{}; }
 
     // A strike noted without a verdict: the first of two blades that touched one monster in the same pass - the second's Strike then sees it at gap 0.
-    void Record(int hand, uint32_t monster, uint64_t nowMs) { last_[hand & 1] = Mem{monster, nowMs, true}; }
+    void Record(int hand, uint32_t monster, uint64_t nowMs) {
+        last_[hand & 1] = Mem{monster, nowMs, true};
+        chain_ = Mem{monster, nowMs, true};
+    }
 
     // An accepted strike of `hand` (0 right, 1 left) on `monster` at `nowMs`. dualWield: a melee weapon in each hand. windowMs: [hands] double_swing_window_ms. facts: the skills and the mana now.
-    Verdict Strike(int hand, uint32_t monster, uint64_t nowMs, bool dualWield, double windowMs, const Facts& facts) {
+    // combo: [hands] double_swing_combo.
+    Verdict Strike(int hand, uint32_t monster, uint64_t nowMs, bool dualWield, double windowMs, const Facts& facts, bool combo = false) {
         Verdict v;
         hand &= 1;
         if (!dualWield) {
@@ -184,24 +197,24 @@ public:
             Reset();
             return v;
         }
-        const Mem& other = last_[hand ^ 1];
-        bool pair = false;
-        if (!other.valid) {
+        const Mem& before = combo ? chain_ : last_[hand ^ 1];
+        bool follows = false;
+        if (!before.valid) {
             v.why = Why::First;
         } else {
-            v.gapMs = nowMs >= other.at ? (double)(nowMs - other.at) : 0.0;   // (a clock that went back: no time passed)
-            if (other.monster != monster) v.why = Why::OtherMonster;
+            v.gapMs = nowMs >= before.at ? (double)(nowMs - before.at) : 0.0;   // (a clock that went back: no time passed)
+            if (before.monster != monster) v.why = Why::OtherMonster;
             else if (v.gapMs > ClampWindowMs(windowMs)) v.why = Why::TooLate;
-            else pair = true;
+            else follows = true;
         }
-        if (pair) {
+        if (follows) {
             Choose(facts, &v);
-            if (v.dual) {
+            if (v.dual && !combo) {
                 Reset();   // the pair is spent
                 return v;
             }
         }
-        Record(hand, monster, nowMs);   // a normal attack: the first of a (new) pair for this hand
+        Record(hand, monster, nowMs);   // pairs: the first of a (new) pair for this hand; combo: the combo goes on from this strike
         return v;
     }
 
@@ -211,7 +224,8 @@ private:
         uint64_t at = 0;
         bool valid = false;
     };
-    Mem last_[2];
+    Mem last_[2];   // pairs: each hand's last strike
+    Mem chain_;     // combo: the last strike of either hand
 };
 
 }  // namespace doubleswing

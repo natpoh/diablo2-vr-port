@@ -139,9 +139,11 @@ struct Binding {
 // A control alone, and with the same hand's grip held ("left_grip+left_menu"). A control with a chord binding does
 // that, not its plain one, while the grip is held at the moment it is pressed.
 // A control with a "hold" binding is hold-or-tap (vr/hold_tap.h) while `holdEnabled`: its plain outputs wait for the
-// release (a tap), its hold outputs fire once after `holdMs`; a command it holds (Alt) is held at once.
+// release (a tap), its hold outputs fire once after `holdMs`; a command it holds (Alt) is held at once. A command on the hold line
+// itself is held from the hold on until the control is let go (the game's key held as long as the button, as on the plain line).
 // A control with a "touch" binding (HasTouch ones; none by default) gives it once for every BEGIN of the finger's touch - a pulse as long as a tap's, nothing
 // repeated while the finger stays - in the world layer of F4 only (no menu, no panel of ours up). It is its own line: the press of the same control keeps its.
+// A key command on it is held while the finger stays (one press of the game's key, let go with the finger), not a pulse.
 struct Table {
     Binding plain[kCtlCount];
     Binding chord[kCtlCount];
@@ -259,7 +261,7 @@ public:
     // The context changed under the controls (a menu, the focus, the session): a press under way is forgotten, no tap.
     void Cancel() {
         for (int& l : latch_) l = -1;
-        for (int i = 0; i < kCtlCount; ++i) { ht_[i].Cancel(); htOn_[i] = false; suppress_[i] = false; touchUntil_[i] = 0; }
+        for (int i = 0; i < kCtlCount; ++i) { ht_[i].Cancel(); htOn_[i] = false; suppress_[i] = false; touchUntil_[i] = 0; touchOn_[i] = false; }
     }
 
     // nowMs: a monotonic clock in ms (hold-or-tap). uiUp: a panel of the plugin's own is up - a control with a hold line
@@ -306,7 +308,7 @@ public:
                 if (htOn_[i]) {
                     const holdtap::Out m = ht_[i].Step(now[i], nowMs, world_.holdMs);
                     for (const Out& o : t.plain[i].out) if ((o.kind == kOutCommand ? m.immediate : m.tap) && !(drop && IsShot(o))) Apply(o, 1.0f, r);
-                    if (m.hold) for (const Out& o : t.hold[i].out) if (!(drop && IsShot(o))) Apply(o, 1.0f, r);
+                    for (const Out& o : t.hold[i].out) if ((o.kind == kOutCommand ? m.hold || m.held : m.hold) && !(drop && IsShot(o))) Apply(o, 1.0f, r);
                     continue;
                 }
             } else if (htOn_[i]) {   // the hold line was taken away under a press (settings changed)
@@ -330,10 +332,13 @@ public:
             const bool on = c.touch[i] && HasTouch((Ctl)i);
             const bool edge = on && !touchDown_[i] && touchSeen_;   // (the first frame only learns where the fingers are)
             touchDown_[i] = on;
-            if (mode != Mode::World || uiUp || !HasOut(t.touch[i])) { touchUntil_[i] = 0; continue; }
-            if (edge) touchUntil_[i] = nowMs + holdtap::kPulseMs;
-            if (nowMs < touchUntil_[i])
-                for (const Out& o : t.touch[i].out) if (!(((noShot >> i) & 1u) && IsShot(o))) Apply(o, 1.0f, r);
+            if (mode != Mode::World || uiUp || !HasOut(t.touch[i])) { touchUntil_[i] = 0; touchOn_[i] = false; continue; }
+            if (edge) { touchUntil_[i] = nowMs + holdtap::kPulseMs; touchOn_[i] = true; }
+            if (!on) touchOn_[i] = false;
+            const bool pulse = nowMs < touchUntil_[i];
+            if (pulse || touchOn_[i])   // (a key command for as long as the finger stays, the rest for the pulse)
+                for (const Out& o : t.touch[i].out)
+                    if ((o.kind == kOutCommand ? pulse || touchOn_[i] : pulse) && !(((noShot >> i) & 1u) && IsShot(o))) Apply(o, 1.0f, r);
         }
         touchSeen_ = true;
         return r;
@@ -371,6 +376,7 @@ private:
     bool suppress_[kCtlCount] = {};    // a panel came up under the press: nothing until it is let go
     bool touchDown_[kCtlCount] = {};   // the finger was on the control last frame
     uint64_t touchUntil_[kCtlCount] = {};   // a touch line's pulse runs until this tick
+    bool touchOn_[kCtlCount] = {};     // a touch that began (an edge) and has not been lifted: the touch line's key commands are held
     bool touchSeen_ = false;           // a frame has been seen: the fingers' places are known
 };
 

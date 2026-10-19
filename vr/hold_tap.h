@@ -8,6 +8,8 @@
 // A plain output that is HELD by nature (a game key command such as Alt, held as long as the click is) is not
 // waited for: it is on at once, as before, and goes off when the hold fires or the control is let go. That is the
 // output's choice, not the machine's: Out.immediate says "still undecided, show what is shown at once".
+// The same goes for the hold line: a key command on it (Alt) is held from the moment the hold fires until the control
+// is let go - Out.held - not just for the pulse (a player: "it only shows them for a split second ... even if you hold").
 #pragma once
 
 #include <algorithm>
@@ -29,6 +31,7 @@ struct Out {
     bool immediate = false;   // pressed and not yet decided (before holdMs): the plain line's held outputs are on
     bool tap = false;         // a tap's press is on: the plain line's other outputs
     bool hold = false;        // the hold's press is on: the hold line's outputs
+    bool held = false;        // the hold has fired and the control is still down: the hold line's held outputs are on
     bool fired = false;       // true only in the step that the hold fired (an edge, for a request that must come once)
 };
 
@@ -53,6 +56,7 @@ public:
         }
         wasDown_ = down;
         o.immediate = state_ == State::Pressed;
+        o.held = state_ == State::Held;
         o.tap = nowMs < tapUntil_;
         o.hold = nowMs < holdUntil_;
         return o;

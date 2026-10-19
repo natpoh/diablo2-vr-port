@@ -81,7 +81,17 @@ the headset-only ones.
   default), the horizon, and which head movements the camera follows: turn,
   look up and down, roll - each can be reversed.
 - **F1 From above** - stereo from above and how deep the top-down 3D is.
-- **F2 Third person** - how far behind and how high the camera is.
+- **F2 Third person** - how far behind and how high the camera is. *Right
+  stick up / down tilts the view* (VR, off by default, `[camera]
+  stick_pitch_f2`): with a gamepad or the VR controllers - on *Mono - a flat
+  screen* too - the right stick's up / down looks higher / lower on top of the
+  horizon, left / right still turns. A push more sideways than up / down only
+  turns, inside the turn's dead zone nothing moves, and F11 puts the tilt back.
+  Its speed (`stick_pitch_speed`, degrees per second at a full push), how high
+  and how low it goes (`stick_pitch_min` / `stick_pitch_max`, in the horizon's
+  degrees: lower looks higher, -60 is the horizon) and *Reverse stick tilt*
+  (`stick_pitch_sign`). Needs *Turn with the right stick*. Not with native
+  OpenXR's headset view, where the headset has the pitch.
 - **First person** - the near clip that hides your hero's own head, the eye
   height (from the hero's class, or fixed), where the eyes sit, turning the
   head about the neck, the camera rising when the hero jumps.
@@ -631,7 +641,10 @@ in full in a square window); the log tells the size the game draws at.
   and one for each learned bow skill, the free hand's trigger at an orb picks it; *Arrow
   effects: fire, frost and arcane light on the arrow* (on), by the chosen skill; *no mana for
   the chosen arrow - shoot the plain arrow* (on), and the effect goes out while the mana
-  is short. The crossbow has no quiver.
+  is short; *Quiver: show the chosen arrow skill in the mana medallion* (on, `[bow] quiver_icon`):
+  the chosen skill's icon lies in the mana medallion on the wrist like an armed melee skill's
+  (full while the hero can pay the shot, faint when not; the plain arrow: none), sized and placed
+  by the *Skill icon in the mana* sliders on the Strikes tab. The crossbow has no quiver.
   *Quick release* (experimental): moves the game's arrow-making
   frame of the hero's bow attack earlier (frame 2 by default) - the arrow, its
   damage and its mana come about 0.2 s sooner inside the same attack; the
@@ -713,11 +726,30 @@ ticks the other). The blade's geometry stays in Weapon Adjust and Debug.
 - **Each kind of weapon** - a table, a row for each of the 15 kinds the touch swings (bows and crossbows are shot, not swung): *Swing x* (the kind's own amplitude factor, 0 =
   follow its family), *= cm* (what that comes to), *Speed* (its own least blade speed, m/s) and *Start cm* (its own start distance; 0 = the general one for both), and two
   ticks, *Toward* and *Head*. Click a number, type, press Enter.
+- **Melee skills armed by their button** (F4, off; `[gameplay] melee_skill_armed`) - *A melee skill's button arms it: every hit is that skill*: a pad skill button (B, X, Y, RB, with or
+  without LT) whose slot holds a melee attack skill no longer casts it - its press ARMS the skill, like the bow's chosen arrow skill (a short buzz in both hands). Every touch of your blade is
+  then the game's attack with that skill - its mana, cooldown, weapon check and animation are the game's, the touched monster its target, one touch one cast; a touch the hero cannot pay is the
+  plain attack and the skill stays armed. The same button again, or one with the plain attack on it, disarms. The tick, and the icon's tick below, are on the headset panel's Melee page too. The skills are the ones the game's Skills.txt gives melee range (h2h): the
+  Barbarian's Bash, Stun, Concentrate, Berserk, Frenzy, Double Swing; the Paladin's Zeal, Smite, Sacrifice, Vengeance, Conversion; the Amazon's spear skills; the Druid's Maul, Fire Claws,
+  Hunger, Rabies, Fury, Feral Rage; the Assassin's martial arts; Poison Dagger; Cleave - each with its own tick under *Armed by its button:* in the same group, a row of ticks per class (`[melee_armed] s<skill>`,
+  ticked by default). There too, unticked by default, the four that move the hero: Whirlwind, Leap Attack, Charge, Dragon Flight - ticked, a hit by touch is the game's own cast of it at
+  the touched monster (the hero whirls, leaps, charges or flies to it, and you with him; Stand Still is not held for it). An unticked skill, spells, buffs and warcries cast from their
+  buttons as ever; a bow, a crossbow or a thrown weapon is not touched. Needs the plain attack on the attack button (A).
+  - *Show the armed skill in the mana medallion* (on; `[gameplay] melee_skill_armed_icon`, under the tick above): the armed skill's icon - the game's own, as the skill panel shows it -
+    lies on the bottom of the mana medallion on the wrist, under the liquid, cut to a circle inside the glass. Full while the hero can pay the next hit; half see-through when he cannot (the
+    next hit is the plain attack), bright again when the mana is back. Nothing armed: no icon. Needs the hand vitals as the medallions (the glass orbs look, the medallion shape) and the skill
+    icons made from your game. Unticked: the medallion as before.
+  - *Skill icon in the mana: size, % of the inner circle* (87.5), *depth, % (100 = the bottom)* (100), *opacity, %* (100) and *opacity when the mana is short, %* (35)
+    (`[gameplay] melee_skill_armed_icon_size_pct`, `_depth_pct`, `_opacity_pct`, `_faint_pct`; live): the icon's size against the glass dome's foot; how deep it lies - 100 on the floor
+    under all the liquid, 0 as high as the dome lets a circle that wide lie, its rim just under the glass (the bigger the icon the less room over it; at 100 % size only the bottom);
+    and how solid it is with the mana for the next hit and without (0 = it goes out until the mana is back). The bow's chosen skill's icon uses the same four. The defaults are the
+    icon as it first was.
 - **Two weapons: Double Swing by the hands** (F4, off; a Barbarian with a melee weapon in each hand) - *Double Swing by the two hands*: the first hand's touch on a monster is the game's normal attack;
   when the other hand then touches the same monster within *the other hand within, ms* (700) the second strike is the game's own Double Swing instead - its pad button is pressed once and the monster
   you touched is its target, the way the shield bash casts Smite. The skill has to sit on one of the pad's ten skill slots, the hero has to have a level in it and the mana for it (the game's own
   numbers); otherwise the second touch is a normal attack too. *The skill pressed first*: with Frenzy on a slot as well, which of the two. The swings, damage, animation and mana are the game's.
-  The log says every decision once.
+  The log says every decision once. *Double Swing as a combo: every blow after the first* (off, `[hands] double_swing_combo`): no pairs - the first touch on a monster is the normal
+  attack and every following touch on it (either hand, within the window of the last one) is the dual skill: normal, double, double...; another monster or a longer pause starts again.
 - **Direct hit** (experimental, off, offline only) - the touch calls the game's basic attack itself - no animation, no walk-up, no attack-rate wait.
 - **Quick strike** (experimental, a change of the game's timing) - the game lands a melee blow at an action frame of the attack animation (a Paladin's sword: frame 7, 0.28 s
   in); this moves that frame to the start (a slider, 1 by default) so the blow lands about a quarter of a second sooner inside the same attack. The animation's length and the

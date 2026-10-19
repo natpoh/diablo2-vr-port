@@ -14,7 +14,8 @@ namespace doubleswing {
 // Plugin start: the log.
 void Init(const D2RL::PluginContext* ctx);
 // [hands] double_swing_by_hands, double_swing_window_ms (200 .. 2000, 700), double_swing_skill (0 Double Swing first, 1 Frenzy first) from the ini (every read). Off: nothing below does anything.
-void Configure(bool on, float windowMs, int prefer);
+// combo: [hands] double_swing_combo (off by default): the first touch on a monster is the normal attack and EVERY following touch on it within the window, either hand, the dual skill (double_swing.h).
+void Configure(bool on, float windowMs, int prefer, bool combo = false);
 bool On();
 
 // The UI thread (gamestate's read of the hands, 5 times a second; cheap when off): which pad slots hold Double Swing and Frenzy, what is on the attack button, the hero's level in each - from the game's
@@ -38,5 +39,10 @@ Press Strike(int hand, uint32_t id, uint64_t nowMs, bool dualWield);
 void Note(int hand, uint32_t id, uint64_t nowMs);
 // The touch stands down (another view, a menu, another weapon): the pairs are forgotten.
 void Forget();
+
+// Shared with [gameplay] melee_skill_armed (vr/melee_arm_game.cpp), UI thread only: the skill (and its owner) the game has on each of the pad's ten skill slots, in shield_smite.h's SlotPress order (B X Y RB,
+// LT + B X Y RB, A, LT + A); false, with *why, when the controller tables do not read as ten slots. And the hero's total level in a skill (-1 not read, 0 not learned).
+bool ReadPadSlots(int skills[10], int owners[10], const char** why);
+int ReadHeroLevel(int id, int owner);
 
 }  // namespace doubleswing

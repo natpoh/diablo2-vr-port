@@ -104,6 +104,8 @@ struct Item {
     COLORREF color = 0;                      // Status: the line's colour now
     bool hidden = false;                     // left out of the page for now (the update row until there is one)
     int col = -1;                            // Group: the column it goes in (0 left); -1 = the shortest column so far (LayoutPage)
+    bool sub = false;                        // Group: a sub-heading inside the group above it (Sub) - it stays in that group's column
+    int across = 0;                          // ... the ticks after it in a grid beside its name, up to this many to a row; 0 = a line of its own
     bool big = false;                        // Button: a large one (the Home page's START)
     int cell = -1;                           // a row of a table (the Strikes tab's kinds): which cell, 0 = the row's label, which starts the row; the others sit beside it (a slider shows its number box only)
     struct ShowFor { const wchar_t* section = nullptr; const wchar_t* key = nullptr; unsigned mask = 0; int item = -1; } showFor;
@@ -167,6 +169,10 @@ Item StartsFromMapped(const wchar_t* oldKey, std::initializer_list<float> map, I
 Item Hide(Item i) { i.hidden = true; return i; }
 // A group in a column of its own choice (0 left); with fewer columns than that it goes in the shortest one.
 Item InColumn(int column, Item i) { i.col = column; return i; }
+// A sub-heading inside the group above it: LayoutPage keeps it and what follows in that group, never in a column of their own. across 0: a line
+// of its own (bold, no rule); otherwise its name sits on the left and the ticks after it in a grid beside it, up to `across` to a row (fewer in a
+// narrow column) - a long list of ticks in a few compact rows.
+Item Sub(const wchar_t* title, int across = 0) { Item i = Group(title); i.sub = true; i.across = across; return i; }
 // A large push button (taller, bigger letters).
 Item Big(Item i) { i.big = true; return i; }
 
@@ -194,6 +200,18 @@ Item BackNeeds(Item i) { return ShowFor(L"weight", L"after_drop", 1u << 1, Needs
 // spell_aim is off (then every spell has it) or the attack is not along the hand ([bow] mode 4).
 Item Spell(const wchar_t* key, const wchar_t* name, float def = 0) {
     return Needs(L"bow", L"mode", 4, Needs(L"hands", L"spell_aim", 1, Toggle(L"autotarget", key, name, def)));
+}
+
+// One skill of [gameplay] melee_skill_armed's list (vr/melee_arm.h kRows, the same order and defaults): ticked = its pad button arms it ([melee_armed] s<skill>); greyed while hit by
+// touch or the arming is off.
+constexpr const wchar_t* kArmedTip = L"Ticked: this skill's pad button (B X Y RB, with or without LT) ARMS it - every hit by touch is then the game's attack with it, paying its mana (the "
+                                     L"plain attack when the mana is short). Unticked: its button casts it as ever. Live.";
+constexpr const wchar_t* kArmedMoverTip = L"A skill that MOVES the hero - off by default. Ticked: its pad button arms it, and every hit by touch is the game's own cast of it at the monster "
+                                          L"you touched: Whirlwind whirls to and through that monster's place, Leap Attack leaps at it, Charge charges it, Dragon Flight flies to it - the hero "
+                                          L"(and so you) moves, as the game moves him; Stand Still is not held for such a hit. Its mana as the game counts it; the plain attack when it is "
+                                          L"short. Unticked: its button casts it as ever (with the game's own aim). Live. Not tried in the game yet.";
+Item ArmedSkill(const wchar_t* key, const wchar_t* name, float def = 1, const wchar_t* tip = kArmedTip) {
+    return Needs(L"gameplay", L"melee_touch", 1, Needs(L"gameplay", L"melee_skill_armed", 1, Toggle(L"melee_armed", key, name, def, tip)));
 }
 
 // The toolbar on a forearm (Where: 1, 2) or on the body (3, 4): a set of sliders each.
@@ -239,7 +257,7 @@ const std::vector<const wchar_t*>& RemapNames() {
 // What a touch row adds to its tip: the finger ARRIVING on the control, not a press.
 constexpr const wchar_t* kTouchTip =
     L" TOUCH, not a press: this fires once when your finger ARRIVES on the control (the capacitive touch of a Touch controller - PS VR2 on SteamVR is "
-    L"one - or an Index controller), nothing more while it stays, and once again the next time it arrives. It is on top of what pressing the same control "
+    L"one - or an Index controller), nothing more while it stays, and once again the next time it arrives - a game key such as Show items (Alt) is held while the finger stays and let go with it. It is on top of what pressing the same control "
     L"does (the touch comes first). A Vive, WMR or simple controller reports no touch: nothing happens there. First person (F4), in the world only - not in "
     L"a menu or with a panel of the mod's own up. Nothing is bound by default; to put the game's run / walk switch here pick \"Run / walk switch\". "
     L"The log (d2r-vr-vrcam.log) says which touch inputs your controller reports.";
@@ -499,6 +517,19 @@ std::vector<Item> g_items = {
     Group(L"F2  Third person"),
     Slider(L"third", L"distance", L"Camera back", 0, 30, 0.5f, 7, L"How far back from the eye point. World units, about 0.24 m each."),
     Slider(L"third", L"height", L"Camera height", 0, 20, 0.1f, 6.5f, L"Eye point above the ground. World units, about 0.24 m each."),
+    // [camera] stick_pitch_f2 (GitHub issue 11, a player's wish): the right stick's up / down tilts the view in VR F2 - a pad on "Mono - a flat
+    // screen" had only the mouse and the headset for it. Off = as before (vr/stick_pitch.h).
+    Only(kVr, Toggle(L"camera", L"stick_pitch_f2", L"Right stick up / down tilts the view", 0,
+           L"In F2 the right stick's up / down looks higher / lower, on top of the Horizon above; left / right still turns. A push "
+           L"more sideways than up / down only turns, and the turn's dead zone applies. F11 puts the tilt back. Needs \"Turn with the "
+           L"right stick\" (Controls tab). Off = as before.")),
+    Only(kVr, Needs(L"camera", L"stick_pitch_f2", 1, Slider(L"camera", L"stick_pitch_speed", L"Stick tilt speed, °/s", 10, 360, 5, 60,
+           L"Degrees per second at a full push; a small push tilts slower."))),
+    Only(kVr, Needs(L"camera", L"stick_pitch_f2", 1, Slider(L"camera", L"stick_pitch_min", L"Stick tilt: highest look", -120, 30, 1, -90,
+           L"The highest the stick takes the camera, in the Horizon's degrees (lower = looks higher, -60 = the horizon)."))),
+    Only(kVr, Needs(L"camera", L"stick_pitch_f2", 1, Slider(L"camera", L"stick_pitch_max", L"Stick tilt: lowest look", -120, 30, 1, 0,
+           L"The lowest the stick takes the camera, in the Horizon's degrees (0 = the game's own steep camera)."))),
+    Only(kVr, Needs(L"camera", L"stick_pitch_f2", 1, Invert(L"camera", L"stick_pitch_sign", L"Reverse stick tilt", 1, L"Tick if pushing up looks down."))),
 #if D2RVR_FIRST_PERSON
     Group(L"F4  First person"),
     Slider(L"camera", L"near", L"Near clip (hides the hero's head)", 0, 5, 0.1f, 1.5f,
@@ -2509,6 +2540,11 @@ std::vector<Item> g_items = {
            L"hero can pay is the game's own arithmetic on the game's own numbers - the skill's row in Skills.txt and its level against the hero's mana, less what our last cast took if the "
            L"mana read has not caught up - never a guess; a skill this does not know is left to the game. The plain attack is pressed the game's way (its own attack button, the cast reading "
            L"the slot as Attack): its checks, animation and arrows are the game's; nothing is called on the server. Off: the game's refusal, as it is. F4 only. Live.")),
+    Needs(L"bow", L"quiver", 1, Toggle(L"bow", L"quiver_icon", L"Quiver: show the chosen arrow skill in the mana medallion", 1,
+           L"The bow skill you chose (an orb, a quiver button, the skill panel) shows its icon - the game's own - on the bottom of the MANA medallion on your wrist, under the liquid, "
+           L"the way an armed melee skill does. Full while the hero can pay a shot with it (the release's own check: the skill's mana cost at his level against his mana); faint when "
+           L"he cannot. The plain arrow: no icon. Its size, depth and the two opacities are the sliders on the Strikes tab (\"Skill icon in the mana\"). Needs the hand vitals as "
+           L"the medallions (the glass orbs look, the medallion shape) and the skill icons made from your game. Unticked: the medallion as before. Live. F4 only.")),
     Needs(L"bow", L"quiver", 1, Toggle(L"bow", L"arrow_fx", L"Arrow effects: fire, frost and arcane light on the arrow", 1,
            L"On: the arrow burns, freezes or crackles by the skill that is chosen - from the moment you choose it (an orb, a button, the game's own slot), nocked at rest, and through the "
            L"draw; the plain shot has none - flames and rising embers for Fire, Exploding and "
@@ -2889,6 +2925,61 @@ std::vector<Item> g_items = {
     Needs(L"gameplay", L"melee_touch", 1, Needs(L"gameplay", L"melee_amplitude", 1, Slider(L"gameplay", L"melee_amp_staff_x", L"Staffs: x piercing", 0.5f, 6, 0.05f, 1.75f,
            L"Staffs: the least swing amplitude as a multiple of the piercing weapons'. 1.75 x 8 cm = 14 cm. The cm it makes is in the label. Live."))),
     Group(L"Each kind of weapon (type a number; 0 = follow the general one)"),
+    Group(L"Melee skills armed by their button (F4)"),
+    Needs(L"gameplay", L"melee_touch", 1, Toggle(L"gameplay", L"melee_skill_armed", L"A melee skill's button arms it: every hit is that skill", 0,
+           L"Hit by touch on (F4 only), a melee weapon or fists swung. A press of a pad skill button (B, X, Y, RB, with or without LT) whose slot holds a melee attack skill - Bash, Stun, Concentrate, "
+           L"Berserk, Frenzy, Double Swing; Zeal, Smite, Sacrifice, Vengeance, Conversion; Jab, Fend, Impale, Power Strike, Charged Strike, Lightning Strike; Maul, Fire Claws, Hunger, Rabies, Fury, "
+           L"Feral Rage; Tiger Strike, Dragon Talon, Dragon Claw, Fists of Fire, Cobra Strike, Claws of Thunder, Blades of Ice, Dragon Tail, Royal Strike; Poison Dagger; Cleave (the skills the game's "
+           L"Skills.txt gives melee range) - no longer casts it: it ARMS it, like the bow's chosen arrow skill (a short buzz in both hands). Every touch of your blade is then the game's attack with "
+           L"that skill: its mana, cooldown, weapon check and animation are the game's, the monster you touched its target, one touch one cast. When the hero cannot pay its mana, that touch is the "
+           L"plain attack and the skill stays armed. The same button again, or a button with the plain attack on it, disarms; another melee skill's button arms that one. Which skills: the "
+           L"ticks of \"Armed by its button\" below (these are ticked; Whirlwind, Charge, Leap Attack and Dragon Flight are there unticked). Spells, buffs, warcries and an unticked skill "
+           L"cast from their buttons as ever, and a bow, a crossbow or a thrown weapon is not touched. Needs the plain attack on the attack button (A). The log says "
+           L"what was armed and what each touch was (\"melee armed: ...\"). Not tried in the game yet. Unticked: the skill buttons cast as before. Live.")),
+    Needs(L"gameplay", L"melee_touch", 1, Needs(L"gameplay", L"melee_skill_armed", 1, Toggle(L"gameplay", L"melee_skill_armed_icon", L"Show the armed skill in the mana medallion", 1,
+           L"The armed skill's icon - the game's own, the one the skill panel shows - lies on the bottom of the MANA medallion on your wrist, under the blue liquid, cut to a circle inside the "
+           L"glass. Full while the hero can pay the next hit with it (the same check the hit makes: the skill's mana cost at his level against his mana); half see-through when he cannot - the "
+           L"next hit will be the plain attack - and bright again when the mana is back. Nothing armed: no icon. Needs the life and mana on the hands as the medallions (Hand vitals: the glass "
+           L"orbs look, the medallion shape) and the skill icons made from your game (the skill wheel's). Unticked: the medallion exactly as before. Not tried in the game yet. Live. F4 only."))),
+    Slider(L"gameplay", L"melee_skill_armed_icon_size_pct", L"Skill icon in the mana: size, % of the inner circle", 30.0f, 100.0f, 0.5f, 87.5f,
+           L"How big the skill's icon in the mana medallion is: a percent of the medallion's inner circle (the glass dome's foot). 87.5 = as it first was; 100 = the whole floor under "
+           L"the glass. For the armed melee skill's icon and the bow's chosen arrow skill's (Bow tab, \"Quiver: show the chosen arrow skill in the mana medallion\"). Live."),
+    Slider(L"gameplay", L"melee_skill_armed_icon_depth_pct", L"Skill icon in the mana: depth, % (100 = the bottom)", 0.0f, 100.0f, 1.0f, 100.0f,
+           L"How deep in the medallion the icon lies: 100 = on the very bottom, under all the liquid (as it first was); 0 = as high as it fits - its rim just under the glass, over the "
+           L"liquid when the mana is low. It is the dome's own shape: the bigger the icon, the less room over it (at 100% size it can only lie on the bottom). Seen from the side it "
+           L"shifts against the floor like a real thing in the glass. Live."),
+    Slider(L"gameplay", L"melee_skill_armed_icon_lift_mm", L"Skill icon in the mana: over the floor, mm", 0.0f, 10.0f, 0.5f, 1.0f,
+           L"How far over where the depth puts it the icon lies, in millimetres: 1 = just off the medallion's floor, so the floor's texture does not show through it; 0 = on the floor itself. Live."),
+    Slider(L"gameplay", L"melee_skill_armed_icon_opacity_pct", L"Skill icon in the mana: opacity, %", 0.0f, 100.0f, 1.0f, 100.0f,
+           L"How solid the icon is while the hero can pay the next hit (the shot, for a bow): 100 = fully (as it first was), 0 = not seen. Live."),
+    Slider(L"gameplay", L"melee_skill_armed_icon_faint_pct", L"Skill icon in the mana: opacity when the mana is short, %", 0.0f, 100.0f, 1.0f, 35.0f,
+           L"How solid the icon is while the hero CANNOT pay the next hit - the hit will be the plain attack (the bow: the plain arrow, or the game's refusal). 35 = as it first was; "
+           L"0 = it goes out until the mana is back. The icon eases between the two opacities. Live."),
+    // Which skills a button arms: in this group with the tick and the icon above (one block, never split over the columns) - the classes under a line of
+    // their own, each one's ticks in a grid of up to three beside its name, in vr/melee_arm.h kRows' order.
+    Sub(L"Armed by its button:"),
+    Sub(L"Amazon", 3),
+    ArmedSkill(L"s10", L"Jab"), ArmedSkill(L"s14", L"Power Strike"), ArmedSkill(L"s19", L"Impale"),
+    ArmedSkill(L"s24", L"Charged Strike"), ArmedSkill(L"s30", L"Fend"), ArmedSkill(L"s34", L"Lightning Strike"),
+    Sub(L"Necromancer", 3),
+    ArmedSkill(L"s73", L"Poison Dagger"),
+    Sub(L"Paladin", 3),
+    ArmedSkill(L"s96", L"Sacrifice"), ArmedSkill(L"s97", L"Smite"), ArmedSkill(L"s106", L"Zeal"),
+    ArmedSkill(L"s111", L"Vengeance"), ArmedSkill(L"s116", L"Conversion"), ArmedSkill(L"s107", L"Charge", 0, kArmedMoverTip),
+    Sub(L"Barbarian", 3),
+    ArmedSkill(L"s126", L"Bash"), ArmedSkill(L"s133", L"Double Swing"), ArmedSkill(L"s139", L"Stun"),
+    ArmedSkill(L"s144", L"Concentrate"), ArmedSkill(L"s147", L"Frenzy"), ArmedSkill(L"s152", L"Berserk"),
+    ArmedSkill(L"s143", L"Leap Attack", 0, kArmedMoverTip), ArmedSkill(L"s151", L"Whirlwind", 0, kArmedMoverTip),
+    Sub(L"Druid", 3),
+    ArmedSkill(L"s232", L"Feral Rage"), ArmedSkill(L"s233", L"Maul"), ArmedSkill(L"s238", L"Rabies"),
+    ArmedSkill(L"s239", L"Fire Claws"), ArmedSkill(L"s242", L"Hunger"), ArmedSkill(L"s248", L"Fury"),
+    Sub(L"Assassin", 3),
+    ArmedSkill(L"s254", L"Tiger Strike"), ArmedSkill(L"s255", L"Dragon Talon"), ArmedSkill(L"s259", L"Fists of Fire"),
+    ArmedSkill(L"s260", L"Dragon Claw"), ArmedSkill(L"s265", L"Cobra Strike"), ArmedSkill(L"s269", L"Claws of Thunder"),
+    ArmedSkill(L"s270", L"Dragon Tail"), ArmedSkill(L"s274", L"Blades of Ice"), ArmedSkill(L"s280", L"Royal Strike"),
+    ArmedSkill(L"s275", L"Dragon Flight", 0, kArmedMoverTip),
+    Sub(L"Warlock", 3),
+    ArmedSkill(L"s391", L"Cleave"),
     Group(L"Two weapons: Double Swing by the hands (F4)"),
     Needs(L"gameplay", L"melee_touch", 1, Toggle(L"hands", L"double_swing_by_hands", L"Double Swing by the two hands", 0,
            L"A Barbarian with a melee weapon in each hand, hit by touch on (F4 only). The first hand's touch on a monster is the game's normal attack, as ever. When the OTHER hand then touches the SAME monster "
@@ -2897,6 +2988,11 @@ std::vector<Item> g_items = {
            L"(the game's own numbers: the skill's cost at its level against the hero's mana); otherwise the second touch is a normal attack too. Frenzy the same way when it is the skill on a slot. The swings, the "
            L"damage, the animation and the mana are the game's; nothing is called that attacks. A pair is spent by the dual skill: the next touch starts a new one. With Double Swing on the attack button itself "
            L"every touch casts it already and this adds nothing. The log says every decision once (\"double swing: ...\"). Not tried in the game yet. Unticked: both hands' touches are normal attacks, as before. Live.")),
+    Needs(L"gameplay", L"melee_touch", 1, Needs(L"hands", L"double_swing_by_hands", 1, Toggle(L"hands", L"double_swing_combo", L"Double Swing as a combo: every blow after the first", 0,
+           L"Ticked: a COMBO instead of pairs. The first touch on a monster is the game's normal attack; EVERY following touch on the same monster - either hand - no longer than the window "
+           L"below after the last one is the game's Double Swing (or Frenzy), as long as you keep hitting it: normal, double, double, double... A touch on another monster, or one after a "
+           L"longer pause, starts a new combo with a normal attack. A touch the hero cannot pay (or with no level, no slot) is a normal attack and the combo goes on. Unticked: pairs, as "
+           L"before - the other hand's touch after the first is the dual skill, and the next touch starts a new pair. Live. Not tried in the game yet."))),
     Needs(L"gameplay", L"melee_touch", 1, Needs(L"hands", L"double_swing_by_hands", 1, Slider(L"hands", L"double_swing_window_ms", L"Double Swing: the other hand within, ms", 200, 2000, 50, 700,
            L"How long after one hand's strike on a monster the other hand's strike on the same monster is the second of a pair - the dual skill's. 700 ms is about one swing of the arm and back. Longer: a slower "
            L"second blow still counts; shorter: only a quick one-two does. Live."))),
@@ -4629,6 +4725,11 @@ void Build(HWND page) {
             groupModes = kBoth;
             continue;
         case Kind::Group:
+            if (it.sub) {   // a part of the group above (Sub)
+                it.modes &= groupModes;
+                it.name = Make(page, L"STATIC", it.label, SS_LEFT | SS_ENDELLIPSIS | SS_NOPREFIX, id);
+                break;
+            }
             it.modes &= tabModes;
             groupModes = it.modes;
             it.name = Make(page, L"STATIC", it.label, SS_LEFT | SS_NOPREFIX, id);
@@ -4826,16 +4927,16 @@ int ShownTabIndex() {
 }
 
 // Places the current tab's groups in as many columns as fit, each group in the
-// shortest column so far; hides the other tabs' controls.
+// shortest column so far (its sub-headings with it); hides the other tabs' controls.
 void LayoutPage() {
     RECT pr; GetClientRect(g_page, &pr);
     const int W = pr.right, m = S(14), gap = S(32), rowH = S(kRowH), headH = S(34), groupGap = S(16);
     struct Span { size_t first, end; };
     std::vector<Span> groups;
     for (size_t i = 0; i < g_items.size(); ++i) {
-        if (g_items[i].kind != Kind::Group || !ShownNow(g_items[i])) continue;
+        if (g_items[i].kind != Kind::Group || g_items[i].sub || !ShownNow(g_items[i])) continue;
         size_t e = i + 1;
-        while (e < g_items.size() && g_items[e].kind != Kind::Group && g_items[e].kind != Kind::Tab) ++e;
+        while (e < g_items.size() && !(g_items[e].kind == Kind::Group && !g_items[e].sub) && g_items[e].kind != Kind::Tab) ++e;
         groups.push_back({i, e});
     }
     const int fit = (W - 2 * m + gap) / (S(400) + gap);
@@ -4855,9 +4956,27 @@ void LayoutPage() {
         places.push_back({head.name, x, y + S(4), colW, S(20)});
         places.push_back({head.line, x, y + S(26), colW, 2});
         y += headH;
+        int gridX = -1, gridN = 1, gridK = 0;   // a sub-heading's grid of ticks: where its cells start, how many to a row, the next one's place
         for (size_t i = g.first + 1; i < g.end; ++i) {
             const Item& it = g_items[i];
             if (!(it.modes & PlatformBit()) || it.hidden || it.off) continue;
+            if (it.kind == Kind::Group) {   // a sub-heading (Sub): its name on the left of its row, its ticks beside it - or a line of its own
+                const int nameW = it.across > 0 ? std::clamp(colW * 24 / 100, S(90), S(150)) : colW;
+                places.push_back({it.name, x, y + S(6), nameW - S(8), S(20)});
+                gridX = it.across > 0 ? x + nameW : -1;
+                gridN = std::clamp((colW - nameW) / S(120), 1, std::max(1, it.across));
+                gridK = 0;
+                y += rowH;   // its first row (the first ticks go up into it)
+                continue;
+            }
+            if (gridX >= 0 && (it.kind == Kind::Toggle || it.kind == Kind::Invert) && it.cell < 0) {
+                const int cw = (x + colW - gridX) / gridN;
+                if (gridK > 0 && gridK % gridN == 0) y += rowH;
+                places.push_back({it.ctl, gridX + gridK % gridN * cw, y - rowH + S(4), cw - S(4), S(24)});
+                ++gridK;
+                continue;
+            }
+            gridX = -1;   // anything else ends the grid and takes a row of its own below it
             if (it.cell >= 0) {   // a row of a table: its cells side by side (cell 0, the label, starts the row and takes its height; a slider shows its number box only)
                 const int labelCol = colW * 27 / 100, cw = (colW - labelCol) / 6;
                 const int cx = it.cell == 0 ? x : x + labelCol + (it.cell - 1) * cw, w2 = (it.cell == 0 ? labelCol : cw) - S(4);
@@ -6603,7 +6722,8 @@ void CollectThread(HWND wnd, std::wstring game, bool running) {
     const std::wstring zip = dir + L"\\" + name + L".zip";
     std::wstring script = LR"PS($ErrorActionPreference='SilentlyContinue'
 $g=__GAME__; $z=__ZIP__; $n=__NAME__
-$t=Join-Path $env:TEMP $n; New-Item -ItemType Directory -Force $t | Out-Null
+$tmp=[IO.Path]::GetTempPath(); if(-not $tmp -or -not $n -or ($n -notlike 'D2R_VR_logs_*')){ exit 3 }
+$t=[IO.Path]::GetFullPath((Join-Path $tmp $n)); New-Item -ItemType Directory -Force $t | Out-Null
 function C($p,$sub){ if(Test-Path -LiteralPath $p){ $d=Join-Path $t $sub; New-Item -ItemType Directory -Force $d | Out-Null; Copy-Item -LiteralPath $p -Destination $d -Force } }
 $pl=Join-Path $g 'd2rloader\plugins'; $lg=Join-Path $g 'd2rloader\logs'; $rs=$g; $mlg=$null; $md=__MOD__
 if($md){ $pl=Join-Path $md 'd2rloader\plugins'; $mlg=Join-Path $md 'd2rloader\logs'; $rs=Join-Path $md 'reshade' }
@@ -6637,7 +6757,7 @@ Get-CimInstance Win32_Processor | ForEach-Object { $i+=('CPU: '+$_.Name) }
 Get-CimInstance Win32_VideoController | ForEach-Object { $i+=('GPU: '+$_.Name+', driver '+$_.DriverVersion+', '+$_.CurrentHorizontalResolution+'x'+$_.CurrentVerticalResolution+' at '+$_.CurrentRefreshRate+' Hz') }
 $i | Set-Content -LiteralPath (Join-Path $t 'versions_and_pc.txt') -Encoding UTF8
 Compress-Archive -Path (Join-Path $t '*') -DestinationPath $z -Force
-Remove-Item -LiteralPath $t -Recurse -Force
+if($t.StartsWith([IO.Path]::GetFullPath($tmp),[StringComparison]::OrdinalIgnoreCase) -and ((Split-Path $t -Leaf) -like 'D2R_VR_logs_*')){ Remove-Item -LiteralPath $t -Recurse -Force }
 if(Test-Path -LiteralPath $z){ exit 0 } else { exit 2 })PS";
     auto put = [&](const wchar_t* key, const std::wstring& value) {
         const size_t at = script.find(key);
@@ -6647,18 +6767,33 @@ if(Test-Path -LiteralPath $z){ exit 0 } else { exit 2 })PS";
     put(L"__MOD__", ModInstall() ? modlayout::ModRoot(game) : std::wstring());   // D2R VR as the D2RLoader mod: its plugin folder, logs and ReShade are the mod's
     put(L"__ZIP__", zip);
     put(L"__NAME__", name);
-    const std::wstring args = L"-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -EncodedCommand " + EncodedCommand(script);
+    // The script goes to a file of its own in TEMP and runs with -File (2026-10-19: a player's antivirus took the Settings program and
+    // D2RLoader away after this button - a hidden PowerShell with -EncodedCommand looks like malware to it). The script itself removes
+    // only its own folder in TEMP, named D2R_VR_logs_*, never anything else.
+    wchar_t tmp[MAX_PATH + 1] = {};
+    const DWORD tl = GetTempPathW(MAX_PATH, tmp);
+    const std::wstring ps1 = (tl > 0 && tl < MAX_PATH) ? std::wstring(tmp) + name + L".ps1" : std::wstring();
+    bool written = false;
+    if (!ps1.empty())
+        if (FILE* f = _wfopen(ps1.c_str(), L"wb")) {
+            const unsigned char bom[2] = {0xFF, 0xFE};   // UTF-16 LE, as Windows PowerShell 5.1 reads a non-ASCII path right
+            written = fwrite(bom, 1, 2, f) == 2 && fwrite(script.data(), sizeof(wchar_t), script.size(), f) == script.size();
+            fclose(f);
+        }
+    if (!written) { PostCollect(wnd, kBad, L"Could not write the packing script to the TEMP folder", true); return; }
+    const std::wstring args = L"-NoProfile -NonInteractive -ExecutionPolicy Bypass -File " + std::wstring(L"\"") + ps1 + L"\"";
     SHELLEXECUTEINFOW sei{sizeof sei};
     sei.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC;
     sei.lpVerb = L"open";
     sei.lpFile = L"powershell.exe";
     sei.lpParameters = args.c_str();
     sei.nShow = SW_HIDE;
-    if (!ShellExecuteExW(&sei) || !sei.hProcess) { PostCollect(wnd, kBad, L"Could not start PowerShell to pack the logs", true); return; }
+    if (!ShellExecuteExW(&sei) || !sei.hProcess) { DeleteFileW(ps1.c_str()); PostCollect(wnd, kBad, L"Could not start PowerShell to pack the logs", true); return; }
     WaitForSingleObject(sei.hProcess, 180000);
     DWORD code = 1;
     GetExitCodeProcess(sei.hProcess, &code);
     CloseHandle(sei.hProcess);
+    DeleteFileW(ps1.c_str());
     if (code != 0 || !Exists(zip)) { PostCollect(wnd, kBad, L"Could not make the zip (code " + std::to_wstring(code) + L")", true); return; }
     LogLine(L"collect logs: " + zip);
     const std::wstring sel = L"/select,\"" + zip + L"\"";

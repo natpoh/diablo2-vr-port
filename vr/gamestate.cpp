@@ -40,8 +40,10 @@
 #include "panel_input.h"
 #include "shield_smite_game.h"
 #include "double_swing_game.h"
+#include "melee_arm_game.h"
 #include "render_resolution.h"
 #include "sigscan.h"
+#include "minimap_side.h"
 
 namespace skel { int HeroClass(); }   // the hero's class from the posed model's folder (vr/skeletons.cpp): -1 not known
 
@@ -318,6 +320,68 @@ int ReqStrOf(const std::string& code) {
     return v <= 1000 ? (int)v : -1;
 }
 
+// The corner map for the hand kept in a corner (vr/minimap_side.h; the setter is bearstonem/d2r-pcvr's finding, MIT):
+// -1 off, else [hud] map_corner - set by vrcam in VR with [hud] map=1. Plain data only here (__try).
+std::atomic<int> g_mapSideCorner{-1};
+int ReadMapMode(uint64_t miniRva, uint64_t leftRva) noexcept {
+    const uintptr_t mini = d2rsig::Addr(miniRva), left = d2rsig::Addr(leftRva);
+    if (!mini || !left) return -1;
+    __try {
+        return minimapside::Mode(*reinterpret_cast<const volatile int32_t*>(mini), *reinterpret_cast<const volatile uint8_t*>(left));
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return -1;
+    }
+}
+bool CallMapSetter(uintptr_t fn, int mode) noexcept {
+    __try {
+        reinterpret_cast<void (*)(int)>(fn)(mode);
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+// On the UI thread (ReadItems): the game's map in the middle while it is to come into the hand - put in its corner.
+void MaintainMapSide(bool havePlayer) {
+    static int checked = 0;   // 0 not yet, 1 the setter's bytes as 3.3.93787 has them, -1 not (this build: nothing done)
+    static uint64_t triedAt = 0;
+    static minimapside::Globals globals;
+    static minimapside::Keeper keeper;
+    static int told = 0;
+    const int corner = g_mapSideCorner.load();
+    const bool want = corner >= 0 && havePlayer && g_menu.load() == 0;
+    if (!want || checked < 0) return;
+    const uint64_t now = GetTickCount64();
+    if (checked == 0) {
+        if (triedAt && now - triedAt < 5000) return;
+        triedAt = now;
+        if (!d2rsig::Check(minimapside::kSetterRva, minimapside::kSetterSig, sizeof minimapside::kSetterSig)) {
+            if (d2rsig::Addr(minimapside::kSetterRva)) {   // read, and other bytes: another build - the start's Settings.json rewrite only
+                checked = -1;
+                Log("gamestate: the game's map-mode setter is not where D2R 3.3.93787 has it - the map in the middle is not put in a corner while the game runs "
+                    "(only at the start, Settings.json); put the mini map on the right in the game's options");
+            }
+            return;
+        }
+        globals = minimapside::MapGlobals(minimapside::kSetterRva, minimapside::kSetterSig);
+        checked = 1;
+    }
+    const int mode = ReadMapMode(globals.mini, globals.left);
+    const int set = keeper.Step(true, mode, corner, now);
+    if (set < 0) return;
+    if (!CallMapSetter(d2rsig::Addr(minimapside::kSetterRva), set)) {
+        checked = -1;
+        Log("gamestate: the game's map-mode setter faulted - not called again");
+        return;
+    }
+    if (told < 5) {
+        ++told;
+        char b[260];
+        snprintf(b, sizeof b, "gamestate: the game's map was in the middle (the whole screen: nothing for the hand) - put in the %s corner "
+                 "(the game's own setter, this session only; its options keep the player's choice)", set == 1 ? "left" : "right");
+        Log(b);
+    }
+}
+
 // The hero's Strength: the game's unit stat getter (stat 0), found through the same three signatures as the life and mana read (vr/hand_vitals_game.cpp, vr/low_hp.cpp). Plain data
 // only: __try cannot sit in a function that unwinds C++ objects. -1 when it cannot be read.
 int ReadHeroStrength() noexcept {
@@ -457,6 +521,7 @@ void __cdecl ReadItems(const PluginContext* ctx, void* user) noexcept {
         g_set.store(0);
     }
     panelinput::UiTick(havePlayer, g_menu.load() != 0);   // the laser's mouse done: the pad's layout back in a game
+    MaintainMapSide(havePlayer);   // the corner map for the hand: the game's map out of the middle (vr/minimap_side.h)
     if (g_inventory) ReadBelt(ctx, player, havePlayer);
     if (!g_inventory || !g_items || !havePlayer) {
         g_weapon.store(D2RVR_WEAPON_UNKNOWN);
@@ -599,6 +664,7 @@ void __cdecl ReadItems(const PluginContext* ctx, void* user) noexcept {
     }
     shieldsmite::UiRead();   // [gameplay] shield_smite: which pad slot holds Smite (the game's own tables, UI thread)
     doubleswing::UiRead();   // [hands] double_swing_by_hands: which pad slots hold Double Swing and Frenzy, the hero's level in them (UI thread; nothing when off)
+    meleearm::UiRead();      // [gameplay] melee_skill_armed: the skills on the pad's face-button slots, the hero's level in the armed one (UI thread; nothing when off)
     Publish();
 }
 
@@ -1106,6 +1172,7 @@ bool SetAutoMap(bool open) {
     if (!g_ctx || !g_threads || !g_threads->runOnUiThread || !g_widgets) return false;
     return g_threads->runOnUiThread(g_ctx, &DispatchAutoMap, open ? (void*)1 : nullptr) == Threads::Result::Success;
 }
+void SetMapSide(int corner) { g_mapSideCorner.store(std::clamp(corner, -1, 2)); }   // -1 off, else [hud] map_corner
 void SetViewMode(uint32_t mode) { if (g_view.exchange(mode) != mode) Publish(); }
 
 }  // namespace gamestate
