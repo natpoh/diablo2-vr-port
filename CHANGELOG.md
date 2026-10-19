@@ -1,5 +1,14 @@
 # What's new in D2R VR
 
+## Next
+
+- **The map in the hand with the game's map in the middle** (a player: native OpenXR drew the map across the view, no map in the hand). The map comes into the
+  hand only from a top corner; the plugin put the game's map on the right in Settings.json at its start, which holds only when it runs before the game reads the
+  file, and the game's options could put it back in the middle for the session. Now, in VR with `[hud] map=1`, the game's live map mode is read and a map in the
+  middle (the whole-screen map) is put in its corner by the game's own setter - the right one, or the left with `[hud] map_corner=1` - in native OpenXR and FlatVR
+  alike, for the running game only. A map already on the right or the left is never touched: nothing changes for those players; no new key. On another game build
+  (the setter's bytes not as 3.3.93787 has them) nothing is done and the log says so. The setter and its globals are bearstonem/d2r-pcvr's finding (MIT).
+
 ## 0.172
 
 - **New: a first-start guide in the headset**, on by default for a new player. The first time you stand in the world in VR first person (F4) with the

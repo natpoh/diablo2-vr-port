@@ -1142,3 +1142,7 @@ endif()
 add_executable(first_start_test cleanroom/tests/first_start_test.cpp)
 target_include_directories(first_start_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
 target_compile_options(first_start_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# The corner map for the hand kept in a corner (vr/minimap_side.h: the game's map-mode setter's globals from its own bytes, when it is asked for): minimap_side_test
+add_executable(minimap_side_test cleanroom/tests/minimap_side_test.cpp)
+target_include_directories(minimap_side_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_options(minimap_side_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
