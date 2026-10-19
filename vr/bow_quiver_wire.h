@@ -78,6 +78,11 @@ bool PlainWanted();
 // [bow] arrow_fx_needs_mana, live (any thread): with an arrow skill chosen that the hero cannot pay - the game's own numbers, the same as the release's - the arrow looks plain: the effect (and the
 // coloured glow) goes out, eased, and lights again when the mana is back. At rest and while drawn. Off: the effect stays whatever the mana.
 void SetArrowFxNeedsMana(bool on);
+// [bow] quiver_icon, live (any thread; default on): the chosen arrow skill's icon on the bottom of the MANA medallion (vr/armed_icon.h - the melee armed skill's icon, the same place and sliders).
+void SetIcon(bool on);
+// The chosen bow skill for that icon (any thread: the effect's, every frame): true with `skill` and whether the hero can pay a shot with it (`ready`: the release's own check, vr/bow_mana.h)
+// while the quiver is on, F4, a bow in hand and a bow skill chosen; false (skill -1) for the plain shot, no bow, another view, the tick off.
+bool ChosenIcon(int* skill, bool* ready);
 // vrcam says whether the slot-skill hook is in (it is installed from a signature check that another build may fail): without it the release stays the game's.
 void SetPlainHookReady(bool ready);
 // True from such a release for a third of a second, for `skill` (the arrow skill that could not be paid): vrcam's slot-skill hook answers the game's reads of that slot as the plain attack

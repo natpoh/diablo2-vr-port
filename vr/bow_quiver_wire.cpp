@@ -91,6 +91,10 @@ struct FxState {
 } g_fxState;
 std::atomic<bool> g_fxMana{true};                        // [bow] arrow_fx_needs_mana: the arrow's effect goes out while the hero cannot pay the chosen skill
 std::atomic<bool> g_noMana{false}, g_plainHook{false};   // [bow] quiver_plain_no_mana; vrcam's slot-skill hook is in
+std::atomic<bool> g_icon{true};                          // [bow] quiver_icon: the chosen arrow skill's icon in the mana medallion
+std::atomic<int> g_iconSkill{-1};                        // ... the skill (-1 none: the plain shot, nothing chosen, the tick off)
+std::atomic<bool> g_iconReady{false};                    // ... the hero can pay it (the release's own check)
+std::atomic<ULONGLONG> g_iconAt{0};                      // ... the frame that said so (stale: no bow in hand, another view)
 std::atomic<int> g_shortSkill{-1}, g_armedSkill{-1};     // the arrow skill the hero cannot pay now (while the string is drawn) / the one the release was turned into the plain attack for
 std::atomic<ULONGLONG> g_shortAt{0}, g_armedAt{0}, g_lastPressAt{0};
 std::atomic<float> g_shortNeed{0.0f}, g_shortHave{0.0f}, g_costPts{0.0f}, g_lastCostPts{0.0f};
@@ -286,7 +290,7 @@ void OnFrame(const directinput::Frame& f, void*) {
         bowquiver::Entry chosen;
         double sinceChosen = 0.0;
         bool shortRaw = false;
-        if ((g_noMana.load() || g_fxMana.load()) && have && snap.ready && machine.Shown(in, &chosen, &sinceChosen) && bowmana::Find(chosen.id)) {
+        if ((g_noMana.load() || g_fxMana.load() || g_icon.load()) && have && snap.ready && machine.Shown(in, &chosen, &sinceChosen) && bowmana::Find(chosen.id)) {
             int level = 0;
             for (uint32_t i = 0; i < snap.count && i < (uint32_t)wheel::kCatalogMax; ++i)
                 if (snap.catalog[i].id == chosen.id && snap.catalog[i].owner == chosen.owner) { level = snap.catalog[i].level; break; }
@@ -299,6 +303,10 @@ void OnFrame(const directinput::Frame& f, void*) {
                 if (bowmana::Short(chosen.id, level, haveMana)) { shortSkill = chosen.id; need = cost; shortRaw = true; }
             }
         }
+        // [bow] quiver_icon: the chosen arrow skill and whether the hero can pay it, for its icon in the mana medallion (vr/armed_icon.h; vrcam's effect thread reads it, ChosenIcon)
+        g_iconSkill.store(g_icon.load() && have && snap.ready && chosen.id >= 0 && bowmana::Find(chosen.id) ? chosen.id : -1);
+        g_iconReady.store(!shortRaw);
+        g_iconAt.store(nowMs);
         g_shortNeed.store(need);   // (every frame: the release reads what the frame before it said)
         g_shortHave.store(haveMana);
         g_costPts.store(cost > 0.0f ? cost : 0.0f);
@@ -620,6 +628,28 @@ void SetPlainNoMana(bool on) {
 bool PlainWanted() { return g_on.load() && g_noMana.load(); }
 
 void SetArrowFxNeedsMana(bool on) { g_fxMana.store(on); }
+
+void SetIcon(bool on) {
+    const bool was = g_icon.exchange(on);
+    static bool told = false;
+    if (told && was == on) return;
+    told = true;
+    if (on) Log("vrcam: bow quiver - the chosen arrow skill's icon lies in the mana medallion on the wrist, full while the hero can pay the shot, faint when he cannot ([bow] quiver_icon; the vitals' medallions, F4)");
+    else Log("vrcam: bow quiver - no icon in the mana medallion ([bow] quiver_icon=0)");
+}
+
+bool ChosenIcon(int* skill, bool* ready) {
+    *skill = -1;
+    *ready = false;
+    if (!g_on.load() || !g_icon.load()) return false;
+    const ULONGLONG at = g_iconAt.load();
+    if (!at || GetTickCount64() - at >= kFreshMs) return false;
+    const int sk = g_iconSkill.load();
+    if (sk < 0) return false;
+    *skill = sk;
+    *ready = g_iconReady.load();
+    return true;
+}
 
 void SetPlainHookReady(bool ready) {
     if (g_plainHook.exchange(ready) != ready && g_ctx && g_noMana.load())

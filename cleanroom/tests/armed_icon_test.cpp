@@ -107,6 +107,72 @@ void Fading() {
     Check(u[0] == 0.0f && u[1] == 0.0f, "nothing to draw: OrbIcon.x 0");
 }
 
+void Placing() {
+    Place p = Placement(kSizeDefPct, kDepthDefPct);
+    Check(Near(p.radius, kIconR) && p.lift == 0.0f && Near(p.opacity, 1.0f) && Near(p.faint, kInactive), "the defaults: as it first was (0.70 on the bottom, full, 35% when short)");
+    Check(Near(kSizeDefPct, 87.5f), "87.5% of the inner circle");
+    p = Placement(100.0f, 0.0f);
+    Check(Near(p.radius, kDomeR) && Near(p.lift, 0.0f), "the whole floor: no room over it - on the bottom whatever the depth");
+    p = Placement(50.0f, 0.0f);
+    const float top = std::sqrt(kDomeR * kDomeR - 0.4f * 0.4f);
+    Check(Near(p.radius, 0.4f) && Near(p.lift, top * kGlassGap) && p.lift < top, "half the circle, depth 0: as high as it fits, its rim just under the glass");
+    Check(p.radius * p.radius + p.lift * p.lift < kDomeR * kDomeR, "... inside the dome");
+    const Place mid = Placement(50.0f, 50.0f);
+    Check(Near(mid.lift, 0.5f * p.lift), "depth 50: half way");
+    bool inside = true;
+    for (float sz = 0.0f; sz <= 120.0f; sz += 5.0f)
+        for (float dp = -20.0f; dp <= 120.0f; dp += 10.0f) {
+            const Place q = Placement(sz, dp);
+            if (q.radius * q.radius + q.lift * q.lift > kDomeR * kDomeR + 1e-5f || q.lift < 0.0f || q.radius < kDomeR * 0.3f - 1e-5f) inside = false;
+        }
+    Check(inside, "every slider position: in the dome, never under the floor, never smaller than 30%");
+    p = Placement(NAN, INFINITY, NAN, NAN);
+    Check(Near(p.radius, kIconR) && p.lift == 0.0f && Near(p.opacity, 1.0f) && Near(p.faint, kInactive), "not numbers: the defaults");
+    p = Placement(87.5f, 100.0f, 150.0f, -10.0f);
+    Check(Near(p.opacity, 1.0f) && p.faint == 0.0f, "the opacities clamped to 0 - 100%");
+
+    // the two opacities drive the fader's two targets
+    Fader f;
+    In in = Live(126, true);
+    in.full = 0.6f;
+    in.faint = 0.1f;
+    Out o;
+    for (int i = 0; i < 60; ++i) o = f.Step(in, 0.016f);
+    Check(Near(o.alpha, 0.6f), "with the mana: the opacity slider's");
+    in.enough = false;
+    for (int i = 0; i < 60; ++i) o = f.Step(in, 0.016f);
+    Check(Near(o.alpha, 0.1f), "without: the short one's");
+    in.faint = 0.0f;
+    for (int i = 0; i < 60; ++i) o = f.Step(in, 0.016f);
+    Check(!o.show, "short opacity 0: the icon goes out while the mana is short");
+    in.enough = true;
+    for (int i = 0; i < 60; ++i) o = f.Step(in, 0.016f);
+    Check(o.show && o.skill == 126 && Near(o.alpha, 0.6f), "... and comes back with the mana");
+
+    float u[4];
+    Uniform(o, u, Placement(50.0f, 0.0f));
+    Check(Near(u[2], 0.4f) && Near(u[1], 0.6f), "the effect gets the slider's radius and the eased strength");
+}
+
+void Bow() {
+    // the Amazon's chosen bow skill: shown like an armed melee skill
+    Check(Shown(6) && Shown(31) && Shown(12) && Shown(126) && !Shown(0) && !Shown(49) && !Shown(-1), "bow skills and the melee list: shown; the plain attack and spells: not");
+    Source s = Pick(-1, false, 7, true);
+    Check(s.skill == 7 && s.enough, "a bow in hand, Fire Arrow chosen: its icon");
+    s = Pick(126, true, 7, false);
+    Check(s.skill == 7 && !s.enough, "the bow's choice wins while a bow is in hand (an armed melee skill waits)");
+    s = Pick(126, true, -1, false);
+    Check(s.skill == 126 && s.enough, "no bow: the armed melee skill");
+    s = Pick(-1, false, -1, false);
+    Check(s.skill == -1, "nothing: no icon");
+    Fader f;
+    Out o;
+    for (int i = 0; i < 60; ++i) o = f.Step(Live(7, true), 0.016f);
+    Check(o.show && o.skill == 7 && Near(o.alpha, 1.0f), "Fire Arrow's icon at full");
+    for (int i = 0; i < 60; ++i) o = f.Step(Live(7, false), 0.016f);
+    Check(Near(o.alpha, kInactive), "the hero cannot pay the shot: faint");
+}
+
 void Baking() {
     std::vector<uint8_t> out;
     Check(!Bake(nullptr, 0, 0, out) && out.size() == (size_t)kTex * kTex * 4, "no picture: an empty texture");
@@ -159,6 +225,8 @@ int main() {
     Mask();
     Ready();
     Fading();
+    Placing();
+    Bow();
     Baking();
     if (g_fail) {
         std::printf("armed_icon_test: %d FAILED\n", g_fail);

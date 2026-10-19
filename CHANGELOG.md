@@ -22,6 +22,22 @@
   against his mana); half see-through when he cannot - the next hit will be the plain attack - and bright again, eased, when the mana is back. Nothing armed: no icon. The medallion shape of
   the glass orbs only (the full ball, the game's own globes and the palm panel have no bottom to lie on). Unticked: the medallion exactly as before. Needs the new D2R_DepthFog.fx with the
   DLL (OrbIcon, OrbIconTex; an older effect: no icon, and the log says so). Not tried in the game yet. Unit test: cleanroom/tests/armed_icon_test.cpp (vr/armed_icon.h).
+- **The skill icon in the mana medallion: size, depth and two opacities** ([gameplay] melee_skill_armed_icon_size_pct / _depth_pct / _opacity_pct / _faint_pct; Settings > Strikes, under
+  "Show the armed skill in the mana medallion"; live). The author's wish after trying it: its size (30 - 100 % of the medallion's inner circle, 87.5 as it was) and how deep it lies (100 = on
+  the bottom, as it was; 0 = as high as the dome lets it - its rim just under the glass, over a low mana's liquid). The height is the dome's own shape, and the effect finds the icon by the
+  same ray step it finds the floor with, so it keeps the medallion's parallax; the liquid under a lifted icon is hidden by it. Two opacities: with the mana for the next hit (100) and
+  without (35, the old "half see-through"; 0 = out until the mana is back). Needs the new D2R_DepthFog.fx (OrbIconLift; an older one: the icon stays on the bottom).
+- **The Amazon's chosen bow skill in the mana medallion** ([bow] quiver_icon, on; Settings > Bow, under the quiver's ticks). The author: "the same for the Amazon - when I choose a skill the
+  icon must show inside the mana". The bow skill chosen from the quiver (an orb, a quiver button, the skill panel) shows its icon there while a bow is in hand: full while the hero can pay a
+  shot with it (the release's own check), faint when not; the plain arrow: none. The same sliders as the melee icon. Needs [bow] quiver on. Not tried in the game yet.
+- **Which melee skills are armed: a tick each** ([melee_armed] s<skill>; Settings > Strikes, "Armed by its button: <class>"; live). The 34 melee attacks, ticked by default, and the four
+  attacks that move the hero - Whirlwind, Leap Attack, Charge, Dragon Flight - unticked by default. An unticked skill's button casts it as before; unticking the armed skill disarms it.
+- **Whirlwind armed** (the author ticked it and it "did not work"): it was not in the list at all - Whirlwind, Charge, Leap Attack and Dragon Flight were left out as movement skills, so
+  their button passed to the game and cast them as ever, and a hit by touch stayed the plain attack. Ticked now, Whirlwind's button arms it and a hit by touch is the game's own cast of it
+  through the same path as the others (the attack button read as Whirlwind, the touched monster its target; its mana by the game's numbers, 12.5 at level 1, else the plain attack): the
+  game whirls the hero to the monster's place. One more fix it needed: hit by touch's attack is held with the game's Stand Still ([gameplay] attack_in_place), which would pin a mover in
+  place - a touch the game reads as Whirlwind, Leap Attack, Charge or Dragon Flight is no longer held (vr/stand_still_wire.cpp). Not tried in the game yet: whether the game's Whirlwind from
+  a short press on a monster whirls far enough to feel right is for the headset to say. Unit tests: cleanroom/tests/melee_arm_test.cpp, armed_icon_test.cpp.
 
 ## 0.172
 

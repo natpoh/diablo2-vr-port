@@ -9,6 +9,14 @@
 //   - the hero can pay the next hit (melee_arm.h Decide: the skill's Skills.txt cost at his level against his mana - the very check the hit makes): the icon at full strength;
 //     he cannot: the icon half see-through (kInactive), the next hit being the plain attack; it brightens again when the mana is back (a short ease, kFadeS, not a jump);
 //   - nothing armed: no icon. Unticked ([gameplay] melee_skill_armed_icon), melee_skill_armed off, not F4, or another look of the vitals: the medallion exactly as it was.
+// The author's tuning (2026-10-19, after trying it): two sliders, live - its SIZE, in percent of the medallion's inner circle (the dome's foot, kDomeR; 30 - 100, 87.5 = kIconR, as it was) and
+// its DEPTH in the liquid (100 = on the very bottom, as it was; 0 = as high as it goes - its rim just under the glass): Placement. The height is the dome's own geometry (a half ball of radius
+// kDomeR on the floor: a circle of radius r fits at height z while r^2 + z^2 <= kDomeR^2), and the effect finds the icon by the same ray-plane step it finds the floor with - its parallax
+// is the medallion's own, not an offset. And two more (the same day): its OPACITY while the hero can pay the next hit (100 %, as it was) and while he cannot (35 %, kInactive, as it
+// was), 0 - 100 % each - the two strengths the Fader eases between.
+// And the Amazon's (2026-10-19, "the same for the Amazon: when I choose a skill the icon must show inside the mana"): the bow skill chosen from the quiver ([bow] quiver, its orbs or its
+// buttons; vr/bow_quiver_wire.cpp ChosenIcon) is shown the same way while a bow is in hand, full while the hero can pay the shot (vr/bow_mana.h, the release's own check), faint when not
+// ([bow] quiver_icon). Shown: a skill of the melee list (melee_arm.h kRows) or a bow skill (bow_mana.h kRows).
 #pragma once
 
 #include <algorithm>
@@ -27,6 +35,36 @@ constexpr float kInactive = 0.35f;  // the strength of an icon the hero cannot p
 constexpr float kFadeS = 0.25f;     // the ease between the two strengths, and in and out, seconds for the whole way
 constexpr int kTex = 128;           // the texture the icon is baked into (D2R_DepthFog.fx OrbIconTex: the same size)
 constexpr float kInset = 0.07f;     // the game's icon tile carries a frame at its edge: the circle is taken from its middle, this much of the side in from each edge
+constexpr float kDomeR = 0.80f;     // the dome's radius over the base's (vr/hand_orbs.h kDomeR; D2R_DepthFog.fx OneMedalCore's Rd0): the inner circle the size is a percent of
+
+// ---- the sliders: size and depth -------------------------------------------------------------------------------------------------
+constexpr float kSizeMinPct = 30.0f, kSizeMaxPct = 100.0f;
+constexpr float kSizeDefPct = kIconR / kDomeR * 100.0f;   // 87.5: the icon as it first was
+constexpr float kDepthDefPct = 100.0f;                    // on the bottom, as it first was
+constexpr float kOpacityDefPct = 100.0f, kFaintDefPct = kInactive * 100.0f;   // the two opacities' defaults: 100 and 35, as they were
+constexpr float kGlassGap = 0.97f;                        // "on the glass": the circle's rim this much of the way to the glass, never through it
+struct Place {
+    float radius = kIconR;   // the circle's radius over the base's (OrbIcon.z)
+    float lift = 0.0f;       // its height over the floor over the base's radius (OrbIconLift): 0 on the bottom
+    float opacity = 1.0f;    // the icon's strength while the hero can pay the next hit (In::full)
+    float faint = kInactive; // ... and while he cannot (In::faint)
+};
+// size: percent of the inner circle; depth: 100 the bottom, 0 the highest the circle fits under the glass; opacityPct / faintPct: percent, with the mana and without. Out of range or not a
+// number: clamped, or the default.
+inline Place Placement(float sizePct, float depthPct, float opacityPct = kOpacityDefPct, float faintPct = kFaintDefPct) {
+    if (!std::isfinite(sizePct)) sizePct = kSizeDefPct;
+    if (!std::isfinite(depthPct)) depthPct = kDepthDefPct;
+    if (!std::isfinite(opacityPct)) opacityPct = kOpacityDefPct;
+    if (!std::isfinite(faintPct)) faintPct = kFaintDefPct;
+    Place p;
+    p.opacity = std::clamp(opacityPct, 0.0f, 100.0f) * 0.01f;
+    p.faint = std::clamp(faintPct, 0.0f, 100.0f) * 0.01f;
+    const float frac = std::clamp(sizePct, kSizeMinPct, kSizeMaxPct) / 100.0f;
+    p.radius = kDomeR * frac;
+    const float top = kDomeR * std::sqrt(std::max(1.0f - frac * frac, 0.0f)) * kGlassGap;   // the dome's own height over a circle that wide
+    p.lift = (1.0f - std::clamp(depthPct, 0.0f, 100.0f) * 0.01f) * top;
+    return p;
+}
 
 // The circle mask: how much of a point `r` icon radii from the middle is the icon (1 inside, 0 from the circle out, a smooth step over the last `edge`). The effect has the same line.
 inline float Smoothstep(float a, float b, float x) {
@@ -46,6 +84,8 @@ struct In {
     bool medallion = false;   // the vitals are drawn as the medallions (the orbs look, the medallion shape, the glass - not the game's globes): there is a bottom to lie on
     int32_t armed = -1;       // the armed skill, -1 none
     bool enough = false;      // the hero can pay the next hit (Ready)
+    float full = 1.0f;        // the strength then (Place::opacity)
+    float faint = kInactive;  // ... and when he cannot (Place::faint)
 };
 struct Out {
     bool show = false;        // the effect draws the icon (OrbIcon.x)
@@ -56,8 +96,23 @@ struct Out {
 // The next hit is the armed skill: melee_arm.h's own decision for a touch now (`level` the hero's in it, -1 not read; `manaPoints` negative: not read - the game decides, so full strength).
 inline bool Ready(int32_t armed, int32_t level, float manaPoints) { return armed >= 0 && meleearm::Decide(armed, level, manaPoints).skill == armed; }
 
+// A skill whose icon may lie there: one of the melee list's, or a bow skill (the Amazon's chosen arrow).
+inline bool Shown(int32_t skill) { return meleearm::IsMelee(skill) || bowmana::Find(skill) != nullptr; }
+
 inline bool Wanted(const In& in) { return in.on && in.armedOn && in.f4 && in.medallion; }
-inline float Target(const In& in) { return Wanted(in) && meleearm::IsMelee(in.armed) ? (in.enough ? 1.0f : kInactive) : 0.0f; }
+inline float Level(float v, float def) { return std::isfinite(v) ? std::clamp(v, 0.0f, 1.0f) : def; }
+inline float Target(const In& in) { return Wanted(in) && Shown(in.armed) ? (in.enough ? Level(in.full, 1.0f) : Level(in.faint, kInactive)) : 0.0f; }
+
+// Whose icon: a bow's chosen skill while a bow is in hand (`bowSkill` >= 0: the quiver's, fresh), else the armed melee skill. -1 none.
+struct Source {
+    int32_t skill = -1;
+    bool enough = false;
+};
+inline Source Pick(int32_t meleeSkill, bool meleeReady, int32_t bowSkill, bool bowReady) {
+    if (bowSkill >= 0) return Source{bowSkill, bowReady};
+    if (meleeSkill >= 0) return Source{meleeSkill, meleeReady};
+    return Source{};
+}
 
 // The strength eased toward its target; the skill held while an icon fades out after a disarm. A setting off (or a view without the medallion) drops the icon at once: the medallion as before.
 class Fader {
@@ -69,7 +124,7 @@ public:
         }
         const float target = Target(in);
         if (target > 0.0f) {
-            if (skill_ != in.armed && alpha_ > 0.0f) alpha_ = std::min(alpha_, kInactive);   // another skill armed: its icon comes in from faint, not from the last one's strength
+            if (skill_ != in.armed && alpha_ > 0.0f) alpha_ = std::min(alpha_, std::min(target, Level(in.faint, kInactive)));   // another skill armed: its icon comes in from faint, not from the last one's strength
             skill_ = in.armed;
         }
         const float step = std::isfinite(dt) && dt > 0.0f ? std::min(dt, 0.25f) / kFadeS : 0.0f;
@@ -126,11 +181,11 @@ inline bool Bake(const uint8_t* rgba, unsigned w, unsigned h, std::vector<uint8_
 }
 
 // ---- the effect's numbers ------------------------------------------------------------------------------------------------------
-// OrbIcon: x 1 = draw it, y the strength, z the circle's radius over the base's, w the soft edge (a fraction of that radius).
-inline void Uniform(const Out& o, float u[4]) {
+// OrbIcon: x 1 = draw it, y the strength, z the circle's radius over the base's, w the soft edge (a fraction of that radius). OrbIconLift (Place::lift) goes on its own.
+inline void Uniform(const Out& o, float u[4], const Place& p = Place{}) {
     u[0] = o.show ? 1.0f : 0.0f;
     u[1] = o.show ? std::clamp(o.alpha, 0.0f, 1.0f) : 0.0f;
-    u[2] = kIconR;
+    u[2] = p.radius;
     u[3] = kEdge;
 }
 

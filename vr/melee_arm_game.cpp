@@ -39,6 +39,8 @@ constexpr int kFaceSlots = 8;   // B X Y RB, LT + B X Y RB (shield_smite.h SlotP
 const D2RL::PluginContext* g_ctx = nullptr;
 std::atomic<bool> g_on{false};
 std::atomic<bool> g_icon{true};   // [gameplay] melee_skill_armed_icon
+std::atomic<float> g_iconR{armedicon::kIconR}, g_iconLift{0.0f}, g_iconOpacity{1.0f}, g_iconFaint{armedicon::kInactive};   // ... its size, depth, opacity with and without the mana (Placement)
+std::atomic<uint64_t> g_allowed{Allowed::Defaults().Bits()};      // [melee_armed] s<id>: the list's ticks
 std::atomic<int> g_hook{0};   // vrcam's slot-skill hook: 0 not yet, 1 in, 2 not possible
 std::atomic<int> g_slot[kFaceSlots];       // the skill on each face-button slot (-1 none / not read)
 std::atomic<int> g_owner[kFaceSlots];      // ... its owner in the controller record (for the level's lookup)
@@ -95,9 +97,33 @@ void Configure(bool on) {
 
 bool On() { return g_on.load(); }
 
-void ConfigureIcon(bool on) {
+void ConfigureList(uint64_t allowedBits) {
+    const uint64_t was = g_allowed.exchange(allowedBits);
+    static bool told = false;
+    if (told && was == allowedBits) return;
+    told = true;
+    const Allowed a = Allowed::FromBits(allowedBits), def = Allowed::Defaults();
+    char b[700];
+    int n = snprintf(b, sizeof b, "melee armed: %d of the list's %d skills are armed by their button ([melee_armed]); not as by default:", a.Count(), kCount);
+    bool any = false;
+    for (int i = 0; i < kCount && n > 0 && n < (int)sizeof b - 40; ++i) {   // what differs from the defaults, named
+        const int32_t id = kRows[i].row.id;
+        if (a.Has(id) == def.Has(id)) continue;
+        n += snprintf(b + n, sizeof b - n, "%s %s %s", any ? "," : "", kRows[i].name, a.Has(id) ? "ticked" : "unticked");
+        any = true;
+    }
+    if (!any && n > 0 && n < (int)sizeof b - 8) snprintf(b + n, sizeof b - n, " none");
+    Log(b);
+}
+
+void ConfigureIcon(bool on, float sizePct, float depthPct, float opacityPct, float faintPct) {
+    const armedicon::Place p = armedicon::Placement(sizePct, depthPct, opacityPct, faintPct);
+    const float rWas = g_iconR.exchange(p.radius), liftWas = g_iconLift.exchange(p.lift), opWas = g_iconOpacity.exchange(p.opacity), faintWas = g_iconFaint.exchange(p.faint);
     const bool was = g_icon.exchange(on);
     static bool told = false;
+    if (told && (rWas != p.radius || liftWas != p.lift || opWas != p.opacity || faintWas != p.faint))
+        LogF("melee armed: the icon in the mana medallion - %.0f%% of the inner circle, %s (radius %.3f, %.3f over the floor, of the base's radius), %.0f%% opaque with the mana, %.0f%% without",
+             p.radius / armedicon::kDomeR * 100.0f, p.lift <= 0.0f ? "on the bottom" : "lifted in the liquid", p.radius, p.lift, p.opacity * 100.0f, p.faint * 100.0f);
     if (told && on == was) return;
     told = true;
     if (on) Log("melee armed: the armed skill's icon lies in the mana medallion on the wrist - full while the hero can pay the next hit, half see-through when he cannot ([gameplay] melee_skill_armed_icon; with melee_skill_armed on and the vitals' medallions, F4)");
@@ -105,6 +131,15 @@ void ConfigureIcon(bool on) {
 }
 
 bool IconOn() { return g_icon.load(); }
+
+armedicon::Place IconPlace() {
+    armedicon::Place p;
+    p.radius = g_iconR.load();
+    p.lift = g_iconLift.load();
+    p.opacity = g_iconOpacity.load();
+    p.faint = g_iconFaint.load();
+    return p;
+}
 
 void SetHookState(int state) {
     if (g_hook.exchange(state) != state && state == 2 && g_on.load()) Log("melee armed: NOT possible - the game's slot-skill reads are not where they were (another build?); the skill buttons cast as ever");
@@ -160,6 +195,13 @@ void FilterPad(uint16_t* buttons, uint8_t lt, bool armable) {
         g_flight.Clear();
         g_armed.store(-1);
     }
+    int32_t untick = g_arm.Armed();
+    if (g_arm.SetAllowed(Allowed::FromBits(g_allowed.load()))) {   // [melee_armed]: the armed skill was unticked in the list
+        g_flight.Clear();
+        g_armed.store(-1);
+    } else {
+        untick = -1;
+    }
     const Step s = g_filter.Poll(*buttons, lt, live, g_arm, [](int slot) { return slot >= 0 && slot < kFaceSlots ? g_slot[slot].load() : -1; });
     if (s.event) {
         g_armed.store(g_arm.Armed());
@@ -173,6 +215,7 @@ void FilterPad(uint16_t* buttons, uint8_t lt, bool armable) {
     }
     ReleaseSRWLockExclusive(&g_lock);
     *buttons = (uint16_t)(*buttons & ~s.strip);
+    if (untick >= 0) LogF("melee armed: %s unticked in the list ([melee_armed] s%d=0) - disarmed, every hit by touch is the plain attack", Name(untick), (int)untick);
     if (!s.event) return;
     const bool armedNow = s.outcome != Outcome::Disarmed;
     directinput::Haptic(0, armedNow ? 0.5f : 0.25f, armedNow ? 40.0f : 25.0f);   // a short buzz in both hands: the press was the arming's, not a cast

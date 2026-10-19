@@ -196,6 +196,18 @@ Item Spell(const wchar_t* key, const wchar_t* name, float def = 0) {
     return Needs(L"bow", L"mode", 4, Needs(L"hands", L"spell_aim", 1, Toggle(L"autotarget", key, name, def)));
 }
 
+// One skill of [gameplay] melee_skill_armed's list (vr/melee_arm.h kRows, the same order and defaults): ticked = its pad button arms it ([melee_armed] s<skill>); greyed while hit by
+// touch or the arming is off.
+constexpr const wchar_t* kArmedTip = L"Ticked: this skill's pad button (B X Y RB, with or without LT) ARMS it - every hit by touch is then the game's attack with it, paying its mana (the "
+                                     L"plain attack when the mana is short). Unticked: its button casts it as ever. Live.";
+constexpr const wchar_t* kArmedMoverTip = L"A skill that MOVES the hero - off by default. Ticked: its pad button arms it, and every hit by touch is the game's own cast of it at the monster "
+                                          L"you touched: Whirlwind whirls to and through that monster's place, Leap Attack leaps at it, Charge charges it, Dragon Flight flies to it - the hero "
+                                          L"(and so you) moves, as the game moves him; Stand Still is not held for such a hit. Its mana as the game counts it; the plain attack when it is "
+                                          L"short. Unticked: its button casts it as ever (with the game's own aim). Live. Not tried in the game yet.";
+Item ArmedSkill(const wchar_t* key, const wchar_t* name, float def = 1, const wchar_t* tip = kArmedTip) {
+    return Needs(L"gameplay", L"melee_touch", 1, Needs(L"gameplay", L"melee_skill_armed", 1, Toggle(L"melee_armed", key, name, def, tip)));
+}
+
 // The toolbar on a forearm (Where: 1, 2) or on the body (3, 4): a set of sliders each.
 constexpr unsigned kBarArm = (1u << 1) | (1u << 2), kBarBody = (1u << 3) | (1u << 4), kBarWrist = 1u << 5;   // bar_place 5: life and mana on the wrists
 
@@ -2509,6 +2521,11 @@ std::vector<Item> g_items = {
            L"hero can pay is the game's own arithmetic on the game's own numbers - the skill's row in Skills.txt and its level against the hero's mana, less what our last cast took if the "
            L"mana read has not caught up - never a guess; a skill this does not know is left to the game. The plain attack is pressed the game's way (its own attack button, the cast reading "
            L"the slot as Attack): its checks, animation and arrows are the game's; nothing is called on the server. Off: the game's refusal, as it is. F4 only. Live.")),
+    Needs(L"bow", L"quiver", 1, Toggle(L"bow", L"quiver_icon", L"Quiver: show the chosen arrow skill in the mana medallion", 1,
+           L"The bow skill you chose (an orb, a quiver button, the skill panel) shows its icon - the game's own - on the bottom of the MANA medallion on your wrist, under the liquid, "
+           L"the way an armed melee skill does. Full while the hero can pay a shot with it (the release's own check: the skill's mana cost at his level against his mana); faint when "
+           L"he cannot. The plain arrow: no icon. Its size, depth and the two opacities are the sliders on the Strikes tab (\"Skill icon in the mana\"). Needs the hand vitals as "
+           L"the medallions (the glass orbs look, the medallion shape) and the skill icons made from your game. Unticked: the medallion as before. Live. F4 only.")),
     Needs(L"bow", L"quiver", 1, Toggle(L"bow", L"arrow_fx", L"Arrow effects: fire, frost and arcane light on the arrow", 1,
            L"On: the arrow burns, freezes or crackles by the skill that is chosen - from the moment you choose it (an orb, a button, the game's own slot), nocked at rest, and through the "
            L"draw; the plain shot has none - flames and rising embers for Fire, Exploding and "
@@ -2896,14 +2913,49 @@ std::vector<Item> g_items = {
            L"Feral Rage; Tiger Strike, Dragon Talon, Dragon Claw, Fists of Fire, Cobra Strike, Claws of Thunder, Blades of Ice, Dragon Tail, Royal Strike; Poison Dagger; Cleave (the skills the game's "
            L"Skills.txt gives melee range) - no longer casts it: it ARMS it, like the bow's chosen arrow skill (a short buzz in both hands). Every touch of your blade is then the game's attack with "
            L"that skill: its mana, cooldown, weapon check and animation are the game's, the monster you touched its target, one touch one cast. When the hero cannot pay its mana, that touch is the "
-           L"plain attack and the skill stays armed. The same button again, or a button with the plain attack on it, disarms; another melee skill's button arms that one. Spells, buffs, warcries, "
-           L"Whirlwind, Charge and Leap Attack cast from their buttons as ever, and a bow, a crossbow or a thrown weapon is not touched. Needs the plain attack on the attack button (A). The log says "
+           L"plain attack and the skill stays armed. The same button again, or a button with the plain attack on it, disarms; another melee skill's button arms that one. Which skills: the "
+           L"ticks of \"Armed by its button\" below (these are ticked; Whirlwind, Charge, Leap Attack and Dragon Flight are there unticked). Spells, buffs, warcries and an unticked skill "
+           L"cast from their buttons as ever, and a bow, a crossbow or a thrown weapon is not touched. Needs the plain attack on the attack button (A). The log says "
            L"what was armed and what each touch was (\"melee armed: ...\"). Not tried in the game yet. Unticked: the skill buttons cast as before. Live.")),
     Needs(L"gameplay", L"melee_touch", 1, Needs(L"gameplay", L"melee_skill_armed", 1, Toggle(L"gameplay", L"melee_skill_armed_icon", L"Show the armed skill in the mana medallion", 1,
            L"The armed skill's icon - the game's own, the one the skill panel shows - lies on the bottom of the MANA medallion on your wrist, under the blue liquid, cut to a circle inside the "
            L"glass. Full while the hero can pay the next hit with it (the same check the hit makes: the skill's mana cost at his level against his mana); half see-through when he cannot - the "
            L"next hit will be the plain attack - and bright again when the mana is back. Nothing armed: no icon. Needs the life and mana on the hands as the medallions (Hand vitals: the glass "
            L"orbs look, the medallion shape) and the skill icons made from your game (the skill wheel's). Unticked: the medallion exactly as before. Not tried in the game yet. Live. F4 only."))),
+    Slider(L"gameplay", L"melee_skill_armed_icon_size_pct", L"Skill icon in the mana: size, % of the inner circle", 30.0f, 100.0f, 0.5f, 87.5f,
+           L"How big the skill's icon in the mana medallion is: a percent of the medallion's inner circle (the glass dome's foot). 87.5 = as it first was; 100 = the whole floor under "
+           L"the glass. For the armed melee skill's icon and the bow's chosen arrow skill's (Bow tab, \"Quiver: show the chosen arrow skill in the mana medallion\"). Live."),
+    Slider(L"gameplay", L"melee_skill_armed_icon_depth_pct", L"Skill icon in the mana: depth, % (100 = the bottom)", 0.0f, 100.0f, 1.0f, 100.0f,
+           L"How deep in the medallion the icon lies: 100 = on the very bottom, under all the liquid (as it first was); 0 = as high as it fits - its rim just under the glass, over the "
+           L"liquid when the mana is low. It is the dome's own shape: the bigger the icon, the less room over it (at 100% size it can only lie on the bottom). Seen from the side it "
+           L"shifts against the floor like a real thing in the glass. Live."),
+    Slider(L"gameplay", L"melee_skill_armed_icon_opacity_pct", L"Skill icon in the mana: opacity, %", 0.0f, 100.0f, 1.0f, 100.0f,
+           L"How solid the icon is while the hero can pay the next hit (the shot, for a bow): 100 = fully (as it first was), 0 = not seen. Live."),
+    Slider(L"gameplay", L"melee_skill_armed_icon_faint_pct", L"Skill icon in the mana: opacity when the mana is short, %", 0.0f, 100.0f, 1.0f, 35.0f,
+           L"How solid the icon is while the hero CANNOT pay the next hit - the hit will be the plain attack (the bow: the plain arrow, or the game's refusal). 35 = as it first was; "
+           L"0 = it goes out until the mana is back. The icon eases between the two opacities. Live."),
+    Group(L"Armed by its button: Amazon (F4)"),
+    ArmedSkill(L"s10", L"Jab"), ArmedSkill(L"s14", L"Power Strike"), ArmedSkill(L"s19", L"Impale"),
+    ArmedSkill(L"s24", L"Charged Strike"), ArmedSkill(L"s30", L"Fend"), ArmedSkill(L"s34", L"Lightning Strike"),
+    Group(L"Armed by its button: Necromancer (F4)"),
+    ArmedSkill(L"s73", L"Poison Dagger"),
+    Group(L"Armed by its button: Paladin (F4)"),
+    ArmedSkill(L"s96", L"Sacrifice"), ArmedSkill(L"s97", L"Smite"), ArmedSkill(L"s106", L"Zeal"),
+    ArmedSkill(L"s111", L"Vengeance"), ArmedSkill(L"s116", L"Conversion"), ArmedSkill(L"s107", L"Charge", 0, kArmedMoverTip),
+    Group(L"Armed by its button: Barbarian (F4)"),
+    ArmedSkill(L"s126", L"Bash"), ArmedSkill(L"s133", L"Double Swing"), ArmedSkill(L"s139", L"Stun"),
+    ArmedSkill(L"s144", L"Concentrate"), ArmedSkill(L"s147", L"Frenzy"), ArmedSkill(L"s152", L"Berserk"),
+    ArmedSkill(L"s143", L"Leap Attack", 0, kArmedMoverTip), ArmedSkill(L"s151", L"Whirlwind", 0, kArmedMoverTip),
+    Group(L"Armed by its button: Druid (F4)"),
+    ArmedSkill(L"s232", L"Feral Rage"), ArmedSkill(L"s233", L"Maul"), ArmedSkill(L"s238", L"Rabies"),
+    ArmedSkill(L"s239", L"Fire Claws"), ArmedSkill(L"s242", L"Hunger"), ArmedSkill(L"s248", L"Fury"),
+    Group(L"Armed by its button: Assassin (F4)"),
+    ArmedSkill(L"s254", L"Tiger Strike"), ArmedSkill(L"s255", L"Dragon Talon"), ArmedSkill(L"s259", L"Fists of Fire"),
+    ArmedSkill(L"s260", L"Dragon Claw"), ArmedSkill(L"s265", L"Cobra Strike"), ArmedSkill(L"s269", L"Claws of Thunder"),
+    ArmedSkill(L"s270", L"Dragon Tail"), ArmedSkill(L"s274", L"Blades of Ice"), ArmedSkill(L"s280", L"Royal Strike"),
+    ArmedSkill(L"s275", L"Dragon Flight", 0, kArmedMoverTip),
+    Group(L"Armed by its button: Warlock (F4)"),
+    ArmedSkill(L"s391", L"Cleave"),
     Group(L"Two weapons: Double Swing by the hands (F4)"),
     Needs(L"gameplay", L"melee_touch", 1, Toggle(L"hands", L"double_swing_by_hands", L"Double Swing by the two hands", 0,
            L"A Barbarian with a melee weapon in each hand, hit by touch on (F4 only). The first hand's touch on a monster is the game's normal attack, as ever. When the OTHER hand then touches the SAME monster "

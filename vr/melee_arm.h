@@ -18,8 +18,14 @@
 //   Druid       Feral Rage, Maul, Rabies, Fire Claws, Hunger, Fury
 //   Assassin    Tiger Strike, Dragon Talon, Fists of Fire, Dragon Claw, Cobra Strike, Claws of Thunder, Dragon Tail, Blades of Ice, Royal Strike
 //   Warlock     Cleave
-// and leaves out, by the same columns: the movement attacks (Charge, Leap Attack, Whirlwind, Dragon Flight: range not h2h - they stay casts as they are), Mirrored Blades (range "both", like
-// Attack), the Barbarian's corpse skills (Find Potion, Find Item, Grim Ward: not leftskill), the bow and javelin skills (rng) and every spell. A skill that is not here is never armed.
+// and leaves out, by the same columns: the movement attacks (Charge, Leap Attack, Whirlwind, Dragon Flight: range not h2h - in kRows all the same, unticked by default, below), Mirrored Blades
+// (range "both", like Attack), the Barbarian's corpse skills (Find Potion, Find Item, Grim Ward: not leftskill), the bow and javelin skills (rng) and every spell. A skill not in kRows is never armed.
+//
+// Which of them are armed (the author's list, 2026-10-19: "a list of skills with a tick each"): [melee_armed] s<id>=1 / 0, one key a skill - the [autotarget] s<id> pattern. The 34 above
+// are ticked by default; the four movement attacks are in the list too, UNticked by default (kRows' `byDefault`): ticked, the skill's button arms it and a touch is the game's cast of it
+// with the touched monster as its target - the game's own path moves the hero (Whirlwind whirls to the monster's place, Leap Attack leaps at it, Charge charges it, Dragon Flight
+// flies to it). Their rows are the same Skills.txt columns as the others' (the movers' read from the same table the 34 rows above match number for number). An unticked skill's button
+// casts it as ever. `mover` marks them for [gameplay] attack_in_place (vr/stand_still.h MovesHero): a touch read as one is never held with Stand Still - the game's mover must move.
 #pragma once
 
 #include <cmath>
@@ -30,57 +36,113 @@
 namespace meleearm {
 
 struct Skill {
-    bowmana::Row row;   // id, then Skills.txt mana, lvlmana, manashift, minmana
+    bowmana::Row row;        // id, then Skills.txt mana, lvlmana, manashift, minmana
     const char* name;
+    const char* cls;         // the class whose skill it is (Settings groups the ticks by it)
+    bool byDefault = true;   // ticked when [melee_armed] has no key for it
+    bool mover = false;      // the skill moves the hero (Charge, Leap Attack, Whirlwind, Dragon Flight)
 };
 inline constexpr Skill kRows[] = {
-    {{10, 8, 1, 6, 1}, "Jab"},
-    {{14, 8, 1, 6, 1}, "Power Strike"},
-    {{19, 3, 0, 8, 1}, "Impale"},
-    {{24, 16, 1, 6, 1}, "Charged Strike"},
-    {{30, 5, 0, 8, 1}, "Fend"},
-    {{34, 9, 0, 8, 1}, "Lightning Strike"},
-    {{73, 12, 1, 6, 1}, "Poison Dagger"},
-    {{96, 0, 0, 8, 0}, "Sacrifice"},   // (costs life, not mana: never short)
-    {{97, 2, 0, 8, 1}, "Smite"},
-    {{106, 2, 0, 8, 1}, "Zeal"},
-    {{111, 16, 1, 6, 1}, "Vengeance"},
-    {{116, 4, 0, 8, 1}, "Conversion"},
-    {{126, 2, 0, 8, 1}, "Bash"},
-    {{133, 8, -1, 5, 0}, "Double Swing"},
-    {{139, 2, 0, 8, 1}, "Stun"},
-    {{144, 2, 0, 8, 1}, "Concentrate"},
-    {{147, 3, 0, 7, 1}, "Frenzy"},
-    {{152, 4, 0, 8, 1}, "Berserk"},
-    {{232, 3, 0, 8, 1}, "Feral Rage"},
-    {{233, 3, 0, 8, 1}, "Maul"},
-    {{238, 10, 0, 8, 1}, "Rabies"},
-    {{239, 4, 0, 8, 1}, "Fire Claws"},
-    {{242, 3, 0, 8, 1}, "Hunger"},
-    {{248, 4, 0, 8, 1}, "Fury"},
-    {{254, 1, 0, 8, 1}, "Tiger Strike"},
-    {{255, 6, 0, 8, 1}, "Dragon Talon"},
-    {{259, 2, 0, 8, 1}, "Fists of Fire"},
-    {{260, 2, 0, 8, 1}, "Dragon Claw"},
-    {{265, 2, 0, 8, 1}, "Cobra Strike"},
-    {{269, 4, 0, 8, 1}, "Claws of Thunder"},
-    {{270, 10, 0, 8, 1}, "Dragon Tail"},
-    {{274, 3, 0, 8, 1}, "Blades of Ice"},
-    {{280, 4, 0, 8, 1}, "Royal Strike"},
-    {{391, 3, 0, 8, 1}, "Cleave"},
+    {{10, 8, 1, 6, 1}, "Jab", "Amazon"},
+    {{14, 8, 1, 6, 1}, "Power Strike", "Amazon"},
+    {{19, 3, 0, 8, 1}, "Impale", "Amazon"},
+    {{24, 16, 1, 6, 1}, "Charged Strike", "Amazon"},
+    {{30, 5, 0, 8, 1}, "Fend", "Amazon"},
+    {{34, 9, 0, 8, 1}, "Lightning Strike", "Amazon"},
+    {{73, 12, 1, 6, 1}, "Poison Dagger", "Necromancer"},
+    {{96, 0, 0, 8, 0}, "Sacrifice", "Paladin"},   // (costs life, not mana: never short)
+    {{97, 2, 0, 8, 1}, "Smite", "Paladin"},
+    {{106, 2, 0, 8, 1}, "Zeal", "Paladin"},
+    {{111, 16, 1, 6, 1}, "Vengeance", "Paladin"},
+    {{116, 4, 0, 8, 1}, "Conversion", "Paladin"},
+    {{107, 9, 0, 8, 1}, "Charge", "Paladin", false, true},
+    {{126, 2, 0, 8, 1}, "Bash", "Barbarian"},
+    {{133, 8, -1, 5, 0}, "Double Swing", "Barbarian"},
+    {{139, 2, 0, 8, 1}, "Stun", "Barbarian"},
+    {{144, 2, 0, 8, 1}, "Concentrate", "Barbarian"},
+    {{147, 3, 0, 7, 1}, "Frenzy", "Barbarian"},
+    {{152, 4, 0, 8, 1}, "Berserk", "Barbarian"},
+    {{143, 10, 0, 8, 1}, "Leap Attack", "Barbarian", false, true},
+    {{151, 25, 1, 7, 1}, "Whirlwind", "Barbarian", false, true},
+    {{232, 3, 0, 8, 1}, "Feral Rage", "Druid"},
+    {{233, 3, 0, 8, 1}, "Maul", "Druid"},
+    {{238, 10, 0, 8, 1}, "Rabies", "Druid"},
+    {{239, 4, 0, 8, 1}, "Fire Claws", "Druid"},
+    {{242, 3, 0, 8, 1}, "Hunger", "Druid"},
+    {{248, 4, 0, 8, 1}, "Fury", "Druid"},
+    {{254, 1, 0, 8, 1}, "Tiger Strike", "Assassin"},
+    {{255, 6, 0, 8, 1}, "Dragon Talon", "Assassin"},
+    {{259, 2, 0, 8, 1}, "Fists of Fire", "Assassin"},
+    {{260, 2, 0, 8, 1}, "Dragon Claw", "Assassin"},
+    {{265, 2, 0, 8, 1}, "Cobra Strike", "Assassin"},
+    {{269, 4, 0, 8, 1}, "Claws of Thunder", "Assassin"},
+    {{270, 10, 0, 8, 1}, "Dragon Tail", "Assassin"},
+    {{274, 3, 0, 8, 1}, "Blades of Ice", "Assassin"},
+    {{280, 4, 0, 8, 1}, "Royal Strike", "Assassin"},
+    {{275, 15, 0, 8, 1}, "Dragon Flight", "Assassin", false, true},
+    {{391, 3, 0, 8, 1}, "Cleave", "Warlock"},
 };
 constexpr int32_t kAttack = 0;   // Skills.txt: the plain attack
+constexpr int kCount = (int)(sizeof kRows / sizeof kRows[0]);
+static_assert(kCount <= 64, "Allowed keeps a bit a row");
 
 inline const Skill* Find(int32_t id) {
     for (const Skill& s : kRows)
         if (s.row.id == id) return &s;
     return nullptr;
 }
-inline bool IsMelee(int32_t id) { return Find(id) != nullptr; }
+inline int IndexOf(int32_t id) {
+    for (int i = 0; i < kCount; ++i)
+        if (kRows[i].row.id == id) return i;
+    return -1;
+}
+inline bool IsMelee(int32_t id) { return Find(id) != nullptr; }   // in the list (ticked or not)
+inline bool IsMover(int32_t id) {
+    const Skill* s = Find(id);
+    return s && s->mover;
+}
 inline const char* Name(int32_t id) {
     const Skill* s = Find(id);
     return s ? s->name : id == kAttack ? "Attack" : "?";
 }
+
+// ---- the list's ticks ([melee_armed] s<id>) -----------------------------------------------------------------------------------------
+class Allowed {
+public:
+    static Allowed Defaults() {
+        Allowed a;
+        for (int i = 0; i < kCount; ++i)
+            if (kRows[i].byDefault) a.bits_ |= 1ull << i;
+        return a;
+    }
+    bool Has(int32_t id) const {
+        const int i = IndexOf(id);
+        return i >= 0 && ((bits_ >> i) & 1);
+    }
+    // One ini key: s<id> = v (0 unticked, anything else ticked). A skill that is not in the list is ignored (false).
+    bool Set(int32_t id, int v) {
+        const int i = IndexOf(id);
+        if (i < 0) return false;
+        if (v) bits_ |= 1ull << i;
+        else bits_ &= ~(1ull << i);
+        return true;
+    }
+    uint64_t Bits() const { return bits_; }
+    static Allowed FromBits(uint64_t b) {
+        Allowed a;
+        a.bits_ = b & (kCount >= 64 ? ~0ull : (1ull << kCount) - 1);
+        return a;
+    }
+    int Count() const {
+        int n = 0;
+        for (int i = 0; i < kCount; ++i) n += (int)((bits_ >> i) & 1);
+        return n;
+    }
+    bool operator==(const Allowed& o) const { return bits_ == o.bits_; }
+
+private:
+    uint64_t bits_ = 0;
+};
 
 // ---- the press: arm, re-arm, disarm --------------------------------------------------------------------------------------------
 enum class Outcome { Pass, Armed, Switched, Disarmed };
@@ -94,9 +156,9 @@ inline const char* OutcomeName(Outcome o) {
 }
 class Arm {
 public:
-    // A press of a skill button whose slot holds `skill` (-1 none). Pass: the press is the game's (a spell, an empty slot, the plain attack with nothing armed).
+    // A press of a skill button whose slot holds `skill` (-1 none). Pass: the press is the game's (a spell, an unticked skill, an empty slot, the plain attack with nothing armed).
     Outcome Press(int32_t skill) {
-        if (IsMelee(skill)) {
+        if (allowed_.Has(skill)) {
             if (armed_ == skill) {
                 armed_ = -1;
                 return Outcome::Disarmed;
@@ -113,9 +175,19 @@ public:
     }
     int32_t Armed() const { return armed_; }   // -1 none
     void Clear() { armed_ = -1; }
+    // The list's ticks (live): an armed skill that is unticked now is disarmed (true then).
+    bool SetAllowed(Allowed a) {
+        allowed_ = a;
+        if (armed_ >= 0 && !allowed_.Has(armed_)) {
+            armed_ = -1;
+            return true;
+        }
+        return false;
+    }
 
 private:
     int32_t armed_ = -1;
+    Allowed allowed_ = Allowed::Defaults();
 };
 
 // ---- the pad: which press is ours -------------------------------------------------------------------------------------------------

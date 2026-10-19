@@ -2086,6 +2086,7 @@ void LoadSettings() {
         // [bow] quiver_plain_no_mana: an arrow skill the hero cannot pay (too little mana by the game's own numbers) shoots the plain arrow at the release instead of the game's refusal; live
         bowquiverwire::SetPlainNoMana(IniB(L"bow", L"quiver_plain_no_mana", true));
         bowquiverwire::SetArrowFxNeedsMana(IniB(L"bow", L"arrow_fx_needs_mana", true));   // [bow] arrow_fx_needs_mana: the arrow's effect goes out while the hero cannot pay the chosen skill
+        bowquiverwire::SetIcon(IniB(L"bow", L"quiver_icon", true));   // [bow] quiver_icon: the chosen arrow skill's icon in the mana medallion (vr/armed_icon.h)
     }
     g_set.bowAimAlong.store(IniB(L"bow", L"aim_along_hands", false));
     g_set.bowAimBlendMs.store(std::clamp(IniF(L"bow", L"aim_blend_ms", 120.0f), 50.0f, 400.0f));
@@ -2195,7 +2196,19 @@ void LoadSettings() {
     meleetrigger::Configure(IniB(L"gameplay", L"melee_touch_only", true));   // F4, hit by touch swinging a weapon (anything but a bow or a crossbow): the trigger's attack is not passed to the game - part of hit by touch, ON by default; 0 = the old way (the plugin's own controls only; vr/melee_trigger.h)
     doubleswing::Configure(IniB(L"hands", L"double_swing_by_hands", false), IniF(L"hands", L"double_swing_window_ms", 700.0f), (int)IniF(L"hands", L"double_swing_skill", 0.0f));   // F4, hit by touch with a weapon in each hand: the second hand's touch casts the game's own Double Swing / Frenzy (vr/double_swing.h)
     meleearm::Configure(IniB(L"gameplay", L"melee_skill_armed", false));   // F4, hit by touch: a melee attack skill's pad button arms it instead of casting it; every touch is then that skill, the plain attack when the mana is short (vr/melee_arm.h)
-    meleearm::ConfigureIcon(IniB(L"gameplay", L"melee_skill_armed_icon", true));   // F4: the armed skill's icon on the bottom of the mana medallion, faint when the mana is short (vr/armed_icon.h)
+    meleearm::ConfigureIcon(IniB(L"gameplay", L"melee_skill_armed_icon", true), IniF(L"gameplay", L"melee_skill_armed_icon_size_pct", armedicon::kSizeDefPct),
+                            IniF(L"gameplay", L"melee_skill_armed_icon_depth_pct", armedicon::kDepthDefPct), IniF(L"gameplay", L"melee_skill_armed_icon_opacity_pct", armedicon::kOpacityDefPct),
+                            IniF(L"gameplay", L"melee_skill_armed_icon_faint_pct", armedicon::kFaintDefPct));   // F4: the armed skill's icon in the mana medallion, faint when the mana is short; its size, depth, opacity with and without the mana (vr/armed_icon.h)
+    {   // [melee_armed]: every s<skill> key the section has (the [autotarget] way); unset, the list's default (vr/melee_arm.h kRows: the 34 melee attacks ticked, the movement attacks not)
+        meleearm::Allowed allowed = meleearm::Allowed::Defaults();
+        static wchar_t sec[4096];
+        const DWORD n = GetPrivateProfileSectionW(L"melee_armed", sec, (DWORD)std::size(sec), g_iniPath);
+        for (const wchar_t* e = sec; n && *e; e += wcslen(e) + 1) {
+            int id = -1, v = 0;
+            if (swscanf_s(e, L"s%d = %d", &id, &v) == 2) allowed.Set(id, v);
+        }
+        meleearm::ConfigureList(allowed.Bits());
+    }
     g_set.meleeTouchUnchecked.store(IniB(L"debug", L"melee_touch_unchecked", false));
     meleetouch::SetWanted(g_set.meleeTouch.load());
     meleetouch::SetThrownTouch(IniB(L"gameplay", L"melee_touch_thrown", true));   // javelins, throwing knives and axes hit by touch too (a point-blank throw; vr/thrown_touch.h)
@@ -16572,11 +16585,20 @@ void OnBeginEffects(reshade::api::effect_runtime* rt, reshade::api::command_list
                 iconLast = nowS;
                 const handvitals::Config hc = handvitals::Settings();
                 armedicon::In ii;
-                ii.on = meleearm::IconOn();
-                ii.armedOn = meleearm::On();
+                // whose: the bow skill chosen from the quiver while a bow is in hand ([bow] quiver_icon), else the armed melee skill ([gameplay] melee_skill_armed_icon)
+                bool meleeReady = false, bowReady = false;
+                int bowSkill = -1;
+                const int meleeSkill = meleearm::IconOn() && meleearm::On() ? meleearm::Armed(&meleeReady) : -1;
+                bowquiverwire::ChosenIcon(&bowSkill, &bowReady);
+                const armedicon::Source src = armedicon::Pick(meleeSkill, meleeReady, bowSkill, bowReady);
+                ii.on = ii.armedOn = (meleearm::IconOn() && meleearm::On()) || bowSkill >= 0;
                 ii.f4 = viewgate::F4();
                 ii.medallion = ou.on && !ou.picture && hc.style == handvitals::kStyleOrbs && hc.orbShape == handvitals::kShapeMedallion;
-                ii.armed = ii.on && ii.armedOn ? meleearm::Armed(&ii.enough) : -1;
+                ii.armed = src.skill;
+                ii.enough = src.enough;
+                const armedicon::Place place = meleearm::IconPlace();   // the sliders (melee_skill_armed_icon_*): the bow's icon lies the same way
+                ii.full = place.opacity;
+                ii.faint = place.faint;
                 armedicon::Out io = iconFade.Step(ii, dt);
                 if (io.show) {
                     const reshade::api::effect_texture_variable tv = rt->find_texture_variable("D2R_DepthFog.fx", "OrbIconTex");
@@ -16596,7 +16618,7 @@ void OnBeginEffects(reshade::api::effect_runtime* rt, reshade::api::command_list
                         if (img && armedicon::Bake(img->rgba.data(), img->width, img->height, baked)) {
                             rt->update_texture(tv, armedicon::kTex, armedicon::kTex, baked.data());
                             g_iconUpSkill = io.skill;
-                            LogF("vrcam: melee armed - %s's icon is in the mana medallion (%ux%u from the icon cache)", meleearm::Name(io.skill), img->width, img->height);
+                            LogF("vrcam: skill icon - skill %d (%s) is in the mana medallion (%ux%u from the icon cache)", io.skill, meleearm::IsMelee(io.skill) ? meleearm::Name(io.skill) : "the bow's chosen skill", img->width, img->height);
                         } else if (!wheelicons::Available()) {
                             static bool told = false;
                             if (!told) { told = true; Log("vrcam: melee armed - no skill icons on this machine (d2r_vr_skill_icons, made by tools/skill_icons/prepare_skill_icons.py from the installed game): the mana medallion shows no icon"); }
@@ -16605,8 +16627,11 @@ void OnBeginEffects(reshade::api::effect_runtime* rt, reshade::api::command_list
                     if (io.skill != g_iconUpSkill) io.show = false;   // its icon is not in the texture (yet): nothing rather than the last skill's
                 }
                 float iu[4];
-                armedicon::Uniform(io, iu);
-                if (io.show || iconWas) SetFloats(rt, "OrbIcon", iu, 4);
+                armedicon::Uniform(io, iu, place);
+                if (io.show || iconWas) {
+                    SetFloats(rt, "OrbIcon", iu, 4);
+                    SetFloats(rt, "OrbIconLift", &place.lift, 1);   // (an older effect has none: the icon stays on the bottom)
+                }
                 iconWas = io.show;
             }
             if (ou.on && !orbsWere) Log(ou.picture ? "vrcam: hand vitals - the game's own globes are in the picture (life on the left wrist, mana on the right, by the settings)"

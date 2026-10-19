@@ -631,7 +631,10 @@ in full in a square window); the log tells the size the game draws at.
   and one for each learned bow skill, the free hand's trigger at an orb picks it; *Arrow
   effects: fire, frost and arcane light on the arrow* (on), by the chosen skill; *no mana for
   the chosen arrow - shoot the plain arrow* (on), and the effect goes out while the mana
-  is short. The crossbow has no quiver.
+  is short; *Quiver: show the chosen arrow skill in the mana medallion* (on, `[bow] quiver_icon`):
+  the chosen skill's icon lies in the mana medallion on the wrist like an armed melee skill's
+  (full while the hero can pay the shot, faint when not; the plain arrow: none), sized and placed
+  by the *Skill icon in the mana* sliders on the Strikes tab. The crossbow has no quiver.
   *Quick release* (experimental): moves the game's arrow-making
   frame of the hero's bow attack earlier (frame 2 by default) - the arrow, its
   damage and its mana come about 0.2 s sooner inside the same attack; the
@@ -718,12 +721,19 @@ ticks the other). The blade's geometry stays in Weapon Adjust and Debug.
   then the game's attack with that skill - its mana, cooldown, weapon check and animation are the game's, the touched monster its target, one touch one cast; a touch the hero cannot pay is the
   plain attack and the skill stays armed. The same button again, or one with the plain attack on it, disarms. The skills are the ones the game's Skills.txt gives melee range (h2h): the
   Barbarian's Bash, Stun, Concentrate, Berserk, Frenzy, Double Swing; the Paladin's Zeal, Smite, Sacrifice, Vengeance, Conversion; the Amazon's spear skills; the Druid's Maul, Fire Claws,
-  Hunger, Rabies, Fury, Feral Rage; the Assassin's martial arts; Poison Dagger; Cleave. Whirlwind, Charge, Leap Attack, spells, buffs and warcries cast from their buttons as ever; a bow, a
-  crossbow or a thrown weapon is not touched. Needs the plain attack on the attack button (A).
+  Hunger, Rabies, Fury, Feral Rage; the Assassin's martial arts; Poison Dagger; Cleave - each with its own tick in the groups *Armed by its button: <class>* (`[melee_armed] s<skill>`,
+  ticked by default). There too, unticked by default, the four that move the hero: Whirlwind, Leap Attack, Charge, Dragon Flight - ticked, a hit by touch is the game's own cast of it at
+  the touched monster (the hero whirls, leaps, charges or flies to it, and you with him; Stand Still is not held for it). An unticked skill, spells, buffs and warcries cast from their
+  buttons as ever; a bow, a crossbow or a thrown weapon is not touched. Needs the plain attack on the attack button (A).
   - *Show the armed skill in the mana medallion* (on; `[gameplay] melee_skill_armed_icon`, under the tick above): the armed skill's icon - the game's own, as the skill panel shows it -
     lies on the bottom of the mana medallion on the wrist, under the liquid, cut to a circle inside the glass. Full while the hero can pay the next hit; half see-through when he cannot (the
     next hit is the plain attack), bright again when the mana is back. Nothing armed: no icon. Needs the hand vitals as the medallions (the glass orbs look, the medallion shape) and the skill
     icons made from your game. Unticked: the medallion as before.
+  - *Skill icon in the mana: size, % of the inner circle* (87.5), *depth, % (100 = the bottom)* (100), *opacity, %* (100) and *opacity when the mana is short, %* (35)
+    (`[gameplay] melee_skill_armed_icon_size_pct`, `_depth_pct`, `_opacity_pct`, `_faint_pct`; live): the icon's size against the glass dome's foot; how deep it lies - 100 on the floor
+    under all the liquid, 0 as high as the dome lets a circle that wide lie, its rim just under the glass (the bigger the icon the less room over it; at 100 % size only the bottom);
+    and how solid it is with the mana for the next hit and without (0 = it goes out until the mana is back). The bow's chosen skill's icon uses the same four. The defaults are the
+    icon as it first was.
 - **Two weapons: Double Swing by the hands** (F4, off; a Barbarian with a melee weapon in each hand) - *Double Swing by the two hands*: the first hand's touch on a monster is the game's normal attack;
   when the other hand then touches the same monster within *the other hand within, ms* (700) the second strike is the game's own Double Swing instead - its pad button is pressed once and the monster
   you touched is its target, the way the shield bash casts Smite. The skill has to sit on one of the pad's ten skill slots, the hero has to have a level in it and the mana for it (the game's own
