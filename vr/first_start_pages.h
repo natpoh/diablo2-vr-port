@@ -4,7 +4,7 @@
 //
 // Every line is what the plugin does with the settings that come with the mod (d2r_vr.ini): the [direct] layout's defaults
 // (vr/direct_layout.h DefaultTable, hold_ms 500), [gameplay] melee_touch / melee_touch_only, [openxr] skill_wheel / skill_panel_style /
-// headset_settings, [hands] belt_grab / bow_draw / throw_by_grip / shoulder_draw, [weight] on, [bow] quiver / quiver_orbs, the F keys
+// headset_settings / skill_rt_a, [hands] belt_grab / bow_draw / throw_by_grip / shoulder_draw, [weight] on, [bow] quiver / quiver_orbs, the F keys
 // (vrcam.cpp UpdateThread). A player who changed them reads the defaults here.
 // The welcome's steps follow bearstonem/d2r-pcvr's first-load prompt (MIT, steamvr/BODY_CALIBRATION.md); the rest is ours.
 
@@ -41,7 +41,7 @@ inline constexpr PageText kPages[kPageCount] = {
      {{"Left stick", "walk"},
       {"Right stick", "left / right: turn (up and down are this guide's)"},
       {"Right trigger", "attack. A sword, axe or mace hits when you swing it through a monster (Hit by touch), so its trigger does not; a bow or crossbow shoots with it."},
-      {"Right A", "pick up, open, talk"},
+      {"Right A", "pick up, open, talk (a skill on the skill panel's A plate is cast instead)"},
       {"Right B, left X, left Y", "the game's skill buttons B, X, Y. Hold the left trigger for the second row."},
       {"Right stick click", "swap weapon sets I / II"}},
      kNavMiddle},
@@ -57,7 +57,7 @@ inline constexpr PageText kPages[kPageCount] = {
     // 3: the skill panel and the settings in the headset
     {"The skill panel and the settings",
      {{"Skill panel", "point at a plate and pull the trigger: from then on that trigger casts its skill"},
-      {"EDIT SKILLS", "pick a plate, then a skill you have, to put it there"},
+      {"EDIT SKILLS", "pick a plate, then a skill you have, to put it there. A skill on the RT or A plate is cast by the right trigger or A."},
       {"SETTINGS tab", "the settings in the headset, in the same window: View, Options, Video, Body, Life, Look, HUD, Belt, Melee, Left, Right"},
       {"Both grips + a click", "squeeze both grips for a moment, then click a thumbstick: the window opens on SETTINGS"},
       {"Flip pages", "flick a thumbstick left or right, or tap a grip (left back, right on). B, Y or Menu closes the window."},

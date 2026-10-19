@@ -16,7 +16,7 @@ including a free BodyWalk Lite if you don't have BodyWalk.
 **[Open the mod's page on BodyWalkVR](https://bodywalkvr.com/mods/d2r-vr)** - the
 four views in video, the controls and the setup.
 
-**What's new in 0.170:** D2R VR is a D2RLoader mod now - everything of it in
+**What's new in 0.171:** a first-start guide in the headset (the T-pose measurement, then what to press for what); a staff held in both hands aims the spell along the staff again; skills on the right trigger and on A, the skill panel's Run / Walk button and the spell aim distance that follows your arm's reach are on in the settings that come with the mod. **In 0.170:** D2R VR is a D2RLoader mod now - everything of it in
 `mods\D2R-VR`, so it no longer shares files with the other VR mod and D2RLoader's
 `-mod` picks which one runs (Setup moves an old install, your settings with it);
 the shared D2R VR Launcher comes with Setup; the Arcane Sanctuary's own sky all
@@ -169,8 +169,8 @@ that come with the mod). The layout in the world, as it comes:
 |---|---|---|---|
 | Left stick | walk | | |
 | Right stick | left / right: turn (smooth, 180 degrees a second; snap turning in Controls) | | |
-| Right trigger | attack (but see *Hit by touch* below) | | |
-| Right A | pick up, open, talk | | |
+| Right trigger | attack (but see *Hit by touch* below); a skill on the panel's RT plate is cast instead | | |
+| Right A | pick up, open, talk; a skill on the panel's A plate is cast instead | | |
 | Right B | the game's skill button B | | RB, the fourth skill button |
 | Left X, left Y | the game's skill buttons X and Y | | |
 | Left trigger | LT: held, B X Y RB are the second row of skills | | |
@@ -199,9 +199,12 @@ OpenXR, in the tiles' look). **Hold the right stick click for half a second** an
 opens in front of you; a short click is still the weapon swap, and the same hold
 closes it (B, Y or Menu too). Point a controller at a plate and pull the trigger:
 from then on that trigger casts its skill. EDIT SKILLS -> a plate -> a skill puts a
-skill you have on it. *Skill panel: skills on
-the right trigger and on A* (off) makes the right trigger and A the game's own RT
-and A skill slots.
+skill you have on it. *Skill panel: skills on the right trigger and on A* (on in the
+settings that come with the mod since 0.171) makes the right trigger and A the
+game's own RT and A skill slots: a skill put on the RT or A plate is cast by them
+(with the left trigger held, the LT + RT and LT + A plates); an empty plate leaves
+the attack and the pick-up as they are. A RUN / WALK button sits beside the first
+row of plates (also on since 0.171).
 
 **The settings in the headset** (*Settings panel in the headset*, UI: F4 body >
 Menus). With the skill panel in the tiles' look they are its **SETTINGS** tab: the

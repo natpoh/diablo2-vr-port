@@ -137,8 +137,6 @@ any quality, Max included. Not checked by us in the game at grazing angles.
   code clamps 1 - 40 (anim_cut.cpp:211); 1 - 12 is the slider's range.
 - `throw_potion_reach_pct` "48 cells (about 30 m)" against `throw_max_cells`'
   0.5 m a cell (about 24 m); metres per cell follow the hero's scale.
-- KNOWN_ISSUES 26 (a staff in both hands aims from the wrist) is not mentioned in
-  the `spell_aim_model` comments.
 
 **Keys the plugin never reads** (left in the ini): `[camera] shadow_slope`;
 `[render] build_rate` (now marked); `[hands] xbow_model_roll`, `xbow_model_pitch`,

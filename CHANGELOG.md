@@ -1,7 +1,14 @@
 # What's new in D2R VR
 
-## 0.171 (in work)
+## 0.171
 
+- **Fixed: a staff held in both hands aimed off to the side** (spell aim by the drawn hand or staff, the weapon's weight on, VR F4). The spell and the spell's ray now go along the staff as it
+  is drawn between the two grips, butt to tip, from its tip. In 0.170 they went along the line between the two controllers, and each grip sits a fist's width from its controller - with the
+  hands near each other that line ran far off the staff. (Known issue 26 of 0.170, docs/KNOWN_ISSUES.md.)
+- **On in the settings that come with the mod** (the author's own settings, as he has them): skills on the right trigger and on A ([openxr] skill_rt_a), the RUN / WALK button on the skill
+  panel ([openxr] skill_run_walk) and a spell's aim distance that follows how far the arm is stretched ([bow] aim_distance_by_arm). Each is still its own tick in D2R VR Authentic Settings
+  (the two skill panel ticks: Stereo > Native OpenXR, in the skill panel rows under "Skill panel style"; the aim distance: Weapon Adjust > Aim distance by the arm), and an update that keeps your own settings file changes none
+  of your values.
 - **A first-start guide in the headset** ([onboarding], D2R VR Authentic Settings > Body > First-start guide). The first time you stand in the world
   in first person (F4) on native OpenXR with Controls without BodyWalk, a panel in front of you offers the T-pose measurement (when none is stored:
   the right stick up measures, down goes on), then five short pages of what to press to open what: walking and fighting, the inventory, the map,

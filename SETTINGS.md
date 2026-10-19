@@ -307,12 +307,13 @@ the headset-only ones.
     over the list - All, your class's three skill trees, General / Items - from
     the game's own tables (run `tools/skill_icons/prepare_skill_icons.py` again
     after an update; without the trees there is only the one list). *Skill panel:
-    a RUN / WALK button* (off): a button on the panel's first page that presses
+    a RUN / WALK button* (off in the program; on in the settings that come with the mod since 0.171): a button on the panel's first page that presses
     the game's own run / walk command and shows which one it is on. The command
     itself is a pick of the button lists: *Run / walk switch* in Controls > Buttons
     of the controllers and the headset's Left / Right pages, *D2R key: Run / walk
     switch* in BodyWalk's bindings. Idea after bearstonem/d2r-pcvr (MIT).
-    *Skill panel: skills on the right trigger and on A* (off): in first person with
+    *Skill panel: skills on the right trigger and on A* (off in the program; on in the
+    settings that come with the mod since 0.171): in first person with
     the mod's own controls, the right trigger casts the skill on the game's RT slot
     and the right A the one on its A slot - and with the left trigger held, LT + RT
     and LT + A - through the game's own buttons, so its mana, cooldown and animation.
@@ -928,9 +929,9 @@ or orb *Wand or orb aim point* (20 cells), bare hands *Bare hands aim point* (5)
 (Weapon Adjust > Staff: aim point and correction; below 3 = the game's own point).
 Debug > Aim rays > *Spell's ray* shows where it goes, live: green from the model,
 orange the old line, to the floor (a full ball) or 8 m out (a ring).
-*A spell's aim distance follows how far the arm is stretched* (off, Weapon Adjust >
-Aim distance by the arm, `[bow] aim_distance_by_arm`,
-VR first person F4): as in flat Diablo, where a click near the hero spreads Teeth wide
+*A spell's aim distance follows how far the arm is stretched* (Weapon Adjust >
+Aim distance by the arm, `[bow] aim_distance_by_arm`; off in the program, on in the
+settings that come with the mod since 0.171; VR first person F4): as in flat Diablo, where a click near the hero spreads Teeth wide
 and a far one keeps it in a tight cone - an arm held at the body aims the spell near
 (*Aim point with the arm at the body*, 3 cells), an arm stretched out along the aim
 aims it at the weapon's own distance. Spells only: a wand, an orb, bare hands, a staff

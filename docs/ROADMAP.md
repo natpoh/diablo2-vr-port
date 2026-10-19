@@ -81,7 +81,8 @@ ends:
   (`[render] dim_own_effects`, Body > *Draw the hero's own effects fainter*): the effect's
   "Fade" is set and nothing changes on screen ([issue 25](KNOWN_ISSUES.md)). [repo]
 - **Aim distance by arm** (players' request, 2026-10-18): DONE in 0.170 (`[bow]
-  aim_distance_by_arm`, Weapon Adjust > *Aim distance by the arm*, off). Spells only; a
+  aim_distance_by_arm`, Weapon Adjust > *Aim distance by the arm*; on in the shipped settings
+  since 0.171). Spells only; a
   staff in both hands always far; bows, crossbows and throws unchanged. [repo]
 - **Gestures for skills** (the swing, the throw, the bow's draw and the swap
   over the shoulder are in; the shield bash casts Smite, and Double Swing by the
