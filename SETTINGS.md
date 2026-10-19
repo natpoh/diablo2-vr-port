@@ -719,7 +719,7 @@ ticks the other). The blade's geometry stays in Weapon Adjust and Debug.
 - **Melee skills armed by their button** (F4, off; `[gameplay] melee_skill_armed`) - *A melee skill's button arms it: every hit is that skill*: a pad skill button (B, X, Y, RB, with or
   without LT) whose slot holds a melee attack skill no longer casts it - its press ARMS the skill, like the bow's chosen arrow skill (a short buzz in both hands). Every touch of your blade is
   then the game's attack with that skill - its mana, cooldown, weapon check and animation are the game's, the touched monster its target, one touch one cast; a touch the hero cannot pay is the
-  plain attack and the skill stays armed. The same button again, or one with the plain attack on it, disarms. The skills are the ones the game's Skills.txt gives melee range (h2h): the
+  plain attack and the skill stays armed. The same button again, or one with the plain attack on it, disarms. The tick, and the icon's tick below, are on the headset panel's Melee page too. The skills are the ones the game's Skills.txt gives melee range (h2h): the
   Barbarian's Bash, Stun, Concentrate, Berserk, Frenzy, Double Swing; the Paladin's Zeal, Smite, Sacrifice, Vengeance, Conversion; the Amazon's spear skills; the Druid's Maul, Fire Claws,
   Hunger, Rabies, Fury, Feral Rage; the Assassin's martial arts; Poison Dagger; Cleave - each with its own tick in the groups *Armed by its button: <class>* (`[melee_armed] s<skill>`,
   ticked by default). There too, unticked by default, the four that move the hero: Whirlwind, Leap Attack, Charge, Dragon Flight - ticked, a hit by touch is the game's own cast of it at
@@ -738,7 +738,8 @@ ticks the other). The blade's geometry stays in Weapon Adjust and Debug.
   when the other hand then touches the same monster within *the other hand within, ms* (700) the second strike is the game's own Double Swing instead - its pad button is pressed once and the monster
   you touched is its target, the way the shield bash casts Smite. The skill has to sit on one of the pad's ten skill slots, the hero has to have a level in it and the mana for it (the game's own
   numbers); otherwise the second touch is a normal attack too. *The skill pressed first*: with Frenzy on a slot as well, which of the two. The swings, damage, animation and mana are the game's.
-  The log says every decision once.
+  The log says every decision once. *Double Swing as a combo: every blow after the first* (off, `[hands] double_swing_combo`): no pairs - the first touch on a monster is the normal
+  attack and every following touch on it (either hand, within the window of the last one) is the dual skill: normal, double, double...; another monster or a longer pause starts again.
 - **Direct hit** (experimental, off, offline only) - the touch calls the game's basic attack itself - no animation, no walk-up, no attack-rate wait.
 - **Quick strike** (experimental, a change of the game's timing) - the game lands a melee blow at an action frame of the attack animation (a Paladin's sword: frame 7, 0.28 s
   in); this moves that frame to the start (a slider, 1 by default) so the blow lands about a quarter of a second sooner inside the same attack. The animation's length and the

@@ -14,7 +14,8 @@ namespace doubleswing {
 // Plugin start: the log.
 void Init(const D2RL::PluginContext* ctx);
 // [hands] double_swing_by_hands, double_swing_window_ms (200 .. 2000, 700), double_swing_skill (0 Double Swing first, 1 Frenzy first) from the ini (every read). Off: nothing below does anything.
-void Configure(bool on, float windowMs, int prefer);
+// combo: [hands] double_swing_combo (off by default): the first touch on a monster is the normal attack and EVERY following touch on it within the window, either hand, the dual skill (double_swing.h).
+void Configure(bool on, float windowMs, int prefer, bool combo = false);
 bool On();
 
 // The UI thread (gamestate's read of the hands, 5 times a second; cheap when off): which pad slots hold Double Swing and Frenzy, what is on the attack button, the hero's level in each - from the game's

@@ -2964,6 +2964,11 @@ std::vector<Item> g_items = {
            L"(the game's own numbers: the skill's cost at its level against the hero's mana); otherwise the second touch is a normal attack too. Frenzy the same way when it is the skill on a slot. The swings, the "
            L"damage, the animation and the mana are the game's; nothing is called that attacks. A pair is spent by the dual skill: the next touch starts a new one. With Double Swing on the attack button itself "
            L"every touch casts it already and this adds nothing. The log says every decision once (\"double swing: ...\"). Not tried in the game yet. Unticked: both hands' touches are normal attacks, as before. Live.")),
+    Needs(L"gameplay", L"melee_touch", 1, Needs(L"hands", L"double_swing_by_hands", 1, Toggle(L"hands", L"double_swing_combo", L"Double Swing as a combo: every blow after the first", 0,
+           L"Ticked: a COMBO instead of pairs. The first touch on a monster is the game's normal attack; EVERY following touch on the same monster - either hand - no longer than the window "
+           L"below after the last one is the game's Double Swing (or Frenzy), as long as you keep hitting it: normal, double, double, double... A touch on another monster, or one after a "
+           L"longer pause, starts a new combo with a normal attack. A touch the hero cannot pay (or with no level, no slot) is a normal attack and the combo goes on. Unticked: pairs, as "
+           L"before - the other hand's touch after the first is the dual skill, and the next touch starts a new pair. Live. Not tried in the game yet."))),
     Needs(L"gameplay", L"melee_touch", 1, Needs(L"hands", L"double_swing_by_hands", 1, Slider(L"hands", L"double_swing_window_ms", L"Double Swing: the other hand within, ms", 200, 2000, 50, 700,
            L"How long after one hand's strike on a monster the other hand's strike on the same monster is the second of a pair - the dual skill's. 700 ms is about one swing of the arm and back. Longer: a slower "
            L"second blow still counts; shorter: only a quick one-two does. Live."))),

@@ -147,6 +147,13 @@ inline constexpr Def kDefs[] = {
     // The trigger does not attack (a part of hit by touch, on with it - the way back): only the blade's touch does; a bow and a crossbow keep it ([gameplay] melee_touch_only, vr/melee_trigger.h; the plugin's own controls, F4).
     {L"gameplay", L"melee_touch_only", "Trigger does not attack", "Only the blade's touch attacks; a bow shoots (F4)",
      1.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageMelee, true},
+    // The author (2026-10-19): the skill arming on the panel too - [gameplay] melee_skill_armed (vr/melee_arm.h: a melee skill's pad button arms it, every touch is then that skill) and its icon in
+    // the mana medallion ([gameplay] melee_skill_armed_icon, vr/armed_icon.h). The same keys and defaults as D2R VR Settings > Strikes; which skills arm ([melee_armed]), the icon's sliders and
+    // the bow's icon stay there. Live, F4 only.
+    {L"gameplay", L"melee_skill_armed", "Skill button arms the skill", "Every touch is then that skill (F4)",
+     0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageMelee, true},
+    {L"gameplay", L"melee_skill_armed_icon", "Armed skill in the mana", "Its icon in the mana medallion",
+     1.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageMelee, true},
     //
     // pages 9 and 10, Left and Right: the key bindings, lines of [direct] (the plugin's own controls, vr/direct_layout.h): the value is a pick of the
     // list D2R VR Settings shows (vr/direct_remap.h, named for the box in vr/hset_keys.h), min / max / def are not used (the list's length is
@@ -224,13 +231,14 @@ constexpr int kKeyHide = IndexOf(L"hud", L"hide");
 constexpr int kKeyBeltOn = IndexOf(L"hands", L"belt_models");     // the Belt page's note
 constexpr int kKeyBeltUp = IndexOf(L"hands", L"belt_models_up");
 constexpr int kKeyMeleeTouch = IndexOf(L"gameplay", L"melee_touch");   // the Melee page's tick: its two numbers do nothing without it
+constexpr int kKeyMeleeArmed = IndexOf(L"gameplay", L"melee_skill_armed");   // the Melee page's skill arming (needs the touch)
 constexpr int kKeyGrabTrigger = IndexOf(L"belt", L"grab_trigger");   // the two-button take: the Belt page's last row (it reads the trigger through direct input)
 constexpr int kKeyVersion = IndexOf(L"calibration", L"version");
 constexpr int kKeyEye = IndexOf(L"calibration", L"eye_height_m");
 constexpr int kKeySpan = IndexOf(L"calibration", L"arm_span_m");
 static_assert(kKeyMode >= 0 && kKeyPx >= 0 && kKeyUse >= 0 && kKeyVersion >= 0 && kKeyEye >= 0 && kKeySpan >= 0, "the Video and Body pages' keys are in the table");
 static_assert(kKeySmooth >= 0 && kKeySnap >= 0, "the turn keys are in the table");
-static_assert(kKeyBeltOn >= 0 && kKeyBeltUp >= 0 && kKeyGrabTrigger >= 0 && kKeyMeleeTouch >= 0, "the belt's and the melee page's keys are in the table");
+static_assert(kKeyBeltOn >= 0 && kKeyBeltUp >= 0 && kKeyGrabTrigger >= 0 && kKeyMeleeTouch >= 0 && kKeyMeleeArmed >= 0, "the belt's and the melee page's keys are in the table");
 constexpr int kKeyDirectOn = IndexOf(L"openxr", L"direct_input");   // the Keys pages' note
 constexpr int kKeyBindFirst = IndexOf(L"direct", L"left_trigger");  // the twelve binding keys, one after the other (vr/hset_keys.h kSlots)
 constexpr int kBindCount = 12;

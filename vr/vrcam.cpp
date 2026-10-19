@@ -2194,7 +2194,8 @@ void LoadSettings() {
     g_set.flailWeightPct.store(std::clamp(IniF(L"flail", L"ball_weight_pct", 100.0f), 25.0f, 400.0f));
     g_set.meleeTouch.store(IniB(L"gameplay", L"melee_touch", false));
     meleetrigger::Configure(IniB(L"gameplay", L"melee_touch_only", true));   // F4, hit by touch swinging a weapon (anything but a bow or a crossbow): the trigger's attack is not passed to the game - part of hit by touch, ON by default; 0 = the old way (the plugin's own controls only; vr/melee_trigger.h)
-    doubleswing::Configure(IniB(L"hands", L"double_swing_by_hands", false), IniF(L"hands", L"double_swing_window_ms", 700.0f), (int)IniF(L"hands", L"double_swing_skill", 0.0f));   // F4, hit by touch with a weapon in each hand: the second hand's touch casts the game's own Double Swing / Frenzy (vr/double_swing.h)
+    doubleswing::Configure(IniB(L"hands", L"double_swing_by_hands", false), IniF(L"hands", L"double_swing_window_ms", 700.0f), (int)IniF(L"hands", L"double_swing_skill", 0.0f),
+                           IniB(L"hands", L"double_swing_combo", false));   // F4, hit by touch with a weapon in each hand: the second hand's touch casts the game's own Double Swing / Frenzy (vr/double_swing.h)
     meleearm::Configure(IniB(L"gameplay", L"melee_skill_armed", false));   // F4, hit by touch: a melee attack skill's pad button arms it instead of casting it; every touch is then that skill, the plain attack when the mana is short (vr/melee_arm.h)
     meleearm::ConfigureIcon(IniB(L"gameplay", L"melee_skill_armed_icon", true), IniF(L"gameplay", L"melee_skill_armed_icon_size_pct", armedicon::kSizeDefPct),
                             IniF(L"gameplay", L"melee_skill_armed_icon_depth_pct", armedicon::kDepthDefPct), IniF(L"gameplay", L"melee_skill_armed_icon_opacity_pct", armedicon::kOpacityDefPct),

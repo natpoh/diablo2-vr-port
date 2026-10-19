@@ -22,6 +22,13 @@
   against his mana); half see-through when he cannot - the next hit will be the plain attack - and bright again, eased, when the mana is back. Nothing armed: no icon. The medallion shape of
   the glass orbs only (the full ball, the game's own globes and the palm panel have no bottom to lie on). Unticked: the medallion exactly as before. Needs the new D2R_DepthFog.fx with the
   DLL (OrbIcon, OrbIconTex; an older effect: no icon, and the log says so). Not tried in the game yet. Unit test: cleanroom/tests/armed_icon_test.cpp (vr/armed_icon.h).
+- **The skill arming on the headset panel** (the author: "put its toggle into the overlay's options"): the in-headset settings panel's Melee page has two more rows, "Skill button arms the
+  skill" ([gameplay] melee_skill_armed) and "Armed skill in the mana" ([gameplay] melee_skill_armed_icon) - the same keys and defaults as D2R VR Authentic Settings, applied by themselves. The
+  list of skills, the icon's sliders and the bow's icon stay in D2R VR Authentic Settings (the page is full: six rows). vr/hset_defs.h.
+- **Double Swing as a combo** ([hands] double_swing_combo, off; Settings > Strikes, under "Double Swing by the two hands"; live). The author: "it fires on the next blow at the target, but it
+  must be every next blow, like a combo - I strike, first it is an ordinary blow, and every next one must be like a double swing". Ticked: the first touch on a monster is the normal attack
+  and every following touch on the same monster - either hand - within the window of the last one is the game's Double Swing (or Frenzy): normal, double, double, double...; another monster
+  or a longer pause starts a new combo; a touch the hero cannot pay is a normal attack and the combo goes on. Unticked: the pairs, as before. Not tried in the game yet. vr/double_swing.h.
 - **The skill icon in the mana medallion: size, depth and two opacities** ([gameplay] melee_skill_armed_icon_size_pct / _depth_pct / _opacity_pct / _faint_pct; Settings > Strikes, under
   "Show the armed skill in the mana medallion"; live). The author's wish after trying it: its size (30 - 100 % of the medallion's inner circle, 87.5 as it was) and how deep it lies (100 = on
   the bottom, as it was; 0 = as high as the dome lets it - its rim just under the glass, over a low mana's liquid). The height is the dome's own shape, and the effect finds the icon by the

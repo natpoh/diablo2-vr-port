@@ -50,6 +50,7 @@ const D2RL::PluginContext* g_ctx = nullptr;
 std::atomic<bool> g_on{false};
 std::atomic<float> g_window{(float)kDefaultWindowMs};
 std::atomic<int> g_prefer{0};
+std::atomic<bool> g_combo{false};   // [hands] double_swing_combo
 // What the UI thread read (UiRead): the pad slot of each skill, its level, the skill on A.
 std::atomic<int> g_slot[kSkillCount] = {{-1}, {-1}};
 std::atomic<int> g_level[kSkillCount] = {{-1}, {-1}};
@@ -205,15 +206,18 @@ Facts Gather(uint64_t nowMs) {
 
 void Init(const D2RL::PluginContext* ctx) { g_ctx = ctx; }
 
-void Configure(bool on, float windowMs, int prefer) {
+void Configure(bool on, float windowMs, int prefer, bool combo) {
     const bool was = g_on.exchange(on);
     const float w = (float)ClampWindowMs(windowMs);
     const int p = prefer == 1 ? 1 : 0;
-    const bool changed = on != was || (on && (w != g_window.load() || p != g_prefer.load()));
+    const bool changed = on != was || (on && (w != g_window.load() || p != g_prefer.load() || combo != g_combo.load()));
     g_window.store(w);
     g_prefer.store(p);
+    g_combo.store(combo);
     if (changed) {
-        if (on) LogF("double swing: on - with a weapon in each hand, the second hand's touch on the monster the first hand struck within %.0f ms is %s (it must sit on a pad slot, with a level and the mana)", w,
+        if (on && combo) LogF("double swing: on, as a COMBO ([hands] double_swing_combo) - with a weapon in each hand, the first touch on a monster is the normal attack and every following touch on it, "
+                              "either hand, no more than %.0f ms after the last, is %s (it must sit on a pad slot, with a level and the mana)", w, p == 1 ? "Frenzy, or Double Swing" : "Double Swing, or Frenzy");
+        else if (on) LogF("double swing: on - with a weapon in each hand, the second hand's touch on the monster the first hand struck within %.0f ms is %s (it must sit on a pad slot, with a level and the mana)", w,
                      p == 1 ? "Frenzy, or Double Swing" : "Double Swing, or Frenzy");
         else Log("double swing: off ([hands] double_swing_by_hands)");
     }
@@ -317,7 +321,7 @@ Press Strike(int hand, uint32_t id, uint64_t nowMs, bool dualWield) {
     if (!g_on.load()) return p;
     const Facts f = Gather(nowMs);
     const double window = ClampWindowMs(g_window.load());
-    const Verdict v = g_tracker.Strike(hand, id, nowMs, dualWield, window, f);
+    const Verdict v = g_tracker.Strike(hand, id, nowMs, dualWield, window, f, g_combo.load());
     Tell(hand, id, v, f, window);
     if (v.dual) {
         const shieldsmite::PadPress pp = shieldsmite::SlotPress(v.slot);

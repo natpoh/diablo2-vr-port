@@ -417,6 +417,9 @@ target_compile_options(shield_smite_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 target_sources(d2rl-vrcam PRIVATE vr/double_swing_game.cpp)
 add_executable(double_swing_test cleanroom/tests/double_swing_test.cpp)
 target_compile_options(double_swing_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# [hands] double_swing_combo (vr/double_swing.h Tracker: the combo - every blow after the first on a monster is the dual skill - and the pairs as they were): double_swing_combo_test
+add_executable(double_swing_combo_test cleanroom/tests/double_swing_combo_test.cpp)
+target_compile_options(double_swing_combo_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # [gameplay] melee_skill_armed: a melee attack skill's pad button arms the skill instead of casting it; every hit by touch is then the game's attack with it, the plain attack when the mana is short
 # (vr/melee_arm.h decides: the skills, the press, the pad buttons taken, the hit; melee_arm_game.cpp reads the pad slots, the level and the mana, vrcam's slot-skill hook answers): melee_arm_test
 target_sources(d2rl-vrcam PRIVATE vr/melee_arm_game.cpp)
