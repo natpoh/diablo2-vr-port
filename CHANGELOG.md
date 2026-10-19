@@ -37,7 +37,7 @@
 - **The Amazon's chosen bow skill in the mana medallion** ([bow] quiver_icon, on; Settings > Bow, under the quiver's ticks). The author: "the same for the Amazon - when I choose a skill the
   icon must show inside the mana". The bow skill chosen from the quiver (an orb, a quiver button, the skill panel) shows its icon there while a bow is in hand: full while the hero can pay a
   shot with it (the release's own check), faint when not; the plain arrow: none. The same sliders as the melee icon. Needs [bow] quiver on. Not tried in the game yet.
-- **Which melee skills are armed: a tick each** ([melee_armed] s<skill>; Settings > Strikes, "Armed by its button: <class>"; live). The 34 melee attacks, ticked by default, and the four
+- **Which melee skills are armed: a tick each** ([melee_armed] s<skill>; Settings > Strikes, "Armed by its button:" in the group "Melee skills armed by their button", a row per class; live). The 34 melee attacks, ticked by default, and the four
   attacks that move the hero - Whirlwind, Leap Attack, Charge, Dragon Flight - unticked by default. An unticked skill's button casts it as before; unticking the armed skill disarms it.
 - **Whirlwind armed** (the author ticked it and it "did not work"): it was not in the list at all - Whirlwind, Charge, Leap Attack and Dragon Flight were left out as movement skills, so
   their button passed to the game and cast them as ever, and a hit by touch stayed the plain attack. Ticked now, Whirlwind's button arms it and a hit by touch is the game's own cast of it

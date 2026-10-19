@@ -104,6 +104,8 @@ struct Item {
     COLORREF color = 0;                      // Status: the line's colour now
     bool hidden = false;                     // left out of the page for now (the update row until there is one)
     int col = -1;                            // Group: the column it goes in (0 left); -1 = the shortest column so far (LayoutPage)
+    bool sub = false;                        // Group: a sub-heading inside the group above it (Sub) - it stays in that group's column
+    int across = 0;                          // ... the ticks after it in a grid beside its name, up to this many to a row; 0 = a line of its own
     bool big = false;                        // Button: a large one (the Home page's START)
     int cell = -1;                           // a row of a table (the Strikes tab's kinds): which cell, 0 = the row's label, which starts the row; the others sit beside it (a slider shows its number box only)
     struct ShowFor { const wchar_t* section = nullptr; const wchar_t* key = nullptr; unsigned mask = 0; int item = -1; } showFor;
@@ -167,6 +169,10 @@ Item StartsFromMapped(const wchar_t* oldKey, std::initializer_list<float> map, I
 Item Hide(Item i) { i.hidden = true; return i; }
 // A group in a column of its own choice (0 left); with fewer columns than that it goes in the shortest one.
 Item InColumn(int column, Item i) { i.col = column; return i; }
+// A sub-heading inside the group above it: LayoutPage keeps it and what follows in that group, never in a column of their own. across 0: a line
+// of its own (bold, no rule); otherwise its name sits on the left and the ticks after it in a grid beside it, up to `across` to a row (fewer in a
+// narrow column) - a long list of ticks in a few compact rows.
+Item Sub(const wchar_t* title, int across = 0) { Item i = Group(title); i.sub = true; i.across = across; return i; }
 // A large push button (taller, bigger letters).
 Item Big(Item i) { i.big = true; return i; }
 
@@ -2929,32 +2935,36 @@ std::vector<Item> g_items = {
            L"How deep in the medallion the icon lies: 100 = on the very bottom, under all the liquid (as it first was); 0 = as high as it fits - its rim just under the glass, over the "
            L"liquid when the mana is low. It is the dome's own shape: the bigger the icon, the less room over it (at 100% size it can only lie on the bottom). Seen from the side it "
            L"shifts against the floor like a real thing in the glass. Live."),
+    // (the icon's height over the floor, mm - melee_skill_armed_icon_lift_mm - goes here, after its depth)
     Slider(L"gameplay", L"melee_skill_armed_icon_opacity_pct", L"Skill icon in the mana: opacity, %", 0.0f, 100.0f, 1.0f, 100.0f,
            L"How solid the icon is while the hero can pay the next hit (the shot, for a bow): 100 = fully (as it first was), 0 = not seen. Live."),
     Slider(L"gameplay", L"melee_skill_armed_icon_faint_pct", L"Skill icon in the mana: opacity when the mana is short, %", 0.0f, 100.0f, 1.0f, 35.0f,
            L"How solid the icon is while the hero CANNOT pay the next hit - the hit will be the plain attack (the bow: the plain arrow, or the game's refusal). 35 = as it first was; "
            L"0 = it goes out until the mana is back. The icon eases between the two opacities. Live."),
-    Group(L"Armed by its button: Amazon (F4)"),
+    // Which skills a button arms: in this group with the tick and the icon above (one block, never split over the columns) - the classes under a line of
+    // their own, each one's ticks in a grid of up to three beside its name, in vr/melee_arm.h kRows' order.
+    Sub(L"Armed by its button:"),
+    Sub(L"Amazon", 3),
     ArmedSkill(L"s10", L"Jab"), ArmedSkill(L"s14", L"Power Strike"), ArmedSkill(L"s19", L"Impale"),
     ArmedSkill(L"s24", L"Charged Strike"), ArmedSkill(L"s30", L"Fend"), ArmedSkill(L"s34", L"Lightning Strike"),
-    Group(L"Armed by its button: Necromancer (F4)"),
+    Sub(L"Necromancer", 3),
     ArmedSkill(L"s73", L"Poison Dagger"),
-    Group(L"Armed by its button: Paladin (F4)"),
+    Sub(L"Paladin", 3),
     ArmedSkill(L"s96", L"Sacrifice"), ArmedSkill(L"s97", L"Smite"), ArmedSkill(L"s106", L"Zeal"),
     ArmedSkill(L"s111", L"Vengeance"), ArmedSkill(L"s116", L"Conversion"), ArmedSkill(L"s107", L"Charge", 0, kArmedMoverTip),
-    Group(L"Armed by its button: Barbarian (F4)"),
+    Sub(L"Barbarian", 3),
     ArmedSkill(L"s126", L"Bash"), ArmedSkill(L"s133", L"Double Swing"), ArmedSkill(L"s139", L"Stun"),
     ArmedSkill(L"s144", L"Concentrate"), ArmedSkill(L"s147", L"Frenzy"), ArmedSkill(L"s152", L"Berserk"),
     ArmedSkill(L"s143", L"Leap Attack", 0, kArmedMoverTip), ArmedSkill(L"s151", L"Whirlwind", 0, kArmedMoverTip),
-    Group(L"Armed by its button: Druid (F4)"),
+    Sub(L"Druid", 3),
     ArmedSkill(L"s232", L"Feral Rage"), ArmedSkill(L"s233", L"Maul"), ArmedSkill(L"s238", L"Rabies"),
     ArmedSkill(L"s239", L"Fire Claws"), ArmedSkill(L"s242", L"Hunger"), ArmedSkill(L"s248", L"Fury"),
-    Group(L"Armed by its button: Assassin (F4)"),
+    Sub(L"Assassin", 3),
     ArmedSkill(L"s254", L"Tiger Strike"), ArmedSkill(L"s255", L"Dragon Talon"), ArmedSkill(L"s259", L"Fists of Fire"),
     ArmedSkill(L"s260", L"Dragon Claw"), ArmedSkill(L"s265", L"Cobra Strike"), ArmedSkill(L"s269", L"Claws of Thunder"),
     ArmedSkill(L"s270", L"Dragon Tail"), ArmedSkill(L"s274", L"Blades of Ice"), ArmedSkill(L"s280", L"Royal Strike"),
     ArmedSkill(L"s275", L"Dragon Flight", 0, kArmedMoverTip),
-    Group(L"Armed by its button: Warlock (F4)"),
+    Sub(L"Warlock", 3),
     ArmedSkill(L"s391", L"Cleave"),
     Group(L"Two weapons: Double Swing by the hands (F4)"),
     Needs(L"gameplay", L"melee_touch", 1, Toggle(L"hands", L"double_swing_by_hands", L"Double Swing by the two hands", 0,
@@ -4701,6 +4711,11 @@ void Build(HWND page) {
             groupModes = kBoth;
             continue;
         case Kind::Group:
+            if (it.sub) {   // a part of the group above (Sub)
+                it.modes &= groupModes;
+                it.name = Make(page, L"STATIC", it.label, SS_LEFT | SS_ENDELLIPSIS | SS_NOPREFIX, id);
+                break;
+            }
             it.modes &= tabModes;
             groupModes = it.modes;
             it.name = Make(page, L"STATIC", it.label, SS_LEFT | SS_NOPREFIX, id);
@@ -4898,16 +4913,16 @@ int ShownTabIndex() {
 }
 
 // Places the current tab's groups in as many columns as fit, each group in the
-// shortest column so far; hides the other tabs' controls.
+// shortest column so far (its sub-headings with it); hides the other tabs' controls.
 void LayoutPage() {
     RECT pr; GetClientRect(g_page, &pr);
     const int W = pr.right, m = S(14), gap = S(32), rowH = S(kRowH), headH = S(34), groupGap = S(16);
     struct Span { size_t first, end; };
     std::vector<Span> groups;
     for (size_t i = 0; i < g_items.size(); ++i) {
-        if (g_items[i].kind != Kind::Group || !ShownNow(g_items[i])) continue;
+        if (g_items[i].kind != Kind::Group || g_items[i].sub || !ShownNow(g_items[i])) continue;
         size_t e = i + 1;
-        while (e < g_items.size() && g_items[e].kind != Kind::Group && g_items[e].kind != Kind::Tab) ++e;
+        while (e < g_items.size() && !(g_items[e].kind == Kind::Group && !g_items[e].sub) && g_items[e].kind != Kind::Tab) ++e;
         groups.push_back({i, e});
     }
     const int fit = (W - 2 * m + gap) / (S(400) + gap);
@@ -4927,9 +4942,27 @@ void LayoutPage() {
         places.push_back({head.name, x, y + S(4), colW, S(20)});
         places.push_back({head.line, x, y + S(26), colW, 2});
         y += headH;
+        int gridX = -1, gridN = 1, gridK = 0;   // a sub-heading's grid of ticks: where its cells start, how many to a row, the next one's place
         for (size_t i = g.first + 1; i < g.end; ++i) {
             const Item& it = g_items[i];
             if (!(it.modes & PlatformBit()) || it.hidden || it.off) continue;
+            if (it.kind == Kind::Group) {   // a sub-heading (Sub): its name on the left of its row, its ticks beside it - or a line of its own
+                const int nameW = it.across > 0 ? std::clamp(colW * 24 / 100, S(90), S(150)) : colW;
+                places.push_back({it.name, x, y + S(6), nameW - S(8), S(20)});
+                gridX = it.across > 0 ? x + nameW : -1;
+                gridN = std::clamp((colW - nameW) / S(120), 1, std::max(1, it.across));
+                gridK = 0;
+                y += rowH;   // its first row (the first ticks go up into it)
+                continue;
+            }
+            if (gridX >= 0 && (it.kind == Kind::Toggle || it.kind == Kind::Invert) && it.cell < 0) {
+                const int cw = (x + colW - gridX) / gridN;
+                if (gridK > 0 && gridK % gridN == 0) y += rowH;
+                places.push_back({it.ctl, gridX + gridK % gridN * cw, y - rowH + S(4), cw - S(4), S(24)});
+                ++gridK;
+                continue;
+            }
+            gridX = -1;   // anything else ends the grid and takes a row of its own below it
             if (it.cell >= 0) {   // a row of a table: its cells side by side (cell 0, the label, starts the row and takes its height; a slider shows its number box only)
                 const int labelCol = colW * 27 / 100, cw = (colW - labelCol) / 6;
                 const int cx = it.cell == 0 ? x : x + labelCol + (it.cell - 1) * cw, w2 = (it.cell == 0 ? labelCol : cw) - S(4);

@@ -721,7 +721,7 @@ ticks the other). The blade's geometry stays in Weapon Adjust and Debug.
   then the game's attack with that skill - its mana, cooldown, weapon check and animation are the game's, the touched monster its target, one touch one cast; a touch the hero cannot pay is the
   plain attack and the skill stays armed. The same button again, or one with the plain attack on it, disarms. The tick, and the icon's tick below, are on the headset panel's Melee page too. The skills are the ones the game's Skills.txt gives melee range (h2h): the
   Barbarian's Bash, Stun, Concentrate, Berserk, Frenzy, Double Swing; the Paladin's Zeal, Smite, Sacrifice, Vengeance, Conversion; the Amazon's spear skills; the Druid's Maul, Fire Claws,
-  Hunger, Rabies, Fury, Feral Rage; the Assassin's martial arts; Poison Dagger; Cleave - each with its own tick in the groups *Armed by its button: <class>* (`[melee_armed] s<skill>`,
+  Hunger, Rabies, Fury, Feral Rage; the Assassin's martial arts; Poison Dagger; Cleave - each with its own tick under *Armed by its button:* in the same group, a row of ticks per class (`[melee_armed] s<skill>`,
   ticked by default). There too, unticked by default, the four that move the hero: Whirlwind, Leap Attack, Charge, Dragon Flight - ticked, a hit by touch is the game's own cast of it at
   the touched monster (the hero whirls, leaps, charges or flies to it, and you with him; Stand Still is not held for it). An unticked skill, spells, buffs and warcries cast from their
   buttons as ever; a bow, a crossbow or a thrown weapon is not touched. Needs the plain attack on the attack button (A).
