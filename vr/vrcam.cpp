@@ -4205,8 +4205,8 @@ bool VrViewInner(const d2rcam::WorldView& in, float out[16]) {
             float proj[4]; memcpy(proj, ro.proj, sizeof proj);
             ro = sv;
             if (projOk) memcpy(ro.proj, proj, sizeof proj); else ro.proj_ok = false;
-            const float sh = 2.0f * g_eyeHalf.load() * (o == 1 ? 1.0f : -1.0f);
-            ro.eyeRel[0] += right.x * sh; ro.eyeRel[1] += right.y * sh; ro.eyeRel[2] += right.z * sh;
+            const turnwarp::Vec at = turnwarp::OtherEyeAt({sv.eyeRel[0], sv.eyeRel[1], sv.eyeRel[2]}, {right.x, right.y, right.z}, g_eyeHalf.load(), o ^ 1);   // (turn_math_test: overlay camera)
+            ro.eyeRel[0] = at.x; ro.eyeRel[1] = at.y; ro.eyeRel[2] = at.z;
         }
         ReleaseSRWLockExclusive(&g_skyLock);
     }
@@ -9758,29 +9758,73 @@ void XrEnd() { t_ours = true; xr::EndPair(); t_ours = false; }
 // Eyes by turns with the other eye made on the GPU (xr::TurnMake, [stereo] turn_warp): what D2R_DepthFog.fx draws without the scene's
 // depth - the game's labels laid back, the wrist medallions, the bow's orbs, the hitboxes, the low-life vignette - is left out of the
 // picture the warp moves (OverlaysApart, set at the effects' begin for this present) and drawn after it for each eye on its own picture
-// (D2R_Overlay / D2R_Overlay_R): moved with the depth behind them they showed twice in the eye made (the author, 2026-10-20).
-reshade::api::effect_technique g_ovTech[2]{};   // found with the effect's techniques (fx OnFinishEffects)
+// (D2R_Overlay / D2R_Overlay_R on the eye drawn, D2R_OverlayMade / D2R_OverlayMade_R on the eye made): moved with the depth behind them
+// they showed twice in the eye made (the author, 2026-10-20). Which depth hides them in an eye is its technique's, not a uniform: the
+// eye made is the other one every frame, and ReShade writes the effect's uniforms over its one buffer at the next frame's effects -
+// GPU-bound, before this frame's overlays have run - so flags per eye were read the next frame's way round and the eye made's
+// medallions were hidden by the other eye's hand: doubled, always (the labels, which read no depth, not).
+reshade::api::effect_technique g_ovTech[2][2]{};   // [made][eye], found with the effect's techniques (fx OnFinishEffects)
 std::atomic<bool> g_ovApart{false};             // OverlaysApart as this present's effects had it
 thread_local bool t_overlay = false;            // inside our own overlay render (the effects' events, if they come, are not a present's)
-bool OverlaysWanted() { return NativeByTurns() && xr::TurnWarpOn() && g_ovTech[0].handle && g_ovTech[1].handle; }   // the mode (any thread)
+bool OverlayTechs() { return g_ovTech[0][0].handle && g_ovTech[0][1].handle && g_ovTech[1][0].handle && g_ovTech[1][1].handle; }
+bool OverlaysWanted() { return NativeByTurns() && xr::TurnWarpOn() && OverlayTechs(); }   // the mode (any thread)
 bool OverlaysNow() { return OverlaysWanted() && xr::TurnsNow(); }   // ... and this pair is made so (the draw thread, inside the pair)
-// `eye`'s overlays over `target`: the back buffer (PRESENT) or our picture of the other eye (RENDER_TARGET), viewed as `fmt`.
-void DrawOverlays(reshade::api::effect_runtime* rt, ID3D12Resource* target, int eye, DXGI_FORMAT fmt, bool backBuffer) {
+// What the overlays by turns did, told every 10 s (TellOverlays), so a medallion seen twice says by which way it came in: drawn into
+// the picture the warp moves (the effect did not leave them out this present: the warp then carries them into the eye made, with the
+// depth behind them), the eye the effects took as drawn not the present's (the eye made then hidden by the wrong depth), or drawn from
+// a camera off the one its picture shows (checked against the warp's cameras, fx: the overlays' cameras). The draw thread (the present
+// and its effects' events are one thread).
+struct OverlayTell {
+    uint32_t presents = 0, apart = 0, inPicture = 0, drawn = 0, made = 0, madeDrawn = 0, madeSkipped = 0, eyeOff = 0, cams = 0, camFallback = 0;
+    float gapAt[2] = {}, gapTurn[2] = {};   // the largest miss of each eye's overlay camera this window: world units, about radians
+    const char* why = "";                   // why not apart, the last time
+    ULONGLONG since = 0;
+};
+OverlayTell g_ovTell;
+int g_ovDrawnEye = -1;   // the eye the effects of this present took as drawn (OnBeginEffects)
+const char* OverlaysWhyNot() {
+    if (!OverlayTechs()) return "the effect has no D2R_Overlay(_R) / D2R_OverlayMade(_R) - an older D2R_DepthFog.fx";
+    if (!NativeByTurns()) return "not native OpenXR by turns";
+    if (!xr::TurnWarpOn()) return "[stereo] turn_warp off";
+    return "the pair was not made by turns when the effects began";
+}
+void TellOverlays(float upm, float gapCm) {
+    OverlayTell& t = g_ovTell;
+    const ULONGLONG now = GetTickCount64();
+    if (!t.since) t.since = now;
+    if (now - t.since < 10000) return;
+    const float cm = upm > 0.0f ? 100.0f / upm : 0.0f;
+    char camLine[256] = "";
+    if (t.cams)
+        snprintf(camLine, sizeof camLine, "; their cameras off the pictures' by up to %.1f / %.1f cm and %.3f / %.3f rad (left / right; 0 = on the picture, "
+                 "the eyes' gap %.1f cm = the other eye's place, shown twice)%s", t.gapAt[0] * cm, t.gapAt[1] * cm, t.gapTurn[0], t.gapTurn[1], gapCm,
+                 t.camFallback ? " - an eye's view not there, the left one's taken" : "");
+    LogF("vrcam: eyes by turns - overlays, 10 s: %u presents; the effect left them out of the picture the warp moves %u, drew them into it %u%s%s; "
+         "drawn on the eye drawn %u, on the eye made %u of %u made%s; the eye the effects took as drawn not the present's %u%s",
+         t.presents, t.apart, t.inPicture, t.inPicture ? " - " : "", t.inPicture ? t.why : "", t.drawn, t.madeDrawn, t.made,
+         t.madeSkipped ? " (none there: [stereo] turn_overlays_made=0)" : "", t.eyeOff, camLine);
+    t = OverlayTell{};
+    t.since = now;
+}
+// `eye`'s overlays over `target`: the back buffer (PRESENT, the eye drawn) or our picture of the other eye (RENDER_TARGET, made), viewed as `fmt`.
+bool DrawOverlays(reshade::api::effect_runtime* rt, ID3D12Resource* target, int eye, DXGI_FORMAT fmt, bool backBuffer) {
     using namespace reshade::api;
-    if (!rt || !target || !g_ovTech[eye & 1].handle) return;
+    const effect_technique tech = g_ovTech[backBuffer ? 0 : 1][eye & 1];
+    if (!rt || !target || !tech.handle) return false;
     device* dev = rt->get_device();
     const resource res{(uint64_t)target};
     resource_view rtv{0};   // made and let go each time: our picture may be made again at the same address
-    if (!dev->create_resource_view(res, resource_usage::render_target, resource_view_desc((format)fmt), &rtv)) return;
+    if (!dev->create_resource_view(res, resource_usage::render_target, resource_view_desc((format)fmt), &rtv)) return false;
     command_queue* q = rt->get_command_queue();
     command_list* cl = q->get_immediate_command_list();
     if (backBuffer) cl->barrier(res, resource_usage::present, resource_usage::render_target);
     t_overlay = true;
-    rt->render_technique(g_ovTech[eye & 1], cl, rtv, rtv);
+    rt->render_technique(tech, cl, rtv, rtv);
     t_overlay = false;
     if (backBuffer) cl->barrier(res, resource_usage::render_target, resource_usage::present);
     q->flush_immediate_command_list();
     dev->destroy_resource_view(rtv);   // (its descriptor was copied into the list when it was recorded)
+    return true;
 }
 
 void XrPresent(reshade::api::effect_runtime* rt, ID3D12Resource* bb) {
@@ -9800,13 +9844,27 @@ void XrPresent(reshade::api::effect_runtime* rt, ID3D12Resource* bb) {
     const bool apart = turns && g_ovApart.load();
     const DXGI_FORMAT fmt = bb ? bb->GetDesc().Format : DXGI_FORMAT_UNKNOWN;
     if (turns) xr::TurnKeep(pairEye, bb);
-    if (apart) DrawOverlays(rt, bb, pairEye, fmt, true);
+    OverlayTell& tell = g_ovTell;
+    if (turns) {
+        ++tell.presents;
+        if (apart) ++tell.apart;
+        else { ++tell.inPicture; tell.why = OverlaysWhyNot(); }
+        if (g_ovDrawnEye != pairEye) ++tell.eyeOff;
+    }
+    if (apart && DrawOverlays(rt, bb, pairEye, fmt, true)) ++tell.drawn;
     xr::OnPresent(dev, q, bb, pairEye);
     if (turns)
         if (ID3D12Resource* made = xr::TurnMake()) {
-            if (apart) DrawOverlays(rt, made, pairEye ^ 1, fmt, false);
+            ++tell.made;
+            // [stereo] turn_overlays_made=0 (the author's idea, a test): none on the eye made - the eye drawn's alone
+            if (apart && !xr::TurnOverlaysMade()) ++tell.madeSkipped;
+            else if (apart && DrawOverlays(rt, made, pairEye ^ 1, fmt, false)) ++tell.madeDrawn;
             xr::TurnFinish();
         }
+    if (turns) {
+        const float upm = std::max(1e-3f, xr::TurnViewNow().upm);
+        TellOverlays(upm, 2.0f * g_eyeHalf.load() * 100.0f / upm);
+    }
     t_ours = false;
 }
 
@@ -15420,7 +15478,7 @@ int g_iconUpSkill = -1, g_iconTry = -1;
 uint32_t g_iconUpRev = 0;
 uint64_t g_iconUpVar = 0;
 
-void Forget(reshade::api::effect_runtime*) { g_tech[0] = g_tech[1] = {0}; replay::g_rightTech = {0}; replay::g_ovTech[0] = replay::g_ovTech[1] = {0}; g_pieceBound[0] = g_pieceBound[1] = g_pieceBound[2] = g_pieceBound[3] = 0; g_madeBound = 0; replay::g_depthBound = 0; g_iconUpSkill = g_iconTry = -1; }
+void Forget(reshade::api::effect_runtime*) { g_tech[0] = g_tech[1] = {0}; replay::g_rightTech = {0}; replay::g_ovTech[0][0] = replay::g_ovTech[0][1] = replay::g_ovTech[1][0] = replay::g_ovTech[1][1] = {0}; g_pieceBound[0] = g_pieceBound[1] = g_pieceBound[2] = g_pieceBound[3] = 0; g_madeBound = 0; replay::g_depthBound = 0; g_iconUpSkill = g_iconTry = -1; }
 
 void SetFloats(reshade::api::effect_runtime* rt, const char* name, const float* v, size_t n) {
     const reshade::api::effect_uniform_variable u = rt->find_uniform_variable("D2R_DepthFog.fx", name);
@@ -15829,7 +15887,9 @@ void OnFinishEffects(reshade::api::effect_runtime* rt, reshade::api::command_lis
     if (!g_tech[1].handle) g_tech[1] = rt->find_technique("D2R_DepthFog.fx", "D2R_DepthFog_R");
     replay::g_rightTech = g_tech[1];
     for (int e = 0; e < 2; ++e)   // eyes by turns: the overlays drawn apart (replay::DrawOverlays); an older effect has none - drawn in the picture, as before
-        if (!replay::g_ovTech[e].handle) replay::g_ovTech[e] = rt->find_technique("D2R_DepthFog.fx", e ? "D2R_Overlay_R" : "D2R_Overlay");
+        for (int m = 0; m < 2; ++m)   // [0] the eye drawn's, [1] the eye made's
+            if (!replay::g_ovTech[m][e].handle)
+                replay::g_ovTech[m][e] = rt->find_technique("D2R_DepthFog.fx", m ? (e ? "D2R_OverlayMade_R" : "D2R_OverlayMade") : (e ? "D2R_Overlay_R" : "D2R_Overlay"));
     if (!g_tech[0].handle) { hud::SetPictureReady(false); return; }
     // Off while a menu is open: the fog lies over the whole picture, the
     // inventory and trade panels included, and darkened them.
@@ -16381,7 +16441,7 @@ void OnBeginEffects(reshade::api::effect_runtime* rt, reshade::api::command_list
     SetBool(rt, "OwnDepth", own);   // ours (VR, the square window) or ReShade's DEPTH (scenedepth::)
     scenedepth::Bind(rt, cl);   // before the replay reads which depth the effects have
     {   // eyes by turns, the other eye made: the overlays apart this present (replay::DrawOverlays). In the eye made the scene's depth bound
-        // is the other eye's: nothing of it hides them there (OverlayNoHide, as in the try the author saw right) - unless [stereo]
+        // is the other eye's: nothing of it hides them there (D2R_OverlayMade, as in the try the author saw right) - unless [stereo]
         // turn_overlay_depth: then its own depth, moved with its picture (xr::TurnMadeDepth, bound once as D2RVR_DEPTH_MADE - a binding
         // drains the GPU, so only when it is another texture or the effects reloaded). Never the drawn eye's depth for the eye made: an
         // orb on the wrist set against the other eye's hand showed twice.
@@ -16408,12 +16468,11 @@ void OnBeginEffects(reshade::api::effect_runtime* rt, reshade::api::command_list
             made = res && res == g_madeBound && gen == g_madeBoundGen;
         }
         const int drawn = g_eye.load() & 1;
+        replay::g_ovDrawnEye = drawn;   // (XrPresent: the present's eye should be the same)
         SetBool(rt, "OverlaysApart", apart);
-        for (int e = 0; e < 2; ++e) {   // (cleanroom/tests/turn_math_test.cpp: overlay)
-            const turnwarp::OverlayDepthFrom from = turnwarp::OverlayDepthOf(apart, made, drawn, e);
-            SetBool(rt, e ? "OverlayNoHide1" : "OverlayNoHide0", from == turnwarp::OverlayDepthFrom::Nothing);
-            SetBool(rt, e ? "OverlayMade1" : "OverlayMade0", from == turnwarp::OverlayDepthFrom::Made);
-        }
+        // the eye made's depth: its technique's (D2R_OverlayMade), never a flag per eye - those flip every frame (replay::g_ovTech); this one
+        // changes only with the binding (cleanroom/tests/turn_math_test.cpp: overlay)
+        SetBool(rt, "OverlayMadeOn", turnwarp::OverlayDepthOf(apart, made, drawn, drawn ^ 1) == turnwarp::OverlayDepthFrom::Made);
     }
     if (replay::g_on.load()) replay::g_rt = rt;
     if (replay::g_on.load()) {   // the depth buffer our effect reads: replay keeps the left eye's for its present
@@ -16748,10 +16807,24 @@ void OnBeginEffects(reshade::api::effect_runtime* rt, reshade::api::command_list
             AcquireSRWLockShared(&g_skyLock);
             sv[0] = SkyBack(AfrOn() ? 0 : eye); sv[1] = SkyBack(AfrOn() ? 1 : eye);
             ReleaseSRWLockShared(&g_skyLock);
+            // eyes by turns: each eye's overlay camera against the camera its picture shows (the warp's, xr::TurnViewNow) - off by the eyes'
+            // gap, an orb on the wrist lies where the other eye sees it and shows twice (replay::TellOverlays; turn_math_test: overlay camera)
+            const xr::TurnView tv = replay::OverlaysWanted() ? xr::TurnViewNow() : xr::TurnView{};
+            if (tv.ok) ++replay::g_ovTell.cams;
             for (int e = 0; e < 2; ++e) {
-                const SkyView& s = sv[e].axes_ok && sv[e].proj_ok ? sv[e] : sv[0];
+                const bool ownView = sv[e].axes_ok && sv[e].proj_ok;
+                const SkyView& s = ownView ? sv[e] : sv[0];
                 float off[3];
                 for (int i = 0; i < 3; ++i) off[i] = s.eyeRel[i] - g_eyeFromLook[i].load();
+                if (tv.ok) {
+                    const turnwarp::Camera picture{{tv.at[e][0], tv.at[e][1], tv.at[e][2]}, {tv.turn[0], tv.turn[1], tv.turn[2], tv.turn[3]}, {}, true};
+                    const turnwarp::Vec at{g_eyeWorld[0].load() + off[0], g_eyeWorld[1].load() + off[1], g_eyeWorld[2].load() + off[2]};   // (the effect: from where the hands hang)
+                    const turnwarp::CameraGap g = turnwarp::GapOf(picture, at, {s.axes[0], s.axes[1], s.axes[2]}, {s.axes[3], s.axes[4], s.axes[5]},
+                                                                  {s.axes[6], s.axes[7], s.axes[8]});
+                    replay::g_ovTell.gapAt[e] = std::max(replay::g_ovTell.gapAt[e], g.at);
+                    replay::g_ovTell.gapTurn[e] = std::max(replay::g_ovTell.gapTurn[e], g.turn);
+                    if (!ownView) ++replay::g_ovTell.camFallback;
+                }
                 char n[16];
                 snprintf(n, sizeof n, "PhantomEye%d", e); SetFloats(rt, n, off, 3);
                 if (!s.axes_ok || !s.proj_ok) continue;

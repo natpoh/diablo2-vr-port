@@ -389,8 +389,8 @@ void Gpu::ClearMadeDepth(ID3D12GraphicsCommandList* list) {
     b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
     b.Transition = {madeDepth_, D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES, readable, D3D12_RESOURCE_STATE_RENDER_TARGET};
     list->ResourceBarrier(1, &b);
-    const float far[4] = {0, 0, 0, 0};
-    list->ClearRenderTargetView(rtvDepth, far, 0, nullptr);
+    const float farZ[4] = {0, 0, 0, 0};
+    list->ClearRenderTargetView(rtvDepth, farZ, 0, nullptr);
     b.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
     b.Transition.StateAfter = readable;
     list->ResourceBarrier(1, &b);

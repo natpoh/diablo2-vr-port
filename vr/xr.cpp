@@ -120,6 +120,7 @@ struct Cfg {
     bool turnWarp = true;     // [stereo] turn_warp: by turns, the eye not drawn made on the GPU (vr/turn_warp.h); 0 = as last drawn, at its own pose
     bool turnFromDrawn = true;   // [stereo] turn_from_drawn: ... with the eye drawn this frame moved across over it (0: its own last picture alone)
     bool turnOverlayDepth = false;   // [stereo] turn_overlay_depth: the made eye's depth moved with it, its overlays hidden by it (0: hidden by nothing)
+    bool turnOverlaysMade = true;    // [stereo] turn_overlays_made: the overlays drawn on the eye made too, from its own camera (0: on the eye drawn alone - a test)
     bool frameProfile = true; // frame_profile: Steam Frame's controllers in their own layout when the runtime offers it (vr/xr_profiles.h); taken at a session start
     bool indexGripForce = false;   // index_grip_force: an Index hand's grip is how hard it squeezes (squeeze/force), not the fingers round the handle
     bool menusWaitTracking = true;   // menus_wait_tracking: the flat picture / menu panel placed only once the head is tracked, again after a focus loss (vr/anchor_gate.h)
@@ -3782,6 +3783,16 @@ void LoadSettings(const wchar_t* ini) {
                              : "vrcam: openxr - eyes by turns: the made eye's overlays hidden by nothing of the scene ([stereo] turn_overlay_depth=0)");
         }
         g_cfg.turnOverlayDepth = overlayDepth;
+        // the author's idea ("draw them only on their native frames", 2026-10-20): the overlays on the eye drawn this frame alone - a
+        // test of where a second medallion comes from (vrcam's 10 s overlay line); 1: each eye's own, the eye made's from its camera
+        const bool overlaysMade = GetPrivateProfileIntW(L"stereo", L"turn_overlays_made", 1, ini) != 0;
+        static int saidMade = -1;
+        if (on && turns && warp && (int)overlaysMade != saidMade) {
+            saidMade = overlaysMade;
+            Log(overlaysMade ? "vrcam: openxr - eyes by turns: the overlays drawn on each eye's own picture, the eye made's from its own camera ([stereo] turn_overlays_made=1)"
+                             : "vrcam: openxr - eyes by turns: the overlays drawn on the eye drawn this frame alone, none on the eye made - a test ([stereo] turn_overlays_made=0)");
+        }
+        g_cfg.turnOverlaysMade = overlaysMade;
     }
     g_cfg.bareHands = f(L"bare_hands", 0.0f) != 0.0f;
     g_cfg.frameProfile = f(L"frame_profile", 1.0f) != 0.0f;   // (taken at the next session start)
@@ -4380,6 +4391,13 @@ void SetTurnDepth(void* resource, uint32_t viewFormat, float scaleX, float scale
 }
 
 bool TurnWarpOn() { return g_cfg.on && g_cfg.byTurns && g_cfg.turnWarp; }
+bool TurnOverlaysMade() { return g_cfg.turnOverlaysMade; }
+TurnView TurnViewNow() {
+    AcquireSRWLockShared(&g_turnLock);
+    const TurnView v = g_turnView;
+    ReleaseSRWLockShared(&g_turnLock);
+    return v;
+}
 void* TurnMadeDepth(uint32_t* gen) {
     if (gen) *gen = g_turnGpu.MadeDepthGen();
     return g_cfg.turnOverlayDepth ? g_turnGpu.MadeDepth() : nullptr;

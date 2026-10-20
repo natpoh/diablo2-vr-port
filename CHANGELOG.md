@@ -43,6 +43,29 @@
     one's address is bound again), and a frame whose eye was not made (its last picture as it was) clears it (nothing hides) rather
     than leave an older frame's. Copy the DLL and D2R_DepthFog.fx together. Unit test: turn_math_test *overlay* (which depth hides
     which eye's overlays); the effect compiles with ReShade's FX compiler (6.3.3).
+  - **Fixed after the author's fourth try: "still doubled - always, standing still too; only the wrist medallions and the bow's
+    orbs, the labels, the HUD and the doll not; they simply go into both frames".** The picture the warp moves had none of them
+    (each eye's kept before they are drawn) and each eye's were drawn from its own camera - but which depth hides them was told
+    to the effect by a flag per eye (`OverlayNoHide0/1`), and which eye is the made one flips every frame. On D3D12 ReShade keeps
+    one constant buffer per effect, in memory the CPU writes, and copies the uniforms into it at every technique it renders -
+    the next frame's effects overwrite it while the graphics card, running a frame behind, has this frame's overlays still to
+    draw (ReShade 6.3.3 runtime.cpp `render_technique`: `map_buffer_region(write_discard)`, no second copy). So the eye made's
+    overlays read the next frame's flags - "this eye is drawn, the game's depth hides" - and were cut by the game's depth, which
+    is the other eye's: a medallion with the other eye's hand cut out of it, every frame, the second "copy" the author saw. Only
+    what reads the depth (the medallions, the bow's orbs, the merc tint, the arrow's glow) was hit; the labels and the HUD read no
+    flags that flip. Now the eye made has techniques of its own, `D2R_OverlayMade` / `D2R_OverlayMade_R` (the same passes,
+    `made` in the effect's `Phantom`: nothing of the scene hides them there, or with `turn_overlay_depth` its moved depth) -
+    which eye is which is the technique vrcam renders, never a uniform; the one flag left, `OverlayMadeOn`, changes only with
+    that setting. **The DLL and D2R_DepthFog.fx go together** (an older effect has no `D2R_OverlayMade`: the overlays are then
+    drawn into the picture as before eyes by turns, and the log says so). The log, every 10 s while the eyes go by turns
+    (`vrcam: eyes by turns - overlays, 10 s`): how many presents left the overlays out of the picture the warp moves (else why
+    not), how many drew them on the eye drawn and on the eye made, whether the eye the effects took as drawn was the present's,
+    and how far each eye's overlay camera is from the camera its picture shows (0 cm; the eyes' gap would mean the other eye's
+    place - shown twice). New test key `[stereo] turn_overlays_made` (1; 0 = the author's idea, "draw them only on their native
+    frames": none on the eye made, each eye shows them every other frame). Also: `turn_warp.cpp` built with MSVC again (`far`
+    is a Windows macro; the local is `farZ`). Unit test: turn_math_test *overlay camera* (the eye drawn's camera moved across
+    the gap is the eye made's, and the wrist orb from it lands on the made picture's wrist; unmoved, a tenth of the picture
+    away); the effect compiles with ReShade's FX compiler (6.3.3). Not seen in the headset.
   - **Fixed: "the doll keeps coming off and goes twice as big".** Three checks meant for the two passes of one game frame took the
     eyes by turns' two frames for one: the hero's facing given up for the memory search (`StructFreshness`, the facing candidates'
     late / bad counts - a wrong copy of his matrix, of another scale, could be picked: the camera height, the world's scale and the

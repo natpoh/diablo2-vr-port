@@ -355,10 +355,9 @@ sampler2D FogDepthRsSmp { Texture = FogDepthRsTex; MinFilter = POINT; MagFilter 
 uniform bool OwnDepth < hidden = true; > = false;
 // vrcam's eyes by turns with the other eye made on the GPU: the overlays apart (see D2R_Overlay at the end)
 uniform bool OverlaysApart < hidden = true; > = false;
-uniform bool OverlayNoHide0 < hidden = true; > = false;   // that eye's picture is the one made, its depth not: nothing of the scene hides an overlay there
-uniform bool OverlayNoHide1 < hidden = true; > = false;
-uniform bool OverlayMade0 < hidden = true; > = false;   // that eye's picture is the one made: its depth is D2RVR_DEPTH_MADE (moved with it), not the game's
-uniform bool OverlayMade1 < hidden = true; > = false;   // (vrcam [stereo] turn_overlay_depth, off by default)
+// The eye made's overlays (D2R_OverlayMade / _R) hidden by D2RVR_DEPTH_MADE, its own depth moved with its picture (vrcam [stereo]
+// turn_overlay_depth, off by default); false: by nothing. Which eye is the made one is the technique's, never a uniform: see Phantom.
+uniform bool OverlayMadeOn < hidden = true; > = false;
 texture2D OverlayMadeDepthTex : D2RVR_DEPTH_MADE;          // vrcam's: R32_FLOAT, reverse-Z near / distance like the game's, the picture's own size
 sampler2D OverlayMadeDepthSmp { Texture = OverlayMadeDepthTex; MinFilter = POINT; MagFilter = POINT; };
 
@@ -2734,38 +2733,40 @@ float3 QuiverArrowFx(float3 c, float3 ro, float3 rd, float3 back, float sceneZ)
 // vrcam, native OpenXR with the eyes by turns and the other eye made on the GPU ([stereo] turn_warp): everything drawn here without the
 // scene's depth (the labels, the wrist medallions, the bow's orbs, the hitboxes, the low-life vignette) is left out of the picture the
 // warp moves - moved with the depth behind it, it showed twice in the eye made (the author, 2026-10-20) - and drawn after it, for each eye
-// on its own picture, by D2R_Overlay / D2R_Overlay_R below (vrcam render_technique). OverlayNoHide0/1: that picture is the eye made and
-// the scene's depth bound is the other eye's - nothing hides an orb there (never that depth: an orb on the wrist set against the other
-// eye's hand showed twice, the author, 2026-10-20). OverlayMade0/1 ([stereo] turn_overlay_depth): its scene depth is the one the warp
-// moved with it (the author's idea: the last frame's depth moved by the same vectors as the picture), so a hand or the bow in front hides it.
-float OverlayDepth(float2 uv, int eye)
+// on its own picture, by D2R_Overlay / D2R_Overlay_R (the eye drawn this frame) and D2R_OverlayMade / D2R_OverlayMade_R (the eye made)
+// below (vrcam render_technique). `made`: the picture is the eye made, and the scene's depth bound is the other eye's - nothing hides an
+// orb there (never that depth: an orb on the wrist set against the other eye's hand showed twice, the author, 2026-10-20), or with
+// OverlayMadeOn ([stereo] turn_overlay_depth) the depth the warp moved with it. It is the technique's, not a uniform: the eye made is the
+// other one every frame, and ReShade writes an effect's uniforms over the one buffer at the next frame's effects while the GPU may still
+// be drawing this frame's - per-eye flags that flipped every frame were read the next frame's way round, and the eye made's medallions
+// were hidden by the other eye's hand after all: doubled, always, the labels (which read no depth) not (the author, 2026-10-20).
+float OverlayDepth(float2 uv, int eye, bool made)
 {
-    if (eye == 0 ? OverlayMade0 : OverlayMade1) return tex2Dlod(OverlayMadeDepthSmp, float4(uv, 0, 0)).x;
-    if (eye == 0 ? OverlayNoHide0 : OverlayNoHide1) return 0.0;
+    if (made) return OverlayMadeOn ? tex2Dlod(OverlayMadeDepthSmp, float4(uv, 0, 0)).x : 0.0;
     return DepthWidth() < 16 ? 0.0 : DepthAt(UpsideDown ? float2(uv.x, 1.0 - uv.y) : uv).x;
 }
-float3 Phantom(float4 pos, float2 uv, int eye)
+float3 Phantom(float4 pos, float2 uv, int eye, bool made)
 {
     float3 c = tex2D(FogColorSmp, uv).rgb;
     [branch] if (HitboxOn) c = Hitboxes(c, pos.xy, eye);
     [branch] if (OrbOn)   // the life and mana balls on the wrists: this eye's ray, the game's depth here
     {
-        const float d = OverlayDepth(uv, eye);
+        const float d = OverlayDepth(uv, eye, made);
         c = Orbs(c, eye == 0 ? PhantomEye0 : PhantomEye1, PixelRayDir(pos.xy, eye), eye == 0 ? CamBack0 : CamBack1, d > 1e-6 ? NearPlane / d : 1e9);
     }
     [branch] if (MercOn)   // the wounded merc: this eye's ray, the game's depth here
     {
-        const float d = OverlayDepth(uv, eye);
+        const float d = OverlayDepth(uv, eye, made);
         c = MercTint(c, eye == 0 ? PhantomEye0 : PhantomEye1, PixelRayDir(pos.xy, eye), eye == 0 ? CamBack0 : CamBack1, d > 1e-6 ? NearPlane / d : 1e9);
     }
     [branch] if (QvN > 0.5)   // the bow quiver's orbs: this eye's ray, the game's depth here
     {
-        const float d = OverlayDepth(uv, eye);
+        const float d = OverlayDepth(uv, eye, made);
         c = QuiverOrbs(c, eye == 0 ? PhantomEye0 : PhantomEye1, PixelRayDir(pos.xy, eye), eye == 0 ? CamBack0 : CamBack1, d > 1e-6 ? NearPlane / d : 1e9);
     }
     [branch] if (AfOn > 0.5)   // the nocked arrow's fire, frost or arcane glow: this eye's ray, the game's depth here
     {
-        const float d = OverlayDepth(uv, eye);
+        const float d = OverlayDepth(uv, eye, made);
         c = QuiverArrowFx(c, eye == 0 ? PhantomEye0 : PhantomEye1, PixelRayDir(pos.xy, eye), eye == 0 ? CamBack0 : CamBack1, d > 1e-6 ? NearPlane / d : 1e9);
     }
     if (PhantomOn) c = Segment(c, pos.xy, PhantomA, PhantomB, eye, float3(1.0, 0.05, 0.05));
@@ -2808,8 +2809,8 @@ float3 LowHp(float3 c, float2 uv)
     return k > 0.0 ? lerp(c, LowHpColor, k) : c;
 }
 // LOWHP-END
-float3 PS_Phantom(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return OverlaysApart ? tex2D(FogColorSmp, uv).rgb : LowHp(Phantom(pos, uv, 0), uv); }
-float3 PS_PhantomR(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return OverlaysApart ? tex2D(FogColorSmp, uv).rgb : LowHp(Phantom(pos, uv, 1), uv); }
+float3 PS_Phantom(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return OverlaysApart ? tex2D(FogColorSmp, uv).rgb : LowHp(Phantom(pos, uv, 0, false), uv); }
+float3 PS_PhantomR(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return OverlaysApart ? tex2D(FogColorSmp, uv).rgb : LowHp(Phantom(pos, uv, 1, false), uv); }
 
 float3 PS_GameHud(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return OverlaysApart ? tex2D(FogColorSmp, uv).rgb : GameHud(uv, 1.0); }
 float3 PS_GameHudR(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return OverlaysApart ? tex2D(FogColorSmp, uv).rgb : GameHud(uv, -1.0); }
@@ -2818,8 +2819,10 @@ float3 PS_OvHud(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { re
 float3 PS_OvHudR(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return Hud(uv, -HudShift); }
 float3 PS_OvGameHud(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return GameHud(uv, 1.0); }
 float3 PS_OvGameHudR(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return GameHud(uv, -1.0); }
-float3 PS_OvPhantom(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return LowHp(Phantom(pos, uv, 0), uv); }
-float3 PS_OvPhantomR(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return LowHp(Phantom(pos, uv, 1), uv); }
+float3 PS_OvPhantom(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return LowHp(Phantom(pos, uv, 0, false), uv); }
+float3 PS_OvPhantomR(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return LowHp(Phantom(pos, uv, 1, false), uv); }
+float3 PS_OvMadePhantom(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return LowHp(Phantom(pos, uv, 0, true), uv); }
+float3 PS_OvMadePhantomR(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return LowHp(Phantom(pos, uv, 1, true), uv); }
 
 // The frame's stamp for FlatVR: when vrcam built this frame's view, and so
 // which head pose it is drawn for. 48 black/white pixels at the right end of
@@ -3024,7 +3027,9 @@ technique D2R_DepthFog_R <
 }
 
 // Eyes by turns with the other eye made on the GPU (OverlaysApart): what has no depth of the scene, drawn after the warp on each eye's own
-// picture - never on by itself: vrcam renders it (render_technique), D2R_Overlay for the left eye's picture, D2R_Overlay_R for the right's.
+// picture - never on by themselves: vrcam renders them (render_technique). D2R_Overlay / D2R_Overlay_R for the eye drawn this frame (the
+// left / right eye's picture, its own depth), D2R_OverlayMade / D2R_OverlayMade_R for the eye made (nothing of the scene hides them there,
+// or its moved depth: OverlayDepth).
 technique D2R_Overlay < hidden = true; enabled = false; ui_tooltip = "vrcam's eyes by turns: the overlays of the left eye's picture (drawn by vrcam)."; >
 {
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_OvHud; }
@@ -3036,4 +3041,16 @@ technique D2R_Overlay_R < hidden = true; enabled = false; ui_tooltip = "vrcam's 
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_OvHudR; }
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_OvGameHudR; }
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_OvPhantomR; }
+}
+technique D2R_OverlayMade < hidden = true; enabled = false; ui_tooltip = "vrcam's eyes by turns: the overlays of the left eye's picture when it is the one made (drawn by vrcam)."; >
+{
+    pass { VertexShader = VS_Fullscreen; PixelShader = PS_OvHud; }
+    pass { VertexShader = VS_Fullscreen; PixelShader = PS_OvGameHud; }
+    pass { VertexShader = VS_Fullscreen; PixelShader = PS_OvMadePhantom; }
+}
+technique D2R_OverlayMade_R < hidden = true; enabled = false; ui_tooltip = "vrcam's eyes by turns: the overlays of the right eye's picture when it is the one made (drawn by vrcam)."; >
+{
+    pass { VertexShader = VS_Fullscreen; PixelShader = PS_OvHudR; }
+    pass { VertexShader = VS_Fullscreen; PixelShader = PS_OvGameHudR; }
+    pass { VertexShader = VS_Fullscreen; PixelShader = PS_OvMadePhantomR; }
 }

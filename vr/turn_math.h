@@ -194,4 +194,22 @@ inline OverlayDepthFrom OverlayDepthOf(bool apart, bool madeBound, int drawnEye,
     return madeBound ? OverlayDepthFrom::Made : OverlayDepthFrom::Nothing;
 }
 
+// The eye not drawn's camera for its overlays (vrcam VrViewInner: g_skyView of that eye): the eye drawn's moved across the eyes'
+// gap - `half` of it each side of the head, along the head's `right`; the left eye (0) is the one at -right.
+inline Vec OtherEyeAt(Vec drawnAt, Vec right, float half, int drawnEye) { return drawnAt + right * (drawnEye == 0 ? 2.0f * half : -2.0f * half); }
+
+// How far the camera an eye's overlays are drawn from (the effect's PhantomEye / CamRight / CamUp / CamBack of that eye) is off the
+// camera its picture shows (the eye drawn's, or the one the warp made the other for): `at` in world units, `turn` the largest of the
+// three axes' misses (unit vectors, about the angle in radians). 0, 0: one camera - the overlays lie on the picture; off by the eyes'
+// gap, they lie where the other eye sees them and show twice.
+struct CameraGap { float at = 0, turn = 0; };
+inline CameraGap GapOf(const Camera& picture, Vec at, Vec r, Vec u, Vec b) {
+    CameraGap g;
+    g.at = Length(at - picture.at);
+    const Vec ax[3] = {Rotate(picture.turn, {1, 0, 0}), Rotate(picture.turn, {0, 1, 0}), Rotate(picture.turn, {0, 0, 1})};
+    const Vec ov[3] = {r, u, b};
+    for (int i = 0; i < 3; ++i) g.turn = std::fmax(g.turn, Length(ax[i] - ov[i]));
+    return g;
+}
+
 }  // namespace turnwarp

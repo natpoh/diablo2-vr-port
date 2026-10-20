@@ -13,6 +13,8 @@
 // edge      EdgeScale / CutsEdge: a cell over a foreground's edge is cut, one on a surface is kept
 // overlay   OverlayDepthOf: the eye drawn's overlays by the game's depth, the eye made's by its own moved depth or by nothing -
 //           never the other eye's (the doubled medallions, 2026-10-20)
+// overlay camera  OtherEyeAt / GapOf: the eye made's overlays from the camera its picture shows - the eye drawn's moved across the
+//           gap; unmoved or moved the wrong way the wrist orb lands elsewhere (shown twice)
 
 #include "turn_math.h"
 
@@ -208,6 +210,39 @@ void OverlayCases() {
     }
 }
 
+// The eye made's overlays from its own camera: the eye drawn's moved across the gap is the camera the warp makes that eye for, so an
+// orb on the wrist lands where the made picture shows the wrist; the eye drawn's camera unmoved (or moved the wrong way) is off by
+// the gap and its orb lands elsewhere - a second one beside the first (the doubled medallions, 2026-10-20).
+void OverlayCameraCases() {
+    const float half = 0.032f * kUpm;
+    const Tan t{-1.0f, 0.9f, -1.0f, 1.0f};
+    const Camera head = Cam({1, 50, 2}, 0.4f, -0.3f, t);
+    const Vec right = Rotate(head.turn, {1, 0, 0}), up = Rotate(head.turn, {0, 1, 0}), back = Rotate(head.turn, {0, 0, 1});
+    const Vec at[2] = {head.at - right * half, head.at + right * half};   // vrcam's TurnView: the warp's two eyes
+    const Vec wrist = head.at + Rotate(head.turn, Vec{0.15f, -0.35f, -0.6f} * kUpm);
+    for (int drawn = 0; drawn < 2; ++drawn) {
+        const int made = drawn ^ 1;
+        const Vec madeAt = OtherEyeAt(at[drawn], right, half, drawn);
+        Check(Near(madeAt.x, at[made].x, 1e-3f) && Near(madeAt.y, at[made].y, 1e-3f) && Near(madeAt.z, at[made].z, 1e-3f),
+              "overlay camera: the eye drawn's moved across the gap is the eye made's");
+        const Camera picture{at[made], head.turn, t, true};
+        const CameraGap g = GapOf(picture, madeAt, right, up, back);
+        Check(g.at < 1e-3f && g.turn < 1e-4f, "overlay camera: the eye made's overlays from the camera its picture shows");
+        const CameraGap wrong = GapOf(picture, at[drawn], right, up, back);
+        Check(Near(wrong.at, 2.0f * half, 1e-3f), "overlay camera: the eye drawn's camera for the eye made is off by the gap");
+        const CameraGap swapped = GapOf(picture, OtherEyeAt(at[drawn], right, half, made), right, up, back);
+        Check(Near(swapped.at, 4.0f * half, 1e-3f), "overlay camera: moved the wrong way, off by twice the gap");
+        float u0, v0, d0, u1, v1, d1;
+        const Camera from{madeAt, head.turn, t, true}, unmoved{at[drawn], head.turn, t, true};
+        Check(See(picture, kNear, wrist, &u0, &v0, &d0) && See(from, kNear, wrist, &u1, &v1, &d1) && Near(u0, u1) && Near(v0, v1),
+              "overlay camera: the wrist orb lands on the made picture's wrist");
+        Check(See(unmoved, kNear, wrist, &u1, &v1, &d1) && std::fabs(u0 - u1) > 0.05f,
+              "overlay camera: from the eye drawn's camera it lands a tenth of the picture away - shown twice");
+    }
+    const CameraGap turned = GapOf(head, head.at, Rotate(Yaw(0.1f), right), Rotate(Yaw(0.1f), up), Rotate(Yaw(0.1f), back));
+    Check(turned.at < 1e-4f && Near(turned.turn, 2.0f * std::sin(0.05f), 1e-3f), "overlay camera: a turned camera's miss, as its angle");
+}
+
 }  // namespace
 
 int main() {
@@ -219,6 +254,7 @@ int main() {
     HeldCases();
     EdgeCases();
     OverlayCases();
+    OverlayCameraCases();
     std::printf("%d checks, %d failed\n", g_checks, g_failed);
     return g_failed ? 1 : 0;
 }
