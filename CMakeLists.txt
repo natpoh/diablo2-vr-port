@@ -1180,6 +1180,13 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/melee_arm_fit_test.cpp")
     target_include_directories(melee_arm_fit_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr ${CMAKE_CURRENT_SOURCE_DIR}/shared)
     target_compile_options(melee_arm_fit_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/press_trace_test.cpp")
+    # [debug] melee_press_trace (vr/press_trace.h): one line per attack press of hit by touch - the pad polls, the slot reads, the target lookups, the hero's mode, the hit -
+    # and the first step that did not happen
+    add_executable(press_trace_test cleanroom/tests/press_trace_test.cpp)
+    target_include_directories(press_trace_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr ${CMAKE_CURRENT_SOURCE_DIR}/shared)
+    target_compile_options(press_trace_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/crouch_test.cpp")
     # [body] crouch (vr/crouch.h): when the player crouches (threshold, hysteresis, standing again, seated, lost tracking) and the legs' bend, on synthetic numbers
     add_executable(crouch_test cleanroom/tests/crouch_test.cpp)

@@ -87,6 +87,12 @@ void SetThrowLink(GripIsThrowsFn gripIsThrows, GripHeldFn gripHeld, LastThrowFn 
 using AnimNoteFn = size_t (*)(char* out, size_t n);
 void SetAnimNote(AnimNoteFn fn);
 
+// [debug] melee_press_trace (vr/press_trace.h): the touch's attack press (the key route; `hand` the skeleton side, 0 right / 1 left) and the hit counter's verdict on each press
+// (hit after `ms`, or lost). Given by vrcam; called on the timer's thread. Observing only.
+using PressNoteFn = void (*)(uint32_t monster, int hand);
+using PressOutcomeFn = void (*)(bool hit, double ms);
+void SetPressTrace(PressNoteFn press, PressOutcomeFn outcome);
+
 // vrcam's FreshHands, on the skeleton hook's thread, on every pose: the hand sample of this pose (the shared block's
 // stamp and head / hand data), and the world epoch (vrcam's g_gen).
 void NoteHands(const D2RVR_Shared* sh, uint32_t epoch);
@@ -133,6 +139,8 @@ uintptr_t TargetUnit(int where = 0);
 
 // The press as vrcam's pad hook asks it (only while direct_input.h is not in the tree): hold pad A now.
 bool PadPressed();
+// The touch's attack press is down now, whichever route holds it (vrcam's pad hook: Stand Still reads such a press as the touch's - the armed melee skill - and names it so).
+bool PressDown();
 
 // Hooks on the server's unit lookup (observing only, to learn the game the hostility check runs in): tried again from
 // the timer until they are in. Cheap when they are.

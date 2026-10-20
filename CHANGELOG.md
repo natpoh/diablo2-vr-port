@@ -2,6 +2,25 @@
 
 ## Next
 
+- **New: `[debug] melee_press_trace` - one log line per attack press of hit by touch, for "the Amazon's touches press the attack but she never strikes"** (the author,
+  2026-10-20, test build 0.175: a short sword, every touch detected and the attack pressed with Stand Still held, "presses=15 hits=0 lost=13"; "Direct hit" lands; a
+  Barbarian or a Paladin on the same path hits; the A slot was already shown to hold the plain Attack with the bow - the sword set's own A, a slot of its own in the
+  game's controller table, was never told). The line ("melee press N: monster M, R hand - <verdict> | ...") follows ONE press to what the game did with it and starts
+  with the first step that did not happen: A never reached the game's pad poll / the A slot's skill was read as a skill, not the plain attack / the game never read the
+  slot / the cast went along the hand / the game asked for its target but was not given the touched monster / the hero never went into an attack mode / no hit came.
+  Then each step: the game's pad polls while the press was live (how many had A, when A went down and up, every button seen, the game's Stand Still at the first A);
+  the game's two reads of the pressed slot (the cast's slot selection and the unit's hand-skill setter: the slot index, what it holds, what it was answered as); the
+  controller's target lookups (the cast flags' own look that clears Stand Still, the resolver's, its hover's, the map click's: how often, what unit each was given and
+  whether it was the touched monster); the resolver's verdict (directed along the hand or the game's own target); the hero's mode at the press and the first attack
+  mode after it, with the animation row and its action frame (`[hands] quick_strike`'s cut shows there); the hit counter's verdict; and what the plugin held at the
+  press - the weapon set, each hand's item code, the A slot and the weapon set's bank as the skill panel reads them, the armed melee skill, the bow quiver's armed
+  shot, the javelin quiver's choice, the bow draw (owns the trigger, aim live), the aim mode, quick_strike's cut. The first 12 presses of a run are told whatever the
+  key says; `melee_press_trace=1` tells every one. Read only: nothing a press does changes. Unit test: cleanroom/tests/press_trace_test.cpp (vr/press_trace.h).
+- **Fixed: Stand Still never knew a press was hit by touch's** (found tracing the press above). With the plugin's own input the touch's attack goes out through
+  direct_input, and the pad hook's "is this the touch's press" was always no: the line said "stand still - press (attack)" for a touch, and an armed melee skill that
+  must move the hero (Whirlwind, Leap Attack, Charge) was still pressed with Stand Still held. Now the touch's press is known whichever way it goes: the line says
+  "press (hit by touch)", and an armed skill that moves is pressed without Stand Still, as `[gameplay] melee_skill_armed` meant. The plain attack is as it was.
+
 - **Changed: the bow's quiver ARMS its arrow skill instead of putting it on the attack button** (the author, 2026-10-20: "the quiver logic
   works wrong: it puts some skill on the attack button A. It must work the same way as our logic for the armed skills"). The quiver
   (`[bow] quiver` - the orbs, `quiver_next` / `quiver_prev`) set the chosen arrow skill on the A slot through the game's setter; the game

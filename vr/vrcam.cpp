@@ -116,7 +116,7 @@ namespace hud { void Register(); void SetHide(int mode); void SetInterfaceScale(
 #include "d2rcam.h"
 #include "sigscan.h"
 #include "mat4.h"
-namespace gamecmd { void Init(const D2RL::PluginContext* ctx); void Tick(); void Tap(uint32_t cmd); }   // the game's key commands from BodyWalk (gamecmd.cpp)
+namespace gamecmd { void Init(const D2RL::PluginContext* ctx); void Tick(); void Tap(uint32_t cmd); bool Pressed(uint32_t cmd); }   // the game's key commands from BodyWalk (gamecmd.cpp)
 namespace skillwheel { void Init(const D2RL::PluginContext* ctx); void Tick(); void Shutdown(); }   // [openxr] skill_wheel (skill_wheel.cpp)
 namespace skillwheel { bool Enabled(); }
 namespace wheelgame { void Tick(bool on, bool open); }   // the wheel's reads of the controller's skill slots (wheel_game.cpp): a throw by gesture keeps them going for the Throw slot
@@ -172,6 +172,8 @@ namespace gamestate { bool HandIsThrowPotion(int side); }   // the held item is 
 #include "own_effects.h"          // [render] dim_own_effects: the hero's own effects (Bone Armor ...) drawn fainter in first person
 #include "grab_priority.h"   // [belt] grab_nearest, grab_trigger: a grip press and the belt potion or the weapon
 #include "anim_cut.h"          // [bow] quick_release, [hands] quick_throw: the action-frame flag of the hero's bow attack / throw rows moved earlier (vr/anim_cut.cpp)
+#include "press_trace.h"       // [debug] melee_press_trace: one line per attack press of hit by touch, from the press to what the game did with it (vr/press_trace.h)
+#include "wheel_game.h"        // ... the A slot and the bank as the skill panel reads them
 #include "bow_latency.h"       // [debug] bow_latency: the split of the second between a bow's release and its arrow (vr/bow_latency.h)
 #include "calibration.h"
 #include "first_start_wire.h"     // [onboarding]: the first-start guide in the headset (vr/first_start.h)
@@ -212,6 +214,14 @@ namespace hud { void SetGameInterfaceScale(float k); }   // the game's own inter
 using namespace D2RL;
 
 namespace {
+// [debug] melee_press_trace (vr/press_trace.h): the notes the press's way gives; the recorder and the line are further down, beside MeleeAnimNote.
+std::atomic<bool> g_pressTraceKey{false};   // [debug] melee_press_trace
+std::atomic<bool> g_ptActive{false};        // a press is being traced (the hooks' cheap test)
+void PressTracePoll(uint16_t buttons);
+void PressTraceSlot(int site, int slot, int bound, int answer);
+void PressTraceLookup(int which, void* unit, bool ours);
+void PressTraceCast(int skill, bool directed);
+
 namespace depthsrc { void Configure(bool on); void Tick(); }   // [render] depth_fix_mode 2 (further down, beside SkyTick)
 namespace gamefog { void SetPoke(const std::wstring& want); }   // [debug] fog_poke, below
 namespace cavelight { void Load(); }   // [cave_light], below
@@ -2208,6 +2218,7 @@ void LoadSettings() {
         potionhide::Configure(flies && (ours || IniB(L"hands", L"potion_hide_game", false)));   // the game's own thrown potion not drawn while ours flies (vr/potion_hide.h): only then, or nothing would be seen
     }
     g_set.bowLatency.store(IniB(L"debug", L"bow_latency", false));
+    g_pressTraceKey.store(IniB(L"debug", L"melee_press_trace", false));   // [debug] melee_press_trace (the first 12 presses are told whatever it says)
     animcut::Configure(animcut::Kind::Bow, IniB(L"bow", L"quick_release", false), (int)std::lround(IniF(L"bow", L"quick_release_frame", 2.0f)));
     g_set.quickThrowPotions.store(IniB(L"hands", L"quick_throw_potions", false));
     g_set.grabNearest.store(IniB(L"belt", L"grab_nearest", true));
@@ -6017,7 +6028,8 @@ void ApplyActions(XINPUT_STATE* s) {
     // [gameplay] attack_in_place (F4): the game's own Stand Still is held with every attack press of ours, so a press with nothing
     // under the point is an attack in place and never a walk; the press waits the few ms the command takes to be down
     const bool attackA = (held & D2RVR_ACT_ATTACK) || touchPress;
-    const standstill::Gate still = standstill::Poll(attackA, touchPress, gamestate::MenuOpen(), s->Gamepad.wButtons, s->Gamepad.bLeftTrigger);
+    // (the touch's press, whichever route holds it: Stand Still reads it as the armed melee skill - a Whirlwind, a Leap Attack must move the hero - and names it "hit by touch")
+    const standstill::Gate still = standstill::Poll(attackA, touchPress || (attackA && meleetouch::PressDown()), gamestate::MenuOpen(), s->Gamepad.wButtons, s->Gamepad.bLeftTrigger);
     if ((attackA && !still.holdBackA) || still.addA || interact) s->Gamepad.wButtons |= XINPUT_GAMEPAD_A;
     s->Gamepad.wButtons = (WORD)((s->Gamepad.wButtons & ~still.holdBack) | still.add);
     BowLatencyPad((s->Gamepad.wButtons & (XINPUT_GAMEPAD_A | XINPUT_GAMEPAD_B | XINPUT_GAMEPAD_X | XINPUT_GAMEPAD_Y | XINPUT_GAMEPAD_RIGHT_SHOULDER)) != 0);   // [debug] bow_latency: the attack or a skill button
@@ -6560,6 +6572,7 @@ void HookSpellResolve(void* mgr, void* unit, bool assist, float* x, float* y) {
     if (viewgate::F4() && SpellAimWanted(drawn) && unit && x && y && AimByVector() &&
         !gamestate::MenuOpen() && (IsHeroUnit(unit) || (thrownLive && unit == g_heroUnit.load())) && (skill = SpellSkill(unit)) >= 0)
         cast = SpellCastFor(skill, drawn);
+    if (g_ptActive.load(std::memory_order_relaxed) && unit && IsHeroUnit(unit)) PressTraceCast(skill >= 0 ? skill : SpellSkill(unit), cast.directed);   // [debug] melee_press_trace
     const SpellCast outer = g_spellCast;   // a resolution inside this one is its own; this one's comes back after
     g_spellCast = cast;
     OrigSpellResolve(mgr, unit, cast.directed ? false : assist, x, y);
@@ -6744,8 +6757,13 @@ uintptr_t NearbySewerWarp() {
     return r.unit;
 }
 
-void* HookSpellTarget(void* mgr, int skill) {
-    const uintptr_t ret = (uintptr_t)_ReturnAddress();
+thread_local bool t_touchAnswer = false;   // [debug] melee_press_trace: the lookup was answered with the touched monster
+int LookupOf(uintptr_t ret) {
+    return ret == g_dispatchTargetRet ? presstrace::kDispatch : ret == g_spellTargetRet ? presstrace::kResolver : ret == g_spellHoverRet ? presstrace::kHover
+         : ret == g_clickTargetRet ? presstrace::kClick : -1;
+}
+
+void* SpellTargetFor(void* mgr, int skill, uintptr_t ret) {
     if (ret == g_dispatchTargetRet) {
         const bool off = DispatchTargetOff(skill);
         void* t = off && !shottrace::Active() ? nullptr : OrigSpellTarget(mgr, skill);   // asked anyway while a shot is traced: to say what the game found
@@ -6755,15 +6773,22 @@ void* HookSpellTarget(void* mgr, int skill) {
         if (const int where = ret == g_spellTargetRet ? 1 : ret == g_clickTargetRet ? 2 : 0)
             if (void* t = shieldsmite::Target(where, skill)) return t;
     }
-    if (void* t = TouchedTarget(ret)) return t;
+    if (void* t = TouchedTarget(ret)) { t_touchAnswer = true; return t; }
     if ((g_spellCast.directed && ret == g_spellTargetRet) || ClickTargetOff(ret)) return nullptr;
     void* t = OrigSpellTarget(mgr, skill);
     if (!t && skill == kInteractSkill) t = reinterpret_cast<void*>(NearbySewerWarp());   // the Kurast sewer stairs, standing
     return t;
 }
-
-void* HookSpellHover(int index) {
+void* HookSpellTarget(void* mgr, int skill) {
     const uintptr_t ret = (uintptr_t)_ReturnAddress();
+    t_touchAnswer = false;
+    void* t = SpellTargetFor(mgr, skill, ret);
+    if (g_ptActive.load(std::memory_order_relaxed))
+        if (const int which = LookupOf(ret); which >= 0) PressTraceLookup(which, t, t_touchAnswer);   // [debug] melee_press_trace
+    return t;
+}
+
+void* SpellHoverFor(int index, uintptr_t ret) {
     if (ret == g_dispatchTargetRet) {
         const bool off = DispatchTargetOff(-1);
         void* t = off && !shottrace::Active() ? nullptr : OrigSpellHover(index);
@@ -6773,9 +6798,17 @@ void* HookSpellHover(int index) {
         if (const int where = ret == g_spellHoverRet ? 1 : ret == g_clickTargetRet ? 2 : 0)
             if (void* t = shieldsmite::Target(where, -1)) return t;
     }
-    if (void* t = TouchedTarget(ret)) return t;
+    if (void* t = TouchedTarget(ret)) { t_touchAnswer = true; return t; }
     if ((g_spellCast.directed && ret == g_spellHoverRet) || ClickTargetOff(ret)) return nullptr;
     return OrigSpellHover(index);
+}
+void* HookSpellHover(int index) {
+    const uintptr_t ret = (uintptr_t)_ReturnAddress();
+    t_touchAnswer = false;
+    void* t = SpellHoverFor(index, ret);
+    if (g_ptActive.load(std::memory_order_relaxed))
+        if (const int which = LookupOf(ret); which >= 0) PressTraceLookup(which, t, t_touchAnswer);   // [debug] melee_press_trace
+    return t;
 }
 
 // `fn` ends in a jump to `to` (an E9 rel32 in its first 0x80 bytes): a tail call.
@@ -6817,8 +6850,9 @@ SlotSkillFn OrigSlotSkill = nullptr;
 uintptr_t g_slotSelectRet = 0, g_slotSetRet = 0;
 std::atomic<int> g_slotSkillHook{0};   // 0 not in yet, 1 in, 2 not possible
 
-int HookSlotSkill(int slot) {
+int SlotSkillFor(int slot, uintptr_t ret, int* boundOut) {
     const int bound = OrigSlotSkill(slot);
+    *boundOut = bound;
     if (bound != 0) {   // (the common case first: any other binding is the game's)
         // a bow skill on the attack's slot with no bow or crossbow in hand: the old bow quiver (to 0.174) loaded its arrow skills there and the game
         // keeps that slot in the save - every attack, the touch's included, went to the game as that bow skill, which it refuses for a melee weapon
@@ -6826,7 +6860,7 @@ int HookSlotSkill(int slot) {
         // below) and gives that slot back as the plain attack (bowquiver::Cleanup); until it has, this reads it as the plain attack (or the armed
         // melee skill, when the weapon can use it).
         if (bound > 0 && bowquiver::FindArrow(bound) && !BowInHand()) {
-            const uintptr_t at = (uintptr_t)_ReturnAddress();
+            const uintptr_t at = ret;
             if (at == g_slotSelectRet || at == g_slotSetRet) {
                 const uint32_t t = gamestate::WeaponType();
                 const int armed = ThrownInHand() ? 0 : meleearm::PressSkill();
@@ -6842,7 +6876,6 @@ int HookSlotSkill(int slot) {
         }
         return bound;
     }
-    const uintptr_t ret = (uintptr_t)_ReturnAddress();
     const bool site = ret == g_slotSelectRet || ret == g_slotSetRet;
     int skill = throwcast::SwapSkill(bound, site, g_set.throwAutoSkill.load(), site && ThrownInHand(), site && GestureAimLive());
     int32_t chosen = quiver::kDefault;
@@ -6885,6 +6918,14 @@ int HookSlotSkill(int slot) {
             }
         }
     }
+    return skill;
+}
+int HookSlotSkill(int slot) {
+    const uintptr_t ret = (uintptr_t)_ReturnAddress();
+    int bound = -1;
+    const int skill = SlotSkillFor(slot, ret, &bound);
+    if (g_ptActive.load(std::memory_order_relaxed) && (ret == g_slotSelectRet || ret == g_slotSetRet))   // [debug] melee_press_trace: the game's reads of the pressed slot
+        PressTraceSlot(ret == g_slotSelectRet ? presstrace::kSelect : presstrace::kSetter, slot, bound, skill);
     return skill;
 }
 
@@ -7094,6 +7135,7 @@ template <int I> DWORD WINAPI XDetour(DWORD idx, XINPUT_STATE* s) {
         }
         TurnStick(s, mirror);
         if (idx == 0) InputLogPad(got, s->Gamepad, mirror);
+        if (idx == 0 && g_ptActive.load(std::memory_order_relaxed)) PressTracePoll(s->Gamepad.wButtons);   // [debug] melee_press_trace: the buttons as the game gets them
     }
     return r;
 }
@@ -12645,6 +12687,120 @@ size_t MeleeAnimNote(char* out, size_t n) {
     return bowlatency::AnimText(anim, out, n);
 }
 
+// [debug] melee_press_trace (vr/press_trace.h): one line for every attack press of hit by touch - what the plugin held at the press, the game's pad polls while it was live,
+// its two reads of the slot's skill, its target lookups and what they were given, the resolver's verdict, the hero's mode and animation row, and the hit counter's
+// verdict - so the step at which a press that never strikes stops is in the log (the Amazon's sword, the author 2026-10-20). The first 12 presses of a run are told
+// whatever the key says, every one with it. Read only: nothing a press does is changed. The notes come from the pad's poll, the game's UI thread and the timer: one lock.
+SRWLOCK g_ptLock = SRWLOCK_INIT;
+presstrace::Recorder g_ptRec;
+std::atomic<unsigned> g_ptTold{0};
+constexpr unsigned kPressTraceAlways = 12;
+
+void PressTraceTell(const presstrace::Trace& t) {
+    char b[1600];
+    presstrace::Format(t, b, sizeof b);
+    Log(b);
+    if (g_ptTold.fetch_add(1) + 1 == kPressTraceAlways && !g_pressTraceKey.load())
+        Log("melee press: the first 12 presses told - [debug] melee_press_trace=1 tells every one");
+}
+// Due: told outside the lock.
+void PressTraceDue(ULONGLONG now) {
+    presstrace::Trace t;
+    AcquireSRWLockExclusive(&g_ptLock);
+    const bool due = g_ptRec.Due(now, &t);
+    g_ptActive.store(g_ptRec.Active());
+    ReleaseSRWLockExclusive(&g_ptLock);
+    if (due) PressTraceTell(t);
+}
+bool HeroAnimRow(bowlatency::AnimInfo* anim) {
+    uintptr_t hero = (uintptr_t)g_heroUnit.load();
+    if (!hero || !IsHeroUnit((void*)hero)) hero = (uintptr_t)g_heroSeen.load();
+    uintptr_t rec = 0;
+    uint8_t bytes[bowlatency::kAnimRecordSize];
+    if (!hero || !SafeRead(&rec, (const void*)(hero + 0x70), sizeof rec) || rec <= 0x10000 || !SafeRead(bytes, (const void*)rec, sizeof bytes)) return false;
+    return bowlatency::ParseAnimRecord(bytes, rec, anim);
+}
+
+// meleetouch's press (the timer's thread): what the plugin holds now.
+void PressTraceBegin(uint32_t monster, int hand) {
+    if (!g_pressTraceKey.load() && g_ptTold.load() >= kPressTraceAlways) return;
+    presstrace::Facts f;
+    f.weaponSet = gamestate::WeaponSet();
+    f.weaponClass = gamestate::WeaponClass();
+    f.weaponType = gamestate::WeaponType();
+    f.codeR = gamestate::HandCode(0);
+    f.codeL = gamestate::HandCode(1);
+    {
+        static wheel::Snapshot snap;   // (12 KB: not on the stack; the timer's thread only)
+        static uint32_t rev = 0;
+        if (wheelgame::Latest(&snap, &rev) && snap.ready) {
+            f.bank = snap.bank;
+            if (snap.slot[bowquiver::kAttackSlot].known) f.slotA = snap.slot[bowquiver::kAttackSlot].id;
+        }
+    }
+    f.armedMelee = meleearm::On() ? meleearm::PressSkill() : -1;
+    f.bowShot = bowquiverwire::ShotSkill();
+    int32_t chosen = -1;
+    bool ranged = false;
+    if (quiverwire::Chosen(&chosen, &ranged)) f.javChosen = chosen;
+    f.bowInHand = BowInHand();
+    f.bowOwned = bowdrawwire::Owned();
+    f.bowAimLive = bowdrawwire::AimLive();
+    f.aimByVector = AimByVector();
+    f.throwLive = GestureAimLive();
+    f.bowMode = g_set.bowMode.load();
+    f.cutMs = animcut::CutMs(animcut::Kind::Melee);
+    const int mode = HeroAnimMode();
+    presstrace::Trace prev;
+    AcquireSRWLockExclusive(&g_ptLock);
+    const bool handed = g_ptRec.Begin(monster, hand, GetTickCount64(), f, mode, &prev);
+    g_ptActive.store(true);
+    ReleaseSRWLockExclusive(&g_ptLock);
+    if (handed) PressTraceTell(prev);
+}
+void PressTraceOutcome(bool hit, double ms) {
+    AcquireSRWLockExclusive(&g_ptLock);
+    g_ptRec.Outcome(hit, ms);
+    ReleaseSRWLockExclusive(&g_ptLock);
+    PressTraceDue(GetTickCount64());
+}
+// The game's poll of pad 0 (its thread), the buttons as it gets them.
+void PressTracePoll(uint16_t buttons) {
+    const ULONGLONG now = GetTickCount64();
+    const bool still = gamecmd::Pressed(0x24);   // the game's Stand Still
+    const int mode = HeroAnimMode();
+    AcquireSRWLockExclusive(&g_ptLock);
+    g_ptRec.Poll(now, buttons, still, mode);
+    const bool wantsAnim = g_ptRec.WantsAnim();
+    ReleaseSRWLockExclusive(&g_ptLock);
+    if (wantsAnim) {
+        bowlatency::AnimInfo a;
+        if (HeroAnimRow(&a)) {
+            AcquireSRWLockExclusive(&g_ptLock);
+            g_ptRec.Anim(a.name, (int)a.frames, a.flagIdx);
+            ReleaseSRWLockExclusive(&g_ptLock);
+        }
+    }
+    PressTraceDue(now);
+}
+void PressTraceSlot(int site, int slot, int bound, int answer) {
+    AcquireSRWLockExclusive(&g_ptLock);
+    g_ptRec.Slot(site, slot, bound, answer);
+    ReleaseSRWLockExclusive(&g_ptLock);
+}
+void PressTraceLookup(int which, void* unit, bool ours) {
+    uint32_t id = 0;
+    if (unit && !SafeRead(&id, (const char*)unit + 8, sizeof id)) id = 0;   // the unit's id
+    AcquireSRWLockExclusive(&g_ptLock);
+    g_ptRec.Lookup(which, GetTickCount64(), id, ours);
+    ReleaseSRWLockExclusive(&g_ptLock);
+}
+void PressTraceCast(int skill, bool directed) {
+    AcquireSRWLockExclusive(&g_ptLock);
+    g_ptRec.Cast(skill, directed);
+    ReleaseSRWLockExclusive(&g_ptLock);
+}
+
 // [bow] quick_release and [hands] quick_throw (vr/anim_cut.cpp): ticked about 20 times a second from the update thread - the action-frame flag of the hero's bow attack rows is moved
 // while he is in VR first person with a bow in hand, and that of his throw rows (the Throw skill's potions, javelins, knives, axes - whatever weapon he holds) while he is in VR first
 // person; put back the moment any of that stops. The hero's unit mode tells whether he is mid-animation (a flag is not moved under one).
@@ -17910,6 +18066,7 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
 #endif
     throwwire::SetAutoSkillFn(&ThrowAutoSkillReady);
     meleetouch::SetAnimNote(&MeleeAnimNote);   // [debug] bow_latency: the animation row on the melee press->hit line
+    meleetouch::SetPressTrace(&PressTraceBegin, &PressTraceOutcome);   // [debug] melee_press_trace: one line per attack press of hit by touch
     meleetouch::SetThrowLink(&throwwire::GripIsThrows, &throwwire::GripHeld, &throwwire::LastThrowTickMs, &throwwire::HoldOffRelease);   // hit by touch with a thrown weapon: the touch and the throw by gesture do not both fire
     standstill::SetThrowPressFn(&throwwire::PressIsThrow);
     crash::Step("update thread and console command");

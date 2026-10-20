@@ -335,7 +335,11 @@ Know Verdicted(uint32_t id, ULONGLONG now) {
 
 Press g_press;                       // the press and the window (vr/melee_press.h)
 #ifdef MELEE_TOUCH_DIRECT
-void SendPress(bool down) { directinput::Action(D2RVR_ACT_ATTACK, down, directinput::kSrcMelee); }
+std::atomic<bool> g_keyDown{false};   // the touch's attack is held (PressDown: vrcam's Stand Still reads the press as the touch's)
+void SendPress(bool down) {
+    g_keyDown.store(down);
+    directinput::Action(D2RVR_ACT_ATTACK, down, directinput::kSrcMelee);
+}
 #else
 std::atomic<bool> g_padA{false};
 void SendPress(bool down) { g_padA.store(down); }
@@ -390,6 +394,8 @@ void ReleasePress(ULONGLONG now, bool force) {
 // The press -> hit times (vr/hit_latency.h): the moment we ask the game to attack, against the moment its hit-flags function
 // answers "landed" for a player (the observer in vr/haptics.cpp, shared). Counting only - nothing here changes what is pressed.
 std::atomic<AnimNoteFn> g_animNote{nullptr};   // [debug] bow_latency: the hero's animation row for the press->hit line (vrcam)
+std::atomic<PressNoteFn> g_pressNote{nullptr};          // [debug] melee_press_trace (vrcam): the key route's press ...
+std::atomic<PressOutcomeFn> g_pressOutcome{nullptr};    // ... and the hit counter's verdict on it
 hitlatency::Stats g_lat;             // the timer's thread only
 hitlatency::Stats g_latDirect;       // the same for the direct hit's route (call -> hit), [gameplay] melee_direct
 ULONGLONG g_latPollAt = 0, g_latReportAt = 0;
@@ -402,6 +408,7 @@ void LatencyPoll(ULONGLONG now) {
     for (int n; (n = hitlatency::Collect(hitlatency::kMelee, o, 8)) > 0;)
         for (int i = 0; i < n; ++i) {
             g_lat.Add(o[i]);
+            if (const PressOutcomeFn fn = g_pressOutcome.load()) fn(o[i].hit, o[i].ms);   // [debug] melee_press_trace
             if (o[i].hit && ++g_latTold <= 200) {   // (the first 200; the 10 s line goes on)
                 char note[200] = {};
                 const AnimNoteFn fn = g_animNote.load();
@@ -457,6 +464,7 @@ void Approve(uint32_t id, bool allowDirect, int hand) {
     meleeboxes::Struck(id, meleeboxes::kStruckKey, now);   // [debug] melee_boxes: the drawing only
     if (g_press.Begin(id, now)) {
         meleearm::OnPress(allowDirect);   // [gameplay] melee_skill_armed: this press is the armed skill or the plain attack (never for a thrown weapon: allowDirect false)
+        if (const PressNoteFn fn = g_pressNote.load()) fn(id, hand);   // [debug] melee_press_trace: what the plugin holds now, before the press goes out
         SendPress(true);
         hitclaim::Press(hand, static_cast<int64_t>(now));
         hitlatency::Press(hitlatency::kMelee);
@@ -651,6 +659,10 @@ bool ServerLookup(uintptr_t* game, uintptr_t* lookup) {
 }
 void SetUnchecked(bool on) { g_unchecked.store(on); }
 void SetAnimNote(AnimNoteFn fn) { g_animNote.store(fn); }
+void SetPressTrace(PressNoteFn press, PressOutcomeFn outcome) {
+    g_pressOutcome.store(outcome);
+    g_pressNote.store(press);
+}
 void SetThrownTouch(bool on) {
     if (g_thrownTouch.exchange(on) != on && g_wanted.load()) Log(on ? "melee touch: thrown weapons (javelin, throwing knife and axe) hit by touch too" : "melee touch: thrown weapons are not swung");
 }
@@ -1125,6 +1137,14 @@ uintptr_t TargetUnit(int where) {
 bool PadPressed() {
 #ifdef MELEE_TOUCH_DIRECT
     return false;
+#else
+    return g_padA.load();
+#endif
+}
+
+bool PressDown() {
+#ifdef MELEE_TOUCH_DIRECT
+    return g_keyDown.load();
 #else
     return g_padA.load();
 #endif
