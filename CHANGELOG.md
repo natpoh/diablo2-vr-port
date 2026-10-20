@@ -1,5 +1,15 @@
 # What's new in D2R VR
 
+## Next
+
+- **New, off by default: `[debug] flat_pick` - a log for "monsters cannot be targeted after a while" in flat first / third person** (a player: "aiming at
+  their feet is fine, but randomly monsters become impossible to target, sometimes in 3rd person too, fine in the normal camera"). With the mouse look on,
+  each mouse press logs what the game has under the crosshair (its own hover: a monster, an item, none), the pixel its mouse code last asked a ray for
+  against the middle of its picture, where that ray meets the hero's ground and how steeply, and the cursor, focus, Alt / Shift and menu state; once a
+  second it says when the game's pixel leaves the middle, it stops asking for a ray, or its window loses the keyboard. Read only, live; nothing the game
+  does changes. The diagnosis and the fixes it would decide between: docs/notes/flat_targeting.md. Unit test: cleanroom/tests/flat_pick_test.cpp
+  (vr/flat_pick.h).
+
 ## 0.173
 
 - **The map in the hand with the game's map in the middle** (a player: native OpenXR drew the map across the view, no map in the hand). The map comes into the

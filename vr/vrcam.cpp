@@ -77,6 +77,7 @@ int FindHeroMatrices(const float hero[3], uintptr_t* out, int max);
 #include "vcache.h"        // [render] vcache: the game's threads on the big-L3 cores (Ryzen X3D with two CCDs)
 #include "interact_press.h"   // [input] interact_one_press: one target per press of "pick up / interact"
 #include "depth_pick.h"    // the depth-stencil our effects copy, picked once and kept (scenedepth::)
+#include "flat_pick.h"     // [debug] flat_pick: the flat mouse look's targeting log (pure part, tested)
 #include "attack_view.h"   // VR F2 and F4: the attack goes where the player looks; VR F1 and F3 (top-down): where the hero faces (pure part, tested)
 #include "window_json.h"   // the game's windowed size in Settings.json and what each platform does to it (shared/, pure, tested)
 #include "turn_mode.h"     // [turn] smooth / snap / speed: how the right stick turns, and what an older ini's snap=0 means (shared/, pure, tested)
@@ -423,6 +424,7 @@ struct Settings {
     std::atomic<int>   dlssMv{2};              // [render] dlss_mv: 0 off, 1 check vrcam's matrices against the game's motion vectors (logs), 2 hand DLSS the same eye's     // [render] dlss_prev_fix: the game's previous-frame view made the same eye's (experiment)   // [debug] find_prev_matrix: once, where the game keeps past frames' view matrices (DLSS motion vectors)
     std::atomic<bool>  frameLog{false};     // [debug] frame_log: every pair, view, hero pose and present to d2r_vr_frames.csv
     std::atomic<bool>  poseOrderLog{false}; // [debug] pose_order: which of eye / look-at / hero matrix is stale per pass, to the log
+    std::atomic<bool>  flatPickLog{false};  // [debug] flat_pick: flat mouse look, what the game's targeting sees at each click and when its pixel leaves the middle
     std::atomic<float> facingSign{1.0f};    // flip if the arms swing the wrong way when the model turns
     std::atomic<int>   facingSource{1};     // [hands] facing_source: 1 the hero's TransformComponent (structural), 0 the memory search
     std::atomic<float> facingHoldMs{4000.0f};   // [hands] facing_hold_ms: the last facing kept this long while none reads
@@ -1991,6 +1993,7 @@ void LoadSettings() {
     g_set.hideHead.store(IniB(L"arms", L"hide_head", false));
     g_set.armScale.store(std::clamp(IniF(L"arms", L"scale", 1.0f), 0.3f, 3.0f));
     g_set.poseOrderLog.store(IniB(L"debug", L"pose_order", false));
+    g_set.flatPickLog.store(IniB(L"debug", L"flat_pick", false));   // docs/notes/flat_targeting.md
     g_set.frameLog.store(IniB(L"debug", L"frame_log", false));
     frametrace::SetOn(IniB(L"debug", L"frame_trace", false));   // a slow pair's time and the plugin's part of it (vr/frame_trace.h); measures only
     ftraceSetOverMs(IniF(L"debug", L"frame_trace_ms", (float)frametrace::kDefaultOverMs));
@@ -6325,6 +6328,44 @@ MapClickFn OrigMapClick;
 std::atomic<int> g_mapClick{0};   // 0 not in yet, 1 in, 2 not possible
 std::atomic<bool> g_hoverHooked{false};   // spell_aim's hook is on HoverUnit (its bytes checked then): no longer as they were
 
+// [debug] flat_pick (docs/notes/flat_targeting.md): a press of a mouse button with the flat mouse look on - what the game has under the
+// crosshair (its own HoverUnit, the click's target), the pixel its mouse code last asked a ray for against its viewport's middle, where
+// that ray meets the hero's ground and how steeply, and the window's state. Read only; at most 4 lines a second.
+extern HWND g_gameWnd;
+void FlatPickClick(void* unit, int type, int x, int y, uint64_t flags) {
+    static ULONGLONG lastLog = 0;
+    const ULONGLONG now = GetTickCount64();
+    if (now - lastLog < 250) return;
+    lastLog = now;
+    const int idx = ((ClientIndexFn)d2rsig::Addr(RVA_CLIENT_INDEX))(unit);
+    void* hover = idx >= 0 && idx < 8 ? ((HoverUnitFn)d2rsig::Addr(RVA_HOVER_UNIT))(idx) : nullptr;
+    char under[220];
+    shottrace::UnitText(hover, g_heroUnit.load(), under, sizeof under);
+    char pick[200] = "the game asked no mouse ray yet", ground[120] = "the ray through it: not known (no camera this frame)";
+    d2rcam::LastPickInfo lp{};
+    if (d2rcam::LastPick(&lp)) {
+        float o[3], d[3], look[3];
+        if (d2rcam::PickRay(lp.px, lp.py, o, d) && d2rcam::LookAtNow(look)) {
+            const flatpick::Ahead a = flatpick::GroundAhead(o, d, look[1]);
+            if (a.hit) snprintf(ground, sizeof ground, "its ray %.0f deg down meets the hero's ground %.1f ahead (%.1f per unit of height)", a.downDeg, a.along, flatpick::SlipPerUnit(a.downDeg));
+            else snprintf(ground, sizeof ground, "its ray (%.0f deg down) never meets the hero's ground", a.downDeg);
+        }
+        snprintf(pick, sizeof pick, "the game's pixel %.0f,%.0f of %.0fx%.0f (%s, %.0f%% off, %llu ms ago, from 0x%llX, %s)", lp.px, lp.py, lp.vpW, lp.vpH,
+                 flatpick::AtCentre(lp.px, lp.py, lp.vpW, lp.vpH) ? "the middle" : "NOT the middle", 100.0f * flatpick::OffCentre(lp.px, lp.py, lp.vpW, lp.vpH),
+                 (unsigned long long)(now - lp.at), lp.ret, lp.by == 0 ? "the game's camera" : lp.by == 2 ? "the ray override" : "our camera");
+    }
+    POINT c{}, mid{};
+    RECT rc{};
+    const bool win = g_gameWnd && GetCursorPos(&c) && GetClientRect(g_gameWnd, &rc);
+    if (win) { mid = {rc.right / 2, rc.bottom / 2}; ClientToScreen(g_gameWnd, &mid); }
+    LogF("vrcam: flat pick: click type %d (%d, %d, flags 0x%llX), under the crosshair: %s", type, x, y, (unsigned long long)flags, under);
+    LogF("vrcam: flat pick:   %s", pick);
+    LogF("vrcam: flat pick:   %s", ground);
+    LogF("vrcam: flat pick:   the cursor %+ld,%+ld from the window's middle (%ldx%ld), focus %d, Alt %d, Shift %d, menu %d", win ? c.x - mid.x : 0L, win ? c.y - mid.y : 0L,
+         (long)rc.right, (long)rc.bottom, GameFocused() ? 1 : 0, (GetAsyncKeyState(VK_MENU) & 0x8000) ? 1 : 0, (GetAsyncKeyState(VK_SHIFT) & 0x8000) ? 1 : 0,
+         gamestate::MenuOpen() ? 1 : 0);
+}
+
 uint64_t HookMapClick(void* unit, int type, int x, int y, uint64_t flags) {
     const bool mouseType = type == 0 || type == 1 || type == 3 || type == 4;
     // nothing under the pointer? the game's own lookup (HoverUnit), asked once for whoever needs it
@@ -6353,6 +6394,7 @@ uint64_t HookMapClick(void* unit, int type, int x, int y, uint64_t flags) {
             }
         }
     }
+    if (g_set.flatPickLog.load() && unit && (type == 0 || type == 3) && KeyMoveMode() && ShooterActive()) FlatPickClick(unit, type, x, y, flags);
     shottrace::ClickTrace shotTrace(unit, type, x, y, flags);   // [debug] shot_trace: the click, and when it returns (nothing when no shot is watched)
     // [gameplay] block_stray_walk (F4): a walk or run to a point that comes out of this click is told by the click's type and by
     // whether anything is under the pointer (vr/stray_walk.h); the guard itself sits on the game's command funnel
@@ -7559,6 +7601,35 @@ void MouseTick() {
     g_mouseYaw.store(WrapDeg(g_mouseYaw.load() + dx * k));                       // right turns right
     g_mousePitch.store(std::clamp(g_mousePitch.load() + dy * k, -90.0f, 90.0f));  // down looks down
     g_gen.fetch_add(1);
+}
+
+// [debug] flat_pick, on the timer after MouseTick: with the flat mouse look on, says when the game's mouse code stops asking for a ray, asks it
+// for a pixel away from its viewport's middle (the crosshair), or the game's window loses the keyboard - and once when all is well again.
+void FlatPickWatch() {
+    static ULONGLONG lastCheck = 0, lastBad = 0;
+    static bool bad = false;
+    const ULONGLONG now = GetTickCount64();
+    if (!g_set.flatPickLog.load() || now - lastCheck < 1000) return;
+    lastCheck = now;
+    if (!ShooterActive() || !KeyMoveMode()) { bad = false; return; }
+    d2rcam::LastPickInfo lp{};
+    const bool have = d2rcam::LastPick(&lp);
+    const bool stale = !have || now - lp.at > 1500;
+    const bool off = have && !flatpick::AtCentre(lp.px, lp.py, lp.vpW, lp.vpH);
+    const bool focus = GameFocused();
+    if (!stale && !off && focus) {
+        if (bad) Log("vrcam: flat pick: the game's pixel is the crosshair's again");
+        bad = false;
+        return;
+    }
+    if (bad && now - lastBad < 5000) return;
+    bad = true;
+    lastBad = now;
+    RECT rc{};
+    if (g_gameWnd) GetClientRect(g_gameWnd, &rc);
+    LogF("vrcam: flat pick: %s%s%s - the game's pixel %.0f,%.0f of %.0fx%.0f (%.0f%% off, from 0x%llX), the window %ldx%ld", !focus ? "the game's window is not in front; " : "",
+         stale ? "the game asked no mouse ray for over 1.5 s; " : "", off ? "the game's pixel is NOT the middle" : "", lp.px, lp.py, lp.vpW, lp.vpH,
+         have ? 100.0f * flatpick::OffCentre(lp.px, lp.py, lp.vpW, lp.vpH) : 0.0f, lp.ret, (long)rc.right, (long)rc.bottom);
 }
 
 // [render] rings and model_radius into cleanroom/drawdist (the old
@@ -17133,6 +17204,7 @@ DWORD WINAPI UpdateThread(void*) {
         // our camera while on, and for the stereo view from above while off
         d2rcam::SetEnabled(g_enabled.load() || (g_set.topStereo.load() && g_set.afr.load()));
         MouseTick();
+        FlatPickWatch();   // [debug] flat_pick
         TurnTick();
         PushArms();
 #if D2RVR_FIRST_PERSON

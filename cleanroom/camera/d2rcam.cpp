@@ -68,6 +68,12 @@ std::atomic<FrameFn> g_frameFn { nullptr };
 std::atomic<RayFn>  g_rayFn { nullptr };
 std::atomic<ULONGLONG> g_lastSync { 0 };
 
+// LastPick: the game's last mouse ray asked for (the shadow fit's left out). Separate
+// relaxed fields: a diagnostic, a torn read of one pick is harmless.
+std::atomic<float>     g_pickPx { 0.0f }, g_pickPy { 0.0f }, g_pickVpW { 0.0f }, g_pickVpH { 0.0f };
+std::atomic<int>       g_pickBy { 0 };
+std::atomic<ULONGLONG> g_pickAt { 0 }, g_pickRet { 0 };
+
 // ---- Per-frame snapshot ----------------------------------------------------
 // Written only by the frame sync (game main thread), read by the hooks and
 // PickRay from any thread. A ring of slots: a reader holding a slot would have
@@ -353,6 +359,16 @@ const float* __fastcall HookGetProjection(void* cam) {
 	return result;
 }
 
+void NotePick(void* cam, const float* px, int by, uintptr_t ret) {
+	g_pickPx.store(px[0], std::memory_order_relaxed);
+	g_pickPy.store(px[1], std::memory_order_relaxed);
+	g_pickVpW.store(cam != nullptr ? At<float>(cam, camf::ViewportW) : 0.0f, std::memory_order_relaxed);
+	g_pickVpH.store(cam != nullptr ? At<float>(cam, camf::ViewportH) : 0.0f, std::memory_order_relaxed);
+	g_pickBy.store(by, std::memory_order_relaxed);   // 1 becomes 2 when the ray override answers
+	g_pickRet.store(ret, std::memory_order_relaxed);
+	g_pickAt.store(GetTickCount64(), std::memory_order_relaxed);
+}
+
 void __fastcall HookScreenToRay(void* cam, const float* px, float* origin, float* dir) {
 	const ScreenToRayFn original = Orig(o_screenToRay);
 	if (original == nullptr) {   // never expected; leave a harmless ray
@@ -362,12 +378,17 @@ void __fastcall HookScreenToRay(void* cam, const float* px, float* origin, float
 		return;
 	}
 	const Frame& f = Current();
-	if (cam == nullptr || cam != f.cam || !(f.ourView || f.ourProj) || px == nullptr) {
+	const uintptr_t ret = reinterpret_cast<uintptr_t>(_ReturnAddress()) - g_base;
+	const bool shadowFit = ret >= d2rsig::Rva(ShadowFitBegin) && ret < d2rsig::Rva(ShadowFitEnd);
+	const bool ours = cam != nullptr && cam == f.cam && (f.ourView || f.ourProj) && px != nullptr;
+	if (!shadowFit && px != nullptr) {
+		NotePick(cam, px, ours ? 1 : 0, ret);
+	}
+	if (!ours) {
 		original(cam, px, origin, dir);
 		return;
 	}
-	const uintptr_t ret = reinterpret_cast<uintptr_t>(_ReturnAddress()) - g_base;
-	if (ret >= d2rsig::Rva(ShadowFitBegin) && ret < d2rsig::Rva(ShadowFitEnd)) {
+	if (shadowFit) {
 		// The shadow fit keeps the game's own camera: same fields, game pose.
 		alignas(16) uint8_t copy[camf::Size];
 		std::memcpy(copy, cam, sizeof(copy));
@@ -377,6 +398,7 @@ void __fastcall HookScreenToRay(void* cam, const float* px, float* origin, float
 		return;
 	}
 	if (const RayFn rayFn = g_rayFn.load(std::memory_order_relaxed); rayFn != nullptr && rayFn(origin, dir)) {
+		g_pickBy.store(2, std::memory_order_relaxed);
 		return;
 	}
 	const float vpW = At<float>(cam, camf::ViewportW);
@@ -485,6 +507,21 @@ bool LookAtNow(float out[3]) {
 		return false;
 	}
 	std::memcpy(out, Fp(cam, camf::LookAt), 3 * sizeof(float));
+	return true;
+}
+
+bool LastPick(LastPickInfo* out) {
+	const ULONGLONG at = g_pickAt.load(std::memory_order_relaxed);
+	if (out == nullptr || at == 0) {
+		return false;
+	}
+	out->px  = g_pickPx.load(std::memory_order_relaxed);
+	out->py  = g_pickPy.load(std::memory_order_relaxed);
+	out->vpW = g_pickVpW.load(std::memory_order_relaxed);
+	out->vpH = g_pickVpH.load(std::memory_order_relaxed);
+	out->by  = g_pickBy.load(std::memory_order_relaxed);
+	out->at  = at;
+	out->ret = g_pickRet.load(std::memory_order_relaxed);
 	return true;
 }
 
