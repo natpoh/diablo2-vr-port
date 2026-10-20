@@ -1130,6 +1130,9 @@ target_compile_options(quiver_input_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # [bow] quiver_orbs (vr/bow_orbs.h): the orbs along the bow's stave and the grip that takes one, on synthetic numbers: bow_orbs_test
 add_executable(bow_orbs_test cleanroom/tests/bow_orbs_test.cpp)
 target_compile_options(bow_orbs_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# [bow] arrow_fire_cut (vr/arrow_fire_cut.h): the arrow's effect out at the release that shoots, at once or after the set delay, back on the next arrow: arrow_fire_cut_test
+add_executable(arrow_fire_cut_test cleanroom/tests/arrow_fire_cut_test.cpp)
+target_compile_options(arrow_fire_cut_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # [bow] quiver_plain_no_mana (vr/bow_mana.h): what a bow skill costs by the game's own row, when the hero cannot pay it, the mana at the release: bow_mana_test
 add_executable(bow_mana_test cleanroom/tests/bow_mana_test.cpp)
 target_compile_options(bow_mana_test PRIVATE /utf-8 /W4 /EHsc /permissive-)

@@ -1,5 +1,19 @@
 # What's new in D2R VR
 
+## Next
+
+- **Fixed: the bow's energy orbs shone through what is in front of them** (the author, in the headset: the quiver orbs, VR first person F4, were drawn over things nearer
+  than them). They now take the game's depth the way the wrist medallions do: through the ball, the ray's own way into it is set against where the game's picture has its
+  surface - nothing of the ball where the scene is nearer than its front, and a surface sunk into it hides the part behind it - and the halo beside it by the ball's middle,
+  with the medallions' soft edge. The orb the free hand is at is no longer drawn over the hand (it was, at three quarters, and the orbs the hand neared at a part of that):
+  fingers in front of it hide it, the ball round them shows. The effect only (reshade/D2R_DepthFog.fx, the QUIVER-ORBS block); no new key. Copy the new effect in.
+- **New, on by default: the arrow's fire goes out at the release** (the author: "the flame on the nocked arrow does not disappear at once when the arrow is released"). With an
+  elemental arrow skill the fire, the frost or the arcane light that the effect draws on the bow's own arrow ([bow] arrow_fx) stayed on the arrow in the hand until the game hid
+  that arrow, a moment after the shot. It now goes out at the release that shoots, or a delay after it the player sets, and lights again on the next arrow: a new draw, the game
+  showing an arrow again after the shot, another skill chosen. D2R VR Authentic Settings > Bow > *Arrow effects: out at the release* (`[bow] arrow_fire_cut=1`) and *... after, ms*
+  (`[bow] arrow_fire_cut_ms`, 0 = at the release, up to 2000; a new draw or the next arrow before then drops it). Only our own light on the arrow: the game's missile, its
+  effects and its damage are the game's, untouched. Off: as before. F4 only, live. Unit test: cleanroom/tests/arrow_fire_cut_test.cpp (vr/arrow_fire_cut.h).
+
 ## 0.173
 
 - **The map in the hand with the game's map in the middle** (a player: native OpenXR drew the map across the view, no map in the hand). The map comes into the

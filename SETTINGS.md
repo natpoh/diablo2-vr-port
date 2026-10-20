@@ -641,7 +641,10 @@ in full in a square window); the log tells the size the game draws at.
   and one for each learned bow skill, the free hand's trigger at an orb picks it; *Arrow
   effects: fire, frost and arcane light on the arrow* (on), by the chosen skill; *no mana for
   the chosen arrow - shoot the plain arrow* (on), and the effect goes out while the mana
-  is short; *Quiver: show the chosen arrow skill in the mana medallion* (on, `[bow] quiver_icon`):
+  is short; *Arrow effects: out at the release* (on, `[bow] arrow_fire_cut`) puts the effect out
+  when the shot goes, not when the game hides the arrow in the hand, with *... after, ms*
+  (`arrow_fire_cut_ms`, 0 = at the release, up to 2000) for a moment of it on the shot
+  arrow - it lights again on the next arrow; *Quiver: show the chosen arrow skill in the mana medallion* (on, `[bow] quiver_icon`):
   the chosen skill's icon lies in the mana medallion on the wrist like an armed melee skill's
   (full while the hero can pay the shot, faint when not; the plain arrow: none), sized and placed
   by the *Skill icon in the mana* sliders on the Strikes tab. The crossbow has no quiver.

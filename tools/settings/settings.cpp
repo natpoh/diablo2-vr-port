@@ -2559,6 +2559,12 @@ std::vector<Item> g_items = {
     Needs(L"bow", L"quiver", 1, Needs(L"bow", L"arrow_fx", 1, Slider(L"bow", L"arrow_fx_along_cm", L"Arrow effects: along the arrow, cm", -20.0f, 60.0f, 0.5f, 0.0f,
            L"Moves the effect's centre along the arrow's shaft: more is forward, toward the arrowhead; less is back toward the string. 0 = where it is found. "
            L"Fire, frost and arcane alike, on the arrow at rest and on the drawn one. Live."))),
+    Needs(L"bow", L"quiver", 1, Needs(L"bow", L"arrow_fx", 1, Toggle(L"bow", L"arrow_fire_cut", L"Arrow effects: out at the release", 1,
+           L"On: the fire, the frost or the arcane light goes out when the shot goes - the release of the string - and not a moment later when the game hides the arrow in your hand. "
+           L"It lights again on the next arrow: a new draw, the game showing an arrow again after the shot, another skill chosen. The delay below keeps it on the shot arrow that long. "
+           L"Only our own light on the arrow: the game's missile, its effects and its damage are the game's. Off: the effect stays until the game hides the arrow, as before. F4 only. Live."))),
+    Needs(L"bow", L"quiver", 1, Needs(L"bow", L"arrow_fx", 1, Needs(L"bow", L"arrow_fire_cut", 1, Slider(L"bow", L"arrow_fire_cut_ms", L"Arrow effects: out at the release - after, ms", 0.0f, 2000.0f, 10.0f, 0.0f,
+           L"How long after the release the effect goes out: 0 = at the release. A new draw, or the next arrow shown, before then lights it on that arrow. Live.")))),
     Needs(L"hands", L"bow_draw", 0, Group(L"Bow without the string draw (the A button, mode above)")),
     Needs(L"hands", L"bow_draw", 0, Needs(L"bow", L"mode", 4, Toggle(L"hands", L"bow_aim", L"Arrows along the hand, no auto-target", 0,
            L"On: with a bow or a crossbow in hand, the attack and the bow's arrow skills go exactly along the hand: the game's "

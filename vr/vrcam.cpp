@@ -2101,6 +2101,8 @@ void LoadSettings() {
                                   IniF(L"bow", L"arrow_fx_along_cm", 0.0f));
         // [bow] quiver_plain_no_mana: an arrow skill the hero cannot pay (too little mana by the game's own numbers) shoots the plain arrow at the release instead of the game's refusal; live
         bowquiverwire::SetPlainNoMana(IniB(L"bow", L"quiver_plain_no_mana", true));
+        // [bow] arrow_fire_cut: the arrow's effect goes out at the release that shoots, at once or arrow_fire_cut_ms after it (vr/arrow_fire_cut.h); live
+        bowquiverwire::SetArrowFireCut(IniB(L"bow", L"arrow_fire_cut", true), IniF(L"bow", L"arrow_fire_cut_ms", 0.0f));
         bowquiverwire::SetArrowFxNeedsMana(IniB(L"bow", L"arrow_fx_needs_mana", true));   // [bow] arrow_fx_needs_mana: the arrow's effect goes out while the hero cannot pay the chosen skill
         bowquiverwire::SetIcon(IniB(L"bow", L"quiver_icon", true));   // [bow] quiver_icon: the chosen arrow skill's icon in the mana medallion (vr/armed_icon.h)
     }

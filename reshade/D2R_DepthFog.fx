@@ -2474,10 +2474,10 @@ float3 MercTint(float3 c, float3 ro, float3 rd, float3 back, float along)
 }
 // vrcam [bow] quiver_orbs (vr/bow_orbs.h, VR first person F4 only, a bow in hand): a row of energy orbs along the bow's stave, one for every bow skill the hero has and one for the
 // plain shot. Real 3D points, ray-cast per eye in the world's own frame (the hand orbs' above: world units, relative to where the hands hang, each eye from its own camera), so they
-// have parallax and follow the bow - and the game's depth is read per pixel, so a hand, a sleeve or a monster in front of an orb hides it. Each is a soft glowing ball in its skill's
-// colour with a white-hot heart and a halo, drawn as light over the picture (a screen blend: it adds and never overbrights). The skill the slot holds now is bigger and brighter and
-// beats slowly. The orb the free hand is at (hover 1) grows to 1.6 times, goes white-hot and bright, and is not hidden by the hand that reaches into it; the orbs the hand is nearing
-// show a part of that, so the player sees the one ahead of the grab. QvN = 0 (the default, and all vrcam sends while the setting is off, the bow is drawn or not in hand) leaves the
+// have parallax and follow the bow - and the game's depth is read per pixel the way the wrist medallions read it, so a hand, a sleeve, the bow or a monster in front of an orb hides it.
+// Each is a soft glowing ball in its skill's colour with a white-hot heart and a halo, drawn as light over the picture (a screen blend: it adds and never overbrights). The skill the slot
+// holds now is bigger and brighter and beats slowly. The orb the free hand is at (hover 1) grows to 1.6 times and goes white-hot and bright; the orbs the hand is nearing show a part of
+// that, so the player sees the one ahead of the grab. QvN = 0 (the default, and all vrcam sends while the setting is off, the bow is drawn or not in hand) leaves the
 // picture exactly as it was.
 //   QvPos[i]  xyz the orb's middle (world units, relative to where the hands hang), w its radius
 //   QvCol[i]  rgb its colour, w = 2 * current + hover: current 1 = the skill the slot holds now; hover 0 - 1 = how near the free hand is (1: it is at the orb)
@@ -2500,11 +2500,22 @@ float3 QuiverOrbs(float3 c, float3 ro, float3 rd, float3 back, float sceneZ)
         const float hov = saturate(s - 2.0 * cur);
         const float R = QvPos[i].w * (1.0 + 0.25 * cur + 0.60 * hov);
         if (R <= 0.0) continue;
-        float vis = saturate((sceneZ - (-b) * rdv) / (0.8 * R));        // something nearer than the orb's middle hides it (a soft edge) ...
-        vis = max(vis, 0.75 * hov);                                     // ... but not the orb the hand is in: it is under the hand that is taking it
-        if (vis <= 0.0) continue;
         const float x = sqrt(max(dot(oc, oc) - b * b, 0.0)) / R;        // the ray's distance from the middle, in radii
         if (x > 3.2) continue;
+        // What is nearer hides it, as the wrist medallions do (OneOrb): through the ball, the ray's own way into it against where the game's picture has its surface (tScene) -
+        // nothing of the ball where the scene is nearer than its front, and what is sunk into it hides the part behind (the share of the chord in front of that surface); the
+        // halo beside it by the ball's middle, with the medallions' soft edge. No exception for the orb the hand is at: fingers in front of it hide it, the ball round them shows.
+        float vis;
+        if (x < 1.0)
+        {
+            const float tScene = sceneZ / rdv;                          // along this ray, where the game's picture has its surface
+            const float hc = R * sqrt(1.0 - x * x);
+            const float ta = max(-b - hc, 0.0), tb = -b + hc;           // the ray's part in the ball
+            if (ta >= tScene) continue;                                 // something nearer hides the ball here
+            vis = saturate((min(tb, tScene) - ta) / max(tb - ta, 1e-6 * R));
+        }
+        else vis = saturate((sceneZ - (-b) * rdv) / (0.6 * R));
+        if (vis <= 0.0) continue;
         const float pulse = 1.0 + cur * 0.12 * sin(QvTime * 5.0 + (float)i);
         const float core = 1.0 - smoothstep(0.35, 1.0, x);              // the body of the ball
         const float hot = pow(saturate(1.0 - x), 2.5);                  // the white-hot heart
