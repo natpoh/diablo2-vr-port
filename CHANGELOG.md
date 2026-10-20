@@ -17,9 +17,23 @@
   edge). Both eyes go at this frame's pose. Stereo tab: *Eyes by turns: make the other eye from the depth* (`[stereo]
   turn_warp`, on) and *... with the eye drawn this frame over it* (`turn_from_drawn`, on), live; unticked, as before. First person
   (F4); F2, the menus and the other views as before. A frame whose depth or camera is missing, or a picture older than 0.1 s,
-  goes as before. The log says, every 10 s, how the other eye was made. Not yet: the game's labels over monsters are moved with
-  the scene behind them (d2r-pcvr takes the interface out of the picture and lays it back; to do), and a snap turn is made from
-  the turned picture, not drawn as a pair. The default stereo stays "one pass, two pictures". The technique and the shaders'
+  goes as before. The log says, every 10 s, how the other eye was made. Not yet: a snap turn is made from the turned picture, not
+  drawn as a pair.
+  - **Fixed after the author's first try: "everything we draw is doubled - the bow's energy orbs, the medallions on the hands, the
+    labels over monsters".** They have no depth of the scene: moved with the depth behind them, the eye made showed them twice.
+    Now they are left out of the picture the warp moves and drawn after it, for each eye on its own picture, from its own camera:
+    D2R_DepthFog.fx has `OverlaysApart` and two techniques of its own, `D2R_Overlay` / `D2R_Overlay_R` (the HUD shift, the game's
+    labels laid back, the hitboxes, the wrist orbs and medallions, the bow's orbs and the arrow's glow, the low-life vignette),
+    which vrcam renders on the back buffer and on the eye made (`replay::DrawOverlays`, xr.h TurnKeep / TurnMake / TurnFinish).
+    The game's labels are taken out of its picture for it (as with the labels' own settings) and laid back per eye. In the eye made
+    nothing of the scene hides an orb (the depth there is the other eye's). Needs the new D2R_DepthFog.fx with the DLL; an older
+    effect: as before.
+  - **Fixed: "the doll keeps coming off and goes twice as big".** Three checks meant for the two passes of one game frame took the
+    eyes by turns' two frames for one: the hero's facing given up for the memory search (`StructFreshness`, the facing candidates'
+    late / bad counts - a wrong copy of his matrix, of another scale, could be picked: the camera height, the world's scale and the
+    arms with it) and the hanging props stepped only every second frame (`props_once_a_pair`). Now only a pair of one game frame
+    counts (`PairOfOneFrame`). And in the eye made what is near (the doll, the hands, the weapon) stays where it was in the picture -
+    the doll is posed from the head - instead of being moved with the hero's step (`turnwarp::Held`). The default stereo stays "one pass, two pictures". The technique and the shaders'
   shape are bearstonem/d2r-pcvr's (MIT, steamvr/turn_warp.cpp, transport.cpp TurnEye). Unit test: cleanroom/tests/turn_math_test.cpp
   (a point moved with its depth lands where the other eye sees it, the turn, what the hero carries, the edge cut); not yet seen
   in the headset.

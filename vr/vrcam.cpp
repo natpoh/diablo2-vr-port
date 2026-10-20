@@ -3302,6 +3302,12 @@ void AfrQuietWhenOff() {
 }
 bool PairWanted();
 bool NativeByTurns();
+// The two passes of the pair being drawn are one game frame (the replay or two passes): the right pass may compare itself with the
+// left one. Eyes by turns (NativeByTurns) has a pair too - one pass, its eye in turn - but each eye is a game frame of its own: a
+// check made for "the right pass of this frame" read the next frame there - the hero's facing given up for the memory search
+// (StructFreshness, FacingCand), the hanging props stepped every second frame (props_once_a_pair): "the doll keeps coming off and
+// goes twice as big" (the author, 2026-10-20).
+bool PairOfOneFrame();
 
 // Once a game frame: the per-frame camera update's copy(second, MASTER).
 // Drawing a pair per game frame, the eye is set by HookDrawGameScreen instead.
@@ -4190,6 +4196,17 @@ bool VrViewInner(const d2rcam::WorldView& in, float out[16]) {
             if (projOk) memcpy(r1.proj, proj, sizeof proj); else r1.proj_ok = sv.proj_ok;
             const float sh = 2.0f * g_eyeHalf.load();
             r1.eyeRel[0] += right.x * sh; r1.eyeRel[1] += right.y * sh; r1.eyeRel[2] += right.z * sh;
+        } else if (native && turnFirst && NativeByTurns()) {
+            // eyes by turns, the other eye made on the GPU (xr::TurnMake): its overlays are drawn for where it is now (D2R_Overlay) - its view is
+            // this one moved across by the eye gap, its projection its own (the last it was drawn with: the same fov)
+            const int o = (g_eye.load() & 1) ^ 1;
+            SkyView& ro = g_skyView[o];
+            const bool projOk = ro.proj_ok;
+            float proj[4]; memcpy(proj, ro.proj, sizeof proj);
+            ro = sv;
+            if (projOk) memcpy(ro.proj, proj, sizeof proj); else ro.proj_ok = false;
+            const float sh = 2.0f * g_eyeHalf.load() * (o == 1 ? 1.0f : -1.0f);
+            ro.eyeRel[0] += right.x * sh; ro.eyeRel[1] += right.y * sh; ro.eyeRel[2] += right.z * sh;
         }
         ReleaseSRWLockExclusive(&g_skyLock);
     }
@@ -4306,8 +4323,9 @@ bool VrProjInner(const d2rcam::WorldView& in, float M[16]) {
         SkyView& r1 = g_skyView[1];
         r1.proj[0] = M[0]; r1.proj[1] = M[5]; r1.proj[2] = M[8] - 2.0f * shift; r1.proj[3] = M[9]; r1.proj_ok = true;
     }
+    const bool turned = NativeByTurns() && xr::TurnsNow();   // eyes by turns: the other eye's view moved with this one (VrViewInner)
     for (int e = 0; e < 2; ++e)
-        if (e == (g_eye.load() & 1) || (e == 1 && replayed))
+        if (e == (g_eye.load() & 1) || (e == 1 && replayed) || turned)
             g_skyHist[e][g_skyHistAt[e] = (g_skyHistAt[e] + 1) & 3] = g_skyView[e];
     ReleaseSRWLockExclusive(&g_skyLock);
     return true;
@@ -7819,6 +7837,7 @@ bool FrameTimeFound() {
 // Native OpenXR with the eyes by turns (D2R VR Settings: "Native OpenXR - eyes by turns"): one pass
 // a game frame through HookDrawGameScreen, which opens the runtime's frame for it (DrawByTurns).
 bool NativeByTurns() { return g_set.platform.load() == 1 && xr::ByTurns() && !g_set.pairPerTick.load(); }
+bool PairOfOneFrame() { return g_pairNow.load() && !NativeByTurns(); }
 
 // Without the frame time held, the second pass would play the frame's
 // animation and particles a second time: the pair is drawn only with it.
@@ -9736,6 +9755,34 @@ bool XrBegin() {
 }
 void XrCopy(int eye, ID3D12Resource* bb) { t_ours = true; xr::CopyEye(eye, bb); t_ours = false; }
 void XrEnd() { t_ours = true; xr::EndPair(); t_ours = false; }
+// Eyes by turns with the other eye made on the GPU (xr::TurnMake, [stereo] turn_warp): what D2R_DepthFog.fx draws without the scene's
+// depth - the game's labels laid back, the wrist medallions, the bow's orbs, the hitboxes, the low-life vignette - is left out of the
+// picture the warp moves (OverlaysApart, set at the effects' begin for this present) and drawn after it for each eye on its own picture
+// (D2R_Overlay / D2R_Overlay_R): moved with the depth behind them they showed twice in the eye made (the author, 2026-10-20).
+reshade::api::effect_technique g_ovTech[2]{};   // found with the effect's techniques (fx OnFinishEffects)
+std::atomic<bool> g_ovApart{false};             // OverlaysApart as this present's effects had it
+thread_local bool t_overlay = false;            // inside our own overlay render (the effects' events, if they come, are not a present's)
+bool OverlaysWanted() { return NativeByTurns() && xr::TurnWarpOn() && g_ovTech[0].handle && g_ovTech[1].handle; }   // the mode (any thread)
+bool OverlaysNow() { return OverlaysWanted() && xr::TurnsNow(); }   // ... and this pair is made so (the draw thread, inside the pair)
+// `eye`'s overlays over `target`: the back buffer (PRESENT) or our picture of the other eye (RENDER_TARGET), viewed as `fmt`.
+void DrawOverlays(reshade::api::effect_runtime* rt, ID3D12Resource* target, int eye, DXGI_FORMAT fmt, bool backBuffer) {
+    using namespace reshade::api;
+    if (!rt || !target || !g_ovTech[eye & 1].handle) return;
+    device* dev = rt->get_device();
+    const resource res{(uint64_t)target};
+    resource_view rtv{0};   // made and let go each time: our picture may be made again at the same address
+    if (!dev->create_resource_view(res, resource_usage::render_target, resource_view_desc((format)fmt), &rtv)) return;
+    command_queue* q = rt->get_command_queue();
+    command_list* cl = q->get_immediate_command_list();
+    if (backBuffer) cl->barrier(res, resource_usage::present, resource_usage::render_target);
+    t_overlay = true;
+    rt->render_technique(g_ovTech[eye & 1], cl, rtv, rtv);
+    t_overlay = false;
+    if (backBuffer) cl->barrier(res, resource_usage::render_target, resource_usage::present);
+    q->flush_immediate_command_list();
+    dev->destroy_resource_view(rtv);   // (its descriptor was copied into the list when it was recorded)
+}
+
 void XrPresent(reshade::api::effect_runtime* rt, ID3D12Resource* bb) {
     if (SkipWhileStuck("the picture's copy to the headset (ReShade's flush waits on the queue)")) return;
     t_ours = true;
@@ -9746,7 +9793,20 @@ void XrPresent(reshade::api::effect_runtime* rt, ID3D12Resource* bb) {
     rq->flush_immediate_command_list();
     ID3D12Device* dev = (ID3D12Device*)rt->get_device()->get_native();
     ID3D12CommandQueue* q = (ID3D12CommandQueue*)rq->get_native();
-    xr::OnPresent(dev, q, bb, g_pairNow.load() ? (g_eye.load() & 1) : -1);   // a pass of two: its eye
+    const int pairEye = g_pairNow.load() ? (g_eye.load() & 1) : -1;   // a pass of two: its eye
+    // eyes by turns, the other eye made ([stereo] turn_warp): this eye kept as it is (no overlays yet), then its overlays, its swapchain,
+    // the other eye made, its overlays, its swapchain (xr.h TurnKeep)
+    const bool turns = pairEye >= 0 && xr::TurnsNow();
+    const bool apart = turns && g_ovApart.load();
+    const DXGI_FORMAT fmt = bb ? bb->GetDesc().Format : DXGI_FORMAT_UNKNOWN;
+    if (turns) xr::TurnKeep(pairEye, bb);
+    if (apart) DrawOverlays(rt, bb, pairEye, fmt, true);
+    xr::OnPresent(dev, q, bb, pairEye);
+    if (turns)
+        if (ID3D12Resource* made = xr::TurnMake()) {
+            if (apart) DrawOverlays(rt, made, pairEye ^ 1, fmt, false);
+            xr::TurnFinish();
+        }
     t_ours = false;
 }
 
@@ -11969,7 +12029,7 @@ bool SearchAllowed() {
 // one at the left pose must already have it. Counted in turning pairs, to the log every 10 s;
 // a frame old in more than a quarter of 30+ pairs and the search takes over (left-eye shake).
 void StructFreshness(uintptr_t at, const float* local) {
-    if (!g_pairNow.load()) return;
+    if (!PairOfOneFrame()) return;   // (by turns there is no left pose of this frame to be fresh against)
     float w[16];
     if (!SafeRead(w, (void*)(at + 0x40), 64) || w[15] != 1.0f) return;
     static SRWLOCK lock = SRWLOCK_INIT;
@@ -12362,7 +12422,7 @@ bool FreshYawInModel(float* yawInModel, float* eyeModel, bool* eyeOk) {
         // yet this frame's at the left pose - FacingCand)
         const bool logIt = flog::g_on.load();
         const int eye = g_eye.load() & 1;
-        const bool pair = g_pairNow.load();
+        const bool pair = PairOfOneFrame();
         char b[700]; int k = logIt ? snprintf(b, sizeof b, "C,%u,%d", flog::Pass(), eye) : 0;
         static float lastTruth = 1000.0f;   // this frame's yaw as the right pass found it, last pair
         AcquireSRWLockExclusive(&g_candLock);
@@ -14632,7 +14692,7 @@ bool g_prepareIn = false, g_simulateIn = false, g_failed = false;
 
 bool Skip(uintptr_t caller, uintptr_t expected) {
     return ::prophold::Hold(g_ready.load(std::memory_order_relaxed), g_set.propsOncePair.load(std::memory_order_relaxed) && FullBody(),
-                g_pairNow.load(std::memory_order_relaxed), g_eye.load(std::memory_order_relaxed), caller, expected);
+                PairOfOneFrame(), g_eye.load(std::memory_order_relaxed), caller, expected);
 }
 
 void HookPrepare(void* self, const void* transform, const void* settings, float dt) {
@@ -15358,7 +15418,7 @@ int g_iconUpSkill = -1, g_iconTry = -1;
 uint32_t g_iconUpRev = 0;
 uint64_t g_iconUpVar = 0;
 
-void Forget(reshade::api::effect_runtime*) { g_tech[0] = g_tech[1] = {0}; replay::g_rightTech = {0}; g_pieceBound[0] = g_pieceBound[1] = g_pieceBound[2] = g_pieceBound[3] = 0; replay::g_depthBound = 0; g_iconUpSkill = g_iconTry = -1; }
+void Forget(reshade::api::effect_runtime*) { g_tech[0] = g_tech[1] = {0}; replay::g_rightTech = {0}; replay::g_ovTech[0] = replay::g_ovTech[1] = {0}; g_pieceBound[0] = g_pieceBound[1] = g_pieceBound[2] = g_pieceBound[3] = 0; replay::g_depthBound = 0; g_iconUpSkill = g_iconTry = -1; }
 
 void SetFloats(reshade::api::effect_runtime* rt, const char* name, const float* v, size_t n) {
     const reshade::api::effect_uniform_variable u = rt->find_uniform_variable("D2R_DepthFog.fx", name);
@@ -15760,11 +15820,14 @@ bool ApplySkyPictures(reshade::api::effect_runtime* rt) {
 // resources it had not created yet, and the game died in D3D12 (null+0x19C).
 // From here it takes effect on the next frame, with everything in place.
 void OnFinishEffects(reshade::api::effect_runtime* rt, reshade::api::command_list*, reshade::api::resource_view, reshade::api::resource_view) {
+    if (replay::t_overlay) return;   // our own overlay render: not a present's effects
     if (const double b = pairtime::g_effBegin.exchange(0.0); b > 0.0) pairtime::g_effSum.store(pairtime::g_effSum.load() + pairtime::UsNow() - b);
     if (ApplySkyPictures(rt)) return;   // the effect reloads with the new pictures
     if (!g_tech[0].handle) g_tech[0] = rt->find_technique("D2R_DepthFog.fx", "D2R_DepthFog");
     if (!g_tech[1].handle) g_tech[1] = rt->find_technique("D2R_DepthFog.fx", "D2R_DepthFog_R");
     replay::g_rightTech = g_tech[1];
+    for (int e = 0; e < 2; ++e)   // eyes by turns: the overlays drawn apart (replay::DrawOverlays); an older effect has none - drawn in the picture, as before
+        if (!replay::g_ovTech[e].handle) replay::g_ovTech[e] = rt->find_technique("D2R_DepthFog.fx", e ? "D2R_Overlay_R" : "D2R_Overlay");
     if (!g_tech[0].handle) { hud::SetPictureReady(false); return; }
     // Off while a menu is open: the fog lies over the whole picture, the
     // inventory and trade panels included, and darkened them.
@@ -16310,10 +16373,20 @@ void OnReshadePresent(reshade::api::effect_runtime* rt) {
 
 
 void OnBeginEffects(reshade::api::effect_runtime* rt, reshade::api::command_list* cl, reshade::api::resource_view, reshade::api::resource_view) {
+    if (replay::t_overlay) return;   // our own overlay render: not a present's effects
     pairtime::g_effBegin.store(pairtime::UsNow());
     const bool own = OwnDepthNow();
     SetBool(rt, "OwnDepth", own);   // ours (VR, the square window) or ReShade's DEPTH (scenedepth::)
     scenedepth::Bind(rt, cl);   // before the replay reads which depth the effects have
+    {   // eyes by turns, the other eye made: the overlays apart this present (replay::DrawOverlays), and in the eye made nothing of the
+        // scene hides them - the depth bound is the eye drawn's
+        const bool apart = replay::OverlaysNow();
+        replay::g_ovApart.store(apart);
+        const int drawn = g_eye.load() & 1;
+        SetBool(rt, "OverlaysApart", apart);
+        SetBool(rt, "OverlayNoHide0", apart && drawn != 0);
+        SetBool(rt, "OverlayNoHide1", apart && drawn != 1);
+    }
     if (replay::g_on.load()) replay::g_rt = rt;
     if (replay::g_on.load()) {   // the depth buffer our effect reads: replay keeps the left eye's for its present
         const reshade::api::effect_texture_variable v = rt->find_texture_variable("D2R_DepthFog.fx", own ? "FogDepthTex" : "FogDepthRsTex");
@@ -17410,7 +17483,7 @@ DWORD WINAPI UpdateThread(void*) {
             static ULONGLONG nextDur = 0;
             if (nowMs >= nextDur) { nextDur = nowMs + 100; gamestate::PollDurability(); }
         }
-        hud::SetLabels(LabelsWanted());
+        hud::SetLabels(LabelsWanted() || replay::OverlaysWanted());   // eyes by turns: the game's labels laid back by the overlays, per eye
         {   // [openxr] menu_3d on FlatVR: is a FlatVR there that hangs a menu panel, where it hangs it, and
             // Game Link keeps FlatVR's screen and Head Lock as with no menu while it does
             hud::PollMenuReader();
@@ -17422,7 +17495,7 @@ DWORD WINAPI UpdateThread(void*) {
             link::SetMenuPanel(FlatVrMenuPanel());
         }
         // the fog leaves the interface alone; the floor's key never takes its text for the void
-        hud::SetUiMask((fx::FogWanted() || fx::TableKeyWanted()) && !LabelsWanted());
+        hud::SetUiMask((fx::FogWanted() || fx::TableKeyWanted()) && !LabelsWanted() && !replay::OverlaysWanted());
         SkyTick();
         flog::Tick(g_set.frameLog.load() || GetTickCount64() < flog::g_diagUntil.load());
         directinput::SetMenuNow(gamestate::MenuOpen() || !g_inWorld.load());   // [openxr] direct_input: the layer in force against the game's

@@ -138,6 +138,12 @@ inline std::array<float, 12> Carry(Vec drawnAt, Quat drawn, Vec heroWas, float b
     return Move(heroNow + Rotate(body, drawnAt - heroWas), Multiply(body, drawn), nowAt, now);
 }
 
+// What the camera carries in first person: the doll is posed from the head every frame (its body turns with the view, the hands hang off
+// the eye, a crouch follows the head), so what is near stays where it was in the picture - the identity, in the view's own frame. Moved
+// with the hero's step instead (Carry), the doll of the older picture showed beside the one drawn now along its edges, eye after eye:
+// "the doll keeps coming off" (the author, 2026-10-20).
+inline std::array<float, 12> Held() { return {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0}; }
+
 // Nearer than kCarriedNearM metres along the view a point moves with the hero (Carry), farther than kCarriedFarM with the
 // world (Move), blended between: the hands and a weapon sit within the first, the ground at the feet - even looking straight
 // down - past the second (pcvr's numbers).

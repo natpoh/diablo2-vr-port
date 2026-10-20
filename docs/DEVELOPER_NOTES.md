@@ -168,6 +168,12 @@ flat mode, the game draws WxH: a light tile is A x B px, square|not square ...; 
   picture moved with its depth, the eye drawn now moved across over it. Projection: reverse-Z, infinite, so a pixel's distance
   is `near / depth` with vrcam's `[camera] near`. Both eyes then go at this frame's pose. The kept pictures are read by the
   next frame's list on the same queue, so no fence; the descriptor sets are a ring of 8 waited on our fence.
+  **What has no depth of the scene is drawn after the warp**, per eye: `OverlaysApart` leaves `PS_Hud`, `PS_GameHud` and
+  `PS_Phantom` out of the main techniques, and vrcam's present (`replay::XrPresent`) goes TurnKeep (the eye kept without them)
+  -> `D2R_Overlay[eye]` on the back buffer -> OnPresent -> TurnMake (the other eye into our own picture, the back buffer's
+  typeless family) -> `D2R_Overlay[other]` on it -> TurnFinish. The other eye's camera for those is this frame's view moved by
+  the eye gap (`g_skyView[o]`, pushed to its history each frame by turns). Checks for "the right pass of this frame" use
+  `PairOfOneFrame()`, never `g_pairNow` alone: by turns each eye is a game frame of its own.
 - **One present per stereo pair.** Two presents drifted the swap chain's
   latency until it deadlocked.
 - **Temporal effects mix the two eyes:**

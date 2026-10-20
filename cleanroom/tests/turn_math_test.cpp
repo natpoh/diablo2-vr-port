@@ -9,6 +9,7 @@
 //           gap (the drawn eye laid over the other), a head turn and step (the eye's own last picture), asymmetric fovs
 // turn      Homography: rotation only - a far point lands where it is seen; a near one does not (what the depth is for)
 // carry     Carry: what the hero holds goes with his step and his body's turn, the world stays
+// held      Held: first person - what is near stays in the picture (the doll is posed from the head), the world moves
 // edge      EdgeScale / CutsEdge: a cell over a foreground's edge is cut, one on a surface is kept
 
 #include "turn_math.h"
@@ -160,6 +161,24 @@ void CarryCases() {
     Check(std::fabs(u2 - u) > 0.02f, "carry: (without it the hand is left behind)");
 }
 
+// First person: what is near (the doll, the hands) is posed from the head - it stays where it was in the picture, whatever the head did.
+void HeldCases() {
+    const Camera was = Cam({10.0f, 6.1f, 4.0f}, 0.4f, -0.3f, kRightTan), now = Cam({10.6f, 6.0f, 3.5f}, 0.9f, -0.1f, kRightTan);
+    const auto move = Move(was.at, was.turn, now.at, now.turn);
+    const auto held = Held();
+    const float nearM = kCarriedNearM * kUpm, farM = kCarriedFarM * kUpm;
+    float u, v, d, u2, v2, d2, ue, ve, de;
+    const Vec hand = was.at + Rotate(was.turn, {0.4f, -1.2f, -2.0f});   // a hand, 0.7 m off the eye
+    See(was, kNear, hand, &u, &v, &d);
+    Check(MovePoint(was.tan, now.tan, kNear, move, held, nearM, farM, u, v, d, &u2, &v2, &d2) && Near(u2, u) && Near(v2, v) && Near(d2, d),
+          "held: the doll's hand stays in the picture through a head turn and step");
+    const Vec wall = was.at + Rotate(was.turn, {1.0f, 0.5f, -20.0f});
+    See(was, kNear, wall, &u, &v, &d);
+    See(now, kNear, wall, &ue, &ve, &de);
+    Check(MovePoint(was.tan, now.tan, kNear, move, held, nearM, farM, u, v, d, &u2, &v2, &d2) && Near(u2, ue, 2e-4f) && Near(v2, ve, 2e-4f),
+          "held: the world past reach is the world's");
+}
+
 void EdgeCases() {
     const float gap = 0.064f * kUpm;
     const float k = EdgeScale(2048, kRightTan, gap, kNear);
@@ -181,6 +200,7 @@ int main() {
     MoveCases();
     TurnCases();
     CarryCases();
+    HeldCases();
     EdgeCases();
     std::printf("%d checks, %d failed\n", g_checks, g_failed);
     return g_failed ? 1 : 0;

@@ -136,6 +136,16 @@ void SetTurnView(const TurnView& v);
 // resource (an ID3D12Resource in a shader-resource state), its shader view's DXGI format and the part of it the scene is
 // drawn in. nullptr: none this present.
 void SetTurnDepth(void* resource, uint32_t viewFormat, float scaleX, float scaleY);
+// The present of a pair by turns with the other eye made ([stereo] turn_warp, F4 / F2's head camera): vrcam's XrPresent, in order -
+// TurnKeep(eye, back buffer) before what has no depth of the scene is drawn over it (D2R_DepthFog.fx's overlays, OverlaysApart:
+// moved with the depth behind them they showed twice in the eye made); then the overlays of this eye on the back buffer; OnPresent
+// (this eye into its swapchain); TurnMake - the other eye made into a picture of ours (the back buffer's size and family,
+// RENDER_TARGET; nullptr: none this frame, its last one goes again); its overlays over it; TurnFinish - into its swapchain.
+bool TurnsNow();
+bool TurnWarpOn();   // [stereo] turn_warp with the eyes by turns (any thread)
+void TurnKeep(int eye, ID3D12Resource* backBuffer);
+ID3D12Resource* TurnMake();
+void TurnFinish();
 // [openxr] on went to 0 while a session is up: the next present ends it.
 bool StopPending();
 // The next views taken as straight ahead (F11, BodyWalk's recentre).

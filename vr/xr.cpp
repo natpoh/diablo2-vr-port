@@ -1230,6 +1230,7 @@ void FlushHaptics() {
 void WaitFence(UINT64 v, DWORD ms);   // (the copy list, below)
 void SweepGraveyard(bool all);
 void TurnTeardown();   // eyes by turns' kept pictures and pass (below)
+void TurnFrameEnd();   // ... the frame's steps given up: the other eye's image given back if vrcam did not finish (CloseFrame)
 void Teardown() {   // under g_lock or before the session exists
     g_running.store(false);
     gpufault::Note("xr: teardown");
@@ -3439,6 +3440,7 @@ uint32_t HangCalibration(const XrCompositionLayerBaseHeader** layers, uint32_t n
 
 void CloseFrame() {
     if (g_kind == kNone) return;
+    TurnFrameEnd();   // eyes by turns: an image acquired for the eye made goes back before the frame's layers (normally TurnFinish did)
     const double closeUs = UsNow();   // the layers built from here, xrEndFrame from endUs (g_clock)
     XrCompositionLayerProjectionView pv[2] = {{XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW}, {XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW}};
     XrCompositionLayerProjection proj{XR_TYPE_COMPOSITION_LAYER_PROJECTION};
@@ -4083,6 +4085,11 @@ TurnKept g_turnKept[2];
 turnwarp::Gpu g_turnGpu;
 UINT64 g_turnSlotDone[turnwarp::kSlots] = {};   // our fence when the list that used each descriptor set was submitted
 int g_turnSlot = 0;
+// The frame's steps under way (TurnKeep / TurnMake / TurnFinish, below): open = the next may go on; acquired = the other eye's swapchain
+// image is ours until TurnFinish (CloseFrame gives it back if vrcam did not).
+struct TurnFrame { bool open = false; bool acquired = false; bool turned = false; int o = 0; uint32_t idx = 0; };
+TurnFrame g_turnFrame;
+ID3D12Resource* g_turnTarget = nullptr;   // the eye made, before it goes to its swapchain: the back buffer's size, its typeless family (RENDER_TARGET)
 struct TurnCounts { uint32_t moved = 0, turned = 0, drawnOver = 0, left = 0; ULONGLONG since = 0; };
 TurnCounts g_turnCounts;
 
@@ -4099,6 +4106,8 @@ void TurnTeardown() {   // the session's end: after Teardown's wait for our list
         k = TurnKept{};
     }
     g_turnGpu.Release();
+    if (g_turnTarget) { g_turnTarget->Release(); g_turnTarget = nullptr; }
+    g_turnFrame = TurnFrame{};
     for (UINT64& v : g_turnSlotDone) v = 0;
     AcquireSRWLockExclusive(&g_turnLock);
     g_turnView = TurnView{};
@@ -4138,9 +4147,47 @@ bool TurnTexture(ID3D12Resource*& r, const D3D12_RESOURCE_DESC& want, D3D12_RESO
     return true;
 }
 
-// After CopyEye put the eye drawn this frame (`d`) into its swapchain: keep it, and make the other eye from what is kept.
-// Under g_lock, on the draw thread.
-void TurnAfterCopy(int d, ID3D12Resource* bb) {
+// The frame's steps (vrcam's present, XrPresent, in order): TurnKeep - the eye drawn kept as its picture is now, before what has no
+// depth of the scene is drawn over it (the effect's overlays: vrcam draws them after, OverlaysApart); TurnMake - the other eye made
+// into g_turnTarget, a picture of ours (vrcam draws that eye's overlays over it); TurnFinish - into its swapchain. Under g_lock, the draw thread.
+
+DXGI_FORMAT TypelessOf(DXGI_FORMAT f) {
+    switch (Family(f)) {
+        case 1: return DXGI_FORMAT_R8G8B8A8_TYPELESS;
+        case 2: return DXGI_FORMAT_B8G8R8A8_TYPELESS;
+        case 3: return DXGI_FORMAT_R10G10B10A2_TYPELESS;
+        case 4: return DXGI_FORMAT_R16G16B16A16_TYPELESS;
+        default: return DXGI_FORMAT_UNKNOWN;
+    }
+}
+
+void CopyPicture(ID3D12GraphicsCommandList* list, ID3D12Resource* from, D3D12_RESOURCE_STATES fromState, ID3D12Resource* to,
+                 D3D12_RESOURCE_STATES toState, uint32_t w, uint32_t h) {
+    D3D12_RESOURCE_BARRIER b[2] = {Tr(from, fromState, D3D12_RESOURCE_STATE_COPY_SOURCE), Tr(to, toState, D3D12_RESOURCE_STATE_COPY_DEST)};
+    list->ResourceBarrier(2, b);
+    D3D12_TEXTURE_COPY_LOCATION t{}, f{};
+    t.pResource = to; t.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+    f.pResource = from; f.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+    const D3D12_BOX box{0, 0, 0, w, h, 1};
+    list->CopyTextureRegion(&t, 0, 0, 0, &f, &box);
+    D3D12_RESOURCE_BARRIER e[2] = {Tr(from, D3D12_RESOURCE_STATE_COPY_SOURCE, fromState), Tr(to, D3D12_RESOURCE_STATE_COPY_DEST, toState)};
+    list->ResourceBarrier(2, e);
+}
+
+void TurnTell() {   // the 10 s line
+    const ULONGLONG now = GetTickCount64();
+    if (!g_turnCounts.since) g_turnCounts.since = now;
+    if (now - g_turnCounts.since >= 10000) {
+        LogF("vrcam: openxr - eyes by turns, 10 s: the eye not drawn made %u times with the depth (the eye drawn laid over it %u), turned only %u, "
+             "left as last drawn %u", g_turnCounts.moved, g_turnCounts.drawnOver, g_turnCounts.turned, g_turnCounts.left);
+        g_turnCounts = TurnCounts{};
+        g_turnCounts.since = now;
+    }
+}
+
+// 1. The eye drawn this frame (`d`) kept: its picture (the back buffer as it is now), the depth our effects copied for its present,
+// and the camera it was drawn from.
+void TurnKeepLocked(int d, ID3D12Resource* bb) {
     TurnView v;
     TurnDepthIn din;
     AcquireSRWLockExclusive(&g_turnLock);
@@ -4148,43 +4195,20 @@ void TurnAfterCopy(int d, ID3D12Resource* bb) {
     din = g_turnDepthIn;
     g_turnDepthIn.ok = false;   // one present's
     ReleaseSRWLockExclusive(&g_turnLock);
+    g_turnFrame = TurnFrame{};
     if (!v.ok || g_pairMode != kViewsHead) { TurnForget(); return; }   // not a first-person pair: nothing kept goes on
+    if (!EnsureChain(g_eyeChain[d], bb->GetDesc(), d ? "right eye's" : "left eye's")) return;
     const Chain& cd = g_eyeChain[d];
-    const int o = d ^ 1;
-    const Chain& co = g_eyeChain[o];
     if (!g_turnGpu.Init(g_dev, (DXGI_FORMAT)cd.fmt, &TurnLog)) return;
-    // the other eye's swapchain image, before the list: if none comes, its last one goes again (CloseFrame, as before)
-    const ULONGLONG nowMs = GetTickCount64();
-    const bool canTurn = co.sc && co.w == cd.w && co.h == cd.h && co.fmt == cd.fmt && g_turnKept[o].imageOk && g_turnKept[o].cam.ok &&
-                         nowMs - g_turnKept[o].at <= kTurnOldMs;
-    uint32_t idx = 0;
-    const bool acquired = canTurn && NextImage(co.sc, &idx, "picture") > 0;
     ID3D12GraphicsCommandList* list = OpenList();
-    if (!list) {
-        if (acquired) { XrSwapchainImageReleaseInfo none{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO}; xrReleaseSwapchainImage(co.sc, &none); }
-        return;
-    }
+    if (!list) return;
     TurnKept& kd = g_turnKept[d];
-    // 1. this eye kept: its picture (the back buffer, as CopyInto copied it) ...
     D3D12_RESOURCE_DESC idesc = bb->GetDesc();
     idesc.Width = cd.w;
     idesc.Height = cd.h;
     idesc.Format = (DXGI_FORMAT)cd.fmt;
     kd.imageOk = TurnTexture(kd.image, idesc, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, L"d2rvr eyes by turns kept eye");
-    if (kd.imageOk) {
-        D3D12_RESOURCE_BARRIER b[2] = {Tr(bb, D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_COPY_SOURCE),
-                                       Tr(kd.image, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST)};
-        list->ResourceBarrier(2, b);
-        D3D12_TEXTURE_COPY_LOCATION to{}, from{};
-        to.pResource = kd.image; to.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
-        from.pResource = bb; from.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
-        const D3D12_BOX box{0, 0, 0, cd.w, cd.h, 1};
-        list->CopyTextureRegion(&to, 0, 0, 0, &from, &box);
-        D3D12_RESOURCE_BARRIER e[2] = {Tr(bb, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_PRESENT),
-                                       Tr(kd.image, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE)};
-        list->ResourceBarrier(2, e);
-    }
-    // ... the depth it was drawn with (our effects' copy of the scene's depth, this present's) ...
+    if (kd.imageOk) CopyPicture(list, bb, D3D12_RESOURCE_STATE_PRESENT, kd.image, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, cd.w, cd.h);
     kd.depthOk = false;
     if (din.ok && din.res && g_turnGpu.DepthReady()) {
         const D3D12_RESOURCE_DESC dd = din.res->GetDesc();
@@ -4200,85 +4224,133 @@ void TurnAfterCopy(int d, ID3D12Resource* bb) {
             kd.depthOk = true;
         }
     }
-    // ... and the camera it was drawn from
+    SubmitList();
     kd.cam = CameraNow(v, d);
     kd.hero = {v.hero[0], v.hero[1], v.hero[2]};
     kd.body = v.body;
     kd.nearPlane = v.nearPlane;
-    kd.at = nowMs;
-    // 2. the other eye, made for where it is now
+    kd.at = GetTickCount64();
+    g_turnFrame.open = true;   // TurnMake may go on
+    g_turnFrame.o = d ^ 1;
+}
+
+// 2. The other eye made for where it is now, into g_turnTarget: its own last picture moved with its depth, the eye drawn now moved across
+// over it - or, when the pass cannot run, its last picture as it was drawn (it then goes at that pose). Its swapchain image acquired now.
+ID3D12Resource* TurnMakeLocked() {
+    if (!g_turnFrame.open) return nullptr;
+    g_turnFrame.open = false;
+    const int o = g_turnFrame.o, d = o ^ 1;
+    const Chain& cd = g_eyeChain[d];
+    const Chain& co = g_eyeChain[o];
+    TurnKept& kd = g_turnKept[d];
+    const TurnKept& ko = g_turnKept[o];
+    const bool canTurn = co.sc && co.w == cd.w && co.h == cd.h && co.fmt == cd.fmt && ko.imageOk && ko.cam.ok && kd.at - ko.at <= kTurnOldMs;
+    if (!canTurn) return nullptr;   // its last image goes again (CloseFrame, as before)
+    // our picture of it: the back buffer's size, viewable as the swapchain's format (the warp) and the back buffer's (ReShade)
+    D3D12_RESOURCE_DESC tdesc{};
+    tdesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    tdesc.Width = co.w;
+    tdesc.Height = co.h;
+    tdesc.DepthOrArraySize = tdesc.MipLevels = 1;
+    tdesc.Format = TypelessOf(co.bbFmt);
+    tdesc.SampleDesc.Count = 1;
+    if (tdesc.Format == DXGI_FORMAT_UNKNOWN) { ++g_turnCounts.left; return nullptr; }
+    if (g_turnTarget) {
+        const D3D12_RESOURCE_DESC t = g_turnTarget->GetDesc();
+        if (t.Width != tdesc.Width || t.Height != tdesc.Height || t.Format != tdesc.Format) Retire(g_turnTarget);
+    }
+    if (!g_turnTarget) {
+        D3D12_HEAP_PROPERTIES hp{};
+        hp.Type = D3D12_HEAP_TYPE_DEFAULT;
+        tdesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+        if (FAILED(g_dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &tdesc, D3D12_RESOURCE_STATE_RENDER_TARGET, nullptr, __uuidof(ID3D12Resource),
+                                                  (void**)&g_turnTarget))) {
+            g_turnTarget = nullptr;
+            ++g_turnCounts.left;
+            return nullptr;
+        }
+        g_turnTarget->SetName(L"d2rvr eyes by turns made eye");
+    }
+    uint32_t idx = 0;
+    if (NextImage(co.sc, &idx, "picture") <= 0) { ++g_turnCounts.left; return nullptr; }
+    ID3D12GraphicsCommandList* list = OpenList();
+    if (!list) {
+        XrSwapchainImageReleaseInfo none{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
+        xrReleaseSwapchainImage(co.sc, &none);
+        ++g_turnCounts.left;
+        return nullptr;
+    }
+    TurnView v;
+    AcquireSRWLockShared(&g_turnLock);
+    v = g_turnView;
+    ReleaseSRWLockShared(&g_turnLock);
+    const turnwarp::Camera now = CameraNow(v, o);
+    const auto h = turnwarp::Homography(ko.cam.turn, ko.cam.tan, now.turn, now.tan);
+    turnwarp::Grid own, over;
+    const turnwarp::Grid* ownP = nullptr;
+    const turnwarp::Grid* overP = nullptr;
+    if (ko.depthOk && ko.nearPlane > 0.0f) {   // its own last picture, moved with its depth (what is near stays with the camera)
+        own.image = ko.image; own.depth = ko.depth; own.depthView = ko.depthView;
+        own.scale[0] = ko.scale[0]; own.scale[1] = ko.scale[1];
+        own.nearPlane = ko.nearPlane;
+        own.drawnTan = ko.cam.tan; own.nowTan = now.tan;
+        own.move = turnwarp::Move(ko.cam.at, ko.cam.turn, now.at, now.turn);
+        own.carry = turnwarp::Held();   // first person: what is near (the doll, the hands, the weapon) is posed from the head - it stays in the picture
+        own.nearW = turnwarp::kCarriedNearM * v.upm;
+        own.farW = turnwarp::kCarriedFarM * v.upm;
+        ownP = &own;
+    }
+    if (g_cfg.turnFromDrawn && kd.imageOk && kd.depthOk && kd.nearPlane > 0.0f) {   // the eye drawn now, moved across over it
+        over.image = kd.image; over.depth = kd.depth; over.depthView = kd.depthView;
+        over.scale[0] = kd.scale[0]; over.scale[1] = kd.scale[1];
+        over.nearPlane = kd.nearPlane;
+        over.drawnTan = kd.cam.tan; over.nowTan = now.tan;
+        over.move = turnwarp::Move(kd.cam.at, kd.cam.turn, now.at, now.turn);
+        over.carry = over.move;
+        over.edgeScale = turnwarp::EdgeScale(co.w, now.tan, turnwarp::Length(kd.cam.at - now.at), kd.nearPlane);
+        overP = &over;
+    }
     bool turned = false;
-    if (acquired) {
-        const TurnKept& ko = g_turnKept[o];
-        const turnwarp::Camera now = CameraNow(v, o);
-        const auto h = turnwarp::Homography(ko.cam.turn, ko.cam.tan, now.turn, now.tan);
-        turnwarp::Grid own, over;
-        const turnwarp::Grid* ownP = nullptr;
-        const turnwarp::Grid* overP = nullptr;
-        if (ko.depthOk && ko.nearPlane > 0.0f) {   // its own last picture, moved with its depth (what the hero carries with him)
-            own.image = ko.image; own.depth = ko.depth; own.depthView = ko.depthView;
-            own.scale[0] = ko.scale[0]; own.scale[1] = ko.scale[1];
-            own.nearPlane = ko.nearPlane;
-            own.drawnTan = ko.cam.tan; own.nowTan = now.tan;
-            own.move = turnwarp::Move(ko.cam.at, ko.cam.turn, now.at, now.turn);
-            own.carry = turnwarp::Carry(ko.cam.at, ko.cam.turn, ko.hero, ko.body, kd.hero, v.body, now.at, now.turn);
-            own.nearW = turnwarp::kCarriedNearM * v.upm;
-            own.farW = turnwarp::kCarriedFarM * v.upm;
-            ownP = &own;
-        }
-        if (g_cfg.turnFromDrawn && kd.imageOk && kd.depthOk && kd.nearPlane > 0.0f) {   // the eye drawn now, moved across over it
-            over.image = kd.image; over.depth = kd.depth; over.depthView = kd.depthView;
-            over.scale[0] = kd.scale[0]; over.scale[1] = kd.scale[1];
-            over.nearPlane = kd.nearPlane;
-            over.drawnTan = kd.cam.tan; over.nowTan = now.tan;
-            over.move = turnwarp::Move(kd.cam.at, kd.cam.turn, now.at, now.turn);
-            over.carry = over.move;
-            over.edgeScale = turnwarp::EdgeScale(co.w, now.tan, turnwarp::Length(kd.cam.at - now.at), kd.nearPlane);
-            overP = &over;
-        }
-        // a descriptor set the GPU is done with (a list reads its set when it runs)
-        const int slot = g_turnSlot;
-        g_turnSlot = (g_turnSlot + 1) % turnwarp::kSlots;
-        if (g_fence && g_fence->GetCompletedValue() < g_turnSlotDone[slot]) WaitFence(g_turnSlotDone[slot], 100);
-        if (!g_fence || g_fence->GetCompletedValue() >= g_turnSlotDone[slot]) {
-            turned = g_turnGpu.Render(list, co.img[idx].texture, co.w, co.h, ko.image, h, ownP, overP, slot);
-            if (turned) {
-                g_turnSlotDone[slot] = g_fenceV + 1;   // the fence SubmitList signals for this list
-                if (ownP || overP) ++g_turnCounts.moved; else ++g_turnCounts.turned;
-                if (overP) ++g_turnCounts.drawnOver;
-            }
-        }
-        if (!turned) {   // the pass did not run: the image acquired gets the eye's last picture as it was drawn - it goes at that pose, as before
-            ID3D12Resource* dst = co.img[idx].texture;
-            D3D12_RESOURCE_BARRIER b[2] = {Tr(ko.image, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_SOURCE),
-                                           Tr(dst, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_DEST)};
-            list->ResourceBarrier(2, b);
-            D3D12_TEXTURE_COPY_LOCATION to{}, from{};
-            to.pResource = dst; to.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
-            from.pResource = ko.image; from.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
-            const D3D12_BOX box{0, 0, 0, co.w, co.h, 1};
-            list->CopyTextureRegion(&to, 0, 0, 0, &from, &box);
-            D3D12_RESOURCE_BARRIER e[2] = {Tr(ko.image, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
-                                           Tr(dst, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_RENDER_TARGET)};
-            list->ResourceBarrier(2, e);
+    const int slot = g_turnSlot;   // a descriptor set the GPU is done with (a list reads its set when it runs)
+    g_turnSlot = (g_turnSlot + 1) % turnwarp::kSlots;
+    if (g_fence && g_fence->GetCompletedValue() < g_turnSlotDone[slot]) WaitFence(g_turnSlotDone[slot], 100);
+    if (!g_fence || g_fence->GetCompletedValue() >= g_turnSlotDone[slot]) {
+        turned = g_turnGpu.Render(list, g_turnTarget, co.w, co.h, ko.image, h, ownP, overP, slot);
+        if (turned) {
+            g_turnSlotDone[slot] = g_fenceV + 1;   // the fence SubmitList signals for this list
+            if (ownP || overP) ++g_turnCounts.moved; else ++g_turnCounts.turned;
+            if (overP) ++g_turnCounts.drawnOver;
         }
     }
+    if (!turned) CopyPicture(list, ko.image, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, g_turnTarget, D3D12_RESOURCE_STATE_RENDER_TARGET, co.w, co.h);
     SubmitList();
-    if (acquired) {
-        XrSwapchainImageReleaseInfo ri{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
-        const bool released = Ok(xrReleaseSwapchainImage(co.sc, &ri), "xrReleaseSwapchainImage");
-        // made for this frame's head: it goes at this frame's pose (CloseFrame); else the last picture as drawn, at the pose it was drawn with
-        if (released && turned) g_copied[o] = true;
-        else ++g_turnCounts.left;
-    } else if (canTurn) ++g_turnCounts.left;
-    const ULONGLONG now = nowMs;
-    if (!g_turnCounts.since) g_turnCounts.since = now;
-    if (now - g_turnCounts.since >= 10000) {
-        LogF("vrcam: openxr - eyes by turns, 10 s: the eye not drawn made %u times with the depth (the eye drawn laid over it %u), turned only %u, "
-             "left as last drawn %u", g_turnCounts.moved, g_turnCounts.drawnOver, g_turnCounts.turned, g_turnCounts.left);
-        g_turnCounts = TurnCounts{};
-        g_turnCounts.since = now;
+    g_turnFrame.open = true;   // TurnFinish takes it on
+    g_turnFrame.acquired = true;
+    g_turnFrame.turned = turned;
+    g_turnFrame.idx = idx;
+    return g_turnTarget;
+}
+
+// 3. The picture made (and the overlays vrcam drew over it) into the other eye's swapchain image.
+void TurnFinishLocked() {
+    if (!g_turnFrame.open || !g_turnFrame.acquired) return;
+    g_turnFrame.open = g_turnFrame.acquired = false;
+    const int o = g_turnFrame.o;
+    const Chain& co = g_eyeChain[o];
+    if (ID3D12GraphicsCommandList* list = OpenList()) {
+        CopyPicture(list, g_turnTarget, D3D12_RESOURCE_STATE_RENDER_TARGET, co.img[g_turnFrame.idx].texture, D3D12_RESOURCE_STATE_RENDER_TARGET, co.w, co.h);
+        SubmitList();
     }
+    XrSwapchainImageReleaseInfo ri{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
+    const bool released = Ok(xrReleaseSwapchainImage(co.sc, &ri), "xrReleaseSwapchainImage");
+    // made for this frame's head: it goes at this frame's pose (CloseFrame); else the last picture as drawn, at the pose it was drawn with
+    if (released && g_turnFrame.turned) g_copied[o] = true;
+    else ++g_turnCounts.left;
+    TurnTell();
+}
+void TurnFrameEnd() {
+    if (g_turnFrame.acquired) TurnFinishLocked();
+    g_turnFrame = TurnFrame{};
 }
 
 }  // namespace
@@ -4294,14 +4366,34 @@ void SetTurnDepth(void* resource, uint32_t viewFormat, float scaleX, float scale
     ReleaseSRWLockExclusive(&g_turnLock);
 }
 
+bool TurnWarpOn() { return g_cfg.on && g_cfg.byTurns && g_cfg.turnWarp; }
+bool TurnsNow() { return g_kind == kPair && g_cfg.byTurns && g_cfg.turnWarp && g_pairMode == kViewsHead && g_session && !DeviceLost(); }
+void TurnKeep(int eye, ID3D12Resource* bb) {
+    if (!TurnsNow() || !bb || eye < 0 || eye > 1 || g_copied[0] || g_copied[1]) return;
+    AcquireSRWLockExclusive(&g_lock);
+    if (g_session) TurnKeepLocked(eye, bb);
+    ReleaseSRWLockExclusive(&g_lock);
+}
+ID3D12Resource* TurnMake() {
+    if (!TurnsNow()) return nullptr;
+    AcquireSRWLockExclusive(&g_lock);
+    ID3D12Resource* r = g_session ? TurnMakeLocked() : nullptr;
+    ReleaseSRWLockExclusive(&g_lock);
+    return r;
+}
+void TurnFinish() {
+    AcquireSRWLockExclusive(&g_lock);
+    if (g_session) TurnFinishLocked();
+    ReleaseSRWLockExclusive(&g_lock);
+}
+
 void CopyEye(int eye, ID3D12Resource* bb) {
     if (g_kind != kPair || !bb || eye < 0 || eye > 1 || g_copied[eye] || DeviceLost()) return;
     AcquireSRWLockExclusive(&g_lock);
     if (g_session && EnsureChain(g_eyeChain[eye], bb->GetDesc(), eye ? "right eye's" : "left eye's")) {
         g_copied[eye] = CopyInto(g_eyeChain[eye], bb);
-        // eyes by turns ([stereo] turn_warp): this eye kept, the other made from it and its own last picture
-        if (g_copied[eye] && g_cfg.byTurns && g_cfg.turnWarp && !g_copied[eye ^ 1]) TurnAfterCopy(eye, bb);
-        else if (g_cfg.byTurns && !g_cfg.turnWarp) TurnForget();
+        // eyes by turns ([stereo] turn_warp): the eye was kept before (TurnKeep), the other is made after (TurnMake, TurnFinish)
+        if (g_cfg.byTurns && !g_cfg.turnWarp) TurnForget();
     }
     ReleaseSRWLockExclusive(&g_lock);
 }
