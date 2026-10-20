@@ -53,6 +53,7 @@ int D2rvrHoverSpheres(float (*out)[8], int max);
 #include "flatvr_gate.h"    // ... and no session over a FlatVR that holds the headset and cannot be stopped (flatvr_gate.h)
 #include "gpu_fault.h"   // the D3D12 device lost: told at once, nothing touched after it (vr/gpu_fault.h)
 #include "view_gate.h"
+#include "body_calibration.h"   // StandingEyeY: the standing eyes' height over the floor, from the T-pose measurement
 #include "views3d.h"   // [openxr] views_3d: F1 as a window, F3 as the room (the pure maths)
 #include "eye_gap.h"   // [openxr] ipd_auto / ipd_mm: the eye distance of the stereo pair - the runtime's or the player's (the pure maths)
 #include "eye_frame.h"   // [openxr] canted_eyes: both eyes drawn and submitted in the head's frame when the displays are canted (the pure maths)
@@ -339,6 +340,11 @@ bool g_winOk = false;
 int g_lastMode = 0;       // the mode of the last pair that was opened (a window comes up in front of the gaze again after another view)
 float g_floorY = 0.0f;    // F3: the room's floor in the layer's space, when the runtime's STAGE gave it
 bool g_floorOk = false;
+// F4: the floor as last seen in the layer's space (g_floorY while it is known, kept through a frame without it; forgotten at a
+// recentre, when the space may have moved): with a T-pose measurement in force, the standing eyes stand this far over it (PairEyes).
+float g_floorHeldY = 0.0f;
+bool g_floorHeldOk = false;
+bool g_posHeld = false;   // the runtime gave no place for the eyes this frame: they are held at the recentre's point (rotation only)
 uint32_t g_epoch = 0;     // moves each time the layer's space was recentred (the runtime's, ours, F11) or jumped: F3's diorama is put again
 
 // Our own copy list on the game's queue: a ring of allocators behind one fence.
@@ -3085,7 +3091,8 @@ bool OpenFrame(Kind kind) {
     if (Ok(xrLocateViews(g_session, &li, &vs, 2, &n, g_views), "xrLocateViews") && n == 2 &&
         (vs.viewStateFlags & XR_VIEW_STATE_ORIENTATION_VALID_BIT) && sane(g_views[0]) && sane(g_views[1])) {
         g_viewsOk = true;
-        if (!(vs.viewStateFlags & XR_VIEW_STATE_POSITION_VALID_BIT))
+        g_posHeld = !(vs.viewStateFlags & XR_VIEW_STATE_POSITION_VALID_BIT);
+        if (g_posHeld)
             for (XrView& v : g_views) v.pose.position = g_cPos;   // rotation only: the head held where it was taken
         {   // The eye distance (vr/eye_gap.h). Auto: the runtime's poses as they are - but two views in one place are no stereo: a runtime
             // that locates both eyes at the same point (no position for the eyes, only the head's turn - what a Meta Air Link player's log
@@ -3216,6 +3223,7 @@ bool OpenFrame(Kind kind) {
             g_panelPlace.anchored = false;   // and a menu's panel
             g_winAnchor.Reset();   // and F1's window
             ++g_epoch;             // and F3's diorama (it stands in this space)
+            g_floorHeldOk = false;  // and the floor F4's standing height is taken from: seen again in the space as it is now
             g_cYaw = YawOf(g_views[0].pose.orientation);
             const XrVector3f& a = g_views[0].pose.position, &b = g_views[1].pose.position;
             g_cPos = {0.5f * (a.x + b.x), 0.5f * (a.y + b.y), 0.5f * (a.z + b.z)};
@@ -3252,6 +3260,7 @@ bool OpenFrame(Kind kind) {
         g_floorY = midY - g_inNow.head.pos[1];
         g_floorOk = std::isfinite(g_floorY);
     }
+    if (g_floorOk) { g_floorHeldY = g_floorY; g_floorHeldOk = true; }
     if (!g_fs.shouldRender) ++g_st.noRender;
     return true;
 }
@@ -3976,6 +3985,15 @@ bool PairEyes(Eyes* out) {
     }
     const XrQuaternionf back = Yaw(-g_cYaw);
     out->epoch = g_epoch;   // (the room walk starts fresh at a recentre)
+    // The height the eyes have standing - where the camera puts the hero's bind-pose eyes. The recentre's height was it always,
+    // and a recentre is taken wherever the head happens to be (the session's first frame, F11, the runtime's own): seated there,
+    // the player who stood up to measure saw the hero's eyes half a metre under their own - "the character ends up small under
+    // me". With a T-pose measurement in force (F4) and the floor known, it is the floor plus the measured eye height: the same
+    // floor and the same head the measurement read (vr/body_calibration.h StandingEyeY). Else the recentre's, as before.
+    // (No place for the eyes this frame - held at the recentre's point: the recentre's height, so the camera stays the hero's eyes.)
+    const float measuredEye = calib::MeasuredEyeM();
+    out->standMeasured = bodycal::StandsOnFloor(g_floorHeldOk, g_floorHeldY, measuredEye);
+    const float standY = g_posHeld ? g_cPos.y : bodycal::StandingEyeY(g_cPos.y, g_floorHeldOk, g_floorHeldY, measuredEye);
     if (GetTickCount64() - g_bodyHeldAt.load() >= 2500) {   // the body follows the head once it leans farther than lean_m (unless the room walk holds it)
         const float mx = 0.5f * (g_views[0].pose.position.x + g_views[1].pose.position.x);
         const float mz = 0.5f * (g_views[0].pose.position.z + g_views[1].pose.position.z);
@@ -3984,8 +4002,8 @@ bool PairEyes(Eyes* out) {
     }
     for (int e = 0; e < 2; ++e) {
         const XrPosef& p = g_views[e].pose;
-        // from the body (over the floor) and the recentre's height: a lean moves the eyes, a walk does not
-        const XrVector3f rel = Rot(back, {p.position.x - g_bodyX, p.position.y - g_cPos.y, p.position.z - g_bodyZ});
+        // from the body (over the floor) and the standing eyes' height: a lean or a crouch moves the eyes, a walk does not
+        const XrVector3f rel = Rot(back, {p.position.x - g_bodyX, p.position.y - standY, p.position.z - g_bodyZ});
         const XrQuaternionf q = Mul(back, p.orientation);
         out->pos[e][0] = rel.x; out->pos[e][1] = rel.y; out->pos[e][2] = rel.z;
         out->quat[e][0] = q.x; out->quat[e][1] = q.y; out->quat[e][2] = q.z; out->quat[e][3] = q.w;

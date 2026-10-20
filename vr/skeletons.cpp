@@ -57,6 +57,7 @@
 #include "view_gate.h"
 #include "frame_trace.h"   // [debug] frame_trace: what the pose hook costs a pair
 #include "body_calibration.h"
+#include "crouch.h"         // [body] crouch: the hero crouches when you do (F4)
 #include "sigscan.h"
 #include "weapon_back.h"
 #include "weapon_shaft.h"
@@ -297,6 +298,9 @@ struct Hero {
     int ind[2] = {-1, -1}, mid[2] = {-1, -1}, pnk[2] = {-1, -1};
     int head = -1, spine = -1, pelvis = -1;
     int eyes[2] = {-1, -1};     // eyeball bones, where the rig has them
+    // [body] crouch: each leg's hip, knee and foot bones ([0] right, [1] left; -1 not found): what is bent again when the body
+    // goes down with the camera (PoseBody, vr/crouch.h)
+    int leg[2][3] = {{-1, -1, -1}, {-1, -1, -1}};
     // Where this hero's eyes are, standing (model space y): the camera's height
     // per class. And the pelvis standing: how far above it the animation lifts
     // the hips is a jump (the barbarian's Leap), the camera goes up with it.
@@ -341,6 +345,10 @@ std::vector<Mat> g_diagOld, g_diagNew;
 int g_diagWrist = -1, g_diagAttach = -1;
 uintptr_t g_diagSkel = 0;
 std::atomic<float> g_eyeY{0.0f}, g_lift{0.0f}, g_rawLift{0.0f};
+// [body] crouch, for vrcam's log: how far the body was last taken down (model units) and whether this hero's legs were found
+// (1 both, 0 not, -1 not asked yet)
+std::atomic<float> g_crouchApplied{0.0f};
+std::atomic<int> g_crouchLegs{-1};
 #if D2RVR_FIRST_PERSON
 // [gameplay] shield_smite: the left weapon attach bone in the render world, as last posed (only while asked for)
 ShieldPose g_shieldPose{};
@@ -849,6 +857,26 @@ bool Learn(uintptr_t self, Hero* h) {
         h->eyeY = k ? sum / k : h->bind[h->head].m[13] + 0.25f;
         if (h->pelvis >= 0) h->pelvisY = h->bind[h->pelvis].m[13];
         if (!(h->eyeY > 3.0f && h->eyeY < 12.0f)) h->eyeY = 0.0f;   // not a standing body: no height from it
+        // [body] crouch: the legs, by the rig's own hierarchy and bind pose, not by class (bearstonem/d2r-pcvr's way, MIT,
+        // vr/skeletons.cpp Learn): a bone named foot or ankle (not a toe, not an _end marker, not above the pelvis), its parent
+        // the knee and that one's the hip, the hip under the pelvis, each joint lower than the one above it and the foot in the
+        // lower half of the standing pelvis's height. Its side by where the foot stands (model +x is the hero's left).
+        for (int foot = 0; foot < count; ++foot) {
+            std::string lo = names[foot];
+            for (char& ch : lo) ch = (char)tolower((unsigned char)ch);
+            if ((lo.find("foot") == std::string::npos && lo.find("ankle") == std::string::npos) || lo.find("end") != std::string::npos ||
+                lo.find("toe") != std::string::npos || h->upper[foot])
+                continue;
+            const int knee = h->parent[foot], hip = knee >= 0 ? h->parent[knee] : -1;
+            if (hip < 0 || h->pelvis < 0 || hip == h->pelvis) continue;
+            int up = hip;
+            while (up >= 0 && up != h->pelvis) up = h->parent[up];
+            if (up != h->pelvis) continue;
+            const V3 a = Pos(h->bind[hip]), b = Pos(h->bind[knee]), c = Pos(h->bind[foot]);
+            if (a.y - b.y < 0.1f || b.y - c.y < 0.1f || c.y > h->pelvisY * 0.5f) continue;
+            const int side = c.x < 0.0f ? 0 : 1;
+            if (h->leg[side][2] < 0) { h->leg[side][0] = hip; h->leg[side][1] = knee; h->leg[side][2] = foot; }
+        }
     }
     return true;
 }
@@ -2515,6 +2543,49 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
         for (int i = 0; i < n; ++i) if (in.bodyTurn == 2 || h.upper[i]) newW[i] = Mul(newW[i], T);
     }
 #if D2RVR_FIRST_PERSON
+    // [body] crouch (vr/crouch.h; the idea is bearstonem/d2r-pcvr's, MIT, vr/skeletons.cpp PoseBody, its tracked-neck body): you
+    // crouched and the camera went down with your head, so the whole body goes down by as much (in.crouchDrop, model units, vrcam
+    // worked it out at the camera's own scale) and each leg is bent again - thigh and shin at their own lengths - to put its foot
+    // back where the game's animation has it, the knee ahead. No deeper than the legs fold. Before the arms: the shoulders come
+    // down with the body and the hands still go to the controllers. Drawn bones only: the hero's place, hit box, walking and
+    // every game state are the game's. 0 (off, another view, standing): nothing here runs.
+    if (in.crouchDrop > 0.0f) {
+        const bool legs = h.bindOk && h.leg[0][2] >= 0 && h.leg[1][2] >= 0;
+        g_crouchLegs.store(legs ? 1 : 0);
+        float drop = legs ? in.crouchDrop : 0.0f;
+        float thigh[2] = {}, shin[2] = {};
+        for (int side = 0; side < 2 && drop > 0.0f; ++side) {
+            const V3 a = Pos(newW[h.leg[side][0]]), b = Pos(newW[h.leg[side][1]]), z = Pos(newW[h.leg[side][2]]);
+            thigh[side] = Len(Sub(b, a));
+            shin[side] = Len(Sub(z, b));
+            drop = std::min(drop, crouch::LegRoom({a.x, a.y, a.z}, {z.x, z.y, z.z}, thigh[side], shin[side]));
+        }
+        g_crouchApplied.store(drop);
+        if (drop > 0.0f) {
+            const std::vector<Mat> before = newW;
+            for (int i = 0; i < n; ++i) newW[i].m[13] -= drop;
+            // the way the legs face: turned with the whole body, else the model's own forward (legs_under_body holds them to it)
+            const crouch::V ahead = turn && in.bodyTurn == 2 ? crouch::V{s, 0.0f, c} : crouch::V{0.0f, 0.0f, 1.0f};
+            for (int side = 0; side < 2; ++side) {
+                const int hip = h.leg[side][0], knee = h.leg[side][1], foot = h.leg[side][2];
+                const V3 a = Pos(before[hip]), b = Pos(before[knee]), z = Pos(before[foot]), now = Pos(newW[hip]);
+                crouch::V end{z.x, z.y, z.z}, bend;
+                const crouch::V pole = crouch::KneePole({a.x, a.y, a.z}, {b.x, b.y, b.z}, end, ahead);
+                if (!crouch::Knee({now.x, now.y, now.z}, thigh[side], shin[side], end, pole, bend)) continue;
+                const std::vector<Mat> base = newW;
+                AimChain(h, hip, knee, foot, {bend.x, bend.y, bend.z}, {end.x, end.y, end.z}, base, newW);
+                // the foot keeps the animation's turn on the floor (a crouch bends the knee, not the ankle), its toes with it
+                const V3 at = Pos(newW[foot]);
+                newW[foot] = before[foot];
+                newW[foot].m[12] = at.x; newW[foot].m[13] = at.y; newW[foot].m[14] = at.z;
+                std::vector<char> moved(n, 0);
+                moved[foot] = 1;
+                Propagate(h, base, newW, moved, foot);
+            }
+        }
+    } else {
+        g_crouchApplied.store(0.0f);
+    }
     // A measured arm span (T-pose, [calibration] use=1; vr/body_calibration.h): each arm's bones, upper arm and forearm, are
     // scaled about their shoulder until the wrist stands where the controller's grip puts it at the world's scale - the hands
     // then reach as far as the real ones and the controllers stay 1:1. The hand, its fingers and what it holds are put back
@@ -5437,6 +5508,10 @@ void Arms(uintptr_t self) {
 // From vrcam, every 10 ms.
 int LockState() { return g_lockState.load(); }
 
+int CrouchLegs(float* applied) {
+    if (applied) *applied = g_crouchApplied.load();
+    return g_crouchLegs.load();
+}
 bool HeroEye(float* eyeY, float* lift, float* rawLift) {
     if (GetTickCount64() - g_eyeAt.load() > 1000) return false;
     *eyeY = g_eyeY.load(); *lift = g_lift.load();

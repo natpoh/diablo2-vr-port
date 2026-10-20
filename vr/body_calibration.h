@@ -218,6 +218,22 @@ struct ReleaseGate {
     }
 };
 
+// -- where the eyes stand: the F4 camera's height ----------------------------------------------------------------------
+
+// The camera puts the hero's bind-pose eyes at the height the player's eyes have standing, and moves from there with the head
+// (a crouch takes it down, at the world's scale). The recentre's head height was that height always - but a recentre is taken
+// wherever the head is at the moment (the session's first frame, F11, the runtime's own): seated, or with the headset still in
+// the hands, it is too low, and the player standing sees the hero's eyes as far under their own - the hero small, under them.
+// With a measurement, the standing eyes are known where the T-pose read them: the measured height over the floor. True when
+// that is in force: a floor seen in the space the eyes are in, and a measured eye height (0 = none: not used, not F4).
+inline bool StandsOnFloor(bool floorKnown, float floorY, float measuredEye) {
+    return floorKnown && std::isfinite(floorY) && ValidEyeHeight(measuredEye);
+}
+// The standing eyes' height in the space the eyes are in: the floor plus the measured eye height, else the recentre's.
+inline float StandingEyeY(float recentreY, bool floorKnown, float floorY, float measuredEye) {
+    return StandsOnFloor(floorKnown, floorY, measuredEye) ? floorY + measuredEye : recentreY;
+}
+
 // -- what the measurement does to the hero ---------------------------------------------------------------------------
 
 // Model units per metre: the hero's eye height in the model over the player's, kept in the range skeletons.cpp has

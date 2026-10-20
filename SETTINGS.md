@@ -113,7 +113,10 @@ the headset-only ones.
   person, F4). It saves your eye
   height over the room's floor and the span between the controllers; the world's
   scale and the hero's arm bones then follow them (the hands stay 1:1 with the
-  controllers). *Use the measured height and arm span* switches it on and off (a
+  controllers), and in native OpenXR the camera's standing height is that eye
+  height over the floor: standing upright you look from the hero's eyes whatever
+  height the last recenter was taken at (seated, crouched, the headset still in
+  your hands). *Use the measured height and arm span* switches it on and off (a
   good measurement switches it on) -
   off is the height from BodyWalk / *My height* and *Arm length (scale)*, as
   before; *Forget the measurement* clears it. Needs the headset's floor (a room
@@ -147,6 +150,16 @@ the headset-only ones.
   d2r-pcvr (MIT).
 - **Body** - no game animation above the pelvis in F4 (your body drives it),
   legs stay under the body, how the hero turns to where you look.
+  *Hero crouches when you crouch (F4)* (`[body] crouch`, off): crouch in the
+  room and the hero's drawn body goes down with your head, knees bent, feet on
+  the ground - his place, hit box and walking stay the game's. It needs a camera
+  that follows your head's height (native OpenXR, or FlatVR with the head's
+  position). *Crouch: head lower than this, cm* (`crouch_cm`, 20): how far below
+  your standing eye height the head must go; he stands again within half of it.
+  The standing eye height is the measured one over the floor (native OpenXR with
+  *Use the measured height and arm span*); without a measurement it is your head's
+  height at the last recenter, so recenter standing upright. The idea is
+  bearstonem/d2r-pcvr's (MIT).
 - **Hands** - the hands turn with the controllers; tilt, turn and roll offsets
   for your controllers' grip.
 - **Effects around the hero** (F4) - *Draw the hero's own effects fainter* (`[render] dim_own_effects`;

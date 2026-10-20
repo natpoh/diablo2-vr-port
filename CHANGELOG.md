@@ -1,5 +1,39 @@
 # What's new in D2R VR
 
+## Next
+
+- **Fixed: after measuring your height standing, the hero was small, under you** (the author: "when I stand up and press
+  calibrate, the character ends up small under me"; native OpenXR, VR first person F4). The camera puts the hero's bind-pose
+  eyes at the height your eyes have standing, and moves from there with your head. That standing height was always your
+  head's height at the last recenter - and a recenter is taken wherever the head is at that moment: the session's first frame,
+  F11, the runtime's own. Recentred seated (1.18 m) and measured standing (1.69 m), the camera stood 51 cm over the hero's
+  eyes at his scale: the hero looked about three quarters of your size, under you. The measurement itself was right (the eye
+  height over the STAGE floor, the world's scale from it); only the camera's zero did not use it. Now, with *Use the measured
+  height and arm span* (`[calibration] use=1`) and the headset's floor, the standing height is the floor plus your measured
+  eye height - the same floor and the same head the T-pose read - so standing upright you look from the hero's eyes whatever
+  height a recenter was taken at, and a recenter only sets straight ahead and where you stand. Without a measurement, or with
+  no STAGE floor, or for a frame with no place for the head: the recenter's height, as before. The log says which
+  ("openxr - standing height: ..."). bearstonem/d2r-pcvr re-zeroes its camera at the head where the T-pose was taken (and has
+  a "reset eye height" action); here it is the measured height over the floor, which a later recenter does not undo. Nothing
+  tuned by hand: the hero's eyes, your measured eyes and the floor. Unit tests: cleanroom/tests/body_calibration_test.cpp
+  (*stand*, with the author's numbers), calibration_test.cpp. In a seated game with a measurement in use the camera is now
+  as low as your seated head - untick *Use the measured height* to play seated from the hero's eyes.
+- **The hero crouches when you crouch, back, from d2r-pcvr** (bearstonem, MIT; VR first person F4 only; its own tick -
+  Settings > Body > "Hero crouches when you crouch (F4)", `[body] crouch`, off by default). Taken out of the release after
+  the author's test, where crouching did nothing: the crouch was counted from the head's height at the last recenter, the
+  same zero as above - recentred seated or at the session's start, a crouch from standing hardly got under it. It now counts
+  from the standing height above: your measured eye height over the floor (else the recenter's, so recenter standing).
+  Crouch in your room and the camera already went down with your head; now the hero's body goes down as far, his knees bent
+  again - thigh and shin at their own lengths - and his feet kept where the game's animation puts them, so looking down you
+  see your crouched legs, not your chest in your face. How deep is the camera's own drop at the camera's own scale (the
+  hero's bind-pose eyes over your measured or set eye height), no deeper than his legs fold: nothing tuned by hand. A dip
+  of less than *Crouch: head lower than this, cm* (`crouch_cm`, 20) below your standing height leaves him standing; he
+  stands up again once the head is back within half of it, eased in and out, and stands if the head's height is lost for a
+  quarter second. Only the drawn bones: where he stands, his hit box, his walking and every game state stay the game's. The
+  legs are found in each rig by its own bones (a foot or ankle under a knee and a hip), d2r-pcvr's way. Unticked, and in
+  F1, F2, F3 and the flat views: exactly as before. Unit test: cleanroom/tests/crouch_test.cpp (*standing*: the headset's
+  case); not yet seen in the headset again.
+
 ## 0.173
 
 - **The map in the hand with the game's map in the middle** (a player: native OpenXR drew the map across the view, no map in the hand). The map comes into the

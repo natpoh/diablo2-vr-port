@@ -8,6 +8,9 @@
 // gate      ReleaseGate: the controls stay the measurement's until let go once (a cancel with the triggers down)
 // ranges    Valid(): the acceptance limits at their edges
 // arms      UnitsPerMetre / ArmScale / ScaleAbout against numbers worked out by hand
+// stand     StandingEyeY: the F4 camera's standing height - measured and standing up after a seated recentre, the hero's
+//           eyes are the player's (not "small under me"), in a STAGE space and a LOCAL one; no floor or no measurement: the
+//           recentre's, as before
 // ini       inipatch::Set: replace, keep a comment, add a key, add a section, keep CRLF
 
 #include "body_calibration.h"
@@ -380,6 +383,42 @@ void IniCases() {
           "ini: the three keys of a measurement");
 }
 
+// The F4 camera (vrcam VrViewInner, native): the hero's bind-pose eyes at the standing eyes' height, moved from there by the
+// head at `upm` world units a metre (his eyes in world units over the measured eye height). How tall his eyes look to the
+// player: his eyes' height over the game's ground over the camera's, times the player's own eye height now.
+float HeroEyesSeenM(float heroEyeUnits, float measuredEye, float headY, float standY) {
+    const float upm = heroEyeUnits / measuredEye;
+    const float camera = heroEyeUnits + (headY - standY) * upm;   // world units over his feet
+    return heroEyeUnits / camera * measuredEye;
+}
+
+void StandCases() {
+    // the author's numbers (2026-10-19): eye_height_m=1.6917, arm_span_m=1.5101 - measured standing in a STAGE space (the floor
+    // at 0); the session's recentre was taken seated, the head at 1.18 m
+    const float eye = 1.6917f, seatedRecentre = 1.18f, heroEye = 6.2f;
+    Check(Valid({eye, 1.5101f}), "stand: the author's measurement is valid");
+    Check(StandsOnFloor(true, 0.0f, eye), "stand: a floor and a measurement - the standing height is the measured one");
+    const float before = HeroEyesSeenM(heroEye, eye, eye, seatedRecentre);   // the old way: from the recentre's height
+    Check(before < 0.8f * eye, "stand: (the bug) from a seated recentre, the hero's eyes stood far under the player's - small, under them");
+    const float standY = StandingEyeY(seatedRecentre, true, 0.0f, eye);
+    Check(Near(standY, eye), "stand: STAGE - the floor plus the measured eye height");
+    Check(Near(HeroEyesSeenM(heroEye, eye, eye, standY), eye), "stand: standing upright the hero's eyes are the player's, whatever the recentre");
+    Check(Near(HeroEyesSeenM(heroEye, eye, eye, StandingEyeY(1.95f, true, 0.0f, eye)), eye), "stand: ... a recentre taken high (on tiptoe) too");
+    // a crouch: the camera goes down by as much as the head, at the world's scale - from the standing eyes, not from the recentre
+    Check(Near(eye - 0.40f - standY, -0.40f), "stand: a 40 cm crouch is 40 cm under the standing eyes (it was 11 cm over the seated recentre)");
+    // LOCAL (no STAGE for the eyes): the floor in that space as F3 has it (the eyes' middle less the head's STAGE height)
+    const float localFloor = -1.30f;
+    const float localStand = StandingEyeY(0.0f, true, localFloor, eye);
+    Check(Near(localStand, localFloor + eye), "stand: LOCAL - the floor there plus the measured eye height");
+    Check(Near(HeroEyesSeenM(heroEye, eye, localFloor + eye, localStand), eye), "stand: LOCAL - standing, the hero's eyes are the player's");
+    // nothing to stand on: as before
+    Check(!StandsOnFloor(false, 0.0f, eye) && StandingEyeY(seatedRecentre, false, 0.0f, eye) == seatedRecentre, "stand: no floor seen - the recentre's");
+    Check(!StandsOnFloor(true, 0.0f, 0.0f) && StandingEyeY(seatedRecentre, true, 0.0f, 0.0f) == seatedRecentre,
+          "stand: no measurement in use (unticked, another view) - the recentre's");
+    Check(StandingEyeY(seatedRecentre, true, 0.0f, 5.2f) == seatedRecentre, "stand: an eye height out of range - the recentre's");
+    Check(StandingEyeY(seatedRecentre, true, NAN, eye) == seatedRecentre, "stand: a floor not finite - the recentre's");
+}
+
 }  // namespace
 
 int main() {
@@ -389,6 +428,7 @@ int main() {
     GateCases();
     ArmCases();
     IniCases();
+    StandCases();
     std::printf("%d checks, %d failed\n", g_checks, g_failed);
     return g_failed ? 1 : 0;
 }

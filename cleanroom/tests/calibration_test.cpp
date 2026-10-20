@@ -11,6 +11,7 @@
 #define NOMINMAX
 #endif
 #include "calibration.h"
+#include "body_calibration.h"
 #include "view_gate.h"
 
 #include <windows.h>
@@ -160,6 +161,26 @@ int main() {
     WritePrivateProfileStringW(L"calibration", L"arm_span_m", L"0.4", ini.c_str());
     calib::LoadSettings(ini.c_str());
     Check(calib::MeasuredEyeM() == 0.0f && calib::MeasuredSpanM() == 0.0f, "stored span 0.4 m: refused");
+
+    // "when I stand up and press calibrate, the character ends up small under me" (the author, 2026-10-19): his stored numbers,
+    // the session recentred seated (the head 1.18 m over the STAGE floor). The F4 camera puts the hero's eyes at the standing
+    // eyes' height (xr.cpp PairEyes): the recentre's put them 51 cm under the player's standing eyes; the measured height over
+    // the floor puts them at the player's.
+    WritePrivateProfileStringW(L"calibration", L"eye_height_m", L"1.6917", ini.c_str());
+    WritePrivateProfileStringW(L"calibration", L"arm_span_m", L"1.5101", ini.c_str());
+    calib::LoadSettings(ini.c_str());
+    {
+        const float eye = calib::MeasuredEyeM(), seatedRecentre = 1.18f, floorY = 0.0f;
+        Check(Near(eye, 1.6917f, 0.0002f) && Near(calib::MeasuredSpanM(), 1.5101f, 0.0002f), "author: the stored numbers are in force");
+        const float standY = bodycal::StandingEyeY(seatedRecentre, true, floorY, eye);
+        Check(Near(standY, 1.6917f, 0.0002f), "author: the standing eyes are the measured height over the floor, not the seated recentre");
+        const float heroEye = 6.2f, upm = heroEye / eye;   // world units: his bind-pose eyes; a metre at his size
+        const float cameraOld = heroEye + (eye - seatedRecentre) * upm, cameraNew = heroEye + (eye - standY) * upm;
+        Check(heroEye / cameraOld < 0.8f, "author: (the bug) from the seated recentre the hero's eyes stood under 80% of the camera's height");
+        Check(Near(cameraNew, heroEye, 1e-4f), "author: standing upright, the camera is the hero's eyes");
+        Check(Near(heroEye + (1.30f - standY) * upm - heroEye, -(eye - 1.30f) * upm, 1e-3f),
+              "author: a crouch takes the camera down from there, at the world's scale");
+    }
 
     // a second measurement does not replace the first backup
     WritePrivateProfileStringW(L"calibration", L"measure", L"2", ini.c_str());

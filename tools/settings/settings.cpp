@@ -603,7 +603,8 @@ std::vector<Item> g_items = {
     Only(kVr, Toggle(L"calibration", L"use", L"Use the measured height and arm span", 0,
            L"The world's scale from your measured eye height, and the hero's arms fitted to your measured arm span (the hands stay "
            L"1:1 with the controllers), in place of \"My height\" / BodyWalk's Body Height and \"Arm length (scale)\". Unticked: "
-           L"those, exactly as before. A good measurement ticks it. F4 only: the other views keep the old numbers.")),
+           L"those, exactly as before. A good measurement ticks it. F4 only: the other views keep the old numbers. Native OpenXR: "
+           L"standing upright you also look from the hero's eyes, whatever height the last recenter was taken at.")),
     Only(kVr, Button(L"calibration", L"measure", L"Measure my height and arm span...",
            L"Native OpenXR only, with the game running and the headset on: a panel in front of you says what to do. Stand upright, "
            L"look straight ahead, stretch both arms out sideways at shoulder height, let go of both triggers, then squeeze both and "
@@ -631,6 +632,15 @@ std::vector<Item> g_items = {
     Needs(L"body", L"lock", 1, Only(kVr, Toggle(L"body", L"legs_under_body", L"Legs stay under the body", 1,
            L"The hips and legs keep their place and direction under the body: a blow no longer lunges them out "
            L"ahead or twists them. They still step, crouch and jump. Off = the game's hips and legs as animated."))),
+    Only(kVr, Toggle(L"body", L"crouch", L"Hero crouches when you crouch (F4)", 0,
+           L"Crouch in your room and the hero's body goes down with your head, his knees bent and his feet on the ground, "
+           L"so you see your legs under you and not your chest in your face. Only the drawn body: where he stands, his hit "
+           L"box and his walking stay the game's. Needs a camera that follows your head's height (native OpenXR, or FlatVR "
+           L"with the head's position). VR first person (F4) only. Unticked: exactly as before. Idea from bearstonem/d2r-pcvr.")),
+    Needs(L"body", L"crouch", 1, Only(kVr, Slider(L"body", L"crouch_cm", L"Crouch: head lower than this, cm", 5, 60, 1, 20,
+           L"How far your head must go below your standing eye height before the hero crouches. He stands again once it is "
+           L"back within half of this. The standing eye height is your measured one over the floor (\"Use the measured height "
+           L"and arm span\", native OpenXR); without it, your head's height at the last recenter: recenter standing upright."))),
     Only(kVr, Choice(L"body", L"turn", L"Hero turns to where you look (F4)", 2, {L"No (the game's facing)", L"Above the pelvis", L"Whole body"},
            L"In the other first-person views the whole hero always turns with you.")),
     Toggle(L"body", L"turn_third", L"From behind too (the right stick turns him)", 1,

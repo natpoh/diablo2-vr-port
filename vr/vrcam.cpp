@@ -171,6 +171,7 @@ namespace gamestate { bool HandIsThrowPotion(int side); }   // the held item is 
 #include "bow_latency.h"       // [debug] bow_latency: the split of the second between a bow's release and its arrow (vr/bow_latency.h)
 #include "calibration.h"
 #include "first_start_wire.h"     // [onboarding]: the first-start guide in the headset (vr/first_start.h)
+#include "crouch.h"          // [body] crouch: the hero crouches when you do (F4; vr/crouch.h)
 #include "flatvr_pose.h"     // [flatvr]: FlatVR as good as native OpenXR - the roll back, the head's move, pairs on FlatVR's frames (docs/flatvr_sync.md)
 #include "haptics.h"
 #include "mob_bars.h"
@@ -610,6 +611,8 @@ struct Settings {
     std::atomic<float> leftHoldTurn[3] = {0.0f, 0.0f, 0.0f};   // [hands] left_hold_pitch/yaw/roll: deg, the same hand turned about its own axes   // [hands] left_hold_x/y/z: cm, the left hand once it holds any two-handed weapon (not the crossbow), its own axes   // [weapon_<kind>] left_x/y/z: cm, the left hand once it holds the weapon, its own axes (on top of left_staff_* etc.)   // [weapon_<kind>] x y z (cm) pitch yaw roll (deg); written and read on the update thread
     std::atomic<bool>  lockUpper{true};     // nothing above the pelvis from the game's animation
     std::atomic<bool>  legsUnder{true};     // with it: pelvis and legs kept under that body (no lunge, no hip turn)
+    std::atomic<bool>  crouch{false};       // [body] crouch: the hero crouches when you crouch (F4 only; vr/crouch.h)
+    std::atomic<float> crouchCm{20.0f};     // [body] crouch_cm: the head this far below its height at the recentre is a crouch
     std::atomic<float> bodyYawDeg{0.0f};    // added to the hero's facing: fixes a body that stands sideways
     std::atomic<bool>  thirdTurn{true};     // [body] turn_third: from behind too the whole hero faces where the camera looks (the right stick turns him)
     std::atomic<int>   bodyTurn{2};         // 0 game facing, 1 above the pelvis, 2 whole body turns to where the camera looks
@@ -2051,6 +2054,8 @@ void LoadSettings() {
     g_set.thirdTurn.store(IniB(L"body", L"turn_third", true));
     g_set.lockUpper.store(IniB(L"body", L"lock", true));
     g_set.legsUnder.store(IniB(L"body", L"legs_under_body", true));
+    g_set.crouch.store(IniB(L"body", L"crouch", false));
+    g_set.crouchCm.store(std::clamp(IniF(L"body", L"crouch_cm", 20.0f), 5.0f, 60.0f));
     g_set.handUp.store(std::clamp(IniF(L"arms", L"up", 0.0f), -50.0f, 50.0f));
     g_set.handFwd.store(std::clamp(IniF(L"arms", L"forward", 0.0f), -50.0f, 50.0f));
     g_set.handSide.store(std::clamp(IniF(L"arms", L"side", 0.0f), -50.0f, 50.0f));
@@ -3375,6 +3380,14 @@ bool RoomHead(float pos[3], float ang[3]) {
     return std::isfinite(pos[0] + pos[1] + pos[2] + ang[0] + ang[1] + ang[2]);
 }
 
+// [body] crouch: how far the head stands below its standing height, metres (+ down) - what the F4 camera has just been lowered
+// by: native, the eyes' middle from the standing eyes' height (VrViewInner; xr.cpp PairEyes: the floor + the measured eye height
+// with [calibration] use=1 and a STAGE floor, else the recentre's height); FlatVR with [flatvr] head_position, the room head
+// since the recentre (FlatVrHeadMove). Where the camera does not follow the head's height nothing is written, and PushArms finds
+// it stale: the body stands (vr/crouch.h).
+std::atomic<float> g_headDownM{0.0f};
+std::atomic<ULONGLONG> g_headDownAt{0};
+
 // [flatvr] head_position, VR F4 on FlatVR: the head's move in the room since the recentre, in the game's world - the camera moves with
 // the head as native OpenXR's does (its eyes' place, NativeEyes), on top of the neck model as there. Before: turns only, and leaning
 // or crouching carried the whole world along with the head. `heading`: the camera's (Facing's) - the room is turned so that the head's
@@ -3393,6 +3406,8 @@ V3 FlatVrHeadMove(float heading) {
     const float roomYaw = (p[0] + WrapDeg(sh->headYawRoomDeg - sh->headYawDeg)) * flatvrpose::kDeg;
     const float upm = std::max(1.0f, ViewHeight()) / UserEyeHeightM();   // world units per metre, as native's
     const flatvrpose::V d{pos[0] - g_recenterPos[0].load(), pos[1] - g_recenterPos[1].load(), pos[2] - g_recenterPos[2].load()};
+    g_headDownM.store(-d.y);   // [body] crouch
+    g_headDownAt.store(GetTickCount64());
     const flatvrpose::V w = flatvrpose::RoomToWorld(d, heading, roomYaw, upm, 2.0f);
     return {w.x, w.y, w.z};
 }
@@ -3972,6 +3987,19 @@ bool VrViewInner(const d2rcam::WorldView& in, float out[16]) {
         const V3 pivot = V3{L[0], L[1] + ViewHeight() + JumpLift(), L[2]} + side * g_set.camSide.load() + ahead * g_set.camForward.load();
         const float upm = std::max(1.0f, ViewHeight()) / UserEyeHeightM();   // world units per metre, as TrueScale
         V3 mid = {0.5f * (xe.pos[0][0] + xe.pos[1][0]), 0.5f * (xe.pos[0][1] + xe.pos[1][1]), 0.5f * (xe.pos[0][2] + xe.pos[1][2])};
+        if (!ThirdPerson()) { g_headDownM.store(-mid.y); g_headDownAt.store(GetTickCount64()); }   // [body] crouch: the camera goes down by this
+        {   // what the eyes' height is counted from (xr::Eyes standMeasured), on change
+            static int told = -1;
+            if (!ThirdPerson() && (int)xe.standMeasured != told) {
+                told = (int)xe.standMeasured;
+                if (xe.standMeasured)
+                    LogF("vrcam: openxr - standing height: the floor + your measured eye height %.2f m - standing upright, the camera is the hero's eyes "
+                         "whatever height a recentre was taken at", calib::MeasuredEyeM());
+                else
+                    Log("vrcam: openxr - standing height: the head's height at the recentre (no T-pose measurement in use, or no STAGE floor) - "
+                        "recentre (F11) standing upright, or measure your height in D2R VR Settings");
+            }
+        }
         RoomWalkView(xe, L, cb, sb, upm, &mid.x, &mid.z);   // [openxr] roomscale_walk: the hero walks under the head, the view stays with it
         V3 head = pivot + toWorld(mid) * upm;
         if (!ThirdPerson() && g_set.neckModel.load()) {
@@ -13000,6 +13028,46 @@ void PushArms() {
     if (const uint32_t type = gamestate::WeaponType(); type < D2RVR_TYPE_COUNT) memcpy(in.weaponAdj, g_set.weaponAdj[type], sizeof in.weaponAdj);
     memcpy(in.shrinkBone, g_set.shrinkBone, sizeof in.shrinkBone);
     in.lockUpper = own && FullBody() && g_set.lockUpper.load();   // the game's animation in the other views
+    {   // [body] crouch (vr/crouch.h; from bearstonem/d2r-pcvr, MIT): you crouch, the camera goes down with your head, and the hero's
+        // body goes down as far, his legs bent to keep his feet. VR first person (F4) only, its own tick, off by default: off, or in
+        // F1, F2, F3 and the flat views, crouchDrop stays 0 and PoseBody is as before. The drop in metres becomes model units at
+        // the camera's own scale - the hero's bind-pose eyes over your eye height (measured, [calibration], or set) - so the neck
+        // lands under the lowered camera; nothing tuned by hand. Drawn bones only: no game state, hit box or movement changes.
+        static crouch::Tracker tracker;
+        static ULONGLONG last = 0;
+        const ULONGLONG now = GetTickCount64();
+        const float dt = last ? (float)(now - last) * 0.001f : 0.0f;
+        last = now;
+        const bool want = own && FullBody() && g_set.crouch.load();
+        static bool toldOn = false;
+        static int toldLegs = -2, toldCrouches = 0;
+        if (want != toldOn && g_set.crouch.load() == want) {   // the tick, not a view change
+            toldOn = want;
+            Log(want ? "vrcam: crouch - the hero crouches when you do ([body] crouch, F4)" : "vrcam: crouch - off, the hero stands as the game poses him");
+        }
+        if (!want) {
+            tracker.Reset();
+        } else {
+            const ULONGLONG at = g_headDownAt.load();
+            const bool fresh = at && now - at < 250;   // the camera follows the head's height and drew a moment ago
+            crouch::Params p;
+            p.enterM = g_set.crouchCm.load() * 0.01f;
+            p.floorM = UserEyeHeightM();
+            const bool was = tracker.Crouched();
+            const float downM = tracker.Step(fresh, g_headDownM.load(), dt, p);
+            in.crouchDrop = downM * std::max(1.0f, ViewHeight()) / UserEyeHeightM() / std::max(0.1f, g_heroScale.load());
+            if (tracker.Crouched() && !was && toldCrouches < 5) {
+                ++toldCrouches;
+                LogF("vrcam: crouch - the head %.0f cm below its standing height (threshold %.0f cm): the body goes down with it", g_headDownM.load() * 100.0f,
+                     p.enterM * 100.0f);
+            }
+            if (const int legs = skel::CrouchLegs(nullptr); legs >= 0 && legs != toldLegs) {
+                toldLegs = legs;
+                Log(legs ? "vrcam: crouch - the hero's legs found (hip, knee, foot each side): they bend to keep his feet"
+                         : "vrcam: crouch - this hero's rig has no leg chain found (a bone named foot or ankle under knee and hip): he stays standing");
+            }
+        }
+    }
 #endif
     in.legsUnder = g_set.legsUnder.load();
     in.followJump = own && g_set.followJump.load();

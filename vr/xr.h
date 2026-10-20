@@ -41,11 +41,14 @@ struct Eyes {
     // moves whenever that space was recentred or jumped. kViewsWindow (F1): the window's frame (x along the window, y up, z out
     // of it towards the viewer, metres, from its middle), quat the identity, tan* the frusta through the window's edges, win*
     // the window's size and distance.
+    // kViewsHead: pos is from the standing eyes' height, and standMeasured says which - true: the floor plus the T-pose's measured
+    // eye height ([calibration] use=1, F4, a STAGE floor seen); false: the head's height at the recentre.
     int mode;
     float winW, winH, winD;
     float floorY;
     bool floorOk;
     uint32_t epoch;
+    bool standMeasured;
 };
 enum { kViewsHead = 0, kViewsWindow = 1, kViewsRoom = 2 };
 

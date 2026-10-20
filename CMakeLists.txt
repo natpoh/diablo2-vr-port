@@ -1148,6 +1148,12 @@ target_sources(d2rl-vrcam PRIVATE vr/anim_cut.cpp)        # [bow] quick_release 
 # ... its pure part: the row's shape check, the move and the way back, the walk over a block (anim_cut_test)
 add_executable(anim_cut_test cleanroom/tests/anim_cut_test.cpp)
 target_compile_options(anim_cut_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/crouch_test.cpp")
+    # [body] crouch (vr/crouch.h): when the player crouches (threshold, hysteresis, standing again, seated, lost tracking) and the legs' bend, on synthetic numbers
+    add_executable(crouch_test cleanroom/tests/crouch_test.cpp)
+    target_include_directories(crouch_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+    target_compile_options(crouch_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/body_calibration_test.cpp")
     # The T-pose measurement (vr/body_calibration.h) and the ini patch it saves through (vr/ini_patch.h), on synthetic poses
     add_executable(body_calibration_test cleanroom/tests/body_calibration_test.cpp)
