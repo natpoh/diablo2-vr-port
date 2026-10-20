@@ -1,5 +1,24 @@
 # What's new in D2R VR
 
+## Next
+
+- **Fixed: the map no longer came into the hand after a change of the window or render size** (a player, native OpenXR, `[hud] map=1`: "once I
+  change Stereo > Square window size, px, the map stops working", with Home > Resolution (VR render size) on the window's size, "until you
+  reinstall the mod using default settings"). The map is taken out of the picture by the game's scissor box for it, looked for in a top corner of
+  the interface area. That area was worked out from the Safe Screen Percent in Settings.json, read once when the plugin starts, against the size of
+  the interface's texture. The box had to be within 7 % of the picture's height of that corner, with its side the safe margin in from the
+  picture's edge. With the picture the window's size, at any size other than the shipped 1536 square, the area could be somewhere else: a file
+  number that is not the game's (no key or none yet read as the whole picture, a size changed while the game runs), a texture bigger than the
+  viewport the game draws through, or a box at the picture's very edge (a wide window). Then nothing was cut and the orb stayed empty. A reinstall
+  brought it back only because the default ini has the render size at a 1536 square again. Now the area comes from the game's OWN interface
+  scale (asked every quarter second; the area is 2160 of its units tall), in the viewport the interface is drawn through. The file's number is
+  only a second guess, and the box's side may be anywhere from the picture's edge to the area's side. Nothing in the test is measured in pixels,
+  so a window, render size or interface size of any kind works, and a size put back works at once. The box's size and top are tested as before
+  (fractions of the picture). No new key. The log says where the box was found ("hud: the map's box ... canvas ...; interface area ... by the
+  game's scale, ... by Settings.json"). After ten seconds with no box, it says which boxes the game drew instead ("hud: no map box ...": the map
+  off in the game with Tab, or not where it is looked for). Not tried in the game yet. Unit test: cleanroom/tests/minimap_box_test.cpp
+  (vr/minimap_box.h; 1920x1920, 2400x2400, 1353x831 and 2560x1440 at interface sizes 80 and 100, both corners).
+
 ## 0.173
 
 - **The map in the hand with the game's map in the middle** (a player: native OpenXR drew the map across the view, no map in the hand). The map comes into the

@@ -78,6 +78,7 @@
 #include "game_hud_shared.h"
 #include "hud_globes.h"   // where the game's own life and mana globes are in its interface layer (the wrists' medallions)
 #include "hud_rects.h"    // the toolbar's strip in that layer (the box taken out of the picture), with the cut sliders
+#include "minimap_box.h"  // which scissor box is the corner map, at any layer size, shape and interface size
 #include "hud_native.h"
 #include "plate_world.h"   // [hud] monster_bar_room: where the plate stands in the layer (BoxOf)
 
@@ -93,6 +94,7 @@ void Log(const char* s) { if (g_log) g_log(s); }
 
 std::atomic<int> g_hide{0};   // 0 nothing, 1 the toolbar, 2 everything
 std::atomic<float> g_uiScale{1.0f};
+std::atomic<float> g_gameUiScale{0.0f};   // the game's own interface scale, pixels a layout unit (SetGameInterfaceScale; 0 not known): where the map's box is looked for
 std::atomic<float> g_cutUp{0.0f}, g_cutDown{0.0f};   // [hud] hide_up_pct / hide_down_pct: the toolbar's strip taller above / below, percent of the layer's height
 std::atomic<bool> g_cutTint{false};                  // [debug] hide_strip_tint: the strip taken out is painted a see-through magenta instead, to see its edges
 std::atomic<bool> g_menu{false};   // the main menu, or a panel (inventory, trade...) open: nothing is hidden then   // the game's interface size, 0.5..1
@@ -139,8 +141,9 @@ std::atomic<bool> g_mapShown{true};
 bool g_mapDrawn = false;
 std::mutex g_lock;
 // Lists that have the interface bound now: the view they draw it through, and
-// whether the map's draws are being sent to our own target right now.
-struct Drawing { resource_view layer{}; bool inMap = false; uint32_t w = 0, h = 0; };
+// whether the map's draws are being sent to our own target right now. vx..vh: the
+// largest viewport bound since (OnViewports), the canvas the map's box is in.
+struct Drawing { resource_view layer{}; bool inMap = false; uint32_t w = 0, h = 0; float vx = 0.0f, vy = 0.0f, vw = 0.0f, vh = 0.0f; };
 std::unordered_map<command_list*, Drawing> g_drawing;
 
 // The map's own target: as big as the layer, same format, cleared like it.
@@ -194,30 +197,51 @@ bool IsLayerClear(device* dev, resource_view rtv, const float c[4]) {
     return true;
 }
 
-// The map's scissor: a box from the safe area's top-left corner (its top a
-// little below it), an eighth to a half of the screen each way. Matched by
-// that, not by MapRect's size: the height rule held at 1920x1200 and
+// The map's scissor: a box in a top corner of the interface area (its top a
+// little below the area's), an eighth to a half of the screen each way. Matched
+// by that, not by MapRect's size: the height rule held at 1920x1200 and
 // 1699x1274/80%, but at 1920x1440 the map is ~640 wide where it predicts 773,
 // past the tolerance - the map stayed in the picture and the share was empty.
-bool IsMapScissor(const rect& r, uint32_t w, uint32_t h) {
-    const float s = g_uiScale.load();
-    const float left = 0.5f * (float)w * (1.0f - s), top = 0.5f * (float)h * (1.0f - s);
-    const float tol = 0.07f * (float)h;
-    const int32_t rw = r.right - r.left, rh = r.bottom - r.top;
-    // The game puts the mini map in either top corner (its own option): the
-    // box hugs the safe area's left edge, or its right one.
-    const float right = (float)w - left;
-    const int which = g_mapCorner.load();
-    const bool atLeft = std::abs(r.left - left) < tol, atRight = std::abs(r.right - right) < tol;
-    const bool corner = which == 1 ? atLeft : which == 2 ? atRight : (atLeft || atRight);
-    return corner && std::abs(r.top - top) < tol &&
-           rw > (int32_t)w / 8 && rw < (int32_t)w / 2 && rh > (int32_t)h / 8 && rh < (int32_t)(h * 0.6f);
+// vr/minimap_box.h has the test and why it is no longer the file's Safe Screen
+// Percent against the texture's size (a window size other than the shipped
+// square lost the map): the area from the game's own interface scale, the
+// file's as a second guess, in the viewport the interface is drawn through.
+minimapbox::Canvas CanvasOf(const Drawing& d) { return minimapbox::CanvasOf(d.w, d.h, d.vx, d.vy, d.vw, d.vh); }
+float GameSafe(const minimapbox::Canvas& c) { return minimapbox::SafeFromScale(g_gameUiScale.load(), c.h); }
+bool IsMapScissor(const rect& r, const Drawing& d) {
+    const minimapbox::Canvas c = CanvasOf(d);
+    return minimapbox::Find(minimapbox::Box{r.left, r.top, r.right, r.bottom}, c, GameSafe(c), g_uiScale.load(), g_mapCorner.load()) != 0;
 }
 
 // The map scissor last seen, and the layer size it was seen at: what the
 // share copies (the map is drawn only inside it). Under g_lock.
 rect g_mapScissor{};
 uint32_t g_mapScissorW = 0, g_mapScissorH = 0;
+// No map box seen while the map is to come out of the picture: the boxes this
+// interface pass had instead, for the log (TellNoMap). Under g_lock.
+rect g_seenBoxes[6]{};
+int g_seenN = 0;
+minimapbox::Canvas g_seenCanvas{};
+uint32_t g_mapMisses = 0;   // interface passes in a row with no map box
+
+// Said once for each layer size and interface area: the map does not come into
+// the hand and the log says what was there instead (the map may be off in the game).
+void TellNoMap(uint32_t w, uint32_t h) {
+    const minimapbox::Canvas c = g_seenCanvas.w ? g_seenCanvas : minimapbox::Canvas{0, 0, w, h};
+    const float game = GameSafe(c), file = g_uiScale.load();
+    static uint64_t told = 0;
+    const uint64_t key = (uint64_t)w << 48 ^ (uint64_t)h << 32 ^ (uint64_t)(game * 1000.0f) << 16 ^ (uint64_t)(file * 1000.0f);
+    if (key == told) return;
+    told = key;
+    char line[640];
+    int n = snprintf(line, sizeof line, "hud: no map box in the game's interface on a %ux%u layer (canvas %d,%d %ux%u; interface area %.3f by the game's "
+                     "scale, %.3f by Settings.json; corner %d) - the map off in the game (Tab), or not where it is looked for; its boxes:", w, h,
+                     c.x, c.y, c.w, c.h, game, file, g_mapCorner.load());
+    for (int i = 0; i < g_seenN && n > 0 && n < (int)sizeof line; ++i)
+        n += snprintf(line + n, sizeof line - n, " %d,%d-%d,%d", g_seenBoxes[i].left, g_seenBoxes[i].top, g_seenBoxes[i].right, g_seenBoxes[i].bottom);
+    if (!g_seenN && n > 0 && n < (int)sizeof line) snprintf(line + n, sizeof line - n, " none");
+    Log(line);
+}
 
 // ── The pieces handed to FlatVR ─────────────────────────────────────────────
 
@@ -533,6 +557,12 @@ void Publish(command_list* cl, resource layer, uint32_t w, uint32_t h, int hide)
     else { g_glb.on = false; g_globesWhy.store(1); }
     const bool drawn = g_mapDrawn;
     g_mapDrawn = false;
+    if (g_frameMap.load() == 1 && !drawn && !menu) {   // ten seconds or so with no map box: what there was, in the log
+        if (++g_mapMisses == 600) TellNoMap(w, h);
+    } else {
+        g_mapMisses = 0;
+    }
+    g_seenN = 0;
     // the parts the labels' plane leaves flat: the toolbar's strip, and the map's box while it is drawn
     {
         const rect m = g_mapScissorW == w && g_mapScissorH == h ? g_mapScissor : MapRect(w, h);
@@ -603,17 +633,40 @@ void OnScissor(command_list* cl, uint32_t, uint32_t count, const rect* rects) {
     auto it = g_drawing.find(cl);
     if (it == g_drawing.end()) return;
     Drawing& d = it->second;
-    const bool map = IsMapScissor(rects[0], d.w, d.h);
+    const bool map = IsMapScissor(rects[0], d);
     if (map && (rects[0].left != g_mapScissor.left || rects[0].top != g_mapScissor.top ||
-                rects[0].right != g_mapScissor.right || rects[0].bottom != g_mapScissor.bottom)) {
-        char line[160];
-        snprintf(line, sizeof line, "hud: the map's box %d,%d - %d,%d on a %ux%u layer", rects[0].left, rects[0].top, rects[0].right, rects[0].bottom, d.w, d.h);
+                rects[0].right != g_mapScissor.right || rects[0].bottom != g_mapScissor.bottom ||
+                g_mapScissorW != d.w || g_mapScissorH != d.h)) {
+        const minimapbox::Canvas c = CanvasOf(d);
+        char line[320];
+        snprintf(line, sizeof line, "hud: the map's box %d,%d - %d,%d on a %ux%u layer (canvas %d,%d %ux%u; interface area %.3f by the game's scale, "
+                 "%.3f by Settings.json)", rects[0].left, rects[0].top, rects[0].right, rects[0].bottom, d.w, d.h, c.x, c.y, c.w, c.h, GameSafe(c),
+                 g_uiScale.load());
         Log(line);
+    }
+    if (!map && redirect && g_seenN < (int)(sizeof g_seenBoxes / sizeof g_seenBoxes[0])) {   // (for TellNoMap: the boxes other than the whole picture)
+        const rect& r = rects[0];
+        bool known = r.left <= 0 && r.top <= 0 && r.right >= (int32_t)d.w && r.bottom >= (int32_t)d.h;
+        for (int i = 0; i < g_seenN && !known; ++i)
+            known = g_seenBoxes[i].left == r.left && g_seenBoxes[i].top == r.top && g_seenBoxes[i].right == r.right && g_seenBoxes[i].bottom == r.bottom;
+        if (!known) g_seenBoxes[g_seenN++] = r;
+        g_seenCanvas = CanvasOf(d);
     }
     if (map) { g_mapScissor = rects[0]; g_mapScissorW = d.w; g_mapScissorH = d.h; g_mapDrawn = true; }
     if (!redirect || !g_mapRtv.handle) return;
     if (map && !d.inMap) { Bind(cl, g_mapRtv); d.inMap = true; }
     else if (!map && d.inMap) { Bind(cl, d.layer); d.inMap = false; }
+}
+
+// On the interface's list: the largest viewport it is drawn through - the canvas the map's box is
+// looked for in (vr/minimap_box.h CanvasOf: a viewport that is a piece of the layer is not it).
+void OnViewports(command_list* cl, uint32_t first, uint32_t count, const viewport* vps) {
+    if (first != 0 || count == 0 || !vps || !g_layer.load() || (g_frameMap.load() != 1 && !g_labels.load())) return;
+    std::lock_guard<std::mutex> g(g_lock);
+    auto it = g_drawing.find(cl);
+    if (it == g_drawing.end()) return;
+    Drawing& d = it->second;
+    if (vps[0].width * vps[0].height > d.vw * d.vh) { d.vx = vps[0].x; d.vy = vps[0].y; d.vw = vps[0].width; d.vh = vps[0].height; }
 }
 
 // The list leaves the interface for another target: the interface is drawn - empty it.
@@ -708,12 +761,14 @@ void Register() {
     reshade::register_event<reshade::addon_event::init_command_list>(&d2rvr::D3D12Only<&OnReset>::Call);
     reshade::register_event<reshade::addon_event::destroy_command_list>(&d2rvr::D3D12Only<&OnReset>::Call);
     reshade::register_event<reshade::addon_event::bind_scissor_rects>(&d2rvr::D3D12Only<&OnScissor>::Call);
+    reshade::register_event<reshade::addon_event::bind_viewports>(&d2rvr::D3D12Only<&OnViewports>::Call);
 }
 
 void SetHide(int mode) { g_hide.store(mode); }
 void SetMenuOpen(bool open) { g_menu.store(open); }
 void SetMapMode(int mode) { g_mapMode.store(mode); }
 void SetInterfaceScale(float s) { g_uiScale.store(std::clamp(s, 0.3f, 1.0f)); }
+void SetGameInterfaceScale(float k) { g_gameUiScale.store(std::isfinite(k) && k > 0.05f && k < 20.0f ? k : 0.0f); }
 void SetToolbarCut(float upPct, float downPct, bool tint) {
     g_cutUp.store(hudrects::UpPct(upPct));
     g_cutDown.store(hudrects::DownPct(downPct));

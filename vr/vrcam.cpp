@@ -178,6 +178,7 @@ namespace gamestate { bool HandIsThrowPotion(int side); }   // the held item is 
 #include "plate_look.h"    // the monster's plate and the item labels kept apart in the interface layer's effect
 #include "plate_world.h"
 namespace hud { void SetPlateCut(bool want, const int32_t layout[4], float scale); }   // [hud] monster_bar_room: where the plate is, to be cut out (vr/hud.cpp)
+namespace hud { void SetGameInterfaceScale(float k); }   // the game's own interface scale: where the corner map's box is looked for (vr/minimap_box.h)
 #include "low_hp_game.h"   // [hud] low_hp_vignette: the red heartbeat vignette at low life (vr/low_hp.h)
 #include "roof_keep.h"     // [render] keep_roofs: in F4 the roof of a building you walk into stays
 #include "roof_sides.h"    // [render] roofs_two_sided: roof materials built double-sided (their underside, not the sky)
@@ -11190,6 +11191,17 @@ void NoteLabelDepth(void* unit, const int32_t* box) {
 
 bool ResizeLabelBox(char* name, int32_t* box, float k);
 std::atomic<float> g_uiScaleSeen{0.0f};   // the game's interface scale, as the label code last asked it
+// The game's interface scale (pixels a layout unit) asked now, for hud.cpp's corner map (vr/minimap_box.h: the interface area is 2160 of
+// them tall, whatever the window, the render size or Safe Screen Percent): 0 when its bytes are not 3.3.93787's or the call faults.
+float GameUiScaleNow() noexcept {
+    if (!Matches(RVA_UI_SCALE, kSigUiScale, sizeof kSigUiScale)) return 0.0f;
+    __try {
+        const float s = ((UiScaleFn)d2rsig::Addr(RVA_UI_SCALE))();
+        return s > 0.05f && s < 20.0f ? s : 0.0f;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return 0.0f;
+    }
+}
 // The label code is the ITEMS' (platelook::IsLabelOfItem): a unit that is read and is not an item is none of the labels' settings - its label is laid out and
 // painted as the game does, and the paint is told so (k -1).
 bool LabelUnitIsItem(void* unit) {
@@ -17146,6 +17158,10 @@ DWORD WINAPI UpdateThread(void*) {
         // From above (vrcam off) and from behind the toolbar and the map stay in
         // the picture, at their own size; on the hands only in first person.
         hud::SetClassicView(ClassicNow());
+        if (g_inWorld.load()) {   // the corner map's box follows the game's own interface scale: a window, render size or interface size of any kind
+            static ULONGLONG nextScale = 0;
+            if (nowMs >= nextScale) { nextScale = nowMs + 250; hud::SetGameInterfaceScale(GameUiScaleNow()); }
+        }
         // first person without the body: the map at a size of its own, from its corner
         // ... and on the floor (F3) its own size, depth and place, as the toolbar's
         hud::SetPictureZoom(BarSizeNow(), InsideFree() ? g_set.mapZoomInside.load() : TableView() ? g_set.mapSizeFloor.load() : 1.0f);

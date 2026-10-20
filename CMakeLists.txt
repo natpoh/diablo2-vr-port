@@ -1167,3 +1167,7 @@ target_compile_options(first_start_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 add_executable(minimap_side_test cleanroom/tests/minimap_side_test.cpp)
 target_include_directories(minimap_side_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
 target_compile_options(minimap_side_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# The corner map's scissor box found at any window size, shape and interface size (vr/minimap_box.h, hud.cpp IsMapScissor): minimap_box_test
+add_executable(minimap_box_test cleanroom/tests/minimap_box_test.cpp)
+target_include_directories(minimap_box_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_options(minimap_box_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
