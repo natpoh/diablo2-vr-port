@@ -119,6 +119,7 @@ struct Cfg {
     bool byTurns = false;     // eyes by turns ([stereo] afr without pair_per_tick): one eye a game frame
     bool turnWarp = true;     // [stereo] turn_warp: by turns, the eye not drawn made on the GPU (vr/turn_warp.h); 0 = as last drawn, at its own pose
     bool turnFromDrawn = true;   // [stereo] turn_from_drawn: ... with the eye drawn this frame moved across over it (0: its own last picture alone)
+    bool turnOverlayDepth = false;   // [stereo] turn_overlay_depth: the made eye's depth moved with it, its overlays hidden by it (0: hidden by nothing)
     bool frameProfile = true; // frame_profile: Steam Frame's controllers in their own layout when the runtime offers it (vr/xr_profiles.h); taken at a session start
     bool indexGripForce = false;   // index_grip_force: an Index hand's grip is how hard it squeezes (squeeze/force), not the fingers round the handle
     bool menusWaitTracking = true;   // menus_wait_tracking: the flat picture / menu panel placed only once the head is tracked, again after a focus loss (vr/anchor_gate.h)
@@ -3772,6 +3773,15 @@ void LoadSettings(const wchar_t* ini) {
         }
         g_cfg.turnWarp = warp;
         g_cfg.turnFromDrawn = fromDrawn;
+        // the made eye's overlays hidden by its own depth, moved with its picture (off: the medallions came out doubled with it, 2026-10-20)
+        const bool overlayDepth = GetPrivateProfileIntW(L"stereo", L"turn_overlay_depth", 0, ini) != 0;
+        static int saidOv = -1;
+        if (on && turns && warp && (int)overlayDepth != saidOv) {
+            saidOv = overlayDepth;
+            Log(overlayDepth ? "vrcam: openxr - eyes by turns: the made eye's overlays hidden by its own depth, moved with its picture ([stereo] turn_overlay_depth=1)"
+                             : "vrcam: openxr - eyes by turns: the made eye's overlays hidden by nothing of the scene ([stereo] turn_overlay_depth=0)");
+        }
+        g_cfg.turnOverlayDepth = overlayDepth;
     }
     g_cfg.bareHands = f(L"bare_hands", 0.0f) != 0.0f;
     g_cfg.frameProfile = f(L"frame_profile", 1.0f) != 0.0f;   // (taken at the next session start)
@@ -4315,14 +4325,17 @@ ID3D12Resource* TurnMakeLocked() {
     g_turnSlot = (g_turnSlot + 1) % turnwarp::kSlots;
     if (g_fence && g_fence->GetCompletedValue() < g_turnSlotDone[slot]) WaitFence(g_turnSlotDone[slot], 100);
     if (!g_fence || g_fence->GetCompletedValue() >= g_turnSlotDone[slot]) {
-        turned = g_turnGpu.Render(list, g_turnTarget, co.w, co.h, ko.image, h, ownP, overP, slot);
+        turned = g_turnGpu.Render(list, g_turnTarget, co.w, co.h, ko.image, h, ownP, overP, slot, g_cfg.turnOverlayDepth);
         if (turned) {
             g_turnSlotDone[slot] = g_fenceV + 1;   // the fence SubmitList signals for this list
             if (ownP || overP) ++g_turnCounts.moved; else ++g_turnCounts.turned;
             if (overP) ++g_turnCounts.drawnOver;
         }
     }
-    if (!turned) CopyPicture(list, ko.image, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, g_turnTarget, D3D12_RESOURCE_STATE_RENDER_TARGET, co.w, co.h);
+    if (!turned) {
+        CopyPicture(list, ko.image, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, g_turnTarget, D3D12_RESOURCE_STATE_RENDER_TARGET, co.w, co.h);
+        g_turnGpu.ClearMadeDepth(list);   // its depth is not this picture's (an older frame's, or the other eye's): nothing hides its overlays
+    }
     SubmitList();
     g_turnFrame.open = true;   // TurnFinish takes it on
     g_turnFrame.acquired = true;
@@ -4367,7 +4380,10 @@ void SetTurnDepth(void* resource, uint32_t viewFormat, float scaleX, float scale
 }
 
 bool TurnWarpOn() { return g_cfg.on && g_cfg.byTurns && g_cfg.turnWarp; }
-void* TurnMadeDepth() { return g_turnGpu.MadeDepth(); }
+void* TurnMadeDepth(uint32_t* gen) {
+    if (gen) *gen = g_turnGpu.MadeDepthGen();
+    return g_cfg.turnOverlayDepth ? g_turnGpu.MadeDepth() : nullptr;
+}
 bool TurnsNow() { return g_kind == kPair && g_cfg.byTurns && g_cfg.turnWarp && g_pairMode == kViewsHead && g_session && !DeviceLost(); }
 void TurnKeep(int eye, ID3D12Resource* bb) {
     if (!TurnsNow() || !bb || eye < 0 || eye > 1 || g_copied[0] || g_copied[1]) return;

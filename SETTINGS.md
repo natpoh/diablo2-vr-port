@@ -42,7 +42,9 @@ the headset-only ones.
   they are now in both. Stereo tab: *Eyes by turns: make the other eye from the
   depth* (`[stereo] turn_warp`, on) and *... with the eye drawn this frame over
   it* (`turn_from_drawn`, on); unticked, the other eye goes as it was last
-  drawn and the headset turns it. First person (F4); the idea is
+  drawn and the headset turns it. *... its overlays hidden by its moved depth
+  (test)* (`turn_overlay_depth`, off): the wrist medallions and the bow's orbs
+  hidden in the eye made by its moved depth (they came out doubled with it). First person (F4); the idea is
   bearstonem/d2r-pcvr's (MIT). Then the headset's refresh rate; *My height*; and **Resolution (VR render
   size)**, a slider from 1024 to 4096 pixels a side (its left end is the game
   window's own size) with a tick box for the headset's recommended size. On

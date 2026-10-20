@@ -183,4 +183,15 @@ inline bool CutsEdge(float a, float b, float c, float d, float edgeScale) {
     return edgeScale > 0.0f && (hi - lo) * edgeScale > kEdgePixels;
 }
 
+// -- the overlays drawn after it (D2R_DepthFog.fx OverlayDepth, vrcam OnBeginEffects) ------------------------------------------
+
+// Which depth hides `eye`'s overlays (the wrist medallions, the bow's orbs) when they are drawn apart, after the warp: the game's for
+// the eye drawn this frame; for the eye made, its own moved depth when that is on and bound ([stereo] turn_overlay_depth), else
+// nothing - never the game's, which is the other eye's (an orb on the wrist set against the other eye's hand showed twice).
+enum class OverlayDepthFrom { Game, Nothing, Made };
+inline OverlayDepthFrom OverlayDepthOf(bool apart, bool madeBound, int drawnEye, int eye) {
+    if (!apart || eye == drawnEye) return OverlayDepthFrom::Game;
+    return madeBound ? OverlayDepthFrom::Made : OverlayDepthFrom::Nothing;
+}
+
 }  // namespace turnwarp

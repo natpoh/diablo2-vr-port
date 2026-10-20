@@ -24,12 +24,18 @@ Pixel VS(uint id : SV_VertexID) {
     p.position = float4(p.uv.x * 2 - 1, 1 - p.uv.y * 2, 0, 1);
     return p;
 }
+#if MADE_DEPTH
 struct Out { float4 colour : SV_Target0; float depth : SV_Target1; };
+#else
+struct Out { float4 colour : SV_Target0; };
+#endif
 Out PS(Pixel p) {
     const float3 at = float3(p.uv, 1);
     const float3 h = float3(dot(row0.xyz, at), dot(row1.xyz, at), dot(row2.xyz, at));
     Out o;
+#if MADE_DEPTH
     o.depth = 0;                                                                   // the turn alone knows no depth: far
+#endif
     o.colour = h.z <= 1e-6 ? float4(0, 0, 0, 1)                                    // behind the drawn eye: nothing it saw
                            : drawn.SampleLevel(edge, h.xy / h.z, 0);               // past its edge: the edge drawn out
     return o;
@@ -81,8 +87,12 @@ Pixel VS(uint id : SV_VertexID) {
     }
     return o;
 }
+#if MADE_DEPTH
 struct Out { float4 colour : SV_Target0; float depth : SV_Target1; };
 Out PS(Pixel p) { Out o; o.colour = drawn.SampleLevel(edge, p.uv, 0); o.depth = p.depth; return o; }
+#else
+float4 PS(Pixel p) : SV_Target { return drawn.SampleLevel(edge, p.uv, 0); }
+#endif
 )";
 constexpr UINT kDepthConstants = 44;
 constexpr UINT kPerSlot = 5;   // base; own image, own depth; drawn image, drawn depth
@@ -97,8 +107,7 @@ void Gpu::Release() {
     Free(dsv_);
     Free(rtv_);
     Free(srv_);
-    Free(depthPso_);
-    Free(pso_);
+    for (int k = 0; k < 2; ++k) { Free(depthPso_[k]); Free(pso_[k]); }
     Free(depthRoot_);
     Free(root_);
     depthW_ = depthH_ = 0;
@@ -108,7 +117,7 @@ void Gpu::Release() {
 }
 
 bool Gpu::Init(ID3D12Device* dev, DXGI_FORMAT target, void (*log)(const char*)) {
-    if (pso_ && dev == dev_ && target == format_) return true;
+    if (pso_[0] && dev == dev_ && target == format_) return true;
     if (tried_ && dev == dev_ && target == format_) return false;   // failed for this one already
     Release();
     dev_ = dev;
@@ -130,9 +139,11 @@ bool Gpu::Init(ID3D12Device* dev, DXGI_FORMAT target, void (*log)(const char*)) 
         say("vrcam: eyes by turns - no shader compiler (%s): the eye not drawn goes as it was last drawn", "d3dcompiler_47.dll");
         return false;
     }
-    auto build = [&](const char* src, const char* entry, const char* target, ID3DBlob** out) {
+    // made: the variant that also writes the made eye's depth (MadeDepth, [stereo] turn_overlay_depth) as a second target
+    auto build = [&](const char* src, const char* entry, const char* target, bool made, ID3DBlob** out) {
         ID3DBlob* err = nullptr;
-        const bool ok = SUCCEEDED(compile(src, strlen(src), "d2rvr_turn", nullptr, nullptr, entry, target, D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, out, &err));
+        const D3D_SHADER_MACRO defs[] = {{"MADE_DEPTH", made ? "1" : "0"}, {nullptr, nullptr}};
+        const bool ok = SUCCEEDED(compile(src, strlen(src), "d2rvr_turn", defs, nullptr, entry, target, D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, out, &err));
         if (!ok) say("vrcam: eyes by turns - a shader did not compile: %s", err ? (const char*)err->GetBufferPointer() : "?");
         Free(err);
         return ok;
@@ -159,7 +170,7 @@ bool Gpu::Init(ID3D12Device* dev, DXGI_FORMAT target, void (*log)(const char*)) 
         Free(err);
         return ok;
     };
-    auto psoOf = [&](ID3D12RootSignature* rs, ID3DBlob* vs, ID3DBlob* ps, bool depth, ID3D12PipelineState** out) {
+    auto psoOf = [&](ID3D12RootSignature* rs, ID3DBlob* vs, ID3DBlob* ps, bool depth, bool made, ID3D12PipelineState** out) {
         D3D12_GRAPHICS_PIPELINE_STATE_DESC d{};
         d.pRootSignature = rs;
         d.VS = {vs->GetBufferPointer(), vs->GetBufferSize()};
@@ -170,9 +181,9 @@ bool Gpu::Init(ID3D12Device* dev, DXGI_FORMAT target, void (*log)(const char*)) 
         d.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
         d.RasterizerState.DepthClipEnable = TRUE;
         d.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
-        d.NumRenderTargets = 2;   // the picture, and its depth (MadeDepth)
+        d.NumRenderTargets = made ? 2 : 1;   // the picture, and its depth (MadeDepth)
         d.RTVFormats[0] = format_;
-        d.RTVFormats[1] = DXGI_FORMAT_R32_FLOAT;
+        if (made) d.RTVFormats[1] = DXGI_FORMAT_R32_FLOAT;
         d.SampleDesc.Count = 1;
         if (depth) {
             d.DepthStencilState.DepthEnable = TRUE;
@@ -182,36 +193,48 @@ bool Gpu::Init(ID3D12Device* dev, DXGI_FORMAT target, void (*log)(const char*)) 
         }
         return SUCCEEDED(dev->CreateGraphicsPipelineState(&d, __uuidof(ID3D12PipelineState), (void**)out));
     };
-    ID3DBlob *vs = nullptr, *ps = nullptr, *dvs = nullptr, *dps = nullptr;
-    bool ok = build(kTurnShader, "VS", "vs_5_0", &vs) && build(kTurnShader, "PS", "ps_5_0", &ps) &&
-              rootOf(1, 12, D3D12_SHADER_VISIBILITY_PIXEL, &root_) && psoOf(root_, vs, ps, false, &pso_);
+    ID3DBlob *vs = nullptr, *ps = nullptr, *psM = nullptr, *dvs = nullptr, *dps = nullptr, *dpsM = nullptr;
+    bool ok = build(kTurnShader, "VS", "vs_5_0", false, &vs) && build(kTurnShader, "PS", "ps_5_0", false, &ps) &&
+              rootOf(1, 12, D3D12_SHADER_VISIBILITY_PIXEL, &root_) && psoOf(root_, vs, ps, false, false, &pso_[0]);
+    // the made depth's variant: without it the overlays of the eye made are hidden by nothing (as with turn_overlay_depth=0)
+    if (ok && !(build(kTurnShader, "PS", "ps_5_0", true, &psM) && psoOf(root_, vs, psM, false, true, &pso_[1]))) {
+        Free(pso_[1]);
+        say("vrcam: eyes by turns - the made eye's depth unavailable (%s): its overlays are hidden by nothing", "its pass could not be made");
+    }
     D3D12_DESCRIPTOR_HEAP_DESC hd{D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, kSlots * kPerSlot, D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE, 0};
     ok = ok && SUCCEEDED(dev->CreateDescriptorHeap(&hd, __uuidof(ID3D12DescriptorHeap), (void**)&srv_));
     D3D12_DESCRIPTOR_HEAP_DESC rd{D3D12_DESCRIPTOR_HEAP_TYPE_RTV, 2, D3D12_DESCRIPTOR_HEAP_FLAG_NONE, 0};
     ok = ok && SUCCEEDED(dev->CreateDescriptorHeap(&rd, __uuidof(ID3D12DescriptorHeap), (void**)&rtv_));
     if (!ok) {
-        Free(vs); Free(ps);
-        Free(pso_); Free(root_); Free(srv_); Free(rtv_);
+        Free(vs); Free(ps); Free(psM);
+        for (int k = 0; k < 2; ++k) Free(pso_[k]);
+        Free(root_); Free(srv_); Free(rtv_);
         say("vrcam: eyes by turns - the GPU pass could not be made (%s): the eye not drawn goes as it was last drawn", "pipeline or heaps");
         return false;
     }
     srvInc_ = dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
     srv_->SetName(L"d2rvr eyes by turns srv");
     // the depth passes: without them the eye not drawn is turned only
-    const bool depthOk = build(kDepthShader, "VS", "vs_5_0", &dvs) && build(kDepthShader, "PS", "ps_5_0", &dps) &&
-                         rootOf(2, kDepthConstants, D3D12_SHADER_VISIBILITY_ALL, &depthRoot_) && psoOf(depthRoot_, dvs, dps, true, &depthPso_);
+    const bool depthOk = build(kDepthShader, "VS", "vs_5_0", false, &dvs) && build(kDepthShader, "PS", "ps_5_0", false, &dps) &&
+                         rootOf(2, kDepthConstants, D3D12_SHADER_VISIBILITY_ALL, &depthRoot_) && psoOf(depthRoot_, dvs, dps, true, false, &depthPso_[0]);
     D3D12_DESCRIPTOR_HEAP_DESC dd{D3D12_DESCRIPTOR_HEAP_TYPE_DSV, 1, D3D12_DESCRIPTOR_HEAP_FLAG_NONE, 0};
     if (!depthOk || FAILED(dev->CreateDescriptorHeap(&dd, __uuidof(ID3D12DescriptorHeap), (void**)&dsv_))) {
-        Free(depthPso_); Free(depthRoot_); Free(dsv_);
+        for (int k = 0; k < 2; ++k) Free(depthPso_[k]);
+        Free(depthRoot_); Free(dsv_);
         say("vrcam: eyes by turns - moving with the depth unavailable (%s): the eye not drawn is turned only", "its pass could not be made");
+    } else if (pso_[1] && !(build(kDepthShader, "PS", "ps_5_0", true, &dpsM) && psoOf(depthRoot_, dvs, dpsM, true, true, &depthPso_[1]))) {
+        Free(depthPso_[1]);
+        Free(pso_[1]);   // the made depth whole or not at all: from the turn alone it would be far everywhere
+        say("vrcam: eyes by turns - the made eye's depth unavailable (%s): its overlays are hidden by nothing", "its grid pass could not be made");
     }
-    Free(vs); Free(ps); Free(dvs); Free(dps);
+    Free(vs); Free(ps); Free(psM); Free(dvs); Free(dps); Free(dpsM);
     return true;
 }
 
 bool Gpu::Render(ID3D12GraphicsCommandList* list, ID3D12Resource* target, uint32_t w, uint32_t h, ID3D12Resource* base,
-                 const std::array<float, 9>& homography, const Grid* own, const Grid* drawn, int slot) {
-    if (!pso_ || !list || !target || !base || !w || !h || slot < 0 || slot >= kSlots) return false;
+                 const std::array<float, 9>& homography, const Grid* own, const Grid* drawn, int slot, bool madeDepth) {
+    const int k = madeDepth && pso_[1] ? 1 : 0;   // 1: the made depth written too (MadeDepth)
+    if (!pso_[0] || !list || !target || !base || !w || !h || slot < 0 || slot >= kSlots) return false;
     D3D12_SHADER_RESOURCE_VIEW_DESC sv{};
     sv.Format = format_;
     sv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
@@ -230,11 +253,11 @@ bool Gpu::Render(ID3D12GraphicsCommandList* list, ID3D12Resource* target, uint32
     const D3D12_CPU_DESCRIPTOR_HANDLE rtv = rtv_->GetCPUDescriptorHandleForHeapStart();   // [0] the picture, [1] its depth: one range
     dev_->CreateRenderTargetView(target, &rv, rtv);
     const D3D12_RESOURCE_STATES readable = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
-    if (madeDepth_) {
+    if (k && madeDepth_) {
         const D3D12_RESOURCE_DESC m = madeDepth_->GetDesc();
         if (m.Width != w || m.Height != h) Free(madeDepth_);   // (one size a session: the caller waited for its lists at a change)
     }
-    if (!madeDepth_) {   // the made eye's depth, as a picture the effect reads (MadeDepth)
+    if (k && !madeDepth_) {   // the made eye's depth, as a picture the effect reads (MadeDepth)
         D3D12_HEAP_PROPERTIES hp{};
         hp.Type = D3D12_HEAP_TYPE_DEFAULT;
         D3D12_RESOURCE_DESC d{};
@@ -250,18 +273,23 @@ bool Gpu::Render(ID3D12GraphicsCommandList* list, ID3D12Resource* target, uint32
             return false;
         }
         madeDepth_->SetName(L"d2rvr eyes by turns made depth");
+        ++madeGen_;   // another texture, perhaps at the old one's address: the effect's binding made again (MadeDepthGen)
     }
-    D3D12_RENDER_TARGET_VIEW_DESC dr{};
-    dr.Format = DXGI_FORMAT_R32_FLOAT;
-    dr.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
-    D3D12_CPU_DESCRIPTOR_HANDLE rtvDepth = rtv;
-    rtvDepth.ptr += dev_->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
-    dev_->CreateRenderTargetView(madeDepth_, &dr, rtvDepth);
     D3D12_RESOURCE_BARRIER toTarget{};
-    toTarget.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-    toTarget.Transition = {madeDepth_, D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES, readable, D3D12_RESOURCE_STATE_RENDER_TARGET};
-    list->ResourceBarrier(1, &toTarget);
+    if (k) {
+        D3D12_RENDER_TARGET_VIEW_DESC dr{};
+        dr.Format = DXGI_FORMAT_R32_FLOAT;
+        dr.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
+        D3D12_CPU_DESCRIPTOR_HANDLE rtvDepth = rtv;
+        rtvDepth.ptr += dev_->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+        dev_->CreateRenderTargetView(madeDepth_, &dr, rtvDepth);
+        toTarget.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+        toTarget.Transition = {madeDepth_, D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES, readable, D3D12_RESOURCE_STATE_RENDER_TARGET};
+        list->ResourceBarrier(1, &toTarget);
+    }
+    const UINT targets = k ? 2 : 1;
     auto done = [&] {   // the made depth readable again for the effect
+        if (!k) return true;
         D3D12_RESOURCE_BARRIER back = toTarget;
         back.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
         back.Transition.StateAfter = readable;
@@ -280,15 +308,15 @@ bool Gpu::Render(ID3D12GraphicsCommandList* list, ID3D12Resource* target, uint32
     for (int r = 0; r < 3; ++r)
         for (int c = 0; c < 3; ++c) rows[r * 4 + c] = homography[r * 3 + c];
     list->SetGraphicsRoot32BitConstants(1, 12, rows, 0);
-    list->OMSetRenderTargets(2, &rtv, TRUE, nullptr);
+    list->OMSetRenderTargets(targets, &rtv, TRUE, nullptr);
     list->RSSetViewports(1, &vp);
     list->RSSetScissorRects(1, &rect);
-    list->SetPipelineState(pso_);
+    list->SetPipelineState(pso_[k]);
     list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     list->DrawInstanced(3, 1, 0, 0);
 
     auto usable = [](const Grid* g) { return g && g->image && g->depth && g->depthView != DXGI_FORMAT_UNKNOWN && g->nearPlane > 0.0f; };
-    if (!depthPso_ || (!usable(own) && !usable(drawn))) return done();
+    if (!depthPso_[k] || (!usable(own) && !usable(drawn))) return done();
     if (!depthTarget_ || depthW_ != w || depthH_ != h) {   // the grids' depth test, the eyes' size
         Free(depthTarget_);
         D3D12_HEAP_PROPERTIES hp{};
@@ -318,9 +346,9 @@ bool Gpu::Render(ID3D12GraphicsCommandList* list, ID3D12Resource* target, uint32
         dev_->CreateDepthStencilView(depthTarget_, &dv, dsv_->GetCPUDescriptorHandleForHeapStart());
     }
     const D3D12_CPU_DESCRIPTOR_HANDLE dsv = dsv_->GetCPUDescriptorHandleForHeapStart();
-    list->OMSetRenderTargets(2, &rtv, TRUE, &dsv);
+    list->OMSetRenderTargets(targets, &rtv, TRUE, &dsv);
     list->SetGraphicsRootSignature(depthRoot_);
-    list->SetPipelineState(depthPso_);
+    list->SetPipelineState(depthPso_[k]);
     const uint32_t across = (w + kGridStep - 1) / kGridStep, down = (h + kGridStep - 1) / kGridStep;
     auto grid = [&](const Grid& g, UINT first) {
         dev_->CreateShaderResourceView(g.image, &sv, at(first));
@@ -346,6 +374,26 @@ bool Gpu::Render(ID3D12GraphicsCommandList* list, ID3D12Resource* target, uint32
     if (usable(own)) grid(*own, 1);
     if (usable(drawn)) grid(*drawn, 3);
     return done();
+}
+
+void Gpu::ClearMadeDepth(ID3D12GraphicsCommandList* list) {
+    if (!madeDepth_ || !list || !rtv_) return;
+    const D3D12_RESOURCE_STATES readable = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+    D3D12_RENDER_TARGET_VIEW_DESC dr{};
+    dr.Format = DXGI_FORMAT_R32_FLOAT;
+    dr.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
+    D3D12_CPU_DESCRIPTOR_HANDLE rtvDepth = rtv_->GetCPUDescriptorHandleForHeapStart();
+    rtvDepth.ptr += dev_->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+    dev_->CreateRenderTargetView(madeDepth_, &dr, rtvDepth);
+    D3D12_RESOURCE_BARRIER b{};
+    b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    b.Transition = {madeDepth_, D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES, readable, D3D12_RESOURCE_STATE_RENDER_TARGET};
+    list->ResourceBarrier(1, &b);
+    const float far[4] = {0, 0, 0, 0};
+    list->ClearRenderTargetView(rtvDepth, far, 0, nullptr);
+    b.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
+    b.Transition.StateAfter = readable;
+    list->ResourceBarrier(1, &b);
 }
 
 }  // namespace turnwarp

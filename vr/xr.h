@@ -144,8 +144,9 @@ void SetTurnDepth(void* resource, uint32_t viewFormat, float scaleX, float scale
 bool TurnsNow();
 bool TurnWarpOn();   // [stereo] turn_warp with the eyes by turns (any thread)
 // The made eye's own depth, moved with its picture (an ID3D12Resource, R32_FLOAT, reverse-Z near / distance, the eyes' size; readable after
-// TurnMake): D2R_DepthFog.fx's overlays of that eye are hidden by what is nearer there (D2RVR_DEPTH_MADE). nullptr: none yet.
-void* TurnMadeDepth();
+// TurnMake): D2R_DepthFog.fx's overlays of that eye are hidden by what is nearer there (D2RVR_DEPTH_MADE). nullptr: none yet, or
+// [stereo] turn_overlay_depth off (the default) - nothing then hides them in that eye. gen: which texture (a new one may reuse an address).
+void* TurnMadeDepth(uint32_t* gen = nullptr);
 void TurnKeep(int eye, ID3D12Resource* backBuffer);
 ID3D12Resource* TurnMake();
 void TurnFinish();

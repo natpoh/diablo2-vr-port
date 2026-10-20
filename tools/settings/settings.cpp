@@ -1093,6 +1093,11 @@ std::vector<Item> g_items = {
            L"The eye drawn this frame is moved across to the other eye with its own depth and laid over its older picture, so what moves by "
            L"itself - monsters, missiles - stands where it is now in both eyes; behind an edge, what that eye could not see, the older "
            L"picture shows. Unticked: the other eye's own last picture alone. Live.")))),
+    Only(kVr, Needs(L"stereo", L"turn_warp", 1, Needs(L"stereo", L"pair_per_tick", 0, Toggle(L"stereo", L"turn_overlay_depth",
+           L"... its overlays hidden by its moved depth (test)", 0,
+           L"The depth is moved with the other eye's picture too, and what the effect draws over it - the wrist medallions, the bow's orbs - "
+           L"is hidden there where a hand or the bow is nearer. A test: the medallions came out doubled with it. Unticked: nothing of the "
+           L"scene hides them in that eye. Live.")))),
     Needs(L"stereo", L"pair_per_tick", 1, Slider(L"stereo", L"right_dt_ms", L"Right eye frame time, ms", 0, 2, 0.01f, 0.01f,
            L"The right eye's pass gets this much game time instead of none. Effects that skip a frame of no time "
            L"(butterflies only in the left eye) are drawn then; 0.01 is enough, more moves the world between the eyes.")),

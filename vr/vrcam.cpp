@@ -15412,6 +15412,7 @@ void Install() {
 // The views of the toolbar's and the map's copies bound to the effect (hud::PictureNow), 0 = none yet.
 uint64_t g_pieceBound[4] = {};   // the toolbar, the map, the labels' layer, the wrists' globes
 uint64_t g_madeBound = 0;         // eyes by turns: the made eye's depth bound as D2RVR_DEPTH_MADE (0 after the effects reload)
+uint32_t g_madeBoundGen = 0;      // ... which of the textures made (turnwarp::Gpu::MadeDepthGen: a new one may sit at the old one's address)
 
 // The armed skill's icon uploaded into the effect's OrbIconTex ([gameplay] melee_skill_armed_icon): which skill, from which decode of the icon cache, into which texture variable. -1: none
 // (a reload of the effects makes the texture anew: Forget says so, and the icon is uploaded again).
@@ -16379,16 +16380,19 @@ void OnBeginEffects(reshade::api::effect_runtime* rt, reshade::api::command_list
     const bool own = OwnDepthNow();
     SetBool(rt, "OwnDepth", own);   // ours (VR, the square window) or ReShade's DEPTH (scenedepth::)
     scenedepth::Bind(rt, cl);   // before the replay reads which depth the effects have
-    {   // eyes by turns, the other eye made: the overlays apart this present (replay::DrawOverlays); in the eye made they are hidden by its
-        // own depth, moved with its picture (xr::TurnMadeDepth, bound once as D2RVR_DEPTH_MADE - a binding drains the GPU, so only when it
-        // is another texture or the effects reloaded)
+    {   // eyes by turns, the other eye made: the overlays apart this present (replay::DrawOverlays). In the eye made the scene's depth bound
+        // is the other eye's: nothing of it hides them there (OverlayNoHide, as in the try the author saw right) - unless [stereo]
+        // turn_overlay_depth: then its own depth, moved with its picture (xr::TurnMadeDepth, bound once as D2RVR_DEPTH_MADE - a binding
+        // drains the GPU, so only when it is another texture or the effects reloaded). Never the drawn eye's depth for the eye made: an
+        // orb on the wrist set against the other eye's hand showed twice.
         const bool apart = replay::OverlaysNow();
         replay::g_ovApart.store(apart);
         bool made = false;
         if (apart) {
             static reshade::api::resource_view view{0};
-            const uint64_t res = (uint64_t)xr::TurnMadeDepth();
-            if (res && res != g_madeBound) {
+            uint32_t gen = 0;
+            const uint64_t res = (uint64_t)xr::TurnMadeDepth(&gen);
+            if (res && (res != g_madeBound || gen != g_madeBoundGen)) {
                 reshade::api::device* dev = rt->get_device();
                 reshade::api::resource_view v{0};
                 if (dev->create_resource_view(reshade::api::resource{res}, reshade::api::resource_usage::shader_resource,
@@ -16397,15 +16401,19 @@ void OnBeginEffects(reshade::api::effect_runtime* rt, reshade::api::command_list
                     if (view.handle) dev->destroy_resource_view(view);
                     view = v;
                     g_madeBound = res;   // (cleared when the effects reload: Forget)
+                    g_madeBoundGen = gen;
                     Log("vrcam: eyes by turns - the made eye's depth bound for the overlays (D2RVR_DEPTH_MADE)");
                 }
             }
-            made = res && res == g_madeBound;
+            made = res && res == g_madeBound && gen == g_madeBoundGen;
         }
         const int drawn = g_eye.load() & 1;
         SetBool(rt, "OverlaysApart", apart);
-        SetBool(rt, "OverlayMade0", made && drawn != 0);
-        SetBool(rt, "OverlayMade1", made && drawn != 1);
+        for (int e = 0; e < 2; ++e) {   // (cleanroom/tests/turn_math_test.cpp: overlay)
+            const turnwarp::OverlayDepthFrom from = turnwarp::OverlayDepthOf(apart, made, drawn, e);
+            SetBool(rt, e ? "OverlayNoHide1" : "OverlayNoHide0", from == turnwarp::OverlayDepthFrom::Nothing);
+            SetBool(rt, e ? "OverlayMade1" : "OverlayMade0", from == turnwarp::OverlayDepthFrom::Made);
+        }
     }
     if (replay::g_on.load()) replay::g_rt = rt;
     if (replay::g_on.load()) {   // the depth buffer our effect reads: replay keeps the left eye's for its present

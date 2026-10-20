@@ -26,10 +26,23 @@
     labels laid back, the hitboxes, the wrist orbs and medallions, the bow's orbs and the arrow's glow, the low-life vignette),
     which vrcam renders on the back buffer and on the eye made (`replay::DrawOverlays`, xr.h TurnKeep / TurnMake / TurnFinish).
     The game's labels are taken out of its picture for it (as with the labels' own settings) and laid back per eye. In the eye made
-    the orbs are hidden by its own depth: the warp moves the last frame's depth with the same grid and vectors as the picture (the
-    author's idea) into a depth picture of its own, bound to the effect as D2RVR_DEPTH_MADE - so a hand or the bow in front hides them
-    there too. Needs the new D2R_DepthFog.fx with the DLL; an older
+    nothing of the scene hides them (the depth bound there is the other eye's). Needs the new D2R_DepthFog.fx with the DLL; an older
     effect: as before.
+  - **Fixed after the author's third try: "the depth broke in the by-turns mode, the medallions double again".** The try before
+    (the overlays apart, nothing hiding them in the eye made) had no doubling - "it just worked"; the next one hid the orbs in the
+    eye made by its own depth, moved with its picture (the author's idea: the warp moves the last frame's depth with the same grid
+    and vectors into a depth picture of its own, D2RVR_DEPTH_MADE), and the wrist medallions doubled again. That depth is the grid's:
+    the eye drawn's depth at 4-pixel cells, the nearest of each cell's texels, cut at every edge of the hand, with the eye's own
+    older picture - the hand where it was a frame ago - under the cuts. A medallion lies on the wrist, right at the hand's edge, so
+    there the depth it is set against is not the hand the picture shows, and it was cut otherwise in the eye made than in the eye
+    drawn; and in any present the made depth was not bound for (the first, an effects reload, a new size) the eye made took the
+    eye drawn's depth instead - the other eye's hand. Now, by default, as in the try that worked: in the eye made nothing hides the
+    overlays, and the warp draws the picture alone again (one target, as before). The made depth is behind its own key,
+    `[stereo] turn_overlay_depth` (Stereo tab: *... its overlays hidden by its moved depth (test)*), **off**; on, it is as the third
+    try with two fixes - never the other eye's depth (nothing hides instead while it is not bound, and a new texture at the old
+    one's address is bound again), and a frame whose eye was not made (its last picture as it was) clears it (nothing hides) rather
+    than leave an older frame's. Copy the DLL and D2R_DepthFog.fx together. Unit test: turn_math_test *overlay* (which depth hides
+    which eye's overlays); the effect compiles with ReShade's FX compiler (6.3.3).
   - **Fixed: "the doll keeps coming off and goes twice as big".** Three checks meant for the two passes of one game frame took the
     eyes by turns' two frames for one: the hero's facing given up for the memory search (`StructFreshness`, the facing candidates'
     late / bad counts - a wrong copy of his matrix, of another scale, could be picked: the camera height, the world's scale and the

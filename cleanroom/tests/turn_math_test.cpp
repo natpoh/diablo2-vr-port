@@ -11,6 +11,8 @@
 // carry     Carry: what the hero holds goes with his step and his body's turn, the world stays
 // held      Held: first person - what is near stays in the picture (the doll is posed from the head), the world moves
 // edge      EdgeScale / CutsEdge: a cell over a foreground's edge is cut, one on a surface is kept
+// overlay   OverlayDepthOf: the eye drawn's overlays by the game's depth, the eye made's by its own moved depth or by nothing -
+//           never the other eye's (the doubled medallions, 2026-10-20)
 
 #include "turn_math.h"
 
@@ -192,6 +194,20 @@ void EdgeCases() {
     Check(!CutsEdge(fg, fg, bg, bg, 0.0f), "edge: no scale (the eye's own picture): never cut");
 }
 
+void OverlayCases() {
+    using F = OverlayDepthFrom;
+    for (int drawn = 0; drawn < 2; ++drawn) {
+        const int made = drawn ^ 1;
+        Check(OverlayDepthOf(true, false, drawn, drawn) == F::Game && OverlayDepthOf(true, true, drawn, drawn) == F::Game,
+              "overlay: the eye drawn this frame - the game's depth, its own");
+        Check(OverlayDepthOf(true, false, drawn, made) == F::Nothing, "overlay: the eye made, its depth off or not bound - nothing hides");
+        Check(OverlayDepthOf(true, true, drawn, made) == F::Made, "overlay: the eye made, turn_overlay_depth bound - its own moved depth");
+        Check(OverlayDepthOf(true, false, drawn, made) != F::Game && OverlayDepthOf(true, true, drawn, made) != F::Game,
+              "overlay: the eye made never takes the game's depth (the other eye's)");
+        Check(OverlayDepthOf(false, true, drawn, made) == F::Game, "overlay: not apart (both eyes drawn) - the game's, as always");
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -202,6 +218,7 @@ int main() {
     CarryCases();
     HeldCases();
     EdgeCases();
+    OverlayCases();
     std::printf("%d checks, %d failed\n", g_checks, g_failed);
     return g_failed ? 1 : 0;
 }

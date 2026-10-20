@@ -5,8 +5,11 @@
 //      distance and seen from where the eye is now (what the hero carries goes with him), nearer over farther;
 //   3. the eye drawn this frame moved across with its own depth, over it - so what moves by itself (monsters, missiles)
 //      stands where that eye shows it; a cell across an edge of its depth is cut, and pass 2 shows through there.
-// The depth is moved the same way, into MadeDepth(): the eye made's own scene depth (reverse-Z, near / distance, 0 where only the turn
-// reached), so what is drawn over it afterwards (D2R_DepthFog.fx's overlays: the wrist orbs, the bow's) is hidden by what is nearer there.
+// With [stereo] turn_overlay_depth (off by default) the depth is moved the same way, into MadeDepth(): the eye made's own scene depth
+// (reverse-Z, near / distance, 0 where only the turn reached), so what is drawn over it afterwards (D2R_DepthFog.fx's overlays: the
+// wrist orbs, the bow's) is hidden by what is nearer there. It is only as good as the grid: round the hands - where the medallions sit -
+// it is the drawn eye's depth at 4-pixel cells, cut at edges and the eye's older picture under it, and the medallions came out doubled
+// with it (the author, 2026-10-20); off, nothing hides an overlay in the eye made.
 // The technique and the shaders' shape are bearstonem/d2r-pcvr's (MIT, steamvr/turn_warp.cpp); written afresh here.
 #pragma once
 
@@ -44,28 +47,34 @@ class Gpu {
 public:
     // target: the eye swapchain's format (its RTV); made again for another. False: no warp (logged once).
     bool Init(ID3D12Device* dev, DXGI_FORMAT target, void (*log)(const char*));
-    bool Ready() const { return pso_ != nullptr; }
-    bool DepthReady() const { return depthPso_ != nullptr; }
-    // The made eye's depth (R32_FLOAT, the target's size; PIXEL_SHADER_RESOURCE | NON_PIXEL_SHADER_RESOURCE after Render), nullptr before the first.
+    bool Ready() const { return pso_[0] != nullptr; }
+    bool DepthReady() const { return depthPso_[0] != nullptr; }
+    // The made eye's depth (R32_FLOAT, the target's size; PIXEL_SHADER_RESOURCE | NON_PIXEL_SHADER_RESOURCE after Render), nullptr before
+    // the first Render with madeDepth. MadeDepthGen: counts the textures made, so a binding of it is made again for a new one at the same address.
     ID3D12Resource* MadeDepth() const { return madeDepth_; }
+    uint32_t MadeDepthGen() const { return madeGen_; }
+    // The made depth far everywhere (nothing hides an overlay): for a frame whose eye was not made by Render (its last picture as it was).
+    void ClearMadeDepth(ID3D12GraphicsCommandList* list);
     DXGI_FORMAT Format() const { return format_; }
     // Into target (RENDER_TARGET, w x h): pass 1 from `base` with `homography`, then `own` (pass 2) and `drawn` (pass 3) when
-    // given. `slot` 0..kSlots-1: the descriptor set this list uses.
+    // given. `slot` 0..kSlots-1: the descriptor set this list uses. madeDepth: the depth moved the same way into MadeDepth() too
+    // ([stereo] turn_overlay_depth); false: the picture alone, one target (as before the made depth).
     bool Render(ID3D12GraphicsCommandList* list, ID3D12Resource* target, uint32_t w, uint32_t h, ID3D12Resource* base,
-                const std::array<float, 9>& homography, const Grid* own, const Grid* drawn, int slot);
+                const std::array<float, 9>& homography, const Grid* own, const Grid* drawn, int slot, bool madeDepth);
     void Release();   // the device's work on it is done (the caller waited)
 
 private:
     ID3D12Device* dev_ = nullptr;
     ID3D12RootSignature* root_ = nullptr;
     ID3D12RootSignature* depthRoot_ = nullptr;
-    ID3D12PipelineState* pso_ = nullptr;
-    ID3D12PipelineState* depthPso_ = nullptr;
+    ID3D12PipelineState* pso_[2] = {};        // [0] the picture alone, [1] the picture and the made depth
+    ID3D12PipelineState* depthPso_[2] = {};
     ID3D12DescriptorHeap* srv_ = nullptr;   // shader-visible, kSlots sets of 4: base, own image + depth, drawn image + depth (the base is pass 2's image)
     ID3D12DescriptorHeap* rtv_ = nullptr;
     ID3D12DescriptorHeap* dsv_ = nullptr;
     ID3D12Resource* depthTarget_ = nullptr;   // the grids' own depth test, the target's size
     ID3D12Resource* madeDepth_ = nullptr;     // the made eye's depth as a picture (MadeDepth), the target's size
+    uint32_t madeGen_ = 0;
     uint32_t depthW_ = 0, depthH_ = 0;
     UINT srvInc_ = 0;
     DXGI_FORMAT format_ = DXGI_FORMAT_UNKNOWN;

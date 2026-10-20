@@ -355,8 +355,10 @@ sampler2D FogDepthRsSmp { Texture = FogDepthRsTex; MinFilter = POINT; MagFilter 
 uniform bool OwnDepth < hidden = true; > = false;
 // vrcam's eyes by turns with the other eye made on the GPU: the overlays apart (see D2R_Overlay at the end)
 uniform bool OverlaysApart < hidden = true; > = false;
+uniform bool OverlayNoHide0 < hidden = true; > = false;   // that eye's picture is the one made, its depth not: nothing of the scene hides an overlay there
+uniform bool OverlayNoHide1 < hidden = true; > = false;
 uniform bool OverlayMade0 < hidden = true; > = false;   // that eye's picture is the one made: its depth is D2RVR_DEPTH_MADE (moved with it), not the game's
-uniform bool OverlayMade1 < hidden = true; > = false;
+uniform bool OverlayMade1 < hidden = true; > = false;   // (vrcam [stereo] turn_overlay_depth, off by default)
 texture2D OverlayMadeDepthTex : D2RVR_DEPTH_MADE;          // vrcam's: R32_FLOAT, reverse-Z near / distance like the game's, the picture's own size
 sampler2D OverlayMadeDepthSmp { Texture = OverlayMadeDepthTex; MinFilter = POINT; MagFilter = POINT; };
 
@@ -2732,12 +2734,14 @@ float3 QuiverArrowFx(float3 c, float3 ro, float3 rd, float3 back, float sceneZ)
 // vrcam, native OpenXR with the eyes by turns and the other eye made on the GPU ([stereo] turn_warp): everything drawn here without the
 // scene's depth (the labels, the wrist medallions, the bow's orbs, the hitboxes, the low-life vignette) is left out of the picture the
 // warp moves - moved with the depth behind it, it showed twice in the eye made (the author, 2026-10-20) - and drawn after it, for each eye
-// on its own picture, by D2R_Overlay / D2R_Overlay_R below (vrcam render_technique). OverlayMade0/1: that picture is the eye made - its
-// scene depth is the one the warp moved with it (the author's idea, 2026-10-20: the last frame's depth moved by the same vectors as the
-// picture), so a hand or the bow in front of an orb hides it there too.
+// on its own picture, by D2R_Overlay / D2R_Overlay_R below (vrcam render_technique). OverlayNoHide0/1: that picture is the eye made and
+// the scene's depth bound is the other eye's - nothing hides an orb there (never that depth: an orb on the wrist set against the other
+// eye's hand showed twice, the author, 2026-10-20). OverlayMade0/1 ([stereo] turn_overlay_depth): its scene depth is the one the warp
+// moved with it (the author's idea: the last frame's depth moved by the same vectors as the picture), so a hand or the bow in front hides it.
 float OverlayDepth(float2 uv, int eye)
 {
     if (eye == 0 ? OverlayMade0 : OverlayMade1) return tex2Dlod(OverlayMadeDepthSmp, float4(uv, 0, 0)).x;
+    if (eye == 0 ? OverlayNoHide0 : OverlayNoHide1) return 0.0;
     return DepthWidth() < 16 ? 0.0 : DepthAt(UpsideDown ? float2(uv.x, 1.0 - uv.y) : uv).x;
 }
 float3 Phantom(float4 pos, float2 uv, int eye)
