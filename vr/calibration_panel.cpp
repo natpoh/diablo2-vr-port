@@ -22,7 +22,7 @@ struct Rgb { float r, g, b; };   // 0..255
 // One message of the bottom line: what to say, in which colour.
 struct Message { const wchar_t* text; Rgb color; };
 const Rgb kInfo{150, 205, 255}, kGood{125, 232, 145}, kWarn{255, 170, 95}, kBad{255, 115, 115};
-const Message kMessages[kPanelImages] = {
+const Message kMessages[kPanelMessages] = {
     {L"Let go of both triggers.", kInfo},                                                            // 0 release
     {L"Good. Now squeeze both triggers and hold still.", kGood},                                   // 1 ready
     {L"Hold still...", kGood},                                                                       // 2 hold
@@ -35,6 +35,10 @@ const Message kMessages[kPanelImages] = {
     {L"Saved, and in use. Let go of the triggers.", kGood},                                          // 9 saved
     {L"d2r_vr.ini could not be written (see the log). Let go and try again.", kBad},                 // 10 failed
 };
+// Seated ([calibration] seated=1, images kPanelMessages and on): the same, but the head is not asked to stand.
+const wchar_t* SeatedText(int message) {
+    return message == 6 ? L"Sit up straight and look straight ahead." : kMessages[message].text;
+}
 
 struct Canvas {
     uint32_t w, h;
@@ -132,12 +136,19 @@ bool PaintPanel(int image, uint32_t* pixels) {
     RoundRect(c, (float)kTrackX, (float)kTrackY, (float)(kTrackX + kTrackW), (float)(kTrackY + kTrackH), 11, Rgb{54, 60, 78}, 1.0f);
 
     bool ok = true;
-    ok = ok && Text(c, s, L"Measure my height and arm span", RECT{60, 22, (LONG)kPanelW - 60, 78}, 40, FW_SEMIBOLD, Rgb{255, 205, 100}, false);
-    ok = ok && Text(c, s, L"Stand upright and look straight ahead. Stretch both arms out sideways at shoulder height.\n"
-                          L"Let go of both triggers, then squeeze both and hold still.",
-                    RECT{60, 86, (LONG)kPanelW - 60, 244}, 29, FW_NORMAL, Rgb{236, 236, 242}, false);
-    const Message& m = kMessages[image];
-    ok = ok && Text(c, s, m.text, RECT{60, 252, (LONG)kPanelW - 60, 340}, 30, FW_SEMIBOLD, m.color, false);
+    const bool seated = image >= kPanelMessages;
+    const int message = image % kPanelMessages;
+    ok = ok && Text(c, s, seated ? L"Seated: measure my arm span" : L"Measure my height and arm span", RECT{60, 22, (LONG)kPanelW - 60, 78}, 40,
+                    FW_SEMIBOLD, Rgb{255, 205, 100}, false);
+    ok = ok && Text(c, s,
+                    seated ? L"Sit upright and look straight ahead. Stretch both arms out sideways at shoulder height.\n"
+                             L"Let go of both triggers, then squeeze both and hold still. Only the arm span is read: "
+                             L"your eye height is not measured seated (the stored one stays)."
+                           : L"Stand upright and look straight ahead. Stretch both arms out sideways at shoulder height.\n"
+                             L"Let go of both triggers, then squeeze both and hold still.",
+                    RECT{60, 86, (LONG)kPanelW - 60, 244}, seated ? 26 : 29, FW_NORMAL, Rgb{236, 236, 242}, false);
+    const Message& m = kMessages[message];
+    ok = ok && Text(c, s, seated ? SeatedText(message) : m.text, RECT{60, 252, (LONG)kPanelW - 60, 340}, 30, FW_SEMIBOLD, m.color, false);
     ok = ok && Text(c, s, L"Right B cancels. The game goes on behind this - measure somewhere safe.",
                     RECT{60, 392, (LONG)kPanelW - 60, 430}, 22, FW_NORMAL, Rgb{150, 156, 172}, false);
     if (!ok) return false;

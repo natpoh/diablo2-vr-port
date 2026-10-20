@@ -12,8 +12,9 @@
 # Authentic's crystal mask. A player with 0.3.1 gets it from this Setup (older -> the carried one).
 # 0.3.3: 0.3.2 with the publisher natpoh (Setup, LICENSE, README; commit 3184291).
 # 0.3.4: before Play, it checks that the game was started once without mods (Saved Games\Diablo II Resurrected\Settings.json; commit 86f8180).
+# 0.3.5: bearstonem's review - System default clears an inherited XR_RUNTIME_JSON, Unleashed's install text, a Discord link on each card (commit c49f339).
 # Its own finish page offers "Choose the mods to install" and "Open D2R VR Launcher" (unticked); both are skipifsilent, so the silent call this Setup makes
 # (/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS=, unchanged) shows and starts nothing.
-version=0.3.4
-file=D2R_VR_Launcher_Setup_0.3.4.exe
-sha256=A0E4692DA980D99C0B53C32ED526B2D40DAC614724D9EDE2A9C12893280A9116
+version=0.3.5
+file=D2R_VR_Launcher_Setup_0.3.5.exe
+sha256=817F28907A5F801B288616C47CB8B748E24563D11733FA1F4884629AF450DA34

@@ -36,6 +36,7 @@
 #include <cstdio>
 
 #include "log_async.h"
+#include "arrow_fire_cut.h"
 #include "bow_draw.h"
 #include "bow_draw_wire.h"
 #include "bow_orbs.h"
@@ -101,6 +102,9 @@ std::atomic<float> g_shortNeed{0.0f}, g_shortHave{0.0f}, g_costPts{0.0f}, g_last
 std::atomic<bool> g_arrowFx{false}, g_fxLacks{false};   // [bow] arrow_fx; the effect file has no ARROWFX uniforms
 std::atomic<float> g_fxSize{1.0f}, g_fxBright{1.0f};     // the sliders, as factors
 std::atomic<float> g_fxAlong{0.0f};                      // [bow] arrow_fx_along_cm: the effect's centre moved along the shaft, metres (forward +)
+std::atomic<bool> g_fireCut{true};                       // [bow] arrow_fire_cut: the arrow's effect goes out at the release that shoots (vr/arrow_fire_cut.h)
+std::atomic<float> g_fireCutMs{0.0f};                    // ... [bow] arrow_fire_cut_ms after it
+std::atomic<unsigned> g_shots{0};                        // the releases that shot so far (OnRelease, the draw thread)
 
 bowdrawwire::DrawInfo g_draw;   // the draw's word about this very frame (the draw thread's)
 uint32_t g_drawCounter = 0;
@@ -501,6 +505,32 @@ void OnFrame(const directinput::Frame& f, void*) {
     bowquiver::Entry shown;
     double since = 0.0;
     const bowquiver::Arrow* a = allowed && machine.Shown(in, &shown, &since) ? bowquiver::FindArrow(shown.id) : nullptr;
+    bool fireLit = true;
+    {   // [bow] arrow_fire_cut: our effect on the arrow goes out at the release that shoots (or the set delay after it), not when the game hides the shot arrow; visual only
+        static arrowcut::Cut cut;
+        static unsigned shotsSeen = 0;
+        const unsigned shots = g_shots.load();
+        float n3[3], h3[3];
+        arrowcut::In ci;
+        ci.t = f.time;
+        ci.on = g_fireCut.load();
+        ci.delayS = arrowcut::DelayS(g_fireCutMs.load());
+        ci.shot = shots != shotsSeen;
+        ci.drawing = drawing;
+        ci.arrowRead = skel::BowArrow(n3, h3);
+        ci.skill = a ? shown.id : -1;
+        shotsSeen = shots;
+        const bool wasOut = cut.Out();
+        fireLit = cut.Step(ci);
+        if (cut.Out() != wasOut && a && bowquiver::ElementOf(shown.id).kind != bowquiver::Element::None) {
+            static int told = 0;
+            if (told < 6) {
+                ++told;
+                Log(cut.Out() ? "vrcam: bow arrow fx - the arrow was shot: its effect is out until the next arrow ([bow] arrow_fire_cut)"
+                              : "vrcam: bow arrow fx - the next arrow: its effect lights again");
+            }
+        }
+    }
     if (a && f.head.valid == 1) {
         const float ago = (float)(f.time - changeAt);
         bowquiver::ArrowFx fx;
@@ -509,6 +539,8 @@ void OnFrame(const directinput::Frame& f, void*) {
         bool drawn = false;
         if (fxFade <= 0.02f) {
             // the hero cannot pay the chosen skill: a plain arrow - no effect, no coloured glow - until the mana is back
+        } else if (!fireLit) {
+            // [bow] arrow_fire_cut: the arrow was shot - its effect is out until the next arrow (a new draw, the game showing an arrow again)
         } else if (g_arrowFx.load() && !g_fxLacks.load() && bowquiver::ElementOf(shown.id).kind != bowquiver::Element::None) {
             if (skel::BowArrow(nock, tip, &drawn) && bowquiver::MakeArrowFx({nock[0], nock[1], nock[2]}, {tip[0], tip[1], tip[2]}, shown.id, ago, &fx)) {
                 fx.strength *= fxFade;   // (eased out while the hero cannot pay, in again when the mana is back)
@@ -664,6 +696,7 @@ bool PlainArmed(int skill) {
 }
 
 void OnRelease() {
+    g_shots.fetch_add(1);   // [bow] arrow_fire_cut: the arrow's effect goes out (the quiver's next frame)
     if (!g_noMana.load() || !g_on.load()) return;
     const ULONGLONG now = GetTickCount64();
     const int skill = g_shortSkill.load();
@@ -686,6 +719,13 @@ void SetArrowFx(bool on, float sizePct, float brightPct, float alongCm) {
     g_fxBright.store(std::isfinite(brightPct) ? std::clamp(brightPct, 20.0f, 300.0f) * 0.01f : 1.0f);
     g_fxAlong.store(std::isfinite(alongCm) ? std::clamp(alongCm, -20.0f, 60.0f) * 0.01f : 0.0f);
     if (was != on && g_ctx) Log(on ? "vrcam: bow arrow fx on - the nocked arrow burns, freezes or crackles by the loaded skill ([bow] arrow_fx)" : "vrcam: bow arrow fx off - the coloured glow ([bow] arrow_fx)");
+}
+
+void SetArrowFireCut(bool on, float ms) {
+    const bool was = g_fireCut.exchange(on);
+    g_fireCutMs.store(std::isfinite(ms) ? std::clamp(ms, 0.0f, arrowcut::kMaxDelayMs) : 0.0f);
+    if (was != on && g_ctx) Log(on ? "vrcam: bow arrow fx - the arrow's effect goes out at the release ([bow] arrow_fire_cut)"
+                                   : "vrcam: bow arrow fx - [bow] arrow_fire_cut off: the effect stays on the arrow until the game hides it");
 }
 
 bool WantsArrowFx() { return g_on.load() && g_arrowFx.load() && !g_fxLacks.load(); }

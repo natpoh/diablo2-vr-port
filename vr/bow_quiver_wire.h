@@ -55,6 +55,10 @@ bool BlocksDraw();
 // skill with no element of its own keeps the glow either way.
 // alongCm ([bow] arrow_fx_along_cm, -20..60): the effect's centre moved along the arrow's shaft, forward toward the arrowhead (0 = where the head is found).
 void SetArrowFx(bool on, float sizePct, float brightPct, float alongCm = 0.0f);
+// [bow] arrow_fire_cut, live (any thread): the arrow's effect goes out at the release that shoots (OnRelease), or `ms` ([bow] arrow_fire_cut_ms, 0..2000) after it, and lights again on
+// the next arrow - a new draw, the game showing an arrow again after the shot, another skill (vr/arrow_fire_cut.h). Visual only: the game's missile is the game's. Off: the effect stays on
+// the arrow in the hand until the game hides it, as it was.
+void SetArrowFireCut(bool on, float ms);
 // What the effect draws for it, in the hands' frame (metres from the head, the head's turn): the effect's kind (AfOn: 1 fire, 2 frost, 3 arcane), the arrow's nock end and head, the size
 // (the flame's radius, metres) and the strength. False when there is nothing to draw now (off, no element - the plain shot included - a menu, a moment after a shot).
 struct ArrowFxDraw {

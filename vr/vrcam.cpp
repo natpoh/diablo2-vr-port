@@ -77,6 +77,7 @@ int FindHeroMatrices(const float hero[3], uintptr_t* out, int max);
 #include "vcache.h"        // [render] vcache: the game's threads on the big-L3 cores (Ryzen X3D with two CCDs)
 #include "interact_press.h"   // [input] interact_one_press: one target per press of "pick up / interact"
 #include "depth_pick.h"    // the depth-stencil our effects copy, picked once and kept (scenedepth::)
+#include "flat_pick.h"     // [debug] flat_pick: the flat mouse look's targeting log (pure part, tested)
 #include "attack_view.h"   // VR F2 and F4: the attack goes where the player looks; VR F1 and F3 (top-down): where the hero faces (pure part, tested)
 #include "window_json.h"   // the game's windowed size in Settings.json and what each platform does to it (shared/, pure, tested)
 #include "turn_mode.h"     // [turn] smooth / snap / speed: how the right stick turns, and what an older ini's snap=0 means (shared/, pure, tested)
@@ -150,6 +151,8 @@ namespace gamestate { bool HandIsThrowPotion(int side); }   // the held item is 
 #include "panel_input.h"
 #include "shoulder_swap_wire.h"   // [hands] shoulder_swap: weapon sets by the grip behind a shoulder
 #include "shield_arm_wire.h"      // [hands] shoulder_draw, the shield: which forearm it is strapped to, or put away
+#include "label_area.h"           // [hud] labels_whole_eye: item labels down to the picture's bottom (the rule; the hook is InstallLabelArea)
+#include "spatial_audio.h"        // [audio] head_follow: the game's 3D sounds turn with your view (two FMOD hooks, from bearstonem/d2r-pcvr)
 #include "stowed_block.h"         // [hands] shield_stow_no_block: a shield put away does not block (the game's block check told the hero has none)
 #include "sewer_interaction.h"     // the Kurast sewer stairs taken with A while standing (the game's Interact query, when it finds none)
 #include "ranged_hand_wire.h"     // [hands] shoulder_draw_ranged: a bow or crossbow put away behind a shoulder, drawn into the hand that reached
@@ -171,6 +174,7 @@ namespace gamestate { bool HandIsThrowPotion(int side); }   // the held item is 
 #include "bow_latency.h"       // [debug] bow_latency: the split of the second between a bow's release and its arrow (vr/bow_latency.h)
 #include "calibration.h"
 #include "first_start_wire.h"     // [onboarding]: the first-start guide in the headset (vr/first_start.h)
+#include "crouch.h"          // [body] crouch: the hero crouches when you do (F4; vr/crouch.h)
 #include "flatvr_pose.h"     // [flatvr]: FlatVR as good as native OpenXR - the roll back, the head's move, pairs on FlatVR's frames (docs/flatvr_sync.md)
 #include "haptics.h"
 #include "mob_bars.h"
@@ -178,6 +182,7 @@ namespace gamestate { bool HandIsThrowPotion(int side); }   // the held item is 
 #include "plate_look.h"    // the monster's plate and the item labels kept apart in the interface layer's effect
 #include "plate_world.h"
 namespace hud { void SetPlateCut(bool want, const int32_t layout[4], float scale); }   // [hud] monster_bar_room: where the plate is, to be cut out (vr/hud.cpp)
+namespace hud { void SetGameInterfaceScale(float k); }   // the game's own interface scale: where the corner map's box is looked for (vr/minimap_box.h)
 #include "low_hp_game.h"   // [hud] low_hp_vignette: the red heartbeat vignette at low life (vr/low_hp.h)
 #include "roof_keep.h"     // [render] keep_roofs: in F4 the roof of a building you walk into stays
 #include "roof_sides.h"    // [render] roofs_two_sided: roof materials built double-sided (their underside, not the sky)
@@ -288,6 +293,7 @@ struct Settings {
     std::atomic<float> labelsAlphaFloor{0.5f};   // labels_alpha: their dark box, 1 = as the game draws it, 0 = none
     std::atomic<float> labelsSizeFloor{1.0f};    // labels_size, %: the names and their box smaller (needs the game's label code, LabelHooks)
     std::atomic<bool>  labelsNativeFloor{true};  // labels_native (not on the settings page): 0 = never the game's code, the box faded as a picture
+    std::atomic<bool>  labelsWholeEye{false};    // [hud] labels_whole_eye: the label layout's height check given the whole picture (vr/label_area.h), every view
     // The same two for the other views (2026-10-06): [hud_top] F1, [hud_third] F2, [hud] F4 - the game's own by default.
     std::atomic<float> labelsAlphaTop{1.0f}, labelsAlphaThird{1.0f}, labelsAlphaBody{1.0f};
     std::atomic<float> plateAlpha{1.0f};   // [hud] monster_alpha: the name plate over the target monster, 1 = as the game draws it
@@ -423,6 +429,7 @@ struct Settings {
     std::atomic<int>   dlssMv{2};              // [render] dlss_mv: 0 off, 1 check vrcam's matrices against the game's motion vectors (logs), 2 hand DLSS the same eye's     // [render] dlss_prev_fix: the game's previous-frame view made the same eye's (experiment)   // [debug] find_prev_matrix: once, where the game keeps past frames' view matrices (DLSS motion vectors)
     std::atomic<bool>  frameLog{false};     // [debug] frame_log: every pair, view, hero pose and present to d2r_vr_frames.csv
     std::atomic<bool>  poseOrderLog{false}; // [debug] pose_order: which of eye / look-at / hero matrix is stale per pass, to the log
+    std::atomic<bool>  flatPickLog{false};  // [debug] flat_pick: flat mouse look, what the game's targeting sees at each click and when its pixel leaves the middle
     std::atomic<float> facingSign{1.0f};    // flip if the arms swing the wrong way when the model turns
     std::atomic<int>   facingSource{1};     // [hands] facing_source: 1 the hero's TransformComponent (structural), 0 the memory search
     std::atomic<float> facingHoldMs{4000.0f};   // [hands] facing_hold_ms: the last facing kept this long while none reads
@@ -610,6 +617,8 @@ struct Settings {
     std::atomic<float> leftHoldTurn[3] = {0.0f, 0.0f, 0.0f};   // [hands] left_hold_pitch/yaw/roll: deg, the same hand turned about its own axes   // [hands] left_hold_x/y/z: cm, the left hand once it holds any two-handed weapon (not the crossbow), its own axes   // [weapon_<kind>] left_x/y/z: cm, the left hand once it holds the weapon, its own axes (on top of left_staff_* etc.)   // [weapon_<kind>] x y z (cm) pitch yaw roll (deg); written and read on the update thread
     std::atomic<bool>  lockUpper{true};     // nothing above the pelvis from the game's animation
     std::atomic<bool>  legsUnder{true};     // with it: pelvis and legs kept under that body (no lunge, no hip turn)
+    std::atomic<bool>  crouch{false};       // [body] crouch: the hero crouches when you crouch (F4 only; vr/crouch.h)
+    std::atomic<float> crouchCm{20.0f};     // [body] crouch_cm: the head this far below its height at the recentre is a crouch
     std::atomic<float> bodyYawDeg{0.0f};    // added to the hero's facing: fixes a body that stands sideways
     std::atomic<bool>  thirdTurn{true};     // [body] turn_third: from behind too the whole hero faces where the camera looks (the right stick turns him)
     std::atomic<int>   bodyTurn{2};         // 0 game facing, 1 above the pelvis, 2 whole body turns to where the camera looks
@@ -1645,6 +1654,7 @@ void LoadSettings() {
     g_set.labelsAlphaFloor.store(std::clamp(IniF(L"hud_floor", L"labels_alpha", 0.5f), 0.0f, 1.0f));
     g_set.labelsSizeFloor.store(std::clamp(IniF(L"hud_floor", L"labels_size", 100.0f), 20.0f, 150.0f) * 0.01f);
     g_set.labelsNativeFloor.store(IniF(L"hud_floor", L"labels_native", 1.0f) != 0.0f);
+    g_set.labelsWholeEye.store(IniB(L"hud", L"labels_whole_eye", false));
     g_set.labelsAlphaTop.store(std::clamp(IniF(L"hud_top", L"labels_alpha", 1.0f), 0.0f, 1.0f));
     g_set.labelsAlphaThird.store(std::clamp(IniF(L"hud_third", L"labels_alpha", 1.0f), 0.0f, 1.0f));
     g_set.labelsAlphaBody.store(std::clamp(IniF(L"hud", L"labels_alpha", 1.0f), 0.0f, 1.0f));
@@ -1991,6 +2001,7 @@ void LoadSettings() {
     g_set.hideHead.store(IniB(L"arms", L"hide_head", false));
     g_set.armScale.store(std::clamp(IniF(L"arms", L"scale", 1.0f), 0.3f, 3.0f));
     g_set.poseOrderLog.store(IniB(L"debug", L"pose_order", false));
+    g_set.flatPickLog.store(IniB(L"debug", L"flat_pick", false));   // docs/notes/flat_targeting.md
     g_set.frameLog.store(IniB(L"debug", L"frame_log", false));
     frametrace::SetOn(IniB(L"debug", L"frame_trace", false));   // a slow pair's time and the plugin's part of it (vr/frame_trace.h); measures only
     ftraceSetOverMs(IniF(L"debug", L"frame_trace_ms", (float)frametrace::kDefaultOverMs));
@@ -2051,6 +2062,8 @@ void LoadSettings() {
     g_set.thirdTurn.store(IniB(L"body", L"turn_third", true));
     g_set.lockUpper.store(IniB(L"body", L"lock", true));
     g_set.legsUnder.store(IniB(L"body", L"legs_under_body", true));
+    g_set.crouch.store(IniB(L"body", L"crouch", false));
+    g_set.crouchCm.store(std::clamp(IniF(L"body", L"crouch_cm", 20.0f), 5.0f, 60.0f));
     g_set.handUp.store(std::clamp(IniF(L"arms", L"up", 0.0f), -50.0f, 50.0f));
     g_set.handFwd.store(std::clamp(IniF(L"arms", L"forward", 0.0f), -50.0f, 50.0f));
     g_set.handSide.store(std::clamp(IniF(L"arms", L"side", 0.0f), -50.0f, 50.0f));
@@ -2071,6 +2084,8 @@ void LoadSettings() {
     g_set.shieldDraw.store(IniB(L"hands", L"shoulder_draw_shield", true));
     g_set.shieldStow.store(IniB(L"hands", L"shoulder_draw_shield_stow", false));
     stowedblock::Configure(IniB(L"hands", L"shield_stow_no_block", false));
+    spatialaudio::Configure(IniB(L"audio", L"head_follow", true), IniB(L"audio", L"listener_turn", true),
+                            IniF(L"audio", L"forward_sign", -1.0f), IniF(L"audio", L"depth_scale", 2.0f));
     g_set.rangedHolster.store(IniB(L"hands", L"shoulder_draw_ranged", false));
     g_set.rangedSwap.store(IniB(L"hands", L"shoulder_draw_ranged_swap", false));
     g_set.shoulderDrawStowMs.store(std::clamp(IniF(L"hands", L"shoulder_draw_stow_ms", 1000.0f), 0.0f, 5000.0f));
@@ -2101,6 +2116,8 @@ void LoadSettings() {
                                   IniF(L"bow", L"arrow_fx_along_cm", 0.0f));
         // [bow] quiver_plain_no_mana: an arrow skill the hero cannot pay (too little mana by the game's own numbers) shoots the plain arrow at the release instead of the game's refusal; live
         bowquiverwire::SetPlainNoMana(IniB(L"bow", L"quiver_plain_no_mana", true));
+        // [bow] arrow_fire_cut: the arrow's effect goes out at the release that shoots, at once or arrow_fire_cut_ms after it (vr/arrow_fire_cut.h); live
+        bowquiverwire::SetArrowFireCut(IniB(L"bow", L"arrow_fire_cut", true), IniF(L"bow", L"arrow_fire_cut_ms", 0.0f));
         bowquiverwire::SetArrowFxNeedsMana(IniB(L"bow", L"arrow_fx_needs_mana", true));   // [bow] arrow_fx_needs_mana: the arrow's effect goes out while the hero cannot pay the chosen skill
         bowquiverwire::SetIcon(IniB(L"bow", L"quiver_icon", true));   // [bow] quiver_icon: the chosen arrow skill's icon in the mana medallion (vr/armed_icon.h)
     }
@@ -3375,6 +3392,14 @@ bool RoomHead(float pos[3], float ang[3]) {
     return std::isfinite(pos[0] + pos[1] + pos[2] + ang[0] + ang[1] + ang[2]);
 }
 
+// [body] crouch: how far the head stands below its standing height, metres (+ down) - what the F4 camera has just been lowered
+// by: native, the eyes' middle from the standing eyes' height (VrViewInner; xr.cpp PairEyes: the floor + the measured eye height
+// with [calibration] use=1 and a STAGE floor, else the recentre's height); FlatVR with [flatvr] head_position, the room head
+// since the recentre (FlatVrHeadMove). Where the camera does not follow the head's height nothing is written, and PushArms finds
+// it stale: the body stands (vr/crouch.h).
+std::atomic<float> g_headDownM{0.0f};
+std::atomic<ULONGLONG> g_headDownAt{0};
+
 // [flatvr] head_position, VR F4 on FlatVR: the head's move in the room since the recentre, in the game's world - the camera moves with
 // the head as native OpenXR's does (its eyes' place, NativeEyes), on top of the neck model as there. Before: turns only, and leaning
 // or crouching carried the whole world along with the head. `heading`: the camera's (Facing's) - the room is turned so that the head's
@@ -3393,6 +3418,8 @@ V3 FlatVrHeadMove(float heading) {
     const float roomYaw = (p[0] + WrapDeg(sh->headYawRoomDeg - sh->headYawDeg)) * flatvrpose::kDeg;
     const float upm = std::max(1.0f, ViewHeight()) / UserEyeHeightM();   // world units per metre, as native's
     const flatvrpose::V d{pos[0] - g_recenterPos[0].load(), pos[1] - g_recenterPos[1].load(), pos[2] - g_recenterPos[2].load()};
+    g_headDownM.store(-d.y);   // [body] crouch
+    g_headDownAt.store(GetTickCount64());
     const flatvrpose::V w = flatvrpose::RoomToWorld(d, heading, roomYaw, upm, 2.0f);
     return {w.x, w.y, w.z};
 }
@@ -3972,6 +3999,23 @@ bool VrViewInner(const d2rcam::WorldView& in, float out[16]) {
         const V3 pivot = V3{L[0], L[1] + ViewHeight() + JumpLift(), L[2]} + side * g_set.camSide.load() + ahead * g_set.camForward.load();
         const float upm = std::max(1.0f, ViewHeight()) / UserEyeHeightM();   // world units per metre, as TrueScale
         V3 mid = {0.5f * (xe.pos[0][0] + xe.pos[1][0]), 0.5f * (xe.pos[0][1] + xe.pos[1][1]), 0.5f * (xe.pos[0][2] + xe.pos[1][2])};
+        if (!ThirdPerson()) { g_headDownM.store(-mid.y); g_headDownAt.store(GetTickCount64()); }   // [body] crouch: the camera goes down by this
+        {   // what the eyes' height is counted from (xr::Eyes standMeasured), on change
+            static int told = -1;
+            const int how = xe.standSeated ? 2 : (int)xe.standMeasured;
+            if (!ThirdPerson() && how != told) {
+                told = how;
+                if (xe.standSeated)
+                    Log("vrcam: openxr - standing height: played seated ([calibration] seated=1) - the head's height at the recentre is the "
+                        "hero's eyes: sit as you play and recentre (F11)");
+                else if (xe.standMeasured)
+                    LogF("vrcam: openxr - standing height: the floor + your measured eye height %.2f m - standing upright, the camera is the hero's eyes "
+                         "whatever height a recentre was taken at", calib::MeasuredEyeM());
+                else
+                    Log("vrcam: openxr - standing height: the head's height at the recentre (no T-pose measurement in use, or no STAGE floor) - "
+                        "recentre (F11) standing upright, or measure your height in D2R VR Settings");
+            }
+        }
         RoomWalkView(xe, L, cb, sb, upm, &mid.x, &mid.z);   // [openxr] roomscale_walk: the hero walks under the head, the view stays with it
         V3 head = pivot + toWorld(mid) * upm;
         if (!ThirdPerson() && g_set.neckModel.load()) {
@@ -6325,6 +6369,44 @@ MapClickFn OrigMapClick;
 std::atomic<int> g_mapClick{0};   // 0 not in yet, 1 in, 2 not possible
 std::atomic<bool> g_hoverHooked{false};   // spell_aim's hook is on HoverUnit (its bytes checked then): no longer as they were
 
+// [debug] flat_pick (docs/notes/flat_targeting.md): a press of a mouse button with the flat mouse look on - what the game has under the
+// crosshair (its own HoverUnit, the click's target), the pixel its mouse code last asked a ray for against its viewport's middle, where
+// that ray meets the hero's ground and how steeply, and the window's state. Read only; at most 4 lines a second.
+extern HWND g_gameWnd;
+void FlatPickClick(void* unit, int type, int x, int y, uint64_t flags) {
+    static ULONGLONG lastLog = 0;
+    const ULONGLONG now = GetTickCount64();
+    if (now - lastLog < 250) return;
+    lastLog = now;
+    const int idx = ((ClientIndexFn)d2rsig::Addr(RVA_CLIENT_INDEX))(unit);
+    void* hover = idx >= 0 && idx < 8 ? ((HoverUnitFn)d2rsig::Addr(RVA_HOVER_UNIT))(idx) : nullptr;
+    char under[220];
+    shottrace::UnitText(hover, g_heroUnit.load(), under, sizeof under);
+    char pick[200] = "the game asked no mouse ray yet", ground[120] = "the ray through it: not known (no camera this frame)";
+    d2rcam::LastPickInfo lp{};
+    if (d2rcam::LastPick(&lp)) {
+        float o[3], d[3], look[3];
+        if (d2rcam::PickRay(lp.px, lp.py, o, d) && d2rcam::LookAtNow(look)) {
+            const flatpick::Ahead a = flatpick::GroundAhead(o, d, look[1]);
+            if (a.hit) snprintf(ground, sizeof ground, "its ray %.0f deg down meets the hero's ground %.1f ahead (%.1f per unit of height)", a.downDeg, a.along, flatpick::SlipPerUnit(a.downDeg));
+            else snprintf(ground, sizeof ground, "its ray (%.0f deg down) never meets the hero's ground", a.downDeg);
+        }
+        snprintf(pick, sizeof pick, "the game's pixel %.0f,%.0f of %.0fx%.0f (%s, %.0f%% off, %llu ms ago, from 0x%llX, %s)", lp.px, lp.py, lp.vpW, lp.vpH,
+                 flatpick::AtCentre(lp.px, lp.py, lp.vpW, lp.vpH) ? "the middle" : "NOT the middle", 100.0f * flatpick::OffCentre(lp.px, lp.py, lp.vpW, lp.vpH),
+                 (unsigned long long)(now - lp.at), lp.ret, lp.by == 0 ? "the game's camera" : lp.by == 2 ? "the ray override" : "our camera");
+    }
+    POINT c{}, mid{};
+    RECT rc{};
+    const bool win = g_gameWnd && GetCursorPos(&c) && GetClientRect(g_gameWnd, &rc);
+    if (win) { mid = {rc.right / 2, rc.bottom / 2}; ClientToScreen(g_gameWnd, &mid); }
+    LogF("vrcam: flat pick: click type %d (%d, %d, flags 0x%llX), under the crosshair: %s", type, x, y, (unsigned long long)flags, under);
+    LogF("vrcam: flat pick:   %s", pick);
+    LogF("vrcam: flat pick:   %s", ground);
+    LogF("vrcam: flat pick:   the cursor %+ld,%+ld from the window's middle (%ldx%ld), focus %d, Alt %d, Shift %d, menu %d", win ? c.x - mid.x : 0L, win ? c.y - mid.y : 0L,
+         (long)rc.right, (long)rc.bottom, GameFocused() ? 1 : 0, (GetAsyncKeyState(VK_MENU) & 0x8000) ? 1 : 0, (GetAsyncKeyState(VK_SHIFT) & 0x8000) ? 1 : 0,
+         gamestate::MenuOpen() ? 1 : 0);
+}
+
 uint64_t HookMapClick(void* unit, int type, int x, int y, uint64_t flags) {
     const bool mouseType = type == 0 || type == 1 || type == 3 || type == 4;
     // nothing under the pointer? the game's own lookup (HoverUnit), asked once for whoever needs it
@@ -6353,6 +6435,7 @@ uint64_t HookMapClick(void* unit, int type, int x, int y, uint64_t flags) {
             }
         }
     }
+    if (g_set.flatPickLog.load() && unit && (type == 0 || type == 3) && KeyMoveMode() && ShooterActive()) FlatPickClick(unit, type, x, y, flags);
     shottrace::ClickTrace shotTrace(unit, type, x, y, flags);   // [debug] shot_trace: the click, and when it returns (nothing when no shot is watched)
     // [gameplay] block_stray_walk (F4): a walk or run to a point that comes out of this click is told by the click's type and by
     // whether anything is under the pointer (vr/stray_walk.h); the guard itself sits on the game's command funnel
@@ -7559,6 +7642,35 @@ void MouseTick() {
     g_mouseYaw.store(WrapDeg(g_mouseYaw.load() + dx * k));                       // right turns right
     g_mousePitch.store(std::clamp(g_mousePitch.load() + dy * k, -90.0f, 90.0f));  // down looks down
     g_gen.fetch_add(1);
+}
+
+// [debug] flat_pick, on the timer after MouseTick: with the flat mouse look on, says when the game's mouse code stops asking for a ray, asks it
+// for a pixel away from its viewport's middle (the crosshair), or the game's window loses the keyboard - and once when all is well again.
+void FlatPickWatch() {
+    static ULONGLONG lastCheck = 0, lastBad = 0;
+    static bool bad = false;
+    const ULONGLONG now = GetTickCount64();
+    if (!g_set.flatPickLog.load() || now - lastCheck < 1000) return;
+    lastCheck = now;
+    if (!ShooterActive() || !KeyMoveMode()) { bad = false; return; }
+    d2rcam::LastPickInfo lp{};
+    const bool have = d2rcam::LastPick(&lp);
+    const bool stale = !have || now - lp.at > 1500;
+    const bool off = have && !flatpick::AtCentre(lp.px, lp.py, lp.vpW, lp.vpH);
+    const bool focus = GameFocused();
+    if (!stale && !off && focus) {
+        if (bad) Log("vrcam: flat pick: the game's pixel is the crosshair's again");
+        bad = false;
+        return;
+    }
+    if (bad && now - lastBad < 5000) return;
+    bad = true;
+    lastBad = now;
+    RECT rc{};
+    if (g_gameWnd) GetClientRect(g_gameWnd, &rc);
+    LogF("vrcam: flat pick: %s%s%s - the game's pixel %.0f,%.0f of %.0fx%.0f (%.0f%% off, from 0x%llX), the window %ldx%ld", !focus ? "the game's window is not in front; " : "",
+         stale ? "the game asked no mouse ray for over 1.5 s; " : "", off ? "the game's pixel is NOT the middle" : "", lp.px, lp.py, lp.vpW, lp.vpH,
+         have ? 100.0f * flatpick::OffCentre(lp.px, lp.py, lp.vpW, lp.vpH) : 0.0f, lp.ret, (long)rc.right, (long)rc.bottom);
 }
 
 // [render] rings and model_radius into cleanroom/drawdist (the old
@@ -11190,6 +11302,17 @@ void NoteLabelDepth(void* unit, const int32_t* box) {
 
 bool ResizeLabelBox(char* name, int32_t* box, float k);
 std::atomic<float> g_uiScaleSeen{0.0f};   // the game's interface scale, as the label code last asked it
+// The game's interface scale (pixels a layout unit) asked now, for hud.cpp's corner map (vr/minimap_box.h: the interface area is 2160 of
+// them tall, whatever the window, the render size or Safe Screen Percent): 0 when its bytes are not 3.3.93787's or the call faults.
+float GameUiScaleNow() noexcept {
+    if (!Matches(RVA_UI_SCALE, kSigUiScale, sizeof kSigUiScale)) return 0.0f;
+    __try {
+        const float s = ((UiScaleFn)d2rsig::Addr(RVA_UI_SCALE))();
+        return s > 0.05f && s < 20.0f ? s : 0.0f;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return 0.0f;
+    }
+}
 // The label code is the ITEMS' (platelook::IsLabelOfItem): a unit that is read and is not an item is none of the labels' settings - its label is laid out and
 // painted as the game does, and the paint is told so (k -1).
 bool LabelUnitIsItem(void* unit) {
@@ -11289,6 +11412,53 @@ void InstallLabelHooks() {
     g_labelSizeIn.store(in);
     Log(in ? "vrcam: item-label size hooks in - on the floor [hud_floor] labels_size sets the labels' size"
            : "vrcam: item-label size hooks FAILED - labels_size does nothing");
+}
+
+// [hud] labels_whole_eye (vr/label_area.h): LabelLayout asks InterfaceSize 0x8462E0 (the interface root's rectangle times its scale; width low, height high) at
+// 0x1FAC2A and keeps a label while its bottom is above the interface's origin y plus that height. To that one call, while ticked, the whole picture's height.
+// Found by bearstonem/d2r-pcvr (MIT, v0.3.23: vr/vrcam.cpp InstallLabelArea).
+constexpr uint64_t RVA_INTERFACE_SIZE = 0x8462E0, RVA_LABEL_AREA_CALL = 0x1FAC2A;
+// push rbx; sub rsp, 0x40; mov rbx, [rip + 0x2BF9E83] (the interface's root - the same object UiScale 0x8460F0 reads); test rbx, rbx; je +0x6E
+const uint8_t kSigInterfaceSize[18] = {0x40,0x53,0x48,0x83,0xEC,0x40,0x48,0x8B,0x1D,0x83,0x9E,0xBF,0x02,0x48,0x85,0xDB,0x74,0x6E};
+using InterfaceSizeFn = uint64_t (*)();
+InterfaceSizeFn OrigInterfaceSize = nullptr;
+std::atomic<bool> g_labelAreaIn{false};
+uintptr_t g_labelAreaRet = 0;
+
+uint64_t HookInterfaceSize() {
+    const uint64_t size = OrigInterfaceSize();
+    if (reinterpret_cast<uintptr_t>(_ReturnAddress()) != g_labelAreaRet || !g_set.labelsWholeEye.load(std::memory_order_relaxed)) return size;
+    uint32_t pictureH = 0;
+    vrres::Size game;
+    RECT rc{};
+    if (vrres::GameSize(g_gameWnd, &game)) pictureH = game.h;   // [render] vr_resolution: the game's picture, not the window
+    else if (g_gameWnd && GetClientRect(g_gameWnd, &rc)) pictureH = (uint32_t)std::max<LONG>(0, rc.bottom - rc.top);
+    const uint64_t area = labelarea::LabelArea(size, pictureH);
+    static std::atomic<bool> told{false};
+    if (area != size && !told.exchange(true))
+        LogF("vrcam: [hud] labels_whole_eye - item labels kept down to the picture's bottom (%u px), not the interface's %u px", unsigned(area >> 32), unsigned(size >> 32));
+    return area;
+}
+
+// Twice a second while ticked and in a world; once in, the hook stays (the tick is read in it, live). LabelLayout's page is encrypted until a label is first laid out.
+void InstallLabelArea() {
+    static bool failed = false;
+    if (g_labelAreaIn.load() || failed || !g_ctx || !g_inWorld.load() || !g_set.labelsWholeEye.load()) return;
+    uint8_t call[5] = {0xE8};
+    const int32_t delta = int32_t(int64_t(RVA_INTERFACE_SIZE) - int64_t(RVA_LABEL_AREA_CALL + 5));
+    memcpy(call + 1, &delta, sizeof delta);
+    if (!Matches(RVA_LABEL_AREA_CALL, call, sizeof call)) {
+        if (!g_labelSizeIn.load() && !Matches(RVA_LABEL_LAYOUT, kSigLabelLayout, sizeof kSigLabelLayout)) return;   // not decrypted yet
+        failed = true;
+        Log("vrcam: [hud] labels_whole_eye NOT possible - the game's label code is not as 3.3.93787 has it (another build?)");
+        return;
+    }
+    g_labelAreaRet = d2rsig::Addr(RVA_LABEL_AREA_CALL + 5);
+    const bool in = g_labelAreaRet && d2rsig::Hook(RVA_INTERFACE_SIZE, kSigInterfaceSize, sizeof kSigInterfaceSize, (void*)&HookInterfaceSize, (void**)&OrigInterfaceSize);
+    failed = !in;
+    g_labelAreaIn.store(in);
+    Log(in ? "vrcam: [hud] labels_whole_eye - item-label area hook in: labels kept over the whole picture, not only the interface's height"
+           : "vrcam: [hud] labels_whole_eye - item-label area hook FAILED: labels as the game lays them out");
 }
 
 // The game's addresses for the settings program's Status tab: d2r_vr_game_code.txt
@@ -13000,6 +13170,46 @@ void PushArms() {
     if (const uint32_t type = gamestate::WeaponType(); type < D2RVR_TYPE_COUNT) memcpy(in.weaponAdj, g_set.weaponAdj[type], sizeof in.weaponAdj);
     memcpy(in.shrinkBone, g_set.shrinkBone, sizeof in.shrinkBone);
     in.lockUpper = own && FullBody() && g_set.lockUpper.load();   // the game's animation in the other views
+    {   // [body] crouch (vr/crouch.h; from bearstonem/d2r-pcvr, MIT): you crouch, the camera goes down with your head, and the hero's
+        // body goes down as far, his legs bent to keep his feet. VR first person (F4) only, its own tick, off by default: off, or in
+        // F1, F2, F3 and the flat views, crouchDrop stays 0 and PoseBody is as before. The drop in metres becomes model units at
+        // the camera's own scale - the hero's bind-pose eyes over your eye height (measured, [calibration], or set) - so the neck
+        // lands under the lowered camera; nothing tuned by hand. Drawn bones only: no game state, hit box or movement changes.
+        static crouch::Tracker tracker;
+        static ULONGLONG last = 0;
+        const ULONGLONG now = GetTickCount64();
+        const float dt = last ? (float)(now - last) * 0.001f : 0.0f;
+        last = now;
+        const bool want = own && FullBody() && g_set.crouch.load();
+        static bool toldOn = false;
+        static int toldLegs = -2, toldCrouches = 0;
+        if (want != toldOn && g_set.crouch.load() == want) {   // the tick, not a view change
+            toldOn = want;
+            Log(want ? "vrcam: crouch - the hero crouches when you do ([body] crouch, F4)" : "vrcam: crouch - off, the hero stands as the game poses him");
+        }
+        if (!want) {
+            tracker.Reset();
+        } else {
+            const ULONGLONG at = g_headDownAt.load();
+            const bool fresh = at && now - at < 250;   // the camera follows the head's height and drew a moment ago
+            crouch::Params p;
+            p.enterM = g_set.crouchCm.load() * 0.01f;
+            p.floorM = UserEyeHeightM();
+            const bool was = tracker.Crouched();
+            const float downM = tracker.Step(fresh, g_headDownM.load(), dt, p);
+            in.crouchDrop = downM * std::max(1.0f, ViewHeight()) / UserEyeHeightM() / std::max(0.1f, g_heroScale.load());
+            if (tracker.Crouched() && !was && toldCrouches < 5) {
+                ++toldCrouches;
+                LogF("vrcam: crouch - the head %.0f cm below its standing height (threshold %.0f cm): the body goes down with it", g_headDownM.load() * 100.0f,
+                     p.enterM * 100.0f);
+            }
+            if (const int legs = skel::CrouchLegs(nullptr); legs >= 0 && legs != toldLegs) {
+                toldLegs = legs;
+                Log(legs ? "vrcam: crouch - the hero's legs found (hip, knee, foot each side): they bend to keep his feet"
+                         : "vrcam: crouch - this hero's rig has no leg chain found (a bone named foot or ankle under knee and hip): he stays standing");
+            }
+        }
+    }
 #endif
     in.legsUnder = g_set.legsUnder.load();
     in.followJump = own && g_set.followJump.load();
@@ -17133,6 +17343,7 @@ DWORD WINAPI UpdateThread(void*) {
         // our camera while on, and for the stereo view from above while off
         d2rcam::SetEnabled(g_enabled.load() || (g_set.topStereo.load() && g_set.afr.load()));
         MouseTick();
+        FlatPickWatch();   // [debug] flat_pick
         TurnTick();
         PushArms();
 #if D2RVR_FIRST_PERSON
@@ -17146,6 +17357,10 @@ DWORD WINAPI UpdateThread(void*) {
         // From above (vrcam off) and from behind the toolbar and the map stay in
         // the picture, at their own size; on the hands only in first person.
         hud::SetClassicView(ClassicNow());
+        if (g_inWorld.load()) {   // the corner map's box follows the game's own interface scale: a window, render size or interface size of any kind
+            static ULONGLONG nextScale = 0;
+            if (nowMs >= nextScale) { nextScale = nowMs + 250; hud::SetGameInterfaceScale(GameUiScaleNow()); }
+        }
         // first person without the body: the map at a size of its own, from its corner
         // ... and on the floor (F3) its own size, depth and place, as the toolbar's
         hud::SetPictureZoom(BarSizeNow(), InsideFree() ? g_set.mapZoomInside.load() : TableView() ? g_set.mapSizeFloor.load() : 1.0f);
@@ -17303,6 +17518,7 @@ DWORD WINAPI UpdateThread(void*) {
             prophook::Install();   // only once [stereo] props_once_a_pair asks for it
             cavelight::Install();   // only once [cave_light] enabled asks for it
             InstallLabelHooks();
+            InstallLabelArea();   // only once [hud] labels_whole_eye asks for it
             mobbars::Install(g_ctx);   // only once [hud] ordinary_mob_bars asks for it
             InstallKeyMoveHook();
             InstallStickHook();
@@ -17313,6 +17529,7 @@ DWORD WINAPI UpdateThread(void*) {
             InstallSlotSkillHook();   // [hands] throw_auto_skill
             haptics::Install();   // only once [openxr] haptics asks for it
             stowedblock::Install();   // only once [hands] shield_stow_no_block asks for it
+            spatialaudio::Install(g_inWorld.load());   // only once [audio] head_follow asks for it (and at the plugin's load, below)
             if (meleetouch::Wanted() || meleetouch::ThrowWanted() || meleetouch::StatusWanted()) meleetouch::Install();   // only once melee_touch, a throw's auto-aim or the wrist status asks for it
             engitem::InstallHook();   // only once belt_models or [debug] engine_unit asks for it
             owneffects::Install();    // [render] dim_own_effects: its two hooks only LOOK at the creation of overlays (in whether it is ticked or not, so a buff cast before it is ticked is known); a status line while it is on
@@ -17440,7 +17657,7 @@ void LoadReShade() {
              "an antivirus may also block it", err == ERROR_DLL_INIT_FAILED ? "its start said no" : "it could not be loaded");
 }
 
-static const char g_info_version[] = "0.173.0";
+static const char g_info_version[] = "0.174.0";
 
 // Who this is. D2RLoader prints "<name> <version> by <author>" for every plugin, and d2r-pcvr (a fork of our 0.152) carries the
 // same id, name and author as we did - "vrcam ... by BodyWalkVR" told a support log nothing. The id stays (the log file
@@ -17624,6 +17841,9 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     shieldarmwire::SetHaptic([](int side, float amplitude, int ms) { haptics::Pulse(haptics::FromSkel(side), amplitude, ms); });   // the left shoulder, with the shield put away
     shieldarmwire::SetLog(&Log);
     stowedblock::SetLog(&Log);
+    spatialaudio::SetLog(&Log);
+    spatialaudio::SetViewYaw(+[]() { return g_camYaw.load(); });
+    spatialaudio::Install(false);   // now: the game sets FMOD's listener up once, early, and that call hands over its sound system
     rangedwire::SetLog(&Log);
     rangedwire::SetHaptic([](int side, float amplitude, int ms) { haptics::Pulse(haptics::FromSkel(side), amplitude, ms); });
     shieldarmwire::SetWielderSource(&weight::WieldingHands);   // [hands] shoulder_draw, the shield: weapon and shield are always on opposite arms

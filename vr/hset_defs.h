@@ -5,7 +5,7 @@
 //
 // Twelve pages: View, Options, Life, Look, HUD, Belt, Melee, Left and Right are rows of this table; Video (the VR render size, vr/hset_video.h), Body (the
 // T-pose measurement, vr/hset_body.h) and Guide (the first-start guide, vr/first_start.h; vr/hset_scene.h) are drawn by hand; Video and Body own the keys
-// at the end of the table, which have no row (kNoPage):
+// at the end of the table, which have no row (kNoPage) - but for the Body page's one table row on top, how you play (standing / seated):
 // the panel still reads them and writes the ones that changed, with the same conflict check as every other key.
 // Life and Look are the low-life vignette's ([hud] low_hp_*, vr/low_hp.h; D2R VR Settings > UI: F4 body > Low life has the same keys):
 // the rows' ranges, steps and defaults are the plugin's (a test keeps them equal), and while one of the two pages is open the plugin
@@ -194,6 +194,10 @@ inline constexpr Def kDefs[] = {
      0.0f, 0.0f, 3.0f, 0.0001f, "%.2f m", "", "", kNoPage},
     {L"calibration", L"arm_span_m", "Measured arm span", "Metres, grip to grip",
      0.0f, 0.0f, 3.0f, 0.0001f, "%.2f m", "", "", kNoPage},
+    // page 3, Body: its one table row, above the hand-drawn part - how the game is played ([calibration] seated, vr/calibration.h; D2R VR
+    // Settings > Body has it next to the measurement). Seated: the recentre sets the hero's eye height, Calibrate reads the arm span only. Live.
+    {L"calibration", L"seated", "How you play", "Seated: Recentre sets the eye height; Calibrate reads the arm span",
+     0.0f, 0.0f, 1.0f, 1.0f, "", "Standing", "Seated", kPageBody, true},
     // page 6, HUD. [hud] bar_place is the toolbar type's row: its value box shows the type's name (vr/hset_names.h), a click steps the type
     // and takes [hud] hide to at least 1 with it (the model, hset_model.h), "In the picture" being hide 0; hide has no row of its own.
     {L"hud", L"bar_place", "Toolbar type", "Life and mana on the wrists, or the whole toolbar",
@@ -236,7 +240,9 @@ constexpr int kKeyGrabTrigger = IndexOf(L"belt", L"grab_trigger");   // the two-
 constexpr int kKeyVersion = IndexOf(L"calibration", L"version");
 constexpr int kKeyEye = IndexOf(L"calibration", L"eye_height_m");
 constexpr int kKeySpan = IndexOf(L"calibration", L"arm_span_m");
-static_assert(kKeyMode >= 0 && kKeyPx >= 0 && kKeyUse >= 0 && kKeyVersion >= 0 && kKeyEye >= 0 && kKeySpan >= 0, "the Video and Body pages' keys are in the table");
+constexpr int kKeySeated = IndexOf(L"calibration", L"seated");   // the Body page's row: what the measurement reads and what the page says
+static_assert(kKeyMode >= 0 && kKeyPx >= 0 && kKeyUse >= 0 && kKeyVersion >= 0 && kKeyEye >= 0 && kKeySpan >= 0 && kKeySeated >= 0,
+              "the Video and Body pages' keys are in the table");
 static_assert(kKeySmooth >= 0 && kKeySnap >= 0, "the turn keys are in the table");
 static_assert(kKeyBeltOn >= 0 && kKeyBeltUp >= 0 && kKeyGrabTrigger >= 0 && kKeyMeleeTouch >= 0 && kKeyMeleeArmed >= 0, "the belt's and the melee page's keys are in the table");
 constexpr int kKeyDirectOn = IndexOf(L"openxr", L"direct_input");   // the Keys pages' note

@@ -178,7 +178,8 @@ static void TestDefs() {
     for (int p = 0; p < kMaxPages; ++p) CHECK(perPage[p] <= kRowsPerPage, "no more rows than the page has room for");
     CHECK(perPage[kPageView] <= kRowsPerPage - 1, "the first page keeps its last row for the game view buttons");
     CHECK(RowsOn(kPageView) > 0 && RowsOn(kPageOptions) > 0, "the two table pages have rows");
-    CHECK(RowsOn(kPageVideo) == 0 && RowsOn(kPageBody) == 0 && RowsOn(kPageGuide) == 0, "the three hand-drawn pages have no table rows (they draw their own)");
+    CHECK(RowsOn(kPageVideo) == 0 && RowsOn(kPageGuide) == 0, "the Video and Guide pages have no table rows (they draw their own)");
+    CHECK(RowsOn(kPageBody) == 1 && KeyAt(kPageBody, 0) == kKeySeated, "the Body page: one table row on top, how you play ([calibration] seated)");
     CHECK(PageCount() == 12 && PageCount() <= kMaxPages, "twelve pages (View, Options, Video, Body, Life, Look, HUD, Belt, Melee, Left, Right, Guide), they fit the tabs");
     // the keys the hand-drawn pages work on are in the table, with no row, named as the plugin reads them
     const int hidden[6] = {kKeyMode, kKeyPx, kKeyUse, kKeyVersion, kKeyEye, kKeySpan};
@@ -1409,6 +1410,66 @@ static void TestBodyModel() {
     }
 }
 
+// -- 11b. the Body page's row: how you play, standing / seated ([calibration] seated; the author, 2026-10-20) ---------------------------
+static void TestBodyPlay() {
+    using namespace hset::body;
+    const Def& d = kDefs[kKeySeated];
+    CHECK(!wcscmp(d.section, L"calibration") && !wcscmp(d.key, L"seated") && IsToggle(d) && d.def == 0.0f && d.live && d.page == kPageBody,
+          "seated: [calibration] seated, a toggle, standing by default, live, the Body page's");
+    CHECK(!std::strcmp(d.off, "Standing") && !std::strcmp(d.on, "Seated"), "seated: its two faces");
+    // the row is where every page's first row is, above the hand-drawn part, and clear of it
+    CHECK(!Overlap(kToggle(0), kBodyWhy) && !Overlap(kToggle(0), kCalibrate) && !Overlap(kToggle(0), kForget) && !Overlap(kToggle(0), kGuideBtn),
+          "seated: the row clear of the page's text and buttons");
+    CHECK(kBodyWhy.y >= kRowY0 + kRowStep - 5 && !Overlap(kBodyWhy, kCalibrate), "seated: the page's text under the row's band");
+    float u, v;
+    Centre(kToggle(0), &u, &v);
+    CHECK((HitTest(kPageBody, u, v) == Hit{Kind::Change, kKeySeated, 1}), "seated: the row toggles on the Body page");
+    CHECK(HitTest(kPageVideo, u, v).kind != Kind::Change || HitTest(kPageVideo, u, v).index != kKeySeated, "seated: and not on the Video page");
+    Centre(kCalibrate, &u, &v);
+    CHECK(HitTest(kPageBody, u, v).kind == Kind::Calibrate, "seated: Calibrate body still where it is drawn");
+    // what the page reads: seated, the span alone counts, and the stored eye height goes with it when it is a person's
+    {
+        const Stored both = Of(1, 1, 1.6917f, 1.5101f, 1);
+        CHECK(both.valid && both.seated && both.eyeValid && MeasuredText(both) == "Eye height 1.69 m, arm span 1.51 m", "seated: a standing measurement stored - both shown");
+        const Stored span = Of(1, 1, 0, 1.5101f, 1);
+        CHECK(span.valid && !span.eyeValid && MeasuredText(span).find("Arm span 1.51 m") == 0 && UseText(span).find("arms") != std::string::npos,
+              "seated: a span alone - in use for the arms, the eye height not measured");
+        CHECK(!Of(1, 1, 0, 1.5101f, 0).valid, "standing: a span alone is not a measurement");
+        CHECK(!Of(1, 1, 1.6917f, 0.5f, 1).valid && MeasuredText(Of(0, 0, 0, 0, 1)) == "Arm span not measured yet", "seated: a bad span, nothing stored");
+        CHECK(std::string(WhyText(true)).find("arm span only") != std::string::npos && std::string(WhyText(false)).find("eye height") != std::string::npos,
+              "seated: the line under the row says what Calibrate reads");
+    }
+    // a click: the draft is seated at once (the page's words follow), written by itself; Calibrate waits until it is in the file
+    {
+        const Snapshot spanOnly = SnapWith({{kKeyUse, 1}, {kKeyVersion, 1}, {kKeySpan, 1.5101}});
+        Model m = OnPage(spanOnly, kPageBody);
+        CHECK(!m.Measured().valid && !m.PlayPending(), "seated: standing, a span alone - not usable");
+        Centre(kToggle(0), &u, &v);
+        m.Click(HitTest(kPageBody, u, v));
+        CHECK(m.Get()[kKeySeated] == 1.0f && m.Measured().seated && m.Measured().valid && m.PlayPending() && m.LiveOnly(),
+              "seated: clicked - the draft seated, the span usable, waiting to be written");
+        CHECK(m.Click({Kind::Calibrate, -1, 0}).what == Do::Nothing, "seated: Calibrate waits while standing / seated is on its way to the file");
+        CHECK(m.Live(1000.0).what == Do::Nothing, "seated: not written at once");
+        const Action a = m.Live(2000.0);
+        CHECK(a.what == Do::Save && a.request.changed == Bit(kKeySeated) && a.request.values[kKeySeated] == 1.0f, "seated: written by itself, that key alone");
+        CHECK(m.Click({Kind::Calibrate, -1, 0}).what == Do::Nothing, "seated: ... and not while it is being written");
+        Snapshot ans = spanOnly;
+        ans.values[kKeySeated] = ans.file[kKeySeated] = 1.0f;
+        ans.sequence = a.request.sequence;
+        ans.result = Result::Saved;
+        m.Observe(ans);
+        CHECK(!m.PlayPending() && !m.Dirty() && m.Measured().valid, "seated: in the file");
+        CHECK(m.Click({Kind::Calibrate, -1, 0}).what == Do::Calibrate, "seated: Calibrate body now (the plugin measures the arm span only)");
+    }
+    {   // the page paints both ways, and they differ
+        Model st = OnPage(Snap(), kPageBody), se = OnPage(Snap(), kPageBody);
+        Centre(kToggle(0), &u, &v);
+        se.Click(HitTest(kPageBody, u, v));
+        std::vector<uint32_t> a, b;
+        CHECK(Paint(st, {}, a) && Paint(se, {}, b) && a != b, "seated: the Body page paints standing and seated, differently");
+    }
+}
+
 // -- 12. the hands: Calibrate body, coming back, the slider drag --------------------------------------------------
 static void TestPagesHands() {
     {   // First-start guide: the panel stays, on the Guide page (the panel still has both hands)
@@ -2227,7 +2288,8 @@ static void TestBelt() {
     CHECK(kDefs[kKeyBeltOn].page == kNoPage && !kDefs[kKeyBeltOn].live && IsToggle(kDefs[kKeyBeltOn]), "belt_models: the Belt page's note, not live");
     int live = 0;
     for (int i = 0; i < kCount; ++i) live += kDefs[i].live ? 1 : 0;
-    CHECK(live == 12 && kLiveMask != 0 && (kLiveMask & Bit(KeyOf(L"brightness"))) == 0 && (kLiveMask & Bit(kKeySmooth)) == 0, "twelve live keys, the belt's and the Melee page's (the skill arming's two too) - not the others");
+    CHECK(live == 13 && kLiveMask != 0 && (kLiveMask & Bit(KeyOf(L"brightness"))) == 0 && (kLiveMask & Bit(kKeySmooth)) == 0,
+          "thirteen live keys, the belt's, the Melee page's (the skill arming's two too) and the Body page's standing / seated - not the others");
     CHECK(kCount <= 64, "the masks are 64 bits");
     CHECK(kDefs[KeyAt(kPageBelt, 0)].min == 0.3f && kDefs[KeyAt(kPageBelt, 4)].min == 4.0f && kDefs[KeyAt(kPageBelt, 4)].max == 30.0f && kDefs[KeyAt(kPageBelt, 4)].def == 12.0f, "the belt's ranges are D2R VR Settings'");
     CHECK(IsToggle(kDefs[KeyAt(kPageBelt, 5)]) && kDefs[KeyAt(kPageBelt, 5)].def == 0.0f && kKeyDirectOn >= 0, "the two-button take is a tick, off as the plugin has it ([belt] grab_trigger)");
@@ -3354,6 +3416,7 @@ int main(int argc, char** argv) {
     TestVideoModel();
     TestPagesHit();
     TestBodyModel();
+    TestBodyPlay();
     TestPagesHands();
     TestIniPages();
     TestPaintPages();

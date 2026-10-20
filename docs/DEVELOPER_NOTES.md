@@ -293,6 +293,10 @@ game must use the window and resolution the player set in the game, and the mod 
   - colour premultiplied;
   - alpha = how much of the world shows through.
 - The map draws under its own scissor rectangles.
+- The corner map's box is found among those rectangles by `vr/minimap_box.h` (`minimap_box_test`): in a top corner of the
+  interface area, worked out from the game's OWN interface scale (asked every 250 ms, `hud::SetGameInterfaceScale`; the area
+  is 2160 of its units tall) in the viewport the interface is drawn through - Settings.json's Safe Screen Percent only as a
+  second guess. Nothing in it is measured in pixels: the window, the render size and the interface size can be anything.
 - The toolbar's rectangle is computed from the game's Safe Screen Percent.
 - **Menus:** the `*frontend*` and `ui_*` biomes are menus (character select,
   create new). The game's own camera must stay there.

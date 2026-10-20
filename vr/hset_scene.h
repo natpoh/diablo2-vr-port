@@ -227,10 +227,10 @@ inline Scene Compose(const Model& m, const Hit& hover, const ComposeOptions& opt
         b.Text("Apply rebuilds the picture: the game freezes a few seconds (about 7).", kVidNote, Face::Normal, Role::Warn);
     } else if (m.page == kPageBody) {
         // -- the T-pose measurement -----------------------------------------------------------------------------
+        // (how you play, standing / seated, is the page's table row above: drawn with the other pages' rows below)
         const body::Stored st = m.Measured();
-        b.Text("Measure your body", kBodyTitle, Face::Bold, Role::Text);
-        b.Text("Your real eye height sets the world's scale, your arm span the hero's arms.", kBodyWhy, Face::Small, Role::Quiet);
-        b.Button(kCalibrate, "Calibrate body", {Kind::Calibrate, -1, 0}, true, canEdit, Role::Accent);
+        b.Text(body::WhyText(st.seated), kBodyWhy, Face::Small, Role::Quiet);
+        b.Button(kCalibrate, "Calibrate body", {Kind::Calibrate, -1, 0}, true, canEdit && !m.PlayPending(), Role::Accent);
         b.Button(kForget, "Forget measurement", {Kind::Forget, -1, 0}, false, canEdit && st.any);
         b.Button(kGuideBtn, "First-start guide", {Kind::Guide, -1, 0});
         b.Text(body::MeasuredText(st), kBodyStored, Face::Bold, st.valid ? Role::Accent : Role::Quiet);
@@ -241,7 +241,13 @@ inline Scene Compose(const Model& m, const Hit& hover, const ComposeOptions& opt
             "3. Arms out sideways, level. Let go of both triggers, then squeeze both and hold still.",
             "4. Right B cancels. This panel comes back when it is done, with the numbers.",
         };
-        for (int i = 0; i < 4; ++i) b.Text(steps[i], kBodyStep(i), Face::Small, Role::Quiet);
+        static const char* const seatedSteps[] = {
+            "1. Sit upright where you play, eyes ahead, room for your arms. No floor is needed.",
+            "2. Press Calibrate body: this panel hides and a prompt appears in front of you.",
+            "3. Arms out sideways, level. Let go of both triggers, then squeeze both and hold still.",
+            "4. Then Recentre view sitting as you play: the hero's eyes are where your head is.",
+        };
+        for (int i = 0; i < 4; ++i) b.Text((st.seated ? seatedSteps : steps)[i], kBodyStep(i), Face::Small, Role::Quiet);
     }
     if (m.page == kPageGuide) {
         // -- the first-start guide (vr/first_start.h): a page of its words, Back and Next under it -----------------------------------------

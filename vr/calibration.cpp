@@ -38,8 +38,9 @@ void LogF(const char* fmt, ...) {
 }
 
 // What the ini says (LoadSettings) and what is in force.
-std::atomic<bool> g_use{false};
+std::atomic<bool> g_use{false}, g_seated{false};
 std::atomic<float> g_eye{0.0f}, g_span{0.0f};   // in force: 0 = not (unticked, nothing measured, not valid)
+std::atomic<float> g_storedEye{0.0f};           // the stored eye height, in force or not (a seated measurement keeps it)
 std::atomic<int> g_measure{INT_MIN};            // the Settings button's counter; the first value seen is only remembered
 std::atomic<bool> g_startAsked{false};
 std::atomic<ULONGLONG> g_startAt{0};
@@ -48,6 +49,7 @@ constexpr ULONGLONG kAskedForMs = 60000;        // a start asked for while no he
 
 // The flow lives on the headset frame's thread; what others read of it is mirrored.
 bodycal::Flow g_flow;
+bool g_flowSeated = false;   // the measurement under way reads the arm span only (seated when it began)
 std::atomic<bool> g_owns{false};
 std::atomic<int> g_image{-1};
 std::atomic<float> g_progress{0.0f};
@@ -98,8 +100,10 @@ bool WriteTimeOf(const wchar_t* path, FILETIME* t) {
 // writes the same file; if it did between our read and our replace, we read again. The file as it was before the first
 // measurement is kept once as d2r_vr.ini.before-calibration. A file the patch cannot read (UTF-16) goes through
 // WritePrivateProfileString instead.
+// Seated (m.eyeHeight 0): the arm span only - the stored eye height is left as it is.
 bool SaveToIni(bodycal::Measurement m) {
     if (!g_ini[0]) return false;
+    const bool withEye = m.eyeHeight > 0.0f;
     char eye[32], span[32];
     snprintf(eye, sizeof eye, "%.4f", m.eyeHeight);
     snprintf(span, sizeof span, "%.4f", m.armSpan);
@@ -108,7 +112,7 @@ bool SaveToIni(bodycal::Measurement m) {
         std::string text;
         FILETIME read{}, now{};
         if (!ReadAll(g_ini, &text, &read)) break;
-        if (!inipatch::Set(text, "calibration", "eye_height_m", eye) || !inipatch::Set(text, "calibration", "arm_span_m", span) ||
+        if ((withEye && !inipatch::Set(text, "calibration", "eye_height_m", eye)) || !inipatch::Set(text, "calibration", "arm_span_m", span) ||
             !inipatch::Set(text, "calibration", "version", "1") || !inipatch::Set(text, "calibration", "use", "1"))
             break;
         if (!WriteAll(tmp.c_str(), text)) { DeleteFileW(tmp.c_str()); return false; }
@@ -125,11 +129,11 @@ bool SaveToIni(bodycal::Measurement m) {
     wchar_t w1[32], w2[32];
     swprintf_s(w1, L"%S", eye);
     swprintf_s(w2, L"%S", span);
-    return WritePrivateProfileStringW(L"calibration", L"eye_height_m", w1, g_ini) && WritePrivateProfileStringW(L"calibration", L"arm_span_m", w2, g_ini) &&
+    return (!withEye || WritePrivateProfileStringW(L"calibration", L"eye_height_m", w1, g_ini)) && WritePrivateProfileStringW(L"calibration", L"arm_span_m", w2, g_ini) &&
            WritePrivateProfileStringW(L"calibration", L"version", L"1", g_ini) && WritePrivateProfileStringW(L"calibration", L"use", L"1", g_ini);
 }
 
-int ImageFor(const bodycal::Flow& f) {
+int MessageFor(const bodycal::Flow& f) {
     using bodycal::Hint;
     using bodycal::Phase;
     switch (f.phase) {
@@ -151,6 +155,12 @@ int ImageFor(const bodycal::Flow& f) {
         }
     }
     return 0;
+}
+
+// The prompt's picture: the message, from the seated set while a seated measurement runs.
+int ImageFor(const bodycal::Flow& f) {
+    const int m = MessageFor(f);
+    return m >= 0 && g_flowSeated ? m + kPanelMessages : m;
 }
 
 void Mirror() {
@@ -177,15 +187,24 @@ void LoadSettings(const wchar_t* iniPath) {
     if (!g_ini[0] && iniPath) wcscpy_s(g_ini, iniPath);
     if (!g_ini[0]) return;
     g_use.store(ReadFloat(L"use", 0.0f) != 0.0f);
+    const bool seated = ReadFloat(L"seated", 0.0f) != 0.0f;
+    if (seated != g_seated.exchange(seated))
+        LogF("vrcam: calibration - played %s ([calibration] seated=%d): %s", seated ? "seated" : "standing", (int)seated,
+             seated ? "the hero's eyes are at the head's height at the recenter (F11), a measurement reads the arm span only"
+                    : "the hero's eyes at the floor plus the measured eye height, a measurement reads both");
     const bodycal::Measurement m{ReadFloat(L"eye_height_m", 0.0f), ReadFloat(L"arm_span_m", 0.0f)};
-    const bool stored = ReadFloat(L"version", 0.0f) == 1.0f && bodycal::Valid(m);
-    const bool inForce = g_use.load() && stored;
-    const float eye = inForce ? m.eyeHeight : 0.0f, span = inForce ? m.armSpan : 0.0f;
+    g_storedEye.store(m.eyeHeight);
+    const bodycal::Measurement f = ReadFloat(L"version", 0.0f) == 1.0f && g_use.load() ? bodycal::InForce(seated, m) : bodycal::Measurement{};
+    const bool inForce = f.armSpan > 0.0f;
+    const float eye = f.eyeHeight, span = f.armSpan;
     if (eye != g_eye.load() || span != g_span.load()) {
         g_eye.store(eye);
         g_span.store(span);
-        if (inForce)
+        if (inForce && eye > 0.0f)
             LogF("vrcam: calibration - the measured eye height %.3f m and arm span %.3f m are in use ([calibration] use=1)", eye, span);
+        else if (inForce)
+            LogF("vrcam: calibration - seated: the measured arm span %.3f m is in use; no stored standing eye height to go with it, so the "
+                 "world's scale is the height from BodyWalk / [stereo] user_height_m, as before", span);
         else
             LogF("vrcam: calibration - %s: the height from BodyWalk / [stereo] user_height_m and [arms] scale, as before",
                  !g_use.load() ? "not used (unticked)" : "nothing valid stored");
@@ -208,6 +227,7 @@ bool Running() { return g_image.load() >= 0 || (g_startAsked.load() && GetTickCo
 // F4 only (vr/view_gate.h): in the other views the world's scale and the arms are the old numbers, as if nothing were measured.
 float MeasuredEyeM() { return viewgate::F4() ? g_eye.load() : 0.0f; }
 float MeasuredSpanM() { return viewgate::F4() ? g_span.load() : 0.0f; }
+bool Seated() { return g_seated.load(); }
 bool OwnsTriggers() { return g_owns.load(); }
 
 void Feed(const Frame& f) {
@@ -223,7 +243,10 @@ void Feed(const Frame& f) {
     if (g_startAsked.exchange(false)) {
         if (GetTickCount64() - g_startAt.load() <= kAskedForMs) {
             g_flow.Begin();
-            LogF("vrcam: calibration - started: stand upright, arms out level, let go of both triggers, then hold both for 1.2 s");
+            g_flowSeated = g_seated.load();
+            LogF(g_flowSeated ? "vrcam: calibration - started, seated (the arm span only): sit upright, arms out level, let go of both triggers, "
+                                "then hold both for 1.2 s"
+                              : "vrcam: calibration - started: stand upright, arms out level, let go of both triggers, then hold both for 1.2 s");
         }
     }
     if (!g_flow.Active()) {
@@ -242,6 +265,7 @@ void Feed(const Frame& f) {
         s.handTracked[kLeft] = f.handTracked[0];
         s.handTracked[kRight] = f.handTracked[1];
         s.cancel = f.cancel;
+        s.seated = g_flowSeated;
         s.head = {f.head[0], f.head[1], f.head[2]};
         s.headRot = {f.headRot[0], f.headRot[1], f.headRot[2], f.headRot[3]};
         for (int h = 0; h < 2; ++h) {
@@ -252,11 +276,19 @@ void Feed(const Frame& f) {
             const Measurement m = g_flow.Get();
             if (SaveToIni(m)) {
                 g_flow.Saved(f.time);
-                g_eye.store(m.eyeHeight);   // in force at once; the ini's change reads back the same
-                g_span.store(m.armSpan);
+                // in force at once (the ini's change reads back the same): a seated one with the eye height stored before
+                const Measurement now = g_flowSeated ? Measurement{g_storedEye.load(), m.armSpan} : m;
+                if (!g_flowSeated) g_storedEye.store(m.eyeHeight);
+                const Measurement in = InForce(g_seated.load(), now);
+                g_eye.store(in.eyeHeight);
+                g_span.store(in.armSpan);
                 g_use.store(true);
-                LogF("vrcam: calibration - measured: eye height %.3f m, arm span %.3f m (ratio %.2f); saved to d2r_vr.ini [calibration], in use", m.eyeHeight,
-                     m.armSpan, m.armSpan / m.eyeHeight);
+                if (g_flowSeated)
+                    LogF("vrcam: calibration - measured seated: arm span %.3f m; saved to d2r_vr.ini [calibration] (the stored eye height %.3f m kept%s), in use",
+                         m.armSpan, now.eyeHeight, in.eyeHeight > 0.0f ? "" : ": none usable - the height from BodyWalk / [stereo] user_height_m");
+                else
+                    LogF("vrcam: calibration - measured: eye height %.3f m, arm span %.3f m (ratio %.2f); saved to d2r_vr.ini [calibration], in use", m.eyeHeight,
+                         m.armSpan, m.armSpan / m.eyeHeight);
             } else {
                 g_flow.SaveFailed();
                 LogF("vrcam: calibration - measured eye height %.3f m, arm span %.3f m, but d2r_vr.ini could not be written", m.eyeHeight, m.armSpan);

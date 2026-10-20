@@ -583,6 +583,15 @@ std::vector<Item> g_items = {
     Slider(L"table", L"floor", L"Lift the game off black", 0, 0.3f, 0.01f, 0.05f,
            L"With a black background: the game's own dark parts are lifted this far off black, so the chroma key does not "
            L"cut them too. Raise it if shadows show the room, lower it if the picture looks washed out."),
+    // [audio] head_follow, listener_turn: the two FMOD hooks from bearstonem/d2r-pcvr (vr/spatial_audio.h)
+    Group(L"Sound"),
+    Toggle(L"audio", L"head_follow", L"The game's sounds turn with your view", 1,
+           L"Monsters, NPCs and streams are heard from where they are around you, as you turn your head, the stick or the mouse - a monster on your left is "
+           L"heard on the left. Music, ambience, the interface and the hero's own sounds stay in the middle. Stereo only: Windows' Mono audio (Settings > "
+           L"Accessibility > Audio) folds it to the middle. Off: the game's sound as it is without the mod. Ticked while the game runs, the turn with the "
+           L"view needs the game started again."),
+    Needs(L"audio", L"head_follow", 1, Toggle(L"audio", L"listener_turn", L"... and turn them with the view", 1,
+           L"The sounds turn as your view turns. Off: their places are kept on the ground only, as if you always looked ahead. Live.")),
 
 #if D2RVR_FIRST_PERSON
     Tab(L"Body"),
@@ -600,15 +609,23 @@ std::vector<Item> g_items = {
            L"camera moved ahead puts them out of the arms' reach. At 0% they hang off the hero's eyes: the body stays put, "
            L"the hands always reach, a little nearer than your real ones.")),
     Only(kVr, Group(L"Measured height and arm span (T-pose)")),
+    Only(kVr, Choice(L"calibration", L"seated", L"How you play", 0, {L"Standing", L"Seated"},
+           L"Standing: in native OpenXR F4 with a measurement in use, the hero's eyes are at your measured eye height over the floor, "
+           L"whatever height a recenter was taken at; a recenter sets straight ahead and where you stand. Seated: the hero's eyes are "
+           L"where your head is when you recenter (F11, the headset's own recenter, the headset settings' Recentre view) - sit as you "
+           L"play and recenter; the crouch counts from there. The measurement then reads only your arm span (no floor needed) and keeps "
+           L"a stored eye height for the world's scale (none stored: \"My height\" / BodyWalk's Body Height). Also on the headset "
+           L"settings' Body page. Live.")),
     Only(kVr, Toggle(L"calibration", L"use", L"Use the measured height and arm span", 0,
            L"The world's scale from your measured eye height, and the hero's arms fitted to your measured arm span (the hands stay "
            L"1:1 with the controllers), in place of \"My height\" / BodyWalk's Body Height and \"Arm length (scale)\". Unticked: "
-           L"those, exactly as before. A good measurement ticks it. F4 only: the other views keep the old numbers.")),
+           L"those, exactly as before. A good measurement ticks it. F4 only: the other views keep the old numbers. Native OpenXR: "
+           L"standing upright you also look from the hero's eyes, whatever height the last recenter was taken at.")),
     Only(kVr, Button(L"calibration", L"measure", L"Measure my height and arm span...",
            L"Native OpenXR only, with the game running and the headset on: a panel in front of you says what to do. Stand upright, "
            L"look straight ahead, stretch both arms out sideways at shoulder height, let go of both triggers, then squeeze both and "
            L"hold still for a second. Needs the room's floor set up in your headset. The game goes on behind the panel: measure "
-           L"somewhere safe. F4 only.")),
+           L"somewhere safe. F4 only. Seated (\"How you play\"): sit upright - only the arm span is measured, no floor needed.")),
     Only(kVr, Button(L"@run", L"calibration_forget", L"Forget the measurement",
            L"Clears the stored measurement: the height from BodyWalk / \"My height\" and \"Arm length (scale)\" apply again.")),
     // [onboarding] (vr/first_start.h): the guide in the headset at the first start in F4 - the T-pose measurement offered first, then what to press for what
@@ -631,6 +648,16 @@ std::vector<Item> g_items = {
     Needs(L"body", L"lock", 1, Only(kVr, Toggle(L"body", L"legs_under_body", L"Legs stay under the body", 1,
            L"The hips and legs keep their place and direction under the body: a blow no longer lunges them out "
            L"ahead or twists them. They still step, crouch and jump. Off = the game's hips and legs as animated."))),
+    Only(kVr, Toggle(L"body", L"crouch", L"Hero crouches when you crouch (F4)", 0,
+           L"Crouch in your room and the hero's body goes down with your head, his knees bent and his feet on the ground, "
+           L"so you see your legs under you and not your chest in your face. Only the drawn body: where he stands, his hit "
+           L"box and his walking stay the game's. Needs a camera that follows your head's height (native OpenXR, or FlatVR "
+           L"with the head's position). VR first person (F4) only. Unticked: exactly as before. Idea from bearstonem/d2r-pcvr.")),
+    Needs(L"body", L"crouch", 1, Only(kVr, Slider(L"body", L"crouch_cm", L"Crouch: head lower than this, cm", 5, 60, 1, 20,
+           L"How far your head must go below your standing eye height before the hero crouches. He stands again once it is "
+           L"back within half of this. The standing eye height is your measured one over the floor (\"Use the measured height "
+           L"and arm span\", native OpenXR); without it, or seated (\"How you play\"), your head's height at the last recenter: "
+           L"recenter as you play (standing upright, or sitting)."))),
     Only(kVr, Choice(L"body", L"turn", L"Hero turns to where you look (F4)", 2, {L"No (the game's facing)", L"Above the pelvis", L"Whole body"},
            L"In the other first-person views the whole hero always turns with you.")),
     Toggle(L"body", L"turn_third", L"From behind too (the right stick turns him)", 1,
@@ -1412,6 +1439,10 @@ std::vector<Item> g_items = {
     Slider(L"hud", L"labels_far", L"Item labels: size far away, % of the size above", 20, 100, 5, 100,
            L"Nearer names larger, farther ones smaller, as signs in the room: the size above for an item 1.5 m away and nearer, "
            L"this much of it for one 10 m away and farther, smoothly in between. 100 = the same size at any distance."),
+    Toggle(L"hud", L"labels_whole_eye", L"Item labels down to the bottom of the picture (test)", 0,
+           L"The game drops the name of an item whose label would reach below its interface's height. Where the interface is smaller than the picture - a "
+           L"square or tall VR render size, Safe Screen - items low in the view, the one you look down at, have no name, with Show Items held too. Ticked: "
+           L"the labels are kept down to the bottom of the picture. Every view. A test of bearstonem/d2r-pcvr's fix: try it on and off. Live."),
     Slider(L"hud", L"labels_depth_body", L"Item labels: at their items, %", 0, 150, 5, 0,
            L"In stereo the game draws the labels on the same spot in both eyes - in the headset they float far off, not on "
            L"their items. Here each label is set at its own item's depth, by the item's distance from you: 100 = exactly "
@@ -2559,6 +2590,12 @@ std::vector<Item> g_items = {
     Needs(L"bow", L"quiver", 1, Needs(L"bow", L"arrow_fx", 1, Slider(L"bow", L"arrow_fx_along_cm", L"Arrow effects: along the arrow, cm", -20.0f, 60.0f, 0.5f, 0.0f,
            L"Moves the effect's centre along the arrow's shaft: more is forward, toward the arrowhead; less is back toward the string. 0 = where it is found. "
            L"Fire, frost and arcane alike, on the arrow at rest and on the drawn one. Live."))),
+    Needs(L"bow", L"quiver", 1, Needs(L"bow", L"arrow_fx", 1, Toggle(L"bow", L"arrow_fire_cut", L"Arrow effects: out at the release", 1,
+           L"On: the fire, the frost or the arcane light goes out when the shot goes - the release of the string - and not a moment later when the game hides the arrow in your hand. "
+           L"It lights again on the next arrow: a new draw, the game showing an arrow again after the shot, another skill chosen. The delay below keeps it on the shot arrow that long. "
+           L"Only our own light on the arrow: the game's missile, its effects and its damage are the game's. Off: the effect stays until the game hides the arrow, as before. F4 only. Live."))),
+    Needs(L"bow", L"quiver", 1, Needs(L"bow", L"arrow_fx", 1, Needs(L"bow", L"arrow_fire_cut", 1, Slider(L"bow", L"arrow_fire_cut_ms", L"Arrow effects: out at the release - after, ms", 0.0f, 2000.0f, 10.0f, 0.0f,
+           L"How long after the release the effect goes out: 0 = at the release. A new draw, or the next arrow shown, before then lights it on that arrow. Live.")))),
     Needs(L"hands", L"bow_draw", 0, Group(L"Bow without the string draw (the A button, mode above)")),
     Needs(L"hands", L"bow_draw", 0, Needs(L"bow", L"mode", 4, Toggle(L"hands", L"bow_aim", L"Arrows along the hand, no auto-target", 0,
            L"On: with a bow or a crossbow in hand, the attack and the bow's arrow skills go exactly along the hand: the game's "

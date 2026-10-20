@@ -70,6 +70,17 @@ bool LookAtNow(float out[3]);
 // is running and the debug camera is not in use).
 bool InWorld();
 
+// The game's last mouse pick (ScreenToRay outside the shadow fit): the pixel it asked a ray
+// for, the camera's viewport then, who answered (0 the game's own camera, 1 our matrices,
+// 2 the ray override), when (GetTickCount64) and from where (the caller's return RVA: tells the
+// mouse code from any other asker). For a diagnostic log; false before the first.
+struct LastPickInfo {
+	float px, py, vpW, vpH;
+	int   by;
+	unsigned long long at, ret;
+};
+bool LastPick(LastPickInfo* out);
+
 // Screen point in the game's viewport pixels -> world ray through the matrices
 // in use this frame (ours when enabled). dir is normalized. False when not in world.
 bool PickRay(float sx, float sy, float origin[3], float dir[3]);

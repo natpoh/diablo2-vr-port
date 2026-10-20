@@ -113,12 +113,25 @@ the headset-only ones.
   person, F4). It saves your eye
   height over the room's floor and the span between the controllers; the world's
   scale and the hero's arm bones then follow them (the hands stay 1:1 with the
-  controllers). *Use the measured height and arm span* switches it on and off (a
+  controllers), and in native OpenXR the camera's standing height is that eye
+  height over the floor: standing upright you look from the hero's eyes whatever
+  height the last recenter was taken at (seated, crouched, the headset still in
+  your hands). *Use the measured height and arm span* switches it on and off (a
   good measurement switches it on) -
   off is the height from BodyWalk / *My height* and *Arm length (scale)*, as
   before; *Forget the measurement* clears it. Needs the headset's floor (a room
-  set up), not a seated-only space. With the settings panel in the headset
+  set up), not a seated-only space - unless you play seated.
+  *How you play* (`[calibration] seated`, *Standing* by default, live): *Standing*
+  is the above. *Seated*: the hero's eyes are where your head is when you
+  recenter (F11, the headset's own recenter, *Recentre view* in the headset
+  settings) - sit as you play and recenter, and you look from his eyes, not
+  from his middle; the crouch counts from there too, so leaning forward in the
+  chair is no crouch unless it goes past *Crouch: head lower than this*. The
+  measurement then reads only your arm span (sit upright, arms out; no floor
+  needed) and keeps an eye height stored by a standing one for the world's
+  scale (none stored: *My height* / BodyWalk's Body Height). With the settings panel in the headset
   (UI: F4 body > Menus) the same measurement starts from its *Body* page:
+  *How you play* (its top row: Standing / Seated, the same key),
   *Calibrate body*, *Forget measurement*, *First-start guide* (the guide below,
   again), and the numbers stored. Its first
   page also switches the game view, F1 - F4, as the F keys do (the panel is
@@ -147,6 +160,17 @@ the headset-only ones.
   d2r-pcvr (MIT).
 - **Body** - no game animation above the pelvis in F4 (your body drives it),
   legs stay under the body, how the hero turns to where you look.
+  *Hero crouches when you crouch (F4)* (`[body] crouch`, off): crouch in the
+  room and the hero's drawn body goes down with your head, knees bent, feet on
+  the ground - his place, hit box and walking stay the game's. It needs a camera
+  that follows your head's height (native OpenXR, or FlatVR with the head's
+  position). *Crouch: head lower than this, cm* (`crouch_cm`, 20): how far below
+  your standing eye height the head must go; he stands again within half of it.
+  The standing eye height is the measured one over the floor (native OpenXR with
+  *Use the measured height and arm span*); without a measurement, or played
+  seated (*How you play*), it is your head's height at the last recenter, so
+  recenter as you play - standing upright, or sitting. The idea is
+  bearstonem/d2r-pcvr's (MIT).
 - **Hands** - the hands turn with the controllers; tilt, turn and roll offsets
   for your controllers' grip.
 - **Effects around the hero** (F4) - *Draw the hero's own effects fainter* (`[render] dim_own_effects`;
@@ -641,7 +665,10 @@ in full in a square window); the log tells the size the game draws at.
   and one for each learned bow skill, the free hand's trigger at an orb picks it; *Arrow
   effects: fire, frost and arcane light on the arrow* (on), by the chosen skill; *no mana for
   the chosen arrow - shoot the plain arrow* (on), and the effect goes out while the mana
-  is short; *Quiver: show the chosen arrow skill in the mana medallion* (on, `[bow] quiver_icon`):
+  is short; *Arrow effects: out at the release* (on, `[bow] arrow_fire_cut`) puts the effect out
+  when the shot goes, not when the game hides the arrow in the hand, with *... after, ms*
+  (`arrow_fire_cut_ms`, 0 = at the release, up to 2000) for a moment of it on the shot
+  arrow - it lights again on the next arrow; *Quiver: show the chosen arrow skill in the mana medallion* (on, `[bow] quiver_icon`):
   the chosen skill's icon lies in the mana medallion on the wrist like an armed melee skill's
   (full while the hero can pay the shot, faint when not; the plain arrow: none), sized and placed
   by the *Skill icon in the mana* sliders on the Strikes tab. The crossbow has no quiver.

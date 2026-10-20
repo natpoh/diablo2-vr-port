@@ -57,10 +57,22 @@ struct Measurement {
 };
 
 inline bool ValidEyeHeight(float h) { return std::isfinite(h) && h >= 0.8f && h <= 2.3f; }
+inline bool ValidSpan(float s) { return std::isfinite(s) && s >= 0.85f && s <= 2.6f; }
 inline bool Valid(Measurement m) {
-    if (!ValidEyeHeight(m.eyeHeight) || !std::isfinite(m.armSpan) || m.armSpan < 0.85f || m.armSpan > 2.6f) return false;
+    if (!ValidEyeHeight(m.eyeHeight) || !ValidSpan(m.armSpan)) return false;
     const float ratio = m.armSpan / m.eyeHeight;
     return ratio >= 0.65f && ratio <= 1.45f;
+}
+
+// [calibration] seated=1 - played seated (the author, 2026-10-20: "if I play seated, the recenter must set the hero's height ... the
+// calibration takes only the distance between the hands, not the headset's height above the floor"). A seated measurement reads the
+// arm span alone (the head over the floor is a seated head, not an eye height) and keeps the eye height stored by a standing one.
+// What of the stored numbers is in force: standing, both or nothing (Valid); seated, the span by itself, and the stored eye height
+// with it when the two are a person's (the world's scale; without one, the height from BodyWalk / [stereo] user_height_m, as before).
+inline Measurement InForce(bool seated, Measurement stored) {
+    if (!seated) return Valid(stored) ? stored : Measurement{};
+    if (!ValidSpan(stored.armSpan)) return {};
+    return {Valid(stored) ? stored.eyeHeight : 0.0f, stored.armSpan};
 }
 
 // -- one headset frame ---------------------------------------------------------------------------------------------
@@ -73,6 +85,7 @@ struct Sample {
     bool headTracked = false;
     bool handTracked[2] = {};              // a controller really located (not a held place)
     bool cancel = false;                   // the cancel button is down (read as an edge)
+    bool seated = false;                   // [calibration] seated: the arm span only - no floor, no eye height asked for
     Vec head{};                            // between the eyes
     Quat headRot{};
     Vec hand[2]{};                         // grip positions
@@ -98,8 +111,9 @@ inline Hint CheckPose(const Sample& s) {
     if (!s.headTracked || !s.handTracked[kLeft] || !s.handTracked[kRight] || !Finite(s.head) || !Finite(s.hand[kLeft]) ||
         !Finite(s.hand[kRight]))
         return Hint::Tracking;
-    if (!s.floor) return Hint::Floor;   // a LOCAL space has no floor: the eye height would be a guess
-    if (!ValidEyeHeight(s.head.y)) return Hint::Height;
+    // a LOCAL space has no floor: the eye height would be a guess (seated, no eye height is read: any space, any head height)
+    if (!s.seated && !s.floor) return Hint::Floor;
+    if (!s.seated && !ValidEyeHeight(s.head.y)) return Hint::Height;
     const Quat q = s.headRot;
     const float n2 = q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w;
     if (!std::isfinite(n2) || std::fabs(n2 - 1.0f) > 0.05f || Rotate(q, {0, 1, 0}).y < 0.96f) return Hint::Upright;
@@ -107,7 +121,7 @@ inline Hint CheckPose(const Sample& s) {
     const float yaw = Heading(q);
     const Vec r = TurnAboutY(-yaw, s.hand[kRight] - s.head), l = TurnAboutY(-yaw, s.hand[kLeft] - s.head);
     const float span = Length(s.hand[kRight] - s.hand[kLeft]);
-    if (!Valid({s.head.y, span})) return Hint::Arms;
+    if (s.seated ? !ValidSpan(span) : !Valid({s.head.y, span})) return Hint::Arms;
     // a hand each side, level, near the shoulder line (little forward reach), under the eyes by a shoulder's drop
     // (grip centres measure the arm's reach, not fingertip to fingertip)
     const float drop = -(r.y + l.y) * 0.5f;
@@ -188,8 +202,9 @@ public:
         ++samples_;
         progress = std::clamp(float((s.time - started_) / kHoldS), 0.0f, 1.0f);
         if (progress < 1.0f || samples_ < kMinSamples) return false;
-        measured_ = {float(heightSum_ / samples_), float(spanSum_ / samples_)};
-        if (!Valid(measured_)) { phase = Phase::Release; hint = Hint::Arms; progress = 0; return false; }
+        // seated: the span only (eyeHeight 0 = not measured - the stored one stays)
+        measured_ = {s.seated ? 0.0f : float(heightSum_ / samples_), float(spanSum_ / samples_)};
+        if (s.seated ? !ValidSpan(measured_.armSpan) : !Valid(measured_)) { phase = Phase::Release; hint = Hint::Arms; progress = 0; return false; }
         phase = Phase::Saving; hint = Hint::Pose;
         return true;
     }
@@ -217,6 +232,25 @@ struct ReleaseGate {
         return owned;
     }
 };
+
+// -- where the eyes stand: the F4 camera's height ----------------------------------------------------------------------
+
+// The camera puts the hero's bind-pose eyes at the height the player's eyes have standing, and moves from there with the head
+// (a crouch takes it down, at the world's scale). The recentre's head height was that height always - but a recentre is taken
+// wherever the head is at the moment (the session's first frame, F11, the runtime's own): seated, or with the headset still in
+// the hands, it is too low, and the player standing sees the hero's eyes as far under their own - the hero small, under them.
+// With a measurement, the standing eyes are known where the T-pose read them: the measured height over the floor. True when
+// that is in force: a floor seen in the space the eyes are in, and a measured eye height (0 = none: not used, not F4).
+// Played seated ([calibration] seated=1) never: the hero's eyes are where the head is at the recentre (F11, the runtime's, the
+// panel's Recentre view) - sit and recentre, and the view is back at his eyes; the crouch counts from there too.
+inline bool StandsOnFloor(bool floorKnown, float floorY, float measuredEye, bool seated = false) {
+    return !seated && floorKnown && std::isfinite(floorY) && ValidEyeHeight(measuredEye);
+}
+// The standing eyes' height in the space the eyes are in: the floor plus the measured eye height, else (seated, or nothing to
+// stand on) the recentre's.
+inline float StandingEyeY(float recentreY, bool floorKnown, float floorY, float measuredEye, bool seated = false) {
+    return StandsOnFloor(floorKnown, floorY, measuredEye, seated) ? floorY + measuredEye : recentreY;
+}
 
 // -- what the measurement does to the hero ---------------------------------------------------------------------------
 

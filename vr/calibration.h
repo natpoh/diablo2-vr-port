@@ -10,6 +10,9 @@
 //
 // [calibration] in d2r_vr.ini:
 //   use=0|1            D2R VR Settings: "Use the measured height and arm span"
+//   seated=0|1         how the game is played (D2R VR Settings > Body, the headset panel's Body page): 0 standing - the F4 camera's
+//                      standing height is the floor plus the measured eye height; 1 seated - the recentre's head height is the hero's
+//                      eyes, and a measurement reads the arm span only (the stored eye height stays). Live.
 //   measure=N          the Settings button adds one; a change (not the first value seen) starts the measurement
 //   version=1          a stored measurement; 0 = none ("Forget the measurement" in Settings)
 //   eye_height_m, arm_span_m   what was measured (written by the plugin, atomically, after a good T-pose)
@@ -39,6 +42,8 @@ bool Running();
 // What the mod uses: 0 = not (unticked, nothing measured, or not valid) - then the old numbers apply.
 float MeasuredEyeM();    // the eyes over the floor, standing, metres
 float MeasuredSpanM();   // grip to grip with the arms out, metres
+// [calibration] seated: played seated - the camera's standing height is the recentre's, a measurement reads the arm span only.
+bool Seated();
 
 // -- the measurement itself ---------------------------------------------------------------------------------------------
 
@@ -68,7 +73,8 @@ void RegisterInput();
 
 // -- the prompt: a panel in front of the face, drawn by xr.cpp --------------------------------------------------------
 
-constexpr int kPanelImages = 11;
+constexpr int kPanelMessages = 11;                    // one image per message, standing ...
+constexpr int kPanelImages = 2 * kPanelMessages;     // ... and the same seated (image + kPanelMessages: "sit upright", the arm span only)
 constexpr uint32_t kPanelW = 960, kPanelH = 440;   // pixels of one image
 constexpr uint32_t kTrackX = 60, kTrackY = 352, kTrackW = 840, kTrackH = 22;   // the progress bar's track in it
 constexpr float kPanelWidthM = 0.80f;               // how wide it hangs, metres

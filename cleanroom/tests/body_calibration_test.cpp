@@ -8,6 +8,11 @@
 // gate      ReleaseGate: the controls stay the measurement's until let go once (a cancel with the triggers down)
 // ranges    Valid(): the acceptance limits at their edges
 // arms      UnitsPerMetre / ArmScale / ScaleAbout against numbers worked out by hand
+// stand     StandingEyeY: the F4 camera's standing height - measured and standing up after a seated recentre, the hero's
+//           eyes are the player's (not "small under me"), in a STAGE space and a LOCAL one; no floor or no measurement: the
+//           recentre's, as before
+// seated    [calibration] seated=1: the arm span only (any space, any head height, eyeHeight 0 out), InForce (the stored eye
+//           height kept), StandingEyeY from the recentre ("recenter must set the hero's height", the author 2026-10-20)
 // ini       inipatch::Set: replace, keep a comment, add a key, add a section, keep CRLF
 
 #include "body_calibration.h"
@@ -380,6 +385,109 @@ void IniCases() {
           "ini: the three keys of a measurement");
 }
 
+// The F4 camera (vrcam VrViewInner, native): the hero's bind-pose eyes at the standing eyes' height, moved from there by the
+// head at `upm` world units a metre (his eyes in world units over the measured eye height). How tall his eyes look to the
+// player: his eyes' height over the game's ground over the camera's, times the player's own eye height now.
+float HeroEyesSeenM(float heroEyeUnits, float measuredEye, float headY, float standY) {
+    const float upm = heroEyeUnits / measuredEye;
+    const float camera = heroEyeUnits + (headY - standY) * upm;   // world units over his feet
+    return heroEyeUnits / camera * measuredEye;
+}
+
+void StandCases() {
+    // the author's numbers (2026-10-19): eye_height_m=1.6917, arm_span_m=1.5101 - measured standing in a STAGE space (the floor
+    // at 0); the session's recentre was taken seated, the head at 1.18 m
+    const float eye = 1.6917f, seatedRecentre = 1.18f, heroEye = 6.2f;
+    Check(Valid({eye, 1.5101f}), "stand: the author's measurement is valid");
+    Check(StandsOnFloor(true, 0.0f, eye), "stand: a floor and a measurement - the standing height is the measured one");
+    const float before = HeroEyesSeenM(heroEye, eye, eye, seatedRecentre);   // the old way: from the recentre's height
+    Check(before < 0.8f * eye, "stand: (the bug) from a seated recentre, the hero's eyes stood far under the player's - small, under them");
+    const float standY = StandingEyeY(seatedRecentre, true, 0.0f, eye);
+    Check(Near(standY, eye), "stand: STAGE - the floor plus the measured eye height");
+    Check(Near(HeroEyesSeenM(heroEye, eye, eye, standY), eye), "stand: standing upright the hero's eyes are the player's, whatever the recentre");
+    Check(Near(HeroEyesSeenM(heroEye, eye, eye, StandingEyeY(1.95f, true, 0.0f, eye)), eye), "stand: ... a recentre taken high (on tiptoe) too");
+    // a crouch: the camera goes down by as much as the head, at the world's scale - from the standing eyes, not from the recentre
+    Check(Near(eye - 0.40f - standY, -0.40f), "stand: a 40 cm crouch is 40 cm under the standing eyes (it was 11 cm over the seated recentre)");
+    // LOCAL (no STAGE for the eyes): the floor in that space as F3 has it (the eyes' middle less the head's STAGE height)
+    const float localFloor = -1.30f;
+    const float localStand = StandingEyeY(0.0f, true, localFloor, eye);
+    Check(Near(localStand, localFloor + eye), "stand: LOCAL - the floor there plus the measured eye height");
+    Check(Near(HeroEyesSeenM(heroEye, eye, localFloor + eye, localStand), eye), "stand: LOCAL - standing, the hero's eyes are the player's");
+    // nothing to stand on: as before
+    Check(!StandsOnFloor(false, 0.0f, eye) && StandingEyeY(seatedRecentre, false, 0.0f, eye) == seatedRecentre, "stand: no floor seen - the recentre's");
+    Check(!StandsOnFloor(true, 0.0f, 0.0f) && StandingEyeY(seatedRecentre, true, 0.0f, 0.0f) == seatedRecentre,
+          "stand: no measurement in use (unticked, another view) - the recentre's");
+    Check(StandingEyeY(seatedRecentre, true, 0.0f, 5.2f) == seatedRecentre, "stand: an eye height out of range - the recentre's");
+    Check(StandingEyeY(seatedRecentre, true, NAN, eye) == seatedRecentre, "stand: a floor not finite - the recentre's");
+}
+
+void SeatedCases() {
+    // the pose: no floor and no eye height asked for - a seated head in a LOCAL space (y 0 at the recentre) or 1.2 m over a STAGE floor
+    Sample s = TPose(1.20f);
+    s.seated = true;
+    Check(CheckPose(s) == Hint::Pose, "seated: a T-pose sitting, the head 1.2 m over the floor");
+    s.floor = false;
+    Check(CheckPose(s) == Hint::Pose, "seated: in a LOCAL space too (no floor needed)");
+    s = TPose(0.0f); s.seated = true; s.floor = false;
+    Check(CheckPose(s) == Hint::Pose, "seated: the head at y 0 (LOCAL, recentred there)");
+    s = TPose(0.6f); s.seated = true;
+    Check(CheckPose(s) == Hint::Pose && CheckPose(TPose(0.6f)) == Hint::Height, "seated: the head's height is not an eye height (standing: refused)");
+    s = TPose(1.20f, 0.36f); s.seated = true;
+    Check(CheckPose(s) == Hint::Arms, "seated: a span of 0.72 m is still refused");
+    s = TPose(1.20f, 1.40f); s.seated = true;
+    Check(CheckPose(s) == Hint::Arms, "seated: a span of 2.8 m is still refused");
+    s = TPose(0.95f, 0.80f);   // a short seated head with an adult's span: the ratio would refuse it standing
+    Check(CheckPose(s) == Hint::Arms, "seated: (standing) span / head 1.68 - refused as not a person");
+    s.seated = true;
+    Check(CheckPose(s) == Hint::Pose, "seated: no ratio to the head's height - accepted");
+    s = TPose(1.20f); s.seated = true; s.hand[kRight].z -= 0.40f;
+    Check(CheckPose(s) == Hint::Arms, "seated: the arms' pose is still checked (a hand ahead)");
+    s = TPose(1.20f); s.seated = true; s.headRot = AboutX(0.5f);
+    Check(CheckPose(s) == Hint::Upright, "seated: and the head upright");
+
+    // the flow: a capture is the span alone (eyeHeight 0 = not measured)
+    {
+        Flow flow;
+        flow.Begin();
+        bool captured = false;
+        const auto local = [](Sample& x) { x.seated = true; x.floor = false; x.head.y = 0.0f; x.hand[0].y = x.hand[1].y = -0.20f; };   // LOCAL: the head at 0
+        Run(flow, 0.2, [&](Sample& x, double) { local(x); });
+        Run(flow, 2.0, [&](Sample& x, double) { local(x); Both(x); }, &captured);
+        const Measurement m = flow.Get();
+        Check(captured && flow.phase == Phase::Saving, "seated: the flow captures in a LOCAL space");
+        Check(m.eyeHeight == 0.0f && Near(m.armSpan, 1.60f, 1e-3f), "seated: the arm span only, the eye height not measured");
+    }
+
+    // what is in force: standing both or nothing; seated the span, and a stored (standing) eye height with it
+    const Measurement author{1.6917f, 1.5101f};
+    Check(InForce(false, author).eyeHeight == author.eyeHeight && InForce(false, author).armSpan == author.armSpan, "seated: standing - both");
+    Check(InForce(true, author).eyeHeight == author.eyeHeight && InForce(true, author).armSpan == author.armSpan,
+          "seated: a standing measurement stored - its eye height is kept for the world's scale");
+    Check(InForce(true, {0.0f, 1.5101f}).eyeHeight == 0.0f && InForce(true, {0.0f, 1.5101f}).armSpan == 1.5101f,
+          "seated: only a span stored - the span, the eye height the old one (0: BodyWalk / user_height_m)");
+    Check(InForce(false, {0.0f, 1.5101f}).armSpan == 0.0f, "seated: only a span stored, played standing - nothing (measure standing)");
+    Check(InForce(true, {1.6917f, 0.5f}).armSpan == 0.0f && InForce(true, {1.6917f, 0.5f}).eyeHeight == 0.0f, "seated: a span not a person's - nothing");
+    Check(InForce(true, {1.0f, 2.0f}).armSpan == 2.0f && InForce(true, {1.0f, 2.0f}).eyeHeight == 0.0f,
+          "seated: an eye height that does not go with the span - the span alone");
+
+    // the camera: the recentre sets the standing height, whatever the floor and the measurement
+    const float eye = author.eyeHeight, heroEye = 6.2f, seatedHead = 1.18f;
+    Check(!StandsOnFloor(true, 0.0f, eye, true), "seated: never on the floor");
+    const float standY = StandingEyeY(seatedHead, true, 0.0f, eye, true);
+    Check(standY == seatedHead, "seated: the recentre's height (sitting) is the hero's eyes");
+    // (the hero's eyes seen from a camera under them look higher than the player's own: the view is in his middle)
+    Check(HeroEyesSeenM(heroEye, eye, seatedHead, StandingEyeY(seatedHead, true, 0.0f, eye, false)) > 1.2f * eye,
+          "seated: (the bug) sitting with the floor's standing height, the view is in the middle of the hero");
+    Check(Near(HeroEyesSeenM(heroEye, eye, seatedHead, standY), eye), "seated: sitting after the recentre, the camera is the hero's eyes");
+    // sat with the recentre taken standing (the session's first frame): a recentre seated lifts the view back to the eyes
+    const float before = StandingEyeY(eye, true, 0.0f, eye, true);
+    Check(HeroEyesSeenM(heroEye, eye, seatedHead, before) > 1.2f * eye, "seated: recentred standing, then sat - in his middle (until a recentre)");
+    Check(Near(HeroEyesSeenM(heroEye, eye, seatedHead, StandingEyeY(seatedHead, true, 0.0f, eye, true)), eye), "seated: recentre sitting - the hero's eyes again");
+    Check(StandingEyeY(-0.02f, false, 0.0f, 0.0f, true) == -0.02f, "seated: LOCAL, nothing measured - the recentre's too");
+    // standing is as it was
+    Check(StandingEyeY(seatedHead, true, 0.0f, eye, false) == StandingEyeY(seatedHead, true, 0.0f, eye), "seated: standing is the 4-argument call");
+}
+
 }  // namespace
 
 int main() {
@@ -389,6 +497,8 @@ int main() {
     GateCases();
     ArmCases();
     IniCases();
+    StandCases();
+    SeatedCases();
     std::printf("%d checks, %d failed\n", g_checks, g_failed);
     return g_failed ? 1 : 0;
 }

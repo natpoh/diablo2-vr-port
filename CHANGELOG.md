@@ -1,5 +1,107 @@
 # What's new in D2R VR
 
+## 0.174
+
+- **New, off by default: `[debug] flat_pick` - a log for "monsters cannot be targeted after a while" in flat first / third person** (a player: "aiming at
+  their feet is fine, but randomly monsters become impossible to target, sometimes in 3rd person too, fine in the normal camera"). With the mouse look on,
+  each mouse press logs what the game has under the crosshair (its own hover: a monster, an item, none), the pixel its mouse code last asked a ray for
+  against the middle of its picture, where that ray meets the hero's ground and how steeply, and the cursor, focus, Alt / Shift and menu state; once a
+  second it says when the game's pixel leaves the middle, it stops asking for a ray, or its window loses the keyboard. Read only, live; nothing the game
+  does changes. The diagnosis and the fixes it would decide between: docs/notes/flat_targeting.md. Unit test: cleanroom/tests/flat_pick_test.cpp
+  (vr/flat_pick.h).
+- **New: how you play, standing or seated** (the author, after the fix below: "if I play seated, the recenter button must set
+  the hero's height. Say I calibrated the body standing, then sat down: now I look from the middle of the hero, not from his
+  head, and recenter does not lift the view either - it stays crouched"; native OpenXR, VR first person F4). D2R VR Authentic
+  Settings > Body > *How you play* (next to the measurement) and the headset settings' Body page (its new top row,
+  *Standing* / *Seated*), `[calibration] seated`, *Standing* by default, live. *Standing*: exactly as below - the hero's eyes
+  at the floor plus your measured eye height; a recenter sets straight ahead and where you stand, not the height (a recenter
+  taken crouched leaves the standing height where it is). *Seated*: the hero's eyes are where your head is when you recenter
+  (F11, the headset's own recenter, the panel's *Recentre view*) - sit, recenter, and you look from his eyes again; the crouch
+  ([body] crouch) counts its drop from there, so leaning forward in the chair is no crouch until it passes *Crouch: head lower
+  than this* (20 cm). *Calibrate body* / *Measure...* seated reads only the span between your hands: no floor needed, the
+  head's height not read (sit upright, arms out, the same triggers); it writes `arm_span_m` alone and keeps the `eye_height_m`
+  a standing measurement stored, which stays the world's scale (none stored: *My height* / BodyWalk's Body Height, as
+  unmeasured); the arms are fitted to the new span as before. The prompt in the headset says so ("Seated: measure my arm
+  span"). Played standing again with only a span stored: nothing measured in use until you measure standing. The log says
+  which ("calibration - played seated", "standing height: played seated"). Unit tests: cleanroom/tests/body_calibration_test.cpp
+  (*seated*), crouch_test.cpp (*play seated*, *recentre crouched*), calibration_test.cpp (Windows), tools/hset_test.cpp (the
+  Body page's row). Not yet seen in the headset.
+- **Fixed: after measuring your height standing, the hero was small, under you** (the author: "when I stand up and press
+  calibrate, the character ends up small under me"; native OpenXR, VR first person F4). The camera puts the hero's bind-pose
+  eyes at the height your eyes have standing, and moves from there with your head. That standing height was always your
+  head's height at the last recenter - and a recenter is taken wherever the head is at that moment: the session's first frame,
+  F11, the runtime's own. Recentred seated (1.18 m) and measured standing (1.69 m), the camera stood 51 cm over the hero's
+  eyes at his scale: the hero looked about three quarters of your size, under you. The measurement itself was right (the eye
+  height over the STAGE floor, the world's scale from it); only the camera's zero did not use it. Now, with *Use the measured
+  height and arm span* (`[calibration] use=1`) and the headset's floor, the standing height is the floor plus your measured
+  eye height - the same floor and the same head the T-pose read - so standing upright you look from the hero's eyes whatever
+  height a recenter was taken at, and a recenter only sets straight ahead and where you stand. Without a measurement, or with
+  no STAGE floor, or for a frame with no place for the head: the recenter's height, as before. The log says which
+  ("openxr - standing height: ..."). bearstonem/d2r-pcvr re-zeroes its camera at the head where the T-pose was taken (and has
+  a "reset eye height" action); here it is the measured height over the floor, which a later recenter does not undo. Nothing
+  tuned by hand: the hero's eyes, your measured eyes and the floor. Unit tests: cleanroom/tests/body_calibration_test.cpp
+  (*stand*, with the author's numbers), calibration_test.cpp. To play seated: *How you play: Seated*, below.
+- **The hero crouches when you crouch, back, from d2r-pcvr** (bearstonem, MIT; VR first person F4 only; its own tick -
+  Settings > Body > "Hero crouches when you crouch (F4)", `[body] crouch`, off by default). Taken out of the release after
+  the author's test, where crouching did nothing: the crouch was counted from the head's height at the last recenter, the
+  same zero as above - recentred seated or at the session's start, a crouch from standing hardly got under it. It now counts
+  from the standing height above: your measured eye height over the floor (else the recenter's, so recenter standing).
+  Crouch in your room and the camera already went down with your head; now the hero's body goes down as far, his knees bent
+  again - thigh and shin at their own lengths - and his feet kept where the game's animation puts them, so looking down you
+  see your crouched legs, not your chest in your face. How deep is the camera's own drop at the camera's own scale (the
+  hero's bind-pose eyes over your measured or set eye height), no deeper than his legs fold: nothing tuned by hand. A dip
+  of less than *Crouch: head lower than this, cm* (`crouch_cm`, 20) below your standing height leaves him standing; he
+  stands up again once the head is back within half of it, eased in and out, and stands if the head's height is lost for a
+  quarter second. Only the drawn bones: where he stands, his hit box, his walking and every game state stay the game's. The
+  legs are found in each rig by its own bones (a foot or ankle under a knee and a hip), d2r-pcvr's way. Unticked, and in
+  F1, F2, F3 and the flat views: exactly as before. Unit test: cleanroom/tests/crouch_test.cpp (*standing*: the headset's
+  case); not yet seen in the headset again.
+- **Fixed: the bow's energy orbs shone through what is in front of them** (the author, in the headset: the quiver orbs, VR first person F4, were drawn over things nearer
+  than them). They now take the game's depth the way the wrist medallions do: through the ball, the ray's own way into it is set against where the game's picture has its
+  surface - nothing of the ball where the scene is nearer than its front, and a surface sunk into it hides the part behind it - and the halo beside it by the ball's middle,
+  with the medallions' soft edge. The orb the free hand is at is no longer drawn over the hand (it was, at three quarters, and the orbs the hand neared at a part of that):
+  fingers in front of it hide it, the ball round them shows. The effect only (reshade/D2R_DepthFog.fx, the QUIVER-ORBS block); no new key. Copy the new effect in.
+- **New, on by default: the arrow's fire goes out at the release** (the author: "the flame on the nocked arrow does not disappear at once when the arrow is released"). With an
+  elemental arrow skill the fire, the frost or the arcane light that the effect draws on the bow's own arrow ([bow] arrow_fx) stayed on the arrow in the hand until the game hid
+  that arrow, a moment after the shot. It now goes out at the release that shoots, or a delay after it the player sets, and lights again on the next arrow: a new draw, the game
+  showing an arrow again after the shot, another skill chosen. D2R VR Authentic Settings > Bow > *Arrow effects: out at the release* (`[bow] arrow_fire_cut=1`) and *... after, ms*
+  (`[bow] arrow_fire_cut_ms`, 0 = at the release, up to 2000; a new draw or the next arrow before then drops it). Only our own light on the arrow: the game's missile, its
+  effects and its damage are the game's, untouched. Off: as before. F4 only, live. Unit test: cleanroom/tests/arrow_fire_cut_test.cpp (vr/arrow_fire_cut.h).
+- **Fixed: the map no longer came into the hand after a change of the window or render size** (a player, native OpenXR, `[hud] map=1`: "once I
+  change Stereo > Square window size, px, the map stops working", with Home > Resolution (VR render size) on the window's size, "until you
+  reinstall the mod using default settings"). The map is taken out of the picture by the game's scissor box for it, looked for in a top corner of
+  the interface area. That area was worked out from the Safe Screen Percent in Settings.json, read once when the plugin starts, against the size of
+  the interface's texture. The box had to be within 7 % of the picture's height of that corner, with its side the safe margin in from the
+  picture's edge. With the picture the window's size, at any size other than the shipped 1536 square, the area could be somewhere else: a file
+  number that is not the game's (no key or none yet read as the whole picture, a size changed while the game runs), a texture bigger than the
+  viewport the game draws through, or a box at the picture's very edge (a wide window). Then nothing was cut and the orb stayed empty. A reinstall
+  brought it back only because the default ini has the render size at a 1536 square again. Now the area comes from the game's OWN interface
+  scale (asked every quarter second; the area is 2160 of its units tall), in the viewport the interface is drawn through. The file's number is
+  only a second guess, and the box's side may be anywhere from the picture's edge to the area's side. Nothing in the test is measured in pixels,
+  so a window, render size or interface size of any kind works, and a size put back works at once. The box's size and top are tested as before
+  (fractions of the picture). No new key. The log says where the box was found ("hud: the map's box ... canvas ...; interface area ... by the
+  game's scale, ... by Settings.json"). After ten seconds with no box, it says which boxes the game drew instead ("hud: no map box ...": the map
+  off in the game with Tab, or not where it is looked for). Not tried in the game yet. Unit test: cleanroom/tests/minimap_box_test.cpp
+  (vr/minimap_box.h; 1920x1920, 2400x2400, 1353x831 and 2560x1440 at interface sizes 80 and 100, both corners).
+- **New, on by default: the game's sounds turn with your view** ([audio] head_follow, listener_turn; D2R VR Authentic Settings > Camera > Sound). Monsters, NPCs
+  and streams are heard from where they are around you as you turn the head, the stick or the mouse - stock D2R pans by the flat camera's screen only, so in VR
+  a monster you turned away from still sounded where the flat camera had it. Music, ambience, the interface and the hero's own sounds stay in the middle. Two
+  FMOD hooks from bearstonem/d2r-pcvr v0.3.21 (MIT, contributed there by ChuckRibbits): a voice's screen offset becomes a direction on the ground at its own
+  distance (the game's loudness and falloff), and the listener is turned along the view every 10 ms. Stereo only; with Windows' Mono audio on the log says so.
+  The listener hook has to be in when the game sets its sound up, at the start: ticked while the game runs, the turn needs the game started again. On another
+  game build nothing is hooked and the log says so. Not tried in the game yet. Unit test: cleanroom/tests/spatial_audio_test.cpp (vr/spatial_audio.h).
+- **New, off by default, a test: item labels down to the bottom of the picture** ([hud] labels_whole_eye; Settings > UI: F4 body > Item labels on the ground; every
+  view). The game drops a label whose bottom passes its interface's height; bearstonem/d2r-pcvr v0.3.23 found that where the interface is smaller than the
+  picture (his native VR's widescreen band of a square eye) items low in the view - the one you look down at - had no name, with Show Items held too, and gives
+  that one check the whole picture's height. Ours lays the interface over the whole picture ([render] vr_resolution_ui), so we may not have the problem: to be
+  tried with and without the tick (Safe Screen, a square render size). The log says "item labels kept down to the picture's bottom" the first time it changes
+  anything. Unit test: cleanroom/tests/label_area_test.cpp (vr/label_area.h).
+- **On in the settings that come with the mod** (the author's own, as he plays): the hero crouches when you crouch (from 5 cm down),
+  Whirlwind armed by its button, the javelin's hit-by-touch tuning, and the sound turned with your view without the listener's own turn
+  ([audio] listener_turn 0). Each is still its own tick in D2R VR Authentic Settings; an update that keeps your settings file changes none of them.
+- **D2R VR Launcher 0.3.5** comes with this Setup (bearstonem's review): "System default" really is the system's OpenXR runtime (an inherited
+  XR_RUNTIME_JSON is cleared), Unleashed's own install text, and a Discord link on each mod's card.
+
 ## 0.173
 
 - **The map in the hand with the game's map in the middle** (a player: native OpenXR drew the map across the view, no map in the hand). The map comes into the
