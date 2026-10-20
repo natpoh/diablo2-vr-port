@@ -659,19 +659,26 @@ in full in a square window); the log tells the size the game draws at.
   the hands start where the game's draw animation has the hooked fingers, not at
   the middle of the palm (the Amazon's right hand; sliders move that point).
   *Quiver: pick the arrow of the next shot* (`[bow] quiver`; on in the settings that
-  come with the mod): with the string drawn, B picks the next arrow skill and A the
-  previous (`[direct] quiver_next` / `quiver_prev`) - only skills the hero has learned;
-  *Quiver: energy orbs along the bow* (the same): an orb on the stave for the plain shot
-  and one for each learned bow skill, the free hand's trigger at an orb picks it; *Arrow
-  effects: fire, frost and arcane light on the arrow* (on), by the chosen skill; *no mana for
-  the chosen arrow - shoot the plain arrow* (on), and the effect goes out while the mana
+  come with the mod): the arrow skill is ARMED, as an armed melee skill is - the quiver's
+  own choice, never written into the game's skill slots or onto the attack button A. Each
+  release of the bow's string is then that skill (the game's own
+  cast, mana and cooldown); with no bow or crossbow in hand it does nothing to any attack.
+  With the string drawn, B arms the next arrow skill and A the previous (`[direct]
+  quiver_next` / `quiver_prev`; past the last: the plain shot, disarmed) - only skills the
+  hero has; *Quiver: energy orbs along the bow* (the same): an orb on the stave for the plain
+  shot and one for each learned bow skill, the free hand's trigger at an orb arms it, the
+  armed one's orb again (or the plain shot's) disarms. A bow skill the quiver of 0.174 and
+  before left on the A slot is given back as the plain attack. *Arrow
+  effects: fire, frost and arcane light on the arrow* (on), by the armed skill; *no mana for
+  the armed arrow - shoot the plain arrow* (on), and the effect goes out while the mana
   is short; *Arrow effects: out at the release* (on, `[bow] arrow_fire_cut`) puts the effect out
   when the shot goes, not when the game hides the arrow in the hand, with *... after, ms*
   (`arrow_fire_cut_ms`, 0 = at the release, up to 2000) for a moment of it on the shot
   arrow - it lights again on the next arrow; *Quiver: show the chosen arrow skill in the mana medallion* (on, `[bow] quiver_icon`):
-  the chosen skill's icon lies in the mana medallion on the wrist like an armed melee skill's
-  (full while the hero can pay the shot, faint when not; the plain arrow: none), sized and placed
-  by the *Skill icon in the mana* sliders on the Strikes tab. The crossbow has no quiver.
+  the armed skill's icon lies in the mana medallion on the wrist like an armed melee skill's
+  (full while the hero can pay the shot, faint when not; nothing armed: none), sized and placed
+  by the *Skill icon in the mana* sliders on the Strikes tab. The crossbow has no quiver and no
+  draw: its shots stay the game's plain attack.
   *Quick release* (experimental): moves the game's arrow-making
   frame of the hero's bow attack earlier (frame 2 by default) - the arrow, its
   damage and its mana come about 0.2 s sooner inside the same attack; the

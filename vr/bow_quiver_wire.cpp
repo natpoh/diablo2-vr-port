@@ -1,24 +1,28 @@
-// bow_quiver_wire.cpp - [bow] quiver: pick the arrow (the bolt) of the next shot from the quiver.
+// bow_quiver_wire.cpp - [bow] quiver: arm the bow skill of the next shots from the quiver.
 //
-// Two ways, one choice, both for a bow. With the string drawn, a button of the string hand ([direct] quiver_next / quiver_prev) loads the next / the previous bow skill.
-// With the string not drawn, an orb on the bow's stave ([bow] quiver_orbs, below) taken with the free hand's trigger picks that skill. (The reach behind a shoulder, where the quiver
-// hung, with its trigger and A / X, for a bow and a crossbow, is gone: the shoulders are the shoulder swap's and the draw from the shoulder's.)
+// Two ways, one choice, both for a bow. With the string drawn, a button of the string hand ([direct] quiver_next / quiver_prev) arms the next / the previous bow skill (onto the
+// plain shot: disarmed). With the string not drawn, an orb on the bow's stave ([bow] quiver_orbs, below) taken with the free hand's trigger arms that skill; the armed one's orb again,
+// or the plain shot's, disarms. (The reach behind a shoulder, where the quiver hung, is gone: the shoulders are the shoulder swap's and the draw from the shoulder's.)
 //
-// Choosing a skill is the game's own business, done the way a thumb does it with the skill panel: the game's current skill on the slot the shot presses is set through the
-// game's own setter - the one the skill wheel and the tiles use (vr/wheel_game.cpp, with its read-back and refusals). The bow's slot is the one the draw's release presses
-// (bow_draw_button; the attack = the controller's A slot). Nothing here shoots, casts or calls the server: the shot is the game's own attack path - mana, arrows, attack rate,
-// line of sight. Only the hero's learned bow skills (level above 0 from points or from an item - the list the skill panel offers) are offered.
+// The choice is OURS, as [gameplay] melee_skill_armed's is (vr/melee_arm_game.cpp): the armed skill is kept here and shown in the mana medallion ([bow] quiver_icon); nothing is written
+// into the game's skill slots, the pad's slots or the attack button A. Each release of the string with a bow or a crossbow in hand (OnRelease, before its button goes down) is decided here
+// - the armed skill, or the plain arrow when the hero cannot pay it ([bow] quiver_plain_no_mana) - and the game's two reads of the attack slot for that press are answered with it by
+// vrcam's slot-skill hook (ShotSkill), the one the armed melee skill uses: the game's own cast, mana, cooldown, arrows, line of sight. With no bow or crossbow in hand the armed skill does
+// nothing. Nothing here shoots, casts or calls the server.
 //
-// The look: with [bow] arrow_fx the arrow burns, freezes or crackles by the skill that is chosen (vr/bow_quiver.h Element; the effect's ARROWFX block draws it - fire for Fire / Exploding /
-// Immolation, frost for Cold / Ice / Freezing, arcane for Magic Arrow): nocked at rest from the moment the skill is chosen (loaded by an orb or a button, or the one the game's slot
-// holds), and through the draw. The plain shot has none. A skill with no element of its own, and every skill with the setting off, gets the plain glow of its colour (vr/bow_quiver.h
-// AddGlow) at the arrow's head while the string is drawn. A cue only. The idea is bearstonem/d2r-pcvr's quiver preview (MIT), drawn our own way.
+// The one write left (bowquiver::Cleanup): until 0.174 the quiver set its arrow skills on the A slot through the game's setter, and the game keeps that slot in the save - with a sword
+// in hand every attack was a cast the game refused ("presses=9 hits=0"). With the quiver on, a bow skill on A is given back as the plain attack at a hero's load and whenever no bow or
+// crossbow is in hand, through the same setter (the skill wheel's, vr/wheel_game.cpp, with its read-back and refusals).
+//
+// The look: with [bow] arrow_fx the arrow burns, freezes or crackles by the skill that is armed (vr/bow_quiver.h Element; the effect's ARROWFX block draws it - fire for Fire / Exploding /
+// Immolation, frost for Cold / Ice / Freezing, arcane for Magic Arrow): nocked at rest from the moment the skill is armed, and through the draw. The plain shot has none. A skill with no
+// element of its own, and every skill with the setting off, gets the plain glow of its colour (vr/bow_quiver.h AddGlow) at the arrow's head while the string is drawn. A cue only. The idea
+// is bearstonem/d2r-pcvr's quiver preview (MIT), drawn our own way.
 //
 // [bow] quiver_orbs: with a bow in hand, a row of energy orbs hangs along its stave (vr/bow_orbs.h; the stave is read off the bow's own bones, skel::BowStave), one for the plain
-// shot and one for every bow skill the hero has; the skill the slot holds stands out. The free hand's TRIGGER on an orb picks that skill ([bow] quiver_orb_trigger; off: the grip, as
-// it was) - the same request as a step of the quiver (bowquiver::Machine::Pick), the game's own setter, never a server call. Inside an orb's reach the trigger is the orb's (it does
-// not start the draw and does not reach the game) and the grip does nothing; the draw does not take the string there (bowdrawwire::SetStartBlock); anywhere else the trigger and the
-// string are what they always were.
+// shot and one for every bow skill the hero has; the armed one stands out. The free hand's TRIGGER on an orb arms that skill ([bow] quiver_orb_trigger; off: the grip, as it was).
+// Inside an orb's reach the trigger is the orb's (it does not start the draw and does not reach the game) and the grip does nothing; the draw does not take the string there
+// (bowdrawwire::SetStartBlock); anywhere else the trigger and the string are what they always were.
 //
 // Idea: bearstonem/d2r-pcvr (MIT), v0.3.17 - his quiver button loads a skill arrow into the nocked arrow while the bow is drawn, and the shot calls the skill directly. This is
 // written afresh and keeps the game's own path.
@@ -47,6 +51,7 @@
 #include "direct_input.h"
 #include "bow_mana.h"
 #include "hand_vitals_game.h"
+#include "melee_arm.h"   // InFlight: the release's skill, answered to the attack slot's reads while the press is young (the armed melee skill's)
 #if D2RVR_FIRST_PERSON
 #include "skeletons.h"   // skel::BowStave: the bow's stave off its own bones
 #endif
@@ -55,7 +60,7 @@
 #include "wheel_game.h"
 #include "wheel_types.h"
 
-namespace gamestate { uint32_t WeaponClass(); bool MenuOpen(); }
+namespace gamestate { uint32_t WeaponClass(); bool MenuOpen(); uint64_t LocalPlayer(); }
 
 namespace bowquiverwire {
 namespace {
@@ -90,15 +95,23 @@ struct FxState {
     bowquiver::ArrowFx fx;
     ULONGLONG at = 0;
 } g_fxState;
-std::atomic<bool> g_fxMana{true};                        // [bow] arrow_fx_needs_mana: the arrow's effect goes out while the hero cannot pay the chosen skill
-std::atomic<bool> g_noMana{false}, g_plainHook{false};   // [bow] quiver_plain_no_mana; vrcam's slot-skill hook is in
-std::atomic<bool> g_icon{true};                          // [bow] quiver_icon: the chosen arrow skill's icon in the mana medallion
-std::atomic<int> g_iconSkill{-1};                        // ... the skill (-1 none: the plain shot, nothing chosen, the tick off)
-std::atomic<bool> g_iconReady{false};                    // ... the hero can pay it (the release's own check)
-std::atomic<ULONGLONG> g_iconAt{0};                      // ... the frame that said so (stale: no bow in hand, another view)
-std::atomic<int> g_shortSkill{-1}, g_armedSkill{-1};     // the arrow skill the hero cannot pay now (while the string is drawn) / the one the release was turned into the plain attack for
-std::atomic<ULONGLONG> g_shortAt{0}, g_armedAt{0}, g_lastPressAt{0};
-std::atomic<float> g_shortNeed{0.0f}, g_shortHave{0.0f}, g_costPts{0.0f}, g_lastCostPts{0.0f};
+std::atomic<bool> g_fxMana{true};                        // [bow] arrow_fx_needs_mana: the arrow's effect goes out while the hero cannot pay the armed skill
+std::atomic<bool> g_noMana{true}, g_hook{false};         // [bow] quiver_plain_no_mana; vrcam's slot-skill hook is in
+std::atomic<bool> g_icon{true};                          // [bow] quiver_icon: the armed arrow skill's icon in the mana medallion
+std::atomic<int> g_iconSkill{-1};                        // ... the skill (-1 none: nothing armed, the tick off)
+std::atomic<bool> g_iconReady{false};                    // ... the hero can pay it (the release's own decision)
+std::atomic<ULONGLONG> g_iconAt{0};                      // ... the frame that said so (stale: no bow or crossbow in hand, another view)
+std::atomic<int> g_armed{-1};                            // the armed bow skill (-1 none), mirrored from the frame's thread
+std::atomic<bool> g_cleanWants{false};                   // bowquiver::Cleanup wants the wheel's reads
+// The release's decision, every frame with a bow or a crossbow in hand (bowquiver::DecideShot): OnRelease takes the newest.
+std::atomic<int> g_decSkill{0}, g_decWhy{0}, g_decLevel{-1};
+std::atomic<float> g_decCost{-1.0f}, g_decMana{-1.0f};
+std::atomic<bool> g_decGuessed{false};
+std::atomic<ULONGLONG> g_decAt{0};
+std::atomic<ULONGLONG> g_lastPressAt{0};                 // our last armed shot that took mana (it is not in the read at once) ...
+std::atomic<float> g_lastCostPts{0.0f};                  // ... and what it took
+SRWLOCK g_flightLock = SRWLOCK_INIT;
+meleearm::InFlight g_flight;                             // the release's skill, for the game's two reads of the attack slot
 std::atomic<bool> g_arrowFx{false}, g_fxLacks{false};   // [bow] arrow_fx; the effect file has no ARROWFX uniforms
 std::atomic<float> g_fxSize{1.0f}, g_fxBright{1.0f};     // the sliders, as factors
 std::atomic<float> g_fxAlong{0.0f};                      // [bow] arrow_fx_along_cm: the effect's centre moved along the shaft, metres (forward +)
@@ -173,14 +186,25 @@ void OnDrawHook(const bowdrawwire::DrawInfo& ds, const directinput::Frame& f) {
     g_drawCounter = f.counter;
 }
 
+// The hero's mana in points now (negative: not read): the latest read, less what our last armed shot took if the read has not caught up.
+float ManaNow(ULONGLONG now) {
+    handvitals::Vitals v;
+    double age = 1e9;
+    if (!handvitals::game::Latest(&v, &age) || !v.known || age >= 3000.0) return -1.0f;
+    const ULONGLONG pressed = g_lastPressAt.load();
+    return bowmana::Estimate(v.mana, age, pressed ? (double)(now - pressed) : -1.0, g_lastCostPts.load());
+}
+
 void OnFrame(const directinput::Frame& f, void*) {
     static bowquiver::Machine machine;
+    static bowquiver::Cleanup cleanup;
     static wheel::Snapshot snap;   // (12 KB: not on the stack)
     static uint32_t rev = 0, session = 0;
     static bool wasLive = false;
+    static uint64_t heroWas = 0;
     static int told = 0;
     static int srcHand[2] = {-1, -1};   // the hand that last pressed "next" / "previous" (for the buzz)
-    static double changeAt = -1e9;      // the frame time of the last load
+    static double changeAt = -1e9;      // the frame time of the last arming
     static boworbs::Layout layout;      // [bow] quiver_orbs
     static boworbs::Grab grab;
     static double drawEndedAt = -1e9;
@@ -189,10 +213,87 @@ void OnFrame(const directinput::Frame& f, void*) {
     static double nearTold = -1e9;
     static int nearLines = 0;
 
-    const bool bow = gamestate::WeaponClass() == D2RVR_WEAPON_BOW;
+    const ULONGLONG nowMs = GetTickCount64();
+    const uint32_t wc = gamestate::WeaponClass();
+    const bool bow = wc == D2RVR_WEAPON_BOW;
+    const bool ranged = bow || wc == D2RVR_WEAPON_CROSSBOW;
+    const bool on = g_on.load();
+    const bool have = wheelgame::Latest(&snap, &rev);
+    const wheel::Snapshot* sp = have ? &snap : nullptr;
+    const uint64_t hero = gamestate::LocalPlayer();
+
+    {   // the old quiver's arrow skill on the A slot: given back as the plain attack (bowquiver::Cleanup - the one write the quiver still makes)
+        bowquiver::CleanIn ci;
+        ci.on = on;
+        ci.ranged = ranged;
+        ci.hero = hero;
+        ci.t = f.time;
+        ci.snap = sp;
+        ci.fresh = have && wheel::Fresh(snap, nowMs, directinput::Session());
+        ci.reply = wheelgame::ReplyNow();
+        const bowquiver::CleanOut co = cleanup.Step(ci);
+        g_cleanWants.store(cleanup.Wants());
+        if (co.submit) wheelgame::Submit(co.req);
+        char b[320];
+        switch (co.event) {
+            case bowquiver::CleanEvent::Asked:
+                snprintf(b, sizeof b, "vrcam: bow quiver - the A (attack) slot holds %s (%d), left there by the old quiver or the skill panel; %s - the game is asked to put the plain attack back",
+                         NameOf(sp, co.was), co.was.id, ranged ? "the hero's load" : "no bow or crossbow in hand");
+                Log(b);
+                break;
+            case bowquiver::CleanEvent::Done:
+                snprintf(b, sizeof b, "vrcam: bow quiver - the A slot holds the plain attack again (it held %s): every attack is the game's own, the quiver arms its skills only for the bow's shot", NameOf(sp, co.was));
+                Log(b);
+                break;
+            case bowquiver::CleanEvent::Refused:
+                snprintf(b, sizeof b, "vrcam: bow quiver - the game did not take the plain attack back on the A slot (it holds %s; the slot or the weapon set changed meanwhile) - tried again", NameOf(sp, co.was));
+                Log(b);
+                break;
+            case bowquiver::CleanEvent::GaveUp:
+                snprintf(b, sizeof b, "vrcam: bow quiver - the A slot still holds %s after %d tries: put the plain attack back on A with the skill panel (with no bow in hand the attack is read as the plain attack meanwhile)",
+                         NameOf(sp, co.was), bowquiver::Cleanup::kMaxTries);
+                Log(b);
+                break;
+            default: break;
+        }
+    }
+
+    if (!on || hero != heroWas) {   // unticked, another hero or game: nothing armed
+        if (heroWas && hero != heroWas && machine.Armed().id >= 0) Log("vrcam: bow quiver - another game or hero: nothing armed");
+        heroWas = hero;
+        machine.Clear();
+        g_armed.store(-1);
+    }
     const bool f4 = viewgate::F4() && (f.flags & directinput::kOtherView) == 0;
-    if (!g_on.load() || !f4 || !bow) {
-        if (wasLive) {   // unticked, another view or another weapon: nothing is held, the glow goes
+    const bowquiver::Entry armedNow = machine.Armed();
+
+    // The release's decision, every frame with a bow or a crossbow in hand (bowquiver::DecideShot: the armed skill's cost at the hero's level against his mana, bow_mana.h): OnRelease takes the
+    // newest. The icon and [bow] arrow_fx_needs_mana show the same decision. The mana is the newest read, less what our own last shot took if that is not in it yet.
+    bowquiver::Shot dec;
+    if (on && f4 && ranged) {
+        g_slotsAt.store(nowMs);   // (the hero's skills and their levels: the wheel's reads)
+        float mana = -1.0f;
+        int32_t level = -1;
+        if (armedNow.id >= 0) {
+            handvitals::game::Tick(true);   // (the hero's mana, five times a second, on the game's UI thread)
+            mana = ManaNow(nowMs);
+            level = bowquiver::LevelOf(sp, armedNow);
+        }
+        dec = bowquiver::DecideShot(armedNow.id, true, level, mana, g_noMana.load());
+        g_decSkill.store(dec.skill);
+        g_decWhy.store((int)dec.why);
+        g_decLevel.store(level);
+        g_decCost.store(dec.cost);
+        g_decMana.store(mana);
+        g_decGuessed.store(dec.levelGuessed);
+        g_decAt.store(nowMs);
+        g_iconSkill.store(g_icon.load() && armedNow.id >= 0 ? armedNow.id : -1);   // [bow] quiver_icon (vr/armed_icon.h; vrcam's effect thread reads it, ChosenIcon)
+        g_iconReady.store(dec.canPay);
+        g_iconAt.store(nowMs);
+    }
+
+    if (!on || !f4 || !bow) {
+        if (wasLive) {   // unticked, another view or another weapon: nothing is held, the glow goes (the armed skill stays: it waits for the bow)
             machine.Forget();
             grab.Reset();
             SetGlow(false, {});
@@ -202,17 +303,15 @@ void OnFrame(const directinput::Frame& f, void*) {
         }
         return;
     }
-    if (!wasLive || f.session != session) {   // a new native session forgets everything
+    if (!wasLive || f.session != session) {   // a new native session forgets the controls' edges and the grab
         session = f.session;
         machine.Forget();
         grab.Reset();
     }
     wasLive = true;
-    const ULONGLONG nowMs = GetTickCount64();
     const bool focused = (f.flags & directinput::kFocused) != 0;
     const bool menu = (f.flags & (directinput::kInMenu | directinput::kUiUp)) != 0 || gamestate::MenuOpen();
     const bool allowed = focused && !menu;
-    if (allowed) g_slotsAt.store(nowMs);
     const float yaw = f.head.valid == 1 ? bowdraw::HeadYaw(Q(f.head.rot)) : 0.0f;
     const bowdraw::Vec head = V(f.head.pos);
 
@@ -220,12 +319,11 @@ void OnFrame(const directinput::Frame& f, void*) {
     const int holdX = holdVr ? 0 : 1;                       // direct_input's: 0 left, 1 right
     const bowdrawwire::DrawInfo ds = g_drawCounter == f.counter ? g_draw : bowdrawwire::DrawInfo{};
     const bool drawing = allowed && ds.active && ds.drawing;
-    const int slot = bowquiver::SlotOfButton(ds.active ? ds.button : 0);   // (no draw: the attack, the A slot)
 
     // the two controls of the draw: a button of the string hand, live while the string is drawn
     quiverin::Control c[2] = {Unpack(g_ctl[0].load()), Unpack(g_ctl[1].load())};
     bool set[2] = {c[0].Set(), c[1].Set()}, down[2] = {false, false};
-    if (set[0] && set[1] && c[0].Hand(holdX) == c[1].Hand(holdX) && c[0].mask == c[1].mask) set[1] = false;   // the same control twice: it loads the next
+    if (set[0] && set[1] && c[0].Hand(holdX) == c[1].Hand(holdX) && c[0].mask == c[1].mask) set[1] = false;   // the same control twice: it arms the next
     for (int i = 0; i < 2; ++i) {
         const int h = set[i] ? c[i].Hand(holdX) : -1;
         down[i] = drawing && h >= 0 && h < 2 && (f.hand[h].buttons & c[i].mask) != 0;
@@ -234,114 +332,34 @@ void OnFrame(const directinput::Frame& f, void*) {
 
     if (drawing) g_drawAt.store(nowMs);
 
-    const bool have = wheelgame::Latest(&snap, &rev);
     bowquiver::In in;
     in.t = f.time;
     in.allowed = allowed;
     in.drawing = drawing;
-    in.snap = have ? &snap : nullptr;
-    in.now = nowMs;
-    in.session = directinput::Session();
-    in.slot = slot;
-    in.reply = wheelgame::ReplyNow();
+    in.snap = sp;
     bowquiver::Out o = machine.Step(in, set, down);
 
-    // What the game does with the shot's skill, said in the log so that a plain shot where a skill was chosen can be told from what the plugin did: the plugin only ever presses the game's
-    // own attack (the pad's A) and asks the game's setter for a skill on the A slot - it never picks the plain attack by itself. So at every release the skill on the slot and the hero's mana
-    // are written down, and a change of that slot that the quiver did not ask for (the game putting the attack back, the skill panel, the wheel) is told when it is seen.
-    {
-        static int slotWas = -2, slotIdxWas = -1;
-        static ULONGLONG askedAt = 0;
-        static bool drawingWas = false;
-        const bool slotRead = have && snap.ready && in.slot >= 0 && in.slot < wheel::kSlotCount && snap.slot[in.slot].known;
-        if (o.submit) askedAt = nowMs;
-        if (slotRead) {
-            handvitals::game::Tick(true);   // (the hero's mana, five times a second, on the game's UI thread)
-            const bowquiver::Entry now{snap.slot[in.slot].id, snap.slot[in.slot].owner};
-            char vit[64] = "mana not read";
-            handvitals::Vitals v;
-            double age = 1e9;
-            if (handvitals::game::Latest(&v, &age) && v.known && age < 3000.0) snprintf(vit, sizeof vit, "mana %.0f of %.0f", v.mana, v.maxMana);
-            char b[300];
-            if (slotWas != -2 && slotIdxWas == in.slot && now.id != slotWas && nowMs - askedAt > 3000 && !machine.Believed(in.t)) {
-                snprintf(b, sizeof b, "vrcam: bow quiver - the %s slot now holds %s (%d), it held skill %d, and the quiver did not ask for it (the game itself, the skill panel or the wheel); %s",
-                         wheel::kSlotDefs[in.slot].label, NameOf(&snap, now), now.id, slotWas, vit);
-                Log(b);
-            }
-            slotWas = now.id;
-            slotIdxWas = in.slot;
-            if (drawingWas && !drawing && bowquiver::FindArrow(now.id)) {   // the string let go with an arrow skill chosen: a shot, or a draw that ended with none
-                snprintf(b, sizeof b, "vrcam: bow quiver - the string let go with %s (%d) on the %s slot; %s", NameOf(&snap, now), now.id, wheel::kSlotDefs[in.slot].label, vit);
-                Log(b);
-            }
-        } else if (!have) {
-            slotWas = -2;
-        }
-        drawingWas = drawing;
-    }
-
-    // [bow] quiver_plain_no_mana and arrow_fx_needs_mana: whether the hero can pay the chosen arrow skill (the game's own numbers, vr/bow_mana.h: the skill's row, its level, the hero's mana),
-    // every frame, at rest as much as while drawn. OnRelease turns the release into the plain attack when he cannot; the arrow's effect goes out (fxFade) while he cannot. The mana is the
-    // newest read, less what our own last cast took if that is not in it yet.
+    // [bow] arrow_fx_needs_mana: the arrow's effect goes out while the hero cannot pay the armed skill (the release's own decision, above), eased in and out
     float fxFade = 1.0f;   // the arrow's effect: 1 lit, 0 out (the arrow looks plain)
     {
         static bowmana::Gate fxGate;
         static float fade = 1.0f;
         static double fadeT = 0.0;
         static bool outWas = false;
-        int shortSkill = -1;
-        float need = 0.0f, haveMana = 0.0f, cost = 0.0f;
-        bowquiver::Entry chosen;
-        double sinceChosen = 0.0;
-        bool shortRaw = false;
-        if ((g_noMana.load() || g_fxMana.load() || g_icon.load()) && have && snap.ready && machine.Shown(in, &chosen, &sinceChosen) && bowmana::Find(chosen.id)) {
-            int level = 0;
-            for (uint32_t i = 0; i < snap.count && i < (uint32_t)wheel::kCatalogMax; ++i)
-                if (snap.catalog[i].id == chosen.id && snap.catalog[i].owner == chosen.owner) { level = snap.catalog[i].level; break; }
-            cost = bowmana::CostPoints(chosen.id, level);
-            handvitals::Vitals v;
-            double age = 1e9;
-            if (cost >= 0.0f && handvitals::game::Latest(&v, &age) && v.known && age < 3000.0) {
-                const ULONGLONG pressed = g_lastPressAt.load();
-                haveMana = bowmana::Estimate(v.mana, age, pressed ? (double)(nowMs - pressed) : -1.0, g_lastCostPts.load());
-                if (bowmana::Short(chosen.id, level, haveMana)) { shortSkill = chosen.id; need = cost; shortRaw = true; }
-            }
-        }
-        // [bow] quiver_icon: the chosen arrow skill and whether the hero can pay it, for its icon in the mana medallion (vr/armed_icon.h; vrcam's effect thread reads it, ChosenIcon)
-        g_iconSkill.store(g_icon.load() && have && snap.ready && chosen.id >= 0 && bowmana::Find(chosen.id) ? chosen.id : -1);
-        g_iconReady.store(!shortRaw);
-        g_iconAt.store(nowMs);
-        g_shortNeed.store(need);   // (every frame: the release reads what the frame before it said)
-        g_shortHave.store(haveMana);
-        g_costPts.store(cost > 0.0f ? cost : 0.0f);
-        g_shortSkill.store(shortSkill);
-        g_shortAt.store(nowMs);
-        {   // the arrow's effect: out while the hero cannot pay (believed after kDwellS), eased in and out
-            const bool out = g_fxMana.load() ? fxGate.Step(shortRaw, f.time) : (fxGate.Reset(), false);
-            fade = bowmana::Ease(fade, out ? 0.0f : 1.0f, fadeT > 0.0 ? f.time - fadeT : 0.0);
-            fadeT = f.time;
-            fxFade = fade;
-            if (out != outWas) {
-                outWas = out;
-                char b[260];
-                if (out) snprintf(b, sizeof b, "vrcam: bow arrow fx - the hero cannot pay %s (it costs %.2f, he has %.2f): the arrow looks plain until the mana is back ([bow] arrow_fx_needs_mana)",
-                                  NameOf(have ? &snap : nullptr, bowquiver::Entry{chosen.id, chosen.owner}), need, haveMana);
-                else snprintf(b, sizeof b, "vrcam: bow arrow fx - the mana is back: the arrow's effect lights again");
-                Log(b);
-            }
-        }
-        static ULONGLONG toldArmed = 0;
-        const ULONGLONG armedAt = g_armedAt.load();
-        if (armedAt && armedAt != toldArmed) {   // this release was turned into the plain attack: said once, with the numbers
-            toldArmed = armedAt;
-            const int sk = g_armedSkill.load();
+        const bool shortRaw = armedNow.id >= 0 && !dec.canPay;
+        const bool out = g_fxMana.load() ? fxGate.Step(shortRaw, f.time) : (fxGate.Reset(), false);
+        fade = bowmana::Ease(fade, out ? 0.0f : 1.0f, fadeT > 0.0 ? f.time - fadeT : 0.0);
+        fadeT = f.time;
+        fxFade = fade;
+        if (out != outWas) {
+            outWas = out;
             char b[260];
-            snprintf(b, sizeof b, "vrcam: bow quiver - not enough mana for %s: it costs %.2f and the hero has %.2f (the game's own numbers) - this release is the plain attack, the skill stays chosen ([bow] quiver_plain_no_mana)",
-                     NameOf(have ? &snap : nullptr, bowquiver::Entry{sk, -1}), g_shortNeed.load(), g_shortHave.load());
+            if (out) snprintf(b, sizeof b, "vrcam: bow arrow fx - the hero cannot pay %s (it costs %.2f, he has %.2f): the arrow looks plain until the mana is back ([bow] arrow_fx_needs_mana)",
+                              NameOf(sp, armedNow), dec.cost, g_decMana.load());
+            else snprintf(b, sizeof b, "vrcam: bow arrow fx - the mana is back: the arrow's effect lights again");
             Log(b);
         }
     }
-
     // the bow's stave: the orbs' row hangs along it, and the arrow nocked at rest lies across it - read once a frame, when either wants it
     boworbs::Stave st;
     bool haveStave = false, staveRead = false;
@@ -390,8 +408,7 @@ void OnFrame(const directinput::Frame& f, void*) {
         }
         bowquiver::Entry list[bowquiver::kMaxList];
         const size_t n = haveStave ? machine.List(in, list, bowquiver::kMaxList) : 0;
-        bowquiver::Entry cur;
-        const bool haveCur = machine.Current(in, &cur);
+        const bowquiver::Entry cur = machine.Current();
         boworbs::Tuning tn;
         {
             const float v[7] = {g_tune[0].load(), g_tune[1].load(), g_tune[2].load(), g_tune[3].load(), g_tune[4].load(), g_tune[5].load(), g_tune[6].load()};
@@ -402,7 +419,7 @@ void OnFrame(const directinput::Frame& f, void*) {
             for (int k = 0; k < 3; ++k) if (std::isfinite(v[4 + k])) tn.offset[k] = v[4 + k];
             for (int k = 0; k < 3; ++k) { const float a = g_turn[k].load(); if (std::isfinite(a)) tn.turnDeg[k] = a; }
         }
-        if (haveStave && n > 0 && boworbs::MakeLayout(st, list, n, haveCur ? &cur : nullptr, tn, &layout)) {
+        if (haveStave && n > 0 && boworbs::MakeLayout(st, list, n, &cur, tn, &layout)) {
             const int freeX = 1 - holdX;
             const directinput::Hand& fh = f.hand[freeX];
             boworbs::GrabIn gi;
@@ -443,8 +460,7 @@ void OnFrame(const directinput::Frame& f, void*) {
                 snprintf(lb, sizeof lb, "vrcam: bow quiver orbs - %s %.2f on orb %d (%s), %.1f cm from its middle", pickName, press, go.pick + 1, NameOf(sp0, layout.orb[go.pick].entry), go.dist * 100.0f);
                 Log(lb);
                 const bowquiver::Out p = machine.Pick(in, layout.orb[go.pick].entry);
-                if (p.submit) { o.submit = true; o.req = p.req; }
-                if (p.feedback != bowquiver::Feedback::None) { o.feedback = p.feedback; o.loaded = p.loaded; o.count = p.count; o.index = p.index; }
+                if (p.feedback != bowquiver::Feedback::None) { o.feedback = p.feedback; o.entry = p.entry; o.count = p.count; o.index = p.index; }
                 o.which = 0;
                 srcHand[0] = freeX;
             }
@@ -461,45 +477,45 @@ void OnFrame(const directinput::Frame& f, void*) {
     if (o.take)   // while the string is drawn the quiver's buttons are not the layout's: nothing bound to them fires (the press stays masked until let go)
         for (int i = 0; i < 2; ++i)
             if (c[i].Set()) directinput::Take(c[i].Hand(holdX), c[i].mask, directinput::kSrcBowDraw);
-    if (o.submit) wheelgame::Submit(o.req);
 
     if (o.feedback != bowquiver::Feedback::None) {
         const int hand = srcHand[o.which] >= 0 ? srcHand[o.which] : 1 - holdX;
-        const char* slotName = slot >= 0 && slot < wheel::kSlotCount ? wheel::kSlotDefs[slot].label : "?";
-        const wheel::Snapshot* sp = have ? &snap : nullptr;
-        char b[300];
+        char b[360];
         switch (o.feedback) {
-            case bowquiver::Feedback::Loaded:
+            case bowquiver::Feedback::Armed:
+            case bowquiver::Feedback::Switched:
                 changeAt = f.time;
+                g_armed.store(o.entry.id);
                 directinput::Haptic(hand, 0.55f, 40.0f);
-                snprintf(b, sizeof b, "vrcam: bow quiver - %s loaded on the %s slot (%d of %d) with the bow in hand", NameOf(sp, o.loaded), slotName, o.index + 1, o.count);
+                snprintf(b, sizeof b, "vrcam: bow quiver - %s armed%s (%d of %d): each release with a bow or a crossbow in hand is %s, the plain arrow when the mana is short; the A slot is not touched",
+                         NameOf(sp, o.entry), o.feedback == bowquiver::Feedback::Switched ? " instead" : "", o.index + 1, o.count, NameOf(sp, o.entry));
+                Log(b);
+                break;
+            case bowquiver::Feedback::Disarmed:
+                changeAt = f.time;
+                g_armed.store(-1);
+                directinput::Haptic(hand, 0.25f, 25.0f);
+                snprintf(b, sizeof b, "vrcam: bow quiver - %s disarmed: each release is the plain shot", NameOf(sp, o.entry));
                 Log(b);
                 break;
             case bowquiver::Feedback::Refused:
                 directinput::Haptic(hand, 0.20f, 90.0f);
-                snprintf(b, sizeof b, "vrcam: bow quiver - the game did not take %s on the %s slot (the slot or the weapon set changed meanwhile)", NameOf(sp, o.loaded), slotName);
+                snprintf(b, sizeof b, "vrcam: bow quiver - %s is not the hero's now: not armed", NameOf(sp, o.entry));
                 Log(b);
                 break;
             case bowquiver::Feedback::NoArrows:
                 directinput::Haptic(hand, 0.20f, 90.0f);
                 if (told < 6) { ++told; Log("vrcam: bow quiver - no bow skills learned (points or items): nothing to take out of the quiver"); }
                 break;
-            case bowquiver::Feedback::OnlyOne:
-                directinput::Haptic(hand, 0.20f, 25.0f);
-                break;
             case bowquiver::Feedback::Unreadable:
                 directinput::Haptic(hand, 0.20f, 90.0f);
-                if (told < 6) {
-                    ++told;
-                    snprintf(b, sizeof b, "vrcam: bow quiver - the game's skill slots cannot be read now (it is not in its controller layout, or the %s slot is not one the plugin can tell)", slotName);
-                    Log(b);
-                }
+                if (told < 6) { ++told; Log("vrcam: bow quiver - the hero's skills cannot be read now (the skill wheel's read of the game): nothing armed"); }
                 break;
             default: break;
         }
     }
 
-    // the look: the loaded skill's element (the effect's fire, frost or arcane) on the bow's own arrow as it is drawn - from the moment the skill is loaded, the arrow
+    // the look: the armed skill's element (the effect's fire, frost or arcane) on the bow's own arrow as it is drawn - from the moment the skill is armed, the arrow
     // nocked at rest as much as on the drawn string (skel::BowArrow, off the arrow bone); without an element, or with [bow] arrow_fx off, its colour while the string is drawn
     bool glowing = false, fxing = false;
     bowquiver::Entry shown;
@@ -547,7 +563,7 @@ void OnFrame(const directinput::Frame& f, void*) {
                 PutFx(true, fx);
                 fxing = true;
                 static int toldId = -1;
-                if (toldId != shown.id) {   // said when the loaded skill changes
+                if (toldId != shown.id) {   // said when the armed skill changes
                     toldId = shown.id;
                     char b[360];
                     snprintf(b, sizeof b, "vrcam: bow arrow fx - %s: %s on the bow's own arrow (%s; %s), weight %.2f", a->name,
@@ -581,7 +597,7 @@ void Init(const D2RL::PluginContext* ctx, bowdrawwire::HandFn weaponHand) {
     if (!listening) listening = directinput::Listen(&OnFrame, nullptr);   // (after the draw's own listener: it hands its word over in the same frame)
     if (!listening) Log("vrcam: bow quiver - direct_input's listener table is full: the quiver does nothing");
     if (g_on.load())
-        Log("vrcam: bow quiver on - a button of the string hand while the string is drawn loads the next bow skill ([bow] quiver)");
+        Log("vrcam: bow quiver on - a button of the string hand while the string is drawn arms the next bow skill; each release is then that skill ([bow] quiver)");
 }
 
 void Configure(bool on, bool orbs, bool orbTrigger, const char* next, const char* prev) {
@@ -600,14 +616,15 @@ void Configure(bool on, bool orbs, bool orbTrigger, const char* next, const char
         Log(b);
     }
     if (was != on || (on && (wasOrbs != orbs || (orbs && wasTrigger != orbTrigger)))) {
-        snprintf(b, sizeof b, "vrcam: bow quiver %s%s", on ? "on - a button of the string hand while the string is drawn loads the next bow skill into the bow ([bow] quiver)" : "off",
-                 on && orbs ? (orbTrigger ? "; and the orbs along the bow's stave, the free hand's trigger picks one ([bow] quiver_orbs)" : "; and the orbs along the bow's stave, the free hand's grip picks one ([bow] quiver_orbs, quiver_orb_trigger off)") : "");
+        snprintf(b, sizeof b, "vrcam: bow quiver %s%s", on ? "on - a button of the string hand while the string is drawn arms the next bow skill, each release with a bow or crossbow is then that skill; the A slot is never written ([bow] quiver)" : "off - nothing armed",
+                 on && orbs ? (orbTrigger ? "; and the orbs along the bow's stave, the free hand's trigger arms one ([bow] quiver_orbs)" : "; and the orbs along the bow's stave, the free hand's grip arms one ([bow] quiver_orbs, quiver_orb_trigger off)") : "");
         Log(b);
     }
 }
 
 bool WantsSlots() {
     if (!g_on.load()) return false;
+    if (g_cleanWants.load()) return true;   // (the old quiver's arrow skill on A: the cleanup reads the slot)
     const ULONGLONG at = g_slotsAt.load();
     return at && GetTickCount64() - at < 1000;
 }
@@ -652,12 +669,11 @@ bool BlocksDraw() {
 
 void SetPlainNoMana(bool on) {
     const bool was = g_noMana.exchange(on);
-    if (was != on && g_ctx) Log(on ? "vrcam: bow quiver - with an arrow skill chosen and too little mana (by the game's own numbers) the release is the plain attack ([bow] quiver_plain_no_mana)"
-                                   : "vrcam: bow quiver - [bow] quiver_plain_no_mana off: the game refuses a release the hero cannot pay, as it does");
-    if (!on) g_armedSkill.store(-1);
+    if (was != on && g_ctx) Log(on ? "vrcam: bow quiver - with an arrow skill armed and too little mana (by the game's own numbers) the release is the plain arrow ([bow] quiver_plain_no_mana)"
+                                   : "vrcam: bow quiver - [bow] quiver_plain_no_mana off: a release the hero cannot pay is the armed skill all the same, and the game refuses it");
 }
 
-bool PlainWanted() { return g_on.load() && g_noMana.load(); }
+bool WantsHook() { return g_on.load(); }
 
 void SetArrowFxNeedsMana(bool on) { g_fxMana.store(on); }
 
@@ -666,7 +682,7 @@ void SetIcon(bool on) {
     static bool told = false;
     if (told && was == on) return;
     told = true;
-    if (on) Log("vrcam: bow quiver - the chosen arrow skill's icon lies in the mana medallion on the wrist, full while the hero can pay the shot, faint when he cannot ([bow] quiver_icon; the vitals' medallions, F4)");
+    if (on) Log("vrcam: bow quiver - the armed arrow skill's icon lies in the mana medallion on the wrist, full while the hero can pay the shot, faint when he cannot ([bow] quiver_icon; a bow or crossbow in hand, the vitals' medallions, F4)");
     else Log("vrcam: bow quiver - no icon in the mana medallion ([bow] quiver_icon=0)");
 }
 
@@ -675,7 +691,7 @@ bool ChosenIcon(int* skill, bool* ready) {
     *ready = false;
     if (!g_on.load() || !g_icon.load()) return false;
     const ULONGLONG at = g_iconAt.load();
-    if (!at || GetTickCount64() - at >= kFreshMs) return false;
+    if (!at || GetTickCount64() - at >= kFreshMs) return false;   // (no bow or crossbow in hand: the frames stop saying so - no icon, the armed melee skill's shows)
     const int sk = g_iconSkill.load();
     if (sk < 0) return false;
     *skill = sk;
@@ -683,33 +699,57 @@ bool ChosenIcon(int* skill, bool* ready) {
     return true;
 }
 
-void SetPlainHookReady(bool ready) {
-    if (g_plainHook.exchange(ready) != ready && g_ctx && g_noMana.load())
-        Log(ready ? "vrcam: bow quiver - the slot-skill hook is in: a release the hero cannot pay can be the plain attack ([bow] quiver_plain_no_mana)"
-                  : "vrcam: bow quiver - [bow] quiver_plain_no_mana cannot work: the game's slot-skill reads were not found (another build?); the game's refusal stays");
+void SetHookReady(bool ready) {
+    if (g_hook.exchange(ready) != ready && g_ctx && g_on.load())
+        Log(ready ? "vrcam: bow quiver - the slot-skill hook is in: each release with a bow skill armed is read by the game as that skill"
+                  : "vrcam: bow quiver - the game's slot-skill reads were not found (another build?): an armed bow skill cannot be shot, every release is the plain shot");
 }
 
-bool PlainArmed(int skill) {
-    if (skill < 0 || g_armedSkill.load() != skill) return false;
-    const ULONGLONG at = g_armedAt.load();
-    return at && GetTickCount64() - at < 300;
+int ShotSkill() {
+    if (!g_on.load()) return 0;
+    AcquireSRWLockShared(&g_flightLock);
+    const int skill = g_flight.Answer(GetTickCount64());
+    ReleaseSRWLockShared(&g_flightLock);
+    return skill;
 }
 
 void OnRelease() {
     g_shots.fetch_add(1);   // [bow] arrow_fire_cut: the arrow's effect goes out (the quiver's next frame)
-    if (!g_noMana.load() || !g_on.load()) return;
+    if (!g_on.load()) return;
+    const int armed = g_armed.load();
+    if (armed < 0) return;   // nothing armed: the game's own shot, as the slot has it
     const ULONGLONG now = GetTickCount64();
-    const int skill = g_shortSkill.load();
-    if (skill >= 0 && now - g_shortAt.load() < 400) {   // the hero cannot pay it: this release is the plain attack (vrcam's slot-skill hook answers it)
-        if (!g_plainHook.load()) return;                  // (no hook: the game refuses, and nothing is spent)
-        g_armedSkill.store(skill);
-        g_armedAt.store(now);
+    static unsigned told = 0;
+    if (!g_hook.load()) {
+        if (told++ < 3) Log("vrcam: bow quiver - a release with a bow skill armed, but the slot-skill hook is not in: the plain shot");
         return;
     }
-    const float cost = g_costPts.load();   // a cast that takes mana: what it took, until the next read has it
-    if (cost > 0.0f && now - g_shortAt.load() < 400) {
+    if (now - g_decAt.load() >= 400) {   // (no frame with a bow or crossbow in hand just now: nothing to read it as)
+        if (told++ < 6) Log("vrcam: bow quiver - a release with no fresh word on the bow in hand: the plain shot");
+        return;
+    }
+    const int skill = g_decSkill.load();
+    AcquireSRWLockExclusive(&g_flightLock);
+    g_flight.Set(skill, now);   // one release, one cast: the game's two reads of the attack slot for this press, while it is young
+    ReleaseSRWLockExclusive(&g_flightLock);
+    const float cost = g_decCost.load();
+    if (skill > 0 && cost > 0.0f) {   // a cast that takes mana: what it took, until the next read has it
         g_lastCostPts.store(cost);
         g_lastPressAt.store(now);
+    }
+    static int whyWas = -1;
+    const int why = g_decWhy.load();
+    if (++told <= 20 || why != whyWas) {
+        whyWas = why;
+        char m[48];
+        const float mana = g_decMana.load();
+        if (mana >= 0.0f) snprintf(m, sizeof m, "the hero has %.2f", mana);
+        else snprintf(m, sizeof m, "the mana not read");
+        char b[360];
+        snprintf(b, sizeof b, "vrcam: bow quiver - a release: %s (%s, level %d%s, %.2f mana; %s)", bowquiver::ShotWhyName((bowquiver::ShotWhy)why),
+                 bowquiver::FindArrow(armed) ? bowquiver::FindArrow(armed)->name : "?", g_decLevel.load(), g_decGuessed.load() ? " - not read, the first level's cost stands in" : "",
+                 cost, m);
+        Log(b);
     }
 }
 
@@ -718,7 +758,7 @@ void SetArrowFx(bool on, float sizePct, float brightPct, float alongCm) {
     g_fxSize.store(std::isfinite(sizePct) ? std::clamp(sizePct, 30.0f, 300.0f) * 0.01f : 1.0f);
     g_fxBright.store(std::isfinite(brightPct) ? std::clamp(brightPct, 20.0f, 300.0f) * 0.01f : 1.0f);
     g_fxAlong.store(std::isfinite(alongCm) ? std::clamp(alongCm, -20.0f, 60.0f) * 0.01f : 0.0f);
-    if (was != on && g_ctx) Log(on ? "vrcam: bow arrow fx on - the nocked arrow burns, freezes or crackles by the loaded skill ([bow] arrow_fx)" : "vrcam: bow arrow fx off - the coloured glow ([bow] arrow_fx)");
+    if (was != on && g_ctx) Log(on ? "vrcam: bow arrow fx on - the nocked arrow burns, freezes or crackles by the armed skill ([bow] arrow_fx)" : "vrcam: bow arrow fx off - the coloured glow ([bow] arrow_fx)");
 }
 
 void SetArrowFireCut(bool on, float ms) {

@@ -2,6 +2,21 @@
 
 ## Next
 
+- **Changed: the bow's quiver ARMS its arrow skill instead of putting it on the attack button** (the author, 2026-10-20: "the quiver logic
+  works wrong: it puts some skill on the attack button A. It must work the same way as our logic for the armed skills"). The quiver
+  (`[bow] quiver` - the orbs, `quiver_next` / `quiver_prev`) set the chosen arrow skill on the A slot through the game's setter; the game
+  kept it there after the bow left the hand, the touches press A, and with a sword in hand the game read every one as Multiple Shot or
+  the like and did nothing ("presses=9 hits=0"; "Direct hit" bypasses A and did hit). Now, as `[gameplay] melee_skill_armed`: choosing
+  only arms the skill - our own state, shown in the mana medallion (`quiver_icon`); nothing is written into the game's skill slots, the
+  pad's slots or A. Each release of the bow's string (the draw; a crossbow has none) is read by the game as the armed skill through the
+  slot-skill hook the armed melee skill uses (one release, one cast; the game's own mana, cooldown, missile) - the plain arrow when the
+  hero cannot pay it (`quiver_plain_no_mana`), the icon faint then. With no bow or crossbow in hand the armed arrow skill does nothing:
+  the touches, the trigger and A are the plain attack or the armed melee skill. The same orb again (or the plain shot's, or a button
+  cycling onto it) disarms. Cleanup: with the quiver on, a bow skill on the A slot (the old quiver's, kept in the save) is given back as
+  the plain attack at the hero's load and whenever no bow or crossbow is in hand - the log says "bow quiver - the A slot holds the plain
+  attack again". The log: "bow quiver - Multiple Shot armed ...", "a release: the armed skill / the plain arrow - too little mana",
+  "bow quiver: the slot's skill (Attack, 0) was read as the armed Multiple Shot". No key removed (all still read). Unit test:
+  cleanroom/tests/bow_quiver_armed_test.cpp. Not yet tried in the game.
 - **Fixed: hit by touch on the Amazon - "the monster's capsule turns red but the strike is not pressed"** (the author, with a spear and
   with a sword). The touch did press the attack; the game read it as a skill it would not cast with that weapon. Two ways it came there:
   (1) the bow's quiver loads its arrow skills onto the attack's slot (A) and nothing took them off when the hero took a spear or a sword:

@@ -1137,7 +1137,7 @@ target_compile_options(bow_hand_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 add_executable(bow_latency_test cleanroom/tests/bow_latency_test.cpp)
 target_compile_options(bow_latency_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 target_sources(d2rl-vrcam PRIVATE vr/bow_draw_wire.cpp)   # [hands] bow_draw (wired to vr/direct_input.h)
-# [bow] quiver (vr/bow_quiver.h): a button of the string hand picks the bow skill while the string is drawn; pure logic on synthetic frames and snapshots: bow_quiver_test
+# [bow] quiver (vr/bow_quiver.h): the bow skill table, the glow and the arrow's element: bow_quiver_test (its old request-machine checks gave way to bow_quiver_armed_test)
 add_executable(bow_quiver_test cleanroom/tests/bow_quiver_test.cpp)
 target_compile_options(bow_quiver_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # ... and the weapon-neutral part (vr/quiver_input.h): the controls' names: quiver_input_test
@@ -1167,6 +1167,13 @@ target_sources(d2rl-vrcam PRIVATE vr/anim_cut.cpp)        # [bow] quick_release 
 # ... its pure part: the row's shape check, the move and the way back, the walk over a block (anim_cut_test)
 add_executable(anim_cut_test cleanroom/tests/anim_cut_test.cpp)
 target_compile_options(anim_cut_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/bow_quiver_armed_test.cpp")
+    # [bow] quiver, armed (vr/bow_quiver.h Machine / DecideShot / Cleanup): arm, disarm, the shot with a bow (the skill, the plain arrow when it cannot be paid), melee with an
+    # armed bow skill untouched, the weapon swap, the old quiver's arrow on A given back as the plain attack
+    add_executable(bow_quiver_armed_test cleanroom/tests/bow_quiver_armed_test.cpp)
+    target_include_directories(bow_quiver_armed_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr ${CMAKE_CURRENT_SOURCE_DIR}/shared)
+    target_compile_options(bow_quiver_armed_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/melee_arm_fit_test.cpp")
     # [gameplay] melee_skill_armed (vr/melee_arm.h NeedOf / Fits): an armed skill the weapon in hand cannot use is the plain attack
     add_executable(melee_arm_fit_test cleanroom/tests/melee_arm_fit_test.cpp)

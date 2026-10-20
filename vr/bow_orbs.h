@@ -1,8 +1,8 @@
 // bow_orbs.h - [bow] quiver_orbs: a row of energy orbs along the bow's stave, one for every bow skill the hero has (and one for the plain shot); the free hand takes one with its trigger
-// (or, by choice, its grip) and that skill is the next shot's. Pure: no game calls, no globals, no windows.h (cleanroom/tests/bow_orbs_test.cpp feeds it synthetic numbers). The bow's own bones give the
+// (or, by choice, its grip) and that skill is armed for the next shots (the armed one's orb again, or the plain shot's, disarms). Pure: no game calls, no globals, no windows.h (cleanroom/tests/bow_orbs_test.cpp feeds it synthetic numbers). The bow's own bones give the
 // stave (skel::BowStave: the riser's middle, the end of the limb that points up, which way the archer is); the orbs sit on it above the grip, on the archer's side of the limb, and
-// follow the bow. What a taken orb does is the quiver's (vr/bow_quiver.h Machine::Pick): the game's current skill on the slot the shot presses, through the game's own setter -
-// never a server call.
+// follow the bow. What a taken orb does is the quiver's (vr/bow_quiver.h Machine::Pick): it arms the skill as the quiver's own state - nothing is written into the game's
+// slots, never a server call.
 //
 // Which wins, the orb or the string: inside the reach of an orb (7.5 cm from its middle by default, a slider) the trigger and the grip are the orb's - the one that picks picks, the other
 // does nothing - and the draw is held back there (bow_draw_wire's start block); anywhere else the string is taken as it always was. The orbs begin 18 cm up the stave and 20 cm or more from the string's resting place.
@@ -96,7 +96,7 @@ struct Orb {
     float r = 0.0f;
     float rgb[3] = {1, 1, 1};
     bowquiver::Entry entry;
-    bool current = false;    // the skill the slot holds now
+    bool current = false;    // the armed skill (the plain shot's orb when none)
     float hover = 0.0f;      // 0..1: how near the hand is - 1 for the orb it is at (the one a grip takes), a ramp for those it is nearing
 };
 struct Layout {

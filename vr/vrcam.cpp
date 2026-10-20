@@ -162,8 +162,8 @@ namespace gamestate { bool HandIsThrowPotion(int side); }   // the held item is 
 #include "belt_trigger_wire.h"    // [belt] hold_takes_trigger: the triggers while a belt bottle is in a hand (the game reads the left one as Shift: the drink must be a plain one)
 #include "bow_draw.h"
 #include "bow_draw_wire.h"   // [hands] bow_draw: a released draw's shot along its line
-#include "bow_quiver.h"       // bowquiver::FindArrow: a bow skill left on the attack's slot (HookSlotSkill)
-#include "bow_quiver_wire.h"  // [bow] quiver: a button of the string hand loads the next bow skill while the string is drawn
+#include "bow_quiver.h"       // bowquiver::FindArrow: a bow skill left on the attack's slot, the armed one's name (HookSlotSkill)
+#include "bow_quiver_wire.h"  // [bow] quiver: arms a bow skill (orbs, the string hand's buttons); ShotSkill answers the release
 #include "throw_gesture_wire.h"
 #include "quiver.h"          // [hands] javelin_quiver: the skill of the next throw chosen from the quiver (vr/quiver_wire.cpp)
 #include "quiver_wire.h"
@@ -2115,12 +2115,12 @@ void LoadSettings() {
         // [bow] arrow_fx: the nocked arrow's fire, frost or arcane light by the loaded skill (the effect's ARROWFX block), live; its size and brightness in percent
         bowquiverwire::SetArrowFx(IniB(L"bow", L"arrow_fx", true), IniF(L"bow", L"arrow_fx_size_pct", 100.0f), IniF(L"bow", L"arrow_fx_bright_pct", 100.0f),
                                   IniF(L"bow", L"arrow_fx_along_cm", 0.0f));
-        // [bow] quiver_plain_no_mana: an arrow skill the hero cannot pay (too little mana by the game's own numbers) shoots the plain arrow at the release instead of the game's refusal; live
+        // [bow] quiver_plain_no_mana: an armed arrow skill the hero cannot pay (too little mana by the game's own numbers) shoots the plain arrow at the release instead of the game's refusal; live
         bowquiverwire::SetPlainNoMana(IniB(L"bow", L"quiver_plain_no_mana", true));
         // [bow] arrow_fire_cut: the arrow's effect goes out at the release that shoots, at once or arrow_fire_cut_ms after it (vr/arrow_fire_cut.h); live
         bowquiverwire::SetArrowFireCut(IniB(L"bow", L"arrow_fire_cut", true), IniF(L"bow", L"arrow_fire_cut_ms", 0.0f));
-        bowquiverwire::SetArrowFxNeedsMana(IniB(L"bow", L"arrow_fx_needs_mana", true));   // [bow] arrow_fx_needs_mana: the arrow's effect goes out while the hero cannot pay the chosen skill
-        bowquiverwire::SetIcon(IniB(L"bow", L"quiver_icon", true));   // [bow] quiver_icon: the chosen arrow skill's icon in the mana medallion (vr/armed_icon.h)
+        bowquiverwire::SetArrowFxNeedsMana(IniB(L"bow", L"arrow_fx_needs_mana", true));   // [bow] arrow_fx_needs_mana: the arrow's effect goes out while the hero cannot pay the armed skill
+        bowquiverwire::SetIcon(IniB(L"bow", L"quiver_icon", true));   // [bow] quiver_icon: the armed arrow skill's icon in the mana medallion (vr/armed_icon.h)
     }
     g_set.bowAimAlong.store(IniB(L"bow", L"aim_along_hands", false));
     g_set.bowAimBlendMs.store(std::clamp(IniF(L"bow", L"aim_blend_ms", 120.0f), 50.0f, 400.0f));
@@ -6819,23 +6819,12 @@ std::atomic<int> g_slotSkillHook{0};   // 0 not in yet, 1 in, 2 not possible
 
 int HookSlotSkill(int slot) {
     const int bound = OrigSlotSkill(slot);
-    if (bound != 0) {   // (the common case first: any other binding is the game's) - but a bow's release that the hero cannot pay (too little mana, by the game's own numbers) is read as the plain attack
-        if (bound > 0 && bowquiverwire::PlainArmed(bound)) {
-            const uintptr_t at = (uintptr_t)_ReturnAddress();
-            if (at == g_slotSelectRet || at == g_slotSetRet) {
-                static ULONGLONG toldPlain = 0;
-                if (GetTickCount64() - toldPlain > 300) {
-                    toldPlain = GetTickCount64();
-                    LogF("bow quiver: the slot's skill (%d) was read as Attack (0) by the %s - the hero cannot pay it ([bow] quiver_plain_no_mana)", bound,
-                         at == g_slotSelectRet ? "cast's slot selection" : "unit's hand-skill setter");
-                }
-                return 0;
-            }
-        }
-        // a bow skill on the attack's slot with no bow or crossbow in hand: the bow's quiver loads its arrow skills there (bow_draw_button 0) and
-        // nothing takes them off when the hero takes a spear or a sword - every attack, the touch's included, went to the game as that bow skill,
-        // which it refuses for a melee weapon (the author, 2026-10-20: "the monster's capsule turns red but the strike is not pressed"). Read as
-        // the plain attack (or the armed melee skill, when the weapon can use it).
+    if (bound != 0) {   // (the common case first: any other binding is the game's)
+        // a bow skill on the attack's slot with no bow or crossbow in hand: the old bow quiver (to 0.174) loaded its arrow skills there and the game
+        // keeps that slot in the save - every attack, the touch's included, went to the game as that bow skill, which it refuses for a melee weapon
+        // (the author, 2026-10-20: "the monster's capsule turns red but the strike is not pressed"). The quiver now only arms its skill (ShotSkill,
+        // below) and gives that slot back as the plain attack (bowquiver::Cleanup); until it has, this reads it as the plain attack (or the armed
+        // melee skill, when the weapon can use it).
         if (bound > 0 && bowquiver::FindArrow(bound) && !BowInHand()) {
             const uintptr_t at = (uintptr_t)_ReturnAddress();
             if (at == g_slotSelectRet || at == g_slotSetRet) {
@@ -6867,6 +6856,16 @@ int HookSlotSkill(int slot) {
             LogF("throw gesture: the slot's skill (Attack, 0) was read as %s (%d) by the %s", quivered && skill == chosen ? "the quiver's skill" : "Throw", skill,
                  ret == g_slotSelectRet ? "cast's slot selection" : "unit's hand-skill setter");
         }
+    } else if (const int shot = site && BowInHand() ? bowquiverwire::ShotSkill() : 0; shot > 0) {
+        // [bow] quiver: a release of the string with a bow skill armed - read as that skill, decided at the release (vr/bow_quiver_wire.cpp OnRelease: the plain
+        // arrow when the hero cannot pay it). With no bow or crossbow in hand the armed bow skill is never answered.
+        skill = shot;
+        static ULONGLONG told = 0;
+        if (GetTickCount64() - told > 300) {
+            told = GetTickCount64();
+            LogF("bow quiver: the slot's skill (Attack, 0) was read as the armed %s (%d) by the %s", bowquiver::FindArrow(shot) ? bowquiver::FindArrow(shot)->name : "skill", shot,
+                 ret == g_slotSelectRet ? "cast's slot selection" : "unit's hand-skill setter");
+        }
     } else if (site && !ThrownInHand()) {   // [gameplay] melee_skill_armed: the touch's attack press is read as the armed melee skill - decided at the press (vr/melee_arm_game.cpp: the plain attack when the mana is short)
         const uint32_t type = gamestate::WeaponType();
         const int armed = meleearm::PressSkill();
@@ -6892,7 +6891,7 @@ int HookSlotSkill(int slot) {
 bool ThrowAutoSkillReady() { return g_set.throwAutoSkill.load() && g_slotSkillHook.load() == 1; }
 
 void InstallSlotSkillHook() {
-    if (!g_ctx || g_slotSkillHook.load() != 0 || !((g_set.throwGesture.load() && g_set.throwAutoSkill.load()) || quiverwire::On() || bowquiverwire::PlainWanted() || meleearm::On())) return;
+    if (!g_ctx || g_slotSkillHook.load() != 0 || !((g_set.throwGesture.load() && g_set.throwAutoSkill.load()) || quiverwire::On() || bowquiverwire::WantsHook() || meleearm::On())) return;
     if (!Matches(RVA_SLOT_SKILL, kSigSlotSkill, sizeof kSigSlotSkill)) return;   // the code is decrypted as it runs: tried again
     if (!CallsTo(RVA_SLOT_SKILL_SELECT_RET, RVA_SLOT_SKILL) || !CallsTo(RVA_SLOT_SKILL_SET_RET, RVA_SLOT_SKILL)) {
         g_slotSkillHook.store(2);
@@ -6904,7 +6903,7 @@ void InstallSlotSkillHook() {
     g_slotSetRet = d2rsig::Addr(RVA_SLOT_SKILL_SET_RET);
     const bool in = d2rsig::Hook(RVA_SLOT_SKILL, kSigSlotSkill, sizeof kSigSlotSkill, (void*)&HookSlotSkill, (void**)&OrigSlotSkill);
     g_slotSkillHook.store(in ? 1 : 2);
-    bowquiverwire::SetPlainHookReady(in);   // [bow] quiver_plain_no_mana needs the hook
+    bowquiverwire::SetHookReady(in);        // [bow] quiver: the armed bow skill's shot needs the hook
     meleearm::SetHookState(in ? 1 : 2);     // [gameplay] melee_skill_armed too
     Log(in ? "vrcam: throw_auto_skill in - with a throwing weapon in hand a throw's A press is read by the game as its Throw skill (no skill slot needed), or as the skill chosen from the quiver"
            : "vrcam: throw_auto_skill hook FAILED - a throw presses the pad button of the slot that holds Throw");
@@ -16865,7 +16864,7 @@ void OnBeginEffects(reshade::api::effect_runtime* rt, reshade::api::command_list
                 iconLast = nowS;
                 const handvitals::Config hc = handvitals::Settings();
                 armedicon::In ii;
-                // whose: the bow skill chosen from the quiver while a bow is in hand ([bow] quiver_icon), else the armed melee skill ([gameplay] melee_skill_armed_icon)
+                // whose: the bow skill armed from the quiver while a bow or crossbow is in hand ([bow] quiver_icon), else the armed melee skill ([gameplay] melee_skill_armed_icon)
                 bool meleeReady = false, bowReady = false;
                 int bowSkill = -1;
                 const int meleeSkill = meleearm::IconOn() && meleearm::On() ? meleearm::Armed(&meleeReady) : -1;
@@ -17899,7 +17898,7 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     panelinput::Init(ctx);
     bowdrawwire::Init(ctx, &AimHand, &FullBody);   // the bow draw listens to direct_input's frames, in F4 only
     bowquiverwire::Init(ctx, &AimHand);            // [bow] quiver rides on the draw's frames (after its listener)
-    bowdrawwire::SetReleaseHook(&bowquiverwire::OnRelease);   // [bow] quiver_plain_no_mana: the quiver says, before the release's button goes down, whether it is the plain attack
+    bowdrawwire::SetReleaseHook(&bowquiverwire::OnRelease);   // [bow] quiver: the quiver decides, before the release's button goes down, whether it is the armed skill or the plain arrow
     bowdrawwire::SetStartBlock([]() -> bool { return bowquiverwire::BlocksDraw() || rangedwire::Stowed(); });   // [bow] quiver_orbs: the free hand at an orb does not take the string; a bow put away takes none
     animcut::Init(ctx);   // [bow] quick_release, [hands] quick_throw: the log
     throwwire::Init(ctx, &GestureCanAim);
