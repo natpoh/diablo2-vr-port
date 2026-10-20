@@ -4367,6 +4367,7 @@ void SetTurnDepth(void* resource, uint32_t viewFormat, float scaleX, float scale
 }
 
 bool TurnWarpOn() { return g_cfg.on && g_cfg.byTurns && g_cfg.turnWarp; }
+void* TurnMadeDepth() { return g_turnGpu.MadeDepth(); }
 bool TurnsNow() { return g_kind == kPair && g_cfg.byTurns && g_cfg.turnWarp && g_pairMode == kViewsHead && g_session && !DeviceLost(); }
 void TurnKeep(int eye, ID3D12Resource* bb) {
     if (!TurnsNow() || !bb || eye < 0 || eye > 1 || g_copied[0] || g_copied[1]) return;

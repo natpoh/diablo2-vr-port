@@ -26,7 +26,9 @@
     labels laid back, the hitboxes, the wrist orbs and medallions, the bow's orbs and the arrow's glow, the low-life vignette),
     which vrcam renders on the back buffer and on the eye made (`replay::DrawOverlays`, xr.h TurnKeep / TurnMake / TurnFinish).
     The game's labels are taken out of its picture for it (as with the labels' own settings) and laid back per eye. In the eye made
-    nothing of the scene hides an orb (the depth there is the other eye's). Needs the new D2R_DepthFog.fx with the DLL; an older
+    the orbs are hidden by its own depth: the warp moves the last frame's depth with the same grid and vectors as the picture (the
+    author's idea) into a depth picture of its own, bound to the effect as D2RVR_DEPTH_MADE - so a hand or the bow in front hides them
+    there too. Needs the new D2R_DepthFog.fx with the DLL; an older
     effect: as before.
   - **Fixed: "the doll keeps coming off and goes twice as big".** Three checks meant for the two passes of one game frame took the
     eyes by turns' two frames for one: the hero's facing given up for the memory search (`StructFreshness`, the facing candidates'

@@ -15411,6 +15411,7 @@ void Install() {
 
 // The views of the toolbar's and the map's copies bound to the effect (hud::PictureNow), 0 = none yet.
 uint64_t g_pieceBound[4] = {};   // the toolbar, the map, the labels' layer, the wrists' globes
+uint64_t g_madeBound = 0;         // eyes by turns: the made eye's depth bound as D2RVR_DEPTH_MADE (0 after the effects reload)
 
 // The armed skill's icon uploaded into the effect's OrbIconTex ([gameplay] melee_skill_armed_icon): which skill, from which decode of the icon cache, into which texture variable. -1: none
 // (a reload of the effects makes the texture anew: Forget says so, and the icon is uploaded again).
@@ -15418,7 +15419,7 @@ int g_iconUpSkill = -1, g_iconTry = -1;
 uint32_t g_iconUpRev = 0;
 uint64_t g_iconUpVar = 0;
 
-void Forget(reshade::api::effect_runtime*) { g_tech[0] = g_tech[1] = {0}; replay::g_rightTech = {0}; replay::g_ovTech[0] = replay::g_ovTech[1] = {0}; g_pieceBound[0] = g_pieceBound[1] = g_pieceBound[2] = g_pieceBound[3] = 0; replay::g_depthBound = 0; g_iconUpSkill = g_iconTry = -1; }
+void Forget(reshade::api::effect_runtime*) { g_tech[0] = g_tech[1] = {0}; replay::g_rightTech = {0}; replay::g_ovTech[0] = replay::g_ovTech[1] = {0}; g_pieceBound[0] = g_pieceBound[1] = g_pieceBound[2] = g_pieceBound[3] = 0; g_madeBound = 0; replay::g_depthBound = 0; g_iconUpSkill = g_iconTry = -1; }
 
 void SetFloats(reshade::api::effect_runtime* rt, const char* name, const float* v, size_t n) {
     const reshade::api::effect_uniform_variable u = rt->find_uniform_variable("D2R_DepthFog.fx", name);
@@ -16378,14 +16379,33 @@ void OnBeginEffects(reshade::api::effect_runtime* rt, reshade::api::command_list
     const bool own = OwnDepthNow();
     SetBool(rt, "OwnDepth", own);   // ours (VR, the square window) or ReShade's DEPTH (scenedepth::)
     scenedepth::Bind(rt, cl);   // before the replay reads which depth the effects have
-    {   // eyes by turns, the other eye made: the overlays apart this present (replay::DrawOverlays), and in the eye made nothing of the
-        // scene hides them - the depth bound is the eye drawn's
+    {   // eyes by turns, the other eye made: the overlays apart this present (replay::DrawOverlays); in the eye made they are hidden by its
+        // own depth, moved with its picture (xr::TurnMadeDepth, bound once as D2RVR_DEPTH_MADE - a binding drains the GPU, so only when it
+        // is another texture or the effects reloaded)
         const bool apart = replay::OverlaysNow();
         replay::g_ovApart.store(apart);
+        bool made = false;
+        if (apart) {
+            static reshade::api::resource_view view{0};
+            const uint64_t res = (uint64_t)xr::TurnMadeDepth();
+            if (res && res != g_madeBound) {
+                reshade::api::device* dev = rt->get_device();
+                reshade::api::resource_view v{0};
+                if (dev->create_resource_view(reshade::api::resource{res}, reshade::api::resource_usage::shader_resource,
+                                              reshade::api::resource_view_desc(reshade::api::format::r32_float), &v)) {
+                    rt->update_texture_bindings("D2RVR_DEPTH_MADE", v, v);
+                    if (view.handle) dev->destroy_resource_view(view);
+                    view = v;
+                    g_madeBound = res;   // (cleared when the effects reload: Forget)
+                    Log("vrcam: eyes by turns - the made eye's depth bound for the overlays (D2RVR_DEPTH_MADE)");
+                }
+            }
+            made = res && res == g_madeBound;
+        }
         const int drawn = g_eye.load() & 1;
         SetBool(rt, "OverlaysApart", apart);
-        SetBool(rt, "OverlayNoHide0", apart && drawn != 0);
-        SetBool(rt, "OverlayNoHide1", apart && drawn != 1);
+        SetBool(rt, "OverlayMade0", made && drawn != 0);
+        SetBool(rt, "OverlayMade1", made && drawn != 1);
     }
     if (replay::g_on.load()) replay::g_rt = rt;
     if (replay::g_on.load()) {   // the depth buffer our effect reads: replay keeps the left eye's for its present

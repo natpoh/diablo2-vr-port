@@ -5,6 +5,8 @@
 //      distance and seen from where the eye is now (what the hero carries goes with him), nearer over farther;
 //   3. the eye drawn this frame moved across with its own depth, over it - so what moves by itself (monsters, missiles)
 //      stands where that eye shows it; a cell across an edge of its depth is cut, and pass 2 shows through there.
+// The depth is moved the same way, into MadeDepth(): the eye made's own scene depth (reverse-Z, near / distance, 0 where only the turn
+// reached), so what is drawn over it afterwards (D2R_DepthFog.fx's overlays: the wrist orbs, the bow's) is hidden by what is nearer there.
 // The technique and the shaders' shape are bearstonem/d2r-pcvr's (MIT, steamvr/turn_warp.cpp); written afresh here.
 #pragma once
 
@@ -44,6 +46,8 @@ public:
     bool Init(ID3D12Device* dev, DXGI_FORMAT target, void (*log)(const char*));
     bool Ready() const { return pso_ != nullptr; }
     bool DepthReady() const { return depthPso_ != nullptr; }
+    // The made eye's depth (R32_FLOAT, the target's size; PIXEL_SHADER_RESOURCE | NON_PIXEL_SHADER_RESOURCE after Render), nullptr before the first.
+    ID3D12Resource* MadeDepth() const { return madeDepth_; }
     DXGI_FORMAT Format() const { return format_; }
     // Into target (RENDER_TARGET, w x h): pass 1 from `base` with `homography`, then `own` (pass 2) and `drawn` (pass 3) when
     // given. `slot` 0..kSlots-1: the descriptor set this list uses.
@@ -61,6 +65,7 @@ private:
     ID3D12DescriptorHeap* rtv_ = nullptr;
     ID3D12DescriptorHeap* dsv_ = nullptr;
     ID3D12Resource* depthTarget_ = nullptr;   // the grids' own depth test, the target's size
+    ID3D12Resource* madeDepth_ = nullptr;     // the made eye's depth as a picture (MadeDepth), the target's size
     uint32_t depthW_ = 0, depthH_ = 0;
     UINT srvInc_ = 0;
     DXGI_FORMAT format_ = DXGI_FORMAT_UNKNOWN;
