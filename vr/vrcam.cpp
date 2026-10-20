@@ -150,6 +150,8 @@ namespace gamestate { bool HandIsThrowPotion(int side); }   // the held item is 
 #include "panel_input.h"
 #include "shoulder_swap_wire.h"   // [hands] shoulder_swap: weapon sets by the grip behind a shoulder
 #include "shield_arm_wire.h"      // [hands] shoulder_draw, the shield: which forearm it is strapped to, or put away
+#include "label_area.h"           // [hud] labels_whole_eye: item labels down to the picture's bottom (the rule; the hook is InstallLabelArea)
+#include "spatial_audio.h"        // [audio] head_follow: the game's 3D sounds turn with your view (two FMOD hooks, from bearstonem/d2r-pcvr)
 #include "stowed_block.h"         // [hands] shield_stow_no_block: a shield put away does not block (the game's block check told the hero has none)
 #include "sewer_interaction.h"     // the Kurast sewer stairs taken with A while standing (the game's Interact query, when it finds none)
 #include "ranged_hand_wire.h"     // [hands] shoulder_draw_ranged: a bow or crossbow put away behind a shoulder, drawn into the hand that reached
@@ -288,6 +290,7 @@ struct Settings {
     std::atomic<float> labelsAlphaFloor{0.5f};   // labels_alpha: their dark box, 1 = as the game draws it, 0 = none
     std::atomic<float> labelsSizeFloor{1.0f};    // labels_size, %: the names and their box smaller (needs the game's label code, LabelHooks)
     std::atomic<bool>  labelsNativeFloor{true};  // labels_native (not on the settings page): 0 = never the game's code, the box faded as a picture
+    std::atomic<bool>  labelsWholeEye{false};    // [hud] labels_whole_eye: the label layout's height check given the whole picture (vr/label_area.h), every view
     // The same two for the other views (2026-10-06): [hud_top] F1, [hud_third] F2, [hud] F4 - the game's own by default.
     std::atomic<float> labelsAlphaTop{1.0f}, labelsAlphaThird{1.0f}, labelsAlphaBody{1.0f};
     std::atomic<float> plateAlpha{1.0f};   // [hud] monster_alpha: the name plate over the target monster, 1 = as the game draws it
@@ -1645,6 +1648,7 @@ void LoadSettings() {
     g_set.labelsAlphaFloor.store(std::clamp(IniF(L"hud_floor", L"labels_alpha", 0.5f), 0.0f, 1.0f));
     g_set.labelsSizeFloor.store(std::clamp(IniF(L"hud_floor", L"labels_size", 100.0f), 20.0f, 150.0f) * 0.01f);
     g_set.labelsNativeFloor.store(IniF(L"hud_floor", L"labels_native", 1.0f) != 0.0f);
+    g_set.labelsWholeEye.store(IniB(L"hud", L"labels_whole_eye", false));
     g_set.labelsAlphaTop.store(std::clamp(IniF(L"hud_top", L"labels_alpha", 1.0f), 0.0f, 1.0f));
     g_set.labelsAlphaThird.store(std::clamp(IniF(L"hud_third", L"labels_alpha", 1.0f), 0.0f, 1.0f));
     g_set.labelsAlphaBody.store(std::clamp(IniF(L"hud", L"labels_alpha", 1.0f), 0.0f, 1.0f));
@@ -2071,6 +2075,8 @@ void LoadSettings() {
     g_set.shieldDraw.store(IniB(L"hands", L"shoulder_draw_shield", true));
     g_set.shieldStow.store(IniB(L"hands", L"shoulder_draw_shield_stow", false));
     stowedblock::Configure(IniB(L"hands", L"shield_stow_no_block", false));
+    spatialaudio::Configure(IniB(L"audio", L"head_follow", true), IniB(L"audio", L"listener_turn", true),
+                            IniF(L"audio", L"forward_sign", -1.0f), IniF(L"audio", L"depth_scale", 2.0f));
     g_set.rangedHolster.store(IniB(L"hands", L"shoulder_draw_ranged", false));
     g_set.rangedSwap.store(IniB(L"hands", L"shoulder_draw_ranged_swap", false));
     g_set.shoulderDrawStowMs.store(std::clamp(IniF(L"hands", L"shoulder_draw_stow_ms", 1000.0f), 0.0f, 5000.0f));
@@ -11291,6 +11297,53 @@ void InstallLabelHooks() {
            : "vrcam: item-label size hooks FAILED - labels_size does nothing");
 }
 
+// [hud] labels_whole_eye (vr/label_area.h): LabelLayout asks InterfaceSize 0x8462E0 (the interface root's rectangle times its scale; width low, height high) at
+// 0x1FAC2A and keeps a label while its bottom is above the interface's origin y plus that height. To that one call, while ticked, the whole picture's height.
+// Found by bearstonem/d2r-pcvr (MIT, v0.3.23: vr/vrcam.cpp InstallLabelArea).
+constexpr uint64_t RVA_INTERFACE_SIZE = 0x8462E0, RVA_LABEL_AREA_CALL = 0x1FAC2A;
+// push rbx; sub rsp, 0x40; mov rbx, [rip + 0x2BF9E83] (the interface's root - the same object UiScale 0x8460F0 reads); test rbx, rbx; je +0x6E
+const uint8_t kSigInterfaceSize[18] = {0x40,0x53,0x48,0x83,0xEC,0x40,0x48,0x8B,0x1D,0x83,0x9E,0xBF,0x02,0x48,0x85,0xDB,0x74,0x6E};
+using InterfaceSizeFn = uint64_t (*)();
+InterfaceSizeFn OrigInterfaceSize = nullptr;
+std::atomic<bool> g_labelAreaIn{false};
+uintptr_t g_labelAreaRet = 0;
+
+uint64_t HookInterfaceSize() {
+    const uint64_t size = OrigInterfaceSize();
+    if (reinterpret_cast<uintptr_t>(_ReturnAddress()) != g_labelAreaRet || !g_set.labelsWholeEye.load(std::memory_order_relaxed)) return size;
+    uint32_t pictureH = 0;
+    vrres::Size game;
+    RECT rc{};
+    if (vrres::GameSize(g_gameWnd, &game)) pictureH = game.h;   // [render] vr_resolution: the game's picture, not the window
+    else if (g_gameWnd && GetClientRect(g_gameWnd, &rc)) pictureH = (uint32_t)std::max<LONG>(0, rc.bottom - rc.top);
+    const uint64_t area = labelarea::LabelArea(size, pictureH);
+    static std::atomic<bool> told{false};
+    if (area != size && !told.exchange(true))
+        LogF("vrcam: [hud] labels_whole_eye - item labels kept down to the picture's bottom (%u px), not the interface's %u px", unsigned(area >> 32), unsigned(size >> 32));
+    return area;
+}
+
+// Twice a second while ticked and in a world; once in, the hook stays (the tick is read in it, live). LabelLayout's page is encrypted until a label is first laid out.
+void InstallLabelArea() {
+    static bool failed = false;
+    if (g_labelAreaIn.load() || failed || !g_ctx || !g_inWorld.load() || !g_set.labelsWholeEye.load()) return;
+    uint8_t call[5] = {0xE8};
+    const int32_t delta = int32_t(int64_t(RVA_INTERFACE_SIZE) - int64_t(RVA_LABEL_AREA_CALL + 5));
+    memcpy(call + 1, &delta, sizeof delta);
+    if (!Matches(RVA_LABEL_AREA_CALL, call, sizeof call)) {
+        if (!g_labelSizeIn.load() && !Matches(RVA_LABEL_LAYOUT, kSigLabelLayout, sizeof kSigLabelLayout)) return;   // not decrypted yet
+        failed = true;
+        Log("vrcam: [hud] labels_whole_eye NOT possible - the game's label code is not as 3.3.93787 has it (another build?)");
+        return;
+    }
+    g_labelAreaRet = d2rsig::Addr(RVA_LABEL_AREA_CALL + 5);
+    const bool in = g_labelAreaRet && d2rsig::Hook(RVA_INTERFACE_SIZE, kSigInterfaceSize, sizeof kSigInterfaceSize, (void*)&HookInterfaceSize, (void**)&OrigInterfaceSize);
+    failed = !in;
+    g_labelAreaIn.store(in);
+    Log(in ? "vrcam: [hud] labels_whole_eye - item-label area hook in: labels kept over the whole picture, not only the interface's height"
+           : "vrcam: [hud] labels_whole_eye - item-label area hook FAILED: labels as the game lays them out");
+}
+
 // The game's addresses for the settings program's Status tab: d2r_vr_game_code.txt
 // beside the ini, rewritten whenever the resolver's report changes. Its Scan
 // button bumps [status] scan in the ini: what is not found is searched for again.
@@ -17303,6 +17356,7 @@ DWORD WINAPI UpdateThread(void*) {
             prophook::Install();   // only once [stereo] props_once_a_pair asks for it
             cavelight::Install();   // only once [cave_light] enabled asks for it
             InstallLabelHooks();
+            InstallLabelArea();   // only once [hud] labels_whole_eye asks for it
             mobbars::Install(g_ctx);   // only once [hud] ordinary_mob_bars asks for it
             InstallKeyMoveHook();
             InstallStickHook();
@@ -17313,6 +17367,7 @@ DWORD WINAPI UpdateThread(void*) {
             InstallSlotSkillHook();   // [hands] throw_auto_skill
             haptics::Install();   // only once [openxr] haptics asks for it
             stowedblock::Install();   // only once [hands] shield_stow_no_block asks for it
+            spatialaudio::Install(g_inWorld.load());   // only once [audio] head_follow asks for it (and at the plugin's load, below)
             if (meleetouch::Wanted() || meleetouch::ThrowWanted() || meleetouch::StatusWanted()) meleetouch::Install();   // only once melee_touch, a throw's auto-aim or the wrist status asks for it
             engitem::InstallHook();   // only once belt_models or [debug] engine_unit asks for it
             owneffects::Install();    // [render] dim_own_effects: its two hooks only LOOK at the creation of overlays (in whether it is ticked or not, so a buff cast before it is ticked is known); a status line while it is on
@@ -17624,6 +17679,9 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     shieldarmwire::SetHaptic([](int side, float amplitude, int ms) { haptics::Pulse(haptics::FromSkel(side), amplitude, ms); });   // the left shoulder, with the shield put away
     shieldarmwire::SetLog(&Log);
     stowedblock::SetLog(&Log);
+    spatialaudio::SetLog(&Log);
+    spatialaudio::SetViewYaw(+[]() { return g_camYaw.load(); });
+    spatialaudio::Install(false);   // now: the game sets FMOD's listener up once, early, and that call hands over its sound system
     rangedwire::SetLog(&Log);
     rangedwire::SetHaptic([](int side, float amplitude, int ms) { haptics::Pulse(haptics::FromSkel(side), amplitude, ms); });
     shieldarmwire::SetWielderSource(&weight::WieldingHands);   // [hands] shoulder_draw, the shield: weapon and shield are always on opposite arms

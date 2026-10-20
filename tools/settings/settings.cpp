@@ -583,6 +583,15 @@ std::vector<Item> g_items = {
     Slider(L"table", L"floor", L"Lift the game off black", 0, 0.3f, 0.01f, 0.05f,
            L"With a black background: the game's own dark parts are lifted this far off black, so the chroma key does not "
            L"cut them too. Raise it if shadows show the room, lower it if the picture looks washed out."),
+    // [audio] head_follow, listener_turn: the two FMOD hooks from bearstonem/d2r-pcvr (vr/spatial_audio.h)
+    Group(L"Sound"),
+    Toggle(L"audio", L"head_follow", L"The game's sounds turn with your view", 1,
+           L"Monsters, NPCs and streams are heard from where they are around you, as you turn your head, the stick or the mouse - a monster on your left is "
+           L"heard on the left. Music, ambience, the interface and the hero's own sounds stay in the middle. Stereo only: Windows' Mono audio (Settings > "
+           L"Accessibility > Audio) folds it to the middle. Off: the game's sound as it is without the mod. Ticked while the game runs, the turn with the "
+           L"view needs the game started again."),
+    Needs(L"audio", L"head_follow", 1, Toggle(L"audio", L"listener_turn", L"... and turn them with the view", 1,
+           L"The sounds turn as your view turns. Off: their places are kept on the ground only, as if you always looked ahead. Live.")),
 
 #if D2RVR_FIRST_PERSON
     Tab(L"Body"),
@@ -1412,6 +1421,10 @@ std::vector<Item> g_items = {
     Slider(L"hud", L"labels_far", L"Item labels: size far away, % of the size above", 20, 100, 5, 100,
            L"Nearer names larger, farther ones smaller, as signs in the room: the size above for an item 1.5 m away and nearer, "
            L"this much of it for one 10 m away and farther, smoothly in between. 100 = the same size at any distance."),
+    Toggle(L"hud", L"labels_whole_eye", L"Item labels down to the bottom of the picture (test)", 0,
+           L"The game drops the name of an item whose label would reach below its interface's height. Where the interface is smaller than the picture - a "
+           L"square or tall VR render size, Safe Screen - items low in the view, the one you look down at, have no name, with Show Items held too. Ticked: "
+           L"the labels are kept down to the bottom of the picture. Every view. A test of bearstonem/d2r-pcvr's fix: try it on and off. Live."),
     Slider(L"hud", L"labels_depth_body", L"Item labels: at their items, %", 0, 150, 5, 0,
            L"In stereo the game draws the labels on the same spot in both eyes - in the headset they float far off, not on "
            L"their items. Here each label is set at its own item's depth, by the item's distance from you: 100 = exactly "

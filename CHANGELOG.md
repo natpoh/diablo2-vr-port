@@ -1,5 +1,21 @@
 # What's new in D2R VR
 
+## Next (in the build, not released yet)
+
+- **New, on by default: the game's sounds turn with your view** ([audio] head_follow, listener_turn; D2R VR Authentic Settings > Camera > Sound). Monsters, NPCs
+  and streams are heard from where they are around you as you turn the head, the stick or the mouse - stock D2R pans by the flat camera's screen only, so in VR
+  a monster you turned away from still sounded where the flat camera had it. Music, ambience, the interface and the hero's own sounds stay in the middle. Two
+  FMOD hooks from bearstonem/d2r-pcvr v0.3.21 (MIT, contributed there by ChuckRibbits): a voice's screen offset becomes a direction on the ground at its own
+  distance (the game's loudness and falloff), and the listener is turned along the view every 10 ms. Stereo only; with Windows' Mono audio on the log says so.
+  The listener hook has to be in when the game sets its sound up, at the start: ticked while the game runs, the turn needs the game started again. On another
+  game build nothing is hooked and the log says so. Not tried in the game yet. Unit test: cleanroom/tests/spatial_audio_test.cpp (vr/spatial_audio.h).
+- **New, off by default, a test: item labels down to the bottom of the picture** ([hud] labels_whole_eye; Settings > UI: F4 body > Item labels on the ground; every
+  view). The game drops a label whose bottom passes its interface's height; bearstonem/d2r-pcvr v0.3.23 found that where the interface is smaller than the
+  picture (his native VR's widescreen band of a square eye) items low in the view - the one you look down at - had no name, with Show Items held too, and gives
+  that one check the whole picture's height. Ours lays the interface over the whole picture ([render] vr_resolution_ui), so we may not have the problem: to be
+  tried with and without the tick (Safe Screen, a square render size). The log says "item labels kept down to the picture's bottom" the first time it changes
+  anything. Unit test: cleanroom/tests/label_area_test.cpp (vr/label_area.h).
+
 ## 0.173
 
 - **The map in the hand with the game's map in the middle** (a player: native OpenXR drew the map across the view, no map in the hand). The map comes into the
