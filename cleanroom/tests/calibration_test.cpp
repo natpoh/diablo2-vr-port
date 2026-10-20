@@ -252,6 +252,65 @@ int main() {
     calib::Stop();
     viewgate::Set(nullptr);
 
+    // ---- played seated ([calibration] seated=1; the author, 2026-10-20) ----
+    // "if I play seated, the recenter must set the hero's height ... the calibration takes only the distance between the hands"
+    WritePrivateProfileStringW(L"calibration", L"eye_height_m", L"1.6917", ini.c_str());
+    WritePrivateProfileStringW(L"calibration", L"arm_span_m", L"1.5101", ini.c_str());
+    WritePrivateProfileStringW(L"calibration", L"version", L"1", ini.c_str());
+    WritePrivateProfileStringW(L"calibration", L"use", L"1", ini.c_str());
+    WritePrivateProfileStringW(L"calibration", L"seated", L"1", ini.c_str());
+    calib::LoadSettings(ini.c_str());
+    Check(calib::Seated(), "seated: read from the ini, live");
+    Check(Near(calib::MeasuredEyeM(), 1.6917f, 0.0002f) && Near(calib::MeasuredSpanM(), 1.5101f, 0.0002f),
+          "seated: the stored (standing) eye height stays the world's scale, the span the arms'");
+    {
+        const float seatedRecentre = 1.18f;
+        const float standY = bodycal::StandingEyeY(seatedRecentre, true, 0.0f, calib::MeasuredEyeM(), calib::Seated());
+        Check(standY == seatedRecentre, "seated: the camera's standing height is the recentre's (sitting): the hero's eyes, not his middle");
+    }
+    // a seated measurement: a LOCAL space (no floor), the head at 0 - the arm span only, the stored eye height kept
+    auto seatedFrame = [](bool both) {
+        calib::Frame f = Frame(both);
+        f.floor = false;
+        f.head[1] = 0.0f;
+        f.hand[0][1] = f.hand[1][1] = -0.20f;
+        return f;
+    };
+    WritePrivateProfileStringW(L"calibration", L"measure", L"7", ini.c_str());
+    calib::LoadSettings(ini.c_str());
+    calib::Feed(seatedFrame(false));
+    Check(calib::PanelNow().show && calib::PanelNow().image == 1 + calib::kPanelMessages, "seated: the prompt's seated pictures (ready)");
+    for (int i = 0; i < 200 && calib::PanelNow().image != 9 + calib::kPanelMessages; ++i) calib::Feed(seatedFrame(true));
+    Check(calib::PanelNow().image == 9 + calib::kPanelMessages, "seated: no floor, no eye height - saved");
+    {
+        const std::string text = ReadFile(ini);
+        Check(text.find("arm_span_m=1.64") != std::string::npos && text.find("eye_height_m=1.6917") != std::string::npos,
+              "seated: ini - the new span, the stored eye height untouched");
+    }
+    Check(Near(calib::MeasuredEyeM(), 1.6917f, 0.0002f) && Near(calib::MeasuredSpanM(), 1.64f, 0.002f), "seated: in force at once");
+    calib::LoadSettings(ini.c_str());
+    Check(Near(calib::MeasuredEyeM(), 1.6917f, 0.0002f) && Near(calib::MeasuredSpanM(), 1.64f, 0.002f), "seated: read back the same");
+    for (int i = 0; i < 200 && calib::OwnsTriggers(); ++i) calib::Feed(seatedFrame(false));
+    // only a span stored: seated the span, the world's scale the old height; standing nothing
+    WritePrivateProfileStringW(L"calibration", L"eye_height_m", L"0", ini.c_str());
+    calib::LoadSettings(ini.c_str());
+    Check(calib::MeasuredEyeM() == 0.0f && Near(calib::MeasuredSpanM(), 1.64f, 0.002f), "seated: a span alone - the arms, the old height");
+    WritePrivateProfileStringW(L"calibration", L"seated", L"0", ini.c_str());
+    calib::LoadSettings(ini.c_str());
+    Check(!calib::Seated() && calib::MeasuredEyeM() == 0.0f && calib::MeasuredSpanM() == 0.0f, "standing again, a span alone: nothing (measure standing)");
+    // standing is as before: both, and the floor's height
+    WritePrivateProfileStringW(L"calibration", L"eye_height_m", L"1.6917", ini.c_str());
+    calib::LoadSettings(ini.c_str());
+    Check(Near(calib::MeasuredEyeM(), 1.6917f, 0.0002f) && Near(calib::MeasuredSpanM(), 1.64f, 0.002f), "standing: both in force");
+    Check(Near(bodycal::StandingEyeY(1.18f, true, 0.0f, calib::MeasuredEyeM(), calib::Seated()), 1.6917f, 0.0002f),
+          "standing: the floor plus the measured eye height, whatever the recentre");
+    // a standing measurement is refused in a LOCAL space as before
+    WritePrivateProfileStringW(L"calibration", L"measure", L"8", ini.c_str());
+    calib::LoadSettings(ini.c_str());
+    for (int i = 0; i < 30; ++i) calib::Feed(seatedFrame(false));
+    Check(calib::PanelNow().image == 3, "standing: no floor - the standing pictures, 'no floor'");
+    calib::Stop();
+
     DeleteFileW(ini.c_str());
     DeleteFileW(bak.c_str());
     DeleteFileW(tmpFile.c_str());

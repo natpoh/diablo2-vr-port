@@ -128,15 +128,15 @@ constexpr Rect kSlEnds = {112, 416, 800, 26};
 constexpr Rect kVidCost = {32, 450, 960, 30};
 constexpr Rect kVidLimit = {32, 482, 960, 30};
 constexpr Rect kVidNote = {32, 516, 960, 30};
-// The Body page: what it is for, the three buttons (the measurement, its Forget, the first-start guide again), what is stored, and the steps.
-constexpr Rect kBodyTitle = {32, 148, 960, 36};
-constexpr Rect kBodyWhy = {32, 184, 960, 30};
-constexpr Rect kCalibrate = {32, 228, 300, 76};
-constexpr Rect kForget = {344, 228, 320, 76};
-constexpr Rect kGuideBtn = {676, 228, 316, 76};   // the first-start guide (vr/first_start.h) again: the Guide page, from its first page
-constexpr Rect kBodyStored = {32, 322, 960, 38};
-constexpr Rect kBodyUse = {32, 360, 960, 30};
-constexpr Rect kBodyStep(int i) { return {48, 408 + i * 32, 944, 30}; }
+// The Body page: its one table row on top (how you play: standing / seated, row 0 as on every page), what Calibrate is for, the three
+// buttons (the measurement, its Forget, the first-start guide again), what is stored, and the steps.
+constexpr Rect kBodyWhy = {32, 222, 960, 30};
+constexpr Rect kCalibrate = {32, 258, 300, 64};
+constexpr Rect kForget = {344, 258, 320, 64};
+constexpr Rect kGuideBtn = {676, 258, 316, 64};   // the first-start guide (vr/first_start.h) again: the Guide page, from its first page
+constexpr Rect kBodyStored = {32, 332, 960, 34};
+constexpr Rect kBodyUse = {32, 366, 960, 28};
+constexpr Rect kBodyStep(int i) { return {48, 402 + i * 30, 944, 28}; }
 constexpr Rect kRecentre = {32, 620, 280, 68};
 // The two low-life pages' own button, between Recentre and Close: the vignette and the beat in the controllers for five seconds, with the rows as they stand.
 constexpr Rect kPreviewBtn = {324, 620, 200, 68};
@@ -189,11 +189,10 @@ inline Hit HitTest(int page, float u, float v) {
         if (kGuideNext.Contains(x, y)) return {Kind::GuideNext, -1, 1};
         return {};
     }
-    if (page == kPageBody) {
+    if (page == kPageBody) {   // (and its table row, below)
         if (kCalibrate.Contains(x, y)) return {Kind::Calibrate, -1, 0};
         if (kForget.Contains(x, y)) return {Kind::Forget, -1, 0};
         if (kGuideBtn.Contains(x, y)) return {Kind::Guide, -1, 0};
-        return {};
     }
     for (int r = 0; r < kRowsPerPage; ++r) {
         const int key = KeyAt(page, r);
@@ -266,8 +265,12 @@ public:
     video::Pick DraftPick() const { return video::PickOf(draft_[kKeyMode], draft_[kKeyPx]); }
     video::Pick FilePick() const { return video::PickOf(base_[kKeyMode], base_[kKeyPx]); }
     bool VideoEdited() const { return Edited(kKeyMode) || Edited(kKeyPx); }
-    // What the file says of the T-pose measurement, always the latest (not a draft: the plugin writes it).
-    body::Stored Measured() const { return body::Of(seen_[kKeyUse], seen_[kKeyVersion], seen_[kKeyEye], seen_[kKeySpan]); }
+    // What the file says of the T-pose measurement, always the latest (not a draft: the plugin writes it) - read as the draft plays it
+    // (standing / seated: the row above it, at once).
+    body::Stored Measured() const { return body::Of(seen_[kKeyUse], seen_[kKeyVersion], seen_[kKeyEye], seen_[kKeySpan], draft_[kKeySeated]); }
+    // Standing / seated is still on its way to the file (a live key, written a moment after the click): a measurement now would be
+    // taken the other way, so Calibrate waits for it.
+    bool PlayPending() const { return Edited(kKeySeated); }
     // What the plugin knows of the picture (the game's size now, the headset's numbers); the picture follows it.
     const video::Env& Env() const { return env_; }
     // The game's view now (the plugin's, 1 = F1 ... 4 = F4; 0 = not known): the button of it is lit.
@@ -398,7 +401,7 @@ public:
             case Kind::GuideNext:
                 if (page != kPageGuide) return a;
                 if (guide == firststart::kOfferPage) {   // Measure now: the measurement writes the ini; the panel comes back on the guide's first page
-                    if (!ready || Busy()) return a;
+                    if (!ready || Busy() || PlayPending()) return a;
                     resumePage_ = kPageGuide;
                     guide = 1;
                     a.what = Do::Calibrate;
@@ -466,8 +469,8 @@ public:
                 }
                 return a;
             }
-            case Kind::Calibrate:   // the measurement writes the ini; without one there is nowhere to put it
-                if (!ready || Busy()) return a;
+            case Kind::Calibrate:   // the measurement writes the ini; without one there is nowhere to put it (and standing / seated is in it first)
+                if (!ready || Busy() || PlayPending()) return a;
                 a.what = Do::Calibrate;
                 return a;
             case Kind::Forget: {   // clears the stored measurement: [calibration] version, eye_height_m, arm_span_m (what the PC window's button does)

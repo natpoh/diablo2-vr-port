@@ -600,6 +600,13 @@ std::vector<Item> g_items = {
            L"camera moved ahead puts them out of the arms' reach. At 0% they hang off the hero's eyes: the body stays put, "
            L"the hands always reach, a little nearer than your real ones.")),
     Only(kVr, Group(L"Measured height and arm span (T-pose)")),
+    Only(kVr, Choice(L"calibration", L"seated", L"How you play", 0, {L"Standing", L"Seated"},
+           L"Standing: in native OpenXR F4 with a measurement in use, the hero's eyes are at your measured eye height over the floor, "
+           L"whatever height a recenter was taken at; a recenter sets straight ahead and where you stand. Seated: the hero's eyes are "
+           L"where your head is when you recenter (F11, the headset's own recenter, the headset settings' Recentre view) - sit as you "
+           L"play and recenter; the crouch counts from there. The measurement then reads only your arm span (no floor needed) and keeps "
+           L"a stored eye height for the world's scale (none stored: \"My height\" / BodyWalk's Body Height). Also on the headset "
+           L"settings' Body page. Live.")),
     Only(kVr, Toggle(L"calibration", L"use", L"Use the measured height and arm span", 0,
            L"The world's scale from your measured eye height, and the hero's arms fitted to your measured arm span (the hands stay "
            L"1:1 with the controllers), in place of \"My height\" / BodyWalk's Body Height and \"Arm length (scale)\". Unticked: "
@@ -609,7 +616,7 @@ std::vector<Item> g_items = {
            L"Native OpenXR only, with the game running and the headset on: a panel in front of you says what to do. Stand upright, "
            L"look straight ahead, stretch both arms out sideways at shoulder height, let go of both triggers, then squeeze both and "
            L"hold still for a second. Needs the room's floor set up in your headset. The game goes on behind the panel: measure "
-           L"somewhere safe. F4 only.")),
+           L"somewhere safe. F4 only. Seated (\"How you play\"): sit upright - only the arm span is measured, no floor needed.")),
     Only(kVr, Button(L"@run", L"calibration_forget", L"Forget the measurement",
            L"Clears the stored measurement: the height from BodyWalk / \"My height\" and \"Arm length (scale)\" apply again.")),
     // [onboarding] (vr/first_start.h): the guide in the headset at the first start in F4 - the T-pose measurement offered first, then what to press for what
@@ -640,7 +647,8 @@ std::vector<Item> g_items = {
     Needs(L"body", L"crouch", 1, Only(kVr, Slider(L"body", L"crouch_cm", L"Crouch: head lower than this, cm", 5, 60, 1, 20,
            L"How far your head must go below your standing eye height before the hero crouches. He stands again once it is "
            L"back within half of this. The standing eye height is your measured one over the floor (\"Use the measured height "
-           L"and arm span\", native OpenXR); without it, your head's height at the last recenter: recenter standing upright."))),
+           L"and arm span\", native OpenXR); without it, or seated (\"How you play\"), your head's height at the last recenter: "
+           L"recenter as you play (standing upright, or sitting)."))),
     Only(kVr, Choice(L"body", L"turn", L"Hero turns to where you look (F4)", 2, {L"No (the game's facing)", L"Above the pelvis", L"Whole body"},
            L"In the other first-person views the whole hero always turns with you.")),
     Toggle(L"body", L"turn_third", L"From behind too (the right stick turns him)", 1,

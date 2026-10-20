@@ -42,13 +42,15 @@ struct Eyes {
     // of it towards the viewer, metres, from its middle), quat the identity, tan* the frusta through the window's edges, win*
     // the window's size and distance.
     // kViewsHead: pos is from the standing eyes' height, and standMeasured says which - true: the floor plus the T-pose's measured
-    // eye height ([calibration] use=1, F4, a STAGE floor seen); false: the head's height at the recentre.
+    // eye height ([calibration] use=1, F4, a STAGE floor seen); false: the head's height at the recentre - always so with
+    // standSeated ([calibration] seated=1: played seated, the recentre sets the hero's eye height).
     int mode;
     float winW, winH, winD;
     float floorY;
     bool floorOk;
     uint32_t epoch;
     bool standMeasured;
+    bool standSeated;
 };
 enum { kViewsHead = 0, kViewsWindow = 1, kViewsRoom = 2 };
 

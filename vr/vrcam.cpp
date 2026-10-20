@@ -3990,9 +3990,13 @@ bool VrViewInner(const d2rcam::WorldView& in, float out[16]) {
         if (!ThirdPerson()) { g_headDownM.store(-mid.y); g_headDownAt.store(GetTickCount64()); }   // [body] crouch: the camera goes down by this
         {   // what the eyes' height is counted from (xr::Eyes standMeasured), on change
             static int told = -1;
-            if (!ThirdPerson() && (int)xe.standMeasured != told) {
-                told = (int)xe.standMeasured;
-                if (xe.standMeasured)
+            const int how = xe.standSeated ? 2 : (int)xe.standMeasured;
+            if (!ThirdPerson() && how != told) {
+                told = how;
+                if (xe.standSeated)
+                    Log("vrcam: openxr - standing height: played seated ([calibration] seated=1) - the head's height at the recentre is the "
+                        "hero's eyes: sit as you play and recentre (F11)");
+                else if (xe.standMeasured)
                     LogF("vrcam: openxr - standing height: the floor + your measured eye height %.2f m - standing upright, the camera is the hero's eyes "
                          "whatever height a recentre was taken at", calib::MeasuredEyeM());
                 else

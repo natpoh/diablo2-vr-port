@@ -3990,10 +3990,14 @@ bool PairEyes(Eyes* out) {
     // the player who stood up to measure saw the hero's eyes half a metre under their own - "the character ends up small under
     // me". With a T-pose measurement in force (F4) and the floor known, it is the floor plus the measured eye height: the same
     // floor and the same head the measurement read (vr/body_calibration.h StandingEyeY). Else the recentre's, as before.
+    // Played seated ([calibration] seated=1): always the recentre's - sit, recentre (F11, the runtime's, the panel's), and the view is
+    // back at the hero's eyes ("I look from the middle of the hero, and recenter does not lift the view", the author, 2026-10-20).
     // (No place for the eyes this frame - held at the recentre's point: the recentre's height, so the camera stays the hero's eyes.)
     const float measuredEye = calib::MeasuredEyeM();
-    out->standMeasured = bodycal::StandsOnFloor(g_floorHeldOk, g_floorHeldY, measuredEye);
-    const float standY = g_posHeld ? g_cPos.y : bodycal::StandingEyeY(g_cPos.y, g_floorHeldOk, g_floorHeldY, measuredEye);
+    const bool seated = calib::Seated();
+    out->standMeasured = bodycal::StandsOnFloor(g_floorHeldOk, g_floorHeldY, measuredEye, seated);
+    out->standSeated = seated;
+    const float standY = g_posHeld ? g_cPos.y : bodycal::StandingEyeY(g_cPos.y, g_floorHeldOk, g_floorHeldY, measuredEye, seated);
     if (GetTickCount64() - g_bodyHeldAt.load() >= 2500) {   // the body follows the head once it leans farther than lean_m (unless the room walk holds it)
         const float mx = 0.5f * (g_views[0].pose.position.x + g_views[1].pose.position.x);
         const float mz = 0.5f * (g_views[0].pose.position.z + g_views[1].pose.position.z);

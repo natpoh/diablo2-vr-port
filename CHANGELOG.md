@@ -2,6 +2,23 @@
 
 ## Next
 
+- **New: how you play, standing or seated** (the author, after the fix below: "if I play seated, the recenter button must set
+  the hero's height. Say I calibrated the body standing, then sat down: now I look from the middle of the hero, not from his
+  head, and recenter does not lift the view either - it stays crouched"; native OpenXR, VR first person F4). D2R VR Authentic
+  Settings > Body > *How you play* (next to the measurement) and the headset settings' Body page (its new top row,
+  *Standing* / *Seated*), `[calibration] seated`, *Standing* by default, live. *Standing*: exactly as below - the hero's eyes
+  at the floor plus your measured eye height; a recenter sets straight ahead and where you stand, not the height (a recenter
+  taken crouched leaves the standing height where it is). *Seated*: the hero's eyes are where your head is when you recenter
+  (F11, the headset's own recenter, the panel's *Recentre view*) - sit, recenter, and you look from his eyes again; the crouch
+  ([body] crouch) counts its drop from there, so leaning forward in the chair is no crouch until it passes *Crouch: head lower
+  than this* (20 cm). *Calibrate body* / *Measure...* seated reads only the span between your hands: no floor needed, the
+  head's height not read (sit upright, arms out, the same triggers); it writes `arm_span_m` alone and keeps the `eye_height_m`
+  a standing measurement stored, which stays the world's scale (none stored: *My height* / BodyWalk's Body Height, as
+  unmeasured); the arms are fitted to the new span as before. The prompt in the headset says so ("Seated: measure my arm
+  span"). Played standing again with only a span stored: nothing measured in use until you measure standing. The log says
+  which ("calibration - played seated", "standing height: played seated"). Unit tests: cleanroom/tests/body_calibration_test.cpp
+  (*seated*), crouch_test.cpp (*play seated*, *recentre crouched*), calibration_test.cpp (Windows), tools/hset_test.cpp (the
+  Body page's row). Not yet seen in the headset.
 - **Fixed: after measuring your height standing, the hero was small, under you** (the author: "when I stand up and press
   calibrate, the character ends up small under me"; native OpenXR, VR first person F4). The camera puts the hero's bind-pose
   eyes at the height your eyes have standing, and moves from there with your head. That standing height was always your
@@ -16,8 +33,7 @@
   ("openxr - standing height: ..."). bearstonem/d2r-pcvr re-zeroes its camera at the head where the T-pose was taken (and has
   a "reset eye height" action); here it is the measured height over the floor, which a later recenter does not undo. Nothing
   tuned by hand: the hero's eyes, your measured eyes and the floor. Unit tests: cleanroom/tests/body_calibration_test.cpp
-  (*stand*, with the author's numbers), calibration_test.cpp. In a seated game with a measurement in use the camera is now
-  as low as your seated head - untick *Use the measured height* to play seated from the hero's eyes.
+  (*stand*, with the author's numbers), calibration_test.cpp. To play seated: *How you play: Seated*, below.
 - **The hero crouches when you crouch, back, from d2r-pcvr** (bearstonem, MIT; VR first person F4 only; its own tick -
   Settings > Body > "Hero crouches when you crouch (F4)", `[body] crouch`, off by default). Taken out of the release after
   the author's test, where crouching did nothing: the crouch was counted from the head's height at the last recenter, the

@@ -120,8 +120,18 @@ the headset-only ones.
   good measurement switches it on) -
   off is the height from BodyWalk / *My height* and *Arm length (scale)*, as
   before; *Forget the measurement* clears it. Needs the headset's floor (a room
-  set up), not a seated-only space. With the settings panel in the headset
+  set up), not a seated-only space - unless you play seated.
+  *How you play* (`[calibration] seated`, *Standing* by default, live): *Standing*
+  is the above. *Seated*: the hero's eyes are where your head is when you
+  recenter (F11, the headset's own recenter, *Recentre view* in the headset
+  settings) - sit as you play and recenter, and you look from his eyes, not
+  from his middle; the crouch counts from there too, so leaning forward in the
+  chair is no crouch unless it goes past *Crouch: head lower than this*. The
+  measurement then reads only your arm span (sit upright, arms out; no floor
+  needed) and keeps an eye height stored by a standing one for the world's
+  scale (none stored: *My height* / BodyWalk's Body Height). With the settings panel in the headset
   (UI: F4 body > Menus) the same measurement starts from its *Body* page:
+  *How you play* (its top row: Standing / Seated, the same key),
   *Calibrate body*, *Forget measurement*, *First-start guide* (the guide below,
   again), and the numbers stored. Its first
   page also switches the game view, F1 - F4, as the F keys do (the panel is
@@ -157,8 +167,9 @@ the headset-only ones.
   position). *Crouch: head lower than this, cm* (`crouch_cm`, 20): how far below
   your standing eye height the head must go; he stands again within half of it.
   The standing eye height is the measured one over the floor (native OpenXR with
-  *Use the measured height and arm span*); without a measurement it is your head's
-  height at the last recenter, so recenter standing upright. The idea is
+  *Use the measured height and arm span*); without a measurement, or played
+  seated (*How you play*), it is your head's height at the last recenter, so
+  recenter as you play - standing upright, or sitting. The idea is
   bearstonem/d2r-pcvr's (MIT).
 - **Hands** - the hands turn with the controllers; tilt, turn and roll offsets
   for your controllers' grip.

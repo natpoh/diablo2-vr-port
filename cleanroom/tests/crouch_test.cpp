@@ -9,7 +9,10 @@
 // lost      tracking lost: the pose held a moment, then standing; a bad step (NaN, a long gap) changes nothing it should not
 // legs      LegRoom, KneePole and Knee: lengths kept, the foot kept, the knee ahead, nothing past the folded leg
 // standing  the drop counted from the standing eyes (vr/body_calibration.h StandingEyeY): a crouch from standing after a
-//           seated recentre - nothing from the recentre (the headset, 2026-10-19), a crouch from the measured height
+//           seated recentre - nothing from the recentre (the headset, 2026-10-19), a crouch from the measured height; a recentre
+//           taken crouched changes nothing standing
+// playseated [calibration] seated=1: the drop from the recentre's height (sitting), measured or not - a lean forward in the chair
+//           under the threshold is nothing, a real duck past it is a crouch; a recentre sitting after one standing puts the hero up
 
 #include "crouch.h"
 #include "body_calibration.h"
@@ -233,6 +236,56 @@ void StandingCases() {
     }
 }
 
+// [calibration] seated=1 (the author, 2026-10-20: "if I play seated, the recenter must set the hero's height"): the standing height is
+// the recentre's head height (StandingEyeY, seated), the measurement or the floor notwithstanding.
+void PlaySeatedCases() {
+    Params p;   // 20 cm
+    const float eye = 1.6917f, seatedHead = 1.18f;   // the author's measurement (standing), sitting at 1.18 m
+    p.floorM = eye;
+    const float standY = bodycal::StandingEyeY(seatedHead, true, 0.0f, eye, true);
+    {
+        Tracker t;
+        Check(Hold(t, -(seatedHead - standY), 1.0f, p) == 0.0f && !t.Crouched(), "play seated: sitting at the recentre - standing pose");
+        Check(Hold(t, -(seatedHead - 0.12f - standY), 1.0f, p) == 0.0f && !t.Crouched(), "play seated: leaning 12 cm forward in the chair - nothing");
+        Check(Hold(t, -(seatedHead - 0.19f - standY), 1.0f, p) == 0.0f && !t.Crouched(), "play seated: 19 cm - still under the threshold");
+        const float d = Hold(t, -(seatedHead - 0.30f - standY), 1.0f, p);
+        Check(t.Crouched() && Near(d, 0.30f, 1e-3f), "play seated: ducking 30 cm in the chair - a crouch, as deep as the head");
+        Hold(t, -(seatedHead - standY), 1.0f, p);
+        Check(!t.Crouched(), "play seated: sitting up again - standing");
+    }
+    {   // (the bug) played seated with the floor's standing height: sitting already read as a 51 cm crouch
+        Tracker t;
+        const float floorStand = bodycal::StandingEyeY(seatedHead, true, 0.0f, eye, false);
+        Hold(t, -(seatedHead - floorStand), 1.0f, p);
+        Check(t.Crouched(), "play seated: (the bug) on the floor's standing height, merely sitting is a crouch");
+    }
+    {   // recentred standing (the session's first frame), then sat: low until a recentre sitting, which stands the hero up again
+        Tracker t;
+        const float wasStand = bodycal::StandingEyeY(eye, true, 0.0f, eye, true);
+        Hold(t, -(seatedHead - wasStand), 1.0f, p);
+        Check(t.Crouched(), "play seated: recentred standing, sitting - a crouch (the camera is low too)");
+        const float nowStand = bodycal::StandingEyeY(seatedHead, true, 0.0f, eye, true);
+        Check(Hold(t, -(seatedHead - nowStand), 1.0f, p) == 0.0f && !t.Crouched(), "play seated: recentre sitting - standing again");
+    }
+}
+
+// A recentre taken crouched, played standing with a measurement: the standing height is the floor's, so the drop is still the crouch.
+void RecentreCrouchedCases() {
+    Params p;
+    const float eye = 1.6917f, crouched = 1.25f;
+    p.floorM = eye;
+    const float standY = bodycal::StandingEyeY(crouched, true, 0.0f, eye);   // recentred while crouched
+    Tracker t;
+    const float d = Hold(t, -(crouched - standY), 1.0f, p);
+    Check(t.Crouched() && Near(d, eye - crouched, 1e-3f), "recentre crouched (standing, measured): still a crouch - the recentre does not lower 'standing'");
+    Hold(t, -(eye - standY), 1.0f, p);
+    Check(!t.Crouched(), "recentre crouched (standing, measured): upright - standing");
+    // without a measurement it is the recentre's height, as before: recentred crouched, crouching is standing (recenter standing)
+    Tracker u;
+    Check(Hold(u, -(crouched - bodycal::StandingEyeY(crouched, true, 0.0f, 0.0f)), 1.0f, p) == 0.0f,
+          "recentre crouched (no measurement): the recentre's height is standing, as before");
+}
+
 }  // namespace
 
 int main() {
@@ -242,6 +295,8 @@ int main() {
     LostCases();
     LegCases();
     StandingCases();
+    PlaySeatedCases();
+    RecentreCrouchedCases();
     std::printf("%d checks, %d failed\n", g_checks, g_failed);
     return g_failed ? 1 : 0;
 }
