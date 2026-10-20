@@ -132,6 +132,7 @@ namespace gamestate { bool HandIsThrowPotion(int side); }   // the held item is 
 #include "afr_eye_shared.h"
 #include "dlss_mv.h"
 #include "xr.h"
+#include "turn_math.h"   // eyes by turns: the cameras handed to xr::SetTurnView (FromAxes)
 #include "views3d.h"      // [openxr] views_3d: F1 and F3 with the runtime's eyes (the pure maths)
 #include "pointer3d.h"    // [openxr] pointer_3d: the game's mouse pointer drawn on F1's and F3's ground (the pure maths)
 #include "frame_hitch.h"
@@ -3957,6 +3958,8 @@ bool VrViewInner(const d2rcam::WorldView& in, float out[16]) {
     xr::Eyes xe{};
     const bool native = NativeEyes(&xe);
     float nativeIpd = 0.0f;   // world units
+    float turnBody = 0.0f;    // native first person: the room's -z in the world (xr::TurnView, eyes by turns)
+    bool turnFirst = false;   // ... this view is a native first-person pair's
     int ptrMode = -1;                 // F1 / F3 in 3D: the laser's map (PointerMap)
     pointer3d::Similarity ptrSim;
     if (native && xe.mode == xr::kViewsRoom) {
@@ -3985,6 +3988,8 @@ bool VrViewInner(const d2rcam::WorldView& in, float out[16]) {
         const float d2r = 3.14159265f / 180.0f;
         const float body = WrapDeg(g_pairNow.load() ? g_heldYaw.load() : g_mouseYaw.load() + g_turnYaw.load());
         const float base = heading0 - body * d2r;   // the room's -z in the world
+        turnBody = base;
+        turnFirst = !ThirdPerson();
         const float cb = cosf(base), sb = sinf(base);
         auto toWorld = [&](V3 v) { return V3{v.x * cb + v.z * sb, v.y, -v.x * sb + v.z * cb}; };
         const float* q = xe.quat[0];   // the left eye's turn (the eyes are parallel on most headsets: logged at the start)
@@ -4126,6 +4131,22 @@ bool VrViewInner(const d2rcam::WorldView& in, float out[16]) {
         view[12] += g_eye.load() == 0 ? half : -half;
         g_eyeHalf.store(half);
         camPos = eye + right * (g_eye.load() == 0 ? -half : half);
+        // eyes by turns ([stereo] turn_warp, vr/xr.cpp): both eyes' cameras as the head is now, for the eye not drawn
+        if (native && xe.mode == xr::kViewsHead) {
+            xr::TurnView tv{};
+            tv.ok = turnFirst && !g_set.pairPerTick.load();
+            if (tv.ok) {
+                const V3 at[2] = {eye - right * half, eye + right * half};
+                for (int e = 0; e < 2; ++e) { tv.at[e][0] = at[e].x; tv.at[e][1] = at[e].y; tv.at[e][2] = at[e].z; }
+                const turnwarp::Quat q = turnwarp::FromAxes({right.x, right.y, right.z}, {up.x, up.y, up.z}, {-fwd.x, -fwd.y, -fwd.z});
+                tv.turn[0] = q.x; tv.turn[1] = q.y; tv.turn[2] = q.z; tv.turn[3] = q.w;
+                memcpy(tv.hero, L, sizeof tv.hero);
+                tv.body = turnBody;
+                tv.nearPlane = g_lastNear.load();
+                tv.upm = std::max(1.0f, ViewHeight()) / UserEyeHeightM();
+            }
+            xr::SetTurnView(tv);
+        }
     }
     // When this eye's view was built: the head pose it is drawn for is the
     // one of this moment (PredictHead carries it on to now). FlatVR places
@@ -16091,7 +16112,9 @@ bool WaitLastFx(effect_runtime* rt) {
     return true;
 }
 // reshade_begin_effects: the scene's depth into our copy on the effects' own list, bound as DEPTH.
+bool g_copiedNow = false;   // Bind copied the scene's depth for this present (eyes by turns keeps it: xr::SetTurnDepth)
 void Bind(effect_runtime* rt, command_list* cl) {
+    g_copiedNow = false;
     static int told = -1;
     auto tell = [&](int what, const char* text) { if (told != what) { told = what; Log(text); } };
     if (!OwnDepthNow() || !cl) return;
@@ -16183,6 +16206,7 @@ void Bind(effect_runtime* rt, command_list* cl) {
     cl->barrier(src, from, resource_usage::copy_source);
     cl->barrier(g_copy, resource_usage::shader_resource, resource_usage::copy_dest);
     cl->copy_resource(src, g_copy);
+    g_copiedNow = true;
     cl->barrier(src, resource_usage::copy_source, from);
     cl->barrier(g_copy, resource_usage::copy_dest, resource_usage::shader_resource);
     // ours alone: Generic Depth binds DEPTH. Once (see replay::g_depthBound): ReShade drains the GPU before each binding
@@ -16307,6 +16331,10 @@ void OnBeginEffects(reshade::api::effect_runtime* rt, reshade::api::command_list
         float s[2];
         renderscale::Frame(rt, s);
         SetFloats(rt, "DepthScale", s, 2);
+        // eyes by turns ([stereo] turn_warp): this present's depth, kept with its eye when its picture goes to the headset
+        if (xr::ByTurns())
+            xr::SetTurnDepth(scenedepth::g_copiedNow && scenedepth::g_copy.handle ? (void*)scenedepth::g_copy.handle : nullptr,
+                             (uint32_t)scenedepth::SrvFormat(scenedepth::g_copyDesc.texture.format), s[0], s[1]);
     }
     depthcam::Publish();
     {   // FlatVR's ring of finished pictures, on or off from D2R VR Settings: the addon

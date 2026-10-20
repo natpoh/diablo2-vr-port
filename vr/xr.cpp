@@ -56,6 +56,7 @@ int D2rvrHoverSpheres(float (*out)[8], int max);
 #include "body_calibration.h"   // StandingEyeY: the standing eyes' height over the floor, from the T-pose measurement
 #include "views3d.h"   // [openxr] views_3d: F1 as a window, F3 as the room (the pure maths)
 #include "eye_gap.h"   // [openxr] ipd_auto / ipd_mm: the eye distance of the stereo pair - the runtime's or the player's (the pure maths)
+#include "turn_warp.h"   // [stereo] turn_warp: by turns, the eye not drawn made on the GPU (turn_math.h the maths)
 #include "eye_frame.h"   // [openxr] canted_eyes: both eyes drawn and submitted in the head's frame when the displays are canted (the pure maths)
 #include "hset_panel.h"   // the in-headset settings panel ([openxr] headset_settings): vr/xr_headset_settings.h
 #include "hset_life.h"
@@ -116,6 +117,8 @@ struct Cfg {
     float quadWidthM = 2.4f;  // and this wide
     float leanM = 0.10f;      // the head may move this far from the body sideways (lean_m); farther, the body follows
     bool byTurns = false;     // eyes by turns ([stereo] afr without pair_per_tick): one eye a game frame
+    bool turnWarp = true;     // [stereo] turn_warp: by turns, the eye not drawn made on the GPU (vr/turn_warp.h); 0 = as last drawn, at its own pose
+    bool turnFromDrawn = true;   // [stereo] turn_from_drawn: ... with the eye drawn this frame moved across over it (0: its own last picture alone)
     bool frameProfile = true; // frame_profile: Steam Frame's controllers in their own layout when the runtime offers it (vr/xr_profiles.h); taken at a session start
     bool indexGripForce = false;   // index_grip_force: an Index hand's grip is how hard it squeezes (squeeze/force), not the fingers round the handle
     bool menusWaitTracking = true;   // menus_wait_tracking: the flat picture / menu panel placed only once the head is tracked, again after a focus loss (vr/anchor_gate.h)
@@ -1226,6 +1229,7 @@ void FlushHaptics() {
 // -- start: instance, system, session (a worker thread) ------------------------
 void WaitFence(UINT64 v, DWORD ms);   // (the copy list, below)
 void SweepGraveyard(bool all);
+void TurnTeardown();   // eyes by turns' kept pictures and pass (below)
 void Teardown() {   // under g_lock or before the session exists
     g_running.store(false);
     gpufault::Note("xr: teardown");
@@ -1234,6 +1238,7 @@ void Teardown() {   // under g_lock or before the session exists
         WaitFence(g_fenceV, 500);
     }
     SweepGraveyard(true);
+    TurnTeardown();   // (after the wait: our lists that read them are done)
     g_hapticTimer->Cancel();   // [openxr] haptics_stop: no stop called on what goes below
     AcquireSRWLockExclusive(&g_hapticStopLock);
     g_hapticStopOk = false;
@@ -3751,6 +3756,20 @@ void LoadSettings(const wchar_t* ini) {
                       : "vrcam: openxr - both eyes from one game frame");
         }
         g_cfg.byTurns = turns;
+        // the eye not drawn made from pictures already drawn (bearstonem/d2r-pcvr's by turns), live
+        const bool warp = GetPrivateProfileIntW(L"stereo", L"turn_warp", 1, ini) != 0;
+        const bool fromDrawn = GetPrivateProfileIntW(L"stereo", L"turn_from_drawn", 1, ini) != 0;
+        static int saidWarp = -1;
+        if (on && turns && (int)warp * 2 + (int)fromDrawn != saidWarp) {
+            saidWarp = (int)warp * 2 + (int)fromDrawn;
+            Log(!warp ? "vrcam: openxr - eyes by turns: the eye not drawn as it was last drawn, the runtime turns it ([stereo] turn_warp=0)"
+                : fromDrawn ? "vrcam: openxr - eyes by turns: the eye not drawn made on the GPU - the eye drawn this frame moved across with its depth, "
+                              "its own last picture moved with its depth under it ([stereo] turn_warp=1, turn_from_drawn=1)"
+                            : "vrcam: openxr - eyes by turns: the eye not drawn made on the GPU from its own last picture moved with its depth "
+                              "([stereo] turn_warp=1, turn_from_drawn=0)");
+        }
+        g_cfg.turnWarp = warp;
+        g_cfg.turnFromDrawn = fromDrawn;
     }
     g_cfg.bareHands = f(L"bare_hands", 0.0f) != 0.0f;
     g_cfg.frameProfile = f(L"frame_profile", 1.0f) != 0.0f;   // (taken at the next session start)
@@ -4037,11 +4056,253 @@ bool PairInput(D2RVR_XrInput* out) {
     return true;
 }
 
+// -- eyes by turns: the eye not drawn this frame made on the GPU ([stereo] turn_warp, vr/turn_warp.h) -------------------
+// bearstonem/d2r-pcvr's (MIT, steamvr/transport.cpp KeepTurn / KeepDepth / TurnEye, 2026-10-19), written for our frame: the eye drawn
+// (CopyEye) is kept beside its swapchain - its picture, the depth it was drawn with and its camera - and the other eye, drawn a frame
+// ago, goes to the runtime made from those: its own last picture moved with its depth to where it is now, the eye drawn this frame
+// moved across with its own depth over it. Handed in at its older pose instead (as before), the runtime turned it - rotation only,
+// so a step or a moving monster showed a frame behind in one eye.
+namespace {
+SRWLOCK g_turnLock = SRWLOCK_INIT;   // what vrcam hands in (SetTurnView, SetTurnDepth), read by CopyEye
+TurnView g_turnView{};
+struct TurnDepthIn { ID3D12Resource* res; DXGI_FORMAT view; float scale[2]; bool ok; };
+TurnDepthIn g_turnDepthIn{};
+struct TurnKept {
+    ID3D12Resource* image = nullptr;   // the eye's picture as drawn (PIXEL_SHADER_RESOURCE), the swapchain's format
+    ID3D12Resource* depth = nullptr;   // the depth it was drawn with (PIXEL_SHADER_RESOURCE | NON_PIXEL_SHADER_RESOURCE)
+    DXGI_FORMAT depthView = DXGI_FORMAT_UNKNOWN;
+    float scale[2] = {1.0f, 1.0f};
+    bool imageOk = false, depthOk = false;
+    turnwarp::Camera cam;                // where it was drawn from, with the fov it was drawn with
+    turnwarp::Vec hero;
+    float body = 0.0f, nearPlane = 0.0f;
+    ULONGLONG at = 0;                    // when (a picture older than kTurnOldMs is not made into a frame: pairs or a pause came between)
+};
+constexpr ULONGLONG kTurnOldMs = 100;
+TurnKept g_turnKept[2];
+turnwarp::Gpu g_turnGpu;
+UINT64 g_turnSlotDone[turnwarp::kSlots] = {};   // our fence when the list that used each descriptor set was submitted
+int g_turnSlot = 0;
+struct TurnCounts { uint32_t moved = 0, turned = 0, drawnOver = 0, left = 0; ULONGLONG since = 0; };
+TurnCounts g_turnCounts;
+
+void TurnLog(const char* s) { Log(s); }
+const D3D12_RESOURCE_STATES kReadable = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+
+void TurnForget() {   // nothing kept is used again (another view, the session's end)
+    for (TurnKept& k : g_turnKept) { k.imageOk = k.depthOk = false; k.cam.ok = false; }
+}
+void TurnTeardown() {   // the session's end: after Teardown's wait for our lists
+    for (TurnKept& k : g_turnKept) {
+        if (k.image) k.image->Release();
+        if (k.depth) k.depth->Release();
+        k = TurnKept{};
+    }
+    g_turnGpu.Release();
+    for (UINT64& v : g_turnSlotDone) v = 0;
+    AcquireSRWLockExclusive(&g_turnLock);
+    g_turnView = TurnView{};
+    g_turnDepthIn = TurnDepthIn{};
+    ReleaseSRWLockExclusive(&g_turnLock);
+}
+
+turnwarp::Tan TanOf(const XrFovf& f) { return {tanf(f.angleLeft), tanf(f.angleRight), tanf(f.angleDown), tanf(f.angleUp)}; }
+turnwarp::Camera CameraNow(const TurnView& v, int e) {
+    turnwarp::Camera c;
+    c.at = {v.at[e][0], v.at[e][1], v.at[e][2]};
+    c.turn = {v.turn[0], v.turn[1], v.turn[2], v.turn[3]};
+    c.tan = TanOf(g_fovUsed[e]);
+    c.ok = v.ok;
+    return c;
+}
+
+// A texture of ours, made again when what it must hold changes; the old one retired (the GPU may still read it).
+bool TurnTexture(ID3D12Resource*& r, const D3D12_RESOURCE_DESC& want, D3D12_RESOURCE_STATES state, const wchar_t* name) {
+    if (r) {
+        const D3D12_RESOURCE_DESC d = r->GetDesc();
+        if (d.Width == want.Width && d.Height == want.Height && d.Format == want.Format) return true;
+        Retire(r);
+    }
+    D3D12_HEAP_PROPERTIES hp{};
+    hp.Type = D3D12_HEAP_TYPE_DEFAULT;
+    D3D12_RESOURCE_DESC d = want;
+    d.Alignment = 0;
+    d.Flags = D3D12_RESOURCE_FLAG_NONE;
+    d.MipLevels = 1;
+    d.DepthOrArraySize = 1;
+    if (FAILED(g_dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &d, state, nullptr, __uuidof(ID3D12Resource), (void**)&r))) {
+        r = nullptr;
+        return false;
+    }
+    r->SetName(name);
+    return true;
+}
+
+// After CopyEye put the eye drawn this frame (`d`) into its swapchain: keep it, and make the other eye from what is kept.
+// Under g_lock, on the draw thread.
+void TurnAfterCopy(int d, ID3D12Resource* bb) {
+    TurnView v;
+    TurnDepthIn din;
+    AcquireSRWLockExclusive(&g_turnLock);
+    v = g_turnView;
+    din = g_turnDepthIn;
+    g_turnDepthIn.ok = false;   // one present's
+    ReleaseSRWLockExclusive(&g_turnLock);
+    if (!v.ok || g_pairMode != kViewsHead) { TurnForget(); return; }   // not a first-person pair: nothing kept goes on
+    const Chain& cd = g_eyeChain[d];
+    const int o = d ^ 1;
+    const Chain& co = g_eyeChain[o];
+    if (!g_turnGpu.Init(g_dev, (DXGI_FORMAT)cd.fmt, &TurnLog)) return;
+    // the other eye's swapchain image, before the list: if none comes, its last one goes again (CloseFrame, as before)
+    const ULONGLONG nowMs = GetTickCount64();
+    const bool canTurn = co.sc && co.w == cd.w && co.h == cd.h && co.fmt == cd.fmt && g_turnKept[o].imageOk && g_turnKept[o].cam.ok &&
+                         nowMs - g_turnKept[o].at <= kTurnOldMs;
+    uint32_t idx = 0;
+    const bool acquired = canTurn && NextImage(co.sc, &idx, "picture") > 0;
+    ID3D12GraphicsCommandList* list = OpenList();
+    if (!list) {
+        if (acquired) { XrSwapchainImageReleaseInfo none{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO}; xrReleaseSwapchainImage(co.sc, &none); }
+        return;
+    }
+    TurnKept& kd = g_turnKept[d];
+    // 1. this eye kept: its picture (the back buffer, as CopyInto copied it) ...
+    D3D12_RESOURCE_DESC idesc = bb->GetDesc();
+    idesc.Width = cd.w;
+    idesc.Height = cd.h;
+    idesc.Format = (DXGI_FORMAT)cd.fmt;
+    kd.imageOk = TurnTexture(kd.image, idesc, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, L"d2rvr eyes by turns kept eye");
+    if (kd.imageOk) {
+        D3D12_RESOURCE_BARRIER b[2] = {Tr(bb, D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_COPY_SOURCE),
+                                       Tr(kd.image, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST)};
+        list->ResourceBarrier(2, b);
+        D3D12_TEXTURE_COPY_LOCATION to{}, from{};
+        to.pResource = kd.image; to.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+        from.pResource = bb; from.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+        const D3D12_BOX box{0, 0, 0, cd.w, cd.h, 1};
+        list->CopyTextureRegion(&to, 0, 0, 0, &from, &box);
+        D3D12_RESOURCE_BARRIER e[2] = {Tr(bb, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_PRESENT),
+                                       Tr(kd.image, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE)};
+        list->ResourceBarrier(2, e);
+    }
+    // ... the depth it was drawn with (our effects' copy of the scene's depth, this present's) ...
+    kd.depthOk = false;
+    if (din.ok && din.res && g_turnGpu.DepthReady()) {
+        const D3D12_RESOURCE_DESC dd = din.res->GetDesc();
+        if (TurnTexture(kd.depth, dd, kReadable, L"d2rvr eyes by turns kept depth")) {
+            D3D12_RESOURCE_BARRIER b[2] = {Tr(din.res, kReadable, D3D12_RESOURCE_STATE_COPY_SOURCE), Tr(kd.depth, kReadable, D3D12_RESOURCE_STATE_COPY_DEST)};
+            list->ResourceBarrier(2, b);
+            list->CopyResource(kd.depth, din.res);
+            D3D12_RESOURCE_BARRIER e[2] = {Tr(din.res, D3D12_RESOURCE_STATE_COPY_SOURCE, kReadable), Tr(kd.depth, D3D12_RESOURCE_STATE_COPY_DEST, kReadable)};
+            list->ResourceBarrier(2, e);
+            kd.depthView = din.view;
+            kd.scale[0] = din.scale[0];
+            kd.scale[1] = din.scale[1];
+            kd.depthOk = true;
+        }
+    }
+    // ... and the camera it was drawn from
+    kd.cam = CameraNow(v, d);
+    kd.hero = {v.hero[0], v.hero[1], v.hero[2]};
+    kd.body = v.body;
+    kd.nearPlane = v.nearPlane;
+    kd.at = nowMs;
+    // 2. the other eye, made for where it is now
+    bool turned = false;
+    if (acquired) {
+        const TurnKept& ko = g_turnKept[o];
+        const turnwarp::Camera now = CameraNow(v, o);
+        const auto h = turnwarp::Homography(ko.cam.turn, ko.cam.tan, now.turn, now.tan);
+        turnwarp::Grid own, over;
+        const turnwarp::Grid* ownP = nullptr;
+        const turnwarp::Grid* overP = nullptr;
+        if (ko.depthOk && ko.nearPlane > 0.0f) {   // its own last picture, moved with its depth (what the hero carries with him)
+            own.image = ko.image; own.depth = ko.depth; own.depthView = ko.depthView;
+            own.scale[0] = ko.scale[0]; own.scale[1] = ko.scale[1];
+            own.nearPlane = ko.nearPlane;
+            own.drawnTan = ko.cam.tan; own.nowTan = now.tan;
+            own.move = turnwarp::Move(ko.cam.at, ko.cam.turn, now.at, now.turn);
+            own.carry = turnwarp::Carry(ko.cam.at, ko.cam.turn, ko.hero, ko.body, kd.hero, v.body, now.at, now.turn);
+            own.nearW = turnwarp::kCarriedNearM * v.upm;
+            own.farW = turnwarp::kCarriedFarM * v.upm;
+            ownP = &own;
+        }
+        if (g_cfg.turnFromDrawn && kd.imageOk && kd.depthOk && kd.nearPlane > 0.0f) {   // the eye drawn now, moved across over it
+            over.image = kd.image; over.depth = kd.depth; over.depthView = kd.depthView;
+            over.scale[0] = kd.scale[0]; over.scale[1] = kd.scale[1];
+            over.nearPlane = kd.nearPlane;
+            over.drawnTan = kd.cam.tan; over.nowTan = now.tan;
+            over.move = turnwarp::Move(kd.cam.at, kd.cam.turn, now.at, now.turn);
+            over.carry = over.move;
+            over.edgeScale = turnwarp::EdgeScale(co.w, now.tan, turnwarp::Length(kd.cam.at - now.at), kd.nearPlane);
+            overP = &over;
+        }
+        // a descriptor set the GPU is done with (a list reads its set when it runs)
+        const int slot = g_turnSlot;
+        g_turnSlot = (g_turnSlot + 1) % turnwarp::kSlots;
+        if (g_fence && g_fence->GetCompletedValue() < g_turnSlotDone[slot]) WaitFence(g_turnSlotDone[slot], 100);
+        if (!g_fence || g_fence->GetCompletedValue() >= g_turnSlotDone[slot]) {
+            turned = g_turnGpu.Render(list, co.img[idx].texture, co.w, co.h, ko.image, h, ownP, overP, slot);
+            if (turned) {
+                g_turnSlotDone[slot] = g_fenceV + 1;   // the fence SubmitList signals for this list
+                if (ownP || overP) ++g_turnCounts.moved; else ++g_turnCounts.turned;
+                if (overP) ++g_turnCounts.drawnOver;
+            }
+        }
+        if (!turned) {   // the pass did not run: the image acquired gets the eye's last picture as it was drawn - it goes at that pose, as before
+            ID3D12Resource* dst = co.img[idx].texture;
+            D3D12_RESOURCE_BARRIER b[2] = {Tr(ko.image, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_SOURCE),
+                                           Tr(dst, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_DEST)};
+            list->ResourceBarrier(2, b);
+            D3D12_TEXTURE_COPY_LOCATION to{}, from{};
+            to.pResource = dst; to.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+            from.pResource = ko.image; from.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+            const D3D12_BOX box{0, 0, 0, co.w, co.h, 1};
+            list->CopyTextureRegion(&to, 0, 0, 0, &from, &box);
+            D3D12_RESOURCE_BARRIER e[2] = {Tr(ko.image, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
+                                           Tr(dst, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_RENDER_TARGET)};
+            list->ResourceBarrier(2, e);
+        }
+    }
+    SubmitList();
+    if (acquired) {
+        XrSwapchainImageReleaseInfo ri{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
+        const bool released = Ok(xrReleaseSwapchainImage(co.sc, &ri), "xrReleaseSwapchainImage");
+        // made for this frame's head: it goes at this frame's pose (CloseFrame); else the last picture as drawn, at the pose it was drawn with
+        if (released && turned) g_copied[o] = true;
+        else ++g_turnCounts.left;
+    } else if (canTurn) ++g_turnCounts.left;
+    const ULONGLONG now = nowMs;
+    if (!g_turnCounts.since) g_turnCounts.since = now;
+    if (now - g_turnCounts.since >= 10000) {
+        LogF("vrcam: openxr - eyes by turns, 10 s: the eye not drawn made %u times with the depth (the eye drawn laid over it %u), turned only %u, "
+             "left as last drawn %u", g_turnCounts.moved, g_turnCounts.drawnOver, g_turnCounts.turned, g_turnCounts.left);
+        g_turnCounts = TurnCounts{};
+        g_turnCounts.since = now;
+    }
+}
+
+}  // namespace
+
+void SetTurnView(const TurnView& v) {
+    AcquireSRWLockExclusive(&g_turnLock);
+    g_turnView = v;
+    ReleaseSRWLockExclusive(&g_turnLock);
+}
+void SetTurnDepth(void* resource, uint32_t viewFormat, float scaleX, float scaleY) {
+    AcquireSRWLockExclusive(&g_turnLock);
+    g_turnDepthIn = TurnDepthIn{(ID3D12Resource*)resource, (DXGI_FORMAT)viewFormat, {scaleX, scaleY}, resource != nullptr};
+    ReleaseSRWLockExclusive(&g_turnLock);
+}
+
 void CopyEye(int eye, ID3D12Resource* bb) {
     if (g_kind != kPair || !bb || eye < 0 || eye > 1 || g_copied[eye] || DeviceLost()) return;
     AcquireSRWLockExclusive(&g_lock);
-    if (g_session && EnsureChain(g_eyeChain[eye], bb->GetDesc(), eye ? "right eye's" : "left eye's"))
+    if (g_session && EnsureChain(g_eyeChain[eye], bb->GetDesc(), eye ? "right eye's" : "left eye's")) {
         g_copied[eye] = CopyInto(g_eyeChain[eye], bb);
+        // eyes by turns ([stereo] turn_warp): this eye kept, the other made from it and its own last picture
+        if (g_copied[eye] && g_cfg.byTurns && g_cfg.turnWarp && !g_copied[eye ^ 1]) TurnAfterCopy(eye, bb);
+        else if (g_cfg.byTurns && !g_cfg.turnWarp) TurnForget();
+    }
     ReleaseSRWLockExclusive(&g_lock);
 }
 

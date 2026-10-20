@@ -1,5 +1,29 @@
 # What's new in D2R VR
 
+## Next
+
+- **Native OpenXR - eyes by turns, the other eye made from the depth, after d2r-pcvr** (the author: "his GPU takes only 10 ms at
+  4096 x 4096" - bearstonem/d2r-pcvr's default stereo draws one eye a frame and rebuilds the other on the GPU, where ours draws the
+  whole frame twice). D2R VR Authentic Settings > Home > *3D in the headset* has *Native OpenXR - eyes by turns* again (the ini's
+  `[stereo] afr=1`, `pair_per_tick=0` as before): one eye drawn a game frame, left and right in turn - about half the graphics
+  card's work of the default "one pass, two pictures", which draws everything twice (shadows, lighting, effects). New: the eye
+  not drawn this frame no longer goes to the headset as it was last drawn, at its older pose (the headset turned it - rotation
+  only, so a step or a moving monster showed a frame behind in that eye). It is made on the graphics card for this frame's
+  head (vr/turn_warp.cpp, vr/turn_math.h; vr/xr.cpp keeps each eye's picture, the depth our effects copy and its camera): (1) its
+  own last picture turned to the head; (2) moved with the depth it was drawn with - a grid of 4 pixels, each point put back at
+  its distance and seen from where the eye is now, what the hero holds within 1 - 1.6 m going with his step and his body's turn;
+  (3) the eye drawn this frame moved across with its own depth over it, so monsters and missiles stand where they are now in
+  both eyes; a cell across an edge of its depth is cut, and the older picture shows there (what that eye cannot see behind an
+  edge). Both eyes go at this frame's pose. Stereo tab: *Eyes by turns: make the other eye from the depth* (`[stereo]
+  turn_warp`, on) and *... with the eye drawn this frame over it* (`turn_from_drawn`, on), live; unticked, as before. First person
+  (F4); F2, the menus and the other views as before. A frame whose depth or camera is missing, or a picture older than 0.1 s,
+  goes as before. The log says, every 10 s, how the other eye was made. Not yet: the game's labels over monsters are moved with
+  the scene behind them (d2r-pcvr takes the interface out of the picture and lays it back; to do), and a snap turn is made from
+  the turned picture, not drawn as a pair. The default stereo stays "one pass, two pictures". The technique and the shaders'
+  shape are bearstonem/d2r-pcvr's (MIT, steamvr/turn_warp.cpp, transport.cpp TurnEye). Unit test: cleanroom/tests/turn_math_test.cpp
+  (a point moved with its depth lands where the other eye sees it, the turn, what the hero carries, the edge cut); not yet seen
+  in the headset.
+
 ## 0.174
 
 - **New, off by default: `[debug] flat_pick` - a log for "monsters cannot be targeted after a while" in flat first / third person** (a player: "aiming at

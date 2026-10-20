@@ -160,6 +160,14 @@ flat mode, the game draws WxH: a light tile is A x B px, square|not square ...; 
 - **Per-object constant buffers carry the left eye's view-space positions.**
   The eyes are parallel, so the right eye's shift is folded into its
   projection: P_right = P · T(dx).
+- **Eyes by turns makes the eye not drawn on the GPU** (`[stereo] turn_warp`, `vr/turn_warp.cpp`, `vr/turn_math.h`, after
+  bearstonem/d2r-pcvr's `steamvr/turn_warp.cpp`). `xr::CopyEye` keeps the eye drawn - its picture (a copy of the back
+  buffer in the swapchain's format), the depth our effects copied for that present (`scenedepth::Bind`, handed in by
+  `xr::SetTurnDepth` before the present) and its camera (`xr::SetTurnView`, from `VrViewInner`: both eyes' cameras in the
+  game's world for this frame's head) - then makes the other eye into its swapchain on our list: the turn, its own last
+  picture moved with its depth, the eye drawn now moved across over it. Projection: reverse-Z, infinite, so a pixel's distance
+  is `near / depth` with vrcam's `[camera] near`. Both eyes then go at this frame's pose. The kept pictures are read by the
+  next frame's list on the same queue, so no fence; the descriptor sets are a ring of 8 waited on our fence.
 - **One present per stereo pair.** Two presents drifted the swap chain's
   latency until it deadlocked.
 - **Temporal effects mix the two eyes:**

@@ -32,8 +32,18 @@ the headset-only ones.
 - **How you play** - *Flat* (the monitor, mouse and keyboard, no headset) or
   *VR* (the headset).
 - **In the headset** - *3D in the headset*: **Native OpenXR** (the default: the
-  game itself in the headset, no FlatVR needed), *FlatVR stereo* or *FlatVR 3D
-  depth*; the headset's refresh rate; *My height*; and **Resolution (VR render
+  game itself in the headset, no FlatVR needed), *FlatVR stereo*, *FlatVR 3D
+  depth* or **Native OpenXR - eyes by turns**: the game draws one eye a frame,
+  left and right in turn - about half the graphics card's work of the default
+  - and the other eye is made on the graphics card for where the head is now:
+  the eye drawn this frame moved across with its depth, that eye's own last
+  picture moved with its depth under it, where the first cannot see (behind an
+  edge). Each eye's own pixels are new at half the rate; monsters stand where
+  they are now in both. Stereo tab: *Eyes by turns: make the other eye from the
+  depth* (`[stereo] turn_warp`, on) and *... with the eye drawn this frame over
+  it* (`turn_from_drawn`, on); unticked, the other eye goes as it was last
+  drawn and the headset turns it. First person (F4); the idea is
+  bearstonem/d2r-pcvr's (MIT). Then the headset's refresh rate; *My height*; and **Resolution (VR render
   size)**, a slider from 1024 to 4096 pixels a side (its left end is the game
   window's own size) with a tick box for the headset's recommended size. On
   native OpenXR the game draws at that size whatever its window is.

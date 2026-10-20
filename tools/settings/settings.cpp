@@ -299,9 +299,10 @@ std::vector<Item> g_items = {
     // Moved here from the Performance tab (2026-10-14, the user's wish): the way the picture gets into the headset and its rate.
     Only(kVr, InColumn(0, Group(L"In the headset"))),
     // The three ways kept in the list (2026-10-14, the user's decision): 0 native OpenXR (the default), 1 FlatVR stereo, 2 FlatVR 3D
-    // from the depth. Stereo - eyes by turns, Mono and Native OpenXR - eyes by turns are left out of the list; their ini keys still work.
+    // from the depth. Stereo - eyes by turns and Mono are left out of the list; their ini keys still work. Native OpenXR - eyes by turns
+    // is back as the fourth (2026-10-20, the user's wish: d2r-pcvr's by turns - one eye drawn a frame, the other made from it on the GPU).
     Only(kVr, Choice(L"@stereo3d", L"source", L"3D in the headset", 0,
-           {L"Native OpenXR (default)", L"FlatVR stereo", L"FlatVR 3D depth"},
+           {L"Native OpenXR (default)", L"FlatVR stereo", L"FlatVR 3D depth", L"Native OpenXR - eyes by turns"},
            L"Native OpenXR (the default): the game is an OpenXR app and shows its own stereo pair in the headset, one pass two "
            L"pictures - each eye's real view and the head's place in the room, paced by the headset, no FlatVR - from the game's "
            L"first frame. First (F4) and third person (F2) in stereo, F1 and F3 in 3D too (Stereo tab, \"F1 and F3 in real 3D\"); menus and open panels as a flat picture where you look. "
@@ -310,7 +311,11 @@ std::vector<Item> g_items = {
            L"while the game runs. FlatVR stereo: the game draws each frame once and the right eye is drawn again from the same work "
            L"with its own camera - true 3D at nearly the mono frame rate; it needs a game restart to switch on the first time. "
            L"FlatVR 3D depth: one picture, FlatVR makes the second eye from ReShade's depth (works with DLSS). The FlatVR choices "
-           L"set the Stereo tab's Real stereo and, while BodyWalk runs, FlatVR's 3D source (BodyWalk 1.76 or later).")),
+           L"set the Stereo tab's Real stereo and, while BodyWalk runs, FlatVR's 3D source (BodyWalk 1.76 or later). "
+           L"Native OpenXR - eyes by turns: the game draws one eye a frame, left and right in turn - about half the graphics card's "
+           L"work of the default; the other eye is made on the graphics card from pictures already drawn (the eye drawn this frame "
+           L"moved across with its depth, its own last picture under it), so both eyes show this frame's head, and monsters where "
+           L"they are now. Each eye's own pixels are new at half the rate. The idea is bearstonem/d2r-pcvr's.")),
     Only(kVr, Choice(L"stereo", L"headset_rate", L"Headset refresh rate", 3, {L"72 Hz", L"75 Hz", L"80 Hz", L"90 Hz", L"120 Hz"},
            L"Sets the game's frame cap (in its own options, Settings.json) - the line under it says what is written and why: the rate "
            L"itself for one picture a frame (mono, the 3D from the depth) and for both eyes from one game frame (one pass, two "
@@ -1078,6 +1083,16 @@ std::vector<Item> g_items = {
     Needs(L"stereo", L"afr", 1, Toggle(L"stereo", L"pair_per_tick", L"Both eyes from one game frame", 0,
            L"The frame is drawn twice (left, then right with the game time held) instead of one eye per frame by turns. "
            L"Same pairs per second; the game itself updates half as often.")),
+    Only(kVr, Needs(L"stereo", L"pair_per_tick", 0, Toggle(L"stereo", L"turn_warp", L"Eyes by turns: make the other eye from the depth", 1,
+           L"Native OpenXR with the eyes by turns: the eye not drawn this frame is made on the graphics card for where the head is now - "
+           L"its own last picture moved with the depth it was drawn with (what the hero holds goes with him), at this frame's pose. "
+           L"Unticked: it goes to the headset as it was last drawn, and the headset turns it (rotation only: a step or a moving monster "
+           L"shows a frame behind in that eye). First person (F4) only. Live. Idea: bearstonem/d2r-pcvr."))),
+    Only(kVr, Needs(L"stereo", L"turn_warp", 1, Needs(L"stereo", L"pair_per_tick", 0, Toggle(L"stereo", L"turn_from_drawn",
+           L"... with the eye drawn this frame over it", 1,
+           L"The eye drawn this frame is moved across to the other eye with its own depth and laid over its older picture, so what moves by "
+           L"itself - monsters, missiles - stands where it is now in both eyes; behind an edge, what that eye could not see, the older "
+           L"picture shows. Unticked: the other eye's own last picture alone. Live.")))),
     Needs(L"stereo", L"pair_per_tick", 1, Slider(L"stereo", L"right_dt_ms", L"Right eye frame time, ms", 0, 2, 0.01f, 0.01f,
            L"The right eye's pass gets this much game time instead of none. Effects that skip a frame of no time "
            L"(butterflies only in the left eye) are drawn then; 0.01 is enough, more moves the world between the eyes.")),
@@ -4087,10 +4102,12 @@ void WriteReShadeValue(const Item&, float v) {
 // replay_right, reads as stereo here).
 BW_LinkRequests* LinkRequests();
 bool LinkHost(uint32_t* caps = nullptr);
-// The list shows three of the six modes (index = the list's item): 0 native OpenXR (modes 4 and 5), 1 FlatVR stereo (modes 0 and 1;
-// mono, which the list no longer offers, is shown here too), 2 FlatVR 3D depth (mode 2). WriteStereo3D takes the list's index.
+// The list shows four of the six modes (index = the list's item): 0 native OpenXR (mode 4), 1 FlatVR stereo (modes 0 and 1;
+// mono, which the list no longer offers, is shown here too), 2 FlatVR 3D depth (mode 2), 3 native OpenXR with the eyes by turns
+// (mode 5). WriteStereo3D takes the list's index.
 float ReadStereo3D() {
-    if (GetPrivateProfileIntW(L"openxr", L"on", 0, g_ini) != 0) return 0.0f;
+    if (GetPrivateProfileIntW(L"openxr", L"on", 0, g_ini) != 0)
+        return GetPrivateProfileIntW(L"stereo", L"afr", 0, g_ini) != 0 && GetPrivateProfileIntW(L"stereo", L"pair_per_tick", 0, g_ini) == 0 ? 3.0f : 0.0f;
     const bool afr = GetPrivateProfileIntW(L"stereo", L"afr", 0, g_ini) != 0;
     const int source = GetPrivateProfileIntW(L"stereo", L"source", afr ? 2 : 1, g_ini);
     if (afr) return 1.0f;
@@ -4109,8 +4126,8 @@ bool BodyWalkTakesGameHeadset() {
 // False: not written (native OpenXR without a BodyWalk for it).
 void ApplyWindowForPlatform();   // (the game's window: VR has the square, flat mode the player's own - below)
 bool WriteStereo3D(float item) {
-    static const float kModeOfItem[3] = {4.0f, 0.0f, 2.0f};   // the list's item -> the mode below (native, FlatVR stereo, FlatVR 3D depth)
-    const float v = kModeOfItem[std::clamp((int)std::lround(item), 0, 2)];
+    static const float kModeOfItem[4] = {4.0f, 0.0f, 2.0f, 5.0f};   // the list's item -> the mode below (native, FlatVR stereo, FlatVR 3D depth, native by turns)
+    const float v = kModeOfItem[std::clamp((int)std::lround(item), 0, 3)];
     const bool native = std::lround(v) == 4 || std::lround(v) == 5;   // the one-pass stereo, or the eyes by turns (5)
     const bool wasNative = GetPrivateProfileIntW(L"openxr", L"on", 0, g_ini) != 0;
     // (with "Controls without BodyWalk" the controls need no BodyWalk at all)
