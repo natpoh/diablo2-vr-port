@@ -106,6 +106,27 @@ inline const char* Name(int32_t id) {
     return s ? s->name : id == kAttack ? "Attack" : "?";
 }
 
+// The weapon an armed skill needs (Skills.txt itypea): the Amazon's spear skills a spear or a javelin, Poison Dagger a dagger; the others
+// any melee weapon (a form or two claws the game checks itself). An armed skill the weapon in hand cannot use is the plain attack: armed
+// with a spear and swung with a sword, every touch went to the game as Jab - refused, no attack at all ("on the Amazon hit by touch
+// stopped working: the monster's capsule turns red but the strike is not pressed", the author, 2026-10-20).
+enum class Need : uint8_t { Any, Spear, Dagger };
+inline Need NeedOf(int32_t id) {
+    switch (id) {
+        case 10: case 14: case 19: case 24: case 30: case 34: return Need::Spear;   // Jab, Power Strike, Impale, Charged Strike, Fend, Lightning Strike
+        case 73: return Need::Dagger;                                               // Poison Dagger
+        default: return Need::Any;
+    }
+}
+// spear: a spear or a javelin in hand; dagger: a dagger.
+inline bool Fits(int32_t id, bool spear, bool dagger) {
+    switch (NeedOf(id)) {
+        case Need::Spear: return spear;
+        case Need::Dagger: return dagger;
+        default: return true;
+    }
+}
+
 // ---- the list's ticks ([melee_armed] s<id>) -----------------------------------------------------------------------------------------
 class Allowed {
 public:

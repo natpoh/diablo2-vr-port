@@ -1,5 +1,18 @@
 # What's new in D2R VR
 
+## Next
+
+- **Fixed: hit by touch on the Amazon - "the monster's capsule turns red but the strike is not pressed"** (the author, with a spear and
+  with a sword). The touch did press the attack; the game read it as a skill it would not cast with that weapon. Two ways it came there:
+  (1) the bow's quiver loads its arrow skills onto the attack's slot (A) and nothing took them off when the hero took a spear or a sword:
+  every attack went to the game as Multiple Shot or the like - refused for a melee weapon. A bow skill on that slot with no bow or
+  crossbow in hand is now read as the plain attack (or the armed melee skill); the log says "bow quiver: the slot's bow skill (N) was
+  read as ... - no bow in hand". (2) `[gameplay] melee_skill_armed`: a spear skill armed by its button (Jab, Power Strike, Impale,
+  Charged Strike, Fend, Lightning Strike - a spear or a javelin; Poison Dagger - a dagger) stayed armed when the weapon changed, and
+  every touch was that skill. A skill the weapon in hand cannot use is now the plain attack ("melee armed: ... needs a spear or javelin
+  - the weapon in hand cannot: the plain attack"). Unit test: cleanroom/tests/melee_arm_fit_test.cpp (vr/melee_arm.h NeedOf / Fits).
+  Not yet tried in the game.
+
 ## 0.174
 
 - **New, off by default: `[debug] flat_pick` - a log for "monsters cannot be targeted after a while" in flat first / third person** (a player: "aiming at

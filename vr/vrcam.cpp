@@ -162,6 +162,7 @@ namespace gamestate { bool HandIsThrowPotion(int side); }   // the held item is 
 #include "belt_trigger_wire.h"    // [belt] hold_takes_trigger: the triggers while a belt bottle is in a hand (the game reads the left one as Shift: the drink must be a plain one)
 #include "bow_draw.h"
 #include "bow_draw_wire.h"   // [hands] bow_draw: a released draw's shot along its line
+#include "bow_quiver.h"       // bowquiver::FindArrow: a bow skill left on the attack's slot (HookSlotSkill)
 #include "bow_quiver_wire.h"  // [bow] quiver: a button of the string hand loads the next bow skill while the string is drawn
 #include "throw_gesture_wire.h"
 #include "quiver.h"          // [hands] javelin_quiver: the skill of the next throw chosen from the quiver (vr/quiver_wire.cpp)
@@ -6831,6 +6832,25 @@ int HookSlotSkill(int slot) {
                 return 0;
             }
         }
+        // a bow skill on the attack's slot with no bow or crossbow in hand: the bow's quiver loads its arrow skills there (bow_draw_button 0) and
+        // nothing takes them off when the hero takes a spear or a sword - every attack, the touch's included, went to the game as that bow skill,
+        // which it refuses for a melee weapon (the author, 2026-10-20: "the monster's capsule turns red but the strike is not pressed"). Read as
+        // the plain attack (or the armed melee skill, when the weapon can use it).
+        if (bound > 0 && bowquiver::FindArrow(bound) && !BowInHand()) {
+            const uintptr_t at = (uintptr_t)_ReturnAddress();
+            if (at == g_slotSelectRet || at == g_slotSetRet) {
+                const uint32_t t = gamestate::WeaponType();
+                const int armed = ThrownInHand() ? 0 : meleearm::PressSkill();
+                const int skill = armed > 0 && meleearm::Fits(armed, t == D2RVR_TYPE_SPEAR || t == D2RVR_TYPE_JAVELIN, t == D2RVR_TYPE_DAGGER) ? armed : 0;
+                static ULONGLONG told = 0;
+                if (GetTickCount64() - told > 2000) {
+                    told = GetTickCount64();
+                    LogF("bow quiver: the slot's bow skill (%d) was read as %s (%d) by the %s - no bow in hand", bound, meleearm::Name(skill), skill,
+                         at == g_slotSelectRet ? "cast's slot selection" : "unit's hand-skill setter");
+                }
+                return skill;
+            }
+        }
         return bound;
     }
     const uintptr_t ret = (uintptr_t)_ReturnAddress();
@@ -6848,7 +6868,16 @@ int HookSlotSkill(int slot) {
                  ret == g_slotSelectRet ? "cast's slot selection" : "unit's hand-skill setter");
         }
     } else if (site && !ThrownInHand()) {   // [gameplay] melee_skill_armed: the touch's attack press is read as the armed melee skill - decided at the press (vr/melee_arm_game.cpp: the plain attack when the mana is short)
-        if (const int armed = meleearm::PressSkill(); armed > 0) {
+        const uint32_t type = gamestate::WeaponType();
+        const int armed = meleearm::PressSkill();
+        if (armed > 0 && !meleearm::Fits(armed, type == D2RVR_TYPE_SPEAR || type == D2RVR_TYPE_JAVELIN, type == D2RVR_TYPE_DAGGER)) {
+            static ULONGLONG toldFit = 0;   // armed for another weapon (Jab, then a sword in hand): the plain attack, never a cast the game refuses
+            if (GetTickCount64() - toldFit > 2000) {
+                toldFit = GetTickCount64();
+                LogF("melee armed: %s (%d) needs a %s - the weapon in hand (type %u) cannot: the plain attack", meleearm::Name(armed), armed,
+                     meleearm::NeedOf(armed) == meleearm::Need::Spear ? "spear or javelin" : "dagger", type);
+            }
+        } else if (armed > 0) {
             skill = armed;
             static ULONGLONG told = 0;
             if (GetTickCount64() - told > 300) {
