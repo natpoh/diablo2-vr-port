@@ -1,6 +1,6 @@
 # Known issues
 
-What is broken or unfinished right now (D2R VR 0.174), what we already know
+What is broken or unfinished right now (D2R VR 0.175), what we already know
 about each problem and where in the code to start. Pick one, fork, fix it and
 send a pull request - or tell us on Discord what you found.
 
@@ -243,14 +243,22 @@ still on the screen.
   (`[hands] spear_hand`, `sword_hand`, `axe_hand`). Spears have never been
   tested.
 - The crossbow's left-hand pose needs a default.
-- **The blades for hit by touch of the thrown kinds are partly estimates.** The
-  javelin's head side (1.04 m from the bone, along its -Y) was measured on two
-  screenshots, and its capsule may lie a few centimetres to one side of the
-  spearhead (the weapon bone's Y axis is about 3 - 4 degrees off the model's long
-  axis; not corrected). Its butt side (0.30 m) is a guess; the spear's side is
-  inferred from the weapon's animation class and the knife's and the axe's blades
-  were not seen. Tune them with the thrown kinds' sliders on the Debug tab while
-  "Draw the capsules of Hit by touch" is on.
+- **The blades for hit by touch come from the weapons' own models.** The two ends
+  of every weapon's capsule (and the side its point is on) are the bounds of the
+  game's own weapon model, one pair per base item (`vr/weapon_extents.h`), in the
+  metres the weapon is drawn in. The spear, the pole-arms, the staves, the javelin
+  and the rest were not measured one by one on screenshots: the javelin's point
+  (model 1.057 m, screenshots 1.04 m) and the spear's head (2.1 - 2.4 m on the
+  screenshot, 2.08 m by the model) agree. The Assassin's katars and claws lie along
+  the weapon bone's Z (yellow in the debug), not its Y, and their capsule runs from
+  the knuckles to the point; which way the Z runs is read from the game's own pose
+  (against the forearm), for each hand. Not read from the models: the Hatchet
+  Hands family (blades spread sideways, the kind's constants along Z) and the flails
+  (their own chain logic), and the capsule's thickness is still per kind. The javelin's
+  capsule may lie a few centimetres to one side of the spearhead (the weapon
+  bone's Y axis is about 3 - 4 degrees off the model's long axis; not corrected).
+  Tune the blades with the sliders on the Debug tab while "Draw the capsules of
+  Hit by touch" is on.
 
 ### 14. The whole body sometimes turns against the controllers [repo]
 

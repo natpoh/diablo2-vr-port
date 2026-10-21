@@ -26,6 +26,7 @@
 #include <atomic>
 #include <cctype>
 #include <cmath>
+#include <cstdarg>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -42,11 +43,13 @@
 #include "bow_hand.h"
 #include "bow_rig.h"
 #include "granny_mesh.h"   // [bow] arrow_fx: the arrow mesh's box off the model in memory
+#include "guarded_text.h"  // Str: a name read a page at a time
 #include "bone_guard.h"
 #include "bow_touch.h"
 #include "flail_chain.h"   // [flail] chain: the flail's head swings free on its chain
 #include "grip_fit.h"
 #include "grip_pose.h"
+#include "weapon_extents.h"   // melee by touch: the weapon model's unit in metres as drawn (PosedBlade::unitM)
 #include "grip_rig.h"
 #include "skeletons.h"
 #include "shield_arm.h"
@@ -77,15 +80,28 @@ bool SafeCopy(void* dst, const void* src, size_t n) noexcept {
 template <class T> bool Get(uintptr_t a, T* v) { return a > 0x10000 && SafeCopy(v, (const void*)a, sizeof(T)); }
 bool SafeWrite(void* dst, const void* src, size_t n) { return (uintptr_t)dst > 0x10000 && SafeCopy(dst, src, n); }
 
+// A name in game memory: one guarded copy per page, not one per letter (vr/guarded_text.h, bearstonem/d2r-pcvr's); the same answers. Printable ASCII, up to 95 letters.
 std::string Str(uintptr_t p) {
     char buf[96];
-    int n = 0;
-    for (; n < 95; ++n) {
-        if (!Get(p + n, &buf[n])) return {};
-        if (!buf[n]) break;
-        if (buf[n] < 32 || buf[n] > 126) return {};
-    }
-    return std::string(buf, n);
+    const int n = guardedtext::ReadText(p, buf, (int)sizeof buf, SafeCopy);
+    return n < 0 ? std::string() : std::string(buf, n);
+}
+// A SkeletonInstance's model path (its name object's +8).
+std::string ModelOf(uintptr_t self) {
+    uintptr_t object = 0, path = 0;
+    Get(self, &object); Get(object + 8, &path);
+    return Str(path);
+}
+
+// A rig cache (the bow's, the flail's, the crossbow's: every skeleton of the size is met) asked under the SHARED lock first: a rig known by the same bones that is not one
+// of what the cache is for leaves at once - most skeletons the game poses - without the exclusive lock its own rigs are posed under, which held up the other render workers.
+template <class Map, class Key, class Not>
+bool KnownNot(SRWLOCK& lock, const Map& map, const Key& key, uintptr_t bones, Not&& isNot) {
+    AcquireSRWLockShared(&lock);
+    const auto it = map.find(key);
+    const bool known = it != map.end() && it->second.bones == bones && isNot(it->second);
+    ReleaseSRWLockShared(&lock);
+    return known;
 }
 
 SRWLOCK g_lock = SRWLOCK_INIT;
@@ -439,7 +455,11 @@ std::atomic<float> g_poseYaw[3];
 SRWLOCK g_heroLock = SRWLOCK_INIT;
 // Per SkeletonInstance, keyed with its skeleton too: an instance address the
 // game frees and reuses for another model must not keep the old verdict.
-std::map<std::pair<uintptr_t, uintptr_t>, Hero> g_heroes;   // count == 0: not the hero
+// Held by a shared pointer: each pose of the hero takes the pointer, not a copy of the rig (its bone names, bind pose, finger chains - 3-6 us a pose, 2026-10-21).
+std::map<std::pair<uintptr_t, uintptr_t>, std::shared_ptr<const Hero>> g_heroes;   // null: not the hero
+// [hands] doll_rebuild: a player's rig not learned whole yet (no rig by name, or its bind pose did not read) - learned again (Arms), under g_heroLock
+struct HeroRetry { ULONGLONG first = 0, last = 0; int tries = 0; };
+std::map<std::pair<uintptr_t, uintptr_t>, HeroRetry> g_heroRetry;
 
 #if D2RVR_FIRST_PERSON
 // The grip: what the hands hold, relative to the hands, taken from the game's
@@ -518,6 +538,24 @@ std::atomic<bool> g_trackHero{false};      // vrcam wants the hero known even wh
 std::atomic<uintptr_t> g_heroSelf{0};      // the hero's SkeletonInstance, last posed
 std::atomic<uint32_t> g_heroGen{0};        // bumped when it changes (a weapon swap rebuilds his model)
 std::atomic<ULONGLONG> g_heroSeen{0};
+
+// [debug] doll_trace: the hero's rig let go - not posed as ours - and taken again, noted here for vrcam's tick to log (DollTakeNote). Let go: the rig posed as
+// ours last is turned away (OursNow says why), a player model's rig is not learned, or no rig was ours for 150 ms and the one met is turned away.
+SRWLOCK g_dollNoteLock = SRWLOCK_INIT;
+std::string g_dollNote;
+std::atomic<bool> g_dollLetGo{false};
+std::atomic<ULONGLONG> g_dollLetGoAt{0};
+std::atomic<uintptr_t> g_dollAlongTold{0};   // the last rig told as posed along
+void NoteDoll(const char* fmt, ...) {
+    char b[600];
+    va_list a;
+    va_start(a, fmt);
+    vsnprintf(b, sizeof b, fmt, a);
+    va_end(a);
+    AcquireSRWLockExclusive(&g_dollNoteLock);
+    if (g_dollNote.size() < 4000) g_dollNote += (g_dollNote.empty() ? "" : "\n") + std::string(b);
+    ReleaseSRWLockExclusive(&g_dollNoteLock);
+}
 
 void NoteHero(uintptr_t self) {
     g_heroSeen.store(GetTickCount64());
@@ -598,7 +636,9 @@ bool EntityOf(uintptr_t self, uint32_t* e) {
 // world one (+0x40). Its entity is kept per instance; one not found is looked for again after 500 ms.
 constexpr uint32_t kNoEntity = 0xFFFFFFFFu;
 std::map<uintptr_t, std::pair<uint32_t, ULONGLONG>> g_bodyEntity;   // SkeletonInstance -> entity (or none), when looked up
-bool BodyPlace(uintptr_t self, float* x, float* z) {
+// noEntity: the storages read, but no entity holds this instance - not a rig of the renderer's world (a menu's model).
+bool BodyPlace(uintptr_t self, float* x, float* z, bool* noEntity = nullptr, ULONGLONG retryMs = 500) {
+    if (noEntity) *noEntity = false;
     AcquireSRWLockExclusive(&g_lock);
     struct Unlock { ~Unlock() { ReleaseSRWLockExclusive(&g_lock); } } unlock;
     const ULONGLONG now = GetTickCount64();
@@ -615,11 +655,11 @@ bool BodyPlace(uintptr_t self, float* x, float* z) {
     if (it != g_bodyEntity.end() && it->second.first != kNoEntity && SkeletonOf(it->second.first, &held) && held == self) {
         e = it->second.first;
     } else {
-        if (it != g_bodyEntity.end() && it->second.first == kNoEntity && now - it->second.second < 500) return false;
+        if (it != g_bodyEntity.end() && it->second.first == kNoEntity && now - it->second.second < retryMs) { if (noEntity) *noEntity = true; return false; }
         if (!EntityOf(self, &e)) e = kNoEntity;
         if (g_bodyEntity.size() > 256) g_bodyEntity.clear();
         g_bodyEntity[self] = {e, now};
-        if (e == kNoEntity) return false;
+        if (e == kNoEntity) { if (noEntity) *noEntity = true; return false; }
     }
     uint32_t i = 0, parent = kNoEntity;
     uintptr_t cb = 0;
@@ -634,13 +674,16 @@ bool BodyPlace(uintptr_t self, float* x, float* z) {
 }
 }  // namespace ecs
 
-bool Learn(uintptr_t self, Hero* h) {
+// player: the model is a player's (/character/player/), learned or not.
+bool Learn(uintptr_t self, Hero* h, bool* player = nullptr) {
+    if (player) *player = false;
     uintptr_t modelInst = 0, skel = 0, nameObj = 0, nameP = 0;
     if (!Get(self + 0x08, &modelInst) || !Get(modelInst + 0x08, &skel)) return false;
     Get(self, &nameObj); Get(nameObj + 8, &nameP);
     const std::string model = Str(nameP);
     const size_t at = model.find("/character/player/");
     if (at == std::string::npos) return false;
+    if (player) *player = true;
     h->cls = -1;
     for (int c = 0; c < 8; ++c)
         if (model.compare(at + 18, strlen(kHeroClasses[c]) + 1, std::string(kHeroClasses[c]) + "/") == 0) h->cls = c;
@@ -2345,14 +2388,16 @@ void PoseFlail(uintptr_t self) {
     if (!Get(self + 0x08, &model) || !Get(model + 0x08, &skeleton) || !Get(skeleton + 8, &count) || count < 8 || count > flailchain::kMaxBones ||
         !Get(skeleton + 0xC, &bones) || !bones) return;   // anything but a skeleton the size of a flail's leaves here
     const ULONGLONG now = GetTickCount64();
+    const auto key = std::make_pair(self, skeleton);
+    if (KnownNot(g_flailRigLock, g_flails, key, bones, [](const FlailEntry& e) { return !e.flail; })) return;   // most rigs: not a flail, told under the shared lock
     AcquireSRWLockExclusive(&g_flailRigLock);
     struct Unlock { ~Unlock() { ReleaseSRWLockExclusive(&g_flailRigLock); } } unlock;
-    const auto key = std::make_pair(self, skeleton);
     auto it = g_flails.find(key);
     if (it == g_flails.end() || it->second.bones != bones) {
         FlailEntry e;
         e.bones = bones;
         LearnFlail(self, bones, count, &e);
+        if (g_flails.size() > 4096) std::erase_if(g_flails, [](const auto& f) { return !f.second.flail; });   // full: the flails are kept
         if (g_flails.size() > 4096) g_flails.clear();
         it = g_flails.insert_or_assign(key, std::move(e)).first;
     }
@@ -2701,7 +2746,7 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
         if (grip.ok && grip.type == in.weaponType && grip.scale[ws] < 0.3f && sz[ws] > 0.3f) gripWanted = true;   // a hidden bone's grip, and the game shows it there now
         if (!shown) gripWanted = false;
     }
-    if (gripWanted && !in.attacking && h.weapon[0] >= 0 && h.weapon[1] >= 0 && h.hand[0] >= 0 && h.hand[1] >= 0) {
+    if (gripWanted && !in.attacking && !in.along && h.weapon[0] >= 0 && h.weapon[1] >= 0 && h.hand[0] >= 0 && h.hand[1] >= 0) {
         for (int side = 0; side < 2; ++side) {
             grip.attach[side] = Mul(oldW[h.weapon[side]], InvAffine(oldW[h.hand[side]]));
             grip.scale[side] = Len({grip.attach[side].m[0], grip.attach[side].m[1], grip.attach[side].m[2]});
@@ -2744,7 +2789,7 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
     // [weight] grip_fit_fingers: the game's weapon-grip pose of the fingers, read off the hand the game holds the weapon in (the slot's) - from the game's own matrices, so whatever
     // the weight model does to that hand (it lets go, the other carries the weapon) does not touch it - while the hero is calm (a swing's hand is not a grip) and the game shows the
     // weapon on that wrist (a hidden attach bone: nothing is held there). Kept for the weapon type; refreshed each calm pose, so it is the base hand's pose as it is drawn.
-    if (wo.on && in.mode == 2 && ((in.weight.gripFit && in.weight.gripFingers) || wo.gripLib) && !in.attacking && h.bindOk) {
+    if (wo.on && in.mode == 2 && ((in.weight.gripFit && in.weight.gripFingers) || wo.gripLib) && !in.attacking && !in.along && h.bindOk) {
         const int bs = wo.slot & 1;
         if (h.weapon[bs] >= 0 && h.hand[bs] >= 0) {
             const Mat a = Mul(oldW[h.weapon[bs]], InvAffine(oldW[h.hand[bs]]));
@@ -4190,6 +4235,17 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
                     b.axis[i][0] = d.x; b.axis[i][1] = d.y; b.axis[i][2] = d.z;
                 }
                 b.ok = std::isfinite(bo.x + bo.y + bo.z) && Len(V3{bone.m[4], bone.m[5], bone.m[6]}) > 0.001f;
+                b.unitM = weaponextent::UnitM(Len(V3{bone.m[4], bone.m[5], bone.m[6]}), upm);   // the weapon model's unit in metres as drawn (vr/weapon_extents.h)
+                // a fist weapon's blade runs along the bone's Z: the sign of that axis against the forearm in the game's own pose (elbow -> wrist), told for the claws and katars
+                if (h.weapon[slot] >= 0 && h.hand[slot] >= 0 && h.lwr[slot] >= 0) {
+                    const Mat& gw = oldW[h.weapon[slot]];
+                    const V3 zOld = {gw.m[8], gw.m[9], gw.m[10]}, fore = Sub(Pos(oldW[h.hand[slot]]), Pos(oldW[h.lwr[slot]]));
+                    const float lz = Len(zOld), lf = Len(fore);
+                    if (lz > 0.001f && lf > 0.001f) {
+                        const float d = Dot(zOld, fore) / (lz * lf);
+                        if (std::isfinite(d)) b.zSign = d > 0.25f ? 1 : d < -0.25f ? -1 : 0;
+                    }
+                }
                 // [flail] chain: a flail's ball swinging on its chain is what strikes - its centre, the last link's way and its radius, carried by
                 // this pose's attach bone (the ball's place on the item is the last chain pose's)
                 if (b.ok && g_flailOn.load(std::memory_order_relaxed)) {
@@ -4659,7 +4715,24 @@ SRWLOCK g_bodiesLock = SRWLOCK_INIT;
 std::map<uintptr_t, Body> g_bodies;   // the standing rigs near the look-at, by SkeletonInstance
 uintptr_t g_ours = 0;                 // the one taken
 
-bool OursNow(uintptr_t self, const Hero& hero) {
+// What a player's rig is to the doll (Arms): taken - ours, the hero (NoteHero: the facing's chain follows it); along - posed with our arms too, but not taken (the
+// facing stays on the rig taken); not ours. [hands] doll_rebuild (on): the hero's model rebuilt - a weapon swap, a weapon taken from or put behind a shoulder,
+// another shield or bow - is a new SkeletonInstance of the same entity, and for a moment (the new model's parts loading: half a second, sometimes more) the game
+// poses the old one and the new one both, either of them the one drawn. The doll let go for that moment (the author, 2026-10-21: "especially on a weapon
+// swap, about half a second, sometimes more"): the new rig was taken at its first pose and the old one, still drawn, turned away; or the new one not yet in
+// the hero's SkeletonComponent read as "no entity" for 500 ms, then, the hero having moved a unit meanwhile, was no rebuild of ours and waited out the old
+// one's 3 s. Now both are posed while both are: the rig ours was rebuilt from stays along while the game poses it; a rig no entity holds (the one being made,
+// or a menu's model) is along while ours is posed; a rebuild may lie as far from ours as the hero ran since ours was posed (20 units a second - a unit is ~0.27 m, a quick run; 4 at most);
+// and an instance with no entity is looked for again after 50 ms, not 500. 0: as before 0.176 (one rig, the first-pose rebuild within a unit).
+enum class Doll { Not, Ours, Along };
+std::atomic<bool> g_dollRebuild{true};   // [hands] doll_rebuild (Set)
+uintptr_t g_oursBefore = 0;              // the rig ours was rebuilt from (under g_bodiesLock)
+ULONGLONG g_oursBeforeAt = 0, g_oursBeforeSeen = 0;   // when ours was rebuilt from it, when the game posed it last
+
+// why (when given, [debug] doll_trace): the reason a rig is not taken, in words with its numbers.
+Doll OursNow(uintptr_t self, const Hero& hero, char* why = nullptr, size_t whyCap = 0) {
+    auto say = [&](Doll d, const char* fmt, auto... a) { if (why && whyCap) snprintf(why, whyCap, fmt, a...); return d; };
+    const bool rebuildHold = g_dollRebuild.load(std::memory_order_relaxed);
     uintptr_t world = 0, mats = 0;
     float head[16];
     const float standing = hero.head >= 0 && hero.head < (int)hero.bind.size() ? hero.bind[hero.head].m[13] : 0.0f;
@@ -4667,13 +4740,27 @@ bool OursNow(uintptr_t self, const Hero& hero) {
         SafeCopy(head, (const void*)(mats + (uintptr_t)hero.head * 64), sizeof head) &&
         !(std::isfinite(head[13]) && head[13] > 0.35f * standing)) {
         AcquireSRWLockExclusive(&g_bodiesLock); g_bodies.erase(self); ReleaseSRWLockExclusive(&g_bodiesLock);
-        return false;
+        return say(Doll::Not, "its head is down - posed at %.2f of the standing %.2f (under 35%%: lying, a corpse, a fall)", head[13], standing);
     }
     float L[3];
     ULONGLONG lookAt = 0, stillSince = 0;
     float x = 0.0f, z = 0.0f;
     const ULONGLONG now = GetTickCount64();
-    if (!HeroPos(L, &lookAt, &stillSince) || now - lookAt > 1000 || !ecs::BodyPlace(self, &x, &z)) return true;
+    bool noEntity = false;
+    const bool placed = ecs::BodyPlace(self, &x, &z, &noEntity, rebuildHold ? 50 : 500);
+    // A rig no entity of the renderer's world holds, while ours is posed: along, not taken - the facing's chain would read "the hero's SkeletonInstance is in
+    // no SkeletonComponent" for it (a menu's model at a game's exit took the hero so, 2026-10-10 / 10-21 logs), and the rig being made at a swap is drawn too.
+    if (noEntity && rebuildHold) {
+        AcquireSRWLockExclusive(&g_bodiesLock);
+        const auto o = g_bodies.find(g_ours);
+        const bool oursLately = g_ours && g_ours != self && o != g_bodies.end() && now - o->second.at < 3000;
+        const uintptr_t ours = g_ours;
+        if (oursLately && self == g_oursBefore) g_oursBeforeSeen = now;   // (the rig ours was rebuilt from, out of the SkeletonComponent now: still posed)
+        ReleaseSRWLockExclusive(&g_bodiesLock);
+        if (oursLately) return say(Doll::Along, "no entity of the renderer's world holds it (being made, or a menu's model) while %p is ours", (void*)ours);
+    }
+    // Where the renderer's ECS does not read or the look-at is not known: the standing test alone.
+    if (!HeroPos(L, &lookAt, &stillSince) || now - lookAt > 1000 || !placed) return Doll::Ours;
     AcquireSRWLockExclusive(&g_bodiesLock);
     struct Unlock { ~Unlock() { ReleaseSRWLockExclusive(&g_bodiesLock); } } unlock;
     Body& me = g_bodies[self];
@@ -4685,23 +4772,46 @@ bool OursNow(uintptr_t self, const Hero& hero) {
         if (now - b.at > (it->first == g_ours ? 3000u : 100u) || !(b.dist < 12.0f)) it = g_bodies.erase(it); else ++it;
     }
     const auto mine = g_bodies.find(self);
-    if (mine == g_bodies.end()) return false;
+    if (mine == g_bodies.end())
+        return say(Doll::Not, "%.1f units from the camera's look-at (%.1f %.1f; the rig at %.1f %.1f) - 12 at most", std::sqrt((x - L[0]) * (x - L[0]) + (z - L[2]) * (z - L[2])),
+                   L[0], L[2], x, z);
     const auto ours = g_bodies.find(g_ours);
     if (ours == g_bodies.end()) g_ours = 0;
-    if (self == g_ours) return true;
+    if (self == g_ours) {
+        if (g_oursBefore && g_oursBefore != self && !g_bodies.count(g_oursBefore)) {   // the rig it was rebuilt from is not posed any more: the swap's overlap is over
+            if (why) NoteDoll("doll: the rig ours was rebuilt from (%p) is not posed any more - the two were posed together for %llu ms", (void*)g_oursBefore,
+                              (unsigned long long)(g_oursBeforeSeen - std::min(g_oursBeforeSeen, g_oursBeforeAt)));
+            g_oursBefore = 0;
+        }
+        return Doll::Ours;
+    }
+    if (self == g_oursBefore) g_oursBeforeSeen = now;
+    if (rebuildHold && self == g_oursBefore && now - g_oursBeforeAt < 10000)   // still posed by the game after ours was rebuilt from it: drawn, maybe
+        return say(Doll::Along, "the rig ours (%p) was rebuilt from, %llu ms ago - still posed by the game", (void*)g_ours, (unsigned long long)(now - g_oursBeforeAt));
     const Body& b = mine->second;
     if (g_ours) {
         const Body& o = ours->second;
-        const bool rebuilt = b.poses <= 3 && fabsf(b.x - o.x) < 1.0f && fabsf(b.z - o.z) < 1.0f;
+        const float apart = std::sqrt((b.x - o.x) * (b.x - o.x) + (b.z - o.z) * (b.z - o.z));
+        const float reach = rebuildHold ? std::min(4.0f, 1.0f + 0.02f * (float)(now - std::min(now, o.at))) : 0.0f;   // as far as he ran since ours was posed
+        const bool rebuilt = b.poses <= 3 && (rebuildHold ? apart < reach : fabsf(b.x - o.x) < 1.0f && fabsf(b.z - o.z) < 1.0f);
         const bool mends = now - stillSince > 500 && b.dist + 1.0f < o.dist;
-        if (!rebuilt && !mends) return false;
+        if (!rebuilt && !mends)
+            return say(Doll::Not, "another rig is taken (%p, %.1f units from the look-at, posed %llu ms ago; this one %.1f) - this is not its rebuild (%d poses, %.1f units "
+                       "from it) nor nearer by a unit with the look-at still", (void*)g_ours, o.dist, (unsigned long long)(now - std::min(now, o.at)), b.dist, b.poses, apart);
+        if (rebuilt) {
+            if (why) NoteDoll("doll: the hero's model rebuilt (a weapon swap, a weapon to or from a shoulder, another shield or bow) - rig %p taken from %p, %.1f units "
+                              "apart, %llu ms after %p was posed last%s", (void*)self, (void*)g_ours, apart, (unsigned long long)(now - std::min(now, o.at)), (void*)g_ours,
+                              rebuildHold ? "; the old one posed along while the game poses it" : "");
+            g_oursBefore = g_ours; g_oursBeforeAt = g_oursBeforeSeen = now;
+        }
     } else {
-        if (b.poses < 2) return false;   // every rig of a frame known
+        if (b.poses < 2) return say(Doll::Not, "none taken yet: waiting for its second pose (every rig of a frame known)");   // every rig of a frame known
         for (const auto& [s, other] : g_bodies)
-            if (s != self && now - other.at <= 100 && other.dist < b.dist) return false;
+            if (s != self && now - other.at <= 100 && other.dist < b.dist)
+                return say(Doll::Not, "none taken yet: another rig is nearer the look-at (%p, %.1f units; this one %.1f)", (void*)s, other.dist, b.dist);
     }
     g_ours = self;
-    return true;
+    return Doll::Ours;
 }
 
 #if D2RVR_FIRST_PERSON
@@ -5057,14 +5167,16 @@ void PoseBowRig(uintptr_t self) {
     int count = 0;
     if (!Get(self + 0x08, &model) || !Get(model + 0x08, &skeleton) || !Get(skeleton + 8, &count) || count < 8 || count > bowrig::kMaxBones ||
         !Get(skeleton + 0xC, &bones) || !bones) return;   // anything but a skeleton the size of a bow's leaves here
+    const auto key = std::make_pair(self, skeleton);
+    if (KnownNot(g_bowRigLock, g_bowRigs, key, bones, [](const BowRigEntry& e) { return !e.isBow; })) return;   // most rigs: not a bow, told under the shared lock
     AcquireSRWLockExclusive(&g_bowRigLock);
     struct Unlock { ~Unlock() { ReleaseSRWLockExclusive(&g_bowRigLock); } } unlock;
-    const auto key = std::make_pair(self, skeleton);
     auto it = g_bowRigs.find(key);
     if (it == g_bowRigs.end() || it->second.bones != bones) {
         BowRigEntry e;
         e.bones = bones;
         LearnBow(self, bones, count, &e);
+        if (g_bowRigs.size() > 4096) std::erase_if(g_bowRigs, [](const auto& b) { return !b.second.isBow; });   // full: the bows are kept
         if (g_bowRigs.size() > 4096) g_bowRigs.clear();
         it = g_bowRigs.insert_or_assign(key, e).first;
     }
@@ -5320,14 +5432,16 @@ void NoteCrossbowBarrel(uintptr_t self) {
     if (!Get(self + 0x08, &model) || !Get(model + 0x08, &skeleton) || !Get(skeleton + 8, &count) || count < 4 || count > 64 ||
         !Get(skeleton + 0xC, &bones) || !bones) return;
     const ULONGLONG now = GetTickCount64();
+    const auto key = std::make_pair(self, skeleton);
+    if (KnownNot(g_xbowRigLock, g_xbowRigs, key, bones, [](const XbowRigEntry& e) { return !e.ok; })) return;   // most rigs: not a crossbow that read, told under the shared lock
     AcquireSRWLockExclusive(&g_xbowRigLock);
     struct Unlock { ~Unlock() { ReleaseSRWLockExclusive(&g_xbowRigLock); } } unlock;
-    const auto key = std::make_pair(self, skeleton);
     auto it = g_xbowRigs.find(key);
     if (it == g_xbowRigs.end() || it->second.bones != bones) {
         XbowRigEntry e;
         e.bones = bones;
         LearnCrossbow(self, bones, count, &e);
+        if (g_xbowRigs.size() > 4096) std::erase_if(g_xbowRigs, [](const auto& x) { return !x.second.ok; });   // full: the crossbows are kept
         if (g_xbowRigs.size() > 4096) g_xbowRigs.clear();
         it = g_xbowRigs.insert_or_assign(key, e).first;
     }
@@ -5461,22 +5575,70 @@ void Arms(uintptr_t self) {
     uintptr_t modelInst = 0, skel = 0;
     if (!Get(self + 0x08, &modelInst) || !Get(modelInst + 0x08, &skel)) return;
     const auto key = std::make_pair(self, skel);
-    Hero hero; bool have = false;
+    std::shared_ptr<const Hero> hero; bool have = false;
     AcquireSRWLockShared(&g_heroLock);
     auto it = g_heroes.find(key);
     if (it != g_heroes.end()) { hero = it->second; have = true; }
+    // [hands] doll_rebuild: a player's rig met before its bones or its bind pose read (a model being made at a swap) is learned again, every 100 ms for 5 s
+    bool again = false;
+    int tries = 0;
+    ULONGLONG firstMet = 0;
+    const ULONGLONG now = GetTickCount64();
+    if (have && (!hero || !hero->bindOk) && in.dollRebuild)
+        if (const auto r = g_heroRetry.find(key); r != g_heroRetry.end() && now - r->second.first < 5000 && now - r->second.last >= 100) {
+            again = true; tries = r->second.tries + 1; firstMet = r->second.first;
+        }
     ReleaseSRWLockShared(&g_heroLock);
-    if (!have) {
-        Hero h;
-        if (!Learn(self, &h)) h.count = 0;
+    if (!have || again) {
+        auto h = std::make_shared<Hero>();
+        bool player = false;
+        const bool learned = Learn(self, h.get(), &player) && h->count > 0;
+        if (learned && (!hero || h->bindOk)) hero = std::move(h);   // (a learned rig without its bind pose is not put back for one that has it)
+        if (!learned && player && in.dollTrace && !again)   // [debug] doll_trace: a player's model that is not learned is not the doll (looked at again for 5 s)
+            NoteDoll("doll: a player model whose rig is not learned (%s, %d bones): its arm / head / spine bones are not found by name or do not read%s", ModelOf(self).c_str(),
+                     h->count, in.dollRebuild ? " - learned again every 100 ms for 5 s" : " - never posed as the doll");
+        if (again && in.dollTrace && learned)
+            NoteDoll("doll: rig %p learned on its try %d, %llu ms after it was met (its bind pose %s)", (void*)self, tries + 1, (unsigned long long)(now - firstMet),
+                     hero->bindOk ? "read" : "not read yet");
         AcquireSRWLockExclusive(&g_heroLock);
+        // full: the rigs that are not a hero's go first (bearstonem/d2r-pcvr's cache keeps its crossbows so), a learned hero is not read again for them
+        if (g_heroes.size() > 4096) std::erase_if(g_heroes, [](const auto& e) { return !e.second; });
         if (g_heroes.size() > 4096) g_heroes.clear();
-        g_heroes[key] = h;
+        g_heroes[key] = hero;
+        if (player && (!hero || !hero->bindOk)) {
+            if (g_heroRetry.size() > 256) g_heroRetry.clear();
+            HeroRetry& r = g_heroRetry[key];
+            if (!r.first) r.first = now;
+            r.last = now; r.tries = tries;
+        } else {
+            g_heroRetry.erase(key);
+        }
         ReleaseSRWLockExclusive(&g_heroLock);
-        hero = h;
     }
-    if (hero.count <= 0 || !OursNow(self, hero)) return;   // another player, our corpse
-    NoteHero(self);
+    if (!hero) return;   // not a hero
+    char why[320] = "";
+    const Doll doll = OursNow(self, *hero, in.dollTrace ? why : nullptr, sizeof why);
+    if (doll == Doll::Not) {   // another player, our corpse
+        // [debug] doll_trace: the rig posed as ours last turned away - or, with none ours for 150 ms, the one met - once until one is taken again
+        if (in.dollTrace && (self == g_heroSelf.load() || GetTickCount64() - g_heroSeen.load() > 150) && !g_dollLetGo.exchange(true)) {
+            g_dollLetGoAt.store(GetTickCount64());
+            const uintptr_t last = g_heroSelf.load();
+            NoteDoll("doll: let go - the hero's rig %p%s is not taken as ours: %s; instead: %s", (void*)self, self == last ? " (posed as ours last)" : "", why,
+                     self == last ? "the game's own pose of it (no arms on the controllers, the head shown), the facing kept from the last rig" :
+                     "no rig is ours (the one posed last is not posed any more: the next line)");
+            if (self != last) NoteDoll("doll: (the rig posed as ours last: %p, %llu ms ago)", (void*)last, (unsigned long long)(GetTickCount64() - g_heroSeen.load()));
+        }
+        return;
+    }
+    if (doll == Doll::Along) {   // posed with ours, not taken: the facing stays on the rig taken, nothing is learned from this one's pose
+        in.along = true;
+        if (in.dollTrace && g_dollAlongTold.exchange(self) != self) NoteDoll("doll: rig %p posed along with the hero's, not taken: %s", (void*)self, why);
+    } else {
+        if (in.dollTrace && g_dollLetGo.exchange(false))
+            NoteDoll("doll: taken again after %llu ms - rig %p%s", (unsigned long long)(GetTickCount64() - g_dollLetGoAt.load()), (void*)self,
+                     self == g_heroSelf.load() ? " (the same rig)" : " (a new rig: the model rebuilt - a weapon swap, an area, a load - or another one nearer the look-at)");
+        NoteHero(self);
+    }
     if (!active) return;
     // The facing of this very frame, not of the last 10 ms tick - the hero only.
     if (in.haveYaw) if (const FreshFn f = g_fresh.load()) {
@@ -5500,7 +5662,7 @@ void Arms(uintptr_t self) {
     // [weight]: the weapon stepped (once per head sample) and the hands on it moved to where it has them
     weight::Out wo;
     weight::Apply(&in, &wo);
-    PoseBody(self, hero, in, wo);
+    PoseBody(self, *hero, in, wo);
 }
 
 }  // namespace
@@ -5768,6 +5930,13 @@ std::string BowRigWho() { return bowcensus::Text(BowCensus(), GetTickCount64());
 
 void FlailHit(int side) { if (side == 0 || side == 1) g_flailHits[side].fetch_add(1); }
 const char* FlailStatus() { return g_flailWhy.load(); }
+std::string DollTakeNote() {
+    std::string s;
+    AcquireSRWLockExclusive(&g_dollNoteLock);
+    s.swap(g_dollNote);
+    ReleaseSRWLockExclusive(&g_dollNoteLock);
+    return s;
+}
 std::string FlailTakeNote() {
     std::string s;
     AcquireSRWLockExclusive(&g_flailNoteLock);
@@ -5928,6 +6097,7 @@ void Set(const Input& in) {
     AcquireSRWLockExclusive(&g_inLock);
     g_in = in;
     ReleaseSRWLockExclusive(&g_inLock);
+    g_dollRebuild.store(in.dollRebuild);
 #if D2RVR_FIRST_PERSON
     g_bowAimOn.store((in.bowAim || in.bowAxis || in.bowRest) && in.mode == 2);
     if (!in.bowAim || !in.bowRest) {   // switched off: it starts from nothing next time
@@ -5998,6 +6168,7 @@ bool Dump(const wchar_t* outPath) {
 void SetGameBase(uintptr_t base) { g_gameBase.store(base); }
 void TrackHero(bool on) { g_trackHero.store(on); }
 uint32_t HeroGen() { return g_heroGen.load(); }
+bool HeroPosedLately(unsigned ms) { const ULONGLONG seen = g_heroSeen.load(); return seen && GetTickCount64() - seen < ms; }
 
 #if D2RVR_FIRST_PERSON
 // [diag] the held weapons' entities whose parent is the hero's: their TransformComponent local
@@ -6120,6 +6291,111 @@ bool EntityTransform(uint32_t entity, uintptr_t* comp) {
     return true;
 }
 
+// ---- [weight] monster_bodies: the monsters' own skeletons (vr/monster_rig.h) ----
+// Off the pose hook: the renderer's ECS lists every SkeletonInstance with its entity, and the entity's TransformComponent is where the model stands. A
+// monster's bones are its world pose (model space, as the game posed it this frame) times that transform; their thickness is its meshes' boxes, read once
+// per model. Read-only, every read guarded; the ECS lock is held only to learn the storages, not for the walk.
+namespace {
+SRWLOCK g_rigLock = SRWLOCK_INIT;
+std::map<std::pair<uintptr_t, uintptr_t>, monsterrig::Boxes> g_rigBoxes;   // (granny_model, skeleton) -> its bones' boxes (n == 0: none, why says)
+}   // namespace
+
+size_t MonsterRigs(float x, float z, float reach, MonsterRig* out, size_t cap) {
+    if (!out || !cap || !std::isfinite(x + z + reach)) return 0;
+    uintptr_t xs = 0, ss = 0;
+    {
+        AcquireSRWLockExclusive(&ecs::g_lock);
+        struct Unlock { ~Unlock() { ReleaseSRWLockExclusive(&ecs::g_lock); } } unlock;
+        if (!ecs::IsStorage(ecs::g_xs, ecs::g_vtX) || !ecs::IsStorage(ecs::g_ss, ecs::g_vtS)) {
+            const ULONGLONG now = GetTickCount64();
+            if (now - ecs::g_lastStorageLook < 500) return 0;
+            ecs::g_lastStorageLook = now;
+            if (!ecs::FindStorages()) return 0;
+            ecs::g_cachedSelf = 0;
+        }
+        xs = ecs::g_xs;
+        ss = ecs::g_ss;
+    }
+    uintptr_t pb = 0, pe = 0, cb = 0, xcb = 0;
+    if (!Get(ss + 0x20, &pb) || !Get(ss + 0x28, &pe) || pe <= pb || !Get(ss + 0x38, &cb) || !cb || !Get(xs + 0x38, &xcb) || !xcb) return 0;
+    const size_t n = (pe - pb) / 4;
+    if (n > 20000) return 0;
+    std::vector<uint64_t> comps(n * (kSkeletonCompSize / 8));
+    std::vector<uint32_t> packed(n);
+    if (!SafeCopy(comps.data(), (const void*)cb, n * kSkeletonCompSize) || !SafeCopy(packed.data(), (const void*)pb, n * 4)) return 0;
+    const uintptr_t hero = g_heroSelf.load();
+    struct Model { uintptr_t self, comp; uint32_t entity; float d2; float t[3]; };   // (not "near": windows.h has that word)
+    std::vector<Model> nearby;
+    for (size_t i = 0; i < n; ++i) {
+        const uintptr_t self = (uintptr_t)comps[i * (kSkeletonCompSize / 8)];
+        if (!self || self == hero) continue;
+        uint32_t ti = 0, parent = 0;
+        if (!ecs::Dense(xs, packed[i], &ti)) continue;
+        const uintptr_t comp = xcb + (uintptr_t)ti * kTransformSize;
+        if (!Get(comp + 0xC0, &parent) || (parent & 0xFFFFF) != 0xFFFFF) continue;   // a model hung off another (a weapon in a hand, an armour piece): not a body of its own
+        Model c{self, comp, packed[i], 0.0f, {}};
+        if (!SafeCopy(c.t, (const void*)(comp + 12 * 4), sizeof c.t) || !std::isfinite(c.t[0] + c.t[1] + c.t[2])) continue;
+        c.d2 = (c.t[0] - x) * (c.t[0] - x) + (c.t[2] - z) * (c.t[2] - z);
+        if (c.d2 <= reach * reach) nearby.push_back(c);
+    }
+    std::sort(nearby.begin(), nearby.end(), [](const Model& a, const Model& b) { return a.d2 < b.d2; });
+    const auto read = [](uintptr_t a, void* d, size_t bytes) { return a > 0x10000 && SafeCopy(d, (const void*)a, bytes); };
+    size_t k = 0;
+    for (const Model& c : nearby) {
+        if (k >= cap) break;
+        MonsterRig& r = out[k];
+        r = MonsterRig{};
+        r.entity = c.entity;
+        r.self = c.self;
+        memcpy(r.root, c.t, sizeof r.root);
+        uintptr_t nameObj = 0, nameP = 0, inst = 0, skelp = 0, model = 0;
+        Get(c.self, &nameObj);
+        Get(nameObj + 8, &nameP);
+        const std::string path = Str(nameP);
+        if (path.find("/player/") != std::string::npos) continue;   // a hero (another player's, our own corpse)
+        const size_t slash = path.find_last_of('/');
+        snprintf(r.model, sizeof r.model, "%s", slash == std::string::npos ? path.c_str() : path.c_str() + slash + 1);
+        if (!Get(c.self + 0x08, &inst) || !Get(inst + 0x08, &skelp) || !Get(inst, &model)) { r.why = "the model instance does not read"; ++k; continue; }
+        monsterrig::Boxes boxes;
+        {
+            const auto key = std::make_pair(model, skelp);
+            bool have = false;
+            AcquireSRWLockShared(&g_rigLock);
+            const auto it = g_rigBoxes.find(key);
+            if (it != g_rigBoxes.end()) { boxes = it->second; have = true; }
+            ReleaseSRWLockShared(&g_rigLock);
+            if (!have) {
+                monsterrig::BoxesOf(read, inst, skelp, &boxes);
+                AcquireSRWLockExclusive(&g_rigLock);
+                if (g_rigBoxes.size() > 256) g_rigBoxes.clear();
+                g_rigBoxes[key] = boxes;
+                ReleaseSRWLockExclusive(&g_rigLock);
+            }
+        }
+        r.bones = boxes.bones;
+        r.boxes = boxes.n;
+        if (!boxes.n) { r.why = boxes.why; ++k; continue; }
+        uintptr_t world = 0, mats = 0;
+        int32_t count = 0;
+        Mat xform;
+        if (!Get(c.self + 0x20, &world) || !Get(world, &count) || count != boxes.bones || !Get(world + 4, &mats) || !mats ||
+            !SafeCopy(xform.m, (const void*)c.comp, sizeof xform.m)) { r.why = "its pose does not read"; ++k; continue; }
+        monsterrig::Capsule caps[monsterrig::kMaxBoxes];
+        int nc = 0;
+        for (int b = 0; b < boxes.n; ++b) {
+            Mat bm;
+            if (!SafeCopy(bm.m, (const void*)(mats + (uintptr_t)boxes.b[b].bone * 64), sizeof bm.m)) continue;
+            const Mat w = Mul(bm, xform);
+            if (monsterrig::CapsuleOf(w.m, boxes.b[b], &caps[nc])) ++nc;
+        }
+        r.n = monsterrig::Keep(caps, nc);
+        for (int i = 0; i < r.n; ++i) r.c[i] = caps[i];
+        if (!r.n) r.why = "no box made a capsule";
+        ++k;
+    }
+    return k;
+}
+
 bool HeroTransform(HeroXform* out, const char** why) {
     static const char* const kNoHero = "the hero has not been posed in the last 2 s";
     const uintptr_t self = g_heroSelf.load();
@@ -6142,7 +6418,8 @@ bool HeroTransform(HeroXform* out, const char** why) {
         static uintptr_t failSelf = 0;
         static ULONGLONG failAt = 0;
         const ULONGLONG now = GetTickCount64();
-        if (self == failSelf && now - failAt < 500) { if (why) *why = ecs::g_why; return false; }   // one pass per half second
+        // one pass per half second ([hands] doll_rebuild: per 50 ms - a rebuilt model's instance is in the hero's SkeletonComponent a moment after it is first posed)
+        if (self == failSelf && now - failAt < (g_dollRebuild.load(std::memory_order_relaxed) ? 50u : 500u)) { if (why) *why = ecs::g_why; return false; }
         if (!ecs::EntityOf(self, &e)) {
             failSelf = self; failAt = now;
             ecs::g_why = "the hero's SkeletonInstance is in no SkeletonComponent"; if (why) *why = ecs::g_why; return false;

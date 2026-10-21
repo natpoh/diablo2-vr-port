@@ -21,6 +21,7 @@
 #include <cstdint>
 
 #include "melee_bodies.h"
+#include "monster_bodies.h"
 #include "unit_scan.h"
 
 namespace D2RL {
@@ -28,6 +29,7 @@ struct PluginContext;
 }
 struct D2RVR_Shared;
 namespace strikedir { struct Rule; }
+namespace thrust { struct Rule; }
 
 // F4 ONLY (vr/view_gate.h): the touch, its press, its window and the Direct hit act in VR first person only; a view change ends them at once.
 namespace meleetouch {
@@ -60,13 +62,27 @@ void SetStrokeTuning(float minSpeed, float startCm);
 void SetStrikeRule(const strikedir::Rule& rule);
 // [gameplay] melee_min_speed_<kind>, melee_stroke_start_cm_<kind>: the engine's two numbers for one weapon kind (strikedir::KindIndex), 0 = the general ones (SetStrokeTuning).
 void SetKindTuning(int kind, float minSpeed, float startCm);
-// The blade the touch sweeps for the item in a hand, as it is NOW (the kind's and base item's constants with the live tuning on top): how far the wood
+// [gameplay] melee_thrust, melee_thrust_min_speed, melee_thrust_cm, melee_thrust_along_pct and per kind melee_thrust_<kind>, melee_thrust_min_speed_<kind>, melee_thrust_cm_<kind>
+// (vr/thrust_stroke.h): a poke along the blade's own axis, point first, counts with numbers of its own - a second engine on the same samples, for the weapons that thrust (by
+// the game's weapon class, 1ht / 2ht, or the kind's own setting). Only whether a contact counts: the game's own attack is pressed as for a swing. F4 only, as the whole touch.
+void SetThrustRule(const thrust::Rule& rule);
+// The blade the touch sweeps for the item in a hand, as it is NOW (the weapon model's own ends - vr/weapon_extents.h at unitM metres per model unit, the pose's
+// skel::PosedBlade::unitM - or, with no unit, the kind's and base item's constants, with the live tuning on top): how far the wood
 // runs ahead of the weapon bone's origin (tipM, on the side tipSign says of the bone's +Y) and behind it (buttM). [weight]'s shaft takes the same ends
 // from the same bone, so its line lies on this blade's axis. code: the item's code (bladeshape::Code), 0 = unknown; type: D2RVR_WeaponType.
 struct BladeExtent { float tipM = 0.0f, buttM = 0.0f; int tipSign = 1; };
-BladeExtent BladeFor(uint32_t code, uint32_t type, bool twoHandsOn);
+BladeExtent BladeFor(uint32_t code, uint32_t type, bool twoHandsOn, float unitM = 0.0f);
 // [debug] melee_touch_unchecked: skip the server's hostility / wall check (to find out whether it is what stops a touch).
 void SetUnchecked(bool on);
+// [weight] monster_bodies (vr/monster_bodies.h): the touch's scans hand over the bodies of the monsters the server calls hostile and unwalled - their limbs
+// from their own skeletons (vr/monster_rig.h, every 10 ms) or the game's capsule, kMax capsules in render metres - while it or [debug] melee_boxes wants them. Bodies: the last of them, fresh (kFreshMs) and in F4 - false otherwise (off,
+// another view, no scan lately: hit by touch off, no melee weapon). Any thread. Nothing is attacked or pressed for it: the bodies only shape the drawn weapon.
+void SetBodiesWanted(bool on);
+bool Bodies(monsterbodies::Snapshot* out);
+// [debug] melee_boxes: the bodies drawn (monsterbodies::Pack: a monster's limbs pink, a monster on the game's capsule blue, the capsule the weapon is on white), into
+// the effect's capsules a / b (world units from where the hands hang), up to max; how many. touchedId / touchedBone: weight::LastContact's (0: none). Wanted by
+// melee_boxes alone - [weight] monster_bodies need not be on. The render thread.
+int DrawBodies(uint64_t nowMs, const float eyeWorld[3], uint32_t touchedId, int touchedBone, float (*a)[4], float (*b)[4], int max);
 // [gameplay] melee_touch_thrown, from the ini (every read; default on): a javelin, a throwing knife or axe in hand is swung like any weapon - its
 // blade (blade_shape.h) swept through a monster presses the game's own attack at it (the game's Throw: a point-blank throw, the ammunition spent as
 // the game spends it; never the Direct hit route). Throwing potions never. Off: a thrown weapon does nothing by touch, as before. F4 only.
@@ -87,6 +103,12 @@ void SetThrowLink(GripIsThrowsFn gripIsThrows, GripHeldFn gripHeld, LastThrowFn 
 using AnimNoteFn = size_t (*)(char* out, size_t n);
 void SetAnimNote(AnimNoteFn fn);
 
+// [debug] melee_press_trace (vr/press_trace.h): the touch's attack press (the key route; `hand` the skeleton side, 0 right / 1 left) and the hit counter's verdict on each press
+// (hit after `ms`, or lost). Given by vrcam; called on the timer's thread. Observing only.
+using PressNoteFn = void (*)(uint32_t monster, int hand);
+using PressOutcomeFn = void (*)(bool hit, double ms);
+void SetPressTrace(PressNoteFn press, PressOutcomeFn outcome);
+
 // vrcam's FreshHands, on the skeleton hook's thread, on every pose: the hand sample of this pose (the shared block's
 // stamp and head / hand data), and the world epoch (vrcam's g_gen).
 void NoteHands(const D2RVR_Shared* sh, uint32_t epoch);
@@ -104,6 +126,7 @@ struct Frame {
     float camR[3] = {}, camF[3] = {}, eyeWorld[3] = {};
     uint32_t kind[2] = {};      // D2RVR_TYPE_* of each hand's slot alone (right, left): 0 empty / shield / quiver. Two melee kinds = dual wield
     uint32_t code[2] = {};      // each hand's item code (gamestate::HandCode, bladeshape::Code): the blade is per base item where it is known
+    int thrustClass[2] = {-1, -1};   // each hand's item: 1 its class in the game's data is a thrust (1ht, 2ht), 0 another, -1 not read (gamestate::HandThrust; vr/thrust_stroke.h)
     // [weight] (vr/weight.cpp, weight::Placed / CarryingHand): with weights the weapon is carried by whichever hand holds it (it goes from
     // hand to hand) and, let go, falls and lies - then it strikes nothing. Without [weight]: the weapon's slot hand, as ever (weightdrive.h).
     bool weightPlaced = false;
@@ -133,6 +156,8 @@ uintptr_t TargetUnit(int where = 0);
 
 // The press as vrcam's pad hook asks it (only while direct_input.h is not in the tree): hold pad A now.
 bool PadPressed();
+// The touch's attack press is down now, whichever route holds it (vrcam's pad hook: Stand Still reads such a press as the touch's - the armed melee skill - and names it so).
+bool PressDown();
 
 // Hooks on the server's unit lookup (observing only, to learn the game the hostility check runs in): tried again from
 // the timer until they are in. Cheap when they are.

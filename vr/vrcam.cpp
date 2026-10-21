@@ -58,6 +58,8 @@
 #include "game_device_only.h"
 #include "light_bounds.h"
 #include "fog_spare.h"      // [fog] spare_effects: the fog spares fire, spells and smoke (the game's transparent targets at its resolve)
+#include "effects_layer.h"  // [stereo] turns_keep_own 3, 4: eyes by turns - where the game's effects are in the eye drawn (xr.cpp reads it)
+#include "fog_in_frame.h"   // [render] fog_in_frame: our fog drawn in the game's frame, before its transparent resolve
 
 namespace probe {
 void Run(const float hero[3], const wchar_t* outPath);
@@ -67,6 +69,8 @@ int FindHeroMatrices(const float hero[3], uintptr_t* out, int max);
 #include "skeletons.h"
 #include "melee_touch.h"   // hit by touch (melee_touch.cpp)
 #include "strike_direction.h"   // hit by touch: the strike rules (toward the monster, the head, the amplitude), the engine's numbers per weapon kind
+#include "thrust_stroke.h"   // hit by touch: the thrust - a poke along the blade with its own speed and distance
+#include "thrust_debug_wire.h"   // [debug] thrust_debug: the thrust's readout over the weapon hand
 #include "melee_direct.h"  // the user's experimental direct hit (melee_direct.cpp)
 #include "pad_presence.h"  // pad 0 is never answered "not connected" in VR once the plugin is the pad (the game's reconnect panel)
 #include "stand_still_wire.h"   // [gameplay] attack_in_place: an attack of ours is pressed with the game's Stand Still (stand_still_wire.cpp)
@@ -116,11 +120,12 @@ namespace hud { void Register(); void SetHide(int mode); void SetInterfaceScale(
 #include "d2rcam.h"
 #include "sigscan.h"
 #include "mat4.h"
-namespace gamecmd { void Init(const D2RL::PluginContext* ctx); void Tick(); void Tap(uint32_t cmd); }   // the game's key commands from BodyWalk (gamecmd.cpp)
+namespace gamecmd { void Init(const D2RL::PluginContext* ctx); void Tick(); void Tap(uint32_t cmd); bool Pressed(uint32_t cmd); }   // the game's key commands from BodyWalk (gamecmd.cpp)
 namespace skillwheel { void Init(const D2RL::PluginContext* ctx); void Tick(); void Shutdown(); }   // [openxr] skill_wheel (skill_wheel.cpp)
 namespace skillwheel { bool Enabled(); }
 namespace wheelgame { void Tick(bool on, bool open); }   // the wheel's reads of the controller's skill slots (wheel_game.cpp): a throw by gesture keeps them going for the Throw slot
 namespace gamestate { void Init(const D2RL::PluginContext* ctx); void Tick(); uint32_t WeaponClass(); uint32_t WeaponSet(); uint32_t WeaponType(); uint32_t HandsHeld(); uint32_t TwoHanded(); uint32_t WeaponHand(); uint32_t HandKind(int side); uint32_t HandCode(int side); void SetWantHeroStrength(bool on); int HeroStrength(); int HandRequiredStrength(int side); uint32_t HandsKey(); bool MenuOpen(); void SetLaserPanels(bool on); uint64_t TitleScreenAt(); int ObjectLight(uint32_t txt, uint32_t mode, float rgb[3]); uint64_t LocalPlayer(); void SetViewMode(uint32_t mode); bool AutoMapOpen(); bool SetAutoMap(bool open); void SetMapSide(int corner); void PollPlate(); bool PlateRect(int32_t out[4]); bool PlateAnchor(int32_t out[2]); void PollDurability(); bool DurabilityRect(int32_t panel[4], int32_t widget[4], bool* widgetRead); bool SkillAimed(int skill); void BeltCodes(uint32_t out[4]); }
+namespace gamestate { int HandThrust(int side); }   // hit by touch's thrust: the item's class in the game's data, 1 a thrust (1ht, 2ht), 0 not, -1 not known
 namespace gamestate { bool HandIsThrowPotion(int side); }   // the held item is one of the six throwing potions (gamestate.cpp)
 #include "d2r_vr_state.h"
 
@@ -132,9 +137,12 @@ namespace gamestate { bool HandIsThrowPotion(int side); }   // the held item is 
 #include "afr_eye_shared.h"
 #include "dlss_mv.h"
 #include "xr.h"
+#include "turn_math.h"   // eyes by turns: the cameras handed to xr::SetTurnView (FromAxes)
+#include "sky_view_eyes.h"   // which eye's sky view and stamp a camera build writes in a pair (the replayed right eye's put in by the replay)
 #include "views3d.h"      // [openxr] views_3d: F1 and F3 with the runtime's eyes (the pure maths)
 #include "pointer3d.h"    // [openxr] pointer_3d: the game's mouse pointer drawn on F1's and F3's ground (the pure maths)
 #include "frame_hitch.h"
+#include "pair_world.h"   // [stereo] slow_pair_world: a pair after a pass of over a second is still the world's (the pure rule)
 #include "gpu_fault.h"   // [debug] dred: the D3D12 device lost, told at once with what the GPU was doing (vr/gpu_fault.h)
 #include "stall_guard.h"  // [debug] stall_guard: a queue that stands still for good (vr/stall_guard.h)
 #include "ecl_hook.h"     // [debug] replay_marks 3, 4: the game's own ExecuteCommandLists calls (vr/ecl_hook.h)
@@ -162,7 +170,8 @@ namespace gamestate { bool HandIsThrowPotion(int side); }   // the held item is 
 #include "belt_trigger_wire.h"    // [belt] hold_takes_trigger: the triggers while a belt bottle is in a hand (the game reads the left one as Shift: the drink must be a plain one)
 #include "bow_draw.h"
 #include "bow_draw_wire.h"   // [hands] bow_draw: a released draw's shot along its line
-#include "bow_quiver_wire.h"  // [bow] quiver: a button of the string hand loads the next bow skill while the string is drawn
+#include "bow_quiver.h"       // bowquiver::FindArrow: a bow skill left on the attack's slot, the armed one's name (HookSlotSkill)
+#include "bow_quiver_wire.h"  // [bow] quiver: arms a bow skill (orbs, the string hand's buttons); ShotSkill answers the release
 #include "throw_gesture_wire.h"
 #include "quiver.h"          // [hands] javelin_quiver: the skill of the next throw chosen from the quiver (vr/quiver_wire.cpp)
 #include "quiver_wire.h"
@@ -171,6 +180,8 @@ namespace gamestate { bool HandIsThrowPotion(int side); }   // the held item is 
 #include "own_effects.h"          // [render] dim_own_effects: the hero's own effects (Bone Armor ...) drawn fainter in first person
 #include "grab_priority.h"   // [belt] grab_nearest, grab_trigger: a grip press and the belt potion or the weapon
 #include "anim_cut.h"          // [bow] quick_release, [hands] quick_throw: the action-frame flag of the hero's bow attack / throw rows moved earlier (vr/anim_cut.cpp)
+#include "press_trace.h"       // [debug] melee_press_trace: one line per attack press of hit by touch, from the press to what the game did with it (vr/press_trace.h)
+#include "wheel_game.h"        // ... the A slot and the bank as the skill panel reads them
 #include "bow_latency.h"       // [debug] bow_latency: the split of the second between a bow's release and its arrow (vr/bow_latency.h)
 #include "calibration.h"
 #include "first_start_wire.h"     // [onboarding]: the first-start guide in the headset (vr/first_start.h)
@@ -211,6 +222,14 @@ namespace hud { void SetGameInterfaceScale(float k); }   // the game's own inter
 using namespace D2RL;
 
 namespace {
+// [debug] melee_press_trace (vr/press_trace.h): the notes the press's way gives; the recorder and the line are further down, beside MeleeAnimNote.
+std::atomic<bool> g_pressTraceKey{false};   // [debug] melee_press_trace
+std::atomic<bool> g_ptActive{false};        // a press is being traced (the hooks' cheap test)
+void PressTracePoll(uint16_t buttons);
+void PressTraceSlot(int site, int slot, int bound, int answer);
+void PressTraceLookup(int which, void* unit, bool ours);
+void PressTraceCast(int skill, bool directed);
+
 namespace depthsrc { void Configure(bool on); void Tick(); }   // [render] depth_fix_mode 2 (further down, beside SkyTick)
 namespace gamefog { void SetPoke(const std::wstring& want); }   // [debug] fog_poke, below
 namespace cavelight { void Load(); }   // [cave_light], below
@@ -433,6 +452,8 @@ struct Settings {
     std::atomic<float> facingSign{1.0f};    // flip if the arms swing the wrong way when the model turns
     std::atomic<int>   facingSource{1};     // [hands] facing_source: 1 the hero's TransformComponent (structural), 0 the memory search
     std::atomic<float> facingHoldMs{4000.0f};   // [hands] facing_hold_ms: the last facing kept this long while none reads
+    std::atomic<bool>  dollRebuild{true};   // [hands] doll_rebuild: the doll held through the hero's model rebuilt - a weapon swap (skel::OursNow)
+    std::atomic<bool>  dollTrace{false};    // [debug] doll_trace: one line each time the doll lets go (the facing, the hero's rig), with why and what instead
     std::atomic<float> handUp{0.0f}, handFwd{0.0f}, handSide{0.0f};   // cm, both hands
     std::atomic<float> handsFollowCam{1.0f}; // [arms] follow_camera: 1 = hands hang off the camera, 0 = off the eye point ([camera] distance not applied)
     std::atomic<int>   bowMode{4};          // attack aim: 0 off, 1 stick while held (ignored), 2 shift+click (flips the UI to mouse), 3 turn first, then A, 4 the game's target vector turned to the hand
@@ -592,6 +613,7 @@ struct Settings {
     std::atomic<float> shoulderDrawStowMs{1000.0f}; // [hands] shoulder_draw_stow_ms: how long a weapon let go lies on the floor (it is recalled by a grip meanwhile) before it goes to the back
     std::atomic<bool>  shoulderDraw{false};         // [hands] shoulder_draw: the zone behind each shoulder is a holster (vr/shoulder_draw.h); the weight model draws the weapon from it, the swap is off
     std::atomic<bool>  weightRecallAny{true};       // [weight] recall_any_hand: the grip of any free hand, anywhere, calls a weapon that is away
+    std::atomic<bool>  weightMonsterBodies{false};  // [weight] monster_bodies: the held weapon stops on the hostile monsters' bodies or glances off them (vr/monster_bodies.h)
     std::atomic<float> weightThrownFlyMs{3000.0f};  // [weight] thrown_fly_ms: a thrown weapon's model flies at most this long after the release
     std::atomic<float> weightThrowReachPct{800.0f}; // [weight] throw_reach_pct: the horizontal release velocity x this (a real arm throws a few metres)
     std::atomic<float> weightThrowMaxCells{48.0f};  // [weight] throw_max_cells: the landing is held to this many cells from the hero (the game refuses > 50 on an axis)
@@ -643,6 +665,7 @@ struct Settings {
     std::atomic<bool>  paceFlatVrOnly{true};   // [stereo] pace_flatvr_only: that only while FlatVR runs (nothing to pace to otherwise)
     std::atomic<int>   headsetHz{90};     // [stereo] headset_rate (0..4: 72 75 80 90 120)
     std::atomic<bool>  pictureRing{false};  // [stereo] picture_ring (off by default since 0.152: it juddered in head turns): FlatVR's addon hands over the newest finished picture (2.19: ReShade.ini [FLATVR] ColourRing)        // [stereo] stamps: each frame's head-pose moment to FlatVR (0: none at all, the screen at the head as it is)
+    std::atomic<bool>  turnFxFence{true};   // [stereo] turn_fx_fence: eyes by turns - each present's effects wait for the last one's renders (vr/sky_view_eyes.h FenceEffects)
     std::atomic<int>   pipelineDepth{0};    // the presented frame is this many of its eye's views older than the newest (D3D12 queueing)   // the frame stamp strip for FlatVR (bottom-right corner)
     std::atomic<bool>  topStereo{false};    // the game's own view from above (F12 off) in stereo too: each eye turned about the hero
     std::atomic<float> topAngle{3.0f};      // that turn between the eyes, degrees
@@ -652,6 +675,8 @@ struct Settings {
     std::atomic<bool>  dlssPerEye{true};   // [render] dlss_per_eye: real stereo with DLSS - a DLSS instance of its own for each eye
     std::atomic<bool>  pairPerTick{false};  // AFR: both eyes drawn from one game frame (the frame drawn twice), not by turns
     std::atomic<float> rightDtMs{0.01f};    // [stereo] right_dt_ms: the frame time the right pass of a pair gets (0 = none)
+    std::atomic<bool>  pairFxSync{true};   // [stereo] pair_fx_sync: in a pair, an eye's effects wait for the same eye's last on the GPU (vr/sky_view_eyes.h FxRing)
+    std::atomic<bool>  slowPairWorld{true};   // [stereo] slow_pair_world: native's pair is the world's when the camera's follow ran since the last pair began (vr/pair_world.h)
     std::atomic<bool>  bgFullSpeed{true};   // no Sleep(10) per frame while the game window is not in front
     std::atomic<bool>  gameHeightFog{false};   // [render] game_height_fog: keep the game's own height fog (gamefog::)
     std::atomic<bool>  gameDepthFog{false};    // [render] game_depth_fog: keep the game's own depth fog (gamefog::)
@@ -1415,6 +1440,7 @@ namespace rtrace { extern std::atomic<bool> g_go; }
 extern std::atomic<int> g_inputLog;
 extern std::atomic<bool> g_xrThirdGaze; extern std::atomic<int> g_projFix; extern std::atomic<float> g_shiftMul; extern std::atomic<int> g_replayViews; extern std::atomic<int> g_viewMask; extern std::atomic<int> g_replayPositions; extern std::atomic<int> g_replayPrev;
 namespace fx { bool OwnDepthNow(); }   // [render] own_depth in force (fx::scenedepth::)
+namespace fx { extern std::atomic<int> g_fifPaint; }   // [debug] fog_in_frame_paint (with the effect, below)
 namespace replay { extern std::atomic<int> g_marksOn; extern std::atomic<bool> g_fxSync; extern std::atomic<bool> g_fxFence; extern std::atomic<bool> g_dlssBoth; extern std::atomic<bool> g_replayCopy; }
 namespace replay { extern std::atomic<int> g_peekWant; }
 namespace replay { void AreaChanged(); }   // the game set a biome: an area loads (see Wanted)
@@ -1424,6 +1450,7 @@ std::atomic<bool> g_squareWin{false};   // [openxr] square_window: D2R VR Settin
 namespace flog { void StartDiag(); }
 namespace replay { extern std::atomic<bool> g_rightDepth; }
 namespace replay { extern std::atomic<int> g_want; extern std::atomic<int> g_ahead; extern std::atomic<bool> g_depthCopy; extern std::atomic<bool> g_on; extern std::atomic<bool> g_fxAtHold; extern std::atomic<bool> g_holdSignalsOn; }
+namespace replay { extern std::atomic<int> g_capturing; }   // 1 from a pair's left pass until the replay draws its right eye (vr/sky_view_eyes.h)
 // The left eye's view as last built, and the half-eye shift in it (VrViewInner): the
 // replay makes the right eye's camera constants from them.
 float g_leftView[16] = {};
@@ -1767,6 +1794,8 @@ void LoadSettings() {
     g_set.dlssPerEye.store(IniB(L"render", L"dlss_per_eye", true));
     g_set.pairPerTick.store(IniB(L"stereo", L"pair_per_tick", false));
     g_set.rightDtMs.store(std::clamp(IniF(L"stereo", L"right_dt_ms", 0.01f), 0.0f, 5.0f));
+    g_set.pairFxSync.store(IniB(L"stereo", L"pair_fx_sync", true));
+    g_set.slowPairWorld.store(IniB(L"stereo", L"slow_pair_world", true));
     g_set.trueScale.store(IniB(L"stereo", L"true_scale", true));
     g_set.eyeMm.store(std::clamp(IniF(L"stereo", L"eye_mm", 63.0f), 45.0f, 80.0f));
     // From the user's height: the eyes of an adult sit at ~0.936 of it.
@@ -1849,6 +1878,7 @@ void LoadSettings() {
         lastDiag = diag;
     }
     g_set.pipelineDepth.store(std::clamp((int)IniF(L"stereo", L"pipeline_depth", 0.0f), 0, 3));
+    g_set.turnFxFence.store(IniB(L"stereo", L"turn_fx_fence", true));
     g_set.thirdDistance.store(std::clamp(IniF(L"third", L"distance", 7.0f), -5.0f, 200.0f));
     g_set.tableFloor.store(std::clamp(IniF(L"table", L"floor", 0.05f), 0.0f, 0.3f));
     // [table] hero_cm: how tall the hero stands on the floor - the size of the whole
@@ -1867,6 +1897,8 @@ void LoadSettings() {
     g_set.hudTop.store(std::clamp(IniF(L"stereo", L"ui_top", 0.70f), 0.0f, 1.0f));
     g_set.fogOn.store(IniB(L"fog", L"enabled", false));
     fogspare::SetWanted(IniB(L"fog", L"spare_effects", false));   // the game's pipelines are looked at only with it on at the game's start
+    fogframe::SetWanted(IniB(L"render", L"fog_in_frame", false));   // (the same: read at the game's start)
+    fx::g_fifPaint.store(std::clamp((int)IniF(L"debug", L"fog_in_frame_paint", 0.0f), 0, 4));   // live
     g_set.fogStart.store(std::clamp(IniF(L"fog", L"start", 150.0f), 0.0f, 100000.0f));
     g_set.fogEnd.store(std::clamp(IniF(L"fog", L"end", 600.0f), g_set.fogStart.load() + 1.0f, 200000.0f));
     // caves: their own range, the open air's when not set (caves are smaller, their fog nearer)
@@ -2058,6 +2090,8 @@ void LoadSettings() {
     g_set.facingSign.store(IniF(L"arms", L"facing_sign", 1.0f) < 0 ? -1.0f : 1.0f);
     g_set.facingSource.store(IniF(L"hands", L"facing_source", 1.0f) != 0.0f ? 1 : 0);
     g_set.facingHoldMs.store(std::clamp(IniF(L"hands", L"facing_hold_ms", 4000.0f), 0.0f, 60000.0f));
+    g_set.dollTrace.store(IniB(L"debug", L"doll_trace", false));
+    g_set.dollRebuild.store(IniB(L"hands", L"doll_rebuild", true));
     g_set.bodyTurn.store(std::clamp((int)IniF(L"body", L"turn", 2.0f), 0, 2));
     g_set.thirdTurn.store(IniB(L"body", L"turn_third", true));
     g_set.lockUpper.store(IniB(L"body", L"lock", true));
@@ -2114,12 +2148,12 @@ void LoadSettings() {
         // [bow] arrow_fx: the nocked arrow's fire, frost or arcane light by the loaded skill (the effect's ARROWFX block), live; its size and brightness in percent
         bowquiverwire::SetArrowFx(IniB(L"bow", L"arrow_fx", true), IniF(L"bow", L"arrow_fx_size_pct", 100.0f), IniF(L"bow", L"arrow_fx_bright_pct", 100.0f),
                                   IniF(L"bow", L"arrow_fx_along_cm", 0.0f));
-        // [bow] quiver_plain_no_mana: an arrow skill the hero cannot pay (too little mana by the game's own numbers) shoots the plain arrow at the release instead of the game's refusal; live
+        // [bow] quiver_plain_no_mana: an armed arrow skill the hero cannot pay (too little mana by the game's own numbers) shoots the plain arrow at the release instead of the game's refusal; live
         bowquiverwire::SetPlainNoMana(IniB(L"bow", L"quiver_plain_no_mana", true));
         // [bow] arrow_fire_cut: the arrow's effect goes out at the release that shoots, at once or arrow_fire_cut_ms after it (vr/arrow_fire_cut.h); live
         bowquiverwire::SetArrowFireCut(IniB(L"bow", L"arrow_fire_cut", true), IniF(L"bow", L"arrow_fire_cut_ms", 0.0f));
-        bowquiverwire::SetArrowFxNeedsMana(IniB(L"bow", L"arrow_fx_needs_mana", true));   // [bow] arrow_fx_needs_mana: the arrow's effect goes out while the hero cannot pay the chosen skill
-        bowquiverwire::SetIcon(IniB(L"bow", L"quiver_icon", true));   // [bow] quiver_icon: the chosen arrow skill's icon in the mana medallion (vr/armed_icon.h)
+        bowquiverwire::SetArrowFxNeedsMana(IniB(L"bow", L"arrow_fx_needs_mana", true));   // [bow] arrow_fx_needs_mana: the arrow's effect goes out while the hero cannot pay the armed skill
+        bowquiverwire::SetIcon(IniB(L"bow", L"quiver_icon", true));   // [bow] quiver_icon: the armed arrow skill's icon in the mana medallion (vr/armed_icon.h)
     }
     g_set.bowAimAlong.store(IniB(L"bow", L"aim_along_hands", false));
     g_set.bowAimBlendMs.store(std::clamp(IniF(L"bow", L"aim_blend_ms", 120.0f), 50.0f, 400.0f));
@@ -2207,12 +2241,13 @@ void LoadSettings() {
         potionhide::Configure(flies && (ours || IniB(L"hands", L"potion_hide_game", false)));   // the game's own thrown potion not drawn while ours flies (vr/potion_hide.h): only then, or nothing would be seen
     }
     g_set.bowLatency.store(IniB(L"debug", L"bow_latency", false));
+    g_pressTraceKey.store(IniB(L"debug", L"melee_press_trace", false));   // [debug] melee_press_trace (the first 12 presses are told whatever it says)
     animcut::Configure(animcut::Kind::Bow, IniB(L"bow", L"quick_release", false), (int)std::lround(IniF(L"bow", L"quick_release_frame", 2.0f)));
     g_set.quickThrowPotions.store(IniB(L"hands", L"quick_throw_potions", false));
     g_set.grabNearest.store(IniB(L"belt", L"grab_nearest", true));
     g_set.grabTrigger.store(IniB(L"belt", L"grab_trigger", false));
     g_set.holdTakesTrigger.store(IniB(L"belt", L"hold_takes_trigger", true));
-    animcut::Configure(animcut::Kind::Melee, IniB(L"hands", L"quick_strike", false), (int)std::lround(IniF(L"hands", L"quick_strike_frame", 1.0f)));   // the melee blow made earlier inside the attack animation
+    animcut::Configure(animcut::Kind::Melee, IniB(L"hands", L"quick_strike", false), std::max(2, (int)std::lround(IniF(L"hands", L"quick_strike_frame", 2.0f))));   // (2 at the earliest: the author, 2026-10-20 - at 1 the Amazon's one-hand swing AMA11HS attacked and never hit; at 2 it hits)   // the melee blow made earlier inside the attack animation
     animcut::Configure(animcut::Kind::Throw, IniB(L"hands", L"quick_throw", false), (int)std::lround(IniF(L"hands", L"quick_throw_frame", 1.0f)));   // the thrown missile made earlier inside the throw animation   // the arrow made earlier inside the same attack (a change of the game's timing)
     shieldsmite::Configure(IniB(L"gameplay", L"shield_smite", false));
     shieldsmite::SetTuning(IniF(L"gameplay", L"shield_smite_min_speed", 0.8f), IniF(L"gameplay", L"shield_smite_stroke_cm", 8.0f));   // the shield bash's own speed and start distance (vr/shield_smite.h BashParams), live
@@ -2255,7 +2290,10 @@ void LoadSettings() {
     meleedirect::SetWanted(IniB(L"gameplay", L"melee_direct", false));   // the user's experimental direct hit (vr/melee_direct.h)
     meleedirect::SetMinIntervalMs((uint32_t)std::clamp(IniF(L"gameplay", L"melee_direct_min_ms", 0.0f), 0.0f, 3000.0f));
     meleetouch::SetUnchecked(g_set.meleeTouchUnchecked.load());
-    meleeboxes::SetWanted(IniB(L"debug", L"melee_boxes", false));   // the capsules of hit by touch drawn (vr/melee_boxes.h)
+    thrustdebugwire::SetWanted(IniB(L"debug", L"thrust_debug", false));   // the thrust's readout over the weapon hand, the blade tinted, a log line per thrust (vr/thrust_debug.h)
+    thrustdebugwire::SetOnly(IniB(L"debug", L"thrust_debug_only", false));   // ... only the thrusts: the swing's colours, marks and log lines left out of the debug
+    meleeboxes::SetWanted(IniB(L"debug", L"melee_boxes", false) || thrustdebugwire::Wanted());   // (thrust_debug draws the blade and the monsters too, to tint the blade)
+    meleeboxes::SetDescribeWanted(!thrustdebugwire::Only());   // (the 5 Hz line of the swing's numbers: not with thrust_debug_only)   // the capsules of hit by touch drawn (vr/melee_boxes.h)
     meleeboxes::SetMarkMs((uint32_t)std::clamp(IniF(L"debug", L"melee_mark_ms", 800.0f), 0.0f, (float)meleeboxes::kMaxMarkMs));   // how long the speed marks and the trail stay (vr/melee_marks.h)
     meleetouch::SetStrokeTuning(IniF(L"gameplay", L"melee_min_speed", 0.8f), IniF(L"gameplay", L"melee_stroke_start_cm", 8.0f));   // the swing engine's speed and start distance, live (vr/stroke_tuning.h)
     {   // the strike rules (vr/strike_direction.h): toward the monster, the head, the amplitude - each with a switch for every kind of weapon - and the engine's two numbers for a kind (0 = the general ones)
@@ -2279,6 +2317,23 @@ void LoadSettings() {
         }
         meleetouch::SetStrikeRule(rule);
         meleeboxes::SetDirectionRed(IniB(L"debug", L"melee_direction_red", true));   // the debug draws "not toward the monster" in red (0: blue)
+    }
+    {   // the thrust (vr/thrust_stroke.h): a poke along the blade with its own least speed and distance - for the weapons the game thrusts with, each kind settable (0 = by the game)
+        thrust::Rule tr;
+        tr.on = IniB(L"gameplay", L"melee_thrust", true);
+        tr.minSpeed = IniF(L"gameplay", L"melee_thrust_min_speed", thrust::kDefaultMinSpeed);
+        tr.cm = IniF(L"gameplay", L"melee_thrust_cm", thrust::kDefaultCm);
+        tr.alongPct = IniF(L"gameplay", L"melee_thrust_along_pct", thrust::kDefaultAlongPct);
+        tr.minAccel = IniF(L"gameplay", L"melee_thrust_min_accel", thrust::kDefaultMinAccel);   // 0 = not asked
+        for (int k = 0; k < strikedir::kKinds; ++k) {
+            const std::wstring name = strikedir::KindNameW(k);
+            // the kind's tick (melee_thrust_on_<kind>); an ini without it keeps the older -1 / 0 / 1 of melee_thrust_<kind>; with neither, by the game's class of the item
+            tr.mode[static_cast<size_t>(k)] = thrust::ModeFromIni(IniF(L"gameplay", (L"melee_thrust_on_" + name).c_str(), NAN), IniF(L"gameplay", (L"melee_thrust_" + name).c_str(), NAN));
+            tr.kindSpeed[static_cast<size_t>(k)] = IniF(L"gameplay", (L"melee_thrust_min_speed_" + name).c_str(), 0.0f);
+            tr.kindCm[static_cast<size_t>(k)] = IniF(L"gameplay", (L"melee_thrust_cm_" + name).c_str(), 0.0f);
+            tr.kindAccel[static_cast<size_t>(k)] = IniF(L"gameplay", (L"melee_thrust_min_accel_" + name).c_str(), 0.0f);
+        }
+        meleetouch::SetThrustRule(tr);
     }
     meleetouch::SetBladeTuning(IniF(L"debug", L"melee_blade_length_pct", 100.0f), IniF(L"debug", L"melee_blade_radius_cm", 0.0f), IniB(L"debug", L"melee_blade_flip", false), IniF(L"debug", L"melee_blade_butt_pct", 100.0f));   // the touch's blade tuned live
     meleetouch::SetThrownTuning(IniF(L"debug", L"melee_thrown_length_pct", 100.0f), IniF(L"debug", L"melee_thrown_butt_pct", 100.0f));   // ... and the thrown kinds' own, on top
@@ -2429,6 +2484,8 @@ void LoadSettings() {
     g_set.weightTakeHaptic.store(IniB(L"weight", L"take_haptic", true));
     g_set.weightTakeHapticPct.store(std::clamp(IniF(L"weight", L"take_haptic_pct", 40.0f), 0.0f, 100.0f));
     g_set.weightRecallAny.store(IniB(L"weight", L"recall_any_hand", true));
+    g_set.weightMonsterBodies.store(IniB(L"weight", L"monster_bodies", false));
+    meleetouch::SetBodiesWanted(g_set.weightMonsterBodies.load());   // (the touch's scan hands the bodies over; off: it does not)
     g_set.weightThrownFlyMs.store(std::clamp(IniF(L"weight", L"thrown_fly_ms", 3000.0f), 100.0f, 5000.0f));
     g_set.weightThrowReachPct.store(std::clamp(IniF(L"weight", L"throw_reach_pct", 800.0f), 50.0f, 1500.0f));
     g_set.weightThrowMaxCells.store(std::clamp(IniF(L"weight", L"throw_max_cells", 48.0f), 10.0f, 48.0f));
@@ -2928,6 +2985,13 @@ SkyView g_skyView[2]{};
 SkyView g_skyHist[2][4]{};
 int g_skyHistAt[2] = {};
 SkyView SkyBack(int e);   // below, by g_set
+// A replayed pair's right eye: the left view moved by the eye gap, kept aside by the left build and put in g_skyView[1] (and its stamp)
+// only when the replay draws that eye (CommitRightSky) - never before: the next pair's left values carried it ahead of the right eye's
+// effects still on the GPU (vr/sky_view_eyes.h). Under g_skyLock; the stamp on the draw thread.
+SkyView g_skyRightNext{};
+bool g_skyRightNextOk = false;
+uint32_t g_stampRightNext = 0;
+bool g_stampRightNextOk = false;
 
 // The FlatVR screen's angular height, from BodyWalk's own settings file: the
 // game camera's vertical FOV set to it maps the picture onto the screen one to
@@ -3301,6 +3365,12 @@ void AfrQuietWhenOff() {
 }
 bool PairWanted();
 bool NativeByTurns();
+// The two passes of the pair being drawn are one game frame (the replay or two passes): the right pass may compare itself with the
+// left one. Eyes by turns (NativeByTurns) has a pair too - one pass, its eye in turn - but each eye is a game frame of its own: a
+// check made for "the right pass of this frame" read the next frame there - the hero's facing given up for the memory search
+// (StructFreshness, FacingCand), the hanging props stepped every second frame (props_once_a_pair): "the doll keeps coming off and
+// goes twice as big" (the author, 2026-10-20).
+bool PairOfOneFrame();
 
 // Once a game frame: the per-frame camera update's copy(second, MASTER).
 // Drawing a pair per game frame, the eye is set by HookDrawGameScreen instead.
@@ -3957,6 +4027,8 @@ bool VrViewInner(const d2rcam::WorldView& in, float out[16]) {
     xr::Eyes xe{};
     const bool native = NativeEyes(&xe);
     float nativeIpd = 0.0f;   // world units
+    float turnBody = 0.0f;    // native first person: the room's -z in the world (xr::TurnView, eyes by turns)
+    bool turnFirst = false;   // ... this view is a native first-person pair's
     int ptrMode = -1;                 // F1 / F3 in 3D: the laser's map (PointerMap)
     pointer3d::Similarity ptrSim;
     if (native && xe.mode == xr::kViewsRoom) {
@@ -3985,6 +4057,8 @@ bool VrViewInner(const d2rcam::WorldView& in, float out[16]) {
         const float d2r = 3.14159265f / 180.0f;
         const float body = WrapDeg(g_pairNow.load() ? g_heldYaw.load() : g_mouseYaw.load() + g_turnYaw.load());
         const float base = heading0 - body * d2r;   // the room's -z in the world
+        turnBody = base;
+        turnFirst = !ThirdPerson();
         const float cb = cosf(base), sb = sinf(base);
         auto toWorld = [&](V3 v) { return V3{v.x * cb + v.z * sb, v.y, -v.x * sb + v.z * cb}; };
         const float* q = xe.quat[0];   // the left eye's turn (the eyes are parallel on most headsets: logged at the start)
@@ -4126,6 +4200,22 @@ bool VrViewInner(const d2rcam::WorldView& in, float out[16]) {
         view[12] += g_eye.load() == 0 ? half : -half;
         g_eyeHalf.store(half);
         camPos = eye + right * (g_eye.load() == 0 ? -half : half);
+        // eyes by turns ([stereo] turn_warp, vr/xr.cpp): both eyes' cameras as the head is now, for the eye not drawn
+        if (native && xe.mode == xr::kViewsHead) {
+            xr::TurnView tv{};
+            tv.ok = turnFirst && !g_set.pairPerTick.load();
+            if (tv.ok) {
+                const V3 at[2] = {eye - right * half, eye + right * half};
+                for (int e = 0; e < 2; ++e) { tv.at[e][0] = at[e].x; tv.at[e][1] = at[e].y; tv.at[e][2] = at[e].z; }
+                const turnwarp::Quat q = turnwarp::FromAxes({right.x, right.y, right.z}, {up.x, up.y, up.z}, {-fwd.x, -fwd.y, -fwd.z});
+                tv.turn[0] = q.x; tv.turn[1] = q.y; tv.turn[2] = q.z; tv.turn[3] = q.w;
+                memcpy(tv.hero, L, sizeof tv.hero);
+                tv.body = turnBody;
+                tv.nearPlane = g_lastNear.load();
+                tv.upm = std::max(1.0f, ViewHeight()) / UserEyeHeightM();
+            }
+            xr::SetTurnView(tv);
+        }
     }
     // When this eye's view was built: the head pose it is drawn for is the
     // one of this moment (PredictHead carries it on to now). FlatVR places
@@ -4143,32 +4233,51 @@ bool VrViewInner(const d2rcam::WorldView& in, float out[16]) {
         const D2RVR_Shared* sh = Shared();
         if (!g_set.headPredict.load() && sh && sh->version == D2RVR_SHARED_VERSION && sh->sampleStampMagic == D2RVR_SAMPLE_STAMP_MAGIC)
             stamp = sh->sampleStamp;
-        g_afrBlock->stamp[g_eye.load() & 1] = stamp;
-        // and remembered: the frame presented may be an older view of this eye
         const int e = g_eye.load() & 1;
-        g_stampHist[e][g_stampHistAt[e] = (g_stampHistAt[e] + 1) & 3] = stamp;
-        if (e == 0 && replay::g_on.load() && replay::g_want.load()) {   // replayed: the right eye is this view too, no view of its own
-            g_afrBlock->stamp[1] = stamp;
-            g_stampHist[1][g_stampHistAt[1] = (g_stampHistAt[1] + 1) & 3] = stamp;
+        // a replayed right eye is this view too, no view of its own: its stamp kept aside until the replay draws it (CommitRightSky);
+        // a pair in two passes leaves the right eye's alone - its own pass writes it (vr/sky_view_eyes.h)
+        const bool rightReplayed = replay::g_capturing.load() == 1;
+        if (skyeyes::OwnEye(e, rightReplayed)) {
+            g_afrBlock->stamp[e] = stamp;
+            // and remembered: the frame presented may be an older view of this eye
+            g_stampHist[e][g_stampHistAt[e] = (g_stampHistAt[e] + 1) & 3] = stamp;
         }
+        if (skyeyes::KeepForRight(e, rightReplayed)) { g_stampRightNext = stamp; g_stampRightNextOk = true; }
         g_afrBlock->stamp_magic = FLATVR_AFR_STAMP_MAGIC;
     }
     {   // Row-major, v*M: the columns are the camera's axes in the world.
         AcquireSRWLockExclusive(&g_skyLock);
-        SkyView& sv = g_skyView[g_eye.load() & 1];
+        const int e = g_eye.load() & 1;
+        // a pair whose right eye the replay draws (vr/sky_view_eyes.h): the right eye's own build leaves its view alone - the replay puts
+        // the left one moved across in (CommitRightSky); a pair in two passes: each pass its own eye only
+        const bool rightReplayed = AfrOn() && replay::g_capturing.load() == 1;
+        SkyView built = g_skyView[e];   // (its projection kept: VrProjInner's)
+        SkyView& sv = skyeyes::OwnEye(e, rightReplayed) ? g_skyView[e] : built;
         for (int i = 0; i < 3; ++i) { sv.axes[i] = view[i*4]; sv.axes[3 + i] = view[i*4 + 1]; sv.axes[6 + i] = view[i*4 + 2]; }
         sv.eyeRel[0] = camPos.x - L[0]; sv.eyeRel[1] = camPos.y - L[1]; sv.eyeRel[2] = camPos.z - L[2];
         memcpy(sv.hero, L, sizeof sv.hero);
         sv.axes_ok = true;
-        if ((g_eye.load() & 1) == 0 && AfrOn() && replay::g_on.load() && replay::g_want.load()) {
-            // replayed: the right eye's sky view is the left one moved by the eye separation
-            SkyView& r1 = g_skyView[1];
+        if (skyeyes::KeepForRight(e, rightReplayed)) {
+            // replayed: the right eye's sky view is the left one moved by the eye separation, kept aside until the replay draws it
+            SkyView& r1 = g_skyRightNext;
             const bool projOk = r1.proj_ok;
             float proj[4]; memcpy(proj, r1.proj, sizeof proj);
             r1 = sv;   // the projection: VrProjInner's (the left one shifted the other way)
             if (projOk) memcpy(r1.proj, proj, sizeof proj); else r1.proj_ok = sv.proj_ok;
             const float sh = 2.0f * g_eyeHalf.load();
             r1.eyeRel[0] += right.x * sh; r1.eyeRel[1] += right.y * sh; r1.eyeRel[2] += right.z * sh;
+            g_skyRightNextOk = true;
+        } else if (native && turnFirst && NativeByTurns()) {
+            // eyes by turns, the other eye made on the GPU (xr::TurnMake): its overlays are drawn for where it is now (D2R_Overlay) - its view is
+            // this one moved across by the eye gap, its projection its own (the last it was drawn with: the same fov)
+            const int o = (g_eye.load() & 1) ^ 1;
+            SkyView& ro = g_skyView[o];
+            const bool projOk = ro.proj_ok;
+            float proj[4]; memcpy(proj, ro.proj, sizeof proj);
+            ro = sv;
+            if (projOk) memcpy(ro.proj, proj, sizeof proj); else ro.proj_ok = false;
+            const turnwarp::Vec at = turnwarp::OtherEyeAt({sv.eyeRel[0], sv.eyeRel[1], sv.eyeRel[2]}, {right.x, right.y, right.z}, g_eyeHalf.load(), o ^ 1);   // (turn_math_test: overlay camera)
+            ro.eyeRel[0] = at.x; ro.eyeRel[1] = at.y; ro.eyeRel[2] = at.z;
         }
         ReleaseSRWLockExclusive(&g_skyLock);
     }
@@ -4277,19 +4386,41 @@ bool VrProjInner(const d2rcam::WorldView& in, float M[16]) {
         ReleaseSRWLockExclusive(&g_ptrLock);
     }
     AcquireSRWLockExclusive(&g_skyLock);
-    SkyView& sv = g_skyView[g_eye.load() & 1];
-    sv.proj[0] = M[0]; sv.proj[1] = M[5]; sv.proj[2] = M[8]; sv.proj[3] = M[9]; sv.proj_ok = true;
-    const bool replayed = (g_eye.load() & 1) == 0 && AfrOn() && replay::g_on.load() && replay::g_want.load();
-    if (replayed) {
-        // replayed: no right pass builds the right eye's projection - the left one, shifted the other way
-        SkyView& r1 = g_skyView[1];
+    const int eye = g_eye.load() & 1;
+    const bool rightReplayed = AfrOn() && replay::g_capturing.load() == 1;   // (as VrViewInner: vr/sky_view_eyes.h)
+    const bool own = skyeyes::OwnEye(eye, rightReplayed);
+    if (own) {
+        SkyView& sv = g_skyView[eye];
+        sv.proj[0] = M[0]; sv.proj[1] = M[5]; sv.proj[2] = M[8]; sv.proj[3] = M[9]; sv.proj_ok = true;
+    }
+    if (skyeyes::KeepForRight(eye, rightReplayed)) {
+        // replayed: no right pass builds the right eye's projection - the left one, shifted the other way (kept aside with its view)
+        SkyView& r1 = g_skyRightNext;
         r1.proj[0] = M[0]; r1.proj[1] = M[5]; r1.proj[2] = M[8] - 2.0f * shift; r1.proj[3] = M[9]; r1.proj_ok = true;
     }
-    for (int e = 0; e < 2; ++e)
-        if (e == (g_eye.load() & 1) || (e == 1 && replayed))
+    const bool turned = NativeByTurns() && xr::TurnsNow();   // eyes by turns: the other eye's view moved with this one (VrViewInner)
+    for (int e = 0; e < 2; ++e)   // (a replayed right eye's: when the replay puts it in, CommitRightSky)
+        if ((e == eye && own) || turned)
             g_skyHist[e][g_skyHistAt[e] = (g_skyHistAt[e] + 1) & 3] = g_skyView[e];
     ReleaseSRWLockExclusive(&g_skyLock);
     return true;
+}
+
+// The replay draws the right eye now (replay::RightFromLeft, after the left eye's effects): its sky view and stamp - the left ones moved
+// across, kept aside by the left build - go in for its effects (vr/sky_view_eyes.h). The draw thread.
+void CommitRightSky() {
+    AcquireSRWLockExclusive(&g_skyLock);
+    if (g_skyRightNextOk) {
+        g_skyView[1] = g_skyRightNext;
+        g_skyHist[1][g_skyHistAt[1] = (g_skyHistAt[1] + 1) & 3] = g_skyView[1];
+        g_skyRightNextOk = false;
+    }
+    ReleaseSRWLockExclusive(&g_skyLock);
+    if (g_stampRightNextOk) {
+        if (g_afrBlock) g_afrBlock->stamp[1] = g_stampRightNext;
+        g_stampHist[1][g_stampHistAt[1] = (g_stampHistAt[1] + 1) & 3] = g_stampRightNext;
+        g_stampRightNextOk = false;
+    }
 }
 
 // The game's pointer in F1 and F3 in 3D ([openxr] pointer_3d, vr/xr.cpp Pointer3dQuad): the ground under the pixel the game's mouse is at - the
@@ -6016,7 +6147,8 @@ void ApplyActions(XINPUT_STATE* s) {
     // [gameplay] attack_in_place (F4): the game's own Stand Still is held with every attack press of ours, so a press with nothing
     // under the point is an attack in place and never a walk; the press waits the few ms the command takes to be down
     const bool attackA = (held & D2RVR_ACT_ATTACK) || touchPress;
-    const standstill::Gate still = standstill::Poll(attackA, touchPress, gamestate::MenuOpen(), s->Gamepad.wButtons, s->Gamepad.bLeftTrigger);
+    // (the touch's press, whichever route holds it: Stand Still reads it as the armed melee skill - a Whirlwind, a Leap Attack must move the hero - and names it "hit by touch")
+    const standstill::Gate still = standstill::Poll(attackA, touchPress || (attackA && meleetouch::PressDown()), gamestate::MenuOpen(), s->Gamepad.wButtons, s->Gamepad.bLeftTrigger);
     if ((attackA && !still.holdBackA) || still.addA || interact) s->Gamepad.wButtons |= XINPUT_GAMEPAD_A;
     s->Gamepad.wButtons = (WORD)((s->Gamepad.wButtons & ~still.holdBack) | still.add);
     BowLatencyPad((s->Gamepad.wButtons & (XINPUT_GAMEPAD_A | XINPUT_GAMEPAD_B | XINPUT_GAMEPAD_X | XINPUT_GAMEPAD_Y | XINPUT_GAMEPAD_RIGHT_SHOULDER)) != 0);   // [debug] bow_latency: the attack or a skill button
@@ -6559,6 +6691,7 @@ void HookSpellResolve(void* mgr, void* unit, bool assist, float* x, float* y) {
     if (viewgate::F4() && SpellAimWanted(drawn) && unit && x && y && AimByVector() &&
         !gamestate::MenuOpen() && (IsHeroUnit(unit) || (thrownLive && unit == g_heroUnit.load())) && (skill = SpellSkill(unit)) >= 0)
         cast = SpellCastFor(skill, drawn);
+    if (g_ptActive.load(std::memory_order_relaxed) && unit && IsHeroUnit(unit)) PressTraceCast(skill >= 0 ? skill : SpellSkill(unit), cast.directed);   // [debug] melee_press_trace
     const SpellCast outer = g_spellCast;   // a resolution inside this one is its own; this one's comes back after
     g_spellCast = cast;
     OrigSpellResolve(mgr, unit, cast.directed ? false : assist, x, y);
@@ -6743,8 +6876,13 @@ uintptr_t NearbySewerWarp() {
     return r.unit;
 }
 
-void* HookSpellTarget(void* mgr, int skill) {
-    const uintptr_t ret = (uintptr_t)_ReturnAddress();
+thread_local bool t_touchAnswer = false;   // [debug] melee_press_trace: the lookup was answered with the touched monster
+int LookupOf(uintptr_t ret) {
+    return ret == g_dispatchTargetRet ? presstrace::kDispatch : ret == g_spellTargetRet ? presstrace::kResolver : ret == g_spellHoverRet ? presstrace::kHover
+         : ret == g_clickTargetRet ? presstrace::kClick : -1;
+}
+
+void* SpellTargetFor(void* mgr, int skill, uintptr_t ret) {
     if (ret == g_dispatchTargetRet) {
         const bool off = DispatchTargetOff(skill);
         void* t = off && !shottrace::Active() ? nullptr : OrigSpellTarget(mgr, skill);   // asked anyway while a shot is traced: to say what the game found
@@ -6754,15 +6892,22 @@ void* HookSpellTarget(void* mgr, int skill) {
         if (const int where = ret == g_spellTargetRet ? 1 : ret == g_clickTargetRet ? 2 : 0)
             if (void* t = shieldsmite::Target(where, skill)) return t;
     }
-    if (void* t = TouchedTarget(ret)) return t;
+    if (void* t = TouchedTarget(ret)) { t_touchAnswer = true; return t; }
     if ((g_spellCast.directed && ret == g_spellTargetRet) || ClickTargetOff(ret)) return nullptr;
     void* t = OrigSpellTarget(mgr, skill);
     if (!t && skill == kInteractSkill) t = reinterpret_cast<void*>(NearbySewerWarp());   // the Kurast sewer stairs, standing
     return t;
 }
-
-void* HookSpellHover(int index) {
+void* HookSpellTarget(void* mgr, int skill) {
     const uintptr_t ret = (uintptr_t)_ReturnAddress();
+    t_touchAnswer = false;
+    void* t = SpellTargetFor(mgr, skill, ret);
+    if (g_ptActive.load(std::memory_order_relaxed))
+        if (const int which = LookupOf(ret); which >= 0) PressTraceLookup(which, t, t_touchAnswer);   // [debug] melee_press_trace
+    return t;
+}
+
+void* SpellHoverFor(int index, uintptr_t ret) {
     if (ret == g_dispatchTargetRet) {
         const bool off = DispatchTargetOff(-1);
         void* t = off && !shottrace::Active() ? nullptr : OrigSpellHover(index);
@@ -6772,9 +6917,17 @@ void* HookSpellHover(int index) {
         if (const int where = ret == g_spellHoverRet ? 1 : ret == g_clickTargetRet ? 2 : 0)
             if (void* t = shieldsmite::Target(where, -1)) return t;
     }
-    if (void* t = TouchedTarget(ret)) return t;
+    if (void* t = TouchedTarget(ret)) { t_touchAnswer = true; return t; }
     if ((g_spellCast.directed && ret == g_spellHoverRet) || ClickTargetOff(ret)) return nullptr;
     return OrigSpellHover(index);
+}
+void* HookSpellHover(int index) {
+    const uintptr_t ret = (uintptr_t)_ReturnAddress();
+    t_touchAnswer = false;
+    void* t = SpellHoverFor(index, ret);
+    if (g_ptActive.load(std::memory_order_relaxed))
+        if (const int which = LookupOf(ret); which >= 0) PressTraceLookup(which, t, t_touchAnswer);   // [debug] melee_press_trace
+    return t;
 }
 
 // `fn` ends in a jump to `to` (an E9 rel32 in its first 0x80 bytes): a tail call.
@@ -6816,24 +6969,32 @@ SlotSkillFn OrigSlotSkill = nullptr;
 uintptr_t g_slotSelectRet = 0, g_slotSetRet = 0;
 std::atomic<int> g_slotSkillHook{0};   // 0 not in yet, 1 in, 2 not possible
 
-int HookSlotSkill(int slot) {
+int SlotSkillFor(int slot, uintptr_t ret, int* boundOut) {
     const int bound = OrigSlotSkill(slot);
-    if (bound != 0) {   // (the common case first: any other binding is the game's) - but a bow's release that the hero cannot pay (too little mana, by the game's own numbers) is read as the plain attack
-        if (bound > 0 && bowquiverwire::PlainArmed(bound)) {
-            const uintptr_t at = (uintptr_t)_ReturnAddress();
+    *boundOut = bound;
+    if (bound != 0) {   // (the common case first: any other binding is the game's)
+        // a bow skill on the attack's slot with no bow or crossbow in hand: the old bow quiver (to 0.174) loaded its arrow skills there and the game
+        // keeps that slot in the save - every attack, the touch's included, went to the game as that bow skill, which it refuses for a melee weapon
+        // (the author, 2026-10-20: "the monster's capsule turns red but the strike is not pressed"). The quiver now only arms its skill (ShotSkill,
+        // below) and gives that slot back as the plain attack (bowquiver::Cleanup); until it has, this reads it as the plain attack (or the armed
+        // melee skill, when the weapon can use it).
+        if (bound > 0 && bowquiver::FindArrow(bound) && !BowInHand()) {
+            const uintptr_t at = ret;
             if (at == g_slotSelectRet || at == g_slotSetRet) {
-                static ULONGLONG toldPlain = 0;
-                if (GetTickCount64() - toldPlain > 300) {
-                    toldPlain = GetTickCount64();
-                    LogF("bow quiver: the slot's skill (%d) was read as Attack (0) by the %s - the hero cannot pay it ([bow] quiver_plain_no_mana)", bound,
+                const uint32_t t = gamestate::WeaponType();
+                const int armed = ThrownInHand() ? 0 : meleearm::PressSkill();
+                const int skill = armed > 0 && meleearm::Fits(armed, t == D2RVR_TYPE_SPEAR || t == D2RVR_TYPE_JAVELIN, t == D2RVR_TYPE_DAGGER) ? armed : 0;
+                static ULONGLONG told = 0;
+                if (GetTickCount64() - told > 2000) {
+                    told = GetTickCount64();
+                    LogF("bow quiver: the slot's bow skill (%d) was read as %s (%d) by the %s - no bow in hand", bound, meleearm::Name(skill), skill,
                          at == g_slotSelectRet ? "cast's slot selection" : "unit's hand-skill setter");
                 }
-                return 0;
+                return skill;
             }
         }
         return bound;
     }
-    const uintptr_t ret = (uintptr_t)_ReturnAddress();
     const bool site = ret == g_slotSelectRet || ret == g_slotSetRet;
     int skill = throwcast::SwapSkill(bound, site, g_set.throwAutoSkill.load(), site && ThrownInHand(), site && GestureAimLive());
     int32_t chosen = quiver::kDefault;
@@ -6847,8 +7008,27 @@ int HookSlotSkill(int slot) {
             LogF("throw gesture: the slot's skill (Attack, 0) was read as %s (%d) by the %s", quivered && skill == chosen ? "the quiver's skill" : "Throw", skill,
                  ret == g_slotSelectRet ? "cast's slot selection" : "unit's hand-skill setter");
         }
+    } else if (const int shot = site && BowInHand() ? bowquiverwire::ShotSkill() : 0; shot > 0) {
+        // [bow] quiver: a release of the string with a bow skill armed - read as that skill, decided at the release (vr/bow_quiver_wire.cpp OnRelease: the plain
+        // arrow when the hero cannot pay it). With no bow or crossbow in hand the armed bow skill is never answered.
+        skill = shot;
+        static ULONGLONG told = 0;
+        if (GetTickCount64() - told > 300) {
+            told = GetTickCount64();
+            LogF("bow quiver: the slot's skill (Attack, 0) was read as the armed %s (%d) by the %s", bowquiver::FindArrow(shot) ? bowquiver::FindArrow(shot)->name : "skill", shot,
+                 ret == g_slotSelectRet ? "cast's slot selection" : "unit's hand-skill setter");
+        }
     } else if (site && !ThrownInHand()) {   // [gameplay] melee_skill_armed: the touch's attack press is read as the armed melee skill - decided at the press (vr/melee_arm_game.cpp: the plain attack when the mana is short)
-        if (const int armed = meleearm::PressSkill(); armed > 0) {
+        const uint32_t type = gamestate::WeaponType();
+        const int armed = meleearm::PressSkill();
+        if (armed > 0 && !meleearm::Fits(armed, type == D2RVR_TYPE_SPEAR || type == D2RVR_TYPE_JAVELIN, type == D2RVR_TYPE_DAGGER)) {
+            static ULONGLONG toldFit = 0;   // armed for another weapon (Jab, then a sword in hand): the plain attack, never a cast the game refuses
+            if (GetTickCount64() - toldFit > 2000) {
+                toldFit = GetTickCount64();
+                LogF("melee armed: %s (%d) needs a %s - the weapon in hand (type %u) cannot: the plain attack", meleearm::Name(armed), armed,
+                     meleearm::NeedOf(armed) == meleearm::Need::Spear ? "spear or javelin" : "dagger", type);
+            }
+        } else if (armed > 0) {
             skill = armed;
             static ULONGLONG told = 0;
             if (GetTickCount64() - told > 300) {
@@ -6859,11 +7039,19 @@ int HookSlotSkill(int slot) {
     }
     return skill;
 }
+int HookSlotSkill(int slot) {
+    const uintptr_t ret = (uintptr_t)_ReturnAddress();
+    int bound = -1;
+    const int skill = SlotSkillFor(slot, ret, &bound);
+    if (g_ptActive.load(std::memory_order_relaxed) && (ret == g_slotSelectRet || ret == g_slotSetRet))   // [debug] melee_press_trace: the game's reads of the pressed slot
+        PressTraceSlot(ret == g_slotSelectRet ? presstrace::kSelect : presstrace::kSetter, slot, bound, skill);
+    return skill;
+}
 
 bool ThrowAutoSkillReady() { return g_set.throwAutoSkill.load() && g_slotSkillHook.load() == 1; }
 
 void InstallSlotSkillHook() {
-    if (!g_ctx || g_slotSkillHook.load() != 0 || !((g_set.throwGesture.load() && g_set.throwAutoSkill.load()) || quiverwire::On() || bowquiverwire::PlainWanted() || meleearm::On())) return;
+    if (!g_ctx || g_slotSkillHook.load() != 0 || !((g_set.throwGesture.load() && g_set.throwAutoSkill.load()) || quiverwire::On() || bowquiverwire::WantsHook() || meleearm::On())) return;
     if (!Matches(RVA_SLOT_SKILL, kSigSlotSkill, sizeof kSigSlotSkill)) return;   // the code is decrypted as it runs: tried again
     if (!CallsTo(RVA_SLOT_SKILL_SELECT_RET, RVA_SLOT_SKILL) || !CallsTo(RVA_SLOT_SKILL_SET_RET, RVA_SLOT_SKILL)) {
         g_slotSkillHook.store(2);
@@ -6875,7 +7063,7 @@ void InstallSlotSkillHook() {
     g_slotSetRet = d2rsig::Addr(RVA_SLOT_SKILL_SET_RET);
     const bool in = d2rsig::Hook(RVA_SLOT_SKILL, kSigSlotSkill, sizeof kSigSlotSkill, (void*)&HookSlotSkill, (void**)&OrigSlotSkill);
     g_slotSkillHook.store(in ? 1 : 2);
-    bowquiverwire::SetPlainHookReady(in);   // [bow] quiver_plain_no_mana needs the hook
+    bowquiverwire::SetHookReady(in);        // [bow] quiver: the armed bow skill's shot needs the hook
     meleearm::SetHookState(in ? 1 : 2);     // [gameplay] melee_skill_armed too
     Log(in ? "vrcam: throw_auto_skill in - with a throwing weapon in hand a throw's A press is read by the game as its Throw skill (no skill slot needed), or as the skill chosen from the quiver"
            : "vrcam: throw_auto_skill hook FAILED - a throw presses the pad button of the slot that holds Throw");
@@ -7066,6 +7254,7 @@ template <int I> DWORD WINAPI XDetour(DWORD idx, XINPUT_STATE* s) {
         }
         TurnStick(s, mirror);
         if (idx == 0) InputLogPad(got, s->Gamepad, mirror);
+        if (idx == 0 && g_ptActive.load(std::memory_order_relaxed)) PressTracePoll(s->Gamepad.wButtons);   // [debug] melee_press_trace: the buttons as the game gets them
     }
     return r;
 }
@@ -7798,6 +7987,7 @@ bool FrameTimeFound() {
 // Native OpenXR with the eyes by turns (D2R VR Settings: "Native OpenXR - eyes by turns"): one pass
 // a game frame through HookDrawGameScreen, which opens the runtime's frame for it (DrawByTurns).
 bool NativeByTurns() { return g_set.platform.load() == 1 && xr::ByTurns() && !g_set.pairPerTick.load(); }
+bool PairOfOneFrame() { return g_pairNow.load() && !NativeByTurns(); }
 
 // Without the frame time held, the second pass would play the frame's
 // animation and particles a second time: the pair is drawn only with it.
@@ -9715,6 +9905,78 @@ bool XrBegin() {
 }
 void XrCopy(int eye, ID3D12Resource* bb) { t_ours = true; xr::CopyEye(eye, bb); t_ours = false; }
 void XrEnd() { t_ours = true; xr::EndPair(); t_ours = false; }
+// Eyes by turns with the other eye made on the GPU (xr::TurnMake, [stereo] turn_warp): what D2R_DepthFog.fx draws without the scene's
+// depth - the game's labels laid back, the wrist medallions, the bow's orbs, the hitboxes, the low-life vignette - is left out of the
+// picture the warp moves (OverlaysApart, set at the effects' begin for this present) and drawn after it for each eye on its own picture
+// (D2R_Overlay / D2R_Overlay_R on the eye drawn, D2R_OverlayMade / D2R_OverlayMade_R on the eye made): moved with the depth behind them
+// they showed twice in the eye made (the author, 2026-10-20). Which depth hides them in an eye is its technique's, not a uniform: the
+// eye made is the other one every frame, and ReShade writes the effect's uniforms over its one buffer at the next frame's effects -
+// GPU-bound, before this frame's overlays have run - so flags per eye were read the next frame's way round and the eye made's
+// medallions were hidden by the other eye's hand: doubled, always (the labels, which read no depth, not).
+reshade::api::effect_technique g_ovTech[2][2]{};   // [made][eye], found with the effect's techniques (fx OnFinishEffects)
+std::atomic<bool> g_ovApart{false};             // OverlaysApart as this present's effects had it
+thread_local bool t_overlay = false;            // inside our own overlay render (the effects' events, if they come, are not a present's)
+bool OverlayTechs() { return g_ovTech[0][0].handle && g_ovTech[0][1].handle && g_ovTech[1][0].handle && g_ovTech[1][1].handle; }
+bool OverlaysWanted() { return NativeByTurns() && xr::TurnWarpOn() && OverlayTechs(); }   // the mode (any thread)
+bool OverlaysNow() { return OverlaysWanted() && xr::TurnsNow(); }   // ... and this pair is made so (the draw thread, inside the pair)
+// What the overlays by turns did, told every 10 s (TellOverlays), so a medallion seen twice says by which way it came in: drawn into
+// the picture the warp moves (the effect did not leave them out this present: the warp then carries them into the eye made, with the
+// depth behind them), the eye the effects took as drawn not the present's (the eye made then hidden by the wrong depth), or drawn from
+// a camera off the one its picture shows (checked against the warp's cameras, fx: the overlays' cameras). The draw thread (the present
+// and its effects' events are one thread).
+struct OverlayTell {
+    uint32_t presents = 0, apart = 0, inPicture = 0, drawn = 0, made = 0, madeDrawn = 0, madeSkipped = 0, eyeOff = 0, cams = 0, camFallback = 0;
+    float gapAt[2] = {}, gapTurn[2] = {};   // the largest miss of each eye's overlay camera this window: world units, about radians
+    const char* why = "";                   // why not apart, the last time
+    ULONGLONG since = 0;
+};
+OverlayTell g_ovTell;
+int g_ovDrawnEye = -1;   // the eye the effects of this present took as drawn (OnBeginEffects)
+const char* OverlaysWhyNot() {
+    if (!OverlayTechs()) return "the effect has no D2R_Overlay(_R) / D2R_OverlayMade(_R) - an older D2R_DepthFog.fx";
+    if (!NativeByTurns()) return "not native OpenXR by turns";
+    if (!xr::TurnWarpOn()) return "[stereo] turn_warp off";
+    return "the pair was not made by turns when the effects began";
+}
+void TellOverlays(float upm, float gapCm) {
+    OverlayTell& t = g_ovTell;
+    const ULONGLONG now = GetTickCount64();
+    if (!t.since) t.since = now;
+    if (now - t.since < 10000) return;
+    const float cm = upm > 0.0f ? 100.0f / upm : 0.0f;
+    char camLine[256] = "";
+    if (t.cams)
+        snprintf(camLine, sizeof camLine, "; their cameras off the pictures' by up to %.1f / %.1f cm and %.3f / %.3f rad (left / right; 0 = on the picture, "
+                 "the eyes' gap %.1f cm = the other eye's place, shown twice)%s", t.gapAt[0] * cm, t.gapAt[1] * cm, t.gapTurn[0], t.gapTurn[1], gapCm,
+                 t.camFallback ? " - an eye's view not there, the left one's taken" : "");
+    LogF("vrcam: eyes by turns - overlays, 10 s: %u presents; the effect left them out of the picture the warp moves %u, drew them into it %u%s%s; "
+         "drawn on the eye drawn %u, on the eye made %u of %u made%s; the eye the effects took as drawn not the present's %u%s",
+         t.presents, t.apart, t.inPicture, t.inPicture ? " - " : "", t.inPicture ? t.why : "", t.drawn, t.madeDrawn, t.made,
+         t.madeSkipped ? " (none there: [stereo] turn_overlays_made=0)" : "", t.eyeOff, camLine);
+    t = OverlayTell{};
+    t.since = now;
+}
+// `eye`'s overlays over `target`: the back buffer (PRESENT, the eye drawn) or our picture of the other eye (RENDER_TARGET, made), viewed as `fmt`.
+bool DrawOverlays(reshade::api::effect_runtime* rt, ID3D12Resource* target, int eye, DXGI_FORMAT fmt, bool backBuffer) {
+    using namespace reshade::api;
+    const effect_technique tech = g_ovTech[backBuffer ? 0 : 1][eye & 1];
+    if (!rt || !target || !tech.handle) return false;
+    device* dev = rt->get_device();
+    const resource res{(uint64_t)target};
+    resource_view rtv{0};   // made and let go each time: our picture may be made again at the same address
+    if (!dev->create_resource_view(res, resource_usage::render_target, resource_view_desc((format)fmt), &rtv)) return false;
+    command_queue* q = rt->get_command_queue();
+    command_list* cl = q->get_immediate_command_list();
+    if (backBuffer) cl->barrier(res, resource_usage::present, resource_usage::render_target);
+    t_overlay = true;
+    rt->render_technique(tech, cl, rtv, rtv);
+    t_overlay = false;
+    if (backBuffer) cl->barrier(res, resource_usage::render_target, resource_usage::present);
+    q->flush_immediate_command_list();
+    dev->destroy_resource_view(rtv);   // (its descriptor was copied into the list when it was recorded)
+    return true;
+}
+
 void XrPresent(reshade::api::effect_runtime* rt, ID3D12Resource* bb) {
     if (SkipWhileStuck("the picture's copy to the headset (ReShade's flush waits on the queue)")) return;
     t_ours = true;
@@ -9725,7 +9987,34 @@ void XrPresent(reshade::api::effect_runtime* rt, ID3D12Resource* bb) {
     rq->flush_immediate_command_list();
     ID3D12Device* dev = (ID3D12Device*)rt->get_device()->get_native();
     ID3D12CommandQueue* q = (ID3D12CommandQueue*)rq->get_native();
-    xr::OnPresent(dev, q, bb, g_pairNow.load() ? (g_eye.load() & 1) : -1);   // a pass of two: its eye
+    const int pairEye = g_pairNow.load() ? (g_eye.load() & 1) : -1;   // a pass of two: its eye
+    // eyes by turns, the other eye made ([stereo] turn_warp): this eye kept as it is (no overlays yet), then its overlays, its swapchain,
+    // the other eye made, its overlays, its swapchain (xr.h TurnKeep)
+    const bool turns = pairEye >= 0 && xr::TurnsNow();
+    const bool apart = turns && g_ovApart.load();
+    const DXGI_FORMAT fmt = bb ? bb->GetDesc().Format : DXGI_FORMAT_UNKNOWN;
+    if (turns) xr::TurnKeep(pairEye, bb);
+    OverlayTell& tell = g_ovTell;
+    if (turns) {
+        ++tell.presents;
+        if (apart) ++tell.apart;
+        else { ++tell.inPicture; tell.why = OverlaysWhyNot(); }
+        if (g_ovDrawnEye != pairEye) ++tell.eyeOff;
+    }
+    if (apart && DrawOverlays(rt, bb, pairEye, fmt, true)) ++tell.drawn;
+    xr::OnPresent(dev, q, bb, pairEye);
+    if (turns)
+        if (ID3D12Resource* made = xr::TurnMake()) {
+            ++tell.made;
+            // [stereo] turn_overlays_made=0 (the author's idea, a test): none on the eye made - the eye drawn's alone
+            if (apart && !xr::TurnOverlaysMade()) ++tell.madeSkipped;
+            else if (apart && DrawOverlays(rt, made, pairEye ^ 1, fmt, false)) ++tell.madeDrawn;
+            xr::TurnFinish();
+        }
+    if (turns) {
+        const float upm = std::max(1e-3f, xr::TurnViewNow().upm);
+        TellOverlays(upm, 2.0f * g_eyeHalf.load() * 100.0f / upm);
+    }
     t_ours = false;
 }
 
@@ -10318,6 +10607,7 @@ bool RightFromLeft() {
     ReleaseSRWLockExclusive(&g_lock);
     if (!g_leftHeld) { ReleaseHeld(nullptr); g_fails.fetch_add(1); return false; }
     g_leftHeld = false;
+    ::CommitRightSky();   // the right eye's sky view and stamp: the left ones moved across, only now (vr/sky_view_eyes.h)
     const int mode = g_want.load();
     camfix::g_capture.store(false);
     if (camfix::g_scanWant.exchange(0)) camfix::ScanCopies();
@@ -10858,10 +11148,32 @@ bool XrIntoShared(D2RVR_Shared* out, const D2RVR_Shared* bridge) {
 // XrBegin, last). A menu open: the flat picture - or with [openxr] menu_3d in F4 (MenuAs3d) still the
 // pair, the interface taken out of the picture by hud.cpp as a panel for xr.cpp (set here, before the
 // pass draws it, so the frame the menu opens has it already).
+// The world's pair: the camera's follow within the second (d2rcam::InWorld), or ([stereo] slow_pair_world) since the last pair began -
+// a pass of over a second on a slow card left every next pair "no world", and its right eye went to the headset as the flat picture
+// between two pairs in stereo (vr/pair_world.h). Told every 10 s while it keeps pairs so.
+bool PairWorld() {
+    static pairworld::Gate gate;
+    static uint32_t kept = 0;
+    static ULONGLONG toldAt = 0;
+    const ULONGLONG now = GetTickCount64();
+    const pairworld::Why why = gate.Begin(now, d2rcam::InWorld(), d2rcam::LastSyncTick(), g_set.slowPairWorld.load());
+    if (why == pairworld::Why::SincePrevious) {
+        ++kept;
+        if (!toldAt || now - toldAt > 10000) {
+            toldAt = now;
+            LogF("vrcam: a pair after a pass of over a second kept in the world (the camera's follow ran in the last pair; [stereo] slow_pair_world) - "
+                 "%u time(s): a graphics card this far behind shows it as stereo, not the flat picture", kept);
+            kept = 0;
+        }
+    }
+    return pairworld::World(why);
+}
+
 bool NativePairBegin() {
     const bool menu = gamestate::MenuOpen();
     xr::SetViewsMode(NativeMode());   // F1 / F3 in 3D (views_3d): what this pair is drawn as
-    const bool native = NativeView() && (!menu || MenuAs3d()) && d2rcam::InWorld() && replay::XrBegin();
+    const bool world = PairWorld();   // (every pair: its begin is the next one's "last pair")
+    const bool native = NativeView() && (!menu || MenuAs3d()) && world && replay::XrBegin();
     const bool out = menu && (native || (!xr::Running() && FlatVrMenuPanel()));   // native's panel, or FlatVR's
     g_menu3dNow.store(out);
     hud::SetPanelOut(out);
@@ -11826,11 +12138,17 @@ std::atomic<uint32_t> g_facingWaitMs{2000};      // the search's backoff (Facing
 
 bool StructWanted() { return g_set.facingSource.load() == 1 && !g_structOff.load(); }
 
+// [debug] doll_trace: why the structural facing did not read the last time (every time, not only when the line above is told), and with "not on the look-at"
+// where the matrix was against it
+std::atomic<const char*> g_structWhyNow{nullptr};
+std::atomic<float> g_structOffX{0.0f}, g_structOffZ{0.0f}, g_structW{1.0f}, g_structUp{1.0f};   // (ReadHeroMatrix wants w 1, up > 0.3, within 12 units)
+
 // The structural facing, read now: the address of the hero's local matrix (comp + 0x00).
 bool FacingStructural(uintptr_t* at, uint32_t* entity = nullptr) {
     static std::atomic<const char*> toldWhy{nullptr};
     static std::atomic<ULONGLONG> toldAt{0};
     auto fail = [&](const char* why) {
+        g_structWhyNow.store(why);
         // the reason, when it changes (at most every 5 s)
         if (why != toldWhy.load() && GetTickCount64() - toldAt.load() > 5000) {
             toldWhy.store(why); toldAt.store(GetTickCount64());
@@ -11843,7 +12161,12 @@ bool FacingStructural(uintptr_t* at, uint32_t* entity = nullptr) {
     if (!skel::HeroTransform(&x, &why)) return fail(why ? why : "?");
     if ((x.parent & 0xFFFFF) != 0xFFFFF) return fail("the hero's transform has a parent - its local matrix is not his world");
     float m[16];
-    if (!ReadHeroMatrix(x.comp, m)) return fail("the hero's local matrix is not on the camera's look-at");
+    if (!ReadHeroMatrix(x.comp, m)) {
+        float r[16];
+        if (SafeRead(r, (void*)x.comp, 64)) { g_structOffX.store(r[12] - g_heroPosNow[0]); g_structOffZ.store(r[14] - g_heroPosNow[2]); g_structW.store(r[15]); g_structUp.store(r[5]); }
+        else { g_structOffX.store(NAN); g_structOffZ.store(NAN); g_structW.store(NAN); g_structUp.store(NAN); }
+        return fail("the hero's local matrix is not on the camera's look-at");
+    }
     if (toldWhy.load()) { toldWhy.store(nullptr); toldAt.store(0); }
     *at = x.comp;
     if (entity) *entity = x.entity;
@@ -11890,10 +12213,21 @@ void PollFacingEvents() {
     heroGen = hg; biomeGen = bg; world = w;
 }
 
+bool SearchAllowed();
+
 // Bound / lost, to the log with the time since the event that unbound it.
 void NoteFacing(bool ok, uintptr_t at, bool held) {
     static bool wasOk = false;
     static uintptr_t lastAt = 0;
+    static ULONGLONG lostAt = 0;          // [debug] doll_trace: the window's start
+    static bool unheld = false;           // ... and whether the doll had no facing at all in it
+    if (!ok && wasOk) { lostAt = GetTickCount64(); unheld = false; }
+    if (!ok && !held) unheld = true;
+    if (ok && !wasOk && lostAt && g_set.dollTrace.load()) {
+        LogF("vrcam: doll: facing bound again after %llu ms - %s", (unsigned long long)(GetTickCount64() - lostAt),
+             unheld ? "with no facing for some of it (the body kept the game's facing)" : "the last facing held all through");
+        lostAt = 0;
+    }
     if (ok && (!wasOk || at != lastAt)) {
         char ev[96]; ULONGLONG evAt;
         AcquireSRWLockExclusive(&g_facingEvLock);
@@ -11910,6 +12244,19 @@ void NoteFacing(bool ok, uintptr_t at, bool held) {
         const std::string ev = g_facingEv;
         ReleaseSRWLockExclusive(&g_facingEvLock);
         LogF("vrcam: facing lost (%s) - %s", ev.c_str(), held ? "holding the last facing ([hands] facing_hold_ms)" : "nothing to hold");
+        if (g_set.dollTrace.load()) {   // [debug] doll_trace: which read failed, with its numbers, and what the doll has instead
+            const bool structural = StructWanted();
+            const char* why = structural ? g_structWhyNow.load() : nullptr;
+            char off[200] = "";
+            if (why && strstr(why, "look-at"))
+                snprintf(off, sizeof off, " (the matrix %.1f / %.1f units off it in x / z, w %.2f, up %.2f - wanted: within 12, w 1, up over 0.3)", g_structOffX.load(),
+                         g_structOffZ.load(), g_structW.load(), g_structUp.load());
+            LogF("vrcam: doll: facing let go - %s%s; instead: %s (the hero's model rebuilt %u times so far)",
+                 structural ? (why ? why : "the structural chain read, its matrix did not") : "the memory search's copy no longer reads", off,
+                 held ? "the last facing, its turn put at the look-at now ([hands] facing_hold_ms)"
+                      : SearchAllowed() ? "nothing yet - the memory search looks" : "nothing - the body keeps the game's facing until it reads",
+                 skel::HeroGen());
+        }
     }
     wasOk = ok;
     if (ok) lastAt = at;
@@ -11927,7 +12274,10 @@ void KeepFacing(const float* m) {
 
 bool HeldFacing(float* m) {
     const ULONGLONG at = g_holdAt.load();
-    if (!at || (float)(GetTickCount64() - at) > g_set.facingHoldMs.load() || !g_inWorld.load()) return false;
+    // [hands] doll_rebuild: held past facing_hold_ms while the game still poses the hero's rig (a rebuilt model's facing reads again when it is in his
+    // SkeletonComponent - half a second, sometimes more), until a facing reads: the time is not fixed
+    const bool posed = g_set.dollRebuild.load() && skel::HeroPosedLately(500);
+    if (!at || ((float)(GetTickCount64() - at) > g_set.facingHoldMs.load() && !posed) || !g_inWorld.load()) return false;
     float look[3];
     if (!LookAtNow(look)) return false;
     AcquireSRWLockShared(&g_holdLock); memcpy(m, g_holdM, sizeof g_holdM); ReleaseSRWLockShared(&g_holdLock);
@@ -11948,7 +12298,7 @@ bool SearchAllowed() {
 // one at the left pose must already have it. Counted in turning pairs, to the log every 10 s;
 // a frame old in more than a quarter of 30+ pairs and the search takes over (left-eye shake).
 void StructFreshness(uintptr_t at, const float* local) {
-    if (!g_pairNow.load()) return;
+    if (!PairOfOneFrame()) return;   // (by turns there is no left pose of this frame to be fresh against)
     float w[16];
     if (!SafeRead(w, (void*)(at + 0x40), 64) || w[15] != 1.0f) return;
     static SRWLOCK lock = SRWLOCK_INIT;
@@ -12341,7 +12691,7 @@ bool FreshYawInModel(float* yawInModel, float* eyeModel, bool* eyeOk) {
         // yet this frame's at the left pose - FacingCand)
         const bool logIt = flog::g_on.load();
         const int eye = g_eye.load() & 1;
-        const bool pair = g_pairNow.load();
+        const bool pair = PairOfOneFrame();
         char b[700]; int k = logIt ? snprintf(b, sizeof b, "C,%u,%d", flog::Pass(), eye) : 0;
         static float lastTruth = 1000.0f;   // this frame's yaw as the right pass found it, last pair
         AcquireSRWLockExclusive(&g_candLock);
@@ -12617,6 +12967,120 @@ size_t MeleeAnimNote(char* out, size_t n) {
     return bowlatency::AnimText(anim, out, n);
 }
 
+// [debug] melee_press_trace (vr/press_trace.h): one line for every attack press of hit by touch - what the plugin held at the press, the game's pad polls while it was live,
+// its two reads of the slot's skill, its target lookups and what they were given, the resolver's verdict, the hero's mode and animation row, and the hit counter's
+// verdict - so the step at which a press that never strikes stops is in the log (the Amazon's sword, the author 2026-10-20). The first 12 presses of a run are told
+// whatever the key says, every one with it. Read only: nothing a press does is changed. The notes come from the pad's poll, the game's UI thread and the timer: one lock.
+SRWLOCK g_ptLock = SRWLOCK_INIT;
+presstrace::Recorder g_ptRec;
+std::atomic<unsigned> g_ptTold{0};
+constexpr unsigned kPressTraceAlways = 12;
+
+void PressTraceTell(const presstrace::Trace& t) {
+    char b[1600];
+    presstrace::Format(t, b, sizeof b);
+    Log(b);
+    if (g_ptTold.fetch_add(1) + 1 == kPressTraceAlways && !g_pressTraceKey.load())
+        Log("melee press: the first 12 presses told - [debug] melee_press_trace=1 tells every one");
+}
+// Due: told outside the lock.
+void PressTraceDue(ULONGLONG now) {
+    presstrace::Trace t;
+    AcquireSRWLockExclusive(&g_ptLock);
+    const bool due = g_ptRec.Due(now, &t);
+    g_ptActive.store(g_ptRec.Active());
+    ReleaseSRWLockExclusive(&g_ptLock);
+    if (due) PressTraceTell(t);
+}
+bool HeroAnimRow(bowlatency::AnimInfo* anim) {
+    uintptr_t hero = (uintptr_t)g_heroUnit.load();
+    if (!hero || !IsHeroUnit((void*)hero)) hero = (uintptr_t)g_heroSeen.load();
+    uintptr_t rec = 0;
+    uint8_t bytes[bowlatency::kAnimRecordSize];
+    if (!hero || !SafeRead(&rec, (const void*)(hero + 0x70), sizeof rec) || rec <= 0x10000 || !SafeRead(bytes, (const void*)rec, sizeof bytes)) return false;
+    return bowlatency::ParseAnimRecord(bytes, rec, anim);
+}
+
+// meleetouch's press (the timer's thread): what the plugin holds now.
+void PressTraceBegin(uint32_t monster, int hand) {
+    if (!g_pressTraceKey.load() && g_ptTold.load() >= kPressTraceAlways) return;
+    presstrace::Facts f;
+    f.weaponSet = gamestate::WeaponSet();
+    f.weaponClass = gamestate::WeaponClass();
+    f.weaponType = gamestate::WeaponType();
+    f.codeR = gamestate::HandCode(0);
+    f.codeL = gamestate::HandCode(1);
+    {
+        static wheel::Snapshot snap;   // (12 KB: not on the stack; the timer's thread only)
+        static uint32_t rev = 0;
+        if (wheelgame::Latest(&snap, &rev) && snap.ready) {
+            f.bank = snap.bank;
+            if (snap.slot[bowquiver::kAttackSlot].known) f.slotA = snap.slot[bowquiver::kAttackSlot].id;
+        }
+    }
+    f.armedMelee = meleearm::On() ? meleearm::PressSkill() : -1;
+    f.bowShot = bowquiverwire::ShotSkill();
+    int32_t chosen = -1;
+    bool ranged = false;
+    if (quiverwire::Chosen(&chosen, &ranged)) f.javChosen = chosen;
+    f.bowInHand = BowInHand();
+    f.bowOwned = bowdrawwire::Owned();
+    f.bowAimLive = bowdrawwire::AimLive();
+    f.aimByVector = AimByVector();
+    f.throwLive = GestureAimLive();
+    f.bowMode = g_set.bowMode.load();
+    f.cutMs = animcut::CutMs(animcut::Kind::Melee);
+    const int mode = HeroAnimMode();
+    presstrace::Trace prev;
+    AcquireSRWLockExclusive(&g_ptLock);
+    const bool handed = g_ptRec.Begin(monster, hand, GetTickCount64(), f, mode, &prev);
+    g_ptActive.store(true);
+    ReleaseSRWLockExclusive(&g_ptLock);
+    if (handed) PressTraceTell(prev);
+}
+void PressTraceOutcome(bool hit, double ms) {
+    AcquireSRWLockExclusive(&g_ptLock);
+    g_ptRec.Outcome(hit, ms);
+    ReleaseSRWLockExclusive(&g_ptLock);
+    PressTraceDue(GetTickCount64());
+}
+// The game's poll of pad 0 (its thread), the buttons as it gets them.
+void PressTracePoll(uint16_t buttons) {
+    const ULONGLONG now = GetTickCount64();
+    const bool still = gamecmd::Pressed(0x24);   // the game's Stand Still
+    const int mode = HeroAnimMode();
+    AcquireSRWLockExclusive(&g_ptLock);
+    g_ptRec.Poll(now, buttons, still, mode);
+    const bool wantsAnim = g_ptRec.WantsAnim();
+    ReleaseSRWLockExclusive(&g_ptLock);
+    if (wantsAnim) {
+        bowlatency::AnimInfo a;
+        if (HeroAnimRow(&a)) {
+            AcquireSRWLockExclusive(&g_ptLock);
+            g_ptRec.Anim(a.name, (int)a.frames, a.flagIdx);
+            ReleaseSRWLockExclusive(&g_ptLock);
+        }
+    }
+    PressTraceDue(now);
+}
+void PressTraceSlot(int site, int slot, int bound, int answer) {
+    AcquireSRWLockExclusive(&g_ptLock);
+    g_ptRec.Slot(site, slot, bound, answer);
+    ReleaseSRWLockExclusive(&g_ptLock);
+}
+void PressTraceLookup(int which, void* unit, bool ours) {
+    uint32_t id = 0;
+    if (unit && !SafeRead(&id, (const char*)unit + 8, sizeof id)) id = 0;   // the unit's id
+    AcquireSRWLockExclusive(&g_ptLock);
+    g_ptRec.Lookup(which, GetTickCount64(), id, ours);
+    ReleaseSRWLockExclusive(&g_ptLock);
+}
+void PressTraceCast(int skill, bool directed) {
+    AcquireSRWLockExclusive(&g_ptLock);
+    g_ptRec.Cast(skill, directed);
+    ReleaseSRWLockExclusive(&g_ptLock);
+}
+
 // [bow] quick_release and [hands] quick_throw (vr/anim_cut.cpp): ticked about 20 times a second from the update thread - the action-frame flag of the hero's bow attack rows is moved
 // while he is in VR first person with a bow in hand, and that of his throw rows (the Throw skill's potions, javelins, knives, axes - whatever weapon he holds) while he is in VR first
 // person; put back the moment any of that stops. The hero's unit mode tells whether he is mid-animation (a flag is not moved under one).
@@ -12701,6 +13165,8 @@ void MeleeTouchTick() {
         f.kind[1] = gamestate::HandKind(1);
         f.code[0] = gamestate::HandCode(0);
         f.code[1] = gamestate::HandCode(1);
+        f.thrustClass[0] = gamestate::HandThrust(0);   // [gameplay] melee_thrust: the item's class in the game's data (1ht, 2ht thrust)
+        f.thrustClass[1] = gamestate::HandThrust(1);
     }
     // [weight] (vr/weight.cpp): the weapon is carried by the hand that holds it; let go (falling, lying, flying back) it strikes nothing
     f.weightPlaced = weight::Placed();
@@ -12908,9 +13374,15 @@ void PushArms() {
             }
             // The weight model's shaft is the weapon bone AS DRAWN with the very ends the hit-by-touch blade has (bladeshape::ForItem, tuned): the bone's Y
             // toward the tip on the side the blade says (a dagger's blade runs along -Y), the wood so far ahead of the bone's origin and so far behind it
-            // (a short staff 0.66 m each way, the bone being the middle of its grip). The old axis choice ([hands] staff_shaft_axis, spear_shaft_axis,
+            // (a short staff: by its model 0.75 m of wood ahead of the bone and 0.96 m behind it). The old axis choice ([hands] staff_shaft_axis, spear_shaft_axis,
             // axe_shaft_axis, sword_hilt_axis) belongs to the logic of weight off.
-            const meleetouch::BladeExtent be = meleetouch::BladeFor(gamestate::HandCode(w.slot), type, (two & D2RVR_TWO_HANDS_ON) != 0);
+            // (with the weapon model's own ends where the last pose has the unit of its model in metres - vr/weapon_extents.h; the constants where the touch is off and there is no pose)
+            float modelUnitM = 0.0f;
+            {
+                skel::PosedWeaponPose pw;
+                if (skel::PosedWeapon(pw) && pw.blade[w.slot & 1].ok) modelUnitM = pw.blade[w.slot & 1].unitM;
+            }
+            const meleetouch::BladeExtent be = meleetouch::BladeFor(gamestate::HandCode(w.slot), type, (two & D2RVR_TWO_HANDS_ON) != 0, modelUnitM);
             w.tipAxis = be.tipSign < 0 ? -2 : 2;
             w.shaftTipM = be.tipM;
             w.shaftButtM = be.buttM;
@@ -12953,6 +13425,7 @@ void PushArms() {
             }
             w.takeHaptic = g_set.weightTakeHaptic.load() ? g_set.weightTakeHapticPct.load() * 0.01f : 0.0f;
             w.recallAny = g_set.weightRecallAny.load();
+            w.monsterBodies = g_set.weightMonsterBodies.load() && viewgate::F4();   // [weight] monster_bodies: VR first person only
             w.thrownFlyMs = g_set.weightThrownFlyMs.load();
             w.throwReachPct = g_set.weightThrowReachPct.load();
             w.throwMaxCells = g_set.weightThrowMaxCells.load();
@@ -13085,6 +13558,16 @@ void PushArms() {
         const char* now = in.flailChain ? skel::FlailStatus() : nullptr;
         if (now != told) { told = now; if (now) LogF("vrcam: flail chain: %s", now); }
         if (in.flailChain) { const std::string note = skel::FlailTakeNote(); if (!note.empty()) Log(("vrcam: " + note).c_str()); }
+    }
+    in.dollTrace = g_set.dollTrace.load();
+    in.dollRebuild = g_set.dollRebuild.load();
+    if (in.dollTrace) {   // [debug] doll_trace: what the pose hook noted - the hero's rig let go and taken again
+        const std::string note = skel::DollTakeNote();
+        for (size_t at = 0; at < note.size();) {
+            const size_t end = std::min(note.find('\n', at), note.size());
+            Log(("vrcam: " + note.substr(at, end - at)).c_str());
+            at = end + 1;
+        }
     }
     in.posedWeapon = meleetouch::Wanted() && FullBody();
     in.dualBlades = in.posedWeapon && bladeshape::DualWield(gamestate::HandKind(0), gamestate::HandKind(1));   // a blade in each hand: both bones kept   // [gameplay] melee_touch (F4 only): skel::PosedWeapon is made only while asked for
@@ -14611,7 +15094,7 @@ bool g_prepareIn = false, g_simulateIn = false, g_failed = false;
 
 bool Skip(uintptr_t caller, uintptr_t expected) {
     return ::prophold::Hold(g_ready.load(std::memory_order_relaxed), g_set.propsOncePair.load(std::memory_order_relaxed) && FullBody(),
-                g_pairNow.load(std::memory_order_relaxed), g_eye.load(std::memory_order_relaxed), caller, expected);
+                PairOfOneFrame(), g_eye.load(std::memory_order_relaxed), caller, expected);
 }
 
 void HookPrepare(void* self, const void* transform, const void* settings, float dt) {
@@ -15161,8 +15644,10 @@ void SkyTick() {
     else if (TopPersp()) arcaneWhy = "the view from above";
     else if (MenuFlat()) arcaneWhy = "a menu is open";
     g_arcaneSky.store(arcaneWhy == nullptr);
-    // [fog] spare_effects: off as soon as the fog or F4 is (the effects' pass, which also sets it, may not run then)
-    fogspare::Configure(fogspare::Wanted() && fx::FogWanted() && viewgate::F4());
+    // [fog] spare_effects: off as soon as the fog or F4 is (the effects' pass, which also sets it, may not run then);
+    // [render] fog_in_frame the same, and the spare is off while the fog is drawn in the frame
+    if (fogframe::Armed() && !(fx::FogWanted() && viewgate::F4())) fogframe::Configure(fogframe::Params{});
+    fogspare::Configure(fogspare::Wanted() && fx::FogWanted() && viewgate::F4() && !fogframe::Armed());
     {
         static std::string toldArcane = "?";
         if (std::string(arcaneWhy ? arcaneWhy : "") != toldArcane) {
@@ -15330,6 +15815,8 @@ void Install() {
 
 // The views of the toolbar's and the map's copies bound to the effect (hud::PictureNow), 0 = none yet.
 uint64_t g_pieceBound[4] = {};   // the toolbar, the map, the labels' layer, the wrists' globes
+uint64_t g_madeBound = 0;         // eyes by turns: the made eye's depth bound as D2RVR_DEPTH_MADE (0 after the effects reload)
+uint32_t g_madeBoundGen = 0;      // ... which of the textures made (turnwarp::Gpu::MadeDepthGen: a new one may sit at the old one's address)
 
 // The armed skill's icon uploaded into the effect's OrbIconTex ([gameplay] melee_skill_armed_icon): which skill, from which decode of the icon cache, into which texture variable. -1: none
 // (a reload of the effects makes the texture anew: Forget says so, and the icon is uploaded again).
@@ -15337,7 +15824,7 @@ int g_iconUpSkill = -1, g_iconTry = -1;
 uint32_t g_iconUpRev = 0;
 uint64_t g_iconUpVar = 0;
 
-void Forget(reshade::api::effect_runtime*) { g_tech[0] = g_tech[1] = {0}; replay::g_rightTech = {0}; g_pieceBound[0] = g_pieceBound[1] = g_pieceBound[2] = g_pieceBound[3] = 0; replay::g_depthBound = 0; g_iconUpSkill = g_iconTry = -1; }
+void Forget(reshade::api::effect_runtime*) { g_tech[0] = g_tech[1] = {0}; replay::g_rightTech = {0}; replay::g_ovTech[0][0] = replay::g_ovTech[0][1] = replay::g_ovTech[1][0] = replay::g_ovTech[1][1] = {0}; g_pieceBound[0] = g_pieceBound[1] = g_pieceBound[2] = g_pieceBound[3] = 0; g_madeBound = 0; replay::g_depthBound = 0; g_iconUpSkill = g_iconTry = -1; }
 
 void SetFloats(reshade::api::effect_runtime* rt, const char* name, const float* v, size_t n) {
     const reshade::api::effect_uniform_variable u = rt->find_uniform_variable("D2R_DepthFog.fx", name);
@@ -15738,12 +16225,71 @@ bool ApplySkyPictures(reshade::api::effect_runtime* rt) {
 // turned on from reshade_begin_effects, ReShade went on to draw an effect whose
 // resources it had not created yet, and the game died in D3D12 (null+0x19C).
 // From here it takes effect on the next frame, with everything in place.
+// [stereo] pair_fx_sync (on): in a stereo pair, a present's effects write ReShade's one constant buffer only once the graphics card has
+// drawn the effects of the present two before them - the same eye's last (vr/sky_view_eyes.h FxRing; the eyes' cameras in it are
+// those of sky_view_eyes.h). A fence on ReShade's queue after each pair's effects (at reshade_finish_effects, flushed first: they are
+// still in its list), waited for at the begin-effects two later, before the uniforms go in. 0: no wait, as before.
+namespace pairfx {
+ID3D12Fence* g_fence = nullptr;
+HANDLE g_event = nullptr;
+UINT64 g_signalled = 0;
+skyeyes::FxRing g_ring;
+uint32_t g_renders = 0, g_waits = 0;   // the 10 s line (OnBeginEffects): effects in pairs, of them waited for the GPU
+double g_waitUs = 0.0;
+ULONGLONG g_since = 0;
+bool Wanted() { return g_set.pairFxSync.load() && PairOfOneFrame(); }
+void BeforeWrite() {
+    if (!Wanted()) return;
+    ++g_renders;
+    const UINT64 v = g_ring.WaitBeforeWriting();
+    if (v && g_fence && g_fence->GetCompletedValue() < v) {
+        const double t0 = pairtime::UsNow();
+        g_fence->SetEventOnCompletion(v, g_event);
+        WaitForSingleObject(g_event, 100);   // (bounded: a queue that stands is the stall guard's)
+        g_waitUs += pairtime::UsNow() - t0;
+        ++g_waits;
+    }
+    const ULONGLONG now = GetTickCount64();
+    if (!g_since) g_since = now;
+    if (now - g_since >= 10000) {
+        LogF("vrcam: pair effects - each eye's effects wrote the constants after the GPU drew that eye's last ([stereo] pair_fx_sync): "
+             "%u of %u waited, %.2f ms each (10 s)", g_waits, g_renders, g_waits ? g_waitUs / 1000.0 / g_waits : 0.0);
+        g_renders = g_waits = 0;
+        g_waitUs = 0.0;
+        g_since = now;
+    }
+}
+void AfterRender(reshade::api::effect_runtime* rt) {
+    if (!Wanted()) return;
+    if (!g_fence) {
+        ID3D12Device* d = (ID3D12Device*)rt->get_device()->get_native();
+        if (!d || FAILED(d->CreateFence(0, D3D12_FENCE_FLAG_NONE, __uuidof(ID3D12Fence), (void**)&g_fence))) { g_fence = nullptr; return; }
+        g_event = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+        if (!g_event) { g_fence->Release(); g_fence = nullptr; return; }
+    }
+    if (replay::SkipWhileStuck("the pair effects' fence")) return;
+    reshade::api::command_queue* q = rt->get_command_queue();
+    const bool wasOurs = replay::t_ours;   // (inside the replay's EffectsAtHold it is already ours, and stays so)
+    replay::t_ours = true;   // our submission and signal, not the game's (the replay's list and queue hooks)
+    q->flush_immediate_command_list();   // the effects just recorded: on the queue before the signal
+    ((ID3D12CommandQueue*)q->get_native())->Signal(g_fence, ++g_signalled);
+    replay::t_ours = wasOurs;
+    g_ring.Rendered(g_signalled);
+}
+}  // namespace pairfx
+
 void OnFinishEffects(reshade::api::effect_runtime* rt, reshade::api::command_list*, reshade::api::resource_view, reshade::api::resource_view) {
+    if (replay::t_overlay) return;   // our own overlay render: not a present's effects
+    pairfx::AfterRender(rt);   // [stereo] pair_fx_sync: the fence after this present's effects
     if (const double b = pairtime::g_effBegin.exchange(0.0); b > 0.0) pairtime::g_effSum.store(pairtime::g_effSum.load() + pairtime::UsNow() - b);
     if (ApplySkyPictures(rt)) return;   // the effect reloads with the new pictures
     if (!g_tech[0].handle) g_tech[0] = rt->find_technique("D2R_DepthFog.fx", "D2R_DepthFog");
     if (!g_tech[1].handle) g_tech[1] = rt->find_technique("D2R_DepthFog.fx", "D2R_DepthFog_R");
     replay::g_rightTech = g_tech[1];
+    for (int e = 0; e < 2; ++e)   // eyes by turns: the overlays drawn apart (replay::DrawOverlays); an older effect has none - drawn in the picture, as before
+        for (int m = 0; m < 2; ++m)   // [0] the eye drawn's, [1] the eye made's
+            if (!replay::g_ovTech[m][e].handle)
+                replay::g_ovTech[m][e] = rt->find_technique("D2R_DepthFog.fx", m ? (e ? "D2R_OverlayMade_R" : "D2R_OverlayMade") : (e ? "D2R_Overlay_R" : "D2R_Overlay"));
     if (!g_tech[0].handle) { hud::SetPictureReady(false); return; }
     // Off while a menu is open: the fog lies over the whole picture, the
     // inventory and trade panels included, and darkened them.
@@ -16055,7 +16601,10 @@ format SrvFormat(format typeless) {
     }
 }
 // [render] fx_fence, a frame of one picture: a fence on the effects' queue after each present's effects (MarkFx, at
-// ReShade's present event, which comes after them), waited for by the next frame's pass before its constants go in.
+// ReShade's present event, which comes after them), waited for by the next frame's pass before its constants go in. Eyes by turns
+// ([stereo] turn_fx_fence, on): the same, marked after the eye made's overlays (vr/sky_view_eyes.h FenceEffects, MarkAfterOverlays).
+bool FenceNow() { return skyeyes::FenceEffects(replay::FxFence(), NativeByTurns(), g_set.turnFxFence.load()); }
+bool MarkAfterOverlays() { return skyeyes::MarkAfterOverlays(NativeByTurns(), g_set.turnFxFence.load()); }
 ID3D12Fence* g_fxFence = nullptr;
 HANDLE g_fxEvent = nullptr;
 UINT64 g_fxSignalled = 0;
@@ -16069,7 +16618,7 @@ bool FxFenceReady(effect_runtime* rt) {
     return g_fxEvent != nullptr;
 }
 void MarkFx(effect_runtime* rt) {
-    if (!replay::FxFence() || !OwnDepthNow() || !FxFenceReady(rt)) return;
+    if (!FenceNow() || !OwnDepthNow() || !FxFenceReady(rt)) return;
     if (replay::SkipWhileStuck("the effects' fence mark")) return;
     command_queue* q = rt->get_command_queue();
     q->flush_immediate_command_list();   // the effects of this present are in ReShade's list still: on the queue first
@@ -16091,7 +16640,9 @@ bool WaitLastFx(effect_runtime* rt) {
     return true;
 }
 // reshade_begin_effects: the scene's depth into our copy on the effects' own list, bound as DEPTH.
+bool g_copiedNow = false;   // Bind copied the scene's depth for this present (eyes by turns keeps it: xr::SetTurnDepth)
 void Bind(effect_runtime* rt, command_list* cl) {
+    g_copiedNow = false;
     static int told = -1;
     auto tell = [&](int what, const char* text) { if (told != what) { told = what; Log(text); } };
     if (!OwnDepthNow() || !cl) return;
@@ -16183,6 +16734,7 @@ void Bind(effect_runtime* rt, command_list* cl) {
     cl->barrier(src, from, resource_usage::copy_source);
     cl->barrier(g_copy, resource_usage::shader_resource, resource_usage::copy_dest);
     cl->copy_resource(src, g_copy);
+    g_copiedNow = true;
     cl->barrier(src, resource_usage::copy_source, from);
     cl->barrier(g_copy, resource_usage::copy_dest, resource_usage::shader_resource);
     // ours alone: Generic Depth binds DEPTH. Once (see replay::g_depthBound): ReShade drains the GPU before each binding
@@ -16194,7 +16746,8 @@ void Bind(effect_runtime* rt, command_list* cl) {
     } else {
         replay::g_depthKept.fetch_add(1, std::memory_order_relaxed);
         // [render] fx_fence, a frame of one picture: its constants wait for the last frame's effects (a pair: the replay)
-        if (!replay::t_pairPass && replay::FxFence()) WaitLastFx(rt);
+        // (eyes by turns, [stereo] turn_fx_fence: the last frame's effects AND overlays - their cameras are overwritten next)
+        if (!replay::t_pairPass && FenceNow()) WaitLastFx(rt);
     }
     if (best.res != g_from) {
         g_from = best.res;
@@ -16209,7 +16762,9 @@ void Bind(effect_runtime* rt, command_list* cl) {
 void OnReshadePresent(reshade::api::effect_runtime* rt) {
     scenedepth::FrameEnd();
     vcache::Apply(g_set.vcache.load(std::memory_order_relaxed), &Log);   // [render] vcache: on the draw thread (its priority); only when it changes
-    if (!replay::g_capturing.load()) scenedepth::MarkFx(rt);   // [render] fx_fence: the next frame's pass waits for these effects
+    // [render] fx_fence: the next frame's pass waits for these effects; by turns ([stereo] turn_fx_fence) for its overlays too - marked after them
+    const bool markLater = scenedepth::MarkAfterOverlays();
+    if (!replay::g_capturing.load() && !markLater) scenedepth::MarkFx(rt);
     static bool firstSeen = false;
     if (!firstSeen) { firstSeen = true; crash::Mark("the first picture presented (ReShade's present)"); }
     // Native OpenXR: the runtime paces the game (xrWaitFrame); a present outside a pair goes
@@ -16253,6 +16808,7 @@ void OnReshadePresent(reshade::api::effect_runtime* rt) {
     if (xr::On() || xr::Running() || xr::StopPending())
         replay::XrPresent(rt, (ID3D12Resource*)rt->get_current_back_buffer().handle);
     else pace::Tick();
+    if (!replay::g_capturing.load() && markLater) scenedepth::MarkFx(rt);   // after the eye made's overlays (XrPresent)
     const double t = pairtime::UsNow();
     pairtime::g_presentAt.store(t);
     pairtime::g_presents.fetch_add(1, std::memory_order_relaxed);
@@ -16285,11 +16841,84 @@ void OnReshadePresent(reshade::api::effect_runtime* rt) {
 }
 
 
+// [render] fog_in_frame (vr/fog_in_frame.h), each effects pass once the fog's values are set: the fog drawn in the game's frame
+// with the values the post pass has - read back from the effect, so what a player moved in ReShade's own window counts too -
+// and the post pass leaving the scene's fog to it while it is drawn (FogInFrame). Only with the fog's colour fixed (the act's
+// own, or no sky): the colour the sky gives the fog is by the view's direction, the post pass's.
+float FxFloat(reshade::api::effect_runtime* rt, const char* name, float fallback) {
+    const reshade::api::effect_uniform_variable u = rt->find_uniform_variable("D2R_DepthFog.fx", name);
+    float v[3] = {fallback, fallback, fallback};
+    if (u.handle) rt->get_uniform_value_float(u, v, 1);
+    return v[0];
+}
+bool FxBool(reshade::api::effect_runtime* rt, const char* name) {
+    const reshade::api::effect_uniform_variable u = rt->find_uniform_variable("D2R_DepthFog.fx", name);
+    bool v = false;
+    if (u.handle) rt->get_uniform_value_bool(u, &v, 1);
+    return v;
+}
+std::atomic<int> g_fifPaint{0};   // [debug] fog_in_frame_paint (live)
+void FogInFrameTick(reshade::api::effect_runtime* rt) {
+    SetFloat(rt, "FogInFramePaint", (float)g_fifPaint.load());   // (the post pass's side paints even with the frame's fog off: it shows that)
+    if (!fogframe::Wanted()) return;
+    fogframe::Params p;
+    p.paint = g_fifPaint.load();
+    const bool sky = FxBool(rt, "SkyOn");
+    // (not in the Arcane Sanctuary: [sky] arcane_fog takes the fog's colour from its sky by the direction, as the sky's horizon does)
+    p.on = FogWanted() && viewgate::F4() && FxBool(rt, "FogOn") && (FxBool(rt, "FogFixed") || !sky) && !FxBool(rt, "ArcaneSkyOn") &&
+           !FxBool(rt, "ShowDistance");
+    p.nearPlane = FxFloat(rt, "NearPlane", p.nearPlane);
+    p.fogStart = FxFloat(rt, "FogStart", p.fogStart);
+    p.fogEnd = FxFloat(rt, "FogEnd", p.fogEnd);
+    p.fogCurve = FxFloat(rt, "FogCurve", p.fogCurve);
+    p.fogStrength = FxFloat(rt, "FogStrength", p.fogStrength);
+    if (const reshade::api::effect_uniform_variable u = rt->find_uniform_variable("D2R_DepthFog.fx", "FogColor"); u.handle)
+        rt->get_uniform_value_float(u, p.fogColour, 3);
+    p.caveHalo = FxBool(rt, "CeilOn") && !sky ? std::clamp(FxFloat(rt, "CeilHalo", 1.0f), 0.0f, 1.0f) : 0.0f;
+    fogframe::Configure(p);
+    SetBool(rt, "FogInFrame", fogframe::Drawn());
+}
 void OnBeginEffects(reshade::api::effect_runtime* rt, reshade::api::command_list* cl, reshade::api::resource_view, reshade::api::resource_view) {
+    if (replay::t_overlay) return;   // our own overlay render: not a present's effects
+    pairfx::BeforeWrite();   // [stereo] pair_fx_sync: this eye's last effects drawn before the constants go in (before the timing: a wait is not effects)
     pairtime::g_effBegin.store(pairtime::UsNow());
     const bool own = OwnDepthNow();
     SetBool(rt, "OwnDepth", own);   // ours (VR, the square window) or ReShade's DEPTH (scenedepth::)
     scenedepth::Bind(rt, cl);   // before the replay reads which depth the effects have
+    {   // eyes by turns, the other eye made: the overlays apart this present (replay::DrawOverlays). In the eye made the scene's depth bound
+        // is the other eye's: nothing of it hides them there (D2R_OverlayMade, as in the try the author saw right) - unless [stereo]
+        // turn_overlay_hide (on): then its own depth, moved with its picture (xr::TurnMadeDepth, bound once as D2RVR_DEPTH_MADE - a binding
+        // drains the GPU, so only when it is another texture or the effects reloaded). Never the drawn eye's depth for the eye made: an
+        // orb on the wrist set against the other eye's hand showed twice.
+        const bool apart = replay::OverlaysNow();
+        replay::g_ovApart.store(apart);
+        bool made = false;
+        if (apart) {
+            static reshade::api::resource_view view{0};
+            uint32_t gen = 0;
+            const uint64_t res = (uint64_t)xr::TurnMadeDepth(&gen);
+            if (res && (res != g_madeBound || gen != g_madeBoundGen)) {
+                reshade::api::device* dev = rt->get_device();
+                reshade::api::resource_view v{0};
+                if (dev->create_resource_view(reshade::api::resource{res}, reshade::api::resource_usage::shader_resource,
+                                              reshade::api::resource_view_desc(reshade::api::format::r32_float), &v)) {
+                    rt->update_texture_bindings("D2RVR_DEPTH_MADE", v, v);
+                    if (view.handle) dev->destroy_resource_view(view);
+                    view = v;
+                    g_madeBound = res;   // (cleared when the effects reload: Forget)
+                    g_madeBoundGen = gen;
+                    Log("vrcam: eyes by turns - the made eye's depth bound for the overlays (D2RVR_DEPTH_MADE)");
+                }
+            }
+            made = res && res == g_madeBound && gen == g_madeBoundGen;
+        }
+        const int drawn = g_eye.load() & 1;
+        replay::g_ovDrawnEye = drawn;   // (XrPresent: the present's eye should be the same)
+        SetBool(rt, "OverlaysApart", apart);
+        // the eye made's depth: its technique's (D2R_OverlayMade), never a flag per eye - those flip every frame (replay::g_ovTech); this one
+        // changes only with the binding (cleanroom/tests/turn_math_test.cpp: overlay)
+        SetBool(rt, "OverlayMadeOn", turnwarp::OverlayDepthOf(apart, made, drawn, drawn ^ 1) == turnwarp::OverlayDepthFrom::Made);
+    }
     if (replay::g_on.load()) replay::g_rt = rt;
     if (replay::g_on.load()) {   // the depth buffer our effect reads: replay keeps the left eye's for its present
         const reshade::api::effect_texture_variable v = rt->find_texture_variable("D2R_DepthFog.fx", own ? "FogDepthTex" : "FogDepthRsTex");
@@ -16307,6 +16936,10 @@ void OnBeginEffects(reshade::api::effect_runtime* rt, reshade::api::command_list
         float s[2];
         renderscale::Frame(rt, s);
         SetFloats(rt, "DepthScale", s, 2);
+        // eyes by turns ([stereo] turn_warp): this present's depth, kept with its eye when its picture goes to the headset
+        if (xr::ByTurns())
+            xr::SetTurnDepth(scenedepth::g_copiedNow && scenedepth::g_copy.handle ? (void*)scenedepth::g_copy.handle : nullptr,
+                             (uint32_t)scenedepth::SrvFormat(scenedepth::g_copyDesc.texture.format), s[0], s[1]);
     }
     depthcam::Publish();
     {   // FlatVR's ring of finished pictures, on or off from D2R VR Settings: the addon
@@ -16320,8 +16953,10 @@ void OnBeginEffects(reshade::api::effect_runtime* rt, reshade::api::command_list
                  on ? "on" : "off", on);
         }
     }
-    if (!g_tech[0].handle) return;
-    if (!rt->get_technique_state(g_tech[0]) && !(g_tech[1].handle && rt->get_technique_state(g_tech[1]))) return;
+    if (!g_tech[0].handle || (!rt->get_technique_state(g_tech[0]) && !(g_tech[1].handle && rt->get_technique_state(g_tech[1])))) {
+        if (fogframe::Armed()) fogframe::Configure(fogframe::Params{});   // [render] fog_in_frame: not without the post pass's values
+        return;
+    }
     SetFloat(rt, "NearPlane", g_lastNear.load());
     LowHpUniforms(rt);   // [hud] low_hp_vignette
     SetFloat(rt, "FogStart", g_underground.load() ? g_set.fogCaveStart.load() : g_set.fogStart.load());
@@ -16422,7 +17057,7 @@ void OnBeginEffects(reshade::api::effect_runtime* rt, reshade::api::command_list
     for (const SkyView& v : sv) sky = sky && v.proj_ok && v.axes_ok && v.proj[0] != 0.0f && v.proj[1] != 0.0f;
     SetBool(rt, "SkyOn", sky);
     // [fog] spare_effects: in VR F4 with our fog on, the game's transparent targets of this frame for the fog to spare
-    fogspare::Configure(fogspare::Wanted() && FogWanted() && viewgate::F4());
+    fogspare::Configure(fogspare::Wanted() && FogWanted() && viewgate::F4() && !fogframe::Armed());
     SetBool(rt, "SpareOn", fogspare::Bind(rt));
     SetBool(rt, "ArcaneSkyOn", sky && arcane);
     {   // the cave ceiling: a plane CeilHeight over the hero's floor, met by each eye's ray
@@ -16524,6 +17159,7 @@ void OnBeginEffects(reshade::api::effect_runtime* rt, reshade::api::command_list
             SetBool(rt, "CeilTexOn", slot > 0);
         }
     }
+    FogInFrameTick(rt);   // [render] fog_in_frame
     {   // from above: the labels on the tilted plane
         float keepBar[4], keepMap[4];
         uint64_t srv = 0;
@@ -16619,10 +17255,24 @@ void OnBeginEffects(reshade::api::effect_runtime* rt, reshade::api::command_list
             AcquireSRWLockShared(&g_skyLock);
             sv[0] = SkyBack(AfrOn() ? 0 : eye); sv[1] = SkyBack(AfrOn() ? 1 : eye);
             ReleaseSRWLockShared(&g_skyLock);
+            // eyes by turns: each eye's overlay camera against the camera its picture shows (the warp's, xr::TurnViewNow) - off by the eyes'
+            // gap, an orb on the wrist lies where the other eye sees it and shows twice (replay::TellOverlays; turn_math_test: overlay camera)
+            const xr::TurnView tv = replay::OverlaysWanted() ? xr::TurnViewNow() : xr::TurnView{};
+            if (tv.ok) ++replay::g_ovTell.cams;
             for (int e = 0; e < 2; ++e) {
-                const SkyView& s = sv[e].axes_ok && sv[e].proj_ok ? sv[e] : sv[0];
+                const bool ownView = sv[e].axes_ok && sv[e].proj_ok;
+                const SkyView& s = ownView ? sv[e] : sv[0];
                 float off[3];
                 for (int i = 0; i < 3; ++i) off[i] = s.eyeRel[i] - g_eyeFromLook[i].load();
+                if (tv.ok) {
+                    const turnwarp::Camera picture{{tv.at[e][0], tv.at[e][1], tv.at[e][2]}, {tv.turn[0], tv.turn[1], tv.turn[2], tv.turn[3]}, {}, true};
+                    const turnwarp::Vec at{g_eyeWorld[0].load() + off[0], g_eyeWorld[1].load() + off[1], g_eyeWorld[2].load() + off[2]};   // (the effect: from where the hands hang)
+                    const turnwarp::CameraGap g = turnwarp::GapOf(picture, at, {s.axes[0], s.axes[1], s.axes[2]}, {s.axes[3], s.axes[4], s.axes[5]},
+                                                                  {s.axes[6], s.axes[7], s.axes[8]});
+                    replay::g_ovTell.gapAt[e] = std::max(replay::g_ovTell.gapAt[e], g.at);
+                    replay::g_ovTell.gapTurn[e] = std::max(replay::g_ovTell.gapTurn[e], g.turn);
+                    if (!ownView) ++replay::g_ovTell.camFallback;
+                }
                 char n[16];
                 snprintf(n, sizeof n, "PhantomEye%d", e); SetFloats(rt, n, off, 3);
                 if (!s.axes_ok || !s.proj_ok) continue;
@@ -16638,12 +17288,17 @@ void OnBeginEffects(reshade::api::effect_runtime* rt, reshade::api::command_list
         const bool grab = PhantomWanted() && !xbow && f.valid && (weight::ShaftEnds(ga, gb) || skel::GrabLine(ga, gb));   // [weight]: its whole shaft
         {   // [debug] melee_boxes: the capsules, in world units from where the hands hang - the cameras above are theirs too
             static bool boxesWere = false;
-            float ha[meleeboxes::kMaxCapsules][4], hb[meleeboxes::kMaxCapsules][4];
+            float ha[meleeboxes::kShaderCapsules][4], hb[meleeboxes::kShaderCapsules][4];
             const float eyeAt[3] = {g_eyeWorld[0].load(), g_eyeWorld[1].load(), g_eyeWorld[2].load()};
             // [debug] skill_triggers (vr/skill_triggers.h) takes its share of the effect's 32 capsules first, melee_boxes what is left
             const uint64_t boxesNow = GetTickCount64();
             const int ns = SkillTriggersWanted() ? skilltriggers::Take(boxesNow, eyeAt, ha, hb) : 0;
-            const int nh = ns + (MeleeBoxesWanted() ? meleeboxes::Take(boxesNow, eyeAt, ha + ns, hb + ns, meleeboxes::kMaxCapsules - ns) : 0);
+            int nh = ns + (MeleeBoxesWanted() ? meleeboxes::Take(boxesNow, eyeAt, ha + ns, hb + ns, meleeboxes::kMaxCapsules - ns) : 0);
+            if (MeleeBoxesWanted()) {   // ... and the monsters' bodies after them ([weight] monster_bodies: their limbs, vr/monster_bodies.h) - drawn whether the blocking is on or not
+                weight::ContactNote touch;
+                const bool on = weight::LastContact(&touch);
+                nh += meleetouch::DrawBodies(boxesNow, eyeAt, on ? touch.id : 0u, touch.bone, ha + nh, hb + nh, meleeboxes::kShaderCapsules - nh);
+            }
             if (nh > 0 || boxesWere) SetBool(rt, "HitboxOn", nh > 0);
             if (nh > 0) {
                 SetFloats(rt, "HitboxA", &ha[0][0], (size_t)nh * 4);
@@ -16836,7 +17491,7 @@ void OnBeginEffects(reshade::api::effect_runtime* rt, reshade::api::command_list
                 iconLast = nowS;
                 const handvitals::Config hc = handvitals::Settings();
                 armedicon::In ii;
-                // whose: the bow skill chosen from the quiver while a bow is in hand ([bow] quiver_icon), else the armed melee skill ([gameplay] melee_skill_armed_icon)
+                // whose: the bow skill armed from the quiver while a bow or crossbow is in hand ([bow] quiver_icon), else the armed melee skill ([gameplay] melee_skill_armed_icon)
                 bool meleeReady = false, bowReady = false;
                 int bowSkill = -1;
                 const int meleeSkill = meleearm::IconOn() && meleearm::On() ? meleearm::Armed(&meleeReady) : -1;
@@ -17156,6 +17811,8 @@ void TryRegister() {
     if (!JoinReShade()) return;
     if (lightbounds::Wanted()) lightbounds::Register(&Log);   // (already, from the plugin's load, when ReShade was there then)
     if (fogspare::Wanted()) fogspare::Register(&Log);
+    effectslayer::Register(&Log);   // (it looks at the game's bindings only while eyes by turns keep the effects: effectslayer::SetWanted)
+    if (fogframe::Wanted()) fogframe::Register(&Log);
     reshade::register_event<reshade::addon_event::reshade_begin_effects>(&OnBeginEffects);
     reshade::register_event<reshade::addon_event::bind_render_targets_and_depth_stencil>(&d2rvr::D3D12Only<&scenedepth::OnBind>::Call);
     reshade::register_event<reshade::addon_event::barrier>(&d2rvr::D3D12Only<&scenedepth::OnBarrier>::Call);
@@ -17382,7 +18039,7 @@ DWORD WINAPI UpdateThread(void*) {
             static ULONGLONG nextDur = 0;
             if (nowMs >= nextDur) { nextDur = nowMs + 100; gamestate::PollDurability(); }
         }
-        hud::SetLabels(LabelsWanted());
+        hud::SetLabels(LabelsWanted() || replay::OverlaysWanted());   // eyes by turns: the game's labels laid back by the overlays, per eye
         {   // [openxr] menu_3d on FlatVR: is a FlatVR there that hangs a menu panel, where it hangs it, and
             // Game Link keeps FlatVR's screen and Head Lock as with no menu while it does
             hud::PollMenuReader();
@@ -17394,7 +18051,7 @@ DWORD WINAPI UpdateThread(void*) {
             link::SetMenuPanel(FlatVrMenuPanel());
         }
         // the fog leaves the interface alone; the floor's key never takes its text for the void
-        hud::SetUiMask((fx::FogWanted() || fx::TableKeyWanted()) && !LabelsWanted());
+        hud::SetUiMask((fx::FogWanted() || fx::TableKeyWanted()) && !LabelsWanted() && !replay::OverlaysWanted());
         SkyTick();
         flog::Tick(g_set.frameLog.load() || GetTickCount64() < flog::g_diagUntil.load());
         directinput::SetMenuNow(gamestate::MenuOpen() || !g_inWorld.load());   // [openxr] direct_input: the layer in force against the game's
@@ -17657,7 +18314,7 @@ void LoadReShade() {
              "an antivirus may also block it", err == ERROR_DLL_INIT_FAILED ? "its start said no" : "it could not be loaded");
 }
 
-static const char g_info_version[] = "0.174.0";
+static const char g_info_version[] = "0.175.0";
 
 // Who this is. D2RLoader prints "<name> <version> by <author>" for every plugin, and d2r-pcvr (a fork of our 0.152) carries the
 // same id, name and author as we did - "vrcam ... by BodyWalkVR" told a support log nothing. The id stays (the log file
@@ -17788,6 +18445,7 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     // not with the rest on the update thread's first tick.
     if (lightbounds::Wanted() && fx::JoinReShade()) lightbounds::Register(&Log);
     if (fogspare::Wanted() && fx::JoinReShade()) fogspare::Register(&Log);   // (the same: the game's resolve pipeline is made at its start)
+    if (fogframe::Wanted() && fx::JoinReShade()) fogframe::Register(&Log);   // ([render] fog_in_frame: the same pipeline)
     crash::Step("camera callbacks, MinHook, the hero's skeleton");
     d2rcam::SetCallbacks(&VrView, &VrProj);
     d2rcam::SetFrameCallback(&VrFrame);
@@ -17803,6 +18461,7 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     weightlib::Probe();   // is d2r_vr_weight.dll beside the plugin? (told in the log; it is loaded when [weight] hands_model 1 first asks)
     griplib::SetLog(&Log);
     weight::SetGripLibrarySource(&griplib::Ensure);
+    weight::SetBodiesSource(&meleetouch::Bodies);   // [weight] monster_bodies: the hostile monsters' capsules from the touch's scan
     skel::SetGripHandStep(&griplib::HandStep, &griplib::Abi);
     griplib::Probe();   // is d2r_vr_grip.dll beside the plugin? (told in the log; it is loaded when [weight] grip_model 1 first asks)
     // [weight] with [hands] throw_by_grip: a grip release that is a throw does not drop a thrown weapon (vr/weight_throw.h). The throw gesture
@@ -17866,11 +18525,12 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     lowhp::Init(ctx);   // [hud] low_hp_vignette reads the hero's life on the UI thread
     merctint::Init(ctx);   // [hud] merc_tint reads the merc's life on the UI thread
     handvitals::Init(ctx);   // [hud] hand_vitals reads the hero's life and mana on the UI thread; listens to direct_input's frames
+    thrustdebugwire::Init(ctx);   // [debug] thrust_debug: the thrust's readout over the weapon hand; listens to direct_input's frames
     wriststatus::Init(ctx);   // [hud] wrist_status reads the hero's pets and states on the game's thread; listens to direct_input's frames
     panelinput::Init(ctx);
     bowdrawwire::Init(ctx, &AimHand, &FullBody);   // the bow draw listens to direct_input's frames, in F4 only
     bowquiverwire::Init(ctx, &AimHand);            // [bow] quiver rides on the draw's frames (after its listener)
-    bowdrawwire::SetReleaseHook(&bowquiverwire::OnRelease);   // [bow] quiver_plain_no_mana: the quiver says, before the release's button goes down, whether it is the plain attack
+    bowdrawwire::SetReleaseHook(&bowquiverwire::OnRelease);   // [bow] quiver: the quiver decides, before the release's button goes down, whether it is the armed skill or the plain arrow
     bowdrawwire::SetStartBlock([]() -> bool { return bowquiverwire::BlocksDraw() || rangedwire::Stowed(); });   // [bow] quiver_orbs: the free hand at an orb does not take the string; a bow put away takes none
     animcut::Init(ctx);   // [bow] quick_release, [hands] quick_throw: the log
     throwwire::Init(ctx, &GestureCanAim);
@@ -17882,6 +18542,7 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
 #endif
     throwwire::SetAutoSkillFn(&ThrowAutoSkillReady);
     meleetouch::SetAnimNote(&MeleeAnimNote);   // [debug] bow_latency: the animation row on the melee press->hit line
+    meleetouch::SetPressTrace(&PressTraceBegin, &PressTraceOutcome);   // [debug] melee_press_trace: one line per attack press of hit by touch
     meleetouch::SetThrowLink(&throwwire::GripIsThrows, &throwwire::GripHeld, &throwwire::LastThrowTickMs, &throwwire::HoldOffRelease);   // hit by touch with a thrown weapon: the touch and the throw by gesture do not both fire
     standstill::SetThrowPressFn(&throwwire::PressIsThrow);
     crash::Step("update thread and console command");
@@ -17896,6 +18557,7 @@ D2RL_PLUGIN_EXPORT void D2RLoaderUnloadPlugin() noexcept {
     animcut::Shutdown();   // [bow] quick_release, [hands] quick_throw: a moved action-frame flag goes back before the plugin does
     skillwheel::Shutdown();   // [openxr] skill_wheel: its listener out, its threads joined
     handvitals::Shutdown();   // [hud] hand_vitals: its listener out, its painter joined
+    thrustdebugwire::Shutdown();   // [debug] thrust_debug: its listener out, its painter joined
     wriststatus::Shutdown();   // [hud] wrist_status: its listener out, its painter joined
     xr::Shutdown();   // the session before anything it runs on goes; FlatVR started again
     g_enabled.store(false);

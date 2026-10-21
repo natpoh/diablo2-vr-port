@@ -8,6 +8,7 @@
 
 #include <cstdint>
 
+#include "monster_bodies.h"
 #include "skeletons.h"
 
 namespace weight {
@@ -89,6 +90,22 @@ using LibraryFn = bool (*)();
 void SetLibrarySource(LibraryFn ensure);
 // [weight] grip_model 1: the same for the grip library (vrcam registers griplib::Ensure).
 void SetGripLibrarySource(LibraryFn ensure);
+// [weight] monster_bodies (vr/monster_bodies.h, cleanroom/heft/contact.h): the hostile monsters near the hero as bodies - the held weapon is put back on their
+// surface and its motion into them taken away (it stops on them, an edge glances off along them), the controllers go on; a pulse in the hands that hold it
+// when it strikes one. The source is the hit by touch's scan (vrcam registers meleetouch::Bodies); unregistered, or Input::Weight::monsterBodies off: none.
+using BodiesFn = bool (*)(monsterbodies::Snapshot* out);
+void SetBodiesSource(BodiesFn fn);
+// What the held weapon met on the last step, for the log and the tests: bodies 0 when nothing.
+struct ContactNote {
+    int bodies = 0;            // how many bodies it touched
+    uint32_t id = 0;           // the game's unit id of the one it met hardest
+    int bone = -1;             // ... the bone of its skeleton whose limb it met (-1: the game's capsule of it)
+    float approachMs = 0.0f;   // m/s into it
+    float depthCm = 0.0f;      // how deep it was before it was put back
+    float slideMs = 0.0f;      // m/s along the surface after the friction
+    float costUs = 0.0f;       // what the bodies cost that step (taken into the room and met), microseconds
+};
+bool LastContact(ContactNote* out);   // true when it touched a body on the last step
 // [weight] hero_strength (vr/hero_strength.h): what the hero's strength did to the weapon last time the model stepped, for the log and the tests. on: the box is ticked and the
 // Strength was read (steel and hands are then the factors the model took); reqFromGame: the requirement is the game's own, not a typical one for the kind.
 struct StrengthNote {

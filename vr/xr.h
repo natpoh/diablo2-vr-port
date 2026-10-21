@@ -114,8 +114,44 @@ float LeanM();
 // from the call; the room walk keeps its own point in the eyes' frame then (the hero's place). A recentre still puts the body under the head.
 void HoldBody();
 // Native OpenXR with the eyes by turns ([stereo] afr without pair_per_tick): one pass a game frame,
-// one eye, the other handed in again as it was last drawn.
+// one eye, the other handed in again as it was last drawn - or, with [stereo] turn_warp, made on the GPU from
+// pictures already drawn (vr/turn_warp.h): its own last one moved with its depth to where it is now, and the
+// eye drawn this frame moved across with its own depth over it (bearstonem/d2r-pcvr's eyes by turns).
 bool ByTurns();
+// What the eye not drawn is made with. vrcam, at each view it builds for a native first-person pair (F4): both eyes'
+// cameras as the head is now - in the game's world, view axes x right, y up, -z ahead (turn: those into the world) -
+// the hero's place and the body's turn (the room's -z in the world, radians, as vrcam's toWorld), the projection's near
+// (world units; distance = near / depth) and world units a metre. ok = false in any other view: nothing kept is used.
+struct TurnView {
+    float at[2][3];
+    float turn[4];   // x y z w
+    float hero[3];
+    float body;
+    float nearPlane;
+    float upm;
+    bool ok;
+};
+void SetTurnView(const TurnView& v);
+// The scene's depth our effects copied for this present (vrcam's own depth, scenedepth::Bind), before the present: the
+// resource (an ID3D12Resource in a shader-resource state), its shader view's DXGI format and the part of it the scene is
+// drawn in. nullptr: none this present.
+void SetTurnDepth(void* resource, uint32_t viewFormat, float scaleX, float scaleY);
+// The present of a pair by turns with the other eye made ([stereo] turn_warp, F4 / F2's head camera): vrcam's XrPresent, in order -
+// TurnKeep(eye, back buffer) before what has no depth of the scene is drawn over it (D2R_DepthFog.fx's overlays, OverlaysApart:
+// moved with the depth behind them they showed twice in the eye made); then the overlays of this eye on the back buffer; OnPresent
+// (this eye into its swapchain); TurnMake - the other eye made into a picture of ours (the back buffer's size and family,
+// RENDER_TARGET; nullptr: none this frame, its last one goes again); its overlays over it; TurnFinish - into its swapchain.
+bool TurnsNow();
+bool TurnWarpOn();   // [stereo] turn_warp with the eyes by turns (any thread)
+bool TurnOverlaysMade();   // [stereo] turn_overlays_made: the overlays drawn on the eye made too (0: on the eye drawn alone, a test)
+TurnView TurnViewNow();   // the last SetTurnView: both eyes' cameras the warp makes the pictures for (vrcam checks the overlays' against them)
+// The made eye's own depth, moved with its picture (an ID3D12Resource, R32_FLOAT, reverse-Z near / distance, the eyes' size; readable after
+// TurnMake): D2R_DepthFog.fx's overlays of that eye are hidden by what is nearer there (D2RVR_DEPTH_MADE). nullptr: none yet, or
+// [stereo] turn_overlay_hide off - nothing then hides them in that eye. gen: which texture (a new one may reuse an address).
+void* TurnMadeDepth(uint32_t* gen = nullptr);
+void TurnKeep(int eye, ID3D12Resource* backBuffer);
+ID3D12Resource* TurnMake();
+void TurnFinish();
 // [openxr] on went to 0 while a session is up: the next present ends it.
 bool StopPending();
 // The next views taken as straight ahead (F11, BodyWalk's recentre).

@@ -32,8 +32,27 @@ the headset-only ones.
 - **How you play** - *Flat* (the monitor, mouse and keyboard, no headset) or
   *VR* (the headset).
 - **In the headset** - *3D in the headset*: **Native OpenXR** (the default: the
-  game itself in the headset, no FlatVR needed), *FlatVR stereo* or *FlatVR 3D
-  depth*; the headset's refresh rate; *My height*; and **Resolution (VR render
+  game itself in the headset, no FlatVR needed), *FlatVR stereo*, *FlatVR 3D
+  depth* or **Native OpenXR - eyes by turns**: the game draws one eye a frame,
+  left and right in turn - about half the graphics card's work of the default
+  - and the other eye is made on the graphics card for where the head is now:
+  the eye drawn this frame moved across with its depth, that eye's own last
+  picture moved with its depth under it, where the first cannot see (behind an
+  edge). Each eye's own pixels are new at half the rate; monsters stand where
+  they are now in both. Stereo tab: *Eyes by turns: make the other eye from the
+  depth* (`[stereo] turn_warp`, on) and *... with the eye drawn this frame over
+  it* (`turn_from_drawn`, on); unticked, the other eye goes as it was last
+  drawn and the headset turns it. *... its overlays hidden by its moved depth*
+  (`turn_overlay_hide`, on): the wrist medallions and the bow's orbs hidden in the
+  eye made where its picture shows a hand or the bow nearer (unticked they show
+  through the hands every second frame). *Eyes by turns: each frame's effects wait
+  for the last frame's* (`turn_fx_fence`, on): the sky drawn with its own frame's
+  head, not the next one's. *... the other eye's own picture kept*
+  (`turns_keep_own`, *Where the game's effects are*): where that eye's own older picture shows the same surface as
+  the eye drawn's, it stays - the game's glow round a blade, hair and its effects (spells, flames, Tyrael's wings)
+  have no depth and, moved across, stood where the eye drawn saw them; also *Round near things*, *Near things and
+  effects*, *Everywhere* (that eye a frame behind all over) and *Nowhere* (as before). First person (F4); the idea is
+  bearstonem/d2r-pcvr's (MIT). Then the headset's refresh rate; *My height*; and **Resolution (VR render
   size)**, a slider from 1024 to 4096 pixels a side (its left end is the game
   window's own size) with a tick box for the headset's recommended size. On
   native OpenXR the game draws at that size whatever its window is.
@@ -467,6 +486,18 @@ The toolbar while the game lies on your floor, and the item labels.
 - **Menus** - the laser pointer on menus and panels (a prototype), which hand
   holds it, the item tooltips at once, *Menus as a panel, the world stays in 3D*
   (on), and the settings panel in the headset:
+  - **Right grip + right stick: a panel nearer / farther** (on; under *Menus as a
+    panel*): with the game's inventory, stash, a trader, the waypoints... hung in
+    front (native OpenXR, F4), hold the right grip and push the right stick forward
+    to bring the panel nearer, back to send it farther; let go and it stays there
+    (written to the panels' distance, `[screen] menu_distance_m`). It stops where
+    the panel stops being readable - nearer, part of it would be out of sight;
+    farther, a headset pixel would cover more than two of the picture's pixels and
+    the game's text breaks up. While the grip is held the stick's forward / back
+    is not the game's; the grip's own press (the menu's right bumper, where the
+    laser does not have it) comes when you let go without moving the panel. Its
+    slider **speed, m/s** (1) is how fast the panel moves with the stick pushed
+    all the way.
   - **Settings panel in the headset** (a prototype, off): both grips squeezed for a
     third of a second, then a stick click. Pages: the game's view (F1 - F4),
     options (the picture's distance and width, brightness, your height, the
@@ -559,7 +590,11 @@ The toolbar while the game lies on your floor, and the item labels.
 - **Fog** - distance fog, where it starts and where it is full, falloff, a depth
   blur, the fog colour in caves, the game's own height fog. *Fog spares fire,
   spells and smoke* (test, off): a torch or a Fire Bolt in front of a far wall is
-  no longer fogged like the wall (VR F4; read at the game's start). *How that depth is
+  no longer fogged like the wall (VR F4; read at the game's start). *Fog drawn inside
+  the game's frame* (test, off; [render] fog_in_frame): the fog goes into the game's own
+  picture before its fire, spells and smoke, which the game then lays over it - the
+  sky and the void keep the fog as before (VR F4, an act's own fog colour; read at the
+  game's start; over the spare when both are on). *How that depth is
   set* (under *The game's effects measure depth from our camera*): in each pass
   as it is bound (as before), or once a frame where the game makes it (after
   bearstonem/d2r-pcvr: every pass - fog, ambient occlusion, particles, grass -
@@ -659,19 +694,26 @@ in full in a square window); the log tells the size the game draws at.
   the hands start where the game's draw animation has the hooked fingers, not at
   the middle of the palm (the Amazon's right hand; sliders move that point).
   *Quiver: pick the arrow of the next shot* (`[bow] quiver`; on in the settings that
-  come with the mod): with the string drawn, B picks the next arrow skill and A the
-  previous (`[direct] quiver_next` / `quiver_prev`) - only skills the hero has learned;
-  *Quiver: energy orbs along the bow* (the same): an orb on the stave for the plain shot
-  and one for each learned bow skill, the free hand's trigger at an orb picks it; *Arrow
-  effects: fire, frost and arcane light on the arrow* (on), by the chosen skill; *no mana for
-  the chosen arrow - shoot the plain arrow* (on), and the effect goes out while the mana
+  come with the mod): the arrow skill is ARMED, as an armed melee skill is - the quiver's
+  own choice, never written into the game's skill slots or onto the attack button A. Each
+  release of the bow's string is then that skill (the game's own
+  cast, mana and cooldown); with no bow or crossbow in hand it does nothing to any attack.
+  With the string drawn, B arms the next arrow skill and A the previous (`[direct]
+  quiver_next` / `quiver_prev`; past the last: the plain shot, disarmed) - only skills the
+  hero has; *Quiver: energy orbs along the bow* (the same): an orb on the stave for the plain
+  shot and one for each learned bow skill, the free hand's trigger at an orb arms it, the
+  armed one's orb again (or the plain shot's) disarms. A bow skill the quiver of 0.174 and
+  before left on the A slot is given back as the plain attack. *Arrow
+  effects: fire, frost and arcane light on the arrow* (on), by the armed skill; *no mana for
+  the armed arrow - shoot the plain arrow* (on), and the effect goes out while the mana
   is short; *Arrow effects: out at the release* (on, `[bow] arrow_fire_cut`) puts the effect out
   when the shot goes, not when the game hides the arrow in the hand, with *... after, ms*
   (`arrow_fire_cut_ms`, 0 = at the release, up to 2000) for a moment of it on the shot
   arrow - it lights again on the next arrow; *Quiver: show the chosen arrow skill in the mana medallion* (on, `[bow] quiver_icon`):
-  the chosen skill's icon lies in the mana medallion on the wrist like an armed melee skill's
-  (full while the hero can pay the shot, faint when not; the plain arrow: none), sized and placed
-  by the *Skill icon in the mana* sliders on the Strikes tab. The crossbow has no quiver.
+  the armed skill's icon lies in the mana medallion on the wrist like an armed melee skill's
+  (full while the hero can pay the shot, faint when not; nothing armed: none), sized and placed
+  by the *Skill icon in the mana* sliders on the Strikes tab. The crossbow has no quiver and no
+  draw: its shots stay the game's plain attack.
   *Quick release* (experimental): moves the game's arrow-making
   frame of the hero's bow attack earlier (frame 2 by default) - the arrow, its
   damage and its mana come about 0.2 s sooner inside the same attack; the
@@ -753,6 +795,28 @@ ticks the other). The blade's geometry stays in Weapon Adjust and Debug.
 - **Each kind of weapon** - a table, a row for each of the 15 kinds the touch swings (bows and crossbows are shot, not swung): *Swing x* (the kind's own amplitude factor, 0 =
   follow its family), *= cm* (what that comes to), *Speed* (its own least blade speed, m/s) and *Start cm* (its own start distance; 0 = the general one for both), and two
   ticks, *Toward* and *Head*. Click a number, type, press Enter.
+- **Thrusts: a poke along the blade** (F4, on; `[gameplay] melee_thrust`) - *A thrust counts*: for the weapons that pierce, a stab - the blade moved along its own length,
+  point first - is a hit of its own kind with its own two numbers, apart from a swing's: *Thrust: the least speed that hits* (0.8 m/s; a poke reads about 1 m/s, a swing's
+  tip 2-6; `melee_thrust_min_speed`) and *Thrust: the least distance along the blade* (5 cm; `melee_thrust_cm`). So a short quick stab hits, while a swing still needs its
+  usual speed, start distance and amplitude. *Thrust: how much of the movement is along the blade* (70 %; `melee_thrust_along_pct`): the part of the point's path that must go
+  forward along the blade (and it must still go forward at the touch) - a swing, whose point goes across the blade, never reaches it. *Thrust: the least acceleration* (0 = not
+  asked; `melee_thrust_min_accel`, m/s²): the PEAK acceleration of the point along the blade over the thrust - the burst that started it, not the value at the touch, where a jab
+  already coasts - so a sharp jab (tens of m/s²) counts and a slow push (a few) does not; about 10 - 15 separates them. The log tells every thrust's speed, cm, part along the
+  blade and peak acceleration (the first ones always, every one with *Draw the capsules of Hit by touch*) to tune the numbers from. Which weapons thrust: the game's own data,
+  the weapon's attack class (the one the game animates it with) - 1ht (daggers, javelins, throwing knives) and 2ht (spears, tridents, pikes); where it cannot be read, spears,
+  daggers and javelins. *Toward the monster* and *the head* judge a thrust as they judge a swing; a pull-back or a stab beside the monster does not count. A monster is hit
+  once per thrust, and one movement that is both a swing and a thrust hits once. Only whether a contact counts - the game's own attack is pressed. Unticked: as before.
+- *Thrust debug: the last thrust's numbers over the weapon hand* (off; `[debug] thrust_debug`) - to tune the thrust in the headset: a plate over the weapon hand shows the last
+  TOUCH (a thrust's contact with a monster: COUNTED in blue, or REJECTED in orange naming the threshold that failed - not straight, too slow, too short, no accel, not toward the
+  monster, not the head) and the last JAB, touching or not (its peak speed, cm along the blade, straightness and peak acceleration, each beside its threshold - green passes, red
+  fails, "(own)" = the kind's own number - and whether it would count), so a real jab can be read before a monster is near. The blade is drawn (as with *Draw the capsules of Hit
+  by touch*) and turns BLUE (counted) or ORANGE (refused) for a moment after each thrust - the thrust's own colours, apart from the swing's green / red; the log gets a
+  "thrust debug:" line per thrust and per jab. A drawing and a log only. Live, F4. *Thrust debug: only the thrusts* (off; `[debug] thrust_debug_only`): only the forward thrusts
+  are shown - the swing's colours, marks and log lines are left out, and a swing or an overhead blow is neither on the plate nor tinted nor logged.
+- **Thrusts of each kind** - a table, a row per kind: *Thrust*, a tick (`melee_thrust_on_<kind>`): ticked, the kind thrusts. Spears, daggers, javelins and throwing weapons are
+  ticked to begin with - the kinds the game's own data thrusts with (1ht / 2ht); tick a sword or a polearm for its tip. (An older `melee_thrust_<kind>` = -1 / 0 / 1 is still read while
+  the tick is not written.)
+  *Speed*, *Cm* and *Accel* (that kind's own thrust numbers, 0 = the general ones; `melee_thrust_min_speed_<kind>`, `melee_thrust_cm_<kind>`, `melee_thrust_min_accel_<kind>`).
 - **Melee skills armed by their button** (F4, off; `[gameplay] melee_skill_armed`) - *A melee skill's button arms it: every hit is that skill*: a pad skill button (B, X, Y, RB, with or
   without LT) whose slot holds a melee attack skill no longer casts it - its press ARMS the skill, like the bow's chosen arrow skill (a short buzz in both hands). Every touch of your blade is
   then the game's attack with that skill - its mana, cooldown, weapon check and animation are the game's, the touched monster its target, one touch one cast; a touch the hero cannot pay is the

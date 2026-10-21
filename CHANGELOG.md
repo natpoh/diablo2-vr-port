@@ -1,5 +1,318 @@
 # What's new in D2R VR
 
+## 0.175
+
+- **Thrust debug: the thrust's numbers in the headset** (the author: "the forward strikes need a debug of their own so I can tune them"). Settings > Strikes > Thrusts: *Thrust debug: the
+  last thrust's numbers over the weapon hand* (`[debug] thrust_debug`, off). A small plate over the weapon hand (F4) shows the LAST TOUCH - a thrust's contact with a monster, COUNTED
+  in blue or REJECTED in orange with the threshold that failed (not straight, too slow, too short, no accel, not toward the monster, not the head) - and the LAST JAB, touching or not:
+  its peak speed, the cm along the blade, how straight, its peak acceleration, each beside its threshold (blue passes, orange fails; "(own)" = the kind's own number) and whether it
+  would count, so a real jab can be read before a monster is near. The blade (drawn as with *Draw the capsules of Hit by touch*) turns BLUE (counted) / ORANGE (refused) for a moment
+  after each thrust - the thrust's own colours, so a thrust is told from a swing (green / red) at a glance - and the log has a "thrust debug:" line per thrust and per jab. *Thrust
+  debug: only the thrusts* (`[debug] thrust_debug_only`, off): the swing's colours, marks and log lines are left out, and a swing or an overhead blow is not shown at all. Only a drawing and a log; live (vr/thrust_debug.h, vr/thrust_debug_wire.cpp, its layer vr/xr_thrust_debug.h).
+- **Fixed, native OpenXR on a slow graphics card: "a weird double vision thing, kinda looks like im drunk"** (a Quest 2 player over Link,
+  GTX 1650 SUPER 4 GB, 0.174, 2026-10-21). A pair is drawn in stereo only while the game's world camera is there, and that was "its follow
+  ran within the last second" (d2rcam::InWorld). The follow runs once in each pass, so on a card that takes over a second for a pair
+  (his log: pairs of 1.2 - 1.8 s, a pass up to 6 s, video memory at its budget) every pair after a right pass of a second or more was
+  taken for no world: drawn without its XR frame, its right eye went to the headset as the flat picture 1.1 m ahead, and the next pair
+  was stereo again - the world jumped between its depth and a flat screen, one pair each (his log: 72 pairs and 64 flat in 10 s in
+  the Rogue Encampment, F4; the author's own at 70 - 120 pairs a second: 0 flat). Now a pair is the world's too when the follow ran
+  since the last pair began (vr/pair_world.h, `[stereo] slow_pair_world`, on; 0 = as before). At the game's own speed nothing changes
+  (the follow is always within the second); a game left on a slow card is seen one pair later. The log says every 10 s how many pairs it
+  kept so. Test: pair_world_test (his pairs' timings: 5 flat before, none now; mutation-checked). It does not make the card faster: at
+  1 - 7 pairs a second the headset still holds each picture long - lower the render size or use the FlatVR 3D depth mode there.
+
+- **Fixed: the sky still shook now and then** (the author on 0.176, after the right-eye fix below: "the sky still shakes now and
+  then"; "one pass, two pictures"). That fix holds while the graphics card is at most one picture behind. In the pairs drawn in
+  two passes - long stretches while walking, the replay settling after each biome set (19 s in his log) - nothing kept it so: two
+  pictures behind, the next pair's values were in ReShade's one constant buffer before this pair's effects were drawn, in either
+  eye. Now, in a pair, each eye's effects put their values in only once the graphics card has drawn that eye's last effects (a
+  fence on ReShade's queue after each pair's effects; vr/sky_view_eyes.h FxRing, cleanroom/tests/sky_view_eyes_test.cpp at 2 and 3
+  pictures behind). The CPU still runs a picture ahead; with the replay running its own waits are stronger, so nothing changes
+  there. `[stereo] pair_fx_sync` (on; 0 = as before). The log tells every 10 s how many effects waited and how long.
+  D2R_DepthFog.fx unchanged.
+- **Fixed, eyes by turns: "the sky shakes in both eyes when I turn my head" and "the medallions show through the hands, flickering"**
+  (the author, test-0176). (1) ReShade keeps one buffer of the effect's values (the cameras the sky, the fog and the overlays are drawn
+  from) and writes it in place at every technique it renders. By turns the graphics card runs a frame behind (one eye a frame is half
+  its work), so the next frame's effects overwrote both eyes' cameras before the card drew this frame's sky: the eye drawn got the next
+  frame's head turn, a frame off its world, as often as the card was behind, and the eye made, warped from that picture, the same - the
+  sky shook in both eyes in head turns; the eye made's overlays read the next frame's cameras too. Now each frame's effects wait until
+  the card is past the last frame's effects AND the eye made's overlays before their values go in (`[stereo] turn_fx_fence`, on; Stereo
+  tab *Eyes by turns: each frame's effects wait for the last frame's*; the fence of `[render] fx_fence`, marked after the overlays
+  instead of after the effects alone). The wait costs little: the next frame's scene is already on the queue behind the mark, the card
+  stays busy. (2) In the eye made nothing of the scene hid the overlays (0.175's `turn_overlay_depth=0`): each eye's medallions and the
+  bow's orbs showed through its hands on every frame it was the one made - every second frame. The made eye's own depth, moved with its
+  picture, hides them again (`[stereo] turn_overlay_hide`, on; replaces `turn_overlay_depth`, no longer read; Stereo tab *... its
+  overlays hidden by its moved depth*). It doubled the medallions when tried on 2026-10-20 by two causes since gone: the depth was the
+  drawn eye's at 4-pixel cells cut whole at the hand's edges with the older picture under the cuts (now to the pixel, d2r-pcvr v0.3.24's
+  layers), and the eye made's flag was a uniform the next frame overwrote (now its own technique, D2R_OverlayMade). The made depth is
+  written by the same pixel as the made picture's colour, so a medallion is hidden exactly where that picture shows the hand. D2R_DepthFog.fx
+  unchanged. Tests: sky_view_eyes_test models the by-turns frames against the one buffer (0.175: both eyes' skies wrong; fenced after
+  the effects alone: the eye made's overlays still wrong; now right at any lag); turn_warp_gpu_test reads the made depth back - the post's
+  to both its edges, the wall's in the gap it uncovered (fails on the 4-pixel cut). Not yet seen in the headset.
+
+- **Hit by touch: a thrust can ask for acceleration - a jab, not a slow push** (the author: a poke of its own with acceleration and distance, chosen per weapon). Settings > Strikes
+  > Thrusts: *Thrust: the least acceleration (a jab, not a push), m/s²* (`[gameplay] melee_thrust_min_accel`, 0 - 300, default 0 = not asked, as before) and an *Accel* column in
+  *Thrusts of each kind* (`melee_thrust_min_accel_<kind>`, 0 = the general one). It is the PEAK acceleration of the point along the blade over the thrust (its speed along the blade
+  over 25 ms, from 0.25 s before the thrust began) - the burst that drove it - not the value at the touch: a jab meets the monster at its top speed, coasting, where a jab and a
+  push both read about nothing. A sharp jab reads tens of m/s², a slow push a few; about 10 - 15 keeps the jabs. The log now tells one line per thrust, counted or refused, with its
+  speed where it touched, the cm along the blade, the part of its path along it and its peak acceleration (the first ones always, every one with [debug] melee_boxes), and the
+  10 s line counts "a push not a jab". Live. F4 only.
+  - **Thrusts of each kind: a tick per kind** (the author: "where is the tick, use it or not") instead of the -1 / 0 / 1 number: *Thrust* ticked = the kind thrusts
+    (`melee_thrust_on_<kind>`). Ticked to begin with: spears, daggers, javelins, throwing weapons - the game's own 1ht / 2ht kinds. An older settings file's `melee_thrust_<kind>`
+    is still read (and shown as the tick) until the tick is written: -1 unticked, 1 ticked, 0 the kind's default.
+- **Fixed: the doll let go on a weapon swap - "about half a second, sometimes more"** (the author, 2026-10-21: people report the doll letting go,
+  "especially on a weapon swap"). A swap - the W set, a weapon taken from or put behind a shoulder, another shield or bow - rebuilds the hero's
+  model: a new skeleton of the same entity, and for a moment the game poses the old one and the new one both, either of them the one drawn. The
+  hook had one rig for the doll: (1) the new one was taken at its first pose and the old one, maybe still the one drawn, got the game's own pose
+  (head shown, arms off the controllers); (2) a new one posed before the hero's SkeletonComponent held it was looked for again only after
+  500 ms, and by then, the hero having moved more than a unit (a swap while running), it was "not a rebuild of ours" and waited out the old
+  one's 3 s (cleanroom test: let go 515 ms after the swap); (3) a rig whose bones did not read at its first pose was "not a hero" for good;
+  (4) the facing's rig went back and forth between the two (its chain failing for the one not in the component). New `[hands] doll_rebuild=1`
+  (0 = as before): both rigs get the arms while the game poses both (the one taken keeps the facing; nothing is learned from the other's pose -
+  not the weapon's grip); the new one is taken as far from the old as the hero ran meanwhile (20 units a second, 4 at most); an instance not
+  in a SkeletonComponent yet is looked for again after 50 ms; a player's rig that did not read is learned again every 100 ms for 5 s; and the
+  last facing is held, past `[hands] facing_hold_ms`, for as long as the hero is posed - until a facing reads, not for a fixed time. Also a menu's
+  model (no entity of the game's world: seen at a game's exit, "facing bound ... (moved, no event)" then "the hero's SkeletonInstance is in no
+  SkeletonComponent") no longer takes the hero over. New `[debug] doll_trace=1` (default 0): one line each time the doll lets go and is taken
+  again, with why and how long - `vrcam: doll: facing let go - <which read failed: not posed for 2 s, no SkeletonComponent, the matrix N / M
+  units off the look-at>; instead: <the last facing held / the search / nothing>`, `doll: facing bound again after N ms`, `doll: the hero's
+  model rebuilt - rig B taken from A, N units apart, M ms after A was posed last`, `doll: rig A posed along with the hero's`, `doll: the rig
+  ours was rebuilt from is not posed any more - the two were posed together for N ms`, `doll: let go - the hero's rig ... is not taken as
+  ours: <its head down / N units from the look-at / another rig taken ... / none taken yet>`, `doll: taken again after N ms`, `doll: a player
+  model whose rig is not learned (<model>)` / `learned on its try N`. The pose hook only notes; vrcam's 10 ms tick writes the lines. The logs
+  at hand (2026-10-10 .. 10-21) hold no swap in play, so the cause is from the code and the test, not seen in the headset. bearstonem/d2r-pcvr:
+  his facing binding is the same code as ours; his hero rig is the one within 3 units of the look-at (ours 12) - nothing there holds the doll
+  better. Tests: skeleton_discovery_test (a fake renderer ECS of one entity: the swap with the new rig in the component at once - the old one
+  posed along, the facing's rig not going back; the new one not in it yet and the hero running - taken 63 ms later; with the key off, let go
+  515 ms later as before; a rig learned on its second try; the notes; the menu's model posed along, not taken).
+- **The skeleton hook does less on every pose, after d2r-pcvr** (bearstonem/d2r-pcvr v0.3.24, MIT: his "crossbow and shield discovery without a call
+  per letter", commits bd99126 / be02ea3). Nothing found or drawn changes; the same bones, the same rigs. Measured on this PC (2026-10-21):
+  (1) each pose of the hero copied the whole learned rig - every bone name, the bind pose, the finger chains - out of the cache: 3-6 us a pose for
+  60-160 bones (a 110-bone rig 4.3 us); the cache now holds it by pointer (8 ns). (2) A model's path and a rig's bone names are read a page at a time
+  (vr/guarded_text.h, his), not one guarded copy per letter: a 62-letter path 346 -> 86 ns, a bone name 150 -> 57 ns - only when a rig is first met.
+  (3) The bow's, the flail's and the crossbow's caches tell the skeletons that are none of theirs (most of what the game poses, while one of them is
+  on) under a shared lock, so the render threads no longer queue for the exclusive one; a full cache drops those, not the hero's bow / flail /
+  crossbow (the hero's cache likewise keeps him). His other two ideas were already so here: the crossbow's rig is looked for only while a crossbow
+  is held (`gunStock`), the bow's only with a bow, and we have no per-skeleton shield scan. Test: cleanroom/tests/skeleton_discovery_test.cpp
+  (Str against the letter-at-a-time loop at 85 000 places next to a page that does not read; Learn on a toy hero rig whose names cross pages; the
+  caches).
+- **New: a game panel nearer / farther with the right grip and the right stick** (the author: "меню можно сделать приближение отдаление
+  оверлея при зажатом грипе правой руки и джойстиком в меню торговца"). Native OpenXR, F4, with the game's inventory, stash, a trader,
+  the waypoints... hung in front as a panel (*Menus as a panel*): hold the right grip and push the right stick forward - the panel comes
+  nearer; back - it goes farther, live; let go and it stays, written to the panels' distance (`[screen] menu_distance_m`). It stops where
+  the panel stops being readable, worked out from the headset and the panel, not set by hand: nearer, part of it would be out of the eyes'
+  field; farther, one headset pixel would cover more than two of the panel picture's pixels (it has no smaller copies, so the game's text
+  breaks up) - and a distance already set past one of those is never moved by itself. While the grip is held the stick's forward / back
+  is not the game's; the grip's own press in a menu (the right bumper, where the laser does not have the grip) comes as a tap when it is
+  let go without moving the panel, so taking the panel never turns the trader's page; a trigger squeezed while the panel moves clicks
+  nothing until let go. D2R VR Authentic Settings > UI: F4 body > Menus > *Right grip + right stick: a panel nearer / farther* (on,
+  `[openxr] menu_zoom`) and its speed (`menu_zoom_speed_mps`, 1 m/s). The idea of taking a game menu by the right grip to push or pull
+  it is bearstonem/d2r-pcvr's (v0.3.24, MIT; there the hand's own travel moves it). vr/menu_zoom.h, cleanroom/tests/menu_zoom_test.cpp.
+- **Hit by touch: a thrust (a poke) is a hit of its own kind, with its own speed and distance** (the players, through the author: "for piercing weapons add a thrust /
+  poke type with its own coefficients for speed and distance"). A stab - the blade moved along its own length, point first - of a weapon that pierces now counts by
+  two numbers of its own, apart from a swing's: Settings > Strikes > *Thrusts: a poke along the blade*: *Thrust: the least speed that hits* (0.8 m/s - a poke reads about
+  1 m/s, a swing's tip 2-6) and *Thrust: the least distance along the blade* (5 cm), with *how much of the movement is along the blade* (70 %). A short quick stab of a
+  spear or a dagger hits while a swing keeps its own least speed, start distance and amplitude - with a high swing speed (only real swings) the pokes no longer go
+  unanswered. Which weapons thrust is the game's own data: the weapon's attack class, the one the game animates it with - 1ht (daggers, javelins, throwing knives) and 2ht
+  (spears, tridents, pikes), read from the item's row (the log says where it was found; if it is not, spears, daggers and javelins). A table *Thrusts of each kind* sets a kind
+  to thrust always (a sword's tip, a polearm) or never, and gives it its own speed and distance. *Toward the monster* and *the head* judge a thrust as a swing; a pull-back or
+  a stab beside the monster does not count; a monster is hit once per thrust, and a movement that is both a swing and a thrust hits once. The game's own attack is pressed
+  as for a swing - its animation, reach, rolls and damage are the game's. A second swing engine runs on the same hand samples with the thrust's numbers (vr/thrust_stroke.h,
+  cleanroom/tests/thrust_stroke_test.cpp). `[gameplay] melee_thrust` (on), `melee_thrust_min_speed`, `melee_thrust_cm`, `melee_thrust_along_pct`, per kind
+  `melee_thrust_<kind>`, `melee_thrust_min_speed_<kind>`, `melee_thrust_cm_<kind>`. Unticked: a poke counts only as a swing, as before. Live. F4 only.
+- **Battle.net copy: START no longer passes Steam's ids to the game** (a player: "You have not been online in the last 30 days" when started from D2R VR
+  Settings). D2R VR Authentic Settings' Launch / START now gives the Battle.net game no SteamAppId / SteamGameId (with them it checks its license
+  through Steam), and the Steam copy its own app id 2536520 - as bearstonem/d2r-pcvr's launcher and the D2R VR Launcher already do.
+- **The fog drawn inside the game's frame** (test, off: [render] fog_in_frame, World > Fog). The fog is drawn into the
+  game's own picture where the game composes it - after the scene is lit, before its fire, spells and smoke - and the
+  game then lays them over the fogged scene: a torch, a Fire Bolt or an Inferno in front of a far wall keeps its light.
+  The sky, the cave ceiling and the black beyond the world keep our fog as before. With an act's own fog colour (all
+  acts have one in the shipped d2r_vr.ini), not in the Arcane Sanctuary (its fog takes the sky's colour); VR F4, both
+  stereo modes (one pass two pictures, and eyes by turns - the eye made carries the fog of the picture it is made
+  from); read at the game's start; over "Fog spares fire" when both are on. Step 1 of docs/game_render_sky_fog.md.
+  Fixed after the author's test on 0.176: every object behind a fire had a thick grey rim - the fence's planks behind a
+  torch, the flame's glow cut along their edges. The fog in the frame took each pixel's fog from the farthest of it and
+  its neighbours (the post pass's rule for the finished picture), so an object's edge against the far ground or the void
+  got the full fog - the flame with it, since it is drawn into those very pixels; the game's anti-aliasing and upscaling
+  widened the rims. Each pixel is now fogged by its own depth, and the post pass leaves exactly those pixels to it.
+  And then: the flame pale over the fence, its warm halo gone, bright streaks in the gaps between the planks. Part of the
+  game's fire (the torch's flame among it) is drawn blended straight into the lit scene, and was fogged with it by the
+  depth behind it. Such draws are now drawn twice with the game's own state - into a texture of ours on black, and their
+  coverage into another on white - and the scene's fog leaves them out exactly (S0 K + E): the flame at its own light,
+  the game's bloom halo back. What blends in a way that can not be taken apart stays fogged with the scene; the log
+  names it.
+  And the thin lines along the planks' edges: where the frame leaves a pixel to our post pass (no depth of its own - the
+  void between two planks and its rim) there is only the fire's light over the black void, and the post pass fogged it
+  away (the rim) or faded it (over the sky). The fog of the far now goes under that light, at full over the sky.
+  And the main thing found in the author's log: in his game the fog in the frame had never run - it refused the frame
+  because the game's light culling (compute) runs in the same command list, and our compute step would have left the
+  game's compute bindings changed; every picture until then (the grey rims, the striped halo, the lines) was our old
+  fog. The game's compute bindings are now given back after ours, and the fog in the frame runs there.
+- **Fixed: the sky juddered in the right eye while walking and turning the head** (the author on 0.175, "one pass, two pictures";
+  not in d2r-pcvr). While walking the game sets its biome at every line of its 80-unit map grid, the replay settles again each
+  time and every pair goes in two passes (as bearstonem/d2r-pcvr measured). The left eye's camera build wrote the right eye's
+  sky camera (the left one moved across) whenever the replay was merely on, not only when it drew the pair; ReShade keeps one
+  constant buffer per effect and the graphics card drew the right eye's sky after the next pair's left present had written its
+  values - the right eye's sky came out one pair ahead of its world and shook as the head turned. Now each pass writes only its
+  own eye's sky camera (and FlatVR stamp); a replayed right eye's is kept aside by the left pass and put in by the replay just
+  before it draws that eye (vr/sky_view_eyes.h, cleanroom/tests/sky_view_eyes_test.cpp). No wait, nothing to switch;
+  D2R_DepthFog.fx unchanged.
+- **Fixed: the Amazon's sword blow never landed with Quick strike at frame 1** (the author: every touch pressed the attack, the hero swung, no hit; the
+  [debug] melee_press_trace line showed the one-hand swing AMA11HS acting at frame 1). Frame 1 is not read for her; at 2 the blow lands. Quick strike's frame
+  is now 2 at the earliest (Settings > Strikes, `[hands] quick_strike_frame`, 2 - 12, default 2; a 1 in a settings file is read as 2).
+- **Native OpenXR - eyes by turns, the other eye made from the depth, after d2r-pcvr** (the author: "his GPU takes only 10 ms at
+  4096 x 4096" - bearstonem/d2r-pcvr's default stereo draws one eye a frame and rebuilds the other on the GPU, where ours draws the
+  whole frame twice). D2R VR Authentic Settings > Home > *3D in the headset* has *Native OpenXR - eyes by turns* again (the ini's
+  `[stereo] afr=1`, `pair_per_tick=0` as before): one eye drawn a game frame, left and right in turn - about half the graphics
+  card's work of the default "one pass, two pictures", which draws everything twice (shadows, lighting, effects). New: the eye
+  not drawn this frame no longer goes to the headset as it was last drawn, at its older pose (the headset turned it - rotation
+  only, so a step or a moving monster showed a frame behind in that eye). It is made on the graphics card for this frame's
+  head (vr/turn_warp.cpp, vr/turn_math.h; vr/xr.cpp keeps each eye's picture, the depth our effects copy and its camera): (1) its
+  own last picture turned to the head; (2) moved with the depth it was drawn with - a grid of 4 pixels, each point put back at
+  its distance and seen from where the eye is now, what the hero holds within 1 - 1.6 m going with his step and his body's turn;
+  (3) the eye drawn this frame moved across with its own depth over it, so monsters and missiles stand where they are now in
+  both eyes; a cell across an edge of its depth is cut, and the older picture shows there (what that eye cannot see behind an
+  edge). Both eyes go at this frame's pose. Stereo tab: *Eyes by turns: make the other eye from the depth* (`[stereo]
+  turn_warp`, on) and *... with the eye drawn this frame over it* (`turn_from_drawn`, on), live; unticked, as before. First person
+  (F4); F2, the menus and the other views as before. A frame whose depth or camera is missing, or a picture older than 0.1 s,
+  goes as before. The log says, every 10 s, how the other eye was made. Not yet: a snap turn is made from the turned picture, not
+  drawn as a pair.
+  - **Fixed after the author's first try: "everything we draw is doubled - the bow's energy orbs, the medallions on the hands, the
+    labels over monsters".** They have no depth of the scene: moved with the depth behind them, the eye made showed them twice.
+    Now they are left out of the picture the warp moves and drawn after it, for each eye on its own picture, from its own camera:
+    D2R_DepthFog.fx has `OverlaysApart` and two techniques of its own, `D2R_Overlay` / `D2R_Overlay_R` (the HUD shift, the game's
+    labels laid back, the hitboxes, the wrist orbs and medallions, the bow's orbs and the arrow's glow, the low-life vignette),
+    which vrcam renders on the back buffer and on the eye made (`replay::DrawOverlays`, xr.h TurnKeep / TurnMake / TurnFinish).
+    The game's labels are taken out of its picture for it (as with the labels' own settings) and laid back per eye. In the eye made
+    nothing of the scene hides them (the depth bound there is the other eye's). Needs the new D2R_DepthFog.fx with the DLL; an older
+    effect: as before.
+  - **Fixed after the author's third try: "the depth broke in the by-turns mode, the medallions double again".** The try before
+    (the overlays apart, nothing hiding them in the eye made) had no doubling - "it just worked"; the next one hid the orbs in the
+    eye made by its own depth, moved with its picture (the author's idea: the warp moves the last frame's depth with the same grid
+    and vectors into a depth picture of its own, D2RVR_DEPTH_MADE), and the wrist medallions doubled again. That depth is the grid's:
+    the eye drawn's depth at 4-pixel cells, the nearest of each cell's texels, cut at every edge of the hand, with the eye's own
+    older picture - the hand where it was a frame ago - under the cuts. A medallion lies on the wrist, right at the hand's edge, so
+    there the depth it is set against is not the hand the picture shows, and it was cut otherwise in the eye made than in the eye
+    drawn; and in any present the made depth was not bound for (the first, an effects reload, a new size) the eye made took the
+    eye drawn's depth instead - the other eye's hand. Now, by default, as in the try that worked: in the eye made nothing hides the
+    overlays, and the warp draws the picture alone again (one target, as before). The made depth is behind its own key,
+    `[stereo] turn_overlay_depth` (Stereo tab: *... its overlays hidden by its moved depth (test)*), **off**; on, it is as the third
+    try with two fixes - never the other eye's depth (nothing hides instead while it is not bound, and a new texture at the old
+    one's address is bound again), and a frame whose eye was not made (its last picture as it was) clears it (nothing hides) rather
+    than leave an older frame's. Copy the DLL and D2R_DepthFog.fx together. Unit test: turn_math_test *overlay* (which depth hides
+    which eye's overlays); the effect compiles with ReShade's FX compiler (6.3.3).
+  - **Fixed after the author's fourth try: "still doubled - always, standing still too; only the wrist medallions and the bow's
+    orbs, the labels, the HUD and the doll not; they simply go into both frames".** The picture the warp moves had none of them
+    (each eye's kept before they are drawn) and each eye's were drawn from its own camera - but which depth hides them was told
+    to the effect by a flag per eye (`OverlayNoHide0/1`), and which eye is the made one flips every frame. On D3D12 ReShade keeps
+    one constant buffer per effect, in memory the CPU writes, and copies the uniforms into it at every technique it renders -
+    the next frame's effects overwrite it while the graphics card, running a frame behind, has this frame's overlays still to
+    draw (ReShade 6.3.3 runtime.cpp `render_technique`: `map_buffer_region(write_discard)`, no second copy). So the eye made's
+    overlays read the next frame's flags - "this eye is drawn, the game's depth hides" - and were cut by the game's depth, which
+    is the other eye's: a medallion with the other eye's hand cut out of it, every frame, the second "copy" the author saw. Only
+    what reads the depth (the medallions, the bow's orbs, the merc tint, the arrow's glow) was hit; the labels and the HUD read no
+    flags that flip. Now the eye made has techniques of its own, `D2R_OverlayMade` / `D2R_OverlayMade_R` (the same passes,
+    `made` in the effect's `Phantom`: nothing of the scene hides them there, or with `turn_overlay_depth` its moved depth) -
+    which eye is which is the technique vrcam renders, never a uniform; the one flag left, `OverlayMadeOn`, changes only with
+    that setting. **The DLL and D2R_DepthFog.fx go together** (an older effect has no `D2R_OverlayMade`: the overlays are then
+    drawn into the picture as before eyes by turns, and the log says so). The log, every 10 s while the eyes go by turns
+    (`vrcam: eyes by turns - overlays, 10 s`): how many presents left the overlays out of the picture the warp moves (else why
+    not), how many drew them on the eye drawn and on the eye made, whether the eye the effects took as drawn was the present's,
+    and how far each eye's overlay camera is from the camera its picture shows (0 cm; the eyes' gap would mean the other eye's
+    place - shown twice). New test key `[stereo] turn_overlays_made` (1; 0 = the author's idea, "draw them only on their native
+    frames": none on the eye made, each eye shows them every other frame). Also: `turn_warp.cpp` built with MSVC again (`far`
+    is a Windows macro; the local is `farZ`). Unit test: turn_math_test *overlay camera* (the eye drawn's camera moved across
+    the gap is the eye made's, and the wrist orb from it lands on the made picture's wrist; unmoved, a tenth of the picture
+    away); the effect compiles with ReShade's FX compiler (6.3.3). Not seen in the headset.
+  - **Fixed: "the doll keeps coming off and goes twice as big".** Three checks meant for the two passes of one game frame took the
+    eyes by turns' two frames for one: the hero's facing given up for the memory search (`StructFreshness`, the facing candidates'
+    late / bad counts - a wrong copy of his matrix, of another scale, could be picked: the camera height, the world's scale and the
+    arms with it) and the hanging props stepped only every second frame (`props_once_a_pair`). Now only a pair of one game frame
+    counts (`PairOfOneFrame`). And in the eye made what is near (the doll, the hands, the weapon) stays where it was in the picture -
+    the doll is posed from the head - instead of being moved with the hero's step (`turnwarp::Held`). The default stereo stays "one pass, two pictures". The technique and the shaders'
+  shape are bearstonem/d2r-pcvr's (MIT, steamvr/turn_warp.cpp, transport.cpp TurnEye). Unit test: cleanroom/tests/turn_math_test.cpp
+  (a point moved with its depth lands where the other eye sees it, the turn, what the hero carries, the edge cut); not yet seen
+  in the headset.
+  - **Improved after bearstonem/d2r-pcvr v0.3.24 (MIT; his commits 84f560d, 4e2cc65, c72b90d, f4c181f, 6726947, 931d820, 9302744,
+    0db1e3a): no hitch when the mode starts, the eye drawn's picture to the pixel along edges, the eye made's own picture where it
+    shows the same surface.** (1) The eye made's passes were compiled and built on the draw thread at the first eye made of every
+    session - about 0.1 - 0.2 s held (pcvr's measure: 112 ms, 106 of them the compiles). Now the shaders compile once a process
+    and a worker builds the passes first (`turnwarp::Warm`); till it is done (a few frames) the other eye goes as it was last drawn,
+    and then the draw thread's own build takes a few milliseconds. A shader that fails to compile (or an exception in the
+    compiler) leaves its pass unavailable, as before, and never escapes. (2) The eye drawn this frame was moved across in 4-pixel
+    cells and a cell across a depth edge was cut whole: the eye's older picture showed through in 4-pixel steps along every edge -
+    stale where a head, a hand or a sword had moved since - and a blade thinner than a cell went as the ground behind it (pcvr's
+    owner: "ghosting on monsters' heads and on swords"). Now such a cell goes as two flat layers, at its nearest depth and its
+    farthest, and each pixel keeps to the layer its own depth is nearer; the edge test reads the cell's corners and its middle, so
+    a thin blade is caught. Only what the eye drawn could not see keeps the older picture. (3) The game's glow round a bright
+    blade, a monster's hair and its effects layer (spells, flames, Tyrael's wings) have no depth: moved across from the eye drawn
+    with the depth behind them they stood where that eye saw them - a ghost blade, a second outline of hair, the scene through the
+    wings. Now the eye made keeps its own older picture, moved with its own depth, wherever it shows the same surface as the eye
+    drawn's (within 2 pixels of parallax), by `[stereo] turns_keep_own` (Stereo tab: *... the other eye's own picture kept*, live):
+    **3 where the game's effects are (the default** - pcvr's owner compared them at Tyrael: the wings right everywhere, no ghost
+    blade); 1 round near things (the hands, the weapon, a monster close by: within `turns_keep_reach` 96 px of something nearer by
+    `turns_keep_gap` 48 px of parallax, a 4096-wide eye's pixels); 4 both; 2 everywhere (that eye then a frame behind the other all
+    over - grass, flames, monsters' motion - which pcvr's owner liked less); 0 nowhere, as before. The effects layer is found by its
+    binding (two half-float targets with a depth target, the scene's size; vr/effects_layer.cpp, looked at only while this mode is
+    on) and read into 16-pixel blocks at each eye drawn's present (`turns_effects_level` 0.02, `turns_effects_reach` 32 px). The
+    log's 10 s line says how often the own picture was kept and the effects read, and how many frames waited for the passes. pcvr's
+    DEV menu switch for the own picture is this key (live). The overlays apart (D2R_OverlayMade) are unchanged - the medallions and
+    the bow's orbs are drawn after the warp, from each eye's camera; D2R_DepthFog.fx unchanged. Not taken: pcvr's removal of Replay
+    from its stereo choices (d973882 - its Replay halved the CPU but not the frame time on his owner's PC): our menu's choices stay.
+    Unit tests: turn_math_test *split*, *keep*; new cleanroom/tests/turn_warp_gpu_test.cpp runs the passes on D3D12's software
+    device (WARP) - the warm-up, a wall / the sky / a post moved with the depth, what the hero carries, the post and a two-texel
+    blade to the pixel, the own picture kept where the same, near things, the effects (none below the level or unread), the made
+    depth beside; after pcvr's turn_warp_test (both its edge cases fail on the old shader). Not yet seen in the headset.
+- **New: `[debug] melee_press_trace` - one log line per attack press of hit by touch, for "the Amazon's touches press the attack but she never strikes"** (the author,
+  2026-10-20, test build 0.175: a short sword, every touch detected and the attack pressed with Stand Still held, "presses=15 hits=0 lost=13"; "Direct hit" lands; a
+  Barbarian or a Paladin on the same path hits; the A slot was already shown to hold the plain Attack with the bow - the sword set's own A, a slot of its own in the
+  game's controller table, was never told). The line ("melee press N: monster M, R hand - <verdict> | ...") follows ONE press to what the game did with it and starts
+  with the first step that did not happen: A never reached the game's pad poll / the A slot's skill was read as a skill, not the plain attack / the game never read the
+  slot / the cast went along the hand / the game asked for its target but was not given the touched monster / the hero never went into an attack mode / no hit came.
+  Then each step: the game's pad polls while the press was live (how many had A, when A went down and up, every button seen, the game's Stand Still at the first A);
+  the game's two reads of the pressed slot (the cast's slot selection and the unit's hand-skill setter: the slot index, what it holds, what it was answered as); the
+  controller's target lookups (the cast flags' own look that clears Stand Still, the resolver's, its hover's, the map click's: how often, what unit each was given and
+  whether it was the touched monster); the resolver's verdict (directed along the hand or the game's own target); the hero's mode at the press and the first attack
+  mode after it, with the animation row and its action frame (`[hands] quick_strike`'s cut shows there); the hit counter's verdict; and what the plugin held at the
+  press - the weapon set, each hand's item code, the A slot and the weapon set's bank as the skill panel reads them, the armed melee skill, the bow quiver's armed
+  shot, the javelin quiver's choice, the bow draw (owns the trigger, aim live), the aim mode, quick_strike's cut. The first 12 presses of a run are told whatever the
+  key says; `melee_press_trace=1` tells every one. Read only: nothing a press does changes. Unit test: cleanroom/tests/press_trace_test.cpp (vr/press_trace.h).
+- **Fixed: Stand Still never knew a press was hit by touch's** (found tracing the press above). With the plugin's own input the touch's attack goes out through
+  direct_input, and the pad hook's "is this the touch's press" was always no: the line said "stand still - press (attack)" for a touch, and an armed melee skill that
+  must move the hero (Whirlwind, Leap Attack, Charge) was still pressed with Stand Still held. Now the touch's press is known whichever way it goes: the line says
+  "press (hit by touch)", and an armed skill that moves is pressed without Stand Still, as `[gameplay] melee_skill_armed` meant. The plain attack is as it was.
+
+- **Changed: the bow's quiver ARMS its arrow skill instead of putting it on the attack button** (the author, 2026-10-20: "the quiver logic
+  works wrong: it puts some skill on the attack button A. It must work the same way as our logic for the armed skills"). The quiver
+  (`[bow] quiver` - the orbs, `quiver_next` / `quiver_prev`) set the chosen arrow skill on the A slot through the game's setter; the game
+  kept it there after the bow left the hand, the touches press A, and with a sword in hand the game read every one as Multiple Shot or
+  the like and did nothing ("presses=9 hits=0"; "Direct hit" bypasses A and did hit). Now, as `[gameplay] melee_skill_armed`: choosing
+  only arms the skill - our own state, shown in the mana medallion (`quiver_icon`); nothing is written into the game's skill slots, the
+  pad's slots or A. Each release of the bow's string (the draw; a crossbow has none) is read by the game as the armed skill through the
+  slot-skill hook the armed melee skill uses (one release, one cast; the game's own mana, cooldown, missile) - the plain arrow when the
+  hero cannot pay it (`quiver_plain_no_mana`), the icon faint then. With no bow or crossbow in hand the armed arrow skill does nothing:
+  the touches, the trigger and A are the plain attack or the armed melee skill. The same orb again (or the plain shot's, or a button
+  cycling onto it) disarms. Cleanup: with the quiver on, a bow skill on the A slot (the old quiver's, kept in the save) is given back as
+  the plain attack at the hero's load and whenever no bow or crossbow is in hand - the log says "bow quiver - the A slot holds the plain
+  attack again". The log: "bow quiver - Multiple Shot armed ...", "a release: the armed skill / the plain arrow - too little mana",
+  "bow quiver: the slot's skill (Attack, 0) was read as the armed Multiple Shot". No key removed (all still read). Unit test:
+  cleanroom/tests/bow_quiver_armed_test.cpp. Not yet tried in the game.
+- **Fixed: hit by touch on the Amazon - "the monster's capsule turns red but the strike is not pressed"** (the author, with a spear and
+  with a sword). The touch did press the attack; the game read it as a skill it would not cast with that weapon. Two ways it came there:
+  (1) the bow's quiver loads its arrow skills onto the attack's slot (A) and nothing took them off when the hero took a spear or a sword:
+  every attack went to the game as Multiple Shot or the like - refused for a melee weapon. A bow skill on that slot with no bow or
+  crossbow in hand is now read as the plain attack (or the armed melee skill); the log says "bow quiver: the slot's bow skill (N) was
+  read as ... - no bow in hand". (2) `[gameplay] melee_skill_armed`: a spear skill armed by its button (Jab, Power Strike, Impale,
+  Charged Strike, Fend, Lightning Strike - a spear or a javelin; Poison Dagger - a dagger) stayed armed when the weapon changed, and
+  every touch was that skill. A skill the weapon in hand cannot use is now the plain attack ("melee armed: ... needs a spear or javelin
+  - the weapon in hand cannot: the plain attack"). Unit test: cleanroom/tests/melee_arm_fit_test.cpp (vr/melee_arm.h NeedOf / Fits).
+  Not yet tried in the game.
+- **Fixed: the hit-by-touch capsule of spears, katars and claws did not lie on the weapon as drawn** (the players: "the spear / the Assassin's
+  katar does not hit"; the author's screenshots: the spear's capsule shifted back along the shaft, past the hand, the head bare; the katar's at
+  right angles to the blade, over the fist, in both hands). The capsule is now the weapon's own model: its tip and butt from the game's mesh
+  bounds (the spear's head on +Y); the Assassin's katars and claws lie along the bone's Z, from the knuckles to the point, the sign of that axis
+  read from the game's own pose for each hand.
+
 ## 0.174
 
 - **New, off by default: `[debug] flat_pick` - a log for "monsters cannot be targeted after a while" in flat first / third person** (a player: "aiming at

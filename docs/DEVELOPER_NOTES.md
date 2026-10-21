@@ -160,6 +160,33 @@ flat mode, the game draws WxH: a light tile is A x B px, square|not square ...; 
 - **Per-object constant buffers carry the left eye's view-space positions.**
   The eyes are parallel, so the right eye's shift is folded into its
   projection: P_right = P · T(dx).
+- **Eyes by turns makes the eye not drawn on the GPU** (`[stereo] turn_warp`, `vr/turn_warp.cpp`, `vr/turn_math.h`, after
+  bearstonem/d2r-pcvr's `steamvr/turn_warp.cpp`). `xr::CopyEye` keeps the eye drawn - its picture (a copy of the back
+  buffer in the swapchain's format), the depth our effects copied for that present (`scenedepth::Bind`, handed in by
+  `xr::SetTurnDepth` before the present) and its camera (`xr::SetTurnView`, from `VrViewInner`: both eyes' cameras in the
+  game's world for this frame's head) - then makes the other eye into its swapchain on our list: the turn, its own last
+  picture moved with its depth, the eye drawn now moved across over it. Projection: reverse-Z, infinite, so a pixel's distance
+  is `near / depth` with vrcam's `[camera] near`. Both eyes then go at this frame's pose. The kept pictures are read by the
+  next frame's list on the same queue, so no fence; the descriptor sets are a ring of 8 waited on our fence.
+  **What has no depth of the scene is drawn after the warp**, per eye: `OverlaysApart` leaves `PS_Hud`, `PS_GameHud` and
+  `PS_Phantom` out of the main techniques, and vrcam's present (`replay::XrPresent`) goes TurnKeep (the eye kept without them)
+  -> `D2R_Overlay[eye]` on the back buffer -> OnPresent -> TurnMake (the other eye into our own picture, the back buffer's
+  typeless family) -> `D2R_OverlayMade[other]` on it -> TurnFinish. The other eye's camera for those is this frame's view moved by
+  the eye gap (`g_skyView[o]`, pushed to its history each frame by turns). **Nothing per eye that flips each frame goes in a
+  uniform**: on D3D12 ReShade keeps one CPU-visible constant buffer per effect and every technique render copies the uniforms
+  into it at once (runtime.cpp render_technique, `map_buffer_region(write_discard)` - no renaming), so a frame's passes the GPU
+  has not run yet read the next frame's values. Which eye is drawn and which made flips every frame: the eye made's overlays
+  are their own technique (`D2R_OverlayMade`, `made` in `Phantom`), not a flag per eye. Checks for "the right pass of this frame" use
+  `PairOfOneFrame()`, never `g_pairNow` alone: by turns each eye is a game frame of its own.
+  From d2r-pcvr v0.3.24: the shaders compile once a process and `turnwarp::Warm` builds the passes on a worker before the draw
+  thread's `Gpu::Init` (until then TurnKeep returns: the eye goes as last drawn); the drawn eye's grid (pass 3) draws every cell
+  twice as instances - a cell across an edge as its front and back layer, each pixel discarded from the layer its own depth is not
+  in (`turn_math.h SplitCell`); pass 2 writes a readable depth test (R32 typeless) and its picture is copied (`ownTurned_`), so
+  pass 3 keeps it where the surface is the same (`KeepOwn`, `[stereo] turns_keep_own`) - round near things (16-pixel blocks of
+  the nearest depth, spread by a reach) and/or where the game's effects layer was (`vr/effects_layer.cpp` finds its two
+  half-float targets by their binding; `Gpu::Effects` reads them into each eye's blocks at TurnKeep, on our list after the
+  game's). Textures made again at another size go to xr.cpp's graveyard (`Retire`), not released under the GPU.
+  `cleanroom/tests/turn_warp_gpu_test.cpp` runs the passes on WARP.
 - **One present per stereo pair.** Two presents drifted the swap chain's
   latency until it deadlocked.
 - **Temporal effects mix the two eyes:**

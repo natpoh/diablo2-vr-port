@@ -14,6 +14,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <cstdarg>
@@ -75,6 +76,12 @@ EmptyHand g_emptyHand;                             // the hand stays empty while
 std::atomic<HeroModeFn> g_heroMode{nullptr};
 std::atomic<LibraryFn> g_libraryEnsure{nullptr};   // weightlib::Ensure (vrcam)
 std::atomic<LibraryFn> g_gripEnsure{nullptr};      // griplib::Ensure (vrcam)
+std::atomic<BodiesFn> g_bodiesSrc{nullptr};        // [weight] monster_bodies: meleetouch::Bodies (vrcam)
+ContactNote g_contactNote;                         // the last step's (under g_lock)
+uint32_t g_contactWas = 0;                         // the body it touched on the step before (0 none): a pulse a strike, not a step
+ULONGLONG g_contactPulseAt = 0, g_contactToldAt = 0;
+std::array<int, monsterbodies::kMax> g_capBone{};   // the bone of each capsule handed to the hold this step (-1: a monster's own capsule)
+struct BodiesCost { double us = 0, worst = 0; unsigned steps = 0, strikes = 0; ULONGLONG since = 0; } g_bodiesCost;   // told once a minute while the bodies are on
 std::atomic<ActionFrameFn> g_actionFrame{nullptr};
 std::atomic<GripIsThrowsFn> g_gripIsThrows{nullptr};
 std::atomic<LastThrowFn> g_lastThrow{nullptr};
@@ -261,6 +268,8 @@ void Apply(skel::Input* in, Out* out) {
         g_zoneTick[0].Reset();
         g_zoneTick[1].Reset();
         g_worldWas = worldanchor::Snap{};
+        g_contactNote = ContactNote{};
+        g_contactWas = 0;
         g_gripWas[0] = g_gripWas[1] = false;
         g_fitLogged[0].store(0xFFFFFFFFu);
         g_fitLogged[1].store(0xFFFFFFFFu);
@@ -585,7 +594,84 @@ void Apply(skel::Input* in, Out* out) {
             }
             g_worldWas = wt.worldOk ? now : worldanchor::Snap{};
         }
+        // [weight] monster_bodies: the hostile monsters near the hero as bodies, from the touch's scan (render metres) into the room through the head's frame - the very
+        // view the drawn weapon is put in the world with, run back (vr/monster_bodies.h). The weapon is put back on them after the step (cleanroom/heft/contact.h).
+        LARGE_INTEGER bodiesAt{};
+        int nBodies = 0;
+        if (wt.monsterBodies && wt.worldOk) {
+            QueryPerformanceCounter(&bodiesAt);
+            const BodiesFn src = g_bodiesSrc.load();
+            monsterbodies::Snapshot snap;
+            heft::contact::Capsule caps[monsterbodies::kMax];
+            if (src && src(&snap)) {
+                g_capBone.fill(-1);
+                monsterbodies::View view;
+                for (int i = 0; i < 3; ++i) { view.eye[i] = wt.worldEye[i]; view.camR[i] = wt.worldCamR[i]; view.camF[i] = wt.worldCamF[i]; }
+                view.upm = std::clamp(wt.worldUpm, 1.0f, 12.0f);   // (the touch's render metres are over the same, clamped so)
+                const float ident[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+                for (int i = 0; i < snap.n && nBodies < monsterbodies::kMax; ++i) {
+                    float a[3], b[3];
+                    if (!monsterbodies::RenderToHead(view, snap.b[i].bottom, a) || !monsterbodies::RenderToHead(view, snap.b[i].top, b)) continue;
+                    g_capBone[nBodies] = snap.b[i].rig ? snap.b[i].bone : -1;   // (the debug view tints the limb the weapon is on)
+                    heft::contact::Capsule& c = caps[nBodies++];
+                    c.a = ToRoom(head, a, ident).pos;
+                    c.b = ToRoom(head, b, ident).pos;
+                    c.radius = snap.b[i].rig ? snap.b[i].radius : monsterbodies::CoreRadius(snap.b[i].radius);   // (a limb is as thick as its mesh; the touch's capsule less its margin)
+                    c.id = snap.b[i].id;
+                }
+            }
+            g_hold.SetBodies(caps, nBodies);
+        } else {
+            g_hold.SetBodies(nullptr, 0);
+        }
+        s.bodies = nBodies > 0;
         g_hold.Step(hi, dt, s, g_out);
+        if (wt.monsterBodies && wt.worldOk) {   // what the weapon met: a pulse in the hands that hold it when it strikes a body, a line for the log, the cost
+            LARGE_INTEGER end;
+            QueryPerformanceCounter(&end);
+            const heft::contact::Report& c = g_hold.LastContact();
+            ContactNote note;
+            note.bodies = c.bodies;
+            note.id = c.id;
+            note.bone = c.bodies > 0 && c.body >= 0 && c.body < monsterbodies::kMax ? g_capBone[c.body] : -1;
+            note.approachMs = (float)c.approach;
+            note.depthCm = (float)(c.depth * 100.0);
+            note.slideMs = (float)c.slide;
+            // (the step with the bodies against what it costs without: the hold's step itself is a few microseconds - the whole is told, an upper bound)
+            note.costUs = (float)((double)(end.QuadPart - bodiesAt.QuadPart) * 1e6 / (double)f.QuadPart);
+            g_contactNote = note;
+            const ULONGLONG nowMs = GetTickCount64();
+            const bool strike = c.bodies > 0 && c.id != g_contactWas;   // a new body met (not every step it rests on one)
+            if (strike && c.approach >= 0.5) {
+                const HapticFn pulse = g_haptic.load();
+                if (pulse && nowMs - g_contactPulseAt >= 150) {   // (PS VR2 feels 0.7 / 45 ms; a gentler one is lost - vr/haptics.h)
+                    g_contactPulseAt = nowMs;
+                    const float amp = (float)std::clamp(0.55 + 0.45 * (c.approach - 0.5) / 3.5, 0.55, 1.0);
+                    for (int side = 0; side < 2; ++side)
+                        if (g_out[side].holds) pulse(side, amp, 45);
+                }
+                ++g_bodiesCost.strikes;
+                if (nowMs - g_contactToldAt >= 1000) {
+                    g_contactToldAt = nowMs;
+                    LogF("vrcam: weight - the weapon struck monster %u's body at %.1f m/s (%.1f cm in, put back on it): it %s; %d bod%s near, %.0f us", c.id, c.approach, c.depth * 100.0,
+                         c.slide > 0.3 ? "glances off along it" : "stops on it", nBodies, nBodies == 1 ? "y" : "ies", (double)note.costUs);
+                }
+            }
+            g_contactWas = c.bodies > 0 ? c.id : 0;
+            BodiesCost& bc = g_bodiesCost;
+            if (!bc.since) bc.since = nowMs;
+            bc.us += note.costUs;
+            bc.worst = std::max(bc.worst, (double)note.costUs);
+            ++bc.steps;
+            if (nowMs - bc.since >= 60000) {
+                LogF("vrcam: weight - monster bodies: %u steps in the last minute, %.1f us a step on average (at most %.0f), %u strikes", bc.steps, bc.us / std::max(1u, bc.steps), bc.worst, bc.strikes);
+                bc = BodiesCost{};
+                bc.since = nowMs;
+            }
+        } else {
+            g_contactNote = ContactNote{};
+            g_contactWas = 0;
+        }
         if (gripLib) {   // the pulses the grip library gives a hand: coming within reach of the shaft, closing on it, letting go
             const HapticFn pulse = g_haptic.load();
             for (int side = 0; side < 2; ++side)
@@ -781,6 +867,14 @@ void SetHeroModeSource(HeroModeFn fn) { g_heroMode.store(fn); }
 void SetLibrarySource(LibraryFn ensure) { g_libraryEnsure.store(ensure); }
 void SetGripLibrarySource(LibraryFn ensure) { g_gripEnsure.store(ensure); }
 void SetActionFrameSource(ActionFrameFn fn) { g_actionFrame.store(fn); }
+void SetBodiesSource(BodiesFn fn) { g_bodiesSrc.store(fn); }
+bool LastContact(ContactNote* out) {
+    AcquireSRWLockShared(&g_lock);
+    const ContactNote n = g_contactNote;
+    ReleaseSRWLockShared(&g_lock);
+    if (out) *out = n;
+    return n.bodies > 0;
+}
 
 void SetDrawnShaft(const float at[3], const float dir[3], float butt, float tip, float boneAlong) {
     const V3 a{at[0], at[1], at[2]}, d{dir[0], dir[1], dir[2]};
@@ -887,6 +981,8 @@ void SetHeroModeSource(HeroModeFn) {}
 void SetLibrarySource(LibraryFn) {}
 void SetGripLibrarySource(LibraryFn) {}
 void SetActionFrameSource(ActionFrameFn) {}
+void SetBodiesSource(BodiesFn) {}
+bool LastContact(ContactNote* out) { if (out) *out = ContactNote{}; return false; }
 void SetBackBody(const float*, const float*) {}
 void NoteGripFit(const GripFitNote&) {}
 void NoteShaftUnmeasured(const char*) {}

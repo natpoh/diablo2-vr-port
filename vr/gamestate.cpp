@@ -35,6 +35,7 @@
 
 #include "log_async.h"   // [debug] log_async: the plugin's log lines through a ring and a writer thread (vr/log_queue.h); off = ctx->LogInfo as ever
 #include "d2r_vr_state.h"
+#include "thrust_stroke.h"   // hit by touch's thrust: the weapon's class (1ht, 2ht) found in the item rows
 #include "link.h"
 #include "ui_ticket.h"
 #include "panel_input.h"
@@ -320,6 +321,47 @@ int ReqStrOf(const std::string& code) {
     return v <= 1000 ? (int)v : -1;
 }
 
+// Hit by touch's thrust (vr/thrust_stroke.h): the weapon's animation class - Weapons.txt "wclass", the three letters the game swings it with (1ht one-hand thrust, 2ht
+// two-hand thrust, 1hs, stf, bow...) - in its Items row, a field the SDK does not name either; found the way the ones above are: the place where a few base items whose
+// class the game's own tables fix all spell it. A build that keeps it otherwise finds none: the weapon's kind decides then (spears, daggers, javelins thrust).
+int g_classOffset = -2;                       // -2 not tried yet, -1 failed
+std::atomic<int> g_thrustSide[2] = {{-1}, {-1}};   // each hand's weapon: 1 a thrust class, 0 another, -1 not known
+
+void CalibrateWeaponClass() {
+    g_classOffset = -1;
+    if (!g_tables || g_typeOffset < 0) return;
+    // dagger, javelin, spear, trident, short sword, hand axe, short staff, short bow, light crossbow
+    static const struct { const char* code; const char* cls; } kAnchors[] = {
+        {"dgr ", "1ht"}, {"jav ", "1ht"}, {"spr ", "2ht"}, {"tri ", "2ht"}, {"ssd ", "1hs"}, {"hax ", "1hs"}, {"sst ", "stf"}, {"sbw ", "bow"}, {"lxb ", "xbw"}};
+    std::vector<thrust::ClassProbe> probes;
+    for (const auto& a : kAnchors) {
+        uint32_t size = 0;
+        if (const uint8_t* r = ItemRow(Four(a.code), &size)) probes.push_back({r, size, a.cls});
+    }
+    char b[220];
+    if (probes.size() < 6) {
+        snprintf(b, sizeof b, "gamestate: weapon class not looked for - only %d of %d probe weapons in the tables (a thrust is by kind: spear, dagger, javelin)", (int)probes.size(), (int)std::size(kAnchors));
+        Log(b);
+        return;
+    }
+    uint32_t at[4] = {};
+    const size_t found = thrust::FindClassField(probes.data(), probes.size(), at, 4);
+    if (found >= 1) g_classOffset = (int)at[0];
+    if (g_classOffset >= 0)
+        snprintf(b, sizeof b, "gamestate: weapon class at row offset 0x%X (%d place(s) fit, %d probe weapons) - a thrust is by the weapon's own class (1ht, 2ht)", g_classOffset, (int)found, (int)probes.size());
+    else snprintf(b, sizeof b, "gamestate: the weapon class field was not found (%d probe weapons) - a thrust is by kind: spear, dagger, javelin", (int)probes.size());
+    Log(b);
+}
+
+// 1: the item's class is a thrust class (1ht, 2ht); 0: another; -1 not known (no field found, or no such row).
+int ThrustOf(const std::string& code) {
+    if (code.size() != 4 || g_classOffset < 0) return -1;
+    uint32_t size = 0;
+    const uint8_t* row = ItemRow(Four(code.c_str()), &size);
+    if (!row || (uint32_t)g_classOffset + 4 > size) return -1;
+    return thrust::ThrustClass(row + g_classOffset) ? 1 : 0;
+}
+
 // The corner map for the hand kept in a corner (vr/minimap_side.h; the setter is bearstonem/d2r-pcvr's finding, MIT):
 // -1 off, else [hud] map_corner - set by vrcam in VR with [hud] map=1. Plain data only here (__try).
 std::atomic<int> g_mapSideCorner{-1};
@@ -532,6 +574,8 @@ void __cdecl ReadItems(const PluginContext* ctx, void* user) noexcept {
         g_heroStrength.store(-1);
         g_reqSide[0].store(-1);
         g_reqSide[1].store(-1);
+        g_thrustSide[0].store(-1);
+        g_thrustSide[1].store(-1);
         if (const uint32_t s = g_set.exchange(0)) keptSet = s;
         Publish();
         return;
@@ -593,6 +637,8 @@ void __cdecl ReadItems(const PluginContext* ctx, void* user) noexcept {
     if (g_typeOffset == -2) CalibrateTypes();
     if (g_objLitOffset == -2) CalibrateObjectLights();
     if (g_twoOffset == -2 && g_typeOffset >= 0) CalibrateTwoHanded();
+    if (g_classOffset == -2 && g_typeOffset >= 0) CalibrateWeaponClass();
+    for (int side = 0; side < 2; ++side) g_thrustSide[side].store(ThrustOf(code[side]));   // hit by touch's thrust: each hand's weapon's class (vr/thrust_stroke.h)
     ReadSkills();
     if (!g_wantStrength.load()) {                                                      // [weight] hero_strength unticked: nothing of the game is asked
         g_heroStrength.store(-1);
@@ -960,6 +1006,7 @@ uint32_t TwoHanded() { return g_two.load(); }
 uint32_t WeaponHand() { return g_from.load(); }
 uint32_t HandKind(int side) { return g_kindSide[side & 1].load(); }
 uint32_t HandCode(int side) { return g_codeSide[side & 1].load(); }
+int HandThrust(int side) { return g_thrustSide[side & 1].load(); }            // hit by touch's thrust: 1 the weapon in a hand is of a thrust class (1ht, 2ht), 0 not, -1 not known
 void SetWantHeroStrength(bool on) { g_wantStrength.store(on); }              // [weight] hero_strength: ticked or not - only then is the stat (and the weapon's requirement) read
 int HeroStrength() { return g_heroStrength.load(); }                          // ... the hero's Strength stat, -1 not read
 int HandRequiredStrength(int side) { return g_reqSide[side & 1].load(); }    // ... the Strength requirement of the weapon in a hand (0 right, 1 left), -1 not known

@@ -29,6 +29,7 @@
 
 #include <cstdint>
 
+#include "contact.h"
 #include "heft.h"
 
 namespace heft::hold {
@@ -36,6 +37,9 @@ namespace heft::hold {
 // The weapons by shape (D2R VR's kinds, shared/d2r_vr_state.h, are mapped onto these by the mod).
 enum class Kind { Dagger, Sword, Axe, Mace, Scepter, Wand, Staff, Polearm, Spear, Javelin, Throwing, Other, Count };
 const char* KindName(Kind k);
+// How much a body holds back a weapon of this kind sliding along it (Coulomb's friction, contact.h): an edge or a point little - a slash at a shallow angle glances off - a
+// blunt weapon much: a mace, a scepter, a staff, a wand stop where they strike.
+double BodyFriction(Kind k);
 
 // A weapon along its shaft, in metres from where the game's fist holds it: from `butt` (behind the
 // fist, negative) to `tip`, and its steel as pieces along +Y.
@@ -109,6 +113,8 @@ struct Settings {
 	int    model        = 0;      // the physics of the held body: 0 our own (below); 1 a weight-physics library's, when one is loaded (SetEngine) - else ours
 	unsigned modelFlags = 0;      // the library's own switches (bit 0: the weapon's weight in the palm), handed to it as they are
 	int    gripModel    = 0;      // how a hand holds the shaft: 0 our own (the grip alone holds it, the second hand slides while it is squeezed); 1 a grip library's, when one is loaded (SetGripEngine) - else ours
+	bool   bodies       = false;  // [weight] monster_bodies: the held weapon meets the bodies it is given (Hold::SetBodies, contact.h) - it stops on them or glances off, the controllers go on
+	double bodyFriction = -1;     // ... how much a body holds back the weapon's slide along it (contact::Params::friction); < 0: by the weapon's kind (BodyFriction)
 };
 // The hands for the gravity feel ([weight] gravity_feel): the soft wrist profiles in place of the stiff ones.
 inline void UseGravityFeel(Settings& s) {
@@ -240,6 +246,12 @@ public:
 	// frame late is fine); the weapon flies from there when it is taken or called back. Before the first one the
 	// weapon goes to the back from where it lay.
 	void SetStowPose(const Pose& p) { stowPose_ = p; }
+	// The bodies the held weapon meets this step (Settings::bodies), in the room - the monsters near the hero, posed now (the mod's vr/monster_bodies.h): up to kBodies, kept until
+	// the next call. A body the hand that carries the weapon is inside of is left alone (the controller is in it: there is nothing to push against). Only a weapon in the hands meets them.
+	static constexpr int kBodies = 64;   // (a monster's limbs are a capsule each: vr/monster_rig.h)
+	void SetBodies(const contact::Capsule* bodies, int n);
+	// What the weapon met on the last step: Report::bodies 0 when nothing (or Settings::bodies is off, or no hand holds it).
+	const contact::Report& LastContact() const { return contact_; }
 	// A THROWN weapon (the mod knows the release was a throw - vr/weight_throw.h): once it is out of the hands it flies and falls like any weapon let go,
 	// but it is not for taking, calling back or stowing - it only has to end (the mod places a fresh one in the hand when it does). Armed while a
 	// hand still holds it (the throw may be known a frame before the grip is seen open); a no-op while it flies back into a hand.
@@ -320,6 +332,9 @@ private:
 	LineState line_state_[2];       // a grip library's state for each hand
 	double   builtWeight_ = -1;     // the steel's mass multiplier the body was built with (Build): another one rebuilds it
 	bool     lineQuiet_[2] = {};    // the hand a weapon was placed in: its first "closed on it" is no pulse (a swap, an area change, the arms back on the controllers)
+	contact::Capsule bodies_[kBodies];   // SetBodies
+	int      nBodies_ = 0;
+	contact::Report contact_;       // the last step's
 	double   on_[2] = {};
 	Controller last_[2];
 	bool     haveLast_ = false;

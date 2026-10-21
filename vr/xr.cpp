@@ -30,6 +30,7 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "xr.h"
@@ -56,6 +57,8 @@ int D2rvrHoverSpheres(float (*out)[8], int max);
 #include "body_calibration.h"   // StandingEyeY: the standing eyes' height over the floor, from the T-pose measurement
 #include "views3d.h"   // [openxr] views_3d: F1 as a window, F3 as the room (the pure maths)
 #include "eye_gap.h"   // [openxr] ipd_auto / ipd_mm: the eye distance of the stereo pair - the runtime's or the player's (the pure maths)
+#include "turn_warp.h"   // [stereo] turn_warp: by turns, the eye not drawn made on the GPU (turn_math.h the maths)
+#include "effects_layer.h"   // [stereo] turns_keep_own 3, 4: where the game's effects are in the eye drawn
 #include "eye_frame.h"   // [openxr] canted_eyes: both eyes drawn and submitted in the head's frame when the displays are canted (the pure maths)
 #include "hset_panel.h"   // the in-headset settings panel ([openxr] headset_settings): vr/xr_headset_settings.h
 #include "hset_life.h"
@@ -77,7 +80,10 @@ int D2rvrHoverSpheres(float (*out)[8], int max);
 #include "wheel_paint.h"
 #include "xr_profiles.h"   // [openxr] frame_profile, index_grip_force: Steam Frame's own layout, the Index grip by force
 #include "xr_stick_check.h"   // is the thumbstick bound by the runtime? (the report of 2026-10-18: SteamVR kept a binding saved for the program)
+#include "menu_zoom.h"   // [openxr] menu_zoom: the right grip + the right stick bring a game panel nearer / farther (MenuZoomPre / Post)
+#include "ini_txn.h"     // ... and its distance written to [screen] menu_distance_m
 #include "hand_vitals_wire.h"   // [hud] hand_vitals: life and mana on the hand when the palm turns to the face (vr/xr_hand_vitals.h is its layer)
+#include "thrust_debug_wire.h"   // [debug] thrust_debug: the thrust's readout over the weapon hand (vr/xr_thrust_debug.h is its layer)
 #include "wrist_status_wire.h"   // [hud] wrist_status: companions and effects over a wrist turned to the eyes (vr/xr_wrist_status.h is its two layers)
 
 namespace gamestate { void SetStickBits(uint32_t bits); }   // the thumbstick check's verdict for D2R VR Settings (vr/gamestate.cpp, the state block)
@@ -116,6 +122,13 @@ struct Cfg {
     float quadWidthM = 2.4f;  // and this wide
     float leanM = 0.10f;      // the head may move this far from the body sideways (lean_m); farther, the body follows
     bool byTurns = false;     // eyes by turns ([stereo] afr without pair_per_tick): one eye a game frame
+    bool turnWarp = true;     // [stereo] turn_warp: by turns, the eye not drawn made on the GPU (vr/turn_warp.h); 0 = as last drawn, at its own pose
+    bool turnFromDrawn = true;   // [stereo] turn_from_drawn: ... with the eye drawn this frame moved across over it (0: its own last picture alone)
+    bool turnOverlayDepth = true;    // [stereo] turn_overlay_hide: the made eye's depth moved with it, its overlays hidden by it (0: hidden by nothing)
+    bool turnOverlaysMade = true;    // [stereo] turn_overlays_made: the overlays drawn on the eye made too, from its own camera (0: on the eye drawn alone - a test)
+    int turnKeepOwn = turnwarp::kKeepDefault;   // [stereo] turns_keep_own: the eye made keeps its own picture where it shows the same surface (turn_math.h KeepOwn)
+    float turnKeepGap = turnwarp::kKeepGapPx, turnKeepReach = turnwarp::kKeepReachPx;          // turns_keep_gap, turns_keep_reach: near things, a 4096-wide eye's pixels
+    float turnEffectsLevel = turnwarp::kEffectsLevel, turnEffectsReach = turnwarp::kEffectsReachPx;   // turns_effects_level, turns_effects_reach
     bool frameProfile = true; // frame_profile: Steam Frame's controllers in their own layout when the runtime offers it (vr/xr_profiles.h); taken at a session start
     bool indexGripForce = false;   // index_grip_force: an Index hand's grip is how hard it squeezes (squeeze/force), not the fingers round the handle
     bool menusWaitTracking = true;   // menus_wait_tracking: the flat picture / menu panel placed only once the head is tracked, again after a focus loss (vr/anchor_gate.h)
@@ -128,6 +141,8 @@ struct Cfg {
     bool pointer3d = true;    // pointer_3d: the game's mouse pointer drawn on F1's and F3's ground in 3D (vr/pointer3d.h); clicks and the mouse are not touched
     bool views3d = true;      // views_3d: F1 (a window of the room onto the game) and F3 (the diorama in the room) drawn with the runtime's eyes (vr/views3d.h); 0 = the flat picture
     bool menu3d = true;       // menu_3d: a menu in F4 as a panel of its own, the world in stereo behind it (HangPanel); on since tested (2026-10-13)
+    bool menuZoom = true;     // menu_zoom: the right grip + the right stick bring that panel nearer / farther, written to [screen] menu_distance_m (vr/menu_zoom.h)
+    float menuZoomSpeed = menuzoom::kSpeedDefault;   // menu_zoom_speed_mps: metres a second at the stick's full travel
     bool headsetSettings = false;   // headset_settings: a settings panel in the headset, opened with both grips squeezed and a thumbstick click (vr/xr_headset_settings.h)
     bool runesDraw = false;   // runes_draw: BodyWalk's gesture runes and the hand's trail drawn in the headset, F4 only (vr/xr_runes.h)
     bool haptics = false;     // haptics: pulses in the controllers (vr/haptics.cpp; the output action is made either way)
@@ -1041,6 +1056,7 @@ void LaserTeardown();
 void WheelTeardown();   // the skill wheel's picture, below (xr_skill_wheel.h)
 void RunesTeardown();   // the gesture runes' atlas, below (xr_runes.h)
 void VitalsTeardown();   // the hand vitals panel's picture, below (xr_hand_vitals.h)
+void ThrustDebugTeardown();   // the thrust debug's readout, below (xr_thrust_debug.h)
 void WristStatusTeardown();   // the wrist status panels' pictures, below (xr_wrist_status.h)
 void HsStep(D2RVR_XrInput& in, bool focused);   // the settings panel, below (xr_headset_settings.h)
 void HsTeardown();
@@ -1062,6 +1078,101 @@ void FeedCalibration(const D2RVR_XrInput& in, const bool located[2], bool focuse
     }
     f.cancel = (in.hand[1].buttons & BW_LINK_XRB_SECONDARY) != 0;   // B on the right controller
     calib::Feed(f);
+}
+
+// -- [openxr] menu_zoom: the right grip + the right stick bring a game panel nearer / farther (vr/menu_zoom.h) ---------------
+// A game panel hung in front in F4 (HangPanel: the inventory, the stash, a trader, the waypoints...): the right grip held and the
+// stick forward brings it nearer, back sends it farther, live (FlatDistance follows at once, no easing); let go, the distance goes
+// to [screen] menu_distance_m on a thread of its own (shared/ini_txn) and the panel stays there until the ini reads the same.
+// The stick's Y is nobody else's while the grip is held; the grip's own press (the menu's right bumper, where the laser did not
+// take it) is a tap on letting go without a zoom - so taking the panel never turns the trader's or the stash's page.
+menuzoom::Grab g_zoom;
+float g_zoomLiveM = 0.0f;    // > 0: the panel's distance as the grip left it, until the ini says the same (or 3 s pass)
+double g_zoomLiveUs = 0.0, g_zoomStepUs = 0.0;
+uint32_t g_panelTexW = 0, g_panelTexH = 0;   // the game panel's picture, as HangPanel last hung it
+std::atomic<float> g_zoomSaveWant{0.0f};
+std::atomic<bool> g_zoomSaving{false};
+
+// A game panel's distance now: the grip's, else the panels' key ([screen] menu_distance_m; 0 there: the menus')
+float PanelDistanceM() {
+    if (g_zoomLiveM > 0.0f) return g_zoomLiveM;
+    return g_cfg.panelM > 0.0f ? g_cfg.panelM : g_cfg.quadM;
+}
+
+void ZoomSaveRun() {
+    for (;;) {
+        const float m = g_zoomSaveWant.exchange(0.0f);
+        if (!(m > 0.0f)) {
+            g_zoomSaving.store(false);
+            if (g_zoomSaveWant.load() > 0.0f && !g_zoomSaving.exchange(true)) continue;   // one came in as this one ended
+            return;
+        }
+        wchar_t v[32];
+        swprintf_s(v, L"%.2f", m);
+        ini::Result r = ini::Result::Failed;
+        std::string why;
+        for (int attempt = 0; attempt < 2 && r != ini::Result::Saved; ++attempt) {   // (a conflict: written by someone between the read and the replace - read again)
+            const ini::Text now = ini::Read(g_iniPath, L"screen", L"menu_distance_m");
+            const ini::Change c{L"screen", L"menu_distance_m", L"1.6", now.present ? now.text : L"1.6", v};
+            r = ini::Commit(g_iniPath, {c}, nullptr, &why);
+        }
+        if (r == ini::Result::Saved) LogF("vrcam: openxr - menu zoom: [screen] menu_distance_m=%.2f written", m);
+        else LogF("vrcam: openxr - menu zoom: [screen] menu_distance_m=%.2f NOT written (%s: %s) - the panel goes back to the ini's", m,
+                  r == ini::Result::Conflict ? "changed meanwhile" : "failed", why.c_str());
+    }
+}
+void ZoomSave(float m) {
+    g_zoomSaveWant.store(m);
+    if (!g_zoomSaving.exchange(true)) std::thread(ZoomSaveRun).detach();
+}
+
+// Before the laser: the right hand's raw controls; the stick's Y and a trigger squeezed while zooming are taken out of `in`.
+void MenuZoomPre(D2RVR_XrInput& in, bool focused) {
+    const double t = UsNow();
+    const float dt = g_zoomStepUs > 0.0 ? (float)((t - g_zoomStepUs) * 1e-6) : 0.0f;
+    g_zoomStepUs = t;
+    D2RVR_XrHand& o = in.hand[1];
+    menuzoom::In z;
+    z.applies = g_cfg.menuZoom && focused && viewgate::F4() && g_kind == kPair && g_cfg.menu3d && g_flatShown.ok && g_panelOpen.load() && !g_hsOpen.load();
+    z.grip = (o.buttons & BW_LINK_XRB_SQUEEZE) ? 1.0f : o.squeeze;
+    z.trigger = o.trigger;
+    z.triggerClick = (o.buttons & BW_LINK_XRB_TRIGGER) != 0;
+    z.stickY = o.stickY;
+    z.dtS = dt;
+    z.distance = PanelDistanceM();
+    z.speed = g_cfg.menuZoomSpeed;
+    if (g_viewsOk && g_panelTexW && g_panelTexH) {
+        const vrres::Size rec = vrres::Unpack(g_vrRecommended.load());
+        menuzoom::Eye eyes[2];
+        for (int e = 0; e < 2; ++e) {
+            const XrFovf& f = g_views[e].fov;
+            eyes[e] = {tanf(f.angleLeft), tanf(f.angleRight), tanf(f.angleUp), tanf(f.angleDown), rec.w, rec.h};
+        }
+        z.limits = menuzoom::LimitsFor(g_cfg.quadWidthM, g_cfg.quadWidthM * (float)g_panelTexH / (float)g_panelTexW, g_panelTexW, g_panelTexH, eyes);
+    }
+    const menuzoom::Pre p = g_zoom.StepPre(z);
+    if (p.takeY) o.stickY = 0.0f;
+    if (p.takeTrigger) { o.trigger = 0.0f; o.buttons &= ~(uint32_t)BW_LINK_XRB_TRIGGER; }
+    if (p.zooming) { g_zoomLiveM = p.distance; g_zoomLiveUs = t; }
+    if (p.save) {
+        g_zoomLiveM = menuzoom::Saved(p.distance);
+        g_zoomLiveUs = t;
+        ZoomSave(g_zoomLiveM);
+        LogF("vrcam: openxr - menu zoom: the panel %.2f -> %.2f m (readable %.2f - %.2f m%s; %.2f m wide, its picture %ux%u)", p.from, g_zoomLiveM,
+             z.limits.nearM, z.limits.farM, z.limits.derived ? ": all of it in sight - a display pixel over at most two of its texels" : ": the key's range, the eyes not known",
+             g_cfg.quadWidthM, g_panelTexW, g_panelTexH);
+    } else if (!p.zooming && g_zoomLiveM > 0.0f &&
+               (std::fabs(g_cfg.panelM - g_zoomLiveM) < 0.5f * menuzoom::kSaveStepM || t - g_zoomLiveUs > 3e6)) {
+        g_zoomLiveM = 0.0f;   // the ini says the same now (or never will: the panel goes back to what it says)
+    }
+}
+
+// After the laser: the grip, if it still reaches the game (the laser did not take it), waits while it may be the zoom's.
+void MenuZoomPost(D2RVR_XrInput& in) {
+    D2RVR_XrHand& o = in.hand[1];
+    const menuzoom::Post p = g_zoom.StepPost((o.buttons & BW_LINK_XRB_SQUEEZE) != 0 || o.squeeze > 0.0f, GetTickCount64());
+    if (p.hideGrip) { o.squeeze = 0.0f; o.buttons &= ~(uint32_t)BW_LINK_XRB_SQUEEZE; }
+    if (p.tapGrip) { o.squeeze = 1.0f; o.buttons |= BW_LINK_XRB_SQUEEZE; }
 }
 
 void Publish(bool focused) {
@@ -1168,7 +1279,9 @@ void Publish(bool focused) {
     }
     HsStep(in, focused);      // the settings panel, when it is up, has both hands: nothing of them goes on
     FeedCalibration(in, located, focused);
+    MenuZoomPre(in, focused);   // [openxr] menu_zoom: the right stick's Y while the right grip holds a game panel is the zoom's (before the laser parks for it)
     LaserStep(in, focused);   // what the laser takes is not BodyWalk's
+    MenuZoomPost(in);           // ... and the grip's own press waits until it is let go without a zoom
     directinput::Feed(&in, g_laserWanted.load(), g_touch);   // the gestures' listeners, and [openxr] direct_input's pad, actions, commands and head (and the finger's touch)
     g_lastPublishTime = g_fs.predictedDisplayTime;
     in.stamp = D2RVRStampNow();
@@ -1226,6 +1339,8 @@ void FlushHaptics() {
 // -- start: instance, system, session (a worker thread) ------------------------
 void WaitFence(UINT64 v, DWORD ms);   // (the copy list, below)
 void SweepGraveyard(bool all);
+void TurnTeardown();   // eyes by turns' kept pictures and pass (below)
+void TurnFrameEnd();   // ... the frame's steps given up: the other eye's image given back if vrcam did not finish (CloseFrame)
 void Teardown() {   // under g_lock or before the session exists
     g_running.store(false);
     gpufault::Note("xr: teardown");
@@ -1234,6 +1349,7 @@ void Teardown() {   // under g_lock or before the session exists
         WaitFence(g_fenceV, 500);
     }
     SweepGraveyard(true);
+    TurnTeardown();   // (after the wait: our lists that read them are done)
     g_hapticTimer->Cancel();   // [openxr] haptics_stop: no stop called on what goes below
     AcquireSRWLockExclusive(&g_hapticStopLock);
     g_hapticStopOk = false;
@@ -1250,6 +1366,7 @@ void Teardown() {   // under g_lock or before the session exists
     WheelTeardown();   // the skill wheel closed, its picture gone
     RunesTeardown();   // the gesture runes' atlas
     VitalsTeardown();  // the hand vitals panel's picture gone
+    ThrustDebugTeardown();   // the thrust debug's readout gone
     WristStatusTeardown();   // the wrist status panels' pictures gone
     g_panelPlace = PanelPlace{};
     g_gate[0] = g_gate[1] = focusgate::Gate{};   // a new session: what is down at its start is held back too
@@ -2796,6 +2913,7 @@ uint32_t HangLaser(const XrCompositionLayerBaseHeader** layers, uint32_t nl, uin
 #include "xr_skill_wheel.h"         // the skill wheel in the headset ([openxr] skill_wheel): uses what is above
 #include "xr_runes.h"               // BodyWalk's gesture runes in the headset ([openxr] runes_draw): uses what is above
 #include "xr_hand_vitals.h"        // the hand vitals panel ([hud] hand_vitals): uses what is above
+#include "xr_thrust_debug.h"       // the thrust debug's readout ([debug] thrust_debug): uses what is above
 #include "xr_wrist_status.h"       // the wrist status panels ([hud] wrist_status): uses what is above
 
 bool CopyInto(Chain& c, ID3D12Resource* bb) {
@@ -3273,6 +3391,7 @@ float FlatDistance(bool fresh) {
     static double since = 0.0;
     const float target = g_panelOpen.load() && g_cfg.panelM > 0.0f ? g_cfg.panelM : g_cfg.quadM;
     const double t = UsNow();
+    if (g_panelOpen.load() && g_zoomLiveM > 0.0f) { from = to = now = g_zoomLiveM; since = t; return now; }   // [openxr] menu_zoom: where the grip puts it, at once
     if (fresh || !(now > 0.0f)) { from = to = now = target; since = t; return now; }
     if (target != to) { from = now; to = target; since = t; }
     const float k = (float)std::min(1.0, (t - since) / 400000.0);
@@ -3334,6 +3453,7 @@ uint32_t HangPanel(const XrCompositionLayerBaseHeader** layers, uint32_t nl, uin
     panel.size = {g_cfg.quadWidthM, g_cfg.quadWidthM * (float)src.h / (float)src.w};
     layers[nl++] = (const XrCompositionLayerBaseHeader*)&panel;
     g_flatShown = FlatShown{panel.pose, panel.size, true};   // where the next frame's laser points
+    g_panelTexW = src.w; g_panelTexH = src.h;                // ... and how readable it is nearer / farther ([openxr] menu_zoom)
     if (nl < max && PointerQuad(panel, &pointer)) layers[nl++] = (const XrCompositionLayerBaseHeader*)&pointer;
     if (!P.told) {
         P.told = true;
@@ -3434,6 +3554,7 @@ uint32_t HangCalibration(const XrCompositionLayerBaseHeader** layers, uint32_t n
 
 void CloseFrame() {
     if (g_kind == kNone) return;
+    TurnFrameEnd();   // eyes by turns: an image acquired for the eye made goes back before the frame's layers (normally TurnFinish did)
     const double closeUs = UsNow();   // the layers built from here, xrEndFrame from endUs (g_clock)
     XrCompositionLayerProjectionView pv[2] = {{XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW}, {XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW}};
     XrCompositionLayerProjection proj{XR_TYPE_COMPOSITION_LAYER_PROJECTION};
@@ -3442,9 +3563,10 @@ void CloseFrame() {
     XrCompositionLayerQuad ptr3d{XR_TYPE_COMPOSITION_LAYER_QUAD};   // F1 / F3 in 3D (pointer_3d): the game's pointer on the ground
     XrCompositionLayerQuad beam{XR_TYPE_COMPOSITION_LAYER_QUAD}, dot{XR_TYPE_COMPOSITION_LAYER_QUAD};
     XrCompositionLayerQuad hsPanel{XR_TYPE_COMPOSITION_LAYER_QUAD}, hsBeam{XR_TYPE_COMPOSITION_LAYER_QUAD}, hsDot{XR_TYPE_COMPOSITION_LAYER_QUAD};
-    const uint32_t hsRoom = (g_hsOpen.load() ? 3 : 0) + (calib::PanelNow().show ? 2 : 0) + (skillwheel::Enabled() ? 3 : 0) + (handvitals::PanelOn() ? 1 : 0) + (wriststatus::Enabled() ? 2 : 0);   // the settings panel's three layers, the T-pose prompt's two, the skill wheel's three, the hand vitals' one and the wrist status' two, hung last
+    const uint32_t hsRoom = (g_hsOpen.load() ? 3 : 0) + (calib::PanelNow().show ? 2 : 0) + (skillwheel::Enabled() ? 3 : 0) + (handvitals::PanelOn() ? 1 : 0) + (wriststatus::Enabled() ? 2 : 0) + (thrustdebugwire::Wanted() ? 1 : 0);   // the settings panel's three layers, the T-pose prompt's two, the skill wheel's three, the hand vitals' one and the wrist status' two, hung last
     XrCompositionLayerQuad wheelPanel{XR_TYPE_COMPOSITION_LAYER_QUAD}, wheelBeam{XR_TYPE_COMPOSITION_LAYER_QUAD}, wheelDot{XR_TYPE_COMPOSITION_LAYER_QUAD};
     XrCompositionLayerQuad vitalsPanel{XR_TYPE_COMPOSITION_LAYER_QUAD};   // [hud] hand_vitals: one layer over the hand
+    XrCompositionLayerQuad thrustPanel{XR_TYPE_COMPOSITION_LAYER_QUAD};   // [debug] thrust_debug: one layer over the weapon hand
     XrCompositionLayerColorScaleBiasKHR vitalsScale{XR_TYPE_COMPOSITION_LAYER_COLOR_SCALE_BIAS_KHR};
     XrCompositionLayerQuad wsPanel[2] = {{XR_TYPE_COMPOSITION_LAYER_QUAD}, {XR_TYPE_COMPOSITION_LAYER_QUAD}};   // [hud] wrist_status: one layer over each wrist
     XrCompositionLayerColorScaleBiasKHR wsScale[2] = {{XR_TYPE_COMPOSITION_LAYER_COLOR_SCALE_BIAS_KHR}, {XR_TYPE_COMPOSITION_LAYER_COLOR_SCALE_BIAS_KHR}};
@@ -3502,6 +3624,7 @@ void CloseFrame() {
         nl = HangPlate(layers, nl, most);   // the targeted monster's health bar over its head ([hud] monster_bar_room)
         if (laser) nl = HangLaser(layers, nl, most, beam, dot);
         nl = HangVitals(layers, nl, most, vitalsPanel);   // life and mana over the hand turned to the face (F4)
+        nl = HangThrustDebug(layers, nl, most, thrustPanel);   // [debug] thrust_debug: the last thrust's numbers over the weapon hand (F4)
         nl = HangWristStatus(layers, nl, most, wsPanel);   // companions and effects over a wrist turned to the eyes (F4)
         nl = HangCalibration(layers, nl, most);   // the T-pose measurement's prompt
         nl = HangSettings(layers, nl, most, hsPanel, hsBeam, hsDot);   // the settings panel, nearest of all
@@ -3662,6 +3785,14 @@ void LoadSettings(const wchar_t* ini) {
         const float v = wcstof(b, &end);
         return end != b && std::isfinite(v) ? v : def;
     };
+    auto fs = [&](const wchar_t* key, float def) {   // the same from [stereo]
+        wchar_t b[64], d[64];
+        swprintf_s(d, L"%g", def);
+        GetPrivateProfileStringW(L"stereo", key, d, b, 64, ini);
+        wchar_t* end = nullptr;
+        const float v = wcstof(b, &end);
+        return end != b && std::isfinite(v) ? v : def;
+    };
     // on: live - switched on, the session starts at the next first-person pair (after a
     // failure too: it is tried again); switched off, it ends and FlatVR comes back
     static int was = -1;
@@ -3751,6 +3882,65 @@ void LoadSettings(const wchar_t* ini) {
                       : "vrcam: openxr - both eyes from one game frame");
         }
         g_cfg.byTurns = turns;
+        // the eye not drawn made from pictures already drawn (bearstonem/d2r-pcvr's by turns), live
+        const bool warp = GetPrivateProfileIntW(L"stereo", L"turn_warp", 1, ini) != 0;
+        const bool fromDrawn = GetPrivateProfileIntW(L"stereo", L"turn_from_drawn", 1, ini) != 0;
+        static int saidWarp = -1;
+        if (on && turns && (int)warp * 2 + (int)fromDrawn != saidWarp) {
+            saidWarp = (int)warp * 2 + (int)fromDrawn;
+            Log(!warp ? "vrcam: openxr - eyes by turns: the eye not drawn as it was last drawn, the runtime turns it ([stereo] turn_warp=0)"
+                : fromDrawn ? "vrcam: openxr - eyes by turns: the eye not drawn made on the GPU - the eye drawn this frame moved across with its depth, "
+                              "its own last picture moved with its depth under it ([stereo] turn_warp=1, turn_from_drawn=1)"
+                            : "vrcam: openxr - eyes by turns: the eye not drawn made on the GPU from its own last picture moved with its depth "
+                              "([stereo] turn_warp=1, turn_from_drawn=0)");
+        }
+        g_cfg.turnWarp = warp;
+        g_cfg.turnFromDrawn = fromDrawn;
+        // The made eye's overlays hidden by its own depth, moved with its picture ([stereo] turn_overlay_hide, 1). Off (0.175's
+        // turn_overlay_depth=0) nothing hid them there: the medallions showed through the hands every second frame of each eye (the author,
+        // test-0176). With it on they had come out doubled (2026-10-20) - by causes since gone: the made depth was the drawn eye's at 4-pixel
+        // cells cut at the hand's edges (now to the pixel, turn_warp.cpp), and the eye made's flag was a uniform the next frame overwrote
+        // (now its technique, D2R_OverlayMade). The older key turn_overlay_depth is no longer read.
+        const bool overlayDepth = GetPrivateProfileIntW(L"stereo", L"turn_overlay_hide", 1, ini) != 0;
+        static int saidOv = -1;
+        if (on && turns && warp && (int)overlayDepth != saidOv) {
+            saidOv = overlayDepth;
+            Log(overlayDepth ? "vrcam: openxr - eyes by turns: the made eye's overlays hidden by its own depth, moved with its picture ([stereo] turn_overlay_hide=1)"
+                             : "vrcam: openxr - eyes by turns: the made eye's overlays hidden by nothing of the scene ([stereo] turn_overlay_hide=0)");
+        }
+        g_cfg.turnOverlayDepth = overlayDepth;
+        // the author's idea ("draw them only on their native frames", 2026-10-20): the overlays on the eye drawn this frame alone - a
+        // test of where a second medallion comes from (vrcam's 10 s overlay line); 1: each eye's own, the eye made's from its camera
+        const bool overlaysMade = GetPrivateProfileIntW(L"stereo", L"turn_overlays_made", 1, ini) != 0;
+        static int saidMade = -1;
+        if (on && turns && warp && (int)overlaysMade != saidMade) {
+            saidMade = overlaysMade;
+            Log(overlaysMade ? "vrcam: openxr - eyes by turns: the overlays drawn on each eye's own picture, the eye made's from its own camera ([stereo] turn_overlays_made=1)"
+                             : "vrcam: openxr - eyes by turns: the overlays drawn on the eye drawn this frame alone, none on the eye made - a test ([stereo] turn_overlays_made=0)");
+        }
+        g_cfg.turnOverlaysMade = overlaysMade;
+        // bearstonem/d2r-pcvr v0.3.24 (MIT): the eye made keeps its own picture where it shows the same surface as the eye drawn - the
+        // game's glow round a blade, hair and its effects (spells, flames, Tyrael's wings) have no depth and, moved across from the eye
+        // drawn, stood where that eye saw them; live
+        const int keepOwn = std::clamp((int)GetPrivateProfileIntW(L"stereo", L"turns_keep_own", turnwarp::kKeepDefault, ini), 0, 4);
+        static int saidKeep = -1;
+        if (on && turns && warp && fromDrawn && keepOwn != saidKeep) {
+            saidKeep = keepOwn;
+            static const char* const kSaid[5] = {
+                "vrcam: openxr - eyes by turns: the eye made takes the eye drawn's picture wherever it reaches ([stereo] turns_keep_own=0)",
+                "vrcam: openxr - eyes by turns: the eye made keeps its own picture where it shows the same surface, round near things ([stereo] turns_keep_own=1)",
+                "vrcam: openxr - eyes by turns: the eye made keeps its own picture wherever it shows the same surface ([stereo] turns_keep_own=2)",
+                "vrcam: openxr - eyes by turns: the eye made keeps its own picture where it shows the same surface, where the game's effects are ([stereo] turns_keep_own=3)",
+                "vrcam: openxr - eyes by turns: the eye made keeps its own picture where it shows the same surface, round near things and where the game's effects are "
+                "([stereo] turns_keep_own=4)"};
+            Log(kSaid[keepOwn]);
+        }
+        g_cfg.turnKeepOwn = keepOwn;
+        g_cfg.turnKeepGap = std::clamp(fs(L"turns_keep_gap", turnwarp::kKeepGapPx), 1.0f, 1000.0f);
+        g_cfg.turnKeepReach = std::clamp(fs(L"turns_keep_reach", turnwarp::kKeepReachPx), 16.0f, 1024.0f);
+        g_cfg.turnEffectsLevel = std::clamp(fs(L"turns_effects_level", turnwarp::kEffectsLevel), 1e-4f, 100.0f);
+        g_cfg.turnEffectsReach = std::clamp(fs(L"turns_effects_reach", turnwarp::kEffectsReachPx), 0.0f, 512.0f);
+        effectslayer::SetWanted(on && turns && warp && fromDrawn && keepOwn >= turnwarp::kKeepEffects);
     }
     g_cfg.bareHands = f(L"bare_hands", 0.0f) != 0.0f;
     g_cfg.frameProfile = f(L"frame_profile", 1.0f) != 0.0f;   // (taken at the next session start)
@@ -3809,6 +3999,19 @@ void LoadSettings(const wchar_t* ini) {
             said = g_cfg.menu3d;
             Log(g_cfg.menu3d ? "vrcam: openxr - menus in F4 as a panel in front, the world in stereo behind it ([openxr] menu_3d=1)"
                              : "vrcam: openxr - menus in F4 as the flat picture ([openxr] menu_3d=0)");
+        }
+    }
+    {   // the right grip + the right stick bring a game panel nearer / farther (D2R VR Settings > UI: F4 body > Menus), live
+        g_cfg.menuZoom = f(L"menu_zoom", 1.0f) != 0.0f;
+        g_cfg.menuZoomSpeed = std::clamp(f(L"menu_zoom_speed_mps", menuzoom::kSpeedDefault), menuzoom::kSpeedMin, menuzoom::kSpeedMax);
+        static int said = -1;
+        if (on && (int)g_cfg.menuZoom != said) {
+            said = g_cfg.menuZoom;
+            if (g_cfg.menuZoom)
+                LogF("vrcam: openxr - a game panel in F4 (inventory, stash, trader...): the right grip held + the right stick forward / back bring it nearer / farther "
+                     "at %.2f m/s, written to [screen] menu_distance_m on letting go ([openxr] menu_zoom=1)", g_cfg.menuZoomSpeed);
+            else
+                Log("vrcam: openxr - the right grip + stick leave a game panel's distance alone ([openxr] menu_zoom=0)");
         }
     }
     directinput::LoadSettings(ini);   // [openxr] direct_input and the [direct] layout: the plugin's own controls
@@ -4037,11 +4240,390 @@ bool PairInput(D2RVR_XrInput* out) {
     return true;
 }
 
+// -- eyes by turns: the eye not drawn this frame made on the GPU ([stereo] turn_warp, vr/turn_warp.h) -------------------
+// bearstonem/d2r-pcvr's (MIT, steamvr/transport.cpp KeepTurn / KeepDepth / TurnEye, 2026-10-19), written for our frame: the eye drawn
+// (CopyEye) is kept beside its swapchain - its picture, the depth it was drawn with and its camera - and the other eye, drawn a frame
+// ago, goes to the runtime made from those: its own last picture moved with its depth to where it is now, the eye drawn this frame
+// moved across with its own depth over it. Handed in at its older pose instead (as before), the runtime turned it - rotation only,
+// so a step or a moving monster showed a frame behind in one eye.
+namespace {
+SRWLOCK g_turnLock = SRWLOCK_INIT;   // what vrcam hands in (SetTurnView, SetTurnDepth), read by CopyEye
+TurnView g_turnView{};
+struct TurnDepthIn { ID3D12Resource* res; DXGI_FORMAT view; float scale[2]; bool ok; };
+TurnDepthIn g_turnDepthIn{};
+struct TurnKept {
+    ID3D12Resource* image = nullptr;   // the eye's picture as drawn (PIXEL_SHADER_RESOURCE), the swapchain's format
+    ID3D12Resource* depth = nullptr;   // the depth it was drawn with (PIXEL_SHADER_RESOURCE | NON_PIXEL_SHADER_RESOURCE)
+    DXGI_FORMAT depthView = DXGI_FORMAT_UNKNOWN;
+    float scale[2] = {1.0f, 1.0f};
+    bool imageOk = false, depthOk = false;
+    turnwarp::Camera cam;                // where it was drawn from, with the fov it was drawn with
+    turnwarp::Vec hero;
+    float body = 0.0f, nearPlane = 0.0f;
+    ULONGLONG at = 0;                    // when (a picture older than kTurnOldMs is not made into a frame: pairs or a pause came between)
+};
+constexpr ULONGLONG kTurnOldMs = 100;
+TurnKept g_turnKept[2];
+turnwarp::Gpu g_turnGpu;
+UINT64 g_turnSlotDone[turnwarp::kSlots] = {};   // our fence when the list that used each descriptor set was submitted
+int g_turnSlot = 0;
+// The frame's steps under way (TurnKeep / TurnMake / TurnFinish, below): open = the next may go on; acquired = the other eye's swapchain
+// image is ours until TurnFinish (CloseFrame gives it back if vrcam did not).
+struct TurnFrame { bool open = false; bool acquired = false; bool turned = false; int o = 0; uint32_t idx = 0; };
+TurnFrame g_turnFrame;
+ID3D12Resource* g_turnTarget = nullptr;   // the eye made, before it goes to its swapchain: the back buffer's size, its typeless family (RENDER_TARGET)
+struct TurnCounts { uint32_t moved = 0, turned = 0, drawnOver = 0, left = 0, keptOwn = 0, effects = 0, building = 0; ULONGLONG since = 0; };
+TurnCounts g_turnCounts;
+
+void TurnLog(const char* s) { Log(s); }
+void TurnRetire(ID3D12Resource* r) { Retire(r); }   // a texture of the warp's made again at another size: the GPU may still read the old one
+// A descriptor set the GPU is done with (a list reads its set when it runs); -1: still in use after the wait.
+int TurnTakeSlot() {
+    const int slot = g_turnSlot;
+    g_turnSlot = (g_turnSlot + 1) % turnwarp::kSlots;
+    if (g_fence && g_fence->GetCompletedValue() < g_turnSlotDone[slot]) WaitFence(g_turnSlotDone[slot], 100);
+    return !g_fence || g_fence->GetCompletedValue() >= g_turnSlotDone[slot] ? slot : -1;
+}
+const D3D12_RESOURCE_STATES kReadable = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+
+void TurnForget() {   // nothing kept is used again (another view, the session's end)
+    for (TurnKept& k : g_turnKept) { k.imageOk = k.depthOk = false; k.cam.ok = false; }
+}
+void TurnTeardown() {   // the session's end: after Teardown's wait for our lists
+    for (TurnKept& k : g_turnKept) {
+        if (k.image) k.image->Release();
+        if (k.depth) k.depth->Release();
+        k = TurnKept{};
+    }
+    g_turnGpu.Release();
+    if (g_turnTarget) { g_turnTarget->Release(); g_turnTarget = nullptr; }
+    g_turnFrame = TurnFrame{};
+    for (UINT64& v : g_turnSlotDone) v = 0;
+    AcquireSRWLockExclusive(&g_turnLock);
+    g_turnView = TurnView{};
+    g_turnDepthIn = TurnDepthIn{};
+    ReleaseSRWLockExclusive(&g_turnLock);
+}
+
+turnwarp::Tan TanOf(const XrFovf& f) { return {tanf(f.angleLeft), tanf(f.angleRight), tanf(f.angleDown), tanf(f.angleUp)}; }
+turnwarp::Camera CameraNow(const TurnView& v, int e) {
+    turnwarp::Camera c;
+    c.at = {v.at[e][0], v.at[e][1], v.at[e][2]};
+    c.turn = {v.turn[0], v.turn[1], v.turn[2], v.turn[3]};
+    c.tan = TanOf(g_fovUsed[e]);
+    c.ok = v.ok;
+    return c;
+}
+
+// A texture of ours, made again when what it must hold changes; the old one retired (the GPU may still read it).
+bool TurnTexture(ID3D12Resource*& r, const D3D12_RESOURCE_DESC& want, D3D12_RESOURCE_STATES state, const wchar_t* name) {
+    if (r) {
+        const D3D12_RESOURCE_DESC d = r->GetDesc();
+        if (d.Width == want.Width && d.Height == want.Height && d.Format == want.Format) return true;
+        Retire(r);
+    }
+    D3D12_HEAP_PROPERTIES hp{};
+    hp.Type = D3D12_HEAP_TYPE_DEFAULT;
+    D3D12_RESOURCE_DESC d = want;
+    d.Alignment = 0;
+    d.Flags = D3D12_RESOURCE_FLAG_NONE;
+    d.MipLevels = 1;
+    d.DepthOrArraySize = 1;
+    if (FAILED(g_dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &d, state, nullptr, __uuidof(ID3D12Resource), (void**)&r))) {
+        r = nullptr;
+        return false;
+    }
+    r->SetName(name);
+    return true;
+}
+
+// The frame's steps (vrcam's present, XrPresent, in order): TurnKeep - the eye drawn kept as its picture is now, before what has no
+// depth of the scene is drawn over it (the effect's overlays: vrcam draws them after, OverlaysApart); TurnMake - the other eye made
+// into g_turnTarget, a picture of ours (vrcam draws that eye's overlays over it); TurnFinish - into its swapchain. Under g_lock, the draw thread.
+
+DXGI_FORMAT TypelessOf(DXGI_FORMAT f) {
+    switch (Family(f)) {
+        case 1: return DXGI_FORMAT_R8G8B8A8_TYPELESS;
+        case 2: return DXGI_FORMAT_B8G8R8A8_TYPELESS;
+        case 3: return DXGI_FORMAT_R10G10B10A2_TYPELESS;
+        case 4: return DXGI_FORMAT_R16G16B16A16_TYPELESS;
+        default: return DXGI_FORMAT_UNKNOWN;
+    }
+}
+
+void CopyPicture(ID3D12GraphicsCommandList* list, ID3D12Resource* from, D3D12_RESOURCE_STATES fromState, ID3D12Resource* to,
+                 D3D12_RESOURCE_STATES toState, uint32_t w, uint32_t h) {
+    D3D12_RESOURCE_BARRIER b[2] = {Tr(from, fromState, D3D12_RESOURCE_STATE_COPY_SOURCE), Tr(to, toState, D3D12_RESOURCE_STATE_COPY_DEST)};
+    list->ResourceBarrier(2, b);
+    D3D12_TEXTURE_COPY_LOCATION t{}, f{};
+    t.pResource = to; t.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+    f.pResource = from; f.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+    const D3D12_BOX box{0, 0, 0, w, h, 1};
+    list->CopyTextureRegion(&t, 0, 0, 0, &f, &box);
+    D3D12_RESOURCE_BARRIER e[2] = {Tr(from, D3D12_RESOURCE_STATE_COPY_SOURCE, fromState), Tr(to, D3D12_RESOURCE_STATE_COPY_DEST, toState)};
+    list->ResourceBarrier(2, e);
+}
+
+void TurnTell() {   // the 10 s line
+    const ULONGLONG now = GetTickCount64();
+    if (!g_turnCounts.since) g_turnCounts.since = now;
+    if (now - g_turnCounts.since >= 10000) {
+        LogF("vrcam: openxr - eyes by turns, 10 s: the eye not drawn made %u times with the depth (the eye drawn laid over it %u, its own picture "
+             "kept where the same %u, the game's effects read %u), turned only %u, left as last drawn %u (its passes still building %u)",
+             g_turnCounts.moved, g_turnCounts.drawnOver, g_turnCounts.keptOwn, g_turnCounts.effects, g_turnCounts.turned, g_turnCounts.left,
+             g_turnCounts.building);
+        g_turnCounts = TurnCounts{};
+        g_turnCounts.since = now;
+    }
+}
+
+// 1. The eye drawn this frame (`d`) kept: its picture (the back buffer as it is now), the depth our effects copied for its present,
+// and the camera it was drawn from.
+void TurnKeepLocked(int d, ID3D12Resource* bb) {
+    TurnView v;
+    TurnDepthIn din;
+    AcquireSRWLockExclusive(&g_turnLock);
+    v = g_turnView;
+    din = g_turnDepthIn;
+    g_turnDepthIn.ok = false;   // one present's
+    ReleaseSRWLockExclusive(&g_turnLock);
+    g_turnFrame = TurnFrame{};
+    if (!v.ok || g_pairMode != kViewsHead) { TurnForget(); return; }   // not a first-person pair: nothing kept goes on
+    if (!EnsureChain(g_eyeChain[d], bb->GetDesc(), d ? "right eye's" : "left eye's")) return;
+    const Chain& cd = g_eyeChain[d];
+    // The passes are built on a worker first (turnwarp::Warm; pcvr v0.3.24, 84f560d): built here at the first eye made of a session
+    // they held the draw thread 0.1-0.2 s. Till then the eye not drawn goes as it was last drawn, as with turn_warp=0.
+    if ((!g_turnGpu.Ready() || g_turnGpu.Format() != (DXGI_FORMAT)cd.fmt) && !turnwarp::Warm(g_dev, (DXGI_FORMAT)cd.fmt)) {
+        ++g_turnCounts.building;
+        return;
+    }
+    if (!g_turnGpu.Init(g_dev, (DXGI_FORMAT)cd.fmt, &TurnLog, &TurnRetire)) return;
+    ID3D12GraphicsCommandList* list = OpenList();
+    if (!list) return;
+    TurnKept& kd = g_turnKept[d];
+    D3D12_RESOURCE_DESC idesc = bb->GetDesc();
+    idesc.Width = cd.w;
+    idesc.Height = cd.h;
+    idesc.Format = (DXGI_FORMAT)cd.fmt;
+    kd.imageOk = TurnTexture(kd.image, idesc, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, L"d2rvr eyes by turns kept eye");
+    if (kd.imageOk) CopyPicture(list, bb, D3D12_RESOURCE_STATE_PRESENT, kd.image, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, cd.w, cd.h);
+    kd.depthOk = false;
+    if (din.ok && din.res && g_turnGpu.DepthReady()) {
+        const D3D12_RESOURCE_DESC dd = din.res->GetDesc();
+        if (TurnTexture(kd.depth, dd, kReadable, L"d2rvr eyes by turns kept depth")) {
+            D3D12_RESOURCE_BARRIER b[2] = {Tr(din.res, kReadable, D3D12_RESOURCE_STATE_COPY_SOURCE), Tr(kd.depth, kReadable, D3D12_RESOURCE_STATE_COPY_DEST)};
+            list->ResourceBarrier(2, b);
+            list->CopyResource(kd.depth, din.res);
+            D3D12_RESOURCE_BARRIER e[2] = {Tr(din.res, D3D12_RESOURCE_STATE_COPY_SOURCE, kReadable), Tr(kd.depth, D3D12_RESOURCE_STATE_COPY_DEST, kReadable)};
+            list->ResourceBarrier(2, e);
+            kd.depthView = din.view;
+            kd.scale[0] = din.scale[0];
+            kd.scale[1] = din.scale[1];
+            kd.depthOk = true;
+        }
+    }
+    // Where the game's effects are in this eye ([stereo] turns_keep_own 3, 4): its effects layer read into its blocks now, while it is this
+    // frame's - the eye made next keeps its own picture there, and so does this eye when it is made next frame.
+    bool fx = false;
+    if (kd.depthOk && g_cfg.turnFromDrawn && g_cfg.turnKeepOwn >= turnwarp::kKeepEffects && g_turnGpu.EffectsReady()) {
+        effectslayer::Layer layer;
+        if (effectslayer::Latest(layer)) {
+            const int slot = TurnTakeSlot();
+            if (slot >= 0 && g_turnGpu.Effects(list, layer.targets, layer.states, d, g_cfg.turnEffectsReach * float(layer.width) / turnwarp::kKeepWidthPx, slot)) {
+                g_turnSlotDone[slot] = g_fenceV + 1;   // the fence SubmitList signals for this list
+                fx = true;
+                ++g_turnCounts.effects;
+            }
+        }
+    }
+    if (!fx) g_turnGpu.ForgetEffects(d);
+    SubmitList();
+    kd.cam = CameraNow(v, d);
+    kd.hero = {v.hero[0], v.hero[1], v.hero[2]};
+    kd.body = v.body;
+    kd.nearPlane = v.nearPlane;
+    kd.at = GetTickCount64();
+    g_turnFrame.open = true;   // TurnMake may go on
+    g_turnFrame.o = d ^ 1;
+}
+
+// 2. The other eye made for where it is now, into g_turnTarget: its own last picture moved with its depth, the eye drawn now moved across
+// over it - or, when the pass cannot run, its last picture as it was drawn (it then goes at that pose). Its swapchain image acquired now.
+ID3D12Resource* TurnMakeLocked() {
+    if (!g_turnFrame.open) return nullptr;
+    g_turnFrame.open = false;
+    const int o = g_turnFrame.o, d = o ^ 1;
+    const Chain& cd = g_eyeChain[d];
+    const Chain& co = g_eyeChain[o];
+    TurnKept& kd = g_turnKept[d];
+    const TurnKept& ko = g_turnKept[o];
+    const bool canTurn = co.sc && co.w == cd.w && co.h == cd.h && co.fmt == cd.fmt && ko.imageOk && ko.cam.ok && kd.at - ko.at <= kTurnOldMs;
+    if (!canTurn) return nullptr;   // its last image goes again (CloseFrame, as before)
+    // our picture of it: the back buffer's size, viewable as the swapchain's format (the warp) and the back buffer's (ReShade)
+    D3D12_RESOURCE_DESC tdesc{};
+    tdesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    tdesc.Width = co.w;
+    tdesc.Height = co.h;
+    tdesc.DepthOrArraySize = tdesc.MipLevels = 1;
+    tdesc.Format = TypelessOf(co.bbFmt);
+    tdesc.SampleDesc.Count = 1;
+    if (tdesc.Format == DXGI_FORMAT_UNKNOWN) { ++g_turnCounts.left; return nullptr; }
+    if (g_turnTarget) {
+        const D3D12_RESOURCE_DESC t = g_turnTarget->GetDesc();
+        if (t.Width != tdesc.Width || t.Height != tdesc.Height || t.Format != tdesc.Format) Retire(g_turnTarget);
+    }
+    if (!g_turnTarget) {
+        D3D12_HEAP_PROPERTIES hp{};
+        hp.Type = D3D12_HEAP_TYPE_DEFAULT;
+        tdesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+        if (FAILED(g_dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &tdesc, D3D12_RESOURCE_STATE_RENDER_TARGET, nullptr, __uuidof(ID3D12Resource),
+                                                  (void**)&g_turnTarget))) {
+            g_turnTarget = nullptr;
+            ++g_turnCounts.left;
+            return nullptr;
+        }
+        g_turnTarget->SetName(L"d2rvr eyes by turns made eye");
+    }
+    uint32_t idx = 0;
+    if (NextImage(co.sc, &idx, "picture") <= 0) { ++g_turnCounts.left; return nullptr; }
+    ID3D12GraphicsCommandList* list = OpenList();
+    if (!list) {
+        XrSwapchainImageReleaseInfo none{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
+        xrReleaseSwapchainImage(co.sc, &none);
+        ++g_turnCounts.left;
+        return nullptr;
+    }
+    TurnView v;
+    AcquireSRWLockShared(&g_turnLock);
+    v = g_turnView;
+    ReleaseSRWLockShared(&g_turnLock);
+    const turnwarp::Camera now = CameraNow(v, o);
+    const auto h = turnwarp::Homography(ko.cam.turn, ko.cam.tan, now.turn, now.tan);
+    turnwarp::Grid own, over;
+    const turnwarp::Grid* ownP = nullptr;
+    const turnwarp::Grid* overP = nullptr;
+    if (ko.depthOk && ko.nearPlane > 0.0f) {   // its own last picture, moved with its depth (what is near stays with the camera)
+        own.image = ko.image; own.depth = ko.depth; own.depthView = ko.depthView;
+        own.scale[0] = ko.scale[0]; own.scale[1] = ko.scale[1];
+        own.nearPlane = ko.nearPlane;
+        own.drawnTan = ko.cam.tan; own.nowTan = now.tan;
+        own.move = turnwarp::Move(ko.cam.at, ko.cam.turn, now.at, now.turn);
+        own.carry = turnwarp::Held();   // first person: what is near (the doll, the hands, the weapon) is posed from the head - it stays in the picture
+        own.nearW = turnwarp::kCarriedNearM * v.upm;
+        own.farW = turnwarp::kCarriedFarM * v.upm;
+        ownP = &own;
+    }
+    if (g_cfg.turnFromDrawn && kd.imageOk && kd.depthOk && kd.nearPlane > 0.0f) {   // the eye drawn now, moved across over it
+        over.image = kd.image; over.depth = kd.depth; over.depthView = kd.depthView;
+        over.scale[0] = kd.scale[0]; over.scale[1] = kd.scale[1];
+        over.nearPlane = kd.nearPlane;
+        over.drawnTan = kd.cam.tan; over.nowTan = now.tan;
+        over.move = turnwarp::Move(kd.cam.at, kd.cam.turn, now.at, now.turn);
+        over.carry = over.move;
+        over.edgeScale = turnwarp::EdgeScale(co.w, now.tan, turnwarp::Length(kd.cam.at - now.at), kd.nearPlane);
+        // its own picture kept where it shows the same surface ([stereo] turns_keep_own; pcvr v0.3.24)
+        over.keep = turnwarp::KeepOf(g_cfg.turnKeepOwn, co.w, g_cfg.turnKeepGap, g_cfg.turnKeepReach, g_cfg.turnEffectsLevel);
+        overP = &over;
+    }
+    bool turned = false;
+    const int slot = TurnTakeSlot();
+    if (slot >= 0) {
+        bool kept = false;
+        turned = g_turnGpu.Render(list, g_turnTarget, co.w, co.h, ko.image, h, ownP, overP, slot, g_cfg.turnOverlayDepth, o, &kept);
+        if (turned) {
+            g_turnSlotDone[slot] = g_fenceV + 1;   // the fence SubmitList signals for this list
+            if (ownP || overP) ++g_turnCounts.moved; else ++g_turnCounts.turned;
+            if (overP) ++g_turnCounts.drawnOver;
+            if (kept) ++g_turnCounts.keptOwn;
+        }
+    }
+    if (!turned) {
+        CopyPicture(list, ko.image, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, g_turnTarget, D3D12_RESOURCE_STATE_RENDER_TARGET, co.w, co.h);
+        g_turnGpu.ClearMadeDepth(list);   // its depth is not this picture's (an older frame's, or the other eye's): nothing hides its overlays
+    }
+    SubmitList();
+    g_turnFrame.open = true;   // TurnFinish takes it on
+    g_turnFrame.acquired = true;
+    g_turnFrame.turned = turned;
+    g_turnFrame.idx = idx;
+    return g_turnTarget;
+}
+
+// 3. The picture made (and the overlays vrcam drew over it) into the other eye's swapchain image.
+void TurnFinishLocked() {
+    if (!g_turnFrame.open || !g_turnFrame.acquired) return;
+    g_turnFrame.open = g_turnFrame.acquired = false;
+    const int o = g_turnFrame.o;
+    const Chain& co = g_eyeChain[o];
+    if (ID3D12GraphicsCommandList* list = OpenList()) {
+        CopyPicture(list, g_turnTarget, D3D12_RESOURCE_STATE_RENDER_TARGET, co.img[g_turnFrame.idx].texture, D3D12_RESOURCE_STATE_RENDER_TARGET, co.w, co.h);
+        SubmitList();
+    }
+    XrSwapchainImageReleaseInfo ri{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
+    const bool released = Ok(xrReleaseSwapchainImage(co.sc, &ri), "xrReleaseSwapchainImage");
+    // made for this frame's head: it goes at this frame's pose (CloseFrame); else the last picture as drawn, at the pose it was drawn with
+    if (released && g_turnFrame.turned) g_copied[o] = true;
+    else ++g_turnCounts.left;
+    TurnTell();
+}
+void TurnFrameEnd() {
+    if (g_turnFrame.acquired) TurnFinishLocked();
+    g_turnFrame = TurnFrame{};
+}
+
+}  // namespace
+
+void SetTurnView(const TurnView& v) {
+    AcquireSRWLockExclusive(&g_turnLock);
+    g_turnView = v;
+    ReleaseSRWLockExclusive(&g_turnLock);
+}
+void SetTurnDepth(void* resource, uint32_t viewFormat, float scaleX, float scaleY) {
+    AcquireSRWLockExclusive(&g_turnLock);
+    g_turnDepthIn = TurnDepthIn{(ID3D12Resource*)resource, (DXGI_FORMAT)viewFormat, {scaleX, scaleY}, resource != nullptr};
+    ReleaseSRWLockExclusive(&g_turnLock);
+}
+
+bool TurnWarpOn() { return g_cfg.on && g_cfg.byTurns && g_cfg.turnWarp; }
+bool TurnOverlaysMade() { return g_cfg.turnOverlaysMade; }
+TurnView TurnViewNow() {
+    AcquireSRWLockShared(&g_turnLock);
+    const TurnView v = g_turnView;
+    ReleaseSRWLockShared(&g_turnLock);
+    return v;
+}
+void* TurnMadeDepth(uint32_t* gen) {
+    if (gen) *gen = g_turnGpu.MadeDepthGen();
+    return g_cfg.turnOverlayDepth ? g_turnGpu.MadeDepth() : nullptr;
+}
+bool TurnsNow() { return g_kind == kPair && g_cfg.byTurns && g_cfg.turnWarp && g_pairMode == kViewsHead && g_session && !DeviceLost(); }
+void TurnKeep(int eye, ID3D12Resource* bb) {
+    if (!TurnsNow() || !bb || eye < 0 || eye > 1 || g_copied[0] || g_copied[1]) return;
+    AcquireSRWLockExclusive(&g_lock);
+    if (g_session) TurnKeepLocked(eye, bb);
+    ReleaseSRWLockExclusive(&g_lock);
+}
+ID3D12Resource* TurnMake() {
+    if (!TurnsNow()) return nullptr;
+    AcquireSRWLockExclusive(&g_lock);
+    ID3D12Resource* r = g_session ? TurnMakeLocked() : nullptr;
+    ReleaseSRWLockExclusive(&g_lock);
+    return r;
+}
+void TurnFinish() {
+    AcquireSRWLockExclusive(&g_lock);
+    if (g_session) TurnFinishLocked();
+    ReleaseSRWLockExclusive(&g_lock);
+}
+
 void CopyEye(int eye, ID3D12Resource* bb) {
     if (g_kind != kPair || !bb || eye < 0 || eye > 1 || g_copied[eye] || DeviceLost()) return;
     AcquireSRWLockExclusive(&g_lock);
-    if (g_session && EnsureChain(g_eyeChain[eye], bb->GetDesc(), eye ? "right eye's" : "left eye's"))
+    if (g_session && EnsureChain(g_eyeChain[eye], bb->GetDesc(), eye ? "right eye's" : "left eye's")) {
         g_copied[eye] = CopyInto(g_eyeChain[eye], bb);
+        // eyes by turns ([stereo] turn_warp): the eye was kept before (TurnKeep), the other is made after (TurnMake, TurnFinish)
+        if (g_cfg.byTurns && !g_cfg.turnWarp) TurnForget();
+    }
     ReleaseSRWLockExclusive(&g_lock);
 }
 

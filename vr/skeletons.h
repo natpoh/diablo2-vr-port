@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <string>
 #include "d2r_vr_build.h"
+#include "monster_rig.h"
 
 namespace skel {
 
@@ -28,6 +29,9 @@ struct Input {
     bool haveYaw = false;       // yawInModel is known (the hero's model matrix is found)
     float yawInModel = 0.0f;    // where the camera looks, as a yaw in model space (0 = model forward)
     bool followJump = true;     // the held upper body (and HeroEye's lift) goes up with the hips
+    bool dollRebuild = true;    // [hands] doll_rebuild: the doll held through the hero's model rebuilt (a weapon swap): both rigs posed while the game poses both (skeletons.cpp OursNow)
+    bool dollTrace = false;
+    bool along = false;         // (set by the hook, not vrcam) this rig is posed along with the hero's, not taken: nothing is learned from its pose (the grip)     // [debug] doll_trace: a note each time the hero's rig is let go (not posed as ours) and taken again, with why (DollTakeNote)
     float jumpFrom = 0.3f;      // model units of hip rise taken for the stride's bob, not a jump
     float grip[2] = {-1.0f, -1.0f};   // the controllers' grips 0..1 ([0] right); < 0 unknown (an older bridge): the left stays on a staff
     // The posed weapon for PosedWeapon() below (melee by touch): wanted only when asked, so nothing is done for it otherwise.
@@ -106,6 +110,7 @@ struct Input {
         float throwReachPct = 800.0f, throwMaxCells = 48.0f, unitsPerMetre = 0.0f;
         float takeHaptic = 0.0f;   // [weight] take_haptic: the pulse (amplitude 0..1) in a hand entering the take zone behind a shoulder while a weapon is away; 0 = none
         bool recallAny = false;    // [weight] recall_any_hand: the grip of any free hand, anywhere, calls a weapon that is away
+        bool monsterBodies = false;   // [weight] monster_bodies (vr/monster_bodies.h): the held weapon stops on the hostile monsters' bodies or glances off them (F4 only; needs the world's frame, worldOk)
         // [hands] shoulder_draw (vr/shoulder_draw.h): a weapon let go lies where it fell - in the WORLD, not carried by the hero's walking - and the grip of either hand calls it back
         // while it is in the air or lies there; after drawStowS on the floor it goes to the back, and from then on a hand behind a shoulder draws it into that hand, whichever hand it
         // is (afterDrop is then 1 for the skeleton's sake: a weapon taken by the other hand is drawn where the body model has it).
@@ -479,6 +484,13 @@ bool CastPoseNow(CastPose* out, unsigned maxAgeMs = 100);
 struct PosedBlade {
     bool ok = false;
     float origin[3]{}, axis[3][3]{};
+    // Metres of the render per unit of the weapon's own model as this pose draws it (the attach bone's Y row over the hero model's units per metre,
+    // weaponextent::UnitM): what the weapon models' bounds (vr/weapon_extents.h) are turned into metres with. 0 = not known.
+    float unitM = 0.0f;
+    // Which way the bone's Z axis runs against the forearm in the GAME'S OWN pose (the elbow -> wrist line): +1 the same way (a fist weapon's blade, along Z, goes forward
+    // out of the fist), -1 against it, 0 not told (the weapon's bone is a point, or the Z is across the forearm). Read from the animation's pose, which our controller's
+    // wrist cannot turn; for the claws and katars only (bladeshape::LineOf).
+    int zSign = 0;
     // [flail] chain on, a flail in this slot: the ball swinging on its chain - it is what strikes, not the handle. Its centre and the last
     // link's direction (toward the ball) in the same frame, and its radius in metres (vr/flail_chain.h HeadOf: measured on the model's mesh).
     bool ball = false;
@@ -535,6 +547,9 @@ void FlailHit(int side);
 // flail model learned since the last call (its chains, or why it has none). Empty when none.
 const char* FlailStatus();
 std::string FlailTakeNote();
+// [debug] doll_trace: the lines the pose hook noted since the last call ('\n' between them) - the hero's rig let go (which test it failed, its numbers, what was
+// taken instead) and taken again. The hook only notes; vrcam's tick writes them to the log (a log line costs a millisecond on the game's thread).
+std::string DollTakeNote();
 // And for the log: one line for every bow skeleton learned or refused since the last call - which model, which layout
 // (bows are matched by what their bones are: vr/bow_layouts.h), or the bones of one that is not known. Empty when none.
 std::string BowRigTakeNote();
@@ -611,8 +626,24 @@ bool HeroTransform(HeroXform* out, const char** why = nullptr);
 // Any entity's TransformComponent, the same layout (engine items, vrcam's engitem). The storage's
 // array moves when it grows: use the pointer at once, on the registry's own thread.
 bool EntityTransform(uint32_t entity, uintptr_t* comp);
+// [weight] monster_bodies (vr/monster_rig.h): the models near (x, z) - the game's render world, its units - that stand on their own (no parent: not a weapon in a
+// hand) and are not a hero's, the nearest first, each with a capsule on each of its limbs: its bones as the game posed them this frame times its place, as thick as its
+// meshes' boxes of them (world units). A model whose boxes or pose do not read is given with n 0 and why. Read-only, off the pose hook (any thread but the hook's).
+struct MonsterRig {
+    uint32_t entity = 0;
+    uintptr_t self = 0;
+    float root[3] = {};        // where the model stands (its transform's translation), world units
+    char model[48] = {};       // the last part of its model's path (for the log)
+    int bones = 0, boxes = 0;  // its skeleton's bones, those with a box
+    int n = 0;
+    monsterrig::Capsule c[monsterrig::kMaxPerRig];
+    const char* why = "";
+};
+size_t MonsterRigs(float x, float z, float reach, MonsterRig* out, size_t cap);
 // Bumped whenever the hero's SkeletonInstance changes: a weapon swap rebuilds his model.
 uint32_t HeroGen();
+// The hero's rig was posed (taken as ours) within the last `ms` - the game still draws him: a facing that does not read is held on ([hands] doll_rebuild).
+bool HeroPosedLately(unsigned ms);
 void** OrigSlot();
 void* Detour();
 

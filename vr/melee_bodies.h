@@ -58,6 +58,10 @@ inline stroke::Vec RenderGround(stroke::Vec grid, float height) {
     return {grid.x + height * kGroundShear, height, grid.z + height * kGroundShear};
 }
 
+// The margin a monster's capsule is given round its footprint (BodyFor): a touch counts a little outside the body. The bodies the held weapon
+// meets ([weight] monster_bodies, monster_bodies.h) are the capsule without it.
+inline constexpr float kTouchSlackM = 0.05f;
+
 // What the monster's row in the game's MonStats table says (bytes 8, 9 and 13 of the row).
 struct MonsterRow { uint8_t footprintA = 0, footprintB = 0, height = 0; };
 
@@ -69,7 +73,7 @@ inline bool BodyFor(const MonsterRow& r, float gridX, float gridZ, float floorM,
     if (r.footprintA < 1 || r.footprintA > 8 || r.footprintB < 1 || r.footprintB > 8) return false;
     const float footprint = std::max(0.12f, static_cast<float>(std::max(r.footprintA, r.footprintB)) * 0.7f / upm);
     const float height = std::clamp(static_cast<float>(r.height ? r.height : 72) * 0.10f / upm, 0.4f, 4.0f);
-    const float radius = std::min(footprint, height * 0.45f) + 0.05f;
+    const float radius = std::min(footprint, height * 0.45f) + kTouchSlackM;
     const stroke::Vec ground = RenderGround({gridX / upm, 0.0f, gridZ / upm}, floorM);
     out.radius = radius;
     out.bottom = {ground.x, floorM + radius, ground.z};

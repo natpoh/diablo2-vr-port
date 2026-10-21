@@ -13,6 +13,7 @@ std::atomic<bool> g_wanted{false};
 std::atomic<LogSink> g_sink{nullptr};
 std::atomic<uint32_t> g_markMs{kDefaultMarkMs};
 std::atomic<bool> g_dirRed{true};
+std::atomic<bool> g_describe{true};
 std::mutex g_mutex;
 Scene g_scene;
 uint64_t g_lastLogMs = 0;
@@ -29,6 +30,7 @@ void SetWanted(bool on) {
 }
 
 bool Wanted() { return g_wanted.load(std::memory_order_relaxed); }
+void SetDescribeWanted(bool on) { g_describe.store(on); }
 
 void SetMarkMs(uint32_t ms) { g_markMs.store(std::min(ms, kMaxMarkMs)); }
 
@@ -42,7 +44,7 @@ void Update(const Frame& f) {
         g.markMs = g_markMs.load();   // the speed marks' time is the module's setting, not the feeder's
         g.directionColour = DirectionColour();   // ... and so is the colour of "not toward the monster"
         g_scene.Set(g);
-        if (f.nowMs - g_lastLogMs >= kLogMs) {
+        if (g_describe.load(std::memory_order_relaxed) && f.nowMs - g_lastLogMs >= kLogMs) {
             g_lastLogMs = f.nowMs;
             say = g_scene.Describe(line, sizeof line, f.nowMs);
         }

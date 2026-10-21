@@ -88,6 +88,18 @@ const char* KindName(Kind k) {
 	return i >= 0 && i < (int)Kind::Count ? names[i] : "?";
 }
 
+double BodyFriction(Kind k) {
+	switch (k) {
+	case Kind::Mace: case Kind::Scepter: case Kind::Staff: case Kind::Wand: case Kind::Other: return 1.5;   // (cleanroom/tests/monster_bodies_test: a shallow cut - a sword slides 58 cm along the body, a mace 4)
+	default: return 0.25;   // an edge or a point: a dagger, a sword, an axe, a polearm, a spear, a javelin, a throwing weapon
+	}
+}
+
+void Hold::SetBodies(const contact::Capsule* bodies, int n) {
+	nBodies_ = 0;
+	for (int i = 0; bodies && i < n && nBodies_ < kBodies; ++i) bodies_[nBodies_++] = bodies[i];
+}
+
 double Shape::Mass() const {
 	double m = 0;
 	for (int i = 0; i < nPieces; ++i) m += pieces[i].mass;
@@ -435,6 +447,7 @@ void Hold::Fall(double dt, const Settings& s) {
 
 void Hold::Step(const HandIn in[2], double dt, const Settings& s, HandOut out[2]) {
 	for (int h = 0; h < 2; ++h) out[h] = { false, 0, in[h].pose, grabs_[h] };
+	contact_ = {};   // (the held step below fills it when the weapon meets a body)
 	if (!placed_) return;
 	// The steel's mass multiplier moved (the Weight slider, the hero's strength): the body is built again with it, about the same centre of mass and the same motion.
 	if (free_ == Free::Held && std::fabs(s.weight - builtWeight_) > 1e-6) Build(s);
@@ -646,10 +659,13 @@ void Hold::Step(const HandIn in[2], double dt, const Settings& s, HandOut out[2]
 			from[k]     = haveLast_ ? last_[h] : to[k];
 			++k;
 		}
+		State before = st_;   // (the weapon before the step: the bodies' friction holds back its slide in it)
+		bool  stepped = false;
 		// a jump of the main controller (a recenter, tracking back): the weapon put back in its hand
 		if (haveLast_ && Len(Sub(in[main_].pose.pos, last_[main_].pose.pos)) > 0.5) {
 			heft::Place(st_, body_, grips_[main_], in[main_].pose);
 		} else if (dt > 0 && k > 0) {
+			stepped = true;
 			const Engine* engine = s.model == 1 ? g_engine : nullptr;   // a weight-physics library moves the body, when one is loaded
 			if (engine) {
 				engine->Step(st_, body_, pieces_, nPieces_, twoHanded_, g, from, to, k, std::min(dt, 0.1), s);
@@ -659,6 +675,22 @@ void Hold::Step(const HandIn in[2], double dt, const Settings& s, HandOut out[2]
 				w.gravity.y    = -9.81 * s.gravity;
 				heft::Step(st_, body_, g, from, to, k, std::min(dt, 0.1), w);
 			}
+		}
+		// [weight] monster_bodies: the weapon meets the bodies near it - put back on their surface, its motion into them taken away (contact.h). After the step, whichever
+		// model moved it: the library is told nothing of the bodies.
+		if (s.bodies && nBodies_ > 0 && Held() && stepped) {
+			contact::Blade blades[3];
+			int nb = 0;
+			for (int i = 0; i < nPieces_ && nb < 3; ++i) blades[nb++] = { pieces_[i].a, pieces_[i].b, std::max(0.01, pieces_[i].radius) };
+			uint64_t skip = 0;   // a body a holding hand's controller is inside of: nothing to push against
+			for (int i = 0; i < nBodies_; ++i)
+				for (int h = 0; h < 2; ++h)
+					if (holds_[h] && contact::Inside(bodies_[i], in[h].pose.pos)) skip |= 1ull << i;
+			contact::Params cp;
+			cp.friction = s.bodyFriction >= 0 ? s.bodyFriction : BodyFriction(kind_);
+			contact::Resolve(st_, &before, body_, blades, nb, bodies_, nBodies_, cp, skip, &contact_);
+		} else {
+			contact_ = {};
 		}
 	}
 	// A weapon that has landed and lain long enough goes to the hero's back (the mod draws it there).

@@ -70,6 +70,10 @@ bool LookAtNow(float out[3]);
 // is running and the debug camera is not in use).
 bool InWorld();
 
+// When the world camera's follow last ran (GetTickCount64), with a world camera there now; 0 = never, or none.
+// InWorld is this within the last second; a caller that draws slower than that asks it itself (vr/pair_world.h).
+unsigned long long LastSyncTick();
+
 // The game's last mouse pick (ScreenToRay outside the shadow fit): the pixel it asked a ray
 // for, the camera's viewport then, who answered (0 the game's own camera, 1 our matrices,
 // 2 the ray override), when (GetTickCount64) and from where (the caller's return RVA: tells the

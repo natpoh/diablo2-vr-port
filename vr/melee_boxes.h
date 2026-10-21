@@ -50,7 +50,8 @@
 
 namespace meleeboxes {
 
-constexpr int kMaxCapsules = 32;          // the shader's HitboxA / HitboxB
+constexpr int kMaxCapsules = 32;          // what melee_boxes draws of the shader's HitboxA / HitboxB
+constexpr int kShaderCapsules = 96;       // the shader's HitboxA / HitboxB: the monsters' bodies ([weight] monster_bodies' limbs, vr/monster_bodies.h Pack) take what is left
 constexpr size_t kMaxMonsters = 48;       // melee_touch's scan holds this many
 constexpr size_t kMaxStrikes = 4;
 constexpr int kNearestAlways = 3;         // the nearest monsters that are drawn whatever the game says of them
@@ -66,7 +67,8 @@ enum Kind : int { kBlade = 0, kMonster = 1, kStruckKey = 2, kStruckDirect = 3, k
 
 // The strike rules' colours (the effect's kinds from 16: colour * 4 + style): the colour of the verdict, and how it is drawn - a solid ball, a see-through capsule (a blade, a monster tinted),
 // a thin tube (the trail, an arrow, a line).
-enum Colour : int { kCBlue = 0, kCAmber = 1, kCGrey = 2, kCGreen = 3, kCRed = 4 };
+enum Colour : int { kCBlue = 0, kCAmber = 1, kCGrey = 2, kCGreen = 3, kCRed = 4,
+                    kCThrustOk = 5, kCThrustNo = 6 };   // [debug] thrust_debug's own tint: a counted thrust BLUE (0.1, 0.45, 1.0), a refused one ORANGE (1.0, 0.42, 0.0) - apart from the swing's
 enum Style : int { kBall = 0, kGlass = 1, kTube = 2 };
 constexpr int TouchKind(int colour, int style) { return 16 + 4 * colour + style; }
 inline Kind KindOfTouch(int colour, int style) { return static_cast<Kind>(TouchKind(colour, style)); }
@@ -121,6 +123,7 @@ struct BladeIn {
     strikedir::Look look = strikedir::Look::Cold;   // what that movement is under the strike rules (Hot / Away / Small); Cold with counting = Hot (a feeder that does not judge)
     float sweepSpeed = 0.0f;         // the speed of the last sweep the engine made, m/s ...
     uint64_t sweepMs = 0;            // ... and when (0 = none yet)
+    int tint = -1;                   // [debug] thrust_debug: the blade drawn in this Colour (kCGreen a counted thrust, kCRed a refused one) whatever the look; -1 = by the look
 };
 // A contact with a monster (melee_touch.cpp), for the drawing: the touching point of the blade, its velocity's direction (unit, or zero), the nearest point of the monster's axis, the colour of the
 // verdict (Colour), whether to tint the monster's capsule, and which monster.
@@ -175,6 +178,7 @@ public:
             b.look = in.have ? look : strikedir::Look::Cold;
             b.sweepSpeed = in.sweepSpeed;
             b.sweepMs = in.sweepMs;
+            b.tint = in.have ? in.tint : -1;
             if (in.have) b.peak.Note(in.speed);
         }
         minSpeed_ = f.minSpeed;
@@ -217,7 +221,8 @@ public:
         const int cap = std::min(max, kMaxCapsules);
         for (int i = 0; i < 2; ++i)
             if (blades_[i].have && n < cap) {   // green while a contact would count, blue (not toward the monster) / amber (a swing too small yet) while the engine counts the movement but the rules do not, else cyan / teal
-                const Kind k = !blades_[i].counting ? (i == 0 ? kBlade : kBlade2)
+                const Kind k = blades_[i].tint >= 0 ? KindOfTouch(blades_[i].tint, kGlass)   // [debug] thrust_debug: the last thrust's verdict
+                             : !blades_[i].counting ? (i == 0 ? kBlade : kBlade2)
                              : blades_[i].look == strikedir::Look::Away ? KindOfTouch(dirColour_, kGlass)
                              : blades_[i].look == strikedir::Look::Small ? KindOfTouch(kCAmber, kGlass) : kBladeHot;
                 out[n++] = {blades_[i].blade.base, blades_[i].blade.tip, blades_[i].blade.radius, k};
@@ -394,7 +399,7 @@ public:
 
 private:
     struct Strike { uint32_t id = 0; Kind kind = kStruckKey; uint64_t at = 0; stroke::Body body; bool haveBody = false; };
-    struct Blade { bool have = false; int side = 0; stroke::Blade blade; bool inStroke = false; bool counting = false; strikedir::Look look = strikedir::Look::Cold; float speed = 0.0f; float sweepSpeed = 0.0f; uint64_t sweepMs = 0; PeakTracker peak; };
+    struct Blade { bool have = false; int side = 0; stroke::Blade blade; bool inStroke = false; bool counting = false; strikedir::Look look = strikedir::Look::Cold; float speed = 0.0f; float sweepSpeed = 0.0f; uint64_t sweepMs = 0; PeakTracker peak; int tint = -1; };
     static bool Active(const Strike& t, uint64_t nowMs) { return t.at && nowMs >= t.at && nowMs - t.at < kStruckMs; }
     uint64_t at_ = 0;
     float upm_ = 4.0f, floorY_ = 0.0f, minSpeed_ = 0.8f;
@@ -432,6 +437,8 @@ void SetLogSink(LogSink sink);
 // [debug] melee_boxes, from the ini (every read).
 void SetWanted(bool on);
 bool Wanted();
+// The 5 Hz "melee boxes:" line of the swing's numbers (on by default); [debug] thrust_debug_only turns it off - only the thrust is told then.
+void SetDescribeWanted(bool on);
 // [debug] melee_mark_ms, from the ini (every read): how long the speed marks and the trail stay, ms; 0 = none (clamped to kMaxMarkMs).
 void SetMarkMs(uint32_t ms);
 // melee_touch's timer, once per pose, only while Wanted(): the scene as it is now; every 200 ms a line of numbers goes to the log sink.

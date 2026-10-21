@@ -98,7 +98,7 @@ target_compile_options(flail_chain_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # A held weapon's weight (cleanroom/heft, docs/WEAPON_WEIGHT.md): the model, its
 # synthetic tests, and heft_bench.dll for the Unity bench (tools/heft_bench_unity); hold.cpp,
 # the hands that take it, is in the mod too (vr/weight.cpp).
-add_library(heft STATIC cleanroom/heft/heft.cpp cleanroom/heft/hold.cpp)
+add_library(heft STATIC cleanroom/heft/heft.cpp cleanroom/heft/hold.cpp cleanroom/heft/contact.cpp)
 target_include_directories(heft PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/heft)
 target_compile_options(heft PRIVATE /utf-8 /W4 /EHsc /permissive-)
 add_library(heft_benchdefs STATIC cleanroom/heft/bench.cpp)
@@ -107,6 +107,19 @@ target_compile_options(heft_benchdefs PRIVATE /utf-8 /W4 /EHsc /permissive-)
 add_executable(heft_test cleanroom/tests/heft_test.cpp)
 target_link_libraries(heft_test PRIVATE heft_benchdefs)
 target_compile_options(heft_test PRIVATE /utf-8 /W4 /EHsc /permissive- /D_CRT_SECURE_NO_WARNINGS)
+# [weight] monster_bodies: the held weapon against the monsters' bodies (cleanroom/heft/contact.h, vr/monster_bodies.h) on synthetic poses.
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/monster_bodies_test.cpp")
+    add_executable(monster_bodies_test cleanroom/tests/monster_bodies_test.cpp)
+    target_link_libraries(monster_bodies_test PRIVATE heft)
+    target_include_directories(monster_bodies_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared)
+    target_compile_options(monster_bodies_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/monster_rig_test.cpp")   # ... their bodies from their own skeletons (vr/monster_rig.h) on a made-up game memory
+    add_executable(monster_rig_test cleanroom/tests/monster_rig_test.cpp)
+    target_link_libraries(monster_rig_test PRIVATE heft)
+    target_include_directories(monster_rig_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared)
+    target_compile_options(monster_rig_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
 # The javelin throw gesture (vr/throw_gesture.h), a pure detector, on synthetic hand poses - and its wiring to the headset
 # frames (vr/throw_gesture_wire.cpp) with stand-ins for direct_input and the game's weapon state. Our own tests: not in the public tree.
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/throw_gesture_test.cpp")
@@ -178,6 +191,15 @@ target_compile_options(melee_touch_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 add_executable(strike_direction_test cleanroom/tests/strike_direction_test.cpp)
 target_include_directories(strike_direction_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared ${CMAKE_CURRENT_SOURCE_DIR}/vr)
 target_compile_options(strike_direction_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# Hit by touch: the thrust (vr/thrust_stroke.h) - a poke along the blade with its own speed and distance, the game's weapon class, both engines on synthetic pokes and swings.
+add_executable(thrust_stroke_test cleanroom/tests/thrust_stroke_test.cpp)
+target_include_directories(thrust_stroke_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_options(thrust_stroke_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# [debug] thrust_debug: the readout's picture (vr/thrust_debug_paint.cpp) from the readings - green where a line passes, red where it fails; --dump <file.bmp> to look at it.
+add_executable(thrust_debug_paint_test cleanroom/tests/thrust_debug_paint_test.cpp vr/thrust_debug_paint.cpp vr/wheel_icons.cpp)
+target_include_directories(thrust_debug_paint_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared ${CMAKE_CURRENT_SOURCE_DIR}/vr ${BODYWALK_SDK_INCLUDE})
+target_link_libraries(thrust_debug_paint_test PRIVATE gdi32 user32 ole32 uuid)
+target_compile_options(thrust_debug_paint_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # Hit by touch with a thrown weapon (vr/thrown_touch.h, pure): the grip's held state and the rules that keep the touch and the throw by gesture
 # from both firing for one swing.
 add_executable(thrown_touch_test cleanroom/tests/thrown_touch_test.cpp)
@@ -239,6 +261,13 @@ target_include_directories(staff_flat_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/s
 target_link_libraries(staff_flat_test PRIVATE d2rcam heft user32)
 target_compile_definitions(staff_flat_test PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_compile_options(staff_flat_test PRIVATE /utf-8 /W3 /EHsc /permissive-)
+# The skeleton hook's discovery (vr/skeletons.cpp, included whole) on a toy hero rig in fake game memory: names read a page at a time (vr/guarded_text.h) as the letter-at-a-time
+# loop read them, next to a page that does not read; the bones Learn finds; Arms' hero cache (by pointer, a full one keeps the hero); the bow / flail / crossbow caches.
+add_executable(skeleton_discovery_test cleanroom/tests/skeleton_discovery_test.cpp vr/weight.cpp vr/shield_arm_wire.cpp vr/ranged_hand_wire.cpp)
+target_include_directories(skeleton_discovery_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_link_libraries(skeleton_discovery_test PRIVATE d2rcam heft user32)
+target_compile_definitions(skeleton_discovery_test PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+target_compile_options(skeleton_discovery_test PRIVATE /utf-8 /W3 /EHsc /permissive-)
 # ... the shield on it: strapped to the left forearm as before, to the RIGHT forearm mirrored, put away ([hands] shoulder_draw)
 add_executable(shield_arm_rig_test cleanroom/tests/shield_arm_rig_test.cpp vr/weight.cpp vr/shield_arm_wire.cpp vr/ranged_hand_wire.cpp)
 target_include_directories(shield_arm_rig_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared ${CMAKE_CURRENT_SOURCE_DIR}/vr)
@@ -331,9 +360,10 @@ target_include_directories(world_anchor_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
 target_compile_options(world_anchor_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 
 
-add_library(d2rl-vrcam SHARED vr/vrcam.cpp vr/xr.cpp vr/link.cpp vr/reshade_shield.cpp vr/dlss_mv.cpp vr/skeletons.cpp vr/weight.cpp vr/gamestate.cpp vr/gamecmd.cpp vr/direct_input.cpp vr/panel_input.cpp vr/throw_gesture_wire.cpp vr/throw_born.cpp vr/potion_hide.cpp vr/probe.cpp vr/uitrace.cpp vr/light_bounds.cpp vr/fog_spare.cpp vr/hud.cpp vr/memdiff.cpp vr/writewatch.cpp vr/hset_paint.cpp vr/hset_store.cpp shared/ini_txn.cpp vr/render_resolution.cpp vr/melee_touch.cpp vr/melee_direct.cpp vr/skill_wheel.cpp vr/wheel_game.cpp vr/wheel_paint.cpp vr/tiles_paint.cpp vr/wheel_icons.cpp vr/stand_still_wire.cpp vr/room_walk_wire.cpp vr/stray_walk_wire.cpp vr/shot_trace_wire.cpp vr/hset_view.cpp vr/gpu_fault.cpp vr/ecl_hook.cpp vr/vrcam.rc vr/quiver_wire.cpp vr/vcache.cpp)
+add_library(d2rl-vrcam SHARED vr/vrcam.cpp vr/xr.cpp vr/link.cpp vr/reshade_shield.cpp vr/dlss_mv.cpp vr/skeletons.cpp vr/weight.cpp vr/gamestate.cpp vr/gamecmd.cpp vr/direct_input.cpp vr/panel_input.cpp vr/throw_gesture_wire.cpp vr/throw_born.cpp vr/potion_hide.cpp vr/probe.cpp vr/uitrace.cpp vr/light_bounds.cpp vr/fog_spare.cpp vr/fog_in_frame.cpp vr/hud.cpp vr/memdiff.cpp vr/writewatch.cpp vr/hset_paint.cpp vr/hset_store.cpp shared/ini_txn.cpp vr/render_resolution.cpp vr/melee_touch.cpp vr/melee_direct.cpp vr/skill_wheel.cpp vr/wheel_game.cpp vr/wheel_paint.cpp vr/tiles_paint.cpp vr/wheel_icons.cpp vr/stand_still_wire.cpp vr/room_walk_wire.cpp vr/stray_walk_wire.cpp vr/shot_trace_wire.cpp vr/hset_view.cpp vr/gpu_fault.cpp vr/ecl_hook.cpp vr/vrcam.rc vr/quiver_wire.cpp vr/vcache.cpp)
 target_include_directories(d2rl-vrcam PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared ${FLATVR_SHARED_DIR} ${RESHADE_SDK_INCLUDE} ${BODYWALK_SRC} ${BODYWALK_SDK_INCLUDE})
 target_sources(d2rl-vrcam PRIVATE vr/shoulder_swap_wire.cpp vr/shield_arm_wire.cpp vr/ranged_hand_wire.cpp)   # [hands] shoulder_swap (wired to vr/direct_input.h)
+target_sources(d2rl-vrcam PRIVATE vr/turn_warp.cpp vr/effects_layer.cpp)   # [stereo] turn_warp: eyes by turns, the eye not drawn made on the GPU from pictures already drawn (bearstonem/d2r-pcvr's, MIT)
 target_sources(d2rl-vrcam PRIVATE vr/own_effects.cpp)   # [render] dim_own_effects: the hero's own effects (Bone Armor ...) fainter, visual only (hooks the game's overlay creation to look)
 target_sources(d2rl-vrcam PRIVATE vr/weight_wire.cpp)   # [weight]: a grip on the weapon is not a chord's modifier (wired to vr/direct_input.h)
 target_sources(d2rl-vrcam PRIVATE vr/belt_trigger_wire.cpp)   # [belt] hold_takes_trigger: the triggers while a belt bottle is in a hand (the game reads the left one as Shift)
@@ -530,6 +560,10 @@ endif()
 add_executable(xr_stick_check_test cleanroom/tests/xr_stick_check_test.cpp)
 target_include_directories(xr_stick_check_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
 target_compile_options(xr_stick_check_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# The right grip + the right stick bring a game panel nearer / farther in VR F4 ([openxr] menu_zoom; vr/menu_zoom.h: the readable limits, a step, the grip's hold)
+add_executable(menu_zoom_test cleanroom/tests/menu_zoom_test.cpp)
+target_include_directories(menu_zoom_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr ${CMAKE_CURRENT_SOURCE_DIR}/shared ${BODYWALK_SDK_INCLUDE})
+target_compile_options(menu_zoom_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # In which views the aiming hand may direct the hero's attack (vr/attack_view.h): VR F2 and F4 look where the player looks, VR F1 and F3 (top-down) keep the hero's own facing.
 # One target per press of "pick up / interact" ([input] interact_one_press; vr/interact_press.h)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/interact_press_test.cpp")   # (not in the public tree's allow-list)
@@ -651,6 +685,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/replay_pause_test.cpp")
     target_include_directories(replay_pause_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
     target_compile_options(replay_pause_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 endif()
+# vr/sky_view_eyes.h: which eye's sky camera a build writes in a pair, against a model of ReShade's one constant buffer
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/sky_view_eyes_test.cpp")
+    add_executable(sky_view_eyes_test cleanroom/tests/sky_view_eyes_test.cpp)
+    target_include_directories(sky_view_eyes_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+    target_compile_options(sky_view_eyes_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/haptics_view_test.cpp")
     add_executable(haptics_view_test cleanroom/tests/haptics_view_test.cpp vr/haptics.cpp vr/direct_input.cpp)
     target_include_directories(haptics_view_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr ${CMAKE_CURRENT_SOURCE_DIR}/shared ${BODYWALK_SDK_INCLUDE})
@@ -675,6 +715,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/eye_frame_test.cpp")
     add_executable(eye_frame_test tools/eye_frame_test.cpp)
     target_include_directories(eye_frame_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
     target_compile_options(eye_frame_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
+# [stereo] slow_pair_world (vr/pair_world.h): a pair after a pass of over a second is still the world's - no flat picture between stereo pairs on a slow card.
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/pair_world_test.cpp")
+    add_executable(pair_world_test cleanroom/tests/pair_world_test.cpp)
+    target_include_directories(pair_world_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+    target_compile_options(pair_world_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 endif()
 # [debug] flat_pick (vr/flat_pick.h): the game's pixel against the middle, where the crosshair's ray meets the ground, the slip per unit of height.
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/flat_pick_test.cpp")
@@ -787,6 +833,16 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/fog_spare_test.cpp")   # 
     target_link_libraries(fog_spare_test PRIVATE d3d11 d3dcompiler)
     target_compile_options(fog_spare_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 endif()
+# [render] fog_in_frame (vr/fog_in_frame.h): the resolve's match, the game's resolve against our three steps, the fog's colour in the
+# game's scene units, the stencil test, and our shaders (vr/fog_in_frame_shader.h) on WARP against vr/fog_in_frame_math.h; with
+# --game-shader <ps_transparent_resolve DXBC from the player's own game> the game's own resolve on WARP too. Run: fog_in_frame_test.exe
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/fog_in_frame_test.cpp")   # (not in the public tree's allow-list)
+    add_executable(fog_in_frame_test cleanroom/tests/fog_in_frame_test.cpp)
+    target_include_directories(fog_in_frame_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+    target_compile_definitions(fog_in_frame_test PRIVATE FOGFRAME_FX_PATH="${CMAKE_CURRENT_SOURCE_DIR}/reshade/D2R_DepthFog.fx")
+    target_link_libraries(fog_in_frame_test PRIVATE d3d11 d3dcompiler)
+    target_compile_options(fog_in_frame_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/arcane_assets_test.cpp")   # (not in the public tree's allow-list)
     add_executable(arcane_assets_test cleanroom/tests/arcane_assets_test.cpp tools/settings/arcane_assets.cpp)
     target_include_directories(arcane_assets_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared ${CMAKE_CURRENT_SOURCE_DIR}/tools/settings)
@@ -812,6 +868,8 @@ endif()
 # [<folder for the pictures>]); the wiring - the frames from direct_input, the painter thread, the layer asked for - is tested against
 # stand-ins for direct_input and the game's read (hand_vitals_wire_test).
 target_sources(d2rl-vrcam PRIVATE vr/hand_vitals_wire.cpp vr/hand_vitals_game.cpp vr/hand_vitals_paint.cpp)
+# [debug] thrust_debug: the thrust's readout over the weapon hand (vr/thrust_debug.h, its layer vr/xr_thrust_debug.h)
+target_sources(d2rl-vrcam PRIVATE vr/thrust_debug_wire.cpp vr/thrust_debug_paint.cpp)
 # [hud] wrist_status (vr/wrist_status.h): the hero's companions (its pet lists) and the effects on it (its states) as small icons and counters over a wrist turned to the
 # eyes. The tables, the reads of the game's lists (against a made-up heap), the cells, the settings and the hang are pure and tested (wrist_status_test, which also draws the panels:
 # wrist_status_test.exe [<folder for the pictures>]); the wiring - the frames from direct_input, the painter thread, the layers asked for - is tested against stand-ins for
@@ -1137,7 +1195,7 @@ target_compile_options(bow_hand_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 add_executable(bow_latency_test cleanroom/tests/bow_latency_test.cpp)
 target_compile_options(bow_latency_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 target_sources(d2rl-vrcam PRIVATE vr/bow_draw_wire.cpp)   # [hands] bow_draw (wired to vr/direct_input.h)
-# [bow] quiver (vr/bow_quiver.h): a button of the string hand picks the bow skill while the string is drawn; pure logic on synthetic frames and snapshots: bow_quiver_test
+# [bow] quiver (vr/bow_quiver.h): the bow skill table, the glow and the arrow's element: bow_quiver_test (its old request-machine checks gave way to bow_quiver_armed_test)
 add_executable(bow_quiver_test cleanroom/tests/bow_quiver_test.cpp)
 target_compile_options(bow_quiver_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # ... and the weapon-neutral part (vr/quiver_input.h): the controls' names: quiver_input_test
@@ -1167,11 +1225,45 @@ target_sources(d2rl-vrcam PRIVATE vr/anim_cut.cpp)        # [bow] quick_release 
 # ... its pure part: the row's shape check, the move and the way back, the walk over a block (anim_cut_test)
 add_executable(anim_cut_test cleanroom/tests/anim_cut_test.cpp)
 target_compile_options(anim_cut_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/bow_quiver_armed_test.cpp")
+    # [bow] quiver, armed (vr/bow_quiver.h Machine / DecideShot / Cleanup): arm, disarm, the shot with a bow (the skill, the plain arrow when it cannot be paid), melee with an
+    # armed bow skill untouched, the weapon swap, the old quiver's arrow on A given back as the plain attack
+    add_executable(bow_quiver_armed_test cleanroom/tests/bow_quiver_armed_test.cpp)
+    target_include_directories(bow_quiver_armed_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr ${CMAKE_CURRENT_SOURCE_DIR}/shared)
+    target_compile_options(bow_quiver_armed_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/melee_arm_fit_test.cpp")
+    # [gameplay] melee_skill_armed (vr/melee_arm.h NeedOf / Fits): an armed skill the weapon in hand cannot use is the plain attack
+    add_executable(melee_arm_fit_test cleanroom/tests/melee_arm_fit_test.cpp)
+    target_include_directories(melee_arm_fit_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr ${CMAKE_CURRENT_SOURCE_DIR}/shared)
+    target_compile_options(melee_arm_fit_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/press_trace_test.cpp")
+    # [debug] melee_press_trace (vr/press_trace.h): one line per attack press of hit by touch - the pad polls, the slot reads, the target lookups, the hero's mode, the hit -
+    # and the first step that did not happen
+    add_executable(press_trace_test cleanroom/tests/press_trace_test.cpp)
+    target_include_directories(press_trace_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr ${CMAKE_CURRENT_SOURCE_DIR}/shared)
+    target_compile_options(press_trace_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/crouch_test.cpp")
     # [body] crouch (vr/crouch.h): when the player crouches (threshold, hysteresis, standing again, seated, lost tracking) and the legs' bend, on synthetic numbers
     add_executable(crouch_test cleanroom/tests/crouch_test.cpp)
     target_include_directories(crouch_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
     target_compile_options(crouch_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/turn_math_test.cpp")
+    # [stereo] turn_warp (vr/turn_math.h): eyes by turns - a point moved with its depth lands where the other eye sees it, the turn, what the hero carries, the edge cut
+    add_executable(turn_math_test cleanroom/tests/turn_math_test.cpp)
+    target_include_directories(turn_math_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+    target_compile_options(turn_math_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/turn_warp_gpu_test.cpp")
+    # [stereo] turn_warp (vr/turn_warp.cpp): the eye made's passes on D3D12's software device - moved with the depth, the drawn eye's edges
+    # to the pixel, its own picture kept where the same ([stereo] turns_keep_own: everywhere, near things, the game's effects), the warm-up
+    add_executable(turn_warp_gpu_test cleanroom/tests/turn_warp_gpu_test.cpp vr/turn_warp.cpp)
+    target_include_directories(turn_warp_gpu_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+    target_link_libraries(turn_warp_gpu_test PRIVATE d3d12 dxgi)
+    target_compile_options(turn_warp_gpu_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 endif()
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/body_calibration_test.cpp")
     # The T-pose measurement (vr/body_calibration.h) and the ini patch it saves through (vr/ini_patch.h), on synthetic poses

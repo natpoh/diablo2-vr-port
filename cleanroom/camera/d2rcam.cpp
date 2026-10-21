@@ -533,6 +533,13 @@ bool InWorld() {
 	return GetTickCount64() - g_lastSync.load(std::memory_order_relaxed) < 1000;
 }
 
+unsigned long long LastSyncTick() {
+	if (!g_cameraHooks.load() || Current().cam == nullptr) {
+		return 0;
+	}
+	return g_lastSync.load(std::memory_order_relaxed);
+}
+
 bool PickRay(float sx, float sy, float origin[3], float dir[3]) {
 	if (!InWorld()) {
 		return false;

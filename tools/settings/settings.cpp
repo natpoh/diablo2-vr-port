@@ -111,7 +111,8 @@ struct Item {
     struct ShowFor { const wchar_t* section = nullptr; const wchar_t* key = nullptr; unsigned mask = 0; int item = -1; } showFor;
     bool off = false;                        // left out while showFor's key has a value not in its mask (UpdateEnabled)
     const wchar_t* oldKey = nullptr;         // Slider / Choice: while its own key is not in the ini yet it starts from this older key of the same section (ReadValue)
-    std::vector<float> oldMap;               // ... through this table when there is one (the older key's value v gives oldMap[v])
+    std::vector<float> oldMap;               // ... through this table when there is one (the older key's value v gives oldMap[v - oldMapFrom])
+    int oldMapFrom = 0;                      // ... the older value that is oldMap[0] (-1 for a -1 / 0 / 1 key)
     HWND name = nullptr, ctl = nullptr, value = nullptr, browse = nullptr, clear = nullptr, line = nullptr;
     HBRUSH brush = nullptr;                  // Color: the swatch
 };
@@ -165,6 +166,7 @@ Item Only(int modes, Item i) { i.modes = modes; return i; }
 // A slider that took over from an older key: until its own key is written, it shows (and the plugin uses) the older one's value.
 Item StartsFrom(const wchar_t* oldKey, Item i) { i.oldKey = oldKey; return i; }
 Item StartsFromMapped(const wchar_t* oldKey, std::initializer_list<float> map, Item i) { i.oldKey = oldKey; i.oldMap = map; return i; }
+Item StartsFromMappedFrom(const wchar_t* oldKey, int from, std::initializer_list<float> map, Item i) { i.oldKey = oldKey; i.oldMap = map; i.oldMapFrom = from; return i; }
 // Left out of the page until the code shows it (Item::hidden).
 Item Hide(Item i) { i.hidden = true; return i; }
 // A group in a column of its own choice (0 left); with fewer columns than that it goes in the shortest one.
@@ -299,9 +301,10 @@ std::vector<Item> g_items = {
     // Moved here from the Performance tab (2026-10-14, the user's wish): the way the picture gets into the headset and its rate.
     Only(kVr, InColumn(0, Group(L"In the headset"))),
     // The three ways kept in the list (2026-10-14, the user's decision): 0 native OpenXR (the default), 1 FlatVR stereo, 2 FlatVR 3D
-    // from the depth. Stereo - eyes by turns, Mono and Native OpenXR - eyes by turns are left out of the list; their ini keys still work.
+    // from the depth. Stereo - eyes by turns and Mono are left out of the list; their ini keys still work. Native OpenXR - eyes by turns
+    // is back as the fourth (2026-10-20, the user's wish: d2r-pcvr's by turns - one eye drawn a frame, the other made from it on the GPU).
     Only(kVr, Choice(L"@stereo3d", L"source", L"3D in the headset", 0,
-           {L"Native OpenXR (default)", L"FlatVR stereo", L"FlatVR 3D depth"},
+           {L"Native OpenXR (default)", L"FlatVR stereo", L"FlatVR 3D depth", L"Native OpenXR - eyes by turns"},
            L"Native OpenXR (the default): the game is an OpenXR app and shows its own stereo pair in the headset, one pass two "
            L"pictures - each eye's real view and the head's place in the room, paced by the headset, no FlatVR - from the game's "
            L"first frame. First (F4) and third person (F2) in stereo, F1 and F3 in 3D too (Stereo tab, \"F1 and F3 in real 3D\"); menus and open panels as a flat picture where you look. "
@@ -310,7 +313,11 @@ std::vector<Item> g_items = {
            L"while the game runs. FlatVR stereo: the game draws each frame once and the right eye is drawn again from the same work "
            L"with its own camera - true 3D at nearly the mono frame rate; it needs a game restart to switch on the first time. "
            L"FlatVR 3D depth: one picture, FlatVR makes the second eye from ReShade's depth (works with DLSS). The FlatVR choices "
-           L"set the Stereo tab's Real stereo and, while BodyWalk runs, FlatVR's 3D source (BodyWalk 1.76 or later).")),
+           L"set the Stereo tab's Real stereo and, while BodyWalk runs, FlatVR's 3D source (BodyWalk 1.76 or later). "
+           L"Native OpenXR - eyes by turns: the game draws one eye a frame, left and right in turn - about half the graphics card's "
+           L"work of the default; the other eye is made on the graphics card from pictures already drawn (the eye drawn this frame "
+           L"moved across with its depth, its own last picture under it), so both eyes show this frame's head, and monsters where "
+           L"they are now. Each eye's own pixels are new at half the rate. The idea is bearstonem/d2r-pcvr's.")),
     Only(kVr, Choice(L"stereo", L"headset_rate", L"Headset refresh rate", 3, {L"72 Hz", L"75 Hz", L"80 Hz", L"90 Hz", L"120 Hz"},
            L"Sets the game's frame cap (in its own options, Settings.json) - the line under it says what is written and why: the rate "
            L"itself for one picture a frame (mono, the 3D from the depth) and for both eyes from one game frame (one pass, two "
@@ -1078,6 +1085,34 @@ std::vector<Item> g_items = {
     Needs(L"stereo", L"afr", 1, Toggle(L"stereo", L"pair_per_tick", L"Both eyes from one game frame", 0,
            L"The frame is drawn twice (left, then right with the game time held) instead of one eye per frame by turns. "
            L"Same pairs per second; the game itself updates half as often.")),
+    Only(kVr, Needs(L"stereo", L"pair_per_tick", 0, Toggle(L"stereo", L"turn_warp", L"Eyes by turns: make the other eye from the depth", 1,
+           L"Native OpenXR with the eyes by turns: the eye not drawn this frame is made on the graphics card for where the head is now - "
+           L"its own last picture moved with the depth it was drawn with (what the hero holds goes with him), at this frame's pose. "
+           L"Unticked: it goes to the headset as it was last drawn, and the headset turns it (rotation only: a step or a moving monster "
+           L"shows a frame behind in that eye). First person (F4) only. Live. Idea: bearstonem/d2r-pcvr."))),
+    Only(kVr, Needs(L"stereo", L"turn_warp", 1, Needs(L"stereo", L"pair_per_tick", 0, Toggle(L"stereo", L"turn_from_drawn",
+           L"... with the eye drawn this frame over it", 1,
+           L"The eye drawn this frame is moved across to the other eye with its own depth and laid over its older picture, so what moves by "
+           L"itself - monsters, missiles - stands where it is now in both eyes; behind an edge, what that eye could not see, the older "
+           L"picture shows. Unticked: the other eye's own last picture alone. Live.")))),
+    Only(kVr, Needs(L"stereo", L"turn_warp", 1, Needs(L"stereo", L"pair_per_tick", 0, Toggle(L"stereo", L"turn_overlay_hide",
+           L"... its overlays hidden by its moved depth", 1,
+           L"The depth is moved with the other eye's picture too, to the pixel, and what the effect draws over it - the wrist medallions, "
+           L"the bow's orbs - is hidden there where that picture shows a hand or the bow nearer. Unticked: nothing of the scene hides them "
+           L"in that eye - they show through the hands every second frame of each eye. Live.")))),
+    Only(kVr, Needs(L"stereo", L"pair_per_tick", 0, Toggle(L"stereo", L"turn_fx_fence", L"Eyes by turns: each frame's effects wait for the last frame's", 1,
+           L"Each frame's effects (the sky, the fog) wait until the graphics card is past the last frame's effects and the other eye's "
+           L"overlays before their cameras go in. ReShade keeps one buffer of them per effect, and while the card was a frame behind the "
+           L"next frame overwrote it: the sky was drawn with the next frame's head turn and shook in both eyes. Unticked: no wait. Live."))),
+    Only(kVr, Needs(L"stereo", L"turn_warp", 1, Needs(L"stereo", L"turn_from_drawn", 1, Needs(L"stereo", L"pair_per_tick", 0,
+           Choice(L"stereo", L"turns_keep_own", L"... the other eye's own picture kept", 3,
+           {L"Nowhere", L"Round near things", L"Everywhere", L"Where the game's effects are (default)", L"Near things and effects"},
+           L"Where the other eye's own older picture, moved with its depth, shows the same surface as the eye drawn this frame, it "
+           L"stays: the game's glow round a blade, hair and its effects (spells, flames, Tyrael's wings) have no depth, and moved "
+           L"across from the eye drawn they stood where that eye saw them - a ghost blade, a second outline, the scene through the "
+           L"wings. Where the game's effects are (the default, bearstonem/d2r-pcvr's owner's choice at Tyrael): the wings right "
+           L"everywhere. Round near things: the hands, the weapon, a monster close by. Everywhere: that eye a frame behind the other "
+           L"all over (grass, flames, monsters' motion). Nowhere: the eye drawn's picture wherever it reaches, as before. Live."))))),
     Needs(L"stereo", L"pair_per_tick", 1, Slider(L"stereo", L"right_dt_ms", L"Right eye frame time, ms", 0, 2, 0.01f, 0.01f,
            L"The right eye's pass gets this much game time instead of none. Effects that skip a frame of no time "
            L"(butterflies only in the left eye) are drawn then; 0.01 is enough, more moves the world between the eyes.")),
@@ -1316,6 +1351,15 @@ std::vector<Item> g_items = {
            L"where the flat picture stood (its width, the panels' distance), the world seen through wherever the menu leaves "
            L"it. Native: the laser points at the panel. FlatVR: needs a BodyWalk that hangs it (an older one keeps the flat "
            L"menus). Off: a menu shows the flat picture, as before. F1, F2 and F3 always do."),
+    Needs(L"openxr", L"menu_3d", 1, Toggle(L"openxr", L"menu_zoom", L"Right grip + right stick: a panel nearer / farther", 1,
+           L"Native OpenXR, F4: with a panel of the game in front (the inventory, the stash, a trader, the waypoints...), hold the "
+           L"right grip and push the right stick forward to bring it nearer, back to send it farther; let go and it stays there - "
+           L"written to \"Flat picture with a panel open: distance\" ([screen] menu_distance_m). It stops where the panel stops "
+           L"being readable: nearer, part of it would be out of sight; farther, the headset's pixels would skip the game's text. "
+           L"While the grip is held the stick's forward / back is not the game's, and the grip's own press (the menu's right "
+           L"bumper, where the laser does not have it) comes when you let go without moving the panel. Off: as before.")),
+    Needs(L"openxr", L"menu_zoom", 1, Slider(L"openxr", L"menu_zoom_speed_mps", L"Panel nearer / farther: speed, m/s", 0.1f, 5.0f, 0.1f, 1.0f,
+           L"How fast the panel moves with the right stick pushed all the way. Live.")),
     Toggle(L"openxr", L"headset_settings", L"Settings panel in the headset (prototype)", 0,
            L"Native OpenXR without BodyWalk's menus: squeeze both grips for a moment, then click a thumbstick, and a small settings "
            L"panel opens in front of you - the flat picture's distance and width, brightness, your height, the laser, the VR render size "
@@ -1935,6 +1979,11 @@ std::vector<Item> g_items = {
            L"Fire, spells, smoke and glows are fogged only as much as the scene behind them is not: a torch or a Fire Bolt in "
            L"front of a far wall stays bright instead of fogged like the wall. The game's own transparent layers of each "
            L"frame are copied for it (VR F4 only). Applies when the game is started again; off = the fog as before.")),
+    Needs(L"fog", L"enabled", 1, Toggle(L"render", L"fog_in_frame", L"Fog drawn inside the game's frame (test)", 0,
+           L"The fog is drawn into the game's own picture before its fire, spells and smoke, and the game lays them over "
+           L"the fogged scene: a torch, a Fire Bolt or an Inferno in front of a far wall is not fogged like the wall. The "
+           L"sky and the black beyond the world keep the fog as before. With an act's own fog colour (World > Sky); VR F4 "
+           L"only. Applies when the game is started again; off = the fog as before. Over \"Fog spares fire\" when both are on.")),
     Needs(L"fog", L"enabled", 1, Toggle(L"fog", L"caves", L"Fog in caves and dungeons", 1,
            L"Off: no fog underground (every area that is not outdoors); the open air keeps it.")),
     Needs(L"fog", L"caves", 1, Slider(L"fog", L"caves_start", L"Fog start in caves", 0, 1000, 5, 150,
@@ -2962,6 +3011,42 @@ std::vector<Item> g_items = {
     Needs(L"gameplay", L"melee_touch", 1, Needs(L"gameplay", L"melee_amplitude", 1, Slider(L"gameplay", L"melee_amp_staff_x", L"Staffs: x piercing", 0.5f, 6, 0.05f, 1.75f,
            L"Staffs: the least swing amplitude as a multiple of the piercing weapons'. 1.75 x 8 cm = 14 cm. The cm it makes is in the label. Live."))),
     Group(L"Each kind of weapon (type a number; 0 = follow the general one)"),
+    Group(L"Thrusts: a poke along the blade (spears, daggers, javelins)"),
+    Needs(L"gameplay", L"melee_touch", 1, Toggle(L"gameplay", L"melee_thrust", L"A thrust counts: a poke along the blade, point first, with its own speed and distance", 1,
+           L"For the weapons that pierce, a THRUST is a hit of its own kind: the blade moved along its own length, point first - a stab of a spear, a dagger, a javelin - counts with the "
+           L"two numbers below, apart from a swing's (\"the least blade speed that hits\", \"how far the blade moves to start a stroke\" and the swing's amplitude). So a short quick poke "
+           L"hits, while a swing still needs its usual speed and size. Which weapons thrust: the game's own data - the weapon's attack class, the one the game animates it with: 1ht "
+           L"(daggers, javelins, throwing knives) and 2ht (spears, tridents, pikes); if that cannot be read, spears, daggers and javelins. Each kind can be set to thrust always (a sword's "
+           L"tip, a polearm) or never in the table below. The strike rules above still judge a thrust (toward the monster, the head); a pull-back or a stab beside the monster does not "
+           L"count. A monster is hit once per thrust, and one movement that is both a swing and a thrust hits once. Only decides whether a contact counts: the game's own attack is "
+           L"pressed - its animation, reach, rolls and damage are the game's. With \"Draw the capsules of Hit by touch\" a poke that counts turns the blade green. Unticked: a poke "
+           L"counts only as a swing, as before. Live. F4 only.")),
+    Needs(L"gameplay", L"melee_touch", 1, Needs(L"gameplay", L"melee_thrust", 1, Slider(L"gameplay", L"melee_thrust_min_speed", L"Thrust: the least speed that hits, m/s", 0.3f, 20, 0.1f, 0.8f,
+           L"How fast the point must be moving where it touches for a thrust to count. A poke reads about 1 m/s, a swing's tip 2-6: 0.8 lets a quick short stab hit. Apart from the swing's "
+           L"least speed - a high swing number (only real swings) leaves pokes to this one. Each kind can have its own in the table. Live."))),
+    Needs(L"gameplay", L"melee_touch", 1, Needs(L"gameplay", L"melee_thrust", 1, Slider(L"gameplay", L"melee_thrust_cm", L"Thrust: the least distance along the blade, cm", 1, 30, 1, 5,
+           L"How far the point must have gone forward along the blade in this thrust before the touch: 5 = a short jab. Larger: only a real lunge counts; smaller: a tap counts too. "
+           L"Apart from the swing's start distance and amplitude. Each kind can have its own in the table. Live."))),
+    Needs(L"gameplay", L"melee_touch", 1, Needs(L"gameplay", L"melee_thrust", 1, Slider(L"gameplay", L"melee_thrust_along_pct", L"Thrust: how much of the movement is along the blade, %", 50, 95, 1, 70,
+           L"A movement is a thrust when at least this part of the point's path went forward along the blade's own length (and the point still goes forward at the touch). 70 = mostly "
+           L"straight; higher: only a clean straight stab; lower: a stab with some sweep in it counts too. A swing (the point goes across the blade) never reaches it. Live."))),
+    Needs(L"gameplay", L"melee_touch", 1, Needs(L"gameplay", L"melee_thrust", 1, Slider(L"gameplay", L"melee_thrust_min_accel", L"Thrust: the least acceleration (jab, not push), m/s\u00B2", 0, 300, 1, 0,
+           L"How sharply the point must have been driven forward along the blade: the PEAK acceleration of the thrust - the burst that started it - not the value at the touch (a jab "
+           L"meets the monster at its top speed, coasting, where a jab and a slow push both read about nothing). A sharp jab reaches tens of m/s\u00B2, a slow push a few: about 10 - 15 "
+           L"keeps the jabs and refuses the pushes. 0 (the default) = not asked, as before. Each kind can have its own in the table. The log tells every thrust's numbers (speed, cm, the part "
+           L"along the blade, the peak acceleration) - the first ones always, every one with \"Draw the capsules of Hit by touch\" - to tune it from. Live."))),
+    Needs(L"gameplay", L"melee_touch", 1, Needs(L"gameplay", L"melee_thrust", 1, Toggle(L"debug", L"thrust_debug", L"Thrust debug: the last thrust's numbers over the weapon hand", 0,
+           L"To tune the thrust in the headset (F4): a small plate over the weapon hand shows the LAST TOUCH - a thrust's contact with a monster, COUNTED in blue or REJECTED in orange with the "
+           L"threshold that failed (not straight, too slow, too short, no accel, not toward the monster, not the head) - and the LAST JAB, touching or not: its peak speed, the cm its point "
+           L"went along the blade, how straight it was, its peak acceleration, each beside its threshold (green passes, red fails; \"(own)\" = the weapon kind's own number, else the "
+           L"general one), and whether it would count. So a real jab can be read before a monster is near. The blade (drawn as with \"Draw the capsules of Hit by touch\", which this "
+           L"switches on too) turns BLUE (counted) or ORANGE (refused) for a moment after each thrust - the thrust's own colours, apart from the swing's green / red - and the log has a "
+           L"line for each thrust and each jab (\"thrust debug: ...\"). Only a drawing and a log: nothing of what counts changes. Off by default. Live."))),
+    Needs(L"gameplay", L"melee_touch", 1, Needs(L"debug", L"thrust_debug", 1, Toggle(L"debug", L"thrust_debug_only", L"Thrust debug: only the thrusts (no swings, no blows from above)", 0,
+           L"With the thrust debug on: ONLY the forward thrusts are shown. The swing's colours on the blade (green, red, amber), its contact marks, its log lines and the 5-a-second \"melee "
+           L"boxes:\" line are left out, and a movement that is not straight enough to be a thrust - a swing, an overhead blow - is neither shown on the plate nor tinted nor logged. "
+           L"The blade stays cyan until a thrust tints it blue or orange. Only what is shown changes; the swings hit as ever. Off by default. Live. F4."))),
+    Group(L"Thrusts of each kind (the tick: it thrusts; a number 0 = the general one)"),
     Group(L"Melee skills armed by their button (F4)"),
     Needs(L"gameplay", L"melee_touch", 1, Toggle(L"gameplay", L"melee_skill_armed", L"A melee skill's button arms it: every hit is that skill", 0,
            L"Hit by touch on (F4 only), a melee weapon or fists swung. A press of a pad skill button (B, X, Y, RB, with or without LT) whose slot holds a melee attack skill - Bash, Stun, Concentrate, "
@@ -3057,7 +3142,7 @@ std::vector<Item> g_items = {
            L"a monster's hit in the first ~0.3 s no longer cancels your blow. It applies to every melee attack of your class - the plain attack and the skills that play it (Zeal, "
            L"Bash, Berserk, Sacrifice...), the Paladin's Smite too - in VR first person only and offline only (this game's own tables); put back exactly when you switch it "
            L"off, change view or leave the game. Never the bow's, the crossbow's or a throw's animation. Live. [debug] bow_latency shows the animation row on the press-to-hit line."),
-    Needs(L"hands", L"quick_strike", 1, Slider(L"hands", L"quick_strike_frame", L"Quick strike: the frame the blow lands at", 1, 12, 1, 1,
+    Needs(L"hands", L"quick_strike", 1, Slider(L"hands", L"quick_strike_frame", L"Quick strike: the frame the blow lands at", 2, 12, 1, 2,
            L"The animation frame (a frame is 0.04 s) the blow lands at instead of the original (6 to 14 for the classes' melee attacks). 1 is the earliest the game can act: frame 0 "
            L"is never looked at when an animation starts. A value at or past the original changes nothing. Live.")),
     Group(L"Shield bash"),
@@ -3212,6 +3297,13 @@ std::vector<Item> g_items = {
            L"Live. How long the hilt is, in centimetres from the pommel to the guard: the second hand takes the weapon only up to here (and a few centimetres past it). 0: the weight model's own - the first piece of its shape for this kind, scaled onto the weapon as it is drawn.")))),
     Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Needs(L"weight", L"grip_hilt_only", 1, Slider(L"weight", L"grip_hilt_cm_dagger", L"Dagger: the hilt, cm (0 = from the model)", 0, 150, 1, 0,
            L"Live. How long the hilt is, in centimetres from the pommel to the guard: the second hand takes the weapon only up to here (and a few centimetres past it). 0: the weight model's own - the first piece of its shape for this kind, scaled onto the weapon as it is drawn (about 10 cm).")))),
+    Group(L"Monsters' bodies (F4)"),
+    Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Toggle(L"weight", L"monster_bodies", L"The weapon stops on monsters' bodies (a test)", 0,
+           L"Ticked: a monster the game calls hostile has a body the weapon in your hands cannot pass through - a thrust or a cut stops on it, an edge (a sword, an axe, a spear) "
+           L"at a shallow angle glances off along it, a blunt weapon (a mace, a scepter, a staff) stops where it struck; a pulse in the hand at the strike. Your hand goes on, the "
+           L"weapon (and the hand as it is drawn on it) stays at the body until the hand comes back. The body is the monster's own skeleton: a capsule on each of its limbs as "
+           L"the game poses them, as thick as its model (where that cannot be read, the capsule the game gives the monster). The hit itself is still the game's attack pressed by hit by touch: needs Hit by touch on - its scan finds the monsters. Unticked: the weapon "
+           L"passes through them, as ever."))),
     Group(L"The hero's strength (F4)"),
     Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Toggle(L"weight", L"hero_strength", L"The hero's strength decides how heavy a weapon feels", 0,
            L"Ticked: the hero's Strength (the game's stat: points, gear and all) against the weapon's own Strength requirement (the game's Weapons table) scales how heavy it feels - the "
@@ -4087,10 +4179,12 @@ void WriteReShadeValue(const Item&, float v) {
 // replay_right, reads as stereo here).
 BW_LinkRequests* LinkRequests();
 bool LinkHost(uint32_t* caps = nullptr);
-// The list shows three of the six modes (index = the list's item): 0 native OpenXR (modes 4 and 5), 1 FlatVR stereo (modes 0 and 1;
-// mono, which the list no longer offers, is shown here too), 2 FlatVR 3D depth (mode 2). WriteStereo3D takes the list's index.
+// The list shows four of the six modes (index = the list's item): 0 native OpenXR (mode 4), 1 FlatVR stereo (modes 0 and 1;
+// mono, which the list no longer offers, is shown here too), 2 FlatVR 3D depth (mode 2), 3 native OpenXR with the eyes by turns
+// (mode 5). WriteStereo3D takes the list's index.
 float ReadStereo3D() {
-    if (GetPrivateProfileIntW(L"openxr", L"on", 0, g_ini) != 0) return 0.0f;
+    if (GetPrivateProfileIntW(L"openxr", L"on", 0, g_ini) != 0)
+        return GetPrivateProfileIntW(L"stereo", L"afr", 0, g_ini) != 0 && GetPrivateProfileIntW(L"stereo", L"pair_per_tick", 0, g_ini) == 0 ? 3.0f : 0.0f;
     const bool afr = GetPrivateProfileIntW(L"stereo", L"afr", 0, g_ini) != 0;
     const int source = GetPrivateProfileIntW(L"stereo", L"source", afr ? 2 : 1, g_ini);
     if (afr) return 1.0f;
@@ -4109,8 +4203,8 @@ bool BodyWalkTakesGameHeadset() {
 // False: not written (native OpenXR without a BodyWalk for it).
 void ApplyWindowForPlatform();   // (the game's window: VR has the square, flat mode the player's own - below)
 bool WriteStereo3D(float item) {
-    static const float kModeOfItem[3] = {4.0f, 0.0f, 2.0f};   // the list's item -> the mode below (native, FlatVR stereo, FlatVR 3D depth)
-    const float v = kModeOfItem[std::clamp((int)std::lround(item), 0, 2)];
+    static const float kModeOfItem[4] = {4.0f, 0.0f, 2.0f, 5.0f};   // the list's item -> the mode below (native, FlatVR stereo, FlatVR 3D depth, native by turns)
+    const float v = kModeOfItem[std::clamp((int)std::lround(item), 0, 3)];
     const bool native = std::lround(v) == 4 || std::lround(v) == 5;   // the one-pass stereo, or the eyes by turns (5)
     const bool wasNative = GetPrivateProfileIntW(L"openxr", L"on", 0, g_ini) != 0;
     // (with "Controls without BodyWalk" the controls need no BodyWalk at all)
@@ -4387,7 +4481,7 @@ float ReadValue(const Item& it) {
             if (!it.oldMap.empty()) {   // the older key's values mean other things here: through the table
                 wchar_t* e2 = nullptr;
                 const float ov = wcstof(buf, &e2);
-                if (e2 != buf && std::isfinite(ov)) swprintf_s(buf, L"%g", it.oldMap[(size_t)std::clamp((int)std::lround(ov), 0, (int)it.oldMap.size() - 1)]);
+                if (e2 != buf && std::isfinite(ov)) swprintf_s(buf, L"%g", it.oldMap[(size_t)std::clamp((int)std::lround(ov) - it.oldMapFrom, 0, (int)it.oldMap.size() - 1)]);
             }
         }
     } else
@@ -4693,7 +4787,10 @@ const wchar_t* const kStrikeKinds[kStrikeKindCount] = {L"sword", L"axe", L"mace"
 const wchar_t* const kStrikeLabels[kStrikeKindCount] = {L"Swords", L"Axes", L"Maces", L"Scepters", L"Wands", L"Staffs", L"Polearms", L"Spears", L"Daggers", L"Claws", L"Orbs", L"Fists", L"Other", L"Javelins", L"Throwing"};
 // 0 piercing, 1 edged, 2 blunt, 3 staff (strikedir::FamilyOf): which factor a kind follows while it has none of its own.
 const int kStrikeFamily[kStrikeKindCount] = {1, 1, 2, 2, 0, 3, 1, 0, 0, 0, 0, 0, 0, 0, 0};
+// [gameplay] melee_thrust_on_<kind>: ticked to begin with - spears, daggers, javelins, throwing weapons (the game's 1ht / 2ht; thrust::DefaultTick)
+const bool kStrikeThrustTick[kStrikeKindCount] = {false, false, false, false, false, false, false, true, true, false, false, false, false, true, true};
 constexpr const wchar_t* kStrikeTableGroup = L"Each kind of weapon (type a number; 0 = follow the general one)";
+constexpr const wchar_t* kThrustTableGroup = L"Thrusts of each kind (the tick: it thrusts; a number 0 = the general one)";
 
 float StrikeIni(const wchar_t* key, float def, float lo, float hi) {
     wchar_t buf[64], dflt[32];
@@ -5635,6 +5732,21 @@ void StartSay(const std::wstring& line);
 // nobody should have to know to start it first (2026-10-10) - and FlatVR once Game Link is
 // up, unless the game holds the headset itself (native OpenXR: it stops FlatVR anyway).
 // 0 started, 3 D2RLoader.exe could not be started (the window ignores the answer; `--start` returns it).
+// The Steam ids the game would inherit (this program started from a Steam library shortcut, SteamVR, the launcher's Steam
+// side): the Steam copy needs its own app id (2536520) and nothing of a shortcut's synthetic one; the Battle.net copy must have
+// NONE of them - with a SteamAppId the Battle.net game checks its license through Steam and finds none ("You have not been
+// online in the last 30 days", a player 2026-10-21). bearstonem/d2r-pcvr's launch_windows.py (MIT) and our launcher do the same.
+// The copy is told by its folder: Steam keeps its games under steamapps\common. Only this program's own environment changes,
+// which the game inherits through ShellExecuteEx below.
+void GameStoreEnvironment(const std::wstring& game) {
+    std::wstring lower = game;
+    for (wchar_t& c : lower) c = (wchar_t)towlower(c);
+    const bool steam = lower.find(L"\\steamapps\\common\\") != std::wstring::npos;
+    SetEnvironmentVariableW(L"SteamOverlayGameId", nullptr);
+    SetEnvironmentVariableW(L"SteamAppId", steam ? L"2536520" : nullptr);
+    SetEnvironmentVariableW(L"SteamGameId", steam ? L"2536520" : nullptr);
+    LogLine(std::wstring(L"launch: the ") + (steam ? L"Steam copy - SteamAppId 2536520" : L"Battle.net copy - no Steam ids passed to the game"));
+}
 int LaunchGame() {
     ApplyWindowForPlatform();   // START in flat mode never meets VR's square (and in VR the square, if ticked)
     if (g_platform != 1) RestoreFrameCapForFlat();   // ... nor VR's frame cap (in VR START changes nothing: the rate was written when it was chosen)
@@ -5643,6 +5755,7 @@ int LaunchGame() {
     const std::wstring exe = game + L"D2RLoader.exe";
     // installed as the D2RLoader mod D2R-VR: D2RLoader is told to run that mod (its plugins load only then)
     const std::wstring args = ModInstall() ? modlayout::LaunchArguments() : std::wstring();
+    GameStoreEnvironment(game);
     {   // (ShellExecuteEx: `--start` must not meet an error box of the shell's - a D2RLoader.exe that is not a program says so by the exit code)
         SHELLEXECUTEINFOW sei{sizeof sei};
         sei.fMask = SEE_MASK_NOASYNC | (g_headless ? SEE_MASK_FLAG_NO_UI : 0);
@@ -6099,6 +6212,53 @@ void AddStrikeTable() {
         rows.push_back(cell(6, Needs(L"gameplay", L"melee_touch", 1, Needs(L"gameplay", L"melee_head_only", 1,
             Toggle(L"gameplay", Keep(L"melee_head_only_" + n), L"", k == 2 || k == 3 ? 1.0f : 0.0f,
                    tip(L"only the head of the weapon strikes (the outer part of the blade); a touch with the shaft or the handle is refused. Live."))))));
+    }
+    g_items.insert(g_items.begin() + (std::ptrdiff_t)at + 1, rows.begin(), rows.end());
+}
+
+// The Strikes tab's thrust table ([gameplay] melee_thrust, vr/thrust_stroke.h), after its group: a row for each weapon kind - whether it thrusts (0 by the game's own class, 1 always, -1
+// never), its least thrust speed, its least thrust distance and its least peak acceleration (0 = the general ones).
+void AddThrustTable() {
+    size_t at = 0;
+    while (at < g_items.size() && !(g_items[at].kind == Kind::Group && wcscmp(g_items[at].label, kThrustTableGroup) == 0)) ++at;
+    if (at == g_items.size()) return;
+    std::vector<Item> rows;
+    const auto cell = [](int c, Item i) { i.cell = c; return i; };
+    const wchar_t* const head[5] = {L"Weapon", L"Thrust", L"Speed", L"Cm", L"Accel"};
+    const wchar_t* const headTip[5] = {
+        L"The kinds of weapon the touch swings. The numbers of a row are for that kind's thrusts alone (a poke along the blade, point first); 0 in a number box = follow the general one.",
+        L"Ticked: this kind thrusts - a poke along its blade, point first, counts with the thrust's numbers. Ticked to begin with: the kinds the game's own data thrusts with (the weapon's "
+        L"attack class 1ht / 2ht - spears, daggers, javelins, throwing weapons). Tick a sword or a polearm for its tip; untick a kind that should only swing.",
+        L"The least speed of a thrust, m/s, for this kind. 0 = the general one (\"Thrust: the least speed that hits\"). 0.3 to 20.",
+        L"How far the point must go forward along the blade, cm, for this kind's thrust. 0 = the general one (\"Thrust: the least distance along the blade\"). 1 to 30.",
+        L"The least peak acceleration of this kind's thrust, m/s\u00B2 - a jab, not a push. 0 = the general one (\"Thrust: the least acceleration\", itself 0 = not asked). Up to 300."};
+    for (int c = 0; c < 5; ++c) {
+        Item h = Status(Keep(L"tt_h" + std::to_wstring(c)), head[c]);
+        h.tip = headTip[c];
+        rows.push_back(cell(c, h));
+    }
+    for (int k = 0; k < kStrikeKindCount; ++k) {
+        const std::wstring n = kStrikeKinds[k];
+        const wchar_t* const label = kStrikeLabels[k];
+        const auto tip = [&](const wchar_t* what) { return Keep(std::wstring(label) + L": " + what); };
+        Item name = Status(Keep(L"tt_n_" + n), label);
+        name.tip = tip(L"this kind's thrusts alone. 0 in a number box = follow the general one.");
+        rows.push_back(cell(0, name));
+        // the tick (melee_thrust_on_<kind>); a settings file without it shows the older number melee_thrust_<kind>: -1 unticked, 1 ticked, 0 the kind's own default
+        const float tickDef = kStrikeThrustTick[k] ? 1.0f : 0.0f;
+        rows.push_back(cell(1, Needs(L"gameplay", L"melee_touch", 1, Needs(L"gameplay", L"melee_thrust", 1,
+            StartsFromMappedFrom(Keep(L"melee_thrust_" + n), -1, {0.0f, tickDef, 1.0f},
+                Toggle(L"gameplay", Keep(L"melee_thrust_on_" + n), L"", tickDef,
+                       tip(L"ticked: this kind thrusts (a poke along the blade counts). Live.")))))));
+        rows.push_back(cell(2, Needs(L"gameplay", L"melee_touch", 1, Needs(L"gameplay", L"melee_thrust", 1,
+            Slider(L"gameplay", Keep(L"melee_thrust_min_speed_" + n), L"", 0, 20, 0.1f, 0,
+                   tip(L"the least speed of a thrust, m/s. 0 (or under 0.3) = the general one. Live."))))));
+        rows.push_back(cell(3, Needs(L"gameplay", L"melee_touch", 1, Needs(L"gameplay", L"melee_thrust", 1,
+            Slider(L"gameplay", Keep(L"melee_thrust_cm_" + n), L"", 0, 30, 1, 0,
+                   tip(L"how far the point goes forward along the blade, cm. 0 (or under 1) = the general one. Live."))))));
+        rows.push_back(cell(4, Needs(L"gameplay", L"melee_touch", 1, Needs(L"gameplay", L"melee_thrust", 1,
+            Slider(L"gameplay", Keep(L"melee_thrust_min_accel_" + n), L"", 0, 300, 1, 0,
+                   tip(L"the least peak acceleration of a thrust, m/s\u00B2 (a jab, not a push). 0 = the general one. Live."))))));
     }
     g_items.insert(g_items.begin() + (std::ptrdiff_t)at + 1, rows.begin(), rows.end());
 }
@@ -7596,6 +7756,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
     GetPrivateProfileStringW(L"window", L"zoom", L"1", buf, 32, g_uiIni);
     g_zoom = std::clamp(std::round(wcstof(buf, nullptr) * 10.0f) / 10.0f, 0.7f, 2.0f);
     AddStrikeTable();
+    AddThrustTable();
     AddGameCodeTab();
     g_tab = 0;   // always the Home page first (2026-10-14, the user's wish); the tab last used is no longer restored
     SetWeaponSection(GetPrivateProfileIntW(L"weapon", L"weapon", 1, g_uiIni) + 1);   // the kind last picked by hand
