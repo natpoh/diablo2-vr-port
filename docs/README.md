@@ -19,8 +19,8 @@ D2R VR is MIT-licensed. Fork it, fix something, and send a pull request.
    tagged **[BodyWalk/FlatVR]** need BodyWalk or FlatVR, which are separate
    products: talk to us first.
 2. **Say you are on it** in our Discord channel
-   [#diablo-2-vr](https://discord.com/channels/1481909961897279562/1556377249484251298)
-   ([join the server](https://discord.gg/kVYjEdJx3e)), so two people don't do
+   [#modding-and-forks](https://discord.com/channels/1564948933996978176/1564952153326354492)
+   ([join the server](https://discord.gg/7PHp8n6v9z)), so two people don't do
    the same thing.
 3. **Build:** see "Building" in the main README. Test in the game (offline,
    single player) with the game's log open.

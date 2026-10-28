@@ -57,9 +57,8 @@ first person (F4). All versions:
 each, and notes for developers are in [docs/](docs/README.md) - fork it, fix
 one and send a pull request.
 
-**Discussion, bugs and ideas:** our Discord, channel
-[#diablo-2-vr](https://discord.com/channels/1481909961897279562/1556377249484251298)
-under *Game Mods* - not on the server yet? [Join it here](https://discord.gg/kVYjEdJx3e).
+**Discussion, bugs and ideas:** the mod's own Discord, D2R VR Authentic -
+[join it here](https://discord.gg/7PHp8n6v9z) (support with your log in #support, ideas in #feedback-and-ideas).
 Tell us what works, what doesn't and what you would like to see.
 
 > Offline single-player only. Injecting code into the game online can get the
