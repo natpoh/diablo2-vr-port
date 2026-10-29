@@ -799,6 +799,12 @@ void SetRagdollAll(bool on);
 // asks it for every skeleton it poses, after the game's own pose, and turns the bones so (vr/doll_pose.h). Null: none.
 using MonsterPoseFn = bool (*)(uintptr_t self, dollpose::Pose* out);
 void SetMonsterPoseSource(MonsterPoseFn fn);
+// ... the same by a world pose the game hands its skinning (Pose::poseCur / posePrev, else Pose::skel and the pose's matrices; meleetouch::MonsterPosesForSkin): the skinning composite draws a struck
+// monster from a turned copy of its pose (headshadow::SetDollSkin; vr/head_shadow.h) - the pose hook then leaves the game's pose as it made it.
+using MonsterPoseByWorldFn = int (*)(uintptr_t skeleton, uintptr_t worldPose, dollpose::Pose* out, int max, bool* exact);
+void SetMonsterPoseByWorldSource(MonsterPoseByWorldFn fn);
+// A SkeletonInstance's world poses: this frame's (+0x20) and the last's (+0x28). False when they do not read.
+bool WorldPoses(uintptr_t self, uintptr_t* cur, uintptr_t* prev, uintptr_t* skeleton = nullptr);
 // [debug] monster_rig_dump: the next model whose boxes are read for the first time has every read written out (its Granny model, its ModelComponent's
 // model instance, the meshes, their first bone bindings, the skeleton's first bones) - one line, taken by RigDumpTakeIn (empty: none); the paths of the
 // models that are not bodies (items, gold, arrows) in short lines. For the headset test that proves the layout.

@@ -217,6 +217,68 @@ void TestHangingArm() {
 	EXPECT(std::fabs(m[4][12] - 0.22f) + std::fabs(m[4][13] - 1.2f) + std::fabs(m[4][14]) < 1e-5f, "the elbow stays");
 }
 
+// 0.188.7: the skinning is handed a copy of a monster's pose - which monster's? Its matrices against each candidate's own pose now: an exact copy is found,
+// a near one too, one of two monsters in the same pose is no answer, a pose far from all is none; the strongest turn for the log.
+void TestNearest() {
+	float a[kBones][16], b[kBones][16], c[kBones][16];
+	Mats(a);
+	Mats(b);
+	Mats(c);
+	for (int i = 0; i < kBones; ++i) { b[i][12] += 0.5f; c[i][13] += 0.3f; }   // b: another monster's pose (moved half a metre), c: a third
+	const float (*cands[3])[16] = {b, a, c};
+	float d = -1.0f;
+	EXPECT(dp::NearestPose(a, kBones, cands, 3, &d) == 1 && d < 1e-6f, "an exact copy found: %f", d);
+	float near[kBones][16];
+	std::memcpy(near, a, sizeof near);
+	near[2][13] += 0.01f;   // a frame later: the head 1 cm up
+	EXPECT(dp::NearestPose(near, kBones, cands, 3) == 1, "a near one found");
+	const float (*twins[2])[16] = {a, a};
+	EXPECT(dp::NearestPose(a, kBones, twins, 2) == -1, "two monsters in the same pose: no answer");
+	float far[kBones][16];
+	Mats(far);
+	for (int i = 0; i < kBones; ++i) far[i][14] += 2.0f;
+	EXPECT(dp::NearestPose(far, kBones, cands, 3) == -1, "far from all: none");
+	const float (*none[2])[16] = {nullptr, nullptr};
+	EXPECT(dp::NearestPose(a, kBones, none, 2) == -1, "no candidates: none");
+	dp::Pose p;
+	p.n = 2;
+	p.t[0].angle = -0.3f;
+	p.t[1].angle = 0.1f;
+	EXPECT(std::fabs(dp::Strongest(p) - 0.3f) < 1e-6f, "the strongest turn");
+}
+
+// 0.188.9, Serg: "нпс несколько секунд в начале игры поддаются, а потом перестают". A monster pushed, let go (it fades out), and pushed again 10 s later -
+// in the same slot of the table: the new pose is a fresh one, drawn whole, not one long faded. And Build makes a pose afresh whatever its slot held.
+void TestPushAgain() {
+	World w;
+	Built b;
+	Make(w, &b);
+	dp::LimbOff limb{3, {0.0f, 0.0f, -0.1f}};
+	dp::Pose table[16], made[16];
+	int n = 0;
+	// t = 1000: monster A pushed
+	EXPECT(dp::Build(b.rig, 1.0f, nullptr, &limb, 1, &made[0]), "built");
+	made[0].self = 0xA;
+	n = dp::Carry(made, 1, 16, table, 0, 1000, 300);
+	for (int i = 0; i < n; ++i) table[i] = made[i];
+	EXPECT(n == 1 && table[0].fadeFromMs == 0, "pushed: fresh");
+	// t = 1500: at rest - nothing made, it is let go of and fades
+	int m = dp::Carry(made, 0, 16, table, n, 1500, 300);
+	for (int i = 0; i < m; ++i) table[i] = made[i];
+	EXPECT(m == 1 && table[0].fadeFromMs == 1500, "let go: fading from 1500");
+	// t = 1900: faded out, dropped
+	const int k = dp::Carry(made, 0, 16, table, m, 1900, 300);
+	EXPECT(k == 0, "faded out: dropped");
+	table[0] = made[0];   // (the slot still holds what it held: a pose marked as fading)
+	made[0].fadeFromMs = 1500;
+	// t = 11500: pushed again, its pose made in that very slot
+	EXPECT(dp::Build(b.rig, 1.0f, nullptr, &limb, 1, &made[0]) && made[0].fadeFromMs == 0, "Build makes it afresh: no fading mark");
+	made[0].self = 0xB;
+	made[0].fadeFromMs = 1500;   // (and were one left there, Carry clears it)
+	n = dp::Carry(made, 1, 16, table, 0, 11500, 300);
+	EXPECT(n == 1 && made[0].fadeFromMs == 0, "pushed again 10 s later: a fresh pose, drawn whole");
+}
+
 }  // namespace
 
 int main() {
@@ -237,6 +299,8 @@ int main() {
 	TestArm(mirrored, 1.0f, back, "mirrored");
 	TestLean(mirrored, 1.0f, "mirrored");
 	TestEdges();
+	TestNearest();
+	TestPushAgain();
 	TestChainLines();
 	TestHangingArm();
 	std::printf("doll_pose_test: %s (%d failed)\n", g_fails ? "FAIL" : "ok", g_fails);

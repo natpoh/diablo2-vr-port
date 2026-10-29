@@ -185,9 +185,43 @@ void CountSkin(uintptr_t skeleton, uintptr_t pose, int pass) {
     }
 }
 
+// [weight] monster_ragdoll_pose: the turned monsters' poses (DollSkinFn), this thread's copy - made afresh for each skinning (a frame is a few of them)
+std::atomic<bool> g_dollWanted{false};
+std::atomic<DollSkinFn> g_dollSkin{nullptr};
+std::atomic<unsigned> g_dollSubs{0}, g_dollFaults{0};
+std::atomic<unsigned> g_dollSubsEyes{0}, g_dollSubsShadow{0}, g_dollSubsNone{0};   // ... by the pass that skinned the copy (the eyes', the shadows', none)
+thread_local std::unique_ptr<Copy> t_doll;
+
+// 1 handed a turned copy (*out), 0 not a monster the doll turns, -1 a fault (off for the session).
+int DollPose(uintptr_t skeleton, uintptr_t pose, uintptr_t* out) {
+    const DollSkinFn fn = g_dollSkin.load(std::memory_order_relaxed);
+    if (!fn || !pose || !fn(skeleton, pose, nullptr, 0)) return 0;   // (a look first - no copy of a pose that is no struck monster's)
+    if (!t_doll) t_doll.reset(new (std::nothrow) Copy());
+    if (!t_doll) return 0;
+    int n = 0;
+    const int r = ReadPose(t_doll.get(), pose, &n);
+    if (r <= 0) return r;
+    if (!fn(skeleton, pose, t_doll->m, n)) return 0;
+    const uintptr_t ours = reinterpret_cast<uintptr_t>(t_doll->m);
+    std::memcpy(t_doll->header + kPoseMatrices, &ours, sizeof ours);
+    *out = reinterpret_cast<uintptr_t>(t_doll->header);
+    return 1;
+}
+
 __declspec(noinline) uintptr_t HookComposite(uintptr_t skeleton, uintptr_t pose, uintptr_t indices, uintptr_t count, uintptr_t out) {
     const int pass = t_pass;
     CountSkin(skeleton, pose, pass);
+    if (g_dollWanted.load(std::memory_order_relaxed) && g_dollFaults.load(std::memory_order_relaxed) == 0 && pose && pose != g_cur.load(std::memory_order_relaxed) &&
+        pose != g_prev.load(std::memory_order_relaxed)) {   // [weight] monster_ragdoll_pose: a struck monster, drawn turned
+        uintptr_t turned = 0;
+        const int r = DollPose(skeleton, pose, &turned);
+        if (r > 0) {
+            g_dollSubs.fetch_add(1, std::memory_order_relaxed);
+            (pass == kPassNone ? g_dollSubsNone : EyesPass(pass) ? g_dollSubsEyes : g_dollSubsShadow).fetch_add(1, std::memory_order_relaxed);
+            return g_origComposite(skeleton, turned, indices, count, out);
+        }
+        if (r < 0 && g_dollFaults.fetch_add(1) == 0) Log("head shadow: a fault reading a monster's pose for its doll - the monsters' turns are written into their poses as before");
+    }
     if (pass != kPassNone && pose) {
         const uintptr_t cur = g_cur.load(std::memory_order_relaxed), prev = g_prev.load(std::memory_order_relaxed);
         if (cur && (pose == cur || pose == prev)) {
@@ -273,6 +307,12 @@ void Init(const PluginContext* ctx) {
     if (g_wanted.load()) Log("head shadow: on ([arms] head_shadow) - in F4 the hero's head stays in his pose for the shadows and is shrunk in the eyes' passes only (visual only)");
 }
 
+void WantForDoll(bool on) {
+    if (g_dollWanted.exchange(on) != on && on) Log("monster ragdoll pose: the game's skinning composite is asked for - a struck monster is drawn from a turned copy of its pose");
+}
+void SetDollSkin(DollSkinFn fn) { g_dollSkin.store(fn); }
+bool DollSkinningIn() { return g_state.load() == 1 && g_dollWanted.load() && g_dollFaults.load() == 0; }
+
 void Configure(bool wanted) {
     const bool was = g_wanted.exchange(wanted);
     if (wanted == was) return;
@@ -288,6 +328,16 @@ void Install() {
     static int whyTold = -1, whySeen = -1;
     const ULONGLONG now = GetTickCount64();
     if (g_marked.Live() != 0) g_marked.Prune(now);   // (what no longer hangs on the head: out of the set, so the draw hook's gate closes again)
+    if (g_dollWanted.load() && g_state.load() == 1) {   // [weight] monster_ragdoll_pose: what the composite handed turned, every 5 s while it does
+        static ULONGLONG dollAt = 0;
+        if (now - dollAt >= 5000) {
+            dollAt = now;
+            const unsigned eyes = g_dollSubsEyes.exchange(0), shadows = g_dollSubsShadow.exchange(0), none = g_dollSubsNone.exchange(0);
+            if (const unsigned subs = g_dollSubs.exchange(0))
+                LogF("monster ragdoll pose: the last 5 s - %u skinnings of struck monsters handed their turned pose (the eyes' passes %u, the shadows' %u, outside a draw "
+                     "collect %u)", subs, eyes, shadows, none);
+        }
+    }
     if (g_wanted.load() && g_state.load() == 1) {
         // a line when the state has held for a second (a log line costs a millisecond: not every frame), and a short count of the hooks' work once a minute while on
         const int why = g_why.load();
@@ -310,7 +360,7 @@ void Install() {
         potionhide::WantHooksForHead(true);
         potionhide::Install();
     }
-    if (!g_wanted.load() || g_state.load() != 0 || !g_ctx || now < retryAt) return;
+    if (!(g_wanted.load() || g_dollWanted.load()) || g_state.load() != 0 || !g_ctx || now < retryAt) return;
     retryAt = now + (tries < 30 ? 2000 : 30000);
     if (!d2rsig::Addr(RVA_DRAW_COLLECT) || !d2rsig::Addr(RVA_COMPOSITE) || !d2rsig::Addr(RVA_ATTACHMENT_OF) || !d2rsig::Addr(RVA_ECS_REGISTRY)) {
         if (++tries == 30) Log("head shadow: the renderer's functions are not found (another build?) - the head is shrunk in the pose as before");

@@ -143,6 +143,15 @@ void Unpublish(uintptr_t self);
 // instance of the hero's skeleton, which our pose never reaches: Serg's 2026-10-29 "I turn the camera and the feet stay where they were" - the body
 // turned, the legs not). SkinNote: the counts since the last call, one line ("" when none met or the hooks are not in).
 void NoteHeroRig(uintptr_t skeleton, uintptr_t pose, uintptr_t prevPose);
+// [weight] monster_ragdoll_pose: a struck monster drawn as its doll turns it - the skinning composite hands the game's skinning a copy of the monster's world
+// pose turned (skel::DollSkin, the callback: true when it turned the copy's matrices), the way the eyes get the hero's head shrunk. 0.188.6, Serg: "the
+// ragdoll moves but the animation doesn't" - the turns written into the pose at +0x20 after ComputeSelfWorldPose were published, and not what the game
+// drew. DollSkinFn(pose, nullptr, 0): only "is it a struck monster's pose?". WantForDoll: the composite hook is put in for it too ([arms] head_shadow off).
+// DollSkinningIn: it is in (else the pose hook writes, as before).
+using DollSkinFn = bool (*)(uintptr_t skeleton, uintptr_t pose, float (*mats)[16], int n);   // (skeleton: the granny_skeleton the composite is handed)
+void WantForDoll(bool on);
+void SetDollSkin(DollSkinFn fn);
+bool DollSkinningIn();
 std::string SkinNote();
 
 }  // namespace headshadow

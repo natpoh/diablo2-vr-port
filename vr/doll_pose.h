@@ -42,6 +42,8 @@ struct Pose {
     Turn t[kMaxTurns];      // the limbs' turns first, the lean last
     uint64_t tickMs = 0;
     uint64_t fadeFromMs = 0;   // let go of at this tick (0: not): eased back to the animation (Faded)
+    uintptr_t poseCur = 0, posePrev = 0;   // its SkeletonInstance's world poses (+0x20, +0x28) when made: the skinning finds it by them...
+    uintptr_t skel = 0;                    // ... or by its granny_skeleton (shared by every monster of its model) and the pose's own matrices (NearestPose)
 };
 
 // What Build needs of the rig: the entity's model -> world rows (3x3), where it stands (world units), its skeleton's parents (parents come first: the game
@@ -128,7 +130,8 @@ inline bool JointAtB(const Rig& rig, const Rig::Cap& c, const float mid[3]) {
 struct LimbOff { int bone; float off[3]; };
 inline bool Build(const Rig& rig, float upm, const float* bodyOff, const LimbOff* limbs, int nLimbs, Pose* out) {
     using namespace detail;
-    out->n = 0;
+    *out = Pose{};   // (all of it: a pose made in a slot a faded one had kept its fadeFromMs - 0.188.9, "нпс несколько секунд в начале игры поддаются, а потом
+                     // перестают": every pose after the first let go was taken for one long faded, and skinned as the game's)
     out->bones = rig.bones;
     if (!(upm > 1e-3f) || rig.bones <= 0 || rig.bones > kMaxBones || !rig.parent || rig.nCaps <= 0) return false;
     float mid[3] = {}, top = -1e30f;
@@ -192,6 +195,62 @@ inline bool Build(const Rig& rig, float upm, const float* bodyOff, const LimbOff
         }
     }
     return out->n > 0;
+}
+
+// The skinning is handed a world pose that is not the SkeletonInstance's own (0.188.7, Serg: "нпс не шевелятся" - a few seconds matched by the instance's
+// +0x20 / +0x28, then none: the game skins from copies of them). Which monster's is it? Its bones' origins (model space) against each candidate's own pose
+// as it is now: the nearest, if near - within kMatchShare of the pose's spread - and clearly nearer than any other (half the next one's distance), else -1.
+// mats: the pose skinned (n bones); cands[i]: a candidate's pose (at least min(n, kMatchBones) bones; null: skipped). *dist: the nearest one's mean distance.
+constexpr int kMatchBones = 32;
+constexpr float kMatchShare = 0.03f;
+inline int NearestPose(const float (*mats)[16], int n, const float (*const* cands)[16], int k, float* dist = nullptr) {
+    const int m = std::min(n, kMatchBones);
+    if (m <= 0 || k <= 0) return -1;
+    float lo[3] = {1e30f, 1e30f, 1e30f}, hi[3] = {-1e30f, -1e30f, -1e30f};
+    for (int b = 0; b < m; ++b)
+        for (int q = 0; q < 3; ++q) { lo[q] = std::min(lo[q], mats[b][12 + q]); hi[q] = std::max(hi[q], mats[b][12 + q]); }
+    const float spread = std::max(hi[0] - lo[0], std::max(hi[1] - lo[1], hi[2] - lo[2]));
+    int best = -1;
+    float d1 = 1e30f, d2 = 1e30f;
+    for (int c = 0; c < k; ++c) {
+        if (!cands[c]) continue;
+        float sum = 0.0f;
+        for (int b = 0; b < m; ++b) {
+            const float dx = mats[b][12] - cands[c][b][12], dy = mats[b][13] - cands[c][b][13], dz = mats[b][14] - cands[c][b][14];
+            sum += std::sqrt(dx * dx + dy * dy + dz * dz);
+        }
+        const float d = sum / static_cast<float>(m);
+        if (!std::isfinite(d)) continue;
+        if (d < d1) { d2 = d1; d1 = d; best = c; }
+        else if (d < d2) d2 = d;
+    }
+    if (dist) *dist = d1;
+    if (best < 0 || !(spread > 0.0f) || d1 > kMatchShare * spread || (d2 < 1e29f && d1 >= 0.5f * d2)) return -1;
+    return best;
+}
+
+// The poses of this moment (made, n of them) and the ones let go of (those of last time, old, not made again: kept with fadeFromMs, the moment they were let
+// go of, easing back for easeMs, then dropped) - up to cap in made. A pose made again is a fresh one: it never inherits a fading mark. How many in made.
+inline int Carry(Pose* made, int n, int cap, const Pose* old, int nOld, uint64_t nowMs, uint64_t easeMs) {
+    for (int i = 0; i < n; ++i) made[i].fadeFromMs = 0;
+    for (int i = 0; i < nOld && n < cap; ++i) {
+        Pose p = old[i];
+        bool again = false;
+        for (int j = 0; j < n && !again; ++j) again = made[j].self == p.self;
+        if (again) continue;
+        if (!p.fadeFromMs) p.fadeFromMs = nowMs;
+        if (nowMs - p.fadeFromMs >= easeMs) continue;
+        p.tickMs = nowMs;
+        made[n++] = p;
+    }
+    return n;
+}
+
+// The largest turn of a pose (radians, its size) - the log's.
+inline float Strongest(const Pose& p) {
+    float a = 0.0f;
+    for (int i = 0; i < p.n && i < kMaxTurns; ++i) a = std::max(a, std::fabs(p.t[i].angle));
+    return a;
 }
 
 // The pose eased toward none: weight 1 as it is, 0 the game's animation alone (each turn's angle times it) - a monster let go of (it died, it went out of

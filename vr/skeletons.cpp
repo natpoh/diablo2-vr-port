@@ -8315,6 +8315,7 @@ void Set(const Input& in) {
 using ComputeFn = void (*)(uintptr_t self, float a, float b, bool c);
 ComputeFn g_orig = nullptr;
 std::atomic<MonsterPoseFn> g_monsterPose{nullptr};   // [weight] monster_ragdoll_pose: meleetouch::MonsterPose (vrcam)
+std::atomic<MonsterPoseByWorldFn> g_monsterPoseByWorld{nullptr};   // ... and by the world pose the skinning is handed (meleetouch::MonsterPosesForSkin)
 // ... the game's own pose of each monster the hook turned, as the game made it this frame: the bodies are read from it (MonsterRigs), not from the turned
 // one - else the doll would push a limb its own turn has already moved, and again
 struct GamePose { ULONGLONG tick = 0; std::vector<Mat> m; };
@@ -8333,7 +8334,7 @@ bool GamePoseOf(uintptr_t self, int count, std::vector<Mat>* out) {
 // game made it (vr/doll_pose.h), as the hero's arms are. Nothing for any skeleton the doll has nothing for (one look in a table of a few).
 void PoseMonsterDoll(uintptr_t self) {
     const MonsterPoseFn src = g_monsterPose.load();
-    if (!src) return;
+    if (!src || headshadow::DollSkinningIn()) return;   // (the skinning gets the turned copy: the game's own pose stays as it made it)
     static thread_local dollpose::Pose pose;
     if (!src(self, &pose)) return;
     uintptr_t world = 0, mats = 0;
@@ -8350,6 +8351,47 @@ void PoseMonsterDoll(uintptr_t self) {
         ReleaseSRWLockExclusive(&g_gamePoseLock);
     }
     if (dollpose::Apply(pose, m, count)) SafeWrite((void*)mats, m, sizeof(Mat) * (size_t)count);
+}
+
+// [weight] monster_ragdoll_pose, the skinning's side (headshadow::SetDollSkin): a world pose the game skins - is it a struck monster's (this frame's or the
+// last's, or one like it, meleetouch::MonsterPosesForSkin)? Then its copy's matrices turned. On the render workers: one look in a table of a few.
+// 0.188.7 (Serg: "нпс не шевелятся"): matched by the instance's own pose pointer for the first seconds only - the game skins from copies of it. So: by the
+// pointer when it is the instance's own, else by the skeleton (the model) and the pose's own matrices against each such monster's pose now (NearestPose).
+std::atomic<unsigned> g_dollByPointer{0}, g_dollByMatch{0}, g_dollUnmatched{0};
+bool DollSkin(uintptr_t skeleton, uintptr_t pose, float (*mats)[16], int n) {
+    const MonsterPoseByWorldFn src = g_monsterPoseByWorld.load(std::memory_order_relaxed);
+    if (!src) return false;
+    static thread_local dollpose::Pose cands[8];
+    bool exact = false;
+    const int k = src(skeleton, pose, cands, 8, &exact);
+    if (k <= 0) return false;
+    if (!mats) return true;   // (the composite's look first)
+    int pick = exact ? 0 : -1;
+    if (!exact) {
+        static thread_local float now[16][dollpose::kMatchBones][16];   // each candidate's this frame's and last frame's pose (their first bones)
+        const float (*ptrs[16])[16] = {};
+        const int m = std::min(n, dollpose::kMatchBones);
+        for (int c = 0; c < k && c < 8; ++c) {
+            if (cands[c].bones != n) continue;
+            for (int w = 0; w < 2; ++w) {
+                uintptr_t wp = 0, mp = 0;
+                if (Get(cands[c].self + (w ? 0x28 : 0x20), &wp) && Get(wp + 4, &mp) && mp && SafeCopy(now[c * 2 + w], (const void*)mp, sizeof(float) * 16 * (size_t)m))
+                    ptrs[c * 2 + w] = now[c * 2 + w];
+            }
+        }
+        const int best = dollpose::NearestPose(mats, n, ptrs, std::min(k, 8) * 2);
+        pick = best >= 0 ? best / 2 : -1;
+    }
+    if (pick < 0) { g_dollUnmatched.fetch_add(1, std::memory_order_relaxed); return false; }
+    (exact ? g_dollByPointer : g_dollByMatch).fetch_add(1, std::memory_order_relaxed);
+    const bool done = cands[pick].bones == n && dollpose::Apply(cands[pick], mats, n);
+    static std::atomic<ULONGLONG> toldAt{0};
+    const ULONGLONG t = GetTickCount64();
+    ULONGLONG was = toldAt.load();
+    if (t - was >= 5000 && toldAt.compare_exchange_strong(was, t))
+        NoteDoll("monster ragdoll pose - the last 5 s, skinnings of struck monsters' models: %u by their own pose, %u by matching its matrices, %u of another monster of "
+                 "the model (left as the game has it)", g_dollByPointer.exchange(0), g_dollByMatch.exchange(0), g_dollUnmatched.exchange(0));
+    return done;
 }
 
 void __cdecl Hook(uintptr_t self, float a, float b, bool c) {
@@ -8398,6 +8440,19 @@ bool Dump(const wchar_t* outPath) {
 
 void SetGameBase(uintptr_t base) { g_gameBase.store(base); }
 void SetMonsterPoseSource(MonsterPoseFn fn) { g_monsterPose.store(fn); }
+void SetMonsterPoseByWorldSource(MonsterPoseByWorldFn fn) {
+    g_monsterPoseByWorld.store(fn);
+    headshadow::SetDollSkin(fn ? &DollSkin : nullptr);
+}
+bool WorldPoses(uintptr_t self, uintptr_t* cur, uintptr_t* prev, uintptr_t* skeleton) {
+    *cur = *prev = 0;
+    if (skeleton) {
+        uintptr_t inst = 0;
+        *skeleton = 0;
+        if (Get(self + 0x08, &inst)) Get(inst + 0x08, skeleton);
+    }
+    return Get(self + 0x20, cur) && Get(self + 0x28, prev) && *cur > 0x10000;
+}
 void TrackHero(bool on) { g_trackHero.store(on); }
 uint32_t HeroGen() { return g_heroGen.load(); }
 bool HeroPosedLately(unsigned ms) { const ULONGLONG seen = g_heroSeen.load(); return seen && GetTickCount64() - seen < ms; }
@@ -8953,7 +9008,14 @@ size_t MonsterRigs(float x, float z, float reach, MonsterRig* out, size_t cap) {
             }
             const ULONGLONG now = GetTickCount64();
             std::lock_guard<std::mutex> lock(g_stillLock);
-            r.still = g_still[c.entity].Look(pts, np, reach / 6.0f, now);   // (reach is 6 m in world units)
+            float lo[3] = {1e30f, 1e30f, 1e30f}, hi[3] = {-1e30f, -1e30f, -1e30f};   // ... and lies (corpsewatch::Lying): a body standing at rest is no corpse
+            for (int i = 0; i < r.n; ++i)
+                for (int q = 0; q < 3; ++q) {
+                    lo[q] = std::min(lo[q], std::min(r.c[i].a[q], r.c[i].b[q]) - r.c[i].radius);
+                    hi[q] = std::max(hi[q], std::max(r.c[i].a[q], r.c[i].b[q]) + r.c[i].radius);
+                }
+            const bool still = g_still[c.entity].Look(pts, np, reach / 6.0f, now);   // (reach is 6 m in world units)
+            r.still = still && corpsewatch::Lying(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]);
             if (g_still.size() > 128)
                 for (auto it = g_still.begin(); it != g_still.end();) it = now - it->second.seenMs > 3000 ? g_still.erase(it) : std::next(it);
         }
@@ -9082,7 +9144,7 @@ size_t MonsterRigs(float x, float z, float reach, MonsterRig* out, size_t cap) {
             r.doll = 1;
             r.dollWhy = r.segments ? "every monster (monster_ragdoll_all), its limbs from its bones" : "every monster (monster_ragdoll_all)";
         }
-        if (r.doll > 0 && r.still) { r.doll = 0; r.dollWhy = "its pose held still for a second - a corpse"; }
+        if (r.doll > 0 && r.still) { r.doll = 0; r.dollWhy = "lying, its pose held still for a second - a corpse"; }
         for (int row = 0; row < 3; ++row)
             for (int col = 0; col < 3; ++col) r.m3[row * 3 + col] = xform.m[row * 4 + col];
         if (human.bones == count) std::memcpy(r.parent, human.parent, sizeof(int16_t) * std::min(dollpose::kMaxBones, monsterhumanoid::kMaxBones));

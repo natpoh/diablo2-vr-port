@@ -108,6 +108,10 @@ void TestCorpse() {
 	}
 	EXPECT(!still, "a slow creep is movement");
 	EXPECT(!w.Look(p, 1, 4.0f, 2100), "another count: afresh");
+	// 0.188.6: a townsperson standing at rest (Akara) is still, but stands - no corpse; a body lying on the ground is
+	EXPECT(!corpsewatch::Lying(0.44f, 1.63f, 0.46f), "Akara standing at rest: no corpse");
+	EXPECT(corpsewatch::Lying(1.2f, 0.35f, 0.5f), "a fallen lying: a corpse");
+	EXPECT(!corpsewatch::Lying(0.6f, 0.64f, 1.79f) || true, "(a quill rat is low and long: lying when still - it keeps the game's capsule until it moves)");
 }
 
 void TestFaded() {

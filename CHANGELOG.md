@@ -1,5 +1,11 @@
 # What's new in D2R VR
 
+## 0.188.10 (hotfix)
+
+- **Fixed: town NPCs and monsters no longer gave way** to the weapon and the hands in 0.188.6 (the push was felt, nothing moved): the
+  turned pose now reaches the drawn body - handed to the game's skinning, found even from a copy of the pose - and a monster pushed again
+  is drawn turned again (a reused slot kept a stale fading mark). A townsperson standing at rest is no longer taken for a corpse.
+
 ## 0.188.6
 
 The release after 0.187 (develop). It gathers the test builds 0.188.1 - 0.188.5 (0.189, 0.190 in between), below.

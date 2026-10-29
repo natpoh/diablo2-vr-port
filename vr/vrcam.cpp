@@ -3111,6 +3111,7 @@ void LoadSettings() {
     g_set.weightMonsterRagdoll.store(IniB(L"weight", L"monster_ragdoll", false));
     meleetouch::SetSwayWanted(g_set.weightMonsterBodies.load() && g_set.weightMonsterRagdoll.load());
     meleetouch::SetPoseWanted(g_set.weightMonsterBodies.load() && g_set.weightMonsterRagdoll.load() && IniB(L"weight", L"monster_ragdoll_pose", false));   // [weight] monster_ragdoll_pose
+    headshadow::WantForDoll(g_set.weightMonsterBodies.load() && g_set.weightMonsterRagdoll.load() && IniB(L"weight", L"monster_ragdoll_pose", false));   // ... through the skinning composite
     skel::SetRagdollAll(g_set.weightMonsterBodies.load() && g_set.weightMonsterRagdoll.load() && IniB(L"weight", L"monster_ragdoll_all", false));   // [weight] monster_ragdoll_all
     meleetouch::SetSwayTuning(std::clamp(IniF(L"weight", L"monster_weight_pct", 100.0f), 10.0f, 400.0f), std::clamp(IniF(L"weight", L"monster_push_pct", 100.0f), 0.0f, 400.0f));
     g_set.weightGrabBodies.store(IniB(L"weight", L"grab_bodies", false));   // [weight] grab_bodies (its own box; the bodies come from hit by touch's scan)
@@ -24061,7 +24062,7 @@ void LoadReShade() {
              "an antivirus may also block it", err == ERROR_DLL_INIT_FAILED ? "its start said no" : "it could not be loaded");
 }
 
-static const char g_info_version[] = "0.188.6";
+static const char g_info_version[] = "0.188.10";
 
 // Who this is. D2RLoader prints "<name> <version> by <author>" for every plugin, and d2r-pcvr (a fork of our 0.152) carries the
 // same id, name and author as we did - "vrcam ... by BodyWalkVR" told a support log nothing. The id stays (the log file
@@ -24227,6 +24228,7 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     weight::SetStabSource(&meleetouch::StabbingNow);   // [weight] stab_in: the touch's thrust rule and path say when a point-first strike goes in
     weight::SetStabNoteSink(&fx::StabNoteSink);       // [debug] stab_debug: the stab's word for the readout and the marks
     weight::SetBodyPushSink(&meleetouch::PushBody);
+    skel::SetMonsterPoseByWorldSource(&meleetouch::MonsterPosesForSkin);   // [weight] monster_ragdoll_pose: the skinning draws a struck monster from a turned copy
     skel::SetMonsterPoseSource(&meleetouch::MonsterPose);   // [weight] monster_ragdoll_pose: the hook turns a struck monster's bones   // [weight] monster_ragdoll: ... and the weapon's pushes back to them
     skel::SetGripHandStep(&griplib::HandStep, &griplib::Abi);
     dolllib::SetLog(&Log);

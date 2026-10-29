@@ -585,7 +585,7 @@ bool BodiesWanted() { return g_bodiesWanted.load() || meleeboxes::Wanted() || g_
 std::atomic<bool> g_swayWanted{false};
 std::mutex g_swayMutex;
 D2rdState g_doll{};
-D2rdParams g_dollParams{sizeof(D2rdParams), 2.5f, 0.8f, 1.0f, 0.25f, 0.20f, 1.0f, 1.0f};   // (critically damped: back without a bounce; the two sliders set the last two)
+D2rdParams g_dollParams{sizeof(D2rdParams), 1.8f, 0.6f, 0.8f, 0.25f, 0.20f, 1.0f, 1.0f};   // (softer since 0.188.7 - a 6-11 N s push turned a limb a few degrees: "нпс не шевелятся"; 0.8 of critical, no bounce worth the name; the sliders set the last two)
 LARGE_INTEGER g_swayAt{};
 ULONGLONG g_swayToldAt = 0;
 // The doll stepped by the clock since it was last stepped (under g_swayMutex): by whichever thread hands it the bodies or pushes it - the weight model's
@@ -603,6 +603,7 @@ std::atomic<bool> g_poseWanted{false};
 SRWLOCK g_posesLock = SRWLOCK_INIT;
 dollpose::Pose g_poses[16];
 int g_nPoses = 0;
+std::atomic<int> g_nPosesNow{0};   // (g_nPoses, read without the lock by the skinning's look)
 constexpr ULONGLONG kPoseFreshMs = 150;   // a pose older than this is not applied (the timer stopped: another view, no weapon)
 constexpr ULONGLONG kPoseEaseMs = 300;    // a monster let go of (it died, it went out of reach, its doll came to rest) eases back to its animation over this
                                           // (bearstonem/d2r-pcvr's ease back, feat/monster-limb-push e865def, MIT)
@@ -648,22 +649,31 @@ void PublishPoses(const skel::MonsterRig* rigs, size_t nr, const int* rigOf, ULO
             p.self = g.self;
             p.id = id;
             p.tickMs = now;
+            skel::WorldPoses(g.self, &p.poseCur, &p.posePrev, &p.skel);   // (the skinning finds it by them: headshadow's composite)
             ++n;
         }
     }
     AcquireSRWLockExclusive(&g_posesLock);
-    for (int i = 0; i < g_nPoses && n < 16; ++i) {   // the ones let go of this time: kept, easing back (dollpose::Faded in MonsterPose), for kPoseEaseMs
-        dollpose::Pose old = g_poses[i];
-        bool again = false;
-        for (int j = 0; j < n && !again; ++j) again = made[j].self == old.self;
-        if (again) continue;
-        if (!old.fadeFromMs) old.fadeFromMs = now;
-        if (now - old.fadeFromMs >= kPoseEaseMs) continue;
-        old.tickMs = now;
-        made[n++] = old;
-    }
+    n = dollpose::Carry(made, n, 16, g_poses, g_nPoses, now, kPoseEaseMs);   // the ones let go of this time: kept, easing back (dollpose::Faded), for kPoseEaseMs
     for (int i = 0; i < n; ++i) g_poses[i] = made[i];
     g_nPoses = n;
+    g_nPosesNow.store(n, std::memory_order_relaxed);
+    {   // the turns, once a second while a monster is turned: the strongest pose's, each limb's bone and degrees and the lean (0.188.7: "нпс не шевелятся")
+        static ULONGLONG toldAt = 0;
+        int s = -1;
+        for (int i = 0; i < n; ++i)
+            if (!made[i].fadeFromMs && (s < 0 || dollpose::Strongest(made[i]) > dollpose::Strongest(made[s]))) s = i;
+        if (s >= 0 && now - toldAt >= 1000) {
+            toldAt = now;
+            const dollpose::Pose& p = made[s];
+            char turns[320];
+            int w = 0;
+            for (int t = 0; t < p.n && w < (int)sizeof turns - 40; ++t)
+                w += snprintf(turns + w, sizeof turns - w, "%s%s %.1f deg", t ? ", " : "", p.t[t].pivot < 0 ? "lean" : ("bone " + std::to_string(p.t[t].pivot)).c_str(),
+                              std::fabs(p.t[t].angle) * 57.2957795f);
+            LogF("melee touch: monster ragdoll pose - monster %u: %d turn(s) - %s (%d posed now)", p.id, p.n, turns, n);
+        }
+    }
     ReleaseSRWLockExclusive(&g_posesLock);
 }
 dollview::Arrow g_swayArrows[4];                   // (under g_swayMutex) the last pushes, for the view
@@ -1770,6 +1780,37 @@ bool MonsterPose(uintptr_t self, dollpose::Pose* out) {
         *out = dollpose::Faded(*out, w);
     }
     return true;
+}
+int MonsterPosesForSkin(uintptr_t skeleton, uintptr_t worldPose, dollpose::Pose* out, int max, bool* exact) {
+    if (exact) *exact = false;
+    if (!g_poseWanted.load(std::memory_order_relaxed) || !out || max <= 0 || g_nPosesNow.load(std::memory_order_relaxed) == 0) return 0;   // (every skinning asks)
+    int n = 0;
+    AcquireSRWLockShared(&g_posesLock);
+    for (int i = 0; i < g_nPoses; ++i)   // the instance's own pose first
+        if (worldPose && (g_poses[i].poseCur == worldPose || g_poses[i].posePrev == worldPose)) {
+            out[0] = g_poses[i];
+            n = 1;
+            if (exact) *exact = true;
+            break;
+        }
+    if (!n)   // ... else every pose of a monster of this skeleton (its model): the caller tells them apart by their matrices
+        for (int i = 0; i < g_nPoses && n < max; ++i)
+            if (skeleton && g_poses[i].skel == skeleton) out[n++] = g_poses[i];
+    ReleaseSRWLockShared(&g_posesLock);
+    const ULONGLONG now = GetTickCount64();
+    int k = 0;
+    for (int i = 0; i < n; ++i) {
+        dollpose::Pose p = out[i];
+        if (now - p.tickMs > kPoseFreshMs) continue;
+        if (p.fadeFromMs) {
+            const float w = 1.0f - static_cast<float>(now - p.fadeFromMs) / static_cast<float>(kPoseEaseMs);
+            if (!(w > 0.0f)) continue;
+            p = dollpose::Faded(p, w);
+        }
+        out[k++] = p;
+    }
+    if (!k && exact) *exact = false;
+    return k;
 }
 int PosedTurns(uint32_t id) {
     if (!g_poseWanted.load()) return -1;

@@ -139,6 +139,9 @@ void SetSwayView(bool on);
 // MonsterPose: the turns for that SkeletonInstance now (the skeleton hook asks, skel::SetMonsterPoseSource); false - none. Humanoids only, F4 only.
 void SetPoseWanted(bool on);
 bool MonsterPose(uintptr_t self, dollpose::Pose* out);
+// The poses for a skinning: the one whose instance's own world pose it is (*exact), else every fresh pose of a monster of that skeleton (the caller tells them
+// apart by their matrices, dollpose::NearestPose) - up to max; how many.
+int MonsterPosesForSkin(uintptr_t skeleton, uintptr_t worldPose, dollpose::Pose* out, int max, bool* exact);
 // ... how many turns monster id's drawn pose has now (its limbs and its lean; 0: none fresh), -1 when the pose is off. For [weight] grab_bodies' log.
 int PosedTurns(uint32_t id);
 bool SwayView();

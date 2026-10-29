@@ -5,6 +5,9 @@
 // a few points of its body (its largest capsules' ends, world units): one that has not moved more than kStillM (in metres) for kStillMs is still - its
 // limbs are no doll and no hostile monster takes it for its body (monsterbodies::Assemble: a live monster standing over a corpse got the corpse's limbs).
 // bearstonem/d2r-pcvr's rule (feat/monster-limb-push e935df9, limb_physics.cpp Lifeless, MIT): a still pose for a second is lifeless.
+// ... and it lies (Lying): 0.188.6, Serg's "the NPCs don't give way to my weapon any more" - a townsperson standing at rest (Akara: "its pose held
+// still for a second - a corpse") barely moves for a second, and lost its doll and its limbs. A corpse lies on the ground: its bodies are lower than they
+// are long. A body standing still is no corpse.
 #pragma once
 
 #include <cmath>
@@ -38,5 +41,11 @@ struct Watch {
         return nowMs - movedMs >= kStillMs;
     }
 };
+
+// Does a body lie (its bodies' box: x, y up, z)? Lower than half its length across the ground.
+inline bool Lying(float extentX, float extentY, float extentZ) {
+    const float across = extentX > extentZ ? extentX : extentZ;
+    return extentY < 0.5f * across;
+}
 
 }  // namespace corpsewatch
