@@ -275,6 +275,26 @@ inline bool Upright(const Verdict& v, const float (*pos)[3], int n, const char**
     return true;
 }
 
+// [weight] own_body: the hero's bones his held weapon may not pass through - his trunk and legs. Left out: each arm from its first bone down (the hands that
+// hold the weapon, and all they carry), the head and all under it (in F4 it is the player's own, hidden from his eyes), and the bones that are no limbs
+// (NotLimbName: weapons' attach points, fingers, helpers). keep[i] 1: bone i is his body. False when the verdict found no arms or no head to leave out.
+inline bool OwnBodyBones(const Verdict& v, uint8_t* keep) {
+    const int n = v.bones;
+    if (n <= 0 || n > kMaxBones || v.headBone < 0 || v.armsL + v.armsR == 0) return false;
+    static thread_local uint8_t out[kMaxBones];
+    for (int i = 0; i < n; ++i) out[i] = 0;
+    const auto drop = [&](int root) { if (root >= 0 && root < n) out[root] = 1; };
+    drop(v.headBone);
+    for (int s = 0; s < 2; ++s)
+        for (int k = 0; k < kMaxPerSide && k < (s ? v.armsR : v.armsL); ++k) drop(v.arms[s][k].root);
+    for (int i = 0; i < n; ++i) {   // (parents come first: a bone under one left out is left out)
+        const int p = v.parent[i];
+        if (p >= 0 && p < i && out[p]) out[i] = 1;
+    }
+    for (int i = 0; i < n; ++i) keep[i] = !out[i] && !v.notLimb[i] ? 1 : 0;
+    return true;
+}
+
 // The verdict on a granny_skeleton in the game's memory (vr/monster_rig.h's layout: +0x08 the count, +0x0C the bones, each 0xA4: +0x00 its name,
 // +0x08 its parent). read(address, out, bytes) as monster_rig's. A skeleton that does not read: not settled.
 template <class Read>

@@ -322,19 +322,18 @@ inline float HeightOf(float own, bool fromWalls, float wallsTop, float relief, f
 // world-fixed, its middle where the game's own pillars stand round the altar's canopy (found in the renderer), its flat at the ceiling's
 // height, its dome raised to pass over the canopy's top. [ceiling] scale does not size its stone: its picture stays one tile of kTile.
 constexpr const char* kVaultBiome = "act1_cathedral";   // (ceilmeasure::kCathedral)
-// [ceiling] game_ceiling_domes_over_tall: a vault each dome over a tall piece, as the cathedral's (ceilmeasure::DomeOf, kTallFactor) - its
-// model at a path of the game's that only its LOD table names (the 2026-10-29 scan: 1198 such; these four named by nothing of ours either),
-// its unit ours. The first is the cathedral's, as it was.
-constexpr int kVaultSlots = 4;
+// [ceiling] game_ceiling_worldstone_dome: the Worldstone's vault, as the cathedral's (ceilmeasure::DomeOf, kWorldstoneBiome) - its model at
+// a path of the game's that only its LOD table names (the 2026-10-29 scan: 1198 such), never written by any build of ours: 0.188.7 took
+// poop_skirt02_OLD, where an earlier build had left a plain rock slab of its own (no longer on its receipt, so kept as the player's) -
+// the game drew that flat rock in place of the vault (Serg, 68.webp: "не вижу купол, потолок стал каменным"). Its unit ours. The first
+// slot is the cathedral's, as it was.
+constexpr int kVaultSlots = 2;
 constexpr const char* kVaultModelFiles[kVaultSlots] = {
     "test_cloth/cloth01",                                               // under Tests/
-    "@global/prop/act2/sewer/act2_sewer_sewage/poop_skirt02_old",       // "@": under data/hd/env/model/
-    "@expansion/wildtemple/expansion_wildtemple_cages/cage05",
-    "@expansion/wildtemple/expansion_wildtemple_monuments/monument05",
+    "@expansion/wildtemple/expansion_wildtemple_temple/temple01_d",     // "@": under data/hd/env/model/ (git log -S: never used before)
 };
-constexpr const char* kVaultUnits[kVaultSlots] = {
-    "data/hd/env/model/d2r_vr/ceiling/cathedral_vault_unit.json", "data/hd/env/model/d2r_vr/ceiling/tall_vault1_unit.json",
-    "data/hd/env/model/d2r_vr/ceiling/tall_vault2_unit.json", "data/hd/env/model/d2r_vr/ceiling/tall_vault3_unit.json"};
+constexpr const char* kVaultUnits[kVaultSlots] = {"data/hd/env/model/d2r_vr/ceiling/cathedral_vault_unit.json",
+                                                  "data/hd/env/model/d2r_vr/ceiling/worldstone_vault_unit.json"};
 constexpr const char* kVaultModelFile = kVaultModelFiles[0];
 constexpr const char* kVaultUnit = kVaultUnits[0];
 constexpr int kVaultCells = 12;   // cells a tile (about 3.3 units: some 34 across the dome); twice as wide past twice its radius
@@ -351,6 +350,21 @@ inline float DomeSize(float asked, float reach, float radius) {
     return s < least ? least : s;
 }
 inline float DomeRiseScale(float asked) { return !(asked >= 1.0f) ? 1.0f : asked > kDomeRiseMax ? kDomeRiseMax : asked; }
+// [ceiling] game_ceiling_worldstone_dome_wider_m (Serg on 0.188.9: "надо купол сделать пошире на 10 м на 132 уровне"): the Worldstone's dome
+// that many metres wider across than measured - its rim `widerM` / 2 further out all round, `unitsPerMetre` the world's units a metre (the
+// hero's eye height in world units over the player's in metres, as the camera has it). As the size it is laid at (VaultMatrix): never
+// under the least that keeps the rim out past the crystal, never over kDomeSizeMax. Its own - the cathedral's size slider not used.
+constexpr float kWorldstoneWiderMMax = 40.0f;
+inline float WiderSize(float widerM, float unitsPerMetre, float reach, float radius) {
+    if (!(radius > 0.0f)) return 1.0f;
+    const float m = !(widerM >= -kWorldstoneWiderMMax) ? 0.0f : widerM > kWorldstoneWiderMMax ? kWorldstoneWiderMMax : widerM;
+    const float upm = unitsPerMetre > 0.0f ? unitsPerMetre : 0.0f;
+    float s = (radius + 0.5f * m * upm) / radius;
+    const float least = 1.05f * reach / radius;
+    if (s < least) s = least;
+    if (s < kDomeSizeMin) s = kDomeSizeMin;
+    return s > kDomeSizeMax ? kDomeSizeMax : s;
+}
 // Its mesh's half side: the slab's, or the preset's reach round its middle and a tile more - at the smallest size
 inline float VaultHalf(float presetReach) {
     const float slab = kTile * kTilesHalf, preset = presetReach + kTile;
@@ -399,7 +413,7 @@ inline std::string BeamUnitJson() { return UnitJsonOf("barracks_beams", ModelPat
 // A vault's unit: its slot's model, its room's kind's maps (the cathedral's: slot 0, the cathedral's stone, as it was)
 inline std::string VaultUnitJson(int slot, const std::string& biome) {
     const int kind = KindOf(biome);
-    return UnitJsonOf(slot == 0 ? std::string("cathedral_vault") : "tall_vault" + std::to_string(slot), ModelPath(kVaultModelFiles[slot]),
+    return UnitJsonOf(slot == 0 ? "cathedral_vault" : "worldstone_vault", ModelPath(kVaultModelFiles[slot]),
                       kKinds[kind >= 0 ? kind : KindOf(kVaultBiome)].maps);
 }
 inline std::string VaultUnitJson() { return VaultUnitJson(0, kVaultBiome); }

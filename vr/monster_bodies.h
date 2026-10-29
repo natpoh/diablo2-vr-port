@@ -22,6 +22,8 @@ constexpr uint64_t kFreshMs = 300; // a snapshot older than this is not used (th
 
 // A capsule of a monster in render metres: one of its limbs (rig: from its skeleton and its meshes' boxes, vr/monster_rig.h), or - when its skeleton was
 // not read - the touch's own capsule of it (BodyFor: the margin included; the weight model takes CoreRadius of it).
+constexpr uint32_t kOwnBodyId = 0xFFFFFFF0u;   // [weight] own_body: the hero's own body among the bodies (no unit has such an id)
+constexpr int kHeldOwnBody = 3;
 struct Body {
     uint32_t id = 0;
     float bottom[3] = {}, top[3] = {};
@@ -30,7 +32,8 @@ struct Body {
     int bone = -1;      // rig: the skeleton's bone
     bool doll = false;  // rig: [weight] monster_ragdoll may move it - its skeleton is a humanoid's (vr/monster_humanoid.h; Rig::doll 1)
     bool hostile = true;   // the server called it hostile; false: a town NPC, a hireling... - a body only with [weight] npc_bodies (never attacked: hit by touch asks its own verdict)
-    int held = 0;          // [weight] monster_shields: 0 its body; 1 a weapon it holds, 2 its shield - they stop the player's weapon, are no hit on it, push no doll
+    int held = 0;          // [weight] monster_shields: 0 its body; 1 a weapon it holds, 2 its shield - they stop the player's weapon, are no hit on it, push no doll;
+                           // [weight] own_body: kHeldOwnBody the hero's own trunk or leg (id kOwnBodyId) - it stops the weapon too, never stabbed, grabbed or pushed
     int mode = -1;         // [weight] parry_*: the monster's unit mode at the scan (vr/parry.h MonsterAttacking), -1 not read
     int parent = -1;       // [weight] grab_bodies: the snapshot's body of the nearest bone above this one's that has a capsule (LinkParents; -1: none - a root, or not known)
 };

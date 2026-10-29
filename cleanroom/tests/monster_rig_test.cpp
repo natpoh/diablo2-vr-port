@@ -460,6 +460,52 @@ void TestHeldModels() {
 	const char* why = "";
 	EXPECT(mr::ItemBox(read, inst, &box, &why) && box.min[1] == -0.12f && box.max[1] == 0.60f && box.min[0] == -0.06f && box.max[2] == 0.03f,
 	       "the item's box is the union of its meshes' boxes (%s)", why);
+	// a bow (Serg, 0.188.6: the rogue archer's bow "one huge orange capsule, ~0.5 m across and short"): one mesh skinned to its own skeleton's three bones - the grip
+	// at the model's origin, the upper limb 0.45 up, the lower 0.45 down - each binding's box about ITS bone (a limb's box 0.4 long along it). Through the bind
+	// poses the union is the bow's length, 1.3, not the 0.4 the boxes give as they are.
+	const uintptr_t bow = m.Alloc(0x320), bres = m.Alloc(0xD0), blist = m.Alloc(8), bmodel = m.Alloc(0x60), bskel = m.Alloc(0x20);
+	const char* names[3] = { "bow_grip", "bow_top", "bow_bottom" };
+	const float ys[3] = { 0.0f, 0.45f, -0.45f };
+	const uintptr_t bbones = m.Alloc(mr::kBoneStride * 3);
+	for (int i = 0; i < 3; ++i) {
+		const uintptr_t at = bbones + mr::kBoneStride * i;
+		m.Put<uintptr_t>(at + mr::kBoneName, m.Str(names[i]));
+		const float inv[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, -ys[i], 0, 1 };   // (the bone at y in the model: its inverse moves it back)
+		m.PutBytes(at + mr::kBoneInvWorld, inv, sizeof inv);
+	}
+	m.Put<uintptr_t>(bow + grannymesh::kInstanceModel, bmodel);
+	m.Put<uintptr_t>(bmodel + grannymesh::kModelSkeleton, bskel);
+	m.Put<int32_t>(bskel + mr::kSkelCount, 3);
+	m.Put<uintptr_t>(bskel + mr::kSkelBones, bbones);
+	m.Put<uintptr_t>(bow + mr::kInstanceResource, bres);
+	m.Put<uint8_t>(bres + mr::kResourceState, mr::kLoaded);
+	m.Put<uintptr_t>(bow + mr::kInstanceMeshes, blist);
+	m.Put<uint64_t>(bow + mr::kInstanceMeshes + 8, 1);
+	const uintptr_t bhandle = m.Alloc(8), bmesh = m.Alloc(0xC0), bbinds = m.Alloc(mr::kBindingStride * 3);
+	m.Put<uintptr_t>(blist, bhandle);
+	m.Put<uintptr_t>(bhandle, bmesh);
+	m.Put<int32_t>(bmesh + mr::kMeshBoneCount, 3);
+	m.Put<uintptr_t>(bmesh + mr::kMeshBones, bbinds);
+	const float bb[3][6] = { { -0.03f, -0.06f, -0.03f, 0.03f, 0.06f, 0.03f }, { -0.02f, -0.05f, -0.02f, 0.06f, 0.20f, 0.02f }, { -0.02f, -0.20f, -0.02f, 0.06f, 0.05f, 0.02f } };
+	for (int k = 0; k < 3; ++k) {
+		const uintptr_t at = bbinds + mr::kBindingStride * k;
+		m.Put<uintptr_t>(at + mr::kBindingName, m.Str(names[k]));
+		m.PutBytes(at + mr::kBindingMin, bb[k], 12);
+		m.PutBytes(at + mr::kBindingMax, bb[k] + 3, 12);
+	}
+	mr::BoneBox bowBox;
+	const bool bowOk = mr::ItemBox(read, bow, &bowBox, &why);
+	const float len = bowBox.max[1] - bowBox.min[1], across = bowBox.max[0] - bowBox.min[0];
+	std::printf("  a bow skinned to its own three bones: its box %.2f long, %.2f across (as the boxes are, without their bones: 0.40 long)\n", len, across);
+	EXPECT(bowOk && std::fabs(bowBox.min[1] + 0.65f) < 1e-4f && std::fabs(bowBox.max[1] - 0.65f) < 1e-4f && std::fabs(across - 0.09f) < 1e-4f,
+	       "a bow's box through its bones' bind poses: 1.30 long (%.3f .. %.3f), 0.09 across (%.3f) (%s)", bowBox.min[1], bowBox.max[1], across, why);
+	mr::Capsule bc;
+	const float id[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
+	EXPECT(mr::HeldCapsules(id, bowBox, false, &bc, 1) == 1 && mr::Extent(bc) > 1.2f && bc.radius < 0.06f, "its capsule along the bow (%.2f long, r %.3f)", mr::Extent(bc), bc.radius);
+	float inv[16];
+	const float t[16] = { 0, 1, 0, 0, -2, 0, 0, 0, 0, 0, 1, 0, 3, 4, 5, 1 };
+	float back[16];
+	EXPECT(mr::InvertAffine(t, inv) && mr::InvertAffine(inv, back) && std::fabs(back[4] + 2.0f) < 1e-5f && std::fabs(back[13] - 4.0f) < 1e-5f, "the affine inverse inverts");
 }
 
 void TestCapsules() {

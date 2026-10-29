@@ -46,6 +46,7 @@
 #include "render_resolution.h"
 #include "sigscan.h"
 #include "minimap_side.h"
+#include "map_zoom.h"   // [hud] map_stick_zoom: the big map's zoom, the game's own (bigzoom, below)
 #include "plate_world.h"   // the hook's latest anchor for the plate, taken with each read (FollowBox)
 #include "hand_inventory.h"   // [openxr] hand_inventory: which panels are the inventory
 #include "notice_card.h"   // [hud] notice_card: the game's quest / level-up notice, counted and its panel's rect read here
@@ -389,6 +390,67 @@ int ReadMapMode(uint64_t miniRva, uint64_t leftRva) noexcept {
         return -1;
     }
 }
+// [hud] map_stick_zoom (vr/map_zoom.h): the big map's zoom, the game's own. The idea and the two places are bearstonem/d2r-pcvr's (MIT: its
+// wrist full map, vr/gamestate.cpp fullmapzoom, 966dbf8 / 3bb57af); written here afresh. Two hooks, put in once, the first time the stick asks
+// for a zoom (xr.cpp SetBigMapZoom), each only where its entry bytes are 3.3.93787's (or found again by pattern, game_sigs.h): the AutoMap
+// panel's draw method notes the panel this thread draws for as long as it runs, and the map's scale call inside it is given the stick's zoom
+// in place of its own - only while our big map is up, the game's map in its whole-screen mode and the panel the AutoMap's (its vtable). Every
+// other call goes through as it came; nothing of the game's memory is written.
+namespace bigzoom {
+constexpr uint64_t kPanelDrawRva = 0x14E3480, kScaleRva = 0xD1940, kPanelVtableRva = 0x1FDC8A8;
+constexpr uint8_t kPanelEntry[] = {0x4c, 0x8b, 0xdc, 0x55, 0x53, 0x56, 0x57, 0x41, 0x54, 0x49, 0x8d, 0x6b, 0xa1};
+constexpr uint8_t kScaleEntry[] = {0x4c, 0x89, 0x44, 0x24, 0x18, 0x53, 0x55, 0x56, 0x57, 0x41, 0x54, 0x41, 0x56, 0x41, 0x57};
+using PanelDraw = uint64_t (*)(void*);
+using Scale = void* (*)(void*, void*, void*, float);
+PanelDraw g_origPanel = nullptr;
+Scale g_origScale = nullptr;
+std::atomic<bool> g_ready{false};
+std::atomic<int> g_tried{0};                 // 0 not yet, 1 tried (in or not)
+std::atomic<float> g_wanted{0.0f};           // the stick's zoom (the game's units), 0 = the game's own
+std::atomic<float> g_drawn{0.0f};            // what the big map's last scale call really drew at (0: none seen)
+std::atomic<uint64_t> g_miniRva{0}, g_leftRva{0};   // the map mode's globals (MaintainMapSide's, once checked)
+thread_local void* t_panel = nullptr;        // the panel this thread is drawing (OnPanelDraw's span)
+bool IsMapPanel(void* self) noexcept {
+    const uintptr_t vt = d2rsig::Addr(kPanelVtableRva);
+    if (!vt || !self) return false;
+    __try {
+        return *reinterpret_cast<const volatile uint64_t*>(self) == vt;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+uint64_t OnPanelDraw(void* self) {
+    void* const was = t_panel;
+    t_panel = self;
+    const uint64_t r = g_origPanel(self);
+    t_panel = was;
+    return r;
+}
+void* OnScale(void* out, void* rect, void* extra, float zoom) {
+    if (t_panel && g_mapBig.load(std::memory_order_relaxed) && g_ready.load(std::memory_order_relaxed)) {
+        const uint64_t mini = g_miniRva.load(std::memory_order_relaxed), left = g_leftRva.load(std::memory_order_relaxed);
+        if (mini && ReadMapMode(mini, left) == 0 && IsMapPanel(t_panel)) {   // the whole-screen map, drawn by the AutoMap panel
+            const float use = mapzoom::GameArg(zoom, g_wanted.load(std::memory_order_relaxed));
+            g_drawn.store(mapzoom::GameRounded(use), std::memory_order_relaxed);
+            return g_origScale(out, rect, extra, use);
+        }
+    }
+    return g_origScale(out, rect, extra, zoom);
+}
+// On the UI thread (MaintainMapSide), once a zoom has been asked for: the two hooks, or neither.
+void Install() {
+    if (g_tried.exchange(1)) return;
+    const bool a = d2rsig::Hook(kPanelDrawRva, kPanelEntry, sizeof kPanelEntry, reinterpret_cast<void*>(&OnPanelDraw), reinterpret_cast<void**>(&g_origPanel));
+    const bool b = a && d2rsig::Hook(kScaleRva, kScaleEntry, sizeof kScaleEntry, reinterpret_cast<void*>(&OnScale), reinterpret_cast<void**>(&g_origScale));
+    g_ready.store(a && b && d2rsig::Addr(kPanelVtableRva) != 0);
+    char line[300];
+    snprintf(line, sizeof line, "gamestate: the big map's zoom - %s (the map panel's draw %s, the map's scale %s, the panel's vtable %s)%s",
+             g_ready.load() ? "the game's own zoom, steered by the stick" : "NOT steered: the big map is magnified as a picture instead",
+             a ? "hooked" : d2rsig::Addr(kPanelDrawRva) ? "bytes differ" : "not found", b ? "hooked" : !a ? "not tried" : d2rsig::Addr(kScaleRva) ? "bytes differ" : "not found",
+             d2rsig::Addr(kPanelVtableRva) ? "found" : "not found", " ([hud] map_stick_zoom)");
+    Log(line);
+}
+}   // namespace bigzoom
 bool CallMapSetter(uintptr_t fn, int mode) noexcept {
     __try {
         reinterpret_cast<void (*)(int)>(fn)(mode);
@@ -423,6 +485,9 @@ void MaintainMapSide(bool havePlayer) {
         checked = 1;
     }
     const int mode = ReadMapMode(globals.mini, globals.left);
+    bigzoom::g_miniRva.store(globals.mini);   // ([hud] map_stick_zoom: its scale call reads the mode too)
+    bigzoom::g_leftRva.store(globals.left);
+    if (bigzoom::g_wanted.load() > 0.0f) bigzoom::Install();   // (once: the first zoom asked for)
     {   // [hud] map_click_big: the whole screen while big (asked again a second later if the game put it back), the Keeper's corner after
         static uint64_t bigAt = 0;
         static int bigTold = 0;
@@ -1497,7 +1562,10 @@ bool SetAutoMap(bool open) {
     return g_threads->runOnUiThread(g_ctx, &DispatchAutoMap, open ? (void*)1 : nullptr) == Threads::Result::Success;
 }
 void SetMapSide(int corner) { g_mapSideCorner.store(std::clamp(corner, -1, 2)); }
-void SetMapBig(bool big) { g_mapBig.store(big); }   // [hud] map_click_big: the game's whole-screen map while true (MaintainMapSide)   // -1 off, else [hud] map_corner
+void SetMapBig(bool big) { g_mapBig.store(big); }
+// [hud] map_stick_zoom: the big map's zoom wanted (the game's units; 0 = the game's own), and what its last draw was really given (0: none)
+void SetBigMapZoom(float wanted) { bigzoom::g_wanted.store(std::isfinite(wanted) && wanted > 0.0f ? wanted : 0.0f); if (!(wanted > 0.0f)) bigzoom::g_drawn.store(0.0f); }
+float BigMapZoomDrawn() { return bigzoom::g_ready.load() ? bigzoom::g_drawn.load() : 0.0f; }   // [hud] map_click_big: the game's whole-screen map while true (MaintainMapSide)   // -1 off, else [hud] map_corner
 void SetViewMode(uint32_t mode) { if (g_view.exchange(mode) != mode) Publish(); }
 
 }  // namespace gamestate

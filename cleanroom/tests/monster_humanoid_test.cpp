@@ -294,9 +294,30 @@ void TestLongSkeleton() {
 
 }  // namespace
 
+// [weight] own_body: the hero's own trunk and legs - each arm and the head left out with everything under them (a weapon on a hand bone too)
+void TestOwnBody() {
+	Rig r = Biped();
+	const int hand = r.Add("R_weapon_attach", 0);   // (an attach point hung off the root: no limb)
+	(void)hand;
+	const mh::Verdict v = r.Judge();
+	uint8_t keep[mh::kMaxBones] = {};
+	EXPECT(mh::OwnBodyBones(v, keep), "judged");
+	for (size_t i = 0; i < r.names.size(); ++i) {
+		const std::string& n = r.names[i];
+		const bool arm = n.find("Clavicle") != std::string::npos || n.find("Arm") != std::string::npos || n.find("arm") != std::string::npos || n.find("Hand") != std::string::npos || n.find("Finger") != std::string::npos;
+		const bool head = n.find("Head") != std::string::npos;
+		const bool body = n.find("Pelvis") != std::string::npos || n.find("Spine") != std::string::npos || n.find("Thigh") != std::string::npos || n.find("Calf") != std::string::npos;
+		if (arm || head || n.find("weapon") != std::string::npos) EXPECT(!keep[i], "left out: %s", n.c_str());
+		if (body) EXPECT(keep[i], "his body: %s", n.c_str());
+	}
+	mh::Verdict blob;
+	EXPECT(!mh::OwnBodyBones(blob, keep), "no skeleton: nothing");
+}
+
 int main() {
 	TestWords();
 	TestHumanoids();
+	TestOwnBody();
 	TestOthers();
 	TestUpright();
 	TestMemory();

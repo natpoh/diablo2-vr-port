@@ -97,6 +97,7 @@ int D2rvrHoverSpheres(float (*out)[8], int max);
 #include "xr_stick_check.h"   // is the thumbstick bound by the runtime? (the report of 2026-10-18: SteamVR kept a binding saved for the program)
 #include "menu_zoom.h"   // [openxr] menu_zoom: the right grip + the right stick bring a game panel nearer / farther (MenuZoomPre / Post)
 #include "ini_txn.h"     // ... and its distance written to [screen] menu_distance_m
+#include "map_zoom.h"   // [hud] map_stick_zoom: the right stick zooms the map the laser is on (pure, tested)
 #include "map_laser.h"   // [hud] map_click_big: the right laser on the map in the hand, a click makes it big (pure, tested)
 #include "map_turn.h"   // [hud] map_top_down / map_rotate / map_compass: the map in the hand from above, turned with the look, a compass over it (pure, tested)
 #include "hand_vitals_wire.h"   // [hud] hand_vitals: life and mana on the hand when the palm turns to the face (vr/xr_hand_vitals.h is its layer)
@@ -104,7 +105,7 @@ int D2rvrHoverSpheres(float (*out)[8], int max);
 #include "wrist_status_wire.h"   // [hud] wrist_status: companions and effects over a wrist turned to the eyes (vr/xr_wrist_status.h is its two layers)
 
 namespace gamestate { void SetStickBits(uint32_t bits); void SetMapBig(bool big); }   // the thumbstick check's verdict for D2R VR Settings (vr/gamestate.cpp, the state block); [hud] map_click_big
-namespace gamestate { int CursorHeld(); bool AutoMapOpen(); }   // [openxr] hand_inventory: 1 an item on the game's cursor, 0 none, -1 not known (vr/gamestate.cpp)
+namespace gamestate { int CursorHeld(); bool AutoMapOpen(); void SetBigMapZoom(float wanted); float BigMapZoomDrawn(); }   // [openxr] hand_inventory: 1 an item on the game's cursor, 0 none, -1 not known (vr/gamestate.cpp)
 
 namespace xr {
 void GuardSet();
@@ -176,6 +177,7 @@ struct Cfg {
     bool mapBigFollow = false;  // [hud] map_big_follow: the big map in front kept in the room, coming round after the gaze lazily, its height fixed (vr/map_laser.h Follow); live
     bool mapBigGrab = false;    // [hud] map_big_grab: the right laser + grip drags the big map in front, the stick nearer / farther; kept in map_big_dist_m / side_deg / up_m; live
     float bigDistM = 1.3f, bigSideDeg = 0.0f, bigUpM = -0.1f;   // [hud] map_big_dist_m, map_big_side_deg, map_big_up_m: where it was let go, relative to the gaze
+    bool mapStickZoom = false;  // [hud] map_stick_zoom: the right stick zooms the map the right laser is on (vr/map_zoom.h); live
     bool mapClickBig = false; // [hud] map_click_big: the right laser on the map in the hand, a click makes it the game's big map in front (vr/map_laser.h); live
     bool menu3d = true;       // menu_3d: a menu in F4 as a panel of its own, the world in stereo behind it (HangPanel); on since tested (2026-10-13)
     bool menuZoom = true;     // menu_zoom: the right grip + the right stick bring that panel nearer / farther, written to [screen] menu_distance_m (vr/menu_zoom.h)
@@ -450,6 +452,11 @@ bool g_mapQuadInG = false;      // [hud] map_beside_inventory: the hand map was 
 struct InvHung { XrPosef pose{}; XrExtent2Df size{}; double atUs = 0.0; };
 InvHung g_invHung;
 maplaser::Clicker g_mapClick;
+// [hud] map_stick_zoom (vr/map_zoom.h): who has the right stick, the map in the hand's magnify (1 - 4, not kept), the big map's zoom wanted
+// in the game's units (0 = the game's own; each opening starts there)
+mapzoom::Stick g_zoomStick;
+float g_handZoom = 1.0f, g_bigZoomWant = 0.0f;
+double g_zoomUs = 0.0;
 float g_bigYaw = 0.0f;
 XrVector3f g_bigEyes{};
 struct MapBeam { bool drawn = false, hit = false; XrVector3f from{}, dir{}, at{}; float len = 0.0f; XrQuaternionf surface{0.0f, 0.0f, 0.0f, 1.0f}; };
@@ -2592,7 +2599,13 @@ float2 TurnedUv(float2 q) { return g_hero + float2(dot(g_turnM.xy, q), dot(g_tur
 float4 PSMain(float4 pos : SV_Position) : SV_Target {
   const int2 at = g_split > 0.5 ? SplitSource(int2(pos.xy)) : int2(pos.xy);
   float4 c;
-  if (g_turn > 0.5) {   // the map from above (and turned): a round map, nothing past the circle or the box
+  if (g_turn > 1.5) {   // [hud] map_stick_zoom: magnified about g_hero by 1 / g_turnM.x, the picture's own shape (not turned)
+    uint sw, sh;
+    g_src.GetDimensions(sw, sh);
+    const float2 uv = g_hero + (pos.xy / float2(sw, sh) - g_hero) * g_turnM.x;
+    if (any(uv < 0.0) || uv.x > 1.0 || uv.y > (g_turnPad > 0.0 ? g_turnPad : 1.0)) return 0.0;
+    c = g_src.SampleLevel(g_smp, uv, 0);
+  } else if (g_turn > 0.5) {   // the map from above (and turned): a round map, nothing past the circle or the box
     const float2 q = pos.xy / g_size * 2.0 - 1.0;
     const float2 uv = TurnedUv(q);
     const float edge = saturate((1.0 - length(q)) * g_size * 0.5 + 0.5);
@@ -2641,7 +2654,8 @@ float4 PSOrb(float4 pos : SV_Position) : SV_Target {
   // its own shape kept (nothing above and below it on a wide map).
   float2 uv = float2(0.5 + q.x * 0.5, 0.5 - q.y * 0.5 * max(g_aspect, 0.01)) - 0.5;
   uv = uv / max(g_zoom, 0.1) + 0.5;  // zoomed about the middle
-  if (g_turn > 0.5) uv = TurnedUv(float2(q.x, -q.y));   // from above and turned: about the hero, the zoom in g_turnM
+  if (g_turn > 1.5) uv = g_hero + (uv - g_hero) * g_turnM.x;   // [hud] map_stick_zoom: magnified about the hero
+  else if (g_turn > 0.5) uv = TurnedUv(float2(q.x, -q.y));   // from above and turned: about the hero, the zoom in g_turnM
   float inMap = all(uv >= 0.0) && all(uv <= 1.0) ? 1.0 : 0.0;
   float4 c = g_src.SampleLevel(g_smp, saturate(uv), 0);
   // D2R's automap is thin, half see-through lines: their coverage is raised
@@ -3143,12 +3157,16 @@ uint32_t HangHud(const XrCompositionLayerBaseHeader** layers, uint32_t nl, uint3
                               std::clamp(look.orb_zoom, 0.5f, 4.0f), look.orb_alpha > 0.0f ? std::clamp(look.orb_alpha, 0.0f, 1.0f) : 1.0f,
                               (float)split, 0.0f};
         float turnCb[kHudConstants - 12] = {};
+        const float handZoom = map && g_cfg.mapStickZoom && viewgate::F4() ? g_handZoom : 1.0f;   // [hud] map_stick_zoom: magnified about the hero
         if (turned) {
-            const mapturn::Map mt = mapturn::MapFor(turn, (float)src.w, (float)src.h, stretch, orb ? std::clamp(look.orb_zoom, 0.5f, 4.0f) : 1.0f);
+            const mapturn::Map mt = mapturn::MapFor(turn, (float)src.w, (float)src.h, stretch, (orb ? std::clamp(look.orb_zoom, 0.5f, 4.0f) : 1.0f) * handZoom);
             if (mt.ok) {
                 const float t[kHudConstants - 12] = {1.0f, mt.hero[0], mt.hero[1], 0.0f, mt.m[0], mt.m[1], mt.m[2], mt.m[3]};
                 memcpy(turnCb, t, sizeof turnCb);
             }
+        } else if (handZoom > 1.001f) {   // the slanted map, magnified (its own shape; the orb on its ball)
+            const float t[kHudConstants - 12] = {2.0f, 0.5f, 0.5f - mapdir::kMarkerUp, 0.0f, 1.0f / handZoom, 0.0f, 0.0f, 0.0f};
+            memcpy(turnCb, t, sizeof turnCb);
         }
         if (!DrawHud(o, src.tex, orb, cb, 0, 0, turnCb)) continue;
         XrCompositionLayerQuad& q = o.layer;
@@ -3969,6 +3987,29 @@ void MapLaserStep(D2RVR_XrInput& in, bool focused) {
         }
         G.was = grip;
     }
+    {   // [hud] map_stick_zoom: the laser on the map (in the hand, or the big map) + the right stick up / down - in / out; the stick the zoom's
+        // from a push begun there to its return to the middle (no turn, no walk / run meanwhile). Not while the grip drags the big map.
+        const double us = UsNow();
+        const float dt = g_zoomUs > 0.0 ? (float)std::min(0.1, (us - g_zoomUs) * 1e-6) : 0.0f;
+        g_zoomUs = us;
+        const bool on = g_cfg.mapStickZoom && allowed && !g_bigGrab.on && (big ? onBig.hit : onMap.hit);
+        const mapzoom::Frame z = g_zoomStick.Step(on, r.stickX, r.stickY, dt);
+        if (z.take) { r.stickX = 0.0f; r.stickY = 0.0f; }
+        if (z.factor != 1.0f) {
+            if (big) {
+                const float drawn = gamestate::BigMapZoomDrawn();
+                const float from = g_bigZoomWant > 0.0f ? g_bigZoomWant : drawn > 0.0f ? drawn : mapzoom::kGameOwn;
+                g_bigZoomWant = mapzoom::Clamp(from * z.factor, mapzoom::kGameMin, mapzoom::kGameMax);
+                gamestate::SetBigMapZoom(g_bigZoomWant);
+            } else {
+                g_handZoom = mapzoom::Clamp(g_handZoom * z.factor, mapzoom::kHandMin, mapzoom::kHandMax);
+            }
+            static uint32_t told = 0;
+            if (++told == 1 || told % 600 == 0)
+                LogF("vrcam: openxr - map zoom by the stick: the %s %.2f ([hud] map_stick_zoom; %u frames of zoom)", big ? "big map at game zoom" : "map in the hand at",
+                     big ? g_bigZoomWant : g_handZoom, told);
+        }
+    }
     const maplaser::Hit& h = onButton.hit ? onButton : onFront.hit ? onFront : onBig.hit ? onBig : onMap;
     B.drawn = f.beam || g_bigGrab.on;
     B.hit = h.hit;
@@ -3984,6 +4025,8 @@ void MapLaserStep(D2RVR_XrInput& in, bool focused) {
             g_bigFront = false;   // ([hud] map_big_on_hand: on the hand at each opening)
             g_bigSpot = maplaser::Spot{};   // ([hud] map_big_follow / map_big_grab: placed afresh at its first frame in front)
             g_bigGrab = BigGrab{};
+            g_bigZoomWant = 0.0f;   // ([hud] map_stick_zoom: the game's own zoom at each opening)
+            gamestate::SetBigMapZoom(0.0f);
             hud::SetMapBig(true);
             gamestate::SetMapBig(true);
             haptics::Play(haptics::Event::MenuClick, 1);
@@ -3993,6 +4036,7 @@ void MapLaserStep(D2RVR_XrInput& in, bool focused) {
         case maplaser::Event::Close:
             hud::SetMapBig(false);
             gamestate::SetMapBig(false);
+            gamestate::SetBigMapZoom(0.0f);
             if (allowed) haptics::Play(haptics::Event::MenuClick, 1);
             Log(allowed ? "vrcam: openxr - the big map clicked: back in the hand"
                         : !gamestate::AutoMapOpen() ? "vrcam: openxr - the game's map closed: the big map down with it, the interface back in its place"
@@ -4040,7 +4084,10 @@ uint32_t HangBigMap(const XrCompositionLayerBaseHeader** layers, uint32_t nl, ui
     const mapturn::Turn turn = mapturn::For(g_cfg.mapTopDown, g_cfg.mapRotate, headingKnown, bearing);
     const float hu = std::clamp(src.heroU, 0.0f, 1.0f), hv = std::clamp(src.heroV, 0.0f, 1.0f);
     const float halfW = std::min(hu, 1.0f - hu) * (float)src.w, halfH = std::min(hv * (float)src.h, (float)rows - hv * (float)src.h);
-    const mapturn::Map mt = turn.Any() ? mapturn::MapAround(turn, (float)src.w, (float)src.h, src.stretch, hu, hv, halfW, halfH) : mapturn::Map{};
+    // [hud] map_stick_zoom: the zoom wanted past what the game drew (its whole 1/8 steps; all of it while its zoom is not steered) magnified
+    const float bigDrawn = gamestate::BigMapZoomDrawn();
+    const float bigRest = g_cfg.mapStickZoom && g_bigZoomWant > 0.0f ? mapzoom::Remainder(g_bigZoomWant, bigDrawn > 0.0f ? bigDrawn : mapzoom::kGameOwn) : 1.0f;
+    const mapturn::Map mt = turn.Any() ? mapturn::MapAround(turn, (float)src.w, (float)src.h, src.stretch, hu, hv, halfW, halfH, bigRest) : mapturn::Map{};
     const bool turned = mt.ok;
     const uint32_t side = std::clamp(std::min(src.w, rows), 256u, 2048u);
     HudOut& o = turned ? g_bigTurnOut : g_hudOut[hud::kNativePanel];   // (a menu's panel's chain: never both at once - a menu puts the map back)
@@ -4049,6 +4096,9 @@ uint32_t HangBigMap(const XrCompositionLayerBaseHeader** layers, uint32_t nl, ui
     float turnCb[kHudConstants - 12] = {};
     if (turned) {
         const float t[kHudConstants - 12] = {1.0f, mt.hero[0], mt.hero[1], (float)rows / (float)src.h, mt.m[0], mt.m[1], mt.m[2], mt.m[3]};
+        memcpy(turnCb, t, sizeof turnCb);
+    } else if (bigRest > 1.001f) {
+        const float t[kHudConstants - 12] = {2.0f, hu, hv, (float)rows / (float)src.h, 1.0f / bigRest, 0.0f, 0.0f, 0.0f};
         memcpy(turnCb, t, sizeof turnCb);
     }
     if (!DrawHud(o, src.tex, false, cb, 0, 0, turnCb)) return nl;
@@ -5543,6 +5593,13 @@ void LoadSettings(const wchar_t* ini) {
             g_cfg.mapRotate = GetPrivateProfileIntW(L"hud", L"map_rotate", 0, ini) != 0;
             g_cfg.mapCompass = GetPrivateProfileIntW(L"hud", L"map_compass", 0, ini) != 0;
             g_cfg.mapClickBig = GetPrivateProfileIntW(L"hud", L"map_click_big", 0, ini) != 0;
+            g_cfg.mapStickZoom = GetPrivateProfileIntW(L"hud", L"map_stick_zoom", 0, ini) != 0;
+            static int saidZoom = 0;
+            if ((int)g_cfg.mapStickZoom != saidZoom) {
+                saidZoom = g_cfg.mapStickZoom;
+                Log(g_cfg.mapStickZoom ? "vrcam: openxr - the map (F4): the right laser on it + the right stick up / down zooms it in / out ([hud] map_stick_zoom=1)"
+                                       : "vrcam: openxr - the map (F4): no zoom by the stick ([hud] map_stick_zoom=0)");
+            }
             g_cfg.mapBigOnHand = GetPrivateProfileIntW(L"hud", L"map_big_on_hand", 0, ini) != 0;
             g_cfg.mapBesideInv = GetPrivateProfileIntW(L"hud", L"map_beside_inventory", 0, ini) != 0;
             g_cfg.mapBigFollow = GetPrivateProfileIntW(L"hud", L"map_big_follow", 0, ini) != 0;

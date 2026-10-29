@@ -520,8 +520,9 @@ struct Settings {
     std::atomic<bool>  gameCeilingBeams{false};  // [ceiling] game_ceiling_beams: the barracks' own wooden ceiling frame under the slab (engitem::CeilingFrame)
     std::atomic<bool>  ceilFromWalls{false};     // [ceiling] height_from_walls: each room's ceiling on its walls' top (measured from the game's models)
     std::atomic<bool>  gameCeilingDome{false};   // [ceiling] game_ceiling_dome: the cathedral's dome over its chapel in the game's ceiling (engitem::CeilingFrame)
-    std::atomic<bool>  gameCeilingDomesTall{false};   // [ceiling] game_ceiling_domes_over_tall: the same over every room's tall piece (ceilmeasure::DomeOf, kTallFactor)
+    std::atomic<bool>  gameCeilingDomesTall{false};   // [ceiling] game_ceiling_worldstone_dome: the same over the Worldstone, level 132 (ceilmeasure::kWorldstoneBiome)
     std::atomic<float> gameCeilingDomeSize{1.0f};   // [ceiling] game_ceiling_dome_size: times the measured dome round its middle (gameceiling::DomeSize)
+    std::atomic<float> worldstoneWiderM{10.0f};       // [ceiling] game_ceiling_worldstone_dome_wider_m: the Worldstone's dome that many metres wider (gameceiling::WiderSize)
     std::atomic<float> gameCeilingDomeRise{1.0f};   // [ceiling] game_ceiling_dome_rise: times the least rise that passes over the canopy (1 .. 2)
     std::atomic<float> ceilHeight{18.0f};   // a room with no height_<biome> of its own (LoadCeilingBiomes: kCeilHeightAlone), world units
     std::atomic<float> ceilScale{10.0f};    // [ceiling] scale: world units per tile (the test grid's cell)
@@ -2411,9 +2412,10 @@ void LoadSettings() {
     g_set.gameCeilingBeams.store(IniB(L"ceiling", L"game_ceiling_beams", false));
     g_set.ceilFromWalls.store(IniB(L"ceiling", L"height_from_walls", true));   // (a room with no height of its own: on its walls)
     g_set.gameCeilingDome.store(IniB(L"ceiling", L"game_ceiling_dome", false));
-    g_set.gameCeilingDomesTall.store(IniB(L"ceiling", L"game_ceiling_domes_over_tall", false));
+    g_set.gameCeilingDomesTall.store(IniB(L"ceiling", L"game_ceiling_worldstone_dome", false));
     g_set.gameCeilingDomeSize.store(IniF(L"ceiling", L"game_ceiling_dome_size", 1.0f));
     g_set.gameCeilingDomeRise.store(IniF(L"ceiling", L"game_ceiling_dome_rise", 1.0f));
+    g_set.worldstoneWiderM.store(IniF(L"ceiling", L"game_ceiling_worldstone_dome_wider_m", 10.0f));
     g_set.ceilHeight.store(kCeilHeightAlone);   // (the common [ceiling] height is not read: each room its own - Serg 2026-10-29)
     g_set.ceilScale.store(std::clamp(IniF(L"ceiling", L"scale", 10.0f), 0.5f, 1000.0f));
     g_set.ceilBright.store(std::clamp(IniF(L"ceiling", L"brightness", 1.0f), 0.0f, 4.0f));
@@ -3111,6 +3113,7 @@ void LoadSettings() {
     g_set.weightMonsterRagdoll.store(IniB(L"weight", L"monster_ragdoll", false));
     meleetouch::SetSwayWanted(g_set.weightMonsterBodies.load() && g_set.weightMonsterRagdoll.load());
     meleetouch::SetPoseWanted(g_set.weightMonsterBodies.load() && g_set.weightMonsterRagdoll.load() && IniB(L"weight", L"monster_ragdoll_pose", false));   // [weight] monster_ragdoll_pose
+    meleetouch::SetOwnBodyWanted(g_set.weightMonsterBodies.load() && IniB(L"weight", L"own_body", false));   // [weight] own_body: the weapon stops on the hero's own body
     headshadow::WantForDoll(g_set.weightMonsterBodies.load() && g_set.weightMonsterRagdoll.load() && IniB(L"weight", L"monster_ragdoll_pose", false));   // ... through the skinning composite
     skel::SetRagdollAll(g_set.weightMonsterBodies.load() && g_set.weightMonsterRagdoll.load() && IniB(L"weight", L"monster_ragdoll_all", false));   // [weight] monster_ragdoll_all
     meleetouch::SetSwayTuning(std::clamp(IniF(L"weight", L"monster_weight_pct", 100.0f), 10.0f, 400.0f), std::clamp(IniF(L"weight", L"monster_push_pct", 100.0f), 0.0f, 400.0f));
@@ -18559,7 +18562,7 @@ Slab g_beams[gameceiling::kBeamPieces];
 // the game's own pillars stand round the altar's canopy, in place of the cathedral's slab. The canopy is found among the renderer's pieces by
 // its place in the preset and a pillar's beside it (knockprops::PresetPieces, a whole pass over the transforms: on a thread of its own), once
 // an area - again every 2 s while not found, kChapelTries times.
-// [ceiling] game_ceiling_domes_over_tall: the same for every dome over a tall piece (ceilmeasure::DomeOf, kTallFactor), each its own vault
+// [ceiling] game_ceiling_worldstone_dome: the same for every dome over a tall piece (ceilmeasure::DomeOf, kTallFactor), each its own vault
 // (slot); an area may hold more than one (the Throne of Destruction's biome: the throne room's arch, the Worldstone Chamber's stone) - all
 // of the area's are looked for at once, the one whose preset is among the game's pieces laid (the nearest the hero if more), and while the
 // area has more than one they are looked for again every 5 s (the same biome over two levels: no area change between them).
@@ -18792,14 +18795,14 @@ void CeilingFrame() {
             LogF("vrcam: game ceiling - its rim bent down: the wall %.0f units round the hero, %.1f units down from the ceiling's top ([ceiling] "
                  "floor_depth %.1f under the floor)", gameceiling::kWallRadius * tile / gameceiling::kTile, reach, g_set.ceilFloor.load());
     }
-    // [ceiling] game_ceiling_dome / game_ceiling_domes_over_tall: a vault - once its piece is found among the game's pieces - in place of the
+    // [ceiling] game_ceiling_dome / game_ceiling_worldstone_dome: a vault - once its piece is found among the game's pieces - in place of the
     // slab, its flat at the slab's top, its dome raised to pass over the piece's top as drawn. The area's domes the keys allow: the
-    // cathedral's (slot 0) by game_ceiling_dome, the others by game_ceiling_domes_over_tall
+    // cathedral's (slot 0) by game_ceiling_dome, the Worldstone's by game_ceiling_worldstone_dome
     const bool domeTick = g_set.gameCeilingDome.load(), tallTick = g_set.gameCeilingDomesTall.load();
     std::vector<ceilmeasure::Dome> domes;
     AcquireSRWLockShared(&g_biomeLock);
     for (const ceilmeasure::Dome& d : g_chapelDomes)
-        if (d.slot == 0 ? domeTick : tallTick) domes.push_back(d);
+        if (d.slot >= 0 && d.slot < gameceiling::kVaultSlots && (d.slot == 0 ? domeTick : tallTick)) domes.push_back(d);   // (a slot past ours: not laid)
     ReleaseSRWLockShared(&g_biomeLock);
     const bool domeArea = want && !domes.empty();
     const unsigned domeGen = g_chapelGen.load() * 4u + (domeTick ? 1u : 0u) + (tallTick ? 2u : 0u);   // (a key changed: looked for again)
@@ -18833,34 +18836,40 @@ void CeilingFrame() {
         if (canopy)
             LogF("vrcam: game ceiling - %s found among the game's pieces at %.1f %.1f %.1f (%zu pieces at the %d dome(s)' pieces' and pillars' "
                  "places, %.1f ms): the dome's middle %.1f %.1f, %.1f round through its pillars, made rising %.1f over %.1f (its vault: slot %d)",
-                 cathedral ? "the cathedral's canopy" : "the tall piece", found.world[0], found.world[1], found.world[2], found.pieces, found.asked,
+                 cathedral ? "the cathedral's canopy" : "the Worldstone", found.world[0], found.world[1], found.world[2], found.pieces, found.asked,
                  found.ms, found.world[0] + dome.centreX - dome.anchor[0], found.world[2] + dome.centreZ - dome.anchor[2], dome.radius, dome.rise,
                  dome.springs, dome.slot);
         else
             LogF("vrcam: game ceiling - %s NOT found among the game's pieces (%s; %zu pieces at their and their pillars' places, %d agreeing, %.1f "
-                 "ms; look %d of %d)%s", domes.size() > 1 ? "the area's tall pieces" : cathedral ? "the cathedral's canopy" : "the tall piece",
+                 "ms; look %d of %d)%s", domes.size() > 1 ? "the area's domes' pieces" : cathedral ? "the cathedral's canopy" : "the Worldstone",
                  found.read ? "the renderer read" : "the renderer's registry does not read", found.pieces, found.matches, found.ms, tries,
                  kChapelTries, tries < kChapelTries ? " - again in 2 s; its slab meanwhile" : " - its slab stays");
     }
     const float baseY = canopy ? found.world[1] - dome.anchor[1] : 0.0f;
     // [ceiling] game_ceiling_dome_size / _rise: the vault laid that many times its size round the measured middle, its rise worked out for
     // the rim it has then (still over the canopy) and that many times higher - live
-    const float size = gameceiling::DomeSize(g_set.gameCeilingDomeSize.load(), dome.reach, dome.radius);
-    const float riseBy = gameceiling::DomeRiseScale(g_set.gameCeilingDomeRise.load());
+    // (the cathedral's: its size and height sliders; the Worldstone's: its own width in metres - the world's units a metre as the camera's)
+    const float upm = std::max(1.0f, ViewHeight()) / UserEyeHeightM();
+    const float size = cathedral ? gameceiling::DomeSize(g_set.gameCeilingDomeSize.load(), dome.reach, dome.radius)
+                                 : gameceiling::WiderSize(g_set.worldstoneWiderM.load(), upm, dome.reach, dome.radius);
+    const float riseBy = cathedral ? gameceiling::DomeRiseScale(g_set.gameCeilingDomeRise.load()) : 1.0f;
     const float rise = canopy ? riseBy * gameceiling::VaultRise(baseY, dome.top, floorAt + slabTop, dome.reach, dome.radius * size) : 0.0f;
     const bool vault = domeArea && canopy && rise > 0.0f;
     const char* vaultWhy = !want ? why : !g_chapelHere.load() ? "no dome measured for this area (D2R_VR_Settings)"
-                           : domes.empty() ? "[ceiling] game_ceiling_dome / game_ceiling_domes_over_tall=0"
+                           : domes.empty() ? "[ceiling] game_ceiling_dome / game_ceiling_worldstone_dome=0"
                            : !canopy ? "its piece not found among the game's pieces (yet)" : !vault ? "the ceiling already over its piece: no dome needed" : "";
     static float toldRise = -1.0f, toldSize = -1.0f;
-    if (vault && (rise != toldRise || size != toldSize)) {
+    if (vault && (std::fabs(rise - toldRise) > 0.05f || std::fabs(size - toldSize) > 0.005f)) {   // (the units a metre follow the hero's eyes: not every small step)
         toldRise = rise;
         toldSize = size;
+        char sizeWhy[160];
+        if (cathedral) snprintf(sizeWhy, sizeof sizeWhy, "[ceiling] game_ceiling_dome_size %.2f", g_set.gameCeilingDomeSize.load());
+        else snprintf(sizeWhy, sizeof sizeWhy, "[ceiling] game_ceiling_worldstone_dome_wider_m %.1f m across at %.2f units a metre: %.1f units further out all round",
+                      g_set.worldstoneWiderM.load(), upm, dome.radius * (size - 1.0f));
         LogF("vrcam: game ceiling - the vault (slot %d): its flat %.1f units over the area's floor; the dome %.1f round (size %.2f of the measured "
-             "%.1f, [ceiling] game_ceiling_dome_size %.2f), rising %.1f over it (rise %.2f of the least, game_ceiling_dome_rise; the canopy's top at "
+             "%.1f, %s), rising %.1f over it (rise %.2f of the least, game_ceiling_dome_rise; the piece's top at "
              "%.1f over the preset's floor %.1f; the mesh made rising %.1f: scaled %.2f up), %.0f units round its middle", dome.slot, slabTop, dome.radius * size,
-             size, dome.radius, g_set.gameCeilingDomeSize.load(), rise, riseBy, dome.top, baseY, dome.rise, rise / dome.rise,
-             gameceiling::VaultHalf(dome.half) * size);
+             size, dome.radius, sizeWhy, rise, riseBy, dome.top, baseY, dome.rise, rise / dome.rise, gameceiling::VaultHalf(dome.half) * size);
     }
     float m[16], w[16], away[16], v[16];
     gameceiling::Matrix(hero, floorAt, slabTop, tile, want, m);
@@ -18876,7 +18885,7 @@ void CeilingFrame() {
     bool shown = vaultShown;
     for (int k = 0; k < gameceiling::kKindCount; ++k) {
         const bool mine = want && k == kind && !vaultShown;
-        const char* whyK = mine || !want ? why : k == kind ? "a vault laid instead ([ceiling] game_ceiling_dome / _domes_over_tall)" : "another kind's area";
+        const char* whyK = mine || !want ? why : k == kind ? "a vault laid instead ([ceiling] game_ceiling_dome / _worldstone_dome)" : "another kind's area";
         shown = PieceFrame(g_slabs[k], mine, whyK, hero, m, away) || shown;
         g_slabGivenUp[k].store(gameceiling::GivenUp(g_slabs[k].loadTried, g_slabs[k].def.p != nullptr, g_slabs[k].tries));
         if (gameceiling::kKinds[k].wall)
@@ -19735,7 +19744,7 @@ void SkyTick() {
                 which += g_chapelHere.load() ? "; the chapel's dome in it - the canopy looked for among the game's pieces ([ceiling] game_ceiling_dome)"
                                            : "; no dome - not measured yet (D2R_VR_Settings makes it from the game's files)";
             else if (world && g_set.gameCeilingDomesTall.load() && g_chapelHere.load())
-                which += "; a dome over a tall piece of its rooms - its preset looked for among the game's pieces ([ceiling] game_ceiling_domes_over_tall)";
+                which += "; the Worldstone's dome - its preset looked for among the game's pieces ([ceiling] game_ceiling_worldstone_dome; level 132)";
             LogF("vrcam: biome '%s' - %s; ceiling: %s%s", biome.empty() ? "(none yet)" : biome.c_str(),
                  palette >= 0 ? kPalettes[palette].part : "no sky here (not in [sky] outdoor)", which.c_str(),
                  g_noFogArea.load() ? "; no added fog ([fog] no_fog_river)" : "");
@@ -23296,7 +23305,9 @@ template <class RT> void EffectsBegin(RT* rt, reshade::api::command_list* cl) {
             flog::Line("R,%u,%d,%u,%u", flog::Pass(), eye & 1, v[0], v[1]);
         }
     }
-    if (!sky) return;
+    // (the game's dome or fog drawn: our sky off, but DomeHorizon and GameFogTrue read the eyes' axes and projections too - left stale, the
+    // dome's low band took the whole dome to the fog's colour: Serg on 0.188.6, act 4 town, game_sky=1 game_fog=1, "где небо")
+    if (!sky && !engitem::DomeShown() && !gamefogvr::Active()) return;
     // (eyes by turns: the cameras the pictures show, as the overlays' above - the eye drawn's is its own, the eye made's the warp's)
     const xr::TurnView tvSky = replay::OverlaysWanted() ? xr::TurnViewNow() : xr::TurnView{};
     for (int e = 0; e < 2; ++e) {
@@ -23313,6 +23324,8 @@ template <class RT> void EffectsBegin(RT* rt, reshade::api::command_list* cl) {
         snprintf(n, sizeof n, "CamUp%d", e); SetFloats(rt, n, axes + 3, 3);
         snprintf(n, sizeof n, "CamBack%d", e); SetFloats(rt, n, axes + 6, 3);
     }
+    // (the act's picture only for our sky, or the game's fog fading into the sky behind - [fog] fog_into_sky: no picture uploaded for nothing)
+    if (!sky && !(g_set.fogIntoSky.load() && gamefogvr::Active())) return;
     if (arcane || pal < 0) return;   // the Arcane sky: no palette, sun, daylight or drift in the void
     const SkyPalette& p = kPalettes[pal];
     SetFloats(rt, "SkyZenith", p.zenith, 3);
@@ -24062,7 +24075,7 @@ void LoadReShade() {
              "an antivirus may also block it", err == ERROR_DLL_INIT_FAILED ? "its start said no" : "it could not be loaded");
 }
 
-static const char g_info_version[] = "0.188.10";
+static const char g_info_version[] = "0.188.11";
 
 // Who this is. D2RLoader prints "<name> <version> by <author>" for every plugin, and d2r-pcvr (a fork of our 0.152) carries the
 // same id, name and author as we did - "vrcam ... by BodyWalkVR" told a support log nothing. The id stays (the log file

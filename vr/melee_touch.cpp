@@ -578,7 +578,8 @@ int g_nHostile = 0;
 
 std::atomic<bool> g_grabWanted{false};      // [weight] grab_bodies (SetGrabWanted): the bodies made for it too, the non-hostile ones kept for it alone
 
-bool BodiesWanted() { return g_bodiesWanted.load() || meleeboxes::Wanted() || g_grabWanted.load(); }
+std::atomic<bool> g_ownBodyWanted{false};   // [weight] own_body: the hero's own trunk and legs among the bodies
+bool BodiesWanted() { return g_bodiesWanted.load() || meleeboxes::Wanted() || g_grabWanted.load() || g_ownBodyWanted.load(); }
 
 // [weight] monster_ragdoll (probe): the bodies' sway - the doll library's (vr/doll_lib.h; its state ours, under g_swayMutex), stepped by the clock whenever
 // the bodies are handed over (either thread). No library: nothing sways.
@@ -808,9 +809,34 @@ void RepublishBodies(ULONGLONG now, const float heroRender[3], float upm) {
         const std::string dump = skel::RigDumpTakeIn();
         if (!dump.empty()) Log(dump.c_str());
     }
+    if (g_ownBodyWanted.load() && viewgate::F4() && upm > 1e-3f) {   // [weight] own_body: the hero's own trunk and legs, as drawn now - the held weapon stops on them too
+        monsterrig::Capsule own[monsterrig::kMaxPerRig];
+        const char* why = "";
+        const int n = skel::HeroBodyCaps(own, monsterrig::kMaxPerRig, &why);
+        for (int i = 0; i < n && snap.n < monsterbodies::kMax; ++i) {
+            monsterbodies::Body& b = snap.b[snap.n++];
+            b = monsterbodies::Body{};
+            b.id = monsterbodies::kOwnBodyId;
+            for (int k = 0; k < 3; ++k) { b.bottom[k] = own[i].a[k] / upm; b.top[k] = own[i].b[k] / upm; }
+            b.radius = own[i].radius / upm;
+            b.rig = true;
+            b.bone = own[i].bone;
+            b.hostile = false;
+            b.held = monsterbodies::kHeldOwnBody;
+        }
+        static int toldN = -1;
+        static std::string toldWhy;
+        if ((n > 0) != (toldN > 0) || (n == 0 && toldWhy != why)) {   // (once a change: a line costs a millisecond)
+            toldN = n;
+            toldWhy = why;
+            if (n > 0) LogF("melee touch: own body - the hero's trunk and legs are %d bodies the held weapon meets (his arms and head left out)", n);
+            else LogF("melee touch: own body - none read (%s): the weapon passes through the hero as before", why);
+        }
+    }
     std::lock_guard<std::mutex> lock(g_bodiesMutex);
     g_bodies = snap;
 }
+
 
 // A scan's hostile monsters kept, and the bodies published from them at once. [weight] npc_bodies: the scan's other units too (town NPCs, hirelings -
 // every monster-type unit near that is not dying or dead), marked not hostile - a body for the weapon to meet and stick into, never a target: the
@@ -1608,6 +1634,9 @@ void SetShieldsWanted(bool on) {
 void SetHeadVolume(bool on) {
     if (g_headVolume.exchange(on) != on) Log(on ? "melee touch: head volumes on - a headed weapon's head is a volume of its own where its model has it, its shaft as thin as the model's"
                                                 : "melee touch: head volumes off - one capsule along the weapon, as before");
+}
+void SetOwnBodyWanted(bool on) {
+    if (g_ownBodyWanted.exchange(on) != on) Log(on ? "melee touch: own body on - the held weapon does not pass through the hero's own trunk and legs" : "melee touch: own body off");
 }
 void SetBodiesWanted(bool on) {
     if (g_bodiesWanted.exchange(on) != on) Log(on ? "melee touch: monster bodies on - the hostile monsters' capsules go to the weight model (the held weapon stops on them)" : "melee touch: monster bodies off");

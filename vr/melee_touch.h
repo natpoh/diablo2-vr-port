@@ -99,6 +99,9 @@ void SetClientVerdict(bool on);
 // from their own skeletons (vr/monster_rig.h, every 10 ms) or the game's capsule, kMax capsules in render metres - while it or [debug] melee_boxes wants them. Bodies: the last of them, fresh (kFreshMs) and in F4 - false otherwise (off,
 // another view, no scan lately: hit by touch off, no melee weapon). Any thread. Nothing is attacked or pressed for it: the bodies only shape the drawn weapon.
 void SetBodiesWanted(bool on);
+// [weight] own_body: the hero's own trunk and legs among the bodies (skel::HeroBodyCaps; id monsterbodies::kOwnBodyId, held kHeldOwnBody) - the held weapon stops on
+// them as on a monster's, never stabs, grabs or pushes them. F4 only.
+void SetOwnBodyWanted(bool on);
 // [gameplay] melee_head_volume (vr/metal_head.h Volume, live): a headed weapon (an axe, a polearm, a hammer, a mace, a spear) has its head as a volume of its own where
 // its model has it - an axe's blade beside the shaft - and its shaft as thin as the model's; the debug's boxes draw it. Off: one capsule along the weapon, as before.
 void SetHeadVolume(bool on);

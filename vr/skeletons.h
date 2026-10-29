@@ -749,6 +749,9 @@ uintptr_t EntityModelInstance(uint32_t entity);
 // [hud] hand_vitals_orb_on_bone: the hero's own body parts' model instances (his root's ModelComponent and the children in its AttachedChildrenComponent, held weapons and
 // shields left out - as a monster's, vr/monster_rig.h PartModels) into models (at most cap), *key a hash of their resources (another armour: another key). How many.
 int HeroPartModels(uint32_t entity, uintptr_t* models, int cap, uint64_t* key);
+// [weight] own_body: the hero's own trunk and legs as capsules his held weapon meets (monsterhumanoid::OwnBodyBones; his arms and head left out), from his
+// meshes' boxes on his bones as drawn now (his pose after ours), world units; their bones in bone[] (may be null). How many (0: not read, *why says).
+int HeroBodyCaps(monsterrig::Capsule* out, int cap, const char** why);
 // [weight] monster_bodies (vr/monster_rig.h): the models near (x, z) - the game's render world, its units - that stand on their own (no parent: not a weapon in a
 // hand) and are not a hero's, the nearest first, each with a capsule on each of its limbs: its bones as the game posed them this frame times its place, as thick as its
 // meshes' boxes of them (world units). A model whose boxes or pose do not read is given with n 0 and why. Read-only, off the pose hook (any thread but the hook's).

@@ -1902,3 +1902,7 @@ target_compile_options(map_turn_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 add_executable(map_laser_test cleanroom/tests/map_laser_test.cpp)
 target_include_directories(map_laser_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
 target_compile_options(map_laser_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# [hud] map_stick_zoom: the right stick zooms the map the laser is on (vr/map_zoom.h, xr.cpp, gamestate.cpp): map_zoom_test
+add_executable(map_zoom_test cleanroom/tests/map_zoom_test.cpp)
+target_include_directories(map_zoom_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_options(map_zoom_test PRIVATE /utf-8 /W4 /EHsc /permissive-)

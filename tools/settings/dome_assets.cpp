@@ -108,7 +108,7 @@ bool CascRead(HANDLE storage, const char* name, std::string* out) { return CascR
 
 // [ceiling] height_from_walls: each indoor area's walls' top (shared/ceiling_measures.h) - the wall pieces its presets place, each model's
 // bounds read once from its own file (lod0). Areas with no wall piece are left out (their own height stays). [ceiling] game_ceiling_dome
-// and game_ceiling_domes_over_tall: each preset's dome over its highest piece when that stands kTallFactor times the room's walls' top
+// and game_ceiling_worldstone_dome: each preset's dome over its highest piece when that stands kTallFactor times the room's walls' top
 // (ceilmeasure::DomeOf: every piece's bounds) - the cathedral's first (slot 0), the rest in the areas' order while slots last; `why` when
 // the cathedral has none.
 void Measure(HANDLE storage, ceilmeasure::Measures* out, std::string* domeWhy) {
@@ -180,20 +180,20 @@ void Measure(HANDLE storage, ceilmeasure::Measures* out, std::string* domeWhy) {
             if (!ceilmeasure::DomeOf(placed, boundsOf, &d, &why, ceilmeasure::kTallFactor * h, !isCathedral)) continue;   // (over the piece itself; the cathedral's on its crossing, as made first)
             d.biome = area.biome;
             if (isCathedral && cathedral.empty()) cathedral.push_back(d);
-            else if (!isCathedral) tall.push_back(d);
+            else if (std::string(area.biome) == ceilmeasure::kWorldstoneBiome) tall.push_back(d);   // (the Worldstone's room only)
         }
     }
     if (!cathedral.empty()) {
         domeWhy->clear();
         out->domes.push_back(cathedral[0]);
     }
-    // slots 1 .. kVaultSlots - 1: the pieces standing the most over their rooms first (the 2026-10-29 game: the Worldstone 4.6 times the
-    // throne biome's 9.9, the throne room's arch 3.5, Travincal's 2.5, a temple's 2.2)
+    // slot 1: the Worldstone - of its room's, the piece standing the most over the ceiling (the 2026-10-29 game: the Worldstone 4.6 times the
+    // throne biome's 9.9; the throne room's arch 3.5, left out)
     std::stable_sort(tall.begin(), tall.end(), [&](const ceilmeasure::Dome& a, const ceilmeasure::Dome& b) {
         return a.top / ceilmeasure::WallsTopOf(*out, a.biome) > b.top / ceilmeasure::WallsTopOf(*out, b.biome);
     });
     for (const ceilmeasure::Dome& d : tall) {
-        if ((int)out->domes.size() - (cathedral.empty() ? 0 : 1) >= gameceiling::kVaultSlots - 1) break;
+        if ((int)out->domes.size() - (cathedral.empty() ? 0 : 1) >= 1) break;   // (the one)
         out->domes.push_back(d);
         out->domes.back().slot = (int)out->domes.size() - (cathedral.empty() ? 0 : 1);
     }
@@ -701,7 +701,7 @@ Result PrepareCeiling(const std::wstring& game, const std::wstring& modRoot, boo
         }
     for (int lod = 0; lod < 5; ++lod) pieces.push_back({gameceiling::LodPath(gameceiling::kBeamModelFile, lod), -1, false, lod});
     pieces.push_back({gameceiling::kBeamUnit, -1, false, -1});
-    // and the vaults ([ceiling] game_ceiling_dome: the cathedral's, slot 0; game_ceiling_domes_over_tall: the rest - kind -10 - slot, five
+    // and the vaults ([ceiling] game_ceiling_dome: the cathedral's, slot 0; game_ceiling_worldstone_dome: the rest - kind -10 - slot, five
     // models and a unit each)
     for (int slot = 0; slot < gameceiling::kVaultSlots; ++slot) {
         for (int lod = 0; lod < 5; ++lod) pieces.push_back({gameceiling::LodPath(gameceiling::kVaultModelFiles[slot], lod), -10 - slot, false, lod});
@@ -765,7 +765,8 @@ Result PrepareCeiling(const std::wstring& game, const std::wstring& modRoot, boo
         ceilmeasure::Measures had;
         const std::string name = std::string("mods/D2R-VR/D2R-VR.mpq/") + ceilmeasure::kFile;
         if (!build.empty() && arcanesky::ReceiptValue(last, "game_build") == build && ReadFile(pathOf(ceilmeasure::kFile), &old) &&
-            arcanesky::Hash(old.data(), old.size()) == arcanesky::ReceiptValue(last, name) && ceilmeasure::Parse(old, &had) && !had.walls.empty()) {
+            arcanesky::Hash(old.data(), old.size()) == arcanesky::ReceiptValue(last, name) && ceilmeasure::Parse(old, &had) && !had.walls.empty() &&
+            had.dropped == 0) {   // (a make that dropped a dome: measured again, the dome back once its vault can be written)
             measures.walls = had.walls;
             measures.domes = had.domes;
             bool cathedral = false;
@@ -848,6 +849,7 @@ Result PrepareCeiling(const std::wstring& game, const std::wstring& modRoot, boo
     grannyremesh::Mesh mesh;
     std::string beamWhy, vaultWhy;
     int vaultFailed = -1;   // (a vault's model refused: its dome taken out of the measures, the last piece)
+    bool vaultKept[gameceiling::kVaultSlots] = {};   // a vault's file there not ours (kept): its dome taken out too - the game would draw that file
     for (const Piece& piece : pieces) {
         std::string made;
         if (piece.kind == -2) {   // the measures (the last piece: the beams' and the vault's files are written by now)
@@ -856,6 +858,13 @@ Result PrepareCeiling(const std::wstring& game, const std::wstring& modRoot, boo
                 for (auto it = measures.domes.begin(); it != measures.domes.end(); ++it)
                     if (it->slot == vaultFailed) { measures.domes.erase(it); break; }
                 if (vaultFailed == 0) domeWhy = vaultWhy;
+            }
+            for (auto it = measures.domes.begin(); it != measures.domes.end();) {
+                if (!vaultKept[it->slot]) { ++it; continue; }
+                ++measures.dropped;
+                if (it->slot == 0) domeWhy = "a file of its vault there is not ours (left as it is)";
+                else tallWhy = it->biome + ": a file of its vault there is not ours (left as it is)";
+                it = measures.domes.erase(it);
             }
             made = ceilmeasure::Format(measures);
         } else if (piece.kind <= -10 && !domeIn(-10 - piece.kind)) {
@@ -923,6 +932,7 @@ Result PrepareCeiling(const std::wstring& game, const std::wstring& modRoot, boo
         const bool exists = ReadFile(path, &old);
         if (!arcanesky::MayReplace(exists, old, made, arcanesky::ReceiptValue(last, name))) {
             ++kept;   // the player's own: left as it is
+            if (piece.kind <= -10) vaultKept[-10 - piece.kind] = true;   // (and its dome not laid: the game would draw that file)
             continue;
         }
         if (!exists || old != made) {
@@ -955,12 +965,12 @@ Result PrepareCeiling(const std::wstring& game, const std::wstring& modRoot, boo
                                     {{L"r", std::to_wstring((int)std::lround(cath->radius))}});
     else
         r.text += L" - " + lang::TX(L"ceiling.no_dome", L"no cathedral dome: {why}", {{L"why", Wide(domeWhy)}});
-    {   // [ceiling] game_ceiling_domes_over_tall: the other domes, each its room and size
+    {   // [ceiling] game_ceiling_worldstone_dome: the Worldstone's, its room and size
         std::wstring list;
         for (const ceilmeasure::Dome& d : measures.domes)
             if (d.slot > 0) list += (list.empty() ? L"" : L", ") + Wide(d.biome) + L" " + std::to_wstring((int)std::lround(d.radius));
         if (!list.empty())
-            r.text += L" - " + lang::TX(L"ceiling.tall_domes", L"domes over tall pieces (room, units round): {list}", {{L"list", list}});
+            r.text += L" - " + lang::TX(L"ceiling.worldstone_dome", L"the Worldstone's dome (level 132, room and units round): {list}", {{L"list", list}});
         if (!tallWhy.empty()) r.text += L" (" + Wide(tallWhy) + L")";
     }
     if (kept) r.text += L" - " + lang::TX(L"ceiling.kept", L"{n} of its files changed by you: left as they are", {{L"n", std::to_wstring(kept)}});

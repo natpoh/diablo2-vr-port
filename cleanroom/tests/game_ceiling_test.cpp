@@ -289,7 +289,7 @@ int main(int argc, char** argv) {
         other.replace(other.find(cur), cur.size(), "version 1");   // (the last one's: measured again)
         CHECK(!ceilmeasure::Parse(other, &back) && !back.haveBeam && back.walls.empty());
         CHECK(!ceilmeasure::Parse("", &back) && !ceilmeasure::Parse("walls act1_crypt 14\n", &back) && back.walls.empty());
-        CHECK(ceilmeasure::Parse("version 4\r\nbeam 0 1 2 3 4 5 6\r\nwalls a 0\r\nwalls b 7.5\r\n", &back) && !back.haveBeam &&   // (a frame of no size; a top of 0)
+        CHECK(ceilmeasure::Parse("version 5\r\nbeam 0 1 2 3 4 5 6\r\nwalls a 0\r\nwalls b 7.5\r\n", &back) && !back.haveBeam &&   // (a frame of no size; a top of 0)
               back.walls.size() == 1 && ceilmeasure::WallsTopOf(back, "b") == 7.5f);
         // the height (Serg 2026-10-29: the walls only where the room's own is not set): its own once set; else on the walls' top when
         // ticked and measured (a hanging rock resting its lowest on them); else 18
@@ -428,7 +428,7 @@ int main(int argc, char** argv) {
         p = cath;
         p[9].scaleX = 3.0f;   // 70 wide: out past the crossing's pillars - the next ring past its footprint, wider, its rim out past it
         CHECK(ceilmeasure::DomeOf(p, boundsOf, &dome, &why) && dome.reach < dome.radius && dome.radius > 40.0f * std::sqrt(2.0f) + 1.0f);
-        // [ceiling] game_ceiling_domes_over_tall: the highest piece at least twice the room (the cathedral: 2 x 11.32 = 22.64 < 36.49)
+        // [ceiling] game_ceiling_worldstone_dome: the highest piece at least twice the room (the cathedral: 2 x 11.32 = 22.64 < 36.49)
         CHECK(ceilmeasure::DomeOf(cath, boundsOf, &dome, &why, ceilmeasure::kTallFactor * 11.32f));
         CHECK(!ceilmeasure::DomeOf(cath, boundsOf, &dome, &why, 40.0f) && why.find("twice") != std::string::npos);
         {   // over the piece itself (Serg on 132: "над кристаллом"): its middle the canopy's footprint's (123.14 .. 146.5, 113.24 .. 123.5),
@@ -474,11 +474,17 @@ int main(int argc, char** argv) {
         m.domes.push_back(tall);
         CHECK(ceilmeasure::Parse(ceilmeasure::Format(m), &back) && back.domes.size() == 2 && back.domes[0].biome == "act1_cathedral" &&
               back.domes[0].indices == 255792u && back.domes[0].slot == 0 && back.domes[1].slot == 2 && back.domes[1].biome == tall.biome);
+        CHECK(back.dropped == 0);
+        {   // a make that dropped a dome (a vault's file not ours) says so: the next make measures again instead of taking this file
+            ceilmeasure::Measures d = m, dback;
+            d.dropped = 1;
+            CHECK(ceilmeasure::Parse(ceilmeasure::Format(d), &dback) && dback.dropped == 1 && dback.domes.size() == 2);
+        }
         const ceilmeasure::Dome& b0 = back.domes[0];
         CHECK(b0.anchor[0] == 146.5f && b0.anchor[2] == 123.5f && b0.witness[0] == 102.5f && b0.centreZ == 142.5f);
         CHECK(std::fabs(b0.radius - dome.radius) < 1e-3f && std::fabs(b0.rise - dome.rise) < 1e-3f && std::fabs(b0.reach - dome.reach) < 1e-3f);
         CHECK(std::fabs(b0.half - dome.half) < 1e-3f && b0.top == dome.top && b0.springs == dome.springs);
-        // an area's domes by the keys: the cathedral's (slot 0) by game_ceiling_dome, the others by game_ceiling_domes_over_tall
+        // an area's domes by the keys: the cathedral's (slot 0) by game_ceiling_dome, the others by game_ceiling_worldstone_dome
         CHECK(ceilmeasure::DomesOf(back, "act1_cathedral", true, false).size() == 1 && ceilmeasure::DomesOf(back, "act1_cathedral", false, true).empty());
         CHECK(ceilmeasure::DomesOf(back, tall.biome, true, true).size() == 1 && ceilmeasure::DomesOf(back, tall.biome, true, false).empty());
         ceilmeasure::AsWritten(&m.domes[0]);   // as written: read back the very same numbers (the vault made from either is the same file)
@@ -489,13 +495,25 @@ int main(int argc, char** argv) {
         CHECK(ceilmeasure::Parse(ceilmeasure::Format(m), &back) && back.domes.size() == 1 && back.domes[0].slot == 2 && back.walls.size() == 1);
         CHECK(std::string(ceilmeasure::kCathedral) == kVaultBiome && KindOf(kVaultBiome) >= 0);
         // the vaults: four slots, the first the cathedral's as it was, each its own model and unit; a unit names its room's stone
-        CHECK(kVaultSlots == 4 && std::string(kVaultModelFiles[0]) == "test_cloth/cloth01" && std::string(kVaultUnit) == kVaultUnits[0]);
+        CHECK(kVaultSlots == 2 && std::string(kVaultModelFiles[0]) == "test_cloth/cloth01" && std::string(kVaultUnit) == kVaultUnits[0]);
         for (int a = 0; a < kVaultSlots; ++a)
             for (int b = a + 1; b < kVaultSlots; ++b) CHECK(ModelPath(kVaultModelFiles[a]) != ModelPath(kVaultModelFiles[b]) && std::string(kVaultUnits[a]) != kVaultUnits[b]);
         CHECK(VaultUnitJson(0, kVaultBiome) == VaultUnitJson());
-        const std::string thr = VaultUnitJson(2, "expansion_baallair_throneroom");
-        CHECK(thr.find("expansion_baallair_floor01_ALB.texture") != std::string::npos && thr.find("d2r_vr_tall_vault2") != std::string::npos &&
-              thr.find("expansion_wildtemple_cages/cage05.model") != std::string::npos);
+        {   // the Worldstone's dome wider in metres (Serg on 0.188.9: "пошире на 10 м"): his eyes 1.76 m, the hero's 6.6 units - 3.75 units a
+            // metre; 10 m across: 18.75 units further out all round, 111.0 -> 129.75 (size 1.169); the measured one with 0; never inside the
+            // crystal's reach (53.3), never over kDomeSizeMax
+            const float upm = 6.6f / 1.76f, R = 111.0f, reach = 53.3f;
+            CHECK(std::fabs(WiderSize(10.0f, upm, reach, R) * R - (R + 18.75f)) < 1e-3f);
+            CHECK(WiderSize(0.0f, upm, reach, R) == 1.0f && WiderSize(10.0f, 0.0f, reach, R) == 1.0f);
+            CHECK(std::fabs(WiderSize(-40.0f, upm, reach, R) - (std::max)(kDomeSizeMin, 1.05f * reach / R)) < 1e-6f);
+            CHECK(WiderSize(40.0f, 100.0f, reach, R) == kDomeSizeMax && WiderSize(1e9f, upm, reach, R) == WiderSize(kWorldstoneWiderMMax, upm, reach, R));
+            // and its rise for that rim still clears the crystal (45.6 over its floor, the flat at 17.8)
+            const float rim = WiderSize(10.0f, upm, reach, R) * R, rise = VaultRise(0.0f, 45.6f, 17.8f, reach, rim);
+            CHECK(rise * std::sqrt(1.0f - (reach / rim) * (reach / rim)) >= 45.6f - 17.8f - 1e-3f);
+        }
+        const std::string thr = VaultUnitJson(1, ceilmeasure::kWorldstoneBiome);   // the Worldstone's: the chamber's own stone
+        CHECK(thr.find("expansion_baallair_floor01_ALB.texture") != std::string::npos && thr.find("d2r_vr_worldstone_vault") != std::string::npos &&
+              thr.find("expansion_wildtemple_temple/temple01_d.model") != std::string::npos);
     }
     // the game's own pieces: the canopy at its place in a preset that also has the pillar where it should be, the two as far apart drawn
     {

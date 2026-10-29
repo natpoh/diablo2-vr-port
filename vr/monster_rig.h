@@ -34,6 +34,7 @@ namespace monsterrig {
 constexpr size_t kMeshBindingCount = 0x30, kMeshBindings = 0x34;
 constexpr size_t kBindingStride = 0x2C, kBindingName = 0x00, kBindingMin = 0x08, kBindingMax = 0x14;
 constexpr size_t kSkelCount = 0x08, kSkelBones = 0x0C, kBoneStride = 0xA4, kBoneName = 0x00, kBoneParent = 0x08;
+constexpr size_t kBoneInvWorld = 0x50;   // granny_bone::InverseWorld4x4: the bone's bind pose in the model, inverted
 constexpr int kMaxBones = 160;     // a monster's rig (the heroes' have ~100); more: not read
 constexpr int kMaxBindings = 256;  // per mesh
 // bones with a box: every one the skeleton may have - a box is one bone's (the town NPCs have 64 boxed bones and more - Kashya, Warriv: the boxes stopped at
@@ -410,8 +411,31 @@ inline int HeldSpace(const float* local, const float* world, bool rooted, const 
     return -1;
 }
 
-// A rigid item's box (it has no skeleton: its meshes' bone bindings name its own bones, or a root): the union of all its meshes' binding boxes, in the
-// model's own frame. False (and *why) when nothing reads.
+// An affine matrix's inverse (row vectors, the translation in [12..14], as the game's): false when it is not one.
+inline bool InvertAffine(const float m[16], float out[16]) {
+    const float a = m[0], b = m[1], c = m[2], d = m[4], e = m[5], f = m[6], g = m[8], h = m[9], i = m[10];
+    const float A = e * i - f * h, B = -(d * i - f * g), C = d * h - e * g;
+    const float det = a * A + b * B + c * C;
+    if (!std::isfinite(det) || std::fabs(det) < 1e-12f) return false;
+    const float k = 1.0f / det;
+    const float r[9] = {A * k, -(b * i - c * h) * k, (b * f - c * e) * k,
+                        B * k, (a * i - c * g) * k, -(a * f - c * d) * k,
+                        C * k, -(a * h - b * g) * k, (a * e - b * d) * k};
+    for (int row = 0; row < 3; ++row)
+        for (int col = 0; col < 3; ++col) out[row * 4 + col] = r[row * 3 + col];
+    out[3] = out[7] = out[11] = 0.0f;
+    for (int col = 0; col < 3; ++col) out[12 + col] = -(m[12] * r[col] + m[13] * r[3 + col] + m[14] * r[6 + col]);
+    out[15] = 1.0f;
+    for (int q = 0; q < 16; ++q)
+        if (!std::isfinite(out[q])) return false;
+    return true;
+}
+
+// A rigid item's box (it has no skeleton of the monster's: its meshes' bone bindings name its own bones, or a root), in the model's own frame: each binding's
+// box is in ITS bone's frame, so each is put through that bone's bind pose (the item's own Granny skeleton, InverseWorld4x4 inverted) before the union - a
+// bow is skinned to its limbs and its string, each box about its own bone, and their union as they were was a short fat box at the grip (Serg, 0.188.6, a
+// rogue archer: "one huge orange capsule, ~0.5 m across and short"). A binding whose bone is not found (or an item with no skeleton): its box as it is (a
+// root's frame is the model's). False (and *why) when nothing reads.
 template <class Read>
 bool ItemBox(Read&& read, uintptr_t instance, BoneBox* out, const char** why) {
     *why = "";
@@ -422,6 +446,22 @@ bool ItemBox(Read&& read, uintptr_t instance, BoneBox* out, const char** why) {
     if (state != kLoaded) { *why = "the model is not loaded yet"; return false; }
     if (!read(instance + kInstanceMeshes, &data, sizeof data) || !read(instance + kInstanceMeshes + 8, &count, sizeof count) || count < 1 || count > (uint64_t)grannymesh::kMaxMeshes ||
         data < 0x10000) { *why = "its meshes do not read"; return false; }
+    // the item's own skeleton: its bones' names and bind poses (none: every box as it is)
+    uintptr_t model = 0, skel = 0, bones = 0;
+    int32_t nBones = 0;
+    if (!read(instance + grannymesh::kInstanceModel, &model, sizeof model) || model < 0x10000 || !read(model + grannymesh::kModelSkeleton, &skel, sizeof skel) || skel < 0x10000 ||
+        !read(skel + kSkelCount, &nBones, sizeof nBones) || nBones < 1 || nBones > kMaxBones || !read(skel + kSkelBones, &bones, sizeof bones) || bones < 0x10000)
+        nBones = 0;
+    const auto bindOf = [&](const char* name, float world[16]) {   // the named bone's bind pose in the model; false: not found
+        for (int i = 0; i < nBones; ++i) {
+            uintptr_t np = 0;
+            char bn[kNameLen];
+            if (!read(bones + (uintptr_t)i * kBoneStride + kBoneName, &np, sizeof np) || !grannymesh::String(read, np, bn) || std::strcmp(bn, name) != 0) continue;
+            float inv[16];
+            return read(bones + (uintptr_t)i * kBoneStride + kBoneInvWorld, inv, sizeof inv) && InvertAffine(inv, world);
+        }
+        return false;
+    };
     float mn[3] = {1e30f, 1e30f, 1e30f}, mx[3] = {-1e30f, -1e30f, -1e30f};
     int boxes = 0;
     for (uint64_t m = 0; m < count; ++m) {
@@ -435,7 +475,21 @@ bool ItemBox(Read&& read, uintptr_t instance, BoneBox* out, const char** why) {
             bool ok = true;
             for (int c = 0; c < 3; ++c) ok = ok && std::isfinite(a[c]) && std::isfinite(b[c]) && b[c] >= a[c] && b[c] - a[c] < 1e4f;
             if (!ok || b[0] - a[0] + b[1] - a[1] + b[2] - a[2] <= 0.0f) continue;
-            for (int c = 0; c < 3; ++c) { mn[c] = std::min(mn[c], a[c]); mx[c] = std::max(mx[c], b[c]); }
+            uintptr_t np = 0;
+            char name[kNameLen];
+            float w[16];
+            if (nBones && read(binds + (uintptr_t)k * kBindingStride + kBindingName, &np, sizeof np) && grannymesh::String(read, np, name) && bindOf(name, w)) {
+                for (int q = 0; q < 8; ++q) {   // its eight corners through its bone's bind pose
+                    const float p[3] = {q & 1 ? b[0] : a[0], q & 2 ? b[1] : a[1], q & 4 ? b[2] : a[2]};
+                    for (int c = 0; c < 3; ++c) {
+                        const float v = p[0] * w[c] + p[1] * w[4 + c] + p[2] * w[8 + c] + w[12 + c];
+                        mn[c] = std::min(mn[c], v);
+                        mx[c] = std::max(mx[c], v);
+                    }
+                }
+            } else {
+                for (int c = 0; c < 3; ++c) { mn[c] = std::min(mn[c], a[c]); mx[c] = std::max(mx[c], b[c]); }
+            }
             ++boxes;
         }
     }

@@ -8754,6 +8754,58 @@ int HeroPartModels(uint32_t entity, uintptr_t* models, int cap, uint64_t* key) {
     return n;
 }
 
+int HeroBodyCaps(monsterrig::Capsule* out, int cap, const char** why) {
+    static const char* const kNoHero = "the hero is not read";
+    if (why) *why = "";
+    if (!out || cap <= 0) return 0;
+    HeroXform hx;
+    if (!HeroTransform(&hx, why) || !hx.self || !hx.comp) { if (why && !**why) *why = kNoHero; return 0; }
+    uintptr_t inst = 0, skelp = 0, world = 0, mats = 0;
+    int32_t count = 0;
+    Mat xform;
+    if (!Get(hx.self + 0x08, &inst) || !Get(inst + 0x08, &skelp) || !Get(hx.self + 0x20, &world) || !Get(world, &count) || count <= 0 ||
+        count > monsterrig::kMaxBones || !Get(world + 4, &mats) || !mats || !SafeCopy(xform.m, (const void*)hx.comp, sizeof xform.m)) {
+        if (why) *why = "his pose does not read";
+        return 0;
+    }
+    // his meshes' boxes and his skeleton's verdict, kept by his parts (another armour: read again)
+    uintptr_t models[monsterrig::kMaxModels] = {};
+    uint64_t key = 0;
+    const int nModels = HeroPartModels(hx.entity, models, monsterrig::kMaxModels, &key);
+    struct Kept { uint64_t key = 0; uintptr_t skel = 0; monsterrig::Boxes boxes; monsterhumanoid::Verdict human; uint8_t keep[monsterhumanoid::kMaxBones] = {}; bool ok = false; };
+    static Kept kept;   // (the touch's timer thread only)
+    if (!kept.ok || kept.key != key || kept.skel != skelp) {
+        const auto read = [](uintptr_t a, void* d, size_t bytes) { return a > 0x10000 && SafeCopy(d, (const void*)a, bytes); };
+        kept = Kept{};
+        kept.key = key;
+        kept.skel = skelp;
+        int nMeshes = 0;
+        if (nModels > 0) monsterrig::BoxesOfModels(read, models, nModels, skelp, &kept.boxes, &nMeshes);
+        kept.human = monsterhumanoid::JudgeSkeleton(read, skelp);
+        kept.ok = kept.boxes.n > 0 && kept.human.bones == count && monsterhumanoid::OwnBodyBones(kept.human, kept.keep);
+        if (!kept.ok) {
+            if (why) *why = !kept.boxes.n ? "his meshes' boxes do not read" : kept.human.bones != count ? "his skeleton does not read" : "his arms or head are not found by name";
+            kept.key = key;   // (asked again only when his parts change)
+            return 0;
+        }
+    }
+    if (!kept.ok) { if (why) *why = "his arms or head are not found by name"; return 0; }
+    monsterrig::Capsule caps[monsterrig::kMaxBoxes];
+    int nc = 0;
+    for (int b = 0; b < kept.boxes.n && nc < (int)std::size(caps); ++b) {
+        const int bone = kept.boxes.b[b].bone;
+        if (bone < 0 || bone >= count || !kept.keep[bone] || !monsterrig::AtItsBone(kept.boxes.b[b])) continue;
+        Mat bm;
+        if (!SafeCopy(bm.m, (const void*)(mats + (uintptr_t)bone * 64), sizeof bm.m)) continue;
+        const Mat w = Mul(bm, xform);
+        if (monsterrig::CapsuleOf(w.m, kept.boxes.b[b], &caps[nc])) ++nc;
+    }
+    const int k = std::min(monsterrig::Keep(caps, nc), cap);
+    for (int i = 0; i < k; ++i) out[i] = caps[i];
+    if (!k && why) *why = "no box of his trunk or legs made a capsule";
+    return k;
+}
+
 size_t MonsterRigs(float x, float z, float reach, MonsterRig* out, size_t cap) {
     if (!out || !cap || !std::isfinite(x + z + reach)) return 0;
     uintptr_t xs = 0, ss = 0, pools[kPools] = {};

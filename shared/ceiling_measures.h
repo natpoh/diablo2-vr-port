@@ -24,7 +24,7 @@
 namespace ceilmeasure {
 
 constexpr const char* kFile = "data/hd/env/model/d2r_vr/ceiling/measures.txt";   // in the mod's D2R-VR.mpq folder
-constexpr int kVersion = 4;   // (2: the dome; 3: each area its own biome's presets, every dungeon; 4: domes over the tall pieces, each its slot)
+constexpr int kVersion = 5;   // (2: the dome; 3: each area its own biome's presets, every dungeon; 4: domes over the tall pieces, each its slot; 5: the Worldstone's alone)
 
 // ---- the presets (a JSON reader of their own: objects, arrays, strings, numbers, true / false / null) ----------------------------------
 
@@ -274,12 +274,13 @@ inline bool BeamGrid(unsigned verts, float periodX, float periodZ, int* cols, in
 // dome stands on those four pillars - its middle theirs, its rim through them - and rises as a half ellipsoid just high enough to pass over
 // the whole of the canopy's top. D2R_VR_Settings measures it from the preset and makes the vault (the slab with the dome in it); vrcam finds
 // the canopy among the game's own pieces (its place in the preset, and a pillar's beside it) and lays the vault there, world-fixed.
-// [ceiling] game_ceiling_domes_over_tall (Serg: the Worldstone Chamber, level 132, "как в храме"; the red crystal cut by the ceiling, 51.webp):
-// the same in every room on the ceiling's lists - each preset whose highest piece stands at least kTallFactor times the room's ceiling
-// (its walls' top) and has a pillar in each quarter round it past its footprint. The 2026-10-29 survey: the cathedral's canopy (36.5 over
-// 11.3), the Worldstone (crystalflame_01, 33.3 over 9.9) and the throne room's arch (34.4) of the Throne of Destruction's biome, the harem's
-// entrance (29.1 over 13.7); the sewers' doors, ladders and statues, the ice caves' posts, the temples' vines stand under it.
+// [ceiling] game_ceiling_worldstone_dome (Serg: the Worldstone Chamber, level 132, "как в храме", "над кристаллом"; then "мне нужно его
+// поменять только на 132 уровне ... и только там где куст" - not over every tall piece): the same over the Worldstone - in the Throne of
+// Destruction's biome (the throne room, 131, and the Worldstone Chamber, 132), the one piece standing the most over its ceiling (the walls'
+// top) of those at least kTallFactor times it with a pillar in each quarter round them past their footprint: crystalflame_01 (45.6 over
+// 9.9; the throne room's arch 34.4 - not made). Nowhere else.
 constexpr float kTallFactor = 2.0f;
+constexpr const char* kWorldstoneBiome = "expansion_baallair_throneroom";
 constexpr const char* kCathedral = "act1_cathedral";   // (its dome: [ceiling] game_ceiling_dome, the first slot)
 
 struct Dome {
@@ -445,6 +446,7 @@ struct Measures {
     Beam beam;
     std::vector<std::pair<std::string, float>> walls;   // area -> its walls' top, model (= world) units
     std::vector<Dome> domes;   // the cathedral's (slot 0) and the domes over tall pieces, each its slot
+    int dropped = 0;           // domes measured but not made this time (a vault's file not ours): the next make measures again
 };
 // An area's domes (`cathedral`: its own, slot 0; `tall`: the others)
 inline std::vector<Dome> DomesOf(const Measures& m, const std::string& biome, bool cathedral, bool tall) {
@@ -465,6 +467,10 @@ inline std::string Format(const Measures& m) {
     }
     for (const auto& w : m.walls) {
         std::snprintf(line, sizeof line, "walls %s %.2f\n", w.first.c_str(), w.second);
+        s += line;
+    }
+    if (m.dropped > 0) {
+        std::snprintf(line, sizeof line, "dropped %d\n", m.dropped);
         s += line;
     }
     for (const Dome& d : m.domes) {   // (the places in the preset as written there: the game's pieces are found by them)
@@ -506,6 +512,9 @@ inline bool Parse(const std::string& text, Measures* out) {
             std::string name;
             float h = 0.0f;
             if ((in >> name >> h) && h > 0.0f) out->walls.emplace_back(name, h);
+        } else if (w == "dropped") {
+            int n = 0;
+            if (in >> n) out->dropped = n;
         } else if (w == "dome") {
             Dome d;
             if ((in >> d.biome >> d.anchor[0] >> d.anchor[1] >> d.anchor[2] >> d.witness[0] >> d.witness[1] >> d.witness[2] >> d.centreX >> d.centreZ >>

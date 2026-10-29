@@ -362,9 +362,8 @@ int wmain(int argc, wchar_t** argv) {
               vaultUnit.find("test_cloth/cloth01.model") != std::string::npos);
         CHECK(receipt.find("cloth01_lod4.model") != std::string::npos && receipt.find("cathedral_vault_unit.json") != std::string::npos);
         CHECK(r.text.find(L"cathedral's dome") != std::wstring::npos && r.text.find(L"57 units round") != std::wstring::npos);
-        // [ceiling] game_ceiling_domes_over_tall: every room's preset whose highest piece stands twice its ceiling, a ring of pillars round it
-        // past its footprint - the Worldstone Chamber's (wstone01: crystalflame_01 at 266.7 241.3, 33.3 over the throne biome's 9.9) among
-        // them, each its own slot, vault and unit
+        // [ceiling] game_ceiling_worldstone_dome: in the throne biome only, its piece standing the most over its ceiling, a ring of pillars
+        // round it past its footprint - the Worldstone (wstone01: crystalflame_01 at 266.7 241.3, 45.6 over 9.9), its own slot, vault and unit
         bool worldstone = false;
         for (const ceilmeasure::Dome& t : ms.domes) {
             std::printf("  dome, slot %d: %s - the highest piece at %.1f %.1f (top %.2f), its middle %.1f %.1f, %.1f round, reaching %.1f; rising %.2f "
@@ -379,8 +378,25 @@ int wmain(int argc, wchar_t** argv) {
             CHECK(ReadAll(scratch + L"D2R-VR.mpq\\" + std::wstring(gameceiling::kVaultUnits[t.slot], gameceiling::kVaultUnits[t.slot] + std::strlen(gameceiling::kVaultUnits[t.slot])), &unit) &&
                   unit.find(gameceiling::ModelPath(gameceiling::kVaultModelFiles[t.slot])) != std::string::npos);
         }
-        CHECK(worldstone && ms.domes.size() <= (size_t)gameceiling::kVaultSlots);
-        CHECK(r.text.find(L"domes over tall pieces") != std::wstring::npos && r.text.find(L"expansion_baallair_throneroom") != std::wstring::npos);
+        // (Serg: "только на 132 уровне ... и только там где куст": the cathedral's and the Worldstone's, no other - not the throne room's arch)
+        CHECK(worldstone && ms.domes.size() == 2 && ms.domes[1].slot == 1);
+        CHECK(r.text.find(L"the Worldstone's dome") != std::wstring::npos && r.text.find(L"expansion_baallair_throneroom") != std::wstring::npos);
+        {   // a vault's file there not ours (0.188.7: an earlier build's rock slab at its path, kept as the player's - the game drew it, flat
+            // rock over the Worldstone): kept, and that dome taken out of the measures - never laid with someone else's model
+            const std::wstring ws = scratch + L"D2R-VR.mpq\\data\\hd\\env\\model\\expansion\\wildtemple\\expansion_wildtemple_temple\\temple01_d_lod1.model";
+            const std::wstring mt = scratch + L"D2R-VR.mpq\\data\\hd\\env\\model\\d2r_vr\\ceiling\\measures.txt";
+            std::string orig, text2;
+            ceilmeasure::Measures m2;
+            CHECK(ReadAll(ws, &orig) && orig.size() > 100000);   // (the vault: our mesh, not a slab)
+            WriteAll(ws, "not ours");
+            r = PrepareCeiling(game, scratch, true);
+            std::wprintf(L"  a foreign file at the Worldstone vault's path: %ls\n", r.text.c_str());
+            CHECK(ReadAll(mt, &text2) && ceilmeasure::Parse(text2, &m2) && m2.domes.size() == 1 && m2.domes[0].slot == 0 &&
+                  r.text.find(L"not ours") != std::wstring::npos);
+            WriteAll(ws, orig);   // ours again: the dome back
+            r = PrepareCeiling(game, scratch, true);
+            CHECK(ReadAll(mt, &text2) && ceilmeasure::Parse(text2, &m2) && m2.domes.size() == 2 && m2.domes[1].slot == 1);
+        }
     }
     r = PrepareCeiling(game, scratch, true);
     CHECK(r.state == kMade && !r.wrote);   // nothing to do
@@ -389,7 +405,7 @@ int wmain(int argc, wchar_t** argv) {
     r = PrepareCeiling(game, scratch, false);
     std::wprintf(L"  ceiling off: %ls\n", r.text.c_str());
     CHECK(r.state == kOff && r.wrote && GetFileAttributesW((cliff + L"0.model").c_str()) == INVALID_FILE_ATTRIBUTES);
-    CHECK(GetFileAttributesW((wallAt + L"0.model").c_str()) == INVALID_FILE_ATTRIBUTES && r.text.find(L"139 of ours") != std::wstring::npos);   // (15 kinds, 3 walls, the beams, 4 vaults: 6 files each; the measures)
+    CHECK(GetFileAttributesW((wallAt + L"0.model").c_str()) == INVALID_FILE_ATTRIBUTES && r.text.find(L"127 of ours") != std::wstring::npos);   // (15 kinds, 3 walls, the beams, 2 vaults: 6 files each; the measures)
     CHECK(GetFileAttributesW((scratch + L"D2R-VR.mpq\\data\\hd\\env\\model\\Tests\\test_cloth\\cloth01_lod0.model").c_str()) == INVALID_FILE_ATTRIBUTES);
     CHECK(GetFileAttributesW((scratch + L"D2R-VR.mpq\\data\\hd\\env\\model\\d2r_vr\\ceiling\\measures.txt").c_str()) == INVALID_FILE_ATTRIBUTES);
     CHECK(GetFileAttributesW((scratch + L"cave_ceiling.json").c_str()) == INVALID_FILE_ATTRIBUTES);

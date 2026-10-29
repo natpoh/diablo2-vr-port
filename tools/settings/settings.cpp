@@ -337,6 +337,11 @@ constexpr const wchar_t* kMapRotateTip =
 constexpr const wchar_t* kMapCompassTip =
     L"The map in your hand, VR F4: a compass strip over it shows which way you look - N is the game map's up, as on the map itself. "
     L"Unticked: no compass. Live.";
+constexpr const wchar_t* kMapStickZoomTip =
+    L"VR F4: with the right controller's laser on the map - the map in your hand, or the big map - push the right stick up to zoom in and "
+    L"down to zoom out. While it zooms the stick does nothing else (no turn) until you let it back to the middle; a push you began "
+    L"elsewhere stays the game's. The map in the hand is magnified (the game draws nothing past its corner map); the big map is drawn "
+    L"closer or wider by the game itself. Not kept: each big map opens at the game's own zoom. Unticked: the stick as before. Live.";
 constexpr const wchar_t* kMapClickBigTip =
     L"The map in your hand, VR F4: point the right controller at it and its laser dot shows; pull the trigger and the game's own big map "
     L"(its whole-screen automap) comes up big in front of you, with a Rotate map button under it (turns the map in the hand with you, or "
@@ -2234,6 +2239,7 @@ std::vector<Item> g_items = {
     Needs(L"hud", L"map", 1, Toggle(L"hud", L"map_rotate", L"Map in the hand: turns with you", 0, kMapRotateTip)),
     Needs(L"hud", L"map", 1, Toggle(L"hud", L"map_compass", L"Compass over the map in the hand", 0, kMapCompassTip)),
     Needs(L"hud", L"map", 1, Toggle(L"hud", L"map_click_big", L"Map in the hand: laser click makes it big", 0, kMapClickBigTip)),
+    Needs(L"hud", L"map", 1, Toggle(L"hud", L"map_stick_zoom", L"Zoom the map: laser on it + right stick up / down", 0, kMapStickZoomTip)),
     Needs(L"hud", L"map", 1, Toggle(L"hud", L"map_big_on_hand", L"Big map held on the left hand", 0, kMapBigOnHandTip)),
     Needs(L"hud", L"map", 1, Toggle(L"hud", L"map_beside_inventory", L"Map beside the inventory on the hand", 0, kMapBesideInventoryTip)),
     Needs(L"hud", L"map", 1, Toggle(L"hud", L"map_big_follow", L"Big map in front: stays in the room, follows slowly", 0, kMapBigFollowTip)),
@@ -2862,13 +2868,18 @@ std::vector<Item> g_items = {
     Needs(L"ceiling", L"game_ceiling_dome", 1, Slider(L"ceiling", L"game_ceiling_dome_rise", L"The cathedral's dome: height", 1, 2, 0.05f, 1,
            L"Times the least height that passes over the altar's canopy (1: just over it). Higher only - lower would cut through the "
            L"canopy. VR F4. Live.")),
-    Needs(L"ceiling", L"game_ceiling", 1, Toggle(L"ceiling", L"game_ceiling_domes_over_tall", L"The game's ceiling: a dome over every tall piece", 0,
-           L"The cathedral's dome, wherever one of the game's pieces stands at least twice as high as its room's ceiling with pillars round "
-           L"it: the ceiling rises in a dome over just that piece, on those pillars, high enough to clear its top - the Worldstone in the "
-           L"Worldstone Chamber (level 132), the throne room's arch (131), Travincal's council hall. Where, how wide and how high come from "
-           L"the game's own pieces and models (measured from your game's files, the piece found in the game as it is drawn); the room's own "
-           L"stone. The rest of the room keeps the flat ceiling. The dome's size and height above apply to these too. VR F4 only. Off: the "
-           L"flat ceiling there, as before. This program makes their vaults again at once; the game takes them at its next start.")),
+    Needs(L"ceiling", L"game_ceiling", 1, Toggle(L"ceiling", L"game_ceiling_worldstone_dome", L"The game's ceiling: a dome over the Worldstone (level 132)", 1,
+           L"In the Worldstone Chamber (level 132) the ceiling rises in a dome over the Worldstone alone - centred on the crystal, its rim "
+           L"through the pillars round it, high enough to clear its top - as the cathedral's over its altar. Where, how wide and how high come "
+           L"from the game's own pieces and models (measured from your game's files, the crystal found in the game as it is drawn); the "
+           L"chamber's own stone. The rest of the chamber, and every other room, keep the flat ceiling. Its width: the slider below (the "
+           L"cathedral's size and height do not apply to it). VR F4 only. Off: the flat ceiling there, as before. Taken at the game's next start.")),
+    Needs(L"ceiling", L"game_ceiling_worldstone_dome", 1, Slider(L"ceiling", L"game_ceiling_worldstone_dome_wider_m", L"The Worldstone's dome: wider by, metres",
+           -10, 40, 1, 10,
+           L"Metres added across the Worldstone's dome (half of it all round), over the one measured from the game's pieces - its own, the "
+           L"cathedral's size stays. Its height follows, so it still clears the crystal; wider than the pillars, its rim comes down past them "
+           L"onto the flat ceiling and the pillars end under the curve. Metres as the camera has them (the hero's eye height over yours). "
+           L"VR F4. Live.")),
     Needs(L"ceiling", L"enabled", 1, Toggle(L"ceiling", L"height_from_walls", L"Ceiling height from the room's walls", 1,
            L"A room whose own height below is not set (0) has its ceiling on its own walls: where the walls the game builds that room "
            L"with end (the middle of its wall, pillar and cliff pieces' tops, measured from your game's files). A room's own height, "
@@ -3986,6 +3997,47 @@ std::vector<Item> g_items = {
     // Strikes (2026-10-16, the user's wish): every setting that decides whether, and how, a touch of the blade becomes an attack, in one place. Moved here from Weapon Adjust (hit by touch, direct hit, quick
     // strike, the shield bash) and the Debug tab's touch ticks (duplicated in the group at the bottom). The ini keys are the same as ever, only the place changed; the blade's geometry stays in Weapon Adjust.
     Only(kVr, Tab(L"Strikes")),
+    Group(L"Direct hit", L"How a touch that counts becomes a hit. Off: the touch presses the game's own attack. By the rules: a direct hit for the first touch on a monster and for a real swing after the hero's attack time, otherwise the game's own attack. Fully on: every touch is a direct hit (the old experimental way). One place for single player, the host and a player who joined someone's game."),
+    Needs(L"gameplay", L"melee_touch", 1, Choice(L"@directhit", L"mode", L"Direct hit", 0, {L"Off", L"By the rules", L"Fully on (not recommended)"},
+           L"Off: the touch presses the game's own attack (its animation, its attack rate, its reach). "
+           L"BY THE RULES: the FIRST touch on a monster is a direct hit. Then a touch on the SAME monster sooner than your hero's attack takes "
+           L"(measured from his own attack animation, so it follows his attack speed) is the game's own attack - poking fast wins nothing. After "
+           L"that, a touch on it is a direct hit again only for a real swing: the least speed, force and swing length (your controller's own "
+           L"path) below. Another monster is never too soon. A TWO-HANDED weapon needs both hands on it (the two-hand grip): in one hand its "
+           L"touch is the game's own attack. A touch that fails a rule still attacks: the game's own attack, never nothing. The two-handed "
+           L"cleave only with its own box below. "
+           L"FULLY ON (not recommended): every accepted touch is a direct hit, as the old experimental box did. "
+           L"What a direct hit is: in single player and as the host, the plugin calls the game's server attack itself (the hit roll, the damage "
+           L"and the wear are the game's; no animation, no wait for the attack rate, no walking up). As a player who JOINED someone's TCP/IP game, "
+           L"it sends the game's own command \"attack this monster\" - the one a click on it sends - and the host's server does the whole attack "
+           L"(the host needs nothing for that). Only while the skill on your attack slot is the one in the hero's hand and no melee skill is armed. "
+           L"Writes [gameplay] melee_direct and melee_direct_client. Live. F4 only, like hit by touch.")),
+    Needs(L"gameplay", L"melee_touch", 1, ShowFor(L"@directhit", L"mode", 1u << 2, Slider(L"gameplay", L"melee_direct_min_ms", L"Direct hit (fully on): min gap between hits, ms", 0, 1500, 50, 0,
+           L"Single player and the host, fully on: 0 = no limit beyond \"a monster is hit once per stroke\". More: after a direct hit, the touches "
+           L"within this time do nothing - to keep the rate near the game's own if hits come too fast. Live."))),
+    Needs(L"gameplay", L"melee_touch", 1, ShowFor(L"@directhit", L"mode", 1u << 1, Slider(L"gameplay", L"melee_direct_client_min_speed", L"Direct hit: least swing speed, m/s", 0.0f, 6.0f, 0.1f, 2.5f,
+           L"How fast the blade must move where it touched for the touch to be a direct hit. Real swings are 2 - 6 m/s, pokes about "
+           L"1. A strike judged by force counts its arrival's speed. For a repeat on the same monster, and for the cleave. A slower touch is the "
+           L"normal attack (the button). 0: no least speed. Live."))),
+    Needs(L"gameplay", L"melee_touch", 1, ShowFor(L"@directhit", L"mode", 1u << 1, Slider(L"gameplay", L"melee_direct_client_min_force", L"Direct hit: least strike force, N s", 0.0f, 10.0f, 0.1f, 1.5f,
+           L"How hard the strike must land: the weight model's strike score (the impulse in its first 150 ms, an edge's cut - the same measure as "
+           L"\"Hit by the strike's force\"). Needs the weapon's weight and the monster bodies on; not measured, it counts as too weak. For a repeat on the "
+           L"same monster, and for the cleave. A weaker touch is the normal attack. 0: no least force. Live."))),
+    Needs(L"gameplay", L"melee_touch", 1, ShowFor(L"@directhit", L"mode", 1u << 1, Slider(L"gameplay", L"melee_direct_client_min_length", L"Direct hit: least swing length (the controller's path), m", 0.0f, 1.5f, 0.05f, 0.2f,
+           L"How far your CONTROLLER itself must have travelled in this swing - its own path, not the blade's tip, so a flick of the wrist that "
+           L"sweeps a long blade a long way does not pass it. A real swing, not a poke. A two-handed weapon: either controller's path counts. "
+           L"For a repeat on the same monster (the first touch on a monster is direct anyway). A shorter swing is the normal attack. 0: no "
+           L"least length. Live."))),
+    Needs(L"gameplay", L"melee_touch", 1, ShowFor(L"@directhit", L"mode", 1u << 1, Toggle(L"gameplay", L"melee_direct_client_cleave",
+           L"Direct hit: a two-handed swing through a group hits each monster (past the game's rules)", 0,
+           L"GOES PAST THE GAME'S RULE OF ONE ATTACK AT A TIME. The game runs one attack at a time, so a swing through several monsters "
+           L"normally lands on the first only. On, with a TWO-HANDED weapon: the first monster gets the direct hit as above; every other monster "
+           L"the same swing touches while that attack plays, with the least speed AND force above, gets the game's server attack for your hero, "
+           L"once (the hit roll, the damage and the weapon's wear are the game's; no animation of its own) - in single player and as the host on "
+           L"this PC, as a joined player asked of the HOST over D2RLoader's network. No repeat on the same monster sooner than your attack takes. "
+           L"A one-handed weapon, or a touch too slow or too weak: the normal attack. JOINED: THE HOST MUST SET \"By the rules\" AND TICK THIS BOX "
+           L"TOO - it strikes only on its own say-so; with it off, those hits are dropped as without the box. Takes effect at the game's next "
+           L"start (the network channel). Off: as before."))),
     Group(L"Hit by touch", L"The main switch for hitting by swinging your weapon in F4: the blade passing through a monster presses the game's own attack at it. The sliders set how fast and how far the blade must move to count; you can also let thrown weapons hit by touch and stop the trigger from attacking."),
     Toggle(L"gameplay", L"melee_touch", L"Hit by touch", 0,
            L"First person (F4), the arms on the controllers, a melee weapon (or bare fists) in hand: the blade you swing through a "
@@ -4201,47 +4253,6 @@ std::vector<Item> g_items = {
     Needs(L"gameplay", L"melee_touch", 1, Needs(L"hands", L"double_swing_by_hands", 1, Choice(L"hands", L"double_swing_skill", L"Double Swing: the skill pressed first", 0,
            {L"Double Swing, then Frenzy", L"Frenzy, then Double Swing"},
            L"Which of the two the second hand presses when both sit on pad slots: the first one that the hero has a level in and can pay. With only one of them on a slot, that one. Live."))),
-    Group(L"Direct hit", L"How a touch that counts becomes a hit. Off: the touch presses the game's own attack. By the rules: a direct hit for the first touch on a monster and for a real swing after the hero's attack time, otherwise the game's own attack. Fully on: every touch is a direct hit (the old experimental way). One place for single player, the host and a player who joined someone's game."),
-    Needs(L"gameplay", L"melee_touch", 1, Choice(L"@directhit", L"mode", L"Direct hit", 0, {L"Off", L"By the rules", L"Fully on (not recommended)"},
-           L"Off: the touch presses the game's own attack (its animation, its attack rate, its reach). "
-           L"BY THE RULES: the FIRST touch on a monster is a direct hit. Then a touch on the SAME monster sooner than your hero's attack takes "
-           L"(measured from his own attack animation, so it follows his attack speed) is the game's own attack - poking fast wins nothing. After "
-           L"that, a touch on it is a direct hit again only for a real swing: the least speed, force and swing length (your controller's own "
-           L"path) below. Another monster is never too soon. A TWO-HANDED weapon needs both hands on it (the two-hand grip): in one hand its "
-           L"touch is the game's own attack. A touch that fails a rule still attacks: the game's own attack, never nothing. The two-handed "
-           L"cleave only with its own box below. "
-           L"FULLY ON (not recommended): every accepted touch is a direct hit, as the old experimental box did. "
-           L"What a direct hit is: in single player and as the host, the plugin calls the game's server attack itself (the hit roll, the damage "
-           L"and the wear are the game's; no animation, no wait for the attack rate, no walking up). As a player who JOINED someone's TCP/IP game, "
-           L"it sends the game's own command \"attack this monster\" - the one a click on it sends - and the host's server does the whole attack "
-           L"(the host needs nothing for that). Only while the skill on your attack slot is the one in the hero's hand and no melee skill is armed. "
-           L"Writes [gameplay] melee_direct and melee_direct_client. Live. F4 only, like hit by touch.")),
-    Needs(L"gameplay", L"melee_touch", 1, ShowFor(L"@directhit", L"mode", 1u << 2, Slider(L"gameplay", L"melee_direct_min_ms", L"Direct hit (fully on): min gap between hits, ms", 0, 1500, 50, 0,
-           L"Single player and the host, fully on: 0 = no limit beyond \"a monster is hit once per stroke\". More: after a direct hit, the touches "
-           L"within this time do nothing - to keep the rate near the game's own if hits come too fast. Live."))),
-    Needs(L"gameplay", L"melee_touch", 1, ShowFor(L"@directhit", L"mode", 1u << 1, Slider(L"gameplay", L"melee_direct_client_min_speed", L"Direct hit: least swing speed, m/s", 0.0f, 6.0f, 0.1f, 2.5f,
-           L"How fast the blade must move where it touched for the touch to be a direct hit. Real swings are 2 - 6 m/s, pokes about "
-           L"1. A strike judged by force counts its arrival's speed. For a repeat on the same monster, and for the cleave. A slower touch is the "
-           L"normal attack (the button). 0: no least speed. Live."))),
-    Needs(L"gameplay", L"melee_touch", 1, ShowFor(L"@directhit", L"mode", 1u << 1, Slider(L"gameplay", L"melee_direct_client_min_force", L"Direct hit: least strike force, N s", 0.0f, 10.0f, 0.1f, 1.5f,
-           L"How hard the strike must land: the weight model's strike score (the impulse in its first 150 ms, an edge's cut - the same measure as "
-           L"\"Hit by the strike's force\"). Needs the weapon's weight and the monster bodies on; not measured, it counts as too weak. For a repeat on the "
-           L"same monster, and for the cleave. A weaker touch is the normal attack. 0: no least force. Live."))),
-    Needs(L"gameplay", L"melee_touch", 1, ShowFor(L"@directhit", L"mode", 1u << 1, Slider(L"gameplay", L"melee_direct_client_min_length", L"Direct hit: least swing length (the controller's path), m", 0.0f, 1.5f, 0.05f, 0.2f,
-           L"How far your CONTROLLER itself must have travelled in this swing - its own path, not the blade's tip, so a flick of the wrist that "
-           L"sweeps a long blade a long way does not pass it. A real swing, not a poke. A two-handed weapon: either controller's path counts. "
-           L"For a repeat on the same monster (the first touch on a monster is direct anyway). A shorter swing is the normal attack. 0: no "
-           L"least length. Live."))),
-    Needs(L"gameplay", L"melee_touch", 1, ShowFor(L"@directhit", L"mode", 1u << 1, Toggle(L"gameplay", L"melee_direct_client_cleave",
-           L"Direct hit: a two-handed swing through a group hits each monster (past the game's rules)", 0,
-           L"GOES PAST THE GAME'S RULE OF ONE ATTACK AT A TIME. The game runs one attack at a time, so a swing through several monsters "
-           L"normally lands on the first only. On, with a TWO-HANDED weapon: the first monster gets the direct hit as above; every other monster "
-           L"the same swing touches while that attack plays, with the least speed AND force above, gets the game's server attack for your hero, "
-           L"once (the hit roll, the damage and the weapon's wear are the game's; no animation of its own) - in single player and as the host on "
-           L"this PC, as a joined player asked of the HOST over D2RLoader's network. No repeat on the same monster sooner than your attack takes. "
-           L"A one-handed weapon, or a touch too slow or too weak: the normal attack. JOINED: THE HOST MUST SET \"By the rules\" AND TICK THIS BOX "
-           L"TOO - it strikes only on its own say-so; with it off, those hits are dropped as without the box. Takes effect at the game's next "
-           L"start (the network channel). Off: as before."))),
     Group(L"Quick strike", L"Makes your melee blow land earlier inside the game's attack animation, so the hit comes sooner after the touch. This changes the game's timing; VR first person and offline only. The slider picks the frame the blow lands at."),
     Toggle(L"hands", L"quick_strike", L"Quick strike: the blow lands earlier in the attack animation (changes the game's timing)", 0,
            L"A CHANGE OF THE GAME'S TIMING (off when the key is missing; on in the settings that come with the mod). The game's melee blow lands at one frame of the hero's attack animation - for a Paladin with a one-hand weapon frame 7 or 8, "
@@ -4432,6 +4443,10 @@ std::vector<Item> g_items = {
            L"weapon (and the hand as it is drawn on it) stays at the body until the hand comes back. The body is the monster's own skeleton: a capsule on each of its limbs as "
            L"the game poses them, as thick as its model (where that cannot be read, the capsule the game gives the monster). The hit itself is still the game's attack pressed by hit by touch: needs Hit by touch on - its scan finds the monsters. Unticked: the weapon "
            L"passes through them, as ever."))),
+    Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Needs(L"weight", L"monster_bodies", 1, Toggle(L"weight", L"own_body", L"The weapon does not pass through your own body", 0,
+           L"Ticked, with the bodies above: the weapon in your hands stops on your own trunk and legs as it stops on a monster's body - it no longer goes through "
+           L"your hero. Your arms and head are left out (your hands hold the weapon; your head is your own). Never a hit, a stab or a grab on yourself. Unticked: it "
+           L"passes through you, as before.")))),
     Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Needs(L"weight", L"monster_bodies", 1, Toggle(L"weight", L"stab_in", L"A pointed weapon sticks into the body (a test)", 0,
            L"Ticked, with the bodies above: a weapon with a point (a sword - one- or two-handed - a dagger, a spear, a javelin, a throwing weapon, a polearm, a claw) driven point "
            L"first (within 60 degrees of straight) into a monster's body at 0.5 m/s or more goes IN instead of stopping at the surface. It only slides along its own length: the "
@@ -9418,7 +9433,7 @@ domeassets::Result PrepareCeilingNow() {
     const bool on = GetPrivateProfileIntW(L"ceiling", L"game_ceiling", 0, g_ini) != 0 ||   // (and the measures: the walls' top, the beams)
                     GetPrivateProfileIntW(L"ceiling", L"height_from_walls", 0, g_ini) != 0 || GetPrivateProfileIntW(L"ceiling", L"game_ceiling_beams", 0, g_ini) != 0 ||
                     GetPrivateProfileIntW(L"ceiling", L"game_ceiling_dome", 0, g_ini) != 0 ||
-                    GetPrivateProfileIntW(L"ceiling", L"game_ceiling_domes_over_tall", 0, g_ini) != 0;
+                    GetPrivateProfileIntW(L"ceiling", L"game_ceiling_worldstone_dome", 0, g_ini) != 0;
     return domeassets::PrepareCeiling(game, modRoot, on);
 }
 
@@ -9909,7 +9924,7 @@ LRESULT CALLBACK PageProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
                     StartSkyDome();
                 if (wcscmp(it.section, L"mods") == 0 && wcscmp(it.key, L"merge_data_mods") == 0) StartDataMods();
                 if (wcscmp(it.section, L"ceiling") == 0 && (wcscmp(it.key, L"height_from_walls") == 0 || wcscmp(it.key, L"game_ceiling_beams") == 0 ||
-                                                            wcscmp(it.key, L"game_ceiling_dome") == 0 || wcscmp(it.key, L"game_ceiling_domes_over_tall") == 0))
+                                                            wcscmp(it.key, L"game_ceiling_dome") == 0 || wcscmp(it.key, L"game_ceiling_worldstone_dome") == 0))
                     StartGameCeiling();   // (their files - the beams, the vault, the measures - made with the slab's)
             }
         }

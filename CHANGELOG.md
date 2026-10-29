@@ -1,10 +1,29 @@
 # What's new in D2R VR
 
+## 0.188.11
+
+
+- **Town NPCs and monsters give way again** to the weapon and the hands: the turned pose reaches the drawn body (it did not in 0.188.6),
+  and a townsperson standing at rest is no corpse. New, off: `[weight] own_body` - the held weapon stops on your own trunk and legs.
+- **The dome only over the Worldstone** (level 132, `[ceiling] game_ceiling_worldstone_dome`); no other tall piece gets one.
+- **A rogue's bow** is one capsule along the bow, not a blob at her hip.
+- **Settings > Strikes: Direct hit first** on the tab.
+- **The game-drawn sky shows again** with `[sky] game_sky=1` (0.188.6 painted it the fog's colour).
+- **Zoom the map with the right stick (test, off)**: `[hud] map_stick_zoom`, Settings > UI: F4 body. VR F4: with the right laser on the map
+  - the map in the hand or the big map - the right stick up zooms in, down out; while it zooms the stick does nothing else until it is back in
+  the middle (a push begun elsewhere stays the game's). The map in the hand is the game's corner map magnified 1 - 4x about the hero (the
+  game draws nothing past its box); the big map is drawn by the game itself at another zoom (its map's scale call, the AutoMap panel's own,
+  given the stick's zoom while our big map is up; its 1/8 steps smoothed by magnifying the rest). The idea and the two game places are
+  Bear's (D2R VR Unleashed, MIT, before 2026-10-29); written afresh. Test: map_zoom_test.
+- **The Worldstone's dome 10 m wider** than measured (`[ceiling] game_ceiling_worldstone_dome_size`, Ceiling tab), still clearing the crystal; its
+  model at a path of its own (0.188.7 drew a stranger's flat rock instead).
+- **Struck NPCs and monsters keep giving way** every time you push them (0.188.10's hotfix, below), and a struck NPC is found from a copy of
+  its pose too.
+
 ## 0.188.10 (hotfix)
 
-- **Fixed: town NPCs and monsters no longer gave way** to the weapon and the hands in 0.188.6 (the push was felt, nothing moved): the
-  turned pose now reaches the drawn body - handed to the game's skinning, found even from a copy of the pose - and a monster pushed again
-  is drawn turned again (a reused slot kept a stale fading mark). A townsperson standing at rest is no longer taken for a corpse.
+- **Fixed: town NPCs and monsters no longer gave way** to the weapon and the hands in 0.188.6: the turned pose reaches the drawn body again,
+  and a monster pushed again is drawn turned again.
 
 ## 0.188.6
 
