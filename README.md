@@ -258,18 +258,43 @@ The idea of a free 3D camera in D2R came from
 [emmericp/D2R-3D](https://github.com/emmericp/D2R-3D). D2R VR has its own
 camera and contains none of its code.
 
-Thanks to **bearstonem** for [d2r-pcvr](https://github.com/bearstonem/d2r-pcvr)
-(MIT), a fork of D2R VR: the laser pointer on menus and panels, the menus as a
-panel in first person and the spells that fly along the hand with no
-auto-target follow what that fork found in the game - where to hook, the extra
-menu panels, the spell resolver and its call sites. So, in 0.165, do reading the
-controllers directly, the skill wheel, the weapon swap over the shoulder, the
-shield's Smite, the item tooltips at once, the controller vibration, hiding the
-plates of ordinary monsters, the T-pose measurement, and the bow's arrow skills
-and bones. And, in 0.167, the turn settings, the Steam Frame's layout, the Smite
-press, the one-press interact, the vibration channels, the menus that wait for the
-headset and follow the VR render size, the depth set at its source, the shield on
-the forearm and our own depth bound once.
+Thanks to **D2R VR Unleashed** ([bearstonem/d2r-pcvr](https://github.com/bearstonem/d2r-pcvr),
+a fork of D2R VR; MIT up to 0.3.28, MPL 2.0 after) and the people who wrote it.
+Much of this mod stands on their code and findings:
+
+- **bearstonem**: the laser pointer on menus and panels, the menus as a panel in
+  first person and the spells that fly along the hand with no auto-target follow
+  what his fork found in the game - where to hook, the extra menu panels, the
+  spell resolver and its call sites. So, in 0.165, do reading the controllers
+  directly, the skill wheel, the weapon swap over the shoulder, the shield's
+  Smite, the item tooltips at once, the controller vibration, hiding the plates
+  of ordinary monsters, the T-pose measurement, and the bow's arrow skills and
+  bones; in 0.167, the turn settings, the Steam Frame's layout, the Smite press,
+  the vibration channels, the menus that wait for the headset and follow the VR
+  render size, the depth set at its source and the shield on the forearm. Since
+  then: the wrist status (summons, mercenary, buffs, auras, curses), the skill
+  panel by the class's trees, the crossbow's left hand, the Arcane Sanctuary's
+  sky, the first-start guide, the Kurast sewer stairs, a stowed shield that does
+  not block, the hero crouching with you, item labels down to the picture's
+  bottom, the lighter skeleton hook, eyes by turns (the other eye made on the
+  graphics card) and its fixes, the quest and level-up card, the knockable props
+  (how they wake, freeze and settle, their materials and their catalogue), each
+  eye exactly as the headset gives it, the sky over the dark rims, the wrist
+  compass, the main menu at 16:9, typing under the laser and monsters' limbs
+  giving way to the weapon.
+- **beadlebytes**: the monitor showing one eye, steady; the map in the hand from
+  above, turning with you, with its heading arrow; the staff aiming along the
+  arm; a game panel pushed and pulled with the right grip.
+- **ChuckRibbits**: the game's sounds turning with your head (the FMOD hooks).
+- **Cal**: the one-press interact.
+- **aSuperGod**: the quiver - the next arrow's skill picked at the bow.
+- **Mcklem** (gmwareservegame-hue): the canoe on the Kurast Docks.
+- And **monkeylashes**, for the early native OpenXR and in-headset panels of
+  Unleashed that much of the rest grew from.
+
+Thanks also to **sajmonsoft** for the flat fork
+[sotodeshi/d2r3dflat](https://github.com/sotodeshi/d2r3dflat), whose F3 eye
+options are in the flat mode.
 
 ## Licences
 
@@ -277,8 +302,15 @@ D2R VR is MIT (`LICENSE`): use it, change it, build your own and share it -
 keep the copyright notice. The licence does not cover the name "D2R VR" as a
 mark, nor BodyWalk / FlatVR, which are separate products.
 
-Third-party: MinHook (BSD 2-clause, `third_party/minhook`), the ReShade SDK
-headers (BSD 3-clause, `external/reshade`), the D2RLoader plugin SDK (MIT).
+Third-party: the parts from D2R VR Unleashed up to 0.3.28 (MIT, Copyright (c)
+2026 bearstonem - the notice is in `LICENSE`), the weight library's props world
+(`external/weight_props`, MIT, natpoh and bearstonem; on Box3D by Erin Catto,
+MIT), MinHook (BSD 2-clause, `third_party/minhook`), the ReShade SDK headers and
+FX compiler (BSD 3-clause, `external/reshade`, `third_party/reshadefx`), the
+OpenXR SDK loader (Apache 2.0), pybg3's BitKnit2 decoder (MIT,
+`third_party/pybg3`), the D2RLoader plugin SDK (MIT). The weight, grip and gait
+libraries ship as DLLs only: they are built on third-party code whose licence
+does not allow publishing its source.
 Diablo II: Resurrected is Blizzard Entertainment's; this project is not affiliated
 with or endorsed by Blizzard and ships none of the game's files.
 
