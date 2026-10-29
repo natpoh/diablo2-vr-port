@@ -6,6 +6,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 
 struct ID3D12Device;
 struct ID3D12PipelineState;
@@ -28,13 +29,17 @@ ID3D12PipelineState* Swap(ID3D12PipelineState* pso);
 // depth's far end) is left alone instead of given the mist whole ([fog] game_fog_caves_black, underground: past a cave ceiling's rim the
 // same band). The variants are made when these change.
 // [fog] game_fog_our_curve: the fog's share by our effect's curve (start, end, curve, strength) in place of the game's exponential.
+// ease: [fog] ease_in, the share eased in over its first 40 units (D2R VR Unleashed's, shared/unleashed_fog.h).
 struct Curve {
     bool on = false;
     float start = 0.0f, end = 1.0f, curve = 1.0f, strength = 1.0f;
+    bool ease = false;
 };
 void Frame(bool on, float top, float soft, bool mist, bool voidAlone = false, bool noFog = false, const Curve& curve = Curve{});
 // [fog] game_fog_before_fx: the distance fog's colour left out of the pass (the scene fogged before the transparent resolve), its mist still
 // fogged - noFog above. A stream's pixel shader (its bytecode in the stream as given), for the resolve's pipeline found the same way.
+// How many times our patched pass was bound in the game's place so far: it grows while the game's fog is drawn by it (height, our curve)
+uint32_t Bound();
 bool StreamPixelShader(const D3D12_PIPELINE_STATE_STREAM_DESC* desc, const void** code, size_t* size);
 
 }  // namespace fogheight

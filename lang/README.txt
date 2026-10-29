@@ -6,6 +6,10 @@ en.txt is the English built into the program, the others are its translations. P
 Language; the program opens again in it. "Windows' language" takes the file for your Windows language when
 there is one.
 
+The lines whose key starts with "vr." are the words the mod draws in the headset (the skill panel, the settings in the
+headset, the first-start guide, the calibration prompt, the map's buttons). They are shown in the game when "In the
+headset too" is ticked under Language (d2r_vr.ini: [hud] headset_language=1); otherwise the headset stays English.
+
 The translations that come with the mod were made by machine and checked only in part - corrections are
 welcome: post them in our Discord (#d2r-vr-feedback), or send the corrected file.
 

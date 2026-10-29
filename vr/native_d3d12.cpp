@@ -297,13 +297,21 @@ void STDMETHODCALLTYPE HookDrawIndexed(ID3D12GraphicsCommandList* cl, UINT n, UI
 using CreateGpsoFn = HRESULT(STDMETHODCALLTYPE*)(ID3D12Device*, const D3D12_GRAPHICS_PIPELINE_STATE_DESC*, REFIID, void**);
 using CreatePsoFn = HRESULT(STDMETHODCALLTYPE*)(ID3D12Device2*, const D3D12_PIPELINE_STATE_STREAM_DESC*, REFIID, void**);
 using SetPsoFn = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*, ID3D12PipelineState*);
+using CreateCpsoFn = HRESULT(STDMETHODCALLTYPE*)(ID3D12Device*, const D3D12_COMPUTE_PIPELINE_STATE_DESC*, REFIID, void**);
 CreateGpsoFn g_origCreateGpso = nullptr;
+CreateCpsoFn g_origCreateCpso = nullptr;
 CreatePsoFn g_origCreatePso = nullptr;
 SetPsoFn g_origSetPso = nullptr;
 HRESULT STDMETHODCALLTYPE HookCreateGpso(ID3D12Device* dev, const D3D12_GRAPHICS_PIPELINE_STATE_DESC* d, REFIID riid, void** out) {
     const HRESULT hr = g_origCreateGpso(dev, d, riid, out);
     if (SUCCEEDED(hr) && out && *out && d && !t_ours && g_sinks.graphicsPso && riid == __uuidof(ID3D12PipelineState))
         g_sinks.graphicsPso(dev, d, (ID3D12PipelineState*)*out);
+    return hr;
+}
+HRESULT STDMETHODCALLTYPE HookCreateCpso(ID3D12Device* dev, const D3D12_COMPUTE_PIPELINE_STATE_DESC* d, REFIID riid, void** out) {
+    const HRESULT hr = g_origCreateCpso(dev, d, riid, out);
+    if (SUCCEEDED(hr) && out && *out && d && !t_ours && g_sinks.computePso && riid == __uuidof(ID3D12PipelineState))
+        g_sinks.computePso(dev, d, (ID3D12PipelineState*)*out);
     return hr;
 }
 HRESULT STDMETHODCALLTYPE HookCreatePso(ID3D12Device2* dev, const D3D12_PIPELINE_STATE_STREAM_DESC* d, REFIID riid, void** out) {
@@ -417,6 +425,8 @@ void HookDevice(ID3D12Device* dev, const char* when) {
     ok &= HookOne(vt[24], (void*)&HookCopyDescSimple, (void**)&g_origCopyDescSimple, "ID3D12Device::CopyDescriptorsSimple");
     // ... CreateGraphicsPipelineState 10; ID3D12Device2::CreatePipelineState 47 ([fog] game_fog_height: the game's fog pass's pipeline)
     if (g_sinks.graphicsPso) ok &= HookOne(vt[10], (void*)&HookCreateGpso, (void**)&g_origCreateGpso, "ID3D12Device::CreateGraphicsPipelineState");
+    // ... CreateComputePipelineState 11 ([render] light_bounds_fix without ReShade: the game's light-bin depth-bounds pipeline)
+    if (g_sinks.computePso) ok &= HookOne(vt[11], (void*)&HookCreateCpso, (void**)&g_origCreateCpso, "ID3D12Device::CreateComputePipelineState");
     if (g_sinks.streamPso) {
         ID3D12Device2* d2 = nullptr;
         if (SUCCEEDED(dev->QueryInterface(__uuidof(ID3D12Device2), (void**)&d2)) && d2) {

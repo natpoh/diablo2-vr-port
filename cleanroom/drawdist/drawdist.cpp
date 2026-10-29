@@ -310,12 +310,20 @@ bool SetModelRadius(float units) {
 		return false;
 	}
 	g_setModelRadius(units < 10.0f ? 10.0f : (units > 10000.0f ? 10000.0f : units));
-	if (g_recalcOk) {   // re-sort now, not when the hero next walks out of the elastic range
-		*reinterpret_cast<volatile uint8_t*>(d2rsig::Addr(ModelRecalcEveryFrame)) = 1;
-		g_recalcUntil.store(GetTickCount64() + 500, std::memory_order_relaxed);
-	}
+	ResortModels();   // re-sort now, not when the hero next walks out of the elastic range
 	return true;
 }
+
+bool ResortModels() {
+	if (!g_recalcOk) {
+		return false;
+	}
+	*reinterpret_cast<volatile uint8_t*>(d2rsig::Addr(ModelRecalcEveryFrame)) = 1;
+	g_recalcUntil.store(GetTickCount64() + 500, std::memory_order_relaxed);
+	return true;
+}
+
+bool HooksReady() { return g_ctx != nullptr; }
 
 float ModelRadius() { return g_getModelRadius != nullptr ? g_getModelRadius() : -1.0f; }
 int RoomsAddedLastTick() { return g_added.load(); }

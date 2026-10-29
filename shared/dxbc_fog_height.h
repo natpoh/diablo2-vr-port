@@ -20,6 +20,8 @@
 #include <string>
 #include <vector>
 
+#include "unleashed_fog.h"   // [fog] ease_in: D2R VR Unleashed's ease over the fog's first 40 units (MPL 2.0, bearstonem) - Curve.ease
+
 namespace dxbcfog {
 
 // ---- the DXBC checksum: MD5 over everything after the 20-byte magic + checksum, with DXBC's own last block --------------------------
@@ -329,11 +331,13 @@ inline bool Find(const uint8_t* p, size_t n, Found* f, std::string* why = nullpt
 //     fog = strength x saturate((distance - start) / (end - start)) ^ curve;   t = 1 - fog
 // (the game's: 1 - exp(-density (distance / plane - 1)), nearly all of it right after the start, the far range one grey - Serg, 2026-10-27:
 // "градиентов не хватает на тумане"). The distance as the game's own: the length of its view position (x, y, z, w = 1).
+// ease ([fog] ease_in): that share times unleashed::fog::Ease - a smoothstep over the first kEaseUnits past the start, no hard ring.
 struct Curve {
     bool on = false;
     float start = 0.0f, end = 1.0f, curve = 1.0f, strength = 1.0f;
+    bool ease = false;
     bool operator==(const Curve& o) const {
-        return on == o.on && (!on || (start == o.start && end == o.end && curve == o.curve && strength == o.strength));
+        return on == o.on && (!on || (start == o.start && end == o.end && curve == o.curve && strength == o.strength && ease == o.ease));
     }
     bool operator!=(const Curve& o) const { return !(*this == o); }
 };
@@ -342,7 +346,7 @@ inline float CurveFog(const Curve& c, float dist) {   // (for the tests and the 
     float x = (dist - c.start) / span;
     x = x < 0.0f ? 0.0f : x > 1.0f ? 1.0f : x;
     const float cv = c.curve > 0.05f ? c.curve : 0.05f;
-    return (x > 0.0f ? std::pow(x, cv) : 0.0f) * c.strength;
+    return (x > 0.0f ? std::pow(x, cv) : 0.0f) * c.strength * (c.ease ? unleashed::fog::Ease(dist, c.start) : 1.0f);
 }
 
 // The patched container (a new one: the game's left alone), or empty with `why`. mist: the volumetric mist fogged by distance too
@@ -366,10 +370,18 @@ inline std::vector<uint8_t> Patch(const uint8_t* p, size_t n, float top, float s
         // T.x = |view| ; T.x = saturate(T.x / span - start / span) ; T.x = exp2(log2(T.x) x curve) x strength ; t = 1 - T.x
         Emit(add, kDp4, false, [&](std::vector<uint32_t>& v) { DstTemp(v, T, 1); SrcTempSwz(v, f.view, 0xE4); SrcTempSwz(v, f.view, 0xE4); });
         Emit(add, kSqrt, false, [&](std::vector<uint32_t>& v) { DstTemp(v, T, 1); SrcTemp(v, T, 0); });
+        const float ew = unleashed::fog::kEaseUnits;
+        if (curve->ease) {   // T.y = smoothstep(start, start + ew, |view|): T.y = saturate(T.x / ew - start / ew) ; T.z = 3 - 2 T.y ; T.y = T.y T.y T.z
+            Emit(add, kMad, true, [&](std::vector<uint32_t>& v) { DstTemp(v, T, 2); SrcTemp(v, T, 0); SrcImm(v, 1.0f / ew); SrcImm(v, -curve->start / ew); });
+            Emit(add, kMad, false, [&](std::vector<uint32_t>& v) { DstTemp(v, T, 4); SrcTemp(v, T, 1); SrcImm(v, -2.0f); SrcImm(v, 3.0f); });
+            Emit(add, kMul, false, [&](std::vector<uint32_t>& v) { DstTemp(v, T, 2); SrcTemp(v, T, 1); SrcTemp(v, T, 1); });
+            Emit(add, kMul, false, [&](std::vector<uint32_t>& v) { DstTemp(v, T, 2); SrcTemp(v, T, 1); SrcTemp(v, T, 2); });
+        }
         Emit(add, kMad, true, [&](std::vector<uint32_t>& v) { DstTemp(v, T, 1); SrcTemp(v, T, 0); SrcImm(v, 1.0f / span); SrcImm(v, -curve->start / span); });
         Emit(add, kLog, false, [&](std::vector<uint32_t>& v) { DstTemp(v, T, 1); SrcTemp(v, T, 0); });
         Emit(add, kMul, false, [&](std::vector<uint32_t>& v) { DstTemp(v, T, 1); SrcTemp(v, T, 0); SrcImm(v, cv); });
         Emit(add, kExp, false, [&](std::vector<uint32_t>& v) { DstTemp(v, T, 1); SrcTemp(v, T, 0); });
+        if (curve->ease) Emit(add, kMul, false, [&](std::vector<uint32_t>& v) { DstTemp(v, T, 1); SrcTemp(v, T, 0); SrcTemp(v, T, 1); });
         Emit(add, kMad, false, [&](std::vector<uint32_t>& v) { DstTemp(v, f.t, 1u << f.tComp); SrcTemp(v, T, 0, true); SrcImm(v, curve->strength); SrcImm(v, 1.0f); });
     }
     // h = viewPos.x * cb3[9].y + viewPos.y * cb3[10].y + viewPos.z * cb3[11].y   (the point's height above the eye, world units)

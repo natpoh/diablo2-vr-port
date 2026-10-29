@@ -2,7 +2,9 @@
 
 lang/en.txt is made from the program itself: the item table's texts as D2R_VR_Settings.exe --lang-template lists them (keys made from
 the ini section and key, or the tab's or group's title), then every TR / TRF / SAY call of tools/settings/settings.cpp and lang::TX call of the asset makers and shared/data_mods.h (the words the
-code writes: status lines, messages). Each other file is kept in en.txt's order; beside it, lang/sync/<code>.txt remembers the English
+code writes: status lines, messages). Then the words the plugin draws in the headset ([hud] headset_language, vr/ui_text.h; keys "vr."):
+the ones in its tables come with the program's --lang-template (vr/ui_text_tables.h), every uitext::Tr / TrF / TrW call of vr/ with a literal
+key and English is found here. Each other file is kept in en.txt's order; beside it, lang/sync/<code>.txt remembers the English
 each text was translated from (a short hash a key), so a text whose English changed since is known as stale.
 
   python tools/lang_sync.py en --exe <D2R_VR_Settings.exe>     lang/en.txt made again (and each language file laid out again)
@@ -32,6 +34,9 @@ SYNC = LANG / "sync"
 SOURCES = [ROOT / "tools" / "settings" / f for f in ("settings.cpp", "arcane_assets.cpp", "props_assets.cpp", "boat_assets.cpp", "dome_assets.cpp")] + [ROOT / "shared" / "data_mods.h"]
 OWN_KEYS = {"language.name"}   # the file's own: never batched, never stale
 CALL = re.compile(r'\b(TR|TRF|SAY|TX)\(\s*L"')   # (TX: lang::TX in the asset makers and data_mods.h)
+VR = ROOT / "vr"
+VR_CALL = re.compile(r'\buitext::(Tr|TrF|TrW)\(\s*"')   # the plugin's words in the headset (vr/ui_text.h): narrow UTF-8 literals
+VR_PREFIX = "vr."   # their keys, apart from the program's
 
 EN_HEADER = """\
 # D2R VR Authentic Settings - English, the text built into the program (made by tools/lang_sync.py - do not edit by hand).
@@ -69,8 +74,10 @@ def c_unescape(s):
     return ''.join(out)
 
 
-def read_literals(text, at):
-    """Wide literals from `at` joined (L"a" L"b", comments and new lines between): (value, end) or (None, at) when none starts there."""
+def read_literals(text, at, wide=True):
+    """Wide literals from `at` joined (L"a" L"b", comments and new lines between): (value, end) or (None, at) when none starts there.
+    wide=False: narrow ones ("a" "b", the plugin's UTF-8)."""
+    start = 'L"' if wide else '"'
     parts, i, n = [], at, len(text)
     while True:
         while i < n and text[i] in ' \t\r\n':
@@ -78,12 +85,12 @@ def read_literals(text, at):
         if text.startswith('//', i):
             i = text.find('\n', i)
             continue
-        if not text.startswith('L"', i):
+        if not text.startswith(start, i):
             break
-        j = i + 2
+        j = i + len(start)
         while text[j] != '"':
             j += 2 if text[j] == '\\' else 1
-        parts.append(c_unescape(text[i + 2:j]))
+        parts.append(c_unescape(text[i + len(start):j]))
         i = j + 1
     return (''.join(parts), i) if parts else (None, at)
 
@@ -106,6 +113,27 @@ def code_texts():
             if en is None:
                 continue
             found.append((key, en, f"{src.name}:{text.count(chr(10), 0, m.start()) + 1}"))
+    return found
+
+
+def vr_texts():
+    """(key, English, where) of each uitext::Tr / TrF / TrW call of vr/ whose key and English are literals (a key made at run time is a
+    table's: the program's --lang-template lists those)."""
+    found = []
+    for src in sorted(list(VR.glob('*.h')) + list(VR.glob('*.cpp'))):
+        text = src.read_text(encoding="utf-8", errors="replace")
+        for m in VR_CALL.finditer(text):
+            key, i = read_literals(text, m.end() - 1, wide=False)
+            if key is None:
+                continue
+            while text[i] in ' \t\r\n':
+                i += 1
+            if text[i] != ',':
+                continue
+            en, j = read_literals(text, i + 1, wide=False)
+            if en is None:
+                continue
+            found.append((key, en, f"vr/{src.name}:{text.count(chr(10), 0, m.start()) + 1}"))
     return found
 
 
@@ -289,10 +317,26 @@ def build_en(exe):
                 errors.append(f"{where}: {key} is an item text with other English")
             continue
         code_lines.append(f"{key} = {escape(en)}")
+    vr_lines = []
+    for key, en, where in vr_texts():
+        if not key.startswith(VR_PREFIX):
+            errors.append(f"{where}: {key} - the headset's keys start with {VR_PREFIX}")
+            continue
+        if key in code_keys:
+            if code_keys[key][0] != en:
+                errors.append(f"{where}: {key} has other English at {code_keys[key][1]}")
+            continue
+        code_keys[key] = (en, where)
+        if key in have:
+            if have[key] != en:
+                errors.append(f"{where}: {key} is a table text with other English")
+            continue
+        vr_lines.append(f"{key} = {escape(en)}")
     if errors:
         sys.exit("lang_sync: " + "\n".join(errors))
     text = EN_HEADER + "\nlanguage.name = English\n" + items.rstrip('\n') + "\n\n# ===== The words the program writes (status lines, messages, buttons) =====\n"
-    return text + '\n'.join(code_lines) + '\n'
+    text += '\n'.join(code_lines) + '\n'
+    return text + "\n# ===== In the headset: the words the plugin writes (the skill panel, the settings in the headset, the calibration prompt, the map) =====\n" + '\n'.join(vr_lines) + '\n'
 
 
 # ---- commands --------------------------------------------------------------------------------------------------------------------------

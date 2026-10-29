@@ -3115,6 +3115,7 @@ V3 PalmAcross(const Hero& h, int side, const std::vector<Mat>& newW, V3 axis) {
 
 #if D2RVR_FIRST_PERSON
 void WalkBackLegs(uintptr_t self, const Hero& h, const Input& in, float c, float s, std::vector<Mat>& newW);   // [body] walk_back (below)
+std::atomic<bool> g_walkBackDumpOn{false};   // [debug] walk_back_dump (below)
 #endif
 void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out& wo) {
     uintptr_t world = 0, mats = 0; int32_t n = 0;
@@ -5495,6 +5496,11 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
     } else {
         headshadow::Unpublish(self);
     }
+    // [debug] walk_back_dump: which world poses the hero's meshes are skinned from - this one, or another of his skeleton (headshadow::SkinNote)
+    if (g_walkBackDumpOn.load(std::memory_order_relaxed) && !in.along) {
+        uintptr_t cur = 0, prev = 0;
+        if (Get(self + 0x20, &cur) && Get(self + 0x28, &prev)) headshadow::NoteHeroRig(h.skel, cur, prev);
+    }
 #endif
 #if D2RVR_FIRST_PERSON
     // [diag] the weapon bone as we leave it, against the grip: must stay 0 whatever the game animates
@@ -6933,7 +6939,12 @@ struct WalkBackMem {
     float x = 0.0f, z = 0.0f, vx = 0.0f, vz = 0.0f; LARGE_INTEGER at{}; bool have = false; uintptr_t self = 0; remotepose::ConeBlend cone;
     walkback::Reverser rev;                                // [body] walk_back_reverse: the game's walk kept, and played back
     std::vector<int> lower;                                // ... the bones kept: the pelvis and every bone under it but the trunk
+    std::vector<int> trunk;                                // ... then the trunk (every other bone under the pelvis), played with its pelvis
+    int gait = 0;                                          // ... the game's walk he is in (its mode: 2 walk, 3 run, 6 town walk; 0 not known yet)
     std::vector<walkback::M4> pose;                        // ... this pose's, the body's turn taken out
+    walkback::ModeGate gate;                               // the game's standing mode, once it has held (not a frame's dip)
+    float modelYaw = 0.0f; bool haveModelYaw = false;      // his matrix's facing at the last pose (a jump of it: the game turned him)
+    double turnUntil = -1.0;                               // ... the game's turn in the skeleton taken out until then
 };
 WalkBackMem g_walkBack;   // (the skeleton hook's thread: our own hero only)
 std::atomic<unsigned> g_walkBackPoses{0}, g_walkBackFull{0}, g_walkBackKneeFail{0}, g_walkBackPlayed{0}, g_walkBackJumps{0};
@@ -6941,6 +6952,7 @@ std::atomic<float> g_walkBackAngle{0.0f}, g_walkBackKeptS{0.0f};
 std::atomic<unsigned> g_walkBackSeen{0}, g_walkBackSlow{0}, g_walkBackOtherMode{0};   // poses seen while he moved or walked back; too slow; not the game's walk mode
 std::atomic<int> g_walkBackMode{-1};   // the last mode that was not a walk
 std::atomic<unsigned> g_walkBackAhead{0}, g_walkBackPlaceJumps{0}, g_walkBackTurnOut{0};   // on while he went ahead (< 90 deg); his place jumped; the game's turn taken out
+std::atomic<unsigned> g_walkBackWhole{0}, g_walkBackModeDips{0};   // came on wholly at once (on the game's own pose); a standing mode let pass (not held kStandS)
 std::atomic<float> g_walkBackTurnMaxDeg{0.0f};   // ... the most of it
 // [debug] walk_back_dump: what one call saw, for the dump (WalkBackLegs below)
 struct WalkBackRow { double t = 0.0; float dt = 0.0f, speedM = 0.0f, angle = -1.0f, w = 0.0f, turnDeg = 0.0f, vx = 0.0f, vz = 0.0f, sx = 0.0f, sz = 0.0f, upm = 0.0f; };
@@ -6976,25 +6988,36 @@ void WalkBackLegsIn(uintptr_t self, const Hero& h, const Input& in, float c, flo
     const float speedM = std::sqrt(v.x * v.x + v.z * v.z) / upm;
     const float angle = remotepose::TravelAngleDeg(v.x, v.z, s, c);
     // he goes only while the game plays its walk or run (walkback::GameWalkMode: standing, the rig's place still read a speed now and then, any way); the game
-    // says he stands: no hold, the walk back fades out at once
-    const bool gameWalk = walkback::GameWalkMode(in.heroAnimMode);
-    if (walkback::GameStands(in.heroAnimMode)) m.cone.still = remotepose::ConeBlend::kHoldStandS + 1.0f;
-    const float w = m.cone.Step(angle, speedM > 0.15f && angle >= 0.0f && gameWalk, kWalkBackFromDeg, dt > 0.3 ? 0.0f : (float)dt);
+    // says he stands: no hold, the walk back fades out at once - once it has said so for walkback::ModeGate::kStandS (a frame's mode 1 while he walks
+    // dropped the cone and dithered the share: the scissor of the 2026-10-29 test)
+    const bool stands = m.gate.Stands(in.heroAnimMode, dt > 0.3 ? 0.0f : (float)dt);
+    const bool gameWalk = !stands;
+    if (!stands && walkback::GameStands(in.heroAnimMode) && speedM > 0.15f) g_walkBackModeDips.fetch_add(1, std::memory_order_relaxed);
+    if (stands) m.cone.still = remotepose::ConeBlend::kHoldStandS + 1.0f;
+    const float wasW = m.cone.share;
+    float w = m.cone.Step(angle, speedM > 0.15f && angle >= 0.0f && gameWalk, kWalkBackFromDeg, dt > 0.3 ? 0.0f : (float)dt);
     g_walkBackAngle.store(angle);
+    // his matrix turned at once (the game's change of way): its turn in the skeleton is taken out for a while (below)
+    const double nowS = f.QuadPart ? (double)now.QuadPart / (double)f.QuadPart : 0.0;
+    const float modelYaw = std::atan2(M.m[8], M.m[10]);
+    if (m.haveModelYaw && std::fabs(walkback::WrapAngle(modelYaw - m.modelYaw)) > walkback::kFlipDeg * 0.0174532925f) m.turnUntil = nowS + walkback::kTurnS;
+    m.modelYaw = modelYaw;
+    m.haveModelYaw = true;
     g_wbRow.speedM = speedM; g_wbRow.angle = angle; g_wbRow.w = w; g_wbRow.vx = v.x; g_wbRow.vz = v.z;
     g_wbRow.t = f.QuadPart ? (double)now.QuadPart / (double)f.QuadPart : 0.0;
     if (w > 0.001f && angle >= 0.0f && angle < 90.0f && speedM > 0.15f) g_walkBackAhead.fetch_add(1, std::memory_order_relaxed);   // (the log: on while he went ahead)
     Mat T{}; T.m[0] = c; T.m[2] = -s; T.m[5] = 1; T.m[8] = s; T.m[10] = c; T.m[15] = 1;   // (the turn PoseBody gave the body: the legs' rest turned with it)
     // The game's own turn, played on the skeleton's anim bone (the pelvis's parent) when he changes his way (walk_back.h TurnAbout): taken out of all that
     // hangs on it - the trunk too, unless [body] lock holds it in its bind pose already - so the body faces the look, and the walk kept below is the walk
-    // alone. Only in the game's walk and standing modes: a skill that spins him (its own turn of the anim bone) keeps it.
+    // alone. Only in the game's walk and standing modes (a skill that spins him - its own turn of the anim bone - keeps it), and only within kTurnS of his
+    // matrix turning at once: otherwise the anim bone's yaw is his stance (the paladin's stood a few degrees off its bind pose: 852 poses "taken out" in
+    // the 2026-10-29 log while he only stood). The game's walk has the anim bone at 0 (the "facing:" lines: anim 0.0), so the turn is its yaw as it is.
     const int animBone = h.pelvis >= 0 ? h.parent[h.pelvis] : -1;
     const int mode = in.heroAnimMode;
-    if (animBone >= 0 && animBone < n && (mode < 0 || mode == 1 || mode == 2 || mode == 3 || mode == 5 || mode == 6)) {
-        walkback::M4 a{}, a0{};
+    if (animBone >= 0 && animBone < n && nowS < m.turnUntil && (mode < 0 || mode == 1 || mode == 2 || mode == 3 || mode == 5 || mode == 6)) {
+        walkback::M4 a{};
         memcpy(a.m, newW[animBone].m, sizeof a.m);
-        memcpy(a0.m, h.bind[animBone].m, sizeof a0.m);   // (h.bindOk: the caller's; a rig whose anim bone stands turned at rest keeps that)
-        const float turnIn = walkback::WrapAngle(walkback::YawOf(a) - std::atan2(s, c) - walkback::YawOf(a0));
+        const float turnIn = walkback::WrapAngle(walkback::YawOf(a) - std::atan2(s, c));
         if (std::fabs(turnIn) > 0.035f) {   // (2 deg; the anim bone carries no sway of the walk's - only the turn)
             const float px = newW[animBone].m[12], pz = newW[animBone].m[14];
             std::vector<char> under(n, 0);
@@ -7016,24 +7039,36 @@ void WalkBackLegsIn(uintptr_t self, const Hero& h, const Input& in, float c, flo
     }
     if (in.walkBackReverse && h.pelvis >= 0) {
         // the game's own lower body of this pose, kept while he walks (whichever way), the body's turn taken out
-        if (!m.lower.empty() && (m.lower.front() != h.pelvis || m.lower.back() >= n)) { m.lower.clear(); m.rev.Reset(); }   // (another rig at this address)
+        if (!m.lower.empty() && (m.lower.front() != h.pelvis || m.lower.back() >= n || (!m.trunk.empty() && m.trunk.back() >= n))) {   // (another rig here)
+            m.lower.clear();
+            m.trunk.clear();
+            m.rev.Reset();
+        }
         if (m.lower.empty()) {
-            std::vector<char> low(n, 0);
+            std::vector<char> low(n, 0), under(n, 0);
             for (int i = 0; i < n; ++i) {
                 const int p = h.parent[i];
+                under[i] = i == h.pelvis || (p >= 0 && p < i && under[p]);
                 low[i] = i == h.pelvis || (!h.upper[i] && p >= 0 && p < i && low[p]);
                 if (low[i]) m.lower.push_back(i);
+                else if (under[i]) m.trunk.push_back(i);
             }
         }
+        // the game's gait now (walk, run, town walk); a frame's other mode (ModeGate let it pass) keeps the last
+        if (walkback::GameWalkMode(in.heroAnimMode) && in.heroAnimMode >= 0) m.gait = in.heroAnimMode;
         int footAt[2] = {-1, -1};
         for (int k = 0; k < (int)m.lower.size(); ++k)
             for (int side = 0; side < 2; ++side)
                 if (m.lower[k] == h.leg[side][2]) footAt[side] = k;
         if (footAt[0] >= 0 && footAt[1] >= 0) {
             Mat Ti{}; Ti.m[0] = c; Ti.m[2] = s; Ti.m[5] = 1; Ti.m[8] = -s; Ti.m[10] = c; Ti.m[15] = 1;   // (T's inverse: the body's turn out)
-            m.pose.resize(m.lower.size());
-            for (size_t k = 0; k < m.lower.size(); ++k) {
-                const Mat b = Mul(newW[m.lower[k]], Ti);
+            // the trunk of the same pose kept after the lower body: played back with its pelvis (F2: the game hangs the trunk on the pelvis with a
+            // counter-sway of the SAME moment of the stride - hung on a pelvis of another moment, the two sways added: the body rocked from side to
+            // side running back, Serg's 2026-10-29 "it began to sway")
+            const size_t nl = m.lower.size(), kept = nl + m.trunk.size();
+            m.pose.resize(kept);
+            for (size_t k = 0; k < kept; ++k) {
+                const Mat b = Mul(newW[k < nl ? m.lower[k] : m.trunk[k - nl]], Ti);
                 memcpy(m.pose[k].m, b.m, sizeof b.m);
             }
             float feet[6];
@@ -7045,33 +7080,34 @@ void WalkBackLegsIn(uintptr_t self, const Hero& h, const Input& in, float c, flo
                 if (!(speedM > 0.15f)) g_walkBackSlow.fetch_add(1, std::memory_order_relaxed);
                 if (!gameWalk) { g_walkBackOtherMode.fetch_add(1, std::memory_order_relaxed); g_walkBackMode.store(in.heroAnimMode); }
             }
-            m.rev.Record(tS, speedM > 0.15f && gameWalk, m.pose.data(), (int)m.pose.size(), feet);
+            m.rev.Record(tS, speedM > 0.15f && gameWalk, m.pose.data(), (int)m.pose.size(), feet, m.gait);
             g_walkBackKeptS.store((float)m.rev.KeptS());
-            const walkback::Sample* back = m.rev.Step(dt > 0.3 ? 0.0 : dt, w > 0.001f);
+            // coming on: the play-back starts on the newest pose kept - when that is this very pose (the game's of this frame), it IS what the game draws, so
+            // it is drawn wholly at once; crossfaded in, the game's walk forward and the walk backwards (a leg ahead in one, behind in the other) passed the
+            // feet through each other for the fade (the 2026-10-29 scissor)
+            if (wasW <= 0.001f && w > 0.001f && m.rev.Kept() > 0 && m.rev.At(m.rev.Kept() - 1).t == tS) {
+                m.cone.share = 1.0f;
+                w = 1.0f;
+                g_wbRow.w = w;
+                g_walkBackWhole.fetch_add(1, std::memory_order_relaxed);
+            }
+            const walkback::Sample* back = m.rev.Step(dt > 0.3 ? 0.0 : dt, w > 0.001f, m.gait);
             g_walkBackJumps.fetch_add((unsigned)m.rev.TakeJumps(), std::memory_order_relaxed);
             if (w <= 0.001f) return;
-            if (back && back->pose.size() == m.lower.size()) {   // played back: the kept pose, turned with the body again, w of the way from the game's
-                const std::vector<Mat> before = newW;
-                std::vector<char> moved(n, 0);
-                for (size_t k = 0; k < m.lower.size(); ++k) {
+            if (back && back->pose.size() == m.lower.size() + m.trunk.size()) {   // played back: the kept pose, turned with the body again, w of the way from the game's
+                // the lower body - and the trunk of the same kept pose, unless [body] lock holds the trunk in its bind pose (F4)
+                const size_t nl = m.lower.size(), upto = in.lockUpper ? nl : nl + m.trunk.size();
+                for (size_t k = 0; k < upto; ++k) {
+                    const int bone = k < nl ? m.lower[k] : m.trunk[k - nl];
                     Mat b{};
                     memcpy(b.m, back->pose[k].m, sizeof b.m);
                     b = Mul(b, T);
                     walkback::M4 a{}, to{};
-                    memcpy(a.m, newW[m.lower[k]].m, sizeof a.m);
+                    memcpy(a.m, newW[bone].m, sizeof a.m);
                     memcpy(to.m, b.m, sizeof to.m);
                     const walkback::M4 r = walkback::Blend(a, to, w);
-                    memcpy(newW[m.lower[k]].m, r.m, sizeof r.m);
-                    moved[m.lower[k]] = 1;
+                    memcpy(newW[bone].m, r.m, sizeof r.m);
                 }
-                // the trunk hangs on the pelvis as the game hangs it - unless [body] lock holds it in its bind pose (not hung on the pelvis there)
-                if (!in.lockUpper)
-                    for (int i = 0; i < n; ++i) {
-                        const int p = h.parent[i];
-                        if (!h.upper[i] || p < 0 || p >= i || !moved[p]) continue;
-                        newW[i] = Mul(Mul(before[i], InvAffine(before[p])), newW[p]);
-                        moved[i] = 1;
-                    }
                 g_walkBackPoses.fetch_add(1, std::memory_order_relaxed);
                 g_walkBackPlayed.fetch_add(1, std::memory_order_relaxed);
                 if (w >= 0.999f) g_walkBackFull.fetch_add(1, std::memory_order_relaxed);
@@ -7129,10 +7165,10 @@ void WalkBackLegsIn(uintptr_t self, const Hero& h, const Input& in, float c, flo
 // tools/walk_legs/walk_legs.py --dump, which draws the game's legs and the drawn ones as the offline pictures. Only kept while it is on; view only.
 constexpr double kWalkBackDumpS = 6.0;
 constexpr int kWalkBackDumpsAtMost = 30;   // (a session's file stays under ~10 MB)
-std::atomic<bool> g_walkBackDumpOn{false};
 std::deque<std::pair<double, std::string>> g_wbLines;   // (the skeleton hook's thread)
 double g_wbOffAt = -1.0;                                  // the walk back's share went to 0 here (-1: on, or none in the lines)
 bool g_wbHadOn = false;
+double g_wbTurnSince = -1.0, g_wbTurnDumpAt = -100.0;   // standing turned round since; the last such dump
 int g_wbDumps = 0;
 SRWLOCK g_wbLock = SRWLOCK_INIT;
 std::string g_wbReady;   // (under g_wbLock)
@@ -7160,16 +7196,21 @@ void WalkBackLegs(uintptr_t self, const Hero& h, const Input& in, float c, float
     line = b + line + " |";
     WalkBackJoints(h, newW, line);   // as drawn
     if (r.t <= 0.0) return;
-    const bool moving = r.speedM > 0.15f || r.w > 0.001f || r.turnDeg != 0.0f;
+    // standing with the body turned far from the game's facing (the camera turned round him: Serg's 2026-10-29 "the feet stay where they were") is kept too
+    const float bodyTurnDeg = std::fabs(std::atan2(s, c)) * 57.2957795f;
+    const bool moving = r.speedM > 0.15f || r.w > 0.001f || r.turnDeg != 0.0f || bodyTurnDeg > 60.0f;
     if (moving) g_wbLines.emplace_back(r.t, std::move(line));
     while (!g_wbLines.empty() && r.t - g_wbLines.front().first > kWalkBackDumpS) g_wbLines.pop_front();
     if (r.w > 0.001f) { g_wbHadOn = true; g_wbOffAt = -1.0; }
     else if (g_wbHadOn && g_wbOffAt < 0.0) g_wbOffAt = r.t;
-    if (g_wbHadOn && g_wbOffAt >= 0.0 && r.t - g_wbOffAt > 0.7) {   // a walk back over: its seconds (and what led to it) out once
-        g_wbHadOn = false;
-        g_wbOffAt = -1.0;
+    if (bodyTurnDeg > 90.0f && r.speedM <= 0.15f) { if (g_wbTurnSince < 0.0) g_wbTurnSince = r.t; }
+    else g_wbTurnSince = -1.0;
+    const bool turnedStanding = g_wbTurnSince >= 0.0 && r.t - g_wbTurnSince > 3.0 && r.t - g_wbTurnDumpAt > 10.0;
+    if (turnedStanding || (g_wbHadOn && g_wbOffAt >= 0.0 && r.t - g_wbOffAt > 0.7)) {   // a walk back over, or 3 s standing turned round: its seconds out once
+        if (turnedStanding) { g_wbTurnDumpAt = r.t; g_wbTurnSince = -1.0; }
+        else { g_wbHadOn = false; g_wbOffAt = -1.0; }
         if (g_wbDumps >= kWalkBackDumpsAtMost) { g_wbLines.clear(); return; }
-        std::string text = "# walk back " + std::to_string(++g_wbDumps) + "\n";
+        std::string text = "# walk back " + std::to_string(++g_wbDumps) + (turnedStanding ? " (standing, the body turned round from the game's facing)" : "") + "\n";
         for (const auto& l : g_wbLines) { text += l.second; text += '\n'; }
         g_wbLines.clear();
         AcquireSRWLockExclusive(&g_wbLock);
@@ -7184,7 +7225,7 @@ std::string WalkBackNoteIn() {
     const unsigned ahead = g_walkBackAhead.exchange(0), placeJumps = g_walkBackPlaceJumps.exchange(0), turnOut = g_walkBackTurnOut.exchange(0);
     const float turnMax = g_walkBackTurnMaxDeg.exchange(0.0f);
     if (!poses && !placeJumps && !turnOut) return "";
-    char b[900];
+    char b[1400];
     snprintf(b, sizeof b, "walk back ([body] walk_back): %u poses with the legs stepping back (%u wholly, the rest crossfading) - %u the game's walk played backwards "
              "(walk_back_reverse; %.1f s of his walk kept, %u jumps through it), %u mirrored (knees not solved %u); the travel %.0f deg from the facing at the last; "
              "of %u poses while he went, %u too slow to count as walking and %u not in the game's walk mode (the last such mode %d)",
@@ -7193,6 +7234,9 @@ std::string WalkBackNoteIn() {
     snprintf(b + at, sizeof b - at, "; %u of them while he went ahead (travel under 90 deg from the facing: the hold and crossfade after a turn back); his place "
              "jumped %u times (an area change: no travel read from it); the game's own turn on the skeleton's anim bone taken out in %u poses (at most %.0f deg)",
              ahead, placeJumps, turnOut, turnMax);
+    const size_t at2 = strlen(b);
+    snprintf(b + at2, sizeof b - at2, "; came on wholly at once (on the game's own pose, no crossfade) %u times; a standing mode while he went let pass %u times "
+             "(not held %.1f s)", g_walkBackWhole.exchange(0), g_walkBackModeDips.exchange(0), walkback::ModeGate::kStandS);
     return b;
 }
 

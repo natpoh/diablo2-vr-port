@@ -12,6 +12,7 @@
 #include <string>
 
 #include "direct_remap.h"
+#include "ui_text.h"   // the picks' names in the player's language ([hud] headset_language)
 
 namespace hset {
 namespace keys {
@@ -80,15 +81,17 @@ inline constexpr Short kShort[] = {
     {"cmd:0x23", "Run / walk"},
     {"cmd:0x24", "Stand still"},
 };
+// A short name's key, made from its ini text ("vr.keys.action_attack"; vr/ui_text_tables.h lists them for lang\en.txt).
+inline std::string ShortKey(const char* ini) { return "vr.keys." + uitext::Slug(ini); }
 inline const char* ShortName(const char* ini) {
     for (const Short& s : kShort)
-        if (!std::strcmp(s.ini, ini)) return s.name;
+        if (!std::strcmp(s.ini, ini)) return uitext::Tr(ShortKey(s.ini), s.name);
     return nullptr;
 }
 // The words of a pick for the value box: "Custom (ini)" for the one past the list.
 inline std::string PickName(int pick) {
     const auto& picks = rm::Picks();
-    if (pick < 0 || pick >= (int)picks.size()) return "Custom (ini)";
+    if (pick < 0 || pick >= (int)picks.size()) return uitext::Tr("vr.keys.custom", "Custom (ini)");
     const char* s = ShortName(picks[pick].ini);
     return s ? s : picks[pick].label;
 }

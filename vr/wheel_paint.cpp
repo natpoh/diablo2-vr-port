@@ -22,6 +22,7 @@
 #include <thread>
 
 #include "paint_kit.h"
+#include "ui_text.h"   // the wheel's words in the player's language ([hud] headset_language)
 #include "tiles_paint.h"
 #include "wheel_geom.h"
 #include "wheel_icons.h"
@@ -119,18 +120,20 @@ void PaintRing(Canvas& cv, const View& v) {
 
 const char* FooterText(Cell c) {
     switch (c) {
-    case kEdit: return "EDIT SKILLS";
-    case kRunWalk: return "RUN / WALK";
-    case kClose: return "CLOSE";
-    case kBack: return "BACK";
-    case kPrev: return "PREVIOUS";
-    case kNext: return "NEXT";
+    case kEdit: return uitext::Tr("vr.wheel.edit", "EDIT SKILLS");
+    case kRunWalk: return uitext::Tr("vr.wheel.run_walk", "RUN / WALK");
+    case kClose: return uitext::Tr("vr.wheel.close", "CLOSE");
+    case kBack: return uitext::Tr("vr.wheel.back", "BACK");
+    case kPrev: return uitext::Tr("vr.wheel.previous", "PREVIOUS");
+    case kNext: return uitext::Tr("vr.wheel.next", "NEXT");
     default: return "";
     }
 }
 
 // What the game says its run / walk switch is on ("" when it is not known).
-const char* RunState(const View& v) { return v.run == kRunning ? "now: RUN" : v.run == kWalking ? "now: WALK" : ""; }
+const char* RunState(const View& v) {
+    return v.run == kRunning ? uitext::Tr("vr.wheel.now_run", "now: RUN") : v.run == kWalking ? uitext::Tr("vr.wheel.now_walk", "now: WALK") : "";
+}
 
 void PaintFooter(Canvas& cv, Fonts& fonts, const View& v) {
     RoundRect(cv, Px({0.02f, 0.894f, 0.98f, 0.99f}), 16.0f, Col{16, 14, 11}, 0.88f, kGoldDim, 0.8f, 1.5f);
@@ -171,15 +174,15 @@ void PaintWheelContent(Canvas& cv, Fonts& fonts, const View& v) {
             Icon(cv, wheelicons::Get(s.id), Rect{px - 42.0f, py - 46.0f, px + 42.0f, py + 38.0f}, !s.available || off);
             Text(cv, fonts, s.name, Rect{px - 86.0f, py + 40.0f, px + 86.0f, py + 94.0f}, 22, false, s.available && !off ? kText : kTextDim);
         } else if (s.known) {
-            Text(cv, fonts, "Empty", Rect{px - 86.0f, py - 20.0f, px + 86.0f, py + 20.0f}, 22, false, Col{110, 102, 88});
+            Text(cv, fonts, uitext::Tr("vr.wheel.empty", "Empty"), Rect{px - 86.0f, py - 20.0f, px + 86.0f, py + 20.0f}, 22, false, Col{110, 102, 88});
         }
     }
     if (wheelPage) {
         const Rect centre{kCxPx - 92.0f, kCyPx - 50.0f, kCxPx + 92.0f, kCyPx + 28.0f};
-        Text(cv, fonts, "BASIC\nATTACK", centre, 26, true, v.hover == kCentre ? kGoldBright : kText);
-        if (v.selected < 0) Text(cv, fonts, "ACTIVE", Rect{kCxPx - 60.0f, kCyPx + 28.0f, kCxPx + 60.0f, kCyPx + 58.0f}, 20, true, kGoldBright);
+        Text(cv, fonts, uitext::Tr("vr.wheel.basic_attack", "BASIC\nATTACK"), centre, 26, true, v.hover == kCentre ? kGoldBright : kText);
+        if (v.selected < 0) Text(cv, fonts, uitext::Tr("vr.wheel.active", "ACTIVE"), Rect{kCxPx - 60.0f, kCyPx + 28.0f, kCxPx + 60.0f, kCyPx + 58.0f}, 20, true, kGoldBright);
     } else {
-        Text(cv, fonts, "CHOOSE\nA SLOT", Rect{kCxPx - 100.0f, kCyPx - 50.0f, kCxPx + 100.0f, kCyPx + 50.0f}, 28, true, kText);
+        Text(cv, fonts, uitext::Tr("vr.wheel.choose_slot", "CHOOSE\nA SLOT"), Rect{kCxPx - 100.0f, kCyPx - 50.0f, kCxPx + 100.0f, kCyPx + 50.0f}, 28, true, kText);
     }
 }
 
@@ -190,10 +193,9 @@ void PaintStrip(Canvas& cv, Fonts& fonts, const View& v) {
         const int count = v.catCount[c];
         const bool on = v.category == c, enabled = count > 0 || on, hot = v.hover == CategoryCell(c) && count > 0;
         RoundRect(cv, r, 10.0f, on ? Col{70, 54, 30} : hot ? Col{58, 46, 28} : Col{32, 28, 23}, 0.97f, on || hot ? kGoldBright : kGoldDim, 1.0f, on ? 3.0f : 2.0f);
-        char name[kNameLen + 4];
-        if (c == kCatAll) std::snprintf(name, sizeof name, "All");
-        else if (c == kCatGeneral) std::snprintf(name, sizeof name, "General / Items");
-        else std::snprintf(name, sizeof name, "%s", v.treeName[c - 1][0] ? v.treeName[c - 1] : "-");
+        const char* name = c == kCatAll ? uitext::Tr("vr.skills.all", "All")
+                         : c == kCatGeneral ? uitext::Tr("vr.skills.general", "General / Items")
+                         : v.treeName[c - 1][0] ? v.treeName[c - 1] : "-";
         const Col ink = on ? kGoldBright : enabled ? kText : Col{100, 93, 80};
         Text(cv, fonts, name, Rect{r.l + 4.0f, r.t + 2.0f, r.r - 4.0f, r.b - 20.0f}, 19, true, ink);
         char n[16];
@@ -204,19 +206,17 @@ void PaintStrip(Canvas& cv, Fonts& fonts, const View& v) {
 
 void PaintList(Canvas& cv, Fonts& fonts, const View& v) {
     RoundRect(cv, Px({0.01f, 0.01f, 0.99f, 0.855f}), 22.0f, Col{20, 17, 14}, 0.93f, kGoldDim, 1.0f, 2.5f);
-    char title[96];
-    std::snprintf(title, sizeof title, "CHOOSE SKILL  -  %s", v.editSlot >= 0 ? kSlotDefs[v.editSlot].label : "");
-    Text(cv, fonts, title, Px({0.05f, 0.035f, 0.62f, 0.095f}), 32, true, kText, 1.0f, true);
+    const std::string title = uitext::TrF("vr.wheel.choose_skill", "CHOOSE SKILL  -  {slot}", {{"slot", v.editSlot >= 0 ? kSlotDefs[v.editSlot].label : ""}});
+    Text(cv, fonts, title.c_str(), Px({0.05f, 0.035f, 0.62f, 0.095f}), 32, true, kText, 1.0f, true);
     if (v.editSlot >= 0 && v.slot[v.editSlot].known) {
-        char now[96];
-        std::snprintf(now, sizeof now, "Now: %s", v.slot[v.editSlot].id >= 0 ? v.slot[v.editSlot].name : "nothing");
-        Text(cv, fonts, now, Px({0.05f, 0.095f, 0.62f, 0.145f}), 22, false, kTextDim, 1.0f, true);
+        const std::string now = uitext::TrF("vr.wheel.now", "Now: {skill}", {{"skill", v.slot[v.editSlot].id >= 0 ? v.slot[v.editSlot].name : uitext::Tr("vr.skills.nothing", "nothing")}});
+        Text(cv, fonts, now.c_str(), Px({0.05f, 0.095f, 0.62f, 0.145f}), 22, false, kTextDim, 1.0f, true);
     }
     if (v.catStrip) PaintStrip(cv, fonts, v);
     const bool hotClear = v.hover == kCentre;
     const Rect clear = Px(kClearRect);
     RoundRect(cv, clear, 12.0f, hotClear ? Col{74, 56, 32} : Col{38, 33, 27}, 0.97f, hotClear ? kGoldBright : kGoldDim, 1.0f, 2.0f);
-    Text(cv, fonts, "CLEAR SLOT", clear, 26, true, kText);
+    Text(cv, fonts, uitext::Tr("vr.wheel.clear_slot", "CLEAR SLOT"), clear, 26, true, kText);
     for (int i = 0; i < v.options; ++i) {
         const Skill& s = v.option[i];
         const Rect r = Px(OptionRect(i));
@@ -226,33 +226,32 @@ void PaintList(Canvas& cv, Fonts& fonts, const View& v) {
         Icon(cv, icon, Rect{r.l + 12.0f, r.t + 12.0f, r.l + 12.0f + 108.0f, r.b - 12.0f}, false);
         const float textLeft = r.l + (icon ? 130.0f : 22.0f);   // (the icon's column is only there when there is an icon)
         Text(cv, fonts, s.name, Rect{textLeft, r.t + 8.0f, r.r - 10.0f, r.t + 78.0f}, 24, false, kText, 1.0f, true);
-        char detail[48];
-        if (s.id == kSkillInteract) std::snprintf(detail, sizeof detail, "Command");
-        else if (s.owner >= 0) std::snprintf(detail, sizeof detail, "Item skill");
-        else std::snprintf(detail, sizeof detail, "Level %d", (int)s.level);
-        Text(cv, fonts, detail, Rect{textLeft, r.t + 82.0f, r.r - 10.0f, r.b - 8.0f}, 20, false, kTextDim, 1.0f, true);
+        const std::string detail = s.id == kSkillInteract ? std::string(uitext::Tr("vr.skills.command", "Command"))
+                                 : s.owner >= 0 ? std::string(uitext::Tr("vr.skills.item_skill", "Item skill"))
+                                 : uitext::TrF("vr.skills.level", "Level {level}", {{"level", std::to_string((int)s.level)}});
+        Text(cv, fonts, detail.c_str(), Rect{textLeft, r.t + 82.0f, r.r - 10.0f, r.b - 8.0f}, 20, false, kTextDim, 1.0f, true);
     }
-    if (!v.options) Text(cv, fonts, "No skills to choose from", Px({0.1f, 0.3f, 0.9f, 0.6f}), 30, false, kTextDim);
+    if (!v.options) Text(cv, fonts, uitext::Tr("vr.skills.none", "No skills to choose from"), Px({0.1f, 0.3f, 0.9f, 0.6f}), 30, false, kTextDim);
 }
 
 void PaintStatus(Canvas& cv, Fonts& fonts, const View& v) {
-    char line[160] = {};
+    std::string line;
     if (v.status[0]) {
-        std::snprintf(line, sizeof line, "%s", v.status);
+        line = v.status;
     } else if (!v.ready) {
-        std::snprintf(line, sizeof line, "Skills unavailable");
+        line = uitext::Tr("vr.skills.unavailable", "Skills unavailable");
     } else if (v.page == Page::Wheel) {
         if (v.selected >= 0 && v.slot[v.selected].known)
-            std::snprintf(line, sizeof line, "Trigger casts: %s  (%s)", v.slot[v.selected].name, kSlotDefs[v.selected].label);
+            line = uitext::TrF("vr.skills.trigger_casts", "Trigger casts: {skill}  ({slot})", {{"skill", v.slot[v.selected].name}, {"slot", kSlotDefs[v.selected].label}});
         else
-            std::snprintf(line, sizeof line, "Trigger: basic attack");
+            line = uitext::Tr("vr.wheel.trigger_basic", "Trigger: basic attack");
     } else if (v.page == Page::PickSlot) {
-        std::snprintf(line, sizeof line, "Choose the slot to change");
+        line = uitext::Tr("vr.skills.choose_slot", "Choose the slot to change");
     } else if (v.editPages > 1) {
-        std::snprintf(line, sizeof line, "Page %d / %d", v.editPage + 1, v.editPages);
+        line = uitext::TrF("vr.wheel.page", "Page {page} / {pages}", {{"page", std::to_string(v.editPage + 1)}, {"pages", std::to_string(v.editPages)}});
     }
     const Col c = v.result == Result::Refused ? Col{232, 140, 110} : kGoldBright;
-    Text(cv, fonts, line, Px({0.04f, 0.862f, 0.96f, 0.892f}), 24, false, c);
+    Text(cv, fonts, line.c_str(), Px({0.04f, 0.862f, 0.96f, 0.892f}), 24, false, c);
 }
 
 }  // namespace

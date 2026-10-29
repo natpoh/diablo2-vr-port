@@ -68,6 +68,48 @@ int main() {
         CHECK(FindFog(noColour, frame, 512) == -1);               // a plane alone matches too easily: not looked for
         CHECK(FindFog(nullptr, frame, 512) == -1);
     }
+    {   // [fog] game_fog_match: Serg's act 4 (50.webp) - his #5A2712 on the sky's low part, the complete fog shown (57, 29, 9) on the far land
+        const float act[3] = {90 / 255.0f, 39 / 255.0f, 18 / 255.0f}, seen[3] = {57 / 255.0f, 29 / 255.0f, 9 / 255.0f};
+        float out[3];
+        MatchShift(seen, 1.0f, act, seen, 1.0f, out);             // complete: exactly the act's colour
+        CHECK(std::fabs(out[0] - act[0]) < 1e-6f && std::fabs(out[1] - act[1]) < 1e-6f && std::fabs(out[2] - act[2]) < 1e-6f);
+        const float near[3] = {0.3f, 0.2f, 0.1f};
+        MatchShift(near, 0.0f, act, seen, 1.0f, out);             // no fog: untouched
+        CHECK(out[0] == near[0] && out[1] == near[1] && out[2] == near[2]);
+        MatchShift(near, 0.5f, act, seen, 1.0f, out);             // half: half the move
+        CHECK(std::fabs(out[0] - (near[0] + 0.5f * (act[0] - seen[0]))) < 1e-6f);
+        const float halfSeen[3] = {seen[0] * 0.5f, seen[1] * 0.5f, seen[2] * 0.5f};   // caves' strength 0.5: complete shows half
+        MatchShift(halfSeen, 0.5f, act, halfSeen, 0.5f, out);
+        CHECK(std::fabs(out[0] - (halfSeen[0] + 0.5f * (act[0] - seen[0]))) < 1e-6f);
+        const float black[3] = {0.0f, 0.0f, 0.0f};
+        MatchShift(black, 1.0f, black, seen, 1.0f, out);          // never below black
+        CHECK(out[0] == 0.0f && out[1] == 0.0f && out[2] == 0.0f);
+        // the share the game's pass left out: scene x (1 - a) + fog x a, then lerped by MissingShare -> scene x (1 - want) + fog x want
+        for (float a : {0.0f, 0.2f, 0.6f, 0.95f})
+            for (float want : {0.0f, 0.3f, 0.8f, 1.0f}) {
+                const float k = MissingShare(a, want), scene = 0.7f, fog = 0.2f;
+                const float shown = (scene * (1 - a) + fog * a) * (1 - k) + fog * k;
+                CHECK(std::fabs(shown - (scene * (1 - (std::max)(a, want)) + fog * (std::max)(a, want))) < 1e-5f);
+            }
+        CHECK(MissingShare(0.0f, 1.0f) == 1.0f && MissingShare(0.5f, 0.5f) == 0.0f && MissingShare(1.0f, 1.0f) == 0.0f);
+        // the height thinning as the patched pass has it: the game's below top - soft, none above top
+        CHECK(HeightShare(60.0f, 55.0f, 0.0f) == 1.0f && HeightShare(60.0f, 55.0f, 5.0f) == 1.0f && HeightShare(60.0f, 55.0f, 60.0f) == 0.0f &&
+              std::fabs(HeightShare(60.0f, 55.0f, 32.5f) - 0.5f) < 1e-6f && HeightShare(1e9f, 1.0f, 500.0f) == 1.0f);
+        // [fog] game_fog_top_from_floor: the top counted from the hero's floor - the eye 6 over it (VR), 40 (third person, the camera high)
+        CHECK(TopAboveEye(60.0f, false, 40.0f) == 60.0f);   // off: above the eye, as before
+        CHECK(TopAboveEye(60.0f, true, 6.0f) == 54.0f && TopAboveEye(60.0f, true, 40.0f) == 20.0f);
+        CHECK(TopAboveEye(0.0f, true, -3.0f) == 0.0f);   // (an eye under the floor counts as on it)
+        // a point 20 units over the floor, top 60 / soft 55 from the floor: the same share whether the eye is 6 or 40 over the floor
+        for (float eye : {6.0f, 40.0f}) {
+            const float h = 20.0f - eye;   // its height above the eye
+            CHECK(std::fabs(HeightShare(TopAboveEye(60.0f, true, eye), 55.0f, h) - HeightShare(60.0f, 55.0f, 20.0f)) < 1e-6f);
+        }
+        // PC1's 62.webp (top 0, soft 1 above the EYES, the camera 40 over the floor): a far cliff top 10 over the floor - above the eye? no,
+        // 30 below it: fogged; one 45 over the floor: clear - the cut at eye height. From the floor: both over the floor's 0 - the same, clear
+        CHECK(HeightShare(0.0f, 1.0f, 10.0f - 40.0f) == 1.0f && HeightShare(0.0f, 1.0f, 45.0f - 40.0f) == 0.0f);
+        CHECK(HeightShare(TopAboveEye(0.0f, true, 40.0f), 1.0f, 10.0f - 40.0f) == 0.0f &&
+              HeightShare(TopAboveEye(0.0f, true, 40.0f), 1.0f, 45.0f - 40.0f) == 0.0f);
+    }
     if (g_fail) { std::printf("game_fog_vr_test: %d FAILED\n", g_fail); return 1; }
     std::printf("game_fog_vr_test: our fog as the game's own - none before the start, %.0f%% of the strength at the end, the colour as ours "
                 "through the game's tone map, the layout checked before a write: all passed\n", kFullAt * 100.0f);

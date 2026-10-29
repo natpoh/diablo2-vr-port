@@ -30,6 +30,7 @@
 #include "effect_parser.hpp"
 #include "effect_preprocessor.hpp"
 #include "fx_native.h"
+#include "fx_build_order.h"   // the size in use built first, the sizes built before after it
 
 namespace fxnative {
 namespace {
@@ -391,6 +392,9 @@ struct Runtime::Impl {
     // The sizes built before (cacheDir\sizes.txt, the last first): at a start the ones not in use now are compiled into the disk cache first -
     // the game switching to its VR render size then finds its shaders there (a cold build took 30 s on an i5-11400F, the effect missing meanwhile).
     std::vector<std::pair<uint32_t, uint32_t>> recent;
+    // ... and the ones to warm this run (as read at the start): apart from `recent`, which each build rewrites - the size in use is built
+    // first now (vr/fx_build_order.h), and its RememberSize took the list as warmed before any was
+    std::vector<std::pair<uint32_t, uint32_t>> warm;
     size_t preAt = 0;
     void LoadSizes() {
         if (o.cacheDir.empty()) return;
@@ -399,14 +403,14 @@ struct Runtime::Impl {
         char x = 0;
         while (f >> w >> x >> h)
             if (x == 'x' && w >= 16 && h >= 16 && w <= 16384 && h <= 16384 && recent.size() < 4) recent.push_back({w, h});
+        warm = recent;
     }
     void RememberSize(uint32_t w, uint32_t h) {
         if (o.cacheDir.empty()) return;
         std::vector<std::pair<uint32_t, uint32_t>> v{{w, h}};
         for (const auto& s : recent) if (s != v[0] && v.size() < 4) v.push_back(s);
         if (v == recent) return;
-        recent = v;
-        preAt = recent.size();   // (what this run builds is in the cache already)
+        recent = v;   // (the warm list stays: a size built this run is skipped there when reached - Frame)
         CreateDirectoryW(o.cacheDir.c_str(), nullptr);
         std::ofstream f(o.cacheDir + L"\\sizes.txt");
         for (const auto& s : recent) f << s.first << 'x' << s.second << '\n';
@@ -1595,18 +1599,29 @@ bool Runtime::Impl::Frame(ID3D12Device* d, const D3D12_RESOURCE_DESC& target) {
     }
     PicturesTick();   // the pictures wanted by the build in use: read, made, its views of them (a new build: of those already there at once)
     const DXGI_FORMAT fmt = Linear(target.Format);
-    while (!busy.load() && preAt < recent.size()) {   // the sizes built before, into the cache first (not the one in use now: that one is built)
-        const auto s = recent[preAt++];
-        if (s.first == target.Width && s.second == target.Height) continue;
-        Log("vrcam: native effects - D2R_DepthFog.fx's shaders for %ux%u (built before) into the cache first, in the background", s.first, s.second);
-        StartJob(d, s.first, s.second, fmt, true);
-    }
+    // The size in use first, then the sizes built before into the cache (vr/fx_build_order.h: they went first, and the game's own size waited
+    // behind all of them - a minute of no sky at a new build's first start, PC1 2026-10-29)
+    // (a size built this run - the one in use, or one built when the game took it - is in the cache already: not warmed again)
+    auto builtThisRun = [&](const std::pair<uint32_t, uint32_t>& s) {
+        return (s.first == target.Width && s.second == target.Height) || (cur && cur->w == s.first && cur->h == s.second);
+    };
+    while (preAt < warm.size() && builtThisRun(warm[preAt])) ++preAt;
     const bool want = !cur || cur->w != target.Width || cur->h != target.Height || cur->target != fmt || cur->gen != wantGen;
     const bool tried = triedGen == wantGen && triedW == target.Width && triedH == target.Height && triedFmt == fmt;
-    if (want && !tried && !busy.load()) {
+    switch (fxbuildorder::Next(busy.load(), want, tried, preAt < warm.size())) {
+    case fxbuildorder::Job::InUse:
         stats.failed = false;
         Log("vrcam: native effects - building D2R_DepthFog.fx for %llux%u in the background", (unsigned long long)target.Width, target.Height);
         StartJob(d, (uint32_t)target.Width, target.Height, fmt);
+        break;
+    case fxbuildorder::Job::Warm: {
+        const auto s = warm[preAt++];
+        Log("vrcam: native effects - D2R_DepthFog.fx's shaders for %ux%u (built before) into the cache, in the background (the size in use is "
+            "built)", s.first, s.second);
+        StartJob(d, s.first, s.second, fmt, true);
+        break;
+    }
+    case fxbuildorder::Job::None: break;
     }
     stats.compiling = busy.load();
     stats.ready = cur && cur->ok;

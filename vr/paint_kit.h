@@ -17,6 +17,7 @@
 #include <memory>
 #include <vector>
 
+#include "ui_text.h"   // uitext::Face: the font a language needs (Chinese: Microsoft YaHei)
 #include "wheel_geom.h"
 #include "wheel_icons.h"
 
@@ -68,15 +69,18 @@ struct Fonts {
     HFONT f[16] = {};
     int size[16] = {};
     bool bold[16] = {};
+    const wchar_t* face[16] = {};   // (the language's font can change while the panel lives: a font is kept per face)
     HFONT Get(int px, bool b) {
+        const wchar_t* want = uitext::Face(L"Georgia");
         for (int i = 0; i < 16; ++i)
-            if (f[i] && size[i] == px && bold[i] == b) return f[i];
+            if (f[i] && size[i] == px && bold[i] == b && face[i] == want) return f[i];
         for (int i = 0; i < 16; ++i)
             if (!f[i]) {
                 f[i] = CreateFontW(-px, 0, 0, 0, b ? FW_BOLD : FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-                                   CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY, DEFAULT_PITCH, L"Georgia");
+                                   CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY, DEFAULT_PITCH, want);
                 size[i] = px;
                 bold[i] = b;
+                face[i] = want;
                 return f[i];
             }
         return f[0];
@@ -89,8 +93,8 @@ struct Fonts {
 // `box` in pixels; the text centred in it (both ways) unless `left`; wrapped at the box's width.
 inline void Text(Canvas& cv, Fonts& fonts, const char* utf8, Rect box, int size, bool bold, Col color, float alpha = 1.0f, bool left = false) {
     if (!utf8 || !*utf8) return;
-    wchar_t w[256] = {};
-    MultiByteToWideChar(CP_UTF8, 0, utf8, -1, w, 255);
+    const std::wstring wide = lang::FromUtf8(utf8);   // (any length: a translated line is longer than the English)
+    const wchar_t* w = wide.c_str();
     const int bw = std::max(1, int(box.r - box.l)), bh = std::max(1, int(box.b - box.t));
     BITMAPINFO bi = {};
     bi.bmiHeader.biSize = sizeof bi.bmiHeader;

@@ -131,6 +131,22 @@ inline bool GameWalkMode(int mode) { return mode < 0 || mode == 2 || mode == 3 |
 // The game says he stands (a known mode, not a walk): the cone's hold through no speed is not wanted - it is for a turn from forward to back, which the
 // game walks through.
 inline bool GameStands(int mode) { return mode >= 0 && !GameWalkMode(mode); }
+// ... but only when it says so for a while. Serg's 2026-10-29 18:13 log (0.188.4, the paladin, F2): of ~250 poses while he went 50-145 read the standing
+// mode 1, and in one 5 s window the walk back was on for 100 poses and never wholly - each such frame dropped the cone (GameStands), so the share dithered
+// between the game's forward walk and the walk played backwards, and a blend of those two (one leg ahead in one, behind in the other) passes the feet
+// through each other: the scissor he still saw walking steadily back. A standing mode counts once it has held kStandS.
+struct ModeGate {
+    static constexpr float kStandS = 0.2f;
+    float standS = 0.0f;   // how long the game has said he stands
+    bool Stands(int mode, float dt) {
+        standS = GameStands(mode) ? standS + std::clamp(std::isfinite(dt) ? dt : 0.0f, 0.0f, 0.25f) : 0.0f;
+        return standS > kStandS;
+    }
+};
+// The game's turn in the skeleton (TurnAbout above) is taken out only this long after his matrix turned at once by more than kFlipDeg: the 2026-10-29
+// log found the paladin's anim bone a few degrees off its bind pose all the while he stood (852 poses, up to 8 deg) - that is his stance, not a turn.
+constexpr float kFlipDeg = 45.0f;
+constexpr double kTurnS = 0.6;
 
 // One pose of the game's walk, as the game drew it.
 struct Sample {
@@ -139,7 +155,8 @@ struct Sample {
     double t0 = 0.0;         // when that stretch began
     float dt = 0.0f;         // since the pose before it in its stretch (0: the first of it)
     float feet[6] = {};      // both feet's places (the pose's own frame): what Match compares
-    std::vector<M4> pose;    // the lower body's bones
+    int gait = 0;            // the game's walk it is from (its unit mode: 2 walk, 3 run, 6 town walk; 0 not known) - a change starts another stretch
+    std::vector<M4> pose;    // the bones kept (the lower body; WalkBackLegs keeps the trunk after it)
 };
 
 class Reverser {
@@ -162,8 +179,10 @@ public:
     int TakeJumps() { const int j = jumps_; jumps_ = 0; return j; }
 
     // The game's own pose at t (count bones). Only his walking is kept: standing (walking false) for more than kGraceS ends a stretch where he last
-    // walked. A pose of another size than those kept starts the store again (another rig).
-    void Record(double t, bool walking, const M4* pose, int count, const float feet[6]) {
+    // walked. A pose of another size than those kept starts the store again (another rig). gait: the game's walk it is (its mode; 0 not known) - Serg's
+    // 2026-10-29 run backwards: walk and run went into one stretch, so the play-back could go from his run into the walk kept before it; a change of
+    // gait starts another stretch, and Step's jumps land on the gait he is in.
+    void Record(double t, bool walking, const M4* pose, int count, const float feet[6], int gait = 0) {
         if (!std::isfinite(t) || count <= 0) return;
         if (!walking) {
             if (!open_) return;
@@ -179,7 +198,7 @@ public:
         }
         if (n_ && (int)At(n_ - 1).pose.size() != count) Reset();
         if (n_ && t <= At(n_ - 1).t) return;   // (the same time again)
-        const bool same = n_ && open_;
+        const bool same = n_ && open_ && At(n_ - 1).gait == gait;
         const int seg = same ? At(n_ - 1).seg : (n_ ? At(n_ - 1).seg + 1 : 0);
         const double t0 = same ? At(n_ - 1).t0 : t;
         const float dt = same ? (float)(t - At(n_ - 1).t) : 0.0f;
@@ -189,6 +208,7 @@ public:
         s.seg = seg;
         s.t0 = t0;
         s.dt = dt;
+        s.gait = gait;
         std::memcpy(s.feet, feet, sizeof s.feet);
         s.pose.assign(pose, pose + count);
         head_ = (head_ + 1) % kCap;
@@ -202,7 +222,8 @@ public:
     // The pose to draw at this call (dt since the last), the game's walk played backwards; nullptr: nothing kept. active false: let go - the next start
     // is from the newest pose (the game's own of that moment, so it starts without a jump).
     // Between two kept poses the one drawn is blended from both at the cursor's time (the frames come at their own times, not the game's).
-    const Sample* Step(double dt, bool active) {
+    // gait (>= 0): the gait he is in now - a pose of another gait is left (a jump), and jumps land on this gait if any of it is kept.
+    const Sample* Step(double dt, bool active, int gait = -1) {
         if (!active || !n_) { on_ = false; return nullptr; }
         int i = n_ - 1;
         float frac = 0.0f;   // of the way from pose i to pose i + 1
@@ -215,8 +236,9 @@ public:
             i = Before(cursor_);
             // out of the stretch it was in (its start passed, or dropped from the store): on from the kept pose most like the one drawn last - one frame
             // back from it, as from the one drawn
-            if (i < 0 || At(i).seg != lastSeg_) {
-                const int to = Match(last_, lastSpeed_, lastSeg_, lastT_ + kMinJumpS);
+            if (i < 0 || At(i).seg != lastSeg_ || (gait >= 0 && At(i).gait != gait && Match(last_, lastSpeed_, -1, 0.0, gait) >= 0)) {
+                int to = Match(last_, lastSpeed_, lastSeg_, lastT_ + kMinJumpS, gait);
+                if (to < 0 && gait >= 0) to = Match(last_, lastSpeed_, lastSeg_, lastT_ + kMinJumpS);   // (none of his gait kept yet: any)
                 if (to < 0) { on_ = false; return nullptr; }   // (no stretch long enough kept yet)
                 cursor_ = Between(to, last_) - step;
                 i = Before(cursor_);
@@ -248,13 +270,13 @@ public:
 
     // The kept pose most like feet / speed (both feet at the same places, going the same ways), with kMinBackS of its stretch before it; in stretch `seg`
     // only later than `after` (-1: none).
-    int Match(const float feet[6], const float speed[6], int seg, double after) const {
+    int Match(const float feet[6], const float speed[6], int seg, double after, int gait = -1) const {
         float v[6];
         int best = -1;
         float bestD = 0.0f;
         for (int k = 0; k < n_; ++k) {
             const Sample& b = At(k);
-            if ((b.seg == seg && b.t <= after) || b.t - b.t0 < kMinBackS) continue;
+            if ((b.seg == seg && b.t <= after) || b.t - b.t0 < kMinBackS || (gait >= 0 && b.gait != gait)) continue;
             Speed(k, v);
             float d = 0.0f;
             for (int j = 0; j < 6; ++j) {

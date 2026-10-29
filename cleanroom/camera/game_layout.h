@@ -126,6 +126,12 @@ inline constexpr Site    GetModelRadius { 0xD8FE60, GetModelRadiusBytes, sizeof(
 inline constexpr uint8_t RecalcCheckBytes[] { 0x80, 0x3D, 0xBC, 0x76, 0xE0, 0x02, 0x00 };
 inline constexpr Site    ModelRecalcCheck { 0x6AF5B1, RecalcCheckBytes, sizeof(RecalcCheckBytes) };
 inline constexpr uint64_t ModelRecalcEveryFrame = 0x34B6C74;
+// bool InStandbyRange(const float box[8], const float hero[4], float radiusSq, int): the AssetStandbySystem's
+// per-model test (its one caller is the system's per-model step): true while the model's box (min x y z w,
+// max x y z w) is nearer the hero across the ground than the radius. Found by bearstonem (D2R VR Unleashed
+// 9e9c241); hooked only for [render] big_radius (cleanroom/drawdist/unleashed_big_objects.cpp).
+inline constexpr uint8_t ModelInRangeBytes[] { 0x0F, 0x10, 0x49, 0x10, 0x0F, 0x57, 0xC0, 0x0F, 0x10, 0x21, 0x0F, 0x28, 0xEA, 0x0F, 0x10, 0x12 };
+inline constexpr Site    ModelInRange { 0x15723B0, ModelInRangeBytes, sizeof(ModelInRangeBytes) };
 
 // ---- Memory pools (Renderer Pool, Entity System Pool) ------------------------
 // Both are TlsfAllocator objects: a fixed buffer handed to a TLSF heap, every

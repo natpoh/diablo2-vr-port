@@ -15,6 +15,7 @@
 #include <string>
 
 #include "render_size.h"
+#include "ui_text.h"   // the page's words in the player's language ([hud] headset_language)
 
 namespace hset::video {
 
@@ -51,6 +52,13 @@ inline constexpr Preset kPresets[kPresetCount] = {
     {"4096", rendersize::Kind::Square, 4096},
     {"Headset's own", rendersize::Kind::Headset, 0},
 };
+// A preset's button: the two that are words in the player's language, the squares their numbers.
+inline const char* PresetLabel(int i) {
+    if (i < 0 || i >= kPresetCount) return "";
+    if (kPresets[i].kind == rendersize::Kind::Desktop) return uitext::Tr("vr.video.preset_window", "Window's size");
+    if (kPresets[i].kind == rendersize::Kind::Headset) return uitext::Tr("vr.video.preset_headset", "Headset's own");
+    return kPresets[i].label;
+}
 inline Pick PickOfPreset(int i) {
     if (i < 0 || i >= kPresetCount) return {};
     return {kPresets[i].kind, kPresets[i].side};
@@ -93,15 +101,17 @@ inline int StepSide(int side, int delta) { return SideOfStop(StopOfSide(side) + 
 
 // -- texts ------------------------------------------------------------------------------------------------------
 inline std::string SizeText(Size s) {
-    if (!s) return "not known yet";
+    if (!s) return uitext::Tr("vr.video.not_known", "not known yet");
     return std::to_string(s.w) + " x " + std::to_string(s.h);
 }
 // What a choice makes of the picture: "2560 x 2560", "the window's own size", "the headset's own, 2496 x 2688".
 inline std::string PickText(const Pick& p, const Env& e) {
     switch (p.kind) {
-        case rendersize::Kind::Headset: return e.recommended ? "Headset's own: " + SizeText(e.recommended) : std::string("Headset's own size");
+        case rendersize::Kind::Headset:
+            return e.recommended ? uitext::TrF("vr.video.pick_headset_size", "Headset's own: {size}", {{"size", SizeText(e.recommended)}})
+                                 : std::string(uitext::Tr("vr.video.pick_headset", "Headset's own size"));
         case rendersize::Kind::Square: return std::to_string(p.side) + " x " + std::to_string(p.side);
-        default: return "Window's own size";
+        default: return uitext::Tr("vr.video.pick_window", "Window's own size");
     }
 }
 // The pixel size a choice asks for, if it is known now ({} = the window's own, or not known).
@@ -116,24 +126,25 @@ inline Size SizeOf(const Pick& p, const Env& e) {
 inline std::string CostText(const Pick& p, const Env& e) {
     const Size s = SizeOf(p, e);
     if (!s) {
-        if (p.kind == rendersize::Kind::Headset) return "Its size is read when the game first starts a headset session.";
-        return "Nothing changes: the picture is the game window's.";
+        if (p.kind == rendersize::Kind::Headset) return uitext::Tr("vr.video.cost_headset_unknown", "Its size is read when the game first starts a headset session.");
+        return uitext::Tr("vr.video.cost_window", "Nothing changes: the picture is the game window's.");
     }
-    char b[96];
-    std::snprintf(b, sizeof b, "Draws %.2f x the pixels of 2048 x 2048.", rendersize::CostVs2048(s.w, s.h));
-    return b;
+    return uitext::TrF("vr.video.cost", "Draws {times} x the pixels of 2048 x 2048.", {{"times", uitext::Num("%.2f", rendersize::CostVs2048(s.w, s.h))}});
 }
 // "Your headset takes 2400 at most: shrunk to that." when the choice is over what the runtime holds, else empty.
 inline std::string LimitText(const Pick& p, const Env& e) {
     if (p.kind != rendersize::Kind::Square || !e.maximum) return {};
     const int most = std::min(e.maximum.w, e.maximum.h);
     if (most <= 0 || p.side <= most) return {};
-    return "Your headset takes " + std::to_string(most) + " at most: shrunk to that.";
+    return uitext::TrF("vr.video.limit", "Your headset takes {most} at most: shrunk to that.", {{"most", std::to_string(most)}});
 }
 // "In the game now: 2048 x 2048. Your headset recommends 2496 x 2688."
 inline std::string NowText(const Env& e) {
-    std::string t = e.now ? "The game draws " + SizeText(e.now) + " now." : std::string("The game's picture size is not known yet.");
-    t += e.recommended ? " Your headset recommends " + SizeText(e.recommended) + "." : " Your headset's size is read when the game first starts a session.";
+    std::string t = e.now ? uitext::TrF("vr.video.now", "The game draws {size} now.", {{"size", SizeText(e.now)}})
+                          : std::string(uitext::Tr("vr.video.now_unknown", "The game's picture size is not known yet."));
+    t += " ";
+    t += e.recommended ? uitext::TrF("vr.video.recommended", "Your headset recommends {size}.", {{"size", SizeText(e.recommended)}})
+                       : std::string(uitext::Tr("vr.video.recommended_unknown", "Your headset's size is read when the game first starts a session."));
     return t;
 }
 

@@ -37,11 +37,11 @@ bool Paint(const Model& m, const Hit& hover, std::vector<uint32_t>& rgba, const 
     HGDIOBJ oldBmp = SelectObject(dc, bmp);
     SetBkMode(dc, TRANSPARENT);
     HFONT normal = CreateFontW(26, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                               ANTIALIASED_QUALITY, DEFAULT_PITCH, L"Segoe UI");
+                               ANTIALIASED_QUALITY, DEFAULT_PITCH, uitext::Face(L"Segoe UI"));
     HFONT bold = CreateFontW(30, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                             ANTIALIASED_QUALITY, DEFAULT_PITCH, L"Segoe UI");
+                             ANTIALIASED_QUALITY, DEFAULT_PITCH, uitext::Face(L"Segoe UI"));
     HFONT small = CreateFontW(22, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                              ANTIALIASED_QUALITY, DEFAULT_PITCH, L"Segoe UI");
+                              ANTIALIASED_QUALITY, DEFAULT_PITCH, uitext::Face(L"Segoe UI"));
     HGDIOBJ oldFont = SelectObject(dc, normal);
 
     auto colour = [](Role r) -> COLORREF {

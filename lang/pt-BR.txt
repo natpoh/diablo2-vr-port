@@ -131,6 +131,8 @@ group.status.help = O que está instalado e em execução: BodyWalk, FlatVR, Gam
 @update.check_now.label = Verificar atualizações
 @update.check_now.tip = Pergunta agora ao bodywalkvr.com, mesmo com a verificação ao abrir desligada. Nada é baixado.
 group.d2r_vr.help = Este programa e o mod: o idioma deste programa, a versão, a verificação de atualizações e Coletar logs - um zip com o que o suporte precisa para achar um problema.
+hud.headset_language.label = No headset também
+hud.headset_language.tip = As palavras que o mod desenha no headset - o painel de habilidades, as configurações no headset, o guia de primeiro uso, o aviso de calibração, os botões do mapa - no idioma escolhido acima. Um texto ainda não traduzido fica em inglês. Desligado: inglês, como antes. Os textos do próprio jogo ficam no idioma do jogo (nas configurações dele).
 @status.update.label = A verificação de atualizações está desligada
 @update.download.label = Baixar
 @update.download.tip = Abre a página de download no seu navegador. Este programa nunca baixa nem executa nada por conta própria.
@@ -211,7 +213,7 @@ sky.enabled.tip = Um céu pintado sobre o vazio negro ao ar livre. Quem o desenh
 ceiling.enabled.label = Teto nas cavernas (via ReShade)
 ceiling.enabled.tip = Uma abóbada de pedra sobre o vazio preto nas masmorras, só em primeira pessoa.
 ceiling.game_ceiling.label = Quem desenha o teto
-ceiling.game_ceiling.tip = O nosso efeito: a abóbada pelo shader de neblina - o do ReShade, ou o próprio do D2R VR sem ReShade. O jogo: uma laje da própria rocha de caverna do jogo, feita a partir dos arquivos do seu jogo, que o jogo desenha e ilumina sozinho - as tochas dele e a sua luz sobre ela, a neblina dele por cima, fogo e magias na frente - posta sobre você a cada quadro, sem tempo de quadro nosso (um teste: só VR F4). Cada sala com a própria pedra do jogo combinada com a imagem escolhida para ela: rocha nas cavernas, lajes altas na cripta, pedra lisa no quartel, nas catacumbas e na catedral, mármore ornamentado no palácio. Uma sala que ainda não tem nenhuma (os esgotos do Ato 2) mantém a abóbada do nosso efeito com as configurações dela, como no F3 plano. As outras configurações de teto abaixo são do nosso efeito; o tamanho do ladrilho define também o da rocha. Ao vivo.
+ceiling.game_ceiling.tip = O nosso efeito: a abóbada pelo shader de neblina - o do ReShade, ou o próprio do D2R VR sem ReShade. O jogo: uma laje da própria rocha de caverna do jogo, feita a partir dos arquivos do seu jogo, que o jogo desenha e ilumina sozinho - as tochas dele e a sua luz sobre ela, a neblina dele por cima, fogo e magias na frente - posta sobre você a cada quadro, sem tempo de quadro nosso (um teste: só VR F4). Cada sala com a própria pedra do jogo combinada com a imagem escolhida para ela: rocha nas cavernas, lajes altas na cripta, pedra lisa no quartel, nas catacumbas e na catedral, mármore ornamentado no palácio; uma sala sem imagem combinada com a pedra do próprio chão (os esgotos do ato 2, o harém corrompido, o porão do palácio). As outras configurações de teto abaixo são do nosso efeito; o tamanho do ladrilho define também o da rocha. Ao vivo.
 ceiling.game_ceiling.choice0 = Nosso efeito (ReShade / o próprio do D2R VR)
 ceiling.game_ceiling.choice1 = O jogo (rocha iluminada)
 ceiling.steps.label = Passos de relevo do teto
@@ -232,6 +234,8 @@ group.draw_distance.help#2 = Até onde o mundo é desenhado ao seu redor, num s�
 # --- What the slider sets ---
 group.what_the_slider_sets = O que o controle deslizante define
 group.what_the_slider_sets.help = Cada valor que o controle deslizante Distância de desenho grava, para definir à mão. Os da neblina ficam acinzentados enquanto a neblina de distância está desligada, os da cúpula do céu enquanto o jogo não desenha o céu (aba Céu: "Céu e neblina desenhados por"), os da cúpula da caverna enquanto ela está desligada.
+render.big_radius.label = Objetos grandes: árvores, casas, muros mais longe (0 = desligado)
+render.big_radius.tip = Árvores, casas e muros continuam desenhados além do raio de visibilidade dos modelos - quanto maiores, mais longe (30 vezes a altura ou metade da largura), até esta quantidade de unidades (300 - 1000; 100 e 200 contam como 300). Pedras, grama e monstros mantêm o raio de visibilidade dos modelos. Precisa de anéis de salas 3 ou mais (além das salas que o jogo monta não há nada para desenhar), e da neblina total e da cúpula de céu além dela para ser visto. Custa quadros em florestas e cidades. Do D2R VR Unleashed (bearstonem). Só visual. Ao vivo. 0 = desligado, como antes.
 sky.game_sky_radius.label = Céu do jogo: raio da cúpula, unidades
 sky.game_sky_radius.tip = A que distância ao seu redor a cúpula de céu do jogo é posta, em unidades do jogo (ao vivo). 200: um horizonte próximo - a cúpula corta o mundo distante num círculo limpo, com a neblina do jogo sobre ela. Mais longe o céu sai da neblina. O log informa o raio em uso a cada mudança.
 fog.enabled.tip#2 = Uma neblina de distância. Quem a desenha: o seletor da aba Céu (nosso efeito ou o próprio jogo). Com o céu ligado, ela se funde ao céu.
@@ -1563,6 +1567,12 @@ fog.game_fog_caves_black.label = A neblina do jogo escurece até o preto nas cav
 fog.game_fog_caves_black.tip = No subsolo a neblina do jogo se apaga até o preto, seja qual for a cor de neblina das cavernas, e o vazio além da borda do teto da caverna é deixado em paz - o passe de neblina do jogo punha a névoa iluminada por tochas sobre ele inteiro, uma faixa clara atrás das fogueiras. A distância escurece, nunca brilha. Só sem ReShade. Ao vivo.
 fog.game_fog_our_curve.label = A neblina do jogo pela nossa curva
 fog.game_fog_our_curve.tip = A própria passada de neblina do jogo faz a neblina surgir como o nosso efeito faz - de Início da neblina até Neblina total pela Atenuação abaixo (nas cavernas o início, o fim e a força próprios delas) - em vez da exponencial própria dela, que põe quase toda a neblina logo depois do início e deixa a faixa distante de um cinza só. Algumas instruções na passada dela, nada acrescentado. Só sem ReShade. Ao vivo.
+fog.fog_keeps_colour.label = A neblina do jogo mantém a cor do ato à noite
+fog.fog_keeps_colour.tip = Enquanto o jogo desenha a neblina: a cor dela é a do próprio ato (as cores acima) a qualquer hora - o distante se apaga numa névoa clara dela, nunca rumo ao preto. A neblina do nosso efeito não muda. Desligado: ela escurece com a luz do jogo, como antes. Ao vivo.
+fog.fog_into_sky.label = A neblina do jogo dissolve o distante no céu atrás dele
+fog.fog_into_sky.tip = Ao ar livre a cor da neblina em cada ponto é o céu logo atrás dele, como no Santuário Arcano: a terra distante, a borda do mundo e prédios altos distantes se apagam no céu, não numa cor plana só (a parte baixa do céu é a cor de neblina do ato, como é desenhada). Objetos distantes mostram o céu através deles. Só a neblina do jogo (com "A neblina do jogo tão densa e tão colorida quanto a nossa"); a neblina do nosso efeito não muda. No subsolo como antes. Ao vivo. Desligado: uma cor de neblina só, como antes.
+fog.game_fog_match.label = A neblina do jogo tão densa e tão colorida quanto a nossa
+fog.game_fog_match.tip = A neblina do jogo saía mais escura que a cor de neblina do ato (a gradação de cor da área) e mais rala que a nossa (ela afina acima dos olhos, e sem a nossa curva é a do próprio jogo): no ato 4 a terra distante ficava como uma silhueta escura e não escondia nada. Marcado, o efeito mede o que a neblina do jogo mostra onde ela está completa, move cada pixel enevoado rumo à cor do ato pela parcela do jogo e completa a parcela que o jogo deixou de fora até a da nossa própria neblina - a terra distante, a borda do mundo e planos distantes escondidos como pela nossa neblina antiga. Nunca sobre o céu do jogo. Uma passada do nosso efeito, que roda de qualquer jeito para o céu. Ao vivo. Desligado: como o jogo a põe.
 fog.game_fog_before_fx.label = A neblina do jogo antes da fumaça e do fogo
 fog.game_fog_before_fx.tip = A neblina posta sobre a cena antes de o jogo acrescentar a fumaça, a névoa e o fogo, para que fiquem sobre o mundo enevoado sem neblina - sem isso o passe de neblina do jogo os embaça pela parede atrás deles (bruma recortada em buracos pretos diante de paredes distantes). Um passe nosso na placa de vídeo (o custo dele na linha de 10 s do log). Só sem ReShade. Vale quando o jogo é iniciado de novo.
 fog.game_fog_height.label = A neblina do jogo afina com a altura
@@ -1571,6 +1581,8 @@ fog.game_fog_top.label = A neblina do jogo: o topo dela, unidades acima dos olho
 fog.game_fog_top.tip = Até que altura chega a neblina do jogo: nenhuma acima disso, em unidades do mundo acima dos seus olhos (o herói tem cerca de 7.5 de altura; a cúpula de céu no raio dela). Ao vivo.
 fog.game_fog_soft.label = A neblina do jogo: suavidade do topo dela, unidades
 fog.game_fog_soft.tip = Quanto abaixo do topo a neblina do jogo se apaga: pequeno, uma borda nítida; grande, um desvanecer longo e suave. Ao vivo.
+fog.game_fog_top_from_floor.label = A neblina do jogo: o topo contado do chão do herói
+fog.game_fog_top_from_floor.tip = O topo acima é contado a partir do chão onde o herói está, não dos seus olhos: uma câmera bem acima do herói (terceira pessoa, a visão de cima) não muda mais onde a neblina termina, e a terra abaixo dos seus olhos não fica toda enevoada com uma linha na altura dos olhos. Desligado: a partir dos olhos, como antes. Desmarcar "A neblina do jogo afina com a altura" em vez disso dá a neblina só pela distância, como a nossa própria neblina. Ao vivo.
 fog.end.tip#2 = Onde a neblina é total. Unidades do mundo (o herói tem cerca de 7.5 de altura).
 fog.curve.label = Atenuação
 fog.curve.tip = 1 = linear; mais = uma distância média mais nítida.
@@ -1582,6 +1594,10 @@ render.fog_in_frame.label = Neblina desenhada dentro do quadro do jogo (teste)
 render.fog_in_frame.tip = A neblina é desenhada na própria imagem do jogo antes do seu fogo, magias e fumaça, e o jogo os põe sobre a cena com neblina: uma tocha, um Raio de Fogo ou um Inferno diante de uma parede distante não fica com neblina como a parede. O céu e o preto além do mundo mantêm a neblina como antes. Com a cor de neblina própria de um ato (Mundo > Céu); só VR F4. Aplica-se quando o jogo é iniciado de novo; desligado = a neblina como antes. Tem precedência sobre "A neblina poupa fogo, magias e fumaça" quando as duas estão ligadas.
 fog.caves.label = Neblina em cavernas e masmorras
 fog.caves.tip = Desligado: sem neblina no subsolo (toda área que não é ao ar livre); o ar livre a mantém. O Santuário Arcano tem o próprio interruptor (Céu > Santuário Arcano: a neblina se dissolve no céu dele).
+fog.ease_in.label = Neblina que entra suave, sem anel duro
+fog.ease_in.tip = A neblina surge suavemente nas primeiras 40 unidades depois do início dela: sem borda nítida ao redor do chão limpo aos seus pés. Onde quer que a nossa curva desenhe a neblina: o nosso efeito, e a neblina do jogo com "A neblina do jogo pela nossa curva" ligado (não a curva própria do jogo). Do D2R VR Unleashed (bearstonem). Ao vivo. Desligado: a neblina como antes.
+fog.no_fog_river.label = Sem neblina no Rio de Chamas
+fog.no_fog_river.tip = Nenhuma neblina acrescentada no Rio de Chamas, embora seja ao ar livre: o brilho e a névoa da própria lava continuam os do jogo. A neblina do nosso efeito e a do jogo, igualmente. Do D2R VR Unleashed (bearstonem). Ao vivo. Desligado: a neblina ali como em todo lugar ao ar livre.
 fog.caves_strength.label = Intensidade da neblina nas cavernas
 fog.caves_strength.tip = Quanto a neblina total cobre nas cavernas: 1 = o fundo some na cor da neblina, menos = ele aparece através dela.
 fog.color_caves.label = Cor da neblina nas cavernas
@@ -1598,9 +1614,9 @@ render.own_depth.tip = De onde a neblina, o céu e o teto da caverna tiram a pro
 render.own_depth.choice0 = A profundidade própria do ReShade
 render.own_depth.choice1 = A nossa, escolhida uma vez
 render.depth_fix_mode.label = Como essa profundidade é definida
-render.depth_fix_mode.tip = Em cada passada, ao ser vinculada (o jeito do D2R VR, como antes): todo buffer de constantes que o jogo vincula recebe a nossa faixa de profundidade - uma passada que recebe suas constantes de outro jeito mantém a do jogo. Uma vez por quadro, onde o jogo a produz (encontrado por bearstonem/d2r-pcvr): a faixa é escrita logo depois de o jogo montar as constantes do quadro, antes de qualquer passada lê-las, então toda passada - neblina, oclusão de ambiente, partículas, grama - lê a mesma profundidade; ela vai do plano próximo da nossa câmera até o fim distante do próprio jogo (a distância abaixo não é usada). Para comparar: a grama do ato 1, o véu da cidade do ato 2, a névoa nos cantos. Desligado: a profundidade do próprio jogo, como "Os efeitos do jogo medem a profundidade a partir da nossa câmera" desmarcado. Ao vivo.
+render.depth_fix_mode.tip = Em cada passada, ao ser vinculada (o jeito do D2R VR, como antes): todo buffer de constantes que o jogo vincula recebe a nossa faixa de profundidade - uma passada que recebe suas constantes de outro jeito mantém a do jogo. Funciona só pelo ReShade: sem ReShade não faz nada, e a oclusão de ambiente, os reflexos, a água, as luzes e a neblina de altura do jogo mantêm a profundidade da câmera dele - pedra mais turva e mais plana, luz mais fraca de braseiros e tochas (com a neblina do jogo escolhida, a próxima opção é definida sozinha). Uma vez por quadro, onde o jogo a produz (encontrado por bearstonem/d2r-pcvr): a faixa é escrita logo depois de o jogo montar as constantes do quadro, antes de qualquer passada lê-las, então toda passada - neblina, oclusão de ambiente, partículas, grama - lê a mesma profundidade; ela vai do plano próximo da nossa câmera até o fim distante do próprio jogo (a distância abaixo não é usada). Para comparar: a grama do ato 1, o véu da cidade do ato 2, a névoa nos cantos. Desligado: a profundidade do próprio jogo, como "Os efeitos do jogo medem a profundidade a partir da nossa câmera" desmarcado. Ao vivo.
 render.depth_fix_mode.choice0 = Desligado (a do próprio jogo)
-render.depth_fix_mode.choice1 = Em cada passada, ao ser vinculada
+render.depth_fix_mode.choice1 = Em cada passada, ao ser vinculada (só com ReShade)
 render.depth_fix_mode.choice2 = Uma vez por quadro, onde o jogo a produz
 render.depth_range.label = Até onde essa profundidade alcança
 render.depth_range.tip = Unidades do mundo (o herói tem cerca de 7.5 de altura). O que está mais longe conta como céu para a neblina do jogo; menos é mais fino perto do herói.
@@ -1616,7 +1632,7 @@ render.roofs_two_sided.tip = O jogo desenha um telhado só de cima, então, de b
 render.portal_no_oval.label = Sem oval preto no Portal da Cidade (F2 - F4)
 render.portal_no_oval.tip = O oval preto do Portal da Cidade fica parado enquanto o anel azul dele se vira para a câmera, então de qualquer visão exceto a do próprio jogo, de cima, ele fica ao lado do anel. Ligado: o oval não é desenhado no F2, F3 e F4, o anel é; o F1 o mantém. Para portais vistos a partir de então (uma área nova, ou depois de reiniciar). Do fork plano de sajmonsoft. Desligado: desenhado como o jogo o tem.
 render.light_bounds_fix.label = Corrigir a iluminação do jogo numa janela quadrada ou larga
-render.light_bounds_fix.tip = O jogo corta a imagem em 32 x 20 ladrilhos e acha a faixa de profundidade de cada ladrilho para as luzes com um shader que só está certo numa janela 16:10. Numa janela quadrada ou larga (a janela VR, 16:9) ele perde fileiras: luzes somem em retângulos duros e o sombreamento de um telhado pisca quando a cabeça se move. Ligado: o nosso próprio shader faz esse trabalho certo enquanto o VR renderiza (em 16:10 os números são os mesmos do jogo). Desligado, vale na hora; ligado de novo, vale na próxima inicialização do jogo. Desligado: o shader do próprio jogo.
+render.light_bounds_fix.tip = O jogo corta a imagem em 32 x 20 ladrilhos e acha a faixa de profundidade de cada ladrilho para as luzes com um shader que só está certo numa janela 16:10. Numa janela quadrada ou larga (a janela VR, 16:9) ele perde fileiras: luzes somem em retângulos duros e o sombreamento de um telhado pisca quando a cabeça se move. Ligado: o nosso próprio shader faz esse trabalho certo enquanto o VR renderiza, com ReShade ou sem ele (em 16:10 os números são os mesmos do jogo). Desligado, vale na hora; marcado de novo, vale na próxima inicialização do jogo. Desligado: o do próprio jogo.
 render.light_bounds_flat.label = ... no modo plano também
 render.light_bounds_flat.tip = A mesma correção no modo plano (um monitor ou uma janela, também a imagem plana do OpenXR nativo): o shader do jogo também está errado em 16:9 e numa janela quadrada, não só em VR. Acompanha o modo na hora. Desligado: o modo plano mantém o shader do próprio jogo, como antes.
 
@@ -1627,8 +1643,8 @@ group.render_distance.help = Até onde ao redor do herói o mundo é desenhado: 
 # --- Scenery ---
 group.scenery = Cenário
 group.scenery.help = Correções do cenário do jogo para a primeira pessoa: pisos que mantêm a altura quando você volta a uma sala, e a canoa das Docas de Kurast posta na água em vez de pendurada no céu. Só a imagem muda.
-render.keep_room_heights.label = Os pisos ficam onde estavam (sem chão que desliza na volta)
-render.keep_room_heights.tip = O jogo dá a cada sala de um nível uma altura quando começa a desenhá-la, ajustada às salas desenhadas ao redor dela naquele momento, e a esquece quando a sala sai de vista. As bordas dos ladrilhos dela não concordam em toda a volta, então uma sala a que você volta por outro caminho (ou depois de outra área ou da cidade) pode ficar um degrau mais alta ou mais baixa - da câmera do jogo lá em cima ninguém vê, da nossa o chão desliza: blocos empurrados para cima, para baixo e para os lados, com o vazio aparecendo entre eles. Ligado: cada sala mantém a altura com que foi desenhada pela primeira vez até você sair do jogo. Só a imagem; o mundo do jogo é plano, nada da luta nem dos caminhos muda. Ao vivo. Desligado: as alturas próprias do jogo, como antes.
+render.floors_stay.label = Os pisos ficam onde estavam (sem chão que desliza na volta)
+render.floors_stay.tip = O jogo dá a cada sala de um nível uma altura quando começa a desenhá-la, combinada com as salas desenhadas ao redor dela naquele momento, e a esquece quando a sala sai de vista. As bordas dos ladrilhos não batem em toda a volta, então uma sala à qual você volta por outro caminho (ou depois de outra área ou cidade) pode ficar um degrau mais alta ou mais baixa - da câmera do jogo lá de cima ninguém vê, da nossa o chão desliza: blocos empurrados para cima, para baixo e para o lado, o vazio aparecendo entre eles. Ligado: toda sala mantém a altura em que foi desenhada pela primeira vez até você sair do jogo. A troca: o jogo também conserta uma sala desenhada na altura errada (um degrau visto de longe, como no portão da Fortaleza do Pandemônio) quando a desenha de novo ao você se aproximar - com isto ligado, esse conserto não vem. Só a imagem; nada da luta ou dos caminhos muda. Ao vivo. Desligado (o padrão): as alturas do próprio jogo.
 world.kurast_boat.label = Docas de Kurast: a canoa no céu fica sobre a água
 world.kurast_boat.tip = O cenário HD da cidade põe uma canoa 50 unidades no alto, onde a visão de cima nunca olha; em primeira pessoa ela fica pendurada sobre as cabanas. Ligado: ela fica deitada na água junto às docas do oeste, onde o prefab dela foi construído - um número do arquivo de cenário da cidade alterado (encontrado por bearstonem/d2r-pcvr). Este programa cria esse arquivo a partir do próprio do seu jogo quando abre (Início: Canoa das Docas de Kurast) e o guarda dentro do mod (mods\D2R-VR\D2R-VR.mpq); nada do próprio jogo muda, nem nada com que você joga. Vale a partir da próxima inicialização do jogo (um jogo já em execução mantém a canoa onde estava). Desligado: o arquivo é retirado de novo, a canoa como o jogo a tem.
 
@@ -1650,6 +1666,19 @@ sky.drift.label = O céu gira devagar (as nuvens à deriva)
 sky.drift.tip = O céu pintado gira devagar ao seu redor. Desligado: ele fica parado - as estrelas pintadas nos céus noturnos giravam com as nuvens.
 sky.cover_rims.label = O céu sobre a borda escura ao redor de telhados e árvores
 sky.cover_rims.tip = O jogo desenha qualquer coisa contra o céu um pixel maior que a profundidade dela, com a borda misturada ao preto, e o céu não era pintado ali: um contorno escuro fino ao redor de todo telhado, copa de árvore e prédio distante, que os olhos, alternadamente, também afastavam deles a cada dois quadros. Marcado: o céu cobre esse pixel quando ele está fraco (a borda clara de um brilho permanece); as silhuetas ficam um pixel mais finas. Só primeira pessoa (F4). Desmarcado: como antes. Ao vivo. Instale a DLL e o D2R_DepthFog.fx juntos. De bearstonem/d2r-pcvr.
+sky.dome_fog_horizon.label = O céu do jogo: o horizonte dele na neblina
+sky.dome_fog_horizon.tip = A parte baixa do céu desenhado pelo jogo afunda na cor de neblina do ato, como fazia a do nosso próprio céu: a terra enevoada encontra o céu sem borda dura, e as cores combinam onde se encontram. Só enquanto uma neblina é desenhada. Desligado: o céu como o jogo o desenha. Ao vivo.
+sky.game_sky_closed.label = O céu do jogo: uma esfera inteira, uma cor embaixo
+sky.game_sky_closed.tip = O céu desenhado pelo jogo terminava 12 graus abaixo do horizonte: além da beira de um penhasco a borda dele ficava como uma linha dura com um buraco embaixo, o vazio e a neblina aparecendo através. Marcado, ele se fecha numa esfera inteira e a metade de baixo é de uma cor só - a do próprio céu no horizonte (com uma neblina desenhada, a da neblina: eles se encontram numa cor só). Em todo ato, VR e plano. Este programa refaz os modelos da cúpula na hora; o jogo os pega na próxima inicialização. Desligado: a cúpula aberta, como antes.
+sky.game_skybox.label = Cume do Arreat: a cúpula de céu bem longe
+sky.game_skybox.tip = No Cume do Arreat (nível 120) e no Cume uber (137) a cúpula de céu desenhada pelo jogo é posta tão longe quanto o buffer de profundidade a segura, para que a névoa do jogo ao longo dos penhascos fique na frente dela por mais longe que esteja. Desligado: os Cumes como qualquer área ao ar livre do ato 5 - a cúpula no raio de sempre. Ao vivo.
+sky.summit_backdrop_hidden.label = Cume do Arreat: sem imagem do chão em primeira pessoa
+sky.summit_backdrop_hidden.tip = Abaixo do Cume do Arreat (nível 120) e do Cume uber (137) o jogo põe uma imagem do chão bem lá embaixo, feita para ser vista de cima; em primeira pessoa ela fica como uma parede plana. Marcado, ela é escondida em VR primeira pessoa (F4) e em primeira pessoa plana (F3): o nosso céu e a nossa neblina aparecem no lugar dela e o mar de nuvens do jogo fica. As visões de cima a mantêm. Desligado: como o jogo a desenha. Ao vivo.
+sky.weather_first_person.label = Chuva e neve em primeira pessoa
+sky.weather_first_person.tip = O jogo põe a chuva e a neve numa caixa ao redor da própria câmera, bem acima e atrás do herói para a visão de cima dele; em primeira pessoa essa caixa fica pendurada no ar (a neve do Cume do Arreat). Escondida: sem chuva nem neve em VR primeira pessoa (F4) e em primeira pessoa plana (F3). Ao seu redor: a caixa posta na sua cabeça ali, para que caia ao seu redor. As outras visões mantêm a do jogo. A do jogo: como antes.
+sky.weather_first_person.choice0 = A do jogo (na câmera dele)
+sky.weather_first_person.choice1 = Escondida
+sky.weather_first_person.choice2 = Ao seu redor
 sky.arcane_sky.label = Santuário Arcano: suas próprias estrelas por toda parte
 sky.arcane_sky.tip = No Santuário Arcano, o vazio ao redor das plataformas mostra as camadas de estrelas e as nuvens do próprio jogo em todas as direções, também abaixo das plataformas (segundo bearstonem/d2r-pcvr). As imagens são feitas a partir dos arquivos do seu jogo quando este programa abre (Início: Céu do Santuário Arcano) e ficam dentro do mod (mods\D2R-VR); nada do jogo é alterado. Não nas visões de cima. Funciona também com o céu ao ar livre desligado. Desligado: o vazio como o jogo o desenha.
 sky.arcane_fog.label = Santuário Arcano: a neblina se dissolve no céu dele
@@ -1705,10 +1734,20 @@ tab.ceiling = Teto
 group.cave_ceiling = Teto da caverna
 group.cave_ceiling.help = Uma abóbada de pedra desenhada sobre o vazio preto nas cavernas, na profundidade real nos dois olhos; só primeira pessoa. Defina o tamanho do ladrilho e o relevo, uma parede distante e um chão abaixo para fechar o vazio, o contraste, o detalhe e o brilho úmido da pedra, e como tochas e monstros com fogo a iluminam.
 ceiling.enabled.tip#2 = Uma abóbada de pedra sobre o vazio preto nas cavernas, na profundidade real nos dois olhos. Só primeira pessoa; por enquanto as cavernas, criptas, quartel, catacumbas e catedral do ato 1 e os esgotos e o palácio do ato 2.
-ceiling.game_ceiling_height.label = O teto do jogo: altura (0 = a da área)
-ceiling.game_ceiling_height.tip = A que altura sobre o chão da área fica o teto de rocha do jogo, em unidades do mundo (ao vivo; o herói tem cerca de 7.5 de altura); a rocha dele fica um pouco mais baixa que isso. 0: a altura própria de cada área, como definida abaixo para o nosso efeito. O log informa a altura em uso a cada mudança.
 ceiling.game_ceiling_wall.label = O teto do jogo: dobrado em parede na borda
 ceiling.game_ceiling_wall.tip = Um anel da mesma rocha iluminada ao seu redor onde o teto do jogo termina (a cerca de 215 unidades de distância no tamanho de ladrilho 10), do teto até abaixo do chão (a profundidade do chão abaixo): o vazio preto além da borda do teto - uma faixa entre ele e o chão distante, iluminada pela neblina atrás das fogueiras - é fechado por pedra, como a parede distante do nosso efeito o fechava. Desligado: o teto plano. Ao vivo.
+ceiling.game_ceiling_beams.label = O teto do jogo: as próprias vigas de madeira do quartel
+ceiling.game_ceiling_beams.tip = O jogo traz uma armação de teto de madeira para o quartel (e a prisão dele) que nunca coloca: uma grade de vigas cuja base fica no topo das paredes do quartel. Marcado, o jogo desenha essa armação sobre você numa grade de armações inteiras fixas no mundo - o próprio modelo, a madeira e o tamanho dela, iluminada pelas tochas dele - com a pedra do quartel sobre as vigas para fechar os vãos entre elas. Feito a partir dos arquivos do seu jogo. Só VR F4. Desligado: o teto de pedra plano. Ao vivo.
+ceiling.game_ceiling_dome.label = O teto do jogo: a cúpula da catedral sobre a capela
+ceiling.game_ceiling_dome.tip = Na Catedral o teto do jogo sobe numa cúpula sobre a capela, como fazia ali a abóbada do nosso efeito: uma cúpula uniforme apoiada nos quatro pilares ao redor do altar, alta o bastante para passar sobre o dossel do altar. Onde, quão larga e quão alta vêm das próprias peças do jogo (medidas a partir dos arquivos do seu jogo, o dossel encontrado no jogo tal como é desenhado); a própria pedra da catedral, iluminada pelas velas dela. O resto da catedral mantém o teto plano na altura dele. Só VR F4. Desligado: o teto plano. Ao vivo.
+ceiling.game_ceiling_dome_size.label = A cúpula da catedral: tamanho
+ceiling.game_ceiling_dome_size.tip = Vezes a cúpula medida a partir das peças do jogo (1: apoiada nos quatro pilares da capela), ao redor do mesmo centro. A abóbada inteira cresce ou encolhe com ela - o padrão da pedra também - e a altura da cúpula acompanha, de modo que ela ainda passa sobre o dossel do altar (0.7 no mínimo: menor o atravessaria). VR F4. Ao vivo.
+ceiling.game_ceiling_dome_rise.label = A cúpula da catedral: altura
+ceiling.game_ceiling_dome_rise.tip = Vezes a menor altura que passa sobre o dossel do altar (1: logo acima dele). Só mais alta - mais baixa atravessaria o dossel. VR F4. Ao vivo.
+ceiling.game_ceiling_domes_over_tall.label = O teto do jogo: uma cúpula sobre cada peça alta
+ceiling.game_ceiling_domes_over_tall.tip = A cúpula da catedral, onde quer que uma das peças do jogo fique pelo menos duas vezes mais alta que o teto da sala dela, com pilares ao redor: o teto sobe numa cúpula só sobre essa peça, nesses pilares, alta o bastante para livrar o topo dela - a Pedra do Mundo na Câmara da Pedra do Mundo (nível 132), o arco da sala do trono (131), o salão do conselho de Travincal. Onde, quão larga e quão alta vêm das próprias peças e modelos do jogo (medidos a partir dos arquivos do seu jogo, a peça encontrada no jogo tal como é desenhada); a própria pedra da sala. O resto da sala mantém o teto plano. O tamanho e a altura da cúpula acima também valem para estas. Só VR F4. Desligado: o teto plano ali, como antes. Este programa refaz as abóbadas delas na hora; o jogo as pega na próxima inicialização.
+ceiling.height_from_walls.label = Altura do teto a partir das paredes da sala
+ceiling.height_from_walls.tip = Uma sala cuja própria altura abaixo não está definida (0) tem o teto nas próprias paredes: onde terminam as paredes com que o jogo monta essa sala (o meio do topo das peças de parede, pilar e penhasco dela, medido a partir dos arquivos do seu jogo). A altura própria de uma sala, uma vez definida, sempre vence. A abóbada do nosso efeito e o teto do jogo, ambos; a rocha do jogo que pende mais baixo apoia o ponto mais baixo dela nas paredes. Desligado, ou uma sala montada sem paredes desse tipo: 18 sobre o chão onde nenhuma altura está definida. O log diz a altura de cada sala e de onde ela vem. Ao vivo na próxima mudança de área.
 ceiling.scale.label = Tamanho do ladrilho
 ceiling.scale.tip = Unidades do mundo por ladrilho do relevo; a imagem de pedra abrange 4 ladrilhos.
 ceiling.steps.label#2 = Passos de relevo
@@ -1755,11 +1794,11 @@ cave_light.ambient.tip = A luz que preenche o lugar, dentro do círculo do heró
 cave_light.ambient_min.label = Luz de preenchimento no mínimo
 cave_light.ambient_min.tip = O que a masmorra tiver, pelo menos isto: só para as mais escuras (as tumbas do ato 2: 0.12). Onde a da própria área vezes o controle deslizante acima já é maior (as cavernas do ato 1: 2 x 2 = 4), não faz nada. 0 = sem piso.
 
-# --- Ceiling: act 1 caves ---
-group.ceiling_act_1_caves = Teto: cavernas do ato 1
-group.ceiling_act_1_caves.help = O teto sobre as cavernas do ato 1: sua altura sobre o chão, o brilho, até onde a luz do herói alcança nele, o relevo, e a imagem de pedra com seu tamanho, contraste, detalhe e brilho úmido.
-ceiling.height_act1_caves.label = Altura sobre o chão
-ceiling.height_act1_caves.tip = Unidades do mundo (o herói tem cerca de 7.5 de altura). Abaixo do topo das paredes, elas furam o teto.
+# --- Ceiling: act 1 caves (levels 8-16) ---
+group.ceiling_act_1_caves_levels_8_16 = Teto: cavernas do ato 1 (níveis 8-16)
+group.ceiling_act_1_caves_levels_8_16.help = O teto sobre as cavernas do ato 1: sua altura sobre o chão, o brilho, até onde a luz do herói alcança nele, o relevo, e a imagem de pedra com seu tamanho, contraste, detalhe e brilho úmido. Níveis: Covil do Mal (8), Caverna Nível 1 (9), Passagem Subterrânea Nível 1 (10), Buraco Nível 1 (11), Fosso Nível 1 (12), Caverna Nível 2 (13), Passagem Subterrânea Nível 2 (14), Buraco Nível 2 (15), Fosso Nível 2 (16).
+ceiling.height_act1_caves.label = Altura sobre o chão (0 = pelas paredes)
+ceiling.height_act1_caves.tip = Unidades do mundo (o herói tem cerca de 7.5 de altura). Abaixo do topo das paredes, elas furam o teto. 0: no topo das paredes da sala, medido a partir dos arquivos do seu jogo (com "Altura do teto a partir das paredes da sala"), senão 18.
 ceiling.brightness_act1_caves.label = Brilho (0 = preto)
 ceiling.brightness_act1_caves.tip = Menor = um teto mais escuro.
 ceiling.light_radius_act1_caves.label = Alcance da luz do herói
@@ -1776,23 +1815,23 @@ ceiling.contrast_act1_caves.tip = O detalhe fino da imagem vezes isto: mais = pe
 ceiling.detail_act1_caves.tip = Quanto os grãos e as rachaduras da imagem se destacam da pedra: eles pegam a luz.
 ceiling.wet_act1_caves.tip = Reflexos da luz do herói e das tochas na pedra (0 = seca).
 
-# --- Ceiling: act 1 crypts ---
-group.ceiling_act_1_crypts = Teto: criptas do ato 1
-group.ceiling_act_1_crypts.help = O teto sobre as criptas do ato 1: sua altura, brilho, o alcance da luz do herói, quanto a alvenaria irregular pende, e sua imagem.
+# --- Ceiling: act 1 crypts and tower (levels 18-25, 133) ---
+group.ceiling_act_1_crypts_and_tower_levels_18_25_133 = Teto: criptas e torre do ato 1 (níveis 18-25, 133)
+group.ceiling_act_1_crypts_and_tower_levels_18_25_133.help = O teto sobre as criptas do ato 1: sua altura, brilho, o alcance da luz do herói, quanto a alvenaria irregular pende, e sua imagem. Níveis: Cripta (18), Mausoléu (19), Torre Esquecida (20), Porão da Torre Nível 1 (21), Porão da Torre Nível 2 (22), Porão da Torre Nível 3 (23), Porão da Torre Nível 4 (24), Porão da Torre Nível 5 (25), Pandemonium Run 1 (133).
 ceiling.relief_act1_crypt.tip = Quanto a alvenaria irregular pende do teto, em unidades do mundo.
 
-# --- Ceiling: act 1 barracks ---
-group.ceiling_act_1_barracks = Teto: quartel do ato 1
-group.ceiling_act_1_barracks.help = O teto sobre o quartel do ato 1: sua altura, brilho, o alcance da luz do herói, relevo e imagem.
+# --- Ceiling: act 1 barracks and jail (levels 28-31) ---
+group.ceiling_act_1_barracks_and_jail_levels_28_31 = Teto: quartel e prisão do ato 1 (níveis 28-31)
+group.ceiling_act_1_barracks_and_jail_levels_28_31.help = O teto sobre o quartel do ato 1: sua altura, brilho, o alcance da luz do herói, relevo e imagem. Níveis: Quartel (28), Prisão Nível 1 (29), Prisão Nível 2 (30), Prisão Nível 3 (31).
 
-# --- Ceiling: act 1 catacombs ---
-group.ceiling_act_1_catacombs = Teto: catacumbas do ato 1
-group.ceiling_act_1_catacombs.help = O teto sobre as catacumbas do ato 1: sua altura (o que o jogo desenha mais alto é cortado), brilho, o alcance da luz do herói, relevo e imagem.
-ceiling.height_act1_catacombs.tip = Unidades do mundo (o herói tem cerca de 7.5 de altura). O que o jogo desenha mais alto é cortado pelo teto.
+# --- Ceiling: act 1 barracks' courtyard (level 28) ---
+group.ceiling_act_1_barracks_courtyard_level_28 = Teto: pátio do quartel do ato 1 (nível 28)
+group.ceiling_act_1_barracks_courtyard_level_28.help = O teto do jogo sob o pátio do quartel do ato 1 (o próprio calçamento de pedras dele) em VR F4, a nossa abóbada em F3 plano; sua altura sobre o chão. Níveis: Quartel (28).
+ceiling.height_act1_court_to_barracks.tip = Unidades do mundo (o herói tem cerca de 7.5 de altura). 0: no topo das paredes da sala, medido a partir dos arquivos do seu jogo (com "Altura do teto a partir das paredes da sala"), senão 18.
 
-# --- Ceiling: act 1 cathedral ---
-group.ceiling_act_1_cathedral = Teto: catedral do ato 1
-group.ceiling_act_1_cathedral.help = O teto sobre a catedral do ato 1. Além da altura, do brilho e da imagem, uma cúpula deixa o teto subir como uma esfera sobre o que fica mais alto (o dossel do altar) em vez de cortá-lo; defina a partir de que altura, quão larga e quão alta ela vai.
+# --- Ceiling: act 1 cathedral (level 33) ---
+group.ceiling_act_1_cathedral_level_33 = Teto: catedral do ato 1 (nível 33)
+group.ceiling_act_1_cathedral_level_33.help = O teto sobre a catedral do ato 1. Além da altura, do brilho e da imagem, uma cúpula deixa o teto subir como uma esfera sobre o que fica mais alto (o dossel do altar) em vez de cortá-lo; defina a partir de que altura, quão larga e quão alta ela vai. Níveis: Catedral (33).
 ceiling.dome_act1_cathedral.label = Cúpula sobre o que é mais alto
 ceiling.dome_act1_cathedral.tip = Onde o jogo desenha algo mais alto que o teto (o dossel do altar), o teto sobe sobre isso como uma esfera em vez de cortá-lo.
 ceiling.dome_find_act1_cathedral.label = Cúpula sobre o que passa por cima
@@ -1802,13 +1841,71 @@ ceiling.dome_radius_act1_cathedral.tip = Unidades do mundo: quão larga é a esf
 ceiling.dome_max_act1_cathedral.label = Altura máxima da cúpula
 ceiling.dome_max_act1_cathedral.tip = Unidades do mundo sobre o teto; o que fica ainda mais alto é cortado.
 
-# --- Ceiling: act 2 sewers ---
-group.ceiling_act_2_sewers = Teto: esgotos do ato 2
-group.ceiling_act_2_sewers.help = O teto sobre os esgotos do ato 2: sua altura, brilho, o alcance da luz do herói, relevo e imagem.
+# --- Ceiling: act 1 catacombs (levels 34-37) ---
+group.ceiling_act_1_catacombs_levels_34_37 = Teto: catacumbas do ato 1 (níveis 34-37)
+group.ceiling_act_1_catacombs_levels_34_37.help = O teto sobre as catacumbas do ato 1: sua altura (o que o jogo desenha mais alto é cortado), brilho, o alcance da luz do herói, relevo e imagem. Níveis: Catacumbas Nível 1 (34), Catacumbas Nível 2 (35), Catacumbas Nível 3 (36), Catacumbas Nível 4 (37).
+ceiling.height_act1_catacombs.tip = Unidades do mundo (o herói tem cerca de 7.5 de altura). O que o jogo desenha mais alto é cortado pelo teto.
 
-# --- Ceiling: act 2 palace ---
-group.ceiling_act_2_palace = Teto: palácio do ato 2
-group.ceiling_act_2_palace.help = O teto sob o palácio do ato 2: sua altura, brilho, o alcance da luz do herói, relevo e imagem.
+# --- Ceiling: act 2 sewers (levels 47-49, 65) ---
+group.ceiling_act_2_sewers_levels_47_49_65 = Teto: esgotos do ato 2 (níveis 47-49, 65)
+group.ceiling_act_2_sewers_levels_47_49_65.help = O teto sobre os esgotos do ato 2: sua altura, brilho, o alcance da luz do herói, relevo e imagem. Níveis: Esgotos Nível 1 (47), Esgotos Nível 2 (48), Esgotos Nível 3 (49), Túneis Antigos (65).
+
+# --- Ceiling: act 2 harem (level 50) ---
+group.ceiling_act_2_harem_level_50 = Teto: harém do ato 2 (nível 50)
+group.ceiling_act_2_harem_level_50.help = O teto sob o harém do ato 2: sua altura, brilho, o alcance da luz do herói, relevo e imagem. Níveis: Harém Nível 1 (50).
+
+# --- Ceiling: act 2 corrupt harem (level 51) ---
+group.ceiling_act_2_corrupt_harem_level_51 = Teto: harém corrompido do ato 2 (nível 51)
+group.ceiling_act_2_corrupt_harem_level_51.help = O teto sob o harém corrompido do ato 2: o teto do jogo com a pedra do próprio chão dele em VR F4, a nossa abóbada em F3 plano; sua altura sobre o chão. Níveis: Harém Nível 2 (51).
+
+# --- Ceiling: act 2 palace cellar (levels 52-54) ---
+group.ceiling_act_2_palace_cellar_levels_52_54 = Teto: porão do palácio do ato 2 (níveis 52-54)
+group.ceiling_act_2_palace_cellar_levels_52_54.help = O teto sob o porão do palácio do ato 2: o teto do jogo de pedra lisa escura (a das catacumbas, não os ladrilhos do chão) em VR F4, a nossa abóbada em F3 plano; sua altura sobre o chão. Níveis: Porão do Palácio Nível 1 (52), Porão do Palácio Nível 2 (53), Porão do Palácio Nível 3 (54).
+
+# --- Ceiling: act 2 tombs (levels 55-61, 66-73) ---
+group.ceiling_act_2_tombs_levels_55_61_66_73 = Teto: tumbas do ato 2 (níveis 55-61, 66-73)
+group.ceiling_act_2_tombs_levels_55_61_66_73.help = O teto do jogo sob as tumbas do ato 2 (pedra lisa escura, a das catacumbas) em VR F4, a nossa abóbada em F3 plano; sua altura sobre o chão. Níveis: Tumba Rochosa Nível 1 (55), Salões dos Mortos Nível 1 (56), Salões dos Mortos Nível 2 (57), Templo da Víbora Garra Nível 1 (58), Tumba Rochosa Nível 2 (59), Salões dos Mortos Nível 3 (60), Templo da Víbora Garra Nível 2 (61), Tumba de Tal Rasha (66), Tumba de Tal Rasha (67), Tumba de Tal Rasha (68), Tumba de Tal Rasha (69), Tumba de Tal Rasha (70), Tumba de Tal Rasha (71), Tumba de Tal Rasha (72), Covil de Duriel (73).
+
+# --- Ceiling: act 2 maggot lair (levels 62-64) ---
+group.ceiling_act_2_maggot_lair_levels_62_64 = Teto: covil das larvas do ato 2 (níveis 62-64)
+group.ceiling_act_2_maggot_lair_levels_62_64.help = O teto do jogo sobre o covil das larvas do ato 2 (a própria rocha de caverna dele; o nosso efeito não desenha abóbada aqui): sua altura sobre o chão. Níveis: Covil das Larvas Nível 1 (62), Covil das Larvas Nível 2 (63), Covil das Larvas Nível 3 (64).
+ceiling.height_act2_maggot.tip = Unidades do mundo (o herói tem cerca de 7.5 de altura): onde fica aqui o teto de rocha do jogo; a rocha dele pende um pouco mais baixo que isso.
+
+# --- Ceiling: act 3 spider caves (levels 84-85) ---
+group.ceiling_act_3_spider_caves_levels_84_85 = Teto: cavernas das aranhas do ato 3 (níveis 84-85)
+group.ceiling_act_3_spider_caves_levels_84_85.help = O teto do jogo sobre as cavernas das aranhas do ato 3 (a própria rocha de caverna delas; o nosso efeito não desenha abóbada aqui): sua altura sobre o chão. Níveis: Caverna das Aranhas (84), Gruta das Aranhas (85).
+
+# --- Ceiling: act 3 jungle dungeons (levels 86-91) ---
+group.ceiling_act_3_jungle_dungeons_levels_86_91 = Teto: masmorras da selva do ato 3 (níveis 86-91)
+group.ceiling_act_3_jungle_dungeons_levels_86_91.help = O teto do jogo sobre as masmorras da selva do ato 3 (a própria rocha de caverna delas; o nosso efeito não desenha abóbada aqui): sua altura sobre o chão. Níveis: Fosso Pantanoso Nível 1 (86), Fosso Pantanoso Nível 2 (87), Masmorra dos Esfoladores Nível 1 (88), Masmorra dos Esfoladores Nível 2 (89), Fosso Pantanoso Nível 3 (90), Masmorra dos Esfoladores Nível 3 (91).
+
+# --- Ceiling: act 3 sewers (level 93) ---
+group.ceiling_act_3_sewers_level_93 = Teto: esgotos do ato 3 (nível 93)
+group.ceiling_act_3_sewers_level_93.help = O teto do jogo sob os esgotos do ato 3 (o próprio chão rochoso deles, deitado plano) em VR F4, a nossa abóbada em F3 plano; sua altura sobre o chão. Níveis: Esgotos Nível 2 (93).
+
+# --- Ceiling: act 3 temples (levels 94-99) ---
+group.ceiling_act_3_temples_levels_94_99 = Teto: templos do ato 3 (níveis 94-99)
+group.ceiling_act_3_temples_levels_94_99.help = O teto do jogo sob os templos do ato 3 (a própria pedra deles) em VR F4, a nossa abóbada em F3 plano; sua altura sobre o chão. Níveis: Templo Arruinado (94), Santuário Abandonado (95), Relicário Esquecido (96), Templo Esquecido (97), Santuário Arruinado (98), Relicário Abandonado (99).
+
+# --- Ceiling: act 3 Durance of Hate (level 102) ---
+group.ceiling_act_3_durance_of_hate_level_102 = Teto: Cárcere do Ódio do ato 3 (nível 102)
+group.ceiling_act_3_durance_of_hate_level_102.help = O teto do jogo sob o Cárcere do Ódio do ato 3 (a própria pedra dele) em VR F4, a nossa abóbada em F3 plano; sua altura sobre o chão. Níveis: Cárcere do Ódio Nível 3 (102).
+
+# --- Ceiling: act 5 ice caves (levels 113-116, 118-119) ---
+group.ceiling_act_5_ice_caves_levels_113_116_118_119 = Teto: cavernas de gelo do ato 5 (níveis 113-116, 118-119)
+group.ceiling_act_5_ice_caves_levels_113_116_118_119.help = O teto do jogo sobre as cavernas de gelo do ato 5 (a própria rocha de caverna delas; o nosso efeito não desenha abóbada aqui): sua altura sobre o chão. Níveis: Caverna Cristalizada Nível 1 (113), Porão da Piedade (114), Caverna Cristalizada Nível 2 (115), Câmara do Eco (116), Cavernas Glaciais Nível 1 (118), Cavernas Glaciais Nível 2 (119).
+
+# --- Ceiling: act 5 Nihlathak's halls (levels 122-124) ---
+group.ceiling_act_5_nihlathak_s_halls_levels_122_124 = Teto: salões de Nihlathak do ato 5 (níveis 122-124)
+group.ceiling_act_5_nihlathak_s_halls_levels_122_124.help = O teto do jogo sob os salões de Nihlathak do ato 5 (a própria rocha de caverna deles) em VR F4, a nossa abóbada em F3 plano; sua altura sobre o chão. Níveis: Salões da Angústia (122), Salões do Chamado da Morte (123), Salões de Vaught (124).
+
+# --- Ceiling: act 5 Worldstone Keep (levels 128-130) ---
+group.ceiling_act_5_worldstone_keep_levels_128_130 = Teto: Fortaleza da Pedra do Mundo do ato 5 (níveis 128-130)
+group.ceiling_act_5_worldstone_keep_levels_128_130.help = O teto do jogo sob a Fortaleza da Pedra do Mundo do ato 5 (o próprio chão dela) em VR F4, a nossa abóbada em F3 plano; sua altura sobre o chão. Níveis: Fortaleza da Pedra do Mundo Nível 1 (128), Fortaleza da Pedra do Mundo Nível 2 (129), Fortaleza da Pedra do Mundo Nível 3 (130).
+
+# --- Ceiling: act 5 throne of destruction (levels 128-132) ---
+group.ceiling_act_5_throne_of_destruction_levels_128_132 = Teto: trono da destruição do ato 5 (níveis 128-132)
+group.ceiling_act_5_throne_of_destruction_levels_128_132.help = O teto do jogo sob o trono da destruição do ato 5 (o próprio chão da Fortaleza) em VR F4, a nossa abóbada em F3 plano; sua altura sobre o chão. Níveis: Fortaleza da Pedra do Mundo Nível 1 (128), Fortaleza da Pedra do Mundo Nível 2 (129), Fortaleza da Pedra do Mundo Nível 3 (130), Trono da Destruição (131), Câmara da Pedra do Mundo (132).
 
 # ===== Tab: Weapon Adjust =====
 tab.weapon_adjust = Ajuste da arma
@@ -2420,6 +2517,8 @@ gameplay.melee_stroke_start_cm.label = Acerto por toque: quanto a lâmina se mov
 gameplay.melee_stroke_start_cm.tip = Um movimento é um golpe - e pode acertar - só depois que a lâmina (sua ponta mais rápida: a ponta de uma espada, como desenhada - não a mão) se moveu esta distância em cerca de um décimo de segundo, e rápido o bastante (acima). Menor: uma estocada curta conta; maior: só um balanço longo conta. Uma lâmina mais lenta que a menor velocidade acima não faz nada, e um monstro é acertado uma vez por golpe. Padrão 8, como antes. Ao vivo. Só F4.
 gameplay.melee_touch_thrown.label = Armas de arremesso acertam por toque também (um arremesso à queima-roupa)
 gameplay.melee_touch_thrown.tip = Um dardo, uma faca de arremesso ou um machado de arremesso na mão é balançado como qualquer arma: a lâmina dele através do corpo de um monstro pressiona o ataque do próprio jogo contra ele - para uma arma de arremesso isso é o Arremesso do jogo nesse monstro, à queima-roupa, com a munição gasta como o jogo a gasta (nunca a via do Acerto direto). Poções de arremesso não são balançadas. O arremesso por gesto (Ajuste da arma > Arremessos: pelo grip ou pelo gatilho) continua como está e não dispara junto com o toque: com o arremesso por grip ligado, o toque só conta enquanto o grip direito está apertado na arma; por 0.7 s depois de um arremesso ser solto o toque fica de lado; e um toque que pressionou o ataque descarta a soltura do mesmo balanço (um arremesso por balanço). O tamanho da lâmina por arma é uma estimativa - ajuste-o com os controles deslizantes de lâmina do grupo Depuração abaixo e "Desenhar as cápsulas do Acerto por toque". Desmarcado: uma arma de arremesso não faz nada por toque, como antes. Ao vivo. Só F4.
+gameplay.melee_touch_barrels.label = Quebrar barris e potes acertando-os
+gameplay.melee_touch_barrels.tip = Um golpe da arma segurada através de um barril, um pote, uma urna ou um cesto o quebra do jeito do próprio jogo: o golpe (um que acertaria um monstro) pressiona a interação do jogo nesse objeto, como o A faz, então o herói o chuta ou quebra com a própria animação - o saque, as armadilhas e as explosões são os do jogo. Baús, portas, santuários e objetos de missão mantêm os controles normais, e o A continua funcionando. O tamanho do objeto é uma estimativa pela área que ele ocupa no chão. Desmarcado: como antes, só o A os quebra. Ao vivo. Só F4.
 gameplay.melee_touch_thrown_held.label = Uma arma de arremesso é a arma na sua mão desde o início (sem precisar do grip para acertar)
 gameplay.melee_touch_thrown_held.tip = Um dardo, uma faca de arremesso ou um machado de arremesso é a arma na sua mão desde o momento em que é equipado, como uma espada: acerta por toque na hora - você não precisa apertar o grip antes. Largada (o grip apertado e solto com a mão em repouso), ela não acerta nada até uma mão segurá-la de novo, como uma espada. O arremesso é o mesmo: aperte o grip, balance, solte - o arremesso do próprio jogo; o toque continua desativado por 0,7 s depois de um arremesso e um balanço arremessa uma vez. Desmarcado: como antes - com o arremesso pelo grip ligado, uma arma de arremesso só acerta por toque enquanto o grip dela está apertado. Ao vivo. Só no F4.
 gameplay.melee_touch_only.label = O gatilho não ataca (só o toque da lâmina; um arco ou uma besta atira com ele)
@@ -3070,7 +3169,7 @@ debug.pose_share_draw.tip = Os outros jogadores desenhados como formas de depura
 debug.pose_share_legs_self.label = Cabeças e mãos no multijogador: as pernas do seu próprio herói com a mesma passada (um teste)
 debug.pose_share_legs_self.tip = As pernas do seu próprio herói andam com a mesma passada dos heróis dos outros jogadores ("as pernas deles andam do jeito que eles se movem"), com a orientação dele mesmo - para ver as pernas num só PC: olhe para ele no F2 ou F3 (plano ou VR) e ande para a frente, para trás e de lado. O log diz a cada 5 s o que elas fizeram ("legs: ..."). Precisa da biblioteca de passada. Ao vivo.
 debug.walk_back_dump.label = Andar para trás: gravar as pernas em um arquivo
-debug.walk_back_dump.tip = Enquanto o herói se move, as pernas dele são guardadas pose a pose - como o jogo as desenhou e como ficam com "Andando para trás, as pernas dão passos para trás" - e os últimos 6 segundos de cada andada para trás vão para d2rloader\logs\d2r_vr_walkback.txt (no máximo 30 por sessão), para a ferramenta walk_legs, que as desenha como bonecos de palito. Só grava um arquivo; nada muda no jogo. Ao vivo.
+debug.walk_back_dump.tip = Enquanto o herói se move, as pernas dele são guardadas pose a pose - como o jogo as desenhou e como ficam com "Andando para trás, as pernas dão passos para trás" - e os últimos 6 segundos de cada andada para trás (e de 3 s parado com a câmera girada ao redor dele) vão para d2rloader\logs\d2r_vr_walkback.txt (no máximo 30 por sessão), para a ferramenta walk_legs, que as desenha como bonecos de palito. O log também diz a cada 5 s de qual pose as malhas do herói são deformadas (a que nós posamos, ou outra). Só grava um arquivo e linhas de log; nada muda no jogo. Ao vivo.
 debug.phantom_ray.label#2 = Desenhar a linha que a mão esquerda segue
 debug.phantom_ray.tip#2 = Uma linha vermelha ao longo da qual a mão esquerda pega a arma na mão e desliza (cajado, lança, arma de haste, espada de duas mãos); com uma besta também onde voa o virote (os controles deslizantes de Besta: linha do tiro a giram). "Desenhar os eixos da arma na mão" também a desenha.
 debug.xbow_barrel_line.label = Besta: desenhar o cano como modelado
@@ -3258,6 +3357,251 @@ status.xr_layers.off = Camada OpenXR {layers} desligada para o D2R VR: ela é co
 status.xr_layers.listed_in_runtime_fov = Camada OpenXR {layers} carrega com o jogo, mantida: os olhos são desenhados exatamente como o headset os fornece, como os outros jogos desenham, então ela não deve fazer mal.
 status.xr_layers.listed_in = Camada OpenXR {layers} carrega com o jogo: ela é conhecida por distorcer a imagem dele (olhos vesgos, esticada) quando os olhos são desenhados do jeito próprio do mod - marque "Cada olho exatamente como o headset o fornece".
 status.xr_layers.in = Outras camadas OpenXR no jogo (deixadas como estão): {layers}.
+
+# ===== In the headset: the settings panel's rows, the first-start guide (the plugin's tables) =====
+vr.hset.page.view = Visão
+vr.hset.page.options = Opções
+vr.hset.page.video = Vídeo
+vr.hset.page.body = Corpo
+vr.hset.page.life = Vida
+vr.hset.page.look = Visual
+vr.hset.page.hud = HUD
+vr.hset.page.belt = Cinto
+vr.hset.page.melee = Combate
+vr.hset.page.left = Esquerdo
+vr.hset.page.right = Direito
+vr.hset.page.guide = Guia
+vr.hset.screen.menu_distance_m.label = Distância do painel
+vr.hset.screen.menu_distance_m.detail = Um painel aberto no jogo: inventário, baú, comerciante
+vr.hset.openxr.flat_distance_m.label = Distância da tela
+vr.hset.openxr.flat_distance_m.detail = Menus, telas de carregamento, as visões planas F1 e F3
+vr.hset.openxr.flat_width_m.label = Largura da tela
+vr.hset.openxr.flat_width_m.detail = Quão largos ficam os menus e os painéis
+vr.hset.openxr.brightness.label = Brilho
+vr.hset.openxr.brightness.detail = Tudo no headset, 1 = como o jogo desenha
+vr.hset.stereo.user_height_m.label = Sua altura
+vr.hset.stereo.user_height_m.detail = Escala do mundo e das mãos; o Body Height do BodyWalk vence
+vr.hset.openxr.laser.label = Laser nos menus
+vr.hset.openxr.laser.detail = Aponte um controle para um menu e ele é o mouse
+vr.hset.value.off = Desligado
+vr.hset.value.on = Ligado
+vr.hset.openxr.laser_hand.label = Mão do laser
+vr.hset.openxr.laser_hand.detail = A mão de onde sai o laser
+vr.hset.value.left = Esquerda
+vr.hset.value.right = Direita
+vr.hset.openxr.menu_3d.label = Menus como painel
+vr.hset.openxr.menu_3d.detail = O mundo fica em 3D atrás de um menu aberto
+vr.hset.turn.smooth.label = Giro suave
+vr.hset.turn.smooth.detail = Analógico direito: giro contínuo, ou um passo por toque
+vr.hset.turn.snap.label = Ângulo do giro em passos
+vr.hset.turn.snap.detail = Graus por toque, com o giro suave desligado
+vr.hset.turn.speed.label = Velocidade do giro suave
+vr.hset.turn.speed.detail = Graus por segundo, com o giro suave ligado
+vr.hset.hud.low_hp_vignette.label = Pouca vida: vinheta vermelha
+vr.hset.hud.low_hp_vignette.detail = As bordas pulsam em vermelho com a vida baixa (F4)
+vr.hset.hud.low_hp_threshold.label = Liga abaixo de
+vr.hset.hud.low_hp_threshold.detail = Parcela da sua vida máxima
+vr.hset.hud.low_hp_intensity_start.label = Força logo abaixo
+vr.hset.hud.low_hp_intensity_start.detail = Quão vermelhas ficam as bordas no começo
+vr.hset.hud.low_hp_intensity_end.label = Força na vida mais baixa
+vr.hset.hud.low_hp_intensity_end.detail = Quão vermelhas ficam as bordas quando você está quase morto
+vr.hset.hud.low_hp_saturation.label = Vermelho
+vr.hset.hud.low_hp_saturation.detail = De um cinza escuro (0) ao vermelho intenso (1)
+vr.hset.hud.low_hp_radius.label = Tamanho
+vr.hset.hud.low_hp_radius.detail = Até onde chega a partir da borda (ângulo de visão)
+vr.hset.hud.low_hp_softness.label = Borda suave
+vr.hset.hud.low_hp_softness.detail = 1 se apaga até o centro, 0 é uma rampa curta
+vr.hset.hud.low_hp_roundness.label = Forma
+vr.hset.hud.low_hp_roundness.detail = 2 um oval ... 6 um quadrado arredondado
+vr.hset.hud.low_hp_gentle.label = Suave
+vr.hset.hud.low_hp_gentle.detail = Mais lenta, mais macia, menos vermelha
+vr.hset.hud.low_hp_haptics.label = Batimento nos controles
+vr.hset.hud.low_hp_haptics.detail = Um pulso nas duas mãos (precisa de Vibração dos controles)
+vr.hset.hud.low_hp_haptics_strength.label = Força do pulso
+vr.hset.hud.low_hp_haptics_strength.detail = Mais forte quanto menor a vida; isto o escala
+vr.hset.hands.belt_models_up.label = Altura do cinto
+vr.hset.hands.belt_models_up.detail = Quão alto em você, em partes da altura dos seus olhos
+vr.hset.hands.belt_models_ahead.label = Distância do cinto
+vr.hset.hands.belt_models_ahead.detail = Para fora do seu corpo: o raio do arco
+vr.hset.hands.belt_models_across.label = Cinto direita / esquerda
+vr.hset.hands.belt_models_across.detail = Deslocado para a sua direita (+) ou esquerda (-)
+vr.hset.hands.belt_models_turn.label = Giro do cinto
+vr.hset.hands.belt_models_turn.detail = Girado ao seu redor: para a direita (+) ou esquerda (-)
+vr.hset.hands.belt_grab_cm.label = Alcance de pegar no cinto
+vr.hset.hands.belt_grab_cm.detail = Quão perto uma mão deve estar de uma poção para pegá-la
+vr.hset.belt.grab_trigger.label = Pegar poção do cinto com
+vr.hset.belt.grab_trigger.detail = Uma poção precisa também do gatilho; o grip sozinho é da arma
+vr.hset.value.grip = Grip
+vr.hset.value.trigger_grip = Gatilho + grip
+vr.hset.gameplay.melee_touch.label = Acerto por toque
+vr.hset.gameplay.melee_touch.detail = A lâmina que você passa por um monstro o acerta (F4)
+vr.hset.gameplay.melee_min_speed.label = Menor velocidade que acerta
+vr.hset.gameplay.melee_min_speed.detail = Abaixo dela um toque não faz nada, m/s
+vr.hset.gameplay.melee_stroke_start_cm.label = Movimento para iniciar golpe
+vr.hset.gameplay.melee_stroke_start_cm.detail = Quanto a lâmina deve se mover para começar um, cm
+vr.hset.gameplay.melee_touch_only.label = Gatilho não ataca
+vr.hset.gameplay.melee_touch_only.detail = Só o toque da lâmina ataca; um arco atira (F4)
+vr.hset.gameplay.melee_skill_armed.label = Botão de habilidade a arma
+vr.hset.gameplay.melee_skill_armed.detail = Todo toque passa a ser essa habilidade (F4)
+vr.hset.gameplay.melee_skill_armed_icon.label = Habilidade armada na mana
+vr.hset.gameplay.melee_skill_armed_icon.detail = O ícone dela no medalhão de mana
+vr.hset.direct.left_trigger.label = Gatilho esquerdo
+vr.hset.direct.left_x.label = X esquerdo
+vr.hset.direct.left_y.label = Y esquerdo
+vr.hset.direct.left_stick.label = Clique do analógico esq.
+vr.hset.direct.left_menu.label = Botão de menu esquerdo
+vr.hset.direct.left_menu_hold.label = Menu esquerdo, toque longo
+vr.hset.direct.right_trigger.label = Gatilho direito
+vr.hset.direct.right_a.label = A direito
+vr.hset.direct.right_b.label = B direito
+vr.hset.direct.right_stick.label = Clique do analógico dir.
+vr.hset.direct.right_stick_hold.label = Analógico dir., toque longo
+vr.hset.direct.right_menu.label = Botão de menu direito
+vr.hset.openxr.direct_input.label = Controles sem o BodyWalk
+vr.hset.openxr.direct_input.detail = O plugin lê os controles por conta própria
+vr.hset.hands.belt_models.label = Poções no cinto
+vr.hset.hands.belt_models.detail = Os modelos de poção do próprio jogo nos quadris do herói
+vr.hset.render.vr_resolution.label = Tamanho VR: modo
+vr.hset.render.vr_resolution.detail = 0 janela, 1 headset, 2-6 um quadrado antigo
+vr.hset.render.vr_resolution_px.label = Tamanho VR: lado
+vr.hset.render.vr_resolution_px.detail = O lado de um quadrado em pixels, 0 = não usado
+vr.hset.calibration.use.label = Usar a medição
+vr.hset.calibration.use.detail = A altura e a envergadura medidas estão em uso
+vr.hset.calibration.version.label = Medição guardada
+vr.hset.calibration.version.detail = 1 = há uma medição guardada
+vr.hset.value.no = Não
+vr.hset.value.yes = Sim
+vr.hset.calibration.eye_height_m.label = Altura dos olhos medida
+vr.hset.calibration.eye_height_m.detail = Metros sobre o chão
+vr.hset.calibration.arm_span_m.label = Envergadura medida
+vr.hset.calibration.arm_span_m.detail = Metros, de punho a punho
+vr.hset.calibration.seated.label = Como você joga
+vr.hset.calibration.seated.detail = Sentado: Recentralizar define a altura dos olhos; Calibrar lê a envergadura
+vr.hset.value.standing = Em pé
+vr.hset.value.seated = Sentado
+vr.hset.hud.bar_place.label = Tipo de barra
+vr.hset.hud.bar_place.detail = Vida e mana nos pulsos, ou a barra de ferramentas inteira
+vr.hset.hud.monster_height.label = Placas: altura na tela
+vr.hset.hud.monster_height.detail = + mais alto, % da tela (F4); a barra na sala tem a sua
+vr.hset.hud.ordinary_mob_bars.label = Placas: monstros comuns
+vr.hset.hud.ordinary_mob_bars.detail = Visível: todas as placas. Oculto: só campeões, chefes, NPCs
+vr.hset.value.shown = Visível
+vr.hset.value.hidden = Oculto
+vr.hset.hud.hide.label = Interface fora da imagem
+vr.hset.hud.hide.detail = 0 nada, 1 a barra de ferramentas, 2 toda ela
+vr.toolbar.wrists = Pulsos
+vr.toolbar.chest_low = Peito, baixa
+vr.toolbar.low_in_front = Baixa à frente
+vr.toolbar.left_forearm = Antebraço esquerdo
+vr.toolbar.right_forearm = Antebraço direito
+vr.toolbar.not_shown = Oculta
+vr.toolbar.in_the_picture = Na imagem
+vr.keys.none = Nada
+vr.keys.action_attack = Atacar
+vr.keys.action_interact = Pegar
+vr.keys.action_inventory = Inventário
+vr.keys.action_map = Mapa
+vr.keys.cmd_0x25 = Mostrar itens
+vr.keys.cmd_0x25_action_map = Itens + mapa
+vr.keys.action_pause = Menu de pausa
+vr.keys.cmd_0x26 = Fechar painéis
+vr.keys.action_skillpanel = Painel de habil.
+vr.keys.action_quivernext = Aljava: próx.
+vr.keys.action_quiverprev = Aljava: ant.
+vr.keys.action_swap = Trocar de arma
+vr.keys.action_recenter = Recentralizar
+vr.keys.action_viewnext = Próxima visão
+vr.keys.pad_b = Botão hab. B
+vr.keys.pad_x = Botão hab. X
+vr.keys.pad_y = Botão hab. Y
+vr.keys.pad_rb = Botão hab. RB
+vr.keys.pad_lb = Pad LB
+vr.keys.pad_a = Pad A
+vr.keys.pad_lt = Hab. fileira 2
+vr.keys.pad_l3 = Pad L3
+vr.keys.pad_r3 = Pad R3
+vr.keys.cmd_0x00 = Personagem
+vr.keys.cmd_0x0c = Árvore de habil.
+vr.keys.cmd_0x04 = Diário de missões
+vr.keys.cmd_0x27 = Próxima hab.
+vr.keys.cmd_0x28 = Hab. anterior
+vr.keys.cmd_0x23 = Correr / andar
+vr.keys.cmd_0x24 = Ficar parado
+vr.guide.0.title = Bem-vindo ao D2R VR - primeiro, meça-se
+vr.guide.0.row0.does = A altura dos seus olhos define a escala do mundo; a sua envergadura ajusta os braços do herói aos seus. Leva alguns segundos.
+vr.guide.0.row1.does = 1. Fique em pé onde você joga, olhando para a frente. O chão do headset (a configuração da sala dele) precisa estar definido.
+vr.guide.0.row2.does = 2. Estique os dois braços para os lados na altura dos ombros, como um T.
+vr.guide.0.row3.does = 3. Solte os dois gatilhos, depois aperte os dois e fique parado até aparecer Salvo.
+vr.guide.0.row4.does = B direito cancela. O jogo continua atrás deste guia: fique num lugar seguro, numa cidade.
+vr.guide.0.row5.does = Depois: as configurações no headset, página Corpo, Calibrar corpo.
+vr.guide.0.nav = Medir agora, ou Agora não: isto também fica na página Corpo, a qualquer hora.
+vr.guide.1.title = Andar, girar, lutar
+vr.guide.1.row0.control = Analógico esquerdo
+vr.guide.1.row0.does = andar
+vr.guide.1.row1.control = Analógico direito
+vr.guide.1.row1.does = esquerda / direita: girar
+vr.guide.1.row2.control = Gatilho direito
+vr.guide.1.row2.does = atacar. Uma espada, um machado ou uma maça acerta quando você a passa por um monstro (Acerto por toque), então o gatilho dela não ataca; um arco ou uma besta atira com ele.
+vr.guide.1.row3.control = A direito
+vr.guide.1.row3.does = pegar, abrir, falar (uma habilidade na placa A do painel de habilidades é lançada em vez disso)
+vr.guide.1.row4.control = B direito, X esquerdo, Y esquerdo
+vr.guide.1.row4.does = os botões de habilidade B, X, Y do jogo. Segure o gatilho esquerdo para a segunda fileira.
+vr.guide.1.row5.control = Clique do analógico direito
+vr.guide.1.row5.does = trocar os conjuntos de armas I / II
+vr.guide.nav = Aponte para Voltar ou Próximo e puxe o gatilho. Fechar (ou B) encerra o guia.
+vr.guide.2.title = Abrir coisas
+vr.guide.2.row0.control = Botão de menu
+vr.guide.2.row0.does = o inventário (PS VR2: o botão Options do controle direito)
+vr.guide.2.row1.control = Botão de menu, segurado
+vr.guide.2.row1.does = meio segundo: o menu de pausa (Esc)
+vr.guide.2.row2.control = Clique do analógico esquerdo
+vr.guide.2.row2.does = um clique rápido: o mapa. Segurado: os itens no chão ganham nome; meio segundo: o inventário.
+vr.guide.2.row3.control = Clique do analógico direito, segurado
+vr.guide.2.row3.does = meio segundo: o painel de habilidades; o mesmo de novo o fecha
+vr.guide.2.row4.control = Grip esquerdo + clique do analógico
+vr.guide.2.row4.does = recentralizar: a frente é para onde você olha
+vr.guide.2.row5.control = Num menu
+vr.guide.2.row5.does = aponte o controle direito para ele (o laser) e puxe o gatilho para clicar; ali os analógicos e os botões são o gamepad do jogo
+vr.guide.3.title = O painel de habilidades e as configurações
+vr.guide.3.row0.control = Painel de habilidades
+vr.guide.3.row0.does = aponte para uma placa e puxe o gatilho: escolha a habilidade dela. Segure o gatilho numa placa: a partir daí esse gatilho lança a habilidade dela
+vr.guide.3.row1.control = EDITAR HABILIDADES
+vr.guide.3.row1.does = escolha uma placa, depois uma habilidade que você tem, para pô-la ali. Uma habilidade na placa RT ou A é lançada pelo gatilho direito ou pelo A.
+vr.guide.3.row2.control = Aba CONFIGURAÇÕES
+vr.guide.3.row2.does = as configurações no headset, na mesma janela: Visão, Opções, Vídeo, Corpo, Vida, Visual, HUD, Cinto, Combate, Esquerdo, Direito
+vr.guide.3.row3.control = Clique do analógico direito, segurado
+vr.guide.3.row3.does = abre a janela na aba em que ela esteve por último; passe para CONFIGURAÇÕES
+vr.guide.3.row4.control = Virar páginas
+vr.guide.3.row4.does = dê um toque rápido num analógico para a esquerda ou a direita, ou toque num grip (esquerdo volta, direito avança). B, Y ou Menu fecha a janela.
+vr.guide.3.row5.control = No PC
+vr.guide.3.row5.does = o D2R VR Authentic Settings tem todas as configurações; a maioria das mudanças aparece no jogo na hora
+vr.guide.4.title = Cinto, armas, arco
+vr.guide.4.row0.control = Poções do cinto
+vr.guide.4.row0.does = ficam nos seus quadris. Uma mão perto de uma a acende, o grip a pega; à boca, inclinada: você bebe. Solte em outro lugar: ela volta.
+vr.guide.4.row1.control = Sua arma
+vr.guide.4.row1.does = tem peso: segure-a com o grip. Os dois grips soltos: ela cai (um grip a chama de volta); um segundo no chão e ela está nas suas costas.
+vr.guide.4.row2.control = Atrás de um ombro
+vr.guide.4.row2.does = um grip ali saca a arma das suas costas. O grip de uma mão vazia atrás do ombro esquerdo guarda o escudo e o saca.
+vr.guide.4.row3.control = Arco
+vr.guide.4.row3.does = a mão livre na corda, gatilho ou grip, puxe para trás, solte. Com a corda puxada: B a próxima habilidade de flecha, A a anterior.
+vr.guide.4.row4.control = Dardo
+vr.guide.4.row4.does = segure-o com o grip, arremesse e solte
+vr.guide.4.row5.control = Vida e mana
+vr.guide.4.row5.does = ficam nos seus pulsos
+vr.guide.5.title = Visões e este guia de novo
+vr.guide.5.row0.control = F1
+vr.guide.5.row0.does = de cima: a própria câmera do jogo
+vr.guide.5.row1.control = F2
+vr.guide.5.row1.does = atrás do herói, uma câmera que gira com a sua cabeça
+vr.guide.5.row2.control = F3
+vr.guide.5.row2.does = o jogo no seu chão: olhe para baixo para ele, ande ao redor dele
+vr.guide.5.row3.control = F4
+vr.guide.5.row3.does = primeira pessoa - esta visão. As mãos, os painéis e este guia são do F4.
+vr.guide.5.row4.control = Teclado
+vr.guide.5.row4.does = a tecla F de uma visão (com a janela do jogo em foco), F12 a próxima visão, F11 recentraliza. A página Visão das configurações também tem F1 - F4.
+vr.guide.5.row5.control = Este guia de novo
+vr.guide.5.row5.does = as configurações no headset, página Corpo: Guia de primeiro uso
+vr.guide.5.nav = Concluir fecha o guia; ele está de novo na página Corpo, a qualquer hora.
 
 # ===== The words the program writes (status lines, messages, buttons) =====
 dialog.pictures = Imagens (png, jpg, bmp, dds, tga)
@@ -3575,6 +3919,8 @@ dome.no_receipt = não foi possível gravar mods\D2R-VR\sky_dome.json
 dome.made = feito a partir do seu jogo: os modelos da cúpula de céu a partir do céu do Cume do Arreat (mods\D2R-VR\D2R-VR.mpq), a partir do próximo início do jogo
 dome.ready = pronto: os modelos da cúpula de céu (mods\D2R-VR\D2R-VR.mpq)
 dome.kept = {n} deles alterados por você: mantidos como estão
+dome.atlas = o céu de cada ato e o preto da caverna numa só imagem, cada cúpula com a sua própria faixa dela
+dome.no_atlas = cada cúpula com a própria imagem ({why})
 ceiling.no_mod = só na pasta própria do mod (mods\D2R-VR\D2R-VR.mpq), que não está aqui: sem teto de caverna do jogo
 ceiling.off = desligado ([ceiling] game_ceiling): nenhum modelo de teto de caverna criado; {n} dos nossos retirados
 ceiling.no_archives = não foi possível abrir os arquivos do jogo (erro {error}); será tentado de novo na próxima inicialização
@@ -3585,6 +3931,12 @@ ceiling.no_receipt = não foi possível gravar mods\D2R-VR\cave_ceiling.json
 ceiling.made_kinds = feito a partir do seu jogo: {n} tipos de teto, a pedra ou rocha própria de cada sala (mods\D2R-VR\D2R-VR.mpq), a partir do próximo início do jogo
 ceiling.ready_kinds = pronto: {n} tipos de teto (mods\D2R-VR\D2R-VR.mpq)
 ceiling.no_maps = não neste jogo, a nossa abóbada lá: {kinds}
+ceiling.beams = as vigas do quartel: a própria armação do jogo, {n} armações inteiras por peça
+ceiling.no_beams = sem vigas do quartel: a armação do jogo não está neste jogo ou não está como se conhece{why}
+ceiling.walls = o topo das paredes medido em {n} áreas
+ceiling.dome = a cúpula da catedral: nos quatro pilares da capela, {r} unidades de raio
+ceiling.no_dome = sem cúpula da catedral: {why}
+ceiling.tall_domes = cúpulas sobre peças altas (sala, unidades de raio): {list}
 ceiling.kept = {n} dos arquivos dele alterados por você: deixados como estão
 data_mods.no_mod = só no mod próprio do D2R VR (mods\D2R-VR\D2R-VR.mpq), que não está aqui
 data_mods.off_removed = desligado - os arquivos dos outros mods retirados do mod do D2R VR
@@ -3598,7 +3950,189 @@ data_mods.not_merged = não mesclado: {mods}
 data_mods.saves = os personagens permanecem na pasta de saves do D2R VR
 data_mods.failed = {n} arquivo(s) falharam, veja d2r_vr_data_mods.txt
 
+# ===== In the headset: the words the plugin writes (the skill panel, the settings in the headset, the calibration prompt, the map) =====
+vr.calib.release = Solte os dois gatilhos.
+vr.calib.ready = Bom. Agora aperte os dois gatilhos e fique parado.
+vr.calib.hold = Fique parado...
+vr.calib.floor = O headset não dá um chão (nenhuma sala configurada), então a altura não pode ser medida.
+vr.calib.height = Seus olhos estão fora de 0.8 - 2.3 m sobre o chão. O nível do chão está configurado?
+vr.calib.tracking = O headset ou um controle não está rastreado. Segure os controles onde o headset os vê.
+vr.calib.upright_seated = Sente-se ereto e olhe bem para a frente.
+vr.calib.upright = Fique de pé, ereto, e olhe bem para a frente.
+vr.calib.arms = Braços esticados para os lados, na altura dos ombros, cotovelos retos, mãos não à sua frente.
+vr.calib.still = Você se mexeu. Solte os dois gatilhos e fique parado.
+vr.calib.saved = Salvo, e em uso. Solte os gatilhos.
+vr.calib.failed = Não foi possível gravar o d2r_vr.ini (veja o log). Solte e tente de novo.
+vr.calib.title_seated = Sentado: medir minha envergadura
+vr.calib.title = Medir minha altura e envergadura
+vr.calib.steps_seated = Sente-se ereto e olhe bem para a frente. Estique os dois braços retos para os lados na altura dos ombros, o mais abertos que puder.\nSolte os dois gatilhos, depois aperte os dois e fique parado. Só a envergadura é lida: a altura dos seus olhos não é medida sentado (a guardada continua).
+vr.calib.steps = Fique de pé, ereto, e olhe bem para a frente. Estique os dois braços retos para os lados na altura dos ombros, o mais abertos que puder.\nSolte os dois gatilhos, depois aperte os dois e fique parado.
+vr.calib.cancel = B direito cancela. O jogo continua atrás disto - meça num lugar seguro.
+vr.body.measured = Altura dos olhos {eye} m, envergadura {span} m
+vr.body.measured_span = Envergadura {span} m (altura dos olhos: não medida)
+vr.body.span_unusable = Uma envergadura guardada não pode ser usada: meça de novo
+vr.body.span_none = Envergadura ainda não medida
+vr.body.unusable = Uma medição guardada não pode ser usada: meça de novo
+vr.body.none = Ainda não medido
+vr.body.use_until = Até você medir, valem a altura do BodyWalk ou "Sua altura" e a escala dos braços.
+vr.body.use_off = Fora de uso: a caixa "Usar a altura e a envergadura medidas" está desmarcada no D2R VR Authentic Settings.
+vr.body.use_span = Em uso: os braços do herói a seguem; a escala do mundo é "Sua altura" (meça em pé uma vez para ela).
+vr.body.use_on = Em uso: a escala do mundo e os braços do herói a seguem.
+vr.body.span_auto = {span} m (auto)
+vr.body.auto = Auto
+vr.body.why_seated = Sentado: Calibrar corpo lê só a sua envergadura. Recentralizar põe os olhos do herói onde está a sua cabeça.
+vr.body.why = A altura real dos seus olhos define a escala do mundo; a sua envergadura, os braços do herói.
+vr.keys.custom = Personalizado (ini)
+vr.hset.status.no_ini = O d2r_vr.ini não foi encontrado. Nada pode ser mudado.
+vr.hset.status.saving = Salvando...
+vr.hset.status.saved_video = Salvo. O jogo reconstrói a imagem em instantes: alguns segundos congelado.
+vr.hset.status.saved = Salvo. A mudança já vale.
+vr.hset.status.save_failed = Falha ao salvar. As suas mudanças continuam aqui.
+vr.hset.status.conflict = O ini foi mudado em outro lugar. Os valores atuais dele são mostrados.
+vr.hset.status.live_soon = Uma mudança vale sozinha em instantes.
+vr.hset.status.video_unapplied = Ainda não aplicado. Aplicar pede este tamanho ao jogo; Fechar o descarta.
+vr.hset.status.unsaved = Mudanças não salvas. Aplicar as salva, Fechar as descarta.
+vr.hset.status.video_idle = Escolha um tamanho, depois Aplicar. Vale quando o seu herói estiver no mundo.
+vr.hset.status.body_idle = Calibrar corpo esconde este painel; ele volta quando a medição termina.
+vr.hset.status.keys_idle = Escolha o que um botão faz, depois Aplicar. Combinações e os outros toques longos: D2R VR Authentic Settings.
+vr.hset.status.keys_off = Controles sem o BodyWalk está desligado: estes botões não fazem nada (os controles são o Mapping do BodyWalk).
+vr.hset.status.melee_idle = Cada mudança vale sozinha. Só primeira pessoa (F4).
+vr.hset.status.melee_off = Acerto por toque está desligado: marque-o, e as linhas abaixo valem.
+vr.hset.status.belt_needs_direct = Precisa de Controles sem o BodyWalk (desligado agora): até lá o grip sozinho pega uma poção.
+vr.hset.status.belt_idle = Cada mudança vale sozinha: olhe para o seu cinto, depois mova-o de novo.
+vr.hset.status.belt_off = As poções no cinto estão desligadas (D2R VR Authentic Settings > IU: F4 corpo): estas linhas não fazem nada.
+vr.hset.status.idle_window = Aponte e puxe o gatilho. B, Fechar ou um toque longo do analógico direito fecha esta janela.
+vr.hset.status.idle = Aponte e puxe o gatilho. B, ou um toque longo do analógico direito, o fecha.
+vr.hset.custom_empty = (uma linha que a lista não nomeia)
+vr.hset.second_row_off = - a segunda fileira (LT) está desligada
+vr.hset.title = CONFIGURAÇÕES DO HEADSET
+vr.video.title = Tamanho de renderização
+vr.video.note = Aplicar reconstrói a imagem: o jogo congela alguns segundos (cerca de 7).
+vr.body.calibrate = Calibrar corpo
+vr.body.forget = Esquecer medição
+vr.body.guide = Guia de primeiro uso
+vr.body.span_note = Envergadura à mão: - braços mais curtos, + mais longos (um novo Calibrar a define de novo)
+vr.body.step1 = 1. Fique em pé onde você joga, olhando para a frente. O chão do headset precisa estar configurado.
+vr.body.step2 = 2. Aperte Calibrar corpo: este painel se esconde e um aviso aparece à sua frente.
+vr.body.step3 = 3. Braços para os lados, nivelados. Solte os dois gatilhos, depois aperte os dois e fique parado.
+vr.body.step4 = 4. B direito cancela. Este painel volta quando terminar, com os números.
+vr.body.seated_step1 = 1. Sente-se ereto onde você joga, olhando para a frente, com espaço para os braços. Não é preciso chão.
+vr.body.seated_step4 = 4. Depois, Recentralizar sentado como você joga: os olhos do herói ficam onde está a sua cabeça.
+vr.guide.not_now = Agora não
+vr.guide.back = Voltar
+vr.guide.measure_now = Medir agora
+vr.guide.done = Concluir
+vr.guide.next = Próximo
+vr.hset.game_view = Visão do jogo
+vr.hset.game_view.detail = F1 de cima, F2 terceira pessoa, F3 no seu chão, F4 primeira
+vr.hset.preview = Prévia 5 s
+vr.hset.recentre = Recentralizar
+vr.hset.close = Fechar
+vr.hset.apply = Aplicar
+vr.video.preset_window = Tamanho da janela
+vr.video.preset_headset = O do headset
+vr.video.not_known = ainda não conhecido
+vr.video.pick_headset_size = O do headset: {size}
+vr.video.pick_headset = Tamanho do headset
+vr.video.pick_window = Tamanho da janela
+vr.video.cost_headset_unknown = O tamanho dele é lido quando o jogo inicia uma sessão do headset pela primeira vez.
+vr.video.cost_window = Nada muda: a imagem é a da janela do jogo.
+vr.video.cost = Desenha {times} x os pixels de 2048 x 2048.
+vr.video.limit = O seu headset aceita no máximo {most}: reduzido a isso.
+vr.video.now = O jogo desenha {size} agora.
+vr.video.now_unknown = O tamanho da imagem do jogo ainda não é conhecido.
+vr.video.recommended = O seu headset recomenda {size}.
+vr.video.recommended_unknown = O tamanho do seu headset é lido quando o jogo inicia uma sessão pela primeira vez.
+vr.tiles.edit = Editar habilidades
+vr.tiles.close = Fechar
+vr.tiles.back = Voltar
+vr.tiles.previous = Anterior
+vr.tiles.next = Próximo
+vr.tiles.clear_slot = Limpar espaço
+vr.tiles.tab_skills = Habilidades
+vr.tiles.tab_settings = Configurações
+vr.tiles.choose_skill_for = Escolha uma habilidade para
+vr.tiles.now = agora: {skill}
+vr.skills.nothing = nada
+vr.skills.choose_slot = Escolha o espaço a mudar
+vr.skills.unavailable = Habilidades indisponíveis
+vr.skills.trigger_casts = O gatilho lança: {skill}  ({slot})
+vr.tiles.trigger_basic = Gatilho: o ataque básico  (A)
+vr.tiles.page = Página {page} de {pages}
+vr.tiles.hint_first = Toque num espaço para mudar a habilidade dele - segure o gatilho nele e o gatilho a lança
+vr.tiles.hint_wheel = Aponte para um espaço e puxe o gatilho
+vr.tiles.hint_pick_slot = Aponte para o espaço a mudar e puxe o gatilho
+vr.tiles.hint_pick_skill = Aponte para uma habilidade e puxe o gatilho para pô-la no espaço
+vr.tiles.run = CORRER
+vr.tiles.walk = ANDAR
+vr.tiles.run_walk_unknown = CORRER /\nANDAR
+vr.wheel.run_walk = CORRER / ANDAR
+vr.tiles.empty = Vazio
+vr.tiles.not_found = Não encontrado
+vr.tiles.lt_row_off = Fileira LT desl.
+vr.skills.all = Todas
+vr.skills.general = Geral / Itens
+vr.tiles.no_trees = As categorias de habilidades precisam das árvores de habilidades do cache de ícones - execute tools/skill_icons/prepare_skill_icons.py de novo
+vr.skills.none = Nenhuma habilidade para escolher
+vr.skills.skill_n = Habilidade {id}
+vr.skills.unassigned = Não atribuído
+vr.skills.tree_n = Árvore {n}
+vr.skills.cleared = Espaço limpo
+vr.skills.assigned = Atribuído
+vr.skills.not_taken = O jogo não aceitou - escolha o espaço de novo
+vr.skills.no_answer = Sem resposta do jogo
+vr.skills.cannot_cast = Esse espaço não pode ser lançado daqui
+vr.skills.hold_left_trigger = Segure o gatilho esquerdo e puxe o direito
+vr.skills.pull_right_trigger = Puxe o gatilho direito
+vr.skills.layout = As habilidades não podem ser mudadas neste layout
+vr.wheel.edit = EDITAR HABILIDADES
+vr.wheel.close = FECHAR
+vr.wheel.back = VOLTAR
+vr.wheel.previous = ANTERIOR
+vr.wheel.next = PRÓXIMO
+vr.wheel.now_run = agora: CORRER
+vr.wheel.now_walk = agora: ANDAR
+vr.wheel.empty = Vazio
+vr.wheel.basic_attack = ATAQUE\nBÁSICO
+vr.wheel.active = ATIVO
+vr.wheel.choose_slot = ESCOLHA\nUM ESPAÇO
+vr.wheel.choose_skill = ESCOLHA A HABILIDADE  -  {slot}
+vr.wheel.now = Agora: {skill}
+vr.wheel.clear_slot = LIMPAR ESPAÇO
+vr.skills.command = Comando
+vr.skills.item_skill = Habilidade de item
+vr.skills.level = Nível {level}
+vr.wheel.trigger_basic = Gatilho: ataque básico
+vr.wheel.page = Página {page} / {pages}
+vr.compass.n = N
+vr.compass.ne = NE
+vr.compass.e = L
+vr.compass.se = SE
+vr.compass.s = S
+vr.compass.sw = SO
+vr.compass.w = O
+vr.compass.nw = NO
+vr.map.rotate = GIRAR MAPA
+vr.map.on = Ligado
+vr.map.off = Desligado
+
 # ===== Keys of this file that en.txt does not list (an English used under several keys, worded here for one of them) =====
+render.keep_room_heights.label = Os pisos ficam onde estavam (sem chão que desliza na volta)
+render.keep_room_heights.tip = O jogo dá a cada sala de um nível uma altura quando começa a desenhá-la, ajustada às salas desenhadas ao redor dela naquele momento, e a esquece quando a sala sai de vista. As bordas dos ladrilhos dela não concordam em toda a volta, então uma sala a que você volta por outro caminho (ou depois de outra área ou da cidade) pode ficar um degrau mais alta ou mais baixa - da câmera do jogo lá em cima ninguém vê, da nossa o chão desliza: blocos empurrados para cima, para baixo e para os lados, com o vazio aparecendo entre eles. Ligado: cada sala mantém a altura com que foi desenhada pela primeira vez até você sair do jogo. Só a imagem; o mundo do jogo é plano, nada da luta nem dos caminhos muda. Ao vivo. Desligado: as alturas próprias do jogo, como antes.
+group.ceiling_act_1_caves = Teto: cavernas do ato 1
+group.ceiling_act_1_caves.help = O teto sobre as cavernas do ato 1: sua altura sobre o chão, o brilho, até onde a luz do herói alcança nele, o relevo, e a imagem de pedra com seu tamanho, contraste, detalhe e brilho úmido.
+group.ceiling_act_1_crypts = Teto: criptas do ato 1
+group.ceiling_act_1_crypts.help = O teto sobre as criptas do ato 1: sua altura, brilho, o alcance da luz do herói, quanto a alvenaria irregular pende, e sua imagem.
+group.ceiling_act_1_barracks = Teto: quartel do ato 1
+group.ceiling_act_1_barracks.help = O teto sobre o quartel do ato 1: sua altura, brilho, o alcance da luz do herói, relevo e imagem.
+group.ceiling_act_1_catacombs = Teto: catacumbas do ato 1
+group.ceiling_act_1_catacombs.help = O teto sobre as catacumbas do ato 1: sua altura (o que o jogo desenha mais alto é cortado), brilho, o alcance da luz do herói, relevo e imagem.
+group.ceiling_act_1_cathedral = Teto: catedral do ato 1
+group.ceiling_act_1_cathedral.help = O teto sobre a catedral do ato 1. Além da altura, do brilho e da imagem, uma cúpula deixa o teto subir como uma esfera sobre o que fica mais alto (o dossel do altar) em vez de cortá-lo; defina a partir de que altura, quão larga e quão alta ela vai.
+group.ceiling_act_2_sewers = Teto: esgotos do ato 2
+group.ceiling_act_2_sewers.help = O teto sobre os esgotos do ato 2: sua altura, brilho, o alcance da luz do herói, relevo e imagem.
+group.ceiling_act_2_palace = Teto: palácio do ato 2
+group.ceiling_act_2_palace.help = O teto sob o palácio do ato 2: sua altura, brilho, o alcance da luz do herói, relevo e imagem.
 ceiling.made = feito a partir do seu jogo: o modelo do teto de caverna a partir da rocha de caverna do ato 1 (mods\D2R-VR\D2R-VR.mpq), a partir da próxima inicialização do jogo
 ceiling.ready = pronto: o modelo do teto de caverna (mods\D2R-VR\D2R-VR.mpq)
 group.direct_hit_experimental = Acerto direto (experimental)

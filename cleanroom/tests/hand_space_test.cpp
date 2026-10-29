@@ -143,6 +143,46 @@ int main() {
         CHECK(Near(Then(moved, learned), gripMoved));
         CHECK(Distance(aim.p, grip.p) < kNearM);
     }
+    // -- where LOCAL is in the room ([openxr] room_by_head) -----------------------
+    {   // 0.186, 2026-10-28: LOCAL in STAGE and STAGE in LOCAL both ---- all the run
+        RoomFacts r;
+        r.direct = true; r.reverse = true; r.byHead = true; r.headRoom = true; r.headLocal = true; r.known = true; r.stageDeadS = 5.0;
+        CHECK(PickRoom(r) == RoomFrom::Direct);       // the runtime's own locate first, as before
+        r.direct = false;
+        CHECK(PickRoom(r) == RoomFrom::Reverse);
+        r.reverse = false;
+        CHECK(PickRoom(r) == RoomFrom::Head);         // the 0.186 log if STAGE still had the head: found by it
+        r.byHead = false;
+        CHECK(PickRoom(r) == RoomFrom::Kept);         // the key off: 0.186's own rule (the last found, else not known)
+        r.known = false;
+        CHECK(PickRoom(r) == RoomFrom::None);
+        r.byHead = true; r.headRoom = false;
+        CHECK(PickRoom(r) == RoomFrom::LocalIsRoom);  // the 0.186 log if STAGE had nothing, the head neither: LOCAL is the room
+        r.stageDeadS = 0.5;
+        CHECK(PickRoom(r) == RoomFrom::None);         // ... not before a second of it (a gap at the start, the focus coming)
+        r.stageDeadS = kStageDeadS;
+        CHECK(PickRoom(r) == RoomFrom::LocalIsRoom);
+        r.headLocal = false;
+        CHECK(PickRoom(r) == RoomFrom::None);         // no head in LOCAL either: nothing to stand on
+        r.headLocal = true; r.known = true;
+        CHECK(PickRoom(r) == RoomFrom::Kept);         // once found (or taken), kept - never LOCAL again over a real one
+        r.headRoom = true;
+        CHECK(PickRoom(r) == RoomFrom::Head);         // a fresh one by the head over the kept one
+        RoomFacts nothing;
+        CHECK(PickRoom(nothing) == RoomFrom::None);
+        CHECK(Name(RoomFrom::Head) != Name(RoomFrom::Kept));
+    }
+    {   // the head in both spaces gives LOCAL in the room; the grip in LOCAL carried by it lands where STAGE would have put it
+        const Pose headInLocal = Make(0.1f, 1, -0.2f, 25.0f, 0.04f, 0.02f, -0.05f);
+        const Pose headInRoom = Then(localInRoom, headInLocal);
+        const Pose byHead = LocalInRoomByHead(headInRoom, headInLocal);
+        CHECK(Near(byHead, localInRoom));
+        CHECK(Near(Then(byHead, gripInLocal), gripInRoom));
+        CHECK(Near(Then(byHead, headInLocal), headInRoom));   // and the head back where STAGE had it
+        Pose id;   // LOCAL taken as the room: a pose in LOCAL is published as it is
+        CHECK(Near(Then(id, gripInLocal), gripInLocal));
+    }
+
     // turns made unit length; none from nonsense
     {
         float u[4] = {0.0f, 0.0f, 0.0f, 1.1f};

@@ -1,5 +1,123 @@
 # What's new in D2R VR
 
+## 0.188.6
+
+The release after 0.187 (develop). It gathers the test builds 0.188.1 - 0.188.5 (0.189, 0.190 in between), below.
+
+- **"Floors stay where they were" is off by default** (`[render] floors_stay`, was `keep_room_heights=1`). The step by the Pandemonium
+  Fortress's gate is the game's own: rooms of the Outer Steppes drawn at the town's height before their neighbours, a step seen from
+  afar that the game mends as you walk up, when it draws them again with their neighbours in - as in Unleashed. With the option on,
+  that mend never came and the step stayed next to you (the author: "да, эту галочку лучше снять"). It stays as an option: on, the
+  floors do not slide on a way back, but the game's mends as you come near do not come either. The key is new so an upgrade's ini
+  gets it off too (the installer keeps old values); Settings drops the old line.
+- **The Arreat Summit's snow hanging in the air in first person** (Serg on 0.188.4, level 120: "квадрат со снежинками ... висит где-то в
+  воздухе"). The game lays its rain and snow in a box round its own camera - high above and behind the hero for its view from above -
+  every update. New `[sky] weather_first_person` (Settings > Sky: "Rain and snow in first person", 0 by default = as before): 1 hidden,
+  2 laid at your head so it falls round you, in VR F4 and flat F3; the other views keep the game's. Visual only. The log says where the
+  game laid the box and where it went (`weather, 10 s: ...`). Test: weather_place_test.
+
+### 0.188.5 (test)
+
+- **The Arreat Summit's sky again**: our sky behind the game's sea of clouds is drawn whatever the sky choice (it was black in 0.188.4);
+  and wherever the game's sky or fog is chosen but cannot be shown for good, ours instead - no black sky on a fresh install.
+- **Setup makes the sky domes and the game's ceilings** from your game (`--prepare-assets`), so Play from the launcher works without
+  opening Settings first.
+- **The fog**: `[fog] fog_into_sky` ships off (the far no longer see-through); the act's fog colour at every hour, never darkened to
+  black (`[fog] fog_keeps_colour`).
+- **Fixed again: the terrace by the Pandemonium Fortress**: `[render] keep_room_heights` keeps only ground from real ground.
+
+### 0.188.4 (test)
+
+- **One path draws the sky and the fog**: "Sky and fog drawn by" is a real either-or - with the game's chosen, our old sky and fog draw
+  nothing (the speckled rectangles over the Summit's mist were our sky over the game's). The old way in flat covers the whole frame, and
+  after VR -> flat its fog follows the flat picture's depth (no black screen).
+- **The game-drawn sky**: sharper (4096 x 1024 a sky), its horizon sinking into the fog's colour, a whole sphere with a one-colour lower
+  half (`[sky] game_sky_closed`); the fog fades the far into the sky behind it, as the Arcane Sanctuary's (`[fog] fog_into_sky`), and the
+  game's fog as thick as ours in the act's colour (`[fog] game_fog_match`).
+- **The Arreat Summit (120, 137)**: the game's sea of clouds with our sky behind it; its ground picture hidden in first person.
+- **Fixed: a terrace by the Pandemonium Fortress (103)**: `[render] keep_room_heights` kept two rooms 9 units too high.
+
+### 0.188.3 (test)
+
+- **Smooth stone over the palace cellar and the tombs**: levels 52 - 54 and every act 2 tomb (55 - 61, 66 - 73) get the catacombs' smooth
+  dark stone instead of their floor's tiles or the cave rock.
+- **New dungeons for upgrading players too**: an ini from before keeps its old `[ceiling] biomes` / `game_ceiling_biomes`; they are now
+  brought up to date where they are read, keeping anything the player took out.
+- Test builds are numbered 0.188.x until a release: 0.189 and 0.190 were 0.188.1 and 0.188.2.
+
+### 0.190
+
+- **Fixed: black rectangles on the tops of walls without ReShade** (Serg, 0.189: act 2 palace cellar, act 1 monastery - "black
+  squares on the ceiling" that moved with the head, at the edge of the hero's light circle; not in D2R VR Unleashed). The game cuts
+  the picture into 32 x 20 light tiles with a shader that is right only at 16:10; our fix for it (`[render] light_bounds_fix`, on)
+  was bound only through ReShade, so with "No ReShade" the lights vanished in hard rectangles at the eyes' size (2496 x 2688:
+  tiles 78 x 134 px). Now the same key works without ReShade too: our own D3D12 hooks find the game's shader as it is made and
+  bind ours in its place; the log says "found without ReShade" and "bound ... without ReShade". Takes effect at the next start of
+  the game. Test: light_bounds_native_test.
+- **A ceiling in every dungeon, drawn by the game**: every indoor area of all five acts the game lists gets the game's flat ceiling - its own
+  floor's stone, or the act 1 caves' rock where none fits (the act 2 sewers, the harem and the palace cellar among them); none keeps our
+  old vault in VR F4. Each its own group on the Ceiling tab, in act order, with its level numbers.
+- **A room's own height wins**: `[ceiling] height_from_walls` now sets the height only where the room has none of its own (0 = from the
+  walls); the heights you set stay.
+- **The cathedral's dome, sized**: `[ceiling] game_ceiling_dome_size` and `_rise` over the measured dome, live, still over the canopy.
+- **The sky of every act, second try**: the first act loaded still showed its sky in every act; each live dome now names one picture, its
+  own band of it. Make the sky dome again in Settings once after installing.
+
+### 0.189
+
+- **The cathedral's dome over the chapel, drawn by the game** (`[ceiling] game_ceiling_dome`, Settings > Ceiling, off by default): the convex
+  dome our ReShade vault had over the chapel (level 33), now in the game's own ceiling - measured from the cathedral's own pieces (the altar's
+  canopy and the four pillars round it), lit and fogged by the game. VR F4.
+- **Each room's own ceiling height only**: the common "The game's ceiling: height" (`[ceiling] game_ceiling_height`) and the common
+  `[ceiling] height` are gone - they overrode every room's own. The maggot lair, the spider caves, the jungle dungeons and the ice caves get
+  their own height (18, as before).
+- **The sky of every act again its own**: loaded in act 2, every act showed act 2's sky. Each act's dome now has its own mesh, and the jungle's
+  and ice caves' ceilings no longer take the act 2 - 4 domes' files. Make the sky dome again in Settings once after installing.
+
+### 0.188 (test)
+
+- **From D2R VR Unleashed, by bearstonem - the first parts taken under its Mozilla Public License 2.0.** They live in files of their own,
+  each with the MPL notice and the commits it comes from (`shared/unleashed_far_objects.h`, `cleanroom/drawdist/unleashed_big_objects.cpp`,
+  `shared/unleashed_fog.h`, `reshade/D2R_FogEase_Unleashed.fxh`; `LICENSE` lists them); the rest of the mod stays MIT. All three are off by
+  default - off is the game exactly as before:
+  - **Big objects** (`[render] big_radius`, Settings > Draw distance; Unleashed 9e9c241): trees, houses and walls stay drawn past the model
+    visibility radius - the bigger, the farther (30 times their height or half their width), out to 300 - 1000 units - while stones, grass
+    and monsters keep the radius. The game's own models, on the game's own test of which models to draw (bearstonem found it). Needs room
+    rings 3 or more, and the fog's end and the sky dome past it to be seen; costs frames in forests and towns (the log says every 10 s how
+    many models it kept). Unleashed ships it at 600 with rings 6.
+  - **Fog eased in, no hard ring** (`[fog] ease_in`, Settings > fog; Unleashed 843b3a4): the fog fades in over its first 40 units past its
+    start, so the clear ground round you has no sharp edge. Our effect's fog (with ReShade or without) and the game's fog drawn by our curve
+    (`game_fog_our_curve`, also in "fog before the effects"); the game's own exponential curve is left as it is.
+  - **No fog in the River of Flame** (`[fog] no_fog_river`, Settings > fog; Unleashed d799f93): open air, but its lava's own glow and haze
+    stay the game's - our effect's fog and the game's fog alike.
+
+  Unleashed's Fog distance (4aa3175) is our Full fog slider, already there (Draw distance tab, up to 2000); its release default is 600 with
+  curve 0.4.
+- **Settings in Ukrainian** (`lang\uk.txt`): picked on the Home tab, or by itself on a Ukrainian Windows. A machine translation like
+  the others - corrections welcome in Discord. The game's own names (skills, areas, items) stay English: Diablo II: Resurrected
+  has no Ukrainian version.
+
+- **The barracks' own ceiling beams** (`[ceiling] game_ceiling_beams`, off, the Ceiling tab, VR F4): the game ships a wooden ceiling frame
+  for the barracks (`wood_ceiling_frame01/02`) and never places it; it is laid in a grid of whole frames on the barracks walls' top, the
+  slab closing the gaps over it. Made from your game's files by D2R VR Settings. Test: game_ceiling_test.
+- **Each room's ceiling on its own walls' top** (`[ceiling] height_from_walls`, off, the Ceiling tab, VR F4): the ceiling's height is the
+  middle of the tops of the wall, pillar and cliff pieces the game builds the room with, measured from the game's models, instead of the
+  height set per biome. A survey of all 17 indoor areas found no ceiling the game places anywhere (docs in the ceiling notes).
+- **The headset's texts in your language** (`[hud] headset_language`, off = English as before; Home > Language: "In the headset too"):
+  the skill panel, the settings in the headset, the first-start guide, the calibration prompt, the map's Rotate button and compass take
+  the language D2R VR Settings is in. Their 407 texts are in English only for now - the other languages come in the batch before a
+  release, until then they show in English. Chinese uses Microsoft YaHei. Test: ui_text_test.
+
+- **Quest over Link: the hands from LOCAL when the room gives nothing** (`[openxr] room_by_head`, 2 = Meta's runtime, the default; 1 = any
+  runtime; 0 = as 0.187): playful_pony's 0.186 log had every locate against STAGE empty for the whole run while LOCAL had the head and the
+  aim, so the hands stayed at the belt. Now LOCAL is found in the room by the head, or taken as the room when STAGE has given the head
+  nothing for a second; with hands that work nothing changes. It does not cover a run where LOCAL is empty too (his 0.187 log) - that one
+  is still being narrowed down. Test: hand_space_test.
+- **Break barrels and pots by hitting them** (`[gameplay] melee_touch_barrels`, off, VR F4): a counting swing or thrust through a barrel,
+  pot, urn or basket presses the game's own interact on it, as A does, so the hero kicks or breaks it with his own animation - loot, traps
+  and explosions are the game's. The object rows and the size estimate are bearstonem/d2r-pcvr's (9b75aa2, MIT); unlike there, the server
+  is never called directly. Test: barrel_touch_test.
+
 ## 0.187
 
 - **Fixed: the game froze on the character screen with ReShade** (0.186, a player: hovering Play). The 16:9 main menu's resize

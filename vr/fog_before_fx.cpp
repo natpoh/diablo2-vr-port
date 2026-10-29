@@ -22,6 +22,7 @@
 #include "fog_height.h"           // StreamPixelShader
 #include "fog_in_frame_math.h"    // IsResolve: the game's ps_transparent_resolve by its size and hash
 #include "native_d3d12.h"
+#include "../shared/unleashed_fog.h"   // [fog] ease_in: UnleashedFogEase (MPL 2.0, D2R VR Unleashed), put in front of our shader
 
 namespace fogfx {
 namespace {
@@ -338,7 +339,7 @@ cbuffer K : register(b0) {
     float3 up; float soft;
     float sx, sy, offX, curveOn;
     uint width, height; float cStart, cEnd;
-    float cCurve, cStrength, pad0, pad1;
+    float cCurve, cStrength, easeOn, pad1;
 };
 Texture2D<float> Depth : register(t0);
 Texture2D<float3> Scene : register(t1);
@@ -353,7 +354,7 @@ void main(uint3 id : SV_DispatchThreadID) {
     const float2 ndc = float2((id.x + 0.5) / width * 2.0 - 1.0, 1.0 - (id.y + 0.5) / height * 2.0);
     const float3 v = float3((ndc.x - offX) / sx * z, ndc.y / sy * z, z);
     const float dist = sqrt(dot(v, v) + 1.0);   // (the game's: its view position's w is 1)
-    float t = curveOn > 0.5 ? 1.0 - pow(saturate((dist - cStart) / max(cEnd - cStart, 1.0)), cCurve) * cStrength   // ([fog] game_fog_our_curve)
+    float t = curveOn > 0.5 ? 1.0 - pow(saturate((dist - cStart) / max(cEnd - cStart, 1.0)), cCurve) * cStrength * UnleashedFogEase(dist, cStart, easeOn)   // ([fog] game_fog_our_curve, ease_in)
                             : min(1.0, exp(-density * (dist / plane - 1.0)));
     if (heightOn > 0.5) t = 1.0 - (1.0 - t) * saturate((top - dot(v, up)) / soft);
     Out[id.xy] = lerp(fogColour, c, t);
@@ -366,7 +367,7 @@ struct Consts {
     float sx, sy, offX, curveOn;
     uint32_t width, height;
     float cStart, cEnd;
-    float cCurve, cStrength, pad0, pad1;
+    float cCurve, cStrength, easeOn, pad1;
 };
 static_assert(sizeof(Consts) == 24 * 4, "twenty-four root constants");
 
@@ -398,7 +399,8 @@ bool MakeGpu(ID3D12Device* dev) {
     HMODULE lib = LoadLibraryExW(L"d3dcompiler_47.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
     auto compile = lib ? reinterpret_cast<pD3DCompile>(GetProcAddress(lib, "D3DCompile")) : nullptr;
     ID3DBlob *code = nullptr, *err = nullptr;
-    if (!compile || FAILED(compile(kCs, sizeof kCs - 1, "vrcam-fog-before-fx", nullptr, nullptr, "main", "cs_5_0", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &code,
+    const std::string source = std::string(unleashed::fog::kEaseHlsl) + kCs;
+    if (!compile || FAILED(compile(source.data(), source.size(), "vrcam-fog-before-fx", nullptr, nullptr, "main", "cs_5_0", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &code,
                                    &err))) {
         Line("vrcam: fog before the effects - our shader did not compile: %s", err ? (const char*)err->GetBufferPointer() : "no d3dcompiler_47.dll");
         if (err) err->Release();
@@ -670,6 +672,7 @@ void Insert(ID3D12GraphicsCommandList* cl, List& l) {
     c.cEnd = p.end;
     c.cCurve = std::max(p.curve, 0.05f);
     c.cStrength = p.strength;
+    c.easeOn = p.ease ? 1.0f : 0.0f;
 
     natived3d::SetOurs(true);
     cl->EndQuery(g.queries, D3D12_QUERY_TYPE_TIMESTAMP, 2 * k);

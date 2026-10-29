@@ -162,8 +162,32 @@ uintptr_t EyesPose(uintptr_t pose) {
     return reinterpret_cast<uintptr_t>(slot->header);
 }
 
+// NoteHeroRig / SkinNote: the hero's skeleton and poses, and what was skinned from them (index 0 the eyes' passes, 1 the shadows', 2 outside a draw collect)
+std::atomic<uintptr_t> g_rigSkel{0}, g_rigPose{0}, g_rigPrev{0};
+std::atomic<unsigned> g_skinOurs[3], g_skinOther[3];
+constexpr int kOtherPoses = 8;
+std::atomic<uintptr_t> g_otherPose[kOtherPoses];   // the other world poses met (the first few)
+
+void CountSkin(uintptr_t skeleton, uintptr_t pose, int pass) {
+    const uintptr_t skel = g_rigSkel.load(std::memory_order_relaxed);
+    if (!skel || skeleton != skel || !pose) return;
+    const int k = pass == kPassNone ? 2 : EyesPass(pass) ? 0 : 1;
+    if (pose == g_rigPose.load(std::memory_order_relaxed) || pose == g_rigPrev.load(std::memory_order_relaxed)) {
+        g_skinOurs[k].fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+    g_skinOther[k].fetch_add(1, std::memory_order_relaxed);
+    for (auto& slot : g_otherPose) {
+        uintptr_t was = slot.load(std::memory_order_relaxed);
+        if (was == pose) return;
+        if (!was && slot.compare_exchange_strong(was, pose)) return;
+        if (was == pose) return;
+    }
+}
+
 __declspec(noinline) uintptr_t HookComposite(uintptr_t skeleton, uintptr_t pose, uintptr_t indices, uintptr_t count, uintptr_t out) {
     const int pass = t_pass;
+    CountSkin(skeleton, pose, pass);
     if (pass != kPassNone && pose) {
         const uintptr_t cur = g_cur.load(std::memory_order_relaxed), prev = g_prev.load(std::memory_order_relaxed);
         if (cur && (pose == cur || pose == prev)) {
@@ -354,6 +378,35 @@ bool Publish(uintptr_t self, const char* flags, int count, int pivot, bool along
 
 void Unpublish(uintptr_t self) {
     if (g_self.load() == self) Clear();
+}
+
+void NoteHeroRig(uintptr_t skeleton, uintptr_t pose, uintptr_t prevPose) {
+    g_rigSkel.store(skeleton, std::memory_order_relaxed);
+    g_rigPose.store(pose, std::memory_order_relaxed);
+    g_rigPrev.store(prevPose, std::memory_order_relaxed);
+}
+
+std::string SkinNote() {
+    if (g_state.load() != 1) return g_rigSkel.load() ? "hero skinning: not counted - the composite hook is not in ([arms] head_shadow off or not hooked)" : "";
+    unsigned ours[3], other[3];
+    for (int k = 0; k < 3; ++k) { ours[k] = g_skinOurs[k].exchange(0); other[k] = g_skinOther[k].exchange(0); }
+    if (!g_rigSkel.load()) return "";
+    if (!(ours[0] + ours[1] + ours[2] + other[0] + other[1] + other[2]))
+        return "hero skinning (since the last line): no skinning of the hero's skeleton met (the composite is handed another skeleton object than the rig's)";
+    std::string poses;
+    int distinct = 0;
+    for (auto& slot : g_otherPose)
+        if (const uintptr_t p = slot.exchange(0)) {
+            char b[24];
+            snprintf(b, sizeof b, "%s%llX", distinct++ ? " " : "", (unsigned long long)p);
+            poses += b;
+        }
+    char b[600];
+    snprintf(b, sizeof b, "hero skinning (since the last line): from the pose we posed - eyes %u, shadows %u, elsewhere %u; from ANOTHER world pose of the hero's "
+             "skeleton - eyes %u, shadows %u, elsewhere %u (%d such poses%s%s)%s", ours[0], ours[1], ours[2], other[0], other[1], other[2], distinct,
+             distinct ? ": " : "", poses.c_str(),
+             other[0] ? " - meshes of the hero drawn from a pose our turn and legs never reach" : "");
+    return b;
 }
 
 }  // namespace headshadow

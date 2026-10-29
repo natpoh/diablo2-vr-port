@@ -131,6 +131,8 @@ group.status.help = Was installiert ist und läuft: BodyWalk, FlatVR, Game Link,
 @update.check_now.label = Nach Updates suchen
 @update.check_now.tip = Fragt jetzt bei bodywalkvr.com nach, auch wenn die Prüfung beim Start ausgeschaltet ist. Es wird nichts heruntergeladen.
 group.d2r_vr.help = Dieses Programm und die Mod: die Sprache dieses Programms, die Version, die Update-Prüfung und Logs sammeln - eine Zip-Datei mit dem, was der Support braucht, um ein Problem zu finden.
+hud.headset_language.label = Auch im Headset
+hud.headset_language.tip = Die Texte, die die Mod im Headset zeichnet - das Fertigkeitenfenster, die Headset-Einstellungen, die Einführung beim ersten Start, die Aufforderung zur Kalibrierung, die Knöpfe der Karte - in der oben gewählten Sprache. Ein noch nicht übersetzter Text bleibt Englisch. Aus: Englisch, wie bisher. Die eigenen Texte des Spiels sind in der Sprache des Spiels (seine eigenen Einstellungen).
 @status.update.label = Update-Prüfung ist aus
 @update.download.label = Herunterladen
 @update.download.tip = Öffnet die Download-Seite in deinem Browser. Dieses Programm lädt oder startet selbst nie etwas.
@@ -211,7 +213,7 @@ sky.enabled.tip = Ein gemalter Himmel über der schwarzen Leere im Freien. Wer i
 ceiling.enabled.label = Decke in Höhlen (per ReShade)
 ceiling.enabled.tip = Ein steinernes Gewölbe über der schwarzen Leere in Verliesen, nur in der ersten Person.
 ceiling.game_ceiling.label = Wer die Decke zeichnet
-ceiling.game_ceiling.tip = Unser Effekt: das Gewölbe durch den Nebel-Shader - den von ReShade oder ohne ReShade den eigenen von D2R VR. Das Spiel: eine Platte aus dem eigenen Höhlenfels des Spiels, aus den Dateien deines Spiels erzeugt, die das Spiel selbst zeichnet und beleuchtet - seine Fackeln und dein Licht darauf, sein Nebel darüber, Feuer und Zauber davor - jeden Frame über dich gelegt, keine Frame-Zeit von uns (ein Test: nur VR F4). In jedem Raum der eigene Stein des Spiels, passend zum dafür gewählten Bild: Fels in den Höhlen, hohe Platten in der Krypta, glatter Stein in der Kaserne, den Katakomben und der Kathedrale, verzierter Marmor im Palast. Ein Raum, für den es noch keinen gibt (die Kanalisation von Akt 2), behält das Gewölbe unseres Effekts mit dessen eigenen Einstellungen, wie im flachen F3. Die übrigen Deckeneinstellungen unten gehören zu unserem Effekt; die Kachelgröße bestimmt auch die des Felsens. Sofort.
+ceiling.game_ceiling.tip = Unser Effekt: das Gewölbe durch den Nebel-Shader - den von ReShade oder ohne ReShade den eigenen von D2R VR. Das Spiel: eine Platte aus dem eigenen Höhlenfels des Spiels, aus den Dateien deines Spiels erzeugt, die das Spiel selbst zeichnet und beleuchtet - seine Fackeln und dein Licht darauf, sein Nebel darüber, Feuer und Zauber davor - jeden Frame über dich gelegt, keine Frame-Zeit von uns (ein Test: nur VR F4). In jedem Raum der eigene Stein des Spiels, passend zum dafür gewählten Bild: Fels in den Höhlen, hohe Platten in der Krypta, glatter Stein in der Kaserne, den Katakomben und der Kathedrale, verzierter Marmor im Palast; ein Raum ohne Bild bekommt den passenden Stein seines eigenen Bodens (die Kanalisation von Akt 2, der verdorbene Harem, der Palastkeller). Die übrigen Deckeneinstellungen unten gehören zu unserem Effekt; die Kachelgröße bestimmt auch die des Felsens. Sofort.
 ceiling.game_ceiling.choice0 = Unser Effekt (ReShade / der eigene von D2R VR)
 ceiling.game_ceiling.choice1 = Das Spiel (beleuchteter Fels)
 ceiling.steps.label = Stufen des Deckenreliefs
@@ -232,6 +234,8 @@ group.draw_distance.help#2 = Wie weit um dich herum die Welt gezeichnet wird, mi
 # --- What the slider sets ---
 group.what_the_slider_sets = Was der Regler einstellt
 group.what_the_slider_sets.help = Jeder Wert, den der Sichtweite-Regler schreibt, zum Einstellen von Hand. Die des Nebels sind ausgegraut, solange der Distanznebel aus ist, die der Himmelskuppel, solange das Spiel den Himmel nicht zeichnet (Reiter Himmel: „Himmel und Nebel gezeichnet von“), die der Höhlenkuppel, solange sie aus ist.
+render.big_radius.label = Große Objekte: Bäume, Häuser, Mauern weiter (0 = aus)
+render.big_radius.tip = Bäume, Häuser und Mauern werden weiter gezeichnet als der Sichtradius der Modelle - je größer, desto weiter (das 30-Fache ihrer Höhe oder ihrer halben Breite), bis zu so vielen Einheiten (300 - 1000; 100 und 200 zählen als 300). Steine, Gras und Monster behalten den Sichtradius der Modelle. Braucht 3 oder mehr Raumringe (jenseits der Räume, die das Spiel dort baut, gibt es nichts zu zeichnen) und dahinter den vollen Nebel und die Himmelskuppel, damit man es sieht. Kostet Frames in Wäldern und Städten. Aus D2R VR Unleashed (bearstonem). Nur optisch. Sofort. 0 = aus, wie bisher.
 sky.game_sky_radius.label = Himmel des Spiels: Kuppelradius, Einheiten
 sky.game_sky_radius.tip = Wie weit um dich herum die Himmelskuppel des Spiels gelegt wird, in den Einheiten des Spiels (live). 200: ein naher Horizont - die Kuppel schneidet die ferne Welt in einem sauberen Kreis ab, der Nebel des Spiels darüber. Weiter weg kommt der Himmel aus dem Nebel. Das Log nennt bei jeder Änderung den verwendeten Radius.
 fog.enabled.tip#2 = Ein Distanznebel. Wer ihn zeichnet, steht in der Auswahl auf dem Tab Himmel (unser Effekt oder das Spiel selbst). Mit dem Himmel an geht er in den Himmel über.
@@ -1563,6 +1567,12 @@ fog.game_fog_caves_black.label = Der Nebel des Spiels wird in Höhlen schwarz
 fog.game_fog_caves_black.tip = Unter der Erde verblasst der Nebel des Spiels zu Schwarz, was auch immer die Nebelfarbe der Höhlen sagt, und die Leere hinter dem Rand einer Höhlendecke bleibt unberührt - der Nebel-Pass des Spiels legte seinen fackelbeleuchteten Dunst ganz darüber, ein helles Band hinter den Feuern. Die Entfernung dunkelt ab, nie leuchtet sie. Nur ohne ReShade. Live.
 fog.game_fog_our_curve.label = Der Nebel des Spiels nach unserer Kurve
 fog.game_fog_our_curve.tip = Der eigene Nebeldurchgang des Spiels blendet den Nebel so ein wie unser Effekt - von Nebelbeginn bis Voller Nebel nach dem Abfall unten (in Höhlen deren eigener Beginn, Ende und Stärke) - statt nach seiner eigenen Exponentialkurve, die fast den ganzen Nebel direkt hinter den Beginn legt und den fernen Bereich einheitlich grau lässt. Ein paar Anweisungen in seinem Durchgang, nichts hinzugefügt. Nur ohne ReShade. Sofort.
+fog.fog_keeps_colour.label = Der Nebel des Spiels behält nachts die Farbe des Akts
+fog.fog_keeps_colour.tip = Solange das Spiel den Nebel zeichnet: Seine Farbe ist zu jeder Stunde die eigene des Akts (die Farben oben) - die Ferne verblasst in einen hellen Dunst daraus, nie ins Schwarze. Der Nebel unseres eigenen Effekts wird nicht verändert. Aus: Er wird mit dem Licht des Spiels dunkler, wie bisher. Sofort.
+fog.fog_into_sky.label = Der Nebel des Spiels lässt die Ferne im Himmel dahinter verblassen
+fog.fog_into_sky.tip = Im Freien ist die Farbe des Nebels an jedem Punkt der Himmel direkt dahinter, wie im Arkanen Heiligtum: Das ferne Land, der Rand der Welt und hohe ferne Gebäude verblassen im Himmel, nicht in einer flachen Farbe (der untere Teil des Himmels ist die Nebelfarbe des Akts, so wie er gezeichnet wird). Ferne Objekte zeigen den Himmel durch sich hindurch. Nur der Nebel des Spiels (mit „Der Nebel des Spiels so dicht und so gefärbt wie unserer“); der Nebel unseres eigenen Effekts wird nicht verändert. Unter der Erde wie bisher. Sofort. Aus: eine Nebelfarbe, wie bisher.
+fog.game_fog_match.label = Der Nebel des Spiels so dicht und so gefärbt wie unserer
+fog.game_fog_match.tip = Der Nebel des Spiels kam dunkler heraus als die Nebelfarbe des Akts (die Farbkorrektur des Gebiets) und dünner als unserer (er wird über dem Auge dünner, und ohne unsere Kurve ist es die eigene des Spiels): In Akt 4 stand das ferne Land als dunkle Silhouette da und verbarg nichts. Angehakt misst der Effekt, was der Nebel des Spiels dort zeigt, wo er vollständig ist, rückt jedes vernebelte Pixel um den Anteil des Spiels zur Farbe des Akts und ergänzt den Anteil, den das Spiel ausließ, bis zu dem unseres eigenen Nebels - das ferne Land, der Rand der Welt und ferne Flächen verborgen wie von unserem alten Nebel. Nie auf dem Himmel des Spiels. Ein Pass unseres Effekts, der für den Himmel ohnehin läuft. Sofort. Aus: so, wie das Spiel ihn legt.
 fog.game_fog_before_fx.label = Der Nebel des Spiels vor Rauch und Feuer
 fog.game_fog_before_fx.tip = Der Nebel wird auf die Szene gelegt, bevor das Spiel Rauch, Dunst und Feuer hinzufügt, sodass sie unbenebelt über der benebelten Welt liegen - ohne das benebelt der Nebel-Pass des Spiels sie nach der Wand dahinter (Dunst, in schwarze Löcher vor fernen Wänden geschnitten). Ein Pass von uns auf der Grafikkarte (seine Kosten in der 10-s-Zeile des Logs). Nur ohne ReShade. Gilt, wenn das Spiel neu gestartet wird.
 fog.game_fog_height.label = Der Nebel des Spiels wird mit der Höhe dünner
@@ -1571,6 +1581,8 @@ fog.game_fog_top.label = Der Nebel des Spiels: Obergrenze, Einheiten über den A
 fog.game_fog_top.tip = Wie hoch der Nebel des Spiels reicht: darüber keiner, in Welteinheiten über deinen Augen (der Held ist ~7,5 groß; die Himmelskuppel in ihrem Radius). Live.
 fog.game_fog_soft.label = Der Nebel des Spiels: Weichheit der Obergrenze, Einheiten
 fog.game_fog_soft.tip = Wie weit unterhalb seiner Obergrenze der Nebel des Spiels ausblendet: klein, eine scharfe Kante; groß, ein langer weicher Übergang. Live.
+fog.game_fog_top_from_floor.label = Der Nebel des Spiels: seine Obergrenze ab dem Boden des Helden
+fog.game_fog_top_from_floor.tip = Die Obergrenze oben wird ab dem Boden gezählt, auf dem der Held steht, nicht ab deinen Augen: Eine Kamera hoch über dem Helden (dritte Person, die Ansicht von oben) verschiebt nicht mehr, wo der Nebel endet, und Land unter deinen Augen ist nicht ganz vernebelt, mit einer Linie auf Augenhöhe. Aus: ab den Augen, wie bisher. „Der Nebel des Spiels wird mit der Höhe dünner“ ohne Haken gibt stattdessen den Nebel allein nach Entfernung, wie unser eigener Nebel. Sofort.
 fog.end.tip#2 = Wo der Nebel vollständig ist. Welteinheiten (der Held ist ca. 7,5 groß).
 fog.curve.label = Abfall
 fog.curve.tip = 1 = linear; mehr = eine klarere mittlere Entfernung.
@@ -1582,6 +1594,10 @@ render.fog_in_frame.label = Nebel im Frame des Spiels gezeichnet (Test)
 render.fog_in_frame.tip = Der Nebel wird in das eigene Bild des Spiels gezeichnet, vor seinem Feuer, seinen Zaubern und seinem Rauch, und das Spiel legt sie über die benebelte Szene: Eine Fackel, ein Feuerpfeil oder ein Inferno vor einer fernen Wand wird nicht wie die Wand benebelt. Der Himmel und das Schwarz jenseits der Welt behalten den Nebel wie bisher. Mit der eigenen Nebelfarbe eines Aktes (Welt > Himmel); nur VR F4. Gilt, wenn das Spiel neu gestartet wird; aus = der Nebel wie bisher. Hat Vorrang vor „Nebel verschont Feuer, Zauber und Rauch (Test)“, wenn beide an sind.
 fog.caves.label = Nebel in Höhlen und Verliesen
 fog.caves.tip = Aus: kein Nebel unter der Erde (jedes Gebiet, das nicht im Freien liegt); die freie Luft behält ihn. Das Arkane Heiligtum hat seinen eigenen Schalter (Himmel > Arkanes Heiligtum: Nebel geht in seinen Himmel über).
+fog.ease_in.label = Nebel sanft eingeblendet, kein harter Ring
+fog.ease_in.tip = Der Nebel blendet sich über seine ersten 40 Einheiten nach seinem Beginn weich ein: keine scharfe Kante um den klaren Boden zu deinen Füßen. Überall, wo unsere Kurve den Nebel zeichnet: unser Effekt und der Nebel des Spiels mit „Der Nebel des Spiels nach unserer Kurve“ an (nicht die eigene Kurve des Spiels). Aus D2R VR Unleashed (bearstonem). Sofort. Aus: der Nebel wie bisher.
+fog.no_fog_river.label = Kein Nebel im Flammenfluss
+fog.no_fog_river.tip = Kein zusätzlicher Nebel im Flammenfluss, obwohl er im Freien liegt: Das eigene Glühen und der Dunst seiner Lava bleiben die des Spiels. Der Nebel unseres Effekts und der des Spiels gleichermaßen. Aus D2R VR Unleashed (bearstonem). Sofort. Aus: der Nebel dort wie überall im Freien.
 fog.caves_strength.label = Nebelstärke in Höhlen
 fog.caves_strength.tip = Wie stark der volle Nebel in Höhlen deckt: 1 = das ferne Ende ist im Nebel in der Nebelfarbe verschwunden, weniger = es scheint durch.
 fog.color_caves.label = Nebelfarbe in Höhlen
@@ -1598,9 +1614,9 @@ render.own_depth.tip = Woher der Nebel, der Himmel und die Höhlendecke die Tief
 render.own_depth.choice0 = Eigene Tiefe von ReShade
 render.own_depth.choice1 = Unsere eigene, einmal gewählt
 render.depth_fix_mode.label = Wie diese Tiefe gesetzt wird
-render.depth_fix_mode.tip = In jedem Pass beim Binden (die Art von D2R VR, wie bisher): Jeder Constant Buffer, den das Spiel bindet, bekommt unseren Tiefenbereich - ein Pass, der seine Konstanten auf anderem Weg bekommt, behält die des Spiels. Einmal pro Frame, wo das Spiel ihn erzeugt (gefunden von bearstonem/d2r-pcvr): Der Bereich wird direkt geschrieben, nachdem das Spiel die Konstanten des Frames aufgebaut hat, bevor ein Pass sie liest, sodass jeder Pass - Nebel, Umgebungsverdeckung, Partikel, Gras - dieselbe Tiefe liest; sie läuft von der Nahebene unserer Kamera bis zum eigenen fernen Ende des Spiels (die Entfernung unten wird nicht benutzt). Zum Vergleich: das Gras in Akt 1, der Schleier der Stadt in Akt 2, der Dunst in den Ecken. Aus: die eigene Tiefe des Spiels, wie bei „Effekte des Spiels messen die Tiefe von unserer Kamera aus“ ohne Haken. Sofort.
+render.depth_fix_mode.tip = In jedem Pass beim Binden (die Art von D2R VR, wie bisher): Jeder Constant Buffer, den das Spiel bindet, bekommt unseren Tiefenbereich - ein Pass, der seine Konstanten auf anderem Weg bekommt, behält die des Spiels. Es wirkt nur über ReShade: Ohne ReShade tut es nichts, und Umgebungsverdeckung, Spiegelungen, Wasser, Lichter und Höhennebel des Spiels behalten die Tiefe seiner eigenen Kamera - trüberer, flacherer Stein, schwächeres Licht von Kohlebecken und Fackeln (ist der Nebel des Spiels gewählt, stellt sich die nächste Art von selbst ein). Einmal pro Frame, wo das Spiel ihn erzeugt (gefunden von bearstonem/d2r-pcvr): Der Bereich wird direkt geschrieben, nachdem das Spiel die Konstanten des Frames aufgebaut hat, bevor ein Pass sie liest, sodass jeder Pass - Nebel, Umgebungsverdeckung, Partikel, Gras - dieselbe Tiefe liest; sie läuft von der Nahebene unserer Kamera bis zum eigenen fernen Ende des Spiels (die Entfernung unten wird nicht benutzt). Zum Vergleich: das Gras in Akt 1, der Schleier der Stadt in Akt 2, der Dunst in den Ecken. Aus: die eigene Tiefe des Spiels, wie bei „Effekte des Spiels messen die Tiefe von unserer Kamera aus“ ohne Haken. Sofort.
 render.depth_fix_mode.choice0 = Aus (die des Spiels)
-render.depth_fix_mode.choice1 = In jedem Pass beim Binden
+render.depth_fix_mode.choice1 = In jedem Pass beim Binden (nur mit ReShade)
 render.depth_fix_mode.choice2 = Einmal pro Frame, wo das Spiel sie erzeugt
 render.depth_range.label = Wie weit diese Tiefe reicht
 render.depth_range.tip = Welteinheiten (der Held ist ca. 7,5 groß). Weiter zählt für den Nebel des Spiels als Himmel; kürzer ist feiner nahe am Helden.
@@ -1616,7 +1632,7 @@ render.roofs_two_sided.tip = Das Spiel zeichnet ein Dach nur von oben, sodass un
 render.portal_no_oval.label = Kein schwarzes Oval im Stadtportal (F2 - F4)
 render.portal_no_oval.tip = Das schwarze Oval des Stadtportals steht still, während sich sein blauer Ring zur Kamera dreht, daher steht es aus jeder Ansicht außer der eigenen des Spiels von oben neben dem Ring. An: Das Oval wird in F2, F3 und F4 nicht gezeichnet, der Ring schon; F1 behält es. Für Portale, die ab dann gesehen werden (ein neues Gebiet oder nach einem Neustart). Aus dem Flat-Fork von sajmonsoft. Aus: gezeichnet, wie das Spiel es hat.
 render.light_bounds_fix.label = Licht des Spiels bei quadratischem oder breitem Fenster korrigieren
-render.light_bounds_fix.tip = Das Spiel zerlegt das Bild in 32 x 20 Kacheln und bestimmt den Tiefenbereich jeder Kachel für seine Lichter mit einem Shader, der nur bei einem 16:10-Fenster stimmt. Bei einem quadratischen oder breiten (dem VR-Fenster, 16:9) verfehlt er Zeilen: Lichter verschwinden in harten Rechtecken und die Schattierung eines Dachs flackert, wenn sich der Kopf bewegt. An: Unser eigener Shader erledigt genau diese eine Aufgabe richtig, solange VR rendert (bei 16:10 sind die Zahlen dieselben wie die des Spiels). Aus sofort; wieder angehakt wirkt es beim nächsten Start des Spiels. Aus: das Eigene des Spiels.
+render.light_bounds_fix.tip = Das Spiel zerlegt das Bild in 32 x 20 Kacheln und bestimmt den Tiefenbereich jeder Kachel für seine Lichter mit einem Shader, der nur bei einem 16:10-Fenster stimmt. Bei einem quadratischen oder breiten (dem VR-Fenster, 16:9) verfehlt er Zeilen: Lichter verschwinden in harten Rechtecken und die Schattierung eines Dachs flackert, wenn sich der Kopf bewegt. An: Unser eigener Shader erledigt genau diese eine Aufgabe richtig, solange VR rendert, mit ReShade oder ohne (bei 16:10 sind die Zahlen dieselben wie die des Spiels). Aus sofort; wieder angehakt wirkt es beim nächsten Start des Spiels. Aus: das Eigene des Spiels.
 render.light_bounds_flat.label = ... auch im Flat-Modus
 render.light_bounds_flat.tip = Dieselbe Korrektur im Flat-Modus (ein Monitor oder ein Fenster, auch das flache Bild von nativem OpenXR): Der Shader des Spiels stimmt bei 16:9 und auch bei einem quadratischen Fenster nicht, nicht nur in VR. Folgt dem Modus sofort. Aus: Der Flat-Modus behält den eigenen Shader des Spiels, wie bisher.
 
@@ -1627,8 +1643,8 @@ group.render_distance.help = Wie weit um den Helden die Welt gezeichnet wird: me
 # --- Scenery ---
 group.scenery = Kulisse
 group.scenery.help = Korrekturen an der Kulisse des Spiels für die erste Person: Böden, die ihre Höhe behalten, wenn du in einen Raum zurückkehrst, und das Kanu der Kurast-Docks, das auf das Wasser gelegt wird, statt am Himmel zu hängen. Nur das Bild ändert sich.
-render.keep_room_heights.label = Böden bleiben, wo sie waren (kein Boden, der auf einem Rückweg rutscht)
-render.keep_room_heights.tip = Das Spiel gibt jedem Raum eines Levels eine Höhe, wenn es beginnt, ihn zu zeichnen, abgestimmt auf die Räume, die in diesem Moment um ihn herum gezeichnet sind, und vergisst sie, wenn der Raum außer Sicht ist. Die Ränder seiner Kacheln passen nicht rundum zusammen, daher kann ein Raum, in den du auf einem anderen Weg zurückkehrst (oder nach einem anderen Gebiet oder der Stadt), eine Stufe höher oder tiefer liegen - aus der Kamera des Spiels von oben sieht das niemand, aus unserer rutscht der Boden: Blöcke nach oben, unten und zur Seite geschoben, dazwischen die Leere. An: Jeder Raum behält die Höhe, in der er zuerst gezeichnet wurde, bis du das Spiel verlässt. Nur das Bild; die Welt des Spiels ist flach, am Kampf und an den Wegen ändert sich nichts. Sofort. Aus: die eigenen Höhen des Spiels, wie bisher.
+render.floors_stay.label = Böden bleiben, wo sie waren (kein Boden, der auf dem Rückweg rutscht)
+render.floors_stay.tip = Das Spiel gibt jedem Raum eines Gebiets eine Höhe, wenn es beginnt, ihn zu zeichnen, passend zu den Räumen, die in diesem Moment um ihn gezeichnet sind, und vergisst sie, wenn der Raum außer Sicht ist. Die Ränder seiner Kacheln stimmen nicht ringsum überein, sodass ein Raum, zu dem du auf einem anderen Weg zurückkommst (oder nach einem anderen Gebiet oder der Stadt), eine Stufe höher oder tiefer liegen kann - aus der Kamera des Spiels oben sieht das niemand, aus unserer rutscht der Boden: Blöcke nach oben, unten und zur Seite geschoben, dazwischen die Leere. An: Jeder Raum behält die Höhe, in der er zuerst gezeichnet wurde, bis du das Spiel verlässt. Der Preis: Das Spiel repariert auch einen in falscher Höhe gezeichneten Raum (eine Stufe, von fern gesehen, wie am Tor der Festung des Pandämoniums), wenn es ihn beim Näherkommen neu zeichnet - mit dieser Option an kommt diese Reparatur nicht. Nur das Bild; nichts am Kampf oder an den Wegen ändert sich. Sofort. Aus (der Standard): die eigenen Höhen des Spiels.
 world.kurast_boat.label = Kurast-Docks: das Kanu am Himmel sitzt auf dem Wasser
 world.kurast_boat.tip = Die HD-Kulisse der Stadt setzt ein Kanu 50 Einheiten hoch, wo die Ansicht von oben nie hinsieht; in der ersten Person hängt es über den Hütten. An: Es liegt auf dem Wasser an den westlichen Docks, wo sein Prefab gebaut wurde - eine Zahl der Kulissendatei der Stadt geändert (gefunden von bearstonem/d2r-pcvr). Dieses Programm erzeugt diese Datei aus der eigenen des Spiels, wenn es sich öffnet (Start: Kurast-Docks, Kanu), und bewahrt sie im Mod auf (mods\D2R-VR\D2R-VR.mpq); am Spiel selbst ändert sich nichts, ebenso wenig an allem, womit du spielst. Gilt ab dem nächsten Start des Spiels (ein bereits laufendes Spiel behält das Kanu, wo es war). Aus: Die Datei wird wieder entfernt, das Kanu so, wie das Spiel es hat.
 
@@ -1650,6 +1666,19 @@ sky.drift.label = Der Himmel dreht sich langsam (Wolken ziehen)
 sky.drift.tip = Der gemalte Himmel dreht sich langsam um dich. Aus: Er steht still - die in die Nachthimmel gemalten Sterne drehten sich mit den Wolken.
 sky.cover_rims.label = Der Himmel über dem dunklen Rand um Dächer und Bäume
 sky.cover_rims.tip = Das Spiel zeichnet alles vor dem Himmel ein Pixel größer als seine Tiefe, sein Rand ins Schwarz überblendet, und dort war der Himmel nicht gemalt: eine dünne dunkle Umrandung um jedes Dach, jede Baumkrone und jedes ferne Gebäude, die die Augen abwechselnd in jedem zweiten Frame auch von ihnen wegbewegten. Mit Haken: Der Himmel legt sich über dieses Pixel, wenn es dunkel ist (der helle Rand eines Leuchtens bleibt); Silhouetten werden ein Pixel dünner. Nur erste Person (F4). Ohne Haken: wie bisher. Sofort. Installiere die DLL und D2R_DepthFog.fx zusammen. Von bearstonem/d2r-pcvr.
+sky.dome_fog_horizon.label = Himmel des Spiels: sein Horizont im Nebel
+sky.dome_fog_horizon.tip = Der untere Teil des vom Spiel gezeichneten Himmels sinkt in die Nebelfarbe des Akts, wie es der unseres eigenen Himmels tat: Das vernebelte Land trifft ohne harte Kante auf den Himmel, und die Farben passen, wo sie sich treffen. Nur solange ein Nebel gezeichnet wird. Aus: der Himmel, wie das Spiel ihn zeichnet. Sofort.
+sky.game_sky_closed.label = Himmel des Spiels: eine ganze Kugel, unten einfarbig
+sky.game_sky_closed.tip = Der vom Spiel gezeichnete Himmel endete 12 Grad unter dem Horizont: Hinter dem Rand einer Klippe stand sein Saum als harte Linie mit einem Loch darunter, durch das die Leere und der Nebel schienen. Angehakt schließt er sich zu einer ganzen Kugel, und seine untere Hälfte ist einfarbig - in der eigenen Farbe des Himmels am Horizont (mit gezeichnetem Nebel in der des Nebels: Sie treffen sich in einer Farbe). In jedem Akt, VR und flach. Dieses Programm erzeugt die Modelle der Kuppel sofort neu; das Spiel übernimmt sie bei seinem nächsten Start. Aus: die offene Kuppel, wie bisher.
+sky.game_skybox.label = Arreat-Gipfel: die Himmelskuppel weit draußen
+sky.game_skybox.tip = Auf dem Arreat-Gipfel (Level 120) und dem Uber-Gipfel (137) wird die vom Spiel gezeichnete Himmelskuppel so weit draußen gelegt, wie der Tiefenpuffer sie hält, sodass der Dunst des Spiels entlang der Klippen vor ihr bleibt, wie weit auch immer. Aus: die Gipfel wie jedes Gebiet von Akt 5 im Freien - die Kuppel in ihrem üblichen Radius. Sofort.
+sky.summit_backdrop_hidden.label = Arreat-Gipfel: kein Bodenbild in der ersten Person
+sky.summit_backdrop_hidden.tip = Unter den Arreat-Gipfel (Level 120) und den Uber-Gipfel (137) setzt das Spiel ein Bild des Bodens weit unten, gemacht, um von oben gesehen zu werden; in der ersten Person steht es als flache Wand da. Angehakt wird es in der ersten Person in VR (F4) und flach (F3) ausgeblendet: Unser Himmel und Nebel zeigen sich an seiner Stelle, und das Wolkenmeer des Spiels bleibt. Die Ansichten von oben behalten es. Aus: wie das Spiel es zeichnet. Sofort.
+sky.weather_first_person.label = Regen und Schnee in der ersten Person
+sky.weather_first_person.tip = Das Spiel legt seinen Regen und Schnee in einen Kasten um seine eigene Kamera, hoch über und hinter dem Helden für seine Ansicht von oben; in der ersten Person hängt dieser Kasten in der Luft (der Schnee des Arreat-Gipfels). Ausgeblendet: kein Regen oder Schnee in der ersten Person in VR (F4) und flach (F3). Um dich: der Kasten dort an deinen Kopf gelegt, sodass er um dich herum fällt. Die anderen Ansichten behalten den des Spiels. Des Spiels: wie bisher.
+sky.weather_first_person.choice0 = Des Spiels (an seiner Kamera)
+sky.weather_first_person.choice1 = Ausgeblendet
+sky.weather_first_person.choice2 = Um dich
 sky.arcane_sky.label = Arkanes Heiligtum: eigene Sterne ringsum
 sky.arcane_sky.tip = Im Arkanen Heiligtum zeigt die Leere um die Plattformen die eigenen Sternenschichten und Wolken des Spiels in jede Richtung, auch unterhalb der Plattformen (nach bearstonem/d2r-pcvr). Die Bilder werden aus den Dateien deines Spiels erzeugt, wenn sich dieses Programm öffnet (Start: Himmel des Arkanen Heiligtums), und liegen im Mod (mods\D2R-VR); am Spiel wird nichts geändert. Nicht in den Ansichten von oben. Funktioniert auch bei ausgeschaltetem Himmel im Freien. Aus: die Leere, wie das Spiel sie zeichnet.
 sky.arcane_fog.label = Arkanes Heiligtum: Nebel geht in seinen Himmel über
@@ -1705,10 +1734,20 @@ tab.ceiling = Decke
 group.cave_ceiling = Höhlendecke
 group.cave_ceiling.help = Ein steinernes Gewölbe, das in Höhlen über die schwarze Leere gezeichnet wird, in beiden Augen in seiner wahren Tiefe; nur erste Person. Stelle die Kachelgröße und das Relief ein, eine ferne Wand und einen Boden darunter, um die Leere zu schließen, den Kontrast, das Detail und den Nassglanz des Steins und wie Fackeln und Monster mit Feuer es beleuchten.
 ceiling.enabled.tip#2 = Ein steinernes Gewölbe über der schwarzen Leere in Höhlen, in beiden Augen in seiner wahren Tiefe. Nur erste Person; vorerst die Höhlen, Krypten, Kaserne, Katakomben und Kathedrale von Akt 1 und die Kanalisation und der Palast von Akt 2.
-ceiling.game_ceiling_height.label = Die Decke des Spiels: Höhe (0 = die des Gebiets)
-ceiling.game_ceiling_height.tip = Wie hoch über dem Boden des Gebiets die Felsdecke des Spiels hängt, in Welteinheiten (live; der Held ist etwa 7,5 groß); ihr Fels hängt etwas tiefer. 0: die eigene Höhe jedes Gebiets, wie unten für unseren Effekt eingestellt. Das Log nennt bei jeder Änderung die verwendete Höhe.
 ceiling.game_ceiling_wall.label = Die Decke des Spiels: an ihrem Rand zur Wand heruntergebogen
 ceiling.game_ceiling_wall.tip = Ein Ring aus demselben beleuchteten Fels um dich, wo die Decke des Spiels endet (etwa 215 Einheiten entfernt bei Kachelgröße 10), von der Decke bis unter den Boden (die Tiefe des Bodens darunter): Die schwarze Leere hinter dem Rand der Decke - ein Band zwischen ihr und dem fernen Boden, vom Nebel hinter den Feuern beleuchtet - wird von Stein geschlossen, wie es die ferne Wand unseres Effekts tat. Aus: die flache Decke. Live.
+ceiling.game_ceiling_beams.label = Die Decke des Spiels: die eigenen Holzbalken der Kaserne
+ceiling.game_ceiling_beams.tip = Das Spiel liefert für die Kaserne (und ihr Gefängnis) einen hölzernen Deckenrahmen mit, den es nie platziert: ein Gitter aus Balken, deren Unterseite auf der Oberkante der Kasernenwände sitzt. Angehakt zeichnet das Spiel diesen Rahmen über dir in einem Gitter aus ganzen Rahmen, fest in der Welt - sein eigenes Modell, Holz und Maß, von seinen Fackeln beleuchtet - mit dem Stein der Kaserne über den Balken, um die Lücken zwischen ihnen zu schließen. Aus den Dateien deines Spiels erzeugt. Nur VR F4. Aus: die flache Steindecke. Sofort.
+ceiling.game_ceiling_dome.label = Die Decke des Spiels: die Kuppel der Kathedrale über der Kapelle
+ceiling.game_ceiling_dome.tip = In der Kathedrale steigt die Decke des Spiels in einer Kuppel über der Kapelle auf, wie es das Gewölbe unseres Effekts dort tat: eine gleichmäßige Kuppel auf den vier Säulen um den Altar, gerade hoch genug, um über den Baldachin des Altars zu reichen. Wo, wie breit und wie hoch, kommt aus den eigenen Teilen des Spiels (gemessen aus den Dateien deines Spiels, der Baldachin im Spiel gefunden, so wie er gezeichnet wird); der eigene Stein der Kathedrale, von ihren Kerzen beleuchtet. Der Rest der Kathedrale behält die flache Decke in ihrer Höhe. Nur VR F4. Aus: die flache Decke. Sofort.
+ceiling.game_ceiling_dome_size.label = Die Kuppel der Kathedrale: Größe
+ceiling.game_ceiling_dome_size.tip = Faktor auf die aus den Teilen des Spiels gemessene Kuppel (1: auf den vier Säulen der Kapelle), um dieselbe Mitte. Das ganze Gewölbe wächst oder schrumpft damit - auch das Muster seines Steins - und die Höhe der Kuppel folgt, sodass sie weiter über den Baldachin des Altars reicht (mindestens 0,7: kleiner würde ihn durchschneiden). VR F4. Sofort.
+ceiling.game_ceiling_dome_rise.label = Die Kuppel der Kathedrale: Höhe
+ceiling.game_ceiling_dome_rise.tip = Faktor auf die kleinste Höhe, die über den Baldachin des Altars reicht (1: knapp darüber). Nur höher - niedriger würde den Baldachin durchschneiden. VR F4. Sofort.
+ceiling.game_ceiling_domes_over_tall.label = Die Decke des Spiels: eine Kuppel über jedem hohen Teil
+ceiling.game_ceiling_domes_over_tall.tip = Die Kuppel der Kathedrale überall, wo eines der Teile des Spiels mindestens doppelt so hoch steht wie die Decke seines Raums, mit Säulen darum: Die Decke steigt in einer Kuppel nur über diesem Teil auf, auf diesen Säulen, hoch genug, um über seine Spitze zu reichen - der Weltstein in der Weltsteinkammer (Level 132), der Bogen des Thronsaals (131), die Ratshalle von Travincal. Wo, wie breit und wie hoch, kommt aus den eigenen Teilen und Modellen des Spiels (gemessen aus den Dateien deines Spiels, das Teil im Spiel gefunden, so wie es gezeichnet wird); der eigene Stein des Raums. Der Rest des Raums behält die flache Decke. Größe und Höhe der Kuppel oben gelten auch für diese. Nur VR F4. Aus: dort die flache Decke, wie bisher. Dieses Programm erzeugt ihre Gewölbe sofort neu; das Spiel übernimmt sie bei seinem nächsten Start.
+ceiling.height_from_walls.label = Deckenhöhe aus den Wänden des Raums
+ceiling.height_from_walls.tip = Ein Raum, dessen eigene Höhe unten nicht gesetzt ist (0), hat seine Decke auf seinen eigenen Wänden: dort, wo die Wände enden, mit denen das Spiel diesen Raum baut (die Mitte der Oberkanten seiner Wand-, Säulen- und Klippenteile, gemessen aus den Dateien deines Spiels). Die eigene Höhe eines Raums gewinnt immer, sobald du sie setzt. Das Gewölbe unseres Effekts und die Decke des Spiels gleichermaßen; der Fels des Spiels, der tiefer hängt, legt seinen tiefsten Punkt auf die Wände. Aus, oder ein Raum ohne Wände dieser Art: 18 über dem Boden, wo keine Höhe gesetzt ist. Das Log nennt die Höhe jedes Raums und woher sie kommt. Wirkt beim nächsten Gebietswechsel.
 ceiling.scale.label = Kachelgröße
 ceiling.scale.tip = Welteinheiten pro Kachel des Reliefs; das Steinbild umfasst 4 Kacheln.
 ceiling.steps.label#2 = Reliefstufen
@@ -1755,11 +1794,11 @@ cave_light.ambient.tip = Das Licht, das den Ort füllt, innerhalb des Kreises de
 cave_light.ambient_min.label = Füllicht mindestens
 cave_light.ambient_min.tip = Was das Verlies auch hat, mindestens so viel: nur für die dunkelsten (die Grüfte in Akt 2: 0,12). Wo der eigene Wert des Gebiets mal dem Regler oben schon mehr ist (die Höhlen in Akt 1: 2 x 2 = 4), bewirkt es nichts. 0 = kein Boden.
 
-# --- Ceiling: act 1 caves ---
-group.ceiling_act_1_caves = Decke: Höhlen in Akt 1
-group.ceiling_act_1_caves.help = Die Decke über den Höhlen in Akt 1: ihre Höhe über dem Boden, Helligkeit, wie weit das Licht des Helden auf ihr reicht, das Relief und das Steinbild mit seiner Größe, seinem Kontrast, Detail und Nassglanz.
-ceiling.height_act1_caves.label = Höhe über dem Boden
-ceiling.height_act1_caves.tip = Welteinheiten (der Held ist ca. 7,5 groß). Unterhalb der Wandoberkanten durchstoßen sie die Decke.
+# --- Ceiling: act 1 caves (levels 8-16) ---
+group.ceiling_act_1_caves_levels_8_16 = Decke: Höhlen in Akt 1 (Level 8-16)
+group.ceiling_act_1_caves_levels_8_16.help = Die Decke über den Höhlen in Akt 1: ihre Höhe über dem Boden, Helligkeit, wie weit das Licht des Helden auf ihr reicht, das Relief und das Steinbild mit seiner Größe, seinem Kontrast, Detail und Nassglanz. Level: Höhle des Bösen (8), Höhle Ebene 1 (9), Unterirdischer Gang Ebene 1 (10), Loch Ebene 1 (11), Grube Ebene 1 (12), Höhle Ebene 2 (13), Unterirdischer Gang Ebene 2 (14), Loch Ebene 2 (15), Grube Ebene 2 (16).
+ceiling.height_act1_caves.label = Höhe über dem Boden (0 = aus den Wänden)
+ceiling.height_act1_caves.tip = Welteinheiten (der Held ist ca. 7,5 groß). Unterhalb der Wandoberkanten durchstoßen sie die Decke. 0: auf der Oberkante der Wände des Raums, gemessen aus den Dateien deines Spiels (mit „Deckenhöhe aus den Wänden des Raums“), sonst 18.
 ceiling.brightness_act1_caves.label = Helligkeit (0 = schwarz)
 ceiling.brightness_act1_caves.tip = Niedriger = eine dunklere Decke.
 ceiling.light_radius_act1_caves.label = Lichtreichweite des Helden
@@ -1776,23 +1815,23 @@ ceiling.contrast_act1_caves.tip = Das feine Detail des Bildes mal diesem Wert: m
 ceiling.detail_act1_caves.tip = Wie weit die Körnung und die Risse des Bildes aus dem Stein hervortreten: Sie fangen das Licht.
 ceiling.wet_act1_caves.tip = Glanzlichter vom Licht des Helden und der Fackeln auf dem Stein (0 = trocken).
 
-# --- Ceiling: act 1 crypts ---
-group.ceiling_act_1_crypts = Decke: Krypten in Akt 1
-group.ceiling_act_1_crypts.help = Die Decke über den Krypten in Akt 1: ihre Höhe, Helligkeit, die Reichweite des Lichts des Helden, wie weit das unebene Mauerwerk herabhängt, und ihr Bild.
+# --- Ceiling: act 1 crypts and tower (levels 18-25, 133) ---
+group.ceiling_act_1_crypts_and_tower_levels_18_25_133 = Decke: Krypten und Turm in Akt 1 (Level 18-25, 133)
+group.ceiling_act_1_crypts_and_tower_levels_18_25_133.help = Die Decke über den Krypten in Akt 1: ihre Höhe, Helligkeit, die Reichweite des Lichts des Helden, wie weit das unebene Mauerwerk herabhängt, und ihr Bild. Level: Krypta (18), Mausoleum (19), Vergessener Turm (20), Turmkeller Ebene 1 (21), Turmkeller Ebene 2 (22), Turmkeller Ebene 3 (23), Turmkeller Ebene 4 (24), Turmkeller Ebene 5 (25), Pandemonium Run 1 (133).
 ceiling.relief_act1_crypt.tip = Wie weit das unebene Mauerwerk von der Decke herabhängt, in Welteinheiten.
 
-# --- Ceiling: act 1 barracks ---
-group.ceiling_act_1_barracks = Decke: Kaserne in Akt 1
-group.ceiling_act_1_barracks.help = Die Decke über der Kaserne in Akt 1: ihre Höhe, Helligkeit, die Reichweite des Lichts des Helden, das Relief und das Bild.
+# --- Ceiling: act 1 barracks and jail (levels 28-31) ---
+group.ceiling_act_1_barracks_and_jail_levels_28_31 = Decke: Kaserne und Gefängnis in Akt 1 (Level 28-31)
+group.ceiling_act_1_barracks_and_jail_levels_28_31.help = Die Decke über der Kaserne in Akt 1: ihre Höhe, Helligkeit, die Reichweite des Lichts des Helden, das Relief und das Bild. Level: Kaserne (28), Gefängnis Ebene 1 (29), Gefängnis Ebene 2 (30), Gefängnis Ebene 3 (31).
 
-# --- Ceiling: act 1 catacombs ---
-group.ceiling_act_1_catacombs = Decke: Katakomben in Akt 1
-group.ceiling_act_1_catacombs.help = Die Decke über den Katakomben in Akt 1: ihre Höhe (was das Spiel höher zeichnet, wird abgeschnitten), Helligkeit, die Reichweite des Lichts des Helden, das Relief und das Bild.
-ceiling.height_act1_catacombs.tip = Welteinheiten (der Held ist ca. 7,5 groß). Was das Spiel höher zeichnet, wird von der Decke abgeschnitten.
+# --- Ceiling: act 1 barracks' courtyard (level 28) ---
+group.ceiling_act_1_barracks_courtyard_level_28 = Decke: Hof der Kaserne in Akt 1 (Level 28)
+group.ceiling_act_1_barracks_courtyard_level_28.help = Die Decke des Spiels unter dem Hof der Kaserne in Akt 1 (sein eigenes Kopfsteinpflaster) in VR F4, unser Gewölbe im flachen F3; ihre Höhe über dem Boden. Level: Kaserne (28).
+ceiling.height_act1_court_to_barracks.tip = Welteinheiten (der Held ist ca. 7,5 groß). 0: auf der Oberkante der Wände des Raums, gemessen aus den Dateien deines Spiels (mit „Deckenhöhe aus den Wänden des Raums“), sonst 18.
 
-# --- Ceiling: act 1 cathedral ---
-group.ceiling_act_1_cathedral = Decke: Kathedrale in Akt 1
-group.ceiling_act_1_cathedral.help = Die Decke über der Kathedrale in Akt 1. Außer Höhe, Helligkeit und Bild lässt eine Kuppel die Decke als Kugel über dem aufsteigen, was höher steht (der Baldachin des Altars), statt es abzuschneiden; stelle ein, ab welcher Höhe, wie breit und wie hoch sie reicht.
+# --- Ceiling: act 1 cathedral (level 33) ---
+group.ceiling_act_1_cathedral_level_33 = Decke: Kathedrale in Akt 1 (Level 33)
+group.ceiling_act_1_cathedral_level_33.help = Die Decke über der Kathedrale in Akt 1. Außer Höhe, Helligkeit und Bild lässt eine Kuppel die Decke als Kugel über dem aufsteigen, was höher steht (der Baldachin des Altars), statt es abzuschneiden; stelle ein, ab welcher Höhe, wie breit und wie hoch sie reicht. Level: Kathedrale (33).
 ceiling.dome_act1_cathedral.label = Kuppel über dem, was höher ist
 ceiling.dome_act1_cathedral.tip = Wo das Spiel etwas höher zeichnet als die Decke (der Baldachin des Altars), steigt die Decke als Kugel darüber auf, statt es abzuschneiden.
 ceiling.dome_find_act1_cathedral.label = Kuppel über dem, was hinaufreicht
@@ -1802,13 +1841,71 @@ ceiling.dome_radius_act1_cathedral.tip = Welteinheiten: wie breit die Kugel übe
 ceiling.dome_max_act1_cathedral.label = Kuppelhöhe höchstens
 ceiling.dome_max_act1_cathedral.tip = Welteinheiten über der Decke; was noch höher steht, wird abgeschnitten.
 
-# --- Ceiling: act 2 sewers ---
-group.ceiling_act_2_sewers = Decke: Kanalisation in Akt 2
-group.ceiling_act_2_sewers.help = Die Decke über der Kanalisation in Akt 2: ihre Höhe, Helligkeit, die Reichweite des Lichts des Helden, das Relief und das Bild.
+# --- Ceiling: act 1 catacombs (levels 34-37) ---
+group.ceiling_act_1_catacombs_levels_34_37 = Decke: Katakomben in Akt 1 (Level 34-37)
+group.ceiling_act_1_catacombs_levels_34_37.help = Die Decke über den Katakomben in Akt 1: ihre Höhe (was das Spiel höher zeichnet, wird abgeschnitten), Helligkeit, die Reichweite des Lichts des Helden, das Relief und das Bild. Level: Katakomben Ebene 1 (34), Katakomben Ebene 2 (35), Katakomben Ebene 3 (36), Katakomben Ebene 4 (37).
+ceiling.height_act1_catacombs.tip = Welteinheiten (der Held ist ca. 7,5 groß). Was das Spiel höher zeichnet, wird von der Decke abgeschnitten.
 
-# --- Ceiling: act 2 palace ---
-group.ceiling_act_2_palace = Decke: Palast in Akt 2
-group.ceiling_act_2_palace.help = Die Decke unter dem Palast in Akt 2: ihre Höhe, Helligkeit, die Reichweite des Lichts des Helden, das Relief und das Bild.
+# --- Ceiling: act 2 sewers (levels 47-49, 65) ---
+group.ceiling_act_2_sewers_levels_47_49_65 = Decke: Kanalisation in Akt 2 (Level 47-49, 65)
+group.ceiling_act_2_sewers_levels_47_49_65.help = Die Decke über der Kanalisation in Akt 2: ihre Höhe, Helligkeit, die Reichweite des Lichts des Helden, das Relief und das Bild. Level: Kanalisation Ebene 1 (47), Kanalisation Ebene 2 (48), Kanalisation Ebene 3 (49), Uralte Tunnel (65).
+
+# --- Ceiling: act 2 harem (level 50) ---
+group.ceiling_act_2_harem_level_50 = Decke: Harem in Akt 2 (Level 50)
+group.ceiling_act_2_harem_level_50.help = Die Decke unter dem Harem in Akt 2: ihre Höhe, Helligkeit, die Reichweite des Lichts des Helden, das Relief und das Bild. Level: Harem Ebene 1 (50).
+
+# --- Ceiling: act 2 corrupt harem (level 51) ---
+group.ceiling_act_2_corrupt_harem_level_51 = Decke: verdorbener Harem in Akt 2 (Level 51)
+group.ceiling_act_2_corrupt_harem_level_51.help = Die Decke unter dem verdorbenen Harem in Akt 2: die Decke des Spiels aus dem Stein seines eigenen Bodens in VR F4, unser Gewölbe im flachen F3; ihre Höhe über dem Boden. Level: Harem Ebene 2 (51).
+
+# --- Ceiling: act 2 palace cellar (levels 52-54) ---
+group.ceiling_act_2_palace_cellar_levels_52_54 = Decke: Palastkeller in Akt 2 (Level 52-54)
+group.ceiling_act_2_palace_cellar_levels_52_54.help = Die Decke unter dem Palastkeller in Akt 2: die Decke des Spiels aus glattem dunklem Stein (dem der Katakomben, nicht den Fliesen des Bodens) in VR F4, unser Gewölbe im flachen F3; ihre Höhe über dem Boden. Level: Palastkeller Ebene 1 (52), Palastkeller Ebene 2 (53), Palastkeller Ebene 3 (54).
+
+# --- Ceiling: act 2 tombs (levels 55-61, 66-73) ---
+group.ceiling_act_2_tombs_levels_55_61_66_73 = Decke: Gräber in Akt 2 (Level 55-61, 66-73)
+group.ceiling_act_2_tombs_levels_55_61_66_73.help = Die Decke des Spiels unter den Gräbern in Akt 2 (glatter dunkler Stein, der der Katakomben) in VR F4, unser Gewölbe im flachen F3; ihre Höhe über dem Boden. Level: Steingrab Ebene 1 (55), Hallen der Toten Ebene 1 (56), Hallen der Toten Ebene 2 (57), Klauenvipertempel Ebene 1 (58), Steingrab Ebene 2 (59), Hallen der Toten Ebene 3 (60), Klauenvipertempel Ebene 2 (61), Tal Rashas Grab (66), Tal Rashas Grab (67), Tal Rashas Grab (68), Tal Rashas Grab (69), Tal Rashas Grab (70), Tal Rashas Grab (71), Tal Rashas Grab (72), Duriels Bau (73).
+
+# --- Ceiling: act 2 maggot lair (levels 62-64) ---
+group.ceiling_act_2_maggot_lair_levels_62_64 = Decke: Madenbau in Akt 2 (Level 62-64)
+group.ceiling_act_2_maggot_lair_levels_62_64.help = Die Decke des Spiels über dem Madenbau in Akt 2 (sein eigener Höhlenfels; unser Effekt zeichnet hier kein Gewölbe): ihre Höhe über dem Boden. Level: Madenbau Ebene 1 (62), Madenbau Ebene 2 (63), Madenbau Ebene 3 (64).
+ceiling.height_act2_maggot.tip = Welteinheiten (der Held ist ca. 7,5 groß): wo die Felsdecke des Spiels hier hängt; ihr Fels hängt etwas tiefer als das.
+
+# --- Ceiling: act 3 spider caves (levels 84-85) ---
+group.ceiling_act_3_spider_caves_levels_84_85 = Decke: Spinnenhöhlen in Akt 3 (Level 84-85)
+group.ceiling_act_3_spider_caves_levels_84_85.help = Die Decke des Spiels über den Spinnenhöhlen in Akt 3 (ihr eigener Höhlenfels; unser Effekt zeichnet hier kein Gewölbe): ihre Höhe über dem Boden. Level: Spinnenhöhle (84), Spinnenkaverne (85).
+
+# --- Ceiling: act 3 jungle dungeons (levels 86-91) ---
+group.ceiling_act_3_jungle_dungeons_levels_86_91 = Decke: Dschungelverliese in Akt 3 (Level 86-91)
+group.ceiling_act_3_jungle_dungeons_levels_86_91.help = Die Decke des Spiels über den Dschungelverliesen in Akt 3 (ihr eigener Höhlenfels; unser Effekt zeichnet hier kein Gewölbe): ihre Höhe über dem Boden. Level: Sumpfgrube Ebene 1 (86), Sumpfgrube Ebene 2 (87), Schinderverlies Ebene 1 (88), Schinderverlies Ebene 2 (89), Sumpfgrube Ebene 3 (90), Schinderverlies Ebene 3 (91).
+
+# --- Ceiling: act 3 sewers (level 93) ---
+group.ceiling_act_3_sewers_level_93 = Decke: Kanalisation in Akt 3 (Level 93)
+group.ceiling_act_3_sewers_level_93.help = Die Decke des Spiels unter der Kanalisation in Akt 3 (ihr eigener felsiger Boden, flach gelegt) in VR F4, unser Gewölbe im flachen F3; ihre Höhe über dem Boden. Level: Kanalisation Ebene 2 (93).
+
+# --- Ceiling: act 3 temples (levels 94-99) ---
+group.ceiling_act_3_temples_levels_94_99 = Decke: Tempel in Akt 3 (Level 94-99)
+group.ceiling_act_3_temples_levels_94_99.help = Die Decke des Spiels unter den Tempeln in Akt 3 (ihr eigener Stein) in VR F4, unser Gewölbe im flachen F3; ihre Höhe über dem Boden. Level: Verfallener Tempel (94), Verlassener Schrein (95), Vergessenes Reliquiar (96), Vergessener Tempel (97), Verfallener Schrein (98), Verlassenes Reliquiar (99).
+
+# --- Ceiling: act 3 Durance of Hate (level 102) ---
+group.ceiling_act_3_durance_of_hate_level_102 = Decke: Kerker des Hasses in Akt 3 (Level 102)
+group.ceiling_act_3_durance_of_hate_level_102.help = Die Decke des Spiels unter dem Kerker des Hasses in Akt 3 (sein eigener Stein) in VR F4, unser Gewölbe im flachen F3; ihre Höhe über dem Boden. Level: Kerker des Hasses Ebene 3 (102).
+
+# --- Ceiling: act 5 ice caves (levels 113-116, 118-119) ---
+group.ceiling_act_5_ice_caves_levels_113_116_118_119 = Decke: Eishöhlen in Akt 5 (Level 113-116, 118-119)
+group.ceiling_act_5_ice_caves_levels_113_116_118_119.help = Die Decke des Spiels über den Eishöhlen in Akt 5 (ihr eigener Höhlenfels; unser Effekt zeichnet hier kein Gewölbe): ihre Höhe über dem Boden. Level: Kristallhöhle Ebene 1 (113), Keller des Mitleids (114), Kristallhöhle Ebene 2 (115), Echokammer (116), Gletscherhöhlen Ebene 1 (118), Gletscherhöhlen Ebene 2 (119).
+
+# --- Ceiling: act 5 Nihlathak's halls (levels 122-124) ---
+group.ceiling_act_5_nihlathak_s_halls_levels_122_124 = Decke: Nihlathaks Hallen in Akt 5 (Level 122-124)
+group.ceiling_act_5_nihlathak_s_halls_levels_122_124.help = Die Decke des Spiels unter Nihlathaks Hallen in Akt 5 (ihr eigener Höhlenfels) in VR F4, unser Gewölbe im flachen F3; ihre Höhe über dem Boden. Level: Hallen der Qual (122), Hallen des Todesrufs (123), Hallen von Vaught (124).
+
+# --- Ceiling: act 5 Worldstone Keep (levels 128-130) ---
+group.ceiling_act_5_worldstone_keep_levels_128_130 = Decke: Weltsteinturm in Akt 5 (Level 128-130)
+group.ceiling_act_5_worldstone_keep_levels_128_130.help = Die Decke des Spiels unter dem Weltsteinturm in Akt 5 (sein eigener Boden) in VR F4, unser Gewölbe im flachen F3; ihre Höhe über dem Boden. Level: Weltsteinturm Ebene 1 (128), Weltsteinturm Ebene 2 (129), Weltsteinturm Ebene 3 (130).
+
+# --- Ceiling: act 5 throne of destruction (levels 128-132) ---
+group.ceiling_act_5_throne_of_destruction_levels_128_132 = Decke: Thron der Zerstörung in Akt 5 (Level 128-132)
+group.ceiling_act_5_throne_of_destruction_levels_128_132.help = Die Decke des Spiels unter dem Thron der Zerstörung in Akt 5 (der eigene Boden des Turms) in VR F4, unser Gewölbe im flachen F3; ihre Höhe über dem Boden. Level: Weltsteinturm Ebene 1 (128), Weltsteinturm Ebene 2 (129), Weltsteinturm Ebene 3 (130), Thron der Zerstörung (131), Weltsteinkammer (132).
 
 # ===== Tab: Weapon Adjust =====
 tab.weapon_adjust = Waffenanpassung
@@ -2420,6 +2517,8 @@ gameplay.melee_stroke_start_cm.label = Treffer durch Berührung: wie weit sich d
 gameplay.melee_stroke_start_cm.tip = Eine Bewegung ist ein Hieb - und kann treffen - erst, nachdem sich die Klinge (ihr schnelleres Ende: die Spitze eines Schwerts, wie gezeichnet - nicht die Hand) innerhalb von etwa einer Zehntelsekunde so weit bewegt hat, und schnell genug (oben). Kleiner: Ein kurzer Stich zählt; größer: nur ein langer Schwung. Eine Klinge, die sich langsamer als die kleinste Geschwindigkeit oben bewegt, bewirkt nichts, ein Monster wird pro Hieb einmal getroffen. Standard 8 wie bisher. Sofort. Nur F4.
 gameplay.melee_touch_thrown.label = Geworfene Waffen treffen auch durch Berührung (ein Wurf aus nächster Nähe)
 gameplay.melee_touch_thrown.tip = Ein Wurfspieß, ein Wurfmesser oder eine Wurfaxt in der Hand wird wie jede Waffe geschwungen: Ihre Klinge durch den Körper eines Monsters drückt den eigenen Angriff des Spiels darauf - bei einer Wurfwaffe ist das das Werfen des Spiels auf dieses Monster, aus nächster Nähe, mit der Munition, wie das Spiel sie verbraucht (nie die Route Direkter Treffer). Wurftränke werden nicht geschwungen. Der Wurf per Geste (Waffenanpassung > Würfe: per Griff oder Trigger) bleibt, wie er ist, und feuert nicht zusammen mit der Berührung: Bei eingeschaltetem Griffwurf zählt die Berührung nur, solange der rechte Griff an der Waffe gedrückt ist; 0,7 s nach dem Loslassen eines Wurfs hält sich die Berührung zurück; und eine Berührung, die den Angriff gedrückt hat, verwirft das Loslassen desselben Schwungs (ein Wurf pro Schwung). Die Größe der Klinge pro Waffe ist eine Schätzung - stelle sie mit den Klingenreglern der Gruppe Debug unten und „Die Kapseln von Treffer durch Berührung zeichnen“ ein. Ohne Haken: Eine Wurfwaffe bewirkt per Berührung nichts, wie bisher. Sofort. Nur F4.
+gameplay.melee_touch_barrels.label = Fässer und Töpfe durch Schlagen zerbrechen
+gameplay.melee_touch_barrels.tip = Ein Schwung der gehaltenen Waffe durch ein Fass, einen Topf, eine Urne oder einen Korb zerbricht es auf die eigene Art des Spiels: Der Schwung (einer, der ein Monster treffen würde) drückt die Interaktion des Spiels auf diesem Objekt, wie A es tut, sodass der Held es mit seiner eigenen Animation tritt oder zerbricht - Beute, Fallen und Explosionen sind die des Spiels. Truhen, Türen, Schreine und Questobjekte behalten ihre normale Steuerung, und A funktioniert weiterhin. Die Größe des Objekts ist eine Schätzung aus seiner Grundfläche. Nicht angehakt: wie bisher, nur A zerbricht sie. Sofort. Nur F4.
 gameplay.melee_touch_thrown_held.label = Eine geworfene Waffe ist von Anfang an die Waffe in deiner Hand (kein Griff zum Treffen nötig)
 gameplay.melee_touch_thrown_held.tip = Ein Wurfspieß, ein Wurfmesser oder eine Wurfaxt ist ab dem Moment des Ausrüstens die Waffe in deiner Hand, wie ein Schwert: Sie trifft sofort durch Berührung - du musst den Griff nicht erst drücken. Abgelegt (Griff gedrückt und bei ruhender Hand losgelassen) trifft sie nichts, bis eine Hand sie wieder hält, wie ein Schwert. Der Wurf bleibt gleich: Griff drücken, schwingen, loslassen - der eigene Wurf des Spiels; die Berührung ruht nach einem Wurf noch 0,7 s, und ein Schwung wirft nur einmal. Nicht angehakt: wie bisher - bei eingeschaltetem Griffwurf trifft eine geworfene Waffe nur durch Berührung, solange ihr Griff gedrückt ist. Sofort. Nur F4.
 gameplay.melee_touch_only.label = Der Trigger greift nicht an (nur die Berührung der Klinge; Bogen oder Armbrust schießen damit)
@@ -3070,7 +3169,7 @@ debug.pose_share_draw.tip = Die anderen Spieler als durchsichtige Debug-Formen i
 debug.pose_share_legs_self.label = Mehrspieler-Köpfe und -Hände: die Beine deines eigenen Helden mit derselben Gangart (ein Test)
 debug.pose_share_legs_self.tip = Die Beine deines eigenen Helden schreiten mit derselben Gangart wie die Helden der anderen Spieler ("ihre Beine schreiten so, wie sie sich bewegen"), seine eigene Blickrichtung - um die Beine auf einem PC zu sehen: Sieh ihn in F2 oder F3 an (flach oder VR) und geh vorwärts, rückwärts und seitwärts. Das Log sagt alle 5 s, was sie getan haben ("legs: ..."). Braucht die Gangart-Bibliothek. Sofort.
 debug.walk_back_dump.label = Rückwärtsgehen: die Beine in eine Datei schreiben
-debug.walk_back_dump.tip = Während der Held sich bewegt, werden seine Beine Pose für Pose festgehalten - wie das Spiel sie gezeichnet hat und wie sie mit „Beim Rückwärtsgehen schreiten die Beine rückwärts“ gezeichnet werden - und die letzten 6 Sekunden jedes Rückwärtsgehens gehen nach d2rloader\logs\d2r_vr_walkback.txt (höchstens 30 pro Sitzung), für das Werkzeug walk_legs, das sie als Strichmännchen zeichnet. Schreibt nur eine Datei; im Spiel ändert sich nichts. Sofort.
+debug.walk_back_dump.tip = Während der Held sich bewegt, werden seine Beine Pose für Pose festgehalten - wie das Spiel sie gezeichnet hat und wie sie mit „Beim Rückwärtsgehen schreiten die Beine rückwärts“ gezeichnet werden - und die letzten 6 Sekunden jedes Rückwärtsgehens (und von 3 s Stehen mit um ihn gedrehter Kamera) gehen nach d2rloader\logs\d2r_vr_walkback.txt (höchstens 30 pro Sitzung), für das Werkzeug walk_legs, das sie als Strichmännchen zeichnet. Das Log sagt außerdem alle 5 s, aus welcher Pose die Meshes des Helden geskinnt werden (der, die wir posieren, oder einer anderen). Schreibt nur eine Datei und Logzeilen; im Spiel ändert sich nichts. Sofort.
 debug.phantom_ray.label#2 = Die Linie zeichnen, die die linke Hand nimmt
 debug.phantom_ray.tip#2 = Eine rote Linie, an der die linke Hand die Waffe in der Hand nimmt und gleitet (Stab, Speer, Stangenwaffe, Zweihandschwert); bei einer Armbrust auch dort, wo der Bolzen fliegt (die Regler der Schusslinie der Armbrust drehen sie). "Die Achsen der Waffe in der Hand zeichnen" zeichnet sie ebenfalls.
 debug.xbow_barrel_line.label = Armbrust: den Lauf wie modelliert zeichnen
@@ -3258,6 +3357,251 @@ status.xr_layers.off = OpenXR-Layer {layers} für D2R VR abgeschaltet: Er verzer
 status.xr_layers.listed_in_runtime_fov = OpenXR-Layer {layers} lädt mit dem Spiel und bleibt drin: Die Augen werden genau so gezeichnet, wie das Headset sie liefert, wie andere Spiele zeichnen, also sollte er keinen Schaden anrichten.
 status.xr_layers.listed_in = OpenXR-Layer {layers} lädt mit dem Spiel: Er verzerrt bekanntlich sein Bild (schielend, gestreckt), wenn die Augen auf die eigene Art der Mod gezeichnet werden - hake "Jedes Auge genau so, wie das Headset es liefert" an.
 status.xr_layers.in = Andere OpenXR-Layer im Spiel (bleiben, wie sie sind): {layers}.
+
+# ===== In the headset: the settings panel's rows, the first-start guide (the plugin's tables) =====
+vr.hset.page.view = Ansicht
+vr.hset.page.options = Optionen
+vr.hset.page.video = Video
+vr.hset.page.body = Körper
+vr.hset.page.life = Leben
+vr.hset.page.look = Blick
+vr.hset.page.hud = HUD
+vr.hset.page.belt = Gürtel
+vr.hset.page.melee = Nahkampf
+vr.hset.page.left = Links
+vr.hset.page.right = Rechts
+vr.hset.page.guide = Einführung
+vr.hset.screen.menu_distance_m.label = Fensterabstand
+vr.hset.screen.menu_distance_m.detail = Ein im Spiel offenes Fenster: Inventar, Truhe, Händler
+vr.hset.openxr.flat_distance_m.label = Bildabstand
+vr.hset.openxr.flat_distance_m.detail = Menüs, Ladebildschirme, die flachen Ansichten F1 und F3
+vr.hset.openxr.flat_width_m.label = Bildbreite
+vr.hset.openxr.flat_width_m.detail = Wie breit Menüs und Fenster stehen
+vr.hset.openxr.brightness.label = Helligkeit
+vr.hset.openxr.brightness.detail = Alles im Headset, 1 = wie das Spiel es zeichnet
+vr.hset.stereo.user_height_m.label = Deine Größe
+vr.hset.stereo.user_height_m.detail = Maßstab von Welt und Händen; Body Height von BodyWalk gewinnt
+vr.hset.openxr.laser.label = Laser auf Menüs
+vr.hset.openxr.laser.detail = Zeig mit einem Controller auf ein Menü, und er ist die Maus
+vr.hset.value.off = Aus
+vr.hset.value.on = An
+vr.hset.openxr.laser_hand.label = Laser-Hand
+vr.hset.openxr.laser_hand.detail = Die Hand, von der der Laser ausgeht
+vr.hset.value.left = Links
+vr.hset.value.right = Rechts
+vr.hset.openxr.menu_3d.label = Menüs als Fenster
+vr.hset.openxr.menu_3d.detail = Die Welt bleibt hinter einem offenen Menü in 3D
+vr.hset.turn.smooth.label = Weiches Drehen
+vr.hset.turn.smooth.detail = Rechter Stick: stufenlos drehen oder ein Ruck pro Schnipp
+vr.hset.turn.snap.label = Schnelldrehwinkel
+vr.hset.turn.snap.detail = Grad pro Schnipp, solange weiches Drehen aus ist
+vr.hset.turn.speed.label = Tempo weiches Drehen
+vr.hset.turn.speed.detail = Grad pro Sekunde, solange weiches Drehen an ist
+vr.hset.hud.low_hp_vignette.label = Wenig Leben: rote Vignette
+vr.hset.hud.low_hp_vignette.detail = Die Ränder pochen rot, solange dein Leben niedrig ist (F4)
+vr.hset.hud.low_hp_threshold.label = Beginnt unter
+vr.hset.hud.low_hp_threshold.detail = Anteil deines maximalen Lebens
+vr.hset.hud.low_hp_intensity_start.label = Stärke knapp darunter
+vr.hset.hud.low_hp_intensity_start.detail = Wie rot die Ränder zu Beginn sind
+vr.hset.hud.low_hp_intensity_end.label = Stärke bei wenigstem Leben
+vr.hset.hud.low_hp_intensity_end.detail = Wie rot die Ränder sind, wenn du fast tot bist
+vr.hset.hud.low_hp_saturation.label = Rot
+vr.hset.hud.low_hp_saturation.detail = Ein dunkles Grau (0) bis zum tiefen Rot (1)
+vr.hset.hud.low_hp_radius.label = Größe
+vr.hset.hud.low_hp_radius.detail = Wie weit es vom Rand hereinreicht (Blickwinkel)
+vr.hset.hud.low_hp_softness.label = Weicher Rand
+vr.hset.hud.low_hp_softness.detail = 1 blendet ganz herein, 0 ist eine kurze Rampe
+vr.hset.hud.low_hp_roundness.label = Form
+vr.hset.hud.low_hp_roundness.detail = 2 ein Oval ... 6 ein abgerundetes Quadrat
+vr.hset.hud.low_hp_gentle.label = Sanft
+vr.hset.hud.low_hp_gentle.detail = Langsamer, weicher, weniger rot
+vr.hset.hud.low_hp_haptics.label = Pochen in den Controllern
+vr.hset.hud.low_hp_haptics.detail = Ein Impuls in beiden Händen (braucht Controller-Vibration)
+vr.hset.hud.low_hp_haptics_strength.label = Impulsstärke
+vr.hset.hud.low_hp_haptics_strength.detail = Stärker, je niedriger dein Leben; dies skaliert es
+vr.hset.hands.belt_models_up.label = Gürtelhöhe
+vr.hset.hands.belt_models_up.detail = Wie hoch an dir, in Teilen deiner Augenhöhe
+vr.hset.hands.belt_models_ahead.label = Gürtelabstand
+vr.hset.hands.belt_models_ahead.detail = Weg vom Körper: der Radius des Bogens
+vr.hset.hands.belt_models_across.label = Gürtel rechts / links
+vr.hset.hands.belt_models_across.detail = Nach rechts (+) oder links (-) verschoben
+vr.hset.hands.belt_models_turn.label = Gürtel drehen
+vr.hset.hands.belt_models_turn.detail = Um dich geschwungen: nach rechts (+) oder links (-)
+vr.hset.hands.belt_grab_cm.label = Gürtel: Greifreichweite
+vr.hset.hands.belt_grab_cm.detail = Wie nah eine Hand einem Trank sein muss, um ihn zu nehmen
+vr.hset.belt.grab_trigger.label = Gürteltrank nehmen mit
+vr.hset.belt.grab_trigger.detail = Ein Trank braucht auch den Trigger; der Griff allein gehört der Waffe
+vr.hset.value.grip = Griff
+vr.hset.value.trigger_grip = Trigger + Griff
+vr.hset.gameplay.melee_touch.label = Treffer durch Berührung
+vr.hset.gameplay.melee_touch.detail = Die Klinge, die du durch ein Monster schwingst, trifft es (F4)
+vr.hset.gameplay.melee_min_speed.label = Min. Klingentempo zum Treffen
+vr.hset.gameplay.melee_min_speed.detail = Darunter bewirkt eine Berührung nichts, m/s
+vr.hset.gameplay.melee_stroke_start_cm.label = Klingenweg bis zum Hieb
+vr.hset.gameplay.melee_stroke_start_cm.detail = Wie weit sie sich bewegen muss, um einen zu beginnen, cm
+vr.hset.gameplay.melee_touch_only.label = Trigger greift nicht an
+vr.hset.gameplay.melee_touch_only.detail = Nur die Berührung der Klinge greift an; ein Bogen schießt (F4)
+vr.hset.gameplay.melee_skill_armed.label = Fertigkeitstaste stellt scharf
+vr.hset.gameplay.melee_skill_armed.detail = Jede Berührung ist dann diese Fertigkeit (F4)
+vr.hset.gameplay.melee_skill_armed_icon.label = Scharfe Fertigkeit im Mana
+vr.hset.gameplay.melee_skill_armed_icon.detail = Ihr Symbol im Mana-Medaillon
+vr.hset.direct.left_trigger.label = Linker Trigger
+vr.hset.direct.left_x.label = Links X
+vr.hset.direct.left_y.label = Links Y
+vr.hset.direct.left_stick.label = Klick linker Stick
+vr.hset.direct.left_menu.label = Linke Menütaste
+vr.hset.direct.left_menu_hold.label = Linke Menütaste, lang
+vr.hset.direct.right_trigger.label = Rechter Trigger
+vr.hset.direct.right_a.label = Rechts A
+vr.hset.direct.right_b.label = Rechts B
+vr.hset.direct.right_stick.label = Klick rechter Stick
+vr.hset.direct.right_stick_hold.label = Rechter Stick, lang
+vr.hset.direct.right_menu.label = Rechte Menütaste
+vr.hset.openxr.direct_input.label = Steuerung ohne BodyWalk
+vr.hset.openxr.direct_input.detail = Das Plugin liest die Controller selbst
+vr.hset.hands.belt_models.label = Tränke am Gürtel
+vr.hset.hands.belt_models.detail = Die eigenen Trankmodelle des Spiels an den Hüften des Helden
+vr.hset.render.vr_resolution.label = VR-Renderformat: Modus
+vr.hset.render.vr_resolution.detail = 0 Fenster, 1 Headset, 2-6 ein älteres Quadrat
+vr.hset.render.vr_resolution_px.label = VR-Renderformat: Seite
+vr.hset.render.vr_resolution_px.detail = Seite eines Quadrats in Pixeln, 0 = nicht benutzt
+vr.hset.calibration.use.label = Messung verwenden
+vr.hset.calibration.use.detail = Gemessene Größe und Armspannweite sind in Gebrauch
+vr.hset.calibration.version.label = Messung gespeichert
+vr.hset.calibration.version.detail = 1 = eine Messung ist gespeichert
+vr.hset.value.no = Nein
+vr.hset.value.yes = Ja
+vr.hset.calibration.eye_height_m.label = Gemessene Augenhöhe
+vr.hset.calibration.eye_height_m.detail = Meter über dem Boden
+vr.hset.calibration.arm_span_m.label = Gemessene Armspannweite
+vr.hset.calibration.arm_span_m.detail = Meter, Griff zu Griff
+vr.hset.calibration.seated.label = Wie du spielst
+vr.hset.calibration.seated.detail = Sitzend: Neu zentrieren setzt die Augenhöhe; Kalibrieren liest die Armspannweite
+vr.hset.value.standing = Stehend
+vr.hset.value.seated = Sitzend
+vr.hset.hud.bar_place.label = Leistentyp
+vr.hset.hud.bar_place.detail = Leben und Mana an den Handgelenken oder die ganze Leiste
+vr.hset.hud.monster_height.label = Leisten: Höhe im Bild
+vr.hset.hud.monster_height.detail = + höher, % des Bildschirms (F4); die Leiste im Raum hat ihre eigene
+vr.hset.hud.ordinary_mob_bars.label = Leisten: gewöhnliche Monster
+vr.hset.hud.ordinary_mob_bars.detail = Angezeigt: alle Leisten. Ausgeblendet: nur Champions, Bosse, NPCs
+vr.hset.value.shown = Angezeigt
+vr.hset.value.hidden = Ausgeblendet
+vr.hset.hud.hide.label = Oberfläche aus dem Bild
+vr.hset.hud.hide.detail = 0 nichts, 1 die Leiste, 2 alles
+vr.toolbar.wrists = Handgelenke
+vr.toolbar.chest_low = Brust, tief
+vr.toolbar.low_in_front = Tief davor
+vr.toolbar.left_forearm = Linker Unterarm
+vr.toolbar.right_forearm = Rechter Unterarm
+vr.toolbar.not_shown = Nicht angezeigt
+vr.toolbar.in_the_picture = Im Bild
+vr.keys.none = Nichts
+vr.keys.action_attack = Angriff
+vr.keys.action_interact = Aufheben
+vr.keys.action_inventory = Inventar
+vr.keys.action_map = Karte
+vr.keys.cmd_0x25 = Gegenstände zeigen
+vr.keys.cmd_0x25_action_map = Gegenstände + Karte
+vr.keys.action_pause = Pausenmenü
+vr.keys.cmd_0x26 = Fenster schließen
+vr.keys.action_skillpanel = Fertigkeitenfenster
+vr.keys.action_quivernext = Köcher: nächster
+vr.keys.action_quiverprev = Köcher: vorh.
+vr.keys.action_swap = Waffen wechseln
+vr.keys.action_recenter = Neu zentrieren
+vr.keys.action_viewnext = Nächste Ansicht
+vr.keys.pad_b = Fert.-Taste B
+vr.keys.pad_x = Fert.-Taste X
+vr.keys.pad_y = Fert.-Taste Y
+vr.keys.pad_rb = Fert.-Taste RB
+vr.keys.pad_lb = Pad LB
+vr.keys.pad_a = Pad A
+vr.keys.pad_lt = Fert.-Reihe 2
+vr.keys.pad_l3 = Pad L3
+vr.keys.pad_r3 = Pad R3
+vr.keys.cmd_0x00 = Charakter
+vr.keys.cmd_0x0c = Fertigkeitenbaum
+vr.keys.cmd_0x04 = Questlog
+vr.keys.cmd_0x27 = Nächste Fertigkeit
+vr.keys.cmd_0x28 = Vorh. Fertigkeit
+vr.keys.cmd_0x23 = Rennen / Gehen
+vr.keys.cmd_0x24 = Stehen bleiben
+vr.guide.0.title = Willkommen bei D2R VR - miss dich zuerst
+vr.guide.0.row0.does = Deine Augenhöhe bestimmt den Maßstab der Welt; deine Armspannweite passt die Arme des Helden an deine an. Es dauert ein paar Sekunden.
+vr.guide.0.row1.does = 1. Stell dich aufrecht dorthin, wo du spielst, Blick geradeaus. Der Boden des Headsets (seine Raumeinrichtung) muss eingerichtet sein.
+vr.guide.0.row2.does = 2. Strecke beide Arme in Schulterhöhe seitlich aus, wie ein T.
+vr.guide.0.row3.does = 3. Lass beide Trigger los, drücke dann beide und halte still, bis Gespeichert erscheint.
+vr.guide.0.row4.does = Rechts B bricht ab. Das Spiel läuft hinter dieser Einführung weiter: Stell dich an einen sicheren Ort, in eine Stadt.
+vr.guide.0.row5.does = Später: die Headset-Einstellungen, Seite Körper, Körper kalibrieren.
+vr.guide.0.nav = Jetzt messen oder nicht jetzt: Es ist auch jederzeit auf der Seite Körper.
+vr.guide.1.title = Gehen, drehen, kämpfen
+vr.guide.1.row0.control = Linker Stick
+vr.guide.1.row0.does = gehen
+vr.guide.1.row1.control = Rechter Stick
+vr.guide.1.row1.does = links / rechts: drehen
+vr.guide.1.row2.control = Rechter Trigger
+vr.guide.1.row2.does = angreifen. Ein Schwert, eine Axt oder ein Streitkolben trifft, wenn du die Waffe durch ein Monster schwingst (Treffer durch Berührung), ihr Trigger also nicht; ein Bogen oder eine Armbrust schießt damit.
+vr.guide.1.row3.control = Rechts A
+vr.guide.1.row3.does = aufheben, öffnen, sprechen (eine Fertigkeit auf dem A-Feld des Fertigkeitenfensters wird stattdessen gewirkt)
+vr.guide.1.row4.control = Rechts B, links X, links Y
+vr.guide.1.row4.does = die Fertigkeitentasten B, X, Y des Spiels. Halte den linken Trigger für die zweite Reihe.
+vr.guide.1.row5.control = Klick rechter Stick
+vr.guide.1.row5.does = Waffensätze I / II wechseln
+vr.guide.nav = Zeig auf Zurück oder Weiter und drücke den Trigger. Schließen (oder B) beendet die Einführung.
+vr.guide.2.title = Dinge öffnen
+vr.guide.2.row0.control = Menütaste
+vr.guide.2.row0.does = das Inventar (PS VR2: die Options-Taste des rechten Controllers)
+vr.guide.2.row1.control = Menütaste, gehalten
+vr.guide.2.row1.does = eine halbe Sekunde: das Pausenmenü (Esc)
+vr.guide.2.row2.control = Klick linker Stick
+vr.guide.2.row2.does = ein kurzer Klick: die Karte. Gehalten: Die Gegenstände am Boden werden benannt; eine halbe Sekunde: das Inventar.
+vr.guide.2.row3.control = Klick rechter Stick, gehalten
+vr.guide.2.row3.does = eine halbe Sekunde: das Fertigkeitenfenster; dasselbe noch einmal schließt es
+vr.guide.2.row4.control = Linker Griff + Stick-Klick
+vr.guide.2.row4.does = neu zentrieren: vorn ist, wohin du schaust
+vr.guide.2.row5.control = In einem Menü
+vr.guide.2.row5.does = zeig mit dem rechten Controller darauf (der Laser) und drücke den Trigger zum Klicken; die Sticks und Tasten sind dort das Gamepad des Spiels
+vr.guide.3.title = Das Fertigkeitenfenster und die Einstellungen
+vr.guide.3.row0.control = Fertigkeitenfenster
+vr.guide.3.row0.does = zeig auf ein Feld und drücke den Trigger: Wähle die Fertigkeit dafür. Halte den Trigger auf einem Feld: Von da an wirkt dieser Trigger seine Fertigkeit
+vr.guide.3.row1.control = FERTIGKEITEN ÄNDERN
+vr.guide.3.row1.does = wähle ein Feld, dann eine Fertigkeit, die du hast, um sie dorthin zu legen. Eine Fertigkeit auf dem RT- oder A-Feld wird vom rechten Trigger oder A gewirkt.
+vr.guide.3.row2.control = Tab EINSTELLUNGEN
+vr.guide.3.row2.does = die Headset-Einstellungen im selben Fenster: Ansicht, Optionen, Video, Körper, Leben, Blick, HUD, Gürtel, Nahkampf, Links, Rechts
+vr.guide.3.row3.control = Klick rechter Stick, gehalten
+vr.guide.3.row3.does = öffnet das Fenster auf dem zuletzt offenen Tab; blättere zu EINSTELLUNGEN
+vr.guide.3.row4.control = Seiten blättern
+vr.guide.3.row4.does = schnippe einen Stick nach links oder rechts oder tippe einen Griff an (links zurück, rechts weiter). B, Y oder Menü schließt das Fenster.
+vr.guide.3.row5.control = Am PC
+vr.guide.3.row5.does = D2R VR Authentic Settings hat jede Einstellung; die meisten Änderungen zeigen sich sofort im Spiel
+vr.guide.4.title = Gürtel, Waffen, Bogen
+vr.guide.4.row0.control = Gürteltränke
+vr.guide.4.row0.does = hängen an deinen Hüften. Eine Hand an einem lässt ihn aufleuchten, der Griff nimmt ihn; zum Mund, gekippt: Du trinkst. Woanders loslassen: Er geht zurück.
+vr.guide.4.row1.control = Deine Waffe
+vr.guide.4.row1.does = hat Gewicht: Halte sie mit dem Griff. Beide Griffe losgelassen: Sie fällt (ein Griff ruft sie zurück); eine Sekunde am Boden, und sie ist auf deinem Rücken.
+vr.guide.4.row2.control = Hinter einer Schulter
+vr.guide.4.row2.does = ein Griff dort zieht die Waffe vom Rücken. Der Griff einer leeren Hand hinter der linken Schulter legt den Schild weg und zieht ihn.
+vr.guide.4.row3.control = Bogen
+vr.guide.4.row3.does = die freie Hand an die Sehne, Trigger oder Griff, zurückziehen, loslassen. Während gespannt: B die nächste Pfeilfertigkeit, A die vorige.
+vr.guide.4.row4.control = Wurfspieß
+vr.guide.4.row4.does = halte ihn mit dem Griff, wirf und lass los
+vr.guide.4.row5.control = Leben und Mana
+vr.guide.4.row5.does = sitzen an deinen Handgelenken
+vr.guide.5.title = Ansichten und diese Einführung erneut
+vr.guide.5.row0.control = F1
+vr.guide.5.row0.does = von oben: die eigene Kamera des Spiels
+vr.guide.5.row1.control = F2
+vr.guide.5.row1.does = hinter dem Helden, eine Kamera, die sich mit deinem Kopf dreht
+vr.guide.5.row2.control = F3
+vr.guide.5.row2.does = das Spiel auf deinem Boden: Schau darauf hinab, geh darum herum
+vr.guide.5.row3.control = F4
+vr.guide.5.row3.does = erste Person - diese Ansicht. Die Hände, die Fenster und diese Einführung gehören zu F4.
+vr.guide.5.row4.control = Tastatur
+vr.guide.5.row4.does = die F-Taste einer Ansicht (Spielfenster im Fokus), F12 die nächste Ansicht, F11 neu zentrieren. Die Seite Ansicht der Einstellungen hat auch F1 - F4.
+vr.guide.5.row5.control = Diese Einführung erneut
+vr.guide.5.row5.does = die Headset-Einstellungen, Seite Körper: Einführung beim ersten Start
+vr.guide.5.nav = Fertig schließt die Einführung; sie ist jederzeit wieder auf der Seite Körper.
 
 # ===== The words the program writes (status lines, messages, buttons) =====
 dialog.pictures = Bilder (png, jpg, bmp, dds, tga)
@@ -3575,6 +3919,8 @@ dome.no_receipt = konnte mods\D2R-VR\sky_dome.json nicht schreiben
 dome.made = aus deinem Spiel gemacht: die Modelle der Himmelskuppel aus dem Himmel des Arreat-Gipfels (mods\D2R-VR\D2R-VR.mpq), ab dem nächsten Spielstart
 dome.ready = bereit: die Modelle der Himmelskuppel (mods\D2R-VR\D2R-VR.mpq)
 dome.kept = {n} davon von dir geändert: so gelassen
+dome.atlas = der Himmel jedes Akts und das Schwarz der Höhle in einem Bild, jede Kuppel ein eigenes Band davon
+dome.no_atlas = jede Kuppel ihr eigenes Bild ({why})
 ceiling.no_mod = nur im eigenen Ordner der Mod (mods\D2R-VR\D2R-VR.mpq), der hier nicht vorhanden ist: keine Höhlendecke des Spiels
 ceiling.off = aus ([ceiling] game_ceiling): kein Höhlendeckenmodell erzeugt; {n} von uns entfernt
 ceiling.no_archives = die Archive des Spiels konnten nicht geöffnet werden (Fehler {error}); beim nächsten Start wird es erneut versucht
@@ -3585,6 +3931,12 @@ ceiling.no_receipt = mods\D2R-VR\cave_ceiling.json konnte nicht geschrieben werd
 ceiling.made_kinds = aus deinem Spiel erzeugt: {n} Arten von Decke, für jeden Raum sein eigener Stein oder Fels (mods\D2R-VR\D2R-VR.mpq), ab dem nächsten Spielstart
 ceiling.ready_kinds = bereit: {n} Arten von Decke (mods\D2R-VR\D2R-VR.mpq)
 ceiling.no_maps = nicht in diesem Spiel, dort unser Gewölbe: {kinds}
+ceiling.beams = die Balken der Kaserne: der eigene Rahmen des Spiels, {n} ganze Rahmen pro Stück
+ceiling.no_beams = keine Kasernenbalken: Der Rahmen des Spiels ist nicht in diesem Spiel oder nicht wie bekannt{why}
+ceiling.walls = die Oberkante der Wände in {n} Gebieten gemessen
+ceiling.dome = die Kuppel der Kathedrale: auf den vier Säulen der Kapelle, {r} Einheiten Radius
+ceiling.no_dome = keine Kuppel der Kathedrale: {why}
+ceiling.tall_domes = Kuppeln über hohen Teilen (Raum, Einheiten Radius): {list}
 ceiling.kept = {n} seiner Dateien von dir geändert: bleiben, wie sie sind
 data_mods.no_mod = nur im eigenen Mod von D2R VR (mods\D2R-VR\D2R-VR.mpq), der hier nicht ist
 data_mods.off_removed = aus - die Dateien der anderen Mods aus dem Mod von D2R VR entfernt
@@ -3598,7 +3950,189 @@ data_mods.not_merged = nicht verbunden: {mods}
 data_mods.saves = Charaktere bleiben im Speicherordner von D2R VR
 data_mods.failed = {n} Datei(en) fehlgeschlagen, siehe d2r_vr_data_mods.txt
 
+# ===== In the headset: the words the plugin writes (the skill panel, the settings in the headset, the calibration prompt, the map) =====
+vr.calib.release = Lass beide Trigger los.
+vr.calib.ready = Gut. Drücke jetzt beide Trigger und halte still.
+vr.calib.hold = Stillhalten...
+vr.calib.floor = Das Headset liefert keinen Boden (kein Raum eingerichtet), deshalb kann die Größe nicht gemessen werden.
+vr.calib.height = Deine Augen liegen außerhalb von 0,8 - 2,3 m über dem Boden. Ist die Bodenhöhe eingerichtet?
+vr.calib.tracking = Das Headset oder ein Controller wird nicht getrackt. Halte die Controller dort, wo das Headset sie sieht.
+vr.calib.upright_seated = Setz dich gerade hin und schau geradeaus.
+vr.calib.upright = Steh gerade und schau geradeaus.
+vr.calib.arms = Arme gerade zur Seite, auf Schulterhöhe, Ellbogen gestreckt, Hände nicht vor dir.
+vr.calib.still = Du hast dich bewegt. Lass beide Trigger los und halte still.
+vr.calib.saved = Gespeichert und in Gebrauch. Lass die Trigger los.
+vr.calib.failed = d2r_vr.ini konnte nicht geschrieben werden (siehe Log). Lass los und versuche es erneut.
+vr.calib.title_seated = Sitzend: meine Armspannweite messen
+vr.calib.title = Meine Größe und Armspannweite messen
+vr.calib.steps_seated = Sitz aufrecht und schau geradeaus. Strecke beide Arme in Schulterhöhe gerade seitlich aus, so weit es geht.\nLass beide Trigger los, drücke dann beide und halte still. Nur die Armspannweite wird gelesen: Deine Augenhöhe wird im Sitzen nicht gemessen (die gespeicherte bleibt).
+vr.calib.steps = Steh aufrecht und schau geradeaus. Strecke beide Arme in Schulterhöhe gerade seitlich aus, so weit es geht.\nLass beide Trigger los, drücke dann beide und halte still.
+vr.calib.cancel = Rechts B bricht ab. Das Spiel läuft dahinter weiter - miss an einem sicheren Ort.
+vr.body.measured = Augenhöhe {eye} m, Armspannweite {span} m
+vr.body.measured_span = Armspannweite {span} m (Augenhöhe: nicht gemessen)
+vr.body.span_unusable = Eine gespeicherte Armspannweite ist unbrauchbar: miss erneut
+vr.body.span_none = Armspannweite noch nicht gemessen
+vr.body.unusable = Eine gespeicherte Messung ist unbrauchbar: miss erneut
+vr.body.none = Noch nicht gemessen
+vr.body.use_until = Bis du misst, gelten die Größe aus BodyWalk oder „Deine Größe“ und die Armskalierung.
+vr.body.use_off = Nicht in Gebrauch: Das Kästchen „Gemessene Größe und Spannweite verwenden“ ist in D2R VR Authentic Settings nicht angehakt.
+vr.body.use_span = In Gebrauch: Die Arme des Helden folgen ihr; der Maßstab der Welt ist „Deine Größe“ (miss dafür einmal im Stehen).
+vr.body.use_on = In Gebrauch: Der Maßstab der Welt und die Arme des Helden folgen ihr.
+vr.body.span_auto = {span} m (auto)
+vr.body.auto = Auto
+vr.body.why_seated = Sitzend: Kalibrieren liest nur deine Armspannweite. Ansicht neu zentrieren setzt die Augen des Helden dorthin, wo dein Kopf ist.
+vr.body.why = Deine echte Augenhöhe bestimmt den Maßstab der Welt, deine Armspannweite die Arme des Helden.
+vr.keys.custom = Eigene (ini)
+vr.hset.status.no_ini = d2r_vr.ini wurde nicht gefunden. Nichts kann geändert werden.
+vr.hset.status.saving = Speichern...
+vr.hset.status.saved_video = Gespeichert. Das Spiel baut gleich sein Bild neu auf: ein paar Sekunden eingefroren.
+vr.hset.status.saved = Gespeichert. Die Änderung wirkt sofort.
+vr.hset.status.save_failed = Speichern fehlgeschlagen. Deine Änderungen sind noch da.
+vr.hset.status.conflict = Die ini wurde woanders geändert. Ihre aktuellen Werte werden gezeigt.
+vr.hset.status.live_soon = Eine Änderung wirkt gleich von selbst.
+vr.hset.status.video_unapplied = Noch nicht übernommen. Übernehmen fragt das Spiel nach dieser Größe; Schließen verwirft sie.
+vr.hset.status.unsaved = Ungespeicherte Änderungen. Übernehmen speichert sie, Schließen verwirft sie.
+vr.hset.status.video_idle = Wähle eine Größe, dann Übernehmen. Sie wirkt, sobald dein Held in der Welt ist.
+vr.hset.status.body_idle = Körper kalibrieren blendet dieses Fenster aus; es kommt zurück, wenn die Messung fertig ist.
+vr.hset.status.keys_idle = Wähle, was eine Taste tut, dann Übernehmen. Kombinationen und die anderen langen Drücke: D2R VR Authentic Settings.
+vr.hset.status.keys_off = Steuerung ohne BodyWalk ist aus: Diese Tasten tun nichts (die Belegung von BodyWalk ist die Steuerung).
+vr.hset.status.melee_idle = Jede Änderung wirkt von selbst. Nur erste Person (F4).
+vr.hset.status.melee_off = Treffer durch Berührung ist aus: Hake es an, und die Zeilen unten gelten.
+vr.hset.status.belt_needs_direct = Braucht Steuerung ohne BodyWalk (jetzt aus): Bis dahin nimmt der Griff allein einen Trank.
+vr.hset.status.belt_idle = Jede Änderung wirkt von selbst: Schau auf deinen Gürtel, dann verschiebe ihn erneut.
+vr.hset.status.belt_off = Die Tränke am Gürtel sind aus (D2R VR Authentic Settings > UI: F4 Körper): Diese tun nichts.
+vr.hset.status.idle_window = Zeigen und den Trigger drücken. B, Schließen oder ein langer Druck auf den rechten Stick schließt dieses Fenster.
+vr.hset.status.idle = Zeigen und den Trigger drücken. B oder ein langer Druck auf den rechten Stick schließt es.
+vr.hset.custom_empty = (eine Zeile, die die Liste nicht benennt)
+vr.hset.second_row_off = - die zweite Reihe (LT) ist aus
+vr.hset.title = HEADSET-EINSTELLUNGEN
+vr.video.title = Renderformat
+vr.video.note = Übernehmen baut das Bild neu auf: Das Spiel friert ein paar Sekunden ein (etwa 7).
+vr.body.calibrate = Körper kalibrieren
+vr.body.forget = Messung vergessen
+vr.body.guide = Einführung beim ersten Start
+vr.body.span_note = Armspannweite von Hand: - kürzere, + längere Arme (ein neues Kalibrieren setzt sie neu)
+vr.body.step1 = 1. Stell dich aufrecht dorthin, wo du spielst, Blick geradeaus. Der Boden des Headsets muss eingerichtet sein.
+vr.body.step2 = 2. Drücke Körper kalibrieren: Dieses Fenster verschwindet, und eine Aufforderung erscheint vor dir.
+vr.body.step3 = 3. Arme seitlich ausstrecken, waagerecht. Lass beide Trigger los, drücke dann beide und halte still.
+vr.body.step4 = 4. Rechts B bricht ab. Dieses Fenster kommt zurück, wenn es fertig ist, mit den Zahlen.
+vr.body.seated_step1 = 1. Setz dich aufrecht dorthin, wo du spielst, Blick geradeaus, Platz für deine Arme. Kein Boden nötig.
+vr.body.seated_step4 = 4. Dann Ansicht neu zentrieren, so sitzend, wie du spielst: Die Augen des Helden sind, wo dein Kopf ist.
+vr.guide.not_now = Nicht jetzt
+vr.guide.back = Zurück
+vr.guide.measure_now = Jetzt messen
+vr.guide.done = Fertig
+vr.guide.next = Weiter
+vr.hset.game_view = Spielansicht
+vr.hset.game_view.detail = F1 oben, F2 dritte Person, F3 auf deinem Boden, F4 erste
+vr.hset.preview = Vorschau 5 s
+vr.hset.recentre = Ansicht neu zentrieren
+vr.hset.close = Schließen
+vr.hset.apply = Übernehmen
+vr.video.preset_window = Fenstergröße
+vr.video.preset_headset = Headset-eigen
+vr.video.not_known = noch nicht bekannt
+vr.video.pick_headset_size = Headset-eigen: {size}
+vr.video.pick_headset = Headset-eigene Größe
+vr.video.pick_window = Eigene Fenstergröße
+vr.video.cost_headset_unknown = Seine Größe wird gelesen, wenn das Spiel zum ersten Mal eine Headset-Sitzung startet.
+vr.video.cost_window = Nichts ändert sich: Das Bild ist das des Spielfensters.
+vr.video.cost = Zeichnet {times} x die Pixel von 2048 x 2048.
+vr.video.limit = Dein Headset nimmt höchstens {most}: darauf verkleinert.
+vr.video.now = Das Spiel zeichnet jetzt {size}.
+vr.video.now_unknown = Die Bildgröße des Spiels ist noch nicht bekannt.
+vr.video.recommended = Dein Headset empfiehlt {size}.
+vr.video.recommended_unknown = Die Größe deines Headsets wird gelesen, wenn das Spiel zum ersten Mal eine Sitzung startet.
+vr.tiles.edit = Fertigkeiten ändern
+vr.tiles.close = Schließen
+vr.tiles.back = Zurück
+vr.tiles.previous = Vorherige
+vr.tiles.next = Nächste
+vr.tiles.clear_slot = Platz leeren
+vr.tiles.tab_skills = Fertigkeiten
+vr.tiles.tab_settings = Einstellungen
+vr.tiles.choose_skill_for = Fertigkeit wählen für
+vr.tiles.now = jetzt: {skill}
+vr.skills.nothing = nichts
+vr.skills.choose_slot = Wähle den Platz zum Ändern
+vr.skills.unavailable = Fertigkeiten nicht verfügbar
+vr.skills.trigger_casts = Trigger wirkt: {skill}  ({slot})
+vr.tiles.trigger_basic = Trigger: der einfache Angriff  (A)
+vr.tiles.page = Seite {page} von {pages}
+vr.tiles.hint_first = Tippe auf einen Platz, um seine Fertigkeit zu ändern - halte den Trigger darauf, und der Trigger wirkt sie
+vr.tiles.hint_wheel = Zeig auf einen Platz und drücke den Trigger
+vr.tiles.hint_pick_slot = Zeig auf den zu ändernden Platz und drücke den Trigger
+vr.tiles.hint_pick_skill = Zeig auf eine Fertigkeit und drücke den Trigger, um sie auf den Platz zu legen
+vr.tiles.run = RENNEN
+vr.tiles.walk = GEHEN
+vr.tiles.run_walk_unknown = RENNEN /\nGEHEN
+vr.wheel.run_walk = RENNEN / GEHEN
+vr.tiles.empty = Leer
+vr.tiles.not_found = Nicht gefunden
+vr.tiles.lt_row_off = LT-Reihe aus
+vr.skills.all = Alle
+vr.skills.general = Allgemein / Gegenst.
+vr.tiles.no_trees = Fertigkeitenkategorien brauchen die Fertigkeitenbäume des Symbol-Caches - führe tools/skill_icons/prepare_skill_icons.py erneut aus
+vr.skills.none = Keine Fertigkeiten zur Auswahl
+vr.skills.skill_n = Fertigkeit {id}
+vr.skills.unassigned = Nicht belegt
+vr.skills.tree_n = Baum {n}
+vr.skills.cleared = Platz geleert
+vr.skills.assigned = Belegt
+vr.skills.not_taken = Das Spiel hat es nicht übernommen - wähle den Platz erneut
+vr.skills.no_answer = Keine Antwort vom Spiel
+vr.skills.cannot_cast = Dieser Platz kann von hier nicht gewirkt werden
+vr.skills.hold_left_trigger = Halte den linken Trigger und drücke den rechten
+vr.skills.pull_right_trigger = Drücke den rechten Trigger
+vr.skills.layout = Fertigkeiten können in diesem Layout nicht geändert werden
+vr.wheel.edit = FERTIGKEITEN ÄNDERN
+vr.wheel.close = SCHLIESSEN
+vr.wheel.back = ZURÜCK
+vr.wheel.previous = VORHERIGE
+vr.wheel.next = NÄCHSTE
+vr.wheel.now_run = jetzt: RENNEN
+vr.wheel.now_walk = jetzt: GEHEN
+vr.wheel.empty = Leer
+vr.wheel.basic_attack = EINFACHER\nANGRIFF
+vr.wheel.active = AKTIV
+vr.wheel.choose_slot = PLATZ\nWÄHLEN
+vr.wheel.choose_skill = FERTIGKEIT WÄHLEN  -  {slot}
+vr.wheel.now = Jetzt: {skill}
+vr.wheel.clear_slot = PLATZ LEEREN
+vr.skills.command = Befehl
+vr.skills.item_skill = Gegenstandsfertigkeit
+vr.skills.level = Stufe {level}
+vr.wheel.trigger_basic = Trigger: einfacher Angriff
+vr.wheel.page = Seite {page} / {pages}
+vr.compass.n = N
+vr.compass.ne = NO
+vr.compass.e = O
+vr.compass.se = SO
+vr.compass.s = S
+vr.compass.sw = SW
+vr.compass.w = W
+vr.compass.nw = NW
+vr.map.rotate = KARTE DREHEN
+vr.map.on = An
+vr.map.off = Aus
+
 # ===== Keys of this file that en.txt does not list (an English used under several keys, worded here for one of them) =====
+render.keep_room_heights.label = Böden bleiben, wo sie waren (kein Boden, der auf einem Rückweg rutscht)
+render.keep_room_heights.tip = Das Spiel gibt jedem Raum eines Levels eine Höhe, wenn es beginnt, ihn zu zeichnen, abgestimmt auf die Räume, die in diesem Moment um ihn herum gezeichnet sind, und vergisst sie, wenn der Raum außer Sicht ist. Die Ränder seiner Kacheln passen nicht rundum zusammen, daher kann ein Raum, in den du auf einem anderen Weg zurückkehrst (oder nach einem anderen Gebiet oder der Stadt), eine Stufe höher oder tiefer liegen - aus der Kamera des Spiels von oben sieht das niemand, aus unserer rutscht der Boden: Blöcke nach oben, unten und zur Seite geschoben, dazwischen die Leere. An: Jeder Raum behält die Höhe, in der er zuerst gezeichnet wurde, bis du das Spiel verlässt. Nur das Bild; die Welt des Spiels ist flach, am Kampf und an den Wegen ändert sich nichts. Sofort. Aus: die eigenen Höhen des Spiels, wie bisher.
+group.ceiling_act_1_caves = Decke: Höhlen in Akt 1
+group.ceiling_act_1_caves.help = Die Decke über den Höhlen in Akt 1: ihre Höhe über dem Boden, Helligkeit, wie weit das Licht des Helden auf ihr reicht, das Relief und das Steinbild mit seiner Größe, seinem Kontrast, Detail und Nassglanz.
+group.ceiling_act_1_crypts = Decke: Krypten in Akt 1
+group.ceiling_act_1_crypts.help = Die Decke über den Krypten in Akt 1: ihre Höhe, Helligkeit, die Reichweite des Lichts des Helden, wie weit das unebene Mauerwerk herabhängt, und ihr Bild.
+group.ceiling_act_1_barracks = Decke: Kaserne in Akt 1
+group.ceiling_act_1_barracks.help = Die Decke über der Kaserne in Akt 1: ihre Höhe, Helligkeit, die Reichweite des Lichts des Helden, das Relief und das Bild.
+group.ceiling_act_1_catacombs = Decke: Katakomben in Akt 1
+group.ceiling_act_1_catacombs.help = Die Decke über den Katakomben in Akt 1: ihre Höhe (was das Spiel höher zeichnet, wird abgeschnitten), Helligkeit, die Reichweite des Lichts des Helden, das Relief und das Bild.
+group.ceiling_act_1_cathedral = Decke: Kathedrale in Akt 1
+group.ceiling_act_1_cathedral.help = Die Decke über der Kathedrale in Akt 1. Außer Höhe, Helligkeit und Bild lässt eine Kuppel die Decke als Kugel über dem aufsteigen, was höher steht (der Baldachin des Altars), statt es abzuschneiden; stelle ein, ab welcher Höhe, wie breit und wie hoch sie reicht.
+group.ceiling_act_2_sewers = Decke: Kanalisation in Akt 2
+group.ceiling_act_2_sewers.help = Die Decke über der Kanalisation in Akt 2: ihre Höhe, Helligkeit, die Reichweite des Lichts des Helden, das Relief und das Bild.
+group.ceiling_act_2_palace = Decke: Palast in Akt 2
+group.ceiling_act_2_palace.help = Die Decke unter dem Palast in Akt 2: ihre Höhe, Helligkeit, die Reichweite des Lichts des Helden, das Relief und das Bild.
 ceiling.made = aus deinem Spiel erzeugt: das Modell der Höhlendecke aus dem Höhlenfels von Akt 1 (mods\D2R-VR\D2R-VR.mpq), ab dem nächsten Start des Spiels
 ceiling.ready = bereit: das Modell der Höhlendecke (mods\D2R-VR\D2R-VR.mpq)
 group.direct_hit_experimental = Direkter Treffer (experimentell)

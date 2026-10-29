@@ -1,12 +1,18 @@
 // granny_remesh_test - shared/granny_remesh.h: [sky] game_sky's dome made from the game's own Summit sky card.
 //   1. BitKnit2 raw quanta (how sections are written back) read back by pybg3's decoder as they were: empty, odd, several quanta;
 //   2. half floats; the dome: 1105 vertices, 1984 triangles both ways round (3968), every index in range, the game's VertexScale code;
+//   3. [sky] game_sky's atlas (shared/sky_atlas.h): the acts' pictures stacked, the cave's black band, its mips; each dome's uv inside
+//      its own band, the same geometry; a mesh made its own (Salt) - the same triangles;
 //   granny_remesh_test [<the game's skybox01_lod1.model> [<out .model>]]: the card made our dome, written, read again - our vertices,
 //   indices, one group, VertexScale 800, the bones identity, our texture's name, the types' section the game's byte for byte.
 #include "granny_remesh.h"
+#include "sky_atlas.h"
 
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <string>
 
 static int g_fail = 0;
@@ -46,6 +52,87 @@ int main(int argc, char** argv) {
     CHECK(m.v[0].pos[3] == 24308 && m.scale == 800.0f);              // log2(800) / 13 * 32767, as the game's 326.123 -> 21045
     CHECK(std::lround(std::log2(326.123) / 13.0 * 32767.0) == 21045);
     CHECK(m.mx[1] > 799.0f && m.mn[1] < -160.0f && m.mn[1] > -170.0f);  // up to the zenith, down to 12 degrees under the horizon
+    // 3. the domes' atlas (Serg on 0.189: loaded in act 1, act 2's own dome drew act 1's sky - every dome now names one picture)
+    {
+        auto unhalf = [](uint16_t h) {
+            const int e = (h >> 10) & 31, mm = h & 1023;
+            const float v = e ? std::ldexp(1.0f + mm / 1024.0f, e - 15) : std::ldexp(mm / 1024.0f, -14);
+            return h & 0x8000 ? -v : v;
+        };
+        for (int b = 0; b < skyatlas::kBandCount; ++b) {
+            float from = 0.0f, to = 0.0f;
+            skyatlas::BandRange(b, &from, &to);
+            CHECK(from > (float)b / skyatlas::kBandCount && to < (float)(b + 1) / skyatlas::kBandCount && from < to);   // inside its band, off its edges
+            const Mesh banded = DomeMesh(800.0f, from, to);
+            CHECK(banded.v.size() == m.v.size() && banded.idx == m.idx);
+            bool inBand = true, sameShape = true;
+            for (size_t i = 0; i < banded.v.size(); ++i) {
+                const float v = unhalf(banded.v[i].uv[1]);
+                inBand = inBand && v >= from - 1e-3f && v <= to + 1e-3f;
+                sameShape = sameShape && std::memcmp(banded.v[i].pos, m.v[i].pos, sizeof m.v[i].pos) == 0 && banded.v[i].uv[0] == m.v[i].uv[0];
+            }
+            CHECK(inBand && sameShape);
+            // [sky] game_sky_closed (Serg on 42.webp: a hole under the rim): a whole sphere; the open dome's rings unchanged above, the closed
+            // ones under -12 degrees all on the band's bottom row (one colour, make_sky_dome.py), down to one point straight under
+            const Mesh closed = DomeMesh(800.0f, from, to, true);
+            const size_t extra = sizeof kClosedRings / sizeof kClosedRings[0] * (kSegments + 1);
+            CHECK(closed.v.size() == 1430 && closed.idx.size() == 5120 * 3 && closed.mn[1] < -799.0f && closed.mx[1] > 799.0f);
+            bool closedIn = true, upperSame = true, bottomRow = true;
+            for (uint16_t i : closed.idx) closedIn = closedIn && i < closed.v.size();
+            for (size_t i = 0; i < closed.v.size(); ++i) {
+                if (i < extra) bottomRow = bottomRow && std::fabs(unhalf(closed.v[i].uv[1]) - unhalf(banded.v[0].uv[1])) < 1e-6f;
+                else upperSame = upperSame && std::memcmp(&closed.v[i], &banded.v[i - extra], sizeof closed.v[i]) == 0;
+            }
+            CHECK(closedIn && upperSame && bottomRow);
+            CHECK(closed.v[0].pos[1] == -32767 && closed.v[0].pos[0] == 0 && closed.v[0].pos[2] == 0);   // (the nadir)
+        }
+        CHECK(skyatlas::BandOf("act1") == 0 && skyatlas::BandOf("act5") == 4 && skyatlas::BandOf("cave") == 5 && skyatlas::BandOf("test") == -1);
+        // five small BC6H pictures (64 x 16, 5 mips), each its own bytes: stacked, the black band, the mips a band stays a block high
+        auto dds = [](int act, uint32_t w, uint32_t h, uint32_t mips, uint32_t format) {
+            std::string s(skyatlas::kHeader, '\0');
+            std::memcpy(&s[0], "DDS ", 4);
+            skyatlas::Put32(&s, 4, 124);
+            skyatlas::Put32(&s, 12, h);
+            skyatlas::Put32(&s, 16, w);
+            skyatlas::Put32(&s, 28, mips);
+            std::memcpy(&s[84], "DX10", 4);
+            skyatlas::Put32(&s, 128, format);
+            skyatlas::Put32(&s, 140, 1);
+            for (uint32_t k = 0; k < mips; ++k)
+                for (size_t i = 0; i < skyatlas::MipBytes(w, h, k); ++i) s.push_back((char)(act * 16 + k + (int)(i % 7)));
+            return s;
+        };
+        std::vector<std::string> acts;
+        for (int a = 1; a <= 5; ++a) acts.push_back(dds(a, 64, 16, 5, skyatlas::kBC6HUF16));
+        std::string atlas, why;
+        CHECK(skyatlas::Make(acts, &atlas, &why));
+        skyatlas::Info info;
+        CHECK(skyatlas::Read(atlas, &info) && info.width == 64 && info.height == 16 * skyatlas::kBandCount && info.mips == 3);   // (16, 8, 4 rows a band)
+        size_t at = skyatlas::kHeader, src = skyatlas::kHeader;
+        for (uint32_t k = 0; k < info.mips; ++k) {
+            const size_t n = skyatlas::MipBytes(64, 16, k);
+            for (int b = 0; b < skyatlas::kBandCount; ++b) {
+                const std::string band = atlas.substr(at, n);
+                CHECK(b < skyatlas::kActBands ? band == acts[b].substr(src, n) : band == std::string(n, '\0'));
+                at += n;
+            }
+            src += n;
+        }
+        CHECK(at == atlas.size());
+        std::vector<std::string> bad = acts;
+        bad[2] = dds(3, 32, 16, 5, skyatlas::kBC6HUF16);   // another size
+        CHECK(!skyatlas::Make(bad, &atlas, &why) && why.find("act 3") != std::string::npos);
+        bad = acts;
+        bad[1] = "not a picture";
+        CHECK(!skyatlas::Make(bad, &atlas, &why));
+        bad.pop_back();
+        CHECK(!skyatlas::Make(bad, &atlas, &why));
+        // a mesh made its own (the 0.188 try, kept): its bytes another's, the same triangles and count
+        Mesh salted = m;
+        Salt(&salted, 3);
+        CHECK(salted.v.size() == m.v.size() + 3 && salted.idx.size() == m.idx.size() && salted.idx != m.idx &&
+              std::is_permutation(salted.idx.begin(), salted.idx.end(), m.idx.begin()));
+    }
     if (argc > 1) {
         std::string card;
         CHECK(ReadAll(argv[1], &card));

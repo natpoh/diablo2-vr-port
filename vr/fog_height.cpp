@@ -16,6 +16,7 @@
 
 #include "dxbc_fog_height.h"
 #include "native_d3d12.h"
+#include "pso_stream.h"
 
 namespace fogheight {
 namespace {
@@ -48,6 +49,7 @@ std::atomic<int> g_n{0};
 SRWLOCK g_lock = SRWLOCK_INIT;   // (the adding of entries)
 std::atomic<bool> g_on{false};
 std::atomic<uint32_t> g_swaps{0}, g_streams{0}, g_streamsUnread{0};
+std::atomic<uint32_t> g_bound{0};   // our variant bound in the game's place, in all (never reset: Bound)
 struct Retired { ID3D12PipelineState* p; ULONGLONG at; };
 std::vector<Retired> g_retired;   // the present's: variants no longer bound, let go a few seconds on
 
@@ -57,42 +59,9 @@ std::vector<uint8_t> Copy(const D3D12_SHADER_BYTECODE& b) {
 }
 D3D12_SHADER_BYTECODE Code(const std::vector<uint8_t>& v) { return D3D12_SHADER_BYTECODE{v.empty() ? nullptr : v.data(), v.size()}; }
 
-// ---- a pipeline state stream: each subobject an alignas(void*) { type; value } - its value's offset and the subobject's whole size ----
-template <class T> constexpr void Of(size_t* at, size_t* size) {
-    const size_t a = alignof(T) > 4 ? alignof(T) : 4;
-    *at = (4 + a - 1) / a * a;
-    *size = (*at + sizeof(T) + sizeof(void*) - 1) / sizeof(void*) * sizeof(void*);
-}
-bool Subobject(uint32_t type, size_t* at, size_t* size) {
-    switch (type) {
-    case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_ROOT_SIGNATURE: Of<ID3D12RootSignature*>(at, size); return true;
-    case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_VS: case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_PS: case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_DS:
-    case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_HS: case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_GS: case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_CS:
-    case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_AS: case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_MS: Of<D3D12_SHADER_BYTECODE>(at, size); return true;
-    case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_STREAM_OUTPUT: Of<D3D12_STREAM_OUTPUT_DESC>(at, size); return true;
-    case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_BLEND: Of<D3D12_BLEND_DESC>(at, size); return true;
-    case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_SAMPLE_MASK: Of<UINT>(at, size); return true;
-    case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_RASTERIZER: Of<D3D12_RASTERIZER_DESC>(at, size); return true;
-    case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_DEPTH_STENCIL: Of<D3D12_DEPTH_STENCIL_DESC>(at, size); return true;
-    case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_INPUT_LAYOUT: Of<D3D12_INPUT_LAYOUT_DESC>(at, size); return true;
-    case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_IB_STRIP_CUT_VALUE: Of<D3D12_INDEX_BUFFER_STRIP_CUT_VALUE>(at, size); return true;
-    case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_PRIMITIVE_TOPOLOGY: Of<D3D12_PRIMITIVE_TOPOLOGY_TYPE>(at, size); return true;
-    case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_RENDER_TARGET_FORMATS: Of<D3D12_RT_FORMAT_ARRAY>(at, size); return true;
-    case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_DEPTH_STENCIL_FORMAT: Of<DXGI_FORMAT>(at, size); return true;
-    case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_SAMPLE_DESC: Of<DXGI_SAMPLE_DESC>(at, size); return true;
-    case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_NODE_MASK: Of<UINT>(at, size); return true;
-    case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_CACHED_PSO: Of<D3D12_CACHED_PIPELINE_STATE>(at, size); return true;
-    case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_FLAGS: Of<D3D12_PIPELINE_STATE_FLAGS>(at, size); return true;
-    case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_DEPTH_STENCIL1: Of<D3D12_DEPTH_STENCIL_DESC1>(at, size); return true;
-    case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_VIEW_INSTANCING: Of<D3D12_VIEW_INSTANCING_DESC>(at, size); return true;
-    default: return false;   // (a kind this does not know: the stream is not kept - the game's fog as it is)
-    }
-}
-bool IsShader(uint32_t t) {
-    return t == D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_VS || t == D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_PS || t == D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_DS ||
-           t == D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_HS || t == D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_GS || t == D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_CS ||
-           t == D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_AS || t == D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_MS;
-}
+// a pipeline state stream's subobjects (vr/pso_stream.h)
+using psostream::IsShader;
+using psostream::Subobject;
 
 void Told(int n, const dxbcfog::Found& f, const char* how) {
     char b[220];
@@ -306,16 +275,18 @@ ID3D12PipelineState* Swap(ID3D12PipelineState* pso) {
     for (int i = 0; i < n; ++i)
         if (g_e[i].game == pso) {
             ID3D12PipelineState* o = g_e[i].ours.load(std::memory_order_acquire);
-            if (o) { g_swaps.fetch_add(1, std::memory_order_relaxed); return o; }
+            if (o) { g_swaps.fetch_add(1, std::memory_order_relaxed); g_bound.fetch_add(1, std::memory_order_relaxed); return o; }
             return pso;
         }
     return pso;
 }
 
+uint32_t Bound() { return g_bound.load(std::memory_order_relaxed); }
+
 void Frame(bool on, float top, float soft, bool mist, bool voidAlone, bool noFog, const Curve& oc) {
     dxbcfog::Curve curve;
     curve.on = oc.on;
-    curve.start = oc.start; curve.end = oc.end; curve.curve = oc.curve; curve.strength = oc.strength;
+    curve.start = oc.start; curve.end = oc.end; curve.curve = oc.curve; curve.strength = oc.strength; curve.ease = oc.ease;
     const int n = g_n.load(std::memory_order_acquire);
     bool ready = true;
     if (on)
@@ -326,11 +297,12 @@ void Frame(bool on, float top, float soft, bool mist, bool voidAlone, bool noFog
                 const bool curveChanged = e.curve != curve || std::isnan(e.top);   // (the first variant: which curve, once)
                 if (!Build(e, top, soft, mist, voidAlone, noFog, curve)) continue;
                 if (i == 0 && curveChanged) {
-                    char c[300];
+                    char c[360];
                     if (curve.on)
                         snprintf(c, sizeof c, "fog height: the game's fog by our curve ([fog] game_fog_our_curve): from %.0f, full at %.0f, curve %.2f, "
-                                 "strength %.2f - %.0f%% half way", curve.start, curve.end, curve.curve, curve.strength,
-                                 100.0f * dxbcfog::CurveFog(curve, 0.5f * (curve.start + curve.end)));
+                                 "strength %.2f - %.0f%% half way%s", curve.start, curve.end, curve.curve, curve.strength,
+                                 100.0f * dxbcfog::CurveFog(curve, 0.5f * (curve.start + curve.end)),
+                                 curve.ease ? "; eased in over its first 40 units ([fog] ease_in)" : "");
                     else
                         snprintf(c, sizeof c, "fog height: the game's fog by its own exponential curve ([fog] game_fog_our_curve off)");
                     Say(c);

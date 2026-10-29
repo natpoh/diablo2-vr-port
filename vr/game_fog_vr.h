@@ -56,6 +56,32 @@ inline float GameFogAmount(const Fog& f, float dist) {
     return 1.0f - t;
 }
 
+// [fog] game_fog_height (shared/dxbc_fog_height.h): the share of the fog left at `h` world units above the eye, top / soft as set
+inline float HeightShare(float top, float soft, float h) { return std::clamp((top - h) / (std::max)(soft, 1e-3f), 0.0f, 1.0f); }
+// [fog] game_fog_top_from_floor: the top as set counted from the hero's floor, not the eyes - the passes take it above the eye. Serg on 0.188.5
+// (2026-10-29, act 4 at the River of Flame's edge, 62.webp): top 0, soft 1 above the EYES - every point above eye level clear, everything below
+// it in full fog by distance, a hard line at eye height across the far cliffs; "it is made for the eyes". From the floor: the eye's own height
+// over it taken off (a camera high over the hero - third person, from above - no longer decides where the fog ends). The eye below the
+// floor (a camera put low) counts as on it.
+inline float TopAboveEye(float top, bool fromFloor, float eyeOverFloor) {
+    return fromFloor ? top - (std::max)(eyeOverFloor, 0.0f) : top;
+}
+
+// [fog] game_fog_match (D2R_DepthFog.fx GameFogTrue, its twin): a pixel `colour` the game fogged by share `a`, its complete fog shown
+// as `seen` (through the area's colour grading; at the complete share `full`: seen / full) - moved toward the act's colour `act`
+// by a: where the game's fog is complete, exactly the act's colour; none, untouched.
+inline void MatchShift(const float colour[3], float a, const float act[3], const float seen[3], float full, float out[3]) {
+    full = (std::max)(full, 0.05f);
+    for (int i = 0; i < 3; ++i) out[i] = (std::max)(0.0f, colour[i] + a * (act[i] - seen[i] / full));
+}
+
+// ... and the share the game's pass left out (its height thinning, its exponential): what is left lerped toward the same colour by
+// (want - a) / (1 - a), so the whole is our own fog's share `want` (D2R_DepthFog.fx GameFogTrue); none when the game laid as much.
+inline float MissingShare(float a, float want) {
+    if (!(want > a)) return 0.0f;
+    return std::clamp((want - a) / (std::max)(1.0f - a, 1e-3f), 0.0f, 1.0f);
+}
+
 // Where in the frame's settings (as `n` floats from its start) the blend's five fog floats are, exactly: their index, or -1 none, -2
 // more than one place. Only a blend with a plane above 0 and some colour or density is looked for (all zero matches anywhere). The
 // frame's fog was looked for only at kFrameFogAt (docs/plan_cave_light.md's reading); on PC1, 3.3.94995, it never matched there

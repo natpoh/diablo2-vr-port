@@ -16,19 +16,61 @@ constexpr unsigned kIndexCount = 5952;
 constexpr float kDepthSteps = 32.0f;
 constexpr float kDomeBand = 0.98f;       // our passes take everything from 98 % of its radius on as the dome (SkyDomeDepth)
 
+// The views the dome is laid in (Serg: "почему в 103 уровне старое небо" - VR's third person, F2, had none and our old sky came back):
+// every view of our camera that looks round the world from in it. Not: the views from above (the world under the camera - a dome round it
+// would stand between them; VR F1, in perspective or the game's own, and the flat game's F1), the table (VR F3: the world a model on a
+// table in the room, no sky round it), the VR camera off (F12: the game's own picture), and the flat game without [render]
+// game_drawn_flat (our effect draws its sky). "" = the dome can be laid.
+struct ViewIn {
+    bool vr = false;              // [mode] platform 1
+    int view = 0;                 // [mode] vr_view / flat_view: 1 from above, 2 third person, 3 the table (VR) / first person (flat), 4 VR first person
+    bool enabled = false;         // our camera on (not F12)
+    bool gameDrawnFlat = false;   // [render] game_drawn_flat
+};
+inline const char* ViewWhyNot(const ViewIn& v) {
+    if (!v.enabled) return "the VR camera is off (F12)";
+    if (v.view == 1) return "the view from above (the world under the camera)";
+    if (v.vr && v.view == 3) return "the table view (the world a model in the room)";
+    if (!v.vr && !v.gameDrawnFlat) return "the flat game with [render] game_drawn_flat=0 (our effect draws its sky)";
+    if (v.view < 1 || v.view > 4 || (!v.vr && v.view > 3)) return "not a view of ours";
+    return "";
+}
+
 struct In {
     bool ticked = false;     // [sky] game_sky
-    bool f4 = false;         // VR first person
+    bool f4 = false;         // a view the dome is laid in (ViewWhyNot "")
+    const char* viewWhy = nullptr;   // why not, when f4 is false (ViewWhyNot)
     bool inWorld = false;
     int palette = -1;        // the painted sky's picture now (-1: no sky wanted here - [sky] enabled, outdoors, no menu)
     int act = 0;             // the area's act
     bool eyeOk = false;      // the eye's place in the world is known
+    bool gameSkybox = false; // [sky] game_skybox ticked and the area is one of kGameSkyboxAreas (the dome laid far: SkyboxRadius)
 };
+
+// [sky] game_skybox (Serg on 0.188.3, level 120: our act 5 dome over the Arreat Summit, a navy band and the fog's grey disc under its
+// horizon where the game's own sea of clouds is): the areas whose preset places the game's cloud sea and skybox - of every preset of play the
+// Summit's (MtnTop: expansion_mountaintop_skybox/skybox01, the card our domes are made from) and the uber Summit's, level 137 ("137
+// отсутствует бакграунд": ColossalSummit, biome UberArreatSummit - off [sky] outdoor, so nothing of ours behind it either); the others
+// are the menus' scenes. There no dome of ours, and the area is
+// open air, not underground (no cave dome, no cave light). (Biome names as the game sets them, any case.)
+// What stands aside there is only the game-drawn dome (Serg's "старое небо и новое", 0.188.3: the old look - our post pass's painted
+// sky in the void, the game's sea of clouds rising round the mountain in front of it - was lost under the dome, a mesh 600 units round
+// that hides the cloud sea and leaves its own lower band and the fog's disc). Our post pass's sky and fog stay as they were: the game's
+// skybox itself never drew above them from our camera (the painted clouds showed there).
+// Since Serg's "а почему там старое небо" (0.188.4) the game-drawn dome stays there too, laid behind the cloud sea (SkyboxRadius): our
+// post sky stays off wherever the game draws the sky.
+constexpr const char* kGameSkyboxAreas[] = {"expansion_mountaintop", "uberarreatsummit"};
+inline bool IsGameSkyboxArea(const std::string& biome) {
+    std::string b = biome;
+    for (char& c : b) c = (c >= 'A' && c <= 'Z') ? (char)(c - 'A' + 'a') : c;
+    for (const char* a : kGameSkyboxAreas) if (b == a) return true;
+    return false;
+}
 
 // Why the dome is not shown now ("" = shown)
 inline const char* WhyNot(const In& in) {
     if (!in.ticked) return "[sky] game_sky=0";
-    if (!in.f4) return "not VR F4";
+    if (!in.f4) return in.viewWhy && *in.viewWhy ? in.viewWhy : "not a view the dome is laid in";
     if (!in.inWorld) return "not in a world";
     if (in.palette < 0) return "no sky wanted here ([sky] enabled, outdoors, no menu)";
     if (in.act < 1 || in.act > 5) return "no act's sky for this area";
@@ -86,6 +128,15 @@ inline const char* UnitFileProblem(const std::string& text) {
 inline float DrawableRadius(float wanted, float nearPlane) {
     const float most = nearPlane > 0.0f ? nearPlane * 16777216.0f / kDepthSteps : 25000.0f;
     return wanted < most ? wanted : most;
+}
+
+// [sky] game_skybox (an option, off: Serg "какое ещё море облаков" - the Summits as any act 5 area): the dome behind the game's mist (FX_Act5MountainTop_abyssalfog_40, CliffRibbons,
+// FloorHaze, Haze; particles, drawn after the opaque scene against its depth) stand along the edges of the presets' 210 x 291 units (MtnTop,
+// ColossalSummit), so a dome 600 units round hid them. Laid as far as the depth buffer holds it (DrawableRadius' limit), never nearer
+// than asked: every cloud, the backdrop and the mountain stand in front of it.
+inline float SkyboxRadius(float wanted, float nearPlane) {
+    const float most = DrawableRadius(1.0e9f, nearPlane);   // (not "far": windows.h's macro)
+    return wanted > most ? wanted : most;
 }
 
 // The depth (reversed Z: near / distance) at or under which our passes take a pixel as the dome's (SkyDomeDepth): from kDomeBand of its

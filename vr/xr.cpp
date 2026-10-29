@@ -34,6 +34,7 @@
 #include <vector>
 
 #include "xr.h"
+#include "ui_text.h"           // the map's buttons and the compass in the player's language ([hud] headset_language)
 #include "d2r_vr_shared.h"
 #include "link.h"
 #include "direct_feed.h"
@@ -158,6 +159,7 @@ struct Cfg {
     bool bareHands = false;   // bare_hands: a hand without a controller (the runtime's hand tracking) works as one; 0: it presses and places nothing
     int handTrackers = 2;     // hand_trackers: 2 = none on Meta's runtime, 1 = wherever the runtime has hand tracking (0.175), 0 = never (vr/hand_trackers.h); taken at a session start
     int handSpace = 2;        // hand_space: 2 = on Meta's runtime a grip with no whole pose in the room is looked for in LOCAL / by the aim, 1 = on any runtime, 0 = never (vr/hand_space.h); live
+    int roomByHead = 2;       // room_by_head: 2 = on Meta's runtime where LOCAL is in the room found by the head, else LOCAL taken as the room when STAGE gives nothing; 1 = any runtime, 0 = never (0.186; vr/hand_space.h PickRoom); live
     float handHoldMs = 1000.0f;   // hand_hold_ms: a controller that loses its place this long is held where it was by the head
     float brightness = 1.0f;  // brightness: everything in the headset times this (the runtime's colour scale), 1 = as drawn
     bool laser = false;       // laser: a controller pointing at the flat picture's menus is the mouse (docs/plan_laser_menus.md)
@@ -1236,6 +1238,8 @@ static_assert(XR_SPACE_LOCATION_ORIENTATION_VALID_BIT == handspace::kOriValid &&
               "hand_space.h's bits are OpenXR's");
 handspace::Pose g_localInRoom;      // where LOCAL is in the room (STAGE): a pose located in LOCAL carried into the room
 bool g_localInRoomOk = false;       // located whole this session (the last good kept)
+bool g_localIsRoom = false;         // [openxr] room_by_head: STAGE gave nothing, LOCAL taken as the room (g_localInRoom no turn, no shift) - no floor
+XrTime g_stageDeadSince = 0;        // ... the first focused frame of the run in which STAGE gave the head nothing whole and LOCAL had it (0: not so)
 handspace::Pose g_aimToGrip[2];     // each hand's grip in its aim's frame, learned in frames where both were whole
 bool g_aimToGripOk[2] = {};
 struct SpaceSaid { int source = -1; XrSpaceLocationFlags room = ~0ull, local = ~0ull, aim = ~0ull; uint32_t changes = 0; };
@@ -1258,38 +1262,73 @@ void PoseIn(const handspace::Pose& p, D2RVR_XrPose* out, float* held) {
 }
 // Where LOCAL is in the room, once a frame: LOCAL located in the room, or the room in LOCAL turned about. Both locates' results and
 // flags told on change (Quest 2, 0.184: "where LOCAL is in the room not known" for a whole run - the LOCAL fallback could not run).
+// [openxr] room_by_head (vr/hand_space.h PickRoom): neither whole, then the head located in STAGE (`head`, Publish's own locate) and
+// in LOCAL; STAGE giving the head nothing for a second while LOCAL has it, LOCAL is taken as the room - and the head, not in the room
+// itself, is carried from LOCAL into `in.head` (0.186, Quest 2 over Link: every locate against STAGE came back with no flag at all).
 void FlagsText(XrSpaceLocationFlags f, char* s);
-void LocalInRoomStep() {
+void LocalInRoomStep(const LocateSeen& head, bool focused, D2RVR_XrPose* inHead) {
     if (!g_roomSpace || !g_space) return;
+    using handspace::RoomFrom;
     static XrResult saidR[2] = {XR_SUCCESS, XR_SUCCESS};
-    static XrSpaceLocationFlags saidF[2] = {~0ull, ~0ull};
+    static XrSpaceLocationFlags saidF[2] = {~0ull, ~0ull}, saidH[2] = {~0ull, ~0ull};
+    static int saidFrom = -1;
+    static bool saidHeadMend = false;
     static uint32_t saidN = 0;
     XrResult r[2] = {XR_ERROR_HANDLE_INVALID, XR_ERROR_HANDLE_INVALID};
     XrSpaceLocationFlags fl[2] = {};
-    bool ok = false;
+    handspace::RoomFacts rf;
+    rf.byHead = handspace::On(handspace::ModeOf(g_cfg.roomByHead), g_runtimeName);
+    rf.known = g_localInRoomOk;
+    handspace::Pose direct, reverse, headRoom, headLocal;
     XrSpaceLocation l{XR_TYPE_SPACE_LOCATION};
     r[0] = xrLocateSpace(g_space, g_roomSpace, g_fs.predictedDisplayTime, &l);
     if (XR_SUCCEEDED(r[0])) fl[0] = l.locationFlags;
-    if (XR_SUCCEEDED(r[0]) && handspace::Whole(l.locationFlags)) {
-        handspace::Pose p = PoseOf(l.pose);
-        if (Usable(p)) { g_localInRoom = p; g_localInRoomOk = ok = true; }
-    }
-    if (!ok) {
+    if (XR_SUCCEEDED(r[0]) && handspace::Whole(l.locationFlags)) { direct = PoseOf(l.pose); rf.direct = Usable(direct); }
+    if (!rf.direct) {
         l = {XR_TYPE_SPACE_LOCATION};
         r[1] = xrLocateSpace(g_roomSpace, g_space, g_fs.predictedDisplayTime, &l);
         if (XR_SUCCEEDED(r[1])) fl[1] = l.locationFlags;
-        if (XR_SUCCEEDED(r[1]) && handspace::Whole(l.locationFlags)) {
-            handspace::Pose p = PoseOf(l.pose);
-            if (Usable(p)) { g_localInRoom = handspace::Inverse(p); g_localInRoomOk = true; }
-        }
+        if (XR_SUCCEEDED(r[1]) && handspace::Whole(l.locationFlags)) { reverse = PoseOf(l.pose); rf.reverse = Usable(reverse); }
     }
-    if (r[0] != saidR[0] || r[1] != saidR[1] || fl[0] != saidF[0] || fl[1] != saidF[1]) {
-        saidR[0] = r[0]; saidR[1] = r[1]; saidF[0] = fl[0]; saidF[1] = fl[1];
+    XrSpaceLocationFlags hl = 0;   // the head in LOCAL: 0 = not looked at
+    if (rf.byHead && !rf.direct && !rf.reverse && g_viewSpace) {
+        if (handspace::Whole(head.flags)) { headRoom = PoseOf(head.pose); rf.headRoom = Usable(headRoom); }
+        l = {XR_TYPE_SPACE_LOCATION};
+        if (XR_SUCCEEDED(xrLocateSpace(g_viewSpace, g_space, g_fs.predictedDisplayTime, &l))) hl = l.locationFlags;
+        if (handspace::Whole(hl)) { headLocal = PoseOf(l.pose); rf.headLocal = Usable(headLocal); }
+    }
+    if (focused && rf.byHead && rf.headLocal && !rf.headRoom && !rf.direct && !rf.reverse) {
+        if (!g_stageDeadSince) g_stageDeadSince = g_fs.predictedDisplayTime;
+        rf.stageDeadS = (double)(g_fs.predictedDisplayTime - g_stageDeadSince) / 1e9;
+    } else {
+        g_stageDeadSince = 0;
+    }
+    const RoomFrom from = handspace::PickRoom(rf);
+    switch (from) {
+        case RoomFrom::Direct: g_localInRoom = direct; break;
+        case RoomFrom::Reverse: g_localInRoom = handspace::Inverse(reverse); break;
+        case RoomFrom::Head: g_localInRoom = handspace::LocalInRoomByHead(headRoom, headLocal); break;
+        case RoomFrom::LocalIsRoom: g_localInRoom = handspace::Pose{}; break;
+        default: break;   // Kept, None
+    }
+    if (from != RoomFrom::Kept && from != RoomFrom::None) { g_localInRoomOk = true; g_localIsRoom = from == RoomFrom::LocalIsRoom; }
+    // the head itself: not in the room, where LOCAL is in the room known by the key's own means (by the head before, or LOCAL as the room)
+    const bool headMend = rf.byHead && g_localInRoomOk && !handspace::Whole(head.flags) && rf.headLocal && inHead;
+    if (headMend) PoseIn(handspace::Then(g_localInRoom, headLocal), inHead, g_headHeld);
+    if (r[0] != saidR[0] || r[1] != saidR[1] || fl[0] != saidF[0] || fl[1] != saidF[1] || head.flags != saidH[0] || hl != saidH[1] ||
+        (int)from != saidFrom || headMend != saidHeadMend) {
+        saidR[0] = r[0]; saidR[1] = r[1]; saidF[0] = fl[0]; saidF[1] = fl[1]; saidH[0] = head.flags; saidH[1] = hl;
+        saidFrom = (int)from; saidHeadMend = headMend;
         if (++saidN <= 100 || saidN % 50 == 0) {   // a flood: every 50th after the first 100
-            char a[5], b[5];
-            FlagsText(fl[0], a); FlagsText(fl[1], b);
-            LogF("vrcam: openxr - where LOCAL is in the room ([openxr] hand_space): LOCAL in STAGE locate %d %s, STAGE in LOCAL %s%d %s - %s (change %u)",
-                 (int)r[0], a, ok ? "(not needed) " : "", (int)r[1], b, g_localInRoomOk ? "known" : "not known", saidN);
+            char a[5], b[5], c[5], d[24];
+            FlagsText(fl[0], a); FlagsText(fl[1], b); FlagsText(head.flags, c);
+            if (!rf.byHead) strcpy_s(d, "(room_by_head off)"); else if (rf.direct || rf.reverse) strcpy_s(d, "not looked at"); else FlagsText(hl, d);
+            LogF("vrcam: openxr - where LOCAL is in the room ([openxr] hand_space): LOCAL in STAGE locate %d %s, STAGE in LOCAL %s%d %s, the head in STAGE %s, "
+                 "in LOCAL %s - %s%s; the head %s (change %u)",
+                 (int)r[0], a, rf.direct ? "(not needed) " : "", (int)r[1], b, c, d, handspace::Name(from),
+                 from == RoomFrom::Kept && g_localIsRoom ? " - LOCAL as the room" : "",
+                 headMend ? "located in LOCAL, carried into the room" : handspace::Whole(head.flags) ? "in the room, as the runtime gave it" : "not whole in the room",
+                 saidN);
         }
     }
 }
@@ -1392,7 +1431,7 @@ void DropCalibration();   // the T-pose measurement's pictures, below
 void FeedCalibration(const D2RVR_XrInput& in, const bool located[2], bool focused) {
     calib::Frame f;
     f.time = (double)in.displayTime * 1e-9;
-    f.floor = g_roomSpace != XR_NULL_HANDLE;   // a STAGE space; LOCAL has no floor
+    f.floor = g_roomSpace != XR_NULL_HANDLE && !g_localIsRoom;   // a STAGE space; LOCAL has no floor (nor LOCAL taken as the room: [openxr] room_by_head)
     f.focused = focused;
     f.headTracked = in.head.valid == 1;
     memcpy(f.head, in.head.pos, sizeof f.head);
@@ -1540,9 +1579,11 @@ void Publish(bool focused) {
     in.version = D2RVR_XR_INPUT_VERSION;
     in.focused = focused ? 1u : 0u;
     in.displayTime = g_fs.predictedDisplayTime;
-    PoseOut(g_viewSpace, &in.head, g_headHeld);
+    LocateSeen headSeen{};
+    PoseOut(g_viewSpace, &in.head, g_headHeld, &headSeen);
     const bool mend = g_roomSpace && handspace::On(handspace::ModeOf(g_cfg.handSpace), g_runtimeName);   // [openxr] hand_space
-    if (mend) LocalInRoomStep();
+    if (mend) LocalInRoomStep(headSeen, focused, &in.head);   // (and [openxr] room_by_head: the head too, where STAGE gives it nothing)
+    else g_localIsRoom = false;
     bool located[2] = {};   // a controller really located this frame (not a place held by the head): the T-pose measurement
     for (int h = 0; h < 2; ++h) {
         D2RVR_XrHand& o = in.hand[h];
@@ -1782,6 +1823,8 @@ void Teardown() {   // under g_lock or before the session exists
     g_xrCreateHandTracker = nullptr; g_xrDestroyHandTracker = nullptr; g_xrLocateHandJoints = nullptr;
     g_bareSaid[0] = g_bareSaid[1] = -1;
     g_localInRoomOk = false;   // [openxr] hand_space: the next session finds and learns them again
+    g_localIsRoom = false;     // ([openxr] room_by_head)
+    g_stageDeadSince = 0;
     g_aimToGripOk[0] = g_aimToGripOk[1] = false;
     g_spaceSaid[0] = g_spaceSaid[1] = SpaceSaid{};
     g_pairYawAt.store(0);
@@ -2975,9 +3018,11 @@ std::vector<uint32_t> PaintCompass() {
     fill({0, 0, kAtlasW, kStripH}, RGB(17, 16, 14));
     for (int y : {1, kStripH - 3}) fill({0, y, kAtlasW, y + 2}, RGB(122, 94, 51));
     fill({0, 4, kAtlasW, 5}, RGB(51, 43, 30));
-    const char* const labels[8] = {"N", "NE", "E", "SE", "S", "SW", "W", "NW"};
-    HFONT major = CreateFontW(34, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY, DEFAULT_PITCH, L"Georgia");
-    HFONT minor = CreateFontW(25, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY, DEFAULT_PITCH, L"Georgia");
+    // (the points in the player's language - painted once a session, so a language picked later shows at the next start)
+    const std::wstring labels[8] = {uitext::TrW("vr.compass.n", "N"),  uitext::TrW("vr.compass.ne", "NE"), uitext::TrW("vr.compass.e", "E"),  uitext::TrW("vr.compass.se", "SE"),
+                                    uitext::TrW("vr.compass.s", "S"),  uitext::TrW("vr.compass.sw", "SW"), uitext::TrW("vr.compass.w", "W"),  uitext::TrW("vr.compass.nw", "NW")};
+    HFONT major = CreateFontW(34, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY, DEFAULT_PITCH, uitext::Face(L"Georgia"));
+    HFONT minor = CreateFontW(25, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY, DEFAULT_PITCH, uitext::Face(L"Georgia"));
     HGDIOBJ oldFont = SelectObject(dc, major);
     SetBkMode(dc, TRANSPARENT);
     for (int x = 0; x <= kAtlasW; x += kPeriod / 32) {
@@ -2989,7 +3034,7 @@ std::vector<uint32_t> PaintCompass() {
         SelectObject(dc, cardinal ? major : minor);
         SetTextColor(dc, index == 0 ? RGB(240, 209, 139) : cardinal ? RGB(229, 218, 191) : RGB(170, 157, 128));
         RECT r{x - 44, 20, x + 44, 61};
-        DrawTextA(dc, labels[index], -1, &r, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        DrawTextW(dc, labels[index].c_str(), -1, &r, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
     }
     for (int y = 0; y < kMarkH; ++y) fill({y, kStripH + y, kMarkW - y, kStripH + y + 1}, RGB(242, 204, 120));
     GdiFlush();
@@ -3763,8 +3808,9 @@ std::vector<uint32_t> PaintRotateButton() {
     HGDIOBJ old = SelectObject(dc, dib);
     memset(bits, 0, (size_t)W * H * 4);
     auto fill = [&](RECT r, COLORREF c) { HBRUSH b = CreateSolidBrush(c); FillRect(dc, &r, b); DeleteObject(b); };
-    HFONT caption = CreateFontW(26, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY, DEFAULT_PITCH, L"Georgia");
-    HFONT value = CreateFontW(34, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY, DEFAULT_PITCH, L"Georgia");
+    HFONT caption = CreateFontW(26, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY, DEFAULT_PITCH, uitext::Face(L"Georgia"));
+    HFONT value = CreateFontW(34, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY, DEFAULT_PITCH, uitext::Face(L"Georgia"));
+    const std::wstring rotate = uitext::TrW("vr.map.rotate", "ROTATE MAP"), onText = uitext::TrW("vr.map.on", "On"), offText = uitext::TrW("vr.map.off", "Off");
     HGDIOBJ oldFont = SelectObject(dc, caption);
     SetBkMode(dc, TRANSPARENT);
     for (int i = 0; i < 2; ++i) {   // 0 off, 1 on (bearstonem/d2r-pcvr's map buttons' colours)
@@ -3775,11 +3821,11 @@ std::vector<uint32_t> PaintRotateButton() {
         SelectObject(dc, caption);
         SetTextColor(dc, RGB(170, 157, 128));
         RECT top{0, y + 4, W, y + 36};
-        DrawTextW(dc, L"ROTATE MAP", -1, &top, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        DrawTextW(dc, rotate.c_str(), -1, &top, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
         SelectObject(dc, value);
         SetTextColor(dc, on ? RGB(240, 209, 139) : RGB(229, 218, 191));
         RECT bottom{0, y + 34, W, y + kRotBtnH - 6};
-        DrawTextW(dc, on ? L"On" : L"Off", -1, &bottom, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        DrawTextW(dc, (on ? onText : offText).c_str(), -1, &bottom, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
     }
     GdiFlush();
     const uint8_t* b = (const uint8_t*)bits;
@@ -5468,6 +5514,7 @@ void LoadSettings(const wchar_t* ini) {
     g_cfg.bareHands = f(L"bare_hands", 0.0f) != 0.0f;
     g_cfg.handTrackers = (int)f(L"hand_trackers", 2.0f);   // (taken at the next session start)
     g_cfg.handSpace = (int)f(L"hand_space", 2.0f);   // live
+    g_cfg.roomByHead = (int)f(L"room_by_head", 2.0f);   // live
     g_cfg.frameProfile = f(L"frame_profile", 1.0f) != 0.0f;   // (taken at the next session start)
     {
         g_cfg.indexGripForce = f(L"index_grip_force", 0.0f) != 0.0f;   // live

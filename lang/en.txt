@@ -136,6 +136,8 @@ group.status.help = What is installed and running: BodyWalk, FlatVR, Game Link, 
 @update.check_now.label = Check for updates
 @update.check_now.tip = Asks bodywalkvr.com now, even with the check at start switched off. Nothing is downloaded.
 group.d2r_vr.help = This program and the mod: the language of this program, the version, the update check, and Collect logs - one zip with what support needs to find a problem.
+hud.headset_language.label = In the headset too
+hud.headset_language.tip = The words the mod draws in the headset - the skill panel, the settings in the headset, the first-start guide, the calibration prompt, the map's buttons - in the language picked above. A text not translated yet stays English. Off: English, as before. The game's own texts are the game's language (its own settings).
 @status.update.label = Update check is off
 @update.download.label = Download
 @update.download.tip = Opens the download page in your browser. This program never downloads or runs anything itself.
@@ -216,7 +218,7 @@ sky.enabled.tip = A painted sky over the black void outdoors. Who draws it: the 
 ceiling.enabled.label = Ceiling in caves (via ReShade)
 ceiling.enabled.tip = A stone vault over the black void in dungeons, first person only.
 ceiling.game_ceiling.label = Who draws the ceiling
-ceiling.game_ceiling.tip = Our effect: the vault through the fog shader - ReShade's, or D2R VR's own without ReShade. The game: a slab of the game's own cave rock, made from your game's files, that the game draws and lights itself - its torches and your light on it, its fog over it, fire and spells in front of it - laid over you every frame, no frame time of ours (a test: VR F4 only). Each room the game's own stone matched to the picture chosen for it: rock in the caves, tall slabs in the crypt, smooth stone in the barracks, catacombs and cathedral, ornamented marble in the palace. A room with none yet (the act 2 sewers) keeps our effect's vault with its own settings, as in flat F3. The other ceiling settings below are our effect's; the tile size sets the rock's too. Live.
+ceiling.game_ceiling.tip = Our effect: the vault through the fog shader - ReShade's, or D2R VR's own without ReShade. The game: a slab of the game's own cave rock, made from your game's files, that the game draws and lights itself - its torches and your light on it, its fog over it, fire and spells in front of it - laid over you every frame, no frame time of ours (a test: VR F4 only). Each room the game's own stone matched to the picture chosen for it: rock in the caves, tall slabs in the crypt, smooth stone in the barracks, catacombs and cathedral, ornamented marble in the palace; a room with no picture matched its own floor's stone (the act 2 sewers, the corrupt harem, the palace cellar). The other ceiling settings below are our effect's; the tile size sets the rock's too. Live.
 ceiling.game_ceiling.choice0 = Our effect (ReShade / D2R VR's own)
 ceiling.game_ceiling.choice1 = The game (lit rock)
 ceiling.steps.label = Ceiling relief steps
@@ -237,6 +239,8 @@ group.draw_distance.help#2 = How far round you the world is drawn, in one slider
 # --- What the slider sets ---
 group.what_the_slider_sets = What the slider sets
 group.what_the_slider_sets.help = Each value the Draw distance slider writes, to set by hand. The fog's are greyed while the distance fog is off, the sky dome's while the game does not draw the sky (Sky tab: "Sky and fog drawn by"), the cave dome's while it is off.
+render.big_radius.label = Big objects: trees, houses, walls farther (0 = off)
+render.big_radius.tip = Trees, houses and walls stay drawn farther than the model visibility radius - the bigger, the farther (30 times its height or half its width), out to this many units (300 - 1000; 100 and 200 count as 300). Stones, grass and monsters keep the model visibility radius. Needs room rings 3 or more (past the rooms the game builds there is nothing to draw), and the full fog and the sky dome past it to be seen. Costs frames in forests and towns. From D2R VR Unleashed (bearstonem). Visual only. Live. 0 = off, as before.
 sky.game_sky_radius.label = The game's sky: dome radius, units
 sky.game_sky_radius.tip = How far round you the game's sky dome is laid, in the game's units (live). 200: a near horizon - the dome cuts the far world off in a clean circle, the game's fog over it. Farther the sky comes out of the fog. The log says the radius in use with each change.
 fog.enabled.tip#2 = A distance fog. Who draws it: the Sky tab's selector (our effect, or the game itself). With the sky on, it fades into the sky.
@@ -1568,6 +1572,12 @@ fog.game_fog_caves_black.label = The game's fog darkens to black in caves
 fog.game_fog_caves_black.tip = Underground the game's fog fades to black, whatever the caves' fog colour says, and the void past a cave ceiling's rim is left alone - the game's fog pass laid its torch-lit mist over it whole, a light band behind the fires. Distance darkens, never glows. Without ReShade only. Live.
 fog.game_fog_our_curve.label = The game's fog by our curve
 fog.game_fog_our_curve.tip = The game's own fog pass fades the fog in as our effect does - from Fog start to Full fog by the Curve below (in caves their own start, end and strength) - instead of its own exponential, which puts nearly all of the fog right after the start and leaves the far range one grey. A few instructions in its pass, nothing added. Without ReShade only. Live.
+fog.fog_keeps_colour.label = The game's fog keeps the act's colour at night
+fog.fog_keeps_colour.tip = While the game draws the fog: its colour is the act's own (the colours above) at every hour - the far fades into a light haze of it, never toward black. Our own effect's fog is not changed. Off: it darkens with the game's light, as before. Live.
+fog.fog_into_sky.label = The game's fog fades the far into the sky behind it
+fog.fog_into_sky.tip = In the open air the fog's colour at each point is the sky straight behind it, as in the Arcane Sanctuary: the far land, the world's edge and tall far buildings fade into the sky, not into one flat colour (the sky's low part is the act's fog colour, as it is drawn). Far objects show the sky through them. The game's fog only (with "The game's fog as thick and as coloured as ours"); our own effect's fog is not changed. Underground as before. Live. Off: one fog colour, as before.
+fog.game_fog_match.label = The game's fog as thick and as coloured as ours
+fog.game_fog_match.tip = The game's fog came out darker than the act's fog colour (the area's colour grading) and thinner than ours (it thins above the eye, and without our curve it is the game's own): in act 4 the far land stood as a dark silhouette and hid nothing. Ticked, the effect measures what the game's fog shows where it is complete, moves each fogged pixel toward the act's colour by the game's share, and makes up the share the game left out to our own fog's - the far land, the world's edge and far planes hidden as by our old fog. Never on the game's sky. Our effect's pass, which runs anyway for the sky. Live. Off: as the game lays it.
 fog.game_fog_before_fx.label = The game's fog before smoke and fire
 fog.game_fog_before_fx.tip = The fog laid on the scene before the game adds its smoke, mist and fire, so they lie over the fogged world unfogged - without it the game's fog pass fogs them by the wall behind them (haze cut into black holes in front of far walls). One pass of ours on the graphics card (its cost in the log's 10 s line). Without ReShade only. Applies when the game is started again.
 fog.game_fog_height.label = The game's fog thins with height
@@ -1576,6 +1586,8 @@ fog.game_fog_top.label = The game's fog: its top, units above the eyes
 fog.game_fog_top.tip = How high the game's fog reaches: none above this, world units above your eyes (the hero is ~7.5 tall; the sky dome at its radius). Live.
 fog.game_fog_soft.label = The game's fog: softness of its top, units
 fog.game_fog_soft.tip = How far below its top the game's fog fades out: small, a sharp edge; large, a long soft fade. Live.
+fog.game_fog_top_from_floor.label = The game's fog: its top counted from the hero's floor
+fog.game_fog_top_from_floor.tip = The top above is counted from the floor the hero stands on, not from your eyes: a camera high over the hero (third person, the view from above) no longer moves where the fog ends, and land below your eyes is not all fogged with a line at eye height. Off: from the eyes, as before. Unticking "thins with height" instead gives the fog by distance alone, as our own fog. Live.
 fog.end.tip#2 = Where the fog is complete. World units (the hero is ~7.5 tall).
 fog.curve.label = Falloff
 fog.curve.tip = 1 = linear; more = a clearer middle distance.
@@ -1587,6 +1599,10 @@ render.fog_in_frame.label = Fog drawn inside the game's frame (test)
 render.fog_in_frame.tip = The fog is drawn into the game's own picture before its fire, spells and smoke, and the game lays them over the fogged scene: a torch, a Fire Bolt or an Inferno in front of a far wall is not fogged like the wall. The sky and the black beyond the world keep the fog as before. With an act's own fog colour (World > Sky); VR F4 only. Applies when the game is started again; off = the fog as before. Over "Fog spares fire" when both are on.
 fog.caves.label = Fog in caves and dungeons
 fog.caves.tip = Off: no fog underground (every area that is not outdoors); the open air keeps it. The Arcane Sanctuary has its own switch (Sky > Arcane Sanctuary: fog fades into its sky).
+fog.ease_in.label = Fog eased in, no hard ring
+fog.ease_in.tip = The fog fades in softly over its first 40 units past its start: no sharp edge round the clear ground at your feet. Wherever our curve draws the fog: our effect, and the game's fog with "The game's fog by our curve" on (not the game's own curve). From D2R VR Unleashed (bearstonem). Live. Off: the fog as before.
+fog.no_fog_river.label = No fog in the River of Flame
+fog.no_fog_river.tip = No added fog in the River of Flame, though it is open air: its lava's own glow and haze stay the game's. Our effect's fog and the game's fog alike. From D2R VR Unleashed (bearstonem). Live. Off: the fog there as everywhere outdoors.
 fog.caves_strength.label = Fog strength in caves
 fog.caves_strength.tip = How much the full fog covers in caves: 1 = the far end is gone in the fog colour, less = it shows through.
 fog.color_caves.label = Fog colour in caves
@@ -1603,9 +1619,9 @@ render.own_depth.tip = Where the fog, the sky and the cave ceiling get the scene
 render.own_depth.choice0 = ReShade's own depth
 render.own_depth.choice1 = Our own, picked once
 render.depth_fix_mode.label = How that depth is set
-render.depth_fix_mode.tip = In each pass as it is bound (D2R VR's way, as before): every constant buffer the game binds gets our depth range - a pass that gets its constants another way keeps the game's. Once a frame where the game makes it (found by bearstonem/d2r-pcvr): the range is written right after the game builds the frame's constants, before any pass reads them, so every pass - fog, ambient occlusion, particles, grass - reads the same depth; it runs from the near plane of our camera to the game's own far end (the distance below is not used). To compare: the act 1 grass, the act 2 town's veil, the haze in the corners. Off: the game's own depth, as "The game's effects measure depth from our camera" unticked. Live.
+render.depth_fix_mode.tip = In each pass as it is bound (D2R VR's way, as before): every constant buffer the game binds gets our depth range - a pass that gets its constants another way keeps the game's. It works through ReShade alone: without ReShade it does nothing, and the game's ambient occlusion, reflections, water, lights and height fog keep its own camera's depth - murkier, flatter stone, weaker light from braziers and torches (the game's fog chosen sets the next one by itself). Once a frame where the game makes it (found by bearstonem/d2r-pcvr): the range is written right after the game builds the frame's constants, before any pass reads them, so every pass - fog, ambient occlusion, particles, grass - reads the same depth; it runs from the near plane of our camera to the game's own far end (the distance below is not used). To compare: the act 1 grass, the act 2 town's veil, the haze in the corners. Off: the game's own depth, as "The game's effects measure depth from our camera" unticked. Live.
 render.depth_fix_mode.choice0 = Off (the game's own)
-render.depth_fix_mode.choice1 = In each pass as it is bound
+render.depth_fix_mode.choice1 = In each pass as it is bound (with ReShade only)
 render.depth_fix_mode.choice2 = Once a frame where the game makes it
 render.depth_range.label = How far that depth reaches
 render.depth_range.tip = World units (the hero is ~7.5 tall). Farther counts as sky to the game's fog; shorter is finer near the hero.
@@ -1621,7 +1637,7 @@ render.roofs_two_sided.tip = The game draws a roof only from above, so from unde
 render.portal_no_oval.label = No black oval in the town portal (F2 - F4)
 render.portal_no_oval.tip = The town portal's black oval stands still while its blue ring turns to the camera, so from any view but the game's own from above it stands beside the ring. On: the oval is not drawn in F2, F3 and F4, the ring is; F1 keeps it. For portals seen from then on (a new area, or after a restart). From sajmonsoft's flat fork. Off: drawn as the game has it.
 render.light_bounds_fix.label = Fix the game's lighting at a square or wide window
-render.light_bounds_fix.tip = The game cuts the picture into 32 x 20 tiles and finds each tile's depth range for its lights with a shader that is right only at a 16:10 window. At a square or wide one (the VR window, 16:9) it misses rows: lights vanish in hard rectangles and a roof's shading flickers as the head moves. On: our own shader does that one job right while VR renders (at 16:10 the numbers are the same as the game's). Off at once; ticked on again it takes effect at the next start of the game. Off: the game's own.
+render.light_bounds_fix.tip = The game cuts the picture into 32 x 20 tiles and finds each tile's depth range for its lights with a shader that is right only at a 16:10 window. At a square or wide one (the VR window, 16:9) it misses rows: lights vanish in hard rectangles and a roof's shading flickers as the head moves. On: our own shader does that one job right while VR renders, with ReShade or without it (at 16:10 the numbers are the same as the game's). Off at once; ticked on again it takes effect at the next start of the game. Off: the game's own.
 render.light_bounds_flat.label = ... in flat mode too
 render.light_bounds_flat.tip = The same fix in flat mode (a monitor or a window, native OpenXR's flat picture too): the game's shader is wrong at 16:9 and at a square window as well, not only in VR. Follows the mode at once. Off: flat mode keeps the game's own shader, as before.
 
@@ -1632,8 +1648,8 @@ group.render_distance.help = How far around the hero the world is drawn: more ro
 # --- Scenery ---
 group.scenery = Scenery
 group.scenery.help = Fixes to the game's scenery for first person: floors that keep their height when you come back to a room, and the Kurast Docks canoe laid on the water instead of hanging in the sky. Only the picture changes.
-render.keep_room_heights.label = Floors stay where they were (no ground that slides on a way back)
-render.keep_room_heights.tip = The game gives each room of a level a height when it starts drawing it, matched to the rooms drawn round it at that moment, and forgets it when the room is out of sight. Its tiles' edges do not agree all the way round, so a room you come back to by another way (or after another area or town) can be a step higher or lower - from the game's camera above nobody sees it, from ours the floor slides: blocks pushed up, down and aside, the void showing between them. On: every room keeps the height it was first drawn at until you leave the game. Only the picture; the game's world is flat, nothing of the fight or the paths changes. Live. Off: the game's own heights, as before.
+render.floors_stay.label = Floors stay where they were (no ground that slides on a way back)
+render.floors_stay.tip = The game gives each room of a level a height when it starts drawing it, matched to the rooms drawn round it at that moment, and forgets it when the room is out of sight. Its tiles' edges do not agree all the way round, so a room you come back to by another way (or after another area or town) can be a step higher or lower - from the game's camera above nobody sees it, from ours the floor slides: blocks pushed up, down and aside, the void showing between them. On: every room keeps the height it was first drawn at until you leave the game. The trade: the game also mends a room drawn at the wrong height (a step seen from afar, as by the Pandemonium Fortress's gate) when it draws it again as you come near - with this on, that mend does not come. Only the picture; nothing of the fight or the paths changes. Live. Off (the default): the game's own heights.
 world.kurast_boat.label = Kurast Docks: the canoe in the sky sits on the water
 world.kurast_boat.tip = The town's HD scenery places one canoe 50 units up, where the view from above never looks; in first person it hangs over the huts. On: it lies on the water by the western docks, where its prefab was built - one number of the town's scenery file changed (found by bearstonem/d2r-pcvr). This program makes that file from your game's own when it opens (Home: Kurast Docks canoe) and keeps it inside the mod (mods\D2R-VR\D2R-VR.mpq); nothing of the game itself changes, nor anything you play with. Takes effect at the next start of the game (a game already running keeps the canoe where it was). Off: the file is taken out again, the canoe as the game has it.
 
@@ -1655,6 +1671,19 @@ sky.drift.label = The sky turns slowly (clouds drift)
 sky.drift.tip = The painted sky goes slowly round you. Off: it stands still - the stars painted into the night skies went round with the clouds.
 sky.cover_rims.label = The sky over the dark rim round roofs and trees
 sky.cover_rims.tip = The game draws anything against the sky a pixel larger than its depth, its edge blended into black, and the sky was not painted there: a thin dark outline round every roof, treetop and far building, which the eyes by turns also moved off them every other frame. Ticked: the sky goes over that pixel when it is dim (a glow's light edge stays); silhouettes come out a pixel thinner. First person (F4) only. Unticked: as before. Live. Install the DLL and D2R_DepthFog.fx together. From bearstonem/d2r-pcvr.
+sky.dome_fog_horizon.label = The game's sky: its horizon into the fog
+sky.dome_fog_horizon.tip = The game-drawn sky's low part sinks into the act's fog colour, as our own sky's did: the fogged land meets the sky with no hard edge, and the colours match where they meet. Only while a fog is drawn. Off: the sky as the game draws it. Live.
+sky.game_sky_closed.label = The game's sky: a whole sphere, one colour below
+sky.game_sky_closed.tip = The game-drawn sky ended 12 degrees under the horizon: past a cliff's edge its rim stood as a hard line with a hole under it, the void and the fog showing through. Ticked, it closes into a whole sphere and its lower half is one colour - the sky's own at the horizon (with a fog drawn, the fog's: they meet in one colour). In every act, VR and flat. This program makes the dome's models again at once; the game takes them at its next start. Off: the open dome, as before.
+sky.game_skybox.label = Arreat Summit: the sky dome far out
+sky.game_skybox.tip = At the Arreat Summit (level 120) and the uber Summit (137) the game-drawn sky dome is laid as far out as the depth buffer holds it, so the game's mist along the cliffs stays in front of it however far. Off: the Summits as any open-air act 5 area - the dome at its usual radius. Live.
+sky.summit_backdrop_hidden.label = Arreat Summit: no ground picture in first person
+sky.summit_backdrop_hidden.tip = Below the Arreat Summit (level 120) and the uber Summit (137) the game puts a picture of the ground far below, made to be seen from above; in first person it stands as a flat wall. Ticked, it is hidden in VR first person (F4) and flat first person (F3): our sky and fog show in its place and the game's sea of clouds stays. The views from above keep it. Off: as the game draws it. Live.
+sky.weather_first_person.label = Rain and snow in first person
+sky.weather_first_person.tip = The game lays its rain and snow in a box round its own camera, high above and behind the hero for its view from above; in first person that box hangs in the air (the Arreat Summit's snow). Hidden: no rain or snow in VR first person (F4) and flat first person (F3). Round you: the box laid at your head there, so it falls round you. The other views keep the game's. The game's: as before.
+sky.weather_first_person.choice0 = The game's (at its camera)
+sky.weather_first_person.choice1 = Hidden
+sky.weather_first_person.choice2 = Round you
 sky.arcane_sky.label = Arcane Sanctuary: its own stars all round
 sky.arcane_sky.tip = In the Arcane Sanctuary the void round the platforms shows the game's own star layers and clouds in every direction, below the platforms too (after bearstonem/d2r-pcvr). The pictures are made from your game's files when this program opens (Home: Arcane Sanctuary sky) and live inside the mod (mods\D2R-VR); nothing of the game is changed. Not in the views from above. Works with the outdoor sky off too. Off: the void as the game draws it.
 sky.arcane_fog.label = Arcane Sanctuary: fog fades into its sky
@@ -1710,10 +1739,20 @@ tab.ceiling = Ceiling
 group.cave_ceiling = Cave ceiling
 group.cave_ceiling.help = A stone vault drawn over the black void in caves, at its true depth in both eyes; first person only. Set the tile size and relief, a far wall and a floor below to close the void, the stone's contrast, detail and wet shine, and how torches and monsters with fire light it.
 ceiling.enabled.tip#2 = A stone vault over the black void in caves, at its true depth in both eyes. First person only; for now act 1's caves, crypts, barracks, catacombs and cathedral and act 2's sewers and palace.
-ceiling.game_ceiling_height.label = The game's ceiling: height (0 = the area's)
-ceiling.game_ceiling_height.tip = How high over the area's floor the game's rock ceiling hangs, world units (live; the hero is about 7.5 tall); its rock hangs a little lower than that. 0: each area's own height, as set below for our effect. The log says the height in use with each change.
 ceiling.game_ceiling_wall.label = The game's ceiling: bent down into a wall at its rim
 ceiling.game_ceiling_wall.tip = A ring of the same lit rock round you where the game's ceiling ends (about 215 units out at tile size 10), from the ceiling down to below the floor (the floor's depth below): the black void past the ceiling's edge - a band between it and the far floor, lit by the fog behind fires - is closed by stone, as our effect's far wall closed it. Off: the flat ceiling. Live.
+ceiling.game_ceiling_beams.label = The game's ceiling: the barracks' own wooden beams
+ceiling.game_ceiling_beams.tip = The game ships a wooden ceiling frame for the barracks (and its jail) that it never places: a grid of beams whose bottom sits at the barracks walls' top. Ticked, the game draws that frame over you in a grid of whole frames fixed in the world - its own model, wood and size, lit by its torches - with the barracks' stone over the beams to close the gaps between them. Made from your game's files. VR F4 only. Off: the flat stone ceiling. Live.
+ceiling.game_ceiling_dome.label = The game's ceiling: the cathedral's dome over the chapel
+ceiling.game_ceiling_dome.tip = In the Cathedral the game's ceiling rises into a dome over the chapel, as our effect's vault did there: one even dome standing on the four pillars round the altar, just high enough to pass over the altar's canopy. Where, how wide and how high come from the game's own pieces (measured from your game's files, the canopy found in the game as it is drawn); the cathedral's own stone, lit by its candles. The rest of the cathedral keeps the flat ceiling at its height. VR F4 only. Off: the flat ceiling. Live.
+ceiling.game_ceiling_dome_size.label = The cathedral's dome: size
+ceiling.game_ceiling_dome_size.tip = Times the dome measured from the game's pieces (1: standing on the chapel's four pillars), round the same middle. The whole vault grows or shrinks with it - its stone's pattern too - and the dome's height follows, so it still passes over the altar's canopy (0.7 at the least: smaller would cut through it). VR F4. Live.
+ceiling.game_ceiling_dome_rise.label = The cathedral's dome: height
+ceiling.game_ceiling_dome_rise.tip = Times the least height that passes over the altar's canopy (1: just over it). Higher only - lower would cut through the canopy. VR F4. Live.
+ceiling.game_ceiling_domes_over_tall.label = The game's ceiling: a dome over every tall piece
+ceiling.game_ceiling_domes_over_tall.tip = The cathedral's dome, wherever one of the game's pieces stands at least twice as high as its room's ceiling with pillars round it: the ceiling rises in a dome over just that piece, on those pillars, high enough to clear its top - the Worldstone in the Worldstone Chamber (level 132), the throne room's arch (131), Travincal's council hall. Where, how wide and how high come from the game's own pieces and models (measured from your game's files, the piece found in the game as it is drawn); the room's own stone. The rest of the room keeps the flat ceiling. The dome's size and height above apply to these too. VR F4 only. Off: the flat ceiling there, as before. This program makes their vaults again at once; the game takes them at its next start.
+ceiling.height_from_walls.label = Ceiling height from the room's walls
+ceiling.height_from_walls.tip = A room whose own height below is not set (0) has its ceiling on its own walls: where the walls the game builds that room with end (the middle of its wall, pillar and cliff pieces' tops, measured from your game's files). A room's own height, once you set it, always wins. Our effect's vault and the game's ceiling both; the game's rock that hangs lower rests its lowest point on the walls. Off, or a room built with no walls of that kind: 18 over the floor where no height is set. The log says each room's height and where it comes from. Live at the next area change.
 ceiling.scale.label = Tile size
 ceiling.scale.tip = World units per tile of the relief; the stone picture spans 4 tiles.
 ceiling.steps.label#2 = Relief steps
@@ -1760,11 +1799,11 @@ cave_light.ambient.tip = The light that fills the place, inside the hero's circl
 cave_light.ambient_min.label = Fill light at least
 cave_light.ambient_min.tip = Whatever the dungeon has, at least this much: only for the darkest ones (the act 2 tombs: 0.12). Where the area's own times the slider above is more already (act 1's caves: 2 x 2 = 4), it does nothing. 0 = no floor.
 
-# --- Ceiling: act 1 caves ---
-group.ceiling_act_1_caves = Ceiling: act 1 caves
-group.ceiling_act_1_caves.help = The ceiling over act 1's caves: its height over the floor, brightness, how far the hero's light reaches on it, the relief, and the stone picture with its size, contrast, detail and wet shine.
-ceiling.height_act1_caves.label = Height over the floor
-ceiling.height_act1_caves.tip = World units (the hero is ~7.5 tall). Below the walls' tops they pierce the ceiling.
+# --- Ceiling: act 1 caves (levels 8-16) ---
+group.ceiling_act_1_caves_levels_8_16 = Ceiling: act 1 caves (levels 8-16)
+group.ceiling_act_1_caves_levels_8_16.help = The ceiling over act 1's caves: its height over the floor, brightness, how far the hero's light reaches on it, the relief, and the stone picture with its size, contrast, detail and wet shine. Levels: Den of Evil (8), Cave Level 1 (9), Underground Passage Level 1 (10), Hole Level 1 (11), Pit Level 1 (12), Cave Level 2 (13), Underground Passage Level 2 (14), Hole Level 2 (15), Pit Level 2 (16).
+ceiling.height_act1_caves.label = Height over the floor (0 = from the walls)
+ceiling.height_act1_caves.tip = World units (the hero is ~7.5 tall). Below the walls' tops they pierce the ceiling. 0: on the room's walls' top as measured from your game's files (with "Ceiling height from the room's walls"), else 18.
 ceiling.brightness_act1_caves.label = Brightness (0 = black)
 ceiling.brightness_act1_caves.tip = Lower = a darker ceiling.
 ceiling.light_radius_act1_caves.label = Hero's light reach
@@ -1781,23 +1820,23 @@ ceiling.contrast_act1_caves.tip = The picture's fine detail times this: more = c
 ceiling.detail_act1_caves.tip = How far the picture's grains and cracks stand out of the stone: they catch the light.
 ceiling.wet_act1_caves.tip = Glints of the hero's and the torches' light on the stone (0 = dry).
 
-# --- Ceiling: act 1 crypts ---
-group.ceiling_act_1_crypts = Ceiling: act 1 crypts
-group.ceiling_act_1_crypts.help = The ceiling over act 1's crypts: its height, brightness, the hero's light reach, how far the uneven masonry hangs down, and its picture.
+# --- Ceiling: act 1 crypts and tower (levels 18-25, 133) ---
+group.ceiling_act_1_crypts_and_tower_levels_18_25_133 = Ceiling: act 1 crypts and tower (levels 18-25, 133)
+group.ceiling_act_1_crypts_and_tower_levels_18_25_133.help = The ceiling over act 1's crypts: its height, brightness, the hero's light reach, how far the uneven masonry hangs down, and its picture. Levels: Crypt (18), Mausoleum (19), Forgotten Tower (20), Tower Cellar Level 1 (21), Tower Cellar Level 2 (22), Tower Cellar Level 3 (23), Tower Cellar Level 4 (24), Tower Cellar Level 5 (25), Pandemonium Run 1 (133).
 ceiling.relief_act1_crypt.tip = How far the uneven masonry hangs down from the ceiling, world units.
 
-# --- Ceiling: act 1 barracks ---
-group.ceiling_act_1_barracks = Ceiling: act 1 barracks
-group.ceiling_act_1_barracks.help = The ceiling over act 1's barracks: its height, brightness, the hero's light reach, relief and picture.
+# --- Ceiling: act 1 barracks and jail (levels 28-31) ---
+group.ceiling_act_1_barracks_and_jail_levels_28_31 = Ceiling: act 1 barracks and jail (levels 28-31)
+group.ceiling_act_1_barracks_and_jail_levels_28_31.help = The ceiling over act 1's barracks: its height, brightness, the hero's light reach, relief and picture. Levels: Barracks (28), Jail Level 1 (29), Jail Level 2 (30), Jail Level 3 (31).
 
-# --- Ceiling: act 1 catacombs ---
-group.ceiling_act_1_catacombs = Ceiling: act 1 catacombs
-group.ceiling_act_1_catacombs.help = The ceiling over act 1's catacombs: its height (what the game draws higher is cut off), brightness, the hero's light reach, relief and picture.
-ceiling.height_act1_catacombs.tip = World units (the hero is ~7.5 tall). What the game draws higher is cut off by the ceiling.
+# --- Ceiling: act 1 barracks' courtyard (level 28) ---
+group.ceiling_act_1_barracks_courtyard_level_28 = Ceiling: act 1 barracks' courtyard (level 28)
+group.ceiling_act_1_barracks_courtyard_level_28.help = The game's ceiling under act 1's barracks' courtyard (its own cobblestone) in VR F4, our vault in flat F3; its height over the floor. Levels: Barracks (28).
+ceiling.height_act1_court_to_barracks.tip = World units (the hero is ~7.5 tall). 0: on the room's walls' top as measured from your game's files (with "Ceiling height from the room's walls"), else 18.
 
-# --- Ceiling: act 1 cathedral ---
-group.ceiling_act_1_cathedral = Ceiling: act 1 cathedral
-group.ceiling_act_1_cathedral.help = The ceiling over act 1's cathedral. Besides height, brightness and picture, a dome lets the ceiling rise as a sphere over what stands higher (the altar's canopy) instead of cutting it off; set from what height, how wide and how high it goes.
+# --- Ceiling: act 1 cathedral (level 33) ---
+group.ceiling_act_1_cathedral_level_33 = Ceiling: act 1 cathedral (level 33)
+group.ceiling_act_1_cathedral_level_33.help = The ceiling over act 1's cathedral. Besides height, brightness and picture, a dome lets the ceiling rise as a sphere over what stands higher (the altar's canopy) instead of cutting it off; set from what height, how wide and how high it goes. Levels: Cathedral (33).
 ceiling.dome_act1_cathedral.label = Dome over what is higher
 ceiling.dome_act1_cathedral.tip = Where the game draws something higher than the ceiling (the altar's canopy), the ceiling rises over it as a sphere instead of cutting it off.
 ceiling.dome_find_act1_cathedral.label = Dome over what reaches above
@@ -1807,13 +1846,71 @@ ceiling.dome_radius_act1_cathedral.tip = World units: how wide the sphere over a
 ceiling.dome_max_act1_cathedral.label = Dome height at most
 ceiling.dome_max_act1_cathedral.tip = World units over the ceiling; what stands higher still is cut off.
 
-# --- Ceiling: act 2 sewers ---
-group.ceiling_act_2_sewers = Ceiling: act 2 sewers
-group.ceiling_act_2_sewers.help = The ceiling over act 2's sewers: its height, brightness, the hero's light reach, relief and picture.
+# --- Ceiling: act 1 catacombs (levels 34-37) ---
+group.ceiling_act_1_catacombs_levels_34_37 = Ceiling: act 1 catacombs (levels 34-37)
+group.ceiling_act_1_catacombs_levels_34_37.help = The ceiling over act 1's catacombs: its height (what the game draws higher is cut off), brightness, the hero's light reach, relief and picture. Levels: Catacombs Level 1 (34), Catacombs Level 2 (35), Catacombs Level 3 (36), Catacombs Level 4 (37).
+ceiling.height_act1_catacombs.tip = World units (the hero is ~7.5 tall). What the game draws higher is cut off by the ceiling.
 
-# --- Ceiling: act 2 palace ---
-group.ceiling_act_2_palace = Ceiling: act 2 palace
-group.ceiling_act_2_palace.help = The ceiling under act 2's palace: its height, brightness, the hero's light reach, relief and picture.
+# --- Ceiling: act 2 sewers (levels 47-49, 65) ---
+group.ceiling_act_2_sewers_levels_47_49_65 = Ceiling: act 2 sewers (levels 47-49, 65)
+group.ceiling_act_2_sewers_levels_47_49_65.help = The ceiling over act 2's sewers: its height, brightness, the hero's light reach, relief and picture. Levels: Sewers Level 1 (47), Sewers Level 2 (48), Sewers Level 3 (49), Ancient Tunnels (65).
+
+# --- Ceiling: act 2 harem (level 50) ---
+group.ceiling_act_2_harem_level_50 = Ceiling: act 2 harem (level 50)
+group.ceiling_act_2_harem_level_50.help = The ceiling under act 2's harem: its height, brightness, the hero's light reach, relief and picture. Levels: Harem Level 1 (50).
+
+# --- Ceiling: act 2 corrupt harem (level 51) ---
+group.ceiling_act_2_corrupt_harem_level_51 = Ceiling: act 2 corrupt harem (level 51)
+group.ceiling_act_2_corrupt_harem_level_51.help = The ceiling under act 2's corrupt harem: the game's ceiling of its own floor's stone in VR F4, our vault in flat F3; its height over the floor. Levels: Harem Level 2 (51).
+
+# --- Ceiling: act 2 palace cellar (levels 52-54) ---
+group.ceiling_act_2_palace_cellar_levels_52_54 = Ceiling: act 2 palace cellar (levels 52-54)
+group.ceiling_act_2_palace_cellar_levels_52_54.help = The ceiling under act 2's palace cellar: the game's ceiling of smooth dark stone (the catacombs', not the floor's tiles) in VR F4, our vault in flat F3; its height over the floor. Levels: Palace Cellar Level 1 (52), Palace Cellar Level 2 (53), Palace Cellar Level 3 (54).
+
+# --- Ceiling: act 2 tombs (levels 55-61, 66-73) ---
+group.ceiling_act_2_tombs_levels_55_61_66_73 = Ceiling: act 2 tombs (levels 55-61, 66-73)
+group.ceiling_act_2_tombs_levels_55_61_66_73.help = The game's ceiling under act 2's tombs (smooth dark stone, the catacombs') in VR F4, our vault in flat F3; its height over the floor. Levels: Stony Tomb Level 1 (55), Halls of the Dead Level 1 (56), Halls of the Dead Level 2 (57), Claw Viper Temple Level 1 (58), Stony Tomb Level 2 (59), Halls of the Dead Level 3 (60), Claw Viper Temple Level 2 (61), Tal Rasha's Tomb (66), Tal Rasha's Tomb (67), Tal Rasha's Tomb (68), Tal Rasha's Tomb (69), Tal Rasha's Tomb (70), Tal Rasha's Tomb (71), Tal Rasha's Tomb (72), Duriel's Lair (73).
+
+# --- Ceiling: act 2 maggot lair (levels 62-64) ---
+group.ceiling_act_2_maggot_lair_levels_62_64 = Ceiling: act 2 maggot lair (levels 62-64)
+group.ceiling_act_2_maggot_lair_levels_62_64.help = The game's ceiling over act 2's maggot lair (its own cave rock; our effect draws no vault here): its height over the floor. Levels: Maggot Lair Level 1 (62), Maggot Lair Level 2 (63), Maggot Lair Level 3 (64).
+ceiling.height_act2_maggot.tip = World units (the hero is ~7.5 tall): where the game's rock ceiling hangs here; its rock hangs a little lower than that.
+
+# --- Ceiling: act 3 spider caves (levels 84-85) ---
+group.ceiling_act_3_spider_caves_levels_84_85 = Ceiling: act 3 spider caves (levels 84-85)
+group.ceiling_act_3_spider_caves_levels_84_85.help = The game's ceiling over act 3's spider caves (its own cave rock; our effect draws no vault here): its height over the floor. Levels: Spider Cave (84), Spider Cavern (85).
+
+# --- Ceiling: act 3 jungle dungeons (levels 86-91) ---
+group.ceiling_act_3_jungle_dungeons_levels_86_91 = Ceiling: act 3 jungle dungeons (levels 86-91)
+group.ceiling_act_3_jungle_dungeons_levels_86_91.help = The game's ceiling over act 3's jungle dungeons (its own cave rock; our effect draws no vault here): its height over the floor. Levels: Swampy Pit Level 1 (86), Swampy Pit Level 2 (87), Flayer Dungeon Level 1 (88), Flayer Dungeon Level 2 (89), Swampy Pit Level 3 (90), Flayer Dungeon Level 3 (91).
+
+# --- Ceiling: act 3 sewers (level 93) ---
+group.ceiling_act_3_sewers_level_93 = Ceiling: act 3 sewers (level 93)
+group.ceiling_act_3_sewers_level_93.help = The game's ceiling under act 3's sewers (its own rocky floor, laid flat) in VR F4, our vault in flat F3; its height over the floor. Levels: Sewers Level 2 (93).
+
+# --- Ceiling: act 3 temples (levels 94-99) ---
+group.ceiling_act_3_temples_levels_94_99 = Ceiling: act 3 temples (levels 94-99)
+group.ceiling_act_3_temples_levels_94_99.help = The game's ceiling under act 3's temples (their own stone) in VR F4, our vault in flat F3; its height over the floor. Levels: Ruined Temple (94), Disused Fane (95), Forgotten Reliquary (96), Forgotten Temple (97), Ruined Fane (98), Disused Reliquary (99).
+
+# --- Ceiling: act 3 Durance of Hate (level 102) ---
+group.ceiling_act_3_durance_of_hate_level_102 = Ceiling: act 3 Durance of Hate (level 102)
+group.ceiling_act_3_durance_of_hate_level_102.help = The game's ceiling under act 3's Durance of Hate (its own stone) in VR F4, our vault in flat F3; its height over the floor. Levels: Durance of Hate Level 3 (102).
+
+# --- Ceiling: act 5 ice caves (levels 113-116, 118-119) ---
+group.ceiling_act_5_ice_caves_levels_113_116_118_119 = Ceiling: act 5 ice caves (levels 113-116, 118-119)
+group.ceiling_act_5_ice_caves_levels_113_116_118_119.help = The game's ceiling over act 5's ice caves (its own cave rock; our effect draws no vault here): its height over the floor. Levels: Crystalized Cavern Level 1 (113), Cellar of Pity (114), Crystalized Cavern Level 2 (115), Echo Chamber (116), Glacial Caves Level 1 (118), Glacial Caves Level 2 (119).
+
+# --- Ceiling: act 5 Nihlathak's halls (levels 122-124) ---
+group.ceiling_act_5_nihlathak_s_halls_levels_122_124 = Ceiling: act 5 Nihlathak's halls (levels 122-124)
+group.ceiling_act_5_nihlathak_s_halls_levels_122_124.help = The game's ceiling under act 5's Nihlathak's halls (their own cave rock) in VR F4, our vault in flat F3; its height over the floor. Levels: Halls of Anguish (122), Halls of Death's Calling (123), Halls of Vaught (124).
+
+# --- Ceiling: act 5 Worldstone Keep (levels 128-130) ---
+group.ceiling_act_5_worldstone_keep_levels_128_130 = Ceiling: act 5 Worldstone Keep (levels 128-130)
+group.ceiling_act_5_worldstone_keep_levels_128_130.help = The game's ceiling under act 5's Worldstone Keep (its own floor) in VR F4, our vault in flat F3; its height over the floor. Levels: The Worldstone Keep Level 1 (128), The Worldstone Keep Level 2 (129), The Worldstone Keep Level 3 (130).
+
+# --- Ceiling: act 5 throne of destruction (levels 128-132) ---
+group.ceiling_act_5_throne_of_destruction_levels_128_132 = Ceiling: act 5 throne of destruction (levels 128-132)
+group.ceiling_act_5_throne_of_destruction_levels_128_132.help = The game's ceiling under act 5's throne of destruction (the Keep's own floor) in VR F4, our vault in flat F3; its height over the floor. Levels: The Worldstone Keep Level 1 (128), The Worldstone Keep Level 2 (129), The Worldstone Keep Level 3 (130), Throne of Destruction (131), The Worldstone Chamber (132).
 
 # ===== Tab: Weapon Adjust =====
 tab.weapon_adjust = Weapon Adjust
@@ -2425,6 +2522,8 @@ gameplay.melee_stroke_start_cm.label = Hit by touch: how far the blade moves to 
 gameplay.melee_stroke_start_cm.tip = A movement is a stroke - and can hit - only after the blade (its faster end: the tip of a sword, as drawn - not the hand) has moved this far within about a tenth of a second, and fast enough (above). Smaller: a short jab counts; larger: only a long swing does. A blade moving slower than the least speed above does nothing, a monster is hit once per stroke. Default 8 as before. Live. F4 only.
 gameplay.melee_touch_thrown.label = Thrown weapons hit by touch too (a point-blank throw)
 gameplay.melee_touch_thrown.tip = A javelin, a throwing knife or a throwing axe in hand is swung like any weapon: its blade through a monster's body presses the game's own attack at it - for a thrown weapon that is the game's Throw at that monster, point blank, with the ammunition spent as the game spends it (never the Direct hit route). Throwing potions are not swung. The throw by gesture (Weapon Adjust > Throws: by the grip or the trigger) stays as it is and does not fire together with the touch: with the grip throw on, the touch counts only while the right grip is squeezed on the weapon; for 0.7 s after a throw is released the touch stands down; and a touch that pressed the attack drops the release of the same swing (one throw per swing). The blade's size per weapon is an estimate - tune it with the blade sliders of the Debug group below and "Draw the capsules of Hit by touch". Unticked: a thrown weapon does nothing by touch, as before. Live. F4 only.
+gameplay.melee_touch_barrels.label = Break barrels and pots by hitting them
+gameplay.melee_touch_barrels.tip = A swing of the held weapon through a barrel, a pot, an urn or a basket breaks it the game's own way: the swing (one that would hit a monster) presses the game's interact on that object, as A does, so the hero kicks or breaks it with his own animation - its loot, traps and explosions are the game's. Chests, doors, shrines and quest objects keep their normal controls, and A still works. The object's size is an estimate from its footprint. Unticked: as before, only A breaks them. Live. F4 only.
 gameplay.melee_touch_thrown_held.label = A thrown weapon is the weapon in your hand from the start (no grip needed to hit)
 gameplay.melee_touch_thrown_held.tip = A javelin, a throwing knife or a throwing axe is the weapon in your hand from the moment it is equipped, like a sword: it hits by touch at once - you do not have to squeeze the grip first. Put down (the grip squeezed and let go with the hand at rest) it hits nothing until a hand holds it again, as a sword. The throw is the same: squeeze the grip, swing, let go - the game's own throw; the touch still stands down for 0.7 s after a throw and one swing throws once. Unticked: as before - with the grip throw on, a thrown weapon hits by touch only while its grip is squeezed. Live. F4 only.
 gameplay.melee_touch_only.label = The trigger does not attack (only the blade's touch; a bow or a crossbow shoots with it)
@@ -3075,7 +3174,7 @@ debug.pose_share_draw.tip = The other players drawn as see-through debug shapes 
 debug.pose_share_legs_self.label = Multiplayer heads and hands: your own hero's legs by the same gait (a test)
 debug.pose_share_legs_self.tip = Your own hero's legs step by the same gait as the other players' heroes ("their legs step the way they move"), his own facing - to see the legs on one PC: look at him in F2 or F3 (flat or VR) and walk forward, back and sideways. The log says every 5 s what they did ("legs: ..."). Needs the gait library. Live.
 debug.walk_back_dump.label = Walking backwards: write the legs to a file
-debug.walk_back_dump.tip = While the hero moves, his legs are kept pose by pose - as the game drew them and as drawn with "Walking backwards, the legs step backwards" - and the last 6 seconds of each walk back go to d2rloader\logs\d2r_vr_walkback.txt (at most 30 a session), for the walk_legs tool that draws them as stick figures. Writes a file only; nothing in the game changes. Live.
+debug.walk_back_dump.tip = While the hero moves, his legs are kept pose by pose - as the game drew them and as drawn with "Walking backwards, the legs step backwards" - and the last 6 seconds of each walk back (and of 3 s standing with the camera turned round him) go to d2rloader\logs\d2r_vr_walkback.txt (at most 30 a session), for the walk_legs tool that draws them as stick figures. The log also says every 5 s which pose the hero's meshes are skinned from (the one we pose, or another). Writes a file and log lines only; nothing in the game changes. Live.
 debug.phantom_ray.label#2 = Draw the line the left hand takes
 debug.phantom_ray.tip#2 = A red line along which the left hand takes the weapon in hand and slides (staff, spear, polearm, two-handed sword); with a crossbow also where the bolt flies (Crossbow: shot line sliders turn it). "Draw the axes of the weapon in hand" draws it too.
 debug.xbow_barrel_line.label = Crossbow: draw the barrel as modelled
@@ -3263,6 +3362,251 @@ status.xr_layers.off = OpenXR layer {layers} turned off for D2R VR: it is known 
 status.xr_layers.listed_in_runtime_fov = OpenXR layer {layers} loads with the game, left in: the eyes are drawn exactly as the headset gives them, as other games draw, so it should do no harm.
 status.xr_layers.listed_in = OpenXR layer {layers} loads with the game: it is known to distort its picture (cross-eyed, stretched) when the eyes are drawn the mod's own way - tick "Each eye exactly as the headset gives it".
 status.xr_layers.in = Other OpenXR layers in the game (left as they are): {layers}.
+
+# ===== In the headset: the settings panel's rows, the first-start guide (the plugin's tables) =====
+vr.hset.page.view = View
+vr.hset.page.options = Options
+vr.hset.page.video = Video
+vr.hset.page.body = Body
+vr.hset.page.life = Life
+vr.hset.page.look = Look
+vr.hset.page.hud = HUD
+vr.hset.page.belt = Belt
+vr.hset.page.melee = Melee
+vr.hset.page.left = Left
+vr.hset.page.right = Right
+vr.hset.page.guide = Guide
+vr.hset.screen.menu_distance_m.label = Panel distance
+vr.hset.screen.menu_distance_m.detail = A panel open in the game: inventory, stash, trader
+vr.hset.openxr.flat_distance_m.label = Screen distance
+vr.hset.openxr.flat_distance_m.detail = Menus, loading screens, the flat views F1 and F3
+vr.hset.openxr.flat_width_m.label = Screen width
+vr.hset.openxr.flat_width_m.detail = How wide the menus and panels stand
+vr.hset.openxr.brightness.label = Brightness
+vr.hset.openxr.brightness.detail = Everything in the headset, 1 = as the game draws it
+vr.hset.stereo.user_height_m.label = Your height
+vr.hset.stereo.user_height_m.detail = World and hands scale; BodyWalk's Body Height wins
+vr.hset.openxr.laser.label = Laser on menus
+vr.hset.openxr.laser.detail = Point a controller at a menu and it is the mouse
+vr.hset.value.off = Off
+vr.hset.value.on = On
+vr.hset.openxr.laser_hand.label = Laser hand
+vr.hset.openxr.laser_hand.detail = The hand the laser comes from
+vr.hset.value.left = Left
+vr.hset.value.right = Right
+vr.hset.openxr.menu_3d.label = Menus as a panel
+vr.hset.openxr.menu_3d.detail = The world stays in 3D behind an open menu
+vr.hset.turn.smooth.label = Smooth turning
+vr.hset.turn.smooth.detail = Right stick: turn continuously, or one snap a flick
+vr.hset.turn.snap.label = Snap turn angle
+vr.hset.turn.snap.detail = Degrees per flick, while smooth turning is off
+vr.hset.turn.speed.label = Smooth turn speed
+vr.hset.turn.speed.detail = Degrees per second, while smooth turning is on
+vr.hset.hud.low_hp_vignette.label = Low life: red vignette
+vr.hset.hud.low_hp_vignette.detail = The edges beat red while your life is low (F4)
+vr.hset.hud.low_hp_threshold.label = Comes on under
+vr.hset.hud.low_hp_threshold.detail = Share of your maximum life
+vr.hset.hud.low_hp_intensity_start.label = Strength just under it
+vr.hset.hud.low_hp_intensity_start.detail = How red the edges are as it begins
+vr.hset.hud.low_hp_intensity_end.label = Strength at the lowest life
+vr.hset.hud.low_hp_intensity_end.detail = How red the edges are when you are nearly dead
+vr.hset.hud.low_hp_saturation.label = Red
+vr.hset.hud.low_hp_saturation.detail = A dark grey (0) to the deep red (1)
+vr.hset.hud.low_hp_radius.label = Size
+vr.hset.hud.low_hp_radius.detail = How far in from the edge it reaches (view angle)
+vr.hset.hud.low_hp_softness.label = Soft edge
+vr.hset.hud.low_hp_softness.detail = 1 fades all the way in, 0 is a short ramp
+vr.hset.hud.low_hp_roundness.label = Shape
+vr.hset.hud.low_hp_roundness.detail = 2 an oval ... 6 a rounded square
+vr.hset.hud.low_hp_gentle.label = Gentle
+vr.hset.hud.low_hp_gentle.detail = Slower, softer, less red
+vr.hset.hud.low_hp_haptics.label = Beat in the controllers
+vr.hset.hud.low_hp_haptics.detail = A pulse in both hands (needs Controller vibration)
+vr.hset.hud.low_hp_haptics_strength.label = Pulse strength
+vr.hset.hud.low_hp_haptics_strength.detail = Stronger the lower your life; this scales it
+vr.hset.hands.belt_models_up.label = Belt height
+vr.hset.hands.belt_models_up.detail = How high on you, in parts of your eye height
+vr.hset.hands.belt_models_ahead.label = Belt distance
+vr.hset.hands.belt_models_ahead.detail = Out from your body: the arc's radius
+vr.hset.hands.belt_models_across.label = Belt right / left
+vr.hset.hands.belt_models_across.detail = Shifted to your right (+) or left (-)
+vr.hset.hands.belt_models_turn.label = Belt turn
+vr.hset.hands.belt_models_turn.detail = Swung round you: to the right (+) or left (-)
+vr.hset.hands.belt_grab_cm.label = Belt grab reach
+vr.hset.hands.belt_grab_cm.detail = How near a hand must be to a potion to take it
+vr.hset.belt.grab_trigger.label = Take a belt potion with
+vr.hset.belt.grab_trigger.detail = A potion needs the trigger too; the grip alone is the weapon's
+vr.hset.value.grip = Grip
+vr.hset.value.trigger_grip = Trigger + grip
+vr.hset.gameplay.melee_touch.label = Hit by touch
+vr.hset.gameplay.melee_touch.detail = The blade you swing through a monster hits it (F4)
+vr.hset.gameplay.melee_min_speed.label = Least blade speed that hits
+vr.hset.gameplay.melee_min_speed.detail = Below it a touch does nothing, m/s
+vr.hset.gameplay.melee_stroke_start_cm.label = Blade moves to start a stroke
+vr.hset.gameplay.melee_stroke_start_cm.detail = How far it must move to begin one, cm
+vr.hset.gameplay.melee_touch_only.label = Trigger does not attack
+vr.hset.gameplay.melee_touch_only.detail = Only the blade's touch attacks; a bow shoots (F4)
+vr.hset.gameplay.melee_skill_armed.label = Skill button arms the skill
+vr.hset.gameplay.melee_skill_armed.detail = Every touch is then that skill (F4)
+vr.hset.gameplay.melee_skill_armed_icon.label = Armed skill in the mana
+vr.hset.gameplay.melee_skill_armed_icon.detail = Its icon in the mana medallion
+vr.hset.direct.left_trigger.label = Left trigger
+vr.hset.direct.left_x.label = Left X
+vr.hset.direct.left_y.label = Left Y
+vr.hset.direct.left_stick.label = Left stick click
+vr.hset.direct.left_menu.label = Left menu button
+vr.hset.direct.left_menu_hold.label = Left menu, long press
+vr.hset.direct.right_trigger.label = Right trigger
+vr.hset.direct.right_a.label = Right A
+vr.hset.direct.right_b.label = Right B
+vr.hset.direct.right_stick.label = Right stick click
+vr.hset.direct.right_stick_hold.label = Right stick, long press
+vr.hset.direct.right_menu.label = Right menu button
+vr.hset.openxr.direct_input.label = Controls without BodyWalk
+vr.hset.openxr.direct_input.detail = The plugin reads the controllers itself
+vr.hset.hands.belt_models.label = Potions on the belt
+vr.hset.hands.belt_models.detail = The game's own potion models on the hero's hips
+vr.hset.render.vr_resolution.label = VR render size: mode
+vr.hset.render.vr_resolution.detail = 0 window, 1 headset, 2-6 an older square
+vr.hset.render.vr_resolution_px.label = VR render size: side
+vr.hset.render.vr_resolution_px.detail = A square's side in pixels, 0 = not used
+vr.hset.calibration.use.label = Use the measurement
+vr.hset.calibration.use.detail = The measured height and arm span are in use
+vr.hset.calibration.version.label = Measurement stored
+vr.hset.calibration.version.detail = 1 = a measurement is stored
+vr.hset.value.no = No
+vr.hset.value.yes = Yes
+vr.hset.calibration.eye_height_m.label = Measured eye height
+vr.hset.calibration.eye_height_m.detail = Metres over the floor
+vr.hset.calibration.arm_span_m.label = Measured arm span
+vr.hset.calibration.arm_span_m.detail = Metres, grip to grip
+vr.hset.calibration.seated.label = How you play
+vr.hset.calibration.seated.detail = Seated: Recentre sets the eye height; Calibrate reads the arm span
+vr.hset.value.standing = Standing
+vr.hset.value.seated = Seated
+vr.hset.hud.bar_place.label = Toolbar type
+vr.hset.hud.bar_place.detail = Life and mana on the wrists, or the whole toolbar
+vr.hset.hud.monster_height.label = Plates: height on the screen
+vr.hset.hud.monster_height.detail = + higher, % of the screen (F4); the bar in the room has its own
+vr.hset.hud.ordinary_mob_bars.label = Plates: ordinary monsters
+vr.hset.hud.ordinary_mob_bars.detail = Shown: all plates. Hidden: only champions, bosses, NPCs
+vr.hset.value.shown = Shown
+vr.hset.value.hidden = Hidden
+vr.hset.hud.hide.label = Interface out of the picture
+vr.hset.hud.hide.detail = 0 nothing, 1 the toolbar, 2 all of it
+vr.toolbar.wrists = Wrists
+vr.toolbar.chest_low = Chest, low
+vr.toolbar.low_in_front = Low in front
+vr.toolbar.left_forearm = Left forearm
+vr.toolbar.right_forearm = Right forearm
+vr.toolbar.not_shown = Not shown
+vr.toolbar.in_the_picture = In the picture
+vr.keys.none = Nothing
+vr.keys.action_attack = Attack
+vr.keys.action_interact = Pick up
+vr.keys.action_inventory = Inventory
+vr.keys.action_map = Map
+vr.keys.cmd_0x25 = Show items
+vr.keys.cmd_0x25_action_map = Items + map
+vr.keys.action_pause = Pause menu
+vr.keys.cmd_0x26 = Close panels
+vr.keys.action_skillpanel = Skill panel
+vr.keys.action_quivernext = Quiver next
+vr.keys.action_quiverprev = Quiver prev.
+vr.keys.action_swap = Swap weapons
+vr.keys.action_recenter = Recenter
+vr.keys.action_viewnext = Next view
+vr.keys.pad_b = Skill btn B
+vr.keys.pad_x = Skill btn X
+vr.keys.pad_y = Skill btn Y
+vr.keys.pad_rb = Skill btn RB
+vr.keys.pad_lb = Pad LB
+vr.keys.pad_a = Pad A
+vr.keys.pad_lt = Skill row 2
+vr.keys.pad_l3 = Pad L3
+vr.keys.pad_r3 = Pad R3
+vr.keys.cmd_0x00 = Character
+vr.keys.cmd_0x0c = Skill tree
+vr.keys.cmd_0x04 = Quest log
+vr.keys.cmd_0x27 = Next skill
+vr.keys.cmd_0x28 = Prev. skill
+vr.keys.cmd_0x23 = Run / walk
+vr.keys.cmd_0x24 = Stand still
+vr.guide.0.title = Welcome to D2R VR - first, measure yourself
+vr.guide.0.row0.does = Your eye height sets the world's scale; your arm span fits the hero's arms to yours. It takes a few seconds.
+vr.guide.0.row1.does = 1. Stand upright where you play, eyes ahead. The headset's floor (its room setup) must be set.
+vr.guide.0.row2.does = 2. Stretch both arms out sideways at shoulder height, like a T.
+vr.guide.0.row3.does = 3. Let go of both triggers, then squeeze both and hold still until it says Saved.
+vr.guide.0.row4.does = Right B cancels it. The game goes on behind this guide: stand somewhere safe, in a town.
+vr.guide.0.row5.does = Later: the settings in the headset, page Body, Calibrate body.
+vr.guide.0.nav = Measure now, or not now: it is on the Body page any time too.
+vr.guide.1.title = Walk, turn, fight
+vr.guide.1.row0.control = Left stick
+vr.guide.1.row0.does = walk
+vr.guide.1.row1.control = Right stick
+vr.guide.1.row1.does = left / right: turn
+vr.guide.1.row2.control = Right trigger
+vr.guide.1.row2.does = attack. A sword, axe or mace hits when you swing it through a monster (Hit by touch), so its trigger does not; a bow or crossbow shoots with it.
+vr.guide.1.row3.control = Right A
+vr.guide.1.row3.does = pick up, open, talk (a skill on the skill panel's A plate is cast instead)
+vr.guide.1.row4.control = Right B, left X, left Y
+vr.guide.1.row4.does = the game's skill buttons B, X, Y. Hold the left trigger for the second row.
+vr.guide.1.row5.control = Right stick click
+vr.guide.1.row5.does = swap weapon sets I / II
+vr.guide.nav = Point at Back or Next and pull the trigger. Close (or B) ends the guide.
+vr.guide.2.title = Open things
+vr.guide.2.row0.control = Menu button
+vr.guide.2.row0.does = the inventory (PS VR2: the Options button of the right controller)
+vr.guide.2.row1.control = Menu button, held
+vr.guide.2.row1.does = half a second: the pause menu (Esc)
+vr.guide.2.row2.control = Left stick click
+vr.guide.2.row2.does = a quick click: the map. Held: the items on the ground are named; half a second: the inventory.
+vr.guide.2.row3.control = Right stick click, held
+vr.guide.2.row3.does = half a second: the skill panel; the same again closes it
+vr.guide.2.row4.control = Left grip + stick click
+vr.guide.2.row4.does = recentre: ahead is where you look
+vr.guide.2.row5.control = In a menu
+vr.guide.2.row5.does = point the right controller at it (the laser) and pull the trigger to click; the sticks and buttons are the game's gamepad there
+vr.guide.3.title = The skill panel and the settings
+vr.guide.3.row0.control = Skill panel
+vr.guide.3.row0.does = point at a plate and pull the trigger: choose the skill for it. Hold the trigger on a plate: from then on that trigger casts its skill
+vr.guide.3.row1.control = EDIT SKILLS
+vr.guide.3.row1.does = pick a plate, then a skill you have, to put it there. A skill on the RT or A plate is cast by the right trigger or A.
+vr.guide.3.row2.control = SETTINGS tab
+vr.guide.3.row2.does = the settings in the headset, in the same window: View, Options, Video, Body, Life, Look, HUD, Belt, Melee, Left, Right
+vr.guide.3.row3.control = Right stick click, held
+vr.guide.3.row3.does = opens the window on the tab it was last on; flip to SETTINGS
+vr.guide.3.row4.control = Flip pages
+vr.guide.3.row4.does = flick a thumbstick left or right, or tap a grip (left back, right on). B, Y or Menu closes the window.
+vr.guide.3.row5.control = On the PC
+vr.guide.3.row5.does = D2R VR Authentic Settings has every setting; most changes show in the game at once
+vr.guide.4.title = Belt, weapons, bow
+vr.guide.4.row0.control = Belt potions
+vr.guide.4.row0.does = hang at your hips. A hand at one lights it, the grip takes it; to your mouth, tipped: you drink. Let go elsewhere: it goes back.
+vr.guide.4.row1.control = Your weapon
+vr.guide.4.row1.does = has weight: hold it with the grip. Both grips let go: it falls (a grip calls it back); a second on the floor and it is on your back.
+vr.guide.4.row2.control = Behind a shoulder
+vr.guide.4.row2.does = a grip there draws the weapon off your back. An empty hand's grip behind the left shoulder puts the shield away and draws it.
+vr.guide.4.row3.control = Bow
+vr.guide.4.row3.does = the free hand to the string, trigger or grip, pull back, let go. While drawn: B the next arrow skill, A the one before.
+vr.guide.4.row4.control = Javelin
+vr.guide.4.row4.does = hold it with the grip, throw, and let go
+vr.guide.4.row5.control = Life and mana
+vr.guide.4.row5.does = sit on your wrists
+vr.guide.5.title = Views and this guide again
+vr.guide.5.row0.control = F1
+vr.guide.5.row0.does = from above: the game's own camera
+vr.guide.5.row1.control = F2
+vr.guide.5.row1.does = behind the hero, a camera turned with your head
+vr.guide.5.row2.control = F3
+vr.guide.5.row2.does = the game on your floor: look down at it, walk round it
+vr.guide.5.row3.control = F4
+vr.guide.5.row3.does = first person - this view. The hands, the panels and this guide are F4's.
+vr.guide.5.row4.control = Keyboard
+vr.guide.5.row4.does = the F key of a view (the game window in focus), F12 the next view, F11 recentre. The settings' View page has F1 - F4 too.
+vr.guide.5.row5.control = This guide again
+vr.guide.5.row5.does = the settings in the headset, page Body: First-start guide
+vr.guide.5.nav = Done closes the guide; it is on the Body page again, any time.
 
 # ===== The words the program writes (status lines, messages, buttons) =====
 dialog.pictures = Pictures (png, jpg, bmp, dds, tga)
@@ -3580,6 +3924,8 @@ dome.no_receipt = could not write mods\D2R-VR\sky_dome.json
 dome.made = made from your game: the sky dome's models from the Arreat Summit's sky (mods\D2R-VR\D2R-VR.mpq), from the next start of the game
 dome.ready = ready: the sky dome's models (mods\D2R-VR\D2R-VR.mpq)
 dome.kept = {n} of them changed by you: left as they are
+dome.atlas = every act's sky and the cave's black in one picture, each dome its own band of it
+dome.no_atlas = each dome its own picture ({why})
 ceiling.no_mod = only in the mod's own folder (mods\D2R-VR\D2R-VR.mpq), which is not here: no game cave ceiling
 ceiling.off = off ([ceiling] game_ceiling): no cave ceiling model made; {n} of ours taken out
 ceiling.no_archives = the game's archives could not be opened (error {error}); it is tried again at the next start
@@ -3590,6 +3936,12 @@ ceiling.no_receipt = could not write mods\D2R-VR\cave_ceiling.json
 ceiling.made_kinds = made from your game: {n} kinds of ceiling, each room's own stone or rock (mods\D2R-VR\D2R-VR.mpq), from the next start of the game
 ceiling.ready_kinds = ready: {n} kinds of ceiling (mods\D2R-VR\D2R-VR.mpq)
 ceiling.no_maps = not in this game, our vault there: {kinds}
+ceiling.beams = the barracks' beams: the game's own frame, {n} whole frames a piece
+ceiling.no_beams = no barracks beams: the game's frame is not in this game or not as known{why}
+ceiling.walls = the walls' top measured in {n} areas
+ceiling.dome = the cathedral's dome: on the chapel's four pillars, {r} units round
+ceiling.no_dome = no cathedral dome: {why}
+ceiling.tall_domes = domes over tall pieces (room, units round): {list}
 ceiling.kept = {n} of its files changed by you: left as they are
 data_mods.no_mod = only in D2R VR's own mod (mods\D2R-VR\D2R-VR.mpq), which is not here
 data_mods.off_removed = off - the other mods' files taken out of D2R VR's mod
@@ -3602,3 +3954,169 @@ data_mods.loaded = loaded with D2R VR: {mods}
 data_mods.not_merged = not merged: {mods}
 data_mods.saves = characters stay in D2R VR's save folder
 data_mods.failed = {n} file(s) failed, see d2r_vr_data_mods.txt
+
+# ===== In the headset: the words the plugin writes (the skill panel, the settings in the headset, the calibration prompt, the map) =====
+vr.calib.release = Let go of both triggers.
+vr.calib.ready = Good. Now squeeze both triggers and hold still.
+vr.calib.hold = Hold still...
+vr.calib.floor = The headset gives no floor (no room set up), so the height cannot be measured.
+vr.calib.height = Your eyes read outside 0.8 - 2.3 m over the floor. Is the floor level set up?
+vr.calib.tracking = The headset or a controller is not tracked. Hold the controllers where the headset sees them.
+vr.calib.upright_seated = Sit up straight and look straight ahead.
+vr.calib.upright = Stand up straight and look straight ahead.
+vr.calib.arms = Arms straight out to the sides, level with the shoulders, elbows straight, hands not ahead of you.
+vr.calib.still = You moved. Let go of both triggers and hold still.
+vr.calib.saved = Saved, and in use. Let go of the triggers.
+vr.calib.failed = d2r_vr.ini could not be written (see the log). Let go and try again.
+vr.calib.title_seated = Seated: measure my arm span
+vr.calib.title = Measure my height and arm span
+vr.calib.steps_seated = Sit upright and look straight ahead. Stretch both arms straight out sideways at shoulder height, as wide as they go.\nLet go of both triggers, then squeeze both and hold still. Only the arm span is read: your eye height is not measured seated (the stored one stays).
+vr.calib.steps = Stand upright and look straight ahead. Stretch both arms straight out sideways at shoulder height, as wide as they go.\nLet go of both triggers, then squeeze both and hold still.
+vr.calib.cancel = Right B cancels. The game goes on behind this - measure somewhere safe.
+vr.body.measured = Eye height {eye} m, arm span {span} m
+vr.body.measured_span = Arm span {span} m (eye height: not measured)
+vr.body.span_unusable = A stored arm span is not usable: measure again
+vr.body.span_none = Arm span not measured yet
+vr.body.unusable = A stored measurement is not usable: measure again
+vr.body.none = Not measured yet
+vr.body.use_until = Until you measure, the height from BodyWalk or "Your height" and the arm scale apply.
+vr.body.use_off = Not in use: the box "Use the measured height and arm span" is unticked in D2R VR Authentic Settings.
+vr.body.use_span = In use: the hero's arms follow it; the world's scale is "Your height" (measure standing once for it).
+vr.body.use_on = In use: the world's scale and the hero's arms follow it.
+vr.body.span_auto = {span} m (auto)
+vr.body.auto = Auto
+vr.body.why_seated = Seated: Calibrate reads your arm span only. Recentre view sets the hero's eyes where your head is.
+vr.body.why = Your real eye height sets the world's scale, your arm span the hero's arms.
+vr.keys.custom = Custom (ini)
+vr.hset.status.no_ini = d2r_vr.ini was not found. Nothing can be changed.
+vr.hset.status.saving = Saving...
+vr.hset.status.saved_video = Saved. The game rebuilds its picture in a moment: a few seconds frozen.
+vr.hset.status.saved = Saved. The change is live.
+vr.hset.status.save_failed = Saving failed. Your changes are still here.
+vr.hset.status.conflict = The ini was changed elsewhere. Its current values are shown.
+vr.hset.status.live_soon = A change applies by itself in a moment.
+vr.hset.status.video_unapplied = Not applied yet. Apply asks the game for this size; Close drops it.
+vr.hset.status.unsaved = Unsaved changes. Apply saves them, Close drops them.
+vr.hset.status.video_idle = Pick a size, then Apply. It takes effect once your hero is in the world.
+vr.hset.status.body_idle = Calibrate body hides this panel; it comes back when the measurement is done.
+vr.hset.status.keys_idle = Pick what a button does, then Apply. Chords and the other long presses: D2R VR Authentic Settings.
+vr.hset.status.keys_off = Controls without BodyWalk is off: these buttons do nothing (BodyWalk's mapping is the controls).
+vr.hset.status.melee_idle = Each change applies by itself. First person (F4) only.
+vr.hset.status.melee_off = Hit by touch is off: tick it, and the rows below apply.
+vr.hset.status.belt_needs_direct = Needs Controls without BodyWalk (off now): until then the grip alone takes a potion.
+vr.hset.status.belt_idle = Each change applies by itself: look at your belt, then move it again.
+vr.hset.status.belt_off = The potions on the belt are off (D2R VR Authentic Settings > UI: F4 body): these do nothing.
+vr.hset.status.idle_window = Point and pull the trigger. B, Close or a long press of the right stick closes this window.
+vr.hset.status.idle = Point and pull the trigger. B, or a long press of the right stick, closes it.
+vr.hset.custom_empty = (a line the list does not name)
+vr.hset.second_row_off =  - the second row (LT) is off
+vr.hset.title = HEADSET SETTINGS
+vr.video.title = Render size
+vr.video.note = Apply rebuilds the picture: the game freezes a few seconds (about 7).
+vr.body.calibrate = Calibrate body
+vr.body.forget = Forget measurement
+vr.body.guide = First-start guide
+vr.body.span_note = Arm span by hand: - shorter, + longer arms (a new Calibrate sets it again)
+vr.body.step1 = 1. Stand upright where you play, eyes ahead. The headset's floor must be set up.
+vr.body.step2 = 2. Press Calibrate body: this panel hides and a prompt appears in front of you.
+vr.body.step3 = 3. Arms out sideways, level. Let go of both triggers, then squeeze both and hold still.
+vr.body.step4 = 4. Right B cancels. This panel comes back when it is done, with the numbers.
+vr.body.seated_step1 = 1. Sit upright where you play, eyes ahead, room for your arms. No floor is needed.
+vr.body.seated_step4 = 4. Then Recentre view sitting as you play: the hero's eyes are where your head is.
+vr.guide.not_now = Not now
+vr.guide.back = Back
+vr.guide.measure_now = Measure now
+vr.guide.done = Done
+vr.guide.next = Next
+vr.hset.game_view = Game view
+vr.hset.game_view.detail = F1 above, F2 third person, F3 on your floor, F4 first
+vr.hset.preview = Preview 5 s
+vr.hset.recentre = Recentre view
+vr.hset.close = Close
+vr.hset.apply = Apply
+vr.video.preset_window = Window's size
+vr.video.preset_headset = Headset's own
+vr.video.not_known = not known yet
+vr.video.pick_headset_size = Headset's own: {size}
+vr.video.pick_headset = Headset's own size
+vr.video.pick_window = Window's own size
+vr.video.cost_headset_unknown = Its size is read when the game first starts a headset session.
+vr.video.cost_window = Nothing changes: the picture is the game window's.
+vr.video.cost = Draws {times} x the pixels of 2048 x 2048.
+vr.video.limit = Your headset takes {most} at most: shrunk to that.
+vr.video.now = The game draws {size} now.
+vr.video.now_unknown = The game's picture size is not known yet.
+vr.video.recommended = Your headset recommends {size}.
+vr.video.recommended_unknown = Your headset's size is read when the game first starts a session.
+vr.tiles.edit = Edit skills
+vr.tiles.close = Close
+vr.tiles.back = Back
+vr.tiles.previous = Previous
+vr.tiles.next = Next
+vr.tiles.clear_slot = Clear slot
+vr.tiles.tab_skills = Skills
+vr.tiles.tab_settings = Settings
+vr.tiles.choose_skill_for = Choose a skill for
+vr.tiles.now = now: {skill}
+vr.skills.nothing = nothing
+vr.skills.choose_slot = Choose the slot to change
+vr.skills.unavailable = Skills unavailable
+vr.skills.trigger_casts = Trigger casts: {skill}  ({slot})
+vr.tiles.trigger_basic = Trigger: the basic attack  (A)
+vr.tiles.page = Page {page} of {pages}
+vr.tiles.hint_first = Tap a slot to change its skill - hold the trigger on it and the trigger casts it
+vr.tiles.hint_wheel = Point at a slot and pull the trigger
+vr.tiles.hint_pick_slot = Point at the slot to change and pull the trigger
+vr.tiles.hint_pick_skill = Point at a skill and pull the trigger to put it on the slot
+vr.tiles.run = RUN
+vr.tiles.walk = WALK
+vr.tiles.run_walk_unknown = RUN /\nWALK
+vr.wheel.run_walk = RUN / WALK
+vr.tiles.empty = Empty
+vr.tiles.not_found = Not found
+vr.tiles.lt_row_off = LT row off
+vr.skills.all = All
+vr.skills.general = General / Items
+vr.tiles.no_trees = Skill categories need the icon cache's skill trees - run tools/skill_icons/prepare_skill_icons.py again
+vr.skills.none = No skills to choose from
+vr.skills.skill_n = Skill {id}
+vr.skills.unassigned = Unassigned
+vr.skills.tree_n = Tree {n}
+vr.skills.cleared = Slot cleared
+vr.skills.assigned = Assigned
+vr.skills.not_taken = The game did not take it - choose the slot again
+vr.skills.no_answer = No answer from the game
+vr.skills.cannot_cast = That slot cannot be cast from here
+vr.skills.hold_left_trigger = Hold the left trigger and pull the right one
+vr.skills.pull_right_trigger = Pull the right trigger
+vr.skills.layout = Skills cannot be changed in this layout
+vr.wheel.edit = EDIT SKILLS
+vr.wheel.close = CLOSE
+vr.wheel.back = BACK
+vr.wheel.previous = PREVIOUS
+vr.wheel.next = NEXT
+vr.wheel.now_run = now: RUN
+vr.wheel.now_walk = now: WALK
+vr.wheel.empty = Empty
+vr.wheel.basic_attack = BASIC\nATTACK
+vr.wheel.active = ACTIVE
+vr.wheel.choose_slot = CHOOSE\nA SLOT
+vr.wheel.choose_skill = CHOOSE SKILL  -  {slot}
+vr.wheel.now = Now: {skill}
+vr.wheel.clear_slot = CLEAR SLOT
+vr.skills.command = Command
+vr.skills.item_skill = Item skill
+vr.skills.level = Level {level}
+vr.wheel.trigger_basic = Trigger: basic attack
+vr.wheel.page = Page {page} / {pages}
+vr.compass.n = N
+vr.compass.ne = NE
+vr.compass.e = E
+vr.compass.se = SE
+vr.compass.s = S
+vr.compass.sw = SW
+vr.compass.w = W
+vr.compass.nw = NW
+vr.map.rotate = ROTATE MAP
+vr.map.on = On
+vr.map.off = Off

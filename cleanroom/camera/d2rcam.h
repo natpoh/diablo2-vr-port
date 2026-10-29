@@ -102,6 +102,13 @@ int  GetRenderRadius();
 bool  SetModelRadius(float units);
 float GetModelRadius();   // -1 when unknown
 
+// Big models (trees, houses, walls) kept drawn past the model radius by their size, out to this many
+// world units ([render] big_radius; 0 = off). drawdist's unleashed_big_objects.cpp (MPL 2.0, from D2R VR
+// Unleashed). False until the game's test is hooked.
+bool     SetBigModelRadius(float units);
+float    GetBigModelRadius();
+uint32_t TakeBigModelsKept();   // models kept past the model radius by their size since the last call
+
 // Called on the game's thread right after each LevelTranslationLayer::SimulationTick
 // (the rooms of this tick are activated and drawn by then), with the layer. Needs the
 // render-distance hooks (Status::roomHooks).

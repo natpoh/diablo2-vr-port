@@ -62,6 +62,7 @@
 #include "doll_view.h"
 #include "grab_bodies.h"   // [weight] grab_bodies: the held limbs put into the bodies (PutLinks)
 #include "item_grab.h"     // [weight] grab_items: the items on the ground near the hero (GroundItems)
+#include "barrel_touch.h"  // [gameplay] melee_touch_barrels: a swing through a barrel / pot presses the game's own interact on it
 #include "blade_push.h"   // [weight] monster_ragdoll: a blade the weight model does not hold (a weapon in each hand) pushes the doll itself
 #include "room_pose.h"
 #include "melee_touch.h"
@@ -286,6 +287,74 @@ uintptr_t ClientUnit(uint32_t id, int type) {
     uint32_t head[3];
     if (!Read(head, u, sizeof head) || head[0] != static_cast<uint32_t>(type) || head[2] != id) return 0;
     return u;
+}
+
+// ---- [gameplay] melee_touch_barrels (vr/barrel_touch.h) --------------------------------------------------------------------------
+// The barrels, pots, urns and baskets near the hero: the client's hash, type 2, whole (mode 0), their Objects row (unit +0x10 -> its first
+// pointer, as the game's own read at 0x34ADB1) of the three kinds, each at its static path's cell (+0x38 -> +0x10 / +0x14, the items'
+// way). Read only, vrcam's timer (Tick, every 50 ms at most). A counting stroke's sweep through one asks the press (BarrelTouch);
+// BarrelsStep holds it until the object breaks; vrcam presses the game's interact with its target answered with the object.
+std::atomic<bool> g_barrelsWanted{false};
+barreltouch::Barrel g_barrels[barreltouch::kMax];
+int g_barrelsN = 0;
+ULONGLONG g_barrelsAt = 0;
+barreltouch::Presser g_barrelPress;           // vrcam's timer thread (Tick, BarrelsStep)
+std::atomic<uintptr_t> g_barrelTarget{0};     // the press in flight, for vrcam's pad and target hooks
+std::atomic<ULONGLONG> g_barrelTargetAt{0};
+
+bool ObjectRow(const UnitBytes& u, barreltouch::Row* r) {
+    const uintptr_t data = U64(u, 0x10);
+    uintptr_t row = 0;
+    if (data < 0x10000 || !Read(&row, data, sizeof row) || row < 0x10000) return false;
+    uint8_t bytes[barreltouch::kRowBytes];
+    if (!Read(bytes, row, sizeof bytes)) return false;
+    *r = barreltouch::RowOf(bytes);
+    return true;
+}
+
+void ScanBarrels(const stroke::Vec& grid, float upm, ULONGLONG now) {
+    if (now - g_barrelsAt < 50 && now >= g_barrelsAt) return;
+    g_barrelsAt = now;
+    const float reach = barreltouch::kScanM * upm;
+    int n = 0;
+    EachUnit(2, [&](uintptr_t at, const UnitBytes& u) {
+        if (n >= barreltouch::kMax) return false;
+        barreltouch::Row row;
+        if (!ObjectRow(u, &row) || !barreltouch::Breakable(row, U32(u, 0xC))) return true;
+        const uintptr_t path = U64(u, 0x38);
+        uint32_t cell[2] = {};
+        if (path < 0x10000 || !Read(cell, path + 0x10, sizeof cell)) return true;
+        const float x = 2.0f * (float)cell[0] + 1.0f, z = 2.0f * (float)cell[1] + 1.0f;
+        if ((x - grid.x) * (x - grid.x) + (z - grid.z) * (z - grid.z) > reach * reach) return true;
+        barreltouch::Barrel& b = g_barrels[n++];
+        b.id = U32(u, 8);
+        b.cls = U32(u, 4);
+        b.unit = at;
+        b.op = row.operateFn;
+        b.sizeX = row.sizeX;
+        b.sizeY = row.sizeY;
+        b.gridX = x;
+        b.gridZ = z;
+        return true;
+    });
+    g_barrelsN = n;
+}
+
+void PublishBarrelPress() {
+    g_barrelTarget.store(g_barrelPress.Target());
+    g_barrelTargetAt.store(GetTickCount64());
+}
+
+// A sweep of hand `side` (a counting stroke's) against the barrels near: the first it goes through is asked - one press at a time, none
+// while the touch's own attack press is down (a monster in the same swing has it).
+void BarrelTouch(int side, const stroke::Sweep& sw, const stroke::Vec& grid, float upm, float floorM, ULONGLONG now) {
+    ScanBarrels(grid, upm, now);
+    if (g_barrelPress.Pressing() || PressDown() || !sw.stroke) return;
+    for (int i = 0; i < g_barrelsN; ++i) {
+        stroke::Body body;
+        if (!barreltouch::Volume(g_barrels[i], floorM, upm, body) || !stroke::Touches(sw.before, sw.after, body)) continue;
+        if (g_barrelPress.Ask(side, sw.stroke, g_barrels[i], (double)now / 1000.0)) { PublishBarrelPress(); return; }
+    }
 }
 
 // ---- the server's verdicts: hostile? is a wall between? ----------------------------------------------------------------------
@@ -2485,6 +2554,7 @@ void Tick(const Frame& f) {
             g_sweepAt[side] = now;
         }
         if (tswept) ++g_n.thrustSweeps;
+        if (g_barrelsWanted.load() && viewgate::F4()) BarrelTouch(side, swept ? sweep : tsweep, grid, upm, heroY, now);   // [gameplay] melee_touch_barrels
         if (!haveFresh) {
             haveFresh = true;
             freshOk = ScanUnits(grid.x, grid.z, upm, heroY, &fresh);
@@ -3071,6 +3141,53 @@ void ItemsTick(bool ok, const float heroRender[3], float upm) {
     g_itemsN = n;
     g_itemsAt = now;
 }
+// [gameplay] melee_touch_barrels
+void SetBarrelsWanted(bool on) {
+    if (g_barrelsWanted.exchange(on) != on)
+        Log(on ? "melee touch: barrels on ([gameplay] melee_touch_barrels: a swing of the held weapon through a barrel, pot, urn or basket presses the game's own "
+                 "interact on it - the hero breaks it his own way, as with A; F4, with hit by touch)"
+               : "melee touch: barrels off");
+}
+void BarrelsStep() {
+    const bool on = g_barrelsWanted.load() && viewgate::F4();
+    if (!g_barrelPress.Pressing()) {
+        const unsigned ev = g_barrelPress.Step((double)GetTickCount64() / 1000.0, 0);   // (a press asked and ended in the same step is not left untold)
+        (void)ev;
+        if (g_barrelTarget.load()) PublishBarrelPress();
+        return;
+    }
+    const barreltouch::Barrel b = g_barrelPress.Object();
+    const int side = g_barrelPress.Side();
+    if (!on) {
+        g_barrelPress.Reset();
+        PublishBarrelPress();
+        LogF("melee touch: barrels - the press on object %u ends (the option off or not F4)", b.id);
+        return;
+    }
+    int mode = -1;   // gone from the client's list: broken (an exploding barrel), or out of reach
+    if (const uintptr_t u = ClientUnit(b.id, 2)) {
+        UnitBytes ub;
+        if (Read(ub.b, u, sizeof ub.b)) mode = (int)U32(ub, 0xC);
+    }
+    const double now = (double)GetTickCount64() / 1000.0;
+    const unsigned ev = g_barrelPress.Step(now, mode);
+    static unsigned told = 0;
+    const bool tell = ++told <= 60 || told % 50 == 0;   // (the first 60 presses' lines, then every 50th)
+    if ((ev & barreltouch::kAsked) && tell)
+        LogF("melee touch: barrels - the %s hand's swing went through a %s (object %u, class %u, its footprint %dx%d): the game's interact pressed on it",
+             side ? "left" : "right", barreltouch::KindName(b.op), b.id, b.cls, b.sizeX, b.sizeY);
+    if ((ev & barreltouch::kBroken) && tell)
+        LogF("melee touch: barrels - object %u %s after %.2f s: the press let go", b.id, mode < 0 ? "gone from the list" : "broken (its mode left 0)", now - g_barrelPress.Since());
+    if ((ev & barreltouch::kNotBroken) && tell)
+        LogF("melee touch: barrels - the game did not break object %u in %.1f s (out of the hero's reach? another action in the way?): the press let go", b.id, barreltouch::kHoldS);
+    PublishBarrelPress();
+}
+uintptr_t BarrelPressTarget() {
+    const ULONGLONG now = GetTickCount64(), at = g_barrelTargetAt.load();
+    if (!g_barrelsWanted.load() || now < at || now - at > 300) return 0;   // (the timer stopped: no press held for ever)
+    return g_barrelTarget.load();
+}
+
 int GroundItems(itemgrab::Item* out, int max, bool* fresh) {
     std::lock_guard<std::mutex> lock(g_itemsMutex);
     const ULONGLONG now = GetTickCount64();

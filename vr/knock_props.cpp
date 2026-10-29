@@ -1261,4 +1261,29 @@ void Tick(const Frame& fr) {
     }
 }
 
+bool PresetPieces(const float (*places)[3], int n, std::vector<PresetPiece>* out) {
+    out->clear();
+    const std::vector<uintptr_t> pools = Pools();
+    Storage transforms;
+    if (pools.empty() || !Transforms(pools, transforms)) return false;
+    std::vector<float> block(kChunk * kTransformSize / 4);
+    for (size_t at = 0; at < transforms.count; at += kChunk) {
+        const size_t count = std::min(kChunk, transforms.count - at);
+        if (!ReadBytes(transforms.payload + at * kTransformSize, block.data(), count * kTransformSize)) continue;
+        for (size_t i = 0; i < count; ++i) {
+            const float* m = block.data() + i * (kTransformSize / 4);
+            uint32_t parent = 0;
+            std::memcpy(&parent, m + 48, 4);
+            if ((parent & kNoParent) == kNoParent || !FiniteN(m + 12, 3) || !FiniteN(m + 28, 3)) continue;   // (not part of a level preset)
+            for (int k = 0; k < n; ++k) {
+                if (std::fabs(m[12] - places[k][0]) > 1e-3f || std::fabs(m[13] - places[k][1]) > 1e-3f || std::fabs(m[14] - places[k][2]) > 1e-3f) continue;
+                PresetPiece p{parent, {m[12], m[13], m[14]}, {m[28], m[29], m[30]}};
+                out->push_back(p);
+                break;
+            }
+        }
+    }
+    return true;
+}
+
 }  // namespace knockprops

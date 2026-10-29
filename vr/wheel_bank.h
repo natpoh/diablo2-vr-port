@@ -16,8 +16,10 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <string>
 #include <vector>
 
+#include "ui_text.h"   // the stand-in names in the player's language ([hud] headset_language)
 #include "wheel_types.h"
 
 namespace wheel {
@@ -103,7 +105,7 @@ inline bool SlotIndices(Game& g, int out[kSlotCount]) {
 }
 
 inline void SetName(Game& g, Skill* s) {
-    if (!g.Name(s->id, s->name, kNameLen) || !s->name[0]) std::snprintf(s->name, kNameLen, "Skill %d", (int)s->id);
+    if (!g.Name(s->id, s->name, kNameLen) || !s->name[0]) std::snprintf(s->name, kNameLen, "%s", uitext::TrF("vr.skills.skill_n", "Skill {id}", {{"id", std::to_string((int)s->id)}}).c_str());
 }
 
 // Fills `s` (everything but session and at: the caller stamps those). s->ready stays false when the slots cannot be read.
@@ -130,7 +132,7 @@ inline bool Capture(Game& g, Snapshot* s) {
         k.id = b.skill;
         k.owner = b.owner;
         if (k.id < 0) {
-            std::snprintf(k.name, kNameLen, "Unassigned");
+            std::snprintf(k.name, kNameLen, "%s", uitext::Tr("vr.skills.unassigned", "Unassigned"));
             continue;
         }
         int32_t level = 0;
@@ -188,7 +190,7 @@ inline bool Capture(Game& g, Snapshot* s) {
     s->treesKnown = haveList && s->playerClass >= 0 && g.TreesKnown();
     for (int t = 0; t < 3; ++t) {
         s->treeName[t][0] = 0;
-        if (s->treesKnown && (!g.TreeName(t + 1, s->treeName[t], kNameLen) || !s->treeName[t][0])) std::snprintf(s->treeName[t], kNameLen, "Tree %d", t + 1);
+        if (s->treesKnown && (!g.TreeName(t + 1, s->treeName[t], kNameLen) || !s->treeName[t][0])) std::snprintf(s->treeName[t], kNameLen, "%s", uitext::TrF("vr.skills.tree_n", "Tree {n}", {{"n", std::to_string(t + 1)}}).c_str());
     }
     s->run = (uint8_t)g.RunState();
     s->count = (uint32_t)catalog.size();

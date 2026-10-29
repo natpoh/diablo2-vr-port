@@ -24,6 +24,23 @@
 //
 // [openxr] hand_space: 2 (Auto, the default) = on Meta's runtime only; every other runtime as before (SteamVR / PS VR2 / Virtual
 // Desktop give whole grips - they never get here). 1 = on any runtime; 0 = never (0.183).
+//
+// Where LOCAL is in the room (the Local source needs it). The same player, 0.186 (2026-10-28 13:38 and 13:40; 0.184 at 13:45 had whole
+// grips at once): every locate against STAGE came back XR_SUCCESS with no flag at all for the whole run - both grips, both aims, LOCAL
+// in STAGE and STAGE in LOCAL - while the aim located in LOCAL was whole (the laser clicked the menus). With LOCAL not placed in the
+// room no fallback could run: "the hand from nothing whole", the arms at the belt. The calls that locate the controllers are the same
+// in 0.184 and 0.186; what the runtime answers is not. So, after the two direct locates:
+//   Direct      LOCAL located in STAGE, whole
+//   Reverse     STAGE located in LOCAL, whole, turned about
+//   Head        the head (VIEW) located in STAGE and in LOCAL in the same frame: LOCAL in the room = the head in the room after the
+//               head in LOCAL undone - the runtime's own two poses, no number of ours ([openxr] room_by_head)
+//   Kept        none of those this frame: the last one found this session
+//   LocalIsRoom nothing ever found and STAGE has given the head nothing whole for kStageDeadS of focused frames while LOCAL has it:
+//               LOCAL is taken as the room itself (as a runtime with no STAGE gives), head and hands located there together - no floor
+//               then ([openxr] room_by_head); kept from then on, until STAGE gives one of the above
+//   None        not known: the Local source cannot run
+// [openxr] room_by_head: 2 (the default) = Head and LocalIsRoom on Meta's runtime only, 1 = on any runtime, 0 = never (0.186: Direct,
+// Reverse, Kept only).
 
 #include <cmath>
 #include <cstdint>
@@ -127,5 +144,43 @@ inline float Distance(const float* a, const float* b) {
     const float d[3] = {a[0] - b[0], a[1] - b[1], a[2] - b[2]};
     return std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
 }
+
+// -- where LOCAL is in the room ----------------------------------------------
+enum class RoomFrom { Direct, Reverse, Head, Kept, LocalIsRoom, None };
+
+struct RoomFacts {
+    bool direct = false;       // LOCAL located in STAGE: whole, numbers to use
+    bool reverse = false;      // STAGE located in LOCAL: whole, numbers to use
+    bool byHead = false;       // [openxr] room_by_head is on for this runtime
+    bool headRoom = false;     // the head located in STAGE this frame: whole
+    bool headLocal = false;    // the head located in LOCAL this frame: whole
+    bool known = false;        // found earlier this session (Kept)
+    double stageDeadS = 0.0;   // focused, STAGE has given the head nothing whole and LOCAL has, this long (seconds; 0 = not so now)
+};
+
+constexpr double kStageDeadS = 1.0;   // a STAGE that gives nothing this long while focused is no room (a frame's gap at the start is not)
+
+inline RoomFrom PickRoom(const RoomFacts& f) {
+    if (f.direct) return RoomFrom::Direct;
+    if (f.reverse) return RoomFrom::Reverse;
+    if (f.byHead && f.headRoom && f.headLocal) return RoomFrom::Head;
+    if (f.known) return RoomFrom::Kept;
+    if (f.byHead && f.headLocal && !f.headRoom && f.stageDeadS >= kStageDeadS) return RoomFrom::LocalIsRoom;
+    return RoomFrom::None;
+}
+
+inline const char* Name(RoomFrom s) {
+    switch (s) {
+        case RoomFrom::Direct: return "known (LOCAL located in STAGE)";
+        case RoomFrom::Reverse: return "known (STAGE located in LOCAL, turned about)";
+        case RoomFrom::Head: return "known by the head (located in STAGE and in LOCAL, [openxr] room_by_head)";
+        case RoomFrom::Kept: return "known (the last found this session)";
+        case RoomFrom::LocalIsRoom: return "STAGE gives nothing: LOCAL taken as the room, head and hands located there ([openxr] room_by_head)";
+        default: return "not known";
+    }
+}
+
+// LOCAL in the room from one head pose located in both: the head in the room after the head in LOCAL undone
+inline Pose LocalInRoomByHead(const Pose& headInRoom, const Pose& headInLocal) { return Then(headInRoom, Inverse(headInLocal)); }
 
 }  // namespace handspace

@@ -76,7 +76,7 @@ target_compile_options(reshadefx PRIVATE /utf-8 /Zc:char8_t- /EHsc /W0)
 # (D3DCompile is its user's: vr/fx_native.cpp finds it at run time, the plugin imports no d3dcompiler_47.dll)
 
 # Our camera, render distance and memory pools, written clean-room from the game (cleanroom/).
-add_library(d2rcam STATIC cleanroom/camera/d2rcam.cpp cleanroom/drawdist/drawdist.cpp cleanroom/pools/pools.cpp cleanroom/sigscan/sigscan.cpp)
+add_library(d2rcam STATIC cleanroom/camera/d2rcam.cpp cleanroom/drawdist/drawdist.cpp cleanroom/drawdist/unleashed_big_objects.cpp cleanroom/pools/pools.cpp cleanroom/sigscan/sigscan.cpp)
 target_include_directories(d2rcam PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/camera ${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/sigscan)
 target_link_libraries(d2rcam PUBLIC D2RLPlugin::D2RLPlugin)
 target_compile_definitions(d2rcam PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
@@ -474,7 +474,7 @@ target_include_directories(world_anchor_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
 target_compile_options(world_anchor_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 
 
-add_library(d2rl-vrcam SHARED vr/vrcam.cpp vr/xr.cpp vr/link.cpp vr/reshade_shield.cpp vr/dlss_mv.cpp vr/skeletons.cpp vr/weight.cpp vr/gamestate.cpp vr/gamecmd.cpp vr/direct_input.cpp vr/panel_input.cpp vr/throw_gesture_wire.cpp vr/throw_born.cpp vr/potion_hide.cpp vr/probe.cpp vr/uitrace.cpp vr/light_bounds.cpp vr/fog_spare.cpp vr/fog_in_frame.cpp vr/hud.cpp vr/memdiff.cpp vr/writewatch.cpp vr/hset_paint.cpp vr/hset_store.cpp shared/ini_txn.cpp vr/render_resolution.cpp vr/melee_touch.cpp vr/melee_direct.cpp vr/melee_direct_client.cpp vr/skill_wheel.cpp vr/wheel_game.cpp vr/wheel_paint.cpp vr/tiles_paint.cpp vr/wheel_icons.cpp vr/stand_still_wire.cpp vr/move_attack_wire.cpp vr/room_walk_wire.cpp vr/stray_walk_wire.cpp vr/shot_trace_wire.cpp vr/hset_view.cpp vr/gpu_fault.cpp vr/ecl_hook.cpp vr/native_d3d12.cpp vr/native_rsapi.cpp vr/fx_native.cpp vr/vrcam.rc vr/quiver_wire.cpp vr/vcache.cpp vr/fog_height.cpp vr/fog_before_fx.cpp)
+add_library(d2rl-vrcam SHARED vr/vrcam.cpp vr/ui_lang.cpp vr/xr.cpp vr/link.cpp vr/reshade_shield.cpp vr/dlss_mv.cpp vr/skeletons.cpp vr/weight.cpp vr/gamestate.cpp vr/gamecmd.cpp vr/direct_input.cpp vr/panel_input.cpp vr/throw_gesture_wire.cpp vr/throw_born.cpp vr/potion_hide.cpp vr/probe.cpp vr/uitrace.cpp vr/light_bounds.cpp vr/fog_spare.cpp vr/fog_in_frame.cpp vr/hud.cpp vr/memdiff.cpp vr/writewatch.cpp vr/hset_paint.cpp vr/hset_store.cpp shared/ini_txn.cpp vr/render_resolution.cpp vr/melee_touch.cpp vr/melee_direct.cpp vr/melee_direct_client.cpp vr/skill_wheel.cpp vr/wheel_game.cpp vr/wheel_paint.cpp vr/tiles_paint.cpp vr/wheel_icons.cpp vr/stand_still_wire.cpp vr/move_attack_wire.cpp vr/room_walk_wire.cpp vr/stray_walk_wire.cpp vr/shot_trace_wire.cpp vr/hset_view.cpp vr/gpu_fault.cpp vr/ecl_hook.cpp vr/native_d3d12.cpp vr/native_rsapi.cpp vr/fx_native.cpp vr/vrcam.rc vr/quiver_wire.cpp vr/vcache.cpp vr/fog_height.cpp vr/fog_before_fx.cpp)
 target_include_directories(d2rl-vrcam PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared ${FLATVR_SHARED_DIR} ${RESHADE_SDK_INCLUDE} ${BODYWALK_SRC} ${BODYWALK_SDK_INCLUDE})
 target_sources(d2rl-vrcam PRIVATE vr/shoulder_swap_wire.cpp vr/shield_arm_wire.cpp vr/ranged_hand_wire.cpp)   # [hands] shoulder_swap (wired to vr/direct_input.h)
 target_sources(d2rl-vrcam PRIVATE vr/turn_warp.cpp vr/effects_layer.cpp)   # [stereo] turn_warp: eyes by turns, the eye not drawn made on the GPU from pictures already drawn (bearstonem/d2r-pcvr's, MIT)
@@ -916,6 +916,13 @@ target_include_directories(stick_pitch_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/
 target_compile_options(stick_pitch_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # The settings panel in the headset ([openxr] headset_settings, vr/hset_*.h, vr/xr_headset_settings.h): its model,
 # the chord and the lasers, the ini transaction (backup, conflict) and the picture, tested without a headset.
+# [hud] headset_language: the headset's words in the player's language (vr/ui_text.h, vr/ui_text_tables.h, vr/ui_lang.cpp): English without a table, the
+# translation with one, every table text in lang/en.txt, the pages composed both ways, a scratch mod folder read. Run: ui_text_test.exe
+add_executable(ui_text_test cleanroom/tests/ui_text_test.cpp vr/ui_lang.cpp)
+target_include_directories(ui_text_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr ${CMAKE_CURRENT_SOURCE_DIR}/shared ${BODYWALK_SDK_INCLUDE})
+target_compile_definitions(ui_text_test PRIVATE D2RVR_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(ui_text_test PRIVATE user32 gdi32)
+target_compile_options(ui_text_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 add_executable(hset_test tools/hset_test.cpp vr/hset_paint.cpp vr/hset_store.cpp shared/ini_txn.cpp)
 target_include_directories(hset_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr ${CMAKE_CURRENT_SOURCE_DIR}/shared ${BODYWALK_SDK_INCLUDE})
 target_link_libraries(hset_test PRIVATE user32 gdi32)
@@ -953,6 +960,21 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/view_gate_test.cpp")
     target_include_directories(view_gate_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
     target_compile_options(view_gate_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/fx_build_order_test.cpp")
+    add_executable(fx_build_order_test cleanroom/tests/fx_build_order_test.cpp)
+    target_include_directories(fx_build_order_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+    target_compile_options(fx_build_order_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/sky_paths_test.cpp")
+    add_executable(sky_paths_test cleanroom/tests/sky_paths_test.cpp)
+    target_include_directories(sky_paths_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+    target_compile_options(sky_paths_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/native_fx_depth_test.cpp")
+    add_executable(native_fx_depth_test cleanroom/tests/native_fx_depth_test.cpp)
+    target_include_directories(native_fx_depth_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+    target_compile_options(native_fx_depth_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/depth_pick_test.cpp")
     add_executable(depth_pick_test cleanroom/tests/depth_pick_test.cpp)
     target_include_directories(depth_pick_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
@@ -969,6 +991,15 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/vcache_test.cpp")
     target_compile_options(vcache_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 endif()
 # [fog] game_fog (vr/game_fog_vr.h): our fog's numbers as the game's own distance fog, and the layout check before a write
+# What is taken from D2R VR Unleashed (bearstonem; MPL 2.0 files of their own, shared/unleashed_*.h, cleanroom/drawdist/unleashed_big_objects.cpp,
+# reshade/D2R_FogEase_Unleashed.fxh): Big objects' reach and the game's test's site (unleashed_far_objects_test, itself MPL, from Unleashed's
+# far_objects_test), the fog's ease and no fog in the River of Flame (unleashed_fog_test). Run: unleashed_far_objects_test.exe, unleashed_fog_test.exe
+add_executable(unleashed_far_objects_test cleanroom/tests/unleashed_far_objects_test.cpp)
+target_compile_options(unleashed_far_objects_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+add_executable(unleashed_fog_test cleanroom/tests/unleashed_fog_test.cpp)
+target_compile_definitions(unleashed_fog_test PRIVATE UNLEASHED_FXH_PATH="${CMAKE_CURRENT_SOURCE_DIR}/reshade/D2R_FogEase_Unleashed.fxh"
+                           DEPTHFOG_FX_PATH="${CMAKE_CURRENT_SOURCE_DIR}/reshade/D2R_DepthFog.fx" _CRT_SECURE_NO_WARNINGS)
+target_compile_options(unleashed_fog_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/game_fog_vr_test.cpp")
     add_executable(game_fog_vr_test cleanroom/tests/game_fog_vr_test.cpp)
     target_include_directories(game_fog_vr_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
@@ -1028,6 +1059,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/hand_space_test.cpp")
     target_include_directories(hand_space_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
     target_compile_options(hand_space_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 endif()
+# [gameplay] melee_touch_barrels (vr/barrel_touch.h): a swing through a barrel / pot presses the game's own interact on it (after d2r-pcvr 9b75aa2, without its server call).
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/barrel_touch_test.cpp")
+    add_executable(barrel_touch_test cleanroom/tests/barrel_touch_test.cpp)
+    target_include_directories(barrel_touch_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+    target_compile_options(barrel_touch_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
 # [debug] flat_pick (vr/flat_pick.h): the game's pixel against the middle, where the crosshair's ray meets the ground, the slip per unit of height.
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/flat_pick_test.cpp")
     add_executable(flat_pick_test cleanroom/tests/flat_pick_test.cpp)
@@ -1059,6 +1096,9 @@ add_executable(portal_auto_test cleanroom/tests/portal_auto_test.cpp)
 target_include_directories(portal_auto_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
 target_compile_options(portal_auto_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # [render] keep_room_heights (vr/room_heights.h): a room keeps the height the game first drew it at - the game's own stitching modelled.
+# [sky] weather_first_person (vr/weather_place.h): where the game's rain and snow go in first person, the pure part
+add_executable(weather_place_test cleanroom/tests/weather_place_test.cpp)
+target_compile_options(weather_place_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 add_executable(room_heights_test cleanroom/tests/room_heights_test.cpp)
 target_include_directories(room_heights_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
 target_compile_options(room_heights_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
@@ -1571,7 +1611,8 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/fog_height_test.cpp")
 endif()
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/game_ceiling_test.cpp")
     # [ceiling] game_ceiling (shared/game_ceiling.h, granny_remesh.h CeilingMesh): when the game's rock slab shows, where it is laid, the slab
-    # the same in every tile, its unit. Run: game_ceiling_test.exe [<the game's rocks03_lod1.model> [<out .model>]]
+    # the same in every tile, its unit; [ceiling] height_from_walls, game_ceiling_beams and game_ceiling_dome (shared/ceiling_measures.h). Run:
+    # game_ceiling_test.exe [<the game's rocks03_lod1.model> [<out .model> [<the game's wood_ceiling_frame01_lod0.model>]]]
     add_executable(game_ceiling_test cleanroom/tests/game_ceiling_test.cpp)
     target_include_directories(game_ceiling_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared ${CMAKE_CURRENT_SOURCE_DIR}/vr ${CMAKE_CURRENT_SOURCE_DIR}/third_party/pybg3)
     target_compile_options(game_ceiling_test PRIVATE /utf-8 /EHsc)
@@ -1665,6 +1706,13 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/light_bounds_test.cpp")
     add_executable(light_bounds_test cleanroom/tests/light_bounds_test.cpp)
     target_link_libraries(light_bounds_test PRIVATE d3d11 d3dcompiler)
     target_compile_options(light_bounds_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/light_bounds_native_test.cpp")
+    # [render] light_bounds_fix without ReShade: the replacement made and bound without ReShade, on a software D3D12 device (WARP)
+    add_executable(light_bounds_native_test cleanroom/tests/light_bounds_native_test.cpp vr/light_bounds.cpp)
+    target_include_directories(light_bounds_native_test PRIVATE ${RESHADE_SDK_INCLUDE} ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+    target_link_libraries(light_bounds_native_test PRIVATE d3d12 dxgi d3dcompiler)
+    target_compile_options(light_bounds_native_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 endif()
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/light_bounds_reshade_test.cpp")
     # The same through the real ReShade on the GPU, with the game's shader (extracted on your machine) as its pipeline:

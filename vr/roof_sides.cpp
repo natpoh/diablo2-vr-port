@@ -16,6 +16,9 @@
 #include <atomic>
 #include <cstdio>
 #include <cstring>
+#include <mutex>
+#include <string>
+#include <vector>
 
 #include "sigscan.h"
 
@@ -37,6 +40,8 @@ BuildFn g_origBuild = nullptr;
 FindFn g_origFind = nullptr;
 LogFn g_log = nullptr;
 WantFn g_want = nullptr;
+std::atomic<WatchFn> g_watch{nullptr};   // [sky] game_sky: the models whose builds are told
+std::atomic<unsigned> g_watchTold{0};
 std::atomic<bool> g_ready{false};
 std::atomic<unsigned> g_told{0};
 thread_local Context* t_current = nullptr;
@@ -91,6 +96,50 @@ void* HookBuild(const char* model, void* file, void* mesh, const Material* mater
     if (chosen) { scope.type = m.type; scope.object = m.object; }
     Scope guard(t_current, chosen ? &scope : nullptr);   // a nested build of another material does not inherit this one
     void* result = g_origBuild(model, file, mesh, material, flags, pass);
+    const WatchFn watch = g_watch.load(std::memory_order_acquire);
+    if (watch && g_log && (p.empty() ? String(model, rawPath) && Canonical(std::string_view(rawPath), path, &p) : true) && watch(path) &&
+        g_watchTold.load() < 96) {
+        // the material, its texture, its maps (Granny: a map is {usage, material}, packed to four bytes) and their materials' textures
+        Material mm{};
+        char mName[128] = "?", mTex[256] = "", usage[4][48] = {}, mapName[4][128] = {}, mapTex[4][256] = {};
+        WatchedMap maps[4] = {};
+        int mapCount = 0;
+        auto textureName = [](const void* texture, char (&out)[256]) {   // granny_texture: its FromFileName first
+            const char* from = nullptr;
+            return texture && Read(&from, texture, sizeof from) && String(from, out);
+        };
+        if (Read(&mm, material, sizeof mm)) {
+            String(mm.name, mName);
+            if (!textureName(mm.texture, mTex)) mTex[0] = 0;
+            for (int i = 0; i < mm.mapCount && i < 4 && mm.maps; ++i) {
+                const void* entry[2] = {};   // (usage, material) at 16 bytes each
+                if (!Read(entry, (const uint8_t*)mm.maps + 16 * i, sizeof entry)) break;
+                Material sub{};
+                String((const char*)entry[0], usage[i]);
+                if (entry[1] && Read(&sub, entry[1], sizeof sub)) {
+                    String(sub.name, mapName[i]);
+                    if (!textureName(sub.texture, mapTex[i])) mapTex[i][0] = 0;
+                }
+                maps[i] = {usage[i], mapName[i], mapTex[i][0] ? mapTex[i] : nullptr};
+                mapCount = i + 1;
+            }
+        }
+        char key[700];
+        snprintf(key, sizeof key, "%s|%s|%p", path, mName, result);
+        static std::mutex toldMutex;
+        static std::vector<std::string> told;
+        bool fresh = false;
+        {
+            std::lock_guard<std::mutex> lock(toldMutex);
+            if (std::find(told.begin(), told.end(), key) == told.end()) { told.push_back(key); fresh = true; }
+        }
+        if (fresh) {
+            g_watchTold.fetch_add(1);
+            char line[1600];
+            WatchLine(line, sizeof line, path, mName, mTex[0] ? mTex : nullptr, maps, mapCount, result);
+            g_log(line);
+        }
+    }
     if (chosen && g_log && g_told.fetch_add(1) < 64) {
         char line[760];
         snprintf(line, sizeof line, "vrcam: roofs two-sided - %s, material %s: %s", path, name,
@@ -101,6 +150,8 @@ void* HookBuild(const char* model, void* file, void* mesh, const Material* mater
 }
 
 }  // namespace
+
+void Watch(WatchFn watched) { g_watch.store(watched, std::memory_order_release); }
 
 void Install(LogFn log, WantFn want) {
     if (g_ready.load()) return;

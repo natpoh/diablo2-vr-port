@@ -9,6 +9,13 @@
 // makes its pipelines at startup: Register has to run as soon as ReShade is there (vrcam does it right
 // after loading ReShade64.dll), not on the update thread's first tick.
 
+#include <cstdint>
+
+struct ID3D12Device;
+struct ID3D12PipelineState;
+struct D3D12_COMPUTE_PIPELINE_STATE_DESC;
+struct D3D12_PIPELINE_STATE_STREAM_DESC;
+
 namespace lightbounds {
 
 // The four ReShade events, for the game's own D3D12 device only. `log` takes one line at a time. Once.
@@ -29,5 +36,20 @@ bool Wanted();
 // The size the game draws at (the swap chain's), every present: a log line when it or the state changes - what
 // the 32 x 20 light grid makes of it (square tiles = the game's own shader is right) and whether ours is bound.
 void NoteScreen(unsigned w, unsigned h);
+
+// Without ReShade ([render] no_reshade): the same replacement under the same key ([render] no_reshade), through the plugin's own D3D12 hooks
+// (vr/native_d3d12.h). With no ReShade in the game nothing above is ever registered, and the game's own light culling ran at the eyes'
+// size (2496 x 2688 on a PS VR2: tiles 78 x 134 px) - the lights vanished in hard black rectangles on the walls' tops (act 2 palace
+// cellar, act 1 monastery, Serg 2026-10-29: "на потолке рисуются какие-то черные квадраты у нас, у медведя их нет" - D2R VR
+// Unleashed always runs through ReShade). [render] light_bounds_fix off: nothing made, the game's own light culling as before.
+// The game's pipeline is kept as it makes it (a description or a stream; one reference of ours, so its address is never another's), a
+// copy with our shader made beside it, bound in its place by SetPipelineState under the same rule as above (`make` when it is made, `bind` when it is
+// bound). The log says so: found, ready, bound "without ReShade".
+void SetLog(void (*log)(const char*));   // (Register sets it with ReShade; without, the plugin's own hooks' Install)
+void OnComputePso(ID3D12Device* dev, const D3D12_COMPUTE_PIPELINE_STATE_DESC* desc, ID3D12PipelineState* pso);
+void OnStreamPso(ID3D12Device* dev, const D3D12_PIPELINE_STATE_STREAM_DESC* desc, ID3D12PipelineState* pso);
+ID3D12PipelineState* Swap(ID3D12PipelineState* pso);   // the pipeline to bind for this one (itself unless it is the game's light bins')
+// For cleanroom/tests/light_bounds_native_test.cpp: a shader of the test's own stands for the game's (its size and FNV-1a 64; 0, 0 = the game's)
+void MatchForTest(uint32_t size, uint64_t hash);
 
 }  // namespace lightbounds

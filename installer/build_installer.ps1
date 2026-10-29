@@ -192,6 +192,7 @@ $manifest = Start-Process -FilePath (Join-Path $build "D2R_VR_Settings.exe") -Wa
     -ArgumentList "--game-link-manifest", "`"$payload\bodywalk\d2r.txt`""
 if ($manifest.ExitCode -ne 0 -or -not (Test-Path "$payload\bodywalk\d2r.txt")) { throw "the Game Link manifest was not written ($($manifest.ExitCode))" }
 Copy-Item (Join-Path $root "reshade\D2R_DepthFog.fx") "$payload\shaders\"
+Copy-Item (Join-Path $root "reshade\D2R_FogEase_Unleashed.fxh") "$payload\shaders\"   # D2R_DepthFog.fx includes it (MPL 2.0, D2R VR Unleashed)
 Get-ChildItem (Join-Path $root "reshade\sky") -Filter "D2R_Sky*.png" | Copy-Item -Destination "$payload\sky\"
 # The cave ceilings' pictures d2r_vr.ini names, beside the skies: our OpenAI drawings
 # (tools/casc_extract/gen_ceiling_from_ref.py), kept in extracted\ - never in the repository -

@@ -17,6 +17,7 @@
 
 #include "hset_model.h"
 #include "tiles_geom.h"
+#include "ui_text.h"   // the panel's lines in the player's language ([hud] headset_language)
 #include "wheel_flip.h"
 #include "wheel_geom.h"
 #include "wheel_types.h"
@@ -42,7 +43,7 @@ struct View {
     bool ready = false, editable = false;
     int bank = -1;
     Result result = Result::None;
-    char status[80] = {};
+    char status[240] = {};   // (a line in the player's language: UTF-8, longer than the English)
     uint32_t revision = 0;
     // The tab strip (tiles, [openxr] headset_settings): `tabs` the strip is there, `tab` the one shown. The Settings tab's pages are the
     // settings model (vr/hset_model.h) as the controller last handed it over, with the button under the beam on them.
@@ -266,8 +267,8 @@ public:
                 v_.result = in.reply.result;
                 const bool applied = in.reply.result == Result::Applied;
                 out.feedback = applied ? Feedback::Applied : Feedback::Refused;
-                Status(in.time, applied ? (pending_.op == Op::Clear ? "Slot cleared" : "Assigned")
-                                        : "The game did not take it - choose the slot again", 3.0);
+                Status(in.time, applied ? (pending_.op == Op::Clear ? uitext::Tr("vr.skills.cleared", "Slot cleared") : uitext::Tr("vr.skills.assigned", "Assigned"))
+                                        : uitext::Tr("vr.skills.not_taken", "The game did not take it - choose the slot again"), 3.0);
                 if (applied && pending_.slot == v_.selected && pending_.op == Op::Clear) v_.selected = -1;
                 pending_ = Request{};
                 if (v_.open) {
@@ -277,7 +278,7 @@ public:
             } else if (in.time - pendingAt_ > 1.5) {
                 v_.result = Result::Refused;
                 out.feedback = Feedback::Refused;
-                Status(in.time, "No answer from the game", 3.0);
+                Status(in.time, uitext::Tr("vr.skills.no_answer", "No answer from the game"), 3.0);
                 pending_ = Request{};
                 if (v_.open) {
                     v_.page = editFrom_;
@@ -402,8 +403,9 @@ private:
             CloseNow();
             out->feedback = Feedback::Selected;
         } else if (how == Cast::None) {   // RT: nothing the trigger can pick - with the slot controls it is the right trigger itself
-            Status(in.time, !in.slotControls ? "That slot cannot be cast from here"
-                            : kSlotDefs[h].alt ? "Hold the left trigger and pull the right one" : "Pull the right trigger", 3.0);
+            Status(in.time, !in.slotControls ? uitext::Tr("vr.skills.cannot_cast", "That slot cannot be cast from here")
+                            : kSlotDefs[h].alt ? uitext::Tr("vr.skills.hold_left_trigger", "Hold the left trigger and pull the right one")
+                                               : uitext::Tr("vr.skills.pull_right_trigger", "Pull the right trigger"), 3.0);
             out->feedback = Feedback::Refused;
         } else if (fresh && s.known && s.id >= 0 && s.available) {
             v_.selected = h;
@@ -416,7 +418,8 @@ private:
     // The skill list for slot h (the slot choice's click; with editFirst the first page's tap): `from` is where Back and the game's answer return to.
     void EditSlot(int h, const In& in, const Snapshot& snap, bool fresh, Page from, Out* out) {
         if (!(fresh && snap.editable && snap.slot[h].known)) {
-            if (from == Page::Wheel) Status(in.time, fresh && !snap.editable ? "Skills cannot be changed in this layout" : "Skills unavailable", 3.0);
+            if (from == Page::Wheel)
+                Status(in.time, fresh && !snap.editable ? uitext::Tr("vr.skills.layout", "Skills cannot be changed in this layout") : uitext::Tr("vr.skills.unavailable", "Skills unavailable"), 3.0);
             out->feedback = Feedback::Refused;
             return;
         }
@@ -450,7 +453,7 @@ private:
                     editFrom_ = Page::PickSlot;
                     out->feedback = Feedback::Hover;
                 } else {
-                    Status(in.time, fresh ? "Skills cannot be changed in this layout" : "Skills unavailable", 3.0);
+                    Status(in.time, fresh ? uitext::Tr("vr.skills.layout", "Skills cannot be changed in this layout") : uitext::Tr("vr.skills.unavailable", "Skills unavailable"), 3.0);
                     out->feedback = Feedback::Refused;
                 }
             } else if (h == kClose) {
@@ -518,7 +521,7 @@ private:
                 pendingAt_ = in.time;
                 out->request = true;
                 out->req = r;
-                Status(in.time, "Saving...", 3.0);
+                Status(in.time, uitext::Tr("vr.hset.status.saving", "Saving..."), 3.0);
             } else {
                 out->feedback = Feedback::Refused;
             }

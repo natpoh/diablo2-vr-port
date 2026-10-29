@@ -259,6 +259,76 @@ int main() {
         CHECK(round);
     }
 
+    // Walking steadily back while the game's mode reads standing (1) in 56 % of the poses (Serg's 2026-10-29 18:13:07 window: 145 of 257, the walk back on
+    // 100 poses and never wholly): dropped at every such pose (0.188.5) the share dithered and the forward walk was blended into the backward one; with
+    // walkback::ModeGate it stays whole. A real stop (mode 1 held) still ends it within kStandS + the 0.2 s fade.
+    {
+        unsigned rnd = 1029u;
+        const float dt = 1.0f / 90.0f;
+        float worst[2] = {1.0f, 1.0f};
+        for (int k = 0; k < 2; ++k) {
+            remotepose::ConeBlend c;
+            walkback::ModeGate gate;
+            for (int f = 0; f < 360; ++f) {
+                rnd = rnd * 1664525u + 1013904223u;
+                const int mode = ((rnd >> 8) % 100) < 56 ? 1 : 2;
+                const bool stands = k ? gate.Stands(mode, dt) : walkback::GameStands(mode);
+                if (stands) c.still = remotepose::ConeBlend::kHoldStandS + 1.0f;
+                const float w = c.Step(178.0f, !stands, 100.0f, dt);
+                if (f >= 45) worst[k] = std::min(worst[k], w);
+            }
+        }
+        std::printf("walking back, the mode reading standing in 56%% of poses: the share at least %.2f as 0.188.5, %.2f with the gate\n", worst[0], worst[1]);
+        CHECK(worst[0] < 0.7f);    // (what the 18:13 test saw)
+        CHECK(worst[1] > 0.999f);
+        remotepose::ConeBlend c;
+        walkback::ModeGate gate;
+        float w = 0.0f;
+        for (int f = 0; f < 45; ++f) w = c.Step(178.0f, !gate.Stands(2, dt), 100.0f, dt);
+        int frames = 0;
+        for (; frames < 120 && w > 0.0f; ++frames) {
+            const bool stands = gate.Stands(1, dt);
+            if (stands) c.still = remotepose::ConeBlend::kHoldStandS + 1.0f;
+            w = c.Step(-1.0f, !stands, 100.0f, dt);
+        }
+        CHECK(w == 0.0f && frames <= 42);   // a held stand: off within 0.2 + 0.2 s (+ a frame)
+    }
+
+    // Walking 2 s, then running back 3 s (Serg's 2026-10-29 "running backwards he began to sway"): with the gait told, the play-back draws the run only
+    // once 0.3 s of it is kept (a change of gait starts another stretch; jumps land on his gait); without (as before) the cursor went back from the run
+    // into the walk kept before it while he ran. A third bone carries the gait (its height) to see which was drawn.
+    for (int told = 0; told < 2; ++told) {
+        walkback::Reverser rev;
+        double t = 0.0;
+        float phase = 0.0f;
+        int walkDrawn = 0, drawn = 0;
+        const double dt = 1.0 / 90.0;
+        while (t < 5.0) {
+            t += dt;
+            const bool run = t > 2.0;
+            const int gait = run ? 3 : 2;
+            phase += 2.0f * kPi * (run ? 1.6f : 1.0f) * (float)dt;
+            M4 game[3];
+            float feet[6];
+            for (int i = 0; i < 2; ++i) {
+                game[i] = FootBone(i ? 1.0f : -1.0f, GameFoot(phase + (i ? kPi : 0.0f)), run ? 4.0f : 3.0f);
+                for (int j = 0; j < 3; ++j) feet[i * 3 + j] = game[i].m[12 + j];
+            }
+            game[2] = M4{};
+            game[2].m[0] = game[2].m[5] = game[2].m[10] = game[2].m[15] = 1.0f;
+            game[2].m[13] = (float)gait;
+            rev.Record(t, true, game, 3, feet, told ? gait : 0);
+            const walkback::Sample* s = rev.Step(dt, run, told ? gait : -1);
+            if (!s || t < 2.3) continue;
+            ++drawn;
+            if (s->pose[2].m[13] < 2.99f) ++walkDrawn;
+        }
+        std::printf("running back after a walk, the gait %s: %d of %d frames drawn from the walk\n", told ? "told" : "not told (as before)", walkDrawn, drawn);
+        CHECK(drawn > 200);
+        if (told) CHECK(walkDrawn == 0);
+        else CHECK(walkDrawn > 0);
+    }
+
     // TurnAbout / YawOf: a bone turned about a point keeps its height and its distance from the point, its yaw goes round by the turn, and the turn back
     // gives it again.
     {

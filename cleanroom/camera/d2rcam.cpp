@@ -555,6 +555,9 @@ void SetRenderRadius(int rooms) { drawdist::SetRadius(rooms); }
 int  GetRenderRadius() { return drawdist::Radius(); }
 bool  SetModelRadius(float units) { return drawdist::SetModelRadius(units); }
 float GetModelRadius() { return drawdist::ModelRadius(); }
+bool     SetBigModelRadius(float units) { return drawdist::SetBigRadius(units); }
+float    GetBigModelRadius() { return drawdist::BigRadius(); }
+uint32_t TakeBigModelsKept() { return drawdist::TakeBigKept(); }
 void SetLevelTickCallback(LevelTickFn fn) { drawdist::SetLevelTickCallback(fn); }
 bool GrowPools(unsigned renderMb, unsigned entityMb, char* line, size_t lineSize) { return pools::Grow(renderMb, entityMb, line, lineSize); }
 

@@ -131,6 +131,8 @@ group.status.help = 已安装和正在运行的内容：BodyWalk、FlatVR、Game
 @update.check_now.label = 检查更新
 @update.check_now.tip = 立即询问 bodywalkvr.com，即使启动时的检查已关闭。不会下载任何内容。
 group.d2r_vr.help = 本程序和模组：本程序的语言、版本、更新检查，以及“收集日志” - 一个压缩包，包含支持人员查找问题所需的内容。
+hud.headset_language.label = 头显中也使用
+hud.headset_language.tip = 模组在头显中绘制的文字 - 技能面板、头显中的设置、首次启动指南、校准提示、地图的按钮 - 使用上方所选的语言。尚未翻译的文字保持英文。关闭：英文，与以前一样。游戏自己的文字使用游戏的语言（在它自己的设置中）。
 @status.update.label = 更新检查已关闭
 @update.download.label = 下载
 @update.download.tip = 在你的浏览器中打开下载页面。本程序自己从不下载或运行任何内容。
@@ -211,7 +213,7 @@ sky.enabled.tip = 室外黑色虚空上方的手绘天空。由谁绘制见上�
 ceiling.enabled.label = 洞穴顶部（通过 ReShade）
 ceiling.enabled.tip = 地牢中黑色虚空上方的石质穹顶，仅限第一人称。
 ceiling.game_ceiling.label = 由谁绘制顶部
-ceiling.game_ceiling.tip = 我们的效果：通过雾着色器绘制的拱顶 - ReShade 的，或无 ReShade 时 D2R VR 自己的。游戏：一块游戏自己的洞穴岩石板，用你的游戏文件制作，由游戏自己绘制和照明 - 它的火把和你的光照在上面，它的雾罩在上面，火焰和法术在它前面 - 每帧铺在你头顶，不占用我们的帧时间（测试：仅限 VR F4）。每个房间使用与为其所选图片相匹配的游戏自有石材：洞穴里是岩石，地穴里是高大的石板，兵营、地下墓穴和大教堂里是平滑的石头，宫殿里是带纹饰的大理石。还没有石材的房间（第二幕的下水道）保留我们效果的拱顶及其自身设置，和平面 F3 一样。下方其他顶部设置属于我们的效果；瓷砖尺寸也决定岩石的尺寸。实时。
+ceiling.game_ceiling.tip = 我们的效果：通过雾着色器绘制的拱顶 - ReShade 的，或无 ReShade 时 D2R VR 自己的。游戏：一块游戏自己的洞穴岩石板，用你的游戏文件制作，由游戏自己绘制和照明 - 它的火把和你的光照在上面，它的雾罩在上面，火焰和法术在它前面 - 每帧铺在你头顶，不占用我们的帧时间（测试：仅限 VR F4）。每个房间使用与为其所选图片相匹配的游戏自有石材：洞穴里是岩石，墓穴里是高大的石板，兵营、地下墓穴和大教堂里是平滑的石头，宫殿里是带纹饰的大理石；没有图片的房间使用与它自己地板相匹配的石材（第二幕的下水道、腐化的后宫、宫殿地窖）。下方其他顶部设置属于我们的效果；图块大小也决定岩石的尺寸。即时生效。
 ceiling.game_ceiling.choice0 = 我们的效果（ReShade / D2R VR 自己的）
 ceiling.game_ceiling.choice1 = 游戏（受光照的岩石）
 ceiling.steps.label = 顶部浮雕层数
@@ -232,6 +234,8 @@ group.draw_distance.help#2 = 用一个滑块控制你周围的世界绘制多远
 # --- What the slider sets ---
 group.what_the_slider_sets = 滑块设置的内容
 group.what_the_slider_sets.help = “绘制距离”滑块写入的每个数值，可手动设置。远景雾关闭时雾的数值变灰，游戏不绘制天空时（天空页：“天空与雾由谁绘制”）天空穹顶的数值变灰，洞穴穹顶关闭时它的数值变灰。
+render.big_radius.label = 大型物体：树木、房屋、墙壁绘制得更远（0 = 关）
+render.big_radius.tip = 树木、房屋和墙壁绘制得比模型可见半径更远 - 越大越远（其高度的 30 倍或宽度的一半），最远到这么多单位（300 - 1000；100 和 200 按 300 计）。石头、草和怪物保持模型可见半径。需要 3 个或更多房间环（游戏构建的房间之外没有可绘制的东西），并需要其外的全雾距离和天穹才能看见。在森林和城镇中会降低帧率。来自 D2R VR Unleashed（bearstonem）。仅影响画面。即时生效。0 = 关，与以前一样。
 sky.game_sky_radius.label = 游戏的天空：天穹半径（单位）
 sky.game_sky_radius.tip = 游戏的天穹放在你周围多远处，以游戏单位计（即时生效）。200：近处的地平线 - 天穹把远处的世界截成一个整齐的圆，游戏的雾覆盖其上。更远时，天空会从雾中露出来。每次更改时日志会记下正在使用的半径。
 fog.enabled.tip#2 = 远景雾。由谁绘制见“天空”标签页的选项：我们的效果，或游戏自己。天空开启时，雾会与天空融合。
@@ -1563,6 +1567,12 @@ fog.game_fog_caves_black.label = 洞穴中游戏的雾渐变为黑色
 fog.game_fog_caves_black.tip = 在地下，无论洞穴的雾色如何设置，游戏的雾都渐变为黑色，洞穴顶部边缘之外的虚空则不处理 - 游戏的雾通道把它被火把照亮的薄雾整片铺在了那里，火焰后面出现一条亮带。距离只会使画面变暗，不会发光。仅限无 ReShade。即时生效。
 fog.game_fog_our_curve.label = 游戏的雾使用我们的曲线
 fog.game_fog_our_curve.tip = 游戏自己的雾通道像我们的效果一样让雾渐浓 - 从“雾起始距离”到“全雾距离”，按下方的“衰减”（洞穴中使用洞穴自己的起始、结束和强度）- 而不是它自己的指数曲线，那种曲线把几乎所有的雾都堆在起点之后，远处只剩一片灰色。只改动它通道中的几条指令，不额外增加任何东西。仅限无 ReShade。实时。
+fog.fog_keeps_colour.label = 游戏的雾在夜晚保持该幕的颜色
+fog.fog_keeps_colour.tip = 由游戏绘制雾时：它的颜色在任何时刻都是该幕自己的（上方的颜色）- 远处渐隐成它的一层淡淡薄雾，从不变黑。我们自己效果的雾不变。关闭：它随游戏的光照变暗，与以前一样。即时生效。
+fog.fog_into_sky.label = 游戏的雾让远处渐隐入其后的天空
+fog.fog_into_sky.tip = 在露天，每一点的雾颜色就是它正后方的天空，就像秘法庇护所中那样：远处的大地、世界的边缘和高大的远处建筑渐隐入天空，而不是一种单调的颜色（天空的下部就是该幕的雾颜色，按其绘制的样子）。远处的物体会透出天空。仅限游戏的雾（配合“游戏的雾与我们的一样浓、一样有颜色”）；我们自己效果的雾不变。地下与以前一样。即时生效。关闭：单一的雾颜色，与以前一样。
+fog.game_fog_match.label = 游戏的雾与我们的一样浓、一样有颜色
+fog.game_fog_match.tip = 游戏的雾比该幕的雾颜色更暗（该区域的调色），也比我们的更薄（它在视线之上变薄，没有我们的曲线时用的是游戏自己的）：在第四幕，远处的大地成了一片暗色剪影，什么也遮不住。勾选：效果测量游戏的雾在完全浓密处显示的内容，按游戏的份额把每个有雾的像素移向该幕的颜色，并把游戏漏掉的份额补足到我们自己雾的程度 - 远处的大地、世界的边缘和远处的平面像我们旧的雾那样被遮住。从不作用于游戏的天空。是我们效果的通道，它本来就为天空运行。即时生效。关闭：按游戏铺设的样子。
 fog.game_fog_before_fx.label = 游戏的雾先于烟和火
 fog.game_fog_before_fx.tip = 雾在游戏加入烟、薄雾和火焰之前铺到场景上，这样它们就不带雾地盖在有雾的世界之上 - 没有它时，游戏的雾通道会按它们后面的墙给它们加雾（远处墙前的雾气被切出黑洞）。是我们在显卡上多做的一个通道（其开销见日志中每 10 s 的一行）。仅限无 ReShade。游戏再次启动时生效。
 fog.game_fog_height.label = 游戏的雾随高度变薄
@@ -1571,6 +1581,8 @@ fog.game_fog_top.label = 游戏的雾：雾顶，眼睛上方的单位数
 fog.game_fog_top.tip = 游戏的雾升到多高：高于此处没有雾，世界单位，相对于你的视线高度（英雄约高 7.5；天穹处于它的半径上）。即时生效。
 fog.game_fog_soft.label = 游戏的雾：雾顶的柔和度，单位
 fog.game_fog_soft.tip = 游戏的雾在雾顶以下多远处渐隐：小则边缘锐利；大则是长而柔和的渐变。即时生效。
+fog.game_fog_top_from_floor.label = 游戏的雾：雾顶从英雄的地板算起
+fog.game_fog_top_from_floor.tip = 上方的雾顶从英雄所站的地板算起，而不是从你的眼睛：英雄上方高处的摄像机（第三人称、俯视视角）不再改变雾结束的位置，眼睛以下的大地也不会整片带雾、在眼睛高度留下一条线。关闭：从眼睛算起，与以前一样。若改为取消勾选“随高度变薄”，雾就只按距离计算，与我们自己的雾一样。即时生效。
 fog.end.tip#2 = 雾完全浓密的位置。世界单位（英雄约高 7.5）。
 fog.curve.label = 衰减
 fog.curve.tip = 1 = 线性；更大 = 中间距离更清晰。
@@ -1582,6 +1594,10 @@ render.fog_in_frame.label = 雾绘制在游戏的帧内（测试）
 render.fog_in_frame.tip = 雾被绘制到游戏自己的画面中，位于火焰、法术和烟雾之前，然后游戏再把它们叠加到有雾的场景上：远处墙前的火把、火焰弹或烈焰不会像墙那样被雾遮住。天空和世界之外的黑色仍按以前的方式带雾。配合某一幕自己的雾颜色（世界 > 天空）；仅限 VR F4。下次启动游戏时生效；关闭 = 雾和以前一样。两者都开启时，优先于“雾不遮蔽火焰、法术和烟雾”。
 fog.caves.label = 洞穴和地牢中的雾
 fog.caves.tip = 关闭：地下（所有非室外区域）没有雾；露天仍保留雾。秘法庇护所有自己的开关（天空 > 秘法庇护所：雾渐隐入它的天空）。
+fog.ease_in.label = 雾渐入，没有硬环
+fog.ease_in.tip = 雾在其起始处之后的前 40 个单位内柔和地渐入：你脚下清晰的地面周围没有锐利的边缘。凡是由我们的曲线绘制雾的地方：我们的效果，以及开启“游戏的雾使用我们的曲线”时游戏的雾（不是游戏自己的曲线）。来自 D2R VR Unleashed（bearstonem）。即时生效。关闭：雾与以前一样。
+fog.no_fog_river.label = 火焰之河中没有雾
+fog.no_fog_river.tip = 火焰之河中不加雾，尽管它是露天的：它熔岩自己的光芒和雾气仍是游戏的。我们效果的雾和游戏的雾都一样。来自 D2R VR Unleashed（bearstonem）。即时生效。关闭：那里的雾与所有室外一样。
 fog.caves_strength.label = 洞穴中的雾强度
 fog.caves_strength.tip = 全雾在洞穴中遮盖多少：1 = 远端完全消失在雾色中，更小 = 远端隐约可见。
 fog.color_caves.label = 洞穴中的雾颜色
@@ -1598,9 +1614,9 @@ render.own_depth.tip = 雾、天空和洞穴顶部从哪里获得场景深度。
 render.own_depth.choice0 = ReShade 自己的深度
 render.own_depth.choice1 = 我们自己的，只取一次
 render.depth_fix_mode.label = 该深度的设置方式
-render.depth_fix_mode.tip = 在每个通道绑定时（D2R VR 以前的方式）：游戏绑定的每个常量缓冲区都会得到我们的深度范围——以其他方式获得常量的通道则保持游戏的深度。每帧在游戏生成处一次（由 bearstonem/d2r-pcvr 发现）：深度范围在游戏构建该帧常量之后、任何通道读取之前写入，所以所有通道——雾、环境光遮蔽、粒子、草——读到的深度都相同；它从我们摄像机的近平面延伸到游戏自己的远端（下面的距离不再使用）。可对比：第一幕的草、第二幕城镇的薄雾、角落里的雾霭。关闭：游戏自己的深度，等同于取消勾选“游戏特效从我们的摄像机测量深度”。即时生效。
+render.depth_fix_mode.tip = 在每个通道绑定时（D2R VR 的方式，与以前一样）：游戏绑定的每个常量缓冲区都会得到我们的深度范围——以其他方式获得常量的通道则保持游戏的深度。它只通过 ReShade 工作：没有 ReShade 时它不起作用，游戏的环境光遮蔽、反射、水、灯光和高度雾保持它自己摄像机的深度——石头更浑浊、更平，火盆和火把的光更弱（所选的游戏的雾会自行设置下一项）。每帧在游戏生成处一次（由 bearstonem/d2r-pcvr 发现）：深度范围在游戏构建该帧常量之后、任何通道读取之前写入，所以所有通道——雾、环境光遮蔽、粒子、草——读到的深度都相同；它从我们摄像机的近平面延伸到游戏自己的远端（下面的距离不再使用）。可对比：第一幕的草、第二幕城镇的薄纱、角落里的雾气。关闭：游戏自己的深度，与取消勾选“游戏特效从我们的摄像机测量深度”相同。即时生效。
 render.depth_fix_mode.choice0 = 关（游戏自带）
-render.depth_fix_mode.choice1 = 在每个通道绑定时
+render.depth_fix_mode.choice1 = 在每个通道绑定时（仅限 ReShade）
 render.depth_fix_mode.choice2 = 每帧在游戏生成处一次
 render.depth_range.label = 该深度的作用范围
 render.depth_range.tip = 世界单位（英雄约高 7.5）。更远的在游戏的雾看来算作天空；更短则在英雄附近更精细。
@@ -1616,7 +1632,7 @@ render.roofs_two_sided.tip = 游戏只从上方绘制屋顶，所以从被保留
 render.portal_no_oval.label = 城镇传送门中不显示黑色椭圆（F2 - F4）
 render.portal_no_oval.tip = 城镇传送门的黑色椭圆在蓝色光环转向摄像机时保持不动，所以除了游戏自己的俯视视角外，从任何视角看它都立在光环旁边。开启：F2、F3 和 F4 中不绘制椭圆，光环照常绘制；F1 保留椭圆。对此后看到的传送门生效（新区域，或重启之后）。来自 sajmonsoft 的平面分支。关闭：按游戏原样绘制。
 render.light_bounds_fix.label = 修正方形或宽窗口下的游戏光照
-render.light_bounds_fix.tip = 游戏把画面切成 32 x 20 的图块，并用一个着色器为每个图块求出其灯光的深度范围，而这个着色器只在 16:10 的窗口下才正确。在方形或宽窗口（VR 窗口、16:9）下它会漏掉若干行：灯光在硬边的矩形中消失，移动头部时屋顶的明暗会闪烁。开启：在 VR 渲染时由我们自己的着色器正确完成这项工作（在 16:10 下数值与游戏的相同）。关闭立即生效；重新勾选后下次启动游戏时生效。关闭：游戏自己的。
+render.light_bounds_fix.tip = 游戏把画面切成 32 x 20 的图块，并用一个着色器为每个图块求出其灯光的深度范围，而这个着色器只在 16:10 的窗口下才正确。在方形或宽窗口（VR 窗口、16:9）下它会漏掉若干行：灯光在硬边的矩形中消失，移动头部时屋顶的明暗会闪烁。开启：在 VR 渲染时由我们自己的着色器正确完成这项工作，有无 ReShade 均可（在 16:10 下数值与游戏的相同）。关闭立即生效；重新勾选后下次启动游戏时生效。关闭：游戏自己的。
 render.light_bounds_flat.label = ……平面模式下也修正
 render.light_bounds_flat.tip = 在平面模式下也做同样的修正（显示器或窗口，原生 OpenXR 的平面画面也算）：游戏的着色器在 16:9 和方形窗口下同样是错的，不只是在 VR 中。立即跟随当前模式。关闭：平面模式保持游戏自己的着色器，和以前一样。
 
@@ -1627,8 +1643,8 @@ group.render_distance.help = 英雄周围多远的世界会被绘制：更多的
 # --- Scenery ---
 group.scenery = 场景
 group.scenery.help = 针对第一人称对游戏场景的修正：回到一个房间时地面保持原来的高度，以及库拉斯特码头的独木舟放到水面上，而不是悬在天空中。只改变画面。
-render.keep_room_heights.label = 地面保持原样（走回头路时地面不再滑动）
-render.keep_room_heights.tip = 游戏在开始绘制关卡中的每个房间时给它一个高度，与当时绘制在它周围的房间相匹配，房间离开视线后就忘掉它。它的地砖边缘并不能一圈都对齐，所以你从另一条路（或在另一个区域或城镇之后）回到的房间可能高一级或低一级 - 从游戏位于上方的摄像机看没有人察觉，从我们的摄像机看地面就会滑动：地块被推高、推低或推向一旁，之间露出虚空。开启：每个房间保持它第一次被绘制时的高度，直到你离开游戏。只改变画面；游戏的世界是平的，战斗和路径的任何东西都不变。即时生效。关闭：游戏自己的高度，与以前相同。
+render.floors_stay.label = 地板保持原处（回头路上的地面不再滑动）
+render.floors_stay.tip = 游戏在开始绘制关卡的每个房间时给它一个高度，与那一刻它周围已绘制的房间相匹配，房间离开视线后就忘掉这个高度。它的图块边缘并非处处吻合，所以你从另一条路（或去过另一个区域或城镇后）回到的房间可能高一级或低一级 - 从游戏高处的摄像机看谁也看不出，从我们的摄像机看地板会滑动：石块被推上、推下、推向一侧，石块之间露出虚空。开启：每个房间都保持它第一次绘制时的高度，直到你离开游戏。代价：游戏也会在你走近、再次绘制一个高度画错的房间时修正它（远处看到的台阶，比如混沌要塞的大门旁）- 开启此项后，这种修正不会出现。只影响画面；战斗和路径都不变。即时生效。关闭（默认）：游戏自己的高度。
 world.kurast_boat.label = 库拉斯特码头：天空中的独木舟落在水面上
 world.kurast_boat.tip = 城镇的高清场景把一条独木舟放在 50 个单位的高处，俯视视角永远看不到那里；在第一人称中它就悬在小屋上方。开启：它躺在西侧码头旁的水面上，也就是它的预制件被建造的位置——城镇场景文件中改动了一个数字（由 bearstonem/d2r-pcvr 发现）。本程序在打开时会根据你游戏自己的文件制作这个文件（主页：库拉斯特码头独木舟），并保存在模组内部（mods\D2R-VR\D2R-VR.mpq）；游戏本身不会有任何改动，你游玩的任何内容也不会。下次启动游戏时生效（已在运行的游戏会让独木舟保持原位）。关闭：该文件会被再次取出，独木舟恢复为游戏原样。
 
@@ -1650,6 +1666,19 @@ sky.drift.label = 天空缓慢转动（云飘移）
 sky.drift.tip = 绘制的天空缓慢地绕着你转。关闭：它静止不动——夜空中绘制的星星原本会随云一起转动。
 sky.cover_rims.label = 天空覆盖屋顶和树木周围的暗边
 sky.cover_rims.tip = 游戏绘制天空前的任何物体时，会比其深度大一个像素，其边缘与黑色混合，而天空没有画到那里：每个屋顶、树梢和远处建筑周围都有一圈细细的暗色轮廓，双眼交替时它还会每隔一帧移开。勾选：当该像素较暗时，天空会覆盖它（光芒的亮边保留）；轮廓会变细一个像素。仅限第一人称（F4）。取消勾选：和以前一样。即时生效。请同时安装 DLL 和 D2R_DepthFog.fx。来自 bearstonem/d2r-pcvr。
+sky.dome_fog_horizon.label = 游戏的天空：地平线融入雾中
+sky.dome_fog_horizon.tip = 游戏绘制的天空下部沉入该幕的雾颜色，就像我们自己的天空那样：有雾的大地与天空相接处没有硬边，相接处颜色一致。仅在绘制雾时。关闭：天空按游戏绘制的样子。即时生效。
+sky.game_sky_closed.label = 游戏的天空：完整的球体，下方单色
+sky.game_sky_closed.tip = 游戏绘制的天空在地平线以下 12 度处结束：在悬崖边缘之外，它的边缘是一条硬线，下方有个洞，透出虚空和雾。勾选：它闭合成完整的球体，下半部分是单一颜色 - 天空自己在地平线处的颜色（绘制雾时则是雾的颜色：两者以同一种颜色相接）。适用于每一幕，VR 和平面均可。本程序会立即重新制作天穹的模型；游戏在下次启动时采用它们。关闭：开口的天穹，与以前一样。
+sky.game_skybox.label = 亚瑞特山顶：天穹放到远处
+sky.game_skybox.tip = 在亚瑞特山顶（关卡 120）和超级山顶（137），游戏绘制的天穹被放到深度缓冲所能容纳的最远处，这样无论多远，游戏沿悬崖的薄雾都保持在它前面。关闭：山顶与第五幕任何露天区域一样 - 天穹在它通常的半径上。即时生效。
+sky.summit_backdrop_hidden.label = 亚瑞特山顶：第一人称下没有地面图片
+sky.summit_backdrop_hidden.tip = 在亚瑞特山顶（关卡 120）和超级山顶（137）下方，游戏放了一张远在下方的地面图片，是为了从上方观看而做的；在第一人称下它像一堵平墙。勾选：在 VR 第一人称（F4）和平面第一人称（F3）中隐藏它：在它的位置显示我们的天空和雾，游戏的云海保留。俯视视角保留它。关闭：按游戏绘制的样子。即时生效。
+sky.weather_first_person.label = 第一人称下的雨和雪
+sky.weather_first_person.tip = 游戏把它的雨和雪放在一个围绕它自己摄像机的盒子里，为它的俯视视角而位于英雄上方高处和后方；在第一人称下，这个盒子悬在空中（亚瑞特山顶的雪）。隐藏：VR 第一人称（F4）和平面第一人称（F3）中没有雨和雪。在你周围：盒子放在你头部所在处，雨雪落在你周围。其他视角保持游戏的。游戏的：与以前一样。
+sky.weather_first_person.choice0 = 游戏的（在它的摄像机处）
+sky.weather_first_person.choice1 = 隐藏
+sky.weather_first_person.choice2 = 在你周围
 sky.arcane_sky.label = 秘法庇护所：四周都是它自己的星空
 sky.arcane_sky.tip = 在秘法庇护所中，平台周围的虚空会向各个方向显示游戏自己的星层和云，平台下方也一样（参照 bearstonem/d2r-pcvr）。这些图片在本程序打开时根据你游戏的文件制作（主页：秘法庇护所天空），保存在模组内部（mods\D2R-VR）；游戏本身不会被改动。俯视视角下无效。室外天空关闭时也有效。关闭：虚空保持游戏的绘制方式。
 sky.arcane_fog.label = 秘法庇护所：雾渐隐入它的天空
@@ -1705,10 +1734,20 @@ tab.ceiling = 顶部
 group.cave_ceiling = 洞穴顶部
 group.cave_ceiling.help = 在洞穴中绘制于黑色虚空之上的石质穹顶，在双眼中都处于真实深度；仅限第一人称。可设置图块大小和浮雕、用来封住虚空的远墙和下方的地板、石头的对比度、细节和潮湿光泽，以及火把和带火的怪物如何照亮它。
 ceiling.enabled.tip#2 = 洞穴中黑色虚空之上的石质穹顶，在双眼中都处于真实深度。仅限第一人称；目前支持第一幕的洞穴、墓穴、兵营、地下墓穴和大教堂，以及第二幕的下水道和宫殿。
-ceiling.game_ceiling_height.label = 游戏的顶部：高度（0 = 区域自己的）
-ceiling.game_ceiling_height.tip = 游戏的岩石顶部悬挂在区域地板之上多高，世界单位（即时生效；英雄约高 7.5）；其岩石比这个高度略低一点。0：每个区域自己的高度，如下方为我们的效果所设。每次更改时日志会记下正在使用的高度。
 ceiling.game_ceiling_wall.label = 游戏的顶部：在边缘向下弯成墙
 ceiling.game_ceiling_wall.tip = 在游戏的顶部结束处（图块大小 10 时约 215 单位远），用同样受光照的岩石围成一圈，从顶部一直延伸到地板之下（地板的深度）：顶部边缘之外的黑色虚空 - 它与远处地板之间由火焰后面的雾照亮的一条亮带 - 被石头封住，就像我们效果的远墙封住它一样。关闭：平的顶部。即时生效。
+ceiling.game_ceiling_beams.label = 游戏的顶部：兵营自己的木梁
+ceiling.game_ceiling_beams.tip = 游戏为兵营（及其监牢）附带了一个从未放置过的木制顶部框架：一个梁格，底部位于兵营墙壁的顶端。勾选：游戏在你头顶以固定在世界中的整框网格绘制这个框架 - 它自己的模型、木材和尺寸，由它的火把照亮 - 梁上方铺着兵营的石头，封住梁之间的空隙。用你的游戏文件制作。仅限 VR F4。关闭：平坦的石质顶部。即时生效。
+ceiling.game_ceiling_dome.label = 游戏的顶部：大教堂礼拜堂上方的穹顶
+ceiling.game_ceiling_dome.tip = 在大教堂中，游戏的顶部在礼拜堂上方升成穹顶，就像我们效果的拱顶在那里那样：一个匀称的穹顶，立在祭坛周围的四根柱子上，高度刚好越过祭坛的华盖。位置、宽度和高度取自游戏自己的构件（从你的游戏文件中测得，华盖则在游戏绘制时找到）；使用大教堂自己的石头，由它的蜡烛照亮。大教堂的其余部分保持其高度上的平坦顶部。仅限 VR F4。关闭：平坦的顶部。即时生效。
+ceiling.game_ceiling_dome_size.label = 大教堂的穹顶：大小
+ceiling.game_ceiling_dome_size.tip = 从游戏构件测得的穹顶的倍数（1：立在礼拜堂的四根柱子上），围绕同一个中心。整个拱顶随之变大或变小 - 石头的花纹也一样 - 穹顶的高度也随之变化，所以它仍然越过祭坛的华盖（最小 0.7：再小会穿过华盖）。VR F4。即时生效。
+ceiling.game_ceiling_dome_rise.label = 大教堂的穹顶：高度
+ceiling.game_ceiling_dome_rise.tip = 越过祭坛华盖的最低高度的倍数（1：刚好越过）。只能更高 - 更低会穿过华盖。VR F4。即时生效。
+ceiling.game_ceiling_domes_over_tall.label = 游戏的顶部：每个高大构件上方都有穹顶
+ceiling.game_ceiling_domes_over_tall.tip = 大教堂的穹顶，出现在游戏的某个构件高度至少是其房间顶部两倍、且周围有柱子的任何地方：顶部只在那个构件上方升成穹顶，立在那些柱子上，高到足以越过它的顶端 - 世界之石大殿（关卡 132）中的世界之石、王座厅的拱门（131）、崔凡克的议会大厅。位置、宽度和高度取自游戏自己的构件和模型（从你的游戏文件中测得，构件在游戏绘制时找到）；使用该房间自己的石头。房间的其余部分保持平坦的顶部。上方穹顶的大小和高度也适用于这些穹顶。仅限 VR F4。关闭：那里是平坦的顶部，与以前一样。本程序会立即重新制作它们的拱顶；游戏在下次启动时采用它们。
+ceiling.height_from_walls.label = 顶部高度取自房间的墙壁
+ceiling.height_from_walls.tip = 下方没有设置自身高度（0）的房间，顶部放在它自己的墙上：游戏用来构建该房间的墙壁结束之处（其墙壁、柱子和悬崖构件顶端的中间值，从你的游戏文件中测得）。房间自己的高度一旦设置，始终优先。我们效果的拱顶和游戏的顶部都适用；游戏垂得更低的岩石以其最低点搁在墙上。关闭，或房间没有这类墙壁：未设置高度时离地 18。日志会写出每个房间的高度及其来源。在下次切换区域时生效。
 ceiling.scale.label = 图块大小
 ceiling.scale.tip = 浮雕每个图块所占的世界单位；石头图片横跨 4 个图块。
 ceiling.steps.label#2 = 浮雕层数
@@ -1755,11 +1794,11 @@ cave_light.ambient.tip = 充满该处的光，在英雄的光圈之内：更亮�
 cave_light.ambient_min.label = 补光至少为
 cave_light.ambient_min.tip = 无论地牢本身是多少，至少达到这么多：只对最暗的地牢有用（第二幕古墓：0.12）。当该区域自身的值乘以上方滑块已经更大时（第一幕洞穴：2 x 2 = 4），此项不起作用。0 = 没有下限。
 
-# --- Ceiling: act 1 caves ---
-group.ceiling_act_1_caves = 顶部：第一幕洞穴
-group.ceiling_act_1_caves.help = 第一幕洞穴的顶部：它离地板的高度、亮度、英雄的光在其上照及的距离、浮雕，以及石头图片及其大小、对比度、细节和潮湿光泽。
-ceiling.height_act1_caves.label = 离地高度
-ceiling.height_act1_caves.tip = 世界单位（英雄约高 7.5）。低于墙顶时，墙会穿出顶部。
+# --- Ceiling: act 1 caves (levels 8-16) ---
+group.ceiling_act_1_caves_levels_8_16 = 顶部：第一幕洞穴（关卡 8-16）
+group.ceiling_act_1_caves_levels_8_16.help = 第一幕洞穴的顶部：它离地板的高度、亮度、英雄的光在其上照及的距离、浮雕，以及石头图片及其大小、对比度、细节和潮湿光泽。关卡：邪恶洞窟（8）、洞穴一层（9）、地下通道一层（10）、地洞一层（11）、地穴一层（12）、洞穴二层（13）、地下通道二层（14）、地洞二层（15）、地穴二层（16）。
+ceiling.height_act1_caves.label = 离地高度（0 = 取自墙壁）
+ceiling.height_act1_caves.tip = 世界单位（英雄约高 7.5）。低于墙顶时，墙会穿出顶部。0：放在从你的游戏文件中测得的房间墙顶（配合“顶部高度取自房间的墙壁”），否则为 18。
 ceiling.brightness_act1_caves.label = 亮度（0 = 黑）
 ceiling.brightness_act1_caves.tip = 更低 = 顶部更暗。
 ceiling.light_radius_act1_caves.label = 英雄的光照范围
@@ -1776,23 +1815,23 @@ ceiling.contrast_act1_caves.tip = 图片的细节乘以此数：更大 = 更清�
 ceiling.detail_act1_caves.tip = 图片中的颗粒和裂缝从石头中凸起多少：它们会反射光线。
 ceiling.wet_act1_caves.tip = 英雄和火把的光在石头上的反光（0 = 干燥）。
 
-# --- Ceiling: act 1 crypts ---
-group.ceiling_act_1_crypts = 顶部：第一幕墓穴
-group.ceiling_act_1_crypts.help = 第一幕墓穴的顶部：高度、亮度、英雄的光照及距离、凹凸不平的砖石垂下多远，以及它的图片。
+# --- Ceiling: act 1 crypts and tower (levels 18-25, 133) ---
+group.ceiling_act_1_crypts_and_tower_levels_18_25_133 = 顶部：第一幕墓穴和塔（关卡 18-25、133）
+group.ceiling_act_1_crypts_and_tower_levels_18_25_133.help = 第一幕墓穴的顶部：高度、亮度、英雄的光照及距离、凹凸不平的砖石垂下多远，以及它的图片。关卡：墓穴（18）、陵墓（19）、遗忘之塔（20）、塔底一层（21）、塔底二层（22）、塔底三层（23）、塔底四层（24）、塔底五层（25）、Pandemonium Run 1（133）。
 ceiling.relief_act1_crypt.tip = 凹凸不平的砖石从顶部垂下多远，单位为世界单位。
 
-# --- Ceiling: act 1 barracks ---
-group.ceiling_act_1_barracks = 顶部：第一幕兵营
-group.ceiling_act_1_barracks.help = 第一幕兵营的顶部：高度、亮度、英雄的光照及距离、浮雕和图片。
+# --- Ceiling: act 1 barracks and jail (levels 28-31) ---
+group.ceiling_act_1_barracks_and_jail_levels_28_31 = 顶部：第一幕兵营和监牢（关卡 28-31）
+group.ceiling_act_1_barracks_and_jail_levels_28_31.help = 第一幕兵营的顶部：高度、亮度、英雄的光照及距离、浮雕和图片。关卡：兵营（28）、监牢一层（29）、监牢二层（30）、监牢三层（31）。
 
-# --- Ceiling: act 1 catacombs ---
-group.ceiling_act_1_catacombs = 顶部：第一幕地下墓穴
-group.ceiling_act_1_catacombs.help = 第一幕地下墓穴的顶部：高度（游戏绘制得更高的部分会被截去）、亮度、英雄的光照及距离、浮雕和图片。
-ceiling.height_act1_catacombs.tip = 世界单位（英雄约高 7.5）。游戏绘制得更高的部分会被顶部截去。
+# --- Ceiling: act 1 barracks' courtyard (level 28) ---
+group.ceiling_act_1_barracks_courtyard_level_28 = 顶部：第一幕兵营的庭院（关卡 28）
+group.ceiling_act_1_barracks_courtyard_level_28.help = 第一幕兵营庭院下方的顶部：VR F4 中是游戏的顶部（它自己的鹅卵石），平面 F3 中是我们的拱顶；它离地板的高度。关卡：兵营（28）。
+ceiling.height_act1_court_to_barracks.tip = 世界单位（英雄约高 7.5）。0：放在从你的游戏文件中测得的房间墙顶（配合“顶部高度取自房间的墙壁”），否则为 18。
 
-# --- Ceiling: act 1 cathedral ---
-group.ceiling_act_1_cathedral = 顶部：第一幕大教堂
-group.ceiling_act_1_cathedral.help = 第一幕大教堂的顶部。除了高度、亮度和图片，还有穹顶：让顶部在更高的物体（祭坛的华盖）之上像球面一样升起，而不是把它截去；可设置从多高开始、多宽以及升到多高。
+# --- Ceiling: act 1 cathedral (level 33) ---
+group.ceiling_act_1_cathedral_level_33 = 顶部：第一幕大教堂（关卡 33）
+group.ceiling_act_1_cathedral_level_33.help = 第一幕大教堂的顶部。除了高度、亮度和图片，还有穹顶：让顶部在更高的物体（祭坛的华盖）之上像球面一样升起，而不是把它截去；可设置从多高开始、多宽以及升到多高。关卡：大教堂（33）。
 ceiling.dome_act1_cathedral.label = 较高处上方的穹顶
 ceiling.dome_act1_cathedral.tip = 游戏绘制得比顶部更高的东西（祭坛的华盖）所在之处，顶部在其上方像球面一样升起，而不是把它截去。
 ceiling.dome_find_act1_cathedral.label = 向上延伸处上方的穹顶
@@ -1802,13 +1841,71 @@ ceiling.dome_radius_act1_cathedral.tip = 世界单位：高处物体上方的球
 ceiling.dome_max_act1_cathedral.label = 穹顶最大高度
 ceiling.dome_max_act1_cathedral.tip = 高于顶部的世界单位；再高的部分会被截去。
 
-# --- Ceiling: act 2 sewers ---
-group.ceiling_act_2_sewers = 顶部：第二幕下水道
-group.ceiling_act_2_sewers.help = 第二幕下水道的顶部：高度、亮度、英雄的光照及距离、浮雕和图片。
+# --- Ceiling: act 1 catacombs (levels 34-37) ---
+group.ceiling_act_1_catacombs_levels_34_37 = 顶部：第一幕地下墓穴（关卡 34-37）
+group.ceiling_act_1_catacombs_levels_34_37.help = 第一幕地下墓穴的顶部：高度（游戏绘制得更高的部分会被截去）、亮度、英雄的光照及距离、浮雕和图片。关卡：地下墓穴一层（34）、地下墓穴二层（35）、地下墓穴三层（36）、地下墓穴四层（37）。
+ceiling.height_act1_catacombs.tip = 世界单位（英雄约高 7.5）。游戏绘制得更高的部分会被顶部截去。
 
-# --- Ceiling: act 2 palace ---
-group.ceiling_act_2_palace = 顶部：第二幕宫殿
-group.ceiling_act_2_palace.help = 第二幕宫殿的顶部：高度、亮度、英雄的光照及距离、浮雕和图片。
+# --- Ceiling: act 2 sewers (levels 47-49, 65) ---
+group.ceiling_act_2_sewers_levels_47_49_65 = 顶部：第二幕下水道（关卡 47-49、65）
+group.ceiling_act_2_sewers_levels_47_49_65.help = 第二幕下水道的顶部：高度、亮度、英雄的光照及距离、浮雕和图片。关卡：下水道一层（47）、下水道二层（48）、下水道三层（49）、古代通道（65）。
+
+# --- Ceiling: act 2 harem (level 50) ---
+group.ceiling_act_2_harem_level_50 = 顶部：第二幕后宫（关卡 50）
+group.ceiling_act_2_harem_level_50.help = 第二幕后宫下方的顶部：高度、亮度、英雄的光照及距离、浮雕和图片。关卡：后宫一层（50）。
+
+# --- Ceiling: act 2 corrupt harem (level 51) ---
+group.ceiling_act_2_corrupt_harem_level_51 = 顶部：第二幕腐化的后宫（关卡 51）
+group.ceiling_act_2_corrupt_harem_level_51.help = 第二幕腐化的后宫下方的顶部：VR F4 中是用它自己地板石材做的游戏的顶部，平面 F3 中是我们的拱顶；它离地板的高度。关卡：后宫二层（51）。
+
+# --- Ceiling: act 2 palace cellar (levels 52-54) ---
+group.ceiling_act_2_palace_cellar_levels_52_54 = 顶部：第二幕宫殿地窖（关卡 52-54）
+group.ceiling_act_2_palace_cellar_levels_52_54.help = 第二幕宫殿地窖下方的顶部：VR F4 中是平滑深色石头（地下墓穴的，不是地板的瓷砖）做的游戏的顶部，平面 F3 中是我们的拱顶；它离地板的高度。关卡：宫殿地窖一层（52）、宫殿地窖二层（53）、宫殿地窖三层（54）。
+
+# --- Ceiling: act 2 tombs (levels 55-61, 66-73) ---
+group.ceiling_act_2_tombs_levels_55_61_66_73 = 顶部：第二幕古墓（关卡 55-61、66-73）
+group.ceiling_act_2_tombs_levels_55_61_66_73.help = 第二幕古墓下方的顶部：VR F4 中是游戏的顶部（平滑深色石头，地下墓穴的），平面 F3 中是我们的拱顶；它离地板的高度。关卡：石墓一层（55）、死亡大厅一层（56）、死亡大厅二层（57）、利爪蝮蛇神殿一层（58）、石墓二层（59）、死亡大厅三层（60）、利爪蝮蛇神殿二层（61）、塔拉夏的古墓（66）、塔拉夏的古墓（67）、塔拉夏的古墓（68）、塔拉夏的古墓（69）、塔拉夏的古墓（70）、塔拉夏的古墓（71）、塔拉夏的古墓（72）、都瑞尔的巢穴（73）。
+
+# --- Ceiling: act 2 maggot lair (levels 62-64) ---
+group.ceiling_act_2_maggot_lair_levels_62_64 = 顶部：第二幕蛆虫巢穴（关卡 62-64）
+group.ceiling_act_2_maggot_lair_levels_62_64.help = 第二幕蛆虫巢穴上方的游戏的顶部（它自己的洞穴岩石；我们的效果在这里不绘制拱顶）：它离地板的高度。关卡：蛆虫巢穴一层（62）、蛆虫巢穴二层（63）、蛆虫巢穴三层（64）。
+ceiling.height_act2_maggot.tip = 世界单位（英雄约高 7.5）：游戏的岩石顶部在这里悬挂的位置；它的岩石垂得比这稍低一些。
+
+# --- Ceiling: act 3 spider caves (levels 84-85) ---
+group.ceiling_act_3_spider_caves_levels_84_85 = 顶部：第三幕蜘蛛洞穴（关卡 84-85）
+group.ceiling_act_3_spider_caves_levels_84_85.help = 第三幕蜘蛛洞穴上方的游戏的顶部（它自己的洞穴岩石；我们的效果在这里不绘制拱顶）：它离地板的高度。关卡：蜘蛛洞穴（84）、蜘蛛洞窟（85）。
+
+# --- Ceiling: act 3 jungle dungeons (levels 86-91) ---
+group.ceiling_act_3_jungle_dungeons_levels_86_91 = 顶部：第三幕丛林地牢（关卡 86-91）
+group.ceiling_act_3_jungle_dungeons_levels_86_91.help = 第三幕丛林地牢上方的游戏的顶部（它自己的洞穴岩石；我们的效果在这里不绘制拱顶）：它离地板的高度。关卡：沼泽地洞一层（86）、沼泽地洞二层（87）、剥皮魔地牢一层（88）、剥皮魔地牢二层（89）、沼泽地洞三层（90）、剥皮魔地牢三层（91）。
+
+# --- Ceiling: act 3 sewers (level 93) ---
+group.ceiling_act_3_sewers_level_93 = 顶部：第三幕下水道（关卡 93）
+group.ceiling_act_3_sewers_level_93.help = 第三幕下水道下方的顶部：VR F4 中是游戏的顶部（它自己的岩石地板，平铺），平面 F3 中是我们的拱顶；它离地板的高度。关卡：下水道二层（93）。
+
+# --- Ceiling: act 3 temples (levels 94-99) ---
+group.ceiling_act_3_temples_levels_94_99 = 顶部：第三幕神殿（关卡 94-99）
+group.ceiling_act_3_temples_levels_94_99.help = 第三幕神殿下方的顶部：VR F4 中是游戏的顶部（它们自己的石头），平面 F3 中是我们的拱顶；它离地板的高度。关卡：毁坏的神殿（94）、废弃的寺院（95）、遗忘的圣骨箱（96）、遗忘的神殿（97）、毁坏的寺院（98）、废弃的圣骨箱（99）。
+
+# --- Ceiling: act 3 Durance of Hate (level 102) ---
+group.ceiling_act_3_durance_of_hate_level_102 = 顶部：第三幕憎恨囚牢（关卡 102）
+group.ceiling_act_3_durance_of_hate_level_102.help = 第三幕憎恨囚牢下方的顶部：VR F4 中是游戏的顶部（它自己的石头），平面 F3 中是我们的拱顶；它离地板的高度。关卡：憎恨囚牢三层（102）。
+
+# --- Ceiling: act 5 ice caves (levels 113-116, 118-119) ---
+group.ceiling_act_5_ice_caves_levels_113_116_118_119 = 顶部：第五幕冰洞（关卡 113-116、118-119）
+group.ceiling_act_5_ice_caves_levels_113_116_118_119.help = 第五幕冰洞上方的游戏的顶部（它自己的洞穴岩石；我们的效果在这里不绘制拱顶）：它离地板的高度。关卡：水晶通道一层（113）、怜悯地窖（114）、水晶通道二层（115）、回音之室（116）、冰河洞穴一层（118）、冰河洞穴二层（119）。
+
+# --- Ceiling: act 5 Nihlathak's halls (levels 122-124) ---
+group.ceiling_act_5_nihlathak_s_halls_levels_122_124 = 顶部：第五幕尼拉塞克的大厅（关卡 122-124）
+group.ceiling_act_5_nihlathak_s_halls_levels_122_124.help = 第五幕尼拉塞克的大厅下方的顶部：VR F4 中是游戏的顶部（它们自己的洞穴岩石），平面 F3 中是我们的拱顶；它离地板的高度。关卡：痛苦大厅（122）、死亡召唤大厅（123）、维特大厅（124）。
+
+# --- Ceiling: act 5 Worldstone Keep (levels 128-130) ---
+group.ceiling_act_5_worldstone_keep_levels_128_130 = 顶部：第五幕世界之石要塞（关卡 128-130）
+group.ceiling_act_5_worldstone_keep_levels_128_130.help = 第五幕世界之石要塞下方的顶部：VR F4 中是游戏的顶部（它自己的地板），平面 F3 中是我们的拱顶；它离地板的高度。关卡：世界之石要塞一层（128）、世界之石要塞二层（129）、世界之石要塞三层（130）。
+
+# --- Ceiling: act 5 throne of destruction (levels 128-132) ---
+group.ceiling_act_5_throne_of_destruction_levels_128_132 = 顶部：第五幕毁灭王座（关卡 128-132）
+group.ceiling_act_5_throne_of_destruction_levels_128_132.help = 第五幕毁灭王座下方的顶部：VR F4 中是游戏的顶部（要塞自己的地板），平面 F3 中是我们的拱顶；它离地板的高度。关卡：世界之石要塞一层（128）、世界之石要塞二层（129）、世界之石要塞三层（130）、毁灭王座（131）、世界之石大殿（132）。
 
 # ===== Tab: Weapon Adjust =====
 tab.weapon_adjust = 武器调整
@@ -2420,6 +2517,8 @@ gameplay.melee_stroke_start_cm.label = 接触命中：刃移动多远算一次�
 gameplay.melee_stroke_start_cm.tip = 只有在刀刃（它更快的一端：剑的尖端，按所绘制的——不是手）在大约十分之一秒内移动了这么远，并且足够快（见上）之后，一次移动才算一击——才能命中。更小：短戳也算；更大：只有长挥才算。比上面的最小速度更慢的刀刃什么也不做，每一击中怪物只被命中一次。默认 8，和以前一样。即时生效。仅限 F4。
 gameplay.melee_touch_thrown.label = 投掷武器也按接触命中（近距离投掷）
 gameplay.melee_touch_thrown.tip = 手中的标枪、飞刀或飞斧像任何武器一样被挥动：它的刀刃穿过怪物身体，就会对它按下游戏自己的攻击——对投掷武器来说就是游戏对那个怪物的投掷，近在咫尺，弹药按游戏的方式消耗（绝不走“直接命中”的路线）。投掷药水不能挥动。手势投掷（武器调整 > 投掷：用握把或扳机）保持原样，且不会与接触同时触发：开启握把投掷时，只有右握把握紧在武器上，接触才算数；投掷松开后 0.7 s 内，接触不起作用；按下攻击的接触会丢弃同一挥动的松开（一次挥动只投一次）。每种武器的刀刃大小只是估计——用下面调试分组的刀刃滑块和“绘制接触命中的胶囊体”来调整。取消勾选：投掷武器按接触什么也不做，和以前一样。即时生效。仅限 F4。
+gameplay.melee_touch_barrels.label = 击打即可打破木桶和罐子
+gameplay.melee_touch_barrels.tip = 手持武器挥过木桶、罐子、瓮或篮子时，会按游戏自己的方式打破它：这一挥（能命中怪物的那种）会对该物体按下游戏的互动键，就像按 A 一样，于是英雄用他自己的动画踢开或打破它 - 掉落物、陷阱和爆炸都是游戏的。箱子、门、神殿和任务物品保持它们的常规操控，A 仍然有效。物体的大小是根据其占地面积估算的。取消勾选：与以前一样，只有 A 能打破它们。即时生效。仅限 F4。
 gameplay.melee_touch_thrown_held.label = 投掷武器从一开始就是你手中的武器（命中无需握把）
 gameplay.melee_touch_thrown_held.tip = 标枪、飞刀或飞斧从装备上的那一刻起就是你手中的武器，如同一把剑：它立即按接触命中，你无需先握紧握把。放下后（握把握紧后在手静止时松开），在有手再次握住它之前它什么也打不中，与剑相同。投掷也一样：握紧握把、挥动、松开——用的是游戏自己的投掷；投掷后接触仍会停用 0.7 s，且一次挥动只投出一次。取消勾选：与以前相同——开启握把投掷时，投出的武器只在其握把握紧期间才按接触命中。即时生效。仅限 F4。
 gameplay.melee_touch_only.label = 扳机不攻击（仅刃的接触；弓或十字弩用扳机射击）
@@ -3070,7 +3169,7 @@ debug.pose_share_draw.tip = 其他玩家在我们摄像机的视角中被绘制�
 debug.pose_share_legs_self.label = 多人游戏的头部和双手：你自己英雄的双腿用同样的步态（测试）
 debug.pose_share_legs_self.tip = 你自己英雄的双腿按与其他玩家英雄相同的步态迈步（“他们的双腿按其移动方式迈步”），用他自己的朝向——在一台 PC 上查看双腿：在 F2 或 F3（平面或 VR）中看着他，向前、后退和侧移行走。日志每 5 s 说明它们做了什么（“legs: ...”）。需要步态库。即时生效。
 debug.walk_back_dump.label = 向后走：把双腿写入文件
-debug.walk_back_dump.tip = 英雄移动时，逐个姿势记录他的双腿 - 游戏画出的样子，以及开启“向后走时，双腿向后迈步”后画出的样子 - 每次向后走的最后 6 秒写入 d2rloader\logs\d2r_vr_walkback.txt（每次会话最多 30 次），供 walk_legs 工具画成火柴人。只写文件；游戏中什么都不变。实时。
+debug.walk_back_dump.tip = 英雄移动时，逐个姿势记录他的双腿 - 游戏画出的样子，以及开启“向后走时，双腿向后迈步”后画出的样子 - 每次向后走的最后 6 秒（以及摄像机绕他转过来时站立的 3 s）写入 d2rloader\logs\d2r_vr_walkback.txt（每次会话最多 30 次），供 walk_legs 工具画成火柴人。日志还会每 5 s 写出英雄的网格是从哪个姿势蒙皮的（我们摆的那个，或另一个）。只写文件和日志行；游戏中什么都不变。即时生效。
 debug.phantom_ray.label#2 = 绘制左手所取的线
 debug.phantom_ray.tip#2 = 一条红线，左手沿着它拿取手中的武器并滑动（长杖、矛、长柄武器、双手剑）；对十字弩，也是弩箭飞行的位置（十字弩：射击线滑块可转动它）。“绘制手中武器的轴”也会画出它。
 debug.xbow_barrel_line.label = 十字弩：按建模绘制枪管
@@ -3258,6 +3357,251 @@ status.xr_layers.off = OpenXR 层 {layers} 已为 D2R VR 关闭：已知它会�
 status.xr_layers.listed_in_runtime_fov = OpenXR 层 {layers} 随游戏加载，已保留：双眼完全按头显给出的来绘制，像其他游戏一样，因此它应当不会造成伤害。
 status.xr_layers.listed_in = OpenXR 层 {layers} 随游戏加载：已知当双眼以模组自己的方式绘制时，它会扭曲画面（斗鸡眼、拉伸）——请勾选“每只眼睛完全按头显给出的来”。
 status.xr_layers.in = 游戏中的其他 OpenXR 层（保持原样）：{layers}。
+
+# ===== In the headset: the settings panel's rows, the first-start guide (the plugin's tables) =====
+vr.hset.page.view = 视角
+vr.hset.page.options = 选项
+vr.hset.page.video = 视频
+vr.hset.page.body = 身体
+vr.hset.page.life = 生命
+vr.hset.page.look = 外观
+vr.hset.page.hud = HUD
+vr.hset.page.belt = 腰带
+vr.hset.page.melee = 近战
+vr.hset.page.left = 左手
+vr.hset.page.right = 右手
+vr.hset.page.guide = 指南
+vr.hset.screen.menu_distance_m.label = 面板距离
+vr.hset.screen.menu_distance_m.detail = 游戏中打开的面板：物品栏、储物箱、商人
+vr.hset.openxr.flat_distance_m.label = 屏幕距离
+vr.hset.openxr.flat_distance_m.detail = 菜单、加载画面、平面视角 F1 和 F3
+vr.hset.openxr.flat_width_m.label = 屏幕宽度
+vr.hset.openxr.flat_width_m.detail = 菜单和面板有多宽
+vr.hset.openxr.brightness.label = 亮度
+vr.hset.openxr.brightness.detail = 头显中的一切，1 = 与游戏绘制的相同
+vr.hset.stereo.user_height_m.label = 你的身高
+vr.hset.stereo.user_height_m.detail = 世界和双手的比例；BodyWalk 的 Body Height 优先
+vr.hset.openxr.laser.label = 菜单上的激光
+vr.hset.openxr.laser.detail = 把手柄指向菜单，它就是鼠标
+vr.hset.value.off = 关
+vr.hset.value.on = 开
+vr.hset.openxr.laser_hand.label = 激光手
+vr.hset.openxr.laser_hand.detail = 发出激光的那只手
+vr.hset.value.left = 左
+vr.hset.value.right = 右
+vr.hset.openxr.menu_3d.label = 菜单为面板
+vr.hset.openxr.menu_3d.detail = 打开的菜单后面，世界保持 3D
+vr.hset.turn.smooth.label = 平滑转向
+vr.hset.turn.smooth.detail = 右摇杆：持续转向，或拨一下转一次
+vr.hset.turn.snap.label = 快速转向角度
+vr.hset.turn.snap.detail = 每次拨动的度数，平滑转向关闭时
+vr.hset.turn.speed.label = 平滑转向速度
+vr.hset.turn.speed.detail = 每秒的度数，平滑转向开启时
+vr.hset.hud.low_hp_vignette.label = 低生命：红色暗角
+vr.hset.hud.low_hp_vignette.detail = 生命低时边缘跳动变红（F4）
+vr.hset.hud.low_hp_threshold.label = 低于此值出现
+vr.hset.hud.low_hp_threshold.detail = 占你最大生命的比例
+vr.hset.hud.low_hp_intensity_start.label = 刚低于时的强度
+vr.hset.hud.low_hp_intensity_start.detail = 开始时边缘有多红
+vr.hset.hud.low_hp_intensity_end.label = 生命最低时的强度
+vr.hset.hud.low_hp_intensity_end.detail = 你几乎死亡时边缘有多红
+vr.hset.hud.low_hp_saturation.label = 红色
+vr.hset.hud.low_hp_saturation.detail = 从深灰（0）到深红（1）
+vr.hset.hud.low_hp_radius.label = 大小
+vr.hset.hud.low_hp_radius.detail = 从边缘向内延伸多远（视角）
+vr.hset.hud.low_hp_softness.label = 柔和边缘
+vr.hset.hud.low_hp_softness.detail = 1 一路渐变进来，0 是一小段斜坡
+vr.hset.hud.low_hp_roundness.label = 形状
+vr.hset.hud.low_hp_roundness.detail = 2 椭圆 ... 6 圆角方形
+vr.hset.hud.low_hp_gentle.label = 柔和
+vr.hset.hud.low_hp_gentle.detail = 更慢、更轻、更少红色
+vr.hset.hud.low_hp_haptics.label = 手柄中的心跳
+vr.hset.hud.low_hp_haptics.detail = 双手中的脉冲（需要手柄振动）
+vr.hset.hud.low_hp_haptics_strength.label = 脉冲强度
+vr.hset.hud.low_hp_haptics_strength.detail = 生命越低越强；这里调节比例
+vr.hset.hands.belt_models_up.label = 腰带高度
+vr.hset.hands.belt_models_up.detail = 在你身上多高，以眼睛高度的几分之几表示
+vr.hset.hands.belt_models_ahead.label = 腰带距离
+vr.hset.hands.belt_models_ahead.detail = 离身体多远：弧线的半径
+vr.hset.hands.belt_models_across.label = 腰带右 / 左
+vr.hset.hands.belt_models_across.detail = 向你的右边（+）或左边（-）移动
+vr.hset.hands.belt_models_turn.label = 腰带旋转
+vr.hset.hands.belt_models_turn.detail = 绕你摆动：向右（+）或向左（-）
+vr.hset.hands.belt_grab_cm.label = 腰带抓取范围
+vr.hset.hands.belt_grab_cm.detail = 手离药水多近才能拿取
+vr.hset.belt.grab_trigger.label = 拿腰带药水用
+vr.hset.belt.grab_trigger.detail = 药水还需要扳机；单独的握把归武器
+vr.hset.value.grip = 握把
+vr.hset.value.trigger_grip = 扳机 + 握把
+vr.hset.gameplay.melee_touch.label = 接触命中
+vr.hset.gameplay.melee_touch.detail = 你挥过怪物的刀刃会命中它（F4）
+vr.hset.gameplay.melee_min_speed.label = 能命中的最低刃速
+vr.hset.gameplay.melee_min_speed.detail = 低于它接触不起作用，m/s
+vr.hset.gameplay.melee_stroke_start_cm.label = 刃移动多远开始一击
+vr.hset.gameplay.melee_stroke_start_cm.detail = 必须移动多远才开始一击，cm
+vr.hset.gameplay.melee_touch_only.label = 扳机不攻击
+vr.hset.gameplay.melee_touch_only.detail = 只有刃的接触会攻击；弓照常射击（F4）
+vr.hset.gameplay.melee_skill_armed.label = 技能键预备技能
+vr.hset.gameplay.melee_skill_armed.detail = 之后每次接触都是该技能（F4）
+vr.hset.gameplay.melee_skill_armed_icon.label = 法力中的预备技能
+vr.hset.gameplay.melee_skill_armed_icon.detail = 它的图标显示在法力徽章中
+vr.hset.direct.left_trigger.label = 左扳机
+vr.hset.direct.left_x.label = 左 X
+vr.hset.direct.left_y.label = 左 Y
+vr.hset.direct.left_stick.label = 左摇杆按下
+vr.hset.direct.left_menu.label = 左菜单键
+vr.hset.direct.left_menu_hold.label = 左菜单键，长按
+vr.hset.direct.right_trigger.label = 右扳机
+vr.hset.direct.right_a.label = 右 A
+vr.hset.direct.right_b.label = 右 B
+vr.hset.direct.right_stick.label = 右摇杆按下
+vr.hset.direct.right_stick_hold.label = 右摇杆，长按
+vr.hset.direct.right_menu.label = 右菜单键
+vr.hset.openxr.direct_input.label = 无需 BodyWalk 的操控
+vr.hset.openxr.direct_input.detail = 插件自行读取手柄
+vr.hset.hands.belt_models.label = 腰带上的药水
+vr.hset.hands.belt_models.detail = 游戏自带的药水模型挂在英雄髋部
+vr.hset.render.vr_resolution.label = VR 渲染尺寸：模式
+vr.hset.render.vr_resolution.detail = 0 窗口，1 头显，2-6 旧的方形
+vr.hset.render.vr_resolution_px.label = VR 渲染尺寸：边长
+vr.hset.render.vr_resolution_px.detail = 方形的边长（像素），0 = 不使用
+vr.hset.calibration.use.label = 使用测量结果
+vr.hset.calibration.use.detail = 正在使用测得的身高和臂展
+vr.hset.calibration.version.label = 已存储测量
+vr.hset.calibration.version.detail = 1 = 已存储一次测量
+vr.hset.value.no = 否
+vr.hset.value.yes = 是
+vr.hset.calibration.eye_height_m.label = 测得的眼睛高度
+vr.hset.calibration.eye_height_m.detail = 离地米数
+vr.hset.calibration.arm_span_m.label = 测得的臂展
+vr.hset.calibration.arm_span_m.detail = 米，握把到握把
+vr.hset.calibration.seated.label = 游玩姿势
+vr.hset.calibration.seated.detail = 坐姿：重新居中设定眼睛高度；校准读取臂展
+vr.hset.value.standing = 站姿
+vr.hset.value.seated = 坐姿
+vr.hset.hud.bar_place.label = 工具栏类型
+vr.hset.hud.bar_place.detail = 手腕上的生命和法力，或整个工具栏
+vr.hset.hud.monster_height.label = 名称牌：屏幕上的高度
+vr.hset.hud.monster_height.detail = + 更高，占屏幕的 %（F4）；房间中的血条有自己的设置
+vr.hset.hud.ordinary_mob_bars.label = 名称牌：普通怪物
+vr.hset.hud.ordinary_mob_bars.detail = 显示：所有名称牌。隐藏：只有精英、首领、NPC
+vr.hset.value.shown = 显示
+vr.hset.value.hidden = 隐藏
+vr.hset.hud.hide.label = 界面移出画面
+vr.hset.hud.hide.detail = 0 无，1 工具栏，2 全部
+vr.toolbar.wrists = 手腕
+vr.toolbar.chest_low = 胸前，偏低
+vr.toolbar.low_in_front = 前方下侧
+vr.toolbar.left_forearm = 左前臂
+vr.toolbar.right_forearm = 右前臂
+vr.toolbar.not_shown = 不显示
+vr.toolbar.in_the_picture = 在画面中
+vr.keys.none = 无
+vr.keys.action_attack = 攻击
+vr.keys.action_interact = 拾取
+vr.keys.action_inventory = 物品栏
+vr.keys.action_map = 地图
+vr.keys.cmd_0x25 = 显示物品
+vr.keys.cmd_0x25_action_map = 物品 + 地图
+vr.keys.action_pause = 暂停菜单
+vr.keys.cmd_0x26 = 关闭面板
+vr.keys.action_skillpanel = 技能面板
+vr.keys.action_quivernext = 箭筒：下一个
+vr.keys.action_quiverprev = 箭筒：上一个
+vr.keys.action_swap = 切换武器
+vr.keys.action_recenter = 重新居中
+vr.keys.action_viewnext = 下一个视角
+vr.keys.pad_b = 技能键 B
+vr.keys.pad_x = 技能键 X
+vr.keys.pad_y = 技能键 Y
+vr.keys.pad_rb = 技能键 RB
+vr.keys.pad_lb = 手柄 LB
+vr.keys.pad_a = 手柄 A
+vr.keys.pad_lt = 第二排技能
+vr.keys.pad_l3 = 手柄 L3
+vr.keys.pad_r3 = 手柄 R3
+vr.keys.cmd_0x00 = 角色
+vr.keys.cmd_0x0c = 技能树
+vr.keys.cmd_0x04 = 任务日志
+vr.keys.cmd_0x27 = 下一个技能
+vr.keys.cmd_0x28 = 上一个技能
+vr.keys.cmd_0x23 = 跑步 / 行走
+vr.keys.cmd_0x24 = 原地站立
+vr.guide.0.title = 欢迎使用 D2R VR - 首先，测量你自己
+vr.guide.0.row0.does = 你的眼睛高度决定世界的比例；你的臂展让英雄的手臂与你的相符。只需几秒钟。
+vr.guide.0.row1.does = 1. 在你游玩的地方站直，目视前方。必须设置好头显的地板（它的房间设置）。
+vr.guide.0.row2.does = 2. 双臂在肩膀高度向两侧伸直，像字母 T 一样。
+vr.guide.0.row3.does = 3. 松开两个扳机，然后同时扣住两个并保持不动，直到显示“已保存”。
+vr.guide.0.row4.does = 右 B 取消。游戏在这个指南后面继续运行：请站在安全的地方，比如城镇里。
+vr.guide.0.row5.does = 以后：头显中的设置，身体页，“校准身体”。
+vr.guide.0.nav = 现在测量，或暂不测量：它也随时在身体页上。
+vr.guide.1.title = 行走、转向、战斗
+vr.guide.1.row0.control = 左摇杆
+vr.guide.1.row0.does = 行走
+vr.guide.1.row1.control = 右摇杆
+vr.guide.1.row1.does = 左 / 右：转向
+vr.guide.1.row2.control = 右扳机
+vr.guide.1.row2.does = 攻击。剑、斧或锤在你挥过怪物时命中（接触命中），所以它们的扳机不攻击；弓或十字弩用扳机射击。
+vr.guide.1.row3.control = 右 A
+vr.guide.1.row3.does = 拾取、打开、交谈（若技能面板的 A 牌上有技能，则改为施放它）
+vr.guide.1.row4.control = 右 B、左 X、左 Y
+vr.guide.1.row4.does = 游戏的技能键 B、X、Y。按住左扳机使用第二排。
+vr.guide.1.row5.control = 右摇杆按下
+vr.guide.1.row5.does = 切换武器组 I / II
+vr.guide.nav = 指向“上一步”或“下一步”并扣动扳机。“关闭”（或 B）结束指南。
+vr.guide.2.title = 打开各种界面
+vr.guide.2.row0.control = 菜单键
+vr.guide.2.row0.does = 物品栏（PS VR2：右手柄的 Options 键）
+vr.guide.2.row1.control = 按住菜单键
+vr.guide.2.row1.does = 半秒：暂停菜单（Esc）
+vr.guide.2.row2.control = 左摇杆按下
+vr.guide.2.row2.does = 快速点按：地图。按住：显示地上物品的名称；半秒：物品栏。
+vr.guide.2.row3.control = 按住右摇杆按下
+vr.guide.2.row3.does = 半秒：技能面板；再来一次即关闭
+vr.guide.2.row4.control = 左握把 + 摇杆按下
+vr.guide.2.row4.does = 重新居中：你注视的方向为正前方
+vr.guide.2.row5.control = 在菜单中
+vr.guide.2.row5.does = 把右手柄指向它（激光）并扣动扳机点击；在那里摇杆和按键就是游戏的手柄
+vr.guide.3.title = 技能面板和设置
+vr.guide.3.row0.control = 技能面板
+vr.guide.3.row0.does = 指向一块牌并扣动扳机：为它选择技能。在牌上按住扳机：从此这个扳机施放它的技能
+vr.guide.3.row1.control = 编辑技能
+vr.guide.3.row1.does = 选一块牌，再选一个你拥有的技能，把它放到那里。RT 或 A 牌上的技能由右扳机或 A 施放。
+vr.guide.3.row2.control = “设置”标签页
+vr.guide.3.row2.does = 头显中的设置，在同一个窗口中：视角、选项、视频、身体、生命、外观、HUD、腰带、近战、左手、右手
+vr.guide.3.row3.control = 按住右摇杆按下
+vr.guide.3.row3.does = 在上次所在的标签页打开窗口；翻到“设置”
+vr.guide.3.row4.control = 翻页
+vr.guide.3.row4.does = 向左或向右拨动摇杆，或轻按握把（左键后退，右键前进）。B、Y 或菜单键关闭窗口。
+vr.guide.3.row5.control = 在电脑上
+vr.guide.3.row5.does = D2R VR Authentic Settings 包含所有设置；大多数改动会立即在游戏中显示
+vr.guide.4.title = 腰带、武器、弓
+vr.guide.4.row0.control = 腰带药水
+vr.guide.4.row0.does = 挂在你的髋部。手靠近一瓶它就亮起，握把拿取它；拿到嘴边倾斜：你就喝下。在别处松开：它回到原处。
+vr.guide.4.row1.control = 你的武器
+vr.guide.4.row1.does = 有重量：用握把握住它。两个握把都松开：它会掉落（握把可召回它）；在地上一秒后它就回到你背上。
+vr.guide.4.row2.control = 肩膀后方
+vr.guide.4.row2.does = 在那里按握把会从背上拔出武器。空手在左肩后按握把会收起盾牌，再按则取出。
+vr.guide.4.row3.control = 弓
+vr.guide.4.row3.does = 空出的手放到弦上，扳机或握把，向后拉，松开。拉弓时：B 下一个箭矢技能，A 上一个。
+vr.guide.4.row4.control = 标枪
+vr.guide.4.row4.does = 用握把握住，投出，然后松开
+vr.guide.4.row5.control = 生命和法力
+vr.guide.4.row5.does = 在你的手腕上
+vr.guide.5.title = 视角和再次查看本指南
+vr.guide.5.row0.control = F1
+vr.guide.5.row0.does = 俯视：游戏自己的摄像机
+vr.guide.5.row1.control = F2
+vr.guide.5.row1.does = 在英雄身后，摄像机随你的头部转动
+vr.guide.5.row2.control = F3
+vr.guide.5.row2.does = 游戏在你的地板上：低头看它，绕着它走
+vr.guide.5.row3.control = F4
+vr.guide.5.row3.does = 第一人称 - 就是这个视角。双手、面板和本指南都属于 F4。
+vr.guide.5.row4.control = 键盘
+vr.guide.5.row4.does = 视角对应的 F 键（游戏窗口处于焦点时），F12 下一个视角，F11 重新居中。设置的视角页上也有 F1 - F4。
+vr.guide.5.row5.control = 再次查看本指南
+vr.guide.5.row5.does = 头显中的设置，身体页：首次启动指南
+vr.guide.5.nav = “完成”关闭指南；它随时都在身体页上。
 
 # ===== The words the program writes (status lines, messages, buttons) =====
 dialog.pictures = 图片（png, jpg, bmp, dds, tga）
@@ -3575,6 +3919,8 @@ dome.no_receipt = 无法写入 mods\D2R-VR\sky_dome.json
 dome.made = 已用你的游戏制作：由亚瑞特山顶天空制成的天穹模型（mods\D2R-VR\D2R-VR.mpq），从下次启动游戏起生效
 dome.ready = 就绪：天穹模型（mods\D2R-VR\D2R-VR.mpq）
 dome.kept = 其中 {n} 个由你改过：保持原样
+dome.atlas = 每一幕的天空和洞穴的黑色都在一张图片里，每个天穹占其中自己的一条
+dome.no_atlas = 每个天穹使用自己的图片（{why}）
 ceiling.no_mod = 仅在模组自己的文件夹中（mods\D2R-VR\D2R-VR.mpq），而它不在这里：没有游戏洞穴顶部
 ceiling.off = 关闭（[ceiling] game_ceiling）：没有生成洞穴顶部模型；已移除我们的 {n} 个
 ceiling.no_archives = 无法打开游戏的存档（错误 {error}）；下次启动时会再试
@@ -3585,6 +3931,12 @@ ceiling.no_receipt = 无法写入 mods\D2R-VR\cave_ceiling.json
 ceiling.made_kinds = 已用你的游戏制作：{n} 种顶部，每个房间各自的石材或岩石（mods\D2R-VR\D2R-VR.mpq），从游戏下次启动起生效
 ceiling.ready_kinds = 就绪：{n} 种顶部（mods\D2R-VR\D2R-VR.mpq）
 ceiling.no_maps = 此游戏中没有，那里使用我们的拱顶：{kinds}
+ceiling.beams = 兵营的木梁：游戏自己的框架，每块 {n} 个整框
+ceiling.no_beams = 没有兵营木梁：这个游戏中没有游戏的框架，或与已知的不同{why}
+ceiling.walls = 已在 {n} 个区域测量墙顶
+ceiling.dome = 大教堂的穹顶：立在礼拜堂的四根柱子上，半径 {r} 单位
+ceiling.no_dome = 没有大教堂穹顶：{why}
+ceiling.tall_domes = 高大构件上方的穹顶（房间，半径单位）：{list}
 ceiling.kept = 其文件中有 {n} 个被你改动过：保持原样
 data_mods.no_mod = 只在 D2R VR 自己的模组（mods\D2R-VR\D2R-VR.mpq）中生效，而它不在这里
 data_mods.off_removed = 关——其他模组的文件已从 D2R VR 的模组中移除
@@ -3598,7 +3950,189 @@ data_mods.not_merged = 未合并：{mods}
 data_mods.saves = 角色保留在 D2R VR 的存档文件夹中
 data_mods.failed = {n} 个文件失败，见 d2r_vr_data_mods.txt
 
+# ===== In the headset: the words the plugin writes (the skill panel, the settings in the headset, the calibration prompt, the map) =====
+vr.calib.release = 松开两个扳机。
+vr.calib.ready = 很好。现在同时扣住两个扳机并保持不动。
+vr.calib.hold = 保持不动...
+vr.calib.floor = 头显没有给出地板（未进行房间设置），所以无法测量身高。
+vr.calib.height = 你的眼睛读数不在离地 0.8 - 2.3 m 之内。地板高度设置好了吗？
+vr.calib.tracking = 头显或某个手柄未被追踪。请把手柄放在头显能看到的地方。
+vr.calib.upright_seated = 坐直，目视正前方。
+vr.calib.upright = 站直，目视正前方。
+vr.calib.arms = 双臂向两侧伸直，与肩同高，肘部伸直，双手不要在身前。
+vr.calib.still = 你动了。松开两个扳机并保持不动。
+vr.calib.saved = 已保存，并已启用。松开扳机。
+vr.calib.failed = 无法写入 d2r_vr.ini（见日志）。松开后再试一次。
+vr.calib.title_seated = 坐姿：测量我的臂展
+vr.calib.title = 测量我的身高和臂展
+vr.calib.steps_seated = 坐直并目视正前方。双臂在肩膀高度向两侧伸直，尽量伸展。\n松开两个扳机，然后同时扣住两个并保持不动。只读取臂展：坐姿下不测量眼睛高度（保留已存储的）。
+vr.calib.steps = 站直并目视正前方。双臂在肩膀高度向两侧伸直，尽量伸展。\n松开两个扳机，然后同时扣住两个并保持不动。
+vr.calib.cancel = 右 B 取消。游戏在后面继续运行 - 请在安全的地方测量。
+vr.body.measured = 眼睛高度 {eye} m，臂展 {span} m
+vr.body.measured_span = 臂展 {span} m（眼睛高度：未测量）
+vr.body.span_unusable = 已存储的臂展不可用：请重新测量
+vr.body.span_none = 尚未测量臂展
+vr.body.unusable = 已存储的测量不可用：请重新测量
+vr.body.none = 尚未测量
+vr.body.use_until = 在你测量之前，使用来自 BodyWalk 或“你的身高”的身高以及手臂缩放。
+vr.body.use_off = 未启用：D2R VR Authentic Settings 中的“使用测得的身高与臂展”未勾选。
+vr.body.use_span = 已启用：英雄的手臂跟随它；世界的比例取“你的身高”（为此请站着测量一次）。
+vr.body.use_on = 已启用：世界的比例和英雄的手臂跟随它。
+vr.body.span_auto = {span} m（自动）
+vr.body.auto = 自动
+vr.body.why_seated = 坐姿：校准只读取你的臂展。“重新居中视角”把英雄的眼睛设在你头部所在处。
+vr.body.why = 你真实的眼睛高度决定世界的比例，你的臂展决定英雄的手臂。
+vr.keys.custom = 自定义（ini）
+vr.hset.status.no_ini = 未找到 d2r_vr.ini。无法更改任何内容。
+vr.hset.status.saving = 正在保存...
+vr.hset.status.saved_video = 已保存。游戏马上会重建画面：冻结几秒钟。
+vr.hset.status.saved = 已保存。改动已生效。
+vr.hset.status.save_failed = 保存失败。你的改动仍在这里。
+vr.hset.status.conflict = ini 在别处被修改了。显示的是它当前的值。
+vr.hset.status.live_soon = 改动马上会自行生效。
+vr.hset.status.video_unapplied = 尚未应用。“应用”向游戏请求这个尺寸；“关闭”放弃它。
+vr.hset.status.unsaved = 有未保存的改动。“应用”保存，“关闭”放弃。
+vr.hset.status.video_idle = 选择一个尺寸，然后“应用”。你的英雄进入世界后生效。
+vr.hset.status.body_idle = “校准身体”会隐藏此面板；测量完成后它会回来。
+vr.hset.status.keys_idle = 选择按键的功能，然后“应用”。组合键和其他长按：D2R VR Authentic Settings。
+vr.hset.status.keys_off = “无需 BodyWalk 的操控”已关闭：这些按键不起作用（操控由 BodyWalk 的映射负责）。
+vr.hset.status.melee_idle = 每项改动都会自行生效。仅限第一人称（F4）。
+vr.hset.status.melee_off = “接触命中”已关闭：勾选它，下方各行才生效。
+vr.hset.status.belt_needs_direct = 需要“无需 BodyWalk 的操控”（现在关闭）：在此之前，单独的握把就能拿药水。
+vr.hset.status.belt_idle = 每项改动都会自行生效：看看你的腰带，然后再调整。
+vr.hset.status.belt_off = 腰带上的药水已关闭（D2R VR Authentic Settings > 界面：F4 身体）：这些不起作用。
+vr.hset.status.idle_window = 指向并扣动扳机。B、“关闭”或长按右摇杆关闭此窗口。
+vr.hset.status.idle = 指向并扣动扳机。B 或长按右摇杆关闭它。
+vr.hset.custom_empty = （列表中没有名称的一行）
+vr.hset.second_row_off = - 第二排（LT）已关闭
+vr.hset.title = 头显设置
+vr.video.title = 渲染尺寸
+vr.video.note = “应用”会重建画面：游戏冻结几秒钟（约 7 秒）。
+vr.body.calibrate = 校准身体
+vr.body.forget = 清除测量
+vr.body.guide = 首次启动指南
+vr.body.span_note = 手动臂展：- 手臂更短，+ 更长（新的校准会重新设置）
+vr.body.step1 = 1. 在你游玩的地方站直，目视前方。必须设置好头显的地板。
+vr.body.step2 = 2. 按“校准身体”：此面板隐藏，你面前出现提示。
+vr.body.step3 = 3. 双臂向两侧平伸。松开两个扳机，然后同时扣住两个并保持不动。
+vr.body.step4 = 4. 右 B 取消。完成后此面板会带着数值回来。
+vr.body.seated_step1 = 1. 在你游玩的地方坐直，目视前方，留出手臂的空间。不需要地板。
+vr.body.seated_step4 = 4. 然后按你游玩时的坐姿“重新居中视角”：英雄的眼睛就在你头部所在处。
+vr.guide.not_now = 暂不
+vr.guide.back = 上一步
+vr.guide.measure_now = 现在测量
+vr.guide.done = 完成
+vr.guide.next = 下一步
+vr.hset.game_view = 游戏视角
+vr.hset.game_view.detail = F1 俯视，F2 第三人称，F3 在你的地板上，F4 第一人称
+vr.hset.preview = 预览 5 s
+vr.hset.recentre = 重新居中视角
+vr.hset.close = 关闭
+vr.hset.apply = 应用
+vr.video.preset_window = 窗口尺寸
+vr.video.preset_headset = 头显自身
+vr.video.not_known = 尚未知晓
+vr.video.pick_headset_size = 头显自身：{size}
+vr.video.pick_headset = 头显自身的尺寸
+vr.video.pick_window = 窗口自身的尺寸
+vr.video.cost_headset_unknown = 游戏第一次启动头显会话时会读取它的尺寸。
+vr.video.cost_window = 没有变化：画面就是游戏窗口的。
+vr.video.cost = 绘制 2048 x 2048 像素的 {times} 倍。
+vr.video.limit = 你的头显最多接受 {most}：已缩小到该尺寸。
+vr.video.now = 游戏现在绘制 {size}。
+vr.video.now_unknown = 尚不知道游戏的画面尺寸。
+vr.video.recommended = 你的头显推荐 {size}。
+vr.video.recommended_unknown = 游戏第一次启动会话时会读取你头显的尺寸。
+vr.tiles.edit = 编辑技能
+vr.tiles.close = 关闭
+vr.tiles.back = 返回
+vr.tiles.previous = 上一页
+vr.tiles.next = 下一页
+vr.tiles.clear_slot = 清空槽位
+vr.tiles.tab_skills = 技能
+vr.tiles.tab_settings = 设置
+vr.tiles.choose_skill_for = 选择技能用于
+vr.tiles.now = 当前：{skill}
+vr.skills.nothing = 无
+vr.skills.choose_slot = 选择要更改的槽位
+vr.skills.unavailable = 技能不可用
+vr.skills.trigger_casts = 扳机施放：{skill}  （{slot}）
+vr.tiles.trigger_basic = 扳机：普通攻击  （A）
+vr.tiles.page = 第 {page} / {pages} 页
+vr.tiles.hint_first = 轻按一个槽位更改其技能 - 在上面按住扳机，扳机就施放它
+vr.tiles.hint_wheel = 指向一个槽位并扣动扳机
+vr.tiles.hint_pick_slot = 指向要更改的槽位并扣动扳机
+vr.tiles.hint_pick_skill = 指向一个技能并扣动扳机，把它放到槽位上
+vr.tiles.run = 跑步
+vr.tiles.walk = 行走
+vr.tiles.run_walk_unknown = 跑步 /\n行走
+vr.wheel.run_walk = 跑步 / 行走
+vr.tiles.empty = 空
+vr.tiles.not_found = 未找到
+vr.tiles.lt_row_off = LT 排已关闭
+vr.skills.all = 全部
+vr.skills.general = 通用 / 物品
+vr.tiles.no_trees = 技能分类需要图标缓存中的技能树 - 请重新运行 tools/skill_icons/prepare_skill_icons.py
+vr.skills.none = 没有可选的技能
+vr.skills.skill_n = 技能 {id}
+vr.skills.unassigned = 未分配
+vr.skills.tree_n = 技能树 {n}
+vr.skills.cleared = 槽位已清空
+vr.skills.assigned = 已分配
+vr.skills.not_taken = 游戏没有接受 - 请重新选择槽位
+vr.skills.no_answer = 游戏没有回应
+vr.skills.cannot_cast = 该槽位无法在这里施放
+vr.skills.hold_left_trigger = 按住左扳机并扣动右扳机
+vr.skills.pull_right_trigger = 扣动右扳机
+vr.skills.layout = 在此布局中无法更改技能
+vr.wheel.edit = 编辑技能
+vr.wheel.close = 关闭
+vr.wheel.back = 返回
+vr.wheel.previous = 上一页
+vr.wheel.next = 下一页
+vr.wheel.now_run = 当前：跑步
+vr.wheel.now_walk = 当前：行走
+vr.wheel.empty = 空
+vr.wheel.basic_attack = 普通\n攻击
+vr.wheel.active = 已激活
+vr.wheel.choose_slot = 选择\n槽位
+vr.wheel.choose_skill = 选择技能  -  {slot}
+vr.wheel.now = 当前：{skill}
+vr.wheel.clear_slot = 清空槽位
+vr.skills.command = 命令
+vr.skills.item_skill = 物品技能
+vr.skills.level = 等级 {level}
+vr.wheel.trigger_basic = 扳机：普通攻击
+vr.wheel.page = 第 {page} / {pages} 页
+vr.compass.n = 北
+vr.compass.ne = 东北
+vr.compass.e = 东
+vr.compass.se = 东南
+vr.compass.s = 南
+vr.compass.sw = 西南
+vr.compass.w = 西
+vr.compass.nw = 西北
+vr.map.rotate = 旋转地图
+vr.map.on = 开
+vr.map.off = 关
+
 # ===== Keys of this file that en.txt does not list (an English used under several keys, worded here for one of them) =====
+render.keep_room_heights.label = 地面保持原样（走回头路时地面不再滑动）
+render.keep_room_heights.tip = 游戏在开始绘制关卡中的每个房间时给它一个高度，与当时绘制在它周围的房间相匹配，房间离开视线后就忘掉它。它的地砖边缘并不能一圈都对齐，所以你从另一条路（或在另一个区域或城镇之后）回到的房间可能高一级或低一级 - 从游戏位于上方的摄像机看没有人察觉，从我们的摄像机看地面就会滑动：地块被推高、推低或推向一旁，之间露出虚空。开启：每个房间保持它第一次被绘制时的高度，直到你离开游戏。只改变画面；游戏的世界是平的，战斗和路径的任何东西都不变。即时生效。关闭：游戏自己的高度，与以前相同。
+group.ceiling_act_1_caves = 顶部：第一幕洞穴
+group.ceiling_act_1_caves.help = 第一幕洞穴的顶部：它离地板的高度、亮度、英雄的光在其上照及的距离、浮雕，以及石头图片及其大小、对比度、细节和潮湿光泽。
+group.ceiling_act_1_crypts = 顶部：第一幕墓穴
+group.ceiling_act_1_crypts.help = 第一幕墓穴的顶部：高度、亮度、英雄的光照及距离、凹凸不平的砖石垂下多远，以及它的图片。
+group.ceiling_act_1_barracks = 顶部：第一幕兵营
+group.ceiling_act_1_barracks.help = 第一幕兵营的顶部：高度、亮度、英雄的光照及距离、浮雕和图片。
+group.ceiling_act_1_catacombs = 顶部：第一幕地下墓穴
+group.ceiling_act_1_catacombs.help = 第一幕地下墓穴的顶部：高度（游戏绘制得更高的部分会被截去）、亮度、英雄的光照及距离、浮雕和图片。
+group.ceiling_act_1_cathedral = 顶部：第一幕大教堂
+group.ceiling_act_1_cathedral.help = 第一幕大教堂的顶部。除了高度、亮度和图片，还有穹顶：让顶部在更高的物体（祭坛的华盖）之上像球面一样升起，而不是把它截去；可设置从多高开始、多宽以及升到多高。
+group.ceiling_act_2_sewers = 顶部：第二幕下水道
+group.ceiling_act_2_sewers.help = 第二幕下水道的顶部：高度、亮度、英雄的光照及距离、浮雕和图片。
+group.ceiling_act_2_palace = 顶部：第二幕宫殿
+group.ceiling_act_2_palace.help = 第二幕宫殿的顶部：高度、亮度、英雄的光照及距离、浮雕和图片。
 ceiling.made = 已由你的游戏生成：取自第 1 幕洞穴岩石的洞穴顶部模型（mods\D2R-VR\D2R-VR.mpq），游戏下次启动时生效
 ceiling.ready = 就绪：洞穴顶部模型（mods\D2R-VR\D2R-VR.mpq）
 group.direct_hit_experimental = 直接命中（实验性）

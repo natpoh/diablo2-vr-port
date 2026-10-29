@@ -51,6 +51,7 @@ struct Params {
     // [fog] game_fog_our_curve: our effect's curve in place of the exponential - strength x saturate((distance - start) / (end - start)) ^ curve
     bool ourCurve = false;
     float start = 50.0f, end = 150.0f, curve = 1.0f, strength = 1.0f;
+    bool ease = false;                     // [fog] ease_in: that curve eased in over its first 40 units (D2R VR Unleashed's, shared/unleashed_fog.h)
 };
 void Configure(const Params& p);
 // The step ran within the last quarter second: the game's pass is to leave the fog's colour out (fog_height noFog)

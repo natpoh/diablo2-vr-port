@@ -64,6 +64,7 @@
 #include "game_fog_vr.h"   // [fog] game_fog: the game's own distance fog with our numbers (its own pass, none of ours)
 #include "sky_dome.h"      // [sky] game_sky: our painted sky as the game's own dome (the pure parts)
 #include "game_ceiling.h"  // [ceiling] game_ceiling: the cave ceiling as the game's own lit rock slab (the pure parts, shared with Settings)
+#include "ceiling_measures.h"   // [ceiling] height_from_walls, game_ceiling_beams: the rooms measured from the game's own models
 
 namespace probe {
 void Run(const float hero[3], const wchar_t* outPath);
@@ -99,7 +100,9 @@ int FindHeroMatrices(const float hero[3], uintptr_t* out, int max);
 #include "unit_scan.h"     // ... the client's unit hash, the walk hit by touch uses
 #include "portal_oval.h"   // [render] flat_portal_no_oval: the town portal's black oval not drawn in flat F2 / F3 (pure part, tested)
 #include "portal_auto.h"   // [input] portal_look_horizon / portal_auto: flat, after a portal and into one (pure part, tested)
-#include "room_heights.h"  // [render] keep_room_heights: a room keeps the height the game first drew it at (pure part, tested)
+#include "../shared/unleashed_fog.h"           // [fog] ease_in / no_fog_river: D2R VR Unleashed's fog ease and no fog in the River of Flame (MPL 2.0)
+#include "../shared/unleashed_far_objects.h"   // [render] big_radius: D2R VR Unleashed's Big objects (MPL 2.0, bearstonem) - the setting's steps
+#include "room_heights.h"  // [render] floors_stay: a room keeps the height the game first drew it at (pure part, tested)
 #include "attack_view.h"   // VR F2 and F4: the attack goes where the player looks; VR F1 and F3 (top-down): where the hero faces (pure part, tested)
 #include "window_json.h"   // the game's windowed size in Settings.json and what each platform does to it (shared/, pure, tested)
 #include "turn_mode.h"     // [turn] smooth / snap / speed: how the right stick turns, and what an older ini's snap=0 means (shared/, pure, tested)
@@ -175,6 +178,7 @@ namespace gamestate { int HeadSide(); }   // [shield] heads_hang: the hand slot 
 #include "afr_eye_shared.h"
 #include "dlss_mv.h"
 #include "xr.h"
+#include "ui_lang.h"   // [hud] headset_language: the headset's words in the language of D2R VR Settings (vr/ui_text.h)
 #include "eye_fov.h"   // native OpenXR: an eye's projection from its frustum (Projection)
 #include "turn_math.h"   // eyes by turns: the cameras handed to xr::SetTurnView (FromAxes)
 #include "sky_view_eyes.h"   // which eye's sky view and stamp a camera build writes in a pair (the replayed right eye's put in by the replay)
@@ -189,6 +193,8 @@ namespace gamestate { int HeadSide(); }   // [shield] heads_hang: the hand slot 
 #include "overlay_work.h" // eyes by turns: the overlay techniques rendered only with something on for them (replay::OverlaysHaveWork)
 #include "no_reshade.h"   // [render] no_reshade: whether ReShade is loaded, the mode it is for, what is off (tools/no_reshade_test)
 #include "native_depth.h" // [render] no_reshade: the scene's depth copied for the eye made (tools/native_d3d12_test runs it on WARP)
+#include "native_fx_depth.h" // [render] no_reshade: the depth copied in flat too for our sky / fog / ceiling, drawn by only when fresh
+#include "sky_paths.h"       // who draws the sky and the fog: the game's or ours, never both; the interface by the eyes only in stereo
 #include "fx_pass_keep.h" // [render] no_reshade's runtime: the passes into the picture left out while their switches are off
 #include "fx_picture_keep.h" // ... and only the act's sky and the ceiling's stone on the graphics card
 #include "fx_native.h"    // [render] no_reshade: D2R_DepthFog.fx run by the plugin itself (the effect code below is templates over the runtime)
@@ -265,6 +271,7 @@ namespace hud { void SetGameInterfaceScale(float k); }   // the game's own inter
 namespace hud { void SetMapProjection(float ratio); }   // F4: our projection's x over y scale - the corner map's box drawn that much wider in a picture of another shape
 #include "low_hp_game.h"   // [hud] low_hp_vignette: the red heartbeat vignette at low life (vr/low_hp.h)
 #include "roof_keep.h"     // [render] keep_roofs: in F4 the roof of a building you walk into stays
+#include "weather_place.h" // [sky] weather_first_person: the game's rain and snow hidden or round the viewer in first person
 #include "roof_sides.h"    // [render] roofs_two_sided: roof materials built double-sided (their underside, not the sky)
 #include "prop_hold.h"     // [stereo] props_once_a_pair: hanging lanterns stepped once a stereo pair
 #include "merc_tint_game.h"   // [hud] merc_tint: the wounded merc tinted red by the effect (vr/merc_tint.h)
@@ -310,7 +317,8 @@ struct RemoteCopy { uint32_t code = 0; float m[16] = {}; };
 void SetRemoteCopies(const RemoteCopy* c, int n);
 unsigned TakeRemoteCopiesDrawn();
 }
-namespace engitem { bool DomeShown(); float DomeRadius(); unsigned DomeIndexCount(); }   // [sky] game_sky: the game draws our sky this frame (the post pass's stands aside)
+namespace engitem { bool DomeShown(); float DomeRadius(); unsigned DomeIndexCount(); const char* SkyCannot(); }   // [sky] game_sky: the game draws our sky this frame (the post pass's stands aside)
+namespace fx { namespace noreshade { bool FxWaiting(); } }   // [render] native_effects: our effect not drawing yet (its build for this size not there) - the game's dome meanwhile
 namespace engitem { bool CeilingShown(); bool CeilingByGame(); }   // [ceiling] game_ceiling: the game draws the cave ceiling this frame; the ceiling is the game's here (the post pass's stays off)
 namespace fx { bool CeilWanted(); bool GameCeilWanted(); }   // (a ceiling wanted here: [ceiling] enabled, first person, a ceiling biome / a natural cave, no menu)
 namespace engitem { void SetWant(const std::wstring& path); void SetBelt(bool on, float up, float ahead, float arc, float scale, float side, float across, float turn, float grabCm, bool grab, const float hold[6]); void SetBallColours(const float (*rgb)[3]); void Frame(bool fullBody); void InstallHook(); float FistCap(int side); bool BeltBusy(int side); }   // [debug] engine_unit, [hands] belt_models, below
@@ -378,6 +386,7 @@ struct Settings {
     std::atomic<float> stickPitchSign{1.0f};   // flip if pushing up looks down
     std::atomic<int>   rings{4};            // [render] rings: room rings drawn around the hero (cleanroom/drawdist)
     std::atomic<float> modelRadius{1000.0f}; // [render] model_radius: houses, props, units drawn out to this (game: 150)
+    std::atomic<float> bigRadius{0.0f};     // [render] big_radius: trees, houses, walls kept farther by their size (0 = off; D2R VR Unleashed's)
     std::atomic<int>   renderPoolMb{64};    // [render] render_pool_mb: the game's Renderer Pool at least this big (game: 12)
     std::atomic<int>   entityPoolMb{280};   // [render] entity_pool_mb: its Entity System Pool (game: 70) - cleanroom/pools
     std::atomic<int>   hudMap{0};           // [hud] map: 0 in the picture, 1 out of it, into its own texture
@@ -483,6 +492,10 @@ struct Settings {
     std::atomic<bool>  fogLight{false};    // [fog] light: the fog's short way for weak graphics cards (D2R_DepthFog.fx LightFog)
     std::atomic<bool>  skyOn{false};        // sky in the void, same shader as the fog
     std::atomic<bool>  gameSky{false};      // [sky] game_sky: our painted sky as the game's own dome (engitem::SkyDome)
+    std::atomic<bool>  domeFogHorizon{true};   // [sky] dome_fog_horizon: the game's dome's low part into the act's fog colour (D2R_DepthFog.fx DomeHorizon)
+    std::atomic<bool>  gameSkybox{false};   // [sky] game_skybox: at the Summits the game's dome laid as far as the depth holds (an option; off: as any act 5 area)
+    std::atomic<bool>  summitBackdropHidden{true};   // [sky] summit_backdrop_hidden: the Summit's ground picture (skybox01) hidden in first person (vr/own_effects.h)
+    std::atomic<int>   weatherFirstPerson{0};   // [sky] weather_first_person: the game's rain and snow in VR F4 / flat F3 - 0 the game's place, 1 hidden, 2 round the viewer (vr/weather_place.h)
     std::atomic<int>   gameSkyTest{0};         // [debug] game_sky_test: 1 the dome in magenta, 2 the game's own Summit sky model, 3 its unit naming our model, 4 our model under its path
     std::atomic<float> gameSkyRadius{200.0f};   // [sky] game_sky_radius: the dome's radius, world units (200: a near horizon under the game's fog)
     std::atomic<bool>  gameDomeCaves{false};    // [sky] game_dome_caves: a black dome round the eye underground (engitem::CaveDomeFrame)
@@ -499,11 +512,18 @@ struct Settings {
     std::atomic<bool>  skyHidePanels{true}; // no sky while a side panel shifts the picture
     std::atomic<bool>  skyOverRims{true};   // [sky] cover_rims: the sky over the dark rim round things against the void (bearstonem/d2r-pcvr 4071a4a), VR F4
     std::atomic<bool>  fogCaves{true};      // [fog] caves: the fog in caves and dungeons too (every area off [sky] outdoor)
+    std::atomic<bool>  fogEaseIn{false};    // [fog] ease_in: the fog eased in over its first 40 units, no hard ring (D2R VR Unleashed's, shared/unleashed_fog.h)
+    std::atomic<bool>  fogNoRiver{false};   // [fog] no_fog_river: no added fog in the River of Flame, as caves=0 underground (D2R VR Unleashed's)
     std::atomic<bool>  ceilOn{false};       // [ceiling] enabled: a vault over the void in caves (first person only)
     std::atomic<bool>  gameCeiling{false};       // [ceiling] game_ceiling: the vault as the game's own lit rock slab (engitem::CeilingFrame), VR F4
-    std::atomic<float> gameCeilingHeight{0.0f};  // [ceiling] game_ceiling_height: its top over the area's floor, world units (0 = the area's height_<biome>)
     std::atomic<bool>  gameCeilingWall{false};   // [ceiling] game_ceiling_wall: its rim bent down into a wall of the same rock (the void past its edge closed)
-    std::atomic<float> ceilHeight{30.0f};   // [ceiling] height: over the hero's floor, world units
+    std::atomic<bool>  gameCeilingBeams{false};  // [ceiling] game_ceiling_beams: the barracks' own wooden ceiling frame under the slab (engitem::CeilingFrame)
+    std::atomic<bool>  ceilFromWalls{false};     // [ceiling] height_from_walls: each room's ceiling on its walls' top (measured from the game's models)
+    std::atomic<bool>  gameCeilingDome{false};   // [ceiling] game_ceiling_dome: the cathedral's dome over its chapel in the game's ceiling (engitem::CeilingFrame)
+    std::atomic<bool>  gameCeilingDomesTall{false};   // [ceiling] game_ceiling_domes_over_tall: the same over every room's tall piece (ceilmeasure::DomeOf, kTallFactor)
+    std::atomic<float> gameCeilingDomeSize{1.0f};   // [ceiling] game_ceiling_dome_size: times the measured dome round its middle (gameceiling::DomeSize)
+    std::atomic<float> gameCeilingDomeRise{1.0f};   // [ceiling] game_ceiling_dome_rise: times the least rise that passes over the canopy (1 .. 2)
+    std::atomic<float> ceilHeight{18.0f};   // a room with no height_<biome> of its own (LoadCeilingBiomes: kCeilHeightAlone), world units
     std::atomic<float> ceilScale{10.0f};    // [ceiling] scale: world units per tile (the test grid's cell)
     std::atomic<float> ceilBright{1.0f};    // [ceiling] brightness
     std::atomic<float> ceilRelief{6.0f};    // [ceiling] relief: how far the rock hangs down, world units (0 = flat)
@@ -552,7 +572,7 @@ struct Settings {
     std::atomic<bool>  portalAuto{false};        // [input] portal_auto: flat F2 / F3, walking into a portal enters it by the game's own click (vr/portal_auto.h)
     std::atomic<float> portalAutoRadius{4.0f};   // [input] portal_auto_radius: how near (world units, 2 a cell)
     std::atomic<int>   portalAutoDelay{150};     // [input] portal_auto_delay_ms: how long that near, walking, before it is entered
-    std::atomic<bool>  keepRoomHeights{true};   // [render] keep_room_heights: a room of the level keeps the height the game first drew it at (no floor that slides on a way back)
+    std::atomic<bool>  keepRoomHeights{false};   // [render] floors_stay: a room of the level keeps the height the game first drew it at (no floor that slides on a way back)
     std::atomic<bool>  findPrevMatrix{false};
     std::atomic<bool>  dlssPrevFix{false};
     std::atomic<int>   dlssMv{2};              // [render] dlss_mv: 0 off, 1 check vrcam's matrices against the game's motion vectors (logs), 2 hand DLSS the same eye's     // [render] dlss_prev_fix: the game's previous-frame view made the same eye's (experiment)   // [debug] find_prev_matrix: once, where the game keeps past frames' view matrices (DLSS motion vectors)
@@ -843,11 +863,15 @@ struct Settings {
     std::atomic<bool>  gameFog{false};         // [fog] game_fog: the game's own distance fog drawn with our numbers (gamefogvr::)
     std::atomic<bool>  fogHeight{false};       // [fog] game_fog_height: the game's fog thinned with height in its own pass (vr/fog_height.h)
     std::atomic<float> fogTop{60.0f};          // [fog] game_fog_top: no fog above this, world units above the eye
+    std::atomic<bool>  fogTopFromFloor{false}; // [fog] game_fog_top_from_floor: game_fog_top counted from the hero's floor (gamefogvr::TopAboveEye)
     std::atomic<float> fogSoft{50.0f};         // [fog] game_fog_soft: how far below the top the fog fades in
     std::atomic<bool>  fogMist{true};          // [fog] game_fog_mist: the game's volumetric mist fogged by distance too (no light band in caves)
     std::atomic<bool>  fogCavesBlack{true};    // [fog] game_fog_caves_black: underground the game's fog black, the void left alone
     std::atomic<bool>  fogBeforeFx{false};     // [fog] game_fog_before_fx: the fog laid on the scene before the transparent resolve (fogfx::)
     std::atomic<bool>  fogOurCurve{false};     // [fog] game_fog_our_curve: the game's fog by our effect's curve, not its exponential
+    std::atomic<bool>  fogKeepsColour{false};  // [fog] fog_keeps_colour: the act's fog colour at every hour, not darkened with the game's light
+    std::atomic<bool>  fogIntoSky{false};      // [fog] fog_into_sky: the fog's colour the sky straight behind each point (D2R_DepthFog.fx SkyBehind)
+    std::atomic<bool>  fogMatch{false};        // [fog] game_fog_match: the game's fog shown in the act's colour, its grading measured (D2R_DepthFog.fx GameFogTrue)
     std::atomic<bool>  gameDrawnFlat{false};   // [render] game_drawn_flat: the game-drawn sky dome, ceiling and fog in the flat game too (GameDrawnView)
     std::atomic<int>   solidWalls{1};          // [render] solid_walls: 0 the game's see-through walls, 1 solid but in F1, 2 solid in every view
     std::atomic<bool>  keepRoofs{false};       // [render] keep_roofs: F4 - the game's roof cut-away (fade to 0) answered with 1 (vr/roof_keep.h)
@@ -934,6 +958,21 @@ std::vector<CeilBiomeCfg> g_ceilBiomeCfg;   // under g_biomeLock
 // [ceiling] game_ceiling_biomes: the natural caves, where the game's own cave rock (game_ceiling) is the ceiling. Every other area on
 // [ceiling] biomes keeps our effect's vault with its own settings, game_ceiling or not (Serg 2026-10-28: the barracks got the cave rock).
 std::vector<std::string> g_gameCeilBiomes;   // under g_biomeLock
+// Every room its own height (Serg 2026-10-29: "оставить только частные для каждого типа помещений"): height_<biome> for each room on
+// [ceiling] biomes (g_ceilBiomeCfg) and on game_ceiling_biomes (here: those not on biomes - the game's ceiling only); a room with none of its
+// own - one typed into a list by hand - the common [ceiling] height's last shipped value, which is no longer read.
+constexpr float kCeilHeightAlone = gameceiling::kHeightAlone;
+std::vector<std::pair<std::string, float>> g_gameCeilHeights;   // under g_biomeLock
+
+// [ceiling] height_from_walls, game_ceiling_beams: the rooms measured from the game's own models (shared/ceiling_measures.h; D2R_VR_Settings
+// writes them into the mod), read at each area change (SkyTick)
+std::atomic<float> g_wallsTopHere{0.0f};   // the area's walls' top, world units (0: not measured)
+std::atomic<bool> g_beamsHere{false};      // the area is the barracks' (gameceiling::kBeamBiomes) and the frame was measured
+ceilmeasure::Beam g_beam;                   // the frame as measured (under g_biomeLock)
+// [ceiling] game_ceiling_dome: the area's dome as measured (the cathedral's), read at each area change with the rest
+std::atomic<bool> g_chapelHere{false};       // the area is the dome's and it was measured
+std::atomic<unsigned> g_chapelGen{0};        // a new area: the canopy is looked for again
+std::vector<ceilmeasure::Dome> g_chapelDomes;   // the area's domes, the cathedral's and those over tall pieces (under g_biomeLock)
 
 // A comma-separated list of biome names from the ini, lower case
 std::vector<std::string> IniBiomeList(const wchar_t* key, const wchar_t* fallback) {
@@ -951,14 +990,30 @@ std::vector<std::string> IniBiomeList(const wchar_t* key, const wchar_t* fallbac
     return list;
 }
 
+// A room's own height as the ini has it: 0 (or none, or less) not set - from its walls (gameceiling::HeightOf); else 1 .. 500
+float OwnHeight(float v) { return v > 0.0f ? std::clamp(v, 1.0f, 500.0f) : 0.0f; }
+
 void LoadCeilingBiomes() {
-    const std::vector<std::string> list = IniBiomeList(L"biomes", L"act1_caves,act1_crypt,act1_barracks,act1_cathedral,act1_catacombs,act2_sewer,act2_palace_clean");
+    // (a list from before an area batch gets the batch: the installer keeps an upgrading player's lists - gameceiling::Upgraded)
+    std::string addedVault, addedGame;
+    const std::vector<std::string> list = gameceiling::Upgraded(
+        IniBiomeList(L"biomes", L"act1_caves,act1_crypt,act1_barracks,act1_cathedral,act1_catacombs,act2_sewer,act2_palace_clean,act2_palace,act2_palace_cells"),
+        false, &addedVault);
     const std::string all = gameceiling::AllBiomes();   // (every area of the table: each its own kind)
-    const std::vector<std::string> caves = IniBiomeList(L"game_ceiling_biomes", std::wstring(all.begin(), all.end()).c_str());
+    const std::vector<std::string> caves = gameceiling::Upgraded(IniBiomeList(L"game_ceiling_biomes", std::wstring(all.begin(), all.end()).c_str()), true,
+                                                                 &addedGame);
+    static std::string toldAdded;
+    if (addedVault + "|" + addedGame != toldAdded) {
+        toldAdded = addedVault + "|" + addedGame;
+        if (!addedVault.empty() || !addedGame.empty())
+            LogF("vrcam: ceiling - the ini's area lists are from before the newer areas (an upgrade keeps them): read with them added - "
+                 "[ceiling] biomes + %s; game_ceiling_biomes + %s", addedVault.empty() ? "nothing" : addedVault.c_str(),
+                 addedGame.empty() ? "nothing" : addedGame.c_str());
+    }
     std::vector<CeilBiomeCfg> cfg;
     for (const std::string& b : list) {
         const std::wstring w(b.begin(), b.end());
-        cfg.push_back({b, std::clamp(IniF(L"ceiling", (L"height_" + w).c_str(), g_set.ceilHeight.load()), 1.0f, 500.0f),
+        cfg.push_back({b, OwnHeight(IniF(L"ceiling", (L"height_" + w).c_str(), 0.0f)),
                        std::clamp(IniF(L"ceiling", (L"brightness_" + w).c_str(), g_set.ceilBright.load()), 0.0f, 4.0f),
                        std::clamp(IniF(L"ceiling", (L"light_radius_" + w).c_str(), g_set.ceilLight.load()), 1.0f, 1000.0f),
                        std::clamp(IniF(L"ceiling", (L"relief_" + w).c_str(), g_set.ceilRelief.load()), 0.0f, 100.0f),
@@ -973,10 +1028,17 @@ void LoadCeilingBiomes() {
         v.texSize = std::clamp(IniF(L"ceiling", (L"tex_size_" + w).c_str(), 0.0f), 0.0f, 1000.0f);
         v.reliefPic = std::clamp(IniF(L"ceiling", (L"relief_pic_" + w).c_str(), 0.0f), -1.0f, 2.0f);
     }
+    std::vector<std::pair<std::string, float>> gameHeights;   // the game's ceiling's rooms with no vault of ours: their own height
+    for (const std::string& b : caves) {
+        if (std::find(list.begin(), list.end(), b) != list.end()) continue;
+        const std::wstring w(b.begin(), b.end());
+        gameHeights.emplace_back(b, OwnHeight(IniF(L"ceiling", (L"height_" + w).c_str(), 0.0f)));
+    }
     AcquireSRWLockExclusive(&g_biomeLock);
     const bool same = g_ceilBiomes == list && g_gameCeilBiomes == caves;
     g_ceilBiomes = list;
     g_gameCeilBiomes = caves;
+    g_gameCeilHeights = gameHeights;
     for (CeilBiomeCfg& c : cfg)   // the picture's slot kept until LoadCeilingTextures looks again: no flicker on a reload
         for (const CeilBiomeCfg& old : g_ceilBiomeCfg) if (old.biome == c.biome) c.slot = old.slot;
     g_ceilBiomeCfg = cfg;
@@ -985,15 +1047,20 @@ void LoadCeilingBiomes() {
 }
 
 // The ceiling's height, brightness, light reach, relief and picture slot (0 = none: the
-// shader's own stone) in the area now - its biome's own, or the common ones.
-void CeilingNow(float* height, float* bright, float* light, float* relief = nullptr, int* slot = nullptr) {
+// shader's own stone) in the area now - its biome's own, or the common ones. Its height: the room's own when set, else on its walls'
+// top ([ceiling] height_from_walls, measured), else 18 (gameceiling::HeightOf; `own` the room's own, 0 not set).
+void CeilingNow(float* height, float* bright, float* light, float* relief = nullptr, int* slot = nullptr, float* own = nullptr) {
     float r = g_set.ceilRelief.load();
     int sl = 0;
-    *height = g_set.ceilHeight.load(); *bright = g_set.ceilBright.load(); *light = g_set.ceilLight.load();
+    *height = 0.0f; *bright = g_set.ceilBright.load(); *light = g_set.ceilLight.load();
     AcquireSRWLockShared(&g_biomeLock);
+    for (const auto& h : g_gameCeilHeights)
+        if (h.first == g_biome) { *height = h.second; break; }
     for (const CeilBiomeCfg& c : g_ceilBiomeCfg)
         if (c.biome == g_biome) { *height = c.height; *bright = c.bright; *light = c.light; r = c.relief; sl = c.slot; break; }
     ReleaseSRWLockShared(&g_biomeLock);
+    if (own) *own = *height;
+    *height = gameceiling::HeightOf(*height, g_set.ceilFromWalls.load(std::memory_order_relaxed), g_wallsTopHere.load(std::memory_order_relaxed), 0.0f, 1.0f);
     if (relief) *relief = r;
     if (slot) *slot = sl;
 }
@@ -1035,6 +1102,7 @@ const SkyPalette kPalettes[] = {
     {"act2",      {0.25f, 0.45f, 0.75f}, {0.85f, 0.75f, 0.55f}, 0.15f, 1.00f, 45,  60, 0.0f, 2},   // desert
     {"act3",      {0.15f, 0.30f, 0.35f}, {0.55f, 0.60f, 0.45f}, 0.50f, 0.40f, 35, 100, 0.0f, 3},   // humid haze
     {"act4",      {0.12f, 0.02f, 0.02f}, {0.60f, 0.15f, 0.05f}, 0.60f, 0.00f, 20,   0, 0.0f, 4},   // hell: smoke, no sun
+    {"summit",    {0.20f, 0.25f, 0.32f}, {0.55f, 0.58f, 0.62f}, 0.60f, 0.30f, 10, 140, 0.0f, 5},   // UberArreatSummit (level 137): act 5's
 };
 constexpr int kDefaultPalette = 3;   // act1
 // Per act, from [sky]: brightness_<act>, texture_<act> (the band round the
@@ -1227,7 +1295,7 @@ void LoadSkyActs() {
         // [fog] color_<act>: #RRGGBB; empty = the sky's horizon (or the dark default where there is no sky)
         swprintf_s(key, L"color_%ls", act.c_str());
         // defaults: each painted sky's horizon, a little darker (key missing; an empty key = from the sky)
-        static const wchar_t* const kFogDef[7] = {L"", L"#242323", L"#683114", L"#50512F", L"#6C1809", L"#322A24", L"#7E8D99"};
+        static const wchar_t* const kFogDef[7] = {L"", L"#242323", L"#683114", L"#50512F", L"#6C1809", L"#322A24", L"#7E8D99"};   // (only without the key: the shipped ini has Serg's own)
         GetPrivateProfileStringW(L"fog", key, kFogDef[a], buf, MAX_PATH, g_iniPath);
         float fog[3] = {};
         const bool fogSet = ParseHexColor(buf, fog);
@@ -1251,6 +1319,9 @@ int ActOfBiome(const std::string& biome) {
 // On the [sky] outdoor list: open air. Everything else in the world is a cave,
 // a dungeon or a building.
 bool IsOutdoorBiome(const std::string& biome) {
+    // (the Summits: open air whatever the list - the uber one, 137, is not on it - while the game draws the sky; our own effect's sky and fog
+    // as they were, by the list - Serg: "Our effect (old)" unchanged)
+    if (skydome::IsGameSkyboxArea(biome) && g_set.gameSky.load()) return true;
     bool outdoor = false;
     AcquireSRWLockShared(&g_biomeLock);
     for (const std::string& o : g_outdoor) if (o == biome) { outdoor = true; break; }
@@ -1790,6 +1861,7 @@ void LoadSettings() {
     g_set.stickPitchSign.store(IniF(L"camera", L"stick_pitch_sign", 1.0f) < 0 ? -1.0f : 1.0f);
     g_set.rings.store(std::clamp((int)IniF(L"render", L"rings", 4.0f), 1, 8));
     g_set.modelRadius.store(std::clamp(IniF(L"render", L"model_radius", 1000.0f), 10.0f, 10000.0f));
+    g_set.bigRadius.store(unleashed::farobjects::Normalize(IniF(L"render", L"big_radius", 0.0f)));
     g_set.renderPoolMb.store(std::clamp((int)IniF(L"render", L"render_pool_mb", 64.0f), 0, 4096));
     owneffects::Configure(IniB(L"render", L"dim_own_effects", false), IniF(L"render", L"dim_own_effects_pct", 30.0f), IniF(L"render", L"dim_own_auras_pct", 50.0f));   // the hero's own effects fainter (vr/own_effects.h), F4 only
     owneffects::ConfigureSpeed(IniB(L"render", L"slow_own_effects", false), IniF(L"render", L"own_effects_speed_pct", 20.0f));   // Bone Armor (the solid effects) turning slower, F4 only
@@ -2192,12 +2264,18 @@ void LoadSettings() {
     g_set.fogHeight.store(IniB(L"fog", L"game_fog_height", false));
     g_set.fogTop.store(std::clamp(IniF(L"fog", L"game_fog_top", 60.0f), -100.0f, 2000.0f));
     g_set.fogSoft.store(std::clamp(IniF(L"fog", L"game_fog_soft", 50.0f), 1.0f, 1000.0f));
+    g_set.fogTopFromFloor.store(IniB(L"fog", L"game_fog_top_from_floor", false));
     g_set.fogMist.store(IniB(L"fog", L"game_fog_mist", true));
     g_set.fogCavesBlack.store(IniB(L"fog", L"game_fog_caves_black", true));
     g_set.fogBeforeFx.store(IniB(L"fog", L"game_fog_before_fx", false));
     g_set.fogOurCurve.store(IniB(L"fog", L"game_fog_our_curve", false));
+    g_set.fogMatch.store(IniB(L"fog", L"game_fog_match", false));
+    g_set.fogIntoSky.store(IniB(L"fog", L"fog_into_sky", false));
+    g_set.fogKeepsColour.store(IniB(L"fog", L"fog_keeps_colour", false));
     g_set.gameDrawnFlat.store(IniB(L"render", L"game_drawn_flat", false));
     g_set.fogCaves.store(IniB(L"fog", L"caves", true));
+    g_set.fogEaseIn.store(IniB(L"fog", L"ease_in", false));
+    g_set.fogNoRiver.store(IniB(L"fog", L"no_fog_river", false));
     {
         wchar_t poke[256];
         GetPrivateProfileStringW(L"debug", L"fog_poke", L"", poke, (DWORD)std::size(poke), g_iniPath);
@@ -2267,10 +2345,24 @@ void LoadSettings() {
         // headset test the same day: the act 2 town's veil gone); 0 = the game's
         // [render] depth_fix_mode: 0 off (the game's), 1 each b10 as a list binds it (uitrace.cpp, D2R VR's), 2 once a frame at the
         // game's frame builder (depthsrc, after bearstonem/d2r-pcvr). Without the key: depth_fix says (1 = mode 1). Live.
-        int depthMode = std::clamp((int)IniF(L"render", L"depth_fix_mode", IniB(L"render", L"depth_fix", true) ? 1.0f : 0.0f), 0, 2);
+        int depthMode = std::clamp((int)IniF(L"render", L"depth_fix_mode", IniB(L"render", L"depth_fix", true) ? 2.0f : 0.0f), 0, 2);   // (2 by default since 0.188)
         // [fog] game_fog: the game's fog pass reads its distances by this range - mode 2 (every pass alike, with or without ReShade;
         // mode 1 is ReShade's binds only, and may miss the fog pass's b10). Off (0) stays off: the game's fog then reads its own range.
+        // (Mode 1 does nothing without ReShade - no binds of ReShade's to fix: the game's AO, reflections, water, lights and height fog stay on
+        // its own camera's range there. game_fog raised it to 2, so "Sky and fog drawn by" changed the lighting too - Serg on 0.188.5,
+        // 2026-10-29, 64 / 65.webp. Mode 2 is the player's choice in Settings: "How that depth is set" > "Once a frame where the game makes it".)
         if (g_set.gameFog.load() && depthMode == 1) depthMode = 2;
+        {   // the game's lighting left on its own range without ReShade: told once a change
+            const bool idle = depthMode == 1 && (g_noReShade || IniB(L"render", L"no_reshade", false));
+            static int toldIdle = -1;
+            if ((idle ? 1 : 0) != toldIdle) {
+                toldIdle = idle ? 1 : 0;
+                if (idle)
+                    Log("vrcam: [render] depth_fix_mode 1 does nothing without ReShade - the game's ambient occlusion, reflections, water, lights "
+                        "and height fog keep its own camera's depth range; Settings > \"How that depth is set\" > \"Once a frame where the game "
+                        "makes it\" (depth_fix_mode=2) gives them our camera's");
+            }
+        }
         const bool depthFix = depthMode == 1;
         const float depthRange = IniF(L"render", L"depth_range", 1000.0f);
         uitrace::SetDepthRange(depthFix, depthRange);
@@ -2291,6 +2383,10 @@ void LoadSettings() {
     }
     g_set.skyOn.store(IniB(L"sky", L"enabled", false));
     g_set.gameSky.store(IniB(L"sky", L"game_sky", false));
+    g_set.gameSkybox.store(IniB(L"sky", L"game_skybox", false));
+    g_set.summitBackdropHidden.store(IniB(L"sky", L"summit_backdrop_hidden", true));
+    g_set.weatherFirstPerson.store(weatherplace::ClampMode((int)IniF(L"sky", L"weather_first_person", 0.0f)));
+    g_set.domeFogHorizon.store(IniB(L"sky", L"dome_fog_horizon", true));
     g_set.gameSkyTest.store(std::clamp((int)IniF(L"debug", L"game_sky_test", 0.0f), 0, 4));   // another model for the dome (draws only)
     g_set.gameSkyRadius.store(std::clamp(IniF(L"sky", L"game_sky_radius", 200.0f), 1.0f, 1.0e8f));   // (the slider: 50 - 30000; the ini to 10^8)
     g_set.gameDomeCaves.store(IniB(L"sky", L"game_dome_caves", false));
@@ -2311,9 +2407,14 @@ void LoadSettings() {
     LoadOutdoorBiomes();
     g_set.ceilOn.store(IniB(L"ceiling", L"enabled", false));
     g_set.gameCeiling.store(IniB(L"ceiling", L"game_ceiling", false));
-    g_set.gameCeilingHeight.store(std::clamp(IniF(L"ceiling", L"game_ceiling_height", 0.0f), 0.0f, 500.0f));
     g_set.gameCeilingWall.store(IniB(L"ceiling", L"game_ceiling_wall", false));
-    g_set.ceilHeight.store(std::clamp(IniF(L"ceiling", L"height", 30.0f), 1.0f, 500.0f));
+    g_set.gameCeilingBeams.store(IniB(L"ceiling", L"game_ceiling_beams", false));
+    g_set.ceilFromWalls.store(IniB(L"ceiling", L"height_from_walls", true));   // (a room with no height of its own: on its walls)
+    g_set.gameCeilingDome.store(IniB(L"ceiling", L"game_ceiling_dome", false));
+    g_set.gameCeilingDomesTall.store(IniB(L"ceiling", L"game_ceiling_domes_over_tall", false));
+    g_set.gameCeilingDomeSize.store(IniF(L"ceiling", L"game_ceiling_dome_size", 1.0f));
+    g_set.gameCeilingDomeRise.store(IniF(L"ceiling", L"game_ceiling_dome_rise", 1.0f));
+    g_set.ceilHeight.store(kCeilHeightAlone);   // (the common [ceiling] height is not read: each room its own - Serg 2026-10-29)
     g_set.ceilScale.store(std::clamp(IniF(L"ceiling", L"scale", 10.0f), 0.5f, 1000.0f));
     g_set.ceilBright.store(std::clamp(IniF(L"ceiling", L"brightness", 1.0f), 0.0f, 4.0f));
     g_set.ceilRelief.store(std::clamp(IniF(L"ceiling", L"relief", 6.0f), 0.0f, 100.0f));
@@ -2417,7 +2518,8 @@ void LoadSettings() {
     g_set.portalAuto.store(IniB(L"input", L"portal_auto", false));
     g_set.portalAutoRadius.store(std::clamp(IniF(L"input", L"portal_auto_radius", 4.0f), 1.0f, 10.0f));
     g_set.portalAutoDelay.store(std::clamp((int)IniF(L"input", L"portal_auto_delay_ms", 150.0f), 0, 2000));
-    g_set.keepRoomHeights.store(IniB(L"render", L"keep_room_heights", true));
+    // (was keep_room_heights, on, until 0.188.5: renamed so an upgrade's ini gets the new key off - the installer keeps old values)
+    g_set.keepRoomHeights.store(IniB(L"render", L"floors_stay", false));
     g_set.flatCrosshair.store(IniB(L"input", L"flat_crosshair", true));
     g_set.inventoryPad.store(IniF(L"input", L"inventory_button", 0.0f) != 0.0f ? 1 : 0);
     if (const bool one = IniF(L"input", L"interact_one_press", 0.0f) != 0.0f; one != g_set.interactOnePress.exchange(one))
@@ -2690,6 +2792,7 @@ void LoadSettings() {
     meleetouch::SetWanted(g_set.meleeTouch.load());
     meleetouch::SetThrownTouch(IniB(L"gameplay", L"melee_touch_thrown", true));   // javelins, throwing knives and axes hit by touch too (a point-blank throw; vr/thrown_touch.h)
     meleetouch::SetThrownHeld(IniB(L"gameplay", L"melee_touch_thrown_held", false));   // ... from the equip, like a sword - not only while the throw's grip is squeezed
+    meleetouch::SetBarrelsWanted(IniB(L"gameplay", L"melee_touch_barrels", false));   // a swing through a barrel / pot presses the game's own interact on it (vr/barrel_touch.h)
     standstill::SetWanted(IniB(L"gameplay", L"attack_in_place", true));   // F4: the plugin's attack presses never walk the hero (vr/stand_still.h)
     moveattack::SetWanted(IniB(L"gameplay", L"move_while_attacking", true));   // F4, EXPERIMENTAL: a spear / bow hero walks on once the blow is out (vr/move_attack.h)
     straywalk::SetWalkWanted(IniB(L"gameplay", L"block_stray_walk", true));     // F4: a walk or run to a point out of a click on bare ground is dropped (vr/stray_walk.h)
@@ -3072,13 +3175,27 @@ void LoadSettings() {
              g_set.flatRoomCentre.load() ? 1 : 0, g_set.flatEnterCentre.load() ? 1 : 0,
              g_set.platform.load() == 1 ? "" : " (VR only: flat mode leaves them)");
     Log(b);
+    const std::string language = uilang::Load(g_iniPath);   // ([hud] headset_language; read again only when it, the language or its file changed)
+    if (!language.empty()) Log(language.c_str());
 }
 
-// Re-read when the file's write time moves. Returns true if it did.
+// Re-read when the file's write time moves. Returns true if it did. A language picked in D2R VR Settings (its own
+// d2r_vr_settings.ini, beside d2r_vr.ini) is taken up too: the headset's words follow it ([hud] headset_language).
+FILETIME g_uiIniTime{};
 bool ReloadIfChanged() {
     WIN32_FILE_ATTRIBUTE_DATA fa{};
     if (!GetFileAttributesExW(g_iniPath, GetFileExInfoStandard, &fa)) return false;
-    if (CompareFileTime(&fa.ftLastWriteTime, &g_iniTime) == 0) return false;
+    if (CompareFileTime(&fa.ftLastWriteTime, &g_iniTime) == 0) {
+        std::wstring ui = g_iniPath;
+        ui.resize(ui.find_last_of(L"\\/") + 1);
+        WIN32_FILE_ATTRIBUTE_DATA ua{};
+        if (GetFileAttributesExW((ui + L"d2r_vr_settings.ini").c_str(), GetFileExInfoStandard, &ua) && CompareFileTime(&ua.ftLastWriteTime, &g_uiIniTime) != 0) {
+            g_uiIniTime = ua.ftLastWriteTime;
+            const std::string language = uilang::Load(g_iniPath);
+            if (!language.empty()) Log(language.c_str());
+        }
+        return false;
+    }
     g_iniTime = fa.ftLastWriteTime;
     LoadSettings();
     return true;
@@ -3966,7 +4083,17 @@ using d2rcam::m4::V3;
 
 // The hero point of the last frame, for code off the frame thread.
 SRWLOCK g_lookLock = SRWLOCK_INIT;
+float FogTopNow();   // [fog] game_fog_top above the eye, as the passes take it (below, with g_lookAt)
 float g_lookAt[3] = {};
+// [fog] game_fog_top above the eye as the game's fog passes take it: as set, or ([fog] game_fog_top_from_floor) counted from the hero's floor
+// - the camera's height over his feet (g_eyeWorld, g_lookAt) taken off (vr/game_fog_vr.h TopAboveEye)
+float FogTopNow() {
+    float feet = 0.0f;
+    AcquireSRWLockShared(&g_lookLock);
+    feet = g_lookAt[1];
+    ReleaseSRWLockShared(&g_lookLock);
+    return gamefogvr::TopAboveEye(g_set.fogTop.load(), g_set.fogTopFromFloor.load(), g_eyeWorld[1].load() - feet);
+}
 bool g_lookOk = false;
 
 // The hero point now: read from the camera, else the last frame's.
@@ -7009,6 +7136,7 @@ void ApplyActions(XINPUT_STATE* s) {
         }
     }
     if (itemgrabwire::Pressing()) interact = true;   // [weight] grab_items: the hand's grip on an item on the ground is the press of interact (its target answered below)
+    if (viewgate::F4() && meleetouch::BarrelPressTarget()) interact = true;   // [gameplay] melee_touch_barrels: a swing through a barrel / pot is the press of interact on it
     if ((held & D2RVR_ACT_INTERACT) && !interact) {
         if (!toldMiss) { toldMiss = true; Log("vrcam: pick up - nothing to pick up or open here, A not pressed"); }
     } else toldMiss = false;
@@ -7086,6 +7214,11 @@ uintptr_t HookInteractTarget(uintptr_t mgr, uint32_t player) {
         t = OrigInteractTarget(mgr, player);
         *flag = 0;
         inside = false;
+    }
+    if (const uintptr_t barrel = viewgate::F4() ? meleetouch::BarrelPressTarget() : 0) {   // [gameplay] melee_touch_barrels: the object the swing went through, while its press is in flight
+        g_interactTarget.store(barrel);
+        g_interactTargetAt.store(GetTickCount64());
+        return barrel;
     }
     if (itemgrabwire::Pressing()) {   // [weight] grab_items: the item the hand's grip is on is the controller's interact target while the press is in flight
         const uintptr_t ours = itemgrabwire::g_target.load();
@@ -7818,11 +7951,12 @@ void PortalOvalTick() {
     if (n) LogF("vrcam: the town portal's oval %s (%d of %d remembered)", hide ? "hidden" : "drawn again", done, n);
 }
 
-// [render] keep_room_heights (vr/room_heights.h): LevelTranslationLayer::CalculateHeightOffset 0x6A2A40(layer, DRLG_ROOM*, const float edges[4])
+// [render] floors_stay (vr/room_heights.h): LevelTranslationLayer::CalculateHeightOffset 0x6A2A40(layer, DRLG_ROOM*, const float edges[4])
 // -> the height a room is drawn at, stitched to the neighbours drawn at that moment; the record that keeps it is erased when the room is no longer
 // drawn, so a way back another way brings the room back a step up or down. A room keeps the height it was first drawn at, for the game - the
-// rooms of one preset as one (the game copies a drawn sibling's height to the others without asking). Every view (any camera but the game's
-// own from above shows it); visual only.
+// rooms of one preset as one (the game copies a drawn sibling's height to the others without asking), the rooms kept together as one island
+// placed where it meets the ground drawn now, a room drawn before its neighbours not kept. Every view (any camera but the game's own from
+// above shows it); visual only.
 constexpr uint64_t RVA_ROOM_HEIGHT = 0x6A2A40;
 // mov rax, rsp; push rbx; push rsi; push rdi; push r13; sub rsp, 58h; movaps [rax-48h], xmm7
 const uint8_t kSigRoomHeight[16] = {0x48,0x8B,0xC4,0x53,0x56,0x57,0x41,0x55,0x48,0x83,0xEC,0x58,0x0F,0x29,0x78,0xB8};
@@ -7833,7 +7967,10 @@ std::atomic<uintptr_t> g_roomLayer{0};   // the layer the game asked for (its re
 std::atomic<bool> g_roomHeightsClear{false};   // the main menu was seen: the next game's rooms are other rooms
 roomheights::Keeper g_roomKeeper;
 SRWLOCK g_roomKeeperLock = SRWLOCK_INIT;
-std::atomic<int> g_roomHeightsMoved{0};   // rooms given their kept height instead of the game's new one, this game
+// The log's lines of each kind (kept off the game's / an island placed / an orphan / given a grounded neighbour's), at most 3 a level a
+// game - each level its own, so the area looked at is told even after others (game thread; cleared with the keeper).
+uint8_t g_roomHeightsTold[1025][4];
+bool RoomHeightsTell(int level, int kind) { return level > 0 && level <= 1024 && g_roomHeightsTold[level][kind]++ < 3; }
 std::atomic<uint32_t> g_roomTick{0};   // the level layer's ticks (the pending rooms' age)
 
 bool RoomRead(void* d, uintptr_t s, size_t n) { return SafeRead(d, (const void*)s, n); }
@@ -7845,14 +7982,39 @@ float HookRoomHeight(void* layer, const void* room, const float* edges) {
     uint64_t uid = 0;
     if (!roomheights::ReadRoom(&RoomRead, (uintptr_t)room, &k, &uid)) return game;
     g_roomLayer.store((uintptr_t)layer, std::memory_order_relaxed);
-    bool moved = false;
+    roomheights::Side sides[4];
+    roomheights::Sides(&RoomRead, (uintptr_t)layer, (uintptr_t)room, edges, sides);
+    const bool drawn = roomheights::DrawnCount(&RoomRead, (uintptr_t)layer) > 0;
+    roomheights::Keeper::How how;
+    size_t joined = 0;
+    float kept = NAN;
     AcquireSRWLockExclusive(&g_roomKeeperLock);
-    const float h = roomheights::Answer(g_roomKeeper, k, game, true, &moved);
-    g_roomKeeper.Pend(k, uid, g_roomTick.load(std::memory_order_relaxed));   // (nothing for a room kept already)
+    g_roomKeeper.Kept(k, &kept);
+    const float h = g_roomKeeper.Ask(k, uid, game, sides, drawn, g_roomTick.load(std::memory_order_relaxed), &how, &joined);
     ReleaseSRWLockExclusive(&g_roomKeeperLock);
-    if (moved && g_roomHeightsMoved.fetch_add(1) < 3)   // the first few a game: where, and by how much the way back would have moved it
-        LogF("vrcam: room heights: level %d %s %d,%d asked again - the game worked out %.2f, kept at %.2f where it was first drawn "
-             "([render] keep_room_heights)", k.level, k.preset ? "preset" : "room", k.x, k.y, game, h);
+    const char* what = k.preset ? "preset" : "room";
+    char around[96] = "";   // for the log: what the drawn sides ask of it, west north east south ("-" not drawn)
+    const auto Around = [&]() -> const char* {
+        int n = 0;
+        for (int d = 0; d < 4; ++d)
+            n += sides[d].drawn ? snprintf(around + n, sizeof around - n, "%s%.2f", d ? " " : "", sides[d].ask)
+                                : snprintf(around + n, sizeof around - n, "%s-", d ? " " : "");
+        return around;
+    };
+    using How = roomheights::Keeper::How;
+    // The first few of each a level: where, and what the game would have done.
+    if (how == How::Kept && std::fabs(h - game) > 0.01f && RoomHeightsTell(k.level, 0))
+        LogF("vrcam: room heights: level %d %s %d,%d asked again - the game worked out %.2f, given %.2f to stand as it did beside the rooms kept "
+             "with it; its sides ask W N E S %s ([render] floors_stay)", k.level, what, k.x, k.y, game, h, Around());
+    else if (how == How::Joined && RoomHeightsTell(k.level, 1))
+        LogF("vrcam: room heights: %zu kept room(s) placed by level %d %s %d,%d - the game worked out %.2f where %.2f was kept: they all move "
+             "by %.2f to meet the ground drawn now ([render] floors_stay)", joined, k.level, what, k.x, k.y, game, kept, game - kept);
+    else if (how == How::Orphan && RoomHeightsTell(k.level, 2))
+        LogF("vrcam: room heights: level %d %s %d,%d drawn before its neighbours or beside an orphan's ground (the game's %.2f; its sides ask "
+             "W N E S %s) - not kept ([render] floors_stay)", k.level, what, k.x, k.y, game, Around());
+    else if (how == How::Grounded && RoomHeightsTell(k.level, 3))
+        LogF("vrcam: room heights: level %d %s %d,%d - the game's %.2f is from an orphan's ground; given %.2f, its grounded neighbour's "
+             "(W N E S %s) ([render] floors_stay)", k.level, what, k.x, k.y, game, h, Around());
     return h;
 }
 
@@ -7864,19 +8026,19 @@ void RoomHeightsTick(void*) {
     AcquireSRWLockExclusive(&g_roomKeeperLock);
     if (clear) g_roomKeeper.Clear();
     const size_t before = g_roomKeeper.KeptCount();
-    if (g_set.keepRoomHeights.load(std::memory_order_relaxed) && g_roomKeeper.PendingCount())
+    if (g_set.keepRoomHeights.load(std::memory_order_relaxed))
         g_roomKeeper.Harvest(&RoomRead, g_roomLayer.load(std::memory_order_relaxed), tick);
     const size_t kept = g_roomKeeper.KeptCount();
     ReleaseSRWLockExclusive(&g_roomKeeperLock);
-    if (clear) g_roomHeightsMoved.store(0);
+    if (clear) memset(g_roomHeightsTold, 0, sizeof g_roomHeightsTold);
     static bool told = false;
     if (!told && before == 0 && kept > 0) {
         told = true;
-        LogF("vrcam: room heights: the first %zu room(s) drawn keep their height for the game ([render] keep_room_heights)", kept);
+        LogF("vrcam: room heights: the first %zu room(s) drawn keep their height for the game ([render] floors_stay)", kept);
     }
 }
 
-// Once [render] keep_room_heights asks for it; tried with the other hooks until the bytes are there.
+// Once [render] floors_stay asks for it; tried with the other hooks until the bytes are there.
 void InstallRoomHeightHook() {
     static int misses = 0;
     if (!g_ctx || g_roomHeightHook.load() != 0 || !g_set.keepRoomHeights.load()) return;
@@ -7891,7 +8053,7 @@ void InstallRoomHeightHook() {
     d2rcam::SetLevelTickCallback(&RoomHeightsTick);
     const bool in = d2rsig::Hook(RVA_ROOM_HEIGHT, kSigRoomHeight, sizeof kSigRoomHeight, (void*)&HookRoomHeight, (void**)&OrigRoomHeight);
     g_roomHeightHook.store(in ? 1 : 2);
-    Log(in ? "vrcam: room heights: hook in - a room of the level keeps the height it was first drawn at ([render] keep_room_heights)"
+    Log(in ? "vrcam: room heights: hook in - a room of the level keeps the height it was first drawn at ([render] floors_stay)"
            : "vrcam: room heights: hook FAILED - a room may come back at another height");
 }
 
@@ -9666,13 +9828,47 @@ void FlatPickWatch() {
 
 // [render] rings and model_radius into cleanroom/drawdist (the old
 // renderdistance plugin's job); the radius retries until its hook is in.
+// big_radius apart (D2R VR Unleashed's Big objects, cleanroom/drawdist/unleashed_big_objects.cpp, MPL): its hook goes in only once it is
+// on, and waits for the game to have run that code; off and never on, the game's test is never touched.
 std::atomic<bool> g_renderDirty{true};
+std::atomic<bool> g_bigDirty{true};
 void ApplyRender() {
-    if (!g_renderDirty.load()) return;
-    d2rcam::SetRenderRadius(g_set.rings.load());
-    if (d2rcam::SetModelRadius(g_set.modelRadius.load())) {
-        g_renderDirty.store(false);
-        LogF("vrcam: render distance - %d room rings, models out to %.0f", d2rcam::GetRenderRadius(), g_set.modelRadius.load());
+    if (g_renderDirty.load()) {
+        d2rcam::SetRenderRadius(g_set.rings.load());
+        if (d2rcam::SetModelRadius(g_set.modelRadius.load())) {
+            g_renderDirty.store(false);
+            LogF("vrcam: render distance - %d room rings, models out to %.0f", d2rcam::GetRenderRadius(), g_set.modelRadius.load());
+        }
+    }
+    const float big = g_set.bigRadius.load();
+    static ULONGLONG bigWaitSince = 0;
+    static bool toldBigWait = false;
+    if (g_bigDirty.load() && big > 0 && g_inWorld.load()) {   // (on, its hook not in yet, in a game)
+        if (!bigWaitSince) bigWaitSince = GetTickCount64();
+        if (!toldBigWait && GetTickCount64() - bigWaitSince > 60000) {
+            toldBigWait = true;
+            Log("vrcam: big objects - the game's model distance test not found after a minute in the game (another build?); every model "
+                "keeps the model visibility radius. Still looked for twice a second");
+        }
+    }
+    if (g_bigDirty.load() && d2rcam::SetBigModelRadius(big)) {
+        g_bigDirty.store(false);
+        bigWaitSince = 0;
+        static bool wasOn = false;
+        if (big > 0)
+            LogF("vrcam: big objects - trees, houses and walls drawn out to %.0f by their size (models out to %.0f, %d room rings; D2R VR "
+                 "Unleashed's, bearstonem)", big, g_set.modelRadius.load(), g_set.rings.load());
+        else if (wasOn) Log("vrcam: big objects - off, every model out to the model visibility radius");
+        wasOn = big > 0;
+    }
+    // what they cost: how many models their size kept, every 10 s
+    static ULONGLONG nextCount = 0;
+    if (big > 0 && GetTickCount64() >= nextCount) {
+        const bool first = nextCount == 0;
+        nextCount = GetTickCount64() + 10000;
+        if (!first)
+            LogF("vrcam: big objects - %u model decisions kept past %.0f by size in 10 s", d2rcam::TakeBigModelsKept(), g_set.modelRadius.load());
+        else d2rcam::TakeBigModelsKept();
     }
 }
 
@@ -15288,6 +15484,7 @@ void MeleeTouchTick() {
         const float heroRender[3] = {g_heroPosNow[0], g_heroPosNow[1], g_heroPosNow[2]};
         meleetouch::GrabTick(f.ok, heroRender, f.upm);
         meleetouch::ItemsTick(f.ok, heroRender, f.upm);   // [weight] grab_items: the items lying near
+        meleetouch::BarrelsStep();   // [gameplay] melee_touch_barrels: the press on a barrel the swing went through, held until it breaks
     }
     {   // [weight] knock_props (vr/knock_props.h): the level's props near the hero, the blades hit by touch just drew, the physics thread's knocks
         knockprops::Frame kf;
@@ -16068,12 +16265,14 @@ void StartProbe() {
 // outdoor biome, no menu and no side panel. Each change of mind goes to the log
 // with its reason - the biome names of caves and dungeons are learnt from it.
 std::atomic<int> g_skyPalette{-1};   // kPalettes index while the sky shows, else -1
+std::atomic<bool> g_gameSkyboxHere{false};   // [sky] game_skybox: the area has a skybox of the game's own (skydome::IsGameSkyboxArea)
 // [sky] arcane_sky (after bearstonem/d2r-pcvr v0.3.18, MIT): in the Arcane Sanctuary the game's own star
 // layers and cloud noise all round the void, from pictures D2R_VR_Settings makes out of the player's game files.
 std::atomic<bool> g_arcaneSky{false};     // it shows now
 std::atomic<bool> g_arcaneReady{false};   // reshade-shaders\Textures\D2R_Arcane\stars.png and clouds.png are there
 std::atomic<int> g_fogAct{0};        // the area's act for the fog colour, caves too; 0 = unknown
 std::atomic<bool> g_underground{false};   // in the world, off the outdoor list: the fog takes [fog] color_caves
+std::atomic<bool> g_noFogArea{false};     // [fog] no_fog_river and the area is the River of Flame: no added fog (unleashed::fog::NoFogArea)
 std::atomic<bool> g_inWorld{false};  // a game area is loaded: not the main menu (its own "frontend" biome), not before any
 std::atomic<bool> g_frontendBiome{false};   // the game's menus' own scene: the main menu, character creation ([render] menu_wide)
 std::atomic<bool> g_ceilBiome{false};   // the area's biome is on [ceiling] biomes
@@ -16174,7 +16373,8 @@ float DayNightMul() {
     if (abs(light - toldLight) >= 10 || period != toldPeriod) {
         toldLight = light; toldPeriod = period;
         static const char* const kNames[6] = {"end of night, dawn", "end of dawn, day", "day", "end of day, dusk", "end of dusk, night", "night"};
-        LogF("vrcam: the game's light %d (%s) - sky and fog x%.2f", light, kNames[period], g_set.nightBright.load() + (1.0f - g_set.nightBright.load()) * k);
+        LogF("vrcam: the game's light %d (%s) - sky and our effect's fog x%.2f; the game's fog's colour %s", light, kNames[period],
+             g_set.nightBright.load() + (1.0f - g_set.nightBright.load()) * k, g_set.fogKeepsColour.load() ? "the act's as set ([fog] fog_keeps_colour)" : "the same");
     }
     return g_set.nightBright.load() + (1.0f - g_set.nightBright.load()) * k;
 }
@@ -16511,6 +16711,22 @@ void Update() {
              "(scene; ours %.3f %.3f %.3f)%s - the area's own were density %.3f, plane %.1f; our post pass draws no fog meanwhile",
              f.plane, kFullAt * 100.0f * o.strength, o.end, f.density, f.plane, f.r, f.g, f.b, o.rgb[0], o.rgb[1], o.rgb[2], under ? " underground" : "",
              seen[3], seen[4]);
+    if (changed) {   // the two side by side (Serg, act 4: the old fog hid the far, the game's "ничего не скрывает"): the share at points of the way
+        auto ours = [&](float dist) { return std::pow(std::clamp((dist - o.start) / (std::max)(o.end - o.start, 1.0f), 0.0f, 1.0f), g_set.fogCurve.load()) * o.strength; };
+        const bool curve = g_set.fogOurCurve.load();
+        auto game = [&](float dist) { return curve ? ours(dist) : GameFogAmount(f, dist); };
+        char line[400];
+        int n = 0;
+        for (float k : {0.25f, 0.5f, 0.75f, 1.0f, 1.5f}) {
+            const float dist = o.start + (o.end - o.start) * k;
+            n += snprintf(line + n, sizeof line - n, "%s%.0f: ours %.0f%% / the game's %.0f%%", n ? ", " : "", dist, ours(dist) * 100.0f, game(dist) * 100.0f);
+            if (n >= (int)sizeof line) break;
+        }
+        const bool height = g_set.fogHeight.load() && !under;
+        LogF("vrcam: game fog - the share by distance (%s): %s; %s; %s", curve ? "the game's pass by our curve, while its patched pass is bound" : "the game's exponential",
+             line, height ? "the game's pass thinned above the eye from game_fog_top - game_fog_soft, none above game_fog_top" : "no height thinning",
+             g_set.fogMatch.load() ? "[fog] game_fog_match makes up the rest to ours on the world's pixels (the dome untouched)" : "[fog] game_fog_match off: as the game lays it");
+    }
     told = 1;
     toldFog = f;
 }
@@ -18081,16 +18297,39 @@ float DomeRadius() { return g_domeRadius.load(std::memory_order_relaxed); }
 // Why not shown now ("" = shown), for the log (vr/sky_dome.h)
 const char* DomeWhyNot() {
     skydome::In in;
-    in.ticked = g_set.gameSky.load();
-    in.f4 = GameDrawnView();   // (VR F4, or the flat game with [render] game_drawn_flat)
+    in.ticked = skypaths::GameDomeWanted(g_set.gameSky.load(), fx::noreshade::FxWaiting());
+    // every view of our camera round the world (skydome::ViewWhyNot: not from above, the table, F12, flat without game_drawn_flat) - VR's
+    // third person too (Serg: "почему в 103 уровне старое небо", VR F2)
+    skydome::ViewIn v;
+    v.vr = g_set.platform.load() == 1;
+    v.view = ViewNow();
+    v.enabled = g_enabled.load();
+    v.gameDrawnFlat = g_set.gameDrawnFlat.load();
+    in.viewWhy = skydome::ViewWhyNot(v);
+    in.f4 = !*in.viewWhy && !TopPersp() && !TableView();
     in.inWorld = g_inWorld.load();
     in.palette = g_skyPalette.load();
     in.act = g_fogAct.load();
     in.eyeOk = g_eyeOk.load();
+    in.gameSkybox = g_set.gameSkybox.load() && g_gameSkyboxHere.load();
     return skydome::WhyNot(in);
 }
 bool DomeRun(Dome& d, const char* unit, const char* why, float radius, const char* tag);
 std::atomic<bool> g_caveDomeShown{false};
+// The game's sky chosen but unable here for good (vr/sky_paths.h GameSkyCannot; nullptr: it can, or it is on its way): the area's act's dome's
+// state as DomeRun left it - read from the present (flags and a pointer, no strings)
+const char* SkyCannot() {
+    const int act = g_fogAct.load();
+    const Dome* d = act == 1 ? &g_dome : act >= 2 && act <= 5 ? &g_actDomes[act] : nullptr;
+    skypaths::DomeTry t;
+    if (d) {
+        t.tried = d->loadTried;
+        t.defLoaded = d->def.p != nullptr;
+        t.gaveUp = d->tries > 4;
+        t.placeFailed = d->toldPlace && !d->inst.p;
+    }
+    return skypaths::GameSkyCannot(GameDrawnView(), d != nullptr, t, g_set.gameSkybox.load() && g_gameSkyboxHere.load());
+}
 void SkyDomeFrame() {
     if (g_set.gameSkyTest.load() != g_dome.test) {   // [debug] game_sky_test changed: another unit from now on (the one placed laid away, kept)
         if (g_dome.inst.p) {
@@ -18111,10 +18350,28 @@ void SkyDomeFrame() {
              : test == 2 ? "the game's own Arreat Summit sky model, placed and laid as the dome"
              : test == 1 ? "the dome in one bright magenta, no sky's picture" : "the act's sky again");
     }
-    const bool ticked = g_set.gameSky.load();
+    const bool ticked = skypaths::GameDomeWanted(g_set.gameSky.load(), fx::noreshade::FxWaiting());
     const int act = g_fogAct.load();
     const char* why = DomeWhyNot();
-    const float radius = g_set.gameSkyRadius.load();
+    {   // our effect's sky chosen (or ours instead) and our effect still being built for this size: the game's dome meanwhile, where it can be
+        const int meanwhile = !g_set.gameSky.load() && fx::noreshade::FxWaiting() && g_skyPalette.load() >= 0 ? (*why ? 2 : 1) : 0;
+        static int told = 0;
+        if (meanwhile != told) {
+            if (meanwhile == 1) Log("vrcam: the sky - our effect is still being built for this size: the game's dome meanwhile");
+            else if (meanwhile == 2) LogF("vrcam: the sky WAITS for our effect's build for this size (the game's dome cannot stand in here: %s)", why);
+            else if (told) Log("vrcam: the sky - our effect is built: its own sky again");
+            told = meanwhile;
+        }
+    }
+    // [sky] game_skybox (an option, off by default): at the Summits the dome behind the game's mist - as far as the depth holds it (skydome::SkyboxRadius)
+    const bool skybox = g_set.gameSkybox.load() && g_gameSkyboxHere.load();
+    const float radius = skybox ? skydome::SkyboxRadius(g_set.gameSkyRadius.load(), g_lastNear.load()) : g_set.gameSkyRadius.load();
+    static bool toldSkybox = false;
+    if (skybox && !toldSkybox && !*why)
+        LogF("vrcam: game sky - the Arreat Summit: the dome laid %.0f units round, as far as the depth holds (game_sky_radius %.0f elsewhere) - the "
+             "game's mist (its emitters along the presets' 210 x 291 units) and the mountain in front of it ([sky] game_skybox)", radius,
+             g_set.gameSkyRadius.load());
+    toldSkybox = skybox && !*why;
     bool shown = false;
     // act 1's (and the debug tests'); then acts 2 - 5's, each only for its act - one placed in another act is put away
     if (ticked || !g_dome.parked) shown |= DomeRun(g_dome, DomeUnit(), act == 1 || *why ? why : "another act's dome", radius, "game sky");
@@ -18285,12 +18542,76 @@ void CaveDomeFrame() {
 // away with the tick (D2R_VR_Settings makes its files with the slab's).
 // Every room its own kind (shared/game_ceiling.h kKinds: a cave's rock, a crypt's stone, the barracks' planks...): a slab - and for a cave
 // its wall - per kind, each its own unit and model; the area's kind laid, every other kind's put away.
+// [ceiling] game_ceiling_beams: in the barracks the game's own wooden ceiling frame (one unit: a grid of whole frames) laid 2 x 2 round the
+// hero at its own size, on whole frames, its bottom at the ceiling's height; the slab goes up by the frame's depth. [ceiling]
+// height_from_walls: that height the area's walls' top (shared/ceiling_measures.h, read at each area change).
 // One piece (a kind's slab or wall): its unit, its definition and instance, its placings, what the log was last told
 struct Slab { std::string what, unit, model; std::atomic<unsigned>* indices = nullptr;
               Shared def{}, inst{}; uint32_t root = 0xFFFFFFFFu; bool loadTried = false, parked = true; int tries = 0;
               ULONGLONG loadedAt = 0, placedAt = 0, modelAt = 0; std::string told = "?"; };
 std::atomic<unsigned> g_slabIndices[gameceiling::kKindCount], g_wallIndices[gameceiling::kKindCount];
 Slab g_slabs[gameceiling::kKindCount], g_walls[gameceiling::kKindCount];
+// [ceiling] game_ceiling_beams: the barracks' own frame in a grid (one unit), laid 2 x 2 round the hero under the slab
+std::atomic<unsigned> g_beamIndices{0};   // (its mesh's, as the game has it: ModelState's)
+Slab g_beams[gameceiling::kBeamPieces];
+// [ceiling] game_ceiling_dome: the cathedral's vault (one unit: the slab over its preset with the chapel's dome in it), laid world-fixed where
+// the game's own pillars stand round the altar's canopy, in place of the cathedral's slab. The canopy is found among the renderer's pieces by
+// its place in the preset and a pillar's beside it (knockprops::PresetPieces, a whole pass over the transforms: on a thread of its own), once
+// an area - again every 2 s while not found, kChapelTries times.
+// [ceiling] game_ceiling_domes_over_tall: the same for every dome over a tall piece (ceilmeasure::DomeOf, kTallFactor), each its own vault
+// (slot); an area may hold more than one (the Throne of Destruction's biome: the throne room's arch, the Worldstone Chamber's stone) - all
+// of the area's are looked for at once, the one whose preset is among the game's pieces laid (the nearest the hero if more), and while the
+// area has more than one they are looked for again every 5 s (the same biome over two levels: no area change between them).
+Slab g_vaults[gameceiling::kVaultSlots];
+std::atomic<unsigned> g_vaultIndices[gameceiling::kVaultSlots];
+constexpr int kChapelTries = 15;
+struct ChapelFound {
+    unsigned gen = ~0u; bool read = false; int matches = 0; size_t pieces = 0; float world[3] = {}; double ms = 0.0;
+    ceilmeasure::Dome dome;   // the one found (matches 1), else the last asked
+    int asked = 0;            // how many domes were looked for
+};
+SRWLOCK g_chapelLock = SRWLOCK_INIT;
+ChapelFound g_chapelFound;   // (under g_chapelLock)
+std::atomic<bool> g_chapelBusy{false};
+struct ChapelAsk { unsigned gen; std::vector<ceilmeasure::Dome> domes; float hero[3]; };
+DWORD WINAPI ChapelThread(void* arg) {
+    const ChapelAsk* ask = static_cast<const ChapelAsk*>(arg);
+    LARGE_INTEGER f, t0, t1;
+    QueryPerformanceFrequency(&f);
+    QueryPerformanceCounter(&t0);
+    std::vector<float> places;   // each dome's anchor and witness
+    for (const ceilmeasure::Dome& d : ask->domes)
+        places.insert(places.end(), {d.anchor[0], d.anchor[1], d.anchor[2], d.witness[0], d.witness[1], d.witness[2]});
+    std::vector<knockprops::PresetPiece> got;
+    ChapelFound r;
+    r.gen = ask->gen;
+    r.asked = (int)ask->domes.size();
+    if (!ask->domes.empty()) r.dome = ask->domes.back();
+    r.read = knockprops::PresetPieces(reinterpret_cast<const float(*)[3]>(places.data()), (int)(places.size() / 3), &got);
+    std::vector<ceilmeasure::Piece> pieces;
+    for (const knockprops::PresetPiece& p : got) {
+        ceilmeasure::Piece c;
+        c.parent = p.parent;
+        std::memcpy(c.local, p.local, sizeof c.local);
+        std::memcpy(c.world, p.world, sizeof c.world);
+        pieces.push_back(c);
+    }
+    r.pieces = pieces.size();
+    float best = 1e30f;
+    for (const ceilmeasure::Dome& d : ask->domes) {   // the domes found once each: the nearest the hero
+        float world[3];
+        const int n = ceilmeasure::MatchPreset(pieces, d.anchor, d.witness, world);
+        if (n != 1) { if (best >= 1e30f) r.matches = (std::max)(r.matches, n); continue; }
+        const float dist = std::hypot(world[0] + d.centreX - d.anchor[0] - ask->hero[0], world[2] + d.centreZ - d.anchor[2] - ask->hero[2]);
+        if (dist < best) { best = dist; r.matches = 1; r.dome = d; std::memcpy(r.world, world, sizeof world); }
+    }
+    QueryPerformanceCounter(&t1);
+    r.ms = 1000.0 * (double)(t1.QuadPart - t0.QuadPart) / (double)f.QuadPart;
+    AcquireSRWLockExclusive(&g_chapelLock); g_chapelFound = r; ReleaseSRWLockExclusive(&g_chapelLock);
+    delete ask;
+    g_chapelBusy.store(false);
+    return 0;
+}
 std::atomic<bool> g_slabGivenUp[gameceiling::kKindCount];
 // (named once, on the first frame: the table's)
 void NamePieces() {
@@ -18309,6 +18630,18 @@ void NamePieces() {
         g_walls[k].model = kind.wall ? gameceiling::ModelPath(kind.wall) : std::string();
         g_walls[k].indices = &g_wallIndices[k];
         g_wallIndices[k].store(gameceiling::kWallIndexCount);
+    }
+    for (int i = 0; i < gameceiling::kBeamPieces; ++i) {
+        g_beams[i].what = "barracks beams " + std::to_string(i + 1);
+        g_beams[i].unit = gameceiling::kBeamUnit;
+        g_beams[i].model = gameceiling::ModelPath(gameceiling::kBeamModelFile);
+        g_beams[i].indices = &g_beamIndices;
+    }
+    for (int i = 0; i < gameceiling::kVaultSlots; ++i) {
+        g_vaults[i].what = i == 0 ? std::string("cathedral vault") : "tall piece's vault " + std::to_string(i);
+        g_vaults[i].unit = gameceiling::kVaultUnits[i];
+        g_vaults[i].model = gameceiling::ModelPath(gameceiling::kVaultModelFiles[i]);
+        g_vaults[i].indices = &g_vaultIndices[i];
     }
 }
 std::vector<Shared> g_slabOld;   // placings given up on (no model made): laid away, kept - the game's
@@ -18404,6 +18737,8 @@ void CeilingFrame() {
     if (!in.ticked) {   // never wanted (or every piece put away): nothing to do
         bool parked = true;
         for (int k = 0; k < gameceiling::kKindCount; ++k) parked = parked && g_slabs[k].parked && g_walls[k].parked;
+        for (const Slab& b : g_beams) parked = parked && b.parked;
+        for (const Slab& v : g_vaults) parked = parked && v.parked;
         if (parked) { g_slabShown.store(false); return; }
     }
     const int kind = g_gameCeilKind.load();
@@ -18414,43 +18749,142 @@ void CeilingFrame() {
     const bool want = !*why, wallTick = g_set.gameCeilingWall.load();
     const bool wall = want && wallTick && gameceiling::kKinds[kind].wall;   // (rooms have walls of their own)
     const float hero[3] = {g_heroPosNow[0], g_heroPosNow[1], g_heroPosNow[2]};
-    // its top: [ceiling] game_ceiling_height over the area's floor (the lowest the hero stood since the area changed), else the area's own
-    // height_<biome>; a tile: the post ceiling's picture, 4 of [ceiling] scale's tiles; the wall's reach down to [ceiling] floor_depth under
+    // its top: the area's own height_<biome> over the area's floor (the lowest the hero stood since the area changed); a tile: the post ceiling's picture, 4 of [ceiling] scale's tiles; the wall's reach down to [ceiling] floor_depth under
     // the floor - all live
     static float floorY = 0.0f;
     static unsigned floorGen = ~0u;
     const float floorAt = gameceiling::Floor(&floorY, &floorGen, g_biomeGen.load(), hero[1]);
     float areaHeight, bright, light;
-    CeilingNow(&areaHeight, &bright, &light);
-    const float height = gameceiling::Height(g_set.gameCeilingHeight.load(), areaHeight), tile = gameceiling::TileWorld(g_set.ceilScale.load());
+    float ownHeight = 0.0f;
+    CeilingNow(&areaHeight, &bright, &light, nullptr, nullptr, &ownHeight);
+    // the room's own height_<biome> when set; else [ceiling] height_from_walls: on the area's walls' top (a rock that hangs lower rests its
+    // lowest on them); else 18
+    const float tile = gameceiling::TileWorld(g_set.ceilScale.load());
+    const float walls = g_set.ceilFromWalls.load() && ownHeight <= 0.0f ? g_wallsTopHere.load() : 0.0f;
+    const float height = gameceiling::HeightOf(ownHeight, g_set.ceilFromWalls.load(), g_wallsTopHere.load(),
+                                               kind >= 0 ? gameceiling::kKinds[kind].relief : 0.0f, tile / gameceiling::kTile);
     const float reach = gameceiling::WallReach(height, g_set.ceilFloor.load());
-    static float toldHeight = -1.0f, toldTile = -1.0f, toldReach = -1.0f;
+    // [ceiling] game_ceiling_beams: the barracks' frame with its bottom at that height, the slab over it by the frame's depth
+    ceilmeasure::Beam beam;
+    AcquireSRWLockShared(&g_biomeLock); beam = g_beam; ReleaseSRWLockShared(&g_biomeLock);
+    const bool beamTick = g_set.gameCeilingBeams.load(), beams = want && beamTick && g_beamsHere.load();
+    const char* beamWhy = !want ? why : !beamTick ? "[ceiling] game_ceiling_beams=0" : !beams ? "not the barracks, or their frame not measured (D2R_VR_Settings)" : "";
+    const float slabTop = beams ? gameceiling::BeamSlabHeight(height, beam.bottom, beam.top) : height;
+    static float toldHeight = -1.0f, toldTile = -1.0f, toldReach = -1.0f, toldTop = -1.0f;
     static int toldKind = -2;
-    if (want && (height != toldHeight || tile != toldTile || (wall ? reach : -1.0f) != toldReach || kind != toldKind)) {
+    if (want && (height != toldHeight || tile != toldTile || (wall ? reach : -1.0f) != toldReach || kind != toldKind || slabTop != toldTop)) {
         toldHeight = height;
         toldTile = tile;
         toldReach = wall ? reach : -1.0f;
         toldKind = kind;
+        toldTop = slabTop;
         LogF("vrcam: game ceiling - the %s ceiling (%s): its top %.1f units over the area's floor (%s), %s; %.0f units a tile (4 x [ceiling] "
-             "scale), %.0f units across", gameceiling::kKinds[kind].name, gameceiling::kKinds[kind].maps, height,
-             g_set.gameCeilingHeight.load() > 0.0f ? "[ceiling] game_ceiling_height" : "the area's height_<biome>",
+             "scale), %.0f units across", gameceiling::kKinds[kind].name, gameceiling::kKinds[kind].maps, slabTop,
+             walls > 0.0f ? "on the area's walls' top - the game's own pieces, [ceiling] height_from_walls"
+                          : "the area's height_<biome>",
              gameceiling::kKinds[kind].relief > 0.0f ? "its rock hanging lower" : "flat", tile, 2.0f * gameceiling::kTilesHalf * tile);
+        if (beams)
+            LogF("vrcam: game ceiling - the barracks' own beams under it: %d x 2 x 2 frames of %.1f x %.1f units (the game's frame at its own "
+                 "size), their bottom at %.1f, the slab %.2f higher (the frame's depth)", beam.cols * beam.rows, beam.periodX, beam.periodZ, height,
+                 beam.top - beam.bottom);
         if (wall)
             LogF("vrcam: game ceiling - its rim bent down: the wall %.0f units round the hero, %.1f units down from the ceiling's top ([ceiling] "
                  "floor_depth %.1f under the floor)", gameceiling::kWallRadius * tile / gameceiling::kTile, reach, g_set.ceilFloor.load());
     }
-    float m[16], w[16], away[16];
-    gameceiling::Matrix(hero, floorAt, height, tile, want, m);
+    // [ceiling] game_ceiling_dome / game_ceiling_domes_over_tall: a vault - once its piece is found among the game's pieces - in place of the
+    // slab, its flat at the slab's top, its dome raised to pass over the piece's top as drawn. The area's domes the keys allow: the
+    // cathedral's (slot 0) by game_ceiling_dome, the others by game_ceiling_domes_over_tall
+    const bool domeTick = g_set.gameCeilingDome.load(), tallTick = g_set.gameCeilingDomesTall.load();
+    std::vector<ceilmeasure::Dome> domes;
+    AcquireSRWLockShared(&g_biomeLock);
+    for (const ceilmeasure::Dome& d : g_chapelDomes)
+        if (d.slot == 0 ? domeTick : tallTick) domes.push_back(d);
+    ReleaseSRWLockShared(&g_biomeLock);
+    const bool domeArea = want && !domes.empty();
+    const unsigned domeGen = g_chapelGen.load() * 4u + (domeTick ? 1u : 0u) + (tallTick ? 2u : 0u);   // (a key changed: looked for again)
+    ChapelFound found;
+    AcquireSRWLockShared(&g_chapelLock); found = g_chapelFound; ReleaseSRWLockShared(&g_chapelLock);
+    static unsigned askedGen = ~0u, toldGen = ~0u;
+    static int tries = 0, toldTries = -1;
+    static ULONGLONG askedAt = 0;
+    const ULONGLONG nowMs = GetTickCount64();
+    const bool canopy = found.gen == domeGen && found.matches == 1;
+    const ceilmeasure::Dome dome = canopy ? found.dome : domes.empty() ? ceilmeasure::Dome{} : domes[0];
+    const bool cathedral = dome.slot == 0;
+    // (not found yet: every 2 s, kChapelTries times; found with more than one dome in the area: again every 5 s - another level of the biome)
+    const bool again = canopy && domes.size() > 1 && nowMs - askedAt >= 5000;
+    if (domeArea && (!canopy || again) && !g_chapelBusy.load()) {
+        if (askedGen != domeGen) { askedGen = domeGen; tries = 0; askedAt = 0; }
+        if ((tries < kChapelTries || again) && nowMs - askedAt >= 2000) {
+            if (!canopy) ++tries;
+            askedAt = nowMs;
+            g_chapelBusy.store(true);
+            for (const ceilmeasure::Dome& d : domes) g_vaultIndices[d.slot].store(d.indices);
+            if (HANDLE th = CreateThread(nullptr, 0, ChapelThread, new ChapelAsk{domeGen, domes, {hero[0], hero[1], hero[2]}}, 0, nullptr)) CloseHandle(th);
+            else g_chapelBusy.store(false);   // (its ask leaks once: a thread that never ran)
+        }
+    }
+    static int toldSlot = -1;
+    if (domeArea && found.gen == domeGen && (toldGen != domeGen || toldTries != tries || (canopy && dome.slot != toldSlot))) {   // each look's answer, once
+        toldGen = domeGen;
+        toldTries = tries;
+        toldSlot = canopy ? dome.slot : -1;
+        if (canopy)
+            LogF("vrcam: game ceiling - %s found among the game's pieces at %.1f %.1f %.1f (%zu pieces at the %d dome(s)' pieces' and pillars' "
+                 "places, %.1f ms): the dome's middle %.1f %.1f, %.1f round through its pillars, made rising %.1f over %.1f (its vault: slot %d)",
+                 cathedral ? "the cathedral's canopy" : "the tall piece", found.world[0], found.world[1], found.world[2], found.pieces, found.asked,
+                 found.ms, found.world[0] + dome.centreX - dome.anchor[0], found.world[2] + dome.centreZ - dome.anchor[2], dome.radius, dome.rise,
+                 dome.springs, dome.slot);
+        else
+            LogF("vrcam: game ceiling - %s NOT found among the game's pieces (%s; %zu pieces at their and their pillars' places, %d agreeing, %.1f "
+                 "ms; look %d of %d)%s", domes.size() > 1 ? "the area's tall pieces" : cathedral ? "the cathedral's canopy" : "the tall piece",
+                 found.read ? "the renderer read" : "the renderer's registry does not read", found.pieces, found.matches, found.ms, tries,
+                 kChapelTries, tries < kChapelTries ? " - again in 2 s; its slab meanwhile" : " - its slab stays");
+    }
+    const float baseY = canopy ? found.world[1] - dome.anchor[1] : 0.0f;
+    // [ceiling] game_ceiling_dome_size / _rise: the vault laid that many times its size round the measured middle, its rise worked out for
+    // the rim it has then (still over the canopy) and that many times higher - live
+    const float size = gameceiling::DomeSize(g_set.gameCeilingDomeSize.load(), dome.reach, dome.radius);
+    const float riseBy = gameceiling::DomeRiseScale(g_set.gameCeilingDomeRise.load());
+    const float rise = canopy ? riseBy * gameceiling::VaultRise(baseY, dome.top, floorAt + slabTop, dome.reach, dome.radius * size) : 0.0f;
+    const bool vault = domeArea && canopy && rise > 0.0f;
+    const char* vaultWhy = !want ? why : !g_chapelHere.load() ? "no dome measured for this area (D2R_VR_Settings)"
+                           : domes.empty() ? "[ceiling] game_ceiling_dome / game_ceiling_domes_over_tall=0"
+                           : !canopy ? "its piece not found among the game's pieces (yet)" : !vault ? "the ceiling already over its piece: no dome needed" : "";
+    static float toldRise = -1.0f, toldSize = -1.0f;
+    if (vault && (rise != toldRise || size != toldSize)) {
+        toldRise = rise;
+        toldSize = size;
+        LogF("vrcam: game ceiling - the vault (slot %d): its flat %.1f units over the area's floor; the dome %.1f round (size %.2f of the measured "
+             "%.1f, [ceiling] game_ceiling_dome_size %.2f), rising %.1f over it (rise %.2f of the least, game_ceiling_dome_rise; the canopy's top at "
+             "%.1f over the preset's floor %.1f; the mesh made rising %.1f: scaled %.2f up), %.0f units round its middle", dome.slot, slabTop, dome.radius * size,
+             size, dome.radius, g_set.gameCeilingDomeSize.load(), rise, riseBy, dome.top, baseY, dome.rise, rise / dome.rise,
+             gameceiling::VaultHalf(dome.half) * size);
+    }
+    float m[16], w[16], away[16], v[16];
+    gameceiling::Matrix(hero, floorAt, slabTop, tile, want, m);
     gameceiling::WallMatrix(hero, floorAt, height, tile, reach, wall, w);
     gameceiling::Matrix(hero, 0.0f, 0.0f, 1.0f, false, away);
-    bool shown = false;
+    gameceiling::VaultMatrix(hero, found.world[0] + dome.centreX - dome.anchor[0], found.world[2] + dome.centreZ - dome.anchor[2], floorAt + slabTop, rise,
+                             dome.rise, size, vault, v);
+    bool vaultShown = false;
+    for (int i = 0; i < gameceiling::kVaultSlots; ++i) {
+        const bool mineV = vault && dome.slot == i;
+        vaultShown = PieceFrame(g_vaults[i], mineV, mineV || !vault ? vaultWhy : "another vault laid", hero, mineV ? v : away, away) || vaultShown;
+    }
+    bool shown = vaultShown;
     for (int k = 0; k < gameceiling::kKindCount; ++k) {
-        const bool mine = want && k == kind;
-        const char* whyK = mine || !want ? why : "another kind's area";
+        const bool mine = want && k == kind && !vaultShown;
+        const char* whyK = mine || !want ? why : k == kind ? "a vault laid instead ([ceiling] game_ceiling_dome / _domes_over_tall)" : "another kind's area";
         shown = PieceFrame(g_slabs[k], mine, whyK, hero, m, away) || shown;
         g_slabGivenUp[k].store(gameceiling::GivenUp(g_slabs[k].loadTried, g_slabs[k].def.p != nullptr, g_slabs[k].tries));
         if (gameceiling::kKinds[k].wall)
             PieceFrame(g_walls[k], mine && wall, mine && !wallTick ? "[ceiling] game_ceiling_wall=0" : whyK, hero, w, away);
+    }
+    for (int i = 0; i < gameceiling::kBeamPieces; ++i) {
+        float b[16];
+        gameceiling::BeamMatrix(hero, floorAt, height, beam.periodX, beam.periodZ, beam.cols, beam.rows, beam.bottom, i, beams, b);
+        PieceFrame(g_beams[i], beams, beamWhy, hero, b, away);
     }
     g_slabShown.store(shown);
 }
@@ -18492,12 +18926,105 @@ void Work() {
     CeilingFrame();   // [ceiling] game_ceiling: the cave ceiling as the game's own lit rock
 }
 
+// [sky] summit_backdrop_hidden: at the Arreat Summits (120, 137) the game's backdrop - a picture of the ground far below, made for the view from above - stood as a flat
+// wall in first person (Serg's 40.webp, flat); hidden in VR F4 and flat F3, our sky and fog in its place. The views from above and F2 keep it.
+bool SummitBackdropOff() {
+    if (!g_set.summitBackdropHidden.load() || !g_gameSkyboxHere.load() || !g_enabled.load() || !g_inWorld.load()) return false;
+    return g_set.platform.load() == 1 ? FullBody() : g_set.flatView.load() == 3;
+}
+
+// [sky] weather_first_person (vr/weather_place.h): the game's weather box - rain, snow - laid at its own camera every update (0x5F2330 in the
+// decrypted image of dump_ingame; found by its pattern, game_sigs.h "WeatherPlace"). After the game's update, in VR F4 and flat F3: hidden
+// far under the world, or laid at our head. Only the weather entity's own matrices (its local and, a root, its world) are written - on the
+// game's thread, right after the game wrote them itself. The hook goes in once the setting asks for it; 0 again, the call passes through.
+namespace weather {
+constexpr uint64_t RVA_PLACE = 0x5F2330;
+// mov [rsp+10h],rbx; push rdi; sub rsp,0B0h (the cookie's rip-relative load follows: not in the bytes)
+constexpr uint8_t kPlaceBytes[13] = {0x48, 0x89, 0x5C, 0x24, 0x10, 0x57, 0x48, 0x81, 0xEC, 0xB0, 0x00, 0x00, 0x00};
+constexpr size_t kSystemOffEntity = 0x64, kXformLocal = 0x00, kXformWorld = 0x40, kXformParent = 0xC0;
+using PlaceFn = void(__fastcall*)(void* system);
+PlaceFn g_orig = nullptr;
+bool g_in = false, g_failed = false;
+std::atomic<uint32_t> g_moved{0}, g_seenEntity{0xFFFFFFFFu};
+std::atomic<int> g_toldMode{-1};
+std::atomic<float> g_gameAt[3], g_putAt[3];
+
+bool FirstPerson() {
+    if (!g_enabled.load(std::memory_order_relaxed)) return false;
+    return g_set.platform.load(std::memory_order_relaxed) == 1 ? FullBody() : g_set.flatView.load(std::memory_order_relaxed) == 3;
+}
+
+// After the game's own update: its matrices given our place (or none, outside first person / at 0)
+void Move(void* system) noexcept {
+    const int mode = g_set.weatherFirstPerson.load(std::memory_order_relaxed);
+    if (!weatherplace::Wanted(mode, FirstPerson(), g_inWorld.load(std::memory_order_relaxed))) return;
+    __try {
+        const uint32_t e = *reinterpret_cast<const uint32_t*>(reinterpret_cast<uintptr_t>(system) + kSystemOffEntity);
+        uintptr_t comp = 0;
+        if (e == 0xFFFFFFFFu || !skel::EntityTransform(e, &comp) || !comp) return;
+        const uint32_t parent = *reinterpret_cast<const uint32_t*>(comp + kXformParent);
+        if (!weatherplace::IsRoot(parent)) return;   // (a parent: its local is not a world place - left as the game has it)
+        float local[16], world[16];
+        std::memcpy(local, reinterpret_cast<const void*>(comp + kXformLocal), sizeof local);
+        std::memcpy(world, reinterpret_cast<const void*>(comp + kXformWorld), sizeof world);
+        const float game[3] = {local[12], local[13], local[14]};
+        float head[3], at[3];
+        DomeCentre(head);
+        if (!weatherplace::Place(mode, game, head, at) || !weatherplace::SetPlace(local, at) || !weatherplace::SetPlace(world, at)) return;
+        std::memcpy(reinterpret_cast<void*>(comp + kXformLocal), local, sizeof local);
+        std::memcpy(reinterpret_cast<void*>(comp + kXformWorld), world, sizeof world);
+        g_seenEntity.store(e, std::memory_order_relaxed);
+        for (int i = 0; i < 3; ++i) { g_gameAt[i].store(game[i], std::memory_order_relaxed); g_putAt[i].store(at[i], std::memory_order_relaxed); }
+        g_moved.fetch_add(1, std::memory_order_relaxed);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+}
+void __fastcall HookPlace(void* system) {
+    g_orig(system);
+    if (system) Move(system);
+}
+
+// The update thread: tried until the bytes are there (their page decrypted), once the setting asks
+void Install() {
+    if (g_in || g_failed || !g_ctx || weatherplace::ClampMode(g_set.weatherFirstPerson.load()) == weatherplace::kGame) return;
+    if (!d2rsig::Addr(RVA_PLACE)) {
+        static unsigned tries = 0;
+        if (!d2rsig::NotInBuild(RVA_PLACE) && ++tries < 120) return;   // (not found yet: asked again)
+        g_failed = true;
+        Log("vrcam: weather - the game's weather update (WeatherPlace) NOT found in this build: its rain and snow stay at its camera");
+        return;
+    }
+    g_in = d2rsig::Hook(RVA_PLACE, kPlaceBytes, sizeof kPlaceBytes, (void*)&HookPlace, (void**)&g_orig);
+    g_failed = !g_in;
+    if (g_in)
+        LogF("vrcam: weather - hook in on the game's weather update (RVA 0x%llX): its rain and snow %s in VR F4 and flat F3 ([sky] weather_first_person)",
+             (unsigned long long)d2rsig::Rva(RVA_PLACE), weatherplace::ModeName(g_set.weatherFirstPerson.load()));
+    else
+        Log("vrcam: weather - the hook on the game's weather update FAILED: its rain and snow stay at its camera");
+}
+
+// Every 10 s while it moves: where the game put the box and where it went (a line also when the mode in force changes)
+void Tick() {
+    if (!g_in) return;
+    static ULONGLONG last = 0;
+    const int mode = weatherplace::Wanted(g_set.weatherFirstPerson.load(), FirstPerson(), g_inWorld.load()) ? g_set.weatherFirstPerson.load() : 0;
+    if (g_toldMode.exchange(mode) != mode)
+        LogF("vrcam: weather - the game's rain and snow: %s ([sky] weather_first_person %d)", mode ? weatherplace::ModeName(mode) : "at the game's camera, as it lays them",
+             g_set.weatherFirstPerson.load());
+    if (GetTickCount64() - last < 10000) return;
+    last = GetTickCount64();
+    if (const uint32_t n = g_moved.exchange(0))
+        LogF("vrcam: weather, 10 s: its box (entity %08X) moved %u times - the game laid it at %.1f %.1f %.1f, ours at %.1f %.1f %.1f (%s)", g_seenEntity.load(), n,
+             g_gameAt[0].load(), g_gameAt[1].load(), g_gameAt[2].load(), g_putAt[0].load(), g_putAt[1].load(), g_putAt[2].load(), weatherplace::ModeName(mode));
+}
+}  // namespace weather
+
 void __fastcall HookSetMutable(void* registry, bool allowed) {
     if (!allowed && g_inWorld.load() && (uintptr_t)registry == d2rsig::Addr(RVA_REGISTRY)) {
         DWORD owner = 0;
         uint8_t open = 0;
         // still open, and ours to change: the game's own thread
-        if (ReadRegistry((uintptr_t)registry, &owner, &open) && open && owner == GetCurrentThreadId()) { Work(); owneffects::Tick(); }   // (the hero's own effects: their opacity, vr/own_effects.cpp)
+        if (ReadRegistry((uintptr_t)registry, &owner, &open) && open && owner == GetCurrentThreadId()) { Work(); owneffects::Tick(); owneffects::HideSummitBackdrop(SummitBackdropOff()); owneffects::BackdropTick(); }   // (the hero's own effects: their opacity, vr/own_effects.cpp)
     }
     g_origSetMutable(registry, allowed);
 }
@@ -18510,6 +19037,7 @@ bool Wanted() {
     return on || g_wantGen.load() != g_doneGen || owneffects::Wanted() || g_set.weightGrabItems.load() ||   // ([weight] grab_items: the copy in the hand)
            g_remoteCopiesOn.load() ||                                                                            // ([multiplayer] pose_share_held: the others' copies)
            g_set.gameSky.load() ||                                                                               // ([sky] game_sky: the dome)
+           g_set.summitBackdropHidden.load() ||                                                                  // ([sky] summit_backdrop_hidden: the Summit's ground picture)
            g_set.gameCeiling.load();                                                                             // ([ceiling] game_ceiling: the slab)
 }
 void InstallHook() {
@@ -19136,6 +19664,7 @@ void SkyTick() {
     env::Find();
     solidwalls::Tick();
     roofhook::Tick();
+    engitem::weather::Tick();   // [sky] weather_first_person: the log lines
     prophook::Tick();
     worldobj::Gather();
     gamefog::Tick();
@@ -19147,6 +19676,7 @@ void SkyTick() {
         seenGen = gen;
         AcquireSRWLockShared(&g_biomeLock); biome = g_biome; ReleaseSRWLockShared(&g_biomeLock);
         palette = SkyPaletteFor(biome, g_set.skyAlways.load());
+        g_gameSkyboxHere.store(skydome::IsGameSkyboxArea(biome));
         // Not a world: the main menu (act2_frontend_biome) and the menu scenes of
         // their own - character creation is 'ui_characterselectscreen' (2026-10-08:
         // taken for a world it got the first person's stereo, HUD shift and hidden heads).
@@ -19154,15 +19684,28 @@ void SkyTick() {
                            biome.rfind("ui_", 0) != 0;
         g_inWorld.store(world);
         g_frontendBiome.store(!biome.empty() && !world);   // (a load into a game sets no name first: not the menus' any more)
-        if (!world) g_roomHeightsClear.store(true);   // [render] keep_room_heights: the next game's rooms are other rooms
+        if (!world) g_roomHeightsClear.store(true);   // [render] floors_stay: the next game's rooms are other rooms
         g_fogAct.store(world ? ActOfBiome(biome) : 0);
         g_underground.store(world && !IsOutdoorBiome(biome));
+        g_noFogArea.store(world && unleashed::fog::NoFogArea(biome, g_set.fogNoRiver.load()));
         g_ceilBiome.store(world && IsCeilingBiome(biome));
         // [ceiling] game_ceiling: the area's kind of the game's ceiling (shared/game_ceiling.h) when on game_ceiling_biomes, else none
         const bool onGameList = world && IsGameCeilingBiome(biome);
         const int kind = onGameList ? gameceiling::KindOf(biome) : -1;
         engitem::g_gameCeilKind.store(kind);
         g_gameCeilBiome.store(kind >= 0);
+        {   // [ceiling] height_from_walls, game_ceiling_beams: the rooms measured from the game's models (D2R_VR_Settings writes them)
+            std::wstring file;
+            ceilmeasure::Measures ms;
+            const bool have = world && ceilmeasure::Parse(engitem::ModDataText(ceilmeasure::kFile, &file), &ms);
+            g_wallsTopHere.store(have ? ceilmeasure::WallsTopOf(ms, biome) : 0.0f);
+            AcquireSRWLockExclusive(&g_biomeLock); g_beam = ms.beam; ReleaseSRWLockExclusive(&g_biomeLock);
+            g_beamsHere.store(have && ms.haveBeam && gameceiling::IsBeamBiome(biome));
+            std::vector<ceilmeasure::Dome> domes = have ? ceilmeasure::DomesOf(ms, biome, true, true) : std::vector<ceilmeasure::Dome>();
+            g_chapelHere.store(!domes.empty());
+            AcquireSRWLockExclusive(&g_biomeLock); g_chapelDomes = std::move(domes); ReleaseSRWLockExclusive(&g_biomeLock);
+            g_chapelGen.fetch_add(1);
+        }
         static std::string told = "?";   // no biome name has a question mark
         if (biome != told) {
             told = biome;
@@ -19177,8 +19720,24 @@ void SkyTick() {
                 which = std::string("our vault with this area's own settings ([ceiling] biomes)") +
                         (!g_set.gameCeiling.load() ? "" : onGameList ? " - no fitting game model for it" : " - not on [ceiling] game_ceiling_biomes");
             else which = kind >= 0 ? "none - [ceiling] game_ceiling=0 and not on [ceiling] biomes" : "none - on neither [ceiling] biomes nor a kind of the game's";
-            LogF("vrcam: biome '%s' - %s; ceiling: %s", biome.empty() ? "(none yet)" : biome.c_str(),
-                 palette >= 0 ? kPalettes[palette].part : "no sky here (not in [sky] outdoor)", which.c_str());
+            if (world && g_set.ceilFromWalls.load()) {   // [ceiling] height_from_walls: where its height comes from
+                char h[160];
+                const float walls = g_wallsTopHere.load();
+                if (walls > 0.0f) std::snprintf(h, sizeof h, "; with no height of its own set, on its walls' top, %.1f (the game's own pieces, [ceiling] height_from_walls)", walls);
+                else std::snprintf(h, sizeof h, "; its walls not measured (D2R_VR_Settings, or a room built without them) - its own height");
+                which += h;
+            }
+            if (world && g_set.gameCeilingBeams.load() && gameceiling::IsBeamBiome(biome))
+                which += g_beamsHere.load() ? "; the barracks' own beams under it ([ceiling] game_ceiling_beams)"
+                                            : "; no beams - their frame not measured yet (D2R_VR_Settings makes it from the game's files)";
+            if (world && g_set.gameCeilingDome.load() && biome == gameceiling::kVaultBiome)
+                which += g_chapelHere.load() ? "; the chapel's dome in it - the canopy looked for among the game's pieces ([ceiling] game_ceiling_dome)"
+                                           : "; no dome - not measured yet (D2R_VR_Settings makes it from the game's files)";
+            else if (world && g_set.gameCeilingDomesTall.load() && g_chapelHere.load())
+                which += "; a dome over a tall piece of its rooms - its preset looked for among the game's pieces ([ceiling] game_ceiling_domes_over_tall)";
+            LogF("vrcam: biome '%s' - %s; ceiling: %s%s", biome.empty() ? "(none yet)" : biome.c_str(),
+                 palette >= 0 ? kPalettes[palette].part : "no sky here (not in [sky] outdoor)", which.c_str(),
+                 g_noFogArea.load() ? "; no added fog ([fog] no_fog_river)" : "");
         }
     }
     cavelight::Tick(biome, g_underground.load());
@@ -20237,6 +20796,8 @@ void PoseShareTick() {
                          : "vrcam: walk back dump off ([debug] walk_back_dump)");
             }
             skel::SetWalkBackDump(want);
+            if (!want) headshadow::NoteHeroRig(0, 0, 0);
+            else if (const std::string skin = headshadow::SkinNote(); !first && !skin.empty()) Log(("vrcam: " + skin).c_str());   // which pose the hero's meshes are skinned from
             if (const std::string dump = skel::TakeWalkBackDump(); !dump.empty()) {
                 wchar_t path[MAX_PATH];
                 wcscpy_s(path, g_iniPath);
@@ -20369,10 +20930,21 @@ bool OurFogWanted() {
     // area 74 with caves=0 and arcane_fog=1: no fog at all
     const bool arcane = g_arcaneSky.load();
     return (!arcane || g_set.arcaneFog.load()) && g_set.fogOn.load() && g_enabled.load() && !Overhead() && g_inWorld.load() && !EffectsPaused() &&
-           (g_set.fogCaves.load() || !g_underground.load() || arcane);   // [fog] caves=0: none underground
+           (g_set.fogCaves.load() || !g_underground.load() || arcane) &&   // [fog] caves=0: none underground
+           !g_noFogArea.load();   // [fog] no_fog_river: none in the River of Flame (our effect's and the game's fog alike)
 }
 // The post pass's fog: ours, unless the game's own pass draws it ([fog] game_fog)
-bool FogWanted() { return OurFogWanted() && !gamefogvr::Active(); }
+// ... and only when the game's is not chosen ([fog] game_fog: its pass draws ours, also before it took our numbers - never both; the Arcane
+// Sanctuary's ours whatever the choice - vr/sky_paths.h)
+// (the game's unable here for good - a view it does not draw in, its frame fog not found: ours instead; vr/sky_paths.h GameFogCannot)
+const char* FogCannot() { return skypaths::GameFogCannot(GameDrawnView(), gamefogvr::g_bad.load()); }
+bool FogWanted() {
+    return skypaths::OurFog(OurFogWanted(), skypaths::GameHolds(g_set.gameFog.load(), FogCannot()), g_arcaneSky.load()) && !gamefogvr::Active();
+}
+// Our post pass's act sky: wanted here and the game's dome not chosen ([sky] game_sky), or chosen and unable here for good (its files
+// missing - a fresh install - refused, no model, a view it is not drawn in: engitem::SkyCannot) - vr/sky_paths.h. g_skyPalette itself stays
+// the act's sky wanted here: the game's dome is laid by it.
+bool OurSkyWanted() { return g_skyPalette.load() >= 0 && !skypaths::GameHolds(g_set.gameSky.load(), engitem::SkyCannot()); }
 // The fog's colour as the post pass lays it: the act's own (its day colour, darker at night with the sky), a cave's own underground;
 // false without one (the post pass then takes the sky's horizon; `rgb` a dark grey - what [fog] game_fog gives the game then)
 bool FogColourNow(float rgb[3]) {
@@ -20384,7 +20956,10 @@ bool FogColourNow(float rgb[3]) {
     cave = g_caveFog;
     ReleaseSRWLockShared(&g_skyCfgLock);
     if (g_underground.load() && cave.set) { fa.fogSet = true; memcpy(fa.fog, cave.rgb, sizeof fa.fog); }   // caves and dungeons: their own
-    else if (fa.fogSet) {   // in the open the act's fog (its day colour) darkens at night with the sky
+    else if (fa.fogSet && !(g_set.fogKeepsColour.load() && gamefogvr::Active())) {   // in the open the act's fog (its day colour) darkens at night with the sky
+        // ([fog] fog_keeps_colour: not while the game draws the fog - Serg on 0.188.4, "прозрачнее, а не чернее": the far fades into a light
+        // haze of his color_<act>, never toward black; the game's light read 32 - "end of dawn, day" - put act 2's fog at x0.25. Our own
+        // effect's fog as it was: Serg, "the old one was good")
         const float m = DayNightMul();
         for (float& f : fa.fog) f *= m;
     }
@@ -20543,7 +21118,7 @@ template <class RT> void EffectsFinish(RT* rt) {
     if (!g_tech[0].handle) { hud::SetPictureReady(false); return; }
     // Off while a menu is open: the fog lies over the whole picture, the
     // inventory and trade panels included, and darkened them.
-    const bool want = FogWanted() || g_skyPalette.load() >= 0 || g_arcaneSky.load() || CeilWanted() || HudWanted() || StampWanted() || hud::PictureWanted() || TableKeyWanted() || PhantomWanted() || BoneAxesWanted() || BowVectorsWanted() || BowQuiverWanted() || MercTintWanted() || BowAimRayWanted() || XbowBarrelWanted() || SpellRayWanted() || MeleeBoxesWanted() || SkillTriggersWanted() || HandOrbsWanted() || LowHpWanted() || BowOrbsWanted() || BowArrowFxWanted();
+    const bool want = FogWanted() || OurSkyWanted() || g_arcaneSky.load() || CeilWanted() || HudWanted() || StampWanted() || hud::PictureWanted() || TableKeyWanted() || PhantomWanted() || BoneAxesWanted() || BowVectorsWanted() || BowQuiverWanted() || MercTintWanted() || BowAimRayWanted() || XbowBarrelWanted() || SpellRayWanted() || MeleeBoxesWanted() || SkillTriggersWanted() || HandOrbsWanted() || LowHpWanted() || BowOrbsWanted() || BowArrowFxWanted();
     // The toolbar and the map are taken out of the game's picture to be drawn
     // back at their own size only while this effect runs, and is new enough to.
     {
@@ -20772,6 +21347,11 @@ bool OwnDepthNow() {
     return (g_noReShade || (g_ownDepth.load(std::memory_order_relaxed) && (g_squareWin.load(std::memory_order_relaxed) || vrres::Active()))) &&
            g_set.platform.load() == 1;
 }
+// The effect draws something placed by the scene's depth: our sky in the void, the fog by distance, the cave ceiling
+bool DepthEffectsWanted() { return FogWanted() || OurSkyWanted() || g_arcaneSky.load() || CeilWanted(); }
+// [render] no_reshade: the scene's depth copied (scenedepth::BindNative) - in VR, and in flat too while the effect draws what needs it
+// (vr/native_fx_depth.h: flat with "Our effect (old)" had none - the void over the whole picture, a black screen)
+bool NativeDepthNow() { return nativefxdepth::CopyWanted(g_noReShade, OwnDepthNow(), DepthEffectsWanted()); }
 namespace scenedepth {
 using namespace reshade::api;
 struct Ds { uint64_t res; uint32_t binds, last, state; uint32_t colour, colourLast; };   // (colour: binds with a colour target - a shadow pass has none)
@@ -20919,6 +21499,7 @@ bool WaitLastFx(effect_runtime* rt) {
 }
 // reshade_begin_effects: the scene's depth into our copy on the effects' own list, bound as DEPTH.
 bool g_copiedNow = false;   // Bind copied the scene's depth for this present (eyes by turns keeps it: xr::SetTurnDepth)
+unsigned g_sinceCopy = ~0u >> 1;   // [render] no_reshade: presents since the last copy (nativefxdepth::Usable; none yet: long ago)
 void Bind(effect_runtime* rt, command_list* cl) {
     g_copiedNow = false;
     static int told = -1;
@@ -21046,11 +21627,11 @@ void OnBindNative(ID3D12Resource* ds, unsigned count) {
         if (g_cache.WantsSight()) g_cache.Seen(r);
         return;
     }
-    if (!OwnDepthNow()) return;
+    if (!NativeDepthNow()) return;
     Count(r, count);
 }
 void OnBarrierNative(unsigned n, const D3D12_RESOURCE_BARRIER* b) {
-    if (!OwnDepthNow()) return;
+    if (!NativeDepthNow()) return;
     if (const uint64_t p = g_cache.pick.load(std::memory_order_relaxed)) {
         for (unsigned i = 0; i < n; ++i)
             if (b[i].Type == D3D12_RESOURCE_BARRIER_TYPE_TRANSITION && (uint64_t)b[i].Transition.pResource == p)
@@ -21075,7 +21656,7 @@ void BindNative(ID3D12Device* dev, ID3D12CommandQueue* q, uint32_t w, uint32_t h
     if (g_nOld && g_nOldLeft && --g_nOldLeft == 0) { g_nOld->Release(); g_nOld = nullptr; }
     static int told = -1;
     auto tell = [&](int what, const char* text) { if (told != what) { told = what; Log(text); } };
-    if (!OwnDepthNow() || !dev || !q) return;
+    if (!NativeDepthNow() || !dev || !q) return;
     if (const char* why = g_cache.Check(w, h)) {
         ClearCounts();
         LogF("vrcam: own depth - the pick let go: %s (counting again; no copy until a buffer the game binds this frame is picked)", why);
@@ -21178,11 +21759,12 @@ void PresentCommon(reshade::api::effect_runtime* rt, HWND wnd, ID3D12Device* dev
             curve.end = under ? g_set.fogCaveEnd.load() : g_set.fogEnd.load();
             curve.curve = g_set.fogCurve.load();
             curve.strength = under ? g_set.fogCaveStrength.load() : 1.0f;
+            curve.ease = g_set.fogEaseIn.load();   // [fog] ease_in (D2R VR Unleashed's)
         }
         fogfx::Params fp;
         fp.on = g_set.fogBeforeFx.load() && gamefogvr::Active() && GameDrawnView();
         fp.ourCurve = curve.on;
-        fp.start = curve.start; fp.end = curve.end; fp.curve = curve.curve; fp.strength = curve.strength;
+        fp.start = curve.start; fp.end = curve.end; fp.curve = curve.curve; fp.strength = curve.strength; fp.ease = curve.ease;
         if (fp.on) {
             const gamefogvr::Fog gf = gamefogvr::Current();
             fp.plane = gf.plane;
@@ -21192,14 +21774,14 @@ void PresentCommon(reshade::api::effect_runtime* rt, HWND wnd, ID3D12Device* dev
             fp.sx = g_projSx.load();
             fp.sy = g_projSy.load();
             fp.height = height;
-            fp.top = g_set.fogTop.load();
+            fp.top = FogTopNow();
             fp.soft = g_set.fogSoft.load();
             fp.up[0] = g_viewRightY.load(); fp.up[1] = g_viewUpY.load(); fp.up[2] = g_viewFwdY.load();
         }
         fogfx::Configure(fp);
         fogfx::Frame();
         const bool noFog = fogfx::Drawn();
-        fogheight::Frame((height || mist || voidAlone || noFog || curve.on) && gamefogvr::Active() && GameDrawnView(), height ? g_set.fogTop.load() : 1.0e9f,
+        fogheight::Frame((height || mist || voidAlone || noFog || curve.on) && gamefogvr::Active() && GameDrawnView(), height ? FogTopNow() : 1.0e9f,
                          height ? g_set.fogSoft.load() : 1.0f, mist, voidAlone, noFog, curve);
     }
     vcache::Apply(g_set.vcache.load(std::memory_order_relaxed), &Log);   // [render] vcache: on the draw thread (its priority); only when it changes
@@ -21371,6 +21953,12 @@ void Tell() {
 }
 // The effect of this present: its uniforms, then its techniques on our list on the game's queue (after the depth's copy), then the switches
 // for the next present - as ReShade's begin effects / effects / finish effects. Nothing while its build is not there yet.
+// Since when our effect has not drawn (its build for this size not there yet; 0: it draws) - the game's dome stands in for its sky (FxWaiting)
+std::atomic<ULONGLONG> g_fxWaitSince{0};
+bool FxWaiting() {
+    const ULONGLONG s = g_fxWaitSince.load(std::memory_order_relaxed);
+    return s && GetTickCount64() - s > 300;
+}
 void Effects(ID3D12Device* dev, ID3D12CommandQueue* q, ID3D12Resource* bb) {
     if (!g_fx) return;
     static bool timed = [&] {   // its passes timed on the graphics card (the 10 s line)
@@ -21380,12 +21968,36 @@ void Effects(ID3D12Device* dev, ID3D12CommandQueue* q, ID3D12Resource* bb) {
     }();
     (void)timed;
     ApplySkyPictures(g_fx);   // the pictures' definitions before the first build too (a change builds it again)
-    if (!g_fx->Begin(dev, bb)) return;
+    if (!g_fx->Begin(dev, bb)) {
+        if (!g_fxWaitSince.load(std::memory_order_relaxed)) g_fxWaitSince.store(GetTickCount64());
+        return;
+    }
+    g_fxWaitSince.store(0, std::memory_order_relaxed);
     if (scenedepth::g_nCopy) {   // the scene's depth as our copy has it (also when not copied this present: the last one)
         g_fx->BindSemantic("D2RVR_DEPTH", scenedepth::g_nCopy, scenedepth::g_nSrv);
         g_fx->BindSemantic("DEPTH", scenedepth::g_nCopy, scenedepth::g_nSrv);
     }
     EffectsBegin(g_fx, nullptr);
+    {   // nothing placed by the depth on a depth missing or stale (vr/native_fx_depth.h): not the void - our sky and fog - over everything
+        const bool usable = nativefxdepth::Usable(scenedepth::g_nCopy != nullptr, scenedepth::g_sinceCopy);
+        static int told = -1;
+        if (!usable && DepthEffectsWanted()) {
+            SetBool(g_fx, "SkyOn", false);
+            SetBool(g_fx, "ArcaneSkyOn", false);
+            SetBool(g_fx, "FogOn", false);
+            SetBool(g_fx, "SkyFogHorizon", false);
+            SetBool(g_fx, "CeilOn", false);
+        }
+        const int now = usable ? 1 : DepthEffectsWanted() ? 0 : told;
+        if (now != told && now >= 0) {
+            if (now == 0)
+                LogF("vrcam: native effects - the sky, the fog and the ceiling NOT drawn: %s (the scene's depth not copied for %u presents) - "
+                     "nothing of ours rather than the void over the whole picture", scenedepth::g_nCopy ? "its copy is stale" : "no copy of the "
+                     "scene's depth yet", scenedepth::g_sinceCopy);
+            else if (told == 0) Log("vrcam: native effects - the scene's depth copied again: the sky, the fog and the ceiling drawn");
+            told = now;
+        }
+    }
     if (ID3D12GraphicsCommandList* l = natived3d::OpenList(dev)) {
         g_fx->Render(l, bb);
         natived3d::Submit(q);
@@ -21410,6 +22022,7 @@ void Present(IDXGISwapChain3* sc, ID3D12CommandQueue* q) {
     float s[2];
     renderscale::FrameOf(w, h, s);
     scenedepth::BindNative(dev, q, w, h);
+    scenedepth::g_sinceCopy = nativefxdepth::NextSince(std::min(scenedepth::g_sinceCopy, 1000000u), scenedepth::g_copiedNow);
     // eyes by turns ([stereo] turn_warp): this present's depth, kept with its eye when its picture goes to the headset
     if (xr::ByTurns())
         xr::SetTurnDepth(scenedepth::g_copiedNow ? (void*)scenedepth::g_nCopy : nullptr, (uint32_t)scenedepth::g_nSrv, s[0], s[1]);
@@ -21450,7 +22063,10 @@ void GraphicsPso(ID3D12Device* dev, const D3D12_GRAPHICS_PIPELINE_STATE_DESC* d,
 void StreamPso(ID3D12Device* dev, const D3D12_PIPELINE_STATE_STREAM_DESC* d, ID3D12PipelineState* pso) {
     fogheight::OnStreamPso(dev, d, pso);
     fogfx::OnStreamPso(dev, d, pso);
+    lightbounds::OnStreamPso(dev, d, pso);   // [render] light_bounds_fix without ReShade: the light bins' compute pipeline, if made from a stream
 }
+// a pipeline the game binds: [render] light_bounds_fix's light bins (compute), then [fog] game_fog_height's fog pass (graphics)
+ID3D12PipelineState* PsoSwap(ID3D12PipelineState* pso) { return fogheight::Swap(lightbounds::Swap(pso)); }
 // At the plugin's load, MinHook initialised, before the game makes its device and swap chain.
 void Install() {
     natived3d::Sinks k;
@@ -21465,7 +22081,10 @@ void Install() {
     fogheight::SetLog(&Log);
     k.graphicsPso = &GraphicsPso;
     k.streamPso = &StreamPso;
-    k.psoSwap = &fogheight::Swap;
+    k.psoSwap = &PsoSwap;
+    // [render] light_bounds_fix without ReShade: the game's light-bin depth bounds (vr/light_bounds.h) - a copy with our shader bound in its place
+    lightbounds::SetLog(&Log);
+    k.computePso = &lightbounds::OnComputePso;
     // [fog] game_fog_before_fx: the lists' bindings followed and the step recorded before the transparent resolve - its hooks only when the key
     // is on at the start (a list's state is followed from its first Reset); switched on later, from the next start
     fogfx::SetLog(&Log);
@@ -21680,6 +22299,7 @@ template <class RT> void EffectsBegin(RT* rt, reshade::api::command_list* cl) {
     SetFloat(rt, "FogStart", g_underground.load() ? g_set.fogCaveStart.load() : g_set.fogStart.load());
     SetFloat(rt, "FogEnd", g_underground.load() ? g_set.fogCaveEnd.load() : g_set.fogEnd.load());
     SetFloat(rt, "FogStrength", g_underground.load() ? g_set.fogCaveStrength.load() : 1.0f);
+    SetFloat(rt, "FogEaseIn", g_set.fogEaseIn.load() ? 1.0f : 0.0f);   // [fog] ease_in (D2R_FogEase_Unleashed.fxh)
     SetFloat(rt, "FogCurve", g_set.fogCurve.load());
     SetFloat(rt, "FogBlur", g_set.fogBlur.load());
     SetBool(rt, "FogOn", FogWanted());
@@ -21732,6 +22352,36 @@ template <class RT> void EffectsBegin(RT* rt, reshade::api::command_list* cl) {
         // sinks into the fog's colour as with our own fog, so the fogged land meets the sky without an edge (Serg, 2026-10-28, act 2: a hard
         // line between the tan fogged world and the sky)
         SetBool(rt, "SkyFogHorizon", gamefogvr::Active() && !engitem::DomeShown());
+        // [sky] dome_fog_horizon: the game's dome shown - its low part sinks into the same fog colour (Serg: "резкая граница", "цвет не
+        // совпадает" against our old sky), while a fog is drawn
+        SetBool(rt, "DomeFogHorizon", g_set.domeFogHorizon.load() && engitem::DomeShown() && (FogWanted() || gamefogvr::Active()));
+        // [fog] game_fog_match: the game's fog comes out through the area's colour grading - act 4 (Serg, 49 / 50.webp): his #5A2712 on the
+        // sky's low part, (57, 29, 9) on the fogged far land under it, a hard silhouette. The effect measures what the game's fog shows where
+        // it is complete and moves the fogged pixels by the game's own share toward the act's colour - the numbers the game's pass has now
+        const bool match = g_set.fogMatch.load() && gamefogvr::Active();
+        SetBool(rt, "GameFogMatch", match);
+        if (match) {
+            const gamefogvr::Fog gf = gamefogvr::Current();
+            const bool under = g_underground.load();
+            SetFloat(rt, "GameFogDensity", gf.density);
+            SetFloat(rt, "GameFogPlane", gf.plane);
+            // (the curve and the height thinning are in the game's pass only while our patched variant of it is bound: no_reshade's hooks)
+            static uint32_t boundBefore = 0;
+            static ULONGLONG boundAt = 0;
+            const uint32_t bound = fogheight::Bound();
+            if (bound != boundBefore) { boundBefore = bound; boundAt = GetTickCount64(); }
+            const bool patched = boundAt && GetTickCount64() < boundAt + 500;
+            SetBool(rt, "GameFogOurCurve", patched && g_set.fogOurCurve.load());
+            const float curve[4] = {under ? g_set.fogCaveStart.load() : g_set.fogStart.load(), under ? g_set.fogCaveEnd.load() : g_set.fogEnd.load(),
+                                    g_set.fogCurve.load(), under ? g_set.fogCaveStrength.load() : 1.0f};
+            SetFloats(rt, "GameFogCurve", curve, 4);
+            const bool height = patched && g_set.fogHeight.load() && !under;   // (as PresentCommon hands fogheight::Frame)
+            const float topSoft[2] = {height ? FogTopNow() : 1.0e9f, height ? g_set.fogSoft.load() : 1.0f};
+            SetFloats(rt, "GameFogTopSoft", topSoft, 2);
+        }
+        // [fog] fog_into_sky: in the open air under an act's sky (ours or the game's dome - the same painted pictures), the fog fades the far
+        // into the sky straight behind it, as the Arcane Sanctuary's ([sky] arcane_fog). Underground nothing but rock is behind: as before
+        SetBool(rt, "FogIntoSky", g_set.fogIntoSky.load() && gamefogvr::Active() && g_skyPalette.load() >= 0 && !g_arcaneSky.load() && !g_underground.load());
     }
     const int pal = g_skyPalette.load();
     // The eye of the frame being presented. Read straight from the block it
@@ -21768,7 +22418,32 @@ template <class RT> void EffectsBegin(RT* rt, reshade::api::command_list* cl) {
     sv[0] = SkyBack(AfrOn() ? 0 : eye); sv[1] = SkyBack(AfrOn() ? 1 : eye);
     ReleaseSRWLockShared(&g_skyLock);
     const bool arcane = g_arcaneSky.load();   // [sky] arcane_sky: the Arcane Sanctuary's own sky, in place of any other
-    bool sky = (pal >= 0 || arcane) && !engitem::DomeShown();   // ([sky] game_sky: the game draws it)
+    // ([sky] game_sky: the game draws it - chosen, ours not at all, also while its dome is not shown; vr/sky_paths.h)
+    const char* cannot = g_set.gameSky.load() && pal >= 0 ? engitem::SkyCannot() : nullptr;   // (chosen and unable here for good: ours instead)
+    bool sky = skypaths::OurSky(pal >= 0, skypaths::GameHolds(g_set.gameSky.load(), cannot), arcane, engitem::DomeShown());
+    {   // who draws the sky now, and why: each change once
+        const char* by = arcane ? "our effect - the Arcane Sanctuary's own sky (the game has none there)"
+                         : g_set.gameSky.load() ? (engitem::DomeShown() ? "the game's dome ([sky] game_sky=1; our effect's sky off)"
+                                                   : cannot ? "our effect INSTEAD of the game's dome ([sky] game_sky=1)"
+                                                            : "nothing yet - the game's dome is chosen ([sky] game_sky=1) and on its way; our effect's sky off")
+                         : pal >= 0 ? "our effect ([sky] game_sky=0)" : "nothing - no sky wanted here";
+        static const char* toldBy = nullptr;
+        static const char* toldWhy = nullptr;
+        if (by != toldBy || cannot != toldWhy) {
+            toldBy = by;
+            toldWhy = cannot;
+            LogF("vrcam: the sky drawn by %s%s%s", by, cannot ? ": " : "", cannot ? cannot : "");
+        }
+    }
+    {   // ... and the fog: our effect's instead of the game's chosen one, once a change
+        const char* fogInstead = g_set.gameFog.load() && OurFogWanted() && !g_arcaneSky.load() ? FogCannot() : nullptr;
+        static const char* toldFog = nullptr;
+        if (fogInstead != toldFog) {
+            if (fogInstead) LogF("vrcam: the fog drawn by our effect INSTEAD of the game's ([fog] game_fog=1): %s", fogInstead);
+            else if (toldFog) Log("vrcam: the fog drawn by the path chosen ([fog] game_fog) again");
+            toldFog = fogInstead;
+        }
+    }
     auto viewOk = [](const SkyView& v) { return v.proj_ok && v.axes_ok && v.proj[0] != 0.0f && v.proj[1] != 0.0f; };
     // AFR: this present's technique reads its own eye's view - the other eye's, not there yet, takes this one's until its own comes (PC2
     // without ReShade, 2026-10-26: "sky on" in the log, never drawn; PC1 with ReShade's replay: the right eye's projection comes with its
@@ -22603,6 +23278,9 @@ template <class RT> void EffectsBegin(RT* rt, reshade::api::command_list* cl) {
     }
 #endif
     SetFloat(rt, "HudTop", g_set.hudTop.load());
+    // the interface told by "the same in both eyes" only while presents alternate the eyes (VR stereo): in flat one view, its still world
+    // below HudTop was taken for the interface - the sky stopped at a row (vr/sky_paths.h)
+    SetBool(rt, "HudByEyes", skypaths::HudByEyes(AfrOn(), g_set.platform.load() == 1 && viewgate::F4()));   // (VR first person only)
     {   // each eye's stamp, into the picture
         const bool on = StampWanted() && g_afrBlock->stamp_magic == FLATVR_AFR_STAMP_MAGIC;
         SetBool(rt, "StampOn", on);
@@ -23065,7 +23743,7 @@ DWORD WINAPI UpdateThread(void*) {
         }
         // the fog leaves the interface alone; the floor's key never takes its text for the void. Flat: the sky and the cave ceiling
         // too, and through a menu, whose panel stays over the world there (EffectsPaused; from sajmonsoft's flat fork)
-        const bool flatFx = g_set.platform.load() == 0 && (g_skyPalette.load() >= 0 || g_arcaneSky.load() || fx::CeilWanted());
+        const bool flatFx = g_set.platform.load() == 0 && (fx::OurSkyWanted() || g_arcaneSky.load() || fx::CeilWanted());
         hud::SetUiMask((fx::FogWanted() || fx::TableKeyWanted() || flatFx) && !LabelsWanted() && !replay::OverlaysWanted());
         hud::SetUiMaskInMenu(g_set.platform.load() == 0);
         SkyTick();
@@ -23172,6 +23850,7 @@ DWORD WINAPI UpdateThread(void*) {
             prevscan::Tick();
             const int ringsWas = g_set.rings.load();
             const float modelRadiusWas = g_set.modelRadius.load();
+            const float bigRadiusWas = g_set.bigRadius.load();
             const bool iniChanged = ReloadIfChanged();
             if (iniChanged) {
                 g_gen.fetch_add(1);
@@ -23179,6 +23858,7 @@ DWORD WINAPI UpdateThread(void*) {
                 // 500 ms, and every save of the ini - any setting, a profile started - began that again.
                 // A first apply still waiting for its hook stays wanted.
                 if (g_set.rings.load() != ringsWas || g_set.modelRadius.load() != modelRadiusWas) g_renderDirty.store(true);
+                if (g_set.bigRadius.load() != bigRadiusWas) g_bigDirty.store(true);
                 g_mouseLookOn.store(MouseLookForView());
             }
             FollowMode();
@@ -23196,8 +23876,16 @@ DWORD WINAPI UpdateThread(void*) {
             fx::TryRegister();
             InstallBiomeHook();
             roofhook::Install();   // only once [render] keep_roofs asks for it
-            if (g_set.roofsTwoSided.load())   // only once [render] roofs_two_sided asks for it; asked again at each material build
+            engitem::weather::Install();   // only once [sky] weather_first_person asks for it
+            // only once [render] roofs_two_sided asks for it (asked again at each material build) - or [sky] game_sky, whose models' builds
+            // are told to the log (Serg on 0.189: every act's dome drew the first act's sky - what does the game build for each? read only)
+            if (g_set.roofsTwoSided.load() || g_set.gameSky.load()) {
+                roofsides::Watch(+[](const char* model) {   // (our models: the game's test models, and the three unused ones the ceilings took)
+                    return std::strstr(model, "data/hd/env/model/tests/") || std::strstr(model, "test_asset") || std::strstr(model, "_old_lod") ||
+                           std::strstr(model, "/_pit02");
+                });
                 roofsides::Install(&Log, +[]() { return g_set.roofsTwoSided.load(std::memory_order_relaxed) && g_set.platform.load() == 1; });
+            }
             prophook::Install();   // only once [stereo] props_once_a_pair asks for it
             cavelight::Install();   // only once [cave_light] enabled asks for it
             InstallLabelHooks();
@@ -23208,7 +23896,7 @@ DWORD WINAPI UpdateThread(void*) {
             InstallMapClickHook();
             InstallMouseGroundHook();   // [input] flat_aim_ground (flat only)
             PortalOvalTick();           // [input] flat_portal_no_oval (flat), [render] portal_no_oval (VR)
-            InstallRoomHeightHook();    // [render] keep_room_heights, once asked for
+            InstallRoomHeightHook();    // [render] floors_stay, once asked for
             straywalk::Install();   // the guard on the game's command funnel, once block_stray_walk asks for it
             moveattack::Install();   // [gameplay] move_while_attacking: the server's attack gate and frame trigger, the controller's update - once asked for
             shottrace::Install();   // [debug] shot_trace: the game's click-command sender, once asked for
@@ -23373,7 +24061,7 @@ void LoadReShade() {
              "an antivirus may also block it", err == ERROR_DLL_INIT_FAILED ? "its start said no" : "it could not be loaded");
 }
 
-static const char g_info_version[] = "0.187.0";
+static const char g_info_version[] = "0.188.6";
 
 // Who this is. D2RLoader prints "<name> <version> by <author>" for every plugin, and d2r-pcvr (a fork of our 0.152) carries the
 // same id, name and author as we did - "vrcam ... by BodyWalkVR" told a support log nothing. The id stays (the log file

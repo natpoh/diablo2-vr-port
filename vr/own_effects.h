@@ -347,6 +347,25 @@ inline int SolidOfResource(Rd&& rd, uintptr_t res, char* path, size_t cap) {
     return ModelKey(path, key, sizeof key) ? SolidOfModelKey(key) : -1;
 }
 
+// [sky] summit_backdrop_hidden: the Arreat Summit's backdrop - the game's skybox01 (expansion_mountaintop_skybox, placed by MtnTop.json and ColossalSummit.json about 90 units
+// below the mountain with a parallax component): a picture of the ground far below, made to be seen from above. Either slash, any case, any level of detail.
+inline bool IsSummitBackdrop(const char* path) {
+    static const char kDir[] = "/expansion_mountaintop_skybox/skybox";
+    if (!path) return false;
+    for (const char* p = path; *p; ++p) {
+        size_t i = 0;
+        for (; i + 1 < sizeof kDir; ++i) {
+            char c = p[i];
+            if (!c) return false;
+            if (c == '\\') c = '/';
+            if (c >= 'A' && c <= 'Z') c = (char)(c + 32);
+            if (c != kDir[i]) break;
+        }
+        if (i + 1 == sizeof kDir) return true;
+    }
+    return false;
+}
+
 // The renderer's model list: false when it does not read as one (no data with a count, a count out of range).
 template <class Rd>
 inline bool ReadModelList(Rd&& rd, uintptr_t renderer, uintptr_t* data, uint64_t* count) {
@@ -600,5 +619,9 @@ bool Wanted();
 void Install();
 // On the thread that may change the renderer's registry, every frame (vr/vrcam.cpp, the engine unit's setter hook): the opacity of each tracked effect.
 void Tick();
+// [sky] summit_backdrop_hidden: true = the Arreat Summit's backdrop model (IsSummitBackdrop) hidden, false = the instances we hid given back. Live, any thread.
+void HideSummitBackdrop(bool hide);
+// The same thread as Tick: walks the renderer's model list (every 250 ms while wanted or while one of ours is hidden). Independent of the effects' hooks.
+void BackdropTick();
 
 }  // namespace owneffects

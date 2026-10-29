@@ -644,13 +644,16 @@ end;
 // (after bearstonem/d2r-pcvr, whose installer makes them too). Once here, after ReShade, the mod's modinfo.json and the ini;
 // the program makes them again at its start when they are missing or the game has changed. All of it is inside the mod, so
 // the uninstaller's RemoveMod takes it with the rest. Whatever comes back, Setup goes on.
+// The same run, each by its own ticks: the game-drawn sky's domes ([sky] game_sky) and the game's ceilings ([ceiling] game_ceiling, the
+// measures, the cathedral's vault) - as the program's window makes them; without them a player who presses Play in the launcher before
+// ever opening the window had a black sky. Each one's time in the program's log (d2r_vr_settings.log).
 // The same run, by its own tick ([world] kurast_boat): the Kurast Docks' town preset with its flying canoe put on the water
 // (after bearstonem/d2r-pcvr, which takes it out), into mods\D2R-VR\D2R-VR.mpq\data the same way; its outcome only in the log.
 procedure PrepareAssets(Dir: String);
 var
   Code: Integer;
 begin
-  WizardForm.StatusLabel.Caption := 'Making the Arcane Sanctuary sky from your game...';
+  WizardForm.StatusLabel.Caption := 'Making the sky, the ceilings and the Arcane Sanctuary sky from your game...';
   if Exec(Dir + '\D2R_VR_Settings.exe', '--prepare-assets', Dir, SW_HIDE, ewWaitUntilTerminated, Code) then
     Log('D2R_VR_Settings --prepare-assets: ' + IntToStr(Code) + ' (0 made, 1 could not, 2 no ReShade folder)')
   else

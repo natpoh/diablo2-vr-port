@@ -140,6 +140,7 @@ def make_payload(tag, dll, defaults, version, libs=True, settings_exe=None):
     put(payload / "plugins/d2r_vr.ini", defaults)
     put(payload / "plugins/D2R_VR_Settings.exe", Path(settings_exe).read_bytes() if settings_exe else b"MZ SETTINGS " + tag.encode())
     put(payload / "shaders/D2R_DepthFog.fx", "// D2R VR shader " + tag + "\n")
+    put(payload / "shaders/D2R_FogEase_Unleashed.fxh", "// D2R VR shader include " + tag + "\n")
     put(payload / "license/D2R_VR_LICENSE.txt", (repo / "LICENSE").read_bytes())
     put(payload / "lang/en.txt", "language.name = English\n# " + tag + "\n")
     put(payload / "lang/ru.txt", "language.name = Русский\n# " + tag + "\n")

@@ -12,32 +12,35 @@
 
 #include <algorithm>
 #include <cmath>
+#include <string>
 #include <vector>
+
+#include "ui_text.h"   // the prompt in the player's language ([hud] headset_language), its font
 
 namespace calib {
 namespace {
 
 struct Rgb { float r, g, b; };   // 0..255
 
-// One message of the bottom line: what to say, in which colour.
-struct Message { const wchar_t* text; Rgb color; };
+// One message of the bottom line: what to say (in the player's language), in which colour.
 const Rgb kInfo{150, 205, 255}, kGood{125, 232, 145}, kWarn{255, 170, 95}, kBad{255, 115, 115};
-const Message kMessages[kPanelMessages] = {
-    {L"Let go of both triggers.", kInfo},                                                            // 0 release
-    {L"Good. Now squeeze both triggers and hold still.", kGood},                                   // 1 ready
-    {L"Hold still...", kGood},                                                                       // 2 hold
-    {L"The headset gives no floor (no room set up), so the height cannot be measured.", kBad},      // 3 floor
-    {L"Your eyes read outside 0.8 - 2.3 m over the floor. Is the floor level set up?", kWarn},       // 4 height
-    {L"The headset or a controller is not tracked. Hold the controllers where the headset sees them.", kWarn},   // 5 tracking
-    {L"Stand up straight and look straight ahead.", kWarn},                                          // 6 upright
-    {L"Arms straight out to the sides, level with the shoulders, elbows straight, hands not ahead of you.", kWarn},   // 7 arms
-    {L"You moved. Let go of both triggers and hold still.", kWarn},                                  // 8 still
-    {L"Saved, and in use. Let go of the triggers.", kGood},                                          // 9 saved
-    {L"d2r_vr.ini could not be written (see the log). Let go and try again.", kBad},                 // 10 failed
-};
+const Rgb kColors[kPanelMessages] = {kInfo, kGood, kGood, kBad, kWarn, kWarn, kWarn, kWarn, kWarn, kGood, kBad};
 // Seated ([calibration] seated=1, images kPanelMessages and on): the same, but the head is not asked to stand.
-const wchar_t* SeatedText(int message) {
-    return message == 6 ? L"Sit up straight and look straight ahead." : kMessages[message].text;
+std::wstring MessageText(int message, bool seated) {
+    switch (message) {
+        case 0: return uitext::TrW("vr.calib.release", "Let go of both triggers.");
+        case 1: return uitext::TrW("vr.calib.ready", "Good. Now squeeze both triggers and hold still.");
+        case 2: return uitext::TrW("vr.calib.hold", "Hold still...");
+        case 3: return uitext::TrW("vr.calib.floor", "The headset gives no floor (no room set up), so the height cannot be measured.");
+        case 4: return uitext::TrW("vr.calib.height", "Your eyes read outside 0.8 - 2.3 m over the floor. Is the floor level set up?");
+        case 5: return uitext::TrW("vr.calib.tracking", "The headset or a controller is not tracked. Hold the controllers where the headset sees them.");
+        case 6: return seated ? uitext::TrW("vr.calib.upright_seated", "Sit up straight and look straight ahead.")
+                              : uitext::TrW("vr.calib.upright", "Stand up straight and look straight ahead.");
+        case 7: return uitext::TrW("vr.calib.arms", "Arms straight out to the sides, level with the shoulders, elbows straight, hands not ahead of you.");
+        case 8: return uitext::TrW("vr.calib.still", "You moved. Let go of both triggers and hold still.");
+        case 9: return uitext::TrW("vr.calib.saved", "Saved, and in use. Let go of the triggers.");
+        default: return uitext::TrW("vr.calib.failed", "d2r_vr.ini could not be written (see the log). Let go and try again.");
+    }
 }
 
 struct Canvas {
@@ -99,7 +102,7 @@ struct Scratch {
 
 HFONT Font(int px, int weight) {
     return CreateFontW(-px, 0, 0, 0, weight, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                       ANTIALIASED_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+                       ANTIALIASED_QUALITY, DEFAULT_PITCH | FF_DONTCARE, uitext::Face(L"Segoe UI"));
 }
 
 // text in `box` (word-wrapped, centred if asked), coloured, over the canvas.
@@ -138,19 +141,21 @@ bool PaintPanel(int image, uint32_t* pixels) {
     bool ok = true;
     const bool seated = image >= kPanelMessages;
     const int message = image % kPanelMessages;
-    ok = ok && Text(c, s, seated ? L"Seated: measure my arm span" : L"Measure my height and arm span", RECT{60, 22, (LONG)kPanelW - 60, 78}, 40,
-                    FW_SEMIBOLD, Rgb{255, 205, 100}, false);
-    ok = ok && Text(c, s,
-                    seated ? L"Sit upright and look straight ahead. Stretch both arms straight out sideways at shoulder height, as wide as they go.\n"
-                             L"Let go of both triggers, then squeeze both and hold still. Only the arm span is read: "
-                             L"your eye height is not measured seated (the stored one stays)."
-                           : L"Stand upright and look straight ahead. Stretch both arms straight out sideways at shoulder height, as wide as they go.\n"
-                             L"Let go of both triggers, then squeeze both and hold still.",
-                    RECT{60, 86, (LONG)kPanelW - 60, 244}, seated ? 26 : 29, FW_NORMAL, Rgb{236, 236, 242}, false);
-    const Message& m = kMessages[message];
-    ok = ok && Text(c, s, seated ? SeatedText(message) : m.text, RECT{60, 252, (LONG)kPanelW - 60, 340}, 30, FW_SEMIBOLD, m.color, false);
-    ok = ok && Text(c, s, L"Right B cancels. The game goes on behind this - measure somewhere safe.",
-                    RECT{60, 392, (LONG)kPanelW - 60, 430}, 22, FW_NORMAL, Rgb{150, 156, 172}, false);
+    const std::wstring title = seated ? uitext::TrW("vr.calib.title_seated", "Seated: measure my arm span") : uitext::TrW("vr.calib.title", "Measure my height and arm span");
+    ok = ok && Text(c, s, title.c_str(), RECT{60, 22, (LONG)kPanelW - 60, 78}, 40, FW_SEMIBOLD, Rgb{255, 205, 100}, false);
+    const std::wstring steps =
+        seated ? uitext::TrW("vr.calib.steps_seated",
+                             "Sit upright and look straight ahead. Stretch both arms straight out sideways at shoulder height, as wide as they go.\n"
+                             "Let go of both triggers, then squeeze both and hold still. Only the arm span is read: "
+                             "your eye height is not measured seated (the stored one stays).")
+               : uitext::TrW("vr.calib.steps",
+                             "Stand upright and look straight ahead. Stretch both arms straight out sideways at shoulder height, as wide as they go.\n"
+                             "Let go of both triggers, then squeeze both and hold still.");
+    ok = ok && Text(c, s, steps.c_str(), RECT{60, 86, (LONG)kPanelW - 60, 244}, seated ? 26 : 29, FW_NORMAL, Rgb{236, 236, 242}, false);
+    const std::wstring line = MessageText(message, seated);
+    ok = ok && Text(c, s, line.c_str(), RECT{60, 252, (LONG)kPanelW - 60, 340}, 30, FW_SEMIBOLD, kColors[message], false);
+    const std::wstring cancel = uitext::TrW("vr.calib.cancel", "Right B cancels. The game goes on behind this - measure somewhere safe.");
+    ok = ok && Text(c, s, cancel.c_str(), RECT{60, 392, (LONG)kPanelW - 60, 430}, 22, FW_NORMAL, Rgb{150, 156, 172}, false);
     if (!ok) return false;
 
     for (size_t i = 0; i < (size_t)kPanelW * kPanelH; ++i) {

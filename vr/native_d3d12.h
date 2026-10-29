@@ -24,6 +24,7 @@ struct D3D12_VIEWPORT;
 struct tagRECT;
 struct D3D12_GRAPHICS_PIPELINE_STATE_DESC;
 struct D3D12_PIPELINE_STATE_STREAM_DESC;
+struct D3D12_COMPUTE_PIPELINE_STATE_DESC;
 struct ID3D12PipelineState;
 struct ID3D12DescriptorHeap;
 
@@ -56,6 +57,8 @@ struct Sinks {
     void (*graphicsPso)(ID3D12Device* dev, const D3D12_GRAPHICS_PIPELINE_STATE_DESC* desc, ID3D12PipelineState* pso) = nullptr;
     void (*streamPso)(ID3D12Device* dev, const D3D12_PIPELINE_STATE_STREAM_DESC* desc, ID3D12PipelineState* pso) = nullptr;
     ID3D12PipelineState* (*psoSwap)(ID3D12PipelineState* pso) = nullptr;
+    // [render] light_bounds_fix without ReShade (vr/light_bounds.h): a compute pipeline the game made from a description (after the real call, made)
+    void (*computePso)(ID3D12Device* dev, const D3D12_COMPUTE_PIPELINE_STATE_DESC* desc, ID3D12PipelineState* pso) = nullptr;
     // [fog] game_fog_before_fx (vr/fog_before_fx.h): what a list of the game's binds, for the fog step recorded before its transparent resolve -
     // each before the real call (the pipeline: after it, the one bound). The hooks for the root arguments, the heaps and DrawInstanced go in
     // only when these are given.

@@ -21,6 +21,9 @@
 
 #include <array>
 #include <cstdint>
+#include <string>
+
+#include "ui_text.h"   // the rows' words in the player's language ([hud] headset_language)
 
 namespace hset {
 
@@ -267,6 +270,22 @@ constexpr bool IsToggle(const Def& d) { return d.min == 0.0f && d.max == 1.0f &&
 
 constexpr int PageCount() { return kPageCount; }
 constexpr const char* kPageNames[kMaxPages] = {"View", "Options", "Video", "Body", "Life", "Look", "HUD", "Belt", "Melee", "Left", "Right", "Guide"};
+// The panel's words in the player's language (vr/ui_text.h; the keys are made from this table, vr/ui_text_tables.h lists them for lang\en.txt):
+// a row's name and the line under it "vr.hset.<section>.<key>.label / .detail" (a Choice row's line is its ini text: not a word), a switch's two
+// faces by their English "vr.hset.value.<word>" (one "On" for every row), a tab "vr.hset.page.<name>". The tabs' widths stay the English names'.
+inline std::string DefKey(int i, const char* field) {
+    std::string k = "vr.hset.";
+    for (const wchar_t* p = kDefs[i].section; *p; ++p) k += (char)*p;
+    k += '.';
+    for (const wchar_t* p = kDefs[i].key; *p; ++p) k += (char)*p;
+    return k + "." + field;
+}
+inline const char* DefLabel(int i) { return uitext::Tr(DefKey(i, "label"), kDefs[i].label); }
+inline const char* DefDetail(int i) { return uitext::Tr(DefKey(i, "detail"), kDefs[i].detail); }
+inline std::string ValueKey(const char* en) { return "vr.hset.value." + uitext::Slug(en); }
+inline const char* ValueWord(const char* en) { return *en ? uitext::Tr(ValueKey(en), en) : en; }
+inline std::string PageKey(int page) { return "vr.hset.page." + uitext::Slug(kPageNames[page]); }
+inline const char* PageName(int page) { return uitext::Tr(PageKey(page), kPageNames[page]); }
 // The low-life vignette's two pages: while one is open the plugin previews the vignette (vr/low_hp_game.h SetPreview).
 constexpr bool IsLifePage(int page) { return page == kPageLife || page == kPageLook; }
 

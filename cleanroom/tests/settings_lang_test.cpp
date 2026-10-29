@@ -97,13 +97,14 @@ int main() {
     CHECK(Slug(L"  UI: F4 body ") == L"ui_f4_body");
     CHECK(Slug(L"Each kind of weapon (type a number; 0 = follow the general one)", 20) == L"each_kind_of_weapon");
     // the file for Windows' language: the same code, the language alone, the first of that language, else none (English)
-    const std::vector<std::wstring> files = {L"de", L"es", L"fr", L"pt-BR", L"ru", L"zh-Hans"};
+    const std::vector<std::wstring> files = {L"de", L"es", L"fr", L"pt-BR", L"ru", L"uk", L"zh-Hans"};
     CHECK(Pick(L"de-DE", files) == L"de");
     CHECK(Pick(L"DE-at", files) == L"de");
     CHECK(Pick(L"pt-BR", files) == L"pt-BR");
     CHECK(Pick(L"pt-PT", files) == L"pt-BR");
     CHECK(Pick(L"zh-CN", files) == L"zh-Hans");
     CHECK(Pick(L"ru-RU", files) == L"ru");
+    CHECK(Pick(L"uk-UA", files) == L"uk");
     CHECK(Pick(L"en-US", files).empty());
     CHECK(Pick(L"ja-JP", files).empty());
     CHECK(Pick(L"", files).empty());

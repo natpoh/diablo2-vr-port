@@ -14,6 +14,7 @@
 #pragma once
 
 #include <cstdint>
+#include <vector>
 
 #include "d2r_vr_props.h"
 
@@ -88,5 +89,11 @@ struct RemoteProp { uint16_t nameHash; float home[3]; float p[3]; float q[4]; };
 void SetRemoteProps(const RemoteProp* r, int n);
 // How many of the props told were found among ours in the last pass (and how many were told), for the log.
 unsigned RemotePlaced(unsigned* wanted);
+
+// [ceiling] game_ceiling_dome (vrcam): the level's preset pieces the renderer has at any of `places` in their presets (render units, as written in the
+// preset): each one's parent (the preset's root entity), its place under it and where it is drawn - read from the transforms as the scan reads them,
+// whether knock props run or not. Read only. False: the renderer's registry or its transforms do not read. Any thread (a whole pass over the transforms).
+struct PresetPiece { uint32_t parent; float local[3]; float world[3]; };
+bool PresetPieces(const float (*places)[3], int n, std::vector<PresetPiece>* out);
 
 }  // namespace knockprops

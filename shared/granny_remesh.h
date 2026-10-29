@@ -23,6 +23,7 @@
 // tiling rock.
 #pragma once
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -351,15 +352,24 @@ constexpr float kLowEl = -12.0f, kHighEl = 90.0f;   // the panorama's and the do
 constexpr int kSegments = 64;
 constexpr float kRings[] = {kLowEl, -6, 0, 4, 8, 13, 18, 24, 30, 37, 44, 52, 60, 68, 76, 83, kHighEl};
 
-// The dome of make_sky_dome.py: a sphere's upper part round the origin of `radius`, its uv the panorama's (u round, v from the top)
-inline Mesh DomeMesh(float radius) {
+// The dome of make_sky_dome.py: a sphere's upper part round the origin of `radius`, its uv the panorama's (u round, v from the top) -
+// its v from `vFrom` to `vTo` of the picture ([sky] game_sky: its own band of the domes' atlas, shared/sky_atlas.h; all of it: 0 .. 1)
+// [sky] game_sky_closed: the sphere closed below the panorama's bottom (Serg on 42.webp, the Summit: "купол внизу обрезается ... это дыра" -
+// under the rim at -12 degrees nothing, the void and the fog through it). These rings all take the panorama's bottom row, which
+// make_sky_dome.py paints one colour - the horizon's (its 0 degree row's mean) -, so the lower half is that one colour with no edge.
+constexpr float kClosedRings[] = {-90, -72, -54, -38, -25};
+inline Mesh DomeMesh(float radius, float vFrom = 0.0f, float vTo = 1.0f, bool closed = false) {
     Mesh m;
     m.scale = radius;
-    const int rings = (int)(sizeof kRings / sizeof kRings[0]), row = kSegments + 1;
+    std::vector<float> ringEl;
+    if (closed) ringEl.assign(std::begin(kClosedRings), std::end(kClosedRings));
+    ringEl.insert(ringEl.end(), std::begin(kRings), std::end(kRings));
+    const int rings = (int)ringEl.size(), row = kSegments + 1;
     const int16_t w = (int16_t)std::lround(std::log2(radius) / 13.0 * 32767.0);   // (the game's own: 326.123 -> 21045)
     for (int k = 0; k < 3; ++k) { m.mn[k] = 1e30f; m.mx[k] = -1e30f; }
     for (int i = 0; i < rings; ++i) {
-        const double e = kRings[i] * 3.14159265358979 / 180.0;
+        const double e = ringEl[i] * 3.14159265358979 / 180.0;
+        const float below = ringEl[i] < kLowEl ? kLowEl : ringEl[i];   // (under the panorama: its bottom row)
         for (int j = 0; j <= kSegments; ++j) {
             const double u = (double)j / kSegments, a = u * 2.0 * 3.14159265358979;
             const double d[3] = {std::cos(e) * std::sin(a), std::sin(e), std::cos(e) * std::cos(a)};
@@ -374,21 +384,37 @@ inline Mesh DomeMesh(float radius) {
             v.pos[3] = w;
             v.tangent[0] = Snorm8((float)std::cos(a)); v.tangent[1] = 0; v.tangent[2] = Snorm8((float)-std::sin(a)); v.tangent[3] = -127;
             v.uv[0] = Half((float)u);
-            v.uv[1] = Half((kHighEl - kRings[i]) / (kHighEl - kLowEl));
+            v.uv[1] = Half(vFrom + (vTo - vFrom) * ((kHighEl - below) / (kHighEl - kLowEl)));
             m.v.push_back(v);
         }
     }
     for (int i = 0; i + 1 < rings; ++i)
         for (int j = 0; j < kSegments; ++j) {
             const uint16_t a = (uint16_t)(i * row + j), b = (uint16_t)(i * row + j + 1), c = (uint16_t)((i + 1) * row + j), d = (uint16_t)((i + 1) * row + j + 1);
-            const bool zenith = i + 1 == rings - 1;   // (one point: one triangle a column)
+            const bool zenith = ringEl[i + 1] >= 90.0f, nadir = ringEl[i] <= -90.0f;   // (one point: one triangle a column)
             const uint16_t tris[2][3] = {{a, b, c}, {b, d, c}};
-            for (int t = 0; t < (zenith ? 1 : 2); ++t) {
+            for (int t = nadir ? 1 : 0; t < (zenith ? 1 : 2); ++t) {
                 m.idx.insert(m.idx.end(), {tris[t][0], tris[t][1], tris[t][2]});
                 m.idx.insert(m.idx.end(), {tris[t][0], tris[t][2], tris[t][1]});   // and the other way round
             }
         }
     return m;
+}
+
+// Made the dome's own (Serg on 0.188: every act's sky drew act 2's - the first one loaded - with every name each dome's own by then; the cave
+// dome drew act 1's after f52f95a1 renamed them all): the game shares a model it already has by what it holds, and every dome holds the
+// same mesh. `salt` (1 and up, each model its own) makes its bytes its own and draws the same: that many more vertices nobody points at
+// (copies of the first, their uv far off), and its triangles begun `salt` triangles on (the same triangles, the same count).
+inline void Salt(Mesh* m, unsigned salt) {
+    if (!salt || m->v.empty() || m->idx.size() < 3) return;
+    for (unsigned k = 0; k < salt && m->v.size() < 65536u; ++k) {
+        Vertex v = m->v[0];
+        v.uv[0] = Half(1000.0f + (float)salt);
+        v.uv[1] = Half((float)k);
+        m->v.push_back(v);
+    }
+    const size_t tris = m->idx.size() / 3, by = (size_t)salt % tris;
+    std::rotate(m->idx.begin(), m->idx.begin() + by * 3, m->idx.end());
 }
 
 // ---- our cave ceiling ([ceiling] game_ceiling, vr/game_ceiling.h lays it) ------------------------------------------------------------
@@ -445,6 +471,82 @@ inline Mesh CeilingMesh(float tile, int tilesHalf, int cells, float relief) {
     return m;
 }
 
+// [ceiling] game_ceiling_dome: a flat slab round the origin, `half` units each way (at least), with a dome in its middle - an even half
+// ellipsoid `radius` round rising `rise` over y 0 - seen from below as CeilingMesh: normals down (in, under the dome), both windings, the uv
+// one picture a `tile` along +x and -z. A grid of cells about `cell` across whose square rings round the middle bend into circles inside
+// the rim (the rim on one ring of vertices: no steps round it) and back into squares out to twice the radius - flat there, so only the
+// triangles' shapes change; past that, out to the edge, its rings `farCell` apart (0: `cell`) - the flat far ceiling needs no fine cells
+// ([ceiling] game_ceiling_dome_size: the vault is made wide enough for the smallest dome, its far part in few cells). The rim's own
+// vertices lean halfway between the dome's wall and the flat ceiling. Empty: more than 16-bit indices hold, or nothing to make.
+inline Mesh VaultMesh(float tile, float half, float cell, float radius, float rise, float farCell = 0.0f) {
+    Mesh m;
+    if (!(tile > 0.0f) || !(half > 0.0f) || !(cell > 0.0f) || !(radius > 0.0f) || !(rise > 0.0f)) return m;
+    const long ringsIn = std::lround(radius / cell) < 1 ? 1 : std::lround(radius / cell);   // rings inside the rim
+    const double R = radius, H = rise, step = R / (double)ringsIn;
+    const long ringsOuter = (long)std::ceil(2.0 * R / step) < (long)std::ceil(half / step) ? (long)std::ceil(2.0 * R / step) : (long)std::ceil(half / step);
+    const double outer = ringsOuter * step;   // squares again from here; past it the far rings
+    const double farGap = farCell > 0.0f ? (farCell > step ? (double)farCell : step) : step;
+    const long ringsFar = half > outer ? (long)std::ceil((half - outer) / farGap) : 0;
+    const double farStep = ringsFar ? (half - outer) / ringsFar : step;
+    const long n = ringsOuter + ringsFar;   // rings out to the edge
+    const long row = 2 * n + 1;
+    if (row * row > 65536) return m;
+    const double edge = outer + ringsFar * farStep;
+    auto rhoOf = [&](long ring) { return ring <= ringsOuter ? ring * step : outer + (ring - ringsOuter) * farStep; };
+    m.scale = (float)(edge > H ? edge : H);
+    const int16_t w = (int16_t)std::lround(std::log2(m.scale) / 13.0 * 32767.0);
+    for (int k = 0; k < 3; ++k) { m.mn[k] = 1e30f; m.mx[k] = -1e30f; }
+    for (long i = 0; i < row; ++i)
+        for (long j = 0; j < row; ++j) {
+            const long ri = j - n > n - j ? j - n : n - j, rk = i - n > n - i ? i - n : n - i, ring = ri > rk ? ri : rk;   // the square ring
+            const double rho = rhoOf(ring), across = ring > 0 ? rho / ring : step;   // (a square ring's points: its own spacing)
+            double x = (j - n) * across, z = (i - n) * across;
+            const double d = std::sqrt(x * x + z * z);
+            if (ring > 0) {
+                const double t = ring <= ringsIn ? 1.0 : rho >= outer ? 0.0 : (outer - rho) / (outer - R);   // circles .. squares
+                const double k = 1.0 - t + t * rho / d;
+                x *= k;
+                z *= k;
+            }
+            const double r = ring <= ringsIn ? rho : std::sqrt(x * x + z * z);
+            const double s = r < R ? std::sqrt(1.0 - (r / R) * (r / R)) : 0.0;
+            const double py = H * s;
+            // the normal: in from the ellipsoid (x / R^2, y / H^2, z / R^2) - down on the flat; the rim's halfway
+            double nx = 0.0, ny = -1.0, nz = 0.0;
+            if (ring < ringsIn) { nx = -H * x / (R * R); ny = -s; nz = -H * z / (R * R); }
+            else if (ring == ringsIn) { nx = -x / r; ny = -1.0; nz = -z / r; }
+            const double nl = std::sqrt(nx * nx + ny * ny + nz * nz);
+            nx /= nl; ny /= nl; nz /= nl;
+            // the tangent: along the surface where u grows (x), straightened against the normal
+            double tx = 1.0 - nx * nx, ty = -nx * ny, tz = -nx * nz;
+            double tl = std::sqrt(tx * tx + ty * ty + tz * tz);
+            if (tl < 1e-6) { tx = 0.0; ty = 0.0; tz = 1.0; tl = 1.0; }   // (the wall facing along x: along the rim)
+            const double p[3] = {x, py, z};
+            Vertex v{};
+            for (int k = 0; k < 3; ++k) {
+                v.pos[k] = (int16_t)std::lround(p[k] / m.scale * 32767.0);
+                if (p[k] < m.mn[k]) m.mn[k] = (float)p[k];
+                if (p[k] > m.mx[k]) m.mx[k] = (float)p[k];
+            }
+            v.pos[3] = w;
+            v.normal[0] = Snorm8((float)nx); v.normal[1] = Snorm8((float)ny); v.normal[2] = Snorm8((float)nz);
+            v.tangent[0] = Snorm8((float)(tx / tl)); v.tangent[1] = Snorm8((float)(ty / tl)); v.tangent[2] = Snorm8((float)(tz / tl)); v.tangent[3] = -127;
+            v.uv[0] = Half((float)(x / tile));
+            v.uv[1] = Half((float)(-z / tile));
+            m.v.push_back(v);
+        }
+    for (long i = 0; i + 1 < row; ++i)
+        for (long j = 0; j + 1 < row; ++j) {
+            const uint16_t a = (uint16_t)(i * row + j), b = (uint16_t)(i * row + j + 1), c = (uint16_t)((i + 1) * row + j), d = (uint16_t)((i + 1) * row + j + 1);
+            const uint16_t tris[2][3] = {{a, b, c}, {b, d, c}};
+            for (const auto& t : tris) {
+                m.idx.insert(m.idx.end(), {t[0], t[1], t[2]});
+                m.idx.insert(m.idx.end(), {t[0], t[2], t[1]});   // and the other way round
+            }
+        }
+    return m;
+}
+
 // [ceiling] game_ceiling_wall: a ring of rock round the origin, `radius` round, from y 0 down to -height, seen from inside - its normals in,
 // both windings; the uv one picture a `tile`, a whole number of them round (no seam where it closes), u round, v up (with the tangent round
 // and its sign the card's -1, the normal map's bitangent runs up).
@@ -483,6 +585,123 @@ inline Mesh WallMesh(float radius, float height, int segments, int rows, float t
             }
         }
     return m;
+}
+
+// ---- a model of the game's read: its mesh, its bounds ([ceiling] game_ceiling_beams, height_from_walls) ---------------------------------
+
+// The first mesh's ExtendedData (its bounds and VertexScale): its type entry and its object; !ok() when it has none
+inline bool MeshExt(Walk& g, Addr meshType, Addr mesh, Addr* et, Addr* eo) {
+    Addr t;
+    const Addr ext = g.Member(meshType, mesh, "ExtendedData", &t);
+    if (!ext.ok() || g.Kind(t) != 5) return false;
+    *et = g.Ptr(ext);
+    *eo = g.Ptr(ext.at(8));
+    return et->ok() && eo->ok();
+}
+
+// Every mesh's bounds together (ExtendedData bbMin / bbMax), model units: how far a piece of the game's reaches. False: none.
+inline bool Bounds(File& f, float mn[3], float mx[3]) {
+    Walk g(f);
+    const Addr rt{f.h.rootType.section, f.h.rootType.offset}, ro{f.h.rootObj.section, f.h.rootObj.offset};
+    Addr t;
+    const Addr meshes = g.Member(rt, ro, "Meshes", &t);
+    if (!meshes.ok() || g.Kind(t) != 4) return false;
+    const Addr meshType = g.Ref(t), arr = g.Ptr(meshes.at(4));
+    bool any = false;
+    for (int32_t k = 0; k < g.Get<int32_t>(meshes) && k < 4096; ++k) {
+        Addr et, eo, e;
+        if (!MeshExt(g, meshType, g.Ptr(arr.at((uint32_t)k * 8)), &et, &eo)) continue;
+        const Addr lo = g.Member(et, eo, "bbMin", &e), hi = g.Member(et, eo, "bbMax", &e);
+        if (!lo.ok() || !hi.ok()) continue;
+        for (int c = 0; c < 3; ++c) {
+            const float a = g.Get<float>(lo.at(c * 4)), b = g.Get<float>(hi.at(c * 4));
+            if (!any || a < mn[c]) mn[c] = a;
+            if (!any || b > mx[c]) mx[c] = b;
+        }
+        any = true;
+    }
+    return any;
+}
+
+// The first mesh as the file has it: its vertices (the card's type), its triangles (16-bit, one group: one material), its VertexScale and
+// bounds. False with `why` when it is not laid out so.
+inline bool MeshOf(File& f, Mesh* out, std::string* why) {
+    auto no = [&](const char* w) { if (why) *why = w; return false; };
+    *out = Mesh{};
+    Walk g(f);
+    const Addr rt{f.h.rootType.section, f.h.rootType.offset}, ro{f.h.rootObj.section, f.h.rootObj.offset};
+    Addr t;
+    const Addr meshes = g.Member(rt, ro, "Meshes", &t);
+    if (!meshes.ok() || g.Kind(t) != 4 || g.Get<int32_t>(meshes) < 1) return no("no mesh");
+    const Addr meshType = g.Ref(t), mesh = g.Ptr(g.Ptr(meshes.at(4)));
+    if (!mesh.ok()) return no("no mesh");
+    const Addr pvd = g.Ptr(g.Member(meshType, mesh, "PrimaryVertexData", &t));
+    if (!pvd.ok()) return no("no vertex data");
+    const Addr verts = g.Member(g.Ref(t), pvd, "Vertices", &t);
+    if (!verts.ok() || g.Kind(t) != 7) return no("no vertex array");
+    if (g.StructBytes(g.Ptr(verts)) != (int)sizeof(Vertex)) return no("the vertex type is not the card's (20 bytes)");
+    const int32_t nv = g.Get<int32_t>(verts.at(8));
+    const Addr vdata = g.Ptr(verts.at(12));
+    if (nv < 1 || nv > 65536 || !g.In(vdata, (uint32_t)nv * sizeof(Vertex))) return no("its vertices lie outside the file");
+    out->v.resize((size_t)nv);
+    std::memcpy(out->v.data(), f.sec[vdata.s].data() + vdata.o, (size_t)nv * sizeof(Vertex));
+    const Addr pt = g.Member(meshType, mesh, "PrimaryTopology", &t);
+    const Addr topo = g.Ptr(pt), topoType = g.Ref(t);
+    Addr gt, it16, it32;
+    const Addr groups = g.Member(topoType, topo, "Groups", &gt), i16 = g.Member(topoType, topo, "Indices16", &it16), i32 = g.Member(topoType, topo, "Indices", &it32);
+    if (!groups.ok() || !i16.ok()) return no("the mesh's topology is not the card's");
+    if (g.Get<int32_t>(groups) != 1) return no("more than one material");
+    if (i32.ok() && g.Get<int32_t>(i32) != 0) return no("32-bit indices");
+    const int32_t ni = g.Get<int32_t>(i16);
+    const Addr idata = g.Ptr(i16.at(4));
+    if (ni < 3 || ni % 3 || !g.In(idata, (uint32_t)ni * 2)) return no("its triangles lie outside the file");
+    out->idx.resize((size_t)ni);
+    std::memcpy(out->idx.data(), f.sec[idata.s].data() + idata.o, (size_t)ni * 2);
+    for (uint16_t i : out->idx) if (i >= nv) return no("a triangle names a vertex it has not");
+    Addr et, eo, e;
+    if (!MeshExt(g, meshType, mesh, &et, &eo)) return no("the mesh has no extended data");
+    const Addr vs = g.Member(et, eo, "VertexScale", &e), lo = g.Member(et, eo, "bbMin", &e), hi = g.Member(et, eo, "bbMax", &e);
+    if (!vs.ok() || !lo.ok() || !hi.ok()) return no("the mesh has no VertexScale or bounds");
+    out->scale = g.Get<float>(vs);
+    for (int c = 0; c < 3; ++c) { out->mn[c] = g.Get<float>(lo.at(c * 4)); out->mx[c] = g.Get<float>(hi.at(c * 4)); }
+    if (!(out->scale > 0.0f)) return no("its VertexScale is not a size");
+    return true;
+}
+
+// `one` laid `cols` x `rows` times, `px` apart across (x) and `pz` along (z), the grid's middle at the origin: each copy its own vertices
+// (the same normals, tangents and uv), its positions at the grid's own VertexScale. False when they would not fit 16-bit indices.
+inline bool GridMesh(const Mesh& one, int cols, int rows, float px, float pz, Mesh* out) {
+    *out = Mesh{};
+    const size_t n = one.v.size();
+    if (cols < 1 || rows < 1 || !n || n * (size_t)cols * (size_t)rows > 65536u) return false;
+    std::vector<float> pos;
+    pos.reserve(n * cols * rows * 3);
+    double most = 1e-6;   // (not `far`: windows.h's macro)
+    for (int k = 0; k < 3; ++k) { out->mn[k] = 1e30f; out->mx[k] = -1e30f; }
+    for (int j = 0; j < rows; ++j)
+        for (int i = 0; i < cols; ++i) {
+            const double off[3] = {(i - (cols - 1) * 0.5) * px, 0.0, (j - (rows - 1) * 0.5) * pz};
+            for (const Vertex& v : one.v)
+                for (int k = 0; k < 3; ++k) {
+                    const float p = (float)(v.pos[k] / 32767.0 * one.scale + off[k]);
+                    pos.push_back(p);
+                    if (std::fabs(p) > most) most = std::fabs(p);
+                    if (p < out->mn[k]) out->mn[k] = p;
+                    if (p > out->mx[k]) out->mx[k] = p;
+                }
+        }
+    out->scale = (float)most;
+    const int16_t w = (int16_t)std::lround(std::log2(out->scale) / 13.0 * 32767.0);
+    out->v.resize(n * cols * rows);
+    for (size_t c = 0; c < out->v.size(); ++c) {
+        Vertex v = one.v[c % n];
+        for (int k = 0; k < 3; ++k) v.pos[k] = (int16_t)std::lround(pos[c * 3 + k] / out->scale * 32767.0);
+        v.pos[3] = w;
+        out->v[c] = v;
+    }
+    for (size_t copy = 0; copy < (size_t)cols * rows; ++copy)
+        for (uint16_t i : one.idx) out->idx.push_back((uint16_t)(copy * n + i));
+    return true;
 }
 
 // ---- the edits ------------------------------------------------------------------------------------------------------------------

@@ -70,6 +70,8 @@ inline constexpr Sig kSigs[] = {
     {"ModelRecalcCheck", 0x6AF5B1, Kind::Code, "80 3D ?? ?? ?? ?? 00 0F 29 B4 24 30 02 00 00 0F 29 BC 24 20 02 00 00 74 09", 0x6AF5B1, 0, 0, 0, 0, "80 3D ?? ?? ?? ?? 00 0F 29 B4 24 30 02 00 00", nullptr, "models re-sorted at once", "Rooms and models"},
     // u8 'Recalculate Every Frame'
     {"ModelRecalcEveryFrame", 0x34B6C74, Kind::Ref, "80 3D ?? ?? ?? ?? 00 0F 29 B4 24 30 02 00 00 0F 29 BC 24 20 02 00 00 74 09", 0x6AF5B1, 0, 2, 7, 0, nullptr, nullptr, "models re-sorted at once", "Rooms and models"},
+    // AssetStandbySystem's model distance test, hooked
+    {"ModelInRange", 0x15723B0, Kind::Code, "0F 10 49 10 0F 57 C0 0F 10 21 0F 28 EA 0F 10 12 0F C6 E4 E1 F3 0F 10 E0 0F C6 C9 E1 F3 0F 10 C8", 0x15723B0, 0, 0, 0, 0, "0F 10 49 10 0F 57 C0 0F 10 21 0F 28 EA 0F 10 12", nullptr, "big objects drawn farther", "Rooms and models"},
     // controller attack target search, hooked
     {"AttackTarget", 0x143960, Kind::Code, "48 8B C4 48 89 58 10 48 89 70 18 4C 89 70 20 41 57 48 81 EC B0 00 00 00", 0x143960, 0, 0, 0, 0, "48 8B C4 48 89 58 10 48 89 70 18 4C 89 70 20 41 57", nullptr, "aim at what the hand points at", "Aim and attack"},
     // UnitFacingVector(unit, float[2]), hooked
@@ -196,6 +198,7 @@ inline constexpr Sig kSigs[] = {
     {"ComputeSelfWorldPose", 0xF78740, Kind::Code, "48 8B C4 53 56 57 48 81 EC A0 00 00 00 48 89 68 10 4C 89 60 E0", 0xF78740, 0, 0, 0, 0, "48 8B C4 53 56 57 48 81 EC A0 00 00 00 48 89 68 10", nullptr, "first-person body", "Body, sky, frame"},
     // biome change, hooked
     {"SetBiome", 0xE68C20, Kind::Code, "4C 8B DC 49 89 5B 20 56 57 41 57 48 81 EC C0 00 00 00 48 8B 05 ?? ?? ?? ??", 0xE68C20, 0, 0, 0, 0, "4C 8B DC 49 89 5B 20 56 57 41 57 48 81 EC C0 00 00 00", nullptr, "sky knows the area", "Body, sky, frame"},
+    {"WeatherPlace", 0x5F2330, Kind::Code, "48 89 5C 24 10 57 48 81 EC B0 00 00 00 48 8B 05 ?? ?? ?? ?? 48 33 C4 48 89 84 24 A0 00 00 00 48 8B D9 E8 ?? ?? ?? ?? E8 ?? ?? ?? ?? 48 8B F8 E8 ?? ?? ?? ?? 48 85 FF 0F 84 ?? ?? ?? ?? 48 8B 48 70 44 8B 43 64", 0x5F2330, 0, 0, 0, 0, "48 89 5C 24 10 57 48 81 EC B0 00 00 00", nullptr, "the game's rain and snow stay at its camera in first person", "Body, sky, frame"},
     // mov ecx, 10 before the background Sleep
     {"BgSleep1", 0xB6C32, Kind::Code, "B9 ?? ?? ?? ?? 48 89 46 28 E8 ?? ?? ?? ?? E8 ?? ?? ?? ?? 48 8B 80 20 01 00 00 49 3B C6", 0xB6C32, 0, 0, 0, 0, "B9 0A 00 00 00 48 89 46 28", nullptr, "full speed behind other windows", "Body, sky, frame"},
     // mov ecx, 10 before the background Sleep

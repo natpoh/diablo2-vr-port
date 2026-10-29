@@ -106,6 +106,10 @@ uniform bool SkyOn < hidden = true; > = false;
 // before.
 uniform bool SkyByGame < hidden = true; > = false;
 uniform float SkyDomeDepth < hidden = true; > = 1e-6;
+// vrcam [sky] dome_fog_horizon (Serg, the game's dome against our old sky: "у нового резкая граница", "и цвет не совпадает"): the dome's
+// low part sinks into the act's fog colour as our own sky's did (SkyFogHorizon), so the fogged land meets the dome without an edge.
+// Sent true only while the dome is shown and a fog is drawn (ours or the game's with our numbers). False: the dome as the game drew it.
+uniform bool DomeFogHorizon < hidden = true; > = false;
 uniform bool ArcaneSkyOn < hidden = true; > = false;   // [sky] arcane_sky: in the Arcane Sanctuary the game's own star layers all round
 // [sky] cover_rims: the sky goes over the dark rim the game leaves round anything against the void (DepthFogWorld; VR F4)
 uniform bool SkyOverRims < hidden = true; > = false;
@@ -211,6 +215,9 @@ uniform float2 CeilHero1 < hidden = true; > = float2(0.0, 0.0);
 // eye. Flat areas of the ground that match too move along - unseen, being flat.
 uniform float HudShift < hidden = true; > = 0.0;   // uv: the left eye's HUD moves this much right, the right eye's left
 uniform float HudTop < hidden = true; > = 0.70;    // the HUD is looked for below this height (uv)
+// vrcam: presents alternate the eyes (VR stereo) - only then is "the same in both eyes" the interface; in flat the still world below HudTop
+// was taken for it and the sky stopped at that row (vr/sky_paths.h, 2026-10-29)
+uniform bool HudByEyes < hidden = true; > = false;
 uniform float HudTol < hidden = true; > = 0.02;    // colour difference still counted as "the same"
 texture2D HudCurTex { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA8; };
 texture2D HudPrevTex { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA8; };
@@ -581,9 +588,13 @@ uniform bool UiMaskOff <
 // How much fog a depth value gets, 0..1. Empty depth (the void) is far: full fog.
 // How much the full fog covers, 0..1 (vrcam [fog] caves_strength in caves, else 1): below 1 the far end shows through.
 uniform float FogStrength < hidden = true; > = 1.0;
+// [fog] ease_in (vrcam): the fog eased in over its first 40 units, no hard ring round the hero - D2R VR Unleashed's (bearstonem, MPL 2.0),
+// in a file of its own beside this one. 0 = the fog as before.
+uniform float FogEaseIn < hidden = true; > = 0.0;
+#include "D2R_FogEase_Unleashed.fxh"
 float FogAt(float dist)
 {
-    return pow(saturate((dist - FogStart) / max(FogEnd - FogStart, 1.0)), FogCurve) * FogStrength;
+    return pow(saturate((dist - FogStart) / max(FogEnd - FogStart, 1.0)), FogCurve) * FogStrength * UnleashedFogEase(dist, FogStart, FogEaseIn);
 }
 float FogAmount(float depth)
 {
@@ -1444,11 +1455,43 @@ float3 VoidGlowAt(float2 uv)
     return lerp(wide, close, saturate(g8.a * 4.0));
 }
 
+// The view's direction through a screen point, in the world (y up)
+float3 ViewDir(float2 uv, int eye)
+{
+    const float2 ndc = float2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
+    const float4 sp = eye == 0 ? SkyProj0 : SkyProj1;
+    const float3 v = float3((ndc.x + sp.z) / sp.x, (ndc.y + sp.w) / sp.y, -1.0);
+    return eye == 0 ? normalize(v.x * CamRight0 + v.y * CamUp0 + v.z * CamBack0) : normalize(v.x * CamRight1 + v.y * CamUp1 + v.z * CamBack1);
+}
+// [fog] fog_into_sky (Serg: level 74's fog "делает прозрачным, надо так сделать везде"): the fog's colour at a point is the sky straight
+// behind it, as [sky] arcane_fog's (ArcaneHaze) - the act's painted sky, its low part sunk into the act's fog colour as the sky itself is
+// drawn (SkyFogHorizon, the game's dome: DomeHorizon). The far land fades into what is behind it, not into a flat colour. The game's fog
+// only (GameFogTrue; Serg: our own fog stays as it was) and shipped off - far objects came out see-through (0.188.4, 53.webp). vrcam
+// sets it in the open air with an act's sky and the game's fog drawn only.
+uniform bool FogIntoSky < hidden = true; > = false;
+float3 SkyBehind(float3 dir)
+{
+    const float3 s = Sky(dir);
+    return FogFixed ? lerp(s, FogColor, 1.0 - smoothstep(-0.03, 0.2, dir.y)) : s;
+}
+
+// [sky] dome_fog_horizon: a pixel of the game's dome, its low part into the act's fog colour - the same blend as our sky's (SkyFogHorizon)
+float3 DomeHorizon(float2 uv, int eye, float3 colour)
+{
+    if (!DomeFogHorizon || !FogFixed || ArcaneSkyOn) return colour;
+    const float2 ndc = float2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
+    const float4 sp = eye == 0 ? SkyProj0 : SkyProj1;
+    const float3 v = float3((ndc.x + sp.z) / sp.x, (ndc.y + sp.w) / sp.y, -1.0);
+    const float3 dir = eye == 0 ? normalize(v.x * CamRight0 + v.y * CamUp0 + v.z * CamBack0)
+                                : normalize(v.x * CamRight1 + v.y * CamUp1 + v.z * CamBack1);
+    return lerp(colour, FogColor, 1.0 - smoothstep(-0.03, 0.2, dir.y));
+}
+
 // [fog] light (FogLight): one depth read; the void gets the sky (or the fog's colour), with what the game drew there without depth (glows,
 // sparks) laid over it as light and the interface low on the screen kept as it is - by its brightness alone, no mask of it.
 float3 LightFog(float2 uv, int eye, float3 colour, float d)
 {
-    if (SkyByGame && d <= SkyDomeDepth) return colour;   // ([sky] game_sky: the game's dome there)
+    if (SkyByGame && d <= SkyDomeDepth) return DomeHorizon(uv, eye, colour);   // ([sky] game_sky: the game's dome there; its low part into the fog)
     if (d > 1e-6 && (!FogOn || FogInFrame)) return colour;
     float3 fogColour = FogColor;
     float3 sky = 0.0;
@@ -1502,7 +1545,7 @@ float3 DepthFogWorld(float4 pos, float2 uv, int eye)
     const float d4 = DepthAt(duv - float2(0, px.y)).x;
     const float dNear = max(max(d, d1), max(max(d2, d3), d4));
     const float dFar = min(min(d, d1), min(min(d2, d3), d4));
-    if (SkyByGame && dNear <= SkyDomeDepth) return colour;   // ([sky] game_sky: the game's dome - neither our sky nor our fog over it)
+    if (SkyByGame && dNear <= SkyDomeDepth) return DomeHorizon(uv, eye, colour);   // ([sky] game_sky: the game's dome - no sky or fog of ours over it; its low part into the fog's colour)
 
     float3 fogColour = FogColor;
     if (SkyOn || CeilOn) {
@@ -1593,7 +1636,7 @@ float3 DepthFogWorld(float4 pos, float2 uv, int eye)
             // stays, laid over the sky as below.
             const float k = rim ? 1.0 - smoothstep(0.15, 0.35, luma) : 1.0 - smoothstep(0.03, 0.08, luma);
             // The interface over the void keeps its own colour; its dark parts are the void.
-            const bool hud = uv.y >= HudTop && tex2Dlod(HudMaskSmp, float4(uv, 0, 0)).r > 0.0;
+            const bool hud = HudByEyes && uv.y >= HudTop && tex2Dlod(HudMaskSmp, float4(uv, 0, 0)).r > 0.0;
             if (hud) return lerp(colour, sky + dither, k);
             // Anything else here was drawn without depth over the game's black void -
             // particles, grass, glows, the far trees of Kurast's docks. It is laid OVER
@@ -1696,10 +1739,87 @@ float3 DepthFogWorld(float4 pos, float2 uv, int eye)
     }
     return lerp(colour, fogColour, t);
 }
+// [fog] game_fog_match: the game's fog shows the act's colour through the area's colour grading (Serg, act 4, 49 / 50.webp: the far land
+// a flat (57, 29, 9) silhouette under the sky's low part in his #5A2712 = (91, 40, 18)). FogSeen measures what the game's fog
+// shows where it is complete - the darkest of the fully fogged far points on a grid (a glow over one only brightens it), eased over
+// the frames -, and GameFogTrue moves each fogged pixel by the game's own amount toward the act's colour: complete, exactly it.
+uniform bool GameFogMatch < hidden = true; > = false;
+// What the game's fog pass computes now (vrcam, vr/game_fog_vr.h and shared/dxbc_fog_height.h): its distance is the point's whole length
+// from the eye; its share the exponential of its density and plane, or ([fog] game_fog_our_curve) our curve with its own start, end,
+// curve and strength; ([fog] game_fog_height) times saturate((top - h) / soft), h the point's height above the eye (top 1e9: none)
+uniform float GameFogDensity < hidden = true; > = 0.0;
+uniform float GameFogPlane < hidden = true; > = 1.0;
+uniform bool GameFogOurCurve < hidden = true; > = false;
+uniform float4 GameFogCurve < hidden = true; > = float4(0.0, 1.0, 1.0, 1.0);   // start, end, curve, strength
+uniform float2 GameFogTopSoft < hidden = true; > = float2(1e9, 1.0);
+texture2D FogSeenTex { Width = 1; Height = 1; Format = RGBA16F; };
+texture2D FogSeenOldTex { Width = 1; Height = 1; Format = RGBA16F; };
+sampler2D FogSeenSmp { Texture = FogSeenTex; MinFilter = POINT; MagFilter = POINT; };
+sampler2D FogSeenOldSmp { Texture = FogSeenOldTex; MinFilter = POINT; MagFilter = POINT; };
+// The game's fog's share at a screen point (its depth d): the void and the game's dome get none
+float GameFogAt(float2 uv, int eye, float d)
+{
+    if (d <= 1e-6 || (SkyByGame && d <= SkyDomeDepth)) return 0.0;
+    const float2 ndc = float2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
+    const float4 sp = eye == 0 ? SkyProj0 : SkyProj1;
+    const float3 v = float3((ndc.x + sp.z) / sp.x, (ndc.y + sp.w) / sp.y, -1.0);
+    const float3 w = eye == 0 ? v.x * CamRight0 + v.y * CamUp0 + v.z * CamBack0 : v.x * CamRight1 + v.y * CamUp1 + v.z * CamBack1;
+    const float3 at = w * (NearPlane / d);   // reverse-Z infinite: the view depth is near / z; the point from the eye, in the world
+    const float dist = length(at);
+    float a;
+    if (GameFogOurCurve)
+        a = pow(saturate((dist - GameFogCurve.x) / max(GameFogCurve.y - GameFogCurve.x, 1.0)), GameFogCurve.z) * GameFogCurve.w;
+    else
+        a = 1.0 - min(1.0, exp(-GameFogDensity * (dist / max(GameFogPlane, 1.0) - 1.0)));
+    return a * saturate((GameFogTopSoft.x - at.y) / max(GameFogTopSoft.y, 1e-3));
+}
+float4 FogSeen(int eye)
+{
+    const float4 old = tex2Dfetch(FogSeenOldSmp, int2(0, 0));
+    if (!GameFogMatch || DepthWidth() < 16) return float4(0, 0, 0, 0);
+    float3 best = 0.0;
+    float bestL = 1e9;
+    [loop] for (int y = 0; y < 12; ++y)
+        [loop] for (int x = 0; x < 16; ++x) {
+            const float2 p = float2((x + 0.5) / 16.0, (y + 0.5) / 12.0 * HudTop);
+            if (GameFogAt(p, eye, DepthAt(UpsideDown ? float2(p.x, 1.0 - p.y) : p).x) < 0.99 * (GameFogOurCurve ? GameFogCurve.w : 1.0)) continue;
+            const float3 c = tex2Dlod(FogColorSmp, float4(p, 0, 0)).rgb;
+            const float l = dot(c, float3(0.2126, 0.7152, 0.0722));
+            if (l < bestL) { bestL = l; best = c; }
+        }
+    if (bestL > 1e8) return old;   // none complete in view: the last
+    return float4(old.a > 0.5 ? lerp(old.rgb, best, 0.1) : best, 1.0);
+}
+float4 PS_FogSeen(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return FogSeen(0); }
+float4 PS_FogSeenR(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return FogSeen(1); }
+float4 PS_FogSeenStore(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return tex2Dfetch(FogSeenSmp, int2(0, 0)); }
+// The game's pass gives scene x (1 - a) + its fog x a; shown through the grading its fog is `seen` (at the complete share `full` over
+// dark far land: seen / full). Each pixel is moved by a x (the act's colour - that): complete, exactly the act's colour; none, untouched.
+// Then the share the game's pass left out (Serg, act 4: "старый хороший, новый ничего не скрывает"): [fog] game_fog_height thins it from
+// game_fog_top - game_fog_soft above the eye (5 units as shipped) - every far terrace, wall and plane higher than the eye stood almost
+// clear -, and the exponential (ReShade's path) is not our curve. Our own fog's share here - its curve by the view's depth, no height
+// limit - is made up by a lerp toward the same colour: (want - a) / (1 - a) of what is left. The game's dome is never touched (its sky
+// overhead stays clear, its low part DomeHorizon's).
+float3 GameFogTrue(float2 uv, int eye, float3 colour)
+{
+    [branch] if (!GameFogMatch || !FogFixed || DepthWidth() < 16) return colour;
+    const float d = DepthAt(UpsideDown ? float2(uv.x, 1.0 - uv.y) : uv).x;
+    if (d <= 1e-6 || (SkyByGame && d <= SkyDomeDepth)) return colour;
+    const float a = GameFogAt(uv, eye, d);
+    const float want = pow(saturate((NearPlane / d - GameFogCurve.x) / max(GameFogCurve.y - GameFogCurve.x, 1.0)), GameFogCurve.z) * GameFogCurve.w;
+    if (max(a, want) < 0.002) return colour;
+    // ([fog] fog_into_sky: toward the sky straight behind the point, as our own fog)
+    const float3 target = FogIntoSky && !ArcaneSkyOn ? SkyBehind(ViewDir(uv, eye)) : FogColor;
+    float3 c = colour;
+    const float4 seen = tex2Dfetch(FogSeenSmp, int2(0, 0));
+    if (seen.a > 0.5) c = max(c + a * (target - seen.rgb / (GameFogOurCurve ? max(GameFogCurve.w, 0.05) : 1.0)), 0.0);
+    return lerp(c, target, want > a ? saturate((want - a) / max(1.0 - a, 1e-3)) : 0.0);
+}
+
 // The interface keeps its own colour: the fog and the sky only where the layer lets the world through.
 float3 DepthFog(float4 pos, float2 uv, int eye)
 {
-    const float3 fogged = DepthFogWorld(pos, uv, eye);
+    const float3 fogged = GameFogTrue(uv, eye, DepthFogWorld(pos, uv, eye));
     [branch] if (!UiMaskOn || UiMaskOff) return fogged;
     float ui = 1.0 - saturate(tex2Dlod(GameLayerSmp, float4(uv, 0, 0)).a);
     if (UiMaskSolid && ui > 0.02) ui = 1.0;
@@ -1731,7 +1851,7 @@ float PS_HudMaskStore(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Targe
 
 bool IsHud(float2 uv)
 {
-    return uv.y >= HudTop && uv.x >= 0.0 && uv.x <= 1.0 && tex2Dlod(HudMaskSmp, float4(uv, 0, 0)).r > 0.0;
+    return HudByEyes && uv.y >= HudTop && uv.x >= 0.0 && uv.x <= 1.0 && tex2Dlod(HudMaskSmp, float4(uv, 0, 0)).r > 0.0;
 }
 
 // The frame as the game drew it, before the fog: what the next frame compares with.
@@ -3189,7 +3309,9 @@ technique D2R_DepthFog <
     pass { ComputeShader = CS_ClearHeights<8, 8>; DispatchSizeX = 8; DispatchSizeY = 8; }
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_Peaks; RenderTarget = PeakTex; }
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_DomeSeeds; RenderTarget = DomeSeedTex; }
+    pass { VertexShader = VS_Fullscreen; PixelShader = PS_FogSeen; RenderTarget = FogSeenTex; }
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_DepthFog; }
+    pass { VertexShader = VS_Fullscreen; PixelShader = PS_FogSeenStore; RenderTarget = FogSeenOldTex; }
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_Hud; }
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_GameHud; }
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_Phantom; }
@@ -3223,7 +3345,9 @@ technique D2R_DepthFog_R <
     pass { ComputeShader = CS_ClearHeights<8, 8>; DispatchSizeX = 8; DispatchSizeY = 8; }
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_Peaks; RenderTarget = PeakTex; }
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_DomeSeeds; RenderTarget = DomeSeedTex; }
+    pass { VertexShader = VS_Fullscreen; PixelShader = PS_FogSeenR; RenderTarget = FogSeenTex; }
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_DepthFogR; }
+    pass { VertexShader = VS_Fullscreen; PixelShader = PS_FogSeenStore; RenderTarget = FogSeenOldTex; }
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_HudR; }
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_GameHudR; }
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_PhantomR; }

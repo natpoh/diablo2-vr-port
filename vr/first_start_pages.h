@@ -9,7 +9,10 @@
 // (vrcam.cpp UpdateThread). A player who changed them reads the defaults here.
 // The welcome's steps follow bearstonem/d2r-pcvr's first-load prompt (MIT, steamvr/BODY_CALIBRATION.md); the rest is ours.
 
+#include <string>
+
 #include "first_start.h"
+#include "ui_text.h"   // the pages in the player's language ([hud] headset_language)
 
 namespace firststart {
 
@@ -83,5 +86,15 @@ inline constexpr PageText kPages[kPageCount] = {
       {"This guide again", "the settings in the headset, page Body: First-start guide"}},
      "Done closes the guide; it is on the Body page again, any time."},
 };
+
+// The pages in the player's language (vr/ui_text.h; the keys are made here, vr/ui_text_tables.h lists them for lang\en.txt): "vr.guide.<page>.title",
+// ".row<r>.control", ".row<r>.does", ".nav" - and the middle pages' one foot (kNavMiddle) "vr.guide.nav".
+inline std::string GuideKey(int page, const std::string& part) { return "vr.guide." + std::to_string(page) + "." + part; }
+inline std::string RowKey(int page, int row, const char* part) { return GuideKey(page, "row" + std::to_string(row) + "." + part); }
+inline std::string NavKey(int page) { return kPages[page].nav == kNavMiddle ? std::string("vr.guide.nav") : GuideKey(page, "nav"); }
+inline const char* Title(int page) { return uitext::Tr(GuideKey(page, "title"), kPages[page].title); }
+inline const char* Control(int page, int row) { const char* en = kPages[page].rows[row].control; return en && *en ? uitext::Tr(RowKey(page, row, "control"), en) : en; }
+inline const char* Does(int page, int row) { const char* en = kPages[page].rows[row].does; return en && *en ? uitext::Tr(RowKey(page, row, "does"), en) : en; }
+inline const char* Nav(int page) { return uitext::Tr(NavKey(page), kPages[page].nav); }
 
 }  // namespace firststart

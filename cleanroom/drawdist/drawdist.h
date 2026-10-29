@@ -30,4 +30,17 @@ void SetLevelTickCallback(LevelTickFn fn);
 bool  SetModelRadius(float units);
 float ModelRadius();   // -1 when unknown
 
+// The models re-sorted at once (the game's "Recalculate Every Frame" for half a second) after a
+// radius changed; false where that byte was not found. HooksReady: Install has had the context.
+bool ResortModels();
+bool HooksReady();
+
+// Big models (trees, houses, walls) kept drawn past the model radius by their size, out to this
+// many world units (0 = off; [render] big_radius). In unleashed_big_objects.cpp - MPL 2.0, from
+// D2R VR Unleashed (bearstonem), shared/unleashed_far_objects.h. Hooks the game's test the first
+// time it is on; false until that hook is in (it is tried again at most twice a second).
+bool     SetBigRadius(float units);
+float    BigRadius();
+uint32_t TakeBigKept();   // models kept past the model radius by their size since the last call
+
 }   // namespace d2rcam::drawdist

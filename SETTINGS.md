@@ -132,6 +132,14 @@ round you in caves* and *The cave dome: radius x model visibility radius*. They
 are the same controls as on Performance, World and Sky (the same keys, kept in
 step); a change here shows Custom on the slider.
 
+*Big objects: trees, houses, walls farther* (`[render] big_radius`, 0 = off, the
+default; not part of the slider) - from D2R VR Unleashed (bearstonem, MPL 2.0):
+trees, houses and walls stay drawn past the model visibility radius, the bigger
+the farther (30 times their height or half their width), out to 300 - 1000
+units; stones, grass and monsters keep the radius. Needs 3 room rings or more,
+and the full fog and the sky dome past it to be seen; costs frames in forests
+and towns. Visual only, live.
+
 ## Camera
 
 ![Camera](screenshots/settings_01_camera.png)
@@ -655,7 +663,12 @@ The toolbar while the game lies on your floor, and the item labels.
   the game's frame* (test, off; [render] fog_in_frame): the fog goes into the game's own
   picture before its fire, spells and smoke, which the game then lays over it - the
   sky and the void keep the fog as before (VR F4, an act's own fog colour; read at the
-  game's start; over the spare when both are on). *How that depth is
+  game's start; over the spare when both are on). *Fog eased in, no hard ring*
+  (off; `[fog] ease_in`, from D2R VR Unleashed): the fog fades in over its first
+  40 units, no sharp edge round the clear ground at your feet - our effect's fog
+  and the game's fog by our curve. *No fog in the River of Flame* (off;
+  `[fog] no_fog_river`, from D2R VR Unleashed): its lava's own glow and haze stay
+  the game's. *How that depth is
   set* (under *The game's effects measure depth from our camera*): in each pass
   as it is bound (as before), or once a frame where the game makes it (after
   bearstonem/d2r-pcvr: every pass - fog, ambient occlusion, particles, grass -
@@ -675,6 +688,8 @@ does it right at any size (at 16:10 it gives the game's own numbers). Unticked i
 works at once; ticked again it takes effect at the next start of the game. *... in
 flat mode too* (on) gives the flat window the same fix (a little on a 16:9 monitor,
 in full in a square window); the log tells the size the game draws at.
+It works with and without ReShade (*No ReShade*); up to 0.189 it was bound only
+through ReShade.
 
 ## Sky
 

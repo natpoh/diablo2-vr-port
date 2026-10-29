@@ -131,6 +131,8 @@ group.status.help = Ce qui est installé et en marche : BodyWalk, FlatVR, Game L
 @update.check_now.label = Chercher des mises à jour
 @update.check_now.tip = Interroge bodywalkvr.com maintenant, même si la recherche à l'ouverture est désactivée. Rien n'est téléchargé.
 group.d2r_vr.help = Ce programme et le mod : la langue de ce programme, la version, la recherche de mises à jour, et Rassembler les journaux - un zip avec ce dont l'assistance a besoin pour trouver un problème.
+hud.headset_language.label = Dans le casque aussi
+hud.headset_language.tip = Les mots que le mod dessine dans le casque - le panneau de compétences, les réglages dans le casque, le guide de premier lancement, l'invite de calibrage, les boutons de la carte - dans la langue choisie ci-dessus. Un texte pas encore traduit reste en anglais. Désactivé : en anglais, comme avant. Les textes propres du jeu sont dans la langue du jeu (ses propres réglages).
 @status.update.label = La recherche de mises à jour est désactivée
 @update.download.label = Télécharger
 @update.download.tip = Ouvre la page de téléchargement dans votre navigateur. Ce programme ne télécharge ni n'exécute jamais rien lui-même.
@@ -211,7 +213,7 @@ sky.enabled.tip = Un ciel peint au-dessus du vide noir en extérieur. Qui le des
 ceiling.enabled.label = Plafond dans les grottes (via ReShade)
 ceiling.enabled.tip = Une voûte de pierre sur le vide noir dans les donjons, en première personne seulement.
 ceiling.game_ceiling.label = Qui dessine le plafond
-ceiling.game_ceiling.tip = Notre effet : la voûte via le shader de brouillard - celui de ReShade, ou celui de D2R VR sans ReShade. Le jeu : une dalle de la roche de grotte du jeu lui-même, faite à partir des fichiers de votre jeu, que le jeu dessine et éclaire lui-même - ses torches et votre lumière dessus, son brouillard par-dessus, le feu et les sorts devant - posée au-dessus de vous à chaque image, sans temps d'image de notre part (un test : VR F4 seulement). Pour chaque salle, la pierre du jeu assortie à l'image choisie pour elle : roche dans les grottes, hautes dalles dans la crypte, pierre lisse dans la caserne, les catacombes et la cathédrale, marbre ornementé dans le palais. Une salle qui n'en a pas encore (les égouts de l'acte 2) garde la voûte de notre effet avec ses propres réglages, comme en F3 plat. Les autres réglages de plafond ci-dessous sont ceux de notre effet ; la taille des tuiles règle aussi celle de la roche. En direct.
+ceiling.game_ceiling.tip = Notre effet : la voûte via le shader de brouillard - celui de ReShade, ou celui de D2R VR sans ReShade. Le jeu : une dalle de la roche de grotte du jeu lui-même, faite à partir des fichiers de votre jeu, que le jeu dessine et éclaire lui-même - ses torches et votre lumière dessus, son brouillard par-dessus, le feu et les sorts devant - posée au-dessus de vous à chaque image, sans temps d'image de notre part (un test : VR F4 seulement). Pour chaque salle, la pierre du jeu assortie à l'image choisie pour elle : roche dans les grottes, hautes dalles dans la crypte, pierre lisse dans la caserne, les catacombes et la cathédrale, marbre ornementé dans le palais ; une salle sans image reçoit la pierre de son propre sol (les égouts de l'acte 2, le harem corrompu, le sous-sol du palais). Les autres réglages de plafond ci-dessous sont ceux de notre effet ; la taille des tuiles règle aussi celle de la roche. En direct.
 ceiling.game_ceiling.choice0 = Notre effet (ReShade / celui de D2R VR)
 ceiling.game_ceiling.choice1 = Le jeu (roche éclairée)
 ceiling.steps.label = Paliers de relief du plafond
@@ -232,6 +234,8 @@ group.draw_distance.help#2 = Jusqu'où le monde est dessiné autour de vous, en 
 # --- What the slider sets ---
 group.what_the_slider_sets = Ce que règle le curseur
 group.what_the_slider_sets.help = Chaque valeur qu'écrit le curseur Distance d'affichage, à régler à la main. Celles du brouillard sont grisées tant que le brouillard de distance est désactivé, celles du dôme céleste tant que le jeu ne dessine pas le ciel (onglet Ciel : « Ciel et brouillard dessinés par »), celles du dôme de grotte tant qu'il est désactivé.
+render.big_radius.label = Grands objets : arbres, maisons, murs plus loin (0 = désactivé)
+render.big_radius.tip = Les arbres, les maisons et les murs restent dessinés plus loin que le rayon de visibilité des modèles - plus ils sont grands, plus loin (30 fois leur hauteur ou la moitié de leur largeur), jusqu'à ce nombre d'unités (300 - 1000 ; 100 et 200 comptent pour 300). Les pierres, l'herbe et les monstres gardent le rayon de visibilité des modèles. Demande 3 anneaux de salles ou plus (au-delà des salles que le jeu construit, il n'y a rien à dessiner), et le brouillard total et le dôme céleste au-delà pour être vus. Coûte des images dans les forêts et les villes. D'après D2R VR Unleashed (bearstonem). Visuel seulement. En direct. 0 = désactivé, comme avant.
 sky.game_sky_radius.label = Ciel du jeu : rayon du dôme, unités
 sky.game_sky_radius.tip = À quelle distance autour de vous le dôme de ciel du jeu est posé, en unités du jeu (en direct). 200 : un horizon proche - le dôme coupe le monde lointain en un cercle net, le brouillard du jeu par-dessus. Plus loin, le ciel sort du brouillard. Le journal indique le rayon utilisé à chaque changement.
 fog.enabled.tip#2 = Un brouillard de distance. Qui le dessine : le sélecteur de l'onglet Ciel (notre effet, ou le jeu lui-même). Avec le ciel activé, il se fond dans le ciel.
@@ -1563,6 +1567,12 @@ fog.game_fog_caves_black.label = Le brouillard du jeu noircit dans les grottes
 fog.game_fog_caves_black.tip = Sous terre, le brouillard du jeu vire au noir, quelle que soit la couleur du brouillard des grottes, et le vide au-delà du bord d'un plafond de grotte est laissé tel quel - la passe de brouillard du jeu y posait toute sa brume éclairée par les torches, une bande claire derrière les feux. La distance assombrit, sans jamais éclairer. Sans ReShade seulement. En direct.
 fog.game_fog_our_curve.label = Le brouillard du jeu selon notre courbe
 fog.game_fog_our_curve.tip = La passe de brouillard du jeu lui-même fait monter le brouillard comme notre effet - de Début du brouillard à Brouillard total selon l'Atténuation ci-dessous (en grotte, leurs propres début, fin et force) - au lieu de sa propre exponentielle, qui met presque tout le brouillard juste après le début et laisse la plage lointaine d'un seul gris. Quelques instructions dans sa passe, rien d'ajouté. Sans ReShade seulement. En direct.
+fog.fog_keeps_colour.label = Le brouillard du jeu garde la couleur de l'acte la nuit
+fog.fog_keeps_colour.tip = Tant que le jeu dessine le brouillard : sa couleur est celle de l'acte (les couleurs ci-dessus) à toute heure - le lointain se fond dans une brume claire de cette couleur, jamais vers le noir. Le brouillard de notre propre effet n'est pas changé. Désactivé : il s'assombrit avec la lumière du jeu, comme avant. En direct.
+fog.fog_into_sky.label = Le brouillard du jeu fond le lointain dans le ciel derrière lui
+fog.fog_into_sky.tip = En plein air, la couleur du brouillard en chaque point est celle du ciel juste derrière, comme dans le Sanctuaire des Arcanes : la terre lointaine, le bord du monde et les grands bâtiments lointains se fondent dans le ciel, pas dans une seule couleur plate (le bas du ciel est la couleur de brouillard de l'acte, tel qu'il est dessiné). Les objets lointains laissent voir le ciel à travers eux. Le brouillard du jeu seulement (avec « Le brouillard du jeu aussi épais et coloré que le nôtre ») ; le brouillard de notre propre effet n'est pas changé. Sous terre comme avant. En direct. Désactivé : une seule couleur de brouillard, comme avant.
+fog.game_fog_match.label = Le brouillard du jeu aussi épais et coloré que le nôtre
+fog.game_fog_match.tip = Le brouillard du jeu sortait plus sombre que la couleur de brouillard de l'acte (l'étalonnage des couleurs de la zone) et plus mince que le nôtre (il s'amincit au-dessus de l'œil, et sans notre courbe c'est celle du jeu) : dans l'acte 4, la terre lointaine se dressait en silhouette sombre et ne cachait rien. Coché, l'effet mesure ce que montre le brouillard du jeu là où il est total, rapproche chaque pixel embrumé de la couleur de l'acte selon la part du jeu, et complète la part que le jeu a laissée jusqu'à celle de notre propre brouillard - la terre lointaine, le bord du monde et les plans lointains cachés comme par notre ancien brouillard. Jamais sur le ciel du jeu. La passe de notre effet, qui tourne de toute façon pour le ciel. En direct. Désactivé : tel que le jeu le pose.
 fog.game_fog_before_fx.label = Le brouillard du jeu avant fumée et feu
 fog.game_fog_before_fx.tip = Le brouillard posé sur la scène avant que le jeu n'y ajoute sa fumée, sa brume et son feu, qui restent ainsi sur le monde embrumé sans brouillard - sans cela, la passe de brouillard du jeu les embrume selon le mur derrière eux (une brume découpée en trous noirs devant les murs lointains). Une passe de notre part sur la carte graphique (son coût dans la ligne de 10 s du journal). Sans ReShade seulement. S'applique au prochain démarrage du jeu.
 fog.game_fog_height.label = Le brouillard du jeu s'amincit avec la hauteur
@@ -1571,6 +1581,8 @@ fog.game_fog_top.label = Brouillard du jeu : son sommet, unités au-dessus des y
 fog.game_fog_top.tip = Jusqu'où monte le brouillard du jeu : nul au-dessus, en unités du monde au-dessus de vos yeux (le héros mesure ~7,5 ; le dôme de ciel est à son rayon). En direct.
 fog.game_fog_soft.label = Brouillard du jeu : douceur de son sommet, unités
 fog.game_fog_soft.tip = Sur quelle hauteur sous son sommet le brouillard du jeu s'estompe : petit, un bord net ; grand, un long fondu doux. En direct.
+fog.game_fog_top_from_floor.label = Brouillard du jeu : son sommet compté depuis le sol du héros
+fog.game_fog_top_from_floor.tip = Le sommet ci-dessus est compté depuis le sol où se tient le héros, pas depuis vos yeux : une caméra haut au-dessus du héros (troisième personne, la vue du dessus) ne déplace plus l'endroit où le brouillard s'arrête, et le terrain sous vos yeux n'est pas tout embrumé avec une ligne à hauteur des yeux. Désactivé : depuis les yeux, comme avant. Décocher « s'amincit avec la hauteur » donne plutôt le brouillard selon la seule distance, comme notre propre brouillard. En direct.
 fog.end.tip#2 = Là où le brouillard est total. Unités du monde (le héros mesure ~7,5).
 fog.curve.label = Atténuation
 fog.curve.tip = 1 = linéaire ; plus = une distance moyenne plus nette.
@@ -1582,6 +1594,10 @@ render.fog_in_frame.label = Brouillard dessiné dans l'image du jeu (test)
 render.fog_in_frame.tip = Le brouillard est dessiné dans l'image propre du jeu avant son feu, ses sorts et sa fumée, et le jeu les pose par-dessus la scène embrumée : une torche, un Trait de feu ou un Brasier devant un mur lointain n'est pas embrumé comme le mur. Le ciel et le noir au-delà du monde gardent le brouillard comme avant. Avec la couleur de brouillard propre à un acte (Monde > Ciel) ; RV F4 seulement. S'applique au prochain démarrage du jeu ; désactivé = le brouillard comme avant. Prioritaire sur « Le brouillard épargne feu, sorts et fumée (test) » quand les deux sont activés.
 fog.caves.label = Brouillard dans les grottes et donjons
 fog.caves.tip = Désactivé : pas de brouillard sous terre (toute zone qui n'est pas en extérieur) ; le plein air le garde. Le Sanctuaire des Arcanes a son propre interrupteur (Ciel > Sanctuaire des Arcanes : le brouillard se fond dans son ciel).
+fog.ease_in.label = Brouillard fondu à son début, sans anneau net
+fog.ease_in.tip = Le brouillard apparaît doucement sur ses 40 premières unités après son début : pas de bord net autour du sol dégagé à vos pieds. Partout où notre courbe dessine le brouillard : notre effet, et le brouillard du jeu avec « Le brouillard du jeu selon notre courbe » activé (pas la courbe propre du jeu). D'après D2R VR Unleashed (bearstonem). En direct. Désactivé : le brouillard comme avant.
+fog.no_fog_river.label = Pas de brouillard dans la Rivière de flammes
+fog.no_fog_river.tip = Pas de brouillard ajouté dans la Rivière de flammes, bien qu'elle soit en plein air : la lueur et la brume propres de sa lave restent celles du jeu. Le brouillard de notre effet comme celui du jeu. D'après D2R VR Unleashed (bearstonem). En direct. Désactivé : le brouillard là comme partout en extérieur.
 fog.caves_strength.label = Intensité du brouillard en grotte
 fog.caves_strength.tip = À quel point le brouillard total couvre dans les grottes : 1 = le fond disparaît dans la couleur du brouillard, moins = il reste visible au travers.
 fog.color_caves.label = Couleur du brouillard en grotte
@@ -1598,9 +1614,9 @@ render.own_depth.tip = D'où le brouillard, le ciel et le plafond des grottes ti
 render.own_depth.choice0 = La profondeur propre de ReShade
 render.own_depth.choice1 = La nôtre, relevée une fois
 render.depth_fix_mode.label = Comment cette profondeur est définie
-render.depth_fix_mode.tip = À chaque passe, au moment de sa liaison (la méthode de D2R VR, comme avant) : chaque constant buffer que le jeu lie reçoit notre plage de profondeur - une passe qui reçoit ses constantes autrement garde celle du jeu. Une fois par image là où le jeu la produit (trouvé par bearstonem/d2r-pcvr) : la plage est écrite juste après que le jeu a construit les constantes de l'image, avant qu'aucune passe ne les lise, de sorte que toutes les passes - brouillard, occlusion ambiante, particules, herbe - lisent la même profondeur ; elle va du plan proche de notre caméra à la limite lointaine propre du jeu (la distance ci-dessous n'est pas utilisée). Pour comparer : l'herbe de l'acte 1, le voile de la ville de l'acte 2, la brume aux coins. Désactivé : la profondeur propre du jeu, comme « Les effets du jeu mesurent la profondeur depuis notre caméra » décoché. Immédiat.
+render.depth_fix_mode.tip = À chaque passe, au moment de sa liaison (la méthode de D2R VR, comme avant) : chaque constant buffer que le jeu lie reçoit notre plage de profondeur - une passe qui reçoit ses constantes autrement garde celle du jeu. Cela ne fonctionne qu'avec ReShade : sans ReShade, cela ne fait rien, et l'occlusion ambiante, les reflets, l'eau, les lumières et le brouillard de hauteur du jeu gardent la profondeur de sa propre caméra - une pierre plus trouble et plus plate, une lumière plus faible des braseros et des torches (choisir le brouillard du jeu règle de lui-même le choix suivant). Une fois par image là où le jeu la produit (trouvé par bearstonem/d2r-pcvr) : la plage est écrite juste après que le jeu a construit les constantes de l'image, avant qu'aucune passe ne les lise, de sorte que toutes les passes - brouillard, occlusion ambiante, particules, herbe - lisent la même profondeur ; elle va du plan proche de notre caméra à la limite lointaine propre du jeu (la distance ci-dessous n'est pas utilisée). Pour comparer : l'herbe de l'acte 1, le voile de la ville de l'acte 2, la brume aux coins. Désactivé : la profondeur propre du jeu, comme « Les effets du jeu mesurent la profondeur depuis notre caméra » décoché. En direct.
 render.depth_fix_mode.choice0 = Désactivée (celle du jeu)
-render.depth_fix_mode.choice1 = À chaque passe, au moment de sa liaison
+render.depth_fix_mode.choice1 = À chaque passe, au moment de sa liaison (avec ReShade seulement)
 render.depth_fix_mode.choice2 = Une fois par image, là où le jeu la produit
 render.depth_range.label = Jusqu'où va cette profondeur
 render.depth_range.tip = Unités du monde (le héros mesure ~7,5). Plus loin compte comme du ciel pour le brouillard du jeu ; plus court est plus fin près du héros.
@@ -1616,7 +1632,7 @@ render.roofs_two_sided.tip = Le jeu ne dessine un toit que vu d'en haut, donc vu
 render.portal_no_oval.label = Pas d'ovale noir dans le portail de ville (F2 - F4)
 render.portal_no_oval.tip = L'ovale noir du portail de ville reste immobile pendant que son anneau bleu se tourne vers la caméra, si bien que depuis toute vue autre que celle du jeu, de dessus, il se tient à côté de l'anneau. Activé : l'ovale n'est pas dessiné en F2, F3 et F4, l'anneau l'est ; F1 le garde. Pour les portails vus à partir de ce moment (une nouvelle zone, ou après un redémarrage). Du fork plat de sajmonsoft. Désactivé : dessiné comme le jeu le fait.
 render.light_bounds_fix.label = Corriger l'éclairage du jeu avec une fenêtre carrée ou large
-render.light_bounds_fix.tip = Le jeu découpe l'image en 32 x 20 tuiles et trouve la plage de profondeur de chaque tuile pour ses lumières avec un shader qui n'est juste qu'avec une fenêtre en 16:10. Avec une fenêtre carrée ou large (la fenêtre RV, 16:9), il rate des lignes : des lumières disparaissent en rectangles durs et l'ombrage d'un toit scintille quand la tête bouge. Activé : notre propre shader fait ce travail correctement pendant le rendu RV (en 16:10 les nombres sont les mêmes que ceux du jeu). Désactivé aussitôt ; recoché, il prend effet au prochain démarrage du jeu. Désactivé : celui du jeu.
+render.light_bounds_fix.tip = Le jeu découpe l'image en 32 x 20 tuiles et trouve la plage de profondeur de chaque tuile pour ses lumières avec un shader qui n'est juste qu'avec une fenêtre en 16:10. Avec une fenêtre carrée ou large (la fenêtre RV, 16:9), il rate des lignes : des lumières disparaissent en rectangles durs et l'ombrage d'un toit scintille quand la tête bouge. Activé : notre propre shader fait ce travail correctement pendant le rendu RV, avec ReShade ou sans (en 16:10 les nombres sont les mêmes que ceux du jeu). Désactivé aussitôt ; recoché, il prend effet au prochain démarrage du jeu. Désactivé : celui du jeu.
 render.light_bounds_flat.label = ... en écran plat aussi
 render.light_bounds_flat.tip = La même correction en mode écran plat (un moniteur ou une fenêtre, l'image plate de l'OpenXR natif aussi) : le shader du jeu est faux aussi en 16:9 et avec une fenêtre carrée, pas seulement en RV. Suit le mode aussitôt. Désactivé : le mode écran plat garde le shader propre du jeu, comme avant.
 
@@ -1627,8 +1643,8 @@ group.render_distance.help = Jusqu'où autour du héros le monde est dessiné : 
 # --- Scenery ---
 group.scenery = Décors
 group.scenery.help = Corrections du décor du jeu pour la première personne : des sols qui gardent leur hauteur quand vous revenez dans une salle, et la pirogue des Quais de Kurast posée sur l'eau au lieu de pendre dans le ciel. Seule l'image change.
-render.keep_room_heights.label = Les sols restent où ils étaient (pas de sol qui glisse au retour)
-render.keep_room_heights.tip = Le jeu donne à chaque salle d'un niveau une hauteur quand il commence à la dessiner, accordée aux salles dessinées autour d'elle à ce moment, et l'oublie quand la salle est hors de vue. Les bords de ses tuiles ne s'accordent pas tout autour, si bien qu'une salle où vous revenez par un autre chemin (ou après une autre zone ou la ville) peut être d'une marche plus haute ou plus basse - depuis la caméra du jeu, au-dessus, personne ne le voit, depuis la nôtre le sol glisse : des blocs poussés vers le haut, le bas et de côté, le vide visible entre eux. Activé : chaque salle garde la hauteur à laquelle elle a été dessinée d'abord jusqu'à ce que vous quittiez le jeu. Seule l'image change ; le monde du jeu est plat, rien du combat ni des chemins ne change. Immédiat. Désactivé : les hauteurs propres du jeu, comme avant.
+render.floors_stay.label = Les sols restent où ils étaient (pas de sol qui glisse au retour)
+render.floors_stay.tip = Le jeu donne à chaque salle d'un niveau une hauteur quand il commence à la dessiner, accordée aux salles dessinées autour d'elle à ce moment, et l'oublie quand la salle est hors de vue. Les bords de ses tuiles ne s'accordent pas tout autour, si bien qu'une salle où vous revenez par un autre chemin (ou après une autre zone ou la ville) peut être une marche plus haut ou plus bas - depuis la caméra du jeu au-dessus, personne ne le voit ; depuis la nôtre, le sol glisse : des blocs poussés vers le haut, vers le bas et sur le côté, le vide visible entre eux. Activé : chaque salle garde la hauteur à laquelle elle a été dessinée la première fois jusqu'à ce que vous quittiez la partie. La contrepartie : le jeu corrige aussi une salle dessinée à la mauvaise hauteur (une marche vue de loin, comme près de la porte de la Forteresse du Pandémonium) quand il la redessine à votre approche - avec ceci activé, cette correction ne vient pas. L'image seulement ; rien du combat ni des chemins ne change. En direct. Désactivé (par défaut) : les hauteurs propres du jeu.
 world.kurast_boat.label = Quais de Kurast : la pirogue dans le ciel repose sur l'eau
 world.kurast_boat.tip = Le décor HD de la ville place une pirogue 50 unités plus haut, là où la vue du dessus ne regarde jamais ; en première personne, elle pend au-dessus des huttes. Activé : elle repose sur l'eau près des quais de l'ouest, là où son préfabriqué a été construit - un seul nombre du fichier de décor de la ville est changé (trouvé par bearstonem/d2r-pcvr). Ce programme fait ce fichier à partir de celui de votre jeu à son ouverture (Accueil : Pirogue des Quais de Kurast) et le garde dans le mod (mods\D2R-VR\D2R-VR.mpq) ; rien du jeu lui-même ne change, ni rien de ce avec quoi vous jouez. Prend effet au prochain démarrage du jeu (un jeu déjà lancé garde la pirogue où elle était). Désactivé : le fichier est retiré, la pirogue comme le jeu l'a.
 
@@ -1650,6 +1666,19 @@ sky.drift.label = Le ciel tourne lentement (les nuages dérivent)
 sky.drift.tip = Le ciel peint tourne lentement autour de vous. Désactivé : il reste immobile - les étoiles peintes dans les ciels de nuit tournaient avec les nuages.
 sky.cover_rims.label = Le ciel sur le bord sombre autour des toits et des arbres
 sky.cover_rims.tip = Le jeu dessine tout ce qui est devant le ciel un pixel plus large que sa profondeur, son bord fondu dans le noir, et le ciel n'était pas peint là : un mince contour sombre autour de chaque toit, cime d'arbre et bâtiment lointain, que les yeux en alternance déplaçaient aussi à chaque image sur deux. Coché : le ciel passe sur ce pixel quand il est sombre (le bord clair d'une lueur reste) ; les silhouettes sont un pixel plus fines. Première personne (F4) seulement. Décoché : comme avant. Immédiat. Installez la DLL et D2R_DepthFog.fx ensemble. De bearstonem/d2r-pcvr.
+sky.dome_fog_horizon.label = Ciel du jeu : son horizon dans le brouillard
+sky.dome_fog_horizon.tip = Le bas du ciel dessiné par le jeu se fond dans la couleur de brouillard de l'acte, comme le faisait notre propre ciel : la terre embrumée rejoint le ciel sans bord net, et les couleurs s'accordent là où elles se rejoignent. Seulement quand un brouillard est dessiné. Désactivé : le ciel tel que le jeu le dessine. En direct.
+sky.game_sky_closed.label = Ciel du jeu : une sphère entière, une seule couleur en bas
+sky.game_sky_closed.tip = Le ciel dessiné par le jeu s'arrêtait 12 degrés sous l'horizon : au-delà du bord d'une falaise, son rebord formait une ligne nette avec un trou en dessous, le vide et le brouillard visibles à travers. Coché, il se ferme en une sphère entière et sa moitié basse est d'une seule couleur - celle du ciel à l'horizon (avec un brouillard dessiné, celle du brouillard : ils se rejoignent en une seule couleur). Dans tous les actes, en RV et en plat. Ce programme refait aussitôt les modèles du dôme ; le jeu les prend à son prochain démarrage. Désactivé : le dôme ouvert, comme avant.
+sky.game_skybox.label = Sommet d'Arreat : le dôme céleste au loin
+sky.game_skybox.tip = Au Sommet d'Arreat (niveau 120) et au Sommet uber (137), le dôme céleste dessiné par le jeu est posé aussi loin que le tampon de profondeur le permet, si bien que la brume du jeu le long des falaises reste devant lui, si loin qu'elle soit. Désactivé : les Sommets comme toute zone de plein air de l'acte 5 - le dôme à son rayon habituel. En direct.
+sky.summit_backdrop_hidden.label = Sommet d'Arreat : pas d'image du sol en première personne
+sky.summit_backdrop_hidden.tip = Sous le Sommet d'Arreat (niveau 120) et le Sommet uber (137), le jeu place une image du sol loin en contrebas, faite pour être vue du dessus ; en première personne, elle se dresse comme un mur plat. Coché, elle est masquée en première personne RV (F4) et en première personne plate (F3) : notre ciel et notre brouillard apparaissent à sa place et la mer de nuages du jeu reste. Les vues du dessus la gardent. Désactivé : tel que le jeu le dessine. En direct.
+sky.weather_first_person.label = Pluie et neige en première personne
+sky.weather_first_person.tip = Le jeu pose sa pluie et sa neige dans une boîte autour de sa propre caméra, haut au-dessus et derrière le héros pour sa vue du dessus ; en première personne, cette boîte flotte en l'air (la neige du Sommet d'Arreat). Masquées : pas de pluie ni de neige en première personne RV (F4) et en première personne plate (F3). Autour de vous : la boîte posée là à votre tête, pour qu'elle tombe autour de vous. Les autres vues gardent celle du jeu. Celle du jeu : comme avant.
+sky.weather_first_person.choice0 = Celle du jeu (à sa caméra)
+sky.weather_first_person.choice1 = Masquées
+sky.weather_first_person.choice2 = Autour de vous
 sky.arcane_sky.label = Sanctuaire des Arcanes : ses propres étoiles tout autour
 sky.arcane_sky.tip = Dans le Sanctuaire des Arcanes, le vide autour des plateformes montre les couches d'étoiles et les nuages propres du jeu dans toutes les directions, sous les plateformes aussi (d'après bearstonem/d2r-pcvr). Les images sont faites à partir des fichiers de votre jeu à l'ouverture de ce programme (Accueil : Ciel du Sanctuaire des Arcanes) et vivent dans le mod (mods\D2R-VR) ; rien du jeu n'est modifié. Pas dans les vues du dessus. Fonctionne aussi avec le ciel en extérieur désactivé. Désactivé : le vide tel que le jeu le dessine.
 sky.arcane_fog.label = Sanctuaire des Arcanes : le brouillard se fond dans son ciel
@@ -1705,10 +1734,20 @@ tab.ceiling = Plafond
 group.cave_ceiling = Plafond des grottes
 group.cave_ceiling.help = Une voûte de pierre dessinée sur le vide noir des grottes, à sa vraie profondeur dans les deux yeux ; première personne seulement. Réglez la taille et le relief des dalles, un mur lointain et un sol en dessous pour fermer le vide, le contraste de la pierre, son détail et son brillant humide, et comment les torches et les monstres porteurs de feu l'éclairent.
 ceiling.enabled.tip#2 = Une voûte de pierre sur le vide noir des grottes, à sa vraie profondeur dans les deux yeux. Première personne seulement ; pour l'instant les grottes, cryptes, casernes, catacombes et la cathédrale de l'acte 1 ainsi que les égouts et le palais de l'acte 2.
-ceiling.game_ceiling_height.label = Plafond du jeu : hauteur (0 = celle de la zone)
-ceiling.game_ceiling_height.tip = À quelle hauteur au-dessus du sol de la zone pend le plafond de roche du jeu, en unités du monde (en direct ; le héros mesure environ 7,5) ; sa roche pend un peu plus bas. 0 : la hauteur propre de chaque zone, réglée ci-dessous pour notre effet. Le journal indique la hauteur utilisée à chaque changement.
 ceiling.game_ceiling_wall.label = Plafond du jeu : recourbé en mur à son bord
 ceiling.game_ceiling_wall.tip = Un anneau de la même roche éclairée autour de vous là où s'arrête le plafond du jeu (environ 215 unités plus loin à la taille de tuile 10), du plafond jusque sous le sol (la profondeur du sol) : le vide noir au-delà du bord du plafond - une bande entre lui et le sol lointain, éclairée par le brouillard derrière les feux - est fermé par de la pierre, comme le mur lointain de notre effet le fermait. Désactivé : le plafond plat. En direct.
+ceiling.game_ceiling_beams.label = Plafond du jeu : les poutres en bois de la caserne
+ceiling.game_ceiling_beams.tip = Le jeu contient une charpente de plafond en bois pour la caserne (et sa prison) qu'il ne place jamais : une grille de poutres dont le bas repose sur le haut des murs de la caserne. Coché, le jeu dessine cette charpente au-dessus de vous en une grille de charpentes entières fixée dans le monde - son propre modèle, son bois et sa taille, éclairée par ses torches - avec la pierre de la caserne au-dessus des poutres pour fermer les espaces entre elles. Faite à partir des fichiers de votre jeu. VR F4 seulement. Désactivé : le plafond de pierre plat. En direct.
+ceiling.game_ceiling_dome.label = Plafond du jeu : le dôme de la cathédrale au-dessus de la chapelle
+ceiling.game_ceiling_dome.tip = Dans la Cathédrale, le plafond du jeu monte en dôme au-dessus de la chapelle, comme le faisait là la voûte de notre effet : un seul dôme régulier posé sur les quatre colonnes autour de l'autel, juste assez haut pour passer au-dessus du baldaquin de l'autel. Où, quelle largeur et quelle hauteur viennent des pièces propres du jeu (mesurées à partir des fichiers de votre jeu, le baldaquin trouvé dans le jeu tel qu'il est dessiné) ; la pierre propre de la cathédrale, éclairée par ses bougies. Le reste de la cathédrale garde le plafond plat à sa hauteur. VR F4 seulement. Désactivé : le plafond plat. En direct.
+ceiling.game_ceiling_dome_size.label = Dôme de la cathédrale : taille
+ceiling.game_ceiling_dome_size.tip = Fois le dôme mesuré à partir des pièces du jeu (1 : posé sur les quatre colonnes de la chapelle), autour du même centre. Toute la voûte grandit ou rétrécit avec lui - le motif de sa pierre aussi - et la hauteur du dôme suit, pour qu'il passe toujours au-dessus du baldaquin de l'autel (0,7 au moins : plus petit, il le traverserait). VR F4. En direct.
+ceiling.game_ceiling_dome_rise.label = Dôme de la cathédrale : hauteur
+ceiling.game_ceiling_dome_rise.tip = Fois la hauteur minimale qui passe au-dessus du baldaquin de l'autel (1 : juste au-dessus). Plus haut seulement - plus bas traverserait le baldaquin. VR F4. En direct.
+ceiling.game_ceiling_domes_over_tall.label = Plafond du jeu : un dôme au-dessus de chaque pièce haute
+ceiling.game_ceiling_domes_over_tall.tip = Le dôme de la cathédrale, partout où une des pièces du jeu se dresse au moins deux fois plus haut que le plafond de sa salle avec des colonnes autour : le plafond monte en dôme juste au-dessus de cette pièce, sur ces colonnes, assez haut pour dégager son sommet - la Pierre-Monde dans la Chambre de la Pierre-Monde (niveau 132), l'arche de la salle du trône (131), la salle du Conseil de Travincal. Où, quelle largeur et quelle hauteur viennent des pièces et des modèles propres du jeu (mesurés à partir des fichiers de votre jeu, la pièce trouvée dans le jeu telle qu'elle est dessinée) ; la pierre propre de la salle. Le reste de la salle garde le plafond plat. La taille et la hauteur du dôme ci-dessus s'appliquent aussi à ceux-ci. VR F4 seulement. Désactivé : le plafond plat là, comme avant. Ce programme refait aussitôt leurs voûtes ; le jeu les prend à son prochain démarrage.
+ceiling.height_from_walls.label = Hauteur du plafond d'après les murs de la salle
+ceiling.height_from_walls.tip = Une salle dont la hauteur propre ci-dessous n'est pas réglée (0) a son plafond sur ses propres murs : là où s'arrêtent les murs avec lesquels le jeu construit cette salle (le milieu du sommet de ses pièces de mur, de colonne et de falaise, mesuré à partir des fichiers de votre jeu). La hauteur propre d'une salle, une fois réglée, l'emporte toujours. La voûte de notre effet et le plafond du jeu tous les deux ; la roche du jeu qui pend plus bas pose son point le plus bas sur les murs. Désactivé, ou une salle construite sans murs de ce genre : 18 au-dessus du sol là où aucune hauteur n'est réglée. Le journal indique la hauteur de chaque salle et d'où elle vient. En direct au prochain changement de zone.
 ceiling.scale.label = Taille des dalles
 ceiling.scale.tip = Unités du monde par dalle du relief ; l'image de pierre couvre 4 dalles.
 ceiling.steps.label#2 = Paliers de relief
@@ -1755,11 +1794,11 @@ cave_light.ambient.tip = La lumière qui emplit l'endroit, à l'intérieur du ce
 cave_light.ambient_min.label = Lumière d'appoint au moins
 cave_light.ambient_min.tip = Quelle que soit celle du donjon, au moins autant : seulement pour les plus sombres (les tombes de l'acte 2 : 0,12). Là où celle de la zone multipliée par le curseur ci-dessus est déjà plus grande (grottes de l'acte 1 : 2 x 2 = 4), cela ne fait rien. 0 = pas de plancher.
 
-# --- Ceiling: act 1 caves ---
-group.ceiling_act_1_caves = Plafond : grottes de l'acte 1
-group.ceiling_act_1_caves.help = Le plafond des grottes de l'acte 1 : sa hauteur au-dessus du sol, sa luminosité, la portée de la lumière du héros sur lui, le relief, et l'image de pierre avec sa taille, son contraste, son détail et son brillant humide.
-ceiling.height_act1_caves.label = Hauteur au-dessus du sol
-ceiling.height_act1_caves.tip = Unités du monde (le héros mesure ~7,5). Sous le sommet des murs, ceux-ci percent le plafond.
+# --- Ceiling: act 1 caves (levels 8-16) ---
+group.ceiling_act_1_caves_levels_8_16 = Plafond : grottes de l'acte 1 (niveaux 8-16)
+group.ceiling_act_1_caves_levels_8_16.help = Le plafond au-dessus des grottes de l'acte 1 : sa hauteur au-dessus du sol, sa luminosité, jusqu'où la lumière du héros y porte, le relief, et l'image de pierre avec sa taille, son contraste, son détail et sa brillance humide. Niveaux : Antre du Mal (8), Caverne niveau 1 (9), Passage souterrain niveau 1 (10), Trou niveau 1 (11), Fosse niveau 1 (12), Caverne niveau 2 (13), Passage souterrain niveau 2 (14), Trou niveau 2 (15), Fosse niveau 2 (16).
+ceiling.height_act1_caves.label = Hauteur au-dessus du sol (0 = d'après les murs)
+ceiling.height_act1_caves.tip = Unités du monde (le héros mesure ~7,5). Sous le sommet des murs, ceux-ci percent le plafond. 0 : sur le sommet des murs de la salle tel que mesuré à partir des fichiers de votre jeu (avec « Hauteur du plafond d'après les murs de la salle »), sinon 18.
 ceiling.brightness_act1_caves.label = Luminosité (0 = noir)
 ceiling.brightness_act1_caves.tip = Plus bas = un plafond plus sombre.
 ceiling.light_radius_act1_caves.label = Portée de la lumière du héros
@@ -1776,23 +1815,23 @@ ceiling.contrast_act1_caves.tip = Le détail fin de l'image multiplié par ceci 
 ceiling.detail_act1_caves.tip = À quel point les grains et les fissures de l'image ressortent de la pierre : ils accrochent la lumière.
 ceiling.wet_act1_caves.tip = Reflets de la lumière du héros et des torches sur la pierre (0 = sèche).
 
-# --- Ceiling: act 1 crypts ---
-group.ceiling_act_1_crypts = Plafond : cryptes de l'acte 1
-group.ceiling_act_1_crypts.help = Le plafond des cryptes de l'acte 1 : sa hauteur, sa luminosité, la portée de la lumière du héros, de combien la maçonnerie irrégulière pend, et son image.
+# --- Ceiling: act 1 crypts and tower (levels 18-25, 133) ---
+group.ceiling_act_1_crypts_and_tower_levels_18_25_133 = Plafond : cryptes et tour de l'acte 1 (niveaux 18-25, 133)
+group.ceiling_act_1_crypts_and_tower_levels_18_25_133.help = Le plafond au-dessus des cryptes de l'acte 1 : sa hauteur, sa luminosité, la portée de la lumière du héros, de combien la maçonnerie irrégulière pend, et son image. Niveaux : Crypte (18), Mausolée (19), Tour oubliée (20), Sous-sol de la tour niveau 1 (21), Sous-sol de la tour niveau 2 (22), Sous-sol de la tour niveau 3 (23), Sous-sol de la tour niveau 4 (24), Sous-sol de la tour niveau 5 (25), Course du Pandémonium 1 (133).
 ceiling.relief_act1_crypt.tip = De combien la maçonnerie irrégulière pend du plafond, en unités du monde.
 
-# --- Ceiling: act 1 barracks ---
-group.ceiling_act_1_barracks = Plafond : casernes de l'acte 1
-group.ceiling_act_1_barracks.help = Le plafond des casernes de l'acte 1 : sa hauteur, sa luminosité, la portée de la lumière du héros, le relief et l'image.
+# --- Ceiling: act 1 barracks and jail (levels 28-31) ---
+group.ceiling_act_1_barracks_and_jail_levels_28_31 = Plafond : caserne et prison de l'acte 1 (niveaux 28-31)
+group.ceiling_act_1_barracks_and_jail_levels_28_31.help = Le plafond au-dessus de la caserne de l'acte 1 : sa hauteur, sa luminosité, la portée de la lumière du héros, le relief et l'image. Niveaux : Caserne (28), Prison niveau 1 (29), Prison niveau 2 (30), Prison niveau 3 (31).
 
-# --- Ceiling: act 1 catacombs ---
-group.ceiling_act_1_catacombs = Plafond : catacombes de l'acte 1
-group.ceiling_act_1_catacombs.help = Le plafond des catacombes de l'acte 1 : sa hauteur (ce que le jeu dessine plus haut est coupé), sa luminosité, la portée de la lumière du héros, le relief et l'image.
-ceiling.height_act1_catacombs.tip = Unités du monde (le héros mesure ~7,5). Ce que le jeu dessine plus haut est coupé par le plafond.
+# --- Ceiling: act 1 barracks' courtyard (level 28) ---
+group.ceiling_act_1_barracks_courtyard_level_28 = Plafond : cour de la caserne de l'acte 1 (niveau 28)
+group.ceiling_act_1_barracks_courtyard_level_28.help = Le plafond du jeu sous la cour de la caserne de l'acte 1 (ses propres pavés) en VR F4, notre voûte en F3 plat ; sa hauteur au-dessus du sol. Niveaux : Caserne (28).
+ceiling.height_act1_court_to_barracks.tip = Unités du monde (le héros mesure ~7,5). 0 : sur le sommet des murs de la salle tel que mesuré à partir des fichiers de votre jeu (avec « Hauteur du plafond d'après les murs de la salle »), sinon 18.
 
-# --- Ceiling: act 1 cathedral ---
-group.ceiling_act_1_cathedral = Plafond : cathédrale de l'acte 1
-group.ceiling_act_1_cathedral.help = Le plafond de la cathédrale de l'acte 1. Outre la hauteur, la luminosité et l'image, un dôme fait monter le plafond en sphère au-dessus de ce qui est plus haut (le baldaquin de l'autel) au lieu de le couper ; réglez à partir de quelle hauteur, quelle largeur et quelle hauteur il atteint.
+# --- Ceiling: act 1 cathedral (level 33) ---
+group.ceiling_act_1_cathedral_level_33 = Plafond : cathédrale de l'acte 1 (niveau 33)
+group.ceiling_act_1_cathedral_level_33.help = Le plafond au-dessus de la cathédrale de l'acte 1. En plus de la hauteur, de la luminosité et de l'image, un dôme laisse le plafond monter en sphère au-dessus de ce qui est plus haut (le baldaquin de l'autel) au lieu de le couper ; réglez à partir de quelle hauteur, sur quelle largeur et jusqu'à quelle hauteur il monte. Niveaux : Cathédrale (33).
 ceiling.dome_act1_cathedral.label = Dôme au-dessus de ce qui est plus haut
 ceiling.dome_act1_cathedral.tip = Là où le jeu dessine quelque chose de plus haut que le plafond (le baldaquin de l'autel), le plafond monte en sphère au-dessus de lui au lieu de le couper.
 ceiling.dome_find_act1_cathedral.label = Dôme au-dessus de ce qui dépasse
@@ -1802,13 +1841,71 @@ ceiling.dome_radius_act1_cathedral.tip = Unités du monde : la largeur de la sph
 ceiling.dome_max_act1_cathedral.label = Hauteur maximale du dôme
 ceiling.dome_max_act1_cathedral.tip = Unités du monde au-dessus du plafond ; ce qui est encore plus haut est coupé.
 
-# --- Ceiling: act 2 sewers ---
-group.ceiling_act_2_sewers = Plafond : égouts de l'acte 2
-group.ceiling_act_2_sewers.help = Le plafond des égouts de l'acte 2 : sa hauteur, sa luminosité, la portée de la lumière du héros, le relief et l'image.
+# --- Ceiling: act 1 catacombs (levels 34-37) ---
+group.ceiling_act_1_catacombs_levels_34_37 = Plafond : catacombes de l'acte 1 (niveaux 34-37)
+group.ceiling_act_1_catacombs_levels_34_37.help = Le plafond au-dessus des catacombes de l'acte 1 : sa hauteur (ce que le jeu dessine plus haut est coupé), sa luminosité, la portée de la lumière du héros, le relief et l'image. Niveaux : Catacombes niveau 1 (34), Catacombes niveau 2 (35), Catacombes niveau 3 (36), Catacombes niveau 4 (37).
+ceiling.height_act1_catacombs.tip = Unités du monde (le héros mesure ~7,5). Ce que le jeu dessine plus haut est coupé par le plafond.
 
-# --- Ceiling: act 2 palace ---
-group.ceiling_act_2_palace = Plafond : palais de l'acte 2
-group.ceiling_act_2_palace.help = Le plafond sous le palais de l'acte 2 : sa hauteur, sa luminosité, la portée de la lumière du héros, le relief et l'image.
+# --- Ceiling: act 2 sewers (levels 47-49, 65) ---
+group.ceiling_act_2_sewers_levels_47_49_65 = Plafond : égouts de l'acte 2 (niveaux 47-49, 65)
+group.ceiling_act_2_sewers_levels_47_49_65.help = Le plafond au-dessus des égouts de l'acte 2 : sa hauteur, sa luminosité, la portée de la lumière du héros, le relief et l'image. Niveaux : Égouts niveau 1 (47), Égouts niveau 2 (48), Égouts niveau 3 (49), Tunnels anciens (65).
+
+# --- Ceiling: act 2 harem (level 50) ---
+group.ceiling_act_2_harem_level_50 = Plafond : harem de l'acte 2 (niveau 50)
+group.ceiling_act_2_harem_level_50.help = Le plafond sous le harem de l'acte 2 : sa hauteur, sa luminosité, la portée de la lumière du héros, le relief et l'image. Niveaux : Harem niveau 1 (50).
+
+# --- Ceiling: act 2 corrupt harem (level 51) ---
+group.ceiling_act_2_corrupt_harem_level_51 = Plafond : harem corrompu de l'acte 2 (niveau 51)
+group.ceiling_act_2_corrupt_harem_level_51.help = Le plafond sous le harem corrompu de l'acte 2 : le plafond du jeu fait de la pierre de son propre sol en VR F4, notre voûte en F3 plat ; sa hauteur au-dessus du sol. Niveaux : Harem niveau 2 (51).
+
+# --- Ceiling: act 2 palace cellar (levels 52-54) ---
+group.ceiling_act_2_palace_cellar_levels_52_54 = Plafond : sous-sol du palais de l'acte 2 (niveaux 52-54)
+group.ceiling_act_2_palace_cellar_levels_52_54.help = Le plafond du sous-sol du palais de l'acte 2 : le plafond du jeu en pierre sombre et lisse (celle des catacombes, pas les dalles du sol) en VR F4, notre voûte en F3 plat ; sa hauteur au-dessus du sol. Niveaux : Sous-sol du palais niveau 1 (52), Sous-sol du palais niveau 2 (53), Sous-sol du palais niveau 3 (54).
+
+# --- Ceiling: act 2 tombs (levels 55-61, 66-73) ---
+group.ceiling_act_2_tombs_levels_55_61_66_73 = Plafond : tombeaux de l'acte 2 (niveaux 55-61, 66-73)
+group.ceiling_act_2_tombs_levels_55_61_66_73.help = Le plafond du jeu sous les tombeaux de l'acte 2 (pierre sombre et lisse, celle des catacombes) en VR F4, notre voûte en F3 plat ; sa hauteur au-dessus du sol. Niveaux : Tombe de pierre niveau 1 (55), Salles des morts niveau 1 (56), Salles des morts niveau 2 (57), Temple des vipères griffues niveau 1 (58), Tombe de pierre niveau 2 (59), Salles des morts niveau 3 (60), Temple des vipères griffues niveau 2 (61), Tombeau de Tal Rasha (66), Tombeau de Tal Rasha (67), Tombeau de Tal Rasha (68), Tombeau de Tal Rasha (69), Tombeau de Tal Rasha (70), Tombeau de Tal Rasha (71), Tombeau de Tal Rasha (72), Antre de Duriel (73).
+
+# --- Ceiling: act 2 maggot lair (levels 62-64) ---
+group.ceiling_act_2_maggot_lair_levels_62_64 = Plafond : antre des larves de l'acte 2 (niveaux 62-64)
+group.ceiling_act_2_maggot_lair_levels_62_64.help = Le plafond du jeu au-dessus de l'antre des larves de l'acte 2 (sa propre roche de grotte ; notre effet n'y dessine pas de voûte) : sa hauteur au-dessus du sol. Niveaux : Antre des larves niveau 1 (62), Antre des larves niveau 2 (63), Antre des larves niveau 3 (64).
+ceiling.height_act2_maggot.tip = Unités du monde (le héros mesure ~7,5) : là où pend ici le plafond de roche du jeu ; sa roche pend un peu plus bas que cela.
+
+# --- Ceiling: act 3 spider caves (levels 84-85) ---
+group.ceiling_act_3_spider_caves_levels_84_85 = Plafond : grottes aux araignées de l'acte 3 (niveaux 84-85)
+group.ceiling_act_3_spider_caves_levels_84_85.help = Le plafond du jeu au-dessus des grottes aux araignées de l'acte 3 (sa propre roche de grotte ; notre effet n'y dessine pas de voûte) : sa hauteur au-dessus du sol. Niveaux : Grotte aux araignées (84), Caverne aux araignées (85).
+
+# --- Ceiling: act 3 jungle dungeons (levels 86-91) ---
+group.ceiling_act_3_jungle_dungeons_levels_86_91 = Plafond : donjons de la jungle de l'acte 3 (niveaux 86-91)
+group.ceiling_act_3_jungle_dungeons_levels_86_91.help = Le plafond du jeu au-dessus des donjons de la jungle de l'acte 3 (sa propre roche de grotte ; notre effet n'y dessine pas de voûte) : sa hauteur au-dessus du sol. Niveaux : Fosse marécageuse niveau 1 (86), Fosse marécageuse niveau 2 (87), Donjon des Écorcheurs niveau 1 (88), Donjon des Écorcheurs niveau 2 (89), Fosse marécageuse niveau 3 (90), Donjon des Écorcheurs niveau 3 (91).
+
+# --- Ceiling: act 3 sewers (level 93) ---
+group.ceiling_act_3_sewers_level_93 = Plafond : égouts de l'acte 3 (niveau 93)
+group.ceiling_act_3_sewers_level_93.help = Le plafond du jeu sous les égouts de l'acte 3 (son propre sol rocheux, posé à plat) en VR F4, notre voûte en F3 plat ; sa hauteur au-dessus du sol. Niveaux : Égouts niveau 2 (93).
+
+# --- Ceiling: act 3 temples (levels 94-99) ---
+group.ceiling_act_3_temples_levels_94_99 = Plafond : temples de l'acte 3 (niveaux 94-99)
+group.ceiling_act_3_temples_levels_94_99.help = Le plafond du jeu sous les temples de l'acte 3 (leur propre pierre) en VR F4, notre voûte en F3 plat ; sa hauteur au-dessus du sol. Niveaux : Temple en ruine (94), Sanctuaire désaffecté (95), Reliquaire oublié (96), Temple oublié (97), Sanctuaire en ruine (98), Reliquaire désaffecté (99).
+
+# --- Ceiling: act 3 Durance of Hate (level 102) ---
+group.ceiling_act_3_durance_of_hate_level_102 = Plafond : Durance de la Haine de l'acte 3 (niveau 102)
+group.ceiling_act_3_durance_of_hate_level_102.help = Le plafond du jeu sous la Durance de la Haine de l'acte 3 (sa propre pierre) en VR F4, notre voûte en F3 plat ; sa hauteur au-dessus du sol. Niveaux : Durance de la Haine niveau 3 (102).
+
+# --- Ceiling: act 5 ice caves (levels 113-116, 118-119) ---
+group.ceiling_act_5_ice_caves_levels_113_116_118_119 = Plafond : grottes de glace de l'acte 5 (niveaux 113-116, 118-119)
+group.ceiling_act_5_ice_caves_levels_113_116_118_119.help = Le plafond du jeu au-dessus des grottes de glace de l'acte 5 (sa propre roche de grotte ; notre effet n'y dessine pas de voûte) : sa hauteur au-dessus du sol. Niveaux : Caverne cristallisée niveau 1 (113), Cave de la pitié (114), Caverne cristallisée niveau 2 (115), Chambre de l'écho (116), Grottes glaciaires niveau 1 (118), Grottes glaciaires niveau 2 (119).
+
+# --- Ceiling: act 5 Nihlathak's halls (levels 122-124) ---
+group.ceiling_act_5_nihlathak_s_halls_levels_122_124 = Plafond : salles de Nihlathak de l'acte 5 (niveaux 122-124)
+group.ceiling_act_5_nihlathak_s_halls_levels_122_124.help = Le plafond du jeu sous les salles de Nihlathak de l'acte 5 (leur propre roche de grotte) en VR F4, notre voûte en F3 plat ; sa hauteur au-dessus du sol. Niveaux : Salles de l'angoisse (122), Salles de l'appel de la mort (123), Salles de Vaught (124).
+
+# --- Ceiling: act 5 Worldstone Keep (levels 128-130) ---
+group.ceiling_act_5_worldstone_keep_levels_128_130 = Plafond : Donjon de la Pierre-Monde de l'acte 5 (niveaux 128-130)
+group.ceiling_act_5_worldstone_keep_levels_128_130.help = Le plafond du jeu sous le Donjon de la Pierre-Monde de l'acte 5 (son propre sol) en VR F4, notre voûte en F3 plat ; sa hauteur au-dessus du sol. Niveaux : Donjon de la Pierre-Monde niveau 1 (128), Donjon de la Pierre-Monde niveau 2 (129), Donjon de la Pierre-Monde niveau 3 (130).
+
+# --- Ceiling: act 5 throne of destruction (levels 128-132) ---
+group.ceiling_act_5_throne_of_destruction_levels_128_132 = Plafond : trône de la destruction de l'acte 5 (niveaux 128-132)
+group.ceiling_act_5_throne_of_destruction_levels_128_132.help = Le plafond du jeu sous le trône de la destruction de l'acte 5 (le propre sol du Donjon) en VR F4, notre voûte en F3 plat ; sa hauteur au-dessus du sol. Niveaux : Donjon de la Pierre-Monde niveau 1 (128), Donjon de la Pierre-Monde niveau 2 (129), Donjon de la Pierre-Monde niveau 3 (130), Trône de la Destruction (131), Chambre de la Pierre-Monde (132).
 
 # ===== Tab: Weapon Adjust =====
 tab.weapon_adjust = Réglage des armes
@@ -2420,6 +2517,8 @@ gameplay.melee_stroke_start_cm.label = Frappe au contact : distance que la lame 
 gameplay.melee_stroke_start_cm.tip = Un mouvement est un coup - et peut toucher - seulement après que la lame (son extrémité la plus rapide : la pointe d'une épée, telle que dessinée - pas la main) a bougé de cette distance en environ un dixième de seconde, et assez vite (ci-dessus). Plus petit : une courte piqûre compte ; plus grand : seul un long balancement compte. Une lame qui bouge plus lentement que la vitesse minimale ci-dessus ne fait rien, un monstre est touché une fois par coup. 8 par défaut, comme avant. Immédiat. F4 seulement.
 gameplay.melee_touch_thrown.label = Les armes de jet frappent aussi au contact (un lancer à bout portant)
 gameplay.melee_touch_thrown.tip = Un javelot, un couteau de jet ou une hache de jet en main est balancé comme n'importe quelle arme : sa lame à travers le corps d'un monstre appuie l'attaque propre du jeu sur lui - pour une arme de jet, c'est le Lancer du jeu sur ce monstre, à bout portant, avec les munitions dépensées comme le jeu les dépense (jamais la voie du Coup direct). Les potions de jet ne se balancent pas. Le lancer par geste (Réglage des armes > Lancers : par la poignée ou la gâchette) reste tel quel et ne se déclenche pas en même temps que le contact : avec le lancer à la poignée activé, le contact ne compte que tant que la poignée droite est serrée sur l'arme ; pendant 0,7 s après qu'un lancer est relâché le contact s'efface ; et un contact qui a appuyé l'attaque annule le relâchement du même balancement (un lancer par balancement). La taille de la lame par arme est une estimation - réglez-la avec les curseurs de lame du bloc Débogage ci-dessous et « Dessiner les capsules de la Frappe au contact ». Décoché : une arme de jet ne fait rien au contact, comme avant. Immédiat. F4 seulement.
+gameplay.melee_touch_barrels.label = Casser tonneaux et pots en les frappant
+gameplay.melee_touch_barrels.tip = Un coup de l'arme tenue à travers un tonneau, un pot, une urne ou un panier le casse à la manière du jeu : le coup (un coup qui toucherait un monstre) appuie l'interaction du jeu sur cet objet, comme A, si bien que le héros le frappe du pied ou le casse avec sa propre animation - son butin, ses pièges et ses explosions sont ceux du jeu. Les coffres, les portes, les sanctuaires et les objets de quête gardent leurs commandes normales, et A marche toujours. La taille de l'objet est estimée d'après son emprise au sol. Décoché : comme avant, seul A les casse. En direct. F4 seulement.
 gameplay.melee_touch_thrown_held.label = Une arme de jet est l'arme de votre main dès le départ (pas besoin de poignée pour frapper)
 gameplay.melee_touch_thrown_held.tip = Un javelot, un couteau de jet ou une hache de jet est l'arme de votre main dès qu'il est équipé, comme une épée : il frappe aussitôt au contact - inutile de serrer d'abord la poignée. Posé (la poignée serrée puis relâchée, la main au repos), il ne touche plus rien tant qu'une main ne le tient pas de nouveau, comme une épée. Le lancer reste le même : serrez la poignée, balancez, lâchez - c'est le lancer propre du jeu ; le contact reste désactivé pendant 0,7 s après un lancer et un balancement ne lance qu'une fois. Décoché : comme avant - avec le lancer par la poignée activé, une arme de jet ne frappe au contact que tant que sa poignée est serrée. Immédiat. F4 seulement.
 gameplay.melee_touch_only.label = La gâchette n'attaque pas (seulement le contact de la lame ; un arc ou une arbalète tire avec)
@@ -3070,7 +3169,7 @@ debug.pose_share_draw.tip = Les autres joueurs dessinés en formes de débogage 
 debug.pose_share_legs_self.label = Têtes et mains en multijoueur : les jambes de votre propre héros avec la même démarche (un test)
 debug.pose_share_legs_self.tip = Les jambes de votre propre héros marchent avec la même démarche que celles des héros des autres joueurs (« leurs jambes marchent comme ils se déplacent »), selon sa propre direction - pour voir les jambes sur un seul PC : regardez-le en F2 ou F3 (plat ou RV) et avancez, reculez et allez de côté. Le journal dit toutes les 5 s ce qu'elles ont fait (« legs: ... »). Demande la bibliothèque de démarche. Immédiat.
 debug.walk_back_dump.label = Marche à reculons : écrire les jambes dans un fichier
-debug.walk_back_dump.tip = Pendant que le héros se déplace, ses jambes sont gardées pose par pose - telles que le jeu les a dessinées et telles que dessinées avec « En marchant à reculons, les jambes reculent » - et les 6 dernières secondes de chaque marche à reculons vont dans d2rloader\logs\d2r_vr_walkback.txt (30 au plus par session), pour l'outil walk_legs qui les dessine en bonshommes bâtons. N'écrit qu'un fichier ; rien ne change dans le jeu. En direct.
+debug.walk_back_dump.tip = Pendant que le héros se déplace, ses jambes sont gardées pose par pose - telles que le jeu les a dessinées et telles que dessinées avec « En marchant à reculons, les jambes reculent » - et les 6 dernières secondes de chaque marche à reculons (et de 3 s debout avec la caméra tournée autour de lui) vont dans d2rloader\logs\d2r_vr_walkback.txt (30 au plus par session), pour l'outil walk_legs qui les dessine en bonshommes bâtons. Le journal dit aussi toutes les 5 s à partir de quelle pose les maillages du héros sont skinnés (celle que nous posons, ou une autre). N'écrit qu'un fichier et des lignes de journal ; rien ne change dans le jeu. En direct.
 debug.phantom_ray.label#2 = Dessiner la ligne que prend la main gauche
 debug.phantom_ray.tip#2 = Une ligne rouge le long de laquelle la main gauche prend l'arme en main et glisse (bâton, lance, arme d'hast, épée à deux mains) ; avec une arbalète aussi là où vole le carreau (les curseurs « Arbalète : ligne de tir » la tournent). « Dessiner les axes de l'arme en main » la dessine aussi.
 debug.xbow_barrel_line.label = Arbalète : dessiner le canon tel que modélisé
@@ -3258,6 +3357,251 @@ status.xr_layers.off = La couche OpenXR {layers} est désactivée pour D2R VR : 
 status.xr_layers.listed_in_runtime_fov = La couche OpenXR {layers} se charge avec le jeu, laissée en place : les yeux sont dessinés exactement comme le casque les donne, comme les autres jeux, elle ne devrait donc faire aucun mal.
 status.xr_layers.listed_in = La couche OpenXR {layers} se charge avec le jeu : elle est connue pour déformer son image (yeux croisés, étirée) quand les yeux sont dessinés à la façon du mod - cochez « Chaque œil exactement comme le casque le donne ».
 status.xr_layers.in = Autres couches OpenXR dans le jeu (laissées telles quelles) : {layers}.
+
+# ===== In the headset: the settings panel's rows, the first-start guide (the plugin's tables) =====
+vr.hset.page.view = Vue
+vr.hset.page.options = Options
+vr.hset.page.video = Vidéo
+vr.hset.page.body = Corps
+vr.hset.page.life = Vie
+vr.hset.page.look = Aspect
+vr.hset.page.hud = HUD
+vr.hset.page.belt = Ceinture
+vr.hset.page.melee = Mêlée
+vr.hset.page.left = Gauche
+vr.hset.page.right = Droite
+vr.hset.page.guide = Guide
+vr.hset.screen.menu_distance_m.label = Distance du panneau
+vr.hset.screen.menu_distance_m.detail = Un panneau ouvert dans le jeu : inventaire, coffre, marchand
+vr.hset.openxr.flat_distance_m.label = Distance de l'écran
+vr.hset.openxr.flat_distance_m.detail = Menus, écrans de chargement, les vues plates F1 et F3
+vr.hset.openxr.flat_width_m.label = Largeur de l'écran
+vr.hset.openxr.flat_width_m.detail = La largeur des menus et des panneaux
+vr.hset.openxr.brightness.label = Luminosité
+vr.hset.openxr.brightness.detail = Tout dans le casque, 1 = tel que le jeu le dessine
+vr.hset.stereo.user_height_m.label = Votre taille
+vr.hset.stereo.user_height_m.detail = Échelle du monde et des mains ; Body Height de BodyWalk l'emporte
+vr.hset.openxr.laser.label = Laser sur les menus
+vr.hset.openxr.laser.detail = Pointez une manette sur un menu : c'est la souris
+vr.hset.value.off = Désactivé
+vr.hset.value.on = Activé
+vr.hset.openxr.laser_hand.label = Main du laser
+vr.hset.openxr.laser_hand.detail = La main d'où part le laser
+vr.hset.value.left = Gauche
+vr.hset.value.right = Droite
+vr.hset.openxr.menu_3d.label = Menus en panneau
+vr.hset.openxr.menu_3d.detail = Le monde reste en 3D derrière un menu ouvert
+vr.hset.turn.smooth.label = Rotation progressive
+vr.hset.turn.smooth.detail = Stick droit : tourner en continu, ou d'un cran par impulsion
+vr.hset.turn.snap.label = Angle par à-coups
+vr.hset.turn.snap.detail = Degrés par impulsion, rotation progressive désactivée
+vr.hset.turn.speed.label = Vitesse de rotation
+vr.hset.turn.speed.detail = Degrés par seconde, rotation progressive activée
+vr.hset.hud.low_hp_vignette.label = Vie basse : vignette rouge
+vr.hset.hud.low_hp_vignette.detail = Les bords battent en rouge quand votre vie est basse (F4)
+vr.hset.hud.low_hp_threshold.label = S'active sous
+vr.hset.hud.low_hp_threshold.detail = Part de votre vie maximale
+vr.hset.hud.low_hp_intensity_start.label = Intensité juste en dessous
+vr.hset.hud.low_hp_intensity_start.detail = À quel point les bords sont rouges au début
+vr.hset.hud.low_hp_intensity_end.label = Intensité à la vie minimale
+vr.hset.hud.low_hp_intensity_end.detail = À quel point les bords sont rouges quand vous êtes presque mort
+vr.hset.hud.low_hp_saturation.label = Rouge
+vr.hset.hud.low_hp_saturation.detail = D'un gris sombre (0) au rouge profond (1)
+vr.hset.hud.low_hp_radius.label = Taille
+vr.hset.hud.low_hp_radius.detail = Jusqu'où elle entre depuis le bord (angle de vue)
+vr.hset.hud.low_hp_softness.label = Bord doux
+vr.hset.hud.low_hp_softness.detail = 1 se fond jusqu'au bout, 0 est une courte rampe
+vr.hset.hud.low_hp_roundness.label = Forme
+vr.hset.hud.low_hp_roundness.detail = 2 un ovale ... 6 un carré arrondi
+vr.hset.hud.low_hp_gentle.label = Doux
+vr.hset.hud.low_hp_gentle.detail = Plus lent, plus doux, moins rouge
+vr.hset.hud.low_hp_haptics.label = Battement dans les manettes
+vr.hset.hud.low_hp_haptics.detail = Une impulsion dans les deux mains (demande Vibration des manettes)
+vr.hset.hud.low_hp_haptics_strength.label = Force de l'impulsion
+vr.hset.hud.low_hp_haptics_strength.detail = Plus forte quand votre vie baisse ; ceci la multiplie
+vr.hset.hands.belt_models_up.label = Hauteur de la ceinture
+vr.hset.hands.belt_models_up.detail = À quelle hauteur sur vous, en part de votre hauteur d'yeux
+vr.hset.hands.belt_models_ahead.label = Distance de la ceinture
+vr.hset.hands.belt_models_ahead.detail = Depuis votre corps : le rayon de l'arc
+vr.hset.hands.belt_models_across.label = Ceinture droite / gauche
+vr.hset.hands.belt_models_across.detail = Décalée vers votre droite (+) ou votre gauche (-)
+vr.hset.hands.belt_models_turn.label = Rotation de la ceinture
+vr.hset.hands.belt_models_turn.detail = Tournée autour de vous : vers la droite (+) ou la gauche (-)
+vr.hset.hands.belt_grab_cm.label = Portée de saisie
+vr.hset.hands.belt_grab_cm.detail = À quelle distance d'une potion une main doit être pour la prendre
+vr.hset.belt.grab_trigger.label = Prendre une potion avec
+vr.hset.belt.grab_trigger.detail = Une potion demande aussi la gâchette ; la poignée seule va à l'arme
+vr.hset.value.grip = Poignée
+vr.hset.value.trigger_grip = Gâchette + poignée
+vr.hset.gameplay.melee_touch.label = Frappe au contact
+vr.hset.gameplay.melee_touch.detail = La lame que vous balancez à travers un monstre le frappe (F4)
+vr.hset.gameplay.melee_min_speed.label = Vitesse min. de la lame
+vr.hset.gameplay.melee_min_speed.detail = En dessous, un contact ne fait rien, m/s
+vr.hset.gameplay.melee_stroke_start_cm.label = Course pour amorcer un coup
+vr.hset.gameplay.melee_stroke_start_cm.detail = Distance que la lame doit parcourir pour en amorcer un, cm
+vr.hset.gameplay.melee_touch_only.label = La gâchette n'attaque pas
+vr.hset.gameplay.melee_touch_only.detail = Seul le contact de la lame attaque ; un arc tire (F4)
+vr.hset.gameplay.melee_skill_armed.label = Le bouton arme la compétence
+vr.hset.gameplay.melee_skill_armed.detail = Chaque contact est alors cette compétence (F4)
+vr.hset.gameplay.melee_skill_armed_icon.label = Compétence armée dans le mana
+vr.hset.gameplay.melee_skill_armed_icon.detail = Son icône dans le médaillon de mana
+vr.hset.direct.left_trigger.label = Gâchette gauche
+vr.hset.direct.left_x.label = X gauche
+vr.hset.direct.left_y.label = Y gauche
+vr.hset.direct.left_stick.label = Clic du stick gauche
+vr.hset.direct.left_menu.label = Bouton menu gauche
+vr.hset.direct.left_menu_hold.label = Menu gauche, appui long
+vr.hset.direct.right_trigger.label = Gâchette droite
+vr.hset.direct.right_a.label = A droit
+vr.hset.direct.right_b.label = B droit
+vr.hset.direct.right_stick.label = Clic du stick droit
+vr.hset.direct.right_stick_hold.label = Stick droit, appui long
+vr.hset.direct.right_menu.label = Bouton menu droit
+vr.hset.openxr.direct_input.label = Commandes sans BodyWalk
+vr.hset.openxr.direct_input.detail = Le plugin lit lui-même les manettes
+vr.hset.hands.belt_models.label = Potions sur la ceinture
+vr.hset.hands.belt_models.detail = Les modèles de potion du jeu sur les hanches du héros
+vr.hset.render.vr_resolution.label = Rendu RV : mode
+vr.hset.render.vr_resolution.detail = 0 fenêtre, 1 casque, 2-6 un ancien carré
+vr.hset.render.vr_resolution_px.label = Rendu RV : côté
+vr.hset.render.vr_resolution_px.detail = Le côté d'un carré en pixels, 0 = non utilisé
+vr.hset.calibration.use.label = Utiliser la mesure
+vr.hset.calibration.use.detail = La taille et l'envergure mesurées sont utilisées
+vr.hset.calibration.version.label = Mesure mémorisée
+vr.hset.calibration.version.detail = 1 = une mesure est mémorisée
+vr.hset.value.no = Non
+vr.hset.value.yes = Oui
+vr.hset.calibration.eye_height_m.label = Hauteur d'yeux mesurée
+vr.hset.calibration.eye_height_m.detail = Mètres au-dessus du sol
+vr.hset.calibration.arm_span_m.label = Envergure mesurée
+vr.hset.calibration.arm_span_m.detail = Mètres, de poignée à poignée
+vr.hset.calibration.seated.label = Votre mode de jeu
+vr.hset.calibration.seated.detail = Assis : Recentrer règle la hauteur d'yeux ; Calibrer lit l'envergure
+vr.hset.value.standing = Debout
+vr.hset.value.seated = Assis
+vr.hset.hud.bar_place.label = Type de barre d'outils
+vr.hset.hud.bar_place.detail = Vie et mana aux poignets, ou toute la barre d'outils
+vr.hset.hud.monster_height.label = Plaques : hauteur à l'écran
+vr.hset.hud.monster_height.detail = + plus haut, % de l'écran (F4) ; la barre dans la pièce a la sienne
+vr.hset.hud.ordinary_mob_bars.label = Plaques : monstres ordinaires
+vr.hset.hud.ordinary_mob_bars.detail = Affichées : toutes les plaques. Masquées : seulement champions, boss, PNJ
+vr.hset.value.shown = Affichées
+vr.hset.value.hidden = Masquées
+vr.hset.hud.hide.label = Interface hors de l'image
+vr.hset.hud.hide.detail = 0 rien, 1 la barre d'outils, 2 tout
+vr.toolbar.wrists = Poignets
+vr.toolbar.chest_low = Torse, en bas
+vr.toolbar.low_in_front = En bas devant
+vr.toolbar.left_forearm = Avant-bras gauche
+vr.toolbar.right_forearm = Avant-bras droit
+vr.toolbar.not_shown = Non affichée
+vr.toolbar.in_the_picture = Dans l'image
+vr.keys.none = Rien
+vr.keys.action_attack = Attaquer
+vr.keys.action_interact = Ramasser
+vr.keys.action_inventory = Inventaire
+vr.keys.action_map = Carte
+vr.keys.cmd_0x25 = Afficher objets
+vr.keys.cmd_0x25_action_map = Objets + carte
+vr.keys.action_pause = Menu pause
+vr.keys.cmd_0x26 = Fermer panneaux
+vr.keys.action_skillpanel = Panneau compét.
+vr.keys.action_quivernext = Carquois suiv.
+vr.keys.action_quiverprev = Carquois préc.
+vr.keys.action_swap = Changer d'armes
+vr.keys.action_recenter = Recentrer
+vr.keys.action_viewnext = Vue suivante
+vr.keys.pad_b = Bouton comp. B
+vr.keys.pad_x = Bouton comp. X
+vr.keys.pad_y = Bouton comp. Y
+vr.keys.pad_rb = Bouton comp. RB
+vr.keys.pad_lb = Manette LB
+vr.keys.pad_a = Manette A
+vr.keys.pad_lt = Rangée comp. 2
+vr.keys.pad_l3 = Manette L3
+vr.keys.pad_r3 = Manette R3
+vr.keys.cmd_0x00 = Personnage
+vr.keys.cmd_0x0c = Arbre compét.
+vr.keys.cmd_0x04 = Journal quêtes
+vr.keys.cmd_0x27 = Compét. suiv.
+vr.keys.cmd_0x28 = Compét. préc.
+vr.keys.cmd_0x23 = Course / marche
+vr.keys.cmd_0x24 = Rester immobile
+vr.guide.0.title = Bienvenue dans D2R VR - d'abord, mesurez-vous
+vr.guide.0.row0.does = Votre hauteur d'yeux règle l'échelle du monde ; votre envergure ajuste les bras du héros aux vôtres. Cela prend quelques secondes.
+vr.guide.0.row1.does = 1. Tenez-vous droit là où vous jouez, les yeux devant vous. Le sol du casque (sa configuration de la pièce) doit être réglé.
+vr.guide.0.row2.does = 2. Tendez les deux bras sur les côtés à hauteur d'épaule, comme un T.
+vr.guide.0.row3.does = 3. Lâchez les deux gâchettes, puis serrez les deux et ne bougez plus jusqu'à ce qu'il affiche Enregistré.
+vr.guide.0.row4.does = B droit l'annule. Le jeu continue derrière ce guide : placez-vous dans un endroit sûr, en ville.
+vr.guide.0.row5.does = Plus tard : les réglages dans le casque, page Corps, Calibrer le corps.
+vr.guide.0.nav = Mesurer, ou Pas maintenant : c'est aussi sur la page Corps, à tout moment.
+vr.guide.1.title = Marcher, tourner, combattre
+vr.guide.1.row0.control = Stick gauche
+vr.guide.1.row0.does = marcher
+vr.guide.1.row1.control = Stick droit
+vr.guide.1.row1.does = gauche / droite : tourner
+vr.guide.1.row2.control = Gâchette droite
+vr.guide.1.row2.does = attaquer. Une épée, une hache ou une masse frappe quand vous la balancez à travers un monstre (Frappe au contact), donc sa gâchette ne le fait pas ; un arc ou une arbalète tire avec.
+vr.guide.1.row3.control = A droit
+vr.guide.1.row3.does = ramasser, ouvrir, parler (une compétence sur la plaque A du panneau de compétences est lancée à la place)
+vr.guide.1.row4.control = B droit, X gauche, Y gauche
+vr.guide.1.row4.does = les boutons de compétence B, X, Y du jeu. Maintenez la gâchette gauche pour la seconde rangée.
+vr.guide.1.row5.control = Clic du stick droit
+vr.guide.1.row5.does = changer de jeu d'armes I / II
+vr.guide.nav = Pointez Retour ou Suivant et tirez la gâchette. Fermer (ou B) termine le guide.
+vr.guide.2.title = Ouvrir des choses
+vr.guide.2.row0.control = Bouton menu
+vr.guide.2.row0.does = l'inventaire (PS VR2 : le bouton Options de la manette droite)
+vr.guide.2.row1.control = Bouton menu, maintenu
+vr.guide.2.row1.does = une demi-seconde : le menu pause (Esc)
+vr.guide.2.row2.control = Clic du stick gauche
+vr.guide.2.row2.does = un clic rapide : la carte. Maintenu : les objets au sol sont nommés ; une demi-seconde : l'inventaire.
+vr.guide.2.row3.control = Clic du stick droit, maintenu
+vr.guide.2.row3.does = une demi-seconde : le panneau de compétences ; la même chose le referme
+vr.guide.2.row4.control = Poignée gauche + clic du stick
+vr.guide.2.row4.does = recentrer : devant est là où vous regardez
+vr.guide.2.row5.control = Dans un menu
+vr.guide.2.row5.does = pointez la manette droite dessus (le laser) et tirez la gâchette pour cliquer ; les sticks et les boutons y sont la manette du jeu
+vr.guide.3.title = Le panneau de compétences et les réglages
+vr.guide.3.row0.control = Panneau de compétences
+vr.guide.3.row0.does = pointez une plaque et tirez la gâchette : choisissez sa compétence. Maintenez la gâchette sur une plaque : dès lors, cette gâchette lance sa compétence
+vr.guide.3.row1.control = MODIFIER COMPÉT.
+vr.guide.3.row1.does = choisissez une plaque, puis une compétence que vous avez, pour l'y mettre. Une compétence sur la plaque RT ou A est lancée par la gâchette droite ou A.
+vr.guide.3.row2.control = Onglet RÉGLAGES
+vr.guide.3.row2.does = les réglages dans le casque, dans la même fenêtre : Vue, Options, Vidéo, Corps, Vie, Aspect, HUD, Ceinture, Mêlée, Gauche, Droite
+vr.guide.3.row3.control = Clic du stick droit, maintenu
+vr.guide.3.row3.does = ouvre la fenêtre sur l'onglet où elle était en dernier ; passez à RÉGLAGES
+vr.guide.3.row4.control = Tourner les pages
+vr.guide.3.row4.does = donnez un coup de stick à gauche ou à droite, ou touchez une poignée (gauche en arrière, droite en avant). B, Y ou Menu ferme la fenêtre.
+vr.guide.3.row5.control = Sur le PC
+vr.guide.3.row5.does = D2R VR Authentic Settings a tous les réglages ; la plupart des changements se voient aussitôt dans le jeu
+vr.guide.4.title = Ceinture, armes, arc
+vr.guide.4.row0.control = Potions de la ceinture
+vr.guide.4.row0.does = pendent à vos hanches. Une main près de l'une l'éclaire, la poignée la prend ; à votre bouche, inclinée : vous buvez. Lâchée ailleurs : elle revient.
+vr.guide.4.row1.control = Votre arme
+vr.guide.4.row1.does = a du poids : tenez-la avec la poignée. Les deux poignées lâchées : elle tombe (une poignée la rappelle) ; une seconde au sol et elle est dans votre dos.
+vr.guide.4.row2.control = Derrière une épaule
+vr.guide.4.row2.does = une poignée là dégaine l'arme de votre dos. La poignée d'une main vide derrière l'épaule gauche range le bouclier et le ressort.
+vr.guide.4.row3.control = Arc
+vr.guide.4.row3.does = la main libre à la corde, gâchette ou poignée, tirez en arrière, lâchez. Arc bandé : B la compétence de flèche suivante, A la précédente.
+vr.guide.4.row4.control = Javelot
+vr.guide.4.row4.does = tenez-le avec la poignée, lancez, et lâchez
+vr.guide.4.row5.control = Vie et mana
+vr.guide.4.row5.does = sont sur vos poignets
+vr.guide.5.title = Les vues, et ce guide à nouveau
+vr.guide.5.row0.control = F1
+vr.guide.5.row0.does = du dessus : la caméra propre du jeu
+vr.guide.5.row1.control = F2
+vr.guide.5.row1.does = derrière le héros, une caméra tournée avec votre tête
+vr.guide.5.row2.control = F3
+vr.guide.5.row2.does = le jeu sur votre sol : regardez-le d'en haut, faites-en le tour
+vr.guide.5.row3.control = F4
+vr.guide.5.row3.does = première personne - cette vue. Les mains, les panneaux et ce guide sont ceux de F4.
+vr.guide.5.row4.control = Clavier
+vr.guide.5.row4.does = la touche F d'une vue (la fenêtre du jeu active), F12 la vue suivante, F11 recentrer. La page Vue des réglages a aussi F1 - F4.
+vr.guide.5.row5.control = Ce guide à nouveau
+vr.guide.5.row5.does = les réglages dans le casque, page Corps : Guide de démarrage
+vr.guide.5.nav = Terminé ferme le guide ; il est de nouveau sur la page Corps, à tout moment.
 
 # ===== The words the program writes (status lines, messages, buttons) =====
 dialog.pictures = Images (png, jpg, bmp, dds, tga)
@@ -3575,6 +3919,8 @@ dome.no_receipt = impossible d'écrire mods\D2R-VR\sky_dome.json
 dome.made = fait à partir de votre jeu : les modèles du dôme de ciel tirés du ciel du Sommet d'Arreat (mods\D2R-VR\D2R-VR.mpq), dès le prochain démarrage du jeu
 dome.ready = prêt : les modèles du dôme de ciel (mods\D2R-VR\D2R-VR.mpq)
 dome.kept = {n} d'entre eux modifiés par vous : laissés tels quels
+dome.atlas = le ciel de chaque acte et le noir de la grotte en une seule image, chaque dôme sa propre bande
+dome.no_atlas = chaque dôme sa propre image ({why})
 ceiling.no_mod = seulement dans le dossier propre du mod (mods\D2R-VR\D2R-VR.mpq), qui n'est pas ici : pas de plafond de grotte du jeu
 ceiling.off = désactivé ([ceiling] game_ceiling) : aucun modèle de plafond de grotte fait ; {n} des nôtres retirés
 ceiling.no_archives = les archives du jeu n'ont pu être ouvertes (erreur {error}) ; nouvel essai au prochain démarrage
@@ -3585,6 +3931,12 @@ ceiling.no_receipt = impossible d'écrire mods\D2R-VR\cave_ceiling.json
 ceiling.made_kinds = fait à partir de votre jeu : {n} sortes de plafond, la pierre ou la roche propre à chaque salle (mods\D2R-VR\D2R-VR.mpq), dès le prochain démarrage du jeu
 ceiling.ready_kinds = prêt : {n} sortes de plafond (mods\D2R-VR\D2R-VR.mpq)
 ceiling.no_maps = pas dans ce jeu, notre voûte à la place : {kinds}
+ceiling.beams = les poutres de la caserne : la charpente propre du jeu, {n} charpentes entières par pièce
+ceiling.no_beams = pas de poutres de caserne : la charpente du jeu n'est pas dans ce jeu ou pas sous la forme connue{why}
+ceiling.walls = le sommet des murs mesuré dans {n} zones
+ceiling.dome = le dôme de la cathédrale : sur les quatre colonnes de la chapelle, {r} unités de rayon
+ceiling.no_dome = pas de dôme de cathédrale : {why}
+ceiling.tall_domes = dômes au-dessus des pièces hautes (salle, unités de rayon) : {list}
 ceiling.kept = {n} de ses fichiers modifiés par vous : laissés tels quels
 data_mods.no_mod = seulement dans le mod propre à D2R VR (mods\D2R-VR\D2R-VR.mpq), qui n'est pas ici
 data_mods.off_removed = désactivé - les fichiers des autres mods retirés du mod de D2R VR
@@ -3598,7 +3950,189 @@ data_mods.not_merged = non fusionné : {mods}
 data_mods.saves = les personnages restent dans le dossier de sauvegarde de D2R VR
 data_mods.failed = {n} fichier(s) en échec, voir d2r_vr_data_mods.txt
 
+# ===== In the headset: the words the plugin writes (the skill panel, the settings in the headset, the calibration prompt, the map) =====
+vr.calib.release = Lâchez les deux gâchettes.
+vr.calib.ready = Bien. Serrez maintenant les deux gâchettes et ne bougez plus.
+vr.calib.hold = Ne bougez plus...
+vr.calib.floor = Le casque ne donne pas de sol (pas de pièce configurée), la taille ne peut donc pas être mesurée.
+vr.calib.height = Vos yeux sont hors de 0,8 - 2,3 m au-dessus du sol. Le niveau du sol est-il configuré ?
+vr.calib.tracking = Le casque ou une manette n'est pas suivi. Tenez les manettes là où le casque les voit.
+vr.calib.upright_seated = Asseyez-vous bien droit et regardez droit devant.
+vr.calib.upright = Tenez-vous bien droit et regardez droit devant.
+vr.calib.arms = Bras tendus sur les côtés, à hauteur d'épaules, coudes tendus, mains pas devant vous.
+vr.calib.still = Vous avez bougé. Lâchez les deux gâchettes et ne bougez plus.
+vr.calib.saved = Enregistré, et utilisé. Lâchez les gâchettes.
+vr.calib.failed = d2r_vr.ini n'a pas pu être écrit (voir le journal). Lâchez et réessayez.
+vr.calib.title_seated = Assis : mesurer mon envergure
+vr.calib.title = Mesurer ma taille et mon envergure
+vr.calib.steps_seated = Asseyez-vous droit et regardez droit devant. Tendez les deux bras sur les côtés à hauteur d'épaule, aussi loin que possible.\nLâchez les deux gâchettes, puis serrez les deux et ne bougez plus. Seule l'envergure est lue : votre hauteur d'yeux n'est pas mesurée assis (celle mémorisée reste).
+vr.calib.steps = Tenez-vous droit et regardez droit devant. Tendez les deux bras sur les côtés à hauteur d'épaule, aussi loin que possible.\nLâchez les deux gâchettes, puis serrez les deux et ne bougez plus.
+vr.calib.cancel = B droit annule. Le jeu continue derrière - mesurez dans un endroit sûr.
+vr.body.measured = Hauteur d'yeux {eye} m, envergure {span} m
+vr.body.measured_span = Envergure {span} m (hauteur d'yeux : non mesurée)
+vr.body.span_unusable = Une envergure mémorisée n'est pas utilisable : mesurez à nouveau
+vr.body.span_none = Envergure pas encore mesurée
+vr.body.unusable = Une mesure mémorisée n'est pas utilisable : mesurez à nouveau
+vr.body.none = Pas encore mesuré
+vr.body.use_until = Jusqu'à la mesure, la taille de BodyWalk ou « Votre taille » et l'échelle des bras s'appliquent.
+vr.body.use_off = Non utilisée : la case « Utiliser la taille et l'envergure mesurées » est décochée dans D2R VR Authentic Settings.
+vr.body.use_span = Utilisée : les bras du héros la suivent ; l'échelle du monde est « Votre taille » (mesurez une fois debout pour elle).
+vr.body.use_on = Utilisée : l'échelle du monde et les bras du héros la suivent.
+vr.body.span_auto = {span} m (auto)
+vr.body.auto = Auto
+vr.body.why_seated = Assis : Calibrer ne lit que votre envergure. Recentrer la vue place les yeux du héros là où est votre tête.
+vr.body.why = Votre vraie hauteur d'yeux règle l'échelle du monde, votre envergure les bras du héros.
+vr.keys.custom = Perso (ini)
+vr.hset.status.no_ini = d2r_vr.ini est introuvable. Rien ne peut être changé.
+vr.hset.status.saving = Enregistrement...
+vr.hset.status.saved_video = Enregistré. Le jeu reconstruit son image dans un instant : quelques secondes figé.
+vr.hset.status.saved = Enregistré. Le changement est en direct.
+vr.hset.status.save_failed = L'enregistrement a échoué. Vos changements sont toujours là.
+vr.hset.status.conflict = L'ini a été changé ailleurs. Ses valeurs actuelles sont affichées.
+vr.hset.status.live_soon = Un changement s'applique de lui-même dans un instant.
+vr.hset.status.video_unapplied = Pas encore appliqué. Appliquer demande cette taille au jeu ; Fermer l'abandonne.
+vr.hset.status.unsaved = Changements non enregistrés. Appliquer les enregistre, Fermer les abandonne.
+vr.hset.status.video_idle = Choisissez une taille, puis Appliquer. Elle prend effet une fois votre héros dans le monde.
+vr.hset.status.body_idle = Calibrer le corps masque ce panneau ; il revient quand la mesure est faite.
+vr.hset.status.keys_idle = Choisissez ce que fait un bouton, puis Appliquer. Combinaisons et autres appuis longs : D2R VR Authentic Settings.
+vr.hset.status.keys_off = Commandes sans BodyWalk est désactivé : ces boutons ne font rien (le mapping de BodyWalk fait les commandes).
+vr.hset.status.melee_idle = Chaque changement s'applique de lui-même. Première personne (F4) seulement.
+vr.hset.status.melee_off = Frappe au contact est désactivée : cochez-la, et les lignes ci-dessous s'appliquent.
+vr.hset.status.belt_needs_direct = Demande Commandes sans BodyWalk (désactivé) : d'ici là, la poignée seule prend une potion.
+vr.hset.status.belt_idle = Chaque changement s'applique de lui-même : regardez votre ceinture, puis déplacez-la à nouveau.
+vr.hset.status.belt_off = Les potions sur la ceinture sont désactivées (D2R VR Authentic Settings > Interface : F4 corps) : ceci ne fait rien.
+vr.hset.status.idle_window = Pointez et tirez la gâchette. B, Fermer ou un appui long sur le stick droit ferme cette fenêtre.
+vr.hset.status.idle = Pointez et tirez la gâchette. B, ou un appui long sur le stick droit, la ferme.
+vr.hset.custom_empty = (une ligne que la liste ne nomme pas)
+vr.hset.second_row_off = - la seconde rangée (LT) est désactivée
+vr.hset.title = RÉGLAGES DU CASQUE
+vr.video.title = Taille du rendu
+vr.video.note = Appliquer reconstruit l'image : le jeu se fige quelques secondes (environ 7).
+vr.body.calibrate = Calibrer le corps
+vr.body.forget = Oublier la mesure
+vr.body.guide = Guide de démarrage
+vr.body.span_note = Envergure à la main : - bras plus courts, + plus longs (un nouveau Calibrer la règle à nouveau)
+vr.body.step1 = 1. Tenez-vous droit là où vous jouez, les yeux devant vous. Le sol du casque doit être configuré.
+vr.body.step2 = 2. Appuyez sur Calibrer le corps : ce panneau se masque et une invite apparaît devant vous.
+vr.body.step3 = 3. Bras sur les côtés, à l'horizontale. Lâchez les deux gâchettes, puis serrez les deux et ne bougez plus.
+vr.body.step4 = 4. B droit annule. Ce panneau revient quand c'est fait, avec les chiffres.
+vr.body.seated_step1 = 1. Asseyez-vous droit là où vous jouez, les yeux devant vous, de la place pour vos bras. Aucun sol n'est nécessaire.
+vr.body.seated_step4 = 4. Puis Recentrer la vue, assis comme vous jouez : les yeux du héros sont là où est votre tête.
+vr.guide.not_now = Pas maintenant
+vr.guide.back = Retour
+vr.guide.measure_now = Mesurer
+vr.guide.done = Terminé
+vr.guide.next = Suivant
+vr.hset.game_view = Vue du jeu
+vr.hset.game_view.detail = F1 dessus, F2 troisième personne, F3 sur votre sol, F4 première
+vr.hset.preview = Aperçu 5 s
+vr.hset.recentre = Recentrer la vue
+vr.hset.close = Fermer
+vr.hset.apply = Appliquer
+vr.video.preset_window = Taille fenêtre
+vr.video.preset_headset = Celle du casque
+vr.video.not_known = pas encore connue
+vr.video.pick_headset_size = Celle du casque : {size}
+vr.video.pick_headset = Taille du casque
+vr.video.pick_window = Taille de la fenêtre
+vr.video.cost_headset_unknown = Sa taille est lue quand le jeu démarre pour la première fois une session casque.
+vr.video.cost_window = Rien ne change : l'image est celle de la fenêtre du jeu.
+vr.video.cost = Dessine {times} x les pixels de 2048 x 2048.
+vr.video.limit = Votre casque prend {most} au plus : réduit à cela.
+vr.video.now = Le jeu dessine {size} maintenant.
+vr.video.now_unknown = La taille de l'image du jeu n'est pas encore connue.
+vr.video.recommended = Votre casque recommande {size}.
+vr.video.recommended_unknown = La taille de votre casque est lue quand le jeu démarre pour la première fois une session.
+vr.tiles.edit = Modifier compét.
+vr.tiles.close = Fermer
+vr.tiles.back = Retour
+vr.tiles.previous = Précédent
+vr.tiles.next = Suivant
+vr.tiles.clear_slot = Vider
+vr.tiles.tab_skills = Compétences
+vr.tiles.tab_settings = Réglages
+vr.tiles.choose_skill_for = Compétence pour
+vr.tiles.now = actuelle : {skill}
+vr.skills.nothing = rien
+vr.skills.choose_slot = Choisissez l'emplacement à changer
+vr.skills.unavailable = Compétences indisponibles
+vr.skills.trigger_casts = La gâchette lance : {skill}  ({slot})
+vr.tiles.trigger_basic = Gâchette : l'attaque de base  (A)
+vr.tiles.page = Page {page} sur {pages}
+vr.tiles.hint_first = Touchez un emplacement pour changer sa compétence - maintenez la gâchette dessus et la gâchette la lance
+vr.tiles.hint_wheel = Pointez un emplacement et tirez la gâchette
+vr.tiles.hint_pick_slot = Pointez l'emplacement à changer et tirez la gâchette
+vr.tiles.hint_pick_skill = Pointez une compétence et tirez la gâchette pour la mettre sur l'emplacement
+vr.tiles.run = COURIR
+vr.tiles.walk = MARCHER
+vr.tiles.run_walk_unknown = COURIR /\nMARCHER
+vr.wheel.run_walk = COURIR / MARCHER
+vr.tiles.empty = Vide
+vr.tiles.not_found = Introuvable
+vr.tiles.lt_row_off = Rangée LT désact.
+vr.skills.all = Toutes
+vr.skills.general = Général / Objets
+vr.tiles.no_trees = Les catégories de compétences demandent les arbres de compétences du cache d'icônes - relancez tools/skill_icons/prepare_skill_icons.py
+vr.skills.none = Aucune compétence à choisir
+vr.skills.skill_n = Compétence {id}
+vr.skills.unassigned = Non assignée
+vr.skills.tree_n = Arbre {n}
+vr.skills.cleared = Emplacement vidé
+vr.skills.assigned = Assignée
+vr.skills.not_taken = Le jeu ne l'a pas prise - choisissez à nouveau l'emplacement
+vr.skills.no_answer = Pas de réponse du jeu
+vr.skills.cannot_cast = Cet emplacement ne peut pas être lancé d'ici
+vr.skills.hold_left_trigger = Maintenez la gâchette gauche et tirez la droite
+vr.skills.pull_right_trigger = Tirez la gâchette droite
+vr.skills.layout = Les compétences ne peuvent pas être changées dans cette disposition
+vr.wheel.edit = MODIFIER COMPÉT.
+vr.wheel.close = FERMER
+vr.wheel.back = RETOUR
+vr.wheel.previous = PRÉCÉDENT
+vr.wheel.next = SUIVANT
+vr.wheel.now_run = actuel : COURIR
+vr.wheel.now_walk = actuel : MARCHER
+vr.wheel.empty = Vide
+vr.wheel.basic_attack = ATTAQUE\nDE BASE
+vr.wheel.active = ACTIVE
+vr.wheel.choose_slot = CHOISIR\nEMPLACEMENT
+vr.wheel.choose_skill = CHOISIR COMPÉTENCE  -  {slot}
+vr.wheel.now = Actuelle : {skill}
+vr.wheel.clear_slot = VIDER
+vr.skills.command = Commande
+vr.skills.item_skill = Compétence d'objet
+vr.skills.level = Niveau {level}
+vr.wheel.trigger_basic = Gâchette : attaque de base
+vr.wheel.page = Page {page} / {pages}
+vr.compass.n = N
+vr.compass.ne = NE
+vr.compass.e = E
+vr.compass.se = SE
+vr.compass.s = S
+vr.compass.sw = SO
+vr.compass.w = O
+vr.compass.nw = NO
+vr.map.rotate = TOURNER LA CARTE
+vr.map.on = Activée
+vr.map.off = Désactivée
+
 # ===== Keys of this file that en.txt does not list (an English used under several keys, worded here for one of them) =====
+render.keep_room_heights.label = Les sols restent où ils étaient (pas de sol qui glisse au retour)
+render.keep_room_heights.tip = Le jeu donne à chaque salle d'un niveau une hauteur quand il commence à la dessiner, accordée aux salles dessinées autour d'elle à ce moment, et l'oublie quand la salle est hors de vue. Les bords de ses tuiles ne s'accordent pas tout autour, si bien qu'une salle où vous revenez par un autre chemin (ou après une autre zone ou la ville) peut être d'une marche plus haute ou plus basse - depuis la caméra du jeu, au-dessus, personne ne le voit, depuis la nôtre le sol glisse : des blocs poussés vers le haut, le bas et de côté, le vide visible entre eux. Activé : chaque salle garde la hauteur à laquelle elle a été dessinée d'abord jusqu'à ce que vous quittiez le jeu. Seule l'image change ; le monde du jeu est plat, rien du combat ni des chemins ne change. Immédiat. Désactivé : les hauteurs propres du jeu, comme avant.
+group.ceiling_act_1_caves = Plafond : grottes de l'acte 1
+group.ceiling_act_1_caves.help = Le plafond des grottes de l'acte 1 : sa hauteur au-dessus du sol, sa luminosité, la portée de la lumière du héros sur lui, le relief, et l'image de pierre avec sa taille, son contraste, son détail et son brillant humide.
+group.ceiling_act_1_crypts = Plafond : cryptes de l'acte 1
+group.ceiling_act_1_crypts.help = Le plafond des cryptes de l'acte 1 : sa hauteur, sa luminosité, la portée de la lumière du héros, de combien la maçonnerie irrégulière pend, et son image.
+group.ceiling_act_1_barracks = Plafond : casernes de l'acte 1
+group.ceiling_act_1_barracks.help = Le plafond des casernes de l'acte 1 : sa hauteur, sa luminosité, la portée de la lumière du héros, le relief et l'image.
+group.ceiling_act_1_catacombs = Plafond : catacombes de l'acte 1
+group.ceiling_act_1_catacombs.help = Le plafond des catacombes de l'acte 1 : sa hauteur (ce que le jeu dessine plus haut est coupé), sa luminosité, la portée de la lumière du héros, le relief et l'image.
+group.ceiling_act_1_cathedral = Plafond : cathédrale de l'acte 1
+group.ceiling_act_1_cathedral.help = Le plafond de la cathédrale de l'acte 1. Outre la hauteur, la luminosité et l'image, un dôme fait monter le plafond en sphère au-dessus de ce qui est plus haut (le baldaquin de l'autel) au lieu de le couper ; réglez à partir de quelle hauteur, quelle largeur et quelle hauteur il atteint.
+group.ceiling_act_2_sewers = Plafond : égouts de l'acte 2
+group.ceiling_act_2_sewers.help = Le plafond des égouts de l'acte 2 : sa hauteur, sa luminosité, la portée de la lumière du héros, le relief et l'image.
+group.ceiling_act_2_palace = Plafond : palais de l'acte 2
+group.ceiling_act_2_palace.help = Le plafond sous le palais de l'acte 2 : sa hauteur, sa luminosité, la portée de la lumière du héros, le relief et l'image.
 ceiling.made = fait à partir de votre jeu : le modèle du plafond de grotte, tiré de la roche de grotte de l'acte 1 (mods\D2R-VR\D2R-VR.mpq), dès le prochain démarrage du jeu
 ceiling.ready = prêt : le modèle du plafond de grotte (mods\D2R-VR\D2R-VR.mpq)
 group.direct_hit_experimental = Coup direct (expérimental)

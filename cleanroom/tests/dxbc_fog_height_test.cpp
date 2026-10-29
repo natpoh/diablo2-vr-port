@@ -183,7 +183,10 @@ int main(int argc, char** argv) {
         struct Case { dxbcfog::Curve c; float top, soft; };
         const Case cases[] = {{{true, 50.0f, 150.0f, 1.0f, 1.0f}, 1.0e9f, 1.0f},
                               {{true, 105.0f, 210.0f, 1.6f, 0.8f}, 1.0e9f, 1.0f},
-                              {{true, 50.0f, 150.0f, 1.0f, 1.0f}, top, soft}};
+                              {{true, 50.0f, 150.0f, 1.0f, 1.0f}, top, soft},
+                              // [fog] ease_in (D2R VR Unleashed's ease over the first 40 units): Serg's numbers, and Unleashed's curve 0.4
+                              {{true, 50.0f, 150.0f, 1.0f, 1.0f, true}, 1.0e9f, 1.0f},
+                              {{true, 50.0f, 150.0f, 0.4f, 1.0f, true}, top, soft}};
         int checked = 0;
         for (const Case& k : cases) {
             const std::vector<uint8_t> pc = dxbcfog::Patch(fog.data(), fog.size(), k.top, k.soft, &why, false, false, false, &k.c);
@@ -195,7 +198,7 @@ int main(int argc, char** argv) {
                     const float fogAt = dxbcfog::CurveFog(k.c, dist);
                     // FogAt itself, as the effect computes it (pow(saturate((d - start) / max(end - start, 1)), curve) * strength)
                     const float x = std::fmin(1.0f, std::fmax(0.0f, (dist - k.c.start) / std::fmax(k.c.end - k.c.start, 1.0f)));
-                    CHECK(std::fabs(fogAt - std::pow(x, k.c.curve) * k.c.strength) < 1e-5f);
+                    CHECK(std::fabs(fogAt - std::pow(x, k.c.curve) * k.c.strength * (k.c.ease ? unleashed::fog::Ease(dist, k.c.start) : 1.0f)) < 1e-5f);
                     const float hw = h + 0.1f * -dz;   // (the height the patch reads: the camera's rows as above, x = 0)
                     const float want = 1.0f - fogAt * dxbcfog::FogFactor(hw, k.top, k.soft);
                     float got = -1;

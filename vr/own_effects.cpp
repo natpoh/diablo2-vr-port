@@ -541,6 +541,73 @@ void ScenePass(const bool* offEntry, const uint64_t* heroAt, bool anySolid, uint
     }
 }
 
+// -- [sky] summit_backdrop_hidden: the Arreat Summit's ground picture (IsSummitBackdrop) hidden in the first-person views --------------------------------------------------
+// The same list and the same setter as the solid effects' models (bit 31: the whole model). Only the instances we hid are given back.
+std::atomic<bool> g_backdropWant{false};
+HiddenModels g_hiddenBackdrop;   // the tick's thread only
+ResourceKinds g_backdropKinds;   // 1 the backdrop's resource, -1 not
+bool g_backdropFault = false;
+
+void BackdropPass(uint64_t now) {
+    static uint64_t nextAt = 0;
+    static int toldHidden = -1;
+    const bool want = g_backdropWant.load(std::memory_order_relaxed);
+    if (g_backdropFault || (!want && !g_hiddenBackdrop.Count())) return;
+    if (now < nextAt) return;
+    nextAt = now + 250;
+    if (!SceneReady()) return;
+    const uintptr_t renderer = Renderer();
+    uintptr_t data = 0;
+    uint64_t count = 0;
+    if (!renderer || !ReadModelList(&ReadAt, renderer, &data, &count)) return;
+    const uintptr_t lock = renderer + kRendererOffModelsLock;
+    if (!ListLock(lock, true)) { g_backdropFault = true; Log("sky: the model list's lock faulted - the Summit's backdrop is left as the game draws it"); return; }
+    ReadModelList(&ReadAt, renderer, &data, &count);   // (again, now that it is locked)
+    int found = 0, hidden = 0, shown = 0;
+    bool ok = true;
+    for (uint64_t i = 0; i < count && ok; ++i) {
+        uintptr_t inst = 0, res = 0, pathPtr = 0;
+        if (!ReadAt(data + i * 8, &inst, sizeof inst) || inst < 0x10000 || !ReadAt(inst + kModelOffResource, &res, sizeof res) || res < 0x10000 ||
+            !ReadAt(res + kResourceOffPath, &pathPtr, sizeof pathPtr))
+            continue;
+        int kind = -1;
+        if (!g_backdropKinds.Get(res, pathPtr, &kind)) {
+            char path[160];
+            kind = ReadModelPath(&ReadAt, res, path, sizeof path) && IsSummitBackdrop(path) ? 1 : -1;
+            g_backdropKinds.Put(res, pathPtr, kind);
+        }
+        if (kind < 0) continue;
+        ++found;
+        uint8_t state = 0;
+        uint32_t layers = 0;
+        if (!ReadAt(res + kResourceOffState, &state, 1) || state != kResourceLoaded || !ReadAt(inst + kModelOffLayers, &layers, sizeof layers)) continue;
+        const bool ours = g_hiddenBackdrop.Has(inst);
+        const int step = ModelStep(want, true, ours, layers);
+        if (step > 0) {
+            if (!g_hiddenBackdrop.Add(inst, now)) continue;   // (no room to remember it: not hidden, so it is never left hidden)
+            if (!SetLayers(inst, layers | kLayersHidden)) { g_hiddenBackdrop.Remove(inst); ok = false; break; }
+            ++hidden;
+        } else if (step < 0) {
+            if (!SetLayers(inst, layers & ~kLayersHidden)) { ok = false; break; }
+            g_hiddenBackdrop.Remove(inst);
+            ++shown;
+        } else if (ours) {
+            if (layers & kLayersHidden) g_hiddenBackdrop.Seen(inst, now);
+            else g_hiddenBackdrop.Remove(inst);
+        }
+    }
+    ListLock(lock, false);
+    if (!ok) { g_backdropFault = true; Log("sky: the game's model setter faulted - the Summit's backdrop is left as the game draws it"); return; }
+    g_hiddenBackdrop.Forget(now);
+    const int nowHidden = (int)g_hiddenBackdrop.Count();
+    if (hidden || shown || nowHidden != toldHidden) {
+        LogF("sky: the Arreat Summit's backdrop (expansion_mountaintop_skybox/skybox01, a picture of the ground far below): %d in the renderer's list, %d hidden now, %d given back, "
+             "%d hidden in all - %s ([sky] summit_backdrop_hidden)", found, hidden, shown, nowHidden,
+             want ? "first person: our sky and fog in its place" : "shown as the game draws it");
+        toldHidden = nowHidden;
+    }
+}
+
 // -- [render] slow_own_effects: the effect's own playback speed (vr/own_effects.h: SpeedFor, DecideSpeed) ----------------------------------------------------------------------
 constexpr uint64_t RVA_SET_SPEED = 0xA4ABB0;
 // push rdi; sub rsp,30h; mov rax,[rcx+40h]; mov rdi,rcx; movaps [rsp+20h],xmm6 (game_sigs.h: EffectSetSpeed)
@@ -784,6 +851,9 @@ void ConfigureHeight(bool lower, float heightCm) {
 void SetScaleSource(float (*unitsPerMetre)()) { g_upm = unitsPerMetre; }
 
 bool Wanted() { return g_on.load() || g_slow.load() || g_lower.load(); }
+
+void HideSummitBackdrop(bool hide) { g_backdropWant.store(hide, std::memory_order_relaxed); }
+void BackdropTick() { BackdropPass(GetTickCount64()); }
 
 void Install() {
     static ULONGLONG retryAt = 0, statusAt = 0;

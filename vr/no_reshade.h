@@ -24,7 +24,7 @@ inline bool Fits(const Mode& m) { return m.vr && m.openxr && m.byTurns && !m.pai
 // What is off with it, as the log says it once at the start. With [render] native_effects (the plugin's own runtime for D2R_DepthFog.fx,
 // vr/fx_native.h) the fog, the sky, the cave ceiling and the overlays drawn apart come back; without it they are off too.
 inline constexpr const char* kOff =
-    "one pass two pictures (the replay), the light bounds, FlatVR's depth and the menus as a panel; the fog, the sky, the cave ceiling and "
+    "one pass two pictures (the replay), FlatVR's depth and the menus as a panel; the fog, the sky, the cave ceiling and "
     "the overlays apart from the picture the eye made is moved from (labels laid back, wrist orbs, HUD shift, low-life vignette, bow orbs) "
     "only with [render] native_effects";
 

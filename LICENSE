@@ -47,6 +47,14 @@ Third-party parts, each under its own licence:
 
   Its later versions are under the Mozilla Public License 2.0: a file of ours that takes code from them
   stays under the MPL 2.0 and is published with its source.
+- D2R VR Unleashed (github.com/bearstonem/d2r-pcvr, after 2026-10-29) - Mozilla Public License 2.0
+  (https://mozilla.org/MPL/2.0/), Copyright (c) 2026 bearstonem and the D2R VR Unleashed contributors. These
+  files are under the MPL 2.0, each with its notice and the commits it comes from; the rest of D2R VR stays MIT
+  and only calls into them:
+    shared/unleashed_far_objects.h, cleanroom/drawdist/unleashed_big_objects.cpp,
+    cleanroom/tests/unleashed_far_objects_test.cpp - Big objects ([render] big_radius; 9e9c241)
+    shared/unleashed_fog.h, reshade/D2R_FogEase_Unleashed.fxh - the fog eased in ([fog] ease_in; 843b3a4)
+    and no fog in the River of Flame ([fog] no_fog_river; d799f93)
 - MinHook - BSD 2-clause, Copyright (C) 2009-2017 Tsuda Kageyu.
 - ReShade SDK headers - BSD 3-clause, Copyright (C) 2014 Patrick Mours.
 - ReShade FX compiler (reshadefx, third_party/reshadefx: the effect's preprocessor, parser and HLSL generator, linked into the plugin

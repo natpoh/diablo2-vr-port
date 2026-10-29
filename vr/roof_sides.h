@@ -22,6 +22,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdio>
 #include <cstdint>
 #include <string_view>
 
@@ -139,5 +140,24 @@ using LogFn = void (*)(const char* line);
 using WantFn = bool (*)();   // the tick (and VR), asked at each material build
 // vrcam's update thread, twice a second while the tick is on: both hooks in once the game's code is there (decrypted); retried until.
 void Install(LogFn log, WantFn want);
+
+// [sky] game_sky (Serg on 0.188 / 0.189: every act's dome drew the first act's sky): what the game builds for a model of ours - each
+// material built for a model whose path `watched` says (its material and its maps' textures by name, and the material the builder hands
+// back), told to the log once each. Read only: the build is the game's own. The hooks are put in for it too (Install), the roofs'
+// redirect still only with its own tick.
+using WatchFn = bool (*)(const char* canonicalModelPath);
+void Watch(WatchFn watched);
+// The watch's line for one build (pure; the hook reads the game's Granny material into these): "model path - material <name> (its
+// texture <name>), maps: <usage> <material> (<texture>), ...; built <address>"
+struct WatchedMap { const char* usage; const char* material; const char* texture; };
+inline void WatchLine(char* out, size_t n, const char* model, const char* material, const char* texture, const WatchedMap* maps, int mapCount,
+                      const void* built) {
+    int at = snprintf(out, n, "vrcam: game sky - the game built for %s: material %s%s%s%s", model, material ? material : "?",
+                      texture ? " (its texture " : "", texture ? texture : "", texture ? ")" : "");
+    for (int i = 0; i < mapCount && at > 0 && (size_t)at < n; ++i)
+        at += snprintf(out + at, n - (size_t)at, "%s%s %s (%s)", i ? ", " : "; maps: ", maps[i].usage ? maps[i].usage : "?",
+                       maps[i].material ? maps[i].material : "?", maps[i].texture ? maps[i].texture : "no texture");
+    if (at > 0 && (size_t)at < n) snprintf(out + at, n - (size_t)at, "; built %p", built);
+}
 
 }  // namespace roofsides

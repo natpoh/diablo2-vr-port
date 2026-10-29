@@ -108,6 +108,16 @@ int main(int argc, char** argv) {
         }
         printf("snapshot %s checked\n", path);
     }
+    // [sky] game_sky's watch: the line told for a build of one of our models - its material, its texture, its maps' and what was built
+    {
+        char line[600];
+        const WatchedMap maps[2] = {{"HDRTexture", "d2rvr_sky_act2_map", "data/hd/env/texture/d2r_vr/sky/sky_domes_HDR.dds"}, {"Normal", "n", nullptr}};
+        WatchLine(line, sizeof line, "data/hd/env/model/tests/pillar01_lod1.model", "d2rvr_sky_act2_material", nullptr, maps, 2, (void*)0x1234);
+        Expect(std::strstr(line, "pillar01_lod1.model: material d2rvr_sky_act2_material; maps: HDRTexture d2rvr_sky_act2_map "
+                                 "(data/hd/env/texture/d2r_vr/sky/sky_domes_HDR.dds), Normal n (no texture); built ") != nullptr, "the watch's line");
+        WatchLine(line, 40, "a/very/long/path/that/does/not/fit/in/forty.model", nullptr, "t", maps, 2, nullptr);
+        Expect(std::strlen(line) < 40, "the watch's line cut to its buffer");
+    }
     if (g_fail) { printf("%d FAILED\n", g_fail); return 1; }
     printf("roof sides: all checks passed\n");
     return 0;

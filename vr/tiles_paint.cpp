@@ -26,6 +26,7 @@
 #include "paint_kit.h"
 #include "tiles_geom.h"
 #include "tiles_labels.h"
+#include "ui_text.h"   // the window's words in the player's language ([hud] headset_language)
 #include "wheel_icons.h"
 
 namespace tilespaint {
@@ -182,9 +183,7 @@ const std::vector<uint32_t>& Frame() {
 constexpr float kSmallCap = 0.80f;
 
 std::wstring Wide(const char* utf8) {
-    wchar_t w[200] = {};
-    MultiByteToWideChar(CP_UTF8, 0, utf8 ? utf8 : "", -1, w, 199);
-    return w;
+    return lang::FromUtf8(utf8 ? utf8 : "");   // (any length: a translated line is longer than the English)
 }
 
 // The width the line takes (and, when `draw`, draws it with its left at x and `box.t` .. `box.b` for the line's height).
@@ -200,7 +199,7 @@ float SmallCaps(Canvas& cv, Fonts& fonts, const char* utf8, float x, Rect box, i
     float total = 0.0f;
     for (size_t i = 0; i < text.size(); ++i) {
         const wchar_t c = text[i];
-        const bool lower = (c >= L'a' && c <= L'z') || (c >= 0x430 && c <= 0x45F);
+        const bool lower = IsCharLowerW(c) != FALSE;   // (a-z as before; an accented letter, Cyrillic too)
         glyph[i] = lower ? (wchar_t)towupper(c) : c;
         SelectObject(dc, fonts.Get(lower ? smallSize : size, true));
         SIZE sz = {};
@@ -236,8 +235,7 @@ float SmallCaps(Canvas& cv, Fonts& fonts, const char* utf8, float x, Rect box, i
     const int baseline = int(0.5f * (bh + 0.70f * size));   // (the capitals' height is about 0.7 of the size)
     float pen = 4.0f;
     for (size_t i = 0; i < text.size(); ++i) {
-        const wchar_t c = text[i];
-        const bool lower = (c >= L'a' && c <= L'z') || (c >= 0x430 && c <= 0x45F);
+        const bool lower = IsCharLowerW(text[i]) != FALSE;
         SelectObject(dc, fonts.Get(lower ? smallSize : size, true));
         TextOutW(dc, int(pen + 0.5f), baseline, &glyph[i], 1);
         pen += adv[i];
@@ -449,12 +447,12 @@ void DrawLtMark(Canvas& cv, Fonts& fonts) {
 
 const char* ButtonText(Cell c) {
     switch (c) {
-    case wheel::kEdit: return "Edit skills";
-    case wheel::kClose: return "Close";
-    case wheel::kBack: return "Back";
-    case wheel::kPrev: return "Previous";
-    case wheel::kNext: return "Next";
-    case wheel::kCentre: return "Clear slot";
+    case wheel::kEdit: return uitext::Tr("vr.tiles.edit", "Edit skills");
+    case wheel::kClose: return uitext::Tr("vr.tiles.close", "Close");
+    case wheel::kBack: return uitext::Tr("vr.tiles.back", "Back");
+    case wheel::kPrev: return uitext::Tr("vr.tiles.previous", "Previous");
+    case wheel::kNext: return uitext::Tr("vr.tiles.next", "Next");
+    case wheel::kCentre: return uitext::Tr("vr.tiles.clear_slot", "Clear slot");
     default: return "";
     }
 }
@@ -478,7 +476,7 @@ void DrawButtons(Canvas& cv, Fonts& fonts, const View& v) {
 
 // The two tabs in the title plate: the chosen one gold on a warm plate, the one under the beam lit.
 void DrawTabs(Canvas& cv, Fonts& fonts, const View& v) {
-    static const char* const names[tiles::kTabCount] = {"Skills", "Settings"};
+    const char* const names[tiles::kTabCount] = {uitext::Tr("vr.tiles.tab_skills", "Skills"), uitext::Tr("vr.tiles.tab_settings", "Settings")};
     for (int i = 0; i < tiles::kTabCount; ++i) {
         const Cell c = tiles::TabCell(i);
         const bool on = (i == 0) == (v.tab == wheel::Tab::Skills);
@@ -524,12 +522,13 @@ void DrawTitle(Canvas& cv, Fonts& fonts, const View& v) {
     const float cx = 0.5f * (tp.l + tp.r);
     if (v.page == Page::PickSkill && v.editSlot >= 0 && v.editSlot < wheel::kSlotCount) {
         // "Choose a skill for [LT] [A]   now: Fire Bolt" - the title and the slot's mark side by side, centred as a whole
-        const char* title = "Choose a skill for";
+        const char* title = uitext::Tr("vr.tiles.choose_skill_for", "Choose a skill for");
         const tiles::Glyph g = tiles::GlyphOf(v.editSlot);
         const float tw = CapsWidth(fonts, title, 42, 3.0f), gap = 22.0f, gwOne = g.kind == tiles::GlyphKind::Chip ? 68.0f : 42.0f, gw = (g.lt ? 76.0f : 0.0f) + gwOne;
-        char now[96] = {};
-        if (v.slot[v.editSlot].known) std::snprintf(now, sizeof now, "now: %s", v.slot[v.editSlot].id >= 0 ? v.slot[v.editSlot].name : "nothing");
-        const float nw = now[0] ? 26.0f + 8.5f * float(std::min<size_t>(std::strlen(now), 28)) : 0.0f;
+        std::string now;
+        if (v.slot[v.editSlot].known)
+            now = uitext::TrF("vr.tiles.now", "now: {skill}", {{"skill", v.slot[v.editSlot].id >= 0 ? v.slot[v.editSlot].name : uitext::Tr("vr.skills.nothing", "nothing")}});
+        const float nw = !now.empty() ? 26.0f + 8.5f * float(std::min(uitext::Letters(now), 28)) : 0.0f;
         float x = cx - 0.5f * (tw + gap + gw + nw);
         SmallCaps(cv, fonts, title, x + 2.0f, Rect{line.l, line.t + 2.0f, line.r, line.b + 2.0f}, 42, 3.0f, Col{0, 0, 0}, 0.8f, true);
         SmallCaps(cv, fonts, title, x, line, 42, 3.0f, kSilver, 1.0f, true);
@@ -542,40 +541,40 @@ void DrawTitle(Canvas& cv, Fonts& fonts, const View& v) {
             x += 76.0f;
         }
         DrawGlyph(cv, fonts, g, Rect{x, midY - 23.0f, x + gwOne, midY + 23.0f});
-        if (now[0]) Text(cv, fonts, now, Rect{x + gwOne + 24.0f, tp.t + 8.0f, tp.r - 40.0f, tp.b - 8.0f}, 26, false, kSilverDim, 1.0f, true);
+        if (!now.empty()) Text(cv, fonts, now.c_str(), Rect{x + gwOne + 24.0f, tp.t + 8.0f, tp.r - 40.0f, tp.b - 8.0f}, 26, false, kSilverDim, 1.0f, true);
         return;
     }
     if (v.tabs && v.page == Page::Wheel) {   // the Settings tab is there: the plate holds the strip, SKILLS | SETTINGS
         DrawTabs(cv, fonts, v);
         return;
     }
-    const char* title = v.page == Page::Wheel ? "Skills" : "Choose the slot to change";
+    const char* title = v.page == Page::Wheel ? uitext::Tr("vr.tiles.tab_skills", "Skills") : uitext::Tr("vr.skills.choose_slot", "Choose the slot to change");
     CapsCentred(cv, fonts, title, cx, line, 44, 3.5f, kSilver);
 }
 
 // The state in red small capitals - as the game prints under its dialog - and what to do under it, dim.
 void DrawStatus(Canvas& cv, Fonts& fonts, const View& v) {
-    char line[160] = {};
+    std::string line;
     if (v.status[0]) {
-        std::snprintf(line, sizeof line, "%s", v.status);
+        line = v.status;
     } else if (!v.ready) {
-        std::snprintf(line, sizeof line, "Skills unavailable");
+        line = uitext::Tr("vr.skills.unavailable", "Skills unavailable");
     } else if (v.page == Page::Wheel) {
         const int ts = wheel::TriggerSlot(v);   // (the picked slot; with the slot controls the RT slot too, when it holds a skill)
         if (ts != 8 && v.slot[ts].known && v.slot[ts].id >= 0)
-            std::snprintf(line, sizeof line, "Trigger casts: %s  (%s)", v.slot[ts].name, wheel::kSlotDefs[ts].label);
+            line = uitext::TrF("vr.skills.trigger_casts", "Trigger casts: {skill}  ({slot})", {{"skill", v.slot[ts].name}, {"slot", wheel::kSlotDefs[ts].label}});
         else
-            std::snprintf(line, sizeof line, "Trigger: the basic attack  (A)");
+            line = uitext::Tr("vr.tiles.trigger_basic", "Trigger: the basic attack  (A)");
     } else if (v.page == Page::PickSkill && v.editPages > 1) {
-        std::snprintf(line, sizeof line, "Page %d of %d", v.editPage + 1, v.editPages);
+        line = uitext::TrF("vr.tiles.page", "Page {page} of {pages}", {{"page", std::to_string(v.editPage + 1)}, {"pages", std::to_string(v.editPages)}});
     }
     const Col red = v.result == wheel::Result::Refused ? kRedBright : kRed;
     const tiles::PRect rl = tiles::kRedLine;
-    CapsCentred(cv, fonts, line, 0.5f * (rl.l + rl.r), Rect{rl.l, rl.t, rl.r, rl.b}, 32, 2.5f, red);
-    const char* hint = v.page == Page::Wheel ? (v.editFirst ? "Tap a slot to change its skill - hold the trigger on it and the trigger casts it"
-                                                            : "Point at a slot and pull the trigger")
-                       : v.page == Page::PickSlot ? "Point at the slot to change and pull the trigger"
-                                                  : "Point at a skill and pull the trigger to put it on the slot";
+    CapsCentred(cv, fonts, line.c_str(), 0.5f * (rl.l + rl.r), Rect{rl.l, rl.t, rl.r, rl.b}, 32, 2.5f, red);
+    const char* hint = v.page == Page::Wheel ? (v.editFirst ? uitext::Tr("vr.tiles.hint_first", "Tap a slot to change its skill - hold the trigger on it and the trigger casts it")
+                                                            : uitext::Tr("vr.tiles.hint_wheel", "Point at a slot and pull the trigger"))
+                       : v.page == Page::PickSlot ? uitext::Tr("vr.tiles.hint_pick_slot", "Point at the slot to change and pull the trigger")
+                                                  : uitext::Tr("vr.tiles.hint_pick_skill", "Point at a skill and pull the trigger to put it on the slot");
     const tiles::PRect hl = tiles::kHintLine;
     CapsCentred(cv, fonts, hint, 0.5f * (hl.l + hl.r), Rect{hl.l, hl.t, hl.r, hl.b}, 22, 1.5f, kSilverDim, false);
 }
@@ -588,11 +587,12 @@ void DrawRunTile(Canvas& cv, Fonts& fonts, const View& v) {
     k.red = v.run == wheel::kRunning;
     k.hot = v.hover == wheel::kRunWalk;
     DrawPlate(cv, r, k);
-    const char* state = v.run == wheel::kRunning ? "RUN" : v.run == wheel::kWalking ? "WALK" : "RUN /\nWALK";
+    const char* state = v.run == wheel::kRunning ? uitext::Tr("vr.tiles.run", "RUN") : v.run == wheel::kWalking ? uitext::Tr("vr.tiles.walk", "WALK")
+                                                 : uitext::Tr("vr.tiles.run_walk_unknown", "RUN /\nWALK");
     Text(cv, fonts, state, Rect{r.l + 10.0f, r.t + 22.0f, r.r - 10.0f, r.b - 22.0f}, v.run == wheel::kRunUnknown ? 30 : 42, true,
          k.red ? Col{255, 214, 200} : Col{238, 232, 224});
     DrawTileMarks(cv, r, k);
-    Text(cv, fonts, "RUN / WALK", tiles::kRunNameRect, 22, false, kSilver);
+    Text(cv, fonts, uitext::Tr("vr.wheel.run_walk", "RUN / WALK"), tiles::kRunNameRect, 22, false, kSilver);
 }
 
 // Two rows of six: the game's twelve slots, with the mark under each tile, the skill's name and the hint for the controller.
@@ -613,9 +613,9 @@ void DrawRows(Canvas& cv, Fonts& fonts, const View& v) {
         DrawTile(cv, fonts, r, k, placed ? &sk : nullptr, pickSlot && placed && sk.id < 0);
         DrawGlyph(cv, fonts, tiles::GlyphOf(s), tiles::GlyphRect(s));
         if (placed && sk.id >= 0) Text(cv, fonts, sk.name, tiles::NameRect(s), 22, false, sk.available && !off ? kSilver : kSilverDim);
-        else if (placed) Text(cv, fonts, "Empty", tiles::NameRect(s), 22, false, Col{110, 112, 120});
-        else if (k.dead) Text(cv, fonts, "Not found", tiles::NameRect(s), 22, false, Col{110, 112, 120});
-        if (off) Text(cv, fonts, "LT row off", tiles::HintRect(s), 21, false, Col{150, 120, 110});
+        else if (placed) Text(cv, fonts, uitext::Tr("vr.tiles.empty", "Empty"), tiles::NameRect(s), 22, false, Col{110, 112, 120});
+        else if (k.dead) Text(cv, fonts, uitext::Tr("vr.tiles.not_found", "Not found"), tiles::NameRect(s), 22, false, Col{110, 112, 120});
+        if (off) Text(cv, fonts, uitext::Tr("vr.tiles.lt_row_off", "LT row off"), tiles::HintRect(s), 21, false, Col{150, 120, 110});
         else if (v.hints.text[s][0]) Text(cv, fonts, v.hints.text[s], tiles::HintRect(s), 21, false, Col{128, 156, 120});
     }
 }
@@ -632,11 +632,11 @@ void DrawStrip(Canvas& cv, Fonts& fonts, const View& v) {
                   on ? 3.5f : 2.5f);
         Bar(cv, r.l + 4.0f, r.t + 4.0f, r.r - 4.0f, r.t + 8.0f, Col{255, 255, 255}, on ? 0.10f : 0.05f);
         Bar(cv, r.l + 4.0f, r.b - 7.0f, r.r - 4.0f, r.b - 4.0f, Col{0, 0, 0}, 0.30f);
-        char name[wheel::kNameLen + 12];
-        if (c == wheel::kCatAll) std::snprintf(name, sizeof name, "All  (%d)", count);
-        else if (c == wheel::kCatGeneral) std::snprintf(name, sizeof name, "General / Items  (%d)", count);
-        else std::snprintf(name, sizeof name, "%s  (%d)", v.treeName[c - 1][0] ? v.treeName[c - 1] : "-", count);
-        Text(cv, fonts, name, Rect{r.l + 8.0f, r.t + 2.0f, r.r - 8.0f, r.b - 6.0f}, 21, true, on ? kGoldBright : hot ? kGold : enabled ? kSilver : Col{92, 92, 100});
+        const char* cat = c == wheel::kCatAll ? uitext::Tr("vr.skills.all", "All")
+                        : c == wheel::kCatGeneral ? uitext::Tr("vr.skills.general", "General / Items")
+                        : v.treeName[c - 1][0] ? v.treeName[c - 1] : "-";
+        const std::string name = std::string(cat) + "  (" + std::to_string(count) + ")";
+        Text(cv, fonts, name.c_str(), Rect{r.l + 8.0f, r.t + 2.0f, r.r - 8.0f, r.b - 6.0f}, 21, true, on ? kGoldBright : hot ? kGold : enabled ? kSilver : Col{92, 92, 100});
     }
 }
 
@@ -645,10 +645,10 @@ void DrawStrip(Canvas& cv, Fonts& fonts, const View& v) {
 void DrawGrid(Canvas& cv, Fonts& fonts, const View& v) {
     if (v.catStrip) DrawStrip(cv, fonts, v);
     else if (v.catWanted)   // the key is on but the game side does not know the trees: say so where the strip would be, instead of an empty band
-        Text(cv, fonts, "Skill categories need the icon cache's skill trees - run tools/skill_icons/prepare_skill_icons.py again", Rect{tiles::kStripLeft, tiles::kStripTop, kW - tiles::kStripLeft, tiles::kStripBottom},
+        Text(cv, fonts, uitext::Tr("vr.tiles.no_trees", "Skill categories need the icon cache's skill trees - run tools/skill_icons/prepare_skill_icons.py again"), Rect{tiles::kStripLeft, tiles::kStripTop, kW - tiles::kStripLeft, tiles::kStripBottom},
              21, false, kSilverDim);
     if (!v.options) {
-        CapsCentred(cv, fonts, "No skills to choose from", 0.5f * kW, Rect{200, 380, 1400, 460}, 40, 3.0f, kSilverDim, false);
+        CapsCentred(cv, fonts, uitext::Tr("vr.skills.none", "No skills to choose from"), 0.5f * kW, Rect{200, 380, 1400, 460}, 40, 3.0f, kSilverDim, false);
         return;
     }
     const Skill* now = v.editSlot >= 0 && v.editSlot < wheel::kSlotCount ? &v.slot[v.editSlot] : nullptr;

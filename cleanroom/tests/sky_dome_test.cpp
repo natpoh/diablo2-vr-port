@@ -26,9 +26,28 @@ int main(int argc, char** argv) {
     CHECK(std::strcmp(WhyNot(ok), "") == 0);
     {
         In in = ok; in.ticked = false; CHECK(std::strstr(WhyNot(in), "game_sky=0") != nullptr);
-        in = ok; in.f4 = false; CHECK(std::strstr(WhyNot(in), "F4") != nullptr);
+        in = ok; in.f4 = false; CHECK(std::strstr(WhyNot(in), "view") != nullptr);
+        in = ok; in.f4 = false; in.viewWhy = "the table view"; CHECK(std::strcmp(WhyNot(in), "the table view") == 0);
+        // the views: every view of our camera round the world (Serg: VR F2 had our old sky) - not from above, the table, F12, flat without game_drawn_flat
+        ViewIn v;
+        v.vr = v.enabled = true;
+        for (int k = 2; k <= 4; k += 2) { v.view = k; CHECK(!*ViewWhyNot(v)); }                 // VR F2, F4
+        v.view = 1; CHECK(std::strstr(ViewWhyNot(v), "above") != nullptr);                      // VR F1
+        v.view = 3; CHECK(std::strstr(ViewWhyNot(v), "table") != nullptr);                      // VR F3
+        v.view = 2; v.enabled = false; CHECK(std::strstr(ViewWhyNot(v), "F12") != nullptr);
+        v.vr = false; v.enabled = true; v.gameDrawnFlat = true;
+        for (int k = 2; k <= 3; ++k) { v.view = k; CHECK(!*ViewWhyNot(v)); }                    // flat F2, F3
+        v.view = 1; CHECK(std::strstr(ViewWhyNot(v), "above") != nullptr);                      // flat F1
+        v.view = 2; v.gameDrawnFlat = false; CHECK(std::strstr(ViewWhyNot(v), "game_drawn_flat") != nullptr);
         in = ok; in.inWorld = false; CHECK(std::strstr(WhyNot(in), "world") != nullptr);
         in = ok; in.palette = -1; CHECK(std::strstr(WhyNot(in), "no sky wanted") != nullptr);
+        // [sky] game_skybox: the Arreat Summit has its own (the game's skybox); no other area of play does
+        CHECK(IsGameSkyboxArea("UberArreatSummit") && IsGameSkyboxArea("uberarreatsummit"));   // (level 137, the uber Summit: its own too)
+        in = ok; in.gameSkybox = true; CHECK(!*WhyNot(in));   // there too the game's dome (Serg: "а почему там старое небо") - laid behind the cloud sea
+        CHECK(SkyboxRadius(200.0f, 0.1f) == DrawableRadius(1.0e9f, 0.1f) && SkyboxRadius(200.0f, 0.1f) > 360.0f * 10.0f);   // far past the presets' 210 x 291
+        CHECK(SkyboxRadius(1.0e9f, 0.1f) == 1.0e9f && SkyboxRadius(200.0f, 0.0f) == 25000.0f);   // never nearer than asked; no near plane yet: 25000
+        CHECK(IsGameSkyboxArea("expansion_mountaintop") && !IsGameSkyboxArea("expansion_ruins_snow") && !IsGameSkyboxArea("act1_outdoors") &&
+              !IsGameSkyboxArea(""));
         in = ok; in.act = 0; CHECK(std::strstr(WhyNot(in), "no act's sky") != nullptr);
         for (int a = 1; a <= 5; ++a) { in = ok; in.act = a; CHECK(std::strcmp(WhyNot(in), "") == 0); }   // (each act its own dome)
         in = ok; in.eyeOk = false; CHECK(std::strstr(WhyNot(in), "eye") != nullptr);

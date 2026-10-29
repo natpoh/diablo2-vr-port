@@ -34,6 +34,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string>
 
 namespace headshadow {
 
@@ -137,5 +138,11 @@ void Install();
 bool Publish(uintptr_t self, const char* flags, int count, int pivot, bool along);
 // The hero's head is not hidden in this pose (another view, the game's own pose): nothing of his is changed for the eyes any more.
 void Unpublish(uintptr_t self);
+// [debug] walk_back_dump, what is skinned (view only): the hero's rig as PoseBody posed it - its granny skeleton and its world poses (this frame's, the
+// last frame's). The composite hook then counts the meshes of that skeleton skinned from those poses and from any OTHER world pose of it (another
+// instance of the hero's skeleton, which our pose never reaches: Serg's 2026-10-29 "I turn the camera and the feet stay where they were" - the body
+// turned, the legs not). SkinNote: the counts since the last call, one line ("" when none met or the hooks are not in).
+void NoteHeroRig(uintptr_t skeleton, uintptr_t pose, uintptr_t prevPose);
+std::string SkinNote();
 
 }  // namespace headshadow

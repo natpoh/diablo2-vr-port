@@ -13,6 +13,10 @@
 // With no sky, no fog and no ceiling (SkyOn, FogOn, CeilOn all off - [fog] game_fog drawing the fog in the game's own frame, PC1 2026-10-27:
 // "sky off, fog off, ceiling off; 0.66-0.69 ms a present, 26 passes" for the interface's switches alone) PS_DepthFog(R) returns the picture
 // as it is: it is left out with everything only it reads (kLight, and kLightHud as above) - the interface's own passes stay as they are.
+// Unless the game's fog or sky has a fix of ours on it (GameFogMatch: the game's fog in the act's colour and as thick as ours; DomeFogHorizon:
+// the game's dome's low part into the fog's colour - D2R_DepthFog.fx GameFogTrue / DomeHorizon, both in PS_DepthFog): then PS_DepthFog(R)
+// is drawn, and still nothing only our sky, fog and ceiling read (Serg, act 4 on 0.188.4: "цвет не совпадает" - the game's fog stayed its
+// graded (57, 29, 9) for his #5A2712: the pass that fixes it was left out). The game fog's measure (PS_FogSeen*) only with GameFogMatch.
 // Every other pass is kept. The switches are read back from the effect as vrcam set them this frame. tools/fx_pass_keep_test checks the rules
 // against the effect's own code and on fake reads; tools/fx_native_test draws the fog with and without them alike.
 #pragma once
@@ -40,8 +44,10 @@ bool Keep(const char* entry, ReadBool readBool, ReadFloat readFloat) {
     auto on = [&](const char* u) { bool v = false; return readBool(u, &v) && v; };
     auto nonzero = [&](const char* u) { float v = 0.0f; return readFloat(u, &v) && v != 0.0f; };
     auto is = [&](const char* a) { return strcmp(n, a) == 0; };
-    const bool none = !on("SkyOn") && !on("FogOn") && !on("CeilOn");   // the world's pass gives the picture as it is
-    if (none && (is("PS_DepthFog") || is("PS_DepthFogR"))) return false;
+    const bool none = !on("SkyOn") && !on("FogOn") && !on("CeilOn");   // the world's pass gives the picture as it is ...
+    const bool gameFix = on("GameFogMatch") || on("DomeFogHorizon");    // ... unless it fixes the game's fog or dome
+    if (none && !gameFix && (is("PS_DepthFog") || is("PS_DepthFogR"))) return false;
+    if (is("PS_FogSeen") || is("PS_FogSeenR") || is("PS_FogSeenStore")) return on("GameFogMatch");
     if (none || on("FogLight")) {
         // (a compute entry point carries its template's numbers: "CS_RecordHeights_16_16_1")
         auto named = [&](const char* a) { const size_t k = strlen(a); return strncmp(n, a, k) == 0 && (n[k] == 0 || n[k] == '_'); };
@@ -66,6 +72,9 @@ bool Keep(const char* entry, ReadBool readBool, ReadFloat readFloat) {
         return false;
     }
     if (is("PS_TableKey") || is("PS_TableKeyR")) return on("TableKeyOn");
+    // [fog] game_fog_match's measure of the game's fog as seen (1x1 targets, a 16 x 12 look each): only for it - off, its value is read by nothing
+    // (GameFogTrue returns the colour as it is), and the two passes ran every present for nothing (the 0.188 build's fx_native_test, 2026-10-29)
+    if (is("PS_FogSeen") || is("PS_FogSeenR") || is("PS_FogSeenStore")) return on("GameFogMatch");
     if (is("PS_Stamp") || is("PS_StampR")) return on("StampOn");
     return true;
 }

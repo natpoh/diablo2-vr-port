@@ -10,17 +10,21 @@
 #include "light_bounds.h"
 
 #include <windows.h>
+#include <d3d12.h>
 #include <d3dcompiler.h>
 
 #include <atomic>
 #include <cstdarg>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <mutex>
 #include <vector>
 
 #include "game_device_only.h"
 #include "light_bounds_shader.h"
+#include "native_d3d12.h"
+#include "pso_stream.h"
 
 namespace lightbounds {
 namespace {
@@ -31,6 +35,8 @@ using namespace reshade::api;
 // the container's size and the FNV-1a 64 of its bytes, which is what ReShade hands over at creation.
 constexpr uint32_t kGameShaderSize = 2164;
 constexpr uint64_t kGameShaderHash = 0x7C22D74C89A5305Cull;
+std::atomic<uint32_t> g_matchSize{kGameShaderSize};   // (MatchForTest: a test's own shader in the game's place)
+std::atomic<uint64_t> g_matchHash{kGameShaderHash};
 
 struct Copy {
     device* owner;
@@ -195,6 +201,64 @@ void OnBindPipeline(command_list* cl, pipeline_stage stages, pipeline original) 
     if (!g_boundTold.exchange(true)) Line("vrcam: light bounds - the replacement is bound in the game's light culling (rectangular tiles)");
 }
 
+// ---- [render] light_bounds_fix without ReShade ([render] no_reshade): the same (vr/native_d3d12.h's hooks) ----
+// The game makes the light bins' pipeline once (one per device): a few places are plenty. Added under g_nativeLock, read without it
+// (SetPipelineState: thousands of times a frame) - an entry is whole before the count that shows it.
+struct Native {
+    ID3D12PipelineState* game = nullptr;   // one reference of ours: its address stays its own
+    ID3D12PipelineState* ours = nullptr;
+};
+constexpr int kNativeMax = 4;
+Native g_native[kNativeMax];
+std::atomic<int> g_nativeN{0};
+SRWLOCK g_nativeLock = SRWLOCK_INIT;
+std::atomic<bool> g_nativeTold{false};
+
+// The game's shader? (its bytes: the size first, cheap - most of the game's compute shaders are not it)
+bool IsGameShader(const D3D12_SHADER_BYTECODE& cs) {
+    if (!cs.pShaderBytecode || !cs.BytecodeLength) return false;
+    const bool sized = cs.BytecodeLength == g_matchSize.load(std::memory_order_relaxed);
+    const bool logAll = g_logAll.load(std::memory_order_relaxed);
+    if (!sized && !logAll) return false;
+    const uint64_t hash = Fnv(cs.pShaderBytecode, cs.BytecodeLength);
+    const bool match = sized && hash == g_matchHash.load(std::memory_order_relaxed);
+    if (logAll)
+        Line("vrcam: compute shader %zu bytes, FNV-1a %016llX%s (no ReShade)", (size_t)cs.BytecodeLength, (unsigned long long)hash,
+             match ? " - the light-bin depth-bounds shader" : "");
+    return match;
+}
+
+// Our copy made beside the game's and kept; `make` builds it on the device (our own call: not told to the hooks)
+template <class Make> void Keep(ID3D12PipelineState* game, const char* how, Make make) {
+    if (!g_make.load(std::memory_order_relaxed)) return;   // off at the start: nothing made (the old behaviour)
+    std::call_once(g_compileOnce, Compile);
+    if (g_code.empty()) return;
+    const D3D12_SHADER_BYTECODE ours{g_code.data(), g_code.size()};
+    ID3D12PipelineState* made = nullptr;
+    const bool was = natived3d::Ours();
+    natived3d::SetOurs(true);
+    const HRESULT hr = make(ours, &made);
+    natived3d::SetOurs(was);
+    if (FAILED(hr) || !made) {
+        Line("vrcam: light bounds - the game's shader matched (%s) but the replacement pipeline was refused by the device (0x%08X): the "
+             "game's own stays", how, (unsigned)hr);
+        return;
+    }
+    AcquireSRWLockExclusive(&g_nativeLock);
+    const int n = g_nativeN.load();
+    if (n >= kNativeMax) {
+        ReleaseSRWLockExclusive(&g_nativeLock);
+        made->Release();
+        return;
+    }
+    game->AddRef();
+    g_native[n] = {game, made};
+    g_nativeN.store(n + 1, std::memory_order_release);
+    ReleaseSRWLockExclusive(&g_nativeLock);
+    Line("vrcam: light bounds - the game's light-bin depth-bounds shader found without ReShade (%s, %zu bytes); the replacement pipeline is "
+         "ready ([render] light_bounds_fix, no ReShade)", how, (size_t)g_matchSize.load());
+}
+
 }  // namespace
 
 void Register(void (*log)(const char*)) {
@@ -215,11 +279,66 @@ void Configure(bool make, bool bind, bool logAll, bool flat) {
 
 bool Wanted() { return g_make.load(std::memory_order_relaxed) || g_logAll.load(std::memory_order_relaxed); }
 
+void SetLog(void (*log)(const char*)) { g_log = log; }
+
+void OnComputePso(ID3D12Device* dev, const D3D12_COMPUTE_PIPELINE_STATE_DESC* d, ID3D12PipelineState* pso) {
+    if (!dev || !d || !pso || !IsGameShader(d->CS)) return;
+    Keep(pso, "a compute description", [&](const D3D12_SHADER_BYTECODE& ours, ID3D12PipelineState** out) {
+        D3D12_COMPUTE_PIPELINE_STATE_DESC c = *d;
+        c.CS = ours;
+        c.CachedPSO = D3D12_CACHED_PIPELINE_STATE{};   // (the game's cache is of its own shader)
+        return dev->CreateComputePipelineState(&c, __uuidof(ID3D12PipelineState), (void**)out);
+    });
+}
+
+void OnStreamPso(ID3D12Device* dev, const D3D12_PIPELINE_STATE_STREAM_DESC* d, ID3D12PipelineState* pso) {
+    if (!dev || !d || !pso || !d->pPipelineStateSubobjectStream || !d->SizeInBytes || d->SizeInBytes > 65536) return;
+    const uint8_t* s = (const uint8_t*)d->pPipelineStateSubobjectStream;
+    size_t csAt = 0;
+    if (!psostream::Find(s, d->SizeInBytes, D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_CS, &csAt)) return;   // not a compute stream, or not read
+    D3D12_SHADER_BYTECODE cs;
+    std::memcpy(&cs, s + csAt, sizeof cs);
+    if (!IsGameShader(cs)) return;
+    Keep(pso, "a pipeline stream", [&](const D3D12_SHADER_BYTECODE& ours, ID3D12PipelineState** out) {
+        std::vector<uint8_t> copy(s, s + d->SizeInBytes);
+        std::memcpy(&copy[csAt], &ours, sizeof ours);
+        size_t cacheAt = 0;
+        if (psostream::Find(copy.data(), copy.size(), D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_CACHED_PSO, &cacheAt)) {
+            const D3D12_CACHED_PIPELINE_STATE none{};
+            std::memcpy(&copy[cacheAt], &none, sizeof none);
+        }
+        ID3D12Device2* d2 = nullptr;
+        HRESULT hr = dev->QueryInterface(__uuidof(ID3D12Device2), (void**)&d2);
+        if (FAILED(hr) || !d2) return FAILED(hr) ? hr : E_NOINTERFACE;
+        const D3D12_PIPELINE_STATE_STREAM_DESC sd{copy.size(), copy.data()};
+        hr = d2->CreatePipelineState(&sd, __uuidof(ID3D12PipelineState), (void**)out);
+        d2->Release();
+        return hr;
+    });
+}
+
+ID3D12PipelineState* Swap(ID3D12PipelineState* pso) {
+    const int n = g_nativeN.load(std::memory_order_acquire);
+    if (!n || !g_bind.load(std::memory_order_relaxed)) return pso;
+    for (int i = 0; i < n; ++i)
+        if (g_native[i].game == pso) {
+            if (!g_nativeTold.exchange(true))
+                Line("vrcam: light bounds - the replacement is bound in the game's light culling without ReShade (rectangular tiles)");
+            return g_native[i].ours;
+        }
+    return pso;
+}
+
+void MatchForTest(uint32_t size, uint64_t hash) {
+    g_matchSize.store(size ? size : kGameShaderSize);
+    g_matchHash.store(size ? hash : kGameShaderHash);
+}
+
 // What the game draws at, and what that makes of the light grid: a line whenever the size or the state changes
 // (the start, a window or render size change, the switch between VR and flat, the shader found).
 void NoteScreen(unsigned w, unsigned h) {
     if (!w || !h || !g_make.load(std::memory_order_relaxed)) return;
-    const bool found = g_copyCount.load(std::memory_order_relaxed) != 0, bind = g_bind.load(std::memory_order_relaxed),
+    const bool found = g_copyCount.load(std::memory_order_relaxed) != 0 || g_nativeN.load(std::memory_order_relaxed) != 0, bind = g_bind.load(std::memory_order_relaxed),
                flat = g_flat.load(std::memory_order_relaxed);
     const uint64_t key = (uint64_t)w | (uint64_t)h << 16 | (uint64_t)found << 40 | (uint64_t)bind << 41 | (uint64_t)flat << 42;
     if (g_noted.exchange(key, std::memory_order_relaxed) == key) return;

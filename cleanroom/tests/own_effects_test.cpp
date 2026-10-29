@@ -429,6 +429,11 @@ void Height() {
 }
 
 void Models() {
+    // [sky] summit_backdrop_hidden: the Summit's ground picture as MtnTop.json / ColossalSummit.json name it, any slash, case, level of detail; nothing else
+    EXPECT(IsSummitBackdrop("data/hd/env/model/expansion/mountaintop/expansion_mountaintop_skybox/skybox01.model"));
+    EXPECT(IsSummitBackdrop("DATA\\HD\\ENV\\MODEL\\Expansion\\MountainTop\\Expansion_MountainTop_Skybox\\SkyBox01_lod0.model"));
+    EXPECT(!IsSummitBackdrop("data/hd/env/model/ui/ui_skybox/act5_sky.model") && !IsSummitBackdrop("data/hd/env/model/expansion/mountaintop/rock01.model") &&
+           !IsSummitBackdrop("data/hd/env/model/x/expansion_mountaintop_skybo") && !IsSummitBackdrop("") && !IsSummitBackdrop(nullptr));
     // the table names each solid effect's model file; a model is known by its file's key, only under data/hd/vfx/
     char k[96];
     EXPECT(ModelKey("data/hd/vfx/meshes/lit_mesh/bonearmor/bonearmor.model", k, sizeof k) && std::strcmp(k, "bonearmor") == 0);

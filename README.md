@@ -281,7 +281,10 @@ Much of this mod stands on their code and findings:
   (how they wake, freeze and settle, their materials and their catalogue), each
   eye exactly as the headset gives it, the sky over the dark rims, the wrist
   compass, the main menu at 16:9, typing under the laser and monsters' limbs
-  giving way to the weapon.
+  giving way to the weapon. Under the MPL 2.0 since: Big objects - trees, houses
+  and walls drawn past the model radius by their size, on the game's own model
+  test he found - and the fog eased in over its first 40 units and none in the
+  River of Flame.
 - **beadlebytes**: the monitor showing one eye, steady; the map in the hand from
   above, turning with you, with its heading arrow; the staff aiming along the
   arm; a game panel pushed and pulled with the right grip.
@@ -303,7 +306,10 @@ keep the copyright notice. The licence does not cover the name "D2R VR" as a
 mark, nor BodyWalk / FlatVR, which are separate products.
 
 Third-party: the parts from D2R VR Unleashed up to 0.3.28 (MIT, Copyright (c)
-2026 bearstonem - the notice is in `LICENSE`), the weight library's props world
+2026 bearstonem - the notice is in `LICENSE`), the parts from its later versions
+(MPL 2.0, Copyright (c) 2026 bearstonem and the D2R VR Unleashed contributors -
+files of their own, `shared/unleashed_*.h`, `cleanroom/drawdist/unleashed_*.cpp`,
+`reshade/D2R_FogEase_Unleashed.fxh`, each with its notice), the weight library's props world
 (`external/weight_props`, MIT, natpoh and bearstonem; on Box3D by Erin Catto,
 MIT), MinHook (BSD 2-clause, `third_party/minhook`), the ReShade SDK headers and
 FX compiler (BSD 3-clause, `external/reshade`, `third_party/reshadefx`), the

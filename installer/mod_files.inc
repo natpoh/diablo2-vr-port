@@ -28,6 +28,8 @@ Source: "{#PayloadDir}\plugins\d2r_vr_gait.dll"; DestDir: "{app}\{#ModDir}\d2rlo
 Source: "{#PayloadDir}\plugins\d2r_vr.ini"; DestDir: "{app}\{#ModDir}\d2rloader\plugins"; Flags: onlyifdoesntexist
 Source: "{#PayloadDir}\plugins\d2r_vr.ini"; DestDir: "{app}\{#ModDir}\d2rloader\plugins"; DestName: "d2r_vr.default.ini"; Flags: ignoreversion
 Source: "{#PayloadDir}\shaders\D2R_DepthFog.fx"; DestDir: "{app}\{#ModDir}\reshade\reshade-shaders\Shaders"; Flags: ignoreversion
+; ... and the file it includes (D2R VR Unleashed's fog ease, MPL 2.0): without it the effect does not build
+Source: "{#PayloadDir}\shaders\D2R_FogEase_Unleashed.fxh"; DestDir: "{app}\{#ModDir}\reshade\reshade-shaders\Shaders"; Flags: ignoreversion
 Source: "{#PayloadDir}\sky\*.png"; DestDir: "{app}\{#ModDir}\reshade\reshade-shaders\Textures\D2R_Sky_ours"; Flags: ignoreversion
 ; The game sky dome's painted act skies ([sky] game_sky), where its units (made by D2R VR Settings, tools\settings\dome_assets.cpp) name them
 Source: "{#PayloadDir}\skydome\*.dds"; DestDir: "{app}\{#ModDir}\D2R-VR.mpq\data\hd\env\texture\d2r_vr\sky"; Flags: ignoreversion skipifsourcedoesntexist

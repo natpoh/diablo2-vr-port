@@ -157,6 +157,13 @@ bool GrabBodies(monsterbodies::Snapshot* out, bool swayed = false);   // (swayed
 void SetItemsWanted(bool on);
 void ItemsTick(bool ok, const float heroRender[3], float upm);
 int GroundItems(itemgrab::Item* out, int max, bool* fresh);
+// [gameplay] melee_touch_barrels (vr/barrel_touch.h): a counting stroke of the held weapon through a barrel, pot, urn or basket presses the game's own
+// interact on it (the hero breaks it as with A). SetBarrelsWanted: on / off (vrcam's settings); BarrelsStep: vrcam's timer, after Tick - the press held
+// until the object breaks, let go after barreltouch::kHoldS; BarrelPressTarget: the object's client unit while the press is in flight (0: none) - the pad
+// hook presses interact, the interact target hook answers with it. F4 only. Any thread (BarrelsStep: the timer's).
+void SetBarrelsWanted(bool on);
+void BarrelsStep();
+uintptr_t BarrelPressTarget();
 bool GrabDollOn();
 void GrabSways(const D2rgbSway* sways, int n);
 // ... GrabLinks: the held limbs as the library holds them (each step; n 0: none). Bodies, GrabBodies(swayed) and the debug boxes put those limbs there (the doll's
