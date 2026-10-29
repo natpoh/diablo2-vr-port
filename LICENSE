@@ -30,7 +30,8 @@ Third-party parts, each under its own licence:
 - D2R PCVR (github.com/bearstonem/d2r-pcvr, releases up to 0.3.28 and the source published before
   2026-10-29) - MIT, Copyright (c) 2026 bearstonem. Code and ideas taken from it (eyes by turns, the one-eye
   desktop, the Arcane Sanctuary sky, the Kurast boat, laser typing, the knockable props' kinds and their
-  physics settings in d2r_vr_weight.dll, and the others named in CHANGELOG.md) keep this notice:
+  physics settings in d2r_vr_weight.dll - whose props world is published in external/weight_props -, and the
+  others named in CHANGELOG.md) keep this notice:
 
     Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
     associated documentation files (the "Software"), to deal in the Software without restriction,
