@@ -29,8 +29,14 @@ void (*g_log)(const char*) = nullptr;
 std::atomic<bool> g_on{false};
 std::atomic<float> g_deadM{0.12f}, g_capM{0.6f};
 std::atomic<bool> g_debug{false};
-// The stick of the last step: x, y (16 bits each) and the low 32 bits of GetTickCount64 when it was made.
+std::atomic<bool> g_body{false};   // [openxr] roomscale_body
+// BodyTarget: the floor under the neck in the world, and GetTickCount64 when it was set (0: none)
+std::atomic<float> g_bodyX{0.0f}, g_bodyZ{0.0f};
+std::atomic<uint64_t> g_bodyAt{0};
+// The stick of the last step: x, y (16 bits each) and the low 32 bits of GetTickCount64 when it was made; and whether the pad gets it
+// before the controller's own (Output::roomFirst)
 std::atomic<uint64_t> g_stick{0};
+std::atomic<bool> g_first{false};
 
 // The render thread's own.
 roomwalk::Walker g_walker;
@@ -38,6 +44,7 @@ float g_heroPrev[3] = {};
 bool g_heroHave = false;
 ULONGLONG g_debugAt = 0;
 int g_told = -1;   // what the last "room walk - ..." line said (an index of Why below)
+bool g_toldBody = false;
 
 void LogF(const char* fmt, ...) {
     if (!g_log) return;
@@ -57,7 +64,8 @@ double NowS() {
     return (double)c.QuadPart / (double)f.QuadPart;
 }
 
-void Publish(float x, float y) {
+void Publish(float x, float y, bool first) {
+    g_first.store(first, std::memory_order_relaxed);
     const uint16_t lx = (uint16_t)roomwalk::Axis(x), ly = (uint16_t)roomwalk::Axis(y);
     g_stick.store((uint64_t)lx | ((uint64_t)ly << 16) | ((uint64_t)(uint32_t)GetTickCount64() << 32), std::memory_order_release);
 }
@@ -76,10 +84,13 @@ const char* WhyName(int w) {
     }
     return "?";
 }
-void Tell(int w) {
+void Tell(int w, const Facts* f = nullptr) {
     if (w == g_told) return;
     g_told = w;
-    LogF("vrcam: room walk - %s", WhyName(w));
+    if (w == kStick && f)   // (whose stick: the controller's raw axes and tilt - a thumb resting on it, or a real push)
+        LogF("vrcam: room walk - %s - the controller's stick %d %d (tilt %.2f)", WhyName(w), (int)f->ownLX, (int)f->ownLY, f->ownTilt);
+    else
+        LogF("vrcam: room walk - %s", WhyName(w));
 }
 
 }  // namespace
@@ -96,9 +107,17 @@ void LoadSettings(const wchar_t* ini) {
         return end != b && std::isfinite(v) ? v : def;
     };
     const bool on = GetPrivateProfileIntW(L"openxr", L"roomscale_walk", 0, ini) != 0;
-    const float dead = std::clamp(f(L"openxr", L"roomscale_dead_zone_m", 0.12f), 0.03f, 0.5f);
+    // 0: no dead zone of your own - the hero starts at the least offset he can be placed by (half his least walk's coast, vr/room_walk.h)
+    const float dead = std::clamp(f(L"openxr", L"roomscale_dead_zone_m", 0.12f), 0.0f, 0.5f);
     const float cap = std::clamp(f(L"openxr", L"roomscale_cap_m", 0.6f), 0.2f, 2.0f);
     const bool debug = GetPrivateProfileIntW(L"debug", L"roomscale_log", 0, ini) != 0;
+    const bool body = GetPrivateProfileIntW(L"openxr", L"roomscale_body", 0, ini) != 0;
+    const bool wasBody = g_body.exchange(body);
+    if (wasBody != body || !g_toldBody) {
+        g_toldBody = true;
+        if (body) LogF("vrcam: room walk - [openxr] roomscale_body=1: the hero's drawn body stands under your neck while the room walk walks him (his "
+                       "pulses at the game's least walk unseen; drawn bones only)");
+    }
     const bool was = g_on.exchange(on);
     const float wasDead = g_deadM.exchange(dead), wasCap = g_capM.exchange(cap);
     const bool wasDebug = g_debug.exchange(debug);
@@ -107,8 +126,9 @@ void LoadSettings(const wchar_t* ini) {
         told = true;
         if (on)
             LogF("vrcam: room walk - [openxr] roomscale_walk=1: in VR first person (native OpenXR) your steps in the room walk the hero through the game's own "
-                 "walking stick (dead zone %.2f m, the room slides past %.2f m off the hero; the controller's stick wins while it is pushed)%s",
-                 dead, cap, debug ? "; [debug] roomscale_log=1: a line a second while it is live" : "");
+                 "walking stick (dead zone %.2f m%s, the room slides past %.2f m off the hero; the controller's stick wins while it is pushed)%s",
+                 dead, dead <= 0.0f ? " - none of yours: he starts as soon as he can be placed" : "", cap,
+                 debug ? "; [debug] roomscale_log=1: a line a second while it is live" : "");
         else
             LogF("vrcam: room walk - [openxr] roomscale_walk=0: walking in the room does not move the hero (the body follows the head past lean_m, as before)");
     }
@@ -136,10 +156,14 @@ bool View(const xr::Eyes& xe, const float hero[3], float cb, float sb, float upm
     for (int k = 0; k < 3; ++k) g_heroPrev[k] = hero[k];
     g_heroHave = in.engaged;
     const roomwalk::Output o = g_walker.Step(cfg, in);
-    Publish(o.stickX, o.stickY);
-    if (cfg.on) Tell(!in.engaged ? (f.inWorld ? kNotF4 : kNoGame) : f.menuOpen ? kMenu : f.chatOpen ? kChat : o.stickHeld ? kStick : kLive);
+    Publish(o.stickX, o.stickY, o.roomFirst);
+    if (cfg.on) Tell(!in.engaged ? (f.inWorld ? kNotF4 : kNoGame) : f.menuOpen ? kMenu : f.chatOpen ? kChat : o.stickHeld ? kStick : kLive, &f);
     else if (g_told != -1) Tell(kOff);
-    if (!o.engaged) return false;
+    if (!o.engaged) { g_bodyAt.store(0, std::memory_order_relaxed); return false; }
+    // the floor under the neck in the world: the hero's place and the neck's offset off it, turned and scaled as the camera's eyes are
+    g_bodyX.store(hero[0] + (o.off.x * cb + o.off.z * sb) * upm, std::memory_order_relaxed);
+    g_bodyZ.store(hero[2] + (-o.off.x * sb + o.off.z * cb) * upm, std::memory_order_relaxed);
+    g_bodyAt.store(GetTickCount64(), std::memory_order_release);
     xr::HoldBody();
     *eyesX -= o.camX;
     *eyesZ -= o.camZ;
@@ -148,15 +172,26 @@ bool View(const xr::Eyes& xe, const float hero[3], float cb, float sb, float upm
         const ULONGLONG now = GetTickCount64();
         if (now - g_debugAt >= 1000) {
             g_debugAt = now;
-            LogF("vrcam: room walk - offset %.2f m (x %+.2f z %+.2f, stop %.2f), stick %+.2f %+.2f (tilt %.2f, asked %.2f%s), walking %s, blocked %s%s, "
-                 "head %.2f m/s, hero %.2f m/s (a full stick: %.2f m/s, learned), controller stick %s (tilt %.2f), pad: %s, least tilt %.2f (%s)",
-                 o.offM, o.off.x, o.off.z, o.stopM, o.stickX, o.stickY, o.tilt, o.need, o.slow ? " - under the game's slowest walk: walk / wait" : "",
-                 o.walking ? "yes" : "no", o.blocked ? "YES" : "no", o.capped ? " (at the cap: the room slides)" : "", o.headMps, o.heroMps, o.fullMps,
-                 o.stickHeld ? "held" : "free", f.ownTilt, f.pad, o.minTilt,
-                 f.hookWalk ? "the walking-stick hook: under the pad's dead zone" : "the pad: its dead zone - [input] direct_walk=1 walks slower and steadier");
+            LogF("vrcam: room walk - offset %.2f m (x %+.2f z %+.2f; he still walks %.2f m of our pushes; starts at %.2f m), stick %+.2f %+.2f (tilt %.2f, "
+                 "asked %.2f%s), walking %s, blocked %s%s, head %.2f m/s, hero %.2f m/s (a full stick: %.2f m/s; his least walk %.2f m/s, %s; lag %.0f ms), "
+                 "controller stick %s (tilt %.2f), pad: %s, least tilt %.2f (%s)",
+                 o.offM, o.off.x, o.off.z, o.stopM, o.startM, o.stickX, o.stickY, o.tilt, o.need,
+                 o.slow ? " - under his least walk: pulses at it" : "", o.walking ? "yes" : "no", o.blocked ? "YES" : "no",
+                 o.capped ? " (at the cap: the room slides)" : "", o.headMps, o.heroMps, o.fullMps, o.leastMps,
+                 o.floorLearned ? "seen" : "a quarter of a full walk until seen", o.leadS * 1000.0f, o.stickHeld ? "held" : "free", f.ownTilt, f.pad,
+                 o.minTilt, f.hookWalk ? "the walking-stick hook: under the pad's dead zone" : "the pad: its dead zone - [input] direct_walk=1 walks slower and steadier");
         }
     }
     return true;
+}
+
+bool BodyTarget(float* wx, float* wz) {
+    if (!g_body.load(std::memory_order_relaxed) || !g_on.load(std::memory_order_relaxed)) return false;
+    const uint64_t at = g_bodyAt.load(std::memory_order_acquire);
+    if (!at || GetTickCount64() - at > 150) return false;
+    *wx = g_bodyX.load(std::memory_order_relaxed);
+    *wz = g_bodyZ.load(std::memory_order_relaxed);
+    return std::isfinite(*wx) && std::isfinite(*wz);
 }
 
 bool IsRoomStick(int16_t lx, int16_t ly) {
@@ -164,12 +199,15 @@ bool IsRoomStick(int16_t lx, int16_t ly) {
     return (lx != 0 || ly != 0) && Stick(&x, &y) && x == lx && y == ly;
 }
 
-bool Stick(int16_t* lx, int16_t* ly) {
+bool Stick(int16_t* lx, int16_t* ly, bool* first) {
+    if (first) *first = false;
     const uint64_t w = g_stick.load(std::memory_order_acquire);
     const uint32_t at = (uint32_t)(w >> 32);
     if ((uint32_t)GetTickCount64() - at > 150) return false;
     const int16_t x = (int16_t)(uint16_t)(w & 0xFFFF), y = (int16_t)(uint16_t)((w >> 16) & 0xFFFF);
-    if (x == 0 && y == 0) return false;
+    const bool f = g_first.load(std::memory_order_relaxed);
+    if (first) *first = f;
+    if (x == 0 && y == 0 && !(first && f)) return false;
     *lx = x; *ly = y;
     return true;
 }

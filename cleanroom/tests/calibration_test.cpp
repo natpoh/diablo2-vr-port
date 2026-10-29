@@ -291,13 +291,13 @@ int main() {
     calib::LoadSettings(ini.c_str());
     Check(Near(calib::MeasuredEyeM(), 1.6917f, 0.0002f) && Near(calib::MeasuredSpanM(), 1.64f, 0.002f), "seated: read back the same");
     for (int i = 0; i < 200 && calib::OwnsTriggers(); ++i) calib::Feed(seatedFrame(false));
-    // only a span stored: seated the span, the world's scale the old height; standing nothing
+    // only a span stored: the span, the world's scale the old height - seated, and standing too (a span set by hand, 2026-10-25)
     WritePrivateProfileStringW(L"calibration", L"eye_height_m", L"0", ini.c_str());
     calib::LoadSettings(ini.c_str());
     Check(calib::MeasuredEyeM() == 0.0f && Near(calib::MeasuredSpanM(), 1.64f, 0.002f), "seated: a span alone - the arms, the old height");
     WritePrivateProfileStringW(L"calibration", L"seated", L"0", ini.c_str());
     calib::LoadSettings(ini.c_str());
-    Check(!calib::Seated() && calib::MeasuredEyeM() == 0.0f && calib::MeasuredSpanM() == 0.0f, "standing again, a span alone: nothing (measure standing)");
+    Check(!calib::Seated() && calib::MeasuredEyeM() == 0.0f && Near(calib::MeasuredSpanM(), 1.64f, 0.002f), "standing again, a span alone: the arms, the old height");
     // standing is as before: both, and the floor's height
     WritePrivateProfileStringW(L"calibration", L"eye_height_m", L"1.6917", ini.c_str());
     calib::LoadSettings(ini.c_str());

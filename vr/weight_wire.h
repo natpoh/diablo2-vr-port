@@ -24,4 +24,13 @@ bool RawGrips(float out[2]);
 // The triggers the same way (hand 0 right, 1 left, 0..1) - only the grip library's loose hold reads them.
 bool RawTriggers(float out[2]);
 
+// [weight] weapon_grip_no_chord (0 by default: as before). The Take above keeps a weapon's grip from the layout's chords, but the skill panel and the settings read the grips from
+// the frame itself: the off hand's grip made the wheel's grip + click chord, and the right grip held kept the right A / right trigger from their A / RT skill slots
+// ([openxr] skill_rt_a). On: a grip that holds the weapon (or that another gesture holds) is no modifier of those either (vr/wheel_controller.h SetGripsTaken; and of the
+// old both-grips settings chord, vr/hset_panel.h FrameIn::gripTaken - which is off anyway unless [debug] settings_two_grip_chord). Read with the ini.
+void ConfigureGripNoChord(bool on);
+bool GripNoChord();
+// The key on, F4, and direct_input's hand (0 left, 1 right) holds the weapon now. Any thread.
+bool GripOnWeapon(int hand);
+
 }  // namespace weightwire

@@ -49,6 +49,16 @@ inline bool MustStayPresent(bool vrPlatform, bool directOn, bool pluginPadSeen) 
     return vrPlatform && (directOn || pluginPadSeen);
 }
 
+// Flat mode hides the game's pads ([input] flat_no_pad) so its UI stays in mouse and keyboard mode - but a player who picks up a real
+// pad wants it (a player, 2026-10-24: "the gamepad does not work in 2D mode"). Has the real pad been TOUCHED: a button, a trigger, or a
+// stick past a dead zone wider than any drift? ([input] flat_pad_on_touch: then the pads go through from then on.)
+inline bool RealPadTouched(uint16_t buttons, uint8_t lt, uint8_t rt, int lx, int ly, int rx, int ry) {
+    constexpr int kStick = 12000;   // of 32767: well past a worn stick's drift
+    constexpr int kTrigger = 60;    // of 255
+    const auto pushed = [](int v) { return v > kStick || v < -kStick; };   // (not "far": windows.h defines it away)
+    return buttons != 0 || lt > kTrigger || rt > kTrigger || pushed(lx) || pushed(ly) || pushed(rx) || pushed(ry);
+}
+
 // Tells when the answer changed (for the log). Any thread.
 class Tracker {
 public:

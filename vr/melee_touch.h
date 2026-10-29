@@ -22,7 +22,11 @@
 
 #include "melee_bodies.h"
 #include "monster_bodies.h"
+#include "doll_pose.h"
+#include "d2r_vr_grab.h"   // [weight] grab_bodies: the library's sways (D2rgbSway)
+#include "item_grab.h"   // [weight] grab_items: the items on the ground (GroundItems)
 #include "unit_scan.h"
+#include "strike_force.h"   // [weight] strike_by_force: SetStrikeForce
 
 namespace D2RL {
 struct PluginContext;
@@ -45,6 +49,12 @@ void SetStatusWanted(bool on);
 bool StatusWanted();
 void SetStatusHero(uint32_t id);
 bool ServerLookup(uintptr_t* game, uintptr_t* lookup);
+// The server's game learned is dropped: leaving a game frees it, and the next game is another one. Called when the client's own player read
+// finds no hero; the lookup hook learns the next game again. `why` goes to the log.
+void ForgetServerGame(const char* why);
+// The world camera up or down (vrcam's watch of it). Down (the title, the character screen, a load): the game is forgotten and none is learned
+// until it is up again - a game torn down after the camera went is never learned back.
+void SetInWorld(bool world);
 // [debug] melee_blade_length_pct (50..150, the tip side), melee_blade_radius_cm (0 = the weapon's own, else 0.5..15), melee_blade_flip,
 // melee_blade_butt_pct (0..150, the side behind the bone): the touch's blade tuned live. What is drawn ([debug] melee_boxes) is the blade
 // the touch tests; the game's reach and rolls are not touched.
@@ -60,6 +70,12 @@ void SetStrokeTuning(float minSpeed, float startCm);
 // within melee_toward_deg of the direction to the monster's axis), with the head of the weapon (maces, scepters), by a swing of at least the kind's amplitude. Only decides whether a contact
 // counts as an attack: the game's attack, damage and rolls are the game's. Every rule off: every contact counts as it did. F4 only, as the whole touch.
 void SetStrikeRule(const strikedir::Rule& rule);
+// [weight] strike_by_force (vr/strike_force.h, live): a weapon the weight model holds in a hand is judged by what its strikes deliver into the monsters' bodies (the impulse,
+// the cut), against a threshold from its own steel, instead of by its speed - the press is the game's own attack, once per strike per monster (strike_force_stuck 1: again
+// while it is pushed in, at the game's attack timing). on false (or no weight model, no monster bodies): the speed rule, exactly as before.
+void SetStrikeForce(const strikeforce::Settings& s);
+// [debug] strike_force_debug: every refused and counted strike by force told (else the first twelve refusals and forty presses)
+void SetStrikeForceDebug(bool on);
 // [gameplay] melee_min_speed_<kind>, melee_stroke_start_cm_<kind>: the engine's two numbers for one weapon kind (strikedir::KindIndex), 0 = the general ones (SetStrokeTuning).
 void SetKindTuning(int kind, float minSpeed, float startCm);
 // [gameplay] melee_thrust, melee_thrust_min_speed, melee_thrust_cm, melee_thrust_along_pct and per kind melee_thrust_<kind>, melee_thrust_min_speed_<kind>, melee_thrust_cm_<kind>
@@ -74,11 +90,81 @@ struct BladeExtent { float tipM = 0.0f, buttM = 0.0f; int tipSign = 1; };
 BladeExtent BladeFor(uint32_t code, uint32_t type, bool twoHandsOn, float unitM = 0.0f);
 // [debug] melee_touch_unchecked: skip the server's hostility / wall check (to find out whether it is what stops a touch).
 void SetUnchecked(bool on);
+// [debug] melee_touch_no_attack: a touch that would attack presses nothing - to try the weapon's stab and the monsters' push without killing them.
+void SetNoAttack(bool on);
+// [debug] melee_touch_client_verdict: the client's own units answer "hostile? a wall?" even where the server is in this process
+// (vr/client_verdict.h) - what a TCP/IP client gets, tried offline.
+void SetClientVerdict(bool on);
 // [weight] monster_bodies (vr/monster_bodies.h): the touch's scans hand over the bodies of the monsters the server calls hostile and unwalled - their limbs
 // from their own skeletons (vr/monster_rig.h, every 10 ms) or the game's capsule, kMax capsules in render metres - while it or [debug] melee_boxes wants them. Bodies: the last of them, fresh (kFreshMs) and in F4 - false otherwise (off,
 // another view, no scan lately: hit by touch off, no melee weapon). Any thread. Nothing is attacked or pressed for it: the bodies only shape the drawn weapon.
 void SetBodiesWanted(bool on);
+// [gameplay] melee_head_volume (vr/metal_head.h Volume, live): a headed weapon (an axe, a polearm, a hammer, a mace, a spear) has its head as a volume of its own where
+// its model has it - an axe's blade beside the shaft - and its shaft as thin as the model's; the debug's boxes draw it. Off: one capsule along the weapon, as before.
+void SetHeadVolume(bool on);
+// [weight] npc_bodies (live): the bodies (Bodies, DrawBodies) also of the non-hostile units near - town NPCs, hirelings - each marked hostile = false
+// (monsterbodies::Body::hostile), for trying [weight] stab_in and the monsters' push on them. They are only bodies: the touch still presses only on a
+// monster the server calls hostile.
+void SetNpcBodies(bool on);
+// [weight] monster_shields: the monsters' shields and weapons stop the held weapon; a blow they stop presses nothing (off: transparent, as before)
+void SetShieldsWanted(bool on);
+// ... a BLOCKED BLOW: a blow that passed every rule a hit is judged by (the least speed, the stroke's or the thrust's, toward the monster, the head of the
+// blade, the verdict) - it would have counted - but the monster's shield (held 2) or its weapon (held 1) stopped it. Once per stroke per monster; count
+// grows by one each. For the shield-hit sound (the author: «это должен быть удар а не просто прикосновение ... как для удара по монстру»): a touch or a
+// blade resting on the shield is none. LastBlockedBlow: the last one (false: none yet).
+struct BlockedBlow {
+    uint32_t id = 0;
+    int side = 0;        // the hand (0 right, 1 left)
+    int held = 0;        // 2 its shield, 1 its weapon
+    float speed = 0.0f;  // m/s where it touched
+    bool thrust = false;
+    unsigned long long ms = 0;   // GetTickCount64
+    unsigned count = 0;
+};
+bool LastBlockedBlow(BlockedBlow* out);
 bool Bodies(monsterbodies::Snapshot* out);
+// [weight] stab_in (cleanroom/heft/stab.h): is hand `side`'s weapon (0 right, 1 left) moving point first now - a weapon that thrusts for hit by touch thrusting
+// (thrust::ThrustingNow on its thrust path), or ANY pointed blade (thrust::PointedKind: a sword too) moving point first by the stab's own judge (thrust::PointFirst) -
+// fresh within the last 150 ms. What the weight model is told so a point-first strike goes into the body; what hit by touch counts as a hit is not changed. Any thread.
+bool StabbingNow(int side);
+// [weight] monster_ragdoll (probe, the doll library: vr/doll_lib.h, vr/doll_view.h): the bodies give way to the held weapon by their weight and spring back. PushBody: the push the weight
+// model's step gave body i of the snapshot it met (weight::SetBodyPushSink; the weight thread). While on, Bodies hands the bodies over swayed - the weight
+// model meets them there and [debug] melee_boxes draws them there; off, the sway is let go at once. Nothing of the game's moves.
+void SetSwayWanted(bool on);
+// [weight] monster_weight_pct / monster_push_pct: the monsters' weight and the weapon's push, % (live).
+void SetSwayTuning(float weightPct, float pushPct);
+// [debug] monster_ragdoll_view: DrawBodies adds the push's arrow and each humanoid's weight and balance (dollview::PackDebug) - while the doll is on.
+void SetSwayView(bool on);
+// [weight] monster_ragdoll_pose: the monster as the game draws it gives way with its doll - its limbs and lean as turns of its own bones (vr/doll_pose.h).
+// MonsterPose: the turns for that SkeletonInstance now (the skeleton hook asks, skel::SetMonsterPoseSource); false - none. Humanoids only, F4 only.
+void SetPoseWanted(bool on);
+bool MonsterPose(uintptr_t self, dollpose::Pose* out);
+// ... how many turns monster id's drawn pose has now (its limbs and its lean; 0: none fresh), -1 when the pose is off. For [weight] grab_bodies' log.
+int PosedTurns(uint32_t id);
+bool SwayView();
+// [weight] grab_bodies (vr/grab_bodies.h, vr/grab_wire.cpp; the grab is the weight library's, vr/grab_lib.h): an empty hand's grip holds a body. SetGrabWanted: the
+// bodies are made for it (as for monster_bodies) and the scan keeps the non-hostile units near too - town NPCs, hirelings - for the grab ONLY: Bodies (the weight model,
+// the debug boxes) leaves them out unless [weight] npc_bodies. GrabBodies: every body of the last scan as the game poses them (no sway), fresh and in F4 - false: none.
+// GrabDollOn: [weight] monster_ragdoll's doll is there to draw a held limb giving way. GrabSways: the library's sways of the held bodies put into the doll's state (its
+// limbs and its lean drawn from there; let go, the doll springs them back). Nothing of the game's moves. The skeleton hook's thread.
+void SetGrabWanted(bool on);
+// ... GrabTick: vrcam's timer, after Tick: when the touch's tick keeps no bodies (no melee weapon swung - a bow, bare hands, hit by touch off), the same read-only scan
+// of who is near and their limbs is made for the grab alone (ok: vrcam's Frame::ok; heroRender: the hero in world units, as the bow's poll has it).
+void GrabTick(bool ok, const float heroRender[3], float upm);
+bool GrabBodies(monsterbodies::Snapshot* out, bool swayed = false);   // (swayed: as drawn, the doll's sway in - [weight] grab_wrap lays the hand on that)
+// [weight] grab_items (vr/item_grab.h): the items lying on the ground within 3 m of the hero, each at its cell on the hero's floor in render metres (read only). SetItemsWanted:
+// scanned at all; ItemsTick: vrcam's timer (every 50 ms at most; heroRender as GrabTick's); GroundItems: the last scan's, *fresh when it is under 200 ms old. Any thread.
+void SetItemsWanted(bool on);
+void ItemsTick(bool ok, const float heroRender[3], float upm);
+int GroundItems(itemgrab::Item* out, int max, bool* fresh);
+bool GrabDollOn();
+void GrabSways(const D2rgbSway* sways, int n);
+// ... GrabLinks: the held limbs as the library holds them (each step; n 0: none). Bodies, GrabBodies(swayed) and the debug boxes put those limbs there (the doll's
+// sway moves the rest) - the bodies stand as the held monster is drawn.
+void GrabLinks(const D2rgbLink* links, int n);
+// ... the doll's numbers the library holds a monster by (its springs, limits and the weight slider: the same as the doll's own).
+void GrabDollTuning(float* limbHz, float* bodyHz, float* damping, float* maxLimbM, float* maxBodyM, float* massScale);
+void PushBody(const monsterbodies::Snapshot& snap, int i, const float impulse[3], const float point[3]);
 // [debug] melee_boxes: the bodies drawn (monsterbodies::Pack: a monster's limbs pink, a monster on the game's capsule blue, the capsule the weapon is on white), into
 // the effect's capsules a / b (world units from where the hands hang), up to max; how many. touchedId / touchedBone: weight::LastContact's (0: none). Wanted by
 // melee_boxes alone - [weight] monster_bodies need not be on. The render thread.
@@ -88,6 +174,10 @@ int DrawBodies(uint64_t nowMs, const float eyeWorld[3], uint32_t touchedId, int 
 // the game spends it; never the Direct hit route). Throwing potions never. Off: a thrown weapon does nothing by touch, as before. F4 only.
 void SetThrownTouch(bool on);
 bool ThrownTouch();
+// [gameplay] melee_touch_thrown_held, from the ini (every read; default off): with the grip throw on, a thrown weapon is in the hand from the moment it is
+// equipped, like a sword - its touch does not wait for the grip to be squeezed (the weight model's "a hand holds it" still decides). Off: as before,
+// the touch counts only while the throw's grip is squeezed (vr/thrown_touch.h). The throw by gesture is the same either way.
+void SetThrownHeld(bool on);
 // What the touch needs of the throw by gesture (vr/throw_gesture_wire.h, [hands] throw_by_grip / throw_gesture), given once by vrcam: GripIsThrows (the grip
 // gesture owns the right grip: the weapon is "in the hand" while it is squeezed), LastThrowTickMs (the touch stands down 0.7 s after a released throw) and
 // HoldOffRelease(until): after a touch pressed the attack with a thrown weapon the gesture's release of that swing throws nothing until then (vr/thrown_touch.h).
@@ -97,6 +187,10 @@ using LastThrowFn = uint64_t (*)();
 using HoldOffFn = void (*)(uint64_t untilTickMs);
 // gripHeld: throwwire::GripHeld - the right grip squeezed, as the gesture reads the controller (the shared block's grip reads 0 while the gesture owns it).
 void SetThrowLink(GripIsThrowsFn gripIsThrows, GripHeldFn gripHeld, LastThrowFn lastThrowTickMs, HoldOffFn holdOff);
+// ... the same two questions asked of ONE hand (0 right, 1 left): the hand that swings the weapon - with a thrown weapon in each hand ([hands] throw_left_hand)
+// each grip is its own weapon's. Registered, they are asked instead of the two above.
+using GripAtFn = bool (*)(int side);
+void SetThrowGripAt(GripAtFn gripIsThrowsAt, GripAtFn gripHeldAt);
 
 // [debug] bow_latency: a text about the hero's animation row (the one his unit points at: name, frames, the action frame) for the press->hit line, written into out; empty when it is not
 // wanted or not readable. Given by vrcam (any thread, read only).
@@ -117,6 +211,7 @@ struct Frame {
     bool ok = false;            // a game area, first person with the hands on the controllers, no panel open
     uint32_t weaponType = 0;    // D2RVR_WeaponType in hand
     bool twoHandsOn = false;    // held in both hands
+    bool twoHanded = false;     // the weapon is two-handed (the game's own flag of the item: [gameplay] melee_direct_client_cleave)
     uint32_t epoch = 0;         // vrcam's g_gen: the world frame's generation
     uint64_t session = 0;       // gamestate::LocalPlayer(): changes with the game / the hero
     float upm = 4.0f;           // game units per metre at the hero's size
@@ -131,6 +226,11 @@ struct Frame {
     // hand to hand) and, let go, falls and lies - then it strikes nothing. Without [weight]: the weapon's slot hand, as ever (weightdrive.h).
     bool weightPlaced = false;
     int weightCarrying = -1;
+    // A weapon in each hand ([weight] StepSecond, second_lets_go): the second is let go (falling, lying, flying back) - its blade is left out; the first let go
+    // (weightCarrying -1) leaves out only the first's: the weapon still in a hand strikes on (the headset 2026-10-24: one dropped, the other lost its hitbox).
+    bool secondLetGo = false;
+    int secondHand = -1;        // ... the hand that holds the second (weight::SecondHand; the hand-over: the first's), -1 its own as ever
+    int heroMode = -1;          // [weight] strike_by_force, strike_force_stuck 1: the hero's unit mode (vrcam's HeroAnimMode; -1 not known) - a repeat waits for the game's attack to end
 };
 // vrcam's timer (about every millisecond; returns at once when no new pose has come).
 void Tick(const Frame& f);
@@ -179,6 +279,22 @@ void ThrowPoll(uintptr_t heroUnit);
 // Any thread, from the game's aim hooks: the monsters of the last poll (not older than 0.5 s) that the server called hostile and
 // unwalled, up to max. *polled (optional): the list is fresh at all - false is "no poll lately", not "no monster".
 size_t ThrowTargets(ThrowMonster* out, size_t max, bool* polled = nullptr);
+// [bow] pitch_aim (vr/bow_pitch_wire.cpp): the same poll for a bow or crossbow in hand (Install hooks the server's lookup for it too), and every monster
+// of it (not older than 0.5 s) - its place, its MonStats row (rowOk: it read) and whether the server called it hostile and unwalled - up to max.
+struct PolledMonster {
+    uint32_t id = 0;
+    float x = 0.0f, z = 0.0f;   // its place on the grid, in game WORLD units
+    MonsterRow row;
+    bool rowOk = false, hostile = false;
+};
+void SetBowWanted(bool on);
+bool BowWanted();
+// [gameplay] leap_by_gaze (vrcam LeapAimNow): the same poll for a Barbarian in F4 - Leap Attack goes at the hostile monster the gaze is on (ThrowTargets);
+// Install hooks the server's lookup for it too.
+void SetLeapWanted(bool on);
+// Inside one of the game's target lookups (its UI thread): the live client monster of this id now, 0 for none (the leap's monster, handed to the game's lookups).
+uintptr_t MonsterUnit(uint32_t id);
+size_t PolledMonsters(PolledMonster* out, size_t max, bool* polled = nullptr);
 
 // ---- the monsters near a point, for the shield bash (vr/unit_scan.h) --------------------------------------------------------------
 // The live client monsters within reachUnits game WORLD units of the grid point (heroX, heroZ), each with its capsule (the nearest cap
@@ -214,5 +330,26 @@ struct HirelingView {
 bool FindHireling(const uint32_t* classes, size_t count, HirelingView* out);
 // That unit's place now, while it is still that monster (the same id) and alive; false otherwise.
 bool HirelingPlace(uintptr_t unit, uint32_t id, float* x, float* z);
+
+// ---- [multiplayer] pose_share (vr/pose_share.h): where the players are ----------------------------------------------------------------
+// Read-only, any thread (guarded): every player unit in the client's unit hash (the type-0 row) - its id and place on the grid (game
+// WORLD units, as UnitPlace). Returns how many were written.
+struct PlayerSpot {
+    uint32_t id = 0;
+    float x = 0.0f, z = 0.0f;
+};
+size_t PlayersNow(PlayerSpot* out, size_t max);
+// [multiplayer] pose_share_bodies: the other players near are bodies in Bodies / GrabBodies / DrawBodies as NPCs are (vr/player_bodies.h): their whole capsule and their
+// own skeletons' limbs, never hostile, ids no game unit has. Live.
+void SetPlayerBodies(bool on);
+// [multiplayer] pose_share_bodies: our blades as the touch swept them last (the weapon bone as drawn, the model's own ends; render metres, as the bodies),
+// [0] the first weapon's; none older than maxAgeMs. Only while hit by touch runs (F4, a melee weapon in hand). Any thread. Returns how many (0..2).
+struct OwnBlade {
+    float butt[3] = {}, tip[3] = {};
+    float radius = 0.04f;
+    int hand = 0;        // the controller that swings it: 0 right, 1 left
+    uint32_t kind = 0;   // the weapon's kind (D2RVR_TYPE_*)
+};
+size_t OwnBlades(OwnBlade out[2], uint64_t maxAgeMs);
 
 }  // namespace meleetouch

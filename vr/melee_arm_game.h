@@ -19,6 +19,9 @@ void Init(const D2RL::PluginContext* ctx);
 // [gameplay] melee_skill_armed from the ini (every read). Off: nothing below does anything, the armed skill is forgotten.
 void Configure(bool on);
 bool On();
+// [gameplay] melee_skill_arm_once / melee_skill_arm_once_s from the ini (every read): an armed skill is spent by its first blow (the next touches the plain attack again), and an unspent one
+// disarms after `timeoutS` seconds (0 never). Off (the default): it stays armed until disarmed, as before.
+void ConfigureOnce(bool once, float timeoutS);
 // [melee_armed] s<id> from the ini (every read): which skills of the list (melee_arm.h kRows) a button arms - Allowed::Bits. A skill unticked while armed is disarmed at the next poll.
 void ConfigureList(uint64_t allowedBits);
 // [gameplay] melee_skill_armed_icon from the ini (every read): the armed skill's icon in the mana medallion (vr/armed_icon.h; drawn only while melee_skill_armed is on too). Default on.
@@ -48,5 +51,8 @@ int Armed(bool* ready);
 // vrcam's slot-skill hook, at the cast's two reads of the attack slot when that slot holds the plain attack: the skill this touch's press is to be read as (0: as the game has it). Also
 // [gameplay] attack_in_place (vr/stand_still_wire.cpp): a touch read as a skill that moves the hero (Whirlwind, Leap Attack, Charge, Dragon Flight) is not held with Stand Still.
 int PressSkill();
+// vrcam's slot-skill hook, when it has answered a read of the attack slot with `skill` (PressSkill, the weapon fits): the game casts it. With melee_skill_arm_once the armed skill is spent then -
+// the icon goes, the next touches are the plain attack. Any thread (the game's).
+void Used(int skill);
 
 }  // namespace meleearm

@@ -44,23 +44,34 @@
 int D2rvrHoverSpheres(float (*out)[8], int max);
 #include "hud_native.h"
 #include "plate_world.h"   // [hud] monster_bar_room: the monster's health bar over its head, in the room (HangPlate)
+#include "notice_card.h"   // [hud] notice_card: the game's quest / level-up notice on a card in the room (HangNotice)
 #include "rtv_slots.h"     // the render-target views of the interface chains, handed out and given back (EnsureHudOut)
 #include "reshade_shield.h"
 #include "panel_input.h"
+#include "typed_keys.h"   // [openxr] laser_typing: the laser's own Ctrl / Shift carry kOwnKeyTag
 #include "xr_layers.h"
 #include "focus_gate.h"
+#include "hand_trackers.h"   // [openxr] hand_trackers: no hand trackers on Meta's runtime - they take the controllers' places away (the pure rule)
+#include "hand_space.h"      // [openxr] hand_space: a grip the room's locate gives no whole pose for, looked for elsewhere (the pure rule)
 #include "xr_failure.h"   // when the runtime fails and the session is given up (xr_failure.h)
 #include "bounded_call.h"   // [openxr] busy_guard: xrWaitFrame and xrBeginSession on a thread of their own, waited for with a limit (bounded_call.h)
 #include "flatvr_gate.h"    // ... and no session over a FlatVR that holds the headset and cannot be stopped (flatvr_gate.h)
+#include "pointer_cache.h"   // the mouse pointer's images kept by what they show (pointer_cache.h)
+#include "chain_reaper.h"   // a swapchain made again in a session is destroyed later, once the game's queue was drained, not inside the present (chain_reaper.h)
 #include "gpu_fault.h"   // the D3D12 device lost: told at once, nothing touched after it (vr/gpu_fault.h)
 #include "view_gate.h"
 #include "body_calibration.h"   // StandingEyeY: the standing eyes' height over the floor, from the T-pose measurement
 #include "views3d.h"   // [openxr] views_3d: F1 as a window, F3 as the room (the pure maths)
 #include "eye_gap.h"   // [openxr] ipd_auto / ipd_mm: the eye distance of the stereo pair - the runtime's or the player's (the pure maths)
 #include "turn_warp.h"   // [stereo] turn_warp: by turns, the eye not drawn made on the GPU (turn_math.h the maths)
+#include "gpu_spans.h"   // the eye made's passes timed on the graphics card (TurnTell's 10 s line)
 #include "effects_layer.h"   // [stereo] turns_keep_own 3, 4: where the game's effects are in the eye drawn
+#include "frame_gen_lib.h"   // [openxr] frame_generation: OFXR Bridge, for this process only (shared/frame_gen.h)
 #include "eye_frame.h"   // [openxr] canted_eyes: both eyes drawn and submitted in the head's frame when the displays are canted (the pure maths)
+#include "eye_fov.h"   // [openxr] runtime_fov / symmetric_fov / fov_crop: the fov each eye is drawn and submitted with (the pure maths)
+#include "api_layers_lib.h"   // [openxr] block_listed_layers: implicit OpenXR layers known to break the picture off in this process (shared/api_layers.h)
 #include "hset_panel.h"   // the in-headset settings panel ([openxr] headset_settings): vr/xr_headset_settings.h
+#include "weight_wire.h"   // [weight] weapon_grip_no_chord: a grip on the weapon does not arm the settings panel's chord
 #include "hset_life.h"
 #include "low_hp_game.h"   // its low-life pages show the vignette as a preview (lowhp::SetPreview)
 #include "hset_paint.h"
@@ -68,10 +79,13 @@ int D2rvrHoverSpheres(float (*out)[8], int max);
 #include "calibration.h"
 #include "first_start_wire.h"   // the first-start guide asks the settings panel for its Guide page ([onboarding], vr/first_start.cpp)
 #include "haptics.h"
+#include "hand_inventory.h"   // [openxr] hand_inventory: the inventory's panel on the left hand (where it hangs)
 #include "haptic_stop.h"   // [openxr] haptics_stop: each pulse stopped by an explicit call when its time is up (a thread of its own)
 #include "anchor_gate.h"   // [openxr] menus_wait_tracking: the flat picture and the menu panel placed only with the head tracked
 #include "frame_trace.h"   // [debug] frame_trace: what the runtime's haptic call costs a pair
 #include "laser_tooltip.h"
+#include "laser_grip_tap.h"   // [openxr] laser_grip_tap: a grip the laser took, tapped, is the menu's bumper (the tabbed menu's page)
+#include "laser_reach.h"      // the laser's point on the picture -> the window's pixel; vrcam keeps the window on its monitor ([openxr] laser_fit_window)
 #include "render_resolution.h"
 #include "hset_ray.h"   // vectors, a ray against a panel, the pad values, the release gate: for any panel hung in the headset
 #include "hset_view.h"   // the settings' view buttons F1 - F4: the controller's own view path
@@ -82,11 +96,14 @@ int D2rvrHoverSpheres(float (*out)[8], int max);
 #include "xr_stick_check.h"   // is the thumbstick bound by the runtime? (the report of 2026-10-18: SteamVR kept a binding saved for the program)
 #include "menu_zoom.h"   // [openxr] menu_zoom: the right grip + the right stick bring a game panel nearer / farther (MenuZoomPre / Post)
 #include "ini_txn.h"     // ... and its distance written to [screen] menu_distance_m
+#include "map_laser.h"   // [hud] map_click_big: the right laser on the map in the hand, a click makes it big (pure, tested)
+#include "map_turn.h"   // [hud] map_top_down / map_rotate / map_compass: the map in the hand from above, turned with the look, a compass over it (pure, tested)
 #include "hand_vitals_wire.h"   // [hud] hand_vitals: life and mana on the hand when the palm turns to the face (vr/xr_hand_vitals.h is its layer)
 #include "thrust_debug_wire.h"   // [debug] thrust_debug: the thrust's readout over the weapon hand (vr/xr_thrust_debug.h is its layer)
 #include "wrist_status_wire.h"   // [hud] wrist_status: companions and effects over a wrist turned to the eyes (vr/xr_wrist_status.h is its two layers)
 
-namespace gamestate { void SetStickBits(uint32_t bits); }   // the thumbstick check's verdict for D2R VR Settings (vr/gamestate.cpp, the state block)
+namespace gamestate { void SetStickBits(uint32_t bits); void SetMapBig(bool big); }   // the thumbstick check's verdict for D2R VR Settings (vr/gamestate.cpp, the state block); [hud] map_click_big
+namespace gamestate { int CursorHeld(); bool AutoMapOpen(); }   // [openxr] hand_inventory: 1 an item on the game's cursor, 0 none, -1 not known (vr/gamestate.cpp)
 
 namespace xr {
 void GuardSet();
@@ -110,6 +127,11 @@ struct Cfg {
     bool stage = false;       // space=stage: the room's floor, else LOCAL (the head at the start)
     bool fovCrop = true;      // fov_crop: each eye's fov narrowed to the window's aspect (sharper, black above and below)
     bool symmetric = true;    // each eye's fov made as wide to the left as to the right (symmetric_fov)
+    bool fovOverride = false;   // fov_override: each eye drawn and submitted whole with the angles set by hand (fov_outer / inner / up / down) - vr/eye_fov.h HandAngles
+    eyefov::HandAngles hand;
+    int runtimeFovMode = 1;   // runtime_fov 0 / 1 / 2 (below); runtimeFov = 1
+    bool runtimeFov = true;   // runtime_fov (on): each eye drawn and submitted exactly with the runtime's own fov - symmetric_fov and fov_crop then do nothing (vr/eye_fov.h)
+    bool blockLayers = true;  // block_listed_layers: the implicit OpenXR layers on blocked_layers switched off in this process at a session's start, runtime_fov off (shared/api_layers.h)
     float ipdFallbackM = 0.064f;   // ipd_fallback_mm: the gap given to two views the runtime located in one place (0 = none)
     bool ipdAuto = true;           // ipd_auto: the eye distance from the runtime's view poses (1), or the player's own number (0) - vr/eye_gap.h
     float ipdManualM = 0.063f;     // ipd_mm: the player's eye distance, metres (taken when ipd_auto is 0), live
@@ -129,27 +151,45 @@ struct Cfg {
     int turnKeepOwn = turnwarp::kKeepDefault;   // [stereo] turns_keep_own: the eye made keeps its own picture where it shows the same surface (turn_math.h KeepOwn)
     float turnKeepGap = turnwarp::kKeepGapPx, turnKeepReach = turnwarp::kKeepReachPx;          // turns_keep_gap, turns_keep_reach: near things, a 4096-wide eye's pixels
     float turnEffectsLevel = turnwarp::kEffectsLevel, turnEffectsReach = turnwarp::kEffectsReachPx;   // turns_effects_level, turns_effects_reach
+    bool turnSharp = true, turnFill = true, turnRims = true;   // [stereo] turns_sharp, turns_fill, turns_rims (turn_warp.h Gpu::Sharpen, Fill, Rims)
     bool frameProfile = true; // frame_profile: Steam Frame's controllers in their own layout when the runtime offers it (vr/xr_profiles.h); taken at a session start
     bool indexGripForce = false;   // index_grip_force: an Index hand's grip is how hard it squeezes (squeeze/force), not the fingers round the handle
     bool menusWaitTracking = true;   // menus_wait_tracking: the flat picture / menu panel placed only once the head is tracked, again after a focus loss (vr/anchor_gate.h)
     bool bareHands = false;   // bare_hands: a hand without a controller (the runtime's hand tracking) works as one; 0: it presses and places nothing
+    int handTrackers = 2;     // hand_trackers: 2 = none on Meta's runtime, 1 = wherever the runtime has hand tracking (0.175), 0 = never (vr/hand_trackers.h); taken at a session start
+    int handSpace = 2;        // hand_space: 2 = on Meta's runtime a grip with no whole pose in the room is looked for in LOCAL / by the aim, 1 = on any runtime, 0 = never (vr/hand_space.h); live
     float handHoldMs = 1000.0f;   // hand_hold_ms: a controller that loses its place this long is held where it was by the head
     float brightness = 1.0f;  // brightness: everything in the headset times this (the runtime's colour scale), 1 = as drawn
     bool laser = false;       // laser: a controller pointing at the flat picture's menus is the mouse (docs/plan_laser_menus.md)
     int laserHand = 1;        // laser_hand: 0 left, 1 right; the other hand's trigger and grip are Ctrl and Shift
     bool laserTooltips = false;   // laser_tooltips: under the laser the game's item tooltip shows at once, with its comparison (vr/laser_tooltip.h)
+    bool laserGripTap = true;     // laser_grip_tap: a grip the laser took, tapped over a menu, is the game's bumper - the tabbed menu's page (vr/laser_grip_tap.h)
     bool pointer3d = true;    // pointer_3d: the game's mouse pointer drawn on F1's and F3's ground in 3D (vr/pointer3d.h); clicks and the mouse are not touched
     bool views3d = true;      // views_3d: F1 (a window of the room onto the game) and F3 (the diorama in the room) drawn with the runtime's eyes (vr/views3d.h); 0 = the flat picture
+    bool mapTopDown = false;  // [hud] map_top_down: the map in the hand (F4) seen from straight above, rooms square (vr/map_turn.h); live
+    bool mapRotate = false;   // [hud] map_rotate: ... and turned so the way you look is up (from above too); live
+    bool mapCompass = false;  // [hud] map_compass: a compass strip over the map in the hand (F4); live
+    bool mapBigOnHand = false;  // [hud] map_big_on_hand: the big map held on the LEFT hand like the inventory ([openxr] hand_inventory's place and width), a button to the front; live
+    bool mapBesideInv = false;  // [hud] map_beside_inventory: while the inventory hangs on the left hand, the map in that hand beside it (not under it); live
+    bool mapBigFollow = false;  // [hud] map_big_follow: the big map in front kept in the room, coming round after the gaze lazily, its height fixed (vr/map_laser.h Follow); live
+    bool mapBigGrab = false;    // [hud] map_big_grab: the right laser + grip drags the big map in front, the stick nearer / farther; kept in map_big_dist_m / side_deg / up_m; live
+    float bigDistM = 1.3f, bigSideDeg = 0.0f, bigUpM = -0.1f;   // [hud] map_big_dist_m, map_big_side_deg, map_big_up_m: where it was let go, relative to the gaze
+    bool mapClickBig = false; // [hud] map_click_big: the right laser on the map in the hand, a click makes it the game's big map in front (vr/map_laser.h); live
     bool menu3d = true;       // menu_3d: a menu in F4 as a panel of its own, the world in stereo behind it (HangPanel); on since tested (2026-10-13)
     bool menuZoom = true;     // menu_zoom: the right grip + the right stick bring that panel nearer / farther, written to [screen] menu_distance_m (vr/menu_zoom.h)
     float menuZoomSpeed = menuzoom::kSpeedDefault;   // menu_zoom_speed_mps: metres a second at the stick's full travel
-    bool headsetSettings = false;   // headset_settings: a settings panel in the headset, opened with both grips squeezed and a thumbstick click (vr/xr_headset_settings.h)
+    bool handInv = false;     // hand_inventory: away from town the inventory's panel on the left hand, the left stick walking on (vr/hand_inventory.h)
+    bool handInvFront = false;   // hand_inventory_front: the button beside it last put it in front, full size (remembered, written by the button)
+    float handInvWidthM = handinv::kWidthDefault;   // hand_inventory_width_m: that panel's width
+    bool headsetSettings = false;   // headset_settings: a settings panel in the headset, opened with the long press of the right stick click (vr/xr_headset_settings.h)
+    bool twoGripChord = false;      // [debug] settings_two_grip_chord: the old way in as well - both grips squeezed, then a thumbstick click (off: two grips held mean nothing)
     bool runesDraw = false;   // runes_draw: BodyWalk's gesture runes and the hand's trail drawn in the headset, F4 only (vr/xr_runes.h)
     bool haptics = false;     // haptics: pulses in the controllers (vr/haptics.cpp; the output action is made either way)
     float hapticsScale = 1.0f;   // haptics_scale: their strength times this
     bool hapticsHands = true; // haptics_hand_actions: a vibration action of its own for each hand, no hand filter (taken at a session start)
     bool hapticsStop = true;  // haptics_stop: each pulse stopped by xrStopHapticFeedback when its time is up (live)
     rendersize::Pick vrPick;  // [render] vr_resolution_px / vr_resolution: the render size the game is given (render_size.h); Desktop = the window's own
+    bool menuWide = false;    // [render] menu_wide: the game's own menus drawn 16:9 (vr_resolution.h MenuWide), live
 };
 Cfg g_cfg;
 // [render] vr_resolution: what the runtime holds per eye (both eyes' limits and the system's swapchain limit), taken when
@@ -185,9 +225,47 @@ void WriteSessionNote(const wchar_t* text) {
     if (wcscmp(had, text ? text : L"") == 0) return;
     WritePrivateProfileStringW(L"session", L"note", text && text[0] ? text : nullptr, g_headsetPath);
 }
+// [openxr] block_listed_layers: the implicit OpenXR layers this session found (names, comma-separated) - the listed ones turned off, the listed ones
+// loading in, and the others - for D2R VR Settings > Status: [session] layers_off / layers_listed_in / layers_in in the same file; empty = deleted.
+void WriteLayersNote(const std::string& off, const std::string& listedIn, const std::string& in) {
+    if (!g_headsetPath[0]) return;
+    auto put = [](const wchar_t* key, const std::string& v) {
+        wchar_t w[512] = L"", had[512] = L"";
+        MultiByteToWideChar(CP_UTF8, 0, v.c_str(), -1, w, 512);
+        GetPrivateProfileStringW(L"session", key, L"", had, 512, g_headsetPath);
+        if (wcscmp(had, w) != 0) WritePrivateProfileStringW(L"session", key, w[0] ? w : nullptr, g_headsetPath);
+    };
+    put(L"layers_off", off);
+    put(L"layers_listed_in", listedIn);
+    put(L"layers_in", in);
+}
 // The eye distance the runtime measured (how far apart xrLocateViews' two poses are, before anything of ours), kept for D2R VR Settings to show
 // beside the slider: [headset] ipd_mm in d2r_vr_headset.ini, millimetres with one decimal; 0 = the runtime locates both eyes in one place (it
 // reports no distance). Written when it moved by 0.3 mm, at most every 2 s (a runtime that follows a headset's IPD wheel moves it in steps).
+// [openxr] fov_override: the runtime's own angles of the left eye ([headset] fov_outer / fov_inner / fov_up / fov_down in d2r_vr_headset.ini, degrees with
+// two decimals, as the sliders), for D2R VR Settings to show beside the sliders and to copy into them. Written when one moved by 0.01 deg, at most every 2 s.
+void NoteRuntimeFov(const XrFovf& left) {
+    static eyefov::HandAngles written{-1.0f, -1.0f, -1.0f, -1.0f};
+    static ULONGLONG at = 0;
+    const eyefov::HandAngles h = eyefov::ToHand(left.angleLeft, left.angleRight, left.angleUp, left.angleDown);
+    const ULONGLONG now = GetTickCount64();
+    auto moved = [](float a, float b) { return std::fabs(a - b) >= 0.01f; };
+    if (!g_headsetPath[0] || !std::isfinite(h.outer + h.inner + h.up + h.down)) return;
+    if (!(moved(h.outer, written.outer) || moved(h.inner, written.inner) || moved(h.up, written.up) || moved(h.down, written.down)) ||
+        (written.outer >= 0.0f && now - at < 2000))
+        return;
+    written = h;
+    at = now;
+    auto put = [](const wchar_t* key, float v) {
+        wchar_t s[24];
+        swprintf_s(s, L"%.2f", v);
+        WritePrivateProfileStringW(L"headset", key, s, g_headsetPath);
+    };
+    put(L"fov_outer", h.outer);
+    put(L"fov_inner", h.inner);
+    put(L"fov_up", h.up);
+    put(L"fov_down", h.down);
+}
 void NoteMeasuredIpd(float gapM) {
     static float written = -1.0f;
     static ULONGLONG at = 0;
@@ -226,6 +304,18 @@ void TellIpd(const eyegap::Choice& pick, float measuredM) {
 // and what the pair is drawn and submitted with (vr/eye_frame.h) - the first thing an "eyes crossed, the centre stretched" report needs: are the
 // headset's displays canted. Called before the canted frame replaces the turns: `q` are the runtime's own.
 bool g_eyesTold = false;
+bool g_subTold = false;   // [openxr] runtime_fov: the part of each picture submitted, told once a session (CloseFrame)
+// [openxr] frame_generation: this session's instance runs through OFXR Bridge (StartSession).
+bool g_bridgeIn = false;
+// [openxr] runtime_fov as it is drawn now: off while OFXR Bridge is in. With the bridge making frames the headset went black - with each
+// eye's part submitted, and again with the whole centred picture and the centred fov (2026-10-25; the cause not found: the bridge's own
+// log was off, and its source checks the submitted fov only for being finite) - while the old symmetric_fov / fov_crop path is the one it
+// was measured working with (50-60 -> 80-90 frames a second). So the eyes are drawn and submitted that way then (OpenFrame tells it).
+bool RuntimeFovNow() { return g_cfg.runtimeFov && !g_bridgeIn; }
+// Each eye drawn and submitted whole with exactly its own angles, off-axis (OpenFrame): [openxr] fov_override (the angles set by hand) or
+// runtime_fov=2 (the runtime's own - what fov_override with the headset's own numbers did for the Apple Vision Pro on ALVR, 2026-10-26).
+bool ExactEyes() { return g_cfg.fovOverride || g_cfg.runtimeFovMode == 2; }
+bool g_routeTold = false;   // which runtime_fov route is in force, told once a session (OpenFrame)
 void TellEyes(const XrView views[2], const eyeframe::Quat q[2], const eyeframe::Frame& fr) {
     if (g_eyesTold) return;
     g_eyesTold = true;
@@ -235,7 +325,8 @@ void TellEyes(const XrView views[2], const eyeframe::Quat q[2], const eyeframe::
     const XrFovf &fl = views[0].fov, &fr2 = views[1].fov;
     LogF("vrcam: openxr - eyes %.1f mm apart, %.2f deg between their views; left fov %.1f %.1f %.1f %.1f, right %.1f %.1f %.1f %.1f (left right up down, deg)%s",
          gap * 1000.0f, fr.cantRad * k, fl.angleLeft * k, fl.angleRight * k, fl.angleUp * k, fl.angleDown * k, fr2.angleLeft * k, fr2.angleRight * k,
-         fr2.angleUp * k, fr2.angleDown * k, g_cfg.fovCrop ? " - cropped to the window's aspect" : "");
+         fr2.angleUp * k, fr2.angleDown * k,
+         RuntimeFovNow() ? " - submitted exactly so ([openxr] runtime_fov=1)" : g_cfg.fovCrop ? " - cropped to the window's aspect" : "");
     const eyeframe::Quat head = eyeframe::Mean(q[0], q[1]);
     float yl, pl, rl, yr, pr, rr;
     eyeframe::Relative(head, q[0], &yl, &pl, &rl);
@@ -300,12 +391,23 @@ struct Chain {
     DXGI_FORMAT bbFmt = DXGI_FORMAT_UNKNOWN;   // the back buffer's it was made for
     int64_t fmt = 0;
     bool bad = false;   // no format the back buffer copies into: not tried again for this size
+    uint32_t sx = 0, sy = 0;   // [openxr] runtime_fov's crop: where in the back buffer the chain's box starts (CopyInto copies w x h from there)
+    uint32_t pw = 0, ph = 0;   // ... and the whole picture's size (= w, h without a crop): eyes by turns keeps and makes whole pictures
 };
 Chain g_eyeChain[2], g_quadChain;
+// [openxr] runtime_fov, both eyes from one game frame: each eye's swapchain holds only its own view's box of the picture (CopyEye) and is
+// submitted whole with that box's fov - exactly the headset's own view. A runtime or streamer that ignores the submitted fov and imageRect
+// and lays each eye's image over the headset's own projection (ALVR into SteamVR: its driver reads only the texture, its bounds and the
+// head's pose - an Apple Vision Pro's world stayed crossed with the box submitted as an imageRect, 0.181) then shows it right.
+bool g_cropped[2] = {};    // this pair's eye was copied cropped
+XrFovf g_cropFov[2] = {};  // ... with this fov (its box's)
+bool g_cropTold = false;   // told once a session
 // The mouse pointer's image over the flat picture (PointerQuad), and the game's window it is in.
 HWND g_wnd = nullptr;
+// sc: one of g_ptrImages' (the session's pointer images by what they show, vr/pointer_cache.h), not its own
 struct Pointer { HCURSOR shape = nullptr; XrSwapchain sc = XR_NULL_HANDLE; int n = 0, hotX = 0, hotY = 0; bool ok = false; };
 Pointer g_ptr;
+ptrcache::Cache<XrSwapchain> g_ptrImages;
 // The toolbar and the map hung in the room (HangHud): a swapchain each, and its layer.
 struct HudOut {
     XrSwapchain sc = XR_NULL_HANDLE;
@@ -318,6 +420,49 @@ HudOut g_hudOut[hud::kNativePieces];
 constexpr int kRtvs = 32;            // the render-target heap of these chains' images (g_rtvHeap) ...
 rtvslots::Slots<kRtvs> g_rtvSlots;   // ... its places: a chain takes one for each image and gives them back when it goes (vr/rtv_slots.h)
 HudOut g_plateOut;   // the monster's health bar hung over its head (HangPlate): a swapchain of its own, ONE size (plateworld::kChainW x kChainH), made once, kept to the session's end
+// [hud] map_compass (vr/map_turn.h, after bearstonem/d2r-pcvr's wrist compass): its strip and marker painted once into a static image,
+// two quads over the map in the hand showing parts of it (HangCompass); made again in a new session.
+XrSwapchain g_compassSc = XR_NULL_HANDLE;
+ID3D12Resource* g_compassUpload = nullptr;
+bool g_compassFailed = false;
+XrCompositionLayerQuad g_compassLayer[2] = {{XR_TYPE_COMPOSITION_LAYER_QUAD}, {XR_TYPE_COMPOSITION_LAYER_QUAD}};
+// [hud] map_click_big (vr/map_laser.h): the map in the hand as HangHud last hung it (in its space, the room's), the big map and its button
+// as HangBigMap last hung them (g_space), the click's state, the beam over them (MapLaserStep -> HangMapLaser), the big map's picture and
+// the button's two-state image.
+maplaser::Quad g_mapQuadRoom;
+ULONGLONG g_mapQuadAt = 0;
+maplaser::Quad g_bigQuad, g_bigButton;
+maplaser::Quad g_bigFrontBtn;   // [hud] map_big_on_hand: the button to the front / back on the hand (the inventory's), as HangBigMap hung it
+bool g_bigFront = false;        // ... pressed: the big map in front this time (each opening starts on the hand)
+// [hud] map_big_follow / map_big_grab (vr/map_laser.h Spot): the big map's spot in front, in g_space - set at its first frame in front,
+// then kept in the room (followed lazily, dragged); and whether the last frame hung it in front (where the grip may take it)
+maplaser::Spot g_bigSpot;
+double g_bigSpotUs = 0.0;
+bool g_bigInFront = false;
+struct BigGrab { bool on = false, claimed = false, was = false; float dist = 0.0f; maplaser::V3 offset; double atUs = 0.0; };
+BigGrab g_bigGrab;
+std::atomic<bool> g_placeSaving{false}, g_placeSaveWant{false};
+float g_placeSave[3] = {};   // dist, side (deg), up - written by RotateSaveRun's sibling PlaceSaveRun
+bool g_mapQuadInG = false;      // [hud] map_beside_inventory: the hand map was hung in g_space beside the inventory (not the room's)
+// [openxr] hand_inventory: the inventory's panel as HangPanel hung it on the left hand this frame (g_space), for the map beside it
+struct InvHung { XrPosef pose{}; XrExtent2Df size{}; double atUs = 0.0; };
+InvHung g_invHung;
+maplaser::Clicker g_mapClick;
+float g_bigYaw = 0.0f;
+XrVector3f g_bigEyes{};
+struct MapBeam { bool drawn = false, hit = false; XrVector3f from{}, dir{}, at{}; float len = 0.0f; XrQuaternionf surface{0.0f, 0.0f, 0.0f, 1.0f}; };
+MapBeam g_mapBeam;
+XrCompositionLayerQuad g_mapBeamLayer[2] = {{XR_TYPE_COMPOSITION_LAYER_QUAD}, {XR_TYPE_COMPOSITION_LAYER_QUAD}};
+XrCompositionLayerQuad g_bigLayer[2] = {{XR_TYPE_COMPOSITION_LAYER_QUAD}, {XR_TYPE_COMPOSITION_LAYER_QUAD}};
+XrSwapchain g_rotButtonSc = XR_NULL_HANDLE;
+ID3D12Resource* g_rotButtonUpload = nullptr;
+bool g_rotButtonFailed = false;
+std::atomic<int> g_rotateSaveWant{-1};   // [hud] map_rotate to write (0 / 1), -1 none
+std::atomic<bool> g_rotateSaving{false};
+HudOut g_bigTurnOut;  // [hud] map_click_big + map_rotate / map_top_down: the big map turned, a square of its own
+HudOut g_noticeOut;  // the quest / level-up notice's card (HangNotice): a swapchain at the notice's box's size, kept to the session's end
+noticecard::Card g_noticeCard;   // when the card comes and goes (draw thread)
+XrPosef g_noticePose{{0.0f, 0.0f, 0.0f, 1.0f}, {0.0f, 0.0f, 0.0f}};   // where it stands, set when it comes up
 // BodyWalk's gesture zones ticked "VR" (HangZones): one atlas swapchain, a ball in a
 // cell of it for each zone, and a quad layer each.
 constexpr uint32_t kZoneCell = 256, kZoneCols = 4, kZonesMax = 16;
@@ -336,13 +481,15 @@ bool g_viewsOk = false;
 // Each eye's last picture as handed to the runtime: the pose and fov it was drawn with, and its
 // swapchain (whose last released image still holds it). Eyes by turns hands the eye not drawn this
 // frame in again with these - the runtime turns it to the head as it is (2026-10-11).
-struct LastEye { XrPosef pose; XrFovf fov; XrSwapchain sc; bool ok; };
+// win: [openxr] runtime_fov - the part of the picture that is the runtime's own view, submitted alone (vr/eye_fov.h; whole otherwise).
+struct LastEye { XrPosef pose; XrFovf fov; XrSwapchain sc; bool ok; eyefov::Window win; };
 LastEye g_lastEye[2] = {};
 // A swapchain image acquired whose wait ran out: waited for again next time (NextImage).
 struct PendingImage { XrSwapchain sc; uint32_t idx; };
 PendingImage g_pendingImg[16];
 bool g_copied[2] = {};
 XrFovf g_fovUsed[2] = {};
+eyefov::Window g_winUsed[2];   // [openxr] runtime_fov: where the runtime's own view lies in each eye's picture (OpenFrame); whole = the picture
 // [openxr] views_3d (vr/views3d.h)
 int g_viewsMode = 0;      // what vrcam asked the next pair to be (xr.h SetViewsMode): kViewsHead, kViewsWindow, kViewsRoom
 PointerAtFn g_pointerAt = nullptr;   // vrcam's: the ground under the game's mouse in F1 / F3 (xr.h)
@@ -398,12 +545,44 @@ std::atomic<bool> g_laserWanted{false};
 // [openxr] headset_settings: the settings panel is up (xr_headset_settings.h): the laser stands down, the hands are the panel's.
 std::atomic<bool> g_hsOpen{false};
 wchar_t g_iniPath[MAX_PATH] = L"";   // d2r_vr.ini, as LoadSettings was given it
-struct FlatShown { XrPosef pose; XrExtent2Df size; bool ok; };
+// crop: what part of the window the quad shows, as fractions of it (l, t, r, b) - all of it but for the inventory cut out on the hand
+// ([openxr] hand_inventory), where the laser's point on the quad is the cut's place in the window.
+struct FlatShown { XrPosef pose; XrExtent2Df size; bool ok; float crop[4] = {0.0f, 0.0f, 1.0f, 1.0f}; };
 FlatShown g_flatShown{};
 // [openxr] menu_3d: where a menu's panel hangs in a pair's frame (HangPanel) - the flat picture's
 // rules, kept apart from it; anchored again at a recentre.
 struct PanelPlace { bool anchored = false; float yaw = 0.0f; XrVector3f pos{}; double shownUs = 0.0, offSince = 0.0; bool told = false; };
 PanelPlace g_panelPlace;
+// [openxr] hand_inventory: vrcam says the inventory hangs on the left hand now (SetHandInventory: in force, vr/hand_inventory.h). HangPanel
+// puts the panel there; the laser is the right hand's and the left stick never parks it.
+std::atomic<bool> g_handInvUp{false};
+std::atomic<bool> g_handInvHung{false};   // the last HangPanel put it on the hand (cleared when vrcam takes it off: SetHandInventory(false))
+struct HandHeld { XrPosef pose{}; XrExtent2Df size{}; double atUs = 0.0; };
+HandHeld g_handHeld;   // its last place on the hand: kept a second while the left controller is not located (a blink of tracking)
+uint32_t g_handTold = 0;   // the log's lines of it (at most 40)
+std::atomic<bool> g_handFront{false};   // the button beside it put it in front, full size: so it opens until the button again ([openxr] hand_inventory_front)
+std::atomic<int> g_frontSaveWant{-1};     // the choice to write to the ini (-1 none), on a thread of its own (FrontSave)
+std::atomic<bool> g_frontSaving{false};
+std::atomic<bool> g_cutReset{false};    // SetHandInventory(false): the cut is found afresh the next time (the draw thread resets it)
+// The inventory window cut out of the interface (handinv::Biggest, the Evil Islands way): a row of every grid cell's height copied from the
+// interface's texture into a buffer we read, a second apart, on our list on the game's queue (where the texture is drawn from); the cells'
+// transmittance read when the copy is done, frames later - never waited for.
+struct HandCut {
+    ID3D12Resource* rb = nullptr;
+    UINT64 bytes = 0, doneAt = 0;
+    uint32_t w = 0, h = 0;
+    int gw = 0, gh = 0;
+    UINT pitch = 0, stride = 0;
+    bool pending = false;
+    double askedUs = 0.0, steppedUs = 0.0;
+    handinv::Steady steady;
+    handinv::Box box;
+    uint32_t told = 0;
+};
+HandCut g_cut;
+struct BtnShown { XrPosef pose{}; float side = 0.0f; bool ok = false; };
+BtnShown g_btnShown;   // the button as the last frame hung it (the laser's second surface)
+XrCompositionLayerQuad g_btnLayer{XR_TYPE_COMPOSITION_LAYER_QUAD};
 
 // The body the camera is held to (lean_m): where the head is over the floor, as far as a
 // lean goes - the head may lean round it, and walking off in the room drags it along
@@ -656,6 +835,7 @@ bool g_actionsOk = false;
 bool g_inSent = false;     // XrInput written this session: its end is told too
 D2RVR_XrInput g_inNow{};   // the last frame's, for vrcam's own arms
 bool g_menuIsOptions = false;   // PS VR2 under the Touch profile: the left menu action is the RIGHT controller's Options button (told in the log; nothing is moved)
+char g_runtimeName[XR_MAX_RUNTIME_NAME_SIZE] = {};   // the runtime's own name ("Oculus", "SteamVR/OpenXR"): [openxr] hand_trackers
 char g_systemName[XR_MAX_SYSTEM_NAME_SIZE] = {};   // the runtime's name for the headset ("SteamVR/OpenXR : playstation_vr2"): the log's reading of a controller that shows as another
 
 XrPath Path(const char* s) {
@@ -796,7 +976,12 @@ bool MakeActions() {
     LogF("vrcam: openxr - poses for BodyWalk in the %s space", g_roomSpace ? "stage" : "local (no stage)");
     if (g_xrCreateHandTracker && g_xrLocateHandJoints && !g_handSourceExt)
         Log("vrcam: openxr - bare hands: the runtime cannot tell them from controllers (no XR_EXT_hand_tracking_data_source) - taken as controllers");
-    if (g_handSourceExt && g_xrCreateHandTracker && g_xrLocateHandJoints) {
+    const handtrackers::Why trackers = handtrackers::Decide(handtrackers::ModeOf(g_cfg.handTrackers), g_runtimeName);
+    if (g_handSourceExt && g_xrCreateHandTracker && g_xrLocateHandJoints && trackers != handtrackers::Why::Made)
+        LogF("vrcam: openxr - bare hands: no hand trackers made (%s) - each hand is taken as a controller", trackers == handtrackers::Why::Off
+                 ? "[openxr] hand_trackers=0"
+                 : "Meta's runtime tracks hands OR controllers, and its hand tracking took the controllers' places away: [openxr] hand_trackers=2; 1 = made");
+    if (g_handSourceExt && g_xrCreateHandTracker && g_xrLocateHandJoints && trackers == handtrackers::Why::Made) {
         for (int h = 0; h < 2; ++h) {
             XrHandTrackerCreateInfoEXT hi{XR_TYPE_HAND_TRACKER_CREATE_INFO_EXT};
             hi.hand = h ? XR_HAND_RIGHT_EXT : XR_HAND_LEFT_EXT;
@@ -822,14 +1007,14 @@ bool MakeActions() {
 // A located pose, only as far as the runtime vouches for it (2026-10-10): its turn finite and of
 // unit length (made exactly so), its place only with POSITION_VALID - a hand needs both (else
 // none); the head may be a turn alone (valid 2), held at `held`, where it was last located.
-struct LocateSeen { XrResult r; XrSpaceLocationFlags flags; };
+struct LocateSeen { XrResult r; XrSpaceLocationFlags flags; XrPosef pose; };
 void PoseOut(XrSpace space, D2RVR_XrPose* out, float* held = nullptr, LocateSeen* seen = nullptr) {
     *out = {};
-    if (seen) *seen = {XR_ERROR_HANDLE_INVALID, 0};
+    if (seen) *seen = {XR_ERROR_HANDLE_INVALID, 0, {}};
     if (!space) return;
     XrSpaceLocation l{XR_TYPE_SPACE_LOCATION};
     const XrResult lr = xrLocateSpace(space, g_roomSpace ? g_roomSpace : g_space, g_fs.predictedDisplayTime, &l);
-    if (seen) *seen = {lr, XR_SUCCEEDED(lr) ? l.locationFlags : 0};
+    if (seen) *seen = {lr, XR_SUCCEEDED(lr) ? l.locationFlags : 0, l.pose};
     if (XR_FAILED(lr)) return;
     const bool rot = (l.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) != 0;
     const XrQuaternionf& q = l.pose.orientation;
@@ -1043,6 +1228,146 @@ void LogHandSeen(int h, const LocateSeen& ls, bool focused, bool active) {
          focused ? "focused" : "NOT focused", active ? "active" : "inactive", held, s.changes);
 }
 
+// [openxr] hand_space (vr/hand_space.h): a grip the room's locate gives no whole pose for (Quest 2 over Link, Oculus 1.115: P--r all the
+// run, the arms at the belt) is looked for in LOCAL, by the aim, or in the room's own numbers. Only where the rule is on (Meta's runtime by
+// default); a whole grip in the room is left exactly as PoseOut gave it.
+static_assert(XR_SPACE_LOCATION_ORIENTATION_VALID_BIT == handspace::kOriValid && XR_SPACE_LOCATION_POSITION_VALID_BIT == handspace::kPosValid &&
+                  XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT == handspace::kOriTracked && XR_SPACE_LOCATION_POSITION_TRACKED_BIT == handspace::kPosTracked,
+              "hand_space.h's bits are OpenXR's");
+handspace::Pose g_localInRoom;      // where LOCAL is in the room (STAGE): a pose located in LOCAL carried into the room
+bool g_localInRoomOk = false;       // located whole this session (the last good kept)
+handspace::Pose g_aimToGrip[2];     // each hand's grip in its aim's frame, learned in frames where both were whole
+bool g_aimToGripOk[2] = {};
+struct SpaceSaid { int source = -1; XrSpaceLocationFlags room = ~0ull, local = ~0ull, aim = ~0ull; uint32_t changes = 0; };
+SpaceSaid g_spaceSaid[2];
+
+handspace::Pose PoseOf(const XrPosef& p) {
+    handspace::Pose o;
+    o.q[0] = p.orientation.x; o.q[1] = p.orientation.y; o.q[2] = p.orientation.z; o.q[3] = p.orientation.w;
+    o.p[0] = p.position.x; o.p[1] = p.position.y; o.p[2] = p.position.z;
+    return o;
+}
+bool Usable(handspace::Pose& p) {   // a turn made unit length, a finite place
+    return handspace::Normalize(p.q) && std::isfinite(p.p[0]) && std::isfinite(p.p[1]) && std::isfinite(p.p[2]);
+}
+void PoseIn(const handspace::Pose& p, D2RVR_XrPose* out, float* held) {
+    memcpy(out->rot, p.q, sizeof out->rot);
+    memcpy(out->pos, p.p, sizeof out->pos);
+    out->valid = 1u;
+    if (held) memcpy(held, out->pos, sizeof out->pos);
+}
+// Where LOCAL is in the room, once a frame: LOCAL located in the room, or the room in LOCAL turned about. Both locates' results and
+// flags told on change (Quest 2, 0.184: "where LOCAL is in the room not known" for a whole run - the LOCAL fallback could not run).
+void FlagsText(XrSpaceLocationFlags f, char* s);
+void LocalInRoomStep() {
+    if (!g_roomSpace || !g_space) return;
+    static XrResult saidR[2] = {XR_SUCCESS, XR_SUCCESS};
+    static XrSpaceLocationFlags saidF[2] = {~0ull, ~0ull};
+    static uint32_t saidN = 0;
+    XrResult r[2] = {XR_ERROR_HANDLE_INVALID, XR_ERROR_HANDLE_INVALID};
+    XrSpaceLocationFlags fl[2] = {};
+    bool ok = false;
+    XrSpaceLocation l{XR_TYPE_SPACE_LOCATION};
+    r[0] = xrLocateSpace(g_space, g_roomSpace, g_fs.predictedDisplayTime, &l);
+    if (XR_SUCCEEDED(r[0])) fl[0] = l.locationFlags;
+    if (XR_SUCCEEDED(r[0]) && handspace::Whole(l.locationFlags)) {
+        handspace::Pose p = PoseOf(l.pose);
+        if (Usable(p)) { g_localInRoom = p; g_localInRoomOk = ok = true; }
+    }
+    if (!ok) {
+        l = {XR_TYPE_SPACE_LOCATION};
+        r[1] = xrLocateSpace(g_roomSpace, g_space, g_fs.predictedDisplayTime, &l);
+        if (XR_SUCCEEDED(r[1])) fl[1] = l.locationFlags;
+        if (XR_SUCCEEDED(r[1]) && handspace::Whole(l.locationFlags)) {
+            handspace::Pose p = PoseOf(l.pose);
+            if (Usable(p)) { g_localInRoom = handspace::Inverse(p); g_localInRoomOk = true; }
+        }
+    }
+    if (r[0] != saidR[0] || r[1] != saidR[1] || fl[0] != saidF[0] || fl[1] != saidF[1]) {
+        saidR[0] = r[0]; saidR[1] = r[1]; saidF[0] = fl[0]; saidF[1] = fl[1];
+        if (++saidN <= 100 || saidN % 50 == 0) {   // a flood: every 50th after the first 100
+            char a[5], b[5];
+            FlagsText(fl[0], a); FlagsText(fl[1], b);
+            LogF("vrcam: openxr - where LOCAL is in the room ([openxr] hand_space): LOCAL in STAGE locate %d %s, STAGE in LOCAL %s%d %s - %s (change %u)",
+                 (int)r[0], a, ok ? "(not needed) " : "", (int)r[1], b, g_localInRoomOk ? "known" : "not known", saidN);
+        }
+    }
+}
+// `space` located in LOCAL and carried into the room: its flags (0 = not located), the pose when whole
+XrSpaceLocationFlags LocatedLocal(XrSpace space, handspace::Pose* out, bool* ok) {
+    *ok = false;
+    if (!space || !g_localInRoomOk) return 0;
+    XrSpaceLocation l{XR_TYPE_SPACE_LOCATION};
+    if (XR_FAILED(xrLocateSpace(space, g_space, g_fs.predictedDisplayTime, &l))) return 0;
+    if (handspace::Whole(l.locationFlags)) {
+        *out = handspace::Then(g_localInRoom, PoseOf(l.pose));
+        *ok = Usable(*out);
+    }
+    return l.locationFlags;
+}
+void FlagsText(XrSpaceLocationFlags f, char* s) {   // as LogHandSeen writes them: P/p position valid/tracked, R/r orientation
+    s[0] = (f & XR_SPACE_LOCATION_POSITION_VALID_BIT) ? 'P' : '-';
+    s[1] = (f & XR_SPACE_LOCATION_POSITION_TRACKED_BIT) ? 'p' : '-';
+    s[2] = (f & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) ? 'R' : '-';
+    s[3] = (f & XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT) ? 'r' : '-';
+    s[4] = 0;
+}
+// This hand's grip (and aim) mended where the room's locate gave no whole pose; the source taken.
+handspace::Source MendHand(int h, D2RVR_XrHand& o, const LocateSeen& grip, const LocateSeen& aim) {
+    using namespace handspace;
+    // the aim: the room's, else LOCAL's carried into the room
+    Pose aimPose;
+    bool aimOk = false;
+    XrSpaceLocationFlags aimLocal = 0;
+    if (Whole(aim.flags)) { aimPose = PoseOf(aim.pose); aimOk = Usable(aimPose); }
+    if (!aimOk) {
+        aimLocal = LocatedLocal(g_aimSpace[h], &aimPose, &aimOk);
+        if (aimOk) PoseIn(aimPose, &o.aim, g_poseHeld[h][1]);
+    }
+    Facts f;
+    f.room = grip.flags;
+    f.localKnown = g_localInRoomOk;
+    f.aim = aimOk;
+    f.learned = g_aimToGripOk[h];
+    Pose local, repaired = PoseOf(grip.pose);
+    bool localOk = false;
+    if (!Whole(f.room)) {
+        f.local = LocatedLocal(g_gripSpace[h], &local, &localOk);
+        if (!localOk) f.local &= ~(XrSpaceLocationFlags)(kOriValid | kPosValid);   // whole flags with numbers that are none: not whole
+        f.roomNumbers = Usable(repaired);
+        if (f.roomNumbers && aimOk) f.repairedNearAim = Distance(repaired.p, aimPose.p) <= kNearM;
+    }
+    const Source s = Pick(f);
+    switch (s) {
+        case Source::Local: PoseIn(local, &o.grip, g_poseHeld[h][0]); break;
+        case Source::AimLearned: PoseIn(Then(aimPose, g_aimToGrip[h]), &o.grip, g_poseHeld[h][0]); break;
+        case Source::Repaired: PoseIn(repaired, &o.grip, g_poseHeld[h][0]); break;
+        case Source::AimRaw: PoseIn(aimPose, &o.grip, g_poseHeld[h][0]); break;
+        default: break;   // Room, AsBefore: as PoseOut gave it
+    }
+    if ((s == Source::Room || s == Source::Local) && o.grip.valid == 1 && aimOk) {   // the grip's offset from the aim, from two whole poses of one controller
+        Pose g;
+        memcpy(g.q, o.grip.rot, sizeof g.q);
+        memcpy(g.p, o.grip.pos, sizeof g.p);
+        if (Distance(g.p, aimPose.p) <= kNearM) { g_aimToGrip[h] = Relative(aimPose, g); g_aimToGripOk[h] = true; }
+    }
+    SpaceSaid& said = g_spaceSaid[h];
+    const XrSpaceLocationFlags aimFlags = Whole(aim.flags) ? aim.flags : aimLocal;
+    if (said.source == -1 && s == Source::Room) said.source = (int)s;   // a whole grip from the start: nothing to say
+    if ((int)s != said.source || f.room != said.room || f.local != said.local || aimFlags != said.aim) {
+        said.source = (int)s; said.room = f.room; said.local = f.local; said.aim = aimFlags;
+        if (++said.changes <= 400 || said.changes % 50 == 0) {   // a flood: every 50th after the first 400
+            char r[5], l[24], a[5];
+            FlagsText(f.room, r); FlagsText(aimFlags, a);
+            if (Whole(f.room)) strcpy_s(l, "not looked at"); else FlagsText(f.local, l);   // (a whole grip in the room: LOCAL is never located)
+            LogF("vrcam: openxr - the %s grip ([openxr] hand_space): in the room %s, in LOCAL %s%s, the aim %s (%s) - the hand from %s (change %u)",
+                 h ? "right" : "left", r, l, g_localInRoomOk ? "" : " (where LOCAL is in the room not known)", a,
+                 Whole(aim.flags) ? "in the room" : "in LOCAL", Name(s), said.changes);
+        }
+    }
+    return s;
+}
+
 // A press held through a loss of the input focus is not a press when the focus returns (vr/focus_gate.h): with the
 // focus away every action reads let go, and the first live frame would hand BodyWalk a trigger still down - often the
 // very click that closed the dashboard - as a fresh press: an attack at whatever the hand points at. The grip is a
@@ -1052,6 +1377,7 @@ uint32_t g_gateTimes = 0;
 constexpr uint32_t kGatedButtons = BW_LINK_XRB_TRIGGER | BW_LINK_XRB_PRIMARY | BW_LINK_XRB_SECONDARY | BW_LINK_XRB_STICK | BW_LINK_XRB_MENU;
 
 void LaserStep(D2RVR_XrInput& in, bool focused);   // the laser, below
+void MapLaserStep(D2RVR_XrInput& in, bool focused);   // [hud] map_click_big: the right laser on the map in the hand, below
 void LaserTeardown();
 void WheelTeardown();   // the skill wheel's picture, below (xr_skill_wheel.h)
 void RunesTeardown();   // the gesture runes' atlas, below (xr_runes.h)
@@ -1126,6 +1452,34 @@ void ZoomSave(float m) {
     if (!g_zoomSaving.exchange(true)) std::thread(ZoomSaveRun).detach();
 }
 
+// [openxr] hand_inventory_front: the button's choice (in front, full size / on the hand) written to the ini, as menu_zoom writes its distance -
+// on a thread of its own (shared/ini_txn), read again if someone wrote between; while it is being written a reload keeps the choice made.
+void FrontSaveRun() {
+    for (;;) {
+        const int want = g_frontSaveWant.exchange(-1);
+        if (want < 0) {
+            g_frontSaving.store(false);
+            if (g_frontSaveWant.load() >= 0 && !g_frontSaving.exchange(true)) continue;   // one came in as this one ended
+            return;
+        }
+        const wchar_t* v = want ? L"1" : L"0";
+        ini::Result r = ini::Result::Failed;
+        std::string why;
+        for (int attempt = 0; attempt < 2 && r != ini::Result::Saved; ++attempt) {
+            const ini::Text now = ini::Read(g_iniPath, L"openxr", L"hand_inventory_front");
+            const ini::Change c{L"openxr", L"hand_inventory_front", L"0", now.present ? now.text : L"0", v};
+            r = ini::Commit(g_iniPath, {c}, nullptr, &why);
+        }
+        if (r == ini::Result::Saved) LogF("vrcam: openxr - [openxr] hand_inventory_front=%d written: the inventory opens %s from now on", want, want ? "in front, full size" : "on the left hand");
+        else LogF("vrcam: openxr - [openxr] hand_inventory_front=%d NOT written (%s: %s) - kept for this game only", want, r == ini::Result::Conflict ? "changed meanwhile" : "failed",
+                  why.c_str());
+    }
+}
+void FrontSave(bool front) {
+    g_frontSaveWant.store(front ? 1 : 0);
+    if (!g_frontSaving.exchange(true)) std::thread(FrontSaveRun).detach();
+}
+
 // Before the laser: the right hand's raw controls; the stick's Y and a trigger squeezed while zooming are taken out of `in`.
 void MenuZoomPre(D2RVR_XrInput& in, bool focused) {
     const double t = UsNow();
@@ -1133,7 +1487,8 @@ void MenuZoomPre(D2RVR_XrInput& in, bool focused) {
     g_zoomStepUs = t;
     D2RVR_XrHand& o = in.hand[1];
     menuzoom::In z;
-    z.applies = g_cfg.menuZoom && focused && viewgate::F4() && g_kind == kPair && g_cfg.menu3d && g_flatShown.ok && g_panelOpen.load() && !g_hsOpen.load();
+    z.applies = g_cfg.menuZoom && focused && viewgate::F4() && g_kind == kPair && g_cfg.menu3d && g_flatShown.ok && g_panelOpen.load() && !g_hsOpen.load() &&
+                !HandInventoryHung();   // ([openxr] hand_inventory: the panel on the hand is as near as the hand holds it)
     z.grip = (o.buttons & BW_LINK_XRB_SQUEEZE) ? 1.0f : o.squeeze;
     z.trigger = o.trigger;
     z.triggerClick = (o.buttons & BW_LINK_XRB_TRIGGER) != 0;
@@ -1186,14 +1541,17 @@ void Publish(bool focused) {
     in.focused = focused ? 1u : 0u;
     in.displayTime = g_fs.predictedDisplayTime;
     PoseOut(g_viewSpace, &in.head, g_headHeld);
+    const bool mend = g_roomSpace && handspace::On(handspace::ModeOf(g_cfg.handSpace), g_runtimeName);   // [openxr] hand_space
+    if (mend) LocalInRoomStep();
     bool located[2] = {};   // a controller really located this frame (not a place held by the head): the T-pose measurement
     for (int h = 0; h < 2; ++h) {
         D2RVR_XrHand& o = in.hand[h];
         bool act = false;
-        LocateSeen gripSeen{};
+        LocateSeen gripSeen{}, aimSeen{};
         PoseOut(g_gripSpace[h], &o.grip, g_poseHeld[h][0], &gripSeen);
-        located[h] = o.grip.valid == 1;
-        PoseOut(g_aimSpace[h], &o.aim, g_poseHeld[h][1]);
+        PoseOut(g_aimSpace[h], &o.aim, g_poseHeld[h][1], &aimSeen);
+        const handspace::Source from = mend ? MendHand(h, o, gripSeen, aimSeen) : handspace::Source::Room;
+        located[h] = o.grip.valid == 1 && from != handspace::Source::AimRaw;   // (the pointer as it is is no place of the hand to measure by)
         HoldPose(o.grip, g_hold[h][0], in.head, focused);
         HoldPose(o.aim, g_hold[h][1], in.head, focused);
         o.trigger = FloatOf(g_aTrigger, h, &act);
@@ -1281,6 +1639,7 @@ void Publish(bool focused) {
     FeedCalibration(in, located, focused);
     MenuZoomPre(in, focused);   // [openxr] menu_zoom: the right stick's Y while the right grip holds a game panel is the zoom's (before the laser parks for it)
     LaserStep(in, focused);   // what the laser takes is not BodyWalk's
+    MapLaserStep(in, focused);   // [hud] map_click_big: ... nor what the laser on the map takes (the right trigger, while it points at the map)
     MenuZoomPost(in);           // ... and the grip's own press waits until it is let go without a zoom
     directinput::Feed(&in, g_laserWanted.load(), g_touch);   // the gestures' listeners, and [openxr] direct_input's pad, actions, commands and head (and the finger's touch)
     g_lastPublishTime = g_fs.predictedDisplayTime;
@@ -1341,6 +1700,8 @@ void WaitFence(UINT64 v, DWORD ms);   // (the copy list, below)
 void SweepGraveyard(bool all);
 void TurnTeardown();   // eyes by turns' kept pictures and pass (below)
 void TurnFrameEnd();   // ... the frame's steps given up: the other eye's image given back if vrcam did not finish (CloseFrame)
+void RetireChain(XrSwapchain& sc, const char* what);   // (below, with the swapchains' images: chain_reaper.h)
+void ReapAll();
 void Teardown() {   // under g_lock or before the session exists
     g_running.store(false);
     gpufault::Note("xr: teardown");
@@ -1348,6 +1709,7 @@ void Teardown() {   // under g_lock or before the session exists
         g_queue->Signal(g_fence, ++g_fenceV);
         WaitFence(g_fenceV, 500);
     }
+    ReapAll();   // the swapchains retired in the session and not destroyed yet go with it
     SweepGraveyard(true);
     TurnTeardown();   // (after the wait: our lists that read them are done)
     g_hapticTimer->Cancel();   // [openxr] haptics_stop: no stop called on what goes below
@@ -1357,7 +1719,9 @@ void Teardown() {   // under g_lock or before the session exists
     for (PendingImage& q : g_pendingImg) q = PendingImage{};   // their swapchains go now
     g_lastEye[0] = g_lastEye[1] = LastEye{};
     g_eyesTold = false;   // the next session says its eyes again
-    if (g_ptr.sc) xrDestroySwapchain(g_ptr.sc);
+    g_subTold = false;
+    g_cropTold = false;
+    g_ptrImages.All([](XrSwapchain sc) { xrDestroySwapchain(sc); });   // (g_ptr.sc is one of them)
     g_ptr = Pointer{};
     LaserTeardown();   // its buttons and keys let go, its images gone
     HsTeardown();      // the settings panel's picture and its thread
@@ -1375,6 +1739,21 @@ void Teardown() {   // under g_lock or before the session exists
     g_zoneOut = HudOut{};
     if (g_plateOut.sc) xrDestroySwapchain(g_plateOut.sc);   // (the only place the monster bar's chain goes: the session's end)
     g_plateOut = HudOut{};
+    if (g_noticeOut.sc) xrDestroySwapchain(g_noticeOut.sc);   // (the notice card's: the session's end too)
+    if (g_compassSc) xrDestroySwapchain(g_compassSc);   // [hud] map_compass: made again in the next session
+    if (g_bigTurnOut.sc) xrDestroySwapchain(g_bigTurnOut.sc);   // [hud] map_click_big: the turned big map's square
+    g_bigTurnOut = HudOut{};
+    if (g_rotButtonSc) xrDestroySwapchain(g_rotButtonSc);   // [hud] map_click_big: the button's image, the big map back in the hand
+    g_rotButtonSc = XR_NULL_HANDLE;
+    g_rotButtonFailed = false;
+    if (g_mapClick.Big()) { hud::SetMapBig(false); gamestate::SetMapBig(false); }
+    g_mapClick.Reset();
+    g_mapQuadRoom = g_bigQuad = g_bigButton = maplaser::Quad{};
+    g_mapBeam = MapBeam{};
+    g_compassSc = XR_NULL_HANDLE;
+    g_compassFailed = false;
+    g_noticeOut = HudOut{};
+    g_noticeCard.Reset();
     g_rtvSlots.Reset();   // every chain that held places is gone
     for (Chain* c : {&g_eyeChain[0], &g_eyeChain[1], &g_quadChain}) {
         if (c->sc) xrDestroySwapchain(c->sc);
@@ -1402,6 +1781,9 @@ void Teardown() {   // under g_lock or before the session exists
     for (XrHandTrackerEXT& t : g_handTracker) { if (t && g_xrDestroyHandTracker) g_xrDestroyHandTracker(t); t = XR_NULL_HANDLE; }
     g_xrCreateHandTracker = nullptr; g_xrDestroyHandTracker = nullptr; g_xrLocateHandJoints = nullptr;
     g_bareSaid[0] = g_bareSaid[1] = -1;
+    g_localInRoomOk = false;   // [openxr] hand_space: the next session finds and learns them again
+    g_aimToGripOk[0] = g_aimToGripOk[1] = false;
+    g_spaceSaid[0] = g_spaceSaid[1] = SpaceSaid{};
     g_pairYawAt.store(0);
     g_pairOpen.store(false);
     if (g_inSent) {   // a last frame that says the session is over: BodyWalk gives the Mapping back at once
@@ -1433,6 +1815,9 @@ void Teardown() {   // under g_lock or before the session exists
     g_beginPending = false; g_waitPendingAt = 0.0;
     if (g_session) { xrDestroySession(g_session); g_session = XR_NULL_HANDLE; }
     if (g_inst) { xrDestroyInstance(g_inst); g_inst = XR_NULL_HANDLE; }
+    framegenlib::Ended();
+    g_bridgeIn = false;
+    g_routeTold = false;
     g_kind = kNone;
     vrres::SessionEnded();   // [render] vr_resolution: the window's own size back (a post - the window's thread does it)
     g_vrRecommended.store(0);
@@ -1442,6 +1827,21 @@ void Teardown() {   // under g_lock or before the session exists
 bool StartSession() {
     // before the runtime is in the game: ReShade's DXGI factory must not take its asks for no adapter (reshade_shield.cpp)
     reshade_shield::Install(g_log);
+    // [openxr] block_listed_layers: the implicit layers known to break the picture ([openxr] blocked_layers) switched off for this process before the
+    // loader looks for layers - only while the eyes are drawn our own way (runtime_fov off); every other layer is left as it is (shared/api_layers.h).
+    // What was found, for D2R VR Settings' Status ([session] layers_off / layers_listed_in / layers_in in d2r_vr_headset.ini).
+    {
+        wchar_t def[256] = L"", list[512] = L"";   // (read here: a string is not shared with the ini's thread)
+        MultiByteToWideChar(CP_UTF8, 0, apilayers::kDefaultList, -1, def, 256);
+        GetPrivateProfileStringW(L"openxr", L"blocked_layers", def, list, 512, g_iniPath);
+        char list8[1024] = "";
+        WideCharToMultiByte(CP_UTF8, 0, list, -1, list8, (int)sizeof list8, nullptr, nullptr);
+        const std::vector<apilayers::Found> found = apilayerslib::Apply(g_cfg.blockLayers, g_cfg.runtimeFovMode == 0, list8, g_log);
+        WriteLayersNote(apilayers::Names(found, apilayers::Kind::Off), apilayers::Names(found, apilayers::Kind::ListedIn),
+                        apilayers::Names(found, apilayers::Kind::In));
+    }
+    // [openxr] frame_generation: OFXR Bridge named to the loader for this process before it first looks for layers (vr/frame_gen_lib.h)
+    const char* frameGenLayer = framegenlib::Offer(g_iniPath);
     // the extensions the runtime has
     uint32_t n = 0;
     if (!Ok(xrEnumerateInstanceExtensionProperties(nullptr, 0, &n, nullptr), "xrEnumerateInstanceExtensionProperties")) return false;
@@ -1484,11 +1884,23 @@ bool StartSession() {
     ci.applicationInfo.apiVersion = XR_API_VERSION_1_0;
     ci.enabledExtensionCount = (uint32_t)exts.size();
     ci.enabledExtensionNames = exts.data();
-    if (!Ok(xrCreateInstance(&ci, &g_inst), "xrCreateInstance")) return false;
+    if (frameGenLayer) { ci.enabledApiLayerCount = 1; ci.enabledApiLayerNames = &frameGenLayer; }
+    bool withFrameGen = frameGenLayer != nullptr;
+    if (withFrameGen && XR_FAILED(xrCreateInstance(&ci, &g_inst))) {   // failed with the bridge: made without it, as if it was not there
+        g_inst = XR_NULL_HANDLE;
+        ci.enabledApiLayerCount = 0; ci.enabledApiLayerNames = nullptr;
+        withFrameGen = false;
+    }
+    if (!g_inst && !Ok(xrCreateInstance(&ci, &g_inst), "xrCreateInstance")) return false;
+    framegenlib::Attach(g_inst, withFrameGen);
+    g_bridgeIn = withFrameGen;
     XrInstanceProperties ip{XR_TYPE_INSTANCE_PROPERTIES};
-    if (XR_SUCCEEDED(xrGetInstanceProperties(g_inst, &ip)))
+    g_runtimeName[0] = 0;
+    if (XR_SUCCEEDED(xrGetInstanceProperties(g_inst, &ip))) {
+        strcpy_s(g_runtimeName, ip.runtimeName);
         LogF("vrcam: openxr - runtime %s %u.%u.%u", ip.runtimeName, XR_VERSION_MAJOR(ip.runtimeVersion), XR_VERSION_MINOR(ip.runtimeVersion),
              XR_VERSION_PATCH(ip.runtimeVersion));
+    }
 
     // the headset (a few seconds' grace: a runtime may still be waking it)
     XrSystemGetInfo si{XR_TYPE_SYSTEM_GET_INFO};
@@ -1693,25 +2105,30 @@ D3D12_RESOURCE_BARRIER Tr(ID3D12Resource* r, D3D12_RESOURCE_STATES from, D3D12_R
 }
 
 // A swapchain the back buffer's size and family; made again when either changes.
-bool EnsureChain(Chain& c, const D3D12_RESOURCE_DESC& d, const char* what) {
+bool EnsureChain(Chain& c, const D3D12_RESOURCE_DESC& full, const char* what, const eyefov::Sub* crop = nullptr) {
+    D3D12_RESOURCE_DESC d = full;   // (runtime_fov's crop: the chain only the box's size - the copy starts at its corner)
+    if (crop) { d.Width = (UINT64)crop->w; d.Height = (UINT)crop->h; c.sx = (uint32_t)crop->x; c.sy = (uint32_t)crop->y; }
+    else c.sx = c.sy = 0;
+    c.pw = (uint32_t)full.Width;
+    c.ph = full.Height;
     if (c.sc && c.w == (uint32_t)d.Width && c.h == d.Height && c.bbFmt == d.Format) return true;
     if (c.bad && c.w == (uint32_t)d.Width && c.h == d.Height && c.bbFmt == d.Format) return false;
-    if (c.sc) {
-        SettleGpu();
-        gpufault::Note("xr: picture swapchain destroyed", (uint64_t)(uintptr_t)c.sc, ((uint64_t)c.w << 32) | c.h);
-        xrDestroySwapchain(c.sc);
-        c.sc = XR_NULL_HANDLE;
+    if (c.sc) {   // (not destroyed here: Virtual Desktop's xrDestroySwapchain waits for the game's queue with no limit - the 2026-10-22 hang, chain_reaper.h)
+        gpufault::Note("xr: picture swapchain retired", (uint64_t)(uintptr_t)c.sc, ((uint64_t)c.w << 32) | c.h);
+        RetireChain(c.sc, "picture");
         c.img.clear();
     }
     c.w = (uint32_t)d.Width; c.h = d.Height; c.bbFmt = d.Format; c.bad = false;
-    g_aspect.store(c.h ? (float)c.w / (float)c.h : 0.0f);
+    g_aspect.store(full.Height ? (float)full.Width / (float)full.Height : 0.0f);   // (the picture's, not a crop's)
     c.fmt = PickFormat(d.Format);
     if (!c.fmt) {
         c.bad = true;
         LogF("vrcam: openxr - the back buffer is %s and the runtime has no format of its family: no %s picture", FormatName(d.Format), what);
         return false;
     }
-    LogF("vrcam: openxr - making the %s swapchain, %ux%u %s", what, c.w, c.h, FormatName(c.fmt));
+    if (crop) LogF("vrcam: openxr - making the %s swapchain, %ux%u %s - the box at %u,%u of the %llux%u picture (runtime_fov)", what, c.w, c.h,
+                   FormatName(c.fmt), c.sx, c.sy, (unsigned long long)full.Width, full.Height);
+    else LogF("vrcam: openxr - making the %s swapchain, %ux%u %s", what, c.w, c.h, FormatName(c.fmt));
     XrSwapchainCreateInfo ci{XR_TYPE_SWAPCHAIN_CREATE_INFO};
     ci.usageFlags = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT;
     ci.format = c.fmt;
@@ -1723,14 +2140,22 @@ bool EnsureChain(Chain& c, const D3D12_RESOURCE_DESC& d, const char* what) {
     ci.mipCount = 1;
     if (!Ok(xrCreateSwapchain(g_session, &ci, &c.sc), "xrCreateSwapchain")) {
         c.bad = true; c.sc = XR_NULL_HANDLE;
-        vrres::SwapchainMade(c.w, c.h, false);   // [render] vr_resolution(_px): a size the runtime refuses falls back to the last good one
+        vrres::SwapchainMade((uint32_t)full.Width, full.Height, false);   // [render] vr_resolution(_px): a size the runtime refuses falls back to the last good one
         return false;
     }
     uint32_t n = 0;
-    xrEnumerateSwapchainImages(c.sc, 0, &n, nullptr);
-    c.img.assign(n, {XR_TYPE_SWAPCHAIN_IMAGE_D3D12_KHR});
-    xrEnumerateSwapchainImages(c.sc, n, &n, (XrSwapchainImageBaseHeader*)c.img.data());
-    vrres::SwapchainMade(c.w, c.h, true);
+    const bool eye = &c == &g_eyeChain[0] || &c == &g_eyeChain[1];   // [openxr] frame_generation: the eyes through the bridge, the flat picture below it
+    if (eye) {
+        xrEnumerateSwapchainImages(c.sc, 0, &n, nullptr);
+        c.img.assign(n, {XR_TYPE_SWAPCHAIN_IMAGE_D3D12_KHR});
+        xrEnumerateSwapchainImages(c.sc, n, &n, (XrSwapchainImageBaseHeader*)c.img.data());
+        if (&c == &g_eyeChain[0]) framegenlib::CheckEye(c.sc, c.img);
+    } else {
+        framegenlib::PanelImages(c.sc, 0, &n, nullptr);
+        c.img.assign(n, {XR_TYPE_SWAPCHAIN_IMAGE_D3D12_KHR});
+        framegenlib::PanelImages(c.sc, n, &n, (XrSwapchainImageBaseHeader*)c.img.data());
+    }
+    vrres::SwapchainMade((uint32_t)full.Width, full.Height, true);
     gpufault::Note("xr: picture swapchain made", (uint64_t)(uintptr_t)c.sc, ((uint64_t)c.w << 32) | c.h);
     LogF("vrcam: openxr - %s swapchain %ux%u %s (back buffer %s), %u images", what, c.w, c.h, FormatName(c.fmt), FormatName(d.Format), n);
     if (Family(d.Format) == 3) Log("vrcam: openxr -   a 10-bit back buffer has no sRGB twin: the headset may show it too bright");
@@ -1786,6 +2211,58 @@ void SubmitList() {
 // (a chain whose images are all acquired gives no more). 1 ready, 0 ran out, -1 failed.
 ULONGLONG g_waitRanOutAt = 0;
 void ForgetPending(XrSwapchain sc) { for (PendingImage& q : g_pendingImg) if (q.sc == sc) q = PendingImage{}; }
+
+// -- swapchains made again in a session (chain_reaper.h) --------------------------
+// Virtual Desktop's xrDestroySwapchain first flushes the game's queue (a Signal on it, then an endless WaitForSingleObject): called inside the game's present it
+// held the draw thread until the driver took the device (2026-10-22 17:48, DXGI_ERROR_DEVICE_HUNG). A swapchain we stop using in a session is handed to the
+// reaper instead; at a later frame's start, after xrBeginFrame, a fence of ours is put on the game's queue and waited for a while: if it came, the queue
+// holds nothing the runtime's flush could wait for and the retired ones are destroyed; if not, the game goes on and it is tried again later. The wait is
+// 20 ms, doubled after each drain that ran out up to [openxr] reap_drain_max_ms (chain_reaper.h DrainMs: on SteamVR at 2764x2780 a pair the 20 ms never
+// came back, the retired ones piled up to XR_ERROR_LIMIT_REACHED - the inventory with no panel).
+chainreap::Reaper<XrSwapchain> g_reaper;
+std::atomic<float> g_reapDrainMaxMs{200.0f};   // [openxr] reap_drain_max_ms (LoadSettings); 20 = the same 20 ms every time, as before
+chainreap::Limits ReapLimits() {
+    chainreap::Limits l;
+    l.drainMaxMs = g_reapDrainMaxMs.load();
+    return l;
+}
+void RetireChain(XrSwapchain& sc, const char* what) {
+    if (!sc) return;
+    ForgetPending(sc);   // (an image of it whose wait ran out is waited for no more)
+    g_reaper.Add(sc, UsNow() / 1000.0);
+    static int told = 0;
+    if (told < 3) { ++told; LogF("vrcam: openxr - the %s swapchain is made again: the old one is destroyed once the game's queue is found drained, not in this present", what); }
+    sc = XR_NULL_HANDLE;
+}
+void DestroyRetired(XrSwapchain sc) {
+    gpufault::Note("xr: a retired swapchain destroyed", (uint64_t)(uintptr_t)sc);
+    xrDestroySwapchain(sc);
+}
+// At a frame's start (OpenFrame, after xrBeginFrame).
+void ReapChains() {
+    const double now = UsNow() / 1000.0;
+    const chainreap::Limits limits = ReapLimits();
+    if (g_reaper.TellSlow(now, limits))
+        LogF("vrcam: openxr - %u retired swapchain(s) have waited %.0f s: the game's queue was not found drained (%u tries ran out, the wait now %.0f ms, "
+             "at most %.0f: [openxr] reap_drain_max_ms) - kept, not destroyed under it",
+             (unsigned)g_reaper.Size(), g_reaper.OldestAgeMs(now) / 1000.0, g_reaper.RanOut(), g_reaper.DrainMs(limits), limits.drainMaxMs);
+    if (!g_reaper.Due(now, limits) || gpufault::Removed() || !g_queue || !g_fence) return;
+    const double waitMs = g_reaper.DrainMs(limits);
+    UINT64 v = 0;
+    if (SUCCEEDED(g_queue->Signal(g_fence, g_fenceV + 1))) v = ++g_fenceV;
+    if (v) WaitFence(v, (DWORD)waitMs);
+    const bool drained = v && g_fence->GetCompletedValue() >= v;
+    const unsigned ranOut = g_reaper.RanOut();
+    const size_t n = g_reaper.Sweep(drained, now, limits, &DestroyRetired);
+    static int told = 0;
+    if (drained && ranOut && n && told < 5) {   // a longer wait than the first did it
+        ++told;
+        LogF("vrcam: openxr - %u retired swapchain(s) destroyed after %u drain(s) that ran out: the game's queue drained within %.0f ms",
+             (unsigned)n, ranOut, waitMs);
+    }
+}
+// The session's end: Teardown waited for the queue as it could; every retired one goes with the session, as all the others do.
+void ReapAll() { g_reaper.All(&DestroyRetired); }
 int NextImage(XrSwapchain sc, uint32_t* idx, const char* what) {
     char b[96];
     PendingImage* p = nullptr;
@@ -1844,10 +2321,10 @@ int MakeStaticImage(uint32_t w, uint32_t h, const uint32_t* rgba, ID3D12Resource
     char b[96];
     snprintf(b, sizeof b, "xrCreateSwapchain(%s)", what);
     if (!Ok(xrCreateSwapchain(g_session, &ci, &sc), b)) { sc = XR_NULL_HANDLE; return -1; }
-    uint32_t cnt = 0;
-    xrEnumerateSwapchainImages(sc, 0, &cnt, nullptr);
+    uint32_t cnt = 0;   // (a panel: listed below the frame-generation bridge, vr/frame_gen.h)
+    framegenlib::PanelImages(sc, 0, &cnt, nullptr);
     std::vector<XrSwapchainImageD3D12KHR> img(cnt, {XR_TYPE_SWAPCHAIN_IMAGE_D3D12_KHR});
-    xrEnumerateSwapchainImages(sc, cnt, &cnt, (XrSwapchainImageBaseHeader*)img.data());
+    framegenlib::PanelImages(sc, cnt, &cnt, (XrSwapchainImageBaseHeader*)img.data());
     uint32_t idx = 0;
     if (!cnt) return -1;
     if (const int got = NextImage(sc, &idx, what); got <= 0) return got;
@@ -1873,13 +2350,7 @@ int MakeStaticImage(uint32_t w, uint32_t h, const uint32_t* rgba, ID3D12Resource
 }
 
 bool MakePointerImage(HCURSOR cur) {
-    if (g_ptr.sc) {
-        ForgetPending(g_ptr.sc);
-        SettleGpu();
-        gpufault::Note("xr: pointer swapchain destroyed", (uint64_t)(uintptr_t)g_ptr.sc);
-        xrDestroySwapchain(g_ptr.sc);
-        g_ptr.sc = XR_NULL_HANDLE;
-    }
+    g_ptr.sc = XR_NULL_HANDLE;   // (kept in g_ptrImages: the picture may come back under another handle)
     g_ptr.ok = false;
     g_ptr.shape = cur;
     ICONINFO ii{};
@@ -1917,7 +2388,25 @@ bool MakePointerImage(HCURSOR cur) {
         const uint32_t cover = 255 - std::clamp((int)(w & 0xFF) - (int)(b & 0xFF), 0, 255);
         rgba[i] = ((b >> 16) & 0xFF) | (b & 0xFF00) | ((b & 0xFF) << 16) | (cover << 24);
     }
-    const int got = MakeStaticImage((uint32_t)n, (uint32_t)n, rgba.data(), g_ptrUpload, g_ptr.sc, "pointer");
+    // the same picture under a new handle (the game makes its pointer anew, every ~500 ms in an area change): the swapchain it has (vr/pointer_cache.h)
+    const uint64_t key = ptrcache::Key(rgba.data(), rgba.size(), n, g_ptr.hotX, g_ptr.hotY);
+    if (const XrSwapchain kept = g_ptrImages.Find(key)) {
+        g_ptr.sc = kept;
+        g_ptr.ok = true;
+        return true;
+    }
+    XrSwapchain sc = XR_NULL_HANDLE;
+    const int got = MakeStaticImage((uint32_t)n, (uint32_t)n, rgba.data(), g_ptrUpload, sc, "pointer");
+    if (got > 0) {
+        if (XrSwapchain out = g_ptrImages.Put(key, sc)) {   // past ptrcache::kKeep pictures: the least lately used one
+            gpufault::Note("xr: pointer swapchain retired", (uint64_t)(uintptr_t)out);
+            RetireChain(out, "pointer");   // (destroyed later, once the game's queue is drained and it is old enough: chain_reaper.h)
+        }
+        g_ptr.sc = sc;
+    } else if (sc) {   // made but not filled: not kept (made again later)
+        gpufault::Note("xr: pointer swapchain retired", (uint64_t)(uintptr_t)sc);
+        RetireChain(sc, "pointer");
+    }
     if (got == 0) { g_ptr.shape = nullptr; g_ptrRetryAt = GetTickCount64() + 1000; }   // made again in a second
     g_ptr.ok = got > 0;
     return g_ptr.ok;
@@ -2025,6 +2514,11 @@ cbuffer Hud : register(b0) {
   float g_alpha;  // the orb's glass, rim and halo (the map's lines keep theirs)
   float g_split;  // the toolbar in two halves side by side: 0 no, 1 the turned half below, 2 above (bar_split)
   float g_opacity;  // the whole picture's opacity, premultiplied (the monster bar's [hud] monster_alpha); 0 = whole - the other callers pass 0
+  // [hud] map_top_down / map_rotate (vr/map_turn.h): the map seen from above, turned with the look - a point q of the square picture
+  // (-1..1, y down; 1 the circle that fits it, the orb's edge) is the share's uv g_hero + (dot(g_turnM.xy, q), dot(g_turnM.zw, q)).
+  // g_turn 0: as before (the other callers pass zeros)
+  float g_turn; float2 g_hero; float g_turnPad;   // g_turnPad: > 0 the last v sampled (the big map: above the toolbar's strip), 0 all
+  float4 g_turnM;
 };
 Texture2D<float4> g_src : register(t0);
 SamplerState g_smp : register(s0);
@@ -2050,9 +2544,21 @@ int2 SplitSource(int2 p) {
   return int2(half - 1 - p.x, H - 1 - row);
 }
 
+float2 TurnedUv(float2 q) { return g_hero + float2(dot(g_turnM.xy, q), dot(g_turnM.zw, q)); }
+
 float4 PSMain(float4 pos : SV_Position) : SV_Target {
   const int2 at = g_split > 0.5 ? SplitSource(int2(pos.xy)) : int2(pos.xy);
-  float4 c = g_src.Load(int3(at, 0));
+  float4 c;
+  if (g_turn > 0.5) {   // the map from above (and turned): a round map, nothing past the circle or the box
+    const float2 q = pos.xy / g_size * 2.0 - 1.0;
+    const float2 uv = TurnedUv(q);
+    const float edge = saturate((1.0 - length(q)) * g_size * 0.5 + 0.5);
+    if (edge <= 0.0 || any(uv < 0.0) || uv.x > 1.0 || uv.y > (g_turnPad > 0.0 ? g_turnPad : 1.0)) return 0.0;   // (g_turnPad: the last row, the big map's)
+    c = g_src.SampleLevel(g_smp, uv, 0);
+    c.a = 1.0 - (1.0 - c.a) * edge;   // (alpha is the world's share: the coverage faded at the rim)
+  } else {
+    c = g_src.Load(int3(at, 0));
+  }
   float cover = saturate(1.0 - c.a);
   float3 straight = cover > 1e-4 ? saturate(max(c.rgb, 0.0) / cover) : 0.0;
   if (g_encoded > 0.5)
@@ -2092,6 +2598,7 @@ float4 PSOrb(float4 pos : SV_Position) : SV_Target {
   // its own shape kept (nothing above and below it on a wide map).
   float2 uv = float2(0.5 + q.x * 0.5, 0.5 - q.y * 0.5 * max(g_aspect, 0.01)) - 0.5;
   uv = uv / max(g_zoom, 0.1) + 0.5;  // zoomed about the middle
+  if (g_turn > 0.5) uv = TurnedUv(float2(q.x, -q.y));   // from above and turned: about the hero, the zoom in g_turnM
   float inMap = all(uv >= 0.0) && all(uv <= 1.0) ? 1.0 : 0.0;
   float4 c = g_src.SampleLevel(g_smp, saturate(uv), 0);
   // D2R's automap is thin, half see-through lines: their coverage is raised
@@ -2166,6 +2673,7 @@ float4 PSBall(float4 pos : SV_Position) : SV_Target {
 )";
 
 constexpr uint32_t kOrbPx = 512;   // the orb's swapchain, square
+constexpr UINT kHudConstants = 20;   // the Hud cbuffer: the 12 every piece passes, the map's turn's 8 (DrawHud's `turn`)
 constexpr float kOrbSpan = 1.6f;   // the orb's quad, in radii from its centre (kSpan in the shader)
 
 ID3D12RootSignature* g_hudRs = nullptr;
@@ -2203,7 +2711,7 @@ bool MakeHudPipeline() {
     D3D12_DESCRIPTOR_RANGE range{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0, 0, 0};
     D3D12_ROOT_PARAMETER rp[2] = {};
     rp[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-    rp[0].Constants = {0, 0, 12};
+    rp[0].Constants = {0, 0, kHudConstants};
     rp[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     rp[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
     rp[1].DescriptorTable = {1, &range};
@@ -2265,11 +2773,9 @@ bool MakeHudPipeline() {
 bool EnsureHudOut(HudOut& o, uint32_t w, uint32_t h, const char* what) {
     if (o.sc && o.w == w && o.h == h) return true;
     if (o.sc) {
-        ForgetPending(o.sc);   // (an image of it whose wait ran out is waited for no more: a new chain may get the same handle)
-        SettleGpu();           // (our lists that draw into its images are done before they go, and before their views are written over)
-        gpufault::Note("xr: interface swapchain destroyed", (uint64_t)(uintptr_t)o.sc, ((uint64_t)o.w << 32) | o.h);
-        xrDestroySwapchain(o.sc);
-        o.sc = XR_NULL_HANDLE;
+        SettleGpu();           // (our lists that draw into its images are done before their views are written over; bounded)
+        gpufault::Note("xr: interface swapchain retired", (uint64_t)(uintptr_t)o.sc, ((uint64_t)o.w << 32) | o.h);
+        RetireChain(o.sc, "interface");   // (destroyed later, once the game's queue is drained: chain_reaper.h)
         gpufault::Note("xr: render-target slots given back", (uint64_t)o.rtv0, (uint64_t)o.img.size());
         g_rtvSlots.Give(o.rtv0, (int)o.img.size());
         o.img.clear();
@@ -2282,14 +2788,13 @@ bool EnsureHudOut(HudOut& o, uint32_t w, uint32_t h, const char* what) {
     ci.usageFlags = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT;
     ci.format = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB; ci.sampleCount = 1; ci.width = w; ci.height = h; ci.faceCount = 1; ci.arraySize = 1; ci.mipCount = 1;
     if (!Ok(xrCreateSwapchain(g_session, &ci, &o.sc), "xrCreateSwapchain(interface)")) { o.sc = XR_NULL_HANDLE; return false; }
-    uint32_t n = 0;
-    xrEnumerateSwapchainImages(o.sc, 0, &n, nullptr);
+    uint32_t n = 0;   // (a panel: listed below the frame-generation bridge, vr/frame_gen.h)
+    framegenlib::PanelImages(o.sc, 0, &n, nullptr);
     std::vector<XrSwapchainImageD3D12KHR> img(n, {XR_TYPE_SWAPCHAIN_IMAGE_D3D12_KHR});
-    xrEnumerateSwapchainImages(o.sc, n, &n, (XrSwapchainImageBaseHeader*)img.data());
+    framegenlib::PanelImages(o.sc, n, &n, (XrSwapchainImageBaseHeader*)img.data());
     o.rtv0 = g_rtvSlots.Take((int)n);
     if (o.rtv0 < 0) {   // the heap is full: no view of anybody else's is taken over (that drew into the wrong chain's image)
-        xrDestroySwapchain(o.sc);
-        o.sc = XR_NULL_HANDLE;
+        RetireChain(o.sc, "interface");
         o.rtv0 = 0;
         static bool told = false;
         if (!told) { told = true; LogF("vrcam: openxr - interface in the room: no room in the render-target heap for the %s's %u images - it stays out", what, n); }
@@ -2312,7 +2817,8 @@ bool EnsureHudOut(HudOut& o, uint32_t w, uint32_t h, const char* what) {
 
 // One piece drawn into its swapchain's next image, on our list on the game's queue.
 // dw x dh: the corner of the image drawn into (0 = all of it): a chain larger than the picture, the monster bar's.
-bool DrawHud(HudOut& o, ID3D12Resource* src, bool orb, const float cb[12], uint32_t dw = 0, uint32_t dh = 0) {
+// turn: [hud] map_top_down / map_rotate's 8 constants (g_turn, g_hero, pad, g_turnM), or none (zeros: as before).
+bool DrawHud(HudOut& o, ID3D12Resource* src, bool orb, const float cb[12], uint32_t dw = 0, uint32_t dh = 0, const float* turn = nullptr) {
     if (!dw || dw > o.w) dw = o.w;
     if (!dh || dh > o.h) dh = o.h;
     uint32_t idx = 0;
@@ -2336,7 +2842,9 @@ bool DrawHud(HudOut& o, ID3D12Resource* src, bool orb, const float cb[12], uint3
     l->SetDescriptorHeaps(1, &g_srvHeap);
     l->SetGraphicsRootSignature(g_hudRs);
     l->SetPipelineState(g_hudPso[orb ? 1 : 0]);
+    static const float kNoTurn[kHudConstants - 12] = {};
     l->SetGraphicsRoot32BitConstants(0, 12, cb, 0);
+    l->SetGraphicsRoot32BitConstants(0, kHudConstants - 12, turn ? turn : kNoTurn, 12);
     l->SetGraphicsRootDescriptorTable(1, gpu);
     l->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
     const D3D12_VIEWPORT vp{0.0f, 0.0f, (float)dw, (float)dh, 0.0f, 1.0f};
@@ -2449,6 +2957,96 @@ bool HudPose(const D2RVR_XrInput& in, int anchor, bool map, bool orb, float widt
     return true;
 }
 
+// [hud] map_compass: the compass's image (mapturn::kAtlasW x kAtlasH) - bearstonem/d2r-pcvr's (MIT; steamvr/interaction_ui.cpp compass::Paint,
+// their colours and Georgia): a dark strip of two revolutions side by side, a tick every 1/32 turn, N NE E ... every eighth, N gold; under
+// it the marker, a small gold wedge pointing down. Premultiplied sRGB, R in the low byte (MakeStaticImage); black is see-through.
+std::vector<uint32_t> PaintCompass() {
+    using namespace mapturn;
+    std::vector<uint32_t> out;
+    BITMAPINFO bi{};
+    bi.bmiHeader = {sizeof(BITMAPINFOHEADER), kAtlasW, -kAtlasH, 1, 32, BI_RGB};
+    HDC dc = CreateCompatibleDC(nullptr);
+    void* bits = nullptr;
+    HBITMAP dib = dc ? CreateDIBSection(dc, &bi, DIB_RGB_COLORS, &bits, nullptr, 0) : nullptr;
+    if (!dc || !dib || !bits) { if (dib) DeleteObject(dib); if (dc) DeleteDC(dc); return out; }
+    HGDIOBJ old = SelectObject(dc, dib);
+    memset(bits, 0, (size_t)kAtlasW * kAtlasH * 4);
+    auto fill = [&](RECT r, COLORREF c) { HBRUSH b = CreateSolidBrush(c); FillRect(dc, &r, b); DeleteObject(b); };
+    fill({0, 0, kAtlasW, kStripH}, RGB(17, 16, 14));
+    for (int y : {1, kStripH - 3}) fill({0, y, kAtlasW, y + 2}, RGB(122, 94, 51));
+    fill({0, 4, kAtlasW, 5}, RGB(51, 43, 30));
+    const char* const labels[8] = {"N", "NE", "E", "SE", "S", "SW", "W", "NW"};
+    HFONT major = CreateFontW(34, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY, DEFAULT_PITCH, L"Georgia");
+    HFONT minor = CreateFontW(25, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY, DEFAULT_PITCH, L"Georgia");
+    HGDIOBJ oldFont = SelectObject(dc, major);
+    SetBkMode(dc, TRANSPARENT);
+    for (int x = 0; x <= kAtlasW; x += kPeriod / 32) {
+        const int step = StepAt(x);
+        const bool cardinal = step % 8 == 0, diagonal = step % 4 == 0;
+        fill({x - 1, diagonal ? 63 : 73, x + 1, 85}, cardinal ? RGB(231, 202, 141) : RGB(133, 112, 75));
+        if (!diagonal) continue;
+        const int index = (step / 4) % 8;
+        SelectObject(dc, cardinal ? major : minor);
+        SetTextColor(dc, index == 0 ? RGB(240, 209, 139) : cardinal ? RGB(229, 218, 191) : RGB(170, 157, 128));
+        RECT r{x - 44, 20, x + 44, 61};
+        DrawTextA(dc, labels[index], -1, &r, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+    }
+    for (int y = 0; y < kMarkH; ++y) fill({y, kStripH + y, kMarkW - y, kStripH + y + 1}, RGB(242, 204, 120));
+    GdiFlush();
+    const uint8_t* b = (const uint8_t*)bits;
+    out.resize((size_t)kAtlasW * kAtlasH);
+    for (size_t i = 0; i < out.size(); ++i) {
+        const uint32_t B = b[4 * i], G = b[4 * i + 1], R = b[4 * i + 2], A = (R | G | B) ? 255u : 0u;
+        out[i] = R | G << 8 | B << 16 | A << 24;
+    }
+    SelectObject(dc, oldFont);
+    DeleteObject(major);
+    DeleteObject(minor);
+    SelectObject(dc, old);
+    DeleteObject(dib);
+    DeleteDC(dc);
+    return out;
+}
+
+// [hud] map_compass: the strip's window (the way one looks in its middle) and the marker over it, a gap above the map in the hand -
+// `map` its quad (centre, turn, size). Appended to layers[] from nl on, at most max.
+uint32_t HangCompass(const XrCompositionLayerBaseHeader** layers, uint32_t nl, uint32_t max, const XrCompositionLayerQuad& map, float bearing, bool orb) {
+    using namespace mapturn;
+    if (nl + 2 > max || g_compassFailed) return nl;
+    if (!g_compassSc) {
+        const std::vector<uint32_t> px = PaintCompass();
+        if (px.empty()) { g_compassFailed = true; Log("vrcam: openxr - map compass: its picture could not be painted - no compass"); return nl; }
+        XrSwapchain sc = XR_NULL_HANDLE;
+        const int got = MakeStaticImage((uint32_t)kAtlasW, (uint32_t)kAtlasH, px.data(), g_compassUpload, sc, "map compass");
+        if (got <= 0) {
+            if (sc) xrDestroySwapchain(sc);
+            if (got < 0) { g_compassFailed = true; Log("vrcam: openxr - map compass: its image could not be made - no compass this session"); }
+            return nl;   // (0: its wait ran out - tried again next frame)
+        }
+        g_compassSc = sc;
+        Log("vrcam: openxr - map compass: its strip made (painted once; the window moves with the way you look)");
+    }
+    // as wide as the map (the orb: a little wider than the ball), a gap over its top
+    const float ball = map.size.width / kOrbSpan;   // the orb's diameter
+    const float w = orb ? 1.2f * ball : map.size.width, h = w * (float)kStripH / (float)kWindow;
+    const float top = orb ? 0.5f * ball : 0.5f * map.size.height;
+    XrCompositionLayerQuad& q = g_compassLayer[0];
+    q = map;   // its space, eyes and flags
+    q.subImage.swapchain = g_compassSc;
+    q.subImage.imageRect = {{Crop(bearing), 0}, {kWindow, kStripH}};
+    q.pose.position = Plus(map.pose.position, Rot(map.pose.orientation, {0.0f, top + 0.15f * h + 0.5f * h, 0.0f}));
+    q.size = {w, h};
+    XrCompositionLayerQuad& m = g_compassLayer[1];
+    m = q;
+    const float mw = w * (float)kMarkW / (float)kWindow, mh = h * (float)kMarkH / (float)kStripH;
+    m.subImage.imageRect = {{0, kStripH}, {kMarkW, kMarkH}};
+    m.pose.position = Plus(q.pose.position, Rot(q.pose.orientation, {0.0f, 0.5f * (h - mh), 0.001f}));   // at the strip's top edge, a mm nearer
+    m.size = {mw, mh};
+    layers[nl++] = (const XrCompositionLayerBaseHeader*)&q;
+    layers[nl++] = (const XrCompositionLayerBaseHeader*)&m;
+    return nl;
+}
+
 // The pieces out of the picture this frame, drawn and appended to layers[] (from nl on, at most max).
 uint32_t HangHud(const XrCompositionLayerBaseHeader** layers, uint32_t nl, uint32_t max) {
     hud::NativePiece piece[hud::kNativePieces];
@@ -2458,6 +3056,12 @@ uint32_t HangHud(const XrCompositionLayerBaseHeader** layers, uint32_t nl, uint3
     if (!piece[0].visible && !piece[1].visible) return nl;
     if (!MakeHudPipeline()) return nl;
     const float seconds = (float)(GetTickCount64() % 3600000ull) / 1000.0f;   // the orb's mist; wraps hourly
+    // [hud] map_top_down / map_rotate / map_compass (vr/map_turn.h): VR F4 only; the way the head looks from vrcam, held while it looks down
+    const bool mapF4 = (g_cfg.mapTopDown || g_cfg.mapRotate || g_cfg.mapCompass) && viewgate::F4();
+    float gx = 0.0f, gy = 1.0f;
+    const bool headingKnown = mapF4 && hud::MapTurnHeading(&gx, &gy);
+    const float bearing = mapturn::Bearing(gx, gy);
+    const mapturn::Turn turn = mapF4 ? mapturn::For(g_cfg.mapTopDown, g_cfg.mapRotate, headingKnown, bearing) : mapturn::Turn{};
     for (int i = 0; i <= hud::kNativeMap && nl < max; ++i) {   // (a menu's panel: HangPanel)
         const hud::NativePiece& src = piece[i];
         if (!src.visible || !src.w || !src.h) continue;
@@ -2465,9 +3069,13 @@ uint32_t HangHud(const XrCompositionLayerBaseHeader** layers, uint32_t nl, uint3
         const int anchor = (int)(map ? look.map_anchor : look.bar_anchor);
         if (anchor == 0) continue;
         const bool orb = map && look.map_orb != 0;
+        // the map drawn wider than its own shape (F4 in a picture of another shape than the frustum, vr/minimap_box.h Stretch): shown narrowed back
+        const float stretch = map ? std::clamp(src.stretch, 0.25f, 4.0f) : 1.0f;
         const float width = std::max(0.03f, orb ? look.orb_size_m * kOrbSpan : map ? look.map_width_m : look.bar_width_m);
         const uint32_t split = !map && look.bar_split <= 2 ? look.bar_split : 0;   // the toolbar in two halves: half as long, twice as wide
-        const uint32_t outW = orb ? kOrbPx : split ? (src.w + 1) / 2 : src.w, outH = orb ? kOrbPx : split ? src.h * 2 : src.h;
+        const bool turned = map && turn.Any();   // from above / turned: a round map in a square picture (the orb: on the ball as before)
+        const uint32_t turnedPx = std::clamp(std::max(src.w, src.h), 64u, 1024u);
+        const uint32_t outW = orb ? kOrbPx : turned ? turnedPx : split ? (src.w + 1) / 2 : src.w, outH = orb ? kOrbPx : turned ? turnedPx : split ? src.h * 2 : src.h;
         HudOut& o = g_hudOut[i];
         XrPosef pose{};
         if (!HudPose(g_inNow, anchor, map, orb, width, look, map ? nullptr : &barPose, &pose) ||
@@ -2483,13 +3091,21 @@ uint32_t HangHud(const XrCompositionLayerBaseHeader** layers, uint32_t nl, uint3
                 pose.position = Plus(pose.position, Rot(pose.orientation, {0.25f * width, split == 1 ? -0.5f * h : 0.5f * h, 0.0f}));
             }
         }
-        const float cb[12] = {look.encoded ? 1.0f : 0.0f, seconds, (float)src.w / (float)src.h, (float)outW,
+        const float cb[12] = {look.encoded ? 1.0f : 0.0f, seconds, (float)src.w / ((float)src.h * stretch), (float)outW,
                               std::clamp(look.orb_glow, 0.0f, 1.0f),
                               powf(((look.orb_rgb >> 16) & 0xFF) / 255.0f, 2.2f), powf(((look.orb_rgb >> 8) & 0xFF) / 255.0f, 2.2f),
                               powf((look.orb_rgb & 0xFF) / 255.0f, 2.2f),
                               std::clamp(look.orb_zoom, 0.5f, 4.0f), look.orb_alpha > 0.0f ? std::clamp(look.orb_alpha, 0.0f, 1.0f) : 1.0f,
                               (float)split, 0.0f};
-        if (!DrawHud(o, src.tex, orb, cb)) continue;
+        float turnCb[kHudConstants - 12] = {};
+        if (turned) {
+            const mapturn::Map mt = mapturn::MapFor(turn, (float)src.w, (float)src.h, stretch, orb ? std::clamp(look.orb_zoom, 0.5f, 4.0f) : 1.0f);
+            if (mt.ok) {
+                const float t[kHudConstants - 12] = {1.0f, mt.hero[0], mt.hero[1], 0.0f, mt.m[0], mt.m[1], mt.m[2], mt.m[3]};
+                memcpy(turnCb, t, sizeof turnCb);
+            }
+        }
+        if (!DrawHud(o, src.tex, orb, cb, 0, 0, turnCb)) continue;
         XrCompositionLayerQuad& q = o.layer;
         q = {XR_TYPE_COMPOSITION_LAYER_QUAD};
         q.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;   // premultiplied
@@ -2499,8 +3115,38 @@ uint32_t HangHud(const XrCompositionLayerBaseHeader** layers, uint32_t nl, uint3
         q.subImage.imageRect = {{0, 0}, {(int32_t)outW, (int32_t)outH}};
         q.pose = pose;
         const float quadW = split ? 0.5f * width : width;
-        q.size = {quadW, quadW * (float)outH / (float)outW};
+        q.size = {quadW, quadW * (float)outH / (float)outW * (orb || turned ? 1.0f : stretch)};
+        bool beside = false;
+        if (map && anchor == 1 && g_cfg.mapBesideInv && viewgate::F4() && g_invHung.atUs > 0.0 && UsNow() - g_invHung.atUs < 100000.0) {
+            // [hud] map_beside_inventory: the inventory's panel on the left hand this frame would cover the map held there - beside its left
+            // edge instead, in its plane (g_space, where the panel hangs), the orb's ball (not its quad) a gap from it
+            const XrQuaternionf pq = g_invHung.pose.orientation;
+            const XrVector3f px = Rot(pq, {1.0f, 0.0f, 0.0f}), py = Rot(pq, {0.0f, 1.0f, 0.0f}), pz = Rot(pq, {0.0f, 0.0f, 1.0f});
+            const float vw = orb ? q.size.width / kOrbSpan : q.size.width, vh = orb ? q.size.height / kOrbSpan : q.size.height;
+            const maplaser::V3 at = maplaser::BesideLeft({g_invHung.pose.position.x, g_invHung.pose.position.y, g_invHung.pose.position.z}, {px.x, px.y, px.z},
+                                                         {py.x, py.y, py.z}, g_invHung.size.width, g_invHung.size.height, vw, vh);
+            q.space = g_space;
+            q.pose.orientation = pq;
+            q.pose.position = Plus({at.x, at.y, at.z}, Times(pz, 0.004f));
+            beside = true;
+            static uint32_t told = 0;
+            if (++told == 1) Log("vrcam: openxr - the map in the hand beside the inventory on the left hand ([hud] map_beside_inventory)");
+        }
         layers[nl++] = (const XrCompositionLayerBaseHeader*)&q;
+        if (map && mapF4 && g_cfg.mapCompass && headingKnown) nl = HangCompass(layers, nl, max, q, bearing, orb);
+        if (map) g_mapQuadInG = beside;
+        if (map) {   // [hud] map_click_big: where the laser finds it next frame (its space: the room's - g_space beside the inventory)
+            maplaser::Quad& m = g_mapQuadRoom;
+            auto v3 = [](XrVector3f v) { return maplaser::V3{v.x, v.y, v.z}; };
+            m.at = v3(q.pose.position);
+            m.right = v3(Rot(q.pose.orientation, {1.0f, 0.0f, 0.0f}));
+            m.up = v3(Rot(q.pose.orientation, {0.0f, 1.0f, 0.0f}));
+            m.front = v3(Rot(q.pose.orientation, {0.0f, 0.0f, 1.0f}));
+            m.w = q.size.width; m.h = q.size.height;
+            m.round = orb; m.ball = orb ? q.size.width / kOrbSpan : 0.0f;
+            m.ok = true;
+            g_mapQuadAt = GetTickCount64();
+        }
     }
     return nl;
 }
@@ -2543,6 +3189,47 @@ uint32_t HangPlate(const XrCompositionLayerBaseHeader** layers, uint32_t nl, uin
     q.pose.position = at;
     q.size = {width, height};
     layers[nl++] = (const XrCompositionLayerBaseHeader*)&q;
+    return nl;
+}
+
+// [hud] notice_card (vr/notice_card.h): the game's own quest / level-up notice, cut out of its interface (hud.cpp), on a card in the room - ahead of
+// where the head looked when it came up, level, a little under the eyes, leant back to face them - for [hud] notice_card_seconds, then faded. It stays
+// where it came up (the room's space), so a turn of the head can leave it. The card's clock runs every frame, drawn or not.
+uint32_t HangNotice(const XrCompositionLayerBaseHeader** layers, uint32_t nl, uint32_t max) {
+    const uint64_t now = GetTickCount64();
+    const noticecard::Frame f = g_noticeCard.Step(now, noticecard::Pokes(), noticecard::PanelOpen(), noticecard::Active(), noticecard::ShowMsNow());
+    static uint32_t toldSeq = 0;
+    if (nl >= max || !f.show || !g_actionsOk || !g_inNow.head.valid) return nl;
+    hud::NativePiece src;
+    bool encoded = true;
+    if (!hud::NoticePiece(&src, &encoded) || !src.visible || !src.w || !src.h) return nl;
+    if (!MakeHudPipeline() || !EnsureHudOut(g_noticeOut, src.w, src.h, "quest / level-up notice")) return nl;
+    if (f.place) {
+        const XrVector3f hp = P3(g_inNow.head.pos);
+        const XrQuaternionf yaw = Yaw(YawOf(Q4(g_inNow.head.rot)));
+        g_noticePose.position = Plus(hp, Rot(yaw, {0.0f, -noticecard::kDropM, -noticecard::kDistanceM}));
+        g_noticePose.orientation = Mul(yaw, AboutAxis({1.0f, 0.0f, 0.0f}, -noticecard::LeanDeg()));   // its face (+z) turned up to the eyes (as HudPose's bar in front)
+    }
+    const float seconds = (float)(GetTickCount64() % 3600000ull) / 1000.0f;
+    const float cb[12] = {encoded ? 1.0f : 0.0f, seconds, (float)src.w / (float)src.h, (float)src.w, 0.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 0.0f,
+                          std::clamp(f.alpha, 0.01f, 1.0f)};
+    if (!DrawHud(g_noticeOut, src.tex, false, cb)) return nl;
+    XrCompositionLayerQuad& q = g_noticeOut.layer;
+    q = {XR_TYPE_COMPOSITION_LAYER_QUAD};
+    q.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;   // premultiplied, as the toolbar
+    q.space = g_roomSpace ? g_roomSpace : g_space;
+    q.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+    q.subImage.swapchain = g_noticeOut.sc;
+    q.subImage.imageRect = {{0, 0}, {(int32_t)src.w, (int32_t)src.h}};
+    q.pose = g_noticePose;
+    q.size = {noticecard::kWidthM, noticecard::kWidthM * (float)src.h / (float)src.w};
+    layers[nl++] = (const XrCompositionLayerBaseHeader*)&q;
+    g_noticeCard.Shown(now);
+    if (f.seq != toldSeq) {
+        toldSeq = f.seq;
+        LogF("vrcam: notice_card - card %u in the room: the game's notice %ux%u, %.0f cm ahead, %.0f cm under the eyes, %.1f s", f.seq, src.w, src.h,
+             noticecard::kDistanceM * 100.0f, noticecard::kDropM * 100.0f, (float)noticecard::ShowMsNow() / 1000.0f);
+    }
     return nl;
 }
 
@@ -2678,11 +3365,20 @@ struct Laser {
     bool trigger = false;      // the laser hand's trigger the frame before (a press is its edge)
     int said = -1;             // the state last told the log
     uint32_t tellings = 0;
+    lasergrip::Tap gripTap[2];   // [openxr] laser_grip_tap: each hand's grip, tapped while the laser had it, given back as the menu's bumper
+    uint32_t gripTaps = 0;
+    bool btn = false;          // [openxr] hand_inventory: it points at the button beside the inventory (the panel to the front / to the hand)
+    bool pressIn = false;      // ... the left button went down on the inventory window
+    float lastPu = 0.0f, lastPv = 0.0f;   // ... where it last put the cursor, as fractions of the window
+    uint32_t drops = 0;
+    ULONGLONG closeAt = 0;     // ... the game's own inventory action held since (the drop: the inventory closed with the item on the cursor)
+    ULONGLONG checkAt = 0;     // ... when to see whether the game dropped it
 };
 Laser g_laser;
 // The beam and the dot, made once a session.
 struct LaserImage { XrSwapchain sc = XR_NULL_HANDLE; ID3D12Resource* upload = nullptr; uint32_t w = 0, h = 0; int state = 0; ULONGLONG retryAt = 0; };
 LaserImage g_beamImg, g_dotImg;
+LaserImage g_btnImg[2];   // [openxr] hand_inventory: the button beside the inventory (ButtonImages)
 constexpr float kBeamM = 1.5f, kBeamWidthM = 0.006f, kDotM = 0.022f;
 
 bool SendButton(int b, bool down) {
@@ -2696,6 +3392,7 @@ bool SendKey(WORD vk, bool down) {
     i.type = INPUT_KEYBOARD;
     i.ki.wScan = (WORD)MapVirtualKeyW(vk, MAPVK_VK_TO_VSC);
     i.ki.dwFlags = KEYEVENTF_SCANCODE | (down ? 0 : KEYEVENTF_KEYUP);
+    i.ki.dwExtraInfo = typedkeys::kOwnKeyTag;   // never the player's typing ([openxr] laser_typing)
     return i.ki.wScan && SendInput(1, &i, sizeof i) == 1;
 }
 
@@ -2711,7 +3408,7 @@ void LaserLetGo() {
 
 void LaserTeardown() {   // under g_lock or before the session exists
     LaserLetGo();
-    for (LaserImage* i : {&g_beamImg, &g_dotImg}) {
+    for (LaserImage* i : {&g_beamImg, &g_dotImg, &g_btnImg[0], &g_btnImg[1]}) {
         if (i->sc) { ForgetPending(i->sc); xrDestroySwapchain(i->sc); }
         ID3D12Resource* upload = i->upload;   // kept until the next image made with it, as the pointer's: its copy may still run
         *i = LaserImage{};
@@ -2719,6 +3416,9 @@ void LaserTeardown() {   // under g_lock or before the session exists
     }
     g_laser = Laser{};
     g_flatShown = FlatShown{};
+    g_btnShown = BtnShown{};
+    g_cut.pending = false;   // (a copy of the session gone is not waited for; the buffer is kept)
+    directinput::Action(D2RVR_ACT_INVENTORY, false, directinput::kSrcOther6);   // (a drop's inventory action never left held)
 }
 
 void LaserTell(int state) {
@@ -2740,8 +3440,10 @@ void LaserStep(D2RVR_XrInput& in, bool focused) {
     L.drawn = L.hit = false;
     bool holds = L.button[0] || L.button[1] || L.key[0] || L.key[1];
     for (const auto& t : L.takes) holds = holds || t[0] || t[1];
+    holds = holds || L.closeAt || L.checkAt;   // ([openxr] hand_inventory: a drop's inventory action is let go, its outcome told)
     if (!g_cfg.laser && !holds) { L.pad = false; L.said = -1; return; }   // off, and nothing of it left to let go
-    const int lh = g_cfg.laserHand ? 1 : 0, oh = 1 - lh;
+    const bool onHand = g_handInvUp.load();   // [openxr] hand_inventory (on the hand, or in front by its button): the right hand points, the left stick walks
+    const int lh = onHand || g_cfg.laserHand ? 1 : 0, oh = 1 - lh;
     const uint32_t raw[2] = {in.hand[0].buttons, in.hand[1].buttons};   // as pressed, before anything is taken
     int why = 0;
     XrSpaceLocation aim{XR_TYPE_SPACE_LOCATION};
@@ -2756,30 +3458,57 @@ void LaserStep(D2RVR_XrInput& in, bool focused) {
              (aim.locationFlags & need) != need) why = 6;
     // the ray against the picture: u, v from its top left
     float u = 0.0f, v = 0.0f;
+    bool onPlane = false;   // the ray meets the picture's plane (u, v past its edges then: a drag carried off it)
+    L.btn = false;
     if (!why) {
         L.from = aim.pose.position;
         L.dir = Unit(Rot(aim.pose.orientation, {0.0f, 0.0f, -1.0f}));
-        const XrPosef& s = g_flatShown.pose;
-        const XrVector3f n = Rot(s.orientation, {0.0f, 0.0f, 1.0f});   // the picture's front
-        const float dn = DotV(L.dir, n);
-        const float t = dn < -1e-4f ? DotV(Minus(s.position, L.from), n) / dn : -1.0f;
-        if (t > 0.0f) {
+        auto meet = [&](const XrPosef& s, float* t, XrVector3f* local) {   // the ray against a quad's plane: its distance and the point in the quad's frame
+            const XrVector3f n = Rot(s.orientation, {0.0f, 0.0f, 1.0f});   // the front
+            const float dn = DotV(L.dir, n);
+            *t = dn < -1e-4f ? DotV(Minus(s.position, L.from), n) / dn : -1.0f;
+            if (!(*t > 0.0f)) return false;
             const XrQuaternionf back{-s.orientation.x, -s.orientation.y, -s.orientation.z, s.orientation.w};
-            const XrVector3f p = Plus(L.from, Times(L.dir, t));
-            const XrVector3f local = Rot(back, Minus(p, s.position));
+            *local = Rot(back, Minus(Plus(L.from, Times(L.dir, *t)), s.position));
+            return true;
+        };
+        float t = 0.0f;
+        XrVector3f local{};
+        if (meet(g_flatShown.pose, &t, &local)) {
+            onPlane = true;
             u = local.x / g_flatShown.size.width + 0.5f;
             v = 0.5f - local.y / g_flatShown.size.height;
             L.hit = u >= 0.0f && u < 1.0f && v >= 0.0f && v < 1.0f;
-            if (L.hit) { L.at = p; L.len = t; }
+            if (L.hit) { L.at = Plus(L.from, Times(L.dir, t)); L.len = t; }
         }
-        if (!L.hit) L.len = kBeamM;
+        float tb = 0.0f;
+        XrVector3f lb{};
+        if (g_btnShown.ok && g_handInvUp.load() && meet(g_btnShown.pose, &tb, &lb) && fabsf(lb.x) <= 0.5f * g_btnShown.side &&
+            fabsf(lb.y) <= 0.5f * g_btnShown.side && (!L.hit || tb < t)) {
+            L.btn = true;   // [openxr] hand_inventory: the button beside the inventory
+            L.hit = false;
+            L.at = Plus(L.from, Times(L.dir, tb));
+            L.len = tb;
+        }
+        if (!L.hit && !L.btn) L.len = kBeamM;
     }
+    // the quad's point as the window's: the cut's own place in it ([openxr] hand_inventory), the whole window otherwise
+    const float* crop = g_flatShown.crop;
+    const float pu = std::clamp(crop[0] + u * (crop[2] - crop[0]), 0.0f, 0.9999f), pv = std::clamp(crop[1] + v * (crop[3] - crop[1]), 0.0f, 0.9999f);
+    const bool invUp = g_handInvUp.load();
+    auto inInventory = [&](float fu, float fv) {   // a point of the window on the inventory's window (the cut; not known yet: anywhere)
+        const handinv::Box& b = g_cut.box;
+        return !b.ok() || !g_cut.w || !g_cut.h || b.Has(fu * (float)g_cut.w, fv * (float)g_cut.h);
+    };
     // BodyWalk's pad navigating (a stick off its middle, a face button): the laser waits until the
     // aim moves on the picture again - tracking's tremble does not take the focus back
     bool padNow = false;
-    for (const D2RVR_XrHand& o : in.hand)
-        if (fabsf(o.stickX) > 0.35f || fabsf(o.stickY) > 0.35f ||
+    for (int h = 0; h < 2; ++h) {
+        const D2RVR_XrHand& o = in.hand[h];
+        const bool walks = onHand && h == 0;   // (the left stick walks the hero, it is not the menu's)
+        if ((!walks && (fabsf(o.stickX) > 0.35f || fabsf(o.stickY) > 0.35f)) ||
             (o.buttons & (BW_LINK_XRB_PRIMARY | BW_LINK_XRB_SECONDARY | BW_LINK_XRB_STICK | BW_LINK_XRB_MENU))) padNow = true;
+    }
     if (why) L.pad = false;
     else if (padNow && !L.button[0] && !L.button[1]) { L.pad = true; L.anchored = L.hit; L.padU = u; L.padV = v; }
     else if (L.pad && !padNow && L.hit && (!L.anchored || hypotf(u - L.padU, v - L.padV) > 0.045f)) L.pad = false;
@@ -2787,7 +3516,7 @@ void LaserStep(D2RVR_XrInput& in, bool focused) {
     L.drawn = acts;
     if (why != 1) LaserTell(why ? why : L.pad ? 7 : 0);
     // who has each trigger and grip, decided while it is let go: the laser's while it points at the picture
-    const bool claim = acts && L.hit;
+    const bool claim = acts && (L.hit || L.btn);
     for (int h = 0; h < 2; ++h) {
         D2RVR_XrHand& o = in.hand[h];
         if (o.trigger < 0.1f && !(raw[h] & BW_LINK_XRB_TRIGGER)) L.takes[h][0] = claim;
@@ -2795,25 +3524,136 @@ void LaserStep(D2RVR_XrInput& in, bool focused) {
         if (L.takes[h][0]) { o.trigger = 0.0f; o.buttons &= ~(uint32_t)BW_LINK_XRB_TRIGGER; }
         if (L.takes[h][1]) { o.squeeze = 0.0f; o.buttons &= ~(uint32_t)BW_LINK_XRB_SQUEEZE; }
     }
+    // [openxr] laser_grip_tap (vr/laser_grip_tap.h, F4): in a menu the grips are the pad's bumpers - the tabbed menu's pages (inventory ... options),
+    // the stash's, a trader's. The laser took them above; one tapped with no click (and not the zoom's) is given back now, a short press.
+    {
+        lasergrip::In gi;
+        gi.allowed = g_cfg.laserGripTap && acts && viewgate::F4();
+        gi.click = ((raw[0] | raw[1]) & BW_LINK_XRB_TRIGGER) != 0;
+        gi.nowMs = GetTickCount64();
+        for (int h = 0; h < 2; ++h) {
+            gi.claimed = L.takes[h][1];
+            gi.grip = (raw[h] & BW_LINK_XRB_SQUEEZE) != 0;
+            gi.spent = h == 1 && g_zoom.state() == menuzoom::Grab::State::Zooming;   // [openxr] menu_zoom moved the panel in this hold
+            const bool was = L.gripTap[h].Step(gi);
+            if (!was) continue;
+            D2RVR_XrHand& o = in.hand[h];
+            o.squeeze = 1.0f;
+            o.buttons |= BW_LINK_XRB_SQUEEZE;
+            static ULONGLONG toldAt[2] = {};
+            if (gi.nowMs - toldAt[h] > 1000 && (++L.gripTaps <= 10 || L.gripTaps % 50 == 0)) {   // once a tap (the pulse spans frames), not a flood
+                toldAt[h] = gi.nowMs;
+                LogF("vrcam: openxr - laser: the %s grip tapped over the menu - its press given to the game (the menu's %s) ([openxr] laser_grip_tap; %u)",
+                     h ? "right" : "left", h ? "RB: the next page" : "LB: the page before", L.gripTaps);
+            }
+        }
+    }
     if (acts) panelinput::OwnPointer();
     else if (L.pad) panelinput::UseController();
-    if (acts && L.hit) {   // the cursor where it points: the picture is the game window's client area
+    // [openxr] hand_inventory: an item dragged off the inventory - the cursor follows it into the window round the cut, where its release drops it
+    const bool dragOff = invUp && acts && onPlane && !L.hit && !L.btn && L.button[0];
+    if (acts && (L.hit || dragOff)) {   // the cursor where it points: the picture is the game window's client area
         // (the window's REAL pixels, also with a render size ([render] vr_resolution): the picture is the game's whole output, the
         // window's whole client area is the same picture, and the game's own ScreenToClient maps the one to the other - render_resolution.cpp)
         RECT rc{};
         POINT p{}, now{};
         if (GetClientRect(g_wnd, &rc) && rc.right > 0 && rc.bottom > 0) {
-            p = {std::clamp((LONG)(u * rc.right), 0L, rc.right - 1), std::clamp((LONG)(v * rc.bottom), 0L, rc.bottom - 1)};
-            if (ClientToScreen(g_wnd, &p) && (!GetCursorPos(&now) || now.x != p.x || now.y != p.y)) SetCursorPos(p.x, p.y);
+            const laserreach::Pt cp = laserreach::ClientPixel(pu, pv, rc.right, rc.bottom);
+            L.lastPu = pu; L.lastPv = pv;
+            p = {cp.x, cp.y};
+            if (ClientToScreen(g_wnd, &p) && (!GetCursorPos(&now) || now.x != p.x || now.y != p.y)) {
+                SetCursorPos(p.x, p.y);
+                // Windows keeps the cursor on the desktop, and a click goes to the window on top there: said when the laser's point is not the game's
+                // ([openxr] laser_fit_window keeps the window on its monitor - vr/laser_reach.h)
+                POINT got{};
+                const HWND over = WindowFromPoint(p);
+                const bool off = GetCursorPos(&got) && (got.x != p.x || got.y != p.y);
+                const bool covered = !off && over && GetAncestor(over, GA_ROOT) != GetAncestor(g_wnd, GA_ROOT);
+                static ULONGLONG toldAt = 0;
+                static uint32_t told = 0;
+                if ((off || covered) && GetTickCount64() - toldAt > 5000 && told < 40) {
+                    toldAt = GetTickCount64();
+                    ++told;
+                    RECT wr{};
+                    GetWindowRect(g_wnd, &wr);
+                    char cls[64] = "";
+                    if (covered) GetClassNameA(GetAncestor(over, GA_ROOT), cls, sizeof cls);
+                    LogF("vrcam: openxr - laser: the picture's point %.3f %.3f is the window's pixel %d,%d = screen %ld,%ld - %s%s%s (the game's window %ldx%ld at "
+                         "%ld,%ld, client %ldx%ld): out of the laser's reach there (%u)", u, v, cp.x, cp.y, p.x, p.y,
+                         off ? "off the desktop, the cursor stopped at " : "another window is over it there: ", off ? "" : cls,
+                         off ? (std::to_string(got.x) + "," + std::to_string(got.y)).c_str() : "", wr.right - wr.left, wr.bottom - wr.top,
+                         wr.left, wr.top, rc.right, rc.bottom, told);
+                }
+            }
         }
     }
     const bool trig = (raw[lh] & BW_LINK_XRB_TRIGGER) != 0, grip = (raw[lh] & BW_LINK_XRB_SQUEEZE) != 0;
     for (int b = 0; b < 2; ++b)   // let go with the trigger, or when the laser stops
-        if (L.button[b] && (!trig || why)) { panelinput::OwnPointer(); SendButton(b, false); L.button[b] = false; }
+        if (L.button[b] && (!trig || why)) {
+            panelinput::OwnPointer();
+            SendButton(b, false);
+            L.button[b] = false;
+            // [openxr] hand_inventory: pressed on the inventory, let go off it with an item on the game's cursor - the game's own controller drop:
+            // its inventory closed with the item held (vr/hand_inventory.h, InventoryItemManager::Update 0x1618A0 drops it the next frame), by the
+            // game's own inventory action (the pad's Start, as BodyWalk's 'D2R: Inventory'). Off the panel: off the cut on the hand; in front, off
+            // the inventory's window or off the picture.
+            const bool hung = HandInventoryHung();
+            const bool outside = handinv::ReleasedOff(hung, L.hit, L.btn, inInventory(pu, pv));
+            if (b == 0 && invUp && !why && L.pressIn && outside && !L.closeAt) {
+                const int held = gamestate::CursorHeld();
+                if (held == 1) {
+                    directinput::Action(D2RVR_ACT_INVENTORY, true, directinput::kSrcOther6);
+                    L.closeAt = GetTickCount64();
+                }
+                if (++L.drops <= 40)
+                    LogF("vrcam: openxr - laser: let go off the inventory (%s) - %s ([openxr] hand_inventory; %u)", hung ? "off the panel on the hand" :
+                         L.hit ? "on the picture outside the inventory's window" : "off the picture",
+                         held == 1 ? "an item on the game's cursor: the inventory closed by the game's own action - its own drop of the held item" :
+                         held == 0 ? "nothing on the game's cursor: nothing done" : "the game's cursor not read: nothing done", L.drops);
+            }
+        }
+    {   // the drop's inventory action: a press of 80 ms (as BodyWalk's), then whether the game dropped the item
+        const ULONGLONG now = GetTickCount64();
+        if (L.closeAt && now - L.closeAt >= 80) {
+            directinput::Action(D2RVR_ACT_INVENTORY, false, directinput::kSrcOther6);
+            L.closeAt = 0;
+            L.checkAt = now + 700;
+        }
+        if (L.checkAt && now >= L.checkAt) {
+            L.checkAt = 0;
+            const int held = gamestate::CursorHeld();
+            if (L.drops <= 40)
+                LogF("vrcam: openxr - laser: after the inventory closed - %s ([openxr] hand_inventory)",
+                     held == 0 ? "the game's cursor is empty: the game dropped the item" : held == 1 ? "the item still on the game's cursor: the game did NOT drop it" :
+                     "the game's cursor not read");
+        }
+    }
+    int clicked = -1;   // this frame's press: the button sent (0 left, 1 right), -1 none
+    if (acts && L.btn && trig && !L.trigger && L.takes[lh][0]) {   // [openxr] hand_inventory: the button - the panel to the front, or back to the hand
+        const bool front = !g_handFront.load();
+        g_handFront.store(front);
+        FrontSave(front);   // remembered: the next opening (and the next game) the same
+        haptics::Play(haptics::Event::MenuClick, lh);
+        static uint32_t told = 0;
+        if (++told <= 40) LogF("vrcam: openxr - the button beside the inventory: %s ([openxr] hand_inventory; %u)", front ? "in front, full size" : "back on the left hand", told);
+    }
     if (acts && L.hit && trig && !L.trigger && L.takes[lh][0]) {   // a fresh press on the picture
         const int b = grip && L.takes[lh][1] ? 1 : 0;
         L.button[b] = SendButton(b, true);
-        if (L.button[b]) haptics::Play(b ? haptics::Event::MenuRightClick : haptics::Event::MenuClick, lh);   // (lh: 0 left, 1 right, as haptics' hands)
+        if (L.button[b]) { clicked = b; haptics::Play(b ? haptics::Event::MenuRightClick : haptics::Event::MenuClick, lh); }   // (lh: 0 left, 1 right, as haptics' hands)
+        if (b == 0) L.pressIn = inInventory(pu, pv);
+    }
+    if (trig && !L.trigger && g_cfg.laser && why != 1) {
+        // Every press of the laser hand's trigger, and what it became (a player's video, 0.182: a tab under the laser lit up and did not open -
+        // a right click, the grip held, does nothing there): first 40, then every 20th
+        static uint32_t presses = 0;
+        if (++presses <= 40 || presses % 20 == 0) {
+            const char* what = clicked == 0 ? "a LEFT click" : clicked == 1 ? "a RIGHT click (the laser hand's grip was held - a tab or a button does nothing with it)" :
+                               why ? "no click - the laser is not the mouse now" : L.pad ? "no click - the laser waits for the pad (a stick or a face button was used): move it on the picture first" :
+                               !L.hit ? "no click - it points off the picture" : !L.takes[lh][0] ? "no click - the trigger was already held when the laser came onto the picture: let it go first" :
+                               "no click - Windows refused the button";
+            LogF("vrcam: openxr - laser: trigger pressed at %.3f %.3f on the picture: %s (%u)", pu, pv, L.btn ? "the button beside the inventory" : what, presses);
+        }
     }
     L.trigger = trig;
     const bool want[2] = {acts && L.takes[oh][0] && (raw[oh] & BW_LINK_XRB_TRIGGER) != 0,
@@ -2833,7 +3673,7 @@ void LaserImages() {
     const ULONGLONG now = GetTickCount64();
     auto make = [&](LaserImage& i, uint32_t w, uint32_t h, const char* what, auto shade) {
         if (i.state != 0 || now < i.retryAt) return;
-        if (i.sc) { ForgetPending(i.sc); SettleGpu(); gpufault::Note("xr: laser swapchain destroyed", (uint64_t)(uintptr_t)i.sc); xrDestroySwapchain(i.sc); i.sc = XR_NULL_HANDLE; }
+        if (i.sc) { gpufault::Note("xr: laser swapchain retired", (uint64_t)(uintptr_t)i.sc); RetireChain(i.sc, "laser"); }   // (chain_reaper.h)
         std::vector<uint32_t> px((size_t)w * h);
         for (uint32_t y = 0; y < h; ++y)
             for (uint32_t x = 0; x < w; ++x) {
@@ -2905,7 +3745,381 @@ uint32_t HangBeam(const BeamView& L, const XrCompositionLayerBaseHeader** layers
 // The game's laser over the flat picture.
 uint32_t HangLaser(const XrCompositionLayerBaseHeader** layers, uint32_t nl, uint32_t max, XrCompositionLayerQuad& beam, XrCompositionLayerQuad& dot) {
     const Laser& L = g_laser;
-    return HangBeam(BeamView{L.drawn, L.hit, L.from, L.dir, L.at, L.len, g_flatShown.pose.orientation}, layers, nl, max, beam, dot);
+    return HangBeam(BeamView{L.drawn, L.hit || L.btn, L.from, L.dir, L.at, L.len, L.btn ? g_btnShown.pose.orientation : g_flatShown.pose.orientation}, layers, nl, max, beam, dot);
+}
+
+// -- [hud] map_click_big: the right laser on the map in the hand, a click makes it big (vr/map_laser.h) ------------------------------
+// The button under the big map: "ROTATE MAP" over "On" / "Off" ([hud] map_rotate), the two states one above the other in one static image.
+constexpr int kRotBtnW = 320, kRotBtnH = 80;
+std::vector<uint32_t> PaintRotateButton() {
+    std::vector<uint32_t> out;
+    const int W = kRotBtnW, H = 2 * kRotBtnH;
+    BITMAPINFO bi{};
+    bi.bmiHeader = {sizeof(BITMAPINFOHEADER), W, -H, 1, 32, BI_RGB};
+    HDC dc = CreateCompatibleDC(nullptr);
+    void* bits = nullptr;
+    HBITMAP dib = dc ? CreateDIBSection(dc, &bi, DIB_RGB_COLORS, &bits, nullptr, 0) : nullptr;
+    if (!dc || !dib || !bits) { if (dib) DeleteObject(dib); if (dc) DeleteDC(dc); return out; }
+    HGDIOBJ old = SelectObject(dc, dib);
+    memset(bits, 0, (size_t)W * H * 4);
+    auto fill = [&](RECT r, COLORREF c) { HBRUSH b = CreateSolidBrush(c); FillRect(dc, &r, b); DeleteObject(b); };
+    HFONT caption = CreateFontW(26, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY, DEFAULT_PITCH, L"Georgia");
+    HFONT value = CreateFontW(34, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY, DEFAULT_PITCH, L"Georgia");
+    HGDIOBJ oldFont = SelectObject(dc, caption);
+    SetBkMode(dc, TRANSPARENT);
+    for (int i = 0; i < 2; ++i) {   // 0 off, 1 on (bearstonem/d2r-pcvr's map buttons' colours)
+        const int y = i * kRotBtnH;
+        const bool on = i == 1;
+        fill({0, y, W, y + kRotBtnH}, on ? RGB(170, 128, 58) : RGB(122, 94, 51));
+        fill({4, y + 4, W - 4, y + kRotBtnH - 4}, on ? RGB(46, 36, 20) : RGB(17, 16, 14));
+        SelectObject(dc, caption);
+        SetTextColor(dc, RGB(170, 157, 128));
+        RECT top{0, y + 4, W, y + 36};
+        DrawTextW(dc, L"ROTATE MAP", -1, &top, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        SelectObject(dc, value);
+        SetTextColor(dc, on ? RGB(240, 209, 139) : RGB(229, 218, 191));
+        RECT bottom{0, y + 34, W, y + kRotBtnH - 6};
+        DrawTextW(dc, on ? L"On" : L"Off", -1, &bottom, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+    }
+    GdiFlush();
+    const uint8_t* b = (const uint8_t*)bits;
+    out.resize((size_t)W * H);
+    for (size_t i = 0; i < out.size(); ++i) {
+        const uint32_t B = b[4 * i], G = b[4 * i + 1], R = b[4 * i + 2], A = (R | G | B) ? 255u : 0u;
+        out[i] = R | G << 8 | B << 16 | A << 24;
+    }
+    SelectObject(dc, oldFont);
+    DeleteObject(caption);
+    DeleteObject(value);
+    SelectObject(dc, old);
+    DeleteObject(dib);
+    DeleteDC(dc);
+    return out;
+}
+
+// [hud] map_rotate flipped by the button: written on a thread of its own (shared/ini_txn), as the menu zoom's distance.
+void RotateSaveRun() {
+    for (;;) {
+        const int v = g_rotateSaveWant.exchange(-1);
+        if (v < 0) {
+            g_rotateSaving.store(false);
+            if (g_rotateSaveWant.load() >= 0 && !g_rotateSaving.exchange(true)) continue;
+            return;
+        }
+        ini::Result r = ini::Result::Failed;
+        std::string why;
+        for (int attempt = 0; attempt < 2 && r != ini::Result::Saved; ++attempt) {
+            const ini::Text now = ini::Read(g_iniPath, L"hud", L"map_rotate");
+            const ini::Change c{L"hud", L"map_rotate", L"0", now.present ? now.text : L"0", v ? L"1" : L"0"};
+            r = ini::Commit(g_iniPath, {c}, nullptr, &why);
+        }
+        if (r == ini::Result::Saved) LogF("vrcam: openxr - the big map's button: [hud] map_rotate=%d written", v);
+        else LogF("vrcam: openxr - the big map's button: [hud] map_rotate=%d NOT written (%s: %s)", v,
+                  r == ini::Result::Conflict ? "changed meanwhile" : "failed", why.c_str());
+    }
+}
+
+// [hud] map_big_grab: where the big map was let go, written on a thread of its own (shared/ini_txn), three keys in one go.
+void PlaceSaveRun() {
+    for (;;) {
+        if (!g_placeSaveWant.exchange(false)) {
+            g_placeSaving.store(false);
+            if (g_placeSaveWant.load() && !g_placeSaving.exchange(true)) continue;
+            return;
+        }
+        const float d = g_placeSave[0], side = g_placeSave[1], up = g_placeSave[2];
+        wchar_t vd[32], vs[32], vu[32];
+        swprintf_s(vd, L"%.2f", d); swprintf_s(vs, L"%.1f", side); swprintf_s(vu, L"%.2f", up);
+        ini::Result r = ini::Result::Failed;
+        std::string why;
+        for (int attempt = 0; attempt < 2 && r != ini::Result::Saved; ++attempt) {
+            const ini::Text a = ini::Read(g_iniPath, L"hud", L"map_big_dist_m"), b = ini::Read(g_iniPath, L"hud", L"map_big_side_deg"),
+                            c = ini::Read(g_iniPath, L"hud", L"map_big_up_m");
+            const std::vector<ini::Change> ch = {
+                ini::Change{L"hud", L"map_big_dist_m", L"1.30", a.present ? a.text : L"1.30", vd},
+                ini::Change{L"hud", L"map_big_side_deg", L"0", b.present ? b.text : L"0", vs},
+                ini::Change{L"hud", L"map_big_up_m", L"-0.10", c.present ? c.text : L"-0.10", vu}};
+            r = ini::Commit(g_iniPath, ch, nullptr, &why);
+        }
+        if (r == ini::Result::Saved) LogF("vrcam: openxr - the big map let go: kept %.2f m out, %.1f deg to the side, %+.2f m from the eyes ([hud] map_big_dist_m / side_deg / up_m)", d, side, up);
+        else LogF("vrcam: openxr - the big map let go: its place NOT written (%s: %s)", r == ini::Result::Conflict ? "changed meanwhile" : "failed", why.c_str());
+    }
+}
+
+// Each frame, after the menus' laser: the right controller's aim against the map in the hand (or, while big, the big map and its button),
+// the click's step, the trigger taken out of `in` while it is the laser's. Everything in g_space (the hand map converted from the room's).
+void MapLaserStep(D2RVR_XrInput& in, bool focused) {
+    MapBeam& B = g_mapBeam;
+    B.drawn = B.hit = false;
+    const bool want = g_cfg.mapClickBig || g_mapClick.Big();
+    D2RVR_XrHand& r = in.hand[1];
+    const bool trig = (r.buttons & BW_LINK_XRB_TRIGGER) != 0;
+    if (!want && !trig) { g_mapClick.Step(false, false, false, false, false); return; }
+    XrSpaceLocation aim{XR_TYPE_SPACE_LOCATION};
+    const XrSpaceLocationFlags need = XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT;
+    const bool aimOk = r.active && g_aimSpace[1] && XR_SUCCEEDED(xrLocateSpace(g_aimSpace[1], g_space, g_fs.predictedDisplayTime, &aim)) &&
+                       (aim.locationFlags & need) == need;
+    const ULONGLONG now = GetTickCount64();
+    const bool big = g_mapClick.Big();
+    const bool allowed = g_cfg.mapClickBig && viewgate::F4() && g_kind == kPair && focused && aimOk && !g_hsOpen.load() && !g_laser.drawn &&
+                         !g_panelOpen.load() && (big || (g_mapQuadRoom.ok && g_mapQuadAt && now - g_mapQuadAt < 300)) &&
+                         (!big || gamestate::AutoMapOpen());   // the game's map closed while big (its key, the stick's click): the whole big map down with it
+    auto v3 = [](XrVector3f v) { return maplaser::V3{v.x, v.y, v.z}; };
+    maplaser::Hit onMap, onBig, onButton, onFront;
+    const XrVector3f from = aim.pose.position, dir = Unit(Rot(aim.pose.orientation, {0.0f, 0.0f, -1.0f}));
+    XrQuaternionf mapTurn{0.0f, 0.0f, 0.0f, 1.0f};
+    if (allowed && !big) {   // the hand map's quad from the room's space into g_space
+        maplaser::Quad q = g_mapQuadRoom;
+        XrPosef room{{0.0f, 0.0f, 0.0f, 1.0f}, {0.0f, 0.0f, 0.0f}};
+        XrSpaceLocation rl{XR_TYPE_SPACE_LOCATION};
+        if (!g_mapQuadInG && g_roomSpace && XR_SUCCEEDED(xrLocateSpace(g_roomSpace, g_space, g_fs.predictedDisplayTime, &rl)) && (rl.locationFlags & need) == need)
+            room = rl.pose;   // (beside the inventory it was hung in g_space already)
+        auto P = [&](maplaser::V3 v) { return v3(Plus(Rot(room.orientation, {v.x, v.y, v.z}), room.position)); };
+        auto D = [&](maplaser::V3 v) { return v3(Rot(room.orientation, {v.x, v.y, v.z})); };
+        q.at = P(q.at); q.right = D(q.right); q.up = D(q.up); q.front = D(q.front);
+        onMap = maplaser::RayQuad(v3(from), v3(dir), q, 2.0f);
+        const XrVector3f x{q.right.x, q.right.y, q.right.z}, y{q.up.x, q.up.y, q.up.z}, z{q.front.x, q.front.y, q.front.z};
+        mapTurn = FromAxes(x, y, z);
+    }
+    if (allowed && big) {
+        onButton = maplaser::RayQuad(v3(from), v3(dir), g_bigButton, 4.0f);
+        onFront = maplaser::RayQuad(v3(from), v3(dir), g_bigFrontBtn, 4.0f);
+        onBig = maplaser::RayQuad(v3(from), v3(dir), g_bigQuad, 4.0f);
+    }
+    const maplaser::Frame f = g_mapClick.Step(allowed, onMap.hit, onBig.hit, onButton.hit, onFront.hit, trig);
+    if (f.claim) { r.trigger = 0.0f; r.buttons &= ~(uint32_t)BW_LINK_XRB_TRIGGER; }
+    {   // [hud] map_big_grab: the right grip on the big map in front takes it; the laser drags it, the stick nearer / farther (as menu_zoom: forward nearer)
+        BigGrab& G = g_bigGrab;
+        const bool grip = (r.buttons & BW_LINK_XRB_SQUEEZE) != 0;
+        const bool can = allowed && big && g_cfg.mapBigGrab && g_bigInFront && g_bigSpot.ok;
+        if (!grip) G.claimed = can && onBig.hit;   // whose the grip is: decided while it is let go
+        if (G.claimed) { r.squeeze = 0.0f; r.buttons &= ~(uint32_t)BW_LINK_XRB_SQUEEZE; }
+        const double us = UsNow();
+        const float dt = G.atUs > 0.0 ? (float)std::min(0.1, (us - G.atUs) * 1e-6) : 0.0f;
+        G.atUs = us;
+        const XrVector3f eyes = g_viewsOk ? Times(Plus(g_views[0].pose.position, g_views[1].pose.position), 0.5f) : from;
+        const float headYaw = g_viewsOk ? YawOf(g_views[0].pose.orientation) : 0.0f;
+        if (G.claimed && grip && !G.was && can && onBig.hit) {
+            G.on = true;
+            G.dist = onBig.t;
+            G.offset = maplaser::Sub(g_bigSpot.at, onBig.at);
+            haptics::Play(haptics::Event::MenuClick, 1);
+        }
+        if (G.on && (!grip || !can)) {   // let go: kept where it is, relative to the gaze
+            G.on = false;
+            float d = 0.0f, side = 0.0f, up = 0.0f;
+            maplaser::Relative(g_bigSpot, v3(eyes), headYaw, &d, &side, &up);
+            g_cfg.bigDistM = std::clamp(d, 0.3f, 4.0f);
+            g_cfg.bigSideDeg = std::clamp(side * 57.2957795f, -180.0f, 180.0f);
+            g_cfg.bigUpM = std::clamp(up, -1.5f, 1.5f);
+            g_placeSave[0] = g_cfg.bigDistM; g_placeSave[1] = g_cfg.bigSideDeg; g_placeSave[2] = g_cfg.bigUpM;
+            g_placeSaveWant.store(true);
+            if (!g_placeSaving.exchange(true)) std::thread(PlaceSaveRun).detach();
+        }
+        if (G.on) {
+            G.dist = std::clamp(G.dist - r.stickY * 1.5f * dt, 0.4f, 4.0f);   // (the stick's Y is the drag's while it holds: not the game's)
+            r.stickY = 0.0f;
+            g_bigSpot = maplaser::Drag(v3(from), v3(dir), G.dist, G.offset, v3(eyes));
+        }
+        G.was = grip;
+    }
+    const maplaser::Hit& h = onButton.hit ? onButton : onFront.hit ? onFront : onBig.hit ? onBig : onMap;
+    B.drawn = f.beam || g_bigGrab.on;
+    B.hit = h.hit;
+    B.from = from; B.dir = dir;
+    B.len = h.hit ? h.t : kBeamM;
+    B.at = {h.at.x, h.at.y, h.at.z};
+    B.surface = big ? g_bigLayer[0].pose.orientation : mapTurn;   // (the big map's turn as hung: in front or on the hand)
+    switch (f.event) {
+        case maplaser::Event::Open: {
+            g_bigEyes = g_viewsOk ? Times(Plus(g_views[0].pose.position, g_views[1].pose.position), 0.5f) : from;
+            g_bigYaw = g_viewsOk ? YawOf(g_views[0].pose.orientation) : YawOf(aim.pose.orientation);
+            g_bigQuad = g_bigButton = g_bigFrontBtn = maplaser::Quad{};   // (hung by HangBigMap once the game draws its big map)
+            g_bigFront = false;   // ([hud] map_big_on_hand: on the hand at each opening)
+            g_bigSpot = maplaser::Spot{};   // ([hud] map_big_follow / map_big_grab: placed afresh at its first frame in front)
+            g_bigGrab = BigGrab{};
+            hud::SetMapBig(true);
+            gamestate::SetMapBig(true);
+            haptics::Play(haptics::Event::MenuClick, 1);
+            Log("vrcam: openxr - the map in the hand clicked: the game's big map in front ([hud] map_click_big; a click on it or away puts it back)");
+            break;
+        }
+        case maplaser::Event::Close:
+            hud::SetMapBig(false);
+            gamestate::SetMapBig(false);
+            if (allowed) haptics::Play(haptics::Event::MenuClick, 1);
+            Log(allowed ? "vrcam: openxr - the big map clicked: back in the hand"
+                        : !gamestate::AutoMapOpen() ? "vrcam: openxr - the game's map closed: the big map down with it, the interface back in its place"
+                                                    : "vrcam: openxr - the big map back in the hand (a menu, another view, or the laser cannot act)");
+            break;
+        case maplaser::Event::Rotate: {
+            g_cfg.mapRotate = !g_cfg.mapRotate;   // live at once; the ini follows
+            g_rotateSaveWant.store(g_cfg.mapRotate ? 1 : 0);
+            if (!g_rotateSaving.exchange(true)) std::thread(RotateSaveRun).detach();
+            haptics::Play(haptics::Event::MenuClick, 1);
+            LogF("vrcam: openxr - the big map's button: the map in the hand %s ([hud] map_rotate=%d)",
+                 g_cfg.mapRotate ? "turns so the way you look is up" : "keeps the map's up up", (int)g_cfg.mapRotate);
+            break;
+        }
+        case maplaser::Event::Front:
+            g_bigFront = !g_bigFront;
+            g_bigSpot = maplaser::Spot{};   // (in front again: placed afresh, from the gaze now)
+            g_bigEyes = g_viewsOk ? Times(Plus(g_views[0].pose.position, g_views[1].pose.position), 0.5f) : g_bigEyes;
+            g_bigYaw = g_viewsOk ? YawOf(g_views[0].pose.orientation) : g_bigYaw;
+            haptics::Play(haptics::Event::MenuClick, 1);
+            LogF("vrcam: openxr - the big map's button: %s ([hud] map_big_on_hand)", g_bigFront ? "in front, big" : "back on the left hand");
+            break;
+        default:
+            break;
+    }
+}
+
+// While big: the game's whole-screen map (the interface hud.cpp took out, kNativePanel) hung in front where the head looked at the click,
+// its button under it; where they hang kept for the next frame's laser. Appended to layers[] from nl on, at most max.
+uint32_t HangHandButton(const XrCompositionLayerBaseHeader** layers, uint32_t nl, uint32_t max, const XrCompositionLayerQuad& panel, bool onHand);   // below
+uint32_t HangBigMap(const XrCompositionLayerBaseHeader** layers, uint32_t nl, uint32_t max) {
+    if (!g_mapClick.Big() || nl >= max || !g_actionsOk) return nl;
+    hud::NativePiece piece[hud::kNativePieces];
+    FlatVRGameHudLook look{};
+    FlatVRGameHudPose barPose{};
+    if (!hud::NativeHud(piece, &look, &barPose)) return nl;
+    const hud::NativePiece& src = piece[hud::kNativePanel];
+    if (!src.visible || !src.w || !src.h || !MakeHudPipeline()) return nl;
+    const uint32_t rows = src.mapRows ? src.mapRows : src.h;   // the whole-screen map above the toolbar's strip (hud.cpp): the toolbar is not on it
+    // [hud] map_rotate / map_top_down (the big map's Rotate button flips the first): turned as the map in the hand is - from above, about the
+    // hero (the canvas's middle: the whole-screen map is centred on him), round in a square of its own; else the game's map as it draws it
+    float gx = 0.0f, gy = 1.0f;
+    const bool headingKnown = hud::MapTurnHeading(&gx, &gy);
+    const float bearing = mapturn::Bearing(gx, gy);
+    const mapturn::Turn turn = mapturn::For(g_cfg.mapTopDown, g_cfg.mapRotate, headingKnown, bearing);
+    const float hu = std::clamp(src.heroU, 0.0f, 1.0f), hv = std::clamp(src.heroV, 0.0f, 1.0f);
+    const float halfW = std::min(hu, 1.0f - hu) * (float)src.w, halfH = std::min(hv * (float)src.h, (float)rows - hv * (float)src.h);
+    const mapturn::Map mt = turn.Any() ? mapturn::MapAround(turn, (float)src.w, (float)src.h, src.stretch, hu, hv, halfW, halfH) : mapturn::Map{};
+    const bool turned = mt.ok;
+    const uint32_t side = std::clamp(std::min(src.w, rows), 256u, 2048u);
+    HudOut& o = turned ? g_bigTurnOut : g_hudOut[hud::kNativePanel];   // (a menu's panel's chain: never both at once - a menu puts the map back)
+    if (!EnsureHudOut(o, turned ? side : src.w, turned ? side : src.h, turned ? "big map, turned" : "big map")) return nl;
+    const float cb[12] = {look.encoded ? 1.0f : 0.0f, 0.0f, (float)src.w / (float)src.h, turned ? (float)side : (float)src.w, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 0.0f};
+    float turnCb[kHudConstants - 12] = {};
+    if (turned) {
+        const float t[kHudConstants - 12] = {1.0f, mt.hero[0], mt.hero[1], (float)rows / (float)src.h, mt.m[0], mt.m[1], mt.m[2], mt.m[3]};
+        memcpy(turnCb, t, sizeof turnCb);
+    }
+    if (!DrawHud(o, src.tex, false, cb, 0, 0, turnCb)) return nl;
+    const float aspect = turned ? 1.0f : (float)src.w / (float)rows;   // (turned: a round map in a square)
+    // in front: its spot in the room (vr/map_laser.h) - the standard place, or the one kept ([hud] map_big_grab) when it is in view; then
+    // left where it is ([hud] map_big_follow: it comes round after the gaze lazily), or dragged by the laser and the grip
+    {
+        const double us = UsNow();
+        const float dt = g_bigSpotUs > 0.0 ? (float)((us - g_bigSpotUs) * 1e-6) : 0.0f;
+        g_bigSpotUs = us;
+        const maplaser::V3 eyesAt{g_bigEyes.x, g_bigEyes.y, g_bigEyes.z};
+        if (!g_bigSpot.ok) {
+            float d = maplaser::kDistM, side = maplaser::kSideRad, up = maplaser::kUpM;
+            if (g_cfg.mapBigGrab) {
+                const float ks = g_cfg.bigSideDeg * 0.0174532925f;
+                if (maplaser::InView(g_cfg.bigDistM, ks, g_cfg.bigUpM)) { d = g_cfg.bigDistM; side = ks; up = g_cfg.bigUpM; }
+                else LogF("vrcam: openxr - the big map's kept place (%.2f m, %.0f deg, %+.2f m) is out of view: in front instead", g_cfg.bigDistM, g_cfg.bigSideDeg, g_cfg.bigUpM);
+            }
+            g_bigSpot = maplaser::SpotFor(eyesAt, g_bigYaw, d, side, up);
+        } else if (g_cfg.mapBigFollow && !g_bigGrab.on && g_viewsOk) {
+            const XrVector3f e = Times(Plus(g_views[0].pose.position, g_views[1].pose.position), 0.5f);
+            g_bigSpot = maplaser::Follow(g_bigSpot, {e.x, e.y, e.z}, YawOf(g_views[0].pose.orientation), dt);
+        }
+    }
+    maplaser::Place pl = maplaser::PlaceAt(g_bigSpot, aspect);
+    XrQuaternionf q = Yaw(g_bigSpot.yaw);
+    bool onHand = false;
+    if (g_cfg.mapBigOnHand && !g_bigFront && g_viewsOk) {
+        // [hud] map_big_on_hand: held over the left controller like the inventory ([openxr] hand_inventory's place, hand_inventory_width_m wide),
+        // turned to the eyes; the Rotate button over its top edge. The controller not located: in front this frame.
+        XrSpaceLocation grip{XR_TYPE_SPACE_LOCATION};
+        const XrSpaceLocationFlags need = XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT;
+        if (g_gripSpace[0] && XR_SUCCEEDED(xrLocateSpace(g_gripSpace[0], g_space, g_fs.predictedDisplayTime, &grip)) && (grip.locationFlags & need) == need) {
+            const XrVector3f& a = g_views[0].pose.position, &b = g_views[1].pose.position;
+            const XrVector3f& hp = grip.pose.position;
+            const handinv::Place hand = handinv::OnHand({hp.x, hp.y, hp.z}, {0.5f * (a.x + b.x), 0.5f * (a.y + b.y), 0.5f * (a.z + b.z)}, g_cfg.handInvWidthM,
+                                                        1.0f / aspect);
+            if (hand.ok) {
+                float hq[4];
+                handinv::Orientation(hand, hq);
+                q = {hq[0], hq[1], hq[2], hq[3]};
+                pl.at = {hand.center.x, hand.center.y, hand.center.z};
+                pl.w = hand.w; pl.h = hand.h;
+                pl.bw = 0.5f * hand.w; pl.bh = 0.25f * pl.bw;
+                pl.button = maplaser::ButtonAbove(pl.at, {hand.up.x, hand.up.y, hand.up.z}, pl.h, pl.bh);
+                onHand = true;
+            }
+        }
+    }
+    auto quad = [&](XrCompositionLayerQuad& l, XrSwapchain sc, XrRect2Di rect, maplaser::V3 at, float w, float h) {
+        l = {XR_TYPE_COMPOSITION_LAYER_QUAD};
+        l.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;   // premultiplied: the world through what the map leaves
+        l.space = g_space;
+        l.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+        l.subImage.swapchain = sc;
+        l.subImage.imageRect = rect;
+        l.pose.orientation = q;
+        l.pose.position = {at.x, at.y, at.z};
+        l.size = {w, h};
+    };
+    auto keep = [&](maplaser::Quad& m, maplaser::V3 at, float w, float h) {
+        const XrVector3f x = Rot(q, {1.0f, 0.0f, 0.0f}), y = Rot(q, {0.0f, 1.0f, 0.0f}), z = Rot(q, {0.0f, 0.0f, 1.0f});
+        m.at = at; m.right = {x.x, x.y, x.z}; m.up = {y.x, y.y, y.z}; m.front = {z.x, z.y, z.z};
+        m.w = w; m.h = h; m.round = false; m.ok = true;
+    };
+    g_bigInFront = !onHand;   // ([hud] map_big_grab: the grip takes it only in front)
+    quad(g_bigLayer[0], o.sc, turned ? XrRect2Di{{0, 0}, {(int32_t)side, (int32_t)side}} : XrRect2Di{{0, 0}, {(int32_t)src.w, (int32_t)rows}}, pl.at, pl.w, pl.h);
+    layers[nl++] = (const XrCompositionLayerBaseHeader*)&g_bigLayer[0];
+    keep(g_bigQuad, pl.at, pl.w, pl.h);
+    if (g_cfg.mapCompass && headingKnown) {   // [hud] map_compass over the big map too, at most half a metre wide; on the hand the Rotate button over it
+        XrCompositionLayerQuad cq = g_bigLayer[0];
+        cq.size.width = std::min(pl.w, 0.5f);
+        const uint32_t before = nl;
+        nl = HangCompass(layers, nl, max, cq, bearing, false);
+        if (nl > before && onHand) {
+            const float ch = cq.size.width * (float)mapturn::kStripH / (float)mapturn::kWindow;
+            const XrVector3f up = Rot(q, {0.0f, 1.0f, 0.0f});
+            pl.button = {pl.button.x + up.x * 1.3f * ch, pl.button.y + up.y * 1.3f * ch, pl.button.z + up.z * 1.3f * ch};
+        }
+    }
+    if (!g_rotButtonSc && !g_rotButtonFailed) {
+        const std::vector<uint32_t> px = PaintRotateButton();
+        XrSwapchain sc = XR_NULL_HANDLE;
+        const int got = px.empty() ? -1 : MakeStaticImage((uint32_t)kRotBtnW, (uint32_t)(2 * kRotBtnH), px.data(), g_rotButtonUpload, sc, "big map button");
+        if (got > 0) g_rotButtonSc = sc;
+        else {
+            if (sc) xrDestroySwapchain(sc);
+            if (got < 0) { g_rotButtonFailed = true; Log("vrcam: openxr - the big map's button: its image could not be made - no button this session"); }
+        }
+    }
+    if (g_rotButtonSc && nl < max) {
+        quad(g_bigLayer[1], g_rotButtonSc, {{0, g_cfg.mapRotate ? kRotBtnH : 0}, {kRotBtnW, kRotBtnH}}, pl.button, pl.bw, pl.bh);
+        layers[nl++] = (const XrCompositionLayerBaseHeader*)&g_bigLayer[1];
+        keep(g_bigButton, pl.button, pl.bw, pl.bh);
+    }
+    g_bigFrontBtn = maplaser::Quad{};
+    if (g_cfg.mapBigOnHand && nl < max) {   // the inventory's own button beside its top right corner: to the front, or back on the hand
+        nl = HangHandButton(layers, nl, max, g_bigLayer[0], onHand);
+        if (g_btnShown.ok) {
+            keep(g_bigFrontBtn, {g_btnShown.pose.position.x, g_btnShown.pose.position.y, g_btnShown.pose.position.z}, g_btnShown.side, g_btnShown.side);
+            g_btnShown.ok = false;   // (the inventory's laser does not take it: the inventory is not up)
+        }
+    }
+    static int told = -1;
+    if (told != ((int)onHand | (int)turned << 1)) {
+        told = (int)onHand | (int)turned << 1;
+        LogF("vrcam: openxr - the big map %s: the game's whole-screen map, %ux%u of the interface's %ux%u (above the toolbar's strip), %.2f m wide, %s, its "
+             "Rotate button %s", onHand ? "on the left hand" : "in front", src.w, rows, src.w, src.h, pl.w,
+             turned ? "from above about the hero (canvas middle)" : "as the game draws it", onHand ? "over it" : "under it");
+    }
+    return nl;
+}
+
+// The beam and dot over the map in the hand / the big map (MapLaserStep's), in g_space as the menus' laser.
+uint32_t HangMapLaser(const XrCompositionLayerBaseHeader** layers, uint32_t nl, uint32_t max) {
+    const MapBeam& B = g_mapBeam;
+    return HangBeam(BeamView{B.drawn, B.hit, B.from, B.dir, B.at, B.len, B.surface}, layers, nl, max, g_mapBeamLayer[0], g_mapBeamLayer[1]);
 }
 
 #include "xr_quad_atlas.h"         // a CPU-painted picture as a quad layer (the settings panel; the skill wheel can use it)
@@ -2928,12 +4142,14 @@ bool CopyInto(Chain& c, ID3D12Resource* bb) {
     }
     D3D12_RESOURCE_BARRIER b[2] = {Tr(bb, D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_COPY_SOURCE),
                                    Tr(dst, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_DEST)};
+    const int span = gpuspans::Begin(g_list, "a picture into its swapchain");
     g_list->ResourceBarrier(2, b);
     D3D12_TEXTURE_COPY_LOCATION to{}, from{};
     to.pResource = dst; to.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX; to.SubresourceIndex = 0;
     from.pResource = bb; from.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX; from.SubresourceIndex = 0;
-    D3D12_BOX box{0, 0, 0, c.w, c.h, 1};
+    D3D12_BOX box{c.sx, c.sy, 0, c.sx + c.w, c.sy + c.h, 1};   // (the whole picture, or runtime_fov's box of it)
     g_list->CopyTextureRegion(&to, 0, 0, 0, &from, &box);
+    gpuspans::End(g_list, span);
     D3D12_RESOURCE_BARRIER e[2] = {Tr(bb, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_PRESENT),
                                    Tr(dst, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_RENDER_TARGET)};
     g_list->ResourceBarrier(2, e);
@@ -3087,20 +4303,16 @@ void Poll() {
     }
 }
 
-// The fov each eye is drawn with. [openxr] symmetric_fov (on): as wide to the left as to the
+// The fov each eye is drawn with (vr/eye_fov.h). [openxr] symmetric_fov (on): as wide to the left as to the
 // right, the wider side's - a headset's eyes are mirrored (each wider on its outer side), and
 // the game's interface, drawn once and the same in both eyes, then put the labels over the
 // monsters left in the left eye and right in the right one, apart beyond the infinite
 // (2026-10-10). The runtime crops what is not shown. Then narrowed to the window's aspect about
-// its own middle with fov_crop.
+// its own middle with fov_crop. [openxr] runtime_fov (off): neither - the runtime's own, as a typical app draws.
 XrFovf Cropped(XrFovf f) {
-    float l = tanf(f.angleLeft), r = tanf(f.angleRight), u = tanf(f.angleUp), d = tanf(f.angleDown);
-    if (g_cfg.symmetric) { const float h = std::max(-l, r); l = -h; r = h; }
-    const float a = g_aspect.load();
-    if (!g_cfg.fovCrop || !(a > 0.1f)) return {atanf(l), atanf(r), atanf(u), atanf(d)};
-    if ((r - l) / (u - d) > a) { const float cx = 0.5f * (r + l), hw = 0.5f * a * (u - d); l = cx - hw; r = cx + hw; }
-    else { const float cy = 0.5f * (u + d), hh = 0.5f * (r - l) / a; u = cy + hh; d = cy - hh; }
-    return {atanf(l), atanf(r), atanf(u), atanf(d)};
+    const eyefov::Tan t = eyefov::Drawn(eyefov::FromAngles(f.angleLeft, f.angleRight, f.angleUp, f.angleDown),
+                                        {RuntimeFovNow(), g_cfg.symmetric, g_cfg.fovCrop, g_aspect.load()});
+    return {atanf(t.l), atanf(t.r), atanf(t.u), atanf(t.d)};
 }
 
 // [openxr] views_3d, F1 (vr/views3d.h): the game's view from above is a WINDOW of the room - the flat picture's place, width and
@@ -3184,9 +4396,11 @@ bool OpenFrame(Kind kind) {
     const XrResult br = xrBeginFrame(g_session, &bi);
     const bool beginGone = g_failStreak[1].Note(br, GetTickCount64());
     if (br != XR_FRAME_DISCARDED && !Ok(br, "xrBeginFrame")) { if (beginGone) GiveUp("xrBeginFrame", br); return false; }
+    ReapChains();   // swapchains retired earlier, destroyed only if the game's queue drains in a few ms (chain_reaper.h)
     g_beginUs = t1;
     g_kind = kind;
     g_copied[0] = g_copied[1] = false;
+    g_cropped[0] = g_cropped[1] = false;
     g_viewsOk = false;
     g_pairMode = 0;   // (set again once the views are located)
     g_winOk = false;
@@ -3247,9 +4461,40 @@ bool OpenFrame(Kind kind) {
                 const XrFovf c = Cropped(g_views[e].fov);
                 want[e] = {c.angleLeft, c.angleRight, c.angleUp, c.angleDown};
             }
-            const eyeframe::Frame fr = eyeframe::Make(q, want, g_cfg.cantedEyes);
+            if (RuntimeFovNow()) {   // [openxr] runtime_fov: one centred frustum that holds both eyes' views, the same for both (vr/eye_fov.h Centred)
+                const XrFovf &a = g_views[0].fov, &b = g_views[1].fov;
+                const eyefov::Tan t = eyefov::Centred(eyefov::FromAngles(a.angleLeft, a.angleRight, a.angleUp, a.angleDown),
+                                                      eyefov::FromAngles(b.angleLeft, b.angleRight, b.angleUp, b.angleDown));
+                want[0] = want[1] = {atanf(t.l), atanf(t.r), atanf(t.u), atanf(t.d)};
+            }
+            NoteRuntimeFov(g_views[0].fov);   // (the runtime's own, for D2R VR Settings beside fov_override's sliders)
+            if (g_cfg.fovOverride)   // [openxr] fov_override: exactly the angles set by hand - not centred, not cropped, not canted; each eye's whole image
+                for (int e = 0; e < 2; ++e) {
+                    const eyefov::Angles h = eyefov::FromHand(g_cfg.hand, e);
+                    want[e] = {h.l, h.r, h.u, h.d};
+                }
+            else if (g_cfg.runtimeFovMode == 2)   // [openxr] runtime_fov=2: exactly the runtime's own angles - each eye's whole image (canted displays as always)
+                for (int e = 0; e < 2; ++e) want[e] = {g_views[e].fov.angleLeft, g_views[e].fov.angleRight, g_views[e].fov.angleUp, g_views[e].fov.angleDown};
+            const eyeframe::Frame fr = eyeframe::Make(q, want, g_cfg.cantedEyes && !g_cfg.fovOverride);
             TellEyes(g_views, q, fr);
             for (int e = 0; e < 2; ++e) g_fovUsed[e] = {fr.fov[e].l, fr.fov[e].r, fr.fov[e].u, fr.fov[e].d};
+            // [openxr] runtime_fov: drawn with the centred frustum that holds both runtime views (above), each eye's own view is the part of
+            // the picture submitted (CloseFrame) - not for canted displays, whose eyes are drawn turned (each eye's whole picture, as above)
+            for (int e = 0; e < 2; ++e) {
+                const XrFovf& rt = g_views[e].fov;
+                g_winUsed[e] = RuntimeFovNow() && !fr.canted && !ExactEyes()
+                                   ? eyefov::Inside({fr.fov[e].l, fr.fov[e].r, fr.fov[e].u, fr.fov[e].d},
+                                                    eyefov::FromAngles(rt.angleLeft, rt.angleRight, rt.angleUp, rt.angleDown))
+                                   : eyefov::Window{};
+            }
+            if (g_cfg.runtimeFov && !ExactEyes() && !g_routeTold) {
+                g_routeTold = true;
+                Log(g_bridgeIn ? "vrcam: openxr - runtime_fov is ON but OFXR Bridge (frame generation) is in this session: the eyes are drawn and submitted the "
+                                 "old way (symmetric_fov / fov_crop) - the headset went black with runtime_fov and the bridge together; switch frame "
+                                 "generation off for runtime_fov (a streamer that shows only the headset's own view, ALVR, needs runtime_fov)"
+                    : fr.canted ? "vrcam: openxr - runtime_fov: the displays are canted - each eye's whole picture submitted (no part of it can be the runtime's view)"
+                                : "vrcam: openxr - runtime_fov: each eye's own part of the centred picture submitted with exactly its fov");
+            }
             if (fr.canted) {   // (the eyes on the head's right, as the game's camera puts them)
                 const float one[3] = {1.0f, 0.0f, 0.0f};
                 float axis[3], pos[2][3];
@@ -3399,6 +4644,177 @@ float FlatDistance(bool fresh) {
     return now;
 }
 
+// [openxr] hand_inventory (vr/hand_inventory.h): the menu's panel - the same picture - held over the left controller like a tablet by its lower
+// edge, turned to the eyes, [openxr] hand_inventory_width_m wide. The controller and the eyes in g_space, where the laser casts. False: the
+// left controller not located this frame (the panel then hangs in front, as without the key - it never vanishes).
+// The cut: the copy read when done, the next asked for when due (at once while none is known yet). The draw thread.
+void HandCutStep(const hud::NativePiece& src) {
+    HandCut& c = g_cut;
+    if (g_cutReset.exchange(false)) { c.steady.Reset(); c.box = handinv::Box{}; c.told = 0; }
+    const double t = UsNow();
+    if (c.pending && g_fence && g_fence->GetCompletedValue() >= c.doneAt) {
+        c.pending = false;
+        uint8_t* m = nullptr;
+        const D3D12_RANGE all{0, (SIZE_T)c.bytes};
+        if (c.rb && SUCCEEDED(c.rb->Map(0, &all, (void**)&m)) && m) {
+            std::vector<uint8_t> drawn((size_t)c.gw * c.gh);
+            for (int y = 0; y < c.gh; ++y)
+                for (int x = 0; x < c.gw; ++x) {
+                    uint16_t a = 0;
+                    memcpy(&a, m + (size_t)y * c.stride + (size_t)handinv::SampleAt(x, c.gw, c.w) * 8 + 6, 2);
+                    drawn[(size_t)y * c.gw + x] = handinv::Drawn(a) ? 1 : 0;
+                }
+            const D3D12_RANGE none{0, 0};
+            c.rb->Unmap(0, &none);
+            const float dt = c.steppedUs > 0.0 ? (float)((t - c.steppedUs) * 1e-6) : handinv::kFindEveryS;
+            c.steppedUs = t;
+            const handinv::Box found = handinv::Biggest(drawn.data(), c.gw, c.gh, c.w, c.h), was = c.box;
+            c.box = c.steady.Step(found, dt);
+            if (!(c.box == was) && ++c.told <= 30)
+                LogF("vrcam: openxr - the inventory window cut out of the interface: %d,%d - %d,%d of %ux%u (found %d,%d - %d,%d; [openxr] hand_inventory)",
+                     c.box.x0, c.box.y0, c.box.x1, c.box.y1, c.w, c.h, found.x0, found.y0, found.x1, found.y1);
+        }
+    }
+    if (c.pending || t - c.askedUs < (c.box.ok() ? handinv::kFindEveryS * 1e6 : 150000.0)) return;
+    if (!c.rb || c.w != src.w || c.h != src.h) {
+        if (c.rb) { c.rb->Release(); c.rb = nullptr; }   // (nothing in flight: not pending)
+        c.w = src.w; c.h = src.h;
+        c.gw = handinv::kGridW; c.gh = handinv::GridH(c.w, c.h);
+        c.pitch = (c.w * 8 + D3D12_TEXTURE_DATA_PITCH_ALIGNMENT - 1) & ~(UINT)(D3D12_TEXTURE_DATA_PITCH_ALIGNMENT - 1);
+        c.stride = (c.pitch + D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT - 1) & ~(UINT)(D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT - 1);
+        c.bytes = (UINT64)c.stride * (UINT64)c.gh;
+        c.steady.Reset(); c.box = handinv::Box{};
+        D3D12_HEAP_PROPERTIES hp{}; hp.Type = D3D12_HEAP_TYPE_READBACK;
+        D3D12_RESOURCE_DESC rd{}; rd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER; rd.Width = c.bytes; rd.Height = 1;
+        rd.DepthOrArraySize = 1; rd.MipLevels = 1; rd.SampleDesc.Count = 1; rd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+        if (!c.gh || FAILED(g_dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, __uuidof(ID3D12Resource), (void**)&c.rb))) {
+            c.rb = nullptr;
+            c.askedUs = t + 10e6;   // (again in 10 s; the whole interface shows meanwhile)
+            if (++c.told <= 30) Log("vrcam: openxr - the inventory window cannot be cut out (no buffer to read the interface into): the whole interface on the hand");
+            return;
+        }
+    }
+    ID3D12GraphicsCommandList* l = OpenList();
+    if (!l) return;
+    constexpr D3D12_RESOURCE_STATES kRead = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;   // as hud.cpp leaves it
+    D3D12_RESOURCE_BARRIER b = Tr(src.tex, kRead, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    l->ResourceBarrier(1, &b);
+    for (int y = 0; y < c.gh; ++y) {
+        const UINT row = handinv::SampleAt(y, c.gh, c.h);
+        D3D12_TEXTURE_COPY_LOCATION dst{}; dst.pResource = c.rb; dst.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+        dst.PlacedFootprint.Offset = (UINT64)y * c.stride;
+        dst.PlacedFootprint.Footprint = {DXGI_FORMAT_R16G16B16A16_FLOAT, c.w, 1, 1, c.pitch};
+        D3D12_TEXTURE_COPY_LOCATION from{}; from.pResource = src.tex; from.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX; from.SubresourceIndex = 0;
+        const D3D12_BOX box{0, row, 0, c.w, row + 1, 1};
+        l->CopyTextureRegion(&dst, 0, 0, 0, &from, &box);
+    }
+    b = Tr(src.tex, D3D12_RESOURCE_STATE_COPY_SOURCE, kRead);
+    l->ResourceBarrier(1, &b);
+    SubmitList();
+    c.doneAt = g_fenceV;
+    c.pending = true;
+    c.askedUs = t;
+}
+
+// The button beside the panel ([openxr] hand_inventory): 0 on the hand ("to the front": a frame), 1 in front ("to the hand": a small panel low left).
+void ButtonImages() {
+    const ULONGLONG now = GetTickCount64();
+    for (int k = 0; k < 2; ++k) {
+        LaserImage& i = g_btnImg[k];
+        if (i.state != 0 || now < i.retryAt) continue;
+        if (i.sc) RetireChain(i.sc, "hand inventory button");
+        constexpr uint32_t n = 64;
+        std::vector<uint32_t> px((size_t)n * n);
+        for (uint32_t y = 0; y < n; ++y)
+            for (uint32_t x = 0; x < n; ++x) {
+                const float fx = ((float)x + 0.5f) / n, fy = ((float)y + 0.5f) / n;   // 0..1, y down
+                const float ex = fabsf(fx - 0.5f) - 0.40f, ey = fabsf(fy - 0.5f) - 0.40f;   // a rounded square
+                const float d = sqrtf(std::max(ex, 0.0f) * std::max(ex, 0.0f) + std::max(ey, 0.0f) * std::max(ey, 0.0f)) + std::min(std::max(ex, ey), 0.0f) - 0.08f;
+                float a = std::clamp(0.5f - d * n, 0.0f, 1.0f) * 0.82f, r = 22.0f, g = 18.0f, bl = 14.0f;   // dark, see-through
+                const bool rim = d > -0.035f && d <= 0.0f;
+                bool mark = false;
+                if (k == 0) {   // a frame: the panel full size
+                    const float mx = fabsf(fx - 0.5f), my = fabsf(fy - 0.5f);
+                    mark = std::max(mx, my) < 0.30f && std::max(mx, my) > 0.22f;
+                } else {        // a small panel low left: back on the hand
+                    mark = fx > 0.20f && fx < 0.52f && fy > 0.48f && fy < 0.80f;
+                    mark = mark || (fabsf(fx - fy) < 0.05f && fx > 0.48f && fx < 0.78f);   // an arrow's shaft toward it
+                }
+                if (rim || mark) { r = 225.0f; g = 200.0f; bl = 150.0f; a = std::max(a, 0.95f * std::clamp(0.5f - d * n, 0.0f, 1.0f)); }
+                px[(size_t)y * n + x] = (uint32_t)(r * a) | (uint32_t)(g * a) << 8 | (uint32_t)(bl * a) << 16 | (uint32_t)(255.0f * a) << 24;
+            }
+        i.w = n; i.h = n;
+        i.state = MakeStaticImage(n, n, px.data(), i.upload, i.sc, "hand inventory button");
+        if (i.state == 0) i.retryAt = now + 1000;
+    }
+}
+// The button hung beside a panel just placed (its top right corner, in the panel's plane), and kept for the laser.
+uint32_t HangHandButton(const XrCompositionLayerBaseHeader** layers, uint32_t nl, uint32_t max, const XrCompositionLayerQuad& panel, bool onHand) {
+    g_btnShown.ok = false;
+    if (nl >= max) return nl;
+    ButtonImages();
+    const LaserImage& i = g_btnImg[onHand ? 0 : 1];
+    if (i.state <= 0) return nl;
+    float bx = 0.0f, by = 0.0f;
+    handinv::ButtonAt(panel.size.width, panel.size.height, &bx, &by);
+    const float side = handinv::ButtonSide(panel.size.width);
+    XrCompositionLayerQuad& q = g_btnLayer;
+    q = {XR_TYPE_COMPOSITION_LAYER_QUAD};
+    q.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+    q.space = panel.space;
+    q.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+    q.subImage.swapchain = i.sc;
+    q.subImage.imageRect = {{0, 0}, {(int32_t)i.w, (int32_t)i.h}};
+    q.pose.orientation = panel.pose.orientation;
+    q.pose.position = Plus(panel.pose.position, Rot(panel.pose.orientation, {bx, by, 0.002f}));
+    q.size = {side, side};
+    layers[nl++] = (const XrCompositionLayerBaseHeader*)&q;
+    g_btnShown = BtnShown{q.pose, side, true};
+    return nl;
+}
+
+bool HangPanelOnHand(const hud::NativePiece& src, const HudOut& o, const handinv::Box& cut, XrCompositionLayerQuad& panel) {
+    XrSpaceLocation grip{XR_TYPE_SPACE_LOCATION};
+    const XrSpaceLocationFlags need = XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT;
+    const double t = UsNow();
+    handinv::Place pl;
+    if (g_gripSpace[0] && XR_SUCCEEDED(xrLocateSpace(g_gripSpace[0], g_space, g_fs.predictedDisplayTime, &grip)) && (grip.locationFlags & need) == need) {
+        const XrVector3f& a = g_views[0].pose.position, &b = g_views[1].pose.position;
+        const XrVector3f& hp = grip.pose.position;
+        pl = handinv::OnHand({hp.x, hp.y, hp.z}, {0.5f * (a.x + b.x), 0.5f * (a.y + b.y), 0.5f * (a.z + b.z)}, g_cfg.handInvWidthM, (float)cut.h() / (float)cut.w());
+    }
+    XrPosef pose{};
+    XrExtent2Df size{};
+    if (pl.ok) {
+        float q[4];
+        handinv::Orientation(pl, q);
+        pose.orientation = {q[0], q[1], q[2], q[3]};
+        pose.position = {pl.center.x, pl.center.y, pl.center.z};
+        size = {pl.w, pl.h};
+        g_handHeld = HandHeld{pose, size, t};
+    } else if (g_handInvHung.load() && g_handHeld.atUs > 0.0 && t - g_handHeld.atUs < 1e6) {
+        pose = g_handHeld.pose;   // the controller not located this frame: where it was, for a second
+        size = g_handHeld.size;
+    } else {
+        if (g_handInvHung.exchange(false) && ++g_handTold <= 40)
+            Log("vrcam: openxr - the inventory's panel in front: the left controller is not located ([openxr] hand_inventory - back on the hand when it is)");
+        return false;
+    }
+    panel = {XR_TYPE_COMPOSITION_LAYER_QUAD};
+    panel.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;   // premultiplied, as in front
+    panel.space = g_space;
+    panel.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+    panel.subImage.swapchain = o.sc;
+    panel.subImage.imageRect = {{cut.x0, cut.y0}, {cut.w(), cut.h()}};   // the inventory window alone
+    panel.pose = pose;
+    panel.size = {size.width, size.width * (float)cut.h() / (float)cut.w()};   // (held through a blink: the cut's own shape)
+    if (!g_handInvHung.exchange(true) && ++g_handTold <= 40)
+        LogF("vrcam: openxr - the inventory on the LEFT hand, away from town: its window %dx%d of the interface's %ux%u, %.2f m wide, its lower edge over the "
+             "controller, turned to the eyes; the right hand's laser picks, the left stick walks, the button beside it puts it in front ([openxr] hand_inventory)",
+             cut.w(), cut.h(), src.w, src.h, size.width);
+    return true;
+}
+
 // [openxr] menu_3d (docs/plan_laser_menus.md step 2): a menu open in F4 as a panel of its own in the
 // pair's frame - the interface hud.cpp took out of the picture (kNativePanel), drawn by the toolbar's
 // shader into a swapchain of the layer's size and hung where the flat picture would have stood: as
@@ -3421,6 +4837,20 @@ uint32_t HangPanel(const XrCompositionLayerBaseHeader** layers, uint32_t nl, uin
                           0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 0.0f};   // PSMain, whole (no split)
     if (!DrawHud(o, src.tex, false, cb)) return nl;
     const double t = UsNow();
+    const bool invUp = g_handInvUp.load();   // [openxr] hand_inventory: away from town, the inventory open
+    if (invUp) HandCutStep(src);
+    else g_btnShown.ok = false;
+    const handinv::Box cut = g_cut.box.ok() && g_cut.w == src.w && g_cut.h == src.h ? g_cut.box : handinv::Box{0, 0, (int)src.w, (int)src.h};
+    if (invUp && !g_handFront.load() && HangPanelOnHand(src, o, cut, panel)) {   // on the left hand: the inventory window cut out
+        P.shownUs = 0.0;   // (back in front - in town, the button, or the key unticked with it open - it is placed ahead afresh)
+        g_invHung = InvHung{panel.pose, panel.size, t};   // [hud] map_beside_inventory: the map in that hand goes beside it (HangHud, later this frame)
+        layers[nl++] = (const XrCompositionLayerBaseHeader*)&panel;
+        FlatShown s{panel.pose, panel.size, true};   // the laser points at it there: its point is the cut's place in the window
+        s.crop[0] = (float)cut.x0 / src.w; s.crop[1] = (float)cut.y0 / src.h; s.crop[2] = (float)cut.x1 / src.w; s.crop[3] = (float)cut.y1 / src.h;
+        g_flatShown = s;
+        g_panelTexW = src.w; g_panelTexH = src.h;
+        return HangHandButton(layers, nl, max, panel, true);   // (no pointer quad: the laser's dot is the pointer on the cut)
+    }
     const bool fresh = !(P.shownUs > 0.0) || t - P.shownUs > 500000.0;   // came up now: placed ahead
     const float yawNow = YawOf(g_views[0].pose.orientation);
     float off = yawNow - P.yaw;
@@ -3460,6 +4890,7 @@ uint32_t HangPanel(const XrCompositionLayerBaseHeader** layers, uint32_t nl, uin
         LogF("vrcam: openxr - a menu as a panel in front, the world in stereo behind it: %ux%u, %.2f m wide at %.2f m ([openxr] menu_3d)",
              src.w, src.h, panel.size.width, FlatDistance(false));
     }
+    if (invUp) nl = HangHandButton(layers, nl, max, panel, false);   // [openxr] hand_inventory: in front by the button - the button back to the hand
     return nl;
 }
 
@@ -3506,7 +4937,7 @@ bool MakeCalibImage(int i) {
         return false;
     }
     const int got = MakeStaticImage(w, h, px.data(), im.upload, im.sc, "calibration");
-    if (got <= 0 && im.sc) { ForgetPending(im.sc); xrDestroySwapchain(im.sc); im.sc = XR_NULL_HANDLE; }
+    if (got <= 0 && im.sc) RetireChain(im.sc, "calibration");
     if (got <= 0) {
         im.retryAt = now + (got == 0 ? 500 : 10000);
         return false;
@@ -3576,7 +5007,9 @@ void CloseFrame() {
     if (g_kind == kPair) g_flatShown.ok = false;   // the laser's surface is gone with the flat picture (a menu's panel: HangPanel)
     if (g_kind == kPair && g_viewsOk)
         for (int e = 0; e < 2; ++e)
-            if (g_copied[e]) g_lastEye[e] = LastEye{g_views[e].pose, g_fovUsed[e], g_eyeChain[e].sc, true};   // drawn with these
+            if (g_copied[e])   // drawn with these (runtime_fov's crop: the swapchain is the box - whole, with the box's fov)
+                g_lastEye[e] = g_cropped[e] ? LastEye{g_views[e].pose, g_cropFov[e], g_eyeChain[e].sc, true, eyefov::Window{}}
+                                            : LastEye{g_views[e].pose, g_fovUsed[e], g_eyeChain[e].sc, true, g_winUsed[e]};
     // eyes by turns: this frame's eye and the other's last, still in its swapchain
     const bool turns = g_cfg.byTurns && (g_copied[0] || g_copied[1]) && g_lastEye[0].ok && g_lastEye[1].ok &&
                        g_lastEye[0].sc == g_eyeChain[0].sc && g_lastEye[1].sc == g_eyeChain[1].sc;
@@ -3602,6 +5035,25 @@ void CloseFrame() {
             pv[e].fov = g_lastEye[e].fov;
             pv[e].subImage.swapchain = g_eyeChain[e].sc;
             pv[e].subImage.imageRect = {{0, 0}, {(int32_t)g_eyeChain[e].w, (int32_t)g_eyeChain[e].h}};
+            if (!g_lastEye[e].win.Whole()) {   // [openxr] runtime_fov: only the runtime's own view, with the fov of exactly those pixels (vr/eye_fov.h)
+                const XrFovf& d = g_lastEye[e].fov;
+                const eyefov::Sub s = eyefov::Pixels(eyefov::FromAngles(d.angleLeft, d.angleRight, d.angleUp, d.angleDown), g_lastEye[e].win,
+                                                     (int)g_eyeChain[e].w, (int)g_eyeChain[e].h);
+                if (s.w > 0 && s.h > 0) {
+                    pv[e].fov = {atanf(s.tan.l), atanf(s.tan.r), atanf(s.tan.u), atanf(s.tan.d)};
+                    pv[e].subImage.imageRect = {{s.x, s.y}, {s.w, s.h}};
+                    if (!g_subTold && e == 1) {
+                        g_subTold = true;
+                        const float k = 57.29578f;
+                        LogF("vrcam: openxr - runtime_fov: each eye drawn %ux%u with fov %.1f %.1f %.1f %.1f, submitted the part x %d-%d y %d-%d (left eye) / x %d-%d "
+                             "(right) with fov %.1f %.1f %.1f %.1f / %.1f %.1f (left right up down, deg)", g_eyeChain[e].w, g_eyeChain[e].h,
+                             d.angleLeft * k, d.angleRight * k, d.angleUp * k, d.angleDown * k, pv[0].subImage.imageRect.offset.x,
+                             pv[0].subImage.imageRect.offset.x + pv[0].subImage.imageRect.extent.width, s.y, s.y + s.h, s.x, s.x + s.w,
+                             pv[0].fov.angleLeft * k, pv[0].fov.angleRight * k, pv[0].fov.angleUp * k, pv[0].fov.angleDown * k,
+                             pv[1].fov.angleLeft * k, pv[1].fov.angleRight * k);
+                    }
+                }
+            }
         }
         proj.space = g_space;
         proj.viewCount = 2;
@@ -3615,13 +5067,16 @@ void CloseFrame() {
             if (Pointer3dQuad(eyes, g_views[0].pose.orientation, &ptr3d)) layers[nl++] = (const XrCompositionLayerBaseHeader*)&ptr3d;
         }
         // a menu in front, the world in stereo behind it (menu_3d); what is nearer lies over it, in this order
-        if (g_cfg.menu3d) nl = HangPanel(layers, nl, most, quad, pointer);
+        if (g_cfg.menu3d && !g_mapClick.Big()) nl = HangPanel(layers, nl, most, quad, pointer);   // (the big map has the interface's picture: HangBigMap)
         const bool laser = g_cfg.menu3d && g_flatShown.ok;   // (the beam and the dot only over a menu's panel)
         const uint32_t zonesMax = most - std::min<uint32_t>(most - nl, (laser ? 4 : 2) + hsRoom);   // room kept for those below
         nl = HangZones(layers, nl, zonesMax);   // the belt's balls
         nl = HangRunes(layers, nl, zonesMax);   // BodyWalk's gesture runes and the hand's trail (F4, [openxr] runes_draw)
         nl = HangHud(layers, nl, most);   // the toolbar and the map, where FlatVR hung them
+        nl = HangBigMap(layers, nl, most);   // [hud] map_click_big: the game's big map in front, its Rotate button
+        nl = HangMapLaser(layers, nl, most);   // ... and the laser on the map / the big map
         nl = HangPlate(layers, nl, most);   // the targeted monster's health bar over its head ([hud] monster_bar_room)
+        nl = HangNotice(layers, nl, most);  // the game's quest / level-up notice on a card ([hud] notice_card)
         if (laser) nl = HangLaser(layers, nl, most, beam, dot);
         nl = HangVitals(layers, nl, most, vitalsPanel);   // life and mana over the hand turned to the face (F4)
         nl = HangThrustDebug(layers, nl, most, thrustPanel);   // [debug] thrust_debug: the last thrust's numbers over the weapon hand (F4)
@@ -3713,6 +5168,16 @@ void CloseFrame() {
     g_clock.layers = endUs - closeUs;
     g_clock.submit = UsNow() - endUs;
     Ok(ended, "xrEndFrame");
+    {   // [openxr] frame_generation: once a second, the settings to the bridge and its state to the log (vr/frame_gen_lib.h)
+        static ULONGLONG frameGenAt = 0;
+        const ULONGLONG now = GetTickCount64();
+        if (now - frameGenAt >= 1000) {
+            frameGenAt = now;
+            framegenlib::Tick(g_fs.predictedDisplayPeriod > 0 ? 1e9f / (float)g_fs.predictedDisplayPeriod : 0.0f);
+            // switched on while running (its instance has no bridge), or it failed a live request: the session is made again, as [openxr] on off and on
+            if (framegenlib::TakeNewSession()) g_stopWanted.store(true);
+        }
+    }
     const bool endGone = g_failStreak[2].Note(ended, GetTickCount64());
     if (ended == XR_ERROR_POSE_INVALID) {   // the runtime names no layer: each one's numbers, so the log does (every 5 s at most)
         static xrlayers::Telling diag;
@@ -3747,7 +5212,7 @@ void CloseFrame() {
 
 }  // namespace
 
-void SetLogger(void (*log)(const char*)) { g_log = log; directinput::SetLogger(log); roomwalkwire::SetLogger(log); haptics::SetLogger(log); vrres::SetLogger(log); }
+void SetLogger(void (*log)(const char*)) { g_log = log; framegenlib::SetLog(log); directinput::SetLogger(log); roomwalkwire::SetLogger(log); haptics::SetLogger(log); vrres::SetLogger(log); }
 void SetWindow(HWND wnd) { g_wnd = wnd; }
 
 // The start guard (2026-10-10): players' games died starting native OpenXR - their runtime's own
@@ -3843,8 +5308,46 @@ void LoadSettings(const wchar_t* ini) {
     g_cfg.stopFlatVR = f(L"stop_flatvr", 1.0f) != 0.0f;
     g_cfg.busyGuard = f(L"busy_guard", 1.0f) != 0.0f;   // the runtime's blocking calls with a limit; no session over a FlatVR that cannot be stopped
     g_cfg.waitFrameMs = (unsigned)std::clamp(f(L"wait_frame_ms", 150.0f), 20.0f, 2000.0f);
+    g_reapDrainMaxMs.store(std::clamp(f(L"reap_drain_max_ms", 200.0f), 20.0f, 500.0f));   // (chain_reaper.h DrainMs; 20 = as before)
     g_cfg.fovCrop = f(L"fov_crop", 1.0f) != 0.0f;   // on: sharper (square pixels), black above and below (2026-10-10)
     g_cfg.symmetric = f(L"symmetric_fov", 1.0f) != 0.0f;
+    {   // [openxr] runtime_fov: each eye exactly as the runtime gives it (off: symmetric_fov / fov_crop as before); live, told when it changes
+        static int said = -1;
+        g_cfg.runtimeFovMode = std::clamp((int)f(L"runtime_fov", 1.0f), 0, 2);
+        g_cfg.runtimeFov = g_cfg.runtimeFovMode == 1;
+        if (on && said != g_cfg.runtimeFovMode) {
+            if (said >= 0 || g_cfg.runtimeFovMode)
+                Log(g_cfg.runtimeFovMode == 1 ? "vrcam: openxr - each eye submitted as the runtime's own view: drawn with one centred frustum that holds both eyes' views, each eye's part "
+                                                "of the picture in a swapchain of its own with exactly its fov ([openxr] runtime_fov=1; symmetric_fov and fov_crop do nothing)"
+                    : g_cfg.runtimeFovMode == 2 ? "vrcam: openxr - each eye drawn off-axis with exactly the runtime's own angles and submitted whole with them ([openxr] runtime_fov=2; "
+                                                  "symmetric_fov and fov_crop do nothing; the game's interface, drawn once for both eyes, may come apart)"
+                                                : "vrcam: openxr - each eye drawn with symmetric_fov / fov_crop again ([openxr] runtime_fov=0)");
+            said = g_cfg.runtimeFovMode;
+        }
+    }
+    {   // [openxr] fov_override: the angles set by hand (vr/eye_fov.h HandAngles); live, told when they change
+        static int said = -1;
+        static eyefov::HandAngles saidHand{};
+        g_cfg.fovOverride = f(L"fov_override", 0.0f) != 0.0f;
+        g_cfg.hand = {f(L"fov_outer", 50.0f), f(L"fov_inner", 45.0f), f(L"fov_up", 50.0f), f(L"fov_down", 50.0f)};
+        const eyefov::HandAngles& h = g_cfg.hand;
+        const bool changed = said != (int)g_cfg.fovOverride ||
+                             (g_cfg.fovOverride && (h.outer != saidHand.outer || h.inner != saidHand.inner || h.up != saidHand.up || h.down != saidHand.down));
+        if (on && changed) {
+            if (g_cfg.fovOverride) {
+                const eyefov::Angles l = eyefov::FromHand(h, 0);
+                const float k = 57.29578f;
+                LogF("vrcam: openxr - fov_override ON: both eyes drawn and submitted whole with the angles set by hand - outer %.2f, inner %.2f, up %.2f, "
+                     "down %.2f deg (left eye's fov %.2f %.2f %.2f %.2f, the right eye's its mirror; runtime_fov, symmetric_fov and fov_crop do nothing)",
+                     -l.l * k, l.r * k, l.u * k, -l.d * k, l.l * k, l.r * k, l.u * k, l.d * k);
+            } else if (said >= 0) {
+                Log("vrcam: openxr - fov_override off: the runtime's angles again");
+            }
+            said = (int)g_cfg.fovOverride;
+            saidHand = h;
+        }
+    }
+    g_cfg.blockLayers = f(L"block_listed_layers", 1.0f) != 0.0f;   // (taken when a session starts, with runtime_fov as it is then)
     g_cfg.ipdFallbackM = std::clamp(f(L"ipd_fallback_mm", 64.0f), 0.0f, 80.0f) * 0.001f;   // eyes located in one place: this gap (0 = off)
     g_cfg.ipdAuto = f(L"ipd_auto", 1.0f) != 0.0f;                                          // the eye distance: the runtime's (1) or the player's own (0), live
     g_cfg.ipdManualM = eyegap::ClampGap(f(L"ipd_mm", eyegap::kDefaultM * 1000.0f) * 0.001f);
@@ -3882,6 +5385,8 @@ void LoadSettings(const wchar_t* ini) {
                       : "vrcam: openxr - both eyes from one game frame");
         }
         g_cfg.byTurns = turns;
+        // [openxr] frame_generation (experimental, OFXR Bridge): Off / FidelityFX / NVIDIA and NVIDIA's options, live into a loaded bridge; on / off at the next start
+        framegenlib::Configure(framegen::Read((int)f(L"frame_generation", 0.0f), (int)f(L"frame_generation_preset", 1.0f), (int)f(L"frame_generation_scale", 2.0f)), !turns);
         // the eye not drawn made from pictures already drawn (bearstonem/d2r-pcvr's by turns), live
         const bool warp = GetPrivateProfileIntW(L"stereo", L"turn_warp", 1, ini) != 0;
         const bool fromDrawn = GetPrivateProfileIntW(L"stereo", L"turn_from_drawn", 1, ini) != 0;
@@ -3941,8 +5446,28 @@ void LoadSettings(const wchar_t* ini) {
         g_cfg.turnEffectsLevel = std::clamp(fs(L"turns_effects_level", turnwarp::kEffectsLevel), 1e-4f, 100.0f);
         g_cfg.turnEffectsReach = std::clamp(fs(L"turns_effects_reach", turnwarp::kEffectsReachPx), 0.0f, 512.0f);
         effectslayer::SetWanted(on && turns && warp && fromDrawn && keepOwn >= turnwarp::kKeepEffects);
+        // bearstonem/d2r-pcvr v0.3.25-v0.3.28 (MIT), against the doubled picture in the eye made; each on by default, live
+        struct TurnFix { const wchar_t* key; bool* to; const char* on; const char* off; };
+        const TurnFix fixes[] = {
+            {L"turns_sharp", &g_cfg.turnSharp, "vrcam: openxr - eyes by turns: the eye made read sharper (Catmull-Rom) ([stereo] turns_sharp=1)",
+             "vrcam: openxr - eyes by turns: the eye made read bilinear, as before ([stereo] turns_sharp=0)"},
+            {L"turns_fill", &g_cfg.turnFill, "vrcam: openxr - eyes by turns: no frame-old ghosts in the strips beside near things ([stereo] turns_fill=1)",
+             "vrcam: openxr - eyes by turns: the strips beside near things keep the eye's own older picture, as before ([stereo] turns_fill=0)"},
+            {L"turns_rims", &g_cfg.turnRims, "vrcam: openxr - eyes by turns: the dark rims round things against the sky go with them ([stereo] turns_rims=1)",
+             "vrcam: openxr - eyes by turns: the dark rims round things against the sky stay with the sky, as before ([stereo] turns_rims=0)"}};
+        static int saidFix[3] = {-1, -1, -1};
+        for (int i = 0; i < 3; ++i) {
+            const bool v = GetPrivateProfileIntW(L"stereo", fixes[i].key, 1, ini) != 0;
+            if (on && turns && warp && (int)v != saidFix[i]) {
+                saidFix[i] = v;
+                Log(v ? fixes[i].on : fixes[i].off);
+            }
+            *fixes[i].to = v;
+        }
     }
     g_cfg.bareHands = f(L"bare_hands", 0.0f) != 0.0f;
+    g_cfg.handTrackers = (int)f(L"hand_trackers", 2.0f);   // (taken at the next session start)
+    g_cfg.handSpace = (int)f(L"hand_space", 2.0f);   // live
     g_cfg.frameProfile = f(L"frame_profile", 1.0f) != 0.0f;   // (taken at the next session start)
     {
         g_cfg.indexGripForce = f(L"index_grip_force", 0.0f) != 0.0f;   // live
@@ -3966,12 +5491,83 @@ void LoadSettings(const wchar_t* ini) {
         }
         // the game's item tooltip at once under the laser: its hooks go in with the laser's (panelinput::Install), unticked they pass through
         g_cfg.laserTooltips = f(L"laser_tooltips", 0.0f) != 0.0f;
+        {   // [hud] map_top_down / map_rotate / map_compass: the map in the hand (F4), live
+            g_cfg.mapTopDown = GetPrivateProfileIntW(L"hud", L"map_top_down", 0, ini) != 0;
+            g_cfg.mapRotate = GetPrivateProfileIntW(L"hud", L"map_rotate", 0, ini) != 0;
+            g_cfg.mapCompass = GetPrivateProfileIntW(L"hud", L"map_compass", 0, ini) != 0;
+            g_cfg.mapClickBig = GetPrivateProfileIntW(L"hud", L"map_click_big", 0, ini) != 0;
+            g_cfg.mapBigOnHand = GetPrivateProfileIntW(L"hud", L"map_big_on_hand", 0, ini) != 0;
+            g_cfg.mapBesideInv = GetPrivateProfileIntW(L"hud", L"map_beside_inventory", 0, ini) != 0;
+            g_cfg.mapBigFollow = GetPrivateProfileIntW(L"hud", L"map_big_follow", 0, ini) != 0;
+            g_cfg.mapBigGrab = GetPrivateProfileIntW(L"hud", L"map_big_grab", 0, ini) != 0;
+            auto hf = [&](const wchar_t* key, float def) {
+                wchar_t b[64], d[64];
+                swprintf_s(d, L"%g", def);
+                GetPrivateProfileStringW(L"hud", key, d, b, 64, ini);
+                wchar_t* end = nullptr;
+                const float v = wcstof(b, &end);
+                return end != b && std::isfinite(v) ? v : def;
+            };
+            g_cfg.bigDistM = std::clamp(hf(L"map_big_dist_m", maplaser::kDistM), 0.3f, 4.0f);
+            g_cfg.bigSideDeg = std::clamp(hf(L"map_big_side_deg", 0.0f), -180.0f, 180.0f);
+            g_cfg.bigUpM = std::clamp(hf(L"map_big_up_m", maplaser::kUpM), -1.5f, 1.5f);
+            static int saidPlace = 0;
+            const int placeNow = (g_cfg.mapBigFollow ? 1 : 0) | (g_cfg.mapBigGrab ? 2 : 0);
+            if (placeNow != saidPlace) {
+                saidPlace = placeNow;
+                LogF("vrcam: openxr - the big map in front: %s; %s ([hud] map_big_follow %d, map_big_grab %d; kept %.2f m, %.0f deg, %+.2f m)",
+                     g_cfg.mapBigFollow ? "kept in the room, it comes round after the gaze lazily, its height fixed" : "put where the gaze was at the click",
+                     g_cfg.mapBigGrab ? "the right laser + grip moves it, the stick nearer / farther, kept where it is let go" : "not moved by hand",
+                     (int)g_cfg.mapBigFollow, (int)g_cfg.mapBigGrab, g_cfg.bigDistM, g_cfg.bigSideDeg, g_cfg.bigUpM);
+            }
+            static int saidHand = 0;
+            const int handNow = (g_cfg.mapBigOnHand ? 1 : 0) | (g_cfg.mapBesideInv ? 2 : 0);
+            if (handNow != saidHand) {
+                saidHand = handNow;
+                LogF("vrcam: openxr - the map and the left hand (F4): the big map %s; with the inventory on the hand the map %s ([hud] map_big_on_hand %d, map_beside_inventory %d)",
+                     g_cfg.mapBigOnHand ? "held on the left hand, a button to the front" : "in front", g_cfg.mapBesideInv ? "beside it" : "where it always is",
+                     (int)g_cfg.mapBigOnHand, (int)g_cfg.mapBesideInv);
+            }
+            static int saidBig = 0;
+            if ((int)g_cfg.mapClickBig != saidBig) {
+                saidBig = g_cfg.mapClickBig;
+                Log(g_cfg.mapClickBig ? "vrcam: openxr - the map in the hand (F4): the right laser points at it, a click shows the game's big map in front ([hud] map_click_big=1)"
+                                      : "vrcam: openxr - the map in the hand (F4): no laser on it ([hud] map_click_big=0)");
+            }
+            static int said = 0;   // (all off at the start: not a word)
+            const int now = (g_cfg.mapTopDown ? 1 : 0) | (g_cfg.mapRotate ? 2 : 0) | (g_cfg.mapCompass ? 4 : 0);
+            if (now != said) {
+                said = now;
+                LogF("vrcam: openxr - the map in the hand (F4): %s, %s ([hud] map_top_down %d, map_rotate %d, map_compass %d)",
+                     g_cfg.mapRotate ? "from above, turned so the way you look is up" : g_cfg.mapTopDown ? "from above, the map's up up" : "as the game draws it",
+                     g_cfg.mapCompass ? "a compass over it" : "no compass", (int)g_cfg.mapTopDown, (int)g_cfg.mapRotate, (int)g_cfg.mapCompass);
+            }
+        }
         panelinput::WantTooltips(g_cfg.laserTooltips);
         static int saidTip = 0;
         if (on && g_cfg.laser && (int)g_cfg.laserTooltips != saidTip) {
             saidTip = g_cfg.laserTooltips;
             LogF("vrcam: openxr - laser: the game's item tooltip %s ([openxr] laser_tooltips)",
                  g_cfg.laserTooltips ? "at once, with the equipped-item comparison and no Shift" : "after the game's own delay");
+        }
+        // a real key lets the game take its keyboard layout for a moment, so its text boxes take typed letters (vr/typed_keys.h; after
+        // bearstonem/d2r-pcvr 34f20a8, MIT); live
+        const bool typing = f(L"laser_typing", 1.0f) != 0.0f;
+        panelinput::WantTyping(typing);
+        static int saidTyping = -1;
+        if (on && g_cfg.laser && (int)typing != saidTyping) {
+            saidTyping = typing;
+            LogF("vrcam: openxr - laser: a key typed on the keyboard %s ([openxr] laser_typing)",
+                 typing ? "lets the game take its keyboard layout, its text boxes take the letters"
+                        : "is held in the controller layout like the laser's mouse, as before (text boxes take nothing)");
+        }
+        // a grip the laser took, tapped, is the menu's own bumper (the tabbed menu's page): vr/laser_grip_tap.h
+        g_cfg.laserGripTap = f(L"laser_grip_tap", 1.0f) != 0.0f;
+        static int saidGrip = -1;
+        if (on && g_cfg.laser && (int)g_cfg.laserGripTap != saidGrip) {
+            saidGrip = g_cfg.laserGripTap;
+            LogF("vrcam: openxr - laser: a grip tapped over a menu %s ([openxr] laser_grip_tap, F4)",
+                 g_cfg.laserGripTap ? "is the game's bumper - LB / RB turn the tabbed menu's page, the stash's, a trader's" : "is the laser's only, as before");
         }
     }
     {   // F1 and F3 in real 3D (D2R VR Settings > Stereo > Native OpenXR), live: unticked the flat picture, as before
@@ -4014,15 +5610,38 @@ void LoadSettings(const wchar_t* ini) {
                 Log("vrcam: openxr - the right grip + stick leave a game panel's distance alone ([openxr] menu_zoom=0)");
         }
     }
+    {   // the inventory on the left hand away from town (D2R VR Settings > UI: F4 body > Menus), live
+        g_cfg.handInv = f(L"hand_inventory", 0.0f) != 0.0f;
+        g_cfg.handInvWidthM = handinv::Width(f(L"hand_inventory_width_m", handinv::kWidthDefault));
+        g_cfg.handInvFront = f(L"hand_inventory_front", 0.0f) != 0.0f;
+        if (!g_frontSaving.load() && g_frontSaveWant.load() < 0) g_handFront.store(g_cfg.handInvFront);   // (the button's own write under way: its choice stands)
+        static int said = -1;
+        static float saidW = 0.0f;
+        if (on && ((int)g_cfg.handInv != said || (g_cfg.handInv && g_cfg.handInvWidthM != saidW))) {
+            said = g_cfg.handInv;
+            saidW = g_cfg.handInvWidthM;
+            if (g_cfg.handInv)
+                LogF("vrcam: openxr - away from town the inventory hangs on the LEFT hand (%.2f m wide), the right hand's laser picks, the left stick walks on; "
+                     "in town in front as before ([openxr] hand_inventory=1, F4)", g_cfg.handInvWidthM);
+            else
+                Log("vrcam: openxr - the inventory in front everywhere ([openxr] hand_inventory=0)");
+        }
+    }
     directinput::LoadSettings(ini);   // [openxr] direct_input and the [direct] layout: the plugin's own controls
     roomwalkwire::LoadSettings(ini);  // [openxr] roomscale_walk: your steps in the room walk the hero (vr/room_walk.h)
-    {   // a settings panel in the headset (both grips squeezed, then a thumbstick click), live
+    {   // a settings panel in the headset (the long press of the right stick click), live
         g_cfg.headsetSettings = f(L"headset_settings", 0.0f) != 0.0f;
+        // [debug] settings_two_grip_chord (off): the old both-grips + click chord. The author (2026-10-23): "no combinations with the two grips, they must be ignored" - a
+        // two-hander is held by both grips, and the armed chord took both stick clicks from the game
+        g_cfg.twoGripChord = ini && GetPrivateProfileIntW(L"debug", L"settings_two_grip_chord", 0, ini) != 0;
+        skillwheel::SetTwoGripChord(g_cfg.twoGripChord);
         static int said = -1;
-        if (on && (int)g_cfg.headsetSettings != said) {
-            said = g_cfg.headsetSettings;
-            Log(g_cfg.headsetSettings ? "vrcam: openxr - settings panel in the headset: both grips squeezed, then a thumbstick click, opens it ([openxr] headset_settings=1)"
-                                      : "vrcam: openxr - settings panel in the headset: off ([openxr] headset_settings=0)");
+        const int now = g_cfg.headsetSettings ? (g_cfg.twoGripChord ? 2 : 1) : 0;
+        if (on && now != said) {
+            said = now;
+            Log(now == 2 ? "vrcam: openxr - settings in the headset: the long press of the right stick click opens them; both grips squeezed + a thumbstick click too ([debug] settings_two_grip_chord=1)"
+                : now == 1 ? "vrcam: openxr - settings in the headset: the long press of the right stick click opens them; both grips held mean nothing ([openxr] headset_settings=1)"
+                           : "vrcam: openxr - settings panel in the headset: off ([openxr] headset_settings=0)");
         }
     }
     {   // BodyWalk's gesture runes and the hand's trail in the headset (D2R VR Settings > Controls > Gestures), live; F4 only
@@ -4047,6 +5666,7 @@ void LoadSettings(const wchar_t* ini) {
         const int mode = (int)GetPrivateProfileIntW(L"render", L"vr_resolution", 0, ini);
         const int px = (int)GetPrivateProfileIntW(L"render", L"vr_resolution_px", 0, ini);
         g_cfg.vrPick = rendersize::FromIni(mode, px);
+        g_cfg.menuWide = GetPrivateProfileIntW(L"render", L"menu_wide", 1, ini) != 0;   // [render] menu_wide (live)
         if (!g_headsetPath[0]) {   // what the runtime says of the headset goes beside the ini for D2R VR Settings (WriteHeadsetInfo)
             wcscpy_s(g_headsetPath, ini);
             if (wchar_t* slash = wcsrchr(g_headsetPath, L'\\')) slash[1] = 0;
@@ -4085,6 +5705,13 @@ void SetLaserWanted(bool menus) { g_laserWanted.store(menus); }
 bool LaserOn() { return g_cfg.on && g_cfg.laser; }
 bool Menu3dOn() { return g_cfg.on && g_cfg.menu3d; }
 bool Menu3dWanted() { return g_cfg.menu3d; }
+bool HandInventoryOn() { return g_cfg.on && g_cfg.handInv && g_cfg.menu3d; }
+void SetHandInventory(bool up) {
+    if (!g_handInvUp.exchange(up) || up) return;
+    g_handInvHung.store(false);   // (the next time it hangs there is told again; in front or on the hand as the button last left it)
+    g_cutReset.store(true);       // and its window found afresh
+}
+bool HandInventoryHung() { return g_handInvUp.load() && g_handInvHung.load(); }
 bool HeadsetSettingsOpen() { return g_hsOpen.load(); }
 bool LaserWanted(int* hand) {
     *hand = g_cfg.laserHand;
@@ -4272,7 +5899,7 @@ int g_turnSlot = 0;
 struct TurnFrame { bool open = false; bool acquired = false; bool turned = false; int o = 0; uint32_t idx = 0; };
 TurnFrame g_turnFrame;
 ID3D12Resource* g_turnTarget = nullptr;   // the eye made, before it goes to its swapchain: the back buffer's size, its typeless family (RENDER_TARGET)
-struct TurnCounts { uint32_t moved = 0, turned = 0, drawnOver = 0, left = 0, keptOwn = 0, effects = 0, building = 0; ULONGLONG since = 0; };
+struct TurnCounts { uint32_t moved = 0, turned = 0, drawnOver = 0, left = 0, keptOwn = 0, effects = 0, building = 0, sharp = 0, filled = 0, rimmed = 0; ULONGLONG since = 0; };
 TurnCounts g_turnCounts;
 
 void TurnLog(const char* s) { Log(s); }
@@ -4341,6 +5968,22 @@ bool TurnTexture(ID3D12Resource*& r, const D3D12_RESOURCE_DESC& want, D3D12_RESO
 // depth of the scene is drawn over it (the effect's overlays: vrcam draws them after, OverlaysApart); TurnMake - the other eye made
 // into g_turnTarget, a picture of ours (vrcam draws that eye's overlays over it); TurnFinish - into its swapchain. Under g_lock, the draw thread.
 
+// [openxr] runtime_fov's crop for this eye of this pair (g_cropped): the head's camera or F3's room (F1's window hangs the whole picture), and a
+// part of the picture that is the runtime's view (OpenFrame's g_winUsed: not with OFXR Bridge, not on canted displays, not with ExactEyes).
+// Both eyes from one game frame and eyes by turns alike (by turns keeps and makes whole pictures, TurnFinish copies the box). The box in the
+// picture's pixels (`w` x `h` the whole picture), and its fov.
+bool CropFor(int eye, uint32_t w, uint32_t h, eyefov::Sub* out) {
+    if (!RuntimeFovNow() || g_pairMode == kViewsWindow || g_winUsed[eye].Whole()) return false;
+    const XrFovf& f = g_fovUsed[eye];
+    *out = eyefov::Pixels(eyefov::FromAngles(f.angleLeft, f.angleRight, f.angleUp, f.angleDown), g_winUsed[eye], (int)w, (int)h);
+    return out->w > 0 && out->h > 0;
+}
+// The eye's swapchain for a back buffer of `bd`: the whole picture, or runtime_fov's box of it (`crop` set then).
+bool EnsureEye(int eye, const D3D12_RESOURCE_DESC& bd, eyefov::Sub* crop, bool* cropped) {
+    *cropped = CropFor(eye, (uint32_t)bd.Width, bd.Height, crop);
+    return EnsureChain(g_eyeChain[eye], bd, eye ? "right eye's" : "left eye's", *cropped ? crop : nullptr);
+}
+
 DXGI_FORMAT TypelessOf(DXGI_FORMAT f) {
     switch (Family(f)) {
         case 1: return DXGI_FORMAT_R8G8B8A8_TYPELESS;
@@ -4352,13 +5995,13 @@ DXGI_FORMAT TypelessOf(DXGI_FORMAT f) {
 }
 
 void CopyPicture(ID3D12GraphicsCommandList* list, ID3D12Resource* from, D3D12_RESOURCE_STATES fromState, ID3D12Resource* to,
-                 D3D12_RESOURCE_STATES toState, uint32_t w, uint32_t h) {
+                 D3D12_RESOURCE_STATES toState, uint32_t w, uint32_t h, uint32_t sx = 0, uint32_t sy = 0) {
     D3D12_RESOURCE_BARRIER b[2] = {Tr(from, fromState, D3D12_RESOURCE_STATE_COPY_SOURCE), Tr(to, toState, D3D12_RESOURCE_STATE_COPY_DEST)};
     list->ResourceBarrier(2, b);
     D3D12_TEXTURE_COPY_LOCATION t{}, f{};
     t.pResource = to; t.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
     f.pResource = from; f.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
-    const D3D12_BOX box{0, 0, 0, w, h, 1};
+    const D3D12_BOX box{sx, sy, 0, sx + w, sy + h, 1};   // (from (sx, sy): runtime_fov's box of a whole picture)
     list->CopyTextureRegion(&t, 0, 0, 0, &f, &box);
     D3D12_RESOURCE_BARRIER e[2] = {Tr(from, D3D12_RESOURCE_STATE_COPY_SOURCE, fromState), Tr(to, D3D12_RESOURCE_STATE_COPY_DEST, toState)};
     list->ResourceBarrier(2, e);
@@ -4369,9 +6012,14 @@ void TurnTell() {   // the 10 s line
     if (!g_turnCounts.since) g_turnCounts.since = now;
     if (now - g_turnCounts.since >= 10000) {
         LogF("vrcam: openxr - eyes by turns, 10 s: the eye not drawn made %u times with the depth (the eye drawn laid over it %u, its own picture "
-             "kept where the same %u, the game's effects read %u), turned only %u, left as last drawn %u (its passes still building %u)",
+             "kept where the same %u, the game's effects read %u), turned only %u, left as last drawn %u (its passes still building %u); "
+             "read sharper %u, its strips filled %u, its rims moved %u ([stereo] turns_sharp / turns_fill / turns_rims)",
              g_turnCounts.moved, g_turnCounts.drawnOver, g_turnCounts.keptOwn, g_turnCounts.effects, g_turnCounts.turned, g_turnCounts.left,
-             g_turnCounts.building);
+             g_turnCounts.building, g_turnCounts.sharp, g_turnCounts.filled, g_turnCounts.rimmed);
+        unsigned frames = 0;
+        const std::string spans = gpuspans::Take(&frames);
+        if (frames)
+            LogF("vrcam: openxr - eyes by turns, 10 s, on the graphics card (ms a frame, %u frames): %s", frames, spans.c_str());
         g_turnCounts = TurnCounts{};
         g_turnCounts.since = now;
     }
@@ -4389,7 +6037,9 @@ void TurnKeepLocked(int d, ID3D12Resource* bb) {
     ReleaseSRWLockExclusive(&g_turnLock);
     g_turnFrame = TurnFrame{};
     if (!v.ok || g_pairMode != kViewsHead) { TurnForget(); return; }   // not a first-person pair: nothing kept goes on
-    if (!EnsureChain(g_eyeChain[d], bb->GetDesc(), d ? "right eye's" : "left eye's")) return;
+    eyefov::Sub crop;
+    bool cropped = false;
+    if (!EnsureEye(d, bb->GetDesc(), &crop, &cropped)) return;
     const Chain& cd = g_eyeChain[d];
     // The passes are built on a worker first (turnwarp::Warm; pcvr v0.3.24, 84f560d): built here at the first eye made of a session
     // they held the draw thread 0.1-0.2 s. Till then the eye not drawn goes as it was last drawn, as with turn_warp=0.
@@ -4400,13 +6050,15 @@ void TurnKeepLocked(int d, ID3D12Resource* bb) {
     if (!g_turnGpu.Init(g_dev, (DXGI_FORMAT)cd.fmt, &TurnLog, &TurnRetire)) return;
     ID3D12GraphicsCommandList* list = OpenList();
     if (!list) return;
+    if (gpuspans::Setup(g_dev, g_queue)) gpuspans::FrameStart();   // (this frame's spans: the eye kept, its copy, the other made, its copy)
+    const int keepSpan = gpuspans::Begin(list, "made: the eye drawn kept (copies)");
     TurnKept& kd = g_turnKept[d];
     D3D12_RESOURCE_DESC idesc = bb->GetDesc();
-    idesc.Width = cd.w;
-    idesc.Height = cd.h;
+    idesc.Width = cd.pw;   // (the whole picture, also with runtime_fov's box in the swapchain)
+    idesc.Height = cd.ph;
     idesc.Format = (DXGI_FORMAT)cd.fmt;
     kd.imageOk = TurnTexture(kd.image, idesc, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, L"d2rvr eyes by turns kept eye");
-    if (kd.imageOk) CopyPicture(list, bb, D3D12_RESOURCE_STATE_PRESENT, kd.image, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, cd.w, cd.h);
+    if (kd.imageOk) CopyPicture(list, bb, D3D12_RESOURCE_STATE_PRESENT, kd.image, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, cd.pw, cd.ph);
     kd.depthOk = false;
     if (din.ok && din.res && g_turnGpu.DepthReady()) {
         const D3D12_RESOURCE_DESC dd = din.res->GetDesc();
@@ -4422,6 +6074,7 @@ void TurnKeepLocked(int d, ID3D12Resource* bb) {
             kd.depthOk = true;
         }
     }
+    gpuspans::End(list, keepSpan);
     // Where the game's effects are in this eye ([stereo] turns_keep_own 3, 4): its effects layer read into its blocks now, while it is this
     // frame's - the eye made next keeps its own picture there, and so does this eye when it is made next frame.
     bool fx = false;
@@ -4429,7 +6082,10 @@ void TurnKeepLocked(int d, ID3D12Resource* bb) {
         effectslayer::Layer layer;
         if (effectslayer::Latest(layer)) {
             const int slot = TurnTakeSlot();
-            if (slot >= 0 && g_turnGpu.Effects(list, layer.targets, layer.states, d, g_cfg.turnEffectsReach * float(layer.width) / turnwarp::kKeepWidthPx, slot)) {
+            const int span = gpuspans::Begin(list, "made: the game's effects read");
+            const bool fxDone = slot >= 0 && g_turnGpu.Effects(list, layer.targets, layer.states, d, g_cfg.turnEffectsReach * float(layer.width) / turnwarp::kKeepWidthPx, slot);
+            gpuspans::End(list, span);
+            if (fxDone) {
                 g_turnSlotDone[slot] = g_fenceV + 1;   // the fence SubmitList signals for this list
                 fx = true;
                 ++g_turnCounts.effects;
@@ -4457,13 +6113,13 @@ ID3D12Resource* TurnMakeLocked() {
     const Chain& co = g_eyeChain[o];
     TurnKept& kd = g_turnKept[d];
     const TurnKept& ko = g_turnKept[o];
-    const bool canTurn = co.sc && co.w == cd.w && co.h == cd.h && co.fmt == cd.fmt && ko.imageOk && ko.cam.ok && kd.at - ko.at <= kTurnOldMs;
+    const bool canTurn = co.sc && co.pw == cd.pw && co.ph == cd.ph && co.fmt == cd.fmt && ko.imageOk && ko.cam.ok && kd.at - ko.at <= kTurnOldMs;
     if (!canTurn) return nullptr;   // its last image goes again (CloseFrame, as before)
     // our picture of it: the back buffer's size, viewable as the swapchain's format (the warp) and the back buffer's (ReShade)
     D3D12_RESOURCE_DESC tdesc{};
     tdesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
-    tdesc.Width = co.w;
-    tdesc.Height = co.h;
+    tdesc.Width = co.pw;
+    tdesc.Height = co.ph;
     tdesc.DepthOrArraySize = tdesc.MipLevels = 1;
     tdesc.Format = TypelessOf(co.bbFmt);
     tdesc.SampleDesc.Count = 1;
@@ -4520,25 +6176,33 @@ ID3D12Resource* TurnMakeLocked() {
         over.drawnTan = kd.cam.tan; over.nowTan = now.tan;
         over.move = turnwarp::Move(kd.cam.at, kd.cam.turn, now.at, now.turn);
         over.carry = over.move;
-        over.edgeScale = turnwarp::EdgeScale(co.w, now.tan, turnwarp::Length(kd.cam.at - now.at), kd.nearPlane);
+        over.edgeScale = turnwarp::EdgeScale(co.pw, now.tan, turnwarp::Length(kd.cam.at - now.at), kd.nearPlane);
         // its own picture kept where it shows the same surface ([stereo] turns_keep_own; pcvr v0.3.24)
-        over.keep = turnwarp::KeepOf(g_cfg.turnKeepOwn, co.w, g_cfg.turnKeepGap, g_cfg.turnKeepReach, g_cfg.turnEffectsLevel);
+        over.keep = turnwarp::KeepOf(g_cfg.turnKeepOwn, co.pw, g_cfg.turnKeepGap, g_cfg.turnKeepReach, g_cfg.turnEffectsLevel);
         overP = &over;
     }
     bool turned = false;
     const int slot = TurnTakeSlot();
     if (slot >= 0) {
         bool kept = false;
-        turned = g_turnGpu.Render(list, g_turnTarget, co.w, co.h, ko.image, h, ownP, overP, slot, g_cfg.turnOverlayDepth, o, &kept);
+        g_turnGpu.Sharpen(g_cfg.turnSharp);
+        g_turnGpu.Fill(g_cfg.turnFill);
+        g_turnGpu.Rims(g_cfg.turnRims);
+        const int span = gpuspans::Begin(list, "made: all its passes");
+        turned = g_turnGpu.Render(list, g_turnTarget, co.pw, co.ph, ko.image, h, ownP, overP, slot, g_cfg.turnOverlayDepth, o, &kept);
+        gpuspans::End(list, span);
         if (turned) {
             g_turnSlotDone[slot] = g_fenceV + 1;   // the fence SubmitList signals for this list
             if (ownP || overP) ++g_turnCounts.moved; else ++g_turnCounts.turned;
             if (overP) ++g_turnCounts.drawnOver;
+            if (g_cfg.turnSharp) ++g_turnCounts.sharp;   // (Sharpen above: every pass of this Render read Catmull-Rom)
+            if (g_turnGpu.Filled()) ++g_turnCounts.filled;
+            if (g_turnGpu.Rimmed()) ++g_turnCounts.rimmed;
             if (kept) ++g_turnCounts.keptOwn;
         }
     }
     if (!turned) {
-        CopyPicture(list, ko.image, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, g_turnTarget, D3D12_RESOURCE_STATE_RENDER_TARGET, co.w, co.h);
+        CopyPicture(list, ko.image, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, g_turnTarget, D3D12_RESOURCE_STATE_RENDER_TARGET, co.pw, co.ph);
         g_turnGpu.ClearMadeDepth(list);   // its depth is not this picture's (an older frame's, or the other eye's): nothing hides its overlays
     }
     SubmitList();
@@ -4556,14 +6220,31 @@ void TurnFinishLocked() {
     const int o = g_turnFrame.o;
     const Chain& co = g_eyeChain[o];
     if (ID3D12GraphicsCommandList* list = OpenList()) {
-        CopyPicture(list, g_turnTarget, D3D12_RESOURCE_STATE_RENDER_TARGET, co.img[g_turnFrame.idx].texture, D3D12_RESOURCE_STATE_RENDER_TARGET, co.w, co.h);
+        const int span = gpuspans::Begin(list, "made: into its swapchain");
+        CopyPicture(list, g_turnTarget, D3D12_RESOURCE_STATE_RENDER_TARGET, co.img[g_turnFrame.idx].texture, D3D12_RESOURCE_STATE_RENDER_TARGET, co.w, co.h,
+                    co.sx, co.sy);   // (runtime_fov: the box of the whole picture made)
+        gpuspans::End(list, span);
+        gpuspans::Resolve(list);   // (the frame's last list of ours)
         SubmitList();
     }
     XrSwapchainImageReleaseInfo ri{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
     const bool released = Ok(xrReleaseSwapchainImage(co.sc, &ri), "xrReleaseSwapchainImage");
     // made for this frame's head: it goes at this frame's pose (CloseFrame); else the last picture as drawn, at the pose it was drawn with
-    if (released && g_turnFrame.turned) g_copied[o] = true;
-    else ++g_turnCounts.left;
+    if (released && g_turnFrame.turned) {
+        g_copied[o] = true;
+        // runtime_fov's box: this frame's box of the eye made must be the chain's (made for this frame's head, with this frame's fov)
+        eyefov::Sub crop;
+        if (CropFor(o, co.pw, co.ph, &crop) && (uint32_t)crop.x == co.sx && (uint32_t)crop.y == co.sy && (uint32_t)crop.w == co.w &&
+            (uint32_t)crop.h == co.h) {
+            g_cropped[o] = true;
+            g_cropFov[o] = {atanf(crop.tan.l), atanf(crop.tan.r), atanf(crop.tan.u), atanf(crop.tan.d)};
+        } else if (co.w != co.pw || co.h != co.ph) {
+            g_copied[o] = false;   // (the box moved since the chain was made: its last image goes again, CloseFrame)
+            ++g_turnCounts.left;
+        }
+    } else {
+        ++g_turnCounts.left;
+    }
     TurnTell();
 }
 void TurnFrameEnd() {
@@ -4619,8 +6300,25 @@ void TurnFinish() {
 void CopyEye(int eye, ID3D12Resource* bb) {
     if (g_kind != kPair || !bb || eye < 0 || eye > 1 || g_copied[eye] || DeviceLost()) return;
     AcquireSRWLockExclusive(&g_lock);
-    if (g_session && EnsureChain(g_eyeChain[eye], bb->GetDesc(), eye ? "right eye's" : "left eye's")) {
+    eyefov::Sub crop;
+    const D3D12_RESOURCE_DESC bd = bb->GetDesc();
+    bool cropNow = false;
+    if (g_session && EnsureEye(eye, bd, &crop, &cropNow)) {
+        const double t0 = UsNow();
         g_copied[eye] = CopyInto(g_eyeChain[eye], bb);
+        g_cropped[eye] = cropNow && g_copied[eye];
+        if (g_cropped[eye]) {
+            g_cropFov[eye] = {atanf(crop.tan.l), atanf(crop.tan.r), atanf(crop.tan.u), atanf(crop.tan.d)};
+            if (!g_cropTold && eye == 1) {
+                g_cropTold = true;
+                const float k = 57.29578f;
+                LogF("vrcam: openxr - runtime_fov: each eye's swapchain holds only its own view - the right eye's box x %d-%d y %d-%d of the %llux%u picture, "
+                     "submitted whole with fov %.1f %.1f %.1f %.1f (left right up down, deg); the copy is the one each eye always had, %.0f %% of its "
+                     "pixels (%.2f ms on the CPU to record and submit it)", crop.x, crop.x + crop.w, crop.y, crop.y + crop.h, (unsigned long long)bd.Width,
+                     bd.Height, g_cropFov[eye].angleLeft * k, g_cropFov[eye].angleRight * k, g_cropFov[eye].angleUp * k, g_cropFov[eye].angleDown * k,
+                     100.0 * crop.w * crop.h / ((double)bd.Width * bd.Height), (UsNow() - t0) / 1000.0);
+            }
+        }
         // eyes by turns ([stereo] turn_warp): the eye was kept before (TurnKeep), the other is made after (TurnMake, TurnFinish)
         if (g_cfg.byTurns && !g_cfg.turnWarp) TurnForget();
     }
@@ -4641,7 +6339,7 @@ void OnPresent(ID3D12Device* dev, ID3D12CommandQueue* queue, ID3D12Resource* bb,
     {   // [render] vr_resolution: the render size the game is asked for (a post, never a wait), on every present
         if (bb) { const D3D12_RESOURCE_DESC d = bb->GetDesc(); g_outputSize.store(vrres::Pack({(uint32_t)d.Width, d.Height})); }
         vrres::Update(g_wnd, g_running.load() && g_state.load() == kCreated, vrres::Unpack(g_vrRecommended.load()), vrres::Unpack(g_vrMaximum.load()),
-                      vrres::Unpack(g_outputSize.load()), g_cfg.on ? g_cfg.vrPick : rendersize::Pick{});
+                      vrres::Unpack(g_outputSize.load()), g_cfg.on ? g_cfg.vrPick : rendersize::Pick{}, g_cfg.on && g_cfg.menuWide);
     }
     if (DeviceLost()) return;
     if (g_kind != kPair && g_stopWanted.exchange(false)) Stop(false);

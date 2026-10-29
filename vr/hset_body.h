@@ -52,9 +52,28 @@ inline std::string MeasuredText(const Stored& s) {
 inline std::string UseText(const Stored& s) {
     if (!s.valid) return "Until you measure, the height from BodyWalk or \"Your height\" and the arm scale apply.";
     if (!s.use) return "Not in use: the box \"Use the measured height and arm span\" is unticked in D2R VR Authentic Settings.";
-    if (s.seated && !s.eyeValid) return "In use: the hero's arms follow it; the world's scale is \"Your height\" (measure standing once for it).";
+    if (!s.eyeValid) return "In use: the hero's arms follow it; the world's scale is \"Your height\" (measure standing once for it).";
     return "In use: the world's scale and the hero's arms follow it.";
 }
+// The Arm span stepper under Calibrate (the author, 2026-10-25: a slider to move by hand): it shows the span the hero's arms are fitted to now
+// and sets [calibration] arm_span_m by hand, a centimetre a press, live. A new measurement writes the key again, so the stepper follows it.
+// Nothing stored, it shows the span in use without one ([calibration] default_span, "auto"), and the first press starts from that.
+constexpr float kSpanStepM = 0.01f, kSpanMinM = 0.85f, kSpanMaxM = 2.6f;   // (bodycal::ValidSpan's range)
+constexpr float kSpanFallbackM = 1.60f;   // no span known at all: where the first press starts
+inline float StepSpan(float shown, int delta) {
+    const float from = std::isfinite(shown) && shown >= kSpanMinM && shown <= kSpanMaxM ? shown : kSpanFallbackM;
+    const float to = std::round((from + (float)delta * kSpanStepM) * 100.0f) / 100.0f;
+    return std::fmin(kSpanMaxM, std::fmax(kSpanMinM, to));
+}
+// "1.68 m" (a span stored), "1.66 m (auto)" (none stored: the span in use without one), "Auto" (not known).
+inline std::string SpanText(float shown, bool stored) {
+    char b[48];
+    if (stored) std::snprintf(b, sizeof b, "%.2f m", (double)shown);
+    else if (shown > 0.0f) std::snprintf(b, sizeof b, "%.2f m (auto)", (double)shown);
+    else return "Auto";
+    return b;
+}
+
 // The line under the title: what Calibrate reads, standing or seated.
 inline const char* WhyText(bool seated) {
     return seated ? "Seated: Calibrate reads your arm span only. Recentre view sets the hero's eyes where your head is."

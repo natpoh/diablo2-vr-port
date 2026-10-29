@@ -85,6 +85,7 @@ std::atomic<bool> g_only{false};   // [hands] bow_draw_only: a press away from t
 std::atomic<float> g_reach{0.28f};   // [hands] bow_draw_reach_cm: how near the string the free hand has to be (m)
 std::atomic<float> g_shift{0.0f};    // [hands] bow_draw_nock_shift_cm: the zone's centre along the bow's axis (m), + away from the grip
 std::atomic<float> g_minPull{0.12f}; // [hands] bow_draw_min_pull_cm: how far the string hand is pulled back from the nock for a release to shoot (m)
+std::atomic<bool> g_shotHold{false};  // [bow] shot_line_hold: a shot's line stays its aim until the game takes it (bowdraw::kShotHoldSeconds), a new draw or not
 std::atomic<bool> g_restAims{true};  // [bow] arrow_rest_aims: the shot's line goes through the arrow's rest point too (skel::BowRestPoint), as the arrow lies
 constexpr float kNockBehind = 0.16f; // the constant touch point: this far behind the grip along the bow
 std::atomic<int> g_button{0}, g_start{0};
@@ -105,8 +106,12 @@ struct Aim {
     bool live = false;
     bowdraw::Vec room;   // the line, in the room's frame (OpenXR: x right, y up, z back)
     float yaw = 0.0f;    // the head's, now: the line is turned into the head's turn frame with it
+    bowdraw::Vec start;  // [bow] pitch_aim: where the line starts, the release's point in the room, and the head now (AimLine puts it in the hands' frame)
+    bowdraw::Vec head;
+    bool haveStart = false;
     ULONGLONG at = 0;
 } g_aim;
+std::atomic<ULONGLONG> g_drawingAt{0};   // the string was held at the last frame, when (Drawing)
 bowtouch::VectorSet g_vectors;   // [debug] bow_vectors: the last frame's, in the hands' frame
 ULONGLONG g_vectorsAt = 0;
 struct RayLine { bowtouch::Vec start, dir; bool fromModel = false; } g_ray;   // [debug] bow_aim_ray: the last frame's shot line, in the hands' frame
@@ -125,6 +130,8 @@ struct Run {
     double lostAt = 0.0;     // a hand is lost and the draw held since then (frame time), 0 = not
     bool pullEnded = false;  // the last pull ended with no shot and no new nock yet (the rig's "cancelled")
     const char* event = "";  // what the last cancel event was (a recentre, the focus/a menu/the session changing)
+    bowdraw::Vec shotStart;  // [bow] pitch_aim: the arrow's release point at the last shot (the room's), as the detector keeps that shot's line
+    bool haveShotStart = false;
 };
 
 bowdraw::Vec V(const float p[3]) { return {p[0], p[1], p[2]}; }
@@ -132,11 +139,13 @@ bowdraw::Quat Q(const float q[4]) { return {q[0], q[1], q[2], q[3]}; }
 
 double SteadyS() { return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
 
-void Publish(bool live, const bowdraw::Vec& room, bool haveYaw, float yaw) {
+void Publish(bool live, const bowdraw::Vec& room, bool haveYaw, float yaw, const bowdraw::Vec* start = nullptr, const bowdraw::Vec* head = nullptr) {
     AcquireSRWLockExclusive(&g_lock);
     g_aim.live = live;
     if (live) g_aim.room = room;
     if (haveYaw) g_aim.yaw = yaw;
+    g_aim.haveStart = live && start && head;
+    if (g_aim.haveStart) { g_aim.start = *start; g_aim.head = *head; }
     g_aim.at = GetTickCount64();
     ReleaseSRWLockExclusive(&g_lock);
 }
@@ -240,6 +249,7 @@ void OnFrame(const directinput::Frame& f, void*) {
     params.reach = g_reach.load();
     params.minPull = g_minPull.load();
     params.nockBehind = kNockBehind + shift;   // (the constant, as the detector would place it: the debug view's)
+    params.shotHoldSeconds = g_shotHold.load() ? bowdraw::kShotHoldSeconds : params.aimSeconds;
     // [bow] arrow_rest_aims: the arrow lies on the line from the string hand through its rest point on the bow hand (skel::BowRestPoint: a point
     // fixed in the hand's own frame, [bow] arrow_rest_*) - the shot goes along that line too, so that it is the line the player sees. Only the
     // detector's line (the aim and the pull's length) is taken through it; the touch point above and the debug below use the hand's own point.
@@ -292,8 +302,14 @@ void OnFrame(const directinput::Frame& f, void*) {
     }
 #endif
 
-    // The aim before the press: the game reads its point when it takes the button.
-    Publish(o.aimOwned && !o.drawing, o.aim, haveHead, yaw);
+    // The aim before the press: the game reads its point when it takes the button. ([bow] pitch_aim: with where the line starts - the release's
+    // point, kept with the shot's line as the detector keeps it; the start of the debug ray below)
+    if (o.shoot) { r.shotStart = haveRest ? restRoom : bowGrip; r.haveShotStart = true; }
+    // [bow] shot_line_hold: the shot's own line stays the aim - the bow hand's ray never takes over - until the game has taken the press (a late read: the
+    // hero still in his last attack, the next draw already under way); without it the line is the aim 0.4 s and not while a new draw is held, as before
+    const bool held = g_shotHold.load() && o.shotAimLive;
+    Publish((o.aimOwned && !o.drawing) || held, o.drawing && held ? o.shotAim : o.aim, haveHead, yaw, r.haveShotStart && haveHead ? &r.shotStart : nullptr, &head);
+    g_drawingAt.store(o.drawing ? GetTickCount64() : 0);
 
     // While the string is held the control that took it is the draw's: nothing bound to it fires. With [hands] bow_draw_only the string
     // hand's trigger is the draw's too while the hand is in the grab zone (a press there is the draw's, whatever the table binds to the
@@ -512,6 +528,7 @@ void Init(const D2RL::PluginContext* ctx, HandFn bowHand, ViewFn f4) {
 }
 
 void SetRestAims(bool on) { g_restAims.store(on); }
+void SetShotLineHold(bool on) { g_shotHold.store(on); }
 
 void SetDrawHook(DrawHook fn) { g_hook = fn; }
 
@@ -590,6 +607,27 @@ bool AimDir(float out[3]) {
     const bowdraw::Vec h = bowdraw::ToHeadTurn(a.room, a.yaw);   // the head's turn taken off: the same as XrIntoShared does to a hand
     out[0] = h.x; out[1] = h.y; out[2] = h.z;
     return std::isfinite(out[0]) && std::isfinite(out[1]) && std::isfinite(out[2]);
+}
+
+bool AimLine(float start[3], float dir[3]) {
+    if (!Active()) return false;
+    AcquireSRWLockShared(&g_lock);
+    const Aim a = g_aim;
+    ReleaseSRWLockShared(&g_lock);
+    if (!a.live || !a.haveStart || GetTickCount64() - a.at >= kFreshMs) return false;
+    const bowdraw::Vec s = bowtouch::RoomToHands(a.start, a.head, a.yaw);   // (the head and its turn now: the same frame AimDir turns the line into)
+    const bowdraw::Vec h = bowdraw::ToHeadTurn(a.room, a.yaw);
+    const float len = bowdraw::Length(h);
+    if (!std::isfinite(len) || len < 1e-6f) return false;
+    start[0] = s.x; start[1] = s.y; start[2] = s.z;
+    dir[0] = h.x / len; dir[1] = h.y / len; dir[2] = h.z / len;
+    return std::isfinite(start[0] + start[1] + start[2]);
+}
+
+bool Drawing() {
+    if (!Active()) return false;
+    const ULONGLONG at = g_drawingAt.load();
+    return at && GetTickCount64() - at < kFreshMs;
 }
 
 void NoteRecenter() { g_recentre.store(true); }

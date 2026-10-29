@@ -28,14 +28,23 @@ struct Capsule {
 	double   radius = 0.3;
 	V3       vel;
 	uint32_t id = 0;
+	int      part = -1;   // which of the monster's limbs (its skeleton's bone; -1: the monster's one capsule) - the stab follows the limb it is in (stab.h)
+	int      held = 0;    // [weight] monster_shields: 0 its body; 1 a weapon it holds, 2 its shield - the weapon stops on it as on a limb, never stabs into it
+	// [weight] dual_collide: the other weapon of a pair - never left inside (Params::deepShare is for a body that walked onto the blade): a blade deep in it is
+	// eased out, kFirmEase a round, so two weapons put into each other (a fresh javelin after a throw, a line measured anew) come apart and then rest on each other
+	bool     firm = false;
 };
+constexpr double kFirmEase = 0.03;   // m
 
 // A piece of the weapon as a capsule in the body's GRIP frame (heft.h Body): a blade, a haft, a mace's head - `radius` round it. The weapon is
 // up to a few of them (its steel's pieces, hold.h Shape).
 struct Blade {
 	V3     butt, tip;
 	double radius = 0.02;
+	uint32_t only = 0;   // 0: it meets every capsule; else only the capsules of this id (a head's own volume against the other weapon of a pair, hold.h SetHead)
+	uint32_t except = 0; // ... and never the capsules of this id (0: none) - the kind's own head piece, where the head's own volume stands for it (hold.h SetHeads)
 };
+inline bool Meets(const Blade& b, const Capsule& c) { return (!b.only || b.only == c.id) && (!b.except || b.except != c.id); }
 
 struct Params {
 	double friction    = 0.25;   // Coulomb's: the most the surface holds back of the slide, as a share of the push it takes out of the blade's motion into the body
@@ -59,6 +68,23 @@ struct Report {
 	int      blade = 0;          // which piece of the weapon met it
 	double   along = 0;          // where on that piece: 0 its butt end, 1 its tip end
 	V3       normal, point;      // the surface's outward normal there and the point of contact (room)
+	// The step's totals against the monster met hardest (all its capsules, all rounds) - what the weapon delivered into its body this step ([debug] strike_measure,
+	// docs/notes/strike_force.md): the bodies do not move, so all the contact takes out of the weapon's motion is the push it gave them.
+	double   stepImpulse = 0;    // N s: the velocity taken out into the body (the normal kicks)
+	double   stepPush = 0;       // kg m: the weapon put back out of the body (the normal shifts: a push of this over the step's dt is an impulse, N s)
+	double   stepFriction = 0;   // N s: the slide held back by the surface (the tangential kicks)
+	double   stepSlid = 0;       // m: how far the blade slid along the body this step (after the friction)
+	// ... and the same for each monster touched this step (a blade caught between two: each its own share; the first kMet, the hardest met first)
+	struct Met {
+		uint32_t id = 0;
+		int      body = -1;          // its capsule met hardest (the bone)
+		double   impulse = 0, push = 0, friction = 0, slid = 0;
+		double   approach = 0;       // m/s: the closing speed into it (the fastest point's)
+		bool     onBody = false, onHeld = false;   // it touched a capsule of its body / of what it holds (Capsule::held) - on the held one alone: blocked
+	};
+	static constexpr int kMet = 4;
+	Met      met[kMet];
+	int      nMet = 0;
 };
 
 // The closest points of two segments p0-p1 and q0-q1: s and t along them (0..1).

@@ -12,6 +12,8 @@
 //     squeezed, so the touch counts only then - an open hand with a javelin in it pokes nothing. The squeeze is the GESTURE's reading of
 //     the controller (throwwire::GripHeld) - never the shared block's grip: a control the gesture Takes reads as let go there, so with a
 //     thrown weapon in hand that grip is always 0 (the first version asked it and the touch never started for a javelin, 2026-10-14);
+//     [gameplay] melee_touch_thrown_held (off by default) takes this one away: the weapon is in the hand from the moment it is equipped,
+//     like a sword - the weight model's own word (a hand holds it, vr/weight_drive.h) decides, an open grip does not;
 //   - after the touch pressed the attack with a thrown weapon, a release of the gesture is dropped for kHoldOffMs: one throw per swing,
 //     at the monster the blade met. A throw at nothing near (no touch fired) is the gesture's, exactly as it always was.
 #pragma once
@@ -28,13 +30,14 @@ struct ThrownState {
     bool gripHeld = true;        // throwwire::GripHeld(): the right grip is squeezed on the weapon (read off the controller, not the shared block)
     uint64_t nowMs = 0;          // GetTickCount64
     uint64_t lastThrowMs = 0;    // throwwire::LastThrowTickMs(): the last released throw, 0 none
+    bool heldAtOnce = false;     // [gameplay] melee_touch_thrown_held: in the hand from the equip, like a sword - an open grip does not refuse
 };
 
 // Why a touch may not fire with the thrown weapon in hand right now.
 enum class ThrownWhy : uint8_t { None, AfterThrow, GripOpen };
 inline ThrownWhy ThrownWhyNot(const ThrownState& s) {
     if (s.lastThrowMs && s.nowMs >= s.lastThrowMs && s.nowMs - s.lastThrowMs < kAfterThrowMs) return ThrownWhy::AfterThrow;
-    if (s.gripOwns && !s.gripHeld) return ThrownWhy::GripOpen;
+    if (s.gripOwns && !s.gripHeld && !s.heldAtOnce) return ThrownWhy::GripOpen;
     return ThrownWhy::None;
 }
 // May a touch fire with the thrown weapon in hand right now?

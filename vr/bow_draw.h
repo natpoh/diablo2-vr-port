@@ -95,10 +95,17 @@ struct Params {
     float cancelGap = 1.10f;                       // a pull this long is not a draw
     float pressSeconds = 0.065f;                   // the one press of the game's key
     float aimSeconds = 0.40f;                      // the line stays the aim this long after a shot
+    // [bow] shot_line_hold: how long a shot's line stays ITS aim (shotAimLive), whatever the next draw does - the game may take the press late, when the
+    // hero's last attack is done; kShotHoldSeconds with the box, else aimSeconds as before
+    float shotHoldSeconds = 0.40f;
     float maxStep = 0.10f;                         // a frame this long after the last is a hitch: a draw does not go on over it
     float maxJump = 0.35f;                         // a hand this far from where it was a frame ago: a recentre or a lost pose
     float lossSeconds = 0.25f;                     // a hand lost this long or less (a controller out of the cameras' view) does not end a draw
 };
+
+// [bow] shot_line_hold: a shot's line stays its aim this long (Params::shotHoldSeconds). The game reads a press's aim when it takes the press - at once when the
+// hero is free, else when his last attack ends (a slow bow's whole animation, a second or so): until then the shot is still that line's, not the bow hand's.
+inline constexpr float kShotHoldSeconds = 1.5f;
 
 // The draw amount (Output::draw, 0..1) under which the bow rig (vr/bow_rig.h ShortPull) reads a pull as one that came to nothing.
 inline constexpr float kRigShortPull = 0.25f;
@@ -164,6 +171,8 @@ struct Output {
     bool shoot = false;     // the frame of a release that shoots
     bool pressing = false;  // from the shoot frame for pressSeconds: the game's key is down
     bool aimOwned = false;  // `aim` is the line to shoot along: while drawing, and aimSeconds after a shot
+    bool shotAimLive = false;   // the last shot's own line (`shotAim`) is still its aim: shotHoldSeconds after it, a new draw or not
+    Vec shotAim;
     Vec aim;                // unit, from the string hand through the bow hand
     Vec origin;             // the string hand's place (where the line starts)
     Vec bowForward;
@@ -192,7 +201,7 @@ class Detector {
     Phase phase_ = Phase::Idle;
     int hold_ = 0;   // 0 the trigger took the string, 1 the grip
     bool down_ = false, dT_ = false, dG_ = false, dTWas_ = false, dGWas_ = false, seen_ = false, atString_ = false, charged_ = false, have_ = false;
-    double last_ = 0, nockedAt_ = 0, pressUntil_ = 0, aimUntil_ = 0, goodAt_ = 0;
+    double last_ = 0, nockedAt_ = 0, pressUntil_ = 0, aimUntil_ = 0, shotUntil_ = 0, goodAt_ = 0;
     float nockGap_ = 0;
     uint64_t context_ = 0;
     Vec prevBow_, prevString_, shotAim_, shotOrigin_;
@@ -204,7 +213,7 @@ class Detector {
         if (phase_ == Phase::Nocked) phase_ = Phase::Blocked;
         else if (phase_ == Phase::Plain) phase_ = Phase::Idle;
         charged_ = atString_ = false;
-        pressUntil_ = aimUntil_ = 0;
+        pressUntil_ = aimUntil_ = 0;   // (not shotUntil_: a shot already pressed is the game's to read, whatever the hands do next)
         goodAt_ = 0;
         resume_ = false;
     }
@@ -285,6 +294,7 @@ public:
                 out.shoot = true;
                 pressUntil_ = in.time + p.pressSeconds;
                 aimUntil_ = in.time + p.aimSeconds;
+                shotUntil_ = in.time + std::fmax(p.aimSeconds, p.shotHoldSeconds);
                 shotAim_ = line * (1.0f / gap);
                 shotOrigin_ = in.stringHand;
             } else if (phase_ == Phase::Nocked) {
@@ -330,6 +340,8 @@ public:
             out.aim = shotAim_;
             out.origin = shotOrigin_;
         }
+        out.shotAimLive = in.time < shotUntil_;
+        if (out.shotAimLive) out.shotAim = shotAim_;
         out.owned = phase_ == Phase::Nocked || phase_ == Phase::Blocked;
         out.hold = out.owned ? hold_ : -1;
         out.phase = (int)phase_;

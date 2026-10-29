@@ -27,18 +27,20 @@ inline bool Exists(const std::wstring& p) { return GetFileAttributesW(p.c_str())
 
 inline std::wstring Dxgi(const Where& w) { return w.game + L"dxgi.dll"; }
 inline std::wstring DxgiOff(const Where& w) { return w.game + L"dxgi.dll.off"; }
+// A dxgi.dll the player put aside by hand (renamed to dxgi.dll.bak to make room for D2R VR's own ReShade - a player, 0.180, 2026-10-25): it is offered
+// back the same way as our dxgi.dll.off. Ours first when both are there.
+inline std::wstring DxgiBak(const Where& w) { return w.game + L"dxgi.dll.bak"; }
+inline std::wstring AsideFile(const Where& w) { return Exists(DxgiOff(w)) || !Exists(DxgiBak(w)) ? DxgiOff(w) : DxgiBak(w); }
 
-// The mod has a ReShade64.dll of its own in its reshade\ (the plugin's ReShadeDir then takes that folder).
-inline bool ModOwn(const Where& w) { return !w.modReShade.empty() && Exists(w.modReShade + L"ReShade64.dll"); }
-
-// The folder D2R VR's ReShade is in: the mod's reshade\ once it has a ReShade64.dll, else the game's folder (as the plugin's ReShadeDir decides).
-inline std::wstring ReShadeFolder(const Where& w) { return ModOwn(w) ? w.modReShade : w.game; }
+// The folder D2R VR's ReShade is in (as the plugin's ReShadeDir decides, shared/mod_layout.h): the mod's reshade\ as the mod, unless the player's dxgi.dll
+// is beside the game; else the game's folder. A ReShade64.dll beside the game in the mod layout is not ours and does not count as installed.
+inline std::wstring ReShadeFolder(const Where& w) { return !w.modReShade.empty() && !Exists(Dxgi(w)) ? w.modReShade : w.game; }
 
 struct Buttons {
     bool install;   // "Install ReShade": there is no ReShade at all
     bool paths;     // "Add D2R VR's folders to my ReShade": a dxgi.dll that does not have the two search paths yet (the mod only)
     bool aside;     // "Put my dxgi.dll aside": a dxgi.dll is there, and no dxgi.dll.off in its way
-    bool back;      // "Bring my dxgi.dll back": it was put aside
+    bool back;      // "Bring my dxgi.dll back": it was put aside (dxgi.dll.off, or dxgi.dll.bak by hand)
 };
 
 inline Buttons ButtonsShown(const Where& w, bool pathsPresent) {
@@ -49,7 +51,7 @@ inline Buttons ButtonsShown(const Where& w, bool pathsPresent) {
     b.install = !(r64 || dx);
     b.paths = dx && !w.modReShade.empty() && !pathsPresent;
     b.aside = dx && !off;
-    b.back = !dx && off;
+    b.back = !dx && (off || Exists(DxgiBak(w)));
     return b;
 }
 
@@ -64,7 +66,7 @@ enum class Act { Aside, Back };
 // The only two things a button does to the player's dxgi.dll, both a rename that cannot lose anything: nothing is replaced, nothing deleted.
 inline Result Apply(Act act, const Where& w) {
     Result r;
-    const std::wstring dx = Dxgi(w), off = DxgiOff(w);
+    const std::wstring dx = Dxgi(w), off = act == Act::Aside ? DxgiOff(w) : AsideFile(w);
     if (act == Act::Aside) {
         r.ok = MoveFileExW(dx.c_str(), off.c_str(), 0) != 0;   // (not MOVEFILE_REPLACE_EXISTING: an older dxgi.dll.off is somebody's file too)
         r.error = r.ok ? 0 : GetLastError();
@@ -72,7 +74,7 @@ inline Result Apply(Act act, const Where& w) {
     } else {
         r.ok = MoveFileExW(off.c_str(), dx.c_str(), 0) != 0;
         r.error = r.ok ? 0 : GetLastError();
-        r.did = L"dxgi.dll.off brought back as dxgi.dll";
+        r.did = (off == DxgiOff(w) ? L"dxgi.dll.off" : L"dxgi.dll.bak") + std::wstring(L" brought back as dxgi.dll");
     }
     return r;
 }

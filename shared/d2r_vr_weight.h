@@ -23,7 +23,7 @@ extern "C" {
 
 #define D2RW_ABI_VERSION 1
 
-/* The library defines D2RW_BUILD_DLL before including this to export the four functions; the mod never does. */
+/* The library defines D2RW_BUILD_DLL before including this to export its functions; the mod never does. */
 #if defined(D2RW_BUILD_DLL) && defined(_WIN32)
 #define D2RW_API __declspec(dllexport)
 #else
@@ -82,11 +82,84 @@ D2RW_API int32_t D2rwStep(const D2rwHold* hold, const D2rwHand* hands, int32_t n
 /* A throw's launch velocity (m/s, world) from the weapon's recent velocities: n samples, oldest first, at tMs milliseconds, up to nowMs. 1 and *out filled, or 0: the mod's own. */
 D2RW_API int32_t D2rwThrowVelocity(const uint64_t* tMs, const D2rwV3* vel, int32_t n, uint64_t nowMs, D2rwV3* out);
 
+/* ---- The stab (OPTIONAL: found by GetProcAddress; a library without it is still version 1, and the mod then has no stab) ----
+ * A thrusting weapon driven point first into a monster's body goes in and is held there ([weight] stab_in). The mod keeps the bodies (a monster's limbs: capsules, refreshed
+ * every step), its own contact (the weapon stops on a body or glances off it) and the gate (its hit by touch says when the weapon thrusts and the hand is thrusting now); the
+ * library decides whether a strike goes in and holds the weapon in the wound. Its state between steps is the mod's blob (zero = in no body); the library keeps nothing.
+ * The mod calls D2rwStab after the weapon's step: while in a wound BEFORE its own contact (with no strike; it leaves that monster's bodies out of its contact meanwhile), and when
+ * not in one AFTER its contact, with the strike it met (if any). With no bodies this step (n 0) a wound counts the body as missing. */
+#define D2RW_STAB_BLOB 256
+typedef struct D2rwStabState { uint8_t blob[D2RW_STAB_BLOB]; } D2rwStabState;
+
+/* A monster's capsule in the world of the call: from a to b, radius round it; vel its velocity (zero when not known); id the monster; part which of its limbs (-1: its one
+ * capsule) - a wound follows its limb. */
+typedef struct D2rwBody {
+    D2rwV3 a, b;
+    double radius;
+    D2rwV3 vel;
+    uint32_t id;
+    int32_t part;
+} D2rwBody;
+
+/* The weapon as the stab sees it and the stab's settings (the mod's sliders). A setting <= 0 is the library's own number (except where 0 is said to mean something). */
+typedef struct D2rwStabber {
+    uint32_t size;          /* sizeof(D2rwStabber) as the caller has it */
+    D2rwV3 tip, base;       /* the stab line in the grip frame: the point, and where the blade (the part that goes in) begins */
+    D2rwV3 com;             /* the weapon with its hands: centre of mass in the grip frame ... */
+    double mass;            /* ... mass, kg ... */
+    double inertia[9];      /* ... inertia about the centre of mass, grip-frame axes, row-major, kg m^2 */
+    double angleCos;        /* the stab line against the surface's inward normal at least this to go in */
+    double requiredSpeed;   /* m/s: the point's speed against the body at least this */
+    double tipZone;         /* m: the contact within this of the tip, along the line (the point struck, not the edge) */
+    double sharpness;       /* 0..1: the dampers x (1 - sharpness) */
+    double shellDamper;     /* N s/m until the point has first been shellThickness deep */
+    double shellThickness;  /* m */
+    double damper;          /* N s/m past the shell */
+    double depthLimit;      /* m: the deepest; <= 0 the blade's length (tip - base) */
+    double lockSpeed;       /* m/s: the weapon slower than this - the slide locks */
+    double lockTime;        /* s: ... and unlocks when the joint's force has stayed over unlockForce this long */
+    double unlockForce;     /* N; 0 = never locks */
+    double unstabThreshold; /* m: the point behind the entry by more than this - out */
+    double unstabDelay;     /* s after going in before it may come out */
+    double perpendicular;   /* m: the entry this far off the stab line - out */
+    double tearDistance;    /* m: a hand's controller this far across the line from its hand on the weapon - out */
+    double missingTime;     /* s: the body missing from the bodies this long - out */
+} D2rwStabber;
+
+/* A contact the mod's own contact met this step, before it put the weapon back - and the weapon as it was before that contact (the speed it came in with). */
+typedef struct D2rwStrike {
+    int32_t body;           /* index into the bodies; < 0: none */
+    D2rwV3 point, normal;   /* where it met (on the weapon's surface) and the body's outward normal there */
+    int32_t thrusting;      /* the mod's gate: the weapon thrusts and the hand is thrusting now */
+    D2rwState before;       /* the weapon before the contact pushed it back */
+} D2rwStrike;
+
+/* What the stab did. why: a short reason (UTF-8): why a strike did not go in, or why the weapon came out ("" otherwise). */
+typedef struct D2rwStabOut {
+    int32_t in;             /* in a wound after the call */
+    int32_t events;         /* 1 went in, 2 came out, 4 locked, 8 unlocked, 16 a full stab, 32 a strike was judged */
+    int32_t locked;
+    uint32_t id;            /* the monster */
+    int32_t part;
+    double depth, limit, deepest;
+    double speed, cosInto, fromTip;   /* the judged strike */
+    double lateral, force, pull;      /* the entry off the line, the joint's force (N), the hand across the line (m) */
+    D2rwV3 entry, dir;                /* the wound: its entry and the line's way in (world) */
+    char why[64];
+} D2rwStabOut;
+
+/* One stab step. The weapon's `state` is the one the mod's own step left (D2rwStep's or ours); `stabber.com/mass/inertia` is the body that state moves. gaps: each holding hand's
+ * controller minus its hand drawn on the weapon (world). Returns 1 in a wound after the call (state may have been changed: the weapon held on its line), 0 in none, < 0 an error
+ * (nothing changed). */
+D2RW_API int32_t D2rwStab(const D2rwStabber* stabber, const D2rwBody* bodies, int32_t n, const D2rwStrike* strike, const D2rwV3* gaps, int32_t nGaps, double dt,
+                          D2rwStabState* st, D2rwState* state, D2rwStabOut* out);
+
 /* The same as pointers, for a loader (GetProcAddress by the names above). */
 typedef int32_t (*D2rwAbiFn)(void);
 typedef const char* (*D2rwNameFn)(void);
 typedef int32_t (*D2rwStepFn)(const D2rwHold*, const D2rwHand*, int32_t, double, D2rwState*);
 typedef int32_t (*D2rwThrowVelocityFn)(const uint64_t*, const D2rwV3*, int32_t, uint64_t, D2rwV3*);
+typedef int32_t (*D2rwStabFn)(const D2rwStabber*, const D2rwBody*, int32_t, const D2rwStrike*, const D2rwV3*, int32_t, double, D2rwStabState*, D2rwState*, D2rwStabOut*);
 
 #ifdef __cplusplus
 }

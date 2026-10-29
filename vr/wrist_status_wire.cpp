@@ -314,6 +314,9 @@ void Tick(bool inGame) {
     game::Tick(g_on.load(std::memory_order_relaxed) && inGame && viewgate::F4());   // (not wanted: the server's lookup is let alone, the last read dropped)
 }
 
+std::atomic<HandShiftFn> g_handShift{nullptr};
+void SetHandShift(HandShiftFn fn) { g_handShift.store(fn); }
+
 bool Draw(int side, Layer* layer, uint32_t* needRevision) {
     if (!Enabled() || !viewgate::F4() || side < 0 || side > 1) return false;
     Published p;
@@ -326,6 +329,10 @@ bool Draw(int side, Layer* layer, uint32_t* needRevision) {
     const float a = std::clamp(p.out.alpha, 0.0f, 1.0f);
     layer->visible = a > 0.0f && p.out.pose.valid;
     layer->pose = p.out.pose;
+    if (const HandShiftFn shift = g_handShift.load()) {   // (this side 0 is the left wrist; the hands' 0 the right)
+        float d[3];
+        if (shift(side == 0 ? 1 : 0, d)) { layer->pose.p.x += d[0]; layer->pose.p.y += d[1]; layer->pose.p.z += d[2]; }
+    }
     const float grow = handvitals::kShrinkWhenFaded + (1.0f - handvitals::kShrinkWhenFaded) * a;
     layer->widthM = p.widthM * grow;
     layer->heightM = p.heightM * grow;

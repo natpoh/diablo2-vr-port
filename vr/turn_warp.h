@@ -8,6 +8,8 @@
 //      depth is nearer (turn_math.h SplitCell): only what the drawn eye could not see behind the edge keeps pass 2's picture.
 //      Where pass 2's picture shows the same surface (turn_math.h KeepOwn, [stereo] turns_keep_own) it stays: the game's glow round
 //      a blade, hair and its effects layer (Effects) have no depth, and moved across they stood where the drawn eye saw them.
+//      Before passes 2 and 3 both depths get the rims round things against the sky (Rims); after pass 3 the strips it did not reach
+//      lose a frame-old near thing (Fill); the pictures are read Catmull-Rom (Sharpen). pcvr v0.3.25-v0.3.28, see Gpu.
 // With [stereo] turn_overlay_hide (on) the depth is moved the same way, into MadeDepth(): the eye made's own scene depth (reverse-Z,
 // near / distance, 0 where only the turn reached), written by the same pixel as its colour - so what is drawn over it afterwards
 // (D2R_DepthFog.fx's overlays: the wrist orbs, the bow's) is hidden by what that picture shows nearer there. When it was the drawn
@@ -50,6 +52,15 @@ struct Grid {
 
 constexpr int kSlots = 8;   // descriptor sets, a ring: a set is written again only after the list that read it is done (the caller's fence)
 
+// The game's picture of anything against the void (the sky, depth 0) is larger than its depth: a rim round it, the thing's colour
+// blended into the void's black, which the sky is not painted over - the pixel beside a roof or a treetop dark like it, the next one
+// half so, all round. With the void's depth that rim stayed where the drawn eye saw it while the thing moved across by the eyes'
+// parallax: a dark, ragged outline beside every roof, treetop and far silhouette against the sky, in every other frame of each eye
+// (pcvr's owner, Kurast Docks, 2026-10-25). Within kRimPixels of something (round), a pixel of the void takes the nearest depth there,
+// so the rim goes with what it belongs to (Gpu::Rims, [stereo] turns_rims). Against anything with depth the picture keeps to its depth.
+// bearstonem/d2r-pcvr 2de7cbd (MIT).
+constexpr int kRimPixels = 2;   // kRimShader's Rim
+
 // Builds the passes for `target` on `dev` on a worker of its own (the device held till it is done), once a pair; true once that is
 // done - Init then takes a few milliseconds, the compile and the driver's first pipelines behind it. Any thread.
 bool Warm(ID3D12Device* dev, DXGI_FORMAT target);
@@ -63,6 +74,19 @@ public:
     bool DepthReady() const { return depthPso_[0] != nullptr; }
     bool NearReady() const { return spreadPso_ != nullptr && reducePso_ != nullptr; }
     bool EffectsReady() const { return effectsPso_ != nullptr && NearReady(); }
+    bool RimReady() const { return rimPso_ != nullptr; }
+    bool HoleReady() const { return holePso_[0] != nullptr; }
+    // From the next Render on (bearstonem/d2r-pcvr, MIT; each its own [stereo] key, on by default):
+    // Sharpen - the pictures, turned and moved, read Catmull-Rom; off: bilinear, as before (turns_sharp, bd88507).
+    // Fill - the strips beside near things pass 3 did not reach: where this eye's own picture there is something nearer since gone (a
+    //        frame-old monster, a ghost beside it), what is behind beside them instead; off: its own picture, as before (turns_fill, 8ae54f2).
+    // Rims - the rims round things against the void moved with them (kRimPixels); off: left with the void, as before (turns_rims, 2de7cbd).
+    void Sharpen(bool on) { sharp_ = on; }
+    void Fill(bool on) { fill_ = on; }
+    void Rims(bool on) { rimsOn_ = on; }
+    // What the last Render did of them: the strips' pass run, the rims' pass run (the 10 s line's counts)
+    bool Filled() const { return filled_; }
+    bool Rimmed() const { return rimmed_; }
     // The game's effects layer (effects_layer.h) as `eye` was drawn this frame: its two targets, in `states` and left so, into that
     // eye's blocks, each the strongest of the layer within `reach` of its pixels (Grid::keep's keepEffects). `slot`: as Render's.
     bool Effects(ID3D12GraphicsCommandList* list, ID3D12Resource* const layer[2], const D3D12_RESOURCE_STATES states[2], int eye, float reach, int slot);
@@ -95,11 +119,15 @@ private:
     ID3D12PipelineState* reducePso_ = nullptr;    // the nearest depth of each kNearBlock block
     ID3D12PipelineState* spreadPso_ = nullptr;    // ... the nearest within reach of it (across, then down)
     ID3D12PipelineState* effectsPso_ = nullptr;   // the strongest of the effects layer in each block
+    ID3D12PipelineState* rimPso_ = nullptr;       // Rims
+    ID3D12PipelineState* holePso_[2] = {};        // Fill: [0] the picture alone, [1] and the made depth
     ID3D12DescriptorHeap* srv_ = nullptr;   // shader-visible, kSlots sets of kPerSlot (turn_warp.cpp)
-    ID3D12DescriptorHeap* rtv_ = nullptr;   // the picture, the made depth, the near blocks, the effects blocks
+    ID3D12DescriptorHeap* rtv_ = nullptr;   // the picture, the made depth, the near blocks, the effects blocks, the rims
     ID3D12DescriptorHeap* dsv_ = nullptr;   // pass 2's depth test, pass 3's
     ID3D12Resource* depthTarget_ = nullptr;   // pass 2's depth test, the target's size (R32 typeless: pass 3 reads it, Grid::keep)
-    ID3D12Resource* drawnTarget_ = nullptr;   // pass 3's
+    ID3D12Resource* drawnTarget_ = nullptr;   // pass 3's (R32 typeless: Fill reads it)
+    ID3D12Resource* rims_[2] = {};            // Rims: this eye's own depth, the drawn eye's, the void round things taken as theirs (R32_FLOAT, each depth's size)
+    bool sharp_ = true, fill_ = true, rimsOn_ = true, filled_ = false, rimmed_ = false;
     ID3D12Resource* ownTurned_ = nullptr;     // the target as pass 2 left it (Grid::keep), the target's size and format
     ID3D12Resource* nears_[3] = {};           // the drawn eye's near blocks, this eye's, one between (R32_FLOAT, a block a texel)
     ID3D12Resource* effects_[4] = {};         // each eye's effects blocks, two between

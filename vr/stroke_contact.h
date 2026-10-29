@@ -222,6 +222,9 @@ public:
     bool Counting() const { return counting_; }
     // The number of the stroke that is on (what Sweep::stroke says), 0 when none: a stroke ends at a rest, a reversal, a drop.
     uint64_t StrokeId() const { return st_.stroke; }
+    // When the stroke that is on began (the sample time its onset was judged at; the wind-up the onset looked at lies up to
+    // Params::onsetWindow before it), 0 when none. Read only ([gameplay] melee_direct_client: the hands' paths in this swing).
+    double StrokeStart() const { return st_.stroke ? st_.strokeAt : 0.0; }
 
     // Feeds one sample. True with `out` filled when the stroke has swept something this step.
     bool Step(const Sample& in, Sweep& out) {
@@ -398,6 +401,36 @@ private:
     uint64_t epoch_ = 0;
     std::array<Entry, 64> entries_{};
     unsigned next_ = 0;
+};
+
+// A controller's own path ([gameplay] melee_direct_client's swing length): its positions in the room as they come, one a headset
+// frame, and how far it moved - its translation only, so a turn of the wrist that sweeps a long blade a long way adds nothing - since
+// a time. Not thread safe - the caller serialises Push and Since.
+class HandPath {
+public:
+    static constexpr unsigned kCap = 256;   // about 2 s at 120 Hz
+    void Clear() { *this = HandPath{}; }
+    void Push(double t, const Vec& p) {
+        if (!std::isfinite(t) || !Finite(p)) return;
+        e_[next_] = {t, p};
+        next_ = (next_ + 1) % kCap;
+        n_ = std::min(n_ + 1, kCap);
+    }
+    // The path from `since` to the newest sample, m (a gap over maxGap between two samples - tracking lost - ends it there).
+    float Since(double since, double maxGap = 0.1) const {
+        float path = 0.0f;
+        for (unsigned age = 1; age < n_; ++age) {
+            const E& b = e_[(next_ + kCap - age) % kCap];
+            const E& a = e_[(next_ + kCap - age - 1) % kCap];
+            if (a.t < since || b.t - a.t > maxGap || b.t < a.t) break;
+            path += Length(b.p - a.p);
+        }
+        return path;
+    }
+private:
+    struct E { double t = 0.0; Vec p; };
+    std::array<E, kCap> e_{};
+    unsigned next_ = 0, n_ = 0;
 };
 
 // Samples kept by the stamp of the pose they belong to. A finished body pose can arrive after a newer hand

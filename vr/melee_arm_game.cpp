@@ -38,6 +38,8 @@ constexpr int kFaceSlots = 8;   // B X Y RB, LT + B X Y RB (shield_smite.h SlotP
 
 const D2RL::PluginContext* g_ctx = nullptr;
 std::atomic<bool> g_on{false};
+std::atomic<bool> g_once{false};             // [gameplay] melee_skill_arm_once: the first blow spends the armed skill
+std::atomic<uint64_t> g_onceMs{OnceTimeoutMs(kOnceTimeoutDefS)};   // ... and an unspent one disarms after this long (0 never)
 std::atomic<bool> g_icon{true};   // [gameplay] melee_skill_armed_icon
 std::atomic<float> g_iconR{armedicon::kIconR}, g_iconLift{0.0f}, g_iconOpacity{1.0f}, g_iconFaint{armedicon::kInactive};   // ... its size, depth, opacity with and without the mana (Placement)
 std::atomic<uint64_t> g_allowed{Allowed::Defaults().Bits()};      // [melee_armed] s<id>: the list's ticks
@@ -96,6 +98,19 @@ void Configure(bool on) {
 }
 
 bool On() { return g_on.load(); }
+
+void ConfigureOnce(bool once, float timeoutS) {
+    const uint64_t ms = OnceTimeoutMs(timeoutS);
+    const bool was = g_once.exchange(once);
+    const uint64_t msWas = g_onceMs.exchange(ms);
+    static bool told = false;
+    if (told && was == once && msWas == ms) return;
+    told = true;
+    if (!once) Log("melee armed: an armed skill stays armed until its button is pressed again ([gameplay] melee_skill_arm_once=0)");
+    else if (ms) LogF("melee armed: ONE blow - the first touch the game casts as the armed skill spends it, the next ones are the plain attack; unspent, it disarms after %.1f s ([gameplay] melee_skill_arm_once)",
+                      (double)ms / 1000.0);
+    else Log("melee armed: ONE blow - the first touch the game casts as the armed skill spends it, the next ones are the plain attack; no time-out ([gameplay] melee_skill_arm_once)");
+}
 
 void ConfigureList(uint64_t allowedBits) {
     const uint64_t was = g_allowed.exchange(allowedBits);
@@ -202,7 +217,16 @@ void FilterPad(uint16_t* buttons, uint8_t lt, bool armable) {
     } else {
         untick = -1;
     }
-    const Step s = g_filter.Poll(*buttons, lt, live, g_arm, [](int slot) { return slot >= 0 && slot < kFaceSlots ? g_slot[slot].load() : -1; });
+    const uint64_t now = GetTickCount64();
+    int32_t expired = -1;   // [gameplay] melee_skill_arm_once: armed too long without its blow
+    if (g_once.load()) {
+        const int32_t was = g_arm.Armed();
+        if (g_arm.Expire(now, g_onceMs.load())) {
+            expired = was;
+            g_armed.store(-1);
+        }
+    }
+    const Step s = g_filter.Poll(*buttons, lt, live, g_arm, [](int slot) { return slot >= 0 && slot < kFaceSlots ? g_slot[slot].load() : -1; }, now);
     if (s.event) {
         g_armed.store(g_arm.Armed());
         if (s.outcome == Outcome::Armed || s.outcome == Outcome::Switched) {
@@ -216,11 +240,19 @@ void FilterPad(uint16_t* buttons, uint8_t lt, bool armable) {
     ReleaseSRWLockExclusive(&g_lock);
     *buttons = (uint16_t)(*buttons & ~s.strip);
     if (untick >= 0) LogF("melee armed: %s unticked in the list ([melee_armed] s%d=0) - disarmed, every hit by touch is the plain attack", Name(untick), (int)untick);
+    if (expired >= 0) {
+        directinput::Haptic(0, 0.25f, 25.0f);   // the disarm's buzz: the skill is no longer waiting for a blow
+        directinput::Haptic(1, 0.25f, 25.0f);
+        LogF("melee armed: %s was not used within %.1f s - disarmed, the next hit by touch is the plain attack ([gameplay] melee_skill_arm_once_s)", Name(expired), (double)g_onceMs.load() / 1000.0);
+    }
     if (!s.event) return;
     const bool armedNow = s.outcome != Outcome::Disarmed;
     directinput::Haptic(0, armedNow ? 0.5f : 0.25f, armedNow ? 40.0f : 25.0f);   // a short buzz in both hands: the press was the arming's, not a cast
     directinput::Haptic(1, armedNow ? 0.5f : 0.25f, armedNow ? 40.0f : 25.0f);
-    if (armedNow) LogF("melee armed: %s (pad %s) %s - every hit by touch is %s now, the plain attack when the mana is short; the same button again, or the plain attack's, disarms", Name(s.skill), SlotName(s.slot),
+    if (armedNow && g_once.load())
+        LogF("melee armed: %s (pad %s) %s for ONE blow - the next hit by touch is %s (the plain attack when the mana is short), the ones after it the plain attack; the same button again disarms",
+             Name(s.skill), SlotName(s.slot), OutcomeName(s.outcome), Name(s.skill));
+    else if (armedNow) LogF("melee armed: %s (pad %s) %s - every hit by touch is %s now, the plain attack when the mana is short; the same button again, or the plain attack's, disarms", Name(s.skill), SlotName(s.slot),
                        OutcomeName(s.outcome), Name(s.skill));
     else LogF("melee armed: disarmed (pad %s, %s) - every hit by touch is the plain attack", SlotName(s.slot), Name(s.skill));
 }
@@ -267,6 +299,16 @@ int PressSkill() {
     const int skill = g_flight.Answer(GetTickCount64());
     ReleaseSRWLockShared(&g_lock);
     return skill;
+}
+
+void Used(int skill) {
+    if (!g_on.load() || !g_once.load() || skill <= kAttack) return;
+    AcquireSRWLockExclusive(&g_lock);
+    const bool spent = g_arm.Spend(skill);   // (the flight stays: the game's second read of the same cast still gets the skill)
+    if (spent) g_armed.store(-1);
+    ReleaseSRWLockExclusive(&g_lock);
+    static unsigned told = 0;
+    if (spent && ++told <= 40) LogF("melee armed: %s cast by a hit by touch - spent (ONE blow), the next hits are the plain attack until its button is pressed again", Name(skill));
 }
 
 }  // namespace meleearm

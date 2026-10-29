@@ -99,6 +99,8 @@ std::atomic<ULONGLONG> g_flatAt{0};
 SRWLOCK g_cfgLock = SRWLOCK_INIT;
 Table g_table = DefaultTable();   // the world layer; the menu layer is the game's own
 bool g_tableChanged = true;       // Feed hands it to the layout once
+std::atomic<bool> g_secondRow{true};   // layout::SecondRowOn(g_table): the left trigger is the second row
+bool g_secondRowSaid = false;
 Table g_flatTable = WithoutPanels(DefaultTable());   // the same without the skill panel's long press: VR F1-F3's controller
 bool g_flatTableChanged = true;
 
@@ -478,6 +480,15 @@ void Take(int hand, uint32_t buttons, Source) {
 uint32_t TakenLastFrame(int hand) { return hand < 0 || hand > 1 ? 0u : g_takenLast[hand].load(); }
 
 void SetUiUp(bool up) { g_uiUpUntil.store(up ? GetTickCount64() + 250 : 0); }
+std::atomic<bool> g_handAway{false};   // [openxr] hand_inventory: away from town (SetHandInventoryAway)
+void SetHandInventoryAway(bool away) {
+    if (g_handAway.exchange(away) != away)
+        Log(away ? "vrcam: direct input - away from town with the inventory on the hand ([openxr] hand_inventory): the left stick walks on through the inventory "
+                   "opening and closing, and its click's long press is never refused for its lean"
+                 : "vrcam: direct input - the left stick and its click as before (in town, or [openxr] hand_inventory not in force)");
+}
+
+bool SecondRowOn() { return g_secondRow.load(); }
 
 bool TakeSkillPanelToggle() {
     const ULONGLONG at = g_panelAt.exchange(0);
@@ -526,6 +537,11 @@ void LoadSettings(const wchar_t* ini) {
     const Table t = TableFromIni(get, &CmdByName, &rebound, &bad, [](const char* key, const std::string& text) {
         LogF("vrcam: direct input - [direct] %s = %s: not understood, the default stays", key, text.c_str());
     });
+    if (const bool row = layout::SecondRowOn(t); row != g_secondRow.exchange(row) || !g_secondRowSaid) {
+        g_secondRowSaid = true;
+        Log(row ? "vrcam: direct input - the left trigger is the second row of skill buttons (the pad's LT, [direct] left_trigger)"
+                : "vrcam: direct input - the left trigger has its own action ([direct] left_trigger): the second row of skill buttons (LT held) is off");
+    }
     AcquireSRWLockExclusive(&g_cfgLock);
     g_table = t;
     g_tableChanged = true;
@@ -651,7 +667,8 @@ void LoadSettings(const wchar_t* ini) {
     if (on && (int)(t.holdEnabled ? t.holdMs : 0) != toldHold) {
         toldHold = (int)(t.holdEnabled ? t.holdMs : 0);
         if (t.holdEnabled) LogF("vrcam: direct input - a long press (%u ms) of a stick click: the right one asks for the skill panel, the left one is the "
-                                "inventory ([direct] hold_enabled, hold_ms)", t.holdMs);
+                                "inventory ([direct] hold_enabled, hold_ms) - only with that stick leaning no more than %.0f %% ([direct] hold_stick_max_pct; 0 = any)",
+                                t.holdMs, t.holdStickMax * 100.0f);
         else Log("vrcam: direct input - no long presses ([direct] hold_enabled=0): a stick click acts at once");
     }
 }
@@ -756,6 +773,11 @@ void Feed(D2RVR_XrInput* in, bool menu, const uint32_t touches[2]) {
     for (const Listener& l : ls) if (l.fn) l.fn(f, l.user);
     const uint32_t take[2] = {g_take[0].load(), g_take[1].load()};
     g_takenLast[0].store(take[0]); g_takenLast[1].store(take[1]);   // (next frame's listeners ask: TakenLastFrame)
+    float lean[2];   // each stick's lean as the hand holds it, before a take hides it ([direct] hold_stick_max_pct judges the clicks by it)
+    for (int h = 0; h < 2; ++h) {
+        const float x = in->hand[h].stickX, y = in->hand[h].stickY;
+        lean[h] = std::isfinite(x) && std::isfinite(y) ? std::sqrt(x * x + y * y) : 0.0f;
+    }
     if (f4) HideTaken(in, take);   // (another view: nothing is taken from BodyWalk's hands either)
 
     // VR F1-F3: the one thing that acts outside F4 - the left stick's walk (walkflat). Nothing of the layout runs there.
@@ -772,10 +794,25 @@ void Feed(D2RVR_XrInput* in, bool menu, const uint32_t touches[2]) {
 
     bool taken[kCtlCount] = {};
     TakenControls(take, taken);
-    // (the controls after HideTaken: a taken one is zero already; the gate keeps it masked once the gesture lets go)
-    const Controls c = s.gate.Step(s.epoch, ControlsOf(*in, touches), taken);
+    // (the controls after HideTaken: a taken one is zero already; the gate keeps it masked once the gesture lets go - and a stick it hides
+    // still leans for the clicks: Controls::lean)
+    Controls raw = ControlsOf(*in, touches);
+    raw.lean[0] = lean[0]; raw.lean[1] = lean[1];
+    const bool away = g_handAway.load();   // [openxr] hand_inventory: the left stick walks through a menu's change, its click is not judged by its lean
+    s.gate.SetStickFree(0, away);
+    s.layout.SetLeanFree(0, away);
+    const Controls c = s.gate.Step(s.epoch, raw, taken);
     const Mode mode = menu ? Mode::Menu : Mode::World;
     const Outputs o = s.layout.Step(mode, c, GetTickCount64(), (f.flags & kUiUp) != 0, NoShotMask(take));   // (a bow's draw-only mode: shots dropped, the rest as bound)
+    for (int h = 0; h < 2; ++h) {   // [direct] hold_stick_max_pct: a stick's click refused because the stick leaned (a push in a fight) - said, a few times
+        static int saidLean = 0;
+        const int why = s.layout.TakeLeanRefused(h);
+        if (why && saidLean < 12) {
+            ++saidLean;
+            LogF("vrcam: direct input - the %s stick's click was held while it leaned past %.0f %%: no %s (a quick click is still its tap, at any lean) "
+                 "([direct] hold_stick_max_pct)", h ? "right" : "left", s.layout.World().holdStickMax * 100.0f, h ? "skill panel" : "inventory");
+        }
+    }
     if (o.skillPanel && !s.panelWas) g_panelAt.store(GetTickCount64());   // a long press asks for the skill panel, once
     s.panelWas = o.skillPanel;
     if (o.pause && !s.pauseWas) {   // a press asks for the pause menu, once

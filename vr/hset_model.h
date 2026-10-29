@@ -134,9 +134,14 @@ constexpr Rect kBodyWhy = {32, 222, 960, 30};
 constexpr Rect kCalibrate = {32, 258, 300, 64};
 constexpr Rect kForget = {344, 258, 320, 64};
 constexpr Rect kGuideBtn = {676, 258, 316, 64};   // the first-start guide (vr/first_start.h) again: the Guide page, from its first page
-constexpr Rect kBodyStored = {32, 332, 960, 34};
-constexpr Rect kBodyUse = {32, 366, 960, 28};
-constexpr Rect kBodyStep(int i) { return {48, 402 + i * 30, 944, 28}; }
+// right under Calibrate: the arm span by hand (hset::body::StepSpan), a stepper each side of its value, what it does beside it
+constexpr Rect kSpanDec = {32, 330, 64, 50};
+constexpr Rect kSpanVal = {104, 330, 228, 50};
+constexpr Rect kSpanInc = {340, 330, 64, 50};
+constexpr Rect kSpanNote = {416, 330, 576, 50};
+constexpr Rect kBodyStored = {32, 384, 960, 32};
+constexpr Rect kBodyUse = {32, 416, 960, 26};
+constexpr Rect kBodyStep(int i) { return {48, 446 + i * 29, 944, 27}; }
 constexpr Rect kRecentre = {32, 620, 280, 68};
 // The two low-life pages' own button, between Recentre and Close: the vignette and the beat in the controllers for five seconds, with the rows as they stand.
 constexpr Rect kPreviewBtn = {324, 620, 200, 68};
@@ -146,7 +151,7 @@ constexpr Rect kApply = {772, 620, 220, 68};
 constexpr float kWidthM = 1.2f, kHeightM = kWidthM * kH / kW;
 constexpr float kAheadM = 1.0f, kBelowM = 0.05f;
 
-enum class Kind { None, Tab, Change, Apply, Close, Recentre, Preset, Slider, Calibrate, Forget, View, Preview, Guide, GuideBack, GuideNext };
+enum class Kind { None, Tab, Change, Apply, Close, Recentre, Preset, Slider, Calibrate, Forget, View, Preview, Guide, GuideBack, GuideNext, Span };
 struct Hit {
     Kind kind = Kind::None;
     int index = -1;   // a tab's page, a Change's key, a Preset's number, a Slider's side along the track (-1: a stepper at its end), a View's number (1 = F1 ... 4 = F4)
@@ -162,6 +167,7 @@ inline Hit SliderAt(float x) {
 // A held trigger on these goes on pressing them (the steppers: a Change with a step, the slider's ends).
 inline bool Repeats(const Hit& h) {
     if (h.kind == Kind::Slider) return h.index < 0 && h.delta != 0;
+    if (h.kind == Kind::Span) return h.delta != 0;
     return h.kind == Kind::Change && h.delta != 0 && h.index >= 0 && h.index < kCount && !IsToggle(kDefs[h.index]);
 }
 
@@ -193,6 +199,8 @@ inline Hit HitTest(int page, float u, float v) {
         if (kCalibrate.Contains(x, y)) return {Kind::Calibrate, -1, 0};
         if (kForget.Contains(x, y)) return {Kind::Forget, -1, 0};
         if (kGuideBtn.Contains(x, y)) return {Kind::Guide, -1, 0};
+        if (kSpanDec.Contains(x, y)) return {Kind::Span, -1, -1};
+        if (kSpanInc.Contains(x, y)) return {Kind::Span, -1, 1};
     }
     for (int r = 0; r < kRowsPerPage; ++r) {
         const int key = KeyAt(page, r);
@@ -227,10 +235,19 @@ class Model {
     bool guideShown_ = false, guideDone_ = false;   // the Guide page has been on show since the panel opened / Done was pressed
     Values liveSeen_ = Defaults();   // the draft as the last Live call saw it
     double editAt_ = 0, firstAt_ = 0;   // the last / the first change of a live key that is not written yet (ms; 0: none)
+    float spanInUse_ = 0.0f;            // the span the hero's arms are fitted to now (the plugin's; 0 none)
     void Seen(const Snapshot& s) {
         const body::Stored was = Measured();
         seen_ = s.values;
         seenFile_ = s.file;
+        // the measurement's keys are the plugin's too (a new measurement writes them): one nobody is editing here follows the file at once, other
+        // edits waiting or not - the Arm span stepper moves to the new measurement (the author, 2026-10-25: "the slider moves to the new measurement")
+        for (const int k : {kKeyUse, kKeyVersion, kKeyEye, kKeySpan})
+            if (!Differ(base_[k], draft_[k]) && (Differ(base_[k], s.values[k]) || Differ(baseFile_[k], s.file[k]))) {
+                base_[k] = draft_[k] = liveSeen_[k] = s.values[k];
+                baseFile_[k] = s.file[k];
+                ++revision;
+            }
         const body::Stored now = Measured();
         if (was.any != now.any || was.valid != now.valid || was.use != now.use || Differ(was.eye, now.eye) || Differ(was.span, now.span)) ++revision;
     }
@@ -281,6 +298,16 @@ public:
         view_ = v;
         ++revision;
     }
+    // The Body page's Arm span: the span the hero's arms are fitted to now (from the plugin), shown while none is stored.
+    void SetSpanInUse(float m) {
+        m = std::isfinite(m) && m > 0.0f ? m : 0.0f;
+        if (!Differ(m, spanInUse_)) return;
+        spanInUse_ = m;
+        ++revision;
+    }
+    // What the Arm span shows: a span set here and not written yet, else the stored one, else (none stored) the one in use; and whether it is stored.
+    bool SpanStored() const { return Edited(kKeySpan) || Measured().valid; }
+    float SpanShown() const { return Edited(kKeySpan) ? draft_[kKeySpan] : Measured().valid ? Measured().span : spanInUse_; }
     void SetEnv(const video::Env& e) {
         if (e == env_) return;
         env_ = e;
@@ -467,6 +494,17 @@ public:
                     const int rest = draft_[kKeyPx] >= (float)rendersize::kSideMin ? (int)draft_[kKeyPx] : 2048;
                     SetPick(video::Square(now.kind == rendersize::Kind::Square ? video::StepSide(now.side, hit.delta > 0 ? 1 : -1) : rest));
                 }
+                return a;
+            }
+            case Kind::Span: {   // the arm span by hand: [calibration] arm_span_m a centimetre a press, written by itself (a live key), in use at once
+                if (!ready || Busy() || hit.delta == 0) return a;
+                const float was = SpanShown(), to = body::StepSpan(was, hit.delta);
+                if (SpanStored() && !Differ(was, to)) return a;   // (at an end)
+                draft_[kKeySpan] = to;
+                draft_[kKeyVersion] = 1.0f;   // a span stored ...
+                draft_[kKeyUse] = 1.0f;       // ... and in use: the stepper shows the span in use, so moving it is using it
+                result = Result::None;
+                ++revision;
                 return a;
             }
             case Kind::Calibrate:   // the measurement writes the ini; without one there is nowhere to put it (and standing / seated is in it first)

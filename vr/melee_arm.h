@@ -8,6 +8,9 @@
 //   - every touch the game's attack is pressed for then reads the attack slot's skill as the armed one (vrcam's slot-skill hook, the bow's [bow] quiver_plain_no_mana path the other way round): the game's
 //     whole cast is the skill's - its checks, weapon, mana, cooldown, animation, the touched monster as its target. One touch, one press, one cast: never more hits than swings.
 //   - a touch the hero cannot pay (Decide: the game's own arithmetic on the skill's Skills.txt row, the skill's level and the hero's mana, bow_mana.h) is the plain attack, the skill staying armed.
+//   - ONE blow ([gameplay] melee_skill_arm_once, off by default - then the skill stays armed as above): the press arms the skill for the next blow alone. The first touch the game casts as
+//     the skill spends it (Arm::Spend, at the game's own read of the attack slot), the touches after it are the plain attack until the button is pressed again; unspent, it disarms after
+//     [gameplay] melee_skill_arm_once_s (Arm::Expire, 3 s). A player's words (0.176/0.177, a Barbarian): "I don't want every single attack to be a skill" - the swing stays the trigger.
 //
 // Which skills (kRows): derived from the game's own Skills.txt (D2R 3.3, the rows the game ships; the bow rows of bow_mana.h and the two of double_swing.h read back identically from the same extract):
 // a class's skill (charclass set) that may sit on the attack button (leftskill 1), has a server function (srvdofunc) and whose range is "h2h" - the game's mark of a blow in melee reach. That gives
@@ -177,8 +180,9 @@ inline const char* OutcomeName(Outcome o) {
 }
 class Arm {
 public:
-    // A press of a skill button whose slot holds `skill` (-1 none). Pass: the press is the game's (a spell, an unticked skill, an empty slot, the plain attack with nothing armed).
-    Outcome Press(int32_t skill) {
+    // A press of a skill button whose slot holds `skill` (-1 none) at `nowMs` (the one blow's time-out counts from it). Pass: the press is the game's (a spell, an unticked skill,
+    // an empty slot, the plain attack with nothing armed).
+    Outcome Press(int32_t skill, uint64_t nowMs = 0) {
         if (allowed_.Has(skill)) {
             if (armed_ == skill) {
                 armed_ = -1;
@@ -186,6 +190,7 @@ public:
             }
             const bool had = armed_ >= 0;
             armed_ = skill;
+            at_ = nowMs;
             return had ? Outcome::Switched : Outcome::Armed;
         }
         if (skill == kAttack && armed_ >= 0) {
@@ -196,6 +201,21 @@ public:
     }
     int32_t Armed() const { return armed_; }   // -1 none
     void Clear() { armed_ = -1; }
+    // [gameplay] melee_skill_arm_once - ONE blow: the game has read its attack slot as `used` for a touch's press (vrcam's slot-skill hook: the cast is the skill's). When that is the
+    // armed skill it is spent - disarmed, the next blows the plain attack (true then). A press the game never read (the hero busy, the weapon unfit for the skill) spends nothing.
+    bool Spend(int32_t used) {
+        if (armed_ < 0 || used != armed_) return false;
+        armed_ = -1;
+        return true;
+    }
+    // ... and its time-out: armed `timeoutMs` (0: never) without the blow that spends it - disarmed (true then). A clock that went back counts again from now.
+    bool Expire(uint64_t nowMs, uint64_t timeoutMs) {
+        if (armed_ < 0 || timeoutMs == 0) return false;
+        if (nowMs < at_) at_ = nowMs;
+        if (nowMs - at_ < timeoutMs) return false;
+        armed_ = -1;
+        return true;
+    }
     // The list's ticks (live): an armed skill that is unticked now is disarmed (true then).
     bool SetAllowed(Allowed a) {
         allowed_ = a;
@@ -208,8 +228,16 @@ public:
 
 private:
     int32_t armed_ = -1;
+    uint64_t at_ = 0;   // when it was armed
     Allowed allowed_ = Allowed::Defaults();
 };
+
+// [gameplay] melee_skill_arm_once_s: how long a one-blow arm waits for its blow, seconds (0 = for ever; 30 at most), as milliseconds.
+constexpr float kOnceTimeoutDefS = 3.0f, kOnceTimeoutMaxS = 30.0f;
+inline uint64_t OnceTimeoutMs(float seconds) {
+    if (!(seconds > 0.0f)) return 0;   // (NaN too: no time-out)
+    return (uint64_t)((seconds < kOnceTimeoutMaxS ? seconds : kOnceTimeoutMaxS) * 1000.0f + 0.5f);
+}
 
 // ---- the pad: which press is ours -------------------------------------------------------------------------------------------------
 // The game's pad skill slots (shield_smite.h SlotPress): B X Y RB are slots 0..3, with the left trigger held 4..7. A (8, 9) is the attack the touch presses itself and is never taken.
@@ -230,9 +258,9 @@ struct Step {
 };
 class PadFilter {
 public:
-    // skillOf(slot) -> the game's skill on that slot (-1 none, not known).
+    // skillOf(slot) -> the game's skill on that slot (-1 none, not known). nowMs: the press's time (Arm::Press).
     template <class F>
-    Step Poll(uint16_t buttons, uint8_t lt, bool armable, Arm& arm, F skillOf) {
+    Step Poll(uint16_t buttons, uint8_t lt, bool armable, Arm& arm, F skillOf, uint64_t nowMs = 0) {
         Step r;
         const uint16_t down = buttons & kMask;
         for (int i = 0; i < 4; ++i) {
@@ -245,7 +273,7 @@ public:
             if (!(down & b) || (prev_ & b) || !armable) continue;
             const int slot = i + (lt > kLtDown ? 4 : 0);
             const int32_t skill = skillOf(slot);
-            const Outcome o = arm.Press(skill);
+            const Outcome o = arm.Press(skill, nowMs);
             if (o == Outcome::Pass) continue;
             held_ |= b;
             r.strip |= b;

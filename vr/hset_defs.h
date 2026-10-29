@@ -185,15 +185,16 @@ inline constexpr Def kDefs[] = {
      0.0f, 0.0f, 6.0f, 1.0f, "%.0f", "", "", kNoPage},
     {L"render", L"vr_resolution_px", "VR render size: side", "A square's side in pixels, 0 = not used",
      0.0f, 0.0f, 4096.0f, 1.0f, "%.0f", "", "", kNoPage},
-    // -- no row: the Body page reads the T-pose measurement (the plugin writes it, vr/calibration.cpp) and can clear it.
+    // -- no row: the Body page reads the T-pose measurement (the plugin writes it, vr/calibration.cpp) and can clear it. Its Arm span stepper sets
+    //    arm_span_m by hand (with version and use): live, written by themselves a moment after the press, as a row's live key.
     {L"calibration", L"use", "Use the measurement", "The measured height and arm span are in use",
-     0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kNoPage},
+     0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kNoPage, true},
     {L"calibration", L"version", "Measurement stored", "1 = a measurement is stored",
-     0.0f, 0.0f, 1.0f, 1.0f, "", "No", "Yes", kNoPage},
+     0.0f, 0.0f, 1.0f, 1.0f, "", "No", "Yes", kNoPage, true},
     {L"calibration", L"eye_height_m", "Measured eye height", "Metres over the floor",
      0.0f, 0.0f, 3.0f, 0.0001f, "%.2f m", "", "", kNoPage},
     {L"calibration", L"arm_span_m", "Measured arm span", "Metres, grip to grip",
-     0.0f, 0.0f, 3.0f, 0.0001f, "%.2f m", "", "", kNoPage},
+     0.0f, 0.0f, 3.0f, 0.0001f, "%.2f m", "", "", kNoPage, true},
     // page 3, Body: its one table row, above the hand-drawn part - how the game is played ([calibration] seated, vr/calibration.h; D2R VR
     // Settings > Body has it next to the measurement). Seated: the recentre sets the hero's eye height, Calibrate reads the arm span only. Live.
     {L"calibration", L"seated", "How you play", "Seated: Recentre sets the eye height; Calibrate reads the arm span",

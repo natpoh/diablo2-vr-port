@@ -158,6 +158,24 @@ public:
         vn_ = vstart_ = 0;
     }
 
+    // A gesture under way from now with the control ALREADY down, as though its edge were at t ([hands] throw_left_hand: the weapon handed over to
+    // a hand whose grip is squeezed on it - in hold mode that grip is the weapon in the hand). A Step at the same t after it is nothing new.
+    void BeginHeld(double t, const Vec3& hand) {
+        Cancel();
+        if (!std::isfinite(t) || !Finite(hand)) return;
+        primed_ = true;
+        blocked_ = false;
+        triggerWas_ = true;
+        lastT_ = t;
+        lastPos_ = hand;
+        throwing_ = true;
+        startT_ = t;
+        startPos_ = hand;
+        travel_ = 0.0f;
+        haveGood_ = false;
+        Push(t, hand);
+    }
+
     Result Step(const Sample& s) {
         Result r;
         if (!s.tracked || s.cancel || !std::isfinite(s.t) || !Finite(s.hand)) {

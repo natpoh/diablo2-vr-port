@@ -17,6 +17,8 @@
 //     the fingers - wrist -> middle knuckle - while they lie within the old rule's 0.7 of level (as HandRay's knuckles). Fingers.
 //     the palm - out of it - when the fingers point up or down (a hand raised, palm to the target). Palm.
 //   A line within 5 degrees of straight up or down has no heading on the ground: the next rule is tried (a staff held upright aims with its hand).
+//   [hands] staff_upright_arm (vr/staff_upright.h): a STAFF near upright aims along the arm instead - the drawn shoulder to the drawn palm of the
+//   hand that holds it - blended with the staff's own line as it tilts (Out::armW, the arm's share); off, or no fresh arm: as above.
 //   Nothing usable (no fresh pose): None - the caller keeps the old aim, corrections and all.
 //
 // How far out the cast's point goes along that line ("accuracy", the cells HookAttackPoint puts it out - the farther, the finer the steps of the
@@ -28,6 +30,8 @@
 // degrees of vertical. Here the free hand is the drawn hand, not the controller, and the game's own cast is untouched: only its target point is
 // steered (vrcam HookSpellResolve / HookAttackTarget / HookUnitFacing).
 #pragma once
+
+#include "staff_upright.h"
 
 #include <cmath>
 
@@ -57,12 +61,22 @@ struct In {
     // the casting hand as drawn: the palm's middle, wrist -> middle knuckle, out of the palm (same frame)
     bool handOk = false;
     float palm[3] = {}, fingers[3] = {0, 0, -1}, face[3] = {0, 0, -1};
+    // [hands] staff_upright_arm: the caster is a staff, the blend is on (its two angles off vertical: vr/staff_upright.h), and the shoulder of the
+    // hand above as drawn (skel::ArmReach, same frame) - the arm runs from it to `palm`
+    bool staff = false;
+    bool uprightArm = false;
+    float uprightFullDeg = staffupright::kFullDeg, uprightNoneDeg = staffupright::kNoneDeg;
+    bool shoulderOk = false;
+    float shoulder[3] = {};
 };
 
 struct Out {
     Src src = Src::None;
     float origin[3] = {}, dir[3] = {0, 0, -1};   // head frame; dir unit
     const char* why = "";
+    // [hands] staff_upright_arm: the arm's share of dir (0 = the staff's own line alone), and the arm it came from (shoulder -> palm, head frame)
+    float armW = 0.0f;
+    float shoulder[3] = {}, armHand[3] = {};
 };
 
 inline float Horizontal(const float d[3]) { return std::sqrt(d[0] * d[0] + d[2] * d[2]); }
@@ -86,16 +100,38 @@ inline Out Choose(const In& in) {
         o.why = why;
         return true;
     };
+    // [hands] staff_upright_arm: a staff's line d, steered toward the arm as it stands upright (vr/staff_upright.h); d itself when that is off or has no arm
+    float steered[3], armW = 0.0f;
+    auto byArm = [&](const float d[3]) -> const float* {
+        armW = 0.0f;
+        float arm[3];
+        if (!in.staff || !in.uprightArm || !in.shoulderOk || !in.handOk || !Finite3(in.shoulder) || !Finite3(in.palm) ||
+            !staffupright::Arm(in.shoulder, in.palm, arm)) return d;
+        const float w = staffupright::ArmWeight(d, in.uprightFullDeg, in.uprightNoneDeg);
+        if (w <= 0.0f || !staffupright::Blend(d, arm, w, steered)) return d;
+        armW = w;
+        return steered;
+    };
+    auto takeStaff = [&](Src s, const float from[3], const float d[3], const char* why, const char* whyArm) {
+        const float* line = byArm(d);
+        if (!take(s, from, line, armW > 0.0f ? whyArm : why)) return false;
+        o.armW = armW;
+        if (armW > 0.0f) for (int i = 0; i < 3; ++i) { o.shoulder[i] = in.shoulder[i]; o.armHand[i] = in.palm[i]; }
+        return true;
+    };
     if (in.caster) {   // (upright, or not posed lately: the hand that holds it aims)
         if (in.weightCarries && in.bothHands && in.shaftOk) {   // the staff as drawn between the two grips, butt -> tip, from its tip
             float d[3];
             for (int i = 0; i < 3; ++i) d[i] = in.shaftTip[i] - in.shaftButt[i];
             const float l = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
-            if (Finite3(in.shaftButt) && l >= kHandsMinM && take(Src::Hands, in.shaftTip, d, "both hands on it: the staff as drawn between the grips, butt to tip")) return o;
+            if (Finite3(in.shaftButt) && l >= kHandsMinM && takeStaff(Src::Hands, in.shaftTip, d, "both hands on it: the staff as drawn between the grips, butt to tip",
+                                                                      "both hands on it, upright: along the arm, blended with the staff between the grips")) return o;
         }
         if (in.weightCarries) {
-            if (take(Src::Grip, in.gripFrom, in.gripDir, "[weight] carries it: its shaft toward the tip as the grip holds it")) return o;
-        } else if (in.weaponOk && take(Src::Weapon, in.weaponOrigin, in.weaponTip, "the weapon's axis as drawn (its bone's +Y)")) {
+            if (takeStaff(Src::Grip, in.gripFrom, in.gripDir, "[weight] carries it: its shaft toward the tip as the grip holds it",
+                          "[weight] carries it, upright: along the arm, blended with the shaft as the grip holds it")) return o;
+        } else if (in.weaponOk && takeStaff(Src::Weapon, in.weaponOrigin, in.weaponTip, "the weapon's axis as drawn (its bone's +Y)",
+                                            "upright: along the arm (shoulder to palm), blended with the weapon's axis as drawn")) {
             return o;
         }
     }

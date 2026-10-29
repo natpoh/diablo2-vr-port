@@ -21,6 +21,7 @@ struct Facts {
     bool chatOpen = false;
     bool stickHeld = false;     // the controller's own walk is pushed (the plugin's pad, or BodyWalk's): it wins
     float ownTilt = 0.0f;       // ... its tilt, 0..1 (the hero's speed at it teaches the walker his full-stick speed)
+    int16_t ownLX = 0, ownLY = 0;   // ... raw, for the log
     bool hookWalk = false;      // the game's walk reads its vector through the walking-stick hook ([input] direct_walk, vrcam's HookStickGet):
                                 // a tilt under the pad's dead zone reaches it (the room walk's slow steady walk); false: the pad, its dead zone
     const char* pad = "";       // which pad the game's walk reads (for the log)
@@ -32,9 +33,15 @@ struct Facts {
 bool View(const xr::Eyes& xe, const float hero[3], float cb, float sb, float upm, const Facts& f, float* eyesX, float* eyesZ);
 
 // Any thread (the game's pad poll, vrcam's PadMirrorRead): the room walk's stick in the view (x right, y ahead, XInput units) while it walks.
-// False = none (off, not walking, or no view built in the last 150 ms).
-bool Stick(int16_t* lx, int16_t* ly);
+// False = none (off, not walking, or no view built in the last 150 ms). *first (if given): the room walk is walking the hero and a push of
+// the controller's has not taken over - the pad gets this stick, zero too (room_walk.h Merge's roomFirst); true is then returned with 0 0.
+bool Stick(int16_t* lx, int16_t* ly, bool* first = nullptr);
 // ... and this stick (raw, as the pad has it) is the room walk's own now - the walking hook lets it in under the pad's dead zone.
 bool IsRoomStick(int16_t lx, int16_t ly);
+
+// [openxr] roomscale_body: the world point (x, z, game units) on the floor under your neck while room walking owns the eyes - the hero's
+// drawn body is moved there (vrcam's pose input, skeletons.cpp PoseBody), his pulses under it unseen. False: off, not live, or no view
+// built in the last 150 ms.
+bool BodyTarget(float* wx, float* wz);
 
 }  // namespace roomwalkwire

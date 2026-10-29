@@ -55,6 +55,14 @@ inline const Arrow* FindArrow(int32_t id) {
     return nullptr;
 }
 
+// [bow] draw_shoots_arrow: what the game's read of the A slot gets for a bow draw's release (its press is "the game's attack - a bow's own arrow"): `bound`, the
+// skill the slot holds (0 Attack); `armed`, the quiver's armed skill for this release (ShotSkill, 0 none). An armed skill first; a bow skill on the slot stays;
+// anything else there (a spell, a warcry, a melee skill - which casts instead and no arrow flies) is read as the plain Attack, the bow's own arrow.
+inline int32_t DrawSlotAnswer(int32_t bound, int32_t armed) {
+    if (armed > 0) return armed;
+    return bound > 0 && FindArrow(bound) ? bound : 0;
+}
+
 struct Entry {
     int32_t id = -1, owner = -1;
     bool operator==(const Entry& o) const { return id == o.id && owner == o.owner; }
@@ -81,6 +89,10 @@ inline size_t BuildList(const wheel::Skill* catalog, uint32_t count, Entry* out,
             if (catalog[i].id == a.id && catalog[i].available) add({a.id, catalog[i].owner});
     return n;
 }
+
+// The orbs hang on the bow only when there is a choice: the plain shot and at least one bow skill (the author, 2026-10-23: "it is needed only when there is more than one
+// choice"). A hero with no bow skill gets no lone white orb.
+inline bool OrbsWanted(size_t listed) { return listed >= 2; }
 
 // The next entry after `cur` (dir +1) or the one before it (dir -1), wrapping. A current entry that is not in the list is stepped onto the first (dir +1) or the last (dir -1). False for
 // an empty list.

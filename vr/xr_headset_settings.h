@@ -59,7 +59,12 @@ void HsStep(D2RVR_XrInput& in, bool focused) {
     f.focused = focused;
     f.laserHand = g_cfg.laserHand;
     f.calibrating = calib::Running();   // a T-pose measurement has the hands (the panel's "Calibrate body", or D2R VR Settings' button)
+    f.chordOn = g_cfg.twoGripChord;     // [debug] settings_two_grip_chord: off, both grips held arm nothing and take no stick click
+    // the way in: the long press of the right stick click, where no skill panel is there to take it ([openxr] skill_wheel=0; with the wheel's look and no tab, only the
+    // old chord reaches this panel)
+    f.toggle = on && !skillwheel::Enabled() && directinput::TakeSkillPanelToggle();
     f.env = HsEnv();
+    f.spanInUse = calib::SpanInUseM();   // the Body page's Arm span shows it while nothing is stored
     f.openGuide = on ? firststart::OpenRequest() : -1;
     f.view = on ? 4 : 0;   // the panel is F4's: the view it stands in is F4 (viewgate has no number)
     bool grips = true;
@@ -72,9 +77,11 @@ void HsStep(D2RVR_XrInput& in, bool focused) {
         p.stickY = o.stickY;
         p.buttons = o.buttons & 0x3Fu;
         f.present[h] = o.active != 0;
-        grips = grips && o.squeeze > hset::kReleaseAt;
+        // [weight] weapon_grip_no_chord: a grip that holds the weapon (a two-hander keeps both down) or that a gesture holds does not arm the chord
+        f.gripTaken[h] = weightwire::GripNoChord() && (weightwire::GripOnWeapon(h) || (directinput::TakenLastFrame(h) & (directinput::kSqueeze | directinput::kTakeSqueeze)) != 0);
+        grips = grips && f.chordOn && o.squeeze > hset::kReleaseAt && !f.gripTaken[h];
     }
-    const bool wake = on && (grips || g_hs.Open() || g_hs.Resuming() || f.openGuide >= 0);   // the chord is arming, the panel is up, it will come back after a measurement, or the guide asks for it
+    const bool wake = on && (grips || f.toggle || g_hs.Open() || g_hs.Resuming() || f.openGuide >= 0);   // the chord is arming, the panel is up, it will come back after a measurement, or the guide asks for it
     if (wake && !g_hsStoreOn) {   // its ini is read now, so the panel has values the moment it opens
         hset::store::SetLogger(g_log);
         hset::store::Start(g_iniPath);

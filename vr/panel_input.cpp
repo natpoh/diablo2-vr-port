@@ -51,6 +51,7 @@
 
 #include "log_async.h"   // [debug] log_async: the plugin's log lines through a ring and a writer thread (vr/log_queue.h); off = ctx->LogInfo as ever
 #include "laser_tooltip.h"
+#include "typed_keys.h"   // [openxr] laser_typing: a real key lets the keyboard layout in (Keep)
 #include "view_gate.h"
 #include "panel_input.h"
 #include "plate_world.h"   // [hud] monster_bar_room: the plate hangs on the anchor only in the pad's layout
@@ -128,6 +129,8 @@ std::atomic<bool> g_tipWanted{false};     // [openxr] laser_tooltips
 std::atomic<bool> g_tipReady{false};      // the hooks are in and g_delaySite / g_compareSite are known
 uintptr_t g_delaySite = 0, g_compareSite = 0;   // the two queries' return addresses; written before g_tipReady
 lasertip::HoverLease g_hover;             // the draw thread's: the laser points at the menus' picture, holding nothing
+std::atomic<bool> g_typingWanted{true};   // [openxr] laser_typing
+typedkeys::Typing g_typing;               // the player's own keys: the keyboard layout let in for a moment
 
 void Log(const char* text) { if (g_ctx) logasync::Info(g_ctx, text); }
 
@@ -159,6 +162,7 @@ bool MouseMessage(uint64_t target, uint64_t command) {
 // The pad's layout is on and the laser owns the pointer: what would leave the layout is skipped.
 bool Keep() {
     if (!Owns() || !g_origIsController()) return false;
+    if (g_typingWanted.load() && g_typing.Active(GetTickCount64())) return false;   // [openxr] laser_typing: the player types
     static std::atomic<bool> told{false};
     if (!told.exchange(true)) Log("vrcam: laser - the game kept in its controller layout while the laser is the mouse");
     return true;
@@ -328,6 +332,16 @@ void UseController() {
 }
 
 void WantTooltips(bool on) { g_tipWanted.store(on); }
+
+void WantTyping(bool on) { g_typingWanted.store(on); }
+
+void Typed(uintptr_t extra) {
+    if (!g_typingWanted.load()) return;
+    const ULONGLONG now = GetTickCount64();
+    static std::atomic<bool> told{false};
+    if (g_typing.Key(now, extra) && Owns() && !told.exchange(true))
+        Log("vrcam: laser - a key typed on the keyboard: the game may take its keyboard layout for its text boxes ([openxr] laser_typing)");
+}
 void ItemHover(bool hovering) { g_hover.Update(GetTickCount64(), hovering); }
 
 // [hud] monster_bar_room: the monster's plate hangs on the anchor the game is given only in its controller layout; in the mouse layout it sits at the

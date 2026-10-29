@@ -1,5 +1,732 @@
 # What's new in D2R VR
 
+## 0.187
+
+- **Fixed: the game froze on the character screen with ReShade** (0.186, a player: hovering Play). The 16:9 main menu's resize
+  never came back under ReShade; `[render] menu_wide` now works without ReShade ("No ReShade") only and does nothing with it.
+  On 0.186 untick "Main menu at 16:9" on the Home tab.
+- **Walking backwards: the legs no longer cross** (`[body] walk_back`). At every change of way the game turns the hero half a turn
+  on the skeleton itself for a moment; that turn is now taken out, so the legs step back under the body. Standing still the walk
+  back no longer comes on by itself, and a waypoint or area change no longer "walks" the standing hero for a second.
+- **Fog before the effects** (`[fog] game_fog_before_fx`, off by default): act 1 had no fog with it on; it now finds the scene the
+  game's own resolve reads.
+- **Collect logs takes the crash dumps too**: the plugin's own minidump (in the mod's logs folder - it was never picked up) and
+  Windows' dump of D2RLoader when Windows keeps one.
+
+## 0.186
+
+- **Shipped defaults: the native render, no ReShade.** A fresh install now draws the sky, fog and ceilings itself (`[render] no_reshade=1`,
+  the game's own fog with our numbers, the game's sky dome per act, the game's ceilings in caves, flat mode drawn by the game too).
+  The ReShade path is still there: untick no_reshade. Hand inventory, walking by leaning and the portal helpers are on as well.
+  Still off for players until they are tried more: direct hit (and the co-op crowd swing), fog before the effects, all monsters reacting
+  to hits. Your own d2r_vr.ini is kept as it is.
+
+- **Flat mode: two more from sajmonsoft's flat fork** (github.com/sotodeshi/d2r3dflat), both off by default (Settings > UI: F3 eyes):
+  - **Look at the horizon after a portal or waypoint** (`[input] portal_look_horizon`, F3): you look down at a portal to walk into it and
+    came out still looking down; now the look goes back to the horizon (up and down only). An arrival is the hero carried over 30 units
+    within 20 s of a new area - not a walk across a border, not the Sorceress's Teleport.
+  - **Walk into a portal to enter it** (`[input] portal_auto`, F2 / F3 with W A S D): near a town portal with a move key held, the game's
+    mouse point goes onto the portal and, once the game itself shows the portal under the pointer, the left button is clicked - the game's
+    own click on the portal, never a level change of ours. Not back through the portal you came out of until you walk away from it
+    (`portal_auto_radius`, `portal_auto_delay_ms`). Test: portal_auto_test.
+- **VR: the town portal's black oval can go too** (the author's cave, 2026-10-28: in VR it stood beside the turning blue ring as in flat).
+  `[render] portal_no_oval` (Settings > World, off = as before): the oval is not drawn in F2, F3 and F4, the ring is; F1, the game's own
+  view from above, keeps it. Portals seen from then on. The same render-mesh hold as flat's `[input] flat_portal_no_oval` (from
+  sajmonsoft's flat fork), with its checks before every write. Test: portal_oval_test.
+- **Flat first person: the body stays under the camera when attacking** (the author: in F3 a swing took the torso out from under the
+  head). As VR first person holds the body under the head: the spine up to the head is held upright and the hips under it, while the
+  arms and the weapon still swing as the game animates them. The drawn body only; the attack is the game's. Settings > UI: F3 eyes,
+  "Keep the body under the camera when attacking" (`[body] flat_hold_trunk`, off = as before).
+- **Flat mode: four fixes from sajmonsoft's flat fork** (github.com/sotodeshi/d2r3dflat, made on our 0.171 by a player on Discord), written
+  again on this version. Flat only (monitor, F2 / F3); VR as before.
+  - **Click a body, not only its feet.** Monsters, NPCs, doors, shrines, chests, waypoints and portals near the hero have short invisible
+    capsules; when the crosshair's ray meets one before the ground, the game's mouse point becomes the place that body stands for, and the
+    game's own hover, click and skills do the rest. A floating one (Tyrael) by its body too (`[input] flat_body_pick`, on; Settings >
+    Controls). Test: flat_body_test.
+  - **The town portal's black oval is not drawn.** It stood still while the blue ring turned to the camera; the ring stays
+    (`[input] flat_portal_no_oval`, on; Settings > Controls; for portals seen from then on). Test: portal_oval_test.
+  - **The sky, the fog and the cave ceiling stay on with a panel open** (a chest, a dialogue, the inventory, Esc): on a monitor the world
+    stays behind the panel. The panel keeps the game's colour - needs this version's `D2R_DepthFog.fx` with the plugin.
+  - **No jump of the view after a menu.** The first mouse sample after a panel closes (or the window comes back to the front) only puts
+    the pointer back in the middle; it was taken as one big turn and could leave the hero looking at the sky.
+- **Flat mode: move the picture on the screen** (a player: "would be amazing if the centering would be fixed in the Flat version"). In third
+  and first person (F2, F3) the whole picture can be moved sideways and up or down: Settings > Camera > Every view, "Move the picture right" /
+  "Move the picture down", % of the picture (`[camera] flat_shift_x`, `flat_shift_y`, live; 0 = as before). The crosshair and the mouse still
+  aim at what is drawn under them. The log says where the hero stands on the picture ("flat picture") and the values that would put his
+  feet in the middle, for a default later. Test: flat_shift_test.
+- **The map in the hand from above, turning with you, and a compass over it (tests, off)** - after Bear's wrist map in D2R VR Unleashed
+  (bearstonem/d2r-pcvr: its VIEW Top-down, ROTATE MAP and wrist compass). VR F4, native OpenXR, with the corner map out of the picture
+  (`[hud] map=1`), flat and orb alike. `[hud] map_top_down`: the game's slanted map turned back and its height doubled, so rooms are
+  square and upright, round your hero. `[hud] map_rotate`: turned so the way you look is up (from above too); while you look down at the
+  hand the last way is kept, the stick's turns still count. `[hud] map_compass`: a compass strip over the map, N the game map's up.
+  Settings: UI: F4 body > In the game's picture. Visual only - the map is the game's; our arrow (map_direction) turns with it. Ours,
+  not Bear's: the hero's marker where map_direction measured it (not searched for by colour), F4's wider map narrowed back first, the
+  map's names not left out. FlatVR, the picture and F1 - F3 as before. Test: map_turn_test.
+- **One "Direct hit" selector on the Strikes tab**: Off / By the rules / Fully on (not recommended). It writes `melee_direct` and
+  `melee_direct_client` together, so one place decides it for single player, the host and a joined player. By the rules: the first
+  touch on a monster is a direct hit, then the hero's attack time per monster, then speed + force + swing length; a touch that fails a
+  rule is the game's own attack. In single player and as the host a direct hit is the server's attack, now by the same rules
+  (`melee_direct=2`); as a joined player it is the game's own command. The two-handed cleave only with its own box. Default Off.
+- **Direct hit when you joined someone's game (test, off)**: `[gameplay] melee_direct_client`, Settings > Direct hit. As a player who
+  joined a TCP/IP game, an accepted touch sends the game's own "attack this monster" command (the one a click on the monster sends,
+  through the same path as the hero's walking) instead of pressing the attack button: a touch a little beyond the game's reach no longer
+  goes out as a blow at the empty point. The host's server does the whole attack (a step up if needed, the attack rate, the animation,
+  the roll, the damage); the host needs no setting. With rules: the first touch on a monster is direct; on the same monster not sooner
+  than the hero's own attack takes (measured from his attack animation) - poking fast wins nothing; after that, direct again only for a
+  real swing: least speed (2.5 m/s), force (1.5 N s, the weight model's strike score) and swing length (0.2 m of the controller's own
+  path - a wrist flick does not pass it). A two-handed weapon needs both hands on it (either hand's path counts). Another monster is never
+  too soon. Only while the attack slot's skill is the hero's left skill and no melee skill is armed. A touch that fails a rule is the
+  normal attack (the button), as before. Single player and the host: unchanged.
+- **Joined: a two-handed swing through a group hits each monster (test, off; past the game's rules)**: `[gameplay] melee_direct_client_cleave`.
+  The game runs one attack at a time; with this box and a two-handed weapon the first monster gets the game's command, and every other
+  monster the same swing touches with the least speed and force is asked of the host, whose plugin calls the server's attack for your
+  hero on it once (D2RLoader's plugin network). The host must tick the same boxes; takes effect at the game's next start.
+- **Fixed: the map never came into the hand with "Corner map is: Top left"** - the mod put the game's mini map on the right at every
+  start, while that choice looks for it on the left only, so it stayed in the picture top right. The start now puts the game's map in
+  the corner you chose (Found by itself and Top right: the right, as before).
+- **Fixed: the inventory opening with no panel, the pointer gone or a black picture after a while (SteamVR, a large render size)** -
+  the old swapchains of the pointer and the menu panels were freed only when the graphics card was done within 20 ms, which never
+  happened at the headset's recommended size, so they piled up until SteamVR refused new ones (XR_ERROR_LIMIT_REACHED). The wait now
+  grows up to 200 ms when it is not enough (`[openxr] reap_drain_max_ms`, Settings Stereo tab; 20 = as before).
+- The log says why each box in the picture was not taken as the corner map, and says it again once the map is open.
+- **Flat mode: the toolbar size for F1 and F2 is on the flat tab** (UI: F3 eyes > Toolbar size). Flat F1 / F2 drew it at the VR views'
+  74 % / 71 % with no slider to change it; 100 = the game's own size.
+- **Every monster gives way to your weapon, not only the humanoids (a probe, off)** (`[weight] monster_ragdoll_all`, Weapon Weight, with
+  "Monsters' bodies give way by their weight"; F4): animals, insects, demons and flyers lean and their struck limbs swing by their weight, and come
+  back to their own animation. A monster whose model has no body parts to read gets its limbs from its bones. Two fixes for every doll, on or off:
+  a corpse (a pose the game holds still for a second) is never a doll and never lends its limbs to a living monster standing over it, and a monster
+  let go of (it died, went out of reach, came to rest) eases back to its animation over 0.3 s instead of snapping. The bones from segments, the
+  "anim" floor bone and the helper bones that are no limbs, the corpse rule and the ease back are bearstonem/d2r-pcvr's (feat/monster-limb-push,
+  a5f2284 - e935df9, MIT): thanks, Bear. Only the drawing - every monster stands, walks and fights as the game has it.
+- **Point the laser at the map in the hand, click: the game's big map in front (test, off)**: `[hud] map_click_big`. VR F4, native
+  OpenXR, the corner map in the hand. The right controller pointing at the map (flat or orb) shows the laser's beam and dot on it; the
+  trigger there shows the game's own whole-screen automap (its map mode by its own setter) big in front, 1.3 m out, a **Rotate map** button
+  under it (flips `[hud] map_rotate`, saved). Another click - on the big map or away from it - puts the map back in the hand. While the laser
+  points at the map the trigger is the laser's, not an attack (a press that began elsewhere stays the game's). Visual only. Test: map_laser_test.
+- **The turned map in the hand keeps all of the map round the hero**: with `map_top_down` / `map_rotate` the circle reached only as far as
+  the map box's narrow way allowed - on a square corner map a quarter of its height above and below the hero, so an ally up or down the
+  map was cut (the author's co-op run). Now everything in the box's ellipse about the hero is in the circle.
+- **Walk, run only when the stick is pushed far** (the author: "up to 80 % a walk, past it a run - it saves stamina, small steps get easier"):
+  `[direct] walk_by_lean` (Settings > Controls, next to the thumbstick sliders; off by default) with *... run from this much of a push, %*
+  (`walk_by_lean_pct`, 20 - 95, 80). VR first person (F4), the plugin's own controllers: up to the limit the hero walks, past it he runs. It is the
+  game's own walk and run: the stick's length is handed to the game measured against the game's own run threshold (`stickRunToggleThreshold`
+  from its controllersettings, read live), and past the limit the game's Run key (command 0x22) is held while its Run / walk switch is on walk.
+  No speed of ours; walking spends no stamina, out of stamina the game walks as ever. The room walk and BodyWalk's walk are left alone. Live.
+  Test: lean_gait_test.
+- **The main menu at 16:9 in the headset** (`[render] menu_wide`, on): a square picture squeezed D2R's main menu - its side panels
+  over the hero, the bottom buttons cut off. While the game shows its own menus (main menu, character list, Create New) its picture
+  is now 16:9, as wide as the render size, on a 16:9 panel; in a game the size you picked, as before (switched once the hero has
+  stood in the world 3 s). The monitor shows the menu stretched to the window. Native OpenXR. The 16:9 menus are
+  bearstonem/d2r-pcvr's idea.
+- **Fixed: talking to any NPC hung the whole toolbar in front of you at waist height** (`[hud] npc_dialog_no_bar`, on; off = as
+  before). With "Menus as a panel" (`[openxr] menu_3d`, on by default) the NPC's small Talk / Trade / Cancel box counts as a menu,
+  and the whole interface went to the panel in front - the toolbar with it, whatever "Hide the game's interface" says. Now the
+  toolbar stays out of that panel; the trader's screen after Trade keeps it. On 0.185 the only way round it is to untick "Menus as
+  a panel" (`[openxr] menu_3d=0`): menus then come up on the flat picture, as before that option.
+
+## 0.185
+
+- **The game draws the sky and the fog itself (test, off)**: one choice in Settings, Sky tab and Performance > Quality, "Sky and fog
+  drawn by": the game (new) or our effect (old, as before). New way: a sky dome of ours that the game draws as one of its own models
+  (made by D2R VR Settings from your game's own Arreat Summit sky card, our act 1 picture on it; a near horizon at radius 200, the puddles
+  reflect it), and the game's own distance fog with our numbers - no frame time of ours. The fog can thin with height so the sky stays
+  clear above (Fog: top and softness sliders, outdoors). Without ReShade. Still being tuned: the game's fog shows fewer gradients than ours.
+- **Cave ceiling drawn by the game (on)**: Ceiling > "Who draws the ceiling: the game (lit rock)" - a slab of the game's own act 1
+  cave rock, lit by its torches and your light, with a height slider and an optional rock wall at its rim. Made by Settings from your
+  game's files.
+- **Caves with the game's fog**: the fog fades to black underground and leaves the void alone, the game's mist fades with distance too,
+  an optional black dome round you in caves, and the fog laid before smoke and fire (test, off) - no light band behind the fires.
+- **Walking backwards your hero steps back** instead of walking forward facing away (`[body] walk_back`, on).
+- **Fixed: jars, books and cups only nudged when gripped** - the new arm-reach rule let go of every take at once. They are held now.
+- **The laser logs each trigger press** (left click, right click, or why none) - for menus a laser does not open.
+- Fixed: a crash at an area change without ReShade (the mouse pointer's images were freed while the headset still showed them).
+- The shipped settings take the author's: the cave ceiling drawn by the game (with its rock wall), fog in caves, the sky and the fog by
+  our effect (old way) - the game's way is one choice away in Settings.
+- **Fixed: holding an NPC, the wrist medallions stayed with the controller** instead of the hero's drawn hand on the NPC. The
+  medallions ride the drawn arm, but it was read in the middle of the pose - before the hand is laid on what it holds (grab_wrap)
+  and fitted onto the weapon - so they kept the hand as the controller first put it, turned as the controller. Now the arm is read
+  again at the very end of the pose: the medallions sit on the hand exactly as drawn, always (holding, the weapon fit). The bottle
+  held in the palm rides it the same way. `[hud] hand_vitals_orb_drawn_hand` (on; off = as before).
+- **The wrist medallions sit on the forearm bone itself**, with no numbers: on the surface of the forearm's own mesh (the box of the
+  vertices the game binds to that bone, read off the hero's model, read again when the armour changes), out of the back of the wrist
+  next to the hand, turned with the bone - wherever the arm is drawn: by the controllers, held on a body, by the game's animation.
+  The place / turn sliders and the class depths are not used (a shield still rolls it to the inner side); a forearm whose mesh gives
+  no size keeps them, and the log says so. `[hud] hand_vitals_orb_on_bone` (on; off = the sliders). Test: hand_orbs_test.
+
+- **Fixed: the sky and the fog without ReShade cost about 10 fps on a weak card**: the full-screen copy every effect pass reads was made
+  again at every present while the sky or the fog was on (a format compared wrongly), a new texture each frame. Made once per size now.
+- **The game can draw our fog itself** (`[fog] game_fog`, off; Settings > Fog "The game draws the fog (no cost)", VR F4): the game's own
+  distance-fog pass gets our start, end and colour per act (caves their own), so the fog costs no pass of ours, with or without ReShade.
+  It thickens a little differently (from the start on). Test: game_fog_vr_test.
+- **Co-op: the other player's hands, elbows and weapon as he draws them** (the two-PC test: his wrists, arms and the weapon in his hand
+  were wrong), and **what he holds** - a potion, an item or a jar - in his hand, in flight and where it lands (`[multiplayer]
+  pose_share_held`, on). The pose format is new: both players need this build. Tests: pose_share_test, remote_pose_test.
+- **Typing on the keyboard works under the laser** (`[openxr] laser_typing`, beside "Item tooltips at once under the laser", on,
+  live; bearstonem/d2r-pcvr 34f20a8, MIT). While the laser points at a menu the game is kept in its controller layout, and there
+  its text boxes take no letters. Nothing could be typed into D2RLoader's Host Game and Browse Games, a name or a password, even
+  on a real keyboard. A real key now lets the game take its keyboard layout for a moment; the plugin's own Ctrl, Shift and Esc
+  never count. Test: typed_keys_test.
+- **Fixed: holding the other player (or an NPC) stretched your arms** (the two-PC co-op test of 0.183: grabbing the other player,
+  your arms grew longer to keep holding as he moved). A held hand is drawn on what it holds, and the arm was lengthened to it - up to
+  35 %. An arm never changes its length now: when what you hold is farther from your shoulder than your arm reaches (the hero's arm
+  fitted to your span), the hand lets go, and takes nothing new until you open the grip. Not while your real hand is out of reach
+  itself (it is drawn there as without a grab). Props held with grab_props too. `[weight] grab_arm_reach` (on; off = only the break
+  distance lets go, as before). The log names the other player's body as such, not "NPC". Test: grab_bodies_test.
+- **Many more props can be knocked about and taken** (`[weight] knock_props`, `grab_props`): 197 kinds of the game's props instead of
+  101. New are barrel variants, broken chairs, stools and benches, boards and logs, bows, quivers and arrows, swords, axes, daggers,
+  spears, maces, shields, helms, tongs, rakes and other tools, broken pottery, skull and bone pieces, onions, meat and fish, bags, open
+  baskets and a figurine. Anything over 1.2 m stays put as before. The kinds are bearstonem/d2r-pcvr's catalogue version 4 (508c5d0,
+  MIT). Together with our prefabs (the Rogue Encampment's camps), the catalogue now holds 36,350 props, up from 30,929. D2R VR
+  Settings makes it again by itself on the first start after the update. Tests: props_scene_test, props_assets_test.
+
+## 0.184.1 (develop build)
+
+- **Fixed: weak graphics cards ran at 1-10 fps for the first minute in town** (a GTX 1650 SUPER, 4 GB, Quest over Link): the native
+  path kept all 34 of the effect's pictures on the card, and two builds' copies at the size switch. Now only the current act's sky (and
+  the ceiling's stone) is there, read in the background and dropped when no longer needed. The log's 10 s line also says how often the
+  game window was in front and how the game's video-memory budget went (with the game in front Windows lets it keep more, which on a
+  4 GB card can squeeze Link; another window in front is a workaround).
+- **Fixed: without ReShade the item labels on the ground blinked between the eyes**: the per-eye correction ran only under ReShade.
+- **Fixed: with ReShade the right eye's labels were shifted twice** while the right eye was not a replay of the left (the first minute
+  in an area, after a hitch).
+- **Fixed: the two eyes showing different moments in heavy fights** (ReShade mode): re-setting the same area paused the right eye's
+  replay for about 10 s each time - 60% of a player's session. Now only a new area pauses it.
+- **Fixed: with "Floors stay where they were" on, floor jumped up and down next to the hero** (the player of 0.183's floor fix: "Floors
+  stay didn't help, even worse ... it jumps to the right height right in front of me"). Some of a level - Act 4's mesas among them - is
+  made of presets, one piece of map over several rooms, and the game gives all rooms of a preset one height: the first one drawn is
+  worked out, the others copy it. 0.183 kept the heights room by room, and the copied rooms were never kept, so a preset came back at
+  the height of whichever of its rooms came first that time, and the ground next to it went with it. Now a preset keeps one height for
+  the game, whichever of its rooms is drawn first (`[render] keep_room_heights`, as before). Only the picture. Test: room_heights_test.
+
+## 0.184 (develop build)
+
+- **Fixed: Quest over Link - the hands stuck at the waist** (a Quest 2 player on Meta's runtime, "my hands were bound to my waist again",
+  the wrist orbs gone): the runtime gave each controller's grip a place but no valid turn for the whole run, so the hands never got a
+  pose. Now, on Meta's runtime only, such a hand is taken from the grip in the headset's own space or from the laser's aim pose
+  (`[openxr] hand_space`, 2; 0 = as before). SteamVR, PS VR2 and Virtual Desktop are unchanged. Live.
+
+## 0.183
+
+- **Settings in seven languages**: English, Russian, German, French, Spanish, Portuguese (Brazil) and Chinese (Simplified), picked on the
+  Home tab. The texts live in `mods\D2R-VR\lang\<code>.txt`: copy `en.txt`, translate it (by hand or with an AI) and your language shows
+  in the list. Every block of settings has a **?** that says what it is for.
+- **Multiplayer: see the other VR players move** (a new **Multiplayer** tab, on): in a TCP/IP game your head, hands and weapon go to the
+  others and theirs come to you - their hero's head, arms and weapon follow their headset and controllers, their legs step the way they
+  walk (back and sideways too), and they are solid for your weapon. Through D2RLoader's own plugin network, visual only. Everyone needs
+  this version. The host now relays to every player, including a flat one.
+- **Grab with your hand** (Weapon Weight): NPCs and monsters (the hand lands on the limb and the fingers close round it; a held arm bends
+  at its joints against its muscles), the level's small props (jars, books, cups - carried and thrown with their weight), and items on
+  the ground (picked up through the game's own pickup).
+- **A light path for weak PCs, without ReShade** (Performance > Quality "Light: no ReShade", off by default): the mod draws the headset's
+  picture itself - the second eye from the game's depth, the sky, a light fog (`[fog] light`), the HUD cut and the wrist globes - with no
+  ReShade loaded. On a GTX 1050 Ti with a Quest 3: 44 fps with ReShade, 60-72 without. Work in progress: menus as a panel and the cave
+  ceilings are not there yet in this mode.
+- **Fixed: the hero's head shadow went missing** when the VR session started late.
+
+- **Town NPCs' bodies are a setting of their own now** (`[weight] npc_bodies`, Settings > Weapon Weight > Monsters' bodies "Town NPCs and
+  allies have bodies too"; live). It was `[debug] npc_bodies` - but a debug tick only draws or writes the log, and this one changes what the
+  weapon meets. Your old value comes with it (Settings moves it the first time it opens; the game reads the old place while the new key is
+  not there). Nothing else changes: the weapon stops on them and sticks into them, hit by touch never attacks them.
+- **The monitor shows one eye, steady - to record the screen while playing in VR** (`[render] monitor_eye`, *The left eye*; Settings >
+  Home > Monitor (screen recording); live). In stereo the game's window showed each eye's picture as it was drawn - left, right, left with
+  the eyes by turns - so a screen capture (OBS) flickered between the eyes and looked doubled. Now, after the headset has taken the other
+  eye's picture, the window gets the chosen eye's instead: its own last picture, or with "Native OpenXR - eyes by turns" the picture made
+  for it that frame (every frame new, as the headset shows it; *Monitor: eyes by turns - only pictures the game drew* keeps to drawn ones).
+  With a VR render size apart from the window (a square picture in a wide window, which Windows stretches) the eye's middle is drawn in
+  the window's shape, so the monitor shows it at its own proportions (`monitor_eye_fit`, on). The headset gets exactly what it got before;
+  one copy on the graphics card a frame. With and without ReShade. Menus and loading: the flat picture as before. *Both eyes in turn* is
+  the old window. The idea is bearstonem/d2r-pcvr's (desktop_one_eye, MIT). Test: monitor_eye_test.
+- **Fixed: the floor that slid after a way back** (a player on flat, Act 4: "It was still flat in front of me! I went up to another area
+  and when I came back, I was sliding. In the other acts too"). The game gives each room of a level a height when it starts drawing it,
+  matched to the rooms drawn round it at that moment (the hero's own first), and forgets it when the room is out of sight. The edges of a
+  level's tiles do not agree all the way round, so the same room came back a step higher or lower depending on the way in - after another
+  area, a town trip, or walking round a block. From the game's camera above a height is invisible (it is drawn along that view); from ours
+  the blocks of floor stood up, sank and slid aside with the void between them, and in VR first person the eyes went up and down with them.
+  Now every room keeps the height it was first drawn at until you leave the game (`[render] keep_room_heights`, on; Settings > World >
+  Scenery "Floors stay where they were"; live). Only the picture: the game's world is flat, nothing of the fight or the paths changes. The
+  log says `room heights: hook in` and, the first few times a room would have moved, by how much. Test: room_heights_test.
+- **Fixed: a spell on the right trigger flew where the last spell along the hand had gone** (a player's report on 0.182: Fire Bolt to
+  the right, then Ice Bolt to the left - the Ice Bolt followed the old Fire Bolt's line, a reinstall changed nothing). With "Skill panel:
+  skills on the right trigger and on A" (`[openxr] skill_rt_a`, on in the shipped ini) the trigger casts the game's RT slot, but the plugin counted only A, B, X, Y and RB as
+  "a skill button held" - the one thing that lets the hand aim a cast in mode 4. A skill on RT (or LT + RT) went with the game's own aim:
+  the hero's facing, which the last hand-aimed cast had left. The right trigger now counts too, so every slot's spell goes along the hand
+  and off the auto-target alike. Only the aim of the game's own cast. F4. Test: pad_skill_test.
+- **The laser over a menu: a grip tap turns the page** (`[openxr] laser_grip_tap`, on; Settings > the laser's boxes; the same player: "the
+  laser cannot reach the Options tab"). In a menu the grips are the game's bumpers - the pages of the tabbed menu (inventory, character,
+  skills ... options), the stash and a trader. While the laser pointed at the menu it kept both grips (the right click, Shift), so a page
+  turned only after a stick had parked the laser. Now a quick grip tap with no trigger pressed is the bumper: left back, right on. Held
+  longer or with a click, the grip stays the laser's. F4 only. The log says `laser: the left grip tapped over the menu - its press given
+  to the game`. Test: laser_grip_tap_test.
+- **Fixed: the laser could not reach parts of the screen** (two players: the inventory's Options tab, "other parts of the screen";
+  `[openxr] laser_fit_window`, on). The laser moves the real mouse cursor, and Windows never puts it off the desktop - and a click goes to
+  the window on top there. The shipped 1920 square game window does not fit a 1080p or 1440p monitor, and with a render size of its own
+  (`[render] vr_resolution_px`, the default) nothing ever fitted it: the picture's rows past the monitor's edge (the bottom, or, with the
+  window placed higher, the top with the tabs) were out of reach, and those under the taskbar clicked the taskbar. Now the window is kept
+  inside its monitor above the taskbar - with a render size made smaller to fit, its shape kept (the picture in the headset keeps its
+  size); without one only moved. The log says `laser - the game's window ... moved onto its monitor's work area`, and the laser says where
+  it still cannot put the cursor (`out of the laser's reach there`). Test: laser_reach_test (the laser's whole way swept over the picture on
+  a 4K, 1440p and 1080p monitor, under the taskbar and on a monitor left of the main one: 2934 of 8065 points out of reach before on 1080p,
+  none after).
+
+- **Eyes by turns: the name plate over a target (and the item labels) no longer doubles** (the author: "in eyes by turns this label also
+  doubles", the plate over Warriv). The game lays its interface out for the eye drawn each frame - the left, then the right - so a plate
+  jumped by its whole disparity between the frames each eye was drawn and made. Now that eye's layout is taken off first, at the target's
+  (or item's) own depth: each eye shows it in the same place every frame. Where it stands in depth is still "Monster plates" and "Item
+  labels" on UI: F4 body ("at its monster" = 1 puts the plate at the NPC's depth). Tests: plate_look_test.
+- **Native OpenXR, the Apple Vision Pro on ALVR: "Each eye exactly as the headset gives it" is now a choice** (`[openxr] runtime_fov`).
+  The player found the picture right with "Set each eye's angles by hand" set to the headset's own angles. That is now a choice of its
+  own, "The headset's own angles, drawn off-centre" (2): no hand-setting. Centred (1, the default) stays the recommended one. It now hands
+  each eye in as an image of its own with eyes by turns too. In 0.182 it was only with both eyes from one game frame, the other way
+  being the part named inside the whole picture, which ALVR does not read.
+- **Off-centre eyes: the names over monsters and items meet again in both eyes.** The right eye's picture is the left one's replayed, so
+  the game's interface is laid out for the left eye; with off-centre eyes it now moves to where the right eye sees it.
+  Effects at the right eye's outer edge can still be missing in it: the game draws only what the left eye's view holds.
+- **The angle sliders step by 0.01 degree**, two decimals in the box, the ini and the log, and the headset's own angles are kept and copied
+  with two decimals too (the player's 60.2 / 45.2 / 50.2 / 45.2 and finer). Test: eye_fov_test.
+- **Fixed: the Barbarian's body leapt up out from under the camera** (Leap, Leap Attack; the author's headset test of 0.182: "everything
+  works except the barbarian's leap"). The game lifts the hero's model itself on a leap's arc - 12 to 13.7 units, about 3.5 m, at the top
+  (his log: `model matrix 12.55 above the look-at`) - while F4's camera stood on the game camera's point on the ground and rose only with
+  the hips. 0.182's `[body] under_camera` fixed only the camera trailing him across the floor, which on his path never happened. Now, with
+  `[body] under_camera` (on), the camera stays at your height over the ground and the drawn body is kept down with it through the arc;
+  "Camera rises with the leap's arc" (`[body] leap_camera_up`, off; Settings > Body) flies the camera up with it instead, the body under
+  it. The arms stay on the controllers all through the leap (the author's next test: "it takes the arms with its animation" - the hands
+  were placed against the game's lifted model, metres over the body, and stretched up to it). Only the drawn body and the camera: his
+  place, hit box, path and the leap are the game's. F4 only. The log says once per leap: `under camera: a leap or a trail of N ms - the
+  hero's model up to X units over the camera's ground, Y across the floor; ...` with what was done or why not. Test: under_camera_test
+  (his leap as logged with the hands on the controllers, and a pad's camera spring).
+- **Eyes by turns: less doubling in the eye made on the graphics card** (native OpenXR, first person). Four fixes from
+  bearstonem/d2r-pcvr (MIT, v0.3.25 - v0.3.28), each with its own switch on the Stereo tab, on by default, live:
+  - **The dark rims round roofs and trees go with them** (`[stereo] turns_rims`; his 2de7cbd). The game draws anything against the
+    sky a pixel larger than its depth. That rim stayed with the sky and stood as a ragged dark outline beside every roof and treetop,
+    in every other frame of each eye.
+  - **No holes along a roof's ridge**: each pixel of a cell across an edge is sorted by its own texel (his 5fa6874). No switch: it is a
+    plain fix.
+  - **No frame-old ghosts beside near things** (`[stereo] turns_fill`; his 8ae54f2). A monster that had moved stayed in the strip
+    the other eye could not see. That strip is now filled from what is behind it, and the medallions are hidden by that depth too.
+    Stricter than his after the author's headset test (ticked, it added ghosting). It fills only a strip with the near thing on one
+    side and what is behind on the other, and only over a frame-old copy of the near thing. What only that eye rightly sees stays:
+    the eye's outer edge, a barrel behind a monster. The strip takes what is behind mirrored, not one column drawn out.
+  - **The eye made is read sharper** (`[stereo] turns_sharp`, Catmull-Rom; his bd88507). Fine detail and text are no longer softer
+    every other frame. The change is small in the headset: about a third more contrast in one-pixel detail, in the eye made only.
+  - The 10 s eyes-by-turns log line now counts the made eyes read sharper, with their strips filled and with their rims moved.
+- **The sky goes over the dark rim round things against it** (`[sky] cover_rims`, the Sky tab, on, live, first person; bearstonem/d2r-pcvr
+  4071a4a, MIT). Silhouettes against the sky come out a pixel thinner, and a glow's light edge stays. **Install this version's DLL and
+  D2R_DepthFog.fx together.** An older .fx ignores the switch; an older DLL leaves the new .fx as before. Test: turn_warp_gpu_test
+  (fill, rims, sharp).
+
+## 0.182
+
+- **Native OpenXR: each eye's angles by hand** (`[openxr] fov_override`, off; Settings > Stereo > Native OpenXR, "Set each eye's angles
+  by hand"). A stopgap for a headset or streamer whose picture stays distorted (the Apple Vision Pro on ALVR): four sliders - outer,
+  inner, up, down, the left eye's, mirrored for the right - and each eye is drawn with exactly them and handed in whole with exactly them,
+  live. A button copies the headset's own angles in to start from; the line under it shows them. Turn until the world looks right and
+  send us the numbers.
+- **Native OpenXR: "Each eye exactly as the headset gives it" now hands each eye in as an image of its own** (the Apple Vision Pro player
+  on ALVR, 0.181: "no improvement"). ALVR's driver lays each eye's whole image over the headset's own view: it reads neither the view
+  the game hands in nor the part of the picture it names. Each eye's swapchain now holds only its own view's part of the picture (the copy
+  each eye always had, of fewer pixels) and is handed in whole, with exactly the headset's view. Both eyes from one game frame only; eyes by
+  turns and F1's window are as before. Test: eye_fov_test.
+- **Fixed: a lag spike at every cast, and the game's hitches on a PC whose log is slow** (a Quest 2 player on 0.181, GTX 1650 SUPER: "lag
+  spikes when i cast orb now ... every cast is a lag spike"). On his PC a log line takes 29 ms to write (the lines of one block are that far
+  apart; the plugin's start took 1.2 s for 30 lines, the watchdog's dump 26 s), against about 1 ms on the author's, and the thread that writes
+  it waits: a Frozen Orb cast writes about eleven lines on the game's thread (the pad, the spell aim, the attack target's callers, the arm), and
+  the pair after it took "game 334.8" ms. Now each line a thread writes itself is timed, and where 8 of the last 16 took 5 ms or more the
+  lines go to the writer thread of `[debug] log_async` for the rest of the run - the game's thread copies the line and goes on; the log says
+  so once (`vrcam: log_async on by itself`). At 1 ms a line nothing changes. `[debug] log_async_auto`, on (Settings > Debug; off = as
+  before). Test: log_slow_test.
+- **Only blades cleave, and only fast** (the author: "why does the staff go through the monster - only sharp swords should", "a blunt weapon must not go through -
+  staves, mauls", "and swords only at a high speed"): a staff, a maul, a mace or a club now always stops on the body, however heavy or two-handed; a
+  dagger, a sword, an axe or a polearm cuts through only coming in at `[weight] cleave_min_speed` m/s or faster (4; real swings are 2 - 6). The old
+  `cleave_heavy_kg` (heavy blunt weapons cleaving) is gone. Settings > Strikes. Test: cleave_test.
+- **The body under the camera while the game's camera trails** (a player: "the Barbarian's character model moving in front of the camera when
+  using Leap or Knockback" - NOT fixed yet: in the author's headset the leap still lifts the body above the camera, with this on or off; next
+  version). Played with a pad, the game's camera follows the hero on a spring (its own controller settings:
+  `cameraSmoothingEnabled`, `cameraSpring*`) and trails him when he moves fast; F4's camera sits on that trailing point while the body was drawn
+  where he really is. Now the drawn body is moved back under the camera for as long as it trails (`[body] under_camera`, on; Settings > Body,
+  "Body stays under the camera in a leap"). Only the drawn body: his place, hit box, path and the leap are the game's. F4 only. The log says
+  `under camera: the game's camera trailed the hero by up to N units ...` once per leap. Test: under_camera_test.
+
+- **Spear and bow: walk on as soon as the blow is out** (`[gameplay] move_while_attacking`, ON by default; a player who does historical reenactment:
+  "after I landed a thrust ... I was just left standing there"). With a spear, a polearm, a javelin, a bow or a crossbow, the hero no longer stands through the
+  rest of the attack animation once the blow or the arrow is out: the left stick walks on. The attack itself, the stance before the blow, the hit, damage and
+  mana stay the game's, and the next attack still waits for the whole animation's time (no faster attacks). It changes how Diablo II plays - untick it for the game's stop;
+  in a network game the host's setting applies to every hero in its game, a joined player sends nothing extra. F4. Test: move_attack_test.
+- **No debug switch ships turned on**: 0.181 went out with some test switches on (a log after every throw, the compute-shader log, bodies on town NPCs);
+  they are back at their defaults, and a release build now stops if any debug switch is on.
+
+## 0.181
+
+- **Fixed: no Install ReShade in flat mode** (a player on 0.180: "Do not have a 'install reshade' option that I can see on the home tab"). In Flat,
+  Settings left its status pass before D2RLoader and ReShade, so their rows stayed empty and the button never came. Flat now shows both and offers
+  *Install ReShade* the same way VR does; a `dxgi.dll` renamed to `dxgi.dll.bak` can be brought back like `.off`; Settings writes its own log,
+  `d2r_vr_settings.log` (the ReShade install's steps and the status decisions), and *Collect logs for support* packs it. Tests: reshade_as_test, mod_layout_test.
+- **The hero's head casts its shadow** (`[arms] head_shadow`, on; Settings > Body; the author: "we remove the head and the shadow has no head"): in F4 the
+  head is still not drawn into the eyes, but the hero's shadow on the ground keeps it. Test: head_shadow_test.
+- **Settings: "Melee skills armed by their button" is on the Skills tab**, and the classes of its grid have a line between them.
+- **The launcher shows updates on its main window** (D2R VR Launcher 0.3.6): each mod's card says "Update available: X -> Y" by itself, as the
+  install view did - for D2R VR Authentic and for D2R VR Unleashed.
+
+## 0.180
+
+- **New defaults** (the author, 2026-10-25): "Each eye exactly as the headset gives it" (`[openxr] runtime_fov`) is on - the shadows and reflections
+  are right with it and a streamer such as ALVR shows the picture undistorted; a stick's long press works while the stick leans up to 70 %
+  (`[direct] hold_stick_max_pct`, was 20); the model visibility radius is 210 (`[render] model_radius`, was 200 - after Bear: the objects draw
+  better), its slider in steps of 10; Leap and Leap Attack are aimed by the arc as well (`[gameplay] leap_arc`, on in this version's settings).
+
+- **The skill panel opens ready to edit** (`[openxr] skill_panel_edit_first`, on; the author: "without pressing Edit skill - pick the skill for the
+  button"): point at a button's tile and pull the trigger, the list of your skills comes up, and the one picked goes on that button through the game's
+  own slot binding. Holding the trigger half a second on a tile picks it for the trigger, as a tap did before. Test: skill_wheel_test.
+- **A strong strike cleaves** (`[weight] cleave`): it goes on through the body into the next one, slowed, each body passed spending the stroke's force
+  (three Fallen, not ten). Every hit is the game's own attack.
+- **Two weapons strike each other** (`[weight] dual_collide`): a weapon in each hand meets the other, steel on steel, and the knock plays the game's own
+  block sound, louder for a harder knock (`clash_sound`).
+- **Frame generation** (`[openxr] frame_generation`, experimental, off; Settings > Stereo): OFXR Bridge 0.2.1 by tig3rmast3r (LGPL-3.0-or-later) for
+  this game's process only - FidelityFX (1) or NVIDIA (2); the author measured 50-60 -> 80-90 fps. Needs a game restart: switching it on while playing
+  (a new VR session) left the headset black, so in this version it starts with the game. While it runs, `runtime_fov` is set aside (the two together
+  went black). Virtual Desktop's SSW halving is warned about.
+- **Fixed: a black sky from a stray ReShade** (a player's logs: "ReShade64.dll did not load (error 1114)"): with no ReShade in the mod's own
+  `reshade` folder, the plugin and Settings took a `ReShade64.dll` beside D2R.exe - another mod's or an old one - which refused to start, and
+  Settings said ReShade was installed and hid *Install ReShade*. D2R VR's ReShade is now only ever `mods\D2R-VR\reshade` (or the player's own
+  dxgi.dll); Settings shows *Install ReShade* again, the install script no longer swaps in the stray file, and the log collector packs the game
+  folder's ReShade.log and ReShade.ini. Tests: mod_layout_test, reshade_as_test.
+- **Fixed: a crash on switching characters without restarting the game.** The touch melee, the wrist status and the other features that ask the
+  game's server kept the pointer to the server's game after that game ended; the next game's first ask used the freed old one and the game died in
+  its own unit lookup (D2R.exe+0x48FECF). The game is now forgotten when the world camera goes (the title, the character screen, a load) and when
+  the client has no hero, and is not learned again until the world camera is back.
+
+- **Point skills: hold for an arc and a circle** (the author: "a ray from the left controller, as in VR games' teleport ... no farther than 50 cells",
+  "Fire Wall and Meteor - the same logic", "the other skills cast at a distance - the same"). VR first person (F4), the skill on one of the pad's skill
+  buttons (every slot of the skill panel's table: B, X, Y, RB, A and RT, with or without the left trigger): a tap casts where the headset looks; held, nothing is cast yet - a red arc leaves the tip of
+  the staff as the game drew it (else the hand) and a circle sits where it lands: raise the hand to throw it farther, lower it to bring it nearer, never
+  past 50 cells (`[gameplay] point_max_cells`; 48 is used at most - the game refuses a point 50 cells off). Let go and the slot's own button is pressed
+  once with the circle as the cast's point; the left stick still walks; a menu opened while it is held casts nothing. The skills, read from the game's
+  own Skills.txt for the ones cast onto a ground location: Teleport, Fire Wall, Meteor, Blizzard, Hydra; the Necromancer's area curses, Bone Wall and
+  the golems; Fissure and Volcano; Fire Blast, Shock Web, Blade Sentinel, the sentries and Mind Blast; the Warlock's Blade Warp, sigils, Apocalypse,
+  Abyss and demons (`[gameplay] point_skills`, ids, editable). Mana, cooldown and every check stay the game's; the ground under the circle is not
+  checked for walkability. Leap and Leap Attack join only with `[gameplay] leap_arc` (off: they stay where you look). `[gameplay] teleport_circle`,
+  on (Settings: Skills, with the distance, height, colour - each skill its own, by its element by default - and opacity sliders and the leap box). Off: as before. Test: point_cast_test.
+- **No inventory in a fight by accident** (the author: "the inventory opens all the time in a fight"): a stick's click is a long press (the inventory, the
+  skill panel) only while that stick leans no more than 70 % (`[direct] hold_stick_max_pct`; Settings > Controls, next to "Long presses"; 70 % opens,
+  71 % does not); held with the stick pushed further it opens nothing. A quick click is still the map at any lean (the author: "if I run and need to
+  look at the map, I must not stop"). The lean is the stick as the hand holds it, also where the layout sees it centred (just after a game panel
+  closes with the stick pushed, or while a gesture takes it). 0 = no limit, as before. Test: direct_input_test.
+- **Bone Armor lower, below the eyes** (the author: "a slider for its height from the ground - lower, it may not be in the way so much in VR"):
+  `[render] lower_own_effects` (on in the shipped settings) with *Bone Armor's height, cm* (`own_effects_height_cm`, -150 .. +50, -60 shipped) -
+  in F4 Bone Armor and the other solid effects (Blade Shield, Energy Shield, the shrines' overlays) are drawn that much lower or higher than the
+  game puts them: the overlay's world matrix, moved after the game computed it. Visual only; the log says per effect whether it was moved.
+  Settings > Body > Effects around the hero. Test: own_effects_test.
+- **Barbarian: Leap and Leap Attack go where you look** (the author: "the Barbarian's leap should go where the headset looks"). In VR first person
+  (F4) a Leap or Leap Attack, cast with its own key or slot as ever, now lands where the head's gaze meets the ground - not where the hand or the
+  game's cursor points; Leap Attack goes at the monster the gaze is on, when there is one. A gaze that meets no ground within the skill's range
+  (looking ahead or up) leaps the full range that way. Only the cast's point (or monster) is the gaze's, given to the game's own target lookups and
+  aim point: range, cooldown, mana and the leap itself stay the game's. `[gameplay] leap_by_gaze`, on (Settings: Skills). Off: as before.
+  Test: leap_gaze_test.
+- **An arrow on the map shows where you look** (a player in flat third / first person with a DualSense: "Is there a way to add directional marker
+  to mini map character marker?"). The game's map is drawn for its own camera from above, so in our views it never turns: a small gold arrow beside the
+  hero's marker in the middle of the mini map (and of the whole-screen map) now points where the camera looks, on the map's own isometric lines - flat
+  F2 / F3, VR F2 / F4, in the picture and on the map in the hand. Painted over the game's map only; F1 and the floor (VR F3) as before. `[hud]
+  map_direction`, on (Settings: UI: F3 eyes, UI: F2 behind, UI: F4 body). Test: map_direction_test.
+- **Your D2RMM mods load with D2R VR again** (a player, 0.179: "I had D2RMM working with this previously. But now it doesn't seem to work"). The game
+  loads one mod, and since 0.170 D2R VR is that mod (`-mod D2R-VR`), so the mod D2RMM builds (`mods\D2RMM`) was left out; D2RLoader 1.3.1 cannot layer
+  mods. Now START and the launcher's Play copy the data files of your other folder mods into D2R VR's mod (`mods\D2R-VR\D2R-VR.mpq`) before the game
+  starts, and take them again when you build your mods again in D2RMM (`[mods] merge_data_mods`, on; Home > Other mods, which also says what was found).
+  Not merged: another VR mod (D2R-PCVR), a mod with D2RLoader plugins of its own, a packed .mpq, the names in `[mods] merge_skip`. Two mods with the same
+  file: D2RMM's is taken; a file D2R VR has too gets D2R VR's one change on top of yours (the canoe, the Arcane Sanctuary's stars), else D2R VR's stays.
+  Only what was copied is ever taken out (a record, `mods\D2R-VR\data_mods.txt`); D2R VR's own files are never lost. Your characters stay in D2R VR's
+  save folder (not D2RMM's `mods\D2RMM`). Each choice is in `d2rloader\logs\d2r_vr_data_mods.txt`. Unticked: their files go out at the next START.
+  Tests: data_mods_test, start_helper_test.
+- **Native OpenXR: "Each eye exactly as the headset gives it"** (`[openxr] runtime_fov`, on; Settings > Stereo). A player's report from
+  0.179, with an Apple Vision Pro on ALVR into SteamVR: "with the Steam menu open, the D2 world renders perfectly ... When I close the Steam menu,
+  everything looks cross eyed and heavily distorted". Each eye is handed back as exactly the headset's own view, as other games do and as FlatVR
+  does; our own view, symmetric and cropped to the window, is shown wrong by a streamer that takes only the headset's own view right. Both eyes are
+  drawn with one centred view, as wide and as tall each way as the headset's widest and tallest side (bearstonem/d2r-pcvr's
+  `symmetric_projection`: the game's light binning takes the view as centred), and only each eye's own part of the picture is handed in - so
+  the lighting and the names over monsters stay right in both eyes (drawn off-centre, the lighting had a seam down the picture). The two choices it replaces are hidden while it is on.
+- **Native OpenXR: OpenXR layers known to break the picture are turned off** (`[openxr] block_listed_layers`, on; the list is
+  `[openxr] blocked_layers`, Quad-Views-Foveated for now). Only while the eyes are drawn our own way (runtime_fov off), for the game only, through
+  the switch the layer names for it; the registry and other games are untouched. Overlays (XSOverlay, fpsVR, OpenKneeboard), OpenXR Toolkit and
+  every other layer are never touched. The log names every implicit layer found, and Settings > Home names a listed one as a warning.
+  Tests: api_layers_test, eye_fov_test.
+
+- **The bow's aiming line is off again** (a player: "the crosshair/aiming aid for the bow breaks the immersion"): `[debug] bow_aim_ray` went out on in
+  0.179 with the author's own settings; it is a debug drawing, off in the shipped settings again (Settings > Debug).
+- **Bow: the arrow goes where the bow points, in one line** (a player, 0.179: "my arrows often fly off to the side, then seem to straighten out mid-flight,
+  almost like they're rocket-propelled ... as though the arrows are taking their directional cue from the other hand"). Two causes, both fixed:
+  - the game reads a shot's aim when it takes the press - late while the hero is still in his last attack - and the drawn line was the aim only for 0.4 s
+    after the release and never while a new draw was held: a later read took the bow hand's own pointing. Now the released shot keeps its line until the
+    game takes it (`[bow] shot_line_hold`, on; 1.5 s, a new draw or not);
+  - our drawn arrow (`arrow_flight`) left the bow and swung onto the game's path, which starts at the hero's body beside the line. Now the shot's own arrow
+    flies straight along its line from the bow when the line met nothing (`[bow] arrow_flight_straight`, on); aimed at what the line met, as before.
+  Tests: bow_draw_test, arrow_flight_test.
+- **Bow: the nocked arrow rests on the bow, not through it** (the same player: "the arrow doesn't actually rest against the bow - it just passes right
+  through it"). The rest point was the bow hand's controller point plus 2.5 cm up (`arrow_rest_*_cm`, a set offset); now it is where the bow model itself
+  lays its arrow - the nock's line at rest crossing the riser, read off the bow's own skeleton (`[bow] arrow_rest_model`, on). The bow is turned along the
+  line from the string hand through it, the arrow lies on it and the shot goes along it; the offsets are only the fallback while the bow's bones are not
+  read. Test: bow_rig_test.
+
+- **Strike by force is on the Strikes tab now** (the author: "move it to the Strikes tab"): *Hit by the strike's force* and its sliders sit in their own
+  group, "Strike by force", above "Which contact counts as a strike" - they decide which strike is a hit, as the groups there do. The keys are the same.
+- **The hands always reach the controllers** (`[arms] full_reach`, on; a player: "my character's arms seem too short ... they shrink even further as
+  they pass across the torso ... the other hand lets go of the weapon"): an arm stopped at its own length, so a hand farther from the hero's shoulder
+  than that - a slash across the body (the hero's shoulders are his, a barbarian's wider than yours), a two-handed hilt at the far hip - was drawn
+  short of the controller, the weapon with it, and the second hand came off the shaft. Now the shoulder comes along first (the hero's own collarbone
+  turned toward the hand, at most 20 degrees) and the arm lengthens for the rest (at most 35 %). Drawn bones only. The log tells the arms as drawn.
+- **The T-pose is taken only with the arms straight out to the sides** (`[calibration] strict_tpose`, on): the hands may no longer be 22 cm ahead of
+  the eyes, and a span under 0.88 of the eye height is refused as arms not stretched. The author's standing measurements had been 1.63 m one day and
+  1.50 m another (seated 1.68 m); the 1.50 left the arms short. Measure again if yours was taken with the arms forward.
+- **The arm span by hand** (the author: "a slider right under the calibration button that can be moved by hand"): the headset settings' Body
+  page has **Arm span - / +** under *Calibrate body*, D2R VR Settings > Body has *Arm span by hand*: the hero's arms grow or shrink as you watch,
+  a centimetre a press. It is the measured span itself (`[calibration] arm_span_m`): a new measurement sets it again and the slider moves to it.
+  With nothing stored it shows the span in use ("auto") and starts from it. A span with no eye height now counts standing too (the arms only).
+- **Not measured: arms of a person's length** (`[calibration] default_span`, on): with no measurement in use the hero's arms are fitted to the span
+  a person of your eye height has (0.95 of it), the hands 1:1; before, the hero's own arm length times `[arms] scale`.
+
+## 0.179
+
+- **Monsters' shields and weapons stop your weapon** (`[weight] monster_shields`, on): what a monster holds - its shield, its weapons - is a body of
+  its own, found where the game hangs the item on it; a blow they stop is no hit (a thrust into a shield neither), only a real blow (as fast as one that
+  would have hit) counts as blocked. The melee boxes debug draws them violet and orange.
+- **Parrying** (`[weight] parry_feel`, `parry_block_show`, `parry_claw_block`, `parry_shield_smite`, on; `parry_counts_hit`, off): a monster's weapon
+  meeting yours during its swing stops it with a strong pulse; the game's own block (a shield, the Assassin's Weapon Block) is shown as a parry; a
+  Paladin's shield put into a monster's swing presses Smite through the game's own key. Whether the monster hits is always the game's roll.
+- **Hits judged by the strike's force** (`[weight] strike_by_force`, on in this version's settings): what a strike puts into the body - its impulse,
+  and for an edge its cut - against a threshold from the weapon's own mass and kind (blunt, edged, piercing: Settings > Weapon Weight), set from the
+  author's 225 recorded blows; a light touch, a falling weapon or one with no hand on it is no hit. Unticked: the blade's speed as before.
+- **Only the metal hits** (`[gameplay] melee_metal_head`, on): a polearm's, spear's, axe's or mace's head and a sword's blade strike; the shaft or the
+  hilt only pushes (a player: "the poleaxe kills monsters with the back end of the shaft"). Where the head starts is read off each weapon's own
+  model. An axe's, hammer's or polearm's head has a volume of its own beside the shaft (`melee_head_volume`, on), and the shaft is as thin as the model's.
+- **Two weapons, each a weapon of its own**: drop one with its grip and the other stays a full weapon; the second drops, goes to the back and is
+  drawn from behind its own shoulder (the left one's from the left); a hand that holds a weapon takes no other; any empty hand draws from either
+  shoulder; a weapon handed to the other hand lies in that hand's palm; the second weapon sticks into a body as the first does.
+- **A javelin or a throwing weapon is the weapon in the hand from the equip** (`[gameplay] melee_touch_thrown_held`): it hits by touch without
+  squeezing the grip first. **Swords thrust** (a poke with the point, or a run in with it held forward).
+- **The three-headed flail** swings its three balls apart, each with its own hit sphere. **The Necromancer's heads** hang from their cord and swing
+  (`[shield] heads_hang`). **The zombie's head** and the **quill rat's tail** have their capsules back; the extra ones are gone.
+- **The left trigger can be bound** to an action of its own; the second row of skill buttons then turns off (greyed in the skill panel).
+- **The hero's strength** counts as it is (`[weight] strength_honest`) and **two hands hold twice as hard** (`[weight] two_hands_double`), both on in
+  this version's settings.
+- **Bone Armor turns slowly** (the author: "let it turn slowly", "bring back the slow-down slider and make its lowest even lower"):
+  `[render] slow_own_effects` (on in the shipped settings) with *Bone Armor's speed* (`own_effects_speed_pct`, 1 - 100 % in steps of 1,
+  20 % shipped; the first version's lowest was 5 %) - Bone Armor and the other solid effects turn at that share of the game's speed in F4,
+  with the effect's own playback speed (now found by signature in every build). Visual only. Settings > Body > Effects around the hero.
+  Test: own_effects_test.
+- **Flat mode with a gamepad: the right stick looks up and down** (a player with an Xbox pad: "the right stick pitch doesn't change the camera
+  angle up and down"). `[camera] stick_pitch_flat`, on (Settings > Controls, flat only): in first and third person the right stick's up / down is
+  the mouse's look up / down; left / right turns as before. The log now says, every 2 s while a real pad's left stick is pushed in flat mode, what
+  the stick was and what the game got ("flat pad: the left stick ... -> the game ...") - the same player finds the left stick walks the screen's way,
+  not his camera's.
+- **Fixed: a canoe hanging in the sky over the Kurast Docks** (the author: "the flying boat - put it on the water"). The town's HD scenery
+  places one canoe 50 units up, where the view from above never looks; in first person it rocked over the huts. Found by
+  bearstonem/d2r-pcvr (bed674b), whose mod takes it out; ours keeps it and lays it on the water by the western docks, where its
+  prefab was built (its keel on the town's water plane). D2R VR Settings makes the town's scenery file from your own game with
+  that one number changed, inside the mod (mods\D2R-VR\D2R-VR.mpq), when it opens and at the end of Setup; nothing you play
+  with changes. `[world] kurast_boat`, on (Settings > World > Scenery; unticked = the file taken out again). Test: kurast_boat_test.
+- **Bone Armor no longer covers the eyes in first person** (the author: "this bone armour round the Necromancer - we wanted to make it
+  see-through"). The option was set the effect's "Fade" and nothing changed: Bone Armor's bones are an opaque lit mesh, and in the game's own
+  files only its faint trail takes the Fade. Now the game's HD files mark the effects with such a solid part (Bone Armor, Blade Shield, Energy
+  Shield, the shrines' overlays) and in F4 these are not drawn at all whenever *Own effects left* is under 100 % (the game's own switch, the one
+  it uses for a unit at alpha 0; switched off again if the game turns it back on). The other effects (Frozen / Shiver / Chilling Armor, the aura
+  rings) are faded with "Fade" as before. The bones themselves turned out to be the game's own models made by the effect's script, which
+  the effect's switch does not reach (the author's test: still there): these are hidden too, as the game hides an overlay's model at alpha 0
+  (`SetVisibleLayers`), only those at the hero's place. Visual only, F4 only; other players and F1 - F3 see it as the game draws it. Still `[render]
+  dim_own_effects`, off in the shipped settings (Settings > Body > *Draw the hero's own effects fainter*); the log says per effect what was done.
+  Test: own_effects_test.
+- **A sword thrusts** (the author: "it is a sword - it must thrust"): `[gameplay] melee_thrust_on_sword` is ticked to begin with, one- and two-handed alike
+  - a poke with the point counts as a thrust, and with `melee_thrust_with_run` a run in with the sword held point first does too (and sticks it in with
+  `[weight] stab_in`). Swings are as before. Test: thrust_stroke_test.
+- **The hero's strength, as it is, and two hands twice as strong** (the author: "a Barbarian at 300 % still finds a Two-Handed Sword heavy, even in two
+  hands"). `[weight] strength_honest`: the margin over a weapon's Strength requirement is Strength x the class' multiplier / the requirement, as it is - the
+  old +50 on each side made 105 against 35 a margin of 1.82 instead of 3; a weapon that asks none counts as 10 and the steel keeps its floor, so a light
+  weapon still weighs something. `[weight] two_hands_double`: with both hands on a weapon each holds it twice as hard (the mod's physics and the
+  weight-physics library alike) - in a test a polearm held out in both hands sinks 2.3 degrees instead of 4.7. Both off by default (Settings > Weapon
+  Weight); the log's strength line says which is on. Tests: hero_strength_test, weight_strength_test.
+- **Fixed: the gamepad did nothing in flat (2D) mode** (a player, 2026-10-24). Flat mode hides the pads from the game (`[input] flat_no_pad`, on)
+  so its menus stay in mouse and keyboard mode - and so a real gamepad never reached it. Now the pads are hidden only until a real pad is used (a
+  button, a trigger, or a stick pushed well past drift): from then on the game sees it (`[input] flat_pad_on_touch`, on; unticked = hidden for
+  good). Both are now in Settings > Controls > Mouse and keyboard (flat only). The log says "the real pad was touched". Test: pad_presence_test.
+- **Fixed: in flat mode the aim went off on stairs, ledges and raised floors** (players: "if there is a height difference in the game, the aiming
+  goes away"; also "monsters cannot be targeted after a while"). The game draws raised ground pushed along its own view from above and finds the
+  mouse's point by a ray that is right only along that view: from first or third person, on a floor 1 m up, it landed 2 to 14 cells off (the further,
+  the worse) - fine again back on base ground. Now the same ray goes into the game's own floors and the cell under the ground drawn at the
+  crosshair is the mouse's point: the hover, a click and a skill's point. Only the point; the game's own targeting does the rest
+  (`[input] flat_aim_ground`, on; Settings > Controls, flat only; unticked = as before). `[debug] flat_pick` says per click how far the game's own
+  point was. Test: flat_ground_test.
+- **Fixed: the bow drew but no arrow flew when the pad's A slot held a skill** (most likely a player's report on 0.178 - the same on 0.175 and with a
+  reset ini: Quest 3, direct input; his log shows a spell on A). The bow draw's release presses the game's attack, the pad's A - and the game casts
+  whatever skill its A slot holds: a spell there is cast and no arrow comes. Now the release is the bow's own arrow (`[bow] draw_shoots_arrow`, on in this version's settings): a skill on A that is not a bow skill is
+  read as the plain Attack for the release's own press; a bow skill on A stays, and a skill armed from the quiver comes first (with a skill on A it
+  never did before). The A button itself and every other slot are the game's as ever. Tests: bow_quiver_test; weight_drive_test checks that a bow
+  with its quiver is no weapon of the weight model's.
+- **The shot arrow drawn by us** (`[bow] arrow_flight`, off; Settings > Bow, "draw the shot arrow ourselves", F4): the arrow or bolt leaves the bow -
+  not the hero's chest - and flies along the shot's line; with `[bow] pitch_aim`, up or down the stairs to the monster or the ground the line met
+  (stuck in the ground where something stands near), arriving when the game's own arrow does. It is the game's own arrow model put where we draw it
+  (the renderer's world matrix of the hero's arrow missile, the potion hide's hooks); the game's missile, its hit and its damage are untouched.
+  `[debug] arrow_flight_trace` logs each arrow; `[debug] arrow_flight_fx_off` switches the arrows' own effects off for a test. Not yet tried in the
+  headset. Test: arrow_flight_test.
+- **Fixed: old frame lines left round the monster's name plate in F4** (Serg, 2026-10-24: "they are cropped badly, old frames stay above and
+  sometimes at the side"). A plate made smaller, fainter or set at its own depth (`[hud] monster_size`, `monster_far`, `monster_alpha`,
+  `monster_near_body`) is cut out of the interface by a box; the box came from the plate's widgets read every 10 ms, while in a headset the plate
+  moves with every turn of the head, and its margin above and below was too thin for the frame's light top line. What the box missed stayed where
+  the game drew it. Now the box moves with the plate in each frame (the plate's anchor call, `vr/mob_bars.cpp`, says where the game hangs it; the
+  box covers its last three places), a new target's box is as wide as the widest name read until its own is read, and the margin is half the plate's
+  height all round (the bar in the room, `monster_bar_room`, is cut with the same box). Not yet seen in the headset. Test: plate_world_test.
+
+## 0.178
+
+- **Fixed: the game died on leaving the Arcane Sanctuary** (the author's crash, 2026-10-23, d2rl-vrcam.dll+0x1310E3). The humanoid check of the monsters'
+  weight let a skeleton have up to 256 bones but kept their names in arrays of 160: a 161 - 256 bone model overran them. Now the arrays hold 256 and a
+  longer skeleton is not judged. Test: monster_humanoid_test (with the old arrays it dies of the same overrun).
+- **A weapon in each hand, or in the left hand alone, is a body of its own** (a Barbarian player and the author: "two weapons pass through the doll",
+  "a dagger in the left hand is not seen at all"). Each held weapon has its own mass and hand, stops on the monsters' limbs and pushes the doll; it
+  was the right-hand weapon alone before. Tests: weight_dual_test (through the real libraries too), blade_push_test.
+- **Fixed: a fast blade passed through a thin limb** (the author: "one-handed weapons pass straight through without slowing"), and a swing carried
+  on is no longer snapped back through the body.
+- **How hard a weapon sticks goes by the class** (`[weight] stick_by_strength`, `stick_pct`; the author: "a Barbarian's sword should practically
+  never get stuck"). The class strength multipliers of Weapon Weight > The hero's strength decide how easily a weapon wedged between monsters or
+  stuck in a body comes free (a Barbarian at 200 % almost never sticks, a Sorceress at 80 % does); the body's surface stops the weapon the same for
+  every class.
+- **Belt potions** (Settings > UI: F4 body > Belt potions; on in this version's settings):
+  - a bottle in reach glows from inside (the game's own highlight) instead of the ball (`[hands] belt_inner_glow`);
+  - a drunk potion leaves the bottle in the hand: the cork gone, the bottle see-through and darker (`belt_empty_bottle`) - throw or drop it, it falls
+    with its weight. (Most potions paint their liquid into the glass, so the glass cannot turn truly empty with the game's models);
+  - a full potion dropped on the ground falls with its weight and the game drops the item there (`belt_drop_ground`);
+  - a healing / rejuvenation / antidote / thawing potion thrown to your mercenary is his, the game's own way (`belt_throw_merc`).
+- **Controls:** two grips held mean nothing any more (the headset settings open with a long press of the right stick); a grip that holds the
+  weapon blocks no button (`[weight] weapon_grip_no_chord`, on in this version's settings); a melee skill can be armed for one blow
+  (`[gameplay] melee_skill_arm_once`, off).
+- **The bow's quiver orbs** show only when there is a choice (the plain shot and at least one bow skill).
+- **For the next versions, off:** `[debug] strike_measure` (each strike's force into the log - the first step of judging hits by force),
+  `[bow] pitch_aim` (shooting up and down stairs - bows and crossbows are not ready, so their new features stay off).
+- **The level's props are knocked about by your weapon** (`[weight] knock_props`, on in this version's settings; Settings > Weapon Weight > "Knock the level's props
+- **Frame generation (experimental)** (`[openxr] frame_generation`, off; D2R VR Settings > Home > In the headset). OFXR Bridge 0.2.1 by
+  tig3rmast3r (an OpenXR API layer, LGPL-3.0-or-later, github.com/tig3rmast3r/OFXR-Bridge) makes every other headset frame from the two the
+  game drew, by optical flow - the game draws half the frames. FidelityFX (any graphics card) or NVIDIA's optical flow (RTX, GTX 1660 family)
+  with its quality and resolution. Native OpenXR with both eyes from one game frame only: with the eyes by turns it is asked to stand aside
+  (each eye would get a quarter of its frames real - bearstonem's measure). Loaded for this game's own process only: the plugin names
+  `d2rloader\d2r_vr_libs\ofxr` to the OpenXR loader (`XR_API_LAYER_PATH`) and asks for the layer in xrCreateInstance - no registry entry,
+  no tray program, nothing for other games; if the instance fails with it, it is made without it. Switched on while playing, the VR session is
+  made again so the new instance loads it (a moment of black); a request the running bridge fails makes the session again once (Virtual
+  Desktop after by turns: 0x80070057); under Virtual Desktop a rate halved again is its SSW - the log says to set SSW to Disabled (after
+  bearstonem v0.3.27). Switched off it stands aside until the next start; the backend and NVIDIA's options reach the running bridge live
+  through its control API (provider_api V1). The panels' swapchains are listed by the
+  runtime itself, below the bridge, so it takes over the eyes only (through it SteamVR ran out of swapchains in bearstonem's test). D2R VR
+  Settings downloads and installs the bridge on a click (its pinned release, SHA-256 checked, about 0.6 MB; needs the Microsoft Visual C++
+  runtime x64). The idea and the way of loading it are bearstonem/d2r-pcvr's (v0.3.25, MIT). Not tried in the headset yet: the log says
+  `frame generation: ...` at the start and on every change. shared/frame_gen.h, vr/frame_gen_lib.cpp; test frame_gen_test.
+
+- **The level's props are knocked about by your weapon** (`[weight] knock_props`, off; Settings > Weapon Weight > "Knock the level's props
+  about", F4). Cups, plates, bowls, jugs, vases, bottles, books, skulls, baskets, pails, stools, chairs, barrels and sacks near you stand where
+  the game placed them until your weapon or your fist reaches them; then they fall off the table, bounce, roll and rest where they land, and the
+  game draws its own model there (its world matrix, its last frame's for the motion vectors, its bounds). The weapon has its weight in it: in the
+  weight library's new props world (d2r_vr_weight.dll 1.3, Box3D 0.1.0 by Erin Catto, MIT) the weapon is a body of its own mass pulled to the
+  weapon as drawn by the hands' drive with the weight library's ceilings (300 N, 75 N m a hand), so a cup flies about the same off a dagger or a
+  maul, but a barrel holds a light sword back and is shoved by a two-handed one. Only the drawing: no item, collision, sound or state of the
+  game's changes; everything is back when the area loads again. The physics runs on a thread of its own at a fixed 120 Hz (its ideal processor
+  the machine's last), never on the game's; the write into the game's matrices is once a frame and only while a prop moves. The idea, the
+  catalogue of preset props (27,971 of 101 kinds from 2,100 presets on Steam 3.3.93787, made by D2R VR Settings from your game in about 6 s),
+  waking, freezing, supports and the materials are bearstonem/d2r-pcvr's knockable props (MIT, 2026-10-22). Needs hit by touch (its blades
+  strike) and the weight library 1.3; without it the tick is greyed out. `knock_strength_pct` (100), `knock_haptic_pct` (35). The held
+  weapon's own step (vr/weight.cpp) is unchanged: it still runs in the skeleton hook once per head sample with the time since the last one
+  (up to 50 ms, cut into 1/360 s pieces) - not a fixed step; moving it onto this thread is the next step. vr/knock_props.cpp, vr/props_lib.cpp,
+  shared/props_scene.h, shared/props_presets.h, tools/settings/props_assets.cpp; tests props_scene_test, props_lib_test, props_assets_test;
+  docs/notes/knock_props.md.
+
+## 0.177
+
+A test version (the author: "let people test"): the weapon sticking into monsters and the monsters' weight are ON in this version's
+settings. Untick them in Settings > Weapon Weight to get 0.176's behaviour.
+
+- **A pointed weapon sticks into monsters** (`[weight] stab_in`, on). A spear, dagger, javelin, throwing weapon - or any sword - driven point
+  first into a monster's body goes in along its blade, meets the body's resistance, holds when you stop, and comes out when you pull it
+  back along the blade (or tear it aside with a lever). Running in with the weapon held forward sticks it in too, without a push of the arms
+  (with `[gameplay] melee_thrust_with_run`, on). After the HurricaneVR toolkit's stabbing rules, in the private weight library
+  (d2r_vr_weight.dll 1.2). Settings > Weapon Weight: the least speed, the widest angle, the resistance, the depth, the tear, the unlock pull.
+  Only the weapon's physics: whether a touch is a hit is unchanged. Tests: stab_test.
+- **Humanoid monsters give way under the weapon's weight** (`[weight] monster_ragdoll` and `monster_ragdoll_pose`, on). A blow pushes the
+  struck limb and, less, the whole monster by its mass (a fallen about 30 kg, a zombie about 50: one rule from the monster's size), muscles
+  bring it back; the monster the game draws bends with it - the limb turns about its joint, the body leans - and the game's animation takes
+  over again. Humanoids only, told by their own skeleton (a zombie is, a quill rat is not). The drawing only: where the monster stands and
+  what it does stay the game's. Tests: doll_lib_test, doll_view_test, doll_pose_test, monster_humanoid_test.
+- **Town NPCs have bodies too** (`[debug] npc_bodies`, on in this test version): try the stab and the push on them in town. They are
+  never attacked - Hit by touch presses only on a monster the game calls hostile.
+- **Every debug switch is on the Settings' Debug tab** (the author: "all the debugs must switch on and off on the Debug tab"): the thrust,
+  stab, NPC-bodies, shield and toolbar-strip checks are copied there from their own tabs, and 26 debug keys that had no control at all got
+  one. New debug tick: *Hit by touch: no attack (try the stab and the push)* (`[debug] melee_touch_no_attack`, off).
+
+## 0.176
+
+- **Fixed: hit by touch did nothing for a player who JOINED a TCP/IP game** (found in the multiplayer audit, 2026-10-22). Before a
+  touch presses the attack it asks the game's server whether the monster is hostile and whether a wall is between; a TCP/IP client's
+  server runs on the host's PC, so no answer ever came and nothing was pressed (the host and offline play were fine). Now, where the
+  server is not in this process, the client's own units answer (vr/client_verdict.h, melee_touch.cpp `ClientProbe`): a monster with an
+  owner - a hireling, a summon, anyone's - is not hostile (its owner's id, read in a game with tools/pet_recon.py), nobody in a town is,
+  and the game's own line test on the client's units stops a touch through a wall. The press is still the game's own attack: the host's
+  server decides what comes of it. Offline and as the host nothing changes. The log says once a second what the client's units answered
+  ("melee touch: no server here - ..."). Test: client_verdict_test (mutation-checked). Not yet tried in a real two-PC game.
+- **Fixed: "Thrust debug: only the thrusts" hid every poke once the straightness was set high** (the author, 2026-10-22: "I move the
+  sliders but on the spear I never see a highlight"; his straightness 94 %). The tick shows only thrust attempts, and an attempt was
+  "straight enough by the player's own threshold" - so at 94 % every real poke failed it and was hidden: no tint, no log line, just when
+  the readout was needed. Now an attempt is a path at least half along the blade (the slider's floor): a poke at 80 % shows orange with
+  "not straight 80 / 94", a swing (across the blade) stays hidden. Test: thrust_stroke_test (mutation-checked).
+- **Thrusts: the whole weapon is measured, not its tip** (the author, 2026-10-22, with a spear: "it should not work like this";
+  "measure not the tip but the angle of the whole weapon and its deviation"). The tip of his spear sits 2 m ahead of the hand: the
+  small turn every real poke has swung it sideways more than forward - his eleven pokes read 51 - 76 % "straight" (so none counted at
+  70 %) - and kept its speed over the rest threshold, so a poke hardly ever ended as one. Now the thrust follows the GRIP (the hand's
+  place on the weapon's axis, vr/thrust_stroke.h GripBlade: the thrust engine steps on it and a point 0.5 m ahead), its straightness is
+  the grip's movement against the weapon's axis, and a new check says how far that axis TURNED during the stroke: up to 35 degrees is a
+  thrust, more is a swing (Why::Turned, "the weapon turned"). The thrust debug readout and its log lines show "turn 10 / 35 deg". Test:
+  thrust_stroke_test (his poke: 57 % by the tip, over 95 % by the grip, counts at the shipped 70 %; a 70-degree swing and a push that
+  turns 40 degrees do not - mutation-checked). The thrust debug's blue now comes the moment a poke has met every threshold (it waited
+  for the poke's end, the pull-back: "it tints half a second after the poke"); a refusal (orange) still waits for the end.
+- **Thrust weapons never hit moving from the point toward the handle** (the author: "a movement from the point toward the handle must
+  not count"). Settings > Strikes > Thrusts: *Thrust weapons: never hit moving point-to-handle* (`[gameplay] melee_not_backward`, off).
+  Ticked, a weapon that thrusts refuses a contact whose touching point moves within 60 deg of the handle's direction along the weapon -
+  its thrust and its swing: a jerk back whose butt met a monster behind used to count as a swing (the toward rule saw the butt going at
+  it, and spears are not head-only). Backing away with the weapon pointed at a monster was never a thrust (the thrust adds only forward
+  movement along the weapon). Tests: strike_direction_test (butt-first refused, thrust and sideways sweep count), thrust_stroke_test
+  (backing away 3 m/s: not a thrust).
+- **Thrusts: running with the weapon counts - a charge** (the author: "if I run with the spear that must count as acceleration and
+  movement", "not only the spear, every thrusting weapon"). Settings > Strikes > Thrusts: *Thrust: running with the weapon counts (a
+  charge)* (`[gameplay] melee_thrust_with_run`, off). Ticked, every weapon that thrusts is measured in the world: the hero running or
+  walking with it held point first is the thrust's movement, speed and acceleration too - run into a monster with the spear forward
+  and it is a thrust (still only along the weapon, and not with a big turn). Unticked: the arms' alone, measured in the room, as
+  before; swings are always the arms' alone. Test: thrust_stroke_test (a 3 m/s run with still hands: no thrust in the room, a 60 cm
+  thrust in the world).
+- **The weapon meets the monsters' limbs, not one capsule** (`[weight] monster_bodies`, on in this version's settings). The weapon in your
+  hands stops on a monster's own body: a capsule for each limb, made from the game's own model of that monster (its part entities' meshes
+  and their bone boxes, vr/monster_rig.h), not one round capsule for the whole monster. A model whose skeleton does not read keeps the game's
+  capsule. Physics of the weapon only - whether a touch is a hit stays as it was. `[debug] melee_boxes` draws the limbs (pink), a monster that
+  kept the capsule (blue) and the one the weapon rests on (white). Tests: monster_rig_test, monster_bodies_test.
+- **Fixed: on a Quest 2 over Link (Meta's runtime) the hands stayed at the belt while the sticks worked** (a player, 0.165 - 0.175). Meta's
+  runtime tracks bare hands OR controllers, and our hand trackers asked for bare hands; now there are none on Meta's runtime (`[openxr]
+  hand_trackers` 2, the default; 1 = as 0.175, 0 = never). Test: hand_trackers_test.
+- **Javelins and throwing weapons thrown from the left hand** (the author: "if I move the javelin to my left hand I must be able to throw
+  it"). Settings > Weapon Adjust: *Throw from the left hand when the weapon is in the left hand* (`[hands] throw_left_hand`, on in this
+  version's settings). Take the weapon with the left hand (the weight model's hand-over) or put it in the game's left slot: the left grip and
+  swing throw it, and hit by touch strikes with it. The throw is the game's own. F4 only. Tests: throw_hand_test, throw_gesture_wire_test.
+- **Room-scale walking: smoother, a dead zone of 0, on by default** (the author: "it moves in jerks", "the dead zone to 0"). The game never
+  walks the hero slower than a quarter of his walk, whatever the stick says, so a small step is now walked as short pulses at that least speed
+  (no more run past the head, stop and wait), and the view always follows your head smoothly. The dead zone may be 0 (this version's
+  default), and a thumb resting on the stick no longer takes the walk over. New: *Room-scale walking: your body stays under you (smooth)*
+  (`[openxr] roomscale_body`, off) draws the body under your neck while the hero catches up - the drawing only. Test: room_walk_test.
+- **Quest and level-up notices on a card in the room** (they were never seen in the headset: the interface's toolbar cut hid them). UI: F4
+  body: *Quest and level-up notices on a card in the room (F4)* (`[hud] notice_card`, off) and *Notice card: seconds shown*. The game's own
+  picture of the notice, 1 m ahead of where you looked, then a fade; the game's panel stays the game's. Idea: bearstonem/d2r-pcvr (MIT).
+  Test: notice_card_test.
+- **A staff held upright aims along the arm** (the author: "if the staff is tilted that way, the attack goes there"). Settings >
+  Auto-target: *A staff held upright aims along the arm* (`[hands] staff_upright_arm`, off). Near vertical the drawn arm aims (shoulder through
+  the palm), blending into the staff's own axis as it tilts. Aim only. After bearstonem/d2r-pcvr (MIT). Test: staff_upright_test.
+- **Fixed: the game died with a GPU hang under Virtual Desktop** (DXGI_ERROR_DEVICE_HUNG, 9 times since 0.172). A headset picture remade
+  mid-session was destroyed inside the game's present, and Virtual Desktop's runtime waits there for the game's queue to drain - which it
+  never does from inside the present. Now such a picture is destroyed only once the queue has drained.
+- **Tests for the next versions, all off:** `[weight] stab_in` (a thrusting weapon sticks into a monster's body - still being tuned,
+  with its sliders and `[debug] stab_debug`), `[weight] monster_ragdoll` (humanoid monsters give way by their weight - only the capsules move
+  yet, `[debug] monster_ragdoll_view`), `[debug] melee_touch_no_attack` (a touch presses no attack - to try the two above), `[debug]
+  pose_share` (other VR players' heads and controllers as markers in TCP/IP games, through D2RLoader's own plugin network).
+- **This version's settings** (the author's, as every release): thrusts may come from running with the weapon (`melee_thrust_with_run`)
+  and never from a movement point-to-handle (`melee_not_backward`); a thrust counts from 0.7 m/s and 60 % along the blade; the throw by
+  gesture is on; the game's sounds turn with your head (`[audio] listener_turn`).
+
 ## 0.175
 
 - **Thrust debug: the thrust's numbers in the headset** (the author: "the forward strikes need a debug of their own so I can tune them"). Settings > Strikes > Thrusts: *Thrust debug: the

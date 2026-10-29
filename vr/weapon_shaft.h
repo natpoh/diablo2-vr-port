@@ -71,4 +71,29 @@ inline Line Relative(const float bone[16], const float body[16], double upm, int
     return out;
 }
 
+// [gameplay] melee_head_volume for the weight model ([weight] dual_collide): the head's own volume (vr/metal_head.h Volume: two ends and a radius in the weapon
+// model's units, its own x y z - the attach bone's axes) where the drawn `bone` puts it, in the frame of `body`: metres, the same frame Relative's line is in.
+// The radius by the bone's Y row (the model's unit as drawn). False: a matrix that cannot be inverted, an axis with no length.
+struct Head {
+    double a[3] = {0, 0, 0}, b[3] = {0, 0, 0};
+    double radius = 0.0;
+};
+inline bool HeadIn(const float bone[16], const float body[16], double upm, const float va[3], const float vb[3], float vr, Head* out) {
+    if (!(upm > 1e-6) || !(vr > 0.0f) || !out) return false;
+    double inv[16];
+    if (!detail::InvAffine(body, inv)) return false;
+    double rel[16] = {};
+    for (int row = 0; row < 4; ++row)
+        for (int k = 0; k < 4; ++k)
+            for (int col = 0; col < 4; ++col) rel[row * 4 + col] += (double)bone[row * 4 + k] * inv[k * 4 + col];
+    const double unit = std::sqrt(rel[4] * rel[4] + rel[5] * rel[5] + rel[6] * rel[6]) / upm;   // metres per model unit, as drawn
+    if (!(unit > 1e-6) || !std::isfinite(unit)) return false;
+    for (int i = 0; i < 3; ++i) {   // p * rel: the model's point carried by the bone, in the body's units, then metres
+        out->a[i] = (va[0] * rel[i] + va[1] * rel[4 + i] + va[2] * rel[8 + i] + rel[12 + i]) / upm;
+        out->b[i] = (vb[0] * rel[i] + vb[1] * rel[4 + i] + vb[2] * rel[8 + i] + rel[12 + i]) / upm;
+    }
+    out->radius = vr * unit;
+    return std::isfinite(out->a[0] + out->a[1] + out->a[2] + out->b[0] + out->b[1] + out->b[2] + out->radius);
+}
+
 }  // namespace weaponshaft

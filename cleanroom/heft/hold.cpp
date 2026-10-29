@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 
 namespace heft::hold {
 
@@ -163,6 +164,41 @@ V3 Hold::FistOffset(int hand, const Settings& s) const { return hand == 1 ? V3 {
 
 Pose Hold::BodyPose() const { return GripPose(st_, body_); }
 Pose Hold::OnWeapon(int hand) const { return HandPose(st_, body_, grips_[hand & 1]); }
+int Hold::RoomPieces(contact::Capsule* out, int cap) const {
+	if (!placed_ || !out) return 0;
+	int n = 0;
+	for (int i = 0; i < nPieces_ && n < cap; ++i) {
+		contact::Capsule& c = out[n++];
+		c = contact::Capsule{};
+		c.a = PointAt(st_, body_, pieces_[i].a);
+		c.b = PointAt(st_, body_, pieces_[i].b);
+		c.radius = std::max(0.01, HeadKnown(i) ? std::min(pieces_[i].radius, pieces_[0].radius) : pieces_[i].radius);   // (the head's own volume stands for the kind's head)
+	}
+	for (int i = 0; i < nHead_ && n < cap; ++i) {   // the head's own volume
+		contact::Capsule& c = out[n++];
+		c = contact::Capsule{};
+		c.a = PointAt(st_, body_, head_[i].butt);
+		c.b = PointAt(st_, body_, head_[i].tip);
+		c.radius = head_[i].radius;
+	}
+	return n;
+}
+
+void Hold::SetHeads(const V3* a, const V3* b, const double* radius, int n, uint32_t only) {
+	nHead_ = 0;
+	if (!placed_ || !a || !b || !radius) return;
+	for (int i = 0; i < n && i < kHeadParts; ++i) {
+		const V3 p = a[i], q = b[i];
+		const double r = radius[i];
+		if (!std::isfinite(p.x + p.y + p.z + q.x + q.y + q.z + r) || !(r > 0.0) || Len(p) > 3.0 || Len(q) > 3.0) {
+			nHead_ = 0;   // (one part not a measurement: none of it)
+			return;
+		}
+		head_[nHead_++] = { p, q, std::max(0.005, r), only };
+	}
+	headOnly_ = only;
+}
+
 void Hold::Ends(V3* butt, V3* tip) const {
 	if (butt) *butt = PointAt(st_, body_, Add(line_.at, Mul(line_.dir, shape_.butt)));
 	if (tip) *tip = PointAt(st_, body_, Add(line_.at, Mul(line_.dir, shape_.tip)));
@@ -197,7 +233,16 @@ void Hold::Place(int hand, Kind kind, bool twoHanded, const Line& line, const Ha
 	hand   = hand & 1;
 	twoHanded_ = twoHanded;
 	kind_  = kind;
+	stuck_    = false;   // (a new weapon is in no body)
+	stuckId_  = 0;
+	nCleft_   = 0;       // ([weight] cleave: a new weapon has cut through nothing)
+	nMetWas_  = 0;
+	strokeCleaves_ = 0;
+	strokeLeft_ = 0;
+	tearFor_  = 0;
+	stabBlob_ = {};
 	shape_ = ShapeOf(kind, twoHanded);
+	nHead_ = 0;   // (a new weapon: its head, if it has one, is told again)
 	line_  = line;
 	const double l = Len(line_.dir);
 	line_.dir = l > 1e-6 ? Mul(line_.dir, 1.0 / l) : V3 { 0, 1, 0 };
@@ -445,9 +490,122 @@ void Hold::Fall(double dt, const Settings& s) {
 	if (turn >= angle) free_ = Free::Lying;
 }
 
+// [weight] stab_in: the strike of the POINT - a body the weapon's point is in (the deepest), where the stab line (base -> tip) crosses into it, and its outward normal there.
+// A real thrust moves the point some centimetres a step, so it is found already in: the contact's own closest points then lie back on the shaft (past the body's axis)
+// and its normal turns across - "not the point", "not straight in" for a straight thrust (the headset, 2026-10-22). False: the point is in no body.
+bool Hold::CanCleave(const Settings& s) const {
+	if (!s.cleave || !s.bodies || !(s.cleaveImpulse > 0) || stabbing_ || stuck_ || !Held()) return false;
+	// only a blade cuts through: a staff, a maul, a mace or a club stops on the body, however heavy or two-handed (the author, 2026-10-25: "a blunt weapon must
+	// not go through - staves, mauls")
+	return kind_ == Kind::Dagger || kind_ == Kind::Sword || kind_ == Kind::Axe || kind_ == Kind::Polearm;
+}
+
+bool Hold::Cleft_(uint32_t id) const {
+	for (int i = 0; i < nCleft_; ++i)
+		if (cleft_[i].id == id) return true;
+	return false;
+}
+
+void Hold::ForgetCleft(double dt) {
+	int k = 0;
+	for (int i = 0; i < nCleft_; ++i) {
+		bool on = false;   // a piece of the steel still within that monster's body (its radius and the piece's, and 2 cm)
+		for (int b = 0; b < nBodies_ && !on; ++b) {
+			const contact::Capsule& c = bodies_[b];
+			if (c.id != cleft_[i].id || c.held) continue;
+			for (int p = 0; p < nPieces_ && !on; ++p) {
+				const V3 a = PointAt(st_, body_, pieces_[p].a), e = PointAt(st_, body_, pieces_[p].b);
+				double u = 0, v = 0;
+				contact::ClosestOnSegments(a, e, c.a, c.b, &u, &v);
+				const V3 pa = Add(a, Mul(Sub(e, a), u)), pc = Add(c.a, Mul(Sub(c.b, c.a), v));
+				on = Len(Sub(pa, pc)) <= c.radius + std::max(0.01, pieces_[p].radius) + 0.02;
+			}
+		}
+		cleft_[i].off = on ? 0.0 : cleft_[i].off + std::max(0.0, dt);
+		if (cleft_[i].off < kCleaveForgetS) cleft_[k++] = cleft_[i];
+	}
+	nCleft_ = k;
+	if (!nCleft_) { strokeCleaves_ = 0; strokeLeft_ = 0; }
+}
+
+static bool PointStrike(V3 base, V3 tip, const contact::Capsule* caps, int n, uint64_t skip, int* body, V3* point, V3* normal) {
+	double best = 0;
+	*body = -1;
+	for (int i = 0; i < n; ++i) {
+		if (i < 64 && (skip >> i & 1u)) continue;
+		const contact::Capsule& c = caps[i];
+		const auto axisDist = [&](V3 p, V3* on) {
+			double s, t;
+			contact::ClosestOnSegments(p, p, c.a, c.b, &s, &t);
+			*on = Add(c.a, Mul(Sub(c.b, c.a), t));
+			return Len(Sub(p, *on));
+		};
+		V3 on;
+		const double in = c.radius - axisDist(tip, &on);
+		if (in <= best) continue;
+		const V3 u = Sub(tip, base);
+		const double len = Len(u);
+		if (len < 1e-6) continue;
+		const V3 dir = Mul(u, 1.0 / len);
+		double lo = 0, hi = len;   // back from the tip along the line: lo inside, hi outside (or the base)
+		for (int k = 0; k < 40; ++k) {
+			const double mid = 0.5 * (lo + hi);
+			if (axisDist(Sub(tip, Mul(dir, mid)), &on) < c.radius) lo = mid;
+			else hi = mid;
+		}
+		const V3 entry = Sub(tip, Mul(dir, hi));
+		V3 onEntry;
+		axisDist(entry, &onEntry);
+		const V3 out = Sub(entry, onEntry);
+		const double lo2 = Len(out);
+		if (lo2 < 1e-9) continue;
+		best = in;
+		*body = i;
+		*point = entry;
+		*normal = Mul(out, 1.0 / lo2);
+	}
+	return *body >= 0 && !caps[*body].held;   // ([weight] monster_shields: the point deepest in a shield or a weapon the monster holds goes into nothing)
+}
+
+// [weight] stab_in: one step of the library's stab (stab.h Engine); its report is the step's, and while it says the weapon is in a wound, that monster is the wound's.
+void Hold::StabStep(const stab::Engine& e, V3 tipL, V3 baseL, const contact::Capsule* bodies, int n, const stab::Strike* strike, const V3* gaps, int nGaps, double dt,
+                    const Settings& s) {
+	stab::Report rep;
+	const int r = e.Step(st_, body_, tipL, baseL, bodies, n, strike, gaps, nGaps, std::max(0.0, std::min(dt, 0.1)), s.stabParams, &stabBlob_, &rep);
+	if (r < 0) {   // refused: nothing changed
+		if (stuck_) Unstick("the stab library refused a step");
+		return;
+	}
+	stabRep_ = rep;
+	stuck_   = r == 1;
+	if (!stuck_) tearFor_ = 0;
+	stuckId_ = stuck_ ? rep.id : 0;
+	if (stuck_) lastIn_ = rep;
+	else stabBlob_ = {};
+}
+
+// [weight] stab_in: out of the wound for a reason of the mod's (the weapon left the hands, the tick went off...).
+void Hold::Unstick(const char* why) {
+	stabRep_         = {};
+	stabRep_.left    = true;
+	stabRep_.id      = stuckId_;
+	stabRep_.depth   = lastIn_.depth;
+	stabRep_.deepest = lastIn_.deepest;
+	stabRep_.entry   = lastIn_.entry;
+	stabRep_.axis    = lastIn_.axis;
+	stabRep_.limit   = lastIn_.limit;
+	std::snprintf(stabRep_.why, sizeof stabRep_.why, "%s", why);
+	stuck_    = false;
+	stuckId_  = 0;
+	tearFor_  = 0;
+	stabBlob_ = {};
+}
+
 void Hold::Step(const HandIn in[2], double dt, const Settings& s, HandOut out[2]) {
 	for (int h = 0; h < 2; ++h) out[h] = { false, 0, in[h].pose, grabs_[h] };
+	wedged_ = contact_.nMet >= 2;   // (the step before was caught between several monsters: Settings::wedgeFriction)
 	contact_ = {};   // (the held step below fills it when the weapon meets a body)
+	stabRep_ = {};   // (... and the stab its report)
 	if (!placed_) return;
 	// The steel's mass multiplier moved (the Weight slider, the hero's strength): the body is built again with it, about the same centre of mass and the same motion.
 	if (free_ == Free::Held && std::fabs(s.weight - builtWeight_) > 1e-6) Build(s);
@@ -556,6 +714,10 @@ void Hold::Step(const HandIn in[2], double dt, const Settings& s, HandOut out[2]
 	// controller's fist along the axis; the first hand's stays. Off an end of the shaft, or pulled away from its axis, it lets go. The weapon's turn
 	// then follows the line between the hands, and the lever the muscles work with (the grips' places) is the current one.
 	bool sliding = false;   // the second hand is sliding: the pull-apart rule below leaves the first hand alone (the slide has its own ends)
+	// [weight] monster_bodies: a weapon a body holds back (on it now or kBodySnapHoldS ago, or in a wound) is not let go for being pulled off its axis or off an end - the
+	// body stopped the steel while the arms went on, the hand did not leave it (a player, 0.179: slashing left to right "the other hand even lets go of the weapon
+	// entirely"; cleave_test: a two-handed sword at 7 m/s, the second controller 23 cm off the axis). An open grip still lets go.
+	const bool bodyHolds = s.bodies && (stuck_ || sinceBody_ < kBodySnapHoldS);
 	if (s.slide && free_ == Free::Held && holds_[0] && holds_[1] && shape_.tip - shape_.butt >= slide::kMinShaft) {
 		const int h = main_ ^ 1;
 		if (in[h].tracked && pressed_[h] && !sticky_[h] && on_[h] >= 1.0) {
@@ -577,20 +739,20 @@ void Hold::Step(const HandIn in[2], double dt, const Settings& s, HandOut out[2]
 				// the grip library's modes: tight - the point stays where it is; loose - it goes where the library has it (the lag, the ends). Pulled away from the axis it lets go
 				// in both, off an end in the loose one.
 				const bool away = si.perp > si.letGo || (lo[h].mode == 2 && (si.raw < si.butt - si.margin || si.raw > si.tip + si.margin));
-				if (away) {
+				if (away && !bodyHolds) {
 					holds_[h]  = false;
 					sticky_[h] = false;
 					changed    = true;
-				} else if (lo[h].mode == 2) {
+				} else if (lo[h].mode == 2 && !away) {
 					grips_[h].at = Sub(Add(line_.at, Mul(line_.dir, lo[h].t)), Rotate(grips_[h].rot, off));
 				}
 			} else {
 				const slide::Out so = slide::Step(si);
-				if (so.release) {
+				if (so.release && !bodyHolds) {
 					holds_[h]  = false;
 					sticky_[h] = false;
 					changed    = true;
-				} else {
+				} else if (!so.release) {
 					grips_[h].at = Sub(Add(line_.at, Mul(line_.dir, so.t)), Rotate(grips_[h].rot, off));
 				}
 			}
@@ -654,24 +816,30 @@ void Hold::Step(const HandIn in[2], double dt, const Settings& s, HandOut out[2]
 			if (!holds_[h]) continue;
 			g[k]        = grips_[h];
 			g[k].on     = true;
-			g[k].muscle = MuscleFor(f, body_.mass / n, MomentAbout(body_, grips_[h].at) / n, std::max(0.05, s.strength), s.damping);
+			g[k].muscle = MuscleFor(f, body_.mass / n, MomentAbout(body_, grips_[h].at) / n, std::max(0.05, s.strength * (n == 2 && s.twoHandsDouble ? 2.0 : 1.0)), s.damping);
 			to[k]       = now[h];
 			from[k]     = haveLast_ ? last_[h] : to[k];
 			++k;
 		}
 		State before = st_;   // (the weapon before the step: the bodies' friction holds back its slide in it)
-		bool  stepped = false;
+		bool  stepped = false, putBack = false;
 		// a jump of the main controller (a recenter, tracking back): the weapon put back in its hand
 		if (haveLast_ && Len(Sub(in[main_].pose.pos, last_[main_].pose.pos)) > 0.5) {
 			heft::Place(st_, body_, grips_[main_], in[main_].pose);
+			putBack = true;
 		} else if (dt > 0 && k > 0) {
 			stepped = true;
 			const Engine* engine = s.model == 1 ? g_engine : nullptr;   // a weight-physics library moves the body, when one is loaded
+			// [weight] stab_in: a weapon in a wound is not snapped back into a far hand - the wound holds it, and the stab's own rules let it go (the controller goes on
+			// into the monster; the snap threw the weapon out of the wound: "pulled off the line", the headset 2026-10-22)
+			Settings held = s;
+			if (stuck_) held.snap = std::max(s.snap, kStuckSnap);
+			else if (s.bodies && sinceBody_ < kBodySnapHoldS) held.snap = std::max(s.snap, kBodySnap);   // (on a body: not snapped back through it)
 			if (engine) {
-				engine->Step(st_, body_, pieces_, nPieces_, twoHanded_, g, from, to, k, std::min(dt, 0.1), s);
+				engine->Step(st_, body_, pieces_, nPieces_, twoHanded_, g, from, to, k, std::min(dt, 0.1), held);
 			} else {
 				World w;
-				w.snapDistance = s.snap;
+				w.snapDistance = held.snap;
 				w.gravity.y    = -9.81 * s.gravity;
 				heft::Step(st_, body_, g, from, to, k, std::min(dt, 0.1), w);
 			}
@@ -679,20 +847,141 @@ void Hold::Step(const HandIn in[2], double dt, const Settings& s, HandOut out[2]
 		// [weight] monster_bodies: the weapon meets the bodies near it - put back on their surface, its motion into them taken away (contact.h). After the step, whichever
 		// model moved it: the library is told nothing of the bodies.
 		if (s.bodies && nBodies_ > 0 && Held() && stepped) {
-			contact::Blade blades[3];
+			contact::Blade blades[6 + kHeadParts];
 			int nb = 0;
-			for (int i = 0; i < nPieces_ && nb < 3; ++i) blades[nb++] = { pieces_[i].a, pieces_[i].b, std::max(0.01, pieces_[i].radius) };
+			for (int i = 0; i < nPieces_ && i < 3; ++i) {
+				blades[nb++] = { pieces_[i].a, pieces_[i].b, std::max(0.01, pieces_[i].radius) };
+				if (HeadKnown(i)) {   // the kind's head piece: as it was against the monsters, as thin as the shaft against the other weapon (its head's own volume is the steel)
+					blades[nb - 1].except = headOnly_;
+					blades[nb++] = { pieces_[i].a, pieces_[i].b, std::max(0.01, std::min(pieces_[i].radius, pieces_[0].radius)), headOnly_ };
+				}
+			}
+			for (int i = 0; i < nHead_; ++i) blades[nb++] = head_[i];   // (the head's own volume: the bodies of its id only - SetHeads)
 			uint64_t skip = 0;   // a body a holding hand's controller is inside of: nothing to push against
 			for (int i = 0; i < nBodies_; ++i)
 				for (int h = 0; h < 2; ++h)
 					if (holds_[h] && contact::Inside(bodies_[i], in[h].pose.pos)) skip |= 1ull << i;
 			contact::Params cp;
 			cp.friction = s.bodyFriction >= 0 ? s.bodyFriction : BodyFriction(kind_);
+			if (wedged_ && std::isfinite(s.wedgeFriction) && s.wedgeFriction >= 0) cp.friction *= s.wedgeFriction;   // (caught between several: the wedge's own)
+			// [weight] stab_in (stab.h): the library's stab - a weapon in a wound is held on it first, and the contact leaves that monster's bodies to it
+			const stab::Engine* stabber = stab::GetEngine();
+			const V3 tipL = Add(line_.at, Mul(line_.dir, shape_.tip));
+			const V3 baseL = nPieces_ > 0 ? pieces_[nPieces_ - 1].a : Add(line_.at, Mul(line_.dir, shape_.butt));   // (the point's piece: the part that goes in)
+			if (stuck_ && (!s.stab || !stabber)) {
+				Unstick(!s.stab ? "stab_in turned off" : "the stab library went away");
+			} else if (stuck_) {
+				// the tear (the mod's own, not the toolkit's: never stuck for good) - a holding hand's controller far across the stab line for a moment. Across what: the
+				// tear's distance plus kTearPerAlong of the hand's distance along the line from the entry - a long weapon held far back, or a hand driven on into the monster a little
+				// off the line, is far across without pulling (the headset, 2026-10-22: "torn free" within 46 ms of going in).
+				double across = 0, over = 0;
+				const V3 a = lastIn_.axis, e = lastIn_.entry;
+				if (Len(a) > 0.5)
+					for (int h = 0; h < 2; ++h) {
+						if (!holds_[h]) continue;
+						const V3 rel = Sub(in[h].pose.pos, e);
+						const double along = Dot(rel, a), acr = Len(Sub(rel, Mul(a, along)));
+						across = std::max(across, acr);
+						over = std::max(over, acr / std::max(1e-3, s.stabParams.breakM + kTearPerAlong * std::fabs(along)));
+					}
+				tearFor_ = over > 1.0 ? tearFor_ + std::max(0.0, dt) : 0.0;
+				if (tearFor_ > kTearHold) {
+					Unstick("torn free (the hand pulled away)");
+				} else {
+					StabStep(*stabber, tipL, baseL, bodies_, nBodies_, nullptr, nullptr, 0, dt, s);
+					stabRep_.pull = across;
+				}
+			}
+			if (stuck_)
+				for (int i = 0; i < nBodies_ && i < 64; ++i)
+					if (bodies_[i].id == stuckId_) skip |= 1ull << i;
+			// [weight] cleave: the bodies the stroke went through are left alone (not what those monsters hold)
+			ForgetCleft(dt);
+			for (int i = 0; i < nBodies_ && i < 64; ++i)
+				if (!bodies_[i].held && Cleft_(bodies_[i].id)) skip |= 1ull << i;
+			const State unmet = st_;   // (the weapon before the contact: a stab undoes the contact's push and stop - it goes on at the speed it came in with)
 			contact::Resolve(st_, &before, body_, blades, nb, bodies_, nBodies_, cp, skip, &contact_);
+			if (CanCleave(s)) {
+				// a new touch of a monster's body hard enough: cut through. The contact again without it, from the weapon as it was before it stopped there; its
+				// arrival kept in the report (it is that monster's strike), the motion slowed by what it took.
+				uint32_t through[contact::Report::kMet];
+				int nThrough = 0;
+				double keep = 1.0;
+				for (int i = 0; i < contact_.nMet; ++i) {
+					const contact::Report::Met& m = contact_.met[i];
+					bool was = false;
+					for (int j = 0; j < nMetWas_; ++j) was = was || metWas_[j] == m.id;
+					if (!m.onBody || m.onHeld || was || Cleft_(m.id) || m.impulse < s.cleaveImpulse || m.approach < s.cleaveMinSpeed) continue;   // ("and swords only fast")
+					const double cost = std::max(0.0, s.cleaveCost);
+					if (strokeCleaves_ == 0) strokeLeft_ = m.impulse;   // (the stroke's force: its first body's arrival)
+					if (strokeLeft_ < cost) continue;                   // spent: this one stops it
+					strokeLeft_ -= cost;
+					through[nThrough++] = m.id;
+					const double k = std::clamp(1.0 - cost / m.impulse, 0.0, 1.0);
+					keep *= k;
+					++cleaves_;
+					++strokeCleaves_;
+					lastCleave_ = { m.id, m.impulse, s.cleaveImpulse, k, m.approach, strokeCleaves_, strokeLeft_ };
+					if (nCleft_ < kCleft) cleft_[nCleft_++] = { m.id, 0.0 };
+				}
+				if (nThrough > 0) {
+					const contact::Report first = contact_;
+					for (int i = 0; i < nBodies_ && i < 64; ++i)
+						if (!bodies_[i].held && Cleft_(bodies_[i].id)) skip |= 1ull << i;
+					st_ = unmet;
+					st_.vel    = Mul(st_.vel, keep);
+					st_.angVel = Mul(st_.angVel, keep);
+					contact::Resolve(st_, &before, body_, blades, nb, bodies_, nBodies_, cp, skip, &contact_);
+					if (contact_.bodies == 0) {   // (nothing else met: the report is the first one's, of the bodies gone through alone)
+						contact_ = first;
+						contact_.nMet = 0;
+					}
+					for (int t = 0; t < nThrough; ++t)   // (the bodies gone through: their arrival is still theirs to be judged by)
+						for (int i = 0; i < first.nMet; ++i) {
+							if (first.met[i].id != through[t]) continue;
+							if (contact_.nMet == 0) {
+								contact_.id   = first.met[i].id;
+								contact_.body = first.met[i].body;
+							}
+							if (contact_.nMet < contact::Report::kMet) contact_.met[contact_.nMet++] = first.met[i];
+							else contact_.met[contact::Report::kMet - 1] = first.met[i];
+						}
+				}
+			}
+			nMetWas_ = 0;
+			for (int i = 0; i < contact_.nMet; ++i) metWas_[nMetWas_++] = contact_.met[i].id;
+			sinceBody_ = contact_.bodies > 0 || stuck_ ? 0.0 : sinceBody_ + std::max(0.0, dt);
+			if (s.stab && stabber && !stuck_ && !stabRep_.left) {   // a strike: does it go in? The point's own when the point is in a body, else the contact's
+				stab::Strike strike;
+				strike.thrusting = stabbing_;
+				strike.before    = unmet;
+				if (PointStrike(PointAt(unmet, body_, baseL), PointAt(unmet, body_, tipL), bodies_, nBodies_, skip, &strike.body, &strike.point, &strike.normal)) {
+					StabStep(*stabber, tipL, baseL, bodies_, nBodies_, &strike, nullptr, 0, dt, s);
+				} else if (strike.body < 0 && contact_.bodies > 0 && contact_.body >= 0 && contact_.body < nBodies_ && !bodies_[contact_.body].held) {   // (the point in a shield: no stab at all)
+					strike.body   = contact_.body;
+					strike.point  = contact_.point;
+					strike.normal = contact_.normal;
+					StabStep(*stabber, tipL, baseL, bodies_, nBodies_, &strike, nullptr, 0, dt, s);
+				}
+			}
 		} else {
 			contact_ = {};
+			nMetWas_ = 0;
+			if (nCleft_) ForgetCleft(dt);
+			sinceBody_ += std::max(0.0, dt);
+			if (stuck_) {
+				const stab::Engine* stabber = stab::GetEngine();
+				if (!Held() || putBack || !s.stab || !stabber) {   // out of the hands, put back in the fist, the tick off: no wound
+					Unstick(!Held() ? "the weapon left the hands" : putBack ? "the weapon was put back in the hand (the controller jumped)" : !s.stab ? "stab_in turned off" : "the stab library went away");
+				} else {   // a step without bodies or without a step of the weapon: the library counts the body missing (it waits for it a little)
+					const V3 tipL = Add(line_.at, Mul(line_.dir, shape_.tip));
+					const V3 baseL = nPieces_ > 0 ? pieces_[nPieces_ - 1].a : Add(line_.at, Mul(line_.dir, shape_.butt));
+					StabStep(*stabber, tipL, baseL, nullptr, 0, nullptr, nullptr, 0, dt, s);
+				}
+			}
 		}
 	}
+	if (stuck_ && !Held()) Unstick("the weapon left the hands");   // [weight] stab_in: let go, thrown, called back - in no body
 	// A weapon that has landed and lain long enough goes to the hero's back (the mod draws it there).
 	// (not a thrown one - it only has to end - nor one whose release may still turn out to be a throw)
 	if (free_ == Free::Lying) {

@@ -55,6 +55,10 @@ struct Rule {
     std::array<float, strikedir::kKinds> kindSpeed{};        // melee_thrust_min_speed_<kind>: 0 (or under 0.3) = the general one
     std::array<float, strikedir::kKinds> kindCm{};           // melee_thrust_cm_<kind>: 0 (or under 1) = the general one
     std::array<float, strikedir::kKinds> kindAccel{};        // melee_thrust_min_accel_<kind>: 0 = the general one
+    // [gameplay] melee_thrust_with_run: the thrust is measured in the WORLD, not the room - the hero running (or walking) with the weapon held forward is the
+    // thrust's movement and acceleration too, a charge (the author, 2026-10-22: "if I run with the spear that must count as acceleration and movement").
+    // Off: the room, as ever (the hero's walking adds nothing). The swing is always the room's.
+    bool withRun = false;
 };
 
 inline Rule Clamp(Rule r) {
@@ -122,8 +126,9 @@ inline size_t FindClassField(const ClassProbe* probes, size_t n, uint32_t* out, 
 // without the class neither is taken.
 inline bool KindThrusts(int kind) { return kind == strikedir::kSpear || kind == strikedir::kDagger || kind == strikedir::kJavelin; }
 // The tick a kind starts with (D2R VR Authentic Settings, the shipped ini): the kinds the game's data thrusts with - spears (2ht), daggers, javelins and throwing weapons (1ht: the
-// throwing knives; ticked, a throwing axe of the same kind pokes too).
-inline bool DefaultTick(int kind) { return KindThrusts(kind) || kind == strikedir::kThrowing; }
+// throwing knives; ticked, a throwing axe of the same kind pokes too) - and swords (the author, 2026-10-24: "a sword must thrust - it is a sword"; the game swings them, but a
+// sword's point pokes, and a run in with it held forward is a thrust).
+inline bool DefaultTick(int kind) { return KindThrusts(kind) || kind == strikedir::kThrowing || kind == strikedir::kSword; }
 
 // Does a thrust count for this weapon? itemClass: 1 = its class in the game's data is a thrust class, 0 = another class, -1 = not read.
 inline bool Applies(const Rule& r, int kind, int itemClass) {
@@ -169,24 +174,61 @@ inline stroke::Params ParamsFor(Numbers n, stroke::Params base = stroke::Params{
     return base;
 }
 
+// ---- the whole weapon, not its tip ----
+// A thrust is the WHOLE weapon going along its own axis without turning much (the author, 2026-10-22: "measure not the tip but the angle of the whole weapon and its
+// deviation"). The tip was measured before, and on a spear it sits 2 m out from the hand: the small turn every real poke has swept it sideways more than forward
+// (his eleven pokes read 51 - 76 % straight, so a 70 % threshold refused them) and kept its speed over the rest threshold, so a jab hardly ever ended. Now the
+// thrust engine and Path follow the GRIP - the hand's place on the weapon's axis - which a turn of the hand barely moves, and a separate number says how far the
+// weapon's axis turned during the stroke: a poke turns little, a swing a lot.
+inline constexpr float kGripAheadM = 0.5f;    // the thrust engine's lever: its "tip" is this far ahead of the grip (or the real tip, when nearer)
+inline constexpr float kMaxTurnDeg = 35.0f;   // a weapon whose axis turned more than this within kTurnWindowS is swinging, not thrusting
+// The turn is measured over the last quarter second: a poke is shorter, so this is its whole turn; a run with the weapon ([gameplay] melee_thrust_with_run) is
+// one long stroke, and the hero steering toward a monster over seconds must not add up to a "turned" refusal at the touch.
+inline constexpr double kTurnWindowS = 0.25;
+
+// Where the hand holds the weapon: the hand projected onto the blade's axis, as the part of the blade from its base (0 the base, 1 the tip). -1: no reading.
+inline float GripAt(const stroke::Blade& b, stroke::Vec hand) {
+    const stroke::Vec span = b.tip - b.base;
+    const float len = stroke::Length(span);
+    if (!stroke::Finite(b.base) || !stroke::Finite(b.tip) || !stroke::Finite(hand) || len < 0.05f) return -1.0f;
+    return std::clamp(stroke::Dot(hand - b.base, span * (1.0f / len)) / len, 0.0f, 1.0f);
+}
+// The blade the thrust engine steps on: from the grip (`at` of the blade, GripAt) to kGripAheadM toward the tip. The same `at` serves the blade in another frame
+// (the world's, [gameplay] melee_thrust_with_run): a rigid blade has its grip at the same part of its length in every frame. at < 0 keeps the blade as drawn.
+inline stroke::Blade GripBladeAt(const stroke::Blade& b, float at) {
+    const stroke::Vec span = b.tip - b.base;
+    const float len = stroke::Length(span);
+    if (at < 0.0f || !stroke::Finite(b.base) || !stroke::Finite(b.tip) || len < 0.05f) return b;
+    const stroke::Vec axis = span * (1.0f / len);
+    const float from = std::clamp(at, 0.0f, 1.0f) * len;
+    stroke::Blade out = b;
+    out.base = b.base + axis * from;
+    out.tip = out.base + axis * std::min(kGripAheadM, len - from);
+    if (len - from < 0.05f) out.tip = b.tip;   // held at the very tip: the blade as drawn
+    return out;
+}
+// The grip blade in the frame the hand is in (the room). A blade with no length, or a hand that does not read, keeps the blade as drawn.
+inline stroke::Blade GripBlade(const stroke::Blade& room, stroke::Vec hand) { return GripBladeAt(room, GripAt(room, hand)); }
+
 // ---- the path of a thrust ----
-// Fed once per pose with the blade's two ends in the room (the frame the engine measures speed in: the hero walking adds nothing) and the THRUST engine's stroke number
-// (0 = none). Like strikedir::StrokeTravel a new stroke starts with the path of its onset window. Along: the tip's steps forward along the blade's axis (base -> tip),
-// summed (a step back adds nothing); Path: the tip's whole path. The share of the two says whether the stroke is a thrust; StepCos is the latest step's own.
-// PeakAccel: the highest forward acceleration of the tip along the blade (its along-the-blade speed's change over kAccelSpanS) in this stroke, counted from kAccelBackS before
-// it began (the burst that drove the point is mostly before the engine calls it a stroke).
+// Fed once per pose with the GRIP (GripBlade's base) and the weapon's tip in the room (the frame the engine measures speed in: the hero walking adds nothing) and the
+// THRUST engine's stroke number (0 = none). Like strikedir::StrokeTravel a new stroke starts with the path of its onset window. Along: the grip's steps forward along
+// the weapon's axis (grip -> tip), summed (a step back adds nothing); Path: the grip's whole path. The share of the two - how much of the weapon's own movement was
+// along its axis - says whether the stroke is a thrust; StepCos is the latest step's own. TurnDeg: how far the weapon's axis turned from where the stroke began (the
+// deviation). PeakAccel: the highest forward acceleration of the grip along the weapon (its along-the-axis speed's change over kAccelSpanS) in this stroke, counted
+// from kAccelBackS before it began (the burst that drove the point is mostly before the engine calls it a stroke).
 class Path {
 public:
     void Reset() { *this = Path{}; }
-    void Feed(double timeS, stroke::Vec base, stroke::Vec tip, uint64_t strokeId, double onsetS = 0.12) {
-        if (!stroke::Finite(base) || !stroke::Finite(tip) || !std::isfinite(timeS)) { Reset(); return; }
+    void Feed(double timeS, stroke::Vec grip, stroke::Vec tip, uint64_t strokeId, double onsetS = 0.12) {
+        if (!stroke::Finite(grip) || !stroke::Finite(tip) || !std::isfinite(timeS)) { Reset(); return; }
         if (n_ && timeS < ring_[(next_ + kRing - 1) % kRing].t) Reset();   // time went back
         float vel = 0.0f, acc = 0.0f;
+        const stroke::Vec axis = stroke::Normalized(tip - grip);
         if (n_) {
             const Point& last = ring_[(next_ + kRing - 1) % kRing];
-            const stroke::Vec step = tip - last.tip;
+            const stroke::Vec step = grip - last.tip;
             const float len = stroke::Length(step);
-            const stroke::Vec axis = stroke::Normalized(tip - base);
             const float along = stroke::Dot(step, axis);
             cumAlong_ += std::max(0.0f, along);
             cumPath_ += len;
@@ -200,7 +242,7 @@ public:
                 break;
             }
         }
-        ring_[next_] = {timeS, tip, cumAlong_, cumPath_, vel, acc};
+        ring_[next_] = {timeS, grip, cumAlong_, cumPath_, vel, acc, axis};
         next_ = (next_ + 1) % kRing;
         n_ = std::min(n_ + 1, kRing);
         if (!strokeId) {   // no stroke: nothing gone, and the totals start again from nothing
@@ -210,6 +252,7 @@ public:
             cumAlong_ = cumPath_ = 0.0f;
             baseAlong_ = basePath_ = 0.0f;
             peakAccel_ = 0.0f;
+            turnDeg_ = 0.0f;
             return;
         }
         if (strokeId != stroke_) {   // a stroke began: the path of its onset window counts
@@ -231,6 +274,15 @@ public:
             }
         }
         peakAccel_ = std::max(peakAccel_, acc);
+        turnDeg_ = 0.0f;   // the most the axis turned against any of its places in the last kTurnWindowS
+        if (stroke::Length(axis) > 0.5f) {
+            for (size_t k = 1; k < n_; ++k) {
+                const Point& p = ring_[(next_ + kRing - 1 - k) % kRing];
+                if (timeS - p.t > kTurnWindowS) break;
+                if (stroke::Length(p.axis) > 0.5f)
+                    turnDeg_ = std::max(turnDeg_, std::acos(std::clamp(stroke::Dot(axis, p.axis), -1.0f, 1.0f)) * 57.2957795f);
+            }
+        }
         along_ = cumAlong_ - baseAlong_;
         path_ = cumPath_ - basePath_;
     }
@@ -242,23 +294,25 @@ public:
     float StepCos() const { return stepCos_; }
     // The highest forward acceleration of the point along the blade in this stroke (with the burst before it began), m/s^2; 0 with no stroke.
     float PeakAccel() const { return stroke_ ? peakAccel_ : 0.0f; }
+    // How far the weapon's axis turned within the last kTurnWindowS, degrees (now); 0 with no stroke.
+    float TurnDeg() const { return stroke_ ? turnDeg_ : 0.0f; }
     uint64_t Stroke() const { return stroke_; }
 
 private:
     static constexpr size_t kRing = 48;   // (0.4 s at 120 Hz: the acceleration looks kAccelBackS back)
-    struct Point { double t = 0.0; stroke::Vec tip; float along = 0.0f, path = 0.0f, vel = 0.0f, acc = 0.0f; };
+    struct Point { double t = 0.0; stroke::Vec tip; float along = 0.0f, path = 0.0f, vel = 0.0f, acc = 0.0f; stroke::Vec axis; };   // tip: the grip
     std::array<Point, kRing> ring_{};
     size_t next_ = 0, n_ = 0;
-    float cumAlong_ = 0.0f, cumPath_ = 0.0f, baseAlong_ = 0.0f, basePath_ = 0.0f, along_ = 0.0f, path_ = 0.0f, stepCos_ = 0.0f, peakAccel_ = 0.0f;
+    float cumAlong_ = 0.0f, cumPath_ = 0.0f, baseAlong_ = 0.0f, basePath_ = 0.0f, along_ = 0.0f, path_ = 0.0f, stepCos_ = 0.0f, peakAccel_ = 0.0f, turnDeg_ = 0.0f;
     uint64_t stroke_ = 0;
 };
 
 // ---- the verdict ----
 
-enum class Why { Counts, NotAlong, Short, Weak };
+enum class Why { Counts, NotAlong, Short, Weak, Turned };
 inline const char* WhyText(Why w) {
     return w == Why::NotAlong ? "not along the blade (a swing, not a thrust)" : w == Why::Short ? "a thrust too short for this weapon"
-         : w == Why::Weak ? "a push, not a jab (too little acceleration)" : "a thrust";
+         : w == Why::Weak ? "a push, not a jab (too little acceleration)" : w == Why::Turned ? "the weapon turned (a swing, not a thrust)" : "a thrust";
 }
 struct Verdict {
     Why why = Why::Counts;
@@ -266,6 +320,7 @@ struct Verdict {
     float stepCos = 0.0f;             // Path::StepCos
     float alongCm = 0.0f, needCm = 0.0f;
     float accel = 0.0f, needAccel = 0.0f;   // Path::PeakAccel and the kind's least (0 = not asked), m/s^2
+    float turnDeg = 0.0f;                   // Path::TurnDeg, against kMaxTurnDeg
 };
 // Is the thrust engine's stroke a thrust, long enough and (when asked) sharp enough, for a weapon of `kind`? (The speed - the engine's own gate and the speed where it touched - and the strike rules
 // are the caller's, as for a swing: StrikeRule.)
@@ -278,12 +333,77 @@ inline Verdict Judge(const Rule& r, int kind, const Path& path) {
     v.needCm = n.cm;
     v.accel = path.PeakAccel();
     v.needAccel = n.minAccel;
+    v.turnDeg = path.TurnDeg();
     const float share = std::clamp(r.alongPct, kAlongFloor, kAlongCeil) * 0.01f;
     if (v.share < share || v.stepCos < kStepCos) v.why = Why::NotAlong;
+    else if (v.turnDeg > kMaxTurnDeg) v.why = Why::Turned;
     else if (v.alongCm < v.needCm) v.why = Why::Short;
     else if (v.needAccel > 0.0f && v.accel < v.needAccel) v.why = Why::Weak;
     return v;
 }
+// [weight] stab_in: is the hand's movement a thrust NOW - the thrust engine's stroke on, mostly along the blade point first, its latest step forward, the weapon not
+// turned (Judge without the distance and the jab's sharpness: the point meets the body when it meets it). What the weight model is told (heft Hold::SetStabbing) for
+// a weapon that thrusts (Applies) - it lets a point-first strike go into the body (cleanroom/heft/stab.h).
+inline bool ThrustingNow(const Rule& r, const Path& path) {
+    if (!r.on || !path.Stroke()) return false;
+    const float share = std::clamp(r.alongPct, kAlongFloor, kAlongCeil) * 0.01f;
+    return path.Share() >= share && path.StepCos() >= kStepCos && path.TurnDeg() <= kMaxTurnDeg;
+}
+// [weight] stab_in for every pointed blade (the author: «любой меч должен втыкаться»): whatever hit by touch counts as a hit, a weapon with a point - a sword (one- or
+// two-handed), a dagger, a spear, a javelin, a throwing weapon, a polearm, a claw or a katar - may stick in when it is driven point first. Maces, scepters, wands, staffs,
+// orbs, axes and bare fists never do.
+inline bool PointedKind(int kind) {
+    return kind == strikedir::kSword || kind == strikedir::kDagger || kind == strikedir::kSpear || kind == strikedir::kJavelin || kind == strikedir::kThrowing ||
+           kind == strikedir::kPolearm || kind == strikedir::kClaw;
+}
+// ... and whether it is moving point first NOW: the stab's own judge, on any pointed blade, apart from hit by touch's thrust (which needs its engine's stroke and only
+// runs for the kinds that thrust). Fed every pose with the grip and a point ahead of it along the weapon (GripBlade, the room); over the last kWindowS: the share of the
+// grip's path that went forward along the weapon's axis (alongPct), its speed along the axis, the latest step forward, and how far the axis turned (kMaxTurnDeg).
+class PointFirst {
+public:
+    static constexpr double kWindowS = 0.15;
+    static constexpr float kMinSpeed = 0.3f;   // m/s along the axis
+    void Reset() { *this = PointFirst{}; }
+    void Feed(double timeS, stroke::Vec grip, stroke::Vec ahead) {
+        if (!stroke::Finite(grip) || !stroke::Finite(ahead) || !std::isfinite(timeS) || (n_ && timeS < ring_[(next_ + kRing - 1) % kRing].t)) { Reset(); return; }
+        ring_[next_] = {timeS, grip, stroke::Normalized(ahead - grip)};
+        next_ = (next_ + 1) % kRing;
+        n_ = std::min(n_ + 1, kRing);
+    }
+    // Is it moving point first now (alongPct: % of the path that must be along the blade - hit by touch's melee_thrust_along_pct)?
+    bool Now(float alongPct, float* speedOut = nullptr) const {
+        if (speedOut) *speedOut = 0.0f;
+        if (n_ < 3) return false;
+        const Point& last = ring_[(next_ + kRing - 1) % kRing];
+        float along = 0.0f, path = 0.0f, turn = 0.0f, stepCos = 0.0f;
+        double from = last.t;
+        bool haveStep = false;
+        for (size_t k = 1; k < n_; ++k) {
+            const Point& b = ring_[(next_ + kRing - k) % kRing];
+            const Point& a = ring_[(next_ + kRing - k - 1) % kRing];
+            if (last.t - a.t > kWindowS) break;
+            const stroke::Vec step = b.grip - a.grip;
+            const float len = stroke::Length(step), al = stroke::Dot(step, b.axis);
+            along += std::max(0.0f, al);
+            path += len;
+            if (!haveStep && len > 0.001f) { stepCos = al / len; haveStep = true; }
+            if (stroke::Length(a.axis) > 0.5f && stroke::Length(last.axis) > 0.5f)
+                turn = std::max(turn, std::acos(std::clamp(stroke::Dot(a.axis, last.axis), -1.0f, 1.0f)) * 57.2957795f);
+            from = a.t;
+        }
+        const double span = last.t - from;
+        if (!(span > 1e-3) || !(path > 1e-4f)) return false;
+        const float speed = static_cast<float>(along / span);
+        if (speedOut) *speedOut = speed;
+        return along / path >= std::clamp(alongPct, kAlongFloor, kAlongCeil) * 0.01f && speed >= kMinSpeed && stepCos >= kStepCos && turn <= kMaxTurnDeg;
+    }
+
+private:
+    static constexpr size_t kRing = 32;
+    struct Point { double t = 0.0; stroke::Vec grip, axis; };
+    std::array<Point, kRing> ring_{};
+    size_t next_ = 0, n_ = 0;
+};
 // The strike rules a thrust's contact is judged by: toward the monster and the head as for a swing; not the swing's amplitude - the thrust's distance stands for it.
 inline strikedir::Rule StrikeRule(strikedir::Rule r) { r.amplitude = false; return r; }
 
@@ -292,7 +412,7 @@ inline strikedir::Rule StrikeRule(strikedir::Rule r) { r.amplitude = false; retu
 inline strikedir::Look LookOf(const Rule& r, const strikedir::Rule& strike, int kind, bool counting, const Path& path, stroke::Vec tip, stroke::Vec way, const stroke::Body* nearest) {
     if (!counting) return strikedir::Look::Cold;
     const Verdict v = Judge(r, kind, path);
-    if (v.why == Why::NotAlong) return strikedir::Look::Cold;
+    if (v.why == Why::NotAlong || v.why == Why::Turned) return strikedir::Look::Cold;
     const strikedir::Look l = strikedir::LookOf(StrikeRule(strike), kind, true, tip, way, nearest, 0.0f);
     return l == strikedir::Look::Hot && (v.why == Why::Short || v.why == Why::Weak) ? strikedir::Look::Small : l;
 }

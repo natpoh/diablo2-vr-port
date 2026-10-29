@@ -45,6 +45,8 @@ struct Arm {
     V3 elbow, wrist, across;
     bool hasPoint = false;
     V3 point;
+    bool hasBox = false;   // [hud] hand_vitals_orb_on_bone: the forearm bone's own mesh box - its middle and its three half sides (the same frame)
+    V3 boxC, boxH[3];
 };
 // The controller's grip pose in the same frame: where the hand is held (`pos`), and - when its orientation is known - the grip's own axes as unit vectors in the world (`x`, `y`, `z`:
 // the columns of its rotation). The fallback when no arm is posed, and what the last drawn wrist is carried on by (Carry).
@@ -121,6 +123,7 @@ struct Place {
     bool hasArm = false;
     V3 armAxis;            // the forearm's axis, elbow -> wrist, unit
     V3 axis, back, thumb;  // the wrist's frame (with hasArm), unit: along the hand toward the knuckles, out of the back of the hand, toward the thumb
+    bool fromBone = false; // placed on the forearm bone's box (OnBone): its frame is the bone's, no turn of the spot's numbers on top
 };
 
 // A vector turned about a unit axis by `deg` degrees (right-hand rule).
@@ -161,6 +164,47 @@ inline V3 FillAxis(int fill, const Place& p) {
 }
 // The numbers of the ball on a wrist (skeleton side: 0 right, 1 left): the right wrist takes the left's when mirrored.
 inline handvitals::OrbSpot SpotFor(const Config& cfg, int side) { return side == 1 || cfg.orbMirror ? cfg.orbLeft : cfg.orbRight; }
+
+// [hud] hand_vitals_orb_on_bone: the ball on the forearm itself, from its bone alone - no hand-set numbers. The bone's own mesh box (Arm::boxC / boxH: the vertices the game's mesh
+// binds to the forearm bone, posed with it) gives the arm's skin: the ball lies on the box's surface out of the back of the wrist (the palm's normal from the knuckles, square to the
+// forearm: the forearm's own twist), its base one radius in from the box's end at the wrist, so it rides the forearm next to the hand wherever the arm is drawn - by the controllers,
+// held on a body, by the game's animation. A medallion's base plate rests on that surface; a full ball touches it. Its frame is the forearm's: along the bone, out of the back of the
+// wrist. `under` (0 - 1) rolls it about the forearm by cfg.orbShield.turnDeg, to the box's surface on that side. `lateralM`: both balls on one wrist side by side. Not ok without a box.
+inline Place OnBone(const Arm& arm, const Config& cfg, int side, float lateralM = 0.0f, float under = 0.0f) {
+    Place p;
+    if (!arm.ok || !arm.hasBox || !Finite(arm.elbow) || !Finite(arm.wrist) || !Finite(arm.across) || !Finite(arm.boxC) || !Finite(arm.boxH[0]) || !Finite(arm.boxH[1]) ||
+        !Finite(arm.boxH[2]))
+        return p;
+    V3 a = hset::Sub(arm.wrist, arm.elbow);
+    const float fl = Len(a);
+    if (!(fl > 1e-4f)) return p;
+    a = hset::Mul(a, 1.0f / fl);
+    V3 x = hset::Sub(arm.across, hset::Mul(a, hset::Dot(arm.across, a)));   // out of the palm, square to the forearm
+    const float l = Len(x);
+    if (!(l > 1e-3f)) return p;
+    V3 back = hset::Mul(x, -1.0f / l);
+    const float u = std::isfinite(under) ? std::clamp(under, 0.0f, 1.0f) : 0.0f;
+    if (u > 0.0f) {   // under a shield: rolled about the forearm (+ toward the thumb on either hand, as Centre rolls it)
+        const float turn = std::clamp(std::isfinite(cfg.orbShield.turnDeg) ? cfg.orbShield.turnDeg : 0.0f, handvitals::kOrbRotMin, handvitals::kOrbRotMax);
+        back = hset::Unit(RotateAbout(back, a, turn * u * (side == 1 ? 1.0f : -1.0f)));
+    }
+    const auto reach = [&](V3 d) {   // how far the box reaches from its middle along d (unit): its support
+        return std::fabs(hset::Dot(arm.boxH[0], d)) + std::fabs(hset::Dot(arm.boxH[1], d)) + std::fabs(hset::Dot(arm.boxH[2], d));
+    };
+    const float r = cfg.orbSizeCm * 0.005f;   // (the base radius, as Step has it)
+    const float lift = cfg.orbShape == handvitals::kShapeMedallion || cfg.style == handvitals::kStyleGlobes ? PlateThickness(r) : r;   // (a medallion's plate on the skin)
+    const V3 lateral = Cross(a, back);   // (toward the thumb on the left hand, toward the little finger on the right one)
+    p.c = hset::Add(hset::Add(arm.boxC, hset::Mul(a, reach(a) - r)), hset::Add(hset::Mul(back, reach(back) + lift), hset::Mul(lateral, lateralM)));
+    p.ok = Finite(p.c);
+    p.hasArm = true;
+    p.armAxis = a;
+    p.axis = a;
+    p.back = back;
+    const V3 thumb = side == 1 ? lateral : hset::Mul(lateral, -1.0f);
+    p.thumb = Len(thumb) > 1e-6f ? hset::Unit(thumb) : V3{1.0f, 0.0f, 0.0f};
+    p.fromBone = true;
+    return p;
+}
 
 // The ball's middle on the back of the hand of `side` (0 right, 1 left). `lateralM` shifts it across the hand on top of the spot's own Y (both balls on one wrist side by side).
 // `under` (0 - 1, handorbs::Eased of State::under): how far the wrist is under a shield - the frame is rolled about the hand's axis by cfg.orbShield.turnDeg * under (+ sends the back of
@@ -243,6 +287,8 @@ inline int ShieldWrist(int strap, bool leftShield) {
 struct WorldArm {
     V3 elbow, wrist, across, point, face;
     bool hand = false;   // the hand's own frame (point, face) was found
+    bool box = false;    // [hud] hand_vitals_orb_on_bone: the forearm bone's mesh box (skel::HeroArm::box)
+    V3 boxC, boxH[3];
 };
 inline Arm ArmFromWorld(const float eye[3], float perM, const WorldArm& m) {
     Arm a;
@@ -257,6 +303,11 @@ inline Arm ArmFromWorld(const float eye[3], float perM, const WorldArm& m) {
         a.point = hset::Unit(m.point);
     }
     a.ok = Finite(a.elbow) && Finite(a.wrist) && Finite(a.across) && Finite(a.point);
+    if (m.box) {
+        a.boxC = hset::Mul(hset::Sub(m.boxC, e), k);
+        for (int i = 0; i < 3; ++i) a.boxH[i] = hset::Mul(m.boxH[i], k);
+        a.hasBox = Finite(a.boxC) && Finite(a.boxH[0]) && Finite(a.boxH[1]) && Finite(a.boxH[2]);
+    }
     return a;
 }
 
@@ -278,8 +329,9 @@ inline bool AxesFromQuat(const float q[4], V3 out[3]) {
 // held to the controller (the skeleton follows it), so the wrist, the hand's axis and the palm's normal keep the same place and direction in the grip's axes: a frame of the
 // grip's orientation and position gives the drawn wrist back, to a few millimetres, from the controller alone - and it turns with the hand, which a point does not.
 struct Carry {
-    bool have = false, hasPoint = false;
+    bool have = false, hasPoint = false, hasBox = false;
     V3 wrist, elbow;       // from the grip's position, in the grip's axes (metres)
+    V3 boxC, boxH[3];      // [hud] hand_vitals_orb_on_bone: the forearm's box, its middle from the grip's position and its half sides, in the grip's axes
     V3 across, point;      // directions in the grip's axes (unit once Make has them)
     double learnedAt = -1.0;
 
@@ -298,6 +350,14 @@ struct Carry {
         wrist = have ? mix(wrist, w) : w;
         elbow = have ? mix(elbow, e) : e;
         across = have ? mix(across, x) : x;
+        if (a.hasBox && Finite(a.boxC) && Finite(a.boxH[0]) && Finite(a.boxH[1]) && Finite(a.boxH[2])) {
+            const V3 c = ToLocal(g, hset::Sub(a.boxC, g.pos));
+            boxC = have && hasBox ? mix(boxC, c) : c;
+            for (int i = 0; i < 3; ++i) boxH[i] = have && hasBox ? mix(boxH[i], ToLocal(g, a.boxH[i])) : ToLocal(g, a.boxH[i]);
+            hasBox = true;
+        } else {
+            hasBox = false;
+        }
         if (pt) point = have && hasPoint ? mix(point, p) : p;
         hasPoint = pt;
         have = true;
@@ -313,6 +373,11 @@ struct Carry {
         if (hasPoint && Len(point) > 1e-3f) {
             a.hasPoint = true;
             a.point = hset::Unit(FromLocal(g, point));
+        }
+        if (hasBox) {
+            a.hasBox = true;
+            a.boxC = hset::Add(g.pos, FromLocal(g, boxC));
+            for (int i = 0; i < 3; ++i) a.boxH[i] = FromLocal(g, boxH[i]);
         }
         a.ok = Finite(a.wrist) && Finite(a.elbow) && Finite(a.across) && Finite(a.point);
         if (a.ok) *out = a;
@@ -482,10 +547,12 @@ inline Set Step(State& st, const In& in) {
         o.radius = baseR * (1.0f + (kind == kLife ? kThrob * glow : 0.0f));
         const float lateral = both ? (kind == kLife ? -1.0f : 1.0f) * (baseR + 0.5f * kGapM) : 0.0f;
         const float under = Eased(st.under[o.side & 1]);
-        Place p = Centre(in.arm[o.side], in.grip[o.side], cfg, o.side, lateral, handvitals::ClassZCm(cfg, in.heroClass), under, handvitals::ClassShieldUpCm(cfg, in.heroClass),
-                         handvitals::ClassShieldAlongCm(cfg, in.heroClass));
+        Place p = cfg.orbOnBone ? OnBone(in.arm[o.side], cfg, o.side, lateral, under) : Place{};   // [hud] hand_vitals_orb_on_bone; no box: the spot's numbers, as before
+        if (!p.ok)
+            p = Centre(in.arm[o.side], in.grip[o.side], cfg, o.side, lateral, handvitals::ClassZCm(cfg, in.heroClass), under, handvitals::ClassShieldUpCm(cfg, in.heroClass),
+                       handvitals::ClassShieldAlongCm(cfg, in.heroClass));
         if (!p.ok) continue;
-        TurnFrame(p, SpotUnder(SpotFor(cfg, o.side), cfg.orbShield, under, handvitals::ClassShieldRotDeg(cfg, in.heroClass)), o.side);   // the medallion's own turn: its back, its along and the fill direction go with it
+        if (!p.fromBone) TurnFrame(p, SpotUnder(SpotFor(cfg, o.side), cfg.orbShield, under, handvitals::ClassShieldRotDeg(cfg, in.heroClass)), o.side);   // the medallion's own turn: its back, its along and the fill direction go with it
         o.c = p.c;
         o.axis = FillAxis(cfg.orbFill, p);                                              // a fixed direction of the wrist's frame (the world's up without one)
         o.back = p.hasArm ? p.back : V3{0.0f, 1.0f, 0.0f};

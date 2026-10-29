@@ -90,6 +90,9 @@ struct Rig {
     video::Env env;
     int view = 4;
     int openGuide = -1;            // the first-start guide asks for the panel on its Guide page (the page to start on)
+    bool gripTaken[2] = {false, false};   // [weight] weapon_grip_no_chord: the grip holds the weapon
+    bool chordOn = true;           // [debug] settings_two_grip_chord (the plugin passes it; off by default - the chord tests below keep it on)
+    bool toggle = false;           // the long press of the right stick click
     FrameOut last;
     FrameOut Step(double dt = 11.0) {
         FrameIn f;
@@ -102,7 +105,10 @@ struct Rig {
         f.view = view;
         f.openGuide = openGuide;
         f.head = head;
-        for (int h = 0; h < 2; ++h) { f.aim[h] = aim[h]; f.present[h] = present[h]; f.pad[h] = pad[h]; }
+        for (int h = 0; h < 2; ++h) { f.aim[h] = aim[h]; f.present[h] = present[h]; f.pad[h] = pad[h]; f.gripTaken[h] = gripTaken[h]; }
+        f.chordOn = chordOn;
+        f.toggle = toggle;
+        toggle = false;   // (a request: one frame)
         f.snapshot = snap;
         last = c.Step(f);
         if (last.action.what == Do::Calibrate) calibrating = true;   // the glue asks the plugin, whose measurement is running from the next frame
@@ -457,6 +463,46 @@ static void TestChord() {
         r.head = Head();
         r.ClickStick(0);
         CHECK(r.c.Open(), "once the head is there the next click opens it (either stick)");
+    }
+    {   // [weight] weapon_grip_no_chord: a two-hander held by both grips (the grips are the weapon's) arms nothing - both stick clicks stay the game's, their bindings work
+        Rig r;
+        r.gripTaken[0] = r.gripTaken[1] = true;
+        r.Grips(true);
+        r.Run(1000);
+        FrameOut o = r.ClickStick(0);
+        CHECK(!o.open && !r.c.Open() && (o.pad[0].buttons & kStick), "the weapon's grips: the left click is the game's");
+        o = r.ClickStick(1);
+        CHECK(!o.open && !r.c.Open() && (o.pad[1].buttons & kStick), "... and the right one");
+        CHECK(o.pad[0].squeeze > 0.5f && o.pad[1].squeeze > 0.5f, "the grips themselves go on to the rest of the mod (the weapon reads them)");
+        r.gripTaken[0] = false;   // one free grip and the weapon's: still no chord (both grips must be free)
+        r.Run(1000);
+        o = r.ClickStick(1);
+        CHECK(!o.open && (o.pad[1].buttons & kStick), "one free grip + the weapon's: the game's");
+        r.gripTaken[1] = false;   // the weapon let go, both grips free: the chord as ever
+        r.Run(400);
+        r.ClickStick(1);
+        CHECK(r.c.Open(), "both free grips: the chord opens it, as before");
+    }
+    {   // the author (2026-10-23): "no combinations with the two grips, they must be ignored" - the chord off (the shipped default): both grips held, however long, take
+        // nothing; the long press opens and closes the panel
+        Rig r;
+        r.chordOn = false;
+        r.Grips(true);
+        r.Run(1000);
+        CHECK(!r.c.Busy(), "both grips held: nothing of the panel is going on");
+        FrameOut o = r.ClickStick(0);
+        CHECK(!o.open && (o.pad[0].buttons & kStick), "both grips + the left click: the game's");
+        o = r.ClickStick(1);
+        CHECK(!o.open && !r.c.Open() && (o.pad[1].buttons & kStick), "both grips + the right click: the game's");
+        r.Grips(false);
+        r.toggle = true;
+        o = r.Step();
+        CHECK(o.open && o.justOpened, "the long press opens it");
+        r.Run(100);
+        CHECK(r.c.Open(), "and it stays");
+        r.toggle = true;
+        o = r.Step();
+        CHECK(!o.open && !r.c.Open(), "the long press again closes it");
     }
     {   // a click already down when the grips arm is not a new click
         Rig r;
@@ -1306,11 +1352,15 @@ static void TestBodyModel() {
         CHECK(UseText(good).find("In use") == 0, "in use");
         const Stored off = Of(0, 1, 1.62f, 1.71f);
         CHECK(off.valid && !off.use && UseText(off).find("unticked") != std::string::npos, "stored but the box is unticked");
-        const Stored bad = Of(1, 1, 0.5f, 1.71f);
-        CHECK(bad.any && !bad.valid && MeasuredText(bad).find("not usable") != std::string::npos, "numbers that are not a person's");
+        const Stored bad = Of(1, 1, 1.62f, 0.5f);
+        CHECK(bad.any && !bad.valid && MeasuredText(bad).find("not usable") != std::string::npos, "a span that is not a person's");
+        const Stored eyeBad = Of(1, 1, 0.5f, 1.71f);
+        CHECK(eyeBad.valid && !eyeBad.eyeValid && MeasuredText(eyeBad).find("eye height: not measured") != std::string::npos, "an eye height not a person's: the span alone");
         CHECK(!Of(1, 0, 1.62f, 1.71f).valid && Of(1, 0, 1.62f, 1.71f).any, "no version: not valid, but there is something to forget");
-        CHECK(!Of(NAN, NAN, NAN, NAN).any && !Of(INFINITY, 1, INFINITY, 1).valid, "not numbers");
-        CHECK(!Of(1, 1, 1.62f, 0.5f).valid && !Of(1, 1, 2.5f, 1.71f).valid && !Of(1, 1, 1.0f, 2.0f).valid, "out of the plugin's ranges (span, height, their ratio)");
+        CHECK(!Of(NAN, NAN, NAN, NAN).any && !Of(INFINITY, 1, INFINITY, INFINITY).valid, "not numbers");
+        CHECK(!Of(1, 1, 1.62f, 0.5f).valid && !Of(1, 1, 1.62f, 2.7f).valid, "a span out of the plugin's range: nothing");
+        CHECK(Of(1, 1, 2.5f, 1.71f).valid && !Of(1, 1, 2.5f, 1.71f).eyeValid && Of(1, 1, 1.0f, 2.0f).valid && !Of(1, 1, 1.0f, 2.0f).eyeValid,
+              "a height (or the ratio) out of range: the span alone (2026-10-25: a span set by hand counts by itself)");
         CHECK(UseText(none).find("BodyWalk") != std::string::npos, "until measured, the old height applies");
     }
     const Snapshot stored = SnapWith({{kKeyUse, 1}, {kKeyVersion, 1}, {kKeyEye, 1.6234f}, {kKeySpan, 1.71f}});
@@ -1434,7 +1484,7 @@ static void TestBodyPlay() {
         const Stored span = Of(1, 1, 0, 1.5101f, 1);
         CHECK(span.valid && !span.eyeValid && MeasuredText(span).find("Arm span 1.51 m") == 0 && UseText(span).find("arms") != std::string::npos,
               "seated: a span alone - in use for the arms, the eye height not measured");
-        CHECK(!Of(1, 1, 0, 1.5101f, 0).valid, "standing: a span alone is not a measurement");
+        CHECK(Of(1, 1, 0, 1.5101f, 0).valid && !Of(1, 1, 0, 1.5101f, 0).eyeValid, "standing: a span alone (set by hand, a seated one) - the arms', the eye height not measured");
         CHECK(!Of(1, 1, 1.6917f, 0.5f, 1).valid && MeasuredText(Of(0, 0, 0, 0, 1)) == "Arm span not measured yet", "seated: a bad span, nothing stored");
         CHECK(std::string(WhyText(true)).find("arm span only") != std::string::npos && std::string(WhyText(false)).find("eye height") != std::string::npos,
               "seated: the line under the row says what Calibrate reads");
@@ -1443,7 +1493,7 @@ static void TestBodyPlay() {
     {
         const Snapshot spanOnly = SnapWith({{kKeyUse, 1}, {kKeyVersion, 1}, {kKeySpan, 1.5101}});
         Model m = OnPage(spanOnly, kPageBody);
-        CHECK(!m.Measured().valid && !m.PlayPending(), "seated: standing, a span alone - not usable");
+        CHECK(m.Measured().valid && !m.Measured().eyeValid && !m.PlayPending(), "seated: standing, a span alone - the arms' by itself");
         Centre(kToggle(0), &u, &v);
         m.Click(HitTest(kPageBody, u, v));
         CHECK(m.Get()[kKeySeated] == 1.0f && m.Measured().seated && m.Measured().valid && m.PlayPending() && m.LiveOnly(),
@@ -1467,6 +1517,103 @@ static void TestBodyPlay() {
         se.Click(HitTest(kPageBody, u, v));
         std::vector<uint32_t> a, b;
         CHECK(Paint(st, {}, a) && Paint(se, {}, b) && a != b, "seated: the Body page paints standing and seated, differently");
+    }
+}
+
+// -- 11c. the Body page's Arm span by hand, right under Calibrate (the author, 2026-10-25: «ползунок, который можно вручную подвинуть»;
+//    «если человек перекалибровал замер, то ползунок должен сдвинуться на новый замер») ---------------------------------------------
+static void TestBodySpan() {
+    using namespace hset::body;
+    // where it is: under the three buttons, above the stored line, clear of all of it
+    for (const Rect& r : {kSpanDec, kSpanVal, kSpanInc, kSpanNote}) {
+        CHECK(Inside(r), "span: on the panel");
+        for (const Rect& o : {kCalibrate, kForget, kGuideBtn, kBodyStored, kBodyUse, kBodyStep(0)}) CHECK(!Overlap(r, o), "span: clear of the page's buttons and text");
+    }
+    CHECK(kSpanDec.y >= kCalibrate.y + kCalibrate.h && kSpanDec.y - (kCalibrate.y + kCalibrate.h) < 20, "span: right under Calibrate");
+    CHECK(!Overlap(kSpanDec, kSpanVal) && !Overlap(kSpanVal, kSpanInc) && !Overlap(kSpanInc, kSpanNote), "span: its parts side by side");
+    CHECK(!Overlap(kBodyStep(3), kStatus) && Inside(kBodyStep(3)), "span: the steps still fit above the status line");
+    float u, v;
+    Centre(kSpanDec, &u, &v);
+    CHECK((HitTest(kPageBody, u, v) == Hit{Kind::Span, -1, -1}), "span: - on the Body page");
+    CHECK(HitTest(kPageVideo, u, v).kind != Kind::Span, "span: not on another page");
+    Centre(kSpanInc, &u, &v);
+    CHECK((HitTest(kPageBody, u, v) == Hit{Kind::Span, -1, 1}), "span: +");
+    Centre(kSpanVal, &u, &v);
+    CHECK(HitTest(kPageBody, u, v).kind == Kind::None, "span: its value is text");
+    CHECK(Repeats({Kind::Span, -1, 1}) && Repeats({Kind::Span, -1, -1}), "span: a held trigger goes on stepping");
+    // the steps: a centimetre, within a person's span; nothing known - from 1.60
+    CHECK(std::fabs(StepSpan(1.68f, 1) - 1.69f) < 1e-5f && std::fabs(StepSpan(1.68f, -1) - 1.67f) < 1e-5f, "span: a centimetre a press");
+    CHECK(std::fabs(StepSpan(0.0f, 1) - 1.61f) < 1e-5f && std::fabs(StepSpan(NAN, -1) - 1.59f) < 1e-5f, "span: nothing known - from 1.60");
+    CHECK(StepSpan(2.6f, 1) == 2.6f && std::fabs(StepSpan(0.85f, -1) - 0.85f) < 1e-5f, "span: held at its ends");
+    CHECK(SpanText(1.6797f, true) == "1.68 m" && SpanText(1.66f, false) == "1.66 m (auto)" && SpanText(0.0f, false) == "Auto", "span: its words");
+    const Snapshot stored = SnapWith({{kKeyUse, 1}, {kKeyVersion, 1}, {kKeyEye, 1.7484f}, {kKeySpan, 1.6797f}});
+    {   // a measurement stored: the stepper shows it, + makes it a centimetre longer, written by itself, that key alone
+        Model m = OnPage(stored, kPageBody);
+        CHECK(m.SpanStored() && std::fabs(m.SpanShown() - 1.6797f) < 1e-4f, "span: shows the measured span");
+        m.Click({Kind::Span, -1, 1});
+        CHECK(std::fabs(m.Get()[kKeySpan] - 1.69f) < 1e-4f && std::fabs(m.SpanShown() - 1.69f) < 1e-4f && m.LiveOnly(), "span: + - 1.69, live");
+        m.Click({Kind::Span, -1, 1});
+        CHECK(std::fabs(m.SpanShown() - 1.70f) < 1e-4f, "span: + again - 1.70");
+        CHECK(m.Live(100.0).what == Do::Nothing, "span: not written at once");
+        const Action a = m.Live(1200.0);
+        CHECK(a.what == Do::Save && a.request.changed == Bit(kKeySpan) && std::fabs(a.request.values[kKeySpan] - 1.70f) < 1e-4f,
+              "span: written by itself, the span alone (stored and in use already)");
+        Snapshot ans = stored;
+        ans.values[kKeySpan] = ans.file[kKeySpan] = 1.70f;
+        ans.sequence = a.request.sequence;
+        ans.result = Result::Saved;
+        m.Observe(ans);
+        CHECK(!m.Dirty() && std::fabs(m.SpanShown() - 1.70f) < 1e-4f && std::fabs(m.Measured().span - 1.70f) < 1e-4f, "span: in the file");
+        // a new measurement moves it: the stepper shows the new one (the author: the slider moves to the new measurement)
+        Snapshot again = stored;
+        again.values[kKeySpan] = again.file[kKeySpan] = 1.6512f;
+        m.Observe(again);
+        CHECK(std::fabs(m.SpanShown() - 1.6512f) < 1e-4f && std::fabs(m.Get()[kKeySpan] - 1.6512f) < 1e-4f && !m.Dirty(), "span: a new measurement - the stepper moves to it");
+    }
+    {   // ... also with an edit waiting on another page: the new measurement is taken for the span, the edit stays, Apply carries only it
+        Model m = OnPage(stored, kPageVideo);
+        m.Click({Kind::Preset, 3, 0});
+        Snapshot again = stored;
+        again.values[kKeySpan] = again.file[kKeySpan] = 1.7312f;
+        m.Observe(again);
+        CHECK(std::fabs(m.SpanShown() - 1.7312f) < 1e-4f && std::fabs(m.Get()[kKeySpan] - 1.7312f) < 1e-4f && m.DraftPick() == video::Square(2048),
+              "span: a new measurement with a size picked - the stepper moves, the size stays");
+        const Action a = m.Click({Kind::Apply, -1, 0});
+        CHECK(a.what == Do::Save && a.request.changed == (Bit(kKeyMode) | Bit(kKeyPx)), "span: and Apply still carries only the size");
+        CHECK(m.Live(100.0).what == Do::Nothing && m.Live(1200.0).what == Do::Nothing, "span: nothing of the span to write (it is the file's)");
+    }
+    {   // nothing stored: the span in use (the plugin's: the default for the eye height) shown as auto; a press starts from it, stored and in use
+        Model m = OnPage(Snap(), kPageBody);
+        CHECK(!m.SpanStored() && m.SpanShown() == 0.0f, "span: nothing stored, nothing known - Auto");
+        m.SetSpanInUse(1.6610f);
+        CHECK(!m.SpanStored() && std::fabs(m.SpanShown() - 1.661f) < 1e-4f && !m.Dirty(), "span: the span in use shown (auto), nothing in the draft");
+        m.Click({Kind::Span, -1, -1});
+        CHECK(m.SpanStored() && std::fabs(m.SpanShown() - 1.65f) < 1e-4f && m.Get()[kKeyVersion] == 1.0f && m.Get()[kKeyUse] == 1.0f && m.LiveOnly(),
+              "span: - from the span in use: 1.65, stored and in use");
+        m.Live(100.0);
+        const Action a = m.Live(1200.0);
+        CHECK(a.what == Do::Save && (a.request.changed & Bit(kKeySpan)) && (a.request.changed & Bit(kKeyVersion)) && (a.request.changed & Bit(kKeyUse)) &&
+              !(a.request.changed & Bit(kKeyEye)), "span: the span, version and use written; the eye height left");
+        const Stored st = Of(a.request.values[kKeyUse], a.request.values[kKeyVersion], a.request.values[kKeyEye], a.request.values[kKeySpan], 0.0f);
+        CHECK(st.valid && st.use && !st.eyeValid && std::fabs(st.span - 1.65f) < 1e-4f, "span: what is written is in force standing - the arms', the old height");
+    }
+    {   // not while an Apply is in flight, nor with no ini; a closed panel does nothing
+        Model busy = OnPage(stored, kPageVideo);
+        busy.Click({Kind::Preset, 3, 0});
+        busy.Click({Kind::Apply, -1, 0});
+        busy.Click({Kind::Span, -1, 1});
+        CHECK(std::fabs(busy.Get()[kKeySpan] - 1.6797f) < 1e-4f, "span: not while an Apply is in flight");
+        Model nr = OnPage(Snap(false), kPageBody);
+        nr.Click({Kind::Span, -1, 1});
+        CHECK(!nr.Dirty(), "span: no ini, nothing");
+        Model closed;
+        CHECK(closed.Click({Kind::Span, -1, 1}).what == Do::Nothing && !closed.Dirty(), "span: a closed panel does nothing");
+    }
+    {   // the page paints it, and the value shows
+        Model a = OnPage(stored, kPageBody), b = OnPage(stored, kPageBody);
+        b.Click({Kind::Span, -1, 1});
+        std::vector<uint32_t> pa, pb;
+        CHECK(Paint(a, {}, pa) && Paint(b, {}, pb) && pa != pb, "span: painted, the value changes the picture");
     }
 }
 
@@ -2288,8 +2435,8 @@ static void TestBelt() {
     CHECK(kDefs[kKeyBeltOn].page == kNoPage && !kDefs[kKeyBeltOn].live && IsToggle(kDefs[kKeyBeltOn]), "belt_models: the Belt page's note, not live");
     int live = 0;
     for (int i = 0; i < kCount; ++i) live += kDefs[i].live ? 1 : 0;
-    CHECK(live == 13 && kLiveMask != 0 && (kLiveMask & Bit(KeyOf(L"brightness"))) == 0 && (kLiveMask & Bit(kKeySmooth)) == 0,
-          "thirteen live keys, the belt's, the Melee page's (the skill arming's two too) and the Body page's standing / seated - not the others");
+    CHECK(live == 16 && kLiveMask != 0 && (kLiveMask & Bit(KeyOf(L"brightness"))) == 0 && (kLiveMask & Bit(kKeySmooth)) == 0,
+          "sixteen live keys, the belt's, the Melee page's (the skill arming's two too), the Body page's standing / seated and its Arm span's three (use, version, arm_span_m) - not the others");
     CHECK(kCount <= 64, "the masks are 64 bits");
     CHECK(kDefs[KeyAt(kPageBelt, 0)].min == 0.3f && kDefs[KeyAt(kPageBelt, 4)].min == 4.0f && kDefs[KeyAt(kPageBelt, 4)].max == 30.0f && kDefs[KeyAt(kPageBelt, 4)].def == 12.0f, "the belt's ranges are D2R VR Settings'");
     CHECK(IsToggle(kDefs[KeyAt(kPageBelt, 5)]) && kDefs[KeyAt(kPageBelt, 5)].def == 0.0f && kKeyDirectOn >= 0, "the two-button take is a tick, off as the plugin has it ([belt] grab_trigger)");
@@ -2627,7 +2774,7 @@ static void TestKeys() {
         Model v;
         v.Open(on);
         v.Click({Kind::Tab, kPageKeysL, 0});
-        CHECK(ChoiceLabel((int)s.values[lt]) == "Swap weapons" && ChoiceDetail(v, lt) == "[direct] left_trigger = action:swap", "a row: the pick's name, and the ini line under the control's name");
+        CHECK(ChoiceLabel((int)s.values[lt]) == "Swap weapons" && ChoiceDetail(v, lt) == "[direct] left_trigger = action:swap - the second row (LT) is off", "a row: the pick's name, and the ini line under the control's name");
         v.Click({Kind::Tab, kPageKeysR, 0});
         CHECK(ChoiceLabel((int)s.values[ra]) == "Custom (ini)" && ChoiceDetail(v, ra) == "[direct] right_a = pad:LT, pad:X", "Custom: the file's own text");
         CHECK(std::string(StatusText(v)).find("Chords") != std::string::npos, "the Keys pages say what stays in the ini");
@@ -3417,6 +3564,7 @@ int main(int argc, char** argv) {
     TestPagesHit();
     TestBodyModel();
     TestBodyPlay();
+    TestBodySpan();
     TestPagesHands();
     TestIniPages();
     TestPaintPages();

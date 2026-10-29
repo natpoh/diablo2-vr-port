@@ -78,6 +78,7 @@ struct FrameIn {
     bool learnedKnown = false;         // the list is a fresh read
     HandSample hand[2];                // 0 left, 1 right
     bool rightTriggerIsThrows = false; // [hands] throw_gesture: the right trigger is the throw's own control
+    bool leftTriggerIsThrows = false;  // ... the left one's, with [hands] throw_left_hand and the weapon in the left hand
     int layoutStep = 0;                // +1 / -1 from the layout's action:quivernext / action:quiverprev
     uint32_t session = 0, epoch = 0;
 };
@@ -119,7 +120,7 @@ public:
         int step = live ? in.layoutStep : 0;
         int tapHand = step ? 1 : -1;   // a layout step is given to the weapon's hand (the right)
         for (int hand = 0; hand < 2; ++hand) {
-            const bool allowed = live && in.zoneOn && sel_.CanCycle() && !(hand == 1 && in.rightTriggerIsThrows);
+            const bool allowed = live && in.zoneOn && sel_.CanCycle() && !(hand == 1 && in.rightTriggerIsThrows) && !(hand == 0 && in.leftTriggerIsThrows);
             const ZoneTap::Out z = zone_[hand].Step(in.t, allowed, in.hand[hand]);
             out.inReach[hand] = z.inReach;
             out.take[hand] = z.claim;

@@ -62,19 +62,78 @@ inline bool FixedPoint(float viewportW, float viewportH, float out[2]) {
 // ---- where the plate stands in the interface layer -------------------------------------------------------------------------
 // The plate's box in pixels (l, t, r, b) of a w x h interface layer, from the plate's rect in the layout (vr/gamestate.cpp PlateRect: x, y from the
 // top middle, width, height, in the layout's units) and the interface scale s (the screen's height over 2160 times the Safe Screen Percent; a
-// value that is not a scale counts as h / 2160). The box is the rect with margins: half the plate's height each side across and 15 % above and
-// below - the same box vrcam's PlateBoxUv gives the effect, in pixels.
+// value that is not a scale counts as h / 2160). The box is the rect with margins (kMarginX, kMarginY) - the same box vrcam's PlateBoxUv gives the
+// effect, in pixels.
+// The margins, shares of the plate's height: across for the background's caps, above and below for the frame's light top and bottom lines - both
+// drawn outside the widgets' rectangles. Above and below were 15 % until 2026-10-24, and the top line stayed in the picture over a plate made smaller
+// (Serg: "old frames stay round the monsters' plates, above and sometimes at the side"): now half the height all round.
+constexpr float kMarginX = 0.5f, kMarginY = 0.5f;
 inline bool BoxOf(const int32_t r[4], float s, uint32_t w, uint32_t h, float box[4]) {
     if (!w || !h || r[2] <= 0 || r[3] <= 0) return false;
     if (!(s > 0.05f && s < 20.0f)) s = static_cast<float>(h) / 2160.0f;
     const float top = std::max(0.0f, 0.5f * (static_cast<float>(h) - 2160.0f * s));
-    const float mx = 0.5f * static_cast<float>(r[3]) * s, my = 0.15f * static_cast<float>(r[3]) * s;
+    const float mx = kMarginX * static_cast<float>(r[3]) * s, my = kMarginY * static_cast<float>(r[3]) * s;
     const float x0 = 0.5f * static_cast<float>(w) + static_cast<float>(r[0]) * s - mx, y0 = top + static_cast<float>(r[1]) * s - my;
     box[0] = x0;
     box[1] = y0;
     box[2] = x0 + static_cast<float>(r[2]) * s + 2.0f * mx;
     box[3] = y0 + static_cast<float>(r[3]) * s + 2.0f * my;
     return std::isfinite(box[0] + box[1] + box[2] + box[3]);
+}
+
+// ---- the box follows the plate ----------------------------------------------------------------------------------------------
+// The plate's widgets are read on the UI thread every 10 ms (vr/gamestate.cpp ReadPlate) and the box is set as the effect draws. In a headset the
+// plate moves on the screen with every turn of the head - 20 px a frame is nothing - and a box placed by the last read trailed it: the plate's edge
+// outside the box (its light top line most of all) stayed where the game drew it, the rest was drawn smaller at its own depth (Serg, 2026-10-24).
+// The hook sees where the game hangs the plate in each frame (its anchor, px of the viewport, vr/mob_bars.cpp): the box is the read one moved by
+// how far the anchor has gone since that read, for each of the hook's last kFollowN answers - their union, so the plate is in it whichever of
+// those frames the picture on the screen was drawn from (the game's thread runs ahead of the one that draws).
+constexpr int kFollowN = 3;
+struct Follow {
+    uintptr_t unit = 0;
+    int n = 0;                     // answers kept, newest first
+    float px[kFollowN][2] = {};
+    float view[2] = {};            // the viewport they are points of
+    uint64_t atMs = 0;
+};
+// One answer of the hook for a unit's plate; another unit starts again.
+inline void FollowAdd(Follow* f, uintptr_t unit, const float px[2], float viewW, float viewH, uint64_t nowMs) {
+    if (unit != f->unit) {
+        f->unit = unit;
+        f->n = 0;
+    }
+    for (int i = std::min(f->n, kFollowN - 1); i > 0; --i) {
+        f->px[i][0] = f->px[i - 1][0];
+        f->px[i][1] = f->px[i - 1][1];
+    }
+    f->px[0][0] = px[0];
+    f->px[0][1] = px[1];
+    f->n = std::min(f->n + 1, kFollowN);
+    f->view[0] = viewW;
+    f->view[1] = viewH;
+    f->atMs = nowMs;
+}
+// The box (uv: x0 y0 x1 y1) for the picture now. read: the box of the rect as read (uv); readUnit, atRead: the unit and its anchor (px) the hook
+// had given at that read (atReadOk false: none). widest: the widest box read for any plate (uv) - a new target's name may be longer than the one
+// read, and its own rect comes a read later: its box is that wide meanwhile, about the same middle (the plate hangs centred on its anchor).
+// No answer from the hook (not in, another view, not a monster's plate, nothing lately): the box as read.
+inline void FollowBox(const float read[4], uintptr_t readUnit, const float atRead[2], bool atReadOk, const Follow& f, float widest, float out[4]) {
+    for (int i = 0; i < 4; ++i) out[i] = read[i];
+    if (!atReadOk || f.n <= 0 || !(f.view[0] >= 1.0f && f.view[1] >= 1.0f) || !(read[2] > read[0] && read[3] > read[1])) return;
+    float b[4] = {read[0], read[1], read[2], read[3]};
+    if (f.unit != readUnit && widest > b[2] - b[0]) {
+        const float cx = 0.5f * (b[0] + b[2]);
+        b[0] = cx - 0.5f * widest;
+        b[2] = cx + 0.5f * widest;
+    }
+    float u[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    for (int i = 0; i < std::min(f.n, kFollowN); ++i) {
+        const float dx = (f.px[i][0] - atRead[0]) / f.view[0], dy = (f.px[i][1] - atRead[1]) / f.view[1];
+        if (!std::isfinite(dx) || !std::isfinite(dy)) return;
+        const float m[4] = {b[0] + dx, b[1] + dy, b[2] + dx, b[3] + dy};
+        for (int k = 0; k < 4; ++k) u[k] = i == 0 ? m[k] : (k < 2 ? std::min(u[k], m[k]) : std::max(u[k], m[k]));
+    }
+    for (int i = 0; i < 4; ++i) out[i] = u[i];
 }
 
 // ---- reading a unit ---------------------------------------------------------------------------------------------------------
@@ -329,6 +388,8 @@ struct State {
     Capture capture;
     Anchor anchor;
     Seen seen;
+    Follow follow;                     // where the game hung the plate in its last frames (the hook), for the effect's box
+    std::atomic<bool> followOn{false};   // [hud] monster_alpha, monster_size, monster_far...: a plate setting the effect needs the box for (vrcam)
     std::atomic<bool> active{false};   // vrcam's tick: the world bar is in force now (ticked, F4, native OpenXR, a game, no menu)
     std::atomic<float> gapCm{15.0f};
     std::atomic<float> sizePct{100.0f};
@@ -442,6 +503,21 @@ inline bool GetTarget(float* metres, float* units, uint64_t nowMs) {
     if (!(m >= 0.0f) || nowMs - s.targetAt.load() > kStaleMs) return false;
     *metres = m;
     *units = s.targetUnits.load();
+    return true;
+}
+// The box follows the plate (FollowBox): the hook notes where it hung the plate while a plate setting needs the box; a note is fresh for kStaleMs.
+inline void SetFollow(bool on) { S().followOn.store(on); }
+inline bool Following() { return S().followOn.load(); }
+inline void NoteFollow(uintptr_t unit, const float px[2], float viewW, float viewH, uint64_t nowMs) {
+    State& s = S();
+    std::lock_guard<std::mutex> g(s.lock);
+    FollowAdd(&s.follow, unit, px, viewW, viewH, nowMs);
+}
+inline bool GetFollow(Follow* out, uint64_t nowMs) {
+    State& s = S();
+    std::lock_guard<std::mutex> g(s.lock);
+    if (s.follow.n <= 0 || nowMs - s.follow.atMs > kStaleMs) return false;
+    *out = s.follow;
     return true;
 }
 // [hud] monster_alpha reaches the bar in the room too (a test of test-56: "the opacity slider does not work" - it faded only the plate left in the picture,

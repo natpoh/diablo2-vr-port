@@ -39,6 +39,7 @@ void LogF(const char* fmt, ...) {
 
 // What the ini says (LoadSettings) and what is in force.
 std::atomic<bool> g_use{false}, g_seated{false};
+std::atomic<bool> g_strict{true};               // [calibration] strict_tpose: the arms straight out to the sides (bodycal::StrictArms)
 std::atomic<float> g_eye{0.0f}, g_span{0.0f};   // in force: 0 = not (unticked, nothing measured, not valid)
 std::atomic<float> g_storedEye{0.0f};           // the stored eye height, in force or not (a seated measurement keeps it)
 std::atomic<int> g_measure{INT_MIN};            // the Settings button's counter; the first value seen is only remembered
@@ -175,7 +176,7 @@ const char* PhaseName(bodycal::Phase p) {
 }
 const char* HintName(bodycal::Hint h) {
     static const char* const n[] = {"pose ok", "let go of the triggers", "no floor (LOCAL space)", "eye height out of range", "not tracked",
-                                    "head tilted", "arms not out level", "moved", "saved", "could not save"};
+                                    "head tilted", "arms not straight out to the sides, level", "moved", "saved", "could not save"};
     return n[(int)h];
 }
 
@@ -188,6 +189,10 @@ void LoadSettings(const wchar_t* iniPath) {
     if (!g_ini[0]) return;
     g_use.store(ReadFloat(L"use", 0.0f) != 0.0f);
     const bool seated = ReadFloat(L"seated", 0.0f) != 0.0f;
+    const bool strict = ReadFloat(L"strict_tpose", 1.0f) != 0.0f;
+    if (strict != g_strict.exchange(strict))
+        LogF("vrcam: calibration - the T-pose %s ([calibration] strict_tpose=%d)", strict ? "is taken only with the arms straight out to the sides (no hand more than 6 cm ahead of the eyes, the span at least 0.88 of the eye height)"
+                                                                     : "takes the arms out level, hands up to 22 cm ahead of the eyes, as before", (int)strict);
     if (seated != g_seated.exchange(seated))
         LogF("vrcam: calibration - played %s ([calibration] seated=%d): %s", seated ? "seated" : "standing", (int)seated,
              seated ? "the hero's eyes are at the head's height at the recenter (F11), a measurement reads the arm span only"
@@ -228,6 +233,9 @@ bool Running() { return g_image.load() >= 0 || (g_startAsked.load() && GetTickCo
 float MeasuredEyeM() { return viewgate::F4() ? g_eye.load() : 0.0f; }
 float MeasuredSpanM() { return viewgate::F4() ? g_span.load() : 0.0f; }
 bool Seated() { return g_seated.load(); }
+std::atomic<float> g_spanInUse{0.0f};
+void NoteSpanInUse(float metres) { g_spanInUse.store(std::isfinite(metres) && metres > 0.0f ? metres : 0.0f); }
+float SpanInUseM() { return g_spanInUse.load(); }
 bool OwnsTriggers() { return g_owns.load(); }
 
 void Feed(const Frame& f) {
@@ -266,6 +274,8 @@ void Feed(const Frame& f) {
         s.handTracked[kRight] = f.handTracked[1];
         s.cancel = f.cancel;
         s.seated = g_flowSeated;
+        s.strict = g_strict.load();
+        s.storedEye = g_storedEye.load();
         s.head = {f.head[0], f.head[1], f.head[2]};
         s.headRot = {f.headRot[0], f.headRot[1], f.headRot[2], f.headRot[3]};
         for (int h = 0; h < 2; ++h) {
@@ -274,6 +284,13 @@ void Feed(const Frame& f) {
         }
         if (g_flow.Step(s)) {
             const Measurement m = g_flow.Get();
+            {   // where the hands were, against the eyes (turned by the head's heading): the pose the span was read in
+                const float yaw = Heading(s.headRot);
+                const Vec r = TurnAboutY(-yaw, s.hand[kRight] - s.head), l = TurnAboutY(-yaw, s.hand[kLeft] - s.head);
+                LogF("vrcam: calibration - the hands at the save: right %.0f cm out, %.0f cm under, %.0f cm %s the eyes; left %.0f cm out, %.0f cm under, %.0f cm %s",
+                     r.x * 100.0f, -r.y * 100.0f, std::fabs(r.z) * 100.0f, r.z < 0.0f ? "ahead of" : "behind", -l.x * 100.0f, -l.y * 100.0f,
+                     std::fabs(l.z) * 100.0f, l.z < 0.0f ? "ahead" : "behind");
+            }
             if (SaveToIni(m)) {
                 g_flow.Saved(f.time);
                 // in force at once (the ini's change reads back the same): a seated one with the eye height stored before

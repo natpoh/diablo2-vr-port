@@ -111,4 +111,37 @@ bool ArrowBox(Read&& read, uintptr_t instance, uintptr_t skeleton, Box* out) {
     return false;
 }
 
+// [shield] heads_hang (vr/head_hang.h): the boxes of every mesh of the model, as ArrowBox reads one - up to `max` of them, in the model's
+// order. The number read (a mesh whose box does not read is left out); 0 when the model is not that skeleton's or has no meshes - `why`
+// (optional) says which. (A Necromancer's head is posed by a skeleton of its own .skeleton file, whose model has no meshes: none there.)
+template <class Read>
+int MeshBoxes(Read&& read, uintptr_t instance, uintptr_t skeleton, Box* out, int max, const char** why = nullptr) {
+    auto none = [&](const char* w) { if (why) *why = w; return 0; };
+    uintptr_t model = 0, modelSkeleton = 0, meshes = 0;
+    int32_t count = 0;
+    if (!out || max <= 0 || instance < 0x10000 || !read(instance + kInstanceModel, &model, sizeof model) || model < 0x10000) return none("no model instance");
+    if (!read(model + kModelSkeleton, &modelSkeleton, sizeof modelSkeleton) || modelSkeleton != skeleton) return none("the instance's model is another skeleton's");
+    if (!read(model + kModelMeshCount, &count, sizeof count) || count < 1 || count > kMaxMeshes) return none(count == 0 ? "the instance's model has no meshes" : "the model's mesh count is not one");
+    if (!read(model + kModelMeshes, &meshes, sizeof meshes) || meshes < 0x10000) return none("the model's mesh list does not read");
+    int got = 0;
+    for (int i = 0; i < count && got < max; ++i) {
+        uintptr_t mesh = 0, namePtr = 0, def = 0, object = 0;
+        if (!read(meshes + (uintptr_t)i * kBindingStride, &mesh, sizeof mesh) || mesh < 0x10000) continue;
+        if (!read(mesh + kMeshExtType, &def, sizeof def) || !read(mesh + kMeshExtObject, &object, sizeof object) || object < 0x10000) continue;
+        uint32_t minAt = 0, maxAt = 0;
+        if (!FieldOffset(read, def, "bbMin", kReal32, 3, &minAt) || !FieldOffset(read, def, "bbMax", kReal32, 3, &maxAt)) continue;
+        Box b;
+        if (!read(object + minAt, b.min, sizeof b.min) || !read(object + maxAt, b.max, sizeof b.max)) continue;
+        bool ok = true;
+        for (int k = 0; k < 3; ++k) ok = ok && b.min[k] == b.min[k] && b.max[k] == b.max[k] && b.max[k] >= b.min[k] && b.max[k] - b.min[k] < 1e4f;
+        if (!ok) continue;
+        char name[96] = {};
+        if (read(mesh + kMeshName, &namePtr, sizeof namePtr)) String(read, namePtr, name);
+        std::memcpy(b.mesh, name, sizeof b.mesh);
+        out[got++] = b;
+    }
+    if (why) *why = got ? nullptr : "no mesh's box read";
+    return got;
+}
+
 }  // namespace grannymesh

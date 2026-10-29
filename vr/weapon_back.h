@@ -109,13 +109,22 @@ inline void QuatFromAxes(V3 a0, V3 a1, V3 a2, float q[4]) {
 //   midM: metres from the attach bone's origin to the middle of the shaft, along the tip;
 //   upm: model units per metre at the hero's size.
 // Returns false (and the matrix as given) for numbers that are not usable.
+//   mirror: the place mirrored to the hero's other side (a weapon in each hand: the left one hangs behind the left shoulder, the right one behind the right).
 inline bool BackMatrix(const Mat& boneBind, const Mat& boneNow, const Mat& weaponNow, int tipAxis, float midM, float upm, Class cls,
-                       const Tuning& t, Mat* out) {
+                       const Tuning& tuning, Mat* out, bool mirror = false) {
     *out = weaponNow;
     if (!(upm > 0.0f) || !std::isfinite(midM) || tipAxis == 0 || tipAxis < -3 || tipAxis > 3) return false;
     // the back's axes in the bind pose (model space: y up, the hero faces +z, his left is +x)
     const V3 right{-1, 0, 0}, up{0, 1, 0}, back{0, 0, -1};
-    const Place d = DefaultPlace(cls);
+    Place d = DefaultPlace(cls);
+    Tuning t = tuning;
+    if (mirror) {   // across the spine: right and left swapped, the turns about up and about the shaft the other way
+        d.at.x = -d.at.x;
+        d.tip.x = -d.tip.x;
+        t.x = -t.x;
+        t.yawDeg = -t.yawDeg;
+        t.rollDeg = -t.rollDeg;
+    }
     // the tip: the default turned by the tuning, in the back's axes (pitch about the hero's right, yaw about up)
     V3 tip = Norm(Add(Add(Mul(right, d.tip.x), Mul(up, d.tip.y)), Mul(back, d.tip.z)));
     tip = Norm(Turn(tip, right, t.pitchDeg));

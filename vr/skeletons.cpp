@@ -30,11 +30,14 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <deque>
 #include <map>
 #include <memory>
 #include <set>
 #include <string>
 #include <string_view>
+#include <mutex>
+#include <unordered_map>
 #include <vector>
 
 #include "bow_aim.h"
@@ -47,24 +50,36 @@
 #include "bone_guard.h"
 #include "bow_touch.h"
 #include "flail_chain.h"   // [flail] chain: the flail's head swings free on its chain
+#include "head_hang.h"     // [shield] heads_hang: the Necromancer's head hangs from its cord
+#include "head_shadow.h"   // [arms] head_shadow: the head shrunk in the eyes' skinning only, its shadow cast
 #include "grip_fit.h"
 #include "grip_pose.h"
 #include "weapon_extents.h"   // melee by touch: the weapon model's unit in metres as drawn (PosedBlade::unitM)
 #include "grip_rig.h"
+#include "grab_bodies.h"   // [weight] grab_wrap: the palm laid on a held body without the grip library (LayPalm)
 #include "skeletons.h"
+#include "gait_lib.h"   // [multiplayer] pose_share_legs: the gait library (d2r_vr_gait.dll) the other heroes' legs step by
+#include "leg_chain.h"  // the legs by the rig's hierarchy where its bones' names say nothing (the barbarian's)
+#include "leg_ik.h"     // the gait's knee and leg bones' turns from the rest pose and the bend plane (never a knee bent the wrong way)
+#include "walk_back.h"  // [body] walk_back_reverse: the game's own walk played backwards while he walks back
 #include "shield_arm.h"
 #include "shield_arm_wire.h"
 #include "ranged_hand_wire.h"
 #include "shield_fist.h"
 #include "forearm_twist.h"
+#include "full_reach.h"      // [arms] full_reach: the hand always reaches its controller (F4)
 #include "view_gate.h"
 #include "frame_trace.h"   // [debug] frame_trace: what the pose hook costs a pair
 #include "body_calibration.h"
 #include "crouch.h"         // [body] crouch: the hero crouches when you do (F4)
+#include "trunk_hold.h"     // [body] lock (F4) and flat_hold_trunk (flat F3): which pose each bone above the pelvis takes
 #include "sigscan.h"
 #include "weapon_back.h"
 #include "weapon_shaft.h"
 #include "weight.h"
+#include "monster_humanoid.h"   // [weight] monster_ragdoll: the doll on humanoids only
+#include "bone_segments.h"   // [weight] monster_ragdoll_all: bodies from bone segments
+#include "corpse_watch.h"    // [weight] monster_ragdoll: a corpse is no doll
 #include "xbow_grip.h"   // [hands] xbow_grip_latch / xbow_grip_wide / xbow_support_model: the crossbow's left hand
 
 namespace skel {
@@ -381,6 +396,18 @@ std::atomic<int> g_gunAxis{0};   // GunAxis
 struct GunBoneOut { float o[3], ax[3][3]; ULONGLONG at; };
 SRWLOCK g_gunBoneLock = SRWLOCK_INIT;
 GunBoneOut g_gunBone{};
+// [multiplayer] pose_share (formats 4, 6): both weapon attach bones as the last pose drew them (DrawnAttach), the head's turn-only frame; and both hands, elbows and
+// the head bone, our model's units a metre (DrawnHands)
+struct DrawnAttachOut {
+    bool ok[2] = {false, false};
+    float origin[2][3] = {}, rows[2][3][3] = {};
+    int main = 0;
+    bool handsOk = false;
+    float hand[2][3] = {}, handRows[2][3][3] = {}, elbow[2][3] = {}, headBone[3] = {}, upm = 0.0f;
+    ULONGLONG at = 0;
+};
+SRWLOCK g_drawnAttachLock = SRWLOCK_INIT;
+DrawnAttachOut g_drawnAttach;
 // [hands] xbow_support_model / [debug] xbow_barrel_line: the hero's crossbow's barrel in its attach bone's frame, as its own skeleton
 // was last posed (NoteCrossbowBarrel), and what was drawn of it - under g_gunBoneLock.
 //   g_xbowBarrel    from the item's own transform (its TransformComponent's local, relative to its parent) - what [bow] aim_along_hands
@@ -444,6 +471,9 @@ GrabLineOut g_grabLine{};
 struct ArmReachOut { float shoulder[3], length; ULONGLONG at; };
 SRWLOCK g_armReachLock = SRWLOCK_INIT;
 ArmReachOut g_armReach[2] = {};
+// [gameplay] leap_arc_head: the belly as the last pose drew it, the same frame (BodyBelly)
+struct BellyOut { float at3[3]; ULONGLONG at; };
+BellyOut g_belly{};
 // [weight] grip_fit, for the debug: the grasp point on the axis and the palm's middle as drawn, per hand, the same frame (GripMarks)
 struct GripMarkOut { float grasp[3], palm[3]; ULONGLONG at; };
 SRWLOCK g_gripMarkLock = SRWLOCK_INIT;
@@ -497,12 +527,29 @@ struct WeightRel {
 };
 SRWLOCK g_weightLock = SRWLOCK_INIT;
 WeightRel g_weightRel;
+// [weight] second_lets_go: the second weapon's attach bone against the weight model's body of it (taken each pose it is in its hand), so it is drawn where that body is when let go
+struct WeightRel2 { Mat body; bool ok = false; bool handOver = false; };   // handOver: measured once in the first's hand (again each frame would chase the hand it lays)
+WeightRel2 g_weightRel2;
 #endif
 
 SRWLOCK g_inLock = SRWLOCK_INIT;
 Input g_in;
 std::atomic<FreshFn> g_fresh{nullptr};
+std::atomic<RoomShiftFn> g_freshShift{nullptr};   // [openxr] roomscale_body
 std::atomic<FreshHandsFn> g_freshHands{nullptr};
+std::atomic<GrabHandsFn> g_grabHands{nullptr};   // [weight] grab_bodies (SetGrabHands)
+// [weight] grab_wrap: the drawn palm of a holding hand (GrabPalmDrawn), written by the pose, read by grab_wire
+SRWLOCK g_grabPalmLock = SRWLOCK_INIT;
+float g_grabPalm[2][3] = {};
+const char* g_grabPalmHow[2] = {"", ""};
+ULONGLONG g_grabPalmAt[2] = {};
+void NoteGrabPalm(int side, const float head[3], const char* how) {
+    AcquireSRWLockExclusive(&g_grabPalmLock);
+    for (int k = 0; k < 3; ++k) g_grabPalm[side & 1][k] = head[k];
+    g_grabPalmHow[side & 1] = how;
+    g_grabPalmAt[side & 1] = GetTickCount64();
+    ReleaseSRWLockExclusive(&g_grabPalmLock);
+}
 std::atomic<GripHandStepFn> g_gripHandStep{nullptr};   // [weight] grip_model 1: the grip library's hand step (SetGripHandStep)
 std::atomic<GripAbiFn> g_gripAbi{nullptr};
 
@@ -531,6 +578,9 @@ std::atomic<GripAbiFn> g_gripAbi{nullptr};
 // made by the same code); type_seq<T> is found next to T's name hash (cleanroom/sigscan).
 constexpr uint64_t RVA_ECS_REGISTRY = 0x2677170;
 constexpr uint64_t RVA_TYPE_SEQ_TRANSFORM = 0x20B8F0, RVA_TYPE_SEQ_SKELETON = 0x67DE50;
+constexpr uint64_t RVA_TYPE_SEQ_MODEL = 0x1DBE40;   // type_seq<ModelComponent> ([weight] monster_bodies: a model's meshes, vr/monster_rig.h)
+constexpr uint64_t RVA_TYPE_SEQ_CHILDREN = 0x799040, RVA_TYPE_SEQ_PART = 0x67E1D0;   // type_seq<AttachedChildrenComponent>, <UnitPartComponent> (a unit's parts)
+constexpr uint32_t kModelCompSize = 0x88;
 constexpr uint32_t kTransformSize = 0xD0, kSkeletonCompSize = 0x10;
 
 std::atomic<uintptr_t> g_gameBase{0};
@@ -637,7 +687,8 @@ bool EntityOf(uintptr_t self, uint32_t* e) {
 constexpr uint32_t kNoEntity = 0xFFFFFFFFu;
 std::map<uintptr_t, std::pair<uint32_t, ULONGLONG>> g_bodyEntity;   // SkeletonInstance -> entity (or none), when looked up
 // noEntity: the storages read, but no entity holds this instance - not a rig of the renderer's world (a menu's model).
-bool BodyPlace(uintptr_t self, float* x, float* z, bool* noEntity = nullptr, ULONGLONG retryMs = 500) {
+// m16 (optional): the whole matrix (row vectors, the translation in 12..14: model -> world, the look-at's units) - [multiplayer] pose_share the other heroes' bodies and travel.
+bool BodyPlace(uintptr_t self, float* x, float* z, bool* noEntity = nullptr, ULONGLONG retryMs = 500, float* m16 = nullptr) {
     if (noEntity) *noEntity = false;
     AcquireSRWLockExclusive(&g_lock);
     struct Unlock { ~Unlock() { ReleaseSRWLockExclusive(&g_lock); } } unlock;
@@ -667,8 +718,10 @@ bool BodyPlace(uintptr_t self, float* x, float* z, bool* noEntity = nullptr, ULO
     const uintptr_t comp = cb + (uintptr_t)i * kTransformSize;
     if (!Get(comp + 0xC0, &parent)) return false;
     float t[3];
-    if (!SafeCopy(t, (const void*)(comp + ((parent & 0xFFFFF) == 0xFFFFF ? 0x00 : 0x40) + 12 * 4), sizeof t)) return false;
+    const uintptr_t mat = comp + ((parent & 0xFFFFF) == 0xFFFFF ? 0x00 : 0x40);
+    if (!SafeCopy(t, (const void*)(mat + 12 * 4), sizeof t)) return false;
     if (!std::isfinite(t[0]) || !std::isfinite(t[2])) return false;
+    if (m16 && !SafeCopy(m16, (const void*)mat, 16 * sizeof(float))) return false;
     *x = t[0]; *z = t[2];
     return true;
 }
@@ -687,7 +740,6 @@ bool Learn(uintptr_t self, Hero* h, bool* player = nullptr) {
     h->cls = -1;
     for (int c = 0; c < 8; ++c)
         if (model.compare(at + 18, strlen(kHeroClasses[c]) + 1, std::string(kHeroClasses[c]) + "/") == 0) h->cls = c;
-    if (h->cls >= 0) g_heroClass.store(h->cls);   // known as soon as the hero's skeleton is learnt, in whatever view (the per-class wrist depth and D2R VR Settings read it)
     int32_t count = 0; uintptr_t bones = 0;
     if (!Get(skel + 8, &count) || !Get(skel + 0xC, &bones) || count <= 0 || count > 1024) return false;
     h->skel = skel; h->count = count; h->parent.assign(count, -1); h->inHead.assign(count, 0); h->upper.assign(count, 0);
@@ -919,6 +971,19 @@ bool Learn(uintptr_t self, Hero* h, bool* player = nullptr) {
             if (a.y - b.y < 0.1f || b.y - c.y < 0.1f || c.y > h->pelvisY * 0.5f) continue;
             const int side = c.x < 0.0f ? 0 : 1;
             if (h->leg[side][2] < 0) { h->leg[side][0] = hip; h->leg[side][1] = knee; h->leg[side][2] = foot; }
+        }
+        // ... a side the names gave none: by the rig's hierarchy and bind pose alone (vr/leg_chain.h - the barbarian's rig names its bones otherwise)
+        if ((h->leg[0][2] < 0 || h->leg[1][2] < 0) && h->pelvis >= 0 && h->pelvisY > 0.5f) {
+            std::vector<float> bx(count), by(count);
+            for (int i = 0; i < count; ++i) { bx[i] = h->bind[i].m[12]; by[i] = h->bind[i].m[13]; }
+            legchain::Leg legs[2];
+            legchain::Find(count, h->parent.data(), bx.data(), by.data(), h->upper.data(), h->pelvis, h->pelvisY, legs);
+            for (int side = 0; side < 2; ++side)
+                if (h->leg[side][2] < 0 && legs[side].foot >= 0) { h->leg[side][0] = legs[side].hip; h->leg[side][1] = legs[side].knee; h->leg[side][2] = legs[side].foot; }
+            if (h->leg[0][2] >= 0 && h->leg[1][2] >= 0 && (legs[0].foot >= 0 || legs[1].foot >= 0))
+                NoteDoll("hero rig %s: its legs found by its bones' places, not their names (%s - %s - %s, %s - %s - %s)", h->cls >= 0 ? kHeroClasses[h->cls] : "?",
+                         names[h->leg[0][0]].c_str(), names[h->leg[0][1]].c_str(), names[h->leg[0][2]].c_str(), names[h->leg[1][0]].c_str(), names[h->leg[1][1]].c_str(),
+                         names[h->leg[1][2]].c_str());
         }
     }
     return true;
@@ -1156,16 +1221,116 @@ Mat TurnAbout(V3 k, float deg) {
     return r;
 }
 
+// An arm's bones (upper arm, forearm and all under them) scaled about `pivot` by `k`; the hand, its fingers and what it holds
+// put back at their own size on the new wrist. The T-pose fit's and [arms] full_reach's stretch.
+void ScaleArmAbout(const Hero& h, int side, V3 pivot, float k, std::vector<Mat>& newW) {
+    const int n = h.count, u = h.upr[side], hk = h.hand[side];
+    if (u < 0 || hk < 0) return;
+    const std::vector<Mat> before = newW;
+    std::vector<char> subtree(n, 0);
+    subtree[u] = 1;
+    for (int i = u; i < n; ++i) {
+        if (i != u && h.parent[i] >= 0) subtree[i] = subtree[h.parent[i]];
+        if (subtree[i]) bodycal::ScaleAbout(newW[i].m, {pivot.x, pivot.y, pivot.z}, k);
+    }
+    for (int row = 0; row < 3; ++row)
+        for (int col = 0; col < 3; ++col) newW[hk].m[row * 4 + col] = before[hk].m[row * 4 + col];   // the hand's own size and turn
+    std::vector<char> fromHand(n, 0);
+    fromHand[hk] = 1;
+    Propagate(h, before, newW, fromHand, hk);   // fingers, weapon bones: their offsets from the hand as they were
+}
+
+// [arms] full_reach (vr/full_reach.h): set by PoseBody for the pose it is posing (the pose thread's), and what it did since the
+// last note (ArmTakeNote), each arm's worst.
+bool g_fullReachPose = false;
+struct FullReachSeen { float shortPct = 0.0f, turnDeg = 0.0f, stretchPct = 0.0f; unsigned acted = 0; };
+FullReachSeen g_fullReachSeen[2];
+SRWLOCK g_armNoteLock = SRWLOCK_INIT;
+std::string g_armNote;   // ArmTakeNote's lines (the arms as drawn, once per rig; full_reach's work)
+ULONGLONG g_fullReachNoteAt = 0;
+// Once a pose: full_reach's worst since the last line, a line every few seconds while it acts (a log line costs a millisecond).
+void NoteFullReach() {
+    const ULONGLONG now = GetTickCount64();
+    if (now - g_fullReachNoteAt < 4000 || (!g_fullReachSeen[0].acted && !g_fullReachSeen[1].acted)) return;
+    g_fullReachNoteAt = now;
+    std::string line = "full reach (the last few seconds):";
+    for (int side = 0; side < 2; ++side) {
+        FullReachSeen& f = g_fullReachSeen[side];
+        if (!f.acted) continue;
+        char b[200];
+        snprintf(b, sizeof b, " the %s hand out of the arm's reach in %u poses, at most %.0f %% of the arm's length past it - the shoulder turned up to %.1f deg toward it, the arm lengthened up to %.0f %%;",
+                 side ? "left" : "right", f.acted, f.shortPct, f.turnDeg, f.stretchPct);
+        line += b;
+        f = FullReachSeen{};
+    }
+    AcquireSRWLockExclusive(&g_armNoteLock);
+    if (g_armNote.size() < 3000) g_armNote += (g_armNote.empty() ? "" : "\n") + line;
+    ReleaseSRWLockExclusive(&g_armNoteLock);
+}
+// The upper arm's parent when it is this arm's own collarbone: under the chest, neither the head nor the other arm under it
+// (a rig whose upper arm hangs straight off the spine has none: -1, no turn).
+int Clavicle(const Hero& h, int side) {
+    const int u = h.upr[side], p = u >= 0 ? h.parent[u] : -1;
+    if (p < 0 || p == h.spine || p == h.neck || (int)h.upper.size() <= p || !h.upper[p] || h.inHead[p]) return -1;
+    for (const int o : {h.upr[side ^ 1], h.head})
+        for (int i = o; i >= 0; i = h.parent[i])
+            if (i == p) return -1;
+    return p;
+}
+
 // One arm's two-bone IK, the wrist to T: elbow down, a little out to its own
 // side and back - of the body as turned.
 void Reach(const Hero& h, int side, V3 T, bool turn, float c, float s, const std::vector<Mat>& baseW, std::vector<Mat>& newW) {
     const int u = h.upr[side], l = h.lwr[side], k = h.hand[side];
+    // [arms] full_reach: a target past the arm's reach brings the shoulder along (the collarbone turned about its joint, the least
+    // turn, bounded), and what is still missing lengthens the arm - the hand on its controller, never short of it
+    const bool full = g_fullReachPose;
+    const V3 want = T;
+    float shortPct = 0.0f, turnDeg = 0.0f;
+    if (full) {
+        const int p = Clavicle(h, side);
+        // a Reach already run on this arm in this pose (the bow's, the grip fit's) may have turned or lengthened it: from the arm as it
+        // was before any, so they do not pile up (no turn or stretch before: as it is - the IK re-aims the chain anyway)
+        const int top = p >= 0 ? p : u;
+        const float rowNow = Len({newW[u].m[0], newW[u].m[1], newW[u].m[2]}), rowBase = Len({baseW[u].m[0], baseW[u].m[1], baseW[u].m[2]});
+        if ((p >= 0 && memcmp(newW[p].m, baseW[p].m, sizeof newW[p].m) != 0) || std::fabs(rowNow - rowBase) > 1e-4f * std::max(1e-3f, rowBase)) {
+            newW[top] = baseW[top];
+            std::vector<char> fromTop(h.count, 0);
+            fromTop[top] = 1;
+            Propagate(h, baseW, newW, fromTop, top);
+        }
+        const V3 S0 = Pos(newW[u]);
+        const float L = Len(Sub(Pos(newW[l]), S0)) + Len(Sub(Pos(newW[k]), Pos(newW[l])));
+        if (L > 1e-5f) shortPct = std::max(0.0f, Len(Sub(want, S0)) / (L * 0.999f) - 1.0f) * 100.0f;
+        if (p >= 0 && shortPct > 0.0f) {
+            const V3 P = Pos(newW[p]);
+            const fullreach::Turned t = fullreach::TurnShoulder({P.x, P.y, P.z}, {S0.x, S0.y, S0.z}, {want.x, want.y, want.z}, L);
+            if (t.turn) {
+                turnDeg = t.rad * 57.2957795f;
+                TurnAboutSelf(newW[p], TurnAbout({t.axis.x, t.axis.y, t.axis.z}, turnDeg));
+                std::vector<char> fromP(h.count, 0);
+                fromP[p] = 1;
+                Propagate(h, baseW, newW, fromP, p);
+            }
+        }
+    }
     const V3 S = Pos(newW[u]);
     const float L1 = Len(Sub(Pos(newW[l]), S)), L2 = Len(Sub(Pos(newW[k]), Pos(newW[l])));
     V3 pole = {side == 0 ? -0.5f : 0.5f, -1.0f, -0.3f};
     if (turn) pole = {pole.x * c + pole.z * s, pole.y, -pole.x * s + pole.z * c};
     const V3 E = Elbow(S, L1, L2, T, pole);
     AimChain(h, u, l, k, E, T, baseW, newW);
+    if (full) {
+        const float stretch = fullreach::Stretch(Len(Sub(want, S)), Len(Sub(Pos(newW[k]), S)));
+        if (stretch > 1.0f) ScaleArmAbout(h, side, S, stretch, newW);
+        if (shortPct > 0.0f) {
+            FullReachSeen& seen = g_fullReachSeen[side & 1];
+            seen.shortPct = std::max(seen.shortPct, shortPct);
+            seen.turnDeg = std::max(seen.turnDeg, turnDeg);
+            seen.stretchPct = std::max(seen.stretchPct, (stretch - 1.0f) * 100.0f);
+            ++seen.acted;
+        }
+    }
 }
 
 // [hands] forearm_twist (vr/forearm_twist.h): Reach aims the forearm by the smallest turn from the animation's, so it kept the
@@ -1350,7 +1515,17 @@ xbowgrip::Latch g_xbowLatch;
 // drawn. [0] right, [1] left.
 // palm: the palm's middle (wrist to middle knuckle, halfway, 3 cm out of the palm) - what a belt potion is held by
 struct ForearmOut { float elbow[3], wrist[3], across[3], palm[3], palmModel[3]; bool palmOk; ULONGLONG at;   // palmModel: in his model space
-                    float elbowW[3], wristW[3], acrossW[3], pointW[3], faceW[3]; bool worldOk, handW; ULONGLONG worldAt; };   // and in the WORLD (HeroArmWorld), made at the pose at worldAt
+                    float elbowW[3], wristW[3], acrossW[3], pointW[3], faceW[3]; bool worldOk, handW; ULONGLONG worldAt;   // and in the WORLD (HeroArmWorld), made at the pose at worldAt
+                    bool boxOk; float boxCW[3], boxHW[3][3]; };   // [hud] hand_vitals_orb_on_bone: the forearm bone's mesh box in the world, at the end of the pose
+// [hud] hand_vitals_orb_on_bone: each forearm bone's box off the hero's own meshes (the pose thread's), read again when his parts change (another armour)
+struct ArmBoxRead {
+    uintptr_t skel = 0;
+    uint64_t key = 0;
+    ULONGLONG lookAt = 0;
+    bool ok[2] = {};
+    float mn[2][3] = {}, mx[2][3] = {};   // in the forearm bone's own frame, the model's units
+};
+ArmBoxRead g_armBoxes;
 std::atomic<const char*> g_armWorldWhy{"not yet posed"};   // why the last pose could not put the arm in the world (HeroArmWhy); "" while it could
 
 SRWLOCK g_forearmLock = SRWLOCK_INIT;
@@ -1746,6 +1921,74 @@ void LibGripForget(int side) {
     ReleaseSRWLockExclusive(&g_libGripLock);
 }
 
+// [weight] grab_wrap: the same hand step for a hand that holds a body ([weight] grab_bodies) - its own state (a grab is not a weapon grip), the rig closing to the fist
+// table's pose (no game's weapon-grip pose for a body), the held limb's capsule as the "shaft". nullptr when `res` is the library's answer; else why not.
+LibGripHand g_libGrab[2];
+const char* LibGrabRun(const Hero& h, int side, const Input& in, const std::vector<Mat>& now, float upm, D2rgHandIn hin, LibGripResult* res) {
+    const GripHandStepFn step = g_gripHandStep.load();
+    if (!step) return "no grip library (d2r_vr_grip.dll) - the palm is laid on, the fist closes";
+    AcquireSRWLockExclusive(&g_libGripLock);
+    LibGripHand& L = g_libGrab[side];
+    const uint64_t key = ((uint64_t)h.skel * 0x9E3779B97F4A7C15ull) ^ ((uint64_t)(side + 1) << 56) ^ 0x6772616275ull;
+    if (L.key != key) {
+        L.key = key;
+        L.why = LibBuildRig(h, side, GripPoseKept{}, in, now, upm, &L);
+        L.rigOk = L.why == nullptr;
+        L.st = D2rgHandState{};
+        L.have = false;
+        L.haveAt = false;
+    }
+    if (!L.rigOk) {
+        const char* why = L.why;
+        ReleaseSRWLockExclusive(&g_libGripLock);
+        return why;
+    }
+    if (!(L.have && L.sample == in.sample)) {
+        LARGE_INTEGER t, f;
+        QueryPerformanceCounter(&t);
+        QueryPerformanceFrequency(&f);
+        hin.size = sizeof hin;
+        hin.dt = L.haveAt ? std::clamp((double)(t.QuadPart - L.at.QuadPart) / (double)f.QuadPart, 0.0, 0.05) : 0.0;
+        L.at = t;
+        L.haveAt = true;
+        {   // the fingers as the hand has them now: the grab closes them from there (smoothly), not from the open pose
+            grippose::M3 eNow;
+            std::vector<grippose::M3> coords;
+            bool ok = HandFrameAt(h, side, now, &eNow);
+            for (const Hero::Finger& fi : h.fingers[side])
+                for (const int b : fi.bones) {
+                    grippose::M3 u;
+                    if (!ok || !grippose::Orientation(now[b].m, &u)) { ok = false; continue; }
+                    coords.push_back(griprig::CoordsInProper(grippose::Coords(u, eNow), side));
+                }
+            D2rgQ q[D2RG_MAX_BONES];
+            if (ok && griprig::LocalsFromCoords(L.rig, L.mirror, coords, q)) {
+                hin.hasFingersFrom = 1;
+                for (int i = 0; i < L.rig.nBones; ++i) hin.fingersFrom[i] = q[i];
+            }
+        }
+        if (step(hin, L.rig, &L.st, &L.out) < 0) {
+            ReleaseSRWLockExclusive(&g_libGripLock);
+            return "the grip library (d2r_vr_grip.dll) is not there or refused the step";
+        }
+        L.sample = in.sample;
+        L.have = true;
+    }
+    res->ok = true;
+    res->out = L.out;
+    res->rig = L.rig;
+    res->mirror = L.mirror;
+    ReleaseSRWLockExclusive(&g_libGripLock);
+    return nullptr;
+}
+void LibGrabForget(int side) {
+    AcquireSRWLockExclusive(&g_libGripLock);
+    g_libGrab[side].st = D2rgHandState{};
+    g_libGrab[side].have = false;
+    g_libGrab[side].haveAt = false;
+    ReleaseSRWLockExclusive(&g_libGripLock);
+}
+
 // [bow] hook_game_pose: the string hand's fingers as the game's own bow-draw animation holds them (vr/bow_hook.h: the measured rotation of
 // every finger bone, bind pose -> the hold of the draw, in the bone's own frame). Laid on the chains below the wrist bone `newW[hand]` as it
 // stands now, into `hook` (a copy of the finger bones' matrices, nothing else touched): the knuckles open, the last two joints of each finger
@@ -1900,6 +2143,17 @@ bool CarryBowFingers(const Hero& h, const std::vector<Mat>& oldW, std::vector<Ma
 // (his TransformComponent's local matrix, set before this very pose - a later copy displaced fast swings) times the
 // bone. Kept with the stamp of the hand sample this pose is made from, so a swing is matched to the hand that posed
 // it. Idea and shape after bearstonem/d2r-pcvr (MIT) skeletons.cpp MeleeWeapon. Read-only on the game.
+// [body] under_camera (vr/under_camera.h): the up part of the body's move under the camera (model units; a Leap's arc pulled back down to
+// the camera's ground, or followed by it). The pose is worked out with the body's feet at the model's own height - the eye's height in
+// model space is read as its height over the feet everywhere (the hands' scale, the arm span, the reach) - and the finished bones are
+// raised by this just before they are written (PoseBody's end). A read of the hero's model-to-world within the pose goes through
+// PoseModel, which carries the same move: what is taken to the world from a bone of the pose is where it will be drawn. 0 outside a pose.
+thread_local float t_poseUp = 0.0f;
+void PoseModel(Mat& model) {
+    if (t_poseUp == 0.0f) return;
+    for (int k = 0; k < 3; ++k) model.m[12 + k] += t_poseUp * model.m[4 + k];   // (0, up, 0) through the model's own rows
+}
+
 void NotePosedWeapon(uintptr_t self, const Mat& w, int side, const Input& in, const PosedBlade (&blades)[2]) {
     PosedWeaponPose out;
     out.blade[0] = blades[0]; out.blade[1] = blades[1];
@@ -1907,6 +2161,7 @@ void NotePosedWeapon(uintptr_t self, const Mat& w, int side, const Input& in, co
     HeroXform hx; Mat model;
     if (in.havePoseStamp && HeroTransform(&hx) && hx.self == self && (hx.parent & 0xFFFFFu) == 0xFFFFFu &&
         SafeCopy(model.m, (const void*)hx.comp, sizeof model)) {
+        PoseModel(model);
         const Mat world = Mul(w, model);
         const V3 o = Pos(world), a = Norm({world.m[4], world.m[5], world.m[6]}), p = Pos(model);
         if (Len({world.m[4], world.m[5], world.m[6]}) > 0.001f && std::isfinite(o.x + o.y + o.z + a.x + a.y + a.z + p.x + p.y + p.z)) {
@@ -1948,6 +2203,10 @@ float g_restModel[3] = {}, g_restHands[3] = {};
 ULONGLONG g_restAt = 0;
 bowaim::Smooth g_restLiftSmooth;                     // [bow] arrow_rest_clear: how far the arrow and the nock are lifted off the arm, smoothed
 float g_restLift[3] = {};                            // ... as a vector in the hero's model space (along the bow's displayed limb axis)
+// [bow] arrow_rest_model: the bow model's own arrow rest (bowrig::ArrowRestPoint) in its attach bone's frame, as the bow's own hook last read it (the hero's
+// pose carries it by the attach bone to where the bow hangs now)
+float g_restAttach[3] = {};
+ULONGLONG g_restAttachAt = 0;
 float g_restResidual = 0.0f;
 int g_restSteps = 0;
 bool g_restSettled = true;
@@ -2134,11 +2393,19 @@ void AimBow(const Hero& h, const Input& in, const std::vector<Mat>& oldW, const 
     // hand THROUGH it; it comes in and goes out with the draw. All offsets 0: the line through the reference point, as it was.
     bowrig::V3 offsetCur{0.0f, 0.0f, 0.0f};
     float restFade = 0.0f;
+    bool restModel = false;
     if (in.bowRest) {
+        float ra[3] = {};
         AcquireSRWLockExclusive(&g_bowAimLock);
         restFade = g_restBlend.StepSparse(drawing, now, in.bowAimBlendMs);
+        restModel = in.bowRestModel && g_restAttachAt && now - g_restAttachAt < 500;
+        if (restModel) memcpy(ra, g_restAttach, sizeof ra);
         ReleaseSRWLockExclusive(&g_bowAimLock);
-        offsetCur = bowaim::OffsetIn(cur, in.bowRestCm[0], in.bowRestCm[1], in.bowRestCm[2]) * (0.01f * upm * restFade);
+        // [bow] arrow_rest_model: the bow model's own rest - where its arrow passes the riser - carried by the attach bone to where the bow hangs now, as an
+        // offset from the hand's point (SolveRest turns it with the bow); else the point the arrow_rest_*_cm offsets set in the hand's frame
+        const bowrig::V3 fromModel = restModel ? bowrig::Point(asRig(oldAttach), {ra[0], ra[1], ra[2]}) - rig(bowHand) : bowrig::V3{};
+        restModel = restModel && bowrig::Finite(fromModel) && bowrig::Length(fromModel) < 0.5f * upm;   // (a rest half a metre off the hand is no rest)
+        offsetCur = (restModel ? fromModel : bowaim::OffsetIn(cur, in.bowRestCm[0], in.bowRestCm[1], in.bowRestCm[2]) * (0.01f * upm)) * restFade;
     }
     const bowaim::RestSolution rest = bowaim::SolveRest(rig(stringHand), rig(bowHand), cur, offsetCur, in.bowAim, rollMode, {0.0f, 1.0f, 0.0f}, blend, 0.05f * upm);   // hands under 5 cm apart give no line
     const bool haveAim = rest.ok;
@@ -2152,8 +2419,12 @@ void AimBow(const Hero& h, const Input& in, const std::vector<Mat>& oldW, const 
         g_restAt = now;
         g_restResidual = rest.residualDeg; g_restSteps = rest.steps; g_restSettled = rest.settled;
         ReleaseSRWLockExclusive(&g_bowAimLock);
-        char more[120];
-        snprintf(more, sizeof more, "; arrow rest %.1f %.1f %.1f cm, %s in %d steps (%.2f deg)", in.bowRestCm[0], in.bowRestCm[1], in.bowRestCm[2], rest.settled ? "settled" : "NOT settled", rest.steps, rest.residualDeg);
+        char more[160];
+        if (restModel)
+            snprintf(more, sizeof more, "; arrow rest: the bow model's own, %.1f cm from the hand's point, %s in %d steps (%.2f deg)",
+                     bowrig::Length(offsetCur) / std::max(restFade, 1e-3f) / upm * 100.0f, rest.settled ? "settled" : "NOT settled", rest.steps, rest.residualDeg);
+        else
+            snprintf(more, sizeof more, "; arrow rest %.1f %.1f %.1f cm, %s in %d steps (%.2f deg)", in.bowRestCm[0], in.bowRestCm[1], in.bowRestCm[2], rest.settled ? "settled" : "NOT settled", rest.steps, rest.residualDeg);
         st.who += more;
     }
     st.raw = haveAim ? bowaim::AngleDeg(cur.forward, aim) : 0.0f;
@@ -2258,6 +2529,7 @@ void NoteFlailHands(uintptr_t self, const Hero& h, const Input& in, const std::v
     FlailHands f;
     HeroXform hx;
     if (h.head < 0 || !HeroTransform(&hx) || hx.self != self || (hx.parent & 0xFFFFFu) != 0xFFFFFu || !SafeCopy(f.heroModel.m, (const void*)hx.comp, sizeof f.heroModel.m)) return;
+    PoseModel(f.heroModel);
     for (int side = 0; side < 2; ++side) {
         if (h.weapon[side] < 0) continue;
         f.attach[side] = newW[h.weapon[side]];
@@ -2308,6 +2580,8 @@ struct FlailBall {
     Mat itemLocal{};                                 // the item's transform against that attach bone
     V3 centre{}, dir{};                              // the ball's centre and the last link's direction (toward the ball)
     float radius = 0.0f;                             // model units
+    int more = 0;                                    // Khalim's: the other chains' balls (each strikes too)
+    V3 moreCentre[PosedBlade::kMoreBalls]{}, moreDir[PosedBlade::kMoreBalls]{};
 };
 SRWLOCK g_flailBallLock = SRWLOCK_INIT;
 FlailBall g_flailBall;
@@ -2485,6 +2759,13 @@ void PoseFlail(uintptr_t self) {
     bool started = false;
     for (int c = 0; c < held.chains; ++c)
         started = flailchain::Drive(held.rig[c], held.sim[c], toSim, fromSim, dt, gravity, 1.0f, kick, p, pose) == flailchain::Done::Started || started;   // a 1 m jump: started again
+    if (held.chains > 1 && held.head.ok) {   // Khalim's three: the balls kept apart - never one lump (flailchain::Separate), the chains posed again where they are
+        flailchain::V3 restHeads[flailchain::kMaxChains];
+        for (int c = 0; c < held.chains; ++c) restHeads[c] = flailchain::RestHead(held.rig[c], pose, toSim);
+        const float minDist = 2.0f * held.head.radius * flailchain::Length(flailchain::Row(toSim, 0)) * 0.95f;
+        if (flailchain::Separate(held.sim, held.chains, minDist, restHeads, p.iterations, held.head.along * flailchain::Length(flailchain::Row(toSim, 0))) > 0)
+            for (int c = 0; c < held.chains; ++c) flailchain::Repose(held.rig[c], held.sim[c], fromSim, pose);
+    }
     for (int i = held.lowest; i <= held.highest; ++i)
         if (!boneguard::Finite(pose[i].m)) { why("the chain's pose did not come out as numbers"); for (int c = 0; c < held.chains; ++c) held.sim[c].live = false; return; }
     if (held.highest < held.lowest ||
@@ -2499,6 +2780,12 @@ void PoseFlail(uintptr_t self) {
         if (flailchain::Ball(held.rig[held.strikes], pose, held.head, &centre, &dir)) {
             b.at = now; b.gen = HeroGen(); b.side = held.side; b.itemLocal = itemLocal;
             b.centre = {centre.x, centre.y, centre.z}; b.dir = {dir.x, dir.y, dir.z}; b.radius = held.head.radius;
+            for (int c = 0; c < held.chains && b.more < PosedBlade::kMoreBalls; ++c)   // ... and every other chain's ball (Khalim's three: each strikes)
+                if (c != held.strikes && flailchain::Ball(held.rig[c], pose, held.head, &centre, &dir)) {
+                    b.moreCentre[b.more] = {centre.x, centre.y, centre.z};
+                    b.moreDir[b.more] = {dir.x, dir.y, dir.z};
+                    ++b.more;
+                }
         }
         AcquireSRWLockExclusive(&g_flailBallLock); g_flailBall = b; ReleaseSRWLockExclusive(&g_flailBallLock);
     }
@@ -2507,12 +2794,338 @@ void PoseFlail(uintptr_t self) {
 }
 #endif
 
+#if D2RVR_FIRST_PERSON
+// ---- [shield] heads_hang: the Necromancer's head hangs from its cord under the hand (vr/head_hang.h) ----
+// A head in the left slot is a "shield" to the game's data (ItemTypes head), so [shield] forearm strapped it to the forearm, and the game's own
+// pose of it - made for the arm the game animates - held it stiff at the hand's angle. Ticked (F4 only): PoseBody leaves its bones with the hand
+// (HoldHead: not strapped), and the head's OWN skeleton is turned here, as a whole, about the point the game hangs it from (the model's origin:
+// the cord's knot, the handle), so that it hangs under gravity, swings after the hand and twists after its turn. It swings in the ROOM, as the
+// flail's chain does. Only the bone matrices of the hero's own head; the item, its block and its stats are the game's. Unticked or any other
+// view: nothing runs, nothing is written - as before.
+std::atomic<bool> g_headOn{false};                   // Set(): [shield] heads_hang with the arms on the controllers (vrcam: F4 and a head in a hand slot)
+std::atomic<const char*> g_headWhy{"no head posed yet"};
+std::atomic<ULONGLONG> g_headSeenAt{0};              // the last pose of any head skeleton the hook met (HeadStatus: none lately is a reason too)
+SRWLOCK g_headNoteLock = SRWLOCK_INIT;
+std::string g_headNote;                              // the head models learned, once each, for vrcam's log
+
+// The bones the head may hang on - L_weapon_attach, shield_attach, R_weapon_attach - as this pose of the hero left them, his model-to-world and
+// his model space in the room (as the flail's FlailHands).
+constexpr int kHeadBones = 3;
+struct HeadHands {
+    ULONGLONG at = 0;
+    uintptr_t hero = 0;
+    uint32_t gen = 0;
+    bool ok[kHeadBones] = {};                        // the bone is there and not shrunk to a point
+    Mat attach[kHeadBones]{};
+    Mat heroModel{};
+    Mat toRoom{};
+};
+SRWLOCK g_headLock = SRWLOCK_INIT;
+HeadHands g_headHands;
+
+void NoteHeadHands(uintptr_t self, const Hero& h, const Input& in, const std::vector<Mat>& newW) {
+    HeadHands f;
+    HeroXform hx;
+    if (h.head < 0 || !HeroTransform(&hx) || hx.self != self || (hx.parent & 0xFFFFFu) != 0xFFFFFu || !SafeCopy(f.heroModel.m, (const void*)hx.comp, sizeof f.heroModel.m)) return;
+    PoseModel(f.heroModel);
+    const int bones[kHeadBones] = {h.weapon[1], h.shield, h.weapon[0]};
+    for (int b = 0; b < kHeadBones; ++b) {
+        if (bones[b] < 0 || bones[b] >= (int)newW.size()) continue;
+        f.attach[b] = newW[bones[b]];
+        f.ok[b] = Len(V3{f.attach[b].m[0], f.attach[b].m[1], f.attach[b].m[2]}) > 0.05f && boneguard::Finite(f.attach[b].m);
+    }
+    const V3 head = in.haveEye ? V3{in.eyeModel[0], in.eyeModel[1], in.eyeModel[2]} : Pos(newW[h.head]);
+    const float upm = std::clamp(head.y / std::max(0.8f, in.userHeadM), 2.0f, 8.0f) * in.scale;   // model units per metre
+    flailchain::Mat room;
+    if (!flailchain::RoomFrame({head.x, head.y, head.z}, upm, cosf(in.yawInModel), sinf(in.yawInModel), {in.headRoom[0], in.headRoom[1], in.headRoom[2]},
+                               in.headYawDeg, &room)) return;
+    memcpy(f.toRoom.m, room.m, sizeof f.toRoom.m);
+    f.at = GetTickCount64();
+    f.hero = self;
+    f.gen = HeroGen();
+    AcquireSRWLockExclusive(&g_headLock);
+    g_headHands = f;
+    ReleaseSRWLockExclusive(&g_headLock);
+}
+
+// PoseBody: the head's bones (the left attach bone and shield_attach) with the hand, not strapped to the forearm. The left attach bone is under the
+// wrist and already there; shield_attach hangs under the forearm in the rig, so it is carried by the wrist as the game's animation has it against it.
+// A head the game hides (shrunk to a point: a weapon swap) stays the game's. True when the hand holds it.
+bool HoldHead(const Hero& h, const std::vector<Mat>& oldW, std::vector<Mat>& newW) {
+    const int k = h.hand[1];
+    if (k < 0 || h.weapon[1] < 0) return false;
+    const Mat anim = Mul(oldW[h.weapon[1]], InvAffine(oldW[k]));
+    if (Len({anim.m[0], anim.m[1], anim.m[2]}) < 0.3f) return false;   // hidden by the game
+    if (h.shield >= 0 && h.shield != h.weapon[1]) {
+        const std::vector<Mat> before = newW;
+        newW[h.shield] = Mul(Mul(oldW[h.shield], InvAffine(oldW[k])), newW[k]);
+        std::vector<char> fromS(h.count, 0);
+        fromS[h.shield] = 1;
+        Propagate(h, before, newW, fromS, h.shield);
+    }
+    return true;
+}
+
+// A head skeleton met: where it hangs from, learned from its bind pose and its meshes' boxes, or why not.
+struct HeadState {
+    std::string model;
+    int count = 0;
+    headhang::Rig rig;
+    headhang::State state;
+    uint32_t entity = 0;
+    bool entityKnown = false;
+    ULONGLONG lookupAt = 0;
+    int bone = -1;                                   // the hero's bone it hangs on (HeadHands' order), as last read
+    LARGE_INTEGER lastAt{};
+    uint32_t gen = 0;
+    bool toldHung = false, toldNotHero = false;      // the log's notes, once each
+    int cog = -1;                                    // its cog bone and that bone's bind pose (the frame it hangs by), -1 none
+    Mat cogBind{};
+    bool fromBones = false;                          // hung by its bones: the meshes' boxes did not read (asked again a few times: boxTries, boxAt)
+    int boxTries = 0;
+    ULONGLONG boxAt = 0;
+};
+struct HeadEntry {
+    uintptr_t bones = 0;
+    std::unique_ptr<HeadState> head;                 // a head's: else none
+};
+SRWLOCK g_headRigLock = SRWLOCK_INIT;
+std::map<std::pair<uintptr_t, uintptr_t>, HeadEntry> g_heads;
+constexpr int kHeadMaxBones = 64;   // the heads' skeletons have 8 (preserved) .. 24 (zombie)
+
+void NoteHead(const std::string& line) {
+    AcquireSRWLockExclusive(&g_headNoteLock);
+    if (g_headNote.size() < 1500) g_headNote += (g_headNote.empty() ? "" : " | ") + line;
+    ReleaseSRWLockExclusive(&g_headNoteLock);
+}
+
+// The head's meshes' boxes off the instance the hook poses (grannymesh::MeshBoxes) and the hang from them; not ok, with why, when none read.
+headhang::Hang HangFromBoxes(uintptr_t self, int* got, const char** why) {
+    grannymesh::Box boxes[16];
+    uintptr_t instance = 0, skel = 0;
+    auto rd = [](uintptr_t at, void* to, size_t n) { return SafeCopy(to, (const void*)at, n); };
+    *why = "the hook's instance does not read";
+    *got = Get(self + 0x08, &instance) && Get(instance + 0x08, &skel) ? grannymesh::MeshBoxes(rd, instance, skel, boxes, 16, why) : 0;
+    headhang::Box hb[16];
+    for (int i = 0; i < *got; ++i) hb[i] = {{boxes[i].min[0], boxes[i].min[1], boxes[i].min[2]}, {boxes[i].max[0], boxes[i].max[1], boxes[i].max[2]}};
+    const headhang::Hang hang = headhang::HangOf(hb, *got);
+    if (*got && !hang.ok) *why = "no mesh below its origin";
+    return hang;
+}
+// The rig from a hang: by its cog when it has one (and its bind pose inverts), else by the model's own frame.
+headhang::Rig HeadRig(const HeadState& e, const headhang::Hang& hang) {
+    if (e.cog >= 0) {
+        flailchain::Mat cb;
+        memcpy(cb.m, e.cogBind.m, sizeof cb.m);
+        const headhang::Rig r = headhang::RigOf(hang, e.cog, &cb);
+        if (r.ok) return r;
+    }
+    return headhang::RigOf(hang, -1, nullptr);
+}
+
+// A head skeleton met: where it hangs from - its meshes' boxes if they read, else its own bones (in the game the boxes do not read: the
+// skeleton is a .skeleton file's, whose model has no meshes) - and how. It always hangs: no way back to the game's stiff pose.
+void LearnHead(uintptr_t self, uintptr_t bones, int count, HeadEntry* entry) {
+    uintptr_t object = 0, name = 0;
+    Get(self, &object); Get(object + 8, &name);
+    const std::string path = Str(name);
+    if (!headhang::IsHeadModel(path)) return;
+    entry->head = std::make_unique<HeadState>();
+    HeadState* e = entry->head.get();
+    e->model = path.substr(path.rfind('/') == std::string::npos ? 0 : path.rfind('/') + 1);
+    e->count = count;
+    headhang::V3 places[kHeadMaxBones];
+    int unread = 0;
+    for (int i = 0; i < count; ++i) {
+        uintptr_t nm = 0;
+        const uintptr_t at = bones + (uintptr_t)i * 0xA4;
+        Mat inverse;
+        places[i] = {std::nanf(""), 0.0f, 0.0f};   // (a bone that does not read is left out of the hang)
+        if (!Get(at, &nm) || !SafeCopy(inverse.m, (const void*)(at + 0x50), sizeof inverse.m)) { ++unread; continue; }
+        const Mat bind = InvAffine(inverse);
+        places[i] = {bind.m[12], bind.m[13], bind.m[14]};
+        if (e->cog < 0 && _stricmp(Str(nm).c_str(), "cog") == 0) { e->cog = i; e->cogBind = bind; }
+    }
+    int got = 0;
+    const char* boxWhy = nullptr;
+    headhang::Hang hang = HangFromBoxes(self, &got, &boxWhy);
+    e->fromBones = !hang.ok;
+    if (e->fromBones) hang = headhang::HangOfBones(places, count);
+    e->rig = HeadRig(*e, hang);
+    e->boxAt = GetTickCount64();
+    char b[400];
+    snprintf(b, sizeof b, "head hang: %s, %d bones%s: hangs from its origin along %.3f %.3f %.3f (the model's), the cord %.3f units, by its %s - %s%s%s",
+             e->model.c_str(), count, unread ? " (some do not read)" : "", hang.dir.x, hang.dir.y, hang.dir.z, hang.length,
+             e->rig.carrier >= 0 ? "cog" : "own frame", e->fromBones ? "from its bones (its meshes' boxes: " : "from its meshes' boxes",
+             e->fromBones ? (boxWhy ? boxWhy : "none") : "", e->fromBones ? "; asked again later)" : "");
+    NoteHead(b);
+}
+
+void PoseHead(uintptr_t self) {
+    if (!g_headOn.load(std::memory_order_relaxed)) return;
+    uintptr_t model = 0, skeleton = 0, bones = 0;
+    int count = 0;
+    if (!Get(self + 0x08, &model) || !Get(model + 0x08, &skeleton) || !Get(skeleton + 8, &count) || count < 2 || count > kHeadMaxBones ||
+        !Get(skeleton + 0xC, &bones) || !bones) return;
+    const ULONGLONG now = GetTickCount64();
+    const auto key = std::make_pair(self, skeleton);
+    if (KnownNot(g_headRigLock, g_heads, key, bones, [](const HeadEntry& e) { return !e.head; })) return;   // most rigs: not a head, told under the shared lock
+    AcquireSRWLockExclusive(&g_headRigLock);
+    struct Unlock { ~Unlock() { ReleaseSRWLockExclusive(&g_headRigLock); } } unlock;
+    auto it = g_heads.find(key);
+    if (it == g_heads.end() || it->second.bones != bones) {
+        HeadEntry e;
+        e.bones = bones;
+        LearnHead(self, bones, count, &e);
+        if (g_heads.size() > 4096) std::erase_if(g_heads, [](const auto& f) { return !f.second.head; });   // full: the heads are kept
+        if (g_heads.size() > 4096) g_heads.clear();
+        it = g_heads.insert_or_assign(key, std::move(e)).first;
+    }
+    if (!it->second.head) return;
+    HeadState& held = *it->second.head;
+    g_headSeenAt.store(now);
+    auto why = [&](const char* w) { g_headWhy.store(w); };
+    if (held.fromBones && held.boxTries < 5 && now - held.boxAt >= 2000) {   // hung by its bones: the meshes' boxes asked again, five times two seconds apart
+        held.boxAt = now;
+        ++held.boxTries;
+        int got = 0;
+        const char* boxWhy = nullptr;
+        const headhang::Hang hang = HangFromBoxes(self, &got, &boxWhy);
+        if (hang.ok) {
+            held.rig = HeadRig(held, hang);
+            held.fromBones = false;
+            char b[260];
+            snprintf(b, sizeof b, "head hang: %s - its meshes' boxes read now (%d): along %.3f %.3f %.3f, the cord %.3f units", held.model.c_str(), got, hang.dir.x, hang.dir.y, hang.dir.z, hang.length);
+            NoteHead(b);
+        }
+    }
+    if (!held.rig.ok) { why("a head that cannot hang (its rig did not learn)"); return; }
+    HeroXform hero;
+    if (!HeroTransform(&hero)) { why("the hero's transform is not known"); return; }
+    // Whose is it? Only the hero's own head: its entity hangs off his (one on the ground, another player's never does).
+    Mat itemLocal, itemWorld;
+    bool haveWorld = false;
+    {
+        AcquireSRWLockExclusive(&ecs::g_lock);
+        struct EcsUnlock { ~EcsUnlock() { ReleaseSRWLockExclusive(&ecs::g_lock); } } ecsUnlock;
+        uintptr_t existing = 0;
+        bool found = held.entityKnown && ecs::SkeletonOf(held.entity, &existing) && existing == self;
+        if (!found) {
+            held.entityKnown = false;
+            if (held.lookupAt && now - held.lookupAt < 500) return;   // looked for twice a second at most
+            held.lookupAt = now;
+            found = held.entityKnown = ecs::EntityOf(self, &held.entity);
+            if (!found) { why("the head's entity is not found yet"); return; }
+        }
+        uint32_t index = 0, parent = 0;
+        uintptr_t components = 0;
+        if (!ecs::Dense(ecs::g_xs, held.entity, &index) || !Get(ecs::g_xs + 0x38, &components) || !components ||
+            !Get(components + (uintptr_t)index * kTransformSize + 0xC0, &parent)) { why("the head entity's transform is not found"); return; }
+        if ((parent & 0xFFFFF) != (hero.entity & 0xFFFFF)) {   // not the hero's: the game's pose (the status says nothing: the hero's own may be posed too)
+            if (!held.toldNotHero) {
+                held.toldNotHero = true;
+                char b[200];
+                snprintf(b, sizeof b, "head hang: a %s skeleton whose entity hangs off entity %05X, not the hero's (%05X) - left as the game poses it (on the ground, or another's)",
+                         held.model.c_str(), parent & 0xFFFFFu, hero.entity & 0xFFFFFu);
+                NoteHead(b);
+            }
+            return;
+        }
+        if (!SafeCopy(itemLocal.m, (const void*)(components + (uintptr_t)index * kTransformSize), sizeof itemLocal.m)) { why("the head entity's transform did not read"); return; }
+        haveWorld = SafeCopy(itemWorld.m, (const void*)(components + (uintptr_t)index * kTransformSize + 0x40), sizeof itemWorld.m) && boneguard::Finite(itemWorld.m);
+    }
+    HeadHands hands;
+    AcquireSRWLockShared(&g_headLock); hands = g_headHands; ReleaseSRWLockShared(&g_headLock);
+    if (!hands.at || now - hands.at >= 150 || hands.hero != g_heroSelf.load() || hands.gen != HeroGen()) { why("the hero's pose has not placed the hands lately"); return; }
+    // The bone it hangs on: of the ones shown, the one that puts the item where the game has it (its world matrix); kept unless another is
+    // clearly nearer. Unreadable: the left attach bone.
+    {
+        float d[kHeadBones];
+        int nearest = -1;
+        for (int b = 0; b < kHeadBones; ++b) {
+            d[b] = hands.ok[b] && haveWorld ? Len(Sub(Pos(Mul(Mul(itemLocal, hands.attach[b]), hands.heroModel)), Pos(itemWorld))) : 1e30f;
+            if (d[b] < 1e29f && (nearest < 0 || d[b] < d[nearest])) nearest = b;
+        }
+        int bone = held.bone;
+        if (nearest >= 0) { if (bone < 0 || !hands.ok[bone] || d[nearest] * 2.0f < d[bone]) bone = nearest; }
+        else bone = 0;
+        if (bone < 0 || !hands.ok[bone]) { why("the bone the head hangs on is not shown"); return; }
+        held.bone = bone;
+    }
+    // the head's model -> the room: the simulation's frame (metres, y up)
+    const Mat toRoom = Mul(Mul(itemLocal, hands.attach[held.bone]), hands.toRoom);
+    if (!boneguard::Finite(toRoom.m)) { why("the head's place in the room is not numbers"); return; }
+    if (held.gen != HeroGen()) { held.gen = HeroGen(); held.state.live = false; }   // a new hero model: started again
+    flailchain::Mat toSim, fromSim;
+    memcpy(toSim.m, toRoom.m, sizeof toSim.m);
+    if (!flailchain::Inverse(toSim, &fromSim)) { why("the head's frame has no inverse"); return; }
+    LARGE_INTEGER qpc, freq;
+    QueryPerformanceCounter(&qpc); QueryPerformanceFrequency(&freq);
+    const float dt = held.lastAt.QuadPart ? (float)((double)(qpc.QuadPart - held.lastAt.QuadPart) / (double)freq.QuadPart) : 1.0f;
+    held.lastAt = qpc;
+    uintptr_t world = 0, matrices = 0;
+    int worldCount = 0;
+    if (!Get(self + 0x20, &world) || !Get(world, &worldCount) || worldCount != held.count || !Get(world + 4, &matrices) || !matrices) { why("its pose matrices are not the skeleton's"); return; }
+    flailchain::Mat pose[kHeadMaxBones];
+    if (!SafeCopy(pose, (const void*)matrices, sizeof(Mat) * (size_t)held.count)) { why("its pose matrices did not read"); return; }
+    const headhang::Done done = headhang::Drive(held.rig, held.state, toSim, fromSim, dt, {0.0f, -9.81f, 0.0f}, 1.0f, headhang::Params{}, pose, held.count);
+    if (!held.state.live) { why("the head's hang did not start (its frame is not square)"); return; }
+    for (int i = 0; i < held.count; ++i)
+        if (!boneguard::Finite(pose[i].m)) { why("the head's pose did not come out as numbers"); held.state.live = false; return; }
+    if (!SafeWrite((void*)matrices, pose, (size_t)held.count * sizeof(Mat))) { why("the head's pose could not be written"); return; }
+    why(done == headhang::Done::Started ? "posed - hanging, started at rest under the hand" : "posed - hanging and swinging");
+    if (!held.toldHung) {
+        held.toldHung = true;
+        static const char* const kBones[kHeadBones] = {"L_weapon_attach", "shield_attach", "R_weapon_attach"};
+        char b[220];
+        snprintf(b, sizeof b, "head hang: the hero's %s hangs on his %s - from its model's origin, the cord %.0f cm to the hanging part's middle", held.model.c_str(),
+                 kBones[held.bone], held.state.length * 100.0f);
+        NoteHead(b);
+    }
+}
+#endif
+
+#if D2RVR_FIRST_PERSON
+// The way the palm faces, square to the forearm `axis` (unit, elbow -> wrist), model space: from the
+// knuckles' line (pinky -> index), which a bending wrist turns about and so leaves alone - only the
+// forearm's own twist turns it. As Fist works the palm out, the forearm in place of wrist -> middle
+// knuckle. (The hand's axis most square to the forearm, picked afresh each frame, swapped for another
+// as the wrist bent: the toolbar jumped onto the arm's edge.) The forearms' read (g_forearm), twice a
+// pose with [hud] hand_vitals_orb_drawn_hand.
+V3 PalmAcross(const Hero& h, int side, const std::vector<Mat>& newW, V3 axis) {
+    const int k = h.hand[side];
+    V3 across{0, 0, 0};
+    if (const int i = h.ind[side], p = h.pnk[side]; i >= 0 && p >= 0) {
+        V3 line = Sub(Pos(newW[i]), Pos(newW[p]));
+        const float d = Dot(line, axis);
+        line = V3{line.x - axis.x * d, line.y - axis.y * d, line.z - axis.z * d};
+        across = Norm(Scale(Cross(axis, line), side == 0 ? -1.0f : 1.0f));
+    } else {
+        float best = 2.0f;
+        for (int r = 0; r < 3; ++r) {   // no knuckles: the hand's axis most square to the forearm
+            const V3 a = Norm(V3{newW[k].m[r * 4], newW[k].m[r * 4 + 1], newW[k].m[r * 4 + 2]});
+            if (std::fabs(Dot(a, axis)) < best) { best = std::fabs(Dot(a, axis)); across = a; }
+        }
+        const float d = Dot(across, axis);
+        across = Norm(V3{across.x - axis.x * d, across.y - axis.y * d, across.z - axis.z * d});
+    }
+    return across;
+}
+#endif
+
+#if D2RVR_FIRST_PERSON
+void WalkBackLegs(uintptr_t self, const Hero& h, const Input& in, float c, float s, std::vector<Mat>& newW);   // [body] walk_back (below)
+#endif
 void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out& wo) {
     uintptr_t world = 0, mats = 0; int32_t n = 0;
     if (!Get(self + 0x20, &world) || !Get(world, &n) || !Get(world + 4, &mats) || n != h.count) return;
     std::vector<Mat> oldW(n);
     if (!SafeCopy(oldW.data(), (const void*)mats, sizeof(Mat) * n)) return;
     std::vector<Mat> newW = oldW;
+#if D2RVR_FIRST_PERSON
+    g_fullReachPose = in.fullReach && in.mode == 2;   // [arms] full_reach: every Reach of this pose
+    if (g_fullReachPose) NoteFullReach();
+#endif
     {   // diagnostics: does the animation itself turn the hero?
         const int ids[3] = {0, h.spine >= 0 ? h.parent[h.spine] - 1 : 2, h.spine >= 0 ? h.parent[h.spine] : 3};
         for (int i = 0; i < 3; ++i)
@@ -2541,13 +3154,20 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
     // parent, spine_01 at its bind place), so walking and attacking no longer
     // twist the trunk or shake the arms. Fingers and what the hands hold keep
     // the animation's grip. Pelvis and legs stay the game's.
-    if (in.lockUpper && h.bindOk) {
+    // [body] flat_hold_trunk (flat F3): the same, for the trunk's axis only - spine_01 up through the neck to the head in the bind pose, every
+    // other bone above the pelvis (collarbones, arms, hands, the face) hung on it with the animation's own turn from its parent, so the arms
+    // still swing as the game has them while the chest and the head stay under the camera; the hips held under it as below.
+    const std::vector<char> axis = !in.lockUpper && in.holdTrunk && h.bindOk ? trunkhold::Axis(n, h.parent.data(), h.head, h.spine) : std::vector<char>{};
+    const bool holdTrunk = !axis.empty();
+    if ((in.lockUpper || holdTrunk) && h.bindOk) {
         for (int i = 0; i < n; ++i) {
-            if (!h.upper[i]) continue;
             const int p = h.parent[i];
-            if (i == h.spine || p < 0) { newW[i] = h.bind[i]; newW[i].m[13] += lift; }   // up with the hips in a jump
-            else if (h.inHand[i]) newW[i] = Mul(Mul(oldW[i], InvAffine(oldW[p])), newW[p]);
-            else newW[i] = Mul(Mul(h.bind[i], InvAffine(h.bind[p])), newW[p]);
+            switch (trunkhold::For(h.upper[i] != 0, i == h.spine || p < 0, h.inHand[i] != 0, in.lockUpper, holdTrunk, holdTrunk && axis[i])) {
+                case trunkhold::Pose::Root: newW[i] = h.bind[i]; newW[i].m[13] += lift; break;   // up with the hips in a jump
+                case trunkhold::Pose::Anim: newW[i] = Mul(Mul(oldW[i], InvAffine(oldW[p])), newW[p]); break;
+                case trunkhold::Pose::Bind: newW[i] = Mul(Mul(h.bind[i], InvAffine(h.bind[p])), newW[p]); break;
+                case trunkhold::Pose::Game: break;
+            }
         }
         // [body] legs_under_body: the trunk now stands in its bind place, but
         // the hips are still the game's - and a blow lunges them ahead and
@@ -2556,7 +3176,7 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
         // stands where the bind pose has it across the floor, and turned so it
         // faces the bind pose's way. Its height stays the animation's (a
         // crouch, a jump), and the legs still step under it.
-        if (in.legsUnder && h.pelvis >= 0) {
+        if ((in.legsUnder || holdTrunk) && h.pelvis >= 0) {
             const Mat& a = oldW[h.pelvis];
             const Mat& b = h.bind[h.pelvis];
             // The turn taking the bind pelvis to the animation's, in model
@@ -2588,6 +3208,8 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
         for (int i = 0; i < n; ++i) if (in.bodyTurn == 2 || h.upper[i]) newW[i] = Mul(newW[i], T);
     }
 #if D2RVR_FIRST_PERSON
+    // [body] walk_back: turned whole to the look while the game walks him the other way - its walk mirrored, the legs step back (before the crouch: it bends them again)
+    if (in.walkBack && turn && in.bodyTurn == 2 && !in.gaitLegs && h.bindOk && h.leg[0][2] >= 0 && h.leg[1][2] >= 0) WalkBackLegs(self, h, in, c, s, newW);
     // [body] crouch (vr/crouch.h; the idea is bearstonem/d2r-pcvr's, MIT, vr/skeletons.cpp PoseBody, its tracked-neck body): you
     // crouched and the camera went down with your head, so the whole body goes down by as much (in.crouchDrop, model units, vrcam
     // worked it out at the camera's own scale) and each leg is bent again - thigh and shin at their own lengths - to put its foot
@@ -2631,12 +3253,27 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
     } else {
         g_crouchApplied.store(0.0f);
     }
+    // [openxr] roomscale_body (vr/room_walk.h): room-scale walking walks the hero through the game's own stick, and the game never walks
+    // him slower than a quarter of his full walk - under that he catches up in short pulses while the view stays with your head. The
+    // drawn body is moved across the floor to stand under your neck (in.roomShift: that point less the hero's place, worked out at
+    // this pose from his model matrix as it is now, so his pulses do not show), before the arms: the shoulders come with it and the
+    // hands still go to the controllers. Drawn bones only: the hero's place, hit box, walking and every game state are the game's.
+    // [body] under_camera (vr/under_camera.h) rides on the same move: the body moved to where the camera stands on - back under it while the
+    // game's camera trails him across the floor here, and up or down by roomShift[2] (a Leap's arc lifts his model off the camera's ground)
+    // only at the end of the pose (t_poseUp): the arms and everything else are worked out with his feet at the model's own height.
+    t_poseUp = 0.0f;
+    if (in.roomShiftOn && std::isfinite(in.roomShift[0]) && std::isfinite(in.roomShift[1]) && std::isfinite(in.roomShift[2])) {
+        for (int i = 0; i < n; ++i) { newW[i].m[12] += in.roomShift[0]; newW[i].m[14] += in.roomShift[1]; }
+        t_poseUp = in.roomShift[2];
+    }
     // A measured arm span (T-pose, [calibration] use=1; vr/body_calibration.h): each arm's bones, upper arm and forearm, are
     // scaled about their shoulder until the wrist stands where the controller's grip puts it at the world's scale - the hands
     // then reach as far as the real ones and the controllers stay 1:1. The hand, its fingers and what it holds are put back
     // at their authored size on the new wrist. Presentation only: no bone length the game reads, only the drawn ones.
     // The idea is bearstonem/d2r-pcvr's (MIT, vr/skeletons.cpp PoseBody).
-    if (in.mode == 2 && in.armSpanM > 0.0f && h.bindOk && h.upr[0] >= 0 && h.upr[1] >= 0) {
+    // [calibration] default_span: nothing measured - the span a person of the eye height has (bodycal::DefaultSpan), fitted the same way.
+    const float armSpanM = in.armSpanM > 0.0f ? in.armSpanM : in.defaultSpan ? bodycal::DefaultSpan(in.userHeadM) : 0.0f;
+    if (in.mode == 2 && armSpanM > 0.0f && h.bindOk && h.upr[0] >= 0 && h.upr[1] >= 0) {
         // the same eye height the hands are placed by (ControllerPoint)
         const float modelEye = in.haveEye ? in.eyeModel[1] : h.head >= 0 ? Pos(newW[h.head]).y : h.eyeY;
         const float shoulderWidth = Len(Sub(Pos(h.bind[h.upr[0]]), Pos(h.bind[h.upr[1]])));
@@ -2645,21 +3282,9 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
             if (u < 0 || l < 0 || k < 0) continue;
             const float length = Len(Sub(Pos(h.bind[l]), Pos(h.bind[u]))) + Len(Sub(Pos(h.bind[k]), Pos(h.bind[l])));
             const float palm = h.mid[side] >= 0 ? 0.5f * Len(Sub(Pos(h.bind[h.mid[side]]), Pos(h.bind[k]))) : 0.0f;   // the wrist is that far behind the grip
-            const float fit = bodycal::ArmScale(modelEye, in.userHeadM, in.armSpanM, shoulderWidth, length, palm);
+            const float fit = bodycal::ArmScale(modelEye, in.userHeadM, armSpanM, shoulderWidth, length, palm);
             if (fit == 1.0f) continue;
-            const std::vector<Mat> before = newW;
-            const V3 shoulder = Pos(newW[u]);
-            std::vector<char> subtree(n, 0);
-            subtree[u] = 1;
-            for (int i = u; i < n; ++i) {
-                if (i != u && h.parent[i] >= 0) subtree[i] = subtree[h.parent[i]];
-                if (subtree[i]) bodycal::ScaleAbout(newW[i].m, {shoulder.x, shoulder.y, shoulder.z}, fit);
-            }
-            for (int row = 0; row < 3; ++row)
-                for (int col = 0; col < 3; ++col) newW[k].m[row * 4 + col] = before[k].m[row * 4 + col];   // the hand's own size and turn
-            std::vector<char> fromHand(n, 0);
-            fromHand[k] = 1;
-            Propagate(h, before, newW, fromHand, k);   // fingers, weapon bones: their offsets from the hand as they were
+            ScaleArmAbout(h, side, Pos(newW[u]), fit, newW);
         }
     }
     // [bow] aim_distance_by_arm: the arms as they stand now (shoulders after the turn, bones after the fit), for ArmReach - read, nothing is changed
@@ -2682,6 +3307,43 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
             AcquireSRWLockExclusive(&g_armReachLock);
             g_armReach[side] = o;
             ReleaseSRWLockExclusive(&g_armReachLock);
+        }
+        // [gameplay] leap_arc_head: the belly - half way between the pelvis bone and spine_01 (the spine alone when the pelvis is the rig's root) - into the same frame
+        if (h.spine >= 0 && head.y > 0.0f) {
+            const V3 sp = Pos(newW[h.spine]);
+            const V3 b = h.pelvis > 0 ? V3{0.5f * (sp.x + Pos(newW[h.pelvis]).x), 0.5f * (sp.y + Pos(newW[h.pelvis]).y), 0.5f * (sp.z + Pos(newW[h.pelvis]).z)} : sp;
+            const V3 d = Sub(b, head);
+            const float mx = d.x * c - d.z * s, mz = d.x * s + d.z * c;   // (as the shoulder above)
+            BellyOut o;
+            o.at3[0] = -mx / upmArm; o.at3[1] = d.y / upmArm; o.at3[2] = -mz / upmArm;
+            o.at = GetTickCount64();
+            if (std::isfinite(o.at3[0] + o.at3[1] + o.at3[2])) {
+                AcquireSRWLockExclusive(&g_armReachLock);
+                g_belly = o;
+                ReleaseSRWLockExclusive(&g_armReachLock);
+            }
+        }
+        // for the log, once per rig and span: the arms as drawn at the world's scale - where the hero's shoulders stand against your eyes and
+        // how long each arm is to the grip (a hand farther than that from its shoulder is out of reach: [arms] full_reach)
+        static uint64_t toldKey = 0;
+        const uint64_t key = ((uint64_t)h.skel << 20) ^ (uint64_t)std::lround(armSpanM * 1000.0f) ^ ((uint64_t)std::lround(in.userHeadM * 1000.0f) << 10) ^ (in.fullReach ? 1ull << 63 : 0);
+        if (key != toldKey && head.y > 0.0f) {
+            ArmReachOut a[2];
+            AcquireSRWLockShared(&g_armReachLock); a[0] = g_armReach[0]; a[1] = g_armReach[1]; ReleaseSRWLockShared(&g_armReachLock);
+            if (a[0].at && a[1].at) {
+                toldKey = key;
+                char b[420];
+                snprintf(b, sizeof b, "arms as drawn: the hero's shoulder joints %.2f m apart, the right one %.2f m out, %.2f m under and %.2f m %s the eyes; "
+                         "shoulder to grip %.2f m right, %.2f m left (%s, eye height %.2f m)%s",
+                         std::fabs(a[0].shoulder[0] - a[1].shoulder[0]), a[0].shoulder[0], -a[0].shoulder[1], std::fabs(a[0].shoulder[2]),
+                         a[0].shoulder[2] >= 0.0f ? "behind" : "ahead of", a[0].length, a[1].length,
+                         armSpanM > 0.0f ? ("fitted to the span " + std::to_string(armSpanM).substr(0, 5) + (in.armSpanM > 0.0f ? " m measured" : " m for the eye height ([calibration] default_span)")).c_str()
+                                         : "the hero's own, not fitted",
+                         in.userHeadM, in.fullReach ? "; [arms] full_reach: a hand farther than that brings its shoulder along, then lengthens the arm" : "");
+                AcquireSRWLockExclusive(&g_armNoteLock);
+                if (g_armNote.size() < 3000) g_armNote += (g_armNote.empty() ? "" : "\n") + std::string(b);
+                ReleaseSRWLockExclusive(&g_armNoteLock);
+            }
         }
     }
     // The animation after the turn: what the arms re-derive their children from.
@@ -3035,21 +3697,43 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
         // turned and placed as a controller there is, the same handOffset beside it as the hands.
         const V3 headM = in.haveEye ? V3{in.eyeModel[0], in.eyeModel[1], in.eyeModel[2]} : Pos(newW[h.head]);
         const float upmM = std::clamp(headM.y / std::max(0.8f, in.userHeadM), 2.0f, 8.0f) * in.scale;   // model units per metre
-        Mat bodyM{};
-        {
-            Q4 q = {wo.bodyRot[0], wo.bodyRot[1], wo.bodyRot[2], wo.bodyRot[3]};
+        const auto bodyMatrix = [&](const float body[3], const float rot[4]) {   // (a weight model's body frame in BodyWalk's frame -> his model space)
+            Mat bm{};
+            Q4 q = {rot[0], rot[1], rot[2], rot[3]};
             const float ql = sqrtf(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w);
             q = ql > 0.5f ? Q4{q.x / ql, q.y / ql, q.z / ql, q.w / ql} : Q4{0, 0, 0, 1};
             const V3 axes[3] = {QRot(q, {1, 0, 0}), QRot(q, {0, 1, 0}), QRot(q, {0, 0, 1})};
             for (int r3 = 0; r3 < 3; ++r3) {
                 const float v[3] = {axes[r3].x, axes[r3].y, axes[r3].z};
                 const V3 a = ToModel(v, c, s);
-                bodyM.m[r3 * 4] = a.x; bodyM.m[r3 * 4 + 1] = a.y; bodyM.m[r3 * 4 + 2] = a.z;
+                bm.m[r3 * 4] = a.x; bm.m[r3 * 4 + 1] = a.y; bm.m[r3 * 4 + 2] = a.z;
             }
-            const float hv[3] = {wo.body[0] + in.handOffset[0], wo.body[1] + in.handOffset[1], wo.body[2] + in.handOffset[2]};
+            const float hv[3] = {body[0] + in.handOffset[0], body[1] + in.handOffset[1], body[2] + in.handOffset[2]};
             const V3 p = Add(headM, Scale(ToModel(hv, c, s), upmM));
-            bodyM.m[12] = p.x; bodyM.m[13] = p.y; bodyM.m[14] = p.z; bodyM.m[15] = 1.0f;
-        }
+            bm.m[12] = p.x; bm.m[13] = p.y; bm.m[14] = p.z; bm.m[15] = 1.0f;
+            return bm;
+        };
+        // [weight] dual_collide with [gameplay] melee_head_volume: a weapon's head as its own volume (in.weight.headA/B/R, the model's units) where its drawn bone puts it,
+        // against its body (metres, the frame its drawn shaft is measured in) - told to the weight model; none told as none
+        static_assert(skel::Input::Weight::kHeadParts == weight::kHeadParts, "the skeleton's head parts are the weight model's");
+        const auto drawnHead = [&](const Mat& bone, const Mat& body, int which, void (*tell)(const float*, int)) {
+            if (!(weaponextent::UnitM(Len(V3{bone.m[4], bone.m[5], bone.m[6]}), upmM) > 0.0f)) return;   // (a bone shrunk or squeezed: no weapon's own size - the last head stands)
+            float parts[weight::kHeadParts][7];
+            int n = 0;
+            for (int i = 0; i < in.weight.headParts[which] && i < weight::kHeadParts; ++i) {
+                const float* p = in.weight.headPart[which][i];
+                weaponshaft::Head hd;
+                if (!(p[6] > 0.0f) || !weaponshaft::HeadIn(bone.m, body.m, upmM, p, p + 3, p[6], &hd)) { n = 0; break; }   // (all of it or none)
+                for (int k = 0; k < 3; ++k) { parts[n][k] = (float)hd.a[k]; parts[n][3 + k] = (float)hd.b[k]; }
+                parts[n][6] = (float)hd.radius;
+                ++n;
+            }
+            tell(&parts[0][0], n);
+        };
+        const Mat bodyM = bodyMatrix(wo.body, wo.bodyRot);
+        int second2B = -1;  // [weight] second_lets_go: the second weapon's attach bone as this pose sets it (below), and its matrix - set again after the hands are laid
+        int hidden2B = -1;  // [hands] throw_left_hand: the second weapon's attach bone while the game throws it (Out::hidden2): squeezed to a point at the end, as the first's
+        Mat second2W{};
         const bool have = r.ok[m] && r.grabs[m] == wo.grabs[m];
         // [weight] after_drop 1: a weapon let go that has landed and lain is slung on the hero's back, relative to his spine bone (vr/weapon_back.h):
         // it follows his body - turn, lean, crouch - and the body frame the weight model keeps for it is told that place (SetBackBody), so
@@ -3065,8 +3749,9 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
             memcpy(cur.m, curW.m, sizeof cur.m);
             const weaponback::Tuning t{in.weight.back[0], in.weight.back[1], in.weight.back[2], in.weight.back[3], in.weight.back[4], in.weight.back[5]};
             // (the body's size, not the arm reach on top of it: `scale` stretches the hands, not the back)
+            // (a weapon in each hand: each behind its own hand's shoulder - the long way, the tip up over that shoulder; the left one mirrored)
             if (weaponback::BackMatrix(bind, now, cur, in.weight.tipAxis, wo.midM, upmM / std::max(0.1f, in.scale),
-                                       in.weight.backLong ? weaponback::Class::Long : weaponback::Class::Short, t, &placed)) {
+                                       in.weight.backLong || wo.second ? weaponback::Class::Long : weaponback::Class::Short, t, &placed, wo.second && slot == 1)) {
                 memcpy(W.m, placed.m, sizeof W.m);
                 onBack = true;
             }
@@ -3103,6 +3788,84 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
         const int o = m ^ 1;
         if (!wo.free && wo.holds[o] && wo.on01[o] >= 1.0f) { r.rel[o] = Mul(W, InvAffine(newW[h.hand[o]])); r.grabs[o] = wo.grabs[o]; r.ok[o] = true; }
         g_weightRel = r;
+        // [weight] second_lets_go: a weapon in each hand - the second one's attach bone kept against its body while it is in its hand, and drawn where that body is
+        // while it is let go (falling, lying, flying back). Only its drawing: the game's weapon stays the game's, in that hand.
+        second2B = -1;
+        if (wo.second && (wo.slot2 & 1) != slot && h.weapon[wo.slot2 & 1] >= 0) {
+            const int b2 = h.weapon[wo.slot2 & 1];
+            if (wo.hidden2) hidden2B = b2;
+            const Mat body2M = bodyMatrix(wo.body2, wo.body2Rot);
+            const auto measure2 = [&](const Mat& w2) {   // its shaft as drawn against its body: a hand that takes it closes on the drawn weapon
+                if (in.weight.shaft2TipM + in.weight.shaft2ButtM <= 0.01f) return;
+                if (!(weaponextent::UnitM(Len(V3{w2.m[4], w2.m[5], w2.m[6]}), upmM) > 0.0f)) return;   // (its bone shrunk - thrown, hidden by the game: the last good measurement stands)
+                const weaponshaft::Line ln = weaponshaft::Relative(w2.m, body2M.m, upmM, in.weight.secondTipAxis, in.weight.shaft2TipM, in.weight.shaft2ButtM);
+                if (!ln.ok) return;
+                const float a[3] = {(float)ln.at[0], (float)ln.at[1], (float)ln.at[2]}, d[3] = {(float)ln.dir[0], (float)ln.dir[1], (float)ln.dir[2]};
+                weight::SetDrawnShaft2(a, d, (float)ln.butt, (float)ln.tip, (float)ln.boneAlong);
+                drawnHead(w2, body2M, 1, &weight::SetDrawnHeadParts2);   // [weight] dual_collide: its head's own volume, as drawn
+            };
+            if (wo.hand2 == slot && h.hand[slot] >= 0) {
+                // the HAND-OVER: the first's hand holds the second - it is laid in that hand as the game's own grip has a weapon there (the slot's attach bone against
+                // its hand, as placed: the first weapon's base hand), the left bone's handedness kept (a mirror-less matrix draws the item inside out); its body and
+                // shaft follow it (the user, 2026-10-24: «оружие сбоку» - laid by the left hand's grip it hung beside the right hand)
+                Mat W2 = Mul(home, newW[h.hand[slot]]);
+                if ((boneguard::Det(oldW[b2].m) < 0.0) != (boneguard::Det(W2.m) < 0.0))
+                    for (int c2 = 0; c2 < 3; ++c2) W2.m[c2] = -W2.m[c2];
+                newW[b2] = W2;
+                std::vector<char> fromWeapon(n, 0);
+                fromWeapon[b2] = 1;
+                Propagate(h, oldW, newW, fromWeapon, b2);
+                second2B = b2;
+                second2W = W2;
+                g_weightRel2.body = Mul(W2, InvAffine(body2M));
+                g_weightRel2.ok = true;
+                if (!g_weightRel2.handOver) measure2(W2);   // (once as it is taken: its weight body on the weapon as laid; a measure each frame re-lays the hand, the hand moves it)
+                g_weightRel2.handOver = true;
+            } else if (!wo.free2) {
+                g_weightRel2.handOver = false;
+                g_weightRel2.body = Mul(newW[b2], InvAffine(body2M));
+                g_weightRel2.ok = true;
+                measure2(newW[b2]);   // (the first's is measured below)
+            } else if (g_weightRel2.ok) {
+                g_weightRel2.handOver = false;   // (let go: taken by the other hand again, it is measured again)
+                Mat W2 = Mul(g_weightRel2.body, body2M);
+                bool onBack2 = false;
+                // [weight] after_drop 1 or 2: on the back, behind its own hand's shoulder (the left weapon behind the left one: the place mirrored)
+                if (wo.stowed2 && in.weight.afterDrop >= 1 && h.bindOk && h.spine >= 0) {
+                    weaponback::Mat bind, now, cur, placed;
+                    memcpy(bind.m, h.bind[h.spine].m, sizeof bind.m);
+                    memcpy(now.m, newW[h.spine].m, sizeof now.m);
+                    memcpy(cur.m, W2.m, sizeof cur.m);
+                    const weaponback::Tuning t{in.weight.back[0], in.weight.back[1], in.weight.back[2], in.weight.back[3], in.weight.back[4], in.weight.back[5]};
+                    if (weaponback::BackMatrix(bind, now, cur, in.weight.tipAxis, wo.midM2, upmM / std::max(0.1f, in.scale), weaponback::Class::Long, t, &placed,
+                                               (wo.slot2 & 1) == 1)) {
+                        memcpy(W2.m, placed.m, sizeof W2.m);
+                        onBack2 = true;
+                    }
+                }
+                if (onBack2) {   // its place on the back, in BodyWalk's frame: the weapon flies from there when its hand draws it (W2 = rel * bodyFrame)
+                    const Mat bm = Mul(InvAffine(g_weightRel2.body), W2);
+                    const auto toBodyWalk = [&](V3 d) { return V3{-(d.x * c - d.z * s), d.y, -(d.x * s + d.z * c)}; };
+                    const V3 p = Scale(toBodyWalk(Sub(Pos(bm), headM)), 1.0f / upmM);
+                    const V3 a0 = Norm(toBodyWalk(V3{bm.m[0], bm.m[1], bm.m[2]})), a1 = Norm(toBodyWalk(V3{bm.m[4], bm.m[5], bm.m[6]})),
+                             a2 = Norm(toBodyWalk(V3{bm.m[8], bm.m[9], bm.m[10]}));
+                    const Q4 q = QFromAxes(a0, a1, a2);
+                    const float body[3] = {p.x - in.handOffset[0], p.y - in.handOffset[1], p.z - in.handOffset[2]}, rot[4] = {q.x, q.y, q.z, q.w};
+                    weight::SetBackBody2(body, rot);
+                    if (in.weight.afterDrop == 2)   // not drawn at all: the bone shrunk to a point, as the first's
+                        for (int rr = 0; rr < 3; ++rr)
+                            for (int cc = 0; cc < 3; ++cc) W2.m[rr * 4 + cc] *= 0.001f;
+                }
+                newW[b2] = W2;
+                second2B = b2;   // (set again after the hands are laid: an arm reached again carries its wrist's bone - the second's - back into that hand)
+                second2W = W2;
+                std::vector<char> fromWeapon(n, 0);
+                fromWeapon[b2] = 1;
+                Propagate(h, oldW, newW, fromWeapon, b2);
+            }
+        } else {
+            g_weightRel2.ok = false;
+        }
         ReleaseSRWLockExclusive(&g_weightLock);
         if (onBack) {   // the body frame as drawn, in BodyWalk's frame (ToModel undone): W = r.body * bodyFrame
             const Mat bm = Mul(InvAffine(r.body), W);
@@ -3153,7 +3916,7 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
         }
         for (int side = 0; side < 2; ++side) {
             const int b = h.weapon[side];
-            if (b < 0 || (side != slot && !in.bothAttach)) continue;   // the other wrist's own (a shield) stays
+            if (b < 0 || (side != slot && (!in.bothAttach || wo.second))) continue;   // the other wrist's own (a shield; a weapon in each hand: the second weapon) stays
             newW[b] = attachFor(side, W);
             std::vector<char> fromWeapon(n, 0);
             fromWeapon[b] = 1;
@@ -3392,24 +4155,41 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
             if (moved)
                 for (int side = 0; side < 2; ++side) {
                     const int b = h.weapon[side];
-                    if (b < 0 || (side != slot && !in.bothAttach)) continue;
+                    if (b < 0 || (side != slot && (!in.bothAttach || wo.second))) continue;   // (a weapon in each hand: the other wrist's bone is the second weapon's - never the first's)
                     newW[b] = attachFor(side, W);   // where it was
                     std::vector<char> fromWeapon(n, 0);
                     fromWeapon[b] = 1;
                     Propagate(h, oldW, newW, fromWeapon, b);
                 }
+            if (second2B >= 0) {   // [weight] second_lets_go: the second weapon let go, or in the first's hand, where its body is - again, after the arms were reached
+                newW[second2B] = second2W;
+                std::vector<char> fromWeapon(n, 0);
+                fromWeapon[second2B] = 1;
+                Propagate(h, oldW, newW, fromWeapon, second2B);
+            }
+        }
+        if (hidden2B >= 0) {   // [hands] throw_left_hand: thrown by the game - the hand empty, the second weapon not drawn wherever its body is (a point, as the first's)
+            for (int rr = 0; rr < 3; ++rr)
+                for (int cc = 0; cc < 3; ++cc) newW[hidden2B].m[rr * 4 + cc] *= 0.001f;
+            std::vector<char> fromWeapon(n, 0);
+            fromWeapon[hidden2B] = 1;
+            Propagate(h, oldW, newW, fromWeapon, hidden2B);
         }
         // The weight model's shaft IS the drawn weapon bone: W, just set on both attach bones, measured against this body frame on every pose it is held (vr/weapon_shaft.h) and
         // told back (weight::SetDrawnShaft) - whichever wrist the game would hang the item on, whichever hand carries it. So the red line, the line both grasp points lie
         // on and hit by touch's capsule (built from the same bone, with the same ends) are one line. (It was measured at the end of the pose from the bone of the game's
         // hand slot only while that slot's bone was the drawn one: walking, the game moves a two-handed weapon to the other wrist, and the model's line then stood still
         // while the weapon moved. The old carry of the other attach bone, below, no longer runs for a weapon the weight model holds: it shifted that bone along the shaft.)
-        if (!wo.free) {
+        // (Not off a matrix that is not the weapon's own: hidden while the game throws - squeezed to a point - or set right from the game's shrunk bone, whose rows
+        // come back with their axes turned: a javelin's line measured off it lay 180 degrees off the drawn one, its 1.8 m swung through the other weapon of the pair
+        // and back after every throw - the headset 2026-10-28, «the axe's blade goes straight through the javelin's shaft». The last good measurement stands.)
+        if (!wo.free && !wo.hidden && wFault == boneguard::Fault::None) {
             if (in.weight.shaftTipM + in.weight.shaftButtM > 0.01f) {
                 const weaponshaft::Line ln = weaponshaft::Relative(W.m, bodyM.m, upmM, in.weight.tipAxis, in.weight.shaftTipM, in.weight.shaftButtM);
                 if (ln.ok) {
                     const float a[3] = {(float)ln.at[0], (float)ln.at[1], (float)ln.at[2]}, d[3] = {(float)ln.dir[0], (float)ln.dir[1], (float)ln.dir[2]};
                     weight::SetDrawnShaft(a, d, (float)ln.butt, (float)ln.tip, (float)ln.boneAlong);
+                    drawnHead(W, bodyM, 0, &weight::SetDrawnHeadParts);   // [weight] dual_collide: its head's own volume, as drawn
                 } else {
                     weight::NoteShaftUnmeasured("the weapon bone could not be measured against the body's frame");
                 }
@@ -3515,6 +4295,7 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
             {   // our attach bone in the world, for XbowRendered (the hero's model-to-world, as NotePosedWeapon takes it)
                 HeroXform hx; Mat model;
                 if (HeroTransform(&hx) && hx.self == self && (hx.parent & 0xFFFFFu) == 0xFFFFFu && SafeCopy(model.m, (const void*)hx.comp, sizeof model)) {
+                    PoseModel(model);
                     XbowAttach a;
                     const Mat w = Mul(staff, model);
                     memcpy(a.world.m, w.m, sizeof a.world.m);
@@ -4014,28 +4795,7 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
             if (l < 0 || k < 0 || upm <= 0.0f) continue;
             const V3 E = Pos(newW[l]), W = Pos(newW[k]);
             const V3 axis = Norm(Sub(W, E));
-            V3 across{0, 0, 0};
-            if (const int i = h.ind[side], p = h.pnk[side]; i >= 0 && p >= 0) {
-                // The way the palm faces, square to the forearm: from the
-                // knuckles' line (pinky -> index), which a bending wrist turns
-                // about and so leaves alone - only the forearm's own twist
-                // turns it. As Fist works the palm out, the forearm in place
-                // of wrist -> middle knuckle. (The hand's axis most square to
-                // the forearm, picked afresh each frame, swapped for another
-                // as the wrist bent: the toolbar jumped onto the arm's edge.)
-                V3 line = Sub(Pos(newW[i]), Pos(newW[p]));
-                const float d = Dot(line, axis);
-                line = V3{line.x - axis.x * d, line.y - axis.y * d, line.z - axis.z * d};
-                across = Norm(Scale(Cross(axis, line), side == 0 ? -1.0f : 1.0f));
-            } else {
-                float best = 2.0f;
-                for (int r = 0; r < 3; ++r) {   // no knuckles: the hand's axis most square to the forearm
-                    const V3 a = Norm(V3{newW[k].m[r * 4], newW[k].m[r * 4 + 1], newW[k].m[r * 4 + 2]});
-                    if (std::fabs(Dot(a, axis)) < best) { best = std::fabs(Dot(a, axis)); across = a; }
-                }
-                const float d = Dot(across, axis);
-                across = Norm(V3{across.x - axis.x * d, across.y - axis.y * d, across.z - axis.z * d});
-            }
+            const V3 across = PalmAcross(h, side, newW, axis);
             ForearmOut f{};
             FromModel(V3{(E.x - head.x) / upm, (E.y - head.y) / upm, (E.z - head.z) / upm}, c, s, f.elbow);
             FromModel(V3{(W.x - head.x) / upm, (W.y - head.y) / upm, (W.z - head.z) / upm}, c, s, f.wrist);
@@ -4079,6 +4839,7 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
                 else if ((hx.parent & 0xFFFFFu) != 0xFFFFFu) why = "the hero's transform has a parent (not the world's)";
                 else if (!SafeCopy(model.m, (const void*)hx.comp, sizeof model)) why = "the hero's transform could not be read";
                 else {
+                    PoseModel(model);   // [body] under_camera: as the arm will be drawn
                     const V3 ew = Through(model, E), ww = Through(model, W);
                     const V3 xw = Norm(RotOnly(across, model)), pw = Norm(RotOnly(pointU, model)), fw = Norm(RotOnly(faceU, model));
                     if (std::isfinite(ew.x + ew.y + ew.z + ww.x + ww.y + ww.z + xw.x + xw.y + xw.z + pw.x + pw.y + pw.z + fw.x + fw.y + fw.z)) {
@@ -4212,6 +4973,7 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
         }
         g.at = GetTickCount64();
         AcquireSRWLockExclusive(&g_gunBoneLock); g_gunBone = g; ReleaseSRWLockExclusive(&g_gunBoneLock);
+        // ([multiplayer] pose_share's attach bones as drawn are read at the end of the pose: DrawnAttach, DrawnHands.)
         {   // [hands] spell_aim_model: the same bone for the aim of a staff, wand or orb - its origin and +Y, and the wrist it is on
             CastWeaponOut cw{};
             cw.side = axesSide;
@@ -4260,6 +5022,17 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
                             b.ballCentre[0] = c2.x; b.ballCentre[1] = c2.y; b.ballCentre[2] = c2.z;
                             b.ballDir[0] = d2.x; b.ballDir[1] = d2.y; b.ballDir[2] = d2.z;
                             b.ballRadius = r;
+                            b.moreBalls = 0;
+                            for (int k = 0; k < fb.more && k < PosedBlade::kMoreBalls; ++k) {   // Khalim's other balls, carried the same way
+                                const V3 mc = Add(RotOnly(fb.moreCentre[k], toModel), Pos(toModel));
+                                const V3 m2 = back(Scale(Sub(mc, head), 1.0f / upm)), md = back(Norm(RotOnly(fb.moreDir[k], toModel)));
+                                if (!std::isfinite(m2.x + m2.y + m2.z + md.x + md.y + md.z) || !(Len(md) > 0.5f)) continue;
+                                float* mcOut = b.moreCentre[b.moreBalls];
+                                float* mdOut = b.moreDir[b.moreBalls];
+                                mcOut[0] = m2.x; mcOut[1] = m2.y; mcOut[2] = m2.z;
+                                mdOut[0] = md.x; mdOut[1] = md.y; mdOut[2] = md.z;
+                                ++b.moreBalls;
+                            }
                         }
                     }
                 }
@@ -4322,6 +5095,194 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
             poseE[side] = t * t * (3.0f - 2.0f * t);
             libFingers[side] = true;
         }
+    // [weight] grab_wrap: a hand that holds a body ([weight] grab_bodies, grab_wire.cpp moved it onto the point the grab holds) is laid ON the body - turned so the palm faces
+    // it, the palm's surface against the body's, and its fingers closed round it until each touches: the grip library's hand step (its port of the VR toolkit's dynamic
+    // pose: the hand carried onto the body, the fingers easing closed) with the held limb's capsule for the shaft. No grip library: the palm is laid on the same way by the
+    // frame below (its depth the hand's own, a fifth of the knuckles' span), eased on, and the fist closes with the grip as ever. Let go, the hand and its fingers ease back
+    // to the controller's at the toolkit's pose blend (16 a second, exponential). Only the hand moves; the arm is reached to it again and the fingers follow.
+    {
+        struct GrabEase {
+            bool holding = false, have = false;
+            gripfit::Rot r;
+            V3 shift{};
+            std::vector<Mat> fingerRel;   // the fingers held, against the hand (none: the fist's own)
+            double heldSince = 0.0, releasedAt = 0.0;
+        };
+        static GrabEase ease[2];   // (the hook's thread)
+        constexpr float kPoseBlend = 16.0f;   // the toolkit's hand pose blend, 1/s (HVRHandAnimator)
+        LARGE_INTEGER qc, qf;
+        QueryPerformanceCounter(&qc);
+        QueryPerformanceFrequency(&qf);
+        const double nowS = (double)qc.QuadPart / (double)qf.QuadPart;
+        // [weight]: the weapon's bones (its attach bones and what hangs on them) are the weight block's - slung on the back, in the other hand: the hand laid here does not
+        // carry them (the hand's turn reached them through its subtree: the headset 0.183, the spear on the back swung round into the holding hand, «опять к руке
+        // примагничивается оружие»)
+        std::vector<char> weaponBone;
+        if (weightDrew) {
+            weaponBone.assign(newW.size(), 0);
+            for (int sd = 0; sd < 2; ++sd)
+                if (h.weapon[sd] >= 0 && h.weapon[sd] < (int)weaponBone.size()) weaponBone[h.weapon[sd]] = 1;
+            for (int i = 0; i < h.count && i < (int)weaponBone.size(); ++i)
+                if (h.parent[i] >= 0 && h.parent[i] < (int)weaponBone.size() && weaponBone[h.parent[i]]) weaponBone[i] = 1;
+        }
+        for (int side = 0; side < 2 && in.mode == 2 && h.bindOk && h.head >= 0; ++side) {
+            const int k = h.hand[side], mk = h.mid[side], ik = h.ind[side], pk = h.pnk[side];
+            const bool bonesOk = k >= 0 && mk >= 0 && ik >= 0 && pk >= 0, tracked = (in.handsValid & (1u << side)) != 0;
+            const bool holding = in.grabWrap && in.grabHolding[side] && bonesOk && tracked;
+            GrabEase& E = ease[side];
+            if (holding && !E.holding) E.heldSince = nowS;
+            if (!holding && E.holding) E.releasedAt = nowS;
+            E.holding = holding;
+            if (!bonesOk) continue;
+            const V3 wristP = Pos(newW[k]), midP = Pos(newW[mk]);
+            const V3 palm = Scale(Add(wristP, midP), 0.5f);   // the palm's middle, as the weapon grip has it
+            // the hand turned by r about the palm's middle and moved by shift, e of the way; the arm reached to it again, the fingers with it
+            const auto applyFit = [&](const gripfit::Rot& r, V3 shift, float e) {
+                std::vector<std::pair<int, Mat>> keepWeapon;   // (the weight block's weapon bones, put back after the arm and the hand are moved)
+                for (int i = 0; i < (int)weaponBone.size(); ++i)
+                    if (weaponBone[i]) keepWeapon.emplace_back(i, newW[i]);
+                struct PutBack {
+                    std::vector<std::pair<int, Mat>>& keep;
+                    std::vector<Mat>& w;
+                    ~PutBack() { for (const auto& kv : keep) w[kv.first] = kv.second; }
+                } putBack{keepWeapon, newW};
+                const V3 pm = Add(palm, shift);
+                const gripfit::V3 w2 = gripfit::Add({pm.x, pm.y, pm.z}, gripfit::Apply(gripfit::Sub({wristP.x, wristP.y, wristP.z}, {palm.x, palm.y, palm.z}), r));
+                const Mat before = newW[k];
+                Mat target = before;
+                for (int i = 0; i < 3; ++i) {
+                    const gripfit::V3 rw = gripfit::Apply({before.m[i * 4], before.m[i * 4 + 1], before.m[i * 4 + 2]}, r);
+                    target.m[i * 4] = rw.x; target.m[i * 4 + 1] = rw.y; target.m[i * 4 + 2] = rw.z;
+                }
+                Reach(h, side, Add(wristP, Scale(Sub(V3{w2.x, w2.y, w2.z}, wristP), e)), turn, c, s, baseW, newW);
+                Mat fitted = e >= 1.0f ? target : BlendRot(before, target, e);
+                fitted.m[12] = newW[k].m[12]; fitted.m[13] = newW[k].m[13]; fitted.m[14] = newW[k].m[14];
+                newW[k] = fitted;
+                std::vector<char> fromHand(n, 0);
+                fromHand[k] = 1;
+                Propagate(h, oldW, newW, fromHand, k);
+            };
+            // fingers set against the hand as it stands now (rel: each against the hand), over the fist by e
+            const auto layFingers = [&](const std::vector<Mat>& rel, float e) {
+                if (rel.size() != newW.size()) return;
+                if (poseW.empty()) poseW = newW;
+                poseW[k] = newW[k];   // (a pose made before for the other hand's weapon has this hand where it was before it was laid)
+                for (const Hero::Finger& f : h.fingers[side])
+                    for (const int b : f.bones) poseW[b] = Mul(rel[b], newW[k]);
+                poseE[side] = e;
+            };
+            if (!holding) {   // let go (or the box unticked): eased back from the last hold
+                LibGrabForget(side);
+                if (!E.have) continue;
+                const float e = expf(-kPoseBlend * (float)(nowS - E.releasedAt));
+                if (!tracked || e < 0.02f || !in.grabWrap) {
+                    E.have = false;
+                    continue;
+                }
+                applyFit(E.r, E.shift, e);
+                if (!E.fingerRel.empty()) layFingers(E.fingerRel, e);
+                continue;
+            }
+            const V3 headM = in.haveEye ? V3{in.eyeModel[0], in.eyeModel[1], in.eyeModel[2]} : Pos(newW[h.head]);
+            const float upmM = std::clamp(headM.y / std::max(0.8f, in.userHeadM), 2.0f, 8.0f) * in.scale;   // (as ControllerPoint)
+            const V3 am = ToModel(in.grabCapA[side], c, s), bm = ToModel(in.grabCapB[side], c, s);   // the held capsule: metres from the head, model axes
+            const V3 axis = Sub(bm, am);
+            const float len = Len(axis), rad = std::max(0.01f, in.grabCapR[side]);
+            if (!(len > 1e-3f) || !std::isfinite(len)) continue;
+            const V3 dir = Scale(axis, 1.0f / len);
+            grippose::M3 e;
+            if (!HandFrameAt(h, side, newW, &e)) continue;
+            const grippose::M3 ep = griprig::ProperFrame(e, side);   // x to the fingers, y across the knuckles, z out of the palm
+            // The palm laid on the body where the grab holds it, turned about the palm to face it (grabbodies::LayPalm). (Not the grip library's own laying: it
+            // turns the hand ABOUT the shaft so the palm faces the axis - right for a weapon's thin shaft, but on a body's fat capsule it swung the palm round
+            // the body away from where it took hold: the headset 0.183, the palm 12-21 cm from the held point.)
+            const V3 amU = Add(headM, Scale(am, upmM)), bmU = Add(headM, Scale(bm, upmM));
+            const float depth = 0.2f * Len(Sub(Pos(newW[ik]), Pos(newW[pk])));
+            const grippose::V x0 = ep.Row(0);
+            const float pa[3] = {palm.x, palm.y, palm.z}, fx[3] = {x0.x, x0.y, x0.z}, ca[3] = {amU.x, amU.y, amU.z}, cb[3] = {bmU.x, bmU.y, bmU.z};
+            float to[3], rows9[9];
+            if (!grabbodies::LayPalm(pa, fx, ca, cb, rad * upmM, depth, to, rows9)) continue;
+            const V3 pm = {to[0], to[1], to[2]};
+            grippose::M3 et;
+            for (int i = 0; i < 9; ++i) et.m[i] = rows9[i];
+            const float ein = 1.0f - expf(-kPoseBlend * (float)(nowS - E.heldSince));   // eased on at the toolkit's pose blend
+            // the fingers: the grip library's hand step (the toolkit's dynamic pose) closes them round the body from the hand as laid
+            D2rgHandIn hin{};
+            hin.holds = 1;
+            hin.mode = D2RG_MODE_TIGHT;
+            const V3 palmRel = Scale(Sub(pm, headM), 1.0f / upmM);
+            hin.handPos = {palmRel.x, palmRel.y, palmRel.z};
+            hin.handRot = griprig::QuatOfRows(et);
+            hin.flags = 0;   // (the hand stays turned as laid)
+            hin.shaft.at = {am.x, am.y, am.z};
+            hin.shaft.dir = {dir.x, dir.y, dir.z};
+            const V3 up = Norm(std::fabs(dir.y) < 0.9f ? Cross(dir, V3{0, 1, 0}) : Cross(dir, V3{1, 0, 0}));
+            hin.shaft.up = {up.x, up.y, up.z};
+            hin.shaft.butt = 0.0;
+            hin.shaft.tip = len;
+            hin.shaft.nPieces = 1;
+            hin.shaft.pieces[0] = {0.0, len, rad};
+            LibGripResult res;
+            const char* why = LibGrabRun(h, side, in, newW, upmM, hin, &res);
+            libGripRes[side] = why ? LibGripResult{} : std::move(res);
+            {   // why the library did not lay it, once for each reason
+                static const char* told[2] = {nullptr, nullptr};
+                if (why && told[side] != why) {
+                    char b[260];
+                    snprintf(b, sizeof b, "grab - the %s hand closes as a fist on the body (no grip library's fingers): %s", side ? "left" : "right", why);
+                    weight::Say(b);
+                }
+                told[side] = why;
+            }
+            const grippose::M3 rr = grippose::Mul(grippose::Transpose(ep), et);
+            gripfit::Rot r;
+            for (int i = 0; i < 9; ++i) r.m[i] = rr.m[i];
+            const V3 shift = Sub(pm, palm);
+            applyFit(r, shift, ein);
+            {   // where the palm is drawn now (the arm's reach may fall short of it), for grab_wire's log: the hands' frame, metres from the head
+                const V3 drawnP = Scale(Add(Pos(newW[k]), Pos(newW[mk])), 0.5f);
+                const V3 d = Scale(Sub(drawnP, headM), 1.0f / upmM);
+                const V3 q = {d.x * c - d.z * s, d.y, d.x * s + d.z * c};
+                const float head3[3] = {-q.x, q.y, -q.z};
+                NoteGrabPalm(side, head3, why ? "our frame, the fist" : "our frame, the grip library's fingers");
+            }
+            E.have = true;
+            E.r = r;
+            E.shift = shift;
+            E.fingerRel.clear();
+            // the library's fingers, closed round the body (they ease closed in it), laid on the bones in the hand's frame as it stands now
+            const LibGripResult& L = libGripRes[side];
+            grippose::M3 e2;
+            std::vector<grippose::M3> rows;
+            if (!L.ok || !L.out.fingersOn || !HandFrameAt(h, side, newW, &e2) || !griprig::Compose(L.rig, L.mirror, griprig::ProperFrame(e2, side), L.out.finger, &rows)) continue;
+            std::vector<Mat> laidW = newW;
+            size_t idx = 0;
+            bool ok = true;
+            for (const Hero::Finger& f : h.fingers[side])
+                for (const int b : f.bones) {
+                    const int pa = h.parent[b];
+                    if (pa < 0 || idx >= rows.size()) { ok = false; break; }
+                    Mat nw = Mul(Mul(h.bind[b], InvAffine(h.bind[pa])), laidW[pa]);
+                    for (int r2 = 0; r2 < 3; ++r2) {
+                        const float l2 = (float)boneguard::RowLen(newW[b].m, r2);
+                        for (int c2 = 0; c2 < 3; ++c2) nw.m[r2 * 4 + c2] = l2 * rows[idx].m[r2 * 3 + c2];
+                        nw.m[r2 * 4 + 3] = 0.0f;
+                    }
+                    nw.m[15] = 1.0f;
+                    for (float v : nw.m)
+                        if (!std::isfinite(v)) ok = false;
+                    laidW[b] = nw;
+                    ++idx;
+                }
+            if (!ok) continue;
+            const Mat handInv = InvAffine(newW[k]);
+            E.fingerRel.assign(newW.size(), Mat{});
+            for (const Hero::Finger& f : h.fingers[side])
+                for (const int b : f.bones) E.fingerRel[b] = Mul(laidW[b], handInv);
+            layFingers(E.fingerRel, 1.0f);
+            libFingers[side] = true;
+        }
+    }
     if (wo.on && in.mode == 2 && in.weight.gripFit && in.weight.gripFingers && h.bindOk) {
         GripPoseKept kept;
         AcquireSRWLockShared(&g_gripPoseLock); kept = g_gripPose; ReleaseSRWLockShared(&g_gripPoseLock);
@@ -4394,7 +5355,12 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
             Propagate(h, before, newW, fromS, wb);
         }
     };
-    if (in.shieldForearm && in.mode == 2 && in.shieldArm == 2 && (shieldBones[0] >= 0 || shieldBones[1] >= 0)) {
+    // [shield] heads_hang: a Necromancer's head on the left arm is not strapped - it hangs from the hand (its own bones swing it: PoseHead)
+    const bool headHangs = in.headsHang && in.mode == 2 && in.shieldArm != 0 && in.shieldArm != 2;
+    if (headHangs) {
+        if (in.handsValid & 2u) HoldHead(h, oldW, newW);
+        g_shieldStrapped.store(0);
+    } else if (in.shieldForearm && in.mode == 2 && in.shieldArm == 2 && (shieldBones[0] >= 0 || shieldBones[1] >= 0)) {
         hideShield();
         g_shieldStrapped.store(2);
     } else if (in.shieldForearm && in.mode == 2 && (in.handsValid & (1u << shieldSide))) {
@@ -4448,6 +5414,7 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
         if (side < 0) status = "no string hand known (no draw feed, no aim hand, the attach bones tell nothing)";
         else if (!(in.handsValid & (1u << side))) status = "the string hand's controller is not tracked";
         else if (h.hand[side] < 0 || h.ind[side] < 0 || h.mid[side] < 0 || h.pnk[side] < 0 || h.fingers[side].empty()) status = "the hero's fingers for that hand were not found";
+        else if (in.grabWrap && in.grabHolding[side]) status = "the string hand holds a body ([weight] grab_wrap lays it)";   // (its fingers are the grab's)
         else {
             // How far it closes: the string taken closes it whatever the controls read (the draw took them from the layout, which
             // then sees a grip let go), else the controller's own trigger and squeeze as the draw's wire read them, else the layout's
@@ -4518,14 +5485,15 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
 
     // First person: the head and the neck shrink into a point at the neck's
     // base, so a camera at the eyes sees out instead of the inside of the skull,
-    // and looking down sees the chest, not a neck.
+    // and looking down sees the chest, not a neck. [arms] head_shadow (vr/head_shadow.h): while the renderer's hooks hand the eyes'
+    // passes a copy of this pose with the head shrunk, the pose itself keeps the head - the shadow passes draw it.
     if (in.hideHead && h.head >= 0) {
-        const V3 p = Pos(newW[h.neck >= 0 ? h.neck : h.head]);
-        for (int i = 0; i < n; ++i) if (h.inNeck[i]) {
-            Mat& w = newW[i];
-            for (int r = 0; r < 3; ++r) for (int cc = 0; cc < 3; ++cc) w.m[r*4+cc] *= 0.001f;
-            w.m[12] = p.x; w.m[13] = p.y; w.m[14] = p.z;
-        }
+        const int pivot = h.neck >= 0 ? h.neck : h.head;
+        static_assert(sizeof(Mat) == sizeof(float) * 16, "a bone matrix is 16 floats");
+        if (!headshadow::Publish(self, h.inNeck.data(), n, pivot, in.along))
+            headshadow::Shrink(reinterpret_cast<float(*)[16]>(newW.data()), n, h.inNeck.data(), pivot);
+    } else {
+        headshadow::Unpublish(self);
     }
 #endif
 #if D2RVR_FIRST_PERSON
@@ -4570,6 +5538,7 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
         Mat model;
         if (HeroTransform(&hx) && hx.self == self && (hx.parent & 0xFFFFFu) == 0xFFFFFu &&
             SafeCopy(model.m, reinterpret_cast<const void*>(hx.comp), sizeof model)) {
+            PoseModel(model);
             const Mat world = Mul(newW[h.weapon[1]], model);
             const V3 origin = Pos(world), axis = Norm({world.m[4], world.m[5], world.m[6]}), player = Pos(model);
             if (Len({world.m[4], world.m[5], world.m[6]}) > 0.3f &&
@@ -4587,6 +5556,13 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
 #if D2RVR_FIRST_PERSON
     if (in.rangedStowed && in.mode == 2) HideRanged(h, in, oldW, newW);
     if (in.flailChain && in.mode == 2) NoteFlailHands(self, h, in, newW);   // [flail] chain: the hands as the flail's chain hangs off them
+    if (in.headsHang && in.mode == 2) NoteHeadHands(self, h, in, newW);     // [shield] heads_hang: the hand as the head hangs off it
+#endif
+#if D2RVR_FIRST_PERSON
+    // [body] under_camera: the up part of the move (t_poseUp, above), now that every bone is posed
+    if (t_poseUp != 0.0f)
+        for (int i = 0; i < n; ++i) newW[i].m[13] += t_poseUp;
+    t_poseUp = 0.0f;
 #endif
     // A bone that is not a number (a NaN carried down a chain by some turn that had no direction) would take its whole subtree out of the picture; the game's own pose of it stands in.
     {
@@ -4603,6 +5579,142 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
             }
         }
     }
+#if D2RVR_FIRST_PERSON
+    if ((in.armWorldLate || in.armBox) && h.head >= 0) {
+        // [hud] hand_vitals_orb_drawn_hand: the arm in the WORLD (HeroArmWorld) read again from the hand as it is drawn at last - after grab_wrap laid it on
+        // what it holds and the weight model fitted it onto the weapon. The forearms' read above comes before them, so a hand holding an NPC carried its wrist
+        // medallions where the IK had put it, turned as the controller (the headset 0.185: «медальоны остаются на контроллере»). Only the world fields: the
+        // hand-frame forearm, the palm and the cast hand as before. No world matrix this pose: the read above stands.
+        HeroXform hx;
+        Mat model;
+        const char* why = "";
+        const bool modelOk = HeroTransform(&hx, &why) && hx.self == self && (hx.parent & 0xFFFFFu) == 0xFFFFFu && SafeCopy(model.m, (const void*)hx.comp, sizeof model);
+        if (modelOk) PoseModel(model);   // [body] under_camera: as the arm will be drawn
+        // [hud] hand_vitals_orb_on_bone: the forearm bones' boxes off the hero's own meshes - his parts looked at once a second, the boxes read again only when they change
+        uintptr_t inst = 0, skelp = 0;
+        if (in.armBox && modelOk && GetTickCount64() - g_armBoxes.lookAt >= 1000 && Get(self + 0x08, &inst) && Get(inst + 0x08, &skelp)) {
+            g_armBoxes.lookAt = GetTickCount64();
+            uintptr_t models[monsterrig::kMaxModels] = {};
+            uint64_t key = 0;
+            const int nModels = HeroPartModels(hx.entity, models, monsterrig::kMaxModels, &key);
+            if (nModels > 0 && (key != g_armBoxes.key || skelp != g_armBoxes.skel)) {
+                const auto read = [](uintptr_t a, void* d, size_t bytes) { return a > 0x10000 && SafeCopy(d, (const void*)a, bytes); };
+                static monsterrig::Boxes boxes;   // (large: the pose thread's alone)
+                int nMeshes = 0;
+                monsterrig::BoxesOfModels(read, models, nModels, skelp, &boxes, &nMeshes);
+                const bool loading = !boxes.n && std::strcmp(boxes.why, "the model is not loaded yet") == 0;   // (asked again, as a monster's)
+                if (!loading) {
+                    g_armBoxes.key = key;
+                    g_armBoxes.skel = skelp;
+                }
+                char note[400];
+                int w = snprintf(note, sizeof note, "wrist medallions on the bone ([hud] hand_vitals_orb_on_bone): the hero's meshes (%d parts, %d meshes) give", nModels, nMeshes);
+                for (int side = 0; side < 2; ++side) {
+                    g_armBoxes.ok[side] = false;
+                    for (int i = 0; i < boxes.n && h.lwr[side] >= 0; ++i)
+                        if (boxes.b[i].bone == h.lwr[side]) {
+                            g_armBoxes.ok[side] = true;
+                            memcpy(g_armBoxes.mn[side], boxes.b[i].min, sizeof boxes.b[i].min);
+                            memcpy(g_armBoxes.mx[side], boxes.b[i].max, sizeof boxes.b[i].max);
+                        }
+                    const float* a = g_armBoxes.mn[side];
+                    const float* b = g_armBoxes.mx[side];
+                    if (w > 0 && w < (int)sizeof note)
+                        w += g_armBoxes.ok[side] ? snprintf(note + w, sizeof note - w, " the %s forearm a box %.2f x %.2f x %.2f (its bone's units);", side ? "left" : "right", b[0] - a[0], b[1] - a[1], b[2] - a[2])
+                                                 : snprintf(note + w, sizeof note - w, " the %s forearm NO box (%s): the medallion where its sliders put it;", side ? "left" : "right",
+                                                            boxes.n ? "its bone has none" : boxes.why && *boxes.why ? boxes.why : "nothing read");
+                }
+                AcquireSRWLockExclusive(&g_armNoteLock);
+                if (g_armNote.size() < 3000) g_armNote += (g_armNote.empty() ? "" : "\n") + std::string(note);
+                ReleaseSRWLockExclusive(&g_armNoteLock);
+            }
+        }
+        for (int side = 0; side < 2 && modelOk; ++side) {
+            const int l = h.lwr[side], k = h.hand[side], mk = h.mid[side], ik = h.ind[side], pk = h.pnk[side];
+            if (l < 0 || k < 0) continue;
+            const V3 E = Pos(newW[l]), W = Pos(newW[k]);
+            const V3 across = PalmAcross(h, side, newW, Norm(Sub(W, E)));
+            V3 pointU{0, 0, 0}, faceU{0, 0, 0};
+            const bool handW = mk >= 0 && ik >= 0 && pk >= 0;
+            if (handW) {
+                const V3 point = Sub(Pos(newW[mk]), W), line = Sub(Pos(newW[ik]), Pos(newW[pk]));
+                pointU = Norm(point);
+                faceU = Norm(Scale(Cross(point, line), side == 0 ? -1.0f : 1.0f));   // out of the palm, as Fist has it
+            }
+            const V3 ew = Through(model, E), ww = Through(model, W);
+            const V3 xw = Norm(RotOnly(across, model)), pw = Norm(RotOnly(pointU, model)), fw = Norm(RotOnly(faceU, model));
+            if (!std::isfinite(ew.x + ew.y + ew.z + ww.x + ww.y + ww.z + xw.x + xw.y + xw.z + pw.x + pw.y + pw.z + fw.x + fw.y + fw.z)) continue;
+            // [hud] hand_vitals_orb_on_bone: the forearm bone's box as it stands now - its middle and half sides through the bone, then the hero's model-to-world
+            bool boxOk = false;
+            V3 bc{}, bh[3]{};
+            if (in.armBox && g_armBoxes.ok[side]) {
+                const float* mn = g_armBoxes.mn[side];
+                const float* mx = g_armBoxes.mx[side];
+                const V3 mid{0.5f * (mn[0] + mx[0]), 0.5f * (mn[1] + mx[1]), 0.5f * (mn[2] + mx[2])};
+                bc = Through(model, Through(newW[l], mid));
+                boxOk = std::isfinite(bc.x + bc.y + bc.z);
+                for (int i = 0; i < 3 && boxOk; ++i) {
+                    V3 end = mid;
+                    (i == 0 ? end.x : i == 1 ? end.y : end.z) += 0.5f * (mx[i] - mn[i]);
+                    bh[i] = Sub(Through(model, Through(newW[l], end)), bc);
+                    boxOk = std::isfinite(bh[i].x + bh[i].y + bh[i].z);
+                }
+            }
+            AcquireSRWLockExclusive(&g_forearmLock);
+            ForearmOut& f = g_forearm[side];
+            if (f.at) {   // (written by the read above this very pose)
+                f.boxOk = boxOk;
+                if (boxOk) {
+                    f.boxCW[0] = bc.x; f.boxCW[1] = bc.y; f.boxCW[2] = bc.z;
+                    for (int i = 0; i < 3; ++i) { f.boxHW[i][0] = bh[i].x; f.boxHW[i][1] = bh[i].y; f.boxHW[i][2] = bh[i].z; }
+                }
+            }
+            if (f.at && in.armWorldLate) {
+                f.elbowW[0] = ew.x; f.elbowW[1] = ew.y; f.elbowW[2] = ew.z;
+                f.wristW[0] = ww.x; f.wristW[1] = ww.y; f.wristW[2] = ww.z;
+                f.acrossW[0] = xw.x; f.acrossW[1] = xw.y; f.acrossW[2] = xw.z;
+                f.pointW[0] = pw.x; f.pointW[1] = pw.y; f.pointW[2] = pw.z;
+                f.faceW[0] = fw.x; f.faceW[1] = fw.y; f.faceW[2] = fw.z;
+                f.handW = handW;
+                f.worldOk = true;
+                f.worldAt = GetTickCount64();
+            }
+            ReleaseSRWLockExclusive(&g_forearmLock);
+        }
+    }
+    {   // [multiplayer] pose_share (formats 5, 6): the bones the others hang our hero's weapon and hands on - both attach bones, both hands and elbows, the head bone -
+        // as they are written now, after all that moves them (the hands fitted onto the weapon, the shield strapped, the body under the camera); the head's
+        // turn-only frame from the eye, metres, with our model's units a metre (DrawnAttach, DrawnHands). Read before at the bone axes, a hand the weight model
+        // fitted onto the weapon later, or a strapped shield, went to the others where it was not drawn.
+        DrawnAttachOut da;
+        da.main = axesSide;
+        const V3 eye = in.haveEye ? V3{in.eyeModel[0], in.eyeModel[1], in.eyeModel[2]} : Pos(newW[h.head >= 0 ? h.head : 0]);
+        const float e3[3] = {eye.x, eye.y, eye.z};
+        da.upm = std::clamp(eye.y / std::max(0.8f, in.userHeadM), 2.0f, 8.0f) * in.scale;   // model units per metre
+        const auto read = [&](int bone, float origin[3], float rows[3][3]) {
+            if (bone < 0 || bone >= n) return false;
+            const Mat& m = newW[bone];
+            const float p[3] = {m.m[12], m.m[13], m.m[14]};
+            remotepose::PointToHead(p, e3, c, s, da.upm, origin);
+            bool fine = std::isfinite(origin[0] + origin[1] + origin[2]);
+            for (int i = 0; fine && i < 3; ++i) {
+                const V3 row = {m.m[i * 4], m.m[i * 4 + 1], m.m[i * 4 + 2]};
+                fine = Len(row) > 0.001f;   // (a point: the game hides a slot that holds nothing)
+                const V3 d = Norm(row);
+                const float d3[3] = {d.x, d.y, d.z};
+                remotepose::DirToHead(d3, c, s, rows[i]);
+            }
+            return fine;
+        };
+        for (int slot = 0; slot < 2; ++slot) da.ok[slot] = read(h.weapon[slot], da.origin[slot], da.rows[slot]);
+        float rows[3][3];
+        bool hands = read(h.head, da.headBone, rows);
+        for (int side = 0; side < 2 && hands; ++side) hands = read(h.hand[side], da.hand[side], da.handRows[side]) && read(h.lwr[side], da.elbow[side], rows);
+        da.handsOk = hands;
+        da.at = GetTickCount64();
+        AcquireSRWLockExclusive(&g_drawnAttachLock); g_drawnAttach = da; ReleaseSRWLockExclusive(&g_drawnAttachLock);
+    }
+#endif
     SafeWrite((void*)mats, newW.data(), sizeof(Mat) * n);
 }
 
@@ -4730,7 +5842,7 @@ uintptr_t g_oursBefore = 0;              // the rig ours was rebuilt from (under
 ULONGLONG g_oursBeforeAt = 0, g_oursBeforeSeen = 0;   // when ours was rebuilt from it, when the game posed it last
 
 // why (when given, [debug] doll_trace): the reason a rig is not taken, in words with its numbers.
-Doll OursNow(uintptr_t self, const Hero& hero, char* why = nullptr, size_t whyCap = 0) {
+Doll OursNow(uintptr_t self, const Hero& hero, char* why = nullptr, size_t whyCap = 0, bool trace = true) {   // trace: [debug] doll_trace (the rebuild notes)
     auto say = [&](Doll d, const char* fmt, auto... a) { if (why && whyCap) snprintf(why, whyCap, fmt, a...); return d; };
     const bool rebuildHold = g_dollRebuild.load(std::memory_order_relaxed);
     uintptr_t world = 0, mats = 0;
@@ -4779,7 +5891,7 @@ Doll OursNow(uintptr_t self, const Hero& hero, char* why = nullptr, size_t whyCa
     if (ours == g_bodies.end()) g_ours = 0;
     if (self == g_ours) {
         if (g_oursBefore && g_oursBefore != self && !g_bodies.count(g_oursBefore)) {   // the rig it was rebuilt from is not posed any more: the swap's overlap is over
-            if (why) NoteDoll("doll: the rig ours was rebuilt from (%p) is not posed any more - the two were posed together for %llu ms", (void*)g_oursBefore,
+            if (why && trace) NoteDoll("doll: the rig ours was rebuilt from (%p) is not posed any more - the two were posed together for %llu ms", (void*)g_oursBefore,
                               (unsigned long long)(g_oursBeforeSeen - std::min(g_oursBeforeSeen, g_oursBeforeAt)));
             g_oursBefore = 0;
         }
@@ -4799,7 +5911,7 @@ Doll OursNow(uintptr_t self, const Hero& hero, char* why = nullptr, size_t whyCa
             return say(Doll::Not, "another rig is taken (%p, %.1f units from the look-at, posed %llu ms ago; this one %.1f) - this is not its rebuild (%d poses, %.1f units "
                        "from it) nor nearer by a unit with the look-at still", (void*)g_ours, o.dist, (unsigned long long)(now - std::min(now, o.at)), b.dist, b.poses, apart);
         if (rebuilt) {
-            if (why) NoteDoll("doll: the hero's model rebuilt (a weapon swap, a weapon to or from a shoulder, another shield or bow) - rig %p taken from %p, %.1f units "
+            if (why && trace) NoteDoll("doll: the hero's model rebuilt (a weapon swap, a weapon to or from a shoulder, another shield or bow) - rig %p taken from %p, %.1f units "
                               "apart, %llu ms after %p was posed last%s", (void*)self, (void*)g_ours, apart, (unsigned long long)(now - std::min(now, o.at)), (void*)g_ours,
                               rebuildHold ? "; the old one posed along while the game poses it" : "");
             g_oursBefore = g_ours; g_oursBeforeAt = g_oursBeforeSeen = now;
@@ -5247,6 +6359,18 @@ void PoseBowRig(uintptr_t self) {
             ReleaseSRWLockExclusive(&g_bowAimLock);
         }
     }
+    {   // [bow] arrow_rest_model: the bow's own arrow rest, into its attach bone's frame (the hero's pose carries it from there: AimBow)
+        bowrig::V3 r;
+        if (bowrig::ArrowRestPoint(held.rig, &r)) {
+            const bowrig::V3 p = bowrig::Point(bowrig::Mul(cog, itemLocal), r);
+            if (bowrig::Finite(p)) {
+                AcquireSRWLockExclusive(&g_bowAimLock);
+                g_restAttach[0] = p.x; g_restAttach[1] = p.y; g_restAttach[2] = p.z;
+                g_restAttachAt = now;
+                ReleaseSRWLockExclusive(&g_bowAimLock);
+            }
+        }
+    }
     if (staveOn) {   // [bow] quiver_orbs: the stave, from the rig's bind pose (the riser = the middle of the limbs' hinges, the upper limb's end = where the string is tied to it)
         const bowrig::V3 grip = (bowrig::Position(held.rig.rest[R.bend[0]]) + bowrig::Position(held.rig.rest[R.bend[1]])) * 0.5f;
         PublishBowStave(hands, now, cog, itemLocal, grip, bowrig::Position(held.rig.rest[R.tip[0]]), bowrig::Position(held.rig.rest[R.tip[1]]), held.rig.back);
@@ -5565,6 +6689,872 @@ std::string XbowNoteTakeIn() {
 }
 #endif
 
+#if D2RVR_FIRST_PERSON
+// ---- [multiplayer] pose_share_hero (vr/remote_pose.h): another player's rig posed from the pose that came ----------------------------------------------------
+SRWLOCK g_remoteLock = SRWLOCK_INIT;
+remotepose::Target g_remote[remotepose::kMaxHeroes];
+std::atomic<unsigned> g_remoteWeapon{0};   // a weapon slot placed as the sender draws it (format 5)
+std::atomic<unsigned> g_remoteHandsDrawn{0}, g_remoteReachMissMm{0};
+struct RemoteHands { uint32_t unit = 0; ULONGLONG at = 0; bool ok[2] = {false, false}; float m[2][16] = {}; };   // [multiplayer] pose_share_held: RemoteHandWorld
+SRWLOCK g_remoteHandsLock = SRWLOCK_INIT;
+RemoteHands g_remoteHands[remotepose::kMaxHeroes];   // a hand placed as the sender draws it (format 6); the most it was out of the arm's reach (mm of his body)
+std::atomic<unsigned> g_remoteLegs{0};    // [multiplayer] pose_share_legs: legs stepped by the gait library
+std::atomic<unsigned> g_remoteYawFromWorld{0};   // poses turned by the world heading through the rig's matrix (else the sender's yaw in his model)
+
+// [multiplayer] pose_share_legs: each other hero's legs, his rig by its SkeletonInstance - the gait's own memory (the library keeps none) and his travel,
+// from his rig's place frame to frame (ecs::BodyPlace, the look-at's units), smoothed.
+std::atomic<float> g_gaitCone{45.0f};   // [body] gait_cone_deg: the half-angle of the cone the game's own walk keeps (SetGaitCone)
+struct LegsMem { D2rfState st{}; float x = 0.0f, z = 0.0f, vx = 0.0f, vz = 0.0f; LARGE_INTEGER at{}; bool have = false; ULONGLONG seen = 0;
+                 remotepose::ConeBlend cone;   // our gait's share against the game's walk, by the travel's angle from the facing
+                 float faceX = 0.0f, faceZ = 0.0f; ULONGLONG faceAt = 0;   // (a hero with no pose: his facing followed, the world's ground direction)
+                 float dirWX = 0.0f, dirWZ = 0.0f; bool dirWorld = false; };   // the library's way of the steps, in the world (remotepose::DirModelToWorld)
+// What the legs did since the last LegsNote (under g_legsLock): the rigs stepped, how far each foot was put from where the game had it, the swing's lift,
+// the walk's share and speed, the hips' drop; and whether our write was still in the rig's bones when the game posed it next (kept) or something had
+// written over it (lost) - the test of whether what we write is what is drawn.
+struct LegsDiag {
+    uintptr_t rigs[8] = {};
+    int nRigs = 0;
+    unsigned steps = 0, kneeFail = 0, kept = 0, lost = 0, gameWalk = 0;   // gameWalk: poses left wholly to the game's walk (in the cone, or standing)
+    unsigned reversals = 0, reverseRefused = 0;   // the steps' way turned round at once on a reversal (remotepose::ReverseSteps); not, the library's feet moved by it
+    float shareSum = 0.0f;
+    float footCmMax = 0.0f, footCmSum = 0.0f, liftCmMax = 0.0f, dropCmMax = 0.0f, moveSum = 0.0f, speedSum = 0.0f, speedMax = 0.0f;
+    unsigned feet = 0;
+};
+LegsDiag g_legsDiag;
+// the feet as we last wrote them, per rig: checked against the rig's bones at its next pose, before the game makes it again
+struct LegWrite { int foot[2] = {-1, -1}; float pos[2][3] = {}; ULONGLONG at = 0; };
+std::map<uintptr_t, LegWrite> g_legWrites;   // under g_legsLock
+SRWLOCK g_legsLock = SRWLOCK_INIT;
+std::map<uintptr_t, LegsMem> g_legsMem;
+
+// His legs on the gait library's feet: the whole body already turned to his look (the pelvis faces where he faces, never his path), the travel turned
+// into his model (remotepose::TravelInModel), the steps along it - forward, backward, sideways - the hips down as far as the legs need, each knee by our
+// two-bone leg (legik::Solve, the knee ahead; the thigh and the shin turned from their rest, legik::Turn), each foot flat and facing the body (its bind
+// turn turned with the body), its toes with it.
+// r: the received pose (nullptr: none - a player who sends no pose: the game's facing, an eye height of 1.7 m); M: the rig's model -> world (nullptr: not read).
+void RemoteLegs(uintptr_t self, const Hero& h, const remotepose::Target* r, float x, float z, float c, float s, const Mat& T, const Mat* M, std::vector<Mat>& newW,
+                const std::vector<Mat>& gameW) {
+    const int n = h.count;
+    LARGE_INTEGER now, f;
+    QueryPerformanceCounter(&now);
+    QueryPerformanceFrequency(&f);
+    D2rfLegsIn in{};
+    in.size = sizeof in;
+    D2rfState st{};
+    float vx = 0.0f, vz = 0.0f;
+    {
+        AcquireSRWLockExclusive(&g_legsLock);
+        const ULONGLONG tick = GetTickCount64();
+        if (g_legsMem.size() > 32) std::erase_if(g_legsMem, [&](const auto& e) { return tick - e.second.seen > 5000; });
+        LegsMem& m = g_legsMem[self];
+        const double dt = m.have && f.QuadPart ? (double)(now.QuadPart - m.at.QuadPart) / (double)f.QuadPart : 0.0;
+        if (!m.have || dt > 0.3) { m.vx = m.vz = 0.0f; }
+        else if (dt > 1e-4) {
+            const float k = 1.0f - (float)std::exp(-dt / 0.08);
+            m.vx += ((x - m.x) / (float)dt - m.vx) * k;
+            m.vz += ((z - m.z) / (float)dt - m.vz) * k;
+        }
+        m.x = x; m.z = z; m.at = now; m.have = true; m.seen = tick;
+        in.dt = dt > 0.3 ? 0.0f : (float)dt;
+        st = m.st;
+        // the steps' way into the model as the game has turned it now: walking back the game turns the model round to the path at once, and a way kept in the old
+        // model swept through sideways for half a second while the library turned it back - a foot stepped across the other's (the 2026-10-27 crossed legs)
+        if (M && m.dirWorld && (st.dirX != 0.0f || st.dirZ != 0.0f)) remotepose::DirWorldToModel(M->m, m.dirWX, m.dirWZ, &st.dirX, &st.dirZ);
+        vx = m.vx; vz = m.vz;
+        ReleaseSRWLockExclusive(&g_legsLock);
+    }
+    const float upm = remotepose::ModelUpm(Pos(newW[h.head]).y, r ? r->eyeM : 1.7f);
+    float vel[3] = {0.0f, 0.0f, 0.0f};
+    if (M) {   // the world's travel back through the rig's own matrix (its turn and size): exact, whatever the pose says
+        const Mat inv = InvAffine(*M);
+        const V3 v = RotOnly({vx, 0.0f, vz}, inv);
+        vel[0] = v.x; vel[2] = v.z;
+    } else if (r) {
+        remotepose::TravelInModel(vx, vz, r->heading, c, s, upm, r->worldUpm, vel);
+    }
+    in.unitsPerM = upm;
+    in.forward = {s, 0.0f, c};
+    in.velocity = {vel[0], vel[1], vel[2]};
+    for (int side = 0; side < 2; ++side) {
+        const int hip = h.leg[side][0], knee = h.leg[side][1], foot = h.leg[side][2];
+        const V3 hp = Pos(newW[hip]), rest = Through(T, Pos(h.bind[foot]));
+        in.hip[side] = {hp.x, hp.y, hp.z};
+        in.rest[side] = {rest.x, rest.y, rest.z};
+        in.legLength[side] = Len(Sub(Pos(h.bind[knee]), Pos(h.bind[hip]))) + Len(Sub(Pos(h.bind[foot]), Pos(h.bind[knee])));
+    }
+    D2rfLegsOut out{};
+    out.size = sizeof out;
+    {   // a reversal (forward, now back): the steps' way turned round at once and the stride mirrored, so the feet stay where they stand - kept only when the library
+        // puts both feet in the same place for it (both states at dt 0); else as before (its own turn, through sideways: the 2026-10-27 crossed legs)
+        D2rfState flip = st;
+        const float speedNow = std::sqrt(vel[0] * vel[0] + vel[2] * vel[2]) / std::max(upm, 1e-3f);
+        if (speedNow > 0.1f && remotepose::ReverseSteps(&flip.dirX, &flip.dirZ, &flip.phase, vel[0], vel[2])) {
+            D2rfLegsIn still = in;
+            still.dt = 0.0f;
+            D2rfState a = st, b = flip;
+            D2rfLegsOut oa{}, ob{};
+            oa.size = ob.size = sizeof oa;
+            float worst = 1e30f;
+            if (gaitlib::Step(still, &a, &oa) && gaitlib::Step(still, &b, &ob)) {
+                worst = 0.0f;
+                for (int side = 0; side < 2; ++side)
+                    worst = std::max(worst, Len(Sub(V3{oa.foot[side].x, oa.foot[side].y, oa.foot[side].z}, V3{ob.foot[side].x, ob.foot[side].y, ob.foot[side].z})));
+            }
+            const bool same = worst < 0.01f * upm;   // (a centimetre)
+            if (same) st = flip;
+            AcquireSRWLockExclusive(&g_legsLock);
+            ++(same ? g_legsDiag.reversals : g_legsDiag.reverseRefused);
+            ReleaseSRWLockExclusive(&g_legsLock);
+        }
+    }
+    if (!gaitlib::Step(in, &st, &out)) return;   // (stepped always: its phase goes on while the game's walk shows)
+    // [body] gait_cone_deg: the game's own walk within the cone about the facing, ours outside it, crossfaded
+    const float speedM = std::sqrt(vel[0] * vel[0] + vel[2] * vel[2]) / std::max(upm, 1e-3f);
+    const float angle = remotepose::TravelAngleDeg(vel[0], vel[2], s, c);
+    float w = 0.0f;
+    {
+        AcquireSRWLockExclusive(&g_legsLock);
+        LegsMem& m = g_legsMem[self];
+        m.st = st;
+        m.dirWorld = M && (st.dirX != 0.0f || st.dirZ != 0.0f) && remotepose::DirModelToWorld(M->m, st.dirX, st.dirZ, &m.dirWX, &m.dirWZ);
+        w = m.cone.Step(angle, speedM > 0.15f && angle >= 0.0f, g_gaitCone.load(std::memory_order_relaxed), in.dt);
+        g_legsDiag.shareSum += w;
+        if (w <= 0.001f) { ++g_legsDiag.steps; ++g_legsDiag.gameWalk; g_legWrites.erase(self); }   // (nothing of ours to check at the next pose)
+        ReleaseSRWLockExclusive(&g_legsLock);
+    }
+    if (w <= 0.001f) return;   // the game's own legs, untouched
+    V3 gameFoot[2];   // the game's own feet (the body turned, before the hips drop): crossfaded from, w of the way to the gait's
+    for (int side = 0; side < 2; ++side) gameFoot[side] = Pos(newW[h.leg[side][2]]);
+    if (out.drop > 0.0f && std::isfinite(out.drop))
+        for (int i = 0; i < n; ++i) newW[i].m[13] -= out.drop * w;
+    unsigned kneeFail = 0;
+    for (int side = 0; side < 2; ++side) {
+        const int hip = h.leg[side][0], knee = h.leg[side][1], foot = h.leg[side][2];
+        const std::vector<Mat> base = newW;
+        const V3 H = Pos(newW[hip]);
+        const float thigh = Len(Sub(Pos(newW[knee]), H)), shin = Len(Sub(Pos(newW[foot]), Pos(newW[knee])));
+        const V3 g = gameFoot[side];
+        const legik::V F{g.x + (out.foot[side].x - g.x) * w, g.y + (out.foot[side].y - g.y) * w, g.z + (out.foot[side].z - g.z) * w};
+        // the knee and both bones' turns from the rig's rest (turned with the body) and the leg's bend plane (vr/leg_ik.h) - never the shortest swing from
+        // the game's walk pose, which turned the bone round its length when the game's leg was ahead and ours behind (the kneecap to the back)
+        auto L = [](V3 v) { return legik::V{v.x, v.y, v.z}; };
+        const V3 hip0 = Through(T, Pos(h.bind[hip])), knee0 = Through(T, Pos(h.bind[knee])), foot0 = Through(T, Pos(h.bind[foot]));
+        const legik::V ahead = legik::KneeAhead(L(hip0), L(knee0), L(foot0), {s, 0.0f, c});
+        legik::Bend b;
+        float Rt[9], Rs[9];
+        if (!legik::Solve(L(H), thigh, shin, F, ahead, legik::kMaxFlexDeg, b)) { ++kneeFail; continue; }
+        const legik::V h0 = legik::Hinge(L(hip0), L(foot0), ahead);
+        if (!legik::Turn(L(Sub(knee0, hip0)), h0, b.knee - L(H), b.hinge, Rt) || !legik::Turn(L(Sub(foot0, knee0)), h0, b.foot - b.knee, b.hinge, Rs)) {
+            ++kneeFail;
+            continue;
+        }
+        auto turned = [&](int bone, const float R[9], V3 at) {   // the bone at rest (turned with the body), turned by R, at `at`
+            Mat r{};
+            for (int i = 0; i < 3; ++i)
+                for (int j = 0; j < 3; ++j) r.m[i * 4 + j] = R[i * 3 + j];
+            r.m[15] = 1.0f;
+            Mat m = Mul(Mul(h.bind[bone], T), r);
+            m.m[12] = at.x; m.m[13] = at.y; m.m[14] = at.z;
+            return m;
+        };
+        newW[hip] = turned(hip, Rt, H);
+        {
+            std::vector<char> moved(n, 0);
+            moved[hip] = 1;
+            Propagate(h, base, newW, moved, hip);
+        }
+        newW[knee] = turned(knee, Rs, Pos(newW[knee]));
+        {
+            std::vector<char> moved(n, 0);
+            moved[knee] = 1;
+            Propagate(h, base, newW, moved, knee);
+        }
+        if (w >= 0.5f) {   // the gait's foot: flat, facing the body (under half way, the game's foot keeps its own turn)
+            const V3 at = Pos(newW[foot]);
+            newW[foot] = Mul(h.bind[foot], T);
+            newW[foot].m[12] = at.x; newW[foot].m[13] = at.y; newW[foot].m[14] = at.z;
+        }
+        std::vector<char> moved(n, 0);
+        moved[foot] = 1;
+        Propagate(h, base, newW, moved, foot);
+    }
+    {   // what this step changed against the game's own legs, and the feet as written (checked at the rig's next pose)
+        AcquireSRWLockExclusive(&g_legsLock);
+        LegsDiag& d = g_legsDiag;
+        bool known = false;
+        for (int i = 0; i < d.nRigs; ++i) known = known || d.rigs[i] == self;
+        if (!known && d.nRigs < 8) d.rigs[d.nRigs++] = self;
+        ++d.steps;
+        d.kneeFail += kneeFail;
+        const float cm = 100.0f / std::max(upm, 1e-3f);
+        for (int side = 0; side < 2; ++side) {
+            const int foot = h.leg[side][2];
+            const float off = Len(Sub(Pos(newW[foot]), Pos(gameW[foot]))) * cm;
+            if (std::isfinite(off)) { d.footCmMax = std::max(d.footCmMax, off); d.footCmSum += off; ++d.feet; }
+            d.liftCmMax = std::max(d.liftCmMax, out.lift[side] * 0.10f * 100.0f);   // (the library's lift is 0..1 of its 10 cm clearance for a man's leg)
+        }
+        d.dropCmMax = std::max(d.dropCmMax, out.drop * cm);
+        d.moveSum += out.move;
+        d.speedSum += out.speedM;
+        d.speedMax = std::max(d.speedMax, out.speedM);
+        LegWrite& w = g_legWrites[self];
+        for (int side = 0; side < 2; ++side) {
+            const int foot = h.leg[side][2];
+            w.foot[side] = foot;
+            w.pos[side][0] = newW[foot].m[12]; w.pos[side][1] = newW[foot].m[13]; w.pos[side][2] = newW[foot].m[14];
+        }
+        w.at = GetTickCount64();
+        if (g_legWrites.size() > 32) std::erase_if(g_legWrites, [&](const auto& e) { return w.at - e.second.at > 2000; });
+        ReleaseSRWLockExclusive(&g_legsLock);
+    }
+    g_remoteLegs.fetch_add(1, std::memory_order_relaxed);
+}
+
+// [body] walk_back: our own hero turned whole to the look (PoseBody's bodyTurn 2) while the game walks him the other way. The game faces him down his path and
+// plays its forward walk, turned half a turn with him: his legs walked forward while he went back - the planted foot slid along at twice his speed, the swinging
+// leg passed it the wrong way ("the legs cross over each other when I move backwards", 2026-10-27). His travel (his rig's place frame to frame, through its
+// matrix into his model) more than kWalkBackFromDeg from where he faces - crossfaded by remotepose::ConeBlend, with its hysteresis and hold - each foot's place
+// along his facing is mirrored about his hips (legik::MirrorAlong): the planted foot stands, the swing goes back; the knee solved again ahead of the hip-ankle
+// line (legik::Solve / Turn, as the gait's), the foot keeping the game's own turn. Across and up nothing changes: the left foot stays left. Drawn bones only.
+// [body] walk_back_reverse (on): Serg's 2026-10-28 test - "when the hero walks backwards his legs still cross". The mirror above is the walk of a hero facing
+// the other way with his legs on the wrong sides: the foot lifted high in front of him, set down behind him toes up. Instead the game's own walk is played
+// BACKWARDS (vr/walk_back.h): his lower body - the pelvis and everything under it but the trunk - is kept from every pose of his walking (any way: the game
+// always plays its forward walk), the body's turn taken out, and while he walks back each pose is drawn from a cursor going back through that store: the
+// planted foot stands, the heel lifts behind him, the toes reach back to land - every joint the game's own. The trunk rides on that pelvis (as the game hangs
+// it) unless [body] lock holds it in its bind pose. Nothing kept yet (his very first steps): the mirror for those frames.
+// Still crossed in his 2026-10-28 17:03 test; drawn offline (tools/walk_legs: the game's 1hs_walk, and this Reverser fed with it) both the walk played
+// backwards and the Reverser make an honest backward step. What the offline pictures lacked and his log shows: the game turns the hero at every change
+// of way on the skeleton's anim bone (up to 128 deg seen, for ~0.1-0.2 s) while his matrix has turned already - the drawn legs faced the way he went
+// under the locked trunk, and the store began each walk back with those poses. That turn is taken out first (walk_back.h TurnAbout). And an area change
+// moved his place 11511 units in a frame: the smoothed travel "walked him back" ~1.5 s while he stood - a jump of the place reads no travel (kJumpMps).
+constexpr float kWalkBackFromDeg = 100.0f;
+static_assert(sizeof(Mat) == sizeof(walkback::M4), "walk_back.h's M4 is skeletons.cpp's Mat");
+struct WalkBackMem {
+    float x = 0.0f, z = 0.0f, vx = 0.0f, vz = 0.0f; LARGE_INTEGER at{}; bool have = false; uintptr_t self = 0; remotepose::ConeBlend cone;
+    walkback::Reverser rev;                                // [body] walk_back_reverse: the game's walk kept, and played back
+    std::vector<int> lower;                                // ... the bones kept: the pelvis and every bone under it but the trunk
+    std::vector<walkback::M4> pose;                        // ... this pose's, the body's turn taken out
+};
+WalkBackMem g_walkBack;   // (the skeleton hook's thread: our own hero only)
+std::atomic<unsigned> g_walkBackPoses{0}, g_walkBackFull{0}, g_walkBackKneeFail{0}, g_walkBackPlayed{0}, g_walkBackJumps{0};
+std::atomic<float> g_walkBackAngle{0.0f}, g_walkBackKeptS{0.0f};
+std::atomic<unsigned> g_walkBackSeen{0}, g_walkBackSlow{0}, g_walkBackOtherMode{0};   // poses seen while he moved or walked back; too slow; not the game's walk mode
+std::atomic<int> g_walkBackMode{-1};   // the last mode that was not a walk
+std::atomic<unsigned> g_walkBackAhead{0}, g_walkBackPlaceJumps{0}, g_walkBackTurnOut{0};   // on while he went ahead (< 90 deg); his place jumped; the game's turn taken out
+std::atomic<float> g_walkBackTurnMaxDeg{0.0f};   // ... the most of it
+// [debug] walk_back_dump: what one call saw, for the dump (WalkBackLegs below)
+struct WalkBackRow { double t = 0.0; float dt = 0.0f, speedM = 0.0f, angle = -1.0f, w = 0.0f, turnDeg = 0.0f, vx = 0.0f, vz = 0.0f, sx = 0.0f, sz = 0.0f, upm = 0.0f; };
+WalkBackRow g_wbRow;   // (the skeleton hook's thread)
+void WalkBackLegsIn(uintptr_t self, const Hero& h, const Input& in, float c, float s, std::vector<Mat>& newW) {
+    const float userHeadM = in.userHeadM;
+    const int n = h.count;
+    float x = 0.0f, z = 0.0f;
+    Mat M{};
+    if (!ecs::BodyPlace(self, &x, &z, nullptr, 500, M.m)) return;
+    LARGE_INTEGER now, f;
+    QueryPerformanceCounter(&now);
+    QueryPerformanceFrequency(&f);
+    WalkBackMem& m = g_walkBack;
+    if (m.self != self) m = WalkBackMem{};
+    m.self = self;
+    const double dt = m.have && f.QuadPart ? (double)(now.QuadPart - m.at.QuadPart) / (double)f.QuadPart : 0.0;
+    const float upm = std::clamp((h.head >= 0 ? Pos(newW[h.head]).y : h.eyeY) / std::max(0.8f, userHeadM), 2.0f, 8.0f);   // model units a metre
+    const V3 stepIn = m.have ? RotOnly({x - m.x, 0.0f, z - m.z}, InvAffine(M)) : V3{0.0f, 0.0f, 0.0f};   // (into his model)
+    g_wbRow.sx = stepIn.x; g_wbRow.sz = stepIn.z; g_wbRow.upm = upm; g_wbRow.dt = (float)dt;
+    if (m.have && dt > 1e-4 && dt <= 0.3 && Len(stepIn) / upm / (float)dt > walkback::kJumpMps) {
+        m.vx = m.vz = 0.0f;   // his place jumped (an area change, a waypoint): no travel from it (walk_back.h kJumpMps)
+        m.cone = remotepose::ConeBlend{};
+        g_walkBackPlaceJumps.fetch_add(1, std::memory_order_relaxed);
+    } else if (!m.have || dt > 0.3) { m.vx = m.vz = 0.0f; }
+    else if (dt > 1e-4) {   // the travel in the world (the look-at's units a second), smoothed as the other heroes' (0.08 s)
+        const float k = 1.0f - (float)std::exp(-dt / 0.08);
+        m.vx += ((x - m.x) / (float)dt - m.vx) * k;
+        m.vz += ((z - m.z) / (float)dt - m.vz) * k;
+    }
+    m.x = x; m.z = z; m.at = now; m.have = true;
+    const V3 v = RotOnly({m.vx, 0.0f, m.vz}, InvAffine(M));   // into his model (its turn and size: exact, as the gait's)
+    const float speedM = std::sqrt(v.x * v.x + v.z * v.z) / upm;
+    const float angle = remotepose::TravelAngleDeg(v.x, v.z, s, c);
+    // he goes only while the game plays its walk or run (walkback::GameWalkMode: standing, the rig's place still read a speed now and then, any way); the game
+    // says he stands: no hold, the walk back fades out at once
+    const bool gameWalk = walkback::GameWalkMode(in.heroAnimMode);
+    if (walkback::GameStands(in.heroAnimMode)) m.cone.still = remotepose::ConeBlend::kHoldStandS + 1.0f;
+    const float w = m.cone.Step(angle, speedM > 0.15f && angle >= 0.0f && gameWalk, kWalkBackFromDeg, dt > 0.3 ? 0.0f : (float)dt);
+    g_walkBackAngle.store(angle);
+    g_wbRow.speedM = speedM; g_wbRow.angle = angle; g_wbRow.w = w; g_wbRow.vx = v.x; g_wbRow.vz = v.z;
+    g_wbRow.t = f.QuadPart ? (double)now.QuadPart / (double)f.QuadPart : 0.0;
+    if (w > 0.001f && angle >= 0.0f && angle < 90.0f && speedM > 0.15f) g_walkBackAhead.fetch_add(1, std::memory_order_relaxed);   // (the log: on while he went ahead)
+    Mat T{}; T.m[0] = c; T.m[2] = -s; T.m[5] = 1; T.m[8] = s; T.m[10] = c; T.m[15] = 1;   // (the turn PoseBody gave the body: the legs' rest turned with it)
+    // The game's own turn, played on the skeleton's anim bone (the pelvis's parent) when he changes his way (walk_back.h TurnAbout): taken out of all that
+    // hangs on it - the trunk too, unless [body] lock holds it in its bind pose already - so the body faces the look, and the walk kept below is the walk
+    // alone. Only in the game's walk and standing modes: a skill that spins him (its own turn of the anim bone) keeps it.
+    const int animBone = h.pelvis >= 0 ? h.parent[h.pelvis] : -1;
+    const int mode = in.heroAnimMode;
+    if (animBone >= 0 && animBone < n && (mode < 0 || mode == 1 || mode == 2 || mode == 3 || mode == 5 || mode == 6)) {
+        walkback::M4 a{}, a0{};
+        memcpy(a.m, newW[animBone].m, sizeof a.m);
+        memcpy(a0.m, h.bind[animBone].m, sizeof a0.m);   // (h.bindOk: the caller's; a rig whose anim bone stands turned at rest keeps that)
+        const float turnIn = walkback::WrapAngle(walkback::YawOf(a) - std::atan2(s, c) - walkback::YawOf(a0));
+        if (std::fabs(turnIn) > 0.035f) {   // (2 deg; the anim bone carries no sway of the walk's - only the turn)
+            const float px = newW[animBone].m[12], pz = newW[animBone].m[14];
+            std::vector<char> under(n, 0);
+            under[animBone] = 1;
+            for (int i = 0; i < n; ++i) {
+                const int p = h.parent[i];
+                if (p >= 0 && p < i && under[p]) under[i] = 1;
+                if (!under[i] || (in.lockUpper && h.upper[i])) continue;
+                walkback::M4 b{};
+                memcpy(b.m, newW[i].m, sizeof b.m);
+                walkback::TurnAbout(b, -turnIn, px, pz);
+                memcpy(newW[i].m, b.m, sizeof b.m);
+            }
+            g_walkBackTurnOut.fetch_add(1, std::memory_order_relaxed);
+            const float deg = std::fabs(turnIn) * 57.2957795f;
+            g_wbRow.turnDeg = turnIn * 57.2957795f;
+            if (deg > g_walkBackTurnMaxDeg.load()) g_walkBackTurnMaxDeg.store(deg);
+        }
+    }
+    if (in.walkBackReverse && h.pelvis >= 0) {
+        // the game's own lower body of this pose, kept while he walks (whichever way), the body's turn taken out
+        if (!m.lower.empty() && (m.lower.front() != h.pelvis || m.lower.back() >= n)) { m.lower.clear(); m.rev.Reset(); }   // (another rig at this address)
+        if (m.lower.empty()) {
+            std::vector<char> low(n, 0);
+            for (int i = 0; i < n; ++i) {
+                const int p = h.parent[i];
+                low[i] = i == h.pelvis || (!h.upper[i] && p >= 0 && p < i && low[p]);
+                if (low[i]) m.lower.push_back(i);
+            }
+        }
+        int footAt[2] = {-1, -1};
+        for (int k = 0; k < (int)m.lower.size(); ++k)
+            for (int side = 0; side < 2; ++side)
+                if (m.lower[k] == h.leg[side][2]) footAt[side] = k;
+        if (footAt[0] >= 0 && footAt[1] >= 0) {
+            Mat Ti{}; Ti.m[0] = c; Ti.m[2] = s; Ti.m[5] = 1; Ti.m[8] = -s; Ti.m[10] = c; Ti.m[15] = 1;   // (T's inverse: the body's turn out)
+            m.pose.resize(m.lower.size());
+            for (size_t k = 0; k < m.lower.size(); ++k) {
+                const Mat b = Mul(newW[m.lower[k]], Ti);
+                memcpy(m.pose[k].m, b.m, sizeof b.m);
+            }
+            float feet[6];
+            for (int side = 0; side < 2; ++side)
+                for (int j = 0; j < 3; ++j) feet[side * 3 + j] = m.pose[footAt[side]].m[12 + j];
+            const double tS = f.QuadPart ? (double)now.QuadPart / (double)f.QuadPart : 0.0;
+            if (speedM > 0.15f || w > 0.001f) {   // (for the log: why a pose while he goes was not taken as his walk)
+                g_walkBackSeen.fetch_add(1, std::memory_order_relaxed);
+                if (!(speedM > 0.15f)) g_walkBackSlow.fetch_add(1, std::memory_order_relaxed);
+                if (!gameWalk) { g_walkBackOtherMode.fetch_add(1, std::memory_order_relaxed); g_walkBackMode.store(in.heroAnimMode); }
+            }
+            m.rev.Record(tS, speedM > 0.15f && gameWalk, m.pose.data(), (int)m.pose.size(), feet);
+            g_walkBackKeptS.store((float)m.rev.KeptS());
+            const walkback::Sample* back = m.rev.Step(dt > 0.3 ? 0.0 : dt, w > 0.001f);
+            g_walkBackJumps.fetch_add((unsigned)m.rev.TakeJumps(), std::memory_order_relaxed);
+            if (w <= 0.001f) return;
+            if (back && back->pose.size() == m.lower.size()) {   // played back: the kept pose, turned with the body again, w of the way from the game's
+                const std::vector<Mat> before = newW;
+                std::vector<char> moved(n, 0);
+                for (size_t k = 0; k < m.lower.size(); ++k) {
+                    Mat b{};
+                    memcpy(b.m, back->pose[k].m, sizeof b.m);
+                    b = Mul(b, T);
+                    walkback::M4 a{}, to{};
+                    memcpy(a.m, newW[m.lower[k]].m, sizeof a.m);
+                    memcpy(to.m, b.m, sizeof to.m);
+                    const walkback::M4 r = walkback::Blend(a, to, w);
+                    memcpy(newW[m.lower[k]].m, r.m, sizeof r.m);
+                    moved[m.lower[k]] = 1;
+                }
+                // the trunk hangs on the pelvis as the game hangs it - unless [body] lock holds it in its bind pose (not hung on the pelvis there)
+                if (!in.lockUpper)
+                    for (int i = 0; i < n; ++i) {
+                        const int p = h.parent[i];
+                        if (!h.upper[i] || p < 0 || p >= i || !moved[p]) continue;
+                        newW[i] = Mul(Mul(before[i], InvAffine(before[p])), newW[p]);
+                        moved[i] = 1;
+                    }
+                g_walkBackPoses.fetch_add(1, std::memory_order_relaxed);
+                g_walkBackPlayed.fetch_add(1, std::memory_order_relaxed);
+                if (w >= 0.999f) g_walkBackFull.fetch_add(1, std::memory_order_relaxed);
+                return;
+            }
+        }
+    }
+    if (w <= 0.001f) return;
+    const V3 hipL = Pos(newW[h.leg[1][0]]), hipR = Pos(newW[h.leg[0][0]]);
+    const legik::V centre{(hipL.x + hipR.x) * 0.5f, 0.0f, (hipL.z + hipR.z) * 0.5f}, forward{s, 0.0f, c};
+    auto L = [](V3 q) { return legik::V{q.x, q.y, q.z}; };
+    bool fail = false;
+    for (int side = 0; side < 2; ++side) {
+        const int hip = h.leg[side][0], knee = h.leg[side][1], foot = h.leg[side][2];
+        const std::vector<Mat> base = newW;
+        const V3 H = Pos(newW[hip]), game = Pos(newW[foot]);
+        const Mat footTurn = newW[foot];   // the game's own turn of the foot (turned with the body): kept
+        const float thigh = Len(Sub(Pos(newW[knee]), H)), shin = Len(Sub(game, Pos(newW[knee])));
+        const legik::V F = legik::MirrorAlong(L(game), centre, forward, w);
+        const V3 hip0 = Through(T, Pos(h.bind[hip])), knee0 = Through(T, Pos(h.bind[knee])), foot0 = Through(T, Pos(h.bind[foot]));
+        const legik::V ahead = legik::KneeAhead(L(hip0), L(knee0), L(foot0), forward);
+        legik::Bend b;
+        float Rt[9], Rs[9];
+        const legik::V h0 = legik::Hinge(L(hip0), L(foot0), ahead);
+        if (!legik::Solve(L(H), thigh, shin, F, ahead, legik::kMaxFlexDeg, b) || !legik::Turn(L(Sub(knee0, hip0)), h0, b.knee - L(H), b.hinge, Rt) ||
+            !legik::Turn(L(Sub(foot0, knee0)), h0, b.foot - b.knee, b.hinge, Rs)) {
+            fail = true;
+            continue;
+        }
+        auto turned = [&](int bone, const float R[9], V3 at) {   // the bone at rest (turned with the body), turned by R, at `at`
+            Mat r{};
+            for (int i = 0; i < 3; ++i)
+                for (int j = 0; j < 3; ++j) r.m[i * 4 + j] = R[i * 3 + j];
+            r.m[15] = 1.0f;
+            Mat mm = Mul(Mul(h.bind[bone], T), r);
+            mm.m[12] = at.x; mm.m[13] = at.y; mm.m[14] = at.z;
+            return mm;
+        };
+        newW[hip] = turned(hip, Rt, H);
+        { std::vector<char> moved(n, 0); moved[hip] = 1; Propagate(h, base, newW, moved, hip); }
+        newW[knee] = turned(knee, Rs, Pos(newW[knee]));
+        { std::vector<char> moved(n, 0); moved[knee] = 1; Propagate(h, base, newW, moved, knee); }
+        const V3 at = Pos(newW[foot]);
+        newW[foot] = footTurn;
+        newW[foot].m[12] = at.x; newW[foot].m[13] = at.y; newW[foot].m[14] = at.z;
+        std::vector<char> moved(n, 0);
+        moved[foot] = 1;
+        Propagate(h, base, newW, moved, foot);
+    }
+    g_walkBackPoses.fetch_add(1, std::memory_order_relaxed);
+    if (w >= 0.999f) g_walkBackFull.fetch_add(1, std::memory_order_relaxed);
+    if (fail) g_walkBackKneeFail.fetch_add(1, std::memory_order_relaxed);
+}
+// [debug] walk_back_dump: the last kWalkBackDumpS of his moving, pose by pose, handed to the log tick once a walk back has ended (TakeWalkBackDump) - for
+// tools/walk_legs/walk_legs.py --dump, which draws the game's legs and the drawn ones as the offline pictures. Only kept while it is on; view only.
+constexpr double kWalkBackDumpS = 6.0;
+constexpr int kWalkBackDumpsAtMost = 30;   // (a session's file stays under ~10 MB)
+std::atomic<bool> g_walkBackDumpOn{false};
+std::deque<std::pair<double, std::string>> g_wbLines;   // (the skeleton hook's thread)
+double g_wbOffAt = -1.0;                                  // the walk back's share went to 0 here (-1: on, or none in the lines)
+bool g_wbHadOn = false;
+int g_wbDumps = 0;
+SRWLOCK g_wbLock = SRWLOCK_INIT;
+std::string g_wbReady;   // (under g_wbLock)
+void WalkBackJoints(const Hero& h, const std::vector<Mat>& W, std::string& out) {   // pelvis, spine, head, then per side hip, knee, foot and the foot's z row
+    char b[64];
+    auto put = [&](float x, float y, float z) { snprintf(b, sizeof b, " %.3f %.3f %.3f", x, y, z); out += b; };
+    auto at = [&](int i) { if (i >= 0 && i < (int)W.size()) put(W[i].m[12], W[i].m[13], W[i].m[14]); else put(0.0f, 0.0f, 0.0f); };
+    at(h.pelvis); at(h.spine); at(h.head);
+    for (int side = 0; side < 2; ++side) {
+        for (int k = 0; k < 3; ++k) at(h.leg[side][k]);
+        const int f = h.leg[side][2];
+        if (f >= 0 && f < (int)W.size()) put(W[f].m[8], W[f].m[9], W[f].m[10]); else put(0.0f, 0.0f, 0.0f);
+    }
+}
+void WalkBackLegs(uintptr_t self, const Hero& h, const Input& in, float c, float s, std::vector<Mat>& newW) {
+    if (!g_walkBackDumpOn.load(std::memory_order_relaxed)) { WalkBackLegsIn(self, h, in, c, s, newW); return; }
+    g_wbRow = WalkBackRow{};
+    std::string line;
+    WalkBackJoints(h, newW, line);   // the game's, turned with the body
+    WalkBackLegsIn(self, h, in, c, s, newW);
+    const WalkBackRow& r = g_wbRow;
+    char b[320];
+    snprintf(b, sizeof b, "%.4f %.4f %d %.3f %.1f %.3f %.1f %.2f %.3f %.3f %.4f %.4f %.3f |", r.t, r.dt, in.heroAnimMode, r.speedM, r.angle, r.w, r.turnDeg,
+             std::atan2(s, c) * 57.2957795f, r.vx, r.vz, r.sx, r.sz, r.upm);
+    line = b + line + " |";
+    WalkBackJoints(h, newW, line);   // as drawn
+    if (r.t <= 0.0) return;
+    const bool moving = r.speedM > 0.15f || r.w > 0.001f || r.turnDeg != 0.0f;
+    if (moving) g_wbLines.emplace_back(r.t, std::move(line));
+    while (!g_wbLines.empty() && r.t - g_wbLines.front().first > kWalkBackDumpS) g_wbLines.pop_front();
+    if (r.w > 0.001f) { g_wbHadOn = true; g_wbOffAt = -1.0; }
+    else if (g_wbHadOn && g_wbOffAt < 0.0) g_wbOffAt = r.t;
+    if (g_wbHadOn && g_wbOffAt >= 0.0 && r.t - g_wbOffAt > 0.7) {   // a walk back over: its seconds (and what led to it) out once
+        g_wbHadOn = false;
+        g_wbOffAt = -1.0;
+        if (g_wbDumps >= kWalkBackDumpsAtMost) { g_wbLines.clear(); return; }
+        std::string text = "# walk back " + std::to_string(++g_wbDumps) + "\n";
+        for (const auto& l : g_wbLines) { text += l.second; text += '\n'; }
+        g_wbLines.clear();
+        AcquireSRWLockExclusive(&g_wbLock);
+        g_wbReady += text;
+        ReleaseSRWLockExclusive(&g_wbLock);
+    }
+}
+std::string WalkBackNoteIn() {
+    const unsigned poses = g_walkBackPoses.exchange(0), full = g_walkBackFull.exchange(0), fail = g_walkBackKneeFail.exchange(0);
+    const unsigned played = g_walkBackPlayed.exchange(0), jumps = g_walkBackJumps.exchange(0);
+    const unsigned seen = g_walkBackSeen.exchange(0), slow = g_walkBackSlow.exchange(0), other = g_walkBackOtherMode.exchange(0);
+    const unsigned ahead = g_walkBackAhead.exchange(0), placeJumps = g_walkBackPlaceJumps.exchange(0), turnOut = g_walkBackTurnOut.exchange(0);
+    const float turnMax = g_walkBackTurnMaxDeg.exchange(0.0f);
+    if (!poses && !placeJumps && !turnOut) return "";
+    char b[900];
+    snprintf(b, sizeof b, "walk back ([body] walk_back): %u poses with the legs stepping back (%u wholly, the rest crossfading) - %u the game's walk played backwards "
+             "(walk_back_reverse; %.1f s of his walk kept, %u jumps through it), %u mirrored (knees not solved %u); the travel %.0f deg from the facing at the last; "
+             "of %u poses while he went, %u too slow to count as walking and %u not in the game's walk mode (the last such mode %d)",
+             poses, full, played, g_walkBackKeptS.load(), jumps, poses - played, fail, g_walkBackAngle.load(), seen, slow, other, g_walkBackMode.load());
+    const size_t at = strlen(b);
+    snprintf(b + at, sizeof b - at, "; %u of them while he went ahead (travel under 90 deg from the facing: the hold and crossfade after a turn back); his place "
+             "jumped %u times (an area change: no travel read from it); the game's own turn on the skeleton's anim bone taken out in %u poses (at most %.0f deg)",
+             ahead, placeJumps, turnOut, turnMax);
+    return b;
+}
+
+// Before the game poses a rig again: were the feet we wrote last still in its bones (kept: what we wrote is what was there to be drawn), or written over?
+void CheckLegWrite(uintptr_t self) {
+    AcquireSRWLockShared(&g_legsLock);
+    const auto it = g_legWrites.find(self);
+    const bool have = it != g_legWrites.end() && GetTickCount64() - it->second.at < 500;
+    const LegWrite w = have ? it->second : LegWrite{};
+    ReleaseSRWLockShared(&g_legsLock);
+    if (!have) return;
+    uintptr_t world = 0, mats = 0;
+    int32_t n = 0;
+    if (!Get(self + 0x20, &world) || !Get(world, &n) || !Get(world + 4, &mats)) return;
+    bool kept = true;
+    for (int side = 0; side < 2; ++side) {
+        float m[16];
+        if (w.foot[side] < 0 || w.foot[side] >= n || !SafeCopy(m, (const void*)(mats + (uintptr_t)w.foot[side] * 64), sizeof m)) return;
+        for (int i = 0; i < 3; ++i) kept = kept && std::fabs(m[12 + i] - w.pos[side][i]) < 1e-3f;
+    }
+    AcquireSRWLockExclusive(&g_legsLock);
+    (kept ? g_legsDiag.kept : g_legsDiag.lost) += 1;
+    ReleaseSRWLockExclusive(&g_legsLock);
+}
+int g_nRemote = 0;
+ULONGLONG g_remoteAt = 0;
+std::atomic<unsigned> g_remotePosed{0}, g_remoteUnmatched{0}, g_remoteUnposable{0};
+std::atomic<float> g_heroYawInModel{0.0f};   // the camera's yaw in our own hero's model space, as his arms were last posed (HeroYawInModel)
+std::atomic<ULONGLONG> g_heroYawAt{0};
+
+// The rig of a player who is not us: if a target's hero stands where it does, its upper body turned to the look (PoseBody's turn about spine_01), each arm
+// to its controller (Elbow / AimChain, the wrist as the controller holds it: PlanWrist / ApplyWrist - the weapon in hand comes along, it hangs under
+// the wrist), the head as the headset is held. `base`: our own Input, for the wrist's settings only.
+bool PoseRemoteHero(uintptr_t self, const Hero& h, const Input& base) {
+    remotepose::Target t[remotepose::kMaxHeroes];
+    int nt = 0;
+    AcquireSRWLockShared(&g_remoteLock);
+    if (g_nRemote > 0 && GetTickCount64() - g_remoteAt <= 300) {
+        nt = g_nRemote;
+        for (int i = 0; i < nt; ++i) t[i] = g_remote[i];
+    }
+    ReleaseSRWLockShared(&g_remoteLock);
+    if (!nt) return false;
+    float x = 0.0f, z = 0.0f;
+    Mat M{};
+    const bool placed = ecs::BodyPlace(self, &x, &z, nullptr, 500, M.m);
+    const int at = placed ? remotepose::Match(x, z, t, nt) : -1;
+    if (at < 0) { g_remoteUnmatched.fetch_add(1, std::memory_order_relaxed); return false; }
+    const remotepose::Target& r = t[at];
+    if (!h.bindOk || h.head < 0 || h.spine < 0) { g_remoteUnposable.fetch_add(1, std::memory_order_relaxed); return false; }
+    uintptr_t world = 0, mats = 0;
+    int32_t n = 0;
+    if (!Get(self + 0x20, &world) || !Get(world, &n) || !Get(world + 4, &mats) || n != h.count) return false;
+    std::vector<Mat> oldW(n);
+    if (!SafeCopy(oldW.data(), (const void*)mats, sizeof(Mat) * n)) return false;
+    std::vector<Mat> newW = oldW;
+    // the look in THIS rig's model, from the pose's world heading through the rig's matrix now (never against a facing the sender's game had and ours has not)
+    float yawModel = r.yawInModel;
+    if (placed && remotepose::ModelYawOfHeading(M.m, r.heading, &yawModel)) g_remoteYawFromWorld.fetch_add(1, std::memory_order_relaxed);
+    else yawModel = r.yawInModel;
+    const float c = cosf(yawModel), s = sinf(yawModel);
+    // [multiplayer] pose_share_legs: the whole body to the look (PoseBody's bodyTurn 2, about the model's origin - where he stands) and the legs stepping along his
+    // travel; else the upper body alone (spine_01 and up about the spine's own vertical, bodyTurn 1), the legs the game's
+    const bool legs = r.legs && gaitlib::Loaded() && h.leg[0][2] >= 0 && h.leg[1][2] >= 0;
+    if (legs) {
+        Mat T{}; T.m[0] = c; T.m[2] = -s; T.m[5] = 1; T.m[8] = s; T.m[10] = c; T.m[15] = 1;
+        for (int i = 0; i < n; ++i) newW[i] = Mul(newW[i], T);
+        RemoteLegs(self, h, &r, x, z, c, s, T, &M, newW, oldW);
+    } else {   // (the trunk at most remotepose::kMaxTwistDeg over the hips, the rest of the look turning him whole: walking back, the game faces him down his path, and the
+               // trunk alone turned half a turn over the game's hips hung his left leg from its right - crossed legs)
+        float bodyYaw = 0.0f, upperYaw = 0.0f;
+        remotepose::TurnSplit(yawModel, remotepose::kMaxTwistDeg * 0.017453292f, &bodyYaw, &upperYaw);
+        const float cb = cosf(bodyYaw), sb = sinf(bodyYaw), cu = cosf(upperYaw), su = sinf(upperYaw);
+        Mat B{}; B.m[0] = cb; B.m[2] = -sb; B.m[5] = 1; B.m[8] = sb; B.m[10] = cb; B.m[15] = 1;
+        if (bodyYaw != 0.0f) for (int i = 0; i < n; ++i) newW[i] = Mul(newW[i], B);
+        Mat U{}; U.m[0] = cu; U.m[2] = -su; U.m[5] = 1; U.m[8] = su; U.m[10] = cu; U.m[15] = 1;
+        const V3 p = Pos(newW[h.spine]);
+        U.m[12] = p.x - (p.x * cu + p.z * su); U.m[14] = p.z - (-p.x * su + p.z * cu);
+        for (int i = 0; i < n; ++i) if (h.upper[i]) newW[i] = Mul(newW[i], U);
+    }
+    const std::vector<Mat> baseW = newW;
+    const V3 head = Pos(newW[h.head]);
+    float headP[3] = {head.x, head.y, head.z};
+    // [format 6] his eye on this rig (its head bone less his head bone from his eye) and his model's units a metre: every offset from his eye lands where it is
+    // from his head bone - the same hero's rig, in his own units (his eye is not this rig's head bone, nor his scale the head bone's height over his eye height)
+    const float upm = r.drawn ? r.modelUpm : remotepose::ModelUpm(head.y, r.eyeM);
+    if (r.drawn) {
+        const float hb[3] = {head.x, head.y, head.z};
+        remotepose::EyeOnRig(hb, r, c, s, upm, headP);
+    }
+    Input in = base;
+    for (int side = 0; side < 2; ++side) memcpy(in.rot[side], r.rot[side], sizeof in.rot[side]);
+    // [format 5] each weapon slot's attach bone as the sender draws it (the game draws the item on it), with the bone's own size as the game has it here (a slot
+    // the game hides here - a point - borrows the other slot's size, else it is left as it is)
+    auto rowLens = [&](const Mat& m, float len[3]) { for (int i = 0; i < 3; ++i) len[i] = Len(V3{m.m[i * 4], m.m[i * 4 + 1], m.m[i * 4 + 2]}); return std::min(len[0], std::min(len[1], len[2])); };
+    Mat attachW[2];
+    bool have[2] = {false, false};
+    for (int slot = 0; slot < 2; ++slot) {
+        const int wb = h.weapon[slot];
+        if (!r.attach[slot] || wb < 0) continue;
+        float len[3];
+        if (rowLens(newW[wb], len) < 0.3f) {
+            const int ob = h.weapon[slot ^ 1];
+            if (ob < 0 || rowLens(newW[ob], len) < 0.3f) continue;
+        }
+        float o[3], rows[3][3];
+        remotepose::AttachInModel(r, slot, headP, c, s, upm, o, rows);
+        Mat& m = attachW[slot];
+        m = Mat{};
+        for (int i = 0; i < 3; ++i)
+            for (int j = 0; j < 3; ++j) m.m[i * 4 + j] = rows[i][j] * len[i];
+        m.m[12] = o[0]; m.m[13] = o[1]; m.m[14] = o[2]; m.m[15] = 1.0f;
+        have[slot] = true;
+    }
+    bool carried[2] = {false, false};   // a slot's bone already where the weapon says (carried by the hand that holds it)
+    for (int side = 0; side < 2; ++side) {
+        const int u = h.upr[side], l = h.lwr[side], k = h.hand[side];
+        if (r.drawn && u >= 0 && l >= 0 && k >= 0) {
+            // [format 6] the hand as he draws it - its place and turn - the elbow out his way (toward his elbow as drawn), the weapon's bones put below from
+            // his too: the weapon sits in the hand as in his ("the weapon not in the hand the way the owner holds it", 2026-10-26 - the hand had been put by
+            // THIS game's grip of the frame, and his is not: a grip taken calm, a staff's own hold, the weight model's hand fitted on the weapon)
+            float o[3], rows[3][3], el[3];
+            remotepose::BoneInModel(r.handPos[side], r.handQ[side], r.handMirror[side], headP, c, s, upm, o, rows);
+            remotepose::HandTarget(headP, r.handElbow[side], c, s, upm, el);
+            V3 T = {o[0], o[1], o[2]};
+            const V3 S = Pos(newW[u]);
+            const float L1 = Len(Sub(Pos(newW[l]), S)), L2 = Len(Sub(Pos(newW[k]), Pos(newW[l])));
+            V3 rest = {side == 0 ? -0.5f : 0.5f, -1.0f, -0.3f};   // (Reach's, for an elbow on the line from the shoulder to the hand)
+            rest = {rest.x * c + rest.z * s, rest.y, -rest.x * s + rest.z * c};
+            const V3 pole = Add(Sub(V3{el[0], el[1], el[2]}, S), Scale(rest, 0.01f * (L1 + L2)));
+            const V3 E = Elbow(S, L1, L2, T, pole);
+            AimChain(h, u, l, k, E, T, baseW, newW);
+            const V3 reached = Pos(newW[k]);
+            float len[3];
+            rowLens(newW[k], len);
+            Mat hm = newW[k];
+            for (int i = 0; i < 3; ++i)
+                for (int j = 0; j < 3; ++j) hm.m[i * 4 + j] = rows[i][j] * len[i];
+            auto det3 = [](const Mat& m) { return Dot(V3{m.m[0], m.m[1], m.m[2]}, Cross(V3{m.m[4], m.m[5], m.m[6]}, V3{m.m[8], m.m[9], m.m[10]})); };
+            if ((det3(hm) < 0.0f) != (det3(newW[k]) < 0.0f)) for (int j = 0; j < 3; ++j) hm.m[j] = -hm.m[j];   // (this rig's handedness of the bone kept)
+            hm.m[12] = reached.x; hm.m[13] = reached.y; hm.m[14] = reached.z;   // (out of the arm's reach: at the arm's end, turned as his)
+            newW[k] = hm;
+            std::vector<char> fromK(n, 0);
+            fromK[k] = 1;
+            Propagate(h, baseW, newW, fromK, k);
+            const float missCm = Len(Sub(reached, T)) * 100.0f / std::max(1.0f, upm);
+            g_remoteHandsDrawn.fetch_add(1, std::memory_order_relaxed);
+            for (unsigned was = g_remoteReachMissMm.load(std::memory_order_relaxed); missCm * 10.0f > (float)was &&
+                 !g_remoteReachMissMm.compare_exchange_weak(was, (unsigned)(missCm * 10.0f), std::memory_order_relaxed);) {}
+            continue;
+        }
+        if (u < 0 || l < 0 || k < 0 || !(r.flags & (side ? poseshare::kLeft : poseshare::kRight))) continue;
+        // the hand that holds the weapon of its own slot goes where the weapon says - by the game's own grip of that hand this frame (its attach bone against
+        // it), when the game shows the weapon on this wrist now (format 5: no hands as drawn)
+        const int wb = h.weapon[side];
+        if (r.holds[side] && have[side] && wb >= 0) {
+            const Mat rel = Mul(oldW[wb], InvAffine(oldW[k]));
+            float rl[3];
+            if (rowLens(rel, rl) > 0.3f) {
+                const Mat handW = Mul(InvAffine(rel), attachW[side]);
+                V3 T = Pos(handW);
+                const V3 S = Pos(newW[u]);
+                const float L1 = Len(Sub(Pos(newW[l]), S)), L2 = Len(Sub(Pos(newW[k]), Pos(newW[l])));
+                V3 pole = {side == 0 ? -0.5f : 0.5f, -1.0f, -0.3f};
+                pole = {pole.x * c + pole.z * s, pole.y, -pole.x * s + pole.z * c};
+                const V3 E = Elbow(S, L1, L2, T, pole);
+                AimChain(h, u, l, k, E, T, baseW, newW);
+                const V3 reached = Pos(newW[k]);
+                newW[k] = handW;
+                newW[k].m[12] = reached.x; newW[k].m[13] = reached.y; newW[k].m[14] = reached.z;   // (out of the arm's reach: the hand at the arm's end, turned as the weapon says)
+                std::vector<char> fromK(n, 0);
+                fromK[k] = 1;
+                Propagate(h, baseW, newW, fromK, k);
+                carried[side] = Len(Sub(reached, Pos(handW))) < 1e-3f * std::max(1.0f, upm);
+                continue;
+            }
+        }
+        float tp[3];
+        remotepose::HandTarget(headP, r.hand[side], c, s, upm, tp);
+        V3 T = {tp[0], tp[1], tp[2]};
+        const Wrist wr = PlanWrist(h, side, baseW, in, c, s);
+        if (wr.ok) T = Sub(T, Scale(wr.point, 0.5f * wr.reach));   // the grip is the palm's middle, the wrist half a hand behind it
+        const V3 S = Pos(newW[u]);
+        const float L1 = Len(Sub(Pos(newW[l]), S)), L2 = Len(Sub(Pos(newW[k]), Pos(newW[l])));
+        V3 pole = {side == 0 ? -0.5f : 0.5f, -1.0f, -0.3f};   // Reach's: elbow down, a little out and back - of the body as turned
+        pole = {pole.x * c + pole.z * s, pole.y, -pole.x * s + pole.z * c};
+        const V3 E = Elbow(S, L1, L2, T, pole);
+        AimChain(h, u, l, k, E, T, baseW, newW);
+        if (wr.ok) {
+            ApplyWrist(newW[k], wr);
+            std::vector<char> fromK(n, 0);
+            fromK[k] = 1;
+            Propagate(h, baseW, newW, fromK, k);
+        }
+    }
+    if (r.flags & poseshare::kHead) {   // the head as the headset is held: its bind forward and top, as posed now, onto the look's
+        float fwd[3], up[3];
+        if (remotepose::LookFrame(r.headQ, c, s, remotepose::kMaxPitchDeg, fwd, up)) {
+            const Mat inv = InvAffine(h.bind[h.head]);
+            const V3 lf = Norm(RotOnly({0.0f, 0.0f, 1.0f}, inv)), lu = Norm(RotOnly({0.0f, 1.0f, 0.0f}, inv));
+            const V3 f0 = Norm(RotOnly(lf, newW[h.head])), u0 = Norm(RotOnly(lu, newW[h.head]));
+            const float a0[3] = {f0.x, f0.y, f0.z}, b0[3] = {u0.x, u0.y, u0.z};
+            float R9[9];
+            if (remotepose::FrameTurn(a0, b0, fwd, up, R9)) {
+                Mat R{};
+                for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) R.m[i * 4 + j] = R9[i * 3 + j];
+                R.m[15] = 1.0f;
+                const std::vector<Mat> before = newW;
+                TurnAboutSelf(newW[h.head], R);
+                std::vector<char> fromH(n, 0);
+                fromH[h.head] = 1;
+                Propagate(h, before, newW, fromH, h.head);
+            }
+        }
+    }
+    // the weapon's slots no holding hand carried there (let go: falling, lying, on the back - or the game hangs it on the other wrist this frame): put alone
+    auto put = [&](int bone, const Mat& w) {
+        const std::vector<Mat> before = newW;
+        newW[bone] = w;
+        std::vector<char> from(n, 0);
+        from[bone] = 1;
+        Propagate(h, before, newW, from, bone);
+    };
+    for (int slot = 0; slot < 2; ++slot) {
+        if (!have[slot] || carried[slot] || h.weapon[slot] < 0) continue;
+        put(h.weapon[slot], attachW[slot]);
+        g_remoteWeapon.fetch_add(1, std::memory_order_relaxed);
+    }
+    for (int slot = 0; slot < 2; ++slot) if (have[slot] && carried[slot]) g_remoteWeapon.fetch_add(1, std::memory_order_relaxed);
+    // ... and the bones the game hangs the same weapon on in some animations - the other wrist's (a two-handed weapon running) and the body's two-hand bone
+    // (the barbarian walking with a great axe): where the weapon's slot is, so the game cannot draw it now in the hand, now along the arm ("now on one side of
+    // the hand, now on the other", the 2026-10-26 test). A mirrored bone (the left one) keeps its handedness: the copy's x row turned over (an item drawn from a
+    // mirror-less matrix is inside out and culled - PoseBody's bothAttach).
+    {
+        const int from = have[0] ? 0 : have[1] ? 1 : -1;
+        auto det = [](const Mat& m) {
+            return m.m[0] * (m.m[5] * m.m[10] - m.m[6] * m.m[9]) - m.m[1] * (m.m[4] * m.m[10] - m.m[6] * m.m[8]) + m.m[2] * (m.m[4] * m.m[9] - m.m[5] * m.m[8]);
+        };
+        if (from >= 0) {
+            const Mat src = newW[h.weapon[from]];
+            const int targets[2] = {have[from ^ 1] ? -1 : h.weapon[from ^ 1], h.twoHand};
+            for (const int to : targets) {
+                float tl[3];
+                if (to < 0 || rowLens(newW[to], tl) < 0.3f) continue;   // (shown there now only: a hidden bone stays hidden)
+                Mat w = src;
+                if ((det(newW[to]) < 0.0f) != (det(src) < 0.0f)) for (int j = 0; j < 3; ++j) w.m[j] = -w.m[j];
+                put(to, w);
+            }
+        }
+    }
+    if (r.grips) {   // [format 5] the fingers closed as hard as his hands grip (the class's own open and closed fists)
+        const int cls = h.cls >= 0 ? h.cls : 3;
+        for (int side = 0; side < 2; ++side)
+            if (r.flags & (side ? poseshare::kLeft : poseshare::kRight)) Fist(h, side, r.grip[side], in.fistClose[cls], in.fistOpen[cls], oldW, newW);
+    }
+    for (int i = 0; i < n; ++i)   // a bone that is not a number keeps the game's own pose (as PoseBody)
+        for (int j = 0; j < 16; ++j)
+            if (!std::isfinite(newW[i].m[j])) { newW[i] = oldW[i]; break; }
+    SafeWrite((void*)mats, newW.data(), sizeof(Mat) * n);
+    g_remotePosed.fetch_add(1, std::memory_order_relaxed);
+    if (placed) {   // [multiplayer] pose_share_held: his hands as drawn here, in the world - what his hands have is hung on them (RemoteHandWorld)
+        RemoteHands rh;
+        rh.unit = r.unit;
+        rh.at = GetTickCount64();
+        for (int side = 0; side < 2; ++side) {
+            if (h.hand[side] < 0) continue;
+            const Mat w = Mul(newW[h.hand[side]], M);
+            memcpy(rh.m[side], w.m, sizeof rh.m[side]);
+            rh.ok[side] = boneguard::Finite(w.m);
+        }
+        AcquireSRWLockExclusive(&g_remoteHandsLock);
+        int slot = -1, oldest = 0;
+        for (int i = 0; i < remotepose::kMaxHeroes; ++i) {
+            if (g_remoteHands[i].unit == r.unit) { slot = i; break; }
+            if (g_remoteHands[i].at < g_remoteHands[oldest].at) oldest = i;
+        }
+        g_remoteHands[slot >= 0 ? slot : oldest] = rh;
+        ReleaseSRWLockExclusive(&g_remoteHandsLock);
+    }
+    return true;
+}
+
+// [body] gait_legs_third / gait_legs_f4: our own hero's legs by the gait, after PoseBody turned his whole body to the camera (yaw: the camera's yaw in his
+// model, PoseBody's own) - the steps along his real travel against the way he now faces, the knees ahead, the feet flat facing the body.
+std::atomic<unsigned> g_ownLegs{0};
+void PoseOwnLegs(uintptr_t self, const Hero& h, float yaw, float eyeM) {
+    if (!gaitlib::Loaded() || !h.bindOk || h.head < 0 || h.leg[0][2] < 0 || h.leg[1][2] < 0 || !std::isfinite(yaw)) return;
+    float x = 0.0f, z = 0.0f;
+    Mat M{};
+    if (!ecs::BodyPlace(self, &x, &z, nullptr, 500, M.m)) return;
+    uintptr_t world = 0, mats = 0;
+    int32_t n = 0;
+    if (!Get(self + 0x20, &world) || !Get(world, &n) || !Get(world + 4, &mats) || n != h.count) return;
+    std::vector<Mat> oldW(n);
+    if (!SafeCopy(oldW.data(), (const void*)mats, sizeof(Mat) * n)) return;
+    std::vector<Mat> newW = oldW;
+    const float c = cosf(yaw), s = sinf(yaw);
+    Mat T{}; T.m[0] = c; T.m[2] = -s; T.m[5] = 1; T.m[8] = s; T.m[10] = c; T.m[15] = 1;   // (the turn PoseBody gave the body: the feet's rest turned with it)
+    remotepose::Target own;
+    own.eyeM = eyeM > 0.5f ? eyeM : 1.7f;
+    RemoteLegs(self, h, &own, x, z, c, s, T, &M, newW, oldW);   // (own: the eye height only - the travel through the rig's matrix)
+    for (int i = 0; i < n; ++i)
+        for (int j = 0; j < 16; ++j)
+            if (!std::isfinite(newW[i].m[j])) { newW[i] = oldW[i]; break; }
+    SafeWrite((void*)mats, newW.data(), sizeof(Mat) * n);
+    g_ownLegs.fetch_add(1, std::memory_order_relaxed);
+}
+
+// A rig lying down (a corpse, a fall): its head under 35 % of its standing height, as OursNow tells it. Not read: not down.
+bool HeadDown(uintptr_t self, const Hero& h) {
+    if (h.head < 0 || h.head >= (int)h.bind.size()) return false;
+    const float standing = h.bind[h.head].m[13];
+    uintptr_t world = 0, mats = 0;
+    float head[16];
+    if (!(standing > 2.0f) || !Get(self + 0x20, &world) || !Get(world + 4, &mats) || !SafeCopy(head, (const void*)(mats + (uintptr_t)h.head * 64), sizeof head)) return false;
+    return !(std::isfinite(head[13]) && head[13] > 0.35f * standing);
+}
+
+// [multiplayer] pose_share_legs, a player who sends no pose (flat, or before his pose comes): his legs step along his travel all the same - his own facing
+// (the game's), the travel from his rig's place through its own matrix.
+std::atomic<bool> g_otherLegs{false};   // SetOtherHeroes (vrcam)
+std::atomic<bool> g_selfLegs{false};    // [debug] pose_share_legs_self: our own hero's legs by the same gait (a one-PC test of the legs; SetSelfLegs)
+std::atomic<unsigned> g_otherLegsNoPose{0};
+void PoseLegsOnly(uintptr_t self, const Hero& h) {
+    if (!gaitlib::Loaded() || !h.bindOk || h.head < 0 || h.leg[0][2] < 0 || h.leg[1][2] < 0) return;
+    float x = 0.0f, z = 0.0f;
+    Mat M{};
+    if (!ecs::BodyPlace(self, &x, &z, nullptr, 500, M.m)) return;
+    uintptr_t world = 0, mats = 0;
+    int32_t n = 0;
+    if (!Get(self + 0x20, &world) || !Get(world, &n) || !Get(world + 4, &mats) || n != h.count) return;
+    std::vector<Mat> oldW(n);
+    if (!SafeCopy(oldW.data(), (const void*)mats, sizeof(Mat) * n)) return;
+    std::vector<Mat> newW = oldW;
+    // his facing as the game turns him (the model's forward in the world: its matrix's z row), followed at 6 rad a second - walking back the game turns him round
+    // to his path at once, his drawn body comes round over half a second; the whole body turned by what is still to go
+    float yaw = 0.0f;
+    {
+        const ULONGLONG tick = GetTickCount64();
+        AcquireSRWLockExclusive(&g_legsLock);
+        LegsMem& m = g_legsMem[self];
+        const float dt = m.faceAt && tick > m.faceAt ? std::min(0.25f, (float)(tick - m.faceAt) * 0.001f) : 0.0f;
+        if (!m.faceAt || tick - m.faceAt > 500) { m.faceX = m.faceZ = 0.0f; }
+        remotepose::TurnToward(&m.faceX, &m.faceZ, M.m[8], M.m[10], 6.0f * dt);
+        m.faceAt = tick;
+        const float fx = m.faceX, fz = m.faceZ;
+        ReleaseSRWLockExclusive(&g_legsLock);
+        if (!remotepose::ModelYawOfDir(M.m, fx, fz, &yaw)) yaw = 0.0f;
+    }
+    const float c = cosf(yaw), s = sinf(yaw);
+    Mat T{}; T.m[0] = c; T.m[2] = -s; T.m[5] = 1; T.m[8] = s; T.m[10] = c; T.m[15] = 1;
+    if (yaw != 0.0f) for (int i = 0; i < n; ++i) newW[i] = Mul(newW[i], T);
+    RemoteLegs(self, h, nullptr, x, z, c, s, T, &M, newW, oldW);
+    for (int i = 0; i < n; ++i)
+        for (int j = 0; j < 16; ++j)
+            if (!std::isfinite(newW[i].m[j])) { newW[i] = oldW[i]; break; }
+    SafeWrite((void*)mats, newW.data(), sizeof(Mat) * n);
+    g_otherLegsNoPose.fetch_add(1, std::memory_order_relaxed);
+}
+
+#endif
+
 void Arms(uintptr_t self) {
     Input in;
     AcquireSRWLockShared(&g_inLock); in = g_in; ReleaseSRWLockShared(&g_inLock);
@@ -5617,8 +7607,25 @@ void Arms(uintptr_t self) {
     }
     if (!hero) return;   // not a hero
     char why[320] = "";
-    const Doll doll = OursNow(self, *hero, in.dollTrace ? why : nullptr, sizeof why);
+    const Doll doll = OursNow(self, *hero, in.dollTrace || in.mode == 2 ? why : nullptr, sizeof why, in.dollTrace);
     if (doll == Doll::Not) {   // another player, our corpse
+#if D2RVR_FIRST_PERSON
+        // [multiplayer] pose_share_hero: another player posed from his pose (none unless asked); with none, his legs alone ([multiplayer] pose_share_legs). Not a corpse
+        // (its head down, OursNow's first test). (His body for our weapon is hit by touch's: melee_touch.cpp PublishBodies, [multiplayer] pose_share_bodies.)
+        const bool down = HeadDown(self, *hero);
+        if (!down) {
+            if (!PoseRemoteHero(self, *hero, in) && g_otherLegs.load(std::memory_order_relaxed)) PoseLegsOnly(self, *hero);
+        }
+#endif
+        // The arms are ours on every pose of the hero's rig, whatever the game animates (a leap, a knockback, Whirlwind, a cast, a hit): no
+        // animation mode gives them back. The one way the game's pose comes back is here - the rig posed as ours not taken this time (its head
+        // under 35 % of standing: lying, a corpse, a fall; too far from the look-at; another rig taken). VR F4 (arms on the controllers): said,
+        // with why, at most every 5 s, without [debug] doll_trace too (which says more, below).
+        static std::atomic<ULONGLONG> armsToldAt{0};
+        if (!in.dollTrace && in.mode == 2 && self == g_heroSelf.load() && GetTickCount64() - armsToldAt.load() > 5000) {
+            armsToldAt.store(GetTickCount64());
+            NoteDoll("arms: the game's own pose of the hero this time, the arms off the controllers - his rig was not taken as ours: %s", why);
+        }
         // [debug] doll_trace: the rig posed as ours last turned away - or, with none ours for 150 ms, the one met - once until one is taken again
         if (in.dollTrace && (self == g_heroSelf.load() || GetTickCount64() - g_heroSeen.load() > 150) && !g_dollLetGo.exchange(true)) {
             g_dollLetGoAt.store(GetTickCount64());
@@ -5638,16 +7645,29 @@ void Arms(uintptr_t self) {
             NoteDoll("doll: taken again after %llu ms - rig %p%s", (unsigned long long)(GetTickCount64() - g_dollLetGoAt.load()), (void*)self,
                      self == g_heroSelf.load() ? " (the same rig)" : " (a new rig: the model rebuilt - a weapon swap, an area, a load - or another one nearer the look-at)");
         NoteHero(self);
+        // the hero's class, from OUR rig only (the per-class wrist depth and D2R VR Settings read it): Learn met every player's rig and a second player's Amazon
+        // took our class for hers (the 2026-10-26 two-PC test's log learned amazon, barbarian, druid, necromancer rigs)
+        if (hero->cls >= 0) g_heroClass.store(hero->cls);
     }
+#if D2RVR_FIRST_PERSON
+    const bool selfLegs = doll == Doll::Ours && g_selfLegs.load(std::memory_order_relaxed);   // [debug] pose_share_legs_self: after our own pose, if any
+    if (!active) { if (selfLegs) PoseLegsOnly(self, *hero); return; }
+#else
     if (!active) return;
+#endif
     // The facing of this very frame, not of the last 10 ms tick - the hero only.
     if (in.haveYaw) if (const FreshFn f = g_fresh.load()) {
         float yaw = 0.0f, eye[3] = {}; bool eyeOk = false;
         if (f(&yaw, eye, &eyeOk)) {
             in.yawInModel = yaw;
+#if D2RVR_FIRST_PERSON
+            if (doll == Doll::Ours && in.mode == 2) { g_heroYawInModel.store(yaw); g_heroYawAt.store(GetTickCount64()); }   // [multiplayer] pose_share_hero: for the others
+#endif
             if (eyeOk) { memcpy(in.eyeModel, eye, sizeof eye); in.haveEye = true; }
         }
     }
+    in.roomShiftOn = false;   // [openxr] roomscale_body: from this pose's matrix only (the fresh facing above read it)
+    if (in.haveYaw) if (const RoomShiftFn f = g_freshShift.load()) in.roomShiftOn = f(in.roomShift);
     if (in.mode == 2) if (const FreshHandsFn f = g_freshHands.load()) f(&in);
     // [hands] shoulder_draw, the shield: which arm it is on (or put away), stepped once per head sample, before the weight model asks which hand is busy with it
     shieldarmwire::Apply(&in);
@@ -5662,13 +7682,109 @@ void Arms(uintptr_t self) {
     // [weight]: the weapon stepped (once per head sample) and the hands on it moved to where it has them
     weight::Out wo;
     weight::Apply(&in, &wo);
+    // [weight] grab_bodies: a hand holding a body drawn where it holds it
+    if (in.mode == 2) if (const GrabHandsFn g = g_grabHands.load()) g(&in);
     PoseBody(self, *hero, in, wo);
+#if D2RVR_FIRST_PERSON
+    if (selfLegs) PoseLegsOnly(self, *hero);
+    else if (in.gaitLegs && doll == Doll::Ours && in.bodyTurn == 2 && in.haveYaw) PoseOwnLegs(self, *hero, in.yawInModel, in.userHeadM);   // [body] gait_legs_third / _f4
+#endif
 }
 
 }  // namespace
 
 // From vrcam, every 10 ms.
 int LockState() { return g_lockState.load(); }
+
+#if D2RVR_FIRST_PERSON
+void SetRemoteHeroes(const remotepose::Target* t, int n) {
+    n = std::clamp(n, 0, remotepose::kMaxHeroes);
+    AcquireSRWLockExclusive(&g_remoteLock);
+    for (int i = 0; i < n; ++i) g_remote[i] = t[i];
+    g_nRemote = t ? n : 0;
+    g_remoteAt = GetTickCount64();
+    ReleaseSRWLockExclusive(&g_remoteLock);
+}
+RemoteHeroCount TakeRemoteHeroCount() {
+    RemoteHeroCount c;
+    c.posed = g_remotePosed.exchange(0);
+    c.unmatched = g_remoteUnmatched.exchange(0);
+    c.unposable = g_remoteUnposable.exchange(0);
+    c.weapon = g_remoteWeapon.exchange(0);
+    c.legs = g_remoteLegs.exchange(0);
+    c.legsNoPose = g_otherLegsNoPose.exchange(0);
+    c.yawFromWorld = g_remoteYawFromWorld.exchange(0);
+    c.handsDrawn = g_remoteHandsDrawn.exchange(0);
+    c.reachMissCm = (float)g_remoteReachMissMm.exchange(0) * 0.1f;
+    return c;
+}
+void SetOtherHeroes(bool legs) { g_otherLegs.store(legs); }
+void SetSelfLegs(bool on) { g_selfLegs.store(on); }
+void SetGaitCone(float halfAngleDeg) { g_gaitCone.store(std::clamp(halfAngleDeg, 0.0f, 180.0f)); }
+unsigned TakeOwnLegs() { return g_ownLegs.exchange(0); }
+std::string WalkBackNote() { return WalkBackNoteIn(); }
+void SetWalkBackDump(bool on) { g_walkBackDumpOn.store(on); }
+std::string TakeWalkBackDump() {
+    AcquireSRWLockExclusive(&g_wbLock);
+    std::string t;
+    t.swap(g_wbReady);
+    ReleaseSRWLockExclusive(&g_wbLock);
+    return t;
+}
+std::string LegsNote() {
+    AcquireSRWLockExclusive(&g_legsLock);
+    const LegsDiag d = g_legsDiag;
+    g_legsDiag = LegsDiag{};
+    ReleaseSRWLockExclusive(&g_legsLock);
+    if (!d.steps && !d.kept && !d.lost) return "";
+    char b[560];
+    snprintf(b, sizeof b, "legs: %u steps on %d rig(s), %u of them the game's own walk (in the cone or standing), our gait's share %.0f %%; feet put %.0f cm from the "
+             "game's on average (%.0f at most), lifted up to %.0f cm, hips down up to %.0f cm; walking %.0f %% (speed %.2f m/s on average, %.2f at most); knees not "
+             "solved %u; our write still there at the next pose %u, written over %u; reversals turned at once %u (refused %u)",
+             d.steps, d.nRigs, d.gameWalk, d.steps ? 100.0f * d.shareSum / d.steps : 0.0f, d.feet ? d.footCmSum / d.feet : 0.0f, d.footCmMax, d.liftCmMax, d.dropCmMax,
+             d.steps ? 100.0f * d.moveSum / d.steps : 0.0f, d.steps ? d.speedSum / d.steps : 0.0f, d.speedMax, d.kneeFail, d.kept, d.lost, d.reversals, d.reverseRefused);
+    return b;
+}
+bool DrawnAttach(int slot, float origin[3], float rows[3][3], unsigned maxAgeMs, int* main) {
+    if (slot < 0 || slot > 1) return false;
+    AcquireSRWLockShared(&g_drawnAttachLock);
+    const DrawnAttachOut d = g_drawnAttach;
+    ReleaseSRWLockShared(&g_drawnAttachLock);
+    if (!d.at || GetTickCount64() - d.at > maxAgeMs || !d.ok[slot]) return false;
+    memcpy(origin, d.origin[slot], sizeof d.origin[slot]);
+    memcpy(rows, d.rows[slot], sizeof d.rows[slot]);
+    if (main) *main = d.main;
+    return true;
+}
+bool RemoteHandWorld(uint32_t unit, int side, float m[16], unsigned maxAgeMs) {
+    if (!unit || side < 0 || side > 1 || !m) return false;
+    AcquireSRWLockShared(&g_remoteHandsLock);
+    bool ok = false;
+    for (const RemoteHands& r : g_remoteHands)
+        if (r.unit == unit && r.ok[side] && GetTickCount64() - r.at <= maxAgeMs) { memcpy(m, r.m[side], 64); ok = true; break; }
+    ReleaseSRWLockShared(&g_remoteHandsLock);
+    return ok;
+}
+bool DrawnHands(DrawnHand* out, unsigned maxAgeMs) {
+    if (!out) return false;
+    AcquireSRWLockShared(&g_drawnAttachLock);
+    const DrawnAttachOut d = g_drawnAttach;
+    ReleaseSRWLockShared(&g_drawnAttachLock);
+    if (!d.at || GetTickCount64() - d.at > maxAgeMs || !d.handsOk || !(d.upm > 0.0f)) return false;
+    memcpy(out->headBone, d.headBone, sizeof out->headBone);
+    memcpy(out->hand, d.hand, sizeof out->hand);
+    memcpy(out->rows, d.handRows, sizeof out->rows);
+    memcpy(out->elbow, d.elbow, sizeof out->elbow);
+    out->upm = d.upm;
+    return true;
+}
+bool HeroYawInModel(float* yaw, unsigned maxAgeMs) {
+    const ULONGLONG at = g_heroYawAt.load();
+    if (!yaw || !at || GetTickCount64() - at > maxAgeMs) return false;
+    *yaw = g_heroYawInModel.load();
+    return std::isfinite(*yaw);
+}
+#endif
 
 int CrouchLegs(float* applied) {
     if (applied) *applied = g_crouchApplied.load();
@@ -5766,6 +7882,12 @@ void ResetGrip() {
     AcquireSRWLockExclusive(&g_gripLock); g_grip.ok = false; ReleaseSRWLockExclusive(&g_gripLock);
     AcquireSRWLockExclusive(&g_gripPoseLock); g_gripPose.ok = false; ReleaseSRWLockExclusive(&g_gripPoseLock);   // (the finger pose read off the game's hand goes with the grip)
 }
+bool BodyBelly(float belly[3]) {
+    AcquireSRWLockShared(&g_armReachLock); const BellyOut o = g_belly; ReleaseSRWLockShared(&g_armReachLock);
+    if (!o.at || GetTickCount64() - o.at > 500) return false;
+    memcpy(belly, o.at3, sizeof o.at3);
+    return true;
+}
 bool ArmReach(int side, float shoulder[3], float* lengthM) {
     AcquireSRWLockShared(&g_armReachLock); const ArmReachOut o = g_armReach[side & 1]; ReleaseSRWLockShared(&g_armReachLock);
     if (!o.at || GetTickCount64() - o.at > 500) return false;
@@ -5805,6 +7927,9 @@ bool HeroArmWorld(int side, HeroArm* out, unsigned maxAgeMs, unsigned* ageMs) {
     memcpy(out->point, f.pointW, sizeof out->point);
     memcpy(out->face, f.faceW, sizeof out->face);
     out->hand = f.handW;
+    out->box = f.boxOk;
+    memcpy(out->boxC, f.boxCW, sizeof out->boxC);
+    memcpy(out->boxH, f.boxHW, sizeof out->boxH);
     return true;
 }
 const char* HeroArmWhy() { return g_armWorldWhy.load(); }
@@ -5930,6 +8055,25 @@ std::string BowRigWho() { return bowcensus::Text(BowCensus(), GetTickCount64());
 
 void FlailHit(int side) { if (side == 0 || side == 1) g_flailHits[side].fetch_add(1); }
 const char* FlailStatus() { return g_flailWhy.load(); }
+const char* HeadStatus() {
+    const ULONGLONG seen = g_headSeenAt.load();
+    if (!seen || GetTickCount64() - seen > 2000) return "no Necromancer head skeleton posed in the last 2 s - the pose hook meets none";
+    return g_headWhy.load();
+}
+std::string ArmTakeNote() {
+    std::string s;
+    AcquireSRWLockExclusive(&g_armNoteLock);
+    s.swap(g_armNote);
+    ReleaseSRWLockExclusive(&g_armNoteLock);
+    return s;
+}
+std::string HeadTakeNote() {
+    std::string s;
+    AcquireSRWLockExclusive(&g_headNoteLock);
+    s.swap(g_headNote);
+    ReleaseSRWLockExclusive(&g_headNoteLock);
+    return s;
+}
 std::string DollTakeNote() {
     std::string s;
     AcquireSRWLockExclusive(&g_dollNoteLock);
@@ -6120,13 +8264,54 @@ void Set(const Input& in) {
     g_flailSwing.store(std::clamp(in.flailSwing, 0.0f, 2.0f));
     g_flailHit.store(std::clamp(in.flailHit, 0.0f, 2.0f));
     g_flailWeight.store(std::clamp(in.flailWeight, 0.25f, 4.0f));
+    g_headOn.store(in.headsHang && in.mode == 2);
 #endif
 }
 
 using ComputeFn = void (*)(uintptr_t self, float a, float b, bool c);
 ComputeFn g_orig = nullptr;
+std::atomic<MonsterPoseFn> g_monsterPose{nullptr};   // [weight] monster_ragdoll_pose: meleetouch::MonsterPose (vrcam)
+// ... the game's own pose of each monster the hook turned, as the game made it this frame: the bodies are read from it (MonsterRigs), not from the turned
+// one - else the doll would push a limb its own turn has already moved, and again
+struct GamePose { ULONGLONG tick = 0; std::vector<Mat> m; };
+SRWLOCK g_gamePoseLock = SRWLOCK_INIT;
+std::map<uintptr_t, GamePose> g_gamePoses;
+bool GamePoseOf(uintptr_t self, int count, std::vector<Mat>* out) {
+    bool ok = false;
+    AcquireSRWLockShared(&g_gamePoseLock);
+    const auto it = g_gamePoses.find(self);
+    if (it != g_gamePoses.end() && (int)it->second.m.size() == count && GetTickCount64() - it->second.tick < 100) { *out = it->second.m; ok = true; }
+    ReleaseSRWLockShared(&g_gamePoseLock);
+    return ok;
+}
+
+// [weight] monster_ragdoll_pose: a monster whose doll is swaying gives way as the game draws it - its limbs and its lean turned in its world pose after the
+// game made it (vr/doll_pose.h), as the hero's arms are. Nothing for any skeleton the doll has nothing for (one look in a table of a few).
+void PoseMonsterDoll(uintptr_t self) {
+    const MonsterPoseFn src = g_monsterPose.load();
+    if (!src) return;
+    static thread_local dollpose::Pose pose;
+    if (!src(self, &pose)) return;
+    uintptr_t world = 0, mats = 0;
+    int32_t count = 0;
+    if (!Get(self + 0x20, &world) || !Get(world, &count) || count != pose.bones || count <= 0 || count > dollpose::kMaxBones || !Get(world + 4, &mats) || !mats) return;
+    static thread_local float m[dollpose::kMaxBones][16];
+    if (!SafeCopy(m, (const void*)mats, sizeof(Mat) * (size_t)count)) return;
+    {
+        AcquireSRWLockExclusive(&g_gamePoseLock);
+        if (g_gamePoses.size() > 32) g_gamePoses.clear();
+        GamePose& g = g_gamePoses[self];
+        g.tick = GetTickCount64();
+        g.m.assign(reinterpret_cast<const Mat*>(m), reinterpret_cast<const Mat*>(m) + count);
+        ReleaseSRWLockExclusive(&g_gamePoseLock);
+    }
+    if (dollpose::Apply(pose, m, count)) SafeWrite((void*)mats, m, sizeof(Mat) * (size_t)count);
+}
 
 void __cdecl Hook(uintptr_t self, float a, float b, bool c) {
+#if D2RVR_FIRST_PERSON
+    CheckLegWrite(self);   // [multiplayer] pose_share_legs: was our last write of this rig's feet still there? (nothing unless its legs were stepped lately)
+#endif
     g_orig(self, a, b, c);
     g_calls++;
     frametrace::Scope trace(frametrace::kSkeleton);   // [debug] frame_trace: everything below is ours (the game's pose is done)
@@ -6140,9 +8325,11 @@ void __cdecl Hook(uintptr_t self, float a, float b, bool c) {
     if (kHoldWeaponSkeleton) HoldWeaponItem(self);
 #endif
     Arms(self);
+    PoseMonsterDoll(self);   // [weight] monster_ragdoll_pose: a struck monster gives way as drawn
 #if D2RVR_FIRST_PERSON
     PoseBowRig(self);   // [bow] rig_pose: the hero's bow, after his pose has told it where the hands are
     PoseFlail(self);    // [flail] chain: the hero's flail's chain swings free
+    PoseHead(self);     // [shield] heads_hang: the hero's Necromancer head hangs from its cord
     NoteCrossbowBarrel(self);   // [hands] xbow_support_model: the hero's crossbow's barrel, read (nothing written)
 #endif
     if (GetTickCount64() < g_dumpUntil.load()) {
@@ -6166,6 +8353,7 @@ bool Dump(const wchar_t* outPath) {
 }
 
 void SetGameBase(uintptr_t base) { g_gameBase.store(base); }
+void SetMonsterPoseSource(MonsterPoseFn fn) { g_monsterPose.store(fn); }
 void TrackHero(bool on) { g_trackHero.store(on); }
 uint32_t HeroGen() { return g_heroGen.load(); }
 bool HeroPosedLately(unsigned ms) { const ULONGLONG seen = g_heroSeen.load(); return seen && GetTickCount64() - seen < ms; }
@@ -6297,12 +8485,179 @@ bool EntityTransform(uint32_t entity, uintptr_t* comp) {
 // per model. Read-only, every read guarded; the ECS lock is held only to learn the storages, not for the walk.
 namespace {
 SRWLOCK g_rigLock = SRWLOCK_INIT;
-std::map<std::pair<uintptr_t, uintptr_t>, monsterrig::Boxes> g_rigBoxes;   // (granny_model, skeleton) -> its bones' boxes (n == 0: none, why says)
+struct RigRead {
+    monsterrig::Boxes boxes;
+    ULONGLONG retryAt;   // 0: for good; else read again from then (no model found yet: the unit's parts may not be attached yet)
+    monsterhumanoid::Verdict human;   // [weight] monster_ragdoll: its skeleton's bone names (vr/monster_humanoid.h)
+    bool upright = false;             // ... and seen standing up (Upright, kUprightRun reads running; latched)
+    int uprightRun = 0;               // ... reads running it has been
+    const char* pose = "";            // ... what the last read said of its pose
+};
+std::map<std::pair<uintptr_t, uintptr_t>, RigRead> g_rigBoxes;   // (the parts' resources, skeleton) -> its bones' boxes (n == 0: none, why says)
+// The storages a unit's body is read from: its parts' ModelComponents, the root's AttachedChildrenComponent, the parts' UnitPartComponents (vr/monster_rig.h).
+enum BodyPool { kPoolModel, kPoolChildren, kPoolPart, kPools };
+struct Pool {
+    uint64_t seq;
+    uintptr_t st, vt;   // the storage and its vtable then (under ecs::g_lock)
+};
+Pool g_pools[kPools] = {{RVA_TYPE_SEQ_MODEL, 0, 0}, {RVA_TYPE_SEQ_CHILDREN, 0, 0}, {RVA_TYPE_SEQ_PART, 0, 0}};
+ULONGLONG g_poolLook = 0;
+std::atomic<bool> g_rigDumpWanted{false};   // [debug] monster_rig_dump: one model's reads, written out once
+std::atomic<bool> g_heldWanted{false};      // [weight] monster_shields: the held parts read too (MonsterRig::held)
+std::atomic<bool> g_ragdollAll{false};      // [weight] monster_ragdoll_all: every monster a doll, bodies from bone segments where no meshes
+std::mutex g_stillLock;                     // [weight] monster_ragdoll: the corpse watch (vr/corpse_watch.h), by entity
+std::unordered_map<uint32_t, corpsewatch::Watch> g_still;
+std::string g_rigDump;                      // (under g_rigLock) what is to be logged
+std::set<std::string> g_rigPathsTold;       // (under g_rigLock) the paths told in the dump's short lines
+
+// The body's storages, as FindStorages takes the other two (under ecs::g_lock; those not found looked for at most twice a second); 0: not found.
+void BodyStorages(uintptr_t out[kPools]) {
+    bool all = true;
+    for (const Pool& p : g_pools) all = all && ecs::IsStorage(p.st, p.vt);
+    const ULONGLONG now = GetTickCount64();
+    if (!all && now - g_poolLook >= 500) {
+        g_poolLook = now;
+        const uintptr_t reg = d2rsig::Addr(RVA_ECS_REGISTRY);
+        uintptr_t b = 0, e = 0;
+        if (reg && Get(reg, &b) && Get(reg + 8, &e) && e > b && (e - b) % 0x28 == 0)
+            for (Pool& p : g_pools) {
+                if (ecs::IsStorage(p.st, p.vt)) continue;
+                p.st = p.vt = 0;
+                const uintptr_t seq = d2rsig::Addr(p.seq);
+                uintptr_t st = 0, vt = 0;
+                if (!seq) continue;
+                const uint32_t ix = (uint32_t)((int (*)())seq)();
+                if (ix >= (e - b) / 0x28 || !Get(b + ix * 0x28 + 0x20, &st) || !st || !Get(st, &vt) || !vt) continue;
+                p.st = st;
+                p.vt = vt;
+            }
+    }
+    for (int i = 0; i < kPools; ++i) out[i] = ecs::IsStorage(g_pools[i].st, g_pools[i].vt) ? g_pools[i].st : 0;
+}
+
+// [debug] monster_rig_dump: what one model's reads give, for the next headset test to prove the layout (once; the paths of every model in short lines).
+void DumpRig(const std::string& path, uint32_t entity, uintptr_t self, uintptr_t inst, uintptr_t skelp, uintptr_t modelInst, const monsterrig::Boxes& granny,
+             const monsterrig::Boxes& meshes, int nMeshes, bool ownModel, int nModels, const monsterrig::Parts& parts) {
+    const auto read = [](uintptr_t a, void* d, size_t bytes) { return a > 0x10000 && SafeCopy(d, (const void*)a, bytes); };
+    char b[2048];
+    int w = snprintf(b, sizeof b, "monster rig dump - '%s' (entity %X, SkeletonInstance %llX, granny instance %llX, skeleton %llX, first model instance %llX): "
+                     "the .skeleton's Granny model: %s (%d boxes); the root's own ModelComponent: %s; its children: %d, %d with a model, %d held (weapon/shield), "
+                     "%d models read, slots",
+                     path.c_str(), entity, (unsigned long long)self, (unsigned long long)inst, (unsigned long long)skelp, (unsigned long long)modelInst,
+                     granny.n ? "boxes" : granny.why, granny.n, ownModel ? "yes" : "none", parts.children, parts.models, parts.held, nModels);
+    for (int i = 0; i < parts.models && i < monsterrig::kMaxModels && w < 1000; ++i) w += snprintf(b + w, sizeof b - w, " %d", parts.slots[i]);
+    w += snprintf(b + w, sizeof b - w, "; the game's meshes: %s (%d meshes, %d with boxes, %d boxes)", meshes.n ? "boxes" : meshes.why, nMeshes, meshes.meshes, meshes.n);
+    uintptr_t res = 0, data = 0, bones = 0;
+    uint8_t state = 0;
+    uint64_t count = 0;
+    int32_t boneCount = 0;
+    if (read(modelInst + monsterrig::kInstanceResource, &res, 8) && read(res + monsterrig::kResourceState, &state, 1)) w += snprintf(b + w, sizeof b - w, "; resource %llX state %u", (unsigned long long)res, state);
+    if (read(skelp + monsterrig::kSkelCount, &boneCount, 4) && read(skelp + monsterrig::kSkelBones, &bones, 8)) {
+        w += snprintf(b + w, sizeof b - w, "; skeleton %d bones:", boneCount);
+        for (int i = 0; i < boneCount && i < 6 && w < 1500; ++i) {
+            uintptr_t np = 0;
+            char n[48] = "";
+            if (read(bones + (uintptr_t)i * monsterrig::kBoneStride, &np, 8)) grannymesh::String(read, np, n);
+            w += snprintf(b + w, sizeof b - w, " '%s'", n);
+        }
+    }
+    if (read(modelInst + monsterrig::kInstanceMeshes, &data, 8) && read(modelInst + monsterrig::kInstanceMeshes + 8, &count, 8)) {
+        w += snprintf(b + w, sizeof b - w, "; meshes at %llX x %llu:", (unsigned long long)data, (unsigned long long)count);
+        for (uint64_t m = 0; m < count && m < 4 && w < 1800; ++m) {
+            uintptr_t h = 0, mesh = 0, binds = 0;
+            int32_t nb = 0;
+            read(data + m * 8, &h, 8);
+            read(h, &mesh, 8);
+            read(mesh + monsterrig::kMeshBoneCount, &nb, 4);
+            read(mesh + monsterrig::kMeshBones, &binds, 8);
+            w += snprintf(b + w, sizeof b - w, " [%llu] handle %llX mesh %llX, %d bindings at %llX", (unsigned long long)m, (unsigned long long)h, (unsigned long long)mesh, nb,
+                          (unsigned long long)binds);
+            for (int k = 0; k < nb && k < 2 && w < 1900; ++k) {
+                uintptr_t np = 0;
+                char n[48] = "";
+                float mn[3] = {}, mx[3] = {};
+                read(binds + (uintptr_t)k * monsterrig::kBindingStride, &np, 8);
+                grannymesh::String(read, np, n);
+                read(binds + (uintptr_t)k * monsterrig::kBindingStride + monsterrig::kBindingMin, mn, 12);
+                read(binds + (uintptr_t)k * monsterrig::kBindingStride + monsterrig::kBindingMax, mx, 12);
+                w += snprintf(b + w, sizeof b - w, " {'%s' %.2f %.2f %.2f .. %.2f %.2f %.2f}", n, mn[0], mn[1], mn[2], mx[0], mx[1], mx[2]);
+            }
+        }
+    }
+    AcquireSRWLockExclusive(&g_rigLock);
+    g_rigDump = b;
+    ReleaseSRWLockExclusive(&g_rigLock);
+}
 }   // namespace
+
+void SetRigDump(bool on) { g_rigDumpWanted.store(on); }
+void SetHeldWanted(bool on) { g_heldWanted.store(on); }
+void SetRagdollAll(bool on) { g_ragdollAll.store(on); }
+std::string RigDumpTakeIn() {
+    std::string s;
+    AcquireSRWLockExclusive(&g_rigLock);
+    s.swap(g_rigDump);
+    ReleaseSRWLockExclusive(&g_rigLock);
+    return s;
+}
+
+uintptr_t EntityModelInstance(uint32_t entity) {
+    uintptr_t pools[kPools] = {};
+    {
+        AcquireSRWLockExclusive(&ecs::g_lock);
+        struct Unlock { ~Unlock() { ReleaseSRWLockExclusive(&ecs::g_lock); } } unlock;
+        BodyStorages(pools);
+    }
+    const uintptr_t ms = pools[kPoolModel];
+    uintptr_t mcb = 0, inst = 0;
+    uint32_t i = 0;
+    return ms && Get(ms + 0x38, &mcb) && mcb && ecs::Dense(ms, entity, &i) && Get(mcb + (uintptr_t)i * kModelCompSize + monsterrig::kModelCompInstance, &inst) ? inst : 0;
+}
+int HeroPartModels(uint32_t entity, uintptr_t* models, int cap, uint64_t* key) {
+    if (key) *key = 0;
+    if (!entity || !models || cap <= 0) return 0;
+    uintptr_t pools[kPools] = {};
+    {
+        AcquireSRWLockExclusive(&ecs::g_lock);
+        struct Unlock { ~Unlock() { ReleaseSRWLockExclusive(&ecs::g_lock); } } unlock;
+        BodyStorages(pools);
+    }
+    const uintptr_t ms = pools[kPoolModel], cs = pools[kPoolChildren], ps = pools[kPoolPart];
+    uintptr_t mcb = 0, ccb = 0, pcb = 0;
+    if (ms && !Get(ms + 0x38, &mcb)) mcb = 0;
+    if (cs && !Get(cs + 0x38, &ccb)) ccb = 0;
+    if (ps && !Get(ps + 0x38, &pcb)) pcb = 0;
+    const auto read = [](uintptr_t a, void* d, size_t bytes) { return a > 0x10000 && SafeCopy(d, (const void*)a, bytes); };
+    const auto modelOf = [&](uint32_t e) -> uintptr_t {   // (as MonsterRigs)
+        uint32_t i = 0;
+        uintptr_t inst = 0;
+        return mcb && ecs::Dense(ms, e, &i) && Get(mcb + (uintptr_t)i * kModelCompSize + monsterrig::kModelCompInstance, &inst) ? inst : 0;
+    };
+    const auto slotOf = [&](uint32_t e) -> int {
+        uint32_t i = 0;
+        uint8_t slot = 0;
+        return pcb && ecs::Dense(ps, e, &i) && Get(pcb + (uintptr_t)i * monsterrig::kPartCompSize + monsterrig::kPartSlot, &slot) ? (int)slot : -1;
+    };
+    int n = 0;
+    const uintptr_t own = modelOf(entity);
+    if (own >= 0x10000) models[n++] = own;
+    if (ccb && n < cap) {
+        uint32_t ci = 0;
+        const uintptr_t children = ecs::Dense(cs, entity, &ci) ? ccb + (uintptr_t)ci * monsterrig::kChildrenCompSize : 0;
+        n += monsterrig::PartModels(read, children, modelOf, slotOf, models + n, cap - n);
+    }
+    uint64_t h = 0;
+    for (int i = 0; i < n; ++i) {
+        uintptr_t res = 0;
+        if (Get(models[i] + monsterrig::kInstanceResource, &res)) h = h * 0x9E3779B97F4A7C15ull + res;
+    }
+    if (key) *key = h;
+    return n;
+}
 
 size_t MonsterRigs(float x, float z, float reach, MonsterRig* out, size_t cap) {
     if (!out || !cap || !std::isfinite(x + z + reach)) return 0;
-    uintptr_t xs = 0, ss = 0;
+    uintptr_t xs = 0, ss = 0, pools[kPools] = {};
     {
         AcquireSRWLockExclusive(&ecs::g_lock);
         struct Unlock { ~Unlock() { ReleaseSRWLockExclusive(&ecs::g_lock); } } unlock;
@@ -6315,7 +8670,24 @@ size_t MonsterRigs(float x, float z, float reach, MonsterRig* out, size_t cap) {
         }
         xs = ecs::g_xs;
         ss = ecs::g_ss;
+        BodyStorages(pools);   // (the ModelComponents' not found: the Granny model's meshes are all there is)
     }
+    const uintptr_t ms = pools[kPoolModel], cs = pools[kPoolChildren], ps = pools[kPoolPart];
+    uintptr_t mcb = 0, ccb = 0, pcb = 0;
+    if (ms && !Get(ms + 0x38, &mcb)) mcb = 0;
+    if (cs && !Get(cs + 0x38, &ccb)) ccb = 0;
+    if (ps && !Get(ps + 0x38, &pcb)) pcb = 0;
+    // an entity's model instance (its ModelComponent's first qword; 0: none) and its part's slot (its UnitPartComponent's first byte; -1: none)
+    const auto modelOf = [&](uint32_t e) -> uintptr_t {
+        uint32_t i = 0;
+        uintptr_t inst = 0;
+        return mcb && ecs::Dense(ms, e, &i) && Get(mcb + (uintptr_t)i * kModelCompSize + monsterrig::kModelCompInstance, &inst) ? inst : 0;
+    };
+    const auto slotOf = [&](uint32_t e) -> int {
+        uint32_t i = 0;
+        uint8_t slot = 0;
+        return pcb && ecs::Dense(ps, e, &i) && Get(pcb + (uintptr_t)i * monsterrig::kPartCompSize + monsterrig::kPartSlot, &slot) ? (int)slot : -1;
+    };
     uintptr_t pb = 0, pe = 0, cb = 0, xcb = 0;
     if (!Get(ss + 0x20, &pb) || !Get(ss + 0x28, &pe) || pe <= pb || !Get(ss + 0x38, &cb) || !cb || !Get(xs + 0x38, &xcb) || !xcb) return 0;
     const size_t n = (pe - pb) / 4;
@@ -6326,6 +8698,8 @@ size_t MonsterRigs(float x, float z, float reach, MonsterRig* out, size_t cap) {
     const uintptr_t hero = g_heroSelf.load();
     struct Model { uintptr_t self, comp; uint32_t entity; float d2; float t[3]; };   // (not "near": windows.h has that word)
     std::vector<Model> nearby;
+    const bool heldWanted = g_heldWanted.load(std::memory_order_relaxed);
+    const bool all = g_ragdollAll.load(std::memory_order_relaxed);   // [weight] monster_ragdoll_all
     for (size_t i = 0; i < n; ++i) {
         const uintptr_t self = (uintptr_t)comps[i * (kSkeletonCompSize / 8)];
         if (!self || self == hero) continue;
@@ -6353,44 +8727,323 @@ size_t MonsterRigs(float x, float z, float reach, MonsterRig* out, size_t cap) {
         Get(nameObj + 8, &nameP);
         const std::string path = Str(nameP);
         if (path.find("/player/") != std::string::npos) continue;   // a hero (another player's, our own corpse)
+        if (!monsterrig::BodyPath(path.c_str())) {   // an item on the ground, gold, arrows, a missile: no body (the dump says which paths were left out)
+            if (g_rigDumpWanted.load()) {
+                AcquireSRWLockExclusive(&g_rigLock);
+                if (g_rigPathsTold.size() < 64 && g_rigPathsTold.insert(path).second) g_rigDump = "monster rig dump - not a body: '" + path + "'";
+                ReleaseSRWLockExclusive(&g_rigLock);
+            }
+            continue;
+        }
         const size_t slash = path.find_last_of('/');
         snprintf(r.model, sizeof r.model, "%s", slash == std::string::npos ? path.c_str() : path.c_str() + slash + 1);
         if (!Get(c.self + 0x08, &inst) || !Get(inst + 0x08, &skelp) || !Get(inst, &model)) { r.why = "the model instance does not read"; ++k; continue; }
+        // the game's meshes of this unit: the root's own ModelComponent if it has one, and its body parts' - the children in its
+        // AttachedChildrenComponent, the weapons and the shield left out (vr/monster_rig.h PartModels, BoxesOfModels)
+        uintptr_t models[monsterrig::kMaxModels] = {}, modelRes = 0;
+        int nModels = 0;
+        monsterrig::Parts parts;
+        parts.children = -1;
+        const uintptr_t own = modelOf(c.entity);
+        if (own >= 0x10000) models[nModels++] = own;
+        if (ccb) {
+            uint32_t ci = 0;
+            const uintptr_t children = ecs::Dense(cs, c.entity, &ci) ? ccb + (uintptr_t)ci * monsterrig::kChildrenCompSize : 0;
+            nModels += monsterrig::PartModels(read, children, modelOf, slotOf, models + nModels, monsterrig::kMaxModels - nModels, &parts);
+        }
+        for (int i = 0; i < nModels; ++i) {   // the parts' resources name the body (a variant of the same skeleton may wear other parts)
+            uintptr_t res = 0;
+            if (Get(models[i] + monsterrig::kInstanceResource, &res)) modelRes = modelRes * 0x9E3779B97F4A7C15ull + res;
+        }
         monsterrig::Boxes boxes;
+        monsterhumanoid::Verdict human;
+        bool upright = false;
+        const char* pose = "";
+        const auto key = std::make_pair(modelRes ? modelRes : model, skelp);
         {
-            const auto key = std::make_pair(model, skelp);
             bool have = false;
             AcquireSRWLockShared(&g_rigLock);
             const auto it = g_rigBoxes.find(key);
-            if (it != g_rigBoxes.end()) { boxes = it->second; have = true; }
+            if (it != g_rigBoxes.end() && (!it->second.retryAt || GetTickCount64() < it->second.retryAt)) {
+                boxes = it->second.boxes;
+                human = it->second.human;
+                upright = it->second.upright;
+                pose = it->second.pose;
+                have = true;
+            }
             ReleaseSRWLockShared(&g_rigLock);
             if (!have) {
-                monsterrig::BoxesOf(read, inst, skelp, &boxes);
-                AcquireSRWLockExclusive(&g_rigLock);
-                if (g_rigBoxes.size() > 256) g_rigBoxes.clear();
-                g_rigBoxes[key] = boxes;
-                ReleaseSRWLockExclusive(&g_rigLock);
+                monsterrig::Boxes granny, meshes;
+                int nMeshes = 0;
+                monsterrig::BoxesOf(read, inst, skelp, &granny);   // (the .skeleton's own Granny model: no meshes in the game - kept for a model that has them)
+                if (nModels) monsterrig::BoxesOfModels(read, models, nModels, skelp, &meshes, &nMeshes);
+                else if (!ms) meshes.why = "the ModelComponent storage is not found";
+                else if (!cs) meshes.why = "the root has no ModelComponent and the AttachedChildrenComponent storage is not found";
+                else if (parts.children < 0) meshes.why = "the root has no ModelComponent and no children";
+                else if (parts.models && parts.models == parts.held) meshes.why = "its parts with a model are all held (weapon, shield)";
+                else meshes.why = "the root has no ModelComponent, nor have its children";
+                boxes = granny.n ? granny : meshes;
+                if (!boxes.n && !granny.n) boxes.why = meshes.why;
+                if (g_rigDumpWanted.exchange(false)) DumpRig(path, c.entity, c.self, inst, skelp, models[0], granny, meshes, nMeshes, own >= 0x10000, nModels, parts);
+                human = monsterhumanoid::JudgeSkeleton(read, skelp);   // [weight] monster_ragdoll: a humanoid by its bone names? (once a model)
+                const bool settled = boxes.n || std::strcmp(meshes.why, "the model is not loaded yet") != 0;   // (one still loading is asked again)
+                if (settled) {
+                    AcquireSRWLockExclusive(&g_rigLock);
+                    if (g_rigBoxes.size() > 256) g_rigBoxes.clear();
+                    g_rigBoxes[key] = RigRead{boxes, boxes.n || nModels ? 0 : GetTickCount64() + 1000, human, false, 0, ""};
+                    ReleaseSRWLockExclusive(&g_rigLock);
+                }
             }
         }
         r.bones = boxes.bones;
         r.boxes = boxes.n;
-        if (!boxes.n) { r.why = boxes.why; ++k; continue; }
+        // [weight] monster_ragdoll_all: a skeleton with no part meshes to read boxes from (its body comes from other models, or none read) - its limbs from
+        // its bones' segments as posed (below), when its skeleton read
+        const bool fromBones = !boxes.n && all && human.bones > 0 && human.bones <= monsterrig::kMaxBones;
+        if (!boxes.n && !fromBones) { r.why = boxes.why; ++k; continue; }
         uintptr_t world = 0, mats = 0;
         int32_t count = 0;
         Mat xform;
-        if (!Get(c.self + 0x20, &world) || !Get(world, &count) || count != boxes.bones || !Get(world + 4, &mats) || !mats ||
+        if (!Get(c.self + 0x20, &world) || !Get(world, &count) || count != (fromBones ? human.bones : boxes.bones) || !Get(world + 4, &mats) || !mats ||
             !SafeCopy(xform.m, (const void*)c.comp, sizeof xform.m)) { r.why = "its pose does not read"; ++k; continue; }
         monsterrig::Capsule caps[monsterrig::kMaxBoxes];
+        monsterrig::BoneBox offLimb[16];   // a humanoid's limb bones whose box is not at the bone (a robe's): their capsule along the bone (monsterrig::AlongBone)
+        int nOffLimb = 0;
+        std::vector<Mat> game;   // [weight] monster_ragdoll_pose: the game's own pose, where the hook turned this one's bones
+        const bool turned = GamePoseOf(c.self, count, &game);
+        if (fromBones) {   // the segments to each bone's children, in its frame (vr/bone_segments.h; no box for the root, "anim", a finger, a helper)
+            static float posed[monsterrig::kMaxBones][16];   // (the timer's thread only)
+            bool all2 = true;
+            for (int b = 0; b < count && all2; ++b) {
+                if (turned) std::memcpy(posed[b], game[b].m, sizeof posed[b]);
+                else if (!SafeCopy(posed[b], (const void*)(mats + (uintptr_t)b * 64), sizeof posed[b])) all2 = false;
+            }
+            boxes.n = all2 ? bonesegments::Boxes(human.parent, count, posed, human.notLimb, boxes.b, monsterrig::kMaxBoxes) : 0;
+            boxes.bones = count;
+            r.bones = count;
+            r.boxes = boxes.n;
+            r.segments = true;
+            if (!boxes.n) { r.why = "no part meshes, and its bones made no segments"; ++k; continue; }
+        }
         int nc = 0;
+        // a humanoid's body bones only (its limbs, the trunk, the head - not a rope or a strip of cloth off it), and only boxes that sit at their bone
+        static bool body[monsterrig::kMaxBones];
+        const bool judged = human.humanoid && count <= monsterrig::kMaxBones && human.bones == count;
+        if (judged) monsterrig::BodyBones(human.parent, human.limbOf, count, human.headBone, body, human.bodyWord);
+        {
+            uintptr_t bonesP = 0;
+            Get(skelp + monsterrig::kSkelBones, &bonesP);
+            int w = 0;
+            std::vector<std::pair<std::string, int>> stems;
+            for (int b = 0; b < boxes.n; ++b) {
+                const int bone = boxes.b[b].bone;
+                // (every monster a doll: a bone whose name says it is no limb - "anim" on the floor under the hips, a finger, a helper - is left out too)
+                const bool notLimb = all && !judged && bone >= 0 && bone < count && human.bones == count && human.notLimb[bone];
+                const bool off = !monsterrig::AtItsBone(boxes.b[b]), out = (judged && bone >= 0 && bone < count && !body[bone]) || notLimb;
+                if (!off && !out) continue;
+                if (off && !out && judged && bone >= 0 && bone < count && human.limbOf[bone] && nOffLimb < (int)std::size(offLimb)) offLimb[nOffLimb++] = boxes.b[b];   // (along its bone, below)
+                ++(off ? r.offBone : r.notBody);
+                char nm[monsterrig::kNameLen] = "";
+                uintptr_t np = 0;
+                if (bonesP && Get(bonesP + (uintptr_t)bone * monsterrig::kBoneStride + monsterrig::kBoneName, &np)) grannymesh::String(read, np, nm);
+                // (each kind once, with how many: the name's stem - its digits out - "spike_jnt x60 (not body)")
+                std::string stem;
+                for (const char* q = nm; *q; ++q)
+                    if (!(*q >= '0' && *q <= '9') && !(*q == '_' && !stem.empty() && stem.back() == '_')) stem += *q;
+                stem += off ? " (off)" : " (not body)";
+                bool found = false;
+                for (auto& s : stems) if (s.first == stem) { ++s.second; found = true; }
+                if (!found && stems.size() < 40) stems.push_back({stem, 1});
+                boxes.b[b].bone = -1 - bone;   // (left out below; the cache keeps its own copy)
+            }
+            for (const auto& s : stems)
+                if (w < (int)sizeof r.leftOut - 60)
+                    w += s.second > 1 ? snprintf(r.leftOut + w, sizeof r.leftOut - w, "%s%s x%d", w ? ", " : "", s.first.c_str(), s.second)
+                                      : snprintf(r.leftOut + w, sizeof r.leftOut - w, "%s%s", w ? ", " : "", s.first.c_str());
+        }
         for (int b = 0; b < boxes.n; ++b) {
+            if (boxes.b[b].bone < 0) continue;
             Mat bm;
-            if (!SafeCopy(bm.m, (const void*)(mats + (uintptr_t)boxes.b[b].bone * 64), sizeof bm.m)) continue;
+            if (turned) bm = game[boxes.b[b].bone];
+            else if (!SafeCopy(bm.m, (const void*)(mats + (uintptr_t)boxes.b[b].bone * 64), sizeof bm.m)) continue;
             const Mat w = Mul(bm, xform);
             if (monsterrig::CapsuleOf(w.m, boxes.b[b], &caps[nc])) ++nc;
+        }
+        {   // a limb bone whose box is off its bone (Akara's thighs and shins under her robe): along the bone, to the farthest bone of the same limb on it
+            const auto worldOf = [&](int bone, Mat* out) {
+                Mat bm;
+                if (turned) bm = game[bone];
+                else if (!SafeCopy(bm.m, (const void*)(mats + (uintptr_t)bone * 64), sizeof bm.m)) return false;
+                *out = Mul(bm, xform);
+                return true;
+            };
+            for (int o = 0; o < nOffLimb && nc < (int)std::size(caps); ++o) {
+                const int bone = offLimb[o].bone;
+                Mat w;
+                if (!worldOf(bone, &w)) continue;
+                int child = -1;
+                float far2 = 0.0f;
+                for (int cb = 0; cb < count; ++cb) {
+                    Mat cw;
+                    if (human.parent[cb] != bone || human.limbOf[cb] != human.limbOf[bone] || !worldOf(cb, &cw)) continue;
+                    const float d2 = (cw.m[12] - w.m[12]) * (cw.m[12] - w.m[12]) + (cw.m[13] - w.m[13]) * (cw.m[13] - w.m[13]) + (cw.m[14] - w.m[14]) * (cw.m[14] - w.m[14]);
+                    if (d2 > far2) { far2 = d2; child = cb; }
+                }
+                Mat cw, mw;
+                if (child < 0 || !worldOf(child, &cw)) continue;
+                const int mirror = offLimb[o].mirror;
+                const bool haveMirror = mirror >= 0 && mirror < count && worldOf(mirror, &mw);
+                const float childAt[3] = {cw.m[12], cw.m[13], cw.m[14]}, mirrorAt[3] = {mw.m[12], mw.m[13], mw.m[14]};
+                if (monsterrig::AlongBone(w.m, childAt, haveMirror ? mirrorAt : nullptr, offLimb[o], &caps[nc])) { ++nc; ++r.alongBone; }
+            }
         }
         r.n = monsterrig::Keep(caps, nc);
         for (int i = 0; i < r.n; ++i) r.c[i] = caps[i];
         if (!r.n) r.why = "no box made a capsule";
+        if (r.n > 0) {   // [weight] monster_ragdoll: a pose the game holds still for a second is a corpse's (vr/corpse_watch.h) - by its largest capsules' ends
+            float pts[corpsewatch::kPoints][3];
+            int np = 0;
+            for (int i = 0; i < r.n && np + 1 < corpsewatch::kPoints; ++i) {
+                std::memcpy(pts[np++], r.c[i].a, sizeof pts[0]);
+                std::memcpy(pts[np++], r.c[i].b, sizeof pts[0]);
+            }
+            const ULONGLONG now = GetTickCount64();
+            std::lock_guard<std::mutex> lock(g_stillLock);
+            r.still = g_still[c.entity].Look(pts, np, reach / 6.0f, now);   // (reach is 6 m in world units)
+            if (g_still.size() > 128)
+                for (auto it = g_still.begin(); it != g_still.end();) it = now - it->second.seenMs > 3000 ? g_still.erase(it) : std::next(it);
+        }
+        // [weight] monster_shields: what it holds - its weapon, its shield - as the game builds it (monsterrig::HeldModels): each child of its root that is a
+        // held part (RH / LH / SH) or an attached unit's root, and two levels under it the item's model (fallen1.json: the "rhand" part has no model; the
+        // item - fallen_scimitar.json - is a unit of its own, a root and a model with no skeleton). A held model bound to this skeleton's bones: its boxes
+        // through those bones, as the body's (each read once, cached by its model instance). A rigid item: its meshes' boxes in its own frame
+        // (monsterrig::ItemBox), put where the game's own transform of that model's entity has it - within 2 m of the monster, or left out. A weapon a
+        // capsule along its box, a shield four across its face (monsterrig::HeldCapsules). The model's log line says for each what it gave, or why not.
+        if (heldWanted && ccb) {
+            const auto childrenOf = [&](uint32_t e) -> uintptr_t {
+                uint32_t ci = 0;
+                return ecs::Dense(cs, e, &ci) ? ccb + (uintptr_t)ci * monsterrig::kChildrenCompSize : 0;
+            };
+            monsterrig::HeldModel hm[MonsterRig::kMaxHeldCaps];
+            int looked = 0;
+            const int nh = monsterrig::HeldModels(read, childrenOf(c.entity), modelOf, slotOf, childrenOf, hm, MonsterRig::kMaxHeldCaps, &looked);
+            r.heldParts = nh;
+            int w = 0;
+            if (!nh && w < (int)sizeof r.heldSaid - 80)
+                w += snprintf(r.heldSaid + w, sizeof r.heldSaid - w, "%d child(ren) of its root could hold something, none with a model under it", looked);
+            for (int h = 0; h < nh && r.nHeld < MonsterRig::kMaxHeldCaps; ++h) {
+                const bool shield = hm[h].slot == monsterrig::kSH;
+                const char* slotName = hm[h].slot == monsterrig::kSH ? "SH" : hm[h].slot == monsterrig::kLH ? "LH" : hm[h].slot == monsterrig::kRH ? "RH" : "attached";
+                static std::unordered_map<uintptr_t, monsterrig::Boxes> skinned;   // (the timer's thread only) by the model instance
+                auto it = skinned.find(hm[h].inst);
+                if (it == skinned.end()) {
+                    monsterrig::Boxes hb;
+                    monsterrig::BoxesOfModels(read, &hm[h].inst, 1, skelp, &hb);
+                    if (!hb.n && std::strcmp(hb.why, "the model is not loaded yet") == 0) {
+                        if (w < (int)sizeof r.heldSaid - 40) w += snprintf(r.heldSaid + w, sizeof r.heldSaid - w, "%s%s: loading", w ? "; " : "", slotName);
+                        continue;
+                    }
+                    if (skinned.size() > 128) skinned.clear();
+                    it = skinned.emplace(hm[h].inst, hb).first;
+                }
+                const monsterrig::Boxes& hb = it->second;
+                int made = 0;
+                if (hb.n) {   // bound to this skeleton's bones: through them
+                    for (int b = 0; b < hb.n && r.nHeld < MonsterRig::kMaxHeldCaps; ++b) {
+                        const int bone = hb.b[b].bone;
+                        if (bone < 0 || bone >= count) continue;
+                        Mat bm;
+                        if (turned) bm = game[bone];
+                        else if (!SafeCopy(bm.m, (const void*)(mats + (uintptr_t)bone * 64), sizeof bm.m)) continue;
+                        const Mat bw = Mul(bm, xform);
+                        monsterrig::Capsule hc[4];
+                        const int k2 = monsterrig::HeldCapsules(bw.m, hb.b[b], shield, hc, std::min(4, MonsterRig::kMaxHeldCaps - r.nHeld));
+                        for (int q = 0; q < k2; ++q, ++made) { r.held[r.nHeld] = hc[q]; r.heldKind[r.nHeld] = shield ? 2 : 1; ++r.nHeld; }
+                    }
+                    if (w < (int)sizeof r.heldSaid - 60) w += snprintf(r.heldSaid + w, sizeof r.heldSaid - w, "%s%s: %d capsule(s), on its bones", w ? "; " : "", slotName, made);
+                    continue;
+                }
+                // a rigid item: its box in its own frame, where the game's transform of its model's entity puts it
+                monsterrig::BoneBox box;
+                const char* why = "";
+                if (!monsterrig::ItemBox(read, hm[h].inst, &box, &why)) {
+                    if (w < (int)sizeof r.heldSaid - 80) w += snprintf(r.heldSaid + w, sizeof r.heldSaid - w, "%s%s: no box (%s)", w ? "; " : "", slotName, why);
+                    continue;
+                }
+                // where the game has the item: its transform component's WORLD matrix (+0x40; +0x00 is its local one, against the hand part it hangs on - read
+                // as the world's it put the item thousands of metres off: the user's 0.179 run, 'navi.skeleton' "3556.0 m from the monster"), as the hero's own
+                // flail is read (FlailStep). The local one only for an item with no parent (its local is the world's).
+                uint32_t ti = 0, parentE = 0;
+                Mat iw, il;
+                const uintptr_t icomp = ecs::Dense(xs, hm[h].entity, &ti) ? xcb + (uintptr_t)ti * kTransformSize : 0;
+                const bool haveL = icomp && SafeCopy(il.m, (const void*)icomp, sizeof il.m) && boneguard::Finite(il.m);
+                const bool haveW = icomp && SafeCopy(iw.m, (const void*)(icomp + 0x40), sizeof iw.m) && boneguard::Finite(iw.m);
+                const bool rooted = icomp && Get(icomp + 0xC0, &parentE) && (parentE & 0xFFFFF) == 0xFFFFF;
+                if (!haveL && !haveW) {
+                    if (w < (int)sizeof r.heldSaid - 60) w += snprintf(r.heldSaid + w, sizeof r.heldSaid - w, "%s%s: its model has no transform", w ? "; " : "", slotName);
+                    continue;
+                }
+                const float toM = 6.0f / reach;   // (reach is 6 m in world units)
+                float apartW = -1.0f, apartL = -1.0f;
+                const int which = monsterrig::HeldSpace(haveL ? il.m : nullptr, haveW ? iw.m : nullptr, rooted, c.t, 2.0f / toM, &apartW, &apartL);
+                if (apartW >= 0.0f) apartW *= toM;
+                if (apartL >= 0.0f) apartL *= toM;
+                if (which < 0) {
+                    if (w < (int)sizeof r.heldSaid - 110)
+                        w += snprintf(r.heldSaid + w, sizeof r.heldSaid - w, "%s%s: not near the monster - world %.1f m, local %.1f m off (parent %05X)", w ? "; " : "", slotName,
+                                      apartW, apartL, parentE & 0xFFFFF);
+                    continue;
+                }
+                if (which == 1) iw = il;
+                const char* space = which == 0 ? "the world matrix (+0x40)" : "its local matrix (no parent: the world's)";
+                const float apartM = which == 0 ? apartW : apartL;
+                monsterrig::Capsule hc[4];
+                const int k2 = monsterrig::HeldCapsules(iw.m, box, shield, hc, std::min(4, MonsterRig::kMaxHeldCaps - r.nHeld));
+                for (int q = 0; q < k2; ++q, ++made) { r.held[r.nHeld] = hc[q]; r.heldKind[r.nHeld] = shield ? 2 : 1; ++r.nHeld; }
+                if (w < (int)sizeof r.heldSaid - 120)
+                    w += snprintf(r.heldSaid + w, sizeof r.heldSaid - w, "%s%s: %d capsule(s), rigid, %.0f cm long, %.1f m from its root, by %s (local %.1f m off)", w ? "; " : "", slotName,
+                                  made, (made ? monsterrig::Extent(r.held[r.nHeld - 1]) : 0.0f) * 100.0f * 6.0f / reach, apartM, space, apartL);
+            }
+        }
+        // [weight] monster_ragdoll: a humanoid by its names must also be seen standing up (vr/monster_humanoid.h Upright: head over hips, the trunk upright, the
+        // hands off the ground) kUprightRun reads running - its bones' places in the world now
+        if (human.humanoid && !upright && count <= monsterrig::kMaxBones) {
+            float pos[monsterrig::kMaxBones][3];
+            bool all = true;
+            for (int b = 0; b < count && all; ++b) {
+                Mat bm;
+                if (turned) bm = game[b];
+                else if (!SafeCopy(bm.m, (const void*)(mats + (uintptr_t)b * 64), sizeof bm.m)) { all = false; break; }
+                const Mat w = Mul(bm, xform);
+                pos[b][0] = w.m[12];
+                pos[b][1] = w.m[13];
+                pos[b][2] = w.m[14];
+            }
+            if (all) {
+                const bool now = monsterhumanoid::Upright(human, pos, count, &pose);
+                AcquireSRWLockExclusive(&g_rigLock);
+                const auto it = g_rigBoxes.find(key);
+                if (it != g_rigBoxes.end()) {
+                    it->second.uprightRun = now ? it->second.uprightRun + 1 : 0;
+                    it->second.pose = pose;
+                    if (it->second.uprightRun >= monsterhumanoid::kUprightRun) it->second.upright = true;
+                    upright = it->second.upright;
+                }
+                ReleaseSRWLockExclusive(&g_rigLock);
+            }
+        }
+        r.doll = !human.humanoid ? -1 : upright ? 1 : 0;
+        r.dollWhy = human.why;
+        if (all && human.bones == count && r.n > 0) {   // [weight] monster_ragdoll_all: every monster (its skeleton read), not only the humanoids
+            r.doll = 1;
+            r.dollWhy = r.segments ? "every monster (monster_ragdoll_all), its limbs from its bones" : "every monster (monster_ragdoll_all)";
+        }
+        if (r.doll > 0 && r.still) { r.doll = 0; r.dollWhy = "its pose held still for a second - a corpse"; }
+        for (int row = 0; row < 3; ++row)
+            for (int col = 0; col < 3; ++col) r.m3[row * 3 + col] = xform.m[row * 4 + col];
+        if (human.bones == count) std::memcpy(r.parent, human.parent, sizeof(int16_t) * std::min(dollpose::kMaxBones, monsterhumanoid::kMaxBones));
+        r.dollPose = pose;
+        snprintf(r.dollSaid, sizeof r.dollSaid, "%s", human.said);
         ++k;
     }
     return k;
@@ -6439,7 +9092,17 @@ bool HeroTransform(HeroXform* out, const char** why) {
 }
 
 void SetFresh(FreshFn fn) { g_fresh.store(fn); }
+void SetFreshRoomShift(RoomShiftFn fn) { g_freshShift.store(fn); }
 void SetFreshHands(FreshHandsFn fn) { g_freshHands.store(fn); }
+void SetGrabHands(GrabHandsFn fn) { g_grabHands.store(fn); }
+bool GrabPalmDrawn(int side, float head[3], const char** how) {
+    AcquireSRWLockShared(&g_grabPalmLock);
+    const bool ok = g_grabPalmAt[side & 1] && GetTickCount64() - g_grabPalmAt[side & 1] < 200;
+    for (int k = 0; k < 3; ++k) head[k] = g_grabPalm[side & 1][k];
+    if (how) *how = g_grabPalmHow[side & 1];
+    ReleaseSRWLockShared(&g_grabPalmLock);
+    return ok;
+}
 void SetGripHandStep(GripHandStepFn fn, GripAbiFn abi) { g_gripHandStep.store(fn); g_gripAbi.store(abi); }
 
 void SetHeroPos(float x, float y, float z) {

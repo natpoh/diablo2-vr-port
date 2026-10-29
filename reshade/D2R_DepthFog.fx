@@ -59,6 +59,12 @@ uniform float3 FogColor <
 > = float3(0.02, 0.02, 0.025);
 
 uniform bool FogFixed < hidden = true; > = false;   // vrcam: the act has its own fog colour, the sky does not tint it
+// vrcam: the game draws the fog ([fog] game_fog) and this effect the sky - the sky's low part sinks into FogColor as with our own fog on
+uniform bool SkyFogHorizon < hidden = true; > = false;
+// vrcam [fog] light: the fog for weak graphics cards - the scene's depth read once a pixel, the fog by it, the sky in the void; none of the
+// rest (no neighbours, no blur, no fog over what is drawn on the void, no interface mask, no cave ceiling). Without ReShade the plugin also
+// leaves out the passes only the rest needs.
+uniform bool FogLight < hidden = true; > = false;
 // vrcam: how much of each act's night picture shows, 0 by day .. 1 at full
 // night - the game's own light (D2R_SkyNight_<act>.png, tools/gen_night_sky.py).
 uniform float SkyNightMix < hidden = true; > = 0.0;
@@ -93,7 +99,16 @@ uniform bool ShowCeilingCut <
 // right eye's present wrote it before the GPU had run the left eye's effect,
 // and the left eye drew the right eye's sky.
 uniform bool SkyOn < hidden = true; > = false;
+// vrcam [sky] game_sky: the game draws our sky itself (a dome round the eye) - its pixels, at or beyond SkyDomeDepth (reversed Z: depth
+// at or under it; the void too), are left as the game drew them: no sky of ours over them, no fog. The game's depth is 24-bit (D24S8):
+// the dome stands ~32 of its steps above the far plane (~26000 units at a near plane of 0.05), nearer than any fog's reach - at 10^7
+// units it rounded to the far plane and was never drawn (PC1, 2026-10-27). False (the default, and all vrcam sends without the dome): as
+// before.
+uniform bool SkyByGame < hidden = true; > = false;
+uniform float SkyDomeDepth < hidden = true; > = 1e-6;
 uniform bool ArcaneSkyOn < hidden = true; > = false;   // [sky] arcane_sky: in the Arcane Sanctuary the game's own star layers all round
+// [sky] cover_rims: the sky goes over the dark rim the game leaves round anything against the void (DepthFogWorld; VR F4)
+uniform bool SkyOverRims < hidden = true; > = false;
 
 // The Arcane Sanctuary's sky - after bearstonem/d2r-pcvr (MIT), v0.3.18. Its
 // pictures are made on the player's machine from that player's own game (D2R_VR_Settings,
@@ -554,6 +569,9 @@ float3 Sky(float3 dir)
 texture2D GameLayerTex : D2R_GAME_LAYER;
 sampler2D GameLayerSmp { Texture = GameLayerTex; AddressU = CLAMP; AddressV = CLAMP; MinFilter = POINT; MagFilter = POINT; };
 uniform bool UiMaskOn < hidden = true; > = false;
+// Flat (a monitor), a menu open: the panel stays over the world. A pixel the panel covers keeps the game's colour whole, or the sky
+// and the fog showed through the panel's own see-through parts (vrcam sets it; from sajmonsoft's flat fork, 2026-10).
+uniform bool UiMaskSolid < hidden = true; > = false;
 uniform bool UiMaskOff <
     ui_label = "Ignore the interface mask (test)";
     ui_tooltip = "Fog and sky over everything, the game's interface layer not looked at - to see whether a straight line "
@@ -1426,6 +1444,36 @@ float3 VoidGlowAt(float2 uv)
     return lerp(wide, close, saturate(g8.a * 4.0));
 }
 
+// [fog] light (FogLight): one depth read; the void gets the sky (or the fog's colour), with what the game drew there without depth (glows,
+// sparks) laid over it as light and the interface low on the screen kept as it is - by its brightness alone, no mask of it.
+float3 LightFog(float2 uv, int eye, float3 colour, float d)
+{
+    if (SkyByGame && d <= SkyDomeDepth) return colour;   // ([sky] game_sky: the game's dome there)
+    if (d > 1e-6 && (!FogOn || FogInFrame)) return colour;
+    float3 fogColour = FogColor;
+    float3 sky = 0.0;
+    if (SkyOn) {
+        const float2 ndc = float2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
+        const float4 sp = eye == 0 ? SkyProj0 : SkyProj1;
+        const float3 v = float3((ndc.x + sp.z) / sp.x, (ndc.y + sp.w) / sp.y, -1.0);
+        const float3 dir = eye == 0 ? normalize(v.x * CamRight0 + v.y * CamUp0 + v.z * CamBack0)
+                                    : normalize(v.x * CamRight1 + v.y * CamUp1 + v.z * CamBack1);
+        if (d <= 1e-6) {
+            sky = Sky(dir);
+            if ((FogOn || SkyFogHorizon) && FogFixed && !ArcaneSkyOn) sky = lerp(sky, FogColor, 1.0 - smoothstep(-0.03, 0.2, dir.y));
+        } else if (!FogFixed) {
+            const float3 fogDir = normalize(float3(dir.x, clamp(dir.y, -0.1, 0.15), dir.z));
+            fogColour = (SkyTex > 0.5 ? PaintedSky(fogDir) : SkyGradient(fogDir.y)) * SkyBrightness;
+        }
+    }
+    if (d > 1e-6) return lerp(colour, fogColour, FogAmount(d));
+    // the void
+    const float luma = dot(colour, float3(0.2126, 0.7152, 0.0722));
+    if (uv.y >= HudTop && luma > 0.03) return colour;
+    if (SkyOn) return sky + colour * smoothstep(0.03, 0.08, luma);
+    return FogOn ? lerp(colour, fogColour, FogAmount(0.0)) : colour;
+}
+
 float3 DepthFogWorld(float4 pos, float2 uv, int eye)
 {
     const float3 colour = tex2D(FogColorSmp, uv).rgb;
@@ -1438,6 +1486,7 @@ float3 DepthFogWorld(float4 pos, float2 uv, int eye)
     // screen-sized buffer. (Probing for empty depth low on the screen was wrong:
     // looking up, the sky is down there too, and the sky went out.)
     if (DepthWidth() < 16) return colour;
+    [branch] if (FogLight) return LightFog(uv, eye, colour, d);
 
     // The pixel's four neighbours. Where the drawn distance ends, the far
     // ground has single empty pixels (depth 0): each was taken for the void,
@@ -1453,6 +1502,7 @@ float3 DepthFogWorld(float4 pos, float2 uv, int eye)
     const float d4 = DepthAt(duv - float2(0, px.y)).x;
     const float dNear = max(max(d, d1), max(max(d2, d3), d4));
     const float dFar = min(min(d, d1), min(min(d2, d3), d4));
+    if (SkyByGame && dNear <= SkyDomeDepth) return colour;   // ([sky] game_sky: the game's dome - neither our sky nor our fog over it)
 
     float3 fogColour = FogColor;
     if (SkyOn || CeilOn) {
@@ -1501,13 +1551,21 @@ float3 DepthFogWorld(float4 pos, float2 uv, int eye)
         // it does not, the void goes on as before (fogged below).
         float3 sky = float3(0.0, 0.0, 0.0);
         bool back = false;
-        if (ceilMode == 0 && dNear <= 1e-6) {
+        // A rim: no depth here, but something drawn beside it. The game's picture of anything over the void is a pixel larger than its
+        // depth, its edge blended into the void's black, and the sky was not painted there: a dark outline round every roof, treetop and
+        // far building against the sky, which eyes by turns moved off them in every other frame of each eye (pcvr's owner, Kurast Docks,
+        // 2026-10-25). With SkyOverRims the sky goes there too. Only at an edge - at most two of the four neighbours drawn: a single empty
+        // pixel in the far ground stays fogged as before (the dots along the horizon). bearstonem/d2r-pcvr 4071a4a (MIT).
+        bool rim = false;
+        if (ceilMode == 0 && dNear > 1e-6 && d <= 1e-6 && SkyOn && SkyOverRims)
+            rim = (d1 > 1e-6 ? 1 : 0) + (d2 > 1e-6 ? 1 : 0) + (d3 > 1e-6 ? 1 : 0) + (d4 > 1e-6 ? 1 : 0) <= 2;
+        if (ceilMode == 0 && (dNear <= 1e-6 || rim)) {
             if (SkyOn) {
                 sky = Sky(dir);
                 // with the act's own fog colour the sky's low part sinks into it too:
                 // the fogged land meets the sky without an edge
                 // (not under the Arcane Sanctuary's sky: it is all round, below too, and its fog is the sky itself)
-                if (FogOn && FogFixed && !ArcaneSkyOn) sky = lerp(sky, FogColor, 1.0 - smoothstep(-0.03, 0.2, dir.y));
+                if ((FogOn || SkyFogHorizon) && FogFixed && !ArcaneSkyOn) sky = lerp(sky, FogColor, 1.0 - smoothstep(-0.03, 0.2, dir.y));
                 back = true;
             } else ceilMode = 3;
         }
@@ -1531,7 +1589,9 @@ float3 DepthFogWorld(float4 pos, float2 uv, int eye)
         }
         if (back) {
             const float luma = dot(colour, float3(0.2126, 0.7152, 0.0722));
-            const float k = 1.0 - smoothstep(0.03, 0.08, luma);
+            // A rim is dim as what it rims (about 0.1): the sky takes it unless it is clearly light - a glow's edge beside a brazier
+            // stays, laid over the sky as below.
+            const float k = rim ? 1.0 - smoothstep(0.15, 0.35, luma) : 1.0 - smoothstep(0.03, 0.08, luma);
             // The interface over the void keeps its own colour; its dark parts are the void.
             const bool hud = uv.y >= HudTop && tex2Dlod(HudMaskSmp, float4(uv, 0, 0)).r > 0.0;
             if (hud) return lerp(colour, sky + dither, k);
@@ -1641,7 +1701,8 @@ float3 DepthFog(float4 pos, float2 uv, int eye)
 {
     const float3 fogged = DepthFogWorld(pos, uv, eye);
     [branch] if (!UiMaskOn || UiMaskOff) return fogged;
-    const float ui = 1.0 - saturate(tex2Dlod(GameLayerSmp, float4(uv, 0, 0)).a);
+    float ui = 1.0 - saturate(tex2Dlod(GameLayerSmp, float4(uv, 0, 0)).a);
+    if (UiMaskSolid && ui > 0.02) ui = 1.0;
     return lerp(fogged, tex2D(FogColorSmp, uv).rgb, ui);
 }
 float3 PS_DepthFog(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return DepthFog(pos, uv, 0); }
@@ -1718,6 +1779,24 @@ sampler2D GameMapSmp { Texture = GameMapTex; AddressU = CLAMP; AddressV = CLAMP;
 // while vrcam cannot fade the label boxes through the game's own code.
 uniform bool LabelsOn < hidden = true; > = false;
 uniform float LabelBase < hidden = true; > = 0.0;
+// vrcam, native OpenXR, both eyes from one game frame with off-centre eyes ([openxr] runtime_fov=2, fov_override): the right eye's pass is the
+// left one's replayed, so the game's interface layer is laid out for the LEFT eye's projection - in the right eye the same pixel is another
+// direction. The right eye's layer moves by this much (uv; half the two eyes' off-axis terms apart, vrcam's projection shift) so each label
+// is in the same direction in both eyes. 0 with centred eyes, by turns and in FlatVR: as before.
+uniform float LabelAxisR < hidden = true; > = 0.0;
+// vrcam, eyes by turns: the game lays its interface layer out for the eye DRAWN this frame - the left one, then the right one - so a label in it
+// stands where that eye sees its thing, and shown by the same shifts every frame it jumped by its whole disparity between the frames each eye
+// was drawn and made: doubled (the target's plate over a near NPC, 2026-10-26). The overlays' techniques know which eye laid it out (layerEye,
+// GameLabels: the eye drawn's own, or the other one in the eye made's); this is the half-disparity at the thing's own depth (uv, the depth
+// rule's at k = 1, vr/plate_look.h TurnsHalf) that takes that eye's layout off first - so each eye shows the same every frame, the eye
+// drawn exactly where the game put it when the shift is the thing's own depth. 0 elsewhere (not by turns, no target): as before.
+uniform float PlateTurnH < hidden = true; > = 0.0;
+// vrcam: each eye's picture has its own layout of the interface in the main pass too - the pair's two passes each drawn by the game (the right one
+// not replayed from the left's lists: [render] no_reshade, or the replay off), or eyes by turns without the overlays apart. A label or the plate
+// then already stands where that eye sees its thing; shifted again by the per-eye shifts it was doubled (Serg, 2026-10-27, no ReShade: the
+// plates over the monsters doubled). The main pass then takes that eye's layout off first (layerEye = the eye, PlateTurnH / LabelTurnH), as the
+// overlays' techniques do by turns. False: as before (one layout for both eyes - the replay, FlatVR).
+uniform bool LayerOwnEye < hidden = true; > = false;
 uniform float LabelTilt < hidden = true; > = 0.0;
 uniform float LabelAlpha < hidden = true; > = 1.0;
 uniform float4 LabelKeep0 < hidden = true; > = float4(0.0, 0.0, 0.0, 0.0);
@@ -1749,6 +1828,7 @@ uniform bool DurabilityHide < hidden = true; > = false;
 uniform int LabelCount < hidden = true; > = 0;
 uniform float4 LabelBoxes[32] < hidden = true; >;
 uniform float LabelShifts[32] < hidden = true; >;
+uniform float LabelTurnH[32] < hidden = true; >;   // eyes by turns: each item label's half-disparity at its item's depth (as PlateTurnH)
 
 bool InBox(float2 uv, float4 box) { return uv.x >= box.x && uv.y >= box.y && uv.x < box.z && uv.y < box.w; }
 bool Kept(float2 uv) { return InBox(uv, LabelKeep0) || InBox(uv, LabelKeep1); }
@@ -1771,13 +1851,15 @@ float4 FadedLabel(float4 l)
     return float4(l.rgb, 1.0 - cover * k);
 }
 
-float4 GameLabels(float2 uv, float eyeSign)
+// layerEye: the eye the layer was laid out for, eyes by turns (+1 the left, -1 the right; the overlays' techniques); 0: the same layer for both
+float4 GameLabels(float2 uvIn, float eyeSign, float layerEye)
 {
+    const float2 uv = uvIn - float2(eyeSign < 0.0 ? LabelAxisR : 0.0, 0.0);   // (the right eye, off-centre: the layer laid out for the left eye's projection)
     const float2 flat = uv - float2(eyeSign * HudShift, 0.0);
     if (Kept(flat)) return tex2Dlod(GameLayerSmp, float4(flat, 0, 0));
     [loop] for (int i = 0; i < LabelCount; ++i)   // the item labels, each at its item's depth
     {
-        const float2 s = uv - float2(eyeSign * LabelShifts[i], 0.0);
+        const float2 s = uv - float2(eyeSign * LabelShifts[i] - layerEye * LabelTurnH[i], 0.0);
         if (InBox(s, LabelBoxes[i]))
         {
             float4 il = tex2Dlod(GameLayerSmp, float4(s, 0, 0));
@@ -1795,7 +1877,7 @@ float4 GameLabels(float2 uv, float eyeSign)
     [branch] if (PlateOwn && PlateBox.z > PlateBox.x)   // the plate at its own depth, sized and faded: none of the labels' shift (vr/plate_look.h LayerPixel)
     {
         const float2 c = 0.5 * (PlateBox.xy + PlateBox.zw);
-        const float2 ps = c + ((uv - float2(eyeSign * PlateShift, 0.0)) - c) / PlateScale;   // the plate's own pixel shown here
+        const float2 ps = c + ((uv - float2(eyeSign * PlateShift - layerEye * PlateTurnH, 0.0)) - c) / PlateScale;   // the plate's own pixel shown here
         if (InBox(ps, PlateBox))
         {
             const float4 p = tex2Dlod(GameLayerSmp, float4(ps, 0, 0));
@@ -1838,7 +1920,7 @@ bool InterfaceLit(float2 uv, float eyeSign)
 {
     if (!LabelsOn && !UiMaskOn) return false;
     float4 l = tex2Dlod(GameLayerSmp, float4(uv, 0, 0));
-    if (LabelsOn) l = GameLabels(uv, eyeSign);
+    if (LabelsOn) l = GameLabels(uv, eyeSign, 0.0);
     return l.a < 0.5 && max(l.r, max(l.g, l.b)) > 0.04;
 }
 
@@ -1851,8 +1933,9 @@ float4 GamePiece(sampler2D s, float4 box, float2 uv)
 
 // The toolbar and the map drawn back, as one premultiplied layer (alpha = the world through).
 // GameBarBox may be anywhere on the screen: [hud_*] bar_x / bar_y move it.
-float4 GamePieces(float2 uv, float eyeSign)
+float4 GamePieces(float2 uvIn, float eyeSign)
 {
+    const float2 uv = uvIn - float2(eyeSign < 0.0 ? LabelAxisR : 0.0, 0.0);   // (as GameLabels)
     const float2 src = uv - float2(eyeSign * HudShift, 0.0);
     float4 p = float4(0.0, 0.0, 0.0, 1.0);
     [branch] if (GameBarOn) p = GamePiece(GameBarSmp, GameBarBox, src - float2(eyeSign * GameBarShift, 0.0));
@@ -1865,12 +1948,12 @@ float4 GamePieces(float2 uv, float eyeSign)
 }
 
 // eyeSign: +1 the left eye (moves right = nearer), -1 the right one
-float3 GameHud(float2 uv, float eyeSign)
+float3 GameHud(float2 uv, float eyeSign, float layerEye)
 {
     float3 c = tex2D(FogColorSmp, uv).rgb;
     [branch] if (LabelsOn)
     {
-        const float4 l = GameLabels(uv, eyeSign);
+        const float4 l = GameLabels(uv, eyeSign, layerEye);
         c = c * saturate(l.a) + l.rgb;
     }
     const float4 p = GamePieces(uv, eyeSign);
@@ -2026,6 +2109,93 @@ float3 Hitboxes(float3 c, float2 p, int eye)
         c = lerp(c, col, saturate(alpha + 0.6 * rim * rim));
     }
     return c;
+}
+
+// vrcam [gameplay] teleport_circle (vr/point_cast.h): the point skill's arc while its button is held - an energy beam from the staff's tip down to the
+// circle on the ground - and the circle as a glowing ring. Ray-traced per eye in the capsules' frame (world units relative to where the hands hang, each eye
+// from its own camera), no depth (it is a guide: it shows through what stands in front of it). The beam: the pixel ray's nearest approach to its 16
+// segments - a white-hot core, a soft glow round it in the colour, a pulse flowing from the staff to the circle and a flicker; vrcam shakes its inner
+// points afresh every 45 ms (pointcast::Jitter), so it crackles like lightning. The ring: where the ray meets the circle's ground - a glowing line, a
+// slow breath, a wave running out from the middle to it, a faint fill. Added light (screen), never overbright. Cheap: only while PaOn, one loop of 16.
+// PaOn = false (the default, and all vrcam sends while nothing is held) leaves the picture exactly as it was.
+//   PaPts[i]  xyz the beam's points (world units, relative to where the hands hang), w the way along 0 (the staff) .. 1 (the circle)
+//   PaRing    xyz the circle's middle (same frame), w its radius
+//   PaLook    rgb the colour, w the strength 0 .. 1 ([gameplay] point_arc_color, point_arc_opacity)
+//   PaSize    x the beam's core radius, y the ring's line radius (world units), z seconds (wrapped), w the thinnest a line may get (radians from the eyes)
+uniform bool PaOn < hidden = true; > = false;
+uniform float4 PaPts[17] < hidden = true; >;
+uniform float4 PaRing < hidden = true; >;
+uniform float4 PaLook < hidden = true; > = float4(1.0, 0.15, 0.1, 0.6);
+uniform float4 PaSize < hidden = true; > = float4(0.04, 0.1, 0.0, 0.0012);
+
+// PARC-BEGIN (cleanroom/tests/point_arc_fx_test.cpp compiles the text between these marks and runs it on WARP)
+// The ray o + t d (d unit) and the segment a -> b at their nearest: the distance, with t there (along the ray) and s (along the segment, 0 .. 1).
+float RaySegment(float3 o, float3 d, float3 a, float3 b, out float t, out float s)
+{
+    const float3 ab = b - a, w = o - a;
+    const float abab = dot(ab, ab), abd = dot(ab, d), wd = dot(w, d), wab = dot(w, ab);
+    const float den = abab - abd * abd;
+    s = den > 1e-8 ? saturate((wab - wd * abd) / den) : 0.0;
+    t = max(0.0, s * abd - wd);
+    s = abab > 1e-8 ? saturate((dot(o + d * t - a, ab)) / abab) : 0.0;   // (the segment's own nearest to that point of the ray)
+    return length(o + d * t - (a + ab * s));
+}
+// The light the beam and the ring give the ray ro + t rd (rd unit), at the strength PaLook.w.
+float3 PointArcLight(float3 ro, float3 rd)
+{
+    const float time = PaSize.z;
+    const float3 col = PaLook.rgb;
+    const float strength = PaLook.w;
+    float3 light = 0.0;
+    // the beam
+    float best = 1e9, along = 0.0, at = 0.0;
+    [loop] for (int i = 0; i < 16; ++i)
+    {
+        float t, s;
+        const float dist = RaySegment(ro, rd, PaPts[i].xyz, PaPts[i + 1].xyz, t, s);
+        if (dist < best) { best = dist; along = lerp(PaPts[i].w, PaPts[i + 1].w, s); at = t; }
+    }
+    const float r = max(PaSize.x, at * PaSize.w);
+    const float q = best / r;
+    [branch] if (q < 14.0)
+    {
+        const float core = exp(-q * q * 1.5);
+        const float glow = exp(-q * 0.45) * 0.55;
+        const float pulse = 0.65 + 0.35 * sin(along * 38.0 - time * 11.0);                    // flowing from the staff to the circle
+        const float surge = 0.75 + 0.25 * sin(along * 7.0 - time * 3.1) * sin(time * 2.3);   // a slower swell along it
+        const float flicker = 0.85 + 0.15 * sin(time * 61.0 + along * 23.0) * sin(time * 37.0);
+        const float3 tint = lerp(col, col.gbr * 0.35 + col * 0.65, 0.5 + 0.5 * sin(along * 6.2832 - time * 1.7));   // the colour shifting along its length
+        const float fade = smoothstep(0.0, 0.04, along);   // born at the staff's tip, not cut off there
+        light += (tint * glow + lerp(tint, 1.0, 0.75) * core) * pulse * surge * flicker * fade;
+    }
+    // the ring, where this ray meets its ground
+    [branch] if (abs(rd.y) > 1e-4)
+    {
+        const float t = (PaRing.y - ro.y) / rd.y;
+        [branch] if (t > 0.0)
+        {
+            const float2 h = (ro + rd * t).xz - PaRing.xz;
+            const float rr = length(h);
+            const float w = max(PaSize.y, t * PaSize.w);
+            const float R = PaRing.w;
+            const float edge = abs(rr - R) / w;
+            const float breath = 0.75 + 0.25 * sin(time * 4.0);
+            const float spin = 0.8 + 0.2 * sin((rr > 1e-5 ? atan2(h.y, h.x) : 0.0) * 6.0 + time * 3.0);   // (atan2 of 0, 0 is no number)
+            const float wave = frac(time * 0.9);                                                  // a ring running out from the middle
+            const float waveEdge = abs(rr - R * wave) / w;
+            float ring = exp(-edge * edge * 1.5) * 1.3 + exp(-edge * 0.5) * 0.35;
+            ring = ring * breath * spin + exp(-waveEdge * waveEdge * 1.5) * (1.0 - wave) * 0.6;
+            const float fill = rr < R ? 0.12 * (0.6 + 0.4 * breath) * smoothstep(R, 0.0, rr) : 0.0;
+            light += col * (ring + fill) + ring * ring * 0.15;
+        }
+    }
+    return light * strength;
+}
+// PARC-END
+float3 PointArc(float3 c, float2 p, int eye)
+{
+    const float3 light = PointArcLight(eye == 0 ? PhantomEye0 : PhantomEye1, PixelRayDir(p, eye));
+    return 1.0 - (1.0 - c) * (1.0 - saturate(light));   // screen: adds light, never overbrights
 }
 
 // vrcam [hud] hand_vitals, style "orbs" (vr/hand_orbs.h, VR first person F4 only): the hero's life (red) and mana (blue) as two glass balls
@@ -2782,6 +2952,7 @@ float3 Phantom(float4 pos, float2 uv, int eye, bool made)
 {
     float3 c = tex2D(FogColorSmp, uv).rgb;
     [branch] if (HitboxOn) c = Hitboxes(c, pos.xy, eye);
+    [branch] if (PaOn) c = PointArc(c, pos.xy, eye);   // [gameplay] teleport_circle: the point skill's beam and ring
     [branch] if (OrbOn)   // the life and mana balls on the wrists: this eye's ray, the game's depth here
     {
         const float d = OverlayDepth(uv, eye, made);
@@ -2845,13 +3016,16 @@ float3 LowHp(float3 c, float2 uv)
 float3 PS_Phantom(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return OverlaysApart ? tex2D(FogColorSmp, uv).rgb : LowHp(Phantom(pos, uv, 0, false), uv); }
 float3 PS_PhantomR(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return OverlaysApart ? tex2D(FogColorSmp, uv).rgb : LowHp(Phantom(pos, uv, 1, false), uv); }
 
-float3 PS_GameHud(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return OverlaysApart ? tex2D(FogColorSmp, uv).rgb : GameHud(uv, 1.0); }
-float3 PS_GameHudR(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return OverlaysApart ? tex2D(FogColorSmp, uv).rgb : GameHud(uv, -1.0); }
+float3 PS_GameHud(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return OverlaysApart ? tex2D(FogColorSmp, uv).rgb : GameHud(uv, 1.0, LayerOwnEye ? 1.0 : 0.0); }
+float3 PS_GameHudR(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return OverlaysApart ? tex2D(FogColorSmp, uv).rgb : GameHud(uv, -1.0, LayerOwnEye ? -1.0 : 0.0); }
 // D2R_Overlay / D2R_Overlay_R: the same, always drawn (OverlaysApart is what leaves them out of the techniques above)
 float3 PS_OvHud(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return Hud(uv, HudShift); }
 float3 PS_OvHudR(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return Hud(uv, -HudShift); }
-float3 PS_OvGameHud(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return GameHud(uv, 1.0); }
-float3 PS_OvGameHudR(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return GameHud(uv, -1.0); }
+// (eyes by turns: the layer laid out for the eye drawn - this eye in D2R_Overlay(_R), the other one in D2R_OverlayMade(_R): PlateTurnH)
+float3 PS_OvGameHud(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return GameHud(uv, 1.0, 1.0); }
+float3 PS_OvGameHudR(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return GameHud(uv, -1.0, -1.0); }
+float3 PS_OvMadeGameHud(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return GameHud(uv, 1.0, -1.0); }
+float3 PS_OvMadeGameHudR(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return GameHud(uv, -1.0, 1.0); }
 float3 PS_OvPhantom(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return LowHp(Phantom(pos, uv, 0, false), uv); }
 float3 PS_OvPhantomR(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return LowHp(Phantom(pos, uv, 1, false), uv); }
 float3 PS_OvMadePhantom(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return LowHp(Phantom(pos, uv, 0, true), uv); }
@@ -3078,12 +3252,12 @@ technique D2R_Overlay_R < hidden = true; enabled = false; ui_tooltip = "vrcam's 
 technique D2R_OverlayMade < hidden = true; enabled = false; ui_tooltip = "vrcam's eyes by turns: the overlays of the left eye's picture when it is the one made (drawn by vrcam)."; >
 {
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_OvHud; }
-    pass { VertexShader = VS_Fullscreen; PixelShader = PS_OvGameHud; }
+    pass { VertexShader = VS_Fullscreen; PixelShader = PS_OvMadeGameHud; }
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_OvMadePhantom; }
 }
 technique D2R_OverlayMade_R < hidden = true; enabled = false; ui_tooltip = "vrcam's eyes by turns: the overlays of the right eye's picture when it is the one made (drawn by vrcam)."; >
 {
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_OvHudR; }
-    pass { VertexShader = VS_Fullscreen; PixelShader = PS_OvGameHudR; }
+    pass { VertexShader = VS_Fullscreen; PixelShader = PS_OvMadeGameHudR; }
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_OvMadePhantomR; }
 }

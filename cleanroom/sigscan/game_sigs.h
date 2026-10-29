@@ -132,6 +132,14 @@ inline constexpr Sig kSigs[] = {
     {"VfxSetFloat", 0xF6A380, Kind::Code, "40 53 56 48 81 EC 88 00 00 00 48 8B 05 ?? ?? ?? ?? 48 33 C4 48 89 44 24 78 48 8B D9 F3 0F 11 54 24 38", 0xF6A380, 0, 0, 0, 0, "40 53 56 48 81 EC 88 00 00 00 48 8B 05 ?? ?? ?? ??", nullptr, "the hero's own effects are not dimmed", "Aim and attack"},
     // the global holding the string object "Fade", the parameter name the game sets to the unit's alpha on the effects of its overlays (its address is what the setter takes)
     {"OverlayFadeName", 0x341D348, Kind::Ref, "48 8D 15 ?? ?? ?? ?? 4C 89 85 40 01 00 00 0F 28 D6 E8 ?? ?? ?? ??", 0x76D13F, 0, 3, 7, 0, nullptr, nullptr, "the hero's own effects are not dimmed", "Aim and attack"},
+    // the effect's playback speed (effect, float), called
+    {"EffectSetSpeed", 0xA4ABB0, Kind::Code, "40 57 48 83 EC 30 48 8B 41 40 48 8B F9 0F 29 74 24 20 0F 28 F1", 0xA4ABB0, 0, 0, 0, 0, "40 57 48 83 EC 30 48 8B 41 40 48 8B F9 0F 29 74 24 20", nullptr, "Bone Armor turns at the game's speed in F4", "Aim and attack"},
+    // ModelInstance::SetVisibleLayers(instance, mask): bit 31 = the whole model hidden, called
+    {"ModelSetLayers", 0xF3F840, Kind::Code, "4C 8B DC 56 48 83 EC 70 48 8B 05 ?? ?? ?? ?? 48 33 C4 48 89 44 24 58", 0xF3F840, 0, 0, 0, 0, "4C 8B DC 56 48 83 EC 70 48 8B 05 ?? ?? ?? ??", nullptr, "Bone Armor's bones are drawn in F4", "Aim and attack"},
+    // the game's SRW lock (an import thunk), called on the renderer's model list lock
+    {"ModelListLock", 0x122AD60, Kind::Ref, "E8 ?? ?? ?? ?? 48 81 C7 B8 EF 02 00 4C 8D 7D 6F 48 B8 FF FF FF FF FF FF FF 7F", 0xE1B3A4, 0, 1, 5, 0, "48 FF 25 ?? ?? ?? ?? CC", nullptr, "Bone Armor's bones are drawn in F4", "Aim and attack"},
+    // the game's SRW unlock (an import thunk), called on the renderer's model list lock
+    {"ModelListUnlock", 0x122AD90, Kind::Ref, "E8 ?? ?? ?? ?? 49 8B 04 24 8B 98 D0 00 00 00 E8 ?? ?? ?? ?? 48 8B C8", 0xE1B500, 0, 1, 5, 0, "48 FF 25 ?? ?? ?? ?? CC", nullptr, "Bone Armor's bones are drawn in F4", "Aim and attack"},
     // the game's table sets (DataTables* x 4, 16-byte steps): +0x14D8 is the AnimData.D2 table
     {"AnimTables", 0x2A9A580, Kind::Ref, "48 8D 0D ?? ?? ?? ?? 48 03 C0 48 8B 04 C1 48 8B 80 D8 14 00 00 48 83 C4 28", 0x300760, 0, 3, 7, 0, nullptr, nullptr, "a quicker bow release", "Aim and attack"},
     // the controller skill bank in use (0 or 16), called
@@ -158,10 +166,22 @@ inline constexpr Sig kSigs[] = {
     {"ClientIndex", 0x9A820, Kind::Code, "48 89 5C 24 08 48 89 74 24 20 57 48 83 EC 20 48 8B D9 E8 ?? ?? ?? ??", 0x9A820, 0, 0, 0, 0, "48 89 5C 24 08 48 89 74 24 20 57 48 83 EC 20", nullptr, "flat click goes where the pointer is", "Chat, walking, clicks"},
     // unit under the pointer, called (hooked for spell aim)
     {"HoverUnit", 0xF1900, Kind::Code, "40 53 55 56 48 83 EC 30 8B F1 8B D9 48 89 5C 24 58 48 83 FE 08", 0xF1900, 0, 0, 0, 0, "40 53 55 56 48 83 EC 30 8B F1 8B D9", nullptr, "flat click goes where the pointer is", "Chat, walking, clicks"},
+    // the mouse pixel -> the ground's cell (physics manager, float* x, float* y, bcVec2 pixel), hooked
+    {"MouseGround", 0x7E7CE0, Kind::Code, "40 53 57 48 81 EC 98 00 00 00 48 8B 05 ?? ?? ?? ?? 48 33 C4 48 89 84 24 80 00 00 00 48 8B 81 28 01 00 00 49 8B F8", 0x7E7CE0, 0, 0, 0, 0, "40 53 57 48 81 EC 98 00 00 00", nullptr, "flat aim on raised ground", "Chat, walking, clicks"},
+    // D2PhysicsManager::RayCastMouseClosest (manager, out, filter, pixel, world), called
+    {"RayCastMouse", 0x7E7E50, Kind::Code, "4C 8B DC 55 53 56 57 41 56 41 57 49 8D 6B C8 48 81 EC 08 01 00 00 48 8B 05 ?? ?? ?? ??", 0x7E7E50, 0, 0, 0, 0, "4C 8B DC 55 53 56 57 41 56 41 57 49 8D 6B C8 48 81 EC 08 01 00 00", nullptr, "flat aim on raised ground", "Chat, walking, clicks"},
+    // the 3D scene's static (+0x18 the scene, +0x1E60 its floor query's filters), called
+    {"SceneGet", 0x685750, Kind::Ref, "E8 ?? ?? ?? ?? 45 33 C9 48 8D 54 24 28 4D 8B C4 48 8B 48 18", 0x1055C3, 0, 1, 5, 0, "48 83 EC 28 65 48 8B 04 25 58 00 00 00", nullptr, "flat aim on raised ground", "Chat, walking, clicks"},
+    // a render mesh's materials built (render mesh, model path, file, Granny mesh, pass), hooked
+    {"MeshMaterials", 0xFA1700, Kind::Code, "48 8B C4 4C 89 40 18 48 89 50 10 55 41 54 41 56 48 83 EC 70 49 8B E9", 0xFA1700, 0, 0, 0, 0, "48 8B C4 4C 89 40 18 48 89 50 10 55 41 54 41 56 48 83 EC 70", nullptr, "flat: no town portal oval", "Chat, walking, clicks"},
+    // LevelTranslationLayer::CalculateHeightOffset (layer, DRLG_ROOM*, const float edges[4]) -> float, hooked
+    {"RoomHeight", 0x6A2A40, Kind::Code, "48 8B C4 53 56 57 41 55 48 83 EC 58 0F 29 78 B8 48 8B DA", 0x6A2A40, 0, 0, 0, 0, "48 8B C4 53 56 57 41 55 48 83 EC 58 0F 29 78 B8", nullptr, "rooms keep their first height", "Chat, walking, clicks"},
     // ControllerInputHandler walking stick (handler, float2* out, player), hooked
     {"StickGet", 0x13CF10, Kind::Ref, "E8 ?? ?? ?? ?? F3 0F 10 58 04 F3 0F 10 38 0F 28 C3 0F 28 CF", 0x2AD6BD, 0, 1, 5, 0, "48 89 5C 24 08 48 89 74 24 18 57 48 83 EC 20", nullptr, "VR walk straight from BodyWalk", "Chat, walking, clicks"},
     // return address of the walk's StickGet call in the per-player update
     {"WalkStickRet", 0x14C647, Kind::Code, "F3 0F 10 00 F3 0F 10 48 04 EB 2B 48 8D 44 24 40 4C 89 64 24 40", 0x14C647, 0, 0, 0, 0, "F3 0F 10 00 F3 0F 10 48 04", nullptr, "VR walk straight from BodyWalk", "Chat, walking, clicks"},
+    // the ControllerManager object (its getter returns it); its float at +0x1F94 is stickRunToggleThreshold (controllersettings.json), read-only
+    {"ControllerMgr", 0x2A4EAB0, Kind::Ref, "75 EC 48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 48 8D 0D ?? ?? ?? ?? 48 83 C4 28 E9 ?? ?? ?? ??", 0x1C7E212, 14, 3, 7, 0, nullptr, nullptr, "walk / run by the stick's lean", "Chat, walking, clicks"},
     // the client's one funnel for a player's commands (cmd 1..0x42 = the D2 packets: 1 walk / 3 run to a point, 2 / 4 to a unit, 5.. skills, 0x42 the stick's direction; unit, a1, a2): client prediction, then the packet; hooked
     {"PlayerCommand", 0xFABE0, Kind::Code, "40 55 53 41 55 41 56 41 57 48 8D 6C 24 C9 48 81 EC A0 00 00 00 48 8B 05 ?? ?? ?? ??", 0xFABE0, 0, 0, 0, 0, "40 55 53 41 55 41 56 41 57 48 8D 6C 24 C9 48 81 EC A0 00 00 00", nullptr, "block stray walks", "Chat, walking, clicks"},
     // the client's sender of a map click's command (command* = flags, actor, target, x, y, walk / run id, skill): the pad's casts (click types 7, 9; 8 through 0x1013B0) come here and run or stand by it; hooked to be told, [debug] shot_trace
@@ -210,6 +230,12 @@ inline constexpr Sig kSigs[] = {
     {"TypeSeqTransform", 0x20B8F0, Kind::Ref, "E8 ?? ?? ?? ?? 0F 10 44 24 20 89 03 48 8B C3 C7 43 04 8B 52 7F 3C 0F 11 43 08", 0x2011FE, 0, 1, 5, 0, "48 83 EC 28 65 48 8B 04 25 58 00 00 00", nullptr, "first-person body", "The body's skeleton"},
     // entt type_seq<SkeletonComponent>::value()
     {"TypeSeqSkeleton", 0x67DE50, Kind::Ref, "E8 ?? ?? ?? ?? 0F 10 44 24 20 89 03 48 8B C3 C7 43 04 B2 89 98 67 0F 11 43 08", 0x6688AE, 0, 1, 5, 0, "48 83 EC 28 65 48 8B 04 25 58 00 00 00", nullptr, "first-person body", "The body's skeleton"},
+    // entt type_seq<ModelComponent>::value() (a model's meshes: [weight] monster_bodies)
+    {"TypeSeqModel", 0x1DBE40, Kind::Ref, "E8 ?? ?? ?? ?? 0F 10 44 24 20 89 03 48 8B C3 C7 43 04 68 22 59 18 0F 11 43 08", 0x1CCF6E, 0, 1, 5, 0, "48 83 EC 28 65 48 8B 04 25 58 00 00 00", nullptr, "monster bodies", "The body's skeleton"},
+    // entt type_seq<AttachedChildrenComponent>::value() (a unit's parts: [weight] monster_bodies)
+    {"TypeSeqChildren", 0x799040, Kind::Ref, "E8 ?? ?? ?? ?? 0F 10 44 24 20 89 03 48 8B C3 C7 43 04 16 40 77 F6 0F 11 43 08", 0x6BE01E, 0, 1, 5, 0, "48 83 EC 28 65 48 8B 04 25 58 00 00 00", nullptr, "monster bodies", "The body's skeleton"},
+    // entt type_seq<UnitPartComponent>::value() (a part's slot: [weight] monster_bodies)
+    {"TypeSeqUnitPart", 0x67E1D0, Kind::Ref, "E8 ?? ?? ?? ?? 0F 10 44 24 20 89 03 48 8B C3 C7 43 04 C1 D3 58 58 0F 11 43 08", 0x6687EE, 0, 1, 5, 0, "48 83 EC 28 65 48 8B 04 25 58 00 00 00", nullptr, "monster bodies", "The body's skeleton"},
     // input-event preflight (asks for KB/M, clears the pads), hooked
     {"InputActivity", 0x13B480, Kind::Code, "48 83 EC 48 E8 ?? ?? ?? ?? 84 C0 0F 85 ?? ?? ?? ?? E8 ?? ?? ?? ?? 84 C0", 0x13B480, 0, 0, 0, 0, "48 83 EC 48 E8 ?? ?? ?? ?? 84 C0 0F 85 ?? ?? ?? ??", nullptr, "laser pointer in menus", "Laser menus"},
     // xor ecx, ecx; call LayoutRequest in the preflight
@@ -322,6 +348,26 @@ inline constexpr Sig kSigs[] = {
     {"AttackTargetCall1", 0x42FFA5, Kind::Code, "E8 ?? ?? ?? ?? 48 8B D8 48 85 C0 75 12 48 8B D6 49 8B CE", 0x42FFA5, 0, 0, 0, 0, "E8 ?? ?? ?? ?? 48 8B D8 48 85 C0", nullptr, "direct hit", "Direct hit"},
     // call ServerTarget inside the server's basic attack (return 0x43010A)
     {"AttackTargetCall2", 0x430105, Kind::Code, "E8 ?? ?? ?? ?? 48 85 C0 74 69 45 33 C9 C6 44 24 20 01 4C 8B C0", 0x430105, 0, 0, 0, 0, "E8 ?? ?? ?? ?? 48 85 C0 74 69", nullptr, "direct hit", "Direct hit"},
+    // the server's gate for a new mode out of an attack (game, unit, mode, target, flag), hooked: lets the stick's walk in after the blow
+    {"PlrModeGate", 0x42D840, Kind::Code, "48 89 5C 24 08 48 89 6C 24 10 48 89 74 24 18 57 41 54 41 55 41 56 41 57 48 83 EC 30 48 8B F2 48 8B F9", 0x42D840, 0, 0, 0, 0, "48 89 5C 24 08 48 89 6C 24 10 48 89 74 24 18", nullptr, "move while attacking", "Direct hit"},
+    // the server's frame trigger of a player's mode (game, unit, code, arg), hooked: notes the attack's action frame
+    {"PlrFrameTrigger", 0x42A940, Kind::Code, "48 89 5C 24 08 48 89 6C 24 10 48 89 74 24 18 48 89 7C 24 20 41 56 48 83 EC 20 48 8B F9 41 8B F1 48 8B CA", 0x42A940, 0, 0, 0, 0, "48 89 5C 24 08 48 89 6C 24 10 48 89 74 24 18", nullptr, "move while attacking", "Direct hit"},
+    // the frame of a unit's next event of a type (game, unit, type, 0), called: the attack's end (event 1)
+    {"UnitEventFrame", 0x48B230, Kind::Code, "48 89 5C 24 10 48 89 6C 24 18 57 41 56 41 57 48 83 EC 30 48 8B CA 41 8B E9", 0x48B230, 0, 0, 0, 0, "48 89 5C 24 10 48 89 6C 24 18 57 41 56 41 57", nullptr, "move while attacking", "Direct hit"},
+    // the controller's per-player update (manager, player, dt), hooked: sends the walk while the attack's rest plays
+    {"CtrlPlayerUpdate", 0x14C540, Kind::Code, "48 8B C4 55 53 56 41 54 48 8D 68 A8 48 81 EC 38 01 00 00 48 89 78 20", 0x14C540, 0, 0, 0, 0, "48 8B C4 55 53 56 41 54 48 8D 68 A8 48 81 EC 38 01 00 00", nullptr, "move while attacking", "Direct hit"},
+    // the stick's walk command (unit, dir, mag, run): command 0x42, called
+    {"WalkDirection", 0xFEFE0, Kind::Code, "40 53 48 83 EC 20 48 8B D9 45 0F B6 C1 48 8B CA 0F 28 CA", 0xFEFE0, 0, 0, 0, 0, "40 53 48 83 EC 20 48 8B D9 45 0F B6 C1", nullptr, "move while attacking", "Direct hit"},
+    // the command flags word (low byte Stand Still, high byte Run), called
+    {"CmdFlags", 0x8AFD0, Kind::Code, "40 53 48 83 EC 20 33 C0 BB 01 00 00 00 83 3D ?? ?? ?? ?? 00 66 89 44 24 30", 0x8AFD0, 0, 0, 0, 0, "40 53 48 83 EC 20 33 C0 BB 01 00 00 00", nullptr, "move while attacking", "Direct hit"},
+    // the server's gate for any new player mode (game, unit, mode, target, flag), hooked: a joined hero's next attack waits out its cut animation
+    {"PlrModeAllowed", 0x42BFB0, Kind::Code, "48 89 5C 24 08 48 89 6C 24 10 48 89 74 24 18 48 89 7C 24 20 41 56 48 83 EC 30 8B 74 24 60 49 8B F9 41 8B D8", 0x42BFB0, 0, 0, 0, 0, "48 89 5C 24 08 48 89 6C 24 10 48 89 74 24 18", nullptr, "move while attacking", "Direct hit"},
+    // a unit's weapon item (unit), the one the server's Attack takes - called: a hero's weapon kind on our server
+    {"ServerUnitWeapon", 0x34B000, Kind::Code, "40 53 55 56 57 41 56 41 57 48 83 EC 38 48 8B F9 48 85 C9", 0x34B000, 0, 0, 0, 0, "40 53 55 56 57 41 56 41 57 48 83 EC 38", nullptr, "move while attacking", "Direct hit"},
+    // u32 gnGameType: 0 = single player (the game's own IsSinglePlayer 0x8D4B0), 2 = GT_JOIN_MULTIPLAYER, ...
+    {"ClientGameType", 0x2A233F4, Kind::Ref, "8B 05 ?? ?? ?? ?? 85 C0 74 08 83 C0 FB 83 F8 03 77 0A", 0x8CF2D, 0, 2, 6, 0, nullptr, nullptr, "move while attacking", "Direct hit"},
+    // u32 geGameType: LAUNCH_SINGLE_PLAYER 0, LAUNCH_BNET_PLAYER 1, LAUNCH_TCPIP_PLAYER 2
+    {"LaunchGameType", 0x32EF888, Kind::Ref, "F7 05 ?? ?? ?? ?? FD FF FF FF 74 14 48 8D 4C 24 48 C6 44 24 48 00", 0x5FF99C, 0, 2, 10, 0, nullptr, nullptr, "move while attacking", "Direct hit"},
     // index of the local player (a getter), called
     {"LocalIndex", 0x8B2D0, Kind::Ref, "E8 ?? ?? ?? ?? 3B F8 75 13 8B CF E8 ?? ?? ?? ?? 84 C0 74 08", 0x7B3A1, 0, 1, 5, 0, "8B 05 ?? ?? ?? ?? C3 CC", nullptr, "skill wheel", "Skill wheel"},
     // the client's player unit by index, called
@@ -334,6 +380,8 @@ inline constexpr Sig kSigs[] = {
     {"SkillNodeLayout", 0x33DD09, Kind::Code, "48 8B 00 48 85 C0 74 18 48 8B 08 0F BF 11 3B D7 75 05", 0x33DD09, 0, 0, 0, 0, "48 8B 00 48 85 C0 74 18", nullptr, "skill wheel", "Skill wheel"},
     // mov rax, [player + 0x100]: the head of the player's skill list
     {"SkillListHead", 0x34B70E, Kind::Code, "48 83 C4 20 5B C3 48 8B 81 00 01 00 00 48 83 C4 20 5B", 0x34B708, 6, 0, 0, 0, "48 8B 81 00 01 00 00 48 83 C4 20", nullptr, "skill wheel", "Skill wheel"},
+    // a unit's left skill node (unit): [unit + 0x100] then the skill list's left one, called read-only
+    {"UnitLeftSkill", 0x34A540, Kind::Ref, "E8 ?? ?? ?? ?? 41 B8 CE 08 00 00 EB 18 45 33 ED EB AE", 0x149708, 0, 1, 5, 0, "40 53 48 83 EC 20 48 8B D9", nullptr, "Direct hit as a joined player", "Skill wheel"},
     // cmp dword [node + 0x4C], -1 ... mov esi, [node + 0x40]: a skill node's owner and level
     {"SkillPositiveLevel", 0x33A68E, Kind::Code, "83 7A 4C FF 48 89 74 24 30 8B 72 40 48 89 7C 24 40 75 0A", 0x33A68E, 0, 0, 0, 0, "83 7A 4C FF 48 89 74 24 30", nullptr, "skill wheel", "Skill wheel"},
     // movzx eax, byte [row + 0x27]: the Skills row's left-hand flag byte
@@ -366,6 +414,12 @@ inline constexpr Sig kSigs[] = {
     {"RoofMatFlagCall", 0xF9AEDA, Kind::Code, "49 8B 56 24 4C 8D 8D F0 03 00 00 49 8B 4E 1C 4C 8D 05 ?? ?? ?? ?? 40 88 74 24 45 E8 ?? ?? ?? ?? 84 C0 74 10 48 8B 85 F8 03 00 00 0F B6 00 88 44 24 42", 0xF9AEDA, 0, 0, 0, 0, "49 8B 56 24 4C 8D 8D F0 03 00 00 49 8B 4E 1C 4C 8D 05 ?? ?? ?? ?? 40 88 74 24 45 E8 ?? ?? ?? ?? 84 C0 74 10 48 8B 85 F8 03 00 00 0F B6 00", nullptr, "roof undersides", "Roofs, hanging props"},
     // the lookup hands back (definition, value) as pointers
     {"GrannyFindResult", 0x16317C3, Kind::Code, "48 85 FF 74 07 48 89 1F 48 89 77 08 B0 01 EB DB", 0x16317C3, 0, 0, 0, 0, "48 85 FF 74 07 48 89 1F 48 89 77 08 B0 01", nullptr, "roof undersides", "Roofs, hanging props"},
+    // a model's draw calls for one pass (.., entity, transform, model, .., pass: 1 the shadow passes, 0 the others), hooked
+    {"ModelDrawCollect", 0xEDB450, Kind::Code, "44 89 4C 24 20 48 89 54 24 10 55 53 56 41 54 41 56 48 8D AC 24 40 FE FF FF", 0xEDB450, 0, 0, 0, 0, "44 89 4C 24 20 48 89 54 24 10 55 53 56 41 54", nullptr, "the head's shadow in first person", "The head's shadow"},
+    // Granny's BuildIndexedCompositeBufferTransposed thunk (skeleton, world pose, indices, count, out): a mesh's skinning matrices, hooked
+    {"GrannyCompositeT", 0x1614DA0, Kind::Code, "48 89 5C 24 08 48 89 6C 24 10 48 89 74 24 18 57 48 83 EC 40 41 8B D9 49 8B F8 48 8B F2 48 8B E9 E8 ?? ?? ?? ?? 84 C0 75 42 48 8D 4C 24 30 E8 ?? ?? ?? ?? 4C 8B 54 24 30 4D 85 D2 74 2E 48 8B 44 24 38 4C 8D 05 ?? ?? ?? ?? 48 89 44 24 28 BA 43 00 00 00 48 8D 05 ?? ?? ?? ?? 41 B9 95 4A 00 00", 0x1614DA0, 0, 0, 0, 0, "48 89 5C 24 08 48 89 6C 24 10 48 89 74 24 18 57", nullptr, "the head's shadow in first person", "The head's shadow"},
+    // an entity's bone attachment (registry, entity): +0 the bone, +0xC8 the SkeletonInstance it hangs on, called
+    {"AttachmentOf", 0xDF5A80, Kind::Ref, "E8 ?? ?? ?? ?? 4C 8B F0 48 85 C0 0F 84 ?? ?? ?? ?? 48 8B 98 D0 00 00 00 33 F6", 0xE3B406, 0, 1, 5, 0, "48 89 5C 24 08 48 89 74 24 18", nullptr, "the head's shadow in first person", "The head's shadow"},
 };
 
 }   // namespace d2rsig

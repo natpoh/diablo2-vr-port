@@ -26,6 +26,7 @@
 #include "melee_trigger.h"
 #include "melee_trigger_wire.h"
 #include "skill_wheel.h"
+#include "throw_gesture_wire.h"
 #include "view_gate.h"
 
 namespace meleetrigger {
@@ -61,6 +62,9 @@ void OnFrame(const directinput::Frame& f, void*) {
     facts.menu = (f.flags & (directinput::kInMenu | directinput::kUiUp)) != 0;
     facts.touchLive = meleetouch::Live(kLiveMs, &facts.weaponType);
     facts.rtSkill = skillwheel::TriggerCastsSkill();   // [openxr] skill_rt_a: the trigger is the RT slot's, a skill is on it
+    facts.thrownKind = throwwire::ThrownInPlay();      // a thrown weapon in hand, the throw by gesture on: withheld between throws too
+    facts.thrownHeld = facts.thrownKind != 0 && meleetouch::ThrownTouch();
+    if (!facts.touchLive && facts.thrownHeld) facts.weaponType = facts.thrownKind;
     const float trigger[2] = {f.hand[0].trigger, f.hand[1].trigger};   // (direct_input's hands: 0 left, 1 right)
     const Gate::Out o = gate.Step(facts, trigger, f.time);
     if (o.v.drop) {

@@ -25,12 +25,29 @@
 // hud::SetGameInterfaceScale), the file's s only as a second guess; the canvas the viewport the interface is drawn through when there is
 // one; and the box's outer edge anywhere from the picture's edge to the area's side. The box's size and its top stay as they were, as
 // fractions of the canvas: nothing measured in pixels.
+//
+// The box's WIDTH follows the camera's projection (2026-10-26, 0.183): the game sizes its map's box and draws its tiles by the world
+// camera's x scale against its y scale. Its own camera keeps them to the picture's shape; our VR first person ([openxr] runtime_fov=1,
+// on since 0.181) draws one centred frustum from the headset's angles whatever the window's shape. In a square window that is the same
+// (1.04); in a wide one (the author's: the game started flat in a maximized 3840x2136 window, the headset switched on in the game) the
+// map's box came 0.66 of the picture wide - x 1258-3792, y 0-818, its tiles' iso diamonds ~3.5:1 instead of 2:1 - past the half of
+// the picture a box may have, so the map stayed in the picture, at its top: high over the eyes in the headset. So the width's bounds
+// are taken in the map's own shape: the box's width over Stretch, the projection's x scale over the one the picture's shape gives.
 
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
 
 namespace minimapbox {
+
+// How much wider than the game's own camera would have it the map is drawn: (P00 / P11) of the projection in force times the canvas's
+// width over its height. 1 for a projection made for the picture's shape (the game's own, our flat and other views); 1 when not known
+// (0 given), or a number that makes no sense.
+inline float Stretch(float projX, float projY, uint32_t w, uint32_t h) {
+    if (!(projX > 0.0f) || !(projY > 0.0f) || !w || !h || !std::isfinite(projX) || !std::isfinite(projY)) return 1.0f;
+    const float s = projX / projY * (float)w / (float)h;
+    return s >= 0.25f && s <= 4.0f ? s : 1.0f;
+}
 
 struct Box { int32_t left = 0, top = 0, right = 0, bottom = 0; };
 // The picture the interface is laid out over, in the layer's pixels: the viewport it is drawn through, or the whole layer.
@@ -59,13 +76,15 @@ inline Canvas CanvasOf(uint32_t layerW, uint32_t layerH, float vx, float vy, flo
 }
 
 // 0: not the map's box at the area fraction `safe`; 1: a box in the top left corner; 2: the top right one. `corner` ([hud] map_corner):
-// 0 either, 1 the left one only, 2 the right one only.
-inline int Corner(const Box& r, const Canvas& c, float safe, int corner) {
+// 0 either, 1 the left one only, 2 the right one only. `stretch`: Stretch - the box's width bounds in the map's own shape (it never
+// reaches past the picture).
+inline int Corner(const Box& r, const Canvas& c, float safe, int corner, float stretch = 1.0f) {
     if (c.w < 64 || c.h < 64 || !std::isfinite(safe) || safe <= 0.0f) return 0;
     const float s = std::clamp(safe, kSafeMin, kSafeMax), W = (float)c.w, H = (float)c.h;
     const float l = (float)(r.left - c.x), t = (float)(r.top - c.y), rr = (float)(r.right - c.x), b = (float)(r.bottom - c.y);
     const float rw = rr - l, rh = b - t;
-    if (!(rw > W / 8.0f && rw < W / 2.0f && rh > H / 8.0f && rh < 0.6f * H)) return 0;
+    const float f = std::isfinite(stretch) ? std::clamp(stretch, 0.25f, 4.0f) : 1.0f;
+    if (!(rw > W / 8.0f * f && rw < std::min(W / 2.0f * f, W) && rh > H / 8.0f && rh < 0.6f * H)) return 0;
     const float side = 0.5f * W * (1.0f - s), top = 0.5f * H * (1.0f - s), tol = kTol * H;
     if (std::fabs(t - top) >= tol) return 0;
     const bool atLeft = l + rr < W && l > -tol && l < side + tol;
@@ -75,10 +94,30 @@ inline int Corner(const Box& r, const Canvas& c, float safe, int corner) {
     return 0;
 }
 
+// Why Corner says 0 for a box, for the log (hud.cpp TellNoMap; 2026-10-28, a player at 2764x2780 whose log could not tell the corner rule from the
+// size): "no area" (no canvas or interface size), "width", "height", "top" (not at the area's top), "side" (in neither top corner), "corner" (in the
+// other corner than [hud] map_corner takes); nullptr when Corner takes it. The same steps as Corner.
+inline const char* WhyNot(const Box& r, const Canvas& c, float safe, int corner, float stretch = 1.0f) {
+    if (c.w < 64 || c.h < 64 || !std::isfinite(safe) || safe <= 0.0f) return "no area";
+    const float s = std::clamp(safe, kSafeMin, kSafeMax), W = (float)c.w, H = (float)c.h;
+    const float l = (float)(r.left - c.x), t = (float)(r.top - c.y), rr = (float)(r.right - c.x), b = (float)(r.bottom - c.y);
+    const float rw = rr - l, rh = b - t;
+    const float f = std::isfinite(stretch) ? std::clamp(stretch, 0.25f, 4.0f) : 1.0f;
+    if (!(rw > W / 8.0f * f && rw < std::min(W / 2.0f * f, W))) return "width";
+    if (!(rh > H / 8.0f && rh < 0.6f * H)) return "height";
+    const float side = 0.5f * W * (1.0f - s), top = 0.5f * H * (1.0f - s), tol = kTol * H;
+    if (std::fabs(t - top) >= tol) return "top";
+    const bool atLeft = l + rr < W && l > -tol && l < side + tol;
+    const bool atRight = l + rr > W && rr < W + tol && rr > W - side - tol;
+    if (!atLeft && !atRight) return "side";
+    if ((atLeft && corner == 2) || (atRight && corner == 1)) return "corner";
+    return nullptr;
+}
+
 // The map's box at either guess of the area: the game's own (SafeFromScale) first, the file's second. 0 / 1 / 2 as Corner.
-inline int Find(const Box& r, const Canvas& c, float safeGame, float safeFile, int corner) {
-    if (const int k = Corner(r, c, safeGame, corner)) return k;
-    return Corner(r, c, safeFile, corner);
+inline int Find(const Box& r, const Canvas& c, float safeGame, float safeFile, int corner, float stretch = 1.0f) {
+    if (const int k = Corner(r, c, safeGame, corner, stretch)) return k;
+    return Corner(r, c, safeFile, corner, stretch);
 }
 
 }  // namespace minimapbox

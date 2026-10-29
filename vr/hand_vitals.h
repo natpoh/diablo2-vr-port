@@ -94,6 +94,7 @@ struct Config {
     // The wrist that wears a shield turns its ball to the other side of the wrist (VR F4 only): [hud] hand_vitals_orb_under_shield, and its coefficients hand_vitals_orb_shield_turn_deg /
     // _along_cm / _side_cm / _up_cm / _rot_x_deg / _rot_y_deg / _rot_z_deg (OrbUnderShield). Unticked: the ball stays on the back of the hand under a shield, as before.
     bool orbUnderShield = true;
+    bool orbOnBone = true;        // [hud] hand_vitals_orb_on_bone: the ball on the forearm bone's own mesh box (handorbs::OnBone) - no along / across / up / turn numbers
     OrbUnderShield orbShield;
     // The wrist's bone and the arm's model differ with the class, so one depth (Z) fits one hero: an offset per hero class, cm, added to the Z of BOTH wrists (whatever their own
     // Z, the mirror or not) while that hero plays - [hud] hand_vitals_orb_z_cm_<class> (amazon, sorceress, ...). 0 = the class has no value of its own: the wrists' Z as it is.

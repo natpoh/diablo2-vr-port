@@ -286,6 +286,7 @@ void __cdecl UiJob(const PluginContext*, void* user) noexcept {
     } else {
         g_heroId.store(0);
         Forget();
+        if (r == HeroRead::NoPlayer) meleetouch::ForgetServerGame("the client has no hero (a title or character screen, or a load)");
         if (r == HeroRead::Fault) {
             g_dead.store(true);
             Log("vrcam: wrist status - reading the client's hero faulted: the wrist status is off until the game restarts");

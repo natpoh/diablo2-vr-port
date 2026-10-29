@@ -31,6 +31,7 @@
 
 #include "contact.h"
 #include "heft.h"
+#include "stab.h"
 
 namespace heft::hold {
 
@@ -90,6 +91,7 @@ struct Settings {
 	Strength one = OneHand(), two = EachOfTwo();
 	double weight       = 1.0;    // the steel's mass x this ("feel the weight", 0 = none)
 	double strength     = 1.0;    // the muscles' ceilings x this (with the soft wrists the springs too)
+	bool   twoHandsDouble = false; // [weight] two_hands_double: both hands on the weapon - each hand's strength x2 (the author: "the hands' strength doubles with two hands")
 	double gravity      = 1.0;    // g x this ([weight] gravity_pct; 0 = no gravity, only inertia). Held weapons only: one let go falls at the real g, or it would never land
 	double damping      = 1.0;    // the muscles' dampers x this ([weight] damping_pct)
 	double handMass     = 0.5;    // kg each hand on it adds (it has no weight: the arm carries itself)
@@ -115,6 +117,24 @@ struct Settings {
 	int    gripModel    = 0;      // how a hand holds the shaft: 0 our own (the grip alone holds it, the second hand slides while it is squeezed); 1 a grip library's, when one is loaded (SetGripEngine) - else ours
 	bool   bodies       = false;  // [weight] monster_bodies: the held weapon meets the bodies it is given (Hold::SetBodies, contact.h) - it stops on them or glances off, the controllers go on
 	double bodyFriction = -1;     // ... how much a body holds back the weapon's slide along it (contact::Params::friction); < 0: by the weapon's kind (BodyFriction)
+	double wedgeFriction = 1;     // ... times this while the weapon is caught between two monsters or more (the step before touched several): [weight] stick_by_strength
+	                              // (vr/stick_strength.h) - a strong class' blade slides out of the wedge, a weak one's holds; one body alone always holds as above
+	bool   stab         = false;  // [weight] stab_in: with bodies, a thrusting weapon driven point first into a body goes in and is held there (stab.h) - while the mod says
+	                              // it thrusts now (Hold::SetStabbing); off: it stops at the surface as any weapon
+	stab::Params stabParams;      // ... its numbers
+	// [weight] cleave: with bodies, a strong strike is not stopped at the first body - it goes on through it into the next, slowed by what that body took. A new
+	// touch of a monster's body (not of what it holds: a shield or a weapon stops it as ever) whose arrival took at least cleaveImpulse out of the weapon is cut
+	// through: the weapon is put back as it was before that body stopped it, that monster's body is left alone for the rest of the stroke (until the steel has been
+	// off it kCleaveForgetS), and the weapon's motion keeps 1 - cleaveCost / the impulse of it (the arrival still counts as that monster's strike: the contact
+	// reports it). The stroke's force is the first body's arrival: each body gone through spends cleaveCost of it, and a body met when less than cleaveCost is left
+	// stops it - a stroke of 12 N s with a cost of 3.5 goes through three, not ten (the hands drive the blade on between the bodies: its speed alone would not run
+	// out). Only a blade cleaves - a dagger, a sword, an axe, a polearm (a staff or a maul stops, however heavy) - and only coming in at cleaveMinSpeed or faster;
+	// never while it thrusts (SetStabbing: a thrust sticks into the first) or is in a wound. The mod sets the numbers from the strike's own
+	// threshold (vr/strike_force.h): cleaveImpulse = cleave_over x it, cleaveCost = cleave_cost x it - three Fallen with a two-handed sword, not a crowd of ten.
+	bool   cleave        = false;
+	double cleaveImpulse = 0;     // N s: <= 0 nothing is cut through
+	double cleaveCost    = 0;     // N s a body passed spends of the stroke's force (and slows the steel by)
+	double cleaveMinSpeed = 0;    // m/s: the blade's speed into the body at least (contact::Report::Met::approach); 0 = any
 };
 // The hands for the gravity feel ([weight] gravity_feel): the soft wrist profiles in place of the stiff ones.
 inline void UseGravityFeel(Settings& s) {
@@ -249,9 +269,37 @@ public:
 	// The bodies the held weapon meets this step (Settings::bodies), in the room - the monsters near the hero, posed now (the mod's vr/monster_bodies.h): up to kBodies, kept until
 	// the next call. A body the hand that carries the weapon is inside of is left alone (the controller is in it: there is nothing to push against). Only a weapon in the hands meets them.
 	static constexpr int kBodies = 64;   // (a monster's limbs are a capsule each: vr/monster_rig.h)
+	static constexpr double kStuckSnap = 3.0;   // m: [weight] stab_in - the snap distance while the weapon is in a wound (the wound holds it, not the snap)
+	// m: [weight] monster_bodies - the snap distance while the weapon is on a body (and kBodySnapHoldS after): the controller swung on past the monster no longer puts
+	// the weapon back in the hand THROUGH it at 0.8 m - the blade stays on its side and drags off around it (the headset 2026-10-23: «одноручное оружие проходит
+	// насквозь, даже не замедляясь»; strike_measure_test: a sword swung 1.1 m on past a limb snapped through it at every speed)
+	static constexpr double kBodySnap = 1.5;
+	static constexpr double kBodySnapHoldS = 0.25;
+	static constexpr double kTearHold = 0.15;   // s: ... a hand far across the stab line this long tears it free (a moment's jerk does not)
+	static constexpr double kTearPerAlong = 0.3;   // ... the tear's distance grows by this much a metre the hand is along the line from the entry
 	void SetBodies(const contact::Capsule* bodies, int n);
 	// What the weapon met on the last step: Report::bodies 0 when nothing (or Settings::bodies is off, or no hand holds it).
 	const contact::Report& LastContact() const { return contact_; }
+	// [weight] cleave (Settings::cleave): the bodies the weapon went on through. Cleaves() is bumped once for each; LastCleave() is the last one.
+	struct Cleave {
+		uint32_t id = 0;        // the monster
+		double   impulse = 0;   // N s its body took at the arrival
+		double   need = 0;      // ... the impulse a cleave needed (Settings::cleaveImpulse)
+		double   keep = 1;      // the share of the weapon's motion it went on with
+		double   approach = 0;  // m/s: the closing speed into it
+		int      inStroke = 0;  // how many bodies this stroke has gone through so far, this one too
+		double   left = 0;      // N s of the stroke's force left after it
+	};
+	int Cleaves() const { return cleaves_; }
+	const Cleave& LastCleave() const { return lastCleave_; }
+	bool CanCleave(const Settings& s) const;   // the weapon may cleave now (a blade; not thrusting or in a wound)
+	static constexpr double kCleaveForgetS = 0.15;   // s off a body cut through before it stops the steel again (the next stroke)
+	// [weight] stab_in (Settings::stab): the mod's word, every step, that this weapon thrusts and the hand that holds it is thrusting now (hit by touch's rule and
+	// path: vr/thrust_stroke.h) - only then does a point-first strike go in (stab.h Enters). What the stab did on the last step; whether the weapon is in a body.
+	void SetStabbing(bool now) { stabbing_ = now; }
+	const stab::Report& LastStab() const { return stabRep_; }
+	bool Stuck() const { return stuck_; }
+	Kind WeaponKind() const { return kind_; }   // the kind it was placed as
 	// A THROWN weapon (the mod knows the release was a throw - vr/weight_throw.h): once it is out of the hands it flies and falls like any weapon let go,
 	// but it is not for taking, calling back or stowing - it only has to end (the mod places a fresh one in the hand when it does). Armed while a
 	// hand still holds it (the throw may be known a frame before the grip is seen open); a no-op while it flies back into a hand.
@@ -290,11 +338,28 @@ public:
 	V3 ShaftInHand(int hand) const { return Rotate(QConj(grips_[hand & 1].rot), line_.dir); }
 	// The shaft's two ends in the room: the butt and the tip.
 	void Ends(V3* butt, V3* tip) const;
+	// The weapon's steel pieces where they are in the room now (after the last step), as capsules - for ANOTHER weapon to meet ([weight] dual_collide: a weapon in each
+	// hand, each a body the other stops on). At most cap; 0 when not placed. The head's own volume (SetHead) last.
+	int RoomPieces(contact::Capsule* out, int cap) const;
+	// [weight] dual_collide with [gameplay] melee_head_volume: a headed weapon's head as its own volume where its model has it (an axe's blade beside the shaft, a hammer's
+	// face, a mace's head round it - vr/metal_head.h Volume), a capsule in the body's frame (the frame SetDrawnShaft's line is in). Touch only - no mass, no lever: it
+	// meets the capsules of id `only` (the other weapon of a pair) and is one of RoomPieces. The user, 2026-10-26: «меч проходит сквозь лезвие топора но не проходит
+	// сквозь древко». Placing a weapon clears it.
+	void SetHead(V3 a, V3 b, double radius, uint32_t only) { SetHeads(&a, &b, &radius, 1, only); }
+	void ClearHead() { nHead_ = 0; }
+	bool HasHead() const { return nHead_ > 0; }
+	// ... a head of several capsules (vr/weapon_head_parts.h: an axe's blade as a thin slab where its mesh is), at most kHeadParts; n 0 clears it.
+	static constexpr int kHeadParts = 12;
+	void SetHeads(const V3* a, const V3* b, const double* radius, int n, uint32_t only);
+	int HeadParts() const { return nHead_; }
 	// A hand's place on the weapon in the room (where it would be drawn fully on it).
 	Pose OnWeapon(int hand) const;
 
 private:
 	void Build(const Settings& s);            // the body from the shape, the line and the hands on it
+	void StabStep(const stab::Engine& e, V3 tipL, V3 baseL, const contact::Capsule* bodies, int n, const stab::Strike* strike, const V3* gaps, int nGaps, double dt,
+	              const Settings& s);         // [weight] stab_in: one step of the library's stab
+	void Unstick(const char* why);            // ... out of the wound for a reason of the mod's
 	bool TryGrab(int hand, const HandIn& in, const Settings& s);
 	bool PastHilt(int hand, double along, const Settings& s) const;   // a grip of `hand` at `along` the shaft is past the zone a second hand may take (hiltOnly)
 	V3   FistOffset(int hand, const Settings& s) const;
@@ -308,6 +373,11 @@ private:
 	Kind     kind_ = Kind::Other;   // the kind it was placed as
 	Piece    pieces_[3];            // the steel in the grip frame, as Build made the body of it
 	int      nPieces_ = 0;
+	contact::Blade head_[kHeadParts];   // SetHeads: the head's own volume, touch only
+	int      nHead_ = 0;
+	uint32_t headOnly_ = 0;         // ... the bodies it is for
+	// A piece of the kind's shape past its first (the shaft or grip): its head, which the head's own volume stands for against those bodies (SetHeads)
+	bool HeadKnown(int piece) const { return nHead_ > 0 && piece > 0 && headOnly_ != 0; }
 	int      first_ = -1, main_ = -1;
 	Shape    shape_;
 	Line     line_;
@@ -335,6 +405,28 @@ private:
 	contact::Capsule bodies_[kBodies];   // SetBodies
 	int      nBodies_ = 0;
 	contact::Report contact_;       // the last step's
+	bool wedged_ = false;           // ... and the one before touched several monsters (Settings::wedgeFriction)
+	double sinceBody_ = 1e9;        // s since the weapon last touched a body (kBodySnap)
+	stab::Blob   stabBlob_;         // [weight] stab_in: the library's wound (zero: in none)
+	bool         stuck_ = false;    // ... the weapon is in a wound (the library said so)
+	double       tearFor_ = 0;      // ... s a hand has been far across the stab line (the tear)
+	uint32_t     stuckId_ = 0;      // ... of this monster (the contact leaves its bodies to the stab)
+	stab::Report lastIn_;           // ... the last report while in (for an exit of the mod's)
+	stab::Report stabRep_;          // ... the last step's
+	bool         stabbing_ = false; // SetStabbing
+	// [weight] cleave: the monsters whose bodies the stroke went through (left alone until the steel has been off them kCleaveForgetS), the monsters met the step
+	// before (a touch of one not among them is an arrival), the count and the last
+	static constexpr int kCleft = 8;
+	struct Cleft { uint32_t id = 0; double off = 0; };
+	Cleft    cleft_[kCleft];
+	int      nCleft_ = 0;
+	uint32_t metWas_[contact::Report::kMet] = {};
+	int      nMetWas_ = 0;
+	int      cleaves_ = 0, strokeCleaves_ = 0;
+	double   strokeLeft_ = 0;       // N s of the stroke's force left (the first body's arrival, less cleaveCost for each body gone through)
+	Cleave   lastCleave_;
+	bool     Cleft_(uint32_t id) const;
+	void     ForgetCleft(double dt);   // the monsters the steel has been off long enough: they stop it again
 	double   on_[2] = {};
 	Controller last_[2];
 	bool     haveLast_ = false;

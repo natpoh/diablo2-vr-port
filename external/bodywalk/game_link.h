@@ -9,9 +9,11 @@
 // and the actions the player's gestures and buttons fire (Actions). A game that
 // shows itself in the headset through OpenXR of its own (no FlatVR) hands its
 // headset and controllers to BodyWalk (XrInput) and gets BodyWalk's gesture
-// zones to draw (VrZones). Any process - the game, its settings program - may
-// ask BodyWalk for FlatVR things (Requests); BodyWalk says what it can do
-// (Host).
+// zones to draw (VrZones) and the runes the player draws in the air (VrRunes:
+// BodyWalk scores them, the game draws them). With BodyWalk's Output set to
+// Game Link the walk itself comes this way too, as the stick it would have
+// pushed (Walk). Any process - the game, its settings program - may ask
+// BodyWalk for FlatVR things (Requests); BodyWalk says what it can do (Host).
 //
 // Every block is named shared memory, Local\BodyWalk.Link.<Block>, always
 // BW_LINK_BLOCK_BYTES long, made by whichever side comes first (BW_LINK_SDDL:
@@ -56,7 +58,9 @@
 #define BW_LINK_REQUESTS_NAME  L"Local\\BodyWalk.Link.Requests"   // anyone -> BodyWalk
 #define BW_LINK_HOST_NAME      L"Local\\BodyWalk.Link.Host"       // BodyWalk -> anyone
 #define BW_LINK_XRINPUT_NAME   L"Local\\BodyWalk.Link.XrInput"    // game (its own OpenXR) -> BodyWalk
+#define BW_LINK_WALK_NAME      L"Local\\BodyWalk.Link.Walk"       // BodyWalk -> game
 #define BW_LINK_VRZONES_NAME   L"Local\\BodyWalk.Link.VrZones"    // BodyWalk -> game (its own OpenXR)
+#define BW_LINK_VRRUNES_NAME   L"Local\\BodyWalk.Link.VrRunes"    // BodyWalk -> game (its own OpenXR)
 
 #if defined(__cplusplus)
 #define BW_LINK_STATIC_ASSERT(c, m) static_assert(c, m)
@@ -125,7 +129,11 @@ BW_LINK_STATIC_ASSERT(sizeof(BW_LinkGameState) == 24 + 32 + 256 + 8, "BW_LinkGam
 // ---------------------------------------------------------------------------
 // Tracking (BodyWalk -> game): the head and hands, each time BodyWalk has
 // them (Universal tracking output on).
-#define BW_LINK_TRACKING_VERSION 1u
+// Version 2: BW_LINK_TRACK_CONTROLS - the hands' trigger, grip, sticks and
+// buttons are the controllers as the player holds them (FlatVR's or SteamVR's
+// frame), never BodyWalk's Mapping, its Output or its demo state: a game with
+// a controller layout of its own may take them as its controllers.
+#define BW_LINK_TRACKING_VERSION 2u
 
 enum {
     BW_LINK_TRACK_HEAD = 1u << 0,          // head.valid: the headset tracks
@@ -133,6 +141,7 @@ enum {
     BW_LINK_TRACK_ROLL = 1u << 2,          // head.rollDeg is there
     BW_LINK_TRACK_ROOM = 1u << 3,          // head.yawRoomDeg and the hands' *Ahead are there
     BW_LINK_TRACK_FLATVR_STAMP = 1u << 4,  // stamp is FlatVR's own moment for this head, else when it came
+    BW_LINK_TRACK_CONTROLS = 1u << 5,      // the hands' controls are the raw controllers (version 2); not set for a game's own frames (XrInput)
 };
 
 typedef struct BW_LinkHead {
@@ -227,6 +236,8 @@ enum {
     BW_LINK_CAP_STEREO_SOURCE = 1u << 3,    // Requests.stereoSource
     BW_LINK_CAP_XR_INPUT = 1u << 4,         // XrInput is taken, Requests.presenter followed
     BW_LINK_CAP_VR_ZONES = 1u << 5,         // VrZones is written
+    BW_LINK_CAP_VR_RUNES = 1u << 6,         // VrRunes is written
+    BW_LINK_CAP_WALK = 1u << 7,             // Walk is written (this BodyWalk can send the walk through Game Link)
 };
 
 typedef struct BW_LinkHost {
@@ -239,6 +250,30 @@ typedef struct BW_LinkHost {
     uint32_t reserved;
 } BW_LinkHost;
 BW_LINK_STATIC_ASSERT(sizeof(BW_LinkHost) == 24 + 8 + 16 + 32 + 8, "BW_LinkHost is a wire format");
+
+// ---------------------------------------------------------------------------
+// Walk (BodyWalk -> game): the player walking by the body, while BodyWalk's
+// Output is "Game Link" - nothing then goes to a pad, keys or a runtime, and
+// this is the walk. The stick is the very one BodyWalk would have put on its
+// virtual Xbox pad's left stick (Output: Xbox Controller), divided by 32767:
+// the same dead zone, curve and speed, so the game gives it what it gives a
+// thumbstick pushed that far (walk, run). Written every BodyWalk frame while
+// that Output is chosen; flags 0 (and the stick at rest) when it is not.
+// Stand the stick at rest when the sequence stands still for half a second.
+#define BW_LINK_WALK_VERSION 1u
+
+enum {
+    BW_LINK_WALK_ACTIVE = 1u << 0,   // the Output is Game Link: this stick is the walk
+};
+
+typedef struct BW_LinkWalk {
+    BW_LinkHeader header;
+    uint32_t stamp;          // BW_LinkStampNow() when written
+    uint32_t flags;          // BW_LINK_WALK_*
+    float stickX, stickY;    // -1..1, + right, + forward (up on the stick)
+    uint32_t reserved[2];
+} BW_LinkWalk;
+BW_LINK_STATIC_ASSERT(sizeof(BW_LinkWalk) == 24 + 24, "BW_LinkWalk is a wire format");
 
 // ---------------------------------------------------------------------------
 // XrInput (game -> BodyWalk): a game that holds the headset itself (an OpenXR
@@ -314,6 +349,70 @@ typedef struct BW_LinkVrZones {
     BW_LinkVrZone zone[BW_LINK_VRZONES_MAX];
 } BW_LinkVrZones;
 BW_LINK_STATIC_ASSERT(sizeof(BW_LinkVrZones) == 24 + 8 + 32 * 24, "BW_LinkVrZones is a wire format");
+
+// ---------------------------------------------------------------------------
+// VrRunes (BodyWalk -> game): the Mapping's gesture RUNES ticked "VR": a shape
+// the player draws in the air with a hand, scored while he draws it. BodyWalk
+// does all of it (matching, the fades, the colours) and sends what to draw:
+// for each rune being drawn its picture on a panel, how much of it the hand has
+// matched, the hand's own trail, colours. Same space as VrZones and XrInput (the
+// head's own STAGE space), written every BodyWalk frame while a rune is on show
+// and once more with count 0; let everything go when the stamp is older than
+// half a second.
+//
+// Drawing, as the player sees it (a rune = one BW_LinkVrRune):
+//  - the PICTURE: a polyline through pts[0..pointCount) on a panel at `centre`,
+//    pts in metres along `right` and `up` (unit vectors in the room; the panel
+//    faces the player). Segment i (pts[i] -> pts[i+1]) is LIT when
+//    i < progress * (pointCount - 1), lit in litRgba, the rest in runeRgba.
+//  - the TRAIL: the polyline through trail[0..trailCount) in the room, in
+//    trailRgba, ending in a bright blob at the last point (the hand).
+//  - every alpha times `fade`; the colours mixed toward white by `flash`; glow
+//    scales the halo of both. state: DRAWING; FIRED (the shape was completed and
+//    the spell went off: flash then fade, about 0.7 s); FAILED (the attempt
+//    strayed, stalled or timed out: fade out, nothing fired).
+#define BW_LINK_VRRUNES_VERSION 1u
+#define BW_LINK_VRRUNES_MAX 4u
+#define BW_LINK_RUNE_POINTS 48u
+#define BW_LINK_RUNE_TRAIL 96u
+
+enum {
+    BW_LINK_RUNE_DRAWING = 1,
+    BW_LINK_RUNE_FIRED = 2,
+    BW_LINK_RUNE_FAILED = 3,
+};
+
+typedef struct BW_LinkVrRune {
+    uint32_t id;               // stable for one gesture
+    uint32_t state;            // BW_LINK_RUNE_*
+    float progress;            // 0..1 how much of the picture is matched
+    float score;               // 0..1 how well
+    float fade;                // 0..1, multiply every alpha
+    float flash;               // 0..1 FIRED: 1 falling to 0 in 0.4 s
+    uint32_t runeRgba;         // the picture at rest; R in the low byte, alpha = opacity
+    uint32_t litRgba;          // the matched part
+    uint32_t trailRgba;        // the hand's trail
+    float lineWidth;           // metres
+    float trailWidth;          // metres
+    float glow;                // 0..1
+    float centre[3];           // the panel, in the room
+    float right[3];            // unit
+    float up[3];               // unit
+    float halfW, halfH;        // metres: the points lie within
+    uint32_t pointCount;
+    float pts[BW_LINK_RUNE_POINTS][2];   // metres along right, up, from centre
+    uint32_t trailCount;
+    float trail[BW_LINK_RUNE_TRAIL][3];  // the room, oldest first
+} BW_LinkVrRune;
+BW_LINK_STATIC_ASSERT(sizeof(BW_LinkVrRune) == 1636, "BW_LinkVrRune is a wire format");
+
+typedef struct BW_LinkVrRunes {
+    BW_LinkHeader header;
+    uint32_t stamp;          // BW_LinkStampNow() when written
+    uint32_t count;          // used entries in rune[]
+    BW_LinkVrRune rune[BW_LINK_VRRUNES_MAX];
+} BW_LinkVrRunes;
+BW_LINK_STATIC_ASSERT(sizeof(BW_LinkVrRunes) == 24 + 8 + 4 * 1636, "BW_LinkVrRunes is a wire format");
 
 #pragma pack(pop)
 

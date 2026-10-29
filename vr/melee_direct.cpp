@@ -65,6 +65,8 @@ using LineFn = int (*)(uintptr_t a, uintptr_t b, int flags);
 const PluginContext* g_ctx = nullptr;
 const ThreadService* g_threads = nullptr;
 std::atomic<bool> g_wanted{false}, g_faulted{false};
+std::atomic<bool> g_remote{false};   // [gameplay] melee_direct_client_cleave as the host: the joined players' extra hits
+std::atomic<bool> g_byRules{false};  // [gameplay] melee_direct 2: by the rules (melee_direct_client.h)
 std::atomic<uint32_t> g_minMs{0};
 std::atomic<int> g_state{0};                 // 0 not tried, 1 hooks in, 2 not possible (another build?)
 TargetFn g_origTarget = nullptr;
@@ -101,6 +103,9 @@ bool CallRelation(uintptr_t fn, uintptr_t game, uintptr_t player, uintptr_t unit
 }
 bool CallLine(uintptr_t fn, uintptr_t a, uintptr_t b, int* out) noexcept {
     __try { *out = reinterpret_cast<LineFn>(fn)(a, b, 0x804); return true; } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+bool CallRangeRaw(RangeFn fn, uintptr_t a, uintptr_t d, int range, int* out, int* result) noexcept {
+    __try { *result = fn(a, d, range, out); return true; } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
 bool CallAttack(uintptr_t fn, uintptr_t game, uintptr_t player) noexcept {
     __try { reinterpret_cast<AttackFn>(fn)(game, player, 0, 1); return true; } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
@@ -142,17 +147,36 @@ struct Counters {
     unsigned asked = 0, called = 0, stale = 0;
     unsigned refused[8] = {};
     unsigned faults = 0;
-} g_n;   // the game's thread only (and the report on the timer's thread, racy and harmless: counts for a log line)
+    unsigned remoteAsked = 0, remoteCalled = 0, remoteFar = 0, remoteSoon = 0;
+} g_n;
+// [gameplay] melee_direct_client_cleave: when each (hero, monster) was last struck for a joined player (the game's thread only)
+struct RemoteSlot { uint32_t hero = 0, monster = 0; ULONGLONG at = 0; };
+std::array<RemoteSlot, 32> g_remoteLast;
+bool RemoteTooSoon(uint32_t hero, uint32_t monster, ULONGLONG now) {
+    RemoteSlot* oldest = &g_remoteLast[0];
+    for (RemoteSlot& s : g_remoteLast) {
+        if (s.hero == hero && s.monster == monster) {
+            if (now - s.at < kRemoteGapMs) return true;
+            s.at = now;
+            return false;
+        }
+        if (s.at < oldest->at) oldest = &s;
+    }
+    *oldest = {hero, monster, now};
+    return false;
+}   // the game's thread only (and the report on the timer's thread, racy and harmless: counts for a log line)
 ULONGLONG g_reportAt = 0;
 
 void Report(ULONGLONG now) {
     if (now - g_reportAt < 10000) return;
     g_reportAt = now;
     if (!g_n.asked && !g_n.called) return;
-    LogF("melee direct: %u asked, %u called the game's attack, %u too old, refused: %u no hero, %u hero's mode, %u no monster, %u dying, %u not hostile, %u wall",
+    LogF("melee direct: %u asked, %u called the game's attack, %u too old, refused: %u no hero, %u hero's mode, %u no monster, %u dying, %u not hostile, %u wall; "
+         "joined players' extra hits: %u asked, %u struck, %u beyond the reach, %u too soon on the same monster",
          g_n.asked, g_n.called, g_n.stale, g_n.refused[static_cast<int>(Verdict::NoPlayer)], g_n.refused[static_cast<int>(Verdict::PlayerMode)],
          g_n.refused[static_cast<int>(Verdict::NoMonster)], g_n.refused[static_cast<int>(Verdict::MonsterDying)],
-         g_n.refused[static_cast<int>(Verdict::NotHostile)], g_n.refused[static_cast<int>(Verdict::Wall)]);
+         g_n.refused[static_cast<int>(Verdict::NotHostile)], g_n.refused[static_cast<int>(Verdict::Wall)],
+         g_n.remoteAsked, g_n.remoteCalled, g_n.remoteFar, g_n.remoteSoon);
     g_n = {};
 }
 
@@ -178,11 +202,24 @@ void Strike(const Request& r) noexcept {
         f.wall = f.hostile && !(CallLine(d2rsig::Addr(RVA_LINE), player, monster, &wall) && wall == 0);
     }
     const Verdict v = Check(f);
+    if (r.remote) ++g_n.remoteAsked;
     if (v != Verdict::Go) {
         ++g_n.refused[static_cast<int>(v)];
         static unsigned told = 0;
-        if (++told <= 12) LogF("melee direct: a touch on monster %u was not struck - %s", r.monsterId, Name(v));
+        if (++told <= 12) LogF("melee direct: a %s on monster %u was not struck - %s", r.remote ? "joined player's extra hit" : "touch", r.monsterId, Name(v));
         return;
+    }
+    if (r.remote) {   // a joined player's extra hit: within the game's own reach (loosely) and not twice on one monster within kRemoteGapMs
+        int out = 0;
+        int inReach = 0;
+        const bool rangeOk = g_origRange && CallRangeRaw(g_origRange, player, monster, kRemoteReach, &out, &inReach);
+        if (!rangeOk || !inReach) {
+            ++g_n.remoteFar;
+            static unsigned toldFar = 0;
+            if (++toldFar <= 12) LogF("melee direct: a joined player's extra hit on monster %u was not struck - beyond the reach on the server", r.monsterId);
+            return;
+        }
+        if (RemoteTooSoon(r.heroId, r.monsterId, GetTickCount64())) { ++g_n.remoteSoon; return; }
     }
     // The call: the touched monster is the target and the reach inside this one call only.
     t_win = {r.game, player, monster};
@@ -195,8 +232,11 @@ void Strike(const Request& r) noexcept {
         return;
     }
     ++g_n.called;
+    if (r.remote) ++g_n.remoteCalled;
     static unsigned toldCall = 0;
-    if (++toldCall <= 12) LogF("melee direct: the game's attack called on monster %u", r.monsterId);
+    if (++toldCall <= 12 || (r.remote && toldCall <= 40))
+        LogF(r.remote ? "melee direct: the game's attack called on monster %u for a joined player's hero %u (an extra hit of his swing)" : "melee direct: the game's attack called on monster %u",
+             r.monsterId, r.heroId);
 }
 
 void __cdecl Apply(const PluginContext*, void* user) noexcept {
@@ -211,7 +251,8 @@ void __cdecl Apply(const PluginContext*, void* user) noexcept {
             for (size_t i = 1; i < g_count; ++i) g_queue[i - 1] = g_queue[i];
             --g_count;
         }
-        if (g_faulted.load() || !g_wanted.load() || !viewgate::F4()) continue;   // (F4 only: a request found in another view is not struck)
+        if (g_faulted.load()) continue;
+        if (q.r.remote ? !g_remote.load() : (!g_wanted.load() || !viewgate::F4())) continue;   // (our own touch: F4 only - a request found in another view is not struck)
         if (GetTickCount64() - q.at > kStaleMs) { ++g_n.stale; continue; }
         Strike(q.r);
     }
@@ -231,6 +272,15 @@ void SetWanted(bool on) {
                : "melee direct: off");
 }
 bool Wanted() { return g_wanted.load(); }
+void SetByRules(bool on) {
+    if (g_byRules.exchange(on) != on) Log(on ? "melee direct: by the rules (the first touch, the attack time, speed + force + length)" : "melee direct: every accepted touch");
+}
+bool ByRules() { return g_byRules.load(); }
+void SetRemoteWanted(bool on) {
+    if (g_remote.exchange(on) != on)
+        Log(on ? "melee direct: the joined players' extra hits are struck on this PC when it hosts ([gameplay] melee_direct_client_cleave)"
+               : "melee direct: the joined players' extra hits are not struck here");
+}
 void SetMinIntervalMs(uint32_t ms) { g_minMs.store(ms); }
 bool Ready() { return g_state.load() == 1 && !g_faulted.load() && g_threads && g_threads->runOnGameThread; }
 
@@ -238,7 +288,7 @@ void Install() {
     static ULONGLONG retryAt = 0;
     static unsigned tries = 0;
     Report(GetTickCount64());
-    if (!g_wanted.load() || g_state.load() != 0 || !g_ctx || GetTickCount64() < retryAt) return;
+    if ((!g_wanted.load() && !g_remote.load()) || g_state.load() != 0 || !g_ctx || GetTickCount64() < retryAt) return;
     retryAt = GetTickCount64() + (tries < 30 ? 2000 : 30000);   // the server's code is decrypted as it runs: tried again
     const uintptr_t attack = d2rsig::Addr(RVA_ATTACK), target = d2rsig::Addr(RVA_TARGET), range = d2rsig::Addr(RVA_RANGE);
     const uintptr_t call1 = d2rsig::Addr(RVA_CALL1), call2 = d2rsig::Addr(RVA_CALL2);
@@ -275,7 +325,7 @@ Route Plan(uint64_t nowMs, bool serverKnown) {
     g.ready = serverKnown && Ready();
     g.nowMs = nowMs;
     g.lastMs = g_lastMs.load();
-    g.minIntervalMs = g_minMs.load();
+    g.minIntervalMs = g_byRules.load() ? 0 : g_minMs.load();   // (by the rules: the attack time per monster is the pace, not this)
     g.f4 = viewgate::F4();
     const Route r = Decide(g);
     if (r == Route::Direct) g_lastMs.store(nowMs ? nowMs : 1);

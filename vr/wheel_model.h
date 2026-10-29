@@ -64,6 +64,10 @@ struct View {
     uint8_t run = kRunUnknown;
     // [openxr] skill_rt_a: the right trigger casts the RT slot and the right A the A slot (vr/slot_controls.h), so a click on those two tiles is not the layout's.
     bool slotControls = false;
+    // The left trigger has its own action ([direct] left_trigger, vr/direct_layout.h SecondRowOn false): the second row of buttons (the slots with LT) is off - greyed.
+    bool rowOff = false;
+    // [openxr] skill_panel_edit_first: the first page edits - a tap on a slot opens its skill list; the trigger held on it picks it for the trigger (the old tap).
+    bool editFirst = false;
 };
 
 // The slot the first page marks as the trigger's: the picked one; else, with the slot controls on, the RT slot when it holds a skill (the right trigger
@@ -72,6 +76,10 @@ inline int TriggerSlot(const View& v) {
     if (v.selected >= 0) return v.selected;
     return v.slotControls && v.ready && CastsSkill(v.slot[9]) ? 9 : 8;
 }
+
+// [openxr] skill_panel_edit_first: the trigger held this long on a slot of the first page picks it for the trigger (the first page's old tap); let go
+// sooner, the tap opens the slot's skill list. The layout's long press ([direct] hold_ms) is as long.
+constexpr double kPickHoldS = 0.5;
 
 struct In {
     double time = 0;              // seconds, monotonic
@@ -92,6 +100,9 @@ struct In {
     bool categories = false;      // [openxr] skill_categories: the editor has the category strip (when the snapshot knows the trees)
     bool runWalk = false;         // [openxr] skill_run_walk: the RUN / WALK control is there
     bool slotControls = false;    // [openxr] skill_rt_a: the right trigger and the right A cast the RT and A slots
+    bool rowOff = false;          // the second row of buttons is off (the left trigger has its own action): View::rowOff
+    bool editFirst = false;       // [openxr] skill_panel_edit_first: a tap on a slot of the first page opens its skill list (held kPickHoldS: picks it for the trigger)
+    bool held = false;            // the pointing hand's trigger is down (the frames after its edge: the long press of editFirst)
     uint64_t nowMs = 0;           // GetTickCount64, the snapshot's clock
     const Snapshot* snap = nullptr;
     Reply reply;                  // the newest answer to a request
@@ -122,6 +133,9 @@ class Model {
     int editBank_ = -1;
     double statusUntil_ = 0;
     uint64_t settingsSeen_ = ~0ull;   // the revision of the settings model the view holds a copy of
+    int pressSlot_ = -1;               // editFirst: the slot the trigger went down on (first page), -1 none - a tap edits it, held kPickHoldS picks it
+    double pressAt_ = 0;
+    Page editFrom_ = Page::PickSlot;   // the page the skill list goes back to (Back, an answer): the slot choice, or the first page when a tap opened it
 
     void Status(double now, const char* text, double seconds) {
         std::snprintf(v_.status, sizeof v_.status, "%s", text);
@@ -130,6 +144,7 @@ class Model {
     // (a request already with the game stays pending: its answer is still taken and told by a buzz - it is not left unsaid)
     void CloseNow() {
         v_.open = false;
+        pressSlot_ = -1;
         v_.page = Page::Wheel;
         v_.hover = kNone;
         v_.editSlot = -1;
@@ -256,7 +271,7 @@ public:
                 if (applied && pending_.slot == v_.selected && pending_.op == Op::Clear) v_.selected = -1;
                 pending_ = Request{};
                 if (v_.open) {
-                    v_.page = Page::PickSlot;
+                    v_.page = editFrom_;
                     v_.editSlot = -1;
                 }
             } else if (in.time - pendingAt_ > 1.5) {
@@ -265,7 +280,7 @@ public:
                 Status(in.time, "No answer from the game", 3.0);
                 pending_ = Request{};
                 if (v_.open) {
-                    v_.page = Page::PickSlot;
+                    v_.page = editFrom_;
                     v_.editSlot = -1;
                 }
             }
@@ -314,6 +329,19 @@ public:
             v_.hover = shown;
             // (a click in the frame the look changed is not acted on: the player still sees the old picture)
             if (in.click && !restyled && out.feedback != Feedback::Closed && pending_.op == Op::None) Click(in, snap, fresh, &out);
+            if (pressSlot_ >= 0 && !in.click) {   // editFirst: the press on a slot - let go, it edits the slot; held kPickHoldS, the trigger casts it (the old tap)
+                const int h = pressSlot_;
+                if (v_.page != Page::Wheel || v_.hover != h || pending_.op != Op::None) {
+                    pressSlot_ = -1;   // (the beam left the slot, or the page changed: nothing)
+                } else if (!in.held) {
+                    pressSlot_ = -1;
+                    EditSlot(h, in, snap, fresh, Page::Wheel, &out);
+                    Options();
+                } else if (in.time - pressAt_ >= kPickHoldS) {
+                    pressSlot_ = -1;
+                    PickForTrigger(h, in, snap, fresh, &out);
+                }
+            }
         } else {
             v_.hover = kNone;
         }
@@ -338,6 +366,8 @@ public:
         v_.catWanted = in.categories && !catKnown_ && v_.open && v_.page == Page::PickSkill;
         v_.runWalk = in.runWalk;
         v_.slotControls = in.slotControls;
+        v_.rowOff = in.rowOff;
+        v_.editFirst = in.editFirst;
         v_.run = fresh ? snap.run : uint8_t(kRunUnknown);
         v_.result = pending_.op != Op::None ? Result::Pending : v_.result;
         if (fresh) for (int i = 0; i < kSlotCount; ++i) v_.slot[i] = snap.slot[i];
@@ -353,7 +383,7 @@ private:
         if (a.open != b.open || a.page != b.page || a.hover != b.hover || a.selected != b.selected || a.editSlot != b.editSlot ||
             a.editPage != b.editPage || a.editPages != b.editPages || a.options != b.options || a.ready != b.ready ||
             a.editable != b.editable || a.bank != b.bank || a.result != b.result || a.style != b.style || !(a.hints == b.hints) ||
-            a.tabs != b.tabs || a.tab != b.tab || a.catStrip != b.catStrip || a.catWanted != b.catWanted || a.category != b.category || a.runWalk != b.runWalk || a.run != b.run || a.slotControls != b.slotControls ||
+            a.tabs != b.tabs || a.tab != b.tab || a.catStrip != b.catStrip || a.catWanted != b.catWanted || a.category != b.category || a.runWalk != b.runWalk || a.run != b.run || a.slotControls != b.slotControls || a.rowOff != b.rowOff || a.editFirst != b.editFirst ||
             std::strncmp(a.status, b.status, sizeof a.status) != 0)
             return true;
         for (int c = 0; c < kCategories; ++c) if (a.catCount[c] != b.catCount[c]) return true;
@@ -361,6 +391,43 @@ private:
         for (int i = 0; i < kSlotCount; ++i) if (!(a.slot[i] == b.slot[i])) return true;
         for (int i = 0; i < kOptionsMax; ++i) if (!(a.option[i] == b.option[i])) return true;
         return false;
+    }
+
+    // The first page's tap as it always was (with editFirst: the trigger held on the slot): the trigger casts that slot from now on.
+    void PickForTrigger(int h, const In& in, const Snapshot& snap, bool fresh, Out* out) {
+        const Skill& s = snap.slot[h];
+        const Cast how = kSlotDefs[h].cast;
+        if (how == Cast::Layout) {   // A: the trigger stays the layout's attack, which is the game's A button
+            v_.selected = -1;
+            CloseNow();
+            out->feedback = Feedback::Selected;
+        } else if (how == Cast::None) {   // RT: nothing the trigger can pick - with the slot controls it is the right trigger itself
+            Status(in.time, !in.slotControls ? "That slot cannot be cast from here"
+                            : kSlotDefs[h].alt ? "Hold the left trigger and pull the right one" : "Pull the right trigger", 3.0);
+            out->feedback = Feedback::Refused;
+        } else if (fresh && s.known && s.id >= 0 && s.available) {
+            v_.selected = h;
+            CloseNow();
+            out->feedback = Feedback::Selected;
+        } else {
+            out->feedback = Feedback::Refused;
+        }
+    }
+    // The skill list for slot h (the slot choice's click; with editFirst the first page's tap): `from` is where Back and the game's answer return to.
+    void EditSlot(int h, const In& in, const Snapshot& snap, bool fresh, Page from, Out* out) {
+        if (!(fresh && snap.editable && snap.slot[h].known)) {
+            if (from == Page::Wheel) Status(in.time, fresh && !snap.editable ? "Skills cannot be changed in this layout" : "Skills unavailable", 3.0);
+            out->feedback = Feedback::Refused;
+            return;
+        }
+        editBank_ = snap.bank;
+        editFrom_ = from;
+        v_.editSlot = h;
+        v_.editPage = 0;
+        previous_ = snap.slot[h];
+        OpenEditor(in, snap);
+        v_.page = Page::PickSkill;
+        out->feedback = Feedback::Hover;
     }
 
     void Click(const In& in, const Snapshot& snap, bool fresh, Out* out) {
@@ -380,6 +447,7 @@ private:
                 if (fresh && snap.editable) {
                     v_.page = Page::PickSlot;
                     editBank_ = snap.bank;
+                    editFrom_ = Page::PickSlot;
                     out->feedback = Feedback::Hover;
                 } else {
                     Status(in.time, fresh ? "Skills cannot be changed in this layout" : "Skills unavailable", 3.0);
@@ -398,42 +466,26 @@ private:
                 CloseNow();
                 out->feedback = Feedback::Selected;
             } else if (h >= 0 && h < kSlotCount) {
-                const Skill& s = snap.slot[h];
-                const Cast how = kSlotDefs[h].cast;
-                if (how == Cast::Layout) {   // A: the trigger stays the layout's attack, which is the game's A button
-                    v_.selected = -1;
-                    CloseNow();
-                    out->feedback = Feedback::Selected;
-                } else if (how == Cast::None) {   // RT: nothing the trigger can pick - with the slot controls it is the right trigger itself
-                    Status(in.time, !in.slotControls ? "That slot cannot be cast from here"
-                                    : kSlotDefs[h].alt ? "Hold the left trigger and pull the right one" : "Pull the right trigger", 3.0);
-                    out->feedback = Feedback::Refused;
-                } else if (fresh && s.known && s.id >= 0 && s.available) {
-                    v_.selected = h;
-                    CloseNow();
-                    out->feedback = Feedback::Selected;
+                if (in.editFirst) {   // a tap edits the slot, the trigger held picks it for the trigger: decided in Step when it is let go or has been held
+                    pressSlot_ = h;
+                    pressAt_ = in.time;
                 } else {
-                    out->feedback = Feedback::Refused;
+                    PickForTrigger(h, in, snap, fresh, out);
                 }
             }
             break;
         case Page::PickSlot:
             if (h == kBack) {
                 v_.page = Page::Wheel;
-            } else if (h >= 0 && h < kSlotCount && fresh && snap.editable && snap.slot[h].known) {
-                v_.editSlot = h;
-                v_.editPage = 0;
-                previous_ = snap.slot[h];
-                OpenEditor(in, snap);
-                v_.page = Page::PickSkill;
-                out->feedback = Feedback::Hover;
+            } else if (h >= 0 && h < kSlotCount) {
+                EditSlot(h, in, snap, fresh, Page::PickSlot, out);
             } else {
                 out->feedback = Feedback::Refused;
             }
             break;
         case Page::PickSkill:
             if (h == kBack) {
-                v_.page = Page::PickSlot;
+                v_.page = editFrom_;
                 v_.editSlot = -1;
             } else if (h == kPrev) {
                 v_.editPage = std::max(0, v_.editPage - 1);

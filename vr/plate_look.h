@@ -38,6 +38,14 @@ inline float DepthShift(float groundUnits, float eyeHeightUnits, float m0, float
     return k * 0.5f * m0 * halfGap * (1.0f / z - (conv > 0.0f ? 1.0f / conv : 0.0f));
 }
 
+// Eyes by turns: the game lays its interface layer out for the eye DRAWN this frame, the left one and then the right one, so a label in it stands where
+// that eye sees its thing - and the same shifts every frame made it jump by its whole disparity in each eye: doubled (the target's plate over a near NPC,
+// 2026-10-26). The half-disparity at the thing's own depth (uv; the depth rule at k = 1) is what the effect takes that eye's layout off by first
+// (D2R_DepthFog.fx PlateTurnH, LabelTurnH; LayerPixel's layerEye): each eye then shows the same every frame. 0 = nothing known (no depth, no stereo).
+inline float TurnsHalf(float groundUnits, float eyeHeightUnits, float m0, float halfGap, float conv) {
+    return m0 > 0.0f && halfGap > 0.0f ? DepthShift(groundUnits, eyeHeightUnits, m0, halfGap, conv, 1.0f) : 0.0f;
+}
+
 // What the plate's look needs, from the plate's own settings (the "Monster plates" group) and the monster it hangs on - none of the item labels' settings.
 struct PlateIn {
     bool firstPerson = false;
@@ -98,7 +106,8 @@ inline bool PlateNeedsBox(bool firstPerson, float plateDepth, float labelsDepth,
 // ---- the effect's plate branch, as C++ ----------------------------------------------------------------------------------------------------------
 // Which pixel of the interface layer an output pixel (u, v) of an eye shows, for the part of GameLabels that concerns the plate. eyeSign: +1 the left eye (moves
 // right = nearer), -1 the right. box: x0 y0 x1 y1 in uv, empty (x1 <= x0) = no plate. Result: a pixel of the layer at (outU, outV), or nothing (kind Empty:
-// the effect leaves it empty - the world shows), plus the plate's alpha for that pixel.
+// the effect leaves it empty - the world shows), plus the plate's alpha for that pixel. Eyes by turns: layerEye the eye the layer was laid out for (+1 left,
+// -1 right; 0 = the same layer for both eyes, as without turns) and turnH the plate's half-disparity at its target's depth (TurnsHalf).
 enum class Kind { Layer, Empty };
 struct Pick {
     Kind kind;
@@ -106,12 +115,13 @@ struct Pick {
     bool plate;        // the pixel is the plate's (its alpha applies)
 };
 inline bool InBox(float u, float v, const float b[4]) { return u >= b[0] && v >= b[1] && u < b[2] && v < b[3]; }
-inline Pick LayerPixel(float u, float v, float eyeSign, float labelBase, float labelTilt, bool own, float plateShift, float plateScale, const float box[4]) {
+inline Pick LayerPixel(float u, float v, float eyeSign, float labelBase, float labelTilt, bool own, float plateShift, float plateScale, const float box[4],
+                       float layerEye = 0.0f, float turnH = 0.0f) {
     const float su = u - eyeSign * (labelBase + labelTilt * v), sv = v;   // where the label layer's pixel is (GameLabels' src)
     const bool havePlate = box[2] > box[0];
     if (own && havePlate) {
         const float cu = 0.5f * (box[0] + box[2]), cv = 0.5f * (box[1] + box[3]);
-        const float pu = u - eyeSign * plateShift;
+        const float pu = u - (eyeSign * plateShift - layerEye * turnH);
         const float s = plateScale > 1e-3f ? plateScale : 1.0f;
         const float psu = cu + (pu - cu) / s, psv = cv + (v - cv) / s;
         if (InBox(psu, psv, box)) return {Kind::Layer, psu, psv, true};

@@ -133,6 +133,10 @@ void NoteSeen(void* unit, plateworld::Why why, const float* px) {
     const bool footOk = plateworld::FootOf((uintptr_t)unit, GameRead(), &foot[0], &foot[1]);   // (its distance: monster_far, monster_depth_body)
     plateworld::NoteSeen((uintptr_t)unit, cls, why, px, GetTickCount64(), footOk ? foot : nullptr);
 }
+// Where the plate is hung this frame, the final answer (out), for the effect's box to follow it (plateworld::FollowBox).
+void NoteFollow(void* unit, const float* out) {
+    plateworld::NoteFollow((uintptr_t)unit, out, g_viewportW.load(std::memory_order_relaxed), g_viewportH.load(std::memory_order_relaxed), GetTickCount64());
+}
 
 // [hud] monster_over_head: the game's own answer (the head's point, out) given another y, so that the plate it hangs on has its lower edge the player's gap
 // over the head (plateworld::LiftAnchor); the x is the game's. False: nothing changed. One line in the log for each target saying what became of its plate.
@@ -178,7 +182,8 @@ bool HookUnitToScreen(void* context, void* unit, float* out, uint8_t above) {
     const bool world = plateworld::Active();
     const bool track = plateworld::Tracking();   // [hud] monster_far / monster_depth_body: which monster is targeted, for the plate left in the picture
     const bool lift = plateworld::LiftWanted() && !world;   // [hud] monster_over_head (the plate cut out and hung in the room, if asked, has its own way)
-    if (IsPlateCall((hide || height != 0.0f || world || track || lift) && viewgate::F4(), above, out, (uintptr_t)_ReturnAddress(), g_plateRet.load(std::memory_order_relaxed))) {
+    const bool follow = plateworld::Following();   // [hud] monster_alpha, monster_size...: where the plate hangs, for the effect's box (the answer unchanged)
+    if (IsPlateCall((hide || height != 0.0f || world || track || lift || follow) && viewgate::F4(), above, out, (uintptr_t)_ReturnAddress(), g_plateRet.load(std::memory_order_relaxed))) {
         static std::atomic<bool> toldHide{false}, toldKeep{false}, toldShift{false}, toldWorld{false};
         if (hide && HidesPlate((uintptr_t)unit, GameRead())) {
             TellOnce(toldHide, true, (uintptr_t)unit);
@@ -201,9 +206,10 @@ bool HookUnitToScreen(void* context, void* unit, float* out, uint8_t above) {
                          was[0], was[1], out[0], out[1]);
                 Log(b);
             }
+            if (follow) NoteFollow(unit, out);
             return shown;
         }
-        if ((height != 0.0f || track || lift) && IsMonsterUnit((uintptr_t)unit, GameRead())) {   // monster_over_head / monster_height: the game's own answer, moved; monster_far / monster_depth_body: noted
+        if ((height != 0.0f || track || lift || follow) && IsMonsterUnit((uintptr_t)unit, GameRead())) {   // monster_over_head / monster_height: the game's own answer, moved; monster_far / monster_depth_body: noted
             const bool shown = g_orig(context, unit, out, above);
             if (shown && (track || lift)) NoteSeen(unit, plateworld::Why::Hung, nullptr);   // (the monster's place; the plate stays where the game puts it)
             if (shown && lift) {
@@ -218,6 +224,7 @@ bool HookUnitToScreen(void* context, void* unit, float* out, uint8_t above) {
                     Log(b);
                 }
             }
+            if (shown && follow) NoteFollow(unit, out);
             return shown;
         }
     }
@@ -240,7 +247,7 @@ void NoteViewport(float widthPx, float heightPx) {
 bool Hooked() { return g_in.load(); }
 
 void Install(const PluginContext* ctx) {
-    if (!ctx || !(g_on.load() || g_height.load() != 0.0f || plateworld::Wanted() || plateworld::Tracking() || plateworld::LiftWanted()) || g_in.load() || g_failed) return;
+    if (!ctx || !(g_on.load() || g_height.load() != 0.0f || plateworld::Wanted() || plateworld::Tracking() || plateworld::LiftWanted() || plateworld::Following()) || g_in.load() || g_failed) return;
     g_ctx = ctx;
     static ULONGLONG since = 0;
     static bool told = false;

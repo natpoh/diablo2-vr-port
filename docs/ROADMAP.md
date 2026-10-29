@@ -77,9 +77,10 @@ ends:
   [repo]
 - **The weapon stops at monsters** instead of passing through them. [repo]
 - **Dim the hero's own effects around him** (a player's request, 2026-10-18): in first person
-  Bone Armor wraps the eyes and is blinding. In the 0.170 build, but off and not working yet
-  (`[render] dim_own_effects`, Body > *Draw the hero's own effects fainter*): the effect's
-  "Fade" is set and nothing changes on screen ([issue 25](KNOWN_ISSUES.md)). [repo]
+  Bone Armor wraps the eyes and is blinding. In the build, off in the shipped settings
+  (`[render] dim_own_effects`, Body > *Draw the hero's own effects fainter*): Bone Armor's bones
+  are an opaque mesh the effect's "Fade" does not reach, so they and the other solid effects are
+  now not drawn in F4 under 100 % - to check in the game ([issue 25](KNOWN_ISSUES.md)). [repo]
 - **Aim distance by arm** (players' request, 2026-10-18): DONE in 0.170 (`[bow]
   aim_distance_by_arm`, Weapon Adjust > *Aim distance by the arm*; on in the shipped settings
   since 0.171). Spells only; a

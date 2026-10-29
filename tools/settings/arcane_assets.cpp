@@ -7,6 +7,7 @@
 // Blizzard's and stays on this machine: never in the repository or a build.
 
 #include "arcane_assets.h"
+#include "lang.h"   // lang::TX: the result line in the player's language (English in the tests)
 
 #include <windows.h>
 
@@ -97,15 +98,16 @@ Result Prepare(const std::wstring& game, const std::wstring& reshadeFolder, cons
     const std::wstring textures = reshadeFolder + L"reshade-shaders\\Textures\\";
     if (reshadeFolder.empty() || !IsDir(textures)) {
         r.state = kNotHere;
-        r.text = L"ReShade's reshade-shaders\\Textures is not in " + (reshadeFolder.empty() ? std::wstring(L"the game's folder") : Shown(game, reshadeFolder)) +
-                 L": install ReShade (above): the pictures are made when it is in";
+        r.text = lang::TX(L"arcane.no_textures", L"ReShade's reshade-shaders\\Textures is not in {folder}: install ReShade (above): the pictures are made when it is in",
+                          {{L"folder", reshadeFolder.empty() ? lang::TX(L"arcane.game_folder", L"the game's folder") : Shown(game, reshadeFolder)}});
         return r;
     }
     std::wstring root = game;
     if (!root.empty() && root.back() == L'\\') root.pop_back();
     HANDLE storage = nullptr;
     if (!CascOpenStorage(root.c_str(), 0, &storage)) {
-        r.text = L"The game's archives could not be opened (error " + std::to_wstring(GetLastError()) + L"); press \"Make the Arcane Sanctuary sky now\" later";
+        r.text = lang::TX(L"arcane.no_archives", L"The game's archives could not be opened (error {error}); press \"Make the Arcane Sanctuary sky now\" later",
+                          {{L"error", std::to_wstring(GetLastError())}});
         return r;
     }
     std::vector<Out> outs;
@@ -149,12 +151,12 @@ Result Prepare(const std::wstring& game, const std::wstring& reshadeFolder, cons
     const bool haveBuild = CascGetStorageInfo(storage, CascStorageProduct, &product, sizeof product, nullptr) && product.BuildNumber;
     CascCloseStorage(storage);
     if (!ok) {
-        r.text = L"Could not be made from the game's files (" + Wide(why) + L"); the game's own background stays";
+        r.text = lang::TX(L"arcane.not_made", L"Could not be made from the game's files ({why}); the game's own background stays", {{L"why", Wide(why)}});
         return r;
     }
 
     const std::wstring dir = textures + L"D2R_Arcane\\";
-    if (!MakeDirs(dir)) { r.text = L"reshade-shaders\\Textures\\D2R_Arcane could not be made"; return r; }
+    if (!MakeDirs(dir)) { r.text = lang::TX(L"arcane.no_folder", L"reshade-shaders\\Textures\\D2R_Arcane could not be made"); return r; }
     std::string last;
     ReadFile(dir + L"made.json", &last);
     std::vector<arcanesky::Written> receipt;
@@ -174,23 +176,24 @@ Result Prepare(const std::wstring& game, const std::wstring& reshadeFolder, cons
         return true;
     };
     for (const Out& o : outs)
-        if (!put(o, false)) { r.text = L"Could not write " + Wide(o.name) + L" (error " + std::to_wstring(GetLastError()) + L")"; return r; }
+        if (!put(o, false)) { r.text = lang::TX(L"arcane.not_written", L"Could not write {file} (error {error})", {{L"file", Wide(o.name)}, {L"error", std::to_wstring(GetLastError())}}); return r; }
     for (const Out& o : vis)
-        if (!put(o, true)) { r.text = L"Could not write " + Wide(o.name) + L" (error " + std::to_wstring(GetLastError()) + L")"; return r; }
+        if (!put(o, true)) { r.text = lang::TX(L"arcane.not_written", L"Could not write {file} (error {error})", {{L"file", Wide(o.name)}, {L"error", std::to_wstring(GetLastError())}}); return r; }
     const std::string made = arcanesky::Receipt(haveBuild ? std::to_string(product.BuildNumber) : std::string(), receipt);
     if (made != last && !WriteFile(dir + L"made.json", made.data(), made.size())) {
-        r.text = L"Could not write reshade-shaders\\Textures\\D2R_Arcane\\made.json";
+        r.text = lang::TX(L"arcane.no_receipt", L"Could not write reshade-shaders\\Textures\\D2R_Arcane\\made.json");
         return r;
     }
     r.state = kMade;
     // (told by the folder it really is in: the mod's, mods\D2R-VR\reshade\reshade-shaders\Textures\D2R_Arcane, or the game's)
     const std::wstring shown = Shown(game, dir);
-    r.text = r.wrote ? L"Made from your game: the star layers and clouds (" + shown + L")"
-                     : L"Ready: made from your game (" + shown + L")";
-    if (!modFolder) r.text += L"; the game's flat star cards stay (they go only in the mod's folder mods\\D2R-VR)";
-    else if (vis.empty()) r.text += L"; the game's flat star cards stay (" + Wide(visWhy) + L")";
-    else if (kept) r.text += L"; " + std::to_wstring(kept) + L" visual file(s) in mods\\D2R-VR changed by you were left as they are";
-    else r.text += L"; the flat star cards taken out in mods\\D2R-VR";
+    r.text = r.wrote ? lang::TX(L"arcane.made", L"Made from your game: the star layers and clouds ({folder})", {{L"folder", shown}})
+                     : lang::TX(L"arcane.ready", L"Ready: made from your game ({folder})", {{L"folder", shown}});
+    r.text += L"; ";
+    if (!modFolder) r.text += lang::TX(L"arcane.cards_stay_no_mod", L"the game's flat star cards stay (they go only in the mod's folder mods\\D2R-VR)");
+    else if (vis.empty()) r.text += lang::TX(L"arcane.cards_stay", L"the game's flat star cards stay ({why})", {{L"why", Wide(visWhy)}});
+    else if (kept) r.text += lang::TX(L"arcane.cards_kept", L"{n} visual file(s) in mods\\D2R-VR changed by you were left as they are", {{L"n", std::to_wstring(kept)}});
+    else r.text += lang::TX(L"arcane.cards_out", L"the flat star cards taken out in mods\\D2R-VR");
     return r;
 }
 

@@ -131,7 +131,8 @@ void OnFrame(const directinput::Frame& f, void*) {
         hs.tracked = focused && f.head.valid == 1 && h.active && h.grip.valid == 1 && s.heading.Relative(f.head.pos, h.grip.pos, hs.pos);
         hs.trigger = h.trigger;
     }
-    in.rightTriggerIsThrows = throwwire::TriggerIsThrows();   // [hands] throw_gesture: the right trigger is the throw's own control
+    in.rightTriggerIsThrows = throwwire::TriggerIsThrowsAt(1);   // [hands] throw_gesture: the right trigger is the throw's own control
+    in.leftTriggerIsThrows = throwwire::TriggerIsThrowsAt(0);    // ... or the left one, with [hands] throw_left_hand and the weapon in the left hand
 
     const quiver::FrameOut out = s.ctl.Step(in);
     const bool thrown = quiver::IsThrownKind(in.weapon) && in.weapon != quiver::Kind::Potion;

@@ -113,6 +113,8 @@ private:
 
 // ---- what melee_touch hands over, once per pose ------------------------------------------------------------------------------
 // One blade of the pose: [0] the primary (the hand slot PosedWeapon names), [1] the other hand's, when two melee weapons are held.
+// The volumes a blade has beside its capsule: an axe's head (melee_head_volume) or a three-ball flail's other balls ([flail] chain, Khalim's).
+constexpr int kHeads = 3;
 struct BladeIn {
     bool have = false;
     int side = 0;                    // the hand slot: 0 right, 1 left (for the log)
@@ -124,6 +126,8 @@ struct BladeIn {
     float sweepSpeed = 0.0f;         // the speed of the last sweep the engine made, m/s ...
     uint64_t sweepMs = 0;            // ... and when (0 = none yet)
     int tint = -1;                   // [debug] thrust_debug: the blade drawn in this Colour (kCGreen a counted thrust, kCRed a refused one) whatever the look; -1 = by the look
+    int nHeads = 0;                  // [gameplay] melee_head_volume: the head's own volume (an axe's blade beside the shaft) - or a three-ball flail's other balls -
+    stroke::Blade heads[kHeads];     // ... drawn in the blade's colour, metres
 };
 // A contact with a monster (melee_touch.cpp), for the drawing: the touching point of the blade, its velocity's direction (unit, or zero), the nearest point of the monster's axis, the colour of the
 // verdict (Colour), whether to tint the monster's capsule, and which monster.
@@ -179,6 +183,8 @@ public:
             b.sweepSpeed = in.sweepSpeed;
             b.sweepMs = in.sweepMs;
             b.tint = in.have ? in.tint : -1;
+            b.nHeads = in.have ? std::clamp(in.nHeads, 0, kHeads) : 0;
+            for (int k = 0; k < b.nHeads; ++k) b.heads[k] = in.heads[k];
             if (in.have) b.peak.Note(in.speed);
         }
         minSpeed_ = f.minSpeed;
@@ -226,6 +232,7 @@ public:
                              : blades_[i].look == strikedir::Look::Away ? KindOfTouch(dirColour_, kGlass)
                              : blades_[i].look == strikedir::Look::Small ? KindOfTouch(kCAmber, kGlass) : kBladeHot;
                 out[n++] = {blades_[i].blade.base, blades_[i].blade.tip, blades_[i].blade.radius, k};
+                for (int h = 0; h < blades_[i].nHeads && n < cap; ++h) out[n++] = {blades_[i].heads[h].base, blades_[i].heads[h].tip, blades_[i].heads[h].radius, k};   // [gameplay] melee_head_volume, a flail's balls
             }
         // the monsters in a struck window are drawn last, in their flash's colour
         int struck = 0;
@@ -399,7 +406,7 @@ public:
 
 private:
     struct Strike { uint32_t id = 0; Kind kind = kStruckKey; uint64_t at = 0; stroke::Body body; bool haveBody = false; };
-    struct Blade { bool have = false; int side = 0; stroke::Blade blade; bool inStroke = false; bool counting = false; strikedir::Look look = strikedir::Look::Cold; float speed = 0.0f; float sweepSpeed = 0.0f; uint64_t sweepMs = 0; PeakTracker peak; int tint = -1; };
+    struct Blade { bool have = false; int side = 0; stroke::Blade blade; bool inStroke = false; bool counting = false; strikedir::Look look = strikedir::Look::Cold; float speed = 0.0f; float sweepSpeed = 0.0f; uint64_t sweepMs = 0; PeakTracker peak; int tint = -1; int nHeads = 0; stroke::Blade heads[kHeads]; };
     static bool Active(const Strike& t, uint64_t nowMs) { return t.at && nowMs >= t.at && nowMs - t.at < kStruckMs; }
     uint64_t at_ = 0;
     float upm_ = 4.0f, floorY_ = 0.0f, minSpeed_ = 0.8f;

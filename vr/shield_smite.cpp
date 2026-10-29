@@ -49,6 +49,7 @@
 #include "shield_arm_wire.h"     // [hands] shoulder_draw: the shield may be on the right arm, or put away
 #include "skill_triggers.h"     // [debug] skill_triggers: the shield's capsule, marks, trail and line
 #include "shield_smite_game.h"
+#include "parry_wire.h"   // [weight] parry_shield_smite: the shield into a monster's weapon in its swing casts Smite; the block shown's strength
 #include "sigscan.h"
 #include "skeletons.h"
 #include "view_gate.h"
@@ -191,7 +192,13 @@ void Configure(bool on) {
 
 bool Casting() { return g_casting.load() && viewgate::F4(); }
 bool On() { return g_on.load(); }
-bool Watching() { return g_on.load() || skilltriggers::Wanted(); }
+// [weight] parry_*: the shield is watched for them too - the shield into a monster's weapon in its swing (parry_shield_smite), and how near it was to a blow
+// for the game's block shown as a parry (parry_block_show) or felt (parry_feel)
+bool ParryWatching() {
+    const parrywire::Settings p = parrywire::Get();
+    return p.shields && (p.shieldSmite || p.blockShow || p.feel) && viewgate::F4();
+}
+bool Watching() { return g_on.load() || skilltriggers::Wanted() || ParryWatching(); }
 void SetTuning(float minSpeed, float strokeCm) {
     const stroke::StrokeTuning t = BashTuning(minSpeed, strokeCm);   // 0.3 .. 8 m/s, 2 .. 30 cm; a number that is not one is the default
     g_minSpeed.store(t.minSpeed);
@@ -201,7 +208,7 @@ static_assert(kSmiteSkill == kSmite, "one Smite");
 
 // -- which pad slot holds Smite (the UI thread) ------------------------------------------------------------------------
 void UiRead() {
-    if (!g_on.load() && !skilltriggers::Wanted()) return;   // ([debug] skill_triggers reads it too, to say whether a Smite slot is there)
+    if (!g_on.load() && !skilltriggers::Wanted() && !parrywire::ShieldSmiteWanted()) return;   // ([debug] skill_triggers reads it too, to say whether a Smite slot is there; [weight] parry_shield_smite casts it)
     static int told = -2;
     static bool toldWhy = false;
     auto fail = [&](const char* why) {
@@ -265,7 +272,8 @@ void LatencyPoll(ULONGLONG now) {
 void Tick(bool play, float upm, uintptr_t hero) {
     const bool on = g_on.load();
     const bool boxes = skilltriggers::Wanted();   // [debug] skill_triggers: the shield is drawn and described even with shield_smite off
-    if (!on && !boxes) return;
+    const bool parried = ParryWatching();          // [weight] parry_*: the shield against the monsters' weapons, with shield_smite off too
+    if (!on && !boxes && !parried) return;
     if (on) LatencyPoll(GetTickCount64());
     if (!viewgate::F4() && g_casting.exchange(false)) {   // F4 only (vr/view_gate.h): a cast window open when the view changes is closed - the game's lookups are its own again
         AcquireSRWLockExclusive(&g_lock);
@@ -330,6 +338,75 @@ void Tick(bool play, float upm, uintptr_t hero) {
         sample.scale = upm;
     }
 
+    // The cast at monster u: Smite's pad slot pressed, the game's target lookups answered with u for the cast window (the bash's, and [weight]
+    // parry_shield_smite's). `what`: for the log line.
+    const auto castAt = [&](const Unit& u, const Monster& m, int slot, float speed, const char* what) {
+        const ULONGLONG tick = GetTickCount64();
+        AcquireSRWLockExclusive(&g_lock);
+        g_cast.Begin(u.id, u.cellX, u.cellY, Now());
+        g_castUnit = u.ptr;
+        ReleaseSRWLockExclusive(&g_lock);
+        g_casting.store(true);
+        hitclaim::Press(BashSide(wear), (int64_t)GetTickCount64());   // the blow is the shield arm's: the game's hit comes after its click closed the cast, so the press says whose it is (vr/hit_claim.h)
+        const PadPress p = SlotPress(slot);
+        g_pressed.store((uint32_t)p.buttons | (uint32_t)p.lt << 16);
+        directinput::PadPulse({p.buttons, p.lt, 0}, PulseMs(p));
+        hitlatency::Press(hitlatency::kShield);   // (counting only: the press -> hit log)
+        g_lat.Press();
+        ++g_requests;
+        skilltriggers::StruckBody(u.id, meleeboxes::kStruckKey, tick, m.body);   // [debug] skill_triggers: the monster flashes red (drawing only)
+        LogF("shield smite: %s at %.1f m/s touched monster %u (kind %u) at cell %.1f %.1f - pad slot %d pressed", what, speed, u.id, u.cls, u.cellX, u.cellY, slot);
+    };
+
+    // [weight] parry_*: the shield against the monsters' weapons (the bodies hit by touch hands over) - how near it is to a blow (the block shown), the clash's pulse
+    // (parry_feel), and parry_shield_smite: the shield into a monster's weapon in its swing casts Smite at it, through the same press, with the same gate as a bash
+    // (the shield, Smite on a slot, in play, F4, the right trigger up). The game's own cast decides the rest: mana, reach, the animation, whether it lands.
+    if (parried && sample.active) {
+        static monsterbodies::Snapshot snap;   // (the timer's thread only)
+        static parry::Clashes clashes;
+        if (meleetouch::Bodies(&snap)) {
+            const parry::Capsule shieldCap{sample.blade.base, sample.blade.tip, sample.blade.radius};
+            const ULONGLONG tick = GetTickCount64();
+            parrywire::Shield(shieldCap, BashSide(wear), snap, tick);
+            const int slot = g_slot.load();
+            if (parrywire::ShieldSmiteWanted() && hero) {
+                uint32_t ids[monsterbodies::kMax];
+                float gaps[monsterbodies::kMax];
+                bool attacks[monsterbodies::kMax];
+                int n = 0;
+                for (int i = 0; i < snap.n; ++i) {   // each monster's weapon nearest the shield
+                    const monsterbodies::Body& w = snap.b[i];
+                    if (w.held != 1) continue;
+                    const float gap = parry::Gap(shieldCap, {{w.bottom[0], w.bottom[1], w.bottom[2]}, {w.top[0], w.top[1], w.top[2]}, w.radius});
+                    int k = 0;
+                    while (k < n && ids[k] != w.id) ++k;
+                    if (k == n) { ids[n] = w.id; gaps[n] = gap; attacks[n] = parry::MonsterAttacking(w.mode); ++n; }
+                    else gaps[k] = std::min(gaps[k], gap);
+                }
+                for (int k = 0; k < n; ++k) {
+                    if (!clashes.Step(ids[k], attacks[k], gaps[k], tick)) continue;
+                    if (!(gate.shield && gate.playing && gate.f4 && gate.rightTrigger < kTriggerDown)) {
+                        LogF("shield smite: the shield met monster %u's weapon in its swing - no Smite (%s)", ids[k], !gate.shield ? "no shield" : !gate.playing || !gate.f4 ? "not in play" : "the right trigger is down");
+                        continue;
+                    }
+                    if (slot < 0) {
+                        static ULONGLONG toldAt = 0;
+                        if (tick - toldAt >= 10000) { toldAt = tick; LogF("shield smite: the shield met monster %u's weapon in its swing - no Smite on a pad slot ([weight] parry_shield_smite)", ids[k]); }
+                        continue;
+                    }
+                    Monster monsters[kMaxMonsters];
+                    Unit units[kMaxMonsters];
+                    const int got = Gather(hero, upm, sample.anchor.y, 3.0f, monsters, units, kMaxMonsters);
+                    int at = -1;
+                    for (int i = 0; i < got; ++i) if (units[i].id == ids[k]) { at = i; break; }
+                    if (at < 0) { LogF("shield smite: the shield met monster %u's weapon in its swing - the monster is not within 3 m (no Smite)", ids[k]); continue; }
+                    castAt(units[at], monsters[at], slot, detector.Speed(), "the shield into a monster's weapon in its swing ([weight] parry_shield_smite)");
+                    break;   // (one cast at a time)
+                }
+            }
+        }
+    }
+
     stroke::Sweep sweep;
     const bool swept = detector.Step(gate, sample, sweep);
     static float lastSweepSpeed = 0.0f;   // for the debug line
@@ -349,24 +426,7 @@ void Tick(bool play, float upm, uintptr_t hero) {
             size_t index = 0;
             if (n > 0 && detector.Pick(sweep, f.session, f.time, monsters, (size_t)n, index)) {
                 const int slot = g_slot.load();
-                const Unit& u = units[index];
-                if (slot >= 0) {
-                    AcquireSRWLockExclusive(&g_lock);
-                    g_cast.Begin(u.id, u.cellX, u.cellY, Now());
-                    g_castUnit = u.ptr;
-                    ReleaseSRWLockExclusive(&g_lock);
-                    g_casting.store(true);
-                    hitclaim::Press(BashSide(wear), (int64_t)GetTickCount64());   // the blow is the shield arm's: the game's hit comes after its click closed the cast, so the press says whose it is (vr/hit_claim.h)
-                    const PadPress p = SlotPress(slot);
-                    g_pressed.store((uint32_t)p.buttons | (uint32_t)p.lt << 16);
-                    directinput::PadPulse({p.buttons, p.lt, 0}, PulseMs(p));
-                    hitlatency::Press(hitlatency::kShield);   // (counting only: the press -> hit log)
-                    g_lat.Press();
-                    ++g_requests;
-                    skilltriggers::StruckBody(u.id, meleeboxes::kStruckKey, tick, monsters[index].body);   // [debug] skill_triggers: the monster flashes red (drawing only)
-                    LogF("shield smite: a bash at %.1f m/s touched monster %u (kind %u) at cell %.1f %.1f - pad slot %d pressed", sweep.speed, u.id, u.cls,
-                         u.cellX, u.cellY, slot);
-                }
+                if (slot >= 0) castAt(units[index], monsters[index], slot, sweep.speed, "a bash");
             }
         } else if (!hero && tick >= nextReport) {
             nextReport = tick + 10000;

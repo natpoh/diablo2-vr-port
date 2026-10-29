@@ -40,6 +40,10 @@ struct Layer {
 // xr.cpp CloseFrame (the draw thread), every frame and for each wrist: true while that wrist's panel is wanted (coming, up or going), with the revision of the
 // picture it must not be shown before. False: nothing to do - no cost beyond this call.
 bool Draw(int side, Layer* layer, uint32_t* needRevision);
+// [weight] grab_bodies: a hand held on a body is drawn off its controller - the panel rides the drawn hand. fn(handSide 0 right / 1 left, out: metres in the
+// room) true while that hand is shifted. vrcam registers grabwire::DrawnShift; unregistered: the controller's place, as ever.
+using HandShiftFn = bool (*)(int side, float out[3]);
+void SetHandShift(HandShiftFn fn);
 
 // A finished picture (premultiplied pixels, R in the low byte, kPicW x kPicH) for that wrist newer than the last fetched, with its revision.
 bool Picture(int side, std::vector<uint32_t>* px, uint32_t* revision, uint32_t* width, uint32_t* height);

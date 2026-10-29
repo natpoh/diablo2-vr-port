@@ -21,6 +21,10 @@ int  Radius();
 int RoomsAddedLastTick();
 int RoomsLoadedTotal();
 
+// Called on the game's thread right after each LevelTranslationLayer::SimulationTick, with the layer.
+using LevelTickFn = void (*)(void* layer);
+void SetLevelTickCallback(LevelTickFn fn);
+
 // Model visibility radius in world units (the game's 150). False if this game
 // build does not match.
 bool  SetModelRadius(float units);

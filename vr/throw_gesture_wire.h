@@ -95,7 +95,7 @@ struct ThrowInfo {
 bool Info(ThrowInfo* out);
 
 // -- for the weapon-weight logic (and anything else that reacts to the right grip) -----------------------------
-// Read-only, any thread.
+// Read-only, any thread. "The right grip / trigger" below is the throwing controller's (Controller(): the right one unless [hands] throw_left_hand).
 //
 // True while a throw_by_grip gesture owns the right grip: the mode is on and direct input feeds the game, a throwing
 // weapon or javelin is wielded, in F4 with no menu - the frames in which this module Takes the grip. In such a
@@ -109,6 +109,37 @@ bool TriggerIsThrows();
 // taken from the frame as the controller made it. NOT the shared block's grip: a control the gesture Takes reads as let go there (and for BodyWalk), so
 // with a thrown weapon in hand that grip is always 0. Hit by touch with a thrown weapon asks this ("the weapon is in the hand").
 bool GripHeld();
+// [hands] throw_left_hand (vr/throw_hand.h): on, EACH hand that carries a thrown weapon in VR throws it with its own controller - a javelin handed over to
+// the left hand (the weight model: the left grip takes it, the right lets go), a javelin in each hand (both), a javelin beside an axe (the javelin's
+// hand only: the axe's grip stays the axe's); without the weight model, the game's slot it is in. Off (the default), the right controller as ever. Live.
+void SetFollowHand(bool on);
+bool FollowHand();   // ... it is on
+// vrcam, once: the weight model's word (hands and slots 0 right, 1 left): weight::Placed, CarryingHand (its first weapon), SecondHand and SecondPlaced
+// (the second of a weapon in each hand), FirstSlot, HoldersOf (by slot: the hands on that weapon - a hand-over is no throw), SecondThrown (the game threw the
+// second: a fresh one in its hand). Unregistered (null fields): the game's slots alone decide.
+struct CarrySource {
+    bool (*placed)() = nullptr;
+    int (*carrying)() = nullptr;
+    int (*secondHand)() = nullptr;
+    bool (*secondPlaced)() = nullptr;
+    int (*firstSlot)() = nullptr;
+    unsigned (*holdersOf)(int slot) = nullptr;
+    void (*secondThrown)() = nullptr;
+};
+void SetCarrySource(const CarrySource& src);
+// The controller of the PRIMARY thrown weapon (direct_input's: 0 left, 1 right) - the weight model's first weapon's (or the game's weapon kind's): 1 unless
+// throw_left_hand is on and that weapon is in the left hand. GripIsThrows / TriggerIsThrows / GripHeld above are that controller's control; whoever reacts
+// to ONE controller's grip or trigger asks the *At forms (with two javelins both controllers' are the throw's).
+int Controller();
+bool GripIsThrowsAt(int xrHand);      // a throw_by_grip gesture owns that controller's grip now
+bool TriggerIsThrowsAt(int xrHand);   // a throw_gesture owns that controller's trigger now
+bool GripHeldAt(int xrHand);          // ... and its grip is squeezed on the weapon (the gesture's own reading, as GripHeld)
+// A throw's press is live now (from the press, for the ticks the game takes to read it - as Aim, without the heading). Any thread.
+bool Live();
+// A thrown weapon is in a game slot with a throw gesture on, in play (F4, focus, no menu) - whether or not a hand holds it this moment (between throws,
+// put down): the game's weapon kind, 0 not. [gameplay] melee_touch_only asks it (vr/melee_trigger_wire.cpp): the trigger does not attack in the gaps
+// between throws either. Any thread.
+uint32_t ThrownInPlay();
 // GetTickCount64 (ms) at the last released throw, 0 if none. It is set in this module's frame callback, in the
 // frame of the release, BEFORE the press: a listener that runs earlier in the same frame sees it one frame late -
 // decide a drop on a grip release no sooner than the next frame (about 11 ms), then compare the release's

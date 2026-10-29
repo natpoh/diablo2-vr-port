@@ -105,7 +105,7 @@ bool ReadAt(uintptr_t at, void* out, size_t n) noexcept {
 
 // The game's own switch: the entity's effect component told "not visible" (VfxSetVisible stores the wish and applies it to the effect if it is made - or, if it is not made yet,
 // when it is). 1 done; 0 the entity has no effect component (the root of the unit); -1 not usable / a fault. made / wasVisible: what the component said before (for the log).
-int HideEffect(uint32_t entity, bool* made, uint32_t* wasVisible) noexcept {
+int HideEffect(uint32_t entity, bool* made, uint32_t* wasVisible, bool hide = true) noexcept {
     if (!g_effectOk.load(std::memory_order_relaxed)) return -1;
     __try {
         const uintptr_t reg = d2rsig::Addr(RVA_ECS_REGISTRY);
@@ -122,7 +122,7 @@ int HideEffect(uint32_t entity, bool* made, uint32_t* wasVisible) noexcept {
         ReadAt(component + kEffectOffVisible, &visible, sizeof visible);
         *made = instance > 0x10000;
         *wasVisible = visible;
-        setVisible(component, 0);
+        if (hide) setVisible(component, 0);
         return 1;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return -1;
@@ -217,19 +217,31 @@ void NoteEntity(uint32_t entity, uintptr_t unit) noexcept {
     if (g_set.Remove(entity, now)) { ++g_removed; LogF("potion hide: entity %08X is now another unit's (%s) - it is drawn again", entity, Why(v)); }
 }
 
+std::atomic<VisualObserver> g_visualObserver{nullptr};   // [bow] arrow_flight: the hero's arrows' entities (it guards itself)
+
 __declspec(noinline) void HookVisualInit(uintptr_t assets, uintptr_t definition, uint32_t entity, uintptr_t unit) {
     if (unit && !g_faulted.load(std::memory_order_relaxed) && (g_wanted.load(std::memory_order_relaxed) || g_set.Live() != 0)) {
         __try { NoteEntity(entity, unit); } __except (EXCEPTION_EXECUTE_HANDLER) { Fault("the visual-init look"); }
     }
+    if (unit)
+        if (const VisualObserver fn = g_visualObserver.load(std::memory_order_relaxed)) fn(entity, unit);
     g_origVisual(assets, definition, entity, unit);
 }
 
 std::atomic<XformObserver> g_observer{nullptr};
-std::atomic<bool> g_otherWants{false};
+std::atomic<XformPass> g_pass{nullptr};
+std::atomic<XformObserver> g_writer{nullptr};   // [bow] arrow_flight: puts the hero's shot arrow where we draw it
+std::atomic<XformObserver> g_effectsWriter{nullptr};   // [render] lower_own_effects: the hero's own solid overlays lowered
+std::atomic<XformObserver> g_headObserver{nullptr};    // [arms] head_shadow: the models hung on the hero's head (only reads)
+std::atomic<bool> g_otherWants{false}, g_propsWant{false}, g_arrowsWant{false}, g_effectsWant{false}, g_headWant{false};
 
 __declspec(noinline) uintptr_t HookXform(uintptr_t out, uint32_t entity, uintptr_t component) {
     const uintptr_t r = g_origXform(out, entity, component);
     if (const XformObserver fn = g_observer.load(std::memory_order_relaxed)) fn(entity, component, out);   // a reader (the crossbow's barrel): only reads
+    if (const XformObserver fn = g_headObserver.load(std::memory_order_relaxed)) fn(entity, component, out);   // [arms] head_shadow: only reads
+    if (const XformPass fn = g_pass.load(std::memory_order_relaxed)) fn();   // [weight] knock_props: the moving props' matrices, once a frame
+    if (const XformObserver fn = g_writer.load(std::memory_order_relaxed)) fn(entity, component, out);   // [bow] arrow_flight: our arrow's matrix, for its entities alone
+    if (const XformObserver fn = g_effectsWriter.load(std::memory_order_relaxed)) fn(entity, component, out);   // [render] lower_own_effects: the hero's own solid overlays
     if (g_set.Live() == 0 || g_faulted.load(std::memory_order_relaxed)) return r;
     if (g_set.Has(entity, GetTickCount64()) && viewgate::F4()) {
         const int w = PutHidden(out, component);
@@ -261,7 +273,8 @@ bool Wanted() { return g_wanted.load(); }
 bool Ready() { return g_wanted.load() && g_state.load() == 1 && !g_faulted.load(); }
 bool HooksIn() { return g_state.load() == 1; }
 
-void Install() {
+namespace {
+void InstallOnce() {
     static ULONGLONG retryAt = 0;
     static unsigned tries = 0;
     const ULONGLONG now = GetTickCount64();
@@ -277,7 +290,7 @@ void Install() {
                 "this throw, or draws it some way the visual-init callback does not see); the game's potion was drawn as ever");
     }
     if (g_set.Live() != 0) g_set.Prune(now);
-    if (!(g_wanted.load() || g_otherWants.load()) || g_state.load() != 0 || !g_ctx || now < retryAt) return;
+    if (!(g_wanted.load() || g_otherWants.load() || g_propsWant.load() || g_arrowsWant.load() || g_effectsWant.load() || g_headWant.load()) || g_state.load() != 0 || !g_ctx || now < retryAt) return;
     retryAt = now + (tries < 30 ? 2000 : 30000);   // the renderer's code is plain from the start, but the signature search may still be waiting
     if (!d2rsig::Addr(RVA_VISUAL_INIT) || !d2rsig::Addr(RVA_WORLD_XFORM)) return;   // not found (yet)
     if (!d2rsig::Check(RVA_VISUAL_INIT, kSigVisualInit, sizeof kSigVisualInit) || !d2rsig::Check(RVA_WORLD_XFORM, kSigXform, sizeof kSigXform)) {
@@ -313,6 +326,17 @@ void Install() {
         Log("potion hide: the hooks could not be put in - the game's own thrown potion is drawn as ever");
     }
 }
+SRWLOCK g_installLock = SRWLOCK_INIT;
+}  // namespace
+
+// Called from two threads: direct input's frame (vr/throw_gesture_wire.cpp) and vrcam's tick for the head's shadow (vr/head_shadow.cpp), which asks at the plugin's
+// start - the hooks must go in EARLY: put in after a game is loaded, MinHook found no room for a trampoline near the game's image (the loader's log, 2026-10-26:
+// "could not install a Native Hook at RVA 0xE3A8C0: MH_ERROR_MEMORY_ALLOC" 30 times from 19:34, the first try - direct input's first frame in the game). One at a time.
+void Install() {
+    if (!TryAcquireSRWLockExclusive(&g_installLock)) return;
+    InstallOnce();
+    ReleaseSRWLockExclusive(&g_installLock);
+}
 
 bool Arm(uint64_t nowMs, double flightS) {
     if (!Ready() || !viewgate::F4()) return false;
@@ -327,9 +351,37 @@ bool Arm(uint64_t nowMs, double flightS) {
 void Disarm() { g_window.Cancel(); }
 
 void SetXformObserver(XformObserver fn) { g_observer.store(fn); }
+void SetXformPass(XformPass fn) { g_pass.store(fn); }
+void SetVisualObserver(VisualObserver fn) { g_visualObserver.store(fn); }
+void SetXformWriter(XformObserver fn) { g_writer.store(fn); }
+void SetXformEffectsWriter(XformObserver fn) { g_effectsWriter.store(fn); }
+void WantHooksForEffects(bool want) {
+    if (g_effectsWant.exchange(want) != want && want && !g_wanted.load())
+        Log("potion hide: its hooks are wanted by the hero's own effects ([render] lower_own_effects) - put in even with the potion hide off; they write only the matrices of his own solid overlays");
+}
+void WantHooksForArrows(bool want) {
+    if (g_arrowsWant.exchange(want) != want && want && !g_wanted.load())
+        Log("potion hide: its hooks are wanted by the arrow's flight ([bow] arrow_flight) - put in even with the potion hide off; they write only the matrices of the hero's shot arrows");
+}
+int EntityEffect(uint32_t entity, bool hide) {
+    if (g_state.load() != 1 || g_faulted.load()) return -1;
+    bool made = false;
+    uint32_t was = 1;
+    return HideEffect(entity, &made, &was, hide);
+}
+bool Faulted() { return g_faulted.load(); }
+void WantHooksForProps(bool want) {
+    if (g_propsWant.exchange(want) != want && want && !g_wanted.load())
+        Log("potion hide: its hooks are wanted by the knockable props ([weight] knock_props) - put in even with the potion hide off; they write only the matrices of props we moved");
+}
 void WantHooks(bool want) {
     if (g_otherWants.exchange(want) != want && want && !g_wanted.load())
         Log("potion hide: its hooks are wanted by the crossbow's barrel ([hands] xbow_support_model) - put in even with the potion hide off; they change nothing");
+}
+void SetXformHeadObserver(XformObserver fn) { g_headObserver.store(fn); }
+void WantHooksForHead(bool want) {
+    if (g_headWant.exchange(want) != want && want && !g_wanted.load())
+        Log("potion hide: its hooks are wanted by the head's shadow ([arms] head_shadow) - put in even with the potion hide off; they only read (which models hang on the hero's head)");
 }
 
 }  // namespace potionhide

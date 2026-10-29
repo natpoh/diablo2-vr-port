@@ -572,7 +572,8 @@ void DrawStatus(Canvas& cv, Fonts& fonts, const View& v) {
     const Col red = v.result == wheel::Result::Refused ? kRedBright : kRed;
     const tiles::PRect rl = tiles::kRedLine;
     CapsCentred(cv, fonts, line, 0.5f * (rl.l + rl.r), Rect{rl.l, rl.t, rl.r, rl.b}, 32, 2.5f, red);
-    const char* hint = v.page == Page::Wheel ? "Point at a slot and pull the trigger"
+    const char* hint = v.page == Page::Wheel ? (v.editFirst ? "Tap a slot to change its skill - hold the trigger on it and the trigger casts it"
+                                                            : "Point at a slot and pull the trigger")
                        : v.page == Page::PickSlot ? "Point at the slot to change and pull the trigger"
                                                   : "Point at a skill and pull the trigger to put it on the slot";
     const tiles::PRect hl = tiles::kHintLine;
@@ -604,16 +605,18 @@ void DrawRows(Canvas& cv, Fonts& fonts, const View& v) {
         PlateLook k;
         const bool placed = v.ready && sk.known;
         k.red = placed && sk.id >= 0;
-        k.dim = k.red && !sk.available;
+        const bool off = v.rowOff && wheel::kSlotDefs[s].alt;   // the second row of buttons is off: the left trigger has its own action
+        k.dim = (k.red && !sk.available) || off;
         k.dead = v.ready && !sk.known;
         k.hot = v.hover == s;
         k.active = v.page == Page::Wheel && wheel::TriggerSlot(v) == s;
         DrawTile(cv, fonts, r, k, placed ? &sk : nullptr, pickSlot && placed && sk.id < 0);
         DrawGlyph(cv, fonts, tiles::GlyphOf(s), tiles::GlyphRect(s));
-        if (placed && sk.id >= 0) Text(cv, fonts, sk.name, tiles::NameRect(s), 22, false, sk.available ? kSilver : kSilverDim);
+        if (placed && sk.id >= 0) Text(cv, fonts, sk.name, tiles::NameRect(s), 22, false, sk.available && !off ? kSilver : kSilverDim);
         else if (placed) Text(cv, fonts, "Empty", tiles::NameRect(s), 22, false, Col{110, 112, 120});
         else if (k.dead) Text(cv, fonts, "Not found", tiles::NameRect(s), 22, false, Col{110, 112, 120});
-        if (v.hints.text[s][0]) Text(cv, fonts, v.hints.text[s], tiles::HintRect(s), 21, false, Col{128, 156, 120});
+        if (off) Text(cv, fonts, "LT row off", tiles::HintRect(s), 21, false, Col{150, 120, 110});
+        else if (v.hints.text[s][0]) Text(cv, fonts, v.hints.text[s], tiles::HintRect(s), 21, false, Col{128, 156, 120});
     }
 }
 

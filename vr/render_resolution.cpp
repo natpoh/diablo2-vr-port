@@ -37,6 +37,9 @@ Fallback g_fallback;                 // (the draw thread's)
 std::atomic<bool> g_forgetFallback{false};
 std::atomic<HWND> g_attached{nullptr};
 std::atomic<bool> g_hero{false};
+std::atomic<bool> g_frontend{false};   // [render] menu_wide: the menus' scene has stood a while
+std::atomic<bool> g_reshade{true};     // ReShade drives the present: [render] menu_wide stands down (until vrcam says otherwise)
+MenuWide g_menuWide;                   // (the draw thread's)
 
 // -- the pointer: the game reads its cursor as GetCursorPos + ScreenToClient and moves it as ClientToScreen +
 // SetCursorPos (D2R.exe 3.3.93787 under D2RLoader 1.3.1: 0x14120A020 and 0x14120A290, read off the memory image).
@@ -127,22 +130,42 @@ void ClientSizeReflow() {
 void SetLogger(void (*log)(const char*)) { g_log = log; }
 void Attach(HWND window) { g_attached.store(window); }
 void SetHeroReady(bool ready) { g_hero.store(ready); }
+void SetFrontendReady(bool ready) { g_frontend.store(ready); }
+void SetReShade(bool on) { g_reshade.store(on); }
 bool Handle(HWND window, UINT message, WPARAM w, LPARAM& l, WNDPROC original, LRESULT& result) {
     return g_window.Handle(window, message, w, l, original, result);
 }
 
-void Update(HWND window, bool running, Size recommended, Size maximum, Size output, const rendersize::Pick& pick) {
-    static Size toldWant, toldSel;
+void Update(HWND window, bool running, Size recommended, Size maximum, Size output, const rendersize::Pick& pick, bool menuWide) {
+    static Size toldWant, toldSel, toldWide;
     static rendersize::Pick toldPick;
     if (!window || window != g_attached.load()) return;   // vrcam's window procedure is not on this window (yet)
+    if (menuWide && !MenuWideApplies(menuWide, g_reshade.load())) {
+        static bool told = false;
+        if (!told) {
+            told = true;
+            Say("vrcam: render size - the menus stay in the picture's shape: [render] menu_wide works only without ReShade ([render] no_reshade=1) - "
+                "under ReShade a resize of the character screen froze a player's game (0.186)");
+        }
+        menuWide = false;
+    }
     if (g_forgetFallback.exchange(false)) g_fallback.Reset();
     // Desktop with nothing of ours in force - the default - is no work at all, present after present.
-    if (pick.kind == rendersize::Kind::Desktop && !g_ctl.InForce() && !g_window.Logical(window)) return;
+    if (pick.kind == rendersize::Kind::Desktop && !menuWide && !g_ctl.InForce() && !g_window.Logical(window)) return;
     Size sel = Select(pick, recommended, maximum);
-    if (sel) std::call_once(g_setup, Setup);
-    if (sel && !g_hooksReady.load()) sel = {};   // no way to map the cursor: the window's own size stays
+    // [render] menu_wide: the menus' 16:9 picture, as wide as the size picked - or the window, the window's own size picked
+    Size wide;
+    if (menuWide && running && maximum) {
+        Size base = sel;
+        RECT rc{};
+        if (!base && GetClientRect(window, &rc)) base = {(uint32_t)rc.right, (uint32_t)rc.bottom};
+        wide = Fit(Wide(base), maximum);
+    }
+    if (sel || wide) std::call_once(g_setup, Setup);
+    if (!g_hooksReady.load()) sel = wide = {};   // no way to map the cursor: the window's own size stays
     const Size asked = sel;
     sel = g_fallback.Apply(sel);                 // a size the runtime refused: the last one it took
+    if (wide && g_fallback.Apply(wide) != wide) wide = {};   // a refused menus' size: the menus as the size picked has them
     if (maximum && (!(pick == toldPick) || sel != toldSel)) {   // (the runtime's limits come with its session: nothing to say before)
         toldPick = pick;
         toldSel = sel;
@@ -158,11 +181,17 @@ void Update(HWND window, bool running, Size recommended, Size maximum, Size outp
             Say("vrcam: render size - %s: %ux%u (the headset recommends %ux%u, takes %ux%u at most)", what, sel.w, sel.h,
                 recommended.w, recommended.h, maximum.w, maximum.h);
     }
+    const uint64_t now = GetTickCount64();
+    const Ask ask = g_menuWide.Step(now, menuWide, g_frontend.load(), g_hero.load(), sel, wide, g_ctl.InForce());
+    if (ask.want == wide && wide && wide != toldWide)
+        Say("vrcam: render size - the game's menus at 16:9: %ux%u ([render] menu_wide; %s in a game)", wide.w, wide.h,
+            sel ? "the size picked" : "the window's own size");
+    toldWide = ask.want == wide ? wide : Size{};
     Inputs in;
-    in.now = GetTickCount64();
+    in.now = now;
     in.running = running;
-    in.hero = g_hero.load();
-    in.want = sel;
+    in.hero = ask.now;
+    in.want = ask.want;
     in.output = output;
     const Decision d = g_ctl.Step(in);
     g_window.Request(window, d.want, d.force);

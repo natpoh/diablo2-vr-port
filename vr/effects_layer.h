@@ -17,6 +17,13 @@ namespace effectslayer {
 
 // The events, for the game's D3D12 device only. Once. `log` takes one line at a time.
 void Register(void (*log)(const char*));
+// [render] no_reshade: the same from the plugin's own hooks (vr/native_d3d12.h) - the game binds its targets (their CPU handles, the
+// depth-stencil's resource), its barriers. No ReShade, no layer: "the game's effects read 0" every 10 s and turns_keep_own 3 / 4 did nothing
+// (PC1 2026-10-28) - spells, flames and wings moved across with what is behind them. With no destroy event here the two targets are held
+// (a reference of ours) while they are the layer, let go when another pair is found.
+void SetLogNative(void (*log)(const char*));
+void OnBindNative(unsigned n, const D3D12_CPU_DESCRIPTOR_HANDLE* rts, bool single, ID3D12Resource* ds);
+void OnBarrierNative(unsigned n, const D3D12_RESOURCE_BARRIER* b);
 // Looked for only while wanted (eyes by turns with the effects kept): the bindings are not even looked at otherwise.
 void SetWanted(bool wanted);
 // This frame's layer: both targets and the state the game's barriers last left each in. False: none seen, or its states not yet known.

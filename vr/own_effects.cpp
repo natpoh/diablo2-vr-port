@@ -1,7 +1,8 @@
 // own_effects.cpp - [render] dim_own_effects, the game's side: the hero's own effects (a state's overlays: Bone Armor, the armors, Energy Shield, the aura rings ...) drawn fainter in
 // VR first person (F4). The pure part, the reasons and the offsets: vr/own_effects.h; the notes: docs/own_effects_recon.md. VISUAL ONLY: nothing of the server, the buff or the
 // state is touched; the game's own draw of the effect is made fainter with the game's own named float parameter "Fade" of the effect (VfxSetFloat 0xF6A380 - what the game sets to
-// the unit's alpha for every effect of its overlays, vr/own_effects.h), or at 0 % not drawn (VfxSetVisible).
+// the unit's alpha for every effect of its overlays, vr/own_effects.h), or at 0 % not drawn (VfxSetVisible). An effect the table marks SOLID (Bone Armor: its bones are an opaque mesh
+// that binds no Fade) is not drawn whenever it is to be any fainter; one the game switches back on (its unit's alpha changed) is switched off again the next frame.
 //
 // Two hooks LOOK (the original always runs, unchanged): UnitTranslationLayer::BeginCreateOverlayInstance (the unit it is for: is it the local hero? then its key is remembered) and
 // FinalizeCreateOverlayInstance (an overlay of the hero's unit, by key, whose definition's name is in the game-data table: its entities are tracked). They are put in as soon as the
@@ -20,6 +21,7 @@
 #endif
 #include <windows.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstdint>
@@ -63,6 +65,10 @@ using VfxVisibleFn = void (*)(uintptr_t component, uint8_t visible);
 const PluginContext* g_ctx = nullptr;
 std::atomic<bool> g_on{false}, g_faulted{false}, g_touched{false};   // g_touched: we have changed an effect (so the tick runs, to give it back, even with the option off)
 std::atomic<float> g_body{0.30f}, g_aura{0.50f};
+std::atomic<bool> g_slow{false};                 // [render] slow_own_effects
+std::atomic<float> g_speed{0.20f};               // [render] own_effects_speed_pct / 100
+std::atomic<bool> g_lower{false};                // [render] lower_own_effects
+std::atomic<float> g_heightCm{0.0f};             // [render] own_effects_height_cm
 std::atomic<int> g_state{0};   // 0 not tried, 1 hooks in, 2 not possible (another build?)
 BeginFn g_origBegin = nullptr;
 FinalizeFn g_origFinalize = nullptr;
@@ -203,10 +209,11 @@ unsigned TrackInto(Tracker* into, uintptr_t ret, Group g, const char* name, uint
     if (!ReadAt(ret, &inst, sizeof inst) || inst < 0x10000) return 0;   // not made yet (the definition is still loading): the game finalizes it later, through this same hook
     *instOut = inst;
     if (!ReadEntities(&ReadAt, inst, ents, kMaxEntities, &n)) return 0;
+    const bool solid = SolidOf(name);
     AcquireSRWLockExclusive(&g_lock);
     unsigned added = 0;
     for (uint32_t i = 0; i < n; ++i)
-        if (into->Add(ents[i], g, key, now)) ++added;
+        if (into->Add(ents[i], g, key, now, solid)) ++added;
     ReleaseSRWLockExclusive(&g_lock);
     return added;
 }
@@ -236,7 +243,8 @@ __declspec(noinline) uintptr_t HookFinalize(uintptr_t self, uintptr_t ret, uintp
         if (g_diagHeroFin.fetch_add(1) < 60) {
             if (!s.nameOk) LogF("own effects: a hero's overlay was made (key %016llX), its definition's name could not be read - left as the game draws it (%s)", (unsigned long long)s.key, s.name);
             else if (s.group == Group::None) LogF("own effects: the hero's overlay \"%s\" is not one of the states' overlays (hit, cast of a skill ...) - left as the game draws it", s.name);
-            else LogF("own effects: the hero's overlay \"%s\" is made - %s group, %u effect entit%s tracked (instance %p)", s.name, GroupName(s.group), added, added == 1 ? "y" : "ies", (void*)inst);
+            else LogF("own effects: the hero's overlay \"%s\" is made - %s group%s, %u effect entit%s tracked (instance %p)", s.name, GroupName(s.group),
+                      SolidOf(s.name) ? ", SOLID (a part of it is an opaque mesh the effect's Fade does not reach: under 100 % it is not drawn)" : "", added, added == 1 ? "y" : "ies", (void*)inst);
         } else if (g_diagHeroFin.load() == 61) Log("own effects: (no more lines about the hero's overlays)");
     } else {
         if (noKey && s.group != Group::None && active && !g_faulted.load(std::memory_order_relaxed)) {   // one of the table's, whoever's: kept as a candidate, the tick tells by its place
@@ -254,8 +262,8 @@ __declspec(noinline) uintptr_t HookFinalize(uintptr_t self, uintptr_t ret, uintp
 
 // -- the tick --------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-// The entity's effect component and effect instance. 1 found (effect may be 0: not made yet), 0 the entity has none, -1 not usable.
-int ResolveEffect(uint32_t entity, uintptr_t* component, uintptr_t* effect) noexcept {
+// The entity's effect component, effect instance and the component's visibility wish (1 / 0, -1 not read). 1 found (effect may be 0: not made yet), 0 the entity has none, -1 not usable.
+int ResolveEffect(uint32_t entity, uintptr_t* component, uintptr_t* effect, int* shown) noexcept {
     __try {
         const uintptr_t reg = d2rsig::Addr(RVA_ECS_REGISTRY);
         const VfxStorageFn storageOf = reinterpret_cast<VfxStorageFn>(d2rsig::Addr(RVA_VFX_STORAGE));
@@ -266,6 +274,8 @@ int ResolveEffect(uint32_t entity, uintptr_t* component, uintptr_t* effect) noex
         if (!potionhide::StorageElement(&ReadAt, storage, entity, potionhide::kEffectElementSize, &element)) return 0;
         if (!ReadAt(element, &comp, sizeof comp) || comp < 0x10000) return 0;
         ReadAt(comp + kEffectOffInstance, &inst, sizeof inst);
+        uint8_t vis = 0;
+        *shown = ReadAt(comp + kEffectOffVisible, &vis, sizeof vis) ? (vis != 0 ? 1 : 0) : -1;
         *component = comp;
         *effect = inst > 0x10000 ? inst : 0;
         return 1;
@@ -324,6 +334,386 @@ bool FadeNameReady() {
     return false;
 }
 
+// CanSwitchOff reads the effect's definition flag at the offsets the game's own effect setter (where VfxSetVisible goes on: the jne at +0xA) reads in THIS build - its bytes are
+// checked once: mov rax,[rcx+40h] at +0xA, test byte [rax+188h],8 at +0x14. When they differ the log says the flag was not read.
+bool SwitchFlagReadable() noexcept {
+    static int ok = -1;   // the tick's thread only
+    if (ok >= 0) return ok == 1;
+    ok = 0;
+    const uintptr_t vis = d2rsig::Addr(RVA_VFX_SETVISIBLE);
+    int32_t rel = 0;
+    if (!vis || !ReadAt(vis + 0xC, &rel, sizeof rel)) return false;
+    const uintptr_t fn = vis + 0x10 + (intptr_t)rel;
+    static const uint8_t a[4] = {0x48, 0x8B, 0x41, 0x40}, b[7] = {0xF6, 0x80, 0x88, 0x01, 0x00, 0x00, 0x08};
+    uint8_t x[4] = {}, y[7] = {};
+    ok = ReadAt(fn + 0xA, x, sizeof x) && ReadAt(fn + 0x14, y, sizeof y) && !std::memcmp(x, a, sizeof a) && !std::memcmp(y, b, sizeof b) ? 1 : 0;
+    return ok == 1;
+}
+
+const char* SwitchWord(uintptr_t effect) {
+    if (!SwitchFlagReadable()) return "its switch flag not read (another build?)";
+    const int c = CanSwitchOff(&ReadAt, effect);
+    return c == 1 ? "the effect takes the switch" : c == 0 ? "the effect's definition says it CANNOT be switched off - the switch does nothing to it" : "its switch flag not read";
+}
+
+// -- the solid part's own models (vr/own_effects.h: the bones are ModelInstances the effect's script makes; found in the renderer's list of models, hidden with the game's
+// SetVisibleLayers, bit 31). The list is walked under the game's own lock on it (so no model is destroyed while it is read or changed), every 250 ms and at once when what
+// is to be hidden changes; a model that appears in between shows for at most that long.
+constexpr uint64_t RVA_SET_VISIBLE_LAYERS = 0xF3F840, RVA_GET_RENDERER = 0xE21140, RVA_LIST_LOCK = 0x122AD60, RVA_LIST_UNLOCK = 0x122AD90;
+// mov r11,rsp; push rsi; sub rsp,70h; mov rax,[rip+...]
+const uint8_t kSigSetLayers[11] = {0x4C, 0x8B, 0xDC, 0x56, 0x48, 0x83, 0xEC, 0x70, 0x48, 0x8B, 0x05};
+// sub rsp,28h; mov rax,gs:[58h] (cleanroom/camera/game_layout.h)
+const uint8_t kSigGetRenderer[13] = {0x48, 0x83, 0xEC, 0x28, 0x65, 0x48, 0x8B, 0x04, 0x25, 0x58, 0x00, 0x00, 0x00};
+// the game's lock and unlock of an SRW lock: rex.w jmp [import]
+const uint8_t kSigImportJump[3] = {0x48, 0xFF, 0x25};
+using SetLayersFn = void (*)(uintptr_t instance, uint32_t mask);
+using RendererFn = uintptr_t (*)();
+using LockFn = void (*)(uintptr_t lock);
+HiddenModels g_hiddenModels;   // the tick's thread only
+ResourceKinds g_kinds;
+int g_sceneOk = 0;             // 0 not resolved yet, 1 the game's, -1 not in this build (or a fault): the models are left alone
+
+// All four through the signature table (cleanroom/sigscan/game_sigs.h: ModelSetLayers, GetRenderer, ModelListLock / ModelListUnlock - the last two found at the model factory's own calls,
+// whose pattern holds the list's offset +0x2EFB8: found means the layout is the one read here). Asked again while the game may still be decrypting the code; said once, with where.
+bool SceneReady() {
+    if (g_sceneOk != 0) return g_sceneOk > 0;
+    static const struct { uint64_t rva; const uint8_t* body; uint32_t size; const char* name; } kFns[] = {
+        {RVA_SET_VISIBLE_LAYERS, kSigSetLayers, sizeof kSigSetLayers, "ModelInstance::SetVisibleLayers"},
+        {RVA_GET_RENDERER, kSigGetRenderer, sizeof kSigGetRenderer, "GetRenderer"},
+        {RVA_LIST_LOCK, kSigImportJump, sizeof kSigImportJump, "the model list's lock"},
+        {RVA_LIST_UNLOCK, kSigImportJump, sizeof kSigImportJump, "the model list's unlock"},
+    };
+    static ULONGLONG retryAt = 0;
+    static unsigned tries = 0;
+    const ULONGLONG t = GetTickCount64();
+    if (t < retryAt) return false;
+    retryAt = t + 2000;
+    char where[400];
+    size_t w = 0;
+    for (const auto& f : kFns) {
+        const bool gone = d2rsig::NotInBuild(f.rva);
+        if (!d2rsig::Addr(f.rva) && !gone && ++tries < 30) return false;   // (not found yet: asked again)
+        const bool ok = d2rsig::Addr(f.rva) && d2rsig::Check(f.rva, f.body, f.size);
+        const int n = std::snprintf(where + w, sizeof where - w, "%s%s %s", w ? ", " : "", f.name,
+                                    ok ? "" : d2rsig::Addr(f.rva) ? "NOT as expected" : "NOT FOUND");
+        if (n > 0) w = std::min(sizeof where - 1, w + (size_t)n);
+        if (ok) {
+            const int m = std::snprintf(where + w, sizeof where - w, "at RVA 0x%llX", (unsigned long long)d2rsig::Rva(f.rva));
+            if (m > 0) w = std::min(sizeof where - 1, w + (size_t)m);
+        } else {
+            g_sceneOk = -1;
+        }
+    }
+    if (g_sceneOk == 0) g_sceneOk = 1;
+    LogF("own effects: the game's model functions (by signature, 3.3.93787's addresses moved where this build has them): %s - %s", where,
+         g_sceneOk > 0 ? "the solid effects' models (Bone Armor's bones) can be hidden" : "the solid effects' models (Bone Armor's bones) are left as the game draws them");
+    return g_sceneOk > 0;
+}
+
+bool SetLayers(uintptr_t inst, uint32_t mask) noexcept {
+    __try { reinterpret_cast<SetLayersFn>(d2rsig::Addr(RVA_SET_VISIBLE_LAYERS))(inst, mask); return true; } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+uintptr_t Renderer() noexcept {
+    __try { return reinterpret_cast<RendererFn>(d2rsig::Addr(RVA_GET_RENDERER))(); } __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
+}
+bool ListLock(uintptr_t lock, bool take) noexcept {
+    __try { reinterpret_cast<LockFn>(d2rsig::Addr(take ? RVA_LIST_LOCK : RVA_LIST_UNLOCK))(lock); return true; } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+
+struct SceneCount {
+    uint64_t models = 0;    // in the renderer's list
+    int solid = 0;          // of a solid effect's model file
+    int mine = 0;           // of those, the hero's
+    int newMine = 0, newOther = 0;   // seen for the first time now: taken as the hero's / not
+    int hidden = 0, shown = 0, again = 0;   // switched off / given back now; shown again by the game
+    int entry = -1;         // the first solid one's table entry (the log)
+    char path[96] = {};
+};
+SeenModels g_seen;             // the tick's thread only
+uint32_t g_walk = 0;
+
+// One walk of the list, under its lock. heroAt[e]: when the hero's newest overlay of table entry e was tracked (0: none live); firstLook[e]: the list has not been looked at for e
+// since then. False: a fault in the game's setter.
+bool SceneWalk(uintptr_t data, uint64_t count, const bool* offEntry, const uint64_t* heroAt, const bool* firstLook, const float hero[3], bool heroOk, uint64_t now,
+               SceneCount* c) noexcept {
+    ++g_walk;
+    for (uint64_t i = 0; i < count; ++i) {
+        uintptr_t inst = 0, res = 0, pathPtr = 0;
+        if (!ReadAt(data + i * 8, &inst, sizeof inst) || inst < 0x10000 || !ReadAt(inst + kModelOffResource, &res, sizeof res) || res < 0x10000 ||
+            !ReadAt(res + kResourceOffPath, &pathPtr, sizeof pathPtr))
+            continue;
+        int entry = -1;
+        char path[96] = {};
+        if (!g_kinds.Get(res, pathPtr, &entry)) {
+            entry = SolidOfResource(&ReadAt, res, path, sizeof path);
+            g_kinds.Put(res, pathPtr, entry);
+        }
+        if (entry < 0) continue;
+        ++c->solid;
+        if (c->entry < 0) {
+            c->entry = entry;
+            if (!path[0]) ReadModelPath(&ReadAt, res, path, sizeof path);
+            std::memcpy(c->path, path, sizeof c->path);
+        }
+        int mine = g_seen.Mine(inst);
+        if (mine < 0) {   // first sight: whose is it?
+            float p[3] = {};
+            const bool placed = ReadAt(inst + kModelOffPlace, p, sizeof p) && std::isfinite(p[0] + p[1] + p[2]) && (p[0] != 0.0f || p[1] != 0.0f || p[2] != 0.0f);
+            mine = (placed ? heroOk && NearHero(hero, p) : ClaimAtFirstSight(now, heroAt[entry], firstLook[entry])) ? 1 : 0;
+            if (g_seen.Add(inst, mine != 0, g_walk)) ++(mine ? c->newMine : c->newOther);
+            else mine = 0;   // (no room to remember it: left as the game draws it)
+        } else {
+            g_seen.Seen(inst, g_walk);
+        }
+        if (mine) ++c->mine;
+        uint8_t state = 0;
+        uint32_t layers = 0;
+        if (!ReadAt(res + kResourceOffState, &state, 1) || state != kResourceLoaded || !ReadAt(inst + kModelOffLayers, &layers, sizeof layers)) continue;
+        const bool ours = g_hiddenModels.Has(inst);
+        const int step = ModelStep(offEntry[entry], mine != 0, ours, layers);
+        if (step > 0) {
+            if (!g_hiddenModels.Add(inst, now)) continue;   // (no room to remember it: not hidden, so it is never left hidden)
+            if (!SetLayers(inst, layers | kLayersHidden)) { g_hiddenModels.Remove(inst); return false; }
+            ++c->hidden;
+            if (ours) ++c->again;
+        } else if (step < 0) {
+            if (!SetLayers(inst, layers & ~kLayersHidden)) return false;
+            g_hiddenModels.Remove(inst);
+            ++c->shown;
+        } else if (ours) {
+            if (layers & kLayersHidden) g_hiddenModels.Seen(inst, now);
+            else g_hiddenModels.Remove(inst);   // shown by the game and not to be hidden: nothing of ours left on it
+        }
+    }
+    g_seen.Prune(g_walk);
+    return true;
+}
+
+// offEntry[i]: the solid table entry i has an effect of the hero's that is not to be drawn now (F4, under 100 %); heroAt[i]: when his newest overlay of it was tracked (0: none
+// live). anySolid: a solid effect of his is tracked at all.
+void ScenePass(const bool* offEntry, const uint64_t* heroAt, bool anySolid, uint64_t now) {
+    static uint64_t nextAt = 0, lastSig = ~0ull;
+    static bool toldList = false, toldAgain = false;
+    static int toldHidden = -1, toldSolid = -1;
+    static uint64_t lookedAt[table::kCount] = {};   // the heroAt the list was last looked at for (a new live overlay: a first look again)
+    if (!anySolid && !g_hiddenModels.Count()) return;
+    uint64_t sig = 1469598103934665603ull;
+    for (unsigned i = 0; i < table::kCount; ++i) sig = (sig ^ (offEntry[i] ? i + 1 : 0) ^ (heroAt[i] << 8)) * 1099511628211ull;
+    if (now < nextAt && sig == lastSig) return;
+    nextAt = now + 250;
+    lastSig = sig;
+    if (!SceneReady()) return;
+    bool firstLook[table::kCount] = {};
+    for (unsigned i = 0; i < table::kCount; ++i) {
+        firstLook[i] = heroAt[i] && !lookedAt[i];
+        lookedAt[i] = heroAt[i] ? (lookedAt[i] ? lookedAt[i] : heroAt[i]) : 0;   // (no live overlay of it: the next one is a first look again)
+    }
+    float hero[3] = {};
+    const bool heroOk = HeroPlace(hero);
+    const uintptr_t renderer = Renderer();
+    uintptr_t data = 0;
+    uint64_t count = 0;
+    if (!renderer || !ReadModelList(&ReadAt, renderer, &data, &count)) {
+        if (!toldList) { toldList = true; LogF("own effects: the renderer's model list does not read (renderer %p +0x%X) - the solid effects' models are left as the game draws them", (void*)renderer, (unsigned)kRendererOffModels); }
+        return;
+    }
+    const uintptr_t lock = renderer + kRendererOffModelsLock;
+    if (!ListLock(lock, true)) { g_sceneOk = -1; Fault("the model list's lock"); return; }
+    SceneCount c;
+    ReadModelList(&ReadAt, renderer, &data, &count);   // (again, now that it is locked)
+    c.models = count;
+    const bool ok = SceneWalk(data, count, offEntry, heroAt, firstLook, hero, heroOk, now, &c);
+    ListLock(lock, false);
+    if (!ok) { g_sceneOk = -1; Fault("the models' layers"); return; }
+    g_hiddenModels.Forget(now);
+    if (c.again && !toldAgain) {
+        toldAgain = true;
+        LogF("own effects: a solid effect's model we hid was shown again by the game - hidden again (said once)");
+    }
+    const int nowHidden = (int)g_hiddenModels.Count();
+    if (c.hidden || c.shown || c.newMine || c.newOther || nowHidden != toldHidden || (c.solid != toldSolid && c.solid == 0)) {
+        LogF("own effects: the renderer's models: %llu; %d of the solid effects' model files (\"%s\", entry \"%s\"), %d of them the hero's (new now: %d his - made within %llu ms after his "
+             "overlay, or there at the first look -, %d another unit's) - %d hidden now, %d given back, %d of ours hidden in all (ModelInstance::SetVisibleLayers 0xF3F840, bit 31: "
+             "the whole model, as the game hides an overlay's model at its unit's alpha 0)", (unsigned long long)c.models, c.solid, c.path, c.entry >= 0 ? table::kEntries[c.entry].name : "-",
+             c.mine, c.newMine, (unsigned long long)kClaimMs, c.newOther, c.hidden, c.shown, nowHidden);
+        toldHidden = nowHidden;
+        toldSolid = c.solid;
+    }
+}
+
+// -- [render] slow_own_effects: the effect's own playback speed (vr/own_effects.h: SpeedFor, DecideSpeed) ----------------------------------------------------------------------
+constexpr uint64_t RVA_SET_SPEED = 0xA4ABB0;
+// push rdi; sub rsp,30h; mov rax,[rcx+40h]; mov rdi,rcx; movaps [rsp+20h],xmm6 (game_sigs.h: EffectSetSpeed)
+const uint8_t kSigSetSpeed[18] = {0x40, 0x57, 0x48, 0x83, 0xEC, 0x30, 0x48, 0x8B, 0x41, 0x40, 0x48, 0x8B, 0xF9, 0x0F, 0x29, 0x74, 0x24, 0x20};
+using SpeedFn = void (*)(uintptr_t effect, float speed);
+int g_speedOk = 0;   // 0 not resolved yet, 1 the game's, -1 not in this build (the effects turn at the game's speed)
+
+bool SpeedReady() {
+    if (g_speedOk != 0) return g_speedOk > 0;
+    static ULONGLONG retryAt = 0;
+    static unsigned tries = 0;
+    const ULONGLONG t = GetTickCount64();
+    if (t < retryAt) return false;
+    retryAt = t + 2000;
+    if (!d2rsig::Addr(RVA_SET_SPEED) && !d2rsig::NotInBuild(RVA_SET_SPEED) && ++tries < 30) return false;   // (not found yet: asked again)
+    g_speedOk = d2rsig::Addr(RVA_SET_SPEED) && d2rsig::Check(RVA_SET_SPEED, kSigSetSpeed, sizeof kSigSetSpeed) ? 1 : -1;
+    if (g_speedOk > 0)
+        LogF("own effects: the effect's playback speed (by signature EffectSetSpeed, 3.3.93787's 0xA4ABB0) is at RVA 0x%llX in this build - the solid effects can be slowed",
+             (unsigned long long)d2rsig::Rva(RVA_SET_SPEED));
+    else
+        LogF("own effects: the effect's playback speed (EffectSetSpeed, 3.3.93787's 0xA4ABB0) is %s in this build - the solid effects turn at the game's speed",
+             d2rsig::Addr(RVA_SET_SPEED) ? "NOT as expected" : "NOT FOUND");
+    return g_speedOk > 0;
+}
+
+bool SetSpeed(uintptr_t effect, float speed) noexcept {
+    __try { reinterpret_cast<SpeedFn>(d2rsig::Addr(RVA_SET_SPEED))(effect, speed); return true; } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+
+// One tracked solid effect's speed this frame. False: a fault in the game's setter.
+bool SpeedPass(Tracker::Slot& s, uintptr_t effect, float target, bool f4, const Settings& set) noexcept {
+    if (!SpeedReady()) return true;
+    if (target < 1.0f - 0.004f) {
+        const int can = CanChangeSpeed(&ReadAt, effect);
+        if (can == 0) {
+            if (!s.toldNoSpeed) {
+                s.toldNoSpeed = true;
+                LogF("own effects: \"%s\" (entity %08X) - its effect's definition does not let its speed change (effect %p) - it turns at the game's speed", s.name, s.entity, (void*)effect);
+            }
+            return true;
+        }
+    }
+    float cur = NAN;
+    if (!ReadAt(effect + kFxOffSpeed, &cur, sizeof cur)) cur = NAN;
+    const float v = DecideSpeed(target, cur, effect, s.sp);
+    if (v >= 0.0f && !SetSpeed(effect, v)) return false;
+    ApplySpeed(v, effect, &s.sp);
+    if (v >= 0.0f && std::fabs(v - s.loggedSpeed) > 0.004f) {
+        s.loggedSpeed = v;
+        if (v < 1.0f - 0.004f)
+            LogF("own effects: \"%s\" (entity %08X) - its playback speed set to %.0f %% of the game's (EffectSetSpeed, effect %p; it read %.2f) - it turns slower in F4, visual only", s.name,
+                 s.entity, (double)v * 100.0, (void*)effect, (double)cur);
+        else
+            LogF("own effects: \"%s\" (entity %08X) - its playback speed given back (100 %%: %s)", s.name, s.entity, !set.slow ? "slow_own_effects is off" : !f4 ? "not F4" : "the slider is at 100");
+    }
+    return true;
+}
+
+// -- [render] lower_own_effects: the hero's own solid overlays drawn lower (vr/own_effects.h: LiftFor, LiftMatrix). The tick (the registry's thread) publishes which entities
+// are lifted by how much; the writer at the world-matrix function (the renderer's thread, vr/potion_hide.cpp's hook) moves their matrices; the tick gives a matrix back when
+// its entity is no longer to be lifted and the game has not placed it again since.
+constexpr size_t kLifts = 16;
+constexpr size_t kXformWorld = 0x40, kXformPrev = 0x80;   // a TransformComponent's world matrix and last frame's (as the potion hide writes them)
+struct Lift {
+    std::atomic<uint32_t> entity{Tracker::kNone};
+    std::atomic<float> dy{0.0f};          // world units now (0: not lifted)
+    std::atomic<float> applied{0.0f};     // the lift of the last matrix written (what a give-back takes off)
+    std::atomic<float> wroteY{NAN};       // the height of the last matrix written
+    std::atomic<uint32_t> hits{0};        // matrices written
+    uint64_t since = 0;                   // (the tick's) when it was published
+    bool told = false, toldPlaced = false, toldNever = false;
+    char name[40] = {};
+};
+Lift g_lifts[kLifts];
+float (*g_upm)() = nullptr;
+
+// The renderer's thread, after the game computed the entity's world matrix: one of ours? (a scan of 16 - most calls end at the first compare with kNone)
+void OnXform(uint32_t entity, uintptr_t component, uintptr_t out) {
+    if (entity == Tracker::kNone) return;
+    for (Lift& l : g_lifts) {
+        if (l.entity.load(std::memory_order_relaxed) != entity) continue;
+        const float dy = l.dy.load(std::memory_order_relaxed);
+        if (dy == 0.0f || !viewgate::F4() || out < 0x10000 || component < 0x10000) return;
+        __try {
+            float m[16];
+            std::memcpy(m, reinterpret_cast<const void*>(out), sizeof m);
+            if (!LiftMatrix(m, dy)) return;
+            std::memcpy(reinterpret_cast<void*>(out), m, sizeof m);
+            std::memcpy(reinterpret_cast<void*>(component + kXformWorld), m, sizeof m);
+            std::memcpy(reinterpret_cast<void*>(component + kXformPrev), m, sizeof m);
+            l.applied.store(dy, std::memory_order_relaxed);
+            l.wroteY.store(m[13], std::memory_order_relaxed);
+            l.hits.fetch_add(1, std::memory_order_relaxed);
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+        }
+        return;
+    }
+}
+
+// A lifted matrix given back (the tick's thread): when the entity's world height is still the one we wrote, the lift is taken off it.
+void GiveBack(Lift& l) noexcept {
+    const uint32_t e = l.entity.load();
+    const float applied = l.applied.load(), wrote = l.wroteY.load();
+    if (e == Tracker::kNone || l.hits.load() == 0 || applied == 0.0f) return;
+    __try {
+        uintptr_t comp = 0;
+        float y = NAN;
+        if (!skel::EntityTransform(e, &comp) || !comp || !ReadAt(comp + kXformWorld + 13 * 4, &y, sizeof y) || !StillLifted(y, wrote)) return;   // (placed again by the game: nothing of ours on it)
+        const float back = y - applied;
+        std::memcpy(reinterpret_cast<void*>(comp + kXformWorld + 13 * 4), &back, sizeof back);
+        float yp = NAN;
+        if (ReadAt(comp + kXformPrev + 13 * 4, &yp, sizeof yp) && StillLifted(yp, wrote)) std::memcpy(reinterpret_cast<void*>(comp + kXformPrev + 13 * 4), &back, sizeof back);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+}
+
+struct LiftWant {
+    uint32_t entity;
+    float dy;
+    const char* name;
+};
+
+// The tick's thread: publish this frame's lifts; give back the ones that are no longer; say per effect what was done.
+void PublishLifts(const LiftWant* want, size_t n, float heightCm, float upm, uint64_t now) {
+    for (Lift& l : g_lifts) {   // the ones no longer wanted (or no longer lifted): given back, let go
+        const uint32_t e = l.entity.load();
+        if (e == Tracker::kNone) continue;
+        float dy = 0.0f;
+        for (size_t i = 0; i < n; ++i) if (want[i].entity == e) dy = want[i].dy;
+        if (dy != 0.0f) continue;
+        GiveBack(l);
+        if (l.told) LogF("own effects: \"%s\" (entity %08X) - its height given back (the game's place: %s)", l.name, e, !g_lower.load() ? "lower_own_effects is off" : "not F4, or the slider at 0");
+        l.dy.store(0.0f);
+        l.entity.store(Tracker::kNone);
+        l.hits.store(0);
+        l.applied.store(0.0f);
+        l.wroteY.store(NAN);
+        l.told = l.toldPlaced = l.toldNever = false;
+    }
+    for (size_t i = 0; i < n; ++i) {
+        if (want[i].dy == 0.0f) continue;
+        Lift* slot = nullptr;
+        for (Lift& l : g_lifts) if (l.entity.load() == want[i].entity) { slot = &l; break; }
+        if (!slot) {
+            for (Lift& l : g_lifts) if (l.entity.load() == Tracker::kNone) { slot = &l; break; }
+            if (!slot) break;
+            std::snprintf(slot->name, sizeof slot->name, "%s", want[i].name);
+            slot->since = now;
+            slot->dy.store(want[i].dy);
+            slot->entity.store(want[i].entity);
+        } else if (slot->dy.load() != want[i].dy) {
+            slot->dy.store(want[i].dy);
+            slot->told = false;   // (the slider moved: told again)
+        }
+        Lift& l = *slot;
+        if (!l.told) {
+            l.told = true;
+            LogF("own effects: \"%s\" (entity %08X) - drawn %.0f cm %s in F4 (%.2f world units at %.2f units a metre; the overlay's world matrix as the game computed it, moved along its "
+                 "up after the world-matrix function 0xE3A8C0 - visual only)", l.name, l.entity.load(), (double)std::fabs(heightCm), heightCm < 0 ? "lower" : "higher", (double)want[i].dy, (double)upm);
+        }
+        const uint32_t hits = l.hits.load();
+        if (hits && !l.toldPlaced) {
+            l.toldPlaced = true;
+            LogF("own effects: \"%s\" (entity %08X) - the renderer has placed it lowered (%u matrices so far; now at height %.2f)", l.name, l.entity.load(), hits, (double)l.wroteY.load());
+        } else if (!hits && !l.toldNever && now > l.since + 3000) {
+            l.toldNever = true;
+            LogF("own effects: \"%s\" (entity %08X) - the world-matrix function has not placed this entity in 3 s - it is not lowered (its effect is placed some other way)", l.name, l.entity.load());
+        }
+    }
+}
+
+size_t LiftsLive() { size_t n = 0; for (const Lift& l : g_lifts) if (l.entity.load(std::memory_order_relaxed) != Tracker::kNone) ++n; return n; }
+
 bool Write(uintptr_t component, const Plan& p, bool* fadeOk) noexcept {
     __try {
         if (p.visible >= 0) reinterpret_cast<VfxVisibleFn>(d2rsig::Addr(RVA_VFX_SETVISIBLE))(component, (uint8_t)p.visible);
@@ -352,6 +742,7 @@ void Status(const char* why) {
 
 void Init(const PluginContext* ctx) {
     g_ctx = ctx;
+    potionhide::SetXformEffectsWriter(&OnXform);   // [render] lower_own_effects: the hero's own solid overlays lowered (writes only their matrices)
     if (g_on.load()) Log("own effects: on ([render] dim_own_effects) - the hero's own effects are drawn fainter in first person (visual only, F4)");
 }
 
@@ -371,7 +762,28 @@ void Configure(bool on, float bodyPct, float auraPct) {
     }
 }
 
-bool Wanted() { return g_on.load(); }
+void ConfigureSpeed(bool slow, float speedPct) {
+    g_speed.store(ClampSpeedPct(speedPct) / 100.0f);
+    const bool was = g_slow.exchange(slow);
+    if (slow != was)
+        LogF(slow ? "own effects: slow on ([render] slow_own_effects) - the hero's solid effects (Bone Armor ...) turn at %.0f %% of the game's speed in first person (F4), visual only"
+                  : "own effects: slow off ([render] slow_own_effects=0) - the solid effects turn at the game's speed (%.0f %% kept for when it is ticked)",
+             (double)ClampSpeedPct(speedPct));
+}
+
+void ConfigureHeight(bool lower, float heightCm) {
+    g_heightCm.store(ClampHeightCm(heightCm));
+    const bool was = g_lower.exchange(lower);
+    potionhide::WantHooksForEffects(lower);
+    if (lower != was)
+        LogF(lower ? "own effects: height on ([render] lower_own_effects) - the hero's solid effects (Bone Armor ...) are drawn %.0f cm from the game's place in first person (F4), visual only"
+                   : "own effects: height off ([render] lower_own_effects=0) - the solid effects are drawn where the game puts them (%.0f cm kept for when it is ticked)",
+             (double)ClampHeightCm(heightCm));
+}
+
+void SetScaleSource(float (*unitsPerMetre)()) { g_upm = unitsPerMetre; }
+
+bool Wanted() { return g_on.load() || g_slow.load() || g_lower.load(); }
 
 void Install() {
     static ULONGLONG retryAt = 0, statusAt = 0;
@@ -414,7 +826,7 @@ void Install() {
 
 void Tick() {
     if (g_state.load(std::memory_order_relaxed) != 1 || g_faulted.load(std::memory_order_relaxed)) return;
-    if (!g_on.load(std::memory_order_relaxed) && !g_touched.load(std::memory_order_relaxed)) return;   // off, and nothing of ours to give back
+    if (!g_on.load(std::memory_order_relaxed) && !g_slow.load(std::memory_order_relaxed) && !g_lower.load(std::memory_order_relaxed) && !g_touched.load(std::memory_order_relaxed)) return;   // off, and nothing of ours to give back
     ++g_ticks;
     AcquireSRWLockExclusive(&g_lock);
     if (g_cands.Count() != 0) {   // the table's overlays of units not known as the hero's: his, if they stand at his place (only while no key of his is known)
@@ -427,7 +839,7 @@ void Tick() {
             float p[3];
             if (!haveHero || !EntityPlace(c.entity, p)) continue;
             if (!NearHero(hero, p)) continue;
-            if (g_tracker.Add(c.entity, c.group, c.name, at)) {
+            if (g_tracker.Add(c.entity, c.group, c.name, at, c.solid)) {
                 ++g_candsTaken;
                 LogF("own effects: \"%s\" (entity %08X) stands at the hero's place (%.1f %.1f %.1f; he is at %.1f %.1f %.1f) - taken as his (no key of the hero's is known)", c.name, c.entity, (double)p[0], (double)p[1], (double)p[2],
                      (double)hero[0], (double)hero[1], (double)hero[2]);
@@ -435,11 +847,26 @@ void Tick() {
             g_cands.Drop(&c);
         }
     }
-    if (g_tracker.Count() == 0) { ReleaseSRWLockExclusive(&g_lock); return; }
+    bool offEntry[table::kCount] = {};   // the solid effects of his not to be drawn now, by table entry (their models are hidden by ScenePass)
+    uint64_t heroAt[table::kCount] = {};  // when his newest overlay of each was tracked (whose a new model is)
+    bool anySolid = false;
+    LiftWant lifts[kLifts];   // [render] lower_own_effects: the hero's solid overlays to draw lower now
+    size_t nLifts = 0;
+    if (g_tracker.Count() == 0) {
+        ReleaseSRWLockExclusive(&g_lock);
+        if (LiftsLive()) PublishLifts(lifts, 0, 0.0f, 0.0f, GetTickCount64());   // (ours given back)
+        if (g_hiddenModels.Count()) ScenePass(offEntry, heroAt, false, GetTickCount64());   // (ours given back)
+        return;
+    }
     Settings set;
     set.on = g_on.load(std::memory_order_relaxed);
     set.body = g_body.load(std::memory_order_relaxed);
     set.aura = g_aura.load(std::memory_order_relaxed);
+    set.slow = g_slow.load(std::memory_order_relaxed);
+    set.speed = g_speed.load(std::memory_order_relaxed);
+    set.lower = g_lower.load(std::memory_order_relaxed);
+    set.heightCm = g_heightCm.load(std::memory_order_relaxed);
+    const float upm = g_upm ? g_upm() : 0.0f;
     const bool f4 = viewgate::F4();
     const uint64_t now = GetTickCount64();
     bool touched = false;
@@ -447,12 +874,28 @@ void Tick() {
     for (Tracker::Slot& s : g_tracker.Slots()) {
         if (s.entity == Tracker::kNone) continue;
         uintptr_t comp = 0, effect = 0;
-        const int found = ResolveEffect(s.entity, &comp, &effect);
+        int shown = -1;
+        const int found = ResolveEffect(s.entity, &comp, &effect, &shown);
         if (found < 0) { Fault("the effect lookup"); break; }
         if (Tracker::GoneNow(s, found > 0, now)) { g_tracker.Drop(&s); continue; }
+        if (s.solid) {   // the solid part's own models (Bone Armor's bones): the effect's switch does not reach them - ScenePass, after the loop (made or not: the models come with it)
+            anySolid = true;
+            if (const table::Entry* e = EntryOfKey(s.name)) {
+                const size_t k = (size_t)(e - table::kEntries);
+                if (TargetFor(s.group, set, f4, true) <= kSame) offEntry[k] = true;
+                if (s.addedAt > heroAt[k]) heroAt[k] = s.addedAt;
+            }
+            const float dy = LiftFor(true, f4, set, upm);
+            if (dy != 0.0f && nLifts < kLifts) lifts[nLifts++] = LiftWant{s.entity, dy, s.name};
+        }
         if (found == 0) continue;
         s.seen = true;
-        const Plan p = Decide(s.group, set, f4, effect, paramReady, s.st);
+        if (s.solid && effect && (set.slow || s.sp.sped)) {   // [render] slow_own_effects: the effect's own playback speed
+            if (!SpeedPass(s, effect, SpeedFor(true, f4, set), f4, set)) { Fault("the effect's speed"); break; }
+        }
+        if (s.sp.sped) touched = true;
+        const bool onAgain = s.st.hidden && shown == 1;   // we switched it off, the game switched it on (its unit's alpha changed)
+        const Plan p = Decide(s.group, set, f4, effect, paramReady, s.st, s.solid, shown);
         if (s.st.hidden || s.st.faded) touched = true;
         if (p.cannotFade && !s.toldNoFade) {
             s.toldNoFade = true;
@@ -471,8 +914,21 @@ void Tick() {
         if (!Write(comp, p, &ok)) { Fault("the Fade write"); break; }
         Apply(p, effect, ok, &s.st);
         if (s.st.hidden || s.st.faded) touched = true;
-        if (p.visible == 0) LogF("own effects: \"%s\" (entity %08X) is not drawn (0 %%, the game's own visibility switch)", s.name, s.entity);
-        else if (p.visible == 1 && !p.setFade) LogF("own effects: \"%s\" (entity %08X) is drawn again", s.name, s.entity);
+        if (p.visible == 0 && onAgain) {
+            if (!s.toldOnAgain) {
+                s.toldOnAgain = true;
+                LogF("own effects: \"%s\" (entity %08X) was switched back on by the game (its unit's alpha changed) - switched off again (said once)", s.name, s.entity);
+            }
+        } else if (p.visible == 0) {
+            const float want = OpacityFor(s.group, set);
+            if (s.solid && want > kSame)
+                LogF("own effects: \"%s\" (entity %08X) - %s group, SOLID - not drawn in F4 (the slider asks %.0f %%; its opaque mesh takes no Fade, so the nearest is off: the game's own "
+                     "visibility switch VfxSetVisible 0xF6A830; %s; effect %p)", s.name, s.entity, GroupName(s.group), (double)want * 100.0, SwitchWord(effect), (void*)effect);
+            else
+                LogF("own effects: \"%s\" (entity %08X) - %s group - not drawn in F4 (0 %%: the game's own visibility switch VfxSetVisible 0xF6A830; %s; effect %p)", s.name, s.entity,
+                     GroupName(s.group), SwitchWord(effect), (void*)effect);
+        } else if (p.visible == 1 && !p.setFade)
+            LogF("own effects: \"%s\" (entity %08X) is drawn again (%s)", s.name, s.entity, f4 && set.on ? "the slider is at 100 %" : !set.on ? "the option is off" : "not F4");
         if (p.setFade) {
             if (!ok) LogF("own effects: \"%s\" (entity %08X) - the game's setter REFUSED the parameter \"Fade\" (effect %p): it has none - left as the game draws it", s.name, s.entity, (void*)effect);
             else if (std::fabs(p.fade - s.loggedFade) > kSame) {
@@ -482,8 +938,12 @@ void Tick() {
             }
         }
     }
-    g_touched.store(touched, std::memory_order_relaxed);   // anything of ours left to give back keeps the tick going after the option is unticked
     ReleaseSRWLockExclusive(&g_lock);
+    if (!g_faulted.load(std::memory_order_relaxed)) ScenePass(offEntry, heroAt, anySolid, now);   // (outside our lock: it takes the game's)
+    PublishLifts(lifts, nLifts, set.heightCm, upm, now);
+    if (LiftsLive()) touched = true;
+    if (g_hiddenModels.Count()) touched = true;
+    g_touched.store(touched, std::memory_order_relaxed);   // anything of ours left to give back keeps the tick going after the option is unticked
 }
 
 }  // namespace owneffects

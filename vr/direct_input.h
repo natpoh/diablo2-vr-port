@@ -132,11 +132,20 @@ uint32_t Session();
 // does not hold the detectors off. Any thread.
 void SetUiUp(bool up);
 
+// [openxr] hand_inventory (vr/hand_inventory.h), away from town in F4: the left stick is never held back by a menu opening or closing (it
+// walks on), and the left stick click's long press (the inventory) is never refused for its lean ([direct] hold_stick_max_pct). vrcam,
+// from its timer; false = as before. Any thread.
+void SetHandInventoryAway(bool away);
+
 // A long press of a stick click asked for the skill panel (the wheel, the tiles; [direct] right_stick_hold = action:skillpanel):
 // true ONCE per request, then false until the next. The panel's owner asks every frame it runs (and only when
 // its own open gesture is the long press, [openxr] skill_wheel_open=1). A request older than a second is dropped, so a
 // panel that was not listening does not open late. Any thread.
 bool TakeSkillPanelToggle();
+
+// The left trigger is the second row of skill buttons ([direct] left_trigger is the pad's LT, the default): layout::SecondRowOn of the table
+// LoadSettings read. False: the left trigger has its own action (or none) and the second row is off. Any thread.
+bool SecondRowOn();
 
 // A button bound to action:quivernext / action:quiverprev was pressed (the javelin quiver, vr/quiver_wire.cpp): +1 next, -1 previous, 0 none; ONCE per press,
 // then 0 until the next. A press older than a second is dropped. Any thread.

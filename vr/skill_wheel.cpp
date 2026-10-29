@@ -28,6 +28,7 @@
 #include "skill_wheel.h"
 #include "tiles_labels.h"
 #include "view_gate.h"
+#include "weight_wire.h"   // [weight] weapon_grip_no_chord: GripOnWeapon
 #include "wheel_controller.h"
 #include "wheel_game.h"
 #include "wheel_icons.h"
@@ -68,6 +69,7 @@ bool g_everOn = false;           // switched on at some time: there may be threa
 // The Settings tab (vr/wheel_controller.h): the ini's thread (vr/hset_store.h) runs while the window is up, comes back or its chord arms;
 // the sizes the Video page shows come from xr.cpp (SetSettingsHost).
 std::atomic<bool> g_settingsTab{false};
+std::atomic<bool> g_twoGripChord{false};   // [debug] settings_two_grip_chord: the old both-grips chord (off: two grips held mean nothing)
 bool g_storeOn = false;          // under g_lock
 std::wstring g_iniPath;          // under g_lock
 hset::video::Env g_env;          // under g_lock
@@ -175,9 +177,17 @@ void OnFrame(const directinput::Frame& f, void*) {
     // a bow wielded in F4 with the draw on shoots by a draw only: the pointing hand's trigger is the bow draw's (kept from the layout), so
     // the picked slot is not cast with it either (the draw's own release still presses its skill slot)
     g_ctl.SetCastBlocked(bowdrawwire::KeepsTrigger(g_cfg.pointerHand));
+    g_ctl.SetSecondRow(directinput::SecondRowOn());   // the left trigger bound to its own action: the second row of buttons is off (greyed)
     {   // the right trigger / A as slot controls ([openxr] skill_rt_a): another gesture that holds them (a bottle, a javelin, the string) keeps them
         const uint32_t others = directinput::TakenLastFrame(1) & ~g_lastTake[1];
         g_ctl.SetControlsTaken((others & (directinput::kTrigger | directinput::kTakeTrigger)) != 0, (others & directinput::kPrimary) != 0);
+    }
+    {   // [weight] weapon_grip_no_chord: a grip that holds the weapon (or another gesture's) is no modifier of the chords and the slot controls
+        bool taken[2] = {false, false};
+        if (weightwire::GripNoChord())
+            for (int h = 0; h < 2; ++h)
+                taken[h] = weightwire::GripOnWeapon(h) || (directinput::TakenLastFrame(h) & ~g_lastTake[h] & (directinput::kSqueeze | directinput::kTakeSqueeze)) != 0;
+        g_ctl.SetGripsTaken(taken[0], taken[1]);
     }
     const bool tabs = wheel::TabsOn(g_cfg);
     wheel::SettingsIn host;
@@ -185,8 +195,10 @@ void OnFrame(const directinput::Frame& f, void*) {
         if (g_storeOn) host.ini = hset::store::Read();
         host.env = g_env;
         host.view = 4;   // (the window is F4's)
+        host.spanInUse = calib::SpanInUseM();   // the Body page's Arm span, while nothing is stored
         host.calibrating = calib::Running();
         host.openGuide = firststart::OpenRequest();   // the first-start guide asks for the window on its Guide tab (vr/first_start.cpp)
+        host.chordOn = g_twoGripChord.load();         // the author: "no combinations with the two grips" - off unless [debug] settings_two_grip_chord
     }
     const wheel::Step s = g_ctl.Frame(f, g_snap, GetTickCount64(), wheelgame::ReplyNow(), f4, request, tabs ? &host : nullptr);
     StoreFor(tabs && s.wantStore);
@@ -279,6 +291,9 @@ void Configure(bool on, int pointerHand, float distanceM, float widthM, int styl
     // the two additions of the editor and the panel (idea after bearstonem/d2r-pcvr, MIT): the category strip (on unless the ini says 0) and the RUN / WALK
     // control (off unless the ini says 1: the same command is a pick of the button lists - "Run / walk switch" - which is how it is meant to be used)
     cfg.categories = !ini || GetPrivateProfileIntW(L"openxr", L"skill_categories", 1, ini) != 0;
+    // the user (2026-10-25): "the skill menu, when I open it, should be in edit mode at once - I tap a tile and can assign" - a tap on a slot opens its
+    // skill list; the old tap (the trigger casts that slot) is the trigger held on it (wheel_model.h kPickHoldS). 0 = as before
+    cfg.editFirst = !ini || GetPrivateProfileIntW(L"openxr", L"skill_panel_edit_first", 1, ini) != 0;
     cfg.runWalk = ini && GetPrivateProfileIntW(L"openxr", L"skill_run_walk", 0, ini) != 0;
     // the right trigger and the right A as the game's RT and A slots (off unless the ini says 1: the layout's trigger is the attack and its A interact, as ever);
     // it acts in first person with direct input only (vr/slot_controls.h), and the editor's list then has the basic attack to put a slot back
@@ -300,7 +315,7 @@ void Configure(bool on, int pointerHand, float distanceM, float widthM, int styl
             g_settingsTab.store(cfg.settingsTab);
             if (now == 1)
                 Log("vrcam: openxr - skill panel: a Settings tab beside Skills ([openxr] headset_settings=1, the tiles' look): the long press opens it on the tab it was last on, "
-                    "both grips and a thumbstick click open it on Settings");
+                    "flip to it with a stick or a grip");
             else if (now == 2)
                 Log("vrcam: openxr - skill panel: no Settings tab - it needs the tiles' look ([openxr] skill_panel_style=1); the settings panel of its own stays");
         }
@@ -328,6 +343,7 @@ void Configure(bool on, int pointerHand, float distanceM, float widthM, int styl
 bool Enabled() { return g_on.load(); }
 bool TriggerCastsSkill() { return g_on.load() && g_triggerSkill.load(); }
 bool SettingsTabOn() { return g_on.load() && g_settingsTab.load(); }
+void SetTwoGripChord(bool on) { g_twoGripChord.store(on); }
 void SetSettingsHost(const hset::video::Env& env) {
     std::lock_guard<std::mutex> lock(g_lock);
     g_env = env;

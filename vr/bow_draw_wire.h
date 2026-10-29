@@ -46,6 +46,10 @@ bool On();
 // (skel::BowRestPoint, a point fixed in the hand's own frame: [bow] arrow_rest_x/y/z_cm) - the line the arrow lies on - instead of through the
 // bow hand's reference point. Without a rest point (the offsets are 0, no rig pose) nothing changes either way. Default true.
 void SetRestAims(bool on);
+// [bow] shot_line_hold (any thread; live): a released shot's line stays the aim the game's hooks get (AimDir, AimLine, AimLive) for bowdraw::kShotHoldSeconds,
+// through a new draw too - the game reads a press when it takes it, late when the hero is still in his last attack; then the bow hand's own ray (HandRay)
+// aimed the arrow, not the line it was drawn along. Off (the default): 0.4 s, and not while a new draw is held, as before.
+void SetShotLineHold(bool on);
 
 // The bow's own string is wanted off the posed bow (skel::BowString): the draw is on and the touch point is the model's, or the
 // debug view shows it. For the skeleton hook.
@@ -62,6 +66,11 @@ bool AimLive();
 // The line in the head's turn frame (x right, y up, z back - what D2RVR_Shared's hands are in), unit; false when it
 // is not live. Turned with the head, so it stays the same line in the room.
 bool AimDir(float out[3]);
+// [bow] pitch_aim: the same line whole - where it starts (the arrow's release point at the release: the bow model's arrow rest point when it was read,
+// else the bow hand's own point; metres from the head in the head's turn frame, the hands' frame) and its unit direction (AimDir's). False when not live.
+bool AimLine(float start[3], float dir[3]);
+// The string is held now (taken, not yet let go or cancelled). False when the box is unticked; stale after a quarter of a second. Any thread.
+bool Drawing();
 
 // [debug] bow_latency: the releases that pressed the game's button so far, and the times (std::chrono::steady_clock seconds, the base of
 // throwborn::NowS()) of the last one's release and of its button's press by the wire. Any thread.

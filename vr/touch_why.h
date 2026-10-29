@@ -35,7 +35,7 @@ inline const char* WhyText(Why w) {
         case Why::NoPose: return "the skeleton hook has no fresh pose of the weapon (the arms are not on the controllers, or no pose in the last 0.1 s)";
         case Why::LetGo: return "[weight]: no hand holds the weapon (let go, falling, lying)";
         case Why::AfterThrow: return "within 0.7 s of a released throw by gesture: the swing's follow-through is not a touch";
-        case Why::GripOpen: return "throw_by_grip is on and the right grip is not squeezed on the weapon (the weapon is in the hand while the grip is)";
+        case Why::GripOpen: return "throw_by_grip is on and the right grip is not squeezed on the weapon (the weapon is in the hand while the grip is; [gameplay] melee_touch_thrown_held=1: from the equip, like a sword)";
         case Why::NoBlade: return "no weapon bone as drawn, no hand sample for the pose, or no view yet";
         default: return "?";
     }

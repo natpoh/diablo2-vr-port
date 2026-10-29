@@ -44,6 +44,10 @@ float MeasuredEyeM();    // the eyes over the floor, standing, metres
 float MeasuredSpanM();   // grip to grip with the arms out, metres
 // [calibration] seated: played seated - the camera's standing height is the recentre's, a measurement reads the arm span only.
 bool Seated();
+// The span the hero's arms are fitted to now, metres (the measured or hand-set [calibration] arm_span_m, else [calibration] default_span's;
+// 0 = none): vrcam notes it each tick, the headset panel's Arm span stepper shows it.
+void NoteSpanInUse(float metres);
+float SpanInUseM();
 
 // -- the measurement itself ---------------------------------------------------------------------------------------------
 

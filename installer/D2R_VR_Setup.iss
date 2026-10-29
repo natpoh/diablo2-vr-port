@@ -66,6 +66,8 @@
 #define MinBodyWalkMinor 79
 #define BodyWalkDownload "https://bodywalkvr.com/api/download/latest?product=bodywalk"
 #define D2RLoaderSite "https://d2rloader.net"
+; Microsoft's own permanent link to the Visual C++ 2015-2022 Redistributable (x64), which D2RLoader needs (vc_runtime.inc)
+#define VcRedistUrl "https://aka.ms/vs/17/release/vc_redist.x64.exe"
 ; The one D2RLoader the mod is made for, fetched only when the player asks (InstallD2RLoader).
 ; The SHA-256 is the one d2rloader.net publishes on its download page. On 2026-10-13 its author
 ; repacked the 1.3.1 ZIP under the same name (the compression and the order of the files; D2RCore.dll,
@@ -495,6 +497,9 @@ end;
 // installer\tests\mod_layout_test.iss runs for real. Needs PlatformValue (above) and ModVersion.
 #include "ini_choice.inc"
 
+// D2RLoader needs the Visual C++ 2015-2022 runtime (x64): its DLLs looked for in System32 on the folder page (vc_redist offered, never forced)
+#include "vc_runtime.inc"
+
 // ---------------------------------------------------------------- wizard
 
 procedure InitializeWizard;
@@ -514,7 +519,7 @@ end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;
 var
-  Dir, Version, Name: String;
+  Dir, Version, Name, Missing: String;
   Code: Integer;
 begin
   Result := True;
@@ -548,6 +553,31 @@ begin
             Result := False;
             Exit;
           end;
+      else
+        begin
+          Result := False;
+          Exit;
+        end;
+      end;
+    end;
+    // Without the Visual C++ runtime D2RLoader stops with "could not start its loader. Reinstall the complete D2RLoader package" (a player's
+    // PC, 2026-10-26: vc_redist.x64 fixed it). {sys}: the 64-bit System32 (Setup runs in 64-bit mode).
+    Missing := VcRuntimeMissing(ExpandConstant('{sys}'));
+    if Missing <> '' then
+    begin
+      Log('Visual C++ runtime (x64) missing from System32: ' + Missing);
+      case TaskDialogMsgBox('The Microsoft Visual C++ runtime (x64) is missing',
+             'D2RLoader needs the Microsoft Visual C++ 2015-2022 Redistributable (x64); without it D2RLoader stops with "could not start its ' +
+             'loader". Missing from Windows\System32: ' + Missing + '.' + #13#10#13#10 +
+             'Get vc_redist.x64.exe from Microsoft, run it, then click Next here again.',
+             mbConfirmation, MB_YESNOCANCEL, ['Download it from Microsoft (vc_redist.x64.exe)', 'Go on without it', 'Cancel'], 0) of
+        IDYES:
+          begin
+            ShellExec('open', '{#VcRedistUrl}', '', '', SW_SHOWNORMAL, ewNoWait, Code);
+            Result := False;
+            Exit;
+          end;
+        IDNO: ;
       else
         begin
           Result := False;
@@ -614,6 +644,8 @@ end;
 // (after bearstonem/d2r-pcvr, whose installer makes them too). Once here, after ReShade, the mod's modinfo.json and the ini;
 // the program makes them again at its start when they are missing or the game has changed. All of it is inside the mod, so
 // the uninstaller's RemoveMod takes it with the rest. Whatever comes back, Setup goes on.
+// The same run, by its own tick ([world] kurast_boat): the Kurast Docks' town preset with its flying canoe put on the water
+// (after bearstonem/d2r-pcvr, which takes it out), into mods\D2R-VR\D2R-VR.mpq\data the same way; its outcome only in the log.
 procedure PrepareAssets(Dir: String);
 var
   Code: Integer;

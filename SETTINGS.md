@@ -56,12 +56,36 @@ the headset-only ones.
   size)**, a slider from 1024 to 4096 pixels a side (its left end is the game
   window's own size) with a tick box for the headset's recommended size. On
   native OpenXR the game draws at that size whatever its window is.
+- **Monitor (screen recording)** - *Monitor shows* (`[render] monitor_eye`, *The left
+  eye*): the game's window on the monitor while the headset has the stereo pair,
+  for OBS or any capture. *Both eyes in turn (as before)*: each picture as it
+  is drawn, left, right, left (a recording flickers between the eyes); *The
+  left eye* / *The right eye*: that eye only, steady, every frame - after the
+  headset took the other eye's picture the window gets this eye's instead (one
+  copy on the graphics card a frame). With the eyes by turns, the frames that
+  draw the other eye show this eye as made for that frame, or with *Monitor:
+  eyes by turns - only pictures the game drew* (`monitor_eye_drawn_only`, off)
+  its last drawn picture. *Monitor: the eye at its own proportions*
+  (`monitor_eye_fit`, on): with a VR render size apart from the window the
+  middle of the eye in the window's shape, not the picture stretched. Menus
+  stay the flat picture. Live; bearstonem/d2r-pcvr's idea.
 - **View** - the view the game starts in; the same as pressing F1 - F4:
   - **F1 From above** - the classic camera, in real 3D.
   - **F2 Third person** - the camera behind your hero, you look around with your head.
   - **F3 On your floor** - the game as a living diorama on your floor or table.
   - **F4 First person** - your body is the hero's: arms on the controllers,
     the weapon in your hands.
+- **Draw distance** - *Draw distance (near - far)*, stops 1 - 8, sets together
+  what is set apart on Performance, World and Sky: the room rings and the model
+  visibility radius (`[render] rings`, `model_radius`) - the edge of the drawn
+  world -, the game's sky dome at that edge (`[sky] game_sky_radius` = the radius,
+  never farther), the fog outdoors full just before it (`[fog] end` = 0.9 of the
+  radius, `start` 0.24) and in caves full at it (`caves_end` = the radius,
+  `caves_start` half). 3: 2 rings, 200, fog 50 - 180, caves 100 - 200, dome 200;
+  1 is 1 ring and 150, 8 is 7 rings and 1000. The line under it says what is set; a
+  single value changed by hand shows Custom. All live. The cave dome's size is a
+  share of the model radius and follows by itself. The same slider with every
+  value it sets: the Draw distance tab.
 - **D2R VR** - the version, the update check (*Up to date* or a download
   button), the beta channel.
 - **Start BodyWalk / Start FlatVR / Stop FlatVR** - start BodyWalk, then FlatVR,
@@ -83,7 +107,7 @@ the headset-only ones.
 - **Processor** - *Game on the cores with the big cache (Ryzen X3D)* (off): on a
   Ryzen with 3D V-Cache on one core group the game's threads run on those cores
   and its drawing thread gets a higher priority. Other processors: nothing changes.
-- **Quality** - *Quality preset* (Potato, Low, Medium, High, Custom) sets the rest
+- **Quality** - *Quality preset* (Light: no ReShade, Potato, Low, Medium, High, Custom) sets the rest
   at once (its tooltip says what each one sets); a change by hand shows Custom.
   The rest: room rings round the hero, the model visibility radius, distance fog
   (start and full, outdoors and in caves), the sky outdoors, ReShade's depth map
@@ -91,6 +115,22 @@ the headset-only ones.
   (CPU heavy) and *Any fire lights the ceiling*; in VR the game's own frame cap.
   The render distance, the headset rate and the frame cap take effect when the
   game starts again.
+  *No ReShade (Native OpenXR - eyes by turns only; restart the game)* (off, VR;
+  `[render] no_reshade`): for a weak PC - D2R VR does not load ReShade64.dll and
+  hooks the game's D3D12 itself; one eye drawn a frame, the other made with the
+  game's depth. No fog, sky, ceiling, overlays, light bounds or menus as a panel.
+  The *Light* preset ticks it and sets *3D in the headset* to *Native OpenXR -
+  eyes by turns*. A dxgi.dll ReShade of your own beside the game is used anyway.
+
+## Draw distance
+
+Everything of the draw distance in one place: the **Draw distance** slider again
+(the same as on Home, with its line), then each value it writes - *Room rings
+around the hero*, *Model visibility radius*, *The game's sky: dome radius*,
+*Distance fog* with *Fog start* / *Full fog* and the caves' pair, *A black dome
+round you in caves* and *The cave dome: radius x model visibility radius*. They
+are the same controls as on Performance, World and Sky (the same keys, kept in
+step); a change here shows Custom on the slider.
 
 ## Camera
 
@@ -193,17 +233,25 @@ the headset-only ones.
 - **Hands** - the hands turn with the controllers; tilt, turn and roll offsets
   for your controllers' grip.
 - **Effects around the hero** (F4) - *Draw the hero's own effects fainter* (`[render] dim_own_effects`;
-  **not working yet** in 0.170: in the build, but off in the settings that come with the mod - the log
-  shows the effect's "Fade" parameter being set, but nothing changes on screen, docs/KNOWN_ISSUES.md
-  issue 25): meant for the
-  overlays of his own states - Bone Armor (which wraps round the eyes), Frozen / Shiver /
-  Chilling Armor, Energy Shield, Cyclone Armor, Blade Shield, Fade, with their casting flash - to
-  be faded with the effect's own "Fade" parameter (the one the game fades an overlay with) to
-  the percentage you set (*Own effects left*, `dim_own_effects_pct`, 30 % in the program, 50 % in
-  the settings that come with the mod; 100 = as the game draws them, 0 = hidden), and the aura
-  rings at his feet to *Aura rings at the feet left* (`dim_own_auras_pct`, 50 %; 60 % shipped). Visual only: the buff
-  and its numbers are the game's; monsters', mercenaries' and other players' effects, and every
-  overlay that is not a state's, are untouched.
+  off in the settings that come with the mod): the overlays of his own states - Bone Armor (which
+  wraps round the eyes), Frozen / Shiver / Chilling Armor, Energy Shield, Blade Shield, Fade, with
+  their casting flash - are faded with the effect's own "Fade" parameter (the one the game fades an
+  overlay with) to the percentage you set (*Own effects left*, `dim_own_effects_pct`, 30 % in the
+  program, 50 % in the settings that come with the mod; 100 = as the game draws them, 0 = hidden),
+  and the aura rings at his feet to *Aura rings at the feet left* (`dim_own_auras_pct`, 50 %; 60 %
+  shipped). **Solid** effects - Bone Armor's bones, Blade Shield's blades, Energy Shield, the
+  shrines' overlays - are an opaque mesh the "Fade" does not reach (the game's own HD files say
+  which, docs/KNOWN_ISSUES.md issue 25): under 100 % they are not drawn at all. Visual only: the
+  buff and its numbers are the game's; monsters', mercenaries' and other players' effects, every
+  overlay that is not a state's, and everything in F1 - F3, are untouched.
+  *Bone Armor turns slower* (`[render] slow_own_effects`, on in the settings that come with the mod):
+  Bone Armor and the other solid effects turn at *Bone Armor's speed* (`own_effects_speed_pct`,
+  1 - 100 % of the game's speed in steps of 1, 20 % shipped) - the effect's own playback speed.
+  Visual only, F4 only. With *Own effects left* under 100 they are hidden instead.
+  *Bone Armor's height* (`[render] lower_own_effects`, on in the settings that come with the mod):
+  Bone Armor and the other solid effects are drawn *Bone Armor's height, cm* (`own_effects_height_cm`,
+  -150 .. +50 in steps of 5, -60 shipped; 0 = the game's place) lower or higher, so they circle below
+  the eyes. Where the renderer draws them only; visual only, F4 only.
 
 ## Controls
 
@@ -228,6 +276,12 @@ the headset-only ones.
   OpenXR, and FlatVR with the plugin's own controls; not a gamepad. 0 and 100 change
   nothing. Live. In d2r_vr.ini: `[direct] stick_deadzone_left_pct`,
   `stick_deadzone_right_pct`, `stick_outer_left_pct`, `stick_outer_right_pct`.
+- **Left stick: walk, run only when pushed far** (off by default) - VR first person
+  (F4) with the plugin's own controllers: the hero walks while the left stick leans
+  up to *... run from this much of a push* (80 %) and runs past it. Small steps get
+  easy and walking spends no stamina. It is the game's own walk and run (its run
+  threshold and its Run key), no speed of ours. The room walk and BodyWalk's walk are
+  not touched. Live. In d2r_vr.ini: `[direct] walk_by_lean`, `walk_by_lean_pct`.
 - **Mouse and keyboard** - mouse look in the VR views F2 and F4 as well.
 - **Input** - the gamepad straight from BodyWalk, which button *D2R: Inventory*
   presses, the A button only attacks. *Pick up / interact: one thing per press*
@@ -331,7 +385,9 @@ the headset-only ones.
     nothing has to be typed into the ini; the standard choice is not written to
     the file, and a line you wrote by hand that the list cannot name shows as
     *Custom* and is left alone. *Pause menu (Esc): long press of the left menu
-    button* takes that default away (the menu button is then the inventory at once). *BodyWalk's walking still walks the hero*: BodyWalk is given your
+    button* takes that default away (the menu button is then the inventory at once). The *Left trigger* row: its standard choice is the
+    gamepad's LT, the second row of skill buttons; bound to its own action (or Nothing) it does that and the second row of buttons is
+    off - no other button takes its place, and the skill panel shows those slots greyed. *BodyWalk's walking still walks the hero*: BodyWalk is given your
     head and hands (no buttons), and its left stick - nothing else - is mixed
     into the controller's own. *Play with the controllers in F1, F2, F3 without
     BodyWalk* (on, from 0.167): in those views the plugin's own controller is the
@@ -371,7 +427,11 @@ the headset-only ones.
     *Skill editor: categories* (on): EDIT SKILLS -> a slot gets a strip of tabs
     over the list - All, your class's three skill trees, General / Items - from
     the game's own tables (run `tools/skill_icons/prepare_skill_icons.py` again
-    after an update; without the trees there is only the one list). *Skill panel:
+    after an update; without the trees there is only the one list). *Skill panel
+    opens ready to edit* (on; `[openxr] skill_panel_edit_first`): a tap on a slot
+    brings up its list of skills - pick one and the game puts it there; the tap
+    that made the trigger cast a slot is the trigger held half a second on it.
+    Unticked: a tap picks the slot for the trigger, as before. *Skill panel:
     a RUN / WALK button* (off in the program; on in the settings that come with the mod since 0.171): a button on the panel's first page that presses
     the game's own run / walk command and shows which one it is on. The command
     itself is a pick of the button lists: *Run / walk switch* in Controls > Buttons
@@ -498,8 +558,9 @@ The toolbar while the game lies on your floor, and the item labels.
     laser does not have it) comes when you let go without moving the panel. Its
     slider **speed, m/s** (1) is how fast the panel moves with the stick pushed
     all the way.
-  - **Settings panel in the headset** (a prototype, off): both grips squeezed for a
-    third of a second, then a stick click. Pages: the game's view (F1 - F4),
+  - **Settings panel in the headset** (a prototype, off): a long press of the right
+    stick click (two grips held mean nothing; the old both-grips + click way is
+    `[debug] settings_two_grip_chord`, off). Pages: the game's view (F1 - F4),
     options (the picture's distance and width, brightness, your height, the
     laser, how the right stick turns), the VR render size, the body measurement,
     the low-life vignette (two pages, Life and Look), the HUD (the toolbar's type,
@@ -676,6 +737,16 @@ in full in a square window); the log tells the size the game draws at.
   Still off the cast; that first look now finds none for a shot along the hand)
   and *An attack never runs the hero off* (off: a net for the run the game starts
   out of a pad cast).
+  *Spear and bow: walk on as soon as the blow is out* (F4, off, EXPERIMENTAL -
+  `[gameplay] move_while_attacking`): it changes the game. With a spear, polearm,
+  javelin, bow or crossbow the left stick's walk goes on as soon as the blow lands
+  or the arrow leaves, instead of the hero standing out the rest of the attack's
+  animation (the game's own rule). The attack, its damage, mana, arrows and attack
+  speed stay the game's - the next attack waits until the animation would have
+  ended. In a network game the host's setting applies to everyone: hosting a
+  TCP/IP game with it ticked, every hero in it (their next attack held by the
+  host's server until the animation would have ended); joined to another's game,
+  the tick does nothing.
 - **Melee: hit by touch, Direct hit, Quick strike, the shield bash** - moved to the Strikes tab (below), with the strike rules.
 - **Bow** (F4, off) - *Draw the string with both hands*: the free hand's trigger
   (or its grip) at the bow's string, pull back along the line to the bow and let
@@ -830,6 +901,11 @@ ticks the other). The blade's geometry stays in Weapon Adjust and Debug.
     lies on the bottom of the mana medallion on the wrist, under the liquid, cut to a circle inside the glass. Full while the hero can pay the next hit; half see-through when he cannot (the
     next hit is the plain attack), bright again when the mana is back. Nothing armed: no icon. Needs the hand vitals as the medallions (the glass orbs look, the medallion shape) and the skill
     icons made from your game. Unticked: the medallion as before.
+  - *... for ONE blow: the next hit is the skill, then plain hits* (off; `[gameplay] melee_skill_arm_once`, under the tick above): the button arms
+    its skill for the next blow only - the first touch the game casts as the skill spends it (the icon goes), the hits after it are the plain attack
+    until the button is pressed again. Too little mana: that hit is the plain attack and the skill stays armed. Not used within *One blow: disarmed when
+    not used within, s* (`melee_skill_arm_once_s`, 3; 0 = never) it disarms with a soft buzz. Nothing is cast without a swing. Unticked: every hit is
+    the armed skill, as above.
   - *Skill icon in the mana: size, % of the inner circle* (87.5), *depth, % (100 = the bottom)* (100), *opacity, %* (100) and *opacity when the mana is short, %* (35)
     (`[gameplay] melee_skill_armed_icon_size_pct`, `_depth_pct`, `_opacity_pct`, `_faint_pct`; live): the icon's size against the glass dome's foot; how deep it lies - 100 on the floor
     under all the liquid, 0 as high as the dome lets a circle that wide lie, its rim just under the glass (the bigger the icon the less room over it; at 100 % size only the bottom);
@@ -861,6 +937,11 @@ F4 with the arms on the controllers, off by default (being tested).
   a hard swing, a two-handed one wants both hands, a spear held by its end is
   slower than held where the game holds it. **Weight** (% of the real mass; 50 to
   begin with, 100 = the real mass) and **Hands' strength**.
+- **A grip holding the weapon blocks no button** (off; `[weight] weapon_grip_no_chord`) - you hold the weapon by its
+  grip, so it is down the whole fight. Ticked, such a grip (or one another gesture holds) is no one-grip modifier: the
+  right grip on the weapon does not keep the right A / right trigger from their A / RT skill slots (a skill there casts
+  with the weapon held), and the off hand's grip on the shaft does not make the skill wheel's grip + stick click chord.
+  (Two grips held mean nothing anyway.) Unticked: as before.
 - **Gravity feel** (ticked) - the weight is gravity, not a drag: the wrists are
   soft near the line of your controller, so a sword held out level sinks a few
   degrees, a polearm or a two-hander in one hand sinks a lot (two hands hold it
@@ -1064,6 +1145,16 @@ or orb *Wand or orb aim point* (20 cells), bare hands *Bare hands aim point* (5)
 (Weapon Adjust > Staff: aim point and correction; below 3 = the game's own point).
 Debug > Aim rays > *Spell's ray* shows where it goes, live: green from the model,
 orange the old line, to the floor (a full ball) or 8 m out (a ring).
+*A staff held upright aims along the arm* (Auto-target, under the tick above,
+`[hands] staff_upright_arm`; off; VR first person F4): a spell lands on a point on the
+ground, so only the line's heading counts, and a staff held upright has almost none - a
+few degrees of tilt and wobble. Ticked, near upright the arm aims, from the drawn
+shoulder through the drawn hand; as the staff tilts away from upright its own axis
+takes over, smoothly (*Arm aims alone within* 10 degrees off upright, *Staff aims
+alone from* 30). A staff tipped toward a side sends the spell that way; an upright one
+goes where the arm points. A wand or orb as before. *Spell's ray* draws the arm in
+light blue, the ray green to blue by the arm's share. After d2r-pcvr 787f820
+(bearstonem, MIT), whose switch is a hard one at 35 degrees from flat.
 *A spell's aim distance follows how far the arm is stretched* (Weapon Adjust >
 Aim distance by the arm, `[bow] aim_distance_by_arm`; off in the program, on in the
 settings that come with the mod since 0.171; VR first person F4): as in flat Diablo, where a click near the hero spreads Teeth wide
@@ -1084,7 +1175,8 @@ in the headset, and a line in the log of why a bash did or did not count); *Draw
 thickness and direction (and the thrown kinds' own); *Log what the game does with
 each attack of ours* (`shot_trace`); *Log the long frames and what the plugin
 spent in them* (`frame_trace`) and *Write the plugin's log from a thread of its
-own* (`log_async`) for a stutter; *Log the room-scale walk once a second* (`roomscale_log`); *Log where the time goes between a bow's release
+own* (`log_async`) for a stutter, and *... where it is slow* (`log_async_auto`, on: where 8 of 16 lines take
+5 ms or more to write, that thread takes the lines over by itself); *Log the room-scale walk once a second* (`roomscale_log`); *Log where the time goes between a bow's release
 and its arrow*; the bow's draw vectors in the headset. After a throw the log tells
 for five seconds what the game does with it (`[debug] throw_trace`, read only;
 on when the key is missing, off in the settings that come with the mod).

@@ -69,8 +69,11 @@ inline bool Valid(Measurement m) {
 // arm span alone (the head over the floor is a seated head, not an eye height) and keeps the eye height stored by a standing one.
 // What of the stored numbers is in force: standing, both or nothing (Valid); seated, the span by itself, and the stored eye height
 // with it when the two are a person's (the world's scale; without one, the height from BodyWalk / [stereo] user_height_m, as before).
+// Standing, a span with no eye height to go with it (a seated measurement, or the span set by hand - the Body page's Arm span stepper, D2R VR
+// Settings' slider: the author, 2026-10-25, «ползунок, который можно вручную подвинуть») is the arms' by itself as well; the world's scale is then
+// the old height.
 inline Measurement InForce(bool seated, Measurement stored) {
-    if (!seated) return Valid(stored) ? stored : Measurement{};
+    if (!seated) return Valid(stored) ? stored : ValidSpan(stored.armSpan) ? Measurement{0.0f, stored.armSpan} : Measurement{};
     if (!ValidSpan(stored.armSpan)) return {};
     return {Valid(stored) ? stored.eyeHeight : 0.0f, stored.armSpan};
 }
@@ -86,6 +89,8 @@ struct Sample {
     bool handTracked[2] = {};              // a controller really located (not a held place)
     bool cancel = false;                   // the cancel button is down (read as an edge)
     bool seated = false;                   // [calibration] seated: the arm span only - no floor, no eye height asked for
+    bool strict = false;                   // [calibration] strict_tpose: the arms straight out to the SIDES (StrictArms)
+    float storedEye = 0.0f;                // ... and seated, the stored standing eye height the span is held against (0 = none)
     Vec head{};                            // between the eyes
     Quat headRot{};
     Vec hand[2]{};                         // grip positions
@@ -105,6 +110,26 @@ enum class Hint {
     Saved,
     Failed,      // the result could not be written
 };
+
+// [calibration] strict_tpose: a span is the width of the arms out to the sides, and the pose above lets the hands stand up to
+// 22 cm ahead of the eyes - arms swung that far forward (and elbows a little bent) read short: the author measured standing
+// 1.63 m one day and 1.50 m another, seated 1.68 m (2026-10-14 / 22 / 24, eye height 1.71 - 1.75 m), and the 1.50 left the
+// hero's arms short of the controllers. So, strict: no hand more than kStrictAheadM ahead of the eyes (the shoulder joints are
+// some 8 cm behind them: that is the arms within about 12 degrees of straight out sideways), and a span under kStrictSpanPerEye of
+// the eye height is read as arms not stretched (the spans we have of arms stretched out: 0.95, 0.95 and 0.96 of the eye height;
+// 1.50 was 0.86). Seated, the stored standing eye height is the yardstick when there is one.
+constexpr float kStrictAheadM = 0.06f;
+constexpr float kStrictSpanPerEye = 0.88f;
+inline bool StrictArms(Vec rightInHead, Vec leftInHead, float span, float eye) {
+    if (rightInHead.z < -kStrictAheadM || leftInHead.z < -kStrictAheadM) return false;   // (z back: ahead is -z)
+    return !ValidEyeHeight(eye) || span >= kStrictSpanPerEye * eye;
+}
+
+// [calibration] default_span: nothing measured - the hero's arms fitted to the span a person of this eye height has with the arms out
+// (grip to grip, the same reading a measurement makes), so they are a person's length and not the model's. The ratio is the one the
+// stretched-out measurements give (StrictArms). 0 = no valid eye height: not fitted.
+constexpr float kSpanPerEye = 0.95f;
+inline float DefaultSpan(float eye) { return ValidEyeHeight(eye) ? kSpanPerEye * eye : 0.0f; }
 
 // Is this frame a T-pose, whatever the triggers do.
 inline Hint CheckPose(const Sample& s) {
@@ -128,6 +153,7 @@ inline Hint CheckPose(const Sample& s) {
     if (r.x < 0.35f || l.x > -0.35f || std::fabs(r.x + l.x) > 0.18f || std::fabs(r.y - l.y) > 0.09f ||
         std::fabs(r.z) > 0.22f || std::fabs(l.z) > 0.22f || drop < 0.10f || drop > 0.50f)
         return Hint::Arms;
+    if (s.strict && !StrictArms(r, l, span, s.seated ? s.storedEye : s.head.y)) return Hint::Arms;
     return Hint::Pose;
 }
 

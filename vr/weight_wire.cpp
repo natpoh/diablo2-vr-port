@@ -30,6 +30,7 @@ const D2RL::PluginContext* g_ctx = nullptr;
 std::atomic<uint32_t> g_counter{0};
 std::atomic<ULONGLONG> g_counterAt{0};
 std::atomic<bool> g_taking{false};
+std::atomic<bool> g_gripNoChord{false};   // [weight] weapon_grip_no_chord
 
 void Log(const char* text) { if (g_ctx) logasync::Info(g_ctx, text); }
 
@@ -72,6 +73,22 @@ bool RawGrips(float out[2]) {
     out[0] = std::clamp(f.hand[1].squeeze, 0.0f, 1.0f);   // right
     out[1] = std::clamp(f.hand[0].squeeze, 0.0f, 1.0f);   // left
     return true;
+}
+
+void ConfigureGripNoChord(bool on) {
+    const bool was = g_gripNoChord.exchange(on);
+    static bool told = false;
+    if (told && was == on) return;
+    told = true;
+    Log(on ? "vrcam: weight - a grip that holds the weapon (or that a gesture holds) is no modifier: it neither makes the wheel's grip + click chord nor keeps the right A / trigger from their skill slots ([weight] weapon_grip_no_chord)"
+           : "vrcam: weight - a grip that holds the weapon still counts for the wheel's chord and the slot controls, as before ([weight] weapon_grip_no_chord=0)");
+}
+
+bool GripNoChord() { return g_gripNoChord.load(); }
+
+bool GripOnWeapon(int hand) {
+    if (!g_gripNoChord.load() || hand < 0 || hand > 1 || !viewgate::F4() || !weight::Placed()) return false;
+    return weight::HoldsWeapon(1 - hand);   // weight's hands: 0 right, 1 left
 }
 
 bool RawTriggers(float out[2]) {

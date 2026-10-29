@@ -6,8 +6,10 @@
 //   vr/tiles_paint.cpp the same pages on the skill panel window's Settings tab, scaled and in that window's own style.
 // The hit test (hset_model.h HitTest) reads the same rectangles, so what is drawn is what is clicked.
 
+#include <cctype>
 #include <cmath>
 #include <cstdio>
+#include <cwchar>
 #include <string>
 #include <vector>
 
@@ -64,7 +66,7 @@ inline const char* StatusText(const Model& m, bool window = false) {
     if (m.page == kPageBelt) return m.Get()[kKeyBeltOn] > 0.5f ? "Each change applies by itself: look at your belt, then move it again."
                                                                  : "The potions on the belt are off (D2R VR Authentic Settings > UI: F4 body): these do nothing.";
     return window ? "Point and pull the trigger. B, Close or a long press of the right stick closes this window."
-                  : "Point and pull the trigger. Squeeze both grips and click a stick, or press B, to close.";
+                  : "Point and pull the trigger. B, or a long press of the right stick, closes it.";
 }
 
 // What a Choice row says and shows: the pick's name ("Custom (ini)" for a line the list does not name); and under the control's name, the ini
@@ -74,7 +76,10 @@ inline std::string ChoiceDetail(const Model& m, int key) {
     const int index = (int)std::lround(m.Get()[key]);
     std::string text = index < keys::CustomPick() ? keys::PickIni(index) : m.BindRaw(key);
     if (index >= keys::CustomPick() && text.empty()) text = "(a line the list does not name)";
-    return std::string(kDefs[key].detail) + " = " + text;
+    std::string lower = text;
+    for (char& c : lower) c = (char)std::tolower((unsigned char)c);
+    const bool rowOff = std::wcscmp(kDefs[key].key, L"left_trigger") == 0 && lower.find("pad:lt") == std::string::npos;   // (vr/direct_layout.h SecondRowOn)
+    return std::string(kDefs[key].detail) + " = " + text + (rowOff ? " - the second row (LT) is off" : "");
 }
 
 // The line under the rows as text (StatusText for the pages whose line is a fixed one).
@@ -233,6 +238,14 @@ inline Scene Compose(const Model& m, const Hit& hover, const ComposeOptions& opt
         b.Button(kCalibrate, "Calibrate body", {Kind::Calibrate, -1, 0}, true, canEdit && !m.PlayPending(), Role::Accent);
         b.Button(kForget, "Forget measurement", {Kind::Forget, -1, 0}, false, canEdit && st.any);
         b.Button(kGuideBtn, "First-start guide", {Kind::Guide, -1, 0});
+        // the arm span by hand, right under Calibrate: the span in use, a centimetre a press (a new measurement moves it)
+        {
+            const bool stored = m.SpanStored(), edited = m.Edited(kKeySpan);
+            b.Button(kSpanDec, "-", {Kind::Span, -1, -1}, false, canEdit);
+            b.Button(kSpanInc, "+", {Kind::Span, -1, 1}, false, canEdit);
+            b.Text(body::SpanText(m.SpanShown(), stored), kSpanVal, Face::Bold, edited ? Role::Warn : stored ? Role::Accent : Role::Quiet, Align::Center);
+            b.Text("Arm span by hand: - shorter, + longer arms (a new Calibrate sets it again)", kSpanNote, Face::Small, Role::Quiet);
+        }
         b.Text(body::MeasuredText(st), kBodyStored, Face::Bold, st.valid ? Role::Accent : Role::Quiet);
         b.Text(body::UseText(st), kBodyUse, Face::Small, st.valid && !st.use ? Role::Warn : Role::Quiet);
         static const char* const steps[] = {

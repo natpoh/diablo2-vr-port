@@ -67,7 +67,8 @@ Col WedgeColour(const View& v, int k) {
     const Skill& s = v.slot[k];
     if (!s.known || s.id < 0) return {32, 29, 26};
     const Col base = k < 4 ? Col{62, 51, 38} : Col{40, 48, 62};   // the right half is the first row, the left half the LT row
-    return s.available ? base : Mix(base, Col{30, 28, 26}, 0.6f);
+    const bool off = v.rowOff && kSlotDefs[k].alt;   // the second row of buttons is off (the left trigger has its own action): greyed
+    return s.available && !off ? base : Mix(base, Col{30, 28, 26}, 0.6f);
 }
 
 void PaintRing(Canvas& cv, const View& v) {
@@ -160,14 +161,15 @@ void PaintWheelContent(Canvas& cv, Fonts& fonts, const View& v) {
         const float px = u * kSize, py = w * kSize;
         const Skill& s = v.slot[k];
         const bool active = wheelPage && v.selected == k;
+        const bool off = v.rowOff && kSlotDefs[k].alt;   // the second row of buttons is off: the left trigger has its own action - greyed
         // the slot's label on a small plate
         const Rect plate{px - 52.0f, py - 84.0f, px + 52.0f, py - 52.0f};
         RoundRect(cv, plate, 14.0f, active ? kGold : kInk, 0.92f, kGoldDim, 1.0f, 1.5f);
-        Text(cv, fonts, kSlotDefs[k].label, plate, 22, true, active ? kInk : kGoldBright);
+        Text(cv, fonts, kSlotDefs[k].label, plate, 22, true, active ? kInk : off ? kTextDim : kGoldBright);
         if (!v.ready) continue;
         if (s.known && s.id >= 0) {
-            Icon(cv, wheelicons::Get(s.id), Rect{px - 42.0f, py - 46.0f, px + 42.0f, py + 38.0f}, !s.available);
-            Text(cv, fonts, s.name, Rect{px - 86.0f, py + 40.0f, px + 86.0f, py + 94.0f}, 22, false, s.available ? kText : kTextDim);
+            Icon(cv, wheelicons::Get(s.id), Rect{px - 42.0f, py - 46.0f, px + 42.0f, py + 38.0f}, !s.available || off);
+            Text(cv, fonts, s.name, Rect{px - 86.0f, py + 40.0f, px + 86.0f, py + 94.0f}, 22, false, s.available && !off ? kText : kTextDim);
         } else if (s.known) {
             Text(cv, fonts, "Empty", Rect{px - 86.0f, py - 20.0f, px + 86.0f, py + 20.0f}, 22, false, Col{110, 102, 88});
         }

@@ -27,6 +27,9 @@
 #   -ReleasesDir <dir>   where the installer and its .sha256 are copied (default: <main checkout>\releases - a test build
 #                        should name its own folder: an installer built with the default name would replace the release file there)
 #   -CeilingFrom <dir>   a folder holding the cave-ceiling pictures d2r_vr.ini names (e.g. an earlier payload's sky\), looked in first
+#   -SkyDomeFrom <dir>   a folder holding the game sky dome's painted act skies sky_act1..5_day_HDR.dds (tools/game_sky/make_sky_dome.py --act;
+#                        default releases\inputs\sky_dome). [sky] game_sky draws them; D2R VR Settings makes the domes' units and plain
+#                        textures itself (tools/settings/dome_assets.cpp), not these
 #
 # The shared "D2R VR Launcher" travels inside this installer (installer\launcher_bundle.inc; docs\launcher_authentic.md): Setup installs it silently,
 # as the original user, when it is missing or older, then installs the mod. The launcher's Setup is carried UNMODIFIED, as its repository publishes it
@@ -49,6 +52,7 @@ param(
     [string]$OutputName = "",
     [string]$ReleasesDir = "",
     [string]$CeilingFrom = "",
+    [string]$SkyDomeFrom = "C:\wsl\d2r_vr\releases\inputs\sky_dome",
     [string]$LauncherSetup = "",
     [string]$LauncherSetupSha256 = "",
     [switch]$NoLauncher
@@ -130,11 +134,25 @@ if (Test-Path $payload) { Remove-Item $payload -Recurse -Force }
 New-Item -ItemType Directory -Force "$payload\plugins", "$payload\shaders", "$payload\sky", "$payload\bodywalk", "$payload\game", "$payload\launcher", "$payload\license" | Out-Null
 # MIT, with the third-party notices MinHook's and ReShade's licences ask for in a binary: it goes into the mod's folder (installer\mod_files.inc)
 Copy-Item (Join-Path $root "LICENSE") "$payload\license\D2R_VR_LICENSE.txt"
+# Settings' language files (lang\<code>.txt, en.txt the English to translate from, README.txt how) - into mods\D2R-VR\lang (mod_files.inc)
+New-Item -ItemType Directory -Force "$payload\lang" | Out-Null
+Get-ChildItem (Join-Path $root "lang") -File | Where-Object { $_.Extension -eq ".txt" } | Copy-Item -Destination "$payload\lang\"
+# ... and how complete each is: keys missing, or translated from an English that has changed since (tools/lang_sync.py). A warning, never
+# a failure - a missing text is shown in English.
+$langPy = Get-Command python, py -ErrorAction SilentlyContinue | Where-Object { $_.Source -notmatch 'WindowsApps' } | Select-Object -First 1
+if ($langPy) {
+    & $langPy.Source -I (Join-Path $root "tools\lang_sync.py") check --exe (Join-Path $build "D2R_VR_Settings.exe") | ForEach-Object {
+        if ($_ -match '^WARNING ') { Write-Warning ("languages: " + $_.Substring(8)) } else { Write-Host "languages: $_" }
+    }
+} else { Write-Warning "languages: no Python - lang\ not checked (tools\lang_sync.py check)" }
 
 foreach ($f in "d2rl-vrcam.dll", "D2R_VR_Settings.exe") { Copy-Item (Join-Path $build $f) "$payload\plugins\" }
+# no debug switch turned on reaches the players (tools/check_debug_defaults.py; 0.179 shipped the bow's aiming ray, 0.181 the log traces)
+& python (Join-Path $root "tools\check_debug_defaults.py") (Join-Path $root "d2r_vr.ini")
+if ($LASTEXITCODE -ne 0) { throw "d2r_vr.ini ships a debug switch turned on - set it back (python tools\check_debug_defaults.py d2r_vr.ini --fix) and build again" }
 Copy-Item (Join-Path $root "d2r_vr.ini") "$payload\plugins\"
 # the optional weight-physics and grip libraries (binaries only; their source is not in this repository)
-foreach ($f in "d2r_vr_weight.dll", "d2r_vr_grip.dll") {
+foreach ($f in "d2r_vr_weight.dll", "d2r_vr_grip.dll", "d2r_vr_gait.dll") {   # gait: the other players' legs ([multiplayer] pose_share_legs)
     $src = Join-Path $WeightLibs $f
     if (Test-Path $src) { Copy-Item $src "$payload\plugins\" } else { Write-Warning "$f not found in $WeightLibs - the installer goes without it" }
 }
@@ -187,6 +205,14 @@ foreach ($n in $ceilNames) {
     $src = $ceilFrom | ForEach-Object { Join-Path $_ $n } | Where-Object { Test-Path $_ } | Select-Object -First 1
     if (-not $src) { throw "ceiling picture not found: $n (looked in $($ceilFrom -join ', '))" }
     Copy-Item $src "$payload\sky\"
+}
+# The game sky dome's painted act skies ([sky] game_sky, shipped on since 0.186): without them a fresh install had no dome picture
+# (PC1 had them only copied by hand). Into the mod's D2R-VR.mpq\data (mod_files.inc).
+New-Item -ItemType Directory -Force "$payload\skydome" | Out-Null
+foreach ($act in 1..5) {
+    $src = Join-Path $SkyDomeFrom "sky_act${act}_day_HDR.dds"
+    if (-not (Test-Path $src)) { throw "the sky dome's act $act picture not found: $src (-SkyDomeFrom)" }
+    Copy-Item $src "$payload\skydome\"
 }
 # the flat crosshair, beside the skies (vrcam [input] crosshair; tools/gen_crosshair.py)
 Copy-Item (Join-Path $root "reshade\sky\D2R_Crosshair.png") "$payload\sky\"

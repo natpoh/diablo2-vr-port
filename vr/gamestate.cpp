@@ -42,9 +42,13 @@
 #include "shield_smite_game.h"
 #include "double_swing_game.h"
 #include "melee_arm_game.h"
+#include "point_cast_wire.h"
 #include "render_resolution.h"
 #include "sigscan.h"
 #include "minimap_side.h"
+#include "plate_world.h"   // the hook's latest anchor for the plate, taken with each read (FollowBox)
+#include "hand_inventory.h"   // [openxr] hand_inventory: which panels are the inventory
+#include "notice_card.h"   // [hud] notice_card: the game's quest / level-up notice, counted and its panel's rect read here
 
 namespace skel { int HeroClass(); }   // the hero's class from the posed model's folder (vr/skeletons.cpp): -1 not known
 
@@ -70,6 +74,7 @@ D2RVR_State* g_state = nullptr;
 uiticket::Ticket g_readQueued;   // ReadItems() queued (ui_ticket.h: a run that never comes is queued again)
 std::atomic<uint32_t> g_weapon{D2RVR_WEAPON_UNKNOWN};
 std::atomic<uint32_t> g_menu{0};
+std::atomic<bool> g_npcDialogOnly{false};   // the only menu open is an NPC's small dialogue box (Talk / Trade / Cancel), [hud] npc_dialog_no_bar
 std::atomic<bool> g_laserPanels{false};   // [openxr] laser on: d2r-pcvr's extra modal panels are menus too (IsMenuPanel)
 std::atomic<uint32_t> g_set{0};      // 1 / 2: the active weapon set
 std::atomic<uint32_t> g_view{0};     // vrcam's view: 0 off, 1 first person, 2 third person, 3 F1 in perspective, 4 the game on the floor
@@ -108,6 +113,9 @@ DataTables::Bank g_bank = DataTables::Bank::Lod;
 std::vector<std::pair<uint32_t, uint32_t>> g_typeIndex;   // ItemTypes row index -> D2RVR_WeaponType
 std::atomic<bool> g_leftShield{false};   // [gameplay] shield_smite: a shield in the left hand of the active set
 std::vector<uint32_t> g_shieldTypes;     // ItemTypes row indexes of the shields: shie, ashd (paladin), head (necromancer)
+std::atomic<int> g_headSide{-1};         // [shield] heads_hang: the hand slot of the active set a Necromancer's head (ItemTypes head) is in - 1 left,
+                                         // 0 right (the game takes a shield in either slot: one in the weapon's box is body location 4), -1 none
+int g_headType = -1;                     // ItemTypes row index of head; -1 not found
 // Weapons.txt "2handed" in an Items row: a byte at an offset the SDK does not
 // name either, found the same way - the one byte that reads 1 for a set of
 // two-handed weapons and 0 for a set of one-handed ones (CalibrateTwoHanded).
@@ -169,6 +177,10 @@ void CalibrateTypes() {
     for (const char* code : {"shie", "ashd", "head"}) {
         uint32_t index = 0;
         if (TypeRow(Four(code), &index)) g_shieldTypes.push_back(index);
+    }
+    {
+        uint32_t index = 0;
+        if (TypeRow(Four("head"), &index)) g_headType = (int)index;
     }
     for (const auto& k : kKinds) {
         uint32_t idx;
@@ -365,6 +377,9 @@ int ThrustOf(const std::string& code) {
 // The corner map for the hand kept in a corner (vr/minimap_side.h; the setter is bearstonem/d2r-pcvr's finding, MIT):
 // -1 off, else [hud] map_corner - set by vrcam in VR with [hud] map=1. Plain data only here (__try).
 std::atomic<int> g_mapSideCorner{-1};
+// [hud] map_click_big (vr/map_laser.h): the map made big by the laser - the game's whole-screen map (mode 0) by the same setter, put back in its
+// corner by the Keeper once it is let go. Set by xr.cpp.
+std::atomic<bool> g_mapBig{false};
 int ReadMapMode(uint64_t miniRva, uint64_t leftRva) noexcept {
     const uintptr_t mini = d2rsig::Addr(miniRva), left = d2rsig::Addr(leftRva);
     if (!mini || !left) return -1;
@@ -408,6 +423,23 @@ void MaintainMapSide(bool havePlayer) {
         checked = 1;
     }
     const int mode = ReadMapMode(globals.mini, globals.left);
+    {   // [hud] map_click_big: the whole screen while big (asked again a second later if the game put it back), the Keeper's corner after
+        static uint64_t bigAt = 0;
+        static int bigTold = 0;
+        if (g_mapBig.load()) {
+            if (mode != 0 && (!bigAt || now - bigAt > 1000)) {
+                bigAt = now ? now : 1;
+                if (!CallMapSetter(d2rsig::Addr(minimapside::kSetterRva), 0)) {
+                    checked = -1;
+                    Log("gamestate: the game's map-mode setter faulted - not called again");
+                    return;
+                }
+                if (bigTold < 5) { ++bigTold; Log("gamestate: the map made big by the laser - the game's whole-screen map (its own setter, this session only)"); }
+            }
+            return;
+        }
+        bigAt = 0;
+    }
     const int set = keeper.Step(true, mode, corner, now);
     if (set < 0) return;
     if (!CallMapSetter(d2rsig::Addr(minimapside::kSetterRva), set)) {
@@ -422,6 +454,27 @@ void MaintainMapSide(bool havePlayer) {
                  "(the game's own setter, this session only; its options keep the player's choice)", set == 1 ? "left" : "right");
         Log(b);
     }
+}
+// The game's map mode now (minimapside::Mode: 0 the whole screen, 1 the left corner, 2 the right), -1 not known (another build of the
+// game, or not read yet): where [hud] map_direction's arrow goes. Read on the UI thread (ReadItems, as MaintainMapSide) only while
+// vrcam asked for it within the last second (MapMode); vrcam gets the last value read.
+std::atomic<int> g_mapModeLast{-1};
+std::atomic<uint64_t> g_mapModeAskedAt{0};
+std::atomic<int> g_mapModeChecked{0};   // 0 not yet, 1 the setter's bytes as 3.3.93787 has them, -1 not
+minimapside::Globals g_mapModeGlobals;
+int MapModeNow() {
+    int checked = g_mapModeChecked.load();
+    if (checked == 0) {
+        if (!d2rsig::Addr(minimapside::kSetterRva)) return -1;   // (not yet: asked again)
+        if (d2rsig::Check(minimapside::kSetterRva, minimapside::kSetterSig, sizeof minimapside::kSetterSig)) {
+            g_mapModeGlobals = minimapside::MapGlobals(minimapside::kSetterRva, minimapside::kSetterSig);
+            checked = 1;
+        } else {
+            checked = -1;
+        }
+        g_mapModeChecked.store(checked);
+    }
+    return checked > 0 ? ReadMapMode(g_mapModeGlobals.mini, g_mapModeGlobals.left) : -1;
 }
 
 // The hero's Strength: the game's unit stat getter (stat 0), found through the same three signatures as the life and mana read (vr/hand_vitals_game.cpp, vr/low_hp.cpp). Plain data
@@ -460,6 +513,70 @@ bool IsThrowPotionCode(const std::string& code) {
     return false;
 }
 
+// Every Items row's weapon kind by its row index (an item unit's class id, unit +4), built once on the UI thread (the tables answer only
+// there) for the readers on other threads: [gameplay] move_while_attacking reads a hero's weapon on the game's server (KindOfItemClass).
+constexpr uint32_t kClassKinds = 4096;
+std::atomic<uint8_t> g_classKind[kClassKinds] = {};
+std::atomic<uint32_t> g_classKindCount{0};
+bool g_classKindsBuilt = false;   // the UI thread only
+void BuildClassKinds() {
+    g_classKindsBuilt = true;
+    if (!g_tables || !g_tables->getTable || g_typeOffset < 0) return;
+    DataTables::TableView v{};
+    v.structSize = DataTables::TableViewSize;
+    if (g_tables->getTable(g_ctx, g_bank, DataTables::TableId::Items, &v) != DataTables::Result::Success || !v.rows || !v.rowSize ||
+        (uint32_t)g_typeOffset + 2 > v.rowSize)
+        return;
+    const uint32_t n = std::min<uint32_t>(v.rowCount, kClassKinds);
+    uint32_t weapons = 0;
+    for (uint32_t i = 0; i < n; ++i) {
+        uint16_t t;
+        memcpy(&t, (const uint8_t*)v.rows + (size_t)i * v.rowSize + g_typeOffset, 2);
+        uint8_t kind = 0;
+        for (const auto& [idx, type] : g_typeIndex) if (idx == t) { kind = (uint8_t)type; break; }
+        g_classKind[i].store(kind, std::memory_order_relaxed);
+        weapons += kind != 0;
+    }
+    g_classKindCount.store(n, std::memory_order_release);
+    char b[160];
+    snprintf(b, sizeof b, "gamestate: weapon kinds by item class ready (%u rows, %u weapons) - for a hero's weapon read on the game's server", n, weapons);
+    Log(b);
+}
+
+// [weight] grab_items: each item class's code (the Items table's row index -> its four letters), built once on the UI thread for readers on other threads - the hand that
+// took an item off the ground shows our copy of it by its code. The code's place in a row is found from three rows the code finds (findRowByCode).
+std::atomic<uint32_t> g_classCode[kClassKinds] = {};
+std::atomic<uint32_t> g_classCodeCount{0};
+bool g_classCodesBuilt = false;   // the UI thread only
+void BuildClassCodes() {
+    g_classCodesBuilt = true;
+    if (!g_tables || !g_tables->getTable || !g_tables->findRowByCode) return;
+    DataTables::TableView v{};
+    v.structSize = DataTables::TableViewSize;
+    if (g_tables->getTable(g_ctx, g_bank, DataTables::TableId::Items, &v) != DataTables::Result::Success || !v.rows || !v.rowSize) return;
+    const char* probe[3] = {"hp1 ", "hax ", "cap "};
+    const uint8_t* rows[3];
+    uint32_t sizes[3];
+    for (int i = 0; i < 3; ++i) if (!(rows[i] = ItemRow(Four(probe[i]), &sizes[i]))) return;
+    int offset = -1;
+    for (uint32_t o = 0; o + 4 <= std::min({sizes[0], sizes[1], sizes[2], v.rowSize}) && offset < 0; o += 4) {
+        bool all = true;
+        for (int i = 0; i < 3 && all; ++i) { uint32_t c; memcpy(&c, rows[i] + o, 4); all = c == Four(probe[i]); }
+        if (all) offset = (int)o;
+    }
+    if (offset < 0) { Log("gamestate: item codes by class - the code's place in the Items table not found: no copies of items taken off the ground"); return; }
+    const uint32_t n = std::min<uint32_t>(v.rowCount, kClassKinds);
+    for (uint32_t i = 0; i < n; ++i) {
+        uint32_t c;
+        memcpy(&c, (const uint8_t*)v.rows + (size_t)i * v.rowSize + offset, 4);
+        g_classCode[i].store(c, std::memory_order_relaxed);
+    }
+    g_classCodeCount.store(n, std::memory_order_release);
+    char b[160];
+    snprintf(b, sizeof b, "gamestate: item codes by class ready (%u rows, the code at +0x%X of a row) - for the copy of an item taken off the ground", n, (unsigned)offset);
+    Log(b);
+}
+
 // D2RVR_TYPE_* of one hand's item; 0 for nothing, or a quiver/shield (not a weapon).
 uint32_t KindOf(const std::string& code) {
     if (IsThrowPotionCode(code)) return D2RVR_TYPE_THROWING;
@@ -481,6 +598,16 @@ bool IsShield(const std::string& code) {
     if (!row || (uint32_t)g_typeOffset + sizeof type > size) return false;
     memcpy(&type, row + g_typeOffset, sizeof type);
     return std::find(g_shieldTypes.begin(), g_shieldTypes.end(), (uint32_t)type) != g_shieldTypes.end();
+}
+// A Necromancer's head: its Items row's type is head.
+bool IsHead(const std::string& code) {
+    if (code.size() != 4 || g_typeOffset < 0 || g_headType < 0) return false;
+    uint32_t size = 0;
+    const uint8_t* row = ItemRow(Four(code.c_str()), &size);
+    uint16_t type = 0;
+    if (!row || (uint32_t)g_typeOffset + sizeof type > size) return false;
+    memcpy(&type, row + g_typeOffset, sizeof type);
+    return type == (uint32_t)g_headType;
 }
 
 void Publish() {
@@ -524,23 +651,25 @@ extern int g_objLitOffset;
 // keys 1-4 drink. Each belt item comes as x 0..15 (column x % 4, row x / 4) with y 0, or as
 // column x and row y - both read (the d2r-pcvr fork found the same, 2026-10-13).
 std::atomic<uint32_t> g_belt[4] = {};
+std::atomic<uint32_t> g_beltId[4] = {};   // ... and that item's own id (the game's unit id): a bottle drunk or dropped is told from the next of its kind falling into its place
+struct BeltRow { uint32_t code[4] = {}, id[4] = {}; };
 Inventory::IterationAction __cdecl BeltItem(const PluginContext*, const Items::ItemInfo* i, void* user) noexcept {
-    auto* bottom = static_cast<uint32_t*>(user);
+    auto* bottom = static_cast<BeltRow*>(user);
     if (!i || i->container != Items::ItemContainer::Belt) return Inventory::IterationAction::Continue;
     int column = -1, row = -1;
     if (i->x >= 0 && i->x < 16 && i->y == 0) { column = i->x % 4; row = i->x / 4; }
     else if (i->x >= 0 && i->x < 4 && i->y >= 0 && i->y < 4) { column = i->x; row = i->y; }
-    if (column >= 0 && row == 0) bottom[column] = i->code;
+    if (column >= 0 && row == 0) { bottom->code[column] = i->code; bottom->id[column] = i->runtimeId; }
     return Inventory::IterationAction::Continue;
 }
 void ReadBelt(const PluginContext* ctx, PlayerHandle player, bool havePlayer) {
-    uint32_t bottom[4] = {};
+    BeltRow bottom;
     if (havePlayer && g_inventory->forEachInventoryItem) {
         const Inventory::ItemFilter filter{sizeof filter, 0, Items::ContainerBit(Items::ItemContainer::Belt), 0};
-        if (g_inventory->forEachInventoryItem(ctx, player, &filter, &BeltItem, bottom) != Inventory::Result::Success)
+        if (g_inventory->forEachInventoryItem(ctx, player, &filter, &BeltItem, &bottom) != Inventory::Result::Success)
             return;   // kept as it was
     }
-    for (int c = 0; c < 4; ++c) g_belt[c].store(bottom[c]);
+    for (int c = 0; c < 4; ++c) { g_belt[c].store(bottom.code[c]); g_beltId[c].store(bottom.id[c]); }
 }
 
 // On the UI thread: the two hands of the active set.
@@ -564,11 +693,14 @@ void __cdecl ReadItems(const PluginContext* ctx, void* user) noexcept {
     }
     panelinput::UiTick(havePlayer, g_menu.load() != 0);   // the laser's mouse done: the pad's layout back in a game
     MaintainMapSide(havePlayer);   // the corner map for the hand: the game's map out of the middle (vr/minimap_side.h)
+    if (const uint64_t asked = g_mapModeAskedAt.load(); asked && GetTickCount64() - asked < 1000)   // [hud] map_direction: the map's mode for vrcam
+        g_mapModeLast.store(havePlayer ? MapModeNow() : -1);
     if (g_inventory) ReadBelt(ctx, player, havePlayer);
     if (!g_inventory || !g_items || !havePlayer) {
         g_weapon.store(D2RVR_WEAPON_UNKNOWN);
         g_type.store(D2RVR_TYPE_UNKNOWN);
         g_leftShield.store(false);
+        g_headSide.store(-1);
         g_held.store(0);
         g_two.store(0);
         g_heroStrength.store(-1);
@@ -635,6 +767,8 @@ void __cdecl ReadItems(const PluginContext* ctx, void* user) noexcept {
     // sits in the left with the quiver in the right); a hand holding no weapon
     // kind we know (a shield) is skipped. Unknown kinds fall back to the class.
     if (g_typeOffset == -2) CalibrateTypes();
+    if (!g_classKindsBuilt && g_typeOffset >= 0) BuildClassKinds();
+    if (!g_classCodesBuilt && g_typeOffset >= 0) BuildClassCodes();   // (g_bank is the one the types were found in)
     if (g_objLitOffset == -2) CalibrateObjectLights();
     if (g_twoOffset == -2 && g_typeOffset >= 0) CalibrateTwoHanded();
     if (g_classOffset == -2 && g_typeOffset >= 0) CalibrateWeaponClass();
@@ -672,6 +806,7 @@ void __cdecl ReadItems(const PluginContext* ctx, void* user) noexcept {
         g_codeSide[side].store(code[side].empty() ? 0u : packed);
     }
     g_leftShield.store(IsShield(code[1]));
+    g_headSide.store(IsHead(code[1]) ? 1 : IsHead(code[0]) ? 0 : -1);
     g_held.store((code[0].empty() ? 0u : 1u) | (code[1].empty() ? 0u : 2u));
     // Two-handed: the weapon's own "2handed"; without the field, a spear, a polearm
     // or a staff (all two-handed in D2) and nothing else. In both hands: the other
@@ -711,10 +846,12 @@ void __cdecl ReadItems(const PluginContext* ctx, void* user) noexcept {
     shieldsmite::UiRead();   // [gameplay] shield_smite: which pad slot holds Smite (the game's own tables, UI thread)
     doubleswing::UiRead();   // [hands] double_swing_by_hands: which pad slots hold Double Swing and Frenzy, the hero's level in them (UI thread; nothing when off)
     meleearm::UiRead();      // [gameplay] melee_skill_armed: the skills on the pad's face-button slots, the hero's level in the armed one (UI thread; nothing when off)
+    pointwire::UiRead();     // [gameplay] teleport_circle: which pad slots hold a point skill (UI thread; nothing when off)
     Publish();
 }
 
 std::set<std::string> g_panels;   // open panels, UI thread only
+std::atomic<bool> g_invOnly{false};   // a menu is open and every menu open is the inventory (handinv::IsInventoryPanel; InventoryOnly)
 
 // A panel that takes the controller away from the game. Names as D2R 3.3
 // loads them (2026-10-02 log): VendorPanelLayout, PlayerInventoryExpansionLayout,
@@ -773,18 +910,39 @@ SharedEvents::UiMessageAction __cdecl OnUiMessage(const PluginContext*, const Sh
         else if (!strcmp(command, "ClosePanel") || !strcmp(command, "UnloadPanel")) g_panels.erase(text);
         else if (!strcmp(command, "UnloadAll") || !strcmp(command, "CloseAll")) g_panels.clear();
         g_autoMap.store(g_panels.count("AutoMap") ? 1 : 0);
-        bool menu = false;
-        for (const std::string& n : g_panels) if (IsMenuPanel(n)) { menu = true; break; }
+        noticecard::SetOpen(g_panels.count("NotificationPanel") != 0);
+        bool menu = false, invOnly = true;
+        for (const std::string& n : g_panels)
+            if (IsMenuPanel(n)) { menu = true; if (!handinv::IsInventoryPanel(n.c_str())) invOnly = false; }
         g_menu.store(menu ? 1 : 0);
+        g_invOnly.store(menu && invOnly);   // [openxr] hand_inventory: every menu open is the inventory
+        {   // an NPC's small box (NpcDialogPanel: Talk / Trade / Cancel) and no other menu: the toolbar need not go with it (hud.cpp)
+            bool npc = false, other = false;
+            for (const std::string& n : g_panels) {
+                if (!IsMenuPanel(n)) continue;
+                (n == "NpcDialogPanel" ? npc : other) = true;
+            }
+            g_npcDialogOnly.store(npc && !other);
+        }
         if (menu != before) {
-            std::string list;
-            for (const std::string& n : g_panels) list += n + " ";
-            char b[300]; snprintf(b, sizeof b, "gamestate: menu %s (open: %.200s)", menu ? "OPEN" : "closed", list.c_str()); Log(b);
+            // the menu's own panels first: the whole list is cut at 200 characters, and alphabetically the one that made it a menu
+            // (UISwitcher, the controller layout's inventory screen that Esc opens) fell off the end (Serg's log 2026-10-28 15:46:59)
+            std::string by, list;
+            for (const std::string& n : g_panels) {
+                if (IsMenuPanel(n)) by += n + " ";
+                list += n + " ";
+            }
+            char b[420];
+            snprintf(b, sizeof b, "gamestate: menu %s%s%.100s(open: %.200s)", menu ? "OPEN" : "closed", by.empty() ? " " : " by ", by.c_str(), list.c_str());
+            Log(b);
         }
     }
     // [render] vr_resolution: the game's own graphics Apply can reset its render state without a WM_SIZE - the size is asked for
     // again once it has settled (render_resolution.h). Not on "ResolutionChanged": our own WM_SIZE sends that, and we would ask for ever.
     if (!strcmp(target, "OptionsPanelMessage") && !strcmp(command, "AcceptChanges")) vrres::OptionsApplied();
+    // [hud] notice_card (vr/notice_card.h): a quest update or a level-up - the notice's panel opening, a message sent to it ('NotificationMessage'
+    // 'QuestUpdate', 2026-10-14) - is counted; the card in the room comes from the count. Only read: the panel is the game's.
+    if (noticecard::IsPoke(target, command, text)) noticecard::Poke();
     if (g_state) {
         strncpy_s(g_state->lastUi, key.c_str(), _TRUNCATE);
         Publish();
@@ -1000,7 +1158,10 @@ void Tick() {
 uint32_t WeaponClass() { return g_weapon.load(); }
 uint32_t WeaponSet() { return g_set.load(); }
 uint32_t WeaponType() { return g_type.load(); }
+uint32_t CodeOfItemClass(uint32_t classId) { return classId < g_classCodeCount.load(std::memory_order_acquire) ? g_classCode[classId].load(std::memory_order_relaxed) : 0; }
+uint32_t KindOfItemClass(uint32_t classId) { return classId < g_classKindCount.load(std::memory_order_acquire) ? g_classKind[classId].load(std::memory_order_relaxed) : 0; }
 void BeltCodes(uint32_t out[4]) { for (int c = 0; c < 4; ++c) out[c] = g_belt[c].load(); }
+void BeltIds(uint32_t out[4]) { for (int c = 0; c < 4; ++c) out[c] = g_beltId[c].load(); }   // the same items' unit ids (0 = none)
 uint32_t HandsHeld() { return g_held.load(); }
 uint32_t TwoHanded() { return g_two.load(); }
 uint32_t WeaponHand() { return g_from.load(); }
@@ -1017,7 +1178,10 @@ bool HandIsThrowPotion(int side) {
 }
 uint32_t HandsKey() { return g_handsKey.load(); }
 bool LeftShield() { return g_leftShield.load(); }
+int HeadSide() { return g_headSide.load(); }
 bool MenuOpen() { return g_menu.load() != 0; }
+bool InventoryOnly() { return g_invOnly.load(); }   // [openxr] hand_inventory: the menu open is the inventory alone (the tabbed menu or the inventory panel)
+bool NpcDialogOnly() { return g_npcDialogOnly.load(); }   // an NPC's dialogue box is the only menu open
 void SetStickBits(uint32_t bits) { g_stickBits.store(bits & (7u << 13)); }
 void SetLaserPanels(bool on) { g_laserPanels.store(on); }   // from the next panel message on
 uint64_t TitleScreenAt() { return g_titleAt.load(); }
@@ -1031,6 +1195,7 @@ int ObjectLight(uint32_t txt, uint32_t mode, float rgb[3]) {
 }
 
 bool AutoMapOpen() { return g_autoMap.load() != 0; }
+int MapMode() { g_mapModeAskedAt.store(GetTickCount64()); return g_mapModeLast.load(); }   // [hud] map_direction: the whole-screen map (0) or a corner (1, 2); -1 not known
 // A skill whose missile flies along the hand (ReadSkills); false while the table is not read.
 bool SkillAimed(int skill) {
     return skill >= 0 && (uint32_t)skill < g_skillCount.load() && ((g_skillAimed[skill >> 6].load() >> (skill & 63)) & 1) != 0;
@@ -1063,6 +1228,9 @@ std::atomic<int32_t> g_plate[4] = {};
 std::atomic<int32_t> g_plateAnchor[2] = {};   // where the plate hangs from: the panel's place plus TargetAttached's (the pad's layout), off the same top middle
 std::atomic<bool> g_plateAttached{false};     // ... and TargetAttached was there to read (else the anchor is the panel's own place)
 std::atomic<ULONGLONG> g_plateAt{0};
+std::atomic<uintptr_t> g_plateUnit{0};       // the unit and the anchor (px) the hook had last given when the plate was read: the box moves from there
+std::atomic<float> g_plateAtPx[2] = {};
+std::atomic<bool> g_plateAtOk{false};
 uiticket::Ticket g_plateReading;   // ReadPlate() queued (ui_ticket.h)
 Widgets::WidgetHandle g_platePanel = Widgets::InvalidHandle;
 // a child's rectangle (found once, the handle kept: a path, it outlives the panel's closing)
@@ -1125,6 +1293,12 @@ void __cdecl ReadPlate(const PluginContext* ctx, void* user) noexcept {
     g_plateAnchor[0].store(ox);
     g_plateAnchor[1].store(oy);
     g_plateAttached.store(attached);
+    plateworld::Follow f;   // (the same thread as the hook: the layout read is the one its latest answer made)
+    const bool followed = plateworld::GetFollow(&f, GetTickCount64());
+    g_plateUnit.store(followed ? f.unit : 0);
+    g_plateAtPx[0].store(followed ? f.px[0][0] : 0.0f);
+    g_plateAtPx[1].store(followed ? f.px[0][1] : 0.0f);
+    g_plateAtOk.store(followed);
     g_plateAt.store(GetTickCount64());
     if (told < 12 && memcmp(last, plate, sizeof last) != 0) {
         ++told;
@@ -1147,6 +1321,15 @@ void PollPlate() {
 bool PlateRect(int32_t out[4]) {
     if (GetTickCount64() - g_plateAt.load() > 250) return false;   // no target, no plate
     for (int i = 0; i < 4; ++i) out[i] = g_plate[i].load();
+    return true;
+}
+
+// The unit and the place (px of the viewport) the hook had hung the plate at when PlateRect's rect was read; false: the hook had not (plateworld::FollowBox).
+bool PlateReadAt(uintptr_t* unit, float px[2]) {
+    if (GetTickCount64() - g_plateAt.load() > 250 || !g_plateAtOk.load()) return false;
+    *unit = g_plateUnit.load();
+    px[0] = g_plateAtPx[0].load();
+    px[1] = g_plateAtPx[1].load();
     return true;
 }
 
@@ -1215,11 +1398,106 @@ bool DurabilityRect(int32_t panel[4], int32_t widget[4], bool* widgetRead) {
     return true;
 }
 
+// [hud] notice_card (vr/notice_card.h): the game's NotificationPanel's border (NotificationPanelHD.json: the panel 0, -500 off the interface area's
+// bottom middle, its child NotificationBorder 1200 x 244) as the widget service gives it - the panel's place, the border's size - read on the UI
+// thread a few times a second while the panel is open and the card is in force. The first few changes go into the log.
+std::atomic<int32_t> g_noticeRect[4] = {};
+std::atomic<ULONGLONG> g_noticeAt{0};
+uiticket::Ticket g_noticeReading;   // ReadNotice() queued (ui_ticket.h)
+Widgets::WidgetHandle g_noticePanelH = Widgets::InvalidHandle, g_noticeBorderH = Widgets::InvalidHandle;
+void __cdecl ReadNotice(const PluginContext* ctx, void* user) noexcept {
+    if (!g_noticeReading.Claim(uiticket::FromUser(user))) return;   // come after its lease, replaced
+    if (!g_widgets || !g_widgets->findPanel || !g_widgets->getWidgetRect || !g_widgets->findWidget) return;
+    static int told = 0;
+    static int32_t last[8] = {};
+    Widgets::Result r = Widgets::Result::Success;
+    if (g_noticePanelH == Widgets::InvalidHandle) r = g_widgets->findPanel(ctx, "NotificationPanel", &g_noticePanelH);
+    Widgets::Rect rc{};
+    if (r == Widgets::Result::Success && g_noticePanelH != Widgets::InvalidHandle) r = g_widgets->getWidgetRect(ctx, g_noticePanelH, &rc);
+    if (r != Widgets::Result::Success) {   // not loaded now: nothing read (the layout's rect is used)
+        if (r == Widgets::Result::StaleHandle || r == Widgets::Result::NotFound) g_noticePanelH = Widgets::InvalidHandle;
+        g_noticeBorderH = Widgets::InvalidHandle;
+        g_noticeAt.store(0);
+        return;
+    }
+    Widgets::Rect bc{};
+    const Widgets::Result br = ChildRect(ctx, g_noticePanelH, "NotificationBorder", &g_noticeBorderH, &bc);
+    const bool border = br == Widgets::Result::Success && bc.width > 0 && bc.height > 0;
+    g_noticeRect[0].store(rc.x); g_noticeRect[1].store(rc.y);
+    g_noticeRect[2].store(border ? bc.width : rc.width); g_noticeRect[3].store(border ? bc.height : rc.height);
+    g_noticeAt.store(GetTickCount64());
+    const int32_t now[8] = {rc.x, rc.y, rc.width, rc.height, border ? bc.x : 0, border ? bc.y : 0, border ? bc.width : 0, border ? bc.height : 0};
+    if (told < 8 && memcmp(last, now, sizeof last) != 0) {
+        ++told;
+        memcpy(last, now, sizeof last);
+        char b[300];
+        snprintf(b, sizeof b, "gamestate: the quest / level-up notice - NotificationPanel at %d,%d %dx%d, NotificationBorder (result %u) at %d,%d %dx%d",
+                 rc.x, rc.y, rc.width, rc.height, (unsigned)br, bc.x, bc.y, bc.width, bc.height);
+        Log(b);
+    }
+}
+void PollNotice() {
+    if (!g_ctx || !g_threads || !g_threads->runOnUiThread || !g_widgets) return;
+    const uint32_t token = g_noticeReading.Start(GetTickCount64());   // 0: the last read not come yet
+    if (!token) return;
+    if (g_threads->runOnUiThread(g_ctx, &ReadNotice, uiticket::ToUser(token)) != Threads::Result::Success) g_noticeReading.Claim(token);
+}
+// The panel's place and the border's size (x, y, width, height; layout units), if read lately.
+bool NoticeRect(int32_t out[4]) {
+    if (GetTickCount64() - g_noticeAt.load() > 1500) return false;
+    for (int i = 0; i < 4; ++i) out[i] = g_noticeRect[i].load();
+    return true;
+}
+
+// [openxr] hand_inventory (vr/hand_inventory.h): is an item on the game's cursor (the inventory's held item)? Read on the UI thread with the SDK's
+// own query, a few times a second while the inventory is on the hand: an item dragged off the panel with the laser and let go there gets the
+// click outside the panel that drops it, only while the game holds one.
+std::atomic<int> g_cursorHeld{-1};   // 1 an item on the cursor, 0 none, -1 not known
+std::atomic<ULONGLONG> g_cursorAt{0};
+uiticket::Ticket g_cursorReading;
+void __cdecl ReadCursor(const PluginContext* ctx, void* user) noexcept {
+    if (!g_cursorReading.Claim(uiticket::FromUser(user))) return;
+    if (!g_inventory || !g_inventory->getLocalPlayer || !g_inventory->getCursorItem) return;
+    PlayerHandle player = InvalidPlayerHandle;
+    ItemHandle item = InvalidItemHandle;
+    if (g_inventory->getLocalPlayer(ctx, &player) != Inventory::Result::Success || player == InvalidPlayerHandle) { g_cursorHeld.store(-1); return; }
+    const Inventory::Result r = g_inventory->getCursorItem(ctx, player, &item);
+    g_cursorHeld.store(r == Inventory::Result::Success ? (item != InvalidItemHandle ? 1 : 0) : -1);
+    g_cursorAt.store(GetTickCount64());
+}
+void PollCursor() {
+    if (!g_ctx || !g_threads || !g_threads->runOnUiThread || !g_inventory) return;
+    const uint32_t token = g_cursorReading.Start(GetTickCount64());
+    if (!token) return;
+    if (g_threads->runOnUiThread(g_ctx, &ReadCursor, uiticket::ToUser(token)) != Threads::Result::Success) g_cursorReading.Claim(token);
+}
+// 1 an item on the cursor, 0 none, -1 not known (not read in the last 400 ms).
+int CursorHeld() { return GetTickCount64() - g_cursorAt.load() <= 400 ? g_cursorHeld.load() : -1; }
+
+// [openxr] hand_inventory: vrcam's walk with the inventory up (the stick's own walk command) on the game's UI thread - where the game's
+// controller update, its clicks and its commands run. One queued at a time (a run that never comes is queued again after the ticket's lease).
+uiticket::Ticket g_handWalkQueued;
+void (*g_handWalkFn)() = nullptr;
+void __cdecl RunHandWalk(const PluginContext*, void* user) noexcept {
+    if (!g_handWalkQueued.Claim(uiticket::FromUser(user))) return;
+    if (void (*fn)() = g_handWalkFn) fn();
+}
+bool QueueHandWalk(void (*fn)()) {
+    if (!g_ctx || !g_threads || !g_threads->runOnUiThread || !fn) return false;
+    g_handWalkFn = fn;
+    const uint32_t token = g_handWalkQueued.Start(GetTickCount64());
+    if (!token) return false;   // the last one has not run yet
+    if (g_threads->runOnUiThread(g_ctx, &RunHandWalk, uiticket::ToUser(token)) == Threads::Result::Success) return true;
+    g_handWalkQueued.Claim(token);
+    return false;
+}
+
 bool SetAutoMap(bool open) {
     if (!g_ctx || !g_threads || !g_threads->runOnUiThread || !g_widgets) return false;
     return g_threads->runOnUiThread(g_ctx, &DispatchAutoMap, open ? (void*)1 : nullptr) == Threads::Result::Success;
 }
-void SetMapSide(int corner) { g_mapSideCorner.store(std::clamp(corner, -1, 2)); }   // -1 off, else [hud] map_corner
+void SetMapSide(int corner) { g_mapSideCorner.store(std::clamp(corner, -1, 2)); }
+void SetMapBig(bool big) { g_mapBig.store(big); }   // [hud] map_click_big: the game's whole-screen map while true (MaintainMapSide)   // -1 off, else [hud] map_corner
 void SetViewMode(uint32_t mode) { if (g_view.exchange(mode) != mode) Publish(); }
 
 }  // namespace gamestate

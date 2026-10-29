@@ -104,7 +104,7 @@ void OnFrame(const directinput::Frame& f, void*) {
             in.hand = side;
             in.tracked = focused && f.head.valid == 1 && h.active && h.grip.valid == 1 && s.holsterHeading.Relative(f.head.pos, h.grip.pos, in.pos);
             in.grip = h.squeeze;
-            in.allowed = focused && !menu && !(xr == 1 && throwwire::GripIsThrows());
+            in.allowed = focused && !menu && !throwwire::GripIsThrowsAt(xr);
             in.canSwap = false;   // (the swap is never asked for)
             const shoulderswap::Output out = s.holster[side].Step(in);
             if (out.claim) {
@@ -145,9 +145,9 @@ void OnFrame(const directinput::Frame& f, void*) {
     in.hand = hand;
     in.tracked = focused && f.head.valid == 1 && h.active && h.grip.valid == 1 && s.heading.Relative(f.head.pos, h.grip.pos, in.pos);
     in.grip = h.squeeze;
-    // a menu or panel open, or no game yet: the grip is not ours; nor is the right grip while it is a throw's ([hands] throw_by_grip:
+    // a menu or panel open, or no game yet: the grip is not ours; nor is the throwing hand's grip (the right; the left with [hands] throw_left_hand) while it is a throw's ([hands] throw_by_grip:
     // a throwing weapon in that hand, the grip held for as long as it is - swap sets by the right stick click, or the left hand)
-    in.allowed = focused && !menu && !(xrHand == 1 && throwwire::GripIsThrows());
+    in.allowed = focused && !menu && !throwwire::GripIsThrowsAt(xrHand);
     in.canSwap = !s.pending.Busy() && (set == 1 || set == 2);
     const shoulderswap::Output out = s.gesture.Step(in);
 

@@ -54,6 +54,12 @@ std::mutex g_lookMutex;
 Look g_look;
 int g_side = 0;
 ULONGLONG g_lookAt = 0;
+// [debug] stab_debug: the stab's lines (under g_lookMutex)
+std::atomic<bool> g_stabOn{false};
+Look g_stabLook;
+int g_stabSide = 0;
+ULONGLONG g_stabAt = 0;
+constexpr ULONGLONG kStabShowMs = 5000;   // (stabdbg::kShowMs)
 
 // -- the painter: one worker thread, the newest look wins -------------------------------------------------------------------------
 class Painter {
@@ -155,14 +161,25 @@ void OnFrame(const directinput::Frame& f, void*) {
     Look look;
     int side = 0;
     ULONGLONG at = 0;
-    if (g_on.load(std::memory_order_relaxed)) {
+    const bool thrustOn = g_on.load(std::memory_order_relaxed), stabOn = g_stabOn.load(std::memory_order_relaxed);
+    const ULONGLONG nowMs = GetTickCount64();
+    if (thrustOn || stabOn) {
         std::lock_guard<std::mutex> lock(g_lookMutex);
-        look = g_look;
-        side = g_side;
-        at = g_lookAt;
+        const bool stabFresh = stabOn && g_stabLook.n > 0 && nowMs - g_stabAt < kStabShowMs;
+        const bool thrustFresh = thrustOn && g_look.n > 0 && nowMs - g_lookAt < 1000;
+        if (stabFresh) {   // the stab's lines first, then the thrust's while there is room
+            look = g_stabLook;
+            side = g_stabSide;
+            at = nowMs;
+            for (size_t i = 0; thrustFresh && i < g_look.n && look.n < kMaxLines; ++i) look.lines[look.n++] = g_look.lines[i];
+        } else if (thrustFresh) {
+            look = g_look;
+            side = g_side;
+            at = g_lookAt;
+        }
     }
-    // F4 only, and only while hit by touch is feeding it (it stops when the touch stands down: another view, a menu, no weapon)
-    const bool active = g_on.load(std::memory_order_relaxed) && viewgate::F4() && look.n > 0 && GetTickCount64() - at < 1000;
+    // F4 only, and only while hit by touch (or the stab) is feeding it (it stops when the touch stands down: another view, a menu, no weapon)
+    const bool active = (thrustOn || stabOn) && viewgate::F4() && look.n > 0 && nowMs - at < 1000;
     if (!active) {
         if (g_wasActive) {
             g_wasActive = false;
@@ -217,8 +234,21 @@ void SetLines(const thrustdbg::Line* lines, size_t n, int side) {
     g_lookAt = GetTickCount64();
 }
 
+void SetStabWanted(bool on) {
+    if (g_stabOn.exchange(on) != on) Log(on ? "vrcam: stab debug on ([debug] stab_debug: the stab's readout over the weapon hand, its marks with the melee boxes)" : "vrcam: stab debug off");
+}
+bool StabWanted() { return g_stabOn.load(std::memory_order_relaxed); }
+
+void SetStabLines(const thrustdbg::Line* lines, size_t n, int side) {
+    std::lock_guard<std::mutex> lock(g_lookMutex);
+    g_stabLook.n = std::min(n, kMaxLines);
+    for (size_t i = 0; i < g_stabLook.n; ++i) g_stabLook.lines[i] = lines[i];
+    g_stabSide = side & 1;
+    g_stabAt = GetTickCount64();
+}
+
 bool Draw(Layer* layer, uint32_t* needRevision) {
-    if (!g_on.load(std::memory_order_relaxed) || !viewgate::F4()) return false;
+    if (!(g_on.load(std::memory_order_relaxed) || g_stabOn.load(std::memory_order_relaxed)) || !viewgate::F4()) return false;
     Published p;
     {
         std::lock_guard<std::mutex> lock(g_pubMutex);

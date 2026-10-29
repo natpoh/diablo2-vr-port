@@ -30,7 +30,7 @@ const Message kMessages[kPanelMessages] = {
     {L"Your eyes read outside 0.8 - 2.3 m over the floor. Is the floor level set up?", kWarn},       // 4 height
     {L"The headset or a controller is not tracked. Hold the controllers where the headset sees them.", kWarn},   // 5 tracking
     {L"Stand up straight and look straight ahead.", kWarn},                                          // 6 upright
-    {L"Arms out to the sides, level with the shoulders, hands not ahead of you.", kWarn},            // 7 arms
+    {L"Arms straight out to the sides, level with the shoulders, elbows straight, hands not ahead of you.", kWarn},   // 7 arms
     {L"You moved. Let go of both triggers and hold still.", kWarn},                                  // 8 still
     {L"Saved, and in use. Let go of the triggers.", kGood},                                          // 9 saved
     {L"d2r_vr.ini could not be written (see the log). Let go and try again.", kBad},                 // 10 failed
@@ -141,10 +141,10 @@ bool PaintPanel(int image, uint32_t* pixels) {
     ok = ok && Text(c, s, seated ? L"Seated: measure my arm span" : L"Measure my height and arm span", RECT{60, 22, (LONG)kPanelW - 60, 78}, 40,
                     FW_SEMIBOLD, Rgb{255, 205, 100}, false);
     ok = ok && Text(c, s,
-                    seated ? L"Sit upright and look straight ahead. Stretch both arms out sideways at shoulder height.\n"
+                    seated ? L"Sit upright and look straight ahead. Stretch both arms straight out sideways at shoulder height, as wide as they go.\n"
                              L"Let go of both triggers, then squeeze both and hold still. Only the arm span is read: "
                              L"your eye height is not measured seated (the stored one stays)."
-                           : L"Stand upright and look straight ahead. Stretch both arms out sideways at shoulder height.\n"
+                           : L"Stand upright and look straight ahead. Stretch both arms straight out sideways at shoulder height, as wide as they go.\n"
                              L"Let go of both triggers, then squeeze both and hold still.",
                     RECT{60, 86, (LONG)kPanelW - 60, 244}, seated ? 26 : 29, FW_NORMAL, Rgb{236, 236, 242}, false);
     const Message& m = kMessages[message];

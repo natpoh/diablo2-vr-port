@@ -224,5 +224,30 @@ void Disarm();
 using XformObserver = void (*)(uint32_t entity, uintptr_t component, uintptr_t out);
 void SetXformObserver(XformObserver fn);
 void WantHooks(bool want);
+// [weight] knock_props (vr/knock_props.h): called at every call of the world-matrix function too, after the original, on the renderer's thread; it writes the matrices of
+// the props it moves once a frame. WantHooksForProps(true) puts the hooks in for it (as WantHooks does for the crossbow).
+using XformPass = void (*)();
+void SetXformPass(XformPass fn);
+void WantHooksForProps(bool want);
+// [bow] arrow_flight (vr/arrow_flight_wire.cpp): a second looker at the visual-init callback (every entity with its unit, before the original; it must be cheap
+// and guard its own reads), and a writer at the world-matrix function (after the original and the readers above, for every entity; it writes only the matrices
+// of the hero's shot arrows). WantHooksForArrows(true) puts the hooks in for it.
+using VisualObserver = void (*)(uint32_t entity, uintptr_t unit);
+void SetVisualObserver(VisualObserver fn);
+void SetXformWriter(XformObserver fn);
+void WantHooksForArrows(bool want);
+// [render] lower_own_effects (vr/own_effects.cpp): one more writer at the world-matrix function (after the arrows'; it writes only the matrices of the hero's own solid
+// overlays - Bone Armor's effect entity - lowered by the player's height). WantHooksForEffects(true) puts the hooks in for it.
+void SetXformEffectsWriter(XformObserver fn);
+void WantHooksForEffects(bool want);
+// [arms] head_shadow (vr/head_shadow.cpp): one more reader at the world-matrix function (after the original, every entity, the renderer's thread; it only reads: which
+// models hang on the hero's head). WantHooksForHead(true) puts the hooks in for it.
+void SetXformHeadObserver(XformObserver fn);
+void WantHooksForHead(bool want);
+// The entity's effect (VFX) component, by the game's own storage (see above): 1 it has one (and, with hide, it is told not visible by the game's own switch),
+// 0 it has none, -1 not usable (the hooks are not in, the switch not found, a fault). The renderer's thread.
+int EntityEffect(uint32_t entity, bool hide);
+// A fault turned the hooks' work off for the session (they only pass the calls on).
+bool Faulted();
 
 }  // namespace potionhide

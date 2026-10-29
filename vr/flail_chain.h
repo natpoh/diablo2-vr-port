@@ -323,35 +323,43 @@ struct Sim {
                 const float l = Length(d);
                 if (l > total && l > 1e-9f) x[head] = a1 + d * (total / l);
             }
-            // the links between the two ends: taut (within half a percent), on the straight line, evenly; slack, from where their own motion
-            // took them, laid between the anchor and the head at their lengths by reaching from one end and back from the other (FABRIK).
-            // Near taut that comes slowly: what the rounds leave is shared out along the whole chain (a percent or so of a link each), not
-            // put on the last link.
-            const V3 span = x[head] - a1;
-            const float spanLen = Length(span);
-            if (spanLen >= total * kTaut && spanLen > 1e-9f) {
-                float along = 0.0f;
-                for (int i = 1; i < head; ++i) { along += len[i - 1]; x[i] = a1 + span * (along / total); }
-            } else if (head > 1) {
-                const V3 target = x[head];
-                const V3 fallback = spanLen > 1e-9f ? span * (1.0f / spanLen) : V3{0.0f, -1.0f, 0.0f};
-                auto toward = [&](V3 from, V3 at) { const V3 d = Unit(at - from); return Length(d) > 0.5f ? d : fallback; };
-                for (int it = 0; it < std::max(1, p.iterations); ++it) {
-                    x[head] = target;
-                    for (int i = head - 1; i >= 1; --i) x[i] = x[i + 1] + toward(x[i + 1], x[i]) * len[i];   // back from the head
-                    for (int i = 1; i <= head; ++i) x[i] = x[i - 1] + toward(x[i - 1], x[i]) * len[i - 1];   // out from the anchor
-                    if (Length(x[head] - target) < total * 1e-6f) break;
-                }
-                const V3 miss = target - x[head];
-                float along = 0.0f;
-                for (int i = 1; i <= head; ++i) { along += len[i - 1]; x[i] = x[i] + miss * (along / total); }
-                x[head] = target;
-            }
+            Lay(p.iterations);
             for (int i = 1; i < n; ++i) v[i] = (x[i] - prev[i]) * (1.0f / h);
         }
         anchorVel = (to - from) * (1.0f / dt);
         for (int i = 0; i < n; ++i)
             if (!Finite(x[i]) || !Finite(v[i])) { live = false; return; }   // never: but a chain that is not numbers is started again
+    }
+
+    // The links between the two ends (x[0] the anchor, x[n - 1] the head, both where they are): taut (within half a percent), on the straight line,
+    // evenly; slack, from where their own motion took them, laid between the anchor and the head at their lengths by reaching from one end and back
+    // from the other (FABRIK). Near taut that comes slowly: what the rounds leave is shared out along the whole chain (a percent or so of a link
+    // each), not put on the last link.
+    void Lay(int iterations) {
+        const int head = n - 1;
+        const float total = Total();
+        if (head < 1 || !(total > 1e-9f)) return;
+        const V3 a1 = x[0];
+        const V3 span = x[head] - a1;
+        const float spanLen = Length(span);
+        if (spanLen >= total * kTaut && spanLen > 1e-9f) {
+            float along = 0.0f;
+            for (int i = 1; i < head; ++i) { along += len[i - 1]; x[i] = a1 + span * (along / total); }
+        } else if (head > 1) {
+            const V3 target = x[head];
+            const V3 fallback = spanLen > 1e-9f ? span * (1.0f / spanLen) : V3{0.0f, -1.0f, 0.0f};
+            auto toward = [&](V3 from, V3 at) { const V3 d = Unit(at - from); return Length(d) > 0.5f ? d : fallback; };
+            for (int it = 0; it < std::max(1, iterations); ++it) {
+                x[head] = target;
+                for (int i = head - 1; i >= 1; --i) x[i] = x[i + 1] + toward(x[i + 1], x[i]) * len[i];   // back from the head
+                for (int i = 1; i <= head; ++i) x[i] = x[i - 1] + toward(x[i - 1], x[i]) * len[i - 1];   // out from the anchor
+                if (Length(x[head] - target) < total * 1e-6f) break;
+            }
+            const V3 miss = target - x[head];
+            float along = 0.0f;
+            for (int i = 1; i <= head; ++i) { along += len[i - 1]; x[i] = x[i] + miss * (along / total); }
+            x[head] = target;
+        }
     }
 
     // A hit: the chain's speed against the hand's is turned back (the head bounces off the target), by Params::hit - and by the ball's weight: the
@@ -407,7 +415,8 @@ inline int StrikingChain(const ChainRig* rigs, int chains, const std::string_vie
     }
     return 0;
 }
-// The ball's centre and the last link's direction (toward the ball) in the skeleton's model space, from the pose as written.
+// The ball's centre and the last link's direction (toward the ball) in the skeleton's model space, from the pose as written. Khalim's three: each
+// chain has its ball, each strikes (the user, 2026-10-24: «у булавы с тремя шариками все три должны быть ударными») - Ball of each rig.
 inline bool Ball(const ChainRig& r, const Mat* pose, const Head& h, V3* centre, V3* dir) {
     if (!h.ok || r.particles < 2 || !centre || !dir) return false;
     const V3 last = Position(pose[r.bone[r.bones - 1]]), before = Position(pose[r.bone[r.first[r.particles - 2]]]);
@@ -482,6 +491,80 @@ inline Done Drive(const ChainRig& r, Sim& s, const Mat& toSim, const Mat& fromSi
     PoseBones(r, rigid, places, out);
     for (int k = 0; k < r.bones; ++k) pose[r.bone[k]] = out[k];
     return done;
+}
+
+// The chain's bones posed again from its simulation (after Separate moved it): as Drive's last part.
+inline void Repose(const ChainRig& r, const Sim& s, const Mat& fromSim, Mat* pose) {
+    if (!s.live || s.n != r.particles) return;
+    Mat rigid[kMaxLinks];
+    Rigid(r, pose[r.parent], rigid);
+    V3 rest[kMaxLinks];
+    RigidPlaces(r, rigid, rest);
+    V3 places[kMaxLinks];
+    places[0] = rest[0];
+    for (int i = 1; i < r.particles; ++i) places[i] = Point(fromSim, s.x[i]);
+    Mat out[kMaxLinks];
+    PoseBones(r, rigid, places, out);
+    for (int k = 0; k < r.bones; ++k) pose[r.bone[k]] = out[k];
+}
+// Where the game's pose (the chain carried rigidly by its parent) has the chain's head, in the simulation's frame - the side it hangs to of the others.
+inline V3 RestHead(const ChainRig& r, const Mat* pose, const Mat& toSim) {
+    Mat rigid[kMaxLinks];
+    Rigid(r, pose[r.parent], rigid);
+    V3 rest[kMaxLinks];
+    RigidPlaces(r, rigid, rest);
+    return Point(toSim, rest[std::max(0, r.particles - 1)]);
+}
+
+// Khalim's Flail and Will: three chains off one point, each with its ball. Hanging still, all three would hang straight down from that point - one lump
+// of three balls (the headset, 2026-10-24: «сейчас они сливаются»). The heads keep apart: two closer than `minDist` (the simulation's units: the two balls'
+// radii) are pushed apart along the line between them - or, one on the other, the way the game's own pose has them apart (restHeads) - each by half, their
+// closing speed taken away (an inelastic touch), each kept within its chain's length of its anchor and its links laid again. A few rounds (three balls
+// against each other). Returns how many pairs were pushed apart.
+// along: the ball's centre past the chain's last particle along its last link (Head::along, the simulation's units) - the balls are kept apart, not the bones.
+inline int Separate(Sim* sims, int count, float minDist, const V3* restHeads, int iterations, float along = 0.0f) {
+    int pushed = 0;
+    if (!sims || count < 2 || !(minDist > 0.0f)) return 0;
+    auto centre = [&](const Sim& s) {
+        const int h = s.n - 1;
+        const V3 d = Unit(s.x[h] - s.x[h - 1]);
+        return s.x[h] + d * along;
+    };
+    for (int round = 0; round < 8; ++round) {
+        bool any = false;
+        for (int a = 0; a < count; ++a)
+            for (int b = a + 1; b < count; ++b) {
+                Sim& sa = sims[a];
+                Sim& sb = sims[b];
+                if (!sa.live || !sb.live || sa.n < 2 || sb.n < 2) continue;
+                const int ha = sa.n - 1, hb = sb.n - 1;
+                V3 d = centre(sa) - centre(sb);
+                float l = Length(d);
+                if (!(l < minDist)) continue;
+                V3 u = l > minDist * 1e-3f ? d * (1.0f / l) : Unit(restHeads ? restHeads[a] - restHeads[b] : V3{});
+                if (!(Length(u) > 0.5f)) u = V3{1.0f, 0.0f, 0.0f};
+                const float gap = (minDist - l) * 0.5f;
+                sa.x[ha] = sa.x[ha] + u * gap;
+                sb.x[hb] = sb.x[hb] - u * gap;
+                const float closing = Dot(sa.v[ha] - sb.v[hb], u);   // < 0: coming together
+                if (closing < 0.0f) {
+                    sa.v[ha] = sa.v[ha] - u * (closing * 0.5f);
+                    sb.v[hb] = sb.v[hb] + u * (closing * 0.5f);
+                }
+                for (Sim* s : {&sa, &sb}) {   // within the chain's length of its anchor, its links laid between
+                    const int h = s->n - 1;
+                    const float total = s->Total();
+                    const V3 span = s->x[h] - s->x[0];
+                    const float sl = Length(span);
+                    if (sl > total && sl > 1e-9f) s->x[h] = s->x[0] + span * (total / sl);
+                    s->Lay(iterations);
+                }
+                ++pushed;
+                any = true;
+            }
+        if (!any) break;
+    }
+    return pushed;
 }
 
 }  // namespace flailchain

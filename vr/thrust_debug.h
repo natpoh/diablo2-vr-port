@@ -22,10 +22,11 @@
 
 namespace thrustdbg {
 
-enum class Fail : uint8_t { None, NotStraight, Slow, Short, NoAccel, Away, NotHead };
+enum class Fail : uint8_t { None, NotStraight, Slow, Short, NoAccel, Away, NotHead, Turned };
 inline const char* FailText(Fail f) {
     switch (f) {
         case Fail::NotStraight: return "not straight";
+        case Fail::Turned: return "the weapon turned";
         case Fail::Slow: return "too slow";
         case Fail::Short: return "too short";
         case Fail::NoAccel: return "no accel";
@@ -48,11 +49,16 @@ struct Reading {
     float cm = 0.0f, needCm = 0.0f;          // along the blade
     float alongPct = 0.0f, needAlongPct = 0.0f;
     float accel = 0.0f, needAccel = 0.0f;    // m/s^2, needAccel 0 = not asked
+    float turnDeg = 0.0f, needTurnDeg = 0.0f;   // how far the weapon's axis turned in the stroke, and the most a thrust may (thrust::kMaxTurnDeg)
     bool ownSpeed = false, ownCm = false, ownAccel = false;   // the kind's own threshold (else the general one)
 };
 
-// Is this reading shown with [debug] thrust_debug_only: a thrust attempt, not a swing - its path was along the blade enough to be judged as a thrust.
-inline bool Shown(const Reading& r, bool thrustsOnly) { return r.have && (!thrustsOnly || r.fail != Fail::NotStraight); }
+// Is this reading shown with [debug] thrust_debug_only: a thrust attempt, not a swing. A thrust attempt is a path at least half along the blade (the
+// straightness slider's own floor), NOT the player's straightness threshold: with that set high (94 %, the author's 2026-10-22 test) every real poke failed
+// it and was hidden - no tint, no log line - exactly when the readout was needed to show "straight 80 / 94". A swing goes across the blade and stays hidden.
+inline bool Shown(const Reading& r, bool thrustsOnly) {
+    return r.have && (!thrustsOnly || r.fail != Fail::NotStraight || r.alongPct >= thrust::kAlongFloor);
+}
 
 // The numbers a thrust of `kind` needs, and whether each is the kind's own.
 inline void Needs(const thrust::Rule& r, int kind, Reading* out) {
@@ -62,6 +68,7 @@ inline void Needs(const thrust::Rule& r, int kind, Reading* out) {
     out->needCm = n.cm;
     out->needAccel = n.minAccel;
     out->needAlongPct = std::clamp(r.alongPct, thrust::kAlongFloor, thrust::kAlongCeil);
+    out->needTurnDeg = thrust::kMaxTurnDeg;
     const bool k = kind >= 0 && kind < strikedir::kKinds;
     out->ownSpeed = k && r.kindSpeed[static_cast<size_t>(kind)] >= thrust::kMinSpeedFloor;
     out->ownCm = k && r.kindCm[static_cast<size_t>(kind)] >= thrust::kCmFloor;
@@ -72,6 +79,7 @@ inline void Needs(const thrust::Rule& r, int kind, Reading* out) {
 // (toward the monster, the head) are the caller's (Contact).
 inline Fail FirstFail(const Reading& r) {
     if (r.alongPct < r.needAlongPct) return Fail::NotStraight;
+    if (r.turnDeg > r.needTurnDeg) return Fail::Turned;
     if (r.speed < r.needSpeed) return Fail::Slow;
     if (r.cm < r.needCm) return Fail::Short;
     if (r.needAccel > 0.0f && r.accel < r.needAccel) return Fail::NoAccel;
@@ -90,8 +98,10 @@ inline Reading ContactReading(const thrust::Rule& r, int kind, const thrust::Ver
     o.cm = v.alongCm;
     o.alongPct = v.share * 100.0f;
     o.accel = v.accel;
-    // the touch's own order: not along the blade first (then the swing judges it), the speed where it touched, the strike rules, the distance, the acceleration
+    o.turnDeg = v.turnDeg;
+    // the touch's own order: not along the blade first (then the swing judges it), the weapon turned, the speed where it touched, the strike rules, the distance, the acceleration
     if (v.why == thrust::Why::NotAlong) o.fail = Fail::NotStraight;
+    else if (v.why == thrust::Why::Turned) o.fail = Fail::Turned;
     else if (speedAt < o.needSpeed) o.fail = Fail::Slow;
     else if (strike == strikedir::Why::Away) o.fail = Fail::Away;
     else if (strike == strikedir::Why::NotHead) o.fail = Fail::NotHead;
@@ -102,7 +112,7 @@ inline Reading ContactReading(const thrust::Rule& r, int kind, const thrust::Ver
 }
 
 // A jab with no monster: its peaks against the thresholds - what it would do.
-inline Reading JabReading(const thrust::Rule& r, int kind, float peakSpeed, float cm, float alongPct, float peakAccel, uint64_t stroke, uint64_t ms) {
+inline Reading JabReading(const thrust::Rule& r, int kind, float peakSpeed, float cm, float alongPct, float peakAccel, uint64_t stroke, uint64_t ms, float turnDeg = 0.0f) {
     Reading o;
     Needs(r, kind, &o);
     o.have = true;
@@ -112,6 +122,7 @@ inline Reading JabReading(const thrust::Rule& r, int kind, float peakSpeed, floa
     o.cm = cm;
     o.alongPct = alongPct;
     o.accel = peakAccel;
+    o.turnDeg = turnDeg;
     o.fail = FirstFail(o);
     o.counted = o.fail == Fail::None;
     return o;
@@ -153,6 +164,7 @@ inline size_t Lines(const Reading& r, const char* title, Line* out, size_t max) 
     }
     const auto mark = [](bool ok) { return ok ? kPass : kFail; };
     add(mark(r.alongPct >= r.needAlongPct), " straight %.0f / %.0f %%", r.alongPct, r.needAlongPct);
+    add(mark(r.turnDeg <= r.needTurnDeg), " turn %.0f / %.0f deg", r.turnDeg, r.needTurnDeg);
     add(mark(r.speed >= r.needSpeed), " speed %.2f / %.2f m/s%s", r.speed, r.needSpeed, r.ownSpeed ? " (own)" : "");
     add(mark(r.cm >= r.needCm), " along %.1f / %.0f cm%s", r.cm, r.needCm, r.ownCm ? " (own)" : "");
     if (r.needAccel > 0.0f) add(mark(r.accel >= r.needAccel), " accel %.0f / %.0f m/s2%s", r.accel, r.needAccel, r.ownAccel ? " (own)" : "");
@@ -166,8 +178,8 @@ class JabTracker {
 public:
     void Reset() { *this = JabTracker{}; }
     // done: set when a jab has just ended (filled with its peaks); the caller turns it into a Reading.
-    struct Peaks { uint64_t stroke = 0; float speed = 0.0f, cm = 0.0f, alongPct = 0.0f, accel = 0.0f; };
-    bool Feed(uint64_t stroke, float speed, float cm, float alongPct, float accel, Peaks* done) {
+    struct Peaks { uint64_t stroke = 0; float speed = 0.0f, cm = 0.0f, alongPct = 0.0f, accel = 0.0f, turnDeg = 0.0f; };
+    bool Feed(uint64_t stroke, float speed, float cm, float alongPct, float accel, Peaks* done, float turnDeg = 0.0f) {
         bool ended = false;
         if (cur_.stroke && stroke != cur_.stroke) {   // the stroke that was on ended
             if (done) *done = cur_;
@@ -182,6 +194,7 @@ public:
                 cur_.alongPct = alongPct;
             }
             if (std::isfinite(accel)) cur_.accel = std::max(cur_.accel, accel);
+            if (std::isfinite(turnDeg)) cur_.turnDeg = std::max(cur_.turnDeg, turnDeg);
         }
         return ended;
     }

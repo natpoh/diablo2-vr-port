@@ -329,6 +329,18 @@ inline V3 EasedDirection(V3 drawn, V3 rest, uint64_t sinceMs) {
     return Length(mix) > 1e-3f ? Unit(mix) : rest;
 }
 
+// [bow] arrow_rest_model: where the bow's own arrow line crosses its riser - its arrow rest, from the bow model, cog frame. In the bind pose the arrow lies nocked
+// on the string at rest and points ahead (-back): its line runs from the nock `reach` ahead to the riser's plane, at the nock's own height on the bow. A line
+// from the string hand through this point, with the bow turned along it (AimBow), is the bind pose's own line: the arrow, which DrawAt keeps as it lies against
+// the nock (beside the riser, if the model lays it so), passes the bow where the model has it - not through the grip. False: no rig, or not numbers.
+inline bool ArrowRestPoint(const Rig& rig, V3* out) {
+    if (!out || !rig.valid) return false;
+    const V3 p = rig.restNock + Unit(rig.back * -1.0f) * rig.reach;
+    if (!Finite(p)) return false;
+    *out = p;
+    return true;
+}
+
 // [bow] arrow_fx: how far ahead of the nock (cog frame, along the way the arrow points: -back) the arrow MESH reaches - the far end of its bounding box
 // (granny_mesh.h ArrowBox: bbMin / bbMax, in the bow's bind frame, the frame `bindCog` - the cog's bind world matrix - is in). The arrowhead. 0 when it does not read.
 inline float MeshAhead(const Rig& rig, const Mat& bindCog, const float mn[3], const float mx[3]) {

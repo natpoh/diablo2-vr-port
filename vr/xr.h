@@ -172,6 +172,13 @@ bool LaserOn();
 bool Menu3dOn();
 // [openxr] menu_3d whatever [openxr] on says: on FlatVR a menu goes as a panel too (vrcam, hud.cpp).
 bool Menu3dWanted();
+// [openxr] hand_inventory (vr/hand_inventory.h): [openxr] on, the key and menu_3d - away from town the inventory may go to the left hand.
+bool HandInventoryOn();
+// vrcam, from its timer: the inventory hangs on the left hand now (handinv::InForce) - HangPanel puts the menu's panel there, the laser is
+// the right hand's and the left stick never parks it. false = in front, as before.
+void SetHandInventory(bool up);
+// The last frame hung it on the hand (SetHandInventory and the left controller located).
+bool HandInventoryHung();
 // [openxr] headset_settings (vr/xr_headset_settings.h): the settings panel in the headset is up. While it is, the
 // hands are the panel's: whatever reads the controllers for the game (BodyWalk through Game Link, the plugin's own
 // input) must read them from PairInput / the published input - already zero there - or hold its output neutral.

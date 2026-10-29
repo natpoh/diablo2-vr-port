@@ -102,6 +102,12 @@ int  GetRenderRadius();
 bool  SetModelRadius(float units);
 float GetModelRadius();   // -1 when unknown
 
+// Called on the game's thread right after each LevelTranslationLayer::SimulationTick
+// (the rooms of this tick are activated and drawn by then), with the layer. Needs the
+// render-distance hooks (Status::roomHooks).
+using LevelTickFn = void (*)(void* layer);
+void SetLevelTickCallback(LevelTickFn fn);
+
 // The game's Renderer Pool (12 MB) and Entity System Pool (70 MB) have a fixed
 // size; more rooms drawn run the renderer's out in dense areas and the game
 // crashes. Makes each at least this many MB (at most 4096), once per pool, by

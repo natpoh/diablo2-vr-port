@@ -69,6 +69,8 @@ bool                   g_recalcOk = false;
 bool g_inTick   = false;
 bool g_expanded = false;
 
+std::atomic<LevelTickFn> g_afterTick { nullptr };
+
 // Rooms tiled per tick beyond the game's own two rings. Tiling builds a room's
 // tiles and collision; one per tick spreads a new ring over a few frames.
 constexpr int kTilesPerTick = 1;
@@ -204,6 +206,9 @@ void __fastcall HookSimTick(void* layer) {
 	g_expanded = false;
 	original(layer);
 	g_inTick = false;
+	if (const LevelTickFn after = g_afterTick.load(std::memory_order_acquire)) {
+		after(layer);
+	}
 	const uint64_t until = g_recalcUntil.load(std::memory_order_relaxed);
 	if (until != 0 && GetTickCount64() > until) {
 		g_recalcUntil.store(0, std::memory_order_relaxed);
@@ -315,5 +320,6 @@ bool SetModelRadius(float units) {
 float ModelRadius() { return g_getModelRadius != nullptr ? g_getModelRadius() : -1.0f; }
 int RoomsAddedLastTick() { return g_added.load(); }
 int RoomsLoadedTotal() { return g_loaded.load(); }
+void SetLevelTickCallback(LevelTickFn fn) { g_afterTick.store(fn, std::memory_order_release); }
 
 }   // namespace d2rcam::drawdist

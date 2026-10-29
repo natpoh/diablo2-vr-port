@@ -5,21 +5,44 @@
 #include <string>
 #include "d2r_vr_build.h"
 #include "monster_rig.h"
+#include "doll_pose.h"   // [weight] monster_ragdoll_pose: the monsters as drawn give way with their dolls
+#include "remote_pose.h"   // [multiplayer] pose_share_hero: the other players' heroes posed from the poses that came
 
 namespace skel {
 
 struct Input {
     int mode = 0;               // arms: 0 game animation, 1 test pose (arms ahead), 2 controllers
     int bodyTurn = 0;           // 0 the game's facing, 1 above the pelvis, 2 whole body faces where the camera looks
+    // [body] gait_legs_third / gait_legs_f4: our own hero's legs step along his travel by the gait library (vr/gait_lib.h), whatever way his turned body faces
+    // (back steps walking backward, side steps strafing) - the game's run would carry them along his path while the body faces the camera. Only with the
+    // whole body turned (bodyTurn 2; vrcam asks it so in F4 when it is on). Visual only.
+    bool gaitLegs = false;
     bool hideHead = false;      // shrink the hero's head away (first person)
     bool lockUpper = false;     // nothing above the pelvis follows the game's animation: bind pose, then ours
     bool legsUnder = false;     // with lockUpper: pelvis and legs kept under that body - no lunge ahead, no hip turn
+    // [body] flat_hold_trunk (flat F3, without lockUpper): the trunk's axis - spine_01 up to the head - in the bind pose and the hips held under it
+    // (as legsUnder), the arms, hands and what they hold keeping the game's animation on that still chest: a swing no longer takes the torso out
+    // from under the camera. Drawn bones only.
+    bool holdTrunk = false;
+    // [body] walk_back: turned whole with the look (bodyTurn 2, no gaitLegs) and walking the other way, the game's own walk mirrored front to back - the legs step
+    // backward (legik::MirrorAlong, the knees solved again), not forward while he goes back (the 2026-10-27 crossed legs). Visual only.
+    bool walkBack = false;
+    // [body] walk_back_reverse (with walkBack): instead of the mirror, the game's own walk played backwards in time (vr/walk_back.h) - the lower body's poses
+    // kept while he walks, drawn from a cursor going back through them: the heel lifts behind him, the toes reach back, every joint the game's own. Visual only.
+    bool walkBackReverse = false;
+    int heroAnimMode = -1;      // the hero's unit mode as the game's client has it (2 walk, 3 run, 6 town walk; -1 not known): walk_back_reverse keeps only his walk
     float crouchDrop = 0.0f;    // [body] crouch (F4): the body this far down (model units), the legs bent to keep the feet; 0 = as the game poses it
+    bool roomShiftOn = false;   // [openxr] roomscale_body (F4, room walking): the whole drawn body moved across the floor by roomShift ...
+    float roomShift[3] = {};    // ... model units, x and z: from the hero's place to the floor under your neck (drawn bones only);
+                                // [body] under_camera adds the move under the camera (vr/under_camera.h): the camera's lag across the
+                                // floor, and [2] up - a Leap's arc that the game lifts his model by, taken out or followed by the camera
     bool wrist = false;         // mode 2: the hands turn with the controllers, not only follow the forearm
     float wristDeg[3] = {};     // pitch, yaw, roll on top, in the controller's own axes (mirrored for the left)
     float scale = 1.0f;         // arm reach on top of the hero/user height ratio
     float userHeadM = 1.7f;     // the user's head above the floor
     float armSpanM = 0.0f;      // > 0: the measured grip-to-grip span (T-pose, [calibration]): the arm bones are fitted to it, scale is 1
+    bool defaultSpan = false;   // [calibration] default_span (F4): armSpanM 0 - the arm bones fitted to bodycal::DefaultSpan(userHeadM) all the same, scale is 1
+    bool fullReach = false;     // [arms] full_reach (F4, mode 2): a hand out of the arm's reach is still drawn on its controller - the collarbone turns the shoulder toward it, then the arm lengthens (vr/full_reach.h)
     uint32_t handsValid = 0;    // bit 0 right, bit 1 left
     float hand[2][3] = {};      // [0] right, [1] left: metres from the head, x right y up z back
     float rot[2][4] = {};       // controller orientation in that frame, x y z w
@@ -81,6 +104,8 @@ struct Input {
         bool heroStrength = false;
         int heroStr = -1, reqStr = -1;
         float strengthClassPct = 100.0f, strengthEffect = 100.0f;
+        bool strengthHonest = false;   // [weight] strength_honest: the ratio as it is (vr/hero_strength.h)
+        bool twoHandsDouble = false;   // [weight] two_hands_double: both hands on the weapon double each hand's strength (heft::hold::Settings)
         bool claimed[2] = {};      // that hand's grip is another gesture's (the weapon swap behind a shoulder): it takes nothing off the floor and calls
                                    // nothing back - but it does take a weapon stowed on the back (busy, a belt potion, blocks that too)
         // [weight] after_drop: what becomes of a weapon let go that has landed. 0 it lies on the floor; 1 after stowAfterS it goes to the hero's back
@@ -111,6 +136,37 @@ struct Input {
         float takeHaptic = 0.0f;   // [weight] take_haptic: the pulse (amplitude 0..1) in a hand entering the take zone behind a shoulder while a weapon is away; 0 = none
         bool recallAny = false;    // [weight] recall_any_hand: the grip of any free hand, anywhere, calls a weapon that is away
         bool monsterBodies = false;   // [weight] monster_bodies (vr/monster_bodies.h): the held weapon stops on the hostile monsters' bodies or glances off them (F4 only; needs the world's frame, worldOk)
+        bool stabIn = false;          // [weight] stab_in (cleanroom/heft/stab.h): with monsterBodies, a thrusting weapon driven point first into a body goes in and is held there (F4 only)
+        // ... its sliders (stab::Sliders, live): stab_min_speed m/s, stab_max_angle deg, stab_resist_pct % of the dampers, stab_depth_cm (0 the blade's), stab_tear_cm, stab_unlock_n
+        float stabMinSpeed = 0.5f, stabMaxAngleDeg = 60.0f, stabResistPct = 30.0f, stabDepthCm = 0.0f, stabTearCm = 45.0f, stabUnlockN = 150.0f;
+        bool stabDebug = false;       // [debug] stab_debug (vr/stab_debug.h): the stab's readout over the weapon hand and its marks with the melee boxes
+        bool stabWithRun = false;     // [gameplay] melee_thrust_with_run: the bodies get their velocity in the room (the hero's run in it) - the stab's speed against the body counts the run
+        // A weapon in each hand (vr/weight.cpp StepSecond): the other slot's weapon is a body of its own, held by that hand alone; its heft::hold::Kind (-1: none)
+        bool second = false;
+        int secondKind = -1;
+        // [weight] second_lets_go: the second weapon is held by its hand's grip as the first is - let go, it falls and lies; that hand's grip pressed away from it calls it back
+        // (into the hand, as the game holds it), or the fist closing on it takes it up. Off: held for good, as before.
+        bool secondLetsGo = true;
+        // ... its shaft as drawn (as shaftTipM / shaftButtM / tipAxis are the first's): the skeleton measures its drawn bone against its body while it is in its own hand
+        // (weight::SetDrawnShaft2), so a hand that takes it closes on the drawn weapon - the right hand on the left's sword in its palm, not beside it. 0, 0: not known.
+        // [weight] dual_collide: the two weapons of a pair meet each other - steel on steel: each stops on the other, glances along it, a knock is felt (a pulse). Off: they pass.
+        bool dualCollide = true;
+        int secondTipAxis = 2;
+        float shaft2TipM = 0.0f, shaft2ButtM = 0.0f;
+        // ... and with [gameplay] melee_head_volume, each weapon's head as its own volume - the capsules of vr/weapon_head_parts.h where its mesh is (an axe's blade
+        // a thin slab), else vr/metal_head.h's one: each a, b, radius in the weapon model's units, its own x y z - [0] the first weapon's, [1] the second's; 0 parts: none
+        // (a blade, wood, an item with no row, the options off). The skeleton puts them where the drawn bone has them, against the weapon's body
+        // (weight::SetDrawnHeadParts, SetDrawnHeadParts2): the other weapon of the pair stops on them.
+        static constexpr int kHeadParts = 12;   // (weight::kHeadParts, weaponheadparts::kParts)
+        float headPart[2][kHeadParts][7] = {};
+        int headParts[2] = {};
+        // [weight] stick_by_strength, stick_pct (vr/stick_strength.h): how hard a weapon sticks in a wound and on the bodies - the factor (1 as before), and what made it
+        float stick = 1.0f;
+        bool stickByStrength = false;
+        float stickPct = 100.0f;
+        bool strikeByForce = false;   // [weight] strike_by_force (vr/strike_force.h): the strikes are measured (as strike_measure's) and handed to hit by touch (weight::LiveStrikes)
+        bool strikeMeasure = false;   // [debug] strike_measure (vr/strike_measure.h): each strike on a body measured into the log - the arrival, the hands' drive, the cut, the stab
+        bool monsterRagdoll = false;  // [weight] monster_ragdoll (probe, the doll library vr/doll_lib.h): ... and their limbs give way to it by their weight (needs monsterBodies)
         // [hands] shoulder_draw (vr/shoulder_draw.h): a weapon let go lies where it fell - in the WORLD, not carried by the hero's walking - and the grip of either hand calls it back
         // while it is in the air or lies there; after drawStowS on the floor it goes to the back, and from then on a hand behind a shoulder draws it into that hand, whichever hand it
         // is (afterDrop is then 1 for the skeleton's sake: a weapon taken by the other hand is drawn where the body model has it).
@@ -159,6 +215,31 @@ struct Input {
     // known: grip[] then. With shieldArm (below) the fist is on the hand of the arm the shield is on.
     bool shieldFist = false;
     float shieldRaw[2] = {-1.0f, -1.0f};
+    // [weight] grab_bodies (vr/grab_bodies.h, grab_wire.cpp): an empty hand's grip holds a monster's or an NPC's body. grabOn: the box ticked and F4 (vrcam);
+    // grabFree: that hand may take a body now (empty, no bottle, its grip nobody else's); the sliders; and the render world the bodies are in, as the
+    // weight model gets it (grabWorldOk, eye in world units, the view's right and forward, world units per metre - FreshHands, every pose).
+    bool grabOn = false;
+    bool grabBodies = false, grabProps = false;   // ... what it takes: the bodies ([weight] grab_bodies), the level's props ([weight] grab_props: knock_props' world)
+    bool grabFree[2] = {};
+    unsigned grabBusy[2] = {};   // ... and why not (grabbodies::Busy bits; 0 free), for the log of a grip that took nothing
+    // [weight] grab_wrap (grab_wire.cpp fills it, the hook reads it): a hand that holds a body is laid ON it - the palm against the surface, facing it, the fingers closed
+    // round it until each touches (the grip library's hand step, d2r_vr_grip.dll; without it the palm is laid on and the fist closes as ever). The held body as drawn:
+    // a capsule from grabCapA to grabCapB, grabCapR round it, in the hands' frame (metres from the head, x right, y up, z back).
+    bool grabWrap = false;
+    bool grabHolding[2] = {};
+    float grabCapA[2][3] = {}, grabCapB[2][3] = {}, grabCapR[2] = {};
+    float grabReachM = 0.08f, grabBreakM = 0.8f, grabStrength = 1.0f;
+    bool grabArmReach = true;   // [weight] grab_arm_reach: a held point past the drawn arm's reach lets go - the arm is never lengthened to it (grabbodies::PastArm)
+    bool armWorldLate = true;   // [hud] hand_vitals_orb_drawn_hand: HeroArmWorld read again at the end of the pose - the hand as drawn at last (laid on a body, fitted to the weapon)
+    bool armBox = true;         // [hud] hand_vitals_orb_on_bone: ... and each forearm bone's mesh box with it (HeroArm::box), at the end of the pose
+    float grabMuscle = 1.0f;   // [weight] grab_muscle_pct / 100: a held monster's joints' muscles
+    bool grabWorldOk = false;
+    // [weight] grab_items (vr/item_grab.h, vrcam's ItemGrabStep): an empty hand's grip on an item on the ground picks it up through the game's own pick-up. itemsOn: the box
+    // ticked and F4; itemsFree: that hand may (free as for a body, and not over or holding a body). grabWorldOk / grabEye... are filled for it too.
+    bool itemsOn = false;
+    bool itemsFree[2] = {};
+    float itemsReachM = 0.25f;
+    float grabEye[3] = {}, grabCamR[3] = {}, grabCamF[3] = {}, grabUpm = 4.0f;
     // [hands] shoulder_draw, the shield (vr/shield_arm.h, shield_arm_wire.cpp): shieldHolster asks for it (vrcam: the box ticked, F4, a shield in the left slot); shieldArm
     // is the answer, put in by shieldarmwire::Apply in the hook before the weight model: the shield follows the sword to the forearm opposite the hand that holds it - 0 the RIGHT
     // forearm (mirrored), 1 the left (the game's own place). -1: not asked - the old logic, the left arm only.
@@ -188,6 +269,10 @@ struct Input {
     bool shieldForearm = false;
     bool shieldBlink = false;   // [debug] shield_blink: the strapped shield's bone is hidden half a second in every two (does the shield on the screen blink?)
     float shieldAdj[6] = {};
+    // [shield] heads_hang (vr/head_hang.h): a Necromancer's head in the left slot is not strapped to the forearm - its bones stay with the hand,
+    // and the head's own bones (PoseHead, the skeleton hook) turn it about the point it hangs from: down under gravity, swinging and twisting
+    // after the hand. vrcam: F4 only, a head in either hand slot. Off = a shield's strap (or the hand), as before.
+    bool headsHang = false;
     // [fist] <class>_close / <class>_open, % / 100: how far a free hand closes with the grip
     // squeezed and with it let go, per hero class (kHeroClasses) - the rigs differ: the full
     // fist rolled the paladin's fingers into his palm (2026-10-06).
@@ -313,6 +398,9 @@ struct Input {
     // It comes in and goes out with the draw over bowAimBlendMs. The arrow bone's (and the bow's turn's) pose only.
     bool bowRest = false;
     float bowRestCm[3] = {0.0f, 0.0f, 0.0f};
+    // [bow] arrow_rest_model: the rest point is the bow MODEL's own - where its arrow crosses the riser in its bind pose (bowrig::ArrowRestPoint), read off the
+    // bow's own skeleton and carried with it - not the offsets above (they are the fallback while it is not read). Makes bowRest true with the rig pose.
+    bool bowRestModel = false;
     // [bow] arrow_rest_clear: where the arrow's line would pass through the bow hand, the wrist or the forearm (the string hand low or far to a
     // side, the hand turned out) the nock and the arrow are lifted off the arm, up the bow's limb axis, by as little as clears it - at most 8 cm.
     // Off: the point exactly as the offsets above put it. With bowRest.
@@ -361,6 +449,10 @@ bool GripMarks(int side, float grasp[3], float palm[3]);
 // back) - the hands' frame, so a hand's position minus it is the arm. `lengthM`: the shoulder to the grip, straight, metres. side 0 right, 1 left. False when the arms have not been
 // posed for half a second (no body, not first person with the arms on the controllers).
 bool ArmReach(int side, float shoulder[3], float* lengthM);
+// [gameplay] leap_arc_head: the middle of the drawn hero's belly - half way between his pelvis bone and the first spine bone (spine_01: the rig's own
+// bones, the same names the head and the arms are found by), as the last pose drew them; the spine bone alone in a rig with no pelvis above the root.
+// Metres from the eye in the head's turn-only frame, as ArmReach's shoulder. False when the body has not been posed for half a second.
+bool BodyBelly(float belly[3]);
 // [gameplay] shield_smite: the left hand's weapon attach bone (where a shield hangs) as last posed, in the render
 // world: its place, the way its Y axis runs, and where the hero stands (all world units - divide by the units per
 // metre), with the generation of his model. Posed only while WantShield(true) was asked lately; false when it was
@@ -383,7 +475,9 @@ bool HeroPalmModel(int side, float palm[3]);
 // is held by). Exactly where the arm is drawn, whatever the IK or the [arms] offsets do; side 0 right, 1 left. False when the arms have not been posed for a quarter of a second,
 // or the hero's transform was not readable.
 // An arm whose world read failed at the last poses is still the last one read, with its age: `ageMs` is how old it is (0xFFFFFFFF: never), the call fails when it is older than `maxAgeMs`.
-struct HeroArm { float elbow[3], wrist[3], across[3], point[3], face[3]; bool hand; };
+// box: [hud] hand_vitals_orb_on_bone - the forearm bone's own mesh box as posed at the end of the pose (its middle and its three half sides, world units: the vertices the
+// game's mesh binds to that bone, OBB in the bone's frame - vr/monster_rig.h), false when the hero's meshes gave that bone none or it is off.
+struct HeroArm { float elbow[3], wrist[3], across[3], point[3], face[3]; bool hand; bool box; float boxC[3], boxH[3][3]; };
 bool HeroArmWorld(int side, HeroArm* out, unsigned maxAgeMs = 250, unsigned* ageMs = nullptr);
 // Why the newest pose could not put the arm in the world ("" when it could): the entity tables not found, the transform not read ...
 const char* HeroArmWhy();
@@ -398,7 +492,19 @@ const char* HeroArmWhy();
 using FreshFn = bool (*)(float* yawInModel, float* eyeModel, bool* eyeOk);
 using FreshHandsFn = bool (*)(Input* in);   // fills handsValid, hand, rot, userHeadM
 void SetFreshHands(FreshHandsFn fn);
+// [weight] grab_bodies: after the weight model, before the arms are posed - a hand that holds a body is moved to where it holds it (vrcam registers
+// grabwire::Apply; unregistered: nothing). The hook's thread, mode 2 only.
+using GrabHandsFn = void (*)(Input* in);
+void SetGrabHands(GrabHandsFn fn);
+// ... where the last pose drew a holding hand's palm (the middle of it, in the hands' frame: metres from the head) and how it was laid on the body ("the grip library",
+// "our own frame", or why not); false when that hand held nothing in the last 200 ms. For grab_wire's log of a held grip.
+bool GrabPalmDrawn(int side, float head[3], const char** how);
 void SetFresh(FreshFn fn);
+// [openxr] roomscale_body: at the hero's pose, right after the fresh facing, the drawn body's move across the floor (Input::roomShift, model
+// units, from the matrix that facing was read with), with [body] under_camera's move under the camera. False: none (off, not room
+// walking and no camera lag, no matrix).
+using RoomShiftFn = bool (*)(float shift[3]);
+void SetFreshRoomShift(RoomShiftFn fn);
 // [weight] grip_model 1: the grip library's hand step (vrcam registers griplib::HandStep) - where the hand sits on the wood and how its fingers close. The hook uses it only when the
 // weight model says the library holds the weapon (weight::Out::gripLib). None registered: the hook has only its own fit.
 }  // namespace skel
@@ -496,6 +602,10 @@ struct PosedBlade {
     bool ball = false;
     float ballCentre[3]{}, ballDir[3]{};
     float ballRadius = 0.0f;
+    // ... Khalim's Flail and Will: three chains, three balls - each strikes. The others (beside the one above) in the same frame, the same radius.
+    static constexpr int kMoreBalls = 3;
+    int moreBalls = 0;
+    float moreCentre[kMoreBalls][3]{}, moreDir[kMoreBalls][3]{};
 };
 struct PosedWeaponPose {
     float origin[3]{}, axis[3]{}, hero[3]{};
@@ -547,6 +657,13 @@ void FlailHit(int side);
 // flail model learned since the last call (its chains, or why it has none). Empty when none.
 const char* FlailStatus();
 std::string FlailTakeNote();
+// [shield] heads_hang, for vrcam's log: what the last pose of the hero's head did ("posed - ..." or why not; a fixed string), and one line for
+// each head model learned since the last call (where it hangs from, how long its cord is, or why it cannot hang). Empty when none.
+const char* HeadStatus();
+std::string HeadTakeNote();
+// [arms] full_reach, for vrcam's log: each arm's fit (once per hero rig) and, a few seconds apart while it acts, how far a hand was out of reach and what
+// brought it there (the shoulder's turn, the stretch). Empty when none.
+std::string ArmTakeNote();
 // [debug] doll_trace: the lines the pose hook noted since the last call ('\n' between them) - the hero's rig let go (which test it failed, its numbers, what was
 // taken instead) and taken again. The hook only notes; vrcam's tick writes them to the log (a log line costs a millisecond on the game's thread).
 std::string DollTakeNote();
@@ -626,6 +743,12 @@ bool HeroTransform(HeroXform* out, const char** why = nullptr);
 // Any entity's TransformComponent, the same layout (engine items, vrcam's engitem). The storage's
 // array moves when it grows: use the pointer at once, on the registry's own thread.
 bool EntityTransform(uint32_t entity, uintptr_t* comp);
+// Any entity's model instance (its ModelComponent's first qword; vr/monster_rig.h), 0: it has none or the storage is not found - [hands] belt_empty_bottle's
+// mesh hide and belt_inner_glow (vrcam's engitem), on the registry's own thread.
+uintptr_t EntityModelInstance(uint32_t entity);
+// [hud] hand_vitals_orb_on_bone: the hero's own body parts' model instances (his root's ModelComponent and the children in its AttachedChildrenComponent, held weapons and
+// shields left out - as a monster's, vr/monster_rig.h PartModels) into models (at most cap), *key a hash of their resources (another armour: another key). How many.
+int HeroPartModels(uint32_t entity, uintptr_t* models, int cap, uint64_t* key);
 // [weight] monster_bodies (vr/monster_rig.h): the models near (x, z) - the game's render world, its units - that stand on their own (no parent: not a weapon in a
 // hand) and are not a hero's, the nearest first, each with a capsule on each of its limbs: its bones as the game posed them this frame times its place, as thick as its
 // meshes' boxes of them (world units). A model whose boxes or pose do not read is given with n 0 and why. Read-only, off the pose hook (any thread but the hook's).
@@ -635,15 +758,99 @@ struct MonsterRig {
     float root[3] = {};        // where the model stands (its transform's translation), world units
     char model[48] = {};       // the last part of its model's path (for the log)
     int bones = 0, boxes = 0;  // its skeleton's bones, those with a box
+    // boxes left out: not at their bone (monsterrig::AtItsBone), not the body of a humanoid (BodyBones: a rope, a strip of cloth); the first few by name (the log)
+    int offBone = 0, notBody = 0;
+    int alongBone = 0;   // ... of the off ones, a humanoid's limb bones given a capsule along the bone instead (monsterrig::AlongBone: a robe over the legs)
+    char leftOut[420] = {};
     int n = 0;
     monsterrig::Capsule c[monsterrig::kMaxPerRig];
+    // [weight] monster_shields (SetHeldWanted): what it holds - its weapons and its shield - as capsules of their own kind (heldKind 1 a weapon, 2 a shield)
+    static constexpr int kMaxHeldCaps = 6;
+    int nHeld = 0;
+    monsterrig::Capsule held[kMaxHeldCaps];
+    int heldKind[kMaxHeldCaps] = {};
+    const char* heldWhy = "";   // why a held part it has gave none (the log)
+    int heldParts = 0;          // its held parts (RH / LH / SH children with a model), read or not
+    int heldOff = 0;            // their boxes on no bone of the skeleton
+    char heldSaid[360] = {};    // each held part: its slot, its boxes (or why none), the bones they are on (the log)
     const char* why = "";
+    // [weight] monster_ragdoll: is it a humanoid (vr/monster_humanoid.h)? -1 its bone names say not (or tell nothing), 0 they say so but it has not been seen
+    // standing up yet (a beast on a two-legged rig never is), 1 a humanoid. dollWhy: the names' reason; dollPose: what its last pose said (Upright);
+    // dollSaid: its limbs by their first bones' names (the log).
+    int doll = -1;
+    const char* dollWhy = "";
+    const char* dollPose = "";
+    char dollSaid[240] = {};
+    // [weight] monster_ragdoll_pose: the entity's model -> world rows (3x3) and its skeleton's parents (dollpose::Build)
+    float m3[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1};
+    int16_t parent[dollpose::kMaxBones] = {};
+    // [weight] monster_ragdoll: its pose held still for a second - a corpse (vr/corpse_watch.h): no doll, and no hostile monster takes it for its body
+    bool still = false;
+    // [weight] monster_ragdoll_all: its limbs are from its bones' segments (vr/bone_segments.h) - its model has no part meshes to read boxes from
+    bool segments = false;
 };
 size_t MonsterRigs(float x, float z, float reach, MonsterRig* out, size_t cap);
+// [weight] monster_shields: MonsterRigs reads the held parts too (MonsterRig::held). Off: none read.
+void SetHeldWanted(bool on);
+// [weight] monster_ragdoll_all: every monster gets a doll, not only the humanoids (MonsterRig::doll 1 for any that is not still), a skeleton with no part
+// meshes its limbs from its bones' segments, the bones that are no limbs (NotLimbName) left out. Off: humanoids only, as before.
+void SetRagdollAll(bool on);
+// [weight] monster_ragdoll_pose: the turns of a monster's bones the doll wants now (meleetouch::MonsterPose: false - none for this SkeletonInstance). The hook
+// asks it for every skeleton it poses, after the game's own pose, and turns the bones so (vr/doll_pose.h). Null: none.
+using MonsterPoseFn = bool (*)(uintptr_t self, dollpose::Pose* out);
+void SetMonsterPoseSource(MonsterPoseFn fn);
+// [debug] monster_rig_dump: the next model whose boxes are read for the first time has every read written out (its Granny model, its ModelComponent's
+// model instance, the meshes, their first bone bindings, the skeleton's first bones) - one line, taken by RigDumpTakeIn (empty: none); the paths of the
+// models that are not bodies (items, gold, arrows) in short lines. For the headset test that proves the layout.
+void SetRigDump(bool on);
+std::string RigDumpTakeIn();
 // Bumped whenever the hero's SkeletonInstance changes: a weapon swap rebuilds his model.
 uint32_t HeroGen();
 // The hero's rig was posed (taken as ours) within the last `ms` - the game still draws him: a facing that does not read is held on ([hands] doll_rebuild).
 bool HeroPosedLately(unsigned ms);
+#if D2RVR_FIRST_PERSON
+// [multiplayer] pose_share_hero (vr/remote_pose.h): the other players' heroes as their poses say - the head as the headset is held, the arms on the controllers
+// (our arm IK), the weapon in hand with the wrist, the upper body turned to the look. Each of their rigs (one the doll did not take as ours) is matched
+// to the target whose hero stands nearest it. Any view (the hook poses every rig). vrcam hands the targets over from its update thread, n 0 = none
+// (off); a list older than 300 ms is not used. Visual only: the drawn bones of those rigs.
+void SetRemoteHeroes(const remotepose::Target* t, int n);
+// What was done since the last call, for the log: rigs posed, players' rigs with no target near them, rigs not posed (no bind pose read / bones missing).
+struct RemoteHeroCount { unsigned posed = 0, unmatched = 0, unposable = 0, weapon = 0, legs = 0, legsNoPose = 0, yawFromWorld = 0, handsDrawn = 0; float reachMissCm = 0.0f; };   // handsDrawn: hands placed as the sender draws them (format 6), reachMissCm the most one was out of the arm's reach   // weapon: slots placed as the sender draws them   // yawFromWorld: turned by the world heading through his rig   // legsNoPose: a player who sends no pose, his legs stepped all the same   // loose: a weapon hung where the sender's lies; legs: stepped by the gait
+RemoteHeroCount TakeRemoteHeroCount();
+// The camera's yaw in our own hero's model space as his arms were last posed by it (radians, PoseBody's convention) - what the other players turn our
+// pose into our hero's model by. False when not posed so in the last maxAgeMs (not VR F4, no body).
+bool HeroYawInModel(float* yaw, unsigned maxAgeMs);
+// [multiplayer] pose_share (format 4): our hero's two weapon attach bones (R / L_weapon_attach, slot 0 / 1) as the last pose drew them - wherever the weapon is,
+// in a hand, falling, lying, on the back - in the head's turn-only frame from the eye (metres; rows unit, as GunBone); `main`: the slot of the weapon in
+// hand (the bone the debug axes are drawn on). False when not posed so in the last maxAgeMs or the bone is a point (the game hides a slot that holds nothing).
+bool DrawnAttach(int slot, float origin[3], float rows[3][3], unsigned maxAgeMs, int* main = nullptr);
+// [multiplayer] pose_share (format 6): our hero's hands as the last pose drew them - read with the attach bones, at its end - in the same frame: [0] right, [1] left,
+// each hand bone's origin and rows and its elbow (the lower arm's origin); the head bone's origin; the model's units a metre the offsets were made with.
+struct DrawnHand { float headBone[3], hand[2][3], rows[2][3][3], elbow[2][3], upm; };
+bool DrawnHands(DrawnHand* out, unsigned maxAgeMs);
+// [multiplayer] pose_share_held: another player's hand bone (side 0 right, 1 left) as his rig was last posed here from his pose, in the world (row vectors, render
+// units) - what his hand has is hung on it. False: not posed so in the last maxAgeMs.
+bool RemoteHandWorld(uint32_t unit, int side, float m[16], unsigned maxAgeMs);
+// [multiplayer] pose_share_legs for every other hero, whether he sends a pose or not (vrcam, live): one with no pose steps along his travel with his own (the game's)
+// facing. (Their bodies for our weapon are hit by touch's: meleetouch::SetPlayerBodies.)
+void SetOtherHeroes(bool legs);
+// [debug] pose_share_legs_self: our own hero's legs by the same gait, his own facing - the one-PC test of the legs (flat F2 / F3 or VR F2 show him). Live.
+void SetSelfLegs(bool on);
+// [body] gait_cone_deg: the half-angle (degrees, 45 default) of the cone about the hero's facing where the game's own walk is kept - a travel within it
+// shows the game's legs, outside it the gait's (remotepose::ConeBlend: crossfaded, with hysteresis). For our own hero and the other heroes alike. Live.
+void SetGaitCone(float halfAngleDeg);
+// [body] gait_legs_third / _f4: how many of our own hero's poses had their legs stepped since the last call (for the log).
+unsigned TakeOwnLegs();
+// What the gait's legs did since the last call, one line for the log ("" when nothing): the steps, the rigs, how far the feet were put from the game's
+// own, the lift, the walk's share and speed, and whether our writes were still in the bones at the rigs' next poses (or written over).
+std::string LegsNote();
+// [body] walk_back: what it did since the last call, for the log ("" when nothing).
+std::string WalkBackNote();
+// [debug] walk_back_dump: our hero's legs kept pose by pose while he moves - the game's (turned with the body) and as drawn, his travel, the walk back's
+// share - the last kWalkBackDumpS seconds; when a walk back has ended, TakeWalkBackDump hands them over once as text for tools/walk_legs ("" else). Live.
+void SetWalkBackDump(bool on);
+std::string TakeWalkBackDump();
+#endif
 void** OrigSlot();
 void* Detour();
 

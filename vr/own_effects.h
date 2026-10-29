@@ -16,6 +16,12 @@
 // "Fade" at +0x18), and the queue's consumer (0x790920) calls, for each entity's VFX component, VfxSetFloat 0xF6A380 (component, the name's address, float): it looks the name up in
 // the effect's parameters (0xA48BD0) and sets the value (0xA4D7A0); true when it did. That is the lever: the same call, the same name, the player's percent. For 0 % the game's own
 // VfxSetVisible (0xF6A830) as the potion hide uses it.
+// WHY BONE ARMOR STILL DID NOT FADE (the third test, 2026-10-18: "Fade" set to 30 % on bonearmorfront, accepted, the bones unchanged; read 2026-10-24 from the HD files): the effect is
+// PopcornFX's (vfx_BoneArmor_Front.particles) and has two renderers - the bones, a mesh drawn with vfx/materials/Diablo_Default_Mesh.pkma (opaque, lit), and a ribbon trail drawn with
+// Diablo_Uber_Ribbon. Only the ribbon binds the material property MonsterFade.Fade to the effect's "Fade" attribute; the opaque mesh binds none, so the bones cannot be drawn fainter
+// by any value of it. The game itself never fades them either: at its unit's alpha 0 it switches the effect off (VfxSetVisible). So an effect the table marks SOLID (its HD particle
+// file has a Diablo_Default_Mesh renderer: Bone Armor, Blade Shield, Energy Shield, the shrines ...; tools/gen_own_effects.py --game) is NOT DRAWN in F4 whenever it is to be any
+// fainter (TargetFor); the others are faded with "Fade" as before (Frozen / Shiver / Chilling Armor are ribbons and billboards that bind it).
 //
 // Which overlays are "own effects" is the game's own data, not a list of offsets: states.txt names, for every state, the overlays it shows (overlay1 - 4, pgsvoverlay), the flash
 // when it is cast (castoverlay) and whether it is an aura (aura = 1); tools/gen_own_effects.py turns the two tables into vr/own_effects_table.h: the overlay names of the states
@@ -63,19 +69,30 @@ inline size_t Key(const char* raw, char* out, size_t cap) {
     return n;
 }
 
-inline Group GroupOfKey(const char* key) {
+inline const table::Entry* EntryOfKey(const char* key) {
     int lo = 0, hi = (int)table::kCount - 1;
     while (lo <= hi) {
         const int mid = (lo + hi) / 2;
         const int c = std::strcmp(key, table::kEntries[mid].name);
-        if (c == 0) return table::kEntries[mid].group == 2 ? Group::Aura : Group::Body;
+        if (c == 0) return &table::kEntries[mid];
         if (c < 0) hi = mid - 1; else lo = mid + 1;
     }
-    return Group::None;
+    return nullptr;
+}
+inline Group GroupOfKey(const char* key) {
+    const table::Entry* e = EntryOfKey(key);
+    return !e ? Group::None : e->group == 2 ? Group::Aura : Group::Body;
 }
 inline Group GroupOf(const char* rawName) {
     char key[96];
     return Key(rawName, key, sizeof key) ? GroupOfKey(key) : Group::None;
+}
+// A SOLID effect (the table's mark, from the game's HD particle files): a part of it is drawn with the opaque lit-mesh material (Bone Armor's bones, Blade Shield's blades), which
+// binds no "Fade" - the third test (2026-10-18) set Fade to 30 % on Bone Armor and the bones did not change. It can be drawn or not drawn, not drawn fainter.
+inline bool SolidOf(const char* rawName) {
+    char key[96];
+    const table::Entry* e = Key(rawName, key, sizeof key) ? EntryOfKey(key) : nullptr;
+    return e && e->solid != 0;
 }
 
 // -- the numbers ([render] dim_own_effects_pct, dim_own_auras_pct: the opacity of the effect in percent, 100 = as the game draws it, 0 = not drawn)
@@ -83,8 +100,58 @@ struct Settings {
     bool on = false;
     float body = 0.30f;    // 0..1
     float aura = 0.50f;
+    bool slow = false;     // [render] slow_own_effects
+    float speed = 0.20f;   // [render] own_effects_speed_pct / 100: 0.01..1
+    bool lower = false;    // [render] lower_own_effects
+    float heightCm = 0.0f; // [render] own_effects_height_cm: -150..+50
 };
+
+// -- the height ([render] lower_own_effects, own_effects_height_cm; the player's wish of 2026-10-25: "a slider for the height from the ground - lower, it may not be in the way
+// so much in VR"). The hero's SOLID effects (Bone Armor first) are drawn that many cm lower (or higher) in F4: the world matrix the renderer's world-matrix function (0xE3A8C0)
+// gives the overlay's entity - the entity that carries the effect, which places its bones - is moved along the world's up (y), after the game computed it; the game's own
+// place, the buff and its numbers are untouched (visual only). cm become world units with the world's units a metre (vrcam: the view's height over the player's eye height).
+constexpr float kHeightMinCm = -150.0f, kHeightMaxCm = 50.0f;
+inline float ClampHeightCm(float cm) { return !std::isfinite(cm) ? 0.0f : cm < kHeightMinCm ? kHeightMinCm : cm > kHeightMaxCm ? kHeightMaxCm : cm; }
+inline float LiftUnits(float cm, float unitsPerMetre) { return std::isfinite(unitsPerMetre) && unitsPerMetre > 1e-4f ? ClampHeightCm(cm) / 100.0f * unitsPerMetre : 0.0f; }
+// The lift of one effect now (world units, 0 = the game's place).
+inline float LiftFor(bool solid, bool f4, const Settings& s, float unitsPerMetre) { return s.lower && solid && f4 ? LiftUnits(s.heightCm, unitsPerMetre) : 0.0f; }
+// A world matrix (the game's layout: the translation at m[12..14], y up) moved up by dy. False (and untouched) when it is not a plain one: not finite, m[15] not 1.
+inline bool LiftMatrix(float m[16], float dy) {
+    for (int i = 0; i < 16; ++i) if (!std::isfinite(m[i])) return false;
+    if (std::fabs(m[15] - 1.0f) > 1e-4f || !std::isfinite(dy)) return false;
+    m[13] += dy;
+    return true;
+}
+// Giving a lifted matrix back: the height read now is still the one we wrote (the game has not placed it again since) - then it is put back by the lift.
+inline bool StillLifted(float yNow, float yWrote) {
+    return std::isfinite(yNow) && std::isfinite(yWrote) && std::fabs(yNow - yWrote) <= 1e-4f * (1.0f + std::fabs(yWrote));
+}
 inline float ClampPct(float pct) { return !std::isfinite(pct) ? 100.0f : pct < 0.0f ? 0.0f : pct > 100.0f ? 100.0f : pct; }
+
+// -- the speed ([render] slow_own_effects, own_effects_speed_pct; the player's wish of 2026-10-24: "let it turn slowly" - Bone Armor's bones whirl round the eyes). The hero's
+// SOLID effects (the table's mark: Bone Armor first) turn at the player's percent of the game's speed in F4, with the effect's own playback speed (0xA4ABB0 (effect, float): it
+// stores the speed at +0xA4; the game's own VfxSetFade sets it to 0 / 1 when it hides / shows an overlay - the first version of this file took it for an opacity, and the bones
+// turned slower). 1 % at the least (they must still turn), 100 % = the game's. Visual only: the buff, its numbers and timers are the game's.
+inline float ClampSpeedPct(float pct) { return !std::isfinite(pct) ? 100.0f : pct < 1.0f ? 1.0f : pct > 100.0f ? 100.0f : pct; }
+inline float SpeedFor(bool solid, bool f4, const Settings& s) { return s.slow && solid && f4 ? s.speed : 1.0f; }
+struct SpeedState {
+    bool sped = false;         // we set its speed to something but 1
+    uintptr_t effect = 0;      // the effect instance it was for
+};
+// What to set this frame: <0 nothing, else the speed. current: the effect's speed read at +0xA4 (NaN: not read). A new effect instance starts at the game's own speed and is
+// not "given back"; the game may set the speed itself (0 / 1 as it hides / shows the overlay), so a wanted speed is set again whenever it reads otherwise.
+inline float DecideSpeed(float target, float current, uintptr_t effect, const SpeedState& st) {
+    if (!effect) return -1.0f;
+    const bool fresh = effect != st.effect;
+    const bool known = std::isfinite(current);
+    if (target < 1.0f - 0.004f) return (!known || std::fabs(current - target) > 0.004f) ? target : -1.0f;
+    if (st.sped && !fresh && (!known || std::fabs(current - 1.0f) > 0.004f)) return 1.0f;
+    return -1.0f;
+}
+inline void ApplySpeed(float set, uintptr_t effect, SpeedState* st) {
+    if (effect != st->effect) { st->effect = effect; st->sped = false; }
+    if (set >= 0.0f) st->sped = set < 1.0f - 0.004f;
+}
 inline float OpacityFor(Group g, const Settings& s) {
     if (!s.on) return 1.0f;
     return g == Group::Body ? s.body : g == Group::Aura ? s.aura : 1.0f;
@@ -108,19 +175,26 @@ struct Plan {
     bool cannotFade = false;   // wanted a fade, the effect has none (or the parameter's name could not be found): told once, left as the game draws it
 };
 inline constexpr float kSame = 0.004f;
-// effect: the effect instance (0 = not made yet); paramReady: the game's "Fade" name object was found and reads "Fade".
-inline Plan Decide(Group g, const Settings& s, bool f4, uintptr_t effect, bool paramReady, const State& st) {
+// The opacity wanted of one effect: the group's, in F4 only; a solid effect that is to be any fainter is not drawn (the nearest it can come: its solid part has no fainter).
+inline float TargetFor(Group g, const Settings& s, bool f4, bool solid) {
+    const float t = (f4 && g != Group::None) ? OpacityFor(g, s) : 1.0f;
+    return solid && t < 1.0f - kSame ? 0.0f : t;
+}
+// effect: the effect instance (0 = not made yet); paramReady: the game's "Fade" name object was found and reads "Fade"; solid: the table's mark (SolidOf); shownNow: the effect
+// component's visibility wish read this frame (1 shown, 0 not, -1 not read) - the game's own unit update switches an overlay's effects back on when the unit's alpha changes, so
+// one we switched off and find on again is switched off again.
+inline Plan Decide(Group g, const Settings& s, bool f4, uintptr_t effect, bool paramReady, const State& st, bool solid = false, int shownNow = -1) {
     Plan p;
     if (!effect) return p;   // not made yet: the next frame
     const bool fresh = effect != st.effect;   // a new effect instance: its Fade is the game's own
-    const float target = (f4 && g != Group::None) ? OpacityFor(g, s) : 1.0f;
+    const float target = TargetFor(g, s, f4, solid);
     if (target >= 1.0f - kSame) {   // as the game draws it
         if (st.hidden) p.visible = 1;
         if (st.faded && !fresh && !st.fadeBad && paramReady) { p.setFade = true; p.fade = 1.0f; }
         return p;
     }
     if (target <= kSame) {   // not drawn: the game's own visibility switch
-        if (!st.hidden) p.visible = 0;
+        if (!st.hidden || shownNow == 1) p.visible = 0;
         return p;
     }
     if (st.hidden) p.visible = 1;   // (it was off at 0 %; a fainter value shows it again)
@@ -145,8 +219,202 @@ constexpr size_t kInstOffEntities = 0x10, kInstOffCount = 0x18, kInstOffDef = 0x
 constexpr size_t kDefOffName = 0x70;                                                                          // the OverlayDefinition: char* to the file / name
 constexpr size_t kStateOffDef = 0x00, kStateOffKey = 0x18;                                                    // the OverlayCreationState
 constexpr size_t kEffectOffInstance = 0x10;                                                                   // the effect component: the effect instance
+constexpr size_t kEffectOffVisible = 0x1C;                                                                    // the effect component: the visibility wish (a byte) VfxSetVisible stores
+constexpr size_t kFxOffDef = 0x40, kFxDefOffFlags = 0x188;                                                    // the effect instance: its definition; the definition's flags
+constexpr uint8_t kFxDefCanHide = 0x08;                                                                       // ... "its drawing can be switched off"
+constexpr uint8_t kFxDefCanSpeed = 0x04;                                                                      // ... "its speed can change" (0xA4ABB0 tests it)
+constexpr size_t kFxOffSpeed = 0xA4;                                                                          // the effect instance: its playback speed (float)
 constexpr size_t kNameOffChars = 0x18;                                                                        // a string object (refcount, capacity, length, then the characters)
 constexpr uint32_t kMaxEntities = 16;
+
+// Whether the game's visibility switch can take this effect off the screen: VfxSetVisible goes on to 0xA4ACC0 (effect, bool), which changes nothing unless the effect's
+// definition (+0x40) has the flag 0x08 at +0x188 (Bone Armor's effect script reads effect.isRenderingEnabled; the game hides an overlay this way when its unit's alpha is 0).
+// 1 it can, 0 it cannot (the switch would do nothing), -1 not read.
+template <class Rd>
+inline int CanSwitchOff(Rd&& rd, uintptr_t effect) {
+    uintptr_t def = 0;
+    uint8_t flags = 0;
+    if (effect < 0x10000 || !rd(effect + kFxOffDef, &def, sizeof def) || def < 0x10000 || !rd(def + kFxDefOffFlags, &flags, sizeof flags)) return -1;
+    return (flags & kFxDefCanHide) ? 1 : 0;
+}
+// Whether the effect's playback speed can change (the flag 4 the speed setter 0xA4ABB0 tests first): 1 it can, 0 the setter would do nothing, -1 not read.
+template <class Rd>
+inline int CanChangeSpeed(Rd&& rd, uintptr_t effect) {
+    uintptr_t def = 0;
+    uint8_t flags = 0;
+    if (effect < 0x10000 || !rd(effect + kFxOffDef, &def, sizeof def) || def < 0x10000 || !rd(def + kFxDefOffFlags, &flags, sizeof flags)) return -1;
+    return (flags & kFxDefCanSpeed) ? 1 : 0;
+}
+
+// -- the solid part's own MODELS (the fourth test, 2026-10-24: "the bone armour did not become see-through" - the switch was taken, the bones stayed). The bones are not
+// drawn by the effect at all: its script calls the game's SimInterfaceCallback_CreateAnimatedModelInstance (0x10039D0, D2Render popcorn_sim_interfaces/
+// sim_animated_model_instance_node.cpp), which makes plain ModelInstances of the game's renderer for them (0x100A830 -> the renderer's model factory 0xE1B340, no entity).
+// The effect's switch does not reach them. The game hides a whole model with ModelInstance::SetVisibleLayers 0xF3F840 (instance, mask): bit 31 of the mask at +0 = the whole
+// model hidden (UpdateVisibleMeshes 0xF3FFF0 skips it and rebuilds the render items) - what its own unit update does to an overlay's ModelComponent when the unit's alpha is 0
+// (0x76DCE2). So that is done here, to the solid effect's models that stand at the hero's place.
+// Where they are (the fifth test, 2026-10-24: the walk from the effect through its +0x40 found nothing - that +0x40 is the PopcornFX MEDIUM's descriptor in the callback, not
+// the D2R effect's): the renderer (GetRenderer 0xE21140) keeps EVERY ModelInstance it made in a vector at +0x2EFB8 (data, count at +0x2EFC0) under an SRW lock at +0x2EFB0 -
+// the factory pushes into it (0xE1B393 - 0xE1B500), the destroy takes out (0xE1F02B - 0xE1F0E0), the frame's bounds update walks it (0xE38088 - 0xE38509), all under that
+// lock. A ModelInstance keeps its model resource at +0x20 (a resource: its file's path a char* at +0x08 - the game's own name getter 0x122A8F0 reads it, 0xF3EA44 -, loaded when
+// the byte at +0xC8 is 4) and its world matrix at +0x260 (the translation at +0x290). The table names the model file of each solid effect (its renderer's General.Mesh:
+// Bone Armor's bonearmor.model -> "bonearmor"); only a model under data/hd/vfx/ is ever taken (never a body part), and only one that is the hero's (SeenModels, below).
+constexpr size_t kRendererOffModelsLock = 0x2EFB0, kRendererOffModels = 0x2EFB8;   // the SRW lock; the vector (data, count at +8)
+constexpr size_t kModelOffLayers = 0x00, kModelOffResource = 0x20, kModelOffPlace = 0x290, kResourceOffPath = 0x08, kResourceOffState = 0xC8;
+constexpr uint8_t kResourceLoaded = 4;   // (the rebuild blocks on a model still loading: only a loaded one is touched)
+constexpr uint32_t kLayersHidden = 0x80000000u;
+constexpr uint64_t kMaxSceneModels = 50000;
+
+// The path text of a resource: printable, ends ".model" (any case). False when it is not one.
+template <class Rd>
+inline bool ReadModelPath(Rd&& rd, uintptr_t res, char* out, size_t cap) {
+    uintptr_t p = 0;
+    out[0] = 0;
+    if (res < 0x10000 || !rd(res + kResourceOffPath, &p, sizeof p) || p < 0x10000) return false;
+    size_t n = 0;
+    for (; n + 1 < cap; ++n) {
+        char c = 0;
+        if (!rd(p + n, &c, 1)) return false;
+        if (!c) break;
+        if ((unsigned char)c < 0x20 || (unsigned char)c > 0x7E) return false;
+        out[n] = c;
+    }
+    out[n] = 0;
+    if (n < 6 || n + 1 >= cap) return false;
+    const char* e = out + n - 6;
+    return e[0] == '.' && (e[1] | 0x20) == 'm' && (e[2] | 0x20) == 'o' && (e[3] | 0x20) == 'd' && (e[4] | 0x20) == 'e' && (e[5] | 0x20) == 'l';
+}
+
+// A model file's key as the table writes it (the last path component without ".model", lowercase letters and digits), and whether the file is one of the effects' own meshes
+// (data/hd/vfx/..., either slash, any case) - never a unit's body part.
+// The loaded file carries its level of detail (the seventh test, read in the running game: "bonearmor_lod0.model" where the effect names "bonearmor.model"): a trailing
+// "_lod<digits>" is not part of the key.
+inline size_t ModelKey(const char* path, char* out, size_t cap) {
+    char tmp[128];
+    size_t n = path ? std::strlen(path) : 0;
+    if (n >= 6 && path[n - 6] == '.') n -= 6;
+    size_t d = n;
+    while (d > 0 && path[d - 1] >= '0' && path[d - 1] <= '9') --d;
+    if (d < n && d >= 4 && path[d - 4] == '_' && (path[d - 3] | 0x20) == 'l' && (path[d - 2] | 0x20) == 'o' && (path[d - 1] | 0x20) == 'd') n = d - 4;
+    if (n >= sizeof tmp) n = sizeof tmp - 1;
+    if (path) std::memcpy(tmp, path, n);
+    tmp[n] = 0;
+    return Key(tmp, out, cap);
+}
+inline bool IsVfxModel(const char* path) {
+    static const char kPre[] = "data/hd/vfx/";
+    if (!path) return false;
+    for (size_t i = 0; i + 1 < sizeof kPre; ++i) {
+        char c = path[i];
+        if (!c) return false;
+        if (c == '\\') c = '/';
+        if (c >= 'A' && c <= 'Z') c = (char)(c + 32);
+        if (c != kPre[i]) return false;
+    }
+    return true;
+}
+// The solid table entry whose model key this is, or -1 (a model that is no solid effect's).
+inline int SolidOfModelKey(const char* key) {
+    if (!key || !*key) return -1;
+    for (unsigned i = 0; i < table::kCount; ++i)
+        if (table::kEntries[i].solid && table::kEntries[i].model[0] && std::strcmp(table::kEntries[i].model, key) == 0) return (int)i;
+    return -1;
+}
+
+// What each model resource is (looked up once: a resource and its path stay while it is loaded; a resource whose path pointer changed is looked up again). -1 no solid
+// effect's model, else the table entry.
+class ResourceKinds {
+public:
+    static constexpr size_t kCapacity = 1024;
+    // false: not known yet (the caller reads the path and Puts it)
+    bool Get(uintptr_t res, uintptr_t pathPtr, int* entry) const {
+        const E& e = e_[Slot(res)];
+        if (e.res != res || e.path != pathPtr) return false;
+        *entry = e.entry;
+        return true;
+    }
+    void Put(uintptr_t res, uintptr_t pathPtr, int entry) { e_[Slot(res)] = E{res, pathPtr, entry}; }
+private:
+    struct E { uintptr_t res = 0, path = 0; int entry = -1; };
+    static size_t Slot(uintptr_t res) { return (size_t)((res >> 4) * 0x9E3779B97F4A7C15ull >> 54) % kCapacity; }
+    std::array<E, kCapacity> e_{};
+};
+
+// The entry a model resource is: its path read (ReadModelPath), kept only when it is under data/hd/vfx/ and its key is a solid effect's model. -1 otherwise (or unreadable).
+template <class Rd>
+inline int SolidOfResource(Rd&& rd, uintptr_t res, char* path, size_t cap) {
+    if (!ReadModelPath(rd, res, path, cap) || !IsVfxModel(path)) return -1;
+    char key[96];
+    return ModelKey(path, key, sizeof key) ? SolidOfModelKey(key) : -1;
+}
+
+// The renderer's model list: false when it does not read as one (no data with a count, a count out of range).
+template <class Rd>
+inline bool ReadModelList(Rd&& rd, uintptr_t renderer, uintptr_t* data, uint64_t* count) {
+    *data = 0;
+    *count = 0;
+    if (renderer < 0x10000 || !rd(renderer + kRendererOffModels, data, sizeof *data) || !rd(renderer + kRendererOffModels + 8, count, sizeof *count)) return false;
+    return *count <= kMaxSceneModels && (*count == 0 || *data >= 0x10000);
+}
+
+// What to do with one model this frame: 1 hide it (set bit 31), -1 show it again (clear it), 0 leave it. off: its effect is not to be drawn; mine: it is the hero's (SeenModels);
+// ours: we hid it. A model of another unit is never hidden, and one we hid that is no longer to be hidden is given back.
+inline int ModelStep(bool off, bool mine, bool ours, uint32_t layers) {
+    const bool hidden = (layers & kLayersHidden) != 0;
+    if (off && mine) return hidden ? 0 : 1;
+    if (ours) return hidden ? -1 : 0;
+    return 0;
+}
+
+// The models we hid (so that exactly those are given back), each with when it was last seen in the renderer's list: one not seen for kForgetMs is gone (destroyed).
+class HiddenModels {
+public:
+    static constexpr size_t kCapacity = 48;
+    static constexpr uint64_t kForgetMs = 5000;
+    bool Has(uintptr_t inst) const { for (const E& e : e_) if (e.inst == inst) return true; return false; }
+    bool Add(uintptr_t inst, uint64_t now) {
+        for (E& e : e_) if (e.inst == inst) { e.seen = now; return true; }
+        for (E& e : e_) if (!e.inst) { e.inst = inst; e.seen = now; return true; }
+        return false;
+    }
+    void Seen(uintptr_t inst, uint64_t now) { for (E& e : e_) if (e.inst == inst) e.seen = now; }
+    void Remove(uintptr_t inst) { for (E& e : e_) if (e.inst == inst) e = E{}; }
+    void Forget(uint64_t now) { for (E& e : e_) if (e.inst && now > e.seen + kForgetMs) e = E{}; }
+    size_t Count() const { size_t n = 0; for (const E& e : e_) if (e.inst) ++n; return n; }
+private:
+    struct E { uintptr_t inst = 0; uint64_t seen = 0; };
+    std::array<E, kCapacity> e_{};
+};
+
+// -- whose a model is (the seventh test, read in the running game: the three bonearmor_lod0.model instances keep no place - +0x260 is all zeros: the effect places them per particle -,
+// so "at the hero's place" never holds for them). A solid effect's model is the hero's when the game made it while his overlay of that effect was being made: it first appears in
+// the list within kClaimMs after the hero's overlay was tracked, or - an effect already on when the option first looks - it is there the first time the list is looked at for
+// that effect while his overlay is live. One that appears at any other time (another necromancer's Bone Armor in a multiplayer game) is never touched. A model with a place
+// (an entity's) is the hero's when it stands at his place.
+constexpr uint64_t kClaimMs = 3000;
+// heroOverlayAt: when the newest of the hero's overlays of this effect was tracked (0: none live); firstLook: the list is looked at for this effect for the first time since his
+// overlay of it is live.
+inline bool ClaimAtFirstSight(uint64_t now, uint64_t heroOverlayAt, bool firstLook) {
+    if (!heroOverlayAt) return false;
+    return firstLook || now <= heroOverlayAt + kClaimMs;
+}
+
+// The solid effects' models seen in the list, each with whether it is the hero's (decided once, at first sight) and the walk it was last seen in: one not seen in a walk is gone.
+class SeenModels {
+public:
+    static constexpr size_t kCapacity = 64;
+    // -1 not seen before, else 1 the hero's, 0 not
+    int Mine(uintptr_t inst) const { for (const E& e : e_) if (e.inst == inst) return e.mine ? 1 : 0; return -1; }
+    bool Add(uintptr_t inst, bool mine, uint32_t walk) {
+        for (E& e : e_) if (!e.inst) { e = E{inst, walk, mine}; return true; }
+        return false;
+    }
+    void Seen(uintptr_t inst, uint32_t walk) { for (E& e : e_) if (e.inst == inst) e.walk = walk; }
+    void Prune(uint32_t walk) { for (E& e : e_) if (e.inst && e.walk != walk) e = E{}; }
+    size_t Count() const { size_t n = 0; for (const E& e : e_) if (e.inst) ++n; return n; }
+private:
+    struct E { uintptr_t inst = 0; uint32_t walk = 0; bool mine = false; };
+    std::array<E, kCapacity> e_{};
+};
 
 // The entity ids of an OverlayInstance: begin pointer at +0x10, count at +0x18. False when it does not look like one (no pointer, a count over the cap, an id that is not one).
 template <class Rd>
@@ -212,26 +480,32 @@ public:
     struct Slot {
         uint32_t entity = kNone;
         Group group = Group::None;
+        bool solid = false;      // the table's mark: drawn or not drawn, never fainter
         State st;
         uint64_t addedAt = 0;
         bool seen = false;       // its effect component has been found once
         bool told = false;       // the log has said what it is
         bool toldNoFade = false;
+        bool toldOnAgain = false;   // the log has said the game switched it back on
+        SpeedState sp;              // [render] slow_own_effects
+        float loggedSpeed = -1.0f;  // the last speed the log has said
+        bool toldNoSpeed = false;
         float loggedFade = -1.0f;   // the last Fade the log has said
         char name[40] = {};
     };
 
-    Slot* Add(uint32_t entity, Group g, const char* name, uint64_t now) {
+    Slot* Add(uint32_t entity, Group g, const char* name, uint64_t now, bool solid = false) {
         if (entity == kNone || (entity & 0xFFFFF) == 0xFFFFF) return nullptr;
         Slot* freeSlot = nullptr;
         for (Slot& s : slots_) {
-            if (s.entity == entity) { s.group = g; s.addedAt = now; return &s; }
+            if (s.entity == entity) { s.group = g; s.solid = solid; s.addedAt = now; return &s; }
             if (!freeSlot && s.entity == kNone) freeSlot = &s;
         }
         if (!freeSlot) return nullptr;
         *freeSlot = Slot{};
         freeSlot->entity = entity;
         freeSlot->group = g;
+        freeSlot->solid = solid;
         freeSlot->addedAt = now;
         if (name) {
             size_t n = std::strlen(name);
@@ -313,6 +587,12 @@ void Init(const D2RL::PluginContext* ctx);
 void SetHeroSource(uintptr_t (*unit)(), bool (*id)(uint32_t*));
 // [render] dim_own_effects, dim_own_effects_pct, dim_own_auras_pct (percent 0..100): live.
 void Configure(bool on, float bodyPct, float auraPct);
+// [render] slow_own_effects, own_effects_speed_pct (percent 1..100): live.
+void ConfigureSpeed(bool slow, float speedPct);
+// [render] lower_own_effects, own_effects_height_cm (-150..+50; 0 = the game's place): live.
+void ConfigureHeight(bool lower, float heightCm);
+// The world's units a metre, as vrcam knows them (the view's height over the player's eye height); 0 = not known (nothing is moved).
+void SetScaleSource(float (*unitsPerMetre)());
 bool Wanted();
 // Puts the two hooks that WATCH the creation of overlays in as soon as they are found, whether the option is on or not (they only look: the original always runs, nothing is
 // changed; so an effect that is already on when the option is ticked live is known and is dimmed at once) - tried again now and then; and tells a status line while the option is on.

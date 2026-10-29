@@ -28,6 +28,11 @@ struct Body {
     float radius = 0.3f;
     bool rig = false;
     int bone = -1;      // rig: the skeleton's bone
+    bool doll = false;  // rig: [weight] monster_ragdoll may move it - its skeleton is a humanoid's (vr/monster_humanoid.h; Rig::doll 1)
+    bool hostile = true;   // the server called it hostile; false: a town NPC, a hireling... - a body only with [weight] npc_bodies (never attacked: hit by touch asks its own verdict)
+    int held = 0;          // [weight] monster_shields: 0 its body; 1 a weapon it holds, 2 its shield - they stop the player's weapon, are no hit on it, push no doll
+    int mode = -1;         // [weight] parry_*: the monster's unit mode at the scan (vr/parry.h MonsterAttacking), -1 not read
+    int parent = -1;       // [weight] grab_bodies: the snapshot's body of the nearest bone above this one's that has a capsule (LinkParents; -1: none - a root, or not known)
 };
 struct Snapshot {
     Body b[kMax];
@@ -60,18 +65,28 @@ inline bool RenderToHead(const View& v, const float p[3], float out[3]) {
     return std::isfinite(out[0] + out[1] + out[2]);
 }
 
+// The head's frame -> the render world (metres): RenderToHead run forward (bladeshape::PointToRender's mapping) - where the weight model's room points
+// are drawn ([debug] stab_debug, vr/stab_debug.h). False when the view is degenerate.
+inline bool HeadToRender(const View& v, const float h[3], float out[3]) {
+    if (!(v.upm > 1e-3f) || !std::isfinite(v.upm)) return false;
+    for (int k = 0; k < 3; ++k) out[k] = v.eye[k] / v.upm + h[0] * v.camR[k] - h[2] * v.camF[k] + (k == 1 ? h[1] : 0.0f);
+    return std::isfinite(out[0] + out[1] + out[2]);
+}
+
 // The body the weapon meets: the touch's capsule less the touch's margin, never thinner than 8 cm.
 inline float CoreRadius(float touchRadius) { return std::max(0.08f, touchRadius - meleetouch::kTouchSlackM); }
 
 // The bodies of the hostile monsters (the touch's capsules of them, render metres, the nearest first) from their skeletons: each monster takes the nearest
 // rig not taken yet whose place (world units, its transform's translation over upm) is within the monster's capsule plus kMatchM across the ground - and
 // so its limbs - or, with none there, its own capsule. Rig: anything with root[3], n and c[] of monsterrig::Capsule (skel::MonsterRig). *rigged: how many
-// monsters got their skeleton. The snapshot's tick is the caller's.
+// monsters got their skeleton; rigOf[m] (may be null): the rig monster m took, -1 none. The snapshot's tick is the caller's. A rig with doll 1 (a humanoid, skel::MonsterRig) makes its limbs Body::doll.
 constexpr float kMatchM = 0.35f;
 template <class Rig>
-void Assemble(const Body* monsters, int nMonsters, const Rig* rigs, int nRigs, float upm, Snapshot* out, int* rigged = nullptr) {
+void Assemble(const Body* monsters, int nMonsters, const Rig* rigs, int nRigs, float upm, Snapshot* out, int* rigged = nullptr, int* rigOf = nullptr) {
     out->n = 0;
     if (rigged) *rigged = 0;
+    if (rigOf)
+        for (int m = 0; m < nMonsters; ++m) rigOf[m] = -1;
     if (!(upm > 1e-3f)) return;
     bool used[64] = {};
     for (int m = 0; m < nMonsters && out->n < kMax; ++m) {
@@ -79,7 +94,7 @@ void Assemble(const Body* monsters, int nMonsters, const Rig* rigs, int nRigs, f
         int best = -1;
         float bestD = 1e30f;
         for (int r = 0; r < nRigs && r < 64; ++r) {
-            if (used[r] || rigs[r].n <= 0) continue;
+            if (used[r] || rigs[r].n <= 0 || rigs[r].still) continue;   // (a corpse's pose, held still: not a living monster's body)
             const float dx = rigs[r].root[0] / upm - mb.bottom[0], dz = rigs[r].root[2] / upm - mb.bottom[2];
             const float d = std::sqrt(dx * dx + dz * dz);
             if (d <= mb.radius + kMatchM && d < bestD) { bestD = d; best = r; }
@@ -90,6 +105,7 @@ void Assemble(const Body* monsters, int nMonsters, const Rig* rigs, int nRigs, f
         }
         used[best] = true;
         if (rigged) ++*rigged;
+        if (rigOf) rigOf[m] = best;
         for (int i = 0; i < rigs[best].n && out->n < kMax; ++i) {
             const auto& c = rigs[best].c[i];
             Body& b = out->b[out->n++];
@@ -98,7 +114,39 @@ void Assemble(const Body* monsters, int nMonsters, const Rig* rigs, int nRigs, f
             b.radius = c.radius / upm;
             b.rig = true;
             b.bone = c.bone;
+            b.doll = rigs[best].doll > 0;
+            b.hostile = mb.hostile;
+            b.mode = mb.mode;
         }
+        for (int i = 0; i < rigs[best].nHeld && out->n < kMax; ++i) {   // [weight] monster_shields: what it holds (skel::MonsterRig::held; none unless asked)
+            const auto& c = rigs[best].held[i];
+            Body& b = out->b[out->n++];
+            b.id = mb.id;
+            for (int k = 0; k < 3; ++k) { b.bottom[k] = c.a[k] / upm; b.top[k] = c.b[k] / upm; }
+            b.radius = c.radius / upm;
+            b.rig = true;
+            b.bone = c.bone;
+            b.doll = false;   // (no doll of it)
+            b.hostile = mb.hostile;
+            b.mode = mb.mode;
+            b.held = rigs[best].heldKind[i];
+        }
+    }
+}
+
+// [weight] grab_bodies: each limb of monster id linked to the limb above it - the body of the nearest bone up its skeleton's chain (parent[], nBones) that has a
+// capsule of its own in the snapshot (the hand to the forearm, the forearm to the upper arm, the upper arm to the trunk); a body with none above it is a root.
+// The grab's muscles bend the held limb at its joints against them (the weight library's chain). Only that monster's own limbs (rig, not what it holds).
+inline void LinkParents(Snapshot* s, uint32_t id, const int16_t* parent, int nBones) {
+    if (!s || !parent || nBones <= 0) return;
+    for (int i = 0; i < s->n && i < kMax; ++i) {
+        Body& b = s->b[i];
+        if (b.id != id || !b.rig || b.held != 0 || b.bone < 0 || b.bone >= nBones) continue;
+        b.parent = -1;
+        int guard = 0;
+        for (int p = parent[b.bone]; p >= 0 && p < nBones && guard < nBones && b.parent < 0; p = parent[p], ++guard)
+            for (int j = 0; j < s->n && j < kMax; ++j)
+                if (j != i && s->b[j].id == id && s->b[j].rig && s->b[j].held == 0 && s->b[j].bone == p) { b.parent = j; break; }
     }
 }
 
@@ -107,7 +155,7 @@ void Assemble(const Body* monsters, int nMonsters, const Rig* rigs, int nRigs, f
 // game's capsule - its skeleton was not read (blue: drawn as the weapon meets it, less the touch's margin), kKindTouched the capsule the weapon is
 // on now (white). World units from where the hands hang (eyeWorld), as melee_boxes.h Pack. touchedId / touchedBone: the capsule the weapon met on the
 // weight model's last step - the monster's id and the bone (-1: its own capsule); id 0 none. Returns how many were packed (up to max).
-constexpr int kKindLimb = 12, kKindOwn = 13, kKindTouched = 14;
+constexpr int kKindLimb = 12, kKindOwn = 13, kKindTouched = 14, kKindShield = 11, kKindWeapon = 8;
 inline int Pack(const Snapshot& s, const float eyeWorld[3], uint32_t touchedId, int touchedBone, float (*a)[4], float (*b)[4], int max) {
     if (!(s.upm > 1e-3f) || max <= 0) return 0;
     int k = 0;
@@ -120,7 +168,8 @@ inline int Pack(const Snapshot& s, const float eyeWorld[3], uint32_t touchedId, 
         }
         a[k][3] = r * s.upm;
         const bool on = touchedId != 0 && c.id == touchedId && (c.rig ? c.bone : -1) == touchedBone;
-        b[k][3] = static_cast<float>(on ? kKindTouched : c.rig ? kKindLimb : kKindOwn);
+        // ([weight] monster_shields: a shield violet, a weapon orange - the effect's colours 11 and 8, no new one)
+        b[k][3] = static_cast<float>(on ? kKindTouched : c.held == 2 ? kKindShield : c.held == 1 ? kKindWeapon : c.rig ? kKindLimb : kKindOwn);
         ++k;
     }
     return k;

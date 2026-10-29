@@ -53,10 +53,14 @@ inline std::wstring GameOfPluginDir(const std::wstring& pluginDir) {
     }
     return ScopeRootOfPluginDir(pluginDir);
 }
-// Where ReShade lives: the mod's reshade\ folder when the plugin runs as a mod and that folder has ReShade64.dll
-// (`modHasReShade`), else the game's folder (the old layout, or a mod without its own ReShade).
-inline std::wstring ReShadeDir(const std::wstring& gameDir, const std::wstring& modRoot, bool modHasReShade) {
-    return !modRoot.empty() && modHasReShade ? WithSlash(modRoot) + kReShadeFolder : WithSlash(gameDir);
+// Where ReShade lives (its base: ReShade.ini, its log): the mod's reshade\ folder whenever the plugin runs as a mod - whether its
+// ReShade64.dll is there yet or not - unless the player has their own ReShade as dxgi.dll beside the game (`playerDxgi`: the game
+// loads that one, its base is the game's folder); else the game's folder (the old layout). A ReShade64.dll beside the game in the
+// mod layout is NOT D2R VR's (another mod's, or one left from before 0.170 that Setup did not mark as ours): a player's logs of
+// 2026-10-25 had the plugin load such a one, it refused to start (error 1114), the sky stayed black, and Settings said "installed"
+// and hid Install ReShade.
+inline std::wstring ReShadeDir(const std::wstring& gameDir, const std::wstring& modRoot, bool playerDxgi) {
+    return !modRoot.empty() && !playerDxgi ? WithSlash(modRoot) + kReShadeFolder : WithSlash(gameDir);
 }
 // Where D2R VR's OWN ReShade files are - D2R_DepthFog.fx, the sky / ceiling / Arcane pictures, FlatVR's add-on: the mod's reshade\ whenever D2R VR is
 // the mod (whoever loads ReShade: its own ReShade64.dll with this folder as base, or a dxgi.dll the player has beside the game, which finds them through

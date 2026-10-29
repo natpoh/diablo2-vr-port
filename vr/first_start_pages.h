@@ -57,10 +57,10 @@ inline constexpr PageText kPages[kPageCount] = {
      kNavMiddle},
     // 3: the skill panel and the settings in the headset
     {"The skill panel and the settings",
-     {{"Skill panel", "point at a plate and pull the trigger: from then on that trigger casts its skill"},
+     {{"Skill panel", "point at a plate and pull the trigger: choose the skill for it. Hold the trigger on a plate: from then on that trigger casts its skill"},
       {"EDIT SKILLS", "pick a plate, then a skill you have, to put it there. A skill on the RT or A plate is cast by the right trigger or A."},
       {"SETTINGS tab", "the settings in the headset, in the same window: View, Options, Video, Body, Life, Look, HUD, Belt, Melee, Left, Right"},
-      {"Both grips + a click", "squeeze both grips for a moment, then click a thumbstick: the window opens on SETTINGS"},
+      {"Right stick click, held", "opens the window on the tab it was last on; flip to SETTINGS"},
       {"Flip pages", "flick a thumbstick left or right, or tap a grip (left back, right on). B, Y or Menu closes the window."},
       {"On the PC", "D2R VR Authentic Settings has every setting; most changes show in the game at once"}},
      kNavMiddle},

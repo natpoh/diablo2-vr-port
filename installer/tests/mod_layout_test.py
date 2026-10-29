@@ -141,6 +141,8 @@ def make_payload(tag, dll, defaults, version, libs=True, settings_exe=None):
     put(payload / "plugins/D2R_VR_Settings.exe", Path(settings_exe).read_bytes() if settings_exe else b"MZ SETTINGS " + tag.encode())
     put(payload / "shaders/D2R_DepthFog.fx", "// D2R VR shader " + tag + "\n")
     put(payload / "license/D2R_VR_LICENSE.txt", (repo / "LICENSE").read_bytes())
+    put(payload / "lang/en.txt", "language.name = English\n# " + tag + "\n")
+    put(payload / "lang/ru.txt", "language.name = Русский\n# " + tag + "\n")
     put(payload / "sky/D2R_Sky_act1.png", "SKY-A1 " + tag)
     put(payload / "sky/D2R_Ceiling_cave.png", "CEILING " + tag)
     put(payload / "game/FlatVR_DepthProvider.addon64", b"MZ ADDON " + tag.encode())

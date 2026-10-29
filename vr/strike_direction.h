@@ -9,6 +9,9 @@
 //   amplitude  (every kind, on by default) the head has travelled at least this far in this stroke before the contact: a real swing, not a flick - the PIERCING amplitude in cm is the base
 //              (a dagger's or a spear's short jab can count), the edged kinds need it times `edgedX`, the blunt ones `bluntX` (2), the staffs `staffX`, each kind may carry a factor of its
 //              own (0 = its family's). The least speed is the engine's own ([gameplay] melee_min_speed, and a kind's own: melee_min_speed_<kind>).
+//   backward   (melee_not_backward, off by default; only a weapon that thrusts) the touching point does not move from the weapon's point toward its handle (Rule::backward).
+//   butt       (melee_not_butt, on by default) the contact is not behind the front hand on the weapon (Rule::frontAlong).
+//   metal head (melee_metal_head, on by default; metal-headed and edged kinds) the contact is on the head, as the game's model has it (Rule::headAlong, vr/metal_head.h).
 // A refused contact does not use the monster up (the HitSet takes only what is pressed): a later contact of the same stroke - or the blow after a wind-up, a stroke of its own - counts.
 //
 // The debug drawing (vr/melee_boxes.h) asks the same questions of the blade as it moves (Look), against the monster nearest it, so green means "a contact would count now".
@@ -91,7 +94,24 @@ struct Rule {
     float pierceCm = kDefaultPierceCm;           // melee_amp_pierce_cm: 1 .. 60 (the piercing kinds' least swing amplitude)
     float edgedX = kDefaultEdgedX, bluntX = kDefaultBluntX, staffX = kDefaultStaffX;   // melee_amp_edged_x, _blunt_x, _staff_x: 0.5 .. 6 (times the piercing)
     std::array<float, kKinds> kindX{};           // melee_amp_x_<kind>: 0 = the family's, else 0.25 .. 8 times the piercing
+    // [gameplay] melee_not_backward: a weapon that thrusts (thrust::Applies - the caller sets this per blade) never strikes with a movement from its point toward its handle: the touching
+    // point's way within kBackwardDeg of the butt's direction along the blade is refused (Why::Backward) - the pull-back, a jerk back that meets a monster behind with the butt. The author,
+    // 2026-10-22: "a movement from the point toward the handle must not count either". Off: as before (only `toward` judges the way).
+    bool backward = false;
+    // [gameplay] melee_not_butt: the butt and the shaft behind the hands never strike - a contact nearer the butt than the front hand on the weapon is refused
+    // (Why::Butt), however fast. frontAlong: that hand's place along the blade (0 its butt end, 1 the tip), set per blade by the caller from where the hands
+    // hold it (the game's own grip - the weapon bone - without the weight model); < 0: no such place (a flail's ball, a fist weapon). A player, 2026-10-24:
+    // a poleaxe held in the middle "often ends up killing monsters with the back end of the shaft on the return stroke". Off: as before.
+    bool notButt = true;
+    float frontAlong = -1.0f;
+    // [gameplay] melee_metal_head: a weapon with a metal head or an edge strikes only with it - a contact nearer the butt than the head's start is refused
+    // (Why::Shaft): the shaft and the handle push, they do not hit. headAlong: where the head starts along the blade (0 its butt end, 1 the tip), set per
+    // blade by the caller from the game's own model (vr/metal_head.h); < 0: nothing to refuse (wood, a claw, a flail's ball). The author, 2026-10-24: weapons
+    // with a metal head should not kill with the shaft, only push. Off: as before.
+    bool metalHead = true;
+    float headAlong = -1.0f;
 };
+inline constexpr float kBackwardDeg = 60.0f;   // the way within this of the blade's axis toward the butt (the dot product under -0.5) is backward
 inline Rule Clamp(Rule r) {
     const auto fin = [](float v, float lo, float hi, float def) { return std::isfinite(v) ? std::clamp(v, lo, hi) : def; };
     r.towardDeg = fin(r.towardDeg, 20.0f, 89.0f, kDefaultTowardDeg);
@@ -107,7 +127,10 @@ inline Rule Clamp(Rule r) {
 }
 // [flail] chain: the rules for a flail's ball (bladeshape::BallShape) - the whole ball is the head, so the head-only rule has nothing to refuse;
 // toward the monster and the amplitude stay, judged by the ball's own motion.
-inline Rule ForBall(Rule r) { r.head = false; return r; }
+inline Rule ForBall(Rule r) { r.head = false; r.headAlong = -1.0f; return r; }
+// [gameplay] melee_head_volume: a contact of the head's own volume (an axe's blade beside its shaft, vr/metal_head.h Volume) IS the head - nothing of the shaft, the
+// butt or the head's share to refuse; toward the monster and the amplitude stay, judged by the head's own motion.
+inline Rule ForHeadVolume(Rule r) { r.head = false; r.headAlong = -1.0f; r.frontAlong = -1.0f; return r; }
 inline bool TowardApplies(const Rule& r, int kind) { return r.toward && kind >= 0 && kind < kKinds && (r.towardKinds & Bit(kind)) != 0; }
 inline bool HeadApplies(const Rule& r, int kind) { return r.head && kind >= 0 && kind < kKinds && (r.headKinds & Bit(kind)) != 0; }
 
@@ -211,9 +234,11 @@ inline float DegOf(float cosine) { return std::acos(std::clamp(cosine, -1.0f, 1.
 
 // ---- the verdict on a contact ----
 
-enum class Why { Counts, NotHead, Away, TooSmall };
+enum class Why { Counts, NotHead, Away, TooSmall, Backward, Butt, Shaft };
 inline const char* WhyText(Why w) {
-    return w == Why::NotHead ? "not the head (the shaft or the handle touched)" : w == Why::Away ? "the point moves away from the monster, or across it" : w == Why::TooSmall ? "a swing too small for this weapon" : "a strike";
+    return w == Why::NotHead ? "not the head (the shaft or the handle touched)" : w == Why::Away ? "the point moves away from the monster, or across it" : w == Why::TooSmall ? "a swing too small for this weapon"
+         : w == Why::Backward ? "the weapon moves from its point toward its handle" : w == Why::Butt ? "the butt or the shaft behind the hands touched"
+         : w == Why::Shaft ? "the shaft or the handle below the head touched (it pushes, it does not hit)" : "a strike";
 }
 
 struct Judgement {
@@ -223,6 +248,7 @@ struct Judgement {
     float cosine = 0.0f;
     float along = 0.0f;          // where on the blade it touched (0 the grip end, 1 the tip)
     float travelCm = 0.0f, needCm = 0.0f;   // the swing's amplitude so far, and what the kind needs
+    float axisCos = 0.0f;        // with haveWay: the way against the blade's axis (+1 toward the point, -1 toward the handle)
     stroke::Vec at, dir, onAxis; // with haveWay: the touching point at the moment of the touch, its way (unit), the nearest point of the monster's axis (for the drawing)
     bool haveAxis = false;
 };
@@ -241,8 +267,17 @@ inline Judgement Judge(const Rule& rule, int kind, const stroke::Sweep& sw, cons
         float c = 0.0f;
         j.haveAxis = TowardCos(at, dir, body, &c, &j.onAxis);
         if (j.haveAxis) { j.cosine = c; j.angleDeg = DegOf(c); }
+        const stroke::Vec blade = sw.after.tip - sw.after.base;   // the blade's axis at the sweep's end, grip end -> point
+        const float bl = stroke::Length(blade);
+        if (bl > 1e-4f) j.axisCos = stroke::Dot(dir, blade * (1.0f / bl));
     }
     if (kind < 0) return j;
+    // from the point toward the handle (a weapon that thrusts)
+    if (rule.backward && j.haveWay && j.axisCos < -std::cos(kBackwardDeg * 0.0174532925f)) { j.why = Why::Backward; return j; }
+    // the butt: behind the front hand (melee_not_butt) - never a strike, whatever the kind
+    if (rule.notButt && rule.frontAlong > 0.0f && contact.along < rule.frontAlong) { j.why = Why::Butt; return j; }
+    // the shaft or the handle below a metal head, an edge (melee_metal_head) - it pushes, it does not strike
+    if (rule.metalHead && rule.headAlong > 0.0f && contact.along < rule.headAlong) { j.why = Why::Shaft; return j; }
     // the head: the outer part of the blade (the contact's place along it)
     if (HeadApplies(rule, kind) && contact.along < 1.0f - rule.headPct * 0.01f) { j.why = Why::NotHead; return j; }
     // toward the monster

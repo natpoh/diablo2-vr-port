@@ -55,6 +55,9 @@ struct Controls {
     float v[kCtlCount] = {};
     float stick[2][2] = {};
     bool touch[kCtlCount] = {};   // the finger on the control (capacitive touch, HasTouch ones only; pressed or not)
+    // Each stick's lean (its length, 0..1) as the hand holds it - before a gate or a gesture hid it (the stick above reads centred then): what
+    // [direct] hold_stick_max_pct judges a click by. 0 = only `stick`.
+    float lean[2] = {};
 };
 
 // The controls whose shots are dropped this frame (bit per Ctl), from the frame's takes (Take with kNoShotTrigger / kNoShotSqueeze; hand 0
@@ -98,18 +101,22 @@ public:
             if (touchMask_[i]) c.touch[i] = false;
         }
         for (int h = 0; h < 2; ++h) {
-            if (std::max(std::fabs(c.stick[h][0]), std::fabs(c.stick[h][1])) <= kStickReleased) stick_[h] = false;
+            if (free_[h] || std::max(std::fabs(c.stick[h][0]), std::fabs(c.stick[h][1])) <= kStickReleased) stick_[h] = false;
             if (stick_[h]) c.stick[h][0] = c.stick[h][1] = 0.0f;
         }
         return c;
     }
     bool Masked(Ctl c) const { return mask_[c]; }
+    // [openxr] hand_inventory: the stick of hand h is never held back by a change of the context - it walks the hero on through a menu
+    // opening or closing (vr/hand_inventory.h). Only the stick; its click and every other control as before.
+    void SetStickFree(int h, bool free) { free_[h & 1] = free; }
 private:
     uint32_t context_ = 0;
     bool started_ = false;
     bool mask_[kCtlCount] = {};
     bool touchMask_[kCtlCount] = {};
     bool stick_[2] = {};
+    bool free_[2] = {};
 };
 
 // -- outputs ------------------------------------------------------------------------------------------------------------
@@ -151,6 +158,10 @@ struct Table {
     Binding touch[kCtlCount];
     bool holdEnabled = true;                       // [direct] hold_enabled
     uint32_t holdMs = holdtap::kDefaultHoldMs;     // [direct] hold_ms
+    // [direct] hold_stick_max_pct / 100 (the author, 2026-10-25: "the inventory opens all the time in a fight" - a stick pushed and pressed by accident):
+    // a stick's click is a long press only while that stick leans no further than this (70 % opens, 71 % does not); leaned past it before the hold,
+    // that press is never a long press - its quick tap (the map) stays at any lean. 0 = no limit, as before.
+    float holdStickMax = 0.7f;
 };
 
 inline Binding Bind(Out a, Out b = {}, Out c = {}) { Binding r; r.out[0] = a; r.out[1] = b; r.out[2] = c; return r; }
@@ -256,12 +267,22 @@ class Layout {
 public:
     Layout() : world_(DefaultTable()), menu_(MenuTable()) {}
     void SetWorld(const Table& t) { world_ = t; }
+    // Was a stick's long press (hand 0 left, 1 right) refused for its stick's lean since the last call? (for the log) kLeanPressed: the stick
+    // leaned past [direct] hold_stick_max before the hold - no inventory / skill panel. Its tap is never refused: the map at any lean (the author,
+    // 2026-10-25: "if I run and need to look at the map, I must not stop").
+    enum : int { kLeanNone, kLeanPressed };
+    int TakeLeanRefused(int h) { const int r = leanRefused_[h & 1]; leanRefused_[h & 1] = kLeanNone; return r; }
     const Table& World() const { return world_; }
+    // [openxr] hand_inventory, away from town: the click of hand h's stick is never refused for that stick's lean (hold_stick_max) - walking,
+    // the inventory opens and closes (vr/hand_inventory.h). false = as before.
+    void SetLeanFree(int h, bool free) { leanFree_[h & 1] = free; }
     void Reset() { for (bool& d : down_) d = false; touchSeen_ = false; Cancel(); }
     // The context changed under the controls (a menu, the focus, the session): a press under way is forgotten, no tap.
     void Cancel() {
         for (int& l : latch_) l = -1;
-        for (int i = 0; i < kCtlCount; ++i) { ht_[i].Cancel(); htOn_[i] = false; suppress_[i] = false; touchUntil_[i] = 0; touchOn_[i] = false; }
+        for (int i = 0; i < kCtlCount; ++i) {
+            ht_[i].Cancel(); htOn_[i] = false; suppress_[i] = false; touchUntil_[i] = 0; touchOn_[i] = false; noHold_[i] = false;
+        }
     }
 
     // nowMs: a monotonic clock in ms (hold-or-tap). uiUp: a panel of the plugin's own is up - a control with a hold line
@@ -303,12 +324,20 @@ public:
             if (!now[i] && down_[i]) latch_[i] = -1;
             down_[i] = now[i];
             if (htCtl) {   // hold-or-tap: a press that is the machine's (a chord is not)
-                if (uiUp) { ht_[i].Cancel(); htOn_[i] = false; suppress_[i] = now[i]; continue; }
+                if (uiUp) { ht_[i].Cancel(); htOn_[i] = false; suppress_[i] = now[i]; noHold_[i] = false; continue; }
                 if (suppress_[i]) { if (now[i]) continue; suppress_[i] = false; }
                 if (htOn_[i]) {
+                    // a stick's own click while that stick leans past hold_stick_max: a push in a fight - this press is never a long press (no
+                    // inventory, no skill panel); its tap (the map, the swap) stays, at any lean (the author: "the map must open at any lean")
+                    const int h = HandOf(ctl);
+                    const bool watch = (ctl == kLStick || ctl == kRStick) && world_.holdStickMax > 0.0f && !leanFree_[h];
+                    if (edge) noHold_[i] = false;
+                    if (watch && now[i] && ht_[i].Undecided() && Leaned(c, h)) noHold_[i] = true;
                     const holdtap::Out m = ht_[i].Step(now[i], nowMs, world_.holdMs);
+                    const bool hold = m.hold && !noHold_[i], held = m.held && !noHold_[i];
+                    if (m.hold && noHold_[i]) leanRefused_[h] = kLeanPressed;
                     for (const Out& o : t.plain[i].out) if ((o.kind == kOutCommand ? m.immediate : m.tap) && !(drop && IsShot(o))) Apply(o, 1.0f, r);
-                    for (const Out& o : t.hold[i].out) if ((o.kind == kOutCommand ? m.hold || m.held : m.hold) && !(drop && IsShot(o))) Apply(o, 1.0f, r);
+                    for (const Out& o : t.hold[i].out) if ((o.kind == kOutCommand ? hold || held : hold) && !(drop && IsShot(o))) Apply(o, 1.0f, r);
                     continue;
                 }
             } else if (htOn_[i]) {   // the hold line was taken away under a press (settings changed)
@@ -345,6 +374,13 @@ public:
     }
 
 private:
+    // The stick of hand h out past [direct] hold_stick_max: as the layout sees it, or as the hand holds it (Controls::lean) - the larger.
+    bool Leaned(const Controls& c, int h) const {
+        const float sx = c.stick[h][0], sy = c.stick[h][1];
+        const float seen = std::isfinite(sx) && std::isfinite(sy) ? std::sqrt(sx * sx + sy * sy) : 0.0f;
+        const float held = std::isfinite(c.lean[h]) ? c.lean[h] : 0.0f;
+        return std::max(seen, held) > world_.holdStickMax;
+    }
     static bool HasOut(const Binding& b) {
         for (const Out& o : b.out) if (o.kind != kOutNone) return true;
         return false;
@@ -374,6 +410,9 @@ private:
     holdtap::Machine ht_[kCtlCount];
     bool htOn_[kCtlCount] = {};        // the press in progress (or its tap) is hold-or-tap's
     bool suppress_[kCtlCount] = {};    // a panel came up under the press: nothing until it is let go
+    int leanRefused_[2] = {};          // a stick's long press was refused for its lean (hold_stick_max) since the last TakeLeanRefused: kLeanPressed
+    bool noHold_[kCtlCount] = {};      // this press of a stick's click leaned past hold_stick_max before its hold: never a long press, its tap stays
+    bool leanFree_[2] = {};            // SetLeanFree: that hand's stick click is not judged by its lean
     bool touchDown_[kCtlCount] = {};   // the finger was on the control last frame
     uint64_t touchUntil_[kCtlCount] = {};   // a touch line's pulse runs until this tick
     bool touchOn_[kCtlCount] = {};     // a touch that began (an edge) and has not been lifted: the touch line's key commands are held
@@ -522,6 +561,14 @@ inline bool StickMapOn(const IniGet& get) { return IniLong(get, "left_stick_map"
 inline bool PauseButtonOn(const IniGet& get) { return IniLong(get, "pause_button", 1) != 0; }
 // The table the keys leave alone: the defaults the toggles ([direct] left_stick_map, pause_button) make.
 inline Table DefaultsFromIni(const IniGet& get) { return DefaultTable(StickMapOn(get), PauseButtonOn(get)); }
+// The second row of skill buttons (B / X / Y / RB with the pad's LT held) is the left trigger's as long as its line is the pad's LT (the default,
+// left_trigger = pad:LT). Bound to its own action - or to nothing - the left trigger does that, and the second row is OFF: no other control takes
+// its place (the author, 2026-10-24: "if you bind the left trigger, the second row of buttons is disabled"). The plugin's skill panel greys
+// those slots then and takes no layer from the left trigger (vr/wheel_controller.h SetSecondRow); D2R VR Settings says so by the row.
+inline bool SecondRowOn(const Table& t) {
+    for (const Out& o : t.plain[kLTrigger].out) if (o.kind == kOutLT) return true;
+    return false;
+}
 inline Table TableFromIni(const IniGet& get, int (*cmdByName)(const char*), int* rebound = nullptr, int* bad = nullptr, const IniBad& onBad = nullptr) {
     Table t = DefaultsFromIni(get);
     int nRebound = 0, nBad = 0;
@@ -550,6 +597,7 @@ inline Table TableFromIni(const IniGet& get, int (*cmdByName)(const char*), int*
     // hold-or-tap (vr/hold_tap.h): a "<control>_hold" line gives a control a long press
     t.holdEnabled = IniLong(get, "hold_enabled", 1) != 0;
     t.holdMs = holdtap::ClampHoldMs(IniLong(get, "hold_ms", (long)holdtap::kDefaultHoldMs));
+    t.holdStickMax = (float)std::clamp<long>(IniLong(get, "hold_stick_max_pct", 70), 0, 100) / 100.0f;
     for (int i = 0; i < kCtlCount; ++i) {
         char hold[64];
         std::snprintf(hold, sizeof hold, "%s_hold", Name((Ctl)i));

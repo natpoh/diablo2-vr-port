@@ -465,7 +465,10 @@ void SeatedCases() {
           "seated: a standing measurement stored - its eye height is kept for the world's scale");
     Check(InForce(true, {0.0f, 1.5101f}).eyeHeight == 0.0f && InForce(true, {0.0f, 1.5101f}).armSpan == 1.5101f,
           "seated: only a span stored - the span, the eye height the old one (0: BodyWalk / user_height_m)");
-    Check(InForce(false, {0.0f, 1.5101f}).armSpan == 0.0f, "seated: only a span stored, played standing - nothing (measure standing)");
+    Check(InForce(false, {0.0f, 1.5101f}).armSpan == 1.5101f && InForce(false, {0.0f, 1.5101f}).eyeHeight == 0.0f,
+          "only a span stored (seated, or set by hand), played standing - the span alone, the old height");
+    Check(InForce(false, {0.0f, 0.5f}).armSpan == 0.0f && InForce(false, {0.5f, 1.6f}).armSpan == 1.6f && InForce(false, {0.5f, 1.6f}).eyeHeight == 0.0f,
+          "standing: a span not a person's - nothing; an eye height not a person's - the span alone");
     Check(InForce(true, {1.6917f, 0.5f}).armSpan == 0.0f && InForce(true, {1.6917f, 0.5f}).eyeHeight == 0.0f, "seated: a span not a person's - nothing");
     Check(InForce(true, {1.0f, 2.0f}).armSpan == 2.0f && InForce(true, {1.0f, 2.0f}).eyeHeight == 0.0f,
           "seated: an eye height that does not go with the span - the span alone");
@@ -488,6 +491,101 @@ void SeatedCases() {
     Check(StandingEyeY(seatedHead, true, 0.0f, eye, false) == StandingEyeY(seatedHead, true, 0.0f, eye), "seated: standing is the 4-argument call");
 }
 
+// [calibration] strict_tpose: the arms straight out to the sides. The author's numbers: eye height 1.75 m; standing 1.63 m one day,
+// 1.50 m another, seated 1.68 m - the 1.50 one taken with the arms swung forward (a span 15 cm short), and it was let through.
+// A pose of an arm `out` from a shoulder 0.18 m out, 0.08 m behind the eyes, swung `aheadDeg` forward from straight out sideways.
+Sample Swung(float eye, float arm, float aheadDeg, float heading = 0.0f) {
+    Sample s = TPose(eye, 0.8f, heading);
+    const float a = aheadDeg * 0.0174532925f;
+    const Vec r{0.18f + arm * std::cos(a), -0.20f, 0.08f - arm * std::sin(a)}, l{-r.x, r.y, r.z};
+    s.hand[kRight] = s.head + TurnAboutY(heading, r);
+    s.hand[kLeft] = s.head + TurnAboutY(heading, l);
+    return s;
+}
+
+void StrictCases() {
+    // the arm the 1.68 seated span gives: 0.66 m each from a shoulder 0.18 m out
+    const float eye = 1.7484f, arm = 0.66f;
+    Sample s = Swung(eye, arm, 0.0f);
+    const float spanOut = Length(s.hand[kRight] - s.hand[kLeft]);
+    Check(Near(spanOut, 1.68f, 1e-3f), "strict: (straight out sideways: the 1.68 span)");
+    s.strict = true;
+    Check(CheckPose(s) == Hint::Pose, "strict: arms straight out sideways - taken");
+    for (float h : {1.0f, -2.0f, 3.1f}) {
+        Sample t = Swung(eye, arm, 0.0f, h);
+        t.strict = true;
+        Check(CheckPose(t) == Hint::Pose, "strict: straight out sideways at any heading - taken");
+    }
+    // swung 25 degrees forward: the hands 20 cm ahead of the eyes, the span 1.56 - the old pose let it through, strict does not
+    Sample f = Swung(eye, arm, 25.0f);
+    const float spanAhead = Length(f.hand[kRight] - f.hand[kLeft]);
+    Check(spanAhead < spanOut - 0.10f, "strict: (arms swung 25 degrees forward read a span over 10 cm short)");
+    Check(CheckPose(f) == Hint::Pose, "strict off: the arms swung forward are taken, as before");
+    f.strict = true;
+    Check(CheckPose(f) == Hint::Arms, "strict: the arms swung forward - refused (Arms)");
+    for (float h : {1.0f, -2.0f, 3.1f}) {
+        Sample t = Swung(eye, arm, 25.0f, h);
+        t.strict = true;
+        Check(CheckPose(t) == Hint::Arms, "strict: swung forward at any heading - refused");
+    }
+    // a little forward (10 degrees: the hands 3 cm ahead of the eyes) - still taken, the span 1 % short
+    Sample g = Swung(eye, arm, 10.0f);
+    g.strict = true;
+    Check(CheckPose(g) == Hint::Pose, "strict: 10 degrees forward - taken");
+    // the elbows bent (the arm 0.55 m to the grip, straight out): span 1.46, 0.84 of the eye height - refused
+    Sample b = Swung(eye, 0.55f, 0.0f);
+    Check(CheckPose(b) == Hint::Pose, "strict off: elbows bent, taken, as before");
+    b.strict = true;
+    Check(CheckPose(b) == Hint::Arms, "strict: a span under 0.88 of the eye height - refused");
+    // the bound itself
+    Check(StrictArms({0.8f, -0.2f, -0.059f}, {-0.8f, -0.2f, 0.0f}, 1.6f, 1.7f), "StrictArms: a hand 5.9 cm ahead - taken");
+    Check(!StrictArms({0.8f, -0.2f, -0.061f}, {-0.8f, -0.2f, 0.0f}, 1.6f, 1.7f), "StrictArms: a hand 6.1 cm ahead - refused");
+    Check(!StrictArms({0.8f, -0.2f, 0.0f}, {-0.8f, -0.2f, -0.07f}, 1.6f, 1.7f), "StrictArms: the left hand ahead - refused");
+    Check(StrictArms({0.8f, -0.2f, 0.15f}, {-0.8f, -0.2f, 0.15f}, 1.6f, 1.7f), "StrictArms: hands behind the eyes - taken");
+    Check(StrictArms({}, {}, 0.881f * 1.7f, 1.7f) && !StrictArms({}, {}, 0.879f * 1.7f, 1.7f), "StrictArms: the span's bound, 0.88 of the eye height");
+    Check(StrictArms({}, {}, 1.0f, 0.0f), "StrictArms: no eye height to hold it against - the span not judged");
+    // seated: the stored standing eye height is the yardstick; without one, only the hands' place
+    Sample sb = Swung(eye, 0.55f, 0.0f);
+    sb.seated = true;
+    sb.strict = true;
+    sb.storedEye = eye;
+    Check(CheckPose(sb) == Hint::Arms, "strict seated: elbows bent against the stored eye height - refused");
+    sb.storedEye = 0.0f;
+    Check(CheckPose(sb) == Hint::Pose, "strict seated, no stored eye height: the span not judged - taken");
+    Sample sf = Swung(eye, arm, 25.0f);
+    sf.seated = true;
+    sf.strict = true;
+    Check(CheckPose(sf) == Hint::Arms, "strict seated: arms swung forward - refused");
+    // the flow with strict: a whole measurement of arms straight out sideways reads the 1.68
+    {
+        Flow flow;
+        flow.Begin();
+        Sample t = Swung(eye, arm, 0.0f);
+        t.strict = true;
+        bool done = false;
+        for (int i = 0; i < 200 && !done; ++i) {
+            t.time = 10.0 + i * 0.011;
+            t.trigger[kLeft] = t.trigger[kRight] = i < 5 ? 0.0f : 1.0f;
+            done = flow.Step(t);
+        }
+        Check(done && Near(flow.Get().armSpan, 1.68f, 2e-3f) && Near(flow.Get().eyeHeight, eye, 1e-3f), "strict: the flow reads the straight-out span");
+    }
+}
+
+// [calibration] default_span: the span a person of the eye height has
+void DefaultSpanCases() {
+    Check(Near(DefaultSpan(1.7484f), 0.95f * 1.7484f), "default span: 0.95 of the eye height");
+    Check(Near(DefaultSpan(1.6401f), 1.5581f, 1e-3f), "default span: the player's eye height gives his measured 1.55 within 1 cm");
+    Check(DefaultSpan(0.0f) == 0.0f && DefaultSpan(0.5f) == 0.0f && DefaultSpan(std::nanf("")) == 0.0f, "default span: no valid eye height - none");
+    Check(ValidSpan(DefaultSpan(0.9f)) && ValidSpan(DefaultSpan(2.3f)), "default span: a valid span from a 0.9 m eye height to the top");
+    Check(Valid({1.7f, DefaultSpan(1.7f)}), "default span: a valid measurement with its eye height");
+    Check(DefaultSpan(1.7f) >= kStrictSpanPerEye * 1.7f, "default span: passes the strict span check");
+    // fitted as a measurement: an arm fitted to it with the author's eye height reaches 0.95 * 1.75 / 2 less half the shoulders, less the palm
+    const float fit = ArmScale(7.05f, 1.7484f, DefaultSpan(1.7484f), 1.6f, 2.2f, 0.2f);
+    const float upm = UnitsPerMetre(7.05f, 1.7484f);
+    Check(Near(fit * 2.2f, (DefaultSpan(1.7484f) * upm - 1.6f) * 0.5f - 0.2f, 1e-4f), "default span: fitted the way a measurement is");
+}
+
 }  // namespace
 
 int main() {
@@ -499,6 +597,8 @@ int main() {
     IniCases();
     StandCases();
     SeatedCases();
+    StrictCases();
+    DefaultSpanCases();
     std::printf("%d checks, %d failed\n", g_checks, g_failed);
     return g_failed ? 1 : 0;
 }

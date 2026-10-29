@@ -33,6 +33,7 @@ Status g_status = Status::NotLooked;
 HMODULE g_module = nullptr;
 D2rwStepFn g_step = nullptr;
 D2rwThrowVelocityFn g_throw = nullptr;
+D2rwStabFn g_stab = nullptr;         // optional: a library without it has no stab ([weight] stab_in)
 std::string g_name;
 ULONGLONG g_lastTry = 0;
 int g_toldMissing = -1;              // what the log was last told about the file: 0 missing, 1 there
@@ -88,7 +89,7 @@ public:
             h.twoHandedKind = twoHandedKind ? 1 : 0;
             h.gravity       = s.gravity;
             h.damping       = s.damping;
-            h.strength      = s.strength;
+            h.strength      = s.strength * (n == 2 && s.twoHandsDouble ? 2.0 : 1.0);   // ([weight] two_hands_double)
             h.snap          = s.snap;
             h.flags         = s.modelFlags;
             h.substep       = 0;
@@ -143,6 +144,108 @@ public:
 };
 
 LibEngine g_engine;
+
+// Our state (the centre of mass of OUR body) <-> the library's (the grip frame).
+D2rwState ToLib(const heft::State& st, const heft::Body& b) {
+    const V3 comAt = heft::Rotate(st.rot, b.com);
+    D2rwState s;
+    s.pos    = ToC(heft::Sub(st.com, comAt));
+    s.rot    = ToC(st.rot);
+    s.angVel = ToC(st.angVel);
+    s.vel    = ToC(heft::Sub(st.vel, heft::Cross(st.angVel, comAt)));
+    return s;
+}
+void FromLib(const D2rwState& s, const heft::Body& b, heft::State& st) {
+    st.rot    = FromC(s.rot);
+    st.angVel = FromC(s.angVel);
+    const V3 comAt = heft::Rotate(st.rot, b.com);
+    st.com    = heft::Add(FromC(s.pos), comAt);
+    st.vel    = heft::Add(FromC(s.vel), heft::Cross(st.angVel, comAt));
+}
+
+// [weight] stab_in: the library's stab behind heft::stab::Engine.
+class LibStab final : public heft::stab::Engine {
+public:
+    int Step(heft::State& st, const heft::Body& b, V3 tipLocal, V3 baseLocal, const heft::contact::Capsule* bodies, int n, const heft::stab::Strike* strike, const V3* gaps,
+             int nGaps, double dt, const heft::stab::Params& p, heft::stab::Blob* blob, heft::stab::Report* out) const override {
+        static_assert(sizeof(heft::stab::Blob) == sizeof(D2rwStabState), "the mod's blob is the library's state");
+        D2rwStabFn fn = g_stab;
+        if (!fn || !blob || n < 0) return -1;
+        D2rwStabber s {};
+        s.size = sizeof s;
+        s.tip = ToC(tipLocal);
+        s.base = ToC(baseLocal);
+        s.com = ToC(b.com);
+        s.mass = b.mass;
+        for (int i = 0; i < 3; ++i)
+            for (int j = 0; j < 3; ++j) s.inertia[i * 3 + j] = b.inertia.m[i][j];
+        s.angleCos = p.angleCos;
+        s.requiredSpeed = p.minSpeed;
+        s.tipZone = p.tipM;
+        s.sharpness = p.sharpness;
+        s.shellDamper = p.shellDamper;
+        s.shellThickness = p.shellM;
+        s.damper = p.fleshDamper;
+        s.depthLimit = p.depthLimit;
+        s.lockSpeed = p.lockSpeed;
+        s.lockTime = p.lockTime;
+        s.unlockForce = p.unlockForce;
+        s.unstabThreshold = p.unstabM;
+        s.unstabDelay = p.unstabDelay;
+        s.perpendicular = p.perpM;
+        s.tearDistance = p.breakM;
+        s.missingTime = p.missingS;
+        D2rwBody cb[64];
+        const int nb = std::min(n, 64);
+        for (int i = 0; i < nb; ++i) cb[i] = { ToC(bodies[i].a), ToC(bodies[i].b), bodies[i].radius, ToC(bodies[i].vel), bodies[i].id, bodies[i].part };
+        D2rwStrike sk {};
+        if (strike) {
+            sk.body = strike->body < nb ? strike->body : -1;
+            sk.point = ToC(strike->point);
+            sk.normal = ToC(strike->normal);
+            sk.thrusting = strike->thrusting ? 1 : 0;
+            sk.before = ToLib(strike->before, b);
+        }
+        D2rwV3 g[2];
+        const int ng = std::min(nGaps, 2);
+        for (int i = 0; i < ng; ++i) g[i] = ToC(gaps[i]);
+        D2rwState state = ToLib(st, b);
+        D2rwStabOut o {};
+        const int32_t r = fn(&s, cb, nb, strike ? &sk : nullptr, ng ? g : nullptr, ng, dt, reinterpret_cast<D2rwStabState*>(blob->bytes), &state, &o);
+        if (r < 0) {
+            if (!g_errorTold.exchange(true)) Say("vrcam: weight library - D2rwStab refused a step: the weapon leaves the wound");
+            return -1;
+        }
+        FromLib(state, b, st);
+        if (out) {
+            heft::stab::Report& rep = *out;
+            rep = {};
+            rep.entered = (o.events & 1) != 0;
+            rep.left = (o.events & 2) != 0;
+            rep.in = r == 1;
+            rep.locked = o.locked != 0;
+            std::snprintf(rep.why, sizeof rep.why, "%s", o.why);
+            rep.id = o.id;
+            rep.depth = o.depth;
+            rep.deepest = o.deepest;
+            rep.speed = o.speed;
+            rep.lateral = o.lateral;
+            rep.pull = o.pull;
+            rep.force = o.force;
+            rep.limit = o.limit;
+            rep.entry = FromC(o.entry);
+            rep.axis = FromC(o.dir);
+            rep.judged = (o.events & 32) != 0;
+            rep.thrusting = strike && strike->thrusting;
+            rep.cosInto = o.cosInto;
+            rep.fromTip = o.fromTip;
+            if (strike) rep.point = strike->point;
+        }
+        return r;
+    }
+};
+
+LibStab g_stabEngine;
 
 }  // namespace
 
@@ -236,10 +339,13 @@ bool Ensure() {
     g_module = mod;
     g_step   = step;
     g_throw  = thr;
+    g_stab   = (D2rwStabFn)GetProcAddress(mod, "D2rwStab");   // (optional)
     g_name   = name && name() ? name() : "unnamed";
     g_status = Status::Loaded;
     hh::SetEngine(&g_engine);
-    Say("vrcam: weight library - %s loaded from in d2rloader\\d2r_vr_libs (or beside the plugin): [weight] hands_model 1 moves the held weapon with it", g_name.c_str());
+    if (g_stab) heft::stab::SetEngine(&g_stabEngine);
+    Say("vrcam: weight library - %s loaded from in d2rloader\\d2r_vr_libs (or beside the plugin): [weight] hands_model 1 moves the held weapon with it%s", g_name.c_str(),
+        g_stab ? "; [weight] stab_in sticks thrusts in with its stab" : "; it has no stab (D2rwStab): [weight] stab_in stops at the surface");
     ReleaseSRWLockExclusive(&g_lock);
     return true;
 }

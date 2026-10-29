@@ -60,6 +60,12 @@ struct Facts {
     bool touchLive = false;    // hit by touch is swinging a weapon (melee_touch.cpp Live), fresh
     uint32_t weaponType = 0;   // D2RVR_WeaponType of the weapon it swings
     bool rtSkill = false;      // the skill panel's slot controls own the trigger this frame and the RT slot holds a skill (skillwheel::TriggerCastsSkill)
+    // A thrown weapon (a javelin, a throwing knife or axe) is in hand with the throw by gesture on and hit by touch swinging thrown weapons
+    // ([gameplay] melee_touch_thrown): the gesture throws it, the blade touches with it - the trigger's attack is withheld for it as for a weapon the touch
+    // swings, also in the moments the touch is not live (the weapon thrown, put down, the hand empty while the game throws). Without this the trigger
+    // attacked between throws (Serg, 2026-10-28). Its kind: thrownKind.
+    bool thrownHeld = false;
+    uint32_t thrownKind = 0;
 };
 
 struct Verdict {
@@ -73,7 +79,7 @@ inline Verdict Decide(const Facts& f) {
     if (!f.f4) { v.why = Why::NotF4; return v; }
     if (!f.focused) { v.why = Why::Unfocused; return v; }
     if (f.menu) { v.why = Why::MenuOrPanel; return v; }
-    if (!f.touchLive) { v.why = Why::TouchNotLive; return v; }
+    if (!f.touchLive && !f.thrownHeld) { v.why = Why::TouchNotLive; return v; }
     if (KeepsTrigger(f.weaponType)) { v.why = Why::Shot; return v; }
     if (f.rtSkill) { v.why = Why::SlotSkill; return v; }   // (a skill the player bound to the trigger casts; only the plain attack is withheld)
     v.drop = true;

@@ -12,7 +12,7 @@
 namespace thrustdebugpaint {
 
 constexpr int kW = 512, kH = 336;   // the picture
-constexpr size_t kMaxLines = 12;    // its lines: the touch's five and the jab's five, with room
+constexpr size_t kMaxLines = 12;    // its lines: the touch's six and the jab's six (head, straight, turn, speed, along, accel)
 
 void Render(const thrustdbg::Line* lines, size_t n, std::vector<uint32_t>& px);
 

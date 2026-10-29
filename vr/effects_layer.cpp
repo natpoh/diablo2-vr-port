@@ -10,6 +10,7 @@
 #include <cstdio>
 
 #include "game_device_only.h"
+#include "native_d3d12.h"   // [render] no_reshade: RtvResource, RtvIncrement
 
 namespace effectslayer {
 namespace {
@@ -72,6 +73,13 @@ void Barrier(command_list*, uint32_t count, const resource* res, const resource_
         g_known[k].store(true, std::memory_order_release);
     }
 }
+// [render] no_reshade: the pair as the plugin's hooks see it bound (the targets held: no destroy event)
+bool LayeredNative(const D3D12_RESOURCE_DESC& d) {
+    return d.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE2D && d.SampleDesc.Count == 1 && d.DepthOrArraySize == 1 &&
+           (d.Format == DXGI_FORMAT_R16G16B16A16_FLOAT || d.Format == DXGI_FORMAT_R16G16B16A16_TYPELESS);
+}
+ID3D12Resource* g_held[2] = {};   // under g_found
+
 void Destroyed(device*, resource r) {
     if (!r.handle || (r.handle != g_targets[0].load(std::memory_order_relaxed) && r.handle != g_targets[1].load(std::memory_order_relaxed))) return;
     AcquireSRWLockExclusive(&g_found);
@@ -91,6 +99,55 @@ void Register(void (*log)(const char*)) {
 }
 
 void SetWanted(bool wanted) { g_wanted.store(wanted, std::memory_order_relaxed); }
+
+void SetLogNative(void (*log)(const char*)) { g_log = log; }
+
+void OnBindNative(unsigned n, const D3D12_CPU_DESCRIPTOR_HANDLE* rts, bool single, ID3D12Resource* ds) {
+    if (n < 2 || !rts || !ds || !g_wanted.load(std::memory_order_relaxed)) return;
+    ID3D12Resource* a = natived3d::RtvResource(rts[0].ptr);
+    ID3D12Resource* b = natived3d::RtvResource(single ? rts[0].ptr + natived3d::RtvIncrement() : rts[1].ptr);
+    if (!a || !b) return;
+    if ((uint64_t)(uintptr_t)a == g_targets[0].load(std::memory_order_relaxed) && (uint64_t)(uintptr_t)b == g_targets[1].load(std::memory_order_relaxed))
+        return;
+    const D3D12_RESOURCE_DESC da = a->GetDesc(), db = b->GetDesc(), dd = ds->GetDesc();
+    if (!LayeredNative(da) || !LayeredNative(db) || db.Width != da.Width || db.Height != da.Height || dd.Width != da.Width || dd.Height != da.Height)
+        return;
+    a->AddRef();
+    b->AddRef();
+    AcquireSRWLockExclusive(&g_found);
+    ID3D12Resource* old[2] = {g_held[0], g_held[1]};
+    g_held[0] = a;
+    g_held[1] = b;
+    for (int i = 0; i < 2; ++i) g_known[i].store(false);
+    g_targets[0].store((uint64_t)(uintptr_t)a);
+    g_targets[1].store((uint64_t)(uintptr_t)b);
+    g_width.store((uint32_t)da.Width);
+    g_height.store(da.Height);
+    ReleaseSRWLockExclusive(&g_found);
+    for (ID3D12Resource* r : old)   // (the last pair: its last frame read long done by the next bind of another pair)
+        if (r) r->Release();
+    if (g_log) {
+        char line[200];
+        snprintf(line, sizeof line, "vrcam: eyes by turns - the game's effects layer found (%llux%u, two half-float targets, no ReShade): the eye made keeps its own "
+                 "picture there", (unsigned long long)da.Width, da.Height);
+        g_log(line);
+    }
+}
+
+void OnBarrierNative(unsigned n, const D3D12_RESOURCE_BARRIER* b) {
+    const uint64_t a = g_targets[0].load(std::memory_order_relaxed);
+    if (!a || !b) return;
+    const uint64_t t = g_targets[1].load(std::memory_order_relaxed);
+    for (unsigned i = 0; i < n; ++i) {
+        if (b[i].Type != D3D12_RESOURCE_BARRIER_TYPE_TRANSITION) continue;
+        const uint64_t r = (uint64_t)(uintptr_t)b[i].Transition.pResource;
+        const int k = r == a ? 0 : r == t ? 1 : -1;
+        if (k < 0) continue;
+        // (as ReShade's usage: the D3D12 state's bits - State() gives them back)
+        g_states[k].store((uint32_t)b[i].Transition.StateAfter == 0 ? 0x80000000u : (uint32_t)b[i].Transition.StateAfter, std::memory_order_relaxed);
+        g_known[k].store(true, std::memory_order_release);
+    }
+}
 
 bool Latest(Layer& out) {
     AcquireSRWLockShared(&g_found);

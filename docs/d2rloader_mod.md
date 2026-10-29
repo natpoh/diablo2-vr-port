@@ -45,6 +45,7 @@ Who reads and writes it: **P** the plugin, **S** D2R VR Authentic Settings, **I*
 | BodyWalk Portable (VR, no BodyWalk installed) | `<game>\BodyWalkVR\` | `BodyWalkVR\` | S (`BodyWalkExe`: the newest it finds), I |
 | the licence | `<game>\D2R_VR_LICENSE.txt` | `D2R_VR_LICENSE.txt` | - |
 | for D2RLoader / the game | - | `D2R-VR.mpq\modinfo.json` | D |
+| the player's other data mods (D2RMM's output), merged in | - | `D2R-VR.mpq\data\...` (what `data_mods.txt` names), D2R VR's own files they replace in `data_mods_ours\`, the log `d2rloader\logs\d2r_vr_data_mods.txt` | S (`[mods] merge_data_mods`, below), D reads them |
 | for the shared launcher | - | `vrmod-manifest.json`, `launcher_icon.png` | L |
 | Collect logs (Settings) | the game's root and `d2rloader` | the mod's plugin, logs and reshade folders, D2RLoader's own logs | S |
 
@@ -93,6 +94,34 @@ a transient `d2r_vr_write_probe.tmp` in the game's root while the Install ReShad
   (= `D2RLoader.exe -mod D2R-VR`). See `launcher_authentic.md`.
 - **The other mod** (d2r-pcvr as `mods\D2R-PCVR`, its own plugin name `d2rl-pcvr.dll` and `d2r_pcvr.ini`) does the same on its side; then the choice of mod in
   D2RLoader is the whole switch.
+
+## Other data mods with D2R VR (D2RMM)
+
+D2R loads ONE `-mod`, and D2RLoader 1.3.1 does not layer mods: one active mod (`-mod`, `default_mod`) and below it only the loose `-direct` data root
+(its D2RCore.dll strings: "remount the -direct data root below the active mod overlay"; no docs in the game folder say more). So the mod D2RMM builds -
+olegbl's D2R Mod Manager writes `<game>\mods\<name>\<name>.mpq\data\...` and `modinfo.json` (`<name>` = its "Output Mod Name", default `D2RMM`, kept in
+its own browser storage) and starts the game as `-mod D2RMM -txt` - is not loaded while D2R VR is the mod. Pointing D2RMM's output at `D2R-VR` is no way
+out: **D2RMM deletes `<game>\mods\<name>\<name>.mpq` whole before every build** (src/main/worker/BridgeAPI.ts), with our own files in it.
+
+So D2R VR Authentic Settings merges them (`shared/data_mods.h`, `[mods] merge_data_mods`, on; Home > Other mods): at START, at `--start` (the launcher's
+Play), when it opens and when the tick changes - never while the game runs - it copies the `data\` files of every other folder mod in `<game>\mods` into
+`D2R-VR.mpq\data` and keeps a record of each (`data_mods.txt`: the file, the mod, its size and time, ours as we left it). The next run compares: a file
+D2RMM built again is copied again, one it dropped is taken out, everything goes when the tick is off. Only what the record names is removed, and only while
+it is still as we left it.
+
+- **Not merged:** another VR mod (a `vrmod-manifest.json`: D2R-PCVR's data is for its own plugin), a mod with D2RLoader plugins or patches of its own
+  (they load only when it is started: its data alone would be half of it), a packed `.mpq` (no MPQ reader here), the names in `[mods] merge_skip`, and
+  D2RMM's `data\global\dataversionbuild.txt` (the game's build stamp, not the mod).
+- **The same file in two mods:** D2RMM first, then by name; the first keeps it (logged).
+- **The same file in D2R VR's mod** (the Arcane Sanctuary's visual files, the Kurast Docks' preset - this program's own): D2R VR's one change is made on
+  top of theirs where it is known (`datamods::OurChange`: the canoe on the water, the flat star cards out), theirs as it is when theirs is not as known;
+  any other file of ours stays ours. Ours is moved to `data_mods_ours\` meanwhile and put back when their file goes.
+- **Saves:** D2RMM's `modinfo.json` names its own save folder (`mods\D2RMM` by default); D2R VR's `savepath "../"` stays - the characters are the ones
+  played with D2R VR. Said in the log and on Home.
+- Every choice is written to `d2rloader\logs\d2r_vr_data_mods.txt` (again at each run), the launch's lines to `d2r_vr_launch.txt`.
+- A plain `D2RLoader.exe` start (its `default_mod`) runs the mod as the last START left it: D2RMM built since is taken at the next START.
+
+`tools/data_mods_test.cpp` runs the merge on a made-up game folder; `tools/start_helper_test.py` case 12 runs `--start` with a D2RMM mod.
 
 ## Upgrading from 0.169 or earlier
 

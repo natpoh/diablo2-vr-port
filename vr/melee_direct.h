@@ -106,14 +106,30 @@ struct Request {
     uint32_t heroId = 0;      // the hero's unit id, the same on the client and on the server
     uint32_t monsterId = 0;   // the touched monster's id, the same on the client and on the server
     uintptr_t lookup = 0;     // the server's unit lookup (game, type, id)
+    bool remote = false;      // [gameplay] melee_direct_client_cleave: a joined player's extra hit, asked of this host (heroId is HIS hero)
 };
+
+// [gameplay] melee_direct_client_cleave, the host's side: a joined player's extra hit is struck only within this reach of the
+// game's own range test (the server's Range 0x348650 with this range, the original, not the contact) - a bound against a request
+// for a monster across the room - and not twice on one monster by one hero within kRemoteGapMs.
+constexpr int kRemoteReach = 6;
+constexpr uint64_t kRemoteGapMs = 200;
 
 // D2RLoaderLoadPlugin.
 void Init(const D2RL::PluginContext* ctx);
 // [gameplay] melee_direct and melee_direct_min_ms, from the ini (every read). Off: nothing is hooked, nothing is called.
 void SetWanted(bool on);
 bool Wanted();
+// [gameplay] melee_direct 2 (Settings' "Direct hit: By the rules"): the touches go by melee_direct_client.h's rules (the first touch on a
+// monster, then the hero's attack time, then speed + force + length; the two-handed cleave only with its box) - a touch that passes is
+// this direct call, one that fails the game's own key. 1 (and the old tick box): every accepted touch, as before. Plan's least interval
+// (melee_direct_min_ms) is Full's only.
+void SetByRules(bool on);
+bool ByRules();
 void SetMinIntervalMs(uint32_t ms);
+// [gameplay] melee_direct_client_cleave on THIS PC as the host: the joined players' extra hits are struck here (the hooks go in for it
+// even with melee_direct off; those requests are struck in any view - the host may be in another one).
+void SetRemoteWanted(bool on);
 // The two hooks (the server's target and reach tests) and the proofs of the code, tried again from the timer until they
 // are in; only while wanted. No local server found, a signature missing or a fault: Ready() stays false, the key path runs.
 void Install();

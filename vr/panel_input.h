@@ -6,6 +6,8 @@ namespace D2RL {
 struct PluginContext;
 }
 
+#include <cstdint>
+
 namespace panelinput {
 
 // Before anything else: the log.
@@ -27,6 +29,11 @@ void UseController();
 // under the laser (vr/laser_tooltip.h, panel_input.cpp). Install() hooks the three queries after the laser's own
 // hooks, and only while this is on; what is not found leaves the game's own delay.
 void WantTooltips(bool on);
+// [openxr] laser_typing (the ini, live; vr/typed_keys.h, after bearstonem/d2r-pcvr 34f20a8): the game window's thread, every key-down with
+// its message's or raw input's extra information. A real key (not one the plugin sent, kOwnKeyTag) lets the game take its keyboard layout
+// for a moment although the laser holds the controller one - its text boxes take typed letters only there. Off: as before.
+void WantTyping(bool on);
+void Typed(uintptr_t extra);
 // The draw thread, every laser frame: the laser is the mouse, points at the picture and holds no button
 // (lasertip::Hovering). A lease of 300 ms; a frame that does not hover ends it.
 void ItemHover(bool hovering);

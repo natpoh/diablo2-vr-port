@@ -65,6 +65,7 @@ struct Settings {
     bool categories = true;     // [openxr] skill_categories: the editor has the category strip (All, the class's trees, General / Items) when the cache knows the trees
     bool runWalk = false;       // [openxr] skill_run_walk (off by default): a RUN / WALK control (a tile in the tiles' look, a button on the wheel): the game's own run / walk switch
     bool slotControls = false;  // [openxr] skill_rt_a (off by default): the right trigger is the game's RT slot and the right A its A slot (vr/slot_controls.h)
+    bool editFirst = false;     // [openxr] skill_panel_edit_first (on in the plugin's ini): a tap on a slot opens its skill list; the trigger held on it picks it for the trigger
 };
 
 // The panel's size in metres for these settings: the wheel is square, the tiles' window is wide.
@@ -82,6 +83,7 @@ struct SettingsIn {
     bool calibrating = false;     // the T-pose measurement runs (or is about to): the window is not to be had, and comes back when it is over
     bool chordOn = true;          // both grips and a thumbstick click open it on the Settings tab
     int openGuide = -1;           // the first-start guide asks for the window on Settings > Guide (vr/first_start.h): the guide's page to start on, -1 none
+    float spanInUse = 0.0f;       // the span the hero's arms are fitted to now (calib::SpanInUseM), for the Body page's Arm span
 };
 
 constexpr float kBeamM = 1.5f;   // the beam's length where it hits nothing
@@ -121,11 +123,13 @@ class Controller {
     SlotControls slots_;
     Pose panel_;
     bool gripDown_[2] = {false, false};
+    bool gripTaken_[2] = {false, false};   // SetGripsTaken
     bool stickWas_ = false, triggerWas_ = false, backWas_ = false;
     bool standing_ = false;            // not in F4 (stood down)
     bool castBlocked_ = false;         // SetCastBlocked
     bool triggerTaken_ = false, aTaken_ = false;   // SetControlsTaken
     bool triggerSkill_ = false;        // TriggerCastsSkill
+    bool secondRow_ = true;            // SetSecondRow
     bool closeArmed_ = false;          // the right stick click was let go since the panel opened: a long press of it closes the panel
     double closeHoldAt_ = -1.0;        // when that long press began (< 0: not pressed)
     struct Held {
@@ -161,6 +165,14 @@ public:
     // A gesture other than this panel holds the right trigger / the right A this frame (a bottle in the hand, a javelin, the bow's string: the frame
     // before's takes, directinput::TakenLastFrame): the slot controls leave that control to it. Set before every Frame; false = free.
     void SetControlsTaken(bool trigger, bool a) { triggerTaken_ = trigger; aTaken_ = a; }
+    // The left trigger is the second row of buttons (directinput::SecondRowOn: [direct] left_trigger is the pad's LT, the default). False: it has its own action and the
+    // second row is off - the slots with LT are greyed, the slot controls take no second layer from the left trigger, and a cast leaves it to its action. Set before
+    // every Frame; true = as before.
+    void SetSecondRow(bool on) { secondRow_ = on; }
+    // [weight] weapon_grip_no_chord: a hand's grip (0 left, 1 right) holds the weapon - with [weight] on a hand holds it by its grip, so a two-hander keeps both grips down - or another
+    // gesture holds it (the frame before's takes). Such a grip is no modifier: it does not arm the Settings tab's both-grips chord (which takes both stick clicks), does not make the
+    // wheel's grip + click chord, and does not keep the right A / right trigger from their A / RT slots (a skill there casts with the weapon held). Set before every Frame; false = as before.
+    void SetGripsTaken(bool left, bool right) { gripTaken_[0] = left; gripTaken_[1] = right; }
     const Settings& Config() const { return cfg_; }
     // This frame the right trigger is the game's RT slot (or LT + RT with the left trigger held) and that slot holds a skill: a pull of it casts that skill,
     // and the layout's attack does not see it (the melee rule asks - vr/melee_trigger.h). False where the slot controls are off, in another view, with a
@@ -220,6 +232,8 @@ public:
         const Hand& hm = f.hand[M];
 
         for (int h = 0; h < 2; ++h) gripDown_[h] = f.hand[h].squeeze > (gripDown_[h] ? 0.40f : 0.60f);
+        // a grip as a modifier of the chords and the slot controls: not one that holds the weapon or another gesture's ([weight] weapon_grip_no_chord: SetGripsTaken)
+        const bool modGrip[2] = {gripDown_[0] && !gripTaken_[0], gripDown_[1] && !gripTaken_[1]};
         const bool stick = (hp.buttons & kStick) != 0;
         const bool stickEdge = stick && !stickWas_;
         stickWas_ = stick;
@@ -233,7 +247,7 @@ public:
 
         // the chord is the way in mode 0, and the fallback in mode 1 where the plugin is not the input (the long press cannot come then)
         const bool chordOk = cfg_.openMode == 0 || (f.flags & kDirect) == 0;
-        const bool chordHeld = chordOk && gripDown_[M] && !gripDown_[P] && hm.active && hp.active;
+        const bool chordHeld = chordOk && modGrip[M] && !modGrip[P] && hm.active && hp.active;
         // an unplaced wheel is placed where the head looks as it opens; no head, no wheel
         const bool wasOpen = model_.Open();
         // the long press of the right stick click closes it again: the click is the panel's while it is up, so it is timed here (only after
@@ -254,7 +268,7 @@ public:
         // the Settings tab's own chord: both grips squeezed a third of a second, then a thumbstick click (the settings panel's old way in)
         bool chordArmed = false, settingsChord = false;
         if (tabsOn && host->chordOn) {
-            const float squeeze[2] = {f.hand[0].squeeze, f.hand[1].squeeze};
+            const float squeeze[2] = {gripTaken_[0] ? 0.0f : f.hand[0].squeeze, gripTaken_[1] ? 0.0f : f.hand[1].squeeze};
             const bool sticks[2] = {(f.hand[0].buttons & kStick) != 0, (f.hand[1].buttons & kStick) != 0};
             const hset::Chord::Out ch = chord_.Step(f.time * 1000.0, allowedUi && f.hand[0].active && f.hand[1].active, squeeze, sticks);
             chordArmed = ch.armed;
@@ -299,6 +313,7 @@ public:
         if (tabsOn && wasOpen) {
             settings_.SetEnv(host->env);
             settings_.SetView(host->view);
+            settings_.SetSpanInUse(host->spanInUse);
             settings_.Observe(host->ini);
             if (tabNow == Tab::Settings && !toggle) {
                 float su = 0.0f, sv = 0.0f;
@@ -347,6 +362,9 @@ public:
         in.categories = cfg_.categories;
         in.runWalk = cfg_.runWalk;
         in.slotControls = cfg_.slotControls;
+        in.rowOff = !secondRow_;
+        in.editFirst = cfg_.editFirst;
+        in.held = trig;   // (the long press on a slot, editFirst)
         const Out mo = model_.Step(in);
         out.feedback = mo.feedback;
         out.request = mo.request;
@@ -377,6 +395,7 @@ public:
                 }
                 settings_.SetEnv(host->env);
                 settings_.SetView(host->view);
+                settings_.SetSpanInUse(host->spanInUse);
                 clicker_.Reset();
             } else if (!open && wasOpen) {
                 if (settings_.GuideShown() && !resume_) out.guideEnd = settings_.GuideFinished() ? 1 : 2;   // (the measurement's hiding is no end: it comes back)
@@ -411,9 +430,9 @@ public:
             si.triggerFree = !castBlocked_ && !triggerTaken_ && model_.Selected() < 0 && !co.casting;
             si.aFree = !aTaken_ && !co.casting;
             si.trigger = f.hand[1].trigger;
-            si.leftTrigger = f.hand[0].trigger;
+            si.leftTrigger = secondRow_ ? f.hand[0].trigger : 0.0f;   // (the left trigger's own action: no second layer)
             si.a = (f.hand[1].buttons & kPrimary) != 0;
-            si.gripHeld = gripDown_[1];
+            si.gripHeld = modGrip[1];
             si.skillMask = SkillMask(snap, nowMs, f.session);
             const SlotControls::Out so = slots_.Step(si);
             triggerSkill_ = si.allowed && si.triggerFree && !si.gripHeld && (si.skillMask & (1u << SlotOfControl(Control::Trigger, slots_.LeftDown()))) != 0;
@@ -424,7 +443,7 @@ public:
                 out.rt = so.rt;
                 if (so.takeA) slotTake[1] |= kPrimary;
                 if (so.takeTrigger) slotTake[1] |= kTrigger | kTakeTrigger;
-                if (so.takeLeftTrigger) slotTake[0] |= kTrigger | kTakeTrigger;
+                if (so.takeLeftTrigger && secondRow_) slotTake[0] |= kTrigger | kTakeTrigger;
             }
             out.slotStarted[0] = so.started[0];
             out.slotStarted[1] = so.started[1];
@@ -451,7 +470,7 @@ public:
                 g.stick = g.stick && pushed;   // (a stick flicked as it closed does not walk the hero off until it is back in the middle)
             }
         }
-        if (!open && allowed && chordOk && gripDown_[M] && !gripDown_[P]) {   // the chord is made: its click is not the game's
+        if (!open && allowed && chordOk && modGrip[M] && !modGrip[P]) {   // the chord is made: its click is not the game's
             out.take[P] |= kStick;
             if (stick) gate_[P].buttons |= kStick;
         }
@@ -462,7 +481,7 @@ public:
             }
         }
         if (co.takeTrigger) out.take[P] |= kTakeTrigger;
-        if (co.takeLeftTrigger) out.take[0] |= kTakeTrigger;
+        if (co.takeLeftTrigger && secondRow_) out.take[0] |= kTakeTrigger;
         for (int h = 0; h < 2; ++h) out.take[h] |= Mask(gate_[h]) | slotTake[h];
 
         // the headset layer

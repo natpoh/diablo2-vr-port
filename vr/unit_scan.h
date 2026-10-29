@@ -64,6 +64,7 @@ template <class Read> bool Place(Read&& read, const Unit& u, float* x, float* z)
 struct Near {
     uintptr_t unit = 0;
     uint32_t id = 0, cls = 0;
+    uint32_t mode = 0;          // its unit's mode now (MonMode: 1 neutral, 4 and 5 its attacks, ...; [weight] parry_*)
     float x = 0.0f, z = 0.0f;   // its place on the grid, game WORLD units
     float d2 = 0.0f;            // squared distance to the point asked from, game WORLD units
     stroke::Body body;          // its capsule, render metres (melee_bodies.h)
@@ -88,6 +89,7 @@ size_t Monsters(Read&& read, uintptr_t table, float px, float pz, float reach, f
         c.unit = at;
         c.id = Field32(u, kOffId);
         c.cls = Field32(u, kOffClass);
+        c.mode = mode;
         c.x = x;
         c.z = z;
         c.d2 = d2;

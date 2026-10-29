@@ -181,6 +181,60 @@ public:
     Size InForce() const { return Unpack(inForce_.load()); }
 };
 
+// -- [render] menu_wide: the game's own menus at 16:9 -------------------------------------------------------------------
+// The game lays its menus out for the shape of its picture. A square picture (the square window, or a square / the headset's
+// render size) got the main menu squeezed: its two side panels pushed into the middle over the hero, the bottom buttons cut off
+// behind them (Serg, 2026-10-28). bearstonem/d2r-pcvr (MIT) gives its interface a 16:9 band at the top of the square
+// (steamvr/vr_resolution.h UiCanvas) and shows the whole square; ours lays the interface over the whole picture in a game
+// (UiCanvas above, test-33), so here the PICTURE is 16:9 while the game shows its menus: as wide as the render size (or the
+// window), 9/16 of that high - the flat picture in the headset takes the picture's shape, a 16:9 panel. In a game the size is the
+// one picked, as before.
+// When: the menus' scene (its biome, `frontend` from vrcam) has stood a while - never while the game builds a screen; that size
+// is kept through the load into a game (the biome goes at once, the hero is not there yet) until the hero has stood in the world,
+// as the render size always was. Off: as before.
+// Not under ReShade: a player's 0.186 (ReShade, SteamVR, 2026-10-29 00:19:02) froze on the character screen at this resize - the game's
+// ResizeBuffers to 2240x1260 went in on the draw thread and never came back (ReShade.log: no "Destroyed runtime environment" after it,
+// 0 presents from then on). The render size's own resize in a game (the hero stood 3 s) has run under ReShade for many releases; one of
+// the menus' scene had killed the game before (2026-10-11, ReShade then always on). So the 16:9 menus only with [render] no_reshade
+// (the plugin's own D3D12 hooks, Serg's way), where they were tried.
+inline bool MenuWideApplies(bool key, bool reshade) { return key && !reshade; }
+inline constexpr uint32_t kWideW = 16, kWideH = 9;
+// `base` (the render size picked, else the window's) as a 16:9 picture of its width; {} when it is not higher than 16:9.
+inline Size Wide(Size base) {
+    if (!base || (uint64_t)base.h * kWideW <= (uint64_t)base.w * kWideH) return {};
+    const Size s{base.w & ~1u, (uint32_t)((uint64_t)base.w * kWideH / kWideW) & ~1u};
+    return s.w >= kMinW && s.h >= kMinH ? s : Size{};
+}
+// What the Controller is given: the size wished for and whether it may be asked for now (its `hero`).
+struct Ask {
+    Size want;
+    bool now = false;
+};
+class MenuWide {
+    Size held_;              // the menus' size, kept through a load into a game
+    uint64_t heldSince_ = 0;  // ms: wished for since
+
+public:
+    // `now` ms (the Controller's), `on` the key, `frontend` the menus' scene has stood a while, `hero` the hero has stood in a world a
+    // while, `sel` the size picked ({} = the window's own), `wide` Wide(...) of it, `inForce` the size the Controller keeps now.
+    Ask Step(uint64_t now, bool on, bool frontend, bool hero, Size sel, Size wide, Size inForce) {
+        if (!on || hero) { held_ = {}; return {sel, hero}; }
+        if (frontend && wide) {
+            if (held_ != wide) { held_ = wide; heldSince_ = now; }
+            // asked for only once it has stayed the Controller's kDebounceMs: before that the Controller still holds the wish of
+            // before as its settled one, and "ask now" let THAT through - the headset's 2496x2688 asked for in the main menu,
+            // 0.7 s before its 16:9 (Serg's log 2026-10-28 15:01:54), a tall picture while the menus stand
+            return {wide, now - heldSince_ >= kDebounceMs};
+        }
+        // between the two (a load into a game, the title screen): the menus' size only while it is the one in force - one
+        // still waiting out the Controller's 0.7 s is not asked for once the menus are gone
+        if (held_ && held_ == inForce) return {held_, true};
+        held_ = {};
+        return {sel, false};
+    }
+    Size Held() const { return held_; }
+};
+
 // A size the runtime refuses (its swapchains could not be made): the last size it took instead - or the window's own
 // size when there was none. Told once; remembered until the session ends.
 class Fallback {

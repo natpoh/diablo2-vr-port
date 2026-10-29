@@ -30,12 +30,14 @@ void Init(const D2RL::PluginContext* ctx);
 // are shown (only while direct input is on and its [direct] layout is not rebound). Switching on registers the per-frame listener;
 // switching off lets everything go. The panel acts in VR first person (F4) only: vr/view_gate.h.
 // `settingsTab` is [openxr] headset_settings: in the tiles' look the window gets a second tab, Settings (the game view F1 - F4, the render size, the
-// T-pose measurement: vr/hset_*.h hosted by vr/wheel_controller.h), opened by the same long press, or by the old settings panel's chord (both grips,
-// then a thumbstick click); the panel of its own (vr/xr_headset_settings.h) stands down then.
+// T-pose measurement: vr/hset_*.h hosted by vr/wheel_controller.h), opened by the same long press (the old settings panel's chord - both grips,
+// then a thumbstick click - only with [debug] settings_two_grip_chord); the panel of its own (vr/xr_headset_settings.h) stands down then.
 void Configure(bool on, int pointerHand, float distanceM, float widthM, int style = 0, float tilesWidthM = 0.9f, const wchar_t* ini = nullptr,
                bool settingsTab = false);
 // The Settings tab is in force: the panel is on, in the tiles' look, with the key. (Any thread.)
 bool SettingsTabOn();
+// [debug] settings_two_grip_chord (xr.cpp LoadSettings): both grips + a thumbstick click open the window on Settings too. Off (the default): two grips held mean nothing.
+void SetTwoGripChord(bool on);
 // xr.cpp, every headset frame while SettingsTabOn(): what the Video page shows of the picture (the size the game draws, what the headset recommends
 // and holds - the numbers only xr.cpp has).
 void SetSettingsHost(const hset::video::Env& env);

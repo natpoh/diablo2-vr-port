@@ -78,7 +78,9 @@
 #include "game_hud_shared.h"
 #include "hud_globes.h"   // where the game's own life and mana globes are in its interface layer (the wrists' medallions)
 #include "hud_rects.h"    // the toolbar's strip in that layer (the box taken out of the picture), with the cut sliders
+#include "notice_card.h"  // [hud] notice_card: the box of the game's quest / level-up notice in that layer
 #include "minimap_box.h"  // which scissor box is the corner map, at any layer size, shape and interface size
+#include "map_direction.h"   // [hud] map_direction: the arrow on the hero's marker of the game's map (rows of pixels)
 #include "hud_native.h"
 #include "plate_world.h"   // [hud] monster_bar_room: where the plate stands in the layer (BoxOf)
 
@@ -95,12 +97,14 @@ void Log(const char* s) { if (g_log) g_log(s); }
 std::atomic<int> g_hide{0};   // 0 nothing, 1 the toolbar, 2 everything
 std::atomic<float> g_uiScale{1.0f};
 std::atomic<float> g_gameUiScale{0.0f};   // the game's own interface scale, pixels a layout unit (SetGameInterfaceScale; 0 not known): where the map's box is looked for
+std::atomic<float> g_projRatio{0.0f};     // F4: our projection's x scale over its y scale (SetMapProjection; 0 the game's own shape): how wide the map's box is drawn
 std::atomic<float> g_cutUp{0.0f}, g_cutDown{0.0f};   // [hud] hide_up_pct / hide_down_pct: the toolbar's strip taller above / below, percent of the layer's height
 std::atomic<bool> g_cutTint{false};                  // [debug] hide_strip_tint: the strip taken out is painted a see-through magenta instead, to see its edges
 std::atomic<bool> g_menu{false};   // the main menu, or a panel (inventory, trade...) open: nothing is hidden then   // the game's interface size, 0.5..1
 std::atomic<uint64_t> g_layer{0};   // the interface's resource, learnt from its clear
 std::atomic<int> g_mapMode{0};     // [hud] map: 0 in the picture, 1 in its own texture
 std::atomic<int> g_mapCorner{0};   // [hud] map_corner: 0 either top corner, 1 the left one, 2 the right one
+std::atomic<bool> g_panelNoBar{false};   // [hud] npc_dialog_no_bar: an NPC's dialogue box is the only menu - its panel without the toolbar
 std::atomic<bool> g_classic{false};   // the view is from above or behind and the pieces stay in the picture
 std::atomic<float> g_barZoom{1.0f}, g_mapZoom{1.0f};   // [hud] bar_zoom, map_zoom: their size in the picture then
 std::atomic<bool> g_picReady{false};  // the effect that draws them back runs (vrcam's fx)
@@ -130,6 +134,8 @@ std::atomic<bool> g_labels{false};
 // monsters were fogged over the void, 2026-10-04) and the floor's key keeps the letters off
 // the void (2026-10-06). Only when the labels are not out anyway.
 std::atomic<bool> g_uiMask{false};
+// ... and through a menu too (flat: the panel stays over the world, and the sky and the fog with it - vrcam EffectsPaused).
+std::atomic<bool> g_uiMaskInMenu{false};
 // The orb shown or hidden on its own: only when the game's map cannot be set
 // (no widget service). Otherwise the "D2R: Map" action opens and closes the
 // game's map and the orb follows what the game draws (g_mapDrawn), so it is
@@ -143,8 +149,98 @@ std::mutex g_lock;
 // Lists that have the interface bound now: the view they draw it through, and
 // whether the map's draws are being sent to our own target right now. vx..vh: the
 // largest viewport bound since (OnViewports), the canvas the map's box is in.
-struct Drawing { resource_view layer{}; bool inMap = false; uint32_t w = 0, h = 0; float vx = 0.0f, vy = 0.0f, vw = 0.0f, vh = 0.0f; };
+// mapRun: the map's scissor is the last one bound - the map is being drawn ([hud] map_direction: its arrow when it is done).
+struct Drawing { resource_view layer{}; bool inMap = false; uint32_t w = 0, h = 0; float vx = 0.0f, vy = 0.0f, vw = 0.0f, vh = 0.0f; bool mapRun = false; };
 std::unordered_map<command_list*, Drawing> g_drawing;
+
+// [hud] map_direction (vr/map_direction.h): an arrow beside the hero's marker in the middle of the game's map, the way our camera looks.
+// Painted with clears on the target the map went to, once its draws are done (its scissor left): in the picture, and in our map target
+// - so the hand's map, the orb and FlatVR's piece have it too. g_dirWant: vrcam says so (ticked, one of our camera's views, a game);
+// g_dirFull: the game's map is the whole-screen one (its AutoMap open, mode 0) - no box of its own, the arrow in the middle of the
+// interface's canvas when no corner map was drawn. The way on the ground (mapdir::OnGround: the game screen's right and up, before the
+// map's projection) from vrcam's last view; one older than half a second (our camera off) is not drawn.
+std::atomic<bool> g_dirWant{false}, g_dirFull{false};
+std::atomic<float> g_dirX{0.0f}, g_dirY{1.0f};
+std::atomic<ULONGLONG> g_dirAt{0};
+// [hud] map_rotate / map_compass (vr/map_turn.h, xr.cpp): the same way for the map in the hand, the head's turn held while it looks down at
+// it (vrcam, native F4 only). Its own: the arrow's way keeps going stale as before.
+std::atomic<float> g_turnX{0.0f}, g_turnY{1.0f};
+std::atomic<ULONGLONG> g_turnAt{0};
+// [hud] map_click_big (vr/map_laser.h, xr.cpp HangBigMap): the map made big - the game's whole-screen map, the whole interface copied out
+// as a menu's panel is (kNativePanel) and the layer emptied, for xr.cpp to hang big in front. Set by xr.cpp.
+std::atomic<bool> g_mapBig{false};
+std::atomic<uint32_t> g_mapBigRows{0};   // the big map's rows in the panel's copy: the layer above the toolbar's strip (OnBind)
+// ... the hero on it: the canvas's middle (as ArrowOnWholeMap has it), uv of the layer; and how much wider than its own shape it is drawn
+std::atomic<float> g_mapBigHeroU{0.5f}, g_mapBigHeroV{0.5f}, g_mapBigStretch{1.0f};
+const float kArrowRim[4] = {0.02f, 0.02f, 0.02f, 0.0f};    // premultiplied, alpha the world's share: opaque
+const float kArrowFill[4] = {1.0f, 0.82f, 0.25f, 0.0f};    // gold, as the game's own text
+// Made safe after a 0.179 test run ended silently the moment the map first opened in VR F4 (no crash report, the log's last line the
+// map's box; 2026-10-25): nothing drawn unless everything is in place - the way fresh and of unit length, the box in the target, the
+// target a 2D texture of ours or the game's layer that holds the box, the map drawn in two passes before (mapdir::Ready) - the rows in
+// buffers of their own (not on the game's draw thread's stack), cleared a few at a time under SEH; a fault stops the arrow for the
+// session. The first arrow says so in the log before and after its clears: a run that ends between the two says it was the clear.
+std::atomic<bool> g_dirBroken{false};
+uint32_t g_mapSeenPasses = 0;   // interface passes in a row the corner map was drawn in (Publish). Under g_lock.
+uint32_t g_fullPasses = 0;      // ... the whole-screen map was wanted in
+mapdir::Rect g_arrowRows[mapdir::kMaxRows];   // (under g_lock: every caller holds it)
+rect g_arrowRects[mapdir::kClearBatch];
+bool ClearGuarded(command_list* cl, resource_view rtv, const float c[4], uint32_t n, const rect* r) noexcept {
+    __try {
+        cl->clear_render_target_view(rtv, c, n, r);
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+void PaintArrow(command_list* cl, const resource_view& rtv, const rect& clip, float cx, float cy, float boxH, uint32_t passes, const char* where) {
+    if (!g_dirWant.load() || g_dirBroken.load() || !cl || !rtv.handle) return;
+    const ULONGLONG at = g_dirAt.load(), now = GetTickCount64();
+    if (!at || now < at || now - at > 500) return;   // no view of ours lately
+    device* dev = cl->get_device();
+    if (!dev) return;
+    const resource tex = dev->get_resource_from_view(rtv);
+    if (!tex.handle) return;
+    const resource_desc td = dev->get_resource_desc(tex);
+    if (td.type != resource_type::texture_2d) return;
+    const mapdir::Dir d{g_dirX.load(), g_dirY.load(), true};
+    mapdir::Rect c{clip.left, clip.top, clip.right, clip.bottom};
+    const mapdir::Place pl = mapdir::PlaceFor(cx, cy, boxH);   // about the hero's ring, clear of it (mapdir::kMarker*)
+    if (!mapdir::Ready(d, pl.cx, pl.cy, boxH, td.texture.width, td.texture.height, passes, &c)) return;
+    const float len = pl.len;
+    cx = pl.cx; cy = pl.cy;
+    static bool told = false;
+    if (!told) {
+        char line[260];
+        snprintf(line, sizeof line, "hud: map direction - the first arrow at %.0f,%.0f on %s (%ux%u), box %d,%d - %d,%d, %.0f px long, way %.2f,%.2f: clearing",
+                 cx, cy, where, td.texture.width, td.texture.height, c.left, c.top, c.right, c.bottom, len, d.x, d.y);
+        Log(line);
+    }
+    int rows = 0;
+    for (int pass = 0; pass < 2; ++pass) {
+        const mapdir::Tri flat = mapdir::IsoArrow(cx, cy, d, len, mapdir::kIsoSquash, pl.gap);   // lying on the map, in its isometric projection
+        const mapdir::Tri t = pass ? flat : mapdir::Grow(flat, std::max(1.0f, 0.08f * len));
+        const int n = mapdir::Rows(t, c, g_arrowRows, mapdir::kMaxRows);
+        rows += n;
+        for (int i = 0; i < n; i += mapdir::kClearBatch) {
+            const int k = std::min(n - i, mapdir::kClearBatch);
+            for (int j = 0; j < k; ++j) {
+                const mapdir::Rect& r = g_arrowRows[i + j];
+                g_arrowRects[j] = rect{r.left, r.top, r.right, r.bottom};
+            }
+            if (!ClearGuarded(cl, rtv, pass ? kArrowFill : kArrowRim, (uint32_t)k, g_arrowRects)) {
+                g_dirBroken.store(true);
+                Log("hud: map direction - a clear for the arrow faulted: no arrow on the map for the rest of the session");
+                return;
+            }
+        }
+    }
+    if (!told) {
+        told = true;
+        char line[160];
+        snprintf(line, sizeof line, "hud: map direction - drawn (%d rows in batches of %d); later arrows are not logged", rows, mapdir::kClearBatch);
+        Log(line);
+    }
+}
 
 // The map's own target: as big as the layer, same format, cleared like it.
 resource g_mapTex{};
@@ -208,15 +304,18 @@ bool IsLayerClear(device* dev, resource_view rtv, const float c[4]) {
 // file's as a second guess, in the viewport the interface is drawn through.
 minimapbox::Canvas CanvasOf(const Drawing& d) { return minimapbox::CanvasOf(d.w, d.h, d.vx, d.vy, d.vw, d.vh); }
 float GameSafe(const minimapbox::Canvas& c) { return minimapbox::SafeFromScale(g_gameUiScale.load(), c.h); }
+// F4 in a picture of another shape than our frustum's (vr/minimap_box.h Stretch): the map's box and tiles that much wider.
+float MapStretch(const minimapbox::Canvas& c) { return minimapbox::Stretch(g_projRatio.load(), 1.0f, c.w, c.h); }
 bool IsMapScissor(const rect& r, const Drawing& d) {
     const minimapbox::Canvas c = CanvasOf(d);
-    return minimapbox::Find(minimapbox::Box{r.left, r.top, r.right, r.bottom}, c, GameSafe(c), g_uiScale.load(), g_mapCorner.load()) != 0;
+    return minimapbox::Find(minimapbox::Box{r.left, r.top, r.right, r.bottom}, c, GameSafe(c), g_uiScale.load(), g_mapCorner.load(), MapStretch(c)) != 0;
 }
 
 // The map scissor last seen, and the layer size it was seen at: what the
 // share copies (the map is drawn only inside it). Under g_lock.
 rect g_mapScissor{};
 uint32_t g_mapScissorW = 0, g_mapScissorH = 0;
+float g_mapStretchNow = 1.0f;   // how much wider than its own shape that map was drawn (MapStretch): the hand's map is narrowed back by it
 // No map box seen while the map is to come out of the picture: the boxes this
 // interface pass had instead, for the log (TellNoMap). Under g_lock.
 rect g_seenBoxes[6]{};
@@ -224,21 +323,54 @@ int g_seenN = 0;
 minimapbox::Canvas g_seenCanvas{};
 uint32_t g_mapMisses = 0;   // interface passes in a row with no map box
 
+// [hud] map_direction: the map's draws are done - its arrow over them, in the middle of its box (the hero's marker), on the target they
+// went to. Under g_lock.
+void ArrowOnMap(command_list* cl, Drawing& d) {
+    d.mapRun = false;
+    if (g_mapScissorW != d.w || g_mapScissorH != d.h) return;   // a box seen on a layer of another size
+    const bool ours = d.inMap && g_mapRtv.handle;
+    if (ours && (g_mapW != d.w || g_mapH != d.h)) return;
+    const rect& b = g_mapScissor;
+    PaintArrow(cl, ours ? g_mapRtv : d.layer, b, 0.5f * (float)(b.left + b.right), 0.5f * (float)(b.top + b.bottom),
+               (float)(b.bottom - b.top), g_mapSeenPasses, ours ? "the map's own target" : "the interface's layer");
+}
+// The whole-screen map has no box of its own: the arrow in the middle of the interface's canvas (the hero, as the game's camera has him),
+// as big as on a corner map. Under g_lock.
+void ArrowOnWholeMap(command_list* cl, const Drawing& d) {
+    const minimapbox::Canvas c = CanvasOf(d);
+    if (c.w < 64 || c.h < 64) return;
+    const float game = GameSafe(c), s = game > 0.0f ? game : g_uiScale.load();
+    const rect clip{c.x, c.y, c.x + (int32_t)c.w, c.y + (int32_t)c.h};
+    PaintArrow(cl, d.layer, clip, (float)c.x + 0.5f * (float)c.w, (float)c.y + 0.5f * (float)c.h, 0.377f * (float)c.h * s, g_fullPasses,
+               "the interface's layer (the whole-screen map)");
+}
+
 // Said once for each layer size and interface area: the map does not come into
 // the hand and the log says what was there instead (the map may be off in the game).
 void TellNoMap(uint32_t w, uint32_t h) {
     const minimapbox::Canvas c = g_seenCanvas.w ? g_seenCanvas : minimapbox::Canvas{0, 0, w, h};
-    const float game = GameSafe(c), file = g_uiScale.load();
+    const float game = GameSafe(c), file = g_uiScale.load(), stretch = MapStretch(c);
+    // a box in the upper half (where the map would be: the map open in the game but not taken) is said again, with why each box was not taken
+    // (2026-10-28: the one line of a player's session came with the map shut, and could not tell [hud] map_corner from the picture's size)
+    uint64_t upper = 0;
+    for (int i = 0; i < g_seenN; ++i) upper += g_seenBoxes[i].top - c.y < (int32_t)(c.h / 2) ? 1 : 0;
     static uint64_t told = 0;
-    const uint64_t key = (uint64_t)w << 48 ^ (uint64_t)h << 32 ^ (uint64_t)(game * 1000.0f) << 16 ^ (uint64_t)(file * 1000.0f);
+    const uint64_t key = (uint64_t)w << 48 ^ (uint64_t)h << 32 ^ (uint64_t)(game * 1000.0f) << 16 ^ (uint64_t)(file * 1000.0f) ^ (uint64_t)(stretch * 100.0f) << 8
+                         ^ (upper ? 1ull << 63 : 0);
     if (key == told) return;
     told = key;
+    static int lines = 0;   // (the map opened and shut again and again: not a line every ten seconds all session)
+    if (++lines > 20) return;
     char line[640];
     int n = snprintf(line, sizeof line, "hud: no map box in the game's interface on a %ux%u layer (canvas %d,%d %ux%u; interface area %.3f by the game's "
-                     "scale, %.3f by Settings.json; corner %d) - the map off in the game (Tab), or not where it is looked for; its boxes:", w, h,
-                     c.x, c.y, c.w, c.h, game, file, g_mapCorner.load());
-    for (int i = 0; i < g_seenN && n > 0 && n < (int)sizeof line; ++i)
-        n += snprintf(line + n, sizeof line - n, " %d,%d-%d,%d", g_seenBoxes[i].left, g_seenBoxes[i].top, g_seenBoxes[i].right, g_seenBoxes[i].bottom);
+                     "scale, %.3f by Settings.json; corner %d; drawn %.2f times as wide) - the map off in the game (Tab), or not where it is looked "
+                     "for; its boxes:", w, h, c.x, c.y, c.w, c.h, game, file, g_mapCorner.load(), stretch);
+    const float safe = game > 0.0f ? game : file;
+    for (int i = 0; i < g_seenN && n > 0 && n < (int)sizeof line; ++i) {
+        const rect& r = g_seenBoxes[i];
+        const char* why = minimapbox::WhyNot(minimapbox::Box{r.left, r.top, r.right, r.bottom}, c, safe, g_mapCorner.load(), stretch);
+        n += snprintf(line + n, sizeof line - n, " %d,%d-%d,%d (%s)", r.left, r.top, r.right, r.bottom, why ? why : "?");
+    }
     if (!g_seenN && n > 0 && n < (int)sizeof line) snprintf(line + n, sizeof line - n, " none");
     Log(line);
 }
@@ -469,34 +601,71 @@ rect PlateRectPx(uint32_t w, uint32_t h) {
     return rect{(int32_t)x0, (int32_t)y0, (int32_t)(x0 + bw), (int32_t)(y0 + bh)};
 }
 
-bool CopyPlate(command_list* cl, resource layer, const rect& r) {
+// A box of the layer copied into a texture of its own (made, or made again, at the box's size). what: for the log ("the monster's plate ... ([hud] monster_bar_room)").
+bool CopyBox(command_list* cl, resource layer, const rect& r, PlateTex& t, const char* what, const char* key, bool& toldFail) {
     device* dev = cl->get_device();
     const uint32_t w = (uint32_t)(r.right - r.left), h = (uint32_t)(r.bottom - r.top);
     if (!w || !h) return false;
-    if (!g_plateTex.tex.handle || g_plateTex.w != w || g_plateTex.h != h) {
-        if (g_plateTex.tex.handle) g_retired.push_back({g_plateTex.tex, {}, nullptr, g_frames});   // xr.cpp may still draw from it
-        g_plateTex = PlateTex{};
+    if (!t.tex.handle || t.w != w || t.h != h) {
+        if (t.tex.handle) g_retired.push_back({t.tex, {}, nullptr, g_frames});   // xr.cpp may still draw from it
+        t = PlateTex{};
         const resource_desc d(w, h, 1, 1, format::r16g16b16a16_float, 1, memory_heap::default_, resource_usage::copy_dest | resource_usage::shader_resource);
-        if (!dev->create_resource(d, nullptr, resource_usage::copy_dest, &g_plateTex.tex)) {
-            g_plateTex = PlateTex{};
-            static bool told = false;
-            if (!told) { told = true; Log("hud: the monster's plate texture could not be made - the plate stays in the picture"); }
+        if (!dev->create_resource(d, nullptr, resource_usage::copy_dest, &t.tex)) {
+            t = PlateTex{};
+            if (!toldFail) {
+                toldFail = true;
+                char line[200];
+                snprintf(line, sizeof line, "hud: %s - its texture could not be made, it stays in the picture", what);
+                Log(line);
+            }
             return false;
         }
-        g_plateTex.w = w; g_plateTex.h = h;
-        char line[160];
-        snprintf(line, sizeof line, "hud: the monster's plate is cut out of the interface for the room ([hud] monster_bar_room): %ux%u from %d,%d of a layer", w, h, r.left, r.top);
+        t.w = w; t.h = h;
+        char line[240];
+        snprintf(line, sizeof line, "hud: %s is cut out of the interface for the room (%s): %ux%u from %d,%d of a layer", what, key, w, h, r.left, r.top);
         Log(line);
     }
     const subresource_box from{(uint32_t)r.left, (uint32_t)r.top, 0, (uint32_t)r.right, (uint32_t)r.bottom, 1};
     const subresource_box to{0, 0, 0, w, h, 1};
     cl->barrier(layer, resource_usage::render_target, resource_usage::copy_source);
-    if (!g_plateTex.fresh) cl->barrier(g_plateTex.tex, resource_usage::shader_resource, resource_usage::copy_dest);
-    cl->copy_texture_region(layer, 0, &from, g_plateTex.tex, 0, &to, filter_mode::min_mag_mip_point);
-    cl->barrier(g_plateTex.tex, resource_usage::copy_dest, resource_usage::shader_resource);
+    if (!t.fresh) cl->barrier(t.tex, resource_usage::shader_resource, resource_usage::copy_dest);
+    cl->copy_texture_region(layer, 0, &from, t.tex, 0, &to, filter_mode::min_mag_mip_point);
+    cl->barrier(t.tex, resource_usage::copy_dest, resource_usage::shader_resource);
     cl->barrier(layer, resource_usage::copy_source, resource_usage::render_target);
-    g_plateTex.fresh = false;
+    t.fresh = false;
     return true;
+}
+bool CopyPlate(command_list* cl, resource layer, const rect& r) {
+    static bool told = false;
+    return CopyBox(cl, layer, r, g_plateTex, "the monster's plate", "[hud] monster_bar_room", told);
+}
+
+// [hud] notice_card (vr/notice_card.h): the game's quest / level-up notice - its NotificationPanel, low in the middle, most of it under the toolbar's
+// strip - cut out of the interface for xr.cpp, which shows it on a card in the room, and emptied in the layer. Cut BEFORE the toolbar's strip is
+// copied and emptied: the strip would take most of it. While vrcam says (the card in force, the panel open); its box from the panel's rect and the
+// interface scale (noticecard::BoxPx). Local: FlatVR never sees it. Under g_lock.
+std::atomic<bool> g_noticeWant{false};
+std::atomic<int32_t> g_noticeWidget[4] = {};   // the rect the widget service gave (all 0: none, the layout's)
+std::atomic<float> g_noticeScale{0.0f};
+PlateTex g_noticeTex;
+std::atomic<bool> g_noticeNow{false};          // cut by the last interface pass
+std::atomic<ULONGLONG> g_noticeAt{0};
+void CutNotice(command_list* cl, resource layer, const resource_view& rtv, uint32_t w, uint32_t h) {
+    bool cut = false;
+    if (g_noticeWant.load() && !g_menu.load() && !g_panelOut.load()) {
+        const int32_t wr[4] = {g_noticeWidget[0].load(), g_noticeWidget[1].load(), g_noticeWidget[2].load(), g_noticeWidget[3].load()};
+        noticecard::Box b;
+        static bool told = false;
+        if (noticecard::BoxPx(wr, g_noticeScale.load(), w, h, &b)) {
+            const rect r{b.left, b.top, b.right, b.bottom};
+            if (CopyBox(cl, layer, r, g_noticeTex, "the quest / level-up notice", "[hud] notice_card", told)) {
+                cl->clear_render_target_view(rtv, kEmpty, 1, &r);
+                cut = true;
+            }
+        }
+    }
+    g_noticeNow.store(cut);
+    if (cut) g_noticeAt.store(GetTickCount64());
 }
 
 // The game's own life and mana globes, cut out of the interface layer for the wrists (vr/hud_globes.h): ONE texture, the life globe's square on the
@@ -548,7 +717,7 @@ void Publish(command_list* cl, resource layer, uint32_t w, uint32_t h, int hide)
     ++g_frames;
     device* dev = cl->get_device();
     DrainRetired(dev);
-    const bool menu = g_menu.load() || g_panelOut.load(), classic = g_classic.load();   // a menu's panel takes the toolbar with it
+    const bool menu = g_menu.load() || g_panelOut.load(), classic = g_classic.load();   // a menu's panel takes the toolbar with it (the big map does not: it stays where it hangs)
     bool bar = false, map = false;
     const rect barBox = ToolbarRect(w, h);
     rect mapBox{};
@@ -557,8 +726,10 @@ void Publish(command_list* cl, resource layer, uint32_t w, uint32_t h, int hide)
     else { g_glb.on = false; g_globesWhy.store(1); }
     const bool drawn = g_mapDrawn;
     g_mapDrawn = false;
+    g_mapSeenPasses = drawn ? std::min(g_mapSeenPasses + 1, 1000u) : 0;   // [hud] map_direction: the arrow only on a map drawn a few passes running
+    g_fullPasses = g_dirFull.load() && !drawn ? std::min(g_fullPasses + 1, 1000u) : 0;
     if (g_frameMap.load() == 1 && !drawn && !menu) {   // ten seconds or so with no map box: what there was, in the log
-        if (++g_mapMisses == 600) TellNoMap(w, h);
+        if (++g_mapMisses % 600 == 0) TellNoMap(w, h);   // (every ten seconds or so; said again only when what it says changes: TellNoMap's key)
     } else {
         g_mapMisses = 0;
     }
@@ -627,8 +798,8 @@ bool OnClear(command_list* cl, resource_view rtv, const float c[4], uint32_t, co
 
 // On the interface's list: the map's scissor sends the draws to our target, any other back to the layer.
 void OnScissor(command_list* cl, uint32_t, uint32_t count, const rect* rects) {
-    const bool redirect = g_frameMap.load() == 1;   // else only seen: the labels keep the map flat
-    if (count == 0 || (!redirect && !g_labels.load())) return;
+    const bool redirect = g_frameMap.load() == 1;   // else only seen: the labels keep the map flat, [hud] map_direction's arrow goes on it
+    if (count == 0 || (!redirect && !g_labels.load() && !g_dirWant.load())) return;
     std::lock_guard<std::mutex> g(g_lock);
     auto it = g_drawing.find(cl);
     if (it == g_drawing.end()) return;
@@ -638,12 +809,13 @@ void OnScissor(command_list* cl, uint32_t, uint32_t count, const rect* rects) {
                 rects[0].right != g_mapScissor.right || rects[0].bottom != g_mapScissor.bottom ||
                 g_mapScissorW != d.w || g_mapScissorH != d.h)) {
         const minimapbox::Canvas c = CanvasOf(d);
-        char line[320];
+        char line[360];
         snprintf(line, sizeof line, "hud: the map's box %d,%d - %d,%d on a %ux%u layer (canvas %d,%d %ux%u; interface area %.3f by the game's scale, "
-                 "%.3f by Settings.json)", rects[0].left, rects[0].top, rects[0].right, rects[0].bottom, d.w, d.h, c.x, c.y, c.w, c.h, GameSafe(c),
-                 g_uiScale.load());
+                 "%.3f by Settings.json; drawn %.2f times as wide)", rects[0].left, rects[0].top, rects[0].right, rects[0].bottom, d.w, d.h, c.x, c.y,
+                 c.w, c.h, GameSafe(c), g_uiScale.load(), MapStretch(c));
         Log(line);
     }
+    if (map) g_mapStretchNow = MapStretch(CanvasOf(d));
     if (!map && redirect && g_seenN < (int)(sizeof g_seenBoxes / sizeof g_seenBoxes[0])) {   // (for TellNoMap: the boxes other than the whole picture)
         const rect& r = rects[0];
         bool known = r.left <= 0 && r.top <= 0 && r.right >= (int32_t)d.w && r.bottom >= (int32_t)d.h;
@@ -652,7 +824,8 @@ void OnScissor(command_list* cl, uint32_t, uint32_t count, const rect* rects) {
         if (!known) g_seenBoxes[g_seenN++] = r;
         g_seenCanvas = CanvasOf(d);
     }
-    if (map) { g_mapScissor = rects[0]; g_mapScissorW = d.w; g_mapScissorH = d.h; g_mapDrawn = true; }
+    if (!map && d.mapRun) ArrowOnMap(cl, d);   // (before the draws go back to the layer: on the map's own target while it has one)
+    if (map) { g_mapScissor = rects[0]; g_mapScissorW = d.w; g_mapScissorH = d.h; g_mapDrawn = true; d.mapRun = true; }
     if (!redirect || !g_mapRtv.handle) return;
     if (map && !d.inMap) { Bind(cl, g_mapRtv); d.inMap = true; }
     else if (!map && d.inMap) { Bind(cl, d.layer); d.inMap = false; }
@@ -661,7 +834,7 @@ void OnScissor(command_list* cl, uint32_t, uint32_t count, const rect* rects) {
 // On the interface's list: the largest viewport it is drawn through - the canvas the map's box is
 // looked for in (vr/minimap_box.h CanvasOf: a viewport that is a piece of the layer is not it).
 void OnViewports(command_list* cl, uint32_t first, uint32_t count, const viewport* vps) {
-    if (first != 0 || count == 0 || !vps || !g_layer.load() || (g_frameMap.load() != 1 && !g_labels.load())) return;
+    if (first != 0 || count == 0 || !vps || !g_layer.load() || (g_frameMap.load() != 1 && !g_labels.load() && !g_dirWant.load())) return;
     std::lock_guard<std::mutex> g(g_lock);
     auto it = g_drawing.find(cl);
     if (it == g_drawing.end()) return;
@@ -682,7 +855,11 @@ void OnBind(command_list* cl, uint32_t count, const resource_view* rtvs, resourc
     if (it != g_drawing.end() && it->second.layer.handle != now.handle) {
         const resource_view layerRtv = it->second.layer;
         const int hideNow = HideNow();
-        const bool panel = g_panelOut.load();
+        const bool panel = g_panelOut.load() || g_mapBig.load();   // (the big map: the whole interface out, as a menu)
+        // [hud] map_direction: the corner map drawn last, its arrow now; the whole-screen map (no box seen), its arrow in the middle
+        if (it->second.mapRun) ArrowOnMap(cl, it->second);
+        else if (g_dirFull.load() && !g_mapDrawn && !g_menu.load() && !g_panelOut.load()) ArrowOnWholeMap(cl, it->second);   // (the big map too)
+        CutNotice(cl, dev->get_resource_from_view(layerRtv), layerRtv, it->second.w, it->second.h);   // [hud] notice_card: before the toolbar's strip takes it
         {
             const resource_desc d = dev->get_resource_desc(dev->get_resource_from_view(layerRtv));
             Publish(cl, dev->get_resource_from_view(layerRtv), d.texture.width, d.texture.height, hideNow);
@@ -692,8 +869,34 @@ void OnBind(command_list* cl, uint32_t count, const resource_view* rtvs, resourc
                 static bool told = false;
                 if (!told) { told = true; Log("hud: the interface's layer was drawn in more than one run this frame - the menu's panel may lack parts"); }
             }
+            // [hud] npc_dialog_no_bar: an NPC's Talk / Trade / Cancel box alone is not a screen of the game's - the toolbar would hang on
+            // its panel as a bar in front of the hero at waist height (Serg, 2026-10-28). Its strip is emptied first, as [hud] hide 1
+            // does with no menu up (the wrists / FlatVR have their copy already: Publish above). A real menu (the trader's screen
+            // after Trade) keeps it.
+            if (g_panelNoBar.load() && HideNow() >= 1 && !g_classic.load()) {
+                const resource_desc d = dev->get_resource_desc(dev->get_resource_from_view(layerRtv));
+                const rect bar = ToolbarRect(d.texture.width, d.texture.height);
+                cl->clear_render_target_view(layerRtv, kEmpty, 1, &bar);
+            }
             const bool out = CopyPanel(cl, dev->get_resource_from_view(layerRtv), it->second.w, it->second.h);
-            if (out) cl->clear_render_target_view(layerRtv, kEmpty);
+            if (out && g_mapBig.load() && !g_panelOut.load()) {
+                // [hud] map_click_big: the big map is the game's whole-screen map above the toolbar's strip (xr.cpp shows those rows only); the
+                // layer is emptied there, the strip left to the toolbar's own rules - cut out and hung as always ([hud] hide 1), or in the picture
+                const rect bar = ToolbarRect(it->second.w, it->second.h);
+                const rect above{0, 0, (int32_t)it->second.w, std::max<int32_t>(1, bar.top)};
+                g_mapBigRows.store((uint32_t)above.bottom);
+                const minimapbox::Canvas c = CanvasOf(it->second);   // [hud] map_rotate on the big map: about the hero, the canvas's middle
+                if (c.w >= 64 && c.h >= 64 && it->second.w && it->second.h) {
+                    g_mapBigHeroU.store(((float)c.x + 0.5f * (float)c.w) / (float)it->second.w);
+                    g_mapBigHeroV.store(((float)c.y + 0.5f * (float)c.h) / (float)it->second.h);
+                    g_mapBigStretch.store(MapStretch(c));
+                }
+                cl->clear_render_target_view(layerRtv, kEmpty, 1, &above);
+                if (hideNow == 2) cl->clear_render_target_view(layerRtv, kEmpty);
+                else if (hideNow == 1 && (!g_classic.load() || g_pic.on[kBar])) cl->clear_render_target_view(layerRtv, kEmpty, 1, &bar);
+            } else if (out) {
+                cl->clear_render_target_view(layerRtv, kEmpty);
+            }
             g_panelNow.store(out);
             g_panelAt.store(GetTickCount64());
             if (FlatVRGameHud* b = g_flatVrMenu.load() || g_block ? Block() : nullptr) {   // for FlatVR, as the toolbar
@@ -732,7 +935,7 @@ void OnBind(command_list* cl, uint32_t count, const resource_view* rtvs, resourc
             if (g_block) g_block->panel[kMenuSlot].visible = 0;
         }
         const bool labels = g_labels.load() && g_picReady.load() && !g_menu.load() && !panel;
-        const bool mask = !labels && g_uiMask.load() && g_picReady.load() && !g_menu.load() && !panel;   // copied, left in
+        const bool mask = !labels && g_uiMask.load() && g_picReady.load() && (!g_menu.load() || g_uiMaskInMenu.load()) && !panel;   // copied, left in
         g_lab.on = (labels || mask) && CopyLayer(cl, dev->get_resource_from_view(layerRtv), it->second.w, it->second.h);
         if (g_lab.on && labels) cl->clear_render_target_view(layerRtv, kEmpty);
         g_lab.at = GetTickCount64();
@@ -754,6 +957,16 @@ void OnReset(command_list* cl) {
 
 }  // namespace
 
+// [render] no_reshade: the same handlers, from the plugin's own D3D12 hooks through the stand-in for ReShade's command list and device
+// (vr/native_rsapi.h) - one code path for the interface with ReShade or without it.
+namespace native {
+void Clear(reshade::api::command_list* cl, reshade::api::resource_view rtv, const float c[4], uint32_t n, const reshade::api::rect* r) { OnClear(cl, rtv, c, n, r); }
+void Bind(reshade::api::command_list* cl, uint32_t count, const reshade::api::resource_view* rtvs) { OnBind(cl, count, rtvs, reshade::api::resource_view{}); }
+void Scissors(reshade::api::command_list* cl, uint32_t count, const reshade::api::rect* rects) { OnScissor(cl, 0, count, rects); }
+void Viewports(reshade::api::command_list* cl, uint32_t count, const reshade::api::viewport* vps) { OnViewports(cl, 0, count, vps); }
+void Reset(reshade::api::command_list* cl) { OnReset(cl); }
+}  // namespace native
+
 void Register() {
     reshade::register_event<reshade::addon_event::clear_render_target_view>(&d2rvr::D3D12Only<&OnClear>::Call);
     reshade::register_event<reshade::addon_event::bind_render_targets_and_depth_stencil>(&d2rvr::D3D12Only<&OnBind>::Call);
@@ -766,9 +979,11 @@ void Register() {
 
 void SetHide(int mode) { g_hide.store(mode); }
 void SetMenuOpen(bool open) { g_menu.store(open); }
+void SetPanelNoBar(bool on) { g_panelNoBar.store(on); }
 void SetMapMode(int mode) { g_mapMode.store(mode); }
 void SetInterfaceScale(float s) { g_uiScale.store(std::clamp(s, 0.3f, 1.0f)); }
 void SetGameInterfaceScale(float k) { g_gameUiScale.store(std::isfinite(k) && k > 0.05f && k < 20.0f ? k : 0.0f); }
+void SetMapProjection(float ratio) { g_projRatio.store(std::isfinite(ratio) && ratio > 0.0f ? ratio : 0.0f); }
 void SetToolbarCut(float upPct, float downPct, bool tint) {
     g_cutUp.store(hudrects::UpPct(upPct));
     g_cutDown.store(hudrects::DownPct(downPct));
@@ -777,6 +992,23 @@ void SetToolbarCut(float upPct, float downPct, bool tint) {
 bool LayerFound() { return g_layer.load() != 0; }
 void SetLogger(void (*log)(const char*)) { g_log = log; }
 void SetMapCorner(int corner) { g_mapCorner.store(std::clamp(corner, 0, 2)); }
+void SetMapDirection(bool want, bool wholeScreen) { g_dirWant.store(want); g_dirFull.store(want && wholeScreen); }
+void SetMapHeading(float x, float y) {
+    if (!std::isfinite(x) || !std::isfinite(y)) return;
+    g_dirX.store(x); g_dirY.store(y); g_dirAt.store(GetTickCount64());
+}
+void SetMapTurnHeading(float x, float y) {
+    if (!std::isfinite(x) || !std::isfinite(y)) return;
+    g_turnX.store(x); g_turnY.store(y); g_turnAt.store(GetTickCount64());
+}
+void SetMapBig(bool big) { g_mapBig.store(big); }
+bool MapBig() { return g_mapBig.load(); }
+bool MapTurnHeading(float* x, float* y) {
+    const ULONGLONG at = g_turnAt.load(), now = GetTickCount64();
+    if (!at || now < at || now - at > 500) return false;   // no view of ours lately
+    *x = g_turnX.load(); *y = g_turnY.load();
+    return true;
+}
 
 // From above and from behind, with [hud] classic 0: the pieces in the picture at their own size.
 void SetClassicView(bool on) { g_classic.store(on); }
@@ -794,6 +1026,7 @@ bool PictureWanted() { return (g_classic.load() && (BarZoomed() || MapZoomed()))
 void SetLabels(bool on) { g_labels.store(on); }
 // The interface copied as the fog's mask (left in the picture) while the labels are not out.
 void SetUiMask(bool on) { g_uiMask.store(on); }
+void SetUiMaskInMenu(bool on) { g_uiMaskInMenu.store(on); }
 bool UiMaskNow() {
     std::lock_guard<std::mutex> g(g_lock);
     return g_lab.on && !g_labels.load() && g_uiMask.load() && g_lab.srv.handle && GetTickCount64() - g_lab.at < 250;
@@ -882,12 +1115,15 @@ bool NativeHud(NativePiece out[kNativePieces], FlatVRGameHudLook* look, FlatVRGa
         out[i].w = g_share[i].w;
         out[i].h = g_share[i].h;
         out[i].visible = fresh && out[i].tex && !g_share[i].fresh && g_outNow[i].load();
+        out[i].stretch = i == kMap ? g_mapStretchNow : 1.0f;
     }
     NativePiece& p = out[kNativePanel];
     p.tex = (ID3D12Resource*)(uintptr_t)g_panel.tex.handle;
     p.w = g_panel.w;
     p.h = g_panel.h;
-    p.visible = p.tex && !g_panel.fresh && g_panelOut.load() && g_panelNow.load() && GetTickCount64() - g_panelAt.load() < 500;
+    p.visible = p.tex && !g_panel.fresh && (g_panelOut.load() || g_mapBig.load()) && g_panelNow.load() && GetTickCount64() - g_panelAt.load() < 500;
+    p.mapRows = g_mapBig.load() && !g_panelOut.load() ? std::min(g_mapBigRows.load(), p.h) : 0u;
+    if (p.mapRows) { p.heroU = g_mapBigHeroU.load(); p.heroV = g_mapBigHeroV.load(); p.stretch = g_mapBigStretch.load(); }
     *look = g_look;
     *barPose = g_pose[kBar];
     return true;
@@ -909,6 +1145,24 @@ bool PlatePiece(NativePiece* out, bool* encoded) {
     out->w = g_plateTex.w;
     out->h = g_plateTex.h;
     out->visible = out->tex && !g_plateTex.fresh && g_plateNow.load() && GetTickCount64() - g_plateAt.load() < 150;
+    if (encoded) *encoded = g_look.encoded != 0;
+    return true;
+}
+// [hud] notice_card: vrcam's tick says whether the notice is to be cut now (the card in force, the game's panel open), its panel's rect as the widget
+// service gave it (null: not read, the layout's) and the interface scale.
+void SetNoticeCut(bool want, const int32_t widget[4], float scale) {
+    for (int i = 0; i < 4; ++i) g_noticeWidget[i].store(widget ? widget[i] : 0);
+    g_noticeScale.store(scale);
+    g_noticeWant.store(want);
+}
+// The cut notice for xr.cpp, as PlatePiece.
+bool NoticePiece(NativePiece* out, bool* encoded) {
+    if (!out) return false;
+    std::lock_guard<std::mutex> g(g_lock);
+    out->tex = (ID3D12Resource*)(uintptr_t)g_noticeTex.tex.handle;
+    out->w = g_noticeTex.w;
+    out->h = g_noticeTex.h;
+    out->visible = out->tex && !g_noticeTex.fresh && g_noticeNow.load() && GetTickCount64() - g_noticeAt.load() < 150;
     if (encoded) *encoded = g_look.encoded != 0;
     return true;
 }

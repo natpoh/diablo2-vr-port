@@ -1,6 +1,7 @@
 #pragma once
-// The in-headset settings panel's hands: the chord that opens it (both grips squeezed a third of a second, then a
-// thumbstick click - the one silent control in the layouts), the laser against its plane, clicks,
+// The in-headset settings panel's hands: what opens it (the long press of the right stick click, FrameIn::toggle; the old chord - both
+// grips squeezed a third of a second, then a thumbstick click - only with FrameIn::chordOn: a two-hander is held by both grips, so the
+// author has two grips held mean nothing), the laser against its plane, clicks,
 // what the rest of the mod is allowed to see of the controllers while it is up, and the release gate
 // after it closes. Pure (no Windows, no OpenXR): a frame of input in, a frame of output out, so a test
 // drives it with made-up poses (tools/hset_test.cpp). vr/xr_headset_settings.h feeds it from the
@@ -34,7 +35,12 @@ struct FrameIn {
                                    // handed over to it comes back when this goes false
     video::Env env;                // the picture's sizes, for the Video page
     int view = 0;                  // the game's view now (1 = F1 ... 4 = F4, 0 = not known), for the lit button of the View row
+    float spanInUse = 0.0f;        // the span the hero's arms are fitted to now, metres (calib::SpanInUseM; 0 none), for the Body page's Arm span
     int openGuide = -1;            // the first-start guide asks the panel to come up on its Guide page: the page to start on (vr/first_start.h), -1 none
+    bool gripTaken[2] = {false, false};   // [weight] weapon_grip_no_chord: that hand's grip holds the weapon (or another gesture holds it) - it does not arm the chord
+    bool chordOn = true;           // [debug] settings_two_grip_chord: both grips + a click open / close it. The plugin passes the key, OFF by default (the author, 2026-10-23: "no
+                                   // combinations with the two grips, they must be ignored"): both grips held then take nothing from the game
+    bool toggle = false;           // the long press of the right stick click asked for it (directinput::TakeSkillPanelToggle, no skill panel there to take it): open / close
 };
 
 struct FrameOut {
@@ -100,9 +106,9 @@ public:
         // ignored, an open panel closes. The key off, or another view than F4, forgets that it was to come back.
         if (!in.enabled) resume_ = false;
         const bool enabled = in.enabled && !in.calibrating;
-        const float squeeze[2] = {in.pad[0].squeeze, in.pad[1].squeeze};
+        const float squeeze[2] = {in.gripTaken[0] ? 0.0f : in.pad[0].squeeze, in.gripTaken[1] ? 0.0f : in.pad[1].squeeze};   // (a weapon's grip is not the chord's)
         const bool stick[2] = {(in.pad[0].buttons & kStick) != 0, (in.pad[1].buttons & kStick) != 0};
-        const Chord::Out chord = chord_.Step(in.ms, enabled, squeeze, stick);
+        const Chord::Out chord = chord_.Step(in.ms, enabled && in.chordOn, squeeze, stick);
         const bool armed = chord.armed, clickEdge = chord.edge;
 
         if (!enabled) {
@@ -114,7 +120,7 @@ public:
             if (armed) { gate_.Hold(0, kStick); gate_.Hold(1, kStick); }   // (a click already down stays the game's own, let go)
             const bool back = resume_ && in.head.valid;   // the measurement is done: the panel stands in front of the player again
             const bool guide = !back && in.openGuide >= 0 && in.head.valid && in.snapshot.ready;   // the first-start guide asks for it (the ini is read: the offer can measure)
-            if (back || guide || (armed && clickEdge && in.head.valid)) {
+            if (back || guide || (armed && clickEdge && in.head.valid) || (in.toggle && in.head.valid)) {
                 open_ = true;
                 panel_ = {};
                 const Q q = YawQ(YawOf(in.head.q));
@@ -149,6 +155,7 @@ public:
         o.panel = panel_;
         model.SetEnv(in.env);
         model.SetView(in.view);
+        model.SetSpanInUse(in.spanInUse);
         model.Observe(in.snapshot);
 
         // closed from here: its controls stay zero until let go
@@ -162,6 +169,7 @@ public:
         };
 
         if (armed && clickEdge && !o.justOpened) return shut(Do::Close);   // the chord again (a click that opened it is not one)
+        if (in.toggle && !o.justOpened) return shut(Do::Close);            // the long press again
 
         // the buttons that close it: B / Y or Menu, either hand, a fresh press
         bool closeNow = false;

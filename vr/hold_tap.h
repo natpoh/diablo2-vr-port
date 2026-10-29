@@ -63,6 +63,8 @@ public:
     }
     // Everything forgotten, no tap: the context changed under the press (a menu opened, the focus went, a panel came up).
     void Cancel() { *this = Machine(); }
+    // Pressed and not decided yet (neither a tap nor the hold has happened).
+    bool Undecided() const { return state_ == State::Pressed; }
     // Something to give still: a tap's or a hold's press not yet over, or a press under way.
     bool Busy(uint64_t nowMs) const { return state_ != State::Idle || nowMs < tapUntil_ || nowMs < holdUntil_; }
 

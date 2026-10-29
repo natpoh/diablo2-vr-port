@@ -407,7 +407,8 @@ void OnFrame(const directinput::Frame& f, void*) {
             }
         }
         bowquiver::Entry list[bowquiver::kMaxList];
-        const size_t n = haveStave ? machine.List(in, list, bowquiver::kMaxList) : 0;
+        const size_t listed = haveStave ? machine.List(in, list, bowquiver::kMaxList) : 0;
+        const size_t n = bowquiver::OrbsWanted(listed) ? listed : 0;   // (no bow skill: no orbs at all)
         const bowquiver::Entry cur = machine.Current();
         boworbs::Tuning tn;
         {

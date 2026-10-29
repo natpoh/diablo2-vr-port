@@ -164,6 +164,7 @@ struct AimRay {
     Vec a, b;               // the start and the end
     bool fromModel = false; // the line is the model's (green), else the hand-set one (orange)
     bool floor = false;     // the end is on the floor (a full ball), else `maxLen` out (a ring)
+    bool target = false;    // [bow] pitch_aim: the end is on the monster the shot goes to (a full red ball; the caller sets it, vrcam's PitchRayEnd)
 };
 inline constexpr float kAimRayLen = 8.0f;
 inline bool MakeAimRay(Vec start, Vec dir, bool fromModel, float floorY, AimRay* out, float maxLen = kAimRayLen) {
@@ -204,6 +205,7 @@ inline bool AddAimRay(VectorSet& v, const AimRay& r) {
     s.a = r.a; s.b = r.b; Rgb(s.rgb, rgb[0], rgb[1], rgb[2]); s.tag = kTagNone;
     Ball& q = v.ball[v.nball++];
     q.c = r.b; q.r = 0.06f; Rgb(q.rgb, rgb[0], rgb[1], rgb[2]); q.fill = r.floor ? 1.0f : 0.0f; q.tag = kTagNone;
+    if (r.target) { Rgb(q.rgb, 1.0f, 0.15f, 0.15f); q.fill = 1.0f; q.r = 0.09f; }
     return true;
 }
 

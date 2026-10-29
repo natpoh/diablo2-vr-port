@@ -414,6 +414,51 @@ def main():
     (root / "ReShade.ini").write_text(stock, encoding="utf-8", newline="")
     check(reshade_paths(root, "add") == 2 and (root / "ReShade.ini").read_bytes().decode("utf-8") == stock, "an install from before the mod layout: add -> 2, his ReShade.ini untouched (the files are beside the game there)")
 
+    # 12. [mods] merge_data_mods (shared/data_mods.h): a mod D2RMM built (mods\D2RMM) loads with D2R VR - its files copied into D2R-VR.mpq at --start,
+    # copied again when D2RMM builds again, taken out when the tick is off; D2R VR's own file stays
+    root = make_game(scratch / "g12", settings, loader, ini_native)
+    ours_mpq = root / "mods" / "D2R-VR" / "D2R-VR.mpq"
+    rm_mpq = root / "mods" / "D2RMM" / "D2RMM.mpq"
+    (ours_mpq / "data" / "hd").mkdir(parents=True)
+    (ours_mpq / "modinfo.json").write_text('{"name":"D2R-VR","savepath":"../"}', encoding="utf-8")
+    (ours_mpq / "data" / "hd" / "ours.json").write_text("ours", encoding="utf-8")
+    (rm_mpq / "data" / "global" / "excel").mkdir(parents=True)
+    (rm_mpq / "modinfo.json").write_text('{\n  "name": "D2RMM",\n  "savepath": "D2RMM/"\n}', encoding="utf-8")
+    (rm_mpq / "data" / "global" / "excel" / "weapons.txt").write_text("rm 1", encoding="utf-8")
+    (rm_mpq / "data" / "hd").mkdir(parents=True)
+    (rm_mpq / "data" / "hd" / "ours.json").write_text("theirs", encoding="utf-8")
+    merged = ours_mpq / "data" / "global" / "excel" / "weapons.txt"
+
+    def start_again(root):
+        for _ in range(100):
+            if not running("D2RLoader.exe"):
+                break
+            time.sleep(0.05)
+        f = root / "fake_loader_started.txt"
+        if f.exists():
+            f.unlink()
+        code, out, _, _ = start(root)
+        return code, out, kv(wait_file(f))
+
+    code, out, started = start_again(root)
+    check(code == 0 and started.get("argline") == "-mod D2R-VR", "a D2RMM mod in mods\\D2RMM: --start -> exit 0, still `-mod D2R-VR`", f"(got {code}; {out!r})")
+    check(rd(merged) == "rm 1", "...D2RMM's file is in D2R VR's mod before the game starts", repr(rd(merged)))
+    check(rd(ours_mpq / "data" / "hd" / "ours.json") == "ours", "...D2R VR's own file of the same name stays")
+    check("other mods: merged into D2R VR: D2RMM" in out, "...stdout says so", repr(out))
+    check("its own save folder (D2RMM/) is not used" in out, "...and that D2RMM's save folder is not taken", repr(out))
+    log12 = rd(root / MOD_LOGS / "d2r_vr_data_mods.txt") or ""
+    check("weapons.txt" not in log12 and "ours.json: D2R VR has its own - D2R VR's kept" in log12, "...d2r_vr_data_mods.txt names the choice", repr(log12))
+    time.sleep(0.05)
+    (rm_mpq / "data" / "global" / "excel" / "weapons.txt").write_text("rm 2 built again", encoding="utf-8")
+    code, out, _ = start_again(root)
+    check(code == 0 and rd(merged) == "rm 2 built again", "D2RMM built again: the next --start takes the new file", repr(rd(merged)))
+    (root / MOD_PLUGINS / "d2r_vr.ini").write_text(ini_native + "[mods]\nmerge_data_mods=0\n", encoding="utf-8")
+    code, out, _ = start_again(root)
+    check(code == 0 and not merged.exists() and rd(ours_mpq / "data" / "hd" / "ours.json") == "ours",
+          "[mods] merge_data_mods=0: the next --start takes D2RMM's files out again, D2R VR's own stays", f"({out!r})")
+    check(not (root / "mods" / "D2R-VR" / "data_mods.txt").exists() and rd(rm_mpq / "data" / "global" / "excel" / "weapons.txt") == "rm 2 built again",
+          "...no record left, D2RMM's own folder untouched")
+
     check(real_game_settings() == real0, "no start touched the player's own Settings.json (hash and size the same before and after)")
 
     print(f"\n{checks - len(failures)}/{checks} checks passed")

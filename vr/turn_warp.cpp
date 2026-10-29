@@ -3,9 +3,11 @@
 // as two layers), small passes over 16-pixel blocks for the near things and the game's effects; compiled once a process.
 
 #include "turn_warp.h"
+#include "gpu_spans.h"   // each pass's time on the graphics card, for the 10 s line (xr.cpp TurnTell)
 
 #include <d3dcompiler.h>
 
+#include <algorithm>
 #include <atomic>
 #include <climits>
 #include <cmath>
@@ -20,11 +22,34 @@
 namespace turnwarp {
 namespace {
 
+// The pictures turned or moved land between texels nearly always. Read bilinear, a half-texel step averages two, and fine detail and
+// text lost contrast every other frame in each eye: softer than both eyes drawn (pcvr's owner, 2026-10-23). Catmull-Rom ([stereo]
+// turns_sharp, Gpu::Sharpen) keeps more of it: five bilinear taps (the four corner ones left out), kept within the four nearest
+// texels, so no ring or halo past them. On a texel's centre it is that texel. bearstonem/d2r-pcvr bd88507 (MIT).
+#define TURN_SHARP R"(
+float4 Sharp(Texture2D<float4> t, SamplerState s, float2 uv) {
+    float w, h;
+    t.GetDimensions(w, h);
+    const float2 size = float2(w, h), at = uv * size, first = floor(at - 0.5) + 0.5, f = at - first;
+    const float2 w0 = f * (-0.5 + f * (1 - 0.5 * f)), w1 = 1 + f * f * (-2.5 + 1.5 * f), w2 = f * (0.5 + f * (2 - 1.5 * f)), w3 = f * f * (-0.5 + 0.5 * f);
+    const float2 w12 = w1 + w2, mid = (first + w2 / w12) / size, lo = (first - 1) / size, hi = (first + 2) / size;
+    const float4 c = (t.SampleLevel(s, float2(mid.x, lo.y), 0) * (w12.x * w0.y) + t.SampleLevel(s, float2(lo.x, mid.y), 0) * (w0.x * w12.y)
+                    + t.SampleLevel(s, mid, 0) * (w12.x * w12.y) + t.SampleLevel(s, float2(hi.x, mid.y), 0) * (w3.x * w12.y)
+                    + t.SampleLevel(s, float2(mid.x, hi.y), 0) * (w12.x * w3.y))
+                   / (w12.x * w0.y + w0.x * w12.y + w12.x * w12.y + w3.x * w12.y + w12.x * w3.y);
+    const int2 last = int2(size) - 1, a = clamp(int2(first - 0.5), 0, last), b = clamp(int2(first + 0.5), 0, last);
+    const float4 p = t.Load(int3(a, 0)), q = t.Load(int3(b.x, a.y, 0)), r = t.Load(int3(a.x, b.y, 0)), u = t.Load(int3(b, 0));
+    return clamp(c, min(min(p, q), min(r, u)), max(max(p, q), max(r, u)));
+}
+)"
+
 // Pass 1: this frame's image coordinates to the drawn image's (Homography's rows), the picture sampled there.
 const char kTurnShader[] = R"(
 Texture2D<float4> drawn : register(t0);
 SamplerState edge : register(s0);
-cbuffer Turn : register(b0) { float4 row0; float4 row1; float4 row2; };
+cbuffer Turn : register(b0) { float4 row0; float4 row1; float4 row2; float4 filter; };   // filter.x: 1 Catmull-Rom (Sharp), 0 bilinear
+)" TURN_SHARP R"(
+float4 Read(float2 uv) { return filter.x > 0 ? Sharp(drawn, edge, uv) : drawn.SampleLevel(edge, uv, 0); }
 struct Pixel { float4 position : SV_Position; float2 uv : TEXCOORD0; };
 Pixel VS(uint id : SV_VertexID) {
     Pixel p;
@@ -45,10 +70,11 @@ Out PS(Pixel p) {
     o.depth = 0;                                                                   // the turn alone knows no depth: far
 #endif
     o.colour = h.z <= 1e-6 ? float4(0, 0, 0, 1)                                    // behind the drawn eye: nothing it saw
-                           : drawn.SampleLevel(edge, h.xy / h.z, 0);               // past its edge: the edge drawn out
+                           : Read(h.xy / h.z);                                     // past its edge: the edge drawn out
     return o;
 }
 )";
+constexpr UINT kTurnConstants = 16;
 
 // Passes 2 and 3: a grid over the drawn picture, each point put back at its distance (reverse-Z, infinite: near / depth),
 // moved (what the hero carries by `carry`) and projected into this frame's eye, nearer over farther. Pass 3 (reach.z > 0): a cell
@@ -69,7 +95,7 @@ cbuffer Move : register(b0) {
     float4 drawnTan;                               // the drawn eye's tangents: left, right, down, up
     float4 nowTan;                                 // this frame's
     float4 depthInfo;                              // near; the depth's drawn part x, y
-    uint4 grid;                                    // cells across, down
+    uint4 grid;                                    // cells across, down; z: 1 Catmull-Rom (Sharp), 0 bilinear
     float4 carry0; float4 carry1; float4 carry2;   // Carry's rows
     float4 reach;                                  // carried nearer than x, the world's farther than y; z: the edge scale (0: no layers)
     float4 keep;                                   // x: parallax pixels a unit of the depth test (KeepScale), 0 off; y: the same surface within;
@@ -77,6 +103,7 @@ cbuffer Move : register(b0) {
     float4 nearInfo;                               // x, y: the picture's coordinates to the near blocks; z, w: this frame's pixels to them
     float4 effects;                                // x, y: the effects' blocks across, down; z: from what level they count, 0 off
 };
+)" TURN_SHARP R"(
 // split: 0 the whole cell; across an edge, > 0 the nearer layer (its pixels nearer than split), < 0 the farther (the rest)
 struct Pixel { float4 position : SV_Position; float2 uv : TEXCOORD0; noperspective float depth : TEXCOORD1; nointerpolation float split : TEXCOORD2; };
 static const float2 Corner[6] = { float2(0, 0), float2(1, 0), float2(0, 1), float2(0, 1), float2(1, 0), float2(1, 1) };
@@ -140,9 +167,17 @@ float4 Colour(Pixel p) {
         const bool where = (keep.z <= 0 && effects.z <= 0) || (keep.z > 0 && NearThing(p, there)) || (effects.z > 0 && Effect(p));
         if (there > 0 && abs(p.position.z - there) * keep.x <= keep.y && where) return own.Load(at);
     }
-    return drawn.SampleLevel(edge, p.uv, 0);
+    return grid.z ? Sharp(drawn, edge, p.uv) : drawn.SampleLevel(edge, p.uv, 0);
 }
-bool OtherLayer(Pixel p) { return p.split != 0 && (Nearest(p.uv) > abs(p.split)) != (p.split > 0); }
+// The texel a point of the picture lies in. A cell across an edge sorts each pixel into its two layers by this one texel: by the four
+// round it (Nearest) each layer, a fraction of a texel apart, could sort a texel out of both, and it was left a hole - the eye's own
+// older picture through it, a stripe off a roof's ridge (pcvr's turn captures, 2026-10-25; bearstonem/d2r-pcvr 5fa6874, MIT).
+float Texel(float2 uv) {
+    float w, h;
+    drawnDepth.GetDimensions(w, h);
+    return drawnDepth.Load(int3(min(int2(uv * depthInfo.yz * float2(w, h)), int2(w, h) - 1), 0));
+}
+bool OtherLayer(Pixel p) { return p.split != 0 && (Texel(p.uv) > abs(p.split)) != (p.split > 0); }
 #if MADE_DEPTH
 struct Out { float4 colour : SV_Target0; float depth : SV_Target1; };
 Out PS(Pixel p) { if (OtherLayer(p)) discard; Out o; o.colour = Colour(p); o.depth = p.depth; return o; }
@@ -207,13 +242,102 @@ float Reduce(float4 position : SV_Position) : SV_Target {
 )";
 constexpr UINT kNearConstants = 12;
 
+// Gpu::Rims (kRimPixels, [stereo] turns_rims): a depth, the void within kRimPixels of something taken as the nearest depth there. Through
+// pass 1's root signature: the depth at t0. bearstonem/d2r-pcvr 2de7cbd (MIT).
+const char kRimShader[] = R"(
+Texture2D<float> input : register(t0);   // reverse-Z: nearer is larger, 0 the void
+static const int Rim = 2;                // turnwarp::kRimPixels
+float4 VS(uint id : SV_VertexID) : SV_Position {
+    const float2 uv = float2(id == 1 ? 2 : 0, id == 2 ? 2 : 0);
+    return float4(uv.x * 2 - 1, 1 - uv.y * 2, 0, 1);
+}
+float PS(float4 position : SV_Position) : SV_Target {
+    const int2 at = int2(position.xy);
+    const float d = input.Load(int3(at, 0));
+    if (d > 0) return d;   // anything with depth keeps its own
+    uint width, height;
+    input.GetDimensions(width, height);
+    const int2 last = int2(width, height) - 1;
+    float nearest = 0;
+    [unroll] for (int y = -Rim; y <= Rim; ++y) [unroll] for (int x = -Rim; x <= Rim; ++x)
+        if (x * x + y * y <= Rim * Rim + 1) nearest = max(nearest, input.Load(int3(clamp(at + int2(x, y), 0, last), 0)));
+    return nearest;
+}
+)";
+
+// Gpu::Fill ([stereo] turns_fill): beside anything near, the eye not drawn sees a strip the drawn eye could not (pass 3 reached nothing
+// there), and keeps its own picture from a frame back there. A monster that stood there a frame ago and has moved since was left in
+// it: a ghost beside it in one eye (pcvr's owner, 2026-10-23). Such a strip is always of what is behind - the drawn eye's view of it was
+// blocked by something nearer - so where this eye's own picture there is nearer than the farther end of the strip along the row (the
+// drawn eye's), it is something since gone: the picture beside that end instead (filled from what is behind, as depth-image-based
+// rendering does). Where it shows what is behind, its own texture stays. Through the grids' root signature: the picture at t0, pass 3's
+// depth test at t1, pass 2's at t2. bearstonem/d2r-pcvr 8ae54f2 (MIT); the made depth (MADE_DEPTH) of that end too, ours.
+// Stricter than his (the author's headset test of 98f8b8d6, 2026-10-26: ticked, more ghosting, not less): "nearer than the farther end"
+// alone also took for a ghost what this eye rightly sees and the drawn eye does not, and painted the column beside it over it -
+//  - at the eye's outer edge, past the drawn eye's picture (one end found, nothing that hid it): now both ends are needed;
+//  - a thing between the two, behind the near thing from the drawn eye (a barrel behind a monster): now only what lies in the near
+//    end's half of the depth between the ends - a frame-old copy of the thing that hid the strip - and only with the near end on the
+//    side the eyes' parallax puts it (made right of the drawn eye: on the left);
+// and the strip is filled from what is behind mirrored past its end, where that is still what is behind, not one column drawn out.
+const char kHoleShader[] = R"(
+Texture2D<float4> picture : register(t0);   // the eye made as the grids left it (a copy)
+Texture2D<float> covered : register(t1);    // pass 3's depth test: 0 where it reached nothing
+Texture2D<float> ownDepth : register(t2);   // pass 2's: 0 where it drew nothing
+// holes: x: how far along the row to look either side, pixels; y: parallax pixels a unit of the depth test; z: within how many it shows
+// what is behind; w: the depth test to the made depth (near / Ahead). sides.x: +1 what is behind is on the strip's right (the eye made
+// right of the drawn one), -1 on its left, 0 either
+cbuffer Holes : register(b0) { float4 holes; float4 sides; };
+float4 VS(uint id : SV_VertexID) : SV_Position {
+    const float2 uv = float2(id == 1 ? 2 : 0, id == 2 ? 2 : 0);
+    return float4(uv.x * 2 - 1, 1 - uv.y * 2, 0, 1);
+}
+#if MADE_DEPTH
+struct Out { float4 colour : SV_Target0; float depth : SV_Target1; };
+#else
+struct Out { float4 colour : SV_Target0; };
+#endif
+Out PS(float4 position : SV_Position) {
+    const int2 at = int2(position.xy);
+    if (covered.Load(int3(at, 0)) > 0) discard;   // the drawn eye's picture: as it is
+    const float own = ownDepth.Load(int3(at, 0));
+    if (own <= 0) discard;   // nothing of its own with a depth here: as the turn left it
+    uint width, height;
+    covered.GetDimensions(width, height);
+    float left = 0, right = 0;   // the strip's ends: the drawn eye's nearest pixels either side
+    int2 l = at, r = at;
+    for (int k = 1; k <= int(holes.x) && (left <= 0 || right <= 0); ++k) {
+        if (left <= 0 && at.x - k >= 0) { const float d = covered.Load(int3(at.x - k, at.y, 0)); if (d > 0) { left = d; l = int2(at.x - k, at.y); } }
+        if (right <= 0 && at.x + k < int(width)) { const float d = covered.Load(int3(at.x + k, at.y, 0)); if (d > 0) { right = d; r = int2(at.x + k, at.y); } }
+    }
+    if (left <= 0 || right <= 0) discard;   // both ends: the thing that hid the strip and what is behind it (not the eye's outer edge)
+    const bool fromLeft = left <= right;    // the farther end (reverse-Z: the smaller)
+    if (sides.x != 0 && (fromLeft ? -1.0 : 1.0) != sides.x) discard;   // what is behind not on the side the parallax uncovers
+    const float end = fromLeft ? left : right, hid = fromLeft ? right : left;
+    if ((hid - end) * holes.y <= holes.z) discard;   // no edge between the ends: nothing hid it
+    if ((own - end) * holes.y <= holes.z || own * 2 < hid + end) discard;   // its own shows what is behind, or something between: it stays
+    const int2 e = fromLeft ? l : r, mirror = int2(clamp(2 * e.x - at.x, 0, int(width) - 1), at.y);
+    const float m = covered.Load(int3(mirror, 0));
+    Out o;
+    o.colour = picture.Load(int3(m > 0 && abs(m - end) * holes.y <= holes.z ? mirror : e, 0));
+#if MADE_DEPTH
+    o.depth = end * holes.w;
+#endif
+    return o;
+}
+)";
+constexpr float kHoleReachPx = 256;   // how far along the row a strip's ends are looked for: a 4096-wide eye's pixels (pcvr's 128: a
+                                      // hand's strip is wider, and both ends are needed now)
+constexpr UINT kHoleConstants = 8;
+
 // A slot's descriptors: [0] pass 1's picture; pass 2's table and pass 3's, kGridTable each (a picture, its depth; pass 2's picture and
 // its depth test as it left them; the near blocks, the drawn eye's and this eye's; the effects blocks, the same); one between for the
-// near passes. Effects uses [0..3] of a slot of its own: the layer's two targets, the two blocks between.
+// near passes; the two depths the rims are taken from (Rims: this eye's own, the drawn eye's); a grid's table for the strips (Fill).
+// Effects uses [0..3] of a slot of its own: the layer's two targets, the two blocks between.
 constexpr UINT kGridTable = 8;
-constexpr UINT kOwnTable = 1, kDrawnTable = kOwnTable + kGridTable, kBetween = kDrawnTable + kGridTable, kPerSlot = kBetween + 1;
-// The RTV heap: the picture, the made depth, the near blocks (3), the effects blocks (4).
-constexpr UINT kRtvPicture = 0, kRtvMade = 1, kRtvNears = 2, kRtvEffects = 5, kRtvs = 9;
+constexpr UINT kOwnTable = 1, kDrawnTable = kOwnTable + kGridTable, kBetween = kDrawnTable + kGridTable, kRimTable = kBetween + 1,
+               kHoleTable = kRimTable + 2, kPerSlot = kHoleTable + kGridTable;
+// The RTV heap: the picture, the made depth, the near blocks (3), the effects blocks (4), the rims (2).
+constexpr UINT kRtvPicture = 0, kRtvMade = 1, kRtvNears = 2, kRtvEffects = 5, kRtvRims = 9, kRtvs = 11;
 const D3D12_RESOURCE_STATES kReadable = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
 
 template <class T> void Free(T*& p) { if (p) { p->Release(); p = nullptr; } }
@@ -224,8 +348,8 @@ template <class T> void Free(T*& p) { if (p) { p->Release(); p = nullptr; } }
 // finish unavailable instead of escaping call_once (pcvr's 4e2cc65).
 struct Compiled {
     bool compiler = false;
-    std::vector<uint8_t> vs, ps[2], depthVs, depthPs[2], nearVs, nearReduce, nearSpread, effectsReduce;
-    std::string errors, depthErrors, nearErrors, effectsErrors;   // the first failure's messages of each group
+    std::vector<uint8_t> vs, ps[2], depthVs, depthPs[2], nearVs, nearReduce, nearSpread, effectsReduce, rimVs, rimPs, holeVs, holePs[2];
+    std::string errors, depthErrors, nearErrors, effectsErrors, rimErrors, holeErrors;   // the first failure's messages of each group
 };
 const Compiled& Shaders() {
     static std::once_flag once;
@@ -259,6 +383,11 @@ const Compiled& Shaders() {
             build(kNearShader, "Reduce", "ps_5_0", false, c.nearReduce, &c.nearErrors);
             build(kNearShader, "Spread", "ps_5_0", false, c.nearSpread, &c.nearErrors);
             build(kEffectsShader, "Reduce", "ps_5_0", false, c.effectsReduce, &c.effectsErrors);
+            build(kRimShader, "VS", "vs_5_0", false, c.rimVs, &c.rimErrors);
+            build(kRimShader, "PS", "ps_5_0", false, c.rimPs, &c.rimErrors);
+            build(kHoleShader, "VS", "vs_5_0", false, c.holeVs, &c.holeErrors);
+            build(kHoleShader, "PS", "ps_5_0", false, c.holePs[0], &c.holeErrors);
+            build(kHoleShader, "PS", "ps_5_0", true, c.holePs[1], nullptr);
         } catch (...) {}   // out of memory: what did not finish stays unavailable
         if (dc) FreeLibrary(dc);
     });
@@ -340,6 +469,7 @@ void Gpu::Release() {
     Free(depthTarget_);
     Free(drawnTarget_);
     Free(ownTurned_);
+    for (auto*& r : rims_) Free(r);
     for (auto*& n : nears_) Free(n);
     for (auto*& e : effects_) Free(e);
     effectsKept_[0] = effectsKept_[1] = false;
@@ -351,6 +481,8 @@ void Gpu::Release() {
     Free(reducePso_);
     Free(spreadPso_);
     Free(effectsPso_);
+    Free(rimPso_);
+    for (auto*& h : holePso_) Free(h);
     Free(nearRoot_);
     Free(depthRoot_);
     Free(root_);
@@ -441,7 +573,7 @@ bool Gpu::Init(ID3D12Device* dev, DXGI_FORMAT target, void (*log)(const char*), 
         }
         return SUCCEEDED(dev->CreateGraphicsPipelineState(&d, __uuidof(ID3D12PipelineState), (void**)out));
     };
-    bool ok = rootOf(1, 12, D3D12_SHADER_VISIBILITY_PIXEL, &root_) && psoOf(root_, c.vs, c.ps[0], DXGI_FORMAT_UNKNOWN, false, false, false, &pso_[0]);
+    bool ok = rootOf(1, kTurnConstants, D3D12_SHADER_VISIBILITY_PIXEL, &root_) && psoOf(root_, c.vs, c.ps[0], DXGI_FORMAT_UNKNOWN, false, false, false, &pso_[0]);
     // the made depth's variant: without it the overlays of the eye made are hidden by nothing (as with turn_overlay_hide=0)
     if (ok && !psoOf(root_, c.vs, c.ps[1], DXGI_FORMAT_UNKNOWN, false, true, false, &pso_[1])) {
         Free(pso_[1]);
@@ -460,6 +592,13 @@ bool Gpu::Init(ID3D12Device* dev, DXGI_FORMAT target, void (*log)(const char*), 
     srvInc_ = dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
     rtvInc_ = dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
     srv_->SetName(L"d2rvr eyes by turns srv");
+    // the rims' pass ([stereo] turns_rims): without it they stay with the void
+    if (!psoOf(root_, c.rimVs, c.rimPs, DXGI_FORMAT_R32_FLOAT, false, false, false, &rimPso_)) {
+        Free(rimPso_);
+        if (!c.rimErrors.empty()) say("vrcam: eyes by turns - a shader did not compile: %s", c.rimErrors.c_str());
+        say("vrcam: eyes by turns - the rims round things against the sky moved with them unavailable (%s): they stay with the sky",
+            "its pass could not be made");
+    }
     // the depth passes: without them the eye not drawn is turned only
     const bool depthOk = rootOf(kGridTable, kDepthConstants, D3D12_SHADER_VISIBILITY_ALL, &depthRoot_) &&
                          psoOf(depthRoot_, c.depthVs, c.depthPs[0], DXGI_FORMAT_UNKNOWN, true, false, false, &depthPso_[0]);
@@ -475,6 +614,14 @@ bool Gpu::Init(ID3D12Device* dev, DXGI_FORMAT target, void (*log)(const char*), 
         Free(depthPso_[1]);
         Free(pso_[1]);   // the made depth whole or not at all: from the turn alone it would be far everywhere
         say("vrcam: eyes by turns - the made eye's depth unavailable (%s): its overlays are hidden by nothing", "its grid pass could not be made");
+    }
+    // the strips' pass ([stereo] turns_fill), each variant as the grids': without it they keep this eye's own picture as before
+    for (int v = 0; v < 2; ++v)
+        if ((v == 0 || pso_[1]) && !psoOf(depthRoot_, c.holeVs, c.holePs[v], DXGI_FORMAT_UNKNOWN, false, v == 1, false, &holePso_[v])) Free(holePso_[v]);
+    if (!holePso_[0]) {
+        Free(holePso_[1]);
+        if (!c.holeErrors.empty()) say("vrcam: eyes by turns - a shader did not compile: %s", c.holeErrors.c_str());
+        say("vrcam: eyes by turns - filling the strips beside near things unavailable (%s): they keep the eye's own picture", "its pass could not be made");
     }
     // the near things' and the effects' passes ([stereo] turns_keep_own): without them those modes keep the drawn eye's picture
     if (!rootOf(1, kNearConstants, D3D12_SHADER_VISIBILITY_PIXEL, &nearRoot_) ||
@@ -592,6 +739,7 @@ bool Gpu::Effects(ID3D12GraphicsCommandList* list, ID3D12Resource* const layer[2
 bool Gpu::Render(ID3D12GraphicsCommandList* list, ID3D12Resource* target, uint32_t w, uint32_t h, ID3D12Resource* base,
                  const std::array<float, 9>& homography, const Grid* own, const Grid* drawn, int slot, bool madeDepth, int eye, bool* kept) {
     if (kept) *kept = false;
+    filled_ = rimmed_ = false;
     const int k = madeDepth && pso_[1] ? 1 : 0;   // 1: the made depth written too (MadeDepth)
     if (!pso_[0] || !list || !target || !base || !w || !h || slot < 0 || slot >= kSlots) return false;
     eye = eye ? 1 : 0;
@@ -648,16 +796,21 @@ bool Gpu::Render(ID3D12GraphicsCommandList* list, ID3D12Resource* target, uint32
     list->SetDescriptorHeaps(1, heaps);
     list->SetGraphicsRootSignature(root_);
     list->SetGraphicsRootDescriptorTable(0, gpuAt(0));
-    float rows[12] = {};
+    float rows[kTurnConstants] = {};
     for (int r = 0; r < 3; ++r)
         for (int c = 0; c < 3; ++c) rows[r * 4 + c] = homography[r * 3 + c];
-    list->SetGraphicsRoot32BitConstants(1, 12, rows, 0);
+    rows[12] = sharp_ ? 1.0f : 0.0f;
+    list->SetGraphicsRoot32BitConstants(1, kTurnConstants, rows, 0);
     list->OMSetRenderTargets(targets, &rtv, TRUE, nullptr);
     list->RSSetViewports(1, &vp);
     list->RSSetScissorRects(1, &rect);
     list->SetPipelineState(pso_[k]);
     list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-    list->DrawInstanced(3, 1, 0, 0);
+    {
+        const int span = gpuspans::Begin(list, "made: turn");
+        list->DrawInstanced(3, 1, 0, 0);
+        gpuspans::End(list, span);
+    }
 
     auto usable = [](const Grid* g) { return g && g->image && g->depth && g->depthView != DXGI_FORMAT_UNKNOWN && g->nearPlane > 0.0f; };
     const bool ownOk = usable(own), drawnOk = usable(drawn);
@@ -673,8 +826,8 @@ bool Gpu::Render(ID3D12GraphicsCommandList* list, ID3D12Resource* target, uint32
         clear.DepthStencil.Depth = 0.0f;
         depthTarget_ = Texture(dev_, w, h, DXGI_FORMAT_R32_TYPELESS, D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL, D3D12_RESOURCE_STATE_DEPTH_WRITE, &clear,
                                L"d2rvr eyes by turns depth test (own)");
-        drawnTarget_ = Texture(dev_, w, h, DXGI_FORMAT_D32_FLOAT, D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL | D3D12_RESOURCE_FLAG_DENY_SHADER_RESOURCE,
-                               D3D12_RESOURCE_STATE_DEPTH_WRITE, &clear, L"d2rvr eyes by turns depth test (drawn)");
+        drawnTarget_ = Texture(dev_, w, h, DXGI_FORMAT_R32_TYPELESS, D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL, D3D12_RESOURCE_STATE_DEPTH_WRITE, &clear,
+                               L"d2rvr eyes by turns depth test (drawn)");   // (R32 typeless: Fill reads it)
         ownTurned_ = Texture(dev_, w, h, format_, D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr, L"d2rvr eyes by turns own moved");
         if (!depthTarget_ || !drawnTarget_ || !ownTurned_) {
             Free(depthTarget_); Free(drawnTarget_); Free(ownTurned_);
@@ -746,6 +899,7 @@ bool Gpu::Render(ID3D12GraphicsCommandList* list, ID3D12Resource* target, uint32
         memcpy(c, f, sizeof f);
         c[24] = across;
         c[25] = down;
+        c[26] = sharp_ ? 1 : 0;
         list->SetGraphicsRoot32BitConstants(1, kDepthConstants, c, 0);
         list->DrawInstanced(6 * across * down, g.edgeScale > 0.0f ? 2 : 1, 0, 0);   // the drawn eye's: the farther layers too
     };
@@ -774,7 +928,55 @@ bool Gpu::Render(ID3D12GraphicsCommandList* list, ID3D12Resource* target, uint32
         nearPass(spreadPso_, kDrawnTable + 4 + out, 2, 1, 1, 1, 0, reach);   // (the drawn table holds nears_[0], [1])
         nearPass(spreadPso_, kBetween, out, 1, 1, 0, 1, reach);
     };
-    if (ownOk) grid(*own, kOwnTable, 0, false, false, false);
+    // The rims (kRimPixels, [stereo] turns_rims): each depth with the void round things taken as theirs, this eye's own into rims_[0], the
+    // drawn eye's into rims_[1]; everything after reads those.
+    Grid ownRimmed, drawnRimmed;
+    auto rimmed = [&](const Grid* g, int n, Grid& out) -> const Grid* {
+        const D3D12_RESOURCE_DESC size = g->depth->GetDesc();
+        if (rims_[n]) {
+            const D3D12_RESOURCE_DESC r = rims_[n]->GetDesc();
+            if (r.Width != size.Width || r.Height != size.Height) Drop(rims_[n]);
+        }
+        if (!rims_[n]) {
+            rims_[n] = Texture(dev_, size.Width, size.Height, DXGI_FORMAT_R32_FLOAT, D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET, kReadable, nullptr,
+                               n ? L"d2rvr eyes by turns rims (drawn)" : L"d2rvr eyes by turns rims (own)");
+            if (!rims_[n]) return g;   // its own depth this frame
+        }
+        const D3D12_CPU_DESCRIPTOR_HANDLE r = rtvAt(kRtvRims + n);
+        dev_->CreateRenderTargetView(rims_[n], nullptr, r);
+        D3D12_SHADER_RESOURCE_VIEW_DESC dvw = sv;
+        dvw.Format = g->depthView;
+        dev_->CreateShaderResourceView(g->depth, &dvw, at(kRimTable + n));
+        D3D12_RESOURCE_BARRIER b = Tr(rims_[n], kReadable, D3D12_RESOURCE_STATE_RENDER_TARGET);
+        list->ResourceBarrier(1, &b);
+        list->OMSetRenderTargets(1, &r, FALSE, nullptr);
+        const D3D12_VIEWPORT whole{0.0f, 0.0f, float(size.Width), float(size.Height), 0.0f, 1.0f};
+        const D3D12_RECT wholeRect{0, 0, LONG(size.Width), LONG(size.Height)};
+        list->RSSetViewports(1, &whole);
+        list->RSSetScissorRects(1, &wholeRect);
+        list->SetGraphicsRootSignature(root_);
+        list->SetPipelineState(rimPso_);
+        list->SetGraphicsRootDescriptorTable(0, gpuAt(kRimTable + n));
+        list->DrawInstanced(3, 1, 0, 0);
+        std::swap(b.Transition.StateBefore, b.Transition.StateAfter);
+        list->ResourceBarrier(1, &b);
+        out = *g;
+        out.depth = rims_[n];
+        out.depthView = DXGI_FORMAT_R32_FLOAT;
+        rimmed_ = true;
+        return &out;
+    };
+    if (rimsOn_ && rimPso_) {
+        const int span = gpuspans::Begin(list, "made: rims");
+        if (ownOk) own = rimmed(own, 0, ownRimmed);
+        if (drawnOk) drawn = rimmed(drawn, 1, drawnRimmed);
+        gpuspans::End(list, span);
+    }
+    if (ownOk) {
+        const int span = gpuspans::Begin(list, "made: own grid");
+        grid(*own, kOwnTable, 0, false, false, false);
+        gpuspans::End(list, span);
+    }
     if (drawnOk) {
         // Where this eye's own picture (pass 2) shows the same surface as the drawn eye's, it stays: seen from this eye, a frame old.
         // With keepNear only round near things (without their passes, nowhere); with keepEffects (also) where either eye's effects were.
@@ -786,6 +988,7 @@ bool Gpu::Render(ID3D12GraphicsCommandList* list, ID3D12Resource* target, uint32
         D3D12_RESOURCE_BARRIER b[3] = {Tr(target, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE),
                                        Tr(ownTurned_, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST),
                                        Tr(depthTarget_, D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE)};
+        const int keepSpan = keepOn ? gpuspans::Begin(list, "made: keep own (copy)") : -1;
         if (keepOn) {
             list->ResourceBarrier(2, b);
             D3D12_TEXTURE_COPY_LOCATION to{}, from{};
@@ -796,6 +999,7 @@ bool Gpu::Render(ID3D12GraphicsCommandList* list, ID3D12Resource* target, uint32
             for (int i = 0; i < 2; ++i) std::swap(b[i].Transition.StateBefore, b[i].Transition.StateAfter);
             list->ResourceBarrier(3, b);   // the target back, the copy readable, pass 2's depth test readable
         }
+        gpuspans::End(list, keepSpan);
         if (keepOn && nearOn) {
             // the drawn eye's depth and pass 2's depth test as SRVs, the blocks' too
             D3D12_SHADER_RESOURCE_VIEW_DESC dvw = sv;
@@ -809,13 +1013,56 @@ bool Gpu::Render(ID3D12GraphicsCommandList* list, ID3D12Resource* target, uint32
             const D3D12_RECT brect{0, 0, LONG(blocksAcross), LONG(blocksDown)};
             list->RSSetViewports(1, &bvp);
             list->RSSetScissorRects(1, &brect);
+            const int span = gpuspans::Begin(list, "made: near blocks");
             nearBlocks(kDrawnTable + 1, 0, drawn->scale[0], drawn->scale[1], kp.keepReach);   // as the drawn eye saw them
             nearBlocks(kDrawnTable + 3, 1, 1, 1, kp.keepReach);                               // as this eye did
+            gpuspans::End(list, span);
         }
-        grid(*drawn, kDrawnTable, 1, keepOn, keepOn && nearOn, keepOn && fxOn);
+        {
+            const int span = gpuspans::Begin(list, "made: drawn grid");
+            grid(*drawn, kDrawnTable, 1, keepOn, keepOn && nearOn, keepOn && fxOn);
+            gpuspans::End(list, span);
+        }
         if (keepOn) {
             std::swap(b[2].Transition.StateBefore, b[2].Transition.StateAfter);
             list->ResourceBarrier(1, b + 2);
+        }
+        // The strips pass 3 did not reach ([stereo] turns_fill): what this eye's own picture left there, unless it is something nearer
+        // since gone - then what is behind beside the strip.
+        if (fill_ && ownOk && holePso_[k] && drawn->edgeScale > 0.0f) {
+            const int span = gpuspans::Begin(list, "made: fill");
+            D3D12_RESOURCE_BARRIER r[4] = {Tr(target, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE),
+                                           Tr(ownTurned_, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST),
+                                           Tr(depthTarget_, D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
+                                           Tr(drawnTarget_, D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE)};
+            list->ResourceBarrier(2, r);
+            D3D12_TEXTURE_COPY_LOCATION to{}, from{};   // the picture so far, to read beside the strips
+            to.pResource = ownTurned_; to.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+            from.pResource = target; from.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+            const D3D12_BOX box{0, 0, 0, w, h, 1};
+            list->CopyTextureRegion(&to, 0, 0, 0, &from, &box);
+            for (int i = 0; i < 2; ++i) std::swap(r[i].Transition.StateBefore, r[i].Transition.StateAfter);
+            list->ResourceBarrier(4, r);   // the target back, the copy readable, both grids' depth tests readable
+            dev_->CreateShaderResourceView(ownTurned_, &sv, at(kHoleTable));
+            dev_->CreateShaderResourceView(drawnTarget_, &single, at(kHoleTable + 1));
+            dev_->CreateShaderResourceView(depthTarget_, &single, at(kHoleTable + 2));
+            for (UINT n = 3; n < kGridTable; ++n) dev_->CreateShaderResourceView(nullptr, &single, at(kHoleTable + n));
+            list->SetGraphicsRootSignature(depthRoot_);
+            list->SetPipelineState(holePso_[k]);
+            list->SetGraphicsRootDescriptorTable(0, gpuAt(kHoleTable));
+            // the drawn eye's place in this eye's view (the move's translation): left of it, what is behind is uncovered right of near things
+            const float drawnX = drawn->move[3];
+            const float holes[kHoleConstants] = {(std::max)(16.0f, kHoleReachPx * float(w) / kKeepWidthPx), KeepScale(drawn->edgeScale, drawn->nearPlane),
+                                                 kEdgePixels, drawn->nearPlane / kAhead, drawnX < 0.0f ? 1.0f : drawnX > 0.0f ? -1.0f : 0.0f, 0, 0, 0};
+            list->SetGraphicsRoot32BitConstants(1, kHoleConstants, holes, 0);
+            filled_ = true;
+            list->OMSetRenderTargets(targets, &rtv, TRUE, nullptr);
+            list->RSSetViewports(1, &vp);
+            list->RSSetScissorRects(1, &rect);
+            list->DrawInstanced(3, 1, 0, 0);
+            for (auto& x : r) std::swap(x.Transition.StateBefore, x.Transition.StateAfter);
+            list->ResourceBarrier(2, r + 2);   // both grids' depth tests back to be written
+            gpuspans::End(list, span);
         }
         if (kept) *kept = keepOn;
     }

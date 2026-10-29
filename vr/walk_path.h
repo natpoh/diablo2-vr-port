@@ -227,6 +227,26 @@ private:
     uint64_t lastAt_ = 0;
 };
 
+// -- [input] bodywalk_walk_lift: BodyWalk's stick from `from` up counts as just past the game's dead zone ---------------------------
+// BodyWalk's walk in place reaches its stick through two moving averages and a speed curve, so from rest its stick climbs for the
+// better part of a second, and the game walks only once it is past 0.32 (2026-10-28, SlimeVR legs: 0.7 - 1.5 s after the first step).
+// The climb itself starts within ~0.3 s; this lets the hero start there: a BodyWalk stick at least `from` long but still inside the
+// dead zone is lengthened to just past it, its direction kept. A stick past the dead zone and one shorter than `from` are left as they
+// are (the first walks anyway, the second is BodyWalk at rest - its noise sits under ~0.1). 0 (or >= the dead zone) = off, as before.
+inline constexpr int16_t kLiftedAxisLen = 10400;   // just past 10349: the game's own test passes, the walk is the slowest it has
+inline bool Lift(int16_t* lx, int16_t* ly, float from) {
+    if (!(from > 0.0f) || from * 32767.0f >= 10349.0f) return false;
+    const float x = (float)*lx, y = (float)*ly;
+    const float len = std::sqrt(x * x + y * y);
+    if (len < from * 32767.0f || PushedRaw(*lx, *ly)) return false;
+    const float k = (float)kLiftedAxisLen / len;
+    int16_t nx = (int16_t)std::lround(std::clamp(x * k, -32767.0f, 32767.0f));
+    int16_t ny = (int16_t)std::lround(std::clamp(y * k, -32767.0f, 32767.0f));
+    if (!PushedRaw(nx, ny)) return false;   // (rounding on a diagonal: never claim a lift the game would not take)
+    *lx = nx; *ly = ny;
+    return true;
+}
+
 // -- BodyWalk's walk through Game Link (its Output "Game Link": bodywalk/game_link.h Walk, link::Walk) ------------------------------
 // With that Output BodyWalk puts no walk on its pad: the report's left stick is the Mapping's alone (at rest unless a gesture holds
 // it), and the walk comes in the Walk block - the very stick its Xbox output would have pushed, /32767 (the same dead zone, curve and

@@ -2,7 +2,8 @@
 // (vr/direct_input.h) fed to the detector of vr/throw_gesture.h, and a released throw made the game's own throw.
 //
 // A javelin or a throwing weapon in the hand and a box ticked: the right trigger (throw_gesture) or the right
-// grip (throw_by_grip) belongs to the gesture (directinput::Take: the layout sees it as let go).
+// grip (throw_by_grip) belongs to the gesture (directinput::Take: the layout sees it as let go). With [hands] throw_left_hand a weapon the game
+// holds in its LEFT hand is the left controller's instead - its trigger or grip and its swing (vr/throw_hand.h); the game's throw is the same.
 //   trigger: a press opens a gesture, the hand's swing and the release of the trigger decide;
 //   grip:    the grip is held as long as the weapon is in the hand (the detector's hold mode), the swing at the
 //            end of it and the release of the grip decide - a release with the hand at rest throws nothing.
@@ -47,13 +48,14 @@
 #include "throw_gesture.h"
 #include "throw_gesture_wire.h"
 #include "throw_born.h"
+#include "throw_hand.h"
 #include "potion_hide.h"
 #include "throw_land.h"
 #include "throw_source.h"
 #include "view_gate.h"
 #include "wheel_game.h"
 
-namespace gamestate { uint32_t WeaponType(); bool MenuOpen(); uint32_t WeaponHand(); uint32_t HandCode(int side); bool HandIsThrowPotion(int side); }
+namespace gamestate { uint32_t WeaponType(); bool MenuOpen(); uint32_t WeaponHand(); uint32_t HandCode(int side); bool HandIsThrowPotion(int side); uint32_t HandKind(int side); uint32_t HandsKey(); }
 
 namespace throwwire {
 namespace {
@@ -70,9 +72,22 @@ std::atomic<bool> g_listening{false};
 std::atomic<float> g_right{0.0f}, g_fwd{1.0f};
 std::atomic<ULONGLONG> g_liveUntil{0};   // GetTickCount64, ms
 std::atomic<bool> g_read{false};         // a hook asked for the aim since the last throw's press
-std::atomic<bool> g_gripOwns{false};     // a throw_by_grip gesture owns the right grip this frame
-std::atomic<bool> g_trigOwns{false};     // a throw_gesture (trigger) gesture owns the right trigger this frame
-std::atomic<bool> g_gripDown{false};     // ... and the right grip is squeezed on the weapon (the frame's own value: the gesture's Take hides it from the shared block)
+// By controller (0 left, 1 right - vr/throw_hand.h): unticked [hands] throw_left_hand, only the right one is ever set.
+std::atomic<bool> g_gripOwns[2] = {};    // a throw_by_grip gesture owns that controller's grip this frame
+std::atomic<bool> g_trigOwns[2] = {};    // a throw_gesture (trigger) gesture owns that controller's trigger this frame
+std::atomic<bool> g_gripDown[2] = {};    // ... and its grip is squeezed on the weapon (the frame's own value: the gesture's Take hides it from the shared block)
+std::atomic<bool> g_followHand{false};   // [hands] throw_left_hand: the controller of each hand that holds a thrown weapon throws (vr/throw_hand.h)
+std::atomic<int> g_xr{throwhand::kXrRight};   // the controller of the PRIMARY thrown weapon (the weight model's first; the game's weapon kind's slot): Controller()
+// The weight model's word on who carries which weapon (SetCarrySource)
+std::atomic<bool (*)()> g_placedFn{nullptr};
+std::atomic<int (*)()> g_carryingFn{nullptr};
+std::atomic<int (*)()> g_secondHandFn{nullptr};
+std::atomic<bool (*)()> g_secondPlacedFn{nullptr};
+std::atomic<int (*)()> g_firstSlotFn{nullptr};
+std::atomic<unsigned (*)(int)> g_holdersFn{nullptr};
+std::atomic<void (*)()> g_secondThrownFn{nullptr};
+std::atomic<uint32_t> g_inPlay{0};       // a thrown weapon is in a game slot with a throw gesture on, in play: the game's weapon kind (ThrownInPlay)
+std::atomic<unsigned> g_handOnlySeq{0};  // the throw with this seq is the weight model's SECOND weapon's: its account (the first's trail) is not this throw's
 std::atomic<float> g_speed{0.0f}, g_horiz{0.0f}, g_vert{0.0f}, g_below{0.0f}, g_relSpeed{0.0f};   // the last throw's hand, for Info
 std::atomic<unsigned> g_seq{0};
 std::atomic<ULONGLONG> g_lastThrow{0};   // GetTickCount64 of the last released throw
@@ -99,12 +114,23 @@ throwgesture::Params HoldParams() {
 }
 
 // What the draw thread keeps between frames (the listener is the only one to touch it).
-struct State {
+// One controller's gesture (by controller: 0 left, 1 right).
+struct Lane {
     throwgesture::Detector trig;
     throwgesture::Detector grip{HoldParams()};
-    uint32_t session = 0, epoch = 0, weaponType = 0;
+    bool controlDown = false;
+    int slot = -1;                     // the game's slot of the weapon it threw on the last frame (-1: it threw nothing)
+    double ownedUntil = 0.0;           // throw_left_hand with the weight model: its control is the throw's until then (throwhand::OwnsGrip)
+};
+
+struct State {
+    Lane lane[2];
+    uint32_t session = 0, epoch = 0, weaponType = 0, handsKey = 0;
+    int lastHand[2] = {throwhand::kSideRight, throwhand::kSideLeft};   // by slot: the hand its weapon was in (vr/throw_hand.h)
+    int pendSlot = 0;                  // the slot of the potion waiting for its model to land
+    bool refusedSeen = false;          // the log said the left slot's thrown weapon is the game's to refuse
     int lastMode = kOff;
-    bool controlDown = false, pressing = false, taking = false;
+    bool pressing = false, taking = false;
     double releaseAt = 0.0;
     // waiting to learn whether the game asked for the aim of the last press
     bool awaitingRead = false;
@@ -113,6 +139,7 @@ struct State {
     bool diagSeen = false, dThrown = false, dPlay = false, dTaking = false, dDirect = false;
     uint32_t dType = 0;
     int dMode = kOff;
+    unsigned dMask = 2u;
     ULONGLONG diagAt = 0, whyAt = 0, hintAt = 0;
     // which command a throw presses: the pad button of the slot that holds the game's Throw, else the A attack
     wheel::Snapshot snap;
@@ -150,6 +177,7 @@ const char* WhyText(throwgesture::Why w) {
 // throw. False when no source is registered, it is not valid, or it belongs to another moment - the hand's own estimate stays.
 bool WeightChoice(throwsrc::Choice* out) {
     const unsigned seq = g_seq.load();
+    if (seq != 0 && seq == g_handOnlySeq.load()) return false;   // the weight model's second weapon was thrown: its account is the first's
     {
         std::lock_guard<std::mutex> lk(g_wMtx);
         if (g_w.ok && g_w.seq == seq) { *out = g_w.c; return true; }
@@ -182,14 +210,26 @@ void LetGoOfAttack() {
     g_pressIsThrow.store(false);
 }
 
+void CancelLanes() {
+    for (Lane& l : g.lane) {
+        l.trig.Cancel();
+        l.grip.Cancel();
+        l.controlDown = false;
+    }
+}
+
+void ClearOwns() {
+    for (int xr = 0; xr < 2; ++xr) {
+        g_gripOwns[xr].store(false);
+        g_trigOwns[xr].store(false);
+        g_gripDown[xr].store(false);
+    }
+}
+
 void Reset() {
-    g.trig.Cancel();
-    g.grip.Cancel();
-    g.controlDown = false;
+    CancelLanes();
     g.taking = false;
-    g_gripOwns.store(false);
-    g_trigOwns.store(false);
-    g_gripDown.store(false);
+    ClearOwns();
     g_wantSlots.store(false);
     g.press.Stop();
     g.pend.Cancel();
@@ -199,13 +239,13 @@ void Reset() {
 }
 
 // The state the log last said, once per change (at most 6 a second).
-void Diag(uint32_t type, int mode, bool thrown, bool play, bool taking, bool direct, uint32_t flags) {
-    if (g.diagSeen && g.dType == type && g.dMode == mode && g.dThrown == thrown && g.dPlay == play && g.dTaking == taking && g.dDirect == direct) return;
+void Diag(uint32_t type, int mode, bool thrown, bool play, bool taking, bool direct, uint32_t flags, unsigned mask) {
+    if (g.diagSeen && g.dType == type && g.dMode == mode && g.dThrown == thrown && g.dPlay == play && g.dTaking == taking && g.dDirect == direct && g.dMask == mask) return;
     const ULONGLONG now = GetTickCount64();
     if (g.diagSeen && now - g.diagAt < 150) return;   // said on a later frame
     g.diagSeen = true;
     g.diagAt = now;
-    g.dType = type; g.dMode = mode; g.dThrown = thrown; g.dPlay = play; g.dTaking = taking; g.dDirect = direct;
+    g.dType = type; g.dMode = mode; g.dThrown = thrown; g.dPlay = play; g.dTaking = taking; g.dDirect = direct; g.dMask = mask;
     const char* why = "";
     if (!play) {
         why = !(flags & directinput::kFocused) ? " (no input focus)" :
@@ -213,10 +253,11 @@ void Diag(uint32_t type, int mode, bool thrown, bool play, bool taking, bool dir
               (flags & directinput::kOtherView) || !viewgate::F4() ? " (not VR first person, F4)" :
               " (the game's menu is open)";
     }
-    char m[360];
-    snprintf(m, sizeof m, "throw gesture: weapon '%s' (type %u) - %s | play %s%s | control: %s, %s%s",
+    char m[400];
+    snprintf(m, sizeof m, "throw gesture: weapon '%s' (type %u) - %s | play %s%s | control: %s%s%s, %s%s",
              WeaponName(type), type, thrown ? "a thrown weapon" : "NOT a thrown weapon", play ? "on" : "OFF", why,
-             mode == kGrip ? "the grip" : mode == kTrigger ? "the trigger" : "none", taking ? "taken from the layout" : "NOT taken",
+             mode == kOff ? "" : "the ", mode == kOff ? "" : mask == 3u ? "left and right" : throwhand::XrName(mask == 1u ? throwhand::kXrLeft : throwhand::kXrRight),
+             mode == kGrip ? (mask == 3u ? " grips" : " grip") : mode == kTrigger ? (mask == 3u ? " triggers" : " trigger") : "none", taking ? "taken from the layout" : "NOT taken",
              g_mode.load() == kGrip && !direct ? " - throw_by_grip needs [openxr] direct_input=1: it does nothing" : "");
     Log(m);
 }
@@ -241,14 +282,14 @@ void DiagSlot(bool thrown) {
 // The game's own throw, pressed: WHICH of its commands - its Throw skill (a cast at a spot) by the pad button of the slot that holds it; failing that
 // the A attack - which the game refuses a missile potion altogether, and gives a knife, axe or javelin only for an enemy at the point (see throw_cast.h).
 // The aim of the press is live from here (the aim hooks read the throw's heading and point for the next 0.5 s).
-void FirePress(const directinput::Frame& f, uint32_t type, bool potion, bool late) {
+void FirePress(const directinput::Frame& f, uint32_t type, bool potion, bool late, int slot, bool second) {
     g_read.store(false);
     g_liveUntil.store(GetTickCount64() + kLiveMs);
     g.awaitingRead = true;
     g.readBy = GetTickCount64() + kLiveMs;
     RefreshSlots(true);
     const throwcast::Pick pick = throwcast::FindSlot(g.snap, GetTickCount64());
-    const uint32_t code = gamestate::HandCode((int)gamestate::WeaponHand());
+    const uint32_t code = gamestate::HandCode(slot);
     char item[8];
     for (int i = 0; i < 4; ++i) item[i] = (char)((code >> (8 * i)) & 0xFF) ? (char)((code >> (8 * i)) & 0xFF) : ' ';
     item[4] = 0;
@@ -287,11 +328,127 @@ void FirePress(const directinput::Frame& f, uint32_t type, bool potion, bool lat
             if (potionhide::Arm(GetTickCount64(), g.hideFlightS)) Log("potion hide: armed - the game's potion missile of this throw is not drawn, our potion is the one that flies");
             g.hideThrow = false;
         }
+        if (second) {   // [hands] throw_left_hand: the weight model's second weapon was the one thrown - a fresh one in its hand after the game's throw animation
+            if (const auto fn = g_secondThrownFn.load()) fn();
+        }
     }
     char b[460];
-    snprintf(b, sizeof b, "throw gesture: %s item '%s' (%s) - pressed %s%s%s%s", WeaponName(type), item, potion ? "a throwing potion" : "thrown weapon", route,
+    snprintf(b, sizeof b, "throw gesture: %s item '%s' (%s%s) - pressed %s%s%s%s", WeaponName(type), item, potion ? "a throwing potion" : "thrown weapon",
+             g_followHand.load() ? (slot == throwhand::kSideLeft ? ", the game's left hand" : ", the game's right hand") : "", route,
              pick.slot >= 0 ? ": " : "", pick.slot >= 0 ? pick.label : "", late ? " - AT THE MODEL'S LANDING (potion_throw_mode 1)" : "");
     Log(b);
+}
+
+// A released throw of controller `xr` - the weapon of the game's slot `slot`: the game's own throw is pressed (or the potion's waits for its model).
+// first: the weight model's first weapon's slot (-1 none) - the other slot's weapon is its second, whose throw is the hand's own estimate.
+void Release(const directinput::Frame& f, const throwgesture::Result& r, int xr, int slot, bool byGrip, bool follow, bool placed, int first) {
+    const directinput::Hand& h = f.hand[xr];
+    const uint32_t type = gamestate::WeaponType();
+    {   // [hands] throw_left_hand: the other hand holds THIS weapon - a hand-over (or one of two hands let go), it stays in VR: no game throw.
+        // (A weapon of its own in the other hand - an axe beside the javelin - is not that: by slot, weight::HoldersOf.)
+        const auto holdersFn = g_holdersFn.load();
+        const unsigned holders = follow && placed && holdersFn ? holdersFn(slot) : 0u;
+        if (throwhand::HandOver(follow, holders, xr)) {
+            Log("throw gesture: a throw released, dropped - the other hand holds the weapon (a hand-over, throw_left_hand): it is still in the hand");
+            return;
+        }
+    }
+    if (GetTickCount64() < g_holdOffUntil.load()) {   // hit by touch already threw this swing at the monster its blade met: one throw per swing
+        // (still a THROW's release to whoever asks - the weapon-weight logic: the weapon leaves the hand with the game's throw, it is not put down;
+        // nothing is pressed or aimed here)
+        g_lastThrow.store(GetTickCount64());
+        Log("throw gesture: a throw released, dropped - hit by touch pressed the game's attack at a monster in this swing (melee_touch_thrown): that was the throw");
+        return;
+    }
+    if (g.pend.Active()) {   // the last potion is still in the air (potion_throw_mode 1): one throw at a time
+        Log("throw gesture: a throw released while the last potion's flight is not over (potion_throw_mode 1) - ignored");
+        return;
+    }
+
+    float fx, fz;
+    if (!f.head.valid || !throwgesture::HeadGroundForward(f.head.rot, &fx, &fz) || !g_canAim || !g_canAim()) {
+        Log("throw gesture: a throw released, but there is no heading to make of it (head pose or camera frame missing) - dropped");
+        return;
+    }
+    // the weight model's second weapon (the other hand's of a weapon in each hand): its account is not this throw's (it works out the first's)
+    const bool second = follow && placed && first >= 0 && slot != first;
+    // the throw's way on the ground, in the head's frame: right of the head, forward of it
+    float right, fwd;
+    throwgesture::ToHeadFrame(r.groundX, r.groundZ, fx, fz, &right, &fwd);
+    g_right.store(right);
+    g_fwd.store(fwd);
+    g_speed.store(r.peakSpeed);
+    g_horiz.store(std::sqrt(r.peak.x * r.peak.x + r.peak.z * r.peak.z));
+    g_vert.store(r.peak.y);
+    g_relSpeed.store(r.speed);
+    g_below.store(f.head.pos[1] - h.grip.pos[1]);
+    const unsigned seq = g_seq.fetch_add(1) + 1;
+    if (second) g_handOnlySeq.store(seq);
+    g_lastThrow.store(GetTickCount64());
+    g_shotReleaseS.store(SteadyS());
+    throwsrc::Choice wc;
+    const bool haveWeight = WeightChoice(&wc);   // the weight model's account of this throw (it has it by now: it is worked out on every step while the weapon is held)
+    if (haveWeight) {
+        char m[260];
+        snprintf(m, sizeof m, "throw gesture: the weight model has the throw - heading %.0f deg to the right of the head's way (%s), lands %.1f m out, flight %.2f s, %+.0f deg up%s",
+                 std::atan2(wc.right, wc.forward) * 57.2957795f, wc.headingFromVelocity ? "from its velocity" : "from its landing", wc.landingM, wc.flightS, wc.elevationDeg,
+                 wc.capped ? " (its cell cap held it)" : "");
+        Log(m);
+    } else if (second) {
+        Log("throw gesture: the other hand's weapon (the weight model's second) - its throw is the hand's own swing");
+    }
+    const bool potion = gamestate::HandIsThrowPotion(slot);
+    throwland::Plan plan = throwland::Decide(g_potionMode.load(), potion, haveWeight, haveWeight ? (double)wc.flightS : 0.0);
+    g.bornThrow = false;
+    g.hideThrow = false;
+    if (potion && potionhide::Wanted()) {   // potion_hide_game: the game's own potion is not drawn - only when OUR potion flies, i.e. the weight model has the throw
+        if (haveWeight && std::isfinite((double)wc.flightS) && potionhide::Ready()) {
+            g.hideThrow = true;
+            g.hideFlightS = (double)wc.flightS;
+        } else {
+            Log(haveWeight ? "potion hide: not armed - the renderer's hooks are not in (see above); the game's own potion is drawn as ever"
+                           : "potion hide: not armed - the weight model has no account of this throw, so no model of ours flies; the game's own potion is drawn as ever");
+        }
+    }
+    if (potion && haveWeight && std::isfinite((double)wc.flightS) && throwborn::Ready()) {   // [hands] throw_direct: the game's throw at the release; its potion is timed to the landing
+        plan.deferred = false;
+        plan.delayS = 0.0;
+        plan.why = "throw_direct: the game's throw is pressed at the release, its potion is born so that it explodes as the model lands";
+        g.bornThrow = true;
+        g.bornFlightS = (double)wc.flightS;
+        g.bornLandMs = GetTickCount64() + (uint64_t)std::llround(std::clamp((double)wc.flightS, 0.0, 10.0) * 1000.0);
+    }
+    if (plan.deferred) {   // potion_throw_mode 1: the model flies; the game's throw is pressed when it lands, aimed at the landing (the aim is live from that press)
+        g_liveUntil.store(0);
+        g.pend.Arm(f.time, plan.delayS, g_seq.load());
+        g.pendSlot = slot;
+        char m[300];
+        snprintf(m, sizeof m, "throw gesture: potion_throw_mode 1 - the potion's model flies %.2f s; the game's Throw is pressed when it lands %.1f m out",
+                 plan.delayS, wc.landingM);
+        Log(m);
+    } else {
+        if (g.bornThrow) {
+            char m[300];
+            snprintf(m, sizeof m, "throw gesture: throw_direct - the game's Throw is pressed now; the model lands %.1f m out after %.2f s and the game's potion is timed to explode there",
+                     wc.landingM, wc.flightS);
+            Log(m);
+        } else if (g_potionMode.load() == throwland::kAtLanding && potion) {
+            char m[300];
+            snprintf(m, sizeof m, "throw gesture: potion_throw_mode 1 is on, but %s", plan.why);
+            Log(m);
+        }
+        FirePress(f, type, potion, false, slot, second);
+    }
+
+    static ULONGLONG told = 0;
+    if (GetTickCount64() - told > 500) {
+        told = GetTickCount64();
+        char m[220];
+        snprintf(m, sizeof m, "throw gesture: thrown (%s%s) - hand %.1f m/s over %.2f m, held %.2f s, %.0f deg to the right of the head's way (up %+.0f deg)",
+                 follow ? (xr == throwhand::kXrLeft ? "the left " : "the right ") : "", byGrip ? "grip" : "trigger", r.speed, r.travel, r.held, std::atan2(right, fwd) * 57.2957795f,
+                 std::asin(std::fmax(-1.0f, std::fmin(1.0f, r.dir.y))) * 57.2957795f);
+        Log(m);
+    }
 }
 
 void OnFrame(const directinput::Frame& f, void*) {
@@ -328,7 +485,11 @@ void OnFrame(const directinput::Frame& f, void*) {
     const int want = g_mode.load();
     if (want == kOff) {
         g.pend.Cancel();
-        if (g.taking || g.trig.Throwing() || g.grip.Throwing() || g.pressing || g.diagSeen) { Reset(); g.diagSeen = false; }
+        g_inPlay.store(0);
+        if (g.taking || g.lane[0].trig.Throwing() || g.lane[0].grip.Throwing() || g.lane[1].trig.Throwing() || g.lane[1].grip.Throwing() || g.pressing || g.diagSeen) {
+            Reset();
+            g.diagSeen = false;
+        }
         return;
     }
     const uint32_t type = gamestate::WeaponType();
@@ -341,156 +502,148 @@ void OnFrame(const directinput::Frame& f, void*) {
     const bool direct = (f.flags & directinput::kDirect) != 0;
     const int mode = want == kGrip && !direct ? kOff : want;
     if (mode != g.lastMode) {   // the other mode's stroke is dropped; nothing is held over
-        g.trig.Cancel();
-        g.grip.Cancel();
-        g.controlDown = false;
+        CancelLanes();
         g.lastMode = mode;
     }
-    // anything that changes what the player holds, where he is or what the controls mean drops a stroke
-    const bool changed = f.session != g.session || f.epoch != g.epoch || type != g.weaponType;
+    // WHICH controllers throw, and whose weapon each: the right one, or with [hands] throw_left_hand the one of each hand that carries a thrown weapon
+    // in VR (the weight model's first and second weapon; without it the game's slot) - vr/throw_hand.h
+    const bool follow = g_followHand.load();
+    const auto placedFn = g_placedFn.load();
+    const bool placed = follow && placedFn && placedFn();
+    const auto firstSlotFn = g_firstSlotFn.load();
+    const int first = placed && firstSlotFn ? firstSlotFn() : -1;
+    throwhand::In hin;
+    hin.follow = follow;
+    hin.thrownKind = thrown;
+    hin.weaponSide = gamestate::WeaponHand();
+    if (follow) {
+        const auto carryingFn = g_carryingFn.load();
+        const auto secondHandFn = g_secondHandFn.load();
+        const auto secondPlacedFn = g_secondPlacedFn.load();
+        const bool second = placed && first >= 0 && secondPlacedFn && secondPlacedFn();
+        for (int k = 0; k < 2; ++k) {
+            throwhand::Slot& sl = hin.slot[k];
+            const uint32_t kind = gamestate::HandKind(k);
+            sl.thrown = ThrownType(kind);
+            sl.weapon = kind != 0;
+            if (placed && k == first) {
+                sl.placed = true;
+                sl.carrier = carryingFn ? carryingFn() : -1;
+            } else if (second && k == (first ^ 1)) {
+                sl.placed = true;
+                sl.carrier = secondHandFn ? secondHandFn() : -1;
+            }
+            hin.lastHand[k] = g.lastHand[k];
+        }
+    }
+    const throwhand::Out plan = throwhand::Plan(hin);
+    g.lastHand[0] = plan.hand[0];
+    g.lastHand[1] = plan.hand[1];
+    if (plan.refused[throwhand::kSideLeft] != g.refusedSeen) {   // (once per change)
+        g.refusedSeen = plan.refused[throwhand::kSideLeft];
+        if (g.refusedSeen)
+            Log("throw gesture: the javelin / throwing weapon in the game's LEFT slot is not thrown - a weapon of another kind is in the RIGHT slot, and the game's Throw "
+                "takes the right slot's weapon (it would only answer \"Impossible\"). To throw it with the left hand: put it in the game's RIGHT slot (the other weapon in "
+                "the left) and hand it over to the left hand in VR - the game then throws it (throw_left_hand)");
+    }
+    // the primary: the controller of the weight model's first weapon (or the game's weapon kind's slot) - the one GripIsThrows / GripHeld / the weight model's release mean
+    const int primarySlot = first >= 0 ? first : (int)hin.weaponSide;
+    int primary = plan.throws[throwhand::kXrRight] || !plan.throws[throwhand::kXrLeft] ? throwhand::kXrRight : throwhand::kXrLeft;
+    for (int xr = 0; xr < 2; ++xr) if (plan.throws[xr] && plan.slotOf[xr] == primarySlot) primary = xr;
+    g_xr.store(primary);
+    const bool anyThrown = plan.throws[0] || plan.throws[1];
+    // anything that changes what the player holds, where he is or what the controls mean drops a stroke (ticked: the other hand's weapon changed too)
+    const uint32_t handsKey = follow ? gamestate::HandsKey() : 0u;
+    const bool moved = f.session != g.session || f.epoch != g.epoch || type != g.weaponType || handsKey != g.handsKey;
     g.session = f.session;
     g.epoch = f.epoch;
     g.weaponType = type;
+    g.handsKey = handsKey;
     if (g.pend.Active()) {   // potion_throw_mode 1: the model's flight is over - the game's throw now; a change of play, weapon or view drops it
-        const bool stillOk = mode != kOff && thrown && play && !changed;
+        const bool stillOk = mode != kOff && anyThrown && play && !moved;
         const throwland::Pending::Act pa = g.pend.Step(f.time, stillOk);
-        if (pa == throwland::Pending::Act::Fire) FirePress(f, type, true, true);
+        if (pa == throwland::Pending::Act::Fire) FirePress(f, type, true, true, g.pendSlot, follow && placed && first >= 0 && g.pendSlot != first);
         else if (pa == throwland::Pending::Act::Dropped)
             Log("throw gesture: potion_throw_mode 1 - the potion's throw was dropped before the model landed (the play, the weapon or the view changed, or too long)");
     }
 
-    const directinput::Hand& h = f.hand[1];   // a javelin is thrown from the right hand, as throw_aim has it
     const bool byGrip = mode == kGrip;
-    const float value = byGrip ? h.squeeze : h.trigger;
     const float down = byGrip ? 0.60f : 0.55f, up = byGrip ? 0.40f : 0.20f;
-    g.controlDown = value > (g.controlDown ? up : down);   // a squeeze wavering does not let go
-    const bool take = mode != kOff && thrown && play;
-    if (take) {
-        if (byGrip) directinput::Take(1, directinput::kSqueeze | directinput::kTakeSqueeze, directinput::kSrcJavelin);
-        else directinput::Take(1, directinput::kTrigger | directinput::kTakeTrigger, directinput::kSrcJavelin);
-    }
-    g.taking = take;
-    g_gripOwns.store(take && byGrip);
-    g_trigOwns.store(take && !byGrip);
-    g_gripDown.store(take && byGrip && g.controlDown);   // (f is the frame as the controllers made it, before the Take above hid the grip from the shared block)
-    g_wantSlots.store(take);   // (the controller's skill slots are wanted while a throw could come)
-    if (take) { RefreshSlots(false); DiagSlot(thrown); } else g.slotSeen = -2;
-    Diag(type, mode, thrown, play, take, direct, f.flags);
-
-    if (mode == kOff) {
-        g.trig.Cancel();
-        g.grip.Cancel();
-        return;
-    }
-    throwgesture::Sample s;
-    s.t = f.time;
-    s.hand = {h.grip.pos[0], h.grip.pos[1], h.grip.pos[2]};
-    s.tracked = h.active != 0 && h.grip.valid == 1;
-    s.trigger = g.controlDown;
-    s.cancel = !thrown || !play || changed;
-    const throwgesture::Result r = (byGrip ? g.grip : g.trig).Step(s);
-    if (r.released && !r.throwNow && GetTickCount64() - g.whyAt > 150) {
-        g.whyAt = GetTickCount64();
-        char m[220];
-        if (r.sinceFast >= 0.0)
-            snprintf(m, sizeof m, "throw gesture: %s let go, not a throw - %s (held %.2f s, swing %.0f cm, last fast %.0f ms before)",
-                     byGrip ? "the grip" : "the trigger", WhyText(r.why), r.held, r.travel * 100.0f, r.sinceFast * 1000.0);
-        else
-            snprintf(m, sizeof m, "throw gesture: %s let go, not a throw - %s (held %.2f s, swing %.0f cm)",
-                     byGrip ? "the grip" : "the trigger", WhyText(r.why), r.held, r.travel * 100.0f);
-        Log(m);
-    }
-    if (!r.throwNow) return;
-    if (GetTickCount64() < g_holdOffUntil.load()) {   // hit by touch already threw this swing at the monster its blade met: one throw per swing
-        // (still a THROW's release to whoever asks - the weapon-weight logic: the weapon leaves the hand with the game's throw, it is not put down;
-        // nothing is pressed or aimed here)
-        g_lastThrow.store(GetTickCount64());
-        Log("throw gesture: a throw released, dropped - hit by touch pressed the game's attack at a monster in this swing (melee_touch_thrown): that was the throw");
-        return;
-    }
-    if (g.pend.Active()) {   // the last potion is still in the air (potion_throw_mode 1): one throw at a time
-        Log("throw gesture: a throw released while the last potion's flight is not over (potion_throw_mode 1) - ignored");
-        return;
-    }
-
-    float fx, fz;
-    if (!f.head.valid || !throwgesture::HeadGroundForward(f.head.rot, &fx, &fz) || !g_canAim || !g_canAim()) {
-        Log("throw gesture: a throw released, but there is no heading to make of it (head pose or camera frame missing) - dropped");
-        return;
-    }
-    // the throw's way on the ground, in the head's frame: right of the head, forward of it
-    float right, fwd;
-    throwgesture::ToHeadFrame(r.groundX, r.groundZ, fx, fz, &right, &fwd);
-    g_right.store(right);
-    g_fwd.store(fwd);
-    g_speed.store(r.peakSpeed);
-    g_horiz.store(std::sqrt(r.peak.x * r.peak.x + r.peak.z * r.peak.z));
-    g_vert.store(r.peak.y);
-    g_relSpeed.store(r.speed);
-    g_below.store(f.head.pos[1] - h.grip.pos[1]);
-    g_seq.fetch_add(1);
-    g_lastThrow.store(GetTickCount64());
-    g_shotReleaseS.store(SteadyS());
-    throwsrc::Choice wc;
-    const bool haveWeight = WeightChoice(&wc);   // the weight model's account of this throw (it has it by now: it is worked out on every step while the weapon is held)
-    if (haveWeight) {
-        char m[260];
-        snprintf(m, sizeof m, "throw gesture: the weight model has the throw - heading %.0f deg to the right of the head's way (%s), lands %.1f m out, flight %.2f s, %+.0f deg up%s",
-                 std::atan2(wc.right, wc.forward) * 57.2957795f, wc.headingFromVelocity ? "from its velocity" : "from its landing", wc.landingM, wc.flightS, wc.elevationDeg,
-                 wc.capped ? " (its cell cap held it)" : "");
-        Log(m);
-    }
-    const bool potion = gamestate::HandIsThrowPotion((int)gamestate::WeaponHand());
-    throwland::Plan plan = throwland::Decide(g_potionMode.load(), potion, haveWeight, haveWeight ? (double)wc.flightS : 0.0);
-    g.bornThrow = false;
-    g.hideThrow = false;
-    if (potion && potionhide::Wanted()) {   // potion_hide_game: the game's own potion is not drawn - only when OUR potion flies, i.e. the weight model has the throw
-        if (haveWeight && std::isfinite((double)wc.flightS) && potionhide::Ready()) {
-            g.hideThrow = true;
-            g.hideFlightS = (double)wc.flightS;
-        } else {
-            Log(haveWeight ? "potion hide: not armed - the renderer's hooks are not in (see above); the game's own potion is drawn as ever"
-                           : "potion hide: not armed - the weight model has no account of this throw, so no model of ours flies; the game's own potion is drawn as ever");
+    bool takeAny = false;
+    unsigned mask = 0;
+    for (int xr = throwhand::kXrRight; xr >= throwhand::kXrLeft; --xr) {   // (the right first: unticked it is the only one)
+        Lane& lane = g.lane[xr];
+        // ticked, with the weight model: the controller throws only while its hand holds the weapon (or a moment after) - an empty hand's grip is free (a belt bottle)
+        bool throws = plan.throws[xr];
+        if (throws && follow && placed) {
+            const auto holdersFn = g_holdersFn.load();
+            const bool holdsIt = holdersFn && ((holdersFn(plan.slotOf[xr]) >> throwhand::SideOfXr(xr)) & 1u) != 0;
+            const bool underWay = (byGrip ? lane.grip : lane.trig).Throwing();
+            throws = throwhand::OwnsGrip(follow, placed, holdsIt, underWay, f.time, &lane.ownedUntil);
         }
-    }
-    if (potion && haveWeight && std::isfinite((double)wc.flightS) && throwborn::Ready()) {   // [hands] throw_direct: the game's throw at the release; its potion is timed to the landing
-        plan.deferred = false;
-        plan.delayS = 0.0;
-        plan.why = "throw_direct: the game's throw is pressed at the release, its potion is born so that it explodes as the model lands";
-        g.bornThrow = true;
-        g.bornFlightS = (double)wc.flightS;
-        g.bornLandMs = GetTickCount64() + (uint64_t)std::llround(std::clamp((double)wc.flightS, 0.0, 10.0) * 1000.0);
-    }
-    if (plan.deferred) {   // potion_throw_mode 1: the model flies; the game's throw is pressed when it lands, aimed at the landing (the aim is live from that press)
-        g_liveUntil.store(0);
-        g.pend.Arm(f.time, plan.delayS, g_seq.load());
-        char m[300];
-        snprintf(m, sizeof m, "throw gesture: potion_throw_mode 1 - the potion's model flies %.2f s; the game's Throw is pressed when it lands %.1f m out",
-                 plan.delayS, wc.landingM);
-        Log(m);
-    } else {
-        if (g.bornThrow) {
-            char m[300];
-            snprintf(m, sizeof m, "throw gesture: throw_direct - the game's Throw is pressed now; the model lands %.1f m out after %.2f s and the game's potion is timed to explode there",
-                     wc.landingM, wc.flightS);
+        const int slot = throws ? plan.slotOf[xr] : -1;
+        if (throws) mask |= 1u << xr;
+        // a javelin is thrown from the right hand, as throw_aim has it - or, ticked, from each hand that holds one (throw_left_hand)
+        const directinput::Hand& h = f.hand[xr];
+        const bool otherWeapon = follow && lane.slot != slot;   // this controller throws another weapon now (or none, or began to)
+        if (otherWeapon) lane.controlDown = false;   // (the other controller's squeeze is not this one's)
+        lane.controlDown = (byGrip ? h.squeeze : h.trigger) > (lane.controlDown ? up : down);   // a squeeze wavering does not let go
+        const bool take = mode != kOff && throws && play;
+        if (take) {
+            if (byGrip) directinput::Take(xr, directinput::kSqueeze | directinput::kTakeSqueeze, directinput::kSrcJavelin);
+            else directinput::Take(xr, directinput::kTrigger | directinput::kTakeTrigger, directinput::kSrcJavelin);
+        }
+        takeAny = takeAny || take;
+        g_gripOwns[xr].store(take && byGrip);
+        g_trigOwns[xr].store(take && !byGrip);
+        g_gripDown[xr].store(take && byGrip && lane.controlDown);   // (f is the frame as the controllers made it, before the Take above hid the grip from the shared block)
+        if (mode == kOff) {
+            lane.trig.Cancel();
+            lane.grip.Cancel();
+            lane.slot = slot;
+            continue;
+        }
+        throwgesture::Sample s;
+        s.t = f.time;
+        s.hand = {h.grip.pos[0], h.grip.pos[1], h.grip.pos[2]};
+        s.tracked = h.active != 0 && h.grip.valid == 1;
+        s.trigger = lane.controlDown;
+        // handed over to a hand whose grip is squeezed on it (the left grip took it, the right let go): that grip is the weapon in the hand from now
+        const bool beginHeld = follow && throwhand::BeginsHeld(otherWeapon && throws, byGrip, lane.controlDown) && !moved && take && s.tracked;
+        s.cancel = !throws || !play || ((moved || otherWeapon) && !beginHeld);
+        if (beginHeld) {
+            lane.grip.BeginHeld(s.t, s.hand);
+            char m[220];
+            snprintf(m, sizeof m, "throw gesture: the %s hand's weapon (the game's %s slot) is the %s controller's now (throw_left_hand) - its grip, squeezed on it, is the throw's: "
+                     "swing and let go to throw", throwhand::XrName(xr), slot == throwhand::kSideLeft ? "left" : "right", throwhand::XrName(xr));
             Log(m);
-        } else if (g_potionMode.load() == throwland::kAtLanding && potion) {
-            char m[300];
-            snprintf(m, sizeof m, "throw gesture: potion_throw_mode 1 is on, but %s", plan.why);
+        } else if (otherWeapon && throws && play) {
+            char m[220];
+            snprintf(m, sizeof m, "throw gesture: the %s controller throws the weapon of the game's %s slot now (throw_left_hand) - by its %s", throwhand::XrName(xr),
+                     slot == throwhand::kSideLeft ? "left" : "right", byGrip ? "grip" : "trigger");
             Log(m);
         }
-        FirePress(f, type, potion, false);
+        lane.slot = slot;
+        const throwgesture::Result r = (byGrip ? lane.grip : lane.trig).Step(s);
+        if (r.released && !r.throwNow && GetTickCount64() - g.whyAt > 150) {
+            g.whyAt = GetTickCount64();
+            const char* control = !follow ? (byGrip ? "the grip" : "the trigger")
+                                          : xr == throwhand::kXrLeft ? (byGrip ? "the left grip" : "the left trigger") : (byGrip ? "the right grip" : "the right trigger");
+            char m[240];
+            if (r.sinceFast >= 0.0)
+                snprintf(m, sizeof m, "throw gesture: %s let go, not a throw - %s (held %.2f s, swing %.0f cm, last fast %.0f ms before)",
+                         control, WhyText(r.why), r.held, r.travel * 100.0f, r.sinceFast * 1000.0);
+            else
+                snprintf(m, sizeof m, "throw gesture: %s let go, not a throw - %s (held %.2f s, swing %.0f cm)", control, WhyText(r.why), r.held, r.travel * 100.0f);
+            Log(m);
+        }
+        if (r.throwNow) Release(f, r, xr, slot, byGrip, follow, placed, first);
     }
-
-    static ULONGLONG told = 0;
-    if (GetTickCount64() - told > 500) {
-        told = GetTickCount64();
-        char m[220];
-        snprintf(m, sizeof m, "throw gesture: thrown (%s) - hand %.1f m/s over %.2f m, held %.2f s, %.0f deg to the right of the head's way (up %+.0f deg)",
-                 byGrip ? "grip" : "trigger", r.speed, r.travel, r.held, std::atan2(right, fwd) * 57.2957795f,
-                 std::asin(std::fmax(-1.0f, std::fmin(1.0f, r.dir.y))) * 57.2957795f);
-        Log(m);
-    }
+    g.taking = takeAny;
+    g_inPlay.store(mode != kOff && anyThrown && play ? type : 0u);
+    g_wantSlots.store(takeAny);   // (the controller's skill slots are wanted while a throw could come)
+    if (takeAny) { RefreshSlots(false); DiagSlot(true); } else g.slotSeen = -2;
+    Diag(type, mode, anyThrown, play, takeAny, direct, f.flags, mask ? mask : 2u);
 }
 
 }  // namespace
@@ -535,9 +688,7 @@ void SetModes(bool byTrigger, bool byGrip) {
     if (mode != was) Log(ModeText(mode));
     if (mode == kOff) {
         g_liveUntil.store(0);
-        g_gripOwns.store(false);
-        g_trigOwns.store(false);
-        g_gripDown.store(false);
+        ClearOwns();
     }
 }
 
@@ -578,11 +729,42 @@ bool Info(ThrowInfo* out) {
     return true;
 }
 
-bool GripIsThrows() { return g_gripOwns.load() && viewgate::F4(); }
+bool GripIsThrows() { return GripIsThrowsAt(g_xr.load()); }
 
-bool TriggerIsThrows() { return g_trigOwns.load() && viewgate::F4(); }
+bool TriggerIsThrows() { return TriggerIsThrowsAt(g_xr.load()); }
 
-bool GripHeld() { return g_gripOwns.load() && g_gripDown.load() && viewgate::F4(); }
+bool GripHeld() { return GripHeldAt(g_xr.load()); }
+
+bool GripHeldAt(int xrHand) { return GripIsThrowsAt(xrHand) && g_gripDown[xrHand & 1].load(); }
+
+bool Live() { return g_mode.load() != kOff && viewgate::F4() && GetTickCount64() < g_liveUntil.load(); }
+
+uint32_t ThrownInPlay() { return viewgate::F4() ? g_inPlay.load() : 0u; }
+
+void SetFollowHand(bool on) {
+    if (g_followHand.exchange(on) != on)
+        Log(on ? "throw gesture: throw_left_hand on - a thrown weapon in the LEFT hand is thrown with the left controller (its trigger or grip and swing)"
+               : "throw gesture: throw_left_hand off - every throw is the right controller's, as ever");
+    if (!on) g_xr.store(throwhand::kXrRight);   // (the next frame says it too)
+}
+
+int Controller() { return g_xr.load(); }
+
+bool FollowHand() { return g_followHand.load(); }
+
+void SetCarrySource(const CarrySource& src) {
+    g_placedFn.store(src.placed);
+    g_carryingFn.store(src.carrying);
+    g_secondHandFn.store(src.secondHand);
+    g_secondPlacedFn.store(src.secondPlaced);
+    g_firstSlotFn.store(src.firstSlot);
+    g_holdersFn.store(src.holdersOf);
+    g_secondThrownFn.store(src.secondThrown);
+}
+
+bool GripIsThrowsAt(int xrHand) { return g_gripOwns[xrHand & 1].load() && viewgate::F4(); }
+
+bool TriggerIsThrowsAt(int xrHand) { return g_trigOwns[xrHand & 1].load() && viewgate::F4(); }
 
 uint64_t LastThrowTickMs() { return g_lastThrow.load(); }
 unsigned ShotCount() { return g_shotCount.load(); }

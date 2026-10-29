@@ -15,6 +15,11 @@
 // A mass that goes down by x^-p and a wrist that goes up by x^p move the lag by x^-2p (x^-1 by default): twice the margin, half the lag. Smooth, monotone, clamped both ways.
 // A weapon whose requirement the game's tables do not give (the field is not found, or no such row) uses a typical one for its kind (NominalReq, the median of Weapons.txt over
 // the tiers); a Strength that cannot be read leaves everything as it is.
+//
+// [weight] strength_honest (the author, 2026-10-24: "a Barbarian at 300 % still finds a Two-Handed Sword heavy" - 105 against 35 came out as a ratio of 1.82, the steel x0.84):
+//   ratio    = capacity / max(req, 10)         the strength as it is, no +50 that pulls every hero towards the middle; a weapon with no requirement counts as 10 (the
+//                                              lowest the game asks), so it never weighs nothing - the steel's floor below holds it anyway
+// The rest as above.
 #pragma once
 
 #include <algorithm>
@@ -27,6 +32,7 @@ constexpr double kRef = 1.3;           // the ratio that feels like today's weig
 constexpr double kSteelMin = 0.6, kSteelMax = 1.5;
 constexpr double kHandsMin = 0.7, kHandsMax = 1.5;
 constexpr double kExponent = 0.5;      // x effect / 100
+constexpr double kMinReq = 10.0;       // strength_honest: the requirement a weapon that asks none counts as
 
 constexpr int kClasses = 8;            // skel::kHeroClasses: amazon, sorceress, necromancer, paladin, barbarian, druid, assassin, warlock
 // The class' multiplier in %, as shipped: the barbarian's arm is the strongest (the game starts him at 30 Str, the sorceress at 10), the paladin next.
@@ -62,6 +68,7 @@ struct In {
     double effectPct = 100.0;  // how much strength matters, %
     int kind = -1;             // heft::hold::Kind, for NominalReq when req is not known
     bool twoHanded = false;
+    bool honest = false;       // [weight] strength_honest: ratio = capacity / max(req, kMinReq)
 };
 
 struct Out {
@@ -80,7 +87,7 @@ inline Out Factor(const In& in) {
     o.reqFromGame = in.req >= 0.0;
     o.req = o.reqFromGame ? in.req : NominalReq(in.kind, in.twoHanded);
     o.capacity = in.str * std::clamp(in.classPct, 1.0, 1000.0) * 0.01;
-    o.ratio = (o.capacity + kK) / (o.req + kK);
+    o.ratio = in.honest ? o.capacity / std::max(o.req, kMinReq) : (o.capacity + kK) / (o.req + kK);
     const double p = kExponent * std::clamp(in.effectPct, 0.0, 400.0) * 0.01;
     const double x = o.ratio / kRef;
     o.steel = std::clamp(std::pow(x, -p), kSteelMin, kSteelMax);

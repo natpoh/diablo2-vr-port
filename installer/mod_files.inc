@@ -10,6 +10,9 @@
 Source: "{#PayloadDir}\plugins\d2rl-vrcam.dll"; DestDir: "{app}\{#ModDir}\d2rloader\plugins"; Flags: ignoreversion
 ; MIT, with the third-party notices MinHook's and ReShade's licences ask for in a binary (build_installer.ps1 stages the repository's LICENSE here)
 Source: "{#PayloadDir}\license\D2R_VR_LICENSE.txt"; DestDir: "{app}\{#ModDir}"; Flags: ignoreversion
+; D2R VR Settings' language files (lang\<code>.txt; the program beside D2R.exe finds them here). A language file a player made and put
+; here stays: Setup writes only its own files.
+Source: "{#PayloadDir}\lang\*.txt"; DestDir: "{app}\{#ModDir}\lang"; Flags: ignoreversion skipifsourcedoesntexist
 ; The optional weight-physics and grip libraries ([weight] hands_model / grip_model), built apart from this repository (C:\wsl\weight_physics;
 ; binaries only). In d2rloader\d2r_vr_libs - NOT among the plugins, where D2RLoader took them for plugins and logged "2 plugins rejected" (0.168.0).
 ; The plugin looks there first (vr\weight_lib.cpp, vr\grip_lib.cpp: <the plugin's folder>\..\d2r_vr_libs, beside the plugin still works) and D2R VR
@@ -18,6 +21,7 @@ Source: "{#PayloadDir}\license\D2R_VR_LICENSE.txt"; DestDir: "{app}\{#ModDir}"; 
 ; Settings are greyed out.
 Source: "{#PayloadDir}\plugins\d2r_vr_weight.dll"; DestDir: "{app}\{#ModDir}\d2rloader\d2r_vr_libs"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#PayloadDir}\plugins\d2r_vr_grip.dll"; DestDir: "{app}\{#ModDir}\d2rloader\d2r_vr_libs"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "{#PayloadDir}\plugins\d2r_vr_gait.dll"; DestDir: "{app}\{#ModDir}\d2rloader\d2r_vr_libs"; Flags: ignoreversion skipifsourcedoesntexist
 ; The player's own settings stay through an update (IniChoice in [Code]); the
 ; shipped defaults go beside them as d2r_vr.default.ini, which tells the next
 ; update whether the player changed anything.
@@ -25,6 +29,8 @@ Source: "{#PayloadDir}\plugins\d2r_vr.ini"; DestDir: "{app}\{#ModDir}\d2rloader\
 Source: "{#PayloadDir}\plugins\d2r_vr.ini"; DestDir: "{app}\{#ModDir}\d2rloader\plugins"; DestName: "d2r_vr.default.ini"; Flags: ignoreversion
 Source: "{#PayloadDir}\shaders\D2R_DepthFog.fx"; DestDir: "{app}\{#ModDir}\reshade\reshade-shaders\Shaders"; Flags: ignoreversion
 Source: "{#PayloadDir}\sky\*.png"; DestDir: "{app}\{#ModDir}\reshade\reshade-shaders\Textures\D2R_Sky_ours"; Flags: ignoreversion
+; The game sky dome's painted act skies ([sky] game_sky), where its units (made by D2R VR Settings, tools\settings\dome_assets.cpp) name them
+Source: "{#PayloadDir}\skydome\*.dds"; DestDir: "{app}\{#ModDir}\D2R-VR.mpq\data\hd\env\texture\d2r_vr\sky"; Flags: ignoreversion skipifsourcedoesntexist
 ; The shared VR mod launcher's descriptor of this mod and the picture it names (tools\make_vrmod_manifest.py, from installer\launcher):
 ; the launcher finds the mod by <game>\mods\*\vrmod-manifest.json. It is not needed to play, and nothing else reads it.
 Source: "{#PayloadDir}\launcher\vrmod-manifest.json"; DestDir: "{app}\{#ModDir}"; Flags: ignoreversion

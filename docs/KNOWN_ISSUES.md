@@ -1,6 +1,6 @@
 # Known issues
 
-What is broken or unfinished right now (D2R VR 0.175), what we already know
+What is broken or unfinished right now (D2R VR 0.182), what we already know
 about each problem and where in the code to start. Pick one, fork, fix it and
 send a pull request - or tell us on Discord what you found.
 
@@ -339,7 +339,7 @@ The log says what happened: "crossbow holding hand: ...", "crossbow hand-over: .
 "crossbow laid by its own barrel ..." and, for the stow behind the shoulder, "ranged
 holster - the right hand's grip at ... outside the shoulder box".
 
-### 25. The hero's own effects: "Fade" is set, but nothing changes on screen [repo]
+### 25. The hero's own effects: "Fade" is set, but nothing changes on screen [repo] - cause found, fix to check in the game
 
 **What you see:** with *Draw the hero's own effects fainter* ticked, Bone Armor still wraps round
 the eyes as before. In the author's test (2026-10-18) the log shows the whole chain to its end - the
@@ -352,11 +352,50 @@ The first version took the effect's playback speed for its opacity (the bones sl
 faded); the second sets the effect's named float parameter "Fade" the way the game's own per-frame
 unit update does, and that call is accepted.
 
-**To find out, later:** how that effect's material uses "Fade" (does Bone Armor's shader read it at
-all?), or whether the game overwrites it afterwards (its per-frame queue sets it from the unit's
-alpha after our tick). Start in `vr/own_effects.cpp` (`Tick`); the log lines are
-"own effects: ...". (`docs/own_effects_recon.md`, which the CHANGELOG names, is not in
-this repository.)
+**Why (read 2026-10-24 from the game's HD files):** Bone Armor's effect
+(`vfx_BoneArmor_Front.particles`) draws the bones as an **opaque lit mesh**
+(`Diablo_Default_Mesh` material) and a thin ribbon trail. Only the trail binds the "Fade"
+parameter (`MonsterFade.Fade`); the mesh binds nothing that fades, so no value of "Fade" can
+make the bones fainter. The game itself never fades them either: it switches the whole effect
+off when its unit's alpha is 0.
+
+**The fix (branch `claude/dim-own-effects-2`, not yet seen in the game):** the game's HD particle
+files now mark which of the table's effects have such a solid part (`tools/gen_own_effects.py
+--game`): Bone Armor's front, Blade Shield, Energy Shield, the shrines' overlays, Holy Freeze's
+ice burst. In F4 those are **not drawn** whenever the slider asks for anything under 100 % (the
+game's own switch, VfxSetVisible 0xF6A830, the one it uses at alpha 0). They are switched off
+again if the game switches them back on. The rest (Frozen / Shiver / Chilling Armor, the aura
+rings ...) are still faded with "Fade". The log says per effect which was done, and whether the
+effect takes the switch. Cyclone Armor's HD overlay is empty, so there is nothing to fade or hide.
+**The fourth test (2026-10-24, 30333e5e): the bones were still there.** The log showed the switch
+taken by all three "bonearmorfront" effects. But the bones are not drawn by the effect: its script
+makes them through the game's `CreateAnimatedModelInstance` callback as plain **ModelInstances** of
+the renderer, kept in the effect's object effects, which the effect's switch never reaches. Now
+those models are hidden too, the way the game hides an overlay's model at alpha 0
+(`ModelInstance::SetVisibleLayers` 0xF3F840, bit 31 = the whole model), only the ones at the
+hero's place and only while the effect is not to be drawn; they are given back exactly.
+**The fifth test (b2f6f070): still there** - the log said the models were NOT found from the effect:
+the object the game's callback walks is the PopcornFX medium's descriptor, not the D2R effect's
+`+0x40`. Since then the models are found where the renderer keeps every model it made (its list at
+`+0x2EFB8`, read under the game's own lock on it): those whose model file is a solid effect's
+(`bonearmor.model`, from the game's files), only under `data/hd/vfx/`, only at the hero's place.
+The log line "the renderer's models: ..." says how many there are, how many are Bone Armor's, how
+many stand at the hero, and how many were hidden.
+**The sixth test (7a7cefe3): not run at all** - the four new game functions were fixed addresses
+of 3.3.93787 and the player's game is 3.3.94995 ("the game's model functions ... are not as in
+3.3.93787"). They are signatures now like the rest (`ModelSetLayers`, `GetRenderer`,
+`ModelListLock` / `ModelListUnlock` in game_sigs.h; the lock pair found at the model factory's own
+calls, whose pattern holds the list's offset), and the log says once where each was found.
+**The seventh test (a46f1787): found, but no Bone Armor model matched.** Read in the running game
+(read only): the list holds `.../bonearmor/bonearmor_lod0.model` x3 - the loaded file carries its
+level of detail, so the key `bonearmor` never matched - and these models keep no place (the effect
+places them per particle), so "at the hero's place" never held. Now `_lod<n>` is not part of the
+key, and a solid effect's model is the hero's when it first appears within 3 s after his overlay of
+that effect was made (or is there at the first look while his overlay is live); one made at
+another time (another player's Bone Armor) is left alone.
+To check: a Necromancer with Bone Armor, the option ticked - the bones are gone in F4 and are
+there in F1 - F3 and to other players. Start in `vr/own_effects.cpp` (`Tick`); the log lines
+are "own effects: ..."; the notes are in `docs/own_effects_recon.md`.
 
 ### 26. A staff in both hands: the spell's ray started at the wrist and went to the side [repo] - FIXED in 0.171
 

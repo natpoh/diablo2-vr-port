@@ -49,11 +49,8 @@ bool QuadAtlasUpload(QuadAtlas& A, uint32_t w, uint32_t h, const std::vector<uin
     if (GetTickCount64() < A.retryAt || !MakeCopyList() || px.size() < (size_t)w * h) return false;
     char b[96];
     if (A.sc && (A.w != w || A.h != h)) {   // another size: made anew
-        ForgetPending(A.sc);
-        SettleGpu();
-        gpufault::Note("xr: quad atlas swapchain destroyed", (uint64_t)(uintptr_t)A.sc, ((uint64_t)A.w << 32) | A.h);
-        xrDestroySwapchain(A.sc);
-        A.sc = XR_NULL_HANDLE;
+        gpufault::Note("xr: quad atlas swapchain retired", (uint64_t)(uintptr_t)A.sc, ((uint64_t)A.w << 32) | A.h);
+        RetireChain(A.sc, "quad atlas");   // (destroyed later, once the game's queue is drained: chain_reaper.h)
         A.shown = false;
         for (int i = 0; i < 3; ++i) if (A.upload[i]) { Retire(A.upload[i]); A.done[i] = 0; }   // (not released under a copy that may not have run)
     }

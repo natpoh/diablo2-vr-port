@@ -35,6 +35,11 @@ bool Only();
 
 // hit by touch (the update thread): the lines to show and the hand they are about (0 right, 1 left - the skeleton's side). n 0: nothing to show.
 void SetLines(const thrustdbg::Line* lines, size_t n, int side);
+// [debug] stab_debug (vr/stab_debug.h, live): the stab's readout on the same plate - its lines first, the thrust's after them while thrust_debug is on too;
+// the plate is up with either tick. SetStabLines: any thread (the weight model's); the lines are shown stabdbg::kShowMs.
+void SetStabWanted(bool on);
+bool StabWanted();
+void SetStabLines(const thrustdbg::Line* lines, size_t n, int side);
 
 // What xr.cpp hangs (the draw thread).
 struct Layer {
