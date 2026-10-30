@@ -125,6 +125,8 @@ Source: "payload\plugins\D2R_VR_Settings.exe"; DestDir: "{app}"; Flags: ignoreve
 ; The shared VR mod launcher's own Setup, carried inside (build_installer.ps1 -LauncherSetup; no line in a build that carries none), unpacked into
 ; {tmp} only when it is needed (launcher_bundle.inc)
 #include "launcher_bundle_files.inc"
+; The co-op plugin D2R Rooms (build_installer.ps1 -RoomsPlugin; no line in a build that carries none), with its "rooms" task below
+#include "rooms_files.inc"
 ; BodyWalk Game Link (vjoy plugins/game_link): the game talks to BodyWalk through it (vr/link.cpp).
 Source: "payload\bodywalk\game_link.dll"; DestDir: "{localappdata}\BodyWalkVR\plugins\game_link"; Flags: ignoreversion; Check: IsVR
 ; The game's manifest as Game Link keeps it (D2R_VR_Settings.exe --game-link-manifest): the
@@ -140,6 +142,12 @@ Source: "payload\bodywalk\profile.json"; DestDir: "{localappdata}\BodyWalkVR\plu
 Source: "payload\bodywalk_portable\*"; DestDir: "{#PortableDir}"; Excludes: "force_lite_mode.txt,imgui.ini"; Flags: ignoreversion recursesubdirs createallsubdirs; Check: UsePortable
 Source: "payload\bodywalk_portable\imgui.ini"; DestDir: "{#PortableDir}"; Flags: onlyifdoesntexist; Check: UsePortable
 Source: "payload\bodywalk_portable\force_lite_mode.txt"; DestDir: "{#PortableDir}"; Flags: ignoreversion; Check: PortableFresh
+
+#ifdef RoomsPlugin
+[Tasks]
+; ticked by default: the co-op relay plugin goes in unless the player unticks it (rooms_files.inc)
+Name: "rooms"; Description: "Install the co-op relay plugin D2R Rooms: co-op without router setup, and the open rooms in D2RLoader's Multiplayer window (for every D2RLoader mod)"; GroupDescription: "Co-op:"
+#endif
 
 [UninstallDelete]
 ; the portable BodyWalk goes with the mod (it is in the mod's folder now, which RemoveMod removes whole; this covers an uninstall log written

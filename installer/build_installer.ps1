@@ -41,6 +41,9 @@
 #   -LauncherSetupSha256 <hash>  another pin than launcher_pin.txt's
 #   -NoLauncher                  build WITHOUT the launcher, on purpose (a test build): the build output says so. Never for a release.
 #
+# The co-op relay plugin D2R Rooms (clauscodes/d2r_mp) can ride along too, as its own task in Setup ("rooms", ticked):
+#   -RoomsPlugin <d2rl-d2r-rooms.dll> [-RoomsIni <d2r-rooms.ini>]   into <game>\d2rloader\plugins\, kept when D2R VR is removed
+#
 param(
     [string]$Addon = "C:\wsl\vjoy\Release_main\flatvr\reshade_addon\FlatVR_DepthProvider.addon64",
     [string]$GameLink = "C:\wsl\vjoy\cpp_src\build_standalone\bin\Release\game_link.dll",
@@ -53,6 +56,8 @@ param(
     [string]$ReleasesDir = "",
     [string]$CeilingFrom = "",
     [string]$SkyDomeFrom = "C:\wsl\d2r_vr\releases\inputs\sky_dome",
+    [string]$RoomsPlugin = "",   # the co-op relay plugin d2rl-d2r-rooms.dll (clauscodes/d2r_mp), carried unmodified; installed with the "rooms" task
+    [string]$RoomsIni = "",      # its sample d2r-rooms.ini (written only where the player has none)
     [string]$LauncherSetup = "",
     [string]$LauncherSetupSha256 = "",
     [switch]$NoLauncher
@@ -257,6 +262,19 @@ if ($ls) {
     Copy-Item -LiteralPath $ls.FullName "$payload\launcher_setup\$($ls.Name)"
     $isccArgs += @("/DLauncherSetupFile=$($ls.Name)", "/DLauncherSetupVersion=$lsVersion")
     Write-Host "launcher: carried - $carriedLauncher"
+}
+# The co-op relay plugin D2R Rooms, carried as it is (rooms_files.inc installs it with the "rooms" task)
+if ($RoomsPlugin) {
+    if (-not (Test-Path -LiteralPath $RoomsPlugin -PathType Leaf) -or (Split-Path -Leaf $RoomsPlugin) -ne "d2rl-d2r-rooms.dll") { throw "-RoomsPlugin must name d2rl-d2r-rooms.dll: $RoomsPlugin" }
+    New-Item -ItemType Directory -Force "$payload\rooms" | Out-Null
+    Copy-Item -LiteralPath $RoomsPlugin "$payload\rooms\d2rl-d2r-rooms.dll"
+    $isccArgs += "/DRoomsPlugin=1"
+    if ($RoomsIni) {
+        if (-not (Test-Path -LiteralPath $RoomsIni -PathType Leaf)) { throw "-RoomsIni is not there: $RoomsIni" }
+        Copy-Item -LiteralPath $RoomsIni "$payload\rooms\d2r-rooms.ini"
+        $isccArgs += "/DRoomsIni=1"
+    }
+    Write-Host ("co-op plugin: carried - d2rl-d2r-rooms.dll  SHA-256 " + (Get-FileHash -LiteralPath $RoomsPlugin).Hash + $(if ($RoomsIni) { " (+ d2r-rooms.ini)" } else { "" }))
 }
 $outName = if ($OutputName) { $OutputName } else { "D2R_VR_Setup_v$shownVersion" }
 & $iscc @isccArgs (Join-Path $PSScriptRoot "D2R_VR_Setup.iss")

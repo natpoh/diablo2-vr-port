@@ -1,5 +1,13 @@
 # What's new in D2R VR
 
+## 0.192.0
+
+- **Co-op without router setup, in Setup** - a ticked task, "Install the co-op relay plugin D2R Rooms", puts the D2RLoader plugin
+  `d2rl-d2r-rooms.dll` (github.com/clauscodes/d2r_mp, carried unmodified) in `<game>\d2rloader\plugins\`, with its `d2r-rooms.ini` where
+  there is none. Host with D2RLoader's Multiplayer > CREATE GAME; friends join from its D2R Rooms button, through the relay when your port
+  is closed. It is D2RLoader's own plugin for every mod and stays when D2R VR is removed; Settings > Multiplayer shows and switches it.
+- **The D2R VR Launcher 0.3.7 inside** (was 0.3.6): it finds D2R VR Authentic's updates on GitHub releases too.
+
 ## 0.191.0
 
 The release after 0.189.0, from the test builds 0.190.1 - 0.190.4 (0.190.0 itself was built but not published; its changes are below).

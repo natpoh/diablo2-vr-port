@@ -17,6 +17,7 @@
 # (/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS=, unchanged) shows and starts nothing.
 # 0.3.6: the main window's cards check for updates themselves and say "Update available: X -> Y", as the install view did (commit 18c7a52 of claude/cards-show-updates;
 # not a GitHub release of the launcher repository yet - its main and release are the author's to publish).
-version=0.3.6
-file=D2R_VR_Launcher_Setup_0.3.6.exe
-sha256=BA5C4ABFDD7C63BBE84C8C98233BC63B4952151AC2BA8D4975708C9A573756C3
+# 0.3.7: D2R VR Authentic's updates from the GitHub releases of natpoh/diablo2-vr-port (commit 2e49b78; the Setup in download/ of the launcher's main, 8d06324).
+version=0.3.7
+file=D2R_VR_Launcher_Setup_0.3.7.exe
+sha256=FF4B717CBBA32137D5F3770E250F6516F78C648F4863EF006CAE814B7AA52175
