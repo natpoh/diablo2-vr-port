@@ -19,6 +19,7 @@
 #include <string>
 #include <vector>
 
+#include "../../vr/game_ui.h"
 #include "../../vr/hset_click.h"
 #include "../../vr/hset_scene.h"
 #include "../../vr/tiles_geom.h"
@@ -1006,6 +1007,24 @@ static void TestLivePagesOnWindow() {
         for (int i = 0; i < 60; ++i) if (w.Next().settings.what == hset::Do::Save) more = true;
         CHECK(!more && !w.c.SettingsModel().Dirty());
     }
+    {   // the Melee page's seventh row, Direct hit by the rules (Serg, 2026-10-30): its tick where the closer rows draw it, written by itself, live
+        World w;
+        w.LongPress();
+        w.Run(2);
+        w.ClickTab(1);
+        w.ClickSheet(hset::kTab(hset::kPageMelee));
+        CHECK(w.c.SettingsModel().page == hset::kPageMelee && hset::KeyAt(hset::kPageMelee, 6) == hset::kKeyMeleeDirect);
+        CHECK(w.c.SettingsModel().Get()[hset::kKeyMeleeDirect] < 0.5f);
+        w.ClickSheet(hset::kToggle(6, hset::kPageMelee));
+        CHECK(w.c.SettingsModel().Get()[hset::kKeyMeleeDirect] > 0.5f && w.c.SettingsModel().LiveOnly());
+        Step saved;
+        bool got = false;
+        for (int i = 0; i < 60 && !got; ++i) {
+            const Step t = w.Next();
+            if (t.settings.what == hset::Do::Save) { saved = t; got = true; }
+        }
+        CHECK(got && saved.settings.request.changed == hset::Bit(hset::kKeyMeleeDirect) && saved.settings.request.values[hset::kKeyMeleeDirect] == 1.0f);
+    }
     {   // the key bindings: a pick waits for Apply (they are not live), then only that key goes, with the line the panel read as its base
         World w;
         w.host.ini.bind[0] = "action:swap";
@@ -1023,6 +1042,112 @@ static void TestLivePagesOnWindow() {
         const Step s = w.ClickSheet(hset::kApply);
         CHECK(s.settings.what == hset::Do::Save && s.settings.request.changed == hset::Bit(lt) && s.settings.request.bind[0] == "action:swap");
     }
+}
+
+// [openxr] skill_panel_game_look: the game's sprite sheets read as the game has them, and the window in the game's art.
+static std::string FakeSheet(int frames, int frameWidth, int gutter, int height, bool lastGutter) {
+    const int width = frames * frameWidth + (frames - 1) * gutter + (lastGutter ? gutter : 0);
+    std::string d(40 + (size_t)width * height * 4, '\0');
+    std::memcpy(&d[0], "SpA1", 4);
+    const uint16_t version = 31, fw = (uint16_t)frameWidth;
+    const uint32_t w = (uint32_t)width, h = (uint32_t)height, n = (uint32_t)frames, size = w * h * 4, comps = 4;
+    std::memcpy(&d[4], &version, 2);
+    std::memcpy(&d[6], &fw, 2);
+    std::memcpy(&d[8], &w, 4);
+    std::memcpy(&d[12], &h, 4);
+    std::memcpy(&d[20], &n, 4);
+    std::memcpy(&d[32], &size, 4);
+    std::memcpy(&d[36], &comps, 4);
+    for (int f = 0; f < frames; ++f)   // each frame's first pixel says which frame it is
+        d[40 + (size_t)(f * (frameWidth + gutter)) * 4] = (char)(10 + f);
+    return d;
+}
+
+static void TestSpriteSheets() {
+    gameui::Sheet s;
+    // the game's own shapes: frames padded alike (StashTabs 4 x 269 in 1079), the last gutter left out (LeftArrow 4 x 54 in 219), one frame
+    CHECK(gameui::Decode(FakeSheet(4, 54, 1, 6, false), &s) && s.frames == 4 && s.frameWidth == 54 && s.stride == 55 && s.At(3, 0, 0)[0] == 13);
+    CHECK(gameui::Decode(FakeSheet(3, 20, 2, 5, true), &s) && s.stride == 22 && s.At(2, 0, 0)[0] == 12);
+    CHECK(gameui::Decode(FakeSheet(1, 30, 0, 4, false), &s) && s.frames == 1 && s.Ok());
+    // what is not a sheet as the game's are: refused, with a reason
+    const char* why = nullptr;
+    std::string bad = FakeSheet(2, 10, 0, 3, false);
+    bad[0] = 'X';
+    CHECK(!gameui::Decode(bad, &s, &why) && why);
+    bad = FakeSheet(2, 10, 0, 3, false);
+    bad[4] = 61;   // another pixel format
+    CHECK(!gameui::Decode(bad, &s));
+    bad = FakeSheet(2, 10, 0, 3, false);
+    bad.pop_back();   // short
+    CHECK(!gameui::Decode(bad, &s));
+    CHECK(!gameui::Decode(std::string("SpA1"), &s));
+    CHECK(!gameui::Decode(FakeSheet(2, 10, 20, 3, false), &s));   // a gutter wider than any of the game's
+}
+
+// The game look's Settings tab has its flip arrows at the two ends of the page tabs' row (Serg, 2026-10-30): beside the row, on neither tab,
+// inside the window's gold rim; hit there on the Settings tab only - the Skills tab keeps them half-way down, and so does our own look.
+static void TestFlipHigh() {
+    const float y0 = tiles::kSheetY + hset::kTab(0).y * tiles::kSheetScale, y1 = y0 + hset::kTab(0).h * tiles::kSheetScale;
+    const float firstL = tiles::kSheetX + hset::kTab(0).x * tiles::kSheetScale;
+    const hset::Rect last = hset::kTab(hset::PageCount() - 1);
+    const float lastR = tiles::kSheetX + (last.x + last.w) * tiles::kSheetScale;
+    const tiles::PRect l = tiles::FlipRect(0, true), r = tiles::FlipRect(1, true);
+    CHECK(l.r <= firstL && r.l >= lastR);                                   // beside the row, on no tab
+    CHECK(l.t <= y0 + 4.0f && l.b >= y1 - 4.0f && r.t == l.t && r.b == l.b);   // as tall as the row
+    CHECK(l.l >= 30.0f + 30.0f && r.r <= tiles::kW - 60.0f);               // inside the gold rim (30 in, 48 wide: its inner line)
+    for (int i = 0; i < 2; ++i) {
+        const tiles::PRect hi = tiles::FlipRect(i, true), lo = tiles::FlipRect(i);
+        const float hx = 0.5f * (hi.l + hi.r) / tiles::kW, hy = 0.5f * (hi.t + hi.b) / tiles::kH;
+        const float lx = 0.5f * (lo.l + lo.r) / tiles::kW, ly = 0.5f * (lo.t + lo.b) / tiles::kH;
+        CHECK(tiles::HitTest(Page::Wheel, hx, hy, kNone, 0, true, true, false, false, true) == tiles::FlipCell(i));    // Settings tab, game look: up there
+        CHECK(tiles::HitTest(Page::Wheel, lx, ly, kNone, 0, true, true, false, false, true) == kNone);                 // ... and no longer half-way down
+        CHECK(tiles::HitTest(Page::Wheel, lx, ly, kNone, 0, true, false, false, false, true) == tiles::FlipCell(i));   // the Skills tab keeps its place
+        CHECK(tiles::HitTest(Page::Wheel, lx, ly, kNone, 0, true, true) == tiles::FlipCell(i));                        // our own look keeps its place
+        CHECK(tiles::HitTest(Page::Wheel, hx, hy, kNone, 0, true, true) == kNone);
+    }
+}
+
+static void TestGameLook(const char* dumpDir) {
+    World w;
+    w.LongPress();
+    const View skills = w.c.ViewNow();
+    w.ClickTab(1);
+    const View settings = w.c.ViewNow();
+    gameui::SetOn(false);
+    const std::vector<uint32_t> ourSkills = Paint(skills), ourSettings = Paint(settings);
+    // the key on but no art beside the plugin: the window as before, to the pixel
+    gameui::SetDir(L"C:\\no such folder\\d2r_vr_game_ui");
+    gameui::SetOn(true);
+    CHECK(!gameui::Ready());
+    CHECK(Paint(skills) == ourSkills && Paint(settings) == ourSettings);
+    gameui::SetOn(false);
+    // with the art (GAME_UI_CACHE: a folder D2R_VR_Settings made from the tester's own game - not in the repository): every picture is the game's
+    char dir[400] = {};
+    if (!GetEnvironmentVariableA("GAME_UI_CACHE", dir, sizeof dir)) {
+        std::printf("  game look: GAME_UI_CACHE not set, only the no-art case\n");
+        return;
+    }
+    wchar_t wide[400] = {};
+    MultiByteToWideChar(CP_UTF8, 0, dir, -1, wide, 399);
+    gameui::SetDir(wide);
+    gameui::SetOn(true);
+    CHECK(gameui::Ready());
+    CHECK(gameui::Get(gameui::Sprite::Border).frames == 9 && gameui::Get(gameui::Sprite::Checkbox).frames == 7 && gameui::Get(gameui::Sprite::Button).frames == 4);
+    const std::vector<uint32_t> gameSkills = Paint(skills);
+    CHECK(gameSkills != ourSkills);
+    if (dumpDir) WriteBmp(std::string(dumpDir) + "/game_skills.bmp", gameSkills, tiles::kW, tiles::kH);
+    std::vector<uint32_t> pages[hset::kMaxPages];
+    for (int p = 0; p < hset::PageCount(); ++p) {
+        w.ClickSheet(hset::kTab(p));
+        View high = w.c.ViewNow();
+        high.flipHigh = true;   // (the game look's layout: the flip arrows at the page tabs' row)
+        pages[p] = Paint(high);
+        for (int q = 0; q < p; ++q) CHECK(pages[p] != pages[q]);
+        if (dumpDir) WriteBmp(std::string(dumpDir) + "/game_settings_page" + std::to_string(p) + ".bmp", pages[p], tiles::kW, tiles::kH);
+    }
+    gameui::SetOn(false);
+    CHECK(Paint(skills) == ourSkills);   // unticked: ours again
+    std::printf("  game look: %d settings pages and the skills in the game's art\n", hset::PageCount());
 }
 
 static void TestPaint(const char* dumpDir) {
@@ -1889,6 +2014,9 @@ int main(int argc, char** argv) {
     TestPagesOnWindow();
     TestLivePagesOnWindow();
     TestPaint(dump);
+    TestSpriteSheets();
+    TestFlipHigh();
+    TestGameLook(dump);
     TestScene();
     TestHands();
     TestFlipper();

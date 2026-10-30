@@ -124,6 +124,47 @@ inline float WrapAngle(float a) {
 // a waypoint, a town portal: Serg's log moved him 11511 units in one frame) - the smoothed travel then took ~1.5 s to die away and the legs "walked back"
 // while he stood (two 5 s windows of his log: 137 and 141 poses walking back, all in the game's standing mode). Such a step starts the travel again.
 constexpr float kJumpMps = 40.0f;
+
+// The travel read off his place. The game moves the place at its own rate (about 25 times a second) while the poses come several times a frame (Serg's
+// 2026-10-30 flat F2 log: every 4-5 ms) - the first reading took each move over the time since the last POSE: running at 5.4 m/s, a 25th-of-a-second
+// step over 4.5 ms read as 48 m/s, past kJumpMps, and every step of his run "jumped": the travel was zeroed and the walk back and the doll's feet saw a
+// hero standing while he ran. Here a move is taken over the time since the place last moved; the travel follows it (0.08 s), and dies away when the
+// place has stood still for kStillS. Units: the place's (world units a second), unitsPerM for the jump test.
+struct PlaceTravel {
+    static constexpr double kStillS = 0.15;   // the place not moved this long: he stands (the game moves it at least every 0.04 s while he goes)
+    static constexpr double kGapS = 0.1;      // a move is taken over at most this long
+    float x = 0.0f, z = 0.0f, vx = 0.0f, vz = 0.0f;
+    double movedAt = 0.0, at = 0.0;   // when the place last moved; the last call
+    bool have = false;
+    // One call a pose: the place now (now: seconds). True: the place jumped (an area change) - the travel starts again from it.
+    bool Step(double now, float px, float pz, float unitsPerM) {
+        if (!std::isfinite(now + px + pz)) return false;
+        if (!have || now - at > 0.3) {   // the first call, or none for a while: from here, standing
+            x = px; z = pz; vx = vz = 0.0f; movedAt = at = now; have = true;
+            return false;
+        }
+        const double dt = std::max(0.0, now - at);
+        at = now;
+        const float dx = px - x, dz = pz - z;
+        if (dx == 0.0f && dz == 0.0f) {
+            if (now - movedAt > kStillS) {   // standing: the travel dies away
+                const float k = (float)std::exp(-dt / 0.08);
+                vx *= k; vz *= k;
+            }
+            return false;
+        }
+        // over the time since it last moved - at most kGapS: a longer gap means he stood, and a move after it (the first step, or an area change taken
+        // standing: 20 m after a second's standing read as 16 m/s, no jump) is over one of the game's ticks, not the whole stand
+        const double since = std::clamp(now - movedAt, 1e-3, kGapS);
+        x = px; z = pz; movedAt = now;
+        const float mps = std::sqrt(dx * dx + dz * dz) / std::max(unitsPerM, 1e-3f) / (float)since;
+        if (mps > kJumpMps) { vx = vz = 0.0f; return true; }
+        const float k = 1.0f - (float)std::exp(-since / 0.08);
+        vx += (dx / (float)since - vx) * k;
+        vz += (dz / (float)since - vz) * k;
+        return false;
+    }
+};
 // The game's own walk or run is on (Diablo II's unit modes: 2 walk, 3 run, 6 town walk; mode < 0: not known - then the speed alone says). Serg's
 // 2026-10-28 17:00 log: standing (mode 1, in town 5) the rig's place still read a speed now and then, any way, and whenever it pointed more than 100 deg
 // from his facing the walk back came on - the walk played backwards under a hero standing still. He goes only while the game walks him.

@@ -62,6 +62,8 @@
 #include "leg_chain.h"  // the legs by the rig's hierarchy where its bones' names say nothing (the barbarian's)
 #include "leg_ik.h"     // the gait's knee and leg bones' turns from the rest pose and the bend plane (never a knee bent the wrong way)
 #include "walk_back.h"  // [body] walk_back_reverse: the game's own walk played backwards while he walks back
+#include "doll_feet.h"  // [body] doll_feet: the feet the doll's - planted, stepping after the body
+#include "weapon_mirror.h"  // [weapon_<kind>] on the left hand's weapon: the right one's mirror image
 #include "shield_arm.h"
 #include "shield_arm_wire.h"
 #include "ranged_hand_wire.h"
@@ -3115,6 +3117,7 @@ V3 PalmAcross(const Hero& h, int side, const std::vector<Mat>& newW, V3 axis) {
 
 #if D2RVR_FIRST_PERSON
 void WalkBackLegs(uintptr_t self, const Hero& h, const Input& in, float c, float s, std::vector<Mat>& newW);   // [body] walk_back (below)
+void NoteDollAside();   // [body] doll_feet: a pose the gait's legs took (below)
 std::atomic<bool> g_walkBackDumpOn{false};   // [debug] walk_back_dump (below)
 #endif
 void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out& wo) {
@@ -3210,7 +3213,10 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
     }
 #if D2RVR_FIRST_PERSON
     // [body] walk_back: turned whole to the look while the game walks him the other way - its walk mirrored, the legs step back (before the crouch: it bends them again)
-    if (in.walkBack && turn && in.bodyTurn == 2 && !in.gaitLegs && h.bindOk && h.leg[0][2] >= 0 && h.leg[1][2] >= 0) WalkBackLegs(self, h, in, c, s, newW);
+    // [body] doll_feet instead: the feet the doll's - turned with the body or not (the body faces the game's way then: c 1, s 0)
+    if (((in.walkBack && turn && in.bodyTurn == 2) || in.dollFeet) && !in.gaitLegs && h.bindOk && h.leg[0][2] >= 0 && h.leg[1][2] >= 0)
+        WalkBackLegs(self, h, in, turn && in.bodyTurn == 2 ? c : 1.0f, turn && in.bodyTurn == 2 ? s : 0.0f, newW);
+    else if (in.dollFeet && in.gaitLegs) NoteDollAside();   // (the log: the gait's legs have them - Serg's 2026-10-30 run was the gait's, not the doll's)
     // [body] crouch (vr/crouch.h; the idea is bearstonem/d2r-pcvr's, MIT, vr/skeletons.cpp PoseBody, its tracked-neck body): you
     // crouched and the camera went down with your head, so the whole body goes down by as much (in.crouchDrop, model units, vrcam
     // worked it out at the camera's own scale) and each leg is bent again - thigh and shin at their own lengths - to put its foot
@@ -3622,7 +3628,9 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
     // bone's own axes, per kind of weapon, set by eye on the Weapon Adjust tab.
     if (in.mode == 2) {
         const float* a = in.weaponAdj;
-        if (a[0] != 0.0f || a[1] != 0.0f || a[2] != 0.0f || a[3] != 0.0f || a[4] != 0.0f || a[5] != 0.0f) {
+        const float* aL = in.weaponAdjLeft;   // the left hand's weapon's own kind's (the same as a when that hand has none of its own)
+        const auto any = [](const float* v) { return v[0] != 0.0f || v[1] != 0.0f || v[2] != 0.0f || v[3] != 0.0f || v[4] != 0.0f || v[5] != 0.0f; };
+        if (any(a) || any(aL)) {
             const float headY = in.haveEye ? in.eyeModel[1] : Pos(newW[h.head >= 0 ? h.head : 0]).y;
             const float upm = std::clamp(headY / std::max(0.8f, in.userHeadM), 2.0f, 8.0f) * in.scale;   // model units per metre
             auto turn = [](int axis, float deg) {   // row-vector rotation about one of the bone's own axes
@@ -3633,17 +3641,50 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
                 return r;
             };
             const Mat local = Mul(Mul(turn(0, a[3]), turn(1, a[4])), turn(2, a[5]));
+            // The left hand's weapon gets the mirror image (vr/weapon_mirror.h): its attach bone's axes against the right one's read off the rig - the
+            // game's grip in each hand when it shows a weapon in both (a weapon in each hand), else the bind pose's attach bones - never set by hand.
+            weaponmirror::K mirror;
+            int mirrorFrom = 0;   // 0 none (as before: the same numbers in its own axes), 1 the game's grips, 2 the bind pose
+            if (h.bindOk && h.hand[0] >= 0 && h.hand[1] >= 0 && h.weapon[0] >= 0 && h.weapon[1] >= 0) {
+                weaponmirror::K hands;
+                if (weaponmirror::FromMirrorPair(h.bind[h.hand[0]].m, h.bind[h.hand[1]].m, &hands)) {
+                    if (grip.ok && grip.scale[0] > 0.7f && grip.scale[1] > 0.7f && weaponmirror::FromGrips(grip.attach[0].m, grip.attach[1].m, hands, &mirror)) mirrorFrom = 1;
+                    else if (weaponmirror::FromMirrorPair(h.bind[h.weapon[0]].m, h.bind[h.weapon[1]].m, &mirror)) mirrorFrom = 2;
+                }
+            }
+            {
+                static int told = -1;   // once for each correspondence (the log: what the left weapon's sliders turn)
+                const int key = mirrorFrom * 1000 + (mirror.col[0] * 9 + mirror.col[1] * 3 + mirror.col[2]) * 8 + (mirror.sign[0] < 0) * 4 + (mirror.sign[1] < 0) * 2 + (mirror.sign[2] < 0);
+                if (key != told) {
+                    told = key;
+                    char t[260];
+                    const char ax[3] = {'x', 'y', 'z'};
+                    if (mirrorFrom)
+                        snprintf(t, sizeof t, "weapon adjust: the left hand's weapon gets the mirror image of the right one's [weapon_<kind>] (its axes against the right bone's reflected, from %s: x %c%c, y %c%c, z %c%c)",
+                                 mirrorFrom == 1 ? "the game's grips" : "the bind pose", mirror.sign[0] < 0 ? '-' : '+', ax[mirror.col[0]], mirror.sign[1] < 0 ? '-' : '+', ax[mirror.col[1]],
+                                 mirror.sign[2] < 0 ? '-' : '+', ax[mirror.col[2]]);
+                    else
+                        snprintf(t, sizeof t, "weapon adjust: the left hand's weapon NOT mirrored - its attach bone's axes against the right one's could not be read (the same numbers in its own axes, as before)");
+                    XbowNote(t);   // (vrcam's log takes these lines)
+                }
+            }
+            const Mat localL = Mul(Mul(turn(0, aL[3]), turn(1, aL[4])), turn(2, aL[5]));   // as set for the right hand: carried over below
+            Mat localLeft = localL;
+            float moveLeft[3] = {aL[0], aL[1], aL[2]};
+            if (mirrorFrom) weaponmirror::Carry(mirror, localL.m, aL, localLeft.m, moveLeft);
             for (int side = 0; side < 2; ++side) {
                 const int wb = h.weapon[side], holder = freeStaff && side == staffSide ? 0 : side;
                 if (wb < 0 || !(in.handsValid & (1u << holder))) continue;
                 if (gun && side == staffSide) continue;   // the crossbow's [weapon_crossbow] is the controller's (above)
                 if (side == 1 && in.shieldForearm) continue;   // [shield] forearm: the shield has its own (StrapShield)
+                const bool left = side == 1 && holder == 1;   // (a staff the right hand holds on the left wrist's bone keeps its numbers as they were)
+                const float* move = left ? moveLeft : a;
                 V3 shift{0, 0, 0};
                 for (int r = 0; r < 3; ++r) {
                     const V3 axis = Norm(V3{newW[wb].m[r * 4], newW[wb].m[r * 4 + 1], newW[wb].m[r * 4 + 2]});
-                    shift = Add(shift, Scale(axis, a[r] * 0.01f * upm));
+                    shift = Add(shift, Scale(axis, move[r] * 0.01f * upm));
                 }
-                newW[wb] = Mul(local, newW[wb]);   // turned in its own frame, about its own origin
+                newW[wb] = Mul(left ? localLeft : local, newW[wb]);   // turned in its own frame, about its own origin
                 newW[wb].m[12] += shift.x; newW[wb].m[13] += shift.y; newW[wb].m[14] += shift.z;
                 std::vector<char> fromWeapon(n, 0);
                 fromWeapon[wb] = 1;
@@ -6738,6 +6779,41 @@ std::map<uintptr_t, LegsMem> g_legsMem;
 // two-bone leg (legik::Solve, the knee ahead; the thigh and the shin turned from their rest, legik::Turn), each foot flat and facing the body (its bind
 // turn turned with the body), its toes with it.
 // r: the received pose (nullptr: none - a player who sends no pose: the game's facing, an eye height of 1.7 m); M: the rig's model -> world (nullptr: not read).
+// A leg solved by turns from the rest (vr/leg_ik.h): its lowest chain bone and what hangs under it. That bone (h.leg[side][2]) is not the foot - on the
+// player rigs it is the shin's lower twist bone (leg_02_twist_02), the ankle (leg_03) under it - so it takes the shin's turn Rs (the shin is one piece;
+// `T` the body's turn the rest is turned with), at p. Given the rest turned by the foot's yaw alone (until 0.190.3) the lower shin stood upright under an
+// upper one leaning into the step and the mesh kinked at mid-shin: the "crossed legs" of Serg's 0.190.2 test with [body] doll_feet (the walk back dump:
+// that bone's axes the rest's in every pose while the game's swing with the stride; the feet's places were right). What hangs on it hangs as at rest;
+// the ankle among them (its child lowest at rest) is turned flat with its toes to footYaw (radians, model space, as T's), where the shin carries it, and
+// what hangs on the ankle (the toes) follows it as at rest.
+void PlaceLowerLeg(const Hero& h, int foot, const float Rs[9], const Mat& T, V3 p, float footYaw, std::vector<Mat>& newW) {
+    const int n = h.count;
+    Mat r{};
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j) r.m[i * 4 + j] = Rs[i * 3 + j];
+    r.m[15] = 1.0f;
+    newW[foot] = Mul(Mul(h.bind[foot], T), r);
+    newW[foot].m[12] = p.x; newW[foot].m[13] = p.y; newW[foot].m[14] = p.z;
+    const float fc = std::cos(footYaw), fs = std::sin(footYaw);
+    Mat Tf{}; Tf.m[0] = fc; Tf.m[2] = -fs; Tf.m[5] = 1; Tf.m[8] = fs; Tf.m[10] = fc; Tf.m[15] = 1;
+    int ankle = -1;
+    for (int i = foot + 1; i < n; ++i)
+        if (h.parent[i] == foot && Pos(h.bind[i]).y < Pos(h.bind[foot]).y && (ankle < 0 || Pos(h.bind[i]).y < Pos(h.bind[ankle]).y)) ankle = i;
+    std::vector<char> under(n, 0);
+    under[foot] = 1;
+    for (int i = foot + 1; i < n; ++i) {   // (a parent's index is below its children's: one pass)
+        const int pa = h.parent[i];
+        if (pa < 0 || pa >= i || !under[pa]) continue;
+        under[i] = 1;
+        newW[i] = Mul(Mul(h.bind[i], InvAffine(h.bind[pa])), newW[pa]);   // as at rest from its parent
+        if (i == ankle) {
+            const V3 at = Pos(newW[i]);
+            newW[i] = Mul(h.bind[i], Tf);
+            newW[i].m[12] = at.x; newW[i].m[13] = at.y; newW[i].m[14] = at.z;
+        }
+    }
+}
+
 void RemoteLegs(uintptr_t self, const Hero& h, const remotepose::Target* r, float x, float z, float c, float s, const Mat& T, const Mat* M, std::vector<Mat>& newW,
                 const std::vector<Mat>& gameW) {
     const int n = h.count;
@@ -6875,14 +6951,13 @@ void RemoteLegs(uintptr_t self, const Hero& h, const remotepose::Target* r, floa
             moved[knee] = 1;
             Propagate(h, base, newW, moved, knee);
         }
-        if (w >= 0.5f) {   // the gait's foot: flat, facing the body (under half way, the game's foot keeps its own turn)
-            const V3 at = Pos(newW[foot]);
-            newW[foot] = Mul(h.bind[foot], T);
-            newW[foot].m[12] = at.x; newW[foot].m[13] = at.y; newW[foot].m[14] = at.z;
+        if (w >= 0.5f) {   // the gait's lower shin with the shin, the foot flat facing the body (PlaceLowerLeg); under half way the game's foot keeps its own turn
+            PlaceLowerLeg(h, foot, Rs, T, Pos(newW[foot]), std::atan2(s, c), newW);
+        } else {
+            std::vector<char> moved(n, 0);
+            moved[foot] = 1;
+            Propagate(h, base, newW, moved, foot);
         }
-        std::vector<char> moved(n, 0);
-        moved[foot] = 1;
-        Propagate(h, base, newW, moved, foot);
     }
     {   // what this step changed against the game's own legs, and the feet as written (checked at the rig's next pose)
         AcquireSRWLockExclusive(&g_legsLock);
@@ -6945,8 +7020,139 @@ struct WalkBackMem {
     walkback::ModeGate gate;                               // the game's standing mode, once it has held (not a frame's dip)
     float modelYaw = 0.0f; bool haveModelYaw = false;      // his matrix's facing at the last pose (a jump of it: the game turned him)
     double turnUntil = -1.0;                               // ... the game's turn in the skeleton taken out until then
+    walkback::PlaceTravel travel;                          // his travel off his place (vx, vz above are its)
+    dollfeet::Doll doll;                                   // [body] doll_feet: the feet's places and steps
+    float dollShare = 0.0f;                                // ... how much the doll's feet (1) or the game's (0): handed back in other modes
+    int dollSteps = 0, dollFlights = 0;                    // ... counted so far (for the log)
 };
 WalkBackMem g_walkBack;   // (the skeleton hook's thread: our own hero only)
+
+// [body] doll_feet (vr/doll_feet.h): the feet the doll's. The game gives his place (the model's origin in the world), the drawn body's facing and the
+// travel; the doll keeps each foot planted in the world and steps it after the body; here they are put back into the model and the legs solved onto
+// them from the rig's rest and the leg's bend plane (vr/leg_ik.h, as the gait's: the knee ahead, never flipped) - the hips stay the game's (its pelvis,
+// turned with the body). In the game's walk, run and standing modes only: any other (an attack's lunge, a Leap, a knockback, a death) hands the legs back
+// to the game over 1/6 s, and the feet are put down again under him when he is back.
+std::atomic<unsigned> g_dollPoses{0}, g_dollWhole{0}, g_dollSteps{0}, g_dollFlights{0}, g_dollKneeFail{0}, g_dollBack{0};
+std::atomic<unsigned> g_dollMoving{0};               // ... poses while he went (faster than walkback's 0.15 m/s)
+std::atomic<unsigned> g_dollAside{0};                // ... poses the gait's legs took instead (NoteDollAside)
+void NoteDollAside() { g_dollAside.fetch_add(1, std::memory_order_relaxed); }
+std::atomic<float> g_dollSpeedSum{0.0f}, g_dollSpeedMax{0.0f};   // ... the speed the doll was given, m/s
+std::atomic<int> g_dollBackMode{-1};
+void DollFeetIn(const Hero& h, const Input& in, float c, float s, const Mat& T, const Mat& M, float x, float z, WalkBackMem& m, double dt, float upm,
+                std::vector<Mat>& newW) {
+    const int n = h.count, mode = in.heroAnimMode;
+    const bool ours = mode < 0 || mode == 1 || mode == 2 || mode == 3 || mode == 5 || mode == 6;
+    const float dtf = dt > 0.3 ? 0.0f : (float)dt;
+    m.dollShare = std::clamp(m.dollShare + (ours ? 6.0f : -6.0f) * dtf, 0.0f, 1.0f);
+    if (!ours) { g_dollBack.fetch_add(1, std::memory_order_relaxed); g_dollBackMode.store(mode); }
+    if (m.dollShare <= 0.0f) { m.doll.Reset(); return; }
+    // the doll's frame: the world's ground, x turned over when the model's matrix mirrors (so that the doll's left is his left)
+    const float det = M.m[0] * (M.m[5] * M.m[10] - M.m[6] * M.m[9]) - M.m[1] * (M.m[4] * M.m[10] - M.m[6] * M.m[8]) + M.m[2] * (M.m[4] * M.m[9] - M.m[5] * M.m[8]);
+    const float flip = det < 0.0f ? -1.0f : 1.0f, scale = std::cbrt(std::fabs(det));
+    if (!(scale > 1e-6f) || !std::isfinite(scale)) return;
+    const float upmW = upm * scale;
+    const V3 aheadW = RotOnly({s, 0.0f, c}, M);
+    const float yaw = std::atan2(aheadW.x * flip, aheadW.z);
+    const dollfeet::P2 body{x * flip, z}, vel{m.vx * flip, m.vz};
+    dollfeet::P2 stance[2];
+    for (int side = 0; side < 2; ++side) {
+        const V3 b = Pos(h.bind[h.leg[side][2]]);
+        stance[side] = {b.x * scale, b.z * scale};   // (the rest stance at yaw 0: x his left, z ahead)
+    }
+    // how far a planted foot can be from under the hip along the ground: the leg (97 % of thigh + shin, not locked straight) at the hip's height now
+    float reachM = 1e9f;
+    for (int side = 0; side < 2; ++side) {
+        const int hip = h.leg[side][0], knee = h.leg[side][1], foot = h.leg[side][2];
+        const float leg = 0.97f * (Len(Sub(Pos(newW[knee]), Pos(newW[hip]))) + Len(Sub(Pos(newW[foot]), Pos(newW[knee]))));
+        const float up = Pos(newW[hip]).y - Pos(h.bind[foot]).y;
+        reachM = std::min(reachM, std::sqrt(std::max(0.0f, leg * leg - up * up)) / std::max(upm, 1e-3f));
+    }
+    reachM = std::max(reachM, 0.15f);
+    const bool fresh = !m.doll.Have();
+    m.doll.Step(dtf, body, yaw, vel, stance, upmW, reachM);
+    if (const float sp = std::sqrt(vel.x * vel.x + vel.z * vel.z) / std::max(upmW, 1e-3f); sp > 0.15f && std::isfinite(sp)) {
+        g_dollMoving.fetch_add(1, std::memory_order_relaxed);
+        g_dollSpeedSum.store(g_dollSpeedSum.load() + sp);   // (one thread writes)
+        if (sp > g_dollSpeedMax.load()) g_dollSpeedMax.store(sp);
+    }
+    if (fresh) m.dollSteps = m.doll.Steps(), m.dollFlights = m.doll.Flights();
+    g_dollSteps.fetch_add((unsigned)std::max(0, m.doll.Steps() - m.dollSteps), std::memory_order_relaxed);
+    g_dollFlights.fetch_add((unsigned)std::max(0, m.doll.Flights() - m.dollFlights), std::memory_order_relaxed);
+    m.dollSteps = m.doll.Steps();
+    m.dollFlights = m.doll.Flights();
+    const Mat inv = InvAffine(M);
+    const legik::V aheadM{s, 0.0f, c};
+    auto L = [](V3 v) { return legik::V{v.x, v.y, v.z}; };
+    unsigned kneeFail = 0;
+    for (int side = 0; side < 2; ++side) {
+        const int hip = h.leg[side][0], knee = h.leg[side][1], foot = h.leg[side][2];
+        const dollfeet::Foot& f = m.doll.Get(side);
+        // the foot into the model: its place on the ground (the model's floor), up by its rest height and its lift
+        V3 at = Through(inv, V3{f.at.x * flip, M.m[13], f.at.z});
+        at.y = Pos(h.bind[foot]).y + f.lift / scale;
+        const V3 toesW{std::sin(f.yaw) * flip, 0.0f, std::cos(f.yaw)};
+        const V3 toesM = RotOnly(toesW, inv);
+        const float footYaw = std::atan2(toesM.x, toesM.z);
+        const V3 g = Pos(newW[foot]);   // the game's (turned with the body): crossfaded from when handed back
+        const float w = m.dollShare;
+        const legik::V F{g.x + (at.x - g.x) * w, g.y + (at.y - g.y) * w, g.z + (at.z - g.z) * w};
+        const std::vector<Mat> base = newW;
+        const V3 H = Pos(newW[hip]);
+        const float thigh = Len(Sub(Pos(newW[knee]), H)), shin = Len(Sub(Pos(newW[foot]), Pos(newW[knee])));
+        const V3 hip0 = Through(T, Pos(h.bind[hip])), knee0 = Through(T, Pos(h.bind[knee])), foot0 = Through(T, Pos(h.bind[foot]));
+        // the knee toward between the body's ahead and the foot's toes (a foot turned under him turns its knee with it)
+        const legik::V kneeWay = legik::Unit(aheadM + legik::V{std::sin(footYaw), 0.0f, std::cos(footYaw)}, aheadM);
+        const legik::V ahead = legik::KneeAhead(L(hip0), L(knee0), L(foot0), kneeWay);
+        legik::Bend b;
+        float Rt[9], Rs[9];
+        if (!legik::Solve(L(H), thigh, shin, F, ahead, legik::kMaxFlexDeg, b)) { ++kneeFail; continue; }
+        const legik::V h0 = legik::Hinge(L(hip0), L(foot0), ahead);
+        if (!legik::Turn(L(Sub(knee0, hip0)), h0, b.knee - L(H), b.hinge, Rt) || !legik::Turn(L(Sub(foot0, knee0)), h0, b.foot - b.knee, b.hinge, Rs)) {
+            ++kneeFail;
+            continue;
+        }
+        auto turned = [&](int bone, const float R[9], V3 p) {   // the bone at rest (turned with the body), turned by R, at p
+            Mat r{};
+            for (int i = 0; i < 3; ++i)
+                for (int j = 0; j < 3; ++j) r.m[i * 4 + j] = R[i * 3 + j];
+            r.m[15] = 1.0f;
+            Mat mm = Mul(Mul(h.bind[bone], T), r);
+            mm.m[12] = p.x; mm.m[13] = p.y; mm.m[14] = p.z;
+            return mm;
+        };
+        newW[hip] = turned(hip, Rt, H);
+        { std::vector<char> moved(n, 0); moved[hip] = 1; Propagate(h, base, newW, moved, hip); }
+        newW[knee] = turned(knee, Rs, Pos(newW[knee]));
+        { std::vector<char> moved(n, 0); moved[knee] = 1; Propagate(h, base, newW, moved, knee); }
+        // the lower shin with the shin, the foot flat with the doll's toes (PlaceLowerLeg: the chain's lowest bone is the shin's twist, not the foot - given
+        // the rest's turn it kinked the shin: the "crossed legs" of 0.190.2); handed back (w under half): the game's own, as before
+        const V3 p = Pos(newW[foot]);
+        if (w >= 0.5f) {
+            PlaceLowerLeg(h, foot, Rs, T, p, footYaw, newW);
+        } else {
+            newW[foot] = base[foot];
+            newW[foot].m[12] = p.x; newW[foot].m[13] = p.y; newW[foot].m[14] = p.z;
+            std::vector<char> moved(n, 0);
+            moved[foot] = 1;
+            Propagate(h, base, newW, moved, foot);
+        }
+    }
+    g_dollPoses.fetch_add(1, std::memory_order_relaxed);
+    if (m.dollShare >= 0.999f) g_dollWhole.fetch_add(1, std::memory_order_relaxed);
+    if (kneeFail) g_dollKneeFail.fetch_add(kneeFail, std::memory_order_relaxed);
+}
+std::string DollNoteIn() {
+    const unsigned poses = g_dollPoses.exchange(0), whole = g_dollWhole.exchange(0), steps = g_dollSteps.exchange(0), flights = g_dollFlights.exchange(0);
+    const unsigned fail = g_dollKneeFail.exchange(0), back = g_dollBack.exchange(0), aside = g_dollAside.exchange(0), moving = g_dollMoving.exchange(0);
+    const float speedSum = g_dollSpeedSum.exchange(0.0f), speedMax = g_dollSpeedMax.exchange(0.0f);
+    if (!poses && !back && !aside) return "";
+    char b[640];
+    snprintf(b, sizeof b, "doll feet ([body] doll_feet): %u poses with the doll's feet (%u wholly), %u steps (%u with both feet up); %u of the poses while he "
+             "went (%.1f m/s on average, %.1f at most); knees not solved %u; %u poses handed back to the game's legs (not its walk, run or stand - the last mode "
+             "%d); %u poses left to the gait's legs ([body] gait_legs_third / _f4 on: they take the legs first)", poses, whole, steps, flights, moving,
+             moving ? speedSum / (float)moving : 0.0f, speedMax, fail, back, g_dollBackMode.load(), aside);
+    return b;
+}
 std::atomic<unsigned> g_walkBackPoses{0}, g_walkBackFull{0}, g_walkBackKneeFail{0}, g_walkBackPlayed{0}, g_walkBackJumps{0};
 std::atomic<float> g_walkBackAngle{0.0f}, g_walkBackKeptS{0.0f};
 std::atomic<unsigned> g_walkBackSeen{0}, g_walkBackSlow{0}, g_walkBackOtherMode{0};   // poses seen while he moved or walked back; too slow; not the game's walk mode
@@ -6973,15 +7179,17 @@ void WalkBackLegsIn(uintptr_t self, const Hero& h, const Input& in, float c, flo
     const float upm = std::clamp((h.head >= 0 ? Pos(newW[h.head]).y : h.eyeY) / std::max(0.8f, userHeadM), 2.0f, 8.0f);   // model units a metre
     const V3 stepIn = m.have ? RotOnly({x - m.x, 0.0f, z - m.z}, InvAffine(M)) : V3{0.0f, 0.0f, 0.0f};   // (into his model)
     g_wbRow.sx = stepIn.x; g_wbRow.sz = stepIn.z; g_wbRow.upm = upm; g_wbRow.dt = (float)dt;
-    if (m.have && dt > 1e-4 && dt <= 0.3 && Len(stepIn) / upm / (float)dt > walkback::kJumpMps) {
-        m.vx = m.vz = 0.0f;   // his place jumped (an area change, a waypoint): no travel from it (walk_back.h kJumpMps)
-        m.cone = remotepose::ConeBlend{};
-        g_walkBackPlaceJumps.fetch_add(1, std::memory_order_relaxed);
-    } else if (!m.have || dt > 0.3) { m.vx = m.vz = 0.0f; }
-    else if (dt > 1e-4) {   // the travel in the world (the look-at's units a second), smoothed as the other heroes' (0.08 s)
-        const float k = 1.0f - (float)std::exp(-dt / 0.08);
-        m.vx += ((x - m.x) / (float)dt - m.vx) * k;
-        m.vz += ((z - m.z) / (float)dt - m.vz) * k;
+    // the travel in the world (the look-at's units a second) off his place, over the time since the place last moved (walk_back.h PlaceTravel: it moves
+    // ~25 times a second, the poses come every few ms); a jump of it (an area change, a waypoint) reads no travel
+    {
+        const float scaleM = std::sqrt(M.m[0] * M.m[0] + M.m[1] * M.m[1] + M.m[2] * M.m[2]);   // (model -> world)
+        const double tS = f.QuadPart ? (double)now.QuadPart / (double)f.QuadPart : 0.0;
+        if (m.travel.Step(tS, x, z, upm * (scaleM > 1e-6f ? scaleM : 1.0f))) {
+            m.cone = remotepose::ConeBlend{};
+            g_walkBackPlaceJumps.fetch_add(1, std::memory_order_relaxed);
+        }
+        m.vx = m.travel.vx;
+        m.vz = m.travel.vz;
     }
     m.x = x; m.z = z; m.at = now; m.have = true;
     const V3 v = RotOnly({m.vx, 0.0f, m.vz}, InvAffine(M));   // into his model (its turn and size: exact, as the gait's)
@@ -7037,6 +7245,8 @@ void WalkBackLegsIn(uintptr_t self, const Hero& h, const Input& in, float c, flo
             if (deg > g_walkBackTurnMaxDeg.load()) g_walkBackTurnMaxDeg.store(deg);
         }
     }
+    // [body] doll_feet: the feet the doll's (above) - instead of correcting the game's legs (the play-back, the mirror below)
+    if (in.dollFeet) { DollFeetIn(h, in, c, s, T, M, x, z, m, dt, upm, newW); return; }
     if (in.walkBackReverse && h.pelvis >= 0) {
         // the game's own lower body of this pose, kept while he walks (whichever way), the body's turn taken out
         if (!m.lower.empty() && (m.lower.front() != h.pelvis || m.lower.back() >= n || (!m.trunk.empty() && m.trunk.back() >= n))) {   // (another rig here)
@@ -7604,7 +7814,7 @@ void Arms(uintptr_t self) {
     AcquireSRWLockShared(&g_inLock); in = g_in; ReleaseSRWLockShared(&g_inLock);
     // The hero is looked for even while nothing is done to him: his SkeletonInstance is what
     // vrcam's facing is found from (HeroTransform), and that is needed before the body can turn.
-    const bool active = !(in.mode == 0 && !in.hideHead && !in.lockUpper && !(in.bodyTurn > 0 && in.haveYaw));
+    const bool active = !(in.mode == 0 && !in.hideHead && !in.lockUpper && !(in.bodyTurn > 0 && in.haveYaw) && !in.dollFeet);   // ([body] doll_feet: in every view)
     if (!active && !g_trackHero.load()) return;
     uintptr_t modelInst = 0, skel = 0;
     if (!Get(self + 0x08, &modelInst) || !Get(modelInst + 0x08, &skel)) return;
@@ -7767,6 +7977,7 @@ void SetSelfLegs(bool on) { g_selfLegs.store(on); }
 void SetGaitCone(float halfAngleDeg) { g_gaitCone.store(std::clamp(halfAngleDeg, 0.0f, 180.0f)); }
 unsigned TakeOwnLegs() { return g_ownLegs.exchange(0); }
 std::string WalkBackNote() { return WalkBackNoteIn(); }
+std::string DollNote() { return DollNoteIn(); }
 void SetWalkBackDump(bool on) { g_walkBackDumpOn.store(on); }
 std::string TakeWalkBackDump() {
     AcquireSRWLockExclusive(&g_wbLock);

@@ -329,6 +329,39 @@ int main() {
         else CHECK(walkDrawn > 0);
     }
 
+    // PlaceTravel: the game moves his place 25 times a second, the poses come every 4.5 ms (Serg's 2026-10-30 flat F2 log). Running at 5.4 m/s: no step
+    // reads as a jump (the first reading took each over the time since the last pose - 48 m/s, past kJumpMps - and zeroed his travel on every step), the
+    // travel comes to his speed; stopping, it dies away; a 20 m move in one go is a jump.
+    {
+        const float upm = 3.67f;   // world units a metre (his rig's, scale 0.93)
+        walkback::PlaceTravel tr;
+        int jumps = 0, oldJumps = 0;
+        float px = 0.0f, last = 0.0f, speedAt1 = 0.0f, speedStopped = 0.0f;
+        double placeT = 0.0;
+        for (int i = 0; i < 600; ++i) {   // 2.7 s
+            const double t = i * 0.0045;
+            const bool running = t < 1.5;
+            if (t - placeT >= 0.04) {   // the game's tick
+                placeT = t;
+                if (running) px += 5.4f * upm * 0.04f;
+            }
+            const float step = px - last;
+            if (step > 0.0f && step / upm / 0.0045f > walkback::kJumpMps) ++oldJumps;   // (the first reading's test)
+            last = px;
+            if (tr.Step(t, px, 0.0f, upm)) ++jumps;
+            if (std::fabs(t - 1.2) < 0.003) speedAt1 = std::hypot(tr.vx, tr.vz) / upm;
+            if (std::fabs(t - 2.2) < 0.003) speedStopped = std::hypot(tr.vx, tr.vz) / upm;
+        }
+        std::printf("running 5.4 m/s, the place moved 25 times a second, a pose every 4.5 ms: %d jumps read (the first reading: %d); the travel %.2f m/s "
+                    "running, %.2f m/s 0.7 s after the stop\n", jumps, oldJumps, speedAt1, speedStopped);
+        CHECK(jumps == 0);
+        CHECK(oldJumps > 20);
+        CHECK(std::fabs(speedAt1 - 5.4f) < 0.6f);
+        CHECK(speedStopped < 0.2f);
+        CHECK(tr.Step(2.71, px + 20.0f * upm, 0.0f, upm));   // an area change
+        CHECK(tr.vx == 0.0f && tr.vz == 0.0f);
+    }
+
     // TurnAbout / YawOf: a bone turned about a point keeps its height and its distance from the point, its yaw goes round by the turn, and the turn back
     // gives it again.
     {

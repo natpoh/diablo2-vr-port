@@ -100,14 +100,27 @@ constexpr int TabWeightTo(int i) {   // the weights of the first i tabs
 constexpr int kTabX(int i) { return 32 + 960 * TabWeightTo(i) / TabWeightTo(kPageCount); }
 constexpr Rect kTab(int i) { return {kTabX(i), 84, kTabX(i + 1) - kTabX(i) - 8, 52}; }
 constexpr int kRowY0 = 156, kRowStep = 66, kRowH = 56;
-constexpr Rect kDec(int row) { return {584, kRowY0 + row * kRowStep, 72, kRowH}; }
-constexpr Rect kVal(int row) { return {664, kRowY0 + row * kRowStep, 248, kRowH}; }
-constexpr Rect kInc(int row) { return {920, kRowY0 + row * kRowStep, 72, kRowH}; }
-constexpr Rect kToggle(int row) { return {584, kRowY0 + row * kRowStep, 408, kRowH}; }
+// A page with more rows than kRowsPerPage (the Melee page's seven, up to kRowsMax) stands them closer, its last one still above the status line.
+// The rows' rectangles take the page (-1, as the other pages: the usual step).
+constexpr int kRowStepClose = 58, kRowHClose = 50;
+constexpr bool CloseRows(int page) { return page >= 0 && page < kPageCount && RowsOn(page) > kRowsPerPage; }
+constexpr int RowStep(int page) { return CloseRows(page) ? kRowStepClose : kRowStep; }
+constexpr int RowH(int page) { return CloseRows(page) ? kRowHClose : kRowH; }
+constexpr int RowY(int row, int page) { return kRowY0 + row * RowStep(page); }
+constexpr Rect kDec(int row, int page = -1) { return {584, RowY(row, page), 72, RowH(page)}; }
+constexpr Rect kVal(int row, int page = -1) { return {664, RowY(row, page), 248, RowH(page)}; }
+constexpr Rect kInc(int row, int page = -1) { return {920, RowY(row, page), 72, RowH(page)}; }
+constexpr Rect kToggle(int row, int page = -1) { return {584, RowY(row, page), 408, RowH(page)}; }
 // The game view row (the first page's last): F1 (from above), F2 (third person), F3 (the game on your floor), F4 (first person).
 constexpr int kViews = 4;
 constexpr Rect kViewBtn(int i) { return {584 + i * 104, kRowY0 + kViewRow * kRowStep, 96, kRowH}; }
 constexpr Rect kStatus = {32, 566, 960, 40};
+constexpr bool RowsFit() {
+    for (int p = 0; p < kPageCount; ++p)
+        if (RowsOn(p) > kRowsMax || (RowsOn(p) > 0 && RowY(RowsOn(p) - 1, p) + RowStep(p) - 5 > kStatus.y)) return false;
+    return true;
+}
+static_assert(RowsFit(), "every page's rows end above the status line");
 // The Guide page (the first-start guide, vr/first_start.h): its title and "2 / 5", its rows from kGuideTop to kGuideBottom (vr/hset_scene.h lays them out by
 // how many lines each takes), and Back / Next under them (on the measurement's offer: Not now / Measure now; on the last page: Done).
 constexpr Rect kGuideTitle = {32, 146, 720, 38};
@@ -202,14 +215,14 @@ inline Hit HitTest(int page, float u, float v) {
         if (kSpanDec.Contains(x, y)) return {Kind::Span, -1, -1};
         if (kSpanInc.Contains(x, y)) return {Kind::Span, -1, 1};
     }
-    for (int r = 0; r < kRowsPerPage; ++r) {
+    for (int r = 0; r < kRowsMax; ++r) {
         const int key = KeyAt(page, r);
         if (key < 0) break;
         if (IsToggle(kDefs[key])) {
-            if (kToggle(r).Contains(x, y)) return {Kind::Change, key, 1};
+            if (kToggle(r, page).Contains(x, y)) return {Kind::Change, key, 1};
         } else {
-            if (kDec(r).Contains(x, y)) return {Kind::Change, key, -1};
-            if (kInc(r).Contains(x, y)) return {Kind::Change, key, 1};
+            if (kDec(r, page).Contains(x, y)) return {Kind::Change, key, -1};
+            if (kInc(r, page).Contains(x, y)) return {Kind::Change, key, 1};
         }
     }
     return {};

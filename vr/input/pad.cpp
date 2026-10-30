@@ -65,14 +65,16 @@ bool ViewStickToGame(float* px, float* py) {
 
 bool DirectWalkNow();
 bool StickHookIn();
-void TurnStick(XINPUT_STATE* s, bool fromBodyWalk) {
+std::atomic<ULONGLONG> g_pad0At{0};   // pad 0 last answered the game's poll (XDetour): another pad's report is not kept meanwhile (padpresence::KeepsReport)
+void TurnStick(XINPUT_STATE* s, bool fromBodyWalk, DWORD padIndex) {
     if (!s || !g_enabled.load()) return;
     // [hands] bow_draw: the string hand's trigger is the draw's while the string is held - BodyWalk's A for it stays from the game
     // (with direct input the layout never gets it: directinput::Take). The draw's own press comes after this, as the release.
     if (bowdrawwire::Owned()) s->Gamepad.wButtons &= ~XINPUT_GAMEPAD_A;
     const XINPUT_GAMEPAD in = s->Gamepad;
-    // What is kept (held buttons, the right stick, the log) only from BodyWalk's pad while it is live.
-    const bool own = fromBodyWalk || GetTickCount64() - g_padMirrorOkAt.load() > 1000;
+    // What is kept (held buttons, the right stick, the log) only from BodyWalk's pad while it is live - and, with none, from pad 0 while it answers:
+    // the game polls four pads, and another pad's empty report must not put the right stick back to 0 (vr/pad_presence.h KeepsReport)
+    const bool own = padpresence::KeepsReport(fromBodyWalk, padIndex, GetTickCount64(), g_padMirrorOkAt.load(), g_pad0At.load());
     if (own) {
         g_aHeld.store((in.wButtons & XINPUT_GAMEPAD_A) != 0 && !gamestate::MenuOpen());
         // (the right trigger too: the game's RT slot - [openxr] skill_rt_a's trigger, BodyWalk's RT - vr/pad_skill.h)
@@ -856,7 +858,8 @@ template <int I> DWORD WINAPI XDetour(DWORD idx, XINPUT_STATE* s) {
                      g_xhooks[I].name, idx, bwWord, s->Gamepad.wButtons, s->Gamepad.sThumbRX, GetCurrentThreadId());
             }
         }
-        TurnStick(s, mirror);
+        if (idx == 0) g_pad0At.store(GetTickCount64());
+        TurnStick(s, mirror, idx);
         if (idx == 0) InputLogPad(got, s->Gamepad, mirror);
         if (idx == 0 && g_ptActive.load(std::memory_order_relaxed)) PressTracePoll(s->Gamepad.wButtons);   // [debug] melee_press_trace: the buttons as the game gets them
     }

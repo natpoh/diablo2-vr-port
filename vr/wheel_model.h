@@ -49,6 +49,7 @@ struct View {
     // settings model (vr/hset_model.h) as the controller last handed it over, with the button under the beam on them.
     bool tabs = false;
     Tab tab = Tab::Skills;
+    bool flipHigh = false;   // the Settings tab's flip arrows at its page tabs' row (the game look, vr/tiles_geom.h kFlipHigh)
     int flipPlace = 0;   // where the window stands along its pages (vr/wheel_flip.h: 0 Skills, 1 + the Settings page): the dots, the arrows
     hset::Model settings;
     hset::Hit settingsHover;
@@ -100,6 +101,7 @@ struct In {
     const Hints* hints = nullptr; // the captions under the slots (tiles); null = none
     bool categories = false;      // [openxr] skill_categories: the editor has the category strip (when the snapshot knows the trees)
     bool runWalk = false;         // [openxr] skill_run_walk: the RUN / WALK control is there
+    bool flipHigh = false;        // [openxr] skill_panel_game_look (its art there): the Settings tab's flip arrows at its page tabs' row
     bool slotControls = false;    // [openxr] skill_rt_a: the right trigger and the right A cast the RT and A slots
     bool rowOff = false;          // the second row of buttons is off (the left trigger has its own action): View::rowOff
     bool editFirst = false;       // [openxr] skill_panel_edit_first: a tap on a slot of the first page opens its skill list (held kPickHoldS: picks it for the trigger)
@@ -322,7 +324,7 @@ public:
             const bool strip = catKnown_ && v_.page == Page::PickSkill;
             const bool run = in.runWalk && v_.page == Page::Wheel && (v_.style != Style::Tiles || v_.tab == Tab::Skills);
             const int hover = !in.pointer ? int(kNone)
-                              : v_.style == Style::Tiles ? tiles::HitTest(v_.page, in.u, in.v, v_.hover, v_.options, v_.tabs, v_.tab == Tab::Settings, strip, run)
+                              : v_.style == Style::Tiles ? tiles::HitTest(v_.page, in.u, in.v, v_.hover, v_.options, v_.tabs, v_.tab == Tab::Settings, strip, run, in.flipHigh)
                                                          : HitTest(v_.page, in.u, in.v, v_.hover, v_.options, strip, run);
             int shown = hover;
             if ((shown == kFlipPrev && v_.flipPlace <= 0) || (shown == kFlipNext && v_.flipPlace >= kFlipPlaces - 1)) shown = kNone;   // (no arrow there)
@@ -366,6 +368,7 @@ public:
         v_.catStrip = catKnown_ && v_.page == Page::PickSkill;
         v_.catWanted = in.categories && !catKnown_ && v_.open && v_.page == Page::PickSkill;
         v_.runWalk = in.runWalk;
+        v_.flipHigh = in.flipHigh;
         v_.slotControls = in.slotControls;
         v_.rowOff = in.rowOff;
         v_.editFirst = in.editFirst;
@@ -384,7 +387,7 @@ private:
         if (a.open != b.open || a.page != b.page || a.hover != b.hover || a.selected != b.selected || a.editSlot != b.editSlot ||
             a.editPage != b.editPage || a.editPages != b.editPages || a.options != b.options || a.ready != b.ready ||
             a.editable != b.editable || a.bank != b.bank || a.result != b.result || a.style != b.style || !(a.hints == b.hints) ||
-            a.tabs != b.tabs || a.tab != b.tab || a.catStrip != b.catStrip || a.catWanted != b.catWanted || a.category != b.category || a.runWalk != b.runWalk || a.run != b.run || a.slotControls != b.slotControls || a.rowOff != b.rowOff || a.editFirst != b.editFirst ||
+            a.tabs != b.tabs || a.tab != b.tab || a.catStrip != b.catStrip || a.catWanted != b.catWanted || a.category != b.category || a.runWalk != b.runWalk || a.flipHigh != b.flipHigh || a.run != b.run || a.slotControls != b.slotControls || a.rowOff != b.rowOff || a.editFirst != b.editFirst ||
             std::strncmp(a.status, b.status, sizeof a.status) != 0)
             return true;
         for (int c = 0; c < kCategories; ++c) if (a.catCount[c] != b.catCount[c]) return true;

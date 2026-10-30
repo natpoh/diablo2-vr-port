@@ -87,7 +87,45 @@ static void TestRealPadTouched() {
     CHECK(RealPadTouched(0, 0, 0, 0, 0, -20000, 0));                // the right stick left
 }
 
+// Whose report is kept (the right stick the turn reads): Serg's 0.190.2 F2 run - the plugin's controller merged into a real pad's report at
+// pad 0 (mirror stale), pad 1 answering with an empty report a millisecond later, every 16 ms frame. The turn's 1 ms tick must see the
+// stick pushed nearly all the time - with the old rule (any pad kept once the mirror was a second old) it saw it 1 ms in 16.
+static void TestKeepsReport() {
+    // the four simple cases
+    CHECK(KeepsReport(true, 0, 5000, 4990, 4990));          // the plugin's own pad: kept
+    CHECK(!KeepsReport(false, 1, 5000, 4990, 4990));        // the plugin's pad is live: another pad's report is not
+    CHECK(KeepsReport(false, 0, 5000, 3000, 4999));         // F1-F3 with a real pad: pad 0's merged report is kept
+    CHECK(!KeepsReport(false, 1, 5000, 3000, 4999));        // ... and pad 1's empty one is not (the bug)
+    CHECK(KeepsReport(false, 1, 5000, 0, 0));               // a pad at index 1 alone (no pad 0 ever): kept, as before
+    CHECK(KeepsReport(false, 1, 5000, 0, 4000));            // pad 0 gone for a second: the other pad's report counts again
+    CHECK(KeepsReport(false, 0, 5000, 0, 0));               // flat, a real pad at 0, never a mirror: kept
+    // the frames: pad 0 at t, pad 1 at t + 1; the turn reads the kept stick every millisecond
+    auto run = [](bool oldRule) {
+        float rightX = 0.0f;
+        uint64_t pad0At = 0;
+        const uint64_t mirrorOkAt = 1000;   // the plugin's pad last lived in F4, then F2
+        int pushed = 0, ticks = 0;
+        for (uint64_t now = 3000; now < 4000; ++now) {
+            const uint64_t f = now % 16;
+            if (f == 0 || f == 1) {
+                const uint32_t pad = f == 0 ? 0u : 1u;
+                const float rx = pad == 0 ? 0.9f : 0.0f;   // the merged controller's stick at pad 0, the real pad 1 at rest
+                if (pad == 0) pad0At = now;
+                const bool keep = oldRule ? (now - mirrorOkAt > 1000) : KeepsReport(false, pad, now, mirrorOkAt, pad0At);
+                if (keep) rightX = rx;
+            }
+            ++ticks;
+            if (rightX > 0.5f) ++pushed;
+        }
+        return (float)pushed / ticks;
+    };
+    const float before = run(true), after = run(false);
+    CHECK(before < 0.1f);    // the bug, reproduced: the stick seen ~6 % of the time
+    CHECK(after > 0.99f);    // fixed: all of it
+}
+
 int main() {
+    TestKeepsReport();
     TestRealPadTouched();
     TestMustStay();
     TestTracker();

@@ -497,6 +497,7 @@ void PoseShareTick() {
         if (const unsigned own = skel::TakeOwnLegs(); !first && own)
             LogF("vrcam: our hero's legs by the gait (5 s): %u poses ([body] gait_legs_third / _f4)", own);
         if (const std::string wb = skel::WalkBackNote(); !first && !wb.empty()) Log(("vrcam: " + wb).c_str());   // [body] walk_back
+        if (const std::string df = skel::DollNote(); !first && !df.empty()) Log(("vrcam: " + df).c_str());       // [body] doll_feet
         {   // [debug] walk_back_dump: the legs of each walk back that ended, pose by pose, to d2rloader\logs\d2r_vr_walkback.txt (tools/walk_legs/walk_legs.py --dump)
             const bool want = IniB(L"debug", L"walk_back_dump", false);
             static bool told = false;

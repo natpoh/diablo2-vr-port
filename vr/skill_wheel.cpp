@@ -20,6 +20,7 @@
 #include "bow_draw_wire.h"
 #include "calibration.h"
 #include "direct_input.h"
+#include "game_ui.h"   // [openxr] skill_panel_game_look: the Settings tab's flip arrows go up with the game look
 #include "first_start_wire.h"   // the Settings tab's Guide page: the first-start guide asks for the window, and is told when it is over
 #include "hset_store.h"
 #include "hset_view.h"
@@ -295,6 +296,8 @@ void Configure(bool on, int pointerHand, float distanceM, float widthM, int styl
     // skill list; the old tap (the trigger casts that slot) is the trigger held on it (wheel_model.h kPickHoldS). 0 = as before
     cfg.editFirst = !ini || GetPrivateProfileIntW(L"openxr", L"skill_panel_edit_first", 1, ini) != 0;
     cfg.runWalk = ini && GetPrivateProfileIntW(L"openxr", L"skill_run_walk", 0, ini) != 0;
+    // the game look (xr.cpp sets it before this): its art there, the Settings tab's flip arrows stand at the page tabs' row (the painter's look and the hit test agree)
+    cfg.flipHigh = cfg.style == wheel::Style::Tiles && gameui::On() && gameui::Present();
     // the right trigger and the right A as the game's RT and A slots (off unless the ini says 1: the layout's trigger is the attack and its A interact, as ever);
     // it acts in first person with direct input only (vr/slot_controls.h), and the editor's list then has the basic attack to put a slot back
     cfg.slotControls = on && ini && GetPrivateProfileIntW(L"openxr", L"skill_rt_a", 0, ini) != 0;

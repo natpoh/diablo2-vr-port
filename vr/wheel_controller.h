@@ -63,6 +63,7 @@ struct Settings {
     float holdS = 0.50f;        // how long a long press is ([direct] hold_ms: the same time that opened it closes it)
     bool settingsTab = false;   // [openxr] headset_settings: the tiles' window has the Settings tab (the wheel's look has none)
     bool categories = true;     // [openxr] skill_categories: the editor has the category strip (All, the class's trees, General / Items) when the cache knows the trees
+    bool flipHigh = false;      // [openxr] skill_panel_game_look with the game's art beside the plugin: the Settings tab's flip arrows at its page tabs' row
     bool runWalk = false;       // [openxr] skill_run_walk (off by default): a RUN / WALK control (a tile in the tiles' look, a button on the wheel): the game's own run / walk switch
     bool slotControls = false;  // [openxr] skill_rt_a (off by default): the right trigger is the game's RT slot and the right A its A slot (vr/slot_controls.h)
     bool editFirst = false;     // [openxr] skill_panel_edit_first (on in the plugin's ini): a tap on a slot opens its skill list; the trigger held on it picks it for the trigger
@@ -361,6 +362,7 @@ public:
         in.hints = &cfg_.hints;
         in.categories = cfg_.categories;
         in.runWalk = cfg_.runWalk;
+        in.flipHigh = cfg_.flipHigh;
         in.slotControls = cfg_.slotControls;
         in.rowOff = !secondRow_;
         in.editFirst = cfg_.editFirst;

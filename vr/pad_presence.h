@@ -89,6 +89,21 @@ private:
     std::atomic<uint32_t> n_{0};
 };
 
+// Whose report the plugin keeps from a poll (the held A and skill buttons, the right stick the turn reads - vr/input/pad.cpp TurnStick).
+// The game polls four pads every frame; each answering one runs through the hook. The plugin's own pad (direct input in F4, BodyWalk's)
+// is pad 0 and marks itself fresh (mirrorOkAtMs), so the other pads were never kept while it lived. But in VR F1-F3 without BodyWalk,
+// with a real or virtual pad answering ([direct] flat_controller), the plugin's controller is MERGED into the real pad's report and
+// does not mark itself: from a second on every answering pad was kept, and pad 1's empty report - the next poll, a millisecond after
+// pad 0's - put the right stick back to 0 each frame (Serg, 0.190.2 F2: "поворот стиком не работает"; the log's pad lines alternated
+// the merged report and zeros 1 ms apart). So while pad 0 answers, another pad's report is not kept; with no pad 0, as before.
+constexpr uint64_t kPad0FreshMs = 250;   // pad 0 answered this recently: it is the one in charge (the game polls every frame)
+inline bool KeepsReport(bool pluginPad, uint32_t padIndex, uint64_t nowMs, uint64_t mirrorOkAtMs, uint64_t pad0AtMs) {
+    if (pluginPad) return true;                                                          // the plugin's own pad (pad 0)
+    if (mirrorOkAtMs != 0 && nowMs >= mirrorOkAtMs && nowMs - mirrorOkAtMs <= 1000) return false;   // it is live: only its own report
+    if (padIndex != 0 && pad0AtMs != 0 && nowMs >= pad0AtMs && nowMs - pad0AtMs <= kPad0FreshMs) return false;   // pad 0 answers: its report
+    return true;
+}
+
 // The state of the neutral pad: no buttons, no sticks, a number that moves with every poll (a pad that never changes its packet
 // reads as a stuck device to some code).
 struct NeutralPacket {

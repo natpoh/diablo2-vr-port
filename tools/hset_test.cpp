@@ -181,7 +181,7 @@ static void TestDefs() {
         else CHECK(d.fmt[0] == '%', "a stepper has a format");
         CHECK(d.label[0] && d.detail[0], "label and detail");
     }
-    for (int p = 0; p < kMaxPages; ++p) CHECK(perPage[p] <= kRowsPerPage, "no more rows than the page has room for");
+    for (int p = 0; p < kMaxPages; ++p) CHECK(perPage[p] <= kRowsMax && (perPage[p] <= kRowsPerPage || CloseRows(p)), "no more rows than the page has room for (a seventh: the rows closer)");
     CHECK(perPage[kPageView] <= kRowsPerPage - 1, "the first page keeps its last row for the game view buttons");
     CHECK(RowsOn(kPageView) > 0 && RowsOn(kPageOptions) > 0, "the two table pages have rows");
     CHECK(RowsOn(kPageVideo) == 0 && RowsOn(kPageGuide) == 0, "the Video and Guide pages have no table rows (they draw their own)");
@@ -222,6 +222,12 @@ static void TestHitTest() {
     CHECK(!Overlap(kStatus, kApply) && !Overlap(kStatus, kClose) && !Overlap(kStatus, kRecentre), "the status line is clear of the buttons");
     for (int i = 0; i < kMaxPages; ++i) CHECK(Inside(kTab(i)), "tabs inside the atlas");
     for (int i = 0; i + 1 < kMaxPages; ++i) CHECK(!Overlap(kTab(i), kTab(i + 1)), "tabs apart");
+    for (int r = 0; r < kRowsMax; ++r) {   // the Melee page's seven, closer
+        const int p = kPageMelee;
+        CHECK(CloseRows(p) && Inside(kDec(r, p)) && Inside(kInc(r, p)) && Inside(kVal(r, p)) && Inside(kToggle(r, p)), "a close row inside the atlas");
+        CHECK(!Overlap(kDec(r, p), kVal(r, p)) && !Overlap(kVal(r, p), kInc(r, p)) && !Overlap(kToggle(r, p), kStatus), "a close row's buttons apart, above the status line");
+        if (r + 1 < kRowsMax) CHECK(!Overlap(kToggle(r, p), kToggle(r + 1, p)), "close rows apart");
+    }
     for (int r = 0; r < kRowsPerPage; ++r) {
         CHECK(Inside(kDec(r)) && Inside(kInc(r)) && Inside(kVal(r)) && Inside(kToggle(r)), "row inside the atlas");
         CHECK(!Overlap(kDec(r), kVal(r)) && !Overlap(kVal(r), kInc(r)) && !Overlap(kDec(r), kInc(r)), "a row's buttons apart");
@@ -233,14 +239,14 @@ static void TestHitTest() {
             const int key = KeyAt(p, r);
             float u, v;
             if (IsToggle(kDefs[key])) {
-                Centre(kToggle(r), &u, &v);
+                Centre(kToggle(r, p), &u, &v);
                 CHECK((HitTest(p, u, v) == Hit{Kind::Change, key, 1}), "a toggle's centre toggles");
             } else {
-                Centre(kDec(r), &u, &v);
+                Centre(kDec(r, p), &u, &v);
                 CHECK((HitTest(p, u, v) == Hit{Kind::Change, key, -1}), "minus");
-                Centre(kInc(r), &u, &v);
+                Centre(kInc(r, p), &u, &v);
                 CHECK((HitTest(p, u, v) == Hit{Kind::Change, key, 1}), "plus");
-                Centre(kVal(r), &u, &v);
+                Centre(kVal(r, p), &u, &v);
                 CHECK(HitTest(p, u, v).kind == Kind::None, "the value box is not a button");
             }
         }
@@ -256,7 +262,7 @@ static void TestHitTest() {
         // a row the page does not have is nothing
         const int rows = RowsOn(p);
         if (rows < kRowsPerPage && !(p == kPageView && rows == kViewRow)) {   // (the first page's last row is the view buttons)
-            Centre(kToggle(rows), &u, &v);
+            Centre(kToggle(rows, p), &u, &v);
             CHECK(HitTest(p, u, v).kind == Kind::None, "past the last row is nothing");
         }
     }
@@ -2435,8 +2441,8 @@ static void TestBelt() {
     CHECK(kDefs[kKeyBeltOn].page == kNoPage && !kDefs[kKeyBeltOn].live && IsToggle(kDefs[kKeyBeltOn]), "belt_models: the Belt page's note, not live");
     int live = 0;
     for (int i = 0; i < kCount; ++i) live += kDefs[i].live ? 1 : 0;
-    CHECK(live == 16 && kLiveMask != 0 && (kLiveMask & Bit(KeyOf(L"brightness"))) == 0 && (kLiveMask & Bit(kKeySmooth)) == 0,
-          "sixteen live keys, the belt's, the Melee page's (the skill arming's two too), the Body page's standing / seated and its Arm span's three (use, version, arm_span_m) - not the others");
+    CHECK(live == 18 && kLiveMask != 0 && (kLiveMask & Bit(KeyOf(L"brightness"))) == 0 && (kLiveMask & Bit(kKeySmooth)) == 0,
+          "eighteen live keys, the belt's, the Melee page's (the skill arming's two and Direct hit's two too), the Body page's standing / seated and its Arm span's three (use, version, arm_span_m) - not the others");
     CHECK(kCount <= 64, "the masks are 64 bits");
     CHECK(kDefs[KeyAt(kPageBelt, 0)].min == 0.3f && kDefs[KeyAt(kPageBelt, 4)].min == 4.0f && kDefs[KeyAt(kPageBelt, 4)].max == 30.0f && kDefs[KeyAt(kPageBelt, 4)].def == 12.0f, "the belt's ranges are D2R VR Settings'");
     CHECK(IsToggle(kDefs[KeyAt(kPageBelt, 5)]) && kDefs[KeyAt(kPageBelt, 5)].def == 0.0f && kKeyDirectOn >= 0, "the two-button take is a tick, off as the plugin has it ([belt] grab_trigger)");
@@ -3272,7 +3278,8 @@ static int GdiWidth(const std::string& text, int cell, int weight) {   // the pa
 // -- 14. The Melee page: the "Hit by touch" group of D2R VR Settings > Strikes -----------------------------------------------------------------
 // The tick and its two numbers, the same [gameplay] keys, ranges and defaults as the desktop program (tools/settings/settings.cpp), written live.
 static void TestMelee() {
-    CHECK(RowsOn(kPageMelee) == 6 && !strcmp(kPageNames[kPageMelee], "Melee"), "six rows on the Melee page (the touch's four, then the skill arming and its icon)");
+    CHECK(RowsOn(kPageMelee) == 7 && CloseRows(kPageMelee) && !strcmp(kPageNames[kPageMelee], "Melee"),
+          "seven rows on the Melee page, closer (the touch's four, the skill arming and its icon, Direct hit by the rules)");
     const int on = KeyAt(kPageMelee, 0), speed = KeyAt(kPageMelee, 1), start = KeyAt(kPageMelee, 2), only = KeyAt(kPageMelee, 3);
     CHECK(!wcscmp(kDefs[only].section, L"gameplay") && !wcscmp(kDefs[only].key, L"melee_touch_only") && IsToggle(kDefs[only]) && kDefs[only].def == 1.0f && kDefs[only].live,
           "the trigger's tick: [gameplay] melee_touch_only, on as shipped, live");
@@ -3345,6 +3352,67 @@ static void TestMelee() {
     // the line under the page
     CHECK(std::string(StatusText(OnPage(s1, kPageMelee))).find("off") != std::string::npos, "with the tick off the page says so");
     CHECK(std::string(StatusText(OnPage(s0, kPageMelee))).find("applies by itself") != std::string::npos, "with it on, that a change applies by itself");
+
+    // Direct hit by the rules (Serg, 2026-10-30): the seventh row, a tick over [gameplay] melee_direct and melee_direct_client - D2R VR Settings > Strikes'
+    // choice (shared/direct_hit_mode.h): on = By the rules (2 / 1), off = Off (0 / 0); Fully on (1 / 2) shows the tick off and the page's line says so.
+    const int dh = KeyAt(kPageMelee, 6);
+    CHECK(dh == kKeyMeleeDirect && !wcscmp(kDefs[dh].section, L"gameplay") && !wcscmp(kDefs[dh].key, L"melee_direct") && IsToggle(kDefs[dh]) && kDefs[dh].def == 0.0f &&
+              kDefs[dh].live && !strcmp(kDefs[dh].label, "Direct hit by the rules"),
+          "the seventh row: [gameplay] melee_direct as a tick, off as shipped, live");
+    CHECK(kDefs[kKeyMeleeDirectClient].page == kNoPage && !wcscmp(kDefs[kKeyMeleeDirectClient].key, L"melee_direct_client") && kDefs[kKeyMeleeDirectClient].max == 2.0f &&
+              kDefs[kKeyMeleeDirectClient].live, "its other key has no row: the mode the two say (0 - 2)");
+    {
+        struct Case { const char* file; float tick, mode; };
+        const Case cases[] = {
+            {"[gameplay]\r\nmelee_touch=1\r\n", 0.0f, 0.0f},                                           // none: Off
+            {"[gameplay]\r\nmelee_touch=1\r\nmelee_direct=2\r\nmelee_direct_client=1\r\n", 1.0f, 1.0f},   // By the rules (his ini)
+            {"[gameplay]\r\nmelee_touch=1\r\nmelee_direct=2\r\n", 1.0f, 1.0f},                          // half of it: By the rules (as Settings reads it)
+            {"[gameplay]\r\nmelee_touch=1\r\nmelee_direct_client=1\r\n", 1.0f, 1.0f},                   // the old client box: By the rules
+            {"[gameplay]\r\nmelee_touch=1\r\nmelee_direct=1\r\nmelee_direct_client=2\r\n", 0.0f, 2.0f},   // Fully on
+            {"[gameplay]\r\nmelee_touch=1\r\nmelee_direct=1\r\n", 0.0f, 2.0f},                          // the old experimental box: Fully on
+        };
+        for (const Case& c : cases) {
+            Spit(path, c.file);
+            const Snapshot s = store::LoadSnapshot(path.c_str());
+            CHECK(s.values[dh] == c.tick && s.values[kKeyMeleeDirectClient] == c.mode, "Direct hit read as D2R VR Settings reads it");
+        }
+    }
+    auto directText = [&](const wchar_t* key) { return ini::Read(path.c_str(), L"gameplay", key).text; };
+    auto tick = [&](const char* file, double at) {   // the file, the page opened on it, the tick clicked, its live write
+        Spit(path, file);
+        Model dm = OnPage(store::LoadSnapshot(path.c_str()), kPageMelee);
+        float u, v;
+        Centre(kToggle(6, kPageMelee), &u, &v);
+        CHECK((HitTest(kPageMelee, u, v) == Hit{Kind::Change, dh, 1}), "the seventh row's tick is hit where it is drawn");
+        dm.Click(HitTest(kPageMelee, u, v));
+        dm.Live(at);
+        return dm.Live(at + Model::kLiveSettleMs + 1.0);
+    };
+    {   // Off -> ticked: By the rules, both keys, the neighbours as they were
+        const Action w = tick("[gameplay]\r\nmelee_touch=1\r\nmelee_min_speed=6.0\r\n", 30.0);
+        CHECK(w.what == Do::Save && w.request.changed == Bit(dh), "the tick is written by itself");
+        CHECK(store::SaveRequest(path.c_str(), w.request) == Result::Saved && directText(L"melee_direct") == L"2" && directText(L"melee_direct_client") == L"1" &&
+                  directText(L"melee_min_speed") == L"6.0" && directText(L"melee_touch") == L"1", "ticked: melee_direct=2, melee_direct_client=1 (By the rules), the rest kept");
+        const Snapshot back = store::LoadSnapshot(path.c_str());
+        CHECK(back.values[dh] == 1.0f && back.values[kKeyMeleeDirectClient] == 1.0f, "and reads back ticked");
+    }
+    {   // his ini, By the rules -> unticked: Off, both keys
+        const Action w = tick("[gameplay]\r\nmelee_touch=1\r\nmelee_direct=2\r\nmelee_direct_client=1\r\nmelee_direct_client_cleave=1\r\n", 40.0);
+        CHECK(w.what == Do::Save && store::SaveRequest(path.c_str(), w.request) == Result::Saved && directText(L"melee_direct") == L"0" &&
+                  directText(L"melee_direct_client") == L"0" && directText(L"melee_direct_client_cleave") == L"1", "unticked: 0 / 0 (Off), the cleave box kept");
+    }
+    {   // Fully on: the tick shows off, the line says so; ticking it is By the rules
+        Spit(path, "[gameplay]\r\nmelee_touch=1\r\nmelee_direct=1\r\nmelee_direct_client=2\r\n");
+        CHECK(std::string(StatusText(OnPage(store::LoadSnapshot(path.c_str()), kPageMelee))).find("Fully on") != std::string::npos, "Fully on: the page's line says so");
+        const Action w = tick("[gameplay]\r\nmelee_touch=1\r\nmelee_direct=1\r\nmelee_direct_client=2\r\n", 50.0);
+        CHECK(w.what == Do::Save && store::SaveRequest(path.c_str(), w.request) == Result::Saved && directText(L"melee_direct") == L"2" &&
+                  directText(L"melee_direct_client") == L"1", "Fully on, ticked: By the rules (2 / 1)");
+    }
+    {   // the other key changed outside meanwhile: a conflict, nothing written
+        const Action w = tick("[gameplay]\r\nmelee_touch=1\r\n", 60.0);
+        Spit(path, "[gameplay]\r\nmelee_touch=1\r\nmelee_direct_client=2\r\n");
+        CHECK(store::SaveRequest(path.c_str(), w.request) == Result::Conflict && directText(L"melee_direct_client") == L"2", "melee_direct_client changed outside: a conflict");
+    }
     CHECK(TmpFiles() == 0, "no temp file left");
 }
 

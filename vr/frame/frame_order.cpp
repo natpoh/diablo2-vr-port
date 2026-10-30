@@ -567,9 +567,11 @@ DWORD WINAPI UpdateThread(void*) {
         }
         // the fog leaves the interface alone; the floor's key never takes its text for the void. Flat: the sky and the cave ceiling
         // too, and through a menu, whose panel stays over the world there (EffectsPaused; from sajmonsoft's flat fork)
+        // (in a menu the labels are not taken out: flat's panel gets the mask whatever they want - [hud] monster_alpha < 1 wants them in flat)
         const bool flatFx = g_set.platform.load() == 0 && (fx::OurSkyWanted() || g_arcaneSky.load() || fx::CeilWanted());
-        hud::SetUiMask((fx::FogWanted() || fx::TableKeyWanted() || flatFx) && !LabelsWanted() && !replay::OverlaysWanted());
-        hud::SetUiMaskInMenu(g_set.platform.load() == 0);
+        const bool maskWanted = fx::FogWanted() || fx::TableKeyWanted() || flatFx;
+        hud::SetUiMask(maskWanted && !LabelsWanted() && !replay::OverlaysWanted());
+        hud::SetUiMaskInMenu(g_set.platform.load() == 0 && maskWanted);
         SkyTick();
         flog::Tick(g_set.frameLog.load() || GetTickCount64() < flog::g_diagUntil.load());
         directinput::SetMenuNow(gamestate::MenuOpen() || !g_inWorld.load());   // [openxr] direct_input: the layer in force against the game's

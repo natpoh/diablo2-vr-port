@@ -31,7 +31,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 LANG = ROOT / "lang"
 SYNC = LANG / "sync"
-SOURCES = [ROOT / "tools" / "settings" / f for f in ("settings.cpp", "arcane_assets.cpp", "props_assets.cpp", "boat_assets.cpp", "dome_assets.cpp")] + [ROOT / "shared" / "data_mods.h"]
+SOURCES = [ROOT / "tools" / "settings" / f for f in ("settings.cpp", "arcane_assets.cpp", "props_assets.cpp", "boat_assets.cpp", "dome_assets.cpp", "menu_assets.cpp")] + [ROOT / "shared" / "data_mods.h"]
 OWN_KEYS = {"language.name"}   # the file's own: never batched, never stale
 CALL = re.compile(r'\b(TR|TRF|SAY|TX)\(\s*L"')   # (TX: lang::TX in the asset makers and data_mods.h)
 VR = ROOT / "vr"

@@ -683,6 +683,10 @@ void PushArms() {
     }
     in.staffGrabM = g_set.staffGrabCm.load() * 0.01f;
     if (const uint32_t type = gamestate::WeaponType(); type < D2RVR_TYPE_COUNT) memcpy(in.weaponAdj, g_set.weaponAdj[type], sizeof in.weaponAdj);
+    // the left hand's weapon by its own kind (a sword in the left beside an axe in the right: the sword's sliders); nothing of its own there
+    // (empty, a shield, a quiver): the same numbers as before
+    if (const uint32_t left = gamestate::HandKind(1); left > D2RVR_TYPE_UNARMED && left < D2RVR_TYPE_COUNT) memcpy(in.weaponAdjLeft, g_set.weaponAdj[left], sizeof in.weaponAdjLeft);
+    else memcpy(in.weaponAdjLeft, in.weaponAdj, sizeof in.weaponAdjLeft);
     memcpy(in.shrinkBone, g_set.shrinkBone, sizeof in.shrinkBone);
     in.lockUpper = own && FullBody() && g_set.lockUpper.load();   // the game's animation in the other views
     {   // [body] crouch (vr/crouch.h; from bearstonem/d2r-pcvr, MIT): you crouch, the camera goes down with your head, and the hero's
@@ -732,6 +736,7 @@ void PushArms() {
     in.holdTrunk = own && g_set.platform.load() == 0 && g_set.flatHoldTrunk.load();
     in.walkBack = g_set.walkBack.load();
     in.walkBackReverse = g_set.walkBackReverse.load();
+    in.dollFeet = g_set.dollFeet.load();
     in.heroAnimMode = HeroAnimMode();   // (walk_back_reverse keeps the game's walk and run only - not a Whirlwind, a Leap, a knockback)
     in.followJump = own && g_set.followJump.load();
     in.jumpFrom = g_set.jumpFrom.load();

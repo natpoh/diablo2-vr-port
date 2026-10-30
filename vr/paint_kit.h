@@ -66,17 +66,19 @@ inline void RoundRect(Canvas& cv, Rect r, float radius, Col fill, float fillA, C
 // -- text through GDI ------------------------------------------------------------------------------------------------------------
 
 struct Fonts {
-    HFONT f[16] = {};
-    int size[16] = {};
-    bool bold[16] = {};
-    const wchar_t* face[16] = {};   // (the language's font can change while the panel lives: a font is kept per face)
+    static constexpr int kMax = 32;   // (sizes x faces a picture uses: the game look adds its two faces)
+    HFONT f[kMax] = {};
+    int size[kMax] = {};
+    bool bold[kMax] = {};
+    const wchar_t* face[kMax] = {};   // (the language's font can change while the panel lives: a font is kept per face)
+    const wchar_t* use = nullptr;   // a face of the caller's for what is drawn next (the game look's fonts); nullptr: ours
     HFONT Get(int px, bool b) {
-        const wchar_t* want = uitext::Face(L"Georgia");
-        for (int i = 0; i < 16; ++i)
-            if (f[i] && size[i] == px && bold[i] == b && face[i] == want) return f[i];
-        for (int i = 0; i < 16; ++i)
+        const wchar_t* want = use ? use : uitext::Face(L"Georgia");
+        for (int i = 0; i < kMax; ++i)
+            if (f[i] && size[i] == px && bold[i] == b && face[i] == want) return f[i];   // (a face of the caller's is drawn at its own weight)
+        for (int i = 0; i < kMax; ++i)
             if (!f[i]) {
-                f[i] = CreateFontW(-px, 0, 0, 0, b ? FW_BOLD : FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+                f[i] = CreateFontW(-px, 0, 0, 0, use ? FW_NORMAL : b ? FW_BOLD : FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
                                    CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY, DEFAULT_PITCH, want);
                 size[i] = px;
                 bold[i] = b;

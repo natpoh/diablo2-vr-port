@@ -30,7 +30,10 @@ struct Input {
     // [body] walk_back_reverse (with walkBack): instead of the mirror, the game's own walk played backwards in time (vr/walk_back.h) - the lower body's poses
     // kept while he walks, drawn from a cursor going back through them: the heel lifts behind him, the toes reach back, every joint the game's own. Visual only.
     bool walkBackReverse = false;
-    int heroAnimMode = -1;      // the hero's unit mode as the game's client has it (2 walk, 3 run, 6 town walk; -1 not known): walk_back_reverse keeps only his walk
+    // [body] doll_feet: the feet are the doll's, not the game's (vr/doll_feet.h) - planted in the world, stepping after the body (its place, facing and
+    // travel are all the game gives); the legs put on them (vr/leg_ik.h). In every view the hero is posed in, turned or not; instead of walk_back. Visual only.
+    bool dollFeet = false;
+    int heroAnimMode = -1;     // the hero's unit mode as the game's client has it (2 walk, 3 run, 6 town walk; -1 not known): walk_back_reverse keeps only his walk
     float crouchDrop = 0.0f;    // [body] crouch (F4): the body this far down (model units), the legs bent to keep the feet; 0 = as the game poses it
     bool roomShiftOn = false;   // [openxr] roomscale_body (F4, room walking): the whole drawn body moved across the floor by roomShift ...
     float roomShift[3] = {};    // ... model units, x and z: from the hero's place to the floor under your neck (drawn bones only);
@@ -343,6 +346,7 @@ struct Input {
     bool holdGrip = false;      // mode 2: the weapon keeps one grip, not the animation's (vrcam: every weapon, 2026-10-05)
     bool attacking = false;     // a skill button is down: no grip is taken from the animation then
     float weaponAdj[6] = {};
+    float weaponAdjLeft[6] = {};   // ... the left hand's weapon: its own kind's [weapon_<kind>] (a weapon in each hand), else the same as weaponAdj; mirrored there (vr/weapon_mirror.h)
     char shrinkBone[48] = {};   // [debug] shrink_bone: the hero's bone of this name drawn shrunk to a point - what hangs on it vanishes    // mode 2: the weapon in the hand moved x y z (cm) and turned pitch yaw roll (deg), its own axes
     // [bow] rig_pose: a bow in hand has its own string, limbs and arrow bones posed by the pull
     // (SetBowDraw, vr/bow_rig.h) instead of the game's animation; off = the game's animation, always.
@@ -855,6 +859,8 @@ unsigned TakeOwnLegs();
 std::string LegsNote();
 // [body] walk_back: what it did since the last call, for the log ("" when nothing).
 std::string WalkBackNote();
+// [body] doll_feet: the same - poses with the doll's feet, steps, flights, knees not solved, poses handed back to the game's legs ("" when nothing).
+std::string DollNote();
 // [debug] walk_back_dump: our hero's legs kept pose by pose while he moves - the game's (turned with the body) and as drawn, his travel, the walk back's
 // share - the last kWalkBackDumpS seconds; when a walk back has ended, TakeWalkBackDump hands them over once as text for tools/walk_legs ("" else). Live.
 void SetWalkBackDump(bool on);

@@ -1,7 +1,7 @@
 #pragma once
 // The keys the in-headset settings panel offers ([openxr] headset_settings, vr/xr.cpp, docs in
 // d2r_vr.ini). One line a key; a new tick box of a feature is one line more. Pages are the panel's tabs
-// (at most kMaxPages, at most kRowsPerPage rows each); a toggle is a key with min 0, max 1, step 1.
+// (at most kMaxPages, at most kRowsPerPage rows each - kRowsMax on a page that stands them closer); a toggle is a key with min 0, max 1, step 1.
 //
 // Twelve pages: View, Options, Life, Look, HUD, Belt, Melee, Left and Right are rows of this table; Video (the VR render size, vr/hset_video.h), Body (the
 // T-pose measurement, vr/hset_body.h) and Guide (the first-start guide, vr/first_start.h; vr/hset_scene.h) are drawn by hand; Video and Body own the keys
@@ -29,6 +29,7 @@ namespace hset {
 
 constexpr int kMaxPages = 12;
 constexpr int kRowsPerPage = 6;
+constexpr int kRowsMax = 7;   // a page with a row more than kRowsPerPage stands its rows closer (the Melee page; hset_model.h RowStep)
 // A page is a line more here, in kPageNames and in kMaxPages / kPageCount (the tabs share the panel's width in proportion to their names:
 // hset_model.h kTab). After HUD come the belt's page, the hit-by-touch page (Melee) and the two key-binding pages (Left, Right).
 enum Page : int {
@@ -140,7 +141,7 @@ inline constexpr Def kDefs[] = {
     //
     // page 8, Melee: the "Hit by touch" group of D2R VR Settings > Strikes - the tick, its two numbers and the trigger's tick, the same keys, ranges and defaults as there
     // ([gameplay] melee_touch, melee_min_speed, melee_stroke_start_cm, melee_touch_only; the plugin follows the ini live, vr/vrcam.cpp, vr/stroke_tuning.h). Live, F4 only.
-    // The rest of the Strikes tab (thrown weapons, which contact counts, the kinds, the direct hit) stays in D2R VR Settings.
+    // The rest of the Strikes tab (thrown weapons, which contact counts, the kinds, Direct hit's Fully on and its numbers) stays in D2R VR Settings.
     {L"gameplay", L"melee_touch", "Hit by touch", "The blade you swing through a monster hits it (F4)",
      0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageMelee, true},
     {L"gameplay", L"melee_min_speed", "Least blade speed that hits", "Below it a touch does nothing, m/s",
@@ -157,6 +158,15 @@ inline constexpr Def kDefs[] = {
      0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageMelee, true},
     {L"gameplay", L"melee_skill_armed_icon", "Armed skill in the mana", "Its icon in the mana medallion",
      1.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageMelee, true},
+    // Serg (2026-10-30): "во вкладку меле добавить директ хит по правилам галочку" - D2R VR Settings > Strikes' "Direct hit" (shared/direct_hit_mode.h) as a
+    // tick: on = By the rules (melee_direct 2, melee_direct_client 1), off = Off (0, 0). The store reads and writes the two keys together (hset_store.cpp);
+    // Fully on stays in D2R VR Settings (the tick shows off then, the page's line says so, ticking it is By the rules). The seventh row: the page's rows
+    // stand closer (hset_model.h RowStep). Live, F4 only.
+    {L"gameplay", L"melee_direct", "Direct hit by the rules", "The first touch on a monster, then real swings (F4)",
+     0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageMelee, true},
+    // -- no row: Direct hit's other key. The panel's value is the mode the two keys say (0 Off, 1 By the rules, 2 Fully on), the file's what it has.
+    {L"gameplay", L"melee_direct_client", "Direct hit as the file has it", "0 off, 1 by the rules, 2 fully on",
+     0.0f, 0.0f, 2.0f, 1.0f, "%.0f", "", "", kNoPage, true},
     //
     // pages 9 and 10, Left and Right: the key bindings, lines of [direct] (the plugin's own controls, vr/direct_layout.h): the value is a pick of the
     // list D2R VR Settings shows (vr/direct_remap.h, named for the box in vr/hset_keys.h), min / max / def are not used (the list's length is
@@ -240,6 +250,9 @@ constexpr int kKeyBeltOn = IndexOf(L"hands", L"belt_models");     // the Belt pa
 constexpr int kKeyBeltUp = IndexOf(L"hands", L"belt_models_up");
 constexpr int kKeyMeleeTouch = IndexOf(L"gameplay", L"melee_touch");   // the Melee page's tick: its two numbers do nothing without it
 constexpr int kKeyMeleeArmed = IndexOf(L"gameplay", L"melee_skill_armed");   // the Melee page's skill arming (needs the touch)
+constexpr int kKeyMeleeDirect = IndexOf(L"gameplay", L"melee_direct");   // the Melee page's Direct hit: a tick over its two keys (hset_store.cpp)
+constexpr int kKeyMeleeDirectClient = IndexOf(L"gameplay", L"melee_direct_client");
+static_assert(kKeyMeleeDirect >= 0 && kKeyMeleeDirectClient >= 0, "Direct hit's keys are in the table");
 constexpr int kKeyGrabTrigger = IndexOf(L"belt", L"grab_trigger");   // the two-button take: the Belt page's last row (it reads the trigger through direct input)
 constexpr int kKeyVersion = IndexOf(L"calibration", L"version");
 constexpr int kKeyEye = IndexOf(L"calibration", L"eye_height_m");

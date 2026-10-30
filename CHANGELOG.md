@@ -1,5 +1,40 @@
 # What's new in D2R VR
 
+## 0.191.0
+
+The release after 0.189.0, from the test builds 0.190.1 - 0.190.4 (0.190.0 itself was built but not published; its changes are below).
+
+- **The weapon in the left hand is the mirror of the right**: Settings > Weapon Adjust > Weapon in hand's moves and turns, set for the right hand, are
+  mirrored for the left (a turn about Y of 14 on the right is -14 on the left) - the mirror read from the rig's own weapon bones, not a
+  per-hand slider. A weapon in the left hand takes its own kind's numbers (a sword beside an axe: the sword's); an empty left hand, a
+  shield or a quiver keeps the main weapon's. Test: weapon_mirror_test.
+- **The right stick turns again in VR F1 - F3 with a real pad**: a second pad's empty report no longer zeroes it.
+- **Headset settings, Melee tab: "Direct hit by the rules"** - the same `[gameplay] melee_direct` as Settings > Strikes, ticked = by the
+  rules, live.
+- **New, off: `[body] doll_feet`** (Settings > Body: "The feet are the doll's, not the game's (test)") - the hero's feet planted on the
+  ground and stepping after the body. Unfinished: off, and "Walking backwards, the legs step backwards" (`[body] walk_back`) ships off too.
+
+## 0.190.0
+
+Built, not published - the release after 0.189.0, from the test build 0.189.1 and the flat fog fix; it went out as part of 0.191.0.
+
+- **The skill panel in the game's own look** (`[openxr] skill_panel_game_look`, on as shipped; Settings > Stereo, with the Tiles style: "Skill panel: the game's own
+  frames, buttons and sliders"): the right stick's panel and its Settings tab drawn with the art D2RLoader's Multiplayer window and the
+  game's Options menu are made of - the stone frame with the gold corners, the Options tabs, the buttons with the blue gems, the check
+  boxes, the sliders, the inset fields and the game's fonts. Settings copies them out of your installed game (read only) into
+  `d2r_vr_game_ui` beside the plugin; nothing of the game ships. The same places and clicks; the flip arrows of the Settings tab sit at
+  the tab row. Off: the panel's own look, as before. Tests: headset_tabs_test, skill_tiles_test, skill_wheel_test, menu_assets_test.
+- **Settings > Multiplayer: the D2R Rooms bridge** (the D2RLoader plugin `d2rl-d2r-rooms.dll`): switch it on or off (off: D2RLoader's
+  CREATE GAME is its own again, with its own error when your port is closed), pick the relay your rooms are hosted on and when a relay
+  is used, and see each relay's state and quota and the open rooms - from the plugin's `d2r-rooms-status.json` while the game runs, asked
+  from the settings program while it is closed. It writes only `[relay]` of `<game>\d2rloader\plugins\d2r-rooms.ini`, keeping the rest of
+  the file; `d2r_vr.ini` is not touched. Translated into all seven languages. Test: rooms_bridge_test.
+- **Flat mode: the fog and our sky no longer cover the inventory** (and any other panel). Since 0.186 they stay on behind a panel and
+  keep off the game's interface by its layer, copied as a mask. With "Name over a monster: opacity" below 1 (`[hud] monster_alpha`, 0.5 as
+  shipped) the labels were "wanted" all the time in flat, which switched that mask off; inside a menu the labels are not taken out
+  either, so nothing kept the fog and the far trees off the panel. In a menu the mask is now copied whatever the labels want. With or
+  without ReShade. Tests: hud_native_test (a menu with the labels wanted), fx_native_test (the mask kept by the plugin's own runtime).
+
 ## 0.189.0
 
 The release after 0.188.11, from the test build 0.188.12. Nothing in play is meant to change: the same ini keys, the same log lines.

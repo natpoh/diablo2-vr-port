@@ -102,7 +102,10 @@ inline Cell TabCell(int i) { return i == 0 ? wheel::kTabSkills : wheel::kTabSett
 // The window flips like pages (a stick's flick, a grip's tap: vr/wheel_flip.h): an arrow at its left and right edge, where there is a place back /
 // on - clickable, one step - and the places as dots at its foot (the first, SKILLS, a little apart from the Settings tab's pages).
 constexpr PRect kFlipZone[2] = {{46.0f, 470.0f, 106.0f, 690.0f}, {1494.0f, 470.0f, 1554.0f, 690.0f}};
-inline PRect FlipRect(int i) { return kFlipZone[i]; }
+// In the game look ([openxr] skill_panel_game_look) the Settings tab's arrows stand at the two ends of its page tabs' row instead: there the
+// rows' own less / more arrows are the game's arrows too, and a pair half-way down beside a slider's pair read as one (Serg, 2026-10-30).
+constexpr PRect kFlipHigh[2] = {{70.0f, 150.0f, 124.0f, 223.0f}, {1476.0f, 150.0f, 1530.0f, 223.0f}};
+inline PRect FlipRect(int i, bool high = false) { return high ? kFlipHigh[i] : kFlipZone[i]; }
 inline Cell FlipCell(int i) { return i == 0 ? wheel::kFlipPrev : wheel::kFlipNext; }
 constexpr float kDotY = 1043.0f, kDotStep = 30.0f, kDotApart = 16.0f;
 inline float DotX(int place, int places) {
@@ -195,16 +198,16 @@ inline bool RectOf(Page page, int cell, int options, PRect* out) {
 // the frame before (or kNone): a point just outside its edge keeps it, so a pointer shaking over a gap does not flicker. `tabs`: the strip
 // is there (the top level only); `settings`: and the Settings tab is the one shown - then only the strip is hit here (the pages are the
 // settings model's: vr/hset_model.h HitTest on SheetPoint). `strip`: the category strip is shown (the editor's grid page); `runWalk`: the RUN / WALK
-// tile is there (the top level's Skills tab).
+// tile is there (the top level's Skills tab); `flipHigh`: the Settings tab's flip arrows stand at its page tabs' row (kFlipHigh, the game look).
 inline int HitTest(Page page, float u, float v, int previous, int options, bool tabs = false, bool settings = false, bool strip = false,
-                   bool runWalk = false) {
+                   bool runWalk = false, bool flipHigh = false) {
     if (!std::isfinite(u) || !std::isfinite(v) || u < 0.0f || u >= 1.0f || v < 0.0f || v >= 1.0f) return wheel::kNone;
     const float x = u * kW, y = v * kH;
     if (tabs && page == Page::Wheel) {
         for (int i = 0; i < kTabCount; ++i)
             if (Has(TabRect(i), x, y)) return TabCell(i);
         for (int i = 0; i < 2; ++i)
-            if (Has(FlipRect(i), x, y)) return FlipCell(i);
+            if (Has(FlipRect(i, flipHigh && settings), x, y)) return FlipCell(i);
         if (settings) return wheel::kNone;
     }
     for (int i = 0; i < ButtonCount(page); ++i)

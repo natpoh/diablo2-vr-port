@@ -747,6 +747,7 @@ void LoadSettings() {
     g_set.flatHoldTrunk.store(IniB(L"body", L"flat_hold_trunk", false));
     g_set.walkBack.store(IniB(L"body", L"walk_back", true));
     g_set.walkBackReverse.store(IniB(L"body", L"walk_back_reverse", true));
+    g_set.dollFeet.store(IniB(L"body", L"doll_feet", false));
     g_set.underCamera.store(IniB(L"body", L"under_camera", true));
     g_set.leapCameraUp.store(IniB(L"body", L"leap_camera_up", false));
     g_set.crouch.store(IniB(L"body", L"crouch", false));

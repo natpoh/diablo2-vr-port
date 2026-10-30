@@ -91,6 +91,7 @@ int D2rvrHoverSpheres(float (*out)[8], int max);
 #include "hset_ray.h"   // vectors, a ray against a panel, the pad values, the release gate: for any panel hung in the headset
 #include "hset_view.h"   // the settings' view buttons F1 - F4: the controller's own view path
 #include "skill_wheel.h"   // [openxr] skill_wheel: the skill wheel in the headset (vr/xr_skill_wheel.h is its layer)
+#include "game_ui.h"       // [openxr] skill_panel_game_look: the skill panel drawn with the game's own art (vr/tiles_paint.cpp)
 #include "rune_shader.h"   // [openxr] runes_draw: BodyWalk's gesture runes in the headset (vr/xr_runes.h is their layer; rune_geom.h the maths)
 #include "wheel_paint.h"
 #include "xr_profiles.h"   // [openxr] frame_profile, index_grip_force: Steam Frame's own layout, the Index grip by force
@@ -5780,6 +5781,10 @@ void LoadSettings(const wchar_t* ini) {
     // [openxr] skill_wheel: the controller's eight skill slots as a wheel in the headset (vr/skill_wheel.h), live; its panel's place is tunable
     {
         const bool wheelOn = on && f(L"skill_wheel", 0.0f) != 0.0f;
+        // [openxr] skill_panel_game_look: the tiles' window in the game's own art (read by the panel's painter from d2r_vr_game_ui beside the plugin,
+        // which D2R VR Authentic Settings makes from the player's game); off, or no such folder: our look. Live (the next picture of the panel).
+        gameui::SetLog(&Log);
+        gameui::SetOn(wheelOn && f(L"skill_panel_game_look", 0.0f) >= 0.5f);   // (before Configure: the window's layout asks for it)
         skillwheel::Configure(wheelOn, g_cfg.laserHand, wheelOn ? f(L"skill_wheel_distance_m", 0.8f) : 0.8f, wheelOn ? f(L"skill_wheel_width_m", 0.8f) : 0.8f,
                               wheelOn && f(L"skill_panel_style", 0.0f) >= 0.5f ? 1 : 0, wheelOn ? f(L"skill_tiles_width_m", 0.9f) : 0.9f, ini,
                               g_cfg.headsetSettings);   // ([openxr] headset_settings with the tiles' look: the panel has the Settings tab)

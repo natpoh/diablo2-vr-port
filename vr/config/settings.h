@@ -485,6 +485,7 @@ struct Settings {
     std::atomic<bool>  gaitF4{false};       // [body] gait_legs_f4: the same on our own F4 body (the whole body turned with the look)
     std::atomic<bool>  walkBack{true};      // [body] walk_back: turned with the look and walking the other way, the game's walk mirrored - the legs step back
     std::atomic<bool>  walkBackReverse{true};   // [body] walk_back_reverse: ... the game's walk played backwards instead of mirrored (0 = the mirror, as 0.185)
+    std::atomic<bool>  dollFeet{false};         // [body] doll_feet: the feet the doll's, not the game's - planted, stepping after the body (0 = the game's legs, as before)
     std::atomic<int>   bodyTurn{2};         // 0 game facing, 1 above the pelvis, 2 whole body turns to where the camera looks
     std::atomic<bool>  wrist{true};         // arms mode 2: the hands turn with the controllers
     std::atomic<float> wristPitch{0.0f}, wristYaw{0.0f}, wristRoll{0.0f};   // degrees on top, controller axes

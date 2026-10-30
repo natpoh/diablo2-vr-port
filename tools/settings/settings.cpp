@@ -23,6 +23,7 @@
 #include "api_layers.h"      // [openxr] block_listed_layers: the Status line of the OpenXR layers the game found (a listed one named as a warning)
 #include "props_assets.h"    // [weight] knock_props: the catalogue of the level's knockable props out of the player's own game (CascLib)
 #include "dome_assets.h"     // [sky] game_sky: the dome's models from the game's own Summit sky card, our mesh in it (granny_remesh.h)
+#include "menu_assets.h"     // [openxr] skill_panel_game_look: the game's own frames, buttons and sliders for the skill panel, from the player's own game (CascLib)
 #include "boat_assets.h"     // [world] kurast_boat: the Kurast Docks' flying canoe put on the water, from the player's own game (CascLib)
 #include "data_mods.h"       // [mods] merge_data_mods: the player's other data mods (D2RMM's output) merged into D2R VR's mod
 #include <tlhelp32.h>
@@ -72,6 +73,7 @@
 #include "../../vr/xr_stick_check.h" // is the thumbstick bound by SteamVR? the plugin's verdict (state block bits 13 - 15) in words
 #include "../../vr/ui_text_tables.h" // the headset's words that live in the plugin's tables, with their keys (--lang-template lists them for lang\en.txt)
 #include "safe_screen.h"     // the game's interface size in Settings.json: VR starts it at 80 where the player chose none, flat mode has his own (the plugin's policy, tested)
+#include "rooms_bridge.h"    // the Multiplayer tab's D2R Rooms bridge: its d2r-rooms.ini and d2r-rooms-status.json, the plugin's formats (tested: rooms_bridge_test)
 #include "lang.h"            // the player's language: lang\<code>.txt read, {placeholders} filled (tested: settings_lang_test)
 #include <functional>
 
@@ -1028,6 +1030,12 @@ std::vector<Item> g_items = {
            L"shown in reverse order - the heel lifts behind him and the toes reach back to land, every joint the game's own; the trunk rides on that pelvis "
            L"(held still with \"lock\"). Off: as 0.185 - each foot's place mirrored front to back and the knees solved again: the foot lifts high in front "
            L"of him and lands behind toes up, which still looked like crossed legs. The drawn legs only. Live.")),
+    Toggle(L"body", L"doll_feet", L"The feet are the doll's, not the game's (test)", 0,
+           L"His feet no longer follow the game's walk: each stays planted on the ground where it was put, and steps after the body when the body has gone "
+           L"a step on or turned too far - walking back the feet step back, turning the camera round him they step round, left stays left. The game gives "
+           L"only where he is, which way he faces and how fast he goes; the hips and the trunk stay the game's. In the game's walk, run and standing; any other "
+           L"move (an attack, a leap, a knockback) hands the legs back to the game for its moment. In every view the hero is posed in; instead of \"Walking "
+           L"backwards, the legs step backwards\". The drawn legs only. Live."),
     Slider(L"body", L"yaw", L"Body turn correction, °", -180, 180, 5, 0,
            L"Added to where the hero faces (the arms too) if he stands sideways: try 90, -90 or 180."),
     Only(kVr, Group(L"Hands (arms on VR controllers)", L"How the hero's hands follow your controllers: whether they turn with them, and small up / down, left / right and roll angles to make each hand lie right.")),
@@ -1424,6 +1432,12 @@ std::vector<Item> g_items = {
            L"How wide the wheel is (it is square). Live."))),
     ShowFor(L"openxr", L"skill_panel_style", 1u << 1, Needs(L"openxr", L"skill_wheel", 1, Slider(L"openxr", L"skill_tiles_width_m", L"Skill tiles: width, m", 0.5f, 1.6f, 0.05f, 0.9f,
            L"How wide the tiles' window is (its height follows). Live."))),
+    ShowFor(L"openxr", L"skill_panel_style", 1u << 1, Needs(L"openxr", L"skill_wheel", 1, Toggle(L"openxr", L"skill_panel_game_look", L"Skill panel: the game's own frames, buttons and sliders", 0,
+           L"The skill panel's window (and its Settings tab) drawn with the game's own interface art, the pieces D2RLoader's Multiplayer window and the "
+           L"game's Options menu are made of: the stone frame with the gold corners, the Options tabs, the buttons with the blue gems, the check "
+           L"boxes, the slider's track, knob and arrows, the inset fields, and the game's fonts where they have your language's letters. This "
+           L"program copies them out of YOUR installed game (read only) into d2r_vr_game_ui beside the plugin when you tick it and at its start; "
+           L"nothing of it ships. The same places, the same clicks; only the look. Unticked: the panel's own look, as before. Live (the panel's next picture)."))),
     Needs(L"openxr", L"skill_wheel", 1, Toggle(L"openxr", L"skill_categories", L"Skill editor: categories (All, the class's skill trees, General / Items)", 1,
            L"EDIT SKILLS -> a slot: a strip over the list of skills with the tabs All, your class's three skill trees (named as the game "
            L"names them, in your language) and General / Items (the town portal, the basic attack, a skill an item gives), each with its "
@@ -4963,10 +4977,47 @@ std::vector<Item> g_items = {
     Spell(L"s266", L"Blade Fury"),
     Group(L"Warlock (ticked: the game's auto-target)", L"Warlock's Miasma Bolt: ticked, it keeps the game's own auto-target even with \"Disable auto-target for spells\" on."),
     Spell(L"s395", L"Miasma Bolt"),
+    // D2R Rooms' bridge (Serg 2026-10-30: "enable disable for this bridge", the relays and their quotas, another one to pick, "this information
+    // must come from the D2RLoader bridge"): the D2RLoader plugin d2rl-d2r-rooms.dll, its d2r-rooms.ini in <game>\d2rloader\plugins - never
+    // d2r_vr.ini ("@rooms": ReadRoomsValue / WriteRoomsValue) - and what it knows from its d2r-rooms-status.json beside it, or asked from
+    // here while the game is closed (RefreshRooms; the rows are AddRoomsRows'). shared/rooms_bridge.h has the plugin's formats. Both builds.
+    Tab(L"Multiplayer"),
+    Group(L"D2R Rooms bridge (CREATE GAME through a relay)",
+          L"D2R Rooms is a D2RLoader plugin (d2rl-d2r-rooms.dll in d2rloader\\plugins): it puts the rooms of D2RLoader's CREATE GAME in a list friends "
+          L"join from, and when your port cannot be reached from outside it opens the room on a relay, so friends still get in. Its settings are "
+          L"d2r-rooms.ini beside it; the plugin reads them again on every CREATE GAME, so a change here counts without restarting the game."),
+    Status(L"mp_plugin", L"Looking for the D2R Rooms plugin..."),
+    Toggle(L"@rooms", L"enabled", L"Bridge on: CREATE GAME lists the room and opens a relay when friends cannot reach me", 1,
+           L"On: D2RLoader's CREATE GAME puts your room in the D2R Rooms list, and when D2RLoader reports that your port cannot be reached from "
+           L"outside, the room goes through a relay below. Off: CREATE GAME is D2RLoader's alone - no room in the list, no relay - and with a closed "
+           L"port you get D2RLoader's own error. Joining a room from the list still works. [relay] enabled in d2r-rooms.ini; read on every CREATE GAME."),
+    Needs(L"@rooms", L"enabled", 1, Choice(L"@rooms", L"use", L"Host my rooms on the relay", 0, {L"The first one that answers"},
+           L"The relay your rooms go through. The one picked is tried first; when it does not answer or its quota is used up, the others are tried "
+           L"in the list's order. \"The first one that answers\": the list's order alone. Joining always uses the host's relay, whatever is picked "
+           L"here. [relay] use in d2r-rooms.ini.")),
+    Needs(L"@rooms", L"enabled", 1, Choice(L"@rooms", L"mode", L"Go through a relay", 0,
+           {L"Only when my port cannot be reached (auto)", L"Always", L"Never (friends need my port open)"},
+           L"Auto: only when D2RLoader reports that your port cannot be reached from outside (no port forwarding, a router without UPnP, "
+           L"carrier-grade NAT). Always: every room you host goes through a relay. Never: the room is listed, friends connect straight to you. "
+           L"[relay] mode in d2r-rooms.ini.")),
+    Button(L"@rooms", L"edit", L"Add or remove relays (d2r-rooms.ini in Notepad)",
+           L"Opens d2r-rooms.ini: one relay per line under [relays], as  name = wss://address  - a private relay's key after a space. Save it and "
+           L"the list here follows. Running a relay of your own: docs/host_a_relay.md of the D2R Rooms repository."),
+    Group(L"Relays and their quotas",
+          L"Each relay of d2r-rooms.ini, its state and how much of its quota (its free plan's daily limit) is used. Green: it takes rooms; orange: "
+          L"near its limit; red: limit reached or not answering. While the game runs this is the plugin's own view; with the game closed, Check "
+          L"now asks each relay from here."),
+    Status(L"mp_source", L"Not checked yet"),
+    Button(L"@rooms", L"check", L"Check now",
+           L"Asks each relay (its /healthz) and the rooms list from this PC now. Nothing is sent but the question."),
+    Group(L"Open rooms",
+          L"The rooms open in the D2R Rooms list now: name and code, game, players, the VR mod and its version, and how friends connect (direct, "
+          L"or through a relay). Join them from the list in the game, beside D2RLoader's Multiplayer window."),
+    Status(L"mp_hosting", L"Start the game once: the bridge writes what it knows (d2r-rooms-status.json) while the game runs."),
+    Status(L"mp_rooms", L"No rooms yet"),
 #if D2RVR_FIRST_PERSON
     // [multiplayer] (vr/pose_share.h): the other players' heads, hands, weapons, bodies and legs - a feature, not debug (the author, 2026-10-26: "this
     // must not be debug, but multiplayer"); its tests (echo, rates, the debug glass, our own hero's legs) stay on the Debug tab
-    Tab(L"Multiplayer"),
     Group(L"The other players (a TCP/IP game - they need this build too)"),
     Toggle(L"multiplayer", L"pose_share", L"Share my head, hands and weapon with the other players (read at the game's start)", 1,
            L"While you play VR first person (F4) your head, both controllers and your weapon go to the host and from it to the other players - about "
@@ -6024,8 +6075,11 @@ bool DollLibFound() { return LibFileFound(L"d2r_vr_weight.dll"); }   // (the mon
 
 float ReadLanguage();
 void WriteLanguage(float v);
+float ReadRoomsValue(const Item& it);
+void WriteRoomsValue(const Item& it, float v);
 float ReadValue(const Item& it) {
     if (wcscmp(it.section, L"@weightlib") == 0) return WeightLibFound() ? 1.0f : 0.0f;
+    if (wcscmp(it.section, L"@rooms") == 0) return ReadRoomsValue(it);   // d2r-rooms.ini, D2R Rooms' own (never d2r_vr.ini)
     if (wcscmp(it.section, L"@lang") == 0) return ReadLanguage();
 
     if (wcscmp(it.section, L"@toolbar") == 0) return ReadToolbarType();
@@ -6080,6 +6134,7 @@ void RefreshStrikeCm();
 void RefreshControls();
 void WriteValue(const Item& it, float v) {
     if (wcscmp(it.section, L"@toolbar") == 0) { WriteToolbarType(v); return; }
+    if (wcscmp(it.section, L"@rooms") == 0) { WriteRoomsValue(it, v); return; }
     if (wcscmp(it.section, L"@lang") == 0) { WriteLanguage(v); return; }
     if (wcscmp(it.section, L"@remap") == 0) { WriteRemapValue(it, v); return; }
     if (wcscmp(it.section, L"@weightlib") == 0 || wcscmp(it.section, L"@griplib") == 0 || wcscmp(it.section, L"@dolllib") == 0) return;   // a fact about the folder, not a setting
@@ -7789,6 +7844,7 @@ void ReShadeStatus() {
 }
 
 
+void RefreshRooms(bool now = false);
 void RefreshStatus() {
     LaunchButton();   // flat and VR alike
     BodyWalkRows();
@@ -7798,6 +7854,7 @@ void RefreshStatus() {
     UpdateFovStatus();          // ... and the headset's own angles beside fov_override's sliders
     UpdateWeightLibStatus();   // Weapon weight: the weight-physics library beside the plugin
     UpdateGripLibStatus();     // ... and the grip library
+    RefreshRooms();            // Multiplayer: D2R Rooms' bridge (only while its tab is shown)
     if (g_tab != 0) return;
     ShowDrawDistance();  // Draw distance: its stop and line (a key may have been changed in the ini meanwhile)
     D2RLoaderStatus();   // The game and ReShade: flat and VR alike
@@ -9147,6 +9204,369 @@ std::string Utf8Narrow(const std::wstring& w) {
     WideCharToMultiByte(CP_UTF8, 0, w.data(), (int)w.size(), s.data(), (int)s.size(), nullptr, nullptr);
     return s;
 }
+
+// ---------------------------------------------------------------------------
+// Multiplayer > D2R Rooms bridge: the D2RLoader plugin d2rl-d2r-rooms.dll (shared/rooms_bridge.h has its formats, rooms_bridge_test the tests).
+// Its settings are its own d2r-rooms.ini in <game>\d2rloader\plugins - the global plugins folder, not the mod's, and never d2r_vr.ini: a
+// change rewrites that one key's line and keeps the player's other lines and comments; with no file yet the plugin's own default text is
+// written first. What it knows comes from its d2r-rooms-status.json there, rewritten while the game runs (a list, a relay check, the room it
+// hosts). Each relay's /healthz and the board's /api/rooms are also asked from here, on a thread of their own (StartRoomsCheck): on Check
+// now, and while the tab is shown at most once a minute when the game is closed or the file is older than two minutes. Each part shows
+// whichever of the two is newer, with its time.
+constexpr UINT WM_APP_ROOMS = WM_APP + 49;   // (48 is WM_APP_RELAUNCH)
+constexpr int kRelayRows = 8, kRoomRows = 16;
+
+std::wstring RoomsFile(const char* name) { return GameFolder() + L"d2rloader\\plugins\\" + Widen(name); }
+
+int64_t NowUtc() {
+    FILETIME ft;
+    GetSystemTimeAsFileTime(&ft);
+    return (int64_t)((((uint64_t)ft.dwHighDateTime << 32) | ft.dwLowDateTime) / 10000000ull) - 11644473600ll;
+}
+// A time of the files' (UTC seconds) as the player's clock shows it, and how long ago.
+std::wstring RoomsWhen(int64_t utc) {
+    const uint64_t ticks = (uint64_t)(utc + 11644473600ll) * 10000000ull;
+    FILETIME ft{(DWORD)ticks, (DWORD)(ticks >> 32)}, local;
+    SYSTEMTIME st{};
+    FileTimeToLocalFileTime(&ft, &local);
+    FileTimeToSystemTime(&local, &st);
+    wchar_t clock[16];
+    swprintf_s(clock, L"%02u:%02u", st.wHour, st.wMinute);
+    const int64_t ago = std::max<int64_t>(0, NowUtc() - utc);
+    std::wstring rel;
+    if (ago < 60) rel = TR(L"mp.ago.now", L"just now");
+    else if (ago < 3600) rel = TRF(L"mp.ago.min", L"{n} min ago", {{L"n", std::to_wstring(ago / 60)}});
+    else if (ago < 86400) rel = TRF(L"mp.ago.h", L"{n} h ago", {{L"n", std::to_wstring(ago / 3600)}});
+    else {
+        wchar_t day[16];
+        swprintf_s(day, L"%04u-%02u-%02u", st.wYear, st.wMonth, st.wDay);
+        return day + std::wstring(L" ") + clock;
+    }
+    return std::wstring(clock) + L" (" + rel + L")";
+}
+
+roomsbridge::Config g_roomsCfg;                // d2r-rooms.ini as last read (ReadRoomsIni)
+bool g_roomsIniThere = false;
+std::string g_roomsIniText;
+std::vector<std::string> g_relayChoiceNames;   // the "use" drop-down: "" (the first that answers), each relay's name, a name of the file's not in the list
+std::wstring g_roomsError;                     // the last write's failure, on the plugin's line until a write works
+std::string g_roomsBoardHost = roomsbridge::kDefaultBoardHost;   // the status file's "board", once there is one
+
+void ReadRoomsIni() {
+    std::string text;
+    g_roomsIniThere = ReadFileText(RoomsFile(roomsbridge::kIniName), &text);
+    g_roomsIniText = g_roomsIniThere ? text : std::string();
+    g_roomsCfg = roomsbridge::ParseIni(g_roomsIniThere ? text : roomsbridge::DefaultIni());
+}
+
+// The "use" drop-down: its first entry (the item table's, translated), then the relays of d2r-rooms.ini. Again when the file changes.
+void FillRelayChoices() {
+    Item* it = FindItem(L"@rooms", L"use");
+    if (!it) return;
+    static std::deque<std::wstring> words;   // (the list holds the pointers)
+    ReadRoomsIni();
+    it->choices.resize(1);
+    g_relayChoiceNames.assign(1, std::string());
+    for (const roomsbridge::Relay& r : g_roomsCfg.relays) {
+        g_relayChoiceNames.push_back(r.name);
+        it->choices.push_back(words.emplace_back(Widen(r.name)).c_str());
+    }
+    if (!g_roomsCfg.use.empty() && roomsbridge::RelayIndex(g_roomsCfg, g_roomsCfg.use) < 0) {   // (the plugin then keeps the list's order)
+        g_relayChoiceNames.push_back(g_roomsCfg.use);
+        it->choices.push_back(words.emplace_back(TRF(L"mp.use_missing", L"{name} (not in the relay list: the list's order)", {{L"name", Widen(g_roomsCfg.use)}})).c_str());
+    }
+    it->max = (float)it->choices.size() - 1;
+    if (!it->ctl) return;
+    SendMessageW(it->ctl, CB_RESETCONTENT, 0, 0);
+    for (const wchar_t* c : it->choices) SendMessageW(it->ctl, CB_ADDSTRING, 0, (LPARAM)c);
+}
+
+float ReadRoomsValue(const Item& it) {
+    if (wcscmp(it.key, L"enabled") == 0) return g_roomsCfg.enabled ? 1.0f : 0.0f;
+    if (wcscmp(it.key, L"mode") == 0) return g_roomsCfg.mode == "always" ? 1.0f : g_roomsCfg.mode == "never" ? 2.0f : 0.0f;
+    if (wcscmp(it.key, L"use") == 0 && !g_roomsCfg.use.empty()) {
+        const std::string want = roomsbridge::detail::Lower(g_roomsCfg.use);
+        for (size_t i = 1; i < g_relayChoiceNames.size(); ++i)
+            if (roomsbridge::detail::Lower(g_relayChoiceNames[i]) == want) return (float)i;
+    }
+    return 0.0f;
+}
+
+// The three controls as d2r-rooms.ini has them now (after a write, or the file changed in Notepad).
+void SyncRoomsControls() {
+    for (const wchar_t* key : {L"enabled", L"mode", L"use"}) {
+        Item* it = FindItem(L"@rooms", key);
+        if (!it || !it->ctl) continue;
+        if (it->kind == Kind::Toggle) SendMessageW(it->ctl, BM_SETCHECK, ReadRoomsValue(*it) != 0.0f ? BST_CHECKED : BST_UNCHECKED, 0);
+        else SendMessageW(it->ctl, CB_SETCURSEL, ToPos(*it, ReadRoomsValue(*it)), 0);
+    }
+    UpdateEnabled();
+}
+
+std::wstring RoomsWriteFailed(const std::wstring& path) {
+    return TRF(L"mp.write_failed", L"Could not write {file} - is D2RLoader installed in this game's folder?", {{L"file", path}});
+}
+
+// [relay] key = value in d2r-rooms.ini, the rest of the file as it is (the plugin's default text when there is none). Through a .tmp
+// moved over it, so the plugin never reads half a file.
+bool WriteRoomsKey(const char* key, const std::string& value) {
+    ReadRoomsIni();   // (the file as it is now: the player may have changed it in Notepad)
+    const std::string text = roomsbridge::WithKey(g_roomsIniThere ? g_roomsIniText : roomsbridge::DefaultIni(), "relay", key, value);
+    const std::wstring path = RoomsFile(roomsbridge::kIniName), tmp = path + L".tmp";
+    bool ok;
+    {
+        std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
+        f << text;
+        ok = (bool)f;
+    }
+    ok = ok && MoveFileExW(tmp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING);
+    if (!ok) DeleteFileW(tmp.c_str());
+    g_roomsError = ok ? std::wstring() : RoomsWriteFailed(path);
+    ReadRoomsIni();
+    return ok;
+}
+
+void RefreshRooms(bool now);
+void StartRoomsCheck();
+void WriteRoomsValue(const Item& it, float v) {
+    if (wcscmp(it.key, L"check") == 0) { StartRoomsCheck(); RefreshRooms(true); return; }
+    if (wcscmp(it.key, L"edit") == 0) {   // the relay list in Notepad (the plugin's default text first, when there is no file yet)
+        ReadRoomsIni();
+        const std::wstring path = RoomsFile(roomsbridge::kIniName);
+        if (!g_roomsIniThere) {
+            std::ofstream f(path, std::ios::binary | std::ios::trunc);
+            f << roomsbridge::DefaultIni();
+            g_roomsError = f ? std::wstring() : RoomsWriteFailed(path);
+        }
+        if (g_roomsError.empty()) ShellExecuteW(g_main, L"open", L"notepad.exe", (L"\"" + path + L"\"").c_str(), nullptr, SW_SHOWNORMAL);
+        RefreshRooms(true);
+        return;
+    }
+    const int n = (int)std::lround(v);
+    if (wcscmp(it.key, L"enabled") == 0) WriteRoomsKey("enabled", n ? "yes" : "no");
+    else if (wcscmp(it.key, L"mode") == 0) WriteRoomsKey("mode", n == 1 ? "always" : n == 2 ? "never" : "auto");
+    else if (wcscmp(it.key, L"use") == 0) WriteRoomsKey("use", g_relayChoiceNames[(size_t)std::clamp(n, 0, (int)g_relayChoiceNames.size() - 1)]);
+    else return;
+    SyncRoomsControls();   // (a write that failed: back to what the file says)
+    RefreshRooms(true);
+}
+
+// The rows of the relays and the rooms (hidden until there is something to show; RefreshRooms fills them).
+void AddRoomsRows() {
+    const auto rows = [](const wchar_t* after, const wchar_t* prefix, int n) {
+        size_t at = 0;
+        while (at < g_items.size() && !(g_items[at].kind == Kind::Status && wcscmp(g_items[at].key, after) == 0)) ++at;
+        if (at == g_items.size()) return;
+        std::vector<Item> add;
+        for (int i = 0; i < n; ++i) {
+            add.push_back(Hide(Status(Keep(prefix + std::to_wstring(i)), L"")));
+            add.back().tr = true;   // (the words are RefreshRooms')
+        }
+        g_items.insert(g_items.begin() + (std::ptrdiff_t)at + 1, add.begin(), add.end());
+    };
+    rows(L"mp_source", L"mp_relay", kRelayRows);
+    rows(L"mp_rooms", L"mp_room", kRoomRows);
+}
+
+// What a check from here found (StartRoomsCheck's thread, handed to the window).
+struct RoomsLive {
+    std::vector<std::pair<std::string, roomsbridge::Health>> relays;   // url, its /healthz
+    bool board = false;                                                 // the board answered
+    std::vector<roomsbridge::RoomRow> rooms;
+    int64_t at = 0;                                                     // UTC seconds
+};
+std::unique_ptr<RoomsLive> g_roomsLive;
+std::atomic<bool> g_roomsBusy{false};
+ULONGLONG g_roomsCheckedAt = 0;   // GetTickCount64 of the last check's start (0 = none yet)
+
+// One GET with short timeouts (a relay that does not answer is "not answering" after 5 s, as the plugin says it). `status` 0 = no answer.
+void RoomsGet(const std::string& host, int port, bool secure, const std::string& path, std::string* body, DWORD* status) {
+    *status = 0;
+    HINTERNET session = WinHttpOpen(L"D2RVR-Settings/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    if (session) WinHttpSetTimeouts(session, 5000, 5000, 5000, 5000);
+    HINTERNET connect = session ? WinHttpConnect(session, Widen(host).c_str(), (INTERNET_PORT)port, 0) : nullptr;
+    HINTERNET request = connect ? WinHttpOpenRequest(connect, L"GET", Widen(path).c_str(), nullptr, WINHTTP_NO_REFERER,
+                                                     WINHTTP_DEFAULT_ACCEPT_TYPES, secure ? WINHTTP_FLAG_SECURE : 0) : nullptr;
+    DWORD size = sizeof *status;
+    if (request && WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) &&
+        WinHttpReceiveResponse(request, nullptr) &&
+        WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX, status, &size,
+                            WINHTTP_NO_HEADER_INDEX)) {
+        for (;;) {
+            DWORD avail = 0, got = 0;
+            if (!WinHttpQueryDataAvailable(request, &avail) || !avail || body->size() > (1u << 20)) break;
+            const size_t at = body->size();
+            body->resize(at + avail);
+            if (!WinHttpReadData(request, body->data() + at, avail, &got)) { body->resize(at); break; }
+            body->resize(at + got);
+        }
+    }
+    if (request) WinHttpCloseHandle(request);
+    if (connect) WinHttpCloseHandle(connect);
+    if (session) WinHttpCloseHandle(session);
+}
+
+void StartRoomsCheck() {
+    if (g_roomsBusy.exchange(true)) return;
+    g_roomsCheckedAt = GetTickCount64();
+    std::thread([relays = g_roomsCfg.relays, board = g_roomsBoardHost, wnd = g_main] {
+        auto* r = new RoomsLive;
+        for (const roomsbridge::Relay& relay : relays) {
+            std::string body;
+            DWORD status = 0;
+            if (const auto u = roomsbridge::ParseRelayUrl(relay.url)) RoomsGet(u->host, u->port, u->secure, roomsbridge::HealthPath(*u), &body, &status);
+            r->relays.push_back({relay.url, roomsbridge::ParseHealth((int)status, body)});
+        }
+        std::string body;
+        DWORD status = 0;
+        RoomsGet(board, INTERNET_DEFAULT_HTTPS_PORT, true, "/api/rooms", &body, &status);
+        const auto rooms = status == 200 ? roomsbridge::ParseBoardRooms(body, [&](const std::string& url) {
+            for (const auto& h : r->relays) if (h.first == url) return h.second.state;
+            return std::string("unknown");   // a relay of someone else's list: not asked from here
+        }) : std::nullopt;
+        if (rooms) { r->board = true; r->rooms = *rooms; }
+        r->at = NowUtc();
+        if (!PostMessageW(wnd, WM_APP_ROOMS, 0, (LPARAM)r)) delete r;   // the window is gone
+    }).detach();
+}
+
+void OnRoomsChecked(RoomsLive* r) {
+    g_roomsLive.reset(r);
+    g_roomsBusy = false;
+    RefreshRooms(true);
+}
+
+// The plugin's English for a room's connection ("direct", "relay: near its limit") in the player's language.
+std::wstring RoomConnection(const std::string& c) {
+    if (c == "direct") return TR(L"mp.conn.direct", L"direct");
+    if (c.rfind("relay: ", 0) != 0) return Widen(c);
+    const std::string s = c.substr(7);
+    const wchar_t* state = s == "active" ? TR(L"mp.conn.active", L"active") : s == "near its limit" ? TR(L"mp.conn.near_limit", L"near its limit")
+                         : s == "limit reached" ? TR(L"mp.conn.limit", L"limit reached") : s == "not answering" ? TR(L"mp.conn.no_answer", L"not answering")
+                         : TR(L"mp.conn.unknown", L"checking");
+    return TRF(L"mp.conn.relay", L"relay: {state}", {{L"state", state}});
+}
+
+// The tab's lines from d2r-rooms.ini, the status file and the last check from here. Every second while the tab is shown (RefreshStatus,
+// the files read every other time); `now` after a change or a check.
+void RefreshRooms(bool now) {
+    const Item* head = FindItem(L"@status", L"mp_plugin");
+    if (!head || g_tab != head->tab || !g_page) return;
+    static ULONGLONG last = 0;
+    if (!now && GetTickCount64() - last < 1900) return;
+    last = GetTickCount64();
+
+    // the ini (changed in Notepad meanwhile: the list and the controls follow)
+    {
+        const std::string before = g_roomsIniText;
+        const bool was = g_roomsIniThere;
+        ReadRoomsIni();
+        if (before != g_roomsIniText || was != g_roomsIniThere) { FillRelayChoices(); SyncRoomsControls(); }
+    }
+    // the status file
+    const bool dll = GetFileAttributesW(RoomsFile(roomsbridge::kPluginDll).c_str()) != INVALID_FILE_ATTRIBUTES;
+    const bool game = ProcessRunning(L"D2RLoader.exe") || ProcessRunning(L"D2R.exe");
+    std::optional<roomsbridge::Status> st;
+    int64_t stAt = 0;
+    {
+        std::string text;
+        if (ReadFileText(RoomsFile(roomsbridge::kStatusName), &text)) st = roomsbridge::ParseStatus(text);
+        if (st && !roomsbridge::ParseUtc(st->updated, &stAt)) stAt = 0;
+        if (st && !roomsbridge::BoardHost(st->board).empty()) g_roomsBoardHost = roomsbridge::BoardHost(st->board);
+    }
+    // a check from here: the game closed or its file two minutes old, at most once a minute, only while the tab is shown
+    if (!g_roomsBusy && (!game || !st || NowUtc() - stAt > 120) && (g_roomsCheckedAt == 0 || GetTickCount64() - g_roomsCheckedAt > 60000))
+        StartRoomsCheck();
+    const RoomsLive* live = g_roomsLive.get();
+    const bool fileNewer = st && (!live || stAt >= live->at);
+
+    bool relayout = false;
+    const auto show = [&](const wchar_t* key, bool on) {
+        if (Item* it = FindItem(L"@status", key); it && it->hidden == on) { it->hidden = !on; relayout = true; }
+    };
+
+    // the plugin
+    const std::wstring version = st && !st->plugin.empty() ? Widen(st->plugin) : std::wstring();
+    if (!g_roomsError.empty()) SetStatus(L"mp_plugin", kBad, g_roomsError.c_str());
+    else if (!dll)
+        SetStatus(L"mp_plugin", kBad, TRF(L"mp.plugin.missing", L"The D2R Rooms plugin is not installed: no d2rl-d2r-rooms.dll in {dir}. The settings here are kept for when it is.",
+                                          {{L"dir", GameFolder() + L"d2rloader\\plugins"}}).c_str());
+    else if (!st)
+        SetStatus(L"mp_plugin", kWarn, TR(L"mp.plugin.no_status", L"The D2R Rooms plugin is installed. Start the game once: the bridge writes what it knows (d2r-rooms-status.json) while the game runs."));
+    else if (game)
+        SetStatus(L"mp_plugin", kOk, TRF(L"mp.plugin.running", L"D2R Rooms {version}: the game runs. The bridge's last word: {when}.", {{L"version", version}, {L"when", RoomsWhen(stAt)}}).c_str());
+    else
+        SetStatus(L"mp_plugin", kUnknown, TRF(L"mp.plugin.closed", L"D2R Rooms {version}. The game is closed; the bridge's last word: {when}.", {{L"version", version}, {L"when", RoomsWhen(stAt)}}).c_str());
+
+    // where the relays' states come from
+    if (g_roomsBusy && !fileNewer) SetStatus(L"mp_source", kUnknown, TR(L"mp.source.checking", L"Asking each relay from this PC..."));
+    else if (fileNewer) SetStatus(L"mp_source", game ? kOk : kUnknown, TRF(L"mp.source.file", L"As the bridge saw them in the game, {when}.", {{L"when", RoomsWhen(stAt)}}).c_str());
+    else if (live) SetStatus(L"mp_source", kOk, TRF(L"mp.source.live", L"Asked from this PC, {when}.", {{L"when", RoomsWhen(live->at)}}).c_str());
+    else SetStatus(L"mp_source", kUnknown, TR(L"mp.source.none", L"Not checked yet - Check now asks each relay."));
+
+    // the relays: d2r-rooms.ini's list (a relay just added shows at once), each one's state from the newer source
+    const int first = std::max(0, roomsbridge::RelayIndex(g_roomsCfg, g_roomsCfg.use));
+    for (int i = 0; i < kRelayRows; ++i) {
+        const std::wstring key = L"mp_relay" + std::to_wstring(i);
+        if (i >= (int)g_roomsCfg.relays.size()) { show(key.c_str(), false); continue; }
+        const roomsbridge::Relay& r = g_roomsCfg.relays[(size_t)i];
+        std::string state = "unknown";
+        double usage = -1;
+        if (fileNewer) {
+            for (const roomsbridge::RelayRow& f : st->relays) if (f.url == r.url) { state = f.state; usage = f.usage; }
+        } else if (live) {
+            for (const auto& h : live->relays) if (h.first == r.url) { state = h.second.state; usage = h.second.usage; }
+        }
+        const wchar_t* word = state == "active" ? TR(L"mp.relay.active", L"takes rooms") : state == "near_limit" ? TR(L"mp.relay.near_limit", L"near its limit")
+                            : state == "limit" ? TR(L"mp.relay.limit", L"limit reached - takes no new rooms") : state == "no_answer" ? TR(L"mp.relay.no_answer", L"not answering")
+                            : TR(L"mp.relay.unknown", L"not checked yet");
+        const int color = state == "active" ? kOk : state == "near_limit" ? kWarn : state == "limit" || state == "no_answer" ? kBad : kUnknown;
+        std::wstring line = Widen(r.name) + L": " + word;
+        if (usage >= 0) line += L", " + TRF(L"mp.relay.usage", L"{pct}% of its quota used", {{L"pct", std::to_wstring((int)std::lround(usage * 100))}});
+        if (i == first && g_roomsCfg.enabled && g_roomsCfg.mode != "never") line += std::wstring(L" - ") + TR(L"mp.relay.first", L"your rooms go here first");
+        if (!r.key.empty()) line += std::wstring(L" (") + TR(L"mp.relay.private", L"private: with a key") + L")";
+        line += L"\r\n" + Widen(r.url);
+        SetStatus(key.c_str(), color, line.c_str());
+        show(key.c_str(), true);
+    }
+
+    // the room hosted now: the running game's only
+    if (st && game && st->hosting) {
+        const std::wstring code = Widen(st->hostingRoom);
+        SetStatus(L"mp_hosting", kOk, (st->hostingRelay.empty()
+            ? TRF(L"mp.hosting.direct", L"You host room {code}: friends connect straight to you.", {{L"code", code}})
+            : TRF(L"mp.hosting.relay", L"You host room {code} through the relay {relay}.", {{L"code", code}, {L"relay", Widen(st->hostingRelay)}})).c_str());
+    } else if (st && game) SetStatus(L"mp_hosting", kUnknown, TR(L"mp.hosting.none", L"You host no room now."));
+    else if (st) SetStatus(L"mp_hosting", kUnknown, TR(L"mp.hosting.closed", L"You host no room: the game is closed."));
+    else SetStatus(L"mp_hosting", kUnknown, TR(L"mp.hosting.no_status", L"Start the game once: the bridge writes what it knows (d2r-rooms-status.json) while the game runs."));
+
+    // the open rooms, from the newer source
+    const std::vector<roomsbridge::RoomRow>* rooms = nullptr;
+    std::wstring from;
+    bool current = true;   // the running game's list or one asked just now (else an older file's: grey)
+    if (fileNewer) { rooms = &st->rooms; from = RoomsWhen(stAt); current = game; }
+    else if (live && live->board) { rooms = &live->rooms; from = RoomsWhen(live->at); }
+    else if (st) { rooms = &st->rooms; from = RoomsWhen(stAt); current = false; }
+    if (!rooms) SetStatus(L"mp_rooms", kUnknown, live ? TR(L"mp.rooms.no_board", L"The rooms list does not answer - Check now asks again.")
+                                                      : TR(L"mp.rooms.none_yet", L"Not asked yet - Check now asks the rooms list."));
+    else if (rooms->empty()) SetStatus(L"mp_rooms", kUnknown, TRF(L"mp.rooms.empty", L"No open rooms right now - {when}.", {{L"when", from}}).c_str());
+    else {
+        std::wstring line = TRF(L"mp.rooms.count", L"{n} open rooms - {when}", {{L"n", std::to_wstring(rooms->size())}, {L"when", from}});
+        if ((int)rooms->size() > kRoomRows) line += L" - " + TRF(L"mp.rooms.first", L"the first {n} shown",{{L"n", std::to_wstring(kRoomRows)}});
+        SetStatus(L"mp_rooms", current ? kOk : kUnknown, line.c_str());
+    }
+    const std::string hosted = st && game && st->hosting ? "[" + st->hostingRoom + "]" : std::string();
+    for (int i = 0; i < kRoomRows; ++i) {
+        const std::wstring key = L"mp_room" + std::to_wstring(i);
+        if (!rooms || i >= (int)rooms->size()) { show(key.c_str(), false); continue; }
+        const roomsbridge::RoomRow& r = (*rooms)[(size_t)i];
+        std::wstring line = Widen(r.name) + L"  -  " + Widen(r.game) + L"  -  " + Widen(r.players) + L"  -  " + Widen(r.version) + L"  -  " + RoomConnection(r.connection);
+        if (!r.who.empty()) line += L"\r\n" + Widen(r.who);
+        SetStatus(key.c_str(), !hosted.empty() && r.name.find(hosted) != std::string::npos ? kOk : kUnknown, line.c_str());
+        show(key.c_str(), true);
+    }
+    if (relayout) LayoutPage();
+}
 // The ReShade.ini a dxgi.dll in the game's folder reads - ReShade's own rule (its dll_main.cpp get_base_path): [INSTALL] BasePath in <game>\ReShade.ini names another base
 // folder (relative to the dll's, the game's), else the game's folder is the base.
 std::wstring ReShadeIniOfDxgi(const std::wstring& game, bool* redirected) {
@@ -9450,6 +9870,26 @@ void StartGameCeiling() {
         }).detach();
     } catch (const std::exception&) {
         LogLine(L"game cave ceiling: could not be started");
+    }
+}
+
+// [openxr] skill_panel_game_look: the game's own interface art beside the plugin (menu_assets.cpp), on a thread of its own - the archives take a
+// moment. At the start and when the tick is set; the result to the log. The plugin's folder is the ini's.
+menuassets::Result PrepareMenuArtNow() {
+    std::wstring dir = g_ini;
+    const size_t slash = dir.find_last_of(L"\\/");
+    dir = slash == std::wstring::npos ? std::wstring() : dir.substr(0, slash + 1);
+    return menuassets::Prepare(GameFolder(), dir, GetPrivateProfileIntW(L"openxr", L"skill_panel_game_look", 0, g_ini) != 0);
+}
+
+void StartMenuArt() {
+    try {
+        std::thread([] {
+            const menuassets::Result r = PrepareMenuArtNow();
+            LogLine(L"skill panel game look: " + r.text);
+        }).detach();
+    } catch (const std::exception&) {
+        LogLine(L"skill panel game look: could not be started");
     }
 }
 
@@ -9923,6 +10363,7 @@ LRESULT CALLBACK PageProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
                 if (wcscmp(it.section, L"sky") == 0 && wcscmp(it.key, L"arcane_sky") == 0) StartArcaneSky();
                 if (wcscmp(it.section, L"weight") == 0 && (wcscmp(it.key, L"knock_props") == 0 || wcscmp(it.key, L"grab_items") == 0)) StartPropsCatalog();
                 if (wcscmp(it.section, L"world") == 0 && wcscmp(it.key, L"kurast_boat") == 0) StartKurastBoat();
+                if (wcscmp(it.section, L"openxr") == 0 && wcscmp(it.key, L"skill_panel_game_look") == 0) StartMenuArt();
                 if ((wcscmp(it.section, L"sky") == 0 && (wcscmp(it.key, L"game_sky") == 0 || wcscmp(it.key, L"game_dome_caves") == 0 ||
                                                          wcscmp(it.key, L"game_sky_closed") == 0)) ||
                     (wcscmp(it.section, L"debug") == 0 && wcscmp(it.key, L"game_sky_test") == 0))
@@ -9977,6 +10418,7 @@ LRESULT CALLBACK WndProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
         StartKurastBoat();
         StartSkyDome();
         StartGameCeiling();
+        StartMenuArt();
         StartDataMods();
         return 0;
     }
@@ -9989,7 +10431,8 @@ LRESULT CALLBACK WndProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
     case WM_APP_BOAT: OnBoatDone((D2RLProgress*)l); return 0;
     case WM_APP_MODS: OnDataModsDone((D2RLProgress*)l); return 0;
     case WM_APP_FRAMEGEN: OnFrameGenProgress((D2RLProgress*)l); return 0;
-    case WM_APP_RELAUNCH: g_relaunch = true; DestroyWindow(wnd); return 0;   // (wWinMain starts the program again once the loop ends)
+    case WM_APP_RELAUNCH: g_relaunch = true; DestroyWindow(wnd); return 0;
+    case WM_APP_ROOMS: OnRoomsChecked((RoomsLive*)l); return 0;   // (wWinMain starts the program again once the loop ends)
     case WM_TIMER: {
         FollowLaunch();
         RefreshSpan();
@@ -10265,6 +10708,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
             timed(L"kurast boat", [] { return PrepareBoat().text; });              // [world] kurast_boat: the canoe on the water
             timed(L"sky dome", [] { return PrepareSkyDomeNow().text; });           // [sky] game_sky / game_dome_caves: the domes' models and the act pictures' atlas
             timed(L"game cave ceiling", [] { return PrepareCeilingNow().text; });  // [ceiling] game_ceiling & co.: the slabs, the measures, the cathedral's vault
+            timed(L"skill panel game look", [] { return PrepareMenuArtNow().text; });   // [openxr] skill_panel_game_look: the game's frames beside the plugin
             if (GetPrivateProfileIntW(L"sky", L"arcane_sky", 1, g_ini) == 0) return 0;   // unticked: nothing made
             const arcane::Result r = PrepareArcane();
             LogLine(L"arcane sky: " + r.text);
@@ -10286,6 +10730,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
             AddStrikeTable();
             AddThrustTable();
             AddGameCodeTab();
+            AddRoomsRows();
             FillLanguageItem();
             const int r = WriteLangTemplate(argv[2]);
             LocalFree(argv);
@@ -10332,8 +10777,10 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
     AddStrikeTable();
     AddThrustTable();
     AddGameCodeTab();
+    AddRoomsRows();
     FillLanguageItem();
     TranslateItems();
+    FillRelayChoices();   // the relays of d2r-rooms.ini after the drop-down's first entry, which is translated by now
     g_tab = 0;   // always the Home page first (2026-10-14, the user's wish); the tab last used is no longer restored
     SetWeaponSection(GetPrivateProfileIntW(L"weapon", L"weapon", 1, g_uiIni) + 1);   // the kind last picked by hand
     const int savedW = GetPrivateProfileIntW(L"window", L"width", 0, g_uiIni);

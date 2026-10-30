@@ -134,7 +134,8 @@ std::atomic<bool> g_labels{false};
 // monsters were fogged over the void, 2026-10-04) and the floor's key keeps the letters off
 // the void (2026-10-06). Only when the labels are not out anyway.
 std::atomic<bool> g_uiMask{false};
-// ... and through a menu too (flat: the panel stays over the world, and the sky and the fog with it - vrcam EffectsPaused).
+// ... and through a menu (flat: the panel stays over the world, and the sky and the fog with it - vrcam EffectsPaused): the fog etc. want it
+// there, whether the labels are wanted or not (they are not taken out in a menu).
 std::atomic<bool> g_uiMaskInMenu{false};
 // The orb shown or hidden on its own: only when the game's map cannot be set
 // (no widget service). Otherwise the "D2R: Map" action opens and closes the
@@ -500,8 +501,9 @@ void ZoomedUv(const rect& r, float ax, float ay, float z, uint32_t w, uint32_t h
 }
 
 // The interface left over, copied whole for the labels' plane (local: FlatVR never sees it). Under g_lock.
+// out: this frame's copy was taken out of the picture (the labels' plane), else left in as the fog's mask; menu: ... left in through a menu.
 struct Labels { resource tex{}; resource_view srv{}; uint32_t w = 0, h = 0; bool fresh = true;
-                bool on = false; float keep[2][4] = {}; ULONGLONG at = 0; };
+                bool on = false, out = false, menu = false; float keep[2][4] = {}; ULONGLONG at = 0; };
 Labels g_lab;
 
 bool CopyLayer(command_list* cl, resource layer, uint32_t w, uint32_t h) {
@@ -935,8 +937,13 @@ void OnBind(command_list* cl, uint32_t count, const resource_view* rtvs, resourc
             if (g_block) g_block->panel[kMenuSlot].visible = 0;
         }
         const bool labels = g_labels.load() && g_picReady.load() && !g_menu.load() && !panel;
-        const bool mask = !labels && g_uiMask.load() && g_picReady.load() && (!g_menu.load() || g_uiMaskInMenu.load()) && !panel;   // copied, left in
+        // copied, left in. Through a menu by g_uiMaskInMenu alone: the labels are never taken out there, so their being wanted (g_uiMask is
+        // off for it) must not leave the panel without a mask - flat F2 with [hud] monster_alpha < 1 wants them all the time, and our sky and
+        // fog lay over the inventory (sangee1234, 0.189.0, 2026-10-30)
+        const bool mask = !labels && g_picReady.load() && !panel && (g_menu.load() ? g_uiMaskInMenu.load() : g_uiMask.load());
         g_lab.on = (labels || mask) && CopyLayer(cl, dev->get_resource_from_view(layerRtv), it->second.w, it->second.h);
+        g_lab.out = g_lab.on && labels;
+        g_lab.menu = g_lab.on && !labels && g_menu.load();
         if (g_lab.on && labels) cl->clear_render_target_view(layerRtv, kEmpty);
         g_lab.at = GetTickCount64();
         g_drawing.erase(it);
@@ -1029,14 +1036,15 @@ void SetUiMask(bool on) { g_uiMask.store(on); }
 void SetUiMaskInMenu(bool on) { g_uiMaskInMenu.store(on); }
 bool UiMaskNow() {
     std::lock_guard<std::mutex> g(g_lock);
-    return g_lab.on && !g_labels.load() && g_uiMask.load() && g_lab.srv.handle && GetTickCount64() - g_lab.at < 250;
+    return g_lab.on && !g_lab.out && (g_lab.menu ? g_uiMaskInMenu.load() : !g_labels.load() && g_uiMask.load()) && g_lab.srv.handle &&
+           GetTickCount64() - g_lab.at < 250;
 }
 // For D2R_DepthFog.fx: the interface left over this frame, and the boxes (uv) it keeps flat - the toolbar, the map.
 bool LabelsNow(float keepBar[4], float keepMap[4], uint64_t* srv) {
     std::lock_guard<std::mutex> g(g_lock);
     *srv = g_lab.srv.handle;
     for (int k = 0; k < 4; ++k) { keepBar[k] = g_lab.keep[0][k]; keepMap[k] = g_lab.keep[1][k]; }
-    return g_lab.on && g_labels.load() && *srv && GetTickCount64() - g_lab.at < 250;
+    return g_lab.on && g_lab.out && g_labels.load() && *srv && GetTickCount64() - g_lab.at < 250;
 }
 // The effect that draws them back is running; until it is, nothing is taken out for it.
 void SetPictureReady(bool ready) { g_picReady.store(ready); }

@@ -432,6 +432,12 @@ and towns. Visual only, live.
     held and a click of the pointing hand's stick. Distance and width are
     sliders. The icons come from a cache made out of your own installed game
     (`tools/skill_icons`, never shipped); without it the panel shows names.
+    *Skill panel: the game's own frames, buttons and sliders* (off; Tiles only;
+    `[openxr] skill_panel_game_look`): the tiles' window and its Settings tab drawn
+    with the game's own interface art - the stone frame with gold corners, the
+    Options tabs, the buttons with the blue gems, check boxes, the slider's track,
+    knob and arrows, the game's fonts. This program copies the pieces out of your
+    installed game into `d2r_vr_game_ui` beside the plugin (never shipped).
     *Skill editor: categories* (on): EDIT SKILLS -> a slot gets a strip of tabs
     over the list - All, your class's three skill trees, General / Items - from
     the game's own tables (run `tools/skill_icons/prepare_skill_icons.py` again

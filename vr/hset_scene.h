@@ -9,6 +9,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <cwchar>
 #include <string>
 #include <vector>
@@ -23,6 +24,10 @@ namespace hset {
 enum class Role : uint8_t { Back, RowA, RowB, Button, Hot, Selected, Off, Text, Quiet, Accent, Warn, Dim };
 enum class Face : uint8_t { Normal, Bold, Small };
 enum class Align : uint8_t { Left, Center, Right };
+// What an item is a piece of, for a painter that draws each kind with a picture of its own (the skill panel's game look, vr/tiles_paint.cpp):
+// a row's band, a value's field, the slider's track / its filled part / its knob; a page tab, a less / more arrow, an on / off switch, one of
+// a row of choices, a toggle with two words of its own (Left / Right: a click flips it), any other button. The other painters go by the role alone.
+enum class Part : uint8_t { None, Row, Value, Track, TrackFill, Knob, Tab, Less, More, Switch, Choice, Flip, Action };
 
 struct Item {
     enum class Type : uint8_t { Fill, Text, Button };
@@ -31,6 +36,7 @@ struct Item {
     Role colour = Role::Back;   // a Fill's colour; a Text's or a Button label's ink
     Face face = Face::Normal;
     Align align = Align::Left;
+    Part part = Part::None;
     bool hot = false, selected = false, enabled = true;   // a Button: under the beam, the chosen one, usable
     std::string text;
 };
@@ -58,6 +64,8 @@ inline const char* StatusText(const Model& m, bool window = false) {
     if (m.page == kPageKeysL || m.page == kPageKeysR)
         return m.Get()[kKeyDirectOn] > 0.5f ? uitext::Tr("vr.hset.status.keys_idle", "Pick what a button does, then Apply. Chords and the other long presses: D2R VR Authentic Settings.")
                                             : uitext::Tr("vr.hset.status.keys_off", "Controls without BodyWalk is off: these buttons do nothing (BodyWalk's mapping is the controls).");
+    if (m.page == kPageMelee && m.Get()[kKeyMeleeTouch] > 0.5f && m.Get()[kKeyMeleeDirect] < 0.5f && m.Get()[kKeyMeleeDirectClient] > 1.5f)   // the file says Fully on
+        return uitext::Tr("vr.hset.status.melee_direct_full", "Direct hit is Fully on (D2R VR Authentic Settings > Strikes); its tick here is By the rules.");
     if (m.page == kPageMelee)
         return m.Get()[kKeyMeleeTouch] > 0.5f ? uitext::Tr("vr.hset.status.melee_idle", "Each change applies by itself. First person (F4) only.")
                                               : uitext::Tr("vr.hset.status.melee_off", "Hit by touch is off: tick it, and the rows below apply.");
@@ -159,11 +167,12 @@ namespace scene_detail {
 struct Builder {
     Scene& s;
     const Hit& hover;
-    void Fill(Rect r, Role c) {
+    void Fill(Rect r, Role c, Part p = Part::None) {
         Item i;
         i.type = Item::Type::Fill;
         i.r = r;
         i.colour = c;
+        i.part = p;
         s.push_back(std::move(i));
     }
     void Text(const std::string& t, Rect r, Face f, Role c, Align a = Align::Left) {
@@ -176,13 +185,14 @@ struct Builder {
         i.text = t;
         s.push_back(std::move(i));
     }
-    void Button(Rect r, const std::string& label, const Hit& h, bool selected = false, bool enabled = true, Role ink = Role::Text) {
+    void Button(Rect r, const std::string& label, const Hit& h, bool selected = false, bool enabled = true, Role ink = Role::Text, Part p = Part::Action) {
         Item i;
         i.type = Item::Type::Button;
         i.r = r;
         i.colour = ink;
         i.face = Face::Bold;
         i.align = Align::Center;
+        i.part = p;
         i.hot = enabled && hover == h && h.kind != Kind::None;
         i.selected = selected;
         i.enabled = enabled;
@@ -202,7 +212,7 @@ inline Scene Compose(const Model& m, const Hit& hover, const ComposeOptions& opt
         b.Text("D2R VR", {760, 22, 232, 50}, Face::Small, Role::Quiet, Align::Center);
     }
     if (PageCount() > 1)
-        for (int i = 0; i < PageCount(); ++i) b.Button(kTab(i), PageName(i), {Kind::Tab, i, 0}, m.page == i);
+        for (int i = 0; i < PageCount(); ++i) b.Button(kTab(i), PageName(i), {Kind::Tab, i, 0}, m.page == i, true, Role::Text, Part::Tab);
 
     const bool canEdit = m.ready && !m.Busy();
     if (m.page == kPageVideo) {
@@ -215,21 +225,21 @@ inline Scene Compose(const Model& m, const Hit& hover, const ComposeOptions& opt
         b.Text(video::NowText(env), kVidNow, Face::Small, Role::Quiet);
         for (int i = 0; i < video::kPresetCount; ++i) {
             const bool on = pick == video::PickOfPreset(i);
-            b.Button(kPreset(i), video::PresetLabel(i), {Kind::Preset, i, 0}, on, canEdit, on ? (edited ? Role::Warn : Role::Accent) : Role::Text);
+            b.Button(kPreset(i), video::PresetLabel(i), {Kind::Preset, i, 0}, on, canEdit, on ? (edited ? Role::Warn : Role::Accent) : Role::Text, Part::Choice);
         }
-        b.Button(kSlDec, "-", {Kind::Slider, -1, -1}, false, canEdit);
-        b.Button(kSlInc, "+", {Kind::Slider, -1, 1}, false, canEdit);
+        b.Button(kSlDec, "-", {Kind::Slider, -1, -1}, false, canEdit, Role::Text, Part::Less);
+        b.Button(kSlInc, "+", {Kind::Slider, -1, 1}, false, canEdit, Role::Text, Part::More);
         const int midY = kSlTrack.y + kSlTrack.h / 2;
         const bool square = pick.kind == rendersize::Kind::Square;
         const int rest = m.Get()[kKeyPx] >= (float)rendersize::kSideMin ? (int)m.Get()[kKeyPx] : 0;   // where the slider rests while a preset is chosen
         const int thumbSide = square ? pick.side : rest;
         const int thumbX = kSlX0 + (int)std::lround(video::FractionOfSide(thumbSide ? thumbSide : rendersize::kSideMin) * (kSlX1 - kSlX0));
-        b.Fill({kSlX0, midY - 4, kSlX1 - kSlX0, 8}, Role::Off);
-        if (square) b.Fill({kSlX0, midY - 4, thumbX - kSlX0, 8}, Role::Selected);
+        b.Fill({kSlX0, midY - 4, kSlX1 - kSlX0, 8}, Role::Off, Part::Track);
+        if (square) b.Fill({kSlX0, midY - 4, thumbX - kSlX0, 8}, Role::Selected, Part::TrackFill);
         if (thumbSide) {
             const bool hot = canEdit && hover.kind == Kind::Slider && hover.index >= 0;
-            b.Fill({thumbX - 14, midY - 24, 28, 48}, !canEdit ? Role::Off : square ? (hot ? Role::Hot : edited ? Role::Warn : Role::Accent) : Role::Button);
-            if (!square) b.Fill({thumbX - 10, midY - 20, 20, 40}, Role::Back);   // a hollow thumb: the choice is not a square
+            b.Fill({thumbX - 14, midY - 24, 28, 48}, !canEdit ? Role::Off : square ? (hot ? Role::Hot : edited ? Role::Warn : Role::Accent) : Role::Button, Part::Knob);
+            if (!square) b.Fill({thumbX - 10, midY - 20, 20, 40}, Role::Back, Part::Knob);   // a hollow thumb: the choice is not a square
         }
         b.Text("1024", {kSlEnds.x, kSlEnds.y, 200, kSlEnds.h}, Face::Small, Role::Quiet);
         b.Text("4096", {kSlEnds.x + kSlEnds.w - 200, kSlEnds.y, 200, kSlEnds.h}, Face::Small, Role::Quiet, Align::Right);
@@ -248,8 +258,8 @@ inline Scene Compose(const Model& m, const Hit& hover, const ComposeOptions& opt
         // the arm span by hand, right under Calibrate: the span in use, a centimetre a press (a new measurement moves it)
         {
             const bool stored = m.SpanStored(), edited = m.Edited(kKeySpan);
-            b.Button(kSpanDec, "-", {Kind::Span, -1, -1}, false, canEdit);
-            b.Button(kSpanInc, "+", {Kind::Span, -1, 1}, false, canEdit);
+            b.Button(kSpanDec, "-", {Kind::Span, -1, -1}, false, canEdit, Role::Text, Part::Less);
+            b.Button(kSpanInc, "+", {Kind::Span, -1, 1}, false, canEdit, Role::Text, Part::More);
             b.Text(body::SpanText(m.SpanShown(), stored), kSpanVal, Face::Bold, edited ? Role::Warn : stored ? Role::Accent : Role::Quiet, Align::Center);
             b.Text(uitext::Tr("vr.body.span_note", "Arm span by hand: - shorter, + longer arms (a new Calibrate sets it again)"), kSpanNote, Face::Small, Role::Quiet);
         }
@@ -281,7 +291,7 @@ inline Scene Compose(const Model& m, const Hit& hover, const ComposeOptions& opt
         }
         int r = 0;
         for (const GuideRowLayout& l : GuideRows(sub)) {
-            b.Fill({32, l.y, 960, l.h - 2}, r++ % 2 ? Role::RowB : Role::RowA);
+            b.Fill({32, l.y, 960, l.h - 2}, r++ % 2 ? Role::RowB : Role::RowA, Part::Row);
             for (size_t k = 0; k < l.control.size(); ++k)
                 b.Text(l.control[k], {kGuideControlBox.x, l.y + kGuideRowPad / 2 + (int)k * kGuideLineH, kGuideControlBox.w, kGuideLineH}, Face::Small, Role::Accent);
             const Rect box = l.named ? kGuideTextBox : kGuideWideBox;
@@ -293,38 +303,42 @@ inline Scene Compose(const Model& m, const Hit& hover, const ComposeOptions& opt
     if (m.page == kPageView) {
         // -- the game's view: F1 from above, F2 third person, F3 the game on your floor, F4 first person -------------------------
         const int y = kRowY0 + kViewRow * kRowStep;
-        b.Fill({32, y - 5, 960, kRowStep - 2}, kViewRow % 2 ? Role::RowB : Role::RowA);
+        b.Fill({32, y - 5, 960, kRowStep - 2}, kViewRow % 2 ? Role::RowB : Role::RowA, Part::Row);
         b.Text(uitext::Tr("vr.hset.game_view", "Game view"), {48, y - 2, 520, 32}, Face::Bold, Role::Text);
         b.Text(uitext::Tr("vr.hset.game_view.detail", "F1 above, F2 third person, F3 on your floor, F4 first"), {48, y + 28, 530, 28}, Face::Small, Role::Quiet);
         static const char* const names[kViews] = {"F1", "F2", "F3", "F4"};
-        for (int i = 0; i < kViews; ++i) b.Button(kViewBtn(i), names[i], {Kind::View, i + 1, 0}, m.View() == i + 1, true, m.View() == i + 1 ? Role::Accent : Role::Text);
+        for (int i = 0; i < kViews; ++i) b.Button(kViewBtn(i), names[i], {Kind::View, i + 1, 0}, m.View() == i + 1, true, m.View() == i + 1 ? Role::Accent : Role::Text, Part::Choice);
     }
-    for (int r = 0; r < kRowsPerPage; ++r) {
-        const int key = KeyAt(m.page, r);
+    const int pg = m.page, step = RowStep(pg);
+    const bool close = CloseRows(pg);   // seven rows: the two lines of a row's name a little smaller and closer
+    for (int r = 0; r < kRowsMax; ++r) {
+        const int key = KeyAt(pg, r);
         if (key < 0) break;
         const Def& d = kDefs[key];
-        const int y = kRowY0 + r * kRowStep;
+        const int y = RowY(r, pg);
         const bool rowEdit = canEdit;
-        b.Fill({32, y - 5, 960, kRowStep - 2}, r % 2 ? Role::RowB : Role::RowA);
-        b.Text(DefLabel(key), {48, y - 2, 520, 32}, Face::Bold, Role::Text);
-        b.Text(d.type == DefType::Choice ? ChoiceDetail(m, key) : std::string(DefDetail(key)), {48, y + 28, 530, 28}, Face::Small, Role::Quiet);
+        b.Fill({32, y - 5, 960, step - 2}, r % 2 ? Role::RowB : Role::RowA, Part::Row);
+        b.Text(DefLabel(key), close ? Rect{48, y - 4, 520, 30} : Rect{48, y - 2, 520, 32}, Face::Bold, Role::Text);
+        b.Text(d.type == DefType::Choice ? ChoiceDetail(m, key) : std::string(DefDetail(key)), close ? Rect{48, y + 24, 530, 26} : Rect{48, y + 28, 530, 28},
+               Face::Small, Role::Quiet);
         const float v = m.Get()[key];
         if (d.type == DefType::Choice) {
-            b.Button(kDec(r), "<", {Kind::Change, key, -1}, false, rowEdit);
-            b.Fill(kVal(r), Role::Back);
-            b.Text(ChoiceLabel((int)std::lround(v)), kVal(r), Face::Bold, m.Edited(key) ? Role::Warn : Role::Text, Align::Center);
-            b.Button(kInc(r), ">", {Kind::Change, key, 1}, false, rowEdit);
+            b.Button(kDec(r, pg), "<", {Kind::Change, key, -1}, false, rowEdit, Role::Text, Part::Less);
+            b.Fill(kVal(r, pg), Role::Back, Part::Value);
+            b.Text(ChoiceLabel((int)std::lround(v)), kVal(r, pg), Face::Bold, m.Edited(key) ? Role::Warn : Role::Text, Align::Center);
+            b.Button(kInc(r, pg), ">", {Kind::Change, key, 1}, false, rowEdit, Role::Text, Part::More);
         } else if (IsToggle(d)) {
-            b.Button(kToggle(r), ValueWord(v > 0.5f ? d.on : d.off), {Kind::Change, key, 1}, v > 0.5f, rowEdit, m.Edited(key) ? Role::Warn : Role::Text);
+            b.Button(kToggle(r, pg), ValueWord(v > 0.5f ? d.on : d.off), {Kind::Change, key, 1}, v > 0.5f, rowEdit, m.Edited(key) ? Role::Warn : Role::Text,
+                     std::strcmp(d.off, "Off") == 0 && std::strcmp(d.on, "On") == 0 ? Part::Switch : Part::Flip);
         } else {
             char n[48];
             std::snprintf(n, sizeof n, d.fmt, (double)v);
             const char* name = ValueName(m.Get(), key);   // a row that is a name (the toolbar type), not a number
             const std::string s = name ? name : n;
-            b.Button(kDec(r), "-", {Kind::Change, key, -1}, false, rowEdit);
-            b.Fill(kVal(r), Role::Back);
-            b.Text(s, kVal(r), Face::Bold, m.Edited(key) ? Role::Warn : Role::Text, Align::Center);   // amber: changed, not applied yet
-            b.Button(kInc(r), "+", {Kind::Change, key, 1}, false, rowEdit);
+            b.Button(kDec(r, pg), "-", {Kind::Change, key, -1}, false, rowEdit, Role::Text, Part::Less);
+            b.Fill(kVal(r, pg), Role::Back, Part::Value);
+            b.Text(s, kVal(r, pg), Face::Bold, m.Edited(key) ? Role::Warn : Role::Text, Align::Center);   // amber: changed, not applied yet
+            b.Button(kInc(r, pg), "+", {Kind::Change, key, 1}, false, rowEdit, Role::Text, Part::More);
         }
     }
 

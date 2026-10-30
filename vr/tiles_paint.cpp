@@ -28,6 +28,7 @@
 #include "tiles_labels.h"
 #include "ui_text.h"   // the window's words in the player's language ([hud] headset_language)
 #include "wheel_icons.h"
+#include "game_ui.h"   // [openxr] skill_panel_game_look: the game's own art, from the player's game
 
 namespace tilespaint {
 namespace {
@@ -443,6 +444,139 @@ void DrawLtMark(Canvas& cv, Fonts& fonts) {
     arc(25.0f, 155.0f);     // under the bottom, to the left
 }
 
+// -- the game look ([openxr] skill_panel_game_look) -------------------------------------------------------------------------------------------
+//
+// The same window drawn with the game's own interface art, as the player's game has it (vr/game_ui.h; D2R_VR_Settings copies it out of the
+// game's archives, nothing of it is in the plugin): the stone slab of the game's dialogs with the gold corners of its tooltips, the Options
+// menu's tabs, the front end's buttons with the blue gems, the lobby's check boxes and fields, the Options sliders' track, knob and arrows,
+// and the game's fonts where they have the letters. The places are the same as ours (vr/tiles_geom.h), so the hit test does not change; the
+// skill plates and the pad's marks stay ours. Off, or the cache not there: the window as before.
+
+bool g_game = false;   // this picture is drawn in the game look (set by Render; one painter thread)
+
+constexpr Col kGameGold{199, 179, 119}, kGameGoldBright{240, 220, 160}, kGameText{222, 222, 222}, kGameQuiet{150, 150, 150}, kGameOff{96, 96, 96};
+
+// The part (sx0, sy0) .. (sx1, sy1) of frame f, stretched into dst: bilinear, its colour by its alpha (no dark fringes), `tint` darkens or lights it.
+void Blit(Canvas& cv, const gameui::Sheet& s, int f, float sx0, float sy0, float sx1, float sy1, Rect dst, float alpha = 1.0f, float tint = 1.0f) {
+    if (!s.Ok() || f < 0 || f >= s.frames || dst.r <= dst.l || dst.b <= dst.t || sx1 <= sx0 || sy1 <= sy0) return;
+    const float kx = (sx1 - sx0) / (dst.r - dst.l), ky = (sy1 - sy0) / (dst.b - dst.t);
+    const float maxX = std::min(sx1, float(s.frameWidth)) - 1.0f, maxY = std::min(sy1, float(s.height)) - 1.0f;
+    for (int y = std::max(0, int(dst.t)); y < std::min(cv.h, int(std::ceil(dst.b))); ++y)
+        for (int x = std::max(0, int(dst.l)); x < std::min(cv.w, int(std::ceil(dst.r))); ++x) {
+            const float u = std::clamp(sx0 + (x + 0.5f - dst.l) * kx - 0.5f, sx0, maxX), v = std::clamp(sy0 + (y + 0.5f - dst.t) * ky - 0.5f, sy0, maxY);
+            const int x0 = int(u), y0 = int(v), x1 = std::min(x0 + 1, int(maxX)), y1 = std::min(y0 + 1, int(maxY));
+            const float fx = u - x0, fy = v - y0;
+            float c[3] = {}, a = 0.0f;
+            auto take = [&](int xx, int yy, float w) {
+                const uint8_t* p = s.At(f, xx, yy);
+                const float pa = p[3] / 255.0f * w;
+                c[0] += p[0] * pa;
+                c[1] += p[1] * pa;
+                c[2] += p[2] * pa;
+                a += pa;
+            };
+            take(x0, y0, (1 - fx) * (1 - fy));
+            take(x1, y0, fx * (1 - fy));
+            take(x0, y1, (1 - fx) * fy);
+            take(x1, y1, fx * fy);
+            if (a <= 0.002f) continue;
+            cv.Over(x, y, Scale(Col{c[0] / a, c[1] / a, c[2] / a}, tint), a * alpha);
+        }
+}
+void Blit(Canvas& cv, const gameui::Sheet& s, int f, Rect dst, float alpha = 1.0f, float tint = 1.0f) {
+    Blit(cv, s, f, 0.0f, 0.0f, float(s.frameWidth), float(s.height), dst, alpha, tint);
+}
+
+// Frame f stretched into dst with its l / t / r / b edges (the sheet's pixels) kept as they are, drawn `k` times their size: the corners whole,
+// the sides and the middle stretched.
+void Nine(Canvas& cv, const gameui::Sheet& s, int f, Rect dst, float l, float t, float r, float b, float k, float tint = 1.0f) {
+    if (!s.Ok()) return;
+    const float sw = float(s.frameWidth), sh = float(s.height);
+    const float sx[4] = {0.0f, l, sw - r, sw}, sy[4] = {0.0f, t, sh - b, sh};
+    const float dx[4] = {dst.l, dst.l + l * k, dst.r - r * k, dst.r}, dy[4] = {dst.t, dst.t + t * k, dst.b - b * k, dst.b};
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j)
+            if (sx[i + 1] > sx[i] && sy[j + 1] > sy[j] && dx[i + 1] > dx[i] && dy[j + 1] > dy[j])
+                Blit(cv, s, f, sx[i], sy[j], sx[i + 1], sy[j + 1], Rect{dx[i], dy[j], dx[i + 1], dy[j + 1]}, 1.0f, tint);
+}
+// A bar of the game's (a button, a tab, a track) as tall as dst, its ends (`cap` of the sheet's pixels) whole, its middle stretched.
+void Bar3(Canvas& cv, const gameui::Sheet& s, int f, Rect dst, float cap, float tint = 1.0f) {
+    if (!s.Ok()) return;
+    const float k = (dst.b - dst.t) / float(s.height);
+    Nine(cv, s, f, dst, cap, 0.0f, cap, 0.0f, std::min(k, 0.5f * (dst.r - dst.l) / std::max(1.0f, cap)), tint);
+}
+// Frame f in its own proportions, as big as fits in dst, centred.
+void Fit(Canvas& cv, const gameui::Sheet& s, int f, Rect dst, float tint = 1.0f) {
+    if (!s.Ok()) return;
+    const float k = std::min((dst.r - dst.l) / s.frameWidth, (dst.b - dst.t) / s.height);
+    const float w = s.frameWidth * k, h = s.height * k, cx = 0.5f * (dst.l + dst.r), cy = 0.5f * (dst.t + dst.b);
+    Blit(cv, s, f, Rect{cx - 0.5f * w, cy - 0.5f * h, cx + 0.5f * w, cy + 0.5f * h}, 1.0f, tint);
+}
+const gameui::Sheet& Art(gameui::Sprite s) { return gameui::Get(s); }
+
+// The game's font for a line when it has all of the line's letters (Exocet for titles and buttons, Formal436 for text), else ours.
+void UseFace(Fonts& fonts, bool title, const char* utf8) {
+    fonts.use = nullptr;
+    if (!g_game || !utf8) return;
+    const wchar_t* face = title ? gameui::TitleFace() : gameui::TextFace();
+    if (face && gameui::Covers(face, Wide(utf8))) fonts.use = face;
+}
+// A title or a button's word, centred, in the game's title font with a shadow (ours, in small capitals, where it has no letters for it).
+void GameWord(Canvas& cv, Fonts& fonts, const char* text, Rect box, int size, Col color) {
+    UseFace(fonts, true, text);
+    if (!fonts.use) {
+        CapsCentred(cv, fonts, text, 0.5f * (box.l + box.r), box, size, 2.0f, color);
+        return;
+    }
+    Text(cv, fonts, text, Rect{box.l + 2.0f, box.t + 2.0f, box.r + 2.0f, box.b + 2.0f}, size, false, Col{0, 0, 0}, 0.8f);
+    Text(cv, fonts, text, box, size, false, color);
+    fonts.use = nullptr;
+}
+
+// The game look's window without content: the slab, the gold corners inside its rim, a gold rule under the title. Made once.
+const std::vector<uint32_t>& GameFrame() {
+    static const std::vector<uint32_t> frame = [] {
+        std::vector<uint32_t> px((size_t)kW * kH, 0u);
+        Canvas cv{px, kW, kH};
+        Nine(cv, Art(gameui::Sprite::Slab), 0, Rect{0.0f, 0.0f, float(kW), float(kH)}, 64.0f, 64.0f, 64.0f, 64.0f, 1.0f);
+        const gameui::Sheet& b = Art(gameui::Sprite::Border);   // 9 pieces of 48: TL T TR / L - R / BL B BR
+        if (b.Ok() && b.frames >= 9) {
+            const float in = 30.0f, c = float(b.frameWidth), l = in, t = in, r = kW - in, bt = kH - in;
+            for (float x = l + c; x < r - c; x += c) {
+                const float w = std::min(c, r - c - x);
+                Blit(cv, b, 1, 0.0f, 0.0f, w, c, Rect{x, t, x + w, t + c});
+                Blit(cv, b, 7, 0.0f, 0.0f, w, c, Rect{x, bt - c, x + w, bt});
+            }
+            for (float y = t + c; y < bt - c; y += c) {
+                const float h = std::min(c, bt - c - y);
+                Blit(cv, b, 3, 0.0f, 0.0f, c, h, Rect{l, y, l + c, y + h});
+                Blit(cv, b, 5, 0.0f, 0.0f, c, h, Rect{r - c, y, r, y + h});
+            }
+            Blit(cv, b, 0, Rect{l, t, l + c, t + c});
+            Blit(cv, b, 2, Rect{r - c, t, r, t + c});
+            Blit(cv, b, 6, Rect{l, bt - c, l + c, bt});
+            Blit(cv, b, 8, Rect{r - c, bt - c, r, bt});
+        }
+        const tiles::PRect tp = tiles::kTitlePlate;
+        Bar3(cv, Art(gameui::Sprite::Rule), 0, Rect{tp.l + 40.0f, tp.b + 4.0f, tp.r - 40.0f, tp.b + 16.0f}, 60.0f);
+        return px;
+    }();
+    return frame;
+}
+
+// A button of the game's: the front end's with the blue gems (0 as it is, 1 under the beam, 2 not usable, 3 pressed - the chosen one).
+void GameButton(Canvas& cv, Fonts& fonts, Rect r, const char* label, bool hot, bool enabled, bool chosen, Col ink, int size) {
+    Bar3(cv, Art(gameui::Sprite::Button), !enabled ? 2 : hot ? 1 : chosen ? 3 : 0, r, 84.0f);
+    const float cap = 0.55f * (r.b - r.t);   // (the gems' ends)
+    GameWord(cv, fonts, label, Rect{r.l + cap, r.t, r.r - cap, r.b}, size, !enabled ? kGameOff : hot ? kGameGoldBright : ink);
+}
+// A tab of the game's: the Options menu's (0 the open one, 1 another) or the lobby's small ones; lit under the beam.
+void GameTab(Canvas& cv, Fonts& fonts, Rect r, const char* label, bool on, bool hot, bool small, int size) {
+    const gameui::Sheet& s = Art(small ? gameui::Sprite::SmallTabs : gameui::Sprite::Tabs);
+    Nine(cv, s, on ? 0 : 1, r, 16.0f, 16.0f, 16.0f, 16.0f, std::min(1.0f, (r.b - r.t) / std::max(1, s.height)), hot ? 1.35f : 1.0f);
+    GameWord(cv, fonts, label, Rect{r.l + 8.0f, r.t, r.r - 8.0f, r.b - 4.0f}, size, on ? kGameGoldBright : hot ? kGameGold : Col{150, 156, 172});
+}
+
 // -- the page -------------------------------------------------------------------------------------------------------------------------------
 
 const char* ButtonText(Cell c) {
@@ -466,6 +600,10 @@ void DrawButtons(Canvas& cv, Fonts& fonts, const View& v) {
         if (c == wheel::kNext) enabled = v.editPage + 1 < v.editPages;
         const bool hot = v.hover == c && enabled;
         const Rect r = tiles::ButtonRect(v.page, i);
+        if (g_game) {
+            GameButton(cv, fonts, r, ButtonText(c), hot, enabled, false, kGameText, 32);
+            continue;
+        }
         if (hot) RoundRect(cv, Rect{r.l - 6.0f, r.t - 6.0f, r.r + 6.0f, r.b + 6.0f}, 12.0f, kGoldBright, 0.20f, Col{0, 0, 0}, 0.0f, 0.0f);
         RoundRect(cv, r, 8.0f, hot ? Col{58, 46, 28} : Col{26, 26, 30}, 0.99f, hot ? kGoldBright : (enabled ? Col{104, 106, 116} : Col{50, 50, 56}), 1.0f, hot ? 3.5f : 2.5f);
         Bar(cv, r.l + 4.0f, r.t + 4.0f, r.r - 4.0f, r.t + 9.0f, Col{255, 255, 255}, enabled ? 0.06f : 0.02f);
@@ -482,6 +620,10 @@ void DrawTabs(Canvas& cv, Fonts& fonts, const View& v) {
         const bool on = (i == 0) == (v.tab == wheel::Tab::Skills);
         const bool hot = v.hover == c && !on;
         const Rect r = tiles::TabRect(i);
+        if (g_game) {
+            GameTab(cv, fonts, r, names[i], on, hot, false, 34);
+            continue;
+        }
         if (hot) RoundRect(cv, Rect{r.l - 6.0f, r.t - 6.0f, r.r + 6.0f, r.b + 6.0f}, 12.0f, kGoldBright, 0.20f, Col{0, 0, 0}, 0.0f, 0.0f);
         RoundRect(cv, r, 9.0f, on ? Col{64, 50, 28} : hot ? Col{52, 42, 26} : Col{22, 22, 26}, 0.99f, on ? kGoldBright : hot ? kGold : Col{96, 98, 108}, 1.0f,
                   on ? 3.5f : 2.5f);
@@ -504,8 +646,14 @@ void DrawFlipHints(Canvas& cv, const View& v) {
     for (int i = 0; i < 2; ++i) {
         if (i == 0 ? v.flipPlace <= 0 : v.flipPlace >= places - 1) continue;   // nothing that way
         const bool hot = v.hover == tiles::FlipCell(i);
-        const Rect z = tiles::FlipRect(i);
+        const bool high = v.flipHigh && v.tab == wheel::Tab::Settings;   // (the game look's Settings tab: at the ends of the page tabs' row)
+        const Rect z = tiles::FlipRect(i, high);
         const float cx = 0.5f * (z.l + z.r), cy = 0.5f * (z.t + z.b), dir = i == 0 ? -1.0f : 1.0f;
+        if (g_game) {   // the Options sliders' arrows, bigger (beside the page tabs: as tall as they are)
+            const float hw = high ? 34.0f : 44.0f, hh = high ? 28.0f : 36.0f;
+            Fit(cv, Art(i == 0 ? gameui::Sprite::ArrowLeft : gameui::Sprite::ArrowRight), hot ? 1 : 0, Rect{cx - hw, cy - hh, cx + hw, cy + hh});
+            continue;
+        }
         const float tipX = cx + dir * 11.0f, armX = cx - dir * 11.0f, h = 34.0f;
         if (hot) RoundRect(cv, Rect{z.l + 6.0f, cy - 64.0f, z.r - 6.0f, cy + 64.0f}, 14.0f, kGoldBright, 0.14f, Col{0, 0, 0}, 0.0f, 0.0f);
         const Col c = hot ? kGoldBright : kGold;
@@ -549,7 +697,8 @@ void DrawTitle(Canvas& cv, Fonts& fonts, const View& v) {
         return;
     }
     const char* title = v.page == Page::Wheel ? uitext::Tr("vr.tiles.tab_skills", "Skills") : uitext::Tr("vr.skills.choose_slot", "Choose the slot to change");
-    CapsCentred(cv, fonts, title, cx, line, 44, 3.5f, kSilver);
+    if (g_game) GameWord(cv, fonts, title, line, 44, kGameGold);
+    else CapsCentred(cv, fonts, title, cx, line, 44, 3.5f, kSilver);
 }
 
 // The state in red small capitals - as the game prints under its dialog - and what to do under it, dim.
@@ -570,13 +719,16 @@ void DrawStatus(Canvas& cv, Fonts& fonts, const View& v) {
     }
     const Col red = v.result == wheel::Result::Refused ? kRedBright : kRed;
     const tiles::PRect rl = tiles::kRedLine;
-    CapsCentred(cv, fonts, line.c_str(), 0.5f * (rl.l + rl.r), Rect{rl.l, rl.t, rl.r, rl.b}, 32, 2.5f, red);
+    if (g_game) GameWord(cv, fonts, line.c_str(), Rect{rl.l, rl.t, rl.r, rl.b}, 32, red);
+    else CapsCentred(cv, fonts, line.c_str(), 0.5f * (rl.l + rl.r), Rect{rl.l, rl.t, rl.r, rl.b}, 32, 2.5f, red);
     const char* hint = v.page == Page::Wheel ? (v.editFirst ? uitext::Tr("vr.tiles.hint_first", "Tap a slot to change its skill - hold the trigger on it and the trigger casts it")
                                                             : uitext::Tr("vr.tiles.hint_wheel", "Point at a slot and pull the trigger"))
                        : v.page == Page::PickSlot ? uitext::Tr("vr.tiles.hint_pick_slot", "Point at the slot to change and pull the trigger")
                                                   : uitext::Tr("vr.tiles.hint_pick_skill", "Point at a skill and pull the trigger to put it on the slot");
     const tiles::PRect hl = tiles::kHintLine;
+    UseFace(fonts, false, hint);   // (the game look: its text font)
     CapsCentred(cv, fonts, hint, 0.5f * (hl.l + hl.r), Rect{hl.l, hl.t, hl.r, hl.b}, 22, 1.5f, kSilverDim, false);
+    fonts.use = nullptr;
 }
 
 // The RUN / WALK tile, right of the first row: the game's own run / walk switch. A copper plate that goes red when the game says it is on RUN,
@@ -612,8 +764,11 @@ void DrawRows(Canvas& cv, Fonts& fonts, const View& v) {
         k.active = v.page == Page::Wheel && wheel::TriggerSlot(v) == s;
         DrawTile(cv, fonts, r, k, placed ? &sk : nullptr, pickSlot && placed && sk.id < 0);
         DrawGlyph(cv, fonts, tiles::GlyphOf(s), tiles::GlyphRect(s));
-        if (placed && sk.id >= 0) Text(cv, fonts, sk.name, tiles::NameRect(s), 22, false, sk.available && !off ? kSilver : kSilverDim);
-        else if (placed) Text(cv, fonts, uitext::Tr("vr.tiles.empty", "Empty"), tiles::NameRect(s), 22, false, Col{110, 112, 120});
+        if (placed && sk.id >= 0) {
+            UseFace(fonts, false, sk.name);   // (the game look: the names in its text font)
+            Text(cv, fonts, sk.name, tiles::NameRect(s), 22, false, sk.available && !off ? kSilver : kSilverDim);
+            fonts.use = nullptr;
+        } else if (placed) Text(cv, fonts, uitext::Tr("vr.tiles.empty", "Empty"), tiles::NameRect(s), 22, false, Col{110, 112, 120});
         else if (k.dead) Text(cv, fonts, uitext::Tr("vr.tiles.not_found", "Not found"), tiles::NameRect(s), 22, false, Col{110, 112, 120});
         if (off) Text(cv, fonts, uitext::Tr("vr.tiles.lt_row_off", "LT row off"), tiles::HintRect(s), 21, false, Col{150, 120, 110});
         else if (v.hints.text[s][0]) Text(cv, fonts, v.hints.text[s], tiles::HintRect(s), 21, false, Col{128, 156, 120});
@@ -627,6 +782,14 @@ void DrawStrip(Canvas& cv, Fonts& fonts, const View& v) {
         const Rect r = tiles::StripRect(c);
         const int count = v.catCount[c];
         const bool on = v.category == c, enabled = count > 0 || on, hot = v.hover == wheel::CategoryCell(c) && count > 0 && !on;
+        if (g_game) {   // the lobby's small tabs
+            const char* cat = c == wheel::kCatAll ? uitext::Tr("vr.skills.all", "All")
+                            : c == wheel::kCatGeneral ? uitext::Tr("vr.skills.general", "General / Items")
+                            : v.treeName[c - 1][0] ? v.treeName[c - 1] : "-";
+            const std::string name = std::string(cat) + "  (" + std::to_string(count) + ")";
+            GameTab(cv, fonts, r, name.c_str(), on, hot, true, 21);
+            continue;
+        }
         if (hot) RoundRect(cv, Rect{r.l - 6.0f, r.t - 6.0f, r.r + 6.0f, r.b + 6.0f}, 12.0f, kGoldBright, 0.20f, Col{0, 0, 0}, 0.0f, 0.0f);
         RoundRect(cv, r, 9.0f, on ? Col{64, 50, 28} : hot ? Col{52, 42, 26} : Col{22, 22, 26}, 0.99f, on ? kGoldBright : hot ? kGold : enabled ? Col{96, 98, 108} : Col{52, 52, 58}, 1.0f,
                   on ? 3.5f : 2.5f);
@@ -663,7 +826,9 @@ void DrawGrid(Canvas& cv, Fonts& fonts, const View& v) {
         k.hot = v.hover == i;
         k.active = now && now->known && now->id >= 0 && now->id == sk.id && now->owner == sk.owner;
         DrawTile(cv, fonts, r, k, &sk, false);
+        UseFace(fonts, false, sk.name);
         Text(cv, fonts, sk.name, tiles::GridNameRect(i), 20, false, k.hot ? kGoldBright : kSilver);
+        fonts.use = nullptr;
     }
 }
 
@@ -714,6 +879,73 @@ Col RoleColour(hset::Role r) {
     }
 }
 
+Col GameInk(hset::Role r) {
+    switch (r) {
+    case hset::Role::Quiet: return kGameQuiet;
+    case hset::Role::Accent: return kGameGold;
+    case hset::Role::Hot: return kGameGoldBright;
+    case hset::Role::Warn: return Col{236, 160, 66};
+    case hset::Role::Dim: return kGameOff;
+    default: return kGameText;
+    }
+}
+
+// One item of the settings pages in the game look, each part by the game's own picture of it: a gold rule under a row, the lobby's inset
+// field for a value, the Options slider (track, knob, arrows), its check box for an on / off row, the Create Game difficulty buttons for a
+// row of choices, the small tabs for the pages, the front end's buttons for the rest.
+void GameItem(Canvas& cv, Fonts& fonts, const hset::Item& it, Rect r) {
+    using P = hset::Part;
+    using S = gameui::Sprite;
+    const float cx = 0.5f * (r.l + r.r), cy = 0.5f * (r.t + r.b);
+    if (it.type == hset::Item::Type::Fill) {
+        if (it.r.w >= tiles::kSheetW && it.r.h >= tiles::kSheetH) return;   // (the sheet's own background: the slab is there)
+        switch (it.part) {
+        case P::Row: Bar3(cv, Art(S::Rule), 0, Rect{r.l + 30.0f, r.b - 4.0f, r.r - 30.0f, r.b + 6.0f}, 60.0f); return;
+        case P::Value: Nine(cv, Art(S::Field), 0, r, 18.0f, 18.0f, 18.0f, 18.0f, std::min(1.0f, (r.b - r.t) / 85.0f)); return;
+        case P::Track: Bar3(cv, Art(S::Track), 0, Rect{r.l - 44.0f, cy - 28.0f, r.r + 44.0f, cy + 28.0f}, 80.0f); return;
+        case P::TrackFill: return;   // (the game's slider has none: the knob says where)
+        case P::Knob:
+            if (it.colour == hset::Role::Back) return;   // (ours hollows the knob of a choice that is not a square: dimmed below instead)
+            Fit(cv, Art(S::Knob), 0, Rect{cx - 40.0f, cy - 30.0f, cx + 40.0f, cy + 30.0f},
+                it.colour == hset::Role::Off ? 0.45f : it.colour == hset::Role::Button ? 0.6f : it.colour == hset::Role::Hot ? 1.3f : 1.0f);
+            return;
+        default: Bar(cv, r.l, r.t, r.r, r.b, RoleColour(it.colour), 1.0f); return;
+        }
+    }
+    if (it.type == hset::Item::Type::Text) {
+        const bool title = it.face == hset::Face::Bold;
+        UseFace(fonts, title, it.text.c_str());
+        FitLine(cv, fonts, it.text, r, title ? 32 : it.face == hset::Face::Small ? 26 : 29, title, GameInk(it.colour), it.align);
+        fonts.use = nullptr;
+        return;
+    }
+    const bool hot = it.hot, en = it.enabled, on = it.selected;
+    const Col ink = !en ? kGameOff : hot ? kGameGoldBright : GameInk(it.colour);
+    switch (it.part) {
+    case P::Tab: GameTab(cv, fonts, r, it.text.c_str(), on, hot, true, 26); return;
+    case P::Less:
+    case P::More: Fit(cv, Art(it.part == P::Less ? S::ArrowLeft : S::ArrowRight), !en ? 2 : hot ? 1 : 0, Rect{r.l + 4.0f, r.t + 4.0f, r.r - 4.0f, r.b - 4.0f}); return;
+    case P::Switch: {   // the check box (0 empty, 1 lit, 2 not usable, 4 ticked, 5 ticked and lit), the word beside it
+        const float side = std::min(r.b - r.t - 6.0f, 64.0f);
+        const Rect box{r.l + 6.0f, cy - 0.5f * side, r.l + 6.0f + side, cy + 0.5f * side};
+        Fit(cv, Art(S::Checkbox), on ? (hot ? 5 : 4) : !en ? 2 : hot ? 1 : 0, box, !en && on ? 0.55f : 1.0f);
+        UseFace(fonts, false, it.text.c_str());
+        FitLine(cv, fonts, it.text, Rect{box.r + 16.0f, r.t, r.r, r.b}, 30, false, ink, hset::Align::Left);
+        fonts.use = nullptr;
+        return;
+    }
+    case P::Choice:
+        Bar3(cv, Art(on ? S::OptionChosen : S::Option), on ? (!en ? 2 : hot ? 1 : 0) : !en ? 2 : hot ? 1 : 0, r, 30.0f);
+        GameWord(cv, fonts, it.text.c_str(), Rect{r.l + 10.0f, r.t, r.r - 10.0f, r.b}, 28, on && en && !hot ? kGameGoldBright : ink);
+        return;
+    case P::Flip:   // one of the Create Game difficulty buttons with the word it stands at (a click flips it)
+        Bar3(cv, Art(S::Option), !en ? 2 : hot ? 1 : 0, r, 30.0f);
+        GameWord(cv, fonts, it.text.c_str(), Rect{r.l + 10.0f, r.t, r.r - 10.0f, r.b}, 28, ink);
+        return;
+    default: GameButton(cv, fonts, r, it.text.c_str(), hot, en, false, it.colour == hset::Role::Text ? kGameText : GameInk(it.colour), 30); return;
+    }
+}
+
 // The settings pages (vr/hset_scene.h) on the window: the sheet's rectangles scaled and put under the title plate, painted in the window's own
 // style - the same silver and gold, the same plates, the same font. What is drawn where is the scene's; the hit test reads the same rectangles.
 void DrawSettings(Canvas& cv, Fonts& fonts, const View& v) {
@@ -727,6 +959,10 @@ void DrawSettings(Canvas& cv, Fonts& fonts, const View& v) {
     };
     for (const hset::Item& it : scene) {
         const Rect r = box(it.r);
+        if (g_game) {
+            GameItem(cv, fonts, it, r);
+            continue;
+        }
         switch (it.type) {
         case hset::Item::Type::Fill:
             if (it.r.w >= tiles::kSheetW && it.r.h >= tiles::kSheetH) break;   // (the sheet's own background: the window's panel is there already)
@@ -761,7 +997,8 @@ void Size(int* width, int* height) {
 }
 
 void Render(const View& v, std::vector<uint32_t>& px) {
-    const std::vector<uint32_t>& base = Frame();
+    g_game = gameui::Ready();   // [openxr] skill_panel_game_look with the game's art beside the plugin; else ours
+    const std::vector<uint32_t>& base = g_game ? GameFrame() : Frame();
     px.assign(base.begin(), base.end());
     Canvas cv{px, tiles::kW, tiles::kH};
     Fonts fonts;
