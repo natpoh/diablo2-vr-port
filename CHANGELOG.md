@@ -1,5 +1,17 @@
 # What's new in D2R VR
 
+## 0.189.0
+
+The release after 0.188.11, from the test build 0.188.12. Nothing in play is meant to change: the same ini keys, the same log lines.
+
+- **The plugin's code in modules**: `vr/vrcam.cpp` (24 000 lines in one namespace) cut into one module a feature - the settings, the
+  sky and fog, the ceiling, the views, the stereo, the depth, the input, the attacks, the interface, pose share and more under `vr/` -
+  each with its own state, so a change to one feature no longer silently breaks another (the sky and fog paths broke each other three
+  times on 0.188.3 - 0.188.6, the NPC pushes stopped being drawn after 0.188.6). The plan and each step's checks: `docs/plan_modules.md`.
+- **New, off: `[debug] health`** (Settings > Debug: "Log each feature's health every 10 s"): one line a feature in the log every 10 s -
+  the weapon's pushes into bodies and the turned poses drawn, who drew the sky, the fog and the ceiling in each picture - marked `(!)`
+  where a chain is broken. It only counts and writes. Translated into all seven languages.
+
 ## 0.188.11
 
 

@@ -492,6 +492,26 @@ target_sources(d2rl-vrcam PRIVATE vr/api_layers_lib.cpp)   # [openxr] block_fore
 target_sources(d2rl-vrcam PRIVATE vr/frame_gen_lib.cpp)   # [openxr] frame_generation: OFXR Bridge for this process only (shared/frame_gen.h)
 target_sources(d2rl-vrcam PRIVATE vr/grip_lib.cpp)      # [weight] grip_model 1: the grip library d2r_vr_grip.dll, when it is beside the plugin (shared/d2r_vr_grip.h)
 target_sources(d2rl-vrcam PRIVATE vr/pose_share_wire.cpp)
+# vr/vrcam.cpp in modules (docs/plan_modules.md): M1 the observers
+target_sources(d2rl-vrcam PRIVATE vr/diag/flog.cpp vr/diag/budget_asks.cpp vr/diag/pair_probes.cpp vr/diag/crash.cpp)
+target_sources(d2rl-vrcam PRIVATE vr/config/settings.cpp vr/config/load_settings.cpp vr/config/reconcile.cpp)   # M2 the settings, the game's Settings.json
+target_sources(d2rl-vrcam PRIVATE vr/plugin/reshade_load.cpp)   # M3 ReShade's loading
+target_sources(d2rl-vrcam PRIVATE vr/world/area.cpp)   # M4 the area
+target_sources(d2rl-vrcam PRIVATE vr/view/view_state.cpp)   # M5 which view
+target_sources(d2rl-vrcam PRIVATE vr/sky/sky_choice.cpp)   # M6 who draws the sky, the fog, the ceiling
+target_sources(d2rl-vrcam PRIVATE vr/engine/engitem.cpp)   # M7 units the game draws as its own
+target_sources(d2rl-vrcam PRIVATE vr/sky/day_night.cpp vr/sky/game_fog.cpp vr/sky/lights.cpp)   # M8 the game's light and fog
+target_sources(d2rl-vrcam PRIVATE vr/sky/sky_config.cpp vr/sky/game_fog_vr_pass.cpp vr/sky/sky_tick.cpp)   # the sky's configuration, the game's fog pass, SkyTick
+target_sources(d2rl-vrcam PRIVATE vr/hud/looks.cpp vr/hud/crosshair.cpp vr/hud/labels.cpp vr/hud/hud_ticks.cpp vr/hud/window.cpp)   # M9 the interface, the game's window
+target_sources(d2rl-vrcam PRIVATE vr/input/spell_aim.cpp vr/input/walk.cpp vr/input/pad.cpp vr/input/aim.cpp vr/input/actions.cpp vr/input/flat_click.cpp)   # M10 the input
+target_sources(d2rl-vrcam PRIVATE vr/mp/pose_share.cpp)   # M11 [multiplayer] pose_share
+target_sources(d2rl-vrcam PRIVATE vr/body/hero_facing.cpp vr/body/arms.cpp)   # M12 the hero's facing and arms
+target_sources(d2rl-vrcam PRIVATE vr/render/depth/depth_fix.cpp vr/render/depth/scene_depth.cpp vr/render/render_switches.cpp)   # M13 the depth, the render switches
+target_sources(d2rl-vrcam PRIVATE vr/render/stereo/prev_scan.cpp vr/render/stereo/replay.cpp vr/render/stereo/frame_sync.cpp vr/render/stereo/pair_pace.cpp)   # M14 the stereo
+target_sources(d2rl-vrcam PRIVATE vr/render/effects/effects.cpp)   # M15 our effect
+target_sources(d2rl-vrcam PRIVATE vr/view/head.cpp vr/view/camera.cpp vr/view/views.cpp)   # M16 the head, our camera, the views
+target_sources(d2rl-vrcam PRIVATE vr/frame/frame_order.cpp)   # M17 the frame's order
+target_sources(d2rl-vrcam PRIVATE vr/combat/combat_ticks.cpp)   # the attacks' ticks
 target_sources(d2rl-vrcam PRIVATE vr/gait_lib.cpp)   # [multiplayer] pose_share_legs: the optional gait library d2r_vr_gait.dll (shared/d2r_vr_gait.h)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/gait_lib_test.cpp")   # the loader against stand-ins (not in the public tree's allow-list)
     add_library(gait_lib_standin SHARED cleanroom/tests/gait_lib_standin.cpp)
@@ -969,6 +989,20 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/sky_paths_test.cpp")
     add_executable(sky_paths_test cleanroom/tests/sky_paths_test.cpp)
     target_include_directories(sky_paths_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
     target_compile_options(sky_paths_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
+# [debug] health: one line per feature every 10 s, a mark where a chain is broken (vr/health.h, docs/plan_modules.md)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/health_test.cpp")
+    add_executable(health_test cleanroom/tests/health_test.cpp)
+    target_include_directories(health_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+    target_compile_options(health_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
+# vr/sky/sky_choice.cpp - the plugin's own file - in a made-up world: never both skies, never both fogs, ours where the game's cannot
+# (docs/plan_modules.md, seam test 1); built with the plugin's include folders, its settings (vr/config/settings.cpp) beside it
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/sky_choice_test.cpp")
+    add_executable(sky_choice_test cleanroom/tests/sky_choice_test.cpp vr/sky/sky_choice.cpp vr/config/settings.cpp)
+    target_include_directories(sky_choice_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr $<TARGET_PROPERTY:d2rl-vrcam,INCLUDE_DIRECTORIES>)
+    target_link_libraries(sky_choice_test PRIVATE D2RLPlugin::D2RLPlugin heft)
+    target_compile_options(sky_choice_test PRIVATE /utf-8 /W3 /EHsc /permissive-)
 endif()
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/native_fx_depth_test.cpp")
     add_executable(native_fx_depth_test cleanroom/tests/native_fx_depth_test.cpp)
@@ -1478,7 +1512,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/reshade_env_test.cpp")
     add_executable(reshade_env_test tools/reshade_env_test.cpp)
     target_include_directories(reshade_env_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared)
     target_compile_options(reshade_env_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
-    target_compile_definitions(reshade_env_test PRIVATE VRCAM_CPP="${CMAKE_CURRENT_SOURCE_DIR}/vr/vrcam.cpp")   # (the order in LoadReShade is checked in the source)
+    target_compile_definitions(reshade_env_test PRIVATE VRCAM_CPP="${CMAKE_CURRENT_SOURCE_DIR}/vr/plugin/reshade_load.cpp")   # (the order in LoadReShade is checked in the source)
 endif()
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/data_mods_test.cpp")
     # Other data mods (D2RMM's output) merged into D2R VR's mod at START (shared/data_mods.h, [mods] merge_data_mods), on real files in %TEMP%.

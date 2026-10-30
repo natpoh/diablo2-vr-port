@@ -5190,6 +5190,11 @@ std::vector<Item> g_items = {
            L"A pair longer than this is a long one for \"Log the long frames and what the plugin spent in them\". 15 ms is a little over one frame at "
            L"72 Hz (13.9 ms); at 90 Hz (11.1 ms) 15 catches every missed frame. Raise it if the game runs at 40-50 frames a second anyway "
            L"(a mean pair of 20 ms), so that only the real stutters are told. Live."),
+    Toggle(L"debug", L"health", L"Log each feature's health every 10 s", 0,
+           L"One line per feature in the log (d2r-vr-vrcam.log) every 10 s: what it counted - the weapon's pushes into bodies and the turned poses "
+           L"given back to the skeletons, who drew the sky, the fog and the cave ceiling in each picture - marked (!) where a chain is broken: "
+           L"bodies pushed and never drawn turned, or two skies, two fogs or two ceilings in one picture. It only counts and writes lines; it "
+           L"changes nothing in play. Live."),
     Toggle(L"debug", L"roomscale_log", L"Log the room-scale walk once a second", 0,
            L"With \"Room-scale walking\" on (Stereo > Native OpenXR): a line a second in the log while it is live - how far your head is off the "
            L"hero's place, the stick it gives the game, walking yes / no, blocked yes / no (at the limit: the room slides), your head's and the "
