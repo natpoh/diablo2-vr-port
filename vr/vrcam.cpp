@@ -921,7 +921,7 @@ int D2rvrHoverSpheres(float (*out)[8], int max) { return engitem::HoverSpheres(o
 
 // ReShade's loading (LoadReShade, LoadOurAddonForDxgiReShade): vr/plugin/reshade_load.cpp
 
-static const char g_info_version[] = "0.192.0";
+static const char g_info_version[] = "0.192.18";
 
 // Who this is. D2RLoader prints "<name> <version> by <author>" for every plugin, and d2r-pcvr (a fork of our 0.152) carries the
 // same id, name and author as we did - "vrcam ... by BodyWalkVR" told a support log nothing. The id stays (the log file
@@ -1021,6 +1021,10 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     crash::Step("settings (d2r_vr.ini)");
     xr::SetLogger(&Log);   // before the settings: [openxr] on says so in the log
     monitoreye::SetLogger(&Log);
+    headshot::SetLogger(&Log);   // [headset_shot]: one line a shot
+    headshot::SetVersion(g_info_version);
+    headclip::SetLogger(&Log);   // [headset_shot] video: one line a clip
+    headgrid::SetLogger(&Log);   // [headset_shot] grid
     xr::SetPointerAt(&PointerAtPixel);   // F1 / F3 in 3D: the game's pointer drawn where its mouse points on their ground
     calib::SetLogger(&Log);
     firststart::SetLogger(&Log);
@@ -1072,25 +1076,30 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     weight::SetLog(&Log);
     grabwire::SetLog(&Log);                  // [weight] grab_bodies
     skel::SetGrabHands(&GrabHandsStep);      // [weight] grab_items, then grab_bodies
+    skel::SetWorldHands(&worldcontact::BlockHands);   // [weight] world_contact_hands
     wriststatus::SetHandShift(&grabwire::DrawnShift);   // [hud] wrist_status: the panel rides a hand drawn on a body
     weightlib::SetLog(&Log);
     weight::SetLibrarySource(&weightlib::Ensure);
     weightlib::Probe();   // is d2r_vr_weight.dll beside the plugin? (told in the log; it is loaded when [weight] hands_model 1 first asks)
     griplib::SetLog(&Log);
     gaitlib::SetLog(&Log);   // [multiplayer] pose_share_legs: the gait library, loaded when first asked
+    stridelib::SetLog(&Log);   // [body] legs_side_ragdoll: the weight library's stepping walk, loaded when first asked
     weight::SetGripLibrarySource(&griplib::Ensure);
 #if D2RVR_FIRST_PERSON
     weight::SetBodiesSource(&fx::BodiesWithPlayers);   // ... and the other players' bodies and weapons ([multiplayer] pose_share_bodies; none unless asked)
 #else
     weight::SetBodiesSource(&meleetouch::Bodies);
 #endif   // [weight] monster_bodies: the hostile monsters' capsules from the touch's scan
+    weight::SetWallsSource(&worldcontact::Walls, &worldcontact::NoteWeapon);   // [weight] world_contact
     weight::SetStabSource(&meleetouch::StabbingNow);   // [weight] stab_in: the touch's thrust rule and path say when a point-first strike goes in
     weight::SetStabNoteSink(&fx::StabNoteSink);       // [debug] stab_debug: the stab's word for the readout and the marks
+    weight::SetStabEnterSink(&knockdown::OnStabEntered);   // [weight] impale_drag: a stab that goes in may carry the body on the blade
     weight::SetBodyPushSink(&HealthPushBody);   // meleetouch::PushBody, counted for [debug] health
     skel::SetMonsterPoseByWorldSource(&HealthMonsterPosesForSkin);   // [weight] monster_ragdoll_pose: the skinning draws a struck monster from a turned copy (meleetouch::MonsterPosesForSkin, counted)
     skel::SetMonsterPoseSource(&HealthMonsterPose);   // (meleetouch::MonsterPose, counted) [weight] monster_ragdoll_pose: the hook turns a struck monster's bones   // [weight] monster_ragdoll: ... and the weapon's pushes back to them
     skel::SetGripHandStep(&griplib::HandStep, &griplib::Abi);
     dolllib::SetLog(&Log);
+    knockdown::SetLog(&Log);   // [weight] knock_down (and its library's loader)
     dolllib::Probe();   // [weight] monster_ragdoll: is d2r_vr_weight.dll (its D2rd* exports) in d2r_vr_libs? (told in the log; loaded when monster_ragdoll 1 first asks)
     griplib::Probe();   // is d2r_vr_grip.dll beside the plugin? (told in the log; it is loaded when [weight] grip_model 1 first asks)
     // [weight] with [hands] throw_by_grip: a grip release that is a throw does not drop a thrown weapon (vr/weight_throw.h). The throw gesture
@@ -1132,6 +1141,7 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     gamestate::Init(ctx);
     crash::Step("game commands");
     gamecmd::Init(ctx);
+    playerscmd::Init(ctx);   // the headset's Players row: the game's own /players N (vr/players_cmd.cpp)
     beltdrop::Init(ctx);   // [hands] belt_drop_ground
     beltglow::Init(ctx);   // [hands] belt_inner_glow
 #if D2RVR_FIRST_PERSON

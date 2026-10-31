@@ -876,12 +876,29 @@ void* const kXDetours[] = {(void*)&XDetour<0>, (void*)&XDetour<1>, (void*)&XDeto
 using XInputSetStateFn = DWORD (WINAPI*)(DWORD, XINPUT_VIBRATION*);
 struct XSetHook { const wchar_t* dll; XInputSetStateFn orig; bool done; };
 XSetHook g_xsets[] = {{L"xinput1_4.dll", nullptr, false}, {L"xinput1_3.dll", nullptr, false}, {L"xinput9_1_0.dll", nullptr, false}};
+// [openxr] haptics_game_rumble / haptics_pad_mute (vr/haptics.h; the Vibration tab): the same detour, put in for them too, on the outer call only. The first
+// follows the game's levels in the controllers (the call still goes on to the pad); the second keeps the call from pad 0 while the controllers are the game's (F4),
+// a pad left rumbling stopped once (after bearstonem/d2r-pcvr's xinput_rumble.h, MIT). Both off: the call passes untouched, as before.
 template <int I> DWORD WINAPI XSetDetour(DWORD idx, XINPUT_VIBRATION* v) {
     const bool outer = t_xDepth == 0;
+    if (outer && v) {
+        haptics::GameRumble(idx, v->wLeftMotorSpeed, v->wRightMotorSpeed);
+        bool stopFirst = false;
+        if (haptics::PadMuted(idx, &stopFirst)) {
+            if (stopFirst) {
+                XINPUT_VIBRATION stop{};
+                ++t_xDepth;
+                g_xsets[I].orig(idx, &stop);
+                --t_xDepth;
+            }
+            return ERROR_SUCCESS;   // (the game is told the pad took it: it goes on as if it rumbled)
+        }
+    }
     frametrace::Scope driver(frametrace::kXInputSet, outer);   // the driver's time is in it: that is what is measured
     ++t_xDepth;
     const DWORD r = g_xsets[I].orig(idx, v);
     --t_xDepth;
+    if (outer && v) haptics::PadPassed(idx, r == ERROR_SUCCESS, v->wLeftMotorSpeed || v->wRightMotorSpeed);
     return r;
 }
 void* const kXSetDetours[] = {(void*)&XSetDetour<0>, (void*)&XSetDetour<1>, (void*)&XSetDetour<2>};
@@ -904,7 +921,7 @@ void HookXInput() {
 }
 
 void HookXInputSet() {
-    if (!frametrace::On()) return;
+    if (!frametrace::On() && !haptics::WantsRumbleHook()) return;   // (once in, it stays: the detour reads the keys live)
     for (size_t i = 0; i < std::size(g_xsets); ++i) {
         XSetHook& h = g_xsets[i];
         if (h.done) continue;
@@ -915,7 +932,7 @@ void HookXInputSet() {
         char b[160];
         if (!fn) { snprintf(b, sizeof b, "vrcam: %ls has no XInputSetState", h.dll); Log(b); continue; }
         const bool ok = MH_CreateHook(fn, kXSetDetours[i], (void**)&h.orig) == MH_OK && MH_EnableHook(fn) == MH_OK;
-        snprintf(b, sizeof b, "vrcam: %ls!XInputSetState %s ([debug] frame_trace: the game's rumble is counted and timed, passed on untouched)", h.dll, ok ? "watched" : "watch FAILED");
+        snprintf(b, sizeof b, "vrcam: %ls!XInputSetState %s ([debug] frame_trace: the game's rumble counted and timed; [openxr] haptics_game_rumble / haptics_pad_mute: followed in the controllers / kept from the pad)", h.dll, ok ? "watched" : "watch FAILED");
         Log(b);
     }
 }

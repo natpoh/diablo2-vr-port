@@ -1,6 +1,7 @@
 #pragma once
 // sky_dome.h - [sky] game_sky (vrcam's engitem::SkyDomeFrame): the pure parts of our painted sky drawn by the game itself as a dome
 // (tools/game_sky/make_sky_dome.py; docs/game_sky_entity.md). Tested in cleanroom/tests/sky_dome_test.cpp.
+#include <cmath>
 #include <cstring>
 #include <string>
 
@@ -94,12 +95,9 @@ inline const char* CaveWhyNot(const CaveIn& in) {
     if (!in.eyeOk) return "no eye yet";
     return "";
 }
-// Its radius: the models' ([render] model_radius - nothing farther is drawn anyway) times [sky] game_dome_caves_size (Serg: "диаметром 210"
-// - 1 the radius, 0.5 the diameter; the headset tells which reads right), never under 20 units
-inline float CaveRadius(float modelRadius, float size) {
-    const float r = modelRadius * size;
-    return r > 20.0f ? r : 20.0f;
-}
+// Its radius ([sky] game_dome_caves_radius_m in world units; before it a share of [render] model_radius, Serg: "диаметром 210"), never under
+// 20 units
+inline float CaveRadius(float radius) { return radius > 20.0f ? radius : 20.0f; }
 
 // Its local matrix (row vectors, the place in [12..14]): shown - its middle at the eye, scaled to `radius`; put away - a thousandth of
 // its size, 5000 units under the eye (a dome of 10^7 units parked at its own size would still stand round the hero).
@@ -137,6 +135,28 @@ inline float DrawableRadius(float wanted, float nearPlane) {
 inline float SkyboxRadius(float wanted, float nearPlane) {
     const float most = DrawableRadius(1.0e9f, nearPlane);   // (not "far": windows.h's macro)
     return wanted > most ? wanted : most;
+}
+
+// [sky] dome_past_far: the game's own passes (its fog, its atmosphere) read the depth only to the far end of its range (depth_fix_mode 2
+// writes it: 1060 units on PC1) - by the view's depth, a plane, not the distance - and take what lies past it as the sky. A dome nearer
+// than that on part of the screen got the game's distance haze there and none past it: in the flat game's F2 (Serg on 0.192.5, 86 - 89.webp:
+// "две сферы", "белая пелена на 1000 м") a darker disc round the view's middle - the dome past the far end - in a lighter veil - the dome
+// nearer - growing with the radius (none at 1000: all nearer; the whole screen at 2430: all past). Laid at least this far, every pixel of
+// it on the screen is past the far end: the game's passes leave it as they leave the void, one sky. `proj` the view's projection as
+// SkyView keeps it (x and y scale, x and y shift); its farthest corner from the view's middle sets the factor, and the mesh's flat faces
+// stand nearer than its radius (shared/granny_remesh.h DomeMesh: kSegments 64 round, its rings at most 18 degrees apart - kClosedRings):
+// a face's nearest point, the middle of its diagonal, at cos(half the diagonal's angle) of it. Never nearer than asked; a range or a
+// projection not known: as asked.
+constexpr float kMeshSegmentDeg = 360.0f / 64.0f, kMeshWidestRingDeg = 18.0f;
+inline float FacetInner() {
+    const double half = 0.5 * std::sqrt((double)kMeshSegmentDeg * kMeshSegmentDeg + (double)kMeshWidestRingDeg * kMeshWidestRingDeg);
+    return (float)std::cos(half * 3.14159265358979 / 180.0);
+}
+inline float PastFarRadius(float wanted, float farEnd, const float proj[4]) {
+    if (!(farEnd > 0.0f) || !(proj[0] > 0.0f) || !(proj[1] > 0.0f)) return wanted;
+    const float tx = (1.0f + std::fabs(proj[2])) / proj[0], ty = (1.0f + std::fabs(proj[3])) / proj[1];
+    const float least = farEnd * std::sqrt(1.0f + tx * tx + ty * ty) / FacetInner();
+    return wanted > least ? wanted : least;
 }
 
 // The depth (reversed Z: near / distance) at or under which our passes take a pixel as the dome's (SkyDomeDepth): from kDomeBand of its

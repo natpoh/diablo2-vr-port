@@ -184,9 +184,10 @@ static void TestDefs() {
     for (int p = 0; p < kMaxPages; ++p) CHECK(perPage[p] <= kRowsMax && (perPage[p] <= kRowsPerPage || CloseRows(p)), "no more rows than the page has room for (a seventh: the rows closer)");
     CHECK(perPage[kPageView] <= kRowsPerPage - 1, "the first page keeps its last row for the game view buttons");
     CHECK(RowsOn(kPageView) > 0 && RowsOn(kPageOptions) > 0, "the two table pages have rows");
-    CHECK(RowsOn(kPageVideo) == 0 && RowsOn(kPageGuide) == 0, "the Video and Guide pages have no table rows (they draw their own)");
+    CHECK(RowsOn(kPageVideo) == 0 && RowsOn(kPageGuide) == 0 && RowsOn(kPageCoop) == 0, "the Video, Co-op and Guide pages have no table rows (they draw their own)");
     CHECK(RowsOn(kPageBody) == 1 && KeyAt(kPageBody, 0) == kKeySeated, "the Body page: one table row on top, how you play ([calibration] seated)");
-    CHECK(PageCount() == 12 && PageCount() <= kMaxPages, "twelve pages (View, Options, Video, Body, Life, Look, HUD, Belt, Melee, Left, Right, Guide), they fit the tabs");
+    CHECK(PageCount() == 14 && PageCount() <= kMaxPages, "fourteen pages (View, Options, Video, Body, Life, Look, HUD, Belt, Melee, Left, Right, Co-op, Vibration, Guide), they fit the tabs");
+    CHECK(RowsOn(kPageVibration) == 7 && CloseRows(kPageVibration) && !std::strcmp(kPageNames[kPageVibration], "Vibration"), "the Vibration page: seven rows, stood closer");
     // the keys the hand-drawn pages work on are in the table, with no row, named as the plugin reads them
     const int hidden[6] = {kKeyMode, kKeyPx, kKeyUse, kKeyVersion, kKeyEye, kKeySpan};
     for (int k : hidden) CHECK(k >= 0 && k < kCount && kDefs[k].page == kNoPage, "a hand-drawn page's key has no row");
@@ -260,7 +261,7 @@ static void TestHitTest() {
         Centre(kRecentre, &u, &v);
         CHECK(HitTest(p, u, v).kind == Kind::Recentre, "Recentre");
         // a row the page does not have is nothing
-        const int rows = RowsOn(p);
+        const int rows = p == kPageCoop ? kCoopRows : RowsOn(p);   // (the Co-op page's rows are its own, hset_coop.h)
         if (rows < kRowsPerPage && !(p == kPageView && rows == kViewRow)) {   // (the first page's last row is the view buttons)
             Centre(kToggle(rows, p), &u, &v);
             CHECK(HitTest(p, u, v).kind == Kind::None, "past the last row is nothing");
@@ -2309,7 +2310,7 @@ static void TestTurn() {
     CHECK(IsToggle(kDefs[sm]) && kDefs[sm].def == 1.0f, "smooth turning is a toggle, on as shipped");
     CHECK(kDefs[sn].min == kSnapMin && kDefs[sn].max == kSnapMax && kDefs[sn].step == 15.0f && kDefs[sn].def == kSnapDefault, "the angle: 15 - 180 by 15, default 30");
     CHECK(kDefs[sp].max == kSpeedMax && kDefs[sp].step == 30.0f && kDefs[sp].def == kSpeedDefault && Normalize(sp, kSpeedDefault) == kSpeedDefault, "the speed: up to 720 by 30, the default on the grid");
-    CHECK(RowsOn(kPageOptions) == kRowsPerPage, "the Options page is full");
+    CHECK(RowsOn(kPageOptions) == kRowsMax && KeyAt(kPageOptions, kRowsMax - 1) == kKeyPlayers, "the Options page is full: its seventh row is the game's Players");
 
     const std::wstring path = g_dir + L"\\turn.ini";
     const std::wstring backup = path + L".before-headset-menu";
@@ -2441,9 +2442,15 @@ static void TestBelt() {
     CHECK(kDefs[kKeyBeltOn].page == kNoPage && !kDefs[kKeyBeltOn].live && IsToggle(kDefs[kKeyBeltOn]), "belt_models: the Belt page's note, not live");
     int live = 0;
     for (int i = 0; i < kCount; ++i) live += kDefs[i].live ? 1 : 0;
-    CHECK(live == 18 && kLiveMask != 0 && (kLiveMask & Bit(KeyOf(L"brightness"))) == 0 && (kLiveMask & Bit(kKeySmooth)) == 0,
+    CHECK(live == 25 && kLiveMask != 0 && (kLiveMask & Bit(KeyOf(L"brightness"))) == 0 && (kLiveMask & Bit(kKeySmooth)) == 0,
           "eighteen live keys, the belt's, the Melee page's (the skill arming's two and Direct hit's two too), the Body page's standing / seated and its Arm span's three (use, version, arm_span_m) - not the others");
-    CHECK(kCount <= 64, "the masks are 64 bits");
+    CHECK(kCount <= 128 && kCount > 64, "the masks are 128 bits, and the table is past 64 keys");
+    {   // the 128-bit mask: a key past 64 has its own bit, sets and tests as the first ones do
+        const Mask a = Bit(3), b = Bit(70), ab = a | b;
+        CHECK(a != b && (ab & b) == b && (ab & a) == a && !(a & b) && static_cast<bool>(ab) && !Mask(0) && ab.Count() == 2 && (~Mask(0)).Count() == 128,
+              "the mask's bits: |, &, ~, ==, Count");
+        CHECK(kAllKeys.Count() == kCount && !(Bit(kCount) & kAllKeys) && (kAllKeys & Bit(kCount - 1)), "every key of the table in kAllKeys, none past it");
+    }
     CHECK(kDefs[KeyAt(kPageBelt, 0)].min == 0.3f && kDefs[KeyAt(kPageBelt, 4)].min == 4.0f && kDefs[KeyAt(kPageBelt, 4)].max == 30.0f && kDefs[KeyAt(kPageBelt, 4)].def == 12.0f, "the belt's ranges are D2R VR Settings'");
     CHECK(IsToggle(kDefs[KeyAt(kPageBelt, 5)]) && kDefs[KeyAt(kPageBelt, 5)].def == 0.0f && kKeyDirectOn >= 0, "the two-button take is a tick, off as the plugin has it ([belt] grab_trigger)");
     for (int i = 0; i < kCount; ++i)   // a default is on its grid (what a missing key shows is what the file means)
@@ -3065,11 +3072,11 @@ static void TestLowLife() {
     }
     CHECK(kDefs[KeyAt(kPageLife, 0)].key == std::wstring(L"low_hp_vignette"), "the first row of the Life page is the tick that switches it on");
     CHECK(RowsOn(kPageLife) == 6 && RowsOn(kPageLook) == 5, "six rows on Life, five on Look: all eleven keys");
-    CHECK(!std::strcmp(kPageNames[kPageLife], "Life") && !std::strcmp(kPageNames[kPageLook], "Look") && !std::strcmp(kPageNames[kPageHud], "HUD") && PageCount() == 12, "the tabs");
+    CHECK(!std::strcmp(kPageNames[kPageLife], "Life") && !std::strcmp(kPageNames[kPageLook], "Look") && !std::strcmp(kPageNames[kPageHud], "HUD") && PageCount() == 14, "the tabs");
     CHECK(IsLifePage(kPageLife) && IsLifePage(kPageLook) && !IsLifePage(kPageView) && !IsLifePage(kPageOptions) && !IsLifePage(kPageVideo) && !IsLifePage(kPageBody) &&
               !IsLifePage(-1) && !IsLifePage(99),
           "only those two pages ask for the preview");
-    CHECK(kCount <= 64, "all the keys have a bit in the change mask");
+    CHECK(kCount <= 128, "all the keys have a bit in the change mask");
 
     // the tab strip: six tabs under the title, each a tab, none off the sheet
     for (int i = 0; i < kPageCount; ++i) {
@@ -3309,8 +3316,10 @@ static void TestMelee() {
         narrowest = std::min(narrowest, kTab(i).w);
     }
     CHECK(kTab(kPageCount - 1).x + kTab(kPageCount - 1).w <= 32 + 960, "the strip ends where the rows do");
-    for (int i = 0; i < kPageCount; ++i) CHECK(GdiWidth(kPageNames[i], 30, FW_SEMIBOLD) <= kTab(i).w - 8, "a tab's name fits it in the panel's own painter");
-    CHECK(kTab(kPageOptions).w > kTab(kPageView).w && kTab(kPageView).w > kTab(kPageHud).w && kTab(kPageMelee).w > kTab(kPageBody).w, "a longer name has the wider tab");
+    for (int i = 0; i < kPageCount; ++i) CHECK(GdiWidth(kPageNames[i], kTabFontPx, FW_SEMIBOLD) <= kTab(i).w - 8, "a tab's name fits it in the panel's own painter");
+    for (int i = 0; i < kPageCount; ++i) CHECK(GdiWidth(kPageNames[i], kTabFontPx, FW_SEMIBOLD) == kPageNameW[i], "kPageNameW is the names' width in that font (the strip is shared by it)");
+    CHECK(kTab(kPageOptions).w > kTab(kPageView).w && kTab(kPageView).w >= kTab(kPageHud).w && kTab(kPageMelee).w > kTab(kPageBody).w, "a longer name has the wider tab");
+    CHECK(kTab(kPageHud).w > kTab(kPageLife).w && kTab(kPageHud).w >= GdiWidth("HUD", kTabFontPx, FW_SEMIBOLD) + 8, "a three-letter name gets what its letters need (HUD's capitals are wide: wider than Life's tab)");
     for (int i = 0; i < kPageCount; ++i) {
         float u, v;
         Centre(kTab(i), &u, &v);
@@ -3610,8 +3619,480 @@ static void TestGuide() {
     }
 }
 
+// -- 16. The Options page's Players row: the game's own players count (/players N, vr/players_cmd.h) ------------------------------------------------
+// Not a key of the ini: the row shows what the game says, - / + ask the game ("/players N", Do::Players), one press one ask; the game's answer
+// is read back. [openxr] headset_players switches it on (off as shipped: the row only shows the count).
+static Snapshot PlayersOn(bool on) { return SnapWith({{kKeyPlayersOn, on ? 1.0 : 0.0}}); }
+static bool SceneItem(const Scene& sc, const std::string& text, Item* got = nullptr) {
+    for (const Item& it : sc)
+        if (it.text == text) { if (got) *got = it; return true; }
+    return false;
+}
+static void TestPlayers() {
+    const Def& d = kDefs[kKeyPlayers];
+    CHECK(d.type == DefType::Game && d.page == kPageOptions && d.min == 1.0f && d.max == 8.0f && d.step == 1.0f && !d.live && !IsToggle(d),
+          "the row: the game's own count, 1 - 8 by 1, on the Options page, not a live ini key");
+    CHECK(IsGame(kKeyPlayers) && !IsGame(kKeyPlayersOn) && !IsGame(kKeySnap), "only the Players row is the game's");
+    const Def& on = kDefs[kKeyPlayersOn];
+    CHECK(!wcscmp(on.section, L"openxr") && !wcscmp(on.key, L"headset_players") && IsToggle(on) && on.def == 0.0f && on.page == kNoPage && !on.live,
+          "its switch: [openxr] headset_players, off as shipped, no row");
+    CHECK(CloseRows(kPageOptions) && RowStep(kPageOptions) == kRowStepClose && RowY(6, kPageOptions) + kRowStepClose - 5 <= kStatus.y,
+          "seven rows: the Options page stands them closer, the last above the status line");
+    float u, v;
+    Centre(kInc(6, kPageOptions), &u, &v);
+    CHECK((HitTest(kPageOptions, u, v) == Hit{Kind::Change, kKeyPlayers, 1}), "+ is hit where it is drawn");
+    Centre(kDec(6, kPageOptions), &u, &v);
+    CHECK((HitTest(kPageOptions, u, v) == Hit{Kind::Change, kKeyPlayers, -1}), "- too");
+    Centre(kInc(5, kPageOptions), &u, &v);
+    CHECK((HitTest(kPageOptions, u, v) == Hit{Kind::Change, KeyOf(L"speed"), 1}), "the row above is still the smooth turn speed");
+    CHECK(!Repeats({Kind::Change, kKeyPlayers, 1}) && Repeats({Kind::Change, KeyOf(L"speed"), 1}), "a held trigger sends one command, not a stream");
+
+    // the store neither reads nor writes it
+    {
+        const std::wstring path = g_dir + L"\\players.ini";
+        static const char kFile[] = "; keep\r\n[game]\r\nplayers=5\r\n[openxr]\r\nheadset_players=1\r\n";
+        Spit(path, kFile);
+        const Snapshot s = store::LoadSnapshot(path.c_str());
+        CHECK(s.values[kKeyPlayers] == 1.0f && s.file[kKeyPlayers] == 1.0f && s.values[kKeyPlayersOn] == 1.0f, "a [game] players line is not read; the switch is");
+        Request r;
+        r.base = r.values = s.file;
+        r.values[kKeyPlayers] = 6.0f;
+        r.changed = Bit(kKeyPlayers);
+        r.sequence = 1;
+        CHECK(store::SaveRequest(path.c_str(), r) == Result::Saved && Slurp(path) == kFile, "nor written");
+        DeleteFileW((path + L".before-headset-menu").c_str());
+    }
+
+    // off: the count is shown, nothing is asked
+    const double t0 = 1000.0;
+    {
+        Model m = OnPage(PlayersOn(false), kPageOptions);
+        m.SetPlayers({3, true}, t0);
+        CHECK(m.PlayersShown() == 3 && !m.PlayersUsable(), "off: the game's count shown, the row unusable");
+        CHECK(m.Click({Kind::Change, kKeyPlayers, 1}).what == Do::Nothing && m.PlayersShown() == 3, "off: + asks nothing");
+        const Scene sc = Compose(m, {});
+        Item val, plus;
+        CHECK(SceneItem(sc, "3", &val) && val.colour == Role::Dim, "off: the count is drawn dim");
+        CHECK(SceneItem(sc, PlayersDetail(m)) && PlayersDetail(m).find("Off") == 0, "off: the line under it says where it is switched on");
+        CHECK(SceneItem(sc, "+", &plus), "the + is drawn");
+    }
+    // on: the game's answer decides
+    Model m = OnPage(PlayersOn(true), kPageOptions);
+    CHECK(!m.PlayersUsable() && m.Click({Kind::Change, kKeyPlayers, 1}).what == Do::Nothing, "the count not known yet: nothing to step from");
+    CHECK(SceneItem(Compose(m, {}), "-") && PlayersDetail(m).find("hero is in a game") != std::string::npos, "not known: \"-\" and why");
+    m.SetPlayers({3, false}, t0);
+    CHECK(!m.PlayersUsable() && m.Click({Kind::Change, kKeyPlayers, 1}).what == Do::Nothing, "a game the game does not take /players in: nothing sent");
+    CHECK(PlayersDetail(m).find("TCP/IP host") != std::string::npos, "and the line says where it works");
+    m.SetPlayers({3, true}, t0);
+    const uint64_t rev = m.revision;
+    Action a = m.Click({Kind::Change, kKeyPlayers, 1});
+    CHECK(a.what == Do::Players && a.players == 4 && a.request.changed == 0, "+ from 3: the game is asked for 4");
+    CHECK(!m.Dirty() && m.Get()[kKeyPlayers] == 1.0f && m.result == Result::None && m.revision > rev, "nothing of the draft: no Apply, no save");
+    {
+        Item val;
+        CHECK(m.PlayersAsked() && m.PlayersShown() == 4 && SceneItem(Compose(m, {}), "4", &val) && val.colour == Role::Warn, "4 shown amber until the game shows it");
+    }
+    CHECK(m.Click({Kind::Change, kKeyPlayers, 1}).what == Do::Nothing, "one ask at a time");
+    m.SetPlayers({3, true}, t0 + 100.0);
+    CHECK(m.PlayersAsked(), "the game not there yet: still asked");
+    m.SetPlayers({4, true}, t0 + 150.0);
+    CHECK(!m.PlayersAsked() && m.PlayersShown() == 4 && m.PlayersAnswer() > 0, "the game shows 4: taken");
+    CHECK(StatusLine(m).find("set players to 4") != std::string::npos && SceneItem(Compose(m, {}), StatusLine(m)), "the line under the rows says the game took it");
+    a = m.Click({Kind::Change, kKeyPlayers, -1});
+    CHECK(a.what == Do::Players && a.players == 3, "- from 4: 3");
+    m.SetPlayers({4, true}, t0 + 200.0 + kPlayersWaitMs + 1.0);
+    CHECK(!m.PlayersAsked() && m.PlayersShown() == 4 && m.PlayersAnswer() < 0 && StatusLine(m).find("did not take") != std::string::npos,
+          "no answer in time: the game's count again, and the line says so");
+    m.SetPlayers({8, true}, t0 + 3000.0);
+    CHECK(m.Click({Kind::Change, kKeyPlayers, 1}).what == Do::Nothing && m.Click({Kind::Change, kKeyPlayers, -1}).players == 7, "8 is the most");
+    m.SetPlayers({7, true}, t0 + 3100.0);
+    m.SetPlayers({1, true}, t0 + 3200.0);
+    CHECK(m.Click({Kind::Change, kKeyPlayers, -1}).what == Do::Nothing, "1 the least");
+    {
+        Item minus;
+        bool found = false;
+        for (const Item& it : Compose(m, {}))
+            if (it.type == Item::Type::Button && it.text == "-" && it.r.y == kDec(6, kPageOptions).y) { minus = it; found = true; }
+        CHECK(found && !minus.enabled, "at 1 the - is greyed");
+    }
+    // another edit keeps its own line; the panel opened again starts without an answer
+    m.Click({Kind::Change, KeyOf(L"speed"), 1});
+    CHECK(m.Dirty() && StatusLine(m).find("Unsaved") != std::string::npos, "an unsaved change: its line, not the game's answer");
+    m.Open(PlayersOn(true));
+    CHECK(m.PlayersAnswer() == 0 && !m.PlayersAsked(), "opened again: no answer, nothing asked");
+    // the panel's own picture paints the page with its seven rows
+    std::vector<uint32_t> px;
+    m.Click({Kind::Tab, kPageOptions, 0});
+    m.SetPlayers({5, true}, t0 + 5000.0);
+    CHECK(Paint(m, {}, px) && px.size() == (size_t)kW * kH, "the Options page with seven rows paints");
+    CHECK(GdiWidth(DefLabel(kKeyPlayers), 26, FW_SEMIBOLD) <= 520, "the row's name fits its place");
+}
+
+// -- the Co-op page: D2R Rooms' relay bridge (vr/hset_coop.h), its own d2r-rooms.ini ------------------------------------------------------
+// A status file as the plugin writes it (board.cpp StatusJson): one relay checked, a room hosted, two in the list.
+static const char kRoomsStatus[] =
+    "{\"plugin\":\"0.9.7\",\"updated\":\"2026-10-30T15:06:48Z\",\"board\":\"https://d2r-rooms.d2r-rooms.workers.dev\","
+    "\"bridge\":{\"enabled\":true,\"mode\":\"auto\",\"use\":\"\"},"
+    "\"relays\":[{\"name\":\"D2R Rooms\",\"url\":\"wss://d2r-rooms-relay.d2r-rooms.workers.dev\",\"state\":\"active\",\"usage\":0.12,\"first\":true},"
+    "{\"name\":\"Mine\",\"url\":\"wss://relay.example.org\",\"state\":\"no_answer\",\"usage\":-1,\"first\":false}],"
+    "\"hosting\":{\"room\":\"K7QX\",\"relay\":\"D2R Rooms\"},"
+    "\"rooms\":[{\"name\":\"Serg's game [K7QX]\",\"game\":\"Hell, Act 5\",\"players\":\"2/8\",\"version\":\"Authentic 0.192.0\",\"connection\":\"relay: active\",\"who\":\"Serg Paladin 88\"},"
+    "{\"name\":\"Cows [AB12]\",\"game\":\"Normal\",\"players\":\"1/8\",\"version\":\"Unleashed 1.2\",\"connection\":\"direct\",\"who\":\"x\"}]}";
+// The player's d2r-rooms.ini: his own comment, two relays, CRLF.
+static const char kRoomsIni[] =
+    "; my relays\r\n[relay]\r\nenabled = yes\r\n; keep this\r\nmode = auto\r\nuse =\r\n\r\n[relays]\r\nD2R Rooms = wss://d2r-rooms-relay.d2r-rooms.workers.dev\r\n"
+    "Mine = wss://relay.example.org secret-key\r\n";
+static int64_t Utc(const char* s) {
+    int64_t t = 0;
+    roomsbridge::ParseUtc(s, &t);
+    return t;
+}
+static std::shared_ptr<const coop::State> CoopState(bool installed = true, bool status = true) {
+    auto st = std::make_shared<coop::State>();
+    st->installed = installed;
+    st->iniThere = true;
+    st->cfg = roomsbridge::ParseIni(kRoomsIni);
+    if (status) {
+        st->statusThere = true;
+        st->status = *roomsbridge::ParseStatus(kRoomsStatus);
+        st->ageMin = 2;
+    }
+    st->dir = "C:\\Games\\Diablo II Resurrected\\d2rloader\\plugins";
+    return st;
+}
+static Snapshot SnapCoop(std::shared_ptr<const coop::State> st, bool ready = true) {
+    Snapshot s = Snap(ready);
+    s.coop = std::move(st);
+    return s;
+}
+static bool SceneHas(const Scene& sc, const std::string& part) {
+    for (const Item& i : sc)
+        if (i.type != Item::Type::Fill && i.text.find(part) != std::string::npos) return true;
+    return false;
+}
+static int CoopButtons(const Scene& sc) {
+    int n = 0;
+    for (const Item& i : sc) if (i.type == Item::Type::Button && i.r.y >= kRowY0 && i.r.y < kStatus.y && i.text != "") ++n;
+    return n;
+}
+
+static void TestCoopPure() {
+    using namespace hset::coop;
+    const roomsbridge::Config c = roomsbridge::ParseIni(kRoomsIni);
+    CHECK(c.relays.size() == 2 && c.enabled && c.mode == "auto" && c.use.empty(), "the player's ini as the plugin reads it");
+    // the bridge flips, the mode and the relay step round their lists both ways
+    CHECK((Step(c, kEnabled, 1) == Edit{"enabled", "no"}), "on -> off");
+    roomsbridge::Config off = c;
+    off.enabled = false;
+    CHECK((Step(off, kEnabled, 1) == Edit{"enabled", "yes"}), "off -> on");
+    CHECK((Step(c, kMode, 1) == Edit{"mode", "always"}) && (Step(c, kMode, -1) == Edit{"mode", "never"}), "auto -> always, auto <- never");
+    roomsbridge::Config nv = c;
+    nv.mode = "never";
+    CHECK((Step(nv, kMode, 1) == Edit{"mode", "auto"}), "never -> auto (round)");
+    CHECK((UseChoices(c) == std::vector<std::string>{"", "D2R Rooms", "Mine"}), "use: the first that answers, then the relays");
+    CHECK((Step(c, kUse, 1) == Edit{"use", "D2R Rooms"}) && (Step(c, kUse, -1) == Edit{"use", "Mine"}), "use steps from the first that answers");
+    roomsbridge::Config mine = c;
+    mine.use = "MINE";   // (the plugin compares the names without letter case)
+    CHECK(UseIndex(mine) == 2 && (Step(mine, kUse, 1) == Edit{"use", ""}) && ValueText(mine, kUse) == "Mine", "a name in another letter case is that relay");
+    roomsbridge::Config gone = c;
+    gone.use = "Old relay";
+    CHECK(UseChoices(gone).size() == 4 && UseIndex(gone) == 3 && (Step(gone, kUse, 1) == Edit{"use", ""}) && ValueText(gone, kUse) == "Old relay (not listed)",
+          "a name the list lacks is kept as a choice, as Settings keeps it");
+    CHECK(!Step(c, 7, 1), "nothing else");
+    // what the store takes
+    CHECK(Sane({"enabled", "no"}) && Sane({"mode", "never"}) && Sane({"use", ""}) && Sane({"use", "D2R Rooms"}), "the three keys' values");
+    CHECK(!Sane({"enabled", "off"}) && !Sane({"mode", "sometimes"}) && !Sane({"use", "x\r\n[relay]"}) && !Sane({"use", "a = b"}) && !Sane({"use", " lead"}) &&
+              !Sane({"relays", "x"}) && !Sane({"use", std::string(200, 'a')}),
+          "nothing else: no other key, no line break, no '=' or section, no stray space");
+    // an edit on its way is shown at once
+    const Edit e{"mode", "always"};
+    CHECK(Shown(c, &e).mode == "always" && Shown(c, nullptr).mode == "auto", "the shown choices carry the edit");
+    // the page's words: the row values, a relay's line, the in-force line, the note
+    CHECK(ValueText(c, kEnabled) == "On" && ValueText(off, kEnabled) == "Off" && ValueText(c, kMode) == "Auto" && ValueText(nv, kMode) == "Never" &&
+              ValueText(c, kUse) == "First that answers",
+          "the value boxes");
+    const auto st = CoopState();
+    const std::vector<Line> lines = Lines(st.get(), c);
+    CHECK((int)lines.size() <= kLines && lines.front().tone == Tone::Head && lines.front().text == "D2R Rooms 0.9.7: its last word 2 min ago.", "the plugin's line first");
+    CHECK(lines.back().text.find("every CREATE GAME") != std::string::npos && lines.back().text.find("no restart") != std::string::npos, "when a change counts: last, always");
+    bool relay = false, quiet = false, hosting = false, rooms = false, room = false;
+    for (const Line& l : lines) {
+        relay = relay || (l.text == "D2R Rooms: takes rooms, 12% of its quota used  -  tried first" && l.tone == Tone::Good);
+        quiet = quiet || (l.text == "Mine: not answering" && l.tone == Tone::Warn);
+        hosting = hosting || l.text == "You host room K7QX through D2R Rooms.";
+        rooms = rooms || l.text == "Open rooms: 2";
+        room = room || l.text.find("Serg's game [K7QX]  -  Hell, Act 5  -  2/8") != std::string::npos;
+        CHECK(l.text.find("In force") == std::string::npos, "the file and the plugin agree: no in-force line");
+    }
+    CHECK(relay && quiet && hosting && rooms && room, "which relay answers, the room hosted, the open rooms");
+    // a choice the plugin does not have in force yet
+    const Edit al{"mode", "always"};
+    const std::vector<Line> pend = Lines(st.get(), Shown(c, &al));
+    CHECK(pend.size() >= 2 && pend[1].tone == Tone::Warn && pend[1].text == "In force until your next CREATE GAME: bridge on, auto, the first that answers.",
+          "the plugin's choices in force until the next CREATE GAME");
+    CHECK(Lines(st.get(), Shown(c, &al)).size() <= (size_t)kLines, "still within the lines");
+    // installed, no status yet: the file's relays, unchecked
+    const auto ns = CoopState(true, false);
+    const std::vector<Line> fresh = Lines(ns.get(), c);
+    CHECK(fresh.front().text.find("nothing yet") != std::string::npos && fresh[1].text == "D2R Rooms: not checked yet" && fresh[2].text == "Mine: not checked yet",
+          "no status file: the plugin's line says so, the relays unchecked");
+    // not installed: says so, where it looked, how to get it
+    const auto ni = CoopState(false);
+    const std::vector<Line> missing = Lines(ni.get(), c);
+    CHECK(missing.size() == 3 && missing[0].tone == Tone::Warn && missing[1].text == ni->dir && missing[2].text.find("Setup") != std::string::npos, "not installed: three lines");
+    CHECK(Lines(nullptr, c).size() == 1, "not read yet: one line");
+    // ages
+    CHECK(AgeText(0) == "just now" && AgeText(5) == "5 min ago" && AgeText(125) == "2 h ago" && AgeText(-1) == "at a time not known", "ages");
+    // every line of the page fits its place in the panel's own painter (the Small face, 18 px)
+    for (const Line& l : lines) CHECK(l.text.size() < 120, "a line is short enough for the page");
+}
+
+static void TestCoopModel() {
+    // the hit zones: the switch, < and > of the two choices; the value boxes and a fourth row are nothing; not on other pages
+    float u, v;
+    Centre(kToggle(coop::kEnabled), &u, &v);
+    CHECK((HitTest(kPageCoop, u, v) == Hit{Kind::Coop, coop::kEnabled, 1}), "the bridge's switch");
+    CHECK(HitTest(kPageVideo, u, v).kind != Kind::Coop && HitTest(kPageView, u, v).kind != Kind::Coop, "not on another page");
+    for (int r = coop::kMode; r < kCoopRows; ++r) {
+        Centre(kDec(r), &u, &v);
+        CHECK((HitTest(kPageCoop, u, v) == Hit{Kind::Coop, r, -1}), "a choice's <");
+        Centre(kInc(r), &u, &v);
+        CHECK((HitTest(kPageCoop, u, v) == Hit{Kind::Coop, r, 1}), "a choice's >");
+        Centre(kVal(r), &u, &v);
+        CHECK(HitTest(kPageCoop, u, v).kind == Kind::None, "its value box is not a button");
+    }
+    Centre(kToggle(kCoopRows), &u, &v);
+    CHECK(HitTest(kPageCoop, u, v).kind == Kind::None, "past the three rows: the lines are text");
+    CHECK(!Repeats({Kind::Coop, coop::kMode, 1}), "a held trigger steps a choice once (each step is a write)");
+    for (int i = 0; i < coop::kLines; ++i) CHECK(kCoopLine(i).y >= RowY(kCoopRows - 1, -1) + kRowStep - 5 && kCoopLine(i).y + kCoopLine(i).h <= kStatus.y, "the lines between the rows and the status line");
+
+    // a click writes at once: one edit, shown amber at once, nothing more until the thread has done it
+    const auto st = CoopState();
+    Model m = OnPage(SnapCoop(st), kPageCoop);
+    CHECK(m.CoopReady() && !m.CoopBusy() && m.CoopResult() == Result::None, "the page is ready");
+    Action a = m.Click({Kind::Coop, coop::kMode, 1});
+    CHECK(a.what == Do::Coop && (a.coop == coop::Edit{"mode", "always", 1}), "> on the mode: [relay] mode = always, the first edit");
+    CHECK(m.CoopBusy() && m.CoopShown().mode == "always" && m.CoopResult() == Result::Saving && !m.Dirty(), "shown at once, on its way; d2r_vr.ini's draft untouched");
+    CHECK(m.Click({Kind::Coop, coop::kUse, 1}).what == Do::Nothing && m.Click({Kind::Coop, coop::kEnabled, 1}).what == Do::Nothing, "one at a time");
+    CHECK(m.Click({Kind::Apply, -1, 0}).what == Do::Nothing, "Apply has nothing to do with it");
+    auto done = std::make_shared<coop::State>(*st);
+    done->cfg.mode = "always";
+    done->written = 1;
+    m.Observe(SnapCoop(done));
+    CHECK(!m.CoopBusy() && m.CoopResult() == Result::Saved && m.CoopShown().mode == "always", "the thread's answer: saved, the file's choice");
+    CHECK(std::string(StatusText(m)).find("next CREATE GAME") != std::string::npos, "the status line: when it counts");
+    a = m.Click({Kind::Coop, coop::kUse, 1});
+    CHECK(a.what == Do::Coop && (a.coop == coop::Edit{"use", "D2R Rooms", 2}), "the next edit: the relay to host on, sequence 2");
+    auto failed = std::make_shared<coop::State>(*done);
+    failed->written = 2;
+    failed->writeFailed = true;
+    m.Observe(SnapCoop(failed));
+    CHECK(!m.CoopBusy() && m.CoopResult() == Result::Failed && m.CoopShown().use.empty(), "a failed write: said, the file's choice shown again");
+    CHECK(std::string(StatusText(m)).find("Could not write") != std::string::npos, "the status line says it failed");
+    a = m.Click({Kind::Coop, coop::kEnabled, 1});
+    CHECK(a.what == Do::Coop && a.coop.sequence == 3, "again");
+    m.CoopSubmitFailed(3);
+    CHECK(!m.CoopBusy() && m.CoopResult() == Result::Failed && m.CoopShown().enabled, "not handed to the thread: failed, nothing changed");
+
+    // the bridge off: its two choices do nothing (as on Settings' tab); the switch still works
+    auto off = std::make_shared<coop::State>(*st);
+    off->cfg.enabled = false;
+    Model o = OnPage(SnapCoop(off), kPageCoop);
+    CHECK(o.Click({Kind::Coop, coop::kMode, 1}).what == Do::Nothing && o.Click({Kind::Coop, coop::kUse, -1}).what == Do::Nothing, "off: no mode, no relay");
+    CHECK((o.Click({Kind::Coop, coop::kEnabled, 1}).coop == coop::Edit{"enabled", "yes", 1}), "off: the switch turns it on");
+    // not installed, or not read yet: nothing to choose
+    Model ni = OnPage(SnapCoop(CoopState(false)), kPageCoop);
+    CHECK(!ni.CoopReady() && ni.Click({Kind::Coop, coop::kEnabled, 1}).what == Do::Nothing, "not installed: nothing");
+    CHECK(std::string(StatusText(ni)).find("not installed") != std::string::npos, "and the status line says why");
+    Model nr = OnPage(Snap(), kPageCoop);
+    CHECK(!nr.Coop() && nr.Click({Kind::Coop, coop::kEnabled, 1}).what == Do::Nothing && std::string(StatusText(nr)).find("Reading") != std::string::npos, "not read yet");
+    // d2r_vr.ini missing does not matter to D2R Rooms' file
+    Model noIni = OnPage(SnapCoop(st, false), kPageCoop);
+    CHECK(noIni.Click({Kind::Coop, coop::kEnabled, 1}).what == Do::Coop && std::string(StatusText(noIni)).find("d2r_vr.ini") == std::string::npos, "no d2r_vr.ini: the page still works");
+    // a click on another page's place is not the page's
+    Model other = OnPage(SnapCoop(st), kPageVideo);
+    CHECK(other.Click({Kind::Coop, coop::kEnabled, 1}).what == Do::Nothing, "only on the Co-op page");
+    // a new panel after an old one's edits: its first edit is past the thread's last
+    auto later = std::make_shared<coop::State>(*st);
+    later->written = 9;
+    Model again = OnPage(SnapCoop(later), kPageCoop);
+    CHECK(again.Click({Kind::Coop, coop::kEnabled, 1}).coop.sequence == 10, "the sequence goes on from the thread's last");
+    // the revision moves with a new reading (the picture follows the plugin's status)
+    Model r = OnPage(SnapCoop(st), kPageCoop);
+    const uint64_t rev = r.revision;
+    r.Observe(SnapCoop(st));
+    CHECK(r.revision == rev, "the same reading: no repaint");
+    r.Observe(SnapCoop(CoopState()));
+    CHECK(r.revision != rev, "a new one: repainted");
+}
+
+static void TestCoopScene() {
+    const auto st = CoopState();
+    Model m = OnPage(SnapCoop(st), kPageCoop);
+    Scene sc = Compose(m, {});
+    CHECK(SceneHas(sc, "Co-op bridge") && SceneHas(sc, "Go through a relay") && SceneHas(sc, "Host my rooms on"), "the three rows");
+    CHECK(SceneHas(sc, "First that answers") && SceneHas(sc, "Auto") && SceneHas(sc, "tried first") && SceneHas(sc, "You host room K7QX"), "their values and what the plugin knows");
+    CHECK(SceneHas(sc, "Co-op") && CoopButtons(sc) == 5, "the switch and two < > pairs");
+    bool sw = false, less = false, more = false, inside = true;
+    for (const Item& i : sc) {
+        if (i.type == Item::Type::Button && i.part == Part::Switch && i.r.y == RowY(0, -1) && i.selected && i.enabled) sw = true;
+        if (i.type == Item::Type::Button && i.part == Part::Less && i.text == "<" && i.enabled) less = true;
+        if (i.type == Item::Type::Button && i.part == Part::More && i.text == ">" && i.enabled) more = true;
+        if (i.type == Item::Type::Text && i.r.y >= kRowY0 && i.r.y < kStatus.y && i.r.y + i.r.h > kStatus.y) inside = false;
+    }
+    CHECK(sw && less && more, "the parts the game look draws its own art for (Switch, Less, More)");
+    CHECK(inside, "every line above the status line");
+    // the hovered < is lit
+    float u, v;
+    Centre(kInc(coop::kMode), &u, &v);
+    bool hot = false;
+    for (const Item& i : Compose(m, HitTest(kPageCoop, u, v))) hot = hot || (i.type == Item::Type::Button && i.hot && i.text == ">");
+    CHECK(hot, "the button under the beam is lit");
+    // on its way: amber, the buttons wait
+    m.Click({Kind::Coop, coop::kMode, 1});
+    sc = Compose(m, {});
+    bool amber = false, waiting = true;
+    for (const Item& i : sc) {
+        if (i.type == Item::Type::Text && i.text == "Always" && i.colour == Role::Warn) amber = true;
+        if (i.type == Item::Type::Button && i.part == Part::Switch && i.enabled) waiting = false;
+    }
+    CHECK(amber && waiting && SceneHas(sc, "In force until your next CREATE GAME"), "amber, the switch waits, the plugin's choices in force shown");
+    // the bridge off: its two choices are grey and not usable
+    auto off = std::make_shared<coop::State>(*st);
+    off->cfg.enabled = false;
+    sc = Compose(OnPage(SnapCoop(off), kPageCoop), {});
+    int usable = 0;
+    for (const Item& i : sc) if (i.type == Item::Type::Button && (i.part == Part::Less || i.part == Part::More) && i.enabled) ++usable;
+    CHECK(usable == 0 && SceneHas(sc, "Off"), "off: < and > greyed");
+    // not installed: no buttons, the reason, a warning status line
+    sc = Compose(OnPage(SnapCoop(CoopState(false)), kPageCoop), {});
+    CHECK(CoopButtons(sc) == 0 && SceneHas(sc, "not installed") && SceneHas(sc, "Setup"), "not installed: the page offers nothing and says why");
+    bool warnLine = false;
+    for (const Item& i : sc) warnLine = warnLine || (i.type == Item::Type::Text && i.r.y == kStatus.y && i.colour == Role::Warn);
+    CHECK(warnLine, "and the status line is amber");
+    // the panel's own painter: every Co-op picture its own
+    std::vector<uint32_t> a, b, c, d;
+    Model pm = OnPage(SnapCoop(st), kPageCoop);
+    CHECK(Paint(pm, {}, a), "painted");
+    pm.Click({Kind::Coop, coop::kEnabled, 1});
+    Paint(pm, {}, b);
+    Paint(OnPage(SnapCoop(CoopState(false)), kPageCoop), {}, c);
+    Paint(OnPage(Snap(), kPageCoop), {}, d);
+    CHECK(a != b && a != c && c != d && a != d, "the page, a click on it, not installed, not read yet: four pictures");
+}
+
+static void TestCoopStore() {
+    const std::wstring dir = g_dir + L"\\plugins";
+    CreateDirectoryW(dir.c_str(), nullptr);
+    const std::wstring ini = dir + L"\\d2r-rooms.ini", dll = dir + L"\\d2rl-d2r-rooms.dll", status = dir + L"\\d2r-rooms-status.json";
+    DeleteFileW(ini.c_str());
+    DeleteFileW(dll.c_str());
+    DeleteFileW(status.c_str());
+    // no plugin: not installed, nothing written
+    auto st = store::LoadCoop(dir.c_str(), Utc("2026-10-30T15:10:00Z"));
+    CHECK(st && !st->installed && !st->iniThere && !st->statusThere && st->cfg.relays.size() == 1, "an empty folder: not installed, the plugin's default list");
+    std::string why;
+    CHECK(!store::WriteCoop(dir.c_str(), {"enabled", "no"}, &why) && !Exists(ini) && why.find("not installed") != std::string::npos, "no plugin: nothing written, and why");
+    // the plugin there, no ini yet: the plugin's own default text is written with the key in it
+    Spit(dll, "MZ");
+    CHECK(store::WriteCoop(dir.c_str(), {"mode", "never"}, &why), "written");
+    std::string text = Slurp(ini);
+    CHECK(text.find("; D2R Rooms relays.") == 0 && text.find("mode = never\n") != std::string::npos && text.find("mode = auto") == std::string::npos &&
+              roomsbridge::ParseIni(text).mode == "never" && roomsbridge::ParseIni(text).relays.size() == 1,
+          "no file: the plugin's default text, with mode = never");
+    CHECK(!Exists(ini + L".tmp"), "no .tmp left");
+    // the player's own file: only that key's line changes, CRLF and his comments kept
+    Spit(ini, kRoomsIni);
+    CHECK(store::WriteCoop(dir.c_str(), {"use", "Mine"}, &why), "use written");
+    text = Slurp(ini);
+    std::string want = kRoomsIni;
+    want.replace(want.find("use =\r\n"), 7, "use = Mine\r\n");
+    CHECK(text == want, "use = Mine: that line alone, his comments and CRLF kept");
+    CHECK(store::WriteCoop(dir.c_str(), {"enabled", "no"}, &why) && store::WriteCoop(dir.c_str(), {"use", ""}, &why), "two more");
+    const roomsbridge::Config back = roomsbridge::ParseIni(Slurp(ini));
+    CHECK(!back.enabled && back.use.empty() && back.mode == "auto" && back.relays.size() == 2 && back.relays[1].key == "secret-key", "the plugin reads them back; the relays and the key untouched");
+    CHECK(Slurp(ini).find("use =\r\n") != std::string::npos && Slurp(ini).find("enabled = no\r\n") != std::string::npos, "empty use is 'use =', as the plugin writes it");
+    CHECK(!store::WriteCoop(dir.c_str(), {"use", "x\r\n[relay]\r\nenabled = yes"}, &why) && roomsbridge::ParseIni(Slurp(ini)).enabled == false, "a value that is not one is refused");
+    // reading: the ini, the status and its age
+    Spit(status, kRoomsStatus);
+    st = store::LoadCoop(dir.c_str(), Utc("2026-10-30T15:10:00Z"), 4, true);
+    CHECK(st->installed && st->iniThere && !st->cfg.enabled && st->statusThere && st->status.plugin == "0.9.7" && st->status.relays.size() == 2 && st->ageMin == 3 &&
+              st->written == 4 && st->writeFailed,
+          "the folder read: the file's choices, the plugin's status, 3 min old, the last write's fate");
+    CHECK(st->dir.size() > 8 && st->dir.compare(st->dir.size() - 8, 8, "\\plugins") == 0, "the folder named for the page");
+    Spit(status, "{\"plugin\":\"0.9.7\",\"rel");   // half a file
+    CHECK(!store::LoadCoop(dir.c_str(), 0)->statusThere, "half a status file: not there yet");
+
+    // the thread: the panel's first reading at once, an edit carried out and logged, a change of the folder picked up
+    Spit(ini, kRoomsIni);
+    std::string later = kRoomsStatus;   // (a time ahead: its age stays 0 while the thread runs, so a reading changes only with the files)
+    later.replace(later.find("2026-10-30T15:06:48Z"), 20, "2099-01-01T00:00:00Z");
+    Spit(status, later);
+    const std::wstring path = g_dir + L"\\coop_thread.ini";
+    Spit(path, "[openxr]\r\nlaser=1\r\n");
+    static std::vector<std::string> said;
+    said.clear();
+    store::SetLogger([](const char* s) { said.push_back(s); });
+    store::SetRoomsDir(dir.c_str());
+    store::Start(path.c_str());
+    Snapshot s = store::Read();
+    CHECK(s.coop && s.coop->installed && s.coop->statusThere && s.coop->cfg.enabled, "the first reading is there at once");
+    const uint64_t base = s.coop->written;
+    CHECK(store::SubmitCoop({"mode", "always", base + 1}), "an edit is taken");
+    for (int i = 0; i < 80 && store::Read().coop->written != base + 1; ++i) Sleep(50);
+    s = store::Read();
+    CHECK(s.coop->written == base + 1 && !s.coop->writeFailed && s.coop->cfg.mode == "always", "carried out, the file read again");
+    CHECK(roomsbridge::ParseIni(Slurp(ini)).mode == "always" && Slurp(ini).find("; keep this\r\n") != std::string::npos, "the file has it, his lines kept");
+    bool logged = false;
+    for (const std::string& l : said) logged = logged || l.find("Co-op: [relay] mode = always written to d2r-rooms.ini") != std::string::npos;
+    CHECK(logged, "one log line");
+    CHECK(s.ready && std::fabs(s.values[KeyOf(L"laser")] - 1.0f) < 1e-4f, "d2r_vr.ini's side as before");
+    CHECK(!store::SubmitCoop({"relays", "x", base + 2}) && !store::SubmitCoop({"mode", "always", 0}), "not a [relay] key, or no sequence: refused");
+    // an edit in Notepad shows up; the plugin's status too
+    std::string t = Slurp(ini);
+    t.replace(t.find("enabled = yes"), 13, "enabled = no ");
+    Spit(ini, t);
+    bool seen = false;
+    for (int i = 0; i < 60 && !seen; ++i) {
+        seen = !store::Read().coop->cfg.enabled;
+        if (!seen) Sleep(50);
+    }
+    CHECK(seen, "an outside edit of d2r-rooms.ini is picked up");
+    const auto before = store::Read().coop;
+    Sleep(1100);
+    CHECK(store::Read().coop == before, "nothing changed: the same reading (no repaint)");
+    DeleteFileW(dll.c_str());
+    seen = false;
+    for (int i = 0; i < 60 && !seen; ++i) {
+        seen = !store::Read().coop->installed;
+        if (!seen) Sleep(50);
+    }
+    CHECK(seen, "the plugin taken away: the page says so");
+    store::Stop();
+    store::Join(3000);
+    store::SetLogger(nullptr);
+    store::SetRoomsDir(nullptr);
+    for (const std::wstring& f : {ini, dll, status, ini + L".tmp"}) DeleteFileW(f.c_str());
+    RemoveDirectoryW(dir.c_str());
+}
+
+// --dump: the Co-op page in the panel's own painter (as it stands, a mode on its way, the plugin not installed).
+static void DumpCoop(const std::string& dir) {
+    std::vector<uint32_t> px;
+    Model m = OnPage(SnapCoop(CoopState()), kPageCoop);
+    float u, v;
+    Centre(kInc(coop::kUse), &u, &v);
+    Paint(m, HitTest(kPageCoop, u, v), px);
+    WriteBmp(dir + "/hset_page_coop.bmp", px);
+    m.Click({Kind::Coop, coop::kMode, 1});
+    Paint(m, {}, px);
+    WriteBmp(dir + "/hset_page_coop_pending.bmp", px);
+    Paint(OnPage(SnapCoop(CoopState(false)), kPageCoop), {}, px);
+    WriteBmp(dir + "/hset_page_coop_missing.bmp", px);
+}
+
 int main(int argc, char** argv) {
-    if (argc == 3 && !strcmp(argv[1], "--dump")) { Dump(argv[2]); return 0; }
+    if (argc == 3 && !strcmp(argv[1], "--dump")) { Dump(argv[2]); DumpCoop(argv[2]); return 0; }
     wchar_t tmp[MAX_PATH];
     GetTempPathW(MAX_PATH, tmp);
     g_dir = std::wstring(tmp) + L"hset_test_" + std::to_wstring(GetCurrentProcessId());
@@ -3645,6 +4126,11 @@ int main(int argc, char** argv) {
     TestHud();
     TestLowLife();
     TestPreviewButton();
+    TestPlayers();
+    TestCoopPure();
+    TestCoopModel();
+    TestCoopScene();
+    TestCoopStore();
 
     // the temp folder's files go
     WIN32_FIND_DATAW fd;

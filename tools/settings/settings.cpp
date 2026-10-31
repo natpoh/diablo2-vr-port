@@ -22,6 +22,7 @@
 #include "frame_gen.h"       // [openxr] frame_generation: OFXR Bridge, its pinned release and manifest
 #include "api_layers.h"      // [openxr] block_listed_layers: the Status line of the OpenXR layers the game found (a listed one named as a warning)
 #include "props_assets.h"    // [weight] knock_props: the catalogue of the level's knockable props out of the player's own game (CascLib)
+#include "solids_assets.h"    // [weight] world_contact: the level pieces' solid parts out of their own meshes (CascLib)
 #include "dome_assets.h"     // [sky] game_sky: the dome's models from the game's own Summit sky card, our mesh in it (granny_remesh.h)
 #include "menu_assets.h"     // [openxr] skill_panel_game_look: the game's own frames, buttons and sliders for the skill panel, from the player's own game (CascLib)
 #include "boat_assets.h"     // [world] kurast_boat: the Kurast Docks' flying canoe put on the water, from the player's own game (CascLib)
@@ -130,6 +131,7 @@ struct Item {
     const wchar_t* oldKey = nullptr;         // Slider / Choice: while its own key is not in the ini yet it starts from this older key of the same section (ReadValue)
     std::vector<float> oldMap;               // ... through this table when there is one (the older key's value v gives oldMap[v - oldMapFrom])
     int oldMapFrom = 0;                      // ... the older value that is oldMap[0] (-1 for a -1 / 0 / 1 key)
+    float (*fromOld)(float) = nullptr;       // ... or through this (the older key in other units: game units -> metres); neither key there: its own default
     const wchar_t* help = nullptr;           // Group: what the block is for - the "?" beside its title (a tooltip; a click shows it too)
     const wchar_t* tipTail = nullptr;        // "@remap": what the row adds to the list's own tip (TranslateItems puts the two together)
     bool tr = false;                         // its words were put in the player's language where it was made (TR): TranslateItems leaves it
@@ -242,6 +244,9 @@ Item Only(int modes, Item i) { i.modes = modes; return i; }
 Item StartsFrom(const wchar_t* oldKey, Item i) { i.oldKey = oldKey; return i; }
 Item StartsFromMapped(const wchar_t* oldKey, std::initializer_list<float> map, Item i) { i.oldKey = oldKey; i.oldMap = map; return i; }
 Item StartsFromMappedFrom(const wchar_t* oldKey, int from, std::initializer_list<float> map, Item i) { i.oldKey = oldKey; i.oldMap = map; i.oldMapFrom = from; return i; }
+Item StartsFromConverted(const wchar_t* oldKey, float (*fromOld)(float), Item i) { i.oldKey = oldKey; i.fromOld = fromOld; return i; }
+float SkyRadiusMFromUnits(float units);   // [sky] game_sky_radius (game units) -> game_sky_radius_m
+float CaveRadiusMFromShare(float share);  // [sky] game_dome_caves_size (a share of [render] model_radius) -> game_dome_caves_radius_m
 // Left out of the page until the code shows it (Item::hidden).
 Item Hide(Item i) { i.hidden = true; return i; }
 // A group in a column of its own choice (0 left); with fewer columns than that it goes in the shortest one.
@@ -298,14 +303,6 @@ constexpr const wchar_t* kSkyPicture = L"A bare name is looked for in reshade-sh
                                        L"Empty (x) = the shader draws this sky itself.";
 constexpr const wchar_t* kFogColour = L"The fog colour of this act, its caves included; the low part of the sky sinks into it. "
                                       L"Empty (x) = the sky's horizon colour, or dark without a sky.";
-constexpr const wchar_t* kTorchesTip = L"WARNING: very heavy on the CPU. To find the torches the mod reads all of the game's memory "
-                                       L"every 1.5 s while a ceiling is drawn (about a third of a CPU core) - on a weaker PC the game "
-                                       L"and VR stutter. Fire seen in the picture (torches, braziers, fire spells) then lights the "
-                                       L"ceiling over it.";
-constexpr const wchar_t* kPictureFireTip = L"Fire found in the picture by ReShade lights the ceiling: torches, braziers, fire spells, "
-                                           L"burning monsters - any fire on the screen, as the first ceilings did. No reading of the "
-                                           L"game's memory, so light on the CPU (a little GPU). A fire out of sight is remembered for "
-                                           L"8 s; one that goes out in plain view goes dark at once. In place of the torches above.";
 // Draw distance (shared/draw_distance.h): the slider on Home and on its own tab
 constexpr const wchar_t* kDrawDistanceTip = L"Sets five things at once, near (1) to far (8): how many rings of rooms round you the game draws, how far "
                                             L"out it draws monsters and objects (the models' radius: the edge of the drawn world), the game's sky dome "
@@ -596,6 +593,7 @@ std::vector<Item> g_items = {
     Status(L"reshade_note", L"IMPORTANT"),
     Status(L"arcane_sky", L"Arcane Sanctuary sky: not made yet"),
     Status(L"knock_props", L"Knockable props: off ([weight] knock_props, Weapon Weight)"),
+    Status(L"world_contact", L"World contact walls: off ([weight] world_contact, Weapon Weight)"),
     Status(L"kurast_boat", L"Kurast Docks canoe: not looked at yet"),
     Button(L"@run", L"arcane_make", L"Make the Arcane Sanctuary sky now",
            L"Reads the star layers and clouds out of your game's own files (read only) and makes the pictures the mod draws the "
@@ -656,6 +654,40 @@ std::vector<Item> g_items = {
            L"records 10 s of how the frames are drawn - keep playing and turn your head. Nothing is sent anywhere: "
            L"post the zip in our Discord (#diablo-2-vr)."),
     Status(L"collect", L"Collect logs: a zip on your desktop to post in our Discord"),
+    // [headset_shot] (vr/headset_shot.h): a screenshot of what reaches the headset, for a picture that is doubled, in the wrong eye, black or flat.
+    // The button asks the running game for one through the ini (take, a counter: vrcam takes one at each change, AskHeadsetShot); the key takes
+    // one in the game. Collect logs packs the newest. Unticked: neither, as before.
+    Only(kVr, Toggle(L"headset_shot", L"on", L"Headset screenshot", 0,
+           L"For a headset picture that is doubled, in the wrong eye, black or flat: saves exactly what the game hands to the headset - "
+           L"both eyes' pictures and the panels, with their sizes, angles and the eye distance - into the logs folder. Ticked: the button "
+           L"below and the key take one while the game runs; Collect logs packs the newest. Unticked: nothing, as before.")),
+    Only(kVr, ShowFor(L"headset_shot", L"on", 2u, Button(L"headset_shot", L"take", L"Screenshot of the headset picture",
+           L"With the game running in VR: the next frame that goes to the headset is saved - headset_shot_<time>_left.png, _right.png, "
+           L"_sbs.png (both side by side) and a .txt with the numbers, in the logs folder. Put the headset on first, so the picture "
+           L"is the one you see. Costs no stutter."))),
+    Only(kVr, ShowFor(L"headset_shot", L"on", 2u, Choice(L"headset_shot", L"key", L"Headset screenshot key in the game", 0,
+           {L"None", L"Scroll Lock", L"Pause", L"F8"},
+           L"A key that takes a headset screenshot in the game (while the game window has the keyboard). None: only the button above."))),
+    Only(kVr, ShowFor(L"headset_shot", L"on", 2u, Status(L"hshot", L"Headset screenshot: put the headset on, then press the button"))),
+    // [headset_shot] video (vr/headset_clip.h): 10 s of the same pictures as an .mp4, a button and a key of its own (Serg: «две кнопки»).
+    Only(kVr, Toggle(L"headset_shot", L"video", L"Headset video (10 s)", 0,
+           L"The same as the screenshot, as 10 seconds of video: both eyes side by side at half size, about 30 frames a second, as they go "
+           L"to the headset - for a picture that flickers, swims, doubles now and then or goes black. Ticked: the button below and the key "
+           L"record one while the game runs; Collect logs packs the newest. Unticked: nothing, as before.")),
+    Only(kVr, ShowFor(L"headset_shot", L"video", 2u, Button(L"headset_shot", L"video_take", L"Record 10 s video of the headset picture",
+           L"With the game running in VR: the next 10 seconds that go to the headset are recorded - headset_clip_<time>.mp4 and a .csv "
+           L"(each frame: stereo pair or flat picture, which eyes, its time) in the logs folder. Put the headset on first and play as when "
+           L"the problem shows. The log says what recording cost each frame."))),
+    Only(kVr, ShowFor(L"headset_shot", L"video", 2u, Choice(L"headset_shot", L"video_key", L"Headset video key in the game", 0,
+           {L"None", L"Scroll Lock", L"Pause", L"F8"},
+           L"A key that records 10 s of the headset picture in the game (while the game window has the keyboard). None: only the button above."))),
+    Only(kVr, ShowFor(L"headset_shot", L"video", 2u, Status(L"hclip", L"Headset video: put the headset on, then press the button"))),
+    // [headset_shot] grid (vr/headset_grid.h): a calibration grid in each eye's picture, native OpenXR, live.
+    Only(kVr, Toggle(L"headset_shot", L"grid", L"Calibration grid in the headset", 0,
+           L"Native OpenXR, F2 / F4: a grid over each eye's picture as it goes to the headset - a line every 10 degrees, numbered, a red cross "
+           L"where the eye looks straight ahead, a magenta ring at the picture's own middle, a big L or R. With the eyes right, the two grids "
+           L"become one and stay still on the world; seen double, tilted or swimming, a screenshot or video with it shows which eye is off. "
+           L"Live. Only in the headset (the window on the monitor has none).")),
     Toggle(L"update", L"check", L"Check for updates when this program opens", 1,
            L"Asks bodywalkvr.com for the newest version of the mod. Nothing is downloaded."),
     Needs(L"update", L"check", 1, Toggle(L"update", L"develop", L"Beta versions too (develop channel)", 0,
@@ -712,28 +744,33 @@ std::vector<Item> g_items = {
            L"the ceiling (heavy on the CPU). Every preset also sets the 3D in the headset: FlatVR stereo (Low, Medium, High) or FlatVR 3D depth "
            L"(Potato) - it switches Native OpenXR off (set it again on the Home page). With Native OpenXR on this shows Custom. "
            L"Changing any of them by hand shows Custom."),
-    // [render] no_reshade (docs/plan_no_reshade.md): ReShade64.dll not loaded; vrcam hooks D3D12 itself, for native OpenXR eyes by turns only.
-    Only(kVr, Toggle(L"render", L"no_reshade", L"No ReShade (Native OpenXR - eyes by turns only; restart the game)", 0,
-           L"For a weak PC: the game runs without ReShade - D2R VR does not load ReShade64.dll at all and hooks the game's graphics itself. "
-           L"Only for \"3D in the headset: Native OpenXR - eyes by turns\" (Home): one eye drawn a frame, the other made on the graphics card "
+    // [render] no_reshade (docs/plan_no_reshade.md): ReShade64.dll not loaded; vrcam hooks D3D12 itself - the flat game, and native OpenXR eyes by
+    // turns in VR. Shown in flat too (Serg, 2026-10-31: "why does the 2D mode start ReShade" - in flat there was no switch for it)
+    Toggle(L"render", L"no_reshade", L"No ReShade (restart the game)", 0,
+           L"The game runs without ReShade - D2R VR does not load ReShade64.dll at all and hooks the game's graphics itself. "
+           L"The flat game (a monitor): everything D2R VR draws there - the sky, the fog, the cave ceiling, the crosshair - comes from D2R VR "
+           L"itself with the box below; gone is only ReShade's own: its overlay (the Home key), its screenshots and any effect of your own in "
+           L"its presets. "
+           L"VR: only for \"3D in the headset: Native OpenXR - eyes by turns\" (Home): one eye drawn a frame, the other made on the graphics card "
            L"with the game's depth. The sky, the fog and the cave ceiling come back drawn by D2R VR itself (the box below). Off with it: the "
            L"overlays kept apart from the picture the second eye is made from (labels laid back, the wrist orbs - drawn into the picture), the "
            L"lights' fix for the square window, and the menus as a panel (they show as the flat picture). On a GTX 1050 Ti the game went "
            L"from about 44 to 53-60 frames a second without any effect. Read when the game starts: restart it after a change. With your own "
-           L"ReShade as dxgi.dll beside the game it does nothing (the game loads that one itself). Off (the default): ReShade as before.")),
-    // [render] native_effects (on): with no_reshade, D2R_DepthFog.fx run by the plugin itself (vr/fx_native.h)
-    Only(kVr, Needs(L"render", L"no_reshade", 1, Toggle(L"render", L"native_effects", L"Sky and fog without ReShade (drawn by D2R VR itself; restart the game)", 1,
+           L"ReShade as dxgi.dll beside the game it does nothing (the game loads that one itself). Off (the default): ReShade as before."),
+    // [render] native_effects (on): with no_reshade, D2R_DepthFog.fx run by the plugin itself (vr/fx_native.h) - flat and VR
+    Needs(L"render", L"no_reshade", 1, Toggle(L"render", L"native_effects", L"Sky and fog without ReShade (drawn by D2R VR itself; restart the game)", 1,
            L"With \"No ReShade\": D2R VR draws its own effect itself - the sky outdoors, the distance fog, the cave ceiling and the rest of what "
            L"ReShade drew in the picture (the switches on this tab and on Sky / Ceiling still decide which). Its shaders are built in the "
            L"background when the game starts and at each new picture size - the first time a while (several seconds; the picture has no sky "
            L"till then), then from a cache beside d2r_vr.ini at once. What it costs the graphics card is in the log every 10 s. Off: no effect "
-           L"at all - the lightest. Read when the game starts."))),
+           L"at all - the lightest. Read when the game starts.")),
     Slider(L"render", L"rings", L"Room rings around the hero", 1, 8, 1, 4, L"Extra room rings around the hero. With fog, 4-6 is enough."),
     Slider(L"render", L"model_radius", L"Model visibility radius", 150, 1000, 10, 210, L"The game's own is 150."),
     Choice(L"@skyfog", L"way", L"Sky and fog drawn by", 1, {L"The game draws them (new)", L"Our effect (old)"},
            L"Who draws the sky and the distance fog, both at once. The game (new): its own fog pass with our numbers and a sky dome of ours the "
            L"game draws itself - no frame time of ours (VR F4; without ReShade for its fog's options below). Our effect (old): the fog shader's "
-           L"sky and fog (ReShade's, or D2R VR's own without ReShade). Writes [sky] game_sky and [fog] game_fog together. Live."),
+           L"sky and fog (ReShade's, or D2R VR's own without ReShade). Writes [sky] game_sky and [fog] game_fog together. Live - the game's sky "
+           L"dome's files are made by this program at its start: the first time after an install or an update, restart a game already running."),
     Toggle(L"fog", L"enabled", L"Distance fog", 0,
            L"A distance fog. Who draws it: the selector above (our effect, or the game itself). With the sky on, it fades into the sky."),
     Needs(L"fog", L"enabled", 1, Needs(L"@skyfog", L"way", 1, Toggle(L"fog", L"light", L"Light fog (weak graphics cards)", 0,
@@ -751,16 +788,10 @@ std::vector<Item> g_items = {
     Toggle(L"@reshade", L"generic_depth", L"ReShade depth map (Generic Depth)", 1,
            L"ReShade's Generic Depth add-on finds the game's depth buffer every frame. Off saves GPU time, but the fog, "
            L"the sky, the ceiling and the 3D from the depth need it. Applies when the game is started again."),
-    Toggle(L"ceiling", L"enabled", L"Ceiling in caves (via ReShade)", 0,
-           L"A stone vault over the black void in dungeons, first person only."),
+    Toggle(L"ceiling", L"enabled", L"Ceiling in caves and dungeons", 0,
+           L"A ceiling over the black void in caves and dungeons, first person only (the Ceiling tab: who draws it, each room's height)."),
     Needs(L"ceiling", L"enabled", 1, Choice(L"ceiling", L"game_ceiling", L"Who draws the ceiling", 0, {L"Our effect (ReShade / D2R VR's own)", L"The game (lit rock)"},
            kGameCeilingTip)),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"steps", L"Ceiling relief steps", 4, 32, 1, 12,
-           L"Steps of the ray through the rock: more = finer relief, a dearer frame.")),
-    Needs(L"ceiling", L"enabled", 1, Toggle(L"ceiling", L"torches", L"Torches light the ceiling (CPU heavy!)", 0,
-           kTorchesTip)),
-    Needs(L"ceiling", L"enabled", 1, Toggle(L"ceiling", L"fire_from_picture", L"Any fire lights the ceiling (ReShade, from the picture)", 0,
-           kPictureFireTip)),
     Only(kVr, Slider(L"@game", L"Framerate Cap", L"Game frame cap, fps (0 = none)", 0, 300, 1, 180,
            L"The game's own frame cap (its Settings.json). Set from the headset's rate and the 3D choice (both on the Home page); can be changed by hand.")),
     Status(L"perf_restart", L"Need to restart the game: the render distance (room rings, models), the headset rate and the frame cap "
@@ -780,9 +811,11 @@ std::vector<Item> g_items = {
            L"its width), out to this many units (300 - 1000; 100 and 200 count as 300). Stones, grass and monsters keep the model visibility "
            L"radius. Needs room rings 3 or more (past the rooms the game builds there is nothing to draw), and the full fog and the sky dome "
            L"past it to be seen. Costs frames in forests and towns. From D2R VR Unleashed (bearstonem). Visual only. Live. 0 = off, as before."),
-    Needs(L"@skyfog", L"way", 0, Slider(L"sky", L"game_sky_radius", L"The game's sky: dome radius, units", 50, 30000, 10, 200,
-           L"How far round you the game's sky dome is laid, in the game's units (live). 200: a near horizon - the dome cuts the far world "
-           L"off in a clean circle, the game's fog over it. Farther the sky comes out of the fog. The log says the radius in use with each change.")),
+    Needs(L"@skyfog", L"way", 0, StartsFromConverted(L"game_sky_radius", &SkyRadiusMFromUnits,
+           Slider(L"sky", L"game_sky_radius_m", L"The game's sky: dome radius, m", 10, 7500, 0.5f, 50,
+           L"How far round you the game's sky dome is laid, in metres (4 of the game's units a metre; live). 50 m: a near horizon - the dome "
+           L"cuts the far world off in a clean circle, the game's fog over it. Farther the sky comes out of the fog. The log says the radius in "
+           L"use with each change."))),
     Toggle(L"fog", L"enabled", L"Distance fog", 0,
            L"A distance fog. Who draws it: the Sky tab's selector (our effect, or the game itself). With the sky on, it fades into the sky."),
     Needs(L"fog", L"enabled", 1, Slider(L"fog", L"start", L"Fog start", 0, 1000, 5, 150,
@@ -796,8 +829,10 @@ std::vector<Item> g_items = {
     Needs(L"@skyfog", L"way", 0, Toggle(L"sky", L"game_dome_caves", L"A black dome round you in caves", 0,
            L"Underground the game draws a black dome round your head at the models' visibility radius: no void past a ceiling's rim, the "
            L"game's fog fades into black walls - no glow behind the fires. The sky dome's own files (made by this program at its start). VR F4. Live.")),
-    Needs(L"sky", L"game_dome_caves", 1, Slider(L"sky", L"game_dome_caves_size", L"The cave dome: radius x model visibility radius", 0.25f, 2.0f, 0.05f, 1.0f,
-           L"1: the dome at the model visibility radius ([render] model_radius); 0.5: half of it (the radius as a diameter). Live.")),
+    Needs(L"sky", L"game_dome_caves", 1, StartsFromConverted(L"game_dome_caves_size", &CaveRadiusMFromShare,
+           Slider(L"sky", L"game_dome_caves_radius_m", L"The cave dome: radius, m", 5, 500, 0.5f, 200,
+           L"How far round you the black dome is laid underground, in metres (4 of the game's units a metre; the model visibility "
+           L"radius of 210 is 52.5 m). 200 by default. The Draw distance slider keeps its share of the model visibility radius. Live."))),
 
     Tab(L"Camera"),
     // One group per view (Home, F1 - F4 in VR, F1 - F3 flat), the shared ones first.
@@ -1036,6 +1071,27 @@ std::vector<Item> g_items = {
            L"only where he is, which way he faces and how fast he goes; the hips and the trunk stay the game's. In the game's walk, run and standing; any other "
            L"move (an attack, a leap, a knockback) hands the legs back to the game for its moment. In every view the hero is posed in; instead of \"Walking "
            L"backwards, the legs step backwards\". The drawn legs only. Live."),
+    Toggle(L"body", L"legs_rear", L"Legs held still while the hero moves (test)", 0,
+           L"While the hero walks or runs between the two cones below - sideways, diagonally - his hips and legs stand in the game's own standing pose and he "
+           L"glides: no step that could cross. Within the cone ahead the game's own walk and run; within the cone straight back the game's own forward walk "
+           L"and run played backwards. Standing, and turning on the spot, they are the game's own stance. Any other move (a blow, a cast, a hit) is the game's own. The trunk and the arms stay the game's. With the whole hero "
+           L"turned to your look. Instead of \"Walking backwards, the legs step backwards\". The drawn legs only. Live."),
+    Slider(L"body", L"legs_front_cone_deg", L"... the game's own legs within this cone ahead, ° (its whole width)", 0, 360, 5, 90,
+           L"With the box above: going within this cone straight ahead (90: 45° either side of where the body faces) the legs are the game's own walk and "
+           L"run; outside it they are held. A short blend at the edge. 0: held whenever he goes; 360: never held. Live."),
+    Slider(L"body", L"legs_rear_cone_deg", L"... the game's walk played backwards within this cone straight back, ° (its whole width)", 0, 360, 5, 90,
+           L"With the box above: going within this cone straight back (90: 45° either side of straight back) the legs play the game's own forward walk "
+           L"backwards - running, its run - at the pace he goes, facing with the body, never crossed; between it and the cone ahead they are held. A short "
+           L"blend at each edge. 0: never played backwards. Live."),
+    Toggle(L"body", L"legs_side_ragdoll", L"... between the cones the hips and legs the ragdoll's gait", 0,
+           L"With the box above: going between the two cones - sideways, diagonally - instead of standing held, his pelvis and both legs are the ragdoll "
+           L"library's own gait (d2r_vr_weight.dll): its walk, run and sprint cycles at the stride and cadence of his speed, the hips bobbing and swaying "
+           L"with them, a flight running, the feet's path turned the way he goes - never across the middle, never crossed. The trunk is the game's. A short "
+           L"blend into the cones. Without the library (or an older one) the legs are held, as before. Live."),
+    Toggle(L"body", L"legs_rear_cycle", L"... instead: going backwards, the game's walk and run played backwards (test)", 0,
+           L"With the box above: instead of holding the legs, going into the rear half - more than 90° from where the body faces - they play the game's own "
+           L"forward walk backwards, running its run, at the pace you go, facing with the body; ahead they are the game's own walk. Crossing 90° the step "
+           L"changes direction on the pose drawn. The drawn legs only. Live."),
     Slider(L"body", L"yaw", L"Body turn correction, °", -180, 180, 5, 0,
            L"Added to where the hero faces (the arms too) if he stands sideways: try 90, -90 or 180."),
     Only(kVr, Group(L"Hands (arms on VR controllers)", L"How the hero's hands follow your controllers: whether they turn with them, and small up / down, left / right and roll angles to make each hand lie right.")),
@@ -1541,12 +1597,6 @@ std::vector<Item> g_items = {
     Toggle(L"openxr", L"third_gaze", L"F2: the camera swings round the hero with the gaze", 0,
            L"Off: the camera stays behind the hero on his turn and the head looks round freely. On: it swings round him "
            L"with the head, as on FlatVR's screen."),
-    Toggle(L"openxr", L"haptics", L"Controller vibration", 0,
-           L"A short pulse in the hand when a blow of yours lands, a belt potion is taken or drunk, the laser clicks on a menu, "
-           L"or you pick something up or open it. The game itself is not changed - the pulses only watch. Native OpenXR only "
-           L"(the headset's runtime drives the motors); off: silent, as before. Live. F4 only."),
-    Needs(L"openxr", L"haptics", 1, Slider(L"openxr", L"haptics_scale", L"Vibration: strength", 0.2f, 2.0f, 0.05f, 1.0f,
-           L"All pulses stronger or weaker; 1 = the usual (a landed blow is about 70% of the motor's strength). Live.")),
     Toggle(L"openxr", L"frame_profile", L"Steam Frame controllers: their own layout", 1,
            L"Native OpenXR. When the runtime offers the Steam Frame's controllers as themselves (XR_VALVE_frame_controller_interaction), "
            L"they get their own buttons instead of the runtime's stand-in for a Quest or an Index controller: the right A and B as "
@@ -1557,13 +1607,6 @@ std::vector<Item> g_items = {
            L"Native OpenXR, Valve Index controllers. The Index reads its grip from the fingers round the handle, so a relaxed hand that "
            L"only holds the controller counts as a squeezed grip (a weapon or a potion taken, the laser's Shift). On: the grip is the "
            L"handle's force sensor - only a real squeeze counts. Other controllers: nothing changes. Live. Off: as before."),
-    Needs(L"openxr", L"haptics", 1, Toggle(L"openxr", L"haptics_hand_actions", L"Vibration: a channel of its own for each hand", 1,
-           L"Each controller's motor gets a vibration action of its own, so a pulse can only go to the hand it is for (some runtimes sent "
-           L"a pulse of the shared action to the wrong hand). Taken when the headset session starts. Off: one action for both hands, "
-           L"as before.")),
-    Needs(L"openxr", L"haptics", 1, Toggle(L"openxr", L"haptics_stop", L"Vibration: stop each pulse on time", 1,
-           L"Each pulse is stopped by its own call when its time is up, even while the game is loading or stalls - some controllers "
-           L"(Steam Frame's) went on buzzing past a short pulse. Live. Off: the runtime ends a pulse by itself, as before.")),
     Group(L"Stereo 3D", L"How the two eyes are drawn: real stereo, both eyes from one game frame, and the eyes-by-turns fixes (the other eye made from the depth, ghosts, rims). Tick Swap eyes if the depth looks inside out."),
     Toggle(L"stereo", L"afr", L"Real stereo (alternate frames)", 0,
            L"The game draws the left eye, the right eye, the left... Needs the FlatVR addon in the game, "
@@ -1932,6 +1975,12 @@ std::vector<Item> g_items = {
            L"controllers are the panel's: nothing of them reaches the game, and it never sends the game a click. The long press "
            L"again, B / Y or Menu close it. Two grips held mean nothing (the old both-grips + click way is on the Debug tab). "
            L"Off: no panel. F4 only."),
+    Needs(L"openxr", L"headset_settings", 1, Toggle(L"openxr", L"headset_players", L"Players from the headset", 0,
+           L"The headset settings' Options page gets a working Players (difficulty) row: the game's own players count, 1 - 8, as the "
+           L"chat command /players N sets it (the game's Options > Gameplay \"Offline Difficulty Scaling\"). - and + send the game that "
+           L"very line, no keyboard needed; the game checks it, keeps it and says so, and the row shows the count read back from the game. "
+           L"The game takes it only in a game of your own: single player, or as the host of a TCP/IP game. Off: the row only shows the "
+           L"game's count, nothing is sent. Live.")),
     // [screen] menu_distance_m: vrcam asks FlatVR for it through Game Link (GameState, host API 6).
     Group(L"Belt potions", L"The potions of your belt hang on the hero's hips as the game's own models (F4). Take one with the grip and tip it at your mouth to drink, throw it on the ground or to your mercenary. The sliders set where the belt hangs, a hand's reach, how a bottle sits in the hand and how it lights up."),
     Toggle(L"hands", L"belt_models", L"Potions on the belt, the game's own models", 1,
@@ -2122,9 +2171,29 @@ std::vector<Item> g_items = {
            L"set at its monster's depth, by the monster's distance from you, as the item labels are (Item labels: at their items): 100 = exactly there, 0 = where the "
            L"game leaves it (the stereo depth below). Live."),
     // [hud] monster_near_body (vr/plate_look.h): the plate at its own stereo depth, apart from the item labels' (labels_near_body)
-    Slider(L"hud", L"monster_near_body", L"Name over a monster: stereo depth", -20, 20, 0.1f, 1.6f,
+    Needs(L"hud", L"monster_stereo_by_distance", 0, Slider(L"hud", L"monster_near_body", L"Name over a monster: stereo depth", -20, 20, 0.1f, 1.6f,
            L"First person (F4) in stereo: the name and bar over the monster you target nearer (+) or farther (-), % of the half screen - its own, "
-           L"apart from the item labels' (\"Item labels: stereo depth on top\" above does not move it). Live."),
+           L"apart from the item labels' (\"Item labels: stereo depth on top\" above does not move it). Replaced by the two depths below while "
+           L"\"stereo depth by distance\" is ticked. Live.")),
+    // [hud] monster_stereo_by_distance, monster_stereo_near / _far, monster_stereo_near_m / _far_m (vr/plate_look.h DepthAt)
+    Toggle(L"hud", L"monster_stereo_by_distance", L"Name over a monster: stereo depth by distance", 0,
+           L"First person (F4) in stereo. The plate's stereo depth follows the monster's distance from your eyes: the near depth for a monster close by, "
+           L"the far depth for one far off, smoothly in between, and a new target glides to its depth rather than jumping. Off: one depth for every "
+           L"monster (the slider above). Live."),
+    Needs(L"hud", L"monster_stereo_by_distance", 1, Slider(L"hud", L"monster_stereo_near", L"Stereo depth: near monster", -20, 20, 0.1f, 2.0f,
+           L"The plate's stereo depth (% of the half screen, + nearer) for a monster at the near distance below or closer. Live.")),
+    Needs(L"hud", L"monster_stereo_by_distance", 1, Slider(L"hud", L"monster_stereo_far", L"Stereo depth: far monster", -20, 20, 0.1f, 1.0f,
+           L"The plate's stereo depth for a monster at the far distance below or farther. Live.")),
+    Needs(L"hud", L"monster_stereo_by_distance", 1, Slider(L"hud", L"monster_stereo_near_m", L"Stereo depth: near up to, m", 0, 30, 0.5f, 1.5f,
+           L"From your eyes. 1.5 m = the plate's own \"near\" (the size far away above uses the same). Live.")),
+    Needs(L"hud", L"monster_stereo_by_distance", 1, Slider(L"hud", L"monster_stereo_far_m", L"Stereo depth: far from, m", 0.5f, 60, 0.5f, 10,
+           L"From your eyes. 10 m = the plate's own \"far\" (the size far away above uses the same); never past the edge of the drawn world "
+           L"(Draw distance). Live.")),
+    // [hud] monster_plate_smooth (vr/plate_world.h SteadyHead, SteadyValue)
+    Toggle(L"hud", L"monster_plate_smooth", L"Name over a monster: steady", 0,
+           L"First person (F4). The plate no longer shakes with its monster's animation (the bob of a walk, the shake of a blow) or the game's steps: it hangs "
+           L"on the monster's head held by a spring - still at rest, close behind a monster that runs - and its distance (its size far away, its stereo "
+           L"depth) is held the same way. A turn of your head moves it with the world. Off: the plate on the game's own head point, every frame. Live."),
     Toggle(L"hud", L"ordinary_mob_bars", L"Hide the plates of ordinary monsters (prototype)", 0, kOrdinaryBarsTip),
     Group(L"Low life: red heartbeat vignette", L"A warning when your life is low (native OpenXR, F4): the edges of your view tint red and beat like a heart, with a heartbeat in the controllers if you like. The sliders set when it starts, how red, how large and its shape. A wounded mercenary can be tinted red too. Needs the new D2R_DepthFog.fx."),
     // [hud] low_hp_vignette, low_hp_threshold, low_hp_intensity_start / _end, low_hp_saturation, low_hp_radius, low_hp_softness,
@@ -2627,10 +2696,17 @@ std::vector<Item> g_items = {
            L"effect measures what the game's fog shows where it is complete, moves each fogged pixel toward the act's colour by the game's "
            L"share, and makes up the share the game left out to our own fog's - the far land, the world's edge and far planes hidden as by "
            L"our old fog. Never on the game's sky. Our effect's pass, which runs anyway for the sky. Live. Off: as the game lays it.")),
-    Needs(L"@skyfog", L"way", 0, Toggle(L"fog", L"game_fog_before_fx", L"The game's fog before smoke and fire", 0,
-           L"The fog laid on the scene before the game adds its smoke, mist and fire, so they lie over the fogged world unfogged - without it "
-           L"the game's fog pass fogs them by the wall behind them (haze cut into black holes in front of far walls). One pass of ours on the "
-           L"graphics card (its cost in the log's 10 s line). Without ReShade only. Applies when the game is started again.")),
+    Toggle(L"fog", L"game_fog_before_fx", L"The fog before smoke and fire", 0,
+           L"The fog laid on the scene before the game adds its smoke, mist, fire and spells, so they lie over the fogged world unfogged - "
+           L"without it the fog is laid over them by the wall behind them (haze cut into black holes in front of far walls, a fire spell "
+           L"fading as it flies past a far wall). The game's fog or our effect's, whichever draws it. One pass of ours on the graphics card "
+           L"(its cost in the log's 10 s line). With ReShade: our effect's fog only, VR first person only. Applies when the game is started "
+           L"again."),
+    Needs(L"fog", L"game_fog_before_fx", 1, Toggle(L"fog", L"game_fog_fx_depth", L"Far smoke and fire fade into the fog", 0,
+           L"With the fog before smoke and fire: the smoke, mist, fire and spells fogged too, each by its own distance - near ones as they "
+           L"are, far ones fading into the fog with the world behind them. Without it a far camp fire stands at full light in full fog and "
+           L"the see-through edges of far fences show as specks on the horizon. The game's effects are drawn once more for their depth alone "
+           L"(the cost in the log's 10 s lines). Without ReShade only. Live. Off: the effects never fogged.")),
     Needs(L"@skyfog", L"way", 0, Toggle(L"fog", L"game_fog_height", L"The game's fog thins with height", 0,
            L"The game's own fog pass leaves the sky clear: the fog as it is up to the fog's top less its softness, fading out above that, none "
            L"above the top (world units above your eyes). For the game's sky dome, so its sky shows above the fogged horizon. Its own pass, "
@@ -2660,8 +2736,9 @@ std::vector<Item> g_items = {
            L"sky and the black beyond the world keep the fog as before. With an act's own fog colour (World > Sky); VR F4 "
            L"only. Applies when the game is started again; off = the fog as before. Over \"Fog spares fire\" when both are on.")),
     Needs(L"fog", L"enabled", 1, Toggle(L"fog", L"caves", L"Fog in caves and dungeons", 1,
-           L"Off: no fog underground (every area that is not outdoors); the open air keeps it. The Arcane Sanctuary has its own switch "
-           L"(Sky > Arcane Sanctuary: fog fades into its sky).")),
+           L"Off: no fog underground (every area that is not outdoors) - neither our effect's nor the game's own fog, and nothing laid "
+           L"before the smoke and fire there; the open air keeps it. The Arcane Sanctuary has its own switch (Sky > Arcane Sanctuary: fog "
+           L"fades into its sky): on, it keeps its fog with either fog. Live.")),
     Needs(L"fog", L"enabled", 1, Toggle(L"fog", L"ease_in", L"Fog eased in, no hard ring", 0,
            L"The fog fades in softly over its first 40 units past its start: no sharp edge round the clear ground at your feet. Wherever our "
            L"curve draws the fog: our effect, and the game's fog with \"The game's fog by our curve\" on (not the game's own curve). From "
@@ -2677,6 +2754,26 @@ std::vector<Item> g_items = {
            L"How much the full fog covers in caves: 1 = the far end is gone in the fog colour, less = it shows through.")),
     Needs(L"fog", L"enabled", 1, Color(L"fog", L"color_caves", L"Fog colour in caves", L"same as the act",
           L"Caves, dungeons, crypts: every area that is not outdoors. Empty (x) = that act's colour.")),
+    Group(L"Arcane Sanctuary", L"The fog in the Arcane Sanctuary (act 2), set apart from the caves': it is not outdoors, so it takes the "
+          L"caves' fog until \"Its own fog\" is ticked. Whether there is fog under its own sky at all is on the Sky tab (Arcane Sanctuary: "
+          L"fog fades into its sky)."),
+    Needs(L"fog", L"enabled", 1, Toggle(L"fog", L"arcane_own", L"Arcane Sanctuary: its own fog", 0,
+          L"The fog in the Arcane Sanctuary set on its own, with the values below; the caves keep theirs. Live. Off: it takes the caves' "
+          L"start, end, strength and colour, as before.")),
+    Needs(L"fog", L"arcane_own", 1, Slider(L"fog", L"arcane_start", L"Arcane Sanctuary: fog start", 0, 1000, 5, 100,
+          L"Where the fog begins in the Arcane Sanctuary. World units (the hero is ~7.5 tall). Live.")),
+    Needs(L"fog", L"arcane_own", 1, Slider(L"fog", L"arcane_end", L"Arcane Sanctuary: full fog", 10, 2000, 10, 200,
+          L"Where the fog is complete in the Arcane Sanctuary. World units (the hero is ~7.5 tall). Live.")),
+    Needs(L"fog", L"arcane_own", 1, Slider(L"fog", L"arcane_strength", L"Arcane Sanctuary: fog strength", 0, 1, 0.01f, 1,
+          L"How much the full fog covers there: 1 = the far platforms are gone in the fog, less = they show through. Live.")),
+    Needs(L"fog", L"arcane_own", 1, Slider(L"fog", L"arcane_curve", L"Arcane Sanctuary: fog curve", 0.3f, 4, 0.05f, 1,
+          L"How the fog grows from its start to full: 1 = evenly, more = it stays thin longer and thickens near the end, less = it "
+          L"thickens soon after the start. Live.")),
+    Needs(L"fog", L"arcane_own", 1, Color(L"fog", L"arcane_color", L"Arcane Sanctuary: fog colour", L"same as caves",
+          L"The fog's colour in the Arcane Sanctuary. Empty (x) = the caves' colour (with the game's fog never black there). Live.")),
+    Needs(L"fog", L"arcane_own", 1, Toggle(L"fog", L"arcane_into_sky", L"Arcane Sanctuary: fog fades into the sky behind", 1,
+          L"Under its own sky (Sky tab) the fog is the sky straight behind each point: the far platforms dissolve into the void. Off: they "
+          L"fade into the fog colour above instead. Live.")),
     Toggle(L"render", L"game_height_fog", L"The game's own height fog", 0,
            L"Only the act 2 town has it. From our camera its edge is a hard line across the picture with a pale "
            L"veil above it (the game's camera never sees that edge). Off: vrcam sets it to 0."),
@@ -2764,18 +2861,23 @@ std::vector<Item> g_items = {
     Choice(L"@skyfog", L"way", L"Sky and fog drawn by", 1, {L"The game draws them (new)", L"Our effect (old)"},
            L"Who draws the sky and the distance fog, both at once. The game (new): its own fog pass with our numbers and a sky dome of ours the "
            L"game draws itself - no frame time of ours (VR F4; without ReShade for its fog's options below). Our effect (old): the fog shader's "
-           L"sky and fog (ReShade's, or D2R VR's own without ReShade). Writes [sky] game_sky and [fog] game_fog together. Live."),
+           L"sky and fog (ReShade's, or D2R VR's own without ReShade). Writes [sky] game_sky and [fog] game_fog together. Live - the game's sky "
+           L"dome's files are made by this program at its start: the first time after an install or an update, restart a game already running."),
     Group(L"Sky", L"A sky in the black void beyond the world, only in the open air. Set the clouds, whether the sky turns slowly, the sky over the dark rim round roofs and trees, and the Arcane Sanctuary's own stars all round and its fog."),
     Toggle(L"sky", L"enabled", L"Sky outdoors", 0,
            L"A sky in the black void beyond the world. Only in the open air; hidden while a menu or side panel is open."),
-    Needs(L"@skyfog", L"way", 0, Slider(L"sky", L"game_sky_radius", L"The game's sky: dome radius, units", 50, 30000, 10, 200,
-           L"How far round you the game's sky dome is laid, in the game's units (live). 200: a near horizon - the dome cuts the far world "
-           L"off in a clean circle, the game's fog over it. Farther the sky comes out of the fog. The log says the radius in use with each change.")),
+    Needs(L"@skyfog", L"way", 0, StartsFromConverted(L"game_sky_radius", &SkyRadiusMFromUnits,
+           Slider(L"sky", L"game_sky_radius_m", L"The game's sky: dome radius, m", 10, 7500, 0.5f, 50,
+           L"How far round you the game's sky dome is laid, in metres (4 of the game's units a metre; live). 50 m: a near horizon - the dome "
+           L"cuts the far world off in a clean circle, the game's fog over it. Farther the sky comes out of the fog. The log says the radius in "
+           L"use with each change."))),
     Needs(L"@skyfog", L"way", 0, Toggle(L"sky", L"game_dome_caves", L"A black dome round you in caves", 0,
            L"Underground the game draws a black dome round your head at the models' visibility radius: no void past a ceiling's rim, the "
            L"game's fog fades into black walls - no glow behind the fires. The sky dome's own files (made by this program at its start). VR F4. Live.")),
-    Needs(L"sky", L"game_dome_caves", 1, Slider(L"sky", L"game_dome_caves_size", L"The cave dome: radius x model visibility radius", 0.25f, 2.0f, 0.05f, 1.0f,
-           L"1: the dome at the model visibility radius ([render] model_radius); 0.5: half of it (the radius as a diameter). Live.")),
+    Needs(L"sky", L"game_dome_caves", 1, StartsFromConverted(L"game_dome_caves_size", &CaveRadiusMFromShare,
+           Slider(L"sky", L"game_dome_caves_radius_m", L"The cave dome: radius, m", 5, 500, 0.5f, 200,
+           L"How far round you the black dome is laid underground, in metres (4 of the game's units a metre; the model visibility "
+           L"radius of 210 is 52.5 m). 200 by default. The Draw distance slider keeps its share of the model visibility radius. Live."))),
     Needs(L"sky", L"enabled", 1, Slider(L"sky", L"clouds", L"Clouds (0 = clear)", 0, 2, 0.05f, 1, L"Times each area's own cloud cover.")),
     Needs(L"sky", L"enabled", 1, Toggle(L"sky", L"drift", L"The sky turns slowly (clouds drift)", 0,
            L"The painted sky goes slowly round you. Off: it stands still - the stars painted into the night skies went round with the clouds.")),
@@ -2785,6 +2887,25 @@ std::vector<Item> g_items = {
            L"every other frame. Ticked: the sky goes over that pixel when it is dim (a glow's light edge stays); silhouettes come out a "
            L"pixel thinner. First person (F4) only. Unticked: as before. Live. Install the DLL and D2R_DepthFog.fx together. "
            L"From bearstonem/d2r-pcvr."))),
+    Needs(L"@skyfog", L"way", 0, Toggle(L"sky", L"dome_past_far", L"The game's sky: past the game's haze in the flat game", 0,
+           L"The game's own passes read the depth only to the far end of its range (about 1060 units) and take what lies past it as the sky. "
+           L"In the flat game's views the dome, nearer than that on part of the screen, got the game's distance haze there and none past it: "
+           L"a darker disc in a light veil, its size changing with the radius. Ticked, outside VR first person the dome is laid at least as far as "
+           L"that range's end at the screen's farthest corner, so all of it is past the haze - one sky; a larger radius stays as set. VR first "
+           L"person keeps the radius as set. Live.")),
+    Needs(L"@skyfog", L"way", 0, Toggle(L"sky", L"dome_true_colour", L"The game's sky: our sky's colours", 0,
+           L"The game draws our painted sky in its own scene, through its tone map and the area's colour grading - darker than our effect's "
+           L"sky, which is drawn in the picture's own colours. Ticked, our effect measures what the game shows of the dome against the "
+           L"painted sky it was made from and brings the dome to it, every area by its own numbers. A multiply in the effect's pass, which "
+           L"runs anyway for the dome's horizon. With \"Sky follows the game's day and night\" the dome follows the game's time of day as our sky does. Off: as the "
+           L"game shows it. Live.")),
+    Needs(L"@skyfog", L"way", 0, Toggle(L"sky", L"dome_in_game_colour", L"The game's sky: its colours drawn by the game", 1,
+           L"Our effect recoloured the game-drawn sky after the game had drawn the trees, the palisade and the roofs over it: their edges, "
+           L"blended into the sky as the game drew it, kept its old colour - a light outline round every branch at night. Ticked, the game "
+           L"draws the sky from a picture of ours instead, made from its own with the night picture, the day and night dimming, the brightness "
+           L"of each period of the day and the measured colours in it - every edge blends into the right sky. Without ReShade only (our own "
+           L"effects). Counts from the game's next start; unticked live, the sky goes back to the game's own colours at once and our effect "
+           L"recolours it as before.")),
     Needs(L"@skyfog", L"way", 0, Toggle(L"sky", L"dome_fog_horizon", L"The game's sky: its horizon into the fog", 1,
            L"The game-drawn sky's low part sinks into the act's fog colour, as our own sky's did: the fogged land meets the sky with "
            L"no hard edge, and the colours match where they meet. Only while a fog is drawn. Off: the sky as the game draws it. Live.")),
@@ -2823,6 +2944,24 @@ std::vector<Item> g_items = {
            L"The game's light runs 0..255 (vrcam's log writes it as it changes). From this up: full day.")),
     Needs(L"sky", L"day_night", 1, Slider(L"sky", L"light_night", L"Game light that is full night", 0, 254, 1, 65,
            L"From this down: full night. In between the sky goes from one to the other.")),
+    Needs(L"sky", L"day_night", 1, Slider(L"sky", L"bright_dawn", L"Sky brightness: end of night, dawn", 0, 3, 0.01f, 1,
+           L"The sky's brightness as dawn begins - the game's dome and our effect's sky alike, times what the day and night above gives (1: as it "
+           L"is). It eases to the next period's by the game's own light. The game names its periods (debug_mode's time key shows them). Live.")),
+    Needs(L"sky", L"day_night", 1, Slider(L"sky", L"bright_day_start", L"Sky brightness: end of dawn, start of day", 0, 3, 0.01f, 1,
+           L"The sky's brightness as the day begins - the game's dome and our effect's sky alike, times what the day and night above gives (1: as it "
+           L"is). It eases to the next period's by the game's own light. The game names its periods (debug_mode's time key shows them). Live.")),
+    Needs(L"sky", L"day_night", 1, Slider(L"sky", L"bright_day", L"Sky brightness: day", 0, 3, 0.01f, 1,
+           L"The sky's brightness through the day, until the light falls toward dusk - the game's dome and our effect's sky alike, times what the day and night above gives (1: as it "
+           L"is). It eases to the next period's by the game's own light. The game names its periods (debug_mode's time key shows them). Live.")),
+    Needs(L"sky", L"day_night", 1, Slider(L"sky", L"bright_dusk", L"Sky brightness: end of day, dusk", 0, 3, 0.01f, 1,
+           L"The sky's brightness as dusk begins - the game's dome and our effect's sky alike, times what the day and night above gives (1: as it "
+           L"is). It eases to the next period's by the game's own light. The game names its periods (debug_mode's time key shows them). Live.")),
+    Needs(L"sky", L"day_night", 1, Slider(L"sky", L"bright_night_start", L"Sky brightness: end of dusk, start of night", 0, 3, 0.01f, 1,
+           L"The sky's brightness as the night begins - the game's dome and our effect's sky alike, times what the day and night above gives (1: as it "
+           L"is). It eases to the next period's by the game's own light. The game names its periods (debug_mode's time key shows them). Live.")),
+    Needs(L"sky", L"day_night", 1, Slider(L"sky", L"bright_night", L"Sky brightness: night", 0, 3, 0.01f, 1,
+           L"The sky's brightness through the night, until the light rises toward dawn - the game's dome and our effect's sky alike, times what the day and night above gives (1: as it "
+           L"is). It eases to the next period's by the game's own light. The game names its periods (debug_mode's time key shows them). Live.")),
     Group(L"Act 1 (night, storm)", L"The sky of act 1: its brightness, the panorama picture (empty = the shader draws this sky itself), the zenith, and the act's fog colour, which its caves use too."),
     Slider(L"sky", L"brightness_act1", L"Brightness", 0, 2, 0.05f, 1),
     File(L"sky", L"texture_act1", L"Sky panorama", L"D2R_Sky_ours\\D2R_Sky_act1.png", kSkyPicture),
@@ -2855,10 +2994,10 @@ std::vector<Item> g_items = {
     Color(L"fog", L"color_snow", L"Fog colour", L"from the sky", kFogColour),
 
     Tab(L"Ceiling"),
-    Group(L"Cave ceiling", L"A stone vault drawn over the black void in caves, at its true depth in both eyes; first person only. Set the tile size and relief, a far wall and a floor below to close the void, the stone's contrast, detail and wet shine, and how torches and monsters with fire light it."),
-    Toggle(L"ceiling", L"enabled", L"Ceiling in caves (via ReShade)", 0,
-           L"A stone vault over the black void in caves, at its true depth in both eyes. "
-           L"First person only; for now act 1's caves, crypts, barracks, catacombs and cathedral and act 2's sewers and palace."),
+    Group(L"Cave ceiling", L"A ceiling over the black void in caves and dungeons, first person only: who draws it, the game's own ceiling's parts (its rim, the barracks' beams, the cathedral's and the Worldstone's domes) and each room's height below."),
+    Toggle(L"ceiling", L"enabled", L"Ceiling in caves and dungeons", 0,
+           L"A ceiling over the black void in caves and dungeons, first person only - the game's own (its lit stone) or our effect's "
+           L"vault, as \"Who draws the ceiling\" says; each room's height below."),
     Needs(L"ceiling", L"enabled", 1, Choice(L"ceiling", L"game_ceiling", L"Who draws the ceiling", 0, {L"Our effect (ReShade / D2R VR's own)", L"The game (lit rock)"},
            kGameCeilingTip)),
     Needs(L"ceiling", L"game_ceiling", 1, Toggle(L"ceiling", L"game_ceiling_wall", L"The game's ceiling: bent down into a wall at its rim", 0,
@@ -2900,44 +3039,9 @@ std::vector<Item> g_items = {
            L"once you set it, always wins. Our effect's vault and the game's ceiling both; the game's rock that hangs lower rests its "
            L"lowest point on the walls. Off, or a room built with no walls of that kind: 18 over the floor where no height is set. "
            L"The log says each room's height and where it comes from. Live at the next area change.")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"scale", L"Tile size", 1, 100, 0.5f, 10,
-           L"World units per tile of the relief; the stone picture spans 4 tiles.")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"steps", L"Relief steps", 4, 32, 1, 12,
-           L"Steps of the ray through the rock: more = finer relief, a dearer frame.")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"wall_distance", L"Far wall distance (0 = none)", 0, 600, 5, 200,
-           L"A wall of the same stone this far round the hero, world units: the black void past the floor's edge is closed. "
-           L"It sinks in the fog like the rest.")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"floor_depth", L"Floor below the floor (0 = none)", 0, 100, 0.5f, 5,
-           L"Stone this far under the hero's floor, world units: looking down past the drawn floor's edge shows it, not the void.")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"contrast", L"Stone contrast", 0, 4, 0.05f, 1.6f,
-           L"The picture's fine detail times this: more = crisper, harder rock, like the walls.")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"detail", L"Detail relief", 0, 4, 0.05f, 0.8f,
-           L"How far the picture's grains and cracks stand out of the rock: they catch the light.")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"wet", L"Wet shine", 0, 2, 0.05f, 0.35f,
-           L"Glints of the hero's and the torches' light on wet rock, as on the walls (0 = dry).")),
-    Needs(L"ceiling", L"enabled", 1, Toggle(L"ceiling", L"torches", L"Torches light the ceiling (CPU heavy!)", 0,
-           kTorchesTip)),
-    Needs(L"ceiling", L"enabled", 1, Toggle(L"ceiling", L"fire_from_picture", L"Any fire lights the ceiling (ReShade, from the picture)", 0,
-           kPictureFireTip)),
-    NeedsEither(L"ceiling", L"torches", L"fire_from_picture", 1, Slider(L"ceiling", L"torch_brightness", L"Torch glow", 0, 3, 0.05f, 0.6f,
-           L"How bright the torches' light on the ceiling is. A small flame gives less light than a big one.")),
-    NeedsEither(L"ceiling", L"torches", L"fire_from_picture", 1, Slider(L"ceiling", L"torch_radius", L"Torch light reach", 3, 100, 1, 20,
-           L"World units from a fire where its light on the ceiling is down to half.")),
-    Needs(L"ceiling", L"fire_from_picture", 1, Slider(L"ceiling", L"fire_nearer", L"Fire light nearer to you", 0, 60, 0.5f, 0,
-           L"A flame is drawn without depth, so the fire found in the picture is put where the wall or the floor behind "
-           L"it is, and its light on the ceiling sits behind the fire. This brings it nearer to you, world units along "
-           L"your line of sight to the flame (the hero is ~7.5 tall). 0 = where the depth says.")),
-    Needs(L"ceiling", L"torches", 1, Slider(L"ceiling", L"torch_warmth", L"Torch warmth (yellow)", 0, 1, 0.05f, 0.6f,
-           L"0 = the game's own pale torch colour; more = the orange-yellow of fire on the stone.")),
-    Needs(L"ceiling", L"torches", 1, Slider(L"ceiling", L"torch_distance", L"Torch light distance", 10, 300, 5, 80,
-           L"Only torches this near the hero light the ceiling; farther ones fade out - those of the next hall shone over the walls.")),
-    Needs(L"ceiling", L"torches", 1, Toggle(L"ceiling", L"monster_lights", L"Monsters with fire light the ceiling", 0,
-           L"The torches the Fallen carry and their shamans' fire. Off: the monsters are not looked at at all.")),
-    Needs(L"ceiling", L"monster_lights", 1, Slider(L"ceiling", L"monster_brightness", L"Monsters' fire glow", 0, 2, 0.05f, 0.35f,
-           L"The torches the Fallen carry and their shamans' fire, times the torches' glow. 0 = none.")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"torch_halo", L"Torch halo in caves", 0, 1, 0.05f, 1,
-           L"How much of the game's own glow round a flame shows over the ceiling and the far floor (1 = all). "
-           L"The flame itself always stays.")),
+    Needs(L"ceiling", L"game_ceiling_wall", 1, Slider(L"ceiling", L"floor_depth", L"The rim's wall: how far below the floor (0 = none)", 0, 100, 0.5f, 5,
+           L"How far under the hero's floor the game's ceiling's rim wall reaches, world units: looking down past the drawn floor's edge "
+           L"shows that stone, not the void.")),
     Group(L"Light in caves", L"Brighter caves and dungeons through the game's own light, for a headset that loses the darkest shades. Set the hero's light circle, its strength and falloff, and the fill light. Only the drawing changes, nothing the game plays by. Works without the ceiling."),
     Toggle(L"cave_light", L"enabled", L"Brighter caves and dungeons", 0,
            L"The game's own light in caves, dungeons and crypts (every area that is not outdoors), given before the game "
@@ -2960,237 +3064,73 @@ std::vector<Item> g_items = {
     Needs(L"cave_light", L"enabled", 1, Slider(L"cave_light", L"ambient_min", L"Fill light at least", 0, 5, 0.05f, 0,
            L"Whatever the dungeon has, at least this much: only for the darkest ones (the act 2 tombs: 0.12). Where the "
            L"area's own times the slider above is more already (act 1's caves: 2 x 2 = 4), it does nothing. 0 = no floor.")),
-    Group(CeilTitle("act1_caves"), CeilHelp("act1_caves", L"The ceiling over act 1's caves: its height over the floor, brightness, how far the hero's light reaches on it, the relief, and the stone picture with its size, contrast, detail and wet shine.")),
-    Needs(L"ceiling", L"enabled", 1, Toggle(L"ceiling", L"torches", L"Torches light the ceiling (CPU heavy!)", 0,
-           kTorchesTip)),
-    Needs(L"ceiling", L"enabled", 1, Toggle(L"ceiling", L"fire_from_picture", L"Any fire lights the ceiling (ReShade, from the picture)", 0,
-           kPictureFireTip)),
+    Group(CeilTitle("act1_caves"), CeilHelp("act1_caves", L"The ceiling's height over this room's floor - 0: on its own walls' top (\"Ceiling height from the room's walls\"), else 18.")),
     Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"height_act1_caves", L"Height over the floor (0 = from the walls)", 0, 150, 0.1f, 30,
            L"World units (the hero is ~7.5 tall). Below the walls' tops they pierce the ceiling. 0: on the room's walls' top as "
            L"measured from your game's files (with \"Ceiling height from the room's walls\"), else 18.")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"brightness_act1_caves", L"Brightness (0 = black)", 0, 3, 0.05f, 1,
-           L"Lower = a darker ceiling.")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"light_radius_act1_caves", L"Hero's light reach", 5, 200, 1, 25,
-           L"World units from the hero where his light on the ceiling is down to half; farther it goes dark.")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"relief_act1_caves", L"Relief (0 = flat)", 0, 30, 0.05f, 6,
-           L"How far the uneven rock hangs down from the ceiling, world units.")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"relief_pic_act1_caves", L"Relief from the picture", -1, 2, 1, 0,
-           L"What stands out of the ceiling by Relief: 0 lumpy noise; 1 the picture's light parts; -1 its dark parts; "
-           L"2 its coloured parts (bricks in grey mortar). Needs a picture.")),
-    Needs(L"ceiling", L"enabled", 1, File(L"ceiling", L"texture_act1_caves", L"Picture", L"D2R_Sky_ours\\D2R_Ceiling_act1_caves_walls.png",
-           L"A square picture that tiles. A bare name is looked for in reshade-shaders\\Textures; a full path works too. "
-           L"Empty (x) = the common picture ([ceiling] texture, the act 1 caves' stone); missing too, the shader's own stone.")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"tex_size_act1_caves", L"Picture size (0 = 4 tiles)", 0, 200, 1, 0,
-           L"World units one picture spans: smaller = finer bricks or stones. 0 = four tiles (Tile size above).")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"contrast_act1_caves", L"Stone contrast", 0, 4, 0.05f, 1.6f,
-           L"The picture's fine detail times this: more = crisper, harder stone; less = smoother.")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"detail_act1_caves", L"Detail relief", 0, 4, 0.05f, 0.8f,
-           L"How far the picture's grains and cracks stand out of the stone: they catch the light.")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"wet_act1_caves", L"Wet shine", 0, 2, 0.05f, 0.35f,
-           L"Glints of the hero's and the torches' light on the stone (0 = dry).")),
-    Group(CeilTitle("act1_crypt"), CeilHelp("act1_crypt", L"The ceiling over act 1's crypts: its height, brightness, the hero's light reach, how far the uneven masonry hangs down, and its picture.")),
+    Group(CeilTitle("act1_crypt"), CeilHelp("act1_crypt", L"The ceiling's height over this room's floor - 0: on its own walls' top (\"Ceiling height from the room's walls\"), else 18.")),
     Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"height_act1_crypt", L"Height over the floor (0 = from the walls)", 0, 150, 0.1f, 30,
            L"World units (the hero is ~7.5 tall). Below the walls' tops they pierce the ceiling. 0: on the room's walls' top as "
            L"measured from your game's files (with \"Ceiling height from the room's walls\"), else 18.")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"brightness_act1_crypt", L"Brightness (0 = black)", 0, 3, 0.05f, 1,
-           L"Lower = a darker ceiling.")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"light_radius_act1_crypt", L"Hero's light reach", 5, 200, 1, 25,
-           L"World units from the hero where his light on the ceiling is down to half; farther it goes dark.")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"relief_act1_crypt", L"Relief (0 = flat)", 0, 30, 0.05f, 1.5,
-           L"How far the uneven masonry hangs down from the ceiling, world units.")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"relief_pic_act1_crypt", L"Relief from the picture", -1, 2, 1, 0,
-           L"What stands out of the ceiling by Relief: 0 lumpy noise; 1 the picture's light parts; -1 its dark parts; "
-           L"2 its coloured parts (bricks in grey mortar). Needs a picture.")),
-    Needs(L"ceiling", L"enabled", 1, File(L"ceiling", L"texture_act1_crypt", L"Picture", L"D2R_Sky_ours\\D2R_Ceiling_act1_crypt.png",
-           L"A square picture that tiles. A bare name is looked for in reshade-shaders\\Textures; a full path works too. "
-           L"Empty (x) = the common picture ([ceiling] texture, the act 1 caves' stone); missing too, the shader's own stone.")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"tex_size_act1_crypt", L"Picture size (0 = 4 tiles)", 0, 200, 1, 0,
-           L"World units one picture spans: smaller = finer bricks or stones. 0 = four tiles (Tile size above).")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"contrast_act1_crypt", L"Stone contrast", 0, 4, 0.05f, 1.6f,
-           L"The picture's fine detail times this: more = crisper, harder stone; less = smoother.")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"detail_act1_crypt", L"Detail relief", 0, 4, 0.05f, 0.8f,
-           L"How far the picture's grains and cracks stand out of the stone: they catch the light.")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"wet_act1_crypt", L"Wet shine", 0, 2, 0.05f, 0.35f,
-           L"Glints of the hero's and the torches' light on the stone (0 = dry).")),
 
-    Group(CeilTitle("act1_barracks"), CeilHelp("act1_barracks", L"The ceiling over act 1's barracks: its height, brightness, the hero's light reach, relief and picture.")),
+    Group(CeilTitle("act1_barracks"), CeilHelp("act1_barracks", L"The ceiling's height over this room's floor - 0: on its own walls' top (\"Ceiling height from the room's walls\"), else 18.")),
     Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"height_act1_barracks", L"Height over the floor (0 = from the walls)", 0, 150, 0.1f, 14,
            L"World units (the hero is ~7.5 tall). Below the walls' tops they pierce the ceiling. 0: on the room's walls' top as "
            L"measured from your game's files (with \"Ceiling height from the room's walls\"), else 18.")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"brightness_act1_barracks", L"Brightness (0 = black)", 0, 3, 0.05f, 1,
-           L"Lower = a darker ceiling.")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"light_radius_act1_barracks", L"Hero's light reach", 5, 200, 1, 25,
-           L"World units from the hero where his light on the ceiling is down to half; farther it goes dark.")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"relief_act1_barracks", L"Relief (0 = flat)", 0, 30, 0.05f, 1.5,
-           L"How far the uneven masonry hangs down from the ceiling, world units.")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"relief_pic_act1_barracks", L"Relief from the picture", -1, 2, 1, 0,
-           L"What stands out of the ceiling by Relief: 0 lumpy noise; 1 the picture's light parts; -1 its dark parts; "
-           L"2 its coloured parts (bricks in grey mortar). Needs a picture.")),
-    Needs(L"ceiling", L"enabled", 1, File(L"ceiling", L"texture_act1_barracks", L"Picture", L"D2R_Sky_ours\\D2R_Ceiling_act1_crypt.png",
-           L"A square picture that tiles. A bare name is looked for in reshade-shaders\\Textures; a full path works too. "
-           L"Empty (x) = the common picture ([ceiling] texture, the act 1 caves' stone); missing too, the shader's own stone.")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"tex_size_act1_barracks", L"Picture size (0 = 4 tiles)", 0, 200, 1, 0,
-           L"World units one picture spans: smaller = finer bricks or stones. 0 = four tiles (Tile size above).")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"contrast_act1_barracks", L"Stone contrast", 0, 4, 0.05f, 1.6f,
-           L"The picture's fine detail times this: more = crisper, harder stone; less = smoother.")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"detail_act1_barracks", L"Detail relief", 0, 4, 0.05f, 0.8f,
-           L"How far the picture's grains and cracks stand out of the stone: they catch the light.")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"wet_act1_barracks", L"Wet shine", 0, 2, 0.05f, 0.35f,
-           L"Glints of the hero's and the torches' light on the stone (0 = dry).")),
-    Group(CeilTitle("act1_court_to_barracks"), CeilHelp("act1_court_to_barracks", L"The game's ceiling under act 1's barracks' courtyard (its own cobblestone) in VR F4, our vault in flat F3; its height over the floor.")),
+    Group(CeilTitle("act1_court_to_barracks"), CeilHelp("act1_court_to_barracks", L"The ceiling's height over this room's floor - 0: on its own walls' top (\"Ceiling height from the room's walls\"), else 18.")),
     Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"height_act1_court_to_barracks", L"Height over the floor (0 = from the walls)", 0, 150, 0.1f, 0,
            L"World units (the hero is ~7.5 tall). 0: on the room's walls' top as measured from your game's files (with \"Ceiling height from the room's walls\"), else 18.")),
-    Group(CeilTitle("act1_cathedral"), CeilHelp("act1_cathedral", L"The ceiling over act 1's cathedral. Besides height, brightness and picture, a dome lets the ceiling rise as a sphere over what stands higher (the altar's canopy) instead of cutting it off; set from what height, how wide and how high it goes.")),
+    Group(CeilTitle("act1_cathedral"), CeilHelp("act1_cathedral", L"The ceiling's height over this room's floor - 0: on its own walls' top (\"Ceiling height from the room's walls\"), else 18.")),
     Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"height_act1_cathedral", L"Height over the floor (0 = from the walls)", 0, 150, 0.1f, 35,
            L"World units (the hero is ~7.5 tall). Below the walls' tops they pierce the ceiling. 0: on the room's walls' top as "
            L"measured from your game's files (with \"Ceiling height from the room's walls\"), else 18.")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"brightness_act1_cathedral", L"Brightness (0 = black)", 0, 3, 0.05f, 1,
-           L"Lower = a darker ceiling.")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"light_radius_act1_cathedral", L"Hero's light reach", 5, 200, 1, 33,
-           L"World units from the hero where his light on the ceiling is down to half; farther it goes dark.")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"relief_act1_cathedral", L"Relief (0 = flat)", 0, 30, 0.05f, 0,
-           L"How far the uneven masonry hangs down from the ceiling, world units.")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"relief_pic_act1_cathedral", L"Relief from the picture", -1, 2, 1, 0,
-           L"What stands out of the ceiling by Relief: 0 lumpy noise; 1 the picture's light parts; -1 its dark parts; "
-           L"2 its coloured parts (bricks in grey mortar). Needs a picture.")),
-    Needs(L"ceiling", L"enabled", 1, File(L"ceiling", L"texture_act1_cathedral", L"Picture", L"D2R_Sky_ours\\D2R_Ceiling_act1_barracks_smooth.png",
-           L"A square picture that tiles. A bare name is looked for in reshade-shaders\\Textures; a full path works too. "
-           L"Empty (x) = the common picture ([ceiling] texture, the act 1 caves' stone); missing too, the shader's own stone.")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"tex_size_act1_cathedral", L"Picture size (0 = 4 tiles)", 0, 200, 1, 0,
-           L"World units one picture spans: smaller = finer bricks or stones. 0 = four tiles (Tile size above).")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"contrast_act1_cathedral", L"Stone contrast", 0, 4, 0.05f, 1.2f,
-           L"The picture's fine detail times this: more = crisper, harder stone; less = smoother.")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"detail_act1_cathedral", L"Detail relief", 0, 4, 0.05f, 0.5f,
-           L"How far the picture's grains and cracks stand out of the stone: they catch the light.")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"wet_act1_cathedral", L"Wet shine", 0, 2, 0.05f, 0.2f,
-           L"Glints of the hero's and the torches' light on the stone (0 = dry).")),
-    Needs(L"ceiling", L"enabled", 1, Toggle(L"ceiling", L"dome_act1_cathedral", L"Dome over what is higher", 1,
-           L"Where the game draws something higher than the ceiling (the altar's canopy), the ceiling rises over it as a sphere "
-           L"instead of cutting it off.")),
-    Needs(L"ceiling", L"dome_act1_cathedral", 1, Slider(L"ceiling", L"dome_find_act1_cathedral", L"Dome over what reaches above", 0, 150, 0.5f, 0,
-           L"World units over the floor: only what the game draws higher than this gets a dome (set it between the columns' tops "
-           L"and the altar canopy's spire). Under the ceiling's height it is that height. ReShade's Show ceiling cut shows heights.")),
-    Needs(L"ceiling", L"dome_act1_cathedral", 1, Slider(L"ceiling", L"dome_radius_act1_cathedral", L"Dome radius", 10, 150, 1, 40,
-           L"World units: how wide the sphere over a high thing is.")),
-    Needs(L"ceiling", L"dome_act1_cathedral", 1, Slider(L"ceiling", L"dome_max_act1_cathedral", L"Dome height at most", 0, 100, 1, 30,
-           L"World units over the ceiling; what stands higher still is cut off.")),
-    Group(CeilTitle("act1_catacombs"), CeilHelp("act1_catacombs", L"The ceiling over act 1's catacombs: its height (what the game draws higher is cut off), brightness, the hero's light reach, relief and picture.")),
+    Group(CeilTitle("act1_catacombs"), CeilHelp("act1_catacombs", L"The ceiling's height over this room's floor - 0: on its own walls' top (\"Ceiling height from the room's walls\"), else 18.")),
     Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"height_act1_catacombs", L"Height over the floor (0 = from the walls)", 0, 150, 0.1f, 20,
            L"World units (the hero is ~7.5 tall). What the game draws higher is cut off by the ceiling.")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"brightness_act1_catacombs", L"Brightness (0 = black)", 0, 3, 0.05f, 1,
-           L"Lower = a darker ceiling.")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"light_radius_act1_catacombs", L"Hero's light reach", 5, 200, 1, 25,
-           L"World units from the hero where his light on the ceiling is down to half; farther it goes dark.")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"relief_act1_catacombs", L"Relief (0 = flat)", 0, 30, 0.05f, 0,
-           L"How far the uneven masonry hangs down from the ceiling, world units.")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"relief_pic_act1_catacombs", L"Relief from the picture", -1, 2, 1, 0,
-           L"What stands out of the ceiling by Relief: 0 lumpy noise; 1 the picture's light parts; -1 its dark parts; "
-           L"2 its coloured parts (bricks in grey mortar). Needs a picture.")),
-    Needs(L"ceiling", L"enabled", 1, File(L"ceiling", L"texture_act1_catacombs", L"Picture", L"D2R_Sky_ours\\D2R_Ceiling_act1_crypt_brick.png",
-           L"A square picture that tiles. A bare name is looked for in reshade-shaders\\Textures; a full path works too. "
-           L"Empty (x) = the common picture ([ceiling] texture, the act 1 caves' stone); missing too, the shader's own stone.")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"tex_size_act1_catacombs", L"Picture size (0 = 4 tiles)", 0, 200, 1, 0,
-           L"World units one picture spans: smaller = finer bricks or stones. 0 = four tiles (Tile size above).")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"contrast_act1_catacombs", L"Stone contrast", 0, 4, 0.05f, 1.2f,
-           L"The picture's fine detail times this: more = crisper, harder stone; less = smoother.")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"detail_act1_catacombs", L"Detail relief", 0, 4, 0.05f, 0.5f,
-           L"How far the picture's grains and cracks stand out of the stone: they catch the light.")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"wet_act1_catacombs", L"Wet shine", 0, 2, 0.05f, 0.2f,
-           L"Glints of the hero's and the torches' light on the stone (0 = dry).")),
-    Group(CeilTitle("act2_sewer"), CeilHelp("act2_sewer", L"The ceiling over act 2's sewers: its height, brightness, the hero's light reach, relief and picture.")),
+    Group(CeilTitle("act2_sewer"), CeilHelp("act2_sewer", L"The ceiling's height over this room's floor - 0: on its own walls' top (\"Ceiling height from the room's walls\"), else 18.")),
     Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"height_act2_sewer", L"Height over the floor (0 = from the walls)", 0, 150, 0.1f, 35,
            L"World units (the hero is ~7.5 tall). Below the walls' tops they pierce the ceiling. 0: on the room's walls' top as "
            L"measured from your game's files (with \"Ceiling height from the room's walls\"), else 18.")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"brightness_act2_sewer", L"Brightness (0 = black)", 0, 3, 0.05f, 1,
-           L"Lower = a darker ceiling.")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"light_radius_act2_sewer", L"Hero's light reach", 5, 200, 1, 33,
-           L"World units from the hero where his light on the ceiling is down to half; farther it goes dark.")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"relief_act2_sewer", L"Relief (0 = flat)", 0, 30, 0.05f, 0,
-           L"How far the uneven masonry hangs down from the ceiling, world units.")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"relief_pic_act2_sewer", L"Relief from the picture", -1, 2, 1, 0,
-           L"What stands out of the ceiling by Relief: 0 lumpy noise; 1 the picture's light parts; -1 its dark parts; "
-           L"2 its coloured parts (bricks in grey mortar). Needs a picture.")),
-    Needs(L"ceiling", L"enabled", 1, File(L"ceiling", L"texture_act2_sewer", L"Picture", L"D2R_Sky_ours\\D2R_Ceiling_act1_barracks_smooth.png",
-           L"A square picture that tiles. A bare name is looked for in reshade-shaders\\Textures; a full path works too. "
-           L"Empty (x) = the common picture ([ceiling] texture, the act 1 caves' stone); missing too, the shader's own stone.")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"tex_size_act2_sewer", L"Picture size (0 = 4 tiles)", 0, 200, 1, 0,
-           L"World units one picture spans: smaller = finer bricks or stones. 0 = four tiles (Tile size above).")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"contrast_act2_sewer", L"Stone contrast", 0, 4, 0.05f, 1.2f,
-           L"The picture's fine detail times this: more = crisper, harder stone; less = smoother.")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"detail_act2_sewer", L"Detail relief", 0, 4, 0.05f, 0.5f,
-           L"How far the picture's grains and cracks stand out of the stone: they catch the light.")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"wet_act2_sewer", L"Wet shine", 0, 2, 0.05f, 0.2f,
-           L"Glints of the hero's and the torches' light on the stone (0 = dry).")),
-    Needs(L"ceiling", L"enabled", 1, Toggle(L"ceiling", L"dome_act2_sewer", L"Dome over what is higher", 1,
-           L"Where the game draws something higher than the ceiling (the altar's canopy), the ceiling rises over it as a sphere "
-           L"instead of cutting it off.")),
-    Needs(L"ceiling", L"dome_act2_sewer", 1, Slider(L"ceiling", L"dome_find_act2_sewer", L"Dome over what reaches above", 0, 150, 0.5f, 0,
-           L"World units over the floor: only what the game draws higher than this gets a dome (set it between the columns' tops "
-           L"and the altar canopy's spire). Under the ceiling's height it is that height. ReShade's Show ceiling cut shows heights.")),
-    Needs(L"ceiling", L"dome_act2_sewer", 1, Slider(L"ceiling", L"dome_radius_act2_sewer", L"Dome radius", 10, 150, 1, 40,
-           L"World units: how wide the sphere over a high thing is.")),
-    Needs(L"ceiling", L"dome_act2_sewer", 1, Slider(L"ceiling", L"dome_max_act2_sewer", L"Dome height at most", 0, 100, 1, 30,
-           L"World units over the ceiling; what stands higher still is cut off.")),
-    Group(CeilTitle("act2_palace_clean"), CeilHelp("act2_palace_clean", L"The ceiling under act 2's harem: its height, brightness, the hero's light reach, relief and picture.")),
+    Group(CeilTitle("act2_palace_clean"), CeilHelp("act2_palace_clean", L"The ceiling's height over this room's floor - 0: on its own walls' top (\"Ceiling height from the room's walls\"), else 18.")),
     Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"height_act2_palace_clean", L"Height over the floor (0 = from the walls)", 0, 150, 0.1f, 20,
            L"World units (the hero is ~7.5 tall). What the game draws higher is cut off by the ceiling.")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"brightness_act2_palace_clean", L"Brightness (0 = black)", 0, 3, 0.05f, 1,
-           L"Lower = a darker ceiling.")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"light_radius_act2_palace_clean", L"Hero's light reach", 5, 200, 1, 25,
-           L"World units from the hero where his light on the ceiling is down to half; farther it goes dark.")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"relief_act2_palace_clean", L"Relief (0 = flat)", 0, 30, 0.05f, 0,
-           L"How far the uneven masonry hangs down from the ceiling, world units.")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"relief_pic_act2_palace_clean", L"Relief from the picture", -1, 2, 1, 0,
-           L"What stands out of the ceiling by Relief: 0 lumpy noise; 1 the picture's light parts; -1 its dark parts; "
-           L"2 its coloured parts (bricks in grey mortar). Needs a picture.")),
-    Needs(L"ceiling", L"enabled", 1, File(L"ceiling", L"texture_act2_palace_clean", L"Picture", L"D2R_Sky_ours\\D2R_Ceiling_act1_crypt_brick.png",
-           L"A square picture that tiles. A bare name is looked for in reshade-shaders\\Textures; a full path works too. "
-           L"Empty (x) = the common picture ([ceiling] texture, the act 1 caves' stone); missing too, the shader's own stone.")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"tex_size_act2_palace_clean", L"Picture size (0 = 4 tiles)", 0, 200, 1, 0,
-           L"World units one picture spans: smaller = finer bricks or stones. 0 = four tiles (Tile size above).")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"contrast_act2_palace_clean", L"Stone contrast", 0, 4, 0.05f, 1.2f,
-           L"The picture's fine detail times this: more = crisper, harder stone; less = smoother.")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"detail_act2_palace_clean", L"Detail relief", 0, 4, 0.05f, 0.5f,
-           L"How far the picture's grains and cracks stand out of the stone: they catch the light.")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"wet_act2_palace_clean", L"Wet shine", 0, 2, 0.05f, 0.2f,
-           L"Glints of the hero's and the torches' light on the stone (0 = dry).")),
-    Group(CeilTitle("act2_palace"), CeilHelp("act2_palace", L"The ceiling under act 2's corrupt harem: the game's ceiling of its own floor's stone in VR F4, our vault in flat F3; its height over the floor.")),
+    Group(CeilTitle("act2_palace"), CeilHelp("act2_palace", L"The ceiling's height over this room's floor - 0: on its own walls' top (\"Ceiling height from the room's walls\"), else 18.")),
     Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"height_act2_palace", L"Height over the floor (0 = from the walls)", 0, 150, 0.1f, 13.18f,
            L"World units (the hero is ~7.5 tall). What the game draws higher is cut off by the ceiling.")),
-    Group(CeilTitle("act2_palace_cells"), CeilHelp("act2_palace_cells", L"The ceiling under act 2's palace cellar: the game's ceiling of smooth dark stone (the catacombs', not the floor's tiles) in VR F4, our vault in flat F3; its height over the floor.")),
+    Group(CeilTitle("act2_palace_cells"), CeilHelp("act2_palace_cells", L"The ceiling's height over this room's floor - 0: on its own walls' top (\"Ceiling height from the room's walls\"), else 18.")),
     Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"height_act2_palace_cells", L"Height over the floor (0 = from the walls)", 0, 150, 0.1f, 13.18f,
            L"World units (the hero is ~7.5 tall). What the game draws higher is cut off by the ceiling.")),
-    Group(CeilTitle("act2_tomb"), CeilHelp("act2_tomb", L"The game's ceiling under act 2's tombs (smooth dark stone, the catacombs') in VR F4, our vault in flat F3; its height over the floor.")),
+    Group(CeilTitle("act2_tomb"), CeilHelp("act2_tomb", L"The ceiling's height over this room's floor - 0: on its own walls' top (\"Ceiling height from the room's walls\"), else 18.")),
     Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"height_act2_tomb", L"Height over the floor (0 = from the walls)", 0, 150, 0.1f, 0,
            L"World units (the hero is ~7.5 tall). 0: on the room's walls' top as measured from your game's files (with \"Ceiling height from the room's walls\"), else 18.")),
-    Group(CeilTitle("act2_maggot"), CeilHelp("act2_maggot", L"The game's ceiling over act 2's maggot lair (its own cave rock; our effect draws no vault here): its height over the floor.")),
+    Group(CeilTitle("act2_maggot"), CeilHelp("act2_maggot", L"The ceiling's height over this room's floor - 0: on its own walls' top (\"Ceiling height from the room's walls\"), else 18.")),
     Needs(L"ceiling", L"game_ceiling", 1, Slider(L"ceiling", L"height_act2_maggot", L"Height over the floor (0 = from the walls)", 0, 150, 0.1f, 18,
            L"World units (the hero is ~7.5 tall): where the game's rock ceiling hangs here; its rock hangs a little lower than that.")),
-    Group(CeilTitle("act3_spider"), CeilHelp("act3_spider", L"The game's ceiling over act 3's spider caves (its own cave rock; our effect draws no vault here): its height over the floor.")),
+    Group(CeilTitle("act3_spider"), CeilHelp("act3_spider", L"The ceiling's height over this room's floor - 0: on its own walls' top (\"Ceiling height from the room's walls\"), else 18.")),
     Needs(L"ceiling", L"game_ceiling", 1, Slider(L"ceiling", L"height_act3_spider", L"Height over the floor (0 = from the walls)", 0, 150, 0.1f, 18,
            L"World units (the hero is ~7.5 tall): where the game's rock ceiling hangs here; its rock hangs a little lower than that.")),
-    Group(CeilTitle("act3_jungle_dungeon"), CeilHelp("act3_jungle_dungeon", L"The game's ceiling over act 3's jungle dungeons (its own cave rock; our effect draws no vault here): its height over the floor.")),
+    Group(CeilTitle("act3_jungle_dungeon"), CeilHelp("act3_jungle_dungeon", L"The ceiling's height over this room's floor - 0: on its own walls' top (\"Ceiling height from the room's walls\"), else 18.")),
     Needs(L"ceiling", L"game_ceiling", 1, Slider(L"ceiling", L"height_act3_jungle_dungeon", L"Height over the floor (0 = from the walls)", 0, 150, 0.1f, 18,
            L"World units (the hero is ~7.5 tall): where the game's rock ceiling hangs here; its rock hangs a little lower than that.")),
-    Group(CeilTitle("act3_sewer"), CeilHelp("act3_sewer", L"The game's ceiling under act 3's sewers (its own rocky floor, laid flat) in VR F4, our vault in flat F3; its height over the floor.")),
+    Group(CeilTitle("act3_sewer"), CeilHelp("act3_sewer", L"The ceiling's height over this room's floor - 0: on its own walls' top (\"Ceiling height from the room's walls\"), else 18.")),
     Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"height_act3_sewer", L"Height over the floor (0 = from the walls)", 0, 150, 0.1f, 0,
            L"World units (the hero is ~7.5 tall). 0: on the room's walls' top as measured from your game's files (with \"Ceiling height from the room's walls\"), else 18.")),
-    Group(CeilTitle("act3_temple"), CeilHelp("act3_temple", L"The game's ceiling under act 3's temples (their own stone) in VR F4, our vault in flat F3; its height over the floor.")),
+    Group(CeilTitle("act3_temple"), CeilHelp("act3_temple", L"The ceiling's height over this room's floor - 0: on its own walls' top (\"Ceiling height from the room's walls\"), else 18.")),
     Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"height_act3_temple", L"Height over the floor (0 = from the walls)", 0, 150, 0.1f, 0,
            L"World units (the hero is ~7.5 tall). 0: on the room's walls' top as measured from your game's files (with \"Ceiling height from the room's walls\"), else 18.")),
-    Group(CeilTitle("act3_travincal"), CeilHelp("act3_travincal", L"The game's ceiling under act 3's Durance of Hate (its own stone) in VR F4, our vault in flat F3; its height over the floor.")),
+    Group(CeilTitle("act3_travincal"), CeilHelp("act3_travincal", L"The ceiling's height over this room's floor - 0: on its own walls' top (\"Ceiling height from the room's walls\"), else 18.")),
     Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"height_act3_travincal", L"Height over the floor (0 = from the walls)", 0, 150, 0.1f, 0,
            L"World units (the hero is ~7.5 tall). 0: on the room's walls' top as measured from your game's files (with \"Ceiling height from the room's walls\"), else 18.")),
-    Group(CeilTitle("expansion_icecave"), CeilHelp("expansion_icecave", L"The game's ceiling over act 5's ice caves (its own cave rock; our effect draws no vault here): its height over the floor.")),
+    Group(CeilTitle("expansion_icecave"), CeilHelp("expansion_icecave", L"The ceiling's height over this room's floor - 0: on its own walls' top (\"Ceiling height from the room's walls\"), else 18.")),
     Needs(L"ceiling", L"game_ceiling", 1, Slider(L"ceiling", L"height_expansion_icecave", L"Height over the floor (0 = from the walls)", 0, 150, 0.1f, 18,
            L"World units (the hero is ~7.5 tall): where the game's rock ceiling hangs here; its rock hangs a little lower than that.")),
-    Group(CeilTitle("expansion_wildtemple"), CeilHelp("expansion_wildtemple", L"The game's ceiling under act 5's Nihlathak's halls (their own cave rock) in VR F4, our vault in flat F3; its height over the floor.")),
+    Group(CeilTitle("expansion_wildtemple"), CeilHelp("expansion_wildtemple", L"The ceiling's height over this room's floor - 0: on its own walls' top (\"Ceiling height from the room's walls\"), else 18.")),
     Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"height_expansion_wildtemple", L"Height over the floor (0 = from the walls)", 0, 150, 0.1f, 0,
            L"World units (the hero is ~7.5 tall). 0: on the room's walls' top as measured from your game's files (with \"Ceiling height from the room's walls\"), else 18.")),
-    Group(CeilTitle("expansion_baallair"), CeilHelp("expansion_baallair", L"The game's ceiling under act 5's Worldstone Keep (its own floor) in VR F4, our vault in flat F3; its height over the floor.")),
+    Group(CeilTitle("expansion_baallair"), CeilHelp("expansion_baallair", L"The ceiling's height over this room's floor - 0: on its own walls' top (\"Ceiling height from the room's walls\"), else 18.")),
     Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"height_expansion_baallair", L"Height over the floor (0 = from the walls)", 0, 150, 0.1f, 0,
            L"World units (the hero is ~7.5 tall). 0: on the room's walls' top as measured from your game's files (with \"Ceiling height from the room's walls\"), else 18.")),
-    Group(CeilTitle("expansion_baallair_throneroom"), CeilHelp("expansion_baallair_throneroom", L"The game's ceiling under act 5's throne of destruction (the Keep's own floor) in VR F4, our vault in flat F3; its height over the floor.")),
+    Group(CeilTitle("expansion_baallair_throneroom"), CeilHelp("expansion_baallair_throneroom", L"The ceiling's height over this room's floor - 0: on its own walls' top (\"Ceiling height from the room's walls\"), else 18.")),
     Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"height_expansion_baallair_throneroom", L"Height over the floor (0 = from the walls)", 0, 150, 0.1f, 0,
            L"World units (the hero is ~7.5 tall). 0: on the room's walls' top as measured from your game's files (with \"Ceiling height from the room's walls\"), else 18.")),
 #if D2RVR_FIRST_PERSON
@@ -4496,6 +4436,20 @@ std::vector<Item> g_items = {
            L"capsules across its face, a weapon one along it; Debug: melee boxes draws them violet and orange). A blow they stop is no hit: hit by touch presses the "
            L"attack only once your weapon has reached the monster's body - the game's own block roll stays the game's for the blows that land. They push no doll "
            L"and take no stab. Unticked: they are transparent to your weapon, as before.")))),
+    // [weight] world_contact / world_contact_hands: the weapon and the bare hands meet the level's walls (vr/world_contact.h, cleanroom/heft/walls.h)
+    Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Toggle(L"weight", L"world_contact", L"Walls stop your weapon (a test)", 0,
+           L"Live. VR first person (F4) only. Ticked: the weapon in your hands strikes the level's walls, pillars, trees and big props instead of passing through "
+           L"them - it stops on the surface with a small bounce and a pulse in the hand, a slash slides along, and your controller goes on into the wall while the "
+           L"weapon (and your hand on it) stays outside; it follows again when the controller comes back. Push the controller far past the wall and the weapon "
+           L"goes back into your hand through it. Only what you see: the game's attacks, its hits and your hero's movement are the game's as ever. The walls are "
+           L"made from the game's own meshes when this program starts with the box ticked (about a minute, once per game build; the status says when): a doorway "
+           L"stays open, a tree stops the weapon at its trunk, not its leaves, and bushes, grass and other small plants never stop it (Debug: \"World contact: "
+           L"draw the walls\" shows them). Unticked: the weapon passes through walls, as before."))),
+    Needs(L"arms", L"mode", 2, Toggle(L"weight", L"world_contact_hands", L"Walls stop your bare hands (a test)", 0,
+           L"Live. VR first person (F4) only. Ticked: an empty hand (or one with a bow, a shield, a potion) is held at the surface of the level's walls, pillars, "
+           L"trees and big props while your controller goes on into them, sliding along as you move; it comes back with the controller. Push the controller "
+           L"more than 45 cm past the surface and the hand goes back to it, through the wall. The same walls as the weapon's, made from the game's meshes (bushes and grass "
+           L"never stop a hand). Only the drawing: nothing of the game changes. Unticked: the hands pass through walls, as before.")),
     Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Toggle(L"weight", L"dual_collide", L"A weapon in each hand: the two strike each other (steel on steel)", 1,
            L"Live. With a weapon in each hand the two weapons meet: each stops on the other and glances along it, as on a monster's weapon; a knock as hard as a blow "
            L"is felt in both hands (and heard, with the clash sound below), resting one on the other is silent. With 'Heads as their own volume' ticked (hit by touch) "
@@ -4545,6 +4499,21 @@ std::vector<Item> g_items = {
     Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Needs(L"weight", L"monster_bodies", 1, Needs(L"weight", L"monster_ragdoll", 1, Toggle(L"weight", L"monster_ragdoll_all", L"Every monster gives way, not only humanoids (a probe)", 0,
            L"Ticked: every monster your weapon pushes gives way by its weight - animals, insects, demons, flyers, not only the humanoid ones. A monster whose "
            L"model has no body parts to read gets its limbs from its bones. A corpse never moves. Only the drawing. Unticked: humanoids only, as before."))))),
+    // [weight] knock_down: a blow knocks a humanoid off its feet - as drawn (vr/knock_down.h; the weight library's knock-down, shared/d2r_vr_fall.h)
+    Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Needs(L"weight", L"monster_bodies", 1, Toggle(L"weight", L"knock_down", L"A hard blow knocks a humanoid off its feet (a test)", 0,
+           L"Ticked: a hard blow of your weapon, a running hit, a sweep at the legs or a shove knocks a humanoid monster or a town NPC (with \"Town NPCs and allies have "
+           L"bodies too\") off its feet as you see it: it falls as a ragdoll, lies a moment and gets up again, then its own animation takes over. Only the drawing: "
+           L"where it stands, what it does, its hits and its talk stay the game's - a monster the game has attack gets up at once. A blow knocks it down when it would "
+           L"give the body the speed below; a sweep low at the legs needs half of it. Needs the weight library with the knock-down (d2r_vr_weight.dll in "
+           L"d2rloader\\d2r_vr_libs; the log says when it is missing). F4. Unticked: nothing falls.")))),
+    Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Needs(L"weight", L"monster_bodies", 1, Needs(L"weight", L"knock_down", 1, Slider(L"weight", L"knock_down_cms", L"Knock-down: how hard, cm/s the blow gives the body", 10, 300, 5, 70,
+           L"Live. A blow knocks a body down when its push (your weapon and arm, their speed, your run) would move the body this fast: the push over the body's weight "
+           L"(a man of 1.75 m about 50 kg). 70: a hard swing of a sword fells a man, a light one does not; lower: easier. The log tells each blow's speed against it."))))),
+    Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Needs(L"weight", L"monster_bodies", 1, Needs(L"weight", L"knock_down", 1, Slider(L"weight", L"knock_down_lie_ms", L"Knock-down: lies for, ms", 0, 5000, 100, 1500,
+           L"Live. How long a body knocked down lies still on the ground before it gets up, then walks back to its place."))))),
+    Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Needs(L"weight", L"monster_bodies", 1, Needs(L"weight", L"knock_down", 1, Slider(L"weight", L"knock_down_stagger_pct", L"Knock-down: a stagger from, % of a knock-down", 0, 99, 5, 45,
+           L"Live. A blow too light to knock the body down but at least this share of it staggers it: a step or two back, it catches its balance and walks back "
+           L"to its place. 0: no stagger."))))),
     // [weight] npc_bodies (until 0.183 [debug] npc_bodies - a debug key only draws or logs): the non-hostile units are bodies for the weapon too
     Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Needs(L"weight", L"monster_bodies", 1, Toggle(L"weight", L"npc_bodies", L"Town NPCs and allies have bodies too", 0,
            L"Ticked, with the bodies above: the town's NPCs, hirelings and every other unit the game does not call hostile have bodies too - a capsule on each limb, from "
@@ -4563,6 +4532,18 @@ std::vector<Item> g_items = {
            L"stays where the game has it, nothing is attacked, hurt or moved in the game. With a bow or crossbow the hand that draws the string grabs (not on the "
            L"string). Needs the weight library 1.4 (d2r_vr_weight.dll in d2rloader\\d2r_vr_libs) - without it nothing grabs. "
            L"Unticked: the grip of an empty hand only closes the fist, as before.")),
+    // [weight] grab_throw: a humanoid the grip takes is held by the knock-down library - lifted off its feet, thrown, gets up, walks home (vr/knock_down.h)
+    Needs(L"arms", L"mode", 2, Needs(L"weight", L"grab_bodies", 1, Toggle(L"weight", L"grab_throw", L"Lift and throw a humanoid you grab (a test)", 0,
+           L"Ticked, with the grab: a humanoid monster or a town NPC your hand's grip takes hangs from your hand as a ragdoll. It stands while its feet bear it; "
+           L"lift it or pull it out of its place and it is off its feet; let go while you swing and it flies, lands, lies a moment, gets up and walks back to where "
+           L"the game has it. Two hands hold it together. Only the drawing: where it stands, what it does and its talk stay the game's. Needs the weight library "
+           L"with the knock-down (d2r_vr_weight.dll in d2rloader\\d2r_vr_libs). F4. Unticked: the grab holds a limb as before."))),
+    // [weight] impale_drag: a charge with a spear impales a humanoid and carries it on the blade (vr/knock_down.h)
+    Needs(L"arms", L"mode", 2, Needs(L"weight", L"stab_in", 1, Toggle(L"weight", L"impale_drag", L"Impale and drag a humanoid on your spear (a test)", 0,
+           L"Ticked, with the stab: run into a humanoid monster or a town NPC with a spear (or any weapon point first) and the point goes in at 2 m/s or more "
+           L"(the thrust and your run along the blade) - it is carried on the blade as a ragdoll, dragged along while you go on. It slides off when you stop, "
+           L"pull the blade back or tip it down, falls, gets up and walks back to where the game has it. Only the drawing: the game's damage, where it stands "
+           L"and what it does stay the game's. Needs the weight library with the knock-down. F4. Unticked: the point stops in the body as before."))),
     Needs(L"arms", L"mode", 2, Needs(L"weight", L"grab_bodies", 1, Slider(L"weight", L"grab_reach_cm", L"Grab: how near the body the palm must be, cm", 0, 30, 1, 8,
            L"Live. The palm this close to a body's surface (or in it) takes it when the grip closes. Higher: easier to grab; lower: only with the palm right on it."))),
     Needs(L"arms", L"mode", 2, Needs(L"weight", L"grab_bodies", 1, Slider(L"weight", L"grab_break_cm", L"Grab: the hand tears loose this far off, cm", 20, 150, 5, 80,
@@ -4981,6 +4962,71 @@ std::vector<Item> g_items = {
     // must come from the D2RLoader bridge"): the D2RLoader plugin d2rl-d2r-rooms.dll, its d2r-rooms.ini in <game>\d2rloader\plugins - never
     // d2r_vr.ini ("@rooms": ReadRoomsValue / WriteRoomsValue) - and what it knows from its d2r-rooms-status.json beside it, or asked from
     // here while the game is closed (RefreshRooms; the rows are AddRoomsRows'). shared/rooms_bridge.h has the plugin's formats. Both builds.
+    // The Vibration tab (Serg, 2026-10-31: "под вибрации отдельную вкладку"): [openxr] haptics and its keys (from Stereo > Native OpenXR), the extra pulses after
+    // bearstonem/d2r-pcvr (MIT; vr/haptics.h Extras, vr/haptics_pattern.h), and copies of the other tabs' pulse settings (the same keys: one value, two places).
+    Only(kVr, Tab(L"Vibration")),
+    Group(L"Controller vibration", L"Pulses in the controllers on what happens in the game (native OpenXR, VR first person F4). They only watch the game: nothing "
+          L"of it is changed. Every box below needs Controller vibration ticked."),
+    Toggle(L"openxr", L"haptics", L"Controller vibration", 0,
+           L"A short pulse in the hand when a blow of yours lands, a belt potion is taken or drunk, the laser clicks on a menu, "
+           L"or you pick something up or open it. The game itself is not changed - the pulses only watch. Native OpenXR only "
+           L"(the headset's runtime drives the motors); off: silent, as before. Live. F4 only."),
+    Needs(L"openxr", L"haptics", 1, Slider(L"openxr", L"haptics_scale", L"Vibration: strength", 0.2f, 2.0f, 0.05f, 1.0f,
+           L"All pulses stronger or weaker; 1 = the usual (a landed blow is about 70% of the motor's strength). Live.")),
+    Needs(L"openxr", L"haptics", 1, Toggle(L"openxr", L"haptics_hand_actions", L"Vibration: a channel of its own for each hand", 1,
+           L"Each controller's motor gets a vibration action of its own, so a pulse can only go to the hand it is for (some runtimes sent "
+           L"a pulse of the shared action to the wrong hand). Taken when the headset session starts. Off: one action for both hands, "
+           L"as before.")),
+    Needs(L"openxr", L"haptics", 1, Toggle(L"openxr", L"haptics_stop", L"Vibration: stop each pulse on time", 1,
+           L"Each pulse is stopped by its own call when its time is up, even while the game is loading or stalls - some controllers "
+           L"(Steam Frame's) went on buzzing past a short pulse. Live. Off: the runtime ends a pulse by itself, as before.")),
+    Needs(L"openxr", L"haptics", 1, Choice(L"openxr", L"haptics_motor", L"Vibration: the controllers' motor", 0,
+           {L"By the headset's name", L"Plain", L"Weak (PlayStation VR2 Sense)"},
+           L"A PlayStation VR2's Sense controllers under SteamVR do not show short, gentle pulses (a Quest's do): the low-life heartbeat, the low mana alert, a "
+           L"cast's pulse and the game's soft rumble are lifted for them to a strength they show, in the same order (stronger stays stronger). By the headset's "
+           L"name: weak for a PlayStation VR2, plain for the rest (the log says which). Plain: every pulse as it is made. Live.")),
+    Group(L"Blows", L"How a blow feels. Hit by touch (Strikes) counts a contact when the blade meets a monster fast enough; the game then rolls the blow."),
+    Needs(L"openxr", L"haptics", 1, Toggle(L"openxr", L"haptics_touch", L"A pulse on every counted touch, landed or not", 0,
+           L"Hit by touch: the blade's hand buzzes the moment a contact is counted, whether the game then lands the blow, misses it or refuses it - you feel "
+           L"the monster you struck. The landed hit that follows gives no second pulse. Off: a pulse only for a blow the game says landed, as before. "
+           L"After bearstonem/d2r-pcvr (MIT). Live. F4 only.")),
+    Needs(L"openxr", L"haptics", 1, Toggle(L"openxr", L"haptics_hit_long", L"A longer, stronger tap for a blow", 0,
+           L"A blow's tap (and a touch's, with the box above) is 95% of the motor for 90 ms instead of 72% for 45 ms: easier to feel in a fast swing. "
+           L"d2r-pcvr's weapon tap (MIT). Live. F4 only.")),
+    Group(L"Spells and mana"),
+    Needs(L"openxr", L"haptics", 1, Toggle(L"openxr", L"haptics_spell", L"A pulse when a cast starts", 0,
+           L"A pulse in the aiming hand when the hero's casting animation starts - a cast the game took (spells, warcries and the other cast skills); a "
+           L"cast it refused (no mana, not ready) has none. A held cast whose animations follow one another without a break is one pulse. After "
+           L"bearstonem/d2r-pcvr (MIT). Live. F4 only.")),
+    Needs(L"openxr", L"haptics", 1, Toggle(L"openxr", L"haptics_low_mana", L"Low mana alert in the left hand", 0,
+           L"A pulse in the left hand when your mana falls under the share below, again every 10 seconds while it stays under. The mana is only read. "
+           L"After bearstonem/d2r-pcvr (MIT). Live. F4 only.")),
+    Needs(L"openxr", L"haptics", 1, Needs(L"openxr", L"haptics_low_mana", 1, Slider(L"openxr", L"haptics_low_mana_pct", L"Low mana: under, % of your mana", 5, 50, 1, 10,
+           L"The alert comes when the mana falls under this share of its maximum, and is ready again a little above it. Live."))),
+    Group(L"The game's own rumble", L"The game rumbles a gamepad on its own events - a hit taken, a skill used - when its Controller Rumble option is on."),
+    Needs(L"openxr", L"haptics", 1, Toggle(L"openxr", L"haptics_game_rumble", L"Feel the game's rumble in the controllers", 0,
+           L"What the game sends to a gamepad's two motors is followed in both controllers, as the game asks for it (the game's own events: a hit taken, a "
+           L"skill used...). Needs the game's own Controller Rumble option on. The call still goes to a pad if one is plugged in (the box below keeps it "
+           L"from it). Live. F4 only.")),
+    Needs(L"openxr", L"haptics", 1, Needs(L"openxr", L"haptics_game_rumble", 1, Slider(L"openxr", L"haptics_game_rumble_scale", L"The game's rumble: strength", 0.2f, 2, 0.05f, 1,
+           L"The game's rumble in the controllers stronger or weaker (1 = as the game asks, Vibration: strength on top). Live."))),
+    Needs(L"openxr", L"haptics", 1, Toggle(L"openxr", L"haptics_pad_mute", L"Keep the game's rumble from a plugged-in gamepad", 0,
+           L"While the controllers are the game's (VR first person F4), the game's rumble does not reach a gamepad that is plugged in - a pad left rumbling "
+           L"is stopped once. In the other views and in flat play the pad rumbles as ever. After bearstonem/d2r-pcvr (MIT). Live.")),
+    Group(L"Pulses set on other tabs", L"The same settings as on their own tabs (UI: F4 body > Low life; Weapon Weight): a change here is a change there."),
+    LowLife(Needs(L"openxr", L"haptics", 1, Toggle(L"hud", L"low_hp_haptics", L"Heartbeat in the controllers", 0,
+           L"A short pulse in both controllers on each beat, as the red climbs, stronger the lower your life is (the same line as "
+           L"the intensity above). Needs Controller vibration (Stereo > Native OpenXR) ticked; its own strength slider applies "
+           L"too. Live."))),
+    LowLife(Needs(L"openxr", L"haptics", 1, Needs(L"hud", L"low_hp_haptics", 1, Slider(L"hud", L"low_hp_haptics_strength", L"Heartbeat in the controllers: strength", 0.1f, 2, 0.05f, 1,
+           L"A scale on the pulse's strength: 1 = about half the motor's strength at the lowest life, and weaker the higher your "
+           L"life. The pulse is never stronger than four fifths of the motor, so 2 is plenty. Live.")))),
+    Needs(L"arms", L"mode", 2, Needs(L"weight", L"knock_props", 1, Slider(L"weight", L"knock_haptic_pct", L"Knock: the pulse in the hand, %", 0, 100, 5, 35,
+           L"Live. The short pulse in the hand whose weapon set a prop going (harder for a harder knock). 0: none."))),
+    AwayShow(Toggle(L"weight", L"take_haptic", L"A pulse in the hand at the take zone", 1,
+           L"A short pulse in a controller when its hand reaches behind a shoulder while a weapon is away, so the hand feels where to grab. "
+           L"Needs controller haptics on (OpenXR: Haptics).")),
+    AwayShow(Needs(L"weight", L"take_haptic", 1, Slider(L"weight", L"take_haptic_pct", L"Pulse strength, %", 5, 100, 5, 40))),
     Tab(L"Multiplayer"),
     Group(L"D2R Rooms bridge (CREATE GAME through a relay)",
           L"D2R Rooms is a D2RLoader plugin (d2rl-d2r-rooms.dll in d2rloader\\plugins): it puts the rooms of D2RLoader's CREATE GAME in a list friends "
@@ -5060,6 +5106,11 @@ std::vector<Item> g_items = {
            L"With Weapon Weight's \"Cups, plates, vases... are knocked about by your weapon\" on: every prop near you (within 3 m) that the catalogue knows - the ones "
            L"your weapon or your fist can knock about - is drawn brighter, with the game's own highlight (as an item under the pointer is). To see which of "
            L"a place's props are found and which are not. Only the drawing. Live."),
+    // [debug] world_contact_draw: [weight] world_contact's walls and the hands against the controllers (vr/world_contact.h Marks)
+    Toggle(L"debug", L"world_contact_draw", L"World contact: draw the walls", 0,
+           L"With \"Walls stop your weapon\" or \"Walls stop your bare hands\" on: the walls nearest your hands are drawn as yellow boxes (red: the one a hand or "
+           L"the weapon rests on), each controller as a blue ball, the hand or weapon as drawn as a green ball, a red line between them while the wall holds it "
+           L"back, and an orange ball where the weapon or a hand struck a wall. Only the drawing. Live."),
     Choice(L"debug", L"replay_marks", L"Replay: how the right eye's lists go to the GPU", 1,
            {L"0 - one batch a queue (hung, test-60..62)", L"1 - each list with a GPU mark (safe, default)", L"2 - each list, no marks",
             L"3 - in the game's own calls", L"4 - the game's calls, a mark after each"},
@@ -5105,6 +5156,10 @@ std::vector<Item> g_items = {
            L"and the last 6 seconds of each walk back (and of 3 s standing with the camera turned round him) go to d2rloader\\logs\\d2r_vr_walkback.txt "
            L"(at most 30 a session), for the walk_legs tool that draws them as stick figures. The log also says every 5 s which pose the hero's meshes "
            L"are skinned from (the one we pose, or another). Writes a file and log lines only; nothing in the game changes. Live."),
+    Toggle(L"debug", L"body_dump", L"Write the hero's drawn bones and the camera to a file", 0,
+           L"30 times a second the hero's joints as they go to the game - after everything the mod changes - and where the camera is and looks (your eyes "
+           L"in VR first person, behind him in third person) go to d2rloader\\logs\\d2r_vr_body.txt, for the walk_legs tool that films the skeleton from "
+           L"your camera. About a megabyte a minute. Writes a file only; nothing in the game changes. Live."),
     Toggle(L"debug", L"phantom_ray", L"Draw the line the left hand takes", 0,
            L"A red line along which the left hand takes the weapon in hand and slides (staff, spear, polearm, two-handed "
            L"sword); with a crossbow also where the bolt flies (Crossbow: shot line sliders turn it). "
@@ -5692,8 +5747,14 @@ drawdistance::Stop DrawDistanceNow() {
     s.fogEnd = v(L"fog", L"end");
     s.cavesStart = v(L"fog", L"caves_start");
     s.cavesEnd = v(L"fog", L"caves_end");
-    s.skyRadius = v(L"sky", L"game_sky_radius");
+    s.skyRadius = drawdistance::ToUnits(v(L"sky", L"game_sky_radius_m"));   // (the stops' units: metres on its slider)
     return s;
+}
+// The domes' radii in metres from the keys they took over from (shared/draw_distance.h), as the plugin reads an ini without the new ones.
+float SkyRadiusMFromUnits(float units) { return drawdistance::SkyRadiusM(units); }
+float CaveRadiusMFromShare(float share) {
+    const Item* model = PresetItem(L"render", L"model_radius");
+    return drawdistance::CaveRadiusM(share, model ? ReadValue(*model) : 210.0f);
 }
 // The slider's place: the stop matched, or for Custom the one with the nearest model radius (1-based, as the slider counts).
 float ReadDrawDistance() {
@@ -5707,10 +5768,13 @@ void ShowDrawDistance();
 void RefreshControls();
 void WriteDrawDistance(float v) {
     const drawdistance::Stop& s = drawdistance::kStops[std::clamp((int)std::lround(v) - 1, 0, drawdistance::kCount - 1)];
+    const drawdistance::Stop was = DrawDistanceNow();
+    const Item* cave = PresetItem(L"sky", L"game_dome_caves_radius_m");   // the cave dome keeps its share of the models' radius (as game_dome_caves_size did)
+    const float caveM = drawdistance::CaveRadiusFollowing(cave ? ReadValue(*cave) : 0.0f, was.modelRadius, s.modelRadius);
     const struct { const wchar_t* section; const wchar_t* key; float v; } keys[] = {
         {L"render", L"rings", (float)s.rings}, {L"render", L"model_radius", s.modelRadius},
         {L"fog", L"start", s.fogStart}, {L"fog", L"end", s.fogEnd}, {L"fog", L"caves_start", s.cavesStart}, {L"fog", L"caves_end", s.cavesEnd},
-        {L"sky", L"game_sky_radius", s.skyRadius},
+        {L"sky", L"game_sky_radius_m", drawdistance::ToMetres(s.skyRadius)}, {L"sky", L"game_dome_caves_radius_m", caveM},
     };
     g_writingDistance = true;
     for (const auto& k : keys) {
@@ -6109,7 +6173,12 @@ float ReadValue(const Item& it) {
         if (wcscmp(buf, L"#") == 0) GetPrivateProfileStringW(L"hud", it.key, def, buf, 64, g_ini);
     } else if (it.oldKey) {
         GetPrivateProfileStringW(SectionOf(it), it.key, L"#", buf, 64, FileOf(it));
-        if (wcscmp(buf, L"#") == 0) {
+        if (wcscmp(buf, L"#") == 0 && it.fromOld) {   // the older key in other units (neither there: its own default)
+            GetPrivateProfileStringW(SectionOf(it), it.oldKey, L"#", buf, 64, FileOf(it));
+            wchar_t* e2 = nullptr;
+            const float ov = wcstof(buf, &e2);
+            swprintf_s(buf, L"%g", e2 != buf && std::isfinite(ov) ? it.fromOld(ov) : it.def);
+        } else if (wcscmp(buf, L"#") == 0) {
             GetPrivateProfileStringW(SectionOf(it), it.oldKey, def, buf, 64, FileOf(it));
             if (!it.oldMap.empty()) {   // the older key's values mean other things here: through the table
                 wchar_t* e2 = nullptr;
@@ -6719,9 +6788,9 @@ void ShowDrawDistance() {
     auto n = [](float f) { return std::to_wstring((int)std::lround(f)); };
     std::wstring line = m >= 0 ? TRF(L"status.draw_distance.stop", L"{n} of {count}: ", {{L"n", std::to_wstring(m + 1)}, {L"count", std::to_wstring(drawdistance::kCount)}})
                                : std::wstring(TR(L"status.draw_distance.custom", L"Custom (a value changed by hand): "));
-    line += TRF(L"status.draw_distance.values", L"{rings} room rings, models out to {model}, fog {fs} to {fe} (in caves {cs} to {ce}), the game's sky dome at {sky}. All live - no restart.",
+    line += TRF(L"status.draw_distance.values", L"{rings} room rings, models out to {model}, fog {fs} to {fe} (in caves {cs} to {ce}), the game's sky dome at {sky} m. All live - no restart.",
                 {{L"rings", std::to_wstring(s.rings)}, {L"model", n(s.modelRadius)}, {L"fs", n(s.fogStart)}, {L"fe", n(s.fogEnd)},
-                 {L"cs", n(s.cavesStart)}, {L"ce", n(s.cavesEnd)}, {L"sky", n(s.skyRadius)}});
+                 {L"cs", n(s.cavesStart)}, {L"ce", n(s.cavesEnd)}, {L"sky", n(drawdistance::ToMetres(s.skyRadius))}});
     if (GetPrivateProfileIntW(L"fog", L"enabled", 0, g_ini) == 0)
         line += TR(L"status.draw_distance.fog_off", L" The fog is off (Performance): the drawn world ends in the void.");
     if (GetPrivateProfileIntW(L"sky", L"game_sky", 0, g_ini) == 0)
@@ -9118,6 +9187,8 @@ $pl=Join-Path $g 'd2rloader\plugins'; $lg=Join-Path $g 'd2rloader\logs'; $rs=$g;
 if($md){ $pl=Join-Path $md 'd2rloader\plugins'; $mlg=Join-Path $md 'd2rloader\logs'; $rs=Join-Path $md 'reshade' }
 Get-ChildItem -LiteralPath $lg -File | Where-Object { ($_.Extension -in '.log','.txt','.csv') -and $_.Length -lt 50MB } | ForEach-Object { C $_.FullName 'd2rloader_logs' }
 if($mlg){ Get-ChildItem -LiteralPath $mlg -File | Where-Object { ($_.Extension -in '.log','.txt','.csv') -and $_.Length -lt 50MB } | ForEach-Object { C $_.FullName 'mod_logs' } }
+foreach($d in @($lg,$mlg)){ if($d){ $s=Get-ChildItem -LiteralPath $d -File -Filter 'headset_shot_*.txt' | Sort-Object LastWriteTime -Descending | Select-Object -First 1; if($s){ Get-ChildItem -LiteralPath $d -File -Filter ($s.BaseName + '_*.png') | Where-Object { $_.Length -lt 50MB } | ForEach-Object { C $_.FullName 'headset_shot' } } } }
+foreach($d in @($lg,$mlg)){ if($d){ Get-ChildItem -LiteralPath $d -File -Filter 'headset_clip_*.mp4' | Where-Object { $_.Length -lt 50MB } | Sort-Object LastWriteTime -Descending | Select-Object -First 1 | ForEach-Object { C $_.FullName 'headset_clip' } } }
 foreach($f in 'd2r_vr_about.json','d2r_vr_start.txt','d2r_vr_crash.txt'){ C (Join-Path $pl $f) 'plugins' }
 foreach($f in 'd2r_vr.ini','d2r_vr.default.ini','d2r_vr_frames.csv','d2r_vr_uitrace.txt'){ C (Join-Path $pl $f) 'plugins' }
 Get-ChildItem -LiteralPath (Join-Path $g 'd2rloader\crashes') -File -Filter '*.log' | Sort-Object LastWriteTime -Descending | Select-Object -First 3 | ForEach-Object { C $_.FullName 'd2rloader_crashes' }
@@ -9802,6 +9873,44 @@ void OnPropsDone(D2RLProgress* raw) {
     SetStatus(L"knock_props", p->state, p->text.c_str());
 }
 
+// [weight] world_contact: the level pieces' solid parts made from their own meshes (solids_assets.cpp, shared/world_solids.h), beside the plugin, on a thread of its own -
+// every placed model's mesh is read out of the archives (about a minute). At the start while a World contact box is ticked, and when one is switched on; once per game build.
+constexpr UINT WM_APP_SOLIDS = WM_APP + 50;
+std::atomic<bool> g_solidsBusy{false};
+
+void SolidsThread(HWND wnd, std::wstring game, std::wstring pluginDir) {
+    const solidsassets::Result r = solidsassets::Prepare(game, pluginDir);
+    LogLine(L"world contact: solids - " + r.text);
+    const int state = r.state == solidsassets::kMade ? kOk : r.state == solidsassets::kNotHere ? kWarn : kBad;
+    auto* p = new D2RLProgress{state, TRF(L"status.world_contact.result", L"World contact walls: {text}", {{L"text", r.text}}), true};
+    if (!PostMessageW(wnd, WM_APP_SOLIDS, 0, (LPARAM)p)) delete p;
+}
+
+void StartSolidsCatalog() {
+    const bool on = GetPrivateProfileIntW(L"weight", L"world_contact", 0, g_ini) != 0 || GetPrivateProfileIntW(L"weight", L"world_contact_hands", 0, g_ini) != 0;
+    if (!on) {
+        SetStatus(L"world_contact", kUnknown, TR(L"@status.world_contact.label", L"World contact walls: off ([weight] world_contact, Weapon Weight)"));
+        return;
+    }
+    if (g_solidsBusy.exchange(true)) return;
+    SetStatus(L"world_contact", kUnknown, TR(L"status.world_contact.making", L"World contact walls: making them from the game's meshes (about a minute)..."));
+    std::wstring dir(g_ini);
+    const size_t slash = dir.find_last_of(L"\\/");
+    dir = slash == std::wstring::npos ? std::wstring() : dir.substr(0, slash + 1);
+    try {
+        std::thread(SolidsThread, g_main, GameFolder(), dir).detach();
+    } catch (const std::exception&) {
+        g_solidsBusy.store(false);
+        SetStatus(L"world_contact", kBad, TR(L"status.world_contact.not_started", L"World contact walls: could not be started"));
+    }
+}
+
+void OnSolidsDone(D2RLProgress* raw) {
+    std::unique_ptr<D2RLProgress> p(raw);
+    g_solidsBusy.store(false);
+    SetStatus(L"world_contact", p->state, p->text.c_str());
+}
+
 // [world] kurast_boat: the town's preset with the canoe on the water (boat_assets.cpp), into the mod's data folder, on a thread of its own -
 // the archives take a moment. At the start, and when the tick changes either way (off takes our file out again).
 constexpr UINT WM_APP_BOAT = WM_APP + 45;
@@ -9831,7 +9940,10 @@ domeassets::Result PrepareSkyDomeNow() {
     const std::wstring game = GameFolder();
     const std::wstring modRoot = ModInstall() ? modlayout::ModRoot(game) : std::wstring();
     const bool sky = GetPrivateProfileIntW(L"sky", L"game_sky", 0, g_ini) != 0;
-    const bool on = sky || GetPrivateProfileIntW(L"sky", L"game_dome_caves", 0, g_ini) != 0;   // ([sky] game_dome_caves: the black one)
+    // The files kept ready whichever way "Sky and fog drawn by" is set (Serg on 0.192.1: set to the game while it ran, the files made only
+    // then - and taken out again whenever our effect was chosen -, the game asked the dome before they were there: our old sky all along).
+    // A dome's files are only read when the game draws the sky; ready, the choice works at once.
+    const bool on = true;
     const bool summitPath = sky && GetPrivateProfileIntW(L"debug", L"game_sky_test", 0, g_ini) == 4;
     const bool closed = GetPrivateProfileIntW(L"sky", L"game_sky_closed", 0, g_ini) != 0;   // ([sky] game_sky_closed: a whole sphere)
     return domeassets::Prepare(game, modRoot, on, summitPath, closed);
@@ -9840,7 +9952,10 @@ domeassets::Result PrepareSkyDomeNow() {
 void StartSkyDome() {
     try {
         std::thread([] {
-            const domeassets::Result r = PrepareSkyDomeNow();
+            domeassets::Result r = PrepareSkyDomeNow();
+            // (written while the game runs: it may take the mod's files only at its start - as the Kurast boat's)
+            if (r.wrote && (ProcessRunning(L"D2RLoader.exe") || ProcessRunning(L"D2R.exe")))
+                r.text += std::wstring(L" - ") + TR(L"dome.restart", L"the game running now: restart it for the game-drawn sky");
             LogLine(L"sky dome: " + r.text);
         }).detach();
     } catch (const std::exception&) {
@@ -10000,6 +10115,69 @@ void DataModsBeforeStart() {
         for (const std::wstring& l : r.log) StartSay(L"start:   " + l);
     } else {
         SetStatus(L"data_mods", DataModsState(r), TRF(L"status.data_mods.result", L"Other mods: {text}", {{L"text", r.text}}).c_str());
+    }
+}
+
+// [headset_shot]: the screenshot's button writes [headset_shot] take, the video's video_take (each item's own click: a counter); the game takes
+// one at its next read of the ini. Each status follows its file appearing in the logs folder vrcam writes to (<the ini's folder>\..\logs) - the
+// shot's .txt, the clip's .mp4 (10 s of recording and its encoding later) - or says none came.
+struct HeadsetAsk { ULONGLONG at = 0; FILETIME ft{}; };
+HeadsetAsk g_hshotAsk, g_hclipAsk;
+void AskHeadsetShot(bool video) {
+    HeadsetAsk& a = video ? g_hclipAsk : g_hshotAsk;
+    if (!ProcessRunning(L"D2R.exe")) {
+        a.at = 0;
+        if (video) SetStatus(L"hclip", kWarn, TR(L"status.hclip.no_game", L"Headset video: start the game in VR first - the button asks the running game for one"));
+        else SetStatus(L"hshot", kWarn, TR(L"status.hshot.no_game", L"Headset screenshot: start the game in VR first - the button asks the running game for one"));
+        return;
+    }
+    a.at = GetTickCount64();
+    GetSystemTimeAsFileTime(&a.ft);
+    if (video) SetStatus(L"hclip", kUnknown, TR(L"status.hclip.asked", L"Recording 10 s of the headset picture - keep the headset on and play..."));
+    else SetStatus(L"hshot", kUnknown, TR(L"status.hshot.asked", L"Headset screenshot asked for - keep the headset on..."));
+}
+// The newest file of `pattern` in the logs folder written since the ask ("" none), its full path.
+std::wstring NewestSince(const wchar_t* pattern, const FILETIME& since) {
+    std::wstring dir = g_ini;
+    dir.resize(dir.find_last_of(L"\\/") + 1);
+    dir += L"..\\logs\\";
+    wchar_t full[MAX_PATH];
+    if (GetFullPathNameW(dir.c_str(), MAX_PATH, full, nullptr)) dir = full;
+    WIN32_FIND_DATAW fd;
+    std::wstring newest;
+    FILETIME newestFt = since;
+    HANDLE h = FindFirstFileW((dir + pattern).c_str(), &fd);
+    if (h != INVALID_HANDLE_VALUE) {
+        do if (CompareFileTime(&fd.ftLastWriteTime, &newestFt) >= 0) { newestFt = fd.ftLastWriteTime; newest = fd.cFileName; }
+        while (FindNextFileW(h, &fd));
+        FindClose(h);
+    }
+    return newest.empty() ? newest : dir + newest;
+}
+void FollowHeadsetShot() {   // (the 500 ms timer)
+    if (!g_ini[0]) return;
+    if (g_hshotAsk.at) {
+        const std::wstring file = NewestSince(L"headset_shot_*.txt", g_hshotAsk.ft);
+        if (!file.empty()) {
+            g_hshotAsk.at = 0;
+            SetStatus(L"hshot", kOk, TRF(L"status.hshot.saved", L"Headset screenshot saved: {file} and its pictures - Collect logs packs the newest",
+                                         {{L"file", file}}).c_str());
+        } else if (GetTickCount64() - g_hshotAsk.at > 20000) {
+            g_hshotAsk.at = 0;
+            SetStatus(L"hshot", kBad, TR(L"status.hshot.none", L"No headset screenshot came in 20 s: is the game running in VR? The mod's log (d2r_vr) says why"));
+        }
+    }
+    if (g_hclipAsk.at) {
+        const std::wstring file = NewestSince(L"headset_clip_*.mp4", g_hclipAsk.ft);
+        // (the .mp4 is there from the recording's start: done once its .csv, written last, is)
+        const std::wstring csv = file.size() > 4 ? file.substr(0, file.size() - 4) + L".csv" : std::wstring();
+        if (!file.empty() && GetFileAttributesW(csv.c_str()) != INVALID_FILE_ATTRIBUTES) {
+            g_hclipAsk.at = 0;
+            SetStatus(L"hclip", kOk, TRF(L"status.hclip.saved", L"Headset video saved: {file} - Collect logs packs the newest", {{L"file", file}}).c_str());
+        } else if (GetTickCount64() - g_hclipAsk.at > 60000) {
+            g_hclipAsk.at = 0;
+            SetStatus(L"hclip", kBad, TR(L"status.hclip.none", L"No headset video came in 60 s: is the game running in VR? The mod's log (d2r_vr) says why"));
+        }
     }
 }
 
@@ -10352,6 +10530,7 @@ LRESULT CALLBACK PageProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
                 else if (BW_LinkRequests* r = LinkRequests()) bw::link::Request(r, &r->flatvrRunning, wcscmp(it.key, L"flatvr_start") == 0 ? 1 : 0);
             } else if (HIWORD(w) == BN_CLICKED && it.kind == Kind::Button) {
                 WriteValue(it, (float)(((int)ReadValue(it) + 1) % 1000000));
+                if (wcscmp(it.section, L"headset_shot") == 0) AskHeadsetShot(wcscmp(it.key, L"video_take") == 0);
             } else if (HIWORD(w) == BN_CLICKED && (it.kind == Kind::Toggle || it.kind == Kind::Invert)) {
                 const bool on = SendMessageW(it.ctl, BM_GETCHECK, 0, 0) == BST_CHECKED;
                 if (it.kind == Kind::Toggle) WriteValue(it, on ? 1.0f : 0.0f);
@@ -10362,6 +10541,7 @@ LRESULT CALLBACK PageProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
                 if (wcscmp(it.section, L"update") == 0) StartUpdateCheck();   // switched on, or the other channel
                 if (wcscmp(it.section, L"sky") == 0 && wcscmp(it.key, L"arcane_sky") == 0) StartArcaneSky();
                 if (wcscmp(it.section, L"weight") == 0 && (wcscmp(it.key, L"knock_props") == 0 || wcscmp(it.key, L"grab_items") == 0)) StartPropsCatalog();
+                if (wcscmp(it.section, L"weight") == 0 && (wcscmp(it.key, L"world_contact") == 0 || wcscmp(it.key, L"world_contact_hands") == 0)) StartSolidsCatalog();
                 if (wcscmp(it.section, L"world") == 0 && wcscmp(it.key, L"kurast_boat") == 0) StartKurastBoat();
                 if (wcscmp(it.section, L"openxr") == 0 && wcscmp(it.key, L"skill_panel_game_look") == 0) StartMenuArt();
                 if ((wcscmp(it.section, L"sky") == 0 && (wcscmp(it.key, L"game_sky") == 0 || wcscmp(it.key, L"game_dome_caves") == 0 ||
@@ -10415,6 +10595,7 @@ LRESULT CALLBACK WndProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
         StartUpdateCheck();
         StartArcaneSky();
         StartPropsCatalog();
+        StartSolidsCatalog();
         StartKurastBoat();
         StartSkyDome();
         StartGameCeiling();
@@ -10428,6 +10609,7 @@ LRESULT CALLBACK WndProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
     case WM_APP_COLLECT: OnCollectProgress((D2RLProgress*)l); return 0;
     case WM_APP_ARCANE: OnArcaneDone((D2RLProgress*)l); return 0;
     case WM_APP_PROPS: OnPropsDone((D2RLProgress*)l); return 0;
+    case WM_APP_SOLIDS: OnSolidsDone((D2RLProgress*)l); return 0;
     case WM_APP_BOAT: OnBoatDone((D2RLProgress*)l); return 0;
     case WM_APP_MODS: OnDataModsDone((D2RLProgress*)l); return 0;
     case WM_APP_FRAMEGEN: OnFrameGenProgress((D2RLProgress*)l); return 0;
@@ -10440,6 +10622,7 @@ LRESULT CALLBACK WndProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
         RefreshRadios();
         RefreshWeaponList();
         RefreshGameCode();
+        FollowHeadsetShot();
         static int tick = 0;
         if (++tick % 2 == 0) RefreshStatus();
         return 0;

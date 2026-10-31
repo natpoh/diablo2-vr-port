@@ -27,6 +27,7 @@ struct D3D12_PIPELINE_STATE_STREAM_DESC;
 struct D3D12_COMPUTE_PIPELINE_STATE_DESC;
 struct ID3D12PipelineState;
 struct ID3D12DescriptorHeap;
+struct D3D12_SHADER_RESOURCE_VIEW_DESC;
 
 namespace natived3d {
 
@@ -63,12 +64,16 @@ struct Sinks {
     // each before the real call (the pipeline: after it, the one bound). The hooks for the root arguments, the heaps and DrawInstanced go in
     // only when these are given.
     void (*fxReset)(ID3D12GraphicsCommandList* cl) = nullptr;
-    void (*fxTargets)(ID3D12GraphicsCommandList* cl, unsigned n, const D3D12_CPU_DESCRIPTOR_HANDLE* rts, bool single, ID3D12Resource* ds) = nullptr;
+    // (`dsv`: the depth-stencil view's handle as bound, nullptr none - the effects' depth binds the game's targets again after its draw)
+    void (*fxTargets)(ID3D12GraphicsCommandList* cl, unsigned n, const D3D12_CPU_DESCRIPTOR_HANDLE* rts, bool single, ID3D12Resource* ds,
+                      const D3D12_CPU_DESCRIPTOR_HANDLE* dsv) = nullptr;
     void (*fxBarrier)(ID3D12GraphicsCommandList* cl, unsigned n, const D3D12_RESOURCE_BARRIER* b) = nullptr;
     void (*fxBound)(ID3D12GraphicsCommandList* cl, ID3D12PipelineState* pso) = nullptr;
     void (*fxHeaps)(ID3D12GraphicsCommandList* cl, unsigned n, ID3D12DescriptorHeap* const* heaps) = nullptr;
     void (*fxRoot)(ID3D12GraphicsCommandList* cl, const RootCall& call) = nullptr;
-    void (*fxDraw)(ID3D12GraphicsCommandList* cl, unsigned vertices, unsigned instances) = nullptr;
+    // (a draw's whole arguments: the effects' depth draws it again; `indexed` DrawIndexedInstanced, `base` its base vertex)
+    void (*fxDraw)(ID3D12GraphicsCommandList* cl, bool indexed, unsigned vertices, unsigned instances, unsigned first, int base,
+                   unsigned firstInstance) = nullptr;
 };
 // A root argument set on a list (Sinks::fxRoot): the compute root signature and arguments (given back after a dispatch of ours), and the
 // graphics descriptor tables (set again after our heaps were bound)
@@ -113,6 +118,14 @@ unsigned RtvIncrement();
 // handle they were made or copied into - only while asked (TrackSceneViews; the hook then looks at every view made and copied). nullptr:
 // not one of them. The pointer may name a resource since freed: compare it, never call it. SrvIncrement: the CBV/SRV/UAV heaps' step.
 void TrackSceneViews(bool on);
+// [sky] game_sky: tell the log when the game makes a shader-resource view of the domes' picture (shared/sky_atlas.h IsAtlasTexture) - the
+// place a texture of ours could stand in for it, so the game draws the dome in our colours itself. Looked at only while on.
+void WatchDomeAtlas(bool on);
+// [sky] dome_in_game_colour (vr/sky/dome_atlas.h StandIn): each view the game makes of the domes' picture, while watched, handed to `fn` first
+// with the real CreateShaderResourceView - true: `fn` made a view of its own in that slot, the game's is not made. nullptr: none.
+using CreateSrvFn = void(__stdcall*)(ID3D12Device*, ID3D12Resource*, const D3D12_SHADER_RESOURCE_VIEW_DESC*, D3D12_CPU_DESCRIPTOR_HANDLE);
+using AtlasStandInFn = bool (*)(ID3D12Device*, ID3D12Resource*, const D3D12_SHADER_RESOURCE_VIEW_DESC*, D3D12_CPU_DESCRIPTOR_HANDLE, CreateSrvFn);
+void SetAtlasStandIn(AtlasStandInFn fn);
 ID3D12Resource* SrvResource(uint64_t handle);
 unsigned SrvIncrement();
 // Our recording on a list of the game's (the stand-in for ReShade's command list, vr/native_rsapi.h): what it calls does not reach the sinks,

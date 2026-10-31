@@ -12,10 +12,11 @@ namespace vrc {
 // game wrote its own fog there; this checks for 30 frames that the frame's fog is the blend's (the layout: vr/game_fog_vr.h SameFog),
 // then writes ours over it each frame - the frame's settings only, never the area's definitions (the game writes them again every
 // frame: unticked, or out of F4, its own are back at once). While it is on the post pass draws no fog of its own (fx::FogWanted).
-namespace fx { bool OurFogWanted(); bool FogColourNow(float rgb[3]); }
+namespace fx { bool OurFogWanted(); bool FogColourNow(float rgb[3]); bool NoFogUnderground(); }
 namespace gamefogvr {
 using namespace ::gamefogvr;               // (the pure parts: vr/game_fog_vr.h)
 std::atomic<bool> g_on{false};             // this frame: ticked, VR F4, our fog wanted (the present sets it)
+std::atomic<bool> g_none{false};           // ... or [fog] caves=0 underground: no fog at all written over the area's own (Active stays false)
 std::atomic<int> g_at{-1};                 // where the frame's fog is in its settings (a float index; -1 not found yet)
 std::atomic<bool> g_bad{false};            // not found for long: nothing written (told once)
 constexpr int kMatchFrames = 30, kGiveUp = 1800;
@@ -39,7 +40,8 @@ Fog Current() {
 // (vr/game_fog_vr.h FindFog: the blend's five floats, exactly, at one place) and taken after 30 frames at the same place; then our
 // numbers go there every frame.
 void Apply(const uint8_t* vis, void* fs) {
-    if (!vis || !fs || g_bad.load(std::memory_order_relaxed) || !g_on.load(std::memory_order_relaxed)) return;
+    if (!vis || !fs || g_bad.load(std::memory_order_relaxed) || !(g_on.load(std::memory_order_relaxed) || g_none.load(std::memory_order_relaxed)))
+        return;
     float blend[5];
     if (!::SafeRead(blend, vis + kVisFogAt, sizeof blend)) return;
     int at = g_at.load(std::memory_order_relaxed);
@@ -75,6 +77,21 @@ void Update() {
     const bool arcane = g_arcaneSky.load();
     const bool want = g_set.gameFog.load() && GameDrawnView() && fx::OurFogWanted() && !arcane;
     g_on.store(want);
+    // [fog] caves=0 underground, the game's fog chosen: its pass would draw the area's own fog there - a fog of nothing goes over it (the
+    // density 0: none at any distance), every frame as ours would; nothing else takes it for the game's fog drawing ours (Active false)
+    const bool none = !want && g_set.gameFog.load() && GameDrawnView() && fx::NoFogUnderground();
+    if (none) {
+        AcquireSRWLockExclusive(&g_lock);
+        g_fog = Fog{0.0f, 0.0f, 0.0f, 0.0f, 1000.0f};
+        ReleaseSRWLockExclusive(&g_lock);
+    }
+    g_none.store(none);
+    static bool toldNone = false;
+    if (none != toldNone) {
+        toldNone = none;
+        Log(none ? "vrcam: game fog - none underground ([fog] caves=0): the game's own distance fog there written to nothing"
+                 : "vrcam: game fog - [fog] caves=0's nothing no longer written");
+    }
     static int told = -1;
     static Fog toldFog{};
     // (the Arcane Sanctuary: told on every entry, whether the game's pass drew before or not - Serg, 2026-10-28: the game's fog there "is
@@ -93,13 +110,14 @@ void Update() {
     }
     const bool under = g_underground.load();
     Ours o{};
-    o.start = under ? g_set.fogCaveStart.load() : g_set.fogStart.load();
-    o.end = under ? g_set.fogCaveEnd.load() : g_set.fogEnd.load();
-    o.strength = under ? g_set.fogCaveStrength.load() : 1.0f;
+    const fx::FogNumbers n = fx::FogNumbersNow();   // ([fog] arcane_own: the Arcane Sanctuary's own)
+    o.start = n.start;
+    o.end = n.end;
+    o.strength = n.strength;
     fx::FogColourNow(o.rgb);
     // [fog] game_fog_caves_black: underground the distance darkens into black, whatever [fog] color_caves says - Serg (2026-10-27): "может
-    // быть в пещерах просто затенять чёрным"
-    if (under && g_set.fogCavesBlack.load()) o.rgb[0] = o.rgb[1] = o.rgb[2] = 0.0f;
+    // быть в пещерах просто затенять чёрным" (not the Arcane Sanctuary with its own fog: its colour)
+    if (under && g_set.fogCavesBlack.load() && !fx::ArcaneOwnFog()) o.rgb[0] = o.rgb[1] = o.rgb[2] = 0.0f;
     const Fog f = FromOurs(o);
     float seen[5], blend[5];
     int lastFind;
@@ -130,7 +148,7 @@ void Update() {
              f.plane, kFullAt * 100.0f * o.strength, o.end, f.density, f.plane, f.r, f.g, f.b, o.rgb[0], o.rgb[1], o.rgb[2], under ? " underground" : "",
              seen[3], seen[4]);
     if (changed) {   // the two side by side (Serg, act 4: the old fog hid the far, the game's "ничего не скрывает"): the share at points of the way
-        auto ours = [&](float dist) { return std::pow(std::clamp((dist - o.start) / (std::max)(o.end - o.start, 1.0f), 0.0f, 1.0f), g_set.fogCurve.load()) * o.strength; };
+        auto ours = [&](float dist) { return std::pow(std::clamp((dist - o.start) / (std::max)(o.end - o.start, 1.0f), 0.0f, 1.0f), n.curve) * o.strength; };
         const bool curve = g_set.fogOurCurve.load();
         auto game = [&](float dist) { return curve ? ours(dist) : GameFogAmount(f, dist); };
         char line[400];

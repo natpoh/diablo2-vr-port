@@ -10,6 +10,8 @@ namespace vrc {
 // vr/body/hero_facing.cpp: where the hero's model faces, the body under the camera
 bool FreshYawInModel(float* yawInModel, float* eyeModel, bool* eyeOk);
 bool CameraYawInModel(float* out, float* eyeModel, bool* eyeOk);
+// the camera's forward in the hero's model space (unit; y up) as the last CameraYawInModel / FreshYawInModel found it ([debug] body_dump)
+bool CameraForwardInModel(float out[3]);
 bool FreshRoomShift(float shift[3]);
 // vr/body/arms.cpp: the head in BodyWalk's room, the hands, the hero's arms (skel::Input, every round of the update thread)
 void PushArms();

@@ -45,9 +45,11 @@ bool Keep(const char* entry, ReadBool readBool, ReadFloat readFloat) {
     auto nonzero = [&](const char* u) { float v = 0.0f; return readFloat(u, &v) && v != 0.0f; };
     auto is = [&](const char* a) { return strcmp(n, a) == 0; };
     const bool none = !on("SkyOn") && !on("FogOn") && !on("CeilOn");   // the world's pass gives the picture as it is ...
-    const bool gameFix = on("GameFogMatch") || on("DomeFogHorizon");    // ... unless it fixes the game's fog or dome
+    const bool gameFix = on("GameFogMatch") || on("DomeFogHorizon") || on("DomeLook");   // ... unless it fixes the game's fog or dome
     if (none && !gameFix && (is("PS_DepthFog") || is("PS_DepthFogR"))) return false;
     if (is("PS_FogSeen") || is("PS_FogSeenR") || is("PS_FogSeenStore")) return on("GameFogMatch");
+    // ([sky] dome_true_colour's measure of the game's dome as seen: only for it)
+    if (is("PS_DomeSeen") || is("PS_DomeSeenR") || is("PS_DomeSeenStore")) return on("DomeLook") && on("DomeGainOn");
     if (none || on("FogLight")) {
         // (a compute entry point carries its template's numbers: "CS_RecordHeights_16_16_1")
         auto named = [&](const char* a) { const size_t k = strlen(a); return strncmp(n, a, k) == 0 && (n[k] == 0 || n[k] == '_'); };

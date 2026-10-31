@@ -17,7 +17,9 @@
 #endif
 #include <windows.h>
 
+#include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -106,6 +108,7 @@ bool ReadAt(uintptr_t at, void* out, size_t n) noexcept {
 struct Copy {
     uintptr_t pose = 0;
     uint64_t gen = 0;
+    uint64_t ours = 0;   // [body] legs_rear: the gen of our own pose its matrices are (0: the game's pose's as read)
     alignas(16) float m[kMaxBones][16];
     alignas(16) uint8_t header[kPoseHeader];
 };
@@ -129,11 +132,70 @@ int ReadPose(Copy* c, uintptr_t pose, int* count) noexcept {
     }
 }
 
+// [body] legs_rear (0.192.7, Serg's clip: the hero ran with his legs running while every pose we wrote held them; the skinning's look at what it drew:
+// "ours 0, NOT ours ~20000"): what the skinning reads from the hero's world pose is not what PoseBody wrote into it - the game's own pose (the skinning
+// meets the pose before our write lands, or after the game has posed it again). So, as the monsters' ragdoll does, the skinning is handed a copy of the
+// pose whose matrices are ours: the last pose PoseBody finished (PublishOurPose), for the pose that was this frame's then; the one before for the last
+// frame's (its motion vectors). Only while it is fresh (kOursMs), and only for the hero's rig.
+std::atomic<bool> g_oursWanted{false};
+constexpr ULONGLONG kOursMs = 250;
+struct OurPose { uintptr_t pose = 0; int n = 0; float m[kMaxBones][16]; };
+SRWLOCK g_oursLock = SRWLOCK_INIT;
+OurPose g_ours[2];   // (under g_oursLock) [0] the last finished, [1] the one before
+std::atomic<uintptr_t> g_oursSkel{0}, g_oursCur{0}, g_oursPrev{0};
+std::atomic<uint64_t> g_oursGen{0};
+std::atomic<ULONGLONG> g_oursAt{0};
+std::atomic<unsigned> g_oursSubs[3];   // skinnings handed our pose: the eyes' passes, the shadows', outside a draw collect
+
+// Our pose for this world pose of the hero's skeleton (its matrices into m, n of them): true when there is a fresh one; *gen its gen.
+bool OursInto(uintptr_t skeleton, uintptr_t pose, float (*m)[16], int n, uint64_t* gen) {
+    if (!g_oursWanted.load(std::memory_order_relaxed) || !pose || skeleton != g_oursSkel.load(std::memory_order_relaxed)) return false;
+    if (GetTickCount64() - g_oursAt.load(std::memory_order_relaxed) > kOursMs) return false;
+    const int which = pose == g_oursCur.load(std::memory_order_relaxed) ? 0 : pose == g_oursPrev.load(std::memory_order_relaxed) ? 1 : -1;
+    if (which < 0) return false;
+    bool ok = false;
+    AcquireSRWLockShared(&g_oursLock);
+    if (g_ours[which].n == n && n > 0) {
+        std::memcpy(m, g_ours[which].m, sizeof(float) * 16 * (size_t)n);
+        *gen = g_oursGen.load(std::memory_order_relaxed);
+        ok = true;
+    }
+    ReleaseSRWLockShared(&g_oursLock);
+    return ok;
+}
+
+// The skinning's copy of the hero's pose with our matrices (0: none fresh - the game's own pose is handed on).
+thread_local std::unique_ptr<Copy> t_ours[2];
+thread_local int t_oursNext = 0;
+uintptr_t OursPose(uintptr_t skeleton, uintptr_t pose) {
+    const uint64_t gen = g_oursGen.load(std::memory_order_acquire);
+    for (auto& c : t_ours)
+        if (c && c->pose == pose && c->ours == gen && gen) return reinterpret_cast<uintptr_t>(c->header);
+    std::unique_ptr<Copy>& slot = t_ours[t_oursNext];
+    t_oursNext ^= 1;
+    if (!slot) slot.reset(new (std::nothrow) Copy());
+    if (!slot) return 0;
+    int n = 0;
+    if (ReadPose(slot.get(), pose, &n) <= 0) { slot->pose = 0; return 0; }
+    uint64_t have = 0;
+    if (!OursInto(skeleton, pose, slot->m, n, &have)) { slot->pose = 0; return 0; }
+    const uintptr_t ours = reinterpret_cast<uintptr_t>(slot->m);
+    std::memcpy(slot->header + kPoseMatrices, &ours, sizeof ours);
+    slot->pose = pose;
+    slot->ours = have;
+    return reinterpret_cast<uintptr_t>(slot->header);
+}
+
 // 1 made, 0 nothing to do (not published / another rig's count), -1 a fault.
 int Fill(Copy* c, uintptr_t pose, uint64_t gen) {
     int n = 0;
     const int r = ReadPose(c, pose, &n);
     if (r <= 0) return r;
+    c->ours = 0;
+    {   // [body] legs_rear: the eyes' copy made from our own pose, not the game's as read (OursInto)
+        uint64_t have = 0;
+        if (OursInto(g_oursSkel.load(std::memory_order_relaxed), pose, c->m, n, &have)) c->ours = have;
+    }
     AcquireSRWLockShared(&g_pubLock);   // (only our own memory under it)
     const bool same = g_pub.gen == gen && g_pub.count == n && g_pub.pivot >= 0 && g_pub.pivot < n;
     if (same) Shrink(c->m, n, g_pub.flags, g_pub.pivot);
@@ -150,8 +212,9 @@ int Fill(Copy* c, uintptr_t pose, uint64_t gen) {
 uintptr_t EyesPose(uintptr_t pose) {
     const uint64_t now = GetTickCount64(), gen = g_gen.load(std::memory_order_acquire);
     if (now - g_pubAt.load(std::memory_order_relaxed) > kPublishedMs || g_faulted.load(std::memory_order_relaxed)) return 0;
+    const uint64_t oursGen = g_oursWanted.load(std::memory_order_relaxed) ? g_oursGen.load(std::memory_order_acquire) : 0;
     for (auto& c : t_copy)
-        if (c && c->pose == pose && c->gen == gen) return reinterpret_cast<uintptr_t>(c->header);
+        if (c && c->pose == pose && c->gen == gen && (!oursGen || c->ours == oursGen)) return reinterpret_cast<uintptr_t>(c->header);
     std::unique_ptr<Copy>& slot = t_copy[t_next];
     t_next ^= 1;
     if (!slot) slot.reset(new (std::nothrow) Copy());
@@ -168,12 +231,53 @@ std::atomic<unsigned> g_skinOurs[3], g_skinOther[3];
 constexpr int kOtherPoses = 8;
 std::atomic<uintptr_t> g_otherPose[kOtherPoses];   // the other world poses met (the first few)
 
+// NoteHeroLegs: our last two writes of the hero's hips and legs (their places); CountSkin compares the legs it is skinning with them, by the pose it
+// skins from (this frame's, the last frame's) - 0.192.6, Serg: "the legs run" while the dump of what we wrote had them held: is what is skinned ours?
+constexpr int kLegBones = 8;
+SRWLOCK g_legsLock = SRWLOCK_INIT;
+int g_legBone[kLegBones] = {}, g_legCount = 0;
+float g_legAt[2][kLegBones][3] = {};   // [0] the last write, [1] the one before
+std::atomic<unsigned> g_legsOurs[2], g_legsNot[2];   // [0] this frame's pose, [1] the last frame's
+std::atomic<float> g_legsWorst{0.0f};                // the farthest a skinned leg bone stood from both writes (model units)
+
+void CheckSkinLegs(uintptr_t pose, int which) {
+    int bones[kLegBones], count;
+    float at[2][kLegBones][3];
+    AcquireSRWLockShared(&g_legsLock);
+    count = g_legCount;
+    memcpy(bones, g_legBone, sizeof bones);
+    memcpy(at, g_legAt, sizeof at);
+    ReleaseSRWLockShared(&g_legsLock);
+    if (count <= 0) return;
+    uintptr_t mats = 0;
+    if (!ReadAt(pose + 4, &mats, sizeof mats) || mats < 0x10000) return;
+    float worst = 0.0f;
+    for (int i = 0; i < count; ++i) {
+        float m[16];
+        if (!ReadAt(mats + (uintptr_t)bones[i] * 64, m, sizeof m)) return;
+        float best = 1e30f;
+        for (int w = 0; w < 2; ++w) {
+            const float dx = m[12] - at[w][i][0], dy = m[13] - at[w][i][1], dz = m[14] - at[w][i][2];
+            best = std::min(best, std::sqrt(dx * dx + dy * dy + dz * dz));
+        }
+        worst = std::max(worst, best);
+    }
+    if (worst > 0.02f) {
+        g_legsNot[which].fetch_add(1, std::memory_order_relaxed);
+        if (worst > g_legsWorst.load(std::memory_order_relaxed)) g_legsWorst.store(worst, std::memory_order_relaxed);
+    } else {
+        g_legsOurs[which].fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
 void CountSkin(uintptr_t skeleton, uintptr_t pose, int pass) {
     const uintptr_t skel = g_rigSkel.load(std::memory_order_relaxed);
     if (!skel || skeleton != skel || !pose) return;
     const int k = pass == kPassNone ? 2 : EyesPass(pass) ? 0 : 1;
-    if (pose == g_rigPose.load(std::memory_order_relaxed) || pose == g_rigPrev.load(std::memory_order_relaxed)) {
+    const bool cur = pose == g_rigPose.load(std::memory_order_relaxed);
+    if (cur || pose == g_rigPrev.load(std::memory_order_relaxed)) {
         g_skinOurs[k].fetch_add(1, std::memory_order_relaxed);
+        CheckSkinLegs(pose, cur ? 0 : 1);
         return;
     }
     g_skinOther[k].fetch_add(1, std::memory_order_relaxed);
@@ -237,6 +341,12 @@ __declspec(noinline) uintptr_t HookComposite(uintptr_t skeleton, uintptr_t pose,
             }
         }
     }
+    if (g_oursWanted.load(std::memory_order_relaxed) && pose && skeleton == g_oursSkel.load(std::memory_order_relaxed)) {   // [body] legs_rear: our pose drawn
+        if (const uintptr_t ours = OursPose(skeleton, pose)) {
+            g_oursSubs[pass == kPassNone ? 2 : EyesPass(pass) ? 0 : 1].fetch_add(1, std::memory_order_relaxed);
+            return g_origComposite(skeleton, ours, indices, count, out);
+        }
+    }
     return g_origComposite(skeleton, pose, indices, count, out);
 }
 
@@ -293,6 +403,8 @@ void OnXform(uint32_t entity, uintptr_t component, uintptr_t) {
     if (on && g_marked.Add(entity, now, kMarkTtlMs)) g_marks.fetch_add(1, std::memory_order_relaxed);   // (already there: Add renewed its time)
 }
 
+std::atomic<void (*)(uint32_t, uintptr_t, uintptr_t)> g_attachWriter{nullptr};   // [weight] knock_down (SetAttachWriter)
+
 void Clear() {
     g_self.store(0);
     g_cur.store(0);
@@ -306,6 +418,36 @@ void Init(const PluginContext* ctx) {
     g_ctx = ctx;
     if (g_wanted.load()) Log("head shadow: on ([arms] head_shadow) - in F4 the hero's head stays in his pose for the shadows and is shrunk in the eyes' passes only (visual only)");
 }
+
+void WantForPose(bool on) {
+    if (g_oursWanted.exchange(on) != on && on) Log("hero pose: the game's skinning composite is asked for - the hero is drawn from a copy of his pose holding the bones as we "
+                                                 "finished them ([body] legs_rear)");
+}
+void PublishOurPose(uintptr_t skeleton, uintptr_t pose, uintptr_t prevPose, const float* m, int n) {
+    if (!g_oursWanted.load(std::memory_order_relaxed) || !m || n <= 0 || n > kMaxBones || pose < 0x10000) return;
+    AcquireSRWLockExclusive(&g_oursLock);
+    g_ours[1].pose = g_ours[0].pose;
+    g_ours[1].n = g_ours[0].n;
+    if (g_ours[0].n > 0) std::memcpy(g_ours[1].m, g_ours[0].m, sizeof(float) * 16 * (size_t)g_ours[0].n);
+    g_ours[0].pose = pose;
+    g_ours[0].n = n;
+    std::memcpy(g_ours[0].m, m, sizeof(float) * 16 * (size_t)n);
+    if (g_ours[1].n != n) { g_ours[1].n = n; std::memcpy(g_ours[1].m, m, sizeof(float) * 16 * (size_t)n); }
+    g_oursGen.store(g_oursGen.load(std::memory_order_relaxed) + 1, std::memory_order_release);
+    ReleaseSRWLockExclusive(&g_oursLock);
+    g_oursSkel.store(skeleton, std::memory_order_relaxed);
+    g_oursCur.store(pose, std::memory_order_relaxed);
+    g_oursPrev.store(prevPose >= 0x10000 ? prevPose : 0, std::memory_order_relaxed);
+    g_oursAt.store(GetTickCount64(), std::memory_order_relaxed);
+}
+
+bool AttachmentOf(uint32_t entity, uintptr_t component, uintptr_t* skeletonInstance, int32_t* bone) {
+    if (component < 0x10000 || !skeletonInstance || !bone || g_state.load(std::memory_order_relaxed) != 1) return false;
+    uint32_t parent = 0xFFFFFFFFu;
+    bool has = false;
+    return ReadAttachment(entity, component, &parent, &has, skeletonInstance, bone) > 0 && has && *skeletonInstance > 0x10000;
+}
+void SetAttachWriter(void (*fn)(uint32_t entity, uintptr_t component, uintptr_t out)) { g_attachWriter.store(fn); }
 
 void WantForDoll(bool on) {
     if (g_dollWanted.exchange(on) != on && on) Log("monster ragdoll pose: the game's skinning composite is asked for - a struck monster is drawn from a turned copy of its pose");
@@ -360,7 +502,16 @@ void Install() {
         potionhide::WantHooksForHead(true);
         potionhide::Install();
     }
-    if (!(g_wanted.load() || g_dollWanted.load()) || g_state.load() != 0 || !g_ctx || now < retryAt) return;
+    if (const auto writer = g_attachWriter.load(); writer && g_ctx && g_state.load() == 1) {   // [weight] knock_down: a knocked-down body's weapon goes with its hand
+        static bool put = false;
+        if (!put) {
+            put = true;
+            potionhide::SetXformKnockWriter(writer);
+            potionhide::WantHooksForKnock(true);
+        }
+        potionhide::Install();
+    }
+    if (!(g_wanted.load() || g_dollWanted.load() || g_oursWanted.load()) || g_state.load() != 0 || !g_ctx || now < retryAt) return;
     retryAt = now + (tries < 30 ? 2000 : 30000);
     if (!d2rsig::Addr(RVA_DRAW_COLLECT) || !d2rsig::Addr(RVA_COMPOSITE) || !d2rsig::Addr(RVA_ATTACHMENT_OF) || !d2rsig::Addr(RVA_ECS_REGISTRY)) {
         if (++tries == 30) Log("head shadow: the renderer's functions are not found (another build?) - the head is shrunk in the pose as before");
@@ -430,6 +581,19 @@ void Unpublish(uintptr_t self) {
     if (g_self.load() == self) Clear();
 }
 
+void NoteHeroLegs(const int* bones, const float (*at)[3], int count) {
+    count = std::clamp(count, 0, kLegBones);
+    AcquireSRWLockExclusive(&g_legsLock);
+    memcpy(g_legAt[1], g_legAt[0], sizeof g_legAt[0]);
+    for (int i = 0; i < count; ++i) {
+        g_legBone[i] = bones[i];
+        for (int j = 0; j < 3; ++j) g_legAt[0][i][j] = at[i][j];
+    }
+    if (count != g_legCount) memcpy(g_legAt[1], g_legAt[0], sizeof g_legAt[0]);
+    g_legCount = count;
+    ReleaseSRWLockExclusive(&g_legsLock);
+}
+
 void NoteHeroRig(uintptr_t skeleton, uintptr_t pose, uintptr_t prevPose) {
     g_rigSkel.store(skeleton, std::memory_order_relaxed);
     g_rigPose.store(pose, std::memory_order_relaxed);
@@ -451,11 +615,28 @@ std::string SkinNote() {
             snprintf(b, sizeof b, "%s%llX", distinct++ ? " " : "", (unsigned long long)p);
             poses += b;
         }
-    char b[600];
+    char b[1200];
     snprintf(b, sizeof b, "hero skinning (since the last line): from the pose we posed - eyes %u, shadows %u, elsewhere %u; from ANOTHER world pose of the hero's "
              "skeleton - eyes %u, shadows %u, elsewhere %u (%d such poses%s%s)%s", ours[0], ours[1], ours[2], other[0], other[1], other[2], distinct,
              distinct ? ": " : "", poses.c_str(),
              other[0] ? " - meshes of the hero drawn from a pose our turn and legs never reach" : "");
+    {
+        const unsigned s0 = g_oursSubs[0].exchange(0), s1 = g_oursSubs[1].exchange(0), s2 = g_oursSubs[2].exchange(0);
+        const size_t at = strlen(b);
+        if (g_oursWanted.load())
+            snprintf(b + at, sizeof b - at, "; handed a copy holding our own pose ([body] legs_rear) - eyes %u, shadows %u, elsewhere %u", s0, s1, s2);
+    }
+    const unsigned lo0 = g_legsOurs[0].exchange(0), ln0 = g_legsNot[0].exchange(0), lo1 = g_legsOurs[1].exchange(0), ln1 = g_legsNot[1].exchange(0);
+    const float worst = g_legsWorst.exchange(0.0f);
+    if (lo0 + ln0 + lo1 + ln1) {
+        const size_t at = strlen(b);
+        snprintf(b + at, sizeof b - at, "; its hips and legs in the game's pose as the skinning met it, against our last two writes - from this frame's pose: ours %u, NOT ours %u; from the last "
+                 "frame's: ours %u, NOT ours %u%s", lo0, ln0, lo1, ln1, (ln0 + ln1) ? "" : " (all ours)");
+        if (ln0 + ln1) {
+            const size_t at2 = strlen(b);
+            snprintf(b + at2, sizeof b - at2, " (the farthest %.2f model units off - what is drawn there is not the pose we wrote)", worst);
+        }
+    }
     return b;
 }
 

@@ -57,8 +57,10 @@ int D2rvrHoverSpheres(float (*out)[8], int max);
 #include "xr_failure.h"   // when the runtime fails and the session is given up (xr_failure.h)
 #include "bounded_call.h"   // [openxr] busy_guard: xrWaitFrame and xrBeginSession on a thread of their own, waited for with a limit (bounded_call.h)
 #include "flatvr_gate.h"    // ... and no session over a FlatVR that holds the headset and cannot be stopped (flatvr_gate.h)
-#include "pointer_cache.h"   // the mouse pointer's images kept by what they show (pointer_cache.h)
+#include "pointer_cache.h"   // the mouse pointer's picture known by what it shows (pointer_cache.h Key)
 #include "chain_reaper.h"   // a swapchain made again in a session is destroyed later, once the game's queue was drained, not inside the present (chain_reaper.h)
+#include "chain_count.h"    // our swapchains alive, by kind, said when the number changes (SteamVR gives a session 16)
+#include "sticker_atlas.h"  // the pictures painted once a session, in one swapchain (g_stickers)
 #include "gpu_fault.h"   // the D3D12 device lost: told at once, nothing touched after it (vr/gpu_fault.h)
 #include "view_gate.h"
 #include "body_calibration.h"   // StandingEyeY: the standing eyes' height over the floor, from the T-pose measurement
@@ -90,6 +92,7 @@ int D2rvrHoverSpheres(float (*out)[8], int max);
 #include "render_resolution.h"
 #include "hset_ray.h"   // vectors, a ray against a panel, the pad values, the release gate: for any panel hung in the headset
 #include "hset_view.h"   // the settings' view buttons F1 - F4: the controller's own view path
+#include "players_cmd.h"   // the settings' Players row: the game's own /players N ([openxr] headset_players)
 #include "skill_wheel.h"   // [openxr] skill_wheel: the skill wheel in the headset (vr/xr_skill_wheel.h is its layer)
 #include "game_ui.h"       // [openxr] skill_panel_game_look: the skill panel drawn with the game's own art (vr/tiles_paint.cpp)
 #include "rune_shader.h"   // [openxr] runes_draw: BodyWalk's gesture runes in the headset (vr/xr_runes.h is their layer; rune_geom.h the maths)
@@ -104,6 +107,9 @@ int D2rvrHoverSpheres(float (*out)[8], int max);
 #include "hand_vitals_wire.h"   // [hud] hand_vitals: life and mana on the hand when the palm turns to the face (vr/xr_hand_vitals.h is its layer)
 #include "thrust_debug_wire.h"   // [debug] thrust_debug: the thrust's readout over the weapon hand (vr/xr_thrust_debug.h is its layer)
 #include "wrist_status_wire.h"   // [hud] wrist_status: companions and effects over a wrist turned to the eyes (vr/xr_wrist_status.h is its two layers)
+#include "headset_shot.h"   // [headset_shot]: the frame's layers as submitted, read back to PNGs (ShotFrame, in CloseFrame)
+#include "headset_clip.h"   // [headset_shot] video: 10 s of the eyes as submitted, to an .mp4 (ClipFrame, in CloseFrame)
+#include "headset_grid.h"   // [headset_shot] grid: the calibration grid in each eye's picture (GridOnEye, TurnFinishLocked)
 
 namespace gamestate { void SetStickBits(uint32_t bits); void SetMapBig(bool big); }   // the thumbstick check's verdict for D2R VR Settings (vr/gamestate.cpp, the state block); [hud] map_click_big
 namespace gamestate { int CursorHeld(); bool AutoMapOpen(); void SetBigMapZoom(float wanted); float BigMapZoomDrawn(); }   // [openxr] hand_inventory: 1 an item on the game's cursor, 0 none, -1 not known (vr/gamestate.cpp)
@@ -409,10 +415,9 @@ XrFovf g_cropFov[2] = {};  // ... with this fov (its box's)
 bool g_cropTold = false;   // told once a session
 // The mouse pointer's image over the flat picture (PointerQuad), and the game's window it is in.
 HWND g_wnd = nullptr;
-// sc: one of g_ptrImages' (the session's pointer images by what they show, vr/pointer_cache.h), not its own
-struct Pointer { HCURSOR shape = nullptr; XrSwapchain sc = XR_NULL_HANDLE; int n = 0, hotX = 0, hotY = 0; bool ok = false; };
+// Its picture is in g_ptrAtlas (one swapchain, the picture in its corner - not a swapchain for each picture: SteamVR gives a session 16); key: what it shows.
+struct Pointer { HCURSOR shape = nullptr; int n = 0, hotX = 0, hotY = 0; bool ok = false; uint64_t key = 0; };
 Pointer g_ptr;
-ptrcache::Cache<XrSwapchain> g_ptrImages;
 // The toolbar and the map hung in the room (HangHud): a swapchain each, and its layer.
 struct HudOut {
     XrSwapchain sc = XR_NULL_HANDLE;
@@ -420,15 +425,18 @@ struct HudOut {
     uint32_t w = 0, h = 0;
     int rtv0 = 0;
     XrCompositionLayerQuad layer{XR_TYPE_COMPOSITION_LAYER_QUAD};
+    ULONGLONG usedAt = 0;   // last drawn (DrawHud): the ones shown now and then give their swapchain back when unused (FreeIdle)
 };
 HudOut g_hudOut[hud::kNativePieces];
+// A picture painted once a session, in the stickers' one swapchain (g_stickers, vr/sticker_atlas.h): where it is, the stickers' generation that
+// has it, 0 not painted yet / 1 in / -1 no room. Shown once an upload of that generation is done (StickerShown).
+struct Sticker { stickers::Rect r; uint32_t gen = 0; int state = 0; };
 constexpr int kRtvs = 32;            // the render-target heap of these chains' images (g_rtvHeap) ...
 rtvslots::Slots<kRtvs> g_rtvSlots;   // ... its places: a chain takes one for each image and gives them back when it goes (vr/rtv_slots.h)
 HudOut g_plateOut;   // the monster's health bar hung over its head (HangPlate): a swapchain of its own, ONE size (plateworld::kChainW x kChainH), made once, kept to the session's end
-// [hud] map_compass (vr/map_turn.h, after bearstonem/d2r-pcvr's wrist compass): its strip and marker painted once into a static image,
-// two quads over the map in the hand showing parts of it (HangCompass); made again in a new session.
-XrSwapchain g_compassSc = XR_NULL_HANDLE;
-ID3D12Resource* g_compassUpload = nullptr;
+// [hud] map_compass (vr/map_turn.h, after bearstonem/d2r-pcvr's wrist compass): its strip and marker painted once into the stickers,
+// two quads over the map in the hand showing parts of it (HangCompass); painted again in a new session.
+Sticker g_compass;
 bool g_compassFailed = false;
 XrCompositionLayerQuad g_compassLayer[2] = {{XR_TYPE_COMPOSITION_LAYER_QUAD}, {XR_TYPE_COMPOSITION_LAYER_QUAD}};
 // [hud] map_click_big (vr/map_laser.h): the map in the hand as HangHud last hung it (in its space, the room's), the big map and its button
@@ -464,8 +472,7 @@ struct MapBeam { bool drawn = false, hit = false; XrVector3f from{}, dir{}, at{}
 MapBeam g_mapBeam;
 XrCompositionLayerQuad g_mapBeamLayer[2] = {{XR_TYPE_COMPOSITION_LAYER_QUAD}, {XR_TYPE_COMPOSITION_LAYER_QUAD}};
 XrCompositionLayerQuad g_bigLayer[2] = {{XR_TYPE_COMPOSITION_LAYER_QUAD}, {XR_TYPE_COMPOSITION_LAYER_QUAD}};
-XrSwapchain g_rotButtonSc = XR_NULL_HANDLE;
-ID3D12Resource* g_rotButtonUpload = nullptr;
+Sticker g_rotButton;   // the big map's button, both states (the stickers)
 bool g_rotButtonFailed = false;
 std::atomic<int> g_rotateSaveWant{-1};   // [hud] map_rotate to write (0 / 1), -1 none
 std::atomic<bool> g_rotateSaving{false};
@@ -488,6 +495,9 @@ Kind g_kind = kNone;
 XrFrameState g_fs{XR_TYPE_FRAME_STATE};
 XrView g_views[2] = {{XR_TYPE_VIEW}, {XR_TYPE_VIEW}};
 bool g_viewsOk = false;
+XrView g_shotViews[2] = {{XR_TYPE_VIEW}, {XR_TYPE_VIEW}};   // [headset_shot]: the views as the runtime located them, before the eye distance was set
+float g_shotIpdM = 0.0f;               // ... and the eye distance drawn with (eye_gap.h's pick)
+const char* g_shotIpdWhy = "";
 // Each eye's last picture as handed to the runtime: the pose and fov it was drawn with, and its
 // swapchain (whose last released image still holds it). Eyes by turns hands the eye not drawn this
 // frame in again with these - the runtime turns it to the head as it is (2026-10-11).
@@ -643,12 +653,26 @@ const char* Res(XrResult r) {
     return b;
 }
 // A failed call to the log, once per call site and result.
+// Our swapchains alive in the session, by kind (vr/chain_count.h): each one made is told here, and each destroyed (DestroyChain, the reaper's too).
+chaincount::Tally<XrSwapchain> g_chains;
+void DestroyChain(XrSwapchain sc) {
+    if (!sc) return;
+    g_chains.Gone(sc);
+    xrDestroySwapchain(sc);
+}
+
 bool Ok(XrResult r, const char* what) {
     if (XR_SUCCEEDED(r)) return true;
     gpufault::Check(g_dev, what);   // a call failed: is the device gone? (the first time it is, the report is written)
     static std::vector<std::pair<const char*, int>> told;
     for (const auto& t : told) if (t.first == what && t.second == (int)r) return false;
     if (told.size() < 64) told.push_back({what, (int)r});
+    if (r == XR_ERROR_LIMIT_REACHED) {   // the runtime's most swapchains (SteamVR: 16 a session): which of ours hold them
+        char b[192];
+        g_chains.Describe(b, sizeof b);
+        LogF("vrcam: openxr - %s failed: %s - ours alive: %u (%s)", what, Res(r), (unsigned)g_chains.Live(), b);
+        return false;
+    }
     LogF("vrcam: openxr - %s failed: %s", what, Res(r));
     return false;
 }
@@ -1433,7 +1457,8 @@ void ThrustDebugTeardown();   // the thrust debug's readout, below (xr_thrust_de
 void WristStatusTeardown();   // the wrist status panels' pictures, below (xr_wrist_status.h)
 void HsStep(D2RVR_XrInput& in, bool focused);   // the settings panel, below (xr_headset_settings.h)
 void HsTeardown();
-void DropCalibration();   // the T-pose measurement's pictures, below
+void DropCalibration(bool now);   // the T-pose measurement's picture, below
+void StickersTeardown();   // the pointer's and the stickers' pictures, below
 
 // The T-pose measurement (vr/calibration.cpp) gets this frame's head and hands in the room's space, as the runtime located them.
 void FeedCalibration(const D2RVR_XrInput& in, const bool located[2], bool focused) {
@@ -1770,12 +1795,11 @@ void Teardown() {   // under g_lock or before the session exists
     g_eyesTold = false;   // the next session says its eyes again
     g_subTold = false;
     g_cropTold = false;
-    g_ptrImages.All([](XrSwapchain sc) { xrDestroySwapchain(sc); });   // (g_ptr.sc is one of them)
-    g_ptr = Pointer{};
+    StickersTeardown();   // the pointer's picture and the stickers' (the laser, the buttons, the compass): painted again in the next session
     LaserTeardown();   // its buttons and keys let go, its images gone
     HsTeardown();      // the settings panel's picture and its thread
     calib::Stop();     // a T-pose measurement under way ends with the session
-    DropCalibration();
+    DropCalibration(true);
     WheelTeardown();   // the skill wheel closed, its picture gone
     RunesTeardown();   // the gesture runes' atlas
     VitalsTeardown();  // the hand vitals panel's picture gone
@@ -1783,31 +1807,28 @@ void Teardown() {   // under g_lock or before the session exists
     WristStatusTeardown();   // the wrist status panels' pictures gone
     g_panelPlace = PanelPlace{};
     g_gate[0] = g_gate[1] = focusgate::Gate{};   // a new session: what is down at its start is held back too
-    for (HudOut& o : g_hudOut) { if (o.sc) xrDestroySwapchain(o.sc); o = HudOut{}; }   // (a menu's panel's too)
-    if (g_zoneOut.sc) xrDestroySwapchain(g_zoneOut.sc);
+    for (HudOut& o : g_hudOut) { DestroyChain(o.sc); o = HudOut{}; }   // (a menu's panel's too)
+    DestroyChain(g_zoneOut.sc);
     g_zoneOut = HudOut{};
-    if (g_plateOut.sc) xrDestroySwapchain(g_plateOut.sc);   // (the only place the monster bar's chain goes: the session's end)
+    DestroyChain(g_plateOut.sc);   // (the only place the monster bar's chain goes: the session's end)
     g_plateOut = HudOut{};
-    if (g_noticeOut.sc) xrDestroySwapchain(g_noticeOut.sc);   // (the notice card's: the session's end too)
-    if (g_compassSc) xrDestroySwapchain(g_compassSc);   // [hud] map_compass: made again in the next session
-    if (g_bigTurnOut.sc) xrDestroySwapchain(g_bigTurnOut.sc);   // [hud] map_click_big: the turned big map's square
+    DestroyChain(g_noticeOut.sc);   // (the notice card's: here, or unused for a while: FreeIdle)
+    DestroyChain(g_bigTurnOut.sc);   // [hud] map_click_big: the turned big map's square
     g_bigTurnOut = HudOut{};
-    if (g_rotButtonSc) xrDestroySwapchain(g_rotButtonSc);   // [hud] map_click_big: the button's image, the big map back in the hand
-    g_rotButtonSc = XR_NULL_HANDLE;
     g_rotButtonFailed = false;
     if (g_mapClick.Big()) { hud::SetMapBig(false); gamestate::SetMapBig(false); }
     g_mapClick.Reset();
     g_mapQuadRoom = g_bigQuad = g_bigButton = maplaser::Quad{};
     g_mapBeam = MapBeam{};
-    g_compassSc = XR_NULL_HANDLE;
     g_compassFailed = false;
     g_noticeOut = HudOut{};
     g_noticeCard.Reset();
     g_rtvSlots.Reset();   // every chain that held places is gone
     for (Chain* c : {&g_eyeChain[0], &g_eyeChain[1], &g_quadChain}) {
-        if (c->sc) xrDestroySwapchain(c->sc);
+        DestroyChain(c->sc);
         *c = Chain{};
     }
+    g_chains.Reset();   // (any left go with the session)
     for (int h = 0; h < 2; ++h) {
         if (g_gripSpace[h]) xrDestroySpace(g_gripSpace[h]);
         if (g_aimSpace[h]) xrDestroySpace(g_aimSpace[h]);
@@ -2196,6 +2217,7 @@ bool EnsureChain(Chain& c, const D3D12_RESOURCE_DESC& full, const char* what, co
     }
     uint32_t n = 0;
     const bool eye = &c == &g_eyeChain[0] || &c == &g_eyeChain[1];   // [openxr] frame_generation: the eyes through the bridge, the flat picture below it
+    g_chains.Made(c.sc, eye ? chaincount::kEye : chaincount::kFlat);
     if (eye) {
         xrEnumerateSwapchainImages(c.sc, 0, &n, nullptr);
         c.img.assign(n, {XR_TYPE_SWAPCHAIN_IMAGE_D3D12_KHR});
@@ -2262,6 +2284,15 @@ void SubmitList() {
 // (a chain whose images are all acquired gives no more). 1 ready, 0 ran out, -1 failed.
 ULONGLONG g_waitRanOutAt = 0;
 void ForgetPending(XrSwapchain sc) { for (PendingImage& q : g_pendingImg) if (q.sc == sc) q = PendingImage{}; }
+// [headset_shot]: each swapchain's image last acquired and waited for - the one a layer of it shows (the frame's images are all released
+// before xrEndFrame; a static image's only one, long ago). Kept for every swapchain whether a shot is on or not: a shot needs the ones before.
+struct ShotImage { XrSwapchain sc; uint32_t idx; };
+ShotImage g_shotImg[64] = {};
+uint32_t g_shotImgAt = 0;
+void NoteShotImage(XrSwapchain sc, uint32_t idx) {
+    for (ShotImage& s : g_shotImg) if (s.sc == sc) { s.idx = idx; return; }
+    g_shotImg[g_shotImgAt++ % 64] = ShotImage{sc, idx};
+}
 
 // -- swapchains made again in a session (chain_reaper.h) --------------------------
 // Virtual Desktop's xrDestroySwapchain first flushes the game's queue (a Signal on it, then an endless WaitForSingleObject): called inside the game's present it
@@ -2282,12 +2313,12 @@ void RetireChain(XrSwapchain& sc, const char* what) {
     ForgetPending(sc);   // (an image of it whose wait ran out is waited for no more)
     g_reaper.Add(sc, UsNow() / 1000.0);
     static int told = 0;
-    if (told < 3) { ++told; LogF("vrcam: openxr - the %s swapchain is made again: the old one is destroyed once the game's queue is found drained, not in this present", what); }
+    if (told < 3) { ++told; LogF("vrcam: openxr - the %s swapchain is let go (made again, or unused): destroyed once the game's queue is found drained, not in this present", what); }
     sc = XR_NULL_HANDLE;
 }
 void DestroyRetired(XrSwapchain sc) {
     gpufault::Note("xr: a retired swapchain destroyed", (uint64_t)(uintptr_t)sc);
-    xrDestroySwapchain(sc);
+    DestroyChain(sc);
 }
 // At a frame's start (OpenFrame, after xrBeginFrame).
 void ReapChains() {
@@ -2339,69 +2370,62 @@ int NextImage(XrSwapchain sc, uint32_t* idx, const char* what) {
     }
     if (p) *p = PendingImage{};   // waited for (or gone): acquired anew next time
     snprintf(b, sizeof b, "xrWaitSwapchainImage(%s)", what);
-    return Ok(r, b) ? 1 : -1;
+    if (!Ok(r, b)) return -1;
+    NoteShotImage(sc, *idx);
+    return 1;
 }
 
-ID3D12Resource* g_ptrUpload = nullptr;
-ULONGLONG g_ptrRetryAt = 0;   // the pointer's image ran out of its wait: made again from then on
+ULONGLONG g_ptrRetryAt = 0;   // the pointer's picture was not uploaded: made again from then on
 
-// A static swapchain (acquired, filled and released once, shown as long as it lasts) of w x h
-// premultiplied pixels, sRGB, R in each one's low byte. `upload` holds them until the copy is done:
-// kept until the next image made with it. `sc` is the caller's to destroy once made, whatever
-// came after. 1 made, 0 the image's wait ran out (make it again later), -1 failed.
-int MakeStaticImage(uint32_t w, uint32_t h, const uint32_t* rgba, ID3D12Resource*& upload, XrSwapchain& sc, const char* what) {
-    const UINT pitch = (w * 4 + 255) & ~255u;
-    Retire(upload);   // (the copy that read it may not have run yet: a new cursor shape came a frame after the last)
-    D3D12_HEAP_PROPERTIES hp{}; hp.Type = D3D12_HEAP_TYPE_UPLOAD;
-    D3D12_RESOURCE_DESC rd{}; rd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER; rd.Width = (UINT64)pitch * h; rd.Height = 1;
-    rd.DepthOrArraySize = 1; rd.MipLevels = 1; rd.SampleDesc.Count = 1; rd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-    if (FAILED(g_dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
-                                              __uuidof(ID3D12Resource), (void**)&upload))) return -1;
-    uint8_t* dst = nullptr;
-    D3D12_RANGE none{0, 0};
-    if (FAILED(upload->Map(0, &none, (void**)&dst))) return -1;
-    for (uint32_t y = 0; y < h; ++y) memcpy(dst + (size_t)y * pitch, rgba + (size_t)y * w, (size_t)w * 4);
-    upload->Unmap(0, nullptr);
-    int64_t fmt = 0;
-    for (int64_t f : g_formats) if (f == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB) fmt = f;
-    if (!fmt) return -1;
-    XrSwapchainCreateInfo ci{XR_TYPE_SWAPCHAIN_CREATE_INFO};
-    ci.createFlags = XR_SWAPCHAIN_CREATE_STATIC_IMAGE_BIT;
-    ci.usageFlags = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT;
-    ci.format = fmt; ci.sampleCount = 1; ci.width = w; ci.height = h; ci.faceCount = 1; ci.arraySize = 1; ci.mipCount = 1;
-    char b[96];
-    snprintf(b, sizeof b, "xrCreateSwapchain(%s)", what);
-    if (!Ok(xrCreateSwapchain(g_session, &ci, &sc), b)) { sc = XR_NULL_HANDLE; return -1; }
-    uint32_t cnt = 0;   // (a panel: listed below the frame-generation bridge, vr/frame_gen.h)
-    framegenlib::PanelImages(sc, 0, &cnt, nullptr);
-    std::vector<XrSwapchainImageD3D12KHR> img(cnt, {XR_TYPE_SWAPCHAIN_IMAGE_D3D12_KHR});
-    framegenlib::PanelImages(sc, cnt, &cnt, (XrSwapchainImageBaseHeader*)img.data());
-    uint32_t idx = 0;
-    if (!cnt) return -1;
-    if (const int got = NextImage(sc, &idx, what); got <= 0) return got;
-    bool copied = false;
-    if (ID3D12GraphicsCommandList* l = OpenList()) {
-        ID3D12Resource* t = img[idx].texture;
-        D3D12_RESOURCE_BARRIER rb = Tr(t, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_DEST);
-        l->ResourceBarrier(1, &rb);
-        D3D12_TEXTURE_COPY_LOCATION to{}, from{};
-        to.pResource = t; to.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
-        from.pResource = upload; from.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
-        from.PlacedFootprint.Footprint = {DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, w, h, 1, pitch};
-        l->CopyTextureRegion(&to, 0, 0, 0, &from, nullptr);
-        rb = Tr(t, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_RENDER_TARGET);
-        l->ResourceBarrier(1, &rb);
-        SubmitList();
-        copied = true;
+#include "xr_quad_atlas.h"         // a CPU-painted picture as a quad layer (the pointer, the stickers, the settings panel, the skill wheel ...)
+
+// The pointer's picture: ONE swapchain for the session, kPtrMax square, the picture in its corner (imageRect n x n) - uploaded when what it shows
+// changes. Until 0.192 each picture had a static swapchain of its own and eight were kept (vr/pointer_cache.h): with the panels SteamVR's 16 for a
+// session ran out (vr/chain_count.h). The same picture under a new handle (the game makes its pointer anew every ~500 ms in an area change) uploads
+// nothing, and no swapchain is made or destroyed for a new one (the 2026-10-27 device removal: chain_reaper.h).
+constexpr int kPtrMax = 256;
+QuadAtlas g_ptrAtlas;
+std::vector<uint32_t> g_ptrPx;
+
+// The pictures painted once a session - the laser's beam and dot, the inventory's two buttons, the map compass, the big map's button - in ONE
+// swapchain (vr/sticker_atlas.h); a static swapchain each until 0.192. Each is put in when first needed (StickerPut) and shown once an upload
+// that has it is done (StickerShown); the layers name g_stickers.sc and the picture's rectangle.
+constexpr int kStickersW = 1600, kStickersH = 320;
+stickers::Atlas g_stickerPx(kStickersW, kStickersH);
+QuadAtlas g_stickers;
+uint32_t g_stickersUp = 0;   // the generation the swapchain holds
+
+void StickerPut(Sticker& s, int w, int h, const uint32_t* px, const char* what) {
+    if (s.state) return;
+    if (g_stickerPx.Put(w, h, px, &s.r)) {
+        s.state = 1;
+        s.gen = g_stickerPx.Gen();
+    } else {
+        s.state = -1;
+        LogF("vrcam: openxr - %s: no room left in the stickers' picture (%dx%d) - not shown", what, kStickersW, kStickersH);
     }
-    XrSwapchainImageReleaseInfo ri{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
-    snprintf(b, sizeof b, "xrReleaseSwapchainImage(%s)", what);
-    if (!Ok(xrReleaseSwapchainImage(sc, &ri), b)) return -1;
-    return copied ? 1 : 0;   // no list could be opened (the GPU is behind): the image holds nothing yet - made again later, not shown empty for good
+}
+bool StickerShown(const Sticker& s) {
+    if (s.state <= 0) return false;
+    if (g_stickersUp != g_stickerPx.Gen() && QuadAtlasUpload(g_stickers, (uint32_t)kStickersW, (uint32_t)kStickersH, g_stickerPx.Pixels(), "stickers", chaincount::kStickers))
+        g_stickersUp = g_stickerPx.Gen();   // (not this time: its wait ran out or a copy still runs - asked again next frame)
+    return g_stickers.shown && g_stickersUp >= s.gen;
+}
+// A part of a sticker (dx, dy from its corner, w x h), as a layer's imageRect.
+XrRect2Di StickerRect(const Sticker& s, int dx, int dy, int w, int h) { return {{s.r.x + dx, s.r.y + dy}, {w, h}}; }
+XrRect2Di StickerRect(const Sticker& s) { return StickerRect(s, 0, 0, s.r.w, s.r.h); }
+
+void StickersTeardown() {   // with the session (Teardown): painted again in the next one
+    QuadAtlasDestroy(g_ptrAtlas);
+    g_ptrPx.clear();
+    g_ptr = Pointer{};
+    QuadAtlasDestroy(g_stickers);
+    g_stickerPx.Clear();
+    g_stickersUp = 0;
+    g_compass = g_rotButton = Sticker{};
 }
 
 bool MakePointerImage(HCURSOR cur) {
-    g_ptr.sc = XR_NULL_HANDLE;   // (kept in g_ptrImages: the picture may come back under another handle)
     g_ptr.ok = false;
     g_ptr.shape = cur;
     ICONINFO ii{};
@@ -2439,28 +2463,25 @@ bool MakePointerImage(HCURSOR cur) {
         const uint32_t cover = 255 - std::clamp((int)(w & 0xFF) - (int)(b & 0xFF), 0, 255);
         rgba[i] = ((b >> 16) & 0xFF) | (b & 0xFF00) | ((b & 0xFF) << 16) | (cover << 24);
     }
-    // the same picture under a new handle (the game makes its pointer anew, every ~500 ms in an area change): the swapchain it has (vr/pointer_cache.h)
+    // the same picture under a new handle (the game makes its pointer anew, every ~500 ms in an area change): nothing uploaded
     const uint64_t key = ptrcache::Key(rgba.data(), rgba.size(), n, g_ptr.hotX, g_ptr.hotY);
-    if (const XrSwapchain kept = g_ptrImages.Find(key)) {
-        g_ptr.sc = kept;
+    if (key == g_ptr.key && g_ptrAtlas.shown) {
         g_ptr.ok = true;
         return true;
     }
-    XrSwapchain sc = XR_NULL_HANDLE;
-    const int got = MakeStaticImage((uint32_t)n, (uint32_t)n, rgba.data(), g_ptrUpload, sc, "pointer");
-    if (got > 0) {
-        if (XrSwapchain out = g_ptrImages.Put(key, sc)) {   // past ptrcache::kKeep pictures: the least lately used one
-            gpufault::Note("xr: pointer swapchain retired", (uint64_t)(uintptr_t)out);
-            RetireChain(out, "pointer");   // (destroyed later, once the game's queue is drained and it is old enough: chain_reaper.h)
-        }
-        g_ptr.sc = sc;
-    } else if (sc) {   // made but not filled: not kept (made again later)
-        gpufault::Note("xr: pointer swapchain retired", (uint64_t)(uintptr_t)sc);
-        RetireChain(sc, "pointer");
+    // into the corner, its last column and row repeated past it (the quad reads at its edge what a swapchain of its own read there)
+    g_ptrPx.assign((size_t)kPtrMax * kPtrMax, 0u);
+    const int e = std::min(n + stickers::kPad, kPtrMax);
+    for (int y = 0; y < e; ++y)
+        for (int x = 0; x < e; ++x) g_ptrPx[(size_t)y * kPtrMax + x] = rgba[(size_t)std::min(y, n - 1) * n + std::min(x, n - 1)];
+    if (!QuadAtlasUpload(g_ptrAtlas, (uint32_t)kPtrMax, (uint32_t)kPtrMax, g_ptrPx, "pointer", chaincount::kPointer)) {
+        g_ptr.shape = nullptr;   // (its wait ran out, or a copy still runs: made again in a moment)
+        g_ptrRetryAt = GetTickCount64() + 100;
+        return false;
     }
-    if (got == 0) { g_ptr.shape = nullptr; g_ptrRetryAt = GetTickCount64() + 1000; }   // made again in a second
-    g_ptr.ok = got > 0;
-    return g_ptr.ok;
+    g_ptr.key = key;
+    g_ptr.ok = true;
+    return true;
 }
 
 // The pointer as a quad on the flat picture (pose and size of that picture's quad), or false:
@@ -2491,7 +2512,7 @@ bool PointerQuad(const XrCompositionLayerQuad& pic, XrCompositionLayerQuad* out)
     const float fy = (float)p.y / rc.bottom + (0.5f * n - (float)g_ptr.hotY) / picH;
     const XrVector3f off = Rot(pic.pose.orientation, {(fx - 0.5f) * W, (0.5f - fy) * H, 0.003f});   // a hair in front
     *out = pic;
-    out->subImage.swapchain = g_ptr.sc;
+    out->subImage.swapchain = g_ptrAtlas.sc;
     out->subImage.imageRect = {{0, 0}, {g_ptr.n, g_ptr.n}};
     out->pose.position = {pic.pose.position.x + off.x, pic.pose.position.y + off.y, pic.pose.position.z + off.z};
     out->size = {W * n / picW, H * n / picH};
@@ -2536,7 +2557,7 @@ bool Pointer3dQuad(XrVector3f eyes, XrQuaternionf look, XrCompositionLayerQuad* 
     *out = XrCompositionLayerQuad{XR_TYPE_COMPOSITION_LAYER_QUAD};
     out->space = g_space;
     out->eyeVisibility = XR_EYE_VISIBILITY_BOTH;
-    out->subImage.swapchain = g_ptr.sc;
+    out->subImage.swapchain = g_ptrAtlas.sc;
     out->subImage.imageRect = {{0, 0}, {g_ptr.n, g_ptr.n}};
     out->pose.orientation = look;
     out->pose.position = {point.x + off.x, point.y + off.y, point.z + off.z};
@@ -2828,15 +2849,23 @@ bool MakeHudPipeline() {
     return true;
 }
 
+// Its swapchain handed to the reaper (destroyed later, once the game's queue is drained: chain_reaper.h) and its render-target places given back.
+void ReleaseHudOut(HudOut& o) {
+    if (!o.sc) return;
+    gpufault::Note("xr: interface swapchain retired", (uint64_t)(uintptr_t)o.sc, ((uint64_t)o.w << 32) | o.h);
+    RetireChain(o.sc, "interface");
+    gpufault::Note("xr: render-target slots given back", (uint64_t)o.rtv0, (uint64_t)o.img.size());
+    g_rtvSlots.Give(o.rtv0, (int)o.img.size());
+    o.img.clear();
+    o.rtv0 = 0;
+    o.w = o.h = 0;
+}
+
 bool EnsureHudOut(HudOut& o, uint32_t w, uint32_t h, const char* what) {
     if (o.sc && o.w == w && o.h == h) return true;
     if (o.sc) {
         SettleGpu();           // (our lists that draw into its images are done before their views are written over; bounded)
-        gpufault::Note("xr: interface swapchain retired", (uint64_t)(uintptr_t)o.sc, ((uint64_t)o.w << 32) | o.h);
-        RetireChain(o.sc, "interface");   // (destroyed later, once the game's queue is drained: chain_reaper.h)
-        gpufault::Note("xr: render-target slots given back", (uint64_t)o.rtv0, (uint64_t)o.img.size());
-        g_rtvSlots.Give(o.rtv0, (int)o.img.size());
-        o.img.clear();
+        ReleaseHudOut(o);
     }
     o.w = w; o.h = h;
     bool srgb = false;
@@ -2846,6 +2875,7 @@ bool EnsureHudOut(HudOut& o, uint32_t w, uint32_t h, const char* what) {
     ci.usageFlags = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT;
     ci.format = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB; ci.sampleCount = 1; ci.width = w; ci.height = h; ci.faceCount = 1; ci.arraySize = 1; ci.mipCount = 1;
     if (!Ok(xrCreateSwapchain(g_session, &ci, &o.sc), "xrCreateSwapchain(interface)")) { o.sc = XR_NULL_HANDLE; return false; }
+    g_chains.Made(o.sc, chaincount::kInterface);
     uint32_t n = 0;   // (a panel: listed below the frame-generation bridge, vr/frame_gen.h)
     framegenlib::PanelImages(o.sc, 0, &n, nullptr);
     std::vector<XrSwapchainImageD3D12KHR> img(n, {XR_TYPE_SWAPCHAIN_IMAGE_D3D12_KHR});
@@ -2879,6 +2909,7 @@ bool EnsureHudOut(HudOut& o, uint32_t w, uint32_t h, const char* what) {
 bool DrawHud(HudOut& o, ID3D12Resource* src, bool orb, const float cb[12], uint32_t dw = 0, uint32_t dh = 0, const float* turn = nullptr) {
     if (!dw || dw > o.w) dw = o.w;
     if (!dh || dh > o.h) dh = o.h;
+    o.usedAt = GetTickCount64();
     uint32_t idx = 0;
     XrSwapchainImageReleaseInfo ri{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
     if (NextImage(o.sc, &idx, "interface") <= 0) return false;
@@ -3017,7 +3048,7 @@ bool HudPose(const D2RVR_XrInput& in, int anchor, bool map, bool orb, float widt
 
 // [hud] map_compass: the compass's image (mapturn::kAtlasW x kAtlasH) - bearstonem/d2r-pcvr's (MIT; steamvr/interaction_ui.cpp compass::Paint,
 // their colours and Georgia): a dark strip of two revolutions side by side, a tick every 1/32 turn, N NE E ... every eighth, N gold; under
-// it the marker, a small gold wedge pointing down. Premultiplied sRGB, R in the low byte (MakeStaticImage); black is see-through.
+// it the marker, a small gold wedge pointing down. Premultiplied sRGB, R in the low byte (the stickers); black is see-through.
 std::vector<uint32_t> PaintCompass() {
     using namespace mapturn;
     std::vector<uint32_t> out;
@@ -3073,33 +3104,28 @@ std::vector<uint32_t> PaintCompass() {
 uint32_t HangCompass(const XrCompositionLayerBaseHeader** layers, uint32_t nl, uint32_t max, const XrCompositionLayerQuad& map, float bearing, bool orb) {
     using namespace mapturn;
     if (nl + 2 > max || g_compassFailed) return nl;
-    if (!g_compassSc) {
+    if (!g_compass.state) {
         const std::vector<uint32_t> px = PaintCompass();
         if (px.empty()) { g_compassFailed = true; Log("vrcam: openxr - map compass: its picture could not be painted - no compass"); return nl; }
-        XrSwapchain sc = XR_NULL_HANDLE;
-        const int got = MakeStaticImage((uint32_t)kAtlasW, (uint32_t)kAtlasH, px.data(), g_compassUpload, sc, "map compass");
-        if (got <= 0) {
-            if (sc) xrDestroySwapchain(sc);
-            if (got < 0) { g_compassFailed = true; Log("vrcam: openxr - map compass: its image could not be made - no compass this session"); }
-            return nl;   // (0: its wait ran out - tried again next frame)
-        }
-        g_compassSc = sc;
+        StickerPut(g_compass, kAtlasW, kAtlasH, px.data(), "map compass");
+        if (g_compass.state < 0) { g_compassFailed = true; return nl; }
         Log("vrcam: openxr - map compass: its strip made (painted once; the window moves with the way you look)");
     }
+    if (!StickerShown(g_compass)) return nl;   // (not uploaded yet: tried again next frame)
     // as wide as the map (the orb: a little wider than the ball), a gap over its top
     const float ball = map.size.width / kOrbSpan;   // the orb's diameter
     const float w = orb ? 1.2f * ball : map.size.width, h = w * (float)kStripH / (float)kWindow;
     const float top = orb ? 0.5f * ball : 0.5f * map.size.height;
     XrCompositionLayerQuad& q = g_compassLayer[0];
     q = map;   // its space, eyes and flags
-    q.subImage.swapchain = g_compassSc;
-    q.subImage.imageRect = {{Crop(bearing), 0}, {kWindow, kStripH}};
+    q.subImage.swapchain = g_stickers.sc;
+    q.subImage.imageRect = StickerRect(g_compass, Crop(bearing), 0, kWindow, kStripH);
     q.pose.position = Plus(map.pose.position, Rot(map.pose.orientation, {0.0f, top + 0.15f * h + 0.5f * h, 0.0f}));
     q.size = {w, h};
     XrCompositionLayerQuad& m = g_compassLayer[1];
     m = q;
     const float mw = w * (float)kMarkW / (float)kWindow, mh = h * (float)kMarkH / (float)kStripH;
-    m.subImage.imageRect = {{0, kStripH}, {kMarkW, kMarkH}};
+    m.subImage.imageRect = StickerRect(g_compass, 0, kStripH, kMarkW, kMarkH);
     m.pose.position = Plus(q.pose.position, Rot(q.pose.orientation, {0.0f, 0.5f * (h - mh), 0.001f}));   // at the strip's top edge, a mm nearer
     m.size = {mw, mh};
     layers[nl++] = (const XrCompositionLayerBaseHeader*)&q;
@@ -3439,10 +3465,9 @@ struct Laser {
     ULONGLONG checkAt = 0;     // ... when to see whether the game dropped it
 };
 Laser g_laser;
-// The beam and the dot, made once a session.
-struct LaserImage { XrSwapchain sc = XR_NULL_HANDLE; ID3D12Resource* upload = nullptr; uint32_t w = 0, h = 0; int state = 0; ULONGLONG retryAt = 0; };
-LaserImage g_beamImg, g_dotImg;
-LaserImage g_btnImg[2];   // [openxr] hand_inventory: the button beside the inventory (ButtonImages)
+// The beam and the dot, painted once a session into the stickers.
+Sticker g_beamImg, g_dotImg;
+Sticker g_btnImg[2];   // [openxr] hand_inventory: the button beside the inventory (ButtonImages)
 constexpr float kBeamM = 1.5f, kBeamWidthM = 0.006f, kDotM = 0.022f;
 
 bool SendButton(int b, bool down) {
@@ -3472,12 +3497,7 @@ void LaserLetGo() {
 
 void LaserTeardown() {   // under g_lock or before the session exists
     LaserLetGo();
-    for (LaserImage* i : {&g_beamImg, &g_dotImg, &g_btnImg[0], &g_btnImg[1]}) {
-        if (i->sc) { ForgetPending(i->sc); xrDestroySwapchain(i->sc); }
-        ID3D12Resource* upload = i->upload;   // kept until the next image made with it, as the pointer's: its copy may still run
-        *i = LaserImage{};
-        i->upload = upload;
-    }
+    for (Sticker* i : {&g_beamImg, &g_dotImg, &g_btnImg[0], &g_btnImg[1]}) *i = Sticker{};   // (their picture went with the stickers: StickersTeardown)
     g_laser = Laser{};
     g_flatShown = FlatShown{};
     g_btnShown = BtnShown{};
@@ -3734,10 +3754,8 @@ void LaserStep(D2RVR_XrInput& in, bool focused) {
 // The beam (soft across, fading to its far end, which is the image's top) and the dot, premultiplied:
 // a warm white core in a red glow.
 void LaserImages() {
-    const ULONGLONG now = GetTickCount64();
-    auto make = [&](LaserImage& i, uint32_t w, uint32_t h, const char* what, auto shade) {
-        if (i.state != 0 || now < i.retryAt) return;
-        if (i.sc) { gpufault::Note("xr: laser swapchain retired", (uint64_t)(uintptr_t)i.sc); RetireChain(i.sc, "laser"); }   // (chain_reaper.h)
+    auto make = [&](Sticker& i, uint32_t w, uint32_t h, const char* what, auto shade) {
+        if (i.state != 0) return;
         std::vector<uint32_t> px((size_t)w * h);
         for (uint32_t y = 0; y < h; ++y)
             for (uint32_t x = 0; x < w; ++x) {
@@ -3746,9 +3764,7 @@ void LaserImages() {
                 const float r = 255.0f, g = 70.0f + 170.0f * core, b = 40.0f + 170.0f * core;
                 px[(size_t)y * w + x] = (uint32_t)(r * a) | (uint32_t)(g * a) << 8 | (uint32_t)(b * a) << 16 | (uint32_t)(255.0f * a) << 24;
             }
-        i.w = w; i.h = h;
-        i.state = MakeStaticImage(w, h, px.data(), i.upload, i.sc, what);
-        if (i.state == 0) i.retryAt = now + 1000;   // its wait ran out: again in a second
+        StickerPut(i, (int)w, (int)h, px.data(), what);
     };
     make(g_beamImg, 16, 128, "laser beam", [](uint32_t x, uint32_t y, float* a, float* core) {
         const float d = fabsf(((float)x + 0.5f) / 8.0f - 1.0f);   // 0 in the middle, 1 at the edges
@@ -3775,7 +3791,7 @@ struct BeamView {
 uint32_t HangBeam(const BeamView& L, const XrCompositionLayerBaseHeader** layers, uint32_t nl, uint32_t max, XrCompositionLayerQuad& beam, XrCompositionLayerQuad& dot) {
     if (!L.drawn) return nl;
     LaserImages();
-    if (g_beamImg.state > 0 && nl < max) {
+    if (StickerShown(g_beamImg) && nl < max) {
         const XrVector3f mid = Plus(L.from, Times(L.dir, 0.5f * L.len));
         const XrVector3f eyes = g_viewsOk ? Times(Plus(g_views[0].pose.position, g_views[1].pose.position), 0.5f) : g_cPos;
         XrVector3f z = Minus(eyes, mid);
@@ -3784,20 +3800,20 @@ uint32_t HangBeam(const BeamView& L, const XrCompositionLayerBaseHeader** layers
         z = Unit(z);
         beam.space = g_space;
         beam.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
-        beam.subImage.swapchain = g_beamImg.sc;
-        beam.subImage.imageRect = {{0, 0}, {(int32_t)g_beamImg.w, (int32_t)g_beamImg.h}};
+        beam.subImage.swapchain = g_stickers.sc;
+        beam.subImage.imageRect = StickerRect(g_beamImg);
         beam.pose.orientation = FromAxes(CrossV(L.dir, z), L.dir, z);   // the quad's height along the ray
         beam.pose.position = mid;
         beam.size = {kBeamWidthM, L.len};
         beam.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
         layers[nl++] = (const XrCompositionLayerBaseHeader*)&beam;
     }
-    if (L.hit && g_dotImg.state > 0 && nl < max) {
+    if (L.hit && StickerShown(g_dotImg) && nl < max) {
         const XrQuaternionf& q = L.surface;
         dot.space = g_space;
         dot.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
-        dot.subImage.swapchain = g_dotImg.sc;
-        dot.subImage.imageRect = {{0, 0}, {(int32_t)g_dotImg.w, (int32_t)g_dotImg.h}};
+        dot.subImage.swapchain = g_stickers.sc;
+        dot.subImage.imageRect = StickerRect(g_dotImg);
         dot.pose.orientation = q;
         dot.pose.position = Plus(L.at, Rot(q, {0.0f, 0.0f, 0.004f}));
         dot.size = {kDotM, kDotM};
@@ -4180,18 +4196,13 @@ uint32_t HangBigMap(const XrCompositionLayerBaseHeader** layers, uint32_t nl, ui
             pl.button = {pl.button.x + up.x * 1.3f * ch, pl.button.y + up.y * 1.3f * ch, pl.button.z + up.z * 1.3f * ch};
         }
     }
-    if (!g_rotButtonSc && !g_rotButtonFailed) {
+    if (!g_rotButton.state && !g_rotButtonFailed) {
         const std::vector<uint32_t> px = PaintRotateButton();
-        XrSwapchain sc = XR_NULL_HANDLE;
-        const int got = px.empty() ? -1 : MakeStaticImage((uint32_t)kRotBtnW, (uint32_t)(2 * kRotBtnH), px.data(), g_rotButtonUpload, sc, "big map button");
-        if (got > 0) g_rotButtonSc = sc;
-        else {
-            if (sc) xrDestroySwapchain(sc);
-            if (got < 0) { g_rotButtonFailed = true; Log("vrcam: openxr - the big map's button: its image could not be made - no button this session"); }
-        }
+        if (!px.empty()) StickerPut(g_rotButton, kRotBtnW, 2 * kRotBtnH, px.data(), "the big map's button");
+        if (px.empty() || g_rotButton.state < 0) { g_rotButtonFailed = true; Log("vrcam: openxr - the big map's button: its image could not be made - no button this session"); }
     }
-    if (g_rotButtonSc && nl < max) {
-        quad(g_bigLayer[1], g_rotButtonSc, {{0, g_cfg.mapRotate ? kRotBtnH : 0}, {kRotBtnW, kRotBtnH}}, pl.button, pl.bw, pl.bh);
+    if (StickerShown(g_rotButton) && nl < max) {
+        quad(g_bigLayer[1], g_stickers.sc, StickerRect(g_rotButton, 0, g_cfg.mapRotate ? kRotBtnH : 0, kRotBtnW, kRotBtnH), pl.button, pl.bw, pl.bh);
         layers[nl++] = (const XrCompositionLayerBaseHeader*)&g_bigLayer[1];
         keep(g_bigButton, pl.button, pl.bw, pl.bh);
     }
@@ -4219,13 +4230,22 @@ uint32_t HangMapLaser(const XrCompositionLayerBaseHeader** layers, uint32_t nl, 
     return HangBeam(BeamView{B.drawn, B.hit, B.from, B.dir, B.at, B.len, B.surface}, layers, nl, max, g_mapBeamLayer[0], g_mapBeamLayer[1]);
 }
 
-#include "xr_quad_atlas.h"         // a CPU-painted picture as a quad layer (the settings panel; the skill wheel can use it)
 #include "xr_headset_settings.h"   // the settings panel in the headset ([openxr] headset_settings): uses what is above
 #include "xr_skill_wheel.h"         // the skill wheel in the headset ([openxr] skill_wheel): uses what is above
 #include "xr_runes.h"               // BodyWalk's gesture runes in the headset ([openxr] runes_draw): uses what is above
 #include "xr_hand_vitals.h"        // the hand vitals panel ([hud] hand_vitals): uses what is above
 #include "xr_thrust_debug.h"       // the thrust debug's readout ([debug] thrust_debug): uses what is above
 #include "xr_wrist_status.h"       // the wrist status panels ([hud] wrist_status): uses what is above
+
+// [headset_shot] grid (vr/headset_grid.h): over an eye's picture of a pair through the head's camera, on the list that copied it, before the
+// image is released. g_gridTan: the tangents of that image's edges (CopyEye: the box's with runtime_fov's crop, else the fov it was drawn with).
+eyefov::Tan g_gridTan[2] = {};
+void GridOnEye(const Chain& c, ID3D12Resource* dst, ID3D12GraphicsCommandList* list) {
+    const int eye = &c == &g_eyeChain[0] ? 0 : &c == &g_eyeChain[1] ? 1 : -1;
+    if (eye < 0 || !headgrid::On() || g_kind != kPair || g_pairMode != kViewsHead) return;
+    const eyefov::Tan& t = g_gridTan[eye];
+    headgrid::Draw(list, dst, (DXGI_FORMAT)c.fmt, c.w, c.h, t.l, t.r, t.u, t.d, eye);
+}
 
 bool CopyInto(Chain& c, ID3D12Resource* bb) {
     if (!MakeCopyList()) return false;
@@ -4250,6 +4270,7 @@ bool CopyInto(Chain& c, ID3D12Resource* bb) {
     D3D12_RESOURCE_BARRIER e[2] = {Tr(bb, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_PRESENT),
                                    Tr(dst, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_RENDER_TARGET)};
     g_list->ResourceBarrier(2, e);
+    GridOnEye(c, dst, g_list);   // [headset_shot] grid
     SubmitList();
     XrSwapchainImageReleaseInfo ri{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
     return Ok(xrReleaseSwapchainImage(c.sc, &ri), "xrReleaseSwapchainImage");
@@ -4533,6 +4554,10 @@ bool OpenFrame(Kind kind) {
             const float measured = sqrtf((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y) + (a.z - b.z) * (a.z - b.z));
             NoteMeasuredIpd(measured);
             const eyegap::Choice pick = eyegap::Choose(measured, g_cfg.ipdAuto, g_cfg.ipdManualM, g_cfg.ipdFallbackM);
+            g_shotViews[0] = g_views[0];
+            g_shotViews[1] = g_views[1];
+            g_shotIpdM = pick.place ? pick.gapM : measured;
+            g_shotIpdWhy = pick.why == eyegap::Why::Manual ? "yours ([openxr] ipd_auto=0, ipd_mm)" : pick.why == eyegap::Why::Fallback ? "the fallback ([openxr] ipd_fallback_mm): the runtime's was not a stereo gap" : "the runtime's ([openxr] ipd_auto=1)";
             if (pick.place) {
                 float pos[2][3], right[2][3];
                 for (int e = 0; e < 2; ++e) {
@@ -4815,11 +4840,9 @@ void HandCutStep(const hud::NativePiece& src) {
 
 // The button beside the panel ([openxr] hand_inventory): 0 on the hand ("to the front": a frame), 1 in front ("to the hand": a small panel low left).
 void ButtonImages() {
-    const ULONGLONG now = GetTickCount64();
     for (int k = 0; k < 2; ++k) {
-        LaserImage& i = g_btnImg[k];
-        if (i.state != 0 || now < i.retryAt) continue;
-        if (i.sc) RetireChain(i.sc, "hand inventory button");
+        Sticker& i = g_btnImg[k];
+        if (i.state != 0) continue;
         constexpr uint32_t n = 64;
         std::vector<uint32_t> px((size_t)n * n);
         for (uint32_t y = 0; y < n; ++y)
@@ -4840,9 +4863,7 @@ void ButtonImages() {
                 if (rim || mark) { r = 225.0f; g = 200.0f; bl = 150.0f; a = std::max(a, 0.95f * std::clamp(0.5f - d * n, 0.0f, 1.0f)); }
                 px[(size_t)y * n + x] = (uint32_t)(r * a) | (uint32_t)(g * a) << 8 | (uint32_t)(bl * a) << 16 | (uint32_t)(255.0f * a) << 24;
             }
-        i.w = n; i.h = n;
-        i.state = MakeStaticImage(n, n, px.data(), i.upload, i.sc, "hand inventory button");
-        if (i.state == 0) i.retryAt = now + 1000;
+        StickerPut(i, (int)n, (int)n, px.data(), "hand inventory button");
     }
 }
 // The button hung beside a panel just placed (its top right corner, in the panel's plane), and kept for the laser.
@@ -4850,8 +4871,8 @@ uint32_t HangHandButton(const XrCompositionLayerBaseHeader** layers, uint32_t nl
     g_btnShown.ok = false;
     if (nl >= max) return nl;
     ButtonImages();
-    const LaserImage& i = g_btnImg[onHand ? 0 : 1];
-    if (i.state <= 0) return nl;
+    const Sticker& i = g_btnImg[onHand ? 0 : 1];
+    if (!StickerShown(i)) return nl;
     float bx = 0.0f, by = 0.0f;
     handinv::ButtonAt(panel.size.width, panel.size.height, &bx, &by);
     const float side = handinv::ButtonSide(panel.size.width);
@@ -4860,8 +4881,8 @@ uint32_t HangHandButton(const XrCompositionLayerBaseHeader** layers, uint32_t nl
     q.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
     q.space = panel.space;
     q.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
-    q.subImage.swapchain = i.sc;
-    q.subImage.imageRect = {{0, 0}, {(int32_t)i.w, (int32_t)i.h}};
+    q.subImage.swapchain = g_stickers.sc;
+    q.subImage.imageRect = StickerRect(i);
     q.pose.orientation = panel.pose.orientation;
     q.pose.position = Plus(panel.pose.position, Rot(panel.pose.orientation, {bx, by, 0.002f}));
     q.size = {side, side};
@@ -5002,55 +5023,214 @@ const char* LayerSlotName(int slot, bool pair, char* b, size_t cap) {
     return slot == 1 && pair ? "menu panel" : fixed[slot];
 }
 
-// -- the T-pose measurement's prompt (vr/calibration.cpp, calibration_panel.cpp) -----------------------------------------
-// A panel hung before the face, level, turning with the head's yaw only: the steps and what to do now, painted once per
-// message into a static swapchain of its own (MakeStaticImage), with a green fill laid on its bar's track as wide as the hold
-// has come. Only while a measurement is under way; its pictures go with it. The text is a quad of ours, not a BodyWalk menu
-// and not the game's: the measurement needs nothing but the headset and the controllers.
-struct CalibImage { XrSwapchain sc = XR_NULL_HANDLE; ID3D12Resource* upload = nullptr; ULONGLONG retryAt = 0; };
-CalibImage g_calibImg[calib::kPanelImages + 1];   // the last one is the fill, a solid colour
-XrCompositionLayerQuad g_calibLayer[2];
-
-void DropCalibration() {
-    WaitFence(g_fenceV, 200);   // the uploads' copies are done
-    for (CalibImage& im : g_calibImg) {
-        if (im.sc) { ForgetPending(im.sc); xrDestroySwapchain(im.sc); }
-        if (im.upload) im.upload->Release();
-        im = CalibImage{};
+// -- [headset_shot]: this frame's layers as submitted, read back (vr/headset_shot.h) -----------------------------------------------------
+// A layer's image: its swapchain's last image (NoteShotImage), from the chain's own list (the eyes', the flat picture's) or listed as a panel's
+// maker lists it (below the frame-generation bridge, vr/frame_gen_lib.h). *fmt the swapchain's format where known (0: the texture's own).
+ID3D12Resource* ShotTexture(XrSwapchain sc, int64_t* fmt) {
+    *fmt = 0;
+    uint32_t idx = UINT32_MAX;
+    for (const ShotImage& s : g_shotImg) if (sc && s.sc == sc) { idx = s.idx; break; }
+    if (idx == UINT32_MAX) return nullptr;
+    for (const Chain* c : {&g_eyeChain[0], &g_eyeChain[1], &g_quadChain})
+        if (c->sc == sc) { *fmt = c->fmt; return idx < c->img.size() ? c->img[idx].texture : nullptr; }
+    uint32_t n = 0;
+    if (XR_FAILED(framegenlib::PanelImages(sc, 0, &n, nullptr)) || idx >= n) return nullptr;
+    std::vector<XrSwapchainImageD3D12KHR> img(n, {XR_TYPE_SWAPCHAIN_IMAGE_D3D12_KHR});
+    if (XR_FAILED(framegenlib::PanelImages(sc, n, &n, (XrSwapchainImageBaseHeader*)img.data())) || idx >= n) return nullptr;
+    return img[idx].texture;
+}
+// Every layer's picture offered (each eye's projection image as its imageRect gives it: "left", "right"; F1's window a quad per eye: the same;
+// the flat picture: "flat"; any other quad "layer<n>_<name>"), and the frame described for the shot's text. On the draw thread, under g_lock,
+// right before xrEndFrame: the copies run on the game's queue after the images were drawn and before anything the runtime does with them.
+void ShotFrame(const XrCompositionLayerBaseHeader* const* layers, uint32_t nl, const std::vector<std::string>& names, bool turns, float bright) {
+    const float k = 57.29578f;
+    std::string t;
+    char b[640];
+    auto add = [&](const char* fmt, ...) {
+        va_list a;
+        va_start(a, fmt);
+        vsnprintf(b, sizeof b, fmt, a);
+        va_end(a);
+        t += b;
+    };
+    auto poseText = [](const XrPosef& p, char* out, size_t cap) {
+        snprintf(out, cap, "at %.4f %.4f %.4f m, turn %.4f %.4f %.4f %.4f (x y z w)", p.position.x, p.position.y, p.position.z, p.orientation.x,
+                 p.orientation.y, p.orientation.z, p.orientation.w);
+        return out;
+    };
+    auto gapMm = [](const XrPosef& a, const XrPosef& c) {
+        const float dx = a.position.x - c.position.x, dy = a.position.y - c.position.y, dz = a.position.z - c.position.z;
+        return sqrtf(dx * dx + dy * dy + dz * dz) * 1000.0f;
+    };
+    const char* mode = g_pairMode == kViewsWindow ? "F1's window in the room (views_3d)" : g_pairMode == kViewsRoom ? "F3's room (views_3d)" : "the head's camera";
+    add("Path: native OpenXR - runtime %s, headset %s, at most %u layers a frame, the headset's frame every %.2f ms\n", g_runtimeName[0] ? g_runtimeName : "?",
+        g_systemName[0] ? g_systemName : "?", g_maxLayers, g_fs.predictedDisplayPeriod / 1e6);
+    add("Settings in force: [openxr] runtime_fov %d%s, symmetric_fov %d, fov_crop %d, fov_override %d, canted_eyes %d, ipd_auto %d (ipd_mm %.1f); "
+        "[stereo] eyes by turns %d, turn_warp %d; [headset_shot] grid %d, video recording now %d\n",
+        g_cfg.runtimeFovMode, RuntimeFovNow() ? "" : " (not in force: the frame-generation bridge)", g_cfg.symmetric ? 1 : 0, g_cfg.fovCrop ? 1 : 0,
+        g_cfg.fovOverride ? 1 : 0, g_cfg.cantedEyes ? 1 : 0, g_cfg.ipdAuto ? 1 : 0, g_cfg.ipdManualM * 1000.0f, g_cfg.byTurns ? 1 : 0,
+        g_cfg.turnWarp ? 1 : 0, headgrid::On() ? 1 : 0, headclip::Wanted() ? 1 : 0);
+    if (g_kind == kPair)
+        add("The eyes this frame: left %s%s, right %s%s; each eye's picture %ux%u of the game's %ux%u\n",
+            g_copied[0] ? "drawn" : "its last picture", g_cropped[0] ? " (runtime_fov's box)" : "", g_copied[1] ? "drawn" : "its last picture",
+            g_cropped[1] ? " (runtime_fov's box)" : "", g_eyeChain[0].w, g_eyeChain[0].h, g_eyeChain[0].pw, g_eyeChain[0].ph);
+    if (g_kind == kPair)
+        add("This frame: a STEREO PAIR drawn as %s - %s\n", mode,
+            turns ? "eyes by turns: one eye drawn this frame, the other handed in with its last picture" : "both eyes drawn this frame");
+    else
+        add("This frame: the FLAT PICTURE (not a stereo pair: a menu, a load or the flat fallback) - one quad in front, the same for both eyes\n");
+    if (g_viewsOk) {
+        char p0[160], p1[160];
+        add("The runtime's views (xrLocateViews)%s:\n", g_posHeld ? " - no position from the runtime this frame: the head held where it was" : "");
+        for (int e = 0; e < 2; ++e) {
+            const XrView& v = g_shotViews[e];
+            add("  %s eye %s, fov %.2f %.2f %.2f %.2f deg (left right up down)\n", e ? "right" : "left", poseText(v.pose, e ? p1 : p0, 160),
+                v.fov.angleLeft * k, v.fov.angleRight * k, v.fov.angleUp * k, v.fov.angleDown * k);
+        }
+        add("  eye distance (IPD): the runtime's %.1f mm; drawn with %.1f mm - %s\n", gapMm(g_shotViews[0].pose, g_shotViews[1].pose), g_shotIpdM * 1000.0f,
+            g_shotIpdWhy);
+    } else {
+        add("The runtime's views: not located this frame\n");
     }
+    add("Colour scale (brightness): %.2f\n", bright);
+    add("Layers handed to xrEndFrame: %u (back to front)\n", nl);
+    for (uint32_t i = 0; i < nl; ++i) {
+        const XrCompositionLayerBaseHeader* l = layers[i];
+        const char* name = i < names.size() ? names[i].c_str() : "layer";
+        auto offer = [&](XrSwapchain sc, const XrRect2Di& r, const char* part, bool opaque, const char* who) {
+            int64_t fmt = 0;
+            ID3D12Resource* tex = ShotTexture(sc, &fmt);
+            const D3D12_RESOURCE_DESC d = tex ? tex->GetDesc() : D3D12_RESOURCE_DESC{};
+            add("    %s: swapchain %llux%u %s, the part x %d y %d %dx%d -> %s\n", who, (unsigned long long)d.Width, d.Height,
+                FormatName(fmt ? fmt : (int64_t)d.Format), r.offset.x, r.offset.y, r.extent.width, r.extent.height,
+                tex ? part : "its image not found (not read)");
+            if (!tex) return;
+            headshot::Picture p;
+            p.tex = tex;
+            p.state = D3D12_RESOURCE_STATE_RENDER_TARGET;   // (a released colour image, as the runtime takes it)
+            p.x = (uint32_t)std::max(0, r.offset.x);
+            p.y = (uint32_t)std::max(0, r.offset.y);
+            p.w = (uint32_t)std::max(0, r.extent.width);
+            p.h = (uint32_t)std::max(0, r.extent.height);
+            p.format = (DXGI_FORMAT)(fmt ? fmt : (int64_t)d.Format);
+            p.part = part;
+            p.opaque = opaque;
+            headshot::Offer(g_dev, g_queue, p);
+        };
+        if (l->type == XR_TYPE_COMPOSITION_LAYER_PROJECTION) {
+            const XrCompositionLayerProjection& pr = *(const XrCompositionLayerProjection*)l;
+            add("  %u: %s, %u views, flags 0x%llx\n", i, name, pr.viewCount, (unsigned long long)pr.layerFlags);
+            for (uint32_t v = 0; v < pr.viewCount && v < 2 && pr.views; ++v) {
+                const XrCompositionLayerProjectionView& pv = pr.views[v];
+                char ps[160];
+                add("    %s view %s, fov %.2f %.2f %.2f %.2f deg\n", v ? "right" : "left", poseText(pv.pose, ps, sizeof ps), pv.fov.angleLeft * k,
+                    pv.fov.angleRight * k, pv.fov.angleUp * k, pv.fov.angleDown * k);
+                offer(pv.subImage.swapchain, pv.subImage.imageRect, v ? "right" : "left", true, v ? "right image" : "left image");
+            }
+            if (pr.viewCount == 2 && pr.views)
+                add("    the eyes submitted %.1f mm apart%s\n", gapMm(pr.views[0].pose, pr.views[1].pose),
+                    pr.views[0].subImage.swapchain == pr.views[1].subImage.swapchain ? " - ONE SWAPCHAIN FOR BOTH EYES" : "");
+        } else if (l->type == XR_TYPE_COMPOSITION_LAYER_QUAD) {
+            const XrCompositionLayerQuad& q = *(const XrCompositionLayerQuad*)l;
+            char ps[160], part[64];
+            const char* eyes = q.eyeVisibility == XR_EYE_VISIBILITY_LEFT ? "left eye only" : q.eyeVisibility == XR_EYE_VISIBILITY_RIGHT ? "right eye only" : "both eyes";
+            add("  %u: %s, quad %.3f x %.3f m %s, %s, flags 0x%llx\n", i, name, q.size.width, q.size.height, poseText(q.pose, ps, sizeof ps), eyes,
+                (unsigned long long)q.layerFlags);
+            if (g_kind == kPair && g_pairMode == kViewsWindow && q.eyeVisibility != XR_EYE_VISIBILITY_BOTH && i < 2)
+                snprintf(part, sizeof part, "%s", q.eyeVisibility == XR_EYE_VISIBILITY_LEFT ? "left" : "right");   // F1 in 3D: each eye's picture on the window
+            else if (g_kind == kMono && i == 0)
+                snprintf(part, sizeof part, "flat");
+            else
+                snprintf(part, sizeof part, "layer%u_%s", i, name);
+            offer(q.subImage.swapchain, q.subImage.imageRect, part, i == 0, "image");
+        } else {
+            add("  %u: %s, a layer of type %d (not read)\n", i, name, (int)l->type);
+        }
+    }
+    headshot::FrameDone(t);
+}
+// [headset_shot] video (vr/headset_clip.h): this frame's main picture into the clip - each eye's projection image (its imageRect), F1's
+// window (a quad per eye), or the flat picture into both halves. The panels are not in it (the screenshot has them). As ShotFrame: before xrEndFrame.
+void ClipFrame(const XrCompositionLayerBaseHeader* const* layers, uint32_t nl, bool turns) {
+    const char* kind = "none";
+    for (uint32_t i = 0; i < nl; ++i) {
+        const XrCompositionLayerBaseHeader* l = layers[i];
+        int64_t fmt = 0;
+        if (l->type == XR_TYPE_COMPOSITION_LAYER_PROJECTION) {
+            const XrCompositionLayerProjection& pr = *(const XrCompositionLayerProjection*)l;
+            for (uint32_t v = 0; v < pr.viewCount && v < 2 && pr.views; ++v) {
+                const XrRect2Di& r = pr.views[v].subImage.imageRect;
+                if (ID3D12Resource* tex = ShotTexture(pr.views[v].subImage.swapchain, &fmt))
+                    headclip::Eye(g_queue, tex, D3D12_RESOURCE_STATE_RENDER_TARGET, (uint32_t)std::max(0, r.offset.x), (uint32_t)std::max(0, r.offset.y),
+                                  (uint32_t)std::max(0, r.extent.width), (uint32_t)std::max(0, r.extent.height), (int)v);
+            }
+            kind = turns ? "turns" : "pair";
+            break;
+        }
+        if (l->type != XR_TYPE_COMPOSITION_LAYER_QUAD || i > 1) break;   // (the main picture is the first layer, or F1's first two)
+        const XrCompositionLayerQuad& q = *(const XrCompositionLayerQuad*)l;
+        const int half = q.eyeVisibility == XR_EYE_VISIBILITY_LEFT ? 0 : q.eyeVisibility == XR_EYE_VISIBILITY_RIGHT ? 1 : 2;
+        const XrRect2Di& r = q.subImage.imageRect;
+        if (ID3D12Resource* tex = ShotTexture(q.subImage.swapchain, &fmt))
+            headclip::Eye(g_queue, tex, D3D12_RESOURCE_STATE_RENDER_TARGET, (uint32_t)std::max(0, r.offset.x), (uint32_t)std::max(0, r.offset.y),
+                          (uint32_t)std::max(0, r.extent.width), (uint32_t)std::max(0, r.extent.height), half);
+        kind = half == 2 ? "flat" : "window";
+        if (half == 2) break;
+    }
+    headclip::FrameDone(kind);
 }
 
-bool MakeCalibImage(int i) {
-    CalibImage& im = g_calibImg[i];
-    if (im.sc) return true;
+// -- the T-pose measurement's prompt (vr/calibration.cpp, calibration_panel.cpp) -----------------------------------------
+// A panel hung before the face, level, turning with the head's yaw only: the steps and what to do now, painted when the message
+// changes into ONE swapchain (g_calibAtlas: the panel, and under it a strip of the fill's green), with that green laid on its bar's
+// track as wide as the hold has come. Only while a measurement is under way; its swapchain goes with it. Until 0.192 each message had a
+// static swapchain of its own, all kept until the measurement ended (up to 23 - SteamVR gives a session 16: vr/chain_count.h). The text
+// is a quad of ours, not a BodyWalk menu and not the game's: the measurement needs nothing but the headset and the controllers.
+constexpr uint32_t kCalibFillH = 8;   // the green strip under the panel; the fill shows 4 x 4 from its middle
+QuadAtlas g_calibAtlas;
+std::vector<uint32_t> g_calibPx;
+int g_calibPainted = -1, g_calibUp = -1;   // the message painted into g_calibPx, and the one the swapchain holds
+ULONGLONG g_calibRetryAt = 0;
+XrCompositionLayerQuad g_calibLayer[2];
+
+// now: the session's end (the game's queue was waited for); otherwise to the reaper (chain_reaper.h), not destroyed in this present
+void DropCalibration(bool now) {
+    if (now) QuadAtlasDestroy(g_calibAtlas);
+    else QuadAtlasRetire(g_calibAtlas, "calibration");
+    g_calibPx.clear();
+    g_calibPx.shrink_to_fit();
+    g_calibPainted = g_calibUp = -1;
+    g_calibRetryAt = 0;
+}
+
+// Message i in the swapchain: true once it is there.
+bool CalibImageUp(int i) {
+    if (g_calibUp == i && g_calibAtlas.shown) return true;
     const ULONGLONG now = GetTickCount64();
-    if (now < im.retryAt) return false;
-    const bool fill = i == calib::kPanelImages;
-    const uint32_t w = fill ? 4 : calib::kPanelW, h = fill ? 4 : calib::kPanelH;
-    std::vector<uint32_t> px((size_t)w * h, 0xFF000000u | (100u << 16) | (215u << 8) | 60u);   // the fill: opaque green
-    if (!fill && !calib::PaintPanel(i, px.data())) {
-        im.retryAt = now + 30000;
-        LogF("vrcam: openxr - the measurement's panel %d could not be painted", i);
-        return false;
+    if (now < g_calibRetryAt) return false;
+    const uint32_t w = calib::kPanelW, h = calib::kPanelH + kCalibFillH;
+    if (g_calibPainted != i) {
+        g_calibPx.assign((size_t)w * h, 0xFF000000u | (100u << 16) | (215u << 8) | 60u);   // the fill: opaque green
+        if (!calib::PaintPanel(i, g_calibPx.data())) {
+            g_calibRetryAt = now + 30000;
+            LogF("vrcam: openxr - the measurement's panel %d could not be painted", i);
+            return false;
+        }
+        g_calibPainted = i;
     }
-    const int got = MakeStaticImage(w, h, px.data(), im.upload, im.sc, "calibration");
-    if (got <= 0 && im.sc) RetireChain(im.sc, "calibration");
-    if (got <= 0) {
-        im.retryAt = now + (got == 0 ? 500 : 10000);
-        return false;
-    }
+    if (!QuadAtlasUpload(g_calibAtlas, w, h, g_calibPx, "calibration", chaincount::kCalibration)) return false;   // (its wait ran out, a copy still runs: next frame)
+    g_calibUp = i;
     return true;
 }
 
 uint32_t HangCalibration(const XrCompositionLayerBaseHeader** layers, uint32_t nl, uint32_t max) {
     const calib::Panel p = calib::PanelNow();
     if (!p.show) {
-        for (const CalibImage& im : g_calibImg)
-            if (im.sc || im.upload) { DropCalibration(); break; }
+        if (g_calibAtlas.sc || g_calibPainted >= 0) DropCalibration(false);
         return nl;
     }
     const D2RVR_XrPose& head = g_inNow.head;
-    if (nl + 2 > max || head.valid != 1 || !g_actionsOk || !MakeCalibImage(p.image)) return nl;
+    if (nl + 2 > max || head.valid != 1 || !g_actionsOk || !CalibImageUp(p.image)) return nl;
     const XrQuaternionf face = Yaw(YawOf(Q4(head.rot)));
     const XrVector3f at = Plus(P3(head.pos), Rot(face, {0.0f, -0.04f, -calib::kPanelDistanceM}));
     const float wM = calib::kPanelWidthM, hM = wM * (float)calib::kPanelH / (float)calib::kPanelW, pxM = wM / (float)calib::kPanelW;
@@ -5059,18 +5239,17 @@ uint32_t HangCalibration(const XrCompositionLayerBaseHeader** layers, uint32_t n
     q.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;   // premultiplied
     q.space = g_roomSpace ? g_roomSpace : g_space;   // where the head was located
     q.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
-    q.subImage.swapchain = g_calibImg[p.image].sc;
+    q.subImage.swapchain = g_calibAtlas.sc;
     q.subImage.imageRect = {{0, 0}, {(int32_t)calib::kPanelW, (int32_t)calib::kPanelH}};
     q.pose = {face, at};
     q.size = {wM, hM};
     layers[nl++] = (const XrCompositionLayerBaseHeader*)&q;
     // the bar: its fill from the track's left end, a few pixels in from the track's edge
     const float full = (float)calib::kTrackW - 6.0f, width = std::clamp(p.progress, 0.0f, 1.0f) * full;
-    if (width >= 2.0f && MakeCalibImage(calib::kPanelImages)) {
+    if (width >= 2.0f) {
         XrCompositionLayerQuad& b = g_calibLayer[1];
         b = q;
-        b.subImage.swapchain = g_calibImg[calib::kPanelImages].sc;
-        b.subImage.imageRect = {{0, 0}, {4, 4}};
+        b.subImage.imageRect = {{0, (int32_t)calib::kPanelH + 2}, {4, 4}};   // (the green strip's middle: green all round it)
         const float cx = ((float)calib::kTrackX + 3.0f + 0.5f * width) - 0.5f * (float)calib::kPanelW;
         const float cy = 0.5f * (float)calib::kPanelH - ((float)calib::kTrackY + 0.5f * (float)calib::kTrackH);
         b.pose.position = Plus(at, Rot(face, {cx * pxM, cy * pxM, 0.0f}));
@@ -5080,8 +5259,42 @@ uint32_t HangCalibration(const XrCompositionLayerBaseHeader** layers, uint32_t n
     return nl;
 }
 
+// The pictures shown now and then - the quest notice's card, the big map turned, the settings panel, the skill wheel, the hand vitals and
+// the wrist status - give their swapchain back once unused for kIdleFreeMs (to the reaper: chain_reaper.h), and make one again when shown next:
+// SteamVR gives a session 16 (vr/chain_count.h), and each was kept to the session's end once shown. Before this frame's layers: none of
+// these is named by one. The pictures the painters handed over are kept and uploaded again. (Not the flat picture: a refused make of it is
+// taken for a render size the runtime refuses - vrres::SwapchainMade - and the size falls back.)
+constexpr ULONGLONG kIdleFreeMs = 10000;
+void FreeIdle() {
+    const ULONGLONG now = GetTickCount64();
+    auto idle = [&](ULONGLONG usedAt) { return now - usedAt > kIdleFreeMs; };
+    for (HudOut* o : {&g_noticeOut, &g_bigTurnOut})
+        if (o->sc && idle(o->usedAt)) ReleaseHudOut(*o);
+    if (g_hsAtlas.sc && !g_hsOpen.load() && idle(g_hsAtlas.usedAt)) QuadAtlasRetire(g_hsAtlas, "headset settings");   // (painted again when opened: HsPaint)
+    if (g_wheelAtlas.sc && idle(g_wheelAtlas.usedAt)) {
+        QuadAtlasRetire(g_wheelAtlas, "skill wheel");
+        g_wheelPxPending = !g_wheelPx.empty();
+    }
+    if (g_vitalsAtlas.sc && idle(g_vitalsAtlas.usedAt)) {
+        QuadAtlasRetire(g_vitalsAtlas, "hand vitals");
+        g_vitalsPxPending = !g_vitalsPx.empty();
+    }
+    for (int side = 0; side < 2; ++side)
+        if (g_wsAtlas[side].sc && idle(g_wsAtlas[side].usedAt)) {
+            QuadAtlasRetire(g_wsAtlas[side], "wrist status");
+            g_wsPxPending[side] = !g_wsPx[side].empty();
+        }
+    if (g_chains.Changed()) {   // once when the number changes, not each frame (a log line costs ~1 ms)
+        char b[192];
+        g_chains.Describe(b, sizeof b);
+        LogF("vrcam: openxr - our swapchains alive: %u (%s), %u of them let go and waiting to be destroyed; the most this session %u", (unsigned)g_chains.Live(), b,
+             (unsigned)g_reaper.Size(), (unsigned)g_chains.Peak());
+    }
+}
+
 void CloseFrame() {
     if (g_kind == kNone) return;
+    FreeIdle();
     TurnFrameEnd();   // eyes by turns: an image acquired for the eye made goes back before the frame's layers (normally TurnFinish did)
     const double closeUs = UsNow();   // the layers built from here, xrEndFrame from endUs (g_clock)
     XrCompositionLayerProjectionView pv[2] = {{XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW}, {XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW}};
@@ -5253,6 +5466,12 @@ void CloseFrame() {
     for (uint32_t i = 0; i < nl; ++i) ((XrCompositionLayerBaseHeader*)layers[i])->next = scaled ? &scale : nullptr;
     VitalsScale(vitalsPanel, vitalsScale, bright);   // (the hand vitals' layer has its own: the fade and the soft pulse)
     WristStatusScale(wsPanel, wsScale, bright);       // (so have the wrist status' two: the fade)
+    if (headshot::Wanted()) {   // [headset_shot]: this frame's layers, as they go to xrEndFrame below
+        std::vector<std::string> names;
+        for (uint32_t i = 0; i < nl; ++i) { char nm[32]; names.push_back(LayerSlotName(slotOf(layers[i]), g_kind == kPair, nm, sizeof nm)); }
+        ShotFrame(layers, nl, names, turns, scaled ? bright : 1.0f);
+    }
+    if (headclip::Wanted()) ClipFrame(layers, nl, turns);   // [headset_shot] video: this frame's eyes into the clip
     static int ends = 0;
     if (ends < 3) LogF("vrcam: openxr - frame %d: xrEndFrame with %u layer(s)", ++ends, nl);
     XrFrameEndInfo ei{XR_TYPE_FRAME_END_INFO};
@@ -5766,6 +5985,16 @@ void LoadSettings(const wchar_t* ini) {
         g_cfg.hapticsHands = f(L"haptics_hand_actions", 1.0f) != 0.0f;   // (taken at the next session start)
         g_cfg.hapticsStop = f(L"haptics_stop", 1.0f) != 0.0f;            // live
         haptics::SetMotorChoice((int)f(L"haptics_motor", 0.0f));         // live: 0 by the headset's name, 1 plain, 2 weak (the low-life beat lifted for the PlayStation VR2 Sense)
+        haptics::Extras x;   // the Vibration tab's extra pulses (vr/haptics.h), each off by default, live
+        x.touch = f(L"haptics_touch", 0.0f) != 0.0f;
+        x.hitLong = f(L"haptics_hit_long", 0.0f) != 0.0f;
+        x.spell = f(L"haptics_spell", 0.0f) != 0.0f;
+        x.lowMana = f(L"haptics_low_mana", 0.0f) != 0.0f;
+        x.lowManaPct = f(L"haptics_low_mana_pct", 10.0f);
+        x.gameRumble = f(L"haptics_game_rumble", 0.0f) != 0.0f;
+        x.gameRumbleScale = f(L"haptics_game_rumble_scale", 1.0f);
+        x.padMute = on && f(L"haptics_pad_mute", 0.0f) != 0.0f;   // (only with a session of ours: the controllers are then the game's)
+        haptics::ConfigureExtras(x);
     }
     {   // [render] vr_resolution_px (a square's side) and vr_resolution (the older mode), live: render_size.h reads the two together
         const int mode = (int)GetPrivateProfileIntW(L"render", L"vr_resolution", 0, ini);
@@ -6332,6 +6561,14 @@ void TurnFinishLocked() {
         const int span = gpuspans::Begin(list, "made: into its swapchain");
         CopyPicture(list, g_turnTarget, D3D12_RESOURCE_STATE_RENDER_TARGET, co.img[g_turnFrame.idx].texture, D3D12_RESOURCE_STATE_RENDER_TARGET, co.w, co.h,
                     co.sx, co.sy);   // (runtime_fov: the box of the whole picture made)
+        if (headgrid::On()) {   // [headset_shot] grid: over the eye made too (made for this frame's head, with this frame's fov - or its box)
+            eyefov::Sub crop;
+            const XrFovf& f = g_fovUsed[o];
+            const bool boxed = co.w != co.pw || co.h != co.ph;
+            if (!boxed || CropFor(o, co.pw, co.ph, &crop))
+                g_gridTan[o] = boxed ? crop.tan : eyefov::FromAngles(f.angleLeft, f.angleRight, f.angleUp, f.angleDown);
+            GridOnEye(co, co.img[g_turnFrame.idx].texture, list);
+        }
         gpuspans::End(list, span);
         gpuspans::Resolve(list);   // (the frame's last list of ours)
         SubmitList();
@@ -6414,6 +6651,8 @@ void CopyEye(int eye, ID3D12Resource* bb) {
     bool cropNow = false;
     if (g_session && EnsureEye(eye, bd, &crop, &cropNow)) {
         const double t0 = UsNow();
+        g_gridTan[eye] = cropNow ? crop.tan : eyefov::FromAngles(g_fovUsed[eye].angleLeft, g_fovUsed[eye].angleRight, g_fovUsed[eye].angleUp,
+                                                                  g_fovUsed[eye].angleDown);   // [headset_shot] grid: this image's edges
         g_copied[eye] = CopyInto(g_eyeChain[eye], bb);
         g_cropped[eye] = cropNow && g_copied[eye];
         if (g_cropped[eye]) {

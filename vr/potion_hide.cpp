@@ -233,7 +233,8 @@ std::atomic<XformPass> g_pass{nullptr};
 std::atomic<XformObserver> g_writer{nullptr};   // [bow] arrow_flight: puts the hero's shot arrow where we draw it
 std::atomic<XformObserver> g_effectsWriter{nullptr};   // [render] lower_own_effects: the hero's own solid overlays lowered
 std::atomic<XformObserver> g_headObserver{nullptr};    // [arms] head_shadow: the models hung on the hero's head (only reads)
-std::atomic<bool> g_otherWants{false}, g_propsWant{false}, g_arrowsWant{false}, g_effectsWant{false}, g_headWant{false};
+std::atomic<XformObserver> g_knockWriter{nullptr};     // [weight] knock_down: what hangs on a knocked-down body's bones, carried with them
+std::atomic<bool> g_otherWants{false}, g_propsWant{false}, g_arrowsWant{false}, g_effectsWant{false}, g_headWant{false}, g_knockWant{false};
 
 __declspec(noinline) uintptr_t HookXform(uintptr_t out, uint32_t entity, uintptr_t component) {
     const uintptr_t r = g_origXform(out, entity, component);
@@ -242,6 +243,7 @@ __declspec(noinline) uintptr_t HookXform(uintptr_t out, uint32_t entity, uintptr
     if (const XformPass fn = g_pass.load(std::memory_order_relaxed)) fn();   // [weight] knock_props: the moving props' matrices, once a frame
     if (const XformObserver fn = g_writer.load(std::memory_order_relaxed)) fn(entity, component, out);   // [bow] arrow_flight: our arrow's matrix, for its entities alone
     if (const XformObserver fn = g_effectsWriter.load(std::memory_order_relaxed)) fn(entity, component, out);   // [render] lower_own_effects: the hero's own solid overlays
+    if (const XformObserver fn = g_knockWriter.load(std::memory_order_relaxed)) fn(entity, component, out);   // [weight] knock_down: a knocked-down body's weapon in its hand
     if (g_set.Live() == 0 || g_faulted.load(std::memory_order_relaxed)) return r;
     if (g_set.Has(entity, GetTickCount64()) && viewgate::F4()) {
         const int w = PutHidden(out, component);
@@ -290,7 +292,7 @@ void InstallOnce() {
                 "this throw, or draws it some way the visual-init callback does not see); the game's potion was drawn as ever");
     }
     if (g_set.Live() != 0) g_set.Prune(now);
-    if (!(g_wanted.load() || g_otherWants.load() || g_propsWant.load() || g_arrowsWant.load() || g_effectsWant.load() || g_headWant.load()) || g_state.load() != 0 || !g_ctx || now < retryAt) return;
+    if (!(g_wanted.load() || g_otherWants.load() || g_propsWant.load() || g_arrowsWant.load() || g_effectsWant.load() || g_headWant.load() || g_knockWant.load()) || g_state.load() != 0 || !g_ctx || now < retryAt) return;
     retryAt = now + (tries < 30 ? 2000 : 30000);   // the renderer's code is plain from the start, but the signature search may still be waiting
     if (!d2rsig::Addr(RVA_VISUAL_INIT) || !d2rsig::Addr(RVA_WORLD_XFORM)) return;   // not found (yet)
     if (!d2rsig::Check(RVA_VISUAL_INIT, kSigVisualInit, sizeof kSigVisualInit) || !d2rsig::Check(RVA_WORLD_XFORM, kSigXform, sizeof kSigXform)) {
@@ -379,6 +381,11 @@ void WantHooks(bool want) {
         Log("potion hide: its hooks are wanted by the crossbow's barrel ([hands] xbow_support_model) - put in even with the potion hide off; they change nothing");
 }
 void SetXformHeadObserver(XformObserver fn) { g_headObserver.store(fn); }
+void SetXformKnockWriter(XformObserver fn) { g_knockWriter.store(fn); }
+void WantHooksForKnock(bool want) {
+    if (g_knockWant.exchange(want) != want && want && !g_wanted.load())
+        Log("potion hide: its hooks are wanted by the knock-down ([weight] knock_down) - put in even with the potion hide off; they move only what hangs on a knocked-down body's bones");
+}
 void WantHooksForHead(bool want) {
     if (g_headWant.exchange(want) != want && want && !g_wanted.load())
         Log("potion hide: its hooks are wanted by the head's shadow ([arms] head_shadow) - put in even with the potion hide off; they only read (which models hang on the hero's head)");

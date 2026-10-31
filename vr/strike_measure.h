@@ -61,6 +61,9 @@ struct Strike {
     uint32_t serial = 0;
     float along = -1.0f;
     double recent = 0;
+    // begun again after kLongestS on the same monster (a weapon resting on a body, a hero landed in one): the same strike's serial kept - no new blow
+    // for strike_by_force (a fresh hit each second held the hero in the game's attacks, zbiromir 2026-10-30: "the hero can't walk")
+    bool resumed = false;
     double Total() const { return arrival + drive + stab; }
 };
 
@@ -75,7 +78,9 @@ public:
             End();
             ended = true;
         }
-        if (on_ && s.t - cur_.startS > kLongestS) {   // resting on it: told, and begun again
+        uint32_t resume = 0;
+        if (on_ && s.t - cur_.startS > kLongestS) {   // resting on it: told, and begun again - the same strike (its serial) going on
+            resume = cur_.serial;
             End();
             ended = true;
         }
@@ -86,9 +91,11 @@ public:
             cur_.id = s.id;
             cur_.bone = s.bone;
             cur_.startS = s.t;
-            cur_.arrival = s.impulse;
-            cur_.approach = s.approach;
-            cur_.serial = NextSerial();
+            cur_.arrival = resume ? 0.0 : s.impulse;   // (begun again: no arrival - the weapon was there already)
+            cur_.approach = resume ? 0.0 : s.approach;
+            cur_.serial = resume ? resume : NextSerial();
+            cur_.resumed = resume != 0;
+            if (resume) cur_.drive += s.impulse;
         } else {
             cur_.drive += s.impulse;
             cur_.recent = cur_.recent * std::exp(-std::max(1e-4, s.dt) / kWindowS) + s.impulse;

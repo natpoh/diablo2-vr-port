@@ -72,7 +72,7 @@ struct RemoteCopy { uint32_t code = 0; float m[16] = {}; };
 void SetRemoteCopies(const RemoteCopy* c, int n);
 unsigned TakeRemoteCopiesDrawn();
 }
-namespace engitem { bool DomeShown(); float DomeRadius(); unsigned DomeIndexCount(); const char* SkyCannot(); }   // [sky] game_sky: the game draws our sky this frame (the post pass's stands aside)
+namespace engitem { bool DomeShown(); int DomeBand(); float DomeRadius(); unsigned DomeIndexCount(); const char* SkyCannot(); }   // [sky] game_sky: the game draws our sky this frame (the post pass's stands aside)
 namespace fx { namespace noreshade { bool FxWaiting(); } }   // [render] native_effects: our effect not drawing yet (its build for this size not there) - the game's dome meanwhile
 namespace engitem { bool CeilingShown(); bool CeilingByGame(); }   // [ceiling] game_ceiling: the game draws the cave ceiling this frame; the ceiling is the game's here (the post pass's stays off)
 namespace fx { bool CeilWanted(); bool GameCeilWanted(); }   // (a ceiling wanted here: [ceiling] enabled, first person, a ceiling biome / a natural cave, no menu)
@@ -166,6 +166,7 @@ extern const char* const kActDefs[7];
 extern SRWLOCK g_skyCfgLock;           // the acts' skies, the caves' fog colour
 extern SkyAct g_skyAct[7];
 extern CaveFog g_caveFog;
+extern CaveFog g_arcaneFogColour;      // [fog] arcane_color: the Arcane Sanctuary's own fog colour (with arcane_own; unset: the caves')
 extern std::atomic<uint32_t> g_skyCfgGen;
 extern std::string g_ceilSlot[kCeilSlots + 1];
 extern bool g_ceilSlotOk[kCeilSlots + 1];

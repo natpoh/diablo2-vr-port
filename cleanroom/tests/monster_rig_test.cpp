@@ -275,6 +275,17 @@ void TestEveryLimb() {
 		EXPECT(k == mr::kMaxPerRig && kept(cs.data(), k, 1) == kept(cs.data(), k, 2) && kept(cs.data(), k, 200), "no pair split at the limit (right %d, left %d, %d kept)",
 		       kept(cs.data(), k, 1) ? 1 : 0, kept(cs.data(), k, 2) ? 1 : 0, k);
 	}
+	{   // Akara (Serg, 0.192.15: «у нпс нет ног»): 30 robe pieces larger than her thin legs along their bones - the limbs kept first, whatever their size
+		std::vector<mr::Capsule> cs;
+		for (int i = 0; i < 30; ++i) cs.push_back(cap(100 + i, -1, 0.20f - 0.002f * i));
+		for (int b = 1; b <= 4; ++b) {
+			mr::Capsule c = cap(b, -1, 0.03f);
+			c.limb = true;
+			cs.push_back(c);
+		}
+		const int k = mr::Keep(cs.data(), (int)cs.size(), 2.0f);
+		EXPECT(k == mr::kMaxPerRig && kept(cs.data(), k, 1) && kept(cs.data(), k, 2) && kept(cs.data(), k, 3) && kept(cs.data(), k, 4), "the thighs and shins under the robe kept (%d)", k);
+	}
 }
 
 // No extra limbs: the author's screenshot 2026-10-24 - a zombie with two capsules floating beside it at the hips and a chain of small ones sticking out
@@ -506,6 +517,62 @@ void TestHeldModels() {
 	const float t[16] = { 0, 1, 0, 0, -2, 0, 0, 0, 0, 0, 1, 0, 3, 4, 5, 1 };
 	float back[16];
 	EXPECT(mr::InvertAffine(t, inv) && mr::InvertAffine(inv, back) && std::fabs(back[4] + 2.0f) < 1e-5f && std::fabs(back[13] - 4.0f) < 1e-5f, "the affine inverse inverts");
+	// ItemParts: a curved bow with its string and a nocked arrow (a rogue archer's, Serg 0.192.15: "со стрелой до сих пор проблемы, она слишком большой имеет
+	// куб") - the union of its boxes is 0.77 deep and its one capsule ~20 cm thick; each part alone is a limb, the string, the arrow's shaft, each as thin as it is
+	{
+		const char* pn[5] = { "grip", "limb_top", "limb_bottom", "string", "arrow" };
+		const float at[5][3] = { { 0, 0, 0 }, { 0.08f, 0.40f, 0 }, { 0.08f, -0.40f, 0 }, { 0.22f, 0, 0 }, { 0.22f, 0, 0 } };
+		const float pb[5][6] = { { -0.03f, -0.06f, -0.03f, 0.03f, 0.06f, 0.03f }, { -0.02f, -0.25f, -0.02f, 0.02f, 0.25f, 0.02f }, { -0.02f, -0.25f, -0.02f, 0.02f, 0.25f, 0.02f },
+		                         { -0.004f, -0.62f, -0.004f, 0.004f, 0.62f, 0.004f }, { -0.75f, -0.008f, -0.008f, 0.02f, 0.008f, 0.008f } };
+		const uintptr_t b2 = m.Alloc(0x320), r2 = m.Alloc(0xD0), l2 = m.Alloc(8), md2 = m.Alloc(0x60), sk2 = m.Alloc(0x20), bones2 = m.Alloc(mr::kBoneStride * 5);
+		for (int i = 0; i < 5; ++i) {
+			const uintptr_t a = bones2 + mr::kBoneStride * i;
+			m.Put<uintptr_t>(a + mr::kBoneName, m.Str(pn[i]));
+			const float iv[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, -at[i][0], -at[i][1], -at[i][2], 1 };
+			m.PutBytes(a + mr::kBoneInvWorld, iv, sizeof iv);
+		}
+		m.Put<uintptr_t>(b2 + grannymesh::kInstanceModel, md2);
+		m.Put<uintptr_t>(md2 + grannymesh::kModelSkeleton, sk2);
+		m.Put<int32_t>(sk2 + mr::kSkelCount, 5);
+		m.Put<uintptr_t>(sk2 + mr::kSkelBones, bones2);
+		m.Put<uintptr_t>(b2 + mr::kInstanceResource, r2);
+		m.Put<uint8_t>(r2 + mr::kResourceState, mr::kLoaded);
+		m.Put<uintptr_t>(b2 + mr::kInstanceMeshes, l2);
+		m.Put<uint64_t>(b2 + mr::kInstanceMeshes + 8, 1);
+		const uintptr_t h2 = m.Alloc(8), me2 = m.Alloc(0xC0), bi2 = m.Alloc(mr::kBindingStride * 5);
+		m.Put<uintptr_t>(l2, h2);
+		m.Put<uintptr_t>(h2, me2);
+		m.Put<int32_t>(me2 + mr::kMeshBoneCount, 5);
+		m.Put<uintptr_t>(me2 + mr::kMeshBones, bi2);
+		for (int k = 0; k < 5; ++k) {
+			const uintptr_t a = bi2 + mr::kBindingStride * k;
+			m.Put<uintptr_t>(a + mr::kBindingName, m.Str(pn[k]));
+			m.PutBytes(a + mr::kBindingMin, pb[k], 12);
+			m.PutBytes(a + mr::kBindingMax, pb[k] + 3, 12);
+		}
+		mr::BoneBox all;
+		mr::Capsule fat;
+		const bool unionOk = mr::ItemBox(read, b2, &all, &why) && mr::HeldCapsules(id, all, false, &fat, 1) == 1;
+		mr::ItemPart parts[4];
+		const int np = mr::ItemParts(read, b2, parts, 4, &why);
+		float thickest = 0.0f;
+		const mr::Capsule* arrow = nullptr;
+		mr::Capsule caps[4];
+		for (int i = 0; i < np; ++i) {
+			if (mr::HeldCapsules(parts[i].bind, parts[i].box, false, &caps[i], 1) != 1) continue;
+			thickest = std::max(thickest, caps[i].radius);
+			if (std::fabs(caps[i].a[1] - caps[i].b[1]) < 1e-4f && std::fabs(caps[i].a[0] - caps[i].b[0]) > 0.5f) arrow = &caps[i];
+		}
+		std::printf("  a curved bow with its string and a nocked arrow: as one box a capsule r %.2f m; as %d parts (the longest first: %.2f, %.2f, %.2f, %.2f m) r up to %.3f m\n",
+		            unionOk ? fat.radius : -1.0f, np, np > 0 ? parts[0].length : 0.0f, np > 1 ? parts[1].length : 0.0f, np > 2 ? parts[2].length : 0.0f, np > 3 ? parts[3].length : 0.0f,
+		            thickest);
+		EXPECT(unionOk && fat.radius > 0.15f, "the union's one capsule is the fat one seen (r %.3f)", unionOk ? fat.radius : -1.0f);
+		EXPECT(np == 4 && std::fabs(parts[0].length - 1.24f) < 1e-3f && std::fabs(parts[1].length - 0.77f) < 1e-3f, "four parts, the string and the arrow first (%d)", np);
+		EXPECT(np == 4 && thickest <= 0.02f + 1e-4f, "each part thin: r up to %.3f", thickest);
+		EXPECT(arrow && std::fabs(std::min(arrow->a[0], arrow->b[0]) - (0.22f - 0.75f + 0.008f)) < 1e-3f && arrow->radius < 0.01f,
+		       "the arrow a thin capsule along its shaft, out to its head (%.3f .. %.3f, r %.3f)", arrow ? std::min(arrow->a[0], arrow->b[0]) : 0.0f,
+		       arrow ? std::max(arrow->a[0], arrow->b[0]) : 0.0f, arrow ? arrow->radius : 0.0f);
+	}
 }
 
 void TestCapsules() {

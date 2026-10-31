@@ -11,6 +11,7 @@
 #include <cstdint>
 
 #include "../durability_figure.h"   // durab::Look
+#include "../plate_look.h"         // platelook::DepthByDistance
 
 namespace vrc {
 
@@ -26,6 +27,8 @@ extern std::atomic<bool> g_labelPaintIn, g_labelSizeIn;   // the game's item-lab
 bool LabelBoxNative();
 bool LabelsTilted();
 bool PlateOwnDepth();
+platelook::DepthByDistance PlateDepthByDistance();   // [hud] monster_stereo_by_distance's settings
+float PlateDepthForBox();
 bool PlateWanted();
 bool LayerOwnEye();
 bool PlateTurnsWanted();

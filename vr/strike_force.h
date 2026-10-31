@@ -67,6 +67,7 @@ struct Strike {
     double recent = 0;            // N s: the drive of about the last kWindowS (the hands pushing it on now)
     double startS = 0;            // s: when it began (the weight model's clock)
     float along = -1.0f;          // the furthest toward the tip it touched along the weapon (0 the butt end, 1 the tip); < 0 not known
+    bool resumed = false;         // the same contact begun again after strikemeasure::kLongestS (resting on the body): never a new blow (NewBlowDue)
 };
 
 inline float Threshold(const Settings& s, Family f, float steelKg) {
@@ -115,6 +116,14 @@ inline void JudgeAll(const Settings& s, Family f, float steelKg, const Strike* i
 
 // The hero's unit in an attack, a kick, a skill or a sequence (PlrMode 7 A1, 8 A2, 10 .. 16: cast, throw, kick, S1 .. S4): the game's own attack is not over yet.
 inline bool HeroAttacking(int mode) { return mode == 7 || mode == 8 || (mode >= 10 && mode <= 16) || mode == 18; }
+// The hero walking or running (PlrMode 2 W, 3 R, 6 TW): the game is moving him - a press now would stop him where he is.
+inline bool HeroMoving(int mode) { return mode == 2 || mode == 3 || mode == 6; }
+// A repeat (RepeatDue) waits for this to be false: the game's attack on, the hero on his way, or his mode not read (-1: not known is not "free" - an unread mode let
+// the repeats run every kRepeatMinS, the hero held in his attacks). Our bodies never hold the hero where he stands (zbiromir 2026-10-30, after a leap into a monster).
+inline bool HeroBusy(int mode) { return mode < 0 || HeroAttacking(mode) || HeroMoving(mode); }
+
+// A strike not pressed yet: is it a blow? Its verdict counts and it is not a contact begun again while resting (Strike::resumed - the weapon was on the body already).
+inline bool NewBlowDue(const Verdict& v, const Strike& k) { return v.Counts() && !k.resumed; }
 
 // [weight] strike_force_stuck 1: a strike already pressed, still on - is the next hit due? The weapon still pushed in (its recent drive at least the threshold),
 // a hand on it, the game's own attack over (heroAttacking false) and kRepeatMinS since the last press.

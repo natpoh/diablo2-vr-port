@@ -175,6 +175,27 @@ bool LiftPlate(void* unit, float* out) {
     return true;
 }
 
+// [hud] monster_plate_smooth: the game's head point (out) replaced by where the camera sees the head held steady this frame (plateworld::SteadyHead), before the
+// lift or the height work from it. Left as the game gave it when that cannot be worked out (no floor known yet, no place on the grid, no ray).
+void SteadyPlate(void* unit, float* out) {
+    static plateworld::Steady<3> held;   // (the game's thread: the hook's own)
+    static LARGE_INTEGER last = {};
+    LARGE_INTEGER now, freq;
+    QueryPerformanceCounter(&now);
+    QueryPerformanceFrequency(&freq);
+    const float dt = last.QuadPart && freq.QuadPart ? static_cast<float>(static_cast<double>(now.QuadPart - last.QuadPart) / static_cast<double>(freq.QuadPart)) : -1.0f;
+    last = now;
+    float foot[2];
+    if (!plateworld::FootOf((uintptr_t)unit, GameRead(), &foot[0], &foot[1])) return;
+    plateworld::RayFn ray = plateworld::RaySlot().load();
+    if (!ray) ray = &d2rcam::PickRay;
+    float px[2];
+    if (plateworld::SteadyHead(&held, (uintptr_t)unit, out, foot, plateworld::S().floorM.load(), plateworld::S().upm.load(), ray, dt, px)) {
+        out[0] = px[0];
+        out[1] = px[1];
+    }
+}
+
 bool HookUnitToScreen(void* context, void* unit, float* out, uint8_t above) {
     // (F4 only, vr/view_gate.h: the game's own plates in every other view)
     const bool hide = g_on.load(std::memory_order_relaxed);
@@ -183,7 +204,8 @@ bool HookUnitToScreen(void* context, void* unit, float* out, uint8_t above) {
     const bool track = plateworld::Tracking();   // [hud] monster_far / monster_depth_body: which monster is targeted, for the plate left in the picture
     const bool lift = plateworld::LiftWanted() && !world;   // [hud] monster_over_head (the plate cut out and hung in the room, if asked, has its own way)
     const bool follow = plateworld::Following();   // [hud] monster_alpha, monster_size...: where the plate hangs, for the effect's box (the answer unchanged)
-    if (IsPlateCall((hide || height != 0.0f || world || track || lift || follow) && viewgate::F4(), above, out, (uintptr_t)_ReturnAddress(), g_plateRet.load(std::memory_order_relaxed))) {
+    const bool steady = plateworld::Steadying() && !world;   // [hud] monster_plate_smooth: the plate hung on the head held steady
+    if (IsPlateCall((hide || height != 0.0f || world || track || lift || follow || steady) && viewgate::F4(), above, out, (uintptr_t)_ReturnAddress(), g_plateRet.load(std::memory_order_relaxed))) {
         static std::atomic<bool> toldHide{false}, toldKeep{false}, toldShift{false}, toldWorld{false};
         if (hide && HidesPlate((uintptr_t)unit, GameRead())) {
             TellOnce(toldHide, true, (uintptr_t)unit);
@@ -209,8 +231,9 @@ bool HookUnitToScreen(void* context, void* unit, float* out, uint8_t above) {
             if (follow) NoteFollow(unit, out);
             return shown;
         }
-        if ((height != 0.0f || track || lift || follow) && IsMonsterUnit((uintptr_t)unit, GameRead())) {   // monster_over_head / monster_height: the game's own answer, moved; monster_far / monster_depth_body: noted
+        if ((height != 0.0f || track || lift || follow || steady) && IsMonsterUnit((uintptr_t)unit, GameRead())) {   // monster_over_head / monster_height: the game's own answer, moved; monster_far / monster_depth_body: noted
             const bool shown = g_orig(context, unit, out, above);
+            if (shown && steady) SteadyPlate(unit, out);   // (the lift and the height start from the steady head)
             if (shown && (track || lift)) NoteSeen(unit, plateworld::Why::Hung, nullptr);   // (the monster's place; the plate stays where the game puts it)
             if (shown && lift) {
                 LiftPlate(unit, out);   // (over its head by the player's gap; else the game's own place)
@@ -247,7 +270,7 @@ void NoteViewport(float widthPx, float heightPx) {
 bool Hooked() { return g_in.load(); }
 
 void Install(const PluginContext* ctx) {
-    if (!ctx || !(g_on.load() || g_height.load() != 0.0f || plateworld::Wanted() || plateworld::Tracking() || plateworld::LiftWanted() || plateworld::Following()) || g_in.load() || g_failed) return;
+    if (!ctx || !(g_on.load() || g_height.load() != 0.0f || plateworld::Wanted() || plateworld::Tracking() || plateworld::LiftWanted() || plateworld::Following() || plateworld::Steadying()) || g_in.load() || g_failed) return;
     g_ctx = ctx;
     static ULONGLONG since = 0;
     static bool told = false;

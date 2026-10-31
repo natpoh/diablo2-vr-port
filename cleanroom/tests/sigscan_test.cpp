@@ -150,6 +150,7 @@ void CaseShift() {
 constexpr uint64_t kKeyMove = 0x8A960;
 constexpr uint64_t kRunLock = 0x2A2375C;   // a data address found through a reference in the same page of code as the keyboard move
 constexpr uint64_t kCmdFlags = 0x8AFD0;   // the command flags ([gameplay] move_while_attacking): code in the same page as the keyboard move
+constexpr uint64_t kGameMode = 0x8AF90;   // the game's mode (the headset's Players row): a call's target in the same page as the keyboard move
 
 void CaseWaiting() {
 	Protect(kKeyMove, PAGE_NOACCESS);
@@ -164,6 +165,7 @@ void CaseWaiting() {
 	EXPECT(d2rsig::Rva(kKeyMove) == kKeyMove, "the keyboard move once its page reads");
 	EXPECT(d2rsig::Rva(kRunLock) == kRunLock, "the run flag once its page reads (an entry is looked at again when its address is asked for)");
 	EXPECT(d2rsig::Rva(kCmdFlags) == kCmdFlags, "the command flags once their page reads");
+	EXPECT(d2rsig::Rva(kGameMode) == kGameMode, "the game's mode once its page reads (found through a call into it: the call's page read, its own not yet)");
 	EXPECT(d2rsig::AllFound(), "%s", d2rsig::Summary().c_str());
 }
 

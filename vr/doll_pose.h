@@ -34,6 +34,18 @@ struct Turn {
     bool Has(int i) const { return i >= 0 && i < kMaxBones && (mask[i >> 6] >> (i & 63) & 1ull); }
 };
 
+// [weight] knock_down: the body laid on the knock-down's joints (vr/knock_pose.h) after the turns - weight 0: none; joint: each joint's bone; at: where it is
+// drawn (the model's frame); parent: the skeleton's parents (knockpose::Apply turns a bone with all below it).
+constexpr int kKnockJoints = 18;   // (shared/d2r_vr_fall.h D2RF_JOINTS)
+struct Knock {
+    float weight = 0.0f;
+    int16_t joint[kKnockJoints] = {};
+    float at[kKnockJoints][3] = {};
+    int16_t parent[kMaxBones] = {};
+    float m3[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1};   // the model -> the world (rows) and where it stands (world units): what hangs on its bones is carried with them
+    float root[3] = {};
+};
+
 struct Pose {
     uintptr_t self = 0;     // the SkeletonInstance it is for
     uint32_t id = 0;        // the monster (the game's unit id)
@@ -44,6 +56,7 @@ struct Pose {
     uint64_t fadeFromMs = 0;   // let go of at this tick (0: not): eased back to the animation (Faded)
     uintptr_t poseCur = 0, posePrev = 0;   // its SkeletonInstance's world poses (+0x20, +0x28) when made: the skinning finds it by them...
     uintptr_t skel = 0;                    // ... or by its granny_skeleton (shared by every monster of its model) and the pose's own matrices (NearestPose)
+    Knock knock;                           // [weight] knock_down: knocked off its feet (weight > 0)
 };
 
 // What Build needs of the rig: the entity's model -> world rows (3x3), where it stands (world units), its skeleton's parents (parents come first: the game
@@ -258,6 +271,7 @@ inline float Strongest(const Pose& p) {
 inline Pose Faded(Pose p, float weight) {
     weight = std::clamp(weight, 0.0f, 1.0f);
     for (int i = 0; i < p.n && i < kMaxTurns; ++i) p.t[i].angle *= weight;
+    p.knock.weight *= weight;   // ([weight] knock_down: a body let go of goes back to its animation alike)
     return p;
 }
 

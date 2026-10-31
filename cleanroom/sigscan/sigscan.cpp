@@ -286,10 +286,14 @@ State Try(size_t i, const Text* text) {
 		}
 		const uint64_t at = start + s.offset;
 		got = s.kind == Kind::Code ? at : ReadRef(at, s);
-		// A function found through a call must still start as it did.
-		if (got && s.kind == Kind::Ref && s.body != nullptr && MatchLive(got, Parse(s.body)) != Live::Match) {
-			Logf(true, "game code: %s - the call found leads to 0x%llX, which does not look like it", s.name, static_cast<unsigned long long>(got));
-			return Missing;
+		// A function found through a call must still start as it did - once its page reads (a call into a page not decrypted yet waits).
+		if (got && s.kind == Kind::Ref && s.body != nullptr) {
+			const Live body = MatchLive(got, Parse(s.body));
+			if (body == Live::Unreadable) return Waiting;
+			if (body != Live::Match) {
+				Logf(true, "game code: %s - the call found leads to 0x%llX, which does not look like it", s.name, static_cast<unsigned long long>(got));
+				return Missing;
+			}
 		}
 	}
 	if (!got || got >= g_img.size) return Missing;

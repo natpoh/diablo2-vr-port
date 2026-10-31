@@ -257,6 +257,63 @@ void TestMotors() {
 	EXPECT(m.Take(2010, 150, &r, &stale) && !stale, "a fresh one plays");
 }
 
+// The Vibration tab's extras (haptics_pattern.h): each one's logic, no game, no headset.
+static void TestExtras() {
+	// haptics_hit_long: the tap
+	EXPECT(HitTap(false).amplitude == 0.72f && HitTap(false).durationMs == 45, "off: the blow's tap as ever (0.72 for 45 ms)");
+	EXPECT(HitTap(true).amplitude == 0.95f && HitTap(true).durationMs == 90, "on: d2r-pcvr's weapon tap (0.95 for 90 ms)");
+	// haptics_touch: a touch covers that hand's landed hit for a while, not the other hand's
+	TouchCover c;
+	EXPECT(!c.Covers(kRight, 1000), "no touch yet: the hit buzzes");
+	c.Touched(kRight, 1000);
+	EXPECT(c.Covers(kRight, 1030) && c.Covers(kRight, 1000 + kTouchCoverMs), "the hit 30 ms after the touch (and up to the window) is the touch's own blow");
+	EXPECT(!c.Covers(kLeft, 1030), "the other hand's hit is its own");
+	EXPECT(!c.Covers(kRight, 1001 + kTouchCoverMs), "after the window: a hit of its own");
+	EXPECT(!c.Covers(-1, 1030), "no hand: nothing covered");
+	// haptics_spell: the step into the cast mode, once
+	CastEdge e;
+	EXPECT(!e.Step(1) && e.Step(kCastMode) && !e.Step(kCastMode) && !e.Step(kCastMode), "neutral, then a cast: one pulse for the whole animation");
+	EXPECT(!e.Step(1) && e.Step(kCastMode), "out of it and in again: the next cast");
+	EXPECT(!e.Step(-1) && e.Step(kCastMode), "the unit lost (-1) and back in a cast: a cast");
+	EXPECT(!e.Step(7) && !e.Step(8) && !e.Step(13), "attacks and skills of other modes are no cast");
+	// haptics_low_mana: under the threshold, again every 10 s, ready again a little above it
+	ManaAlert m;
+	EXPECT(!m.Step(true, 0.5f, 0.10f, 0), "plenty of mana: nothing");
+	EXPECT(m.Step(true, 0.08f, 0.10f, 1000), "under 10 %: the alert");
+	EXPECT(!m.Step(true, 0.05f, 0.10f, 5000), "still under, 4 s later: quiet");
+	EXPECT(m.Step(true, 0.05f, 0.10f, 1000 + kManaAgainMs), "10 s later, still under: again");
+	EXPECT(!m.Step(true, 0.11f, 0.10f, 12000) && !m.Step(true, 0.09f, 0.10f, 12100), "a hair above and back under within the 10 s: no new alert (the rearm needs more)");
+	EXPECT(!m.Step(true, 0.20f, 0.10f, 13000) && m.Step(true, 0.09f, 0.10f, 13100), "well above, then under: at once");
+	EXPECT(!m.Step(false, 0.0f, 0.10f, 40000), "unknown numbers: nothing");
+	EXPECT(!m.Step(true, NAN, 0.10f, 40000), "NaN: nothing");
+	// haptics_game_rumble: a level becomes pulses while it is up, at once when it changes, never past the cap
+	RumbleFollow f;
+	Request r;
+	EXPECT(!f.Step(100, &r), "no rumble: nothing");
+	f.Set(30000, 10000, 1000);
+	EXPECT(f.Step(1000, &r) && std::fabs(r.amplitude - 30000.0f / 65535.0f) < 1e-4f && r.durationMs == kRumblePulseMs, "a level: a pulse at once, the stronger motor's");
+	EXPECT(!f.Step(1050, &r), "within the gap: none");
+	EXPECT(f.Step(1000 + kRumbleEveryMs, &r), "the level still up: the next one");
+	f.Set(30000, 10000, 1200);
+	EXPECT(!f.Step(1150, &r), "the same level set again is the same rumble (no extra pulse)");
+	f.Set(0, 65535, 1200);
+	EXPECT(f.Step(1200, &r) && r.amplitude == 1.0f, "a new level: at once");
+	EXPECT(!f.Step(1200 + kRumbleMaxMs + 1, &r), "held past the cap: let go");
+	f.Set(0, 0, 3000);
+	EXPECT(!f.Step(3000, &r) && !f.Step(4000, &r), "0: quiet");
+	f.Set(1, 1, 5000);
+	EXPECT(!f.Step(5000, &r), "a level too weak to feel: nothing");
+	// haptics_pad_mute: passes when off, swallows when on, stops a rumbling pad once
+	PadGate g;
+	EXPECT(g.Step(false) == PadGate::Act::Pass, "off: the call goes to the pad");
+	g.Passed(true, true);
+	EXPECT(g.Step(true) == PadGate::Act::StopThenSwallow, "on while the pad rumbles: one stop first");
+	EXPECT(g.Step(true) == PadGate::Act::Swallow, "then kept from it");
+	EXPECT(g.Step(false) == PadGate::Act::Pass, "off again: passes");
+	g.Passed(false, true);
+	EXPECT(g.Step(true) == PadGate::Act::Swallow, "a call the pad refused (no pad) left nothing rumbling: no stop");
+}
+
 int main() {
 	TestMotors();
 	TestScale();
@@ -266,6 +323,7 @@ int main() {
 	TestPatterns();
 	TestHitHand();
 	TestRatchet();
+	TestExtras();
 	if (g_fails) {
 		std::printf("\n%d FAILED\n", g_fails);
 		return 1;

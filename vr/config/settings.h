@@ -74,6 +74,10 @@ struct Settings {
     std::atomic<float> plateFar{1.0f};         // [hud] monster_far: the plate this share of its size for a monster 10 m away and farther (1 = no change)
     std::atomic<float> plateDepthBody{0.0f};   // [hud] monster_depth_body: the plate in the picture at its monster's depth, 1 = exactly there (0 = where the game leaves it)
     std::atomic<float> plateNearBody{0.0f};   // [hud] monster_near_body: that plate's own stereo depth in first person (absent in the ini: labels_near_body, as before)
+    // [hud] monster_stereo_by_distance: that depth by the monster's distance from the eyes instead (vr/plate_look.h DepthAt) - monster_stereo_near for a monster
+    // monster_stereo_near_m away and nearer, monster_stereo_far for one monster_stereo_far_m and farther; off = monster_near_body for every monster
+    std::atomic<bool> plateStereoByDistance{false};
+    std::atomic<float> plateStereoNear{2.0f}, plateStereoFar{1.0f}, plateStereoNearM{1.5f}, plateStereoFarM{10.0f};
     // [hud] allies_x / allies_y: the allies' portraits (the mercenary, the party) moved on the screen, uv (+x right,
     // +y DOWN; the ini's allies_y is + up, %)
     std::atomic<float> alliesX{0.0f}, alliesY{0.0f};
@@ -149,23 +153,36 @@ struct Settings {
     std::atomic<float> fogCaveEnd{600.0f};
     std::atomic<float> fogCaveStrength{1.0f};  // [fog] caves_strength: how much the full fog covers in caves, 0..1
     std::atomic<float> fogCurve{1.6f};
+    // [fog] arcane_own (Serg 2026-10-31: "отделить вид тумана в пещерах от тумана в Аркан Сити"): the Arcane Sanctuary's own fog - start,
+    // end, strength, curve ([fog] arcane_*), colour ([fog] arcane_color, g_arcaneFogColour) and whether it fades into its sky
+    // (arcane_into_sky); off: the caves' as before (it is off the outdoor list)
+    std::atomic<bool>  arcaneOwnFog{false};
+    std::atomic<float> arcaneFogStart{150.0f};
+    std::atomic<float> arcaneFogEnd{600.0f};
+    std::atomic<float> arcaneFogStrength{1.0f};
+    std::atomic<float> arcaneFogCurve{1.6f};
+    std::atomic<bool>  arcaneFogIntoSky{true};
     std::atomic<float> fogBlur{3.0f};      // the fog over a 5x5 grid this many pixels apart: holes and specks in the depth melt away
     std::atomic<bool>  fogLight{false};    // [fog] light: the fog's short way for weak graphics cards (D2R_DepthFog.fx LightFog)
     std::atomic<bool>  skyOn{false};        // sky in the void, same shader as the fog
     std::atomic<bool>  gameSky{false};      // [sky] game_sky: our painted sky as the game's own dome (engitem::SkyDome)
+    std::atomic<bool>  domePastFar{false};      // [sky] dome_past_far: off F4, the dome laid past the game's depth range in every pixel (skydome::PastFarRadius)
+    std::atomic<bool>  domeInGameColour{true};   // [sky] dome_in_game_colour: the game samples our baked picture for the dome (vr/sky/dome_atlas.h)
+    std::atomic<bool>  domeTrueColour{false};   // [sky] dome_true_colour: the game's dome brought to our sky's colours (D2R_DepthFog.fx DomeSeen / DomeLookOf)
     std::atomic<bool>  domeFogHorizon{true};   // [sky] dome_fog_horizon: the game's dome's low part into the act's fog colour (D2R_DepthFog.fx DomeHorizon)
     std::atomic<bool>  gameSkybox{false};   // [sky] game_skybox: at the Summits the game's dome laid as far as the depth holds (an option; off: as any act 5 area)
     std::atomic<bool>  summitBackdropHidden{true};   // [sky] summit_backdrop_hidden: the Summit's ground picture (skybox01) hidden in first person (vr/own_effects.h)
     std::atomic<int>   weatherFirstPerson{0};   // [sky] weather_first_person: the game's rain and snow in VR F4 / flat F3 - 0 the game's place, 1 hidden, 2 round the viewer (vr/weather_place.h)
     std::atomic<int>   gameSkyTest{0};         // [debug] game_sky_test: 1 the dome in magenta, 2 the game's own Summit sky model, 3 its unit naming our model, 4 our model under its path
-    std::atomic<float> gameSkyRadius{200.0f};   // [sky] game_sky_radius: the dome's radius, world units (200: a near horizon under the game's fog)
+    std::atomic<float> gameSkyRadius{200.0f};   // [sky] game_sky_radius_m: the dome's radius in world units (50 m: a near horizon under the game's fog)
     std::atomic<bool>  gameDomeCaves{false};    // [sky] game_dome_caves: a black dome round the eye underground (engitem::CaveDomeFrame)
-    std::atomic<float> gameDomeCavesSize{1.0f}; // [sky] game_dome_caves_size: its radius as a share of [render] model_radius
+    std::atomic<float> gameDomeCavesRadius{800.0f}; // [sky] game_dome_caves_radius_m: its radius in world units (200 m)
     std::atomic<float> skyClouds{1.0f};     // times the biome's own cloud cover
     std::atomic<bool>  skyDrift{false};     // [sky] drift: the painted sky turns slowly (off: it stands still - painted stars went round with the clouds)
     std::atomic<bool>  skyDayNight{true};   // [sky] day_night: the sky and the open-air fog follow the game's own light
     std::atomic<float> lightDay{128.0f};    // [sky] light_day / light_night: the game's light (0..255) that counts as full day / full night
     std::atomic<float> lightNight{65.0f};
+    std::atomic<float> periodBright[6] = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f};   // [sky] bright_<period>: the sky's brightness each period of the game's day (vr/sky/period_bright.h)
     std::atomic<float> nightBright{0.25f};  // [sky] night_brightness: the sky and the fog at full night, times their day brightness
     std::atomic<bool>  skyAlways{false};    // whatever the biome (testing): caves get a sky too
     std::atomic<bool>  arcaneSky{true};     // [sky] arcane_sky: the Arcane Sanctuary's own star layers all round (after bearstonem/d2r-pcvr), [sky] enabled or not
@@ -485,6 +502,11 @@ struct Settings {
     std::atomic<bool>  gaitF4{false};       // [body] gait_legs_f4: the same on our own F4 body (the whole body turned with the look)
     std::atomic<bool>  walkBack{true};      // [body] walk_back: turned with the look and walking the other way, the game's walk mirrored - the legs step back
     std::atomic<bool>  walkBackReverse{true};   // [body] walk_back_reverse: ... the game's walk played backwards instead of mirrored (0 = the mirror, as 0.185)
+    std::atomic<bool>  legsRear{false};         // [body] legs_rear: while he goes, the legs held in the game's standing pose - he glides (0 = as before)
+    std::atomic<float> legsFrontConeDeg{90.0f}; // [body] legs_front_cone_deg: with legs_rear, the game's own legs going within this cone ahead (its width, 0..360)
+    std::atomic<float> legsRearConeDeg{90.0f};  // [body] legs_rear_cone_deg: ... the game's walk / run played backwards within this cone straight back (0..360)
+    std::atomic<bool> legsSideRagdoll{false};   // [body] legs_side_ragdoll: ... between the cones the feet step after him by the weight library's walk (D2rs*)
+    std::atomic<bool>  legsRearCycle{false};    // [body] legs_rear_cycle: with legs_rear, the rear half's game walk / run played backwards instead (0.192.1-3)
     std::atomic<bool>  dollFeet{false};         // [body] doll_feet: the feet the doll's, not the game's - planted, stepping after the body (0 = the game's legs, as before)
     std::atomic<int>   bodyTurn{2};         // 0 game facing, 1 above the pelvis, 2 whole body turns to where the camera looks
     std::atomic<bool>  wrist{true};         // arms mode 2: the hands turn with the controllers
@@ -531,6 +553,7 @@ struct Settings {
     std::atomic<bool>  fogMist{true};          // [fog] game_fog_mist: the game's volumetric mist fogged by distance too (no light band in caves)
     std::atomic<bool>  fogCavesBlack{true};    // [fog] game_fog_caves_black: underground the game's fog black, the void left alone
     std::atomic<bool>  fogBeforeFx{false};     // [fog] game_fog_before_fx: the fog laid on the scene before the transparent resolve (fogfx::)
+    std::atomic<bool>  fogFxDepth{false};      // [fog] game_fog_fx_depth: with it, the effects fogged by their own distance (fogfx::Params::fxDepth)
     std::atomic<bool>  fogOurCurve{false};     // [fog] game_fog_our_curve: the game's fog by our effect's curve, not its exponential
     std::atomic<bool>  fogKeepsColour{false};  // [fog] fog_keeps_colour: the act's fog colour at every hour, not darkened with the game's light
     std::atomic<bool>  fogIntoSky{false};      // [fog] fog_into_sky: the fog's colour the sky straight behind each point (D2R_DepthFog.fx SkyBehind)

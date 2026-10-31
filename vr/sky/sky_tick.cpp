@@ -21,6 +21,7 @@ std::atomic<bool> g_arcaneSky{false};     // it shows now
 std::atomic<bool> g_arcaneReady{false};   // reshade-shaders\Textures\D2R_Arcane\stars.png and clouds.png are there
 std::atomic<int> g_fogAct{0};        // the area's act for the fog colour, caves too; 0 = unknown
 std::atomic<bool> g_underground{false};   // in the world, off the outdoor list: the fog takes [fog] color_caves
+std::atomic<bool> g_arcaneArea{false};    // in the Arcane Sanctuary (act2_arcane), its sky shown or not: [fog] arcane_own's fog there
 std::atomic<bool> g_noFogArea{false};     // [fog] no_fog_river and the area is the River of Flame: no added fog (unleashed::fog::NoFogArea)
 std::atomic<bool> g_inWorld{false};  // a game area is loaded: not the main menu (its own "frontend" biome), not before any
 std::atomic<bool> g_frontendBiome{false};   // the game's menus' own scene: the main menu, character creation ([render] menu_wide)
@@ -55,6 +56,11 @@ void SkyTick() {
         if (!world) g_roomHeightsClear.store(true);   // [render] floors_stay: the next game's rooms are other rooms
         g_fogAct.store(world ? ActOfBiome(biome) : 0);
         g_underground.store(world && !IsOutdoorBiome(biome));
+        g_arcaneArea.store(world && biome == "act2_arcane");
+        if (world && biome == "act2_arcane")
+            LogF("vrcam: the Arcane Sanctuary - %s", g_set.arcaneOwnFog.load()
+                 ? "its own fog ([fog] arcane_own): start, end, strength, curve and colour of its own, not the caves'"
+                 : "the caves' fog numbers and colour ([fog] arcane_own=0, as before)");
         g_noFogArea.store(world && unleashed::fog::NoFogArea(biome, g_set.fogNoRiver.load()));
         g_ceilBiome.store(world && IsCeilingBiome(biome));
         // [ceiling] game_ceiling: the area's kind of the game's ceiling (shared/game_ceiling.h) when on game_ceiling_biomes, else none

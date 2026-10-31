@@ -16,12 +16,14 @@
 #include <cstdio>
 #include <cstring>
 #include <mutex>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
 #include "fog_height.h"           // StreamPixelShader
 #include "fog_in_frame_math.h"    // IsResolve: the game's ps_transparent_resolve by its size and hash
 #include "native_d3d12.h"
+#include "pso_stream.h"           // the effects' pipelines made from a stream
 #include "../shared/unleashed_fog.h"   // [fog] ease_in: UnleashedFogEase (MPL 2.0, D2R VR Unleashed), put in front of our shader
 
 namespace fogfx {
@@ -48,8 +50,13 @@ void Why(int code, const char* text) {
 SRWLOCK g_paramLock = SRWLOCK_INIT;
 Params g_params;
 std::atomic<bool> g_on{false};
+std::atomic<bool> g_ours{false};   // Params::ours, on
+std::atomic<bool> g_fxDepth{false};   // Params::fxDepth, on
 std::atomic<ULONGLONG> g_lastDraw{0};
 std::atomic<uint32_t> g_draws{0};
+// the effects' depth, since the 10 s line: draws given a depth, of them by a twin made now; a twin pipeline's draws not given one (their
+// targets not the effects', a twin not made, no depth bound); steps that fogged the effects by it, steps with effects drawn but not fogged
+std::atomic<uint32_t> g_fxTwinDraws{0}, g_fxTwinsMade{0}, g_fxOther{0}, g_fxFogged{0}, g_fxNotFogged{0};
 // what the 10 s line says when none is drawn: the resolve's pipeline bound on a followed list / on one not followed (made or reset while
 // the step was off), its draws seen, and of them on lists not followed
 std::atomic<uint32_t> g_boundSeen{0}, g_boundUntracked{0}, g_drawSeen{0}, g_drawUntracked{0};
@@ -89,6 +96,7 @@ struct Known {   // a resource's last barrier on a list: its subresource 0's sta
     uint32_t frame;   // (any list's record: the present count when it was recorded)
 };
 std::atomic<uint32_t> g_frame{0};   // the game's presents (Frame)
+struct FxDepth;
 struct List {
     bool tracked = false;   // reset (or made) while the step was wanted: everything bound since is known
     ID3D12DescriptorHeap* heaps[2] = {};
@@ -105,6 +113,17 @@ struct List {
     ID3D12Resource* scene = nullptr;     // the last R11G11B10 target bound with a depth-stencil
     ID3D12Resource* sceneDs = nullptr;
     std::vector<Known> states;   // the list's last barrier on each
+    // the targets as bound (bound again after an effect's twin): how many, the handles (`single`: one, n in a row), the depth-stencil view's
+    unsigned nRt = 0;
+    bool single = false, hasDsv = false;
+    D3D12_CPU_DESCRIPTOR_HANDLE rts[8] = {}, dsv = {};
+    // the effects drawn on this list since its reset or its last step: the game's weighted-blended colour target and its additive one, and
+    // the depths of ours their twins drew into (each cleared before its first)
+    ID3D12Resource* accum = nullptr;
+    ID3D12Resource* glow = nullptr;
+    FxDepth* accumZ = nullptr;
+    FxDepth* glowZ = nullptr;
+    void FxDone() { accum = glow = nullptr; accumZ = glowZ = nullptr; }
     void Clear() {
         tracked = true;
         nHeaps = 0;
@@ -113,6 +132,9 @@ struct List {
         pso = nullptr;
         ds = rt0 = scene = sceneDs = nullptr;
         states.clear();
+        nRt = 0;
+        single = hasDsv = false;
+        FxDone();
     }
 };
 SRWLOCK g_listLock = SRWLOCK_INIT;
@@ -247,11 +269,17 @@ ID3D12Resource* ReadScene(const List& l, ID3D12Resource* depth, int* elsewhere) 
     return nullptr;
 }
 
-void OnTargets(ID3D12GraphicsCommandList* cl, unsigned n, const D3D12_CPU_DESCRIPTOR_HANDLE* rts, bool, ID3D12Resource* ds) {
+void OnTargets(ID3D12GraphicsCommandList* cl, unsigned n, const D3D12_CPU_DESCRIPTOR_HANDLE* rts, bool single, ID3D12Resource* ds,
+               const D3D12_CPU_DESCRIPTOR_HANDLE* dsv) {
     if (!Wanted()) return;
     List* l = Of(cl);
     l->ds = ds;
     l->rt0 = n && rts ? natived3d::RtvResource(rts[0].ptr) : nullptr;
+    l->nRt = rts ? std::min(n, 8u) : 0;
+    l->single = single;
+    for (unsigned i = 0; i < (single ? std::min(l->nRt, 1u) : l->nRt); ++i) l->rts[i] = rts[i];
+    l->hasDsv = dsv != nullptr;
+    if (dsv) l->dsv = *dsv;
     if (l->rt0 && ds) {
         const D3D12_RESOURCE_DESC d = l->rt0->GetDesc();
         if (d.Format == DXGI_FORMAT_R11G11B10_FLOAT && d.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE2D) {
@@ -329,7 +357,7 @@ void OnRoot(ID3D12GraphicsCommandList* cl, const RootCall& c) {
     }
     l->cSet |= 1u << c.index;
 }
-void OnDraw(ID3D12GraphicsCommandList* cl, unsigned, unsigned);
+void OnDraw(ID3D12GraphicsCommandList* cl, bool indexed, unsigned n, unsigned inst, unsigned first, int base, unsigned firstInst);
 
 // ---- our step: its shader, root signature, pipeline, heap, texture, timestamps (one device)
 const char kCs[] = R"(
@@ -339,25 +367,74 @@ cbuffer K : register(b0) {
     float3 up; float soft;
     float sx, sy, offX, curveOn;
     uint width, height; float cStart, cEnd;
-    float cCurve, cStrength, easeOn, pad1;
+    float cCurve, cStrength, easeOn, byDepth;
+    uint glowW, glowH; float holes, pad1;
 };
 Texture2D<float> Depth : register(t0);
 Texture2D<float3> Scene : register(t1);
+Texture2D<float> AccumDepth : register(t2);   // [fog] game_fog_fx_depth: the nearest effect drawn into the weighted-blended targets
+Texture2D<float4> Accum : register(t3);       // ... their colour target (rgb weighted, a the weights' sum)
+Texture2D<float> GlowDepth : register(t4);    // ... the nearest drawn into the half-size additive target
+Texture2D<float3> Glow : register(t5);
 RWTexture2D<float3> Out : register(u0);
+RWTexture2D<float4> OutAccum : register(u1);
+RWTexture2D<float3> OutGlow : register(u2);
+// What the fog leaves of a point at the depth d (reverse-Z, > 0) seen at uv in the frame
+float Keep(float2 uv, float d) {
+    const float z = nearPlane / d;
+    const float2 ndc = float2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
+    const float3 v = float3((ndc.x - offX) / sx * z, ndc.y / sy * z, z);
+    // (the game's: its view position's w is 1; our effect's fog, Params::ours: the view's depth, as D2R_DepthFog.fx FogAmount)
+    const float dist = byDepth > 0.5 ? z : sqrt(dot(v, v) + 1.0);
+    float t = curveOn > 0.5 ? 1.0 - pow(saturate((dist - cStart) / max(cEnd - cStart, 1.0)), cCurve) * cStrength * UnleashedFogEase(dist, cStart, easeOn)   // ([fog] game_fog_our_curve, ease_in)
+                            : min(1.0, exp(-density * (dist / plane - 1.0)));
+    if (heightOn > 0.5) t = 1.0 - (1.0 - t) * saturate((top - dot(v, up)) / soft);
+    return t;
+}
+// The depth a pixel is fogged by: its own. With Params::holes a pixel of none beside drawn ground - a hole the far trees' dithered edges
+// leave in it, or the one-pixel rim round anything against the void, where the game lays its blended edge (Serg 2026-10-31: the far
+// trees a band of dark specks; every plank of the far palisade traced in a dark line, 85.png) - takes the farthest of its drawn
+// neighbours: fogged as what it borders. The void proper (no neighbour drawn): none (0)
+float GroundDepth(uint2 p) {
+    const float d = Depth[p];
+    if (d > 1e-7 || holes < 0.5) return d;
+    const uint2 m = uint2(width - 1, height - 1);
+    const float n0 = Depth[uint2(min(p.x + 1, m.x), p.y)], n1 = Depth[uint2(p.x > 0 ? p.x - 1 : 0, p.y)];
+    const float n2 = Depth[uint2(p.x, min(p.y + 1, m.y))], n3 = Depth[uint2(p.x, p.y > 0 ? p.y - 1 : 0)];
+    const float farthest = min(min(n0 > 1e-7 ? n0 : 1e9, n1 > 1e-7 ? n1 : 1e9), min(n2 > 1e-7 ? n2 : 1e9, n3 > 1e-7 ? n3 : 1e9));
+    return farthest < 1e8 ? farthest : 0.0;
+}
 [numthreads(8, 8, 1)]
 void main(uint3 id : SV_DispatchThreadID) {
     if (id.x >= width || id.y >= height) return;
     const float3 c = Scene[id.xy];
-    const float d = Depth[id.xy];
+    const float d = GroundDepth(id.xy);
     if (d <= 1e-7) { Out[id.xy] = c; return; }   // the void: left as it is
-    const float z = nearPlane / d;
-    const float2 ndc = float2((id.x + 0.5) / width * 2.0 - 1.0, 1.0 - (id.y + 0.5) / height * 2.0);
-    const float3 v = float3((ndc.x - offX) / sx * z, ndc.y / sy * z, z);
-    const float dist = sqrt(dot(v, v) + 1.0);   // (the game's: its view position's w is 1)
-    float t = curveOn > 0.5 ? 1.0 - pow(saturate((dist - cStart) / max(cEnd - cStart, 1.0)), cCurve) * cStrength * UnleashedFogEase(dist, cStart, easeOn)   // ([fog] game_fog_our_curve, ease_in)
-                            : min(1.0, exp(-density * (dist / plane - 1.0)));
-    if (heightOn > 0.5) t = 1.0 - (1.0 - t) * saturate((top - dot(v, up)) / soft);
-    Out[id.xy] = lerp(fogColour, c, t);
+    Out[id.xy] = lerp(fogColour, c, Keep((id.xy + 0.5) / float2(width, height), d));
+}
+// The effects at their own depth, never nearer than the scene behind them (an effect hidden there adds nothing); none drawn here (our
+// depth 0): as they are. The weighted-blended colour toward the fog's colour (its weight kept: the resolve divides by it), the additive
+// light down. Over the void (the sky goes there after) the colour fades out rather than into the fog's colour: a far fire's halo above
+// the palisade it stands on fades with its lower half (Serg's 0.192.1 shot: an orange disc on the horizon)
+[numthreads(8, 8, 1)]
+void fxAccum(uint3 id : SV_DispatchThreadID) {
+    if (id.x >= width || id.y >= height) return;
+    const float4 a = Accum[id.xy];
+    const float e = AccumDepth[id.xy], o = GroundDepth(id.xy);   // (a blended edge on the rim against the void: as the ground it borders)
+    const float t = a.a > 0.0 && e > 1e-7 ? Keep((id.xy + 0.5) / float2(width, height), max(e, o)) : 1.0;
+    OutAccum[id.xy] = float4(a.rgb * t + (o > 1e-7 ? fogColour * (a.a * (1.0 - t)) : 0.0), a.a);
+}
+[numthreads(8, 8, 1)]
+void fxGlow(uint3 id : SV_DispatchThreadID) {
+    if (id.x >= glowW || id.y >= glowH) return;
+    const float3 g = Glow[id.xy];
+    const float e = GlowDepth[id.xy];
+    // (the scene's depth under it: the nearest of the full-size pixels it covers)
+    const uint2 f0 = min(uint2(float2(id.xy) * float2(width, height) / float2(glowW, glowH)), uint2(width - 1, height - 1));
+    const uint2 f1 = min(f0 + 1, uint2(width - 1, height - 1));
+    const float o = max(max(Depth[f0], Depth[uint2(f1.x, f0.y)]), max(Depth[uint2(f0.x, f1.y)], Depth[f1]));
+    const float t = e > 1e-7 ? Keep((id.xy + 0.5) / float2(glowW, glowH), max(e, o)) : 1.0;
+    OutGlow[id.xy] = g * t;
 }
 )";
 struct Consts {
@@ -367,20 +444,34 @@ struct Consts {
     float sx, sy, offX, curveOn;
     uint32_t width, height;
     float cStart, cEnd;
-    float cCurve, cStrength, easeOn, pad1;
+    float cCurve, cStrength, easeOn, byDepth;
+    uint32_t glowW, glowH;
+    float holes, pad1;
 };
-static_assert(sizeof(Consts) == 24 * 4, "twenty-four root constants");
+static_assert(sizeof(Consts) == 28 * 4, "twenty-eight root constants");
 
 constexpr int kSlots = 64;   // descriptor sets and timestamp pairs used in turn (the GPU is never that many steps behind)
+constexpr UINT kViews = 9;   // a step's views: t0 - t5, u0 - u2
 struct Gpu {
     ID3D12Device* dev = nullptr;
     ID3D12RootSignature* root = nullptr;
     ID3D12PipelineState* cs = nullptr;
+    ID3D12PipelineState* csAccum = nullptr;   // the effects' (fxAccum, fxGlow)
+    ID3D12PipelineState* csGlow = nullptr;
     ID3D12DescriptorHeap* heap = nullptr;
     UINT inc = 0;
     ID3D12Resource* tex = nullptr;
     UINT64 w = 0;
     UINT h = 0;
+    // the effects' weighted-blended colour and additive light as fogged (Params::fxDepth), as big as the game's and of their formats
+    ID3D12Resource* accumTex = nullptr;
+    UINT64 accumW = 0;
+    UINT accumH = 0;
+    DXGI_FORMAT accumF = DXGI_FORMAT_UNKNOWN;
+    ID3D12Resource* glowTex = nullptr;
+    UINT64 glowW = 0;
+    UINT glowH = 0;
+    DXGI_FORMAT glowF = DXGI_FORMAT_UNKNOWN;
     ID3D12QueryHeap* queries = nullptr;
     ID3D12Resource* readback = nullptr;
     const uint64_t* stamps = nullptr;
@@ -398,18 +489,24 @@ bool MakeGpu(ID3D12Device* dev) {
     g.dev = dev;
     HMODULE lib = LoadLibraryExW(L"d3dcompiler_47.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
     auto compile = lib ? reinterpret_cast<pD3DCompile>(GetProcAddress(lib, "D3DCompile")) : nullptr;
-    ID3DBlob *code = nullptr, *err = nullptr;
+    ID3DBlob *code = nullptr, *codeAccum = nullptr, *codeGlow = nullptr, *err = nullptr;
     const std::string source = std::string(unleashed::fog::kEaseHlsl) + kCs;
-    if (!compile || FAILED(compile(source.data(), source.size(), "vrcam-fog-before-fx", nullptr, nullptr, "main", "cs_5_0", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &code,
-                                   &err))) {
-        Line("vrcam: fog before the effects - our shader did not compile: %s", err ? (const char*)err->GetBufferPointer() : "no d3dcompiler_47.dll");
-        if (err) err->Release();
-        if (lib) FreeLibrary(lib);
-        g.failed = true;
-        return false;
+    const char* entries[3] = {"main", "fxAccum", "fxGlow"};
+    ID3DBlob** codes[3] = {&code, &codeAccum, &codeGlow};
+    for (int i = 0; i < 3; ++i) {
+        if (!compile || FAILED(compile(source.data(), source.size(), "vrcam-fog-before-fx", nullptr, nullptr, entries[i], "cs_5_0",
+                                       D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, codes[i], &err))) {
+            Line("vrcam: fog before the effects - our shader did not compile: %s", err ? (const char*)err->GetBufferPointer() : "no d3dcompiler_47.dll");
+            if (err) err->Release();
+            for (ID3DBlob** c : codes)
+                if (*c) (*c)->Release();
+            if (lib) FreeLibrary(lib);
+            g.failed = true;
+            return false;
+        }
     }
     if (lib) FreeLibrary(lib);
-    D3D12_DESCRIPTOR_RANGE ranges[2] = {{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 2, 0, 0, 0}, {D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0, 0, 0}};
+    D3D12_DESCRIPTOR_RANGE ranges[2] = {{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 6, 0, 0, 0}, {D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 3, 0, 0, 0}};
     D3D12_ROOT_PARAMETER params[3] = {};
     params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
     params[0].Constants = {0, 0, sizeof(Consts) / 4};
@@ -430,9 +527,15 @@ bool MakeGpu(ID3D12Device* dev) {
     pd.CS = {code->GetBufferPointer(), code->GetBufferSize()};
     natived3d::SetOurs(true);
     ok = ok && SUCCEEDED(dev->CreateComputePipelineState(&pd, __uuidof(ID3D12PipelineState), (void**)&g.cs));
+    pd.CS = {codeAccum->GetBufferPointer(), codeAccum->GetBufferSize()};
+    ok = ok && SUCCEEDED(dev->CreateComputePipelineState(&pd, __uuidof(ID3D12PipelineState), (void**)&g.csAccum));
+    pd.CS = {codeGlow->GetBufferPointer(), codeGlow->GetBufferSize()};
+    ok = ok && SUCCEEDED(dev->CreateComputePipelineState(&pd, __uuidof(ID3D12PipelineState), (void**)&g.csGlow));
     natived3d::SetOurs(false);
     code->Release();
-    const D3D12_DESCRIPTOR_HEAP_DESC hd{D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 3 * kSlots, D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE, 0};
+    codeAccum->Release();
+    codeGlow->Release();
+    const D3D12_DESCRIPTOR_HEAP_DESC hd{D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, kViews * kSlots, D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE, 0};
     ok = ok && SUCCEEDED(dev->CreateDescriptorHeap(&hd, __uuidof(ID3D12DescriptorHeap), (void**)&g.heap));
     g.inc = dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
     const D3D12_QUERY_HEAP_DESC qd{D3D12_QUERY_HEAP_TYPE_TIMESTAMP, 2 * kSlots, 0};
@@ -503,6 +606,250 @@ D3D12_RESOURCE_BARRIER Transition(ID3D12Resource* r, D3D12_RESOURCE_STATES from,
     b.Transition = {r, sub, from, to};
     return b;
 }
+
+// ---- [fog] game_fog_fx_depth: the effects' own depth
+// A pipeline of the game's that may draw an effect - blended into its first target (a float colour target with alpha: the weighted-blended
+// colour; or R11G11B10: the additive light), no depth written, one sample, no mesh shaders - kept as made: its shaders before the pixel's
+// (copies), its input layout, root signature (held), rasterizer and topology. Its twin, made at its first draw into the effects' targets,
+// draws only the depth (the nearest: reverse-Z, greater-equal) into a buffer of ours.
+struct Twin {
+    std::vector<uint8_t> vs, gs, hs, ds;
+    std::vector<D3D12_INPUT_ELEMENT_DESC> layout;
+    std::vector<std::string> names;   // (the layout's semantic names: copies)
+    ID3D12RootSignature* root = nullptr;
+    D3D12_RASTERIZER_DESC raster{};
+    D3D12_PRIMITIVE_TOPOLOGY_TYPE topology = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+    D3D12_INDEX_BUFFER_STRIP_CUT_VALUE cut = D3D12_INDEX_BUFFER_STRIP_CUT_VALUE_DISABLED;
+    UINT nodeMask = 0;
+    std::atomic<ID3D12PipelineState*> made{nullptr};
+    bool failed = false;   // (under g_twinLock)
+};
+SRWLOCK g_twinLock = SRWLOCK_INIT;
+std::unordered_map<ID3D12PipelineState*, Twin*> g_twins;   // (the game's pipeline held: its address never another's)
+std::atomic<uint32_t> g_twinsKept{0};
+
+bool EffectTarget(DXGI_FORMAT f) {
+    return f == DXGI_FORMAT_R16G16B16A16_FLOAT || f == DXGI_FORMAT_R32G32B32A32_FLOAT || f == DXGI_FORMAT_R11G11B10_FLOAT;
+}
+// A target's resource may be typeless (its views typed): the float format it is drawn and read as
+DXGI_FORMAT Typed(DXGI_FORMAT f) {
+    switch (f) {
+    case DXGI_FORMAT_R16G16B16A16_TYPELESS: return DXGI_FORMAT_R16G16B16A16_FLOAT;
+    case DXGI_FORMAT_R32G32B32A32_TYPELESS: return DXGI_FORMAT_R32G32B32A32_FLOAT;
+    default: return f;
+    }
+}
+bool MayDrawEffect(const D3D12_BLEND_DESC& b, const D3D12_DEPTH_STENCIL_DESC& d, UINT nRt, DXGI_FORMAT rt0, DXGI_SAMPLE_DESC s) {
+    return nRt >= 1 && EffectTarget(rt0) && b.RenderTarget[0].BlendEnable && s.Count == 1 &&
+           (!d.DepthEnable || d.DepthWriteMask == D3D12_DEPTH_WRITE_MASK_ZERO);
+}
+std::vector<uint8_t> Copy(const D3D12_SHADER_BYTECODE& c) {
+    return c.pShaderBytecode && c.BytecodeLength ? std::vector<uint8_t>((const uint8_t*)c.pShaderBytecode, (const uint8_t*)c.pShaderBytecode + c.BytecodeLength)
+                                                 : std::vector<uint8_t>();
+}
+void Keep(ID3D12PipelineState* pso, Twin* t, const D3D12_INPUT_LAYOUT_DESC& il) {
+    t->names.reserve(il.NumElements);
+    for (UINT i = 0; i < il.NumElements && il.pInputElementDescs; ++i) {
+        t->layout.push_back(il.pInputElementDescs[i]);
+        t->names.emplace_back(il.pInputElementDescs[i].SemanticName ? il.pInputElementDescs[i].SemanticName : "");
+    }
+    for (size_t i = 0; i < t->layout.size(); ++i) t->layout[i].SemanticName = t->names[i].c_str();
+    if (t->root) t->root->AddRef();
+    pso->AddRef();
+    AcquireSRWLockExclusive(&g_twinLock);
+    Twin*& slot = g_twins[pso];
+    Twin* old = slot;
+    slot = t;
+    ReleaseSRWLockExclusive(&g_twinLock);
+    if (old) { pso->Release(); delete old; }   // (the same pipeline told again: one hold)
+    else g_twinsKept.fetch_add(1, std::memory_order_relaxed);
+}
+Twin* TwinOf(ID3D12PipelineState* pso) {
+    if (!pso) return nullptr;
+    AcquireSRWLockShared(&g_twinLock);
+    const auto it = g_twins.find(pso);
+    Twin* t = it != g_twins.end() ? it->second : nullptr;
+    ReleaseSRWLockShared(&g_twinLock);
+    return t;
+}
+// The twin itself (made once, under g_twinLock); nullptr when the device would not make it
+ID3D12PipelineState* MadeTwin(ID3D12Device* dev, Twin* t) {
+    if (ID3D12PipelineState* m = t->made.load(std::memory_order_acquire)) return m;
+    AcquireSRWLockExclusive(&g_twinLock);
+    if (!t->made.load(std::memory_order_relaxed) && !t->failed) {
+        D3D12_GRAPHICS_PIPELINE_STATE_DESC d{};
+        d.pRootSignature = t->root;
+        d.VS = {t->vs.data(), t->vs.size()};
+        if (!t->gs.empty()) d.GS = {t->gs.data(), t->gs.size()};
+        if (!t->hs.empty()) d.HS = {t->hs.data(), t->hs.size()};
+        if (!t->ds.empty()) d.DS = {t->ds.data(), t->ds.size()};
+        d.SampleMask = ~0u;
+        d.RasterizerState = t->raster;
+        d.RasterizerState.ForcedSampleCount = 0;
+        d.DepthStencilState.DepthEnable = TRUE;
+        d.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
+        d.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_GREATER_EQUAL;
+        d.InputLayout = {t->layout.data(), (UINT)t->layout.size()};
+        d.IBStripCutValue = t->cut;
+        d.PrimitiveTopologyType = t->topology;
+        d.DSVFormat = DXGI_FORMAT_D32_FLOAT;
+        d.SampleDesc.Count = 1;
+        d.NodeMask = t->nodeMask;
+        ID3D12PipelineState* made = nullptr;
+        natived3d::SetOurs(true);
+        const HRESULT hr = dev->CreateGraphicsPipelineState(&d, __uuidof(ID3D12PipelineState), (void**)&made);
+        natived3d::SetOurs(false);
+        if (FAILED(hr) || !made) {
+            t->failed = true;
+            static std::atomic<int> told{0};
+            if (told.fetch_add(1) < 3) Line("vrcam: fog before the effects - an effect's depth pipeline could not be made (0x%08X): that effect not fogged", (unsigned)hr);
+        } else {
+            made->SetName(L"d2rvr fog before fx effect depth");
+            t->made.store(made, std::memory_order_release);
+            g_fxTwinsMade.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    ID3D12PipelineState* got = t->made.load(std::memory_order_relaxed);
+    ReleaseSRWLockExclusive(&g_twinLock);
+    return got;
+}
+
+// Depths of ours the twins draw into (D32, cleared to 0: nothing), one for each size the effects' targets have - kept (a few: both eyes'
+// targets are one size, the half-size layer another, a menu's besides), never let go while the GPU may use them
+struct FxDepth {
+    ID3D12Resource* tex = nullptr;
+    UINT64 w = 0;
+    UINT h = 0;
+    D3D12_CPU_DESCRIPTOR_HANDLE dsv{};
+};
+constexpr int kFxDepths = 8;
+FxDepth g_fxDepths[kFxDepths];
+int g_fxDepthN = 0;
+ID3D12DescriptorHeap* g_dsvHeap = nullptr;
+std::mutex g_fxDepthMx;
+FxDepth* DepthFor(ID3D12Device* dev, UINT64 w, UINT h) {
+    std::lock_guard<std::mutex> one(g_fxDepthMx);
+    for (int i = 0; i < g_fxDepthN; ++i)
+        if (g_fxDepths[i].w == w && g_fxDepths[i].h == h) return &g_fxDepths[i];
+    if (g_fxDepthN == kFxDepths) return nullptr;
+    if (!g_dsvHeap) {
+        const D3D12_DESCRIPTOR_HEAP_DESC hd{D3D12_DESCRIPTOR_HEAP_TYPE_DSV, kFxDepths, D3D12_DESCRIPTOR_HEAP_FLAG_NONE, 0};
+        if (FAILED(dev->CreateDescriptorHeap(&hd, __uuidof(ID3D12DescriptorHeap), (void**)&g_dsvHeap))) { g_dsvHeap = nullptr; return nullptr; }
+    }
+    FxDepth& z = g_fxDepths[g_fxDepthN];
+    D3D12_HEAP_PROPERTIES hp{D3D12_HEAP_TYPE_DEFAULT};
+    D3D12_RESOURCE_DESC d{};
+    d.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    d.Width = w;
+    d.Height = h;
+    d.DepthOrArraySize = d.MipLevels = 1;
+    d.Format = DXGI_FORMAT_R32_TYPELESS;
+    d.SampleDesc.Count = 1;
+    d.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+    D3D12_CLEAR_VALUE cv{DXGI_FORMAT_D32_FLOAT};
+    cv.DepthStencil = {0.0f, 0};
+    // (its home state DEPTH_WRITE: the step takes it to a shader resource and back within itself)
+    if (FAILED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &d, D3D12_RESOURCE_STATE_DEPTH_WRITE, &cv, __uuidof(ID3D12Resource),
+                                            (void**)&z.tex)))
+        return nullptr;
+    z.tex->SetName(L"d2rvr fog before fx effects depth");
+    z.w = w;
+    z.h = h;
+    z.dsv.ptr = g_dsvHeap->GetCPUDescriptorHandleForHeapStart().ptr +
+                (SIZE_T)g_fxDepthN * dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
+    D3D12_DEPTH_STENCIL_VIEW_DESC dv{DXGI_FORMAT_D32_FLOAT, D3D12_DSV_DIMENSION_TEXTURE2D};
+    dev->CreateDepthStencilView(z.tex, &dv, z.dsv);
+    ++g_fxDepthN;
+    Line("vrcam: fog before the effects - an effects' depth of ours made, %llux%u", (unsigned long long)w, h);
+    return &z;
+}
+
+// An effect's draw (before the game's, its arguments): drawn again by its twin into our depth of its target's size - the weighted-blended
+// colour target (a float one with alpha, the depth's size), or the additive light's (R11G11B10, smaller than the depth); any other target
+// (the scene itself: a flame drawn into it is fogged with it) is left alone. The game's pipeline and targets bound again after it; its root
+// signature, arguments, viewports, vertex and index buffers never changed.
+void TwinDraw(ID3D12GraphicsCommandList* cl, List& l, Twin* t, bool indexed, unsigned n, unsigned inst, unsigned first, int base, unsigned firstInst) {
+    if (!l.rt0 || !l.ds || !l.nRt) { g_fxOther.fetch_add(1, std::memory_order_relaxed); return; }
+    const D3D12_RESOURCE_DESC rd = l.rt0->GetDesc(), dd = l.ds->GetDesc();
+    const DXGI_FORMAT rf = Typed(rd.Format);
+    const bool accum = rf != DXGI_FORMAT_R11G11B10_FLOAT && rd.Width == dd.Width && rd.Height == dd.Height;
+    const bool glow = rf == DXGI_FORMAT_R11G11B10_FLOAT && l.nRt == 1 && rd.Width < dd.Width && rd.Height < dd.Height;
+    if ((!accum && !glow) || rd.SampleDesc.Count != 1 || !EffectTarget(rf)) { g_fxOther.fetch_add(1, std::memory_order_relaxed); return; }
+    ID3D12Device* dev = nullptr;
+    if (FAILED(cl->GetDevice(__uuidof(ID3D12Device), (void**)&dev)) || !dev) return;
+    dev->Release();   // (the game's device, held by the game)
+    ID3D12PipelineState* twin = MadeTwin(dev, t);
+    FxDepth* z = twin ? DepthFor(dev, rd.Width, rd.Height) : nullptr;
+    if (!z) { g_fxOther.fetch_add(1, std::memory_order_relaxed); return; }
+    {   // the targets each kind was found in, once each
+        static ID3D12Resource* told[2] = {};
+        if (told[glow] != l.rt0) {
+            told[glow] = l.rt0;
+            Line("vrcam: fog before the effects - the effects' %s target %p, format %d, %llux%u (%u target(s) bound; the depth %llux%u): their depth drawn",
+                 glow ? "additive light" : "weighted-blended colour", (void*)l.rt0, (int)rd.Format, (unsigned long long)rd.Width, rd.Height, l.nRt,
+                 (unsigned long long)dd.Width, dd.Height);
+        }
+    }
+    FxDepth*& mine = glow ? l.glowZ : l.accumZ;
+    natived3d::SetOurs(true);
+    if (mine != z) cl->ClearDepthStencilView(z->dsv, D3D12_CLEAR_FLAG_DEPTH, 0.0f, 0, 0, nullptr);   // (its first on this list)
+    cl->SetPipelineState(twin);
+    cl->OMSetRenderTargets(0, nullptr, FALSE, &z->dsv);
+    if (indexed) cl->DrawIndexedInstanced(n, inst, first, base, firstInst);
+    else cl->DrawInstanced(n, inst, first, firstInst);
+    cl->OMSetRenderTargets(l.nRt, l.rts, l.single ? TRUE : FALSE, l.hasDsv ? &l.dsv : nullptr);
+    cl->SetPipelineState(l.pso);
+    natived3d::SetOurs(false);
+    mine = z;
+    (glow ? l.glow : l.accum) = l.rt0;
+    g_fxTwinDraws.fetch_add(1, std::memory_order_relaxed);
+}
+
+// The state a target the resolve reads is in: certain when this list set it; else a read state set on another list this frame (see Insert)
+bool ReadState(const List& l, ID3D12Resource* r, D3D12_RESOURCE_STATES* s) {
+    const D3D12_RESOURCE_STATES readable = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+    Known k{};
+    const bool own = OwnState(l, r, &k);
+    if (!own && !(AnyState(r, &k) && k.frame == g_frame.load(std::memory_order_relaxed))) return false;
+    *s = k.s;
+    return (k.s & D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE) && !(k.s & ~readable);
+}
+// One of ours as big as a target of the game's and of its format, written by a compute shader (a new size or format: made again - the old
+// one's last step long done, as the scene's)
+bool MakeOwn(ID3D12Resource*& tex, UINT64& w, UINT& h, DXGI_FORMAT& f, UINT64 nw, UINT nh, DXGI_FORMAT nf, const wchar_t* name) {
+    if (tex && w == nw && h == nh && f == nf) return true;
+    if (tex) {
+        tex->Release();
+        tex = nullptr;
+    }
+    D3D12_HEAP_PROPERTIES hp{D3D12_HEAP_TYPE_DEFAULT};
+    D3D12_RESOURCE_DESC d{};
+    d.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    d.Width = nw;
+    d.Height = nh;
+    d.DepthOrArraySize = d.MipLevels = 1;
+    d.Format = nf;
+    d.SampleDesc.Count = 1;
+    d.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+    if (FAILED(g_gpu.dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &d, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr, __uuidof(ID3D12Resource),
+                                                  (void**)&tex))) {
+        tex = nullptr;
+        return false;
+    }
+    tex->SetName(name);
+    w = nw;
+    h = nh;
+    f = nf;
+    return true;
+}
+// An effects' target to fog at the step: the game's, its state, ours, our depth of it
+struct FxPart {
+    ID3D12Resource* game = nullptr;
+    D3D12_RESOURCE_STATES s{}, r{};
+    ID3D12Resource* ours = nullptr;
+    FxDepth* z = nullptr;
+    D3D12_RESOURCE_DESC d{};
+};
 
 // The step, before the resolve's draw on `cl` (the game's state given back after it)
 void Insert(ID3D12GraphicsCommandList* cl, List& l) {
@@ -629,23 +976,75 @@ void Insert(ID3D12GraphicsCommandList* cl, List& l) {
     dev->Release();   // (the game's device, held by the game)
     if (!MakeGpu(dev) || !MakeTexture(sd.Width, sd.Height)) return;
     Gpu& g = g_gpu;
+    // [fog] game_fog_fx_depth: the effects drawn on this list (their twins drew their depth): their targets as the scene's - one slice, one
+    // sample, the weighted-blended colour the depth's size, the additive light smaller; each in a read state this list set or set elsewhere
+    // this frame. Anything else: those effects as they are (a line, once each way)
+    FxPart fa, fg;
+    if (p.fxDepth && (l.accum || l.glow)) {
+        int why = 0;   // 0 fogged; else the first refusal
+        auto take = [&](FxPart& f, ID3D12Resource* game, FxDepth* z, bool glow) {
+            if (!game || !z) return;
+            const D3D12_RESOURCE_DESC d = game->GetDesc();
+            D3D12_RESOURCE_STATES s{};
+            if (d.SampleDesc.Count != 1 || d.DepthOrArraySize != 1 || d.Width != z->w || d.Height != z->h ||
+                (glow ? d.Width >= sd.Width : d.Width != sd.Width || d.Height != sd.Height)) { why = why ? why : glow ? 2 : 1; return; }
+            if (!ReadState(l, game, &s)) { why = why ? why : glow ? 4 : 3; return; }
+            ID3D12Resource*& tex = glow ? g.glowTex : g.accumTex;
+            const DXGI_FORMAT tf = Typed(d.Format);   // (a copy between a typeless resource and its typed format is allowed)
+            const bool made = glow ? MakeOwn(tex, g.glowW, g.glowH, g.glowF, d.Width, d.Height, tf, L"d2rvr fog before fx glow")
+                                   : MakeOwn(tex, g.accumW, g.accumH, g.accumF, d.Width, d.Height, tf, L"d2rvr fog before fx accum");
+            if (!made) { why = why ? why : 5; return; }
+            f.game = game;
+            f.s = s;
+            f.r = s | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+            f.ours = tex;
+            f.z = z;
+            f.d = d;
+        };
+        take(fa, l.accum, l.accumZ, false);
+        take(fg, l.glow, l.glowZ, true);
+        static int toldWhy = -1;
+        if (why != toldWhy) {
+            toldWhy = why;
+            static const char* const kWhy[] = {"fogged by their own distance", "the weighted-blended target not of the scene's size (or arrays, samples): as they are",
+                                               "the additive target not smaller than the scene (or arrays, samples): as it is",
+                                               "the weighted-blended target's state not known as the resolve reads it: as they are",
+                                               "the additive target's state not known as the resolve reads it: as it is",
+                                               "a texture of ours could not be made: as they are"};
+            Line("vrcam: fog before the effects - the effects drawn on the resolve's list: %s (colour %p, additive %p)", kWhy[why], (void*)fa.game, (void*)fg.game);
+        }
+        (fa.game || fg.game ? g_fxFogged : g_fxNotFogged).fetch_add(1, std::memory_order_relaxed);
+    }
     const uint32_t step = g_slot++;
     const uint32_t k = step % kSlots;
-    // this step's views: t0 the depth, t1 the scene, u0 ours
-    const D3D12_CPU_DESCRIPTOR_HANDLE cpu{g.heap->GetCPUDescriptorHandleForHeapStart().ptr + (SIZE_T)k * 3 * g.inc};
-    const D3D12_GPU_DESCRIPTOR_HANDLE gpu{g.heap->GetGPUDescriptorHandleForHeapStart().ptr + (UINT64)k * 3 * g.inc};
+    // this step's views: t0 the depth, t1 the scene, t2 - t5 the effects' depths and targets, u0 - u2 ours (the effects' none: empty views)
+    const D3D12_CPU_DESCRIPTOR_HANDLE cpu{g.heap->GetCPUDescriptorHandleForHeapStart().ptr + (SIZE_T)k * kViews * g.inc};
+    const D3D12_GPU_DESCRIPTOR_HANDLE gpu{g.heap->GetGPUDescriptorHandleForHeapStart().ptr + (UINT64)k * kViews * g.inc};
+    auto at = [&](UINT i) { return D3D12_CPU_DESCRIPTOR_HANDLE{cpu.ptr + (SIZE_T)i * g.inc}; };
     D3D12_SHADER_RESOURCE_VIEW_DESC sv{};
     sv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
     sv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
     sv.Texture2D.MipLevels = 1;
     sv.Format = dfmt;
-    dev->CreateShaderResourceView(depth, &sv, cpu);
+    dev->CreateShaderResourceView(depth, &sv, at(0));
     sv.Format = DXGI_FORMAT_R11G11B10_FLOAT;
-    dev->CreateShaderResourceView(scene, &sv, D3D12_CPU_DESCRIPTOR_HANDLE{cpu.ptr + g.inc});
+    dev->CreateShaderResourceView(scene, &sv, at(1));
+    sv.Format = DXGI_FORMAT_R32_FLOAT;
+    dev->CreateShaderResourceView(fa.game ? fa.z->tex : nullptr, &sv, at(2));
+    sv.Format = fa.game ? Typed(fa.d.Format) : DXGI_FORMAT_R16G16B16A16_FLOAT;
+    dev->CreateShaderResourceView(fa.game, &sv, at(3));
+    sv.Format = DXGI_FORMAT_R32_FLOAT;
+    dev->CreateShaderResourceView(fg.game ? fg.z->tex : nullptr, &sv, at(4));
+    sv.Format = DXGI_FORMAT_R11G11B10_FLOAT;
+    dev->CreateShaderResourceView(fg.game, &sv, at(5));
     D3D12_UNORDERED_ACCESS_VIEW_DESC uv{};
     uv.Format = DXGI_FORMAT_R11G11B10_FLOAT;
     uv.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
-    dev->CreateUnorderedAccessView(g.tex, nullptr, &uv, D3D12_CPU_DESCRIPTOR_HANDLE{cpu.ptr + 2 * g.inc});
+    dev->CreateUnorderedAccessView(g.tex, nullptr, &uv, at(6));
+    uv.Format = fa.game ? Typed(fa.d.Format) : DXGI_FORMAT_R16G16B16A16_FLOAT;
+    dev->CreateUnorderedAccessView(fa.ours, nullptr, &uv, at(7));
+    uv.Format = DXGI_FORMAT_R11G11B10_FLOAT;
+    dev->CreateUnorderedAccessView(fg.ours, nullptr, &uv, at(8));
 
     const D3D12_RESOURCE_STATES readOnly = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
     const D3D12_RESOURCE_STATES rScene =
@@ -673,6 +1072,10 @@ void Insert(ID3D12GraphicsCommandList* cl, List& l) {
     c.cCurve = std::max(p.curve, 0.05f);
     c.cStrength = p.strength;
     c.easeOn = p.ease ? 1.0f : 0.0f;
+    c.byDepth = p.ours ? 1.0f : 0.0f;
+    c.glowW = fg.game ? (uint32_t)fg.d.Width : 0;
+    c.glowH = fg.game ? fg.d.Height : 0;
+    c.holes = p.fxDepth && !p.ours ? 1.0f : 0.0f;   // (our effect's fog: the post pass fogs such a pixel itself - FrameVoidFog)
 
     natived3d::SetOurs(true);
     cl->EndQuery(g.queries, D3D12_QUERY_TYPE_TIMESTAMP, 2 * k);
@@ -687,22 +1090,60 @@ void Insert(ID3D12GraphicsCommandList* cl, List& l) {
     cl->SetPipelineState(g.cs);
     cl->SetComputeRoot32BitConstants(0, sizeof(Consts) / 4, &c, 0);
     cl->SetComputeRootDescriptorTable(1, gpu);
-    cl->SetComputeRootDescriptorTable(2, D3D12_GPU_DESCRIPTOR_HANDLE{gpu.ptr + 2 * g.inc});
+    cl->SetComputeRootDescriptorTable(2, D3D12_GPU_DESCRIPTOR_HANDLE{gpu.ptr + 6 * g.inc});
     cl->Dispatch((UINT)((sd.Width + 7) / 8), (sd.Height + 7) / 8, 1);
+    FxPart* parts[2] = {&fa, &fg};
+    if (fa.game || fg.game) {   // the effects': their targets and our depths read
+        D3D12_RESOURCE_BARRIER fb[4];
+        UINT nf = 0;
+        for (FxPart* f : parts) {
+            if (!f->game) continue;
+            if (f->r != f->s) fb[nf++] = Transition(f->game, f->s, f->r, 0);
+            fb[nf++] = Transition(f->z->tex, D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        }
+        if (nf) cl->ResourceBarrier(nf, fb);
+        if (fa.game) {
+            cl->SetPipelineState(g.csAccum);
+            cl->Dispatch((UINT)((sd.Width + 7) / 8), (sd.Height + 7) / 8, 1);
+        }
+        if (fg.game) {
+            cl->SetPipelineState(g.csGlow);
+            cl->Dispatch((UINT)((fg.d.Width + 7) / 8), (fg.d.Height + 7) / 8, 1);
+        }
+    }
+    D3D12_RESOURCE_BARRIER bx[3 + 6];
     nb = 0;
-    b[nb++] = Transition(g.tex, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
-    b[nb++] = Transition(scene, rScene, D3D12_RESOURCE_STATE_COPY_DEST, 0);
-    if (rDepth != sDepth) b[nb++] = Transition(depth, rDepth, sDepth);
-    cl->ResourceBarrier(nb, b);
-    {   // into the scene's first mip (CopyResource wants the same mips on both sides)
+    bx[nb++] = Transition(g.tex, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    bx[nb++] = Transition(scene, rScene, D3D12_RESOURCE_STATE_COPY_DEST, 0);
+    if (rDepth != sDepth) bx[nb++] = Transition(depth, rDepth, sDepth);
+    for (FxPart* f : parts) {
+        if (!f->game) continue;
+        bx[nb++] = Transition(f->ours, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        bx[nb++] = Transition(f->game, f->r, D3D12_RESOURCE_STATE_COPY_DEST, 0);
+        bx[nb++] = Transition(f->z->tex, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_DEPTH_WRITE);
+    }
+    cl->ResourceBarrier(nb, bx);
+    {   // into the scene's first mip (CopyResource wants the same mips on both sides); the effects' targets the same way
         D3D12_TEXTURE_COPY_LOCATION dst{scene, D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX}, src{g.tex, D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX};
         dst.SubresourceIndex = 0;
         src.SubresourceIndex = 0;
         cl->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+        for (FxPart* f : parts) {
+            if (!f->game) continue;
+            dst.pResource = f->game;
+            src.pResource = f->ours;
+            cl->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+        }
     }
-    b[0] = Transition(scene, D3D12_RESOURCE_STATE_COPY_DEST, sScene, 0);
-    b[1] = Transition(g.tex, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-    cl->ResourceBarrier(2, b);
+    nb = 0;
+    bx[nb++] = Transition(scene, D3D12_RESOURCE_STATE_COPY_DEST, sScene, 0);
+    bx[nb++] = Transition(g.tex, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    for (FxPart* f : parts) {
+        if (!f->game) continue;
+        bx[nb++] = Transition(f->game, D3D12_RESOURCE_STATE_COPY_DEST, f->s, 0);
+        bx[nb++] = Transition(f->ours, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    }
+    cl->ResourceBarrier(nb, bx);
     cl->EndQuery(g.queries, D3D12_QUERY_TYPE_TIMESTAMP, 2 * k + 1);
     cl->ResolveQueryData(g.queries, D3D12_QUERY_TYPE_TIMESTAMP, 2 * k, 2, g.readback, 2 * k * sizeof(uint64_t));
     // the game's state again: its heaps, its graphics tables (set again under them), its compute root signature and arguments, its pipeline
@@ -731,25 +1172,41 @@ void Insert(ID3D12GraphicsCommandList* cl, List& l) {
     natived3d::SetOurs(false);
     g_draws.fetch_add(1, std::memory_order_relaxed);
     g_lastDraw.store(GetTickCount64(), std::memory_order_relaxed);
-    if (g_toldWhy.exchange(0) != 0)
-        Line("vrcam: fog before the effects - drawn: the scene fogged (plane %.0f, density %.3f, colour %.3f %.3f %.3f) before the game's transparent "
-             "resolve (%llux%u); the game's fog pass leaves the fog's colour out",
-             c.plane, c.density, c.fog[0], c.fog[1], c.fog[2], (unsigned long long)sd.Width, sd.Height);
+    static int toldOurs = -1;   // (again when the fog drawn changes: the game's, or our effect's)
+    if (g_toldWhy.exchange(0) != 0 || toldOurs != (int)p.ours) {
+        toldOurs = (int)p.ours;
+        if (p.ours)
+            Line("vrcam: fog before the effects - drawn: the scene fogged by our effect's fog (start %.0f, end %.0f, curve %.2f, strength %.2f, colour "
+                 "%.3f %.3f %.3f in the scene's units) before the game's transparent resolve (%llux%u); the post pass leaves a drawn pixel's fog to it",
+                 c.cStart, c.cEnd, c.cCurve, c.cStrength, c.fog[0], c.fog[1], c.fog[2], (unsigned long long)sd.Width, sd.Height);
+        else
+            Line("vrcam: fog before the effects - drawn: the scene fogged (plane %.0f, density %.3f, colour %.3f %.3f %.3f) before the game's transparent "
+                 "resolve (%llux%u); the game's fog pass leaves the fog's colour out",
+                 c.plane, c.density, c.fog[0], c.fog[1], c.fog[2], (unsigned long long)sd.Width, sd.Height);
+    }
 }
-void OnDraw(ID3D12GraphicsCommandList* cl, unsigned, unsigned) {
+void OnDraw(ID3D12GraphicsCommandList* cl, bool indexed, unsigned n, unsigned inst, unsigned first, int base, unsigned firstInst) {
     if (!Wanted()) return;
     List* l = Of(cl);
-    if (!IsResolvePso(l->pso)) return;
+    if (!IsResolvePso(l->pso)) {
+        if (!g_fxDepth.load(std::memory_order_relaxed) || !l->tracked) return;
+        if (Twin* t = TwinOf(l->pso)) TwinDraw(cl, *l, t, indexed, n, inst, first, base, firstInst);
+        return;
+    }
     g_drawSeen.fetch_add(1, std::memory_order_relaxed);
     if (!l->tracked) { g_drawUntracked.fetch_add(1, std::memory_order_relaxed); return; }
     Insert(cl, *l);
+    l->FxDone();   // (the next effects on this list clear our depths again)
 }
 
 }  // namespace
 
 void SetLog(LogFn log) { g_log = log; }
 
+std::atomic<bool> g_hooked{false};
+bool Hooked() { return g_hooked.load(std::memory_order_relaxed); }
 void FillSinks(natived3d::Sinks& k) {
+    g_hooked.store(true);
     natived3d::TrackSceneViews(true);   // (the scene the resolve reads: ReadScene)
     k.fxReset = &OnReset;
     k.fxTargets = &OnTargets;
@@ -762,11 +1219,109 @@ void FillSinks(natived3d::Sinks& k) {
 
 void OnGraphicsPso(ID3D12Device*, const D3D12_GRAPHICS_PIPELINE_STATE_DESC* d, ID3D12PipelineState* pso) {
     if (d && pso && fogframe::IsResolve(d->PS.pShaderBytecode, d->PS.BytecodeLength)) AddResolve(pso);
+    else if (d && pso && Hooked() && d->VS.pShaderBytecode &&
+             MayDrawEffect(d->BlendState, d->DepthStencilState, d->NumRenderTargets, d->RTVFormats[0], d->SampleDesc)) {
+        Twin* t = new Twin();
+        t->vs = Copy(d->VS);
+        t->gs = Copy(d->GS);
+        t->hs = Copy(d->HS);
+        t->ds = Copy(d->DS);
+        t->root = d->pRootSignature;
+        t->raster = d->RasterizerState;
+        t->topology = d->PrimitiveTopologyType;
+        t->cut = d->IBStripCutValue;
+        t->nodeMask = d->NodeMask;
+        Keep(pso, t, d->InputLayout);
+    }
 }
 void OnStreamPso(ID3D12Device*, const D3D12_PIPELINE_STATE_STREAM_DESC* d, ID3D12PipelineState* pso) {
     const void* code = nullptr;
     size_t size = 0;
-    if (pso && fogheight::StreamPixelShader(d, &code, &size) && fogframe::IsResolve(code, size)) AddResolve(pso);
+    if (pso && fogheight::StreamPixelShader(d, &code, &size) && fogframe::IsResolve(code, size)) { AddResolve(pso); return; }
+    if (!pso || !d || !Hooked() || !d->pPipelineStateSubobjectStream || !d->SizeInBytes || d->SizeInBytes > 65536) return;
+    // a stream's subobjects, each kind's defaults where it has none (no blend, the depth written: not an effect's)
+    const uint8_t* s = (const uint8_t*)d->pPipelineStateSubobjectStream;
+    D3D12_SHADER_BYTECODE vs{}, gs{}, hs{}, dsh{};
+    ID3D12RootSignature* root = nullptr;
+    D3D12_BLEND_DESC blend{};
+    D3D12_DEPTH_STENCIL_DESC depth{};
+    depth.DepthEnable = TRUE;
+    depth.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
+    D3D12_RASTERIZER_DESC raster{};
+    raster.FillMode = D3D12_FILL_MODE_SOLID;
+    raster.CullMode = D3D12_CULL_MODE_BACK;
+    raster.DepthClipEnable = TRUE;
+    D3D12_INPUT_LAYOUT_DESC il{};
+    D3D12_INDEX_BUFFER_STRIP_CUT_VALUE cut = D3D12_INDEX_BUFFER_STRIP_CUT_VALUE_DISABLED;
+    D3D12_PRIMITIVE_TOPOLOGY_TYPE topology = D3D12_PRIMITIVE_TOPOLOGY_TYPE_UNDEFINED;
+    D3D12_RT_FORMAT_ARRAY rts{};
+    DXGI_SAMPLE_DESC sample{1, 0};
+    UINT nodeMask = 0;
+    for (size_t at = 0; at + 4 <= d->SizeInBytes;) {
+        uint32_t type = 0;
+        std::memcpy(&type, s + at, 4);
+        size_t vo = 0, sz = 0;
+        if (!psostream::Subobject(type, &vo, &sz) || at + sz > d->SizeInBytes) return;   // (a kind not read: left alone)
+        const uint8_t* v = s + at + vo;
+        switch (type) {
+        case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_ROOT_SIGNATURE: std::memcpy(&root, v, sizeof root); break;
+        case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_VS: std::memcpy(&vs, v, sizeof vs); break;
+        case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_GS: std::memcpy(&gs, v, sizeof gs); break;
+        case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_HS: std::memcpy(&hs, v, sizeof hs); break;
+        case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_DS: std::memcpy(&dsh, v, sizeof dsh); break;
+        case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_AS: case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_MS: {   // (mesh shaders, stream output, views: not twinned)
+            D3D12_SHADER_BYTECODE b{};
+            std::memcpy(&b, v, sizeof b);
+            if (b.pShaderBytecode) return;
+            break;
+        }
+        case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_STREAM_OUTPUT: {
+            D3D12_STREAM_OUTPUT_DESC so{};
+            std::memcpy(&so, v, sizeof so);
+            if (so.NumEntries) return;
+            break;
+        }
+        case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_VIEW_INSTANCING: {
+            D3D12_VIEW_INSTANCING_DESC vi{};
+            std::memcpy(&vi, v, sizeof vi);
+            if (vi.ViewInstanceCount) return;
+            break;
+        }
+        case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_BLEND: std::memcpy(&blend, v, sizeof blend); break;
+        case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_RASTERIZER: std::memcpy(&raster, v, sizeof raster); break;
+        case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_DEPTH_STENCIL: std::memcpy(&depth, v, sizeof depth); break;
+        case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_DEPTH_STENCIL1: {
+            D3D12_DEPTH_STENCIL_DESC1 d1{};
+            std::memcpy(&d1, v, sizeof d1);
+            depth.DepthEnable = d1.DepthEnable;
+            depth.DepthWriteMask = d1.DepthWriteMask;
+            depth.DepthFunc = d1.DepthFunc;
+            break;
+        }
+        case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_INPUT_LAYOUT: std::memcpy(&il, v, sizeof il); break;
+        case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_IB_STRIP_CUT_VALUE: std::memcpy(&cut, v, sizeof cut); break;
+        case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_PRIMITIVE_TOPOLOGY: std::memcpy(&topology, v, sizeof topology); break;
+        case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_RENDER_TARGET_FORMATS: std::memcpy(&rts, v, sizeof rts); break;
+        case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_SAMPLE_DESC: std::memcpy(&sample, v, sizeof sample); break;
+        case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_NODE_MASK: std::memcpy(&nodeMask, v, sizeof nodeMask); break;
+        default: break;
+        }
+        at += sz;
+    }
+    if (!vs.pShaderBytecode || topology == D3D12_PRIMITIVE_TOPOLOGY_TYPE_UNDEFINED ||
+        !MayDrawEffect(blend, depth, rts.NumRenderTargets, rts.RTFormats[0], sample))
+        return;
+    Twin* t = new Twin();
+    t->vs = Copy(vs);
+    t->gs = Copy(gs);
+    t->hs = Copy(hs);
+    t->ds = Copy(dsh);
+    t->root = root;
+    t->raster = raster;
+    t->topology = topology;
+    t->cut = cut;
+    t->nodeMask = nodeMask;
+    Keep(pso, t, il);
 }
 void MarkResolve(ID3D12PipelineState* pso) { AddResolve(pso); }
 
@@ -774,10 +1329,13 @@ void Configure(const Params& p) {
     AcquireSRWLockExclusive(&g_paramLock);
     g_params = p;
     ReleaseSRWLockExclusive(&g_paramLock);
+    g_ours.store(p.on && p.ours, std::memory_order_relaxed);
+    g_fxDepth.store(p.on && p.fxDepth, std::memory_order_relaxed);
     g_on.store(p.on, std::memory_order_relaxed);
 }
 
 bool Drawn() { return g_on.load(std::memory_order_relaxed) && GetTickCount64() - g_lastDraw.load(std::memory_order_relaxed) < 250; }
+bool OursDrawn() { return g_ours.load(std::memory_order_relaxed) && Drawn(); }
 
 void Frame() {
     g_frame.fetch_add(1, std::memory_order_relaxed);
@@ -806,10 +1364,18 @@ void Frame() {
         }
     }
     const uint32_t bound = g_boundSeen.exchange(0), boundU = g_boundUntracked.exchange(0), drawn = g_drawSeen.exchange(0), drawnU = g_drawUntracked.exchange(0);
-    Line("vrcam: fog before the effects, 10 s: %u steps before the game's transparent resolve%s; on the graphics card %.3f ms a step (%d measured)%s "
-         "(its pipeline bound %u times on followed lists, %u on others; its draws %u, %u of them on lists not followed)",
-         draws, g_resolveN.load() ? "" : " - the game's resolve pipeline NOT found (another build?)", n ? ms / n : 0.0, n,
-         g_on.load() && !draws ? " - NONE drawn: the game's fog as before" : "", bound, boundU, drawn, drawnU);
+    const bool ours = g_ours.load();
+    const uint32_t twinDraws = g_fxTwinDraws.exchange(0), twinsMade = g_fxTwinsMade.exchange(0), other = g_fxOther.exchange(0),
+                   fogged = g_fxFogged.exchange(0), notFogged = g_fxNotFogged.exchange(0);
+    if (g_fxDepth.load() || twinDraws)
+        Line("vrcam: fog before the effects, 10 s: the effects' own depth - %u draws drawn again for it (%u new depth pipelines, %u of the "
+             "game's kept), %u draws of those pipelines into other targets; %u steps fogged the effects by it, %u with effects not fogged",
+             twinDraws, twinsMade, g_twinsKept.load(), other, fogged, notFogged);
+    Line("vrcam: fog before the effects, 10 s: %u steps before the game's transparent resolve (%s)%s; on the graphics card %.3f ms a step (%d "
+         "measured)%s (its pipeline bound %u times on followed lists, %u on others; its draws %u, %u of them on lists not followed)",
+         draws, ours ? "our effect's fog" : "the game's fog", g_resolveN.load() ? "" : " - the game's resolve pipeline NOT found (another build?)",
+         n ? ms / n : 0.0, n, g_on.load() && !draws ? (ours ? " - NONE drawn: our post pass's fog as before" : " - NONE drawn: the game's fog as before") : "",
+         bound, boundU, drawn, drawnU);
 }
 
 }  // namespace fogfx

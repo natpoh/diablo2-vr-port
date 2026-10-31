@@ -78,16 +78,54 @@ the headset-only ones.
 - **Draw distance** - *Draw distance (near - far)*, stops 1 - 8, sets together
   what is set apart on Performance, World and Sky: the room rings and the model
   visibility radius (`[render] rings`, `model_radius`) - the edge of the drawn
-  world -, the game's sky dome at that edge (`[sky] game_sky_radius` = the radius,
+  world -, the game's sky dome at that edge (`[sky] game_sky_radius_m` = the radius in metres,
   never farther), the fog outdoors full just before it (`[fog] end` = 0.9 of the
   radius, `start` 0.24) and in caves full at it (`caves_end` = the radius,
-  `caves_start` half). 3: 2 rings, 200, fog 50 - 180, caves 100 - 200, dome 200;
+  `caves_start` half). 3: 2 rings, 200, fog 50 - 180, caves 100 - 200, dome 50 m
+  (200 units; both domes count 4 of the game's units a metre);
   1 is 1 ring and 150, 8 is 7 rings and 1000. The line under it says what is set; a
-  single value changed by hand shows Custom. All live. The cave dome's size is a
-  share of the model radius and follows by itself. The same slider with every
+  single value changed by hand shows Custom. All live. The cave dome
+  (`[sky] game_dome_caves_radius_m`, metres) keeps its share of the model radius
+  when the slider moves. The same slider with every
   value it sets: the Draw distance tab.
 - **D2R VR** - the version, the update check (*Up to date* or a download
   button), the beta channel.
+- **Headset screenshot** (`[headset_shot] on`, off by default, VR only) - for a
+  headset picture that is doubled, in the wrong eye, black or flat. Ticked,
+  *Screenshot of the headset picture* (`take`, a counter) asks the running game for one,
+  and *Headset screenshot key in the game* (`key`: none, Scroll Lock, Pause, F8)
+  takes one from the game. What is saved is what the headset was handed, not the
+  window: native OpenXR - every layer of the frame (each eye's projection image,
+  only the part submitted, and the panels); FlatVR - the pictures the mod passes
+  on. Into `d2rloader\logs`: `headset_shot_<time>_left.png`, `_right.png`,
+  `_sbs.png` (both side by side), `_flat.png` / `_layer<n>_<name>.png`, and
+  `headset_shot_<time>.txt` - the layers, sizes and formats, each eye's angles and
+  pose, the eye distance, stereo pair or flat picture, whether both eyes got the
+  same picture, the version. The newest 10 shots are kept; *Collect logs* packs
+  the newest. Any view (F1-F4). The press costs no stutter: the frame's pictures
+  are copied on the GPU and read back on a thread of their own.
+- **Headset video (10 s)** (`[headset_shot] video`, off by default, VR only) - a
+  button and a key of its own: *Record 10 s video of the headset picture*
+  (`video_take`, a counter) and *Headset video key in the game* (`video_key`).
+  The same pictures as the screenshot (not the panels) for 10 seconds:
+  `headset_clip_<time>.mp4` (H.264, both eyes side by side at half size, at most
+  960 x 1080 an eye, about 30 frames a second) and `headset_clip_<time>.csv`
+  (each frame: its time, stereo pair / eyes by turns / flat picture, which eyes
+  came, its cost on the draw thread and on the GPU, or left out because the
+  encoder was behind). Each eye is shrunk on the GPU; the encoding (the graphics card's own
+  H.264 encoder where Windows has one) runs on a thread of its own. The log says
+  what recording cost each frame (the draw thread and the GPU) and how the
+  game's frames came meanwhile. On FlatVR (ReShade / BodyWalk) the pictures are
+  the ones the mod passes on, after their effects; the grid is native OpenXR's
+  only (FlatVR has its own). The newest 3 clips are kept; *Collect logs*
+  packs the newest. Needs Media Foundation (missing on Windows "N" without the
+  Media Feature Pack: then the log says so and nothing else changes).
+- **Calibration grid in the headset** (`[headset_shot] grid`, off by default,
+  live; native OpenXR, F2 / F4) - a grid drawn into each eye's picture as it goes
+  to the headset (so the screenshot and the video have it; the monitor does
+  not): a line every 10 degrees of that eye's own angles, numbered, a red cross
+  on the eye's axis, a magenta ring at the picture's own middle, a big L or R.
+  With the eyes right the two grids fuse into one and stay still on the world.
 - **Start BodyWalk / Start FlatVR / Stop FlatVR** - start BodyWalk, then FlatVR,
   right from here. Each button shows only when it can do something.
 - **Status** - everything the VR chain needs, top to bottom: ReShade and the
@@ -128,7 +166,7 @@ Everything of the draw distance in one place: the **Draw distance** slider again
 (the same as on Home, with its line), then each value it writes - *Room rings
 around the hero*, *Model visibility radius*, *The game's sky: dome radius*,
 *Distance fog* with *Fog start* / *Full fog* and the caves' pair, *A black dome
-round you in caves* and *The cave dome: radius x model visibility radius*. They
+round you in caves* and *The cave dome: radius, m*. They
 are the same controls as on Performance, World and Sky (the same keys, kept in
 step); a change here shows Custom on the slider.
 
@@ -356,21 +394,13 @@ and towns. Visual only, live.
   trigger clicks, with the grip held it right-clicks; the other hand's trigger
   and grip are Ctrl and Shift. *Item tooltips at once under the laser*: the
   game's own tooltip and its comparison with what you wear, with no wait and no
-  Shift. *Controller vibration*: a short pulse in the hand
-  when a blow of yours lands, a belt potion is taken or drunk, the laser clicks
-  on a menu, or you pick something up or open it (the pulses only watch the
-  game); its strength has a slider. Off: silent. *Steam Frame controllers:
+  Shift. (*Controller vibration* and its settings are on the Vibration tab.) *Steam Frame controllers:
   their own layout* (on): when the runtime offers the Frame's controllers as
   themselves, the left hand's D-pad down and up are its two face buttons (X and
   Y on a Quest controller) and the left View / right Menu buttons the menu;
   taken when the headset session starts. *Valve Index: the grip is how hard you
   squeeze* (off): an Index hand's grip is the handle's force sensor, so a
   relaxed hand round the handle no longer counts as a squeezed grip.
-  With it, *a channel of its own
-  for each hand* (on: each controller's motor has its own vibration action, so a
-  pulse cannot go to the other hand) and *stop each pulse on time* (on: a pulse
-  is stopped by its own call when its time is up, even while the game loads -
-  some controllers buzzed on past a short pulse).
   - **Controls without BodyWalk** (a prototype, off, VR first person F4 only):
     the plugin reads both controllers itself and gives the game its gamepad, its
     actions and its key commands, so BodyWalk's buttons, gestures and tracking
@@ -1184,6 +1214,37 @@ and a far one keeps it in a tight cone - an arm held at the body aims the spell 
 aims it at the weapon's own distance. Spells only: a wand, an orb, bare hands, a staff
 with one hand on it; a staff held in both hands always aims at its far distance, and a
 bow, a crossbow and throws keep their fixed distance.
+
+## Vibration
+
+Pulses in the controllers (native OpenXR, VR first person F4). They only watch the game:
+nothing of it changes. The headset's Settings tab has a Vibration page with the main ticks.
+
+*Controller vibration*: a short pulse in the hand when a blow of yours lands, a belt
+potion is taken or drunk, the laser clicks on a menu, or you pick something up or open
+it; *Vibration: strength* scales every pulse. *A channel of its own for each hand* (on:
+each controller's motor has its own vibration action, so a pulse cannot go to the other
+hand), *stop each pulse on time* (on: a pulse is stopped by its own call when its time is
+up, even while the game loads - some controllers buzzed on past a short pulse) and *the
+controllers' motor* (by the headset's name; weak for a PlayStation VR2, whose Sense
+controllers do not show gentle pulses: they are lifted).
+
+New, each off by default (after bearstonem/d2r-pcvr, MIT):
+
+- **Blows**: *a pulse on every counted touch, landed or not* - hit by touch buzzes the
+  blade's hand the moment a contact is counted, whatever the game then rolls (the landed
+  hit gives no second pulse); *a longer, stronger tap for a blow* - 95% for 90 ms
+  instead of 72% for 45 ms.
+- **Spells and mana**: *a pulse when a cast starts* (the aiming hand, when the hero's
+  casting animation starts: a cast the game took); *low mana alert in the left hand*
+  (under the share set, again every 10 seconds while it stays under).
+- **The game's own rumble**: *feel the game's rumble in the controllers* - what the game
+  sends a gamepad (a hit taken, a skill used; its own Controller Rumble option must be on)
+  in both controllers, with its own strength; *keep the game's rumble from a plugged-in
+  gamepad* while the controllers are the game's.
+
+*Pulses set on other tabs*: the heartbeat (UI: F4 body > Low life), the knock pulse and
+the take zone's pulse (Weapon Weight) - the same settings, shown here too.
 
 ## Debug
 

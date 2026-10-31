@@ -41,7 +41,7 @@ namespace {
 // Addresses in 3.3.93787 (the keys of game_sigs.h): the index of the local player, the client's player unit by index,
 // and the unit's stat getter (a jump thunk): stat(unit, id, layer) -> the value.
 constexpr uint64_t kLocalIndex = 0x8B2D0, kClientPlayer = 0x9A480, kStat = 0x2F5020;
-constexpr int kStatLife = 6, kStatMaxLife = 7;
+constexpr int kStatLife = 6, kStatMaxLife = 7, kStatMana = 8, kStatMaxMana = 9;   // (the mana: [openxr] haptics_low_mana, vr/haptics.h Mana)
 
 const PluginContext* g_ctx = nullptr;
 const ThreadService* g_threads = nullptr;
@@ -87,7 +87,7 @@ enum class Read { Ok, NoAddress, NoPlayer, Fault };
 
 // The hero's life and maximum life, raw. The unit must be a player (its first dword, the unit type, is 0).
 // Plain data only here: __try cannot sit in a function that unwinds C++ objects.
-Read ReadLife(int32_t* life, int32_t* maxLife) noexcept {
+Read ReadLife(int32_t* life, int32_t* maxLife, int32_t* mana, int32_t* maxMana) noexcept {
     const uintptr_t indexFn = d2rsig::Addr(kLocalIndex), playerFn = d2rsig::Addr(kClientPlayer), statFn = d2rsig::Addr(kStat);
     if (!indexFn || !playerFn || !statFn) return Read::NoAddress;
     __try {
@@ -106,6 +106,10 @@ Read ReadLife(int32_t* life, int32_t* maxLife) noexcept {
         const auto stat = reinterpret_cast<int (*)(uintptr_t, int, int)>(statFn);
         *life = stat(player, kStatLife, 0);
         *maxLife = stat(player, kStatMaxLife, 0);
+        if (mana && maxMana) {
+            *mana = stat(player, kStatMana, 0);
+            *maxMana = stat(player, kStatMaxMana, 0);
+        }
         return Read::Ok;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return Read::Fault;
@@ -122,7 +126,13 @@ void StoreLife(const Life& l) {
 void __cdecl ReadJob(const PluginContext*, void* user) noexcept {
     if (!g_queued.Claim(uiticket::FromUser(user))) return;
     int32_t life = 0, maxLife = 0;
-    const Read r = ReadLife(&life, &maxLife);
+    int32_t mana = 0, maxMana = 0;
+    const bool wantMana = haptics::ManaWanted();
+    const Read r = ReadLife(&life, &maxLife, wantMana ? &mana : nullptr, wantMana ? &maxMana : nullptr);
+    if (wantMana) {   // [openxr] haptics_low_mana: the same sanity bounds as the life's (a maximum under one point: no mana to warn of)
+        const Life m = r == Read::Ok ? LifeFromStats(mana, maxMana) : Life{};
+        haptics::Mana(m.known, m.frac);
+    }
     if (r == Read::Ok) {
         const Life l = LifeFromStats(life, maxLife);
         StoreLife(l);
@@ -235,7 +245,7 @@ void PlayPreview() {
 }
 
 void Tick(bool wantRead) {
-    if (!wantRead || !g_on.load(std::memory_order_relaxed) || !g_ctx || !g_threads || !g_threads->runOnUiThread || g_dead.load()) return;
+    if (!wantRead || !(g_on.load(std::memory_order_relaxed) || haptics::ManaWanted()) || !g_ctx || !g_threads || !g_threads->runOnUiThread || g_dead.load()) return;
     static ULONGLONG next = 0;
     const ULONGLONG now = GetTickCount64();
     if (now < next) return;

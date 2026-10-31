@@ -3,8 +3,9 @@
 // d2r_vr.ini). One line a key; a new tick box of a feature is one line more. Pages are the panel's tabs
 // (at most kMaxPages, at most kRowsPerPage rows each - kRowsMax on a page that stands them closer); a toggle is a key with min 0, max 1, step 1.
 //
-// Twelve pages: View, Options, Life, Look, HUD, Belt, Melee, Left and Right are rows of this table; Video (the VR render size, vr/hset_video.h), Body (the
-// T-pose measurement, vr/hset_body.h) and Guide (the first-start guide, vr/first_start.h; vr/hset_scene.h) are drawn by hand; Video and Body own the keys
+// Fourteen pages: View, Options, Life, Look, HUD, Belt, Melee, Left, Right and Vibration are rows of this table; Video (the VR render size, vr/hset_video.h), Body (the
+// T-pose measurement, vr/hset_body.h), Co-op (the D2R Rooms plugin's relay bridge: its own d2r-rooms.ini, not d2r_vr.ini; vr/hset_coop.h) and Guide (the
+// first-start guide, vr/first_start.h; vr/hset_scene.h) are drawn by hand; Video and Body own the keys
 // at the end of the table, which have no row (kNoPage) - but for the Body page's one table row on top, how you play (standing / seated):
 // the panel still reads them and writes the ones that changed, with the same conflict check as every other key.
 // Life and Look are the low-life vignette's ([hud] low_hp_*, vr/low_hp.h; D2R VR Settings > UI: F4 body > Low life has the same keys):
@@ -27,25 +28,48 @@
 
 namespace hset {
 
-constexpr int kMaxPages = 12;
+constexpr int kMaxPages = 14;
 constexpr int kRowsPerPage = 6;
 constexpr int kRowsMax = 7;   // a page with a row more than kRowsPerPage stands its rows closer (the Melee page; hset_model.h RowStep)
 // A page is a line more here, in kPageNames and in kMaxPages / kPageCount (the tabs share the panel's width in proportion to their names:
-// hset_model.h kTab). After HUD come the belt's page, the hit-by-touch page (Melee) and the two key-binding pages (Left, Right).
+// hset_model.h kTab). After HUD come the belt's page, the hit-by-touch page (Melee), the two key-binding pages (Left, Right) and the co-op relay
+// bridge (Co-op); the first-start guide stays the last.
 enum Page : int {
     kPageView = 0, kPageOptions = 1, kPageVideo = 2, kPageBody = 3, kPageLife = 4, kPageLook = 5, kPageHud = 6,
-    kPageBelt = 7, kPageMelee = 8, kPageKeysL = 9, kPageKeysR = 10, kPageGuide = 11
+    kPageBelt = 7, kPageMelee = 8, kPageKeysL = 9, kPageKeysR = 10, kPageCoop = 11, kPageVibration = 12, kPageGuide = 13
 };
-constexpr int kPageCount = 12;
+constexpr int kPageCount = 14;
 constexpr int kNoPage = -1;   // a key with no row of its own: a hand-drawn page reads and writes it
 
-// A set of keys, one bit a key of the table below (what an Apply writes, what a draft has changed).
-using Mask = uint64_t;
-constexpr Mask Bit(int key) { return Mask(1) << key; }
+// A set of keys, one bit a key of the table below (what an Apply writes, what a draft has changed). 128 bits: the Vibration page took the
+// table past 64 keys. Used as an integer would be (|, &, ~, ==, a test in an if); 0 is the empty set.
+struct Mask {
+    uint64_t lo = 0, hi = 0;
+    constexpr Mask() = default;
+    constexpr Mask(uint64_t low) : lo(low) {}
+    constexpr Mask(uint64_t low, uint64_t high) : lo(low), hi(high) {}
+    constexpr explicit operator bool() const { return lo || hi; }
+    friend constexpr Mask operator|(Mask a, Mask b) { return {a.lo | b.lo, a.hi | b.hi}; }
+    friend constexpr Mask operator&(Mask a, Mask b) { return {a.lo & b.lo, a.hi & b.hi}; }
+    friend constexpr Mask operator~(Mask a) { return {~a.lo, ~a.hi}; }
+    friend constexpr bool operator==(Mask a, Mask b) { return a.lo == b.lo && a.hi == b.hi; }
+    friend constexpr bool operator!=(Mask a, Mask b) { return !(a == b); }
+    constexpr Mask& operator|=(Mask b) { lo |= b.lo; hi |= b.hi; return *this; }
+    constexpr Mask& operator&=(Mask b) { lo &= b.lo; hi &= b.hi; return *this; }
+    constexpr int Count() const {   // how many keys
+        int n = 0;
+        for (uint64_t v = lo; v; v &= v - 1) ++n;
+        for (uint64_t v = hi; v; v &= v - 1) ++n;
+        return n;
+    }
+};
+constexpr Mask Bit(int key) { return key < 64 ? Mask(uint64_t(1) << key, 0) : Mask(0, uint64_t(1) << (key - 64)); }
 
 // What a row's value is: a number or a switch (min / max / step, shown by fmt or off / on), or a pick of the key bindings' list (vr/hset_keys.h: the
-// value is the pick's index, one past the list = a line the list does not name; shown by the pick's name, stepped round the list).
-enum class DefType : uint8_t { Number, Choice };
+// value is the pick's index, one past the list = a line the list does not name; shown by the pick's name, stepped round the list), or a number of the
+// game's own (Game: not the ini's - the row shows what the game says, Model::Players, its - / + ask the game, Do::Players; the store neither reads
+// nor writes it).
+enum class DefType : uint8_t { Number, Choice, Game };
 
 struct Def {
     const wchar_t* section;
@@ -90,7 +114,13 @@ inline constexpr Def kDefs[] = {
      30.0f, 15.0f, 180.0f, 15.0f, "%.0f deg", "", "", 1},
     {L"turn", L"speed", "Smooth turn speed", "Degrees per second, while smooth turning is on",
      120.0f, 30.0f, 720.0f, 30.0f, "%.0f deg/s", "", "", 1},
-    // ADD NEW TICK BOXES HERE, one line each (page 0 is full: its sixth row is the game view's F1 - F4 buttons; page 1 is full too: the
+    // Serg (2026-10-30, a player's question in Discord: how to set "players 8" in VR): "я имел в виду выбор сложности". The game's players count, 1 - 8:
+    // the value is the game's own (its Options > Gameplay "Offline Difficulty Scaling", Settings.json), not a key of d2r_vr.ini; - / + send the game's own
+    // chat command "/players N" (vr/players_cmd.cpp), with every check of the game's: only in a game of one's own (single player, a TCP/IP host). The
+    // seventh row: the page's rows stand closer (hset_model.h RowStep). [openxr] headset_players (no row, below) switches it on.
+    {L"game", L"players", "Players (difficulty)", "As /players: tougher monsters, more experience and drops",
+     1.0f, 1.0f, 8.0f, 1.0f, "%.0f", "", "", 1, false, DefType::Game},
+    // ADD NEW TICK BOXES HERE, one line each (page 0 is full: its sixth row is the game view's F1 - F4 buttons; page 1 is full too (seven rows): the
     // next key needs a page of its own - kMaxPages and the tabs' places in the tile window and the panel).
     //
     // page 4, Life, and page 5, Look: the low-life vignette ([hud] low_hp_*, vr/low_hp.h; D2R VR Settings > UI: F4 body > Low life edits the same
@@ -185,8 +215,29 @@ inline constexpr Def kDefs[] = {
     {L"direct", L"right_stick", "Right stick click", "[direct] right_stick", 0.0f, 0.0f, 0.0f, 1.0f, "", "", "", kPageKeysR, false, DefType::Choice},
     {L"direct", L"right_stick_hold", "Right stick, long press", "[direct] right_stick_hold", 0.0f, 0.0f, 0.0f, 1.0f, "", "", "", kPageKeysR, false, DefType::Choice},
     {L"direct", L"right_menu", "Right menu button", "[direct] right_menu", 0.0f, 0.0f, 0.0f, 1.0f, "", "", "", kPageKeysR, false, DefType::Choice},
+    //
+    // page 12, Vibration (Serg, 2026-10-31: the vibration on a tab of its own, in D2R VR Settings and in the headset): [openxr] haptics, its strength and the
+    // extra pulses after bearstonem/d2r-pcvr (MIT; vr/haptics.h Extras) - the keys, defaults and ranges of D2R VR Settings > Vibration (its steps coarser).
+    // The extras' other keys (the low mana share, the game rumble's strength, the pad mute, the motor) stay in D2R VR Settings. Live, F4 only.
+    {L"openxr", L"haptics", "Controller vibration", "Pulses in the controllers on what happens (F4)",
+     0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageVibration, true},
+    {L"openxr", L"haptics_scale", "Strength", "Every pulse stronger or weaker, 1 = the usual",
+     1.0f, 0.2f, 2.0f, 0.1f, "%.1f", "", "", kPageVibration, true},
+    {L"openxr", L"haptics_touch", "Pulse on every touch", "Hit by touch: landed or not, the blade's hand buzzes",
+     0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageVibration, true},
+    {L"openxr", L"haptics_hit_long", "Longer tap for a blow", "95% for 90 ms instead of 72% for 45 ms",
+     0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageVibration, true},
+    {L"openxr", L"haptics_spell", "Pulse when a cast starts", "The aiming hand, for a cast the game took",
+     0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageVibration, true},
+    {L"openxr", L"haptics_low_mana", "Low mana alert", "The left hand, again every 10 s while it is low",
+     0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageVibration, true},
+    {L"openxr", L"haptics_game_rumble", "The game's own rumble", "A hit taken, a skill used: as the game rumbles a pad",
+     0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageVibration, true},
     // -- no row: the Keys pages' note - the plugin's own controls are off ([openxr] direct_input=0: BodyWalk's mapping is the controls), so these lines do nothing.
     {L"openxr", L"direct_input", "Controls without BodyWalk", "The plugin reads the controllers itself",
+     0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kNoPage},
+    // -- no row: the Options page's Players row works ([openxr] headset_players, D2R VR Settings beside the panel's own tick); off, the row only shows the game's count.
+    {L"openxr", L"headset_players", "Players from the headset", "The Options page's Players row asks the game",
      0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kNoPage},
     // -- no row: the Belt page's note - the potions on the belt are off in D2R VR Settings, so its sliders do nothing.
     {L"hands", L"belt_models", "Potions on the belt", "The game's own potion models on the hero's hips",
@@ -225,7 +276,13 @@ inline constexpr Def kDefs[] = {
      0.0f, 0.0f, 2.0f, 1.0f, "%.0f", "", "", kNoPage},
 };
 constexpr int kCount = (int)(sizeof kDefs / sizeof kDefs[0]);
-static_assert(kCount <= 64, "a change mask is 64 bits (hset::Mask)");
+static_assert(kCount <= 128, "a change mask is 128 bits (hset::Mask)");
+constexpr Mask AllKeysMask() {
+    Mask m = 0;
+    for (int i = 0; i < kCount; ++i) m |= Bit(i);
+    return m;
+}
+constexpr Mask kAllKeys = AllKeysMask();   // every key of the table (a request with a bit past them is refused)
 constexpr int kViewRow = kRowsPerPage - 1;   // the first page's last row is not the table's: the game view's four buttons (hset_model.h)
 
 constexpr bool SameW(const wchar_t* a, const wchar_t* b) {
@@ -262,11 +319,15 @@ static_assert(kKeyMode >= 0 && kKeyPx >= 0 && kKeyUse >= 0 && kKeyVersion >= 0 &
               "the Video and Body pages' keys are in the table");
 static_assert(kKeySmooth >= 0 && kKeySnap >= 0, "the turn keys are in the table");
 static_assert(kKeyBeltOn >= 0 && kKeyBeltUp >= 0 && kKeyGrabTrigger >= 0 && kKeyMeleeTouch >= 0 && kKeyMeleeArmed >= 0, "the belt's and the melee page's keys are in the table");
+constexpr int kKeyPlayers = IndexOf(L"game", L"players");                 // the Options page's Players row: the game's count (DefType::Game)
+constexpr int kKeyPlayersOn = IndexOf(L"openxr", L"headset_players");    // ... and its switch
+static_assert(kKeyPlayers >= 0 && kKeyPlayersOn >= 0, "the Players row's keys are in the table");
 constexpr int kKeyDirectOn = IndexOf(L"openxr", L"direct_input");   // the Keys pages' note
 constexpr int kKeyBindFirst = IndexOf(L"direct", L"left_trigger");  // the twelve binding keys, one after the other (vr/hset_keys.h kSlots)
 constexpr int kBindCount = 12;
 static_assert(kKeyDirectOn >= 0 && kKeyBindFirst >= 0, "the Keys pages' keys are in the table");
 constexpr bool IsChoice(int key) { return key >= 0 && key < kCount && kDefs[key].type == DefType::Choice; }
+constexpr bool IsGame(int key) { return key >= 0 && key < kCount && kDefs[key].type == DefType::Game; }   // not the ini's: the store leaves it alone
 constexpr bool IsBindKey(int key) { return key >= kKeyBindFirst && key < kKeyBindFirst + kBindCount; }
 constexpr int BindSlot(int key) { return key - kKeyBindFirst; }   // 0 .. kBindCount - 1, the index in hset::keys::kSlots
 
@@ -282,7 +343,13 @@ static_assert(kKeyBarPlace >= 0 && kKeyHide >= 0, "the toolbar type's keys are i
 constexpr bool IsToggle(const Def& d) { return d.min == 0.0f && d.max == 1.0f && d.step == 1.0f; }
 
 constexpr int PageCount() { return kPageCount; }
-constexpr const char* kPageNames[kMaxPages] = {"View", "Options", "Video", "Body", "Life", "Look", "HUD", "Belt", "Melee", "Left", "Right", "Guide"};
+constexpr const char* kPageNames[kMaxPages] = {"View", "Options", "Video", "Body", "Life", "Look", "HUD", "Belt", "Melee", "Left", "Right", "Co-op", "Vibration",
+                                               "Guide"};
+// The tabs' font (vr/hset_paint.cpp: Segoe UI 26, semibold, GDI) and the English names' widths in it, pixels: the strip is shared by them (hset_model.h kTab).
+// Fourteen names by their letters did not leave "Options" and "HUD" room, nor did 30 pixels letters by their widths; 26 by their widths does (939 of 960).
+// tools/hset_test.cpp measures them again.
+constexpr int kTabFontPx = 26;
+constexpr int kPageNameW[kMaxPages] = {45, 73, 54, 46, 34, 44, 42, 36, 57, 35, 49, 58, 87, 55};
 // The panel's words in the player's language (vr/ui_text.h; the keys are made from this table, vr/ui_text_tables.h lists them for lang\en.txt):
 // a row's name and the line under it "vr.hset.<section>.<key>.label / .detail" (a Choice row's line is its ini text: not a word), a switch's two
 // faces by their English "vr.hset.value.<word>" (one "On" for every row), a tab "vr.hset.page.<name>". The tabs' widths stay the English names'.

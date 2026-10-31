@@ -55,4 +55,32 @@ void Flush(uint64_t nowMs, bool canPlay, ApplyFn apply);
 // vrcam, twice a second: the observer of a landed hit, once [openxr] haptics asks for it.
 void Install();
 
+// The Vibration tab's extra pulses (haptics_pattern.h, after bearstonem/d2r-pcvr, MIT), each its own [openxr] key, off by default: off = not a call
+// does anything. xr.cpp sets them on every read of the ini (live); every one needs [openxr] haptics too, and plays in F4 only, as every pulse.
+struct Extras {
+    bool touch = false;            // haptics_touch: hit by touch's counted contact buzzes at once, landed or not (the landed hit then gives no second)
+    bool hitLong = false;          // haptics_hit_long: a blow's tap 0.95 for 90 ms instead of 0.72 for 45
+    bool spell = false;            // haptics_spell: the hero's casting animation starting - the aiming hand
+    bool lowMana = false;          // haptics_low_mana: the mana under lowManaPct - the left hand, again every 10 s
+    float lowManaPct = 10.0f;      // haptics_low_mana_pct (5 - 50)
+    bool gameRumble = false;       // haptics_game_rumble: the game's own pad rumble followed in both controllers
+    float gameRumbleScale = 1.0f;  // haptics_game_rumble_scale (0.2 - 2)
+    bool padMute = false;          // haptics_pad_mute: the game's rumble kept from a plugged-in pad while the controllers are the game's (F4)
+};
+void ConfigureExtras(const Extras& e);
+Extras CurrentExtras();
+// vr/melee_touch.cpp: a contact hit by touch counted (once a stroke and monster; not a thrown weapon's), `hand` haptics' (FromSkel).
+void Touched(int hand);
+// vrcam's 10 ms tick, F4 in the world: the hero's unit mode (-1 not known) and the aiming hand (haptics', FromSkel(AimHand())).
+void HeroMode(int mode, int hand);
+// vr/low_hp.cpp, after each read of the hero's stats: the mana over its maximum (known false: not read, nonsense numbers).
+void Mana(bool known, float frac);
+bool ManaWanted();   // the stats are to be read for the alert (haptics on, the key on)
+// vr/input/pad.cpp's XInputSetState detour (the game's thread): the levels the game asked of pad `index`'s two motors.
+void GameRumble(unsigned index, uint16_t low, uint16_t high);
+// The same detour: whether the call is kept from the pad (haptics_pad_mute, F4); `stopFirst` = send the pad one stop first (it was rumbling).
+bool PadMuted(unsigned index, bool* stopFirst);
+void PadPassed(unsigned index, bool ok, bool nonzero);
+bool WantsRumbleHook();   // either of the two: the detour is to be put in
+
 }   // namespace haptics

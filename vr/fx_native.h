@@ -111,6 +111,10 @@ public:
     reshade::api::effect_texture_variable find_texture_variable(const char* effect, const char* name) const;
     // the pixels of a texture of the effect (RGBA8, its size), uploaded with the next Render
     void update_texture(reshade::api::effect_texture_variable v, uint32_t width, uint32_t height, const void* pixels);
+    // A texture of the effect by its name, as the build in use has it: a render target's or storage's own, or the picture its views show
+    // (nullptr: none, not there yet, or no build). PIXEL_SHADER_RESOURCE | NON_PIXEL_SHADER_RESOURCE between Renders; for reading on a list
+    // recorded after this frame's Render (the build retires its textures frames later). Not ReShade's.
+    ID3D12Resource* TextureResource(const char* name) const;
     // ReShade's views mean nothing here: a semantic is bound with BindSemantic. Kept so the same code compiles; a non-zero view is told once.
     void update_texture_bindings(const char* semantic, reshade::api::resource_view srv, reshade::api::resource_view srvSrgb);
     void get_texture_binding(reshade::api::effect_texture_variable v, reshade::api::resource_view* srv, reshade::api::resource_view* srvSrgb) const;

@@ -52,7 +52,7 @@ int main(int argc, char** argv) {
         for (int a = 1; a <= 5; ++a) { in = ok; in.act = a; CHECK(std::strcmp(WhyNot(in), "") == 0); }   // (each act its own dome)
         in = ok; in.eyeOk = false; CHECK(std::strstr(WhyNot(in), "eye") != nullptr);
     }
-    // [sky] game_dome_caves: underground only, the models' radius times its size
+    // [sky] game_dome_caves: underground only, at its radius
     {
         CaveIn c;
         c.ticked = c.f4 = c.inWorld = c.underground = c.eyeOk = true;
@@ -62,7 +62,7 @@ int main(int argc, char** argv) {
         in = c; in.inWorld = false; CHECK(std::strstr(CaveWhyNot(in), "world") != nullptr);
         in = c; in.underground = false; CHECK(std::strstr(CaveWhyNot(in), "underground") != nullptr);
         in = c; in.eyeOk = false; CHECK(std::strstr(CaveWhyNot(in), "eye") != nullptr);
-        CHECK(CaveRadius(210.0f, 1.0f) == 210.0f && CaveRadius(210.0f, 0.5f) == 105.0f && CaveRadius(10.0f, 1.0f) == 20.0f);
+        CHECK(CaveRadius(210.0f) == 210.0f && CaveRadius(105.0f) == 105.0f && CaveRadius(10.0f) == 20.0f);
     }
     {
         const float eye[3] = {100.0f, 20.0f, -50.0f};
@@ -86,6 +86,21 @@ int main(int argc, char** argv) {
         const float dd = DomeDepth(r, 0.05f);
         CHECK(0.05f / r <= dd && 0.05f / (r * 0.97f) > dd);     // its own depth in the band, 97 % of its radius not
         CHECK(DomeDepth(0.0f, 0.05f) == 1e-6f);
+    }
+    {   // [sky] dome_past_far: Serg's flat F2 on 0.192.5 (far end 1060): 1000 and 1310 lay a disc of haze, 2430 none. A view 90 x 60 degrees
+        // (x scale 1, y scale 1.732): the corner 1.155 off the middle's 1 -> the dome at least 1060 x 1.528 / the faces' cos
+        const float proj[4] = {1.0f, 1.7320508f, 0.0f, 0.0f};
+        const float least = PastFarRadius(1.0f, 1060.0f, proj);
+        CHECK(FacetInner() > 0.98f && FacetInner() < 0.99f);
+        CHECK(std::fabs(least - 1060.0f * std::sqrt(1.0f + 1.0f + 1.0f / 3.0f) / FacetInner()) < 0.5f);
+        CHECK(least > 1310.0f && least < 2430.0f);                    // past his 1310 (the disc), under his 2430 (none)
+        CHECK(PastFarRadius(5000.0f, 1060.0f, proj) == 5000.0f);      // never nearer than asked
+        // its every pixel past the far end: the corner's view depth (radius / the corner's length) on the faces' nearest point
+        CHECK(least * FacetInner() / std::sqrt(1.0f + 1.0f + 1.0f / 3.0f) >= 1060.0f - 0.5f);
+        const float shifted[4] = {1.0f, 1.7320508f, 0.0f, -0.5f};    // [camera] flat_shift_y: the picture moved - its far corner farther
+        CHECK(PastFarRadius(1.0f, 1060.0f, shifted) > least);
+        const float none[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+        CHECK(PastFarRadius(800.0f, 0.0f, proj) == 800.0f && PastFarRadius(800.0f, 1060.0f, none) == 800.0f);   // not known: as asked
     }
     {
         const std::string good = R"({"type":"UnitDefinition","entities":[{"components":[{"type":"UnitRootComponent"},{"type":"TransformDefinitionComponent"}]},)"

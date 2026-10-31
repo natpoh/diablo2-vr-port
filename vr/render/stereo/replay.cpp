@@ -611,6 +611,7 @@ bool XrBegin() {
     return on;
 }
 void XrCopy(int eye, ID3D12Resource* bb) { t_ours = true; xr::CopyEye(eye, bb); t_ours = false; }
+void ShotHold(ID3D12Resource* bb);   // [headset_shot] on FlatVR: the left eye at its hold, after its effects (below)
 void XrEnd() { t_ours = true; xr::EndPair(); t_ours = false; }
 // Eyes by turns with the other eye made on the GPU (xr::TurnMake, [stereo] turn_warp): what D2R_DepthFog.fx draws without the scene's
 // depth - the game's labels laid back, the wrist medallions, the bow's orbs, the hitboxes, the low-life vignette - is left out of the
@@ -747,6 +748,80 @@ void XrPresent(reshade::api::effect_runtime* rt, ID3D12Device* dev, ID3D12Comman
         TellOverlays(upm, 2.0f * g_eyeHalf.load() * 100.0f / upm);
     }
     t_ours = false;
+}
+
+// [headset_shot] (vr/headset_shot.h, vr/headset_clip.h) on FlatVR (native OpenXR reads its own layers: xr.cpp ShotFrame, ClipFrame): the back
+// buffers this plugin passes on, final - after their effects, before monitor_eye covers one for the window. One pass, one present a pair
+// (the effects at the hold): the left eye at its hold (ShotHold), as FlatVR's add-on takes it there, the right at its present. Otherwise each
+// eye at its own present - one pass, two presents: the right one first, then the left held back (its effects run at that present, not at the
+// hold); two passes: the left, then the right. A frame is done once both eyes came (in either order), or with a flat picture. FlatVR's own
+// screen, warp and crop come after these. On the draw thread, the present's queue.
+uint32_t g_shotEyes = 0;      // the pair's eyes handed over so far (bit 0 left, bit 1 right)
+bool g_shotLeftHeld = false;  // ... the left one at its hold
+void ShotEye(ID3D12Device* dev, ID3D12CommandQueue* q, ID3D12Resource* bb, int eye) {
+    const bool was = t_ours;
+    t_ours = true;   // our submissions and signals, not the game's
+    if (headclip::Wanted()) headclip::Eye(q, bb, D3D12_RESOURCE_STATE_PRESENT, 0, 0, 0, 0, eye < 0 ? 2 : eye);
+    if (headshot::Wanted()) {
+        headshot::Picture p;
+        p.tex = bb;
+        p.state = D3D12_RESOURCE_STATE_PRESENT;
+        p.part = eye == 0 ? "left" : eye == 1 ? "right" : "flat";
+        headshot::Offer(dev, q, p);
+    }
+    t_ours = was;
+}
+void ShotHold(ID3D12Resource* bb) {
+    if ((!headshot::Wanted() && !headclip::Wanted()) || xr::Running() || !bb) return;
+    ID3D12CommandQueue* q = g_rt ? (ID3D12CommandQueue*)g_rt->get_command_queue()->get_native() : g_direct;   // (where its effects ran)
+    if (!q) return;
+    ShotEye(g_dev, q, bb, 0);
+    g_shotEyes |= 1u;
+    g_shotLeftHeld = true;
+}
+void ShotPresent(ID3D12Device* dev, ID3D12CommandQueue* q, ID3D12Resource* bb) {
+    const bool shot = headshot::Wanted(), clip = headclip::Wanted();
+    if ((!shot && !clip) || xr::Running() || !bb) { g_shotEyes = 0; g_shotLeftHeld = false; return; }
+    const int eye = g_pairNow.load() ? (g_eye.load() & 1) : -1;
+    if (eye == 0 && g_shotLeftHeld) return;   // (taken at its hold already)
+    ShotEye(dev, q, bb, eye);
+    if (eye >= 0) g_shotEyes |= 1u << eye;
+    if (eye >= 0 && g_shotEyes != 3u) return;   // the other eye still to come
+    const bool held = g_shotLeftHeld;
+    g_shotEyes = 0;
+    g_shotLeftHeld = false;
+    if (clip) headclip::FrameDone(eye < 0 ? "flat" : "pair");
+    if (!shot) return;
+    std::string t;
+    char b[512];
+    snprintf(b, sizeof b, "Path: FlatVR (BodyWalk's ReShade add-on, SteamVR / OpenVR)%s - the pictures as this plugin passes them on; FlatVR's own "
+             "screen, warp and crop come after these. The calibration grid is native OpenXR's only (FlatVR has its own)\n",
+             xr::FlatVrRunning() ? "" : " - FlatVR NOT seen running (its head sample does not move)");
+    t += b;
+    snprintf(b, sizeof b, "This frame: %s\n", eye >= 0 ? (held ? "a STEREO PAIR - the left eye at its hold after its effects (one present a pair), the right at its present"
+                                                                : "a STEREO PAIR - each eye at its own present")
+                                                       : "the FLAT PICTURE (no stereo pair: a menu, a load, or the VR mode without stereo)");
+    t += b;
+    const D3D12_RESOURCE_DESC bd = bb->GetDesc();
+    snprintf(b, sizeof b, "The back buffer: %llux%u, DXGI format %d; %s, the view %d%s\n", (unsigned long long)bd.Width, bd.Height, (int)bd.Format,
+             g_set.platform.load() == 1 ? "VR" : "flat mode", g_set.vrView.load(), viewgate::F4() ? " (F4, first person with the body)" : "");
+    t += b;
+    float sw = 0.0f, sh = 0.0f, sd = 0.0f;
+    if (LiveScreen(&sw, &sh, &sd)) {
+        snprintf(b, sizeof b, "FlatVR's screen: %.2f x %.2f m at %.2f m (as BodyWalk's settings give it)\n", sw, sh, sd);
+        t += b;
+    }
+    float ipd = 0.0f, conv = 0.0f;
+    const bool trueScale = TrueScale(&ipd, &conv);
+    snprintf(b, sizeof b, "The game's camera: fov %.1f deg; the right eye shifted %.4f (eye half %.4f x2 x%.2f), off-axis %.4f, x scale %.4f%s\n",
+             CameraFov(), 2.0 * g_eyeHalf.load() * g_shiftMul.load(), g_eyeHalf.load(), g_shiftMul.load(), g_projShift.load(), g_projSx.load(),
+             trueScale ? "" : "; [stereo] true_scale not in force");
+    t += b;
+    if (trueScale) {
+        snprintf(b, sizeof b, "True scale: the eyes %.3f units apart (%.1f mm), zero parallax at %.2f units\n", ipd, g_set.eyeMm.load(), conv);
+        t += b;
+    }
+    headshot::FrameDone(t);
 }
 
 // [render] monitor_eye (vr/monitor_eye.h): the left eye's picture at the hold, kept for the window while the right eye's present follows (one pass,
@@ -1018,6 +1093,7 @@ bool HoldLeft() {
         if (!ok) g_pairFence = false;
         if (ok && g_peekStage == 1) Peek(0, bb);
         if (ok) XrCopy(0, bb);   // native OpenXR: the left eye, as FlatVR's add-on takes it from that effect pass
+        if (ok) ShotHold(bb);    // [headset_shot] on FlatVR: the same left eye
         if (ok) MonitorHeld(bb);   // [render] monitor_eye: kept for the window (the right eye's present follows)
         bb->Release();
         return ok;

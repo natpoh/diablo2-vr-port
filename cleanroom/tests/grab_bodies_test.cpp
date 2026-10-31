@@ -86,6 +86,13 @@ void TestToGrab() {
 	gb::ToGrab(s, false, out);
 	EXPECT(out[1].doll == 0, "without the doll nothing gives");
 	EXPECT(gb::Hostile(s, 7) && !gb::Hostile(s, 11) && !gb::Hostile(s, 99), "hostile: the monster yes, the NPC no, an unknown no");
+	// [weight] grab_throw (Serg: «я не могу схватить монстра за оружие»): what it holds handed over too - a body of its own, standing, no bone, no doll
+	Body& spear = Add(s, 7, 21, 0.3f, 1.0f, 0.2f, 0.3f, 1.0f, 1.6f, 0.03f);
+	spear.held = 1;
+	const int nh = gb::ToGrab(s, true, out, of, true);
+	EXPECT(nh == 7 && out[4].id == 7 && out[4].bone == -1 && out[4].doll == 0 && of[4] == 4 && out[6].bone == -1 && of[6] == 6,
+	       "the shield and the spear handed over as standing bodies (%d)", nh);
+	EXPECT(gb::ToGrab(s, true, out, of) == 5, "without held: the shield and the spear left out");
 }
 
 void TestBusy() {

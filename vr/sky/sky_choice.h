@@ -10,6 +10,7 @@ namespace vrc {
 extern std::atomic<int> g_skyPalette;      // the act's sky wanted here (kPalettes index), else -1
 extern std::atomic<bool> g_arcaneSky;      // the Arcane Sanctuary's own sky shows now
 extern std::atomic<bool> g_underground;    // in the world, off the outdoor list
+extern std::atomic<bool> g_arcaneArea;     // in the Arcane Sanctuary (act2_arcane), its sky shown or not
 extern std::atomic<bool> g_noFogArea;      // [fog] no_fog_river: the River of Flame
 extern std::atomic<bool> g_ceilBiome;      // the area's biome is on [ceiling] biomes
 extern std::atomic<bool> g_gameCeilBiome;  // ... on [ceiling] game_ceiling_biomes
@@ -19,7 +20,15 @@ namespace fx {
 bool OurFogWanted();          // a fog wanted here at all (either path)
 const char* FogCannot();      // the game's fog unable here for good ("" / nullptr: able)
 bool FogWanted();             // our post pass's fog
+// The fog's numbers here: the open air's ([fog] start, end), the caves' (every area off the outdoor list: caves_start, caves_end,
+// caves_strength), or the Arcane Sanctuary's own ([fog] arcane_own: arcane_start ... arcane_curve) - every fog takes them from here
+struct FogNumbers { float start, end, curve, strength; };
+FogNumbers FogNumbersNow();
+bool NoFogUnderground();      // [fog] caves=0 and the area off the outdoor list (not the Arcane Sanctuary with [sky] arcane_fog): no fog at all
+bool ArcaneOwnFog();          // [fog] arcane_own, in the Arcane Sanctuary: its own numbers and colour, not the caves'
+bool ArcaneHazeFog();         // the fog's colour is the Arcane Sanctuary's sky behind each point (its sky shown; arcane_into_sky with its own fog)
 bool OurSkyWanted();          // our post pass's act sky
+bool GameSkyFixWanted();      // a fix of ours on the game's dome or fog that reads the scene's depth (its colour, its night, its horizon, the fog's match)
 bool CeilWanted();            // a cave ceiling wanted here ([ceiling] enabled, first person, a ceiling biome, no menu)
 bool GameCeilWanted();        // ... of the game's rock ([ceiling] game_ceiling's areas)
 }  // namespace fx

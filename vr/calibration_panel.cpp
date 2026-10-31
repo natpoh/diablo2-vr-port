@@ -1,7 +1,7 @@
 // calibration_panel.cpp - the measurement's prompt as pictures: a dark rounded panel with the steps, the one line that
 // says what is wrong or right now, and the empty track of a progress bar (the fill is a quad of xr.cpp's, grown with
-// the hold). One image per message, painted once with GDI (grayscale-antialiased text as a coverage mask) and put in a
-// static swapchain by xr.cpp when it first shows. Premultiplied RGBA, R in the low byte, as MakeStaticImage takes it.
+// the hold). One image per message, painted with GDI (grayscale-antialiased text as a coverage mask) when it shows and
+// uploaded by xr.cpp into the prompt's one swapchain (g_calibAtlas). Premultiplied RGBA, R in the low byte.
 
 #ifndef NOMINMAX
 #define NOMINMAX

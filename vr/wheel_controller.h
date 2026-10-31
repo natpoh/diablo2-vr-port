@@ -85,6 +85,7 @@ struct SettingsIn {
     bool chordOn = true;          // both grips and a thumbstick click open it on the Settings tab
     int openGuide = -1;           // the first-start guide asks for the window on Settings > Guide (vr/first_start.h): the guide's page to start on, -1 none
     float spanInUse = 0.0f;       // the span the hero's arms are fitted to now (calib::SpanInUseM), for the Body page's Arm span
+    hset::Players players;        // the game's players count and whether it takes /players now (vr/players_cmd.h), for the Options page's Players row
 };
 
 constexpr float kBeamM = 1.5f;   // the beam's length where it hits nothing
@@ -188,6 +189,8 @@ public:
     int FlipPlace() const { return model_.Current().tab == Tab::Settings ? 1 + std::clamp(settings_.page, 0, hset::PageCount() - 1) : 0; }
     // The Settings tab's Save could not even be handed to the ini's thread.
     void SettingsSubmitFailed(uint64_t sequence) { settings_.SubmitFailed(sequence); }
+    // The Co-op page's edit could not be handed to the ini's thread.
+    void SettingsCoopFailed(uint64_t sequence) { settings_.CoopSubmitFailed(sequence); }
 
     void Reset() {
         model_.Reset();
@@ -315,6 +318,7 @@ public:
             settings_.SetEnv(host->env);
             settings_.SetView(host->view);
             settings_.SetSpanInUse(host->spanInUse);
+            settings_.SetPlayers(host->players, f.time * 1000.0);
             settings_.Observe(host->ini);
             if (tabNow == Tab::Settings && !toggle) {
                 float su = 0.0f, sv = 0.0f;
@@ -398,6 +402,7 @@ public:
                 settings_.SetEnv(host->env);
                 settings_.SetView(host->view);
                 settings_.SetSpanInUse(host->spanInUse);
+                settings_.SetPlayers(host->players, f.time * 1000.0);
                 clicker_.Reset();
             } else if (!open && wasOpen) {
                 if (settings_.GuideShown() && !resume_) out.guideEnd = settings_.GuideFinished() ? 1 : 2;   // (the measurement's hiding is no end: it comes back)
@@ -407,7 +412,7 @@ public:
             model_.SetSettings(settings_, open && model_.Current().tab == Tab::Settings ? settingsHover : hset::Hit{});
             model_.SetPlace(open ? FlipPlace() : 0);
             out.settings = settingsAct;
-            if (settingsAct.what == hset::Do::Save && out.feedback == Feedback::None) out.feedback = Feedback::Applied;
+            if ((settingsAct.what == hset::Do::Save || settingsAct.what == hset::Do::Coop) && out.feedback == Feedback::None) out.feedback = Feedback::Applied;
             out.wantStore = open || resume_ || chord_.Arming() || toggle || host->openGuide >= 0;
         }
 

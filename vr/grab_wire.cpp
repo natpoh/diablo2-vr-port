@@ -20,6 +20,7 @@
 #include "grip_lib.h"   // [weight] grab_wrap: the grip library lays the holding hand on the body
 #include "haptics.h"
 #include "haptics_pattern.h"
+#include "knock_down.h"    // [weight] grab_throw: a body the hand took, held, lifted and thrown by the knock-down library
 #include "knock_props.h"   // [weight] grab_props: the props world's hands
 #include "melee_touch.h"
 #include "monster_bodies.h"
@@ -286,7 +287,7 @@ void CheckArmReach(const skel::Input* in, const monsterbodies::View& view) {
 }
 
 // The body grab's step ([weight] grab_bodies): the library stepped with the bodies and the hands, its sways and links into the doll, the pulses, the log.
-void StepBodies(skel::Input* in, const monsterbodies::View& view, const monsterbodies::Snapshot& snap, const D2rgbBody* bodies, int n, const D2rgbHand* hands) {
+void StepBodies(skel::Input* in, const monsterbodies::View& view, const monsterbodies::Snapshot& snap, const D2rgbBody* bodies, int n, const int* of, const D2rgbHand* hands) {
     D2rgbParams p{};
     p.size = sizeof p;
     meleetouch::GrabDollTuning(&p.limbHz, &p.bodyHz, &p.damping, &p.maxLimbM, &p.maxBodyM, &p.massScale);
@@ -301,6 +302,34 @@ void StepBodies(skel::Input* in, const monsterbodies::View& view, const monsterb
     g_lastAt = now;
     D2rgbHandOut out[2];
     if (grablib::Step(&p, bodies, n, hands, dt, out) < 0) return;
+    {   // [weight] grab_throw: a humanoid a hand took goes to the knock-down library (vr/knock_down.h) - it hangs from the hand, lifted off its feet,
+        // thrown on the let-go; the library's own hold of it ends here (the grip stays squeezed: the library takes nothing new until it is pressed again)
+        bool took = false;
+        for (int side = 0; side < 2; ++side) {
+            if (!knockdown::ThrowWanted() || knockdown::Holding(side) || !(out[side].events & D2RGB_EV_GRAB) || !out[side].id || !hands[side].tracked) continue;
+            // what the hand closed on: the body of that monster nearest the point taken - a limb, or what it holds (its spear: taken by the hand that holds it)
+            int which = -1;
+            float best = 1e30f;
+            for (int i = 0; i < n; ++i) {
+                if (bodies[i].id != out[side].id) continue;
+                const float d = OffSurface(out[side].pos, bodies[i].a, bodies[i].b, bodies[i].radius);
+                if (d < best) { best = d; which = i; }
+            }
+            const bool weapon = which >= 0 && of[which] >= 0 && of[which] < snap.n && (snap.b[of[which]].held == 1 || snap.b[of[which]].held == 2);
+            if (knockdown::TakeOver(side, out[side].id, out[side].pos, hands[side].pos, weapon ? bodies[which].a : nullptr, weapon ? bodies[which].b : nullptr)) took = true;
+        }
+        if (took) {
+            grablib::ReleaseAll();
+            for (int side = 0; side < 2; ++side)
+                if (knockdown::Holding(side)) out[side] = D2rgbHandOut{};
+        }
+        for (int side = 0; side < 2; ++side) {   // a hand that holds one for the library: the palm each step, let go when the grip opens
+            if (!knockdown::Holding(side)) continue;
+            const float grip = g_pastArm[side] ? 0.0f : in->grip[side];
+            if (grip < kTryOff) knockdown::LetGo(side);
+            else if (hands[side].tracked) knockdown::HandAt(side, hands[side].pos);
+        }
+    }
     D2rgbSway sways[D2RGB_MAX_SWAYS];
     meleetouch::GrabSways(sways, grablib::Sways(sways, D2RGB_MAX_SWAYS));
     // the held limbs as the library holds them: every body list puts them there (the debug view, the weapon's contact, the hand's capsule)
@@ -375,6 +404,8 @@ void StepBodies(skel::Input* in, const monsterbodies::View& view, const monsterb
             }
         }
     }
+    for (int side = 0; side < 2; ++side)
+        if (knockdown::Holding(side)) holding |= 1u << side;   // ([weight] grab_throw: a body the knock-down library holds for this hand)
     g_holding.store(holding);
     g_overBody.store(over);
     // [weight] grab_wrap: the held bodies as they are drawn (the doll's sway in), for the hook to lay the hand on
@@ -415,6 +446,8 @@ void Apply(skel::Input* in) {
     if (!in) return;
     if (!in->grabOn || !in->grabWorldOk) {
         if (g_wasOn && grablib::Loaded() && grablib::ReleaseAll() > 0) LogF("grab: every hand let go - %s", !in->grabOn ? "the grab is off or not F4" : "no world");
+        knockdown::LetGo(0);   // ([weight] grab_throw: a body held for the knock-down library falls)
+        knockdown::LetGo(1);
         g_wasOn = false;
         g_holding.store(0);
         g_overBody.store(0);
@@ -448,7 +481,8 @@ void Apply(skel::Input* in) {
         // the bodies as the game poses them (the library adds the sway it makes itself)
         monsterbodies::Snapshot snap;
         D2rgbBody bodies[D2RGB_MAX_BODIES];
-        const int n = bodiesOn && meleetouch::GrabBodies(&snap) ? gb::ToGrab(snap, meleetouch::GrabDollOn(), bodies) : 0;
+        int of[D2RGB_MAX_BODIES];
+        const int n = bodiesOn && meleetouch::GrabBodies(&snap) ? gb::ToGrab(snap, meleetouch::GrabDollOn(), bodies, of, knockdown::ThrowWanted()) : 0;
         // the hands: the palm (the drawn hand's place with nothing in it), its turn, the grip, whether it may take anything
         CheckArmReach(in, view);
         D2rgbHand hands[2] = {};
@@ -457,12 +491,12 @@ void Apply(skel::Input* in) {
             float head[3];
             for (int k = 0; k < 3; ++k) head[k] = in->hand[side][k] + in->handOffset[k];
             h.tracked = (in->handsValid & (1u << side)) && monsterbodies::HeadToRender(view, head, h.pos) ? 1 : 0;
-            h.mayTake = in->grabFree[side] && g_prop[side].state < D2RP_HAND_TAKING && !g_pastArm[side] ? 1 : 0;   // (a hand that holds a prop takes no body)
+            h.mayTake = in->grabFree[side] && g_prop[side].state < D2RP_HAND_TAKING && !g_pastArm[side] && !knockdown::Holding(side) ? 1 : 0;   // (a hand that holds a prop takes no body; [weight] grab_throw: nor one that holds one for the knock-down)
             h.grip = g_pastArm[side] ? 0.0f : in->grip[side];   // ([weight] grab_arm_reach: let go past the arm's reach)
             gb::HeadRotToRender(view, in->rot[side], h.rot);
             for (int k = 0; k < 3; ++k) g_ctrl[side][k] = h.pos[k];
         }
-        if (bodiesOn) StepBodies(in, view, snap, bodies, n, hands);
+        if (bodiesOn) StepBodies(in, view, snap, bodies, n, of, hands);
         if (in->grabProps) StepProps(in, view, hands);
         else PropsOff();
     }
@@ -533,6 +567,13 @@ void Apply(skel::Input* in) {
                     in->grabCapB[side][k] = propHeld ? g_propCapB[side][k] : g_capB[side][k];
                 }
                 in->grabCapR[side] = propHeld ? g_propCapR[side] : g_capR[side];
+            }
+        }
+        if (!in->along && knockdown::Holding(side)) {   // [weight] grab_throw: the hand at the controller (the body hangs from it), laid on the part it holds as drawn
+            float a[3], b[3], r = 0.0f;
+            if (knockdown::HeldPart(side, a, b, &r) && monsterbodies::RenderToHead(view, a, in->grabCapA[side]) && monsterbodies::RenderToHead(view, b, in->grabCapB[side])) {
+                in->grabHolding[side] = true;
+                in->grabCapR[side] = r;
             }
         }
     }

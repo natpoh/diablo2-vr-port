@@ -15,6 +15,12 @@
 namespace stabdbg {
 struct Note;   // vr/stab_debug.h
 }
+namespace heft::walls {
+struct Wall;   // cleanroom/heft/walls.h
+}
+namespace worldcontact {
+struct WeaponNote;   // vr/world_contact.h
+}
 
 namespace weight {
 
@@ -155,6 +161,12 @@ void SetGripLibrarySource(LibraryFn ensure);
 // when it strikes one. The source is the hit by touch's scan (vrcam registers meleetouch::Bodies); unregistered, or Input::Weight::monsterBodies off: none.
 using BodiesFn = bool (*)(monsterbodies::Snapshot* out);
 void SetBodiesSource(BodiesFn fn);
+// [weight] world_contact (vr/world_contact.h, cleanroom/heft/walls.h): the level's walls near the head in the hands' frame through the view - the held weapon is put
+// back on their faces (a little bounce, the controllers go on); and what it met, each step it was given walls (a pulse, the log, the debug view). vrcam registers
+// worldcontact::Walls and worldcontact::NoteWeapon; unregistered, or Input::Weight::worldContact off: none.
+using WallsFn = int (*)(const monsterbodies::View& v, heft::walls::Wall* out, int max);
+using WallNoteFn = void (*)(const worldcontact::WeaponNote& note);
+void SetWallsSource(WallsFn walls, WallNoteFn note);
 // [weight] stab_in (cleanroom/heft/stab.h): whether hand `side`'s weapon thrusts and is thrusting now - hit by touch's own rule and path (vrcam registers
 // meleetouch::StabbingNow). Only then does a point-first strike go into the body; unregistered, or Input::Weight::stabIn off: it stops at the surface.
 using StabFn = bool (*)(int side);
@@ -163,6 +175,10 @@ void SetStabSource(StabFn fn);
 // last for the readout and the marks. Called on the weight model's thread, only with Input::Weight::stabDebug.
 using StabNoteFn = void (*)(const stabdbg::Note& note);
 void SetStabNoteSink(StabNoteFn fn);
+// [weight] impale_drag (vr/knock_down.h): each stab that goes in - the body (its id), the weapon's hand (0 right, 1 left), the point's speed at the strike (m/s).
+// The weight model's thread.
+using StabEnterFn = void (*)(uint32_t id, int side, float speed);
+void SetStabEnterSink(StabEnterFn fn);
 // [weight] monster_ragdoll (probe, the doll library vr/doll_lib.h): each step the weapon rests on or strikes a body, the push it gave that body - body i of the snapshot
 // the step met (render world): impulse N s into the body, at point (metres). vrcam registers meleetouch::PushBody; Input::Weight::monsterRagdoll off: never called.
 using BodyPushFn = void (*)(const monsterbodies::Snapshot& snap, int i, const float impulse[3], const float point[3]);

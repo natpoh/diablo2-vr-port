@@ -79,6 +79,57 @@ inline bool HeadToRender(const View& v, const float h[3], float out[3]) {
 // The body the weapon meets: the touch's capsule less the touch's margin, never thinner than 8 cm.
 inline float CoreRadius(float touchRadius) { return std::max(0.08f, touchRadius - meleetouch::kTouchSlackM); }
 
+// The hero inside a monster's body (a Leap or Leap Attack landed in it, the game let them stand together): that monster is no body at all until the hero
+// is out of it again - the weapon passes through it, no strike is measured on it. Our bodies never hold the hero: a weapon caught in the monster he stands
+// in made a strike that never ended, its presses kept him in the game's attacks and he could not walk (zbiromir 2026-10-30: Griswold, Goatmen, a zombie -
+// the big ones; never a Fallen). Inside: the hero's place on the ground nearer the monster's axis than its body (CoreRadius) plus kHeroInsideM; out again
+// beyond that plus kHeroOutM (no flicker at the edge). The game keeps two units apart on its own, so a hero merely beside a monster is never inside it.
+constexpr float kHeroInsideM = 0.10f;
+constexpr float kHeroOutM = 0.15f;
+constexpr int kGiveWayMax = 16;
+class GiveWay {
+public:
+    // The touch's capsules of the monsters (render metres, Body::bottom on the axis) less the ones the hero stands in, kept in order; returns how many are
+    // left. hero: the hero's place in render metres (his feet). entered (may be null): how many began to give way on this call (the log's).
+    int Apply(Body* b, int n, const float hero[3], int* entered = nullptr) {
+        uint32_t now[kGiveWayMax];
+        int nNow = 0, kept = 0, in = 0;
+        const bool heroOk = hero && std::isfinite(hero[0] + hero[1] + hero[2]);
+        for (int i = 0; i < n; ++i) {
+            const Body& c = b[i];
+            bool inside = false;
+            if (heroOk && c.id != 0 && c.id != kOwnBodyId && c.held == 0) {
+                const float dx = hero[0] - c.bottom[0], dz = hero[2] - c.bottom[2];
+                const float d = std::sqrt(dx * dx + dz * dz);
+                const bool was = Was(c.id);
+                inside = d < CoreRadius(c.radius) + kHeroInsideM + (was ? kHeroOutM : 0.0f);
+                if (inside && !was) ++in;
+            }
+            if (inside) {
+                if (nNow < kGiveWayMax) now[nNow++] = c.id;
+                continue;
+            }
+            if (kept != i) b[kept] = c;
+            ++kept;
+        }
+        for (int i = 0; i < nNow; ++i) ids_[i] = now[i];
+        n_ = nNow;
+        if (entered) *entered = in;
+        return kept;
+    }
+    bool Was(uint32_t id) const {
+        for (int i = 0; i < n_; ++i)
+            if (ids_[i] == id) return true;
+        return false;
+    }
+    int Count() const { return n_; }
+    uint32_t Id(int i) const { return i >= 0 && i < n_ ? ids_[i] : 0; }
+
+private:
+    uint32_t ids_[kGiveWayMax] = {};
+    int n_ = 0;
+};
+
 // The bodies of the hostile monsters (the touch's capsules of them, render metres, the nearest first) from their skeletons: each monster takes the nearest
 // rig not taken yet whose place (world units, its transform's translation over upm) is within the monster's capsule plus kMatchM across the ground - and
 // so its limbs - or, with none there, its own capsule. Rig: anything with root[3], n and c[] of monsterrig::Capsule (skel::MonsterRig). *rigged: how many

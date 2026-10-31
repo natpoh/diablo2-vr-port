@@ -143,6 +143,15 @@ void Unpublish(uintptr_t self);
 // instance of the hero's skeleton, which our pose never reaches: Serg's 2026-10-29 "I turn the camera and the feet stay where they were" - the body
 // turned, the legs not). SkinNote: the counts since the last call, one line ("" when none met or the hooks are not in).
 void NoteHeroRig(uintptr_t skeleton, uintptr_t pose, uintptr_t prevPose);
+// ... and the places of its hips and legs as we wrote them (bones: up to 8 bone indices): SkinNote then says whether the legs skinned are those of our last
+// two writes, by the pose skinned from (this frame's, the last frame's). 0.192.6, Serg: "the legs run" while the dump of what we wrote had them held.
+void NoteHeroLegs(const int* bones, const float (*at)[3], int count);
+// [body] legs_rear (0.192.7: the skinning drew the game's own legs while every pose we wrote held them - "ours 0, NOT ours ~20000"): the hero's pose as
+// PoseBody finished it (all n world matrices; pose / prevPose: his world poses, this frame's and the last frame's) - the skinning composite is then handed
+// a copy of the pose holding these matrices (the eyes' copy too, its head shrunk on them), as long as they are fresh. WantForPose: the composite hook is
+// put in for it too ([arms] head_shadow off), and copies are made only while it is wanted.
+void WantForPose(bool on);
+void PublishOurPose(uintptr_t skeleton, uintptr_t pose, uintptr_t prevPose, const float* m, int n);
 // [weight] monster_ragdoll_pose: a struck monster drawn as its doll turns it - the skinning composite hands the game's skinning a copy of the monster's world
 // pose turned (skel::DollSkin, the callback: true when it turned the copy's matrices), the way the eyes get the hero's head shrunk. 0.188.6, Serg: "the
 // ragdoll moves but the animation doesn't" - the turns written into the pose at +0x20 after ComputeSelfWorldPose were published, and not what the game
@@ -150,6 +159,12 @@ void NoteHeroRig(uintptr_t skeleton, uintptr_t pose, uintptr_t prevPose);
 // DollSkinningIn: it is in (else the pose hook writes, as before).
 using DollSkinFn = bool (*)(uintptr_t skeleton, uintptr_t pose, float (*mats)[16], int n);   // (skeleton: the granny_skeleton the composite is handed)
 void WantForDoll(bool on);
+// [weight] knock_down: what an entity whose world matrix the game just made hangs on - the SkeletonInstance and its bone (the game's bone attachment). False:
+// it hangs on no bone, or the renderer's functions are not in. The renderer's thread (the world-matrix hook's).
+bool AttachmentOf(uint32_t entity, uintptr_t component, uintptr_t* skeletonInstance, int32_t* bone);
+// ... and the world-matrix writer that carries such entities with a knocked-down body's bones (vr/knock_down.cpp; null: none) - put in through potion_hide's
+// hook once the renderer's functions are found.
+void SetAttachWriter(void (*fn)(uint32_t entity, uintptr_t component, uintptr_t out));
 void SetDollSkin(DollSkinFn fn);
 bool DollSkinningIn();
 std::string SkinNote();

@@ -40,6 +40,8 @@ bool Paint(const Model& m, const Hit& hover, std::vector<uint32_t>& rgba, const 
                                ANTIALIASED_QUALITY, DEFAULT_PITCH, uitext::Face(L"Segoe UI"));
     HFONT bold = CreateFontW(30, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                              ANTIALIASED_QUALITY, DEFAULT_PITCH, uitext::Face(L"Segoe UI"));
+    HFONT tab = CreateFontW(kTabFontPx, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                            ANTIALIASED_QUALITY, DEFAULT_PITCH, uitext::Face(L"Segoe UI"));   // the page tabs (hset_defs.h kPageNameW: fourteen fit at 26)
     HFONT small = CreateFontW(22, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                               ANTIALIASED_QUALITY, DEFAULT_PITCH, uitext::Face(L"Segoe UI"));
     HGDIOBJ oldFont = SelectObject(dc, normal);
@@ -78,7 +80,7 @@ bool Paint(const Model& m, const Hit& hover, std::vector<uint32_t>& rgba, const 
         }
         wchar_t w[256]{};
         MultiByteToWideChar(CP_UTF8, 0, it.text.c_str(), -1, w, 256);
-        SelectObject(dc, it.face == Face::Bold ? bold : it.face == Face::Small ? small : normal);
+        SelectObject(dc, it.part == Part::Tab ? tab : it.face == Face::Bold ? bold : it.face == Face::Small ? small : normal);
         SetTextColor(dc, it.type == Item::Type::Button && !it.enabled ? RGB(100, 116, 126) : c);
         DrawTextW(dc, w, -1, &rc, DT_NOPREFIX | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | (it.align == Align::Center ? DT_CENTER : it.align == Align::Right ? DT_RIGHT : DT_LEFT));
     }
@@ -92,6 +94,7 @@ bool Paint(const Model& m, const Hit& hover, std::vector<uint32_t>& rgba, const 
     SelectObject(dc, oldFont);
     DeleteObject(normal);
     DeleteObject(bold);
+    DeleteObject(tab);
     DeleteObject(small);
     SelectObject(dc, oldBmp);
     DeleteObject(bmp);

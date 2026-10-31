@@ -51,8 +51,9 @@ inline uint32_t ClampDuration(int ms) {
 }
 
 struct Request {
-    float amplitude = 0.0f;
-    uint32_t durationMs = 0;
+    float amplitude;
+    uint32_t durationMs;
+    constexpr Request(float a = 0.0f, uint32_t ms = 0) : amplitude(a), durationMs(ms) {}
 };
 
 // The motors. A Quest's Touch controller feels every pulse above kMinAmplitude. The PlayStation VR2 Sense controllers under SteamVR (the runtime names the headset
@@ -211,6 +212,127 @@ inline int Expand(Event e, int hand, Resolved out[2]) {
     for (int i = 0; i < p.n; ++i) out[i] = Resolved{p.part[i].other ? Other(h) : h, p.part[i].amplitude, p.part[i].durationMs};
     return p.n;
 }
+
+// ---- the extra pulses (the Vibration tab; each its own key, off = nothing of this runs) --------------------------------------------------------------
+// The numbers below are bearstonem/d2r-pcvr's (MIT, before its MPL change of 2026-10-28): steamvr/haptic_strength.h Samples (the weapon's 0.95 for
+// 90 ms, the spell's 0.6, the alert's 0.25 for 100 ms) and steamvr/interactions.h's low mana alert (under 10 %, again every 10 s). The code is ours.
+
+// [openxr] haptics_hit_long: a blow's tap. Off: 0.72 for 45 ms, as ever. On: d2r-pcvr's longer weapon tap, 0.95 for 90 ms - easier to feel in a fast swing.
+inline Request HitTap(bool longTap) {
+    Request r;
+    r.amplitude = longTap ? 0.95f : 0.72f;
+    r.durationMs = longTap ? 90u : 45u;
+    return r;
+}
+
+// [openxr] haptics_touch: hit by touch's counted contact buzzes the blade's hand at once - whether the game then lands the blow, misses it or refuses
+// it (d2r-pcvr's melee.cpp Feel: one tap a stroke and monster). The landed hit that follows the same hand's touch within kTouchCoverMs is that touch's
+// own blow: it gives no second pulse (Covers). Any thread; times are GetTickCount64 milliseconds.
+constexpr uint64_t kTouchCoverMs = 400;   // hit_claim.h's window: a press -> the game's hit is 24 - 53 ms, 253 at the most
+class TouchCover {
+public:
+    void Touched(int hand, uint64_t nowMs) {
+        if (hand == kLeft || hand == kRight) at_[hand].store(nowMs ? nowMs : 1, std::memory_order_relaxed);
+    }
+    bool Covers(int hand, uint64_t nowMs) const {
+        if (hand != kLeft && hand != kRight) return false;
+        const uint64_t t = at_[hand].load(std::memory_order_relaxed);
+        return t && nowMs >= t && nowMs - t <= kTouchCoverMs;
+    }
+
+private:
+    std::atomic<uint64_t> at_[2] = {};
+};
+
+// [openxr] haptics_spell: the hero's own casting animation starting (Diablo II's unit mode 10, "SC": spells, warcries, the other cast skills) is a cast
+// the game accepted - one it refused (no mana, a skill not ready) never animates. True on the step into the mode; -1 (the unit not known) forgets it.
+// A held cast whose animations follow one another with no frame out of the mode in between is one pulse.
+constexpr int kCastMode = 10;
+constexpr Request kSpellTap = {0.60f, 50u};
+class CastEdge {
+public:
+    bool Step(int mode) {
+        const bool now = mode == kCastMode;
+        const bool edge = now && !was_;
+        was_ = now;
+        return edge;
+    }
+
+private:
+    bool was_ = false;
+};
+
+// [openxr] haptics_low_mana: a pulse in the left hand when the mana falls under the threshold, again every kManaAgainMs while it stays under; a little
+// above it (kManaRearm) it is ready again. Unknown numbers do nothing (no hero, a load). Single thread.
+constexpr uint64_t kManaAgainMs = 10000;
+constexpr float kManaRearm = 0.03f;
+constexpr Request kManaTap = {0.25f, 100u};
+class ManaAlert {
+public:
+    bool Step(bool known, float frac, float threshold, uint64_t nowMs) {
+        if (!known || !std::isfinite(frac) || !(threshold > 0.0f)) return false;
+        if (frac >= threshold + kManaRearm) { low_ = false; return false; }
+        if (frac >= threshold) return false;   // (between the two: as it was)
+        if (low_ && nowMs - at_ < kManaAgainMs) return false;
+        low_ = true;
+        at_ = nowMs;
+        return true;
+    }
+
+private:
+    bool low_ = false;
+    uint64_t at_ = 0;
+};
+
+// [openxr] haptics_game_rumble: the game's own pad rumble (its RumbleManager calls XInputSetState: a hit taken, a skill used ...) followed in the controllers.
+// A rumble is a level the game sets and later sets to 0; here it becomes pulses of kRumblePulseMs, one every kRumbleEveryMs while it stays up, both
+// hands, the stronger of the pad's two motors (0 - 65535) as the amplitude. A level held past kRumbleMaxMs is let go (a stuck rumble does not buzz for
+// good) until the game sets 0 or another level. Set from the game's thread, Step from the frame loop: lock-free.
+constexpr uint32_t kRumblePulseMs = 100, kRumbleEveryMs = 90, kRumbleMaxMs = 1500;
+class RumbleFollow {
+public:
+    void Set(uint16_t low, uint16_t high, uint64_t nowMs) {
+        const uint32_t level = low > high ? low : high;
+        const uint64_t old = v_.load(std::memory_order_relaxed);
+        if ((uint32_t)(old & 0xFFFFu) == level && level) return;   // the same level again: it goes on
+        v_.store((uint64_t)level | (nowMs << 16), std::memory_order_relaxed);
+    }
+    // True: play `out` on both hands now.
+    bool Step(uint64_t nowMs, Request* out) {
+        const uint64_t v = v_.load(std::memory_order_relaxed);
+        const uint32_t level = (uint32_t)(v & 0xFFFFu);
+        const uint64_t since = v >> 16;
+        if (v != seen_) { seen_ = v; next_ = 0; }   // a new level: at once
+        if (!level || nowMs < since || nowMs - since > kRumbleMaxMs || nowMs < next_) return false;
+        const float a = (float)level / 65535.0f;
+        if (!(a >= kMinAmplitude)) return false;
+        next_ = nowMs + kRumbleEveryMs;
+        out->amplitude = a;
+        out->durationMs = kRumblePulseMs;
+        return true;
+    }
+
+private:
+    std::atomic<uint64_t> v_{0};   // level | set at (ms) << 16
+    uint64_t seen_ = 0, next_ = 0;  // (the frame loop's)
+};
+
+// [openxr] haptics_pad_mute: while the plugin's controllers are the game's (VR, F4) the game's rumble does not reach a pad that is plugged in - only
+// the controllers vibrate. A pad left rumbling when that starts is stopped once. Otherwise every call goes through as it came. (d2r-pcvr's
+// steamvr/xinput_rumble.h GamepadRumble, MIT, rewritten.) Single thread per caller in practice; the game calls from one.
+class PadGate {
+public:
+    enum class Act { Pass, Swallow, StopThenSwallow };
+    Act Step(bool mute) {
+        if (!mute) return Act::Pass;
+        if (active_) { active_ = false; return Act::StopThenSwallow; }
+        return Act::Swallow;
+    }
+    void Passed(bool ok, bool nonzero) { active_ = ok && nonzero; }   // after a Pass: what the pad does now
+
+private:
+    bool active_ = false;
+};
 
 // The bow's string while it is drawn: a light tick for every 0.018 of the draw, never closer than
 // 70 ms apart, the string hand a little stronger the farther it is drawn; nothing while it is held

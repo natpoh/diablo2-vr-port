@@ -1286,4 +1286,128 @@ bool PresetPieces(const float (*places)[3], int n, std::vector<PresetPiece>* out
     return true;
 }
 
+bool IsMovable(uint32_t presetId, const float local[3]) { return g_catalogReady.load() && g_catalog.Find(presetId, local) >= 0; }
+
+bool LevelBoxes(const float hero[3], float upm, float radiusM, KnowsFn knows, std::vector<LevelEntity>* out, const char** why) {
+    static std::atomic<int> s_boundsPool{-1}, s_idPool{-1};
+    out->clear();
+    *why = "";
+    const float u = std::max(upm, 1e-3f);
+    const std::vector<uintptr_t> pools = Pools();
+    Storage transforms;
+    if (pools.empty()) { *why = "the renderer's registry does not read"; return false; }
+    if (!Transforms(pools, transforms)) { *why = "no transform storage"; return false; }
+    std::vector<uint32_t> ids(transforms.count);
+    if (!ReadBytes(transforms.packed, ids.data(), ids.size() * 4)) { *why = "the transforms moved while read"; return false; }
+    struct E { uint32_t id; float world[16]; float local[3]; };
+    std::vector<E> nearby;
+    std::unordered_map<uint32_t, uint32_t> at;
+    std::vector<float> block(kChunk * kTransformSize / 4);
+    for (size_t i0 = 0; i0 < transforms.count && nearby.size() < kMaxNear; i0 += kChunk) {
+        const size_t n = std::min(kChunk, transforms.count - i0);
+        if (!ReadBytes(transforms.payload + i0 * kTransformSize, block.data(), n * kTransformSize)) continue;
+        for (size_t i = 0; i < n && nearby.size() < kMaxNear; ++i) {
+            const float* m = block.data() + i * (kTransformSize / 4);
+            uint32_t parent = 0;
+            std::memcpy(&parent, m + 48, 4);
+            if ((parent & kNoParent) == kNoParent) continue;   // (not part of a level preset)
+            const float dx = m[28] - hero[0], dy = m[29] - hero[1], dz = m[30] - hero[2];
+            if (!(std::hypot(dx, dz) <= radiusM * u) || !(dy >= -propscene::kBelow * u && dy <= (propscene::kAbove + 0.5f) * u)) continue;
+            E e;
+            e.id = ids[i0 + i];
+            std::memcpy(e.world, m + 16, 64);
+            std::memcpy(e.local, m + 12, 12);
+            if (!FiniteN(e.world, 16)) continue;
+            at[e.id] = uint32_t(nearby.size());
+            nearby.push_back(e);
+        }
+    }
+    if (nearby.empty()) return true;
+    std::vector<uint32_t> packed;
+    std::vector<float> boxes;
+    // the preset ids: the 4-byte storage whose values the caller's catalogue knows most of at these entities (as Work finds the props' one)
+    std::unordered_map<uint32_t, uint32_t> presetOf;
+    if (knows) {
+        std::vector<uint32_t> values;
+        const std::vector<uintptr_t> pools2 = pools;
+        auto count = [&](const Storage& s, bool apply) {
+            unsigned known = 0;
+            if (!s.Copy(packed, values)) return 0u;
+            for (size_t i = 0; i < s.count; ++i) {
+                if (at.find(packed[i]) == at.end() || !knows(values[i])) continue;
+                ++known;
+                if (apply) presetOf[packed[i]] = values[i];
+            }
+            return known;
+        };
+        Storage idStorage;
+        const int knownPool = s_idPool.load();
+        bool have = knownPool >= 0 && size_t(knownPool) < pools2.size() && idStorage.Load(pools2[size_t(knownPool)]) && idStorage.elem == kIdSize;
+        if (!have) {
+            unsigned best = 0;
+            for (size_t i = 0; i < pools2.size(); ++i) {
+                Storage s;
+                if (!pools2[i] || !s.Load(pools2[i]) || s.elem != kIdSize || s.count < 64) continue;
+                const unsigned k = count(s, false);
+                if (k > best) { best = k; s_idPool.store(int(i)); idStorage = s; have = true; }
+            }
+            if (best < 4) { have = false; s_idPool.store(-1); }
+        }
+        if (have && count(idStorage, true) == 0) s_idPool.store(-1);   // (none known here: found again next time)
+    }
+    // the bounds storage: the 0x60-byte one whose world boxes are their local boxes under these entities' matrices (as Work finds it, without the catalogue)
+    auto agree = [&](const Storage& s, bool apply, unsigned& checked) {
+        unsigned ok = 0;
+        checked = 0;
+        if (!s.Copy(packed, boxes)) return 0u;
+        for (size_t i = 0; i < s.count; ++i) {
+            const auto it = at.find(packed[i]);
+            if (it == at.end()) continue;
+            const float* b = boxes.data() + i * (kBoundsSize / 4);
+            if (!FiniteN(b, 24)) continue;
+            const Box local{{b[0], b[1], b[2]}, {b[4], b[5], b[6]}}, world{{b[16], b[17], b[18]}, {b[20], b[21], b[22]}};
+            const float scale = std::max({std::fabs(world.lo.x), std::fabs(world.hi.x), std::fabs(world.lo.z), std::fabs(world.hi.z), 1.0f});
+            ++checked;
+            if (!(local.lo.x <= local.hi.x && local.lo.y <= local.hi.y && local.lo.z <= local.hi.z)) continue;
+            if (!propscene::Near(propscene::WorldBounds(local, nearby[it->second].world), world, 0.02f + scale * 2e-5f)) continue;
+            ++ok;
+            if (apply) {
+                LevelEntity le;
+                le.id = packed[i];
+                std::memcpy(le.world, nearby[it->second].world, 64);
+                le.lo[0] = local.lo.x; le.lo[1] = local.lo.y; le.lo[2] = local.lo.z;
+                le.hi[0] = local.hi.x; le.hi[1] = local.hi.y; le.hi[2] = local.hi.z;
+                const auto p = presetOf.find(packed[i]);
+                le.preset = p == presetOf.end() ? 0u : p->second;
+                std::memcpy(le.local, nearby[it->second].local, 12);
+                out->push_back(le);
+            }
+        }
+        return ok;
+    };
+    Storage bounds;
+    unsigned checked = 0;
+    const int known = s_boundsPool.load();
+    if (!(known >= 0 && size_t(known) < pools.size() && bounds.Load(pools[size_t(known)]) && bounds.elem == kBoundsSize)) {
+        unsigned best = 0;
+        int found = -1;
+        for (size_t i = 0; i < pools.size(); ++i) {
+            Storage s;
+            if (!pools[i] || !s.Load(pools[i]) || s.elem != kBoundsSize) continue;
+            const unsigned ok = agree(s, false, checked);
+            if (ok >= 8 && ok * 2 >= checked && ok > best) { best = ok; found = int(i); bounds = s; }
+        }
+        if (found < 0) { *why = "no bounds storage agrees with the level's matrices"; return false; }
+        s_boundsPool.store(found);
+    }
+    const unsigned ok = agree(bounds, true, checked);
+    if (checked >= 16 && ok * 4 < checked) {   // (the storage moved on: found again next time)
+        s_boundsPool.store(-1);
+        out->clear();
+        *why = "the bounds storage no longer agrees";
+        return false;
+    }
+    return true;
+}
+
 }  // namespace knockprops

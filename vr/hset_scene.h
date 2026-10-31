@@ -46,6 +46,17 @@ using Scene = std::vector<Item>;
 // button or the long press of the right stick click, not by the grips and a click).
 inline const char* StatusText(const Model& m, bool window = false) {
     if (m.page == kPageGuide) return firststart::Nav(std::clamp(m.guide, 0, firststart::kPageCount - 1));   // the guide's own foot, whatever else is going on
+    if (m.page == kPageCoop) {   // D2R Rooms' own file, written at once: d2r_vr.ini (there or not, edited or not) is not this page's
+        if (!m.Coop()) return uitext::Tr("vr.coop.status.reading", "Reading D2R Rooms' files...");
+        if (!m.Coop()->installed) return uitext::Tr("vr.coop.status.missing", "Nothing to choose: the D2R Rooms plugin is not installed.");
+        switch (m.CoopResult()) {
+            case Result::Saving: return uitext::Tr("vr.coop.status.saving", "Writing d2r-rooms.ini...");
+            case Result::Saved: return uitext::Tr("vr.coop.status.saved", "Saved in d2r-rooms.ini. It counts from your next CREATE GAME.");
+            case Result::Failed: return uitext::Tr("vr.coop.status.failed", "Could not write d2r-rooms.ini. Nothing changed.");
+            default: break;
+        }
+        return uitext::Tr("vr.coop.status.idle", "Each change is written to d2r-rooms.ini at once (the plugin's own file).");
+    }
     if (!m.ready) return uitext::Tr("vr.hset.status.no_ini", "d2r_vr.ini was not found. Nothing can be changed.");
     switch (m.result) {
         case Result::Saving: return uitext::Tr("vr.hset.status.saving", "Saving...");
@@ -90,8 +101,28 @@ inline std::string ChoiceDetail(const Model& m, int key) {
     return std::string(kDefs[key].detail) + " = " + text + (rowOff ? uitext::Tr("vr.hset.second_row_off", " - the second row (LT) is off") : "");
 }
 
-// The line under the rows as text (StatusText for the pages whose line is a fixed one).
-inline std::string StatusLine(const Model& m, bool window = false) { return StatusText(m, window); }
+// The Options page's Players row: the line under its name - what it does, or why - / + do nothing now.
+inline std::string PlayersDetail(const Model& m) {
+    if (!m.PlayersOn()) return uitext::Tr("vr.hset.players.off", "Off: D2R VR Authentic Settings, Players from the headset");
+    if (m.GamePlayers().count < kPlayersMin) return uitext::Tr("vr.hset.players.unknown", "The game's count is read once your hero is in a game");
+    if (!m.GamePlayers().takes) return uitext::Tr("vr.hset.players.not_here", "Only in a game of your own: single player or a TCP/IP host");
+    return DefDetail(kKeyPlayers);
+}
+// What the game answered the row's last press, for the line under the rows ("" none).
+inline std::string PlayersAnswerText(const Model& m) {
+    if (m.PlayersAnswer() > 0)
+        return uitext::TrF("vr.hset.players.took", "The game set players to {n} (as /players {n}): monsters met from now on.",
+                           {{"n", std::to_string(m.GamePlayers().count)}});
+    if (m.PlayersAnswer() < 0)
+        return uitext::Tr("vr.hset.players.refused", "The game did not take it: only in single player, or as the host of a TCP/IP game.");
+    return "";
+}
+
+// The line under the rows as text (StatusText for the pages whose line is a fixed one; the Options page's Players row tells the game's answer).
+inline std::string StatusLine(const Model& m, bool window = false) {
+    if (m.page == kPageOptions && m.ready && m.result == Result::None && !m.Dirty() && m.PlayersAnswer() != 0) return PlayersAnswerText(m);
+    return StatusText(m, window);
+}
 
 struct ComposeOptions {
     bool title = true;               // "HEADSET SETTINGS" and "D2R VR" over the tabs (the skill panel's window has its own title)
@@ -279,6 +310,36 @@ inline Scene Compose(const Model& m, const Hit& hover, const ComposeOptions& opt
         };
         for (int i = 0; i < 4; ++i) b.Text((st.seated ? seatedSteps : steps)[i], kBodyStep(i), Face::Small, Role::Quiet);
     }
+    if (m.page == kPageCoop) {
+        // -- D2R Rooms' relay bridge (vr/hset_coop.h): its three choices as rows, then what the plugin knows ------------------------------------
+        const roomsbridge::Config shown = m.CoopShown();
+        if (m.CoopReady()) {
+            const bool free = !m.CoopBusy();
+            for (int r = 0; r < kCoopRows; ++r) {
+                const int y = RowY(r, -1);
+                const bool rowOn = free && (r == coop::kEnabled || shown.enabled);
+                const bool pending = m.CoopBusy();   // amber while the line is on its way
+                b.Fill({32, y - 5, 960, kRowStep - 2}, r % 2 ? Role::RowB : Role::RowA, Part::Row);
+                b.Text(coop::Label(r), {48, y - 2, 520, 32}, Face::Bold, r == coop::kEnabled || shown.enabled ? Role::Text : Role::Quiet);
+                b.Text(coop::Detail(shown, r), {48, y + 28, 530, 28}, Face::Small, Role::Quiet);
+                if (r == coop::kEnabled) {
+                    b.Button(kToggle(r), coop::ValueText(shown, r), {Kind::Coop, r, 1}, shown.enabled, rowOn, pending ? Role::Warn : Role::Text, Part::Switch);
+                } else {
+                    b.Button(kDec(r), "<", {Kind::Coop, r, -1}, false, rowOn, Role::Text, Part::Less);
+                    b.Fill(kVal(r), Role::Back, Part::Value);
+                    b.Text(coop::ValueText(shown, r), kVal(r), Face::Bold, pending ? Role::Warn : shown.enabled ? Role::Text : Role::Quiet, Align::Center);
+                    b.Button(kInc(r), ">", {Kind::Coop, r, 1}, false, rowOn, Role::Text, Part::More);
+                }
+            }
+        }
+        const std::vector<coop::Line> lines = coop::Lines(m.Coop(), shown);
+        const int first = m.CoopReady() ? 0 : -6;   // nothing to choose: the lines stand where the rows would be
+        for (int i = 0; i < (int)lines.size() && i < coop::kLines; ++i) {
+            const coop::Line& l = lines[(size_t)i];
+            const Role ink = l.tone == coop::Tone::Good ? Role::Accent : l.tone == coop::Tone::Warn ? Role::Warn : l.tone == coop::Tone::Head ? Role::Text : Role::Quiet;
+            b.Text(l.text, kCoopLine(first + i), l.tone == coop::Tone::Head ? Face::Bold : Face::Small, ink);
+        }
+    }
     if (m.page == kPageGuide) {
         // -- the first-start guide (vr/first_start.h): a page of its words, Back and Next under it -----------------------------------------
         const int sub = std::clamp(m.guide, 0, firststart::kPageCount - 1);
@@ -319,10 +380,18 @@ inline Scene Compose(const Model& m, const Hit& hover, const ComposeOptions& opt
         const bool rowEdit = canEdit;
         b.Fill({32, y - 5, 960, step - 2}, r % 2 ? Role::RowB : Role::RowA, Part::Row);
         b.Text(DefLabel(key), close ? Rect{48, y - 4, 520, 30} : Rect{48, y - 2, 520, 32}, Face::Bold, Role::Text);
-        b.Text(d.type == DefType::Choice ? ChoiceDetail(m, key) : std::string(DefDetail(key)), close ? Rect{48, y + 24, 530, 26} : Rect{48, y + 28, 530, 28},
-               Face::Small, Role::Quiet);
+        b.Text(d.type == DefType::Choice ? ChoiceDetail(m, key) : d.type == DefType::Game ? PlayersDetail(m) : std::string(DefDetail(key)),
+               close ? Rect{48, y + 24, 530, 26} : Rect{48, y + 28, 530, 28}, Face::Small, Role::Quiet);
         const float v = m.Get()[key];
-        if (d.type == DefType::Choice) {
+        if (d.type == DefType::Game) {   // the game's players count: what the game says (amber: asked, not shown by the game yet), "-" not known
+            const bool usable = m.PlayersUsable();
+            const int shown = m.PlayersShown();
+            b.Button(kDec(r, pg), "-", {Kind::Change, key, -1}, false, usable && shown > kPlayersMin, Role::Text, Part::Less);
+            b.Fill(kVal(r, pg), Role::Back, Part::Value);
+            b.Text(shown >= kPlayersMin ? std::to_string(shown) : std::string("-"), kVal(r, pg), Face::Bold,
+                   m.PlayersAsked() ? Role::Warn : m.PlayersOn() && m.GamePlayers().takes ? Role::Text : Role::Dim, Align::Center);
+            b.Button(kInc(r, pg), "+", {Kind::Change, key, 1}, false, usable && shown < kPlayersMax, Role::Text, Part::More);
+        } else if (d.type == DefType::Choice) {
             b.Button(kDec(r, pg), "<", {Kind::Change, key, -1}, false, rowEdit, Role::Text, Part::Less);
             b.Fill(kVal(r, pg), Role::Back, Part::Value);
             b.Text(ChoiceLabel((int)std::lround(v)), kVal(r, pg), Face::Bold, m.Edited(key) ? Role::Warn : Role::Text, Align::Center);
@@ -346,7 +415,9 @@ inline Scene Compose(const Model& m, const Hit& hover, const ComposeOptions& opt
     if (IsLifePage(m.page)) b.Button(kPreviewBtn, uitext::Tr("vr.hset.preview", "Preview 5 s"), {Kind::Preview, -1, 0}, false, true, Role::Accent);
 
     const std::string line = opt.status ? std::string(opt.status) : StatusLine(m, opt.window);
-    b.Text(line, kStatus, Face::Normal, m.Dirty() && !opt.status && !m.LiveOnly() && m.page != kPageGuide ? Role::Warn : Role::Quiet);
+    const bool warn = m.page == kPageCoop ? !opt.status && m.Coop() && (!m.Coop()->installed || m.CoopResult() == Result::Failed)
+                                          : m.Dirty() && !opt.status && !m.LiveOnly() && m.page != kPageGuide;
+    b.Text(line, kStatus, Face::Normal, warn ? Role::Warn : Role::Quiet);
     b.Button(kRecentre, uitext::Tr("vr.hset.recentre", "Recentre view"), {Kind::Recentre, -1, 0});
     b.Button(kClose, uitext::Tr("vr.hset.close", "Close"), {Kind::Close, -1, 0});
     b.Button(kApply, uitext::Tr("vr.hset.apply", "Apply"), {Kind::Apply, -1, 0}, true, m.ready && m.Dirty() && !m.Busy());

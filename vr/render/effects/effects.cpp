@@ -247,8 +247,18 @@ void PlateWorldTick(ULONGLONG nowMs) {
         float hero[3], units = 0.0f, metres = 0.0f;
         if (plateworld::Tracking() || active) {
             if (plateworld::GetSeen(&ts, nowMs) && ts.footOk && LookAtNow(hero) &&
-                plateworld::GroundDistance(ts.foot, hero, std::max(1.0f, ViewHeight()) / UserEyeHeightM(), &units, &metres))
+                plateworld::GroundDistance(ts.foot, hero, std::max(1.0f, ViewHeight()) / UserEyeHeightM(), &units, &metres)) {
+                if (plateworld::Steadying()) {   // [hud] monster_plate_smooth: the distance held by the same spring as the head (the size, the depth, the eyes by turns)
+                    static plateworld::Steady<1> held;
+                    static ULONGLONG lastMs = 0;
+                    const float dt = lastMs ? static_cast<float>(nowMs - lastMs) * 0.001f : -1.0f;
+                    lastMs = nowMs;
+                    const float m = plateworld::SteadyValue(&held, ts.unit, metres, dt);
+                    if (metres > 1e-4f) units *= m / metres;
+                    metres = m;
+                }
                 plateworld::SetTarget(metres, units, nowMs);
+            }
         }
     }
     // The plate is cut out of the picture only while the hook has a monster to hang it on (a record fresh) and the game has hung the plate on the point it was
@@ -266,7 +276,7 @@ void PlateWorldTick(ULONGLONG nowMs) {
     const bool havePlate = rectRead && gamestate::PlateAnchor(anchor);
     const bool anchored = havePlate && plateworld::AnchorAtFixed(anchor, c.fixed, c.view, su);
     hud::SetPlateCut(anchored, rect, sOk ? s : 0.0f);
-    if (plateworld::LiftWanted()) {   // [hud] monster_over_head: what the hook needs to lift the game's plate (the floor, the scale) and the game's own gap under it
+    if (plateworld::LiftWanted() || plateworld::Steadying()) {   // [hud] monster_over_head, monster_plate_smooth: what the hook needs (the floor, the scale) and the game's own gap under the plate
         plateworld::SetWorld(g_heroPosNow[1] / (std::max(1.0f, ViewHeight()) / UserEyeHeightM()), std::max(1.0f, ViewHeight()) / UserEyeHeightM());
         int32_t pr[4], pa[2];
         if (sOk && gamestate::PlateRect(pr) && gamestate::PlateAnchor(pa) && plateworld::SanePlate(pr))
@@ -651,6 +661,7 @@ bool FogColourNow(float rgb[3]) {
     AcquireSRWLockShared(&g_skyCfgLock);
     if (const int a = g_fogAct.load(); a > 0) fa = g_skyAct[a];
     cave = g_caveFog;
+    if (ArcaneOwnFog() && g_arcaneFogColour.set) cave = g_arcaneFogColour;   // [fog] arcane_color (unset: the caves', as before)
     ReleaseSRWLockShared(&g_skyCfgLock);
     if (g_underground.load() && cave.set) { fa.fogSet = true; memcpy(fa.fog, cave.rgb, sizeof fa.fog); }   // caves and dungeons: their own
     else if (fa.fogSet && !(g_set.fogKeepsColour.load() && gamefogvr::Active())) {   // in the open the act's fog (its day colour) darkens at night with the sky
@@ -810,18 +821,38 @@ void PresentCommon(reshade::api::effect_runtime* rt, HWND wnd, ID3D12Device* dev
         fogheight::Curve curve;
         curve.on = g_set.fogOurCurve.load();
         if (curve.on) {
-            const bool under = g_underground.load();
-            curve.start = under ? g_set.fogCaveStart.load() : g_set.fogStart.load();
-            curve.end = under ? g_set.fogCaveEnd.load() : g_set.fogEnd.load();
-            curve.curve = g_set.fogCurve.load();
-            curve.strength = under ? g_set.fogCaveStrength.load() : 1.0f;
+            const FogNumbers n = FogNumbersNow();
+            curve.start = n.start;
+            curve.end = n.end;
+            curve.curve = n.curve;
+            curve.strength = n.strength;
             curve.ease = g_set.fogEaseIn.load();   // [fog] ease_in (D2R VR Unleashed's)
         }
         fogfx::Params fp;
-        fp.on = g_set.fogBeforeFx.load() && gamefogvr::Active() && GameDrawnView();
+        const bool beforeFx = g_set.fogBeforeFx.load() && GameDrawnView() && fogfx::Hooked();   // (its hooks: no ReShade, the key on at the start)
+        fp.on = beforeFx && gamefogvr::Active();
+        fp.fxDepth = g_set.fogFxDepth.load();   // [fog] game_fog_fx_depth: the effects fogged by their own distance (either fog)
         fp.ourCurve = curve.on;
         fp.start = curve.start; fp.end = curve.end; fp.curve = curve.curve; fp.strength = curve.strength; fp.ease = curve.ease;
-        if (fp.on) {
+        // ... or our effect's fog ([fog] game_fog=0): its curve by the view's depth (FogAmount), its colour as the post pass lays it in the
+        // scene's units; the post pass then leaves a drawn pixel's fog to the step (FogInFrame). Only with a colour of its own (the act's, a
+        // cave's, or no sky: the dark grey) - without one the post pass takes the sky's horizon by the view's direction - and not in the
+        // Arcane Sanctuary (its fog is its sky behind the point, ArcaneHaze)
+        float ourRgb[3];
+        if (!fp.on && beforeFx && FogWanted() && (FogColourNow(ourRgb) || !OurSkyWanted()) && !ArcaneHazeFog()) {
+            const FogNumbers n = FogNumbersNow();
+            fp.on = fp.ours = fp.ourCurve = true;
+            fp.start = n.start;
+            fp.end = n.end;
+            fp.curve = n.curve;
+            fp.strength = n.strength;
+            fp.ease = g_set.fogEaseIn.load();
+            const fogframe::V3 s = fogframe::SceneFromDisplay({ourRgb[0], ourRgb[1], ourRgb[2]});
+            fp.colour[0] = s.r; fp.colour[1] = s.g; fp.colour[2] = s.b;
+            fp.nearPlane = g_lastNear.load();
+            fp.sx = g_projSx.load();
+            fp.sy = g_projSy.load();
+        } else if (fp.on) {
             const gamefogvr::Fog gf = gamefogvr::Current();
             fp.plane = gf.plane;
             fp.density = gf.density;
@@ -836,7 +867,7 @@ void PresentCommon(reshade::api::effect_runtime* rt, HWND wnd, ID3D12Device* dev
         }
         fogfx::Configure(fp);
         fogfx::Frame();
-        const bool noFog = fogfx::Drawn();
+        const bool noFog = fogfx::Drawn() && !fogfx::OursDrawn();   // (our effect's fog in the step: the game's pass has none of ours to leave out)
         fogheight::Frame((height || mist || voidAlone || noFog || curve.on) && gamefogvr::Active() && GameDrawnView(), height ? FogTopNow() : 1.0e9f,
                          height ? g_set.fogSoft.load() : 1.0f, mist, voidAlone, noFog, curve);
     }
@@ -883,6 +914,7 @@ void PresentCommon(reshade::api::effect_runtime* rt, HWND wnd, ID3D12Device* dev
     if (xr::On() || xr::Running() || xr::StopPending())
         replay::XrPresent(rt, dev, q, bb);
     else pace::Tick();
+    replay::ShotPresent(dev, q, bb);   // [headset_shot] on FlatVR: the picture passed on, before monitor_eye covers it for the window
     replay::MonitorPresent(rt, wnd, q, bb);   // [render] monitor_eye: the window one eye, after the headset took this one
     if (rt && !replay::g_capturing.load() && markLater) scenedepth::MarkFx(rt);   // after the eye made's overlays (XrPresent)
     const double t = pairtime::UsNow();
@@ -938,6 +970,10 @@ void OnReshadePresent(reshade::api::effect_runtime* rt) {
 // drawn at (renderscale, DLSS). Nothing else: no effect, so no fog, sky, ceiling or overlays; no replay (one pass, two pictures), no light
 // bounds, no FlatVR depth, no menu panel (hud's layer).
 template <class RT> void EffectsBegin(RT* rt, reshade::api::command_list* cl);   // (below, with the effect's uniforms)
+// [sky] dome_in_game_colour: the numbers the effect has for the game's dome now (set with its uniforms: DomeNightMix, DomeDayMul, SkyCapOn,
+// SkyZenith; the act's picture slot SkyTex) - the bake of the game's own picture takes the same (noreshade::DomeAtlas)
+struct DomeBake { float night = 0.0f, mul = 1.0f; bool capOn = true; int slot = 0; float zenith[3] = {0.10f, 0.13f, 0.18f}; };
+DomeBake g_domeBake;
 namespace noreshade {
 // [render] native_effects (on): D2R_DepthFog.fx run by the plugin itself (vr/fx_native.h) - the sky, the fog, the cave ceiling and the rest of
 // its main technique, built in the background at the start and at each new size; the same uniform code as with ReShade (EffectsBegin /
@@ -960,14 +996,19 @@ void Tell() {
     m.pairPerTick = g_set.pairPerTick.load();
     m.turnWarp = xr::TurnWarpOn();
     const bool byTurns = nors::Fits(m);
-    if (!toldMode || byTurns != wasByTurns) {
+    static bool wasFlat = false;
+    if (!toldMode || byTurns != wasByTurns || m.vr == wasFlat) {
         toldMode = true;
         wasByTurns = byTurns;
-        if (byTurns) Log("vrcam: no ReShade - native OpenXR eyes by turns: one eye drawn a frame, the other made on the GPU with the game's depth");
+        wasFlat = !m.vr;
+        if (!m.vr) LogF("vrcam: no ReShade - the flat game: one picture on the monitor, drawn by the plugin's own hooks; without ReShade: %s",
+                        nors::kOffFlat);
+        else if (byTurns) Log("vrcam: no ReShade - native OpenXR eyes by turns: one eye drawn a frame, the other made on the GPU with the game's depth");
         else Log("vrcam: no ReShade - NOT native OpenXR eyes by turns with the eye made ([openxr] on, [stereo] afr=1 pair_per_tick=0 turn_warp=1): "
                  "[render] no_reshade is made for that mode only - other modes have no picture in the headset or no 3D without ReShade");
     }
-    natived3d::WatchIndexCount(g_set.gameSky.load() ? engitem::DomeIndexCount() : 0);   // [sky] game_sky: the game's draws of the dome's mesh
+    natived3d::WatchIndexCount(g_set.gameSky.load() ? engitem::DomeIndexCount() : 0);
+    natived3d::WatchDomeAtlas(g_set.gameSky.load());   // (the game's view of the domes' picture: told to the log - read only)   // [sky] game_sky: the game's draws of the dome's mesh
     static ULONGLONG since = 0;
     const ULONGLONG now = GetTickCount64();
     if (!since) since = now;
@@ -1015,6 +1056,28 @@ bool FxWaiting() {
     const ULONGLONG s = g_fxWaitSince.load(std::memory_order_relaxed);
     return s && GetTickCount64() - s > 300;
 }
+// [sky] dome_in_game_colour (vr/sky/dome_atlas.h): the game's own picture of the dome baked by the numbers the effect has for it now
+// (g_domeBake, set with its uniforms), its night pictures and measured gain as the effect has them - on `l` after the effect's passes
+// (ready: its build drew this present), or on a list of its own while the effect is built (the picture as last baked).
+void DomeAtlas(ID3D12Device* dev, ID3D12CommandQueue* q, ID3D12GraphicsCommandList* l, bool ready) {
+    domeatlas::BakeIn in;
+    in.on = g_set.gameSky.load() && g_set.domeInGameColour.load();
+    in.band = engitem::DomeBand();
+    in.night = g_domeBake.night;
+    in.mul = g_domeBake.mul;
+    in.capOn = g_domeBake.capOn;
+    for (int i = 0; i < 3; ++i) in.zenith[i] = g_domeBake.zenith[i];
+    if (ready && g_domeBake.slot > 0) {
+        char n[24];
+        snprintf(n, sizeof n, "SkyNBand%dTex", g_domeBake.slot);
+        in.nightBand = g_fx->TextureResource(n);
+        snprintf(n, sizeof n, "SkyNCap%dTex", g_domeBake.slot);
+        in.nightCap = g_fx->TextureResource(n);
+    }
+    if (ready && g_set.domeTrueColour.load()) in.gain = g_fx->TextureResource("DomeSeenTex");
+    if (!ready) in.night = 0.0f, in.gain = nullptr;   // (no build: the effect's pictures are not there)
+    domeatlas::Present(dev, q, l, in);
+}
 void Effects(ID3D12Device* dev, ID3D12CommandQueue* q, ID3D12Resource* bb) {
     if (!g_fx) return;
     static bool timed = [&] {   // its passes timed on the graphics card (the 10 s line)
@@ -1026,6 +1089,9 @@ void Effects(ID3D12Device* dev, ID3D12CommandQueue* q, ID3D12Resource* bb) {
     ApplySkyPictures(g_fx);   // the pictures' definitions before the first build too (a change builds it again)
     if (!g_fx->Begin(dev, bb)) {
         if (!g_fxWaitSince.load(std::memory_order_relaxed)) g_fxWaitSince.store(GetTickCount64());
+        ID3D12GraphicsCommandList* l = domeatlas::Ours() ? natived3d::OpenList(dev) : nullptr;
+        DomeAtlas(dev, q, l, false);
+        if (l) natived3d::Submit(q);
         return;
     }
     g_fxWaitSince.store(0, std::memory_order_relaxed);
@@ -1043,6 +1109,9 @@ void Effects(ID3D12Device* dev, ID3D12CommandQueue* q, ID3D12Resource* bb) {
             SetBool(g_fx, "FogOn", false);
             SetBool(g_fx, "SkyFogHorizon", false);
             SetBool(g_fx, "CeilOn", false);
+            SetBool(g_fx, "DomeLook", false);         // (the game's dome and fog as the game drew them: no depth to find them by)
+            SetBool(g_fx, "DomeFogHorizon", false);
+            SetBool(g_fx, "GameFogMatch", false);
         }
         const int now = usable ? 1 : DepthEffectsWanted() ? 0 : told;
         if (now != told && now >= 0) {
@@ -1054,8 +1123,10 @@ void Effects(ID3D12Device* dev, ID3D12CommandQueue* q, ID3D12Resource* bb) {
             told = now;
         }
     }
+    if (ID3D12Resource* g = domeatlas::BakedGain()) g_fx->BindSemantic("D2RVR_DOME_GAIN", g, DXGI_FORMAT_R16G16B16A16_FLOAT);
     if (ID3D12GraphicsCommandList* l = natived3d::OpenList(dev)) {
         g_fx->Render(l, bb);
+        DomeAtlas(dev, q, l, true);   // (after the effect's passes: their gain measured this present)
         natived3d::Submit(q);
     }
     EffectsFinish(g_fx);
@@ -1101,10 +1172,12 @@ void Barrier(ID3D12GraphicsCommandList*, unsigned n, const D3D12_RESOURCE_BARRIE
 void Viewport(ID3D12GraphicsCommandList* cl, float w, float h) { renderscale::OnViewportNative(cl, w, h); }
 // [stereo] turns_keep_own 3 / 4 without ReShade: the game's effects layer found from these hooks (effectslayer::OnBindNative) - beside
 // [fog] game_fog_before_fx's own sinks for the same calls, when that is on
-void (*g_fogTargets)(ID3D12GraphicsCommandList*, unsigned, const D3D12_CPU_DESCRIPTOR_HANDLE*, bool, ID3D12Resource*) = nullptr;
+void (*g_fogTargets)(ID3D12GraphicsCommandList*, unsigned, const D3D12_CPU_DESCRIPTOR_HANDLE*, bool, ID3D12Resource*,
+                     const D3D12_CPU_DESCRIPTOR_HANDLE*) = nullptr;
 void (*g_fogBarrier)(ID3D12GraphicsCommandList*, unsigned, const D3D12_RESOURCE_BARRIER*) = nullptr;
-void FxTargets(ID3D12GraphicsCommandList* cl, unsigned n, const D3D12_CPU_DESCRIPTOR_HANDLE* rts, bool single, ID3D12Resource* ds) {
-    if (g_fogTargets) g_fogTargets(cl, n, rts, single, ds);
+void FxTargets(ID3D12GraphicsCommandList* cl, unsigned n, const D3D12_CPU_DESCRIPTOR_HANDLE* rts, bool single, ID3D12Resource* ds,
+               const D3D12_CPU_DESCRIPTOR_HANDLE* dsv) {
+    if (g_fogTargets) g_fogTargets(cl, n, rts, single, ds, dsv);
     effectslayer::OnBindNative(n, rts, single, ds);
 }
 void FxBarrier(ID3D12GraphicsCommandList* cl, unsigned n, const D3D12_RESOURCE_BARRIER* b) {
@@ -1155,6 +1228,8 @@ void Install() {
     effectslayer::SetLogNative(&Log);
     hud::SetLogger(&Log);
     natived3d::Install(k, &Log);
+    domeatlas::SetLog(&Log);
+    natived3d::SetAtlasStandIn(&domeatlas::StandIn);   // [sky] dome_in_game_colour: the game's view of the domes' picture made on ours
     if (IniB(L"render", L"native_effects", true)) {
         fxnative::Options o;
         // the effect and its pictures where D2R VR's own files are (the mod's reshade\), else beside the game (an older install, or files
@@ -1242,12 +1317,13 @@ template <class RT> bool FxBool(RT* rt, const char* name) {
 std::atomic<int> g_fifPaint{0};   // [debug] fog_in_frame_paint (live)
 template <class RT> void FogInFrameTick(RT* rt) {
     SetFloat(rt, "FogInFramePaint", (float)g_fifPaint.load());   // (the post pass's side paints even with the frame's fog off: it shows that)
-    if (!fogframe::Wanted()) return;
+    // ([fog] game_fog_before_fx without ReShade: our effect's fog laid by that step before the game's transparent resolve - the same rule)
+    if (!fogframe::Wanted()) { SetBool(rt, "FogInFrame", fogfx::OursDrawn()); return; }
     fogframe::Params p;
     p.paint = g_fifPaint.load();
     const bool sky = FxBool(rt, "SkyOn");
     // (not in the Arcane Sanctuary: [sky] arcane_fog takes the fog's colour from its sky by the direction, as the sky's horizon does)
-    p.on = FogWanted() && viewgate::F4() && FxBool(rt, "FogOn") && (FxBool(rt, "FogFixed") || !sky) && !FxBool(rt, "ArcaneSkyOn") &&
+    p.on = FogWanted() && viewgate::F4() && FxBool(rt, "FogOn") && (FxBool(rt, "FogFixed") || !sky) && !ArcaneHazeFog() &&
            !FxBool(rt, "ShowDistance");
     p.nearPlane = FxFloat(rt, "NearPlane", p.nearPlane);
     p.fogStart = FxFloat(rt, "FogStart", p.fogStart);
@@ -1258,7 +1334,7 @@ template <class RT> void FogInFrameTick(RT* rt) {
         rt->get_uniform_value_float(u, p.fogColour, 3);
     p.caveHalo = FxBool(rt, "CeilOn") && !sky ? std::clamp(FxFloat(rt, "CeilHalo", 1.0f), 0.0f, 1.0f) : 0.0f;
     fogframe::Configure(p);
-    SetBool(rt, "FogInFrame", fogframe::Drawn());
+    SetBool(rt, "FogInFrame", fogframe::Drawn() || fogfx::OursDrawn());
 }
 // Before each present's effects: everything the effect reads that changes (uniforms, bindings). RT: ReShade's runtime (its
 // reshade_begin_effects, cl its list) or [render] no_reshade's own (vr/fx_native.h; cl nullptr - the depth was copied before, BindNative).
@@ -1352,11 +1428,12 @@ template <class RT> void EffectsBegin(RT* rt, reshade::api::command_list* cl) {
     }
     SetFloat(rt, "NearPlane", g_lastNear.load());
     LowHpUniforms(rt);   // [hud] low_hp_vignette
-    SetFloat(rt, "FogStart", g_underground.load() ? g_set.fogCaveStart.load() : g_set.fogStart.load());
-    SetFloat(rt, "FogEnd", g_underground.load() ? g_set.fogCaveEnd.load() : g_set.fogEnd.load());
-    SetFloat(rt, "FogStrength", g_underground.load() ? g_set.fogCaveStrength.load() : 1.0f);
+    const FogNumbers fogNow = FogNumbersNow();   // (the open air's, the caves', or the Arcane Sanctuary's own: [fog] arcane_own)
+    SetFloat(rt, "FogStart", fogNow.start);
+    SetFloat(rt, "FogEnd", fogNow.end);
+    SetFloat(rt, "FogStrength", fogNow.strength);
     SetFloat(rt, "FogEaseIn", g_set.fogEaseIn.load() ? 1.0f : 0.0f);   // [fog] ease_in (D2R_FogEase_Unleashed.fxh)
-    SetFloat(rt, "FogCurve", g_set.fogCurve.load());
+    SetFloat(rt, "FogCurve", fogNow.curve);
     SetFloat(rt, "FogBlur", g_set.fogBlur.load());
     SetBool(rt, "FogOn", FogWanted());
     SetBool(rt, "FogLight", g_set.fogLight.load());   // [fog] light: the short way (the sky still drawn; no ceiling, no fog over glows)
@@ -1414,9 +1491,20 @@ template <class RT> void EffectsBegin(RT* rt, reshade::api::command_list* cl) {
         // [fog] game_fog_match: the game's fog comes out through the area's colour grading - act 4 (Serg, 49 / 50.webp): his #5A2712 on the
         // sky's low part, (57, 29, 9) on the fogged far land under it, a hard silhouette. The effect measures what the game's fog shows where
         // it is complete and moves the fogged pixels by the game's own share toward the act's colour - the numbers the game's pass has now
-        const bool match = g_set.fogMatch.load() && gamefogvr::Active();
+        // ([fog] game_fog_before_fx with our effect's fog: that step's colour goes through the same grading - the same measure and move, its
+        // share our own curve by the view's depth, GameFogByDepth)
+        const bool oursBefore = fogfx::OursDrawn();
+        const bool match = g_set.fogMatch.load() && (gamefogvr::Active() || oursBefore);
         SetBool(rt, "GameFogMatch", match);
-        if (match) {
+        SetBool(rt, "GameFogByDepth", match && oursBefore && !gamefogvr::Active());
+        if (match && oursBefore && !gamefogvr::Active()) {
+            const FogNumbers n = FogNumbersNow();
+            SetBool(rt, "GameFogOurCurve", true);
+            const float curve[4] = {n.start, n.end, n.curve, n.strength};
+            SetFloats(rt, "GameFogCurve", curve, 4);
+            const float topSoft[2] = {1.0e9f, 1.0f};   // (no height thinning in our fog)
+            SetFloats(rt, "GameFogTopSoft", topSoft, 2);
+        } else if (match) {
             const gamefogvr::Fog gf = gamefogvr::Current();
             const bool under = g_underground.load();
             SetFloat(rt, "GameFogDensity", gf.density);
@@ -1428,8 +1516,8 @@ template <class RT> void EffectsBegin(RT* rt, reshade::api::command_list* cl) {
             if (bound != boundBefore) { boundBefore = bound; boundAt = GetTickCount64(); }
             const bool patched = boundAt && GetTickCount64() < boundAt + 500;
             SetBool(rt, "GameFogOurCurve", patched && g_set.fogOurCurve.load());
-            const float curve[4] = {under ? g_set.fogCaveStart.load() : g_set.fogStart.load(), under ? g_set.fogCaveEnd.load() : g_set.fogEnd.load(),
-                                    g_set.fogCurve.load(), under ? g_set.fogCaveStrength.load() : 1.0f};
+            const FogNumbers n = FogNumbersNow();
+            const float curve[4] = {n.start, n.end, n.curve, n.strength};
             SetFloats(rt, "GameFogCurve", curve, 4);
             const bool height = patched && g_set.fogHeight.load() && !under;   // (as PresentCommon hands fogheight::Frame)
             const float topSoft[2] = {height ? FogTopNow() : 1.0e9f, height ? g_set.fogSoft.load() : 1.0f};
@@ -1527,6 +1615,7 @@ template <class RT> void EffectsBegin(RT* rt, reshade::api::command_list* cl) {
     if constexpr (kReShade) SetBool(rt, "SpareOn", fogspare::Bind(rt));
     else SetBool(rt, "SpareOn", false);   // (no ReShade: the game's transparent targets are not taken)
     SetBool(rt, "ArcaneSkyOn", sky && arcane);
+    SetBool(rt, "ArcaneFogIntoSky", !ArcaneOwnFog() || g_set.arcaneFogIntoSky.load());   // [fog] arcane_into_sky (off: its own colour)
     {   // the cave ceiling: a plane CeilHeight over the hero's floor, met by each eye's ray ([ceiling] game_ceiling: the game draws it)
         // [ceiling] game_ceiling: the game's from the first frame underground, laid or still loading - never our vault in between
         const int who = gameceiling::Drawer(sky, CeilWanted(), engitem::CeilingByGame(), engitem::CeilingShown());
@@ -1695,6 +1784,19 @@ template <class RT> void EffectsBegin(RT* rt, reshade::api::command_list* cl) {
             pin.atMonster = g_set.plateDepthBody.load();
             float tm = 0.0f, tu = 0.0f;
             if (plateworld::GetTarget(&tm, &tu, GetTickCount64())) { pin.groundM = tm; pin.groundUnits = tu; }
+            {   // [hud] monster_stereo_by_distance: the depth by the monster's distance from the eyes, eased from frame to frame (vr/plate_look.h DepthNow)
+                static platelook::DepthEase ease;
+                static LARGE_INTEGER last = {};
+                LARGE_INTEGER now, freq;
+                QueryPerformanceCounter(&now);
+                QueryPerformanceFrequency(&freq);
+                const float dt = last.QuadPart && freq.QuadPart ? static_cast<float>(static_cast<double>(now.QuadPart - last.QuadPart) / static_cast<double>(freq.QuadPart)) : 0.0f;
+                last = now;
+                const float upm = std::max(1.0f, ViewHeight()) / UserEyeHeightM();   // game units a metre
+                const platelook::DepthByDistance d = platelook::Bounded(PlateDepthByDistance(), g_set.modelRadius.load() / upm);   // (no farther than the drawn world)
+                pin.depthPercent = platelook::DepthNow(&ease, g_set.plateStereoByDistance.load(), g_set.plateNearBody.load(), d, pin.groundM >= 0.0f,
+                                                       platelook::EyeDistanceM(pin.groundM, UserEyeHeightM()), dt);
+            }
             pin.m0 = g_projSx.load(); pin.halfGap = 0.5f * g_stereoIpd.load(); pin.conv = g_stereoConv.load(); pin.eyeHeightUnits = std::max(1.0f, ViewHeight());
             pin.stereo = AfrOn() && g_enabled.load() && FullBody() && pin.m0 > 0.0f && pin.halfGap > 0.0f;   // as LabelDepthWanted
             const platelook::PlateUniforms pu = platelook::Plate(pin);
@@ -1816,6 +1918,8 @@ template <class RT> void EffectsBegin(RT* rt, reshade::api::command_list* cl) {
                 nh += StabMarks(boxesNow, eyeAt, ha + nh, hb + nh, meleeboxes::kShaderCapsules - nh);   // [debug] stab_debug: the wound, its line, its depth
             }
             nh += PoseShareMarkers(eyeAt, ha + nh, hb + nh, meleeboxes::kShaderCapsules - nh);   // [multiplayer] pose_share: the other players' heads and controllers
+            if (worldcontact::DrawWanted())   // [debug] world_contact_draw: the walls near the hands, the controllers against the hands and the weapon as drawn
+                nh += worldcontact::Marks(boxesNow, eyeAt, std::max(1.0f, ViewHeight()) / UserEyeHeightM(), ha + nh, hb + nh, meleeboxes::kShaderCapsules - nh);
             if (!g_paFxHas) nh += PointCastMarks(eyeAt, ha + nh, hb + nh, meleeboxes::kShaderCapsules - nh);   // [gameplay] teleport_circle: an older effect - the arc and circle as capsules
             if (nh > 0 || boxesWere) SetBool(rt, "HitboxOn", nh > 0);
             if (nh > 0) {
@@ -2355,6 +2459,11 @@ template <class RT> void EffectsBegin(RT* rt, reshade::api::command_list* cl) {
     }
     // (the game's dome or fog drawn: our sky off, but DomeHorizon and GameFogTrue read the eyes' axes and projections too - left stale, the
     // dome's low band took the whole dome to the fog's colour: Serg on 0.188.6, act 4 town, game_sky=1 game_fog=1, "где небо")
+    // [sky] dome_true_colour / day_night on the game's dome (D2R_DepthFog.fx DomeLookOf): its colours as our sky's, by day and night as ours
+    const bool domeLook = engitem::DomeShown() && !arcane && pal >= 0 && (g_set.domeTrueColour.load() || g_set.skyDayNight.load());
+    SetBool(rt, "DomeLook", domeLook);
+    // [sky] dome_in_game_colour: the game draws the dome from our baked picture - nothing recoloured here (vr/sky/dome_atlas.h)
+    SetBool(rt, "DomeInGame", domeLook && domeatlas::Live());
     if (!sky && !engitem::DomeShown() && !gamefogvr::Active()) return;
     // (eyes by turns: the cameras the pictures show, as the overlays' above - the eye drawn's is its own, the eye made's the warp's)
     const xr::TurnView tvSky = replay::OverlaysWanted() ? xr::TurnViewNow() : xr::TurnView{};
@@ -2373,7 +2482,7 @@ template <class RT> void EffectsBegin(RT* rt, reshade::api::command_list* cl) {
         snprintf(n, sizeof n, "CamBack%d", e); SetFloats(rt, n, axes + 6, 3);
     }
     // (the act's picture only for our sky, or the game's fog fading into the sky behind - [fog] fog_into_sky: no picture uploaded for nothing)
-    if (!sky && !(g_set.fogIntoSky.load() && gamefogvr::Active())) return;
+    if (!sky && !domeLook && !(g_set.fogIntoSky.load() && gamefogvr::Active())) return;
     if (arcane || pal < 0) return;   // the Arcane sky: no palette, sun, daylight or drift in the void
     const SkyPalette& p = kPalettes[pal];
     SetFloats(rt, "SkyZenith", p.zenith, 3);
@@ -2391,7 +2500,47 @@ template <class RT> void EffectsBegin(RT* rt, reshade::api::command_list* cl) {
     // brightness stays; without one the day picture is dimmed.
     SetFloat(rt, "SkyNightMix", act.nightOk && act.bandOk ? 1.0f - DayNightK() : 0.0f);
     SetFloat(rt, "SkyDrift", g_set.skyDrift.load() ? 1.0f : 0.0f);
-    SetFloat(rt, "SkyBrightness", act.nightOk && act.bandOk ? act.bright : act.bright * DayNightMul());
+    // [sky] bright_<period> (Serg's own sliders): the sky's brightness each period of the game's day, eased by its light - our old sky and
+    // the game's dome alike; 1 while the time of day is not known or not followed
+    float periodMul = 1.0f;
+    {
+        int light = 0, period = 0;
+        static periodbright::State periodState;
+        if (DayNightKRaw(&light, &period) >= 0.0f) {
+            float b[periodbright::kPeriods];
+            for (int i = 0; i < periodbright::kPeriods; ++i) b[i] = g_set.periodBright[i].load();
+            periodMul = periodbright::Mul(periodState, period, (float)light, b);
+        }
+    }
+    SetFloat(rt, "SkyBrightness", (act.nightOk && act.bandOk ? act.bright : act.bright * DayNightMul()) * periodMul);
+    if (domeLook) {   // the dome by our sky's numbers: its colours ([sky] dome_true_colour), its night as ours ([sky] day_night - off, or not known: day)
+        int light = 0, period = 0;
+        const float k = DayNightKRaw(&light, &period);
+        const bool night = g_set.skyDayNight.load() && k >= 0.0f;
+        SetBool(rt, "DomeGainOn", g_set.domeTrueColour.load());
+        SetFloat(rt, "DomeNightMix", night && act.nightOk && act.bandOk ? 1.0f - k : 0.0f);
+        SetFloat(rt, "DomeDayMul", (night && !(act.nightOk && act.bandOk) ? DayNightMul() : 1.0f) * periodMul);
+        SetFloat(rt, "DomeBright", act.bright);
+        // (the same for the bake of the game's own picture: noreshade::DomeAtlas)
+        g_domeBake.night = night && act.nightOk && act.bandOk ? 1.0f - k : 0.0f;
+        g_domeBake.mul = (night && !(act.nightOk && act.bandOk) ? DayNightMul() : 1.0f) * periodMul;
+        g_domeBake.capOn = act.capOk;
+        g_domeBake.slot = act.bandOk ? p.act : 0;
+        for (int i = 0; i < 3; ++i) g_domeBake.zenith[i] = p.zenith[i];
+        // (each period of the game's day once: its light and the share of night it gives the dome and our old sky alike - Serg on 0.192.8,
+        // 93 - 96.webp: "его цвет не соответствует времени суток")
+        static int toldPeriod = -1;
+        if (night && period != toldPeriod) {
+            toldPeriod = period;
+            static const char* const kNames[6] = {"end of night, dawn", "end of dawn, day", "day", "end of day, dusk", "end of dusk, night", "night"};
+            LogF("vrcam: game sky - %s: the game's light %d -> day share %.2f ([sky] light_night %.0f .. light_day %.0f); the dome: night picture "
+                 "%.2f, dimmed x%.2f; our old sky: night picture %.2f, x%.2f; both x%.2f by [sky] bright_<period> (this one's slider %.2f)",
+                 period >= 0 && period < 6 ? kNames[period] : "?", light, k, g_set.lightNight.load(), g_set.lightDay.load(),
+                 act.nightOk && act.bandOk ? 1.0f - k : 0.0f, act.nightOk && act.bandOk ? 1.0f : DayNightMul(),
+                 act.nightOk && act.bandOk ? 1.0f - DayNightK() : 0.0f, act.nightOk && act.bandOk ? 1.0f : DayNightMul(), periodMul,
+                 period >= 0 && period < 6 ? g_set.periodBright[period].load() : 1.0f);
+        }
+    }
 }
 
 void OnBeginEffects(reshade::api::effect_runtime* rt, reshade::api::command_list* cl, reshade::api::resource_view, reshade::api::resource_view) {

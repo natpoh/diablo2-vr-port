@@ -25,13 +25,14 @@ static const char* w_skyCannot = nullptr;
 namespace vrc {
 std::atomic<bool> g_enabled{true}, g_inWorld{true};
 std::atomic<int> g_skyPalette{0};
+std::atomic<bool> g_arcaneArea{false};   // (sky_tick.cpp's: [fog] arcane_own / caves=0 there)
 std::atomic<bool> g_arcaneSky{false}, g_underground{false}, g_noFogArea{false}, g_ceilBiome{false}, g_gameCeilBiome{false};
 bool GameDrawnView() { return w_gameView; }
 namespace gamefogvr {
 std::atomic<bool> g_bad{false};
 bool Active() { return w_gameFogActive; }
 }
-namespace engitem { const char* SkyCannot() { return w_skyCannot; } }
+namespace engitem { const char* SkyCannot() { return w_skyCannot; } bool DomeShown() { return false; } }   // (GameSkyFixWanted: no dome laid here)
 bool Overhead() { return w_overhead; }
 bool ThirdPerson() { return w_third; }
 bool MenuFlat() { return w_menuFlat; }

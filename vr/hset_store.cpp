@@ -5,11 +5,13 @@
 #include <windows.h>
 #include <intrin.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <vector>
 
@@ -70,6 +72,67 @@ float Parse(const ini::Text& t, float fallback) {
     return end == t.text.c_str() || !std::isfinite(v) ? fallback : v;
 }
 
+// -- the Co-op page's files -----------------------------------------------------------------------------------------
+std::string Utf8(const std::wstring& w) {
+    if (w.empty()) return {};
+    const int n = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), (int)w.size(), nullptr, 0, nullptr, nullptr);
+    std::string s((size_t)std::max(n, 0), '\0');
+    if (n > 0) WideCharToMultiByte(CP_UTF8, 0, w.c_str(), (int)w.size(), s.data(), n, nullptr, nullptr);
+    return s;
+}
+bool ReadAll(const std::wstring& path, std::string* out) {
+    out->clear();
+    const HANDLE f = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return false;
+    LARGE_INTEGER size{};
+    bool ok = GetFileSizeEx(f, &size) && size.QuadPart < (1 << 22);   // (a status file of the plugin's is a few kilobytes)
+    if (ok) {
+        out->resize((size_t)size.QuadPart);
+        DWORD got = 0;
+        ok = size.QuadPart == 0 || (ReadFile(f, out->data(), (DWORD)size.QuadPart, &got, nullptr) && got == (DWORD)size.QuadPart);
+    }
+    CloseHandle(f);
+    return ok;
+}
+std::wstring PathIn(const std::wstring& dir, const char* name) {
+    std::wstring p = dir;
+    if (!p.empty() && p.back() != L'\\' && p.back() != L'/') p += L'\\';
+    return p + Widen(name);
+}
+// D2R.exe's folder + d2rloader\plugins\: where the plugin's DLL is and where it reads its ini (beside the DLL).
+std::wstring DefaultRoomsDir() {
+    wchar_t exe[MAX_PATH] = {};
+    const DWORD n = GetModuleFileNameW(nullptr, exe, MAX_PATH);
+    if (n == 0 || n >= MAX_PATH) return {};
+    std::wstring dir(exe, n);
+    const size_t slash = dir.find_last_of(L"\\/");
+    return slash == std::wstring::npos ? std::wstring() : dir.substr(0, slash + 1) + L"d2rloader\\plugins\\";
+}
+int64_t NowUtc() {
+    FILETIME ft;
+    GetSystemTimeAsFileTime(&ft);
+    return (int64_t)((((uint64_t)ft.dwHighDateTime << 32) | ft.dwLowDateTime) / 10000000ull) - 11644473600ll;
+}
+// What a reading of the folder is compared by: a new State only when one of these moved.
+struct CoopSeen {
+    ini::Stamp dll, ini, status;
+    int ageMin = -1;
+    uint64_t written = 0;
+    bool failed = false;
+    bool halfRead = false;   // the status file is there but did not parse (the plugin writing it): read again next time
+    bool operator==(const CoopSeen&) const = default;
+};
+CoopSeen SeenOf(const std::wstring& dir, const coop::State* st, int64_t now) {
+    CoopSeen s;
+    s.dll = ini::StampOf(PathIn(dir, roomsbridge::kPluginDll).c_str());
+    s.ini = ini::StampOf(PathIn(dir, roomsbridge::kIniName).c_str());
+    s.status = ini::StampOf(PathIn(dir, roomsbridge::kStatusName).c_str());
+    int64_t at = 0;
+    if (st && st->statusThere && roomsbridge::ParseUtc(st->status.updated, &at)) s.ageMin = (int)std::clamp<int64_t>((now - at) / 60, 0, 1 << 20);
+    s.halfRead = st && st->installed && s.status.exists && !st->statusThere;
+    return s;
+}
+
 struct State {
     std::mutex m;
     Snapshot pub;
@@ -80,6 +143,14 @@ struct State {
     HANDLE thread = nullptr;
     HANDLE wake = nullptr;
     void (*log)(const char*) = nullptr;
+    // the Co-op page's
+    std::wstring roomsDir;
+    bool roomsDirSet = false;          // a test's folder
+    coop::Edit coopQueued;
+    bool hasCoop = false;
+    uint64_t coopWritten = 0;          // the last edit carried out, and how
+    bool coopFailed = false;
+    CoopSeen coopSeen;
 };
 State g;
 
@@ -98,27 +169,71 @@ void Say(const char* fmt, ...) {
     log(b);
 }
 
+// The Co-op page's files again when one of them changed (or the status grew a minute older, or an edit was carried out). The thread's.
+void RefreshCoop() {
+    std::wstring dir;
+    std::shared_ptr<const coop::State> was;
+    CoopSeen seenWas;
+    uint64_t written;
+    bool failed;
+    {
+        std::lock_guard<std::mutex> lock(g.m);
+        dir = g.roomsDir;
+        was = g.pub.coop;
+        seenWas = g.coopSeen;
+        written = g.coopWritten;
+        failed = g.coopFailed;
+    }
+    const int64_t now = NowUtc();
+    CoopSeen seen = SeenOf(dir, was.get(), now);
+    seen.written = written;
+    seen.failed = failed;
+    if (was && seen == seenWas && !seen.halfRead) return;
+    std::shared_ptr<const coop::State> st = LoadCoop(dir.c_str(), now, written, failed);
+    seen = SeenOf(dir, st.get(), now);   // (the age of the status just read)
+    seen.written = written;
+    seen.failed = failed;
+    std::lock_guard<std::mutex> lock(g.m);
+    g.pub.coop = std::move(st);
+    g.coopSeen = seen;
+}
+
 DWORD WINAPI Run(void*) {
     for (;;) {
         WaitForSingleObject(g.wake, 500);
         Request req;
         bool have = false;
-        std::wstring path;
+        std::wstring path, roomsDir;
+        coop::Edit edit;
+        bool haveEdit = false;
         {
             std::lock_guard<std::mutex> lock(g.m);
             if (g.hasQueued) { req = g.queued; g.hasQueued = false; have = true; }
+            if (g.hasCoop) { edit = g.coopQueued; g.hasCoop = false; haveEdit = true; }
             path = g.path;
+            roomsDir = g.roomsDir;
         }
+        if (haveEdit) {   // the Co-op page: one [relay] line of d2r-rooms.ini
+            std::string why;
+            const bool ok = WriteCoop(roomsDir.c_str(), edit, &why);
+            Say("vrcam: openxr - headset settings: Co-op: [relay] %s = %s %s d2r-rooms.ini%s%s", edit.key.c_str(), edit.value.c_str(), ok ? "written to" : "NOT written to",
+                ok ? "" : ": ", ok ? " (the D2R Rooms plugin reads it on the next CREATE GAME)" : why.c_str());
+            std::lock_guard<std::mutex> lock(g.m);
+            g.coopWritten = edit.sequence;
+            g.coopFailed = !ok;
+        }
+        RefreshCoop();
         if (have) {
             std::string why;
             const Result r = SaveRequest(path.c_str(), req, &why);
             Say("vrcam: openxr - headset settings: Apply %s (%u key%s)%s%s", r == Result::Saved ? "saved" : r == Result::Conflict ? "refused, the ini changed elsewhere" : "FAILED",
-                (unsigned)__popcnt64(req.changed), __popcnt64(req.changed) == 1 ? "" : "s", why.empty() || r == Result::Saved ? "" : ": ", r == Result::Saved ? "" : why.c_str());
+                (unsigned)req.changed.Count(), req.changed.Count() == 1 ? "" : "s", why.empty() || r == Result::Saved ? "" : ": ", r == Result::Saved ? "" : why.c_str());
             Snapshot s = LoadSnapshot(path.c_str());
             const ini::Stamp st = ini::StampOf(path.c_str());
             s.sequence = req.sequence;
             s.result = r;
             std::lock_guard<std::mutex> lock(g.m);
+            s.coop = g.pub.coop;
             g.pub = s;
             g.stamp = st;
             g.busy = false;
@@ -134,12 +249,13 @@ DWORD WINAPI Run(void*) {
                 std::lock_guard<std::mutex> lock(g.m);
                 s.sequence = g.pub.sequence;
                 s.result = g.pub.result;
+                s.coop = g.pub.coop;
                 g.pub = s;
                 g.stamp = st;
             }
         }
         std::lock_guard<std::mutex> lock(g.m);
-        if (g.stop && !g.hasQueued) { g.running = false; break; }
+        if (g.stop && !g.hasQueued && !g.hasCoop) { g.running = false; break; }
     }
     return 0;
 }
@@ -153,6 +269,7 @@ Snapshot LoadSnapshot(const wchar_t* path) {
     DirectLines* direct = &lines;
     for (int i = 0; i < kCount; ++i) {
         const Def& d = kDefs[i];
+        if (IsGame(i)) continue;   // the game's own (the Players row): not in the ini, the default stands
         if (IsBindKey(i)) {   // a [direct] line: the pick it is by the list's reading (the plugin's default when the line is not there), and its text as the file has it
             if (s.ready) {
                 const std::string key = keys::KeyOf(BindSlot(i));
@@ -199,6 +316,7 @@ Result SaveRequest(const wchar_t* path, const Request& r, std::string* why) {
     for (int i = 0; i < kCount; ++i)
         if (write & Bit(i)) {
             const Def& d = kDefs[i];
+            if (IsGame(i)) continue;   // the game's own: never written here
             if (IsBindKey(i)) {   // a [direct] line: the list's own change (its text, or the key out when the pick is what the plugin does anyway), judged against the line as the panel read it
                 directinput::remap::Change ch;
                 if (!keys::Choose(direct.Getter(), BindSlot(i), (int)std::lround(r.values[i]), &ch)) continue;   // Custom is not a thing to write
@@ -221,10 +339,79 @@ Result SaveRequest(const wchar_t* path, const Request& r, std::string* why) {
     }
 }
 
+std::shared_ptr<const coop::State> LoadCoop(const wchar_t* dir, int64_t nowUtc, uint64_t written, bool writeFailed) {
+    auto st = std::make_shared<coop::State>();
+    const std::wstring d = dir ? dir : L"";
+    st->dir = Utf8(d);
+    while (!st->dir.empty() && (st->dir.back() == '\\' || st->dir.back() == '/')) st->dir.pop_back();
+    st->written = written;
+    st->writeFailed = writeFailed;
+    st->installed = !d.empty() && ini::StampOf(PathIn(d, roomsbridge::kPluginDll).c_str()).exists;
+    std::string text;
+    st->iniThere = !d.empty() && ReadAll(PathIn(d, roomsbridge::kIniName), &text);
+    st->cfg = roomsbridge::ParseIni(st->iniThere ? text : roomsbridge::DefaultIni());
+    if (!d.empty() && ReadAll(PathIn(d, roomsbridge::kStatusName), &text))
+        if (const auto s = roomsbridge::ParseStatus(text)) {
+            st->statusThere = true;
+            st->status = *s;
+            int64_t at = 0;
+            if (roomsbridge::ParseUtc(s->updated, &at)) st->ageMin = (int)std::clamp<int64_t>((nowUtc - at) / 60, 0, 1 << 20);
+        }
+    return st;
+}
+
+bool WriteCoop(const wchar_t* dir, const coop::Edit& e, std::string* why) {
+    const auto fail = [&](const char* w) { if (why) *why = w; return false; };
+    if (!coop::Sane(e)) return fail("not one of [relay] enabled / mode / use with a value the plugin reads");
+    const std::wstring d = dir ? dir : L"";
+    if (d.empty() || !ini::StampOf(PathIn(d, roomsbridge::kPluginDll).c_str()).exists) return fail("the D2R Rooms plugin is not installed (no d2rl-d2r-rooms.dll)");
+    const std::wstring path = PathIn(d, roomsbridge::kIniName), tmp = path + L".tmp";
+    std::string text;
+    const bool there = ReadAll(path, &text);   // the file as it is now (the player may have changed it in Notepad)
+    const std::string out = roomsbridge::WithKey(there ? text : roomsbridge::DefaultIni(), "relay", e.key, e.value);
+    const HANDLE f = CreateFileW(tmp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return fail("could not make d2r-rooms.ini.tmp");
+    DWORD put = 0;
+    const bool wrote = WriteFile(f, out.data(), (DWORD)out.size(), &put, nullptr) && put == (DWORD)out.size();
+    CloseHandle(f);
+    if (!wrote || !MoveFileExW(tmp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        DeleteFileW(tmp.c_str());
+        return fail(wrote ? "could not move d2r-rooms.ini.tmp over d2r-rooms.ini" : "could not write d2r-rooms.ini.tmp");
+    }
+    return true;
+}
+
+void SetRoomsDir(const wchar_t* dir) {
+    std::lock_guard<std::mutex> lock(g.m);
+    g.roomsDir = dir ? dir : L"";
+    g.roomsDirSet = dir != nullptr;
+    g.coopSeen = {};
+    g.pub.coop.reset();   // read again
+}
+
+bool SubmitCoop(const coop::Edit& e) {
+    if (!e.sequence || !coop::Sane(e)) return false;
+    std::lock_guard<std::mutex> lock(g.m);
+    if (g.hasCoop || !g.running) return false;
+    g.coopQueued = e;
+    g.hasCoop = true;
+    if (g.wake) SetEvent(g.wake);
+    return true;
+}
+
 void Start(const wchar_t* iniPath) {
     std::lock_guard<std::mutex> lock(g.m);
     g.path = iniPath;
+    const std::shared_ptr<const coop::State> coop = g.pub.coop;
     g.pub = LoadSnapshot(iniPath);
+    if (!g.roomsDirSet) g.roomsDir = DefaultRoomsDir();
+    if (coop) g.pub.coop = coop;   // (the thread reads it again when anything changed)
+    else {   // the first reading now, so the Co-op page has it the moment the panel opens
+        g.pub.coop = LoadCoop(g.roomsDir.c_str(), NowUtc(), g.coopWritten, g.coopFailed);
+        g.coopSeen = SeenOf(g.roomsDir, g.pub.coop.get(), NowUtc());
+        g.coopSeen.written = g.coopWritten;
+        g.coopSeen.failed = g.coopFailed;
+    }
     g.stamp = ini::StampOf(iniPath);
     g.stop = false;
     if (!g.wake) g.wake = CreateEventW(nullptr, FALSE, FALSE, nullptr);
@@ -262,7 +449,7 @@ Snapshot Read() {
 }
 
 bool Submit(const Request& r) {
-    if (!r.sequence || !r.changed || (kCount < 64 && (r.changed >> kCount))) return false;
+    if (!r.sequence || !r.changed || (r.changed & ~kAllKeys)) return false;
     for (int i = 0; i < kCount; ++i)
         if (r.changed & Bit(i))
             if (!std::isfinite(r.base[i]) || !std::isfinite(r.values[i]) || Normalize(i, r.values[i]) != r.values[i]) return false;

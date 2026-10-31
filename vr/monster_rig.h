@@ -26,6 +26,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <vector>
 
 #include "granny_mesh.h"
 
@@ -431,21 +432,19 @@ inline bool InvertAffine(const float m[16], float out[16]) {
     return true;
 }
 
-// A rigid item's box (it has no skeleton of the monster's: its meshes' bone bindings name its own bones, or a root), in the model's own frame: each binding's
-// box is in ITS bone's frame, so each is put through that bone's bind pose (the item's own Granny skeleton, InverseWorld4x4 inverted) before the union - a
-// bow is skinned to its limbs and its string, each box about its own bone, and their union as they were was a short fat box at the grip (Serg, 0.188.6, a
-// rogue archer: "one huge orange capsule, ~0.5 m across and short"). A binding whose bone is not found (or an item with no skeleton): its box as it is (a
-// root's frame is the model's). False (and *why) when nothing reads.
-template <class Read>
-bool ItemBox(Read&& read, uintptr_t instance, BoneBox* out, const char** why) {
+// A rigid item's boxes (it has no skeleton of the monster's: its meshes' bone bindings name its own bones, or a root): each binding's box in ITS bone's frame and that
+// bone's bind pose in the model (the item's own Granny skeleton, InverseWorld4x4 inverted; identity for a binding whose bone is not found, or an item with no skeleton:
+// a root's frame is the model's) handed to fn(min, max, bind). How many; 0 (and *why) when nothing reads.
+template <class Read, class Fn>
+int ForItemBoxes(Read&& read, uintptr_t instance, Fn&& fn, const char** why) {
     *why = "";
     uintptr_t res = 0, data = 0;
     uint8_t state = 0;
     uint64_t count = 0;
-    if (instance < 0x10000 || !read(instance + kInstanceResource, &res, sizeof res) || res < 0x10000 || !read(res + kResourceState, &state, 1)) { *why = "the model instance does not read"; return false; }
-    if (state != kLoaded) { *why = "the model is not loaded yet"; return false; }
+    if (instance < 0x10000 || !read(instance + kInstanceResource, &res, sizeof res) || res < 0x10000 || !read(res + kResourceState, &state, 1)) { *why = "the model instance does not read"; return 0; }
+    if (state != kLoaded) { *why = "the model is not loaded yet"; return 0; }
     if (!read(instance + kInstanceMeshes, &data, sizeof data) || !read(instance + kInstanceMeshes + 8, &count, sizeof count) || count < 1 || count > (uint64_t)grannymesh::kMaxMeshes ||
-        data < 0x10000) { *why = "its meshes do not read"; return false; }
+        data < 0x10000) { *why = "its meshes do not read"; return 0; }
     // the item's own skeleton: its bones' names and bind poses (none: every box as it is)
     uintptr_t model = 0, skel = 0, bones = 0;
     int32_t nBones = 0;
@@ -462,7 +461,7 @@ bool ItemBox(Read&& read, uintptr_t instance, BoneBox* out, const char** why) {
         }
         return false;
     };
-    float mn[3] = {1e30f, 1e30f, 1e30f}, mx[3] = {-1e30f, -1e30f, -1e30f};
+    static const float kIdentity[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
     int boxes = 0;
     for (uint64_t m = 0; m < count; ++m) {
         uintptr_t handle = 0, mesh = 0, binds = 0;
@@ -478,25 +477,60 @@ bool ItemBox(Read&& read, uintptr_t instance, BoneBox* out, const char** why) {
             uintptr_t np = 0;
             char name[kNameLen];
             float w[16];
-            if (nBones && read(binds + (uintptr_t)k * kBindingStride + kBindingName, &np, sizeof np) && grannymesh::String(read, np, name) && bindOf(name, w)) {
-                for (int q = 0; q < 8; ++q) {   // its eight corners through its bone's bind pose
-                    const float p[3] = {q & 1 ? b[0] : a[0], q & 2 ? b[1] : a[1], q & 4 ? b[2] : a[2]};
-                    for (int c = 0; c < 3; ++c) {
-                        const float v = p[0] * w[c] + p[1] * w[4 + c] + p[2] * w[8 + c] + w[12 + c];
-                        mn[c] = std::min(mn[c], v);
-                        mx[c] = std::max(mx[c], v);
-                    }
-                }
-            } else {
-                for (int c = 0; c < 3; ++c) { mn[c] = std::min(mn[c], a[c]); mx[c] = std::max(mx[c], b[c]); }
-            }
+            const bool bound = nBones && read(binds + (uintptr_t)k * kBindingStride + kBindingName, &np, sizeof np) && grannymesh::String(read, np, name) && bindOf(name, w);
+            fn(a, b, bound ? w : kIdentity);
             ++boxes;
         }
     }
-    if (!boxes) { *why = "its meshes have no bone boxes"; return false; }
+    if (!boxes) *why = "its meshes have no bone boxes";
+    return boxes;
+}
+
+// A rigid item's box in the model's own frame: the union of its boxes, each put through its bone's bind pose first - a bow is skinned to its limbs and its string,
+// each box about its own bone, and their union as they were was a short fat box at the grip (Serg, 0.188.6, a rogue archer: "one huge orange capsule, ~0.5 m
+// across and short"). What a shield is made of (HeldCapsules' strips across its face). False (and *why) when nothing reads.
+template <class Read>
+bool ItemBox(Read&& read, uintptr_t instance, BoneBox* out, const char** why) {
+    float mn[3] = {1e30f, 1e30f, 1e30f}, mx[3] = {-1e30f, -1e30f, -1e30f};
+    const int boxes = ForItemBoxes(read, instance, [&](const float a[3], const float b[3], const float w[16]) {
+        for (int q = 0; q < 8; ++q) {   // its eight corners through its bone's bind pose
+            const float p[3] = {q & 1 ? b[0] : a[0], q & 2 ? b[1] : a[1], q & 4 ? b[2] : a[2]};
+            for (int c = 0; c < 3; ++c) {
+                const float v = p[0] * w[c] + p[1] * w[4 + c] + p[2] * w[8 + c] + w[12 + c];
+                mn[c] = std::min(mn[c], v);
+                mx[c] = std::max(mx[c], v);
+            }
+        }
+    }, why);
+    if (!boxes) return false;
     *out = BoneBox{};
     for (int c = 0; c < 3; ++c) { out->min[c] = mn[c]; out->max[c] = mx[c]; }
     return true;
+}
+
+// A rigid item's parts, each its own box in its own bone's frame with that bone's bind pose (ForItemBoxes) - what a held WEAPON is made of: the union of a
+// bow's limbs, string and nocked arrow (ItemBox) is as deep as the bow is curved, and its one capsule was ~0.35 m thick round the arrow (Serg, 0.192.15: "со
+// стрелой до сих пор проблемы, она слишком большой имеет куб"); each part alone is as thin as it is: a limb, the string, the arrow's shaft. The longest
+// parts first, up to cap. How many (0 and *why when nothing reads).
+struct ItemPart { BoneBox box; float bind[16]; float length = 0.0f; };
+template <class Read>
+int ItemParts(Read&& read, uintptr_t instance, ItemPart* out, int cap, const char** why) {
+    if (cap <= 0) return 0;
+    std::vector<ItemPart> all;
+    ForItemBoxes(read, instance, [&](const float a[3], const float b[3], const float w[16]) {
+        ItemPart p;
+        for (int c = 0; c < 3; ++c) { p.box.min[c] = a[c]; p.box.max[c] = b[c]; }
+        std::memcpy(p.bind, w, sizeof p.bind);
+        for (int c = 0; c < 3; ++c) {   // its longest side in the model (the bind pose may scale it)
+            const float s = std::sqrt(w[c * 4] * w[c * 4] + w[c * 4 + 1] * w[c * 4 + 1] + w[c * 4 + 2] * w[c * 4 + 2]);
+            p.length = std::max(p.length, (b[c] - a[c]) * s);
+        }
+        all.push_back(p);
+    }, why);
+    std::sort(all.begin(), all.end(), [](const ItemPart& x, const ItemPart& y) { return x.length > y.length; });
+    const int n = std::min(cap, (int)all.size());
+    for (int i = 0; i < n; ++i) out[i] = all[(size_t)i];
+    return n;
 }
 
 // Is a model of this path a monster's (or an NPC's) body - not an item lying on the ground, gold, arrows, a missile, a hero? (The headset test:
@@ -566,6 +600,7 @@ struct Capsule {
     float radius = 0.0f;
     int bone = -1;
     int mirror = -1;   // the other side's bone (BoneBox::mirror)
+    bool limb = false; // a humanoid's limb or trunk between two of its joints (a thigh, a shin, an upper arm...): Keep keeps it before anything else
 };
 
 // A row-vector point through a row-major 4x4: p * M.
@@ -674,7 +709,8 @@ inline float Extent(const Capsule& c) {   // the capsule's longest side: its len
 }
 
 // The capsules of a rig, the trifles left out, the largest kMaxPerRig kept (in place; returns how many) - a left and right pair (Capsule::mirror) kept or
-// left out together: a left shin is not dropped for a cape while its right one stays. height: the body's height in the same units (the highest capsule
+// left out together: a left shin is not dropped for a cape while its right one stays. The limbs (Capsule::limb) first, whatever their size: Akara's robe
+// pieces took every place and her thin legs along their bones none (Serg, 0.192.15: «у нпс нет ног»). height: the body's height in the same units (the highest capsule
 // point over the lowest - the caller may give its own, e.g. from the game's MonStats; <= 0: worked out here).
 inline int Keep(Capsule* caps, int n, float height = 0.0f) {
     if (n <= 0) return 0;
@@ -688,8 +724,9 @@ inline int Keep(Capsule* caps, int n, float height = 0.0f) {
     }
     int k = 0;
     for (int i = 0; i < n; ++i)
-        if (Extent(caps[i]) >= kTrifle * height) caps[k++] = caps[i];
+        if (caps[i].limb || Extent(caps[i]) >= kTrifle * height) caps[k++] = caps[i];
     std::sort(caps, caps + k, [](const Capsule& x, const Capsule& y) {
+        if (x.limb != y.limb) return x.limb;
         return x.radius * x.radius * Extent(x) > y.radius * y.radius * Extent(y);   // by the room they take
     });
     if (k <= kMaxPerRig) return k;

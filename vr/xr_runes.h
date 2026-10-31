@@ -214,7 +214,7 @@ uint32_t HangRunes(const XrCompositionLayerBaseHeader** layers, uint32_t nl, uin
 }
 
 void RunesTeardown() {   // under g_lock or before the session exists: the atlas goes with the session, the pipeline stays like the HUD's
-    if (g_runeOut.sc) { ForgetPending(g_runeOut.sc); xrDestroySwapchain(g_runeOut.sc); }
+    if (g_runeOut.sc) { ForgetPending(g_runeOut.sc); DestroyChain(g_runeOut.sc); }
     g_runeOut = HudOut{};
     g_runeEase.Reset();
     for (UINT64& d : g_runeCbDone) d = 0;

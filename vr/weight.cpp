@@ -26,6 +26,7 @@
 #include "hero_strength.h"
 #include "world_anchor.h"
 #include "hold.h"
+#include "world_contact.h"   // [weight] world_contact: the walls' and the note's types (the calls go through SetWallsSource's pointers)
 #include "doll_view.h"
 #include "shoulder_draw.h"
 #include "shoulder_grip.h"
@@ -94,9 +95,12 @@ std::atomic<HeroModeFn> g_heroMode{nullptr};
 std::atomic<LibraryFn> g_libraryEnsure{nullptr};   // weightlib::Ensure (vrcam)
 std::atomic<LibraryFn> g_gripEnsure{nullptr};      // griplib::Ensure (vrcam)
 std::atomic<BodiesFn> g_bodiesSrc{nullptr};        // [weight] monster_bodies: meleetouch::Bodies (vrcam)
+std::atomic<WallsFn> g_wallsSrc{nullptr};          // [weight] world_contact: worldcontact::Walls, NoteWeapon (vrcam)
+std::atomic<WallNoteFn> g_wallNote{nullptr};
 std::atomic<StabFn> g_stabSrc{nullptr};            // [weight] stab_in: meleetouch::StabbingNow (vrcam)
 unsigned g_stabTold = 0;                           // [weight] stab_in: the log's lines of wounds so far (the first few dozen told)
 std::atomic<StabNoteFn> g_stabNoteSink{nullptr};   // [debug] stab_debug: vrcam's
+std::atomic<StabEnterFn> g_stabEnterSink{nullptr};   // [weight] impale_drag: knock_down's
 monsterbodies::View g_stabView;                    // ... the view the bodies came through (the room's points drawn back in the render world)
 bool g_stabViewOk = false;
 bodymotion::Tracker g_bodyMotion;                  // [gameplay] melee_thrust_with_run: the bodies' velocities in the room (the stab counts the hero's run)
@@ -289,6 +293,8 @@ heft::stab::Params StabParamsOf(const skel::Input::Weight& wt) {
 // (vr/stab_debug.h) with its points drawn back in the render world through the view the bodies came through.
 void TellStab(const Head& head, const hh::Settings& s, bool debug) {
     const heft::stab::Report& st = g_hold.LastStab();
+    if (st.entered)
+        if (const StabEnterFn enter = g_stabEnterSink.load()) enter(st.id, std::max(0, g_hold.Main()) & 1, (float)st.speed);
     if ((st.entered || st.left) && g_stabTold < 60) {
         ++g_stabTold;
         if (st.entered) LogF("vrcam: weight - stab: the point went into monster %u's body at %.1f m/s (%.1f cm in at once)", st.id, st.speed, st.depth * 100.0);
@@ -1316,6 +1322,30 @@ void Apply(skel::Input* in, Out* out) {
             g_hold2.SetBodies(nBodies > 0 ? g_monsterCaps : nullptr, nBodies);   // (a weapon in each hand: the other one meets the same bodies - and the first's pieces, StepSecond)
             s.bodies = n1 > 0;
         }
+        // [weight] world_contact: the level's walls near the head, from the render world into the room through the same view (vr/world_contact.h); the weapon is put back
+        // on their faces after the step (cleanroom/heft/walls.h) - both weapons of a pair
+        LARGE_INTEGER wallsAt{};
+        int nWalls = 0;
+        monsterbodies::View wallView;
+        {
+            static heft::walls::Wall walls[heft::walls::kMaxWalls];
+            const WallsFn src = g_wallsSrc.load();
+            if (wt.worldContact && wt.worldOk && src) {
+                QueryPerformanceCounter(&wallsAt);
+                for (int i = 0; i < 3; ++i) { wallView.eye[i] = wt.worldEye[i]; wallView.camR[i] = wt.worldCamR[i]; wallView.camF[i] = wt.worldCamF[i]; }
+                wallView.upm = std::clamp(wt.worldUpm, 1.0f, 12.0f);
+                nWalls = src(wallView, walls, heft::walls::kMaxWalls);
+                const float ident[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+                for (int i = 0; i < nWalls; ++i) {   // (the hands' frame into the room: the head's place and its turn about the vertical)
+                    const float c[3] = {(float)walls[i].c.x, (float)walls[i].c.y, (float)walls[i].c.z};
+                    walls[i].c = ToRoom(head, c, ident).pos;
+                    for (int k = 0; k < 3; ++k) walls[i].axis[k] = heft::Rotate(head.yaw, walls[i].axis[k]);
+                }
+            }
+            g_hold.SetWalls(nWalls > 0 ? walls : nullptr, nWalls);
+            g_hold2.SetWalls(nWalls > 0 ? walls : nullptr, nWalls);
+            s.walls = nWalls > 0;
+        }
         // [weight] stab_in: a point-first strike goes into the body - while hit by touch says the weapon in the hand that holds it (or the other hand on it) is thrusting now
         s.stab = wt.stabIn && wt.monsterBodies;
         s.stabParams = stickstr::Apply(StabParamsOf(wt), wt.stick);   // (its sliders, live; [weight] stick_by_strength / stick_pct: as hard as the hero's strength says)
@@ -1353,6 +1383,30 @@ void Apply(skel::Input* in, Out* out) {
             DualKnock(g_hold, "the first");
         }
         g_steelKg.store(g_hold.Placed() ? (float)g_hold.SteelKg() : 0.0f);
+        if (nWalls > 0) {   // [weight] world_contact: what the weapon met - a pulse at a new strike, the log, the debug view (the room's points back in the render world)
+            const WallNoteFn note = g_wallNote.load();
+            LARGE_INTEGER end;
+            QueryPerformanceCounter(&end);
+            const heft::walls::Report& c = g_hold.LastWall();
+            worldcontact::WeaponNote n;
+            n.walls = c.walls;
+            n.id = c.id;
+            n.approach = (float)c.approach;
+            n.depthCm = (float)(c.depth * 100.0);
+            n.returned = c.returned;
+            n.ignored = c.ignored;
+            n.costUs = (float)((double)(end.QuadPart - wallsAt.QuadPart) * 1e6 / (double)f.QuadPart);
+            for (int side = 0; side < 2; ++side) n.holds[side] = g_out[side].holds;
+            auto toRender = [&](const V3& room, float out[3]) {
+                float hd[3], q[4];
+                FromRoom(head, Pose {room, {}}, hd, q);
+                return monsterbodies::HeadToRender(wallView, hd, out);
+            };
+            if (c.walls > 0) toRender(c.point, n.point);
+            const int m = g_hold.Main();
+            if (g_hold.Held() && m >= 0 && m < 2) n.controllerOk = toRender(hi[m].pose.pos, n.controller) && toRender(g_hold.OnWeapon(m).pos, n.drawn);
+            if (note) note(n);
+        }
         if (wt.monsterBodies && wt.worldOk) {   // what the weapon met: a pulse in the hands that hold it when it strikes a body, a line for the log, the cost
             LARGE_INTEGER end;
             QueryPerformanceCounter(&end);
@@ -1672,8 +1726,13 @@ void SetLibrarySource(LibraryFn ensure) { g_libraryEnsure.store(ensure); }
 void SetGripLibrarySource(LibraryFn ensure) { g_gripEnsure.store(ensure); }
 void SetActionFrameSource(ActionFrameFn fn) { g_actionFrame.store(fn); }
 void SetBodiesSource(BodiesFn fn) { g_bodiesSrc.store(fn); }
+void SetWallsSource(WallsFn walls, WallNoteFn note) {
+    g_wallsSrc.store(walls);
+    g_wallNote.store(note);
+}
 void SetStabSource(StabFn fn) { g_stabSrc.store(fn); }
 void SetStabNoteSink(StabNoteFn fn) { g_stabNoteSink.store(fn); }
+void SetStabEnterSink(StabEnterFn fn) { g_stabEnterSink.store(fn); }
 void SetBodyPushSink(BodyPushFn fn) { g_bodyPush.store(fn); }
 bool LastContact(ContactNote* out) {
     AcquireSRWLockShared(&g_lock);
@@ -1881,8 +1940,10 @@ void SetLibrarySource(LibraryFn) {}
 void SetGripLibrarySource(LibraryFn) {}
 void SetActionFrameSource(ActionFrameFn) {}
 void SetBodiesSource(BodiesFn) {}
+void SetWallsSource(WallsFn, WallNoteFn) {}
 void SetStabSource(StabFn) {}
 void SetStabNoteSink(StabNoteFn) {}
+void SetStabEnterSink(StabEnterFn) {}
 void SetBodyPushSink(BodyPushFn) {}
 bool LastContact(ContactNote* out) { if (out) *out = ContactNote{}; return false; }
 void SetBackBody(const float*, const float*) {}

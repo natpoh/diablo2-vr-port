@@ -66,8 +66,20 @@ bool LabelsTilted() {
 // comes out for that too, drawn back where the game puts it.
 // In first person (F4) the plate has its own depth, apart from the item labels' (labels_near_body): then the effect needs its box to tell it from the labels (vr/plate_look.h).
 bool PlateOwnDepth() { return g_enabled.load() && FullBody(); }
+// [hud] monster_stereo_by_distance: the plate's depth by its monster's distance - the settings, and the depth that decides whether the box is needed.
+platelook::DepthByDistance PlateDepthByDistance() {
+    platelook::DepthByDistance d;
+    d.nearPercent = g_set.plateStereoNear.load();
+    d.farPercent = g_set.plateStereoFar.load();
+    d.nearM = g_set.plateStereoNearM.load();
+    d.farM = g_set.plateStereoFarM.load();
+    return d;
+}
+float PlateDepthForBox() {
+    return platelook::DepthForBox(g_set.plateStereoByDistance.load(), g_set.plateNearBody.load(), PlateDepthByDistance(), g_set.labelsNearBody.load());
+}
 bool PlateWanted() {
-    return platelook::PlateNeedsBox(PlateOwnDepth(), g_set.plateNearBody.load(), g_set.labelsNearBody.load(), g_set.plateAlpha.load(), g_set.plateSize.load(),
+    return platelook::PlateNeedsBox(PlateOwnDepth(), PlateDepthForBox(), g_set.labelsNearBody.load(), g_set.plateAlpha.load(), g_set.plateSize.load(),
                                     g_set.plateFar.load(), g_set.plateDepthBody.load());
 }
 // Eyes by turns: the plate's layer is laid out for the eye drawn each frame - the effect needs its box and its target's depth to show it the same in each

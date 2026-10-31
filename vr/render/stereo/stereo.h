@@ -41,6 +41,7 @@ bool Wanted();
 bool XrBegin();
 void XrEnd();
 void XrPresent(reshade::api::effect_runtime* rt, ID3D12Device* dev, ID3D12CommandQueue* q, ID3D12Resource* bb);
+void ShotPresent(ID3D12Device* dev, ID3D12CommandQueue* q, ID3D12Resource* bb);   // [headset_shot] on FlatVR: this present's picture (vr/headset_shot.h)
 extern std::atomic<int> g_ahead;
 extern std::atomic<int> g_capturing;
 extern std::atomic<uint32_t> g_depthBinds;

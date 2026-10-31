@@ -680,6 +680,104 @@ int main() {
 		CHECK(GetFollow(&got, 7020));
 	}
 
+	// ---- [hud] monster_plate_smooth: the plate held steady (Serg, 2026-10-31: "the plates keep shaking and jittering") ----
+	{
+		// the spring: critically damped - from a step it never passes the target, and is nearly there in a second
+		float x = 0.0f, v = 0.0f, most = 0.0f;
+		for (int f = 0; f < 90; ++f) {
+			SpringStep(&x, &v, 1.0f, SteadyW(v), 1.0f / 90.0f);
+			most = std::max(most, x);
+		}
+		CHECK(most <= 1.0f + 1e-5f && Near(x, 1.0f, 0.01f));
+		// any step size: still no overshoot (it is solved, not stepped)
+		x = 0.0f; v = 0.0f;
+		SpringStep(&x, &v, 1.0f, kSteadyMaxW, 0.2f);
+		CHECK(x <= 1.0f + 1e-6f && x > 0.99f);
+		// its stiffness: low at rest, higher with speed, capped
+		CHECK(Near(SteadyW(0.0f), kSteadyRestW) && SteadyW(1.0f) > SteadyW(0.2f) && Near(SteadyW(100.0f), kSteadyMaxW) && Near(SteadyW(std::nanf("")), kSteadyRestW));
+
+		// a head that bobs 3 cm up and down at 2 Hz on a monster standing still: what is left of it is small, and there is no drift
+		Steady<1> h;
+		float lo = 1e9f, hi = -1e9f;
+		for (int f = 0; f < 270; ++f) {
+			const float bob = 1.8f + 0.03f * std::sin(2.0f * 3.14159265f * 2.0f * f / 90.0f);
+			const float y = SteadyValue(&h, 0x10, bob, 1.0f / 90.0f);
+			if (f >= 90) { lo = std::min(lo, y); hi = std::max(hi, y); }
+		}
+		CHECK(hi - lo < 0.4f * 0.06f && Near(0.5f * (lo + hi), 1.8f, 0.01f));
+		// a monster running 5 m/s: followed closely (well under the 2 v / w of the spring at rest), not left behind
+		Steady<1> run;
+		float pos = 0.0f, held = 0.0f;
+		for (int f = 0; f < 180; ++f) {
+			pos = 5.0f * f / 90.0f;
+			held = SteadyValue(&run, 0x10, pos, 1.0f / 90.0f);
+		}
+		CHECK(pos - held > 0.0f && pos - held < 0.25f && pos - held < 2.0f * 5.0f / kSteadyRestW * 0.25f);
+		// the game's steps (the place moves 25 times a second, the frames come 90): the steps are taken out
+		Steady<1> st;
+		float worst = 0.0f, prevHeld = 0.0f;
+		for (int f = 0; f < 270; ++f) {
+			const float t = f / 90.0f, stepped = std::floor(t * 25.0f) / 25.0f * 2.0f;   // walking 2 m/s in 25 Hz steps
+			const float y = SteadyValue(&st, 0x10, stepped, 1.0f / 90.0f);
+			if (f > 90) worst = std::max(worst, std::fabs((y - prevHeld) - 2.0f / 90.0f));
+			prevHeld = y;
+		}
+		CHECK(worst < 0.5f * 2.0f / 25.0f);   // each frame's move far smoother than a step of 8 cm (raw: 0 or 8 cm a frame)
+		// another target, a long pause, a number that is not one: it starts again at the target, no glide from the last one
+		Steady<1> t;
+		SteadyValue(&t, 0x10, 1.0f, 0.0f);
+		CHECK(Near(SteadyValue(&t, 0x20, 9.0f, 1.0f / 90.0f), 9.0f));
+		CHECK(Near(SteadyValue(&t, 0x20, 3.0f, 1.0f), 3.0f));
+		CHECK(Near(SteadyValue(&t, 0x20, 5.0f, -1.0f), 5.0f));
+		CHECK(Near(SteadyValue(&t, 0x20, std::nanf(""), 1.0f / 90.0f), 5.0f));   // not a number: what is held stays
+		const float after = SteadyValue(&t, 0x20, 6.0f, 1.0f / 90.0f);
+		CHECK(after > 5.0f && after < 5.5f);   // (and goes on from there)
+
+		// where the camera sees a point: the projection, from a guess some way off
+		g_cam.Set(-10.0f, 70.0f, 1.7f);
+		const float P[3] = {0.8f, 1.9f, 7.0f};
+		float sx = 0.0f, sy = 0.0f, got[2] = {};
+		CHECK(g_cam.Project(P, &sx, &sy));
+		const float guess[2] = {sx + 60.0f, sy - 45.0f};
+		CHECK(ScreenOf(&CamRay, P, g_cam.upm, guess, got) && Near(got[0], sx, 0.05f) && Near(got[1], sy, 0.05f));
+		const float behind[3] = {0.0f, 1.7f, -5.0f};
+		CHECK(!ScreenOf(&CamRay, behind, g_cam.upm, guess, got) && !ScreenOf(&NoRay, P, g_cam.upm, guess, got) && !ScreenOf(&CamRay, P, 0.0f, guess, got));
+
+		// the hook's step: a monster standing 6 m off whose game head point shakes by 6 px - the plate's point barely moves, and stays on the head
+		const float k = meleetouch::kGroundShear, fx = 0.5f, fz = 6.0f, ht = 1.8f;
+		const float head[3] = {fx + ht * k, ht, fz + ht * k};
+		float hx = 0.0f, hy = 0.0f;
+		g_cam.Set(0.0f, 70.0f, 1.7f);
+		CHECK(g_cam.Project(head, &hx, &hy));
+		const float foot[2] = {fx * g_cam.upm, fz * g_cam.upm};
+		Steady<3> s3;
+		float minY = 1e9f, maxY = -1e9f, minX = 1e9f, maxX = -1e9f;
+		bool ok = true;
+		for (int f = 0; f < 180; ++f) {
+			const float shake = (f % 2 ? 6.0f : -6.0f);
+			const float px[2] = {hx + 0.5f * shake, hy + shake};
+			float o[2];
+			ok = ok && SteadyHead(&s3, 0x30, px, foot, 0.0f, g_cam.upm, &CamRay, 1.0f / 90.0f, o);
+			if (f >= 90) { minY = std::min(minY, o[1]); maxY = std::max(maxY, o[1]); minX = std::min(minX, o[0]); maxX = std::max(maxX, o[0]); }
+		}
+		CHECK(ok && maxY - minY < 1.0f && maxX - minX < 0.5f);                // 12 px of shake down to under a pixel
+		CHECK(Near(0.5f * (minY + maxY), hy, 1.0f) && Near(0.5f * (minX + maxX), hx, 0.5f));   // on the monster's head (its axis), not off it
+		// your head turns: the plate goes with the world at once - where the camera now sees the held head, no lag behind the turn
+		g_cam.Set(8.0f, 70.0f, 1.7f);   // looking up 8 degrees: everything goes down the screen
+		float nx = 0.0f, ny = 0.0f, o2[2];
+		CHECK(g_cam.Project(head, &nx, &ny));
+		const float px2[2] = {nx, ny};
+		CHECK(SteadyHead(&s3, 0x30, px2, foot, 0.0f, g_cam.upm, &CamRay, 1.0f / 90.0f, o2) && Near(o2[0], nx, 0.5f) && Near(o2[1], ny, 1.0f) && ny > hy + 50.0f);
+		// no ray, no scale: nothing changed
+		float o3[2] = {-1.0f, -1.0f};
+		CHECK(!SteadyHead(&s3, 0x30, px2, foot, 0.0f, g_cam.upm, &NoRay, 0.01f, o3) && !SteadyHead(&s3, 0x30, px2, foot, 0.0f, 0.0f, &CamRay, 0.01f, o3));
+		// the switch
+		SetSteady(true);
+		CHECK(Steadying());
+		SetSteady(false);
+		CHECK(!Steadying());
+	}
+
 	std::printf("plate_world_test: %d checks, %d failed\n", g_checks, g_fails);
 	return g_fails == 0 ? 0 : 1;
 }

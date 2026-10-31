@@ -1245,11 +1245,12 @@ constexpr const char* kDomeUnitSummit = "data/hd/env/model/d2r_vr/sky/sky_dome_s
 // loadedAt / placedAt: when (GetTickCount64) the definition was asked and the instance placed; tries: placings that made no model; the
 // rest what its log last said
 struct Dome { Shared def{}, inst{}; uint32_t root = 0xFFFFFFFFu; bool loadTried = false, parked = true; int test = 0, tries = 0;
-              ULONGLONG loadedAt = 0, placedAt = 0, modelAt = 0; std::string told = "?"; float toldR = -1.0f; bool toldPlace = false; };
+              ULONGLONG loadedAt = 0, placedAt = 0, modelAt = 0; std::string told = "?"; float toldR = -1.0f; bool toldPlace = false;
+              bool fileMissing = false; ULONGLONG fileCheckedAt = 0; };   // (its unit's file not there yet: looked for again - DomeRun)
 std::vector<Shared> g_domeOld;   // placings given up on (no model made): laid away, kept - the game's (never let go, as engine_unit's)
 Dome g_dome;
-// [sky] game_dome_caves: the same dome, black, round the eye underground at the models' radius ([render] model_radius x
-// [sky] game_dome_caves_size) - Serg (2026-10-27): "мы можем всё заворачивать в чёрную сферу". Past a cave's ceiling rim lay the void; the
+// [sky] game_dome_caves: the same dome, black, round the eye underground at its radius ([sky] game_dome_caves_radius_m,
+// before it a share of [render] model_radius) - Serg (2026-10-27): "мы можем всё заворачивать в чёрную сферу". Past a cave's ceiling rim lay the void; the
 // game's fog pass gave it its torch-lit mist whole (a light band behind the fires, PC1 2026-10-27). Inside the dome there is no void: the
 // game's fog lands on the dome as on any wall, black on black. Its model at another of the game's developer test paths (Tests/test_cube_02,
 // dome_assets.cpp), its texture plain black (make_sky_dome.py --cave).
@@ -1329,8 +1330,9 @@ std::string ModelState(void* placed, std::atomic<unsigned>* indices) {
     }
     return s.empty() ? "no entity of it has a model instance (no ModelComponent made: the model not taken)" : s;
 }
-// (the sky dome's counts its mesh's indices for the 10 s line; the cave dome's not)
-std::string DomeModelState(const Dome& d = g_dome) { return ModelState(d.inst.p, &d == &g_dome ? &g_domeIndices : nullptr); }
+// (a sky dome's - any act's, one shown at a time - counts its mesh's indices for the 10 s line; the cave dome's not. Act 1's alone did: in
+// acts 2 - 5 the line watched the default count, 5952, and said "NONE: the game does not draw it" of a dome drawn - 0.192.5, act 5, flat F2)
+std::string DomeModelState(const Dome& d = g_dome) { return ModelState(d.inst.p, &d != &g_caveDome ? &g_domeIndices : nullptr); }
 // Any entity of the placed instance has a model instance (its ModelComponent made)
 bool HasModel(void* placed) {
     uintptr_t list = 0;
@@ -1368,6 +1370,11 @@ std::string ModDataText(const char* rel, std::wstring* file) {
 std::atomic<bool> g_domeShown{false};
 std::atomic<float> g_domeRadius{0.0f};   // the radius it is laid at now (skydome::DrawableRadius)
 bool DomeShown() { return g_domeShown.load(std::memory_order_relaxed); }
+// The shown act's dome's band in the domes' picture (shared/sky_atlas.h: act - 1), -1: none shown, or a debug dome of its own picture
+int DomeBand() {
+    const int act = g_fogAct.load();
+    return g_domeShown.load(std::memory_order_relaxed) && act >= 1 && act <= 5 && g_dome.test == 0 ? act - 1 : -1;
+}
 float DomeRadius() { return g_domeRadius.load(std::memory_order_relaxed); }
 // Why not shown now ("" = shown), for the log (vr/sky_dome.h)
 const char* DomeWhyNot() {
@@ -1440,7 +1447,23 @@ void SkyDomeFrame() {
     }
     // [sky] game_skybox (an option, off by default): at the Summits the dome behind the game's mist - as far as the depth holds it (skydome::SkyboxRadius)
     const bool skybox = g_set.gameSkybox.load() && g_gameSkyboxHere.load();
-    const float radius = skybox ? skydome::SkyboxRadius(g_set.gameSkyRadius.load(), g_lastNear.load()) : g_set.gameSkyRadius.load();
+    float radius = skybox ? skydome::SkyboxRadius(g_set.gameSkyRadius.load(), g_lastNear.load()) : g_set.gameSkyRadius.load();
+    // [sky] dome_past_far: off VR F4 (the flat game's views, VR F2) the dome past the far end of the game's depth range in every pixel on the
+    // screen - nearer, the game's own haze lay on part of it (skydome::PastFarRadius); F4 as set
+    if (g_set.domePastFar.load() && !viewgate::F4()) {
+        float proj[4] = {};
+        AcquireSRWLockShared(&g_skyLock);
+        if (g_skyView[0].proj_ok) memcpy(proj, g_skyView[0].proj, sizeof proj);
+        ReleaseSRWLockShared(&g_skyLock);
+        const float asked = radius;
+        radius = skydome::DrawableRadius(skydome::PastFarRadius(asked, depthsrc::LastFar(), proj), g_lastNear.load());
+        static float toldPast = -1.0f;
+        if (radius != asked && std::fabs(radius - toldPast) > 50.0f) {
+            toldPast = radius;
+            LogF("vrcam: game sky - the dome laid %.0f units round, not %.0f: past the game's depth range (its far end %.0f) in every pixel of this "
+                 "view, so the game's own haze leaves it all ([sky] dome_past_far; VR F4 as set)", radius, asked, depthsrc::LastFar());
+        }
+    }
     static bool toldSkybox = false;
     if (skybox && !toldSkybox && !*why)
         LogF("vrcam: game sky - the Arreat Summit: the dome laid %.0f units round, as far as the depth holds (game_sky_radius %.0f elsewhere) - the "
@@ -1465,20 +1488,33 @@ void SkyDomeFrame() {
 // away, small under the ground, while not; true while shown. `tag` heads its log lines.
 bool DomeRun(Dome& d, const char* unit, const char* why, float radius, const char* tag) {
     const bool want = !*why;
-    if (want && !d.loadTried) {   // the definition, once a run - and only a file that holds what the game needs (vr/sky_dome.h)
+    // The definition, once a run - and only a file that holds what the game needs (vr/sky_dome.h). Its file not there (yet): looked for again
+    // every 3 s - Serg on 0.192.1: "Sky and fog drawn by" set to the game while it ran, the Settings window made the files a moment (or
+    // minutes) later, and the dome was never asked again: our old sky all along.
+    const ULONGLONG checkMs = GetTickCount64();
+    if (want && (!d.loadTried || (d.fileMissing && !d.def.p && checkMs - d.fileCheckedAt >= 3000))) {
+        const bool again = d.loadTried;
         d.loadTried = true;
+        d.fileCheckedAt = checkMs;
         std::wstring file;
         const std::string text = ModDataText(unit, &file);
         if (const char* bad = skydome::UnitFileProblem(text)) {
-            LogF("vrcam: %s - the dome's unit NOT given to the game: %s - %s (tools/game_sky/make_sky_dome.py writes it); no dome", tag,
-                 Utf8(file.c_str()).c_str(), bad);
+            if (!again)
+                LogF("vrcam: %s - the dome's unit NOT given to the game: %s - %s (the Settings window makes it); looked for again every 3 s", tag,
+                     Utf8(file.c_str()).c_str(), bad);
+            d.fileMissing = true;
         } else if (LoadDef(unit, &d.def) && d.def.p) {
+            d.fileMissing = false;
             d.loadedAt = GetTickCount64();
-            LogF("vrcam: %s - the dome's definition loaded: %s (one unit root; the model file asks UnlitMaterial - models_unlit_p -, "
-                 "lightMask 0, shadowMask 0; whether the game drew it: the 10 s line's draws of its mesh)", tag, unit);
+            LogF("vrcam: %s - the dome's definition loaded%s: %s (one unit root; the model file asks UnlitMaterial - models_unlit_p -, "
+                 "lightMask 0, shadowMask 0; whether the game drew it: the 10 s line's draws of its mesh)", tag, again ? " (its file there now)" : "",
+                 unit);
         } else {
+            d.fileMissing = false;
             d.def = {};
-            LogF("vrcam: %s - the dome's definition did NOT load (%s): the game refused it - no dome", tag, unit);
+            LogF("vrcam: %s - the dome's definition did NOT load (%s): the game refused it - no dome%s", tag, unit,
+                 again ? " (its files were written after the game started: the game may take the mod's files only at its start - restart the game)"
+                       : "");
         }
     }
     if (!d.def.p) {   // (never loaded: wanted nowhere yet - the reason told all the same, once a change)
@@ -1601,7 +1637,7 @@ void CaveDomeFrame() {
     in.inWorld = g_inWorld.load();
     in.underground = g_underground.load();
     in.eyeOk = g_eyeOk.load();
-    const float r = skydome::CaveRadius(g_set.modelRadius.load(), g_set.gameDomeCavesSize.load());
+    const float r = skydome::CaveRadius(g_set.gameDomeCavesRadius.load());
     g_caveDomeShown.store(DomeRun(g_caveDome, kDomeUnitCave, skydome::CaveWhyNot(in), r, "cave dome"));
 }
 

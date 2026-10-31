@@ -5,6 +5,9 @@
 // five "Swap Chain" resources had just been freed - those five), and the device was removed (vr/chain_reaper.h). Here an image is known by its pixels, its size
 // and its hot spot: the same picture under a new handle takes the swapchain it already has, nothing made, nothing destroyed. Up to kKeep pictures are kept for
 // the session; a new one past that puts the least lately used one out (to the reaper), never the one in use.
+//
+// Since 0.192 (SteamVR gives a session 16 swapchains, vr/chain_count.h) xr.cpp keeps no swapchain per picture: the picture goes into ONE swapchain
+// (g_ptrAtlas), uploaded when Key changes. Cache is no longer used there.
 #pragma once
 
 #include <cstddef>

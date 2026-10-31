@@ -67,6 +67,7 @@ void HsStep(D2RVR_XrInput& in, bool focused) {
     f.spanInUse = calib::SpanInUseM();   // the Body page's Arm span shows it while nothing is stored
     f.openGuide = on ? firststart::OpenRequest() : -1;
     f.view = on ? 4 : 0;   // the panel is F4's: the view it stands in is F4 (viewgate has no number)
+    if (on && g_hs.model.open && g_hs.model.page == hset::kPageOptions) f.players = playerscmd::Now();   // the Options page's Players row: the game's count (read, cheap)
     bool grips = true;
     for (int h = 0; h < 2; ++h) {
         const D2RVR_XrHand& o = in.hand[h];
@@ -125,6 +126,12 @@ void HsStep(D2RVR_XrInput& in, bool focused) {
                 Log("vrcam: openxr - headset settings: Apply could not be handed to the ini's thread");
             }
             break;
+        case hset::Do::Coop:   // the Co-op page: a [relay] line of D2R Rooms' d2r-rooms.ini, written by the ini's thread (it logs the write)
+            if (!hset::store::SubmitCoop(out.action.coop)) {
+                g_hs.model.CoopSubmitFailed(out.action.coop.sequence);
+                Log("vrcam: openxr - headset settings: Co-op: the change could not be handed to the ini's thread");
+            }
+            break;
         case hset::Do::Recentre:
             Recenter();
             Log("vrcam: openxr - headset settings: Recentre view");
@@ -142,6 +149,9 @@ void HsStep(D2RVR_XrInput& in, bool focused) {
             break;
         case hset::Do::GuideDone:   // the guide's last page: the panel has closed, the guide is over (out.guideEnd told it)
             Log("vrcam: openxr - headset settings: the first-start guide's Done");
+            break;
+        case hset::Do::Players:   // the Options page's Players row: "/players N" into the game's own chat commands, on the UI thread (vr/players_cmd.cpp logs it)
+            playerscmd::Ask(out.action.players);
             break;
         default: break;
     }

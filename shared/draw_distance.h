@@ -58,4 +58,20 @@ inline int Nearest(float modelRadius) {
     return best;
 }
 
+// The two domes' radii are set in metres (Serg, 2026-10-31: "тут радиус в метрах, а не единицах"): [sky] game_sky_radius_m and
+// game_dome_caves_radius_m, the game's world units at kUnitsPerMetre - the mod's own world units a metre at the hero's size (melee_touch's
+// and melee_boxes' upm; Serg's live scale, the hero's 7.05-unit eyes over his 1.76 m, is 4.0). One number for both keys and the slider's
+// stops, so the dome stays at the models' radius whoever plays. The keys they took over from count while the new ones are not in the ini:
+inline constexpr float kUnitsPerMetre = 4.0f;
+inline float ToUnits(float metres) { return metres * kUnitsPerMetre; }
+inline float ToMetres(float units) { return units / kUnitsPerMetre; }
+// [sky] game_sky_radius: world units
+inline float SkyRadiusM(float oldUnits) { return ToMetres(oldUnits); }
+// [sky] game_dome_caves_size: a share of [render] model_radius (world units)
+inline float CaveRadiusM(float oldShare, float modelRadius) { return ToMetres(oldShare * modelRadius); }
+// Neither key in the ini: the cave dome 200 m round (Serg, 2026-10-31: "200 м по умолчанию")
+inline constexpr float kCaveRadiusDefaultM = 200.0f;
+// The slider moves the models' radius from `oldModel` to `newModel`: the cave dome keeps its share of it, as the share key did by itself.
+inline float CaveRadiusFollowing(float caveM, float oldModel, float newModel) { return oldModel > 0.0f ? caveM * newModel / oldModel : caveM; }
+
 }  // namespace drawdistance

@@ -96,4 +96,17 @@ unsigned RemotePlaced(unsigned* wanted);
 struct PresetPiece { uint32_t parent; float local[3]; float world[3]; };
 bool PresetPieces(const float (*places)[3], int n, std::vector<PresetPiece>* out);
 
+// [weight] world_contact (vr/world_contact.h): the level's entities near the hero as the renderer draws them - each one's id, its world matrix and its model's
+// own bounds (render units; the 0x60-byte bounds storage, found by its world boxes agreeing with the matrices) - the level's pieces only (a preset's
+// child: walls, pillars, props, trees), within radiusM across the ground of `hero` (render units) and kBelow .. kAbove + 0.5 m of his floor. Read only, whether
+// knock props run or not; a whole pass over the transforms (a worker, never the game's threads). False (and *why): the registry, the transforms or the
+// bounds do not read. knows (may be null): whether a preset entity id is in the caller's catalogue - the 4-byte storage of the preset ids is the one whose values it
+// knows most of (as the props' catalogue finds it); each entity's preset id (0: none found) and its place under its parent (the preset's position) are given then.
+struct LevelEntity { uint32_t id; float world[16]; float lo[3], hi[3]; uint32_t preset; float local[3]; };
+using KnowsFn = bool (*)(uint32_t presetId);
+// [weight] world_contact: is the preset entity with this id at this place (its transform's local position) a prop the catalogue knows - one knock props / grab props
+// move (never a wall)? False with no catalogue. Any thread (the catalogue is read once, at Init).
+bool IsMovable(uint32_t presetId, const float local[3]);
+bool LevelBoxes(const float hero[3], float upm, float radiusM, KnowsFn knows, std::vector<LevelEntity>* out, const char** why);
+
 }  // namespace knockprops

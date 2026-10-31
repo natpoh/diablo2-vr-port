@@ -20,6 +20,7 @@
 #include <cstdio>
 #include <cstring>
 
+#include "d2r_vr_fall.h"   // [weight] knock_down: the humanoid's joints (MapJoints)
 #include "monster_rig.h"
 
 namespace monsterhumanoid {
@@ -138,7 +139,173 @@ struct Verdict {
     uint8_t bodyWord[kMaxBones] = {}; // each bone: 1 its name says it is the body (BodyWord) - [weight] monster_bodies keeps it
     uint8_t notLimb[kMaxBones] = {};  // each bone: 1 its name says it is no limb (NotLimbName) - [weight] monster_ragdoll_all leaves it out
     char said[240] = {};              // the limbs by their first bones' names (the log)
+    // [weight] knock_down: the bone whose origin is each joint of the knock-down's humanoid (shared/d2r_vr_fall.h order; -1: none - the mod puts it by its
+    // neighbours), and whether every joint it cannot do without was found (MapJoints)
+    int16_t joint[D2RF_JOINTS] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
+    bool joints = false;
+    char jointsSaid[160] = {};        // the joints by bone index, or what was missing (the log)
 };
+
+// [weight] knock_down: a limb bone's place in its chain, by its name's words. Mixamo's LeftArm / LeftForeArm / LeftHand, a Biped's L UpperArm / L Forearm,
+// "R_upr_arm_bind_jnt", "LeftUpLeg" / "LeftLeg" / "LeftFoot" / "LeftToeBase", "Bip01 L Calf". A word that tells nothing ("leg_01"): none - the chain's order
+// decides (MapJoints).
+enum Role : int8_t { kRoleNone, kRoleClavicle, kRoleShoulderWord, kRoleUpper, kRoleFore, kRoleHand, kRoleHip, kRoleThigh, kRoleKnee, kRoleAnkle, kRoleToe };
+inline Role RoleOf(const char* name, bool arm) {
+    char w[kMaxWords][kWordLen];
+    const int n = Words(name, w, kMaxWords);
+    const auto has = [&](const char* const* list) {
+        for (int i = 0; i < n; ++i)
+            if (Is(w[i], list)) return true;
+        return false;
+    };
+    if (arm) {
+        static const char* const kHand[] = {"hand", "wrist", "palm", nullptr};
+        static const char* const kFore[] = {"forearm", "fore", "lowerarm", "lower", "lwr", "elbow", "lo", nullptr};
+        static const char* const kClav[] = {"clavicle", "clav", "collar", "collarbone", nullptr};
+        static const char* const kUpper[] = {"upperarm", "upper", "upr", "up", nullptr};
+        static const char* const kShoulder[] = {"shoulder", nullptr};
+        static const char* const kArm[] = {"arm", nullptr};
+        if (has(kHand)) return kRoleHand;
+        if (has(kFore)) return kRoleFore;
+        if (has(kClav)) return kRoleClavicle;
+        if (has(kUpper)) return kRoleUpper;
+        if (has(kShoulder)) return kRoleShoulderWord;
+        if (has(kArm)) return kRoleUpper;
+        return kRoleNone;
+    }
+    static const char* const kToe[] = {"toe", "toes", "ball", nullptr};
+    static const char* const kAnkle[] = {"foot", "ankle", nullptr};
+    static const char* const kKnee[] = {"calf", "shin", "knee", "lowerleg", "lower", "lwr", "lo", nullptr};
+    static const char* const kThigh[] = {"thigh", "upperleg", "upper", "upr", "up", nullptr};
+    static const char* const kHip[] = {"hip", "hips", "pelvis", nullptr};
+    if (has(kToe)) return kRoleToe;
+    if (has(kAnkle)) return kRoleAnkle;
+    if (has(kKnee)) return kRoleKnee;
+    if (has(kThigh)) return kRoleThigh;
+    if (has(kHip)) return kRoleHip;
+    return kRoleNone;
+}
+
+// [weight] knock_down: the humanoid's joints on its bones (Verdict::joint), from its limbs (the first of each side), their bones' names and the hierarchy.
+// Each limb is walked down from its first bone (at each bone the child of the same limb with the most of it below); in an arm the shoulder is the first bone
+// named an upper arm (else one named a shoulder; else the first that is no clavicle), the elbow the next named a forearm (else the next), the wrist the next
+// named a hand (else the next); in a leg the hip the first named a thigh (else its first bone), then the knee, the ankle, the toe alike. The pelvis:
+// the nearest bone above both legs; the chest: the nearest above both arms; the neck: the bone under the chest on the way to the head (none: the head's own
+// bone is the neck joint and the head's top is put by the mod). Not found (`joints` false): no knock-down for the model.
+inline void MapJoints(const char* const* names, Verdict& v) {
+    const int n = v.bones;
+    for (auto& j : v.joint) j = -1;
+    v.joints = false;
+    const auto chainOf = [&](int root, int16_t* out, int cap) {
+        int k = 0;
+        const int limb = v.limbOf[root];
+        for (int b = root; b >= 0 && k < cap;) {
+            out[k++] = static_cast<int16_t>(b);
+            int best = -1, bestBelow = -1;
+            for (int c = b + 1; c < n; ++c) {
+                if (v.parent[c] != b || v.limbOf[c] != limb) continue;
+                int below = 0;   // the limb's bones under c (parents come first)
+                static thread_local uint8_t in[kMaxBones];
+                std::memset(in, 0, static_cast<size_t>(n));
+                in[c] = 1;
+                for (int d = c + 1; d < n; ++d)
+                    if (v.parent[d] >= 0 && in[v.parent[d]] && v.limbOf[d] == limb) { in[d] = 1; ++below; }
+                if (below > bestBelow) { bestBelow = below; best = c; }
+            }
+            b = best;
+        }
+        return k;
+    };
+    const auto firstAfter = [&](int k, const Role* r, int from, Role want) {
+        for (int i = from; i < k; ++i)
+            if (r[i] == want) return i;
+        return from < k ? from : -1;
+    };
+    const auto childNamed = [&](int b, Role want) {   // a child of b named as `want` (Mixamo's LeftToeBase: no limb's word, so no bone of the limb)
+        for (int c = b + 1; c < n && b >= 0; ++c)
+            if (v.parent[c] == b && names && names[c] && RoleOf(names[c], false) == want) return c;
+        return -1;
+    };
+    int legRoot[2] = {-1, -1}, armRoot[2] = {-1, -1};
+    for (int s = 0; s < 2; ++s) {
+        const int shoulderJ = s ? D2RF_R_SHOULDER : D2RF_L_SHOULDER, hipJ = s ? D2RF_R_HIP : D2RF_L_HIP;
+        if ((s ? v.armsR : v.armsL) > 0) {
+            int16_t c[24];
+            Role r[24];
+            const int k = chainOf(armRoot[s] = v.arms[s][0].root, c, 24);
+            for (int i = 0; i < k; ++i) r[i] = names && names[c[i]] ? RoleOf(names[c[i]], true) : kRoleNone;
+            int sh = -1;
+            for (int i = 0; i < k && sh < 0; ++i) if (r[i] == kRoleUpper) sh = i;
+            for (int i = 0; i < k && sh < 0; ++i) if (r[i] == kRoleShoulderWord) sh = i;
+            if (sh < 0) sh = k > 0 && r[0] == kRoleClavicle ? 1 : 0;
+            const int el = sh + 1 < k ? firstAfter(k, r, sh + 1, kRoleFore) : -1;
+            const int wr = el >= 0 && el + 1 < k ? firstAfter(k, r, el + 1, kRoleHand) : -1;
+            if (sh < k) v.joint[shoulderJ] = c[sh];
+            if (el >= 0) v.joint[shoulderJ + 1] = c[el];
+            if (wr >= 0) v.joint[shoulderJ + 2] = c[wr];
+        }
+        if ((s ? v.legsR : v.legsL) > 0) {
+            int16_t c[25];
+            Role r[25];
+            int k = chainOf(legRoot[s] = v.legs[s][0].root, c + 1, 24);
+            for (int i = 1; i <= k; ++i) r[i] = names && names[c[i]] ? RoleOf(names[c[i]], false) : kRoleNone;
+            // the assassin's "hip_L_JNT" is her thigh's bone, but "hip" is a trunk's word: her leg's chain begins at the knee - the bone above it is the hip
+            const int above = v.parent[c[1]];
+            const bool startsAtKnee = r[1] == kRoleKnee && above >= 0 && names && names[above] && RoleOf(names[above], false) == kRoleHip && Read(names[above]).side != 0;
+            int first = 1;
+            if (startsAtKnee) { c[0] = static_cast<int16_t>(above); r[0] = kRoleThigh; first = 0; legRoot[s] = above; }
+            k += 1;
+            int hp = -1;
+            for (int i = first; i < k && hp < 0; ++i) if (r[i] == kRoleThigh) hp = i;
+            if (hp < 0) hp = first;   // (no bone named a thigh: the chain's first - "leg_01")
+            const int kn = hp + 1 < k ? firstAfter(k, r, hp + 1, kRoleKnee) : -1;
+            const int an = kn >= 0 && kn + 1 < k ? firstAfter(k, r, kn + 1, kRoleAnkle) : -1;
+            int to = an >= 0 && an + 1 < k ? firstAfter(k, r, an + 1, kRoleToe) : -1;
+            if (hp < k) v.joint[hipJ] = c[hp];
+            if (kn >= 0) v.joint[hipJ + 1] = c[kn];
+            if (an >= 0) v.joint[hipJ + 2] = c[an];
+            if (to >= 0) v.joint[hipJ + 3] = c[to];
+            else if (an >= 0 && (to = childNamed(c[an], kRoleToe)) >= 0) v.joint[hipJ + 3] = static_cast<int16_t>(to);
+        }
+    }
+    const auto commonAbove = [&](int a, int b) {   // the nearest bone above both (not a nor b themselves)
+        if (a < 0 || b < 0) return -1;
+        static thread_local uint8_t up[kMaxBones];
+        std::memset(up, 0, static_cast<size_t>(n));
+        for (int p = v.parent[a], g = 0; p >= 0 && g < n; p = v.parent[p], ++g) up[p] = 1;
+        for (int p = v.parent[b], g = 0; p >= 0 && g < n; p = v.parent[p], ++g)
+            if (up[p]) return p;
+        return -1;
+    };
+    v.joint[D2RF_PELVIS] = static_cast<int16_t>(commonAbove(legRoot[0], legRoot[1]));
+    v.joint[D2RF_CHEST] = static_cast<int16_t>(commonAbove(armRoot[0], armRoot[1]));
+    if (v.headBone >= 0 && v.joint[D2RF_CHEST] >= 0) {
+        int below = v.headBone;   // up from the head to the bone just under the chest
+        for (int g = 0; g < n && v.parent[below] >= 0 && v.parent[below] != v.joint[D2RF_CHEST]; ++g) below = v.parent[below];
+        if (v.parent[below] == v.joint[D2RF_CHEST] && below != v.headBone) {
+            v.joint[D2RF_NECK] = static_cast<int16_t>(below);
+            v.joint[D2RF_HEAD] = static_cast<int16_t>(v.headBone);
+        } else {
+            v.joint[D2RF_NECK] = static_cast<int16_t>(v.headBone);   // no neck of its own: the head's bone turns at the neck
+        }
+    }
+    static const int kNeeded[] = {D2RF_PELVIS, D2RF_CHEST, D2RF_NECK, D2RF_L_SHOULDER, D2RF_L_ELBOW, D2RF_R_SHOULDER, D2RF_R_ELBOW,
+                                  D2RF_L_HIP, D2RF_L_KNEE, D2RF_R_HIP, D2RF_R_KNEE};   // (an ankle no bone names: put by the mod, knockpose::JointsOf)
+    static const char* const kJointName[D2RF_JOINTS] = {"pelvis", "chest", "neck", "head", "L shoulder", "L elbow", "L wrist", "R shoulder", "R elbow", "R wrist",
+                                                        "L hip", "L knee", "L ankle", "L toe", "R hip", "R knee", "R ankle", "R toe"};
+    const char* missing = nullptr;
+    for (int j : kNeeded)
+        if (v.joint[j] < 0 && !missing) missing = kJointName[j];
+    if (!missing && v.joint[D2RF_PELVIS] == v.joint[D2RF_L_HIP]) missing = "the pelvis apart from the hips";
+    v.joints = !missing;
+    if (missing) {
+        std::snprintf(v.jointsSaid, sizeof v.jointsSaid, "no %s", missing);
+    } else {
+        int at = 0;
+        for (int j = 0; j < D2RF_JOINTS && at < (int)sizeof v.jointsSaid - 8; ++j)
+            at += std::snprintf(v.jointsSaid + at, sizeof v.jointsSaid - at, "%s%d", j ? " " : "", (int)v.joint[j]);
+    }
+}
 
 // The skeleton: n bones, names[i] (null or empty: unknown), parent[i] (-1: a root). Arms must hang from the trunk: a trunk bone among an arm root's
 // ancestors.
@@ -225,6 +392,7 @@ inline Verdict Judge(const char* const* names, const int* parent, int n) {
     else if (v.armsL > kMaxPerSide || v.armsR > kMaxPerSide) v.why = "more than two arms a side";
     else if (!v.armsOnTrunk) v.why = "its arms do not hang from its trunk";
     else { v.humanoid = true; v.why = "a head, a trunk, an arm on each side on it, a leg on each side"; }
+    if (v.humanoid) MapJoints(names, v);   // [weight] knock_down
     return v;
 }
 

@@ -87,6 +87,10 @@ int main(int argc, char** argv) {
             CHECK(closed.v[0].pos[1] == -32767 && closed.v[0].pos[0] == 0 && closed.v[0].pos[2] == 0);   // (the nadir)
         }
         CHECK(skyatlas::BandOf("act1") == 0 && skyatlas::BandOf("act5") == 4 && skyatlas::BandOf("cave") == 5 && skyatlas::BandOf("test") == -1);
+        // the atlas as the game's graphics card has it (vrcam's probe of the game's view of it): 2048 x 3072 BC6H - not a band, not RGBA
+        CHECK(skyatlas::IsAtlasTexture(2048, 3072, 95) && skyatlas::IsAtlasTexture(2048, 3072, 94) && skyatlas::IsAtlasTexture(2048, 3072, 96));
+        CHECK(!skyatlas::IsAtlasTexture(2048, 512, 95) && !skyatlas::IsAtlasTexture(2048, 3072, 10) && !skyatlas::IsAtlasTexture(2048, 3071, 95));
+        CHECK(!skyatlas::IsAtlasTexture(0, 0, 95));
         // five small BC6H pictures (64 x 16, 5 mips), each its own bytes: stacked, the black band, the mips a band stays a block high
         auto dds = [](int act, uint32_t w, uint32_t h, uint32_t mips, uint32_t format) {
             std::string s(skyatlas::kHeader, '\0');

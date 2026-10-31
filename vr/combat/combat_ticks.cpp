@@ -454,6 +454,14 @@ void MeleeTouchTick() {
         kf.hands = f.twoHandsOn ? 2 : 1;
         knockprops::Tick(kf);
     }
+    {   // [weight] world_contact (vr/world_contact.h): the level's walls near the hero, scanned on its worker - VR first person only
+        worldcontact::Frame wf;
+        wf.ok = f.ok && viewgate::F4();
+        for (int i = 0; i < 3; ++i) wf.hero[i] = g_heroPosNow[i];
+        wf.upm = f.upm;
+        wf.session = f.session;
+        worldcontact::Tick(wf);
+    }
 #endif
 }
 

@@ -5,6 +5,7 @@
 #include <string>
 #include "d2r_vr_build.h"
 #include "monster_rig.h"
+#include "d2r_vr_fall.h"   // [weight] knock_down: the humanoid's joints (MonsterRig::joint)
 #include "doll_pose.h"   // [weight] monster_ragdoll_pose: the monsters as drawn give way with their dolls
 #include "remote_pose.h"   // [multiplayer] pose_share_hero: the other players' heroes posed from the poses that came
 
@@ -33,6 +34,14 @@ struct Input {
     // [body] doll_feet: the feet are the doll's, not the game's (vr/doll_feet.h) - planted in the world, stepping after the body (its place, facing and
     // travel are all the game gives); the legs put on them (vr/leg_ik.h). In every view the hero is posed in, turned or not; instead of walk_back. Visual only.
     bool dollFeet = false;
+    // [body] legs_rear: while he goes, any way, the lower body held in the game's own standing pose (vr/walk_back.h StandHold) - he glides; the trunk and
+    // the arms the game's. legsRearCycle ([body] legs_rear_cycle, 0.192.1-3's way): instead, moving into the rear half the lower body plays the game's own
+    // forward walk / run backwards. With the whole body turned (bodyTurn 2). Visual only.
+    bool legsRear = false;
+    bool legsRearCycle = false;
+    float legsFrontConeDeg = 90.0f;   // [body] legs_front_cone_deg: the cone straight ahead (its whole width) where the legs are the game's walk and run
+    float legsRearConeDeg = 90.0f;    // [body] legs_rear_cone_deg: the cone straight back (its whole width) where they play the game's walk / run backwards
+    bool legsSideRagdoll = false;     // [body] legs_side_ragdoll: between the cones the feet step after him by the ragdoll library's walk (vr/stride_lib.h; loaded)
     int heroAnimMode = -1;     // the hero's unit mode as the game's client has it (2 walk, 3 run, 6 town walk; -1 not known): walk_back_reverse keeps only his walk
     float crouchDrop = 0.0f;    // [body] crouch (F4): the body this far down (model units), the legs bent to keep the feet; 0 = as the game poses it
     bool roomShiftOn = false;   // [openxr] roomscale_body (F4, room walking): the whole drawn body moved across the floor by roomShift ...
@@ -52,6 +61,8 @@ struct Input {
     float handOffset[3] = {};   // added to both hands, metres in the same frame (x right, y up, z back)
     bool haveEye = false;       // eyeModel is known: hands hang off the camera, not the hero's head bone
     float eyeModel[3] = {};     // the camera's eye point in the hero's model space
+    bool haveCamFwd = false;    // [debug] body_dump: camFwd is known
+    float camFwd[3] = {};       // ... the camera's forward in the hero's model space (unit, y up)
     bool haveYaw = false;       // yawInModel is known (the hero's model matrix is found)
     float yawInModel = 0.0f;    // where the camera looks, as a yaw in model space (0 = model forward)
     bool followJump = true;     // the held upper body (and HeroEye's lift) goes up with the hips
@@ -138,6 +149,7 @@ struct Input {
         float throwReachPct = 800.0f, throwMaxCells = 48.0f, unitsPerMetre = 0.0f;
         float takeHaptic = 0.0f;   // [weight] take_haptic: the pulse (amplitude 0..1) in a hand entering the take zone behind a shoulder while a weapon is away; 0 = none
         bool recallAny = false;    // [weight] recall_any_hand: the grip of any free hand, anywhere, calls a weapon that is away
+        bool worldContact = false;    // [weight] world_contact (vr/world_contact.h): the held weapon meets the level's walls and big props (F4 only; needs worldOk)
         bool monsterBodies = false;   // [weight] monster_bodies (vr/monster_bodies.h): the held weapon stops on the hostile monsters' bodies or glances off them (F4 only; needs the world's frame, worldOk)
         bool stabIn = false;          // [weight] stab_in (cleanroom/heft/stab.h): with monsterBodies, a thrusting weapon driven point first into a body goes in and is held there (F4 only)
         // ... its sliders (stab::Sliders, live): stab_min_speed m/s, stab_max_angle deg, stab_resist_pct % of the dampers, stab_depth_cm (0 the blade's), stab_tear_cm, stab_unlock_n
@@ -237,6 +249,8 @@ struct Input {
     bool armBox = true;         // [hud] hand_vitals_orb_on_bone: ... and each forearm bone's mesh box with it (HeroArm::box), at the end of the pose
     float grabMuscle = 1.0f;   // [weight] grab_muscle_pct / 100: a held monster's joints' muscles
     bool grabWorldOk = false;
+    // [weight] world_contact_hands (vr/world_contact.h): a bare hand is held at the level's walls - the box ticked and F4 (vrcam); grabWorldOk / grabEye... are filled for it too
+    bool wallsOn = false;
     // [weight] grab_items (vr/item_grab.h, vrcam's ItemGrabStep): an empty hand's grip on an item on the ground picks it up through the game's own pick-up. itemsOn: the box
     // ticked and F4; itemsFree: that hand may (free as for a body, and not over or holding a body). grabWorldOk / grabEye... are filled for it too.
     bool itemsOn = false;
@@ -500,6 +514,10 @@ void SetFreshHands(FreshHandsFn fn);
 // grabwire::Apply; unregistered: nothing). The hook's thread, mode 2 only.
 using GrabHandsFn = void (*)(Input* in);
 void SetGrabHands(GrabHandsFn fn);
+// [weight] world_contact_hands: after the weight model, before the grab - a bare hand (holds[side] false: not on the weapon the weight model holds) held at the
+// level's walls (vrcam registers worldcontact::BlockHands; unregistered: nothing). The hook's thread, mode 2 only.
+using WorldHandsFn = void (*)(Input* in, const bool holds[2]);
+void SetWorldHands(WorldHandsFn fn);
 // ... where the last pose drew a holding hand's palm (the middle of it, in the hands' frame: metres from the head) and how it was laid on the body ("the grip library",
 // "our own frame", or why not); false when that hand held nothing in the last 200 ms. For grab_wire's log of a held grip.
 bool GrabPalmDrawn(int side, float head[3], const char** how);
@@ -795,6 +813,10 @@ struct MonsterRig {
     bool still = false;
     // [weight] monster_ragdoll_all: its limbs are from its bones' segments (vr/bone_segments.h) - its model has no part meshes to read boxes from
     bool segments = false;
+    // [weight] knock_down: the bone of each of the knock-down's joints (shared/d2r_vr_fall.h; monsterhumanoid::MapJoints) - joints: all it needs were found
+    int16_t joint[D2RF_JOINTS] = {};
+    bool joints = false;
+    char jointsSaid[160] = {};   // ... the log: the bones, or what was missing
 };
 size_t MonsterRigs(float x, float z, float reach, MonsterRig* out, size_t cap);
 // [weight] monster_shields: MonsterRigs reads the held parts too (MonsterRig::held). Off: none read.
@@ -812,6 +834,9 @@ using MonsterPoseByWorldFn = int (*)(uintptr_t skeleton, uintptr_t worldPose, do
 void SetMonsterPoseByWorldSource(MonsterPoseByWorldFn fn);
 // A SkeletonInstance's world poses: this frame's (+0x20) and the last's (+0x28). False when they do not read.
 bool WorldPoses(uintptr_t self, uintptr_t* cur, uintptr_t* prev, uintptr_t* skeleton = nullptr);
+// [weight] knock_down: a SkeletonInstance's world pose as the game made it (the model's frame) into m - its bone count, 0 when it does not read or has more
+// than max bones.
+int PoseNow(uintptr_t self, float (*m)[16], int max);
 // [debug] monster_rig_dump: the next model whose boxes are read for the first time has every read written out (its Granny model, its ModelComponent's
 // model instance, the meshes, their first bone bindings, the skeleton's first bones) - one line, taken by RigDumpTakeIn (empty: none); the paths of the
 // models that are not bodies (items, gold, arrows) in short lines. For the headset test that proves the layout.
@@ -865,6 +890,10 @@ std::string DollNote();
 // share - the last kWalkBackDumpS seconds; when a walk back has ended, TakeWalkBackDump hands them over once as text for tools/walk_legs ("" else). Live.
 void SetWalkBackDump(bool on);
 std::string TakeWalkBackDump();
+// [debug] body_dump: our hero's joints as they go to the game (after every change of ours) and the camera, 30 a second - TakeBodyDump hands what came since
+// the last call as text for d2rloader\logs\d2r_vr_body.txt (tools/walk_legs/body_video.py). Live.
+void SetBodyDump(bool on);
+std::string TakeBodyDump();
 #endif
 void** OrigSlot();
 void* Detour();

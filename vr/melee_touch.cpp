@@ -35,6 +35,7 @@
 
 #include "log_async.h"   // [debug] log_async: the plugin's log lines through a ring and a writer thread (vr/log_queue.h); off = ctx->LogInfo as ever
 #include "d2r_vr_shared.h"
+#include "haptics.h"     // [openxr] haptics_touch: the counted contact's pulse
 #include "hit_claim.h"
 #include "hit_latency.h"
 #include "blade_shape.h"
@@ -60,6 +61,7 @@
 #include "melee_press.h"
 #include "doll_lib.h"     // [weight] monster_ragdoll: the weight library's monsters' weight (d2r_vr_weight.dll's D2rd* exports) moves the bodies
 #include "doll_view.h"
+#include "knock_down.h"   // [weight] knock_down: a struck humanoid drawn falling, lying and getting up (the weight library's D2rf* exports)
 #include "grab_bodies.h"   // [weight] grab_bodies: the held limbs put into the bodies (PutLinks)
 #include "item_grab.h"     // [weight] grab_items: the items on the ground near the hero (GroundItems)
 #include "barrel_touch.h"  // [gameplay] melee_touch_barrels: a swing through a barrel / pot presses the game's own interact on it
@@ -601,6 +603,7 @@ void StepSwayLocked() {
 std::atomic<bool> g_swayView{false};               // [debug] monster_ragdoll_view
 // [weight] monster_ragdoll_pose: each swaying humanoid's bone turns (vr/doll_pose.h), made on the timer's thread with the bodies, read by the skeleton hook
 std::atomic<bool> g_poseWanted{false};
+bool PosesWanted() { return g_poseWanted.load(std::memory_order_relaxed) || knockdown::Wanted(); }   // ([weight] knock_down hands its bodies down the same way)
 SRWLOCK g_posesLock = SRWLOCK_INIT;
 dollpose::Pose g_poses[16];
 int g_nPoses = 0;
@@ -609,6 +612,7 @@ constexpr ULONGLONG kPoseFreshMs = 150;   // a pose older than this is not appli
 constexpr ULONGLONG kPoseEaseMs = 300;    // a monster let go of (it died, it went out of reach, its doll came to rest) eases back to its animation over this
                                           // (bearstonem/d2r-pcvr's ease back, feat/monster-limb-push e865def, MIT)
 
+float g_knockHero[3] = {};   // [weight] knock_down: the hero where the bodies were last made (world units; the timer's thread)
 // The poses of the hostile humanoids whose dolls sway now: their limbs' and bodies' offsets (the doll's state) as turns of their own bones.
 void PublishPoses(const skel::MonsterRig* rigs, size_t nr, const int* rigOf, ULONGLONG now, float upm) {
     static dollpose::Pose made[16];
@@ -654,6 +658,12 @@ void PublishPoses(const skel::MonsterRig* rigs, size_t nr, const int* rigOf, ULO
             ++n;
         }
     }
+    {   // [weight] knock_down: the bodies knocked down, laid on the knock-down library's joints (in place of a sway's turns)
+        knockdown::Unit units[monsterbodies::kMax];
+        const int nu = std::min(g_nHostile, monsterbodies::kMax);
+        for (int m = 0; m < nu; ++m) units[m] = {g_hostile[m].id, g_hostile[m].mode, g_hostile[m].hostile};
+        n = knockdown::Tick(rigs, nr, units, nu, rigOf, now, upm, g_knockHero, made, n, 16);
+    }
     AcquireSRWLockExclusive(&g_posesLock);
     n = dollpose::Carry(made, n, 16, g_poses, g_nPoses, now, kPoseEaseMs);   // the ones let go of this time: kept, easing back (dollpose::Faded), for kPoseEaseMs
     for (int i = 0; i < n; ++i) g_poses[i] = made[i];
@@ -685,6 +695,7 @@ std::atomic<bool> g_playerBodies{false};   // [multiplayer] pose_share_bodies: t
 playerbodies::PlayerSlots g_playerSlots;    // (the timer's thread only)
 void RepublishBodies(ULONGLONG now, const float heroRender[3], float upm) {
     g_rigsAt = now;
+    if (heroRender) std::memcpy(g_knockHero, heroRender, sizeof g_knockHero);
     LARGE_INTEGER t0, t1, qf;
     QueryPerformanceCounter(&t0);
     static skel::MonsterRig rigs[16];   // (the timer's thread only)
@@ -722,6 +733,7 @@ void RepublishBodies(ULONGLONG now, const float heroRender[3], float upm) {
         if (rigOf[m] >= 0 && static_cast<size_t>(rigOf[m]) < nr && rigs[rigOf[m]].doll > 0)
             monsterbodies::LinkParents(&snap, g_hostile[m].id, rigs[rigOf[m]].parent, std::min(rigs[rigOf[m]].bones, dollpose::kMaxBones));
     PublishPoses(rigs, nr, rigOf, now, upm);   // [weight] monster_ragdoll_pose
+    knockdown::LayBodies(&snap, upm);          // [weight] knock_down: a body drawn out of the game's pose has its bodies where it is drawn
     QueryPerformanceCounter(&t1);
     QueryPerformanceFrequency(&qf);
     const double us = static_cast<double>(t1.QuadPart - t0.QuadPart) * 1e6 / static_cast<double>(qf.QuadPart);
@@ -736,6 +748,19 @@ void RepublishBodies(ULONGLONG now, const float heroRender[3], float upm) {
                 LogF("melee touch: monster bodies - '%s': its skeleton, %d limbs (of %d bones, %d with a box%s): %.0f to %.0f cm thick; %d of %d hostile monsters near have their skeletons (%.0f us)",
                      g.model, g.n, g.bones, g.boxes, g.alongBone ? (g.alongBone == 1 ? "; 1 limb bone's box off it: along the bone" : "; limb bones' boxes off them: along the bones") : "",
                      thin / upm * 100.0f, thick / upm * 100.0f, rigged, g_nHostile, us);
+                if (g.doll > 0 && g.joints) {   // a humanoid's legs: a body on each thigh and shin (a robe's legs along their bones) - or which have none
+                    static const struct { int joint; const char* name; } kLegs[] = {{D2RF_L_HIP, "left thigh"}, {D2RF_L_KNEE, "left shin"},
+                                                                                    {D2RF_R_HIP, "right thigh"}, {D2RF_R_KNEE, "right shin"}};
+                    char missing[96] = "";
+                    int w = 0;
+                    for (const auto& leg : kLegs) {
+                        bool have = false;
+                        for (int i = 0; i < g.n && !have; ++i) have = g.joint[leg.joint] >= 0 && g.c[i].bone == g.joint[leg.joint];
+                        if (!have) w += snprintf(missing + w, sizeof missing - w, "%s%s", w ? ", " : "", leg.name);
+                    }
+                    if (w) LogF("melee touch: monster bodies - '%s': NO body on its %s - a sweep or a grab there meets nothing", g.model, missing);
+                    else LogF("melee touch: monster bodies - '%s': its legs are bodies (both thighs and shins)", g.model);
+                }
                 if (g.offBone + g.notBody > 0) {   // (the boxes that are no limb: off their bone, or a rope / a strip of cloth off a humanoid's body - vr/monster_rig.h; every kind named)
                     char b[640];
                     snprintf(b, sizeof b, "melee touch: monster bodies - '%s': %d boxes left out - %d not at their bone, %d not the body: %s", g.model, g.offBone + g.notBody,
@@ -881,6 +906,18 @@ void PublishBodies(const Scan& s, ULONGLONG now, const float heroRender[3], floa
             b.bottom[0] = body.bottom.x; b.bottom[1] = body.bottom.y; b.bottom[2] = body.bottom.z;
             b.top[0] = body.top.x; b.top[1] = body.top.y; b.top[2] = body.top.z;
             b.radius = body.radius;
+        }
+    }
+    {   // a monster the hero stands in is no body until he is out of it (monsterbodies::GiveWay): our bodies never hold the hero
+        static monsterbodies::GiveWay giveWay;   // (the timer's thread only, as g_hostile)
+        const float um = std::max(upm, 1e-3f);
+        const float heroM[3] = {heroRender[0] / um, heroRender[1] / um, heroRender[2] / um};
+        int entered = 0;
+        g_nHostile = giveWay.Apply(g_hostile, g_nHostile, heroM, &entered);
+        static unsigned told = 0;
+        if (entered && told < 20) {
+            ++told;
+            LogF("melee touch: the hero stands inside a monster - its body gives way to him until he is out of it (%d giving way now, the first monster %u)", giveWay.Count(), giveWay.Id(0));
         }
     }
     RepublishBodies(now, heroRender, upm);
@@ -1646,11 +1683,17 @@ bool StabbingNow(int side) {
     return at && GetTickCount64() - at < 150 && viewgate::F4();
 }
 void PutGrabLinks(monsterbodies::Snapshot* s);   // [weight] grab_bodies (below)
-bool Bodies(monsterbodies::Snapshot* out) {
+bool BodiesWith(monsterbodies::Snapshot* out, bool held) {
     if (!out || !BodiesWanted() || !viewgate::F4()) return false;
     {
         std::lock_guard<std::mutex> lock(g_bodiesMutex);
         *out = g_bodies;
+    }
+    if (!held) {   // what the monsters hold is there for [weight] grab_throw's hands alone (a monster taken by its spear): not a body for the weapon unless monster_shields
+        int k = 0;
+        for (int i = 0; i < out->n; ++i)
+            if (out->b[i].held != 1 && out->b[i].held != 2) out->b[k++] = out->b[i];
+        out->n = k;
     }
     if (!g_npcBodies.load() && g_grabWanted.load()) {   // [weight] grab_bodies keeps the non-hostile units for the grab alone: not bodies for the weapon
         int k = 0;
@@ -1671,6 +1714,14 @@ bool Bodies(monsterbodies::Snapshot* out) {
     }
     if (fresh) PutGrabLinks(out);   // [weight] grab_bodies: the held limbs where the library holds them
     return fresh;
+}
+bool Bodies(monsterbodies::Snapshot* out) {
+    if (!BodiesWith(out, g_shieldsWanted.load())) return false;
+    int k = 0;   // [weight] impale_drag: a body on the blade is not one the blade meets (it is in it)
+    for (int i = 0; i < out->n; ++i)
+        if (!knockdown::Impaled(out->b[i].id)) out->b[k++] = out->b[i];
+    out->n = k;
+    return true;
 }
 // [weight] grab_bodies: every body of the last scan (the non-hostile ones too), fresh and in F4, as it stands swayed (the doll's state in, as Bodies hands
 // it over) - or as the game has it (unswayed: the library's grab works on those and the doll's state). False: none fresh.
@@ -1792,7 +1843,7 @@ void SetPoseWanted(bool on) {
     if (g_poseWanted.exchange(on) != on) Log(on ? "melee touch: monster ragdoll pose on - a struck humanoid gives way as the game draws it (its bones turned with its doll)" : "melee touch: monster ragdoll pose off");
 }
 bool MonsterPose(uintptr_t self, dollpose::Pose* out) {
-    if (!g_poseWanted.load() || !out) return false;
+    if (!PosesWanted() || !out) return false;
     bool found = false;
     AcquireSRWLockShared(&g_posesLock);
     for (int i = 0; i < g_nPoses && !found; ++i)
@@ -1812,7 +1863,7 @@ bool MonsterPose(uintptr_t self, dollpose::Pose* out) {
 }
 int MonsterPosesForSkin(uintptr_t skeleton, uintptr_t worldPose, dollpose::Pose* out, int max, bool* exact) {
     if (exact) *exact = false;
-    if (!g_poseWanted.load(std::memory_order_relaxed) || !out || max <= 0 || g_nPosesNow.load(std::memory_order_relaxed) == 0) return 0;   // (every skinning asks)
+    if (!PosesWanted() || !out || max <= 0 || g_nPosesNow.load(std::memory_order_relaxed) == 0) return 0;   // (every skinning asks)
     int n = 0;
     AcquireSRWLockShared(&g_posesLock);
     for (int i = 0; i < g_nPoses; ++i)   // the instance's own pose first
@@ -1853,7 +1904,12 @@ int PosedTurns(uint32_t id) {
 }
 bool SwayView() { return g_swayView.load() && g_swayWanted.load(); }
 void PushBody(const monsterbodies::Snapshot& snap, int i, const float impulse[3], const float point[3]) {
-    if (!g_swayWanted.load() || i < 0 || i >= snap.n || !snap.b[i].doll || !dolllib::Loaded()) return;   // (humanoids only)
+    if (i < 0 || i >= snap.n || !snap.b[i].doll) return;   // (humanoids only)
+    if (knockdown::Wanted()) {   // [weight] knock_down: does it knock the body off its feet? (one knocked down already: no sway of its limbs either)
+        knockdown::NotePush(snap.b[i].id, impulse, point);
+        if (knockdown::IsDown(snap.b[i].id)) return;
+    }
+    if (!g_swayWanted.load() || !dolllib::Loaded()) return;
     D2rdBody bodies[monsterbodies::kMax];
     const int n = dollview::ToDoll(snap, bodies);
     std::lock_guard<std::mutex> lock(g_swayMutex);
@@ -1879,7 +1935,7 @@ void PushBody(const monsterbodies::Snapshot& snap, int i, const float impulse[3]
 int DrawBodies(uint64_t nowMs, const float eyeWorld[3], uint32_t touchedId, int touchedBone, float (*a)[4], float (*b)[4], int max) {
     if (!meleeboxes::Wanted() || max <= 0) return 0;
     monsterbodies::Snapshot snap;
-    if (!Bodies(&snap) || nowMs < snap.tickMs) return 0;
+    if (!BodiesWith(&snap, true) || nowMs < snap.tickMs) return 0;   // (what they hold drawn too: the grab takes it)
     int k = monsterbodies::Pack(snap, eyeWorld, touchedId, touchedBone, a, b, max);
     if (SwayView() && k < max) {   // [debug] monster_ragdoll_view after the bodies
         D2rdBody bodies[monsterbodies::kMax];
@@ -2551,7 +2607,7 @@ void Tick(const Frame& f) {
             for (int i = 0; i < nl && nk < 8; ++i) {
                 if (ls[i].slot != (sb.slot & 1)) continue;
                 const strikemeasure::Strike& m = ls[i].s;
-                ks[nk] = {m.id, m.serial, m.hands, m.window, m.cut, m.recent, m.startS, m.along};
+                ks[nk] = {m.id, m.serial, m.hands, m.window, m.cut, m.recent, m.startS, m.along, m.resumed};
                 dur[nk] = m.durS;
                 appr[nk] = static_cast<float>(m.approach);
                 steel = ls[i].steelKg;
@@ -2573,8 +2629,9 @@ void Tick(const Frame& f) {
                     for (size_t i = 0; i < fresh.n; ++i) if (fresh.c[i].id == ks[k].id) { c = &fresh.c[i]; break; }
                     if (!c) continue;
                     ForcePressed::E* was = g_forcePressed[sb.slot & 1].Find(ks[k].serial, ks[k].id);
-                    const bool due = !was ? v[k].Counts()
-                                          : strikeforce::RepeatDue(force, fam, steel, ks[k], strikeforce::HeroAttacking(f.heroMode), (double)(now - was->at) * 0.001);
+                    // (a contact resting on past a second is the same strike: no new blow; a repeat never while the hero's attack runs, he walks, or his mode is not read)
+                    const bool due = !was ? strikeforce::NewBlowDue(v[k], ks[k])
+                                          : strikeforce::RepeatDue(force, fam, steel, ks[k], strikeforce::HeroBusy(f.heroMode), (double)(now - was->at) * 0.001);
                     static unsigned told = 0;
                     const bool tell = told < 12 || meleeboxes::Wanted() || g_forceDebug.load();
                     if (!due) {
@@ -2850,6 +2907,7 @@ void Tick(const Frame& f) {
 #endif
         if (dual.dual) ApproveDual(p.c->id, hand, dual);
         else Approve(p.c->id, !thrown, p.side, TouchOf(p), f.twoHanded, f.twoHandsOn);   // ([gameplay] melee_direct_client: its speed, force and the hands' paths)
+        if (!thrown) haptics::Touched(haptics::FromSkel(hand));   // [openxr] haptics_touch: the blade's hand buzzes now, landed or not (a no-op when off)
         if (thrown)   // one throw per swing: the throw by gesture's release of this swing is dropped (the touch's press is the throw)
             if (const HoldOffFn hold = g_holdOff.load()) hold(meleetouch::HoldOffUntil(now));
         if (p.thrust && (g_n.thrusts <= 20 || meleeboxes::Wanted())) {   // [gameplay] melee_thrust: the counted thrust's numbers (the first twenty, every one with [debug] melee_boxes)

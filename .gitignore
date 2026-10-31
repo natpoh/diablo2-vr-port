@@ -34,3 +34,5 @@ __pycache__/
 /build_public/
 promo/
 /installer/launcher/cache/
+# fx_native_test's cache of compiled shaders and pictures (made by running it)
+fx_native_cache/

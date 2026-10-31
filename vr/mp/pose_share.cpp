@@ -507,7 +507,7 @@ void PoseShareTick() {
                          : "vrcam: walk back dump off ([debug] walk_back_dump)");
             }
             skel::SetWalkBackDump(want);
-            if (!want) headshadow::NoteHeroRig(0, 0, 0);
+            if (!want && !IniB(L"debug", L"body_dump", false)) headshadow::NoteHeroRig(0, 0, 0);   // ([debug] body_dump says it too)
             else if (const std::string skin = headshadow::SkinNote(); !first && !skin.empty()) Log(("vrcam: " + skin).c_str());   // which pose the hero's meshes are skinned from
             if (const std::string dump = skel::TakeWalkBackDump(); !dump.empty()) {
                 wchar_t path[MAX_PATH];
@@ -524,6 +524,32 @@ void PoseShareTick() {
                     fwrite(dump.data(), 1, dump.size(), f);
                     fclose(f);
                     LogF("vrcam: walk back dump - %zu bytes more in d2rloader\\logs\\d2r_vr_walkback.txt", dump.size());
+                }
+            }
+        }
+        {   // [debug] body_dump: the bones as they go to the game, and the camera, to d2rloader\logs\d2r_vr_body.txt (tools/walk_legs/body_video.py)
+            const bool want = IniB(L"debug", L"body_dump", false);
+            static bool told = false;
+            if (want != told) {
+                told = want;
+                Log(want ? "vrcam: body dump on - our hero's joints as drawn and the camera, 30 a second, go to d2rloader\\logs\\d2r_vr_body.txt ([debug] body_dump)"
+                         : "vrcam: body dump off ([debug] body_dump)");
+            }
+            skel::SetBodyDump(want);
+            if (const std::string dump = skel::TakeBodyDump(); !dump.empty()) {
+                wchar_t path[MAX_PATH];
+                wcscpy_s(path, g_iniPath);
+                if (wchar_t* slash = wcsrchr(path, L'\\')) *slash = 0;
+                wcscat_s(path, L"\\..\\logs\\d2r_vr_body.txt");
+                static bool headed = false;
+                if (FILE* f = _wfopen(path, headed ? L"ab" : L"wb")) {
+                    if (!headed)
+                        fputs("# [debug] body_dump - per pose: t mode view bodyTurn yaw_deg speed_m_s travel_deg legs_share eye_ok eye_x eye_y eye_z fwd_ok fwd_x fwd_y"
+                              " fwd_z | units_a_metre, then each joint the \"# rig\" line names: x y z (the hero's model space as drawn, y up; the eye and forward:"
+                              " the camera in the same space)\n", f);
+                    headed = true;
+                    fwrite(dump.data(), 1, dump.size(), f);
+                    fclose(f);
                 }
             }
         }

@@ -26,7 +26,7 @@
 #   -OutputName <name>   the installer's file name without .exe (default D2R_VR_Setup_v<version>), e.g. D2R_VR_Authentic_Setup_launcher-test
 #   -ReleasesDir <dir>   where the installer and its .sha256 are copied (default: <main checkout>\releases - a test build
 #                        should name its own folder: an installer built with the default name would replace the release file there)
-#   -CeilingFrom <dir>   a folder holding the cave-ceiling pictures d2r_vr.ini names (e.g. an earlier payload's sky\), looked in first
+#   -CeilingFrom <dir>   no longer used (since 0.192: the cave ceilings are the game's own; their pictures left the payload) - accepted
 #   -SkyDomeFrom <dir>   a folder holding the game sky dome's painted act skies sky_act1..5_day_HDR.dds (tools/game_sky/make_sky_dome.py --act;
 #                        default releases\inputs\sky_dome). [sky] game_sky draws them; D2R VR Settings makes the domes' units and plain
 #                        textures itself (tools/settings/dome_assets.cpp), not these
@@ -199,19 +199,10 @@ if ($manifest.ExitCode -ne 0 -or -not (Test-Path "$payload\bodywalk\d2r.txt")) {
 Copy-Item (Join-Path $root "reshade\D2R_DepthFog.fx") "$payload\shaders\"
 Copy-Item (Join-Path $root "reshade\D2R_FogEase_Unleashed.fxh") "$payload\shaders\"   # D2R_DepthFog.fx includes it (MPL 2.0, D2R VR Unleashed)
 Get-ChildItem (Join-Path $root "reshade\sky") -Filter "D2R_Sky*.png" | Copy-Item -Destination "$payload\sky\"
-# The cave ceilings' pictures d2r_vr.ini names, beside the skies: our OpenAI drawings
-# (tools/casc_extract/gen_ceiling_from_ref.py), kept in extracted\ - never in the repository -
-# or, for the ones finished in the game (*_smooth), the game's D2R_Sky_ours. Without them
-# ReShade said "errors loading some effects" and the caves had no ceiling (a player, 0.153).
-$ceilFrom = @((Join-Path $root "extracted"), "D:\SteamLibrary\steamapps\common\Diablo II Resurrected\reshade-shaders\Textures\D2R_Sky_ours")
-if ($CeilingFrom) { $ceilFrom = @($CeilingFrom) + $ceilFrom }
-$ceilNames = Select-String -Path (Join-Path $root "d2r_vr.ini") -Pattern 'D2R_Ceiling_[A-Za-z0-9_]+\.png' -AllMatches |
-    ForEach-Object { $_.Matches } | ForEach-Object { $_.Value } | Sort-Object -Unique
-foreach ($n in $ceilNames) {
-    $src = $ceilFrom | ForEach-Object { Join-Path $_ $n } | Where-Object { Test-Path $_ } | Select-Object -First 1
-    if (-not $src) { throw "ceiling picture not found: $n (looked in $($ceilFrom -join ', '))" }
-    Copy-Item $src "$payload\sky\"
-}
+# (The cave ceilings' pictures are not shipped any more - Serg, 2026-10-31: "текстуры потолков тоже можно из релиза убрать". The
+# ceilings are the game's own lit stone; our effect's old vault, still selectable, draws its own stone where no picture is found -
+# vr/sky/sky_config.cpp LoadCeilingTextures. d2r_vr.ini names none; -CeilingFrom is accepted and not used.)
+if ($CeilingFrom) { Write-Host "-CeilingFrom: not used any more (no cave-ceiling pictures in the payload)" }
 # The game sky dome's painted act skies ([sky] game_sky, shipped on since 0.186): without them a fresh install had no dome picture
 # (PC1 had them only copied by hand). Into the mod's D2R-VR.mpq\data (mod_files.inc).
 New-Item -ItemType Directory -Force "$payload\skydome" | Out-Null

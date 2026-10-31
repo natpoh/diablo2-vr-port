@@ -1,7 +1,7 @@
 // A picture the CPU paints, hung in the room as a quad layer - what the settings panel (vr/xr_headset_settings.h) uses and
-// what any other panel in the headset (the skill wheel) can use the same way.
+// what any other panel in the headset (the skill wheel, the pointer, the stickers, the T-pose prompt) can use the same way.
 //
-// NOT a header of its own: xr.cpp includes it once, inside namespace xr { namespace {, after HangLaser, because it uses what
+// NOT a header of its own: xr.cpp includes it once, inside namespace xr { namespace {, after NextImage, because it uses what
 // is in xr.cpp's unnamed namespace (the session, the copy list, the swapchain helpers). The pure side - the ray against a
 // panel, the pad values and the release gate - is vr/hset_ray.h.
 //
@@ -10,6 +10,7 @@
 //   QuadAtlasUpload(A, w, h, pixels, "name") the next picture (premultiplied RGBA, R in the low byte, sRGB) into A's swapchain
 //   QuadLayerOf(layer, A, pose, size)        the quad layer that shows it (A.shown first)
 //   HangBeam(BeamView, ...)                  (xr.cpp) the beam and the dot from a hand to the panel
+//   QuadAtlasRetire(A, "name")               unused for a while: its swapchain to the reaper (made again by the next upload)
 //   QuadAtlasDestroy(A)                      with the session (Teardown)
 // Hand it a frame of input through Publish (xr.cpp): take the pads you own out of `in` there, as HsStep does.
 
@@ -22,6 +23,7 @@ struct QuadAtlas {
     uint32_t w = 0, h = 0;
     bool shown = false;               // an image was released: the layer may name the swapchain
     ULONGLONG retryAt = 0;            // a failed make waits a moment
+    ULONGLONG usedAt = 0;             // last hung (QuadLayerOf) or uploaded: the ones shown now and then give their swapchain back when unused (FreeIdle)
 };
 
 // A pose in the layers' space (g_space), only as far as the runtime vouches for it: both the turn and the place valid, finite,
@@ -45,7 +47,8 @@ bool PoseIn(XrSpace sp, hset::Pose* out) {
 
 // The picture into the next image of A's swapchain, on the game's queue. The swapchain is made at the first call (and again
 // when the size changes). False: not this time (its wait ran out, a copy is still running, no format) - ask again later.
-bool QuadAtlasUpload(QuadAtlas& A, uint32_t w, uint32_t h, const std::vector<uint32_t>& px, const char* what) {
+bool QuadAtlasUpload(QuadAtlas& A, uint32_t w, uint32_t h, const std::vector<uint32_t>& px, const char* what,
+                     chaincount::Kind kind = chaincount::kPanel) {
     if (GetTickCount64() < A.retryAt || !MakeCopyList() || px.size() < (size_t)w * h) return false;
     char b[96];
     if (A.sc && (A.w != w || A.h != h)) {   // another size: made anew
@@ -73,10 +76,11 @@ bool QuadAtlasUpload(QuadAtlas& A, uint32_t w, uint32_t h, const std::vector<uin
         ci.mipCount = 1;
         snprintf(b, sizeof b, "xrCreateSwapchain(%s)", what);
         if (!Ok(xrCreateSwapchain(g_session, &ci, &A.sc), b)) { A.sc = XR_NULL_HANDLE; A.retryAt = GetTickCount64() + 1000; return false; }
-        uint32_t n = 0;
-        xrEnumerateSwapchainImages(A.sc, 0, &n, nullptr);
+        g_chains.Made(A.sc, kind);
+        uint32_t n = 0;   // (a panel: listed below the frame-generation bridge, vr/frame_gen.h)
+        framegenlib::PanelImages(A.sc, 0, &n, nullptr);
         A.img.assign(n, {XR_TYPE_SWAPCHAIN_IMAGE_D3D12_KHR});
-        xrEnumerateSwapchainImages(A.sc, n, &n, (XrSwapchainImageBaseHeader*)A.img.data());
+        framegenlib::PanelImages(A.sc, n, &n, (XrSwapchainImageBaseHeader*)A.img.data());
         A.w = w;
         A.h = h;
     }
@@ -133,11 +137,13 @@ bool QuadAtlasUpload(QuadAtlas& A, uint32_t w, uint32_t h, const std::vector<uin
     if (!Ok(xrReleaseSwapchainImage(A.sc, &ri), b)) return false;
     if (!copied) return false;   // no list could be opened (the GPU is behind): the picture is not on the image - painted again next time, not taken for shown
     A.shown = true;
+    A.usedAt = GetTickCount64();
     return true;
 }
 
 // The quad layer that shows A, standing at `pose` (in g_space), `size` metres.
-void QuadLayerOf(XrCompositionLayerQuad& q, const QuadAtlas& A, const hset::Pose& pose, float widthM, float heightM) {
+void QuadLayerOf(XrCompositionLayerQuad& q, QuadAtlas& A, const hset::Pose& pose, float widthM, float heightM) {
+    A.usedAt = GetTickCount64();
     q = {XR_TYPE_COMPOSITION_LAYER_QUAD};
     q.space = g_space;
     q.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
@@ -148,9 +154,20 @@ void QuadLayerOf(XrCompositionLayerQuad& q, const QuadAtlas& A, const hset::Pose
     q.size = {widthM, heightM};
 }
 
+// In the session, when it is not hung this frame: its swapchain destroyed later, once the game's queue is drained (chain_reaper.h), its
+// buffers once their copies are done (Retire). The next upload makes a swapchain again.
+void QuadAtlasRetire(QuadAtlas& A, const char* what) {
+    if (A.sc) {
+        gpufault::Note("xr: quad atlas swapchain retired", (uint64_t)(uintptr_t)A.sc, ((uint64_t)A.w << 32) | A.h);
+        RetireChain(A.sc, what);
+    }
+    for (ID3D12Resource*& u : A.upload) if (u) Retire(u);
+    A = QuadAtlas{};
+}
+
 // With the session (Teardown, before the swapchains' space goes). The game's queue was waited for: the buffers are free.
 void QuadAtlasDestroy(QuadAtlas& A) {
-    if (A.sc) { ForgetPending(A.sc); xrDestroySwapchain(A.sc); }
+    if (A.sc) { ForgetPending(A.sc); DestroyChain(A.sc); }
     for (ID3D12Resource*& u : A.upload) if (u) { u->Release(); u = nullptr; }
     A = QuadAtlas{};
 }

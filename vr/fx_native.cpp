@@ -1866,6 +1866,13 @@ reshade::api::effect_texture_variable Runtime::find_texture_variable(const char*
     const auto it = m_->cur->textureByName.find(name);
     return {it == m_->cur->textureByName.end() ? 0 : (uint64_t)it->second + 1};
 }
+ID3D12Resource* Runtime::TextureResource(const char* name) const {
+    if (!m_->cur || !name) return nullptr;
+    const auto it = m_->cur->textureByName.find(name);
+    if (it == m_->cur->textureByName.end()) return nullptr;
+    const Texture& t = m_->cur->textures[(size_t)it->second];
+    return t.res ? t.res : t.shown;
+}
 void Runtime::update_texture(reshade::api::effect_texture_variable v, uint32_t width, uint32_t height, const void* pixels) {
     if (!m_->cur || !v.handle || v.handle > m_->cur->textures.size() || !pixels) return;
     Texture& t = m_->cur->textures[(size_t)v.handle - 1];

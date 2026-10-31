@@ -362,6 +362,190 @@ int main() {
         CHECK(tr.vx == 0.0f && tr.vz == 0.0f);
     }
 
+    // [body] legs_rear: RearRate - his speed over the kept speed (the game's own cadence, whichever way he goes); not known: its own pace while he goes.
+    {
+        CHECK(Near(walkback::RearRate(2.0f, 2.0f), 1.0f, 1e-4f));      // at the kept speed: the cycle at its own pace
+        CHECK(Near(walkback::RearRate(3.2f, 2.0f), 1.6f, 1e-4f));      // faster: faster
+        CHECK(Near(walkback::RearRate(1.0f, 2.0f), 0.5f, 1e-4f));
+        CHECK(walkback::RearRate(2.0f, 0.0f) == 1.0f && walkback::RearRate(0.0f, 0.0f) == 0.0f);
+        CHECK(walkback::RearRate(50.0f, 2.0f) == 3.0f);
+    }
+    // ShownTurn: of the anim bone's turn just what the hips show, on its side, at most its whole - the numbers of Serg's 2026-10-31 dump (degrees).
+    {
+        const float d = kPi / 180.0f;
+        CHECK(Near(walkback::ShownTurn(-170.0f * d, -143.0f * d), -143.0f * d, 1e-5f));   // the turn the hips show: taken out
+        CHECK(Near(walkback::ShownTurn(-55.0f * d, -4.0f * d), -4.0f * d, 1e-5f));        // the anim bone ahead of the hips: only theirs (it was all 55)
+        CHECK(walkback::ShownTurn(-50.0f * d, 4.0f * d) == 0.0f);                          // the hips the other way (their stance): nothing
+        CHECK(Near(walkback::ShownTurn(171.0f * d, 146.0f * d), 146.0f * d, 1e-5f));
+        CHECK(Near(walkback::ShownTurn(20.0f * d, 35.0f * d), 20.0f * d, 1e-5f));          // never more than the anim bone's
+        CHECK(walkback::ShownTurn(0.0f, 30.0f * d) == 0.0f);
+    }
+    // StandHold ([body] legs_rear since 0.192.4: the legs held in the game's standing pose while he goes; since 0.192.9 not within the front cone): standing
+    // (held) the game's own pose, kept; going within the cone ahead the game's own walk and run, nothing held; going outside it the stance, wholly at once
+    // when he sets off from standing (it is the pose drawn), else fading in at 10 a second - and out again into the cone; which way he goes not known yet
+    // (setting off before a speed is read, stopping, a dip in his walk): as it was; never the game's own standing legs while he goes; any other move (a
+    // blow) fades the stance out; stopping, the stance fades to the game's own and is kept again once wholly the game's.
+    {
+        walkback::StandHold hold;
+        const float dt = 1.0f / 90.0f;
+        CHECK(hold.Live(5, true, false) && hold.Live(1, true, false));
+        CHECK(hold.Step(5, true, false, false, dt) == 0.0f && hold.live);
+        CHECK(hold.Step(2, false, false, false, dt) == 0.0f && hold.live);       // the walk mode before a speed is read: as it was
+        CHECK(hold.Step(2, false, true, true, dt) == 0.0f && !hold.live);        // off ahead, within the cone: the game's own walk
+        float share = 0.0f;
+        for (int f = 0; f < 5; ++f) share = hold.Step(3, false, true, false, 0.01f);   // turning out of the cone: the stance fades in
+        CHECK(Near(share, 0.5f, 1e-4f));
+        for (int f = 0; f < 10; ++f) share = hold.Step(3, false, true, false, 0.01f);
+        CHECK(share == 1.0f);
+        for (int f = 0; f < 5; ++f) share = hold.Step(3, false, true, true, 0.01f);    // back into it: out again
+        CHECK(Near(share, 0.5f, 1e-4f));
+        for (int f = 0; f < 10; ++f) share = hold.Step(3, false, true, true, 0.01f);
+        CHECK(share == 0.0f);
+        CHECK(hold.Step(5, false, false, false, 0.01f) == 0.0f);                 // he stops (going ahead): as it was - the game's own
+        for (int f = 0; f < 5; ++f) share = hold.Step(5, true, false, false, 0.01f);
+        CHECK(share == 0.0f && hold.live);
+        for (int mode : {2, 3, 6}) {   // off back, any gait: held wholly from the first pose
+            walkback::StandHold h2;
+            h2.Step(5, true, false, false, dt);
+            CHECK(!h2.Live(mode, false, true));
+            CHECK(Near(h2.Step(mode, false, true, false, dt), 1.0f, 1e-6f) && !h2.live);
+        }
+        CHECK(Near(hold.Step(3, false, true, false, dt), 1.0f, 1e-6f));          // off back from standing: wholly at once
+        CHECK(Near(hold.Step(5, false, true, false, dt), 1.0f, 1e-6f));          // a dip in his walk
+        CHECK(!hold.Live(5, true, true));                                         // going: never the game's standing legs
+        CHECK(Near(hold.Step(-1, false, true, false, dt), 1.0f, 1e-6f));
+        for (int f = 0; f < 5; ++f) share = hold.Step(7, false, false, false, 0.01f);  // a blow (mode 7): out at 10 a second
+        CHECK(Near(share, 0.5f, 1e-4f));
+        for (int f = 0; f < 10; ++f) share = hold.Step(7, false, false, false, 0.01f);
+        CHECK(share == 0.0f && !hold.live);
+        for (int f = 0; f < 5; ++f) share = hold.Step(3, false, true, false, 0.01f);   // running back again after the blow: in, not at once
+        CHECK(Near(share, 0.5f, 1e-4f));
+        for (int f = 0; f < 10; ++f) share = hold.Step(3, false, true, false, 0.01f);
+        CHECK(hold.Step(5, false, false, false, 0.01f) == 1.0f && !hold.live);   // he stops: the standing mode not held yet - still held
+        for (int f = 0; f < 5; ++f) share = hold.Step(5, true, false, false, 0.01f);   // held: the stance fades to the game's
+        CHECK(Near(share, 0.5f, 1e-4f) && !hold.live);
+        for (int f = 0; f < 10; ++f) share = hold.Step(5, true, false, false, 0.01f);
+        CHECK(share == 0.0f && hold.live);
+        CHECK(hold.Live(-1, false, false));
+    }
+    // InFrontCone: the cone's whole width about the facing, either side; kConeEdgeDeg either way about the edge; 0 never, 360 always.
+    {
+        CHECK(walkback::InFrontCone(0.0f, 90.0f, false) && walkback::InFrontCone(41.0f, 90.0f, false) && walkback::InFrontCone(-41.0f, 90.0f, false));
+        CHECK(!walkback::InFrontCone(43.0f, 90.0f, false) && !walkback::InFrontCone(-90.0f, 90.0f, false) && !walkback::InFrontCone(180.0f, 90.0f, true));
+        CHECK(walkback::InFrontCone(47.0f, 90.0f, true) && !walkback::InFrontCone(49.0f, 90.0f, true));   // (was in: kept to 48)
+        CHECK(!walkback::InFrontCone(0.0f, 0.0f, true) && walkback::InFrontCone(180.0f, 360.0f, false));
+        CHECK(walkback::InFrontCone(100.0f, 240.0f, false) && !walkback::InFrontCone(130.0f, 240.0f, false));
+    }
+    // InRearCone: the same about straight back, either side; RearBlend: wholly at once only from the game's own pose the play-back starts on, else in and out
+    // at 10 a second.
+    {
+        CHECK(walkback::InRearCone(180.0f, 90.0f, false) && walkback::InRearCone(-180.0f, 90.0f, false) && walkback::InRearCone(139.0f, 90.0f, false));
+        CHECK(walkback::InRearCone(-139.0f, 90.0f, false) && !walkback::InRearCone(137.0f, 90.0f, false) && !walkback::InRearCone(90.0f, 90.0f, true));
+        CHECK(walkback::InRearCone(133.0f, 90.0f, true) && !walkback::InRearCone(131.0f, 90.0f, true));   // (was in: kept to 132)
+        CHECK(!walkback::InRearCone(180.0f, 0.0f, true) && walkback::InRearCone(0.0f, 360.0f, false) && !walkback::InRearCone(0.0f, 300.0f, false));
+        walkback::RearBlend rb;
+        CHECK(rb.Step(true, true, 0.01f) == 1.0f);                 // from the game's own pose: wholly at once
+        float share = 1.0f;
+        for (int f = 0; f < 5; ++f) share = rb.Step(false, true, 0.01f);
+        CHECK(Near(share, 0.5f, 1e-4f));
+        CHECK(Near(rb.Step(true, true, 0.01f), 0.6f, 1e-4f));    // not from nothing: in at 10 a second
+        for (int f = 0; f < 10; ++f) share = rb.Step(false, false, 0.01f);
+        CHECK(share == 0.0f);
+        for (int f = 0; f < 5; ++f) share = rb.Step(true, false, 0.01f);   // from the held stance: in at 10 a second
+        CHECK(Near(share, 0.5f, 1e-4f));
+    }
+    // [body] legs_rear driven as WalkBackLegs drives it: the game's forward walk kept while he walks ahead, then he goes off into the rear half at an angle
+    // (and, last, sweeps 60 -> 120 -> 60, and stands while the body turns round). The pose drawn: the game's own while the cone is off; on, the kept walk
+    // played backwards at his pace (the distance gone), hung at the pelvis, facing with the trunk. Measured across the TRUNK (0.192.1 turned the legs
+    // toward the travel and measured in their own turned frame: Serg's crossed feet went unseen): the left foot stays left of the right by the game's own
+    // spacing (they never cross); the play-back comes on wholly at once (no two walks blended in); a planted foot steps back at his pace - over the
+    // ground it moves by just the travel's part off straight back (none straight back; 0.192.1's pace fell to nothing near the side: "x0.15").
+    {
+        struct Case { float phi; float speedFactor; const char* name; };
+        const Case cases[] = {{180.0f, 1.0f, "straight back"}, {160.0f, 1.0f, "back 160"}, {135.0f, 1.0f, "back-diagonal 135 (his left)"},
+                              {-135.0f, 1.0f, "back-diagonal 135 (his right)"}, {100.0f, 1.0f, "near the side 100"}, {180.0f, 1.6f, "straight back, 1.6x as fast"},
+                              {999.0f, 1.0f, "sweep 60 > 120 > 60"}, {-999.0f, 0.0f, "standing, the body turned round"}};
+        for (const Case& cs : cases) {
+            walkback::Reverser rev;
+            remotepose::ConeBlend cone;
+            const float stride = 3.0f, keptSpeed = 2.0f * stride * 1.0f;   // (two steps a cycle at 1 cycle a second)
+            const double dt = 1.0 / 90.0;
+            float phase = 0.0f, worstSide = 1e9f, worstPlanted = 0.0f;
+            int blended = 0, drawnOn = 0, startedWhole = 0, starts = 0;
+            float wasWorld[4] = {}, wasW = 0.0f;
+            bool wasPlanted[2] = {false, false};
+            float bodyX = 0.0f, bodyZ = 0.0f;
+            for (int f = 0; f < 900; ++f) {   // 10 s: 3 ahead (kept), then the case
+                const double t = f * dt;
+                const bool ahead = t < 3.0;
+                float phi = ahead ? 0.0f : cs.phi;
+                if (cs.phi == 999.0f && !ahead) phi = 90.0f - 30.0f * std::cos(2.0f * kPi * (float)(t - 3.0) / 4.0f);
+                const bool standing = cs.phi == -999.0f && !ahead;
+                const float speed = standing ? 0.0f : keptSpeed * (ahead ? 1.0f : cs.speedFactor);
+                bodyX += speed * std::sin(phi * kPi / 180.0f) * (float)dt;
+                bodyZ += speed * std::cos(phi * kPi / 180.0f) * (float)dt;
+                if (!standing) phase += 2.0f * kPi * (speed / keptSpeed) * (float)dt;   // the game's own walk keeps its pace with his speed
+                // the game's pose (its forward walk, turned with the body: facing +z): [0] the pelvis, [1] right foot, [2] left foot
+                M4 game[3];
+                game[0] = M4{};
+                game[0].m[0] = game[0].m[5] = game[0].m[10] = game[0].m[15] = 1.0f;
+                game[0].m[13] = 1.8f + 0.05f * std::cos(2.0f * phase);   // (its bob)
+                float feet[6];
+                for (int i = 0; i < 2; ++i) {
+                    game[1 + i] = FootBone(i ? 1.0f : -1.0f, standing ? Foot{i ? 0.15f : -0.15f, 0.0f} : GameFoot(phase + (i ? kPi : 0.0f)), stride);
+                    for (int j = 0; j < 3; ++j) feet[i * 3 + j] = game[1 + i].m[12 + j];
+                }
+                const float angle = speed > 0.15f ? std::fabs(phi) : -1.0f;
+                float w = cone.Step(angle, speed > 0.15f, walkback::kRearFromDeg, (float)dt);
+                rev.Record(t, speed > 0.15f, game, 3, feet, 2, speed);
+                if (wasW <= 0.001f && w > 0.001f) {
+                    ++starts;
+                    if (rev.Kept() > 0 && rev.At(rev.Kept() - 1).t == t) { cone.share = 1.0f; w = 1.0f; ++startedWhole; }
+                }
+                wasW = w;
+                const float keptNow = rev.DrawnSpeed() > 0.0f ? rev.DrawnSpeed() : rev.MeanSpeed(2);   // (the pace of the pose being played)
+                const float rate = walkback::RearRate(speed, keptNow);
+                const walkback::Sample* s = rev.Step(dt * rate, w > 0.001f, 2);
+                const bool jumped = rev.TakeJumps() > 0;   // (a jump's landing may be a hair off, for a frame)
+                M4 drawn[3] = {game[0], game[1], game[2]};
+                float liftOf[2] = {game[1].m[13] - 0.9f, game[2].m[13] - 0.9f};   // (planted: as the pose itself has it - hung at the game's pelvis
+                if (s && w > 0.001f) {                                               //  the kept pose goes up or down by the two bobs' difference)
+                    M4 kept[3] = {s->pose[0], s->pose[1], s->pose[2]};
+                    for (int i = 0; i < 2; ++i) liftOf[i] = kept[1 + i].m[13] - 0.9f;
+                    walkback::HangLegs(kept, 3, game[0].m[12], game[0].m[13], game[0].m[14]);
+                    for (int b = 0; b < 3; ++b) drawn[b] = walkback::Blend(game[b], kept[b], w);
+                    ++drawnOn;
+                    if (w < 0.999f) ++blended;
+                }
+                if (t < 3.2) continue;
+                // across the trunk (the body faces +z): what he sees looking down
+                worstSide = std::min(worstSide, drawn[2].m[12] - drawn[1].m[12]);
+                for (int i = 0; i < 2; ++i) {   // a planted foot over the ground (world: the body's travel added)
+                    const M4& d = drawn[1 + i];
+                    const bool planted = liftOf[i] < 1e-3f;
+                    const float wx = d.m[12] + bodyX, wz = d.m[14] + bodyZ;
+                    if (planted && wasPlanted[i] && w >= 0.999f && speed > 0.15f && !jumped) {
+                        const float gx = (wx - wasWorld[2 * i]) / (float)dt, gz = (wz - wasWorld[2 * i + 1]) / (float)dt;
+                        const float r = phi * kPi / 180.0f;   // (the travel's part off straight back: his travel plus his speed straight ahead)
+                        worstPlanted = std::max(worstPlanted, std::hypot(gx / speed - std::sin(r), gz / speed - (std::cos(r) + 1.0f)));
+                    }
+                    wasPlanted[i] = planted;
+                    wasWorld[2 * i] = wx;
+                    wasWorld[2 * i + 1] = wz;
+                }
+            }
+            (void)wasWorld;
+            std::printf("legs_rear %-32s on %3d poses (%d blended), started wholly %d of %d; left foot's lead across the trunk at least %.2f; a "
+                        "planted foot off stepping back at his pace at most %.2f of his speed\n", cs.name, drawnOn, blended, startedWhole, starts,
+                        worstSide, worstPlanted);
+            CHECK(worstSide > 2.0f - 1e-3f);                          // never crossed: the game's own spacing across (the feet 2 apart)
+            if (cs.phi == -999.0f) { CHECK(drawnOn == 0); continue; }   // standing: the game's own legs, turned with the body
+            CHECK(drawnOn > 100);
+            CHECK(startedWhole == starts);                            // no walk blended into the other coming on
+            if (cs.phi != 999.0f) CHECK(worstPlanted < 0.12f);       // the feet step back at his pace (straight back: they stand)
+        }
+    }
+
     // TurnAbout / YawOf: a bone turned about a point keeps its height and its distance from the point, its yaw goes round by the turn, and the turn back
     // gives it again.
     {

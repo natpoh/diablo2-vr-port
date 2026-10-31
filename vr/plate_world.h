@@ -403,6 +403,7 @@ struct State {
     std::atomic<bool> lift{false};
     std::atomic<float> floorM{0.0f}, upm{0.0f};   // vrcam's tick: the hero's floor (metres, render world) and game units a metre; upm 0 = not known
     std::atomic<float> gameGapPx{19.0f};          // how far under the plate's lower edge the game's anchor stands (px), measured from its widgets; 19 until read
+    std::atomic<bool> steady{false};   // [hud] monster_plate_smooth: the plate hung on a smoothed head, the target's distance smoothed (SteadyHead, SteadyValue)
 };
 inline State& S() {
     static State s;
@@ -674,5 +675,128 @@ inline void SetWorld(float floorM, float upm) {
 inline void SetGameGap(float px) {
     if (std::isfinite(px) && px >= 0.0f && px <= 400.0f) S().gameGapPx.store(px);
 }
+
+// ---- [hud] monster_plate_smooth: the plate held steady ----------------------------------------------------------------------------------------------
+// Serg (2026-10-31): "the plates keep shaking and jittering, they should move more smoothly". The point the plate hangs on came, each frame, from the game's
+// own head point (UnitToScreen "above", which goes with the model's animation: the bob of a walk, the shake of a blow) and the monster's axis through its
+// place on the grid (its path, which moves in the game's own steps); the target's distance - the plate's size far away, its stereo depth, the eyes by
+// turns - from that place too. Now the head is held by a critically damped spring in the world (metres, the render world): it never overshoots, so nothing
+// wobbles at rest, and its stiffness rises with its own speed, so a monster that runs is followed closely while the small shakes of one standing are
+// taken out. The plate hangs where the game's camera sees the spring's head this frame (ScreenOf): a turn of your head moves it with the world, as the
+// monster moves, never after it. The distance gets the same spring (SteadyValue). One point a frame, the layer laid out once: both eyes show the same.
+constexpr float kSteadyRestW = 7.0f;      // rad/s at rest: a shake is down to a tenth in 0.55 s
+constexpr float kSteadyWPerMps = 12.0f;   // stiffer by this per m/s of the spring's own speed
+constexpr float kSteadyMaxW = 60.0f;      // at most: a monster running 5 m/s is followed some 17 cm behind (2 v / w)
+constexpr float kSteadyMaxDtS = 0.25f;    // a longer gap (a pause, a load): it starts again where the head is
+inline float SteadyW(float speed) {
+    return std::clamp(kSteadyRestW + kSteadyWPerMps * (std::isfinite(speed) ? std::fabs(speed) : 0.0f), kSteadyRestW, kSteadyMaxW);
+}
+// One step of a critically damped spring of stiffness w toward a target held for dt, solved exactly (no step size makes it overshoot):
+// e = x - target, a = v + w e: x(t) = target + (e + a t) e^-wt, v(t) = (v - w a t) e^-wt. It crosses the target only when a has the sign of -e (coming in
+// faster than w e - a stiffness that eased off as it slowed): then w is taken as -v / e, which brings it in without passing.
+inline void SpringStep(float* x, float* v, float target, float w, float dt) {
+    const float e0 = *x - target;
+    if (e0 != 0.0f && *v * e0 < 0.0f) w = std::max(w, -*v / e0);
+    const float e = e0, a = *v + w * e, ex = std::exp(-w * dt);
+    *x = target + (e + a * dt) * ex;
+    *v = (*v - w * a * dt) * ex;
+}
+// A point (3) or a value (1) held for one target: another target or a gap past kSteadyMaxDtS starts it again at the target; a target that is not a number
+// leaves what is held as it is.
+template <int N>
+struct Steady {
+    uintptr_t unit = 0;
+    bool valid = false;
+    float x[N] = {}, v[N] = {};
+};
+template <int N>
+inline void SteadyStep(Steady<N>* s, uintptr_t unit, const float target[N], float dt, float out[N]) {
+    bool finite = true;
+    for (int i = 0; i < N; ++i) finite = finite && std::isfinite(target[i]);
+    if (!finite) {
+        for (int i = 0; i < N; ++i) out[i] = s->valid ? s->x[i] : target[i];
+        return;
+    }
+    bool fresh = !s->valid || s->unit != unit || !(dt >= 0.0f) || dt > kSteadyMaxDtS;
+    if (!fresh) {
+        float sp = 0.0f;
+        for (int i = 0; i < N; ++i) sp += s->v[i] * s->v[i];
+        const float w = SteadyW(std::sqrt(sp));
+        for (int i = 0; i < N; ++i) SpringStep(&s->x[i], &s->v[i], target[i], w, dt);
+        for (int i = 0; i < N; ++i) fresh = fresh || !std::isfinite(s->x[i]) || !std::isfinite(s->v[i]);
+    }
+    if (fresh) {
+        s->unit = unit;
+        s->valid = true;
+        for (int i = 0; i < N; ++i) {
+            s->x[i] = target[i];
+            s->v[i] = 0.0f;
+        }
+    }
+    for (int i = 0; i < N; ++i) out[i] = s->x[i];
+}
+inline float SteadyValue(Steady<1>* s, uintptr_t unit, float target, float dt) {
+    float out = target;
+    SteadyStep<1>(s, unit, &target, dt, &out);
+    return out;
+}
+
+// Where the game's camera sees a point (metres, the render world): the screen point whose ray points at it - Newton steps from a guess (the game's own
+// point for the head), the ray's change across and down the screen worked out from rays a few pixels off. False: no ray, behind the eye, or no answer.
+inline bool ScreenOf(RayFn ray, const float P[3], float upm, const float guess[2], float out[2]) {
+    if (!ray || !(upm >= 1.0f && upm <= 12.0f)) return false;
+    auto norm = [](float v[3]) {
+        const float l = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+        if (!(l > 1e-9f) || !std::isfinite(l)) return false;
+        for (int i = 0; i < 3; ++i) v[i] /= l;
+        return true;
+    };
+    float x = guess[0], y = guess[1];
+    for (int step = 0; step < 3; ++step) {
+        float o[3], d[3], ox[3], dx[3], oy[3], dy[3];
+        if (!ray(x, y, o, d) || !ray(x + kProbePx, y, ox, dx) || !ray(x, y + kProbePx, oy, dy) || !norm(d) || !norm(dx) || !norm(dy)) return false;
+        float u[3] = {P[0] - o[0] / upm, P[1] - o[1] / upm, P[2] - o[2] / upm};
+        if (!norm(u) || u[0] * d[0] + u[1] * d[1] + u[2] * d[2] <= 0.0f) return false;   // behind the eye
+        float jx[3], jy[3], r[3];
+        for (int i = 0; i < 3; ++i) {
+            jx[i] = (dx[i] - d[i]) / kProbePx;
+            jy[i] = (dy[i] - d[i]) / kProbePx;
+            r[i] = u[i] - d[i];
+        }
+        const float a = jx[0] * jx[0] + jx[1] * jx[1] + jx[2] * jx[2], bb = jx[0] * jy[0] + jx[1] * jy[1] + jx[2] * jy[2];
+        const float c = jy[0] * jy[0] + jy[1] * jy[1] + jy[2] * jy[2];
+        const float rx = jx[0] * r[0] + jx[1] * r[1] + jx[2] * r[2], ry = jy[0] * r[0] + jy[1] * r[1] + jy[2] * r[2];
+        const float det = a * c - bb * bb;
+        if (!(std::fabs(det) > 1e-20f)) return false;
+        x += (c * rx - bb * ry) / det;
+        y += (a * ry - bb * rx) / det;
+        if (!std::isfinite(x) || !std::isfinite(y)) return false;
+    }
+    out[0] = x;
+    out[1] = y;
+    return true;
+}
+
+// The hook's step: the game's head point (px) -> the head on the monster's axis (HeadOnAxis, else kFallbackHeadM over the floor, as LiftAnchor) -> the
+// spring -> where the camera sees the spring's head now (outPx, the point the plate hangs on from here: the lift starts from it). False: left as it was.
+inline bool SteadyHead(Steady<3>* s, uintptr_t unit, const float px[2], const float foot[2], float floorM, float upm, RayFn ray, float dt, float outPx[2]) {
+    if (!ray || !(upm >= 1.0f && upm <= 12.0f) || !std::isfinite(floorM)) return false;
+    float o[3], d[3];
+    if (!ray(px[0], px[1], o, d)) return false;
+    const float k = meleetouch::kGroundShear, fx = foot[0] / upm, fz = foot[1] / upm;
+    const float ro[3] = {o[0] / upm, o[1] / upm, o[2] / upm};
+    float height = kFallbackHeadM, head[3];
+    if (!HeadOnAxis(fx, fz, floorM, ro, d, &height, head) || height < kMinHeadM || height > kMaxHeadM) {
+        height = kFallbackHeadM;
+        head[0] = fx + (floorM + height) * k;
+        head[1] = floorM + height;
+        head[2] = fz + (floorM + height) * k;
+    }
+    float held[3];
+    SteadyStep<3>(s, unit, head, dt, held);
+    return ScreenOf(ray, held, upm, px, outPx);
+}
+inline void SetSteady(bool on) { S().steady.store(on); }
+inline bool Steadying() { return S().steady.load(); }
 
 }  // namespace plateworld

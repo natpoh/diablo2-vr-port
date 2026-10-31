@@ -32,6 +32,7 @@
 #include "contact.h"
 #include "heft.h"
 #include "stab.h"
+#include "walls.h"
 
 namespace heft::hold {
 
@@ -122,6 +123,11 @@ struct Settings {
 	bool   stab         = false;  // [weight] stab_in: with bodies, a thrusting weapon driven point first into a body goes in and is held there (stab.h) - while the mod says
 	                              // it thrusts now (Hold::SetStabbing); off: it stops at the surface as any weapon
 	stab::Params stabParams;      // ... its numbers
+	// [weight] world_contact: the held weapon meets the level's walls and big props it is given (Hold::SetWalls, walls.h) - put back on their faces, a little bounce, the controllers
+	// go on; a controller wallReturn past the hand it holds the weapon with puts the weapon back in it, through the walls it is in (they leave it alone until it is clear of them)
+	bool   walls        = false;
+	walls::Params wallParams;
+	double wallReturn   = 0.6;    // m
 	// [weight] cleave: with bodies, a strong strike is not stopped at the first body - it goes on through it into the next, slowed by what that body took. A new
 	// touch of a monster's body (not of what it holds: a shield or a weapon stops it as ever) whose arrival took at least cleaveImpulse out of the weapon is cut
 	// through: the weapon is put back as it was before that body stopped it, that monster's body is left alone for the rest of the stroke (until the steel has been
@@ -278,6 +284,11 @@ public:
 	static constexpr double kTearHold = 0.15;   // s: ... a hand far across the stab line this long tears it free (a moment's jerk does not)
 	static constexpr double kTearPerAlong = 0.3;   // ... the tear's distance grows by this much a metre the hand is along the line from the entry
 	void SetBodies(const contact::Capsule* bodies, int n);
+	// [weight] world_contact (Settings::walls): the walls the held weapon meets this step, in the room - up to walls::kMaxWalls, kept until the next call; what it met on the last step
+	// (Report::walls 0: nothing); how many times it went back into the hand through a wall (Settings::wallReturn)
+	void SetWalls(const walls::Wall* w, int n);
+	const walls::Report& LastWall() const { return wall_; }
+	int WallReturns() const { return wallReturns_; }
 	// What the weapon met on the last step: Report::bodies 0 when nothing (or Settings::bodies is off, or no hand holds it).
 	const contact::Report& LastContact() const { return contact_; }
 	// [weight] cleave (Settings::cleave): the bodies the weapon went on through. Cleaves() is bumped once for each; LastCleave() is the last one.
@@ -407,6 +418,11 @@ private:
 	contact::Report contact_;       // the last step's
 	bool wedged_ = false;           // ... and the one before touched several monsters (Settings::wedgeFriction)
 	double sinceBody_ = 1e9;        // s since the weapon last touched a body (kBodySnap)
+	walls::Wall   walls_[walls::kMaxWalls];   // SetWalls
+	int           nWalls_ = 0;
+	walls::Memory wallMem_;         // which face each wall lets the weapon out of
+	walls::Report wall_;            // the last step's
+	int           wallReturns_ = 0;
 	stab::Blob   stabBlob_;         // [weight] stab_in: the library's wound (zero: in none)
 	bool         stuck_ = false;    // ... the weapon is in a wound (the library said so)
 	double       tearFor_ = 0;      // ... s a hand has been far across the stab line (the tear)

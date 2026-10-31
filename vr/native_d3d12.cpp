@@ -15,6 +15,8 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
+
+#include "sky_atlas.h"   // [sky] game_sky: the domes' picture as the game loads it (WatchDomeAtlas)
 #include <vector>
 
 #include "MinHook.h"
@@ -124,8 +126,42 @@ ID3D12Resource* SrvAt(SIZE_T slot) {
     ReleaseSRWLockShared(&g_srvLock);
     return r;
 }
+// [sky] game_sky: the game's views of the domes' picture (WatchDomeAtlas) - each texture's first view told, and how many it got. Serg on
+// 0.192.8 (92.webp): our effect recoloured the dome after the game had blended the trees' edges into it - bright outlines round every tree
+// at night; the game should draw the dome in its right colours itself. A view of the picture made by the game is where a texture of ours,
+// baked by the time of day, could stand in. (Read only: the view is the game's.)
+std::atomic<bool> g_watchAtlas{false};
+std::atomic<AtlasStandInFn> g_atlasStandIn{nullptr};   // [sky] dome_in_game_colour: ours made in the game's view's place (SetAtlasStandIn)
+bool IsAtlas(ID3D12Resource* r) {
+    const D3D12_RESOURCE_DESC rd = r->GetDesc();
+    return rd.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE2D && skyatlas::IsAtlasTexture(rd.Width, rd.Height, (uint32_t)rd.Format);
+}
+void NoteAtlasView(ID3D12Resource* r, const D3D12_SHADER_RESOURCE_VIEW_DESC* desc, D3D12_CPU_DESCRIPTOR_HANDLE h) {
+    const D3D12_RESOURCE_DESC rd = r->GetDesc();
+    static std::mutex m;
+    static ID3D12Resource* seen[8] = {};
+    static unsigned views[8] = {};
+    std::lock_guard<std::mutex> lock(m);
+    int i = 0;
+    while (i < 8 && seen[i] && seen[i] != r) ++i;
+    if (i == 8) return;
+    const bool first = !seen[i];
+    seen[i] = r;
+    ++views[i];
+    if (first || views[i] == 2 || views[i] == 10)
+        LogF("vrcam: game sky - the game made %s view of the domes' picture: texture %p %llux%u, format %u, %u mips, heap %s; the view %s, "
+             "format %u, mips %u from %u, in slot %zx%s", first ? "a" : views[i] == 2 ? "a second" : "a tenth", (void*)r,
+             (unsigned long long)rd.Width, rd.Height, (unsigned)rd.Format, (unsigned)rd.MipLevels,
+             i ? "(another texture of it: loaded again)" : "", desc ? "described" : "with no description (the texture's own)",
+             desc ? (unsigned)desc->Format : (unsigned)rd.Format, desc && desc->ViewDimension == D3D12_SRV_DIMENSION_TEXTURE2D ? desc->Texture2D.MipLevels : 0u,
+             desc && desc->ViewDimension == D3D12_SRV_DIMENSION_TEXTURE2D ? desc->Texture2D.MostDetailedMip : 0u, (size_t)h.ptr,
+             first ? " - where a texture of ours could stand in for it ([sky] game_sky, the dome's own colours by the time of day)" : "");
+}
 void STDMETHODCALLTYPE HookCreateSrv(ID3D12Device* d, ID3D12Resource* r, const D3D12_SHADER_RESOURCE_VIEW_DESC* desc, D3D12_CPU_DESCRIPTOR_HANDLE h) {
-    g_origCreateSrv(d, r, desc, h);
+    const bool atlas = r && !t_ours && g_watchAtlas.load(std::memory_order_relaxed) && IsAtlas(r);
+    if (atlas) NoteAtlasView(r, desc, h);
+    const AtlasStandInFn standIn = atlas ? g_atlasStandIn.load() : nullptr;
+    if (!standIn || !standIn(d, r, desc, h, g_origCreateSrv)) g_origCreateSrv(d, r, desc, h);
     if (!g_trackSrv.load(std::memory_order_relaxed) || t_ours) return;
     bool scene = false;
     if (r) {
@@ -249,7 +285,7 @@ void STDMETHODCALLTYPE HookOmSet(ID3D12GraphicsCommandList* cl, UINT n, const D3
             r = it != g_views.end() ? it->second : nullptr;
             ReleaseSRWLockShared(&g_viewLock);
         }
-        g_sinks.fxTargets(cl, n, rts, single != FALSE, r);
+        g_sinks.fxTargets(cl, n, rts, single != FALSE, r, ds);
     }
     if (in.outer && !t_ours && g_sinks.bindDepth) {
         ID3D12Resource* r = nullptr;
@@ -288,7 +324,7 @@ void STDMETHODCALLTYPE HookDrawIndexed(ID3D12GraphicsCommandList* cl, UINT n, UI
     }
     {   // [fog] game_fog_before_fx: the resolve may be an indexed draw too (PC1 2026-10-28: never seen through DrawInstanced alone)
         const InList in;
-        if (in.outer && !t_ours && g_sinks.fxDraw) g_sinks.fxDraw(cl, n, inst);
+        if (in.outer && !t_ours && g_sinks.fxDraw) g_sinks.fxDraw(cl, true, n, inst, first, base, firstInst);
     }
     g_origDrawIndexed(cl, n, inst, first, base, firstInst);
 }
@@ -398,7 +434,7 @@ void STDMETHODCALLTYPE HookCUav(ID3D12GraphicsCommandList* cl, UINT i, D3D12_GPU
 void STDMETHODCALLTYPE HookDraw(ID3D12GraphicsCommandList* cl, UINT n, UINT inst, UINT first, UINT firstInst) {
     {
         const InList in;
-        if (in.outer && !t_ours && g_sinks.fxDraw) g_sinks.fxDraw(cl, n, inst);
+        if (in.outer && !t_ours && g_sinks.fxDraw) g_sinks.fxDraw(cl, false, n, inst, first, 0, firstInst);
     }
     g_origDraw(cl, n, inst, first, firstInst);
 }
@@ -657,6 +693,8 @@ ID3D12Resource* RtvResource(uint64_t handle) {
 }
 unsigned RtvIncrement() { return g_rtvInc.load(); }
 void TrackSceneViews(bool on) { g_trackSrv.store(on); }
+void WatchDomeAtlas(bool on) { g_watchAtlas.store(on, std::memory_order_relaxed); }
+void SetAtlasStandIn(AtlasStandInFn fn) { g_atlasStandIn.store(fn); }
 ID3D12Resource* SrvResource(uint64_t handle) { return SrvAt((SIZE_T)handle); }
 unsigned SrvIncrement() { return g_srvInc.load(); }
 ID3D12CommandQueue* GameQueue() { return g_queue.load(); }

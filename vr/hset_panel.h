@@ -36,6 +36,7 @@ struct FrameIn {
     video::Env env;                // the picture's sizes, for the Video page
     int view = 0;                  // the game's view now (1 = F1 ... 4 = F4, 0 = not known), for the lit button of the View row
     float spanInUse = 0.0f;        // the span the hero's arms are fitted to now, metres (calib::SpanInUseM; 0 none), for the Body page's Arm span
+    Players players;               // the game's players count and whether it takes /players now (vr/players_cmd.h), for the Options page's Players row
     int openGuide = -1;            // the first-start guide asks the panel to come up on its Guide page: the page to start on (vr/first_start.h), -1 none
     bool gripTaken[2] = {false, false};   // [weight] weapon_grip_no_chord: that hand's grip holds the weapon (or another gesture holds it) - it does not arm the chord
     bool chordOn = true;           // [debug] settings_two_grip_chord: both grips + a click open / close it. The plugin passes the key, OFF by default (the author, 2026-10-23: "no
@@ -156,6 +157,7 @@ public:
         model.SetEnv(in.env);
         model.SetView(in.view);
         model.SetSpanInUse(in.spanInUse);
+        model.SetPlayers(in.players, in.ms);
         model.Observe(in.snapshot);
 
         // closed from here: its controls stay zero until let go

@@ -43,6 +43,12 @@ inline bool Read(const std::string& dds, Info* out) {
     out->format = U32(dds, 128);
     return out->width && out->height && (out->format == kBC6HUF16 || out->format == kBC6HSF16) && U32(dds, 140) <= 1;   // (one array slice)
 }
+// The atlas as the game's graphics card has it (vrcam's probe of the game's view of it, vr/native_d3d12.cpp): a BC6H 2D texture (DXGI 94
+// typeless, 95 UF16, 96 SF16) as high as kBandCount bands of a quarter of its width (the acts' 2048 x 512 pictures: 2048 x 3072)
+inline bool IsAtlasTexture(uint64_t width, uint32_t height, uint32_t dxgiFormat) {
+    return (dxgiFormat == 94 || dxgiFormat == kBC6HUF16 || dxgiFormat == kBC6HSF16) && width >= 4 && width % 4 == 0 &&
+           (uint64_t)height == width / 4 * kBandCount;
+}
 // One mip's bytes: 16 a 4 x 4 block
 inline size_t MipBytes(uint32_t width, uint32_t height, uint32_t mip) {
     const uint32_t w = width >> mip ? width >> mip : 1, h = height >> mip ? height >> mip : 1;

@@ -423,6 +423,12 @@ inline constexpr Sig kSigs[] = {
     {"GrannyCompositeT", 0x1614DA0, Kind::Code, "48 89 5C 24 08 48 89 6C 24 10 48 89 74 24 18 57 48 83 EC 40 41 8B D9 49 8B F8 48 8B F2 48 8B E9 E8 ?? ?? ?? ?? 84 C0 75 42 48 8D 4C 24 30 E8 ?? ?? ?? ?? 4C 8B 54 24 30 4D 85 D2 74 2E 48 8B 44 24 38 4C 8D 05 ?? ?? ?? ?? 48 89 44 24 28 BA 43 00 00 00 48 8D 05 ?? ?? ?? ?? 41 B9 95 4A 00 00", 0x1614DA0, 0, 0, 0, 0, "48 89 5C 24 08 48 89 6C 24 10 48 89 74 24 18 57", nullptr, "the head's shadow in first person", "The head's shadow"},
     // an entity's bone attachment (registry, entity): +0 the bone, +0xC8 the SkeletonInstance it hangs on, called
     {"AttachmentOf", 0xDF5A80, Kind::Ref, "E8 ?? ?? ?? ?? 4C 8B F0 48 85 C0 0F 84 ?? ?? ?? ?? 48 8B 98 D0 00 00 00 33 F6", 0xE3B406, 0, 1, 5, 0, "48 89 5C 24 08 48 89 74 24 18", nullptr, "the head's shadow in first person", "The head's shadow"},
+    // the chat line's command parser (text, text, 0, 0): /fps ... /players N ... /nopickup, called with "/players N"
+    {"ChatCommands", 0x188700, Kind::Code, "40 55 53 56 57 48 8D AC 24 D8 F8 FF FF 48 81 EC 28 08 00 00 48 8B 05 ?? ?? ?? ??", 0x188700, 0, 0, 0, 0, "40 55 53 56 57 48 8D AC 24 D8 F8 FF FF 48 81 EC 28 08 00 00", nullptr, "Players in the headset", "Players in the headset"},
+    // the game's Offline Difficulty Scaling setting (1 - 8, Settings.json; /players N writes it): the object, its value at +0xC, called read-only
+    {"PlayersSetting", 0xE19E0, Kind::Code, "48 83 EC 58 65 48 8B 04 25 58 00 00 00 8B 0D ?? ?? ?? ?? 41 B8 6C 12 00 00 48 8B 14 C8 41 8B 04 10 39 05 ?? ?? ?? ?? 7F 39 BA 01 00 00 00", 0xE19E0, 0, 0, 0, 0, "48 83 EC 58 65 48 8B 04 25 58 00 00 00 8B 0D ?? ?? ?? ??", nullptr, "Players in the headset", "Players in the headset"},
+    // the game's mode (0 offline; /players is taken in 0, 5 and 7 only), called read-only
+    {"GameMode", 0x8AF90, Kind::Ref, "E8 ?? ?? ?? ?? 85 C0 8B DD 0F 95 C3 66 81 C3 91 0E EB 2A", 0x16B92E, 0, 1, 5, 0, "8B 05 ?? ?? ?? ?? C3 CC", nullptr, "Players in the headset", "Players in the headset"},
 };
 
 }   // namespace d2rsig

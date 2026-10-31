@@ -48,6 +48,8 @@
 #include "effects_layer.h"  // [stereo] turns_keep_own 3, 4: eyes by turns - where the game's effects are in the eye drawn (xr.cpp reads it)
 #include "fog_in_frame.h"   // [render] fog_in_frame: our fog drawn in the game's frame, before its transparent resolve
 #include "game_fog_vr.h"   // [fog] game_fog: the game's own distance fog with our numbers (its own pass, none of ours)
+#include "sky/dome_atlas.h"     // [sky] dome_in_game_colour: the game samples our baked picture for the dome
+#include "sky/period_bright.h"   // [sky] bright_<period>: the sky's brightness each period of the game's day (Serg's sliders)
 #include "sky_dome.h"      // [sky] game_sky: our painted sky as the game's own dome (the pure parts)
 #include "game_ceiling.h"  // [ceiling] game_ceiling: the cave ceiling as the game's own lit rock slab (the pure parts, shared with Settings)
 #include "ceiling_measures.h"   // [ceiling] height_from_walls, game_ceiling_beams: the rooms measured from the game's own models
@@ -76,6 +78,9 @@ int FindHeroMatrices(const float hero[3], uintptr_t* out, int max);
 #include "reshade_env.h"        // another mod's RESHADE_* variables, cleared in this process before ReShade64.dll loads (LoadReShade)
 #include "stray_walk_wire.h"    // [gameplay] block_stray_walk / block_stray_clicks: no stray walk, no stray mouse button in the F4 world (stray_walk_wire.cpp)
 #include "view_gate.h"     // everything added after the base mod acts in VR first person (F4) only
+#include "headset_shot.h"  // [headset_shot]: a screenshot of what reaches the headset (every view: a support tool, not a feature of play)
+#include "headset_clip.h"  // [headset_shot] video: 10 s of what reaches the headset, to an .mp4
+#include "headset_grid.h"  // [headset_shot] grid: a calibration grid in each eye's picture
 #include "vcache.h"        // [render] vcache: the game's threads on the big-L3 cores (Ryzen X3D with two CCDs)
 #include "interact_press.h"   // [input] interact_one_press: one target per press of "pick up / interact"
 #include "depth_pick.h"    // the depth-stencil our effects copy, picked once and kept (scenedepth::)
@@ -109,6 +114,7 @@ int FindHeroMatrices(const float hero[3], uintptr_t* out, int max);
 #include "skill_triggers.h"   // [debug] skill_triggers: what casts a skill (the shield bash -> Smite so far) drawn in the headset
 #include "player_bodies.h"   // [multiplayer] pose_share_bodies: the other players' bodies and weapons as capsules our weapon meets
 #include "pose_share_wire.h"
+#include "stride_lib.h"   // [body] legs_side_ragdoll: the weight library's stepping walk for the hero's feet (D2rs*, shared/d2r_vr_stride.h)
 #include "gait_lib.h"   // [multiplayer] pose_share_legs: the optional gait library (d2r_vr_gait.dll)   // [multiplayer] pose_share: the VR players' heads and controllers to each other through D2RLoader's plugin network (a probe: logged, three markers)
 #include "blade_shape.h"   // the touch's blade as drawn (dual wield, the sliders)
 #include "flail_chain.h"   // [flail] ball_weight_pct: the flail's mass on the weight model (WeaponMassFactor)
@@ -117,6 +123,7 @@ int FindHeroMatrices(const float hero[3], uintptr_t* out, int max);
 #include "grab_bodies.h"   // ... which hand may take a body (BusyWhy)
 #include "weight_lib.h"    // the weight-physics library (d2r_vr_weight.dll beside the plugin), when there is one: [weight] hands_model 1
 #include "doll_lib.h"   // [weight] monster_ragdoll: the doll library
+#include "knock_down.h"   // [weight] knock_down: a struck humanoid drawn falling, lying and getting up (the weight library's D2rf* exports)
 #include "grip_lib.h"      // the grip library (d2r_vr_grip.dll beside the plugin), when there is one: [weight] grip_model 1
 #include "hero_strength.h"  // [weight] hero_strength: the default class multipliers
 #include "stick_strength.h"  // [weight] stick_by_strength, stick_pct: how hard a weapon sticks
@@ -141,6 +148,7 @@ namespace hud { void Register(); void SetHide(int mode); void SetInterfaceScale(
 #include "sigscan.h"
 #include "mat4.h"
 namespace gamecmd { void Init(const D2RL::PluginContext* ctx); void Tick(); void Tap(uint32_t cmd); bool Pressed(uint32_t cmd); }   // the game's key commands from BodyWalk (gamecmd.cpp)
+namespace playerscmd { void Init(const D2RL::PluginContext* ctx); void Tick(); }   // the headset's Players row: the game's own /players N (players_cmd.cpp)
 namespace skillwheel { void Init(const D2RL::PluginContext* ctx); void Tick(); void Shutdown(); }   // [openxr] skill_wheel (skill_wheel.cpp)
 namespace skillwheel { bool Enabled(); }
 namespace wheelgame { void Tick(bool on, bool open); }   // the wheel's reads of the controller's skill slots (wheel_game.cpp): a throw by gesture keeps them going for the Throw slot
@@ -251,6 +259,7 @@ namespace gamestate { int HeadSide(); }   // [shield] heads_hang: the hand slot 
 #include "throw_born.h"
 #include "potion_hide.h"
 #include "knock_props.h"   // [weight] knock_props: the level's small props knocked about (drawn only)
+#include "world_contact.h"   // [weight] world_contact: the weapon and the bare hands meet the level's walls (drawn only)
 #include "own_effects.h"          // [render] dim_own_effects: the hero's own effects (Bone Armor ...) drawn fainter in first person
 #include "head_shadow.h"          // [arms] head_shadow: the hidden head still casts its shadow
 #include "grab_priority.h"   // [belt] grab_nearest, grab_trigger: a grip press and the belt potion or the weapon

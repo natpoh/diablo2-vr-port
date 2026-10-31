@@ -189,6 +189,7 @@ SkyAct g_skyAct[7];
 // [fog] color_caves: one colour for every area off the outdoor list - caves,
 // dungeons, crypts, towers. Empty = the act's own colour, as before.
 CaveFog g_caveFog{};
+CaveFog g_arcaneFogColour{};   // [fog] arcane_color (empty: the caves' colour, as before)
 std::atomic<uint32_t> g_skyCfgGen{0};   // bumped when a picture name changes
 
 std::string Utf8(const wchar_t* w) {
@@ -225,7 +226,10 @@ void LoadCaveFog() {
     GetPrivateProfileStringW(L"fog", L"color_caves", L"#100D0B", buf, (DWORD)std::size(buf), g_iniPath);
     CaveFog f{};
     f.set = ParseHexColor(buf, f.rgb);
-    AcquireSRWLockExclusive(&g_skyCfgLock); g_caveFog = f; ReleaseSRWLockExclusive(&g_skyCfgLock);
+    GetPrivateProfileStringW(L"fog", L"arcane_color", L"", buf, (DWORD)std::size(buf), g_iniPath);
+    CaveFog a{};
+    a.set = ParseHexColor(buf, a.rgb);
+    AcquireSRWLockExclusive(&g_skyCfgLock); g_caveFog = f; g_arcaneFogColour = a; ReleaseSRWLockExclusive(&g_skyCfgLock);
 }
 
 // The folder ReShade lives in (shared/mod_layout.h): the mod's own reshade\ when this plugin runs as the D2RLoader mod D2R-VR

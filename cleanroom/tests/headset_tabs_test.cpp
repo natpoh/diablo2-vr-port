@@ -1166,7 +1166,7 @@ static void TestPaint(const char* dumpDir) {
     bool belowSame = true;
     for (int y = (int)tiles::kPanel.t + 14; y < tiles::kH && belowSame; ++y)
         for (int x = 0; x < tiles::kW; ++x) {
-            const bool hint = (y > 1020 && x > 600 && x < 1000) ||                                                                    // the dots at the foot
+            const bool hint = (y > 1020 && x > 560 && x < 1040) ||                                                                    // the dots at the foot
                               (y >= 470 && y <= 690 && (x < 110 || x > 1490));                                                       // the arrows at the edges
             if (!hint && skills[(size_t)y * tiles::kW + x] != plain[(size_t)y * tiles::kW + x]) { belowSame = false; break; }
         }
@@ -1339,8 +1339,8 @@ struct Pads {   // a frame's sticks and grips for the pure flipper
 };
 
 static void TestFlipper() {
-    CHECK(kFlipPlaces == 13 && kFlipPlaces == 1 + hset::PageCount());
-    CHECK(FlipTo(0, -1) == 0 && FlipTo(0, 1) == 1 && FlipTo(2, 1) == 3 && FlipTo(2, -1) == 1 && FlipTo(12, 1) == 12 && FlipTo(12, -1) == 11 && FlipTo(2, 0) == 2);
+    CHECK(kFlipPlaces == 15 && kFlipPlaces == 1 + hset::PageCount());
+    CHECK(FlipTo(0, -1) == 0 && FlipTo(0, 1) == 1 && FlipTo(2, 1) == 3 && FlipTo(2, -1) == 1 && FlipTo(14, 1) == 14 && FlipTo(14, -1) == 13 && FlipTo(2, 0) == 2);
     auto step = [](Flipper& f, double t, const Pads& p) { return f.Step(t, p.x, p.y, p.g); };
     {   // a flick right is one step forward, left one back; the stick's coming back to the middle re-arms it
         Flipper f;
@@ -1639,6 +1639,102 @@ static void TestPreviewButton() {
     CHECK(other.settings.what != hset::Do::Preview);
 }
 
+// The Co-op page on the window's Settings tab (vr/hset_coop.h): D2R Rooms' three choices, clicked with the laser, written at once (the step
+// carries the edit to the plugin: SettingsAct -> store::SubmitCoop), in our look and in the game's.
+static void TestCoopOnWindow(const char* dumpDir) {
+    auto st = std::make_shared<hset::coop::State>();
+    st->installed = st->iniThere = true;
+    st->cfg = roomsbridge::ParseIni(roomsbridge::DefaultIni() + "Mine = wss://relay.example.org\n");
+    st->statusThere = true;
+    st->status.plugin = "0.9.7";
+    st->status.relays = {{"D2R Rooms", roomsbridge::kDefaultRelayUrl, "active", 0.12, true}, {"Mine", "wss://relay.example.org", "no_answer", -1, false}};
+    st->ageMin = 1;
+    World w;
+    w.host.ini.coop = st;
+    w.LongPress();
+    w.ClickTab(1);
+    const Step t = w.ClickSheet(hset::kTab(hset::kPageCoop));
+    CHECK(t.settings.what == hset::Do::Nothing && w.c.SettingsModel().page == hset::kPageCoop && w.c.FlipPlace() == 1 + hset::kPageCoop && w.c.SettingsModel().CoopReady());
+    const std::vector<uint32_t> page = Paint(w.c.ViewNow());
+    if (dumpDir) WriteBmp(std::string(dumpDir) + "/tabs_coop.bmp", page, tiles::kW, tiles::kH);
+    // the bridge's switch: [relay] enabled = no, at once, the click felt
+    Step s = w.ClickSheet(hset::kToggle(hset::coop::kEnabled));
+    CHECK(s.settings.what == hset::Do::Coop && s.settings.coop.key == "enabled" && s.settings.coop.value == "no" && s.settings.coop.sequence == 1);
+    CHECK(s.feedback == Feedback::Applied && w.c.Open() && !w.c.SettingsModel().Dirty());
+    CHECK(w.c.SettingsModel().CoopBusy() && !w.c.SettingsModel().CoopShown().enabled);
+    const std::vector<uint32_t> clicked = Paint(w.c.ViewNow());
+    CHECK(clicked != page);   // (the switch shows Off at once, amber)
+    CHECK(w.ClickSheet(hset::kInc(hset::coop::kMode)).settings.what == hset::Do::Nothing);   // one at a time
+    // the thread's answer comes with the store's next reading
+    auto off = std::make_shared<hset::coop::State>(*st);
+    off->cfg.enabled = false;
+    off->written = 1;
+    w.host.ini.coop = off;
+    w.Run(2);
+    CHECK(!w.c.SettingsModel().CoopBusy() && w.c.SettingsModel().CoopResult() == hset::Result::Saved && !w.c.SettingsModel().CoopShown().enabled);
+    CHECK(w.ClickSheet(hset::kInc(hset::coop::kMode)).settings.what == hset::Do::Nothing);   // the bridge off: its choices wait
+    s = w.ClickSheet(hset::kToggle(hset::coop::kEnabled));
+    CHECK(s.settings.what == hset::Do::Coop && s.settings.coop.value == "yes" && s.settings.coop.sequence == 2);
+    auto on = std::make_shared<hset::coop::State>(*st);
+    on->written = 2;
+    w.host.ini.coop = on;
+    w.Run(2);
+    // the relay to host on: > steps to the first of the list, < from there back to "the first that answers"
+    s = w.ClickSheet(hset::kInc(hset::coop::kUse));
+    CHECK(s.settings.what == hset::Do::Coop && s.settings.coop.key == "use" && s.settings.coop.value == "D2R Rooms");
+    auto used = std::make_shared<hset::coop::State>(*st);
+    used->cfg.use = "D2R Rooms";
+    used->written = s.settings.coop.sequence;
+    w.host.ini.coop = used;
+    w.Run(2);
+    s = w.ClickSheet(hset::kDec(hset::coop::kUse));
+    CHECK(s.settings.what == hset::Do::Coop && s.settings.coop.value.empty() && s.settings.coop.sequence == 4);
+    CHECK(w.ClickSheet(hset::kDec(hset::coop::kMode)).settings.what == hset::Do::Nothing);   // (the "use" edit is still on its way)
+    // the edit could not be handed over: the window says so, and shows the file's choice again
+    w.c.SettingsCoopFailed(s.settings.coop.sequence);
+    CHECK(!w.c.SettingsModel().CoopBusy() && w.c.SettingsModel().CoopResult() == hset::Result::Failed && w.c.SettingsModel().CoopShown().use == "D2R Rooms");
+    // not installed: the page offers nothing, a click on the switch is nothing
+    World n;
+    auto missing = std::make_shared<hset::coop::State>(*st);
+    missing->installed = false;
+    n.host.ini.coop = missing;
+    n.LongPress();
+    n.ClickTab(1);
+    n.ClickSheet(hset::kTab(hset::kPageCoop));
+    CHECK(n.ClickSheet(hset::kToggle(hset::coop::kEnabled)).settings.what == hset::Do::Nothing && !n.c.SettingsModel().CoopReady());
+    const std::vector<uint32_t> none = Paint(n.c.ViewNow());
+    CHECK(none != page);
+    if (dumpDir) WriteBmp(std::string(dumpDir) + "/tabs_coop_missing.bmp", none, tiles::kW, tiles::kH);
+    // the game look ([openxr] skill_panel_game_look): the same page in the game's art, when the art is there (GAME_UI_CACHE)
+    char dir[400] = {};
+    if (!GetEnvironmentVariableA("GAME_UI_CACHE", dir, sizeof dir)) {
+        std::printf("  co-op page: GAME_UI_CACHE not set, our look only\n");
+        return;
+    }
+    wchar_t wide[400] = {};
+    MultiByteToWideChar(CP_UTF8, 0, dir, -1, wide, 399);
+    gameui::SetDir(wide);
+    gameui::SetOn(true);
+    CHECK(gameui::Ready());
+    World g;
+    g.host.ini.coop = st;
+    g.LongPress();
+    g.ClickTab(1);
+    g.ClickSheet(hset::kTab(hset::kPageCoop));
+    View high = g.c.ViewNow();
+    high.flipHigh = true;
+    const std::vector<uint32_t> game = Paint(high);
+    CHECK(game != page);
+    if (dumpDir) WriteBmp(std::string(dumpDir) + "/game_coop.bmp", game, tiles::kW, tiles::kH);
+    s = g.ClickSheet(hset::kToggle(hset::coop::kEnabled));
+    CHECK(s.settings.what == hset::Do::Coop && s.settings.coop.value == "no");   // the same click in the game's look
+    high = g.c.ViewNow();
+    high.flipHigh = true;
+    CHECK(Paint(high) != game);
+    gameui::SetOn(false);
+    std::printf("  co-op page: our look and the game's\n");
+}
+
 static void TestFlipController() {
     {   // along the pages: Skills, View, Options, Video, Body, Life, Look, HUD - and stops at the ends
         World w;
@@ -1668,9 +1764,15 @@ static void TestFlipController() {
         Flick(w, 1.0f);
         CHECK(w.c.SettingsModel().page == hset::kPageKeysR && w.c.FlipPlace() == 11);
         Flick(w, 1.0f);
-        CHECK(w.c.SettingsModel().page == hset::kPageGuide && w.c.FlipPlace() == 12 && w.c.SettingsModel().GuideShown());
+        CHECK(w.c.SettingsModel().page == hset::kPageCoop && w.c.FlipPlace() == 12);
         Flick(w, 1.0f);
-        CHECK(w.c.SettingsModel().page == hset::kPageGuide && w.c.FlipPlace() == 12 && w.c.Open());   // the end: a stop
+        CHECK(w.c.SettingsModel().page == hset::kPageVibration && w.c.FlipPlace() == 13);
+        Flick(w, 1.0f);
+        CHECK(w.c.SettingsModel().page == hset::kPageGuide && w.c.FlipPlace() == 14 && w.c.SettingsModel().GuideShown());
+        Flick(w, 1.0f);
+        CHECK(w.c.SettingsModel().page == hset::kPageGuide && w.c.FlipPlace() == 14 && w.c.Open());   // the end: a stop
+        Flick(w, -1.0f);
+        Flick(w, -1.0f);
         Flick(w, -1.0f);
         Flick(w, -1.0f);
         Flick(w, -1.0f);
@@ -1834,12 +1936,12 @@ static void TestFlipController() {
         CHECK(w.c.FlipPlace() == 0 && w.c.Open());
         w.ClickPx(CentreX(next), CentreY(next));
         CHECK(w.c.FlipPlace() == 1 && w.c.ViewNow().tab == Tab::Settings);
-        for (int i = 0; i < 11; ++i) w.ClickPx(CentreX(next), CentreY(next));
-        CHECK(w.c.FlipPlace() == 12);
+        for (int i = 0; i < 13; ++i) w.ClickPx(CentreX(next), CentreY(next));
+        CHECK(w.c.FlipPlace() == 14);
         w.ClickPx(CentreX(next), CentreY(next));
-        CHECK(w.c.FlipPlace() == 12);
+        CHECK(w.c.FlipPlace() == 14);
         w.ClickPx(CentreX(prev), CentreY(prev));
-        CHECK(w.c.FlipPlace() == 11);
+        CHECK(w.c.FlipPlace() == 13 && w.c.SettingsModel().page == hset::kPageVibration);
         // the laser's click on a page tab of the sheet moves the place too, the same order
         w.ClickSheet(hset::kTab(hset::kPageView));
         CHECK(w.c.FlipPlace() == 1 && w.c.ViewNow().flipPlace == 1);
@@ -1915,7 +2017,7 @@ static void TestFlipPaint() {
         for (int y = 0; y < tiles::kH && onlyHints; ++y)
             for (int x = 0; x < tiles::kW; ++x)
                 if (a[(size_t)y * tiles::kW + x] != b[(size_t)y * tiles::kW + x]) {
-                    const bool dot = y > 1020 && x > 600 && x < 1000, arrow = y >= 470 && y <= 690 && (x < 110 || x > 1490);
+                    const bool dot = y > 1020 && x > 560 && x < 1040, arrow = y >= 470 && y <= 690 && (x < 110 || x > 1490);
                     if (!dot && !arrow) { onlyHints = false; break; }
                 }
         CHECK(onlyHints);
@@ -2024,6 +2126,7 @@ int main(int argc, char** argv) {
     TestFlipModel();
     TestFlipController();
     TestPreviewButton();
+    TestCoopOnWindow(dump);
     TestFlipPaint();
     std::printf("%d checks, %d failed\n", g_checks, g_failures);
     return g_failures ? 1 : 0;

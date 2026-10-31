@@ -483,6 +483,8 @@ DWORD WINAPI UpdateThread(void*) {
         for (int k = 0; k < 5; ++k)
             if (fView[k].Pressed(focus) && k < ViewCount()) SetView(k + 1);
         if (f11.Pressed(focus)) Recenter();
+        headshot::KeyTick(focus);   // [headset_shot] key: a screenshot of what reaches the headset
+        headclip::KeyTick(focus);   // [headset_shot] video_key: 10 s of it
         FlatVrCentreTick();
         if (f10.Pressed(focus)) {
             if (GetAsyncKeyState(VK_CONTROL) & 0x8000) {   // Ctrl + F10: one frame of render targets, to find the interface's
@@ -576,6 +578,7 @@ DWORD WINAPI UpdateThread(void*) {
         flog::Tick(g_set.frameLog.load() || GetTickCount64() < flog::g_diagUntil.load());
         directinput::SetMenuNow(gamestate::MenuOpen() || !g_inWorld.load());   // [openxr] direct_input: the layer in force against the game's
         gamecmd::Tick();   // skills, potions, Alt... held in BodyWalk: pressed on the UI thread
+        playerscmd::Tick();   // the headset's Players row: "/players N" on the UI thread
         beltdrop::Tick();  // [hands] belt_drop_ground: a drop of a belt potion under way, on the UI thread
         PauseKeyTick();    // [direct] action:pause - the pause menu: Esc, tapped (F4 only)
         if (shieldsmite::Watching()) {   // [gameplay] shield_smite: a hard bash of the left shield casts the game's own Smite (and [debug] melee_boxes draws it)
@@ -593,6 +596,11 @@ DWORD WINAPI UpdateThread(void*) {
             const ULONGLONG t = GetTickCount64();
             if (t - parryAt >= 10) { parryAt = t; parrywire::Tick(HeroAnimMode(), skel::HeroClass(), t); }
         }
+        if (haptics::CurrentExtras().spell && haptics::Enabled() && viewgate::F4() && g_inWorld.load()) {   // [openxr] haptics_spell: the hero's cast starting, felt
+            static ULONGLONG castAt = 0;
+            const ULONGLONG t = GetTickCount64();
+            if (t - castAt >= 10) { castAt = t; haptics::HeroMode(HeroAnimMode(), haptics::FromSkel(AimHand())); }
+        }
         {
             frametrace::Scope melee(frametrace::kMeleeTick);   // [debug] frame_trace: hit by touch's share of this round
             MeleeTouchTick();   // [gameplay] melee_touch
@@ -601,7 +609,7 @@ DWORD WINAPI UpdateThread(void*) {
         fx::PoseShareTick();   // [multiplayer] pose_share: our pose to the others, their places for the markers (F4 only: first-person builds)
 #endif
         skillwheel::Tick();   // [openxr] skill_wheel: the controller's skill slots read on the UI thread (a no-op when off)
-        lowhp::Tick(lowhp::Enabled() && g_enabled.load() && FullBody() && g_inWorld.load());   // [hud] low_hp_vignette: the hero's life, 5 a second (a no-op when off)
+        lowhp::Tick((lowhp::Enabled() || haptics::ManaWanted()) && g_enabled.load() && FullBody() && g_inWorld.load());   // [hud] low_hp_vignette, [openxr] haptics_low_mana: the hero's stats, 5 a second (a no-op when off)
         merctint::Tick(merctint::Enabled() && g_enabled.load() && FullBody() && g_inWorld.load());   // [hud] merc_tint: the merc and its life, 5 a second (a no-op when off)
         handvitals::Tick(g_enabled.load() && g_inWorld.load());   // [hud] hand_vitals: the hero's life and mana, 5 a second (a no-op when off or outside F4)
         wriststatus::Tick(g_enabled.load() && g_inWorld.load());   // [hud] wrist_status: the hero's companions and effects, 5 a second (a no-op when off or outside F4)
@@ -698,7 +706,7 @@ DWORD WINAPI UpdateThread(void*) {
             HookGameWindow();
             UpdateFovFromFlatVR();
             HookXInput();
-            HookXInputSet();   // [debug] frame_trace only
+            HookXInputSet();   // [debug] frame_trace, [openxr] haptics_game_rumble / haptics_pad_mute only
             ReportXInputUse();
             fx::TryRegister();
             InstallBiomeHook();

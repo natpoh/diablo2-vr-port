@@ -62,7 +62,7 @@ bool FreshHands(skel::Input* in) {
             in->weight.worldUpm = std::max(1.0f, ViewHeight()) / UserEyeHeightM();
         }
     }
-    if (in->grabOn || in->itemsOn) {   // [weight] grab_bodies / grab_items: the render world of this pose, as the weight model's (the bodies and the items are in it)
+    if (in->grabOn || in->itemsOn || in->wallsOn) {   // [weight] grab_bodies / grab_items / world_contact_hands: the render world of this pose, as the weight model's (the bodies, the items, the walls are in it)
         AcquireSRWLockShared(&g_stickLock);
         const StickFrame sf = g_stickFrame;
         ReleaseSRWLockShared(&g_stickLock);
@@ -430,6 +430,7 @@ void PushArms() {
             w.takeHaptic = g_set.weightTakeHaptic.load() ? g_set.weightTakeHapticPct.load() * 0.01f : 0.0f;
             w.recallAny = g_set.weightRecallAny.load();
             w.monsterBodies = g_set.weightMonsterBodies.load() && viewgate::F4();   // [weight] monster_bodies: VR first person only
+            w.worldContact = worldcontact::WeaponWanted() && viewgate::F4();         // [weight] world_contact: the same
             w.stabIn = g_set.weightStabIn.load() && viewgate::F4();                 // [weight] stab_in: the same
             w.stabMinSpeed = g_set.stabMinSpeed.load();
             w.stabMaxAngleDeg = g_set.stabMaxAngleDeg.load();
@@ -737,6 +738,11 @@ void PushArms() {
     in.walkBack = g_set.walkBack.load();
     in.walkBackReverse = g_set.walkBackReverse.load();
     in.dollFeet = g_set.dollFeet.load();
+    in.legsRear = g_set.legsRear.load();
+    in.legsRearCycle = g_set.legsRearCycle.load();
+    in.legsFrontConeDeg = g_set.legsFrontConeDeg.load();
+    in.legsRearConeDeg = g_set.legsRearConeDeg.load();
+    in.legsSideRagdoll = in.legsRear && g_set.legsSideRagdoll.load() && stridelib::Ensure();   // (the library loaded here, never in the pose hook)
     in.heroAnimMode = HeroAnimMode();   // (walk_back_reverse keeps the game's walk and run only - not a Whirlwind, a Leap, a knockback)
     in.followJump = own && g_set.followJump.load();
     in.jumpFrom = g_set.jumpFrom.load();
@@ -772,6 +778,7 @@ void PushArms() {
     bool eyeOk = false;
     in.haveYaw = on && (in.mode == 2 || in.bodyTurn > 0) && CameraYawInModel(&yaw, in.eyeModel, &eyeOk);
     in.haveEye = in.haveYaw && eyeOk;
+    in.haveCamFwd = in.haveYaw && CameraForwardInModel(in.camFwd);   // ([debug] body_dump)
     // the offset turns arms and body together: both read "ahead" from this yaw
     in.yawInModel = in.haveYaw ? g_set.facingSign.load() * yaw + g_set.bodyYawDeg.load() * 0.0174532925f : 0.0f;
 #if D2RVR_FIRST_PERSON
@@ -779,6 +786,7 @@ void PushArms() {
     // (dropped, on the back) - holds no bottle, its grip is no other gesture's (the swap behind a shoulder, the bow's string, the throw) and the weight model
     // would not take the weapon with it (TakeZone: the weapon first, as for the belt)
     in.itemsOn = on && in.mode == 2 && g_set.weightGrabItems.load() && viewgate::F4();   // [weight] grab_items
+    in.wallsOn = on && in.mode == 2 && worldcontact::HandsWanted() && viewgate::F4();   // [weight] world_contact_hands
     // [weight] grab_props: the same hands take the level's props (knock_props' world) - either box ticked
     in.grabBodies = g_set.weightGrabBodies.load();
     in.grabProps = g_set.weightGrabProps.load() && knockprops::GrabReady();

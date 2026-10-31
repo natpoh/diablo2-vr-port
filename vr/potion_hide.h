@@ -244,6 +244,10 @@ void WantHooksForEffects(bool want);
 // models hang on the hero's head). WantHooksForHead(true) puts the hooks in for it.
 void SetXformHeadObserver(XformObserver fn);
 void WantHooksForHead(bool want);
+// [weight] knock_down (vr/knock_down.cpp): one more writer at the world-matrix function (after the others; it writes only the matrices of what hangs on a
+// knocked-down body's bones - a monster's or an NPC's weapon and shield - carried with the bone as drawn). WantHooksForKnock(true) puts the hooks in for it.
+void SetXformKnockWriter(XformObserver fn);
+void WantHooksForKnock(bool want);
 // The entity's effect (VFX) component, by the game's own storage (see above): 1 it has one (and, with hide, it is told not visible by the game's own switch),
 // 0 it has none, -1 not usable (the hooks are not in, the switch not found, a fault). The renderer's thread.
 int EntityEffect(uint32_t entity, bool hide);

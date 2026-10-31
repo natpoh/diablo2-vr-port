@@ -443,6 +443,13 @@ void StartMatrixWatch() {
 }
 
 // Camera forward and eye point in the hero's model space, from model matrix m.
+std::atomic<float> g_camFwdModel[3];   // [debug] body_dump: the camera's forward in the hero's model space (YawFromMatrix)
+std::atomic<bool> g_camFwdOk{false};
+bool CameraForwardInModel(float out[3]) {
+    if (!g_camFwdOk.load()) return false;
+    for (int i = 0; i < 3; ++i) out[i] = g_camFwdModel[i].load();
+    return true;
+}
 bool YawFromMatrix(const float* m, float* out, float* eyeModel, bool* eyeOk, float rows[3][3]) {
     *eyeOk = false;
     AcquireSRWLockShared(&g_stickLock); StickFrame f = g_stickFrame; ReleaseSRWLockShared(&g_stickLock);
@@ -467,6 +474,11 @@ bool YawFromMatrix(const float* m, float* out, float* eyeModel, bool* eyeOk, flo
     const float cx = f.camF[0]*rows[0][0] + f.camF[1]*rows[0][1] + f.camF[2]*rows[0][2];
     const float cz = f.camF[0]*rows[2][0] + f.camF[1]*rows[2][1] + f.camF[2]*rows[2][2];
     *out = atan2f(cx, cz);
+    {   // [debug] body_dump: the whole forward (its pitch too), for the video from his camera
+        const float cy = f.camF[0]*rows[1][0] + f.camF[1]*rows[1][1] + f.camF[2]*rows[1][2];
+        const float l = sqrtf(cx * cx + cy * cy + cz * cz);
+        if (l > 1e-6f && std::isfinite(l)) { g_camFwdModel[0].store(cx / l); g_camFwdModel[1].store(cy / l); g_camFwdModel[2].store(cz / l); g_camFwdOk.store(true); }
+    }
     // The eye point in model space: (world - translation), dotted with each row
     // over its squared length (the rows carry the model's scale). The eye from
     // the look-at as it is now (g_eyeFromLook); the last rebuild's if unreadable.

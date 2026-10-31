@@ -254,6 +254,66 @@ int main() {
 		CHECK(Same(a, b));
 	}
 
+	// ---- the plate's stereo depth by its monster's distance ([hud] monster_stereo_by_distance; Serg, 2026-10-31: "2 near, 1 when the monster is far") ----
+	{
+		platelook::DepthByDistance d;   // the defaults: 2 near, 1 far, the plate's own 1.5 m and 10 m
+		CHECK(Near(d.nearPercent, 2.0f) && Near(d.farPercent, 1.0f) && Near(d.nearM, platelook::kNearM) && Near(d.farM, platelook::kFarM));
+		CHECK(Near(platelook::DepthAt(0.5f, d), 2.0f) && Near(platelook::DepthAt(1.5f, d), 2.0f));     // near and nearer: the near depth
+		CHECK(Near(platelook::DepthAt(10.0f, d), 1.0f) && Near(platelook::DepthAt(40.0f, d), 1.0f));   // far and farther: the far depth
+		CHECK(Near(platelook::DepthAt(5.75f, d), 1.5f, 1e-4f));                                         // halfway: halfway
+		float prev = 3.0f;
+		bool falls = true;
+		for (float m = 0.0f; m <= 12.0f; m += 0.25f) {   // never back up on the way out
+			const float v = platelook::DepthAt(m, d);
+			if (v > prev + 1e-6f) falls = false;
+			prev = v;
+		}
+		CHECK(falls);
+		CHECK(std::fabs(platelook::DepthAt(1.6f, d) - 2.0f) < 0.01f && std::fabs(platelook::DepthAt(9.9f, d) - 1.0f) < 0.01f);   // smooth at both ends
+		// the eyes' distance: the ground distance and the eyes' height
+		CHECK(Near(platelook::EyeDistanceM(3.0f, 4.0f), 5.0f) && Near(platelook::EyeDistanceM(0.0f, 1.7f), 1.7f) && Near(platelook::EyeDistanceM(2.0f, std::nanf("")), 2.0f));
+		// kept sane: far past near, never past the drawn world's edge
+		platelook::DepthByDistance w = d;
+		w.nearM = 8.0f;
+		w.farM = 3.0f;
+		const platelook::DepthByDistance wb = platelook::Bounded(w, 0.0f);
+		CHECK(wb.farM > wb.nearM && Near(wb.nearM, 8.0f));
+		const platelook::DepthByDistance eb = platelook::Bounded(d, 6.0f);   // the world drawn out to 6 m
+		CHECK(Near(eb.farM, 6.0f) && Near(eb.nearM, 1.5f) && Near(platelook::DepthAt(6.0f, eb), 1.0f));
+		CHECK(Near(platelook::Bounded(d, 50.0f).farM, 10.0f) && Near(platelook::Bounded(d, std::nanf("")).farM, 10.0f));
+		// the ease: half the way in kEaseHalfS, no further than the target, nothing at no time, at once from nothing
+		CHECK(Near(platelook::EaseDepth(2.0f, 1.0f, platelook::kEaseHalfS), 1.5f, 1e-4f));
+		CHECK(Near(platelook::EaseDepth(2.0f, 1.0f, 0.0f), 2.0f) && Near(platelook::EaseDepth(std::nanf(""), 1.0f, 0.0f), 1.0f));
+		CHECK(Near(platelook::EaseDepth(2.0f, 1.0f, 100.0f), 1.0f, 1e-3f));
+		// a new target, far after near: no jump - each frame (90 Hz) a small step, and there within a second
+		platelook::DepthEase e;
+		float shown = platelook::DepthNow(&e, true, 1.4f, d, true, 1.0f, 0.0f);
+		CHECK(Near(shown, 2.0f));   // the first target: at once
+		float biggest = 0.0f;
+		for (int f = 0; f < 90; ++f) {
+			const float v = platelook::DepthNow(&e, true, 1.4f, d, true, 20.0f, 1.0f / 90.0f);
+			biggest = std::max(biggest, std::fabs(v - shown));
+			shown = v;
+		}
+		CHECK(biggest < 0.1f && std::fabs(shown - 1.0f) < 0.01f);
+		// no target for a while: the last depth kept; the next target eases from it
+		CHECK(Near(platelook::DepthNow(&e, true, 1.4f, d, false, std::nanf(""), 0.5f), shown));
+		const float next = platelook::DepthNow(&e, true, 1.4f, d, true, 1.0f, 1.0f / 90.0f);
+		CHECK(next > shown && next < 1.1f);
+		// off: the single depth (monster_near_body), and nothing kept for the next time it is on
+		CHECK(Near(platelook::DepthNow(&e, false, 1.4f, d, true, 20.0f, 0.1f), 1.4f));
+		CHECK(Near(platelook::DepthNow(&e, true, 1.4f, d, true, 20.0f, 0.1f), 1.0f));   // on again: the depth at once
+		platelook::DepthEase fresh;
+		CHECK(Near(platelook::DepthNow(&fresh, true, 1.4f, d, false, std::nanf(""), 0.1f), 2.0f));   // on, nothing targeted yet: the near depth
+		// the box: by distance, the depth farther from the labels' decides
+		CHECK(Near(platelook::DepthForBox(false, 1.4f, d, 1.6f), 1.4f));
+		CHECK(Near(platelook::DepthForBox(true, 1.4f, d, 1.6f), 1.0f) && Near(platelook::DepthForBox(true, 1.4f, d, 0.5f), 2.0f));
+		CHECK(platelook::PlateNeedsBox(true, platelook::DepthForBox(true, 1.6f, d, 1.6f), 1.6f, 1.0f, 1.0f));   // one of the two off the labels': the box
+		platelook::DepthByDistance same = d;
+		same.nearPercent = same.farPercent = 1.6f;
+		CHECK(!platelook::PlateNeedsBox(true, platelook::DepthForBox(true, 1.0f, same, 1.6f), 1.6f, 1.0f, 1.0f));
+	}
+
 	std::printf("plate_look_test: %d checks, %d failed\n", g_checks, g_fails);
 	return g_fails == 0 ? 0 : 1;
 }

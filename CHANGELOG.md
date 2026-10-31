@@ -1,5 +1,60 @@
 # What's new in D2R VR
 
+## Next
+
+- **The monster plate held steady** (`[hud] monster_plate_smooth`, off by default; Settings > Monster plates: "Name over a monster: steady").
+  Serg: "the plates keep shaking and jittering". The plate hung, every frame, on the game's own head point - which goes with the model's animation
+  (the bob of a walk, the shake of a blow) - on an axis through the monster's place on the grid, which moves in the game's own steps; its distance
+  (size far away, stereo depth, the eyes by turns) came from that place too. Ticked, the head is held in the world by a critically damped spring
+  (no overshoot, so still at rest; stiffer as it moves, so close behind a monster that runs - some 17 cm at 5 m/s) and the plate hangs where the
+  game's camera sees that head this frame, so a turn of your head moves it with the world, not after it; the distance is held by the same spring.
+  The lift over the head and the height work from the steady head. Not yet seen in the headset. Test: plate_world_test.
+- **The monster plate's stereo depth by distance** (`[hud] monster_stereo_by_distance`, off by default; Settings > Monster plates: "Name over a
+  monster: stereo depth by distance"). Serg: the depth slider at 2 suits a monster close by, at 1 one far off. Ticked, the plate's depth follows its
+  monster's distance from the eyes: `monster_stereo_near` (2) up to `monster_stereo_near_m` (1.5 m), `monster_stereo_far` (1) from
+  `monster_stereo_far_m` (10 m), a smoothstep between - the plate's own near and far, the ones its "size far away" has (the game has no targeting
+  range to take them from), and never past the drawn world's edge (`[render] model_radius`). The depth eases (half the way in 0.12 s), so a new target
+  glides to its depth. Unticked: `monster_near_body`, one depth for every monster, as before. Not yet seen in the headset. Test: plate_look_test.
+- **Our own fog before smoke and fire** (`[fog] game_fog_before_fx`, off by default; Settings > World > Fog: "The fog before smoke and
+  fire"): with our effect's fog (`[fog] game_fog=0`, "Sky and fog drawn by: Our effect") the same key now lays our fog on the scene
+  before the game adds its smoke, haze, fire and spells - a compute pass of ours just before the game's transparent resolve, with our
+  curve by the view's depth and our colour, as the post pass has them. The game's effects are then laid over the fogged world as the game
+  draws them: haze in front of a far wall no longer turns into the wall's fog, a fire spell no longer fades as it flies past a far wall.
+  The post pass leaves every drawn pixel's fog to the step (the sky, the void, the cave ceiling and the light over the void stay its own);
+  "The game's fog as thick and as coloured as ours" (`[fog] game_fog_match`) puts the colour the area's grading changed back to the act's,
+  by our curve. Not with a fog coloured by the sky (no act colour) or in the Arcane Sanctuary. The game's fog with the key on: as before.
+  Without ReShade (as shipped); with ReShade it switches on `[render] fog_in_frame`'s step (VR F4). The fire some torches draw straight
+  into the scene is still fogged with it. Its cost on the graphics card is in the log's 10 s line ("fog before the effects, 10 s ...
+  (our effect's fog)"). Tests: fog_before_fx_test (our curve by the view's depth on WARP), fx_native_test (a drawn pixel left to the step;
+  the grading moved back by our curve).
+- **Far smoke and fire fade into the fog** (`[fog] game_fog_fx_depth`, off by default; Settings > World > Fog: "Far smoke and fire fade
+  into the fog", under "The fog before smoke and fire"): Serg on 0.192.1, a Rogue camp torch at night - with the fog laid before the
+  effects, the far palisade's fires stood at full light in full fog and the far fences' see-through edges made a band of specks along the
+  horizon, since nothing fogged the effects at all. With this key each of the game's effect draws (its weighted-blended smoke and haze,
+  its additive light) is drawn once more for its depth alone, into a depth of ours, and the step fogs the effects by it: near ones as
+  they are, far ones fading into the fog with the world behind them; with the game's fog the holes the far trees' dithered edges leave
+  in drawn ground (Serg's second pair: a band of dark specks along the horizon) and the one-pixel rim round anything against the sky
+  (his 85.png: every far plank traced in a dark line) are fogged as the ground they border. Either fog; without
+  ReShade only; live. Its cost is in the step's
+  10 s line, with a second line counting the draws drawn again. Test: fog_before_fx_test 5 (WARP, the debug layer).
+
+- **Flat without ReShade: the game's fog matched by this frame's depth** (fix): in 2D (`[mode] platform=0`, `no_reshade=1`) with the
+  game's fog and dome, "The game's fog as thick and as coloured as ours" (`[fog] game_fog_match`) and the dome's low part in the fog
+  colour read the scene's depth, but nothing asked for its copy there - they used the copy last made while our own sky was on, a mask
+  from another moment (Serg: "в режиме 2д маска нового тумана не обновляется каждый кадр"). The copy is now made whenever they draw,
+  and on a stale one they are not drawn.
+
+- **The Arcane Sanctuary's fog set apart from the caves'** (`[fog] arcane_own`, off by default; Settings > World, group "Arcane
+  Sanctuary"): Serg - "отделить вид тумана в пещерах от тумана в Аркан Сити". The Sanctuary is not outdoors, so its fog took the caves'
+  start, end, strength and colour (and with the game's fog, `game_fog_caves_black`'s black). Ticked, it has its own start, full fog,
+  strength, curve (`arcane_start`, `arcane_end`, `arcane_strength`, `arcane_curve`), colour (`arcane_color`; empty = the caves', never
+  black) and whether it fades into its sky behind (`arcane_into_sky`) - for our effect's fog, the game's fog and the step before the
+  effects alike. Unticked: as before. Live.
+- **"Fog in caves and dungeons" off means no fog underground with the game's fog too** (`[fog] caves=0`; Serg: "туман в пещерах я бы
+  пока отключил полностью"): it switched off only our effect's fog - with the game's fog chosen its pass went on drawing the area's own
+  fog underground. Now the game's distance fog is written to nothing there as well (and the step before the effects has nothing to
+  lay). The Arcane Sanctuary keeps its fog with `[sky] arcane_fog=1` ("а в аркан включил"), its own sky shown or not, in either fog.
+
 ## 0.192.0
 
 - **Co-op without router setup, in Setup** - a ticked task, "Install the co-op relay plugin D2R Rooms", puts the D2RLoader plugin

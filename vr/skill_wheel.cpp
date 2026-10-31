@@ -26,6 +26,7 @@
 #include "hset_view.h"
 #include "hset_life.h"
 #include "low_hp_game.h"   // the Settings tab's vignette pages show the vignette as a preview
+#include "players_cmd.h"   // the Settings tab's Players row: the game's own /players N ([openxr] headset_players)
 #include "skill_wheel.h"
 #include "tiles_labels.h"
 #include "view_gate.h"
@@ -128,6 +129,12 @@ void SettingsAct(const wheel::Step& s) {
             Log("vrcam: openxr - skill panel, Settings: Apply could not be handed to the ini's thread");
         }
         break;
+    case hset::Do::Coop:   // the Co-op page: a [relay] line of D2R Rooms' d2r-rooms.ini, written by the ini's thread (it logs the write)
+        if (!hset::store::SubmitCoop(s.settings.coop)) {
+            g_ctl.SettingsCoopFailed(s.settings.coop.sequence);
+            Log("vrcam: openxr - skill panel, Settings: Co-op: the change could not be handed to the ini's thread");
+        }
+        break;
     case hset::Do::Recentre:
         xr::Recenter();
         Log("vrcam: openxr - skill panel, Settings: Recentre view");
@@ -138,6 +145,9 @@ void SettingsAct(const wheel::Step& s) {
         break;
     case hset::Do::GuideDone:   // the guide's last page: the window has closed, the guide is over (the controller told it: Step::guideEnd)
         Log("vrcam: openxr - skill panel, Settings: the first-start guide's Done");
+        break;
+    case hset::Do::Players:     // the Options page's Players row: "/players N" into the game's own chat commands, on the UI thread (vr/players_cmd.cpp logs it)
+        playerscmd::Ask(s.settings.players);
         break;
     case hset::Do::Preview:     // "Preview 5 s" on the Life and Look pages: the vignette and the beat for five seconds with the rows as they stand (vr/low_hp.h PreviewWindow)
         lowhp::PlayPreview();
@@ -197,6 +207,7 @@ void OnFrame(const directinput::Frame& f, void*) {
         host.env = g_env;
         host.view = 4;   // (the window is F4's)
         host.spanInUse = calib::SpanInUseM();   // the Body page's Arm span, while nothing is stored
+        host.players = playerscmd::Now();       // the Options page's Players row: the game's count (read, cheap)
         host.calibrating = calib::Running();
         host.openGuide = firststart::OpenRequest();   // the first-start guide asks for the window on its Guide tab (vr/first_start.cpp)
         host.chordOn = g_twoGripChord.load();         // the author: "no combinations with the two grips" - off unless [debug] settings_two_grip_chord

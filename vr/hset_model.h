@@ -8,9 +8,11 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <memory>
 #include <string>
 
 #include "hset_body.h"
+#include "hset_coop.h"      // the Co-op page: D2R Rooms' relay bridge, its own d2r-rooms.ini
 #include "hset_defs.h"
 #include "hset_keys.h"
 #include "hset_video.h"
@@ -70,6 +72,8 @@ struct Snapshot {
     // The binding keys (kKeyBindFirst ...) as the file has their lines, "" when a line is not there: values[] holds the choice each is
     // (kCustom: none of the list's), this is what a conflict is judged by and what a custom one shows.
     std::array<std::string, kBindCount> bind;
+    // The Co-op page's: what the store's thread read of the D2R Rooms plugin's files (a new one only when something in it changed; null: not read yet).
+    std::shared_ptr<const coop::State> coop;
 };
 // An Apply: `base` is what the panel saw in the file when its draft began, `values` the draft; only `changed` is written.
 struct Request {
@@ -85,16 +89,12 @@ struct Rect {
     int x, y, w, h;
     bool Contains(float px, float py) const { return px >= x && px < x + w && py >= y && py < y + h; }
 };
-// The tabs share the 960 pixels under the title in proportion to their names (the letters + 3): "Options" gets a wide one, "HUD" a narrow one, so a
-// page more does not squeeze the long names out of their tab (eleven pages at an even 87 pixels would not hold "Options" in either painter).
-constexpr int NameLen(const char* s) {
-    int n = 0;
-    while (s[n]) ++n;
-    return n;
-}
+// The tabs share the 960 pixels under the title in proportion to their names' widths (hset_defs.h kPageNameW, + 16 for the tab's edges and the text's
+// margin): "Options" gets a wide one, "Life" a narrow one, so a page more does not squeeze the long names out of their tab (eleven pages at an even 87
+// pixels would not hold "Options" in either painter; fourteen by their letters held neither "Options" nor "HUD").
 constexpr int TabWeightTo(int i) {   // the weights of the first i tabs
     int w = 0;
-    for (int k = 0; k < i; ++k) w += NameLen(kPageNames[k]) + 3;
+    for (int k = 0; k < i; ++k) w += kPageNameW[k] + 16;
     return w;
 }
 constexpr int kTabX(int i) { return 32 + 960 * TabWeightTo(i) / TabWeightTo(kPageCount); }
@@ -155,6 +155,10 @@ constexpr Rect kSpanNote = {416, 330, 576, 50};
 constexpr Rect kBodyStored = {32, 384, 960, 32};
 constexpr Rect kBodyUse = {32, 416, 960, 26};
 constexpr Rect kBodyStep(int i) { return {48, 446 + i * 29, 944, 27}; }
+// The Co-op page: three rows where a table page has its rows (the bridge's switch, the relay's mode, the relay to host on: hset_coop.h), then
+// up to coop::kLines lines of what the plugin knows, above the status line.
+constexpr int kCoopRows = coop::kWhatCount;
+constexpr Rect kCoopLine(int i) { return {48, 358 + i * 26, 944, 26}; }
 constexpr Rect kRecentre = {32, 620, 280, 68};
 // The two low-life pages' own button, between Recentre and Close: the vignette and the beat in the controllers for five seconds, with the rows as they stand.
 constexpr Rect kPreviewBtn = {324, 620, 200, 68};
@@ -164,10 +168,11 @@ constexpr Rect kApply = {772, 620, 220, 68};
 constexpr float kWidthM = 1.2f, kHeightM = kWidthM * kH / kW;
 constexpr float kAheadM = 1.0f, kBelowM = 0.05f;
 
-enum class Kind { None, Tab, Change, Apply, Close, Recentre, Preset, Slider, Calibrate, Forget, View, Preview, Guide, GuideBack, GuideNext, Span };
+enum class Kind { None, Tab, Change, Apply, Close, Recentre, Preset, Slider, Calibrate, Forget, View, Preview, Guide, GuideBack, GuideNext, Span, Coop };
 struct Hit {
     Kind kind = Kind::None;
-    int index = -1;   // a tab's page, a Change's key, a Preset's number, a Slider's side along the track (-1: a stepper at its end), a View's number (1 = F1 ... 4 = F4)
+    int index = -1;   // a tab's page, a Change's key, a Preset's number, a Slider's side along the track (-1: a stepper at its end), a View's number (1 = F1 ... 4 = F4),
+                      // a Coop row's choice (coop::What)
     int delta = 0;    // -1 / +1 (a toggle: 1; a Slider's stepper)
     bool operator==(const Hit& o) const { return kind == o.kind && index == o.index && delta == o.delta; }
     bool operator!=(const Hit& o) const { return !(*this == o); }
@@ -177,12 +182,24 @@ struct Hit {
 inline Hit SliderAt(float x) {
     return {Kind::Slider, video::SideAtFraction((x - (float)kSlX0) / (float)(kSlX1 - kSlX0)), 0};
 }
-// A held trigger on these goes on pressing them (the steppers: a Change with a step, the slider's ends).
+// A held trigger on these goes on pressing them (the steppers: a Change with a step, the slider's ends). Not the Players row: each press is one
+// command to the game, as typed.
 inline bool Repeats(const Hit& h) {
     if (h.kind == Kind::Slider) return h.index < 0 && h.delta != 0;
     if (h.kind == Kind::Span) return h.delta != 0;
-    return h.kind == Kind::Change && h.delta != 0 && h.index >= 0 && h.index < kCount && !IsToggle(kDefs[h.index]);
+    return h.kind == Kind::Change && h.delta != 0 && h.index >= 0 && h.index < kCount && !IsToggle(kDefs[h.index]) && !IsGame(h.index);
 }
+
+// The Options page's Players row (DefType::Game): what the game says of its players count, handed in by the plugin (vr/players_cmd.h).
+constexpr int kPlayersMin = 1, kPlayersMax = 8;   // what /players takes (the game clamps to it too)
+struct Players {
+    int count = 0;        // the game's count now, 1 - 8 (its Offline Difficulty Scaling); 0 not known (the game's code not found, or not read yet)
+    bool takes = false;   // the game takes /players now: single player, or the host of a TCP/IP game (the game's own check, read back)
+    bool operator==(const Players& o) const { return count == o.count && takes == o.takes; }
+    bool operator!=(const Players& o) const { return !(*this == o); }
+};
+// How long the row waits for the game to show the count it was asked for before it takes the answer as a no.
+constexpr double kPlayersWaitMs = 1500.0;
 
 // The atlas' u, v (0..1 from its top left) to the button there.
 inline Hit HitTest(int page, float u, float v) {
@@ -201,6 +218,14 @@ inline Hit HitTest(int page, float u, float v) {
         if (kSlDec.Contains(x, y)) return {Kind::Slider, -1, -1};
         if (kSlInc.Contains(x, y)) return {Kind::Slider, -1, 1};
         if (kSlTrack.Contains(x, y)) return SliderAt(x);
+        return {};
+    }
+    if (page == kPageCoop) {   // the bridge's switch, then the two choices' < and > (the model takes none while the plugin is not there)
+        if (kToggle(coop::kEnabled).Contains(x, y)) return {Kind::Coop, coop::kEnabled, 1};
+        for (int r = coop::kMode; r < kCoopRows; ++r) {
+            if (kDec(r).Contains(x, y)) return {Kind::Coop, r, -1};
+            if (kInc(r).Contains(x, y)) return {Kind::Coop, r, 1};
+        }
         return {};
     }
     if (page == kPageGuide) {   // what Back and Next do depends on the guide's page (the model's): the offer's Not now / Measure now, the last page's Done
@@ -229,11 +254,15 @@ inline Hit HitTest(int page, float u, float v) {
 }
 
 // -- the panel's state ---------------------------------------------------------------------------
-enum class Do { Nothing, Save, Close, Recentre, Calibrate, View, Preview, GuideDone };   // GuideDone: the last page's Done - the window closes, the guide is over
+// GuideDone: the last page's Done - the window closes, the guide is over. Players: the game's own "/players N" (vr/players_cmd.h), nothing of the ini.
+// Coop: a [relay] line of d2r-rooms.ini to write (the store's SubmitCoop), at once.
+enum class Do { Nothing, Save, Close, Recentre, Calibrate, View, Preview, GuideDone, Players, Coop };
 struct Action {
     Do what = Do::Nothing;
     Request request;   // with Save
     int view = 0;      // with View: 1 = F1 ... 4 = F4
+    int players = 0;   // with Players: the count to ask the game for, 1 - 8
+    coop::Edit coop;   // with Coop
 };
 
 class Model {
@@ -249,7 +278,27 @@ class Model {
     Values liveSeen_ = Defaults();   // the draft as the last Live call saw it
     double editAt_ = 0, firstAt_ = 0;   // the last / the first change of a live key that is not written yet (ms; 0: none)
     float spanInUse_ = 0.0f;            // the span the hero's arms are fitted to now (the plugin's; 0 none)
+    Players players_;                   // the game's players count (the plugin's)
+    int asked_ = 0;                     // the count the row asked the game for and the game does not show yet (0: none)
+    double askedAt_ = 0, clock_ = 0;    // when it was asked; the last clock SetPlayers was given (ms)
+    int answer_ = 0;                    // the last ask's answer: 1 the game took it, -1 it did not (in time), 0 none since the panel opened
+    std::shared_ptr<const coop::State> coop_;   // the Co-op page: D2R Rooms' files as last read
+    std::optional<coop::Edit> coopPending_;      // a [relay] line on its way to d2r-rooms.ini (shown at once)
+    uint64_t coopSerial_ = 0;
+    Result coopResult_ = Result::None;
+    void SeenCoop(const std::shared_ptr<const coop::State>& c) {
+        if (c == coop_) return;
+        coop_ = c;
+        ++revision;
+        if (!coop_) return;
+        if (coopPending_ && coop_->written >= coopPending_->sequence) {   // the thread carried it out (or a later one)
+            coopResult_ = coop_->written == coopPending_->sequence && coop_->writeFailed ? Result::Failed : Result::Saved;
+            coopPending_.reset();
+        }
+        coopSerial_ = std::max(coopSerial_, coop_->written);   // (the thread outlives a panel: a new one's first edit is past the last it did)
+    }
     void Seen(const Snapshot& s) {
+        SeenCoop(s.coop);
         const body::Stored was = Measured();
         seen_ = s.values;
         seenFile_ = s.file;
@@ -326,6 +375,36 @@ public:
         env_ = e;
         ++revision;
     }
+    // The Options page's Players row: what the game says now (the plugin's, every frame the panel is up) and a clock (ms). The count asked for
+    // stays on show until the game shows it (the game took it) or kPlayersWaitMs passes (it did not: single player or the host only).
+    void SetPlayers(const Players& p, double ms) {
+        clock_ = ms;
+        if (p != players_) { players_ = p; ++revision; }
+        if (!asked_) return;
+        if (p.count == asked_) { asked_ = 0; answer_ = 1; ++revision; }
+        else if (ms - askedAt_ > kPlayersWaitMs) { asked_ = 0; answer_ = -1; ++revision; }
+    }
+    const Players& GamePlayers() const { return players_; }
+    bool PlayersOn() const { return draft_[kKeyPlayersOn] > 0.5f; }   // [openxr] headset_players
+    // - / + do something: the switch on, the game's count known and the game taking the command now, no ask on its way.
+    bool PlayersUsable() const { return ready && PlayersOn() && players_.count >= kPlayersMin && players_.takes && !asked_; }
+    int PlayersShown() const { return asked_ ? asked_ : players_.count; }   // 0: not known
+    bool PlayersAsked() const { return asked_ != 0; }
+    int PlayersAnswer() const { return answer_; }
+
+    // The Co-op page: what was read of D2R Rooms' files (null: nothing yet), its choices as shown (an edit on its way in place), and that edit's fate.
+    const coop::State* Coop() const { return coop_.get(); }
+    roomsbridge::Config CoopShown() const { return coop_ ? coop::Shown(coop_->cfg, coopPending_ ? &*coopPending_ : nullptr) : roomsbridge::Config{}; }
+    bool CoopBusy() const { return coopPending_.has_value(); }
+    bool CoopReady() const { return coop_ && coop_->installed; }
+    Result CoopResult() const { return coopPending_ ? Result::Saving : coopResult_; }
+    // The edit could not be handed to the store's thread.
+    void CoopSubmitFailed(uint64_t sequence) {
+        if (!coopPending_ || coopPending_->sequence != sequence) return;
+        coopPending_.reset();
+        coopResult_ = Result::Failed;
+        ++revision;
+    }
 
     // The first-start guide's page (vr/first_start.h): the window comes up on it (the guide asks for it on the first start, or the Body page's button).
     void OpenGuide(int sub) {
@@ -349,6 +428,9 @@ public:
         bindBase_ = s.bind;
         liveSeen_ = draft_;
         editAt_ = firstAt_ = 0;
+        asked_ = answer_ = 0;
+        coopPending_.reset();   // (one still on its way is the thread's: the file shows it when it is done)
+        coopResult_ = Result::None;
         Seen(s);
         ready = s.ready;
         result = s.result == Result::Saving ? Result::None : s.result;
@@ -463,6 +545,18 @@ public:
                 }
                 return a;
             case Kind::Change: {
+                if (hit.index == kKeyPlayers) {   // the game's players count: one "/players N" a press, nothing of the draft (the game keeps it)
+                    if (!PlayersUsable() || hit.delta == 0) return a;
+                    const int to = std::clamp(players_.count + (hit.delta > 0 ? 1 : -1), kPlayersMin, kPlayersMax);
+                    if (to == players_.count) return a;   // (at an end)
+                    asked_ = to;
+                    askedAt_ = clock_;
+                    answer_ = 0;
+                    ++revision;
+                    a.what = Do::Players;
+                    a.players = to;
+                    return a;
+                }
                 if (!ready || Busy() || hit.index < 0 || hit.index >= kCount) return a;
                 if (hit.index == kKeyBarPlace) {   // the HUD page's toolbar type: a step over bar_place and hide together (shared/toolbar_type.h)
                     int h = (int)std::lround(draft_[kKeyHide]), p = (int)std::lround(draft_[kKeyBarPlace]);
@@ -490,6 +584,20 @@ public:
                 a.what = Do::View;
                 a.view = hit.index;
                 return a;
+            case Kind::Coop: {   // a [relay] line of d2r-rooms.ini, written at once (no Apply: the plugin's file, not d2r_vr.ini); one at a time
+                if (page != kPageCoop || !CoopReady() || CoopBusy() || hit.index < 0 || hit.index >= coop::kWhatCount) return a;
+                const roomsbridge::Config shown = CoopShown();
+                if (hit.index != coop::kEnabled && !shown.enabled) return a;   // (the bridge off: its two choices do nothing, as on Settings' tab)
+                std::optional<coop::Edit> e = coop::Step(shown, hit.index, hit.delta);
+                if (!e) return a;
+                e->sequence = ++coopSerial_;
+                coopPending_ = *e;
+                coopResult_ = Result::None;
+                ++revision;
+                a.what = Do::Coop;
+                a.coop = *e;
+                return a;
+            }
             case Kind::Preview:   // the plugin shows the vignette and plays the beat for five seconds: nothing of the ini, nothing of the draft is touched
                 if (!IsLifePage(page)) return a;
                 a.what = Do::Preview;

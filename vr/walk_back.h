@@ -188,6 +188,118 @@ struct ModeGate {
 // log found the paladin's anim bone a few degrees off its bind pose all the while he stood (852 poses, up to 8 deg) - that is his stance, not a turn.
 constexpr float kFlipDeg = 45.0f;
 constexpr double kTurnS = 0.6;
+// What of the anim bone's turn (animTurn, radians off the body's facing) is taken out: the part the hips show (hipsTurn: their line's yaw off the bind
+// pose's, less the body's turn) on the anim bone's side, at most the anim bone's whole turn. The game turns the anim bone at once and brings the pelvis
+// round after it - Serg's 2026-10-31 dump (0.192.1), the run after a flip: the anim bone -170 / -97 / -55 / -19 deg while the hips stood -143 / -49 / -4 /
+// +7 off the body - so taking the anim bone's whole turn out twisted the legs up to 54 deg the other way under the trunk and crossed the feet (and the
+// poses kept then crossed them again when [body] legs_rear played them back). The hips' own few degrees of stance the other way are left alone.
+inline float ShownTurn(float animTurn, float hipsTurn) {
+    if (!std::isfinite(animTurn) || !std::isfinite(hipsTurn) || animTurn == 0.0f) return 0.0f;
+    const float sgn = animTurn > 0.0f ? 1.0f : -1.0f;
+    return sgn * std::clamp(sgn * hipsTurn, 0.0f, std::fabs(animTurn));
+}
+
+// [body] legs_rear, since 0.192.4 (Serg, 2026-10-31, after the played-back cycle still looked wrong: "let's act hard - first freeze them completely so they
+// don't move", "let it always freeze on any movement"): the lower body - the pelvis and the legs - held in the game's own standing pose whenever he goes,
+// any way (the game's walk and run, ahead too); he glides. Standing he has the game's own stance (turning on the spot: it turns with the body, no step);
+// that stance is what is kept. Any other move (a blow, a cast, a hit) is the game's own, the held stance fading out and in at kRate.
+inline bool GameNeutral(int mode) { return mode == 1 || mode == 5; }
+// Since 0.192.9 (Serg, after 0.192.8 drew the held legs at last: "now let them work only in a 90 degree angle ahead"): going within the cone straight ahead
+// - the travel within half of coneDeg either side of the facing - the legs are the game's own walk and run; outside it, held. kConeEdgeDeg either way
+// about the edge (no dither at it); coneDeg 0: never the game's (0.192.8, held whenever he goes), 360: always.
+constexpr float kConeEdgeDeg = 3.0f;
+inline bool InFrontCone(float phiDeg, float coneDeg, bool was) {
+    if (!(coneDeg > 0.0f) || !std::isfinite(phiDeg)) return false;
+    if (coneDeg >= 360.0f) return true;
+    return std::fabs(phiDeg) <= coneDeg * 0.5f + (was ? kConeEdgeDeg : -kConeEdgeDeg);
+}
+// Since 0.192.11 (Serg, the front cone good: "now let's make running back the reverse way"): going within the cone straight back - the travel within half
+// of coneDeg either side of the facing's back - the legs play the game's own forward walk / run backwards (the cycle below: no turn, its pace his whole
+// speed; [body] legs_rear_cone_deg); between the two cones, held. Its edge as the front one's; 0 never, 360 always (the front cone first).
+inline bool InRearCone(float phiDeg, float coneDeg, bool was) {
+    if (!(coneDeg > 0.0f) || !std::isfinite(phiDeg)) return false;
+    if (coneDeg >= 360.0f) return true;
+    return 180.0f - std::fabs(phiDeg) <= coneDeg * 0.5f + (was ? kConeEdgeDeg : -kConeEdgeDeg);
+}
+// The played-back cycle's share over the game's pose: in at kRate while he goes within the rear cone - wholly at once when the pose drawn is the game's
+// own and the play-back starts on it (fromGame: the newest pose kept is this one, the stance not over it: what the game draws, no two walks blended in);
+// out at kRate otherwise (into the side: the stance fades in as it fades out).
+struct RearBlend {
+    static constexpr float kRate = 10.0f;
+    float share = 0.0f;
+    float Step(bool on, bool fromGame, float dt) {
+        const float step = kRate * std::clamp(std::isfinite(dt) ? dt : 0.0f, 0.0f, 0.25f);
+        if (on) share = share <= 0.0f && fromGame ? 1.0f : std::min(1.0f, share + step);
+        else share = std::max(0.0f, share - step);
+        return share;
+    }
+};
+struct StandHold {
+    static constexpr float kRate = 10.0f;   // share a second
+    float share = 0.0f;
+    bool live = true;   // the last Step drew the game's own pose wholly (share 0 in a standing pose): the kept stance is that pose
+    // stands: ModeGate's (the game has said a standing mode for kStandS); going: his speed read over the walk's least. True: the game's own pose is
+    // wanted - a standing pose (neutral and held) or the mode not known; the held stance fades out to it (0.192.6's dump: it snapped, the legs jumped
+    // to the game's end of the run for a frame) and the caller keeps the stance once it is wholly the game's (share 0). False: the kept stance at
+    // `share` over the game's pose.
+    bool Live(int mode, bool stands, bool going) const {
+        return !going && ((stands && GameNeutral(mode)) || mode < 0);
+    }
+    // ahead: going within the front cone (InFrontCone) - the game's own walk and run, the stance fading out to it (into it again leaving the cone).
+    float Step(int mode, bool stands, bool going, bool ahead, float dt) {
+        const float step = kRate * std::clamp(std::isfinite(dt) ? dt : 0.0f, 0.0f, 0.25f);
+        if (Live(mode, stands, going)) {
+            share = std::max(0.0f, share - step);
+            live = share <= 0.0f;
+            return share;
+        }
+        if (!going) {   // which way he goes not known (setting off before a speed is read, stopping, a dip in his walk): as it was; any other move fades out
+            if (GameWalkMode(mode) || GameNeutral(mode)) return share;
+            share = std::max(0.0f, share - step);
+            live = false;
+            return share;
+        }
+        const bool hold = !ahead;
+        if (hold && live) share = 1.0f;   // setting off from the game's own stance: the kept stance IS the pose drawn - wholly at once, no blend
+        else share = std::clamp(share + (hold ? step : -step), 0.0f, 1.0f);
+        live = false;
+        return share;
+    }
+};
+
+// [body] legs_rear_cycle (with legs_rear; off - legs_rear's way in 0.192.1-3): the cycle played backwards described below.
+// [body] legs_rear (Serg, 2026-10-30, after the doll's feet looked worse than the game's own legs): "work with the game's legs again - for running back
+// use the game's own animation reversed: walking forward [and] running forward", "and so for all running in the rear half". The game's own legs, no
+// doll, no IK: moving into the rear half (the travel more than kRearFromDeg off the drawn body's facing) the lower body (the pelvis and the legs) plays the
+// game's own forward walk BACKWARDS - running, its run (Reverser: each gait kept apart) - hung at the game's pelvis place, facing with the trunk, the
+// trunk and the arms the game's. Its pace is the distance gone over the speed the gait was kept at - the game's own cadence, whichever way he goes;
+// going diagonally the feet slide sideways. Crossing 90 the cycle's direction changes on the pose drawn (it starts on the newest pose kept - this
+// one - so no two walks are blended: the scissor of 2026-10-29). The front half is the game's own, as before. Offline: tools/walk_legs/legs_rear.py.
+// 0.192.1 turned the legs toward the travel (at most 45 deg under the trunk): Serg's 2026-10-31 "running back crosses the legs" - his dump had the feet
+// crossed across the trunk in a third to a half of the poses at travel 90-135 (by up to 0.56 m; along the turned hips never, which is all its test and
+// pictures measured). Turned by a, feet dz apart along the way they step swing across by dz sin a: the game's run puts them 0.16 m apart across and a
+// metre along, so 9-15 deg brings them together; and where they come closest they pass side by side, so ANY turn brings them closer than the game's own
+// closest. No turn: across the trunk the feet are always as far apart as the game's.
+// The same build paced the cycle by the travel's share along the legs' way: with the legs no longer turned, near the side (where much of Serg's walking
+// back went, 90-120 deg) and in the cone's hold after he turned ahead that fell to nothing - "x0.15 on average" in his log, the kept pose dragged along
+// nearly still: "walking back doesn't play the animation reversed, it lays the old animation on the hero as it is". The whole distance: the legs step
+// back at the game's own cadence (the game's own walk ahead of 90 steps at it too), the feet slide about as much (0.77 of his speed at 135 against 0.71).
+constexpr float kRearFromDeg = 90.0f;
+// The play-back's pace (seconds of the kept cycle a second): his speed over the speed the gait was kept at (keptMps; not known: the cycle at its own pace
+// while he goes). 0 .. 3.
+inline float RearRate(float speedMps, float keptMps) {
+    if (!(keptMps > 0.2f)) return speedMps > 0.15f ? 1.0f : 0.0f;
+    const float r = speedMps / keptMps;
+    return std::isfinite(r) ? std::clamp(r, 0.0f, 3.0f) : 0.0f;
+}
+// The kept lower body hung at the game's pelvis place: bones[0] (the pelvis) moved to (px, py, pz), every other bone with it.
+inline void HangLegs(M4* bones, int count, float px, float py, float pz) {
+    if (!bones || count <= 0) return;
+    const float dx = px - bones[0].m[12], dy = py - bones[0].m[13], dz = pz - bones[0].m[14];
+    for (int k = 0; k < count; ++k) {
+        bones[k].m[12] += dx; bones[k].m[13] += dy; bones[k].m[14] += dz;
+    }
+}
 
 // One pose of the game's walk, as the game drew it.
 struct Sample {
@@ -197,6 +309,7 @@ struct Sample {
     float dt = 0.0f;         // since the pose before it in its stretch (0: the first of it)
     float feet[6] = {};      // both feet's places (the pose's own frame): what Match compares
     int gait = 0;            // the game's walk it is from (its unit mode: 2 walk, 3 run, 6 town walk; 0 not known) - a change starts another stretch
+    float speed = 0.0f;      // how fast he went when it was kept (m/s; 0 not known): [body] legs_rear paces the play-back by it
     std::vector<M4> pose;    // the bones kept (the lower body; WalkBackLegs keeps the trunk after it)
 };
 
@@ -218,12 +331,15 @@ public:
     int Kept() const { return n_; }
     double KeptS() const { return walkS_; }
     int TakeJumps() { const int j = jumps_; jumps_ = 0; return j; }
+    // The speed the pose drawn last was kept at (m/s; 0: none drawn, or not known) - [body] legs_rear paces the next step by it: the store holds poses kept
+    // at different speeds (he walked ahead slower, the game's walk goes on being kept while he goes back faster), an average fits none of them.
+    float DrawnSpeed() const { return on_ ? out_.speed : 0.0f; }
 
     // The game's own pose at t (count bones). Only his walking is kept: standing (walking false) for more than kGraceS ends a stretch where he last
     // walked. A pose of another size than those kept starts the store again (another rig). gait: the game's walk it is (its mode; 0 not known) - Serg's
     // 2026-10-29 run backwards: walk and run went into one stretch, so the play-back could go from his run into the walk kept before it; a change of
     // gait starts another stretch, and Step's jumps land on the gait he is in.
-    void Record(double t, bool walking, const M4* pose, int count, const float feet[6], int gait = 0) {
+    void Record(double t, bool walking, const M4* pose, int count, const float feet[6], int gait = 0, float speed = 0.0f) {
         if (!std::isfinite(t) || count <= 0) return;
         if (!walking) {
             if (!open_) return;
@@ -250,6 +366,7 @@ public:
         s.t0 = t0;
         s.dt = dt;
         s.gait = gait;
+        s.speed = std::isfinite(speed) ? std::max(0.0f, speed) : 0.0f;
         std::memcpy(s.feet, feet, sizeof s.feet);
         s.pose.assign(pose, pose + count);
         head_ = (head_ + 1) % kCap;
@@ -293,11 +410,14 @@ public:
         out_.t = cursor_;
         out_.seg = a.seg;
         out_.dt = 0.0f;
+        out_.gait = a.gait;
+        out_.speed = a.speed;
         out_.pose.resize(a.pose.size());
         if (frac > 0.0f) {
             const Sample& b = At(i + 1);
             for (size_t k = 0; k < a.pose.size(); ++k) out_.pose[k] = Blend(a.pose[k], b.pose[k], frac);
             for (int j = 0; j < 6; ++j) out_.feet[j] = a.feet[j] + (b.feet[j] - a.feet[j]) * frac;
+            out_.speed = a.speed + (b.speed - a.speed) * frac;
         } else {
             out_.pose = a.pose;
             std::memcpy(out_.feet, a.feet, sizeof out_.feet);
@@ -330,6 +450,15 @@ public:
     }
 
     const Sample& At(int i) const { return ring_[(head_ - n_ + i + 2 * kCap) % kCap]; }   // 0 the oldest .. Kept() - 1 the newest
+
+    // How fast he went, on average, while the poses of this gait were kept (m/s; 0: none of it, or no speed known) - [body] legs_rear's pace.
+    float MeanSpeed(int gait) const {
+        double sum = 0.0;
+        int count = 0;
+        for (int k = 0; k < n_; ++k)
+            if (At(k).gait == gait && At(k).speed > 0.0f) { sum += At(k).speed; ++count; }
+        return count ? (float)(sum / count) : 0.0f;
+    }
 
 private:
     std::vector<Sample> ring_ = std::vector<Sample>(kCap);

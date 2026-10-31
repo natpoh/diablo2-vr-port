@@ -97,8 +97,9 @@ inline float Nearest(const D2rgbBody* b, int n, const float palm[3], int* which)
 inline float RadiusOf(const monsterbodies::Body& b) { return b.rig ? b.radius : monsterbodies::CoreRadius(b.radius); }
 
 // The snapshot's bodies for the library (as the game poses them), up to D2RGB_MAX_BODIES; dollOn: [weight] monster_ragdoll draws a humanoid's limb giving way - without it
-// nothing is marked to give. *of (may be null): the snapshot index of each. How many.
-inline int ToGrab(const monsterbodies::Snapshot& s, bool dollOn, D2rgbBody* out, int* of = nullptr) {
+// nothing is marked to give. *of (may be null): the snapshot index of each. How many. held: what the monsters hold too (a weapon, a shield - [weight] grab_throw
+// takes the monster by it), each a stationary body of its own (no bone, no doll).
+inline int ToGrab(const monsterbodies::Snapshot& s, bool dollOn, D2rgbBody* out, int* of = nullptr, bool held = false) {
     int k = 0;
     int at[monsterbodies::kMax];   // each snapshot body's index among the handed over (-1 left out): the parents are the library's indices
     for (int i = 0; i < monsterbodies::kMax; ++i) at[i] = -1;
@@ -107,14 +108,14 @@ inline int ToGrab(const monsterbodies::Snapshot& s, bool dollOn, D2rgbBody* out,
     k = 0;
     for (int i = 0; i < s.n && i < monsterbodies::kMax && k < D2RGB_MAX_BODIES; ++i) {
         const monsterbodies::Body& b = s.b[i];
-        if (b.held != 0) continue;
+        if (b.held != 0 && !(held && (b.held == 1 || b.held == 2))) continue;
         D2rgbBody& g = out[k];
         g = D2rgbBody{};
         g.id = b.id;
-        g.bone = b.rig ? b.bone : -1;
+        g.bone = b.rig && b.held == 0 ? b.bone : -1;
         for (int j = 0; j < 3; ++j) { g.a[j] = b.bottom[j]; g.b[j] = b.top[j]; }
         g.radius = RadiusOf(b);
-        g.doll = dollOn && b.doll && b.rig ? 1 : 0;   // (humanoids only: a held beast stands - its limbs bent shook, the headset 2026-10-26)
+        g.doll = dollOn && b.doll && b.rig && b.held == 0 ? 1 : 0;   // (humanoids only: a held beast stands - its limbs bent shook, the headset 2026-10-26)
         g.parent = b.parent >= 0 && b.parent < s.n && b.parent < monsterbodies::kMax ? at[b.parent] : -1;
         if (of) of[k] = i;
         ++k;

@@ -13,7 +13,7 @@ static int g_failures = 0, g_checks = 0;
 #define CHECK(cond) do { ++g_checks; if (!(cond)) { ++g_failures; std::printf("FAIL line %d: %s\n", __LINE__, #cond); } } while (0)
 
 // on the single slider's range and step (settings.cpp: rings 1-8 by 1, model_radius 150-1000 by 10, fog start 0-1000 by 5, Full fog
-// 10-2000 by 10, the caves the same, game_sky_radius 50-30000 by 10)
+// 10-2000 by 10, the caves the same; game_sky_radius_m 10-7500 m by 0.5)
 static bool OnSlider(float v, float min, float max, float step) {
     const float k = (v - min) / step;
     return v >= min && v <= max && std::fabs(k - std::round(k)) < 1e-4f;
@@ -30,7 +30,7 @@ int main() {
         CHECK(OnSlider(s.fogEnd, 10, 2000, 10));
         CHECK(OnSlider(s.cavesStart, 0, 1000, 5));
         CHECK(OnSlider(s.cavesEnd, 10, 2000, 10));
-        CHECK(OnSlider(s.skyRadius, 50, 30000, 10));
+        CHECK(OnSlider(ToMetres(s.skyRadius), 10, 7500, 0.5f));   // (in metres on its slider: each stop exactly, Match holds)
         // the dome at the edge of the drawn world, the fog full just before it (0.9 of the radius, to the fog end slider's step) and at
         // it in caves, rooms enough for the radius (the presets' 1 at 150, 3 at 400)
         CHECK(s.skyRadius == s.modelRadius);
@@ -62,6 +62,14 @@ int main() {
     CHECK(Nearest(150) == 0 && Nearest(100) == 0 && Nearest(5000) == kCount - 1);
     CHECK(Nearest(190) == 2);   // a tie between 180 and 200: the farther
     CHECK(Nearest(400) == 5 && Nearest(999) == 7);
+    // the domes in metres (Serg, 2026-10-31), 4 units a metre; the older keys convert to the same size
+    CHECK(ToUnits(50.0f) == 200.0f && ToMetres(200.0f) == 50.0f && ToUnits(ToMetres(5090.0f)) == 5090.0f);
+    CHECK(SkyRadiusM(600.0f) == 150.0f && SkyRadiusM(5090.0f) == 1272.5f);   // the shipped ini's 600 units, Serg's 5090
+    CHECK(CaveRadiusM(1.0f, 210.0f) == 52.5f && std::fabs(CaveRadiusM(1.05f, 200.0f) - 52.5f) < 1e-4f && CaveRadiusM(0.5f, 210.0f) == 26.25f);
+    CHECK(kCaveRadiusDefaultM == 200.0f && OnSlider(kCaveRadiusDefaultM, 5, 500, 0.5f));   // Serg's default
+    // the slider moving the models' radius: the cave dome keeps its share of it
+    CHECK(CaveRadiusFollowing(52.5f, 210.0f, 400.0f) == 100.0f && CaveRadiusFollowing(52.5f, 0.0f, 400.0f) == 52.5f);
+    CHECK(std::fabs(CaveRadiusFollowing(ToMetres(1.05f * 200.0f), 200.0f, 150.0f) - ToMetres(1.05f * 150.0f)) < 1e-4f);
     if (g_failures) { std::printf("%d check(s) FAILED\n", g_failures); return 1; }
     std::printf("draw_distance_test: all %d checks passed\n", g_checks);
     return 0;

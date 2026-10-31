@@ -38,6 +38,64 @@ inline float DepthShift(float groundUnits, float eyeHeightUnits, float m0, float
     return k * 0.5f * m0 * halfGap * (1.0f / z - (conv > 0.0f ? 1.0f / conv : 0.0f));
 }
 
+// ---- the plate's stereo depth by its monster's distance ([hud] monster_stereo_by_distance) ----------------------------------------------------
+// Serg (2026-10-31, the slider "Name over a monster: stereo depth" at 2 and at 1): "it should change with the distance: 2 near, 1 when the monster is far".
+// The depth (percent of the half screen, as monster_near_body) is monster_stereo_near for a monster nearM from the eyes and nearer, monster_stereo_far for one
+// farM and farther, a smoothstep between. The distances default to the plate's own near and far (kNearM, kFarM: "size far away", the item labels' too);
+// the game has no targeting range to take them from, and the far one never passes the edge of the drawn world ([render] model_radius: no monster is
+// drawn beyond it). Off: monster_near_body, one depth for every monster, as before.
+struct DepthByDistance {
+    float nearPercent = 2.0f, farPercent = 1.0f;   // [hud] monster_stereo_near, monster_stereo_far
+    float nearM = kNearM, farM = kFarM;            // [hud] monster_stereo_near_m, monster_stereo_far_m: from the eyes, metres
+};
+// The monster's distance from the eyes (metres): its ground distance from the hero's feet and the eyes' height over them.
+inline float EyeDistanceM(float groundM, float eyeHeightM) {
+    const float h = std::isfinite(eyeHeightM) ? std::max(0.0f, eyeHeightM) : 0.0f;
+    return std::sqrt(groundM * groundM + h * h);
+}
+// The far distance kept past the near one and inside the drawn world (worldEdgeM <= 0: not known).
+inline DepthByDistance Bounded(DepthByDistance d, float worldEdgeM) {
+    d.nearM = std::isfinite(d.nearM) ? std::max(0.0f, d.nearM) : kNearM;
+    d.farM = std::isfinite(d.farM) ? d.farM : kFarM;
+    if (worldEdgeM > 0.0f && std::isfinite(worldEdgeM)) {
+        d.farM = std::min(d.farM, worldEdgeM);
+        d.nearM = std::min(d.nearM, 0.5f * worldEdgeM);
+    }
+    d.farM = std::max(d.farM, d.nearM + 0.1f);
+    return d;
+}
+inline float DepthAt(float eyeM, const DepthByDistance& d) {
+    float t = std::clamp((eyeM - d.nearM) / std::max(d.farM - d.nearM, 0.1f), 0.0f, 1.0f);
+    t = t * t * (3.0f - 2.0f * t);
+    return d.nearPercent + (d.farPercent - d.nearPercent) * t;
+}
+// The depth shown eases to the one wanted, half of the way in kEaseHalfS: a new target near after one far (or back) glides there, it does not jump.
+constexpr float kEaseHalfS = 0.12f;
+inline float EaseDepth(float shown, float want, float dtSec) {
+    if (!std::isfinite(shown)) return want;
+    if (!(dtSec > 0.0f)) return shown;
+    const float k = 1.0f - std::exp2(-std::min(dtSec, 10.0f) / kEaseHalfS);
+    return shown + (want - shown) * k;
+}
+// One frame of it: the depth the plate is shown at (shown: last frame's, NaN = none yet). Off: the single depth, and nothing kept. On with no target
+// lately: last frame's kept (the next target eases from it), the near value before there was one.
+struct DepthEase {
+    float shown = std::nanf("");
+};
+inline float DepthNow(DepthEase* e, bool byDistance, float single, const DepthByDistance& d, bool haveTarget, float eyeM, float dtSec) {
+    if (!byDistance) {
+        e->shown = std::nanf("");
+        return single;
+    }
+    if (haveTarget && std::isfinite(eyeM)) e->shown = EaseDepth(e->shown, DepthAt(eyeM, d), dtSec);
+    return std::isfinite(e->shown) ? e->shown : d.nearPercent;
+}
+// The depth PlateNeedsBox weighs: the single one, or by distance the one of the two that is farther from the item labels' depth.
+inline float DepthForBox(bool byDistance, float single, const DepthByDistance& d, float labelsDepth) {
+    if (!byDistance) return single;
+    return std::fabs(d.nearPercent - labelsDepth) >= std::fabs(d.farPercent - labelsDepth) ? d.nearPercent : d.farPercent;
+}
+
 // Eyes by turns: the game lays its interface layer out for the eye DRAWN this frame, the left one and then the right one, so a label in it stands where
 // that eye sees its thing - and the same shifts every frame made it jump by its whole disparity in each eye: doubled (the target's plate over a near NPC,
 // 2026-10-26). The half-disparity at the thing's own depth (uv; the depth rule at k = 1) is what the effect takes that eye's layout off by first

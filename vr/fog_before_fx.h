@@ -16,6 +16,11 @@
 // list's last barrier on each said (else any list's, else the resolve's: the scene a pixel shader resource, the depth written). The scene is
 // the R11G11B10 target the list last bound with the resolve's depth-stencil. Anything not as expected and the game's draw goes on alone, a
 // line in the log. Its cost on the graphics card (timestamps round the step) is in the 10 s line.
+//
+// With our own effect's fog ([fog] game_fog=0, Params::ours; Serg 2026-10-30: "туман который будет рисоваться раньше чем огонь и дымка
+// чтобы их не ломать") the same step lays that fog instead: D2R_DepthFog.fx's curve by the view's depth, its colour taken into the scene's
+// units (fog_in_frame_math.h SceneFromDisplay), and the post pass leaves every pixel with a depth of its own to it (FogInFrame, as
+// [render] fog_in_frame on the ReShade path) - the void, the sky, the ceiling and the light over the void stay the post pass's.
 #pragma once
 
 #include <cstddef>
@@ -33,7 +38,9 @@ using LogFn = void (*)(const char*);
 void SetLog(LogFn log);
 // natived3d's list sinks (fxReset ... fxDraw) for the step
 void FillSinks(natived3d::Sinks& k);
-// The game's pipelines as made: the resolve's found by its pixel shader
+bool Hooked();   // FillSinks was called (the key on at the game's start, no ReShade): the step can be drawn at all
+// The game's pipelines as made: the resolve's found by its pixel shader; one that may draw an effect (blended into its first target, no
+// depth written) kept for its twin (Params::fxDepth)
 void OnGraphicsPso(ID3D12Device* dev, const D3D12_GRAPHICS_PIPELINE_STATE_DESC* desc, ID3D12PipelineState* pso);
 void OnStreamPso(ID3D12Device* dev, const D3D12_PIPELINE_STATE_STREAM_DESC* desc, ID3D12PipelineState* pso);
 void MarkResolve(ID3D12PipelineState* pso);   // (the test: a pipeline taken as the resolve's)
@@ -52,10 +59,26 @@ struct Params {
     bool ourCurve = false;
     float start = 50.0f, end = 150.0f, curve = 1.0f, strength = 1.0f;
     bool ease = false;                     // [fog] ease_in: that curve eased in over its first 40 units (D2R VR Unleashed's, shared/unleashed_fog.h)
+    // Our effect's fog ([fog] game_fog=0), not the game's: that curve by the view's depth (D2R_DepthFog.fx FogAmount: near / depth), not
+    // the point's whole length; the colour the post pass lays, in the scene's units. The post pass then leaves a drawn pixel's fog to the
+    // step (FogInFrame) - the void, the sky and the ceiling stay its own
+    bool ours = false;
+    // [fog] game_fog_fx_depth: the effects themselves fogged by their own distance (Serg 2026-10-31, a Rogue camp torch at night: "новый
+    // туман, старый туман" - the far palisade's fires at full light in full fog, its see-through bits a band of specks on the horizon).
+    // Each draw of the game's into its weighted-blended targets or its half-size additive one is drawn again by a twin of its pipeline -
+    // its vertex shaders, no pixel shader - into a depth of ours (the nearest effect at each pixel; a quad's empty corners too, where it
+    // adds next to nothing); at the step the weighted-blended colour goes toward the fog's colour and the additive light down by the fog
+    // at that depth (never nearer than the scene behind); over the void they fade out by it (the sky goes there after). With the game's
+    // fog the step also fogs the pixels of no depth beside drawn ground (holes the far trees' dithered edges leave, the one-pixel rim
+    // round anything against the void where the game lays its blended edge) by the farthest drawn neighbour - the game's pass gave them
+    // its mist, the post pass leaves them to the game.
+    bool fxDepth = false;
 };
 void Configure(const Params& p);
 // The step ran within the last quarter second: the game's pass is to leave the fog's colour out (fog_height noFog)
 bool Drawn();
+// ... with our effect's fog, and still set so: the post pass is to leave a drawn pixel's fog to it (D2R_DepthFog.fx FogInFrame)
+bool OursDrawn();
 // The present, every frame: the 10 s line
 void Frame();
 
