@@ -97,6 +97,18 @@ typedef int32_t (*D2rfGrabFn)(void* world, const D2rfKnock* body, int32_t hand, 
 /* D2rfGrab with the part the point goes with: joint (D2RF_*) - the hand holds the body by `point` fixed to that joint's limb, wherever the point is (a spear
  * held by its shaft: the hand that holds it, `point` on the shaft). joint < 0: the limb nearest the point, as D2rfGrab. Optional (a library without it: D2rfGrab). */
 typedef int32_t (*D2rfGrabPartFn)(void* world, const D2rfKnock* body, int32_t hand, const float point[3], int32_t joint);
+/* The hands' strength (the mod's [weight] strength / 100; 1 at first): each hand pulls at most D2RF_HAND_MAX_FORCE x strength - the same ceiling as the grab's
+ * and the props' hands. A body's weight shows in it: a heavy one comes up slower, swings slower, the hand lags under it; it never sticks - while held off
+ * its feet it weighs at most half of what its hands pull. Optional (a library without it: strength 1). */
+#define D2RF_HAND_MAX_FORCE 300
+typedef int32_t (*D2rfSetStrengthFn)(void* world, float strength);
+/* One hand's own strength while it holds body id (0: the world's) - a body on a spear is carried by the hero's whole running weight, not an arm's pull
+ * ([weight] impale_drag: 20). 1 done, 0 not held. Optional. */
+typedef int32_t (*D2rfSetHandStrengthFn)(void* world, uint32_t id, int32_t hand, float strength);
+/* A body held standing and pulled keeps its feet (on: 1, the default) - it steps after the pull, its feet under it, as fast as its legs can (a man's fastest
+ * walking step for its leg's length); only a pull its steps cannot catch takes it off its feet. Off (0): pulled 30 cm out of its place it falls (1.12).
+ * Optional. */
+typedef int32_t (*D2rfSetBalanceFn)(void* world, int32_t on);
 /* Where the holding hand is now (its palm, render world). 1 done, 0 not held. */
 typedef int32_t (*D2rfHandFn)(void* world, uint32_t id, int32_t hand, const float pos[3]);
 /* The hand lets go: off its feet, the body flies on as the hand left it (a throw), falls, lies, gets up and walks home; still on its feet, it walks home. */
@@ -115,6 +127,9 @@ D2RF_API int32_t D2rfLetGo(void* world, uint32_t id, int32_t how);
 D2RF_API int32_t D2rfHome(void* world, uint32_t id, const float joint[D2RF_JOINTS][3]);
 D2RF_API int32_t D2rfGrab(void* world, const D2rfKnock* body, int32_t hand, const float point[3]);
 D2RF_API int32_t D2rfGrabPart(void* world, const D2rfKnock* body, int32_t hand, const float point[3], int32_t joint);
+D2RF_API int32_t D2rfSetStrength(void* world, float strength);
+D2RF_API int32_t D2rfSetHandStrength(void* world, uint32_t id, int32_t hand, float strength);
+D2RF_API int32_t D2rfSetBalance(void* world, int32_t on);
 D2RF_API int32_t D2rfHand(void* world, uint32_t id, int32_t hand, const float pos[3]);
 D2RF_API int32_t D2rfRelease(void* world, uint32_t id, int32_t hand);
 D2RF_API int32_t D2rfHeld(void* world, uint32_t id, int32_t hand, float a[3], float b[3], float* r);

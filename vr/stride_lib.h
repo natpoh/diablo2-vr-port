@@ -28,5 +28,8 @@ const char* Name();   // the library's own name and version while one is loaded,
 
 // The hero's pelvis and legs now (D2rsGait), any thread: false when no library is loaded or it refused.
 bool Gait(const D2rsGaitIn& in, D2rsGaitState* state, D2rsGaitOut* out);
+// [body] legs_side_steps: the library's stepping walk too (D2rsStep, in the same library since stride 1.0): one step of the feet; false when absent or refused.
+bool HasSteps();
+bool Step(const D2rsLegs& in, D2rsState* state, D2rsFeet* out);
 
 }  // namespace stridelib

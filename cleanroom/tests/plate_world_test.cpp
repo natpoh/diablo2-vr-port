@@ -778,6 +778,47 @@ int main() {
 		CHECK(!Steadying());
 	}
 
+	// ---- the box from where the game hung the plate (Serg, PC2: "cut in the middle, one part small and one part big") ----
+	{
+		// a square 1216 render, the game's true interface scale 0.45, the area's top half of what it leaves free; the plate hangs far left of the middle
+		const float W = 1216.0f, H = 1216.0f, sTrue = 0.45f, top = 0.5f * (H - 2160.0f * sTrue);
+		const int32_t anchor[2] = {-600, 586};                        // the anchor widget (layout units off the top middle)
+		const int32_t r[4] = {anchor[0] - 101, anchor[1] - 86, 203, 58};   // the plate under it, centred, as the game lays it out
+		const float at[2] = {0.5f * W + anchor[0] * sTrue, top + anchor[1] * sTrue};   // where the game hung it (the hook's answer, px)
+		// where the plate really is on the screen (px): its rect at the true scale (the caps and the frame lines inside the margins)
+		const float plate[4] = {0.5f * W + r[0] * sTrue, top + r[1] * sTrue, 0.5f * W + (r[0] + r[2]) * sTrue, top + (r[1] + r[3]) * sTrue};
+		auto holds = [&](const float uv[4]) {
+			return uv[0] * W <= plate[0] + 1e-3f && uv[2] * W >= plate[2] - 1e-3f && uv[1] * H <= plate[1] + 1e-3f && uv[3] * H >= plate[3] - 1e-3f;
+		};
+		// the scale as the anchor tells it: exact; near the middle (or no viewport) it is not taken
+		float sm = 0.0f;
+		CHECK(ScaleFromAnchor(anchor[0], at[0], W, &sm) && Near(sm, sTrue, 1e-4f));
+		CHECK(ScaleFromAnchor(400, 0.5f * W + 400 * sTrue, W, &sm) && Near(sm, sTrue, 1e-4f));
+		CHECK(!ScaleFromAnchor(100, 0.5f * W + 45.0f, W, &sm) && !ScaleFromAnchor(-600, at[0], 0.0f, &sm) && !ScaleFromAnchor(-600, std::nanf(""), W, &sm));
+		CHECK(!ScaleFromAnchor(-600, 0.5f * W + 50.0f, W, &sm));   // the wrong side of the middle: no scale
+		// at the true scale both boxes hold the plate
+		float uv[4], px[4];
+		CHECK(BoxAtAnchor(r, anchor, sTrue, at, W, H, uv) && holds(uv));
+		CHECK(BoxOf(r, sTrue, 1216, 1216, px));
+		const float old[4] = {px[0] / W, px[1] / H, px[2] / W, px[3] / H};
+		CHECK(holds(old));
+		CHECK(Near(uv[0], old[0], 1e-4f) && Near(uv[1], old[1], 1e-4f) && Near(uv[2], old[2], 1e-4f) && Near(uv[3], old[3], 1e-4f));   // the same box
+		// the scale 10 % off (the render size changed since it was asked, a fallback): the rect alone puts the box off the plate - part of it outside, drawn
+		// at its own size beside the rest made smaller; set where the game hung it, the box still holds all of it
+		for (const float off : {0.90f, 1.10f}) {
+			const float s = sTrue * off;
+			CHECK(BoxOf(r, s, 1216, 1216, px));
+			const float wrong[4] = {px[0] / W, px[1] / H, px[2] / W, px[3] / H};
+			CHECK(!holds(wrong));
+			CHECK(BoxAtAnchor(r, anchor, s, at, W, H, uv) && holds(uv));
+		}
+		// nothing to set it by: no box
+		CHECK(!BoxAtAnchor(r, anchor, sTrue, at, 0.0f, H, uv) && !BoxAtAnchor(r, anchor, 0.0f, at, W, H, uv));
+		const int32_t flat[4] = {r[0], r[1], 203, 0};
+		const float bad[2] = {std::nanf(""), 0.0f};
+		CHECK(!BoxAtAnchor(flat, anchor, sTrue, at, W, H, uv) && !BoxAtAnchor(r, anchor, sTrue, bad, W, H, uv));
+	}
+
 	std::printf("plate_world_test: %d checks, %d failed\n", g_checks, g_fails);
 	return g_fails == 0 ? 0 : 1;
 }

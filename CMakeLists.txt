@@ -516,6 +516,7 @@ target_sources(d2rl-vrcam PRIVATE vr/belt_glow.cpp vr/belt_drop.cpp)   # [hands]
 target_sources(d2rl-vrcam PRIVATE vr/own_effects.cpp)   # [render] dim_own_effects: the hero's own effects (Bone Armor ...) fainter, visual only (hooks the game's overlay creation to look)
 target_sources(d2rl-vrcam PRIVATE vr/head_shadow.cpp)   # [arms] head_shadow: the hidden head still casts its shadow (the eyes' skinning only has it shrunk), visual only
 target_sources(d2rl-vrcam PRIVATE vr/headset_shot.cpp vr/headset_clip.cpp vr/headset_grid.cpp)   # [headset_shot]: a screenshot of what reaches the headset (the layers / pictures handed over, read back to PNGs)
+target_sources(d2rl-vrcam PRIVATE vr/flatvr_feed.cpp)   # [render] flatvr_feed: without ReShade, FlatVR's picture and depth from the plugin (FlatVR_DepthProvider's blocks)
 target_sources(d2rl-vrcam PRIVATE vr/monitor_eye.cpp)   # [render] monitor_eye: the game's window shows one eye, steady - to capture the screen (bearstonem/d2r-pcvr's desktop_one_eye, MIT)
 target_sources(d2rl-vrcam PRIVATE vr/weight_wire.cpp)   # [weight]: a grip on the weapon is not a chord's modifier (wired to vr/direct_input.h)
 target_sources(d2rl-vrcam PRIVATE vr/belt_trigger_wire.cpp)   # [belt] hold_takes_trigger: the triggers while a belt bottle is in a hand (the game reads the left one as Shift)
@@ -594,6 +595,9 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/pose_share_test.cpp")   #
     add_executable(walk_back_test cleanroom/tests/walk_back_test.cpp)
     target_include_directories(walk_back_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
     target_compile_options(walk_back_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+    # VR F1 / F3 the game's own: every pose writer walked through the views (vr/body/pose_views.h)
+    add_executable(pose_views_test cleanroom/tests/pose_views_test.cpp)
+    target_compile_options(pose_views_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
     # [body] doll_feet: the hero's feet the doll's, not the game's (vr/doll_feet.h: planted feet, steps taken in turns, sides kept)
     add_executable(doll_feet_test cleanroom/tests/doll_feet_test.cpp)
     target_include_directories(doll_feet_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
@@ -873,6 +877,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/api_layers_test.cpp")
     target_compile_definitions(api_layers_test PRIVATE _CRT_SECURE_NO_WARNINGS)
     target_compile_options(api_layers_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 endif()
+# A live session end off the game's present: the exit asked for and waited for to STOPPING, the runtime's handles on a thread of their own (vr/session_end.h)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/session_end_test.cpp")
+    add_executable(session_end_test cleanroom/tests/session_end_test.cpp)
+    target_include_directories(session_end_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+    target_compile_options(session_end_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
 # [openxr] runtime_fov / symmetric_fov / fov_crop: the fov each eye is drawn with and the off-axis projection from it (vr/eye_fov.h)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/eye_fov_test.cpp")
     add_executable(eye_fov_test cleanroom/tests/eye_fov_test.cpp)
@@ -948,6 +958,10 @@ target_compile_options(attack_view_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 add_executable(bw_path_test cleanroom/tests/bw_path_test.cpp)
 target_include_directories(bw_path_test PRIVATE ${BODYWALK_SDK_INCLUDE})
 target_compile_options(bw_path_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# D2R VR Settings starts BodyWalk and FlatVR, or stops FlatVR, by the 3D in the headset (tools/settings/bw_autorun.h): FlatVR <-> native, at the switch
+# and at the game's start, running already, not installed, a second copy, the keys off; BodyWalk never closed; the gentle close's steps
+add_executable(bw_autorun_test cleanroom/tests/bw_autorun_test.cpp)
+target_compile_options(bw_autorun_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 add_executable(flat_raw_test cleanroom/tests/flat_raw_test.cpp)
 target_include_directories(flat_raw_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr ${CMAKE_CURRENT_SOURCE_DIR}/shared ${BODYWALK_SDK_INCLUDE})
 target_compile_options(flat_raw_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
@@ -1557,6 +1571,24 @@ target_link_options(d2r_vr_settings PRIVATE /STACK:8388608)
 add_custom_command(TARGET d2r_vr_settings POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_CURRENT_SOURCE_DIR}/lang" "$<TARGET_FILE_DIR:d2r_vr_settings>/lang")
 target_compile_definitions(d2r_vr_settings PRIVATE UNICODE _UNICODE)
 target_include_directories(d2r_vr_settings PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared ${CMAKE_CURRENT_SOURCE_DIR}/third_party/pybg3 ${FLATVR_SHARED_DIR} ${D2RVR_GEN_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/sigscan ${BODYWALK_SDK_INCLUDE})   # d2r_vr_state.h: the weapon in hand; afr_eye_shared.h: is FlatVR running; game_link.h: BodyWalk
+# D2R VR Headset Report (tools/headset_report): a player whose headset picture is wrong runs it with the headset on - one text report of what the
+# OpenXR runtime gives (layers, views, the eyes' fov and gap in VIEW / LOCAL / STAGE, the spaces, the controllers), for #support. Setup puts it
+# beside D2R_VR_Settings.exe; Settings' Home runs it ([support] headset_report). It looks at D2R VR's own files too: every D2R_DepthFog.fx
+# ReShade can pick up and what it holds, ReShade.ini's search paths and cache, the key ini values, another VR mod. Reads only; writes the report.
+add_executable(d2r_vr_headset_report tools/headset_report/headset_report.cpp vr/api_layers_lib.cpp tools/headset_report/headset_report.rc)
+add_dependencies(d2r_vr_headset_report d2r_vr_version_h)
+set_target_properties(d2r_vr_headset_report PROPERTIES OUTPUT_NAME "D2R_VR_Headset_Report")
+target_include_directories(d2r_vr_headset_report PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr ${CMAKE_CURRENT_SOURCE_DIR}/shared ${CMAKE_CURRENT_SOURCE_DIR}/tools/headset_report ${D2RVR_GEN_DIR})
+target_link_libraries(d2r_vr_headset_report PRIVATE OpenXR::openxr_loader d3d12 d3d11 dxgi advapi32 shell32 ole32 shlwapi version bcrypt)
+target_compile_definitions(d2r_vr_headset_report PRIVATE _CRT_SECURE_NO_WARNINGS UNICODE _UNICODE)
+target_compile_options(d2r_vr_headset_report PRIVATE /utf-8 /W4 /EHsc /permissive-)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/headset_report_test.cpp")
+    # its arithmetic and hints (tools/headset_report/report_stats.h) on made-up numbers - the reported players' among them; no headset
+    add_executable(headset_report_test tools/headset_report_test.cpp)
+    target_include_directories(headset_report_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tools/headset_report)
+    target_compile_options(headset_report_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
+
 # Our own debugging tools (not in the public tree).
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/settings/fake_loader.cpp")
     # Stands in for D2RLoader.exe in tools/start_helper_test.py (D2R_VR_Settings.exe --start): records its arguments and environment, starts nothing.
@@ -1822,6 +1854,14 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/hud_native_test.cpp")
     target_include_directories(hud_native_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr ${CMAKE_CURRENT_SOURCE_DIR}/shared ${FLATVR_SHARED_DIR} ${RESHADE_SDK_INCLUDE})
     target_link_libraries(hud_native_test PRIVATE minhook d3d12 dxgi)
     target_compile_options(hud_native_test PRIVATE /utf-8 /W3 /EHsc /permissive-)
+endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/flatvr_feed_test.cpp")
+    # [render] flatvr_feed (vr/flatvr_feed.cpp) on two WARP devices: the game's side publishes, FlatVR's opens the blocks and the NT handles
+    # and reads the pictures back - a pair's halves, a single picture, the depth, the counters, a new size, Idle
+    add_executable(flatvr_feed_test tools/flatvr_feed_test.cpp vr/flatvr_feed.cpp vr/native_d3d12.cpp)
+    target_include_directories(flatvr_feed_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr ${CMAKE_CURRENT_SOURCE_DIR}/shared ${FLATVR_SHARED_DIR})
+    target_link_libraries(flatvr_feed_test PRIVATE minhook d3d12 dxgi)
+    target_compile_options(flatvr_feed_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 endif()
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/native_d3d12_test.cpp")
     # [render] no_reshade's own hooks (vr/native_d3d12.cpp) on a WARP device and a hidden window: the device, the swap chain, its presents and resizes,

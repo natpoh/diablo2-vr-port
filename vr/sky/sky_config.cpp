@@ -330,6 +330,52 @@ void LoadCeilingTextures() {
     if (changed) g_skyCfgGen.fetch_add(1);
 }
 
+// The picture's horizon in the game's scene units (vr/sky/three_skies.h HorizonRow, RowMeanScene: its 0 degree row's mean, as the dome lays
+// it under the horizon) - the three skies' fog colour. Read once a file and its time (WIC, one row of it); the timer thread only.
+bool PictureHorizon(const std::wstring& name, float out[3]) {
+    const std::wstring path = name.find(L':') != std::wstring::npos || name.rfind(L"\\\\", 0) == 0 ? name
+                                                                                                  : OurFilesDir() + L"reshade-shaders\\Textures\\" + name;
+    WIN32_FILE_ATTRIBUTE_DATA fa{};
+    if (name.empty() || !GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &fa)) return false;
+    const uint64_t stamp = ((uint64_t)fa.ftLastWriteTime.dwHighDateTime << 32) | fa.ftLastWriteTime.dwLowDateTime;
+    struct Seen { uint64_t stamp; float rgb[3]; bool ok; };
+    static std::map<std::wstring, Seen> seen;
+    if (auto it = seen.find(path); it != seen.end() && it->second.stamp == stamp) {
+        memcpy(out, it->second.rgb, sizeof it->second.rgb);
+        return it->second.ok;
+    }
+    Seen s{stamp, {0.0f, 0.0f, 0.0f}, false};
+    const HRESULT co = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    IWICImagingFactory* wic = nullptr;
+    IWICBitmapDecoder* dec = nullptr;
+    IWICBitmapFrameDecode* frame = nullptr;
+    IWICFormatConverter* conv = nullptr;
+    if (SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&wic))) &&
+        SUCCEEDED(wic->CreateDecoderFromFilename(path.c_str(), nullptr, GENERIC_READ, WICDecodeMetadataCacheOnDemand, &dec)) &&
+        SUCCEEDED(dec->GetFrame(0, &frame)) && SUCCEEDED(wic->CreateFormatConverter(&conv)) &&
+        SUCCEEDED(conv->Initialize(frame, GUID_WICPixelFormat32bppRGBA, WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeCustom))) {
+        UINT w = 0, h = 0;
+        if (SUCCEEDED(conv->GetSize(&w, &h)) && w && h) {
+            std::vector<uint8_t> row((size_t)w * 4);
+            const WICRect r{0, (INT)threeskies::HorizonRow(h), (INT)w, 1};
+            if (SUCCEEDED(conv->CopyPixels(&r, w * 4, (UINT)row.size(), row.data()))) {
+                threeskies::RowMeanScene(row.data(), w, s.rgb);
+                s.ok = true;
+            }
+        }
+    }
+    if (conv) conv->Release();
+    if (frame) frame->Release();
+    if (dec) dec->Release();
+    if (wic) wic->Release();
+    if (SUCCEEDED(co)) CoUninitialize();
+    seen[path] = s;
+    memcpy(out, s.rgb, sizeof s.rgb);
+    LogF("vrcam: sky picture %s - its horizon %.4f %.4f %.4f (the game's scene units: the three skies' fog colour)%s", Utf8(name.c_str()).c_str(),
+         s.rgb[0], s.rgb[1], s.rgb[2], s.ok ? "" : " NOT READ");
+    return s.ok;
+}
+
 void LoadSkyActs() {
     bool changed = false;
     for (int a = 1; a <= 6; ++a) {
@@ -338,6 +384,8 @@ void LoadSkyActs() {
         swprintf_s(key, L"brightness_%ls", act.c_str());
         const float bright = std::clamp(IniF(L"sky", key, 1.0f), 0.0f, 4.0f);
         std::string files[2]; bool ok[2];
+        float dayHorizon[3] = {}, nightHorizon[3] = {};
+        bool dayHorizonOk = false, nightHorizonOk = false;
         for (int k = 0; k < 2; ++k) {
             swprintf_s(key, k ? L"cap_%ls" : L"texture_%ls", act.c_str());
             wchar_t def[96];   // tools/gen_sky.py's names, in their own folder (the game's skies sit beside it)
@@ -347,6 +395,7 @@ void LoadSkyActs() {
             while (!f.empty() && (f.back() == L' ' || f.back() == L'"')) f.pop_back();
             while (!f.empty() && (f.front() == L' ' || f.front() == L'"')) f.erase(0, 1);
             ok[k] = !f.empty() && SkyFileExists(f);
+            if (k == 0 && ok[k]) dayHorizonOk = PictureHorizon(f, dayHorizon);
             if (!f.empty() && !ok[k]) LogF("vrcam: sky %s %s '%s' NOT FOUND - %s", kActKeys[a], k ? "cap" : "texture", Utf8(f.c_str()).c_str(),
                                           k ? "the zenith takes the palette colour" : "the shader draws this sky itself");
             for (wchar_t& c : f) if (c == L'\\') c = L'/';   // an FX string takes no backslashes
@@ -363,6 +412,7 @@ void LoadSkyActs() {
             while (!f.empty() && (f.back() == L' ' || f.back() == L'"')) f.pop_back();
             while (!f.empty() && (f.front() == L' ' || f.front() == L'"')) f.erase(0, 1);
             nightOk = nightOk && !f.empty() && SkyFileExists(f);
+            if (k == 0 && nightOk) nightHorizonOk = PictureHorizon(f, nightHorizon);
             for (wchar_t& ch : f) if (ch == L'\\') ch = L'/';
             night[k] = Utf8(f.c_str());
         }
@@ -377,7 +427,8 @@ void LoadSkyActs() {
         SkyAct& s = g_skyAct[a];
         if (s.band != files[0] || s.cap != files[1] || s.bandOk != ok[0] || s.capOk != ok[1] ||
             s.nightBand != night[0] || s.nightCap != night[1] || s.nightOk != nightOk) changed = true;
-        s = {bright, files[0], files[1], ok[0], ok[1], {fog[0], fog[1], fog[2]}, fogSet, night[0], night[1], nightOk};
+        s = {bright, files[0], files[1], ok[0], ok[1], {fog[0], fog[1], fog[2]}, fogSet, night[0], night[1], nightOk,
+             {dayHorizon[0], dayHorizon[1], dayHorizon[2]}, {nightHorizon[0], nightHorizon[1], nightHorizon[2]}, dayHorizonOk, nightHorizonOk};
         ReleaseSRWLockExclusive(&g_skyCfgLock);
     }
     if (changed) g_skyCfgGen.fetch_add(1);

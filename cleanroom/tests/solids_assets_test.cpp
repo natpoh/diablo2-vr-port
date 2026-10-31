@@ -37,6 +37,13 @@ int wmain(int argc, wchar_t** argv) {
 		std::printf("  FAIL: made again on the same build\n");
 		++fails;
 	}
+	// the archives not opening (the game starting at that moment, Serg 0.192.19: "error 2") with this make's catalogue there: kept, no red line
+	const solidsassets::Result busy = solidsassets::Prepare(L"C:\\no_such_game_folder", argv[2], false);
+	std::wprintf(L"archives not there: %ls\n", busy.text.c_str());
+	if (busy.state != solidsassets::kMade || busy.text.find(L"kept") == std::wstring::npos) {
+		std::printf("  FAIL: the catalogue made before is not kept when the archives do not open\n");
+		++fails;
+	}
 	std::wstring bin = argv[2];
 	if (!bin.empty() && bin.back() != L'\\') bin += L'\\';
 	bin += L"d2r_vr_props\\solids.bin";

@@ -16,7 +16,9 @@
 
 #include "fall_lib.h"
 #include "head_shadow.h"
+#include "held_bounds.h"
 #include "knock_pose.h"
+#include "knock_props.h"
 #include "knock_trigger.h"
 #include "melee_touch.h"
 #include "monster_bodies.h"
@@ -95,13 +97,14 @@ constexpr float kPullBackMs = 1.2f;      // the tip going back along the blade t
 constexpr float kTipDownSin = 0.5f;      // the blade pointing down more than 30 deg: it slides off
 constexpr uint64_t kBladeGoneMs = 250;   // the blade not drawn this long (another weapon, no hit by touch): let go
 constexpr uint64_t kMaxOnBladeMs = 8000;
+constexpr float kImpaleStrength = 20.0f;  // the blade's hold: 20 hands' pull (the hero's run carries the body, D2RF_HAND_MAX_FORCE x 20 = 6000 N)
 std::atomic<uint32_t> g_downIds[D2RF_MAX_DOWN];
 std::atomic<uintptr_t> g_downSelves[D2RF_MAX_DOWN];   // the SkeletonInstances drawn out of the game's pose now (what hangs on their bones goes with them: OnXform)
 std::atomic<unsigned> g_carried{0}, g_carryMissed{0};
 std::atomic<int> g_downPhase[D2RF_MAX_DOWN];
 // Each model's facing for the library, from the game's own walking (knockpose::FacesGoing: the game walks a unit toward its front): the ticks the game moved
 // one of it with the library's front, against it; the verdict once there are enough (0 not yet: its transform's sign till then); said once. Timer thread.
-struct Facing { char model[48] = {}; int with = 0, against = 0, verdict = 0; };
+struct Facing { char model[48] = {}; int with = 0, against = 0, verdict = 0; float tallest = 0.0f; };   // (tallest: the most it has stood, m - its size for its weight)
 Facing g_facing[64];
 int g_nFacing = 0;
 Facing* FacingOf(const char* model) {
@@ -116,7 +119,30 @@ constexpr int kFacingTicks = 20;        // ticks the game moved it, all one way,
 constexpr float kFacingMinMs = 0.5f;    // the game moving it at least this fast across the ground
 
 // the poses Tick last made, for LayBodies (the timer's thread makes and lays them; the lock for the rest)
-struct Laid { uint32_t id = 0; uintptr_t self = 0; int bones = 0; dollpose::Knock knock; };
+struct Laid {
+    uint32_t id = 0;
+    uintptr_t self = 0;
+    int bones = 0;
+    dollpose::Knock knock;
+    uint32_t entity[1 + skel::MonsterRig::kMaxParts] = {};   // its root and its parts (their bounds grown while it is drawn away: GrowBounds)
+    int nEntity = 0;
+};
+// Each entity of a body drawn out of the game's pose, and the world box (world units) where it is drawn: LayBodies (the timer) sets them, the world-matrix
+// hook (OnXform, the renderer's threads) grows each one's bounds to hold that box - and puts back the bounds it grew once its body is the game's again.
+struct Grow { uint32_t entity = 0; float lo[3] = {}, hi[3] = {}; };
+SRWLOCK g_growLock = SRWLOCK_INIT;
+Grow g_grow[64];
+int g_nGrow = 0;
+std::atomic<int> g_nGrowNow{0};
+struct GrownBounds { uint32_t entity = 0; float orig[24] = {}; };   // (under g_grownMutex) the bounds as the game had them before we grew them
+std::mutex g_grownMutex;
+GrownBounds g_grown[64];
+int g_nGrown = 0;
+std::atomic<int> g_nGrownNow{0};
+std::atomic<unsigned> g_boundsGrew{0}, g_boundsHeld{0}, g_boundsRebuilt{0}, g_boundsMissed{0}, g_boundsPutBack{0};
+std::atomic<unsigned> g_boundsGrewTimer{0}, g_boundsHookMet{0}, g_boundsNoWorld{0};
+std::atomic<unsigned> g_boundsGrewDraw{0}, g_drawEyes{0}, g_drawShadow{0}, g_drawHeld{0}, g_drawRebuilt{0};   // (BeforeDraw: grown; collected for the eyes' / the shadows'; the box then)   // (the timer's grows; the hook meeting one of them; no matrix read)
+constexpr float kBoundsMarginM = 0.3f;   // the drawn box grown by this all round (a hand, a swinging arm between two ticks)
 D2rfPose g_posesNow[D2RF_MAX_DOWN];   // (under g_lib) the library's bodies as Tick last drew them, render world - the wrist that holds a weapon taken
 int g_nPosesNow = 0;
 std::mutex g_laidMutex;
@@ -185,6 +211,7 @@ void ResetLocked() {
 bool Busy(int phase) { return phase == D2RF_FALLING || phase == D2RF_LYING || phase == D2RF_GETTING_UP || phase == D2RF_HELD; }
 
 }  // namespace
+void GrowBoundsNow(const Grow* grow, int n);   // (below: the bounds of the bodies drawn away grown on the timer too)
 
 void SetLog(LogFn fn) {
     g_log.store(fn);
@@ -197,6 +224,11 @@ void Configure(const Settings& s) {
         std::lock_guard<std::mutex> lock(g_mutex);
         g_set = s;
     }
+    {
+        std::lock_guard<std::mutex> lock(g_lib);
+        falllib::SetStrength(s.strength);
+        falllib::SetBalance(s.balance);
+    }
     if (s.on != was) {
         if (s.on) {
             falllib::Probe();
@@ -206,6 +238,12 @@ void Configure(const Settings& s) {
         } else {
             LogF("knock down: off");
         }
+    }
+    static int toldBalance = -1;
+    if (s.throwOn && toldBalance != (s.balance ? 1 : 0)) {
+        toldBalance = s.balance ? 1 : 0;
+        LogF(s.balance ? "knock down: grab balance on ([weight] grab_balance) - a humanoid held standing and pulled steps after the pull and keeps its feet; only a pull "
+                         "faster than its legs can step takes it off them" : "knock down: grab balance off - a humanoid held standing and pulled 30 cm out of its place falls");
     }
     if (s.throwOn != wasThrow) {
         if (s.throwOn) falllib::Probe();
@@ -435,7 +473,7 @@ int Tick(const skel::MonsterRig* rigs, size_t nr, const Unit* units, int nUnits,
                                                                                      : g.jointsSaid[0] ? g.jointsSaid : "its joints not found");
             }
         }
-        if (g.doll <= 0 || !g.joints || g.bones <= 0 || g.bones > knockpose::kMaxBones) continue;   // a humanoid seen standing, not a corpse, its joints found
+        if (g.doll <= 0 || !g.joints || g.bones <= 0 || g.bones > bonecap::Max()) continue;   // a humanoid seen standing, not a corpse, its joints found
         const int count = skel::PoseNow(g.self, mats, knockpose::kMaxBones);
         if (count != g.bones) continue;
         float jm[D2RF_JOINTS][3];
@@ -471,6 +509,10 @@ int Tick(const skel::MonsterRig* rigs, size_t nr, const Unit* units, int nUnits,
         }
         f.body.floorY = g.root[1] / upm;
         f.body.height = std::max(0.3f, (f.joint[D2RF_HEAD][1] - f.body.floorY) * 1.1f);
+        if (Facing* fc = FacingOf(g.model)) {   // its size the tallest its model has stood: a crouch, an attack, a fall weigh nothing less (the brute came to 6 kg)
+            fc->tallest = std::max(fc->tallest, f.body.height);
+            f.body.height = fc->tallest;
+        }
         ++nf;
     }
     Pending pending[8];
@@ -605,6 +647,7 @@ int Tick(const skel::MonsterRig* rigs, size_t nr, const Unit* units, int nUnits,
             float at[3] = {bl->tip[0], bl->tip[1], bl->tip[2]};
             Flip(at);
             if (falllib::Grab(k, s, at) != 1) continue;
+            falllib::SetHandStrength(k.id, s, kImpaleStrength);   // (the blade carries it by the hero's whole running weight, not an arm's pull)
             if (DownBody* d = DownOf(k.id, nowMs, true)) d->swap = swap;
             g_any = true;
             OnBlade& o = g_blade[s];
@@ -739,7 +782,16 @@ int Tick(const skel::MonsterRig* rigs, size_t nr, const Unit* units, int nUnits,
             if (made[s].self == g->self) slot = s;   // (out of the game's pose: its sway turns give way)
         made[slot] = pose;
         if (slot == n) ++n;
-        if (nLaid < D2RF_MAX_DOWN) laid[nLaid++] = {pose.id, pose.self, pose.bones, pose.knock};
+        if (nLaid < D2RF_MAX_DOWN) {
+            Laid& l = laid[nLaid++];
+            l = Laid{};
+            l.id = pose.id;
+            l.self = pose.self;
+            l.bones = pose.bones;
+            l.knock = pose.knock;
+            l.entity[l.nEntity++] = g->entity;
+            for (int k = 0; k < g->nParts && l.nEntity < (int)std::size(l.entity); ++k) l.entity[l.nEntity++] = g->parts[k];
+        }
         if (tell && at < (int)sizeof said - 140)
             at += snprintf(said + at, sizeof said - at, "%s%u %s %.1f s%s (hips %.2f m over its floor, %.2f m from home, weight %.2f)", at ? "; " : "", p.id,
                            PhaseName(p.phase), p.t, p.phase == D2RF_GETTING_UP ? (p.fromBack ? " from the back" : " from the face") : "",
@@ -767,6 +819,24 @@ int Tick(const skel::MonsterRig* rigs, size_t nr, const Unit* units, int nUnits,
         toldAt = nowMs;
         const unsigned carried = g_carried.exchange(0), missed = g_carryMissed.exchange(0);
         const unsigned laidN = g_laidBodies.exchange(0), laidMissed = g_laidMissed.exchange(0);
+        const unsigned grew = g_boundsGrew.exchange(0), held = g_boundsHeld.exchange(0), rebuilt = g_boundsRebuilt.exchange(0), bmissed = g_boundsMissed.exchange(0),
+                       putBack = g_boundsPutBack.exchange(0), grewTimer = g_boundsGrewTimer.exchange(0), hookMet = g_boundsHookMet.exchange(0),
+                       noWorld = g_boundsNoWorld.exchange(0), grewDraw = g_boundsGrewDraw.exchange(0), drawEyes = g_drawEyes.exchange(0),
+                       drawShadow = g_drawShadow.exchange(0), drawHeld = g_drawHeld.exchange(0), drawRebuilt = g_drawRebuilt.exchange(0);
+        const int from = knockprops::EntityBoundsSource();
+        int entities = 0;
+        {
+            AcquireSRWLockShared(&g_growLock);
+            entities = g_nGrow;
+            ReleaseSRWLockShared(&g_growLock);
+        }
+        LogF("knock down: kept in view - %d entities of the bodies drawn away; their bounds grown by the world-matrix hook %u times (it met them %u), by the timer "
+             "%u (no matrix read %u) - %s; before each: the game's box held the drawn body %u times, made again without it %u; no bounds read %u; put back %u",
+             entities, grew, hookMet, grewTimer, noWorld, from == 1 ? "the props' bounds storage" : from == 2 ? "the bounds storage found by a unit's box" : "NO bounds storage found yet",
+             held, rebuilt, bmissed, putBack);
+        LogF("knock down: kept in view at the draw collect - the bodies' entities collected for the eyes' passes %u times, the shadows' %u (a pass that "
+             "leaves one out before its collect is not counted); their bounds grown there %u times, just before the game's - the box then held the drawn body "
+             "%u times, made again without it %u", drawEyes, drawShadow, grewDraw, drawHeld, drawRebuilt);
         LogF("knock down: %d out of the game's pose - %s; what hangs on their bones (weapons, shields) carried %u times since the last line%s; their bodies (the "
              "weapon's, the grab's) laid on them as drawn: %u capsules%s", nPoses, said, carried,
              missed ? (", " + std::to_string(missed) + " not (the pose not found)").c_str() : "", laidN,
@@ -776,6 +846,18 @@ int Tick(const skel::MonsterRig* rigs, size_t nr, const Unit* units, int nUnits,
 }
 
 void LayBodies(monsterbodies::Snapshot* s, float upm) {
+    struct PublishGrow {   // (on every way out: the entities and their boxes for the world-matrix hook - none when no body is drawn away)
+        Grow g[64];
+        int n = 0;
+        ~PublishGrow() {
+            AcquireSRWLockExclusive(&g_growLock);
+            for (int i = 0; i < n; ++i) g_grow[i] = g[i];
+            g_nGrow = n;
+            g_nGrowNow.store(n);
+            ReleaseSRWLockExclusive(&g_growLock);
+            if (n > 0 || g_nGrownNow.load(std::memory_order_relaxed) > 0) GrowBoundsNow(g, n);   // (and on the timer: the hook may never see them)
+        }
+    } grow;
     if (!s || s->n <= 0 || !(upm > 1e-3f)) return;
     static Laid laid[D2RF_MAX_DOWN];   // (the timer's thread only)
     int nl = 0;
@@ -827,6 +909,24 @@ void LayBodies(monsterbodies::Snapshot* s, float upm) {
             for (int k = 0; k < 3; ++k) { b.bottom[k] = qa[k] / upm; b.top[k] = qb[k] / upm; }
             g_laidBodies.fetch_add(1, std::memory_order_relaxed);
         }
+        // where it is drawn (world units): its capsules laid, all round - each of its entities' bounds to hold it (OnXform)
+        float lo[3] = {1e30f, 1e30f, 1e30f}, hi[3] = {-1e30f, -1e30f, -1e30f};
+        for (int i = 0; i < s->n; ++i) {
+            const monsterbodies::Body& b = s->b[i];
+            if (b.id != L.id || !b.rig) continue;
+            for (int k = 0; k < 3; ++k) {
+                lo[k] = std::min(lo[k], (std::min(b.bottom[k], b.top[k]) - b.radius - kBoundsMarginM) * upm);
+                hi[k] = std::max(hi[k], (std::max(b.bottom[k], b.top[k]) + b.radius + kBoundsMarginM) * upm);
+            }
+        }
+        if (!(lo[0] <= hi[0])) continue;
+        for (int e = 0; e < L.nEntity && grow.n < (int)std::size(grow.g); ++e) {
+            if (!L.entity[e]) continue;
+            Grow& g = grow.g[grow.n++];
+            g.entity = L.entity[e];
+            std::memcpy(g.lo, lo, sizeof lo);
+            std::memcpy(g.hi, hi, sizeof hi);
+        }
     }
 }
 
@@ -853,8 +953,99 @@ int WriteM(uintptr_t at, const float* m) noexcept {
 // its shield - carried with that bone as drawn (Serg on the first build: «если это нпс с оружием оружие должно оставаться у него в руках сейчас оружие
 // остается висеть в воздухе»). The game made it from the bone as the game has it: out x X^-1 x B^-1 x B' x X, B the bone's matrix in the game's pose, B' in
 // ours (the same copy the skinning is handed, laid on the library's joints), X the model's place in the world.
+// The bounds of an entity of a body drawn away from its place grown to hold where it is drawn (its world matrix just made: `out`); one the game has again put
+// back as it was. Serg, 0.192.33: «почему-то модельки нпс пропадают когда я их поднимаю» - the renderer leaves out what its box says is out of view, and
+// the box was the game place's (vr/held_bounds.h).
+// Two ways in, as the game may make the boxes: the world-matrix hook (each entity the moment its matrix is made: `out`) and the touch's timer (LayBodies,
+// every 10 ms: the matrix the renderer has) - 0.192.34 grew by the hook alone and nothing was ever grown (the hook may not make a unit's matrices): its
+// walking home flickered and vanished. The ids matched by their index (the hook's and the storages' may differ in the version bits).
+bool SameEntity(uint32_t a, uint32_t b) { return a && b && (a & 0xFFFFF) == (b & 0xFFFFF); }
+// Under g_grownMutex: entity (the storages' own id) grown to hold want (null: its own bounds put back), m its world matrix now.
+void GrowOneLocked(uint32_t entity, const float m[16], const Grow* want, std::atomic<unsigned>& grewCount, std::atomic<unsigned>* heldC = &g_boundsHeld,
+                   std::atomic<unsigned>* rebuiltC = &g_boundsRebuilt) {
+    int at = -1;
+    for (int i = 0; i < g_nGrown && at < 0; ++i)
+        if (SameEntity(g_grown[i].entity, entity)) at = i;
+    if (!want && at < 0) return;
+    float box[24];
+    if (!knockprops::EntityBounds(entity, m, box)) { if (want) g_boundsMissed.fetch_add(1, std::memory_order_relaxed); return; }
+    if (!want) {   // its body is the game's again: its own bounds back (its world box under its matrix now)
+        float back[24];
+        std::memcpy(back, g_grown[at].orig, sizeof back);
+        heldbounds::WorldOf(back, back + 4, m, back + 16, back + 20);
+        if (knockprops::PutEntityBounds(entity, back)) g_boundsPutBack.fetch_add(1, std::memory_order_relaxed);
+        g_grown[at] = g_grown[--g_nGrown];
+        g_nGrownNow.store(g_nGrown);
+        return;
+    }
+    if (at < 0) {   // (first touch: its bounds as the game has them, to grow from and put back)
+        if (g_nGrown >= (int)std::size(g_grown)) g_grown[0] = g_grown[--g_nGrown];
+        at = g_nGrown++;
+        g_grown[at].entity = entity;
+        std::memcpy(g_grown[at].orig, box, sizeof box);
+        g_nGrownNow.store(g_nGrown);
+    }
+    (heldbounds::Holds(box, want->lo, want->hi) ? *heldC : *rebuiltC).fetch_add(1, std::memory_order_relaxed);
+    float grown[24];
+    if (heldbounds::Grown(g_grown[at].orig, m, want->lo, want->hi, grown) && knockprops::PutEntityBounds(entity, grown)) grewCount.fetch_add(1, std::memory_order_relaxed);
+}
+// The hook's way in (the renderer's threads).
+void GrowBounds(uint32_t entity, uintptr_t out) {
+    if (g_nGrowNow.load(std::memory_order_relaxed) == 0 && g_nGrownNow.load(std::memory_order_relaxed) == 0) return;
+    Grow want;
+    bool wanted = false;
+    AcquireSRWLockShared(&g_growLock);
+    for (int i = 0; i < g_nGrow && !wanted; ++i)
+        if (SameEntity(g_grow[i].entity, entity)) { want = g_grow[i]; wanted = true; }
+    ReleaseSRWLockShared(&g_growLock);
+    if (!wanted && g_nGrownNow.load(std::memory_order_relaxed) == 0) return;
+    float m[16];
+    if (ReadM(out, m) <= 0) return;
+    std::lock_guard<std::mutex> lock(g_grownMutex);
+    if (wanted) {
+        g_boundsHookMet.fetch_add(1, std::memory_order_relaxed);
+        GrowOneLocked(want.entity, m, &want, g_boundsGrew);
+        return;
+    }
+    for (int i = 0; i < g_nGrown; ++i)
+        if (SameEntity(g_grown[i].entity, entity)) { GrowOneLocked(g_grown[i].entity, m, nullptr, g_boundsGrew); return; }
+}
+// The timer's way in (LayBodies): every entity of the bodies drawn away grown by the matrix the renderer has, and those no longer drawn so put back.
+void GrowBoundsNow(const Grow* grow, int n) {
+    std::lock_guard<std::mutex> lock(g_grownMutex);
+    for (int i = 0; i < n; ++i) {
+        float m[16];
+        if (!knockprops::EntityWorld(grow[i].entity, m)) { g_boundsNoWorld.fetch_add(1, std::memory_order_relaxed); continue; }
+        GrowOneLocked(grow[i].entity, m, &grow[i], g_boundsGrewTimer);
+    }
+    for (int i = g_nGrown; i-- > 0;) {
+        bool still = false;
+        for (int k = 0; k < n && !still; ++k) still = SameEntity(grow[k].entity, g_grown[i].entity);
+        float m[16];
+        if (!still && knockprops::EntityWorld(g_grown[i].entity, m)) GrowOneLocked(g_grown[i].entity, m, nullptr, g_boundsGrewTimer);
+    }
+}
+
+// The draw collect's way in (the render workers, just before the game's ModelDrawCollect for this entity and pass).
+void BeforeDraw(uint32_t entity, bool eyes) {
+    if (g_nGrowNow.load(std::memory_order_relaxed) == 0) return;
+    Grow want;
+    bool wanted = false;
+    AcquireSRWLockShared(&g_growLock);
+    for (int i = 0; i < g_nGrow && !wanted; ++i)
+        if (SameEntity(g_grow[i].entity, entity)) { want = g_grow[i]; wanted = true; }
+    ReleaseSRWLockShared(&g_growLock);
+    if (!wanted) return;
+    (eyes ? g_drawEyes : g_drawShadow).fetch_add(1, std::memory_order_relaxed);
+    float m[16];
+    if (!knockprops::EntityWorld(want.entity, m)) return;
+    std::lock_guard<std::mutex> lock(g_grownMutex);
+    GrowOneLocked(want.entity, m, &want, g_boundsGrewDraw, &g_drawHeld, &g_drawRebuilt);
+}
+
 void OnXform(uint32_t entity, uintptr_t component, uintptr_t out) {
     if (!Wanted() || out < 0x10000) return;
+    GrowBounds(entity, out);
     bool any = false;
     for (auto& s : g_downSelves) any = any || s.load(std::memory_order_relaxed) != 0;
     if (!any) return;

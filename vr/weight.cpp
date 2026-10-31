@@ -44,6 +44,7 @@
 #include "weight_flight.h"
 #include "weight_floor.h"
 #include "weight_throw.h"
+#include "own_body.h"   // [weight] own_body: left out a moment after a take, and while a hand draws behind a shoulder
 
 namespace weight {
 
@@ -1275,7 +1276,14 @@ void Apply(skel::Input* in, Out* out) {
         // view the drawn weapon is put in the world with, run back (vr/monster_bodies.h). The weapon is put back on them after the step (cleanroom/heft/contact.h).
         LARGE_INTEGER bodiesAt{};
         int nBodies = 0;
-        if (wt.monsterBodies && wt.worldOk) {
+        // [weight] own_body (vr/own_body.h): the hero's own body among them - not a moment after the weapon was taken (drawn from the back or the hip, called back:
+        // it comes in through him) nor while a hand is behind a shoulder where it draws or stows
+        static ULONGLONG ownTakenAt = 0;
+        static bool ownWasHeld = false;
+        if (g_hold.Held() && !ownWasHeld) ownTakenAt = GetTickCount64();
+        ownWasHeld = g_hold.Held();
+        const bool ownSkip = !wt.ownBody || ownbody::Skip(GetTickCount64(), ownTakenAt, drawZone[0] >= 0 || drawZone[1] >= 0);
+        if ((wt.monsterBodies || wt.ownBody) && wt.worldOk) {
             QueryPerformanceCounter(&bodiesAt);
             const BodiesFn src = g_bodiesSrc.load();
             monsterbodies::Snapshot snap;
@@ -1289,6 +1297,8 @@ void Apply(skel::Input* in, Out* out) {
                 view.upm = std::clamp(wt.worldUpm, 1.0f, 12.0f);   // (the touch's render metres are over the same, clamped so)
                 const float ident[4] = {0.0f, 0.0f, 0.0f, 1.0f};
                 for (int i = 0; i < snap.n && nBodies < monsterbodies::kMax; ++i) {
+                    const bool own = snap.b[i].held == monsterbodies::kHeldOwnBody;
+                    if (own ? ownSkip : !wt.monsterBodies) continue;   // (own_body alone: only his body; monster_bodies alone: as before)
                     float a[3], b[3];
                     if (!monsterbodies::RenderToHead(view, snap.b[i].bottom, a) || !monsterbodies::RenderToHead(view, snap.b[i].top, b)) continue;
                     g_capBone[nBodies] = snap.b[i].rig ? snap.b[i].bone : -1;   // (the debug view tints the limb the weapon is on)

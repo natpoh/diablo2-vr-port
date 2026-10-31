@@ -41,9 +41,10 @@ const float kStill[3] = {0.0f, 0.0f, 0.0f};
 }  // namespace
 
 int main() {
-	EXPECT(std::fabs(kt::MassOf(1.15f, 1.0f) - 30.0f) < 0.3f && std::fabs(kt::MassOf(1.8f, 1.0f) - 50.0f) < 0.5f, "fallen %.1f, zombie %.1f",
-	       kt::MassOf(1.15f, 1.0f), kt::MassOf(1.8f, 1.0f));
-	EXPECT(std::fabs(kt::MassOf(1.8f, 2.0f) - 100.0f) < 1.0f, "the weight slider: %.1f", kt::MassOf(1.8f, 2.0f));
+	EXPECT(std::fabs(kt::MassOf(1.15f, 1.0f) - 30.0f) < 0.3f && std::fabs(kt::MassOf(1.75f, 1.0f) - 63.0f) < 0.5f, "fallen %.1f, a man %.1f",
+	       kt::MassOf(1.15f, 1.0f), kt::MassOf(1.75f, 1.0f));
+	EXPECT(kt::MassOf(2.1f, 1.0f) > 80.0f && kt::MassOf(2.1f, 1.0f) < 95.0f, "a big one of 2.1 m: %.1f (bigger is heavier, faster than its size)", kt::MassOf(2.1f, 1.0f));
+	EXPECT(std::fabs(kt::MassOf(1.75f, 2.0f) - 126.0f) < 1.0f, "the weight slider: %.1f", kt::MassOf(1.75f, 2.0f));
 	kt::Settings s;   // 0.7 m/s
 	s.staggerShare = 0.0f;   // (the knock-downs alone first; the stagger below)
 	{   // a strike: 40 N s on 50 kg = 0.8 m/s knocks him down; 30 N s = 0.6 does not

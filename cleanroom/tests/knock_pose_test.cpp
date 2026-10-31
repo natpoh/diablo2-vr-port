@@ -8,6 +8,7 @@
 // a leg of two bones has its ankle put at the farthest bone below the knee; the model's frame and the world's, turned, scaled and mirrored, round trip.
 
 #include "../../vr/knock_pose.h"
+#include "../../vr/held_bounds.h"
 #include "../../vr/monster_humanoid.h"
 
 #include <cmath>
@@ -32,6 +33,7 @@ int g_fails = 0;
 
 namespace mh = monsterhumanoid;
 namespace kp = knockpose;
+namespace hb = heldbounds;
 
 struct Bone { const char* name; int parent; float at[3]; };
 // A Mixamo-named man of 1.75 m in his model's frame (y up, facing +z, his left at -x), with the game's "anim" bone on the floor under him, a finger and a
@@ -339,6 +341,34 @@ void TestFacing() {
 	       kp::SwapJoint(D2RF_L_WRIST, false) == D2RF_L_WRIST, "a joint's other side");
 }
 
+// A body held up in the air kept in view (vr/held_bounds.h): its part's box grown to hold where it is drawn, run back through its matrix - under a turned,
+// scaled, moved matrix the world box holds the drawn box and the game's own box; the original kept inside; a flat matrix refused.
+void TestHeldBounds() {
+	const float m[16] = {0, 0, -2.0f, 0, 0, 2.0f, 0, 0, 2.0f, 0, 0, 0, 10.0f, 2.0f, -4.0f, 1};   // a quarter turn about y, scale 2, moved
+	float orig[24] = {-0.2f, 0.0f, -0.2f, 1, 0.2f, 1.8f, 0.2f, 1};
+	{
+		float wmin[3], wmax[3];
+		hb::WorldOf(orig, orig + 4, m, wmin, wmax);
+		for (int k = 0; k < 3; ++k) { orig[16 + k] = wmin[k]; orig[20 + k] = wmax[k]; }
+		orig[19] = orig[23] = 1;
+	}
+	const float lo[3] = {12.0f, 5.0f, -6.0f}, hi[3] = {13.0f, 7.0f, -5.0f};   // lifted 2 m over its place's box
+	EXPECT(!hb::Holds(orig, lo, hi), "the game's box already holds the lifted body");
+	float out[24];
+	EXPECT(hb::Grown(orig, m, lo, hi, out), "not grown");
+	EXPECT(hb::Holds(out, lo, hi), "the grown world box does not hold where it is drawn");
+	bool keeps = true;
+	for (int k = 0; k < 3; ++k) keeps = keeps && out[16 + k] <= orig[16 + k] + 1e-4f && out[20 + k] >= orig[20 + k] - 1e-4f && out[k] <= orig[k] && out[4 + k] >= orig[4 + k];
+	EXPECT(keeps && out[3] == 1 && out[23] == 1, "the game's own box not kept inside (or a w lane changed)");
+	float wmin[3], wmax[3];   // the world box is the grown local box under the matrix - what the game makes of it each frame
+	hb::WorldOf(out, out + 4, m, wmin, wmax);
+	float off = 0.0f;
+	for (int k = 0; k < 3; ++k) off = std::max({off, std::fabs(wmin[k] - out[16 + k]), std::fabs(wmax[k] - out[20 + k])});
+	EXPECT(off < 1e-4f, "the world box %.5f off the local box under the matrix", off);
+	const float flat[16] = {};
+	EXPECT(!hb::Grown(orig, flat, lo, hi, out), "grown through a flat matrix");
+}
+
 void TestFrames() {
 	const float turned[9] = {0, 0, -2.0f, 0, 2.0f, 0, 2.0f, 0, 0};   // a quarter turn about y, scale 2
 	const float mirrored[9] = {-1.5f, 0, 0, 0, 1.5f, 0, 0, 0, 1.5f};
@@ -362,6 +392,7 @@ int main() {
 	TestApply();
 	TestCarry();
 	TestFacing();
+	TestHeldBounds();
 	TestFrames();
 	std::printf(g_fails ? "knock_pose_test: %d FAILED\n" : "knock_pose_test: all passed\n", g_fails);
 	return g_fails ? 1 : 0;

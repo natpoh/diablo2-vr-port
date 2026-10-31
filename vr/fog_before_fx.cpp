@@ -57,6 +57,43 @@ std::atomic<uint32_t> g_draws{0};
 // the effects' depth, since the 10 s line: draws given a depth, of them by a twin made now; a twin pipeline's draws not given one (their
 // targets not the effects', a twin not made, no depth bound); steps that fogged the effects by it, steps with effects drawn but not fogged
 std::atomic<uint32_t> g_fxTwinDraws{0}, g_fxTwinsMade{0}, g_fxOther{0}, g_fxFogged{0}, g_fxNotFogged{0};
+// ... the effects' draws not drawn again (no step took their depth for a while: g_fxIdle), and the steps in a row that took none - the
+// twins then wait, trying again for a quarter second every 5 s (PC1 2026-10-31 16:03: 1250 draws a pair drawn again, no step took them)
+std::atomic<uint32_t> g_fxSkipped{0}, g_fxIdle{0};
+constexpr uint32_t kFxIdleSteps = 120;
+// What it costs (PC1 2026-10-31 16:08: [fog] enabled=0 took 0.192.21 from 38 to 68-70 frames/s, a pair 25 -> 14 ms): the CPU in the
+// sinks (every bind, barrier and draw of the followed lists), in the twins and in the step, by the performance counter; the twins' GPU
+// time sampled - one present a second, each twin between two timestamps (TwinTimes, Frame)
+std::atomic<uint64_t> g_cpuSinks{0}, g_cpuTwins{0}, g_cpuStep{0};   // counter ticks since the 10 s line
+struct CpuTime {
+    std::atomic<uint64_t>& to;
+    LARGE_INTEGER t0;
+    explicit CpuTime(std::atomic<uint64_t>& a) : to(a) { QueryPerformanceCounter(&t0); }
+    ~CpuTime() {
+        LARGE_INTEGER t1;
+        QueryPerformanceCounter(&t1);
+        to.fetch_add((uint64_t)(t1.QuadPart - t0.QuadPart), std::memory_order_relaxed);
+    }
+};
+constexpr uint32_t kTwinStamps = 4096;   // twins timed in a sampled present (pairs)
+struct TwinTimes {
+    ID3D12QueryHeap* heap = nullptr;
+    ID3D12Resource* readback = nullptr;
+    const uint64_t* data = nullptr;
+    ID3D12CommandAllocator* alloc = nullptr;
+    ID3D12GraphicsCommandList* list = nullptr;
+    ID3D12Fence* fence = nullptr;
+    UINT64 fenceAt = 0;
+    std::atomic<bool> sampling{false};     // the twins recorded now are timed
+    std::atomic<uint32_t> used{0};         // ... so many of them
+    int stage = 0;                         // the present's: 0 idle, 1 sampling, 2 waiting to resolve, 3 waiting to read
+    uint32_t pairs = 0, waited = 0;
+    ULONGLONG sampledAt = 0;
+    bool failed = false;
+    double sumMs = 0.0;                    // since the 10 s line: the sampled presents' twins, in all
+    uint32_t samples = 0, timed = 0;
+};
+TwinTimes g_twinTimes;
 // what the 10 s line says when none is drawn: the resolve's pipeline bound on a followed list / on one not followed (made or reset while
 // the step was off), its draws seen, and of them on lists not followed
 std::atomic<uint32_t> g_boundSeen{0}, g_boundUntracked{0}, g_drawSeen{0}, g_drawUntracked{0};
@@ -184,6 +221,7 @@ void Note(Known& k, const D3D12_RESOURCE_TRANSITION_BARRIER& t) {
 // ---- the sinks (the game's calls, before the real ones)
 bool Wanted() { return g_on.load(std::memory_order_relaxed); }
 void OnReset(ID3D12GraphicsCommandList* cl) {
+    const CpuTime cpuTime(g_cpuSinks);
     List* l = Of(cl);
     if (Wanted()) l->Clear();
     else l->tracked = false;
@@ -272,6 +310,7 @@ ID3D12Resource* ReadScene(const List& l, ID3D12Resource* depth, int* elsewhere) 
 void OnTargets(ID3D12GraphicsCommandList* cl, unsigned n, const D3D12_CPU_DESCRIPTOR_HANDLE* rts, bool single, ID3D12Resource* ds,
                const D3D12_CPU_DESCRIPTOR_HANDLE* dsv) {
     if (!Wanted()) return;
+    const CpuTime cpuTime(g_cpuSinks);
     List* l = Of(cl);
     l->ds = ds;
     l->rt0 = n && rts ? natived3d::RtvResource(rts[0].ptr) : nullptr;
@@ -291,6 +330,7 @@ void OnTargets(ID3D12GraphicsCommandList* cl, unsigned n, const D3D12_CPU_DESCRI
 }
 void OnBarrier(ID3D12GraphicsCommandList* cl, unsigned n, const D3D12_RESOURCE_BARRIER* b) {
     if (!Wanted()) return;
+    const CpuTime cpuTime(g_cpuSinks);
     List* l = Of(cl);
     for (unsigned i = 0; i < n; ++i) {
         if (b[i].Type != D3D12_RESOURCE_BARRIER_TYPE_TRANSITION || !b[i].Transition.pResource) continue;
@@ -312,6 +352,7 @@ void OnBarrier(ID3D12GraphicsCommandList* cl, unsigned n, const D3D12_RESOURCE_B
 }
 void OnBound(ID3D12GraphicsCommandList* cl, ID3D12PipelineState* pso) {
     if (!Wanted()) return;
+    const CpuTime cpuTime(g_cpuSinks);
     List* l = Of(cl);
     l->pso = pso;
     if (IsResolvePso(pso)) (l->tracked ? g_boundSeen : g_boundUntracked).fetch_add(1, std::memory_order_relaxed);
@@ -324,6 +365,7 @@ void OnHeaps(ID3D12GraphicsCommandList* cl, unsigned n, ID3D12DescriptorHeap* co
 }
 void OnRoot(ID3D12GraphicsCommandList* cl, const RootCall& c) {
     if (!Wanted()) return;
+    const CpuTime cpuTime(g_cpuSinks);
     List* l = Of(cl);
     switch (c.kind) {
     case RootCall::kGraphicsRootSignature:
@@ -368,7 +410,7 @@ cbuffer K : register(b0) {
     float sx, sy, offX, curveOn;
     uint width, height; float cStart, cEnd;
     float cCurve, cStrength, easeOn, byDepth;
-    uint glowW, glowH; float holes, pad1;
+    uint glowW, glowH; float holes, skyDepth;
 };
 Texture2D<float> Depth : register(t0);
 Texture2D<float3> Scene : register(t1);
@@ -391,6 +433,18 @@ float Keep(float2 uv, float d) {
     if (heightOn > 0.5) t = 1.0 - (1.0 - t) * saturate((top - dot(v, up)) / soft);
     return t;
 }
+// The void, or the game's dome ([sky] game_sky, Params::skyDepth) at p: the depth is the view's (near / the depth along the view), so off the
+// view's middle the dome's is near / (radius x cos) - the pixel's view ray at depth 1 (its length 1 / cos) brings it back, as D2R_DepthFog.fx
+// DomeAt. By the depth alone only the dome within 11.5 degrees of the view's middle was the sky (cos 0.98) and the rest of it was fogged as
+// ground: Serg on 0.192.39 (126.webp, "туман ужасен") - a ten-sided disc straight ahead in the dome's own colours, the sky round it fogged.
+// The game's fog only: our effect's fog in the step (byDepth) keeps the depth alone, as it was (Serg: the old fog not touched)
+bool SkyAt(uint2 p, float d) {
+    const float g = max(skyDepth, 1e-7);
+    if (skyDepth <= 0.0 || sx <= 0.0 || sy <= 0.0 || byDepth > 0.5) return d <= g;
+    const float2 uv = (float2(p) + 0.5) / float2(width, height);
+    const float2 t = float2((uv.x * 2.0 - 1.0 - offX) / sx, (1.0 - uv.y * 2.0) / sy);
+    return d <= g * sqrt(1.0 + dot(t, t));
+}
 // The depth a pixel is fogged by: its own. With Params::holes a pixel of none beside drawn ground - a hole the far trees' dithered edges
 // leave in it, or the one-pixel rim round anything against the void, where the game lays its blended edge (Serg 2026-10-31: the far
 // trees a band of dark specks; every plank of the far palisade traced in a dark line, 85.png) - takes the farthest of its drawn
@@ -398,18 +452,90 @@ float Keep(float2 uv, float d) {
 float GroundDepth(uint2 p) {
     const float d = Depth[p];
     if (d > 1e-7 || holes < 0.5) return d;
+    // (a neighbour counts when it is ground: not the void, not the game's dome - a hole beside the dome is the sky's)
     const uint2 m = uint2(width - 1, height - 1);
     const float n0 = Depth[uint2(min(p.x + 1, m.x), p.y)], n1 = Depth[uint2(p.x > 0 ? p.x - 1 : 0, p.y)];
     const float n2 = Depth[uint2(p.x, min(p.y + 1, m.y))], n3 = Depth[uint2(p.x, p.y > 0 ? p.y - 1 : 0)];
-    const float farthest = min(min(n0 > 1e-7 ? n0 : 1e9, n1 > 1e-7 ? n1 : 1e9), min(n2 > 1e-7 ? n2 : 1e9, n3 > 1e-7 ? n3 : 1e9));
+    const float farthest = min(min(SkyAt(p, n0) ? 1e9 : n0, SkyAt(p, n1) ? 1e9 : n1), min(SkyAt(p, n2) ? 1e9 : n2, SkyAt(p, n3) ? 1e9 : n3));
     return farthest < 1e8 ? farthest : 0.0;
+}
+// What the fog leaves of a pixel at the depth d: the sky (the void, the game's dome) all of it
+float KeepAt(uint2 p, float2 uv, float d) { return SkyAt(p, d) ? 1.0 : Keep(uv, d); }
+// The share of `o` in c, a blend of `own` and `o` (where c lies along the line between them); `none` when the two are alike
+float ShareOf(float3 c, float3 own, float3 o, float none) {
+    const float3 e = o - own;
+    const float l = dot(e, e);
+    return l > 1e-6 ? saturate(dot(c - own, e) / l) : none;
+}
+// The game's fog (Params::ours off): a pixel on an edge between two fogs. The pixels along a silhouette hold the object and what is behind
+// it blended (the game's soft edges, leaves and planks drawn over the dome) but only one depth: fogged whole by the object's, the sky or the
+// far ground in it took the object's fog (a light line against the sky); left whole as the sky, the object in it stayed unfogged (a dark
+// line round the fogged object) - Serg on 0.192.34 - 0.192.40 (119, 121, 126.webp: "чтобы туман игры был без полос вокруг объектов"). Where
+// the 3 x 3 round a pixel holds two fogs (what the fog leaves differing by over 0.05), its neighbours on the other side give that side's
+// colour O and fog kO, those on its own side its own colour; the pixel's share s of O is fogged by kO, the rest by its own depth - so it
+// lies between its two neighbours as fogged. A pixel of no depth beside drawn ground and no sky (a hole the far trees' dithered edges leave,
+// a band of dark specks; with the game's dome shown the sky has its depth, so no depth is never the sky there): fogged as the farthest
+// ground beside it, as before (Params::holes)
+bool SkyProper(uint2 p, float d) { return skyDepth > 0.0 && d > 1e-7 && SkyAt(p, d); }   // (the game's dome: the sky has a depth)
+float3 GameFogPixel(uint2 p, float3 c) {
+    const float2 uv = (float2(p) + 0.5) / float2(width, height);
+    const int2 m = int2(width - 1, height - 1);
+    const float d0 = Depth[p];
+    // (alike depths round it - the most of the picture: its own fog, no more reads)
+    float dn[8];
+    float dLo = d0, dHi = d0;
+    [unroll] for (int i = 0; i < 8; ++i) {
+        const int j = i < 4 ? i : i + 1;
+        dn[i] = Depth[uint2(clamp(int2(p) + int2(j % 3 - 1, j / 3 - 1), int2(0, 0), m))];
+        dLo = min(dLo, dn[i]);
+        dHi = max(dHi, dn[i]);
+    }
+    const float k0 = KeepAt(p, uv, d0);
+    if (dHi - dLo <= 0.02 * dHi) return lerp(fogColour, c, k0);
+    if (d0 <= 1e-7 && holes > 0.5) {   // (a hole: no sky proper beside it, drawn ground beside it)
+        float far = 1e9;
+        bool sky = false;
+        [unroll] for (int i = 0; i < 8; ++i) {
+            if (SkyProper(p, dn[i])) sky = true;
+            else if (!SkyAt(p, dn[i])) far = min(far, dn[i]);
+        }
+        if (!sky && far < 1e8) return lerp(fogColour, c, Keep(uv, far));
+    }
+    float kn[8];
+    float kLo = k0, kHi = k0;
+    [unroll] for (int i = 0; i < 8; ++i) {
+        kn[i] = KeepAt(p, uv, dn[i]);
+        kLo = min(kLo, kn[i]);
+        kHi = max(kHi, kn[i]);
+    }
+    if (kHi - kLo <= 0.05) return lerp(fogColour, c, k0);
+    const float mid = 0.5 * (kLo + kHi);
+    const bool ownHigh = k0 > mid;
+    float3 own = 0.0, o = 0.0;
+    float nOwn = 0.0, nO = 0.0, kO = 0.0;
+    [unroll] for (int i = 0; i < 8; ++i) {
+        if (skyDepth > 0.0 && dn[i] <= 1e-7) continue;   // (no depth under the dome: a blend itself, no side's colour)
+        const int j = i < 4 ? i : i + 1;
+        const float3 q = Scene[uint2(clamp(int2(p) + int2(j % 3 - 1, j / 3 - 1), int2(0, 0), m))];
+        if ((kn[i] > mid) == ownHigh) { own += q; nOwn += 1.0; }
+        else { o += q; nO += 1.0; kO += kn[i]; }
+    }
+    if (nO < 0.5) return lerp(fogColour, c, k0);
+    own = nOwn > 0.5 ? own / nOwn : c;
+    o /= nO;
+    kO /= nO;
+    return lerp(fogColour, c, k0) + ShareOf(c, own, o, 0.0) * (kO - k0) * (o - fogColour);
 }
 [numthreads(8, 8, 1)]
 void main(uint3 id : SV_DispatchThreadID) {
     if (id.x >= width || id.y >= height) return;
     const float3 c = Scene[id.xy];
+    if (byDepth < 0.5) { Out[id.xy] = GameFogPixel(id.xy, c); return; }   // (the game's fog; our effect's below, as it was)
     const float d = GroundDepth(id.xy);
-    if (d <= 1e-7) { Out[id.xy] = c; return; }   // the void: left as it is
+    // the void, and the game's dome ([sky] game_sky, Params::skyDepth: it stands past the game's linear depth's far end, and the game's
+    // pass leaves it - Serg 2026-10-31 on 0.192.19, "обводка вокруг объектов": its low part right behind the trees fogged to the fog's
+    // colour, a light band round every tree against the dark sky): left as they are
+    if (SkyAt(id.xy, d)) { Out[id.xy] = c; return; }
     Out[id.xy] = lerp(fogColour, c, Keep((id.xy + 0.5) / float2(width, height), d));
 }
 // The effects at their own depth, never nearer than the scene behind them (an effect hidden there adds nothing); none drawn here (our
@@ -422,7 +548,7 @@ void fxAccum(uint3 id : SV_DispatchThreadID) {
     const float4 a = Accum[id.xy];
     const float e = AccumDepth[id.xy], o = GroundDepth(id.xy);   // (a blended edge on the rim against the void: as the ground it borders)
     const float t = a.a > 0.0 && e > 1e-7 ? Keep((id.xy + 0.5) / float2(width, height), max(e, o)) : 1.0;
-    OutAccum[id.xy] = float4(a.rgb * t + (o > 1e-7 ? fogColour * (a.a * (1.0 - t)) : 0.0), a.a);
+    OutAccum[id.xy] = float4(a.rgb * t + (!SkyAt(id.xy, o) ? fogColour * (a.a * (1.0 - t)) : 0.0), a.a);   // (over the sky: fades out)
 }
 [numthreads(8, 8, 1)]
 void fxGlow(uint3 id : SV_DispatchThreadID) {
@@ -446,7 +572,7 @@ struct Consts {
     float cStart, cEnd;
     float cCurve, cStrength, easeOn, byDepth;
     uint32_t glowW, glowH;
-    float holes, pad1;
+    float holes, skyDepth;
 };
 static_assert(sizeof(Consts) == 28 * 4, "twenty-eight root constants");
 
@@ -505,7 +631,6 @@ bool MakeGpu(ID3D12Device* dev) {
             return false;
         }
     }
-    if (lib) FreeLibrary(lib);
     D3D12_DESCRIPTOR_RANGE ranges[2] = {{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 6, 0, 0, 0}, {D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 3, 0, 0, 0}};
     D3D12_ROOT_PARAMETER params[3] = {};
     params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
@@ -535,6 +660,10 @@ bool MakeGpu(ID3D12Device* dev) {
     code->Release();
     codeAccum->Release();
     codeGlow->Release();
+    // Only now: the blobs are d3dcompiler_47's objects - their code lives in it. Freed before them (until 0.192.29) on a PC where nothing else
+    // held the compiler (PC2: FlatVR, no ReShade), it was unloaded and the first GetBufferPointer read its gone vtable: the game crashed at the
+    // first stereo pair with fog before the effects on.
+    if (lib) FreeLibrary(lib);
     const D3D12_DESCRIPTOR_HEAP_DESC hd{D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, kViews * kSlots, D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE, 0};
     ok = ok && SUCCEEDED(dev->CreateDescriptorHeap(&hd, __uuidof(ID3D12DescriptorHeap), (void**)&g.heap));
     g.inc = dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
@@ -764,11 +893,23 @@ FxDepth* DepthFor(ID3D12Device* dev, UINT64 w, UINT h) {
     return &z;
 }
 
+// The effects drawn this frame, on any list: the game records them on another list than its resolve's (PC1 2026-10-31 16:03, 0.192.21:
+// 489 091 draws drawn again in 10 s, "0 steps fogged the effects by it" - the step looked on its own list only). Each kind's target and
+// our depth of it, and the present it was drawn in; the step takes them while this present's or the last one's.
+struct FxSeen {
+    ID3D12Resource* game = nullptr;
+    FxDepth* z = nullptr;
+    uint32_t frame = 0;
+};
+SRWLOCK g_fxSeenLock = SRWLOCK_INIT;
+FxSeen g_fxSeen[2];   // [0] the weighted-blended colour, [1] the additive light
+
 // An effect's draw (before the game's, its arguments): drawn again by its twin into our depth of its target's size - the weighted-blended
 // colour target (a float one with alpha, the depth's size), or the additive light's (R11G11B10, smaller than the depth); any other target
 // (the scene itself: a flame drawn into it is fogged with it) is left alone. The game's pipeline and targets bound again after it; its root
 // signature, arguments, viewports, vertex and index buffers never changed.
 void TwinDraw(ID3D12GraphicsCommandList* cl, List& l, Twin* t, bool indexed, unsigned n, unsigned inst, unsigned first, int base, unsigned firstInst) {
+    const CpuTime cpuTime(g_cpuTwins);
     if (!l.rt0 || !l.ds || !l.nRt) { g_fxOther.fetch_add(1, std::memory_order_relaxed); return; }
     const D3D12_RESOURCE_DESC rd = l.rt0->GetDesc(), dd = l.ds->GetDesc();
     const DXGI_FORMAT rf = Typed(rd.Format);
@@ -795,13 +936,20 @@ void TwinDraw(ID3D12GraphicsCommandList* cl, List& l, Twin* t, bool indexed, uns
     if (mine != z) cl->ClearDepthStencilView(z->dsv, D3D12_CLEAR_FLAG_DEPTH, 0.0f, 0, 0, nullptr);   // (its first on this list)
     cl->SetPipelineState(twin);
     cl->OMSetRenderTargets(0, nullptr, FALSE, &z->dsv);
+    TwinTimes& tt = g_twinTimes;
+    const uint32_t stamp = tt.sampling.load(std::memory_order_relaxed) ? tt.used.fetch_add(1, std::memory_order_relaxed) : kTwinStamps;
+    if (stamp < kTwinStamps) cl->EndQuery(tt.heap, D3D12_QUERY_TYPE_TIMESTAMP, 2 * stamp);
     if (indexed) cl->DrawIndexedInstanced(n, inst, first, base, firstInst);
     else cl->DrawInstanced(n, inst, first, firstInst);
+    if (stamp < kTwinStamps) cl->EndQuery(tt.heap, D3D12_QUERY_TYPE_TIMESTAMP, 2 * stamp + 1);
     cl->OMSetRenderTargets(l.nRt, l.rts, l.single ? TRUE : FALSE, l.hasDsv ? &l.dsv : nullptr);
     cl->SetPipelineState(l.pso);
     natived3d::SetOurs(false);
     mine = z;
     (glow ? l.glow : l.accum) = l.rt0;
+    AcquireSRWLockExclusive(&g_fxSeenLock);
+    g_fxSeen[glow] = {l.rt0, z, g_frame.load(std::memory_order_relaxed)};
+    ReleaseSRWLockExclusive(&g_fxSeenLock);
     g_fxTwinDraws.fetch_add(1, std::memory_order_relaxed);
 }
 
@@ -853,6 +1001,7 @@ struct FxPart {
 
 // The step, before the resolve's draw on `cl` (the game's state given back after it)
 void Insert(ID3D12GraphicsCommandList* cl, List& l) {
+    const CpuTime cpuTime(g_cpuStep);
     Params p;
     AcquireSRWLockShared(&g_paramLock);
     p = g_params;
@@ -980,7 +1129,20 @@ void Insert(ID3D12GraphicsCommandList* cl, List& l) {
     // sample, the weighted-blended colour the depth's size, the additive light smaller; each in a read state this list set or set elsewhere
     // this frame. Anything else: those effects as they are (a line, once each way)
     FxPart fa, fg;
-    if (p.fxDepth && (l.accum || l.glow)) {
+    ID3D12Resource* accum = l.accum;
+    ID3D12Resource* glow = l.glow;
+    FxDepth* accumZ = l.accumZ;
+    FxDepth* glowZ = l.glowZ;
+    bool elsewhere = false;   // (taken from another list's twins)
+    if (p.fxDepth && (!accum || !glow)) {
+        const uint32_t now = g_frame.load(std::memory_order_relaxed);
+        AcquireSRWLockShared(&g_fxSeenLock);
+        const FxSeen sa = g_fxSeen[0], sg = g_fxSeen[1];
+        ReleaseSRWLockShared(&g_fxSeenLock);
+        if (!accum && sa.game && now - sa.frame <= 1) { accum = sa.game; accumZ = sa.z; elsewhere = true; }
+        if (!glow && sg.game && now - sg.frame <= 1) { glow = sg.game; glowZ = sg.z; elsewhere = true; }
+    }
+    if (p.fxDepth && (accum || glow)) {
         int why = 0;   // 0 fogged; else the first refusal
         auto take = [&](FxPart& f, ID3D12Resource* game, FxDepth* z, bool glow) {
             if (!game || !z) return;
@@ -1001,19 +1163,26 @@ void Insert(ID3D12GraphicsCommandList* cl, List& l) {
             f.z = z;
             f.d = d;
         };
-        take(fa, l.accum, l.accumZ, false);
-        take(fg, l.glow, l.glowZ, true);
+        take(fa, accum, accumZ, false);
+        take(fg, glow, glowZ, true);
         static int toldWhy = -1;
-        if (why != toldWhy) {
+        static bool toldElsewhere = false;
+        if (why != toldWhy || elsewhere != toldElsewhere) {
             toldWhy = why;
+            toldElsewhere = elsewhere;
             static const char* const kWhy[] = {"fogged by their own distance", "the weighted-blended target not of the scene's size (or arrays, samples): as they are",
                                                "the additive target not smaller than the scene (or arrays, samples): as it is",
                                                "the weighted-blended target's state not known as the resolve reads it: as they are",
                                                "the additive target's state not known as the resolve reads it: as it is",
                                                "a texture of ours could not be made: as they are"};
-            Line("vrcam: fog before the effects - the effects drawn on the resolve's list: %s (colour %p, additive %p)", kWhy[why], (void*)fa.game, (void*)fg.game);
+            Line("vrcam: fog before the effects - the effects drawn %s: %s (colour %p, additive %p)",
+                 elsewhere ? "on another list this frame" : "on the resolve's list", kWhy[why], (void*)fa.game, (void*)fg.game);
         }
         (fa.game || fg.game ? g_fxFogged : g_fxNotFogged).fetch_add(1, std::memory_order_relaxed);
+    }
+    if (p.fxDepth) {   // (no step taking the effects' depth for long: the twins wait - OnDraw)
+        if (fa.game || fg.game) g_fxIdle.store(0, std::memory_order_relaxed);
+        else g_fxIdle.fetch_add(1, std::memory_order_relaxed);
     }
     const uint32_t step = g_slot++;
     const uint32_t k = step % kSlots;
@@ -1075,7 +1244,10 @@ void Insert(ID3D12GraphicsCommandList* cl, List& l) {
     c.byDepth = p.ours ? 1.0f : 0.0f;
     c.glowW = fg.game ? (uint32_t)fg.d.Width : 0;
     c.glowH = fg.game ? fg.d.Height : 0;
-    c.holes = p.fxDepth && !p.ours ? 1.0f : 0.0f;   // (our effect's fog: the post pass fogs such a pixel itself - FrameVoidFog)
+    // (the holes and rims: a few reads in the step itself, so with the step - not with game_fog_fx_depth, off as shipped for its cost;
+    // our effect's fog: the post pass fogs such a pixel itself - FrameVoidFog)
+    c.holes = p.ours ? 0.0f : 1.0f;
+    c.skyDepth = std::max(p.skyDepth, 0.0f);
 
     natived3d::SetOurs(true);
     cl->EndQuery(g.queries, D3D12_QUERY_TYPE_TIMESTAMP, 2 * k);
@@ -1189,8 +1361,17 @@ void OnDraw(ID3D12GraphicsCommandList* cl, bool indexed, unsigned n, unsigned in
     if (!Wanted()) return;
     List* l = Of(cl);
     if (!IsResolvePso(l->pso)) {
+        const CpuTime cpuTime(g_cpuSinks);   // (the twin's own in g_cpuTwins as well)
         if (!g_fxDepth.load(std::memory_order_relaxed) || !l->tracked) return;
-        if (Twin* t = TwinOf(l->pso)) TwinDraw(cl, *l, t, indexed, n, inst, first, base, firstInst);
+        if (Twin* t = TwinOf(l->pso)) {
+            // no step took the effects' depth for kFxIdleSteps in a row: not drawn again, but for a quarter second every 5 s (to see
+            // whether a step takes it again - a target found, a state known)
+            if (g_fxIdle.load(std::memory_order_relaxed) >= kFxIdleSteps && (GetTickCount64() / 250) % 20 != 0) {
+                g_fxSkipped.fetch_add(1, std::memory_order_relaxed);
+                return;
+            }
+            TwinDraw(cl, *l, t, indexed, n, inst, first, base, firstInst);
+        }
         return;
     }
     g_drawSeen.fetch_add(1, std::memory_order_relaxed);
@@ -1337,12 +1518,123 @@ void Configure(const Params& p) {
 bool Drawn() { return g_on.load(std::memory_order_relaxed) && GetTickCount64() - g_lastDraw.load(std::memory_order_relaxed) < 250; }
 bool OursDrawn() { return g_ours.load(std::memory_order_relaxed) && Drawn(); }
 
+// The twins' GPU time, one present a second (the present's thread): 1 its twins get timestamps; 2 two presents on (its lists surely
+// submitted) the timestamps resolved into a readback by a list of ours on the game's queue; 3 eight presents on, read
+void TwinTimesTick() {
+    TwinTimes& tt = g_twinTimes;
+    const ULONGLONG now = GetTickCount64();
+    if (tt.failed) return;
+    switch (tt.stage) {
+    case 0: {
+        if (!g_fxDepth.load(std::memory_order_relaxed) || now - tt.sampledAt < 1000) return;
+        ID3D12Device* dev = nullptr;
+        {
+            std::lock_guard<std::mutex> one(g_gpuMx);
+            dev = g_gpu.dev;
+        }
+        if (!dev) return;
+        if (!tt.heap) {
+            const D3D12_QUERY_HEAP_DESC qd{D3D12_QUERY_HEAP_TYPE_TIMESTAMP, 2 * kTwinStamps, 0};
+            D3D12_HEAP_PROPERTIES rb{D3D12_HEAP_TYPE_READBACK};
+            D3D12_RESOURCE_DESC bd{};
+            bd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+            bd.Width = 2 * kTwinStamps * sizeof(uint64_t);
+            bd.Height = bd.DepthOrArraySize = bd.MipLevels = 1;
+            bd.SampleDesc.Count = 1;
+            bd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+            void* mapped = nullptr;
+            natived3d::SetOurs(true);
+            const bool ok = SUCCEEDED(dev->CreateQueryHeap(&qd, __uuidof(ID3D12QueryHeap), (void**)&tt.heap)) &&
+                            SUCCEEDED(dev->CreateCommittedResource(&rb, D3D12_HEAP_FLAG_NONE, &bd, D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
+                                                                   __uuidof(ID3D12Resource), (void**)&tt.readback)) &&
+                            SUCCEEDED(tt.readback->Map(0, nullptr, &mapped)) &&
+                            SUCCEEDED(dev->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, __uuidof(ID3D12CommandAllocator), (void**)&tt.alloc)) &&
+                            SUCCEEDED(dev->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, tt.alloc, nullptr, __uuidof(ID3D12GraphicsCommandList),
+                                                             (void**)&tt.list)) &&
+                            SUCCEEDED(tt.list->Close()) &&
+                            SUCCEEDED(dev->CreateFence(0, D3D12_FENCE_FLAG_NONE, __uuidof(ID3D12Fence), (void**)&tt.fence));
+            natived3d::SetOurs(false);
+            if (!ok) {
+                tt.failed = true;
+                Line("vrcam: fog before the effects - the effects' depth's GPU time cannot be sampled (a query heap or list of ours not made)");
+                return;
+            }
+            tt.data = (const uint64_t*)mapped;
+        }
+        if (tt.fence->GetCompletedValue() < tt.fenceAt) return;   // (the last resolve still running: later)
+        tt.used.store(0, std::memory_order_relaxed);
+        tt.sampling.store(true, std::memory_order_relaxed);
+        tt.sampledAt = now;
+        tt.stage = 1;
+        return;
+    }
+    case 1:
+        tt.sampling.store(false, std::memory_order_relaxed);
+        tt.pairs = std::min(tt.used.load(std::memory_order_relaxed), kTwinStamps);
+        tt.waited = 0;
+        tt.stage = tt.pairs ? 2 : 0;
+        return;
+    case 2: {
+        if (++tt.waited < 2) return;
+        ID3D12CommandQueue* q = natived3d::GameQueue();
+        if (!q || FAILED(tt.alloc->Reset()) || FAILED(tt.list->Reset(tt.alloc, nullptr))) { tt.stage = 0; return; }
+        natived3d::SetOurs(true);
+        tt.list->ResolveQueryData(tt.heap, D3D12_QUERY_TYPE_TIMESTAMP, 0, 2 * tt.pairs, tt.readback, 0);
+        tt.list->Close();
+        natived3d::SetOurs(false);
+        ID3D12CommandList* lists[1] = {tt.list};
+        q->ExecuteCommandLists(1, lists);
+        q->Signal(tt.fence, ++tt.fenceAt);
+        tt.waited = 0;
+        tt.stage = 3;
+        return;
+    }
+    default: {
+        if (++tt.waited < 8 && tt.fence->GetCompletedValue() < tt.fenceAt) return;
+        if (tt.fence->GetCompletedValue() < tt.fenceAt) return;
+        ID3D12CommandQueue* q = natived3d::GameQueue();
+        UINT64 hz = 0;
+        if (q && SUCCEEDED(q->GetTimestampFrequency(&hz)) && hz) {
+            double ms = 0.0;
+            uint32_t timed = 0;
+            for (uint32_t i = 0; i < tt.pairs; ++i) {
+                const uint64_t a = tt.data[2 * i], b = tt.data[2 * i + 1];
+                if (b >= a && b - a < hz / 10) { ms += (double)(b - a) * 1000.0 / (double)hz; ++timed; }
+            }
+            tt.sumMs += ms;
+            tt.timed += timed;
+            ++tt.samples;
+        }
+        tt.stage = 0;
+        return;
+    }
+    }
+}
+
 void Frame() {
     g_frame.fetch_add(1, std::memory_order_relaxed);
+    TwinTimesTick();
     static ULONGLONG toldAt = 0;
+    static uint32_t frameAtTold = 0;
     const ULONGLONG now = GetTickCount64();
     if (now - toldAt < 10000) return;
     toldAt = now;
+    {   // the cost, a present: the CPU in the sinks, the twins and the step; the twins' GPU time in the sampled presents
+        const uint32_t f = g_frame.load(std::memory_order_relaxed), presents = f - frameAtTold;
+        frameAtTold = f;
+        LARGE_INTEGER hz;
+        QueryPerformanceFrequency(&hz);
+        const double per = presents ? 1000.0 / (double)hz.QuadPart / presents : 0.0;
+        const uint64_t sinks = g_cpuSinks.exchange(0), twins = g_cpuTwins.exchange(0), stepCpu = g_cpuStep.exchange(0);
+        TwinTimes& tt = g_twinTimes;
+        if (g_on.load() || sinks)
+            Line("vrcam: fog before the effects, 10 s, its cost a present (%u presents): on the CPU %.3f ms in the followed lists' calls, of them "
+                 "%.3f ms drawing the effects' depth again and %.3f ms recording the step; on the graphics card the effects' depth %.3f ms a "
+                 "present (%u presents sampled, %u draws timed)", presents, sinks * per, twins * per, stepCpu * per,
+                 tt.samples ? tt.sumMs / tt.samples : 0.0, tt.samples, tt.timed);
+        tt.sumMs = 0.0;
+        tt.samples = tt.timed = 0;
+    }
     const uint32_t draws = g_draws.exchange(0);
     if (!g_on.load() && !draws) return;
     double ms = 0.0;
@@ -1366,11 +1658,12 @@ void Frame() {
     const uint32_t bound = g_boundSeen.exchange(0), boundU = g_boundUntracked.exchange(0), drawn = g_drawSeen.exchange(0), drawnU = g_drawUntracked.exchange(0);
     const bool ours = g_ours.load();
     const uint32_t twinDraws = g_fxTwinDraws.exchange(0), twinsMade = g_fxTwinsMade.exchange(0), other = g_fxOther.exchange(0),
-                   fogged = g_fxFogged.exchange(0), notFogged = g_fxNotFogged.exchange(0);
+                   fogged = g_fxFogged.exchange(0), notFogged = g_fxNotFogged.exchange(0), skipped = g_fxSkipped.exchange(0);
     if (g_fxDepth.load() || twinDraws)
         Line("vrcam: fog before the effects, 10 s: the effects' own depth - %u draws drawn again for it (%u new depth pipelines, %u of the "
-             "game's kept), %u draws of those pipelines into other targets; %u steps fogged the effects by it, %u with effects not fogged",
-             twinDraws, twinsMade, g_twinsKept.load(), other, fogged, notFogged);
+             "game's kept), %u draws of those pipelines into other targets, %u not drawn again (no step took it for %u steps in a row); %u "
+             "steps fogged the effects by it, %u with effects not fogged",
+             twinDraws, twinsMade, g_twinsKept.load(), other, skipped, kFxIdleSteps, fogged, notFogged);
     Line("vrcam: fog before the effects, 10 s: %u steps before the game's transparent resolve (%s)%s; on the graphics card %.3f ms a step (%d "
          "measured)%s (its pipeline bound %u times on followed lists, %u on others; its draws %u, %u of them on lists not followed)",
          draws, ours ? "our effect's fog" : "the game's fog", g_resolveN.load() ? "" : " - the game's resolve pipeline NOT found (another build?)",

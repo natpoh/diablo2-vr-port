@@ -221,6 +221,46 @@ inline bool InRearCone(float phiDeg, float coneDeg, bool was) {
     if (coneDeg >= 360.0f) return true;
     return 180.0f - std::fabs(phiDeg) <= coneDeg * 0.5f + (was ? kConeEdgeDeg : -kConeEdgeDeg);
 }
+// [body] legs_side_game (Serg, 2026-10-31: "forward, sideways - the animation untouched; backward, sideways - the reverse animation"): two halves only.
+// Up to 90 degrees off the facing (ahead, the diagonals ahead, straight sideways) the game's own walk and run; past it (the diagonals back, straight back)
+// played backwards. Into the rear half past kRearHalfEnterDeg, out of it under 90 - straight sideways is always the game's, no dither at the edge.
+constexpr float kRearHalfEnterDeg = 92.0f;
+inline bool InRearHalf(float phiDeg, bool was) {
+    if (!std::isfinite(phiDeg)) return false;
+    return std::fabs(phiDeg) > (was ? 90.0f : kRearHalfEnterDeg);
+}
+// [body] legs_turn (Serg on 0.192.39: "the legs, most important: they must turn, and they only ever go straight ahead or straight back"): with the two
+// halves the hips and legs - drawn facing the trunk, the game's walk ahead, its walk played backwards behind - are turned about the pelvis's vertical to
+// where he goes: ahead by the travel's own angle off the facing (45 degrees: the legs walk at 45; straight sideways: they point sideways and walk ahead
+// that way), behind by the travel's angle less half a turn, so the legs walking backwards point their backs along the travel (135: the legs face -45) -
+// within +-90 of the trunk always. Radians, + as the facing's own yaw (toward +x from +z).
+inline float LegsTurnTarget(float phiDeg, bool rear) {
+    if (!std::isfinite(phiDeg)) return 0.0f;
+    const float deg = rear ? WrapAngle((phiDeg - (phiDeg >= 0.0f ? 180.0f : -180.0f)) * 0.0174532925f) * 57.2957795f : phiDeg;
+    return std::clamp(deg, -kRearHalfEnterDeg, kRearHalfEnterDeg) * 0.0174532925f;
+}
+// The turn as drawn: toward the target over kTauS (a change of way turns the legs, not a snap); at a change of half (ahead <-> behind across 90) at once -
+// the legs pointing sideways walking ahead and pointing the other way walking backwards are the same line, swung half a turn round they would sweep across
+// the trunk. Standing (not going): back to the trunk's facing.
+struct LegsTurn {
+    static constexpr float kTauS = 0.12f;
+    float yaw = 0.0f;
+    bool rear = false;
+    float Step(float phiDeg, bool going, bool rearNow, float dt) {
+        const float target = going ? LegsTurnTarget(phiDeg, rearNow) : 0.0f;
+        if (going && rearNow != rear) yaw = target;
+        else yaw += (target - yaw) * std::clamp(std::isfinite(dt) ? dt / kTauS : 0.0f, 0.0f, 1.0f);
+        rear = going ? rearNow : rear;
+        if (!std::isfinite(yaw)) yaw = 0.0f;
+        return yaw;
+    }
+};
+// The twist between the turned hips and the trunk spread over the spine: bone i of k (0 the lowest, above the pelvis) turned by this share of the hips'
+// turn - (k - i) / (k + 1): with three, 3/4, 1/2, 1/4, the neck and up none.
+inline float SpineTwistShare(int i, int k) {
+    if (k <= 0 || i < 0 || i >= k) return 0.0f;
+    return static_cast<float>(k - i) / static_cast<float>(k + 1);
+}
 // The played-back cycle's share over the game's pose: in at kRate while he goes within the rear cone - wholly at once when the pose drawn is the game's
 // own and the play-back starts on it (fromGame: the newest pose kept is this one, the stance not over it: what the game draws, no two walks blended in);
 // out at kRate otherwise (into the side: the stance fades in as it fades out).

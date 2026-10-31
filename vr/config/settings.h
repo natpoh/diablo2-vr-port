@@ -161,15 +161,32 @@ struct Settings {
     std::atomic<float> arcaneFogEnd{600.0f};
     std::atomic<float> arcaneFogStrength{1.0f};
     std::atomic<float> arcaneFogCurve{1.6f};
+    // The same three ranges for the game's fog ([fog] game_fog=1, fx::GameFogNumbersNow): a Full fog below its start taken the other way
+    // round. Our effect's fog keeps the ones above (its end held to start + 1)
+    std::atomic<float> gameFogStart{150.0f}, gameFogEnd{600.0f};
+    std::atomic<float> gameFogCaveStart{150.0f}, gameFogCaveEnd{600.0f};
+    std::atomic<float> gameArcaneFogStart{150.0f}, gameArcaneFogEnd{600.0f};
     std::atomic<bool>  arcaneFogIntoSky{true};
     std::atomic<float> fogBlur{3.0f};      // the fog over a 5x5 grid this many pixels apart: holes and specks in the depth melt away
     std::atomic<bool>  fogLight{false};    // [fog] light: the fog's short way for weak graphics cards (D2R_DepthFog.fx LightFog)
+    // [render] distance_blur: the far picture blurred behind a pane at distance_blur_start_m, the most at distance_blur_full_m (world units
+    // here, 4 a metre), its widest distance_blur_strength x 2.5 % of the picture's height (D2R_DepthFog.fx DistBlur*; Serg's fractal game's veil)
+    std::atomic<bool>  distanceBlur{false};
+    std::atomic<float> distanceBlurStart{60.0f};
+    std::atomic<float> distanceBlurFull{200.0f};
+    std::atomic<float> distanceBlurStrength{0.4f};
     std::atomic<bool>  skyOn{false};        // sky in the void, same shader as the fog
     std::atomic<bool>  gameSky{false};      // [sky] game_sky: our painted sky as the game's own dome (engitem::SkyDome)
     std::atomic<bool>  domePastFar{false};      // [sky] dome_past_far: off F4, the dome laid past the game's depth range in every pixel (skydome::PastFarRadius)
     std::atomic<bool>  domeInGameColour{true};   // [sky] dome_in_game_colour: the game samples our baked picture for the dome (vr/sky/dome_atlas.h)
     std::atomic<bool>  domeTrueColour{false};   // [sky] dome_true_colour: the game's dome brought to our sky's colours (D2R_DepthFog.fx DomeSeen / DomeLookOf)
+    std::atomic<bool>  effectWorld{true};       // [render] effect_world: our effect's sky and fog passes (off: only its overlays and interface)
+    std::atomic<bool>  domeGainOnce{false};     // [sky] dome_gain_once: that measure taken once per area and period, kept in d2r_vr_dome_gain.txt
     std::atomic<bool>  domeFogHorizon{true};   // [sky] dome_fog_horizon: the game's dome's low part into the act's fog colour (D2R_DepthFog.fx DomeHorizon)
+    // [sky] dome_fog_baked / dome_fog_baked_strength: with the game's fog, the dome's low part baked into the fog's own colour (vr/sky/dome_atlas.h
+    // BakeIn::fog) as our old sky's low part goes into the fog - the trees' soft edges blended over it by the game, no light rim
+    std::atomic<bool>  domeFogBaked{true};
+    std::atomic<float> domeFogBakedStrength{1.0f};
     std::atomic<bool>  gameSkybox{false};   // [sky] game_skybox: at the Summits the game's dome laid as far as the depth holds (an option; off: as any act 5 area)
     std::atomic<bool>  summitBackdropHidden{true};   // [sky] summit_backdrop_hidden: the Summit's ground picture (skybox01) hidden in first person (vr/own_effects.h)
     std::atomic<int>   weatherFirstPerson{0};   // [sky] weather_first_person: the game's rain and snow in VR F4 / flat F3 - 0 the game's place, 1 hidden, 2 round the viewer (vr/weather_place.h)
@@ -183,6 +200,14 @@ struct Settings {
     std::atomic<float> lightDay{128.0f};    // [sky] light_day / light_night: the game's light (0..255) that counts as full day / full night
     std::atomic<float> lightNight{65.0f};
     std::atomic<float> periodBright[6] = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f};   // [sky] bright_<period>: the sky's brightness each period of the game's day (vr/sky/period_bright.h)
+    // The game's dome as the act's baked pictures - day, night, dawn / dusk (act 4 one) - each at its own brightness, by the game's time of
+    // day, nothing recoloured or measured (vr/sky/three_skies.h): the default. [sky] dome_tint: the tinting instead (DomeSeen's gain,
+    // dome_true_colour, DomeLook, dome_gain_once, bright_<period>) - parked until the dome can be tinted with no outline round the trees.
+    // threeBright: [sky] three_bright_day / _night / _dawn_dusk / _act4; skyCrossfade: [sky] sky_crossfade (off: the next picture whole as the
+    // period turns)
+    std::atomic<bool>  domeTint{false};
+    std::atomic<bool>  skyCrossfade{false};
+    std::atomic<float> threeBright[4] = {1.0f, 1.0f, 1.0f, 1.0f};
     std::atomic<float> nightBright{0.25f};  // [sky] night_brightness: the sky and the fog at full night, times their day brightness
     std::atomic<bool>  skyAlways{false};    // whatever the biome (testing): caves get a sky too
     std::atomic<bool>  arcaneSky{true};     // [sky] arcane_sky: the Arcane Sanctuary's own star layers all round (after bearstonem/d2r-pcvr), [sky] enabled or not
@@ -505,6 +530,10 @@ struct Settings {
     std::atomic<bool>  legsRear{false};         // [body] legs_rear: while he goes, the legs held in the game's standing pose - he glides (0 = as before)
     std::atomic<float> legsFrontConeDeg{90.0f}; // [body] legs_front_cone_deg: with legs_rear, the game's own legs going within this cone ahead (its width, 0..360)
     std::atomic<float> legsRearConeDeg{90.0f};  // [body] legs_rear_cone_deg: ... the game's walk / run played backwards within this cone straight back (0..360)
+    std::atomic<bool> legsTurn{true};           // [body] legs_turn: with legs_side_game, the hips and legs turned to where he goes (the trunk to the look)
+    std::atomic<bool> legsSideGame{true};       // [body] legs_side_game: ... up to 90 deg off the facing the game's own walk / run (as 0.191), past it played backwards - no hold, no steps
+    std::atomic<bool> legsSideGait{false};      // [body] legs_side_gait: ... the small-step gait (D2rsGait) instead of the stepping feet (D2rsStep)
+    std::atomic<bool> legsSideCross{true};      // [body] legs_side_cross: ... the stepping feet take turns, one always down, passing each other (stride 2.2)
     std::atomic<bool> legsSideRagdoll{false};   // [body] legs_side_ragdoll: ... between the cones the feet step after him by the weight library's walk (D2rs*)
     std::atomic<bool>  legsRearCycle{false};    // [body] legs_rear_cycle: with legs_rear, the rear half's game walk / run played backwards instead (0.192.1-3)
     std::atomic<bool>  dollFeet{false};         // [body] doll_feet: the feet the doll's, not the game's - planted, stepping after the body (0 = the game's legs, as before)
@@ -528,6 +557,7 @@ struct Settings {
     std::atomic<bool>  pace{true};        // [stereo] pace: game frames held to the headset's rate (see pace::Tick)
     std::atomic<bool>  vcache{false};     // [render] vcache: the game's threads on the big-L3 cores (vr/vcache.h)
     std::atomic<bool>  paceFlatVrOnly{true};   // [stereo] pace_flatvr_only: that only while FlatVR runs (nothing to pace to otherwise)
+    std::atomic<bool>  flatvrFeed{true};   // [render] flatvr_feed: without ReShade FlatVR's picture and depth from the plugin (vr/flatvr_feed.h); live
     std::atomic<int>   headsetHz{90};     // [stereo] headset_rate (0..4: 72 75 80 90 120)
     std::atomic<bool>  pictureRing{false};  // [stereo] picture_ring (off by default since 0.152: it juddered in head turns): FlatVR's addon hands over the newest finished picture (2.19: ReShade.ini [FLATVR] ColourRing)        // [stereo] stamps: each frame's head-pose moment to FlatVR (0: none at all, the screen at the head as it is)
     std::atomic<bool>  turnFxFence{true};   // [stereo] turn_fx_fence: eyes by turns - each present's effects wait for the last one's renders (vr/sky_view_eyes.h FenceEffects)
@@ -557,6 +587,9 @@ struct Settings {
     std::atomic<bool>  fogOurCurve{false};     // [fog] game_fog_our_curve: the game's fog by our effect's curve, not its exponential
     std::atomic<bool>  fogKeepsColour{false};  // [fog] fog_keeps_colour: the act's fog colour at every hour, not darkened with the game's light
     std::atomic<bool>  fogIntoSky{false};      // [fog] fog_into_sky: the fog's colour the sky straight behind each point (D2R_DepthFog.fx SkyBehind)
+    // [fog] fog_colour_measured: the fog's colour measured from the game (game_fog_match's FogSeen); off (the default): the fog's colour is the
+    // baked sky's at the horizon, a number (vr/sky/three_skies.h HorizonScene) - no measure, no passes
+    std::atomic<bool>  fogMeasured{false};
     std::atomic<bool>  fogMatch{false};        // [fog] game_fog_match: the game's fog shown in the act's colour, its grading measured (D2R_DepthFog.fx GameFogTrue)
     std::atomic<bool>  gameDrawnFlat{false};   // [render] game_drawn_flat: the game-drawn sky dome, ceiling and fog in the flat game too (GameDrawnView)
     std::atomic<int>   solidWalls{1};          // [render] solid_walls: 0 the game's see-through walls, 1 solid but in F1, 2 solid in every view
@@ -567,6 +600,10 @@ struct Settings {
     std::atomic<float> hudTop{0.70f};       // the HUD is looked for below this height (0 top .. 1 bottom)
 };
 extern Settings g_set;
+// [render] bench_bare (Serg: "надо галочку которая вообще все выключает чтобы сверить производительность"): every per-frame cost of ours
+// the game can live without stopped, live - the settings read as off (IniF, BenchForced) and our effect's whole drawing, overlays included,
+// left out; only what puts the picture in the headset (the presentation, head and hands, input) stays. Set by LoadSettings.
+extern std::atomic<bool> g_benchBare;
 
 // vr/config/load_settings.cpp: d2r_vr.ini into g_set and to every feature; again when the file (or d2r_vr_settings.ini's language) changed.
 void LoadSettings();

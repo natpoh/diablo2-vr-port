@@ -1506,49 +1506,84 @@ float3 SkyBehind(float3 dir)
 uniform bool DomeLook < hidden = true; > = false;
 uniform bool DomeInGame < hidden = true; > = false;
 uniform bool DomeGainOn < hidden = true; > = false;
+// The measure spread over presents (Serg: "мерить раз в 10 секунд ... по 10 точек брать с кадра"): a 10 x 5 grid of points, one row of
+// 10 a present (DomeSeenStep 0 .. 4, vrcam; -1: none), its sums gathered in DomeSumTex over the five, the gain from them at the last - a
+// new measure every 10 s. One pixel walking 192 points each present held a small card's whole effect (PC2 2026-10-31: 51 -> 64 frames/s):
+// now no present reads more than 10 points in a row
+uniform int DomeSeenStep < hidden = true; > = -1;
+uniform bool DomeSeenNow < hidden = true; > = false;   // (DomeSeenStep >= 0: the measure's passes drawn this present - vr/fx_pass_keep.h)
+uniform bool DomeSeenFresh < hidden = true; > = true;  // (a measure after a new area or period: its gain whole, not eased - the last was another place's)
+static const int kDomeSeenRows = 5, kDomeSeenCols = 10;
 uniform float DomeNightMix < hidden = true; > = 0.0;
 uniform float DomeDayMul < hidden = true; > = 1.0;
 uniform float DomeBright < hidden = true; > = 1.0;   // the act's sky brightness ([sky] brightness_<act>), as our sky's
+// D2R_DOME_MEASURE (vrcam: [sky] dome_tint with dome_true_colour): the measure's textures, functions and passes compiled in at all - off (the
+// three baked skies, the default) none of it is made, drawn or scheduled
+#ifndef D2R_DOME_MEASURE
+#define D2R_DOME_MEASURE 0
+#endif
+#if D2R_DOME_MEASURE
 texture2D DomeSeenTex { Width = 1; Height = 1; Format = RGBA16F; };
 texture2D DomeSeenOldTex { Width = 1; Height = 1; Format = RGBA16F; };
 sampler2D DomeSeenSmp { Texture = DomeSeenTex; MinFilter = POINT; MagFilter = POINT; };
 sampler2D DomeSeenOldSmp { Texture = DomeSeenOldTex; MinFilter = POINT; MagFilter = POINT; };
 texture2D DomeBakedGainTex : D2RVR_DOME_GAIN;   // vrcam's: the gain its last bake used (1 x 1 RGBA16F, a = 1 once baked; unbound: zero)
 sampler2D DomeBakedGainSmp { Texture = DomeBakedGainTex; MinFilter = POINT; MagFilter = POINT; };
+// the measure's sums: texel 0 what our painted sky is at the points (rgb) and how many (a), texel 1 what the game shows there
+texture2D DomeSumTex { Width = 2; Height = 1; Format = RGBA32F; };
+texture2D DomeSumOldTex { Width = 2; Height = 1; Format = RGBA32F; };
+sampler2D DomeSumSmp { Texture = DomeSumTex; MinFilter = POINT; MagFilter = POINT; };
+sampler2D DomeSumOldSmp { Texture = DomeSumOldTex; MinFilter = POINT; MagFilter = POINT; };
+bool DomeMeasuring() { return DomeLook && DomeGainOn && DomeSeenNow && DomeSeenStep >= 0 && SkyByGame && SkyTex > 0.5 && DepthWidth() >= 16; }
+// This present's row of points added to the sums (its first row starts them again); each texel walks the row's 10 points
+float4 DomeSum(int texel, int eye)
+{
+    const float4 old = tex2Dfetch(DomeSumOldSmp, int2(texel, 0));
+    if (!DomeMeasuring()) return old;
+    float4 acc = DomeSeenStep == 0 ? 0.0 : old;
+    const int y = min(DomeSeenStep, kDomeSeenRows - 1);
+    [loop] for (int x = 0; x < kDomeSeenCols; ++x) {
+        const float2 p = float2((x + 0.5) / kDomeSeenCols, (y + 0.5) / kDomeSeenRows * HudTop);
+        const float d = DepthAt(UpsideDown ? float2(p.x, 1.0 - p.y) : p).x;
+        if (!DomeAt(p, eye, d)) continue;   // (not the dome)
+        const float3 dir = ViewDir(p, eye);
+        if (dir.y < 0.25) continue;   // (high above the horizon: no fog, no horizon band on it)
+        if (texel == 0)
+            acc += float4(DomeInGame ? PaintedSkyAt(dir, DomeNightMix, 0.0) * DomeBright * DomeDayMul : PaintedSkyAt(dir, 0.0, 0.0) * DomeBright, 1.0);
+        else acc.rgb += tex2Dlod(FogColorSmp, float4(p, 0, 0)).rgb;
+    }
+    return acc;
+}
+// The gain, at the measure's last row only (from the five rows' sums); else as it was
 float4 DomeSeen(int eye)
 {
     const float4 old = tex2Dfetch(DomeSeenOldSmp, int2(0, 0));
-    if (!DomeLook || !DomeGainOn || !SkyByGame || SkyTex < 0.5 || DepthWidth() < 16) return old;   // (kept: back at once)
-    float3 want = 0.0, seen = 0.0;
-    float n = 0.0;
-    [loop] for (int y = 0; y < 12; ++y)
-        [loop] for (int x = 0; x < 16; ++x) {
-            const float2 p = float2((x + 0.5) / 16.0, (y + 0.5) / 12.0 * HudTop);
-            const float d = DepthAt(UpsideDown ? float2(p.x, 1.0 - p.y) : p).x;
-            if (!DomeAt(p, eye, d)) continue;   // (not the dome)
-            const float3 dir = ViewDir(p, eye);
-            if (dir.y < 0.25) continue;   // (high above the horizon: no fog, no horizon band on it)
-            want += DomeInGame ? PaintedSkyAt(dir, DomeNightMix, 0.0) * DomeBright * DomeDayMul : PaintedSkyAt(dir, 0.0, 0.0) * DomeBright;
-            seen += tex2Dlod(FogColorSmp, float4(p, 0, 0)).rgb;
-            n += 1.0;
-        }
-    if (n < 4.0) return old;   // (too little of the dome in view: the last)
-    float3 gain = clamp(want / max(seen, 1e-3), 0.25, 8.0);
+    if (!DomeMeasuring() || DomeSeenStep != kDomeSeenRows - 1) return old;   // (kept: back at once)
+    const float4 w = tex2Dfetch(DomeSumSmp, int2(0, 0));
+    const float3 seen = tex2Dfetch(DomeSumSmp, int2(1, 0)).rgb;
+    if (w.a < 4.0) return old;   // (too little of the dome in view: the last)
+    float3 gain = clamp(w.rgb / max(seen, 1e-3), 0.25, 8.0);
     if (DomeInGame) {   // (the dome as baked: the bake's gain times what is still off)
         const float4 b = tex2Dfetch(DomeBakedGainSmp, int2(0, 0));
-        gain = clamp((b.a > 0.5 ? b.rgb : 1.0) * want / max(seen, 1e-3), 0.05, 20.0);
+        gain = clamp((b.a > 0.5 ? b.rgb : 1.0) * w.rgb / max(seen, 1e-3), 0.05, 20.0);
     }
-    return float4(old.a > 0.5 ? lerp(old.rgb, gain, 0.1) : gain, 1.0);
+    return float4(old.a > 0.5 && !DomeSeenFresh ? lerp(old.rgb, gain, 0.5) : gain, 1.0);   // (the 10-minute ones half way)
 }
+float4 PS_DomeSum(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return DomeSum((int)pos.x, 0); }
+float4 PS_DomeSumR(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return DomeSum((int)pos.x, 1); }
+float4 PS_DomeSumStore(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return tex2Dfetch(DomeSumSmp, int2(pos.xy)); }
 float4 PS_DomeSeen(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return DomeSeen(0); }
 float4 PS_DomeSeenR(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return DomeSeen(1); }
 float4 PS_DomeSeenStore(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return tex2Dfetch(DomeSeenSmp, int2(0, 0)); }
+#endif
 float3 DomeLookOf(float2 uv, int eye, float3 colour)
 {
     [branch] if (!DomeLook || DomeInGame) return colour;   // (in the game: drawn so - DomeInGame)
     float3 c = colour;
+#if D2R_DOME_MEASURE
     const float4 g = tex2Dfetch(DomeSeenSmp, int2(0, 0));
     if (DomeGainOn && g.a > 0.5) c *= g.rgb;
+#endif
     [branch] if (DomeNightMix > 0.0 && SkyTex > 0.5) c = lerp(c, PaintedSkyAt(ViewDir(uv, eye), 1.0, 0.0) * DomeBright, saturate(DomeNightMix));
     return c * DomeDayMul;
 }
@@ -1833,10 +1868,26 @@ uniform float2 GameFogTopSoft < hidden = true; > = float2(1e9, 1.0);
 // vrcam [fog] game_fog_before_fx with our own fog ([fog] game_fog=0): the step before the game's transparent resolve laid OUR fog (FogAt by
 // the view's depth, as FogAmount) in the scene's units - through the area's grading as the game's would be: its share is that curve
 uniform bool GameFogByDepth < hidden = true; > = false;
+// The measure spread over presents, as the dome's (PC2 2026-10-31: one pixel walking 16 x 12 points each present, both eyes, a long
+// serial chain on a small card's critical path): a row of 10 points a present (FogSeenStep 0 .. 4, vrcam; FogSeenNow: the passes drawn),
+// the darkest complete point gathered in FogMinTex (rgb, its luma in a), the colour from it at the last row; a new measure every 2 s
+uniform int FogSeenStep < hidden = true; > = -1;
+uniform bool FogSeenNow < hidden = true; > = false;
+// D2R_FOG_MEASURE (vrcam: [fog] fog_colour_measured with game_fog_match): the measure compiled in at all - off (the default: the fog's colour
+// is the sky's, a number) none of it is made, drawn or scheduled
+#ifndef D2R_FOG_MEASURE
+#define D2R_FOG_MEASURE 0
+#endif
+#if D2R_FOG_MEASURE
+texture2D FogMinTex { Width = 1; Height = 1; Format = RGBA32F; };
+texture2D FogMinOldTex { Width = 1; Height = 1; Format = RGBA32F; };
+sampler2D FogMinSmp { Texture = FogMinTex; MinFilter = POINT; MagFilter = POINT; };
+sampler2D FogMinOldSmp { Texture = FogMinOldTex; MinFilter = POINT; MagFilter = POINT; };
 texture2D FogSeenTex { Width = 1; Height = 1; Format = RGBA16F; };
 texture2D FogSeenOldTex { Width = 1; Height = 1; Format = RGBA16F; };
 sampler2D FogSeenSmp { Texture = FogSeenTex; MinFilter = POINT; MagFilter = POINT; };
 sampler2D FogSeenOldSmp { Texture = FogSeenOldTex; MinFilter = POINT; MagFilter = POINT; };
+#endif
 // The game's fog's share at a screen point (its depth d): the void and the game's dome get none
 float GameFogAt(float2 uv, int eye, float d)
 {
@@ -1855,26 +1906,39 @@ float GameFogAt(float2 uv, int eye, float d)
         a = 1.0 - min(1.0, exp(-GameFogDensity * (dist / max(GameFogPlane, 1.0) - 1.0)));
     return a * saturate((GameFogTopSoft.x - at.y) / max(GameFogTopSoft.y, 1e-3));
 }
+#if D2R_FOG_MEASURE
+// This present's row: the darkest point where the game's fog is complete, kept against the rows before (its first row starts again)
+float4 FogMin(int eye)
+{
+    const float4 old = tex2Dfetch(FogMinOldSmp, int2(0, 0));
+    if (!GameFogMatch || !FogSeenNow || FogSeenStep < 0 || DepthWidth() < 16) return old;
+    float4 acc = FogSeenStep == 0 ? float4(0.0, 0.0, 0.0, 1e9) : old;
+    const float y = min(FogSeenStep, 4);
+    [loop] for (int x = 0; x < 10; ++x) {
+        const float2 p = float2((x + 0.5) / 10.0, (y + 0.5) / 5.0 * HudTop);
+        if (GameFogAt(p, eye, DepthAt(UpsideDown ? float2(p.x, 1.0 - p.y) : p).x) < 0.99 * (GameFogOurCurve ? GameFogCurve.w : 1.0)) continue;
+        const float3 c = tex2Dlod(FogColorSmp, float4(p, 0, 0)).rgb;
+        const float l = dot(c, float3(0.2126, 0.7152, 0.0722));
+        if (l < acc.a) acc = float4(c, l);
+    }
+    return acc;
+}
 float4 FogSeen(int eye)
 {
     const float4 old = tex2Dfetch(FogSeenOldSmp, int2(0, 0));
     if (!GameFogMatch || DepthWidth() < 16) return float4(0, 0, 0, 0);
-    float3 best = 0.0;
-    float bestL = 1e9;
-    [loop] for (int y = 0; y < 12; ++y)
-        [loop] for (int x = 0; x < 16; ++x) {
-            const float2 p = float2((x + 0.5) / 16.0, (y + 0.5) / 12.0 * HudTop);
-            if (GameFogAt(p, eye, DepthAt(UpsideDown ? float2(p.x, 1.0 - p.y) : p).x) < 0.99 * (GameFogOurCurve ? GameFogCurve.w : 1.0)) continue;
-            const float3 c = tex2Dlod(FogColorSmp, float4(p, 0, 0)).rgb;
-            const float l = dot(c, float3(0.2126, 0.7152, 0.0722));
-            if (l < bestL) { bestL = l; best = c; }
-        }
-    if (bestL > 1e8) return old;   // none complete in view: the last
-    return float4(old.a > 0.5 ? lerp(old.rgb, best, 0.1) : best, 1.0);
+    if (!FogSeenNow || FogSeenStep != 4) return old;
+    const float4 m = tex2Dfetch(FogMinSmp, int2(0, 0));
+    if (m.a > 1e8) return old;   // none complete in view: the last
+    return float4(old.a > 0.5 ? lerp(old.rgb, m.rgb, 0.5) : m.rgb, 1.0);   // (a measure in 2 s: half way each)
 }
+float4 PS_FogMin(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return FogMin(0); }
+float4 PS_FogMinR(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return FogMin(1); }
+float4 PS_FogMinStore(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return tex2Dfetch(FogMinSmp, int2(0, 0)); }
 float4 PS_FogSeen(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return FogSeen(0); }
 float4 PS_FogSeenR(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return FogSeen(1); }
 float4 PS_FogSeenStore(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return tex2Dfetch(FogSeenSmp, int2(0, 0)); }
+#endif
 // The game's pass gives scene x (1 - a) + its fog x a; shown through the grading its fog is `seen` (at the complete share `full` over
 // dark far land: seen / full). Each pixel is moved by a x (the act's colour - that): complete, exactly the act's colour; none, untouched.
 // Then the share the game's pass left out (Serg, act 4: "старый хороший, новый ничего не скрывает"): [fog] game_fog_height thins it from
@@ -1893,8 +1957,17 @@ float3 GameFogTrue(float2 uv, int eye, float3 colour)
     // ([fog] fog_into_sky: toward the sky straight behind the point, as our own fog)
     const float3 target = FogIntoSky && !ArcaneSkyOn ? SkyBehind(ViewDir(uv, eye)) : FogColor;
     float3 c = colour;
+#if D2R_FOG_MEASURE
+    // Moved toward the colour, never past it: where the depth and the picture disagree - a fence's or a tree's edge against the dome, its
+    // depth the fence's, its colour already lighter than the fog the game laid there - the whole move overshot into a white outline round
+    // every silhouette (Serg on 0.192.34, Rogue camp at night, 119.webp). A pixel the game fogged as the depth says is moved as before.
+    // The game's fog only: our effect's fog in the step (GameFogByDepth) moved as it was (Serg: the old fog not touched)
     const float4 seen = tex2Dfetch(FogSeenSmp, int2(0, 0));
-    if (seen.a > 0.5) c = max(c + a * (target - seen.rgb / (GameFogOurCurve ? max(GameFogCurve.w, 0.05) : 1.0)), 0.0);
+    if (seen.a > 0.5) {
+        const float3 moved = c + a * (target - seen.rgb / (GameFogOurCurve ? max(GameFogCurve.w, 0.05) : 1.0));
+        c = GameFogByDepth ? max(moved, 0.0) : clamp(moved, min(c, target), max(c, target));
+    }
+#endif
     return lerp(c, target, want > a ? saturate((want - a) / max(1.0 - a, 1e-3)) : 0.0);
 }
 
@@ -1939,6 +2012,96 @@ bool IsHud(float2 uv)
 // The frame as the game drew it, before the fog: what the next frame compares with.
 float4 PS_HudCopy(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return tex2D(FogColorSmp, uv); }
 float4 PS_HudStore(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return tex2D(HudCurSmp, uv); }
+
+// [render] distance_blur (vrcam): a pane of frosted glass standing DistBlurStart (world units) in front of the eye - Serg's fractal game's
+// veil (AbyssVeil.shader). Nearer than the pane the picture is left as it is; behind it each pixel is spread over a radius that grows with
+// its distance, squared (the eye reads the ratio of distances, not their difference), to DistBlurStrength x 2.5 % of the picture's height
+// at DistBlurFull and beyond - a share of the height, so the same in either eye and at any size. No colour of its own: it spreads the light
+// already there, after the fog, which keeps its look. A tap nearer than the pixel by more than 2 % is refused: a far wall's blur never takes
+// in the near hill's colours, and the near edge stays sharp. Two passes, across into DistBlurTex, then down into the picture, 9 taps each.
+// The void, our sky and the game's dome are not blurred (smooth already; their stars and moon stay sharp) but lend their light to the far
+// ground beside them, so a far silhouette softens into the sky. The interface (the game's layer under UiMaskOn, the AFR HUD mask) is
+// neither blurred nor taken in. Off: both passes return at once - left out altogether without ReShade (vr/fx_pass_keep.h).
+uniform bool DistBlurOn < hidden = true; > = false;
+uniform float DistBlurStart < hidden = true; > = 60.0;
+uniform float DistBlurFull < hidden = true; > = 200.0;
+uniform float DistBlurStrength < hidden = true; > = 0.4;
+texture2D DistBlurTex { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA8; };
+sampler2D DistBlurSmp { Texture = DistBlurTex; };
+// A pixel's place for the blur, kept in DistBlurTex's alpha: 0 the interface (never blurred, never taken in); a drawn point at distance d
+// d / (d + start) - 0.5 at the pane, one 8-bit step about 1.6 % of the distance there (finer than the 2 % a tap may be nearer by);
+// 1 the void, the sky and the game's dome (infinitely far: taken in, not blurred).
+float DistBlurKey(float2 uv, int eye)
+{
+    if (UiMaskOn && !UiMaskOff && tex2Dlod(GameLayerSmp, float4(uv, 0, 0)).a < 0.98) return 0.0;   // (DepthFog's mask: ui = 1 - a over 0.02)
+    if (IsHud(uv)) return 0.0;
+    const float d = DepthAt(UpsideDown ? float2(uv.x, 1.0 - uv.y) : uv).x;
+    if (d <= 1e-6 || DomeAt(uv, eye, d)) return 1.0;
+    const float dist = NearPlane / d;
+    return dist / (dist + max(DistBlurStart, 1.0));
+}
+// how far behind the pane, 0 .. 1 squared (AbyssVeil's "mud"); 0 for the interface and the void
+float DistBlurMud(float k)
+{
+    if (k <= 0.0 || k >= 0.999) return 0.0;
+    const float s = max(DistBlurStart, 1.0);
+    const float dist = s * k / (1.0 - k);
+    const float m = saturate((dist - s) / max(DistBlurFull - s, 1.0));
+    return m * m;
+}
+// the key of a point 2 % nearer: taps under it are refused (AbyssVeil's slack, a share of the distance)
+float DistBlurNearest(float k)
+{
+    const float s = max(DistBlurStart, 1.0);
+    const float dist = 0.98 * s * k / max(1.0 - k, 1e-4);
+    return dist / (dist + s);
+}
+// The 9 taps' weights (a Gaussian over the radius, the outermost at a quarter) - 4 a side, a quarter of the radius apart; the taps between
+// pixels read two (linear filtering), so a radius of 20 pixels still reads as glass, not as a picture repeated.
+static const float kDistBlurW[5] = {1.0, 0.88, 0.61, 0.32, 0.14};
+float4 DistBlurAcross(float2 uv, int eye)
+{
+    if (!DistBlurOn || DepthWidth() < 16) discard;
+    const float3 c = tex2Dlod(FogColorSmp, float4(uv, 0, 0)).rgb;
+    const float k = DistBlurKey(uv, eye);
+    const float r = DistBlurMud(k) * DistBlurStrength * 0.025 * BUFFER_HEIGHT;   // pixels
+    if (r < 0.5) return float4(c, k);
+    const float kMin = DistBlurNearest(k);
+    float3 sum = c;
+    float wsum = 1.0;
+    [unroll] for (int i = 1; i <= 4; ++i)
+        [unroll] for (int s = -1; s <= 1; s += 2) {
+            const float2 at = saturate(uv + float2((float)(s * i) * r * 0.25 * BUFFER_RCP_WIDTH, 0.0));
+            const float w = kDistBlurW[i] * step(kMin, DistBlurKey(at, eye));
+            sum += tex2Dlod(FogColorSmp, float4(at, 0, 0)).rgb * w;
+            wsum += w;
+        }
+    return float4(sum / wsum, k);
+}
+float3 DistBlurDown(float2 uv)
+{
+    if (!DistBlurOn || DepthWidth() < 16) discard;
+    const float3 c = tex2Dlod(FogColorSmp, float4(uv, 0, 0)).rgb;
+    const float4 m = tex2Dlod(DistBlurSmp, float4(uv, 0, 0));   // (the pixel's own texel: no filtering at its centre)
+    const float mud = DistBlurMud(m.a);
+    const float r = mud * DistBlurStrength * 0.025 * BUFFER_HEIGHT;
+    if (r < 0.5) return c;
+    const float kMin = DistBlurNearest(m.a);
+    float3 sum = m.rgb;
+    float wsum = 1.0;
+    [unroll] for (int i = 1; i <= 4; ++i)
+        [unroll] for (int s = -1; s <= 1; s += 2) {
+            const float4 t = tex2Dlod(DistBlurSmp, float4(saturate(uv + float2(0.0, (float)(s * i) * r * 0.25 * BUFFER_RCP_HEIGHT)), 0, 0));
+            const float w = kDistBlurW[i] * step(kMin, t.a);
+            sum += t.rgb * w;
+            wsum += w;
+        }
+    // arriving with the distance, and only once the radius is a pixel or more (AbyssVeil: a blur too small to see costs no sharpness)
+    return lerp(c, sum / wsum, saturate(mud * 1.5) * smoothstep(0.5, 1.5, r));
+}
+float4 PS_DistBlurH(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return DistBlurAcross(uv, 0); }
+float4 PS_DistBlurHR(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return DistBlurAcross(uv, 1); }
+float3 PS_DistBlurV(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return DistBlurDown(uv); }
 
 // HUD pixels come from where the HUD was; where it left, the world beside it fills in.
 float3 Hud(float2 uv, float shift)
@@ -3391,11 +3554,25 @@ technique D2R_DepthFog <
     pass { ComputeShader = CS_ClearHeights<8, 8>; DispatchSizeX = 8; DispatchSizeY = 8; }
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_Peaks; RenderTarget = PeakTex; }
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_DomeSeeds; RenderTarget = DomeSeedTex; }
+#if D2R_FOG_MEASURE
+    pass { VertexShader = VS_Fullscreen; PixelShader = PS_FogMin; RenderTarget = FogMinTex; }
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_FogSeen; RenderTarget = FogSeenTex; }
+#endif
+#if D2R_DOME_MEASURE
+    pass { VertexShader = VS_Fullscreen; PixelShader = PS_DomeSum; RenderTarget = DomeSumTex; }
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_DomeSeen; RenderTarget = DomeSeenTex; }
+#endif
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_DepthFog; }
+    pass { VertexShader = VS_Fullscreen; PixelShader = PS_DistBlurH; RenderTarget = DistBlurTex; }
+    pass { VertexShader = VS_Fullscreen; PixelShader = PS_DistBlurV; }
+#if D2R_DOME_MEASURE
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_DomeSeenStore; RenderTarget = DomeSeenOldTex; }
+    pass { VertexShader = VS_Fullscreen; PixelShader = PS_DomeSumStore; RenderTarget = DomeSumOldTex; }
+#endif
+#if D2R_FOG_MEASURE
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_FogSeenStore; RenderTarget = FogSeenOldTex; }
+    pass { VertexShader = VS_Fullscreen; PixelShader = PS_FogMinStore; RenderTarget = FogMinOldTex; }
+#endif
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_Hud; }
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_GameHud; }
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_Phantom; }
@@ -3429,11 +3606,25 @@ technique D2R_DepthFog_R <
     pass { ComputeShader = CS_ClearHeights<8, 8>; DispatchSizeX = 8; DispatchSizeY = 8; }
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_Peaks; RenderTarget = PeakTex; }
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_DomeSeeds; RenderTarget = DomeSeedTex; }
+#if D2R_FOG_MEASURE
+    pass { VertexShader = VS_Fullscreen; PixelShader = PS_FogMinR; RenderTarget = FogMinTex; }
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_FogSeenR; RenderTarget = FogSeenTex; }
+#endif
+#if D2R_DOME_MEASURE
+    pass { VertexShader = VS_Fullscreen; PixelShader = PS_DomeSumR; RenderTarget = DomeSumTex; }
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_DomeSeenR; RenderTarget = DomeSeenTex; }
+#endif
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_DepthFogR; }
+    pass { VertexShader = VS_Fullscreen; PixelShader = PS_DistBlurHR; RenderTarget = DistBlurTex; }
+    pass { VertexShader = VS_Fullscreen; PixelShader = PS_DistBlurV; }
+#if D2R_DOME_MEASURE
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_DomeSeenStore; RenderTarget = DomeSeenOldTex; }
+    pass { VertexShader = VS_Fullscreen; PixelShader = PS_DomeSumStore; RenderTarget = DomeSumOldTex; }
+#endif
+#if D2R_FOG_MEASURE
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_FogSeenStore; RenderTarget = FogSeenOldTex; }
+    pass { VertexShader = VS_Fullscreen; PixelShader = PS_FogMinStore; RenderTarget = FogMinOldTex; }
+#endif
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_HudR; }
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_GameHudR; }
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_PhantomR; }

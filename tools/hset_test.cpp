@@ -186,7 +186,7 @@ static void TestDefs() {
     CHECK(RowsOn(kPageView) > 0 && RowsOn(kPageOptions) > 0, "the two table pages have rows");
     CHECK(RowsOn(kPageVideo) == 0 && RowsOn(kPageGuide) == 0 && RowsOn(kPageCoop) == 0, "the Video, Co-op and Guide pages have no table rows (they draw their own)");
     CHECK(RowsOn(kPageBody) == 1 && KeyAt(kPageBody, 0) == kKeySeated, "the Body page: one table row on top, how you play ([calibration] seated)");
-    CHECK(PageCount() == 14 && PageCount() <= kMaxPages, "fourteen pages (View, Options, Video, Body, Life, Look, HUD, Belt, Melee, Left, Right, Co-op, Vibration, Guide), they fit the tabs");
+    CHECK(PageCount() == 18 && PageCount() <= kMaxPages && kTabCount == 15, "eighteen pages under fifteen tabs (View ... Vibration, World's four, Guide)");
     CHECK(RowsOn(kPageVibration) == 7 && CloseRows(kPageVibration) && !std::strcmp(kPageNames[kPageVibration], "Vibration"), "the Vibration page: seven rows, stood closer");
     // the keys the hand-drawn pages work on are in the table, with no row, named as the plugin reads them
     const int hidden[6] = {kKeyMode, kKeyPx, kKeyUse, kKeyVersion, kKeyEye, kKeySpan};
@@ -221,8 +221,8 @@ static void TestHitTest() {
     CHECK(Inside(kApply) && Inside(kClose) && Inside(kRecentre) && Inside(kStatus), "bottom buttons inside the atlas");
     CHECK(!Overlap(kApply, kClose) && !Overlap(kClose, kRecentre) && !Overlap(kApply, kRecentre), "bottom buttons apart");
     CHECK(!Overlap(kStatus, kApply) && !Overlap(kStatus, kClose) && !Overlap(kStatus, kRecentre), "the status line is clear of the buttons");
-    for (int i = 0; i < kMaxPages; ++i) CHECK(Inside(kTab(i)), "tabs inside the atlas");
-    for (int i = 0; i + 1 < kMaxPages; ++i) CHECK(!Overlap(kTab(i), kTab(i + 1)), "tabs apart");
+    for (int i = 0; i < kTabCount; ++i) CHECK(Inside(kTab(i)), "tabs inside the atlas");
+    for (int i = 0; i + 1 < kTabCount; ++i) CHECK(!Overlap(kTab(i), kTab(i + 1)), "tabs apart");
     for (int r = 0; r < kRowsMax; ++r) {   // the Melee page's seven, closer
         const int p = kPageMelee;
         CHECK(CloseRows(p) && Inside(kDec(r, p)) && Inside(kInc(r, p)) && Inside(kVal(r, p)) && Inside(kToggle(r, p)), "a close row inside the atlas");
@@ -252,8 +252,8 @@ static void TestHitTest() {
             }
         }
         float u, v;
-        Centre(kTab(p), &u, &v);
-        CHECK((HitTest(p, u, v) == Hit{Kind::Tab, p, 0}), "a tab");
+        Centre(kTab(TabOf(p)), &u, &v);
+        CHECK((HitTest(p, u, v) == Hit{Kind::Tab, TabPage(TabOf(p)), 0}), "a tab (a World page's: the World tab, its first page)");
         Centre(kApply, &u, &v);
         CHECK(HitTest(p, u, v).kind == Kind::Apply, "Apply");
         Centre(kClose, &u, &v);
@@ -1342,9 +1342,9 @@ static void TestPagesHit() {
     Centre(kGuideBtn, &u, &v);
     CHECK(HitTest(kPageBody, u, v).kind == Kind::Guide && HitTest(kPageVideo, u, v).kind != Kind::Guide, "First-start guide, on the Body page only");
     CHECK(HitTest(kPageBody, 0.5f, (kBodyStep(1).y + 5.0f) / kH).kind == Kind::None, "the steps are text");
-    for (int p = 0; p < kPageCount; ++p) {
-        Centre(kTab(p), &u, &v);
-        CHECK((HitTest(kPageBody, u, v) == Hit{Kind::Tab, p, 0}) && (HitTest(kPageVideo, u, v) == Hit{Kind::Tab, p, 0}), "all four tabs from the new pages too");
+    for (int t = 0; t < kTabCount; ++t) {
+        Centre(kTab(t), &u, &v);
+        CHECK((HitTest(kPageBody, u, v) == Hit{Kind::Tab, TabPage(t), 0}) && (HitTest(kPageVideo, u, v) == Hit{Kind::Tab, TabPage(t), 0}), "all the tabs from the new pages too");
     }
 }
 
@@ -2442,8 +2442,8 @@ static void TestBelt() {
     CHECK(kDefs[kKeyBeltOn].page == kNoPage && !kDefs[kKeyBeltOn].live && IsToggle(kDefs[kKeyBeltOn]), "belt_models: the Belt page's note, not live");
     int live = 0;
     for (int i = 0; i < kCount; ++i) live += kDefs[i].live ? 1 : 0;
-    CHECK(live == 25 && kLiveMask != 0 && (kLiveMask & Bit(KeyOf(L"brightness"))) == 0 && (kLiveMask & Bit(kKeySmooth)) == 0,
-          "eighteen live keys, the belt's, the Melee page's (the skill arming's two and Direct hit's two too), the Body page's standing / seated and its Arm span's three (use, version, arm_span_m) - not the others");
+    CHECK(live == 47 && kLiveMask != 0 && (kLiveMask & Bit(KeyOf(L"brightness"))) == 0 && (kLiveMask & Bit(kKeySmooth)) == 0,
+          "the live keys: the World pages' 22, the belt's, the Melee page's (the skill arming's two and Direct hit's two too), the Body page's standing / seated and its Arm span's three (use, version, arm_span_m) - not the others");
     CHECK(kCount <= 128 && kCount > 64, "the masks are 128 bits, and the table is past 64 keys");
     {   // the 128-bit mask: a key past 64 has its own bit, sets and tests as the first ones do
         const Mask a = Bit(3), b = Bit(70), ab = a | b;
@@ -2457,12 +2457,12 @@ static void TestBelt() {
         CHECK(std::fabs(Normalize(i, kDefs[i].def) - kDefs[i].def) < 1e-4f, "every default is on its grid");
 
     // the tabs: apart, inside the atlas, every one hit
-    for (int i = 0; i < kPageCount; ++i) {
+    for (int i = 0; i < kTabCount; ++i) {
         CHECK(Inside(kTab(i)), "a tab inside the atlas");
-        if (i + 1 < kPageCount) CHECK(!Overlap(kTab(i), kTab(i + 1)), "tabs apart");
+        if (i + 1 < kTabCount) CHECK(!Overlap(kTab(i), kTab(i + 1)), "tabs apart");
         float u, v;
         Centre(kTab(i), &u, &v);
-        CHECK((HitTest(kPageView, u, v) == Hit{Kind::Tab, i, 0}), "every tab is hit");
+        CHECK((HitTest(kPageView, u, v) == Hit{Kind::Tab, TabPage(i), 0}), "every tab is hit");
     }
     for (int r = 0; r < 6; ++r) {   // minus and plus of every row of the Belt page (the tick: the whole row is one button)
         const int key = KeyAt(kPageBelt, r);
@@ -3072,17 +3072,17 @@ static void TestLowLife() {
     }
     CHECK(kDefs[KeyAt(kPageLife, 0)].key == std::wstring(L"low_hp_vignette"), "the first row of the Life page is the tick that switches it on");
     CHECK(RowsOn(kPageLife) == 6 && RowsOn(kPageLook) == 5, "six rows on Life, five on Look: all eleven keys");
-    CHECK(!std::strcmp(kPageNames[kPageLife], "Life") && !std::strcmp(kPageNames[kPageLook], "Look") && !std::strcmp(kPageNames[kPageHud], "HUD") && PageCount() == 14, "the tabs");
+    CHECK(!std::strcmp(kPageNames[kPageLife], "Life") && !std::strcmp(kPageNames[kPageLook], "Look") && !std::strcmp(kPageNames[kPageHud], "HUD") && PageCount() == 18, "the tabs");
     CHECK(IsLifePage(kPageLife) && IsLifePage(kPageLook) && !IsLifePage(kPageView) && !IsLifePage(kPageOptions) && !IsLifePage(kPageVideo) && !IsLifePage(kPageBody) &&
               !IsLifePage(-1) && !IsLifePage(99),
           "only those two pages ask for the preview");
     CHECK(kCount <= 128, "all the keys have a bit in the change mask");
 
     // the tab strip: six tabs under the title, each a tab, none off the sheet
-    for (int i = 0; i < kPageCount; ++i) {
+    for (int i = 0; i < kTabCount; ++i) {
         float u, v;
         Centre(kTab(i), &u, &v);
-        CHECK((HitTest(0, u, v) == Hit{Kind::Tab, i, 0}) && Inside(kTab(i)), "a tab of the six");
+        CHECK((HitTest(0, u, v) == Hit{Kind::Tab, TabPage(i), 0}) && Inside(kTab(i)), "a tab of the six");
     }
 
     // the pages' pictures say what the rows are
@@ -3310,20 +3310,20 @@ static void TestMelee() {
 
     // the tabs share the strip by the length of their names: all inside the atlas, apart, none too narrow for its name, the long names wider
     int narrowest = 1 << 20;
-    for (int i = 0; i < kPageCount; ++i) {
+    for (int i = 0; i < kTabCount; ++i) {
         CHECK(Inside(kTab(i)), "a tab inside the atlas");
-        if (i + 1 < kPageCount) CHECK(!Overlap(kTab(i), kTab(i + 1)) && kTab(i).x + kTab(i).w < kTab(i + 1).x, "tabs apart, in order");
+        if (i + 1 < kTabCount) CHECK(!Overlap(kTab(i), kTab(i + 1)) && kTab(i).x + kTab(i).w < kTab(i + 1).x, "tabs apart, in order");
         narrowest = std::min(narrowest, kTab(i).w);
     }
-    CHECK(kTab(kPageCount - 1).x + kTab(kPageCount - 1).w <= 32 + 960, "the strip ends where the rows do");
-    for (int i = 0; i < kPageCount; ++i) CHECK(GdiWidth(kPageNames[i], kTabFontPx, FW_SEMIBOLD) <= kTab(i).w - 8, "a tab's name fits it in the panel's own painter");
-    for (int i = 0; i < kPageCount; ++i) CHECK(GdiWidth(kPageNames[i], kTabFontPx, FW_SEMIBOLD) == kPageNameW[i], "kPageNameW is the names' width in that font (the strip is shared by it)");
+    CHECK(kTab(kTabCount - 1).x + kTab(kTabCount - 1).w <= 32 + 960, "the strip ends where the rows do");
+    for (int i = 0; i < kTabCount; ++i) CHECK(GdiWidth(kTabNames[i], kTabFontPx, FW_SEMIBOLD) <= kTab(i).w - 8, "a tab's name fits it in the panel's own painter");
+    for (int i = 0; i < kTabCount; ++i) CHECK(GdiWidth(kTabNames[i], kTabFontPx, FW_SEMIBOLD) == kTabNameW[i], "kTabNameW is the names' width in that font (the strip is shared by it)");
     CHECK(kTab(kPageOptions).w > kTab(kPageView).w && kTab(kPageView).w >= kTab(kPageHud).w && kTab(kPageMelee).w > kTab(kPageBody).w, "a longer name has the wider tab");
     CHECK(kTab(kPageHud).w > kTab(kPageLife).w && kTab(kPageHud).w >= GdiWidth("HUD", kTabFontPx, FW_SEMIBOLD) + 8, "a three-letter name gets what its letters need (HUD's capitals are wide: wider than Life's tab)");
-    for (int i = 0; i < kPageCount; ++i) {
+    for (int i = 0; i < kTabCount; ++i) {
         float u, v;
         Centre(kTab(i), &u, &v);
-        CHECK((HitTest(kPageView, u, v) == Hit{Kind::Tab, i, 0}), "every tab is hit");
+        CHECK((HitTest(kPageView, u, v) == Hit{Kind::Tab, TabPage(i), 0}), "every tab is hit");
     }
 
     // his ini ([gameplay]: 6.0 m/s, 15 cm): shown as it is, a step is written alone and live, the neighbours stay
@@ -3444,7 +3444,7 @@ static void TestGuide() {
         CHECK((HitTest(kPageGuide, u, v) == Hit{Kind::GuideBack, -1, -1}) && HitTest(kPageBody, u, v).kind == Kind::None, "Back, on the Guide page only");
         Centre(kGuideNext, &u, &v);
         CHECK((HitTest(kPageGuide, u, v) == Hit{Kind::GuideNext, -1, 1}) && HitTest(kPageBody, u, v).kind == Kind::None, "Next, on the Guide page only");
-        Centre(kTab(kPageGuide), &u, &v);
+        Centre(kTab(kTabGuide), &u, &v);
         CHECK((HitTest(kPageView, u, v) == Hit{Kind::Tab, kPageGuide, 0}), "the Guide tab is hit");
     }
 
@@ -4076,6 +4076,123 @@ static void TestCoopStore() {
     RemoveDirectoryW(dir.c_str());
 }
 
+// -- the World tab: the world's touch on four pages (Contact, Monsters react, Grab, More) --------------------------------------------------
+static void TestWorld() {
+    // the rows, in the order asked, with D2R VR Settings' defaults; every one live
+    struct Want { int page; const wchar_t* section; const wchar_t* key; float def; };
+    const Want rows[] = {
+        {kPageWorld, L"weight", L"world_contact", 0}, {kPageWorld, L"weight", L"world_contact_hands", 0}, {kPageWorld, L"weight", L"own_body", 0},
+        {kPageWorld, L"weight", L"monster_bodies", 0},
+        {kPageWorld, L"weight", L"monster_shields", 0},
+        {kPageWorldReact, L"gameplay", L"melee_touch", 0}, {kPageWorldReact, L"weight", L"strike_by_force", 0}, {kPageWorldReact, L"weight", L"monster_ragdoll", 0},
+        {kPageWorldReact, L"weight", L"monster_ragdoll_all", 0}, {kPageWorldReact, L"weight", L"knock_down", 0}, {kPageWorldReact, L"weight", L"stab_in", 0},
+        {kPageWorldReact, L"weight", L"impale_drag", 0},
+        {kPageWorldGrab, L"weight", L"grab_bodies", 0}, {kPageWorldGrab, L"weight", L"npc_bodies", 0}, {kPageWorldGrab, L"weight", L"grab_throw", 0},
+        {kPageWorldGrab, L"weight", L"grab_balance", 1}, {kPageWorldGrab, L"weight", L"grab_items", 0}, {kPageWorldGrab, L"weight", L"grab_props", 0},
+        {kPageWorldGrab, L"weight", L"knock_props", 0},
+        {kPageWorldMore, L"weight", L"strength", 100}, {kPageWorldMore, L"weight", L"skeleton_bones_max", 256}, {kPageWorldMore, L"hands", L"throw_gesture", 0},
+        {kPageWorldMore, L"gameplay", L"shield_smite", 0},
+    };
+    int at[kPageCount] = {};
+    for (const Want& w : rows) {
+        const int k = IndexOf(w.section, w.key);
+        CHECK(k >= 0 && KeyAt(w.page, at[w.page]++) == k, "a World row in its place");
+        if (k < 0) continue;
+        CHECK(kDefs[k].live && kDefs[k].def == w.def && kDefs[k].type == DefType::Number, "live, the default D2R VR Settings has");
+    }
+    for (int p = kPageWorld; p < kPageWorld + kWorldPages; ++p) CHECK(RowsOn(p) == at[p] && KeyAt(p, at[p]) < 0, "no other row on a World page");
+    CHECK(RowsOn(kPageWorld) == 5 && RowsOn(kPageWorldReact) == 7 && RowsOn(kPageWorldGrab) == 7 && RowsOn(kPageWorldMore) == 4, "5, 7, 7 and 4 rows");
+    const int touch = IndexOf(L"gameplay", L"melee_touch");
+    CHECK(KeyAt(kPageMelee, 0) == touch && KeyAt(kPageWorldReact, 0) == touch && kDefs[touch].page == kPageMelee && kDefs[touch].also == kPageWorldReact,
+          "Hit by touch: one key, a row on Melee and on Monsters react");
+    const int str = IndexOf(L"weight", L"strength"), bones = IndexOf(L"weight", L"skeleton_bones_max");
+    CHECK(kDefs[str].min == 10 && kDefs[str].max == 500 && kDefs[str].step == 5 && Normalize(str, 123) == 125 && Normalize(str, 900) == 500, "strength: 10 - 500 % by 5");
+    CHECK(kDefs[bones].min == 64 && kDefs[bones].max == 1024 && kDefs[bones].step == 16 && Normalize(bones, 256) == 256 && Normalize(bones, 260) == 256 &&
+              Normalize(bones, 2000) == 1024,
+          "skeleton bones: 64 - 1024 by 16, as the Settings slider");
+    // names: the tab one, its pages theirs; a page's name fits its button, a row's two lines fit the row (the faces the panel paints them in)
+    CHECK(!std::strcmp(kTabNames[kTabWorld], "World") && TabOf(kPageWorldGrab) == kTabWorld && TabPage(kTabWorld) == kPageWorld && TabOf(kPageGuide) == kTabGuide &&
+              TabPage(kTabGuide) == kPageGuide && TabOf(kPageVibration) == kPageVibration,
+          "the World tab holds the four pages; Guide the last tab");
+    for (int i = 0; i < kWorldPages; ++i) CHECK(GdiWidth(kPageNames[kPageWorld + i], 30, FW_SEMIBOLD) <= kWorldSub(i).w - 16, "a World page's name fits its button");
+    for (const Want& w : rows) {
+        const int k = IndexOf(w.section, w.key);
+        if (k < 0) continue;
+        CHECK(GdiWidth(kDefs[k].label, 26, FW_NORMAL) <= 530, "a World row's name fits (the normal face)");
+        CHECK(GdiWidth(kDefs[k].detail, 22, FW_NORMAL) <= 530, "and the line under it");
+    }
+    // places: the four buttons under the tabs, above the first row, apart; seven rows above the status line
+    for (int i = 0; i < kWorldPages; ++i) {
+        CHECK(Inside(kWorldSub(i)) && kWorldSub(i).y >= kTab(0).y + kTab(0).h && kWorldSub(i).y + kWorldSub(i).h <= RowY(0, kPageWorld) - 5, "a World button between the tabs and the rows");
+        if (i + 1 < kWorldPages) CHECK(!Overlap(kWorldSub(i), kWorldSub(i + 1)), "apart");
+        float u, v;
+        Centre(kWorldSub(i), &u, &v);
+        for (int p = kPageWorld; p < kPageWorld + kWorldPages; ++p) CHECK((HitTest(p, u, v) == Hit{Kind::Tab, kPageWorld + i, 0}), "a World button goes to its page, from any of them");
+        CHECK(HitTest(kPageMelee, u, v).kind != Kind::Tab, "not on another page");
+    }
+    for (int r = 0; r < kRowsMax; ++r) {
+        CHECK(Inside(kToggle(r, kPageWorldGrab)) && !Overlap(kToggle(r, kPageWorldGrab), kStatus), "a World row inside, above the status line");
+        if (r + 1 < kRowsMax) CHECK(!Overlap(kToggle(r, kPageWorldGrab), kToggle(r + 1, kPageWorldGrab)), "World rows apart");
+        const int key = KeyAt(kPageWorldGrab, r);
+        float u, v;
+        Centre(kToggle(r, kPageWorldGrab), &u, &v);
+        CHECK((HitTest(kPageWorldGrab, u, v) == Hit{Kind::Change, key, 1}), "a World row's switch is hit");
+    }
+    {   // the sliders' steppers
+        float u, v;
+        Centre(kInc(0, kPageWorldMore), &u, &v);
+        CHECK((HitTest(kPageWorldMore, u, v) == Hit{Kind::Change, str, 1}), "strength +");
+        Centre(kDec(1, kPageWorldMore), &u, &v);
+        CHECK((HitTest(kPageWorldMore, u, v) == Hit{Kind::Change, bones, -1}), "bones -");
+    }
+    // the model: the tab opens Contact, a button another page; a click is written by itself a moment later, alone
+    Model m;
+    m.Open(Snap());
+    float u, v;
+    Centre(kTab(kTabWorld), &u, &v);
+    m.Click(HitTest(m.page, u, v));
+    CHECK(m.page == kPageWorld, "the World tab opens Contact");
+    Centre(kWorldSub(2), &u, &v);
+    m.Click(HitTest(m.page, u, v));
+    CHECK(m.page == kPageWorldGrab, "the Grab button");
+    const int grab = IndexOf(L"weight", L"grab_bodies");
+    m.Click({Kind::Change, grab, 1});
+    CHECK(m.Get()[grab] == 1.0f && m.Dirty() && m.LiveOnly(), "ticked: a live change");
+    CHECK(m.Live(1000.0).what == Do::Nothing, "not written at once");
+    const Action a = m.Live(2000.0);
+    CHECK(a.what == Do::Save && a.request.changed == Bit(grab) && a.request.values[grab] == 1.0f, "a moment later: that key alone");
+    m.Click({Kind::Change, bones, 1});
+    CHECK(m.Get()[bones] == 256.0f, "nothing while the save is on its way");
+    // the scene: the four buttons, the page's lit, the rows' names in the normal face
+    Model sm = OnPage(Snap(), kPageWorldReact);
+    const Scene sc = Compose(sm, {});
+    int buttons = 0, lit = 0, normalNames = 0, tabLit = 0;
+    for (const Item& i : sc) {
+        for (int k = 0; k < kWorldPages; ++k)
+            if (i.type == Item::Type::Button && i.r.x == kWorldSub(k).x && i.r.y == kWorldSub(k).y) { ++buttons; if (i.selected) lit = k + 1; }
+        if (i.type == Item::Type::Text && i.face == Face::Normal && i.text == DefLabel(touch)) ++normalNames;
+        if (i.type == Item::Type::Button && i.part == Part::Tab && i.selected) tabLit = i.text == "World" ? 1 : 2;
+    }
+    CHECK(buttons == 4 && lit == 2 && normalNames == 1 && tabLit == 1, "four buttons, Monsters react lit, the World tab lit, the rows' names in the normal face");
+    CHECK(std::string(StatusText(sm)).find("applies by itself") != std::string::npos, "the status line: each change by itself");
+    // the store: a World key written alone, the rest of the file as it was, the first backup kept
+    const std::wstring path = g_dir + L"\\world.ini";
+    DeleteFileW((path + L".before-headset-menu").c_str());
+    Spit(path, "[weight]\r\n; mine\r\ngrab_bodies=0\r\nstrength=150\r\n[gameplay]\r\nmelee_touch=1\r\n");
+    Snapshot s = store::LoadSnapshot(path.c_str());
+    CHECK(s.values[str] == 150.0f && s.values[touch] == 1.0f && s.values[IndexOf(L"weight", L"grab_balance")] == 1.0f, "read: the file's, a missing key its default");
+    std::string why;
+    CHECK(store::SaveRequest(path.c_str(), Req({{grab, 1.0f}}, s), &why) == Result::Saved, "saved");
+    CHECK(Slurp(path) == "[weight]\r\n; mine\r\ngrab_bodies=1\r\nstrength=150\r\n[gameplay]\r\nmelee_touch=1\r\n", "only that line changed");
+    CHECK(Slurp(path + L".before-headset-menu").find("grab_bodies=0") != std::string::npos, "the file before the panel's first write kept");
+    s = store::LoadSnapshot(path.c_str());
+    CHECK(store::SaveRequest(path.c_str(), Req({{bones, 512.0f}}, s), &why) == Result::Saved && Slurp(path).find("skeleton_bones_max=512") != std::string::npos,
+          "a missing key is added to its section");
+    CHECK(Slurp(path + L".before-headset-menu").find("grab_bodies=0") != std::string::npos, "the backup stays the first one");
+    DeleteFileW(path.c_str());
+    DeleteFileW((path + L".before-headset-menu").c_str());
+}
+
 // --dump: the Co-op page in the panel's own painter (as it stands, a mode on its way, the plugin not installed).
 static void DumpCoop(const std::string& dir) {
     std::vector<uint32_t> px;
@@ -4131,6 +4248,7 @@ int main(int argc, char** argv) {
     TestCoopModel();
     TestCoopScene();
     TestCoopStore();
+    TestWorld();
 
     // the temp folder's files go
     WIN32_FIND_DATAW fd;

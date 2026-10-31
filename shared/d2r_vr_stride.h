@@ -44,6 +44,13 @@ typedef struct D2rsLegs {
     float reach;            /* m: how far along the ground a planted foot may be from under its hip (the leg at the hips' height) */
     float legLength;        /* m: hip to ankle, thigh and shin together */
     float feet[2][2];       /* m: where the feet are drawn now on the ground - a fresh state starts with them planted there */
+    /* stride 2.1 (read when `size` covers them; an older caller's struct ends above): */
+    float stanceMax;        /* m: the body goes at most this far over a planted foot (0: 1.6 reaches) - narrow steps; faster ones instead */
+    float cycleMinS;        /* s: a foot's cycle no quicker than this (0: the library's own, 1 / 2.6) - how fast the steps may come for stanceMax */
+    /* stride 2.2 (read when `size` covers it): */
+    float stagger;          /* m: > 0 with stanceMax: the narrow steps cross - the feet take turns, one always down (no bound), passing each other this far
+                               apart along the trunk's forward (the left one ahead); the stance grows past stanceMax rather than a swing shorter than half
+                               cycleMinS. 0: stride 2.1's (the trailing foot never passes the leading one: a bound sideways) */
 } D2rsLegs;
 
 /* The library's own memory of the feet, kept by the mod between steps; all zero = a fresh start. */

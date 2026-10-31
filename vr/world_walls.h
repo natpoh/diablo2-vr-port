@@ -52,6 +52,7 @@ struct Entity {
     float lo[3] = {}, hi[3] = {};
     uint32_t preset = 0;
     float local[3] = {};
+    bool steady = true;   // its world matrix as it was a scan ago: a piece not in the catalogue is laid by its box only then (a monster's weapon, anything that moves: never)
 };
 
 // A part's box, render metres: its centre, its axes (unit), half its size along each; its lowest and highest point; the piece's entity (id: entity and part).
@@ -63,8 +64,8 @@ struct Box {
     float bottom = 0.0f, top = 0.0f;
 };
 
-enum class Why { kKept, kBad, kTiny, kLow, kHigh, kRound, kUnknown, kFoliage, kNoParts, kMovable, kBig };
-constexpr int kWhys = 11;
+enum class Why { kKept, kBad, kTiny, kLow, kHigh, kRound, kUnknown, kFoliage, kNoParts, kMovable, kBig, kMoving };
+constexpr int kWhys = 12;
 inline const char* WhyName(Why w) {
     switch (w) {
     case Why::kKept: return "kept";
@@ -78,6 +79,7 @@ inline const char* WhyName(Why w) {
     case Why::kNoParts: return "no mesh";
     case Why::kMovable: return "movable";
     case Why::kBig: return "not in the catalogue and big";
+    case Why::kMoving: return "not in the catalogue and moving";
     }
     return "?";
 }
@@ -180,6 +182,7 @@ inline std::vector<Box> Choose(const std::vector<Entity>& es, const worldsolids:
         if (longest < kMinSideM) { ++c.why[(int)Why::kTiny]; continue; }
         if (!m) {   // not in the catalogue (a game object), or its mesh did not read: its renderer's box, when it is object-sized
             if (longest > kObjectMaxM) { ++c.why[(int)Why::kBig]; continue; }
+            if (!e.steady) { ++c.why[(int)Why::kMoving]; continue; }
             ++c.why[(int)(row ? Why::kNoParts : Why::kUnknown)];
             ++c.objects;
             ++c.parts;

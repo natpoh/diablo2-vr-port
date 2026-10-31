@@ -158,7 +158,10 @@ extern std::atomic<float> g_topUnitsPerM;
 
 // ---- what vr/render/effects/effects.cpp (M15) reads of vrcam.cpp: the sky's and the ceiling's pictures, the table, the eyes ----
 struct SkyAct { float bright; std::string band, cap; bool bandOk, capOk; float fog[3]; bool fogSet;
-                std::string nightBand, nightCap; bool nightOk; };   // [sky] night_<act> / night_cap_<act>: the night picture (gen_night_sky.py)
+                std::string nightBand, nightCap; bool nightOk;   // [sky] night_<act> / night_cap_<act>: the night picture (gen_night_sky.py)
+                // the day and the night picture's horizon in the game's scene units (their 0 degree rows' means, vr/sky/three_skies.h): the
+                // three skies' fog colour; false: a picture not read
+                float dayHorizon[3]; float nightHorizon[3]; bool dayHorizonOk; bool nightHorizonOk; };
 struct CaveFog { float rgb[3]; bool set; };
 struct TableBox { float vp[16]; float hero[3]; bool ok; };
 constexpr int kCeilSlots = 8;

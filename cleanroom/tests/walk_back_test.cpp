@@ -443,6 +443,28 @@ int main() {
         CHECK(walkback::InRearCone(-139.0f, 90.0f, false) && !walkback::InRearCone(137.0f, 90.0f, false) && !walkback::InRearCone(90.0f, 90.0f, true));
         CHECK(walkback::InRearCone(133.0f, 90.0f, true) && !walkback::InRearCone(131.0f, 90.0f, true));   // (was in: kept to 132)
         CHECK(!walkback::InRearCone(180.0f, 0.0f, true) && walkback::InRearCone(0.0f, 360.0f, false) && !walkback::InRearCone(0.0f, 300.0f, false));
+        // InRearHalf ([body] legs_side_game): straight sideways the game's either way it came from; in past 92, out under 90
+        CHECK(!walkback::InRearHalf(90.0f, false) && !walkback::InRearHalf(-90.0f, true) && !walkback::InRearHalf(91.0f, false) && !walkback::InRearHalf(0.0f, true));
+        CHECK(walkback::InRearHalf(93.0f, false) && walkback::InRearHalf(-93.0f, false) && walkback::InRearHalf(180.0f, false) && walkback::InRearHalf(91.0f, true));
+        CHECK(!walkback::InRearHalf(NAN, true));
+        // LegsTurnTarget ([body] legs_turn): ahead the travel's angle; behind it less half a turn - within +-90 of the trunk
+        const float d2r = 0.0174532925f;
+        CHECK(Near(walkback::LegsTurnTarget(45.0f, false), 45.0f * d2r, 1e-5f) && Near(walkback::LegsTurnTarget(-90.0f, false), -90.0f * d2r, 1e-5f));
+        CHECK(Near(walkback::LegsTurnTarget(135.0f, true), -45.0f * d2r, 1e-4f) && Near(walkback::LegsTurnTarget(-135.0f, true), 45.0f * d2r, 1e-4f));
+        CHECK(Near(walkback::LegsTurnTarget(180.0f, true), 0.0f, 1e-4f) && Near(walkback::LegsTurnTarget(93.0f, true), -87.0f * d2r, 1e-4f));
+        CHECK(walkback::LegsTurnTarget(NAN, false) == 0.0f);
+        // LegsTurn: eased toward the target; across 90 at once (no sweep across the trunk); standing back to the trunk
+        walkback::LegsTurn lt;
+        lt.Step(45.0f, true, false, walkback::LegsTurn::kTauS * 0.5f);
+        CHECK(lt.yaw > 0.1f * 45.0f * d2r && lt.yaw < 0.9f * 45.0f * d2r);   // (half the time: part of the way)
+        for (int i = 0; i < 100; ++i) lt.Step(90.0f, true, false, 0.01f);
+        CHECK(Near(lt.yaw, 90.0f * d2r, 1e-3f));
+        lt.Step(93.0f, true, true, 0.01f);
+        CHECK(Near(lt.yaw, -87.0f * d2r, 1e-4f));   // into the rear half: at once
+        for (int i = 0; i < 200; ++i) lt.Step(0.0f, false, false, 0.01f);
+        CHECK(Near(lt.yaw, 0.0f, 1e-3f));
+        // SpineTwistShare: 3/4, 1/2, 1/4 over three bones; none past them
+        CHECK(Near(walkback::SpineTwistShare(0, 3), 0.75f, 1e-6f) && Near(walkback::SpineTwistShare(2, 3), 0.25f, 1e-6f) && walkback::SpineTwistShare(3, 3) == 0.0f);
         walkback::RearBlend rb;
         CHECK(rb.Step(true, true, 0.01f) == 1.0f);                 // from the game's own pose: wholly at once
         float share = 1.0f;

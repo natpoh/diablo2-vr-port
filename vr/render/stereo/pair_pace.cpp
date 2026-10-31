@@ -71,6 +71,7 @@ void AfterRender(reshade::api::effect_runtime* rt) {
 // two, a replayed pair (one present), mono and the depth one.
 namespace pace {
 double g_next = 0.0;
+double g_heldUs = 0.0;
 uint32_t g_lastReplays = 0;
 int g_replayedRecently = 0;   // presents since a replayed pair was seen, capped
 void Tick() {
@@ -101,8 +102,10 @@ void Tick() {
     if (now < g_next) {
         static bool fine = (timeBeginPeriod(1), true);
         (void)fine;
+        const double from = now;
         while (g_next - now > 1500.0) { Sleep(1); now = pairtime::UsNow(); }
         while (now < g_next) { YieldProcessor(); now = pairtime::UsNow(); }
+        g_heldUs += now - from;   // (inside the present: the no-ReShade 10 s line's "our present work" took it for work - 0.33 -> 5.35 ms, 0.192.32)
     }
     g_next += period;
 }

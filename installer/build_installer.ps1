@@ -151,7 +151,7 @@ if ($langPy) {
     }
 } else { Write-Warning "languages: no Python - lang\ not checked (tools\lang_sync.py check)" }
 
-foreach ($f in "d2rl-vrcam.dll", "D2R_VR_Settings.exe") { Copy-Item (Join-Path $build $f) "$payload\plugins\" }
+foreach ($f in "d2rl-vrcam.dll", "D2R_VR_Settings.exe", "D2R_VR_Headset_Report.exe") { Copy-Item (Join-Path $build $f) "$payload\plugins\" }   # (the report: tools/headset_report, beside the settings program)
 # no debug switch turned on reaches the players (tools/check_debug_defaults.py; 0.179 shipped the bow's aiming ray, 0.181 the log traces)
 & python (Join-Path $root "tools\check_debug_defaults.py") (Join-Path $root "d2r_vr.ini")
 if ($LASTEXITCODE -ne 0) { throw "d2r_vr.ini ships a debug switch turned on - set it back (python tools\check_debug_defaults.py d2r_vr.ini --fix) and build again" }

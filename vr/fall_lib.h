@@ -34,6 +34,9 @@ int Grab(const D2rfKnock& body, int hand, const float point[3], int joint = -1);
 int Hand(uint32_t id, int hand, const float pos[3]);
 int Release(uint32_t id, int hand);
 int Held(uint32_t id, int hand, float a[3], float b[3], float* r);
+void SetStrength(float strength);
+int SetHandStrength(uint32_t id, int hand, float strength);
+void SetBalance(bool on);   // a body held standing steps after a pull (D2rfSetBalance, optional) - kept, handed to the world when there is one   // (D2rfSetHandStrength, optional: 0 without it)   // the hands' strength ([weight] strength / 100) - kept, handed to the world when there is one (D2rfSetStrength, optional)
 void Reset();   // the world gone: every body down is let go of
 
 }  // namespace falllib

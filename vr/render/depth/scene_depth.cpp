@@ -166,7 +166,7 @@ bool OwnDepthNow() {
            g_set.platform.load() == 1;
 }
 // The effect draws something placed by the scene's depth: our sky in the void, the fog by distance, the cave ceiling
-bool DepthEffectsWanted() { return FogWanted() || OurSkyWanted() || g_arcaneSky.load() || CeilWanted() || GameSkyFixWanted(); }
+bool DepthEffectsWanted() { return FogWanted() || OurSkyWanted() || g_arcaneSky.load() || CeilWanted() || GameSkyFixWanted() || DistanceBlurWanted(); }
 // [render] no_reshade: the scene's depth copied (scenedepth::BindNative) - in VR, and in flat too while the effect draws what needs it
 // (vr/native_fx_depth.h: flat with "Our effect (old)" had none - the void over the whole picture, a black screen)
 bool NativeDepthNow() { return nativefxdepth::CopyWanted(g_noReShade, OwnDepthNow(), DepthEffectsWanted()); }

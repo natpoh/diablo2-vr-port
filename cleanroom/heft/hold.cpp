@@ -102,8 +102,9 @@ void Hold::SetBodies(const contact::Capsule* bodies, int n) {
 }
 
 void Hold::SetWalls(const walls::Wall* w, int n) {
-	nWalls_ = 0;
-	for (int i = 0; w && i < n && nWalls_ < walls::kMaxWalls; ++i) walls_[nWalls_++] = w[i];
+	nWalls_ = w ? std::clamp(n, 0, walls::kMaxWalls) : 0;
+	walls_.assign(w, w + nWalls_);   // (none given: nothing allocated - world_contact off)
+	if (nWalls_ > 0 && !wallMem_) wallMem_ = std::make_unique<walls::Memory>();
 }
 
 double Shape::Mass() const {
@@ -246,7 +247,7 @@ void Hold::Place(int hand, Kind kind, bool twoHanded, const Line& line, const Ha
 	strokeLeft_ = 0;
 	tearFor_  = 0;
 	stabBlob_ = {};
-	wallMem_.Clear();   // ([weight] world_contact: a weapon placed afresh came by no face - the walls it is in leave it alone until it is clear)
+	if (wallMem_) wallMem_->Clear();   // ([weight] world_contact: a weapon placed afresh came by no face - the walls it is in leave it alone until it is clear)
 	wall_ = {};
 	shape_ = ShapeOf(kind, twoHanded);
 	nHead_ = 0;   // (a new weapon: its head, if it has one, is told again)
@@ -992,7 +993,7 @@ void Hold::Step(const HandIn in[2], double dt, const Settings& s, HandOut out[2]
 			contact::Blade blades[3];
 			int nb = 0;
 			for (int i = 0; i < nPieces_ && i < 3; ++i) blades[nb++] = { pieces_[i].a, pieces_[i].b, std::max(0.01, pieces_[i].radius) };
-			walls::Resolve(st_, &before, body_, blades, nb, walls_, nWalls_, wallMem_, s.wallParams, &wall_);
+			walls::Resolve(st_, &before, body_, blades, nb, walls_.data(), nWalls_, *wallMem_, s.wallParams, &wall_);
 			// the controller far past the hand it holds the weapon with (behind the wall): the weapon back in that hand, through the wall - it leaves the weapon alone
 			// until it is clear of it (a weapon stuck on the near side of a wall the arm went through looks worse than one through it)
 			if (wall_.walls > 0 && s.wallReturn > 0) {
@@ -1000,14 +1001,14 @@ void Hold::Step(const HandIn in[2], double dt, const Settings& s, HandOut out[2]
 				const V3 hand = Add(body.pos, Rotate(body.rot, grips_[main_].at));
 				if (Len(Sub(in[main_].pose.pos, hand)) > s.wallReturn) {
 					heft::Place(st_, body_, grips_[main_], in[main_].pose);
-					wallMem_.Clear();
+					wallMem_->Clear();
 					++wallReturns_;
 					wall_.returned = 1;
 				}
 			}
 		} else {
 			wall_ = {};
-			if (putBack) wallMem_.Clear();
+			if (putBack && wallMem_) wallMem_->Clear();
 		}
 	}
 	if (stuck_ && !Held()) Unstick("the weapon left the hands");   // [weight] stab_in: let go, thrown, called back - in no body

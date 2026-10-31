@@ -16,9 +16,11 @@
 #include <cstdint>
 #include <cstring>
 
+#include "bone_cap.h"
+
 namespace dollpose {
 
-constexpr int kMaxBones = 256;
+constexpr int kMaxBones = bonecap::kCeiling;   // the arrays; a rig past bonecap::Max() ([weight] skeleton_bones_max) gets no doll
 constexpr int kMaxTurns = 8;        // the limbs of one monster that sway at once (and the lean)
 constexpr float kMaxAngle = 0.7f;   // radians: no limb or lean turns further (the doll holds its offsets to 25 / 20 cm anyway)
 constexpr float kLeanAt = 0.6f;     // the lean: the body's offset is where this share of its height goes
@@ -146,7 +148,7 @@ inline bool Build(const Rig& rig, float upm, const float* bodyOff, const LimbOff
     *out = Pose{};   // (all of it: a pose made in a slot a faded one had kept its fadeFromMs - 0.188.9, "нпс несколько секунд в начале игры поддаются, а потом
                      // перестают": every pose after the first let go was taken for one long faded, and skinned as the game's)
     out->bones = rig.bones;
-    if (!(upm > 1e-3f) || rig.bones <= 0 || rig.bones > kMaxBones || !rig.parent || rig.nCaps <= 0) return false;
+    if (!(upm > 1e-3f) || rig.bones <= 0 || rig.bones > bonecap::Max() || !rig.parent || rig.nCaps <= 0) return false;
     float mid[3] = {}, top = -1e30f;
     for (int i = 0; i < rig.nCaps; ++i)
         for (int k = 0; k < 3; ++k) {

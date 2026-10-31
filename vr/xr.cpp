@@ -72,6 +72,7 @@ int D2rvrHoverSpheres(float (*out)[8], int max);
 #include "frame_gen_lib.h"   // [openxr] frame_generation: OFXR Bridge, for this process only (shared/frame_gen.h)
 #include "eye_frame.h"   // [openxr] canted_eyes: both eyes drawn and submitted in the head's frame when the displays are canted (the pure maths)
 #include "eye_fov.h"   // [openxr] runtime_fov / symmetric_fov / fov_crop: the fov each eye is drawn and submitted with (the pure maths)
+#include "session_end.h"   // a live session end off the game's present: the exit asked for, the runtime's handles destroyed on a thread of their own
 #include "api_layers_lib.h"   // [openxr] block_listed_layers: implicit OpenXR layers known to break the picture off in this process (shared/api_layers.h)
 #include "hset_panel.h"   // the in-headset settings panel ([openxr] headset_settings): vr/xr_headset_settings.h
 #include "weight_wire.h"   // [weight] weapon_grip_no_chord: a grip on the weapon does not arm the settings panel's chord
@@ -146,6 +147,7 @@ struct Cfg {
     float ipdManualM = 0.063f;     // ipd_mm: the player's eye distance, metres (taken when ipd_auto is 0), live
     bool cantedEyes = true;        // canted_eyes: canted displays - both eyes drawn and submitted in the head's frame (vr/eye_frame.h); 0 = as before, live
     bool stopFlatVR = true;   // FlatVR stopped before the session, started again after
+    bool stopFlatVrWatch = true;   // stop_flatvr_watch: ... and stopped again when it starts while the session runs (vr/flatvr_gate.h Watch); 0 = only at the start
     bool busyGuard = true;    // busy_guard: the runtime's blocking calls with a limit, no session over a FlatVR that holds the headset (unticked: as before)
     unsigned waitFrameMs = 150;   // wait_frame_ms: how long the draw thread waits for xrWaitFrame (and xrBeginSession) before the VR frame is left out
     float quadM = 2.0f;       // outside a pair: the flat picture this far ahead, metres
@@ -655,9 +657,14 @@ const char* Res(XrResult r) {
 // A failed call to the log, once per call site and result.
 // Our swapchains alive in the session, by kind (vr/chain_count.h): each one made is told here, and each destroyed (DestroyChain, the reaper's too).
 chaincount::Tally<XrSwapchain> g_chains;
+// A live session end (vr/session_end.h): while Teardown runs, a swapchain is not destroyed in the game's present but handed to the end's own thread
+// (Virtual Desktop's xrDestroySwapchain waits for the game's queue with no limit - the 2026-10-31 freeze at on=0).
+bool g_deferDestroy = false;
+std::vector<XrSwapchain> g_goneChains;
 void DestroyChain(XrSwapchain sc) {
     if (!sc) return;
     g_chains.Gone(sc);
+    if (g_deferDestroy) { g_goneChains.push_back(sc); return; }
     xrDestroySwapchain(sc);
 }
 
@@ -1776,9 +1783,79 @@ void TurnTeardown();   // eyes by turns' kept pictures and pass (below)
 void TurnFrameEnd();   // ... the frame's steps given up: the other eye's image given back if vrcam did not finish (CloseFrame)
 void RetireChain(XrSwapchain& sc, const char* what);   // (below, with the swapchains' images: chain_reaper.h)
 void ReapAll();
+// A live session end's own thread (vr/session_end.h): what Teardown hands it, and how many are under way (a new session waits for none).
+struct GoneSession {
+    XrSession s = XR_NULL_HANDLE;
+    XrInstance i = XR_NULL_HANDLE;
+    std::vector<XrSwapchain> chains;
+    UINT64 fenceV = 0;       // our fence's value on the game's queue after our last work (0: not waited for)
+    bool requestExit = false;
+    bool stuck = false;
+};
+std::atomic<int> g_goneBusy{0};
+bool g_requestExit = false;   // Stop(false) sets it for the Teardown that follows: the session ran and we end it (the exit is asked for)
+DWORD WINAPI GoneThread(void* p) {
+    GoneSession* g = (GoneSession*)p;
+    const double t0 = UsNow();
+    // 1. the game's queue past our last work - no limit: this is not the game's thread, and the runtime's own flush (xrDestroySwapchain) then finds it run
+    if (g->fenceV && g_fence) {
+        HANDLE e = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+        if (e && SUCCEEDED(g_fence->SetEventOnCompletion(g->fenceV, e))) {
+            for (int s = 1; WaitForSingleObject(e, 1000) == WAIT_TIMEOUT; ++s)
+                if (s == 3) Log("vrcam: openxr - the session's end waits for the game's queue (3 s so far) - on its own thread, the game goes on");
+        }
+        if (e) CloseHandle(e);
+    }
+    // 2. the exit asked for, its STOPPING waited for, then xrEndSession (the spec's order: without it NOT_STOPPING)
+    const char* ended = "not asked";
+    if (g->s && g->requestExit) {
+        ended = "asked, the runtime gave no STOPPING in time";
+        if (XR_SUCCEEDED(xrRequestExitSession(g->s))) {
+            const double r0 = UsNow();
+            int state = sessionend::kUnknown;
+            for (;;) {
+                XrEventDataBuffer ev{XR_TYPE_EVENT_DATA_BUFFER};
+                while (g->i && xrPollEvent(g->i, &ev) == XR_SUCCESS) {
+                    if (ev.type == XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED) {
+                        const auto& sc = *(const XrEventDataSessionStateChanged*)&ev;
+                        if (sc.session == g->s) state = (int)sc.state;
+                    }
+                    ev = {XR_TYPE_EVENT_DATA_BUFFER};
+                }
+                const sessionend::Step step = sessionend::ExitStep(state, (UsNow() - r0) / 1000.0, sessionend::kExitTimeoutMs);
+                if (step == sessionend::Step::End) {
+                    const XrResult r = xrEndSession(g->s);
+                    ended = XR_SUCCEEDED(r) ? "ended at STOPPING" : "xrEndSession at STOPPING failed";
+                    break;
+                }
+                if (step == sessionend::Step::Skip) {
+                    if (state == sessionend::kIdle || state == sessionend::kExiting || state == sessionend::kLossPending) ended = "already stopped";
+                    break;
+                }
+                Sleep(5);
+            }
+        } else {
+            ended = "xrRequestExitSession failed";
+        }
+    }
+    // 3. the runtime's handles
+    for (XrSwapchain sc : g->chains) xrDestroySwapchain(sc);
+    if (g->s) xrDestroySession(g->s);
+    if (g->i) xrDestroyInstance(g->i);
+    LogF("vrcam: openxr - the session's end on its own thread: the exit %s, %u swapchain(s), the session and the instance destroyed in %.0f ms%s", ended,
+         (unsigned)g->chains.size(), (UsNow() - t0) / 1000.0, g->stuck ? " (a runtime call of ours had not returned)" : "");
+    delete g;
+    g_goneBusy.fetch_sub(1);
+    return 0;
+}
 void Teardown() {   // under g_lock or before the session exists
     g_running.store(false);
     gpufault::Note("xr: teardown");
+    // a live end (not the game's closing): the runtime's handles go on a thread of their own, never in the game's present (vr/session_end.h)
+    const bool stuckCall = (g_waitRunner && g_waitRunner->Running()) || (g_beginRunner && g_beginRunner->Running());
+    const sessionend::Plan plan = sessionend::PlanFor(g_final, gpufault::Removed(), stuckCall, g_requestExit);
+    g_requestExit = false;
+    g_deferDestroy = plan.offThread;
     if (!gpufault::Removed() && g_queue && g_fence) {   // our lists done before the swapchains they draw into go (Poll's loss path had no wait; Stop's is the same one)
         g_queue->Signal(g_fence, ++g_fenceV);
         WaitFence(g_fenceV, 500);
@@ -1866,7 +1943,29 @@ void Teardown() {   // under g_lock or before the session exists
         g_inSent = false;
     }
     if (g_space) { xrDestroySpace(g_space); g_space = XR_NULL_HANDLE; }
-    const bool stuck = (g_waitRunner && g_waitRunner->Running()) || (g_beginRunner && g_beginRunner->Running());
+    g_deferDestroy = false;
+    if (plan.offThread && (g_session || g_inst || !g_goneChains.empty())) {   // a live end: handed over, the game's present goes on at once
+        GoneSession* gone = new GoneSession;
+        gone->s = g_session;
+        gone->i = g_inst;
+        gone->chains.swap(g_goneChains);
+        gone->requestExit = plan.requestExit;
+        gone->stuck = stuckCall;
+        if (plan.waitQueue && g_queue && g_fence && SUCCEEDED(g_queue->Signal(g_fence, g_fenceV + 1))) gone->fenceV = ++g_fenceV;
+        g_goneBusy.fetch_add(1);
+        if (HANDLE h = CreateThread(nullptr, 0, GoneThread, gone, 0, nullptr)) {
+            CloseHandle(h);
+            g_session = XR_NULL_HANDLE;
+            g_inst = XR_NULL_HANDLE;
+        } else {   // (no thread: as before, here)
+            g_goneBusy.fetch_sub(1);
+            for (XrSwapchain sc : gone->chains) xrDestroySwapchain(sc);
+            delete gone;
+        }
+    }
+    for (XrSwapchain sc : g_goneChains) xrDestroySwapchain(sc);   // (none: a closing end destroys them where they go)
+    g_goneChains.clear();
+    const bool stuck = stuckCall;
     if (stuck && (g_session || g_inst)) {   // a runtime call of ours has not returned: the session and the instance are destroyed on a thread that may wait for good, not here
         struct Gone { XrSession s; XrInstance i; };
         Gone* gone = new Gone{g_session, g_inst};
@@ -4276,7 +4375,7 @@ bool CopyInto(Chain& c, ID3D12Resource* bb) {
     return Ok(xrReleaseSwapchainImage(c.sc, &ri), "xrReleaseSwapchainImage");
 }
 
-void EndSessionNow(const char* why);
+void EndSessionNow(const char* why, bool callEnd = true);
 
 // The runtime failed (xr_failure.h; 2026-10-17: Virtual Desktop's xrBeginFrame answered XR_ERROR_RUNTIME_FAILURE for as long as the game lived): the session is
 // given up - nothing more is submitted, the game goes on flat (FlatVR started again where it was ours to stop), and with the device alive a new session is made after
@@ -4306,11 +4405,13 @@ void GiveUp(const char* what, XrResult r) {
     }
 }
 
-void EndSessionNow(const char* why) {
+// callEnd false: a live end of ours (Stop(false)) - xrEndSession comes after the exit was asked for and the session is STOPPING, on the end's own thread
+// (Teardown, GoneThread); called on a running session it only failed with XR_ERROR_SESSION_NOT_STOPPING (2026-10-31).
+void EndSessionNow(const char* why, bool callEnd) {
     directinput::SessionEnd();   // what the session held in the game is let go
     g_pairYawAt.store(0);
     const bool wasRunning = g_running.exchange(false);
-    if (wasRunning && g_session) {
+    if (wasRunning && g_session && callEnd) {
         if ((g_waitRunner && g_waitRunner->Running()) || (g_beginRunner && g_beginRunner->Running()))
             Log("vrcam: openxr - xrEndSession left out: a runtime call of ours has not returned");
         else
@@ -4359,7 +4460,36 @@ void BeginSession() {
 
 // The runtime's events: begin when it says ready, end when it says stopping, give
 // the headset back to FlatVR when the session or the instance is lost.
+// [openxr] stop_flatvr_watch (vr/flatvr_gate.h Watch): a FlatVR that starts while the native session runs is stopped again through Game Link -
+// before it, one not running at the session's start ran beside it for the rest of the game. A look a second, on the game thread (Poll).
+flatgate::Watch g_flatWatch;
+void WatchFlatVR() {
+    static ULONGLONG at = 0;
+    const ULONGLONG now = GetTickCount64();
+    if (now - at < 1000) return;
+    at = now;
+    const bool on = g_cfg.stopFlatVR && g_cfg.stopFlatVrWatch && g_running.load() && !g_stopWanted.load();
+    bool present = false;
+    const uint32_t c = on ? FlatVRCounter(&present) : 0;
+    uint32_t caps = 0;
+    const bool canStop = on && present && link::HostAlive(&caps) && (caps & BW_LINK_CAP_FLATVR_RUNNING);
+    switch (g_flatWatch.Look(on, present, c, canStop, now)) {
+        case flatgate::Watch::Do::Stop:
+            link::RequestFlatVR(false);
+            g_flatVrStopped = true;   // started again when native ends, as the one stopped at the session's start
+            Log("vrcam: openxr - FlatVR runs beside the native session (its head sample moves - started after the session began): stopped again through "
+                "Game Link ([openxr] stop_flatvr_watch)");
+            break;
+        case flatgate::Watch::Do::CannotStop:
+            Log("vrcam: openxr - FlatVR runs beside the native session (its head sample moves) and BodyWalk's Game Link is not there to stop it (BodyWalk "
+                "Lite?): stop FlatVR in BodyWalk - both share the headset's frames");
+            break;
+        default: break;
+    }
+}
+
 void Poll() {
+    WatchFlatVR();
     if (g_beginPending && !g_running.load() && g_session) BeginSession();   // asked for earlier and not answered: has it come?
     XrEventDataBuffer ev{XR_TYPE_EVENT_DATA_BUFFER};
     while (g_inst && xrPollEvent(g_inst, &ev) == XR_SUCCESS) {
@@ -5622,6 +5752,7 @@ void LoadSettings(const wchar_t* ini) {
     GetPrivateProfileStringW(L"openxr", L"space", L"local", sp, 32, ini);
     g_cfg.stage = _wcsicmp(sp, L"stage") == 0;   // (taken when a session starts)
     g_cfg.stopFlatVR = f(L"stop_flatvr", 1.0f) != 0.0f;
+    g_cfg.stopFlatVrWatch = f(L"stop_flatvr_watch", 1.0f) != 0.0f;   // (live)
     g_cfg.busyGuard = f(L"busy_guard", 1.0f) != 0.0f;   // the runtime's blocking calls with a limit; no session over a FlatVR that cannot be stopped
     g_cfg.waitFrameMs = (unsigned)std::clamp(f(L"wait_frame_ms", 150.0f), 20.0f, 2000.0f);
     g_reapDrainMaxMs.store(std::clamp(f(L"reap_drain_max_ms", 200.0f), 20.0f, 500.0f));   // (chain_reaper.h DrainMs; 20 = as before)
@@ -6068,6 +6199,11 @@ void Stop(bool final);
 // The session started on the game's device and queue (a worker thread), once.
 void Start(ID3D12Device* dev, ID3D12CommandQueue* queue) {
     if (g_state.load() != kIdle || !dev || !queue) return;
+    if (g_goneBusy.load() > 0) {   // the last session's end still on its own thread: one instance at a time - tried again at the next present
+        static ULONGLONG told = 0;
+        if (GetTickCount64() - told > 5000) { told = GetTickCount64(); Log("vrcam: openxr - a new session waits for the last one's end to finish"); }
+        return;
+    }
     gpufault::Watch(dev);   // (vrcam does it from every present; here too, for a session that starts first)
     g_dev = dev;
     g_queue = queue;
@@ -6742,12 +6878,16 @@ void FollowLink() {
 // The session and the instance gone, FlatVR started again; final: the game is closing.
 void Stop(bool final) {
     if (g_state.load() == kStarting) Sleep(200);   // (a start under way finishes under the lock)
+    if (final)   // the DLL goes after this: a live end still destroying on its own thread is given a short while (vr/session_end.h)
+        for (unsigned waited = 0; g_goneBusy.load() > 0 && waited < sessionend::kCloseWaitMs; waited += 10) Sleep(10);
     AcquireSRWLockExclusive(&g_lock);
     if (final) g_final = true;
     const bool had = g_session || g_inst;
     if (had) {
         if (g_kind != kNone) CloseFrame();
-        if (g_running.load()) EndSessionNow(final ? "the game is closing" : "switched off");
+        // a live switch-off: the exit asked for and the session ended on the end's own thread (Teardown); the game closing: here, as before
+        if (!final) g_requestExit = g_running.load() && g_session;
+        if (g_running.load()) EndSessionNow(final ? "the game is closing" : "switched off", final);
         if (g_queue && g_fence) { g_queue->Signal(g_fence, ++g_fenceV); WaitFence(g_fenceV, 500); }   // our copies done before the images go
         Teardown();
         Log("vrcam: openxr - session and instance gone");

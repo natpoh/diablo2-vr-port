@@ -34,6 +34,8 @@ struct Settings {
     float staggerPct = 45.0f;   // [weight] knock_down_stagger_pct: a blow of this share of it staggers (0: never)
     float lieMs = 1500.0f;      // [weight] knock_down_lie_ms: how long it lies before it gets up
     float massScale = 1.0f;     // [weight] monster_weight_pct / 100
+    bool balance = true;        // [weight] grab_balance: held standing and pulled, it steps after the pull (only a pull its legs cannot catch takes it off its feet)
+    float strength = 1.0f;      // [weight] strength / 100: the hands that hold a body (each at most D2RF_HAND_MAX_FORCE x it - a body's weight shows in them)
 };
 void Configure(const Settings& s);
 bool Wanted();        // either of them on
@@ -65,6 +67,10 @@ uint32_t Holding(int side);
 // The world-matrix hook's writer (headshadow::SetAttachWriter -> potion_hide's hook; the renderer's thread): what hangs on a body drawn out of the game's pose -
 // its weapon, its shield - goes with the bone it hangs on as drawn.
 void OnXform(uint32_t entity, uintptr_t component, uintptr_t out);
+// ModelDrawCollect, just before the game's own (headshadow::SetBeforeDraw; the render workers): an entity of a body drawn away from its place has its bounds
+// grown again here - after whatever made them again this frame, before the pass decides on it (Serg, 0.192.39: «когда беру за руку нпс, он по-прежнему
+// мерцает»: the game made each entity's box again about every frame, and the hook's and the timer's growth came before that in about 40 % of them).
+void BeforeDraw(uint32_t entity, bool eyes);
 
 // The touch's timer, every tick the bodies are made: the scan's units (ids, their game modes), the rigs read and which rig each unit is (rigOf), the hero
 // (world units). Puts a pose for every body drawn out of the game's pose into made[n..cap) (replacing one for the same skeleton) and returns the new count.

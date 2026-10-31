@@ -170,6 +170,14 @@ inline handvitals::OrbSpot SpotFor(const Config& cfg, int side) { return side ==
 // forearm: the forearm's own twist), its base one radius in from the box's end at the wrist, so it rides the forearm next to the hand wherever the arm is drawn - by the controllers,
 // held on a body, by the game's animation. A medallion's base plate rests on that surface; a full ball touches it. Its frame is the forearm's: along the bone, out of the back of the
 // wrist. `under` (0 - 1) rolls it about the forearm by cfg.orbShield.turnDeg, to the box's surface on that side. `lateralM`: both balls on one wrist side by side. Not ok without a box.
+// Anchored on the bone's own line, the box giving only how far out its surface lies (Serg, 0.192.36: the medallion 10-15 cm beside the wrist after a
+// restart, the same armour on - "I changed nothing"): until then the ball went to the box's middle and out to its surface, so a box off the bone (a piece
+// of armour bound to the forearm on one side, or another set of meshes read at another start) carried it sideways, and one running past the wrist onto
+// the hand. Now: across the forearm on the line elbow -> wrist; along it one radius in from the box's end at the wrist, never past the wrist joint; out of
+// the back of the wrist by the box's reach from that line, kept within kBoneBackMin..kBoneBackMax of the forearm's length (a box padded far out by armour
+// does not float it off the arm).
+constexpr float kBoneBackMin = 0.06f;   // (of the forearm's length: ~1.6 cm on a 27 cm forearm)
+constexpr float kBoneBackMax = 0.30f;   // (~8 cm)
 inline Place OnBone(const Arm& arm, const Config& cfg, int side, float lateralM = 0.0f, float under = 0.0f) {
     Place p;
     if (!arm.ok || !arm.hasBox || !Finite(arm.elbow) || !Finite(arm.wrist) || !Finite(arm.across) || !Finite(arm.boxC) || !Finite(arm.boxH[0]) || !Finite(arm.boxH[1]) ||
@@ -194,7 +202,10 @@ inline Place OnBone(const Arm& arm, const Config& cfg, int side, float lateralM 
     const float r = cfg.orbSizeCm * 0.005f;   // (the base radius, as Step has it)
     const float lift = cfg.orbShape == handvitals::kShapeMedallion || cfg.style == handvitals::kStyleGlobes ? PlateThickness(r) : r;   // (a medallion's plate on the skin)
     const V3 lateral = Cross(a, back);   // (toward the thumb on the left hand, toward the little finger on the right one)
-    p.c = hset::Add(hset::Add(arm.boxC, hset::Mul(a, reach(a) - r)), hset::Add(hset::Mul(back, reach(back) + lift), hset::Mul(lateral, lateralM)));
+    const V3 off = hset::Sub(arm.boxC, arm.wrist);   // (the box's middle against the wrist joint)
+    const float endAlong = std::min(hset::Dot(off, a) + reach(a), 0.0f);   // its end at the wrist, from the wrist joint - never past it
+    const float out = std::clamp(hset::Dot(off, back) + reach(back), kBoneBackMin * fl, kBoneBackMax * fl);   // its surface out of the back, from the bone line
+    p.c = hset::Add(hset::Add(arm.wrist, hset::Mul(a, endAlong - r)), hset::Add(hset::Mul(back, out + lift), hset::Mul(lateral, lateralM)));
     p.ok = Finite(p.c);
     p.hasArm = true;
     p.armAxis = a;

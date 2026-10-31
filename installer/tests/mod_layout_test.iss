@@ -41,6 +41,8 @@ Compression=none
 [Files]
 ; D2R VR Settings beside D2R.exe, as the real Setup has it
 Source: "{#PayloadDir}\plugins\D2R_VR_Settings.exe"; DestDir: "{app}"; Flags: ignoreversion
+; ... and D2R VR Headset Report beside it, as the real Setup has it
+Source: "{#PayloadDir}\plugins\D2R_VR_Headset_Report.exe"; DestDir: "{app}"; Flags: ignoreversion
 #include "..\mod_files.inc"
 #include "..\launcher_bundle_files.inc"
 

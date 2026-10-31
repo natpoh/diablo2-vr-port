@@ -14,11 +14,12 @@
 #include <cstdint>
 #include <cstring>
 
+#include "bone_cap.h"
 #include "d2r_vr_fall.h"
 
 namespace knockpose {
 
-constexpr int kMaxBones = 256;
+constexpr int kMaxBones = bonecap::kCeiling;   // the arrays (a body is knocked down only within bonecap::Max(): knock_down.cpp)
 
 namespace detail {
 struct V { float x = 0, y = 0, z = 0; };

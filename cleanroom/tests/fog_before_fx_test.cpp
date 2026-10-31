@@ -22,6 +22,7 @@
 #include <cstring>
 #include <unordered_map>
 #include <vector>
+#include <vector>
 
 // (the hooks are not in this test: the sinks are called as they would call them)
 static std::unordered_map<uint64_t, ID3D12Resource*> g_rtvs;
@@ -102,6 +103,7 @@ static const char* kGameCs = "cbuffer C : register(b0) { uint v; }; RWByteAddres
 
 // --debug: the D3D12 debug layer with GPU-based validation (the Graphics Tools feature); every error or corruption it reports fails the test
 int main(int argc, char** argv) {
+    std::setvbuf(stdout, nullptr, _IONBF, 0);   // (a crash leaves every line before it)
     const bool debugLayer = argc > 1 && std::strcmp(argv[1], "--debug") == 0;
     if (debugLayer) {
         ID3D12Debug* dbg = nullptr;
@@ -262,6 +264,7 @@ int main(int argc, char** argv) {
     bool decoyAfter = false;       // a full-size R11G11B10 target the resolve does not read, bound with the same depth after the scene
     bool holes = false;            // holes in the depth: one pixel (10, 10); a line of three at (20 - 22, 40)
     bool holeKey = false;          // [fog] game_fog_fx_depth on
+    float skyDepth = 0.0f;         // [sky] game_sky: the game's dome's depth band (Params::skyDepth)
     bool depthUntold = false;      // no barrier of the depth this frame (its state from an earlier frame's: stale)
     bool depthElsewhere = false;   // the depth's barrier to its read state told on another list this frame
     int sceneElse = 0;             // the scene's barrier to a shader resource told on another list: 1 this frame; 2 then a later one to a
@@ -269,6 +272,9 @@ int main(int argc, char** argv) {
     bool curveOn = false;   // [fog] game_fog_our_curve: our effect's curve (20 - 80, curve 1.5, strength 0.9) in place of the exponential
     const float cStart = 20.0f, cEnd = 80.0f, cCurve = 1.5f, cStrength = 0.9f;
     bool ours = false;      // our effect's fog ([fog] game_fog=0): that curve by the view's depth (D2R_DepthFog.fx FogAmount), not the length
+    // rectangles painted over the cleared frame: their depth and their colour (a silhouette against the sky)
+    struct Patch { D3D12_RECT r; float depth; float rgb[3]; };
+    std::vector<Patch> patches;
     // one frame's end as the game records it; the resolve's output at pixel (px, py) and the game's dispatch's word back
     auto frame = [&](bool on, float depthValue, float px, float py, float rgb[3], uint32_t* gameWord) {
         fogfx::Params p;
@@ -280,7 +286,8 @@ int main(int argc, char** argv) {
         p.ourCurve = curveOn || ours;
         p.ours = ours;
         p.start = cStart; p.end = cEnd; p.curve = cCurve; p.strength = cStrength;
-        p.fxDepth = holeKey;
+        p.fxDepth = holeKey;   // (the holes go with the step now, not with this - holeKey off checks a hole with it off)
+        p.skyDepth = skyDepth;
         fogfx::Configure(p);
         fogfx::Frame();   // (a present between frames)
         alloc->Reset();
@@ -297,6 +304,11 @@ int main(int argc, char** argv) {
         if (holes) {
             const D3D12_RECT hr[2] = {{10, 10, 11, 11}, {20, 40, 23, 41}};
             cl->ClearDepthStencilView(dsv, D3D12_CLEAR_FLAG_DEPTH, 0.0f, 0, 2, hr);
+        }
+        for (const Patch& pt : patches) {
+            const float pc[4] = {pt.rgb[0], pt.rgb[1], pt.rgb[2], 1};
+            cl->ClearRenderTargetView(rtvScene, pc, 1, &pt.r);
+            cl->ClearDepthStencilView(dsv, D3D12_CLEAR_FLAG_DEPTH, pt.depth, 0, 1, &pt.r);
         }
         auto* other = (ID3D12GraphicsCommandList*)(uintptr_t)0x5CE7F;
         D3D12_RESOURCE_BARRIER b = Tr(scene, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
@@ -555,9 +567,95 @@ int main(int argc, char** argv) {
         CHECK(std::fabs(got[0] - grey) < 0.01f && std::fabs(got[2] - grey) < 0.01f);
         ours = false;
         holeKey = false;
-        frame(true, d, 10, 10, got, &word);   // (the key off: the hole the scene's, as before)
-        CHECK(std::fabs(got[0] - grey) < 0.01f);
+        frame(true, d, 10, 10, got, &word);   // (game_fog_fx_depth off: the hole fogged all the same - it goes with the step)
+        expect(d, 10, 10, want);
+        CHECK(near3(got, want));
         holes = false;
+    }
+    // 2h: [sky] game_sky - the game's dome far out (its depth near / 1130, under the band's near / (1130 x 0.98)): left as it is, the
+    // game's pass leaves it too (Serg 2026-10-31, 0.192.19: its low part fogged behind the trees - "обводка вокруг объектов"); without the
+    // dome told, the same depth is fogged as before; a hole beside the dome (holes on) is the sky's, not fogged by the dome's depth
+    {
+        const float dome = nearPlane / 1130.0f, band = nearPlane / (1130.0f * 0.98f);
+        skyDepth = band;
+        frame(true, dome, 32, 32, got, &word);
+        std::printf("  the game's dome (its band told), pixel 32 32: %.4f %.4f %.4f (the scene's %.4f)\n", got[0], got[1], got[2], grey);
+        CHECK(std::fabs(got[0] - grey) < 0.01f && std::fabs(got[2] - grey) < 0.01f);
+        holes = holeKey = true;
+        frame(true, dome, 10, 10, got, &word);
+        std::printf("  a hole beside the dome only, pixel 10 10: %.4f %.4f %.4f (the scene's %.4f)\n", got[0], got[1], got[2], grey);
+        CHECK(std::fabs(got[0] - grey) < 0.01f && std::fabs(got[2] - grey) < 0.01f);
+        // ... off the view's middle, the dome's depth there near / (1130 x cos) - past the band by the depth alone (Serg on 0.192.39, 126.webp:
+        // a ten-sided disc straight ahead the only sky, the dome round it fogged as ground): the sky by the pixel's view ray, and a hole there
+        auto ray = [](float px, float py) {
+            const float x = (px + 0.5f) / 32.0f - 1.0f, y = 1.0f - (py + 0.5f) / 32.0f;
+            return std::sqrt(1.0f + x * x + y * y);
+        };
+        frame(true, dome * ray(10, 10), 10, 10, got, &word);
+        std::printf("  ... a hole beside the dome off the middle (its depth x%.3f), pixel 10 10: %.4f %.4f %.4f\n", ray(10, 10), got[0], got[1], got[2]);
+        CHECK(dome * ray(10, 10) > band && std::fabs(got[0] - grey) < 0.01f && std::fabs(got[2] - grey) < 0.01f);
+        holes = holeKey = false;
+        frame(true, dome * ray(2, 2), 2, 2, got, &word);
+        std::printf("  the dome near the corner (its depth x%.3f), pixel 2 2: %.4f %.4f %.4f\n", ray(2, 2), got[0], got[1], got[2]);
+        CHECK(std::fabs(got[0] - grey) < 0.01f && std::fabs(got[2] - grey) < 0.01f);
+        frame(true, dome * ray(2, 2) * 1.05f, 2, 2, got, &word);   // (5 % nearer there than the dome: ground, fogged)
+        expect(dome * ray(2, 2) * 1.05f, 2, 2, want);
+        std::printf("  ... 5 %% nearer than the dome there: %.4f %.4f %.4f (the formula %.4f %.4f %.4f)\n", got[0], got[1], got[2], want[0], want[1], want[2]);
+        CHECK(near3(got, want) && std::fabs(got[0] - grey) > 0.02f);
+        skyDepth = 0.0f;
+        frame(true, dome, 32, 32, got, &word);
+        expect(dome, 32, 32, want);
+        std::printf("  ... no dome told, the same depth: %.4f %.4f %.4f (the formula %.4f %.4f %.4f)\n", got[0], got[1], got[2], want[0], want[1], want[2]);
+        CHECK(near3(got, want) && std::fabs(got[0] - grey) > 0.02f);
+    }
+    // 2i: the game's fog at a silhouette's edge against the game's dome (Serg on 0.192.34 - 0.192.40: "чтобы туман игры был без полос
+    // вокруг объектов"). A dark fence far in the fog (x < 32) against a lighter sky (x > 32); the edge column x = 32 blends the two half and
+    // half but holds one depth. Its pixel must lie between the fogged fence and the sky beside it, whichever depth it holds - left whole
+    // as the sky, the fence's unfogged half in it was a dark line round every fogged silhouette. Our effect's fog in the step keeps its
+    // old answer (the old fog not touched)
+    {
+        const float dome = nearPlane / 1130.0f, band = nearPlane / (1130.0f * 0.98f), fence = nearPlane / 200.0f;
+        const float T[3] = {0.02f, 0.02f, 0.02f}, S[3] = {0.3f, 0.15f, 0.08f};
+        const float E[3] = {0.5f * (T[0] + S[0]), 0.5f * (T[1] + S[1]), 0.5f * (T[2] + S[2])};
+        skyDepth = band;
+        curveOn = true;
+        float kFence;
+        {   // (the fence's keep by the formula: the scene's grey toward the fog)
+            float w[3];
+            expect(fence, 31, 32, w);
+            kFence = (w[0] - fog[0]) / (grey - fog[0]);
+        }
+        float Tf[3];
+        for (int i = 0; i < 3; ++i) Tf[i] = fog[i] + (T[i] - fog[i]) * kFence;
+        auto between = [&](const float v[3]) {
+            for (int i = 0; i < 3; ++i)
+                if (v[i] < std::fmin(Tf[i], S[i]) - 0.006f || v[i] > std::fmax(Tf[i], S[i]) + 0.006f) return false;
+            return true;
+        };
+        const char* const kEdge[3] = {"the sky's depth", "the fence's depth", "no depth (under the dome)"};
+        const float edgeDepth[3] = {dome, fence, 0.0f};
+        for (int e = 0; e < 3; ++e) {
+            patches = {{{0, 0, 32, 64}, fence, {T[0], T[1], T[2]}}, {{33, 0, 64, 64}, dome, {S[0], S[1], S[2]}},
+                       {{32, 0, 33, 64}, edgeDepth[e], {E[0], E[1], E[2]}}};
+            frame(true, dome, 32, 32, got, &word);
+            std::printf("  the edge with %s: %.4f %.4f %.4f (the fogged fence %.4f %.4f %.4f, the sky %.4f %.4f %.4f)\n", kEdge[e], got[0], got[1],
+                        got[2], Tf[0], Tf[1], Tf[2], S[0], S[1], S[2]);
+            CHECK(between(got));
+            float f[3], s[3];
+            frame(true, dome, 30, 32, f, &word);
+            frame(true, dome, 34, 32, s, &word);
+            CHECK(near3(f, Tf) && std::fabs(s[0] - S[0]) < 0.01f && std::fabs(s[2] - S[2]) < 0.01f);   // (the fence and the sky away from it as before)
+        }
+        // our effect's fog in the step: as it was - the edge with the sky's depth left whole, the one with the fence's fogged by it
+        ours = true;
+        patches = {{{0, 0, 32, 64}, fence, {T[0], T[1], T[2]}}, {{33, 0, 64, 64}, dome, {S[0], S[1], S[2]}}, {{32, 0, 33, 64}, dome, {E[0], E[1], E[2]}}};
+        frame(true, dome, 32, 32, got, &word);
+        std::printf("  ... our effect's fog, the edge with the sky's depth: %.4f %.4f %.4f (left as drawn, %.4f)\n", got[0], got[1], got[2], E[0]);
+        CHECK(std::fabs(got[0] - E[0]) < 0.006f && std::fabs(got[1] - E[1]) < 0.006f);
+        ours = false;
+        curveOn = false;
+        patches.clear();
+        skyDepth = 0.0f;
     }
     // 3: the void
     frame(true, 0.0f, 32, 32, got, &word);
@@ -664,6 +762,13 @@ int main(int argc, char** argv) {
         fogfx::MarkResolve(fxResolve);
 
         // one frame's end: the wall at the depth wallD, the effects at effD; out at (px, py) back
+        // the game records its effects on another list than its resolve's (PC1 2026-10-31 16:03, 0.192.21: "0 steps fogged the effects")
+        ID3D12CommandAllocator* alloc2 = nullptr;
+        ID3D12GraphicsCommandList* cl2 = nullptr;
+        dev->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, __uuidof(ID3D12CommandAllocator), (void**)&alloc2);
+        dev->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, alloc2, nullptr, __uuidof(ID3D12GraphicsCommandList), (void**)&cl2);
+        cl2->Close();
+        bool apart = false;   // the scene and the effects on cl2, the resolve on cl (run in that order)
         auto fxFrame = [&](bool fxDepth, float wallD, float effD, float px, float py, float rgb[3]) {
             fogfx::Params p;
             p.on = true;
@@ -677,47 +782,56 @@ int main(int argc, char** argv) {
             alloc->Reset();
             cl->Reset(alloc, nullptr);
             k.fxReset(cl);
-            k.fxTargets(cl, 1, &rtvScene, false, depth, &dsv);
-            cl->OMSetRenderTargets(1, &rtvScene, FALSE, &dsv);
+            ID3D12GraphicsCommandList* ec = cl;
+            if (apart) {
+                alloc2->Reset();
+                cl2->Reset(alloc2, nullptr);
+                k.fxReset(cl2);
+                ec = cl2;
+            }
+            k.fxTargets(ec, 1, &rtvScene, false, depth, &dsv);
+            ec->OMSetRenderTargets(1, &rtvScene, FALSE, &dsv);
             const float c[4] = {grey, grey, grey, 1}, none[4] = {0, 0, 0, 0};
-            cl->ClearRenderTargetView(rtvScene, c, 0, nullptr);
-            cl->ClearDepthStencilView(dsv, D3D12_CLEAR_FLAG_DEPTH, wallD, 0, 0, nullptr);
-            cl->ClearRenderTargetView(rtvAccum, none, 0, nullptr);
-            cl->ClearRenderTargetView(rtvGlow, none, 0, nullptr);
+            ec->ClearRenderTargetView(rtvScene, c, 0, nullptr);
+            ec->ClearDepthStencilView(dsv, D3D12_CLEAR_FLAG_DEPTH, wallD, 0, 0, nullptr);
+            ec->ClearRenderTargetView(rtvAccum, none, 0, nullptr);
+            ec->ClearRenderTargetView(rtvGlow, none, 0, nullptr);
             // the effects
             natived3d::RootCall rc{natived3d::RootCall::kGraphicsRootSignature, 0, (uint64_t)(uintptr_t)fxRoot};
-            k.fxRoot(cl, rc);
-            cl->SetGraphicsRootSignature(fxRoot);
+            k.fxRoot(ec, rc);
+            ec->SetGraphicsRootSignature(fxRoot);
             uint32_t zb = 0;
             std::memcpy(&zb, &effD, 4);
-            cl->SetGraphicsRoot32BitConstant(0, zb, 0);
-            cl->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+            ec->SetGraphicsRoot32BitConstant(0, zb, 0);
+            ec->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
             const D3D12_VIEWPORT full{0, 0, 64, 64, 0, 1}, half{0, 0, 32, 32, 0, 1};
             const D3D12_RECT fullR{0, 0, 64, 64}, halfR{0, 0, 32, 32};
-            cl->RSSetViewports(1, &full);
-            cl->RSSetScissorRects(1, &fullR);
-            k.fxTargets(cl, 1, &rtvAccum, false, depth, &dsv);
-            cl->OMSetRenderTargets(1, &rtvAccum, FALSE, &dsv);
-            cl->SetPipelineState(fxAccum);
-            k.fxBound(cl, fxAccum);
-            k.fxDraw(cl, false, 3, 1, 0, 0, 0);
-            cl->DrawInstanced(3, 1, 0, 0);
-            cl->RSSetViewports(1, &half);
-            cl->RSSetScissorRects(1, &halfR);
-            k.fxTargets(cl, 1, &rtvGlow, false, depth, &dsv);
-            cl->OMSetRenderTargets(1, &rtvGlow, FALSE, &dsv);
-            cl->SetPipelineState(fxGlowPso);
-            k.fxBound(cl, fxGlowPso);
-            k.fxDraw(cl, false, 3, 1, 0, 0, 0);
-            cl->DrawInstanced(3, 1, 0, 0);
+            ec->RSSetViewports(1, &full);
+            ec->RSSetScissorRects(1, &fullR);
+            k.fxTargets(ec, 1, &rtvAccum, false, depth, &dsv);
+            ec->OMSetRenderTargets(1, &rtvAccum, FALSE, &dsv);
+            ec->SetPipelineState(fxAccum);
+            k.fxBound(ec, fxAccum);
+            k.fxDraw(ec, false, 3, 1, 0, 0, 0);
+            ec->DrawInstanced(3, 1, 0, 0);
+            ec->RSSetViewports(1, &half);
+            ec->RSSetScissorRects(1, &halfR);
+            k.fxTargets(ec, 1, &rtvGlow, false, depth, &dsv);
+            ec->OMSetRenderTargets(1, &rtvGlow, FALSE, &dsv);
+            ec->SetPipelineState(fxGlowPso);
+            k.fxBound(ec, fxGlowPso);
+            k.fxDraw(ec, false, 3, 1, 0, 0, 0);
+            ec->DrawInstanced(3, 1, 0, 0);
             // the resolve reads them all
             const D3D12_RESOURCE_STATES depthRead = D3D12_RESOURCE_STATE_DEPTH_READ | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
             D3D12_RESOURCE_BARRIER rb[4] = {Tr(scene, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
                                             Tr(accum, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
                                             Tr(glow, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
                                             Tr(depth, D3D12_RESOURCE_STATE_DEPTH_WRITE, depthRead)};
-            k.fxBarrier(cl, 4, rb);
-            cl->ResourceBarrier(4, rb);
+            k.fxBarrier(ec, 4, rb);
+            ec->ResourceBarrier(4, rb);
+            if (apart) CHECK(SUCCEEDED(cl2->Close()));
+            cl->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);   // (the resolve's list: its own input state)
             ID3D12DescriptorHeap* heaps[1] = {fxSrvHeap};
             k.fxHeaps(cl, 1, heaps);
             cl->SetDescriptorHeaps(1, heaps);
@@ -748,8 +862,8 @@ int main(int argc, char** argv) {
             bb[0] = Tr(out, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
             cl->ResourceBarrier(1, bb);
             CHECK(SUCCEEDED(cl->Close()));
-            ID3D12CommandList* lists[1] = {cl};
-            g_q->ExecuteCommandLists(1, lists);
+            ID3D12CommandList* lists[2] = {cl2, cl};
+            g_q->ExecuteCommandLists(apart ? 2 : 1, apart ? lists : lists + 1);
             g_q->Signal(fence, ++fv);
             while (fence->GetCompletedValue() < fv) Sleep(1);
             CHECK(SUCCEEDED(dev->GetDeviceRemovedReason()));
@@ -805,6 +919,13 @@ int main(int argc, char** argv) {
         fxWant(true, wall, nearPlane / 40.0f, want);
         std::printf("  the effects far after near: %.4f %.4f %.4f (want %.4f %.4f %.4f)\n", got[0], got[1], got[2], want[0], want[1], want[2]);
         CHECK(near3(got, want));
+        // the effects on another list than the resolve's, as the game records them: fogged by their depth all the same
+        apart = true;
+        fxFrame(true, wall, nearPlane / 40.0f, 32, 32, got);
+        std::printf("  the effects far, drawn on another list than the resolve's: %.4f %.4f %.4f (want %.4f %.4f %.4f)\n", got[0], got[1], got[2],
+                    want[0], want[1], want[2]);
+        CHECK(near3(got, want));
+        apart = false;
     }
     if (g_fail) { std::printf("fog_before_fx_test: %d FAILED\n", g_fail); return 1; }
     std::printf("fog_before_fx_test: the scene fogged before the resolve by the game's formula and by our effect's curve, the void, off and states not known on the resolve's "

@@ -28,17 +28,27 @@
 
 namespace hset {
 
-constexpr int kMaxPages = 14;
+constexpr int kMaxPages = 18;
 constexpr int kRowsPerPage = 6;
 constexpr int kRowsMax = 7;   // a page with a row more than kRowsPerPage stands its rows closer (the Melee page; hset_model.h RowStep)
 // A page is a line more here, in kPageNames and in kMaxPages / kPageCount (the tabs share the panel's width in proportion to their names:
 // hset_model.h kTab). After HUD come the belt's page, the hit-by-touch page (Melee), the two key-binding pages (Left, Right) and the co-op relay
-// bridge (Co-op); the first-start guide stays the last.
+// bridge (Co-op), Vibration, then World; the first-start guide stays the last.
+// World (Serg, 2026-10-31: the basic world-interaction switches on one page, "выноси весь список") is one TAB of four pages - Contact,
+// Monsters react, Grab, More - that follow each other like any pages (a flick, a grip's tap) and are picked by a row of four buttons on top
+// (hset_model.h kWorldSub). So a page is not always a tab: kTabCount tabs, TabOf / TabPage between the two.
 enum Page : int {
     kPageView = 0, kPageOptions = 1, kPageVideo = 2, kPageBody = 3, kPageLife = 4, kPageLook = 5, kPageHud = 6,
-    kPageBelt = 7, kPageMelee = 8, kPageKeysL = 9, kPageKeysR = 10, kPageCoop = 11, kPageVibration = 12, kPageGuide = 13
+    kPageBelt = 7, kPageMelee = 8, kPageKeysL = 9, kPageKeysR = 10, kPageCoop = 11, kPageVibration = 12,
+    kPageWorld = 13, kPageWorldReact = 14, kPageWorldGrab = 15, kPageWorldMore = 16, kPageGuide = 17
 };
-constexpr int kPageCount = 14;
+constexpr int kPageCount = 18;
+constexpr int kWorldPages = 4;   // kPageWorld .. kPageWorldMore
+constexpr bool IsWorldPage(int page) { return page >= kPageWorld && page < kPageWorld + kWorldPages; }
+constexpr int kTabWorld = kPageWorld, kTabGuide = kPageWorld + 1, kTabCount = kTabGuide + 1;
+// The tab a page is under, and the page a tab opens.
+constexpr int TabOf(int page) { return IsWorldPage(page) ? kTabWorld : page == kPageGuide ? kTabGuide : page; }
+constexpr int TabPage(int tab) { return tab == kTabWorld ? kPageWorld : tab == kTabGuide ? kPageGuide : tab; }
 constexpr int kNoPage = -1;   // a key with no row of its own: a hand-drawn page reads and writes it
 
 // A set of keys, one bit a key of the table below (what an Apply writes, what a draft has changed). 128 bits: the Vibration page took the
@@ -83,6 +93,7 @@ struct Def {
     int page;
     bool live = false;           // written by itself a moment after a change, as D2R VR Settings' sliders are (the belt)
     DefType type = DefType::Number;
+    int also = -1;               // a second page the same row stands on (the World pages' Hit by touch is the Melee page's), kNoPage none
 };
 
 inline constexpr Def kDefs[] = {
@@ -173,7 +184,7 @@ inline constexpr Def kDefs[] = {
     // ([gameplay] melee_touch, melee_min_speed, melee_stroke_start_cm, melee_touch_only; the plugin follows the ini live, vr/vrcam.cpp, vr/stroke_tuning.h). Live, F4 only.
     // The rest of the Strikes tab (thrown weapons, which contact counts, the kinds, Direct hit's Fully on and its numbers) stays in D2R VR Settings.
     {L"gameplay", L"melee_touch", "Hit by touch", "The blade you swing through a monster hits it (F4)",
-     0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageMelee, true},
+     0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageMelee, true, DefType::Number, kPageWorldReact},
     {L"gameplay", L"melee_min_speed", "Least blade speed that hits", "Below it a touch does nothing, m/s",
      0.8f, 0.3f, 20.0f, 0.1f, "%.1f m/s", "", "", kPageMelee, true},
     {L"gameplay", L"melee_stroke_start_cm", "Blade moves to start a stroke", "How far it must move to begin one, cm",
@@ -233,6 +244,59 @@ inline constexpr Def kDefs[] = {
      0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageVibration, true},
     {L"openxr", L"haptics_game_rumble", "The game's own rumble", "A hit taken, a skill used: as the game rumbles a pad",
      0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageVibration, true},
+    //
+    // pages 13 - 16, World (one tab): the basic switches of the world's touch, from D2R VR Settings' Weapon / Strikes / Hands tabs - the same keys and
+    // defaults, their labels as there without "(a test)" (shortened where a row has no room: a test measures them), the line under each from the tooltip. Live: each is
+    // written by itself a moment after the click, the other pages' rule; the plugin follows what it follows live. Hit by touch is the Melee page's row too.
+    // Contact: what stops your weapon and hands - walls, your own body ([weight] own_body), the monsters' bodies and what they hold. The walls and your own body
+    // are marked "(experimental)" as in the Settings exe (Serg, 0.192.41: off by default, "кто хочет, сам включит, потестит").
+    {L"weight", L"world_contact", "Walls stop your weapon (experimental)", "Walls, pillars, trees and big props stop it (F4)",
+     0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageWorld, true},
+    {L"weight", L"world_contact_hands", "Walls stop your bare hands (experimental)", "An empty hand stays at the wall's surface (F4)",
+     0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageWorld, true},
+    {L"weight", L"own_body", "Your own body stops the weapon (experimental)", "It stops on your trunk and legs; never a hit on you",
+     0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageWorld, true},
+    {L"weight", L"monster_bodies", "The weapon stops on monsters' bodies", "A cut or thrust stops on the body; an edge glances",
+     0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageWorld, true},
+    {L"weight", L"monster_shields", "Monsters' shields and weapons stop your weapon", "Their shields and weapons too: a stopped blow no hit",
+     0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageWorld, true},
+    // Monsters react (Hit by touch, the Melee page's row, stands first)
+    {L"weight", L"strike_by_force", "Hit by the strike's force, not the blade's speed", "Not the blade's speed: a light touch is no hit",
+     0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageWorldReact, true},
+    {L"weight", L"monster_ragdoll", "Monsters' bodies give way by their weight", "A push moves the limb it meets (humanoids)",
+     0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageWorldReact, true},
+    {L"weight", L"monster_ragdoll_all", "Every monster gives way, not only humanoids", "Animals, insects, demons too, not only humanoids",
+     0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageWorldReact, true},
+    {L"weight", L"knock_down", "A hard blow knocks a humanoid off its feet", "It falls as a ragdoll and gets up again",
+     0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageWorldReact, true},
+    {L"weight", L"stab_in", "A pointed weapon sticks into the body", "Driven point first into the body, 0.5 m/s or more",
+     0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageWorldReact, true},
+    {L"weight", L"impale_drag", "Impale and drag a humanoid on your spear", "Run into a humanoid point first: it is carried",
+     0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageWorldReact, true},
+    // Grab
+    {L"weight", L"grab_bodies", "Grab monsters and allies with your hand's grip", "An empty hand's grip takes hold of a body",
+     0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageWorldGrab, true},
+    {L"weight", L"npc_bodies", "Town NPCs and allies have bodies too", "Your weapon stops on them as on monsters",
+     0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageWorldGrab, true},
+    {L"weight", L"grab_throw", "Lift and throw a humanoid you grab", "Let go while you swing and it flies",
+     0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageWorldGrab, true},
+    {L"weight", L"grab_balance", "A pulled humanoid steps to keep its feet", "It steps after you; only a faster pull fells it",
+     1.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageWorldGrab, true},
+    {L"weight", L"grab_items", "Pick up items from the ground with your hand's grip", "The game's own pick-up, at your palm",
+     0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageWorldGrab, true},
+    {L"weight", L"grab_props", "Take the props in your hand", "Cups, books, stools: carried by your grip",
+     0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageWorldGrab, true},
+    {L"weight", L"knock_props", "Props are knocked about by your weapon", "Cups, plates, vases, books and stools (F4)",
+     0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageWorldGrab, true},
+    // More: the hands' strength, the skeleton's bone cap, and the two gestures
+    {L"weight", L"strength", "Hands' strength, %", "How hard the hands pull the weapon after the controllers",
+     100.0f, 10.0f, 500.0f, 5.0f, "%.0f%%", "", "", kPageWorldMore, true},
+    {L"weight", L"skeleton_bones_max", "Monsters' skeletons: bones read at most", "Higher reads longer skeletons and costs more",
+     256.0f, 64.0f, 1024.0f, 16.0f, "%.0f", "", "", kPageWorldMore, true},
+    {L"hands", L"throw_gesture", "Throw a javelin with a throwing motion", "A javelin: hold the trigger, swing, let go",
+     0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageWorldMore, true},
+    {L"gameplay", L"shield_smite", "Shield bash casts Smite", "Paladin: a hard swing of the shield casts it",
+     0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageWorldMore, true},
     // -- no row: the Keys pages' note - the plugin's own controls are off ([openxr] direct_input=0: BodyWalk's mapping is the controls), so these lines do nothing.
     {L"openxr", L"direct_input", "Controls without BodyWalk", "The plugin reads the controllers itself",
      0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kNoPage},
@@ -343,13 +407,16 @@ static_assert(kKeyBarPlace >= 0 && kKeyHide >= 0, "the toolbar type's keys are i
 constexpr bool IsToggle(const Def& d) { return d.min == 0.0f && d.max == 1.0f && d.step == 1.0f; }
 
 constexpr int PageCount() { return kPageCount; }
+// The pages' names: a tab's for its page, the World pages' their own (the buttons of the row on top of them, hset_scene.h).
 constexpr const char* kPageNames[kMaxPages] = {"View", "Options", "Video", "Body", "Life", "Look", "HUD", "Belt", "Melee", "Left", "Right", "Co-op", "Vibration",
-                                               "Guide"};
-// The tabs' font (vr/hset_paint.cpp: Segoe UI 26, semibold, GDI) and the English names' widths in it, pixels: the strip is shared by them (hset_model.h kTab).
-// Fourteen names by their letters did not leave "Options" and "HUD" room, nor did 30 pixels letters by their widths; 26 by their widths does (939 of 960).
-// tools/hset_test.cpp measures them again.
-constexpr int kTabFontPx = 26;
-constexpr int kPageNameW[kMaxPages] = {45, 73, 54, 46, 34, 44, 42, 36, 57, 35, 49, 58, 87, 55};
+                                               "Contact", "Monsters react", "Grab", "More", "Guide"};
+constexpr const char* kTabNames[kTabCount] = {"View", "Options", "Video", "Body", "Life", "Look", "HUD", "Belt", "Melee", "Left", "Right", "Co-op", "Vibration",
+                                              "World", "Guide"};
+// The tabs' font (vr/hset_paint.cpp: Segoe UI, semibold, GDI) and the English names' widths in it, pixels: the strip is shared by them (hset_model.h kTab).
+// Fourteen names by their letters did not leave "Options" and "HUD" room, nor did 30 pixels letters by their widths; 26 by their widths did for
+// fourteen (939 of 960); fifteen (World) take 24. tools/hset_test.cpp measures them again.
+constexpr int kTabFontPx = 24;
+constexpr int kTabNameW[kTabCount] = {40, 67, 49, 42, 30, 40, 39, 33, 51, 32, 45, 53, 79, 51, 50};
 // The panel's words in the player's language (vr/ui_text.h; the keys are made from this table, vr/ui_text_tables.h lists them for lang\en.txt):
 // a row's name and the line under it "vr.hset.<section>.<key>.label / .detail" (a Choice row's line is its ini text: not a word), a switch's two
 // faces by their English "vr.hset.value.<word>" (one "On" for every row), a tab "vr.hset.page.<name>". The tabs' widths stay the English names'.
@@ -366,12 +433,14 @@ inline std::string ValueKey(const char* en) { return "vr.hset.value." + uitext::
 inline const char* ValueWord(const char* en) { return *en ? uitext::Tr(ValueKey(en), en) : en; }
 inline std::string PageKey(int page) { return "vr.hset.page." + uitext::Slug(kPageNames[page]); }
 inline const char* PageName(int page) { return uitext::Tr(PageKey(page), kPageNames[page]); }
+inline std::string TabKey(int tab) { return "vr.hset.page." + uitext::Slug(kTabNames[tab]); }   // (a tab's page has the same key: one word)
+inline const char* TabName(int tab) { return uitext::Tr(TabKey(tab), kTabNames[tab]); }
 // The low-life vignette's two pages: while one is open the plugin previews the vignette (vr/low_hp_game.h SetPreview).
 constexpr bool IsLifePage(int page) { return page == kPageLife || page == kPageLook; }
 
 constexpr int RowsOn(int page) {
     int n = 0;
-    for (const Def& d : kDefs) if (d.page == page) ++n;
+    for (const Def& d : kDefs) if (d.page == page || (d.also >= 0 && d.also == page)) ++n;
     return n;
 }
 static_assert(RowsOn(kPageView) <= kViewRow, "the first page's table rows leave its last row to the game view's buttons");
@@ -379,7 +448,7 @@ static_assert(RowsOn(kPageView) <= kViewRow, "the first page's table rows leave 
 constexpr int KeyAt(int page, int row) {
     int seen = 0;
     for (int i = 0; i < kCount; ++i)
-        if (kDefs[i].page == page) {
+        if (kDefs[i].page == page || (kDefs[i].also >= 0 && kDefs[i].also == page)) {
             if (seen == row) return i;
             ++seen;
         }

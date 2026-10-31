@@ -66,6 +66,7 @@
 #include "reshade_paths.h"   // D2R VR's two search paths in that ReShade's ReShade.ini: append-only text edits, tested (shared/reshade_paths.h)
 #include "bw_output.h"      // BodyWalk's Output in its settings file: does its pad reach the game (the Status row, tested)
 #include "bw_path.h"        // how BodyWalk's input reaches the game: Game Link direct, or its gamepad and Mapping (the Status row, tested)
+#include "bw_autorun.h"     // what the 3D choice and START start or close of BodyWalk and FlatVR (tested)
 #include "frame_cap.h"       // the game's frame cap in Settings.json: VR's rate is VR's, flat mode has the player's own (the plugin's policy, tested)
 #include "direct_hit_mode.h"   // the Strikes tab's "Direct hit": one choice over [gameplay] melee_direct and melee_direct_client (tested)
 #include "toolbar_type.h"   // the toolbar's type: one choice over [hud] hide and bar_place (the headset panel has it too)
@@ -453,6 +454,18 @@ std::vector<Item> g_items = {
            L"work of the default; the other eye is made on the graphics card from pictures already drawn (the eye drawn this frame "
            L"moved across with its depth, its own last picture under it), so both eyes show this frame's head, and monsters where "
            L"they are now. Each eye's own pixels are new at half the rate. The idea is bearstonem/d2r-pcvr's.")),
+    // The 3D choice starts BodyWalk and FlatVR, or stops FlatVR, itself (2026-10-29, Serg's decision; tools/settings/bw_autorun.h): each its own box, off = as before.
+    Only(kVr, Toggle(L"mode", L"flatvr_autostart", L"FlatVR: start BodyWalk and FlatVR by themselves", 1,
+           L"When \"3D in the headset\" is switched from Native OpenXR to a FlatVR choice, BodyWalk is started (if it is not running; the newest "
+           L"one found, as the Start BodyWalk button does) and FlatVR's Start is asked once BodyWalk's Game Link is up (within a minute) - you do "
+           L"not have to start them yourself. START and the launcher start them in FlatVR whether this is on or not, as before. Never a second "
+           L"BodyWalk. Off: switching starts nothing, as before.")),
+    Only(kVr, Toggle(L"mode", L"native_close_flatvr", L"Native OpenXR: stop FlatVR by itself (BodyWalk stays)", 1,
+           L"Native OpenXR does not need FlatVR, and FlatVR holds the headset the game wants. When \"3D in the headset\" is switched to Native OpenXR, "
+           L"and when the game is started with it (START, the launcher), FlatVR is stopped through BodyWalk's Game Link, and a FlatVR running on its own "
+           L"(FlatVR.exe) is closed the way its own close button does it (ended by force only when its window stops answering). BodyWalk itself stays "
+           L"running - its controls, gestures and walking go on. A BodyWalk without Game Link (BodyWalk Lite) cannot be told to stop FlatVR: stop it in "
+           L"BodyWalk yourself. Settings' log says what was done (d2r_vr_settings.log). Off: nothing stopped, as before.")),
     Only(kVr, Choice(L"stereo", L"headset_rate", L"Headset refresh rate", 3, {L"72 Hz", L"75 Hz", L"80 Hz", L"90 Hz", L"120 Hz"},
            L"Sets the game's frame cap (in its own options, Settings.json) - the line under it says what is written and why: the rate "
            L"itself for one picture a frame (mono, the 3D from the depth) and for both eyes from one game frame (one pass, two "
@@ -462,6 +475,17 @@ std::vector<Item> g_items = {
            L"VR only: in flat mode (How you play) the game runs at the frame cap you set in its own options - yours is kept before the "
            L"rate writes its own, and comes back when you switch to Flat or start the game in flat mode.")),
     Only(kVr, Status(L"frame_cap", L"")),
+    // Start BodyWalk from here, so nobody hunts for its shortcut: shown while a
+    // BodyWalk is found and not running (RefreshStatus, BodyWalkExe).
+    // (Under the 3D choice and the rate, not at the D2R VR group's foot - Serg 2026-10-31: «эту кнопку сюда подними».)
+    Only(kVr, Hide(Button(L"@run", L"bodywalk", L"Start BodyWalk",
+           L"Starts BodyWalk - the one in the game's folder that D2R VR Setup put in, or your installed one."))),
+    // FlatVR's own START / STOP, so nobody hunts for them in BodyWalk: shown
+    // while BodyWalk runs with Game Link (its Host block moves), one at a time.
+    Only(kVr, Hide(Button(L"@run", L"flatvr_start", L"Start FlatVR",
+           L"Starts FlatVR in BodyWalk - the picture goes into the headset. The same as START FLATVR on BodyWalk's FlatVR tab."))),
+    Only(kVr, Hide(Button(L"@run", L"flatvr_stop", L"Stop FlatVR",
+           L"Stops FlatVR in BodyWalk. The same as STOP FLATVR on BodyWalk's FlatVR tab."))),
     // The render size next to the rate (2026-10-14, the user's wish: the resolution belongs with the headset's choices on Home), as a
     // SLIDER (2026-10-14, the user's wish): the square's side, 1024 - 4096 in steps of 64, [render] vr_resolution_px; the stop under
     // the smallest reads "window's size" (Desktop, 0). The tick box under it is the older mode 1, [render] vr_resolution: the headset's
@@ -688,20 +712,22 @@ std::vector<Item> g_items = {
            L"where the eye looks straight ahead, a magenta ring at the picture's own middle, a big L or R. With the eyes right, the two grids "
            L"become one and stay still on the world; seen double, tilted or swimming, a screenshot or video with it shows which eye is off. "
            L"Live. Only in the headset (the window on the monitor has none).")),
+    // D2R VR Headset Report (tools/headset_report: D2R_VR_Headset_Report.exe beside this program) - one text report of what the headset's
+    // OpenXR runtime gives, for a picture that is doubled, cross-eyed or stretched or hands at the waist. [support] is this program's own (vrcam
+    // never reads it). Ticked: the button makes the report into the logs folder Collect logs packs, and Collect logs makes one first. Unticked: as before.
+    Toggle(L"support", L"headset_report", L"Headset report with the logs", 0,
+           L"For a headset picture that is doubled, cross-eyed or stretched, or hands at your waist: D2R VR Headset Report asks your headset's "
+           L"OpenXR runtime what it gives - the eyes' angles and distance, the spaces, the controllers - and writes it down. Ticked: \"Make a "
+           L"headset report\" appears, and Collect logs makes one first (with the game closed and the headset on: about 20 s). Nothing on the "
+           L"PC is changed."),
+    ShowFor(L"support", L"headset_report", 2u, Button(L"@run", L"headset_report", L"Make a headset report",
+           L"Close the game, put the headset on and hold both controllers in front of you, then click. About 20 s; the report opens in Notepad "
+           L"and goes into the Collect logs zip. With the game running it only lists the OpenXR runtime and layers from the registry.")),
+    ShowFor(L"support", L"headset_report", 2u, Status(L"hreport", L"Headset report: close the game, put the headset on, click the button")),
     Toggle(L"update", L"check", L"Check for updates when this program opens", 1,
            L"Asks bodywalkvr.com for the newest version of the mod. Nothing is downloaded."),
     Needs(L"update", L"check", 1, Toggle(L"update", L"develop", L"Beta versions too (develop channel)", 0,
            L"Also offers test builds before they are released to everyone.")),
-    // Start BodyWalk from here, so nobody hunts for its shortcut: shown while a
-    // BodyWalk is found and not running (RefreshStatus, BodyWalkExe).
-    Only(kVr, Hide(Button(L"@run", L"bodywalk", L"Start BodyWalk",
-           L"Starts BodyWalk - the one in the game's folder that D2R VR Setup put in, or your installed one."))),
-    // FlatVR's own START / STOP, so nobody hunts for them in BodyWalk: shown
-    // while BodyWalk runs with Game Link (its Host block moves), one at a time.
-    Only(kVr, Hide(Button(L"@run", L"flatvr_start", L"Start FlatVR",
-           L"Starts FlatVR in BodyWalk - the picture goes into the headset. The same as START FLATVR on BodyWalk's FlatVR tab."))),
-    Only(kVr, Hide(Button(L"@run", L"flatvr_stop", L"Stop FlatVR",
-           L"Stops FlatVR in BodyWalk. The same as STOP FLATVR on BodyWalk's FlatVR tab."))),
     Only(kVr, InColumn(1, Group(L"Monitor (screen recording)", L"What the game's window on your monitor shows while you play in VR - for recording or streaming it with OBS: both eyes in turn, or one eye only, at its own proportions. The headset's picture does not change."))),   // under D2R VR: the left column is full
     // [render] monitor_eye (vr/monitor_eye.h): the window shows one eye, steady - to capture the screen while playing in VR (bearstonem/d2r-pcvr's
     // desktop_one_eye, MIT). 0 as before (each present shows its own eye: both in turn), 1 the left (the default), 2 the right. Live.
@@ -725,6 +751,14 @@ std::vector<Item> g_items = {
            L"Off (the default): the picture made for this eye that frame - every frame new, as the headset shows it. Live."))),
 
     Tab(L"Performance"),
+    Group(L"Compare with the bare game", L"One switch that stops everything of D2R VR's that costs a frame and the game can do without, at once and "
+          L"without a restart - for comparing the frame rate with the bare game in the same spot. What puts the picture in the headset stays."),
+    Toggle(L"render", L"bench_bare", L"Everything of ours off (to compare the frame rate)", 0,
+           L"Ticked: our effect (the sky, fog and ceiling, the medallions, labels, toolbar and phantoms), the game's fog and sky with our "
+           L"numbers, the dome, the distance blur, the monsters' bars, the props, world contact, ragdolls and bodies, the legs, and every debug "
+           L"switch stop at once - the game shows its own sky and fog. The headset, the head and the hands, and the controls stay. The room "
+           L"rings and the models' distance stay as at the start (they need a restart). The log says what stopped, and its 10 s frame line "
+           L"goes on. Live. Unticked: everything back as set."),
     Group(L"Processor", L"For Ryzen processors with 3D V-Cache (X3D): the game runs on the cores with the big cache and its drawing thread gets a higher priority. On other processors nothing changes."),
     Toggle(L"render", L"vcache", L"Game on the cores with the big cache (Ryzen X3D)", 0,
            L"On a Ryzen with 3D V-Cache on one of its two core groups (7900X3D, 7950X3D, 9900X3D, 9950X3D) the game's threads "
@@ -755,8 +789,16 @@ std::vector<Item> g_items = {
            L"with the game's depth. The sky, the fog and the cave ceiling come back drawn by D2R VR itself (the box below). Off with it: the "
            L"overlays kept apart from the picture the second eye is made from (labels laid back, the wrist orbs - drawn into the picture), the "
            L"lights' fix for the square window, and the menus as a panel (they show as the flat picture). On a GTX 1050 Ti the game went "
-           L"from about 44 to 53-60 frames a second without any effect. Read when the game starts: restart it after a change. With your own "
+           L"from about 44 to 53-60 frames a second without any effect. FlatVR works with it too, with the box \"FlatVR's picture without ReShade\" "
+           L"below (its stereo pair drawn in two passes: one pass, two pictures needs ReShade). Read when the game starts: restart it after a change. With your own "
            L"ReShade as dxgi.dll beside the game it does nothing (the game loads that one itself). Off (the default): ReShade as before."),
+    // [render] flatvr_feed (on): with no_reshade, FlatVR's picture and depth from the plugin, through the blocks FlatVR's ReShade add-on uses (vr/flatvr_feed.h)
+    Needs(L"render", L"no_reshade", 1, Toggle(L"render", L"flatvr_feed", L"FlatVR's picture without ReShade (D2R VR hands it over itself)", 1,
+           L"With \"No ReShade\" FlatVR had no picture: it takes the game's picture and depth from ReShade's add-on (FlatVR_DepthProvider), and "
+           L"BodyWalk's FlatVR said \"No picture from the ReShade addon\". On: D2R VR hands FlatVR the same itself, the same way the add-on does - "
+           L"each picture of the game's window (a stereo pair as the two eyes side by side, only whole pairs), the scene's depth for FlatVR's 3D "
+           L"from the depth, and which view each eye holds. Only while FlatVR runs and native OpenXR does not hold the headset. Live. Off: nothing "
+           L"handed over, as before.")),
     // [render] native_effects (on): with no_reshade, D2R_DepthFog.fx run by the plugin itself (vr/fx_native.h) - flat and VR
     Needs(L"render", L"no_reshade", 1, Toggle(L"render", L"native_effects", L"Sky and fog without ReShade (drawn by D2R VR itself; restart the game)", 1,
            L"With \"No ReShade\": D2R VR draws its own effect itself - the sky outdoors, the distance fog, the cave ceiling and the rest of what "
@@ -764,6 +806,12 @@ std::vector<Item> g_items = {
            L"background when the game starts and at each new picture size - the first time a while (several seconds; the picture has no sky "
            L"till then), then from a cache beside d2r_vr.ini at once. What it costs the graphics card is in the log every 10 s. Off: no effect "
            L"at all - the lightest. Read when the game starts.")),
+    // [render] effect_world: a live A/B of the effect's own sky and fog; the medallions, labels, toolbar and phantoms stay
+    Needs(L"render", L"no_reshade", 1, Toggle(L"render", L"effect_world", L"Sky and fog of the effect drawn (live)", 1,
+           L"Unticked, the effect's own sky, fog and cave ceiling are not drawn at all - nor the fixes on the game's fog and sky, their colour "
+           L"measures and the distance blur - while the medallions, the labels, the toolbar, the phantoms and the interface stay as they are. "
+           L"For seeing what the sky and the fog cost (the log's \"native effects, 10 s\" line says each pass's time). The game's own sky and "
+           L"fog stay the game's. Live. Ticked: as before.")),
     Slider(L"render", L"rings", L"Room rings around the hero", 1, 8, 1, 4, L"Extra room rings around the hero. With fog, 4-6 is enough."),
     Slider(L"render", L"model_radius", L"Model visibility radius", 150, 1000, 10, 210, L"The game's own is 150."),
     Choice(L"@skyfog", L"way", L"Sky and fog drawn by", 1, {L"The game draws them (new)", L"Our effect (old)"},
@@ -778,7 +826,8 @@ std::vector<Item> g_items = {
     Needs(L"fog", L"enabled", 1, Slider(L"fog", L"start", L"Fog start", 0, 1000, 5, 150,
            L"Where the fog begins. World units (the hero is ~7.5 tall).")),
     Needs(L"fog", L"enabled", 1, Slider(L"fog", L"end", L"Full fog", 10, 2000, 10, 600,
-           L"Where the fog is complete. World units (the hero is ~7.5 tall). Near fog hides what a short render distance leaves out.")),
+           L"Where the fog is complete. World units (the hero is ~7.5 tall). Near fog hides what a short render distance leaves out. With the "
+           L"game's fog, below Fog start the two are taken the other way round (our effect's fog: full just past Fog start).")),
     Needs(L"fog", L"enabled", 1, Slider(L"fog", L"caves_start", L"Fog start in caves", 0, 1000, 5, 150,
            L"Where the fog begins in caves, dungeons and crypts. World units (the hero is ~7.5 tall).")),
     Needs(L"fog", L"enabled", 1, Slider(L"fog", L"caves_end", L"Full fog in caves", 10, 2000, 10, 600,
@@ -821,7 +870,8 @@ std::vector<Item> g_items = {
     Needs(L"fog", L"enabled", 1, Slider(L"fog", L"start", L"Fog start", 0, 1000, 5, 150,
            L"Where the fog begins. World units (the hero is ~7.5 tall).")),
     Needs(L"fog", L"enabled", 1, Slider(L"fog", L"end", L"Full fog", 10, 2000, 10, 600,
-           L"Where the fog is complete. World units (the hero is ~7.5 tall). Near fog hides what a short render distance leaves out.")),
+           L"Where the fog is complete. World units (the hero is ~7.5 tall). Near fog hides what a short render distance leaves out. With the "
+           L"game's fog, below Fog start the two are taken the other way round (our effect's fog: full just past Fog start).")),
     Needs(L"fog", L"enabled", 1, Slider(L"fog", L"caves_start", L"Fog start in caves", 0, 1000, 5, 150,
            L"Where the fog begins in caves, dungeons and crypts. World units (the hero is ~7.5 tall).")),
     Needs(L"fog", L"enabled", 1, Slider(L"fog", L"caves_end", L"Full fog in caves", 10, 2000, 10, 600,
@@ -1083,11 +1133,26 @@ std::vector<Item> g_items = {
            L"With the box above: going within this cone straight back (90: 45° either side of straight back) the legs play the game's own forward walk "
            L"backwards - running, its run - at the pace he goes, facing with the body, never crossed; between it and the cone ahead they are held. A short "
            L"blend at each edge. 0: never played backwards. Live."),
+    Toggle(L"body", L"legs_side_game", L"... two halves: ahead and sideways the game's walk, back played backwards", 1,
+           L"With the box above: going up to 90° off where the body faces - ahead, diagonally ahead, straight sideways - the legs are the game's own "
+           L"walk and run, as 0.191 drew them; past 90° - diagonally back, straight back - its walk and run played backwards. Nothing held, no steps of "
+           L"ours. Off: the two cones (legs_front_cone_deg, legs_rear_cone_deg), and between them the legs held, or stepped by the box below. Live."),
+    Toggle(L"body", L"legs_turn", L"... the hips and legs turn to where you go", 1,
+           L"With the box above: the hips and legs turn to where the hero goes while the trunk and the head stay on your look - diagonally ahead the legs "
+           L"walk that way, straight sideways they point sideways and walk ahead, going back they walk backwards with their backs along the way. Never "
+           L"more than 90° from the trunk, the twist spread over the spine, eased; at 90° the swap is at once. Off: the legs face the trunk. Live."),
     Toggle(L"body", L"legs_side_ragdoll", L"... between the cones the hips and legs the ragdoll's gait", 0,
-           L"With the box above: going between the two cones - sideways, diagonally - instead of standing held, his pelvis and both legs are the ragdoll "
-           L"library's own gait (d2r_vr_weight.dll): its walk, run and sprint cycles at the stride and cadence of his speed, the hips bobbing and swaying "
-           L"with them, a flight running, the feet's path turned the way he goes - never across the middle, never crossed. The trunk is the game's. A short "
-           L"blend into the cones. Without the library (or an older one) the legs are held, as before. Live."),
+           L"With the box above: going between the two cones - sideways, diagonally - instead of standing held, his feet step after him by the ragdoll "
+           L"library (d2r_vr_weight.dll): each foot planted where it lands (it does not slide) and set down where he goes, the steps quicker the faster he "
+           L"goes so they stay narrow, the leading foot out and the trailing one up to it, never crossed, under a level pelvis. The trunk is the game's. "
+           L"Never in F1 or F3. Without the library (or an older one) the legs are held, as before. Live."),
+    Toggle(L"body", L"legs_side_gait", L"... instead: the ragdoll's gait, small steps (0.192.34)", 0,
+           L"With the box above: instead of the planted steps, the legs move by the ragdoll's gait cycle at his speed under a level pelvis - each foot a "
+           L"small side step from its place; the feet skate along with him. A choice to compare. Live."),
+    Toggle(L"body", L"legs_side_cross", L"... the planted steps take turns, crossing (test)", 1,
+           L"With the planted steps: the feet take turns, one always on the ground, passing each other a little apart front to back - running "
+           L"sideways. Off: as 0.192.36, the trailing foot never passes the leading one, and going fast both feet leave the ground together (a bound). "
+           L"Live."),
     Toggle(L"body", L"legs_rear_cycle", L"... instead: going backwards, the game's walk and run played backwards (test)", 0,
            L"With the box above: instead of holding the legs, going into the rear half - more than 90° from where the body faces - they play the game's own "
            L"forward walk backwards, running its run, at the pace you go, facing with the body; ahead they are the game's own walk. Crossing 90° the step "
@@ -1347,6 +1412,12 @@ std::vector<Item> g_items = {
            L"have not come the headset gets no picture that frame and the game goes on flat (the log says so, and when the headset answers). And no headset session is "
            L"started over a FlatVR that holds the headset and cannot be stopped (BodyWalk Lite has no Game Link): the Status column says to close BodyWalk and restart "
            L"SteamVR, and it is tried again while FlatVR runs. Needs a game restart. Off: as before. (d2r_vr.ini: wait_frame_ms.)"),
+    Toggle(L"openxr", L"stop_flatvr_watch", L"Stop FlatVR again if it starts during the native session", 1,
+           L"BodyWalk's FlatVR is stopped through its Game Link when the native session starts - but only a FlatVR running at that moment. One started "
+           L"later (BodyWalk opened after the game, its start held until SteamVR came up, its START button) ran beside the native session for the rest "
+           L"of the game: both in the headset, sharing its frames. On: while the session runs, FlatVR is looked at once a second and stopped again "
+           L"through Game Link when it runs (started again when native OpenXR ends, as the one stopped at the start). A BodyWalk without Game Link "
+           L"(BodyWalk Lite) cannot be told: the log says so. Live. Off: stopped only at the session's start, as before."),
     Slider(L"openxr", L"reap_drain_max_ms", L"Old swapchains: longest wait to free them, ms (native OpenXR)", 20, 500, 10, 200,
            L"A swapchain of ours made again (a new mouse pointer, a menu panel of another size) is freed later, once the graphics card has "
            L"finished the game's work: waited for 20 ms, doubled each time that was not enough, up to this. With a busy card (the headset's "
@@ -2392,11 +2463,12 @@ std::vector<Item> g_items = {
     ShowFor(L"hud", L"bar_place", kBarWrist, Toggle(L"hud", L"hand_vitals_orb_mirror", L"Right wrist mirrors the left", 0,
            L"The right wrist's ball takes the left wrist's three numbers (the same along, the same across toward the thumb, the same up), so the two sit as mirror "
            L"images. The right wrist's own sliders keep their values, greyed, for when it is unticked. Live.")),
-    ShowFor(L"hud", L"bar_place", kBarWrist, Toggle(L"hud", L"hand_vitals_orb_on_bone", L"On the forearm bone itself (no numbers)", 1,
+    ShowFor(L"hud", L"bar_place", kBarWrist, Toggle(L"hud", L"hand_vitals_orb_on_bone", L"On the forearm bone itself (no numbers, a test)", 0,
            L"Ticked: each ball sits on its forearm bone - on the surface of the forearm's own mesh (read off the hero's model, again when the armour changes), out of the "
            L"back of the wrist next to the hand, turned with the bone - wherever the arm is drawn: by your controllers, held on a body, by the game's animation. The "
            L"place and turn numbers below and the class depths are not used (a shield still rolls it to the inner side). A forearm whose mesh gives no size: the numbers, "
-           L"as before (the log says which). Unticked: the numbers. VR F4. Live.")),
+           L"as before (the log says which). Unticked: the numbers. VR F4. Live. A test: off by default - a hero's forearm mesh was first read in 0.192.36, "
+           L"and the medallion it placed sat 10-15 cm off the wrist.")),
     ShowFor(L"hud", L"bar_place", kBarWrist, Toggle(L"hud", L"hand_vitals_orb_drawn_hand", L"Ride the hand as drawn", 1,
            L"Ticked: the balls sit on the hero's hand exactly as it is drawn - laid on a body or a prop your hand holds, fitted onto the weapon - so they stay on the "
            L"hand while it holds on and your real hand moves. A bottle held in the palm rides it the same way. Unticked: the hand as the controller first put it, "
@@ -2682,20 +2754,28 @@ std::vector<Item> g_items = {
            L"The game's own fog pass fades the fog in as our effect does - from Fog start to Full fog by the Curve below (in caves their own "
            L"start, end and strength) - instead of its own exponential, which puts nearly all of the fog right after the start and leaves the far "
            L"range one grey. A few instructions in its pass, nothing added. Without ReShade only. Live.")),
-    Needs(L"@skyfog", L"way", 0, Toggle(L"fog", L"fog_keeps_colour", L"The game's fog keeps the act's colour at night", 1,
+    Needs(L"@skyfog", L"way", 0, Toggle(L"fog", L"fog_keeps_colour", L"The game's fog keeps the act's colour at night", 0,
            L"While the game draws the fog: its colour is the act's own (the colours above) at every hour - the far fades into a light haze of "
-           L"it, never toward black. Our own effect's fog is not changed. Off: it darkens with the game's light, as before. Live.")),
+           L"it, never toward black. Our own effect's fog is not changed. Off: it darkens with the game's light as the sky does - by night to \"Sky at night\" and by "
+           L"the sky's brightness for each time of day. With the sky's colour (\"The fog's colour: measured from the game\" unticked): the day "
+           L"sky's at the horizon at every hour; off, the night sky's by night - near black. Live.")),
     Needs(L"@skyfog", L"way", 0, Toggle(L"fog", L"fog_into_sky", L"The game's fog fades the far into the sky behind it", 0,
            L"In the open air the fog's colour at each point is the sky straight behind it, as in the Arcane Sanctuary: the far land, the "
            L"world's edge and tall far buildings fade into the sky, not into one flat colour (the sky's low part is the act's fog colour, "
            L"as it is drawn). Far objects show the sky through them. The game's fog only (with \"The game's fog as thick and as coloured as "
            L"ours\"); our own effect's fog is not changed. Underground as before. Live. Off: one fog colour, as before.")),
+    Toggle(L"fog", L"fog_colour_measured", L"The fog's colour: measured from the game", 0,
+           L"Ticked: the fog's colour is measured from what the game shows (with \"The game's fog as thick and as coloured as ours\") - as "
+           L"before. Unticked: the fog's colour is the sky's own at the horizon - the baked picture there at its brightness slider - so the far "
+           L"land melts into the sky with no seam; a number, set when the time of day or a slider changes: no measure, nothing of it in the "
+           L"effect. Underground, in the Arcane Sanctuary and with the tinted sky: the act's or the cave's colour as set. Live."),
     Needs(L"@skyfog", L"way", 0, Toggle(L"fog", L"game_fog_match", L"The game's fog as thick and as coloured as ours", 1,
            L"The game's fog came out darker than the act's fog colour (the area's colour grading) and thinner than ours (it thins above the "
            L"eye, and without our curve it is the game's own): in act 4 the far land stood as a dark silhouette and hid nothing. Ticked, the "
-           L"effect measures what the game's fog shows where it is complete, moves each fogged pixel toward the act's colour by the game's "
-           L"share, and makes up the share the game left out to our own fog's - the far land, the world's edge and far planes hidden as by "
-           L"our old fog. Never on the game's sky. Our effect's pass, which runs anyway for the sky. Live. Off: as the game lays it.")),
+           L"effect makes up the share the game left out to our own fog's - the far land, the world's edge and far planes hidden as by our "
+           L"old fog - in the fog's colour; with \"The fog's colour: measured from the game\" it also measures what the game's fog shows where "
+           L"it is complete and moves each fogged pixel toward the act's colour by the game's share (never past it). Never on the game's sky. "
+           L"Our effect's pass, which runs anyway for the sky. Live. Off: as the game lays it.")),
     Toggle(L"fog", L"game_fog_before_fx", L"The fog before smoke and fire", 0,
            L"The fog laid on the scene before the game adds its smoke, mist, fire and spells, so they lie over the fogged world unfogged - "
            L"without it the fog is laid over them by the wall behind them (haze cut into black holes in front of far walls, a fire spell "
@@ -2705,8 +2785,9 @@ std::vector<Item> g_items = {
     Needs(L"fog", L"game_fog_before_fx", 1, Toggle(L"fog", L"game_fog_fx_depth", L"Far smoke and fire fade into the fog", 0,
            L"With the fog before smoke and fire: the smoke, mist, fire and spells fogged too, each by its own distance - near ones as they "
            L"are, far ones fading into the fog with the world behind them. Without it a far camp fire stands at full light in full fog and "
-           L"the see-through edges of far fences show as specks on the horizon. The game's effects are drawn once more for their depth alone "
-           L"(the cost in the log's 10 s lines). Without ReShade only. Live. Off: the effects never fogged.")),
+           L"the see-through edges of far fences show as specks on the horizon. The game's effects are drawn once more for their depth alone: "
+           L"EXPENSIVE - on a Quest 3 at 2048 x 2048 an eye it took about 30 frames a second (72 -> 42); the cost in the log's 10 s lines. "
+           L"Without ReShade only. Live. Off: the effects never fogged.")),
     Needs(L"@skyfog", L"way", 0, Toggle(L"fog", L"game_fog_height", L"The game's fog thins with height", 0,
            L"The game's own fog pass leaves the sky clear: the fog as it is up to the fog's top less its softness, fading out above that, none "
            L"above the top (world units above your eyes). For the game's sky dome, so its sky shows above the fogged horizon. Its own pass, "
@@ -2722,7 +2803,8 @@ std::vector<Item> g_items = {
     Needs(L"fog", L"enabled", 1, Needs(L"@skyfog", L"way", 1, Toggle(L"fog", L"light", L"Light fog (weak graphics cards)", 0,
            L"Our effect's fog the short way: the depth read once a pixel, the fog by it, the sky still drawn in the void - no depth blur, no fog over glows and sparks against the sky, no cave ceiling. A fraction of the full fog's cost on the graphics card (the log's 10 s line says it). Off: the full fog, as before."))),
     Needs(L"fog", L"enabled", 1, Slider(L"fog", L"start", L"Fog start", 0, 1000, 5, 150, L"Where the fog begins. World units (the hero is ~7.5 tall).")),
-    Needs(L"fog", L"enabled", 1, Slider(L"fog", L"end", L"Full fog", 10, 2000, 10, 600, L"Where the fog is complete. World units (the hero is ~7.5 tall).")),
+    Needs(L"fog", L"enabled", 1, Slider(L"fog", L"end", L"Full fog", 10, 2000, 10, 600, L"Where the fog is complete. World units (the hero is ~7.5 tall). With the game's fog, below Fog start "
+           L"the two are taken the other way round (our effect's fog: full just past Fog start).")),
     Needs(L"fog", L"enabled", 1, Slider(L"fog", L"curve", L"Falloff", 0.3f, 4, 0.05f, 1.6f, L"1 = linear; more = a clearer middle distance.")),
     Needs(L"fog", L"enabled", 1, Slider(L"fog", L"blur", L"Depth blur, px (0 = off)", 0, 12, 0.5f, 3,
            L"The fog over a 5x5 grid this many pixels apart: holes and specks in the depth melt away.")),
@@ -2754,6 +2836,23 @@ std::vector<Item> g_items = {
            L"How much the full fog covers in caves: 1 = the far end is gone in the fog colour, less = it shows through.")),
     Needs(L"fog", L"enabled", 1, Color(L"fog", L"color_caves", L"Fog colour in caves", L"same as the act",
           L"Caves, dungeons, crypts: every area that is not outdoors. Empty (x) = that act's colour.")),
+    Group(L"Distance blur", L"The far picture blurred, as through a pane of frosted glass standing at a distance in front of you: nothing "
+          L"nearer than the pane is touched; behind it the world blurs more the farther it is. Set where the pane stands, where the blur is at "
+          L"its widest, and how wide that is. Apart from the fog: no colour of its own, the fog keeps its look."),
+    Toggle(L"render", L"distance_blur", L"Blur in the distance", 0,
+           L"The far world blurred behind a pane of frosted glass (from Serg's fractal game): near ground, monsters and your weapon stay "
+           L"sharp, the distance softens the farther it is. The sky, the void and the interface are not blurred. Drawn by our effect's pass "
+           L"(with ReShade or without), first person, whoever draws the fog; its cost on the graphics card is in the log's 10 s line "
+           L"without ReShade (\"distance blur on, ... ms\"). Live. Off: the pass is left out."),
+    Needs(L"render", L"distance_blur", 1, Slider(L"render", L"distance_blur_start_m", L"Blur starts at, m", 1, 250, 0.5f, 15,
+           L"Where the pane stands, metres from your eyes (4 world units a metre): nothing nearer is blurred. Keep it past where you fight. "
+           L"Live.")),
+    Needs(L"render", L"distance_blur", 1, Slider(L"render", L"distance_blur_full_m", L"Full blur at, m", 2, 500, 0.5f, 50,
+           L"Where the blur is at its widest, metres (at least 5 % past the start). Between the two it grows with the distance squared: "
+           L"the middle distance stays clear. 50 m: the edge of the default draw distance's world. Live.")),
+    Needs(L"render", L"distance_blur", 1, Slider(L"render", L"distance_blur_strength", L"Blur strength", 0, 1, 0.01f, 0.4f,
+           L"How wide the blur is at its widest: 1 = 2.5 % of the picture's height (about 50 pixels on a 2000-line eye), 0.4 as the fractal "
+           L"game has it. 0 = no blur. Live.")),
     Group(L"Arcane Sanctuary", L"The fog in the Arcane Sanctuary (act 2), set apart from the caves': it is not outdoors, so it takes the "
           L"caves' fog until \"Its own fog\" is ticked. Whether there is fog under its own sky at all is on the Sky tab (Arcane Sanctuary: "
           L"fog fades into its sky)."),
@@ -2893,22 +2992,33 @@ std::vector<Item> g_items = {
            L"a darker disc in a light veil, its size changing with the radius. Ticked, outside VR first person the dome is laid at least as far as "
            L"that range's end at the screen's farthest corner, so all of it is past the haze - one sky; a larger radius stays as set. VR first "
            L"person keeps the radius as set. Live.")),
-    Needs(L"@skyfog", L"way", 0, Toggle(L"sky", L"dome_true_colour", L"The game's sky: our sky's colours", 0,
+    Needs(L"sky", L"dome_tint", 1, Needs(L"@skyfog", L"way", 0, Toggle(L"sky", L"dome_true_colour", L"The game's sky: our sky's colours", 0,
            L"The game draws our painted sky in its own scene, through its tone map and the area's colour grading - darker than our effect's "
            L"sky, which is drawn in the picture's own colours. Ticked, our effect measures what the game shows of the dome against the "
            L"painted sky it was made from and brings the dome to it, every area by its own numbers. A multiply in the effect's pass, which "
            L"runs anyway for the dome's horizon. With \"Sky follows the game's day and night\" the dome follows the game's time of day as our sky does. Off: as the "
-           L"game shows it. Live.")),
-    Needs(L"@skyfog", L"way", 0, Toggle(L"sky", L"dome_in_game_colour", L"The game's sky: its colours drawn by the game", 1,
+           L"game shows it. Live."))),
+    Needs(L"sky", L"dome_tint", 1, Needs(L"sky", L"dome_true_colour", 1, Toggle(L"sky", L"dome_gain_once", L"The game's sky: its colours measured once", 0,
+           L"With \"its colours drawn by the game\": the measure of the game's sky against ours is taken once for each area and time of day, "
+           L"and kept in d2r_vr_dome_gain.txt beside the settings (delete it to measure again). After that the sky is baked from those numbers "
+           L"only when the light, the time of day or a slider changes - nothing measured or baked again while you play. Live. Off: measured "
+           L"all the time, as before."))),
+    Needs(L"sky", L"dome_tint", 1, Needs(L"@skyfog", L"way", 0, Toggle(L"sky", L"dome_in_game_colour", L"The game's sky: its colours drawn by the game", 1,
            L"Our effect recoloured the game-drawn sky after the game had drawn the trees, the palisade and the roofs over it: their edges, "
            L"blended into the sky as the game drew it, kept its old colour - a light outline round every branch at night. Ticked, the game "
            L"draws the sky from a picture of ours instead, made from its own with the night picture, the day and night dimming, the brightness "
            L"of each period of the day and the measured colours in it - every edge blends into the right sky. Without ReShade only (our own "
            L"effects). Counts from the game's next start; unticked live, the sky goes back to the game's own colours at once and our effect "
-           L"recolours it as before.")),
+           L"recolours it as before."))),
     Needs(L"@skyfog", L"way", 0, Toggle(L"sky", L"dome_fog_horizon", L"The game's sky: its horizon into the fog", 1,
            L"The game-drawn sky's low part sinks into the act's fog colour, as our own sky's did: the fogged land meets the sky with "
            L"no hard edge, and the colours match where they meet. Only while a fog is drawn. Off: the sky as the game draws it. Live.")),
+    Needs(L"@skyfog", L"way", 0, Toggle(L"sky", L"dome_fog_baked", L"The game's sky: its low part in the fog's colour", 1,
+           L"With the game's fog, the sky's low part is laid into the fog's own colour in the sky's picture itself, as our old sky's low "
+           L"part goes into the fog: trees and bushes against the horizon stand on the fog's colour, with no light rim of the picture's "
+           L"horizon round them. The sky's horizon into the fog above stands aside meanwhile. Off: the picture as it is. Live.")),
+    Needs(L"sky", L"dome_fog_baked", 1, Slider(L"sky", L"dome_fog_baked_strength", L"The game's sky: how much of the fog's colour", 0, 1, 0.05f, 1,
+           L"1: the horizon wholly the fog's colour, fading up to the picture by 11 degrees; less: some of the picture through it. Live.")),
     Needs(L"@skyfog", L"way", 0, Toggle(L"sky", L"game_sky_closed", L"The game's sky: a whole sphere, one colour below", 1,
            L"The game-drawn sky ended 12 degrees under the horizon: past a cliff's edge its rim stood as a hard line with a hole "
            L"under it, the void and the fog showing through. Ticked, it closes into a whole sphere and its lower half is one colour - "
@@ -2944,24 +3054,46 @@ std::vector<Item> g_items = {
            L"The game's light runs 0..255 (vrcam's log writes it as it changes). From this up: full day.")),
     Needs(L"sky", L"day_night", 1, Slider(L"sky", L"light_night", L"Game light that is full night", 0, 254, 1, 65,
            L"From this down: full night. In between the sky goes from one to the other.")),
-    Needs(L"sky", L"day_night", 1, Slider(L"sky", L"bright_dawn", L"Sky brightness: end of night, dawn", 0, 3, 0.01f, 1,
+    Needs(L"sky", L"dome_tint", 1, Needs(L"sky", L"day_night", 1, Slider(L"sky", L"bright_dawn", L"Sky brightness: end of night, dawn", 0, 3, 0.01f, 1,
            L"The sky's brightness as dawn begins - the game's dome and our effect's sky alike, times what the day and night above gives (1: as it "
-           L"is). It eases to the next period's by the game's own light. The game names its periods (debug_mode's time key shows them). Live.")),
-    Needs(L"sky", L"day_night", 1, Slider(L"sky", L"bright_day_start", L"Sky brightness: end of dawn, start of day", 0, 3, 0.01f, 1,
+           L"is). It eases to the next period's by the game's own light. The game names its periods (debug_mode's time key shows them). Live."))),
+    Needs(L"sky", L"dome_tint", 1, Needs(L"sky", L"day_night", 1, Slider(L"sky", L"bright_day_start", L"Sky brightness: end of dawn, start of day", 0, 3, 0.01f, 1,
            L"The sky's brightness as the day begins - the game's dome and our effect's sky alike, times what the day and night above gives (1: as it "
-           L"is). It eases to the next period's by the game's own light. The game names its periods (debug_mode's time key shows them). Live.")),
-    Needs(L"sky", L"day_night", 1, Slider(L"sky", L"bright_day", L"Sky brightness: day", 0, 3, 0.01f, 1,
+           L"is). It eases to the next period's by the game's own light. The game names its periods (debug_mode's time key shows them). Live."))),
+    Needs(L"sky", L"dome_tint", 1, Needs(L"sky", L"day_night", 1, Slider(L"sky", L"bright_day", L"Sky brightness: day", 0, 3, 0.01f, 1,
            L"The sky's brightness through the day, until the light falls toward dusk - the game's dome and our effect's sky alike, times what the day and night above gives (1: as it "
-           L"is). It eases to the next period's by the game's own light. The game names its periods (debug_mode's time key shows them). Live.")),
-    Needs(L"sky", L"day_night", 1, Slider(L"sky", L"bright_dusk", L"Sky brightness: end of day, dusk", 0, 3, 0.01f, 1,
+           L"is). It eases to the next period's by the game's own light. The game names its periods (debug_mode's time key shows them). Live."))),
+    Needs(L"sky", L"dome_tint", 1, Needs(L"sky", L"day_night", 1, Slider(L"sky", L"bright_dusk", L"Sky brightness: end of day, dusk", 0, 3, 0.01f, 1,
            L"The sky's brightness as dusk begins - the game's dome and our effect's sky alike, times what the day and night above gives (1: as it "
-           L"is). It eases to the next period's by the game's own light. The game names its periods (debug_mode's time key shows them). Live.")),
-    Needs(L"sky", L"day_night", 1, Slider(L"sky", L"bright_night_start", L"Sky brightness: end of dusk, start of night", 0, 3, 0.01f, 1,
+           L"is). It eases to the next period's by the game's own light. The game names its periods (debug_mode's time key shows them). Live."))),
+    Needs(L"sky", L"dome_tint", 1, Needs(L"sky", L"day_night", 1, Slider(L"sky", L"bright_night_start", L"Sky brightness: end of dusk, start of night", 0, 3, 0.01f, 1,
            L"The sky's brightness as the night begins - the game's dome and our effect's sky alike, times what the day and night above gives (1: as it "
-           L"is). It eases to the next period's by the game's own light. The game names its periods (debug_mode's time key shows them). Live.")),
-    Needs(L"sky", L"day_night", 1, Slider(L"sky", L"bright_night", L"Sky brightness: night", 0, 3, 0.01f, 1,
+           L"is). It eases to the next period's by the game's own light. The game names its periods (debug_mode's time key shows them). Live."))),
+    Needs(L"sky", L"dome_tint", 1, Needs(L"sky", L"day_night", 1, Slider(L"sky", L"bright_night", L"Sky brightness: night", 0, 3, 0.01f, 1,
            L"The sky's brightness through the night, until the light rises toward dawn - the game's dome and our effect's sky alike, times what the day and night above gives (1: as it "
-           L"is). It eases to the next period's by the game's own light. The game names its periods (debug_mode's time key shows them). Live.")),
+           L"is). It eases to the next period's by the game's own light. The game names its periods (debug_mode's time key shows them). Live."))),
+    Group(L"The sky's pictures", L"The game's sky is the act's own pictures, baked once - the day's, the night's and one for dawn and dusk "
+          L"(act 4, with no night, one) - each at its own brightness, picked by the game's time of day. Nothing recoloured or measured."),
+    Slider(L"sky", L"three_bright_day", L"Sky brightness: day picture", 0, 3, 0.01f, 1,
+           L"The day picture's brightness (1: as the picture is). Baked again once when it moves. Live."),
+    Slider(L"sky", L"three_bright_night", L"Sky brightness: night picture", 0, 3, 0.01f, 1,
+           L"The night picture's brightness (1: as the picture is). An act without a night picture shows the day's at this brightness. Live."),
+    Slider(L"sky", L"three_bright_dawn_dusk", L"Sky brightness: dawn and dusk picture", 0, 3, 0.01f, 1,
+           L"The dawn and dusk picture's brightness - for now the day's picture, until the acts have one of their own (1: as the picture "
+           L"is). Live."),
+    Slider(L"sky", L"three_bright_act4", L"Sky brightness: act 4", 0, 3, 0.01f, 1,
+           L"Act 4 (Hell) has no night: one sky, its day picture, at this brightness whatever the time of day. Live."),
+    Toggle(L"sky", L"sky_crossfade", L"Sky: crossfade between the pictures", 0,
+           L"Unticked: as the game's period of the day turns, the sky is the next period's picture at once - baked once then, nothing between. "
+           L"Ticked: each picture fades into the next by the game's own light through the dawns and dusks - the sky is baked again at each step "
+           L"of the light then (a pass over the sky's picture, a few dozen times a dawn or a dusk), never in between. Live."),
+    Group(L"Sky tinting (parked)", L"Our old recolouring of the game's sky, measured from what the game shows. Parked until it can tint without "
+          L"a light outline round the trees; the baked pictures are the sky meanwhile."),
+    Toggle(L"sky", L"dome_tint", L"The game's sky: tinted (parked)", 0,
+           L"Ticked: the game's sky recoloured as before - its colours measured against ours (\"our sky's colours\", \"measured once\"), "
+           L"day and night by the period sliders above - in place of the baked pictures. The measure is compiled into the effect only while "
+           L"this and \"our sky's colours\" are ticked (the effect builds again). It left a light outline round every tree; we come back to it "
+           L"when it can tint without one. Unticked: the baked pictures, nothing measured. Live."),
     Group(L"Act 1 (night, storm)", L"The sky of act 1: its brightness, the panorama picture (empty = the shader draws this sky itself), the zenith, and the act's fog colour, which its caves use too."),
     Slider(L"sky", L"brightness_act1", L"Brightness", 0, 2, 0.05f, 1),
     File(L"sky", L"texture_act1", L"Sky panorama", L"D2R_Sky_ours\\D2R_Sky_act1.png", kSkyPicture),
@@ -4397,11 +4529,13 @@ std::vector<Item> g_items = {
            L"weapon (and the hand as it is drawn on it) stays at the body until the hand comes back. The body is the monster's own skeleton: a capsule on each of its limbs as "
            L"the game poses them, as thick as its model (where that cannot be read, the capsule the game gives the monster). The hit itself is still the game's attack pressed by hit by touch: needs Hit by touch on - its scan finds the monsters. Unticked: the weapon "
            L"passes through them, as ever."))),
-    Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Needs(L"weight", L"monster_bodies", 1, Toggle(L"weight", L"own_body", L"The weapon does not pass through your own body", 0,
-           L"Ticked, with the bodies above: the weapon in your hands stops on your own trunk and legs as it stops on a monster's body - it no longer goes through "
-           L"your hero. Your arms and head are left out (your hands hold the weapon; your head is your own). Never a hit, a stab or a grab on yourself. Unticked: it "
-           L"passes through you, as before.")))),
-    Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Needs(L"weight", L"monster_bodies", 1, Toggle(L"weight", L"stab_in", L"A pointed weapon sticks into the body (a test)", 0,
+    // [weight] skeleton_bones_max: how many bones of a monster's skeleton are read (vr/bone_cap.h) - the rig, the humanoid judge, the doll's and the knock-down's poses
+    Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Needs(L"weight", L"monster_bodies", 1, Slider(L"weight", L"skeleton_bones_max", L"Monsters' skeletons: bones read at most", 64, 1024, 16, 256,
+           L"Live. A monster whose skeleton has more bones than this gets no limbs: it stays the game's one capsule - your weapon stops on that, a grab holds "
+           L"it, but it is never knocked down, lifted or thrown, and gives way by no limb. The log names its bone count when it is over (\"the skeleton has more "
+           L"bones than [weight] skeleton_bones_max reads\", N bones). Higher reads longer skeletons (the Ancients on Arreat Summit have more than 160) and costs "
+           L"more processor time per monster - each model's skeleton is read once, then its limbs every scan; lower is cheaper but leaves more big monsters as one "
+           L"capsule. 256 by default.")))),    Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Needs(L"weight", L"monster_bodies", 1, Toggle(L"weight", L"stab_in", L"A pointed weapon sticks into the body (a test)", 0,
            L"Ticked, with the bodies above: a weapon with a point (a sword - one- or two-handed - a dagger, a spear, a javelin, a throwing weapon, a polearm, a claw) driven point "
            L"first (within 60 degrees of straight) into a monster's body at 0.5 m/s or more goes IN instead of stopping at the surface. It only slides along its own length: the "
            L"body holds it back - a harder skin for the first few centimetres, then softer flesh - no deeper than its blade; left still it locks where it is, and a steady pull "
@@ -4437,19 +4571,26 @@ std::vector<Item> g_items = {
            L"attack only once your weapon has reached the monster's body - the game's own block roll stays the game's for the blows that land. They push no doll "
            L"and take no stab. Unticked: they are transparent to your weapon, as before.")))),
     // [weight] world_contact / world_contact_hands: the weapon and the bare hands meet the level's walls (vr/world_contact.h, cleanroom/heft/walls.h)
-    Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Toggle(L"weight", L"world_contact", L"Walls stop your weapon (a test)", 0,
+    Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Toggle(L"weight", L"world_contact", L"Walls stop your weapon (experimental)", 0,
            L"Live. VR first person (F4) only. Ticked: the weapon in your hands strikes the level's walls, pillars, trees and big props instead of passing through "
            L"them - it stops on the surface with a small bounce and a pulse in the hand, a slash slides along, and your controller goes on into the wall while the "
            L"weapon (and your hand on it) stays outside; it follows again when the controller comes back. Push the controller far past the wall and the weapon "
            L"goes back into your hand through it. Only what you see: the game's attacks, its hits and your hero's movement are the game's as ever. The walls are "
            L"made from the game's own meshes when this program starts with the box ticked (about a minute, once per game build; the status says when): a doorway "
            L"stays open, a tree stops the weapon at its trunk, not its leaves, and bushes, grass and other small plants never stop it (Debug: \"World contact: "
-           L"draw the walls\" shows them). Unticked: the weapon passes through walls, as before."))),
-    Needs(L"arms", L"mode", 2, Toggle(L"weight", L"world_contact_hands", L"Walls stop your bare hands (a test)", 0,
+           L"draw the walls\" shows them). Unticked: the weapon passes through walls, as before. Experimental: off by default, and it may still misbehave."))),
+    Needs(L"arms", L"mode", 2, Toggle(L"weight", L"world_contact_hands", L"Walls stop your bare hands (experimental)", 0,
            L"Live. VR first person (F4) only. Ticked: an empty hand (or one with a bow, a shield, a potion) is held at the surface of the level's walls, pillars, "
            L"trees and big props while your controller goes on into them, sliding along as you move; it comes back with the controller. Push the controller "
            L"more than 45 cm past the surface and the hand goes back to it, through the wall. The same walls as the weapon's, made from the game's meshes (bushes and grass "
-           L"never stop a hand). Only the drawing: nothing of the game changes. Unticked: the hands pass through walls, as before.")),
+           L"never stop a hand). Only the drawing: nothing of the game changes. Unticked: the hands pass through walls, as before. Experimental: off by default, and it may still misbehave.")),
+    // [weight] own_body: the weapon stops on the hero's own body (vr/own_body.h, melee_touch.cpp's own body, weight.cpp) - beside the walls, monster_bodies not needed
+    Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Toggle(L"weight", L"own_body", L"The weapon does not pass through your own body (experimental)", 0,
+           L"Live. VR first person (F4) only. Ticked: the weapon in your hands stops on your own hero as it stops on a wall - his trunk, hips, legs and head - and "
+           L"slides along. Your controller goes on; the weapon follows again when it comes back. Never in the way: your arms and hands and all they hold (a "
+           L"two-handed grip, passing the weapon from hand to hand, a shield), a weapon drawn from your back or hip or called back into the hand (for a moment, "
+           L"as it comes in), and while a hand is behind a shoulder to draw or put away. "
+           L"Only the drawing: never a hit, a stab or a grab on yourself, and the game's attacks are the game's. Unticked: it passes through you, as before. Experimental: off by default, and it may still misbehave."))),
     Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Toggle(L"weight", L"dual_collide", L"A weapon in each hand: the two strike each other (steel on steel)", 1,
            L"Live. With a weapon in each hand the two weapons meet: each stops on the other and glances along it, as on a monster's weapon; a knock as hard as a blow "
            L"is felt in both hands (and heard, with the clash sound below), resting one on the other is silent. With 'Heads as their own volume' ticked (hit by touch) "
@@ -4538,6 +4679,11 @@ std::vector<Item> g_items = {
            L"lift it or pull it out of its place and it is off its feet; let go while you swing and it flies, lands, lies a moment, gets up and walks back to where "
            L"the game has it. Two hands hold it together. Only the drawing: where it stands, what it does and its talk stay the game's. Needs the weight library "
            L"with the knock-down (d2r_vr_weight.dll in d2rloader\\d2r_vr_libs). F4. Unticked: the grab holds a limb as before."))),
+    // [weight] grab_balance: a humanoid held standing and pulled steps after the pull and keeps its feet (vr/knock_down.h, fall_physics 1.13)
+    Needs(L"arms", L"mode", 2, Needs(L"weight", L"grab_throw", 1, Toggle(L"weight", L"grab_balance", L"A pulled humanoid steps to keep its feet (a test)", 1,
+           L"Ticked, with Lift and throw: take a humanoid by the hand or the arm and pull, and it steps after you to keep its feet - as fast as its legs can step; "
+           L"only a pull faster than that takes it off its feet. Let go and it walks back to where the game has it. Only the drawing: where it stands and what it "
+           L"does stay the game's. F4. Unticked: pulled 30 cm out of its place it falls, as before."))),
     // [weight] impale_drag: a charge with a spear impales a humanoid and carries it on the blade (vr/knock_down.h)
     Needs(L"arms", L"mode", 2, Needs(L"weight", L"stab_in", 1, Toggle(L"weight", L"impale_drag", L"Impale and drag a humanoid on your spear (a test)", 0,
            L"Ticked, with the stab: run into a humanoid monster or a town NPC with a spear (or any weapon point first) and the point goes in at 2 m/s or more "
@@ -5882,6 +6028,7 @@ bool BodyWalkTakesGameHeadset() {
 }
 // False: not written (native OpenXR without a BodyWalk for it).
 void ApplyWindowForPlatform();   // (the game's window: VR has the square, flat mode the player's own - below)
+void AutoRun(bwauto::When when);   // BodyWalk and FlatVR started or closed by the switch (below)
 bool WriteStereo3D(float item) {
     static const float kModeOfItem[4] = {4.0f, 0.0f, 2.0f, 5.0f};   // the list's item -> the mode below (native, FlatVR stereo, FlatVR 3D depth, native by turns)
     const float v = kModeOfItem[std::clamp((int)std::lround(item), 0, 3)];
@@ -5915,6 +6062,8 @@ bool WriteStereo3D(float item) {
     }
     // BodyWalk's FlatVR follows, through Game Link (s is BW_LINK_STEREO_*; done only while BodyWalk runs)
     if (BW_LinkRequests* r = LinkRequests()) bw::link::Request(r, &r->stereoSource, s);
+    // FlatVR <-> native: BodyWalk and FlatVR started, or FlatVR stopped ([mode] flatvr_autostart / native_close_flatvr, bw_autorun.h)
+    if (native != wasNative && g_platform == 1) AutoRun(bwauto::When::ModeSwitch);
     return true;
 }
 
@@ -7591,6 +7740,7 @@ std::wstring RunningBodyWalkExe() {
 
 Item* FindItem(const wchar_t* section, const wchar_t* key);
 void StartBodyWalk();
+void AutoRun(bwauto::When when);
 // FlatVR started by Launch once BodyWalk's Game Link is up (FollowLaunch): until this tick, 0 = not wanted.
 ULONGLONG g_flatVrStartBy = 0;
 // `--start`: the START button without the window (StartHeadless below). Nothing may open a message box then: it says
@@ -7640,10 +7790,9 @@ int LaunchGame() {
         if (!ShellExecuteExW(&sei)) return 3;
     }
     if (g_platform != 1) return 0;
-    const bool native = GetPrivateProfileIntW(L"openxr", L"on", 0, g_ini) != 0;
-    const bool noBodyWalk = native && GetPrivateProfileIntW(L"openxr", L"direct_input", 0, g_ini) != 0;   // native with its own controls: BodyWalk is not needed
-    if (!noBodyWalk && RunningBodyWalkExe().empty()) StartBodyWalk();
-    g_flatVrStartBy = native ? 0 : GetTickCount64() + 60000;
+    // BodyWalk when none runs (not with native OpenXR and its own controls) and FlatVR once Game Link is up, as before; with native OpenXR
+    // ([mode] native_close_flatvr) FlatVR stopped, BodyWalk stays (bw_autorun.h)
+    AutoRun(bwauto::When::GameStart);
     return 0;
 }
 // Every timer tick: FlatVR's Start asked once Game Link is up (BodyWalk loaded with it),
@@ -7727,6 +7876,121 @@ bool LinkHost(uint32_t* caps) {
     BW_LinkHost c;
     if (caps && bw::link::Read(h, &c)) *caps = c.caps;
     return true;
+}
+
+// The ids of the running `exe`s.
+std::vector<DWORD> ProcessIds(const wchar_t* exe) {
+    std::vector<DWORD> ids;
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snap == INVALID_HANDLE_VALUE) return ids;
+    PROCESSENTRY32W pe{sizeof pe};
+    for (BOOL ok = Process32FirstW(snap, &pe); ok; ok = Process32NextW(snap, &pe))
+        if (_wcsicmp(pe.szExeFile, exe) == 0) ids.push_back(pe.th32ProcessID);
+    CloseHandle(snap);
+    return ids;
+}
+
+// A process's own window to close: its top-level window of its own class (BodyWalk's "BodyWalkVR", FlatVR's "FlatVR"), else a visible
+// top-level one that no other window owns. nullptr when it has none (any more).
+HWND OwnWindowOf(DWORD pid, const wchar_t* cls) {
+    struct Find { DWORD pid; const wchar_t* cls; HWND own = nullptr, visible = nullptr; } f{pid, cls};
+    EnumWindows([](HWND w, LPARAM l) -> BOOL {
+        Find& f = *(Find*)l;
+        DWORD p = 0;
+        GetWindowThreadProcessId(w, &p);
+        if (p != f.pid) return TRUE;
+        wchar_t name[64] = L"";
+        GetClassNameW(w, name, 64);
+        if (_wcsicmp(name, f.cls) == 0) { f.own = w; return FALSE; }
+        if (!f.visible && IsWindowVisible(w) && !GetWindow(w, GW_OWNER)) f.visible = w;
+        return TRUE;
+    }, (LPARAM)&f);
+    return f.own ? f.own : f.visible;
+}
+
+void AutoSay(const std::wstring& line);
+// Every running `exe` closed the way its own title bar's X does it, one after the other (bw_autorun.h NextCloseStep): WM_CLOSE to its
+// window, then waited for - FlatVR (BodyWalk's code, FLATVR_STANDALONE_BUILD) ends its loop and writes its settings on the way out. Ended by force only while its window stays and
+// does not answer; never once its window is gone (it is writing its settings then). Each one's end goes to the log.
+void CloseGently(const wchar_t* exe, const wchar_t* cls) {
+    for (const DWORD pid : ProcessIds(exe)) {
+        const std::wstring who = std::wstring(exe) + L" (" + std::to_wstring(pid) + L")";
+        HANDLE h = OpenProcess(SYNCHRONIZE | PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+        if (!h) h = OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);   // (one run as administrator: no right to end it)
+        if (!h) { AutoSay(L"bodywalk: " + who + L" cannot be reached (run as administrator?) - left running"); continue; }
+        const HWND w = OwnWindowOf(pid, cls);
+        if (!w || !PostMessageW(w, WM_CLOSE, 0, 0)) {
+            AutoSay(L"bodywalk: " + who + (w ? L" did not take the close (run as administrator?)" : L" has no window to close") + L" - left running");
+            CloseHandle(h);
+            continue;
+        }
+        const ULONGLONG t0 = GetTickCount64();
+        for (;;) {
+            const bool exited = WaitForSingleObject(h, 250) == WAIT_OBJECT_0;
+            const HWND still = exited ? nullptr : OwnWindowOf(pid, cls);
+            const unsigned waited = (unsigned)(GetTickCount64() - t0);
+            const bwauto::CloseStep step = bwauto::NextCloseStep(exited, still != nullptr, still && IsHungAppWindow(still), waited);
+            if (step == bwauto::CloseStep::Wait) continue;
+            const std::wstring after = std::to_wstring(waited / 1000) + L"." + std::to_wstring(waited % 1000 / 100) + L" s";
+            if (step == bwauto::CloseStep::Done) AutoSay(L"bodywalk: " + who + L" closed (" + after + L")");
+            else if (step == bwauto::CloseStep::Kill)
+                AutoSay(L"bodywalk: " + who + (TerminateProcess(h, 1) ? L" did not answer for " + after + L" - ended by force" : L" does not answer and could not be ended - left running"));
+            else AutoSay(L"bodywalk: " + who + (still ? L" kept its window open (a question of its own?) - left running" : L" still ending after " + after + L" - left to finish"));
+            break;
+        }
+        CloseHandle(h);
+    }
+}
+std::atomic<bool> g_autoClosing{false};   // a close running (its thread); `--start` waits for it before it returns
+
+bool FlatVrRunningNow() {   // FlatVR's head sample moves (Moving needs a second look the first time it is asked)
+    FlatVRHeadSample hs{};
+    for (int i = 0; i < 2; ++i) {
+        if (ReadBlock(FLATVR_HEAD_SAMPLE_NAME, &hs, sizeof hs) && Moving(FLATVR_HEAD_SAMPLE_NAME, hs.counter)) return true;
+        if (i == 0) Sleep(150);
+    }
+    return false;
+}
+
+void AutoSay(const std::wstring& line) {
+    LogLine(line);
+    if (g_headless) StartSay(line);
+}
+// The 3D choice switched between native OpenXR and FlatVR, or the game started: BodyWalk and FlatVR started, or FlatVR stopped, by bw_autorun.h's
+// plan ([mode] flatvr_autostart, [mode] native_close_flatvr; BodyWalk is never closed). A FlatVR.exe of its own is closed on a thread of its own
+// (a few seconds at most); the starts as the
+// Start BodyWalk button and START do them: BodyWalk by the shell from this program (started by the player or the launcher, so BodyWalk sees
+// the player's own folders), FlatVR's Start through Game Link once it is up (FollowLaunch).
+void AutoRun(bwauto::When when) {
+    bwauto::Facts f;
+    f.when = when;
+    f.vr = g_platform == 1;
+    f.native = GetPrivateProfileIntW(L"openxr", L"on", 0, g_ini) != 0;
+    f.directInput = GetPrivateProfileIntW(L"openxr", L"direct_input", 0, g_ini) != 0;
+    f.startOn = GetPrivateProfileIntW(L"mode", L"flatvr_autostart", 1, g_ini) != 0;
+    f.closeOn = GetPrivateProfileIntW(L"mode", L"native_close_flatvr", 1, g_ini) != 0;
+    f.bodyWalkFound = !BodyWalkExe().empty();
+    f.bodyWalkRunning = (int)ProcessIds(L"BodyWalkVR.exe").size();
+    uint32_t caps = 0;
+    f.linkUp = LinkHost(&caps);
+    f.linkStopsFlatVr = f.linkUp && (caps & BW_LINK_CAP_FLATVR_RUNNING) != 0;
+    f.flatVrRunning = FlatVrRunningNow();
+    f.flatVrAppRunning = (int)ProcessIds(L"FlatVR.exe").size();
+    const bwauto::Plan p = bwauto::Decide(f);
+    AutoSay(std::wstring(L"bodywalk: ") + (when == bwauto::When::GameStart ? L"the game's start" : L"3D in the headset switched") + L": " +
+            bwauto::Text(p.why) + L" (BodyWalk running " + std::to_wstring(f.bodyWalkRunning) + (f.linkUp ? L", Game Link up" : L", no Game Link") +
+            (f.flatVrRunning ? L", FlatVR running" : L"") + (f.flatVrAppRunning ? L", FlatVR.exe running" : L"") + L")");
+    if (p.stopFlatVr)
+        if (BW_LinkRequests* r = LinkRequests()) bw::link::Request(r, &r->flatvrRunning, 0);
+    if (p.closeFlatVrApp && !g_autoClosing.exchange(true)) {
+        std::thread([] {
+            CloseGently(L"FlatVR.exe", L"FlatVR");
+            g_autoClosing = false;
+        }).detach();
+    }
+    if (p.startBodyWalk) StartBodyWalk();
+    if (p.startFlatVr) g_flatVrStartBy = GetTickCount64() + 60000;
+    else if (f.native) g_flatVrStartBy = 0;   // native: a FlatVR start still waited for is called off
 }
 
 // The VR status column: what BodyWalk, its Game Link, FlatVR and the game
@@ -8574,15 +8838,20 @@ std::wstring g_updateUrl;         // what Download opens
 // Each line also goes to d2r_vr_settings.log in the logs folder Collect logs packs (the mod's d2rloader\logs, the game's before the
 // mod layout): until 0.180 these lines went only to OutputDebugString, and a player's "no Install ReShade" left nothing to read (2026-10-25).
 // Over 1 MB at the program's first line, it becomes d2r_vr_settings_prev.log. From any thread (the ReShade and D2RLoader installs).
+// The logs folder Collect logs packs: the mod's d2rloader\logs, the game's before the mod layout ("" before FindIni).
+std::wstring LogsFolder() {
+    const std::wstring game = GameFolder();
+    if (game.empty() || !g_ini[0]) return {};   // (before FindIni: whether this is the mod is not known yet)
+    return (ModInstall() ? modlayout::ModRoot(game) : modlayout::WithSlash(game)) + L"d2rloader\\logs";
+}
 void LogLine(const std::wstring& line) {
     OutputDebugStringW((L"[D2R VR Authentic Settings] " + line + L"\n").c_str());
     static std::mutex lock;
     static std::wstring path;
     const std::lock_guard<std::mutex> hold(lock);
     if (path.empty()) {
-        const std::wstring game = GameFolder();
-        if (game.empty() || !g_ini[0]) return;   // (before FindIni: whether this is the mod is not known yet)
-        const std::wstring logs = (ModInstall() ? modlayout::ModRoot(game) : modlayout::WithSlash(game)) + L"d2rloader\\logs";
+        const std::wstring logs = LogsFolder();
+        if (logs.empty()) return;
         CreateDirectoryW(logs.c_str(), nullptr);
         path = logs + L"\\d2r_vr_settings.log";
         WIN32_FILE_ATTRIBUTE_DATA fa{};
@@ -9156,6 +9425,33 @@ void PostCollect(HWND wnd, int state, std::wstring text, bool done) {
     if (!PostMessageW(wnd, WM_APP_COLLECT, 0, (LPARAM)p)) delete p;
 }
 
+// D2R VR Headset Report ([support] headset_report): D2R_VR_Headset_Report.exe beside this program (Setup puts it there), run without a window
+// into the logs folder Collect logs packs. It asks the OpenXR runtime nothing while the game runs (the registry's facts only then) and changes
+// nothing on the PC. Its exit code (0 = the report written); -1 = not started (no program, no logs folder).
+std::wstring HeadsetReportFile() {
+    const std::wstring logs = LogsFolder();
+    return logs.empty() ? std::wstring() : logs + L"\\d2r_vr_headset_report.txt";
+}
+int RunHeadsetReport(const std::wstring& out) {
+    wchar_t self[MAX_PATH];
+    DWORD n = GetModuleFileNameW(nullptr, self, MAX_PATH);
+    while (n && self[n - 1] != L'\\') --n;
+    std::wstring exe = std::wstring(self, n) + L"D2R_VR_Headset_Report.exe";
+    if (!Exists(exe)) exe = modlayout::WithSlash(GameFolder()) + L"D2R_VR_Headset_Report.exe";   // (this program's copy in d2rloader\plugins)
+    if (out.empty() || !Exists(exe)) return -1;
+    CreateDirectoryW(LogsFolder().c_str(), nullptr);
+    std::wstring cmd = L"\"" + exe + L"\" --no-wait --out \"" + out + L"\"";
+    STARTUPINFOW si{sizeof si};
+    PROCESS_INFORMATION pi{};
+    if (!CreateProcessW(exe.c_str(), cmd.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) return -1;
+    CloseHandle(pi.hThread);
+    WaitForSingleObject(pi.hProcess, 150000);   // ~20 s with a headset; it gives up on its own within 90 s
+    DWORD code = 1;
+    if (!GetExitCodeProcess(pi.hProcess, &code) || code == STILL_ACTIVE) { TerminateProcess(pi.hProcess, 2); code = 2; }
+    CloseHandle(pi.hProcess);
+    return (int)code;
+}
+
 void CollectThread(HWND wnd, std::wstring game, bool running) {
     if (running) {
         wchar_t v[32];
@@ -9166,6 +9462,12 @@ void CollectThread(HWND wnd, std::wstring game, bool running) {
                                            {{L"s", std::to_wstring(left)}}), false);
             Sleep(1000);
         }
+    }
+    // [support] headset_report: a headset report first, into the logs folder packed below (d2r_vr_headset_report.txt)
+    if (GetPrivateProfileIntW(L"support", L"headset_report", 0, g_ini) == 1) {
+        PostCollect(wnd, kUnknown, TR(L"status.collect.headset_report", L"Making the headset report: keep the headset on (about 20 s)..."), false);
+        const int code = RunHeadsetReport(HeadsetReportFile());
+        LogLine(L"collect logs: headset report, exit code " + std::to_wstring(code));
     }
     PostCollect(wnd, kUnknown, TR(L"status.collect.packing", L"Packing the logs..."), false);
     wchar_t* desk = nullptr;
@@ -10201,6 +10503,39 @@ void OnCollectProgress(D2RLProgress* raw) {
     if (Item* b = FindItem(L"@run", L"collect_logs")) EnableWindow(b->ctl, TRUE);
 }
 
+// Make a headset report (Home, [support] headset_report ticked): RunHeadsetReport on a thread of its own, then the report in Notepad.
+constexpr UINT WM_APP_HREPORT = WM_APP + 51;
+std::atomic<bool> g_hreportBusy{false};
+void StartHeadsetReport() {
+    if (g_hreportBusy.exchange(true)) return;
+    if (Item* b = FindItem(L"@run", L"headset_report")) EnableWindow(b->ctl, FALSE);
+    SetStatus(L"hreport", kUnknown, TR(L"status.hreport.running", L"Making the headset report: keep the headset on and both controllers in front of you (about 20 s)..."));
+    const std::wstring out = HeadsetReportFile();
+    try {
+        std::thread([out](HWND wnd) {
+            const int code = RunHeadsetReport(out);
+            auto* p = new D2RLProgress{code == 0 ? kOk : kBad,
+                                       code == 0    ? TRF(L"status.hreport.saved", L"Headset report saved: {path} - Collect logs packs it", {{L"path", out}})
+                                       : code == -1 ? TR(L"status.hreport.missing", L"D2R_VR_Headset_Report.exe not found beside this program - install D2R VR again")
+                                                    : TRF(L"status.hreport.failed", L"The headset report failed (code {code})", {{L"code", std::to_wstring(code)}}),
+                                       true};
+            if (!PostMessageW(wnd, WM_APP_HREPORT, 0, (LPARAM)p)) delete p;
+        }, g_main).detach();
+    } catch (const std::exception&) {
+        g_hreportBusy.store(false);
+        if (Item* b = FindItem(L"@run", L"headset_report")) EnableWindow(b->ctl, TRUE);
+        SetStatus(L"hreport", kBad, TR(L"status.hreport.not_started", L"Could not start the headset report"));
+    }
+}
+void OnHeadsetReportDone(D2RLProgress* raw) {
+    std::unique_ptr<D2RLProgress> p(raw);
+    SetStatus(L"hreport", p->state, p->text.c_str());
+    g_hreportBusy.store(false);
+    if (Item* b = FindItem(L"@run", L"headset_report")) EnableWindow(b->ctl, TRUE);
+    LogLine(L"headset report: " + p->text);
+    if (p->state == kOk) ShellExecuteW(g_main, L"open", L"notepad.exe", (L"\"" + HeadsetReportFile() + L"\"").c_str(), nullptr, SW_SHOWNORMAL);
+}
+
 // ---- [openxr] frame_generation: OFXR Bridge into d2rloader\d2r_vr_libs\ofxr (shared/frame_gen.h), only when the player clicks it ----
 constexpr UINT WM_APP_FRAMEGEN = WM_APP + 46;   // (45 is the canoe's, WM_APP_BOAT)
 std::atomic<bool> g_fgBusy{false};
@@ -10524,6 +10859,7 @@ LRESULT CALLBACK PageProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
                 else if (wcscmp(it.key, L"reshade_aside") == 0) ReShadeAside(false);
                 else if (wcscmp(it.key, L"reshade_back") == 0) ReShadeAside(true);
                 else if (wcscmp(it.key, L"collect_logs") == 0) StartCollectLogs();
+                else if (wcscmp(it.key, L"headset_report") == 0) StartHeadsetReport();
                 else if (wcscmp(it.key, L"arcane_make") == 0) StartArcaneSky();
                 else if (wcscmp(it.key, L"calibration_forget") == 0) ForgetCalibration();
                 else if (wcscmp(it.key, L"fov_from_headset") == 0) FovFromHeadset();
@@ -10607,6 +10943,7 @@ LRESULT CALLBACK WndProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
     case WM_APP_D2RL: OnD2RLProgress((D2RLProgress*)l); return 0;
     case WM_APP_RESHADE: OnReShadeProgress((D2RLProgress*)l); return 0;
     case WM_APP_COLLECT: OnCollectProgress((D2RLProgress*)l); return 0;
+    case WM_APP_HREPORT: OnHeadsetReportDone((D2RLProgress*)l); return 0;
     case WM_APP_ARCANE: OnArcaneDone((D2RLProgress*)l); return 0;
     case WM_APP_PROPS: OnPropsDone((D2RLProgress*)l); return 0;
     case WM_APP_SOLIDS: OnSolidsDone((D2RLProgress*)l); return 0;
@@ -10780,8 +11117,9 @@ void FindIni() {
 // What it does, as the button does: reads [mode] platform from d2r_vr.ini; sets the game's window for it (flat: the player's own; VR: the
 // square, if ticked); starts `D2RLoader.exe -mod D2R-VR` from the game's folder (the plugin loads only under that mod; an install from
 // before the mod layout is started without it, as before); in VR also BodyWalk (not with native OpenXR and "Controls without BodyWalk") and, for
-// FlatVR, asks FlatVR to start once BodyWalk's Game Link is up (it waits up to a minute for that; native OpenXR returns at once). It does
-// not wait for the game to end, opens no window and no message box.
+// FlatVR, asks FlatVR to start once BodyWalk's Game Link is up (it waits up to a minute for that; native OpenXR returns at once); with native
+// OpenXR and [mode] native_close_flatvr it stops FlatVR, BodyWalk stays (bw_autorun.h; a FlatVR.exe closed, waited for). It does not wait for the game to end,
+// opens no window and no message box.
 // What it says goes to stdout (a pipe or a console, when there is one) and to d2rloader\logs\d2r_vr_launch.txt.
 // Exit code: 0 started; 1 no d2r_vr.ini (not in the mod); 2 no D2RLoader.exe; 3 D2RLoader.exe could not be started; 4 the game runs.
 void StartSay(const std::wstring& line) {
@@ -10859,6 +11197,7 @@ int StartHeadless() {
         if (!g_flatVrStartBy) break;
         Sleep(500);
     }
+    while (g_autoClosing) Sleep(100);   // native: BodyWalk / FlatVR being closed (bw_autorun.h: at most ~40 s, as a rule a second)
     StartSay(L"start: done");
     return 0;
 }

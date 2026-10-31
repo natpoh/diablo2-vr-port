@@ -28,6 +28,7 @@ void ForEachTableText(Fn fn) {
     };
     // the settings in the headset (vr/hset_defs.h): the tabs, then each row's name, the line under it and a switch's two faces
     for (int p = 0; p < hset::kPageCount; ++p) give(hset::PageKey(p), hset::kPageNames[p]);
+    for (int t = 0; t < hset::kTabCount; ++t) give(hset::TabKey(t), hset::kTabNames[t]);   // (World: a tab, not a page)
     for (int i = 0; i < hset::kCount; ++i) {
         const hset::Def& d = hset::kDefs[i];
         give(hset::DefKey(i, "label"), d.label);

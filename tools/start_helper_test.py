@@ -7,8 +7,9 @@ runs), that D2R VR Authentic is started as `D2RLoader.exe -mod D2R-VR` (and an i
 child got in its environment (XR_RUNTIME_JSON and VRMOD_*), what went to stdout and to d2rloader\\logs\\d2r_vr_launch.txt, that no window
 opened, and that nothing outside the scratch folder was written (the game's Settings.json, d2r_vr.ini and its neighbours).
 
-Only the VR + native OpenXR + "Controls without BodyWalk" path is run: it starts no BodyWalk and does not meet the game's window
-(flat mode and FlatVR would read the player's Saved Games and start the real BodyWalk).
+Only the VR + native OpenXR + "Controls without BodyWalk" path is run, with [mode] native_close_flatvr=0: it starts no BodyWalk, stops no
+FlatVR and does not meet the game's window (flat mode and FlatVR would read the player's Saved Games and start the real BodyWalk;
+native_close_flatvr=1 would stop a real FlatVR running here - what it decides is bw_autorun_test's).
 
     python tools/start_helper_test.py <D2R_VR_Settings.exe> <fake_loader.exe> [scratch dir]
 """
@@ -156,7 +157,8 @@ def main():
         if not p.is_file():
             print("not found:", p)
             return 2
-    ini_native = "[mode]\nplatform=1\n[openxr]\non=1\ndirect_input=1\n"
+    # native_close_flatvr=0: with it on, --start stops a FlatVR really running on this PC (tools/settings/bw_autorun.h; its own test)
+    ini_native = "[mode]\nplatform=1\nnative_close_flatvr=0\n[openxr]\non=1\ndirect_input=1\n"
     real0 = real_game_settings()
 
     # 1. no d2r_vr.ini anywhere
@@ -220,6 +222,7 @@ def main():
     check("D2RLoader.exe -mod D2R-VR started (VR)" in out, "...stdout: started (VR), with the mod", repr(out))
     check("by the VR mod launcher as d2r-vr 0.167.0, runtime vdxr, store steam" in out, "...stdout: who started it", repr(out))
     check("start: done" in out, "...stdout: done")
+    check("bodywalk: the game's start: nothing to start or stop" in out, "...stdout: BodyWalk and FlatVR - nothing started or stopped ([mode] native_close_flatvr=0)", repr(out))
     log = rd(root / MOD_LOGS / "d2r_vr_launch.txt") or ""
     check("-mod D2R-VR started (VR)" in log and "start: done" in log, "...d2r_vr_launch.txt has the same lines", repr(log))
     check(len(log.splitlines()) == len(out.splitlines()), "...one log line per stdout line", f"{len(log.splitlines())} vs {len(out.splitlines())}")

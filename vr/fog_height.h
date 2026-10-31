@@ -40,6 +40,8 @@ void Frame(bool on, float top, float soft, bool mist, bool voidAlone = false, bo
 // fogged - noFog above. A stream's pixel shader (its bytecode in the stream as given), for the resolve's pipeline found the same way.
 // How many times our patched pass was bound in the game's place so far: it grows while the game's fog is drawn by it (height, our curve)
 uint32_t Bound();
+// Variants of the fog pass made so far (the test: a top moving with the head makes none per frame)
+uint32_t Builds();
 bool StreamPixelShader(const D3D12_PIPELINE_STATE_STREAM_DESC* desc, const void** code, size_t* size);
 
 }  // namespace fogheight

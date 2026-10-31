@@ -90,8 +90,10 @@ environment, which `D2RLoader.exe` and the game inherit.
 - Reads `[mode] platform` from `d2r_vr.ini` (`mods\D2R-VR\d2rloader\plugins`, else the global plugins folder of an earlier install), sets the game's
   window, frame cap and interface size for it (the game's `Settings.json`, as the button does), starts **`D2RLoader.exe -mod D2R-VR`** from the game's folder
   (an install from before the mod layout: without `-mod`, as it always was), in VR also BodyWalk (not with native OpenXR and "Controls without BodyWalk")
-  and asks FlatVR to start once BodyWalk's Game Link is up (waits up to a minute for that; native OpenXR returns at once). It does not wait for the game
-  to end, opens no window and no message box.
+  and asks FlatVR to start once BodyWalk's Game Link is up (waits up to a minute for that; native OpenXR returns at once). With native OpenXR and
+  `[mode] native_close_flatvr=1` (the default) it stops FlatVR through BodyWalk's Game Link and closes a FlatVR.exe of its own as its close button
+  does, waiting for it to end; BodyWalk keeps running (`tools/settings/bw_autorun.h`, `bw_autorun_test`).
+  It does not wait for the game to end, opens no window and no message box.
 - Exit code: **0** started, **1** no `d2r_vr.ini`, **2** no `D2RLoader.exe`, **3** `D2RLoader.exe` could not be started, **4** the game runs already.
 - It says what it does on stdout (a pipe or a console, when there is one) and in `<game>\mods\D2R-VR\d2rloader\logs\d2r_vr_launch.txt` (`d2rloader\logs` of the game for an earlier install; appended, one
   time-stamped line per stdout line): its version, the ini it read, who started it, what it started, the exit reason.

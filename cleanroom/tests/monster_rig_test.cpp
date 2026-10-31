@@ -242,6 +242,31 @@ void TestEveryLimb() {
 	EXPECT(b.n == 76 && lCalf >= 0 && rCalf >= 0, "every boxed bone read - not the first 64 (%d; left calf %d, right %d)", b.n, lCalf, rCalf);
 	if (lCalf >= 0 && rCalf >= 0)
 		EXPECT(b.b[lCalf].mirror == b.b[rCalf].bone && b.b[rCalf].mirror == b.b[lCalf].bone, "each calf knows the other");
+	{   // a long rig (Arreat Summit's ancientbarb1 / 2 read "0 bones" under the old 160 cap - only the 121-bone ancientbarb3 could be grabbed): 200 bones read;
+		// past the cap it says how many
+		static char longNames[300][24];
+		const char* longPtrs[300];
+		for (int i = 0; i < 300; ++i) { std::snprintf(longNames[i], sizeof longNames[i], "Bip01 Beard%03d", i); longPtrs[i] = longNames[i]; }
+		std::snprintf(longNames[0], sizeof longNames[0], "Bip01 L Calf");
+		std::snprintf(longNames[1], sizeof longNames[1], "Bip01 R Calf");
+		const std::vector<Box> calves = { { longPtrs[0], { -0.06f, -0.45f, -0.06f }, { 0.06f, 0.0f, 0.06f } }, { longPtrs[1], { -0.06f, -0.45f, -0.06f }, { 0.06f, 0.0f, 0.06f } } };
+		Doll lng = MakeDoll({ calves }, longPtrs, 200);
+		const auto readLong = [&](uintptr_t a, void* p, size_t sz) { return lng.m.Read(a, p, sz); };
+		mr::Boxes lb;
+		const bool longOk = mr::BoxesOf(readLong, lng.instance, lng.skeleton, &lb);
+		std::printf("  a rig of 200 bones: %s (%d bones, %d boxes)\n", longOk ? "read" : lb.why, lb.bones, lb.n);
+		EXPECT(longOk && lb.bones == 200 && lb.n == 2, "a 200-bone rig not read: %s (%d bones, %d boxes)", lb.why, lb.bones, lb.n);
+		Doll huge = MakeDoll({ calves }, longPtrs, 300);
+		const auto readHuge = [&](uintptr_t a, void* p, size_t sz) { return huge.m.Read(a, p, sz); };
+		EXPECT(!mr::BoxesOf(readHuge, huge.instance, huge.skeleton, &lb) && lb.bones == 300, "a 300-bone rig past the cap: refused, its count said (%d: %s)", lb.bones, lb.why);
+		bonecap::Set(512);   // [weight] skeleton_bones_max raised (live): the same rig reads
+		const bool hugeOk = mr::BoxesOf(readHuge, huge.instance, huge.skeleton, &lb);
+		std::printf("  a rig of 300 bones under skeleton_bones_max 512: %s (%d bones, %d boxes)\n", hugeOk ? "read" : lb.why, lb.bones, lb.n);
+		EXPECT(hugeOk && lb.bones == 300 && lb.n == 2, "a 300-bone rig under skeleton_bones_max 512 not read: %s", lb.why);
+		bonecap::Set(64);    // lowered: the 200-bone one is refused, its count said
+		EXPECT(!mr::BoxesOf(readLong, lng.instance, lng.skeleton, &lb) && lb.bones == 200, "a 200-bone rig under skeleton_bones_max 64 read (%d)", lb.bones);
+		bonecap::Set(bonecap::kDefault);
+	}
 	// Keep at the 24 limit: a pair straddling it is kept or left out together
 	const auto cap = [](int bone, int mirror, float r) {
 		mr::Capsule c;

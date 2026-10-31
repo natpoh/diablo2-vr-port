@@ -77,6 +77,8 @@ inline const char* StatusText(const Model& m, bool window = false) {
                                             : uitext::Tr("vr.hset.status.keys_off", "Controls without BodyWalk is off: these buttons do nothing (BodyWalk's mapping is the controls).");
     if (m.page == kPageMelee && m.Get()[kKeyMeleeTouch] > 0.5f && m.Get()[kKeyMeleeDirect] < 0.5f && m.Get()[kKeyMeleeDirectClient] > 1.5f)   // the file says Fully on
         return uitext::Tr("vr.hset.status.melee_direct_full", "Direct hit is Fully on (D2R VR Authentic Settings > Strikes); its tick here is By the rules.");
+    if (IsWorldPage(m.page))
+        return uitext::Tr("vr.hset.status.world_idle", "Each change applies by itself (F4). They need the arms on the controllers; the rest is in D2R VR Authentic Settings.");
     if (m.page == kPageMelee)
         return m.Get()[kKeyMeleeTouch] > 0.5f ? uitext::Tr("vr.hset.status.melee_idle", "Each change applies by itself. First person (F4) only.")
                                               : uitext::Tr("vr.hset.status.melee_off", "Hit by touch is off: tick it, and the rows below apply.");
@@ -242,8 +244,11 @@ inline Scene Compose(const Model& m, const Hit& hover, const ComposeOptions& opt
         b.Text(uitext::Tr("vr.hset.title", "HEADSET SETTINGS"), {32, 22, 640, 50}, Face::Bold, Role::Accent);
         b.Text("D2R VR", {760, 22, 232, 50}, Face::Small, Role::Quiet, Align::Center);
     }
-    if (PageCount() > 1)
-        for (int i = 0; i < PageCount(); ++i) b.Button(kTab(i), PageName(i), {Kind::Tab, i, 0}, m.page == i, true, Role::Text, Part::Tab);
+    for (int i = 0; i < kTabCount; ++i) b.Button(kTab(i), TabName(i), {Kind::Tab, TabPage(i), 0}, TabOf(m.page) == i, true, Role::Text, Part::Tab);
+    if (IsWorldPage(m.page))   // -- the World tab's four pages: a button each, the one shown lit (a flick goes along them too) ----------------------------
+        for (int i = 0; i < kWorldPages; ++i)
+            b.Button(kWorldSub(i), PageName(kPageWorld + i), {Kind::Tab, kPageWorld + i, 0}, m.page == kPageWorld + i, true,
+                     m.page == kPageWorld + i ? Role::Accent : Role::Text, Part::Choice);
 
     const bool canEdit = m.ready && !m.Busy();
     if (m.page == kPageVideo) {
@@ -372,6 +377,7 @@ inline Scene Compose(const Model& m, const Hit& hover, const ComposeOptions& opt
     }
     const int pg = m.page, step = RowStep(pg);
     const bool close = CloseRows(pg);   // seven rows: the two lines of a row's name a little smaller and closer
+    const bool world = IsWorldPage(pg);   // under the World pages' buttons: closer still, the name in the normal face (D2R VR Settings' longer labels fit it)
     for (int r = 0; r < kRowsMax; ++r) {
         const int key = KeyAt(pg, r);
         if (key < 0) break;
@@ -379,9 +385,9 @@ inline Scene Compose(const Model& m, const Hit& hover, const ComposeOptions& opt
         const int y = RowY(r, pg);
         const bool rowEdit = canEdit;
         b.Fill({32, y - 5, 960, step - 2}, r % 2 ? Role::RowB : Role::RowA, Part::Row);
-        b.Text(DefLabel(key), close ? Rect{48, y - 4, 520, 30} : Rect{48, y - 2, 520, 32}, Face::Bold, Role::Text);
+        b.Text(DefLabel(key), world ? Rect{48, y - 5, 530, 27} : close ? Rect{48, y - 4, 520, 30} : Rect{48, y - 2, 520, 32}, world ? Face::Normal : Face::Bold, Role::Text);
         b.Text(d.type == DefType::Choice ? ChoiceDetail(m, key) : d.type == DefType::Game ? PlayersDetail(m) : std::string(DefDetail(key)),
-               close ? Rect{48, y + 24, 530, 26} : Rect{48, y + 28, 530, 28}, Face::Small, Role::Quiet);
+               world ? Rect{48, y + 21, 530, 24} : close ? Rect{48, y + 24, 530, 26} : Rect{48, y + 28, 530, 28}, Face::Small, Role::Quiet);
         const float v = m.Get()[key];
         if (d.type == DefType::Game) {   // the game's players count: what the game says (amber: asked, not shown by the game yet), "-" not known
             const bool usable = m.PlayersUsable();

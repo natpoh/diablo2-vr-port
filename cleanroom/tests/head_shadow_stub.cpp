@@ -10,6 +10,7 @@ void NoteHeroRig(uintptr_t, uintptr_t, uintptr_t) {}   // [debug] walk_back_dump
 void NoteHeroLegs(const int*, const float (*)[3], int) {}   // ... and the legs it should skin: nothing compares them here
 void PublishOurPose(uint64_t, uint64_t, uint64_t, const float*, int) {}   // [body] legs_rear's finished pose for the skinning: nothing skins here
 void WantForPose(bool) {}   // ... and its composite hook: not in here
+void SetPoseView(bool) {}   // ... nor its views
 // monster_ragdoll_pose's skinning composite: not in here, so the pose hook writes as before
 void WantForDoll(bool) {}
 void SetDollSkin(bool (*)(uintptr_t, uintptr_t, float (*)[16], int)) {}

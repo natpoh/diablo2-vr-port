@@ -1,7 +1,90 @@
 # What's new in D2R VR
 
-## Next
+## 0.193.0
 
+The release after 0.192.0, from the test builds 0.192.1 - 0.192.43. It ships our old sky and our old fog (`[sky] game_sky=0`, `[fog]
+game_fog=0`); the game's own sky and fog and their fixes below stay in Settings for whoever wants to try them, off.
+
+- **The hero's legs in F4 walk where you go**: up to 90 degrees off your facing (ahead, diagonally, straight sideways) the game's own walk
+  and run, past it the same cycle played backwards; the hips and legs turn toward the travel, the trunk and head stay on your look
+  (`[body] legs_side_game`, `legs_turn`, on). Serg: "the best we have had".
+- **VR F1 and F3 are the plain game in 3D**: nothing of ours on the hero, his gear or anyone there - no body, arms, legs, ragdoll or stale
+  pose; F2 and F4 as before (`vr/body/pose_views.h`). Test: pose_views_test.
+- **Monsters react to your body, on for everyone**: knocked down by a hard hit, a sweep or a push and getting up with the game's own clips
+  (`[weight] knock_down`), lifted and thrown (`grab_throw`), keeping their balance when pulled by the hand (`grab_balance`), dragged on an
+  impaling weapon (`impale_drag`); heavier bodies by their size; lifted and knocked-down NPCs no longer flicker or vanish.
+- **Vibration on for everyone**: hits, spells, touch, low mana, the game's own rumble (`[openxr] haptics_*`).
+- **The headset settings' World tab**: contact, monsters react, grab and more on four pages, each live.
+- **World contact (experimental, off)**: the weapon and hands stop at walls and props, your own body stops the weapon (`[weight]
+  world_contact`, `world_contact_hands`, `own_body`) - labelled "(experimental)" in Settings and the headset; NPCs and your own gear are
+  never walls.
+- **Settings**: Start BodyWalk / Start FlatVR / Stop FlatVR on Home under the headset's 3D choice; "How many bones a ragdoll counts"
+  (`skeleton_bones_max`); a live switch with everything of ours off to compare the frame rate (`[render] bench_bare`, Performance).
+- **D2R VR Headset Report** in the game folder (and from Settings' Home): a player whose headset picture is wrong runs it, it collects the
+  headset's numbers and D2R VR's files for support.
+- **FlatVR without ReShade** gets its picture and depth from the plugin.
+- **Co-op: D2R Rooms 0.9.10** - its window's buttons click by the VR ray again (the click map scaled per axis).
+- **The wrist medallion** sits on the forearm bone again.
+
+- **Fixed: a monster's plate cut in the middle, half small and half big** (Serg on the small PC: native OpenXR, no ReShade, render 1152 then
+  1216). A plate made smaller or set at its own depth is drawn again from a box round it; the box was placed by the plate's rect made pixels with the
+  interface scale, and the plate hangs far from the screen's middle, so a scale a few percent off moved the box by more than the plate's width errs:
+  the half inside it was drawn smaller, the other half at the game's own size. Now the box is set where the game hung the plate (the anchor call's
+  answer), only the plate's offset from it and its size use the scale, and the scale is measured there when the plate hangs off the middle. The
+  log says when the game's scale and the measured one differ. Not yet seen in the headset. Test: plate_world_test.
+- **The game's sky: the act's own pictures, baked, nothing recoloured** (the default now; Settings > Sky > "The sky's pictures"). Serg: "the
+  sky's colouring off completely, only three skies - day, night, and morning / evening - with three brightnesses", "baked". The game's dome is
+  the act's day picture, its night picture, and one for dawn and dusk (no act has one yet: the day's stands in at the dawn / dusk brightness),
+  each at its own slider (`[sky] three_bright_day`, `_night`, `_dawn_dusk`); act 4 has no night - one sky at `three_bright_act4`. The game's
+  time of day picks the picture: as a period turns, the next one's whole, baked once (`[sky] sky_crossfade`, off: ticked, each fades into the
+  next by the game's light, baked again at each step of the light through the dawns and dusks). Nothing is measured while you play.
+- **The fog's colour is the sky's** (`[fog] fog_colour_measured`, off by default; Settings > World > Fog). Serg: the fog's colour need not be
+  measured, it "equals the sky's colour". Unticked, the fog is the baked sky's own colour at the horizon at its brightness - read once from the
+  pictures, set when the time of day or a slider changes - so the far land melts into the sky with no seam. Ticked: measured from the game as
+  before (with "The game's fog as thick and as coloured as ours"). Live, to compare on one spot.
+- **Fixed: the sky-colour fog gone at night, and white outlines with the measured fog** (Serg on 0.192.34, Rogue camp at night). The night
+  picture's horizon is all but black (act 1: 0.004 0.005 0.007), so the far land went into it and no fog showed. Now "The game's fog keeps the
+  act's colour at night" means the day sky's horizon at every hour with the sky's colour too (off: the night sky's, near black). "The game's fog
+  as thick and as coloured as ours" no longer needs the measured colour: it makes up the share the game left out in the sky's colour, with no
+  measure. Measured, it moves each fogged pixel toward the act's colour but never past it: a fence's or tree's edge against the sky, its depth
+  the fence's and its colour already lighter, was lifted into a white outline round every silhouette. Not yet seen in the game. Test:
+  fx_native_test.
+- **Fixed: a flat grey wall of fog with a hard edge** (Serg on 0.192.34, 121.webp: Full fog 10 below Fog start 40). A full fog nearer than its
+  start was held to the start + 1, so the whole fog came in over one unit at 41 - one flat grey past it, a hard line where it met the sky.
+  With the game's fog the two are now taken the other way round (open air, caves, Arcane alike) and the log says so; our
+  effect's fog is left as it was (Serg: the old fog not touched).
+- **Fixed: a ten-sided disc in the sky, the sky round it fogged, light rims round the trees** (Serg on 0.192.39, 126.webp, `[fog]
+  game_fog_before_fx` with the game's dome). The fog step before the effects told the dome by its depth alone, and the depth is the view's:
+  only the dome within 11.5 degrees of the view's middle passed as the sky, the rest of it was fogged as ground - a disc straight ahead in
+  the dome's own colours, the sky round it greyed, the one-pixel rims against it fogged by the dome's distance (light outlines, a light line
+  where the land meets the sky). It now takes each pixel's view ray as the post pass does (D2R_DepthFog.fx DomeAt). Test:
+  fog_before_fx_test. Not yet seen in the game.
+- **The game's sky: its low part in the fog's colour** (`[sky] dome_fog_baked`, on, and `dome_fog_baked_strength`, 1; Settings > Sky;
+  Serg on 0.192.40, 127 / 128.webp: the old fog "прекрасно ложится поверх жёлтого фона", the game's fog left the dome's light yellow horizon
+  bare and it showed through every tree's and bush's soft edge as a light rim). With the game's fog under an act's sky the dome's
+  picture is baked with its low part laid into the fog's own colour by our old sky's falloff (full under the horizon, the picture by 11
+  degrees up), so the game blends the trees' edges over the fog's colour itself. dome_fog_horizon stands aside meanwhile. Nothing a frame
+  (in the bake); our effect's fog untouched. Test: dome_atlas_test. Not yet seen in the game.
+- **Fixed: dark and light lines round fences and trees in the game's fog** (Serg on 0.192.34 - 0.192.40: "чтобы туман игры был без полос
+  вокруг объектов"; `[fog] game_fog_before_fx`). A silhouette's edge pixels hold the object and the sky (or the far ground) behind it
+  blended but one depth, so the step fogged them whole as one or left them whole as the other: the object's unfogged half a dark line,
+  the sky's fogged half a light one. Where two fogs meet in a pixel's 3 x 3 the step now takes the pixel apart by its colour between its
+  two sides and fogs each share by its own side - the pixel always between its neighbours. The farthest-neighbour fill stays for holes
+  with no sky beside them. The game's fog only: our effect's fog (`game_fog=0`) is untouched, and so are the earlier fixes here
+  (the Full fog swap, the dome test, game_fog_match without the measure, the measured move's clamp) - all for the game's fog alone.
+  Tests: fog_before_fx_test (a silhouette, its edge with the sky's depth, the fence's, none; our fog as it was), fx_native_test. Not yet
+  seen in the game.
+- **The sky's tinting parked** (`[sky] dome_tint`, off; Settings > Sky > "Sky tinting (parked)"): the old recolouring of the game's dome - its
+  colours measured against ours, `dome_gain_once` and its file, the period sliders - left a light outline round every tree. Serg: "we will come
+  back to the colouring later, when we learn to colour without outlines round the trees" - open until the dome can be tinted with no outline.
+  Its measures (and game_fog_match's, with the fog's measure off) are no longer even compiled into the effect while off: no textures, passes,
+  readbacks or schedule. Tests: dome_atlas_test, fx_native_test.
+
+- **Fixed: the game froze when native OpenXR was switched off while playing** (switching to FlatVR in the game, Quest on Virtual Desktop:
+  the game stopped at once). The session was ended and torn down inside the game's frame, and Virtual Desktop's swapchain destroy waits for
+  the game's own GPU queue with no limit - which waited on that frame. Now a session ended while the game goes on asks the headset for the
+  exit, waits for it, and is ended and destroyed on a thread of its own; the game goes on at once, and a new session waits for it to finish.
+  Test: session_end_test.
 - **The monster plate held steady** (`[hud] monster_plate_smooth`, off by default; Settings > Monster plates: "Name over a monster: steady").
   Serg: "the plates keep shaking and jittering". The plate hung, every frame, on the game's own head point - which goes with the model's animation
   (the bob of a walk, the shake of a blow) - on an axis through the monster's place on the grid, which moves in the game's own steps; its distance
@@ -97,6 +180,19 @@ Built, not published - the release after 0.189.0, from the test build 0.189.1 an
   shipped) the labels were "wanted" all the time in flat, which switched that mask off; inside a menu the labels are not taken out
   either, so nothing kept the fog and the far trees off the panel. In a menu the mask is now copied whatever the labels want. With or
   without ReShade. Tests: hud_native_test (a menu with the labels wanted), fx_native_test (the mask kept by the plugin's own runtime).
+- **New: D2R VR Headset Report** (`D2R_VR_Headset_Report.exe`, beside `D2R_VR_Settings.exe`): for a headset picture that is doubled,
+  cross-eyed or stretched, or hands at the waist. Run with the game closed and the headset on, it writes one text report of what the
+  OpenXR runtime gives - the runtime and its version, the API layers (implicit ones, the registry's too), the extensions, the view
+  configurations and picture sizes, the GPU it wants, then 10 s of each eye's fov and the eyes' distance in VIEW, LOCAL and STAGE (in the
+  plugin's own log line), whether the pair is a mirror image, where the head and each controller's grip and aim are located in each space,
+  the stage bounds and the refresh rate - with a short "what stands out" at the end. First it looks at D2R VR's own files: the plugin's and
+  the programs' versions (and the plugin's sha256), the key ini values of the path in use (and the shipped defaults beside them, the toolbar
+  type), every ReShade setup beside the game and in each mod - its DLL, `ReShade.ini`'s search paths, preset and effect cache - with every
+  `D2R_DepthFog.fx` / `.fxh` the search paths reach and whether the effect holds `GameBarOn`, `GameMapOn` and `QvN` (what vrcam asks ReShade
+  for: without them the toolbar stays in the picture), and another VR mod's files (d2r-pcvr / Unleashed) in the same folders. It reads the mod's `[openxr]` settings and changes
+  nothing; while the game runs it asks the runtime nothing. Settings > Home: **"Headset report with the logs"** (`[support]
+  headset_report`, off) shows "Make a headset report" and makes Collect logs put a fresh report into its zip. English only for now.
+  Test: headset_report_test.
 
 ## 0.189.0
 

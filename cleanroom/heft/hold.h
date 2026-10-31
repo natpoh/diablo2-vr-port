@@ -28,6 +28,8 @@
 // where the game's own grip puts the weapon; its shaft runs through that frame along `Line`.
 
 #include <cstdint>
+#include <memory>
+#include <vector>
 
 #include "contact.h"
 #include "heft.h"
@@ -418,9 +420,10 @@ private:
 	contact::Report contact_;       // the last step's
 	bool wedged_ = false;           // ... and the one before touched several monsters (Settings::wedgeFriction)
 	double sinceBody_ = 1e9;        // s since the weapon last touched a body (kBodySnap)
-	walls::Wall   walls_[walls::kMaxWalls];   // SetWalls
+	// (on the heap, made when walls are first given: ~41 KB a Hold kept inline overflowed heft_test's stack, 26 Holds in one function - 0.193.0)
+	std::vector<walls::Wall>       walls_;     // SetWalls
 	int           nWalls_ = 0;
-	walls::Memory wallMem_;         // which face each wall lets the weapon out of
+	std::unique_ptr<walls::Memory> wallMem_;   // which face each wall lets the weapon out of
 	walls::Report wall_;            // the last step's
 	int           wallReturns_ = 0;
 	stab::Blob   stabBlob_;         // [weight] stab_in: the library's wound (zero: in none)

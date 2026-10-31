@@ -137,11 +137,12 @@ private:
     }
 };
 
-// The mass of a humanoid of this height (m) by the author's two numbers (2026-10-22: a fallen of 1.15 m 30 kg, a zombie of 1.8 m 50 kg - the doll library's
-// law, the size to the power ~1.14), times scale (the weight slider).
+// The mass of a humanoid of this height (m) - one law of its size, the doll library's (doll_physics 1.3): a fallen of 1.15 m 30 kg, a man of 1.75 m 63 kg
+// (Serg, 2026-10-31: «надо нпс ещё весу добавить, чтобы они не были такие легкие, чем больше тем тяжелее» - a rogue 60 - 65), the size to the power ~1.77
+// between and beyond (until then a zombie's 50 kg at 1.8 m, the power ~1.14: a rogue came to 48); times scale (the weight slider).
 inline float MassOf(float heightM, float scale) {
     const float h = std::clamp(heightM, 0.3f, 6.0f);
-    return 30.0f * std::pow(h / 1.15f, 1.1427f) * std::clamp(scale, 0.1f, 10.0f);
+    return 30.0f * std::pow(h / 1.15f, 1.7673f) * std::clamp(scale, 0.1f, 10.0f);
 }
 
 }  // namespace knocktrigger

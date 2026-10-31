@@ -30,8 +30,18 @@ group.in_the_headset.help = Cómo llega el juego a tu visor: la opción de 3D (O
 @stereo3d.source.choice1 = Estéreo de FlatVR
 @stereo3d.source.choice2 = Profundidad 3D de FlatVR
 @stereo3d.source.choice3 = OpenXR nativo - ojos alternos
+mode.flatvr_autostart.label = FlatVR: iniciar BodyWalk y FlatVR por sí solos
+mode.flatvr_autostart.tip = Cuando "3D en el visor" se cambia de OpenXR nativo a una opción de FlatVR, se inicia BodyWalk (si no está en marcha; el más nuevo encontrado, como hace el botón Iniciar BodyWalk) y se pide una vez el Start de FlatVR cuando el Game Link de BodyWalk está activo (en un minuto) - no tienes que iniciarlos tú. START y el lanzador los inician en FlatVR esté esto activado o no, como antes. Nunca un segundo BodyWalk. Desactivado: el cambio no inicia nada, como antes.
+mode.native_close_flatvr.label = OpenXR nativo: detener FlatVR por sí solo (BodyWalk sigue)
+mode.native_close_flatvr.tip = OpenXR nativo no necesita FlatVR, y FlatVR ocupa el visor que el juego quiere. Cuando "3D en el visor" se cambia a OpenXR nativo, y cuando el juego se inicia con él (START, el lanzador), FlatVR se detiene a través del Game Link de BodyWalk, y un FlatVR que funciona por su cuenta (FlatVR.exe) se cierra como lo hace su propio botón de cerrar (terminado a la fuerza solo cuando su ventana deja de responder). BodyWalk sigue en marcha - sus controles, gestos y caminar continúan. A un BodyWalk sin Game Link (BodyWalk Lite) no se le puede pedir que detenga FlatVR: detenlo tú en BodyWalk. El registro de Ajustes dice lo que se hizo (d2r_vr_settings.log). Desactivado: no se detiene nada, como antes.
 stereo.headset_rate.label = Frecuencia de actualización del visor
 stereo.headset_rate.tip = Fija el límite de fotogramas del juego (en sus propias opciones, Settings.json); la línea de debajo dice qué se escribe y por qué: la propia frecuencia para una imagen por fotograma (mono, el 3D a partir de la profundidad) y para ambos ojos desde un fotograma del juego (una pasada, dos imágenes: estéreo de FlatVR); el doble de la frecuencia para ojos alternos (un ojo por fotograma del juego, cada ojo a la frecuencia); ninguno para OpenXR nativo (el visor marca el ritmo del juego por sí mismo). Más imágenes de las que muestra el visor hacen temblar la imagen. El juego lo lee al iniciarse: ajústalo con el juego cerrado (escribe sus propias opciones al salir) o reinicia el juego después. Solo RV: en modo plano (Cómo juegas) el juego va al límite de fotogramas que fijaste en sus propias opciones - el tuyo se conserva antes de que la frecuencia escriba el suyo, y vuelve cuando pasas a Plano o inicias el juego en modo plano.
+@run.bodywalk.label = Iniciar BodyWalk
+@run.bodywalk.tip = Inicia BodyWalk - el de la carpeta del juego que puso D2R VR Setup, o el que tienes instalado.
+@run.flatvr_start.label = Iniciar FlatVR
+@run.flatvr_start.tip = Inicia FlatVR en BodyWalk - la imagen pasa al visor. Es lo mismo que START FLATVR en la pestaña FlatVR de BodyWalk.
+@run.flatvr_stop.label = Detener FlatVR
+@run.flatvr_stop.tip = Detiene FlatVR en BodyWalk. Es lo mismo que STOP FLATVR en la pestaña FlatVR de BodyWalk.
 @render.vr_px.label = Resolución (tamaño de render RV)
 @render.vr_headset.label = Usar el tamaño recomendado por el visor
 openxr.frame_generation.label = Generación de fotogramas (experimental; reinicia el juego)
@@ -98,7 +108,7 @@ group.the_game_and_reshade.help = Comprueba e instala lo que necesita el mod: D2
 @status.reshade_note.label = IMPORTANTE
 @status.arcane_sky.label = Cielo del Santuario Arcano: aún no creado
 @status.knock_props.label = Objetos derribables: desactivado ([weight] knock_props, Peso del arma)
-# @status.world_contact.label = World contact walls: off ([weight] world_contact, Weapon Weight)
+@status.world_contact.label = Paredes del contacto con el mundo: desactivado ([weight] world_contact, Peso del arma)
 @status.kurast_boat.label = Canoa de los Muelles de Kurast: aún sin revisar
 @run.arcane_make.label = Crear ahora el cielo del Santuario Arcano
 @run.arcane_make.tip = Lee las capas de estrellas y las nubes de los archivos propios de tu juego (solo lectura) y crea las imágenes con las que el mod dibuja el cielo del Santuario Arcano (D2R_Arcane, en reshade-shaders\Textures de ReShade: mods\D2R-VR\reshade para el mod), y saca las tarjetas planas de estrellas del juego de los archivos del nivel en mods\D2R-VR\D2R-VR.mpq (los archivos propios del juego se quedan como están). Este programa lo hace por sí mismo al abrirse; púlsalo después de actualizar el juego o si se borró una imagen. Lo que ya está bien no se vuelve a escribir. El juego puede estar en marcha: encuentra las imágenes en 2 segundos.
@@ -140,35 +150,34 @@ hud.headset_language.tip = Los textos que el mod dibuja en el visor - el panel d
 @run.collect_logs.label = Recopilar registros para soporte
 @run.collect_logs.tip = Crea un zip en tu escritorio con lo que necesitamos para encontrar un problema: los registros del mod, de D2RLoader, de ReShade y de FlatVR, los ajustes, las versiones, la tarjeta gráfica y Windows. Si el juego está en marcha, antes graba 10 s de cómo se dibujan los fotogramas - sigue jugando y gira la cabeza. No se envía nada a ningún sitio: publica el zip en nuestro Discord (#diablo-2-vr).
 @status.collect.label = Recopilar registros: un zip en tu escritorio para publicar en nuestro Discord
-# headset_shot.on.label = Headset screenshot
-# headset_shot.on.tip = For a headset picture that is doubled, in the wrong eye, black or flat: saves exactly what the game hands to the headset - both eyes' pictures and the panels, with their sizes, angles and the eye distance - into the logs folder. Ticked: the button below and the key take one while the game runs; Collect logs packs the newest. Unticked: nothing, as before.
-# headset_shot.take.label = Screenshot of the headset picture
-# headset_shot.take.tip = With the game running in VR: the next frame that goes to the headset is saved - headset_shot_<time>_left.png, _right.png, _sbs.png (both side by side) and a .txt with the numbers, in the logs folder. Put the headset on first, so the picture is the one you see. Costs no stutter.
-# headset_shot.key.label = Headset screenshot key in the game
-# headset_shot.key.tip = A key that takes a headset screenshot in the game (while the game window has the keyboard). None: only the button above.
-# headset_shot.key.choice0 = None
-# headset_shot.key.choice1 = Scroll Lock
-# headset_shot.key.choice2 = Pause
-# @status.hshot.label = Headset screenshot: put the headset on, then press the button
-# headset_shot.video.label = Headset video (10 s)
-# headset_shot.video.tip = The same as the screenshot, as 10 seconds of video: both eyes side by side at half size, about 30 frames a second, as they go to the headset - for a picture that flickers, swims, doubles now and then or goes black. Ticked: the button below and the key record one while the game runs; Collect logs packs the newest. Unticked: nothing, as before.
-# headset_shot.video_take.label = Record 10 s video of the headset picture
-# headset_shot.video_take.tip = With the game running in VR: the next 10 seconds that go to the headset are recorded - headset_clip_<time>.mp4 and a .csv (each frame: stereo pair or flat picture, which eyes, its time) in the logs folder. Put the headset on first and play as when the problem shows. The log says what recording cost each frame.
-# headset_shot.video_key.label = Headset video key in the game
-# headset_shot.video_key.tip = A key that records 10 s of the headset picture in the game (while the game window has the keyboard). None: only the button above.
-# @status.hclip.label = Headset video: put the headset on, then press the button
-# headset_shot.grid.label = Calibration grid in the headset
-# headset_shot.grid.tip = Native OpenXR, F2 / F4: a grid over each eye's picture as it goes to the headset - a line every 10 degrees, numbered, a red cross where the eye looks straight ahead, a magenta ring at the picture's own middle, a big L or R. With the eyes right, the two grids become one and stay still on the world; seen double, tilted or swimming, a screenshot or video with it shows which eye is off. Live. Only in the headset (the window on the monitor has none).
+headset_shot.on.label = Captura del visor
+headset_shot.on.tip = Para una imagen del visor duplicada, en el ojo equivocado, negra o plana: guarda exactamente lo que el juego entrega al visor - las imágenes de ambos ojos y los paneles, con sus tamaños, ángulos y la distancia entre ojos - en la carpeta de registros. Marcado: el botón de abajo y la tecla toman una mientras el juego funciona; Recopilar registros empaqueta la más reciente. Desmarcado: nada, como antes.
+headset_shot.take.label = Captura de la imagen del visor
+headset_shot.take.tip = Con el juego en marcha en VR: se guarda el siguiente fotograma que va al visor - headset_shot_<time>_left.png, _right.png, _sbs.png (ambos lado a lado) y un .txt con los números, en la carpeta de registros. Ponte primero el visor, para que la imagen sea la que ves. No causa tirones.
+headset_shot.key.label = Tecla de captura del visor en el juego
+headset_shot.key.tip = Una tecla que toma una captura del visor en el juego (mientras la ventana del juego tiene el teclado). Ninguna: solo el botón de arriba.
+headset_shot.key.choice0 = Ninguna
+headset_shot.key.choice1 = Bloq Despl
+headset_shot.key.choice2 = Pausa
+@status.hshot.label = Captura del visor: ponte el visor y luego pulsa el botón
+headset_shot.video.label = Vídeo del visor (10 s)
+headset_shot.video.tip = Lo mismo que la captura, como 10 segundos de vídeo: ambos ojos lado a lado a la mitad de tamaño, unos 30 fotogramas por segundo, tal como van al visor - para una imagen que parpadea, flota, se duplica de vez en cuando o se pone negra. Marcado: el botón de abajo y la tecla graban uno mientras el juego funciona; Recopilar registros empaqueta el más reciente. Desmarcado: nada, como antes.
+headset_shot.video_take.label = Grabar 10 s de vídeo de la imagen del visor
+headset_shot.video_take.tip = Con el juego en marcha en VR: se graban los siguientes 10 segundos que van al visor - headset_clip_<time>.mp4 y un .csv (cada fotograma: par estéreo o imagen plana, qué ojos, su tiempo) en la carpeta de registros. Ponte primero el visor y juega como cuando aparece el problema. El registro dice cuánto costó grabar cada fotograma.
+headset_shot.video_key.label = Tecla de vídeo del visor en el juego
+headset_shot.video_key.tip = Una tecla que graba 10 s de la imagen del visor en el juego (mientras la ventana del juego tiene el teclado). Ninguna: solo el botón de arriba.
+@status.hclip.label = Vídeo del visor: ponte el visor y luego pulsa el botón
+headset_shot.grid.label = Cuadrícula de calibración en el visor
+headset_shot.grid.tip = OpenXR nativo, F2 / F4: una cuadrícula sobre la imagen de cada ojo tal como va al visor - una línea cada 10 grados, numerada, una cruz roja donde el ojo mira al frente, un anillo magenta en el centro propio de la imagen, una L o R grande. Con los ojos bien, las dos cuadrículas se vuelven una y quedan quietas sobre el mundo; si se ven dobles, inclinadas o flotando, una captura o un vídeo con ella muestra qué ojo falla. Al instante. Solo en el visor (la ventana del monitor no la tiene).
+support.headset_report.label = Informe del visor con los registros
+support.headset_report.tip = Para una imagen del visor duplicada, bizca o estirada, o manos a la altura de la cintura: D2R VR Headset Report pregunta al runtime OpenXR de tu visor lo que da - los ángulos y la distancia de los ojos, los espacios, los mandos - y lo anota. Marcado: aparece "Crear un informe del visor", y Recopilar registros crea uno primero (con el juego cerrado y el visor puesto: unos 20 s). No se cambia nada en el PC.
+@run.headset_report.label = Crear un informe del visor
+@run.headset_report.tip = Cierra el juego, ponte el visor y sostén ambos mandos delante de ti, luego haz clic. Unos 20 s; el informe se abre en el Bloc de notas y entra en el zip de Recopilar registros. Con el juego en marcha solo lista el runtime OpenXR y las capas del registro de Windows.
+@status.hreport.label = Informe del visor: cierra el juego, ponte el visor, haz clic en el botón
 update.check.label = Buscar actualizaciones al abrir este programa
 update.check.tip = Consulta bodywalkvr.com para saber la versión más reciente del mod. No se descarga nada.
 update.develop.label = También versiones beta (canal develop)
 update.develop.tip = Ofrece también versiones de prueba antes de que se publiquen para todos.
-@run.bodywalk.label = Iniciar BodyWalk
-@run.bodywalk.tip = Inicia BodyWalk - el de la carpeta del juego que puso D2R VR Setup, o el que tienes instalado.
-@run.flatvr_start.label = Iniciar FlatVR
-@run.flatvr_start.tip = Inicia FlatVR en BodyWalk - la imagen pasa al visor. Es lo mismo que START FLATVR en la pestaña FlatVR de BodyWalk.
-@run.flatvr_stop.label = Detener FlatVR
-@run.flatvr_stop.tip = Detiene FlatVR en BodyWalk. Es lo mismo que STOP FLATVR en la pestaña FlatVR de BodyWalk.
 
 # --- Monitor (screen recording) ---
 group.monitor_screen_recording = Monitor (grabación de pantalla)
@@ -186,6 +195,12 @@ render.monitor_eye_drawn_only.tip = Solo "OpenXR nativo - ojos alternos": los fo
 # ===== Tab: Performance =====
 tab.performance = Rendimiento
 
+# --- Compare with the bare game ---
+group.compare_with_the_bare_game = Comparar con el juego sin mod
+group.compare_with_the_bare_game.help = Un interruptor que detiene todo lo de D2R VR que cuesta fotogramas y de lo que el juego puede prescindir, de una vez y sin reiniciar - para comparar la tasa de fotogramas con el juego sin mod en el mismo sitio. Lo que pone la imagen en el visor se queda.
+render.bench_bare.label = Todo lo nuestro desactivado (para comparar la tasa de fotogramas)
+render.bench_bare.tip = Marcado: nuestro efecto (el cielo, la niebla y el techo, los medallones, las etiquetas, la barra de herramientas y los fantasmas), la niebla y el cielo del juego con nuestros números, la cúpula, el desenfoque de distancia, las barras de los monstruos, los objetos del escenario, el contacto con el mundo, los ragdolls y los cuerpos, las piernas, y todo interruptor de depuración se detienen a la vez - el juego muestra su propio cielo y niebla. El visor, la cabeza y las manos, y los controles se quedan. Los anillos de salas y la distancia de los modelos quedan como al inicio (necesitan reiniciar). El registro dice qué se detuvo, y su línea de fotogramas de 10 s sigue. Al instante. Desmarcado: todo vuelve como estaba ajustado.
+
 # --- Processor ---
 group.processor = Procesador
 group.processor.help = Para procesadores Ryzen con 3D V-Cache (X3D): el juego se ejecuta en los núcleos con la caché grande y su hilo de dibujo recibe mayor prioridad. En otros procesadores no cambia nada.
@@ -202,19 +217,20 @@ group.quality.help = Cuánto dibuja el juego y qué calidad tiene, frente a lo r
 @preset.preset.choice2 = Baja
 @preset.preset.choice4 = Alta
 @preset.preset.choice5 = Personalizada
-# English changed: No ReShade (restart the game)
-render.no_reshade.label = Sin ReShade (OpenXR nativo - solo ojos alternos; reinicia el juego)
-# English changed: The game runs without ReShade - D2R VR does not load ReShade64.dll at all and hooks the game's graphics itself. The flat game (a monitor): everything D2R VR draws there - the sky, the fog, the cave ceiling, the crosshair - comes from D2R VR itself with the box below; gone is only ReShade's own: its overlay (the Home key), its screenshots and any effect of your own in its presets. VR: only for "3D in the headset: Native OpenXR - eyes by turns" (Home): one eye drawn a frame, the other made on the graphics card with the game's depth. The sky, the fog and the cave ceiling come back drawn by D2R VR itself (the box below). Off with it: the overlays kept apart from the picture the second eye is made from (labels laid back, the wrist orbs - drawn into the picture), the lights' fix for the square window, and the menus as a panel (they show as the flat picture). On a GTX 1050 Ti the game went from about 44 to 53-60 frames a second without any effect. Read when the game starts: restart it after a change. With your own ReShade as dxgi.dll beside the game it does nothing (the game loads that one itself). Off (the default): ReShade as before.
-render.no_reshade.tip = Para un PC débil: el juego funciona sin ReShade - D2R VR no carga ReShade64.dll en absoluto y engancha los gráficos del juego por sí mismo. Solo para "3D en el visor: OpenXR nativo - ojos alternos" (Inicio): un ojo se dibuja en un fotograma y el otro se crea en la tarjeta gráfica con la profundidad del juego. El cielo, la niebla y el techo de las cuevas vuelven dibujados por el propio D2R VR (el recuadro de abajo). Desactivado con esto: las superposiciones se mantienen aparte de la imagen a partir de la cual se crea el segundo ojo (etiquetas inclinadas, las esferas de la muñeca - dibujadas dentro de la imagen), la corrección de las luces para la ventana cuadrada y los menús como panel (se muestran como imagen plana). En una GTX 1050 Ti el juego pasó de unos 44 a 53-60 fotogramas por segundo sin ningún efecto. Se lee al iniciar el juego: reinícialo tras un cambio. Con tu propio ReShade como dxgi.dll junto al juego no hace nada (el juego carga ese por sí mismo). Desmarcada (el valor predeterminado): ReShade como antes.
+render.no_reshade.label = Sin ReShade (reinicia el juego)
+render.no_reshade.tip = El juego funciona sin ReShade - D2R VR no carga ReShade64.dll en absoluto y engancha él mismo los gráficos del juego. El juego plano (un monitor): todo lo que D2R VR dibuja ahí - el cielo, la niebla, el techo de las cuevas, la mira - lo hace el propio D2R VR con la casilla de abajo; solo desaparece lo propio de ReShade: su superposición (la tecla Inicio), sus capturas y cualquier efecto tuyo en sus presets. VR: solo para "3D en el visor: OpenXR nativo - ojos alternos" (Inicio): un ojo dibujado por fotograma, el otro creado en la tarjeta gráfica con la profundidad del juego. El cielo, la niebla y el techo de las cuevas vuelven dibujados por el propio D2R VR (la casilla de abajo). Desaparecen con ello: las superposiciones separadas de la imagen de la que se crea el segundo ojo (las etiquetas puestas atrás, las esferas de las muñecas - dibujadas en la imagen), el arreglo de las luces para la ventana cuadrada, y los menús como panel (se muestran como la imagen plana). En una GTX 1050 Ti el juego pasó de unos 44 a 53-60 fotogramas por segundo sin ningún efecto. FlatVR también funciona con ello, con la casilla "Imagen de FlatVR sin ReShade" de abajo (su par estéreo dibujado en dos pasadas: una pasada, dos imágenes necesita ReShade). Se lee al iniciar el juego: reinícialo tras un cambio. Con tu propio ReShade como dxgi.dll junto al juego no hace nada (el juego carga ese por sí mismo). Desactivado (por defecto): ReShade como antes.
+render.flatvr_feed.label = Imagen de FlatVR sin ReShade (D2R VR la entrega él mismo)
+render.flatvr_feed.tip = Con "Sin ReShade" FlatVR no tenía imagen: toma la imagen y la profundidad del juego del complemento de ReShade (FlatVR_DepthProvider), y el FlatVR de BodyWalk decía "No picture from the ReShade addon". Activado: D2R VR entrega a FlatVR lo mismo él mismo, del mismo modo que el complemento - cada imagen de la ventana del juego (un par estéreo como los dos ojos lado a lado, solo pares completos), la profundidad de la escena para el 3D de FlatVR a partir de la profundidad, y qué vista tiene cada ojo. Solo mientras FlatVR funciona y OpenXR nativo no ocupa el visor. Al instante. Desactivado: no se entrega nada, como antes.
 render.native_effects.label = Cielo y niebla sin ReShade (los dibuja el propio D2R VR; reinicia el juego)
 render.native_effects.tip = Con "Sin ReShade": D2R VR dibuja él mismo su propio efecto - el cielo al aire libre, la niebla de distancia, el techo de las cuevas y el resto de lo que ReShade dibujaba en la imagen (los interruptores de esta pestaña y de Cielo / Techo siguen decidiendo cuáles). Sus shaders se compilan en segundo plano al iniciar el juego y con cada nuevo tamaño de imagen - la primera vez tarda un poco (varios segundos; hasta entonces la imagen no tiene cielo), después salen al instante de una caché junto a d2r_vr.ini. Lo que cuesta a la tarjeta gráfica queda en el registro cada 10 s. Desmarcada: ningún efecto - lo más ligero. Se lee al iniciar el juego.
+render.effect_world.label = Cielo y niebla del efecto dibujados (al instante)
+render.effect_world.tip = Desmarcado, el cielo, la niebla y el techo de las cuevas propios del efecto no se dibujan en absoluto - ni los arreglos de la niebla y el cielo del juego, sus medidas de color y el desenfoque de distancia - mientras los medallones, las etiquetas, la barra de herramientas, los fantasmas y la interfaz quedan como están. Para ver lo que cuestan el cielo y la niebla (la línea "native effects, 10 s" del registro dice el tiempo de cada pasada). El cielo y la niebla propios del juego siguen siendo del juego. Al instante. Marcado: como antes.
 render.rings.label = Anillos de salas alrededor del personaje
 render.rings.tip = Anillos de salas adicionales alrededor del personaje. Con niebla, 4-6 bastan.
 render.model_radius.label = Radio de visibilidad de modelos
 render.model_radius.tip = El del propio juego es 150.
 @skyfog.way.label = Cielo y niebla dibujados por
-# English changed: Who draws the sky and the distance fog, both at once. The game (new): its own fog pass with our numbers and a sky dome of ours the game draws itself - no frame time of ours (VR F4; without ReShade for its fog's options below). Our effect (old): the fog shader's sky and fog (ReShade's, or D2R VR's own without ReShade). Writes [sky] game_sky and [fog] game_fog together. Live - the game's sky dome's files are made by this program at its start: the first time after an install or an update, restart a game already running.
-@skyfog.way.tip = Quién dibuja el cielo y la niebla a distancia, ambos a la vez. El juego (nuevo): su propia pasada de niebla con nuestros valores y una cúpula de cielo nuestra que el propio juego dibuja - sin tiempo de fotograma nuestro (VR F4; sin ReShade para las opciones de su niebla de abajo). Nuestro efecto (antiguo): el cielo y la niebla del shader de niebla (el de ReShade, o el propio de D2R VR sin ReShade). Escribe [sky] game_sky y [fog] game_fog a la vez. Al instante.
+@skyfog.way.tip = Quién dibuja el cielo y la niebla de distancia, ambos a la vez. El juego (nuevo): su propia pasada de niebla con nuestros números y una cúpula de cielo nuestra que el propio juego dibuja - nada de tiempo de fotograma nuestro (VR F4; sin ReShade para las opciones de su niebla de abajo). Nuestro efecto (antiguo): el cielo y la niebla del shader de niebla (el de ReShade, o el propio de D2R VR sin ReShade). Escribe [sky] game_sky y [fog] game_fog juntos. Al instante - los archivos de la cúpula del cielo del juego los crea este programa al iniciarse: la primera vez tras una instalación o una actualización, reinicia un juego que ya esté en marcha.
 @skyfog.way.choice0 = El juego los dibuja (nuevo)
 @skyfog.way.choice1 = Nuestro efecto (antiguo)
 fog.enabled.label = Niebla a distancia
@@ -224,7 +240,7 @@ fog.light.tip = La niebla de nuestro efecto por el camino corto: la profundidad 
 fog.start.label = Inicio de la niebla
 fog.start.tip = Dónde empieza la niebla. Unidades del mundo (el personaje mide ~7,5).
 fog.end.label = Niebla completa
-fog.end.tip = Dónde la niebla es completa. Unidades del mundo (el personaje mide ~7,5). La niebla cercana oculta lo que deja fuera una distancia de render corta.
+fog.end.tip = Dónde la niebla es completa. Unidades del mundo (el personaje mide ~7,5). La niebla cercana oculta lo que una distancia de dibujado corta deja fuera. Con la niebla del juego, por debajo de Inicio de la niebla los dos se toman al revés (la niebla de nuestro efecto: completa justo pasado Inicio de la niebla).
 fog.caves_start.label = Inicio de la niebla en cuevas
 fog.caves_start.tip = Dónde empieza la niebla en cuevas, mazmorras y criptas. Unidades del mundo (el personaje mide ~7,5).
 fog.caves_end.label = Niebla completa en cuevas
@@ -233,10 +249,8 @@ sky.enabled.label = Cielo en exteriores
 sky.enabled.tip = Un cielo pintado sobre el vacío negro en exteriores. Quién lo dibuja: el selector de arriba (nuestro efecto o la cúpula del juego).
 @reshade.generic_depth.label = Mapa de profundidad de ReShade (Generic Depth)
 @reshade.generic_depth.tip = El complemento Generic Depth de ReShade encuentra el búfer de profundidad del juego en cada fotograma. Desactivado ahorra tiempo de GPU, pero la niebla, el cielo, el techo y el 3D a partir de la profundidad lo necesitan. Se aplica cuando se vuelve a iniciar el juego.
-# English changed: Ceiling in caves and dungeons
-ceiling.enabled.label = Techo en cuevas (vía ReShade)
-# English changed: A ceiling over the black void in caves and dungeons, first person only (the Ceiling tab: who draws it, each room's height).
-ceiling.enabled.tip = Una bóveda de piedra sobre el vacío negro en mazmorras, solo en primera persona.
+ceiling.enabled.label = Techo en cuevas y mazmorras
+ceiling.enabled.tip = Un techo sobre el vacío negro en cuevas y mazmorras, solo en primera persona (la pestaña Techo: quién lo dibuja, la altura de cada sala).
 ceiling.game_ceiling.label = Quién dibuja el techo
 ceiling.game_ceiling.tip = Nuestro efecto: la bóveda mediante el shader de niebla - el de ReShade, o el propio de D2R VR sin ReShade. El juego: una losa de la propia roca de cueva del juego, hecha a partir de los archivos de tu juego, que el juego dibuja e ilumina él mismo - sus antorchas y tu luz sobre ella, su niebla encima, el fuego y los hechizos delante - colocada sobre ti en cada fotograma, sin tiempo de fotograma nuestro (una prueba: solo VR F4). En cada sala, la propia piedra del juego que corresponde a la imagen elegida para ella: roca en las cuevas, losas altas en la cripta, piedra lisa en los cuarteles, las catacumbas y la catedral, mármol ornamentado en el palacio; una sala sin imagen recibe la piedra de su propio suelo (las alcantarillas del acto 2, el harén corrupto, el sótano del palacio). Las demás opciones del techo de abajo son de nuestro efecto; el tamaño de baldosa fija también el de la roca. Al instante.
 ceiling.game_ceiling.choice0 = Nuestro efecto (ReShade / el propio de D2R VR)
@@ -255,13 +269,13 @@ group.what_the_slider_sets = Lo que fija el deslizador
 group.what_the_slider_sets.help = Cada valor que escribe el deslizador de distancia de dibujado, para fijarlo a mano. Los de la niebla aparecen en gris mientras la niebla a distancia está desactivada, los de la cúpula del cielo mientras el juego no dibuja el cielo (pestaña Cielo: "Cielo y niebla dibujados por"), los de la cúpula de las cuevas mientras está desactivada.
 render.big_radius.label = Objetos grandes: árboles, casas, muros más lejos (0 = desactivado)
 render.big_radius.tip = Los árboles, las casas y los muros se siguen dibujando más allá del radio de visibilidad de modelos - cuanto más grandes, más lejos (30 veces su altura o la mitad de su anchura), hasta esta cantidad de unidades (300 - 1000; 100 y 200 cuentan como 300). Las piedras, la hierba y los monstruos conservan el radio de visibilidad de modelos. Necesita 3 o más anillos de salas (más allá de las salas que construye el juego no hay nada que dibujar), y la niebla completa y la cúpula del cielo más allá para que se vea. Cuesta fotogramas en bosques y pueblos. De D2R VR Unleashed (bearstonem). Solo visual. Al instante. 0 = desactivado, como antes.
-sky.game_sky_radius.label = Cielo del juego: radio de la cúpula, unidades
-sky.game_sky_radius.tip = A qué distancia a tu alrededor se coloca la cúpula de cielo del juego, en unidades del juego (al instante). 200: un horizonte cercano - la cúpula corta el mundo lejano en un círculo limpio, con la niebla del juego encima. Más lejos, el cielo sale de la niebla. El registro dice el radio en uso con cada cambio.
+sky.game_sky_radius_m.label = El cielo del juego: radio de la cúpula, m
+sky.game_sky_radius_m.tip = A qué distancia a tu alrededor se coloca la cúpula del cielo del juego, en metros (4 unidades del juego por metro; al instante). 50 m: un horizonte cercano - la cúpula corta el mundo lejano en un círculo limpio, con la niebla del juego encima. Más lejos, el cielo sale de la niebla. El registro dice el radio en uso con cada cambio.
 fog.enabled.tip#2 = Una niebla a distancia. Quién la dibuja: el selector de la pestaña Cielo (nuestro efecto o el propio juego). Con el cielo activado, se funde con el cielo.
 sky.game_dome_caves.label = Una cúpula negra a tu alrededor en cuevas
 sky.game_dome_caves.tip = Bajo tierra el juego dibuja una cúpula negra alrededor de tu cabeza en el radio de visibilidad de los modelos: sin vacío más allá del borde de un techo, la niebla del juego se funde en paredes negras - sin brillo detrás de los fuegos. Los archivos propios de la cúpula de cielo (hechos por este programa al iniciarse). VR F4. Al instante.
-sky.game_dome_caves_size.label = La cúpula de cuevas: radio x radio de visibilidad de los modelos
-sky.game_dome_caves_size.tip = 1: la cúpula en el radio de visibilidad de los modelos ([render] model_radius); 0,5: la mitad (el radio como diámetro). Al instante.
+sky.game_dome_caves_radius_m.label = La cúpula de las cuevas: radio, m
+sky.game_dome_caves_radius_m.tip = A qué distancia a tu alrededor se coloca la cúpula negra bajo tierra, en metros (4 unidades del juego por metro; el radio de visibilidad de modelos de 210 son 52,5 m). 200 por defecto. El deslizador Distancia de dibujado mantiene su parte del radio de visibilidad de modelos. Al instante.
 
 # ===== Tab: Camera =====
 tab.camera = Cámara
@@ -450,16 +464,24 @@ body.walk_back_reverse.label = ... con el propio paso del juego reproducido al r
 body.walk_back_reverse.tip = Activado: su pelvis y sus piernas exactamente como el juego las dibujó mientras caminaba (se guardan los últimos 2.5 segundos de su andar, también mientras está quieto), mostradas en orden inverso - el talón se levanta detrás de él y los dedos se estiran hacia atrás para apoyarse, cada articulación la del propio juego; el tronco va sobre esa pelvis (quieto con "lock"). Desactivado: como en 0.185 - el lugar de cada pie reflejado de delante atrás y las rodillas calculadas de nuevo: el pie se levanta alto delante de él y se apoya detrás con los dedos hacia arriba, lo que seguía pareciendo piernas cruzadas. Solo las piernas dibujadas. Al instante.
 body.doll_feet.label = Los pies son del muñeco, no del juego (prueba)
 body.doll_feet.tip = Sus pies ya no siguen el paso del juego: cada uno se queda plantado en el suelo donde se apoyó y da un paso tras el cuerpo cuando el cuerpo ha avanzado un paso o ha girado demasiado - al caminar hacia atrás los pies pisan hacia atrás, al girar la cámara a su alrededor pisan girando, el izquierdo sigue siendo el izquierdo. El juego solo da dónde está, hacia dónde mira y a qué velocidad va; las caderas y el tronco siguen siendo del juego. Al caminar, correr y estar de pie; cualquier otro movimiento (un ataque, un salto, un retroceso) devuelve las piernas al juego durante su momento. En cualquier vista en que posamos al héroe; en lugar de "Al caminar hacia atrás, las piernas pisan hacia atrás". Solo las piernas dibujadas. Al instante.
-# body.legs_rear.label = Legs held still while the hero moves (test)
-# body.legs_rear.tip = While the hero walks or runs between the two cones below - sideways, diagonally - his hips and legs stand in the game's own standing pose and he glides: no step that could cross. Within the cone ahead the game's own walk and run; within the cone straight back the game's own forward walk and run played backwards. Standing, and turning on the spot, they are the game's own stance. Any other move (a blow, a cast, a hit) is the game's own. The trunk and the arms stay the game's. With the whole hero turned to your look. Instead of "Walking backwards, the legs step backwards". The drawn legs only. Live.
-# body.legs_front_cone_deg.label = ... the game's own legs within this cone ahead, ° (its whole width)
-# body.legs_front_cone_deg.tip = With the box above: going within this cone straight ahead (90: 45° either side of where the body faces) the legs are the game's own walk and run; outside it they are held. A short blend at the edge. 0: held whenever he goes; 360: never held. Live.
-# body.legs_rear_cone_deg.label = ... the game's walk played backwards within this cone straight back, ° (its whole width)
-# body.legs_rear_cone_deg.tip = With the box above: going within this cone straight back (90: 45° either side of straight back) the legs play the game's own forward walk backwards - running, its run - at the pace he goes, facing with the body, never crossed; between it and the cone ahead they are held. A short blend at each edge. 0: never played backwards. Live.
-# body.legs_side_ragdoll.label = ... between the cones the hips and legs the ragdoll's gait
-# body.legs_side_ragdoll.tip = With the box above: going between the two cones - sideways, diagonally - instead of standing held, his pelvis and both legs are the ragdoll library's own gait (d2r_vr_weight.dll): its walk, run and sprint cycles at the stride and cadence of his speed, the hips bobbing and swaying with them, a flight running, the feet's path turned the way he goes - never across the middle, never crossed. The trunk is the game's. A short blend into the cones. Without the library (or an older one) the legs are held, as before. Live.
-# body.legs_rear_cycle.label = ... instead: going backwards, the game's walk and run played backwards (test)
-# body.legs_rear_cycle.tip = With the box above: instead of holding the legs, going into the rear half - more than 90° from where the body faces - they play the game's own forward walk backwards, running its run, at the pace you go, facing with the body; ahead they are the game's own walk. Crossing 90° the step changes direction on the pose drawn. The drawn legs only. Live.
+body.legs_rear.label = Piernas quietas mientras el personaje se mueve (prueba)
+body.legs_rear.tip = Mientras el personaje camina o corre entre los dos conos de abajo - de lado, en diagonal - sus caderas y piernas quedan en la propia pose de pie del juego y se desliza: ningún paso que pueda cruzarse. Dentro del cono de delante, el caminar y correr propios del juego; dentro del cono justo detrás, el caminar y correr hacia delante del juego reproducidos al revés. De pie, y girando en el sitio, son la postura propia del juego. Cualquier otro movimiento (un golpe, un lanzamiento, un impacto) es el propio del juego. El tronco y los brazos siguen siendo del juego. Con todo el personaje girado hacia donde miras. En lugar de "Al caminar hacia atrás, las piernas dan pasos hacia atrás". Solo las piernas dibujadas. Al instante.
+body.legs_front_cone_deg.label = ... las piernas propias del juego dentro de este cono de delante, ° (su anchura total)
+body.legs_front_cone_deg.tip = Con la casilla de arriba: yendo dentro de este cono justo delante (90: 45° a cada lado de hacia donde mira el cuerpo) las piernas son el caminar y correr propios del juego; fuera de él quedan quietas. Una breve mezcla en el borde. 0: quietas siempre que se mueve; 360: nunca quietas. Al instante.
+body.legs_rear_cone_deg.label = ... el caminar del juego al revés dentro de este cono justo detrás, ° (su anchura total)
+body.legs_rear_cone_deg.tip = Con la casilla de arriba: yendo dentro de este cono justo detrás (90: 45° a cada lado de justo detrás) las piernas reproducen al revés el caminar hacia delante del juego - corriendo, su correr - al ritmo al que va, mirando con el cuerpo, nunca cruzadas; entre él y el cono de delante quedan quietas. Una breve mezcla en cada borde. 0: nunca al revés. Al instante.
+body.legs_side_game.label = ... dos mitades: delante y de lado el caminar del juego, detrás al revés
+body.legs_side_game.tip = Con la casilla de arriba: yendo hasta 90° desde hacia donde mira el cuerpo - delante, en diagonal delante, justo de lado - las piernas son el caminar y correr propios del juego, como las dibujaba la 0.191; pasados 90° - en diagonal detrás, justo detrás - su caminar y correr al revés. Nada quieto, ningún paso nuestro. Desactivado: los dos conos (legs_front_cone_deg, legs_rear_cone_deg), y entre ellos las piernas quietas, o con pasos de la casilla de abajo. Al instante.
+body.legs_turn.label = ... las caderas y piernas giran hacia donde vas
+body.legs_turn.tip = Con la casilla de arriba: las caderas y piernas giran hacia donde va el personaje mientras el tronco y la cabeza siguen donde miras - en diagonal delante las piernas caminan en esa dirección, justo de lado apuntan de lado y caminan hacia delante, yendo hacia atrás caminan hacia atrás con la espalda a lo largo del camino. Nunca más de 90° respecto al tronco, el giro repartido por la columna, suavizado; a 90° el cambio es inmediato. Desactivado: las piernas miran como el tronco. Al instante.
+body.legs_side_ragdoll.label = ... entre los conos, las caderas y piernas con el paso del ragdoll
+body.legs_side_ragdoll.tip = Con la casilla de arriba: yendo entre los dos conos - de lado, en diagonal - en lugar de quedarse quietos, sus pies dan pasos tras él mediante la biblioteca de ragdoll (d2r_vr_weight.dll): cada pie plantado donde cae (no se desliza) y colocado hacia donde va, los pasos más rápidos cuanto más rápido va para que sigan siendo cortos, el pie delantero hacia fuera y el trasero hasta él, nunca cruzados, bajo una pelvis nivelada. El tronco es del juego. Nunca en F1 ni F3. Sin la biblioteca (o con una más antigua) las piernas quedan quietas, como antes. Al instante.
+body.legs_side_gait.label = ... en su lugar: el paso del ragdoll, pasos pequeños (0.192.34)
+body.legs_side_gait.tip = Con la casilla de arriba: en lugar de los pasos plantados, las piernas se mueven con el ciclo de paso del ragdoll a su velocidad bajo una pelvis nivelada - cada pie un pequeño paso lateral desde su sitio; los pies patinan con él. Una opción para comparar. Al instante.
+body.legs_side_cross.label = ... los pasos plantados se alternan, cruzándose (prueba)
+body.legs_side_cross.tip = Con los pasos plantados: los pies se alternan, uno siempre en el suelo, pasando uno junto al otro un poco separados de delante a atrás - correr de lado. Desactivado: como en la 0.192.36, el pie trasero nunca pasa al delantero, y yendo rápido ambos pies dejan el suelo a la vez (un brinco). Al instante.
+body.legs_rear_cycle.label = ... en su lugar: hacia atrás, el caminar y correr del juego al revés (prueba)
+body.legs_rear_cycle.tip = Con la casilla de arriba: en lugar de dejar las piernas quietas, yendo hacia la mitad trasera - más de 90° desde hacia donde mira el cuerpo - reproducen al revés el caminar hacia delante del juego, corriendo su correr, al ritmo al que vas, mirando con el cuerpo; delante son el caminar propio del juego. Al cruzar los 90° el paso cambia de dirección sobre la pose dibujada. Solo las piernas dibujadas. Al instante.
 body.yaw.label = Corrección del giro del cuerpo, °
 body.yaw.tip = Se suma a hacia dónde mira el personaje (también los brazos) si está de lado: prueba 90, -90 o 180.
 
@@ -703,6 +725,8 @@ screen.menu_distance_m.label = Imagen plana con un panel abierto (inventario, co
 screen.menu_distance_m.tip = Mientras el inventario, un comerciante, el alijo u otro panel está abierto en un juego, la imagen plana se aleja esta distancia - suavemente - y vuelve cuando se cierra. Con una ventana cuadrada, la interfaz del juego es tan ancha como la imagen: más lejos, entran en la vista sus bordes izquierdo y derecho. 0 = la distancia de arriba. Es el mismo ajuste que "Distancia de la pantalla mientras hay un panel abierto" para FlatVR (Interfaz: F4 cuerpo).
 openxr.busy_guard.label = No bloquearse nunca con un visor ocupado (OpenXR nativo)
 openxr.busy_guard.tip = Un runtime espera sin fin a un visor que otra aplicación retiene: FlatVR mediante BodyWalk Lite, luego de vuelta a Native, y el juego se quedó parado hasta el Administrador de tareas. Activado: las dos llamadas bloqueantes del runtime (la espera de fotograma y el inicio de la sesión) se ejecutan en un hilo propio, y el juego las espera una fracción de segundo; si no han llegado, el visor no recibe imagen ese fotograma y el juego sigue en plano (el registro lo dice, y cuándo responde el visor). Y no se inicia ninguna sesión de visor sobre un FlatVR que retiene el visor y no se puede detener (BodyWalk Lite no tiene Game Link): la columna Estado dice que cierres BodyWalk y reinicies SteamVR, y se vuelve a intentar mientras FlatVR funciona. Necesita reiniciar el juego. Desactivado: como antes. (d2r_vr.ini: wait_frame_ms.)
+openxr.stop_flatvr_watch.label = Detener FlatVR otra vez si se inicia durante la sesión nativa
+openxr.stop_flatvr_watch.tip = El FlatVR de BodyWalk se detiene a través de su Game Link cuando empieza la sesión nativa - pero solo un FlatVR que funcione en ese momento. Uno iniciado después (BodyWalk abierto después del juego, su inicio retenido hasta que SteamVR arrancó, su botón START) funcionaba junto a la sesión nativa el resto de la partida: ambos en el visor, compartiendo sus fotogramas. Activado: mientras la sesión funciona, se mira FlatVR una vez por segundo y se detiene otra vez a través de Game Link si está en marcha (se inicia otra vez cuando termina OpenXR nativo, como el detenido al inicio). A un BodyWalk sin Game Link (BodyWalk Lite) no se le puede decir: el registro lo indica. Al instante. Desactivado: se detiene solo al inicio de la sesión, como antes.
 openxr.reap_drain_max_ms.label = Swapchains antiguas: espera máxima para liberarlas, ms (OpenXR nativo)
 openxr.reap_drain_max_ms.tip = Una swapchain nuestra creada de nuevo (un nuevo puntero del ratón, un panel de menú de otro tamaño) se libera más tarde, cuando la tarjeta gráfica ha terminado el trabajo del juego: se esperan 20 ms, el doble cada vez que no bastó, hasta este valor. Con una tarjeta ocupada (el tamaño recomendado del visor) 20 ms nunca bastaban, las antiguas se acumulaban y SteamVR rechazaba las nuevas (XR_ERROR_LIMIT_REACHED): el inventario se abría sin panel, el puntero desaparecía, una imagen negra. 20 = como antes. Al instante.
 openxr.menus_wait_tracking.label = Menús colocados solo cuando el visor tiene seguimiento
@@ -1054,8 +1078,8 @@ openxr.hand_inventory_front.label = El inventario se abre delante, a tamaño com
 openxr.hand_inventory_front.tip = Fuera de la ciudad el inventario se abre delante, a tamaño completo, en lugar de en la mano izquierda. El botón junto al inventario también fija esto: se abre como lo dejaste la última vez, también tras reiniciar. Al instante.
 openxr.headset_settings.label = Panel de ajustes en el visor (prototipo)
 openxr.headset_settings.tip = OpenXR nativo sin los menús de BodyWalk: mantén el clic de la palanca derecha (la pulsación larga) y se abre delante de ti un pequeño panel de ajustes - la distancia y la anchura de la imagen plana, el brillo, tu altura, el láser, el tamaño de render RV (página Vídeo: preajustes y un deslizador; al aplicarlo el juego reconstruye su imagen, unos segundos congelado) y Calibrar cuerpo (página Cuerpo: la medición con pose en T, iniciada desde el visor) y la vista del juego F1 - F4 (F1 - F3 cierran el panel; se vuelve a F4 con la tecla F4, D2R VR Authentic Settings > Inicio, o una acción de vista en el mapping de BodyWalk). Apunta un mando a él y aprieta el gatillo; Aplicar escribe solo lo que cambiaste en d2r_vr.ini (el original se conserva una vez como d2r_vr.ini.before-headset-menu; un cambio hecho en otro sitio entretanto se muestra, no se sobrescribe). Con el panel de habilidades con el aspecto Mosaicos (Estilo del panel de habilidades: Mosaicos) estas páginas son su pestaña Ajustes, junto a Habilidades: la pulsación larga de la palanca derecha abre la ventana en la pestaña en la que estuvo por última vez. Mientras está abierta, ambos mandos son del panel: nada de ellos llega al juego, y nunca envía un clic al juego. Cierran el panel la pulsación larga otra vez, B / Y o Menu. Dos agarres mantenidos no significan nada (la antigua forma de ambos agarres + clic está en la pestaña Depuración). Desactivado: sin panel. Solo F4.
-# openxr.headset_players.label = Players from the headset
-# openxr.headset_players.tip = The headset settings' Options page gets a working Players (difficulty) row: the game's own players count, 1 - 8, as the chat command /players N sets it (the game's Options > Gameplay "Offline Difficulty Scaling"). - and + send the game that very line, no keyboard needed; the game checks it, keeps it and says so, and the row shows the count read back from the game. The game takes it only in a game of your own: single player, or as the host of a TCP/IP game. Off: the row only shows the game's count, nothing is sent. Live.
+openxr.headset_players.label = Jugadores desde el visor
+openxr.headset_players.tip = La página Opciones de los ajustes del visor obtiene una fila Jugadores (dificultad) que funciona: la cantidad de jugadores propia del juego, 1 - 8, tal como la fija el comando de chat /players N (en el juego, Opciones > Jugabilidad "Escalado de dificultad sin conexión"). - y + envían al juego esa misma línea, sin teclado; el juego la comprueba, la guarda y lo dice, y la fila muestra la cantidad leída de vuelta del juego. El juego solo la acepta en una partida tuya: un jugador, o como anfitrión de una partida TCP/IP. Desactivado: la fila solo muestra la cantidad del juego, no se envía nada. Al instante.
 
 # --- Belt potions ---
 group.belt_potions = Pociones del cinturón
@@ -1198,20 +1222,19 @@ hud.monster_height.tip = Solo primera persona (F4), mientras la placa sobre la c
 hud.monster_depth_body.label = Nombre sobre un monstruo: en su monstruo, %
 hud.monster_depth_body.tip = Primera persona (F4) en estéreo. El juego dibuja la placa en el mismo punto en ambos ojos, así que en el visor flota lejos, no sobre su monstruo. Aquí se coloca a la profundidad de su monstruo, según la distancia del monstruo a ti, como las etiquetas de objetos (Etiquetas de objetos: en sus objetos): 100 = exactamente ahí, 0 = donde la deja el juego (la profundidad estéreo de abajo). Al instante.
 hud.monster_near_body.label = Nombre sobre un monstruo: profundidad estéreo
-# English changed: First person (F4) in stereo: the name and bar over the monster you target nearer (+) or farther (-), % of the half screen - its own, apart from the item labels' ("Item labels: stereo depth on top" above does not move it). Replaced by the two depths below while "stereo depth by distance" is ticked. Live.
-hud.monster_near_body.tip = Primera persona (F4) en estéreo: el nombre y la barra sobre el monstruo al que apuntas más cerca (+) o más lejos (-), % de la media pantalla - los suyos propios, aparte de los de las etiquetas de objetos ("Etiquetas de objetos: profundidad estéreo encima" de arriba no lo mueve). Al instante.
-# hud.monster_stereo_by_distance.label = Name over a monster: stereo depth by distance
-# hud.monster_stereo_by_distance.tip = First person (F4) in stereo. The plate's stereo depth follows the monster's distance from your eyes: the near depth for a monster close by, the far depth for one far off, smoothly in between, and a new target glides to its depth rather than jumping. Off: one depth for every monster (the slider above). Live.
-# hud.monster_stereo_near.label = Stereo depth: near monster
-# hud.monster_stereo_near.tip = The plate's stereo depth (% of the half screen, + nearer) for a monster at the near distance below or closer. Live.
-# hud.monster_stereo_far.label = Stereo depth: far monster
-# hud.monster_stereo_far.tip = The plate's stereo depth for a monster at the far distance below or farther. Live.
-# hud.monster_stereo_near_m.label = Stereo depth: near up to, m
-# hud.monster_stereo_near_m.tip = From your eyes. 1.5 m = the plate's own "near" (the size far away above uses the same). Live.
-# hud.monster_stereo_far_m.label = Stereo depth: far from, m
-# hud.monster_stereo_far_m.tip = From your eyes. 10 m = the plate's own "far" (the size far away above uses the same); never past the edge of the drawn world (Draw distance). Live.
-# hud.monster_plate_smooth.label = Name over a monster: steady
-# hud.monster_plate_smooth.tip = First person (F4). The plate no longer shakes with its monster's animation (the bob of a walk, the shake of a blow) or the game's steps: it hangs on the monster's head held by a spring - still at rest, close behind a monster that runs - and its distance (its size far away, its stereo depth) is held the same way. A turn of your head moves it with the world. Off: the plate on the game's own head point, every frame. Live.
+hud.monster_near_body.tip = Primera persona (F4) en estéreo: el nombre y la barra sobre el monstruo que apuntas más cerca (+) o más lejos (-), % de la media pantalla - la suya propia, aparte de la de las etiquetas de objetos ("Etiquetas de objetos: profundidad estéreo encima" de arriba no la mueve). Sustituida por las dos profundidades de abajo mientras "profundidad estéreo según la distancia" está marcado. Al instante.
+hud.monster_stereo_by_distance.label = Nombre sobre un monstruo: profundidad estéreo según la distancia
+hud.monster_stereo_by_distance.tip = Primera persona (F4) en estéreo. La profundidad estéreo de la placa sigue la distancia del monstruo a tus ojos: la profundidad cercana para un monstruo cerca, la lejana para uno lejos, suavemente entre medias, y un nuevo objetivo se desliza a su profundidad en vez de saltar. Desactivado: una profundidad para todo monstruo (el deslizador de arriba). Al instante.
+hud.monster_stereo_near.label = Profundidad estéreo: monstruo cercano
+hud.monster_stereo_near.tip = La profundidad estéreo de la placa (% de la media pantalla, + más cerca) para un monstruo a la distancia cercana de abajo o más cerca. Al instante.
+hud.monster_stereo_far.label = Profundidad estéreo: monstruo lejano
+hud.monster_stereo_far.tip = La profundidad estéreo de la placa para un monstruo a la distancia lejana de abajo o más lejos. Al instante.
+hud.monster_stereo_near_m.label = Profundidad estéreo: cerca hasta, m
+hud.monster_stereo_near_m.tip = Desde tus ojos. 1,5 m = el "cerca" propio de la placa (el tamaño a lo lejos de arriba usa el mismo). Al instante.
+hud.monster_stereo_far_m.label = Profundidad estéreo: lejos desde, m
+hud.monster_stereo_far_m.tip = Desde tus ojos. 10 m = el "lejos" propio de la placa (el tamaño a lo lejos de arriba usa el mismo); nunca más allá del borde del mundo dibujado (Distancia de dibujado). Al instante.
+hud.monster_plate_smooth.label = Nombre sobre un monstruo: estable
+hud.monster_plate_smooth.tip = Primera persona (F4). La placa ya no tiembla con la animación de su monstruo (el balanceo al caminar, la sacudida de un golpe) ni con los pasos del juego: cuelga de la cabeza del monstruo sujeta por un muelle - quieta en reposo, justo detrás de un monstruo que corre - y su distancia (su tamaño a lo lejos, su profundidad estéreo) se sostiene del mismo modo. Un giro de tu cabeza la mueve con el mundo. Desactivado: la placa en el punto de cabeza propio del juego, cada fotograma. Al instante.
 
 # --- Low life: red heartbeat vignette ---
 group.low_life_red_heartbeat_vignette = Vida baja: viñeta roja de latido
@@ -1387,8 +1410,8 @@ hud.hand_vitals_orb_size_cm.label = Tamaño, cm
 hud.hand_vitals_orb_size_cm.tip = El diámetro de la bola. 5 es el tamaño de un medallón. Al instante.
 hud.hand_vitals_orb_mirror.label = La muñeca derecha refleja la izquierda
 hud.hand_vitals_orb_mirror.tip = La bola de la muñeca derecha toma los tres números de la muñeca izquierda (el mismo a lo largo, el mismo a lo ancho hacia el pulgar, el mismo hacia arriba), así que las dos quedan como imágenes especulares. Los deslizadores propios de la muñeca derecha conservan sus valores, en gris, para cuando se desmarque. Al instante.
-hud.hand_vitals_orb_on_bone.label = Sobre el propio hueso del antebrazo (sin números)
-hud.hand_vitals_orb_on_bone.tip = Activado: cada bola se coloca sobre el hueso de su antebrazo - en la superficie de la malla del propio antebrazo (leída del modelo del héroe, de nuevo al cambiar de armadura), en el dorso de la muñeca junto a la mano, girada con el hueso - dondequiera que se dibuje el brazo: por tus mandos, sujetando un cuerpo, por la animación del juego. Los números de lugar y giro de abajo y las profundidades por clase no se usan (un escudo aún la rueda al lado interior). Un antebrazo cuya malla no da tamaño: los números, como antes (el registro dice cuál). Desactivado: los números. VR F4. En vivo.
+hud.hand_vitals_orb_on_bone.label = Sobre el propio hueso del antebrazo (sin números, una prueba)
+hud.hand_vitals_orb_on_bone.tip = Marcado: cada bola se sitúa sobre el hueso de su antebrazo - en la superficie de la propia malla del antebrazo (leída del modelo del personaje, de nuevo cuando cambia la armadura), saliendo del dorso de la muñeca junto a la mano, girada con el hueso - dondequiera que se dibuje el brazo: por tus mandos, sostenido sobre un cuerpo, por la animación del juego. Los números de posición y giro de abajo y las profundidades por clase no se usan (un escudo aún la pasa al lado interior). Un antebrazo cuya malla no da tamaño: los números, como antes (el registro dice cuál). Desmarcado: los números. VR F4. Al instante. Una prueba: desactivada por defecto - la malla del antebrazo de un personaje se leyó por primera vez en la 0.192.36, y el medallón que colocó quedaba a 10-15 cm de la muñeca.
 hud.hand_vitals_orb_drawn_hand.label = Seguir la mano tal como se dibuja
 hud.hand_vitals_orb_drawn_hand.tip = Activado: las bolas se colocan en la mano del héroe exactamente como se dibuja - apoyada en un cuerpo o un objeto que tu mano sostiene, ajustada al arma -, así que se quedan en la mano mientras sujeta y tu mano real se mueve. Una botella en la palma la sigue igual. Desactivado: la mano como el mando la puso primero, antes de esos pasos, como antes (sujetando a un PNJ, las bolas mantenían el giro del mando). VR F4. En vivo.
 hud.hand_vitals_orb_left_along_cm.label = Muñeca izquierda X, a lo largo del brazo, cm
@@ -1610,17 +1633,17 @@ fog.game_fog_caves_black.tip = Bajo tierra la niebla del juego se desvanece hast
 fog.game_fog_our_curve.label = La niebla del juego con nuestra curva
 fog.game_fog_our_curve.tip = La propia pasada de niebla del juego hace aparecer la niebla como nuestro efecto - de Inicio de la niebla a Niebla completa según la Atenuación de abajo (en cuevas su propio inicio, final e intensidad) - en lugar de con su propia exponencial, que pone casi toda la niebla justo después del inicio y deja la zona lejana de un gris uniforme. Unas pocas instrucciones en su pasada, nada añadido. Solo sin ReShade. Al instante.
 fog.fog_keeps_colour.label = La niebla del juego conserva el color del acto de noche
-fog.fog_keeps_colour.tip = Mientras el juego dibuja la niebla: su color es el propio del acto (los colores de arriba) a cualquier hora - lo lejano se desvanece en una bruma clara de ese color, nunca hacia el negro. La niebla de nuestro efecto no cambia. Desactivado: se oscurece con la luz del juego, como antes. Al instante.
+fog.fog_keeps_colour.tip = Mientras el juego dibuja la niebla: su color es el propio del acto (los colores de arriba) a toda hora - lo lejano se desvanece en una bruma clara de él, nunca hacia el negro. La niebla de nuestro propio efecto no cambia. Desactivado: se oscurece con la luz del juego como hace el cielo - de noche hacia "Cielo de noche" y según el brillo del cielo para cada momento del día. Con el color del cielo ("El color de la niebla: medido del juego" desmarcado): el del cielo de día en el horizonte a toda hora; desactivado, el del cielo de noche por la noche - casi negro. Al instante.
 fog.fog_into_sky.label = La niebla del juego funde lo lejano con el cielo que tiene detrás
 fog.fog_into_sky.tip = Al aire libre, el color de la niebla en cada punto es el del cielo justo detrás, como en el Santuario Arcano: la tierra lejana, el borde del mundo y los edificios altos y lejanos se funden con el cielo, no con un solo color plano (la parte baja del cielo es el color de niebla del acto, tal como se dibuja). Los objetos lejanos dejan ver el cielo a través. Solo la niebla del juego (con "La niebla del juego tan densa y con el mismo color que la nuestra"); la niebla de nuestro efecto no cambia. Bajo tierra, como antes. Al instante. Desactivado: un solo color de niebla, como antes.
+fog.fog_colour_measured.label = El color de la niebla: medido del juego
+fog.fog_colour_measured.tip = Marcado: el color de la niebla se mide de lo que muestra el juego (con "La niebla del juego tan densa y con el mismo color que la nuestra") - como antes. Desmarcado: el color de la niebla es el propio del cielo en el horizonte - la imagen horneada ahí con su deslizador de brillo - de modo que la tierra lejana se funde con el cielo sin costura; un número, fijado cuando cambia el momento del día o un deslizador: sin medida, nada de ello en el efecto. Bajo tierra, en el Santuario Arcano y con el cielo teñido: el color del acto o de la cueva tal como está ajustado. Al instante.
 fog.game_fog_match.label = La niebla del juego tan densa y con el mismo color que la nuestra
-fog.game_fog_match.tip = La niebla del juego salía más oscura que el color de niebla del acto (la gradación de color de la zona) y más fina que la nuestra (se adelgaza por encima de los ojos, y sin nuestra curva es la propia del juego): en el acto 4 la tierra lejana se alzaba como una silueta oscura y no ocultaba nada. Marcado, el efecto mide lo que muestra la niebla del juego donde está completa, mueve cada píxel con niebla hacia el color del acto según la parte del juego, y completa la parte que el juego dejó fuera hasta la de nuestra propia niebla - la tierra lejana, el borde del mundo y los planos lejanos ocultos como con nuestra niebla antigua. Nunca sobre el cielo del juego. Es la pasada de nuestro efecto, que funciona de todos modos para el cielo. Al instante. Desactivado: como la pone el juego.
-# English changed: The fog before smoke and fire
-fog.game_fog_before_fx.label = La niebla del juego antes del humo y el fuego
-# English changed: The fog laid on the scene before the game adds its smoke, mist, fire and spells, so they lie over the fogged world unfogged - without it the fog is laid over them by the wall behind them (haze cut into black holes in front of far walls, a fire spell fading as it flies past a far wall). The game's fog or our effect's, whichever draws it. One pass of ours on the graphics card (its cost in the log's 10 s line). With ReShade: our effect's fog only, VR first person only. Applies when the game is started again.
-fog.game_fog_before_fx.tip = La niebla colocada sobre la escena antes de que el juego añada su humo, bruma y fuego, de modo que queden sobre el mundo con niebla sin velarse - sin esto la pasada de niebla del juego los vela según la pared que hay detrás (neblina recortada en agujeros negros delante de paredes lejanas). Una pasada nuestra en la tarjeta gráfica (su coste, en la línea de 10 s del registro). Solo sin ReShade. Se aplica al volver a iniciar el juego.
-# fog.game_fog_fx_depth.label = Far smoke and fire fade into the fog
-# fog.game_fog_fx_depth.tip = With the fog before smoke and fire: the smoke, mist, fire and spells fogged too, each by its own distance - near ones as they are, far ones fading into the fog with the world behind them. Without it a far camp fire stands at full light in full fog and the see-through edges of far fences show as specks on the horizon. The game's effects are drawn once more for their depth alone (the cost in the log's 10 s lines). Without ReShade only. Live. Off: the effects never fogged.
+fog.game_fog_match.tip = La niebla del juego salía más oscura que el color de niebla del acto (la gradación de color de la zona) y más fina que la nuestra (se aclara por encima del ojo, y sin nuestra curva es la propia del juego): en el acto 4 la tierra lejana se veía como una silueta oscura y no ocultaba nada. Marcado, el efecto completa la parte que el juego dejó fuera hasta la de nuestra propia niebla - la tierra lejana, el borde del mundo y los planos lejanos ocultos como con nuestra niebla antigua - en el color de la niebla; con "El color de la niebla: medido del juego" además mide lo que muestra la niebla del juego donde es completa y acerca cada píxel con niebla al color del acto según la parte del juego (nunca más allá). Nunca sobre el cielo del juego. La pasada de nuestro efecto, que se ejecuta de todos modos para el cielo. Al instante. Desactivado: como la pone el juego.
+fog.game_fog_before_fx.label = La niebla antes del humo y el fuego
+fog.game_fog_before_fx.tip = La niebla se aplica a la escena antes de que el juego añada su humo, bruma, fuego y hechizos, de modo que queden sobre el mundo con niebla sin niebla - sin ello la niebla se pone sobre ellos según la pared que hay detrás (bruma recortada en agujeros negros delante de paredes lejanas, un hechizo de fuego que se apaga al pasar junto a una pared lejana). La niebla del juego o la de nuestro efecto, la que la dibuje. Una pasada nuestra en la tarjeta gráfica (su coste en la línea de 10 s del registro). Con ReShade: solo la niebla de nuestro efecto, solo VR en primera persona. Se aplica cuando el juego se inicia de nuevo.
+fog.game_fog_fx_depth.label = El humo y el fuego lejanos se desvanecen en la niebla
+fog.game_fog_fx_depth.tip = Con la niebla antes del humo y el fuego: el humo, la bruma, el fuego y los hechizos también con niebla, cada uno según su propia distancia - los cercanos como son, los lejanos desvaneciéndose en la niebla con el mundo de detrás. Sin ello una hoguera lejana se ve a plena luz en plena niebla y los bordes transparentes de las vallas lejanas se ven como motas en el horizonte. Los efectos del juego se dibujan una vez más solo para su profundidad: CARO - en una Quest 3 a 2048 x 2048 por ojo costó unos 30 fotogramas por segundo (72 -> 42); el coste en las líneas de 10 s del registro. Solo sin ReShade. Al instante. Desactivado: los efectos nunca con niebla.
 fog.game_fog_height.label = La niebla del juego se adelgaza con la altura
 fog.game_fog_height.tip = La pasada de niebla del propio juego deja el cielo despejado: la niebla tal como es hasta el tope de la niebla menos su suavidad, desvaneciéndose por encima, y nada por encima del tope (unidades del mundo sobre tus ojos). Para la cúpula de cielo del juego, de modo que su cielo se vea sobre el horizonte con niebla. Su propia pasada, sin añadir nada. Solo en exteriores (bajo tierra no hay cielo que mantener despejado). Solo sin ReShade. Desactivado: la niebla del juego tal como es. Al instante.
 fog.game_fog_top.label = La niebla del juego: su tope, unidades sobre los ojos
@@ -1629,7 +1652,7 @@ fog.game_fog_soft.label = La niebla del juego: suavidad de su tope, unidades
 fog.game_fog_soft.tip = Cuánto por debajo de su tope se desvanece la niebla del juego: pequeño, un borde nítido; grande, un desvanecimiento largo y suave. Al instante.
 fog.game_fog_top_from_floor.label = La niebla del juego: su tope contado desde el suelo del personaje
 fog.game_fog_top_from_floor.tip = El tope de arriba se cuenta desde el suelo que pisa el personaje, no desde tus ojos: una cámara muy por encima del personaje (tercera persona, la vista desde arriba) ya no mueve dónde acaba la niebla, y el terreno por debajo de tus ojos no queda todo con niebla con una línea a la altura de los ojos. Desactivado: desde los ojos, como antes. Desmarcar "se adelgaza con la altura" en su lugar da la niebla solo por distancia, como nuestra propia niebla. Al instante.
-fog.end.tip#2 = Donde la niebla es completa. Unidades del mundo (el personaje mide ~7,5).
+fog.end.tip#2 = Dónde la niebla es completa. Unidades del mundo (el personaje mide ~7,5). Con la niebla del juego, por debajo de Inicio de la niebla los dos se toman al revés (la niebla de nuestro efecto: completa justo pasado Inicio de la niebla).
 fog.curve.label = Atenuación
 fog.curve.tip = 1 = lineal; más = una distancia media más clara.
 fog.blur.label = Desenfoque de profundidad, px (0 = desactivado)
@@ -1639,8 +1662,7 @@ fog.spare_effects.tip = El fuego, los hechizos, el humo y los resplandores se di
 render.fog_in_frame.label = Niebla dibujada dentro del fotograma del juego (prueba)
 render.fog_in_frame.tip = La niebla se dibuja dentro de la imagen propia del juego antes de su fuego, hechizos y humo, y el juego los superpone a la escena con niebla: una antorcha, una Flecha de fuego o un Infierno frente a una pared lejana no se nubla como la pared. El cielo y el negro más allá del mundo conservan la niebla como antes. Con el color de niebla propio de un acto (Mundo > Cielo); solo RV F4. Se aplica al volver a iniciar el juego; desactivado = la niebla como antes. Tiene prioridad sobre "La niebla respeta el fuego, los hechizos y el humo" cuando ambas están activadas.
 fog.caves.label = Niebla en cuevas y mazmorras
-# English changed: Off: no fog underground (every area that is not outdoors) - neither our effect's nor the game's own fog, and nothing laid before the smoke and fire there; the open air keeps it. The Arcane Sanctuary has its own switch (Sky > Arcane Sanctuary: fog fades into its sky): on, it keeps its fog with either fog. Live.
-fog.caves.tip = Desactivado: sin niebla bajo tierra (toda zona que no es exterior); el aire libre la conserva. El Santuario Arcano tiene su propio interruptor (Cielo > Santuario Arcano: la niebla se funde con su cielo).
+fog.caves.tip = Desactivado: sin niebla bajo tierra (toda zona que no es exterior) - ni la de nuestro efecto ni la propia del juego, y nada aplicado antes del humo y el fuego ahí; el aire libre la conserva. El Santuario Arcano tiene su propio interruptor (Cielo > Santuario Arcano: la niebla se funde con su cielo): activado, conserva su niebla con cualquiera de las dos. Al instante.
 fog.ease_in.label = Niebla suavizada, sin anillo duro
 fog.ease_in.tip = La niebla aparece suavemente a lo largo de sus primeras 40 unidades pasado su inicio: sin borde marcado alrededor del suelo despejado a tus pies. Allí donde nuestra curva dibuja la niebla: nuestro efecto, y la niebla del juego con "La niebla del juego con nuestra curva" activado (no la curva propia del juego). De D2R VR Unleashed (bearstonem). Al instante. Desactivado: la niebla como antes.
 fog.no_fog_river.label = Sin niebla en el Río de Llamas
@@ -1651,24 +1673,36 @@ fog.color_caves.label = Color de la niebla en cuevas
 fog.color_caves.tip = Cuevas, mazmorras, criptas: toda zona que no es exterior. Vacío (x) = el color de ese acto.
 fog.color_caves.empty = como el acto
 
+# --- Distance blur ---
+group.distance_blur = Desenfoque de distancia
+group.distance_blur.help = La imagen lejana desenfocada, como a través de un cristal esmerilado situado a cierta distancia delante de ti: nada más cerca que el cristal se toca; detrás de él el mundo se desenfoca más cuanto más lejos está. Ajusta dónde está el cristal, dónde el desenfoque es más amplio, y cuánto. Aparte de la niebla: sin color propio, la niebla conserva su aspecto.
+render.distance_blur.label = Desenfoque a lo lejos
+render.distance_blur.tip = El mundo lejano desenfocado detrás de un cristal esmerilado (del juego fractal de Serg): el suelo cercano, los monstruos y tu arma siguen nítidos, la distancia se suaviza cuanto más lejos está. El cielo, el vacío y la interfaz no se desenfocan. Lo dibuja la pasada de nuestro efecto (con ReShade o sin él), en primera persona, dibuje quien dibuje la niebla; su coste en la tarjeta gráfica está en la línea de 10 s del registro sin ReShade ("distance blur on, ... ms"). Al instante. Desactivado: la pasada se omite.
+render.distance_blur_start_m.label = El desenfoque empieza a, m
+render.distance_blur_start_m.tip = Dónde está el cristal, en metros desde tus ojos (4 unidades del mundo por metro): nada más cerca se desenfoca. Déjalo más allá de donde luchas. Al instante.
+render.distance_blur_full_m.label = Desenfoque completo a, m
+render.distance_blur_full_m.tip = Dónde el desenfoque es más amplio, en metros (al menos un 5 % más allá del inicio). Entre ambos crece con el cuadrado de la distancia: la distancia media sigue nítida. 50 m: el borde del mundo con la distancia de dibujado por defecto. Al instante.
+render.distance_blur_strength.label = Intensidad del desenfoque
+render.distance_blur_strength.tip = Cuán amplio es el desenfoque en su punto máximo: 1 = 2,5 % de la altura de la imagen (unos 50 píxeles en un ojo de 2000 líneas), 0,4 como lo tiene el juego fractal. 0 = sin desenfoque. Al instante.
+
 # --- Arcane Sanctuary ---
-# group.arcane_sanctuary = Arcane Sanctuary
-# group.arcane_sanctuary.help = The fog in the Arcane Sanctuary (act 2), set apart from the caves': it is not outdoors, so it takes the caves' fog until "Its own fog" is ticked. Whether there is fog under its own sky at all is on the Sky tab (Arcane Sanctuary: fog fades into its sky).
-# fog.arcane_own.label = Arcane Sanctuary: its own fog
-# fog.arcane_own.tip = The fog in the Arcane Sanctuary set on its own, with the values below; the caves keep theirs. Live. Off: it takes the caves' start, end, strength and colour, as before.
-# fog.arcane_start.label = Arcane Sanctuary: fog start
-# fog.arcane_start.tip = Where the fog begins in the Arcane Sanctuary. World units (the hero is ~7.5 tall). Live.
-# fog.arcane_end.label = Arcane Sanctuary: full fog
-# fog.arcane_end.tip = Where the fog is complete in the Arcane Sanctuary. World units (the hero is ~7.5 tall). Live.
-# fog.arcane_strength.label = Arcane Sanctuary: fog strength
-# fog.arcane_strength.tip = How much the full fog covers there: 1 = the far platforms are gone in the fog, less = they show through. Live.
-# fog.arcane_curve.label = Arcane Sanctuary: fog curve
-# fog.arcane_curve.tip = How the fog grows from its start to full: 1 = evenly, more = it stays thin longer and thickens near the end, less = it thickens soon after the start. Live.
-# fog.arcane_color.label = Arcane Sanctuary: fog colour
-# fog.arcane_color.tip = The fog's colour in the Arcane Sanctuary. Empty (x) = the caves' colour (with the game's fog never black there). Live.
-# fog.arcane_color.empty = same as caves
-# fog.arcane_into_sky.label = Arcane Sanctuary: fog fades into the sky behind
-# fog.arcane_into_sky.tip = Under its own sky (Sky tab) the fog is the sky straight behind each point: the far platforms dissolve into the void. Off: they fade into the fog colour above instead. Live.
+group.arcane_sanctuary = Santuario Arcano
+group.arcane_sanctuary.help = La niebla en el Santuario Arcano (acto 2), separada de la de las cuevas: no es exterior, así que toma la niebla de las cuevas hasta que se marque "Su propia niebla". Si hay niebla bajo su propio cielo se decide en la pestaña Cielo (Santuario Arcano: la niebla se funde con su cielo).
+fog.arcane_own.label = Santuario Arcano: su propia niebla
+fog.arcane_own.tip = La niebla del Santuario Arcano ajustada por separado, con los valores de abajo; las cuevas conservan la suya. Al instante. Desactivado: toma el inicio, el final, la intensidad y el color de las cuevas, como antes.
+fog.arcane_start.label = Santuario Arcano: inicio de la niebla
+fog.arcane_start.tip = Dónde empieza la niebla en el Santuario Arcano. Unidades del mundo (el personaje mide ~7,5). Al instante.
+fog.arcane_end.label = Santuario Arcano: niebla completa
+fog.arcane_end.tip = Dónde la niebla es completa en el Santuario Arcano. Unidades del mundo (el personaje mide ~7,5). Al instante.
+fog.arcane_strength.label = Santuario Arcano: intensidad de la niebla
+fog.arcane_strength.tip = Cuánto cubre ahí la niebla completa: 1 = las plataformas lejanas desaparecen en la niebla, menos = se ven a través. Al instante.
+fog.arcane_curve.label = Santuario Arcano: curva de la niebla
+fog.arcane_curve.tip = Cómo crece la niebla desde su inicio hasta completa: 1 = uniformemente, más = se mantiene fina más tiempo y se espesa cerca del final, menos = se espesa poco después del inicio. Al instante.
+fog.arcane_color.label = Santuario Arcano: color de la niebla
+fog.arcane_color.tip = El color de la niebla en el Santuario Arcano. Vacío (x) = el color de las cuevas (con la niebla del juego nunca negro ahí). Al instante.
+fog.arcane_color.empty = igual que las cuevas
+fog.arcane_into_sky.label = Santuario Arcano: la niebla se funde con el cielo de detrás
+fog.arcane_into_sky.tip = Bajo su propio cielo (pestaña Cielo) la niebla es el cielo justo detrás de cada punto: las plataformas lejanas se disuelven en el vacío. Desactivado: se desvanecen en el color de niebla de arriba. Al instante.
 render.game_height_fog.label = La niebla de altura propia del juego
 render.game_height_fog.tip = Solo la tiene la ciudad del acto 2. Desde nuestra cámara su borde es una línea dura a lo ancho de la imagen con un velo pálido encima (la cámara del juego nunca ve ese borde). Desactivado: vrcam la pone a 0.
 render.game_depth_fog.label = La niebla de profundidad propia del juego
@@ -1732,14 +1766,20 @@ sky.drift.label = El cielo gira despacio (las nubes se desplazan)
 sky.drift.tip = El cielo pintado gira despacio a tu alrededor. Desactivado: se queda quieto - las estrellas pintadas en los cielos nocturnos giraban con las nubes.
 sky.cover_rims.label = El cielo sobre el borde oscuro alrededor de tejados y árboles
 sky.cover_rims.tip = El juego dibuja todo lo que está contra el cielo un píxel más grande que su profundidad, con el borde fundido en negro, y el cielo no se pintaba ahí: un contorno oscuro y fino alrededor de cada tejado, copa de árbol y edificio lejano, que además los ojos movían a ratos de su sitio un fotograma sí y otro no. Marcado: el cielo cubre ese píxel cuando es tenue (el borde claro de un resplandor se queda); las siluetas salen un píxel más finas. Solo primera persona (F4). Desmarcado: como antes. Al instante. Instala la DLL y D2R_DepthFog.fx juntos. De bearstonem/d2r-pcvr.
-# sky.dome_past_far.label = The game's sky: past the game's haze in the flat game
-# sky.dome_past_far.tip = The game's own passes read the depth only to the far end of its range (about 1060 units) and take what lies past it as the sky. In the flat game's views the dome, nearer than that on part of the screen, got the game's distance haze there and none past it: a darker disc in a light veil, its size changing with the radius. Ticked, outside VR first person the dome is laid at least as far as that range's end at the screen's farthest corner, so all of it is past the haze - one sky; a larger radius stays as set. VR first person keeps the radius as set. Live.
-# sky.dome_true_colour.label = The game's sky: our sky's colours
-# sky.dome_true_colour.tip = The game draws our painted sky in its own scene, through its tone map and the area's colour grading - darker than our effect's sky, which is drawn in the picture's own colours. Ticked, our effect measures what the game shows of the dome against the painted sky it was made from and brings the dome to it, every area by its own numbers. A multiply in the effect's pass, which runs anyway for the dome's horizon. With "Sky follows the game's day and night" the dome follows the game's time of day as our sky does. Off: as the game shows it. Live.
-# sky.dome_in_game_colour.label = The game's sky: its colours drawn by the game
-# sky.dome_in_game_colour.tip = Our effect recoloured the game-drawn sky after the game had drawn the trees, the palisade and the roofs over it: their edges, blended into the sky as the game drew it, kept its old colour - a light outline round every branch at night. Ticked, the game draws the sky from a picture of ours instead, made from its own with the night picture, the day and night dimming, the brightness of each period of the day and the measured colours in it - every edge blends into the right sky. Without ReShade only (our own effects). Counts from the game's next start; unticked live, the sky goes back to the game's own colours at once and our effect recolours it as before.
+sky.dome_past_far.label = El cielo del juego: más allá de la bruma del juego en el juego plano
+sky.dome_past_far.tip = Las pasadas propias del juego leen la profundidad solo hasta el extremo lejano de su rango (unas 1060 unidades) y toman lo que queda más allá como el cielo. En las vistas del juego plano la cúpula, más cerca que eso en parte de la pantalla, recibía ahí la bruma de distancia del juego y ninguna más allá: un disco más oscuro en un velo claro, cuyo tamaño cambiaba con el radio. Marcado, fuera de VR en primera persona la cúpula se coloca al menos tan lejos como el final de ese rango en la esquina más lejana de la pantalla, de modo que toda ella quede más allá de la bruma - un solo cielo; un radio mayor queda como está ajustado. VR en primera persona conserva el radio ajustado. Al instante.
+sky.dome_true_colour.label = El cielo del juego: los colores de nuestro cielo
+sky.dome_true_colour.tip = El juego dibuja nuestro cielo pintado en su propia escena, a través de su mapa de tonos y la gradación de color de la zona - más oscuro que el cielo de nuestro efecto, que se dibuja en los colores propios de la imagen. Marcado, nuestro efecto mide lo que el juego muestra de la cúpula frente al cielo pintado del que se hizo y lleva la cúpula hacia él, cada zona con sus propios números. Una multiplicación en la pasada del efecto, que se ejecuta de todos modos para el horizonte de la cúpula. Con "El cielo sigue el día y la noche del juego" la cúpula sigue el momento del día del juego como lo hace nuestro cielo. Desactivado: como lo muestra el juego. Al instante.
+sky.dome_gain_once.label = El cielo del juego: sus colores medidos una vez
+sky.dome_gain_once.tip = Con "sus colores dibujados por el juego": la medida del cielo del juego frente al nuestro se toma una vez por cada zona y momento del día, y se guarda en d2r_vr_dome_gain.txt junto a los ajustes (bórralo para medir de nuevo). Después de eso el cielo se hornea a partir de esos números solo cuando cambian la luz, el momento del día o un deslizador - nada se mide ni se hornea de nuevo mientras juegas. Al instante. Desactivado: se mide todo el tiempo, como antes.
+sky.dome_in_game_colour.label = El cielo del juego: sus colores dibujados por el juego
+sky.dome_in_game_colour.tip = Nuestro efecto recoloreaba el cielo dibujado por el juego después de que el juego hubiera dibujado encima los árboles, la empalizada y los tejados: sus bordes, mezclados con el cielo tal como lo dibujó el juego, conservaban su color antiguo - un contorno claro alrededor de cada rama de noche. Marcado, el juego dibuja el cielo a partir de una imagen nuestra, hecha de la suya propia con la imagen de noche, el oscurecimiento de día y de noche, el brillo de cada periodo del día y los colores medidos en ella - cada borde se mezcla con el cielo correcto. Solo sin ReShade (nuestros propios efectos). Cuenta desde el siguiente inicio del juego; desmarcado al instante, el cielo vuelve enseguida a los colores propios del juego y nuestro efecto lo recolorea como antes.
 sky.dome_fog_horizon.label = El cielo del juego: su horizonte se funde con la niebla
 sky.dome_fog_horizon.tip = La parte baja del cielo que dibuja el juego se hunde en el color de niebla del acto, como hacía nuestro propio cielo: la tierra con niebla se une al cielo sin borde duro, y los colores coinciden donde se unen. Solo mientras se dibuja una niebla. Desactivado: el cielo tal como lo dibuja el juego. Al instante.
+sky.dome_fog_baked.label = El cielo del juego: su parte baja en el color de la niebla
+sky.dome_fog_baked.tip = Con la niebla del juego, la parte baja del cielo se pone en el color propio de la niebla en la propia imagen del cielo, como la parte baja de nuestro cielo antiguo pasa a la niebla: los árboles y arbustos contra el horizonte se recortan sobre el color de la niebla, sin el borde claro del horizonte de la imagen alrededor. Mientras tanto, el horizonte del cielo hacia la niebla de arriba se hace a un lado. Desactivado: la imagen tal cual. Al instante.
+sky.dome_fog_baked_strength.label = El cielo del juego: cuánto del color de la niebla
+sky.dome_fog_baked_strength.tip = 1: el horizonte totalmente del color de la niebla, desvaneciéndose hacia la imagen hasta los 11 grados; menos: algo de la imagen se ve a través. Al instante.
 sky.game_sky_closed.label = El cielo del juego: una esfera entera, un solo color abajo
 sky.game_sky_closed.tip = El cielo que dibuja el juego acababa 12 grados por debajo del horizonte: más allá del borde de un acantilado su contorno se alzaba como una línea dura con un agujero debajo, por el que se veían el vacío y la niebla. Marcado, se cierra en una esfera entera y su mitad inferior es de un solo color - el propio del cielo en el horizonte (con una niebla dibujada, el de la niebla: se unen en un solo color). En todos los actos, en RV y en plano. Este programa vuelve a crear los modelos de la cúpula al instante; el juego los toma en su siguiente inicio. Desactivado: la cúpula abierta, como antes.
 sky.game_skybox.label = Cumbre del Arreat: la cúpula del cielo a lo lejos
@@ -1767,18 +1807,38 @@ sky.light_day.label = Luz del juego que cuenta como pleno día
 sky.light_day.tip = La luz del juego va de 0 a 255 (el registro de vrcam la escribe al cambiar). Desde este valor hacia arriba: pleno día.
 sky.light_night.label = Luz del juego que cuenta como plena noche
 sky.light_night.tip = Desde este valor hacia abajo: plena noche. Entre medias el cielo pasa de uno a otro.
-# sky.bright_dawn.label = Sky brightness: end of night, dawn
-# sky.bright_dawn.tip = The sky's brightness as dawn begins - the game's dome and our effect's sky alike, times what the day and night above gives (1: as it is). It eases to the next period's by the game's own light. The game names its periods (debug_mode's time key shows them). Live.
-# sky.bright_day_start.label = Sky brightness: end of dawn, start of day
-# sky.bright_day_start.tip = The sky's brightness as the day begins - the game's dome and our effect's sky alike, times what the day and night above gives (1: as it is). It eases to the next period's by the game's own light. The game names its periods (debug_mode's time key shows them). Live.
-# sky.bright_day.label = Sky brightness: day
-# sky.bright_day.tip = The sky's brightness through the day, until the light falls toward dusk - the game's dome and our effect's sky alike, times what the day and night above gives (1: as it is). It eases to the next period's by the game's own light. The game names its periods (debug_mode's time key shows them). Live.
-# sky.bright_dusk.label = Sky brightness: end of day, dusk
-# sky.bright_dusk.tip = The sky's brightness as dusk begins - the game's dome and our effect's sky alike, times what the day and night above gives (1: as it is). It eases to the next period's by the game's own light. The game names its periods (debug_mode's time key shows them). Live.
-# sky.bright_night_start.label = Sky brightness: end of dusk, start of night
-# sky.bright_night_start.tip = The sky's brightness as the night begins - the game's dome and our effect's sky alike, times what the day and night above gives (1: as it is). It eases to the next period's by the game's own light. The game names its periods (debug_mode's time key shows them). Live.
-# sky.bright_night.label = Sky brightness: night
-# sky.bright_night.tip = The sky's brightness through the night, until the light rises toward dawn - the game's dome and our effect's sky alike, times what the day and night above gives (1: as it is). It eases to the next period's by the game's own light. The game names its periods (debug_mode's time key shows them). Live.
+sky.bright_dawn.label = Brillo del cielo: final de la noche, amanecer
+sky.bright_dawn.tip = El brillo del cielo cuando empieza el amanecer - la cúpula del juego y el cielo de nuestro efecto por igual, multiplicado por lo que da el día y la noche de arriba (1: tal cual). Pasa suavemente al del periodo siguiente según la luz propia del juego. El juego da nombre a sus periodos (la tecla de hora de debug_mode los muestra). Al instante.
+sky.bright_day_start.label = Brillo del cielo: final del amanecer, inicio del día
+sky.bright_day_start.tip = El brillo del cielo cuando empieza el día - la cúpula del juego y el cielo de nuestro efecto por igual, multiplicado por lo que da el día y la noche de arriba (1: tal cual). Pasa suavemente al del periodo siguiente según la luz propia del juego. El juego da nombre a sus periodos (la tecla de hora de debug_mode los muestra). Al instante.
+sky.bright_day.label = Brillo del cielo: día
+sky.bright_day.tip = El brillo del cielo durante el día, hasta que la luz baja hacia el anochecer - la cúpula del juego y el cielo de nuestro efecto por igual, multiplicado por lo que da el día y la noche de arriba (1: tal cual). Pasa suavemente al del periodo siguiente según la luz propia del juego. El juego da nombre a sus periodos (la tecla de hora de debug_mode los muestra). Al instante.
+sky.bright_dusk.label = Brillo del cielo: final del día, anochecer
+sky.bright_dusk.tip = El brillo del cielo cuando empieza el anochecer - la cúpula del juego y el cielo de nuestro efecto por igual, multiplicado por lo que da el día y la noche de arriba (1: tal cual). Pasa suavemente al del periodo siguiente según la luz propia del juego. El juego da nombre a sus periodos (la tecla de hora de debug_mode los muestra). Al instante.
+sky.bright_night_start.label = Brillo del cielo: final del anochecer, inicio de la noche
+sky.bright_night_start.tip = El brillo del cielo cuando empieza la noche - la cúpula del juego y el cielo de nuestro efecto por igual, multiplicado por lo que da el día y la noche de arriba (1: tal cual). Pasa suavemente al del periodo siguiente según la luz propia del juego. El juego da nombre a sus periodos (la tecla de hora de debug_mode los muestra). Al instante.
+sky.bright_night.label = Brillo del cielo: noche
+sky.bright_night.tip = El brillo del cielo durante la noche, hasta que la luz sube hacia el amanecer - la cúpula del juego y el cielo de nuestro efecto por igual, multiplicado por lo que da el día y la noche de arriba (1: tal cual). Pasa suavemente al del periodo siguiente según la luz propia del juego. El juego da nombre a sus periodos (la tecla de hora de debug_mode los muestra). Al instante.
+
+# --- The sky's pictures ---
+group.the_sky_s_pictures = Las imágenes del cielo
+group.the_sky_s_pictures.help = El cielo del juego son las imágenes propias del acto, horneadas una vez - la del día, la de la noche y una para el amanecer y el anochecer (el acto 4, sin noche, una) - cada una con su propio brillo, elegida según el momento del día del juego. Nada recoloreado ni medido.
+sky.three_bright_day.label = Brillo del cielo: imagen de día
+sky.three_bright_day.tip = El brillo de la imagen de día (1: tal como es la imagen). Se hornea de nuevo una vez cuando se mueve. Al instante.
+sky.three_bright_night.label = Brillo del cielo: imagen de noche
+sky.three_bright_night.tip = El brillo de la imagen de noche (1: tal como es la imagen). Un acto sin imagen de noche muestra la del día con este brillo. Al instante.
+sky.three_bright_dawn_dusk.label = Brillo del cielo: imagen de amanecer y anochecer
+sky.three_bright_dawn_dusk.tip = El brillo de la imagen de amanecer y anochecer - por ahora la imagen de día, hasta que los actos tengan una propia (1: tal como es la imagen). Al instante.
+sky.three_bright_act4.label = Brillo del cielo: acto 4
+sky.three_bright_act4.tip = El acto 4 (el Infierno) no tiene noche: un solo cielo, su imagen de día, con este brillo sea cual sea el momento del día. Al instante.
+sky.sky_crossfade.label = Cielo: fundido entre las imágenes
+sky.sky_crossfade.tip = Desmarcado: cuando cambia el periodo del día del juego, el cielo pasa enseguida a la imagen del periodo siguiente - horneada una vez entonces, nada entre medias. Marcado: cada imagen se funde con la siguiente según la luz propia del juego durante los amaneceres y anocheceres - el cielo se hornea de nuevo en cada paso de la luz entonces (una pasada sobre la imagen del cielo, unas pocas docenas de veces por amanecer o anochecer), nunca entre medias. Al instante.
+
+# --- Sky tinting (parked) ---
+group.sky_tinting_parked = Tintado del cielo (aparcado)
+group.sky_tinting_parked.help = Nuestro antiguo recoloreado del cielo del juego, medido de lo que muestra el juego. Aparcado hasta que pueda teñir sin un contorno claro alrededor de los árboles; mientras tanto el cielo son las imágenes horneadas.
+sky.dome_tint.label = El cielo del juego: teñido (aparcado)
+sky.dome_tint.tip = Marcado: el cielo del juego recoloreado como antes - sus colores medidos frente a los nuestros ("los colores de nuestro cielo", "medidos una vez"), el día y la noche según los deslizadores de periodo de arriba - en lugar de las imágenes horneadas. La medida se compila en el efecto solo mientras esto y "los colores de nuestro cielo" están marcados (el efecto se compila de nuevo). Dejaba un contorno claro alrededor de cada árbol; volveremos a ello cuando pueda teñir sin él. Desmarcado: las imágenes horneadas, nada medido. Al instante.
 
 # --- Act 1 (night, storm) ---
 group.act_1_night_storm = Acto 1 (noche, tormenta)
@@ -1816,10 +1876,8 @@ tab.ceiling = Techo
 
 # --- Cave ceiling ---
 group.cave_ceiling = Techo de cueva
-# English changed: A ceiling over the black void in caves and dungeons, first person only: who draws it, the game's own ceiling's parts (its rim, the barracks' beams, the cathedral's and the Worldstone's domes) and each room's height below.
-group.cave_ceiling.help = Una bóveda de piedra dibujada sobre el vacío negro de las cuevas, a su profundidad real en ambos ojos; solo primera persona. Ajusta el tamaño de baldosa y el relieve, una pared lejana y un suelo inferior para cerrar el vacío, el contraste, el detalle y el brillo húmedo de la piedra, y cómo la iluminan las antorchas y los monstruos con fuego.
-# English changed: A ceiling over the black void in caves and dungeons, first person only - the game's own (its lit stone) or our effect's vault, as "Who draws the ceiling" says; each room's height below.
-ceiling.enabled.tip#2 = Una bóveda de piedra sobre el vacío negro de las cuevas, a su profundidad real en ambos ojos. Solo primera persona; por ahora las cuevas, criptas, cuarteles, catacumbas y catedral del acto 1 y las alcantarillas y el palacio del acto 2.
+group.cave_ceiling.help = Un techo sobre el vacío negro en cuevas y mazmorras, solo en primera persona: quién lo dibuja, las partes del techo propio del juego (su borde, las vigas del cuartel, las cúpulas de la catedral y de la Piedra del Mundo) y la altura de cada sala abajo.
+ceiling.enabled.tip#2 = Un techo sobre el vacío negro en cuevas y mazmorras, solo en primera persona - el propio del juego (su piedra iluminada) o la bóveda de nuestro efecto, según diga "Quién dibuja el techo"; la altura de cada sala abajo.
 ceiling.game_ceiling_wall.label = El techo del juego: doblado hacia abajo en una pared en su borde
 ceiling.game_ceiling_wall.tip = Un anillo de la misma roca iluminada a tu alrededor donde acaba el techo del juego (a unas 215 unidades con baldosa de tamaño 10), desde el techo hasta por debajo del suelo (la profundidad del suelo): el vacío negro más allá del borde del techo - una banda entre él y el suelo lejano, iluminada por la niebla detrás de los fuegos - se cierra con piedra, como lo cerraba la pared lejana de nuestro efecto. Desactivado: el techo plano. Al instante.
 ceiling.game_ceiling_beams.label = El techo del juego: las vigas de madera propias del cuartel
@@ -1836,10 +1894,8 @@ ceiling.game_ceiling_worldstone_dome_wider_m.label = La cúpula de la Piedra del
 ceiling.game_ceiling_worldstone_dome_wider_m.tip = Metros añadidos de lado a lado a la cúpula de la Piedra del Mundo (la mitad por cada lado), sobre la medida a partir de las piezas del juego - la suya propia; el tamaño de la cúpula de la catedral no cambia. Su altura la sigue, para que siga pasando por encima del cristal; más ancha que los pilares, su borde baja más allá de ellos hasta el techo plano y los pilares acaban bajo la curva. Metros tal como los tiene la cámara (la altura de los ojos del personaje respecto a la tuya). VR F4. Al instante.
 ceiling.height_from_walls.label = Altura del techo desde las paredes de la sala
 ceiling.height_from_walls.tip = Una sala cuya propia altura de abajo no está fijada (0) tiene su techo sobre sus propias paredes: donde acaban las paredes con las que el juego construye esa sala (la mitad de sus piezas de pared, y lo alto de las de pilar y acantilado, medidos a partir de los archivos de tu juego). La altura propia de una sala, una vez fijada, siempre gana. Tanto la bóveda de nuestro efecto como el techo del juego; la roca del juego que cuelga más baja apoya su punto más bajo sobre las paredes. Desactivado, o una sala construida sin paredes de ese tipo: 18 sobre el suelo donde no hay altura fijada. El registro dice la altura de cada sala y de dónde sale. Al instante, en el siguiente cambio de zona.
-# English changed: The rim's wall: how far below the floor (0 = none)
-ceiling.floor_depth.label = Suelo bajo el suelo (0 = ninguno)
-# English changed: How far under the hero's floor the game's ceiling's rim wall reaches, world units: looking down past the drawn floor's edge shows that stone, not the void.
-ceiling.floor_depth.tip = Piedra a esta distancia bajo el suelo del personaje, en unidades del mundo: al mirar hacia abajo más allá del borde del suelo dibujado se ve ella, no el vacío.
+ceiling.floor_depth.label = La pared del borde: cuánto por debajo del suelo (0 = nada)
+ceiling.floor_depth.tip = Hasta dónde llega la pared del borde del techo del juego por debajo del suelo del personaje, en unidades del mundo: al mirar hacia abajo más allá del borde del suelo dibujado se ve esa piedra, no el vacío.
 
 # --- Light in caves ---
 group.light_in_caves = Luz en cuevas
@@ -1859,113 +1915,92 @@ cave_light.ambient_min.tip = Lo que tenga la mazmorra, al menos esto: solo para 
 
 # --- Ceiling: act 1 caves (levels 8-16) ---
 group.ceiling_act_1_caves_levels_8_16 = Techo: cuevas del acto 1 (niveles 8-16)
-# English changed: The ceiling's height over this room's floor - 0: on its own walls' top ("Ceiling height from the room's walls"), else 18. Levels: Den of Evil (8), Cave Level 1 (9), Underground Passage Level 1 (10), Hole Level 1 (11), Pit Level 1 (12), Cave Level 2 (13), Underground Passage Level 2 (14), Hole Level 2 (15), Pit Level 2 (16).
-group.ceiling_act_1_caves_levels_8_16.help = El techo sobre las cuevas del acto 1: su altura sobre el suelo, brillo, hasta dónde llega la luz del personaje sobre él, el relieve, y la imagen de piedra con su tamaño, contraste, detalle y brillo húmedo. Niveles: Guarida del Mal (8), Cueva, nivel 1 (9), Pasaje subterráneo, nivel 1 (10), Agujero, nivel 1 (11), Foso, nivel 1 (12), Cueva, nivel 2 (13), Pasaje subterráneo, nivel 2 (14), Agujero, nivel 2 (15), Foso, nivel 2 (16).
+group.ceiling_act_1_caves_levels_8_16.help = La altura del techo sobre el suelo de esta sala - 0: en lo alto de sus propias paredes ("Altura del techo desde las paredes de la sala"), si no 18. Niveles: Guarida del Mal (8), Cueva, nivel 1 (9), Pasaje subterráneo, nivel 1 (10), Agujero, nivel 1 (11), Foso, nivel 1 (12), Cueva, nivel 2 (13), Pasaje subterráneo, nivel 2 (14), Agujero, nivel 2 (15), Foso, nivel 2 (16).
 ceiling.height_act1_caves.label = Altura sobre el suelo (0 = desde las paredes)
 ceiling.height_act1_caves.tip = Unidades del mundo (el personaje mide ~7,5). Por debajo de lo alto de las paredes las paredes atraviesan el techo. 0: sobre lo alto de las paredes de la sala, medido a partir de los archivos de tu juego (con "Altura del techo desde las paredes de la sala"); si no, 18.
 
 # --- Ceiling: act 1 crypts and tower (levels 18-25, 133) ---
 group.ceiling_act_1_crypts_and_tower_levels_18_25_133 = Techo: criptas y torre del acto 1 (niveles 18-25, 133)
-# English changed: The ceiling's height over this room's floor - 0: on its own walls' top ("Ceiling height from the room's walls"), else 18. Levels: Crypt (18), Mausoleum (19), Forgotten Tower (20), Tower Cellar Level 1 (21), Tower Cellar Level 2 (22), Tower Cellar Level 3 (23), Tower Cellar Level 4 (24), Tower Cellar Level 5 (25), Pandemonium Run 1 (133).
-group.ceiling_act_1_crypts_and_tower_levels_18_25_133.help = El techo sobre las criptas del acto 1: su altura, brillo, el alcance de la luz del personaje, cuánto cuelga la mampostería irregular y su imagen. Niveles: Cripta (18), Mausoleo (19), Torre Olvidada (20), Sótano de la torre, nivel 1 (21), Sótano de la torre, nivel 2 (22), Sótano de la torre, nivel 3 (23), Sótano de la torre, nivel 4 (24), Sótano de la torre, nivel 5 (25), Pandemonium Run 1 (133).
+group.ceiling_act_1_crypts_and_tower_levels_18_25_133.help = La altura del techo sobre el suelo de esta sala - 0: en lo alto de sus propias paredes ("Altura del techo desde las paredes de la sala"), si no 18. Niveles: Cripta (18), Mausoleo (19), Torre Olvidada (20), Sótano de la torre, nivel 1 (21), Sótano de la torre, nivel 2 (22), Sótano de la torre, nivel 3 (23), Sótano de la torre, nivel 4 (24), Sótano de la torre, nivel 5 (25), Pandemonium Run 1 (133).
 
 # --- Ceiling: act 1 barracks and jail (levels 28-31) ---
 group.ceiling_act_1_barracks_and_jail_levels_28_31 = Techo: cuartel y cárcel del acto 1 (niveles 28-31)
-# English changed: The ceiling's height over this room's floor - 0: on its own walls' top ("Ceiling height from the room's walls"), else 18. Levels: Barracks (28), Jail Level 1 (29), Jail Level 2 (30), Jail Level 3 (31).
-group.ceiling_act_1_barracks_and_jail_levels_28_31.help = El techo sobre el cuartel del acto 1: su altura, brillo, el alcance de la luz del personaje, relieve e imagen. Niveles: Cuartel (28), Cárcel, nivel 1 (29), Cárcel, nivel 2 (30), Cárcel, nivel 3 (31).
+group.ceiling_act_1_barracks_and_jail_levels_28_31.help = La altura del techo sobre el suelo de esta sala - 0: en lo alto de sus propias paredes ("Altura del techo desde las paredes de la sala"), si no 18. Niveles: Cuartel (28), Cárcel, nivel 1 (29), Cárcel, nivel 2 (30), Cárcel, nivel 3 (31).
 
 # --- Ceiling: act 1 barracks' courtyard (level 28) ---
 group.ceiling_act_1_barracks_courtyard_level_28 = Techo: patio del cuartel del acto 1 (nivel 28)
-# English changed: The ceiling's height over this room's floor - 0: on its own walls' top ("Ceiling height from the room's walls"), else 18. Levels: Barracks (28).
-group.ceiling_act_1_barracks_courtyard_level_28.help = El techo del juego bajo el patio del cuartel del acto 1 (su propio empedrado) en VR F4, nuestra bóveda en F3 plano; su altura sobre el suelo. Niveles: Cuartel (28).
+group.ceiling_act_1_barracks_courtyard_level_28.help = La altura del techo sobre el suelo de esta sala - 0: en lo alto de sus propias paredes ("Altura del techo desde las paredes de la sala"), si no 18. Niveles: Cuartel (28).
 ceiling.height_act1_court_to_barracks.tip = Unidades del mundo (el personaje mide ~7,5). 0: sobre lo alto de las paredes de la sala, medido a partir de los archivos de tu juego (con "Altura del techo desde las paredes de la sala"); si no, 18.
 
 # --- Ceiling: act 1 cathedral (level 33) ---
 group.ceiling_act_1_cathedral_level_33 = Techo: catedral del acto 1 (nivel 33)
-# English changed: The ceiling's height over this room's floor - 0: on its own walls' top ("Ceiling height from the room's walls"), else 18. Levels: Cathedral (33).
-group.ceiling_act_1_cathedral_level_33.help = El techo sobre la catedral del acto 1. Además de altura, brillo e imagen, una cúpula deja que el techo se eleve como una esfera sobre lo que sobresale más (el dosel del altar) en vez de cortarlo; ajusta desde qué altura, cuán ancha y cuán alta llega. Niveles: Catedral (33).
+group.ceiling_act_1_cathedral_level_33.help = La altura del techo sobre el suelo de esta sala - 0: en lo alto de sus propias paredes ("Altura del techo desde las paredes de la sala"), si no 18. Niveles: Catedral (33).
 
 # --- Ceiling: act 1 catacombs (levels 34-37) ---
 group.ceiling_act_1_catacombs_levels_34_37 = Techo: catacumbas del acto 1 (niveles 34-37)
-# English changed: The ceiling's height over this room's floor - 0: on its own walls' top ("Ceiling height from the room's walls"), else 18. Levels: Catacombs Level 1 (34), Catacombs Level 2 (35), Catacombs Level 3 (36), Catacombs Level 4 (37).
-group.ceiling_act_1_catacombs_levels_34_37.help = El techo sobre las catacumbas del acto 1: su altura (lo que el juego dibuja más alto se corta), brillo, el alcance de la luz del personaje, relieve e imagen. Niveles: Catacumbas, nivel 1 (34), Catacumbas, nivel 2 (35), Catacumbas, nivel 3 (36), Catacumbas, nivel 4 (37).
+group.ceiling_act_1_catacombs_levels_34_37.help = La altura del techo sobre el suelo de esta sala - 0: en lo alto de sus propias paredes ("Altura del techo desde las paredes de la sala"), si no 18. Niveles: Catacumbas, nivel 1 (34), Catacumbas, nivel 2 (35), Catacumbas, nivel 3 (36), Catacumbas, nivel 4 (37).
 ceiling.height_act1_catacombs.tip = Unidades del mundo (el personaje mide ~7,5). Lo que el juego dibuja más alto lo corta el techo.
 
 # --- Ceiling: act 2 sewers (levels 47-49, 65) ---
 group.ceiling_act_2_sewers_levels_47_49_65 = Techo: alcantarillas del acto 2 (niveles 47-49, 65)
-# English changed: The ceiling's height over this room's floor - 0: on its own walls' top ("Ceiling height from the room's walls"), else 18. Levels: Sewers Level 1 (47), Sewers Level 2 (48), Sewers Level 3 (49), Ancient Tunnels (65).
-group.ceiling_act_2_sewers_levels_47_49_65.help = El techo sobre las alcantarillas del acto 2: su altura, brillo, el alcance de la luz del personaje, relieve e imagen. Niveles: Alcantarillas, nivel 1 (47), Alcantarillas, nivel 2 (48), Alcantarillas, nivel 3 (49), Túneles Antiguos (65).
+group.ceiling_act_2_sewers_levels_47_49_65.help = La altura del techo sobre el suelo de esta sala - 0: en lo alto de sus propias paredes ("Altura del techo desde las paredes de la sala"), si no 18. Niveles: Alcantarillas, nivel 1 (47), Alcantarillas, nivel 2 (48), Alcantarillas, nivel 3 (49), Túneles Antiguos (65).
 
 # --- Ceiling: act 2 harem (level 50) ---
 group.ceiling_act_2_harem_level_50 = Techo: harén del acto 2 (nivel 50)
-# English changed: The ceiling's height over this room's floor - 0: on its own walls' top ("Ceiling height from the room's walls"), else 18. Levels: Harem Level 1 (50).
-group.ceiling_act_2_harem_level_50.help = El techo bajo el harén del acto 2: su altura, brillo, el alcance de la luz del personaje, relieve e imagen. Niveles: Harén, nivel 1 (50).
+group.ceiling_act_2_harem_level_50.help = La altura del techo sobre el suelo de esta sala - 0: en lo alto de sus propias paredes ("Altura del techo desde las paredes de la sala"), si no 18. Niveles: Harén, nivel 1 (50).
 
 # --- Ceiling: act 2 corrupt harem (level 51) ---
 group.ceiling_act_2_corrupt_harem_level_51 = Techo: harén corrupto del acto 2 (nivel 51)
-# English changed: The ceiling's height over this room's floor - 0: on its own walls' top ("Ceiling height from the room's walls"), else 18. Levels: Harem Level 2 (51).
-group.ceiling_act_2_corrupt_harem_level_51.help = El techo bajo el harén corrupto del acto 2: el techo del juego con la piedra de su propio suelo en VR F4, nuestra bóveda en F3 plano; su altura sobre el suelo. Niveles: Harén, nivel 2 (51).
+group.ceiling_act_2_corrupt_harem_level_51.help = La altura del techo sobre el suelo de esta sala - 0: en lo alto de sus propias paredes ("Altura del techo desde las paredes de la sala"), si no 18. Niveles: Harén, nivel 2 (51).
 
 # --- Ceiling: act 2 palace cellar (levels 52-54) ---
 group.ceiling_act_2_palace_cellar_levels_52_54 = Techo: sótano del palacio del acto 2 (niveles 52-54)
-# English changed: The ceiling's height over this room's floor - 0: on its own walls' top ("Ceiling height from the room's walls"), else 18. Levels: Palace Cellar Level 1 (52), Palace Cellar Level 2 (53), Palace Cellar Level 3 (54).
-group.ceiling_act_2_palace_cellar_levels_52_54.help = El techo bajo el sótano del palacio del acto 2: el techo del juego de piedra lisa y oscura (la de las catacumbas, no las baldosas del suelo) en VR F4, nuestra bóveda en F3 plano; su altura sobre el suelo. Niveles: Sótano del palacio, nivel 1 (52), Sótano del palacio, nivel 2 (53), Sótano del palacio, nivel 3 (54).
+group.ceiling_act_2_palace_cellar_levels_52_54.help = La altura del techo sobre el suelo de esta sala - 0: en lo alto de sus propias paredes ("Altura del techo desde las paredes de la sala"), si no 18. Niveles: Sótano del palacio, nivel 1 (52), Sótano del palacio, nivel 2 (53), Sótano del palacio, nivel 3 (54).
 
 # --- Ceiling: act 2 tombs (levels 55-61, 66-73) ---
 group.ceiling_act_2_tombs_levels_55_61_66_73 = Techo: tumbas del acto 2 (niveles 55-61, 66-73)
-# English changed: The ceiling's height over this room's floor - 0: on its own walls' top ("Ceiling height from the room's walls"), else 18. Levels: Stony Tomb Level 1 (55), Halls of the Dead Level 1 (56), Halls of the Dead Level 2 (57), Claw Viper Temple Level 1 (58), Stony Tomb Level 2 (59), Halls of the Dead Level 3 (60), Claw Viper Temple Level 2 (61), Tal Rasha's Tomb (66), Tal Rasha's Tomb (67), Tal Rasha's Tomb (68), Tal Rasha's Tomb (69), Tal Rasha's Tomb (70), Tal Rasha's Tomb (71), Tal Rasha's Tomb (72), Duriel's Lair (73).
-group.ceiling_act_2_tombs_levels_55_61_66_73.help = El techo del juego bajo las tumbas del acto 2 (piedra lisa y oscura, la de las catacumbas) en VR F4, nuestra bóveda en F3 plano; su altura sobre el suelo. Niveles: Tumba Pedregosa, nivel 1 (55), Salas de los Muertos, nivel 1 (56), Salas de los Muertos, nivel 2 (57), Templo de la Víbora, nivel 1 (58), Tumba Pedregosa, nivel 2 (59), Salas de los Muertos, nivel 3 (60), Templo de la Víbora, nivel 2 (61), Tumba de Tal Rasha (66), Tumba de Tal Rasha (67), Tumba de Tal Rasha (68), Tumba de Tal Rasha (69), Tumba de Tal Rasha (70), Tumba de Tal Rasha (71), Tumba de Tal Rasha (72), Guarida de Duriel (73).
+group.ceiling_act_2_tombs_levels_55_61_66_73.help = La altura del techo sobre el suelo de esta sala - 0: en lo alto de sus propias paredes ("Altura del techo desde las paredes de la sala"), si no 18. Niveles: Tumba Pedregosa, nivel 1 (55), Salas de los Muertos, nivel 1 (56), Salas de los Muertos, nivel 2 (57), Templo de la Víbora, nivel 1 (58), Tumba Pedregosa, nivel 2 (59), Salas de los Muertos, nivel 3 (60), Templo de la Víbora, nivel 2 (61), Tumba de Tal Rasha (66), Tumba de Tal Rasha (67), Tumba de Tal Rasha (68), Tumba de Tal Rasha (69), Tumba de Tal Rasha (70), Tumba de Tal Rasha (71), Tumba de Tal Rasha (72), Guarida de Duriel (73).
 
 # --- Ceiling: act 2 maggot lair (levels 62-64) ---
 group.ceiling_act_2_maggot_lair_levels_62_64 = Techo: guarida de larvas del acto 2 (niveles 62-64)
-# English changed: The ceiling's height over this room's floor - 0: on its own walls' top ("Ceiling height from the room's walls"), else 18. Levels: Maggot Lair Level 1 (62), Maggot Lair Level 2 (63), Maggot Lair Level 3 (64).
-group.ceiling_act_2_maggot_lair_levels_62_64.help = El techo del juego sobre la guarida de larvas del acto 2 (su propia roca de cueva; nuestro efecto no dibuja bóveda aquí): su altura sobre el suelo. Niveles: Guarida de Larvas, nivel 1 (62), Guarida de Larvas, nivel 2 (63), Guarida de Larvas, nivel 3 (64).
+group.ceiling_act_2_maggot_lair_levels_62_64.help = La altura del techo sobre el suelo de esta sala - 0: en lo alto de sus propias paredes ("Altura del techo desde las paredes de la sala"), si no 18. Niveles: Guarida de Larvas, nivel 1 (62), Guarida de Larvas, nivel 2 (63), Guarida de Larvas, nivel 3 (64).
 ceiling.height_act2_maggot.tip = Unidades del mundo (el personaje mide ~7,5): dónde cuelga aquí el techo de roca del juego; su roca cuelga un poco más baja que eso.
 
 # --- Ceiling: act 3 spider caves (levels 84-85) ---
 group.ceiling_act_3_spider_caves_levels_84_85 = Techo: cuevas de arañas del acto 3 (niveles 84-85)
-# English changed: The ceiling's height over this room's floor - 0: on its own walls' top ("Ceiling height from the room's walls"), else 18. Levels: Spider Cave (84), Spider Cavern (85).
-group.ceiling_act_3_spider_caves_levels_84_85.help = El techo del juego sobre las cuevas de arañas del acto 3 (su propia roca de cueva; nuestro efecto no dibuja bóveda aquí): su altura sobre el suelo. Niveles: Cueva de las Arañas (84), Caverna de las Arañas (85).
+group.ceiling_act_3_spider_caves_levels_84_85.help = La altura del techo sobre el suelo de esta sala - 0: en lo alto de sus propias paredes ("Altura del techo desde las paredes de la sala"), si no 18. Niveles: Cueva de las Arañas (84), Caverna de las Arañas (85).
 
 # --- Ceiling: act 3 jungle dungeons (levels 86-91) ---
 group.ceiling_act_3_jungle_dungeons_levels_86_91 = Techo: mazmorras de la selva del acto 3 (niveles 86-91)
-# English changed: The ceiling's height over this room's floor - 0: on its own walls' top ("Ceiling height from the room's walls"), else 18. Levels: Swampy Pit Level 1 (86), Swampy Pit Level 2 (87), Flayer Dungeon Level 1 (88), Flayer Dungeon Level 2 (89), Swampy Pit Level 3 (90), Flayer Dungeon Level 3 (91).
-group.ceiling_act_3_jungle_dungeons_levels_86_91.help = El techo del juego sobre las mazmorras de la selva del acto 3 (su propia roca de cueva; nuestro efecto no dibuja bóveda aquí): su altura sobre el suelo. Niveles: Foso Pantanoso, nivel 1 (86), Foso Pantanoso, nivel 2 (87), Mazmorra de los Desolladores, nivel 1 (88), Mazmorra de los Desolladores, nivel 2 (89), Foso Pantanoso, nivel 3 (90), Mazmorra de los Desolladores, nivel 3 (91).
+group.ceiling_act_3_jungle_dungeons_levels_86_91.help = La altura del techo sobre el suelo de esta sala - 0: en lo alto de sus propias paredes ("Altura del techo desde las paredes de la sala"), si no 18. Niveles: Foso Pantanoso, nivel 1 (86), Foso Pantanoso, nivel 2 (87), Mazmorra de los Desolladores, nivel 1 (88), Mazmorra de los Desolladores, nivel 2 (89), Foso Pantanoso, nivel 3 (90), Mazmorra de los Desolladores, nivel 3 (91).
 
 # --- Ceiling: act 3 sewers (level 93) ---
 group.ceiling_act_3_sewers_level_93 = Techo: alcantarillas del acto 3 (nivel 93)
-# English changed: The ceiling's height over this room's floor - 0: on its own walls' top ("Ceiling height from the room's walls"), else 18. Levels: Sewers Level 2 (93).
-group.ceiling_act_3_sewers_level_93.help = El techo del juego bajo las alcantarillas del acto 3 (su propio suelo rocoso, colocado plano) en VR F4, nuestra bóveda en F3 plano; su altura sobre el suelo. Niveles: Alcantarillas, nivel 2 (93).
+group.ceiling_act_3_sewers_level_93.help = La altura del techo sobre el suelo de esta sala - 0: en lo alto de sus propias paredes ("Altura del techo desde las paredes de la sala"), si no 18. Niveles: Alcantarillas, nivel 2 (93).
 
 # --- Ceiling: act 3 temples (levels 94-99) ---
 group.ceiling_act_3_temples_levels_94_99 = Techo: templos del acto 3 (niveles 94-99)
-# English changed: The ceiling's height over this room's floor - 0: on its own walls' top ("Ceiling height from the room's walls"), else 18. Levels: Ruined Temple (94), Disused Fane (95), Forgotten Reliquary (96), Forgotten Temple (97), Ruined Fane (98), Disused Reliquary (99).
-group.ceiling_act_3_temples_levels_94_99.help = El techo del juego bajo los templos del acto 3 (su propia piedra) en VR F4, nuestra bóveda en F3 plano; su altura sobre el suelo. Niveles: Templo en Ruinas (94), Santuario en Desuso (95), Relicario Olvidado (96), Templo Olvidado (97), Santuario en Ruinas (98), Relicario en Desuso (99).
+group.ceiling_act_3_temples_levels_94_99.help = La altura del techo sobre el suelo de esta sala - 0: en lo alto de sus propias paredes ("Altura del techo desde las paredes de la sala"), si no 18. Niveles: Templo en Ruinas (94), Santuario en Desuso (95), Relicario Olvidado (96), Templo Olvidado (97), Santuario en Ruinas (98), Relicario en Desuso (99).
 
 # --- Ceiling: act 3 Durance of Hate (level 102) ---
 group.ceiling_act_3_durance_of_hate_level_102 = Techo: Prisión del Odio del acto 3 (nivel 102)
-# English changed: The ceiling's height over this room's floor - 0: on its own walls' top ("Ceiling height from the room's walls"), else 18. Levels: Durance of Hate Level 3 (102).
-group.ceiling_act_3_durance_of_hate_level_102.help = El techo del juego bajo la Prisión del Odio del acto 3 (su propia piedra) en VR F4, nuestra bóveda en F3 plano; su altura sobre el suelo. Niveles: Prisión del Odio, nivel 3 (102).
+group.ceiling_act_3_durance_of_hate_level_102.help = La altura del techo sobre el suelo de esta sala - 0: en lo alto de sus propias paredes ("Altura del techo desde las paredes de la sala"), si no 18. Niveles: Prisión del Odio, nivel 3 (102).
 
 # --- Ceiling: act 5 ice caves (levels 113-116, 118-119) ---
 group.ceiling_act_5_ice_caves_levels_113_116_118_119 = Techo: cuevas de hielo del acto 5 (niveles 113-116, 118-119)
-# English changed: The ceiling's height over this room's floor - 0: on its own walls' top ("Ceiling height from the room's walls"), else 18. Levels: Crystalized Cavern Level 1 (113), Cellar of Pity (114), Crystalized Cavern Level 2 (115), Echo Chamber (116), Glacial Caves Level 1 (118), Glacial Caves Level 2 (119).
-group.ceiling_act_5_ice_caves_levels_113_116_118_119.help = El techo del juego sobre las cuevas de hielo del acto 5 (su propia roca de cueva; nuestro efecto no dibuja bóveda aquí): su altura sobre el suelo. Niveles: Caverna Cristalizada, nivel 1 (113), Sótano de la Piedad (114), Caverna Cristalizada, nivel 2 (115), Cámara del Eco (116), Cuevas Glaciales, nivel 1 (118), Cuevas Glaciales, nivel 2 (119).
+group.ceiling_act_5_ice_caves_levels_113_116_118_119.help = La altura del techo sobre el suelo de esta sala - 0: en lo alto de sus propias paredes ("Altura del techo desde las paredes de la sala"), si no 18. Niveles: Caverna Cristalizada, nivel 1 (113), Sótano de la Piedad (114), Caverna Cristalizada, nivel 2 (115), Cámara del Eco (116), Cuevas Glaciales, nivel 1 (118), Cuevas Glaciales, nivel 2 (119).
 
 # --- Ceiling: act 5 Nihlathak's halls (levels 122-124) ---
 group.ceiling_act_5_nihlathak_s_halls_levels_122_124 = Techo: salas de Nihlathak del acto 5 (niveles 122-124)
-# English changed: The ceiling's height over this room's floor - 0: on its own walls' top ("Ceiling height from the room's walls"), else 18. Levels: Halls of Anguish (122), Halls of Death's Calling (123), Halls of Vaught (124).
-group.ceiling_act_5_nihlathak_s_halls_levels_122_124.help = El techo del juego bajo las salas de Nihlathak del acto 5 (su propia roca de cueva) en VR F4, nuestra bóveda en F3 plano; su altura sobre el suelo. Niveles: Salas de la Angustia (122), Salas de la Llamada de la Muerte (123), Salas de Vaught (124).
+group.ceiling_act_5_nihlathak_s_halls_levels_122_124.help = La altura del techo sobre el suelo de esta sala - 0: en lo alto de sus propias paredes ("Altura del techo desde las paredes de la sala"), si no 18. Niveles: Salas de la Angustia (122), Salas de la Llamada de la Muerte (123), Salas de Vaught (124).
 
 # --- Ceiling: act 5 Worldstone Keep (levels 128-130) ---
 group.ceiling_act_5_worldstone_keep_levels_128_130 = Techo: Fortaleza de la Piedra del Mundo del acto 5 (niveles 128-130)
-# English changed: The ceiling's height over this room's floor - 0: on its own walls' top ("Ceiling height from the room's walls"), else 18. Levels: The Worldstone Keep Level 1 (128), The Worldstone Keep Level 2 (129), The Worldstone Keep Level 3 (130).
-group.ceiling_act_5_worldstone_keep_levels_128_130.help = El techo del juego bajo la Fortaleza de la Piedra del Mundo del acto 5 (su propio suelo) en VR F4, nuestra bóveda en F3 plano; su altura sobre el suelo. Niveles: Fortaleza de la Piedra del Mundo, nivel 1 (128), Fortaleza de la Piedra del Mundo, nivel 2 (129), Fortaleza de la Piedra del Mundo, nivel 3 (130).
+group.ceiling_act_5_worldstone_keep_levels_128_130.help = La altura del techo sobre el suelo de esta sala - 0: en lo alto de sus propias paredes ("Altura del techo desde las paredes de la sala"), si no 18. Niveles: Fortaleza de la Piedra del Mundo, nivel 1 (128), Fortaleza de la Piedra del Mundo, nivel 2 (129), Fortaleza de la Piedra del Mundo, nivel 3 (130).
 
 # --- Ceiling: act 5 throne of destruction (levels 128-132) ---
 group.ceiling_act_5_throne_of_destruction_levels_128_132 = Techo: trono de la destrucción del acto 5 (niveles 128-132)
-# English changed: The ceiling's height over this room's floor - 0: on its own walls' top ("Ceiling height from the room's walls"), else 18. Levels: The Worldstone Keep Level 1 (128), The Worldstone Keep Level 2 (129), The Worldstone Keep Level 3 (130), Throne of Destruction (131), The Worldstone Chamber (132).
-group.ceiling_act_5_throne_of_destruction_levels_128_132.help = El techo del juego bajo el trono de la destrucción del acto 5 (el propio suelo de la Fortaleza) en VR F4, nuestra bóveda en F3 plano; su altura sobre el suelo. Niveles: Fortaleza de la Piedra del Mundo, nivel 1 (128), Fortaleza de la Piedra del Mundo, nivel 2 (129), Fortaleza de la Piedra del Mundo, nivel 3 (130), Trono de la Destrucción (131), Cámara de la Piedra del Mundo (132).
+group.ceiling_act_5_throne_of_destruction_levels_128_132.help = La altura del techo sobre el suelo de esta sala - 0: en lo alto de sus propias paredes ("Altura del techo desde las paredes de la sala"), si no 18. Niveles: Fortaleza de la Piedra del Mundo, nivel 1 (128), Fortaleza de la Piedra del Mundo, nivel 2 (129), Fortaleza de la Piedra del Mundo, nivel 3 (130), Trono de la Destrucción (131), Cámara de la Piedra del Mundo (132).
 
 # ===== Tab: Weapon Adjust =====
 tab.weapon_adjust = Ajuste del arma
@@ -2824,8 +2859,8 @@ group.monsters_bodies_f4 = Cuerpos de monstruos (F4)
 group.monsters_bodies_f4.help = Pruebas que dan a los monstruos cuerpos que tu arma no puede atravesar: se detiene en ellos, un arma puntiaguda puede clavarse, los escudos y armas de los monstruos la detienen, dos armas chocan, se sienten las paradas y los cuerpos ceden por su peso. Necesita Golpear al tocar activado; el golpe en sí sigue siendo del juego.
 weight.monster_bodies.label = El arma se detiene en los cuerpos de los monstruos (una prueba)
 weight.monster_bodies.tip = Marcada: un monstruo que el juego llama hostil tiene un cuerpo que el arma en tus manos no puede atravesar - una estocada o un corte se detiene en él, un filo (una espada, un hacha, una lanza) en ángulo suave resbala a lo largo de él, un arma contundente (una maza, un cetro, un bastón) se detiene donde golpeó; un pulso en la mano al golpear. Tu mano sigue, el arma (y la mano tal como se dibuja en ella) se queda en el cuerpo hasta que la mano vuelve. El cuerpo es el esqueleto propio del monstruo: una cápsula en cada miembro tal como los coloca el juego, tan gruesa como su modelo (donde eso no se puede leer, la cápsula que el juego da al monstruo). El golpe en sí sigue siendo el ataque del juego pulsado por golpear al tocar: necesita Golpear al tocar activado - su escaneo encuentra a los monstruos. Desmarcada: el arma los atraviesa, como siempre.
-weight.own_body.label = El arma no atraviesa tu propio cuerpo
-weight.own_body.tip = Marcada, junto con los cuerpos de arriba: el arma en tus manos se detiene en tu propio torso y piernas igual que se detiene en el cuerpo de un monstruo - ya no atraviesa a tu personaje. Tus brazos y tu cabeza quedan fuera (tus manos sostienen el arma; tu cabeza es la tuya). Nunca un golpe, una estocada ni un agarre sobre ti mismo. Desmarcada: te atraviesa, como antes.
+weight.skeleton_bones_max.label = Esqueletos de los monstruos: huesos leídos como máximo
+weight.skeleton_bones_max.tip = Al instante. Un monstruo cuyo esqueleto tiene más huesos que esto no recibe extremidades: queda como la única cápsula del juego - tu arma se detiene en ella, un agarre la sujeta, pero nunca se derriba, se levanta ni se lanza, y no cede por ninguna extremidad. El registro nombra su número de huesos cuando lo supera ("the skeleton has more bones than [weight] skeleton_bones_max reads", N huesos). Más alto lee esqueletos más largos (los Ancestros en la Cumbre del Arreat tienen más de 160) y cuesta más tiempo de procesador por monstruo - el esqueleto de cada modelo se lee una vez, luego sus extremidades en cada exploración; más bajo es más barato pero deja más monstruos grandes como una sola cápsula. 256 por defecto.
 weight.stab_in.label = Un arma puntiaguda se clava en el cuerpo (una prueba)
 weight.stab_in.tip = Marcada, con los cuerpos de arriba: un arma con punta (una espada - de una o dos manos - una daga, una lanza, una jabalina, un arma arrojadiza, un arma de asta, una garra) clavada con la punta por delante (a menos de 60 grados de la recta) en el cuerpo de un monstruo a 0,5 m/s o más ENTRA en lugar de detenerse en la superficie. Solo se desliza a lo largo de su propia longitud: el cuerpo la retiene - una piel más dura los primeros centímetros, luego carne más blanda - sin pasar de la profundidad de su hoja; si queda quieta se bloquea donde está, y un tirón constante la libera de nuevo. Retírala a lo largo de su longitud más allá de donde entró y sale. Si se la balancea de lado o se la gira estando dentro, se mantiene en su línea - arrastra y gira con el monstruo, no corta; aleja mucho la mano y se libera. Un monstruo que anda la lleva, uno que muere la suelta. Solo cuenta un movimiento con la punta por delante (a lo largo de la hoja, sin giro) - para cualquier arma puntiaguda, cuente o no Golpear al tocar ese movimiento como estocada. Un corte con el filo, una maza, un hacha, un bastón o un puño se detiene en la superficie como antes. Solo el arma que ves: el golpe sigue siendo el ataque del juego pulsado por golpear al tocar (la puñalada de una espada sigue golpeando como el tajo que era, a menos que Estocada esté marcada para las espadas). Desmarcada: todas las armas se detienen en la superficie. Necesita la biblioteca de peso (d2r_vr_weight.dll 1.1 o posterior en d2rloader\d2r_vr_libs): el apuñalamiento es suyo - sin ella todas las armas se detienen en la superficie (el registro lo dice).
 weight.stab_min_speed.label = Apuñalar: la velocidad mínima para entrar, m/s
@@ -2842,10 +2877,12 @@ weight.stab_unlock_n.label = Apuñalar: el tirón que libera un arma clavada en 
 weight.stab_unlock_n.tip = Al instante. Un apuñalamiento quieto se bloquea donde está; un tirón constante a lo largo del arma de más de esto durante un cuarto de segundo la libera para deslizar de nuevo. Más bajo: sale con un tirón suave; 0 = nunca se bloquea.
 weight.monster_shields.label = Los escudos y armas de los monstruos detienen tu arma (una prueba)
 weight.monster_shields.tip = Al instante. Marcada: lo que sostiene un monstruo - su escudo, sus armas - detiene tu arma como sus miembros, y tu hoja resbala a lo largo de ellos (un escudo son cuatro cápsulas a lo ancho de su cara, un arma una a lo largo; "Dibujar las cápsulas de Golpear al tocar" las dibuja en violeta y naranja). Un golpe que detienen no es golpe: golpear al tocar solo pulsa el ataque una vez que tu arma ha llegado al cuerpo del monstruo - la tirada de bloqueo propia del juego sigue siendo del juego para los golpes que aterrizan. No empujan ningún muñeco ni reciben apuñalamientos. Desmarcada: son transparentes para tu arma, como antes.
-# weight.world_contact.label = Walls stop your weapon (a test)
-# weight.world_contact.tip = Live. VR first person (F4) only. Ticked: the weapon in your hands strikes the level's walls, pillars, trees and big props instead of passing through them - it stops on the surface with a small bounce and a pulse in the hand, a slash slides along, and your controller goes on into the wall while the weapon (and your hand on it) stays outside; it follows again when the controller comes back. Push the controller far past the wall and the weapon goes back into your hand through it. Only what you see: the game's attacks, its hits and your hero's movement are the game's as ever. The walls are made from the game's own meshes when this program starts with the box ticked (about a minute, once per game build; the status says when): a doorway stays open, a tree stops the weapon at its trunk, not its leaves, and bushes, grass and other small plants never stop it (Debug: "World contact: draw the walls" shows them). Unticked: the weapon passes through walls, as before.
-# weight.world_contact_hands.label = Walls stop your bare hands (a test)
-# weight.world_contact_hands.tip = Live. VR first person (F4) only. Ticked: an empty hand (or one with a bow, a shield, a potion) is held at the surface of the level's walls, pillars, trees and big props while your controller goes on into them, sliding along as you move; it comes back with the controller. Push the controller more than 45 cm past the surface and the hand goes back to it, through the wall. The same walls as the weapon's, made from the game's meshes (bushes and grass never stop a hand). Only the drawing: nothing of the game changes. Unticked: the hands pass through walls, as before.
+weight.world_contact.label = Las paredes detienen tu arma (experimental)
+weight.world_contact.tip = Al instante. Solo VR en primera persona (F4). Marcado: el arma en tus manos golpea las paredes, columnas, árboles y objetos grandes del nivel en lugar de atravesarlos - se detiene en la superficie con un pequeño rebote y un pulso en la mano, un tajo se desliza a lo largo, y tu mando sigue dentro de la pared mientras el arma (y tu mano en ella) queda fuera; vuelve a seguirlo cuando el mando regresa. Empuja el mando mucho más allá de la pared y el arma vuelve a tu mano atravesándola. Solo lo que ves: los ataques del juego, sus impactos y el movimiento de tu personaje son del juego como siempre. Las paredes se crean a partir de las propias mallas del juego cuando este programa se inicia con la casilla marcada (alrededor de un minuto, una vez por versión del juego; el estado dice cuándo): un umbral de puerta queda abierto, un árbol detiene el arma en su tronco, no en sus hojas, y los arbustos, la hierba y otras plantas pequeñas nunca la detienen (Depuración: "Contacto con el mundo: dibujar las paredes" las muestra). Desmarcado: el arma atraviesa las paredes, como antes. Experimental: desactivado por defecto, y aún puede fallar.
+weight.world_contact_hands.label = Las paredes detienen tus manos desnudas (experimental)
+weight.world_contact_hands.tip = Al instante. Solo VR en primera persona (F4). Marcado: una mano vacía (o con un arco, un escudo, una poción) se sostiene en la superficie de las paredes, columnas, árboles y objetos grandes del nivel mientras tu mando sigue dentro de ellos, deslizándose a lo largo cuando te mueves; vuelve con el mando. Empuja el mando más de 45 cm más allá de la superficie y la mano vuelve a él, atravesando la pared. Las mismas paredes que las del arma, creadas a partir de las mallas del juego (los arbustos y la hierba nunca detienen una mano). Solo el dibujo: nada del juego cambia. Desmarcado: las manos atraviesan las paredes, como antes. Experimental: desactivado por defecto, y aún puede fallar.
+weight.own_body.label = El arma no atraviesa tu propio cuerpo (experimental)
+weight.own_body.tip = Al instante. Solo VR en primera persona (F4). Marcado: el arma en tus manos se detiene en tu propio personaje como se detiene en una pared - su tronco, caderas, piernas y cabeza - y se desliza a lo largo. Tu mando sigue; el arma vuelve a seguirlo cuando regresa. Nunca estorban: tus brazos y manos y todo lo que sostienen (un agarre a dos manos, pasar el arma de una mano a otra, un escudo), un arma sacada de tu espalda o cadera o llamada de vuelta a la mano (por un momento, mientras llega), y mientras una mano está detrás de un hombro para sacar o guardar. Solo el dibujo: nunca un golpe, una estocada ni un agarre sobre ti mismo, y los ataques del juego son del juego. Desmarcado: te atraviesa, como antes. Experimental: desactivado por defecto, y aún puede fallar.
 weight.dual_collide.label = Un arma en cada mano: las dos chocan entre sí (acero contra acero)
 weight.dual_collide.tip = Al instante. Con un arma en cada mano las dos armas se encuentran: cada una se detiene en la otra y resbala a lo largo de ella, como en el arma de un monstruo; un choque tan fuerte como un golpe se siente en ambas manos (y se oye, con el sonido de choque de abajo), apoyar una en otra es silencioso. Con "Cabezas como volumen propio" marcada (golpear al tocar) la hoja de un hacha, la cara de un martillo, la cabeza de una maza es acero propio junto al asta, donde lo tiene el modelo del juego: una espada también se detiene en ella. Solo cómo se mueven, se sienten y suenan - ningún golpe, nada del juego. Desmarcada: se atraviesan una a otra, como antes.
 weight.clash_sound.label = Sonidos de acero contra acero: cuanto más fuerte el golpe, más alto
@@ -2872,14 +2909,14 @@ weight.monster_ragdoll_pose.label = El monstruo tal como se dibuja también cede
 weight.monster_ragdoll_pose.tip = Marcada: un monstruo humanoide golpeado cede tal como lo dibuja el juego - el miembro que golpeaste gira en torno a su articulación, el cuerpo se inclina hacia atrás, y su propia animación retoma el control al recuperarse. Solo el dibujo: dónde está, lo que hace y todo lo que el juego sabe siguen siendo del juego. Desmarcada: solo se mueven los cuerpos que encuentra tu arma ("Dibujar las cápsulas de Golpear al tocar" los muestra).
 weight.monster_ragdoll_all.label = Todo monstruo cede, no solo los humanoides (una sonda)
 weight.monster_ragdoll_all.tip = Marcado: todo monstruo que empuja tu arma cede según su peso - animales, insectos, demonios, voladores, no solo los humanoides. Un monstruo cuyo modelo no tiene partes del cuerpo que leer obtiene sus extremidades de sus huesos. Un cadáver nunca se mueve. Solo el dibujo. Desmarcado: solo humanoides, como antes.
-# weight.knock_down.label = A hard blow knocks a humanoid off its feet (a test)
-# weight.knock_down.tip = Ticked: a hard blow of your weapon, a running hit, a sweep at the legs or a shove knocks a humanoid monster or a town NPC (with "Town NPCs and allies have bodies too") off its feet as you see it: it falls as a ragdoll, lies a moment and gets up again, then its own animation takes over. Only the drawing: where it stands, what it does, its hits and its talk stay the game's - a monster the game has attack gets up at once. A blow knocks it down when it would give the body the speed below; a sweep low at the legs needs half of it. Needs the weight library with the knock-down (d2r_vr_weight.dll in d2rloader\d2r_vr_libs; the log says when it is missing). F4. Unticked: nothing falls.
-# weight.knock_down_cms.label = Knock-down: how hard, cm/s the blow gives the body
-# weight.knock_down_cms.tip = Live. A blow knocks a body down when its push (your weapon and arm, their speed, your run) would move the body this fast: the push over the body's weight (a man of 1.75 m about 50 kg). 70: a hard swing of a sword fells a man, a light one does not; lower: easier. The log tells each blow's speed against it.
-# weight.knock_down_lie_ms.label = Knock-down: lies for, ms
-# weight.knock_down_lie_ms.tip = Live. How long a body knocked down lies still on the ground before it gets up, then walks back to its place.
-# weight.knock_down_stagger_pct.label = Knock-down: a stagger from, % of a knock-down
-# weight.knock_down_stagger_pct.tip = Live. A blow too light to knock the body down but at least this share of it staggers it: a step or two back, it catches its balance and walks back to its place. 0: no stagger.
+weight.knock_down.label = Un golpe fuerte derriba a un humanoide (una prueba)
+weight.knock_down.tip = Marcado: un golpe fuerte de tu arma, un golpe a la carrera, un barrido a las piernas o un empujón derriba a un monstruo humanoide o a un PNJ del pueblo (con "Los PNJ del pueblo y los aliados también tienen cuerpo") tal como lo ves: cae como ragdoll, yace un momento y se levanta de nuevo, luego su propia animación toma el control. Solo el dibujo: dónde está, lo que hace, sus golpes y su conversación siguen siendo del juego - un monstruo al que el juego hace atacar se levanta enseguida. Un golpe lo derriba cuando daría al cuerpo la velocidad de abajo; un barrido bajo a las piernas necesita la mitad. Necesita la biblioteca de peso con el derribo (d2r_vr_weight.dll en d2rloader\d2r_vr_libs; el registro dice cuándo falta). F4. Desmarcado: nada cae.
+weight.knock_down_cms.label = Derribo: qué fuerza, cm/s que el golpe da al cuerpo
+weight.knock_down_cms.tip = Al instante. Un golpe derriba un cuerpo cuando su empuje (tu arma y tu brazo, su velocidad, tu carrera) movería el cuerpo así de rápido: el empuje dividido por el peso del cuerpo (un hombre de 1,75 m unos 50 kg). 70: un tajo fuerte de espada derriba a un hombre, uno ligero no; más bajo: más fácil. El registro indica la velocidad de cada golpe frente a esto.
+weight.knock_down_lie_ms.label = Derribo: yace durante, ms
+weight.knock_down_lie_ms.tip = Al instante. Cuánto tiempo yace quieto en el suelo un cuerpo derribado antes de levantarse, y luego vuelve caminando a su sitio.
+weight.knock_down_stagger_pct.label = Derribo: un tambaleo desde, % de un derribo
+weight.knock_down_stagger_pct.tip = Al instante. Un golpe demasiado ligero para derribar el cuerpo pero de al menos esta parte de ello lo hace tambalearse: un paso o dos atrás, recupera el equilibrio y vuelve caminando a su sitio. 0: sin tambaleo.
 weight.npc_bodies.label = Los PNJ del pueblo y los aliados también tienen cuerpo
 weight.npc_bodies.tip = Marcado, con los cuerpos de arriba: los PNJ del pueblo, los mercenarios y cualquier otra unidad que el juego no considera hostil también tienen cuerpo - una cápsula en cada extremidad, según sus propios esqueletos, como los monstruos. Tu arma se detiene en ellos, resbala, se clava (con «Un arma puntiaguda se clava en el cuerpo») y ceden según su peso (con «Los cuerpos de los monstruos ceden según su peso») - para probarlo todo sin pelear. Solo son cuerpos para el arma visible: el golpe por contacto nunca los ataca - sigue golpeando solo a un monstruo que el juego considera hostil. Desmarcado: el arma los atraviesa, como antes (el agarre los toma igual). Al instante. F4.
 
@@ -2888,8 +2925,12 @@ group.grab_bodies_f4 = Agarrar cuerpos (F4)
 group.grab_bodies_f4.help = Una prueba: aprieta el agarre de una mano vacía sobre el cuerpo de un monstruo o de un aliado y tu mano se agarra a él. Solo se mueve lo que ves; nada se ataca ni se mueve en el juego. Necesita Golpear al tocar, un arma en la otra mano y la biblioteca de peso.
 weight.grab_bodies.label = Agarrar monstruos y aliados con el agarre de la mano (una prueba)
 weight.grab_bodies.tip = Al instante. Marcada: aprieta con firmeza el agarre de una mano VACÍA (sin arma, escudo, arco ni frasco) con la palma sobre el cuerpo de un monstruo o de un aliado - un mercenario, la gente del pueblo - y la mano se agarra a él allí (un pulso). El agarre es el propio del kit de herramientas de RV, en la biblioteca de peso: mientras mantienes el agarre apretado tu mano sostiene ese punto - el miembro de un humanoide es tirado por la fuerza de tu mano contra su peso (con "Los cuerpos de los monstruos ceden por su peso" marcada - uno ligero te sigue, uno pesado retiene tu mano, sus músculos tiran de vuelta; "El monstruo tal como se dibuja también cede" lo muestra), cualquier otra cosa no cede y tu mano queda sujeta a ella y va donde va el monstruo. Suelta el agarre para soltar; tira de tu mano más allá de la distancia de ruptura de abajo respecto al punto sujeto y se suelta (no en los primeros 2 s). Solo se mueve lo que ves: el monstruo se queda donde lo tiene el juego, nada se ataca, se hiere ni se mueve en el juego. Con un arco o una ballesta agarra la mano que tensa la cuerda (no sobre la cuerda). Necesita la biblioteca de peso 1.4 (d2r_vr_weight.dll en d2rloader\d2r_vr_libs) - sin ella nada se agarra. Desmarcada: el agarre de una mano vacía solo cierra el puño, como antes.
-# weight.grab_throw.label = Lift and throw a humanoid you grab (a test)
-# weight.grab_throw.tip = Ticked, with the grab: a humanoid monster or a town NPC your hand's grip takes hangs from your hand as a ragdoll. It stands while its feet bear it; lift it or pull it out of its place and it is off its feet; let go while you swing and it flies, lands, lies a moment, gets up and walks back to where the game has it. Two hands hold it together. Only the drawing: where it stands, what it does and its talk stay the game's. Needs the weight library with the knock-down (d2r_vr_weight.dll in d2rloader\d2r_vr_libs). F4. Unticked: the grab holds a limb as before.
+weight.grab_throw.label = Levantar y lanzar a un humanoide que agarras (una prueba)
+weight.grab_throw.tip = Marcado, con el agarre: un monstruo humanoide o un PNJ del pueblo que toma el agarre de tu mano cuelga de tu mano como ragdoll. Se mantiene en pie mientras sus pies lo sostienen; levántalo o sácalo de su sitio y pierde el equilibrio; suéltalo mientras haces un movimiento amplio y sale volando, cae, yace un momento, se levanta y vuelve caminando a donde lo tiene el juego. Dos manos lo sujetan juntas. Solo el dibujo: dónde está, lo que hace y su conversación siguen siendo del juego. Necesita la biblioteca de peso con el derribo (d2r_vr_weight.dll en d2rloader\d2r_vr_libs). F4. Desmarcado: el agarre sujeta una extremidad como antes.
+weight.grab_balance.label = Un humanoide del que tiras da pasos para no caerse (una prueba)
+weight.grab_balance.tip = Marcado, con Levantar y lanzar: toma a un humanoide por la mano o el brazo y tira, y da pasos tras de ti para no caerse - tan rápido como sus piernas pueden dar pasos; solo un tirón más rápido que eso lo derriba. Suéltalo y vuelve caminando a donde lo tiene el juego. Solo el dibujo: dónde está y lo que hace siguen siendo del juego. F4. Desmarcado: sacado 30 cm de su sitio cae, como antes.
+weight.impale_drag.label = Empalar y arrastrar a un humanoide con tu lanza (una prueba)
+weight.impale_drag.tip = Marcado, con la estocada: corre contra un monstruo humanoide o un PNJ del pueblo con una lanza (o cualquier arma de punta por delante) y la punta entra a 2 m/s o más (la estocada y tu carrera a lo largo de la hoja) - queda llevado en la hoja como ragdoll, arrastrado mientras sigues avanzando. Se desliza fuera cuando te detienes, retiras la hoja o la inclinas hacia abajo, cae, se levanta y vuelve caminando a donde lo tiene el juego. Solo el dibujo: el daño del juego, dónde está y lo que hace siguen siendo del juego. Necesita la biblioteca de peso con el derribo. F4. Desmarcado: la punta se detiene en el cuerpo como antes.
 weight.grab_reach_cm.label = Agarrar: a qué distancia del cuerpo debe estar la palma, cm
 weight.grab_reach_cm.tip = Al instante. Con la palma tan cerca de la superficie de un cuerpo (o dentro de él), lo toma cuando el agarre se cierra. Más alto: más fácil de agarrar; más bajo: solo con la palma justo encima.
 weight.grab_break_cm.label = Agarrar: la mano se suelta a esta distancia, cm
@@ -3193,11 +3234,11 @@ group.warlock_ticked_the_game_s_auto_target.help = Rayo de miasma del Brujo: mar
 autotarget.s395.label = Rayo de miasma
 
 # ===== Tab: Vibration =====
-# tab.vibration = Vibration
+tab.vibration = Vibración
 
 # --- Controller vibration ---
-# group.controller_vibration = Controller vibration
-# group.controller_vibration.help = Pulses in the controllers on what happens in the game (native OpenXR, VR first person F4). They only watch the game: nothing of it is changed. Every box below needs Controller vibration ticked.
+group.controller_vibration = Vibración de los mandos
+group.controller_vibration.help = Pulsos en los mandos según lo que pasa en el juego (OpenXR nativo, VR en primera persona F4). Solo observan el juego: nada de él cambia. Toda casilla de abajo necesita Vibración de los mandos marcada.
 openxr.haptics.tip = Un pulso corto en la mano cuando un golpe tuyo da en el blanco, se toma o se bebe una poción del cinturón, el láser hace clic en un menú, o recoges o abres algo. El juego en sí no cambia - los pulsos solo observan. Solo OpenXR nativo (el runtime del visor maneja los motores); desactivado: en silencio, como antes. Al instante. Solo F4.
 openxr.haptics_scale.label = Vibración: intensidad
 openxr.haptics_scale.tip = Todos los pulsos más fuertes o más débiles; 1 = lo habitual (un golpe que da en el blanco es cerca del 70 % de la fuerza del motor). Al instante.
@@ -3205,42 +3246,42 @@ openxr.haptics_hand_actions.label = Vibración: un canal propio para cada mano
 openxr.haptics_hand_actions.tip = El motor de cada mando recibe una acción de vibración propia, de modo que un pulso solo puede ir a la mano a la que corresponde (algunos runtimes enviaban un pulso de la acción compartida a la mano equivocada). Se toma al iniciarse la sesión del visor. Desactivado: una acción para ambas manos, como antes.
 openxr.haptics_stop.label = Vibración: detener cada pulso a tiempo
 openxr.haptics_stop.tip = Cada pulso se detiene con su propia llamada cuando se acaba su tiempo, incluso mientras el juego carga o se atasca - algunos mandos (los del Steam Frame) seguían zumbando pasado un pulso corto. Al instante. Desactivado: el runtime termina un pulso por sí mismo, como antes.
-# openxr.haptics_motor.label = Vibration: the controllers' motor
-# openxr.haptics_motor.tip = A PlayStation VR2's Sense controllers under SteamVR do not show short, gentle pulses (a Quest's do): the low-life heartbeat, the low mana alert, a cast's pulse and the game's soft rumble are lifted for them to a strength they show, in the same order (stronger stays stronger). By the headset's name: weak for a PlayStation VR2, plain for the rest (the log says which). Plain: every pulse as it is made. Live.
-# openxr.haptics_motor.choice0 = By the headset's name
-# openxr.haptics_motor.choice1 = Plain
-# openxr.haptics_motor.choice2 = Weak (PlayStation VR2 Sense)
+openxr.haptics_motor.label = Vibración: el motor de los mandos
+openxr.haptics_motor.tip = Los mandos Sense de un PlayStation VR2 bajo SteamVR no muestran pulsos cortos y suaves (los de una Quest sí): el latido de vida baja, la alerta de maná bajo, el pulso de un lanzamiento y la vibración suave del juego se elevan para ellos a una intensidad que muestran, en el mismo orden (lo más fuerte sigue siendo más fuerte). Según el nombre del visor: débil para un PlayStation VR2, normal para el resto (el registro dice cuál). Normal: cada pulso tal como se crea. Al instante.
+openxr.haptics_motor.choice0 = Según el nombre del visor
+openxr.haptics_motor.choice1 = Normal
+openxr.haptics_motor.choice2 = Débil (PlayStation VR2 Sense)
 
 # --- Blows ---
-# group.blows = Blows
-# group.blows.help = How a blow feels. Hit by touch (Strikes) counts a contact when the blade meets a monster fast enough; the game then rolls the blow.
-# openxr.haptics_touch.label = A pulse on every counted touch, landed or not
-# openxr.haptics_touch.tip = Hit by touch: the blade's hand buzzes the moment a contact is counted, whether the game then lands the blow, misses it or refuses it - you feel the monster you struck. The landed hit that follows gives no second pulse. Off: a pulse only for a blow the game says landed, as before. After bearstonem/d2r-pcvr (MIT). Live. F4 only.
-# openxr.haptics_hit_long.label = A longer, stronger tap for a blow
-# openxr.haptics_hit_long.tip = A blow's tap (and a touch's, with the box above) is 95% of the motor for 90 ms instead of 72% for 45 ms: easier to feel in a fast swing. d2r-pcvr's weapon tap (MIT). Live. F4 only.
+group.blows = Golpes
+group.blows.help = Cómo se siente un golpe. Golpear al tocar (Golpes) cuenta un contacto cuando la hoja alcanza a un monstruo lo bastante rápido; el juego entonces tira los dados del golpe.
+openxr.haptics_touch.label = Un pulso en cada toque contado, acierte o no
+openxr.haptics_touch.tip = Golpear al tocar: la mano de la hoja vibra en el momento en que se cuenta un contacto, tanto si el juego luego acierta el golpe, lo falla o lo rechaza - sientes el monstruo que golpeaste. El impacto acertado que sigue no da un segundo pulso. Desactivado: un pulso solo para un golpe que el juego dice que acertó, como antes. Basado en bearstonem/d2r-pcvr (MIT). Al instante. Solo F4.
+openxr.haptics_hit_long.label = Un toque más largo y fuerte para un golpe
+openxr.haptics_hit_long.tip = El toque de un golpe (y el de un contacto, con la casilla de arriba) es el 95% del motor durante 90 ms en lugar del 72% durante 45 ms: más fácil de sentir en un tajo rápido. El toque de arma de d2r-pcvr (MIT). Al instante. Solo F4.
 
 # --- Spells and mana ---
-# group.spells_and_mana = Spells and mana
-# openxr.haptics_spell.label = A pulse when a cast starts
-# openxr.haptics_spell.tip = A pulse in the aiming hand when the hero's casting animation starts - a cast the game took (spells, warcries and the other cast skills); a cast it refused (no mana, not ready) has none. A held cast whose animations follow one another without a break is one pulse. After bearstonem/d2r-pcvr (MIT). Live. F4 only.
-# openxr.haptics_low_mana.label = Low mana alert in the left hand
-# openxr.haptics_low_mana.tip = A pulse in the left hand when your mana falls under the share below, again every 10 seconds while it stays under. The mana is only read. After bearstonem/d2r-pcvr (MIT). Live. F4 only.
-# openxr.haptics_low_mana_pct.label = Low mana: under, % of your mana
-# openxr.haptics_low_mana_pct.tip = The alert comes when the mana falls under this share of its maximum, and is ready again a little above it. Live.
+group.spells_and_mana = Hechizos y maná
+openxr.haptics_spell.label = Un pulso cuando empieza un lanzamiento
+openxr.haptics_spell.tip = Un pulso en la mano que apunta cuando empieza la animación de lanzamiento del personaje - un lanzamiento que el juego aceptó (hechizos, gritos de guerra y las demás habilidades de lanzamiento); uno que rechazó (sin maná, no preparado) no tiene ninguno. Un lanzamiento mantenido cuyas animaciones se suceden sin pausa es un solo pulso. Basado en bearstonem/d2r-pcvr (MIT). Al instante. Solo F4.
+openxr.haptics_low_mana.label = Alerta de maná bajo en la mano izquierda
+openxr.haptics_low_mana.tip = Un pulso en la mano izquierda cuando tu maná cae por debajo de la parte de abajo, de nuevo cada 10 segundos mientras siga por debajo. El maná solo se lee. Basado en bearstonem/d2r-pcvr (MIT). Al instante. Solo F4.
+openxr.haptics_low_mana_pct.label = Maná bajo: por debajo de, % de tu maná
+openxr.haptics_low_mana_pct.tip = La alerta llega cuando el maná cae por debajo de esta parte de su máximo, y está lista de nuevo un poco por encima. Al instante.
 
 # --- The game's own rumble ---
-# group.the_game_s_own_rumble = The game's own rumble
-# group.the_game_s_own_rumble.help = The game rumbles a gamepad on its own events - a hit taken, a skill used - when its Controller Rumble option is on.
-# openxr.haptics_game_rumble.label = Feel the game's rumble in the controllers
-# openxr.haptics_game_rumble.tip = What the game sends to a gamepad's two motors is followed in both controllers, as the game asks for it (the game's own events: a hit taken, a skill used...). Needs the game's own Controller Rumble option on. The call still goes to a pad if one is plugged in (the box below keeps it from it). Live. F4 only.
-# openxr.haptics_game_rumble_scale.label = The game's rumble: strength
-# openxr.haptics_game_rumble_scale.tip = The game's rumble in the controllers stronger or weaker (1 = as the game asks, Vibration: strength on top). Live.
-# openxr.haptics_pad_mute.label = Keep the game's rumble from a plugged-in gamepad
-# openxr.haptics_pad_mute.tip = While the controllers are the game's (VR first person F4), the game's rumble does not reach a gamepad that is plugged in - a pad left rumbling is stopped once. In the other views and in flat play the pad rumbles as ever. After bearstonem/d2r-pcvr (MIT). Live.
+group.the_game_s_own_rumble = La vibración propia del juego
+group.the_game_s_own_rumble.help = El juego hace vibrar un mando de juego con sus propios eventos - un golpe recibido, una habilidad usada - cuando su opción Vibración del mando está activada.
+openxr.haptics_game_rumble.label = Sentir la vibración del juego en los mandos
+openxr.haptics_game_rumble.tip = Lo que el juego envía a los dos motores de un mando de juego se sigue en ambos mandos, tal como el juego lo pide (los propios eventos del juego: un golpe recibido, una habilidad usada...). Necesita activada la opción Vibración del mando del propio juego. La llamada sigue yendo a un mando de juego si hay uno conectado (la casilla de abajo lo evita). Al instante. Solo F4.
+openxr.haptics_game_rumble_scale.label = La vibración del juego: intensidad
+openxr.haptics_game_rumble_scale.tip = La vibración del juego en los mandos más fuerte o más débil (1 = como lo pide el juego, Vibración: intensidad encima). Al instante.
+openxr.haptics_pad_mute.label = Apartar la vibración del juego de un mando de juego conectado
+openxr.haptics_pad_mute.tip = Mientras los mandos son los del juego (VR en primera persona F4), la vibración del juego no llega a un mando de juego conectado - un mando que se quedó vibrando se detiene una vez. En las demás vistas y en el juego plano el mando vibra como siempre. Basado en bearstonem/d2r-pcvr (MIT). Al instante.
 
 # --- Pulses set on other tabs ---
-# group.pulses_set_on_other_tabs = Pulses set on other tabs
-# group.pulses_set_on_other_tabs.help = The same settings as on their own tabs (UI: F4 body > Low life; Weapon Weight): a change here is a change there.
+group.pulses_set_on_other_tabs = Pulsos ajustados en otras pestañas
+group.pulses_set_on_other_tabs.help = Los mismos ajustes que en sus propias pestañas (IU: Cuerpo F4 > Vida baja; Peso del arma): un cambio aquí es un cambio allí.
 
 # ===== Tab: Multiplayer =====
 tab.multiplayer = Multijugador
@@ -3299,8 +3340,8 @@ debug.knock_props_trace.label = Objetos derribados: una línea de registro por c
 debug.knock_props_trace.tip = Con "Tazas, platos, jarrones, libros y taburetes se derriban con tu arma" de Peso del arma activado: el registro recibe una línea por cada objeto que tu arma o tu puño pone en marcha (su clase, qué mano, con qué rapidez iba la hoja, con qué fuerza se golpeó el objeto) y por cada escaneo de los objetos cercanos (cuántos, cuántos del catálogo están cerca, cuántos están en el suelo, sobre otro objeto, sobre muebles, sobre una repisa supuesta, y el coste del escaneo). Solo el registro - nada de lo que se derriba cambia. Al instante.
 debug.knock_props_glow.label = Objetos derribables: iluminar los que se encuentran
 debug.knock_props_glow.tip = Con "Tazas, platos, jarrones, libros y taburetes se derriban con tu arma" de Peso del arma activado: cada objeto cerca de ti (a menos de 3 m) que el catálogo conoce - los que tu arma o tu puño pueden golpear - se dibuja más brillante, con el resaltado propio del juego (como un objeto bajo el puntero). Para ver cuáles de los objetos de un lugar se encuentran y cuáles no. Solo el dibujo. Al instante.
-# debug.world_contact_draw.label = World contact: draw the walls
-# debug.world_contact_draw.tip = With "Walls stop your weapon" or "Walls stop your bare hands" on: the walls nearest your hands are drawn as yellow boxes (red: the one a hand or the weapon rests on), each controller as a blue ball, the hand or weapon as drawn as a green ball, a red line between them while the wall holds it back, and an orange ball where the weapon or a hand struck a wall. Only the drawing. Live.
+debug.world_contact_draw.label = Contacto con el mundo: dibujar las paredes
+debug.world_contact_draw.tip = Con "Las paredes detienen tu arma" o "Las paredes detienen tus manos desnudas" activado: las paredes más cercanas a tus manos se dibujan como cajas amarillas (roja: aquella en la que descansa una mano o el arma), cada mando como una bola azul, la mano o el arma tal como se dibuja como una bola verde, una línea roja entre ellos mientras la pared lo retiene, y una bola naranja donde el arma o una mano golpeó una pared. Solo el dibujo. Al instante.
 debug.replay_marks.label = Repetición: cómo van a la GPU las listas del ojo derecho
 debug.replay_marks.tip = Estéreo de una pasada: cómo se envían a la GPU las listas de comandos reproducidas del juego para el ojo derecho. 1 (el predeterminado): cada lista por separado con una señal tras ella, de modo que el registro de un cuelgue nombra la lista en la que se paró la GPU; cada par ~35 envíos separados (~0,4 ms del hilo del juego). 0: la tanda de listas de cada cola en un solo envío - el 2026-10-18 la cola gráfica ejecutó entonces una lista que no terminaba nunca, de 30 s a 3 min después. 2: cada lista por separado sin las señales. 3: las mismas listas en las mismas llamadas que hizo el juego, sin marcas - el número de envíos propio del juego (la primera vez, reinicia el juego). 4: eso con una señal tras cada llamada. Al instante.
 debug.replay_marks.choice0 = 0 - un lote por cola (se colgaba, test-60..62)
@@ -3328,8 +3369,8 @@ debug.pose_share_legs_self.label = Cabezas y manos en multijugador: las piernas 
 debug.pose_share_legs_self.tip = Las piernas de tu propio personaje dan pasos con el mismo andar que los personajes de los demás jugadores ("sus piernas dan pasos según se mueven"), con su propia orientación - para ver las piernas en un solo PC: míralo en F2 o F3 (plana o RV) y anda hacia delante, atrás y de lado. El registro dice cada 5 s lo que hicieron ("legs: ..."). Necesita la biblioteca de andar. Al instante.
 debug.walk_back_dump.label = Caminar hacia atrás: escribir las piernas en un archivo
 debug.walk_back_dump.tip = Mientras el héroe se mueve, sus piernas se guardan pose a pose - como las dibujó el juego y como se dibujan con "Al caminar hacia atrás, las piernas dan pasos hacia atrás" - y los últimos 6 segundos de cada paso atrás (y de 3 s de pie con la cámara girada a su alrededor) van a d2rloader\logs\d2r_vr_walkback.txt (como mucho 30 por sesión), para la herramienta walk_legs, que las dibuja como figuras de palitos. El registro dice además cada 5 s a partir de qué pose se deforman las mallas del héroe (la que nosotros posamos, u otra). Solo escribe un archivo y líneas de registro; nada cambia en el juego. Al instante.
-# debug.body_dump.label = Write the hero's drawn bones and the camera to a file
-# debug.body_dump.tip = 30 times a second the hero's joints as they go to the game - after everything the mod changes - and where the camera is and looks (your eyes in VR first person, behind him in third person) go to d2rloader\logs\d2r_vr_body.txt, for the walk_legs tool that films the skeleton from your camera. About a megabyte a minute. Writes a file only; nothing in the game changes. Live.
+debug.body_dump.label = Escribir en un archivo los huesos dibujados del personaje y la cámara
+debug.body_dump.tip = 30 veces por segundo las articulaciones del personaje tal como van al juego - después de todo lo que cambia el mod - y dónde está y hacia dónde mira la cámara (tus ojos en VR en primera persona, detrás de él en tercera persona) van a d2rloader\logs\d2r_vr_body.txt, para la herramienta walk_legs que graba el esqueleto desde tu cámara. Alrededor de un megabyte por minuto. Solo escribe un archivo; nada del juego cambia. Al instante.
 debug.phantom_ray.label#2 = Dibujar la línea que toma la mano izquierda
 debug.phantom_ray.tip#2 = Una línea roja a lo largo de la cual la mano izquierda toma el arma en la mano y desliza (bastón, lanza, arma de asta, espada a dos manos); con una ballesta también dónde vuela el virote (los deslizadores de línea de disparo de la Ballesta la giran). "Dibujar los ejes del arma en la mano" la dibuja también.
 debug.xbow_barrel_line.label = Ballesta: dibujar el cañón tal como está modelado
@@ -3532,9 +3573,14 @@ vr.hset.page.belt = Cinturón
 vr.hset.page.melee = Golpes
 vr.hset.page.left = Izquierda
 vr.hset.page.right = Derecha
-# vr.hset.page.co_op = Co-op
-# vr.hset.page.vibration = Vibration
+vr.hset.page.co_op = Cooperativo
+vr.hset.page.vibration = Vibración
+vr.hset.page.contact = Contacto
+vr.hset.page.monsters_react = Reacción de monstruos
+vr.hset.page.grab = Agarrar
+vr.hset.page.more = Más
 vr.hset.page.guide = Guía
+vr.hset.page.world = Mundo
 vr.hset.screen.menu_distance_m.label = Distancia del panel
 vr.hset.screen.menu_distance_m.detail = Un panel abierto en el juego: inventario, alijo, comerciante
 vr.hset.openxr.flat_distance_m.label = Distancia de pantalla
@@ -3561,8 +3607,8 @@ vr.hset.turn.snap.label = Ángulo del giro por saltos
 vr.hset.turn.snap.detail = Grados por toque, con el giro suave desactivado
 vr.hset.turn.speed.label = Velocidad del giro suave
 vr.hset.turn.speed.detail = Grados por segundo, con el giro suave activado
-# vr.hset.game.players.label = Players (difficulty)
-# vr.hset.game.players.detail = As /players: tougher monsters, more experience and drops
+vr.hset.game.players.label = Jugadores (dificultad)
+vr.hset.game.players.detail = Como /players: monstruos más duros, más experiencia y botín
 vr.hset.hud.low_hp_vignette.label = Vida baja: viñeta roja
 vr.hset.hud.low_hp_vignette.detail = Los bordes laten en rojo con la vida baja (F4)
 vr.hset.hud.low_hp_threshold.label = Se enciende bajo
@@ -3627,24 +3673,68 @@ vr.hset.direct.right_b.label = B derecha
 vr.hset.direct.right_stick.label = Clic palanca der.
 vr.hset.direct.right_stick_hold.label = Palanca der., mantener
 vr.hset.direct.right_menu.label = Botón menú der.
-# vr.hset.openxr.haptics.label = Controller vibration
-# vr.hset.openxr.haptics.detail = Pulses in the controllers on what happens (F4)
-# vr.hset.openxr.haptics_scale.label = Strength
-# vr.hset.openxr.haptics_scale.detail = Every pulse stronger or weaker, 1 = the usual
-# vr.hset.openxr.haptics_touch.label = Pulse on every touch
-# vr.hset.openxr.haptics_touch.detail = Hit by touch: landed or not, the blade's hand buzzes
-# vr.hset.openxr.haptics_hit_long.label = Longer tap for a blow
-# vr.hset.openxr.haptics_hit_long.detail = 95% for 90 ms instead of 72% for 45 ms
-# vr.hset.openxr.haptics_spell.label = Pulse when a cast starts
-# vr.hset.openxr.haptics_spell.detail = The aiming hand, for a cast the game took
-# vr.hset.openxr.haptics_low_mana.label = Low mana alert
-# vr.hset.openxr.haptics_low_mana.detail = The left hand, again every 10 s while it is low
-# vr.hset.openxr.haptics_game_rumble.label = The game's own rumble
-# vr.hset.openxr.haptics_game_rumble.detail = A hit taken, a skill used: as the game rumbles a pad
+vr.hset.openxr.haptics.label = Vibración de los mandos
+vr.hset.openxr.haptics.detail = Pulsos en los mandos según lo que pasa (F4)
+vr.hset.openxr.haptics_scale.label = Intensidad
+vr.hset.openxr.haptics_scale.detail = Todo pulso más fuerte o más débil, 1 = lo normal
+vr.hset.openxr.haptics_touch.label = Pulso en cada toque
+vr.hset.openxr.haptics_touch.detail = Golpear al tocar: acierte o no, la mano de la hoja vibra
+vr.hset.openxr.haptics_hit_long.label = Toque más largo para un golpe
+vr.hset.openxr.haptics_hit_long.detail = 95% durante 90 ms en lugar de 72% durante 45 ms
+vr.hset.openxr.haptics_spell.label = Pulso al empezar un lanzamiento
+vr.hset.openxr.haptics_spell.detail = La mano que apunta, para un lanzamiento que el juego aceptó
+vr.hset.openxr.haptics_low_mana.label = Alerta de maná bajo
+vr.hset.openxr.haptics_low_mana.detail = La mano izquierda, de nuevo cada 10 s mientras esté bajo
+vr.hset.openxr.haptics_game_rumble.label = La vibración propia del juego
+vr.hset.openxr.haptics_game_rumble.detail = Un golpe recibido, una habilidad usada: como el juego hace vibrar un mando
+vr.hset.weight.world_contact.label = Las paredes detienen tu arma (experimental)
+vr.hset.weight.world_contact.detail = Paredes, columnas, árboles y objetos grandes la detienen (F4)
+vr.hset.weight.world_contact_hands.label = Las paredes detienen tus manos desnudas (experimental)
+vr.hset.weight.world_contact_hands.detail = Una mano vacía se queda en la superficie de la pared (F4)
+vr.hset.weight.own_body.label = Tu propio cuerpo detiene el arma (experimental)
+vr.hset.weight.own_body.detail = Se detiene en tu tronco y piernas; nunca un golpe sobre ti
+vr.hset.weight.monster_bodies.label = El arma se detiene en los cuerpos de los monstruos
+vr.hset.weight.monster_bodies.detail = Un tajo o estocada se detiene en el cuerpo; un filo resbala
+vr.hset.weight.monster_shields.label = Los escudos y armas de los monstruos detienen tu arma
+vr.hset.weight.monster_shields.detail = También sus escudos y armas: un golpe detenido no es impacto
+vr.hset.weight.strike_by_force.label = Golpear por la fuerza del golpe, no por la velocidad de la hoja
+vr.hset.weight.strike_by_force.detail = No la velocidad de la hoja: un roce ligero no es impacto
+vr.hset.weight.monster_ragdoll.label = Los cuerpos de los monstruos ceden por su peso
+vr.hset.weight.monster_ragdoll.detail = Un empujón mueve la extremidad que encuentra (humanoides)
+vr.hset.weight.monster_ragdoll_all.label = Todo monstruo cede, no solo los humanoides
+vr.hset.weight.monster_ragdoll_all.detail = También animales, insectos y demonios, no solo humanoides
+vr.hset.weight.knock_down.label = Un golpe fuerte derriba a un humanoide
+vr.hset.weight.knock_down.detail = Cae como ragdoll y se levanta de nuevo
+vr.hset.weight.stab_in.label = Un arma puntiaguda se clava en el cuerpo
+vr.hset.weight.stab_in.detail = Clavada de punta en el cuerpo, a 0,5 m/s o más
+vr.hset.weight.impale_drag.label = Empalar y arrastrar a un humanoide con tu lanza
+vr.hset.weight.impale_drag.detail = Corre contra un humanoide de punta: queda llevado
+vr.hset.weight.grab_bodies.label = Agarrar monstruos y aliados con el agarre de la mano
+vr.hset.weight.grab_bodies.detail = El agarre de una mano vacía sujeta un cuerpo
+vr.hset.weight.npc_bodies.label = Los PNJ del pueblo y los aliados también tienen cuerpo
+vr.hset.weight.npc_bodies.detail = Tu arma se detiene en ellos como en los monstruos
+vr.hset.weight.grab_throw.label = Levantar y lanzar a un humanoide que agarras
+vr.hset.weight.grab_throw.detail = Suéltalo mientras haces un movimiento amplio y sale volando
+vr.hset.weight.grab_balance.label = Un humanoide del que tiras da pasos para no caerse
+vr.hset.weight.grab_balance.detail = Da pasos tras de ti; solo un tirón más rápido lo derriba
+vr.hset.weight.grab_items.label = Recoger objetos del suelo con el agarre de la mano
+vr.hset.weight.grab_items.detail = La recogida propia del juego, en tu palma
+vr.hset.weight.grab_props.label = Tomar en la mano los objetos del escenario
+vr.hset.weight.grab_props.detail = Tazas, libros, taburetes: llevados con tu agarre
+vr.hset.weight.knock_props.label = Tu arma derriba los objetos del escenario
+vr.hset.weight.knock_props.detail = Tazas, platos, jarrones, libros y taburetes (F4)
+vr.hset.weight.strength.label = Fuerza de las manos, %
+vr.hset.weight.strength.detail = Con cuánta fuerza tiran las manos del arma tras los mandos
+vr.hset.weight.skeleton_bones_max.label = Esqueletos de los monstruos: huesos leídos como máximo
+vr.hset.weight.skeleton_bones_max.detail = Más alto lee esqueletos más largos y cuesta más
+vr.hset.hands.throw_gesture.label = Lanzar una jabalina con un gesto de lanzamiento
+vr.hset.hands.throw_gesture.detail = Una jabalina: mantén el gatillo, balancea, suelta
+vr.hset.gameplay.shield_smite.label = El golpe de escudo lanza Castigar
+vr.hset.gameplay.shield_smite.detail = Paladín: un golpe fuerte con el escudo lo lanza
 vr.hset.openxr.direct_input.label = Controles sin BodyWalk
 vr.hset.openxr.direct_input.detail = El plugin lee los mandos por sí mismo
-# vr.hset.openxr.headset_players.label = Players from the headset
-# vr.hset.openxr.headset_players.detail = The Options page's Players row asks the game
+vr.hset.openxr.headset_players.label = Jugadores desde el visor
+vr.hset.openxr.headset_players.detail = La fila Jugadores de la página Opciones se lo pide al juego
 vr.hset.hands.belt_models.label = Pociones en el cinturón
 vr.hset.hands.belt_models.detail = Los modelos de poción del juego en las caderas del personaje
 vr.hset.render.vr_resolution.label = Render RV: modo
@@ -3837,7 +3927,7 @@ button.pick_picture = Elegir una imagen
 button.clear = Borrar
 status.draw_distance.stop = {n} de {count}:
 status.draw_distance.custom = Personalizado (un valor cambiado a mano):
-status.draw_distance.values = {rings} anillos de salas, modelos hasta {model}, niebla de {fs} a {fe} (en cuevas de {cs} a {ce}), la cúpula del cielo del juego a {sky}. Todo al instante - sin reiniciar.
+status.draw_distance.values = {rings} anillos de salas, modelos hasta {model}, niebla de {fs} a {fe} (en cuevas de {cs} a {ce}), la cúpula del cielo del juego a {sky} m. Todo al instante - sin reiniciar.
 status.draw_distance.fog_off = La niebla está desactivada (Rendimiento): el mundo dibujado acaba en el vacío.
 status.draw_distance.no_game_sky = La cúpula del cielo solo cuenta mientras el juego dibuja el cielo (pestaña Cielo).
 res.tip = El tamaño de la imagen del juego en el visor: un cuadrado, su lado en píxeles, sea cual sea el tamaño de la ventana del juego - la ventana conserva su tamaño. Arrastra a cualquier tamaño de 1024 a 4096 (de 64 en 64); el extremo izquierdo, "tamaño de la ventana", es Escritorio: la imagen es la de la ventana, como antes.\n\nMás grande es más nítido y más caro, por los píxeles - frente a 2048 x 2048:
@@ -4003,6 +4093,7 @@ status.reshade.code = No se pudo instalar ReShade (código {code})
 status.reshade.installed = ReShade instalado: inicia el juego con D2RLoader.exe
 status.reshade.looking = Buscando el ReShade actual en reshade.me...
 status.collect.recording = Grabando cómo se dibujan los fotogramas: {s} s - sigue jugando y gira la cabeza
+status.collect.headset_report = Creando el informe del visor: mantén el visor puesto (unos 20 s)...
 status.collect.packing = Empaquetando los registros...
 status.collect.no_script = No se pudo escribir el script de empaquetado en la carpeta TEMP
 status.collect.no_powershell = No se pudo iniciar PowerShell para empaquetar los registros
@@ -4058,12 +4149,12 @@ status.arcane_sky.not_started = Cielo del Santuario Arcano: no se pudo iniciar
 status.knock_props.result = Objetos derribables: {text}
 status.knock_props.making = Objetos derribables: creando su catálogo a partir de los archivos del juego...
 status.knock_props.not_started = Objetos derribables: no se pudo iniciar
-# status.world_contact.result = World contact walls: {text}
-# status.world_contact.making = World contact walls: making them from the game's meshes (about a minute)...
-# status.world_contact.not_started = World contact walls: could not be started
+status.world_contact.result = Paredes del contacto con el mundo: {text}
+status.world_contact.making = Paredes del contacto con el mundo: creándolas a partir de las mallas del juego (alrededor de un minuto)...
+status.world_contact.not_started = Paredes del contacto con el mundo: no se pudieron iniciar
 boat.restart = el juego está en marcha: reinícialo para ver el cambio
 status.kurast_boat.result = Canoa de los Muelles de Kurast: {text}
-# dome.restart = the game running now: restart it for the game-drawn sky
+dome.restart = el juego en marcha ahora: reinícialo para el cielo dibujado por el juego
 status.kurast_boat.reading = Canoa de los Muelles de Kurast: leyendo el pueblo a partir de los archivos del juego...
 status.kurast_boat.not_started = Canoa de los Muelles de Kurast: no se pudo iniciar
 data_mods.running_none = nada que fusionar
@@ -4072,16 +4163,21 @@ data_mods.running_off = desactivado; encontrados: {mods}
 status.data_mods.result = Otros mods: {text}
 status.data_mods.looking = Otros mods: examinando la carpeta de mods del juego...
 status.data_mods.not_started = Otros mods: no se pudo iniciar
-# status.hclip.no_game = Headset video: start the game in VR first - the button asks the running game for one
-# status.hshot.no_game = Headset screenshot: start the game in VR first - the button asks the running game for one
-# status.hclip.asked = Recording 10 s of the headset picture - keep the headset on and play...
-# status.hshot.asked = Headset screenshot asked for - keep the headset on...
-# status.hshot.saved = Headset screenshot saved: {file} and its pictures - Collect logs packs the newest
-# status.hshot.none = No headset screenshot came in 20 s: is the game running in VR? The mod's log (d2r_vr) says why
-# status.hclip.saved = Headset video saved: {file} - Collect logs packs the newest
-# status.hclip.none = No headset video came in 60 s: is the game running in VR? The mod's log (d2r_vr) says why
+status.hclip.no_game = Vídeo del visor: inicia primero el juego en VR - el botón se lo pide al juego en marcha
+status.hshot.no_game = Captura del visor: inicia primero el juego en VR - el botón se la pide al juego en marcha
+status.hclip.asked = Grabando 10 s de la imagen del visor - mantén el visor puesto y juega...
+status.hshot.asked = Captura del visor solicitada - mantén el visor puesto...
+status.hshot.saved = Captura del visor guardada: {file} y sus imágenes - Recopilar registros empaqueta la más reciente
+status.hshot.none = No llegó ninguna captura del visor en 20 s: ¿está el juego en marcha en VR? El registro del mod (d2r_vr) dice por qué
+status.hclip.saved = Vídeo del visor guardado: {file} - Recopilar registros empaqueta el más reciente
+status.hclip.none = No llegó ningún vídeo del visor en 60 s: ¿está el juego en marcha en VR? El registro del mod (d2r_vr) dice por qué
 status.collect.collecting = Recopilando los registros...
 status.collect.not_started = No se pudo iniciar la recopilación de registros
+status.hreport.running = Creando el informe del visor: mantén el visor puesto y ambos mandos delante de ti (unos 20 s)...
+status.hreport.saved = Informe del visor guardado: {path} - Recopilar registros lo empaqueta
+status.hreport.missing = No se encontró D2R_VR_Headset_Report.exe junto a este programa - instala D2R VR de nuevo
+status.hreport.failed = El informe del visor falló (código {code})
+status.hreport.not_started = No se pudo iniciar el informe del visor
 status.framegen.on = OFXR Bridge {version} instalado (d2rloader\d2r_vr_libs\ofxr) - la generación de fotogramas está activada (el registro dice qué hace)
 status.framegen.off = OFXR Bridge {version} instalado (d2rloader\d2r_vr_libs\ofxr): la generación de fotogramas está desactivada
 status.framegen.missing_on = La generación de fotogramas está activada, pero OFXR Bridge no está instalado: el botón de arriba lo instala
@@ -4225,52 +4321,52 @@ vr.body.span_auto = {span} m (auto)
 vr.body.auto = Auto
 vr.body.why_seated = Sentado: Calibrar lee solo tu envergadura. Recentrar la vista pone los ojos del personaje donde está tu cabeza.
 vr.body.why = La altura real de tus ojos fija la escala del mundo, tu envergadura los brazos del personaje.
-# vr.coop.enabled = Co-op bridge
-# vr.coop.mode = Go through a relay
-# vr.coop.use = Host my rooms on
-# vr.coop.enabled.on = CREATE GAME lists your room; a relay when friends cannot reach you
-# vr.coop.enabled.off = CREATE GAME is D2RLoader's alone: no list, no relay
-# vr.coop.mode.always_detail = Every room you host goes through a relay
-# vr.coop.mode.never_detail = Friends connect straight to you: your port open
-# vr.coop.mode.auto_detail = Only when your port cannot be reached from outside
-# vr.coop.use.detail = Tried first; joining uses the host's relay
-# vr.coop.mode.always = Always
-# vr.coop.mode.never = Never
-# vr.coop.mode.auto = Auto
-# vr.coop.use.first = First that answers
-# vr.coop.use.missing = {name} (not listed)
-# vr.coop.state.active = takes rooms
-# vr.coop.state.near_limit = near its limit
-# vr.coop.state.limit = limit reached
-# vr.coop.state.no_answer = not answering
-# vr.coop.state.unknown = not checked yet
-# vr.coop.age.unknown = at a time not known
-# vr.coop.age.now = just now
-# vr.coop.age.min = {n} min ago
-# vr.coop.age.h = {n} h ago
-# vr.coop.use.first_lower = the first that answers
-# vr.coop.in_force_on = In force until your next CREATE GAME: bridge on, {mode}, {use}.
-# vr.coop.in_force_off = In force until your next CREATE GAME: bridge off.
-# vr.coop.reading = Reading D2R Rooms' files...
-# vr.coop.missing = The D2R Rooms plugin is not installed: no d2rl-d2r-rooms.dll in this folder:
-# vr.coop.missing_how = D2R VR Authentic's Setup installs it (its D2R Rooms task). Nothing to choose until then.
-# vr.coop.plugin = D2R Rooms {version}: its last word {age}.
-# vr.coop.plugin_no_status = D2R Rooms is installed; it writes what it knows while the game runs (nothing yet).
-# vr.coop.relay_usage = {name}: {state}, {pct}% of its quota used
-# vr.coop.relay = {name}: {state}
-# vr.coop.first = tried first
-# vr.coop.hosting_direct = You host room {code}: friends connect straight to you.
-# vr.coop.hosting_relay = You host room {code} through {relay}.
-# vr.coop.rooms_none = No open rooms in the list.
-# vr.coop.rooms = Open rooms: {n}
-# vr.coop.when = Read again on every CREATE GAME: a change counts from your next one, no restart. A room open now keeps its way.
+vr.coop.enabled = Puente cooperativo
+vr.coop.mode = Pasar por un relé
+vr.coop.use = Alojar mis salas en
+vr.coop.enabled.on = CREATE GAME lista tu sala; un relé cuando los amigos no pueden llegar a ti
+vr.coop.enabled.off = CREATE GAME es solo de D2RLoader: sin lista, sin relé
+vr.coop.mode.always_detail = Toda sala que alojas pasa por un relé
+vr.coop.mode.never_detail = Los amigos se conectan directamente a ti: tu puerto abierto
+vr.coop.mode.auto_detail = Solo cuando no se puede llegar a tu puerto desde fuera
+vr.coop.use.detail = Se prueba primero; al unirse se usa el relé del anfitrión
+vr.coop.mode.always = Siempre
+vr.coop.mode.never = Nunca
+vr.coop.mode.auto = Auto
+vr.coop.use.first = El primero que responda
+vr.coop.use.missing = {name} (no listado)
+vr.coop.state.active = acepta salas
+vr.coop.state.near_limit = cerca de su límite
+vr.coop.state.limit = límite alcanzado
+vr.coop.state.no_answer = no responde
+vr.coop.state.unknown = aún sin comprobar
+vr.coop.age.unknown = en un momento desconocido
+vr.coop.age.now = justo ahora
+vr.coop.age.min = hace {n} min
+vr.coop.age.h = hace {n} h
+vr.coop.use.first_lower = el primero que responda
+vr.coop.in_force_on = En vigor hasta tu próximo CREATE GAME: puente activado, {mode}, {use}.
+vr.coop.in_force_off = En vigor hasta tu próximo CREATE GAME: puente desactivado.
+vr.coop.reading = Leyendo los archivos de D2R Rooms...
+vr.coop.missing = El plugin D2R Rooms no está instalado: no hay d2rl-d2r-rooms.dll en esta carpeta:
+vr.coop.missing_how = El instalador de D2R VR Authentic lo instala (su tarea D2R Rooms). Nada que elegir hasta entonces.
+vr.coop.plugin = D2R Rooms {version}: su última noticia {age}.
+vr.coop.plugin_no_status = D2R Rooms está instalado; escribe lo que sabe mientras el juego funciona (nada todavía).
+vr.coop.relay_usage = {name}: {state}, {pct}% de su cuota usado
+vr.coop.relay = {name}: {state}
+vr.coop.first = se prueba primero
+vr.coop.hosting_direct = Alojas la sala {code}: los amigos se conectan directamente a ti.
+vr.coop.hosting_relay = Alojas la sala {code} a través de {relay}.
+vr.coop.rooms_none = No hay salas abiertas en la lista.
+vr.coop.rooms = Salas abiertas: {n}
+vr.coop.when = Se lee de nuevo en cada CREATE GAME: un cambio cuenta desde el siguiente, sin reiniciar. Una sala abierta ahora mantiene su forma.
 vr.keys.custom = Personalizado (ini)
-# vr.coop.status.reading = Reading D2R Rooms' files...
-# vr.coop.status.missing = Nothing to choose: the D2R Rooms plugin is not installed.
-# vr.coop.status.saving = Writing d2r-rooms.ini...
-# vr.coop.status.saved = Saved in d2r-rooms.ini. It counts from your next CREATE GAME.
-# vr.coop.status.failed = Could not write d2r-rooms.ini. Nothing changed.
-# vr.coop.status.idle = Each change is written to d2r-rooms.ini at once (the plugin's own file).
+vr.coop.status.reading = Leyendo los archivos de D2R Rooms...
+vr.coop.status.missing = Nada que elegir: el plugin D2R Rooms no está instalado.
+vr.coop.status.saving = Escribiendo d2r-rooms.ini...
+vr.coop.status.saved = Guardado en d2r-rooms.ini. Cuenta desde tu próximo CREATE GAME.
+vr.coop.status.failed = No se pudo escribir d2r-rooms.ini. Nada cambió.
+vr.coop.status.idle = Cada cambio se escribe en d2r-rooms.ini al instante (el archivo propio del plugin).
 vr.hset.status.no_ini = No se encontró d2r_vr.ini. No se puede cambiar nada.
 vr.hset.status.saving = Guardando...
 vr.hset.status.saved_video = Guardado. El juego reconstruye su imagen en un momento: unos segundos congelado.
@@ -4285,6 +4381,7 @@ vr.hset.status.body_idle = Calibrar cuerpo oculta este panel; vuelve cuando term
 vr.hset.status.keys_idle = Elige qué hace un botón y luego Aplicar. Combinaciones y las demás pulsaciones largas: D2R VR Authentic Settings.
 vr.hset.status.keys_off = Controles sin BodyWalk está desactivado: estos botones no hacen nada (los controles son el mapping de BodyWalk).
 vr.hset.status.melee_direct_full = Direct hit está totalmente activado (D2R VR Authentic Settings > Strikes); su casilla aquí es Según las reglas.
+vr.hset.status.world_idle = Cada cambio se aplica por sí solo (F4). Necesitan los brazos en los mandos; el resto está en D2R VR Authentic Settings.
 vr.hset.status.melee_idle = Cada cambio se aplica solo. Solo primera persona (F4).
 vr.hset.status.melee_off = Golpear al tocar está desactivado: márcalo y se aplican las filas de abajo.
 vr.hset.status.belt_needs_direct = Necesita Controles sin BodyWalk (ahora desactivado): hasta entonces el agarre solo coge una poción.
@@ -4294,11 +4391,11 @@ vr.hset.status.idle_window = Apunta y aprieta el gatillo. B, Cerrar o una pulsac
 vr.hset.status.idle = Apunta y aprieta el gatillo. B, o una pulsación larga de la palanca derecha, lo cierra.
 vr.hset.custom_empty = (una línea que la lista no nombra)
 vr.hset.second_row_off = - la segunda fila (LT) está desactivada
-# vr.hset.players.off = Off: D2R VR Authentic Settings, Players from the headset
-# vr.hset.players.unknown = The game's count is read once your hero is in a game
-# vr.hset.players.not_here = Only in a game of your own: single player or a TCP/IP host
-# vr.hset.players.took = The game set players to {n} (as /players {n}): monsters met from now on.
-# vr.hset.players.refused = The game did not take it: only in single player, or as the host of a TCP/IP game.
+vr.hset.players.off = Desactivado: D2R VR Authentic Settings, Jugadores desde el visor
+vr.hset.players.unknown = La cantidad del juego se lee en cuanto tu personaje está en una partida
+vr.hset.players.not_here = Solo en una partida tuya: un jugador o anfitrión TCP/IP
+vr.hset.players.took = El juego fijó los jugadores en {n} (como /players {n}): para los monstruos que encuentres desde ahora.
+vr.hset.players.refused = El juego no lo aceptó: solo en un jugador, o como anfitrión de una partida TCP/IP.
 vr.hset.title = AJUSTES DEL VISOR
 vr.video.title = Tamaño de render
 vr.video.note = Aplicar reconstruye la imagen: el juego se congela unos segundos (unos 7).
@@ -4411,6 +4508,10 @@ vr.map.on = Sí
 vr.map.off = No
 
 # ===== Keys of this file that en.txt does not list (an English used under several keys, worded here for one of them) =====
+sky.game_sky_radius.label = Cielo del juego: radio de la cúpula, unidades
+sky.game_sky_radius.tip = A qué distancia a tu alrededor se coloca la cúpula de cielo del juego, en unidades del juego (al instante). 200: un horizonte cercano - la cúpula corta el mundo lejano en un círculo limpio, con la niebla del juego encima. Más lejos, el cielo sale de la niebla. El registro dice el radio en uso con cada cambio.
+sky.game_dome_caves_size.label = La cúpula de cuevas: radio x radio de visibilidad de los modelos
+sky.game_dome_caves_size.tip = 1: la cúpula en el radio de visibilidad de los modelos ([render] model_radius); 0,5: la mitad (el radio como diámetro). Al instante.
 openxr.haptics.label = Vibración de los mandos
 ceiling.steps.label = Pasos de relieve del techo
 ceiling.steps.tip = Pasos del rayo a través de la roca: más = relieve más fino, un fotograma más caro.

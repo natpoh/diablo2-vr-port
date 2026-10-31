@@ -678,6 +678,7 @@ template <class RT> bool OverlaysHaveWork(RT* rt) {
 }
 // `eye`'s overlays over `target`: the back buffer (PRESENT, the eye drawn) or our picture of the other eye (RENDER_TARGET, made), viewed as `fmt`.
 bool DrawOverlays(reshade::api::effect_runtime* rt, ID3D12Resource* target, int eye, DXGI_FORMAT fmt, bool backBuffer) {
+    if (g_benchBare.load(std::memory_order_relaxed)) return false;   // ([render] bench_bare: no overlays of ours)
     using namespace reshade::api;
     const effect_technique tech = g_ovTech[backBuffer ? 0 : 1][eye & 1];
     if (!rt || !target || !tech.handle) return false;
@@ -698,6 +699,7 @@ bool DrawOverlays(reshade::api::effect_runtime* rt, ID3D12Resource* target, int 
 }
 // The same without ReShade: the plugin's own runtime renders the technique on our list on the game's queue (after the eye's copies before it).
 bool DrawOverlaysNative(ID3D12Device* dev, ID3D12CommandQueue* q, ID3D12Resource* target, int eye, bool backBuffer) {
+    if (g_benchBare.load(std::memory_order_relaxed)) return false;   // ([render] bench_bare: no overlays of ours)
     const reshade::api::effect_technique tech = g_ovTech[backBuffer ? 0 : 1][eye & 1];
     if (!g_nativeFx || !dev || !q || !target || !tech.handle) return false;
     ID3D12GraphicsCommandList* l = natived3d::OpenList(dev);

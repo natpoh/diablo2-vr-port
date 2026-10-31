@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 #include "d2r_vr_build.h"
 #include "monster_rig.h"
 #include "d2r_vr_fall.h"   // [weight] knock_down: the humanoid's joints (MonsterRig::joint)
@@ -41,6 +42,10 @@ struct Input {
     bool legsRearCycle = false;
     float legsFrontConeDeg = 90.0f;   // [body] legs_front_cone_deg: the cone straight ahead (its whole width) where the legs are the game's walk and run
     float legsRearConeDeg = 90.0f;    // [body] legs_rear_cone_deg: the cone straight back (its whole width) where they play the game's walk / run backwards
+    bool legsTurn = true;             // [body] legs_turn: with legsSideGame, the hips and legs turned to where he goes, the twist spread over the spine
+    bool legsSideGame = true;         // [body] legs_side_game: up to 90 deg off the facing the game's own walk / run, past it played backwards (no cones, no side zone)
+    bool legsSideSteps = false;       // [body] legs_side_ragdoll's side walk the stepping feet (D2rsStep; legs_side_gait 0) - else the gait
+    bool legsSideCross = false;       // [body] legs_side_cross: ... the feet take turns, one always down, passing each other (stride 2.2) - else stride 2.1's bound
     bool legsSideRagdoll = false;     // [body] legs_side_ragdoll: between the cones the feet step after him by the ragdoll library's walk (vr/stride_lib.h; loaded)
     int heroAnimMode = -1;     // the hero's unit mode as the game's client has it (2 walk, 3 run, 6 town walk; -1 not known): walk_back_reverse keeps only his walk
     float crouchDrop = 0.0f;    // [body] crouch (F4): the body this far down (model units), the legs bent to keep the feet; 0 = as the game poses it
@@ -150,6 +155,8 @@ struct Input {
         float takeHaptic = 0.0f;   // [weight] take_haptic: the pulse (amplitude 0..1) in a hand entering the take zone behind a shoulder while a weapon is away; 0 = none
         bool recallAny = false;    // [weight] recall_any_hand: the grip of any free hand, anywhere, calls a weapon that is away
         bool worldContact = false;    // [weight] world_contact (vr/world_contact.h): the held weapon meets the level's walls and big props (F4 only; needs worldOk)
+        bool ownBody = false;         // [weight] own_body (vr/own_body.h): the held weapon stops on the hero's own trunk, legs, head and free arms (F4 only; needs worldOk) - with
+                                      // monster_bodies off too
         bool monsterBodies = false;   // [weight] monster_bodies (vr/monster_bodies.h): the held weapon stops on the hostile monsters' bodies or glances off them (F4 only; needs the world's frame, worldOk)
         bool stabIn = false;          // [weight] stab_in (cleanroom/heft/stab.h): with monsterBodies, a thrusting weapon driven point first into a body goes in and is held there (F4 only)
         // ... its sliders (stab::Sliders, live): stab_min_speed m/s, stab_max_angle deg, stab_resist_pct % of the dampers, stab_depth_cm (0 the blade's), stab_tear_cm, stab_unlock_n
@@ -762,6 +769,10 @@ void TrackHero(bool on);
 // Resolved now (cheap: a few reads; a new SkeletonInstance costs one pass over the storage).
 // False with *why set when the chain does not read.
 bool HeroTransform(HeroXform* out, const char** why = nullptr);
+// [weight] world_contact: the entities holding a unit's skeleton (a player, a monster, an NPC, a merc, an item, a missile: vr/unit_models.h UnitPath), by their
+// index (the low 20 bits), sorted - nor they nor what hangs on them are ever walls. One pass over the SkeletonComponents (each path read once an instance).
+// False with *why set when the storages do not read.
+bool UnitEntities(std::vector<uint32_t>* out, const char** why = nullptr);
 // Any entity's TransformComponent, the same layout (engine items, vrcam's engitem). The storage's
 // array moves when it grows: use the pointer at once, on the registry's own thread.
 bool EntityTransform(uint32_t entity, uintptr_t* comp);
@@ -773,7 +784,8 @@ uintptr_t EntityModelInstance(uint32_t entity);
 int HeroPartModels(uint32_t entity, uintptr_t* models, int cap, uint64_t* key);
 // [weight] own_body: the hero's own trunk and legs as capsules his held weapon meets (monsterhumanoid::OwnBodyBones; his arms and head left out), from his
 // meshes' boxes on his bones as drawn now (his pose after ours), world units; their bones in bone[] (may be null). How many (0: not read, *why says).
-int HeroBodyCaps(monsterrig::Capsule* out, int cap, const char** why);
+// head: his head too; arm[2] (0 left, 1 right; null: none): that free arm down to its wrist (monsterhumanoid::OwnBodyBones). capsule[i].bone tells which bone.
+int HeroBodyCaps(monsterrig::Capsule* out, int cap, const char** why, bool head = false, const bool* arm = nullptr);
 // [weight] monster_bodies (vr/monster_rig.h): the models near (x, z) - the game's render world, its units - that stand on their own (no parent: not a weapon in a
 // hand) and are not a hero's, the nearest first, each with a capsule on each of its limbs: its bones as the game posed them this frame times its place, as thick as its
 // meshes' boxes of them (world units). A model whose boxes or pose do not read is given with n 0 and why. Read-only, off the pose hook (any thread but the hook's).
@@ -817,6 +829,10 @@ struct MonsterRig {
     int16_t joint[D2RF_JOINTS] = {};
     bool joints = false;
     char jointsSaid[160] = {};   // ... the log: the bones, or what was missing
+    // [weight] knock_down: its root's children (its parts' entities, what it holds) - their bounds are grown while it is drawn away from its place (vr/held_bounds.h)
+    static constexpr int kMaxParts = 24;
+    uint32_t parts[kMaxParts] = {};
+    int nParts = 0;
 };
 size_t MonsterRigs(float x, float z, float reach, MonsterRig* out, size_t cap);
 // [weight] monster_shields: MonsterRigs reads the held parts too (MonsterRig::held). Off: none read.
@@ -828,6 +844,9 @@ void SetRagdollAll(bool on);
 // asks it for every skeleton it poses, after the game's own pose, and turns the bones so (vr/doll_pose.h). Null: none.
 using MonsterPoseFn = bool (*)(uintptr_t self, dollpose::Pose* out);
 void SetMonsterPoseSource(MonsterPoseFn fn);
+// vr/body/pose_views.h AnyAllowed, the update thread each tick (PushArms): false in VR F1 / F3 - the pose hook writes nothing there (the hero, his gear, a
+// struck monster, the other heroes) and the skinning is handed none of our poses (headshadow::SetPoseView)
+void SetPoseView(bool allowed);
 // ... the same by a world pose the game hands its skinning (Pose::poseCur / posePrev, else Pose::skel and the pose's matrices; meleetouch::MonsterPosesForSkin): the skinning composite draws a struck
 // monster from a turned copy of its pose (headshadow::SetDollSkin; vr/head_shadow.h) - the pose hook then leaves the game's pose as it made it.
 using MonsterPoseByWorldFn = int (*)(uintptr_t skeleton, uintptr_t worldPose, dollpose::Pose* out, int max, bool* exact);

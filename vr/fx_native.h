@@ -19,9 +19,11 @@
 #include <reshade.hpp>
 
 #include <cstdint>
+#include <cstring>
 #include <functional>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace fxnative {
@@ -70,6 +72,13 @@ struct Stats {
     // "PS_DepthFog 0.41, PS_VoidFog 0.08, ..." (ms a Render); a pass run in fewer of them (a technique of one eye, the other's the next
     // present) also its time when run: "PS_DepthFogR 0.69 (1.38 in 50%)"
     std::string dearest;
+    std::vector<std::pair<std::string, double>> passMs;   // every timed pass by name (without F__ / E__), ms a present on average
+    // the passes whose names begin with `prefix`, ms a present on average (0: none timed)
+    double MsOf(const char* prefix) const {
+        double ms = 0.0;
+        for (const auto& p : passMs) if (p.first.compare(0, strlen(prefix), prefix) == 0) ms += p.second;
+        return ms;
+    }
 };
 
 class Runtime {

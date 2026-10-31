@@ -8,6 +8,7 @@
 // first test), a man and a crouching fallen do; the verdict read off a skeleton in a made-up game memory (vr/monster_rig.h's layout).
 
 #include "../../vr/monster_humanoid.h"
+#include "../../vr/own_body.h"
 
 #include <array>
 #include <cstdio>
@@ -285,10 +286,16 @@ void TestLongSkeleton() {
 		}
 		const auto read = [&](uintptr_t at, void* out, size_t bytes) { return m.Read(at, out, bytes); };
 		const mh::Verdict v = mh::JudgeSkeleton(read, skel);
-		if (bones <= mh::kMaxBones)
+		if (bones <= bonecap::Max())   // ([weight] skeleton_bones_max, 256 by default)
 			EXPECT(v.humanoid && v.bones == bones, "%d bones: judged in whole, a humanoid (%s)", bones, v.why);
 		else
 			EXPECT(!v.humanoid && std::strstr(v.why, "too many"), "%d bones: not judged (%s)", bones, v.why);
+		if (bones > bonecap::Max()) {   // the slider raised: judged in whole (live - the arrays hold bonecap::kCeiling)
+			bonecap::Set(512);
+			const mh::Verdict up = mh::JudgeSkeleton(read, skel);
+			EXPECT(up.humanoid && up.bones == bones, "%d bones under skeleton_bones_max 512: judged in whole (%s)", bones, up.why);
+			bonecap::Set(bonecap::kDefault);
+		}
 	}
 }
 
@@ -312,6 +319,32 @@ void TestOwnBody() {
 	}
 	mh::Verdict blob;
 	EXPECT(!mh::OwnBodyBones(blob, keep), "no skeleton: nothing");
+	// Serg, 0.192.36 ("где галочка, чтобы оружие не проходило сквозь собственное тело"): his head too, and a FREE arm down to its wrist - never its hand
+	EXPECT(v.joints, "the joints found (the wrists)");
+	const bool rightFree[2] = { false, true };   // (the verdict's order: [0] the left arm, [1] the right)
+	EXPECT(mh::OwnBodyBones(v, keep, true, rightFree), "judged with the head and the free right arm");
+	for (size_t i = 0; i < r.names.size(); ++i) {
+		const std::string& n = r.names[i];
+		const bool rightArm = n.find("R Clavicle") != std::string::npos || n.find("R UpperArm") != std::string::npos || n.find("R Forearm") != std::string::npos;
+		const bool rightHand = n.find("R Hand") != std::string::npos || n.find("R Finger") != std::string::npos;
+		const bool leftArm = n.find("L ") != std::string::npos && (n.find("Clavicle") != std::string::npos || n.find("Arm") != std::string::npos || n.find("arm") != std::string::npos ||
+		                                                          n.find("Hand") != std::string::npos || n.find("Finger") != std::string::npos);
+		if (n.find("Head") != std::string::npos) EXPECT(keep[i], "the head kept: %s", n.c_str());
+		if (rightArm) EXPECT(keep[i], "the free arm kept down to its wrist: %s", n.c_str());
+		if (rightHand || leftArm) EXPECT(!keep[i], "the free arm's hand and the busy arm left out: %s", n.c_str());
+	}
+	// what the plugin asks (melee_touch.cpp: the head, never an arm - Serg 0.192.37, a pike "само об себя стукается"): the head kept, both arms and hands out
+	EXPECT(mh::OwnBodyBones(v, keep, true, nullptr), "judged with the head, no arm");
+	for (size_t i = 0; i < r.names.size(); ++i) {
+		const std::string& n = r.names[i];
+		const bool armOrHand = n.find("Clavicle") != std::string::npos || n.find("Arm") != std::string::npos || n.find("arm") != std::string::npos ||
+		                       n.find("Hand") != std::string::npos || n.find("Finger") != std::string::npos;
+		if (armOrHand) EXPECT(!keep[i], "never an arm or a hand: %s", n.c_str());
+		if (n.find("Head") != std::string::npos) EXPECT(keep[i], "the head: %s", n.c_str());
+	}
+	// left out a moment after a take (from the back, the hip, called back) and while a hand draws behind a shoulder
+	EXPECT(ownbody::Skip(1000, 900, false) && !ownbody::Skip(1500, 900, false) && ownbody::Skip(5000, 0, true) && !ownbody::Skip(5000, 0, false),
+	       "skipped 0.4 s after a take and behind a shoulder, else not");
 }
 
 int main() {

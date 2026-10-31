@@ -139,6 +139,7 @@ def make_payload(tag, dll, defaults, version, libs=True, settings_exe=None):
         put(payload / "plugins/d2r_vr_grip.dll", b"MZ grip library " + tag.encode() + NOISE[5000:9000])
     put(payload / "plugins/d2r_vr.ini", defaults)
     put(payload / "plugins/D2R_VR_Settings.exe", Path(settings_exe).read_bytes() if settings_exe else b"MZ SETTINGS " + tag.encode())
+    put(payload / "plugins/D2R_VR_Headset_Report.exe", b"MZ HEADSET REPORT " + tag.encode())
     put(payload / "shaders/D2R_DepthFog.fx", "// D2R VR shader " + tag + "\n")
     put(payload / "shaders/D2R_FogEase_Unleashed.fxh", "// D2R VR shader include " + tag + "\n")
     put(payload / "license/D2R_VR_LICENSE.txt", (repo / "LICENSE").read_bytes())
@@ -146,6 +147,8 @@ def make_payload(tag, dll, defaults, version, libs=True, settings_exe=None):
     put(payload / "lang/ru.txt", "language.name = Русский\n# " + tag + "\n")
     put(payload / "sky/D2R_Sky_act1.png", "SKY-A1 " + tag)
     put(payload / "sky/D2R_Ceiling_cave.png", "CEILING " + tag)
+    # the sky dome's pictures (mod_files.inc: skydome\*.dds into the mod's mpq): the manifest tool stops on a pattern with nothing staged
+    put(payload / "skydome/d2r_vr_skydome_test.dds", b"DDS " + tag.encode())
     put(payload / "game/FlatVR_DepthProvider.addon64", b"MZ ADDON " + tag.encode())
     put(payload / "game/FlatVR_Keepalive.addonfx", "// keepalive " + tag + "\n")
     r = subprocess.run([sys.executable, "-I", str(repo / "tools" / "make_vrmod_manifest.py"), "--out", str(payload / "launcher"),
@@ -285,6 +288,8 @@ def old_ours(g, ours_reshade=True, players_ini=PLAYERS_INI):
 
 MOD = "mods/D2R-VR"
 SETTINGS_FILES = ("D2R_VR_Settings.exe",)
+# the programs Setup puts beside D2R.exe: the settings program and D2R VR Headset Report (tools/headset_report)
+ROOT_PROGRAMS = ("D2R_VR_Settings.exe", "D2R_VR_Headset_Report.exe")
 
 
 # ------------------------------------------------------------------ the launcher carried inside Setup (section 8)
@@ -469,7 +474,7 @@ def migration_sections():
         check(b'default_mod = "D2R-VR"' in want_toml and want_toml.replace(b'default_mod = "D2R-VR"', b'default_mod = ""') == TOML.replace("allow_global_extensions = false", "allow_global_extensions = true").encode(),
               "d2rloader.toml: only default_mod changed (\"\" -> \"D2R-VR\")")
         check(sub(after, "mods/D2R-PCVR/") == bear0, "bearstonem's mods\\D2R-PCVR: every file byte for byte the same")
-        left = top_leftovers(after, ("d2rloader/config/", "d2rloader/logs/", "d2rloader/data/"), GAME_OWN + ("D2R_VR_Settings.exe",))
+        left = top_leftovers(after, ("d2rloader/config/", "d2rloader/logs/", "d2rloader/data/"), GAME_OWN + ROOT_PROGRAMS)
         check(left == [], f"nothing of ours is left in the game folder outside mods\\D2R-VR (left: {left})")
         rc, log = run_uninstall("f1_uninstall")
         gone = snap(game)
@@ -548,7 +553,7 @@ def migration_sections():
     check(all(after.get(k) == before[k] for k in cfg if k != toml_k), f"D2RLoader's config, data and logs ({len(cfg) - 1} files) are untouched")
     check(after[toml_k] != before[toml_k] and (game / toml_k).read_bytes().replace(b'default_mod = "D2R-VR"', b'default_mod = ""') == (snapdir / toml_k).read_bytes(),
           "d2rloader.toml: only default_mod changed")
-    left = top_leftovers(after, ("d2rloader/config/", "d2rloader/logs/", "d2rloader/data/", "d2rloader/plugins/", "reshade-shaders/", "D2R_VR_Settings.exe", "D2R_Sky_ours/", "BodyWalkVR/"), GAME_OWN)
+    left = top_leftovers(after, ("d2rloader/config/", "d2rloader/logs/", "d2rloader/data/", "d2rloader/plugins/", "reshade-shaders/", "D2R_VR_Settings.exe", "D2R_Sky_ours/", "BodyWalkVR/"), GAME_OWN + ROOT_PROGRAMS)
     check(left == [], f"outside mods\\D2R-VR, besides what stays on purpose, nothing of ours is in the game's root (left: {left})")
     remains = sorted(k for k in after if not k.startswith("mods/") and k not in GAME_OWN and not k.startswith(("d2rloader/config/", "d2rloader/logs/", "d2rloader/data/", "unins000")))
     kinds = {}
@@ -712,9 +717,10 @@ def main():
     toml = (game / "d2rloader/config/d2rloader.toml").read_bytes()
     exp = TOML.replace("allow_global_extensions = false", "allow_global_extensions = true").replace('default_mod = ""', 'default_mod = "D2R-VR"').encode()
     check(toml == exp, "d2rloader.toml: allow_global_extensions = true and default_mod = \"D2R-VR\", everything else byte for byte")
-    # nothing outside the mod but Settings.exe, the uninstaller, the toml
-    stray = sorted(k for k in S if not k.startswith(MOD + "/") and k not in B0 and not k.startswith("unins000") and k != "D2R_VR_Settings.exe")
-    check(not stray, f"Setup wrote nothing outside mods\\D2R-VR but D2R_VR_Settings.exe and the uninstaller (stray: {stray})")
+    # nothing outside the mod but Settings.exe (and the headset report beside it), the uninstaller, the toml
+    stray = sorted(k for k in S if not k.startswith(MOD + "/") and k not in B0 and not k.startswith("unins000") and k not in ROOT_PROGRAMS)
+    check(not stray, f"Setup wrote nothing outside mods\\D2R-VR but D2R_VR_Settings.exe, D2R_VR_Headset_Report.exe and the uninstaller (stray: {stray})")
+    check((game / "D2R_VR_Headset_Report.exe").read_bytes().startswith(b"MZ HEADSET REPORT"), "D2R VR Headset Report is beside D2R.exe, with the settings program")
     check(all(S.get(k) == v for k, v in B0.items() if k != "d2rloader/config/d2rloader.toml"), "the game's own files are untouched")
     ready = rd(work / "ready.txt")
     check("take_new=0 changed=0" in ready, "first install: no question asked, nothing changed")
@@ -940,7 +946,7 @@ def main():
         check(OUR_EFFECT in ini1 and OUR_TEXTURE in ini1 and ini1 != ini0, "his ReShade.ini lists D2R VR's two folders (EffectSearchPaths, TextureSearchPaths)")
         check(ini1.replace(b"," + OUR_EFFECT, b"").replace(b"," + OUR_TEXTURE, b"") == ini0, "...and nothing else of his file changed (taking our two list items out gives his file, every byte)")
         check((game / "ReShade.ini.before_d2rvr").exists() and (game / "ReShade.ini.before_d2rvr").read_bytes() == ini0, "...a copy of his file as it was is beside it (ReShade.ini.before_d2rvr)")
-        others = sorted(k for k in S2d if k not in B2d and not k.startswith(MOD + "/") and not k.startswith("unins000") and k not in ("D2R_VR_Settings.exe", "ReShade.ini.before_d2rvr"))
+        others = sorted(k for k in S2d if k not in B2d and not k.startswith(MOD + "/") and not k.startswith("unins000") and k not in ROOT_PROGRAMS + ("ReShade.ini.before_d2rvr",))
         check(not others and S2d["ReShadePreset.ini"] == B2d["ReShadePreset.ini"] and S2d["reshade-shaders/Shaders/Own.fx"] == B2d["reshade-shaders/Shaders/Own.fx"],
               f"his preset and his own effect are untouched, nothing else is made beside the game (stray: {others})")
         # an update over it: nothing changes again

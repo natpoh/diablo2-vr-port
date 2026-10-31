@@ -78,6 +78,16 @@ void Transformed();
 // For Settings' status and the log.
 const char* StatusText();
 
+// [weight] knock_down (vr/held_bounds.h): the renderer's bounds component of any entity (24 floats: the local min / max, then the world min / max, as vec4s).
+// The storage is the one this module found for the props; else the first time looked for by the entity's own box under its world matrix `world` (the
+// 0x60-byte storage whose box is its local box under it), kept after - none: false, looked for again 2 s on. Any thread; only guarded reads and writes.
+bool EntityBounds(uint32_t entity, const float world[16], float box[24]);
+bool PutEntityBounds(uint32_t entity, const float box[24]);
+// ... how the storage was found, for the log: 0 not yet, 1 the props', 2 by a unit's box.
+int EntityBoundsSource();
+// ... an entity's world matrix as the renderer has it (its transform +0x40) - the transform storage this module found for the props. False: not found.
+bool EntityWorld(uint32_t entity, float m[16]);
+
 // [multiplayer] pose_share_held: a prop as drawn now, for the other players - one our hand holds or threw: its catalogue name, where it stood when first found this
 // session (render units: the level's own place of it, the same on every PC), its world matrix as drawn (render units) and whether it is moving. False: not tracked.
 struct PropShot { char name[28]; float home[3]; float world[16]; bool moving; };
@@ -102,11 +112,17 @@ bool PresetPieces(const float (*places)[3], int n, std::vector<PresetPiece>* out
 // knock props run or not; a whole pass over the transforms (a worker, never the game's threads). False (and *why): the registry, the transforms or the
 // bounds do not read. knows (may be null): whether a preset entity id is in the caller's catalogue - the 4-byte storage of the preset ids is the one whose values it
 // knows most of (as the props' catalogue finds it); each entity's preset id (0: none found) and its place under its parent (the preset's position) are given then.
+// ownRoot (0: none): the hero's entity - every entity hanging on him (his parts, the weapon in his hand, what is slung on his back: their parents up to him)
+// is left out (Serg, 0.192.37: the pike "считает себя объектами внешнего мира и само об себя стукается"); *ownLeft how many.
+// units (null: none): the entities holding a unit's skeleton by their index, sorted (skel::UnitEntities) - an entity that is one or hangs on one (an NPC's,
+// a monster's, a merc's, another player's body parts and gear; an item's, a missile's) is left out (Serg, 0.192.39: "НПС тоже принимается за твёрдый объект");
+// *unitLeft how many.
 struct LevelEntity { uint32_t id; float world[16]; float lo[3], hi[3]; uint32_t preset; float local[3]; };
 using KnowsFn = bool (*)(uint32_t presetId);
 // [weight] world_contact: is the preset entity with this id at this place (its transform's local position) a prop the catalogue knows - one knock props / grab props
 // move (never a wall)? False with no catalogue. Any thread (the catalogue is read once, at Init).
 bool IsMovable(uint32_t presetId, const float local[3]);
-bool LevelBoxes(const float hero[3], float upm, float radiusM, KnowsFn knows, std::vector<LevelEntity>* out, const char** why);
+bool LevelBoxes(const float hero[3], float upm, float radiusM, KnowsFn knows, std::vector<LevelEntity>* out, const char** why, uint32_t ownRoot = 0,
+                unsigned* ownLeft = nullptr, const std::vector<uint32_t>* units = nullptr, unsigned* unitLeft = nullptr);
 
 }  // namespace knockprops

@@ -117,8 +117,11 @@ SelectDirLabel3=Setup will install D2R VR into the folder of Diablo II: Resurrec
 SelectDirBrowseLabel=If this is not your game's folder, click Browse.
 
 [Files]
-; D2R VR Authentic Settings beside D2R.exe (the only file of the mod outside its folder: the launcher's START and Settings button name it there)
+; D2R VR Authentic Settings beside D2R.exe (the launcher's START and Settings button name it there)
 Source: "payload\plugins\D2R_VR_Settings.exe"; DestDir: "{app}"; Flags: ignoreversion
+; ... and D2R VR Headset Report beside it (tools/headset_report): a player whose headset picture is wrong runs it, or Settings' Home does
+; ([support] headset_report). These two are the mod's only files outside its folder; the uninstaller takes both.
+Source: "payload\plugins\D2R_VR_Headset_Report.exe"; DestDir: "{app}"; Flags: ignoreversion
 ; The mod's own files, all in <game>\mods\D2R-VR: the plugin and its ini, the libraries, the shader, the sky, FlatVR's add-on, the licence,
 ; and the shared VR mod launcher's vrmod-manifest.json with its icon (mod_files.inc; installer\tests\mod_layout_test.iss includes the same lines)
 #include "mod_files.inc"

@@ -151,6 +151,8 @@ void NoteHeroLegs(const int* bones, const float (*at)[3], int count);
 // a copy of the pose holding these matrices (the eyes' copy too, its head shrunk on them), as long as they are fresh. WantForPose: the composite hook is
 // put in for it too ([arms] head_shadow off), and copies are made only while it is wanted.
 void WantForPose(bool on);
+// vr/body/pose_views.h AnyAllowed (skel::SetPoseView): false - the composite hands the game's own poses on, ours (the hero's) and the monsters' turned not
+void SetPoseView(bool allowed);
 void PublishOurPose(uintptr_t skeleton, uintptr_t pose, uintptr_t prevPose, const float* m, int n);
 // [weight] monster_ragdoll_pose: a struck monster drawn as its doll turns it - the skinning composite hands the game's skinning a copy of the monster's world
 // pose turned (skel::DollSkin, the callback: true when it turned the copy's matrices), the way the eyes get the hero's head shrunk. 0.188.6, Serg: "the
@@ -165,6 +167,9 @@ bool AttachmentOf(uint32_t entity, uintptr_t component, uintptr_t* skeletonInsta
 // ... and the world-matrix writer that carries such entities with a knocked-down body's bones (vr/knock_down.cpp; null: none) - put in through potion_hide's
 // hook once the renderer's functions are found.
 void SetAttachWriter(void (*fn)(uint32_t entity, uintptr_t component, uintptr_t out));
+// ... and what runs at ModelDrawCollect for each entity, just before the game's own (vr/knock_down.cpp BeforeDraw: a drawn-away body's bounds grown again
+// there, after anything that made them again this frame; null: none). eyes: an eyes' pass (not the shadows'). The render workers.
+void SetBeforeDraw(void (*fn)(uint32_t entity, bool eyes));
 void SetDollSkin(DollSkinFn fn);
 bool DollSkinningIn();
 std::string SkinNote();

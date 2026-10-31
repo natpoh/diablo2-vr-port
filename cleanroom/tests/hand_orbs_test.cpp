@@ -148,6 +148,30 @@ void TestOnBone() {
         const Place a = OnBone(BoxedRight(), cfg, 0, -0.027f), b = OnBone(BoxedRight(), cfg, 0, 0.027f);
         Expect(a.ok && b.ok && Near(std::fabs(a.c.x - b.c.x), 0.054f, 1e-5f) && Near(a.c.y, b.c.y, 1e-6f), "two on one wrist: across the forearm, 5.4 cm apart");
     }
+    {   // the box off the bone (Serg, 0.192.36: 10-15 cm beside the wrist after a restart): a piece of armour bound to the forearm on one side moves the box's
+        // middle 10 cm across and makes it 12 cm wider - the medallion stays on the bone's line, on the same surface
+        Arm a = BoxedRight();
+        a.boxC.x += 0.10f;
+        a.boxH[0].x = 0.16f;
+        const Place q = OnBone(BoxedRight(), cfg, 0), m = OnBone(a, cfg, 0);
+        Expect(m.ok && Near(m.c.x, q.c.x, 1e-5f) && Near(m.c.y, q.c.y, 1e-5f) && Near(m.c.z, q.c.z, 1e-5f), "a box off to one side: still on the bone's line (%.3f vs %.3f)",
+               m.c.x, q.c.x);
+    }
+    {   // a box running 6 cm past the wrist (a gauntlet bound to the forearm): the medallion stays one radius short of the wrist joint, not on the hand
+        Arm a = BoxedRight();
+        a.boxC.z -= 0.04f;
+        a.boxH[2].z = 0.17f;
+        const Place m = OnBone(a, cfg, 0);
+        const float along = hset::Dot(hset::Sub(m.c, a.wrist), hset::Unit(hset::Sub(a.wrist, a.elbow)));
+        Expect(m.ok && Near(along, -0.025f, 1e-4f), "a box past the wrist: one radius short of the wrist joint (%.4f)", along);
+    }
+    {   // a box padded far out (25 cm deep): the medallion at most 0.3 of the forearm out from the bone
+        Arm a = BoxedRight();
+        a.boxH[1].y = 0.25f;
+        const Place m = OnBone(a, cfg, 0);
+        const float fl = Len(hset::Sub(a.wrist, a.elbow));
+        Expect(m.ok && m.c.y - a.boxC.y <= kBoneBackMax * fl + 0.0051f, "a box padded far out: kept on the arm (%.3f m out)", m.c.y - a.boxC.y);
+    }
     Expect(!OnBone(RightArm(), cfg, 0).ok, "no box: not on the bone");
     {
         Arm a = BoxedRight();
@@ -160,6 +184,7 @@ void TestOnBone() {
         in.cfg.orbHands = 0;   // (life on the left wrist, mana on the right)
         in.cfg.orbRight.alongCm = 7.0f;
         in.cfg.orbRight.rotYDeg = 30.0f;
+        in.cfg.orbOnBone = true;   // (ticked: off by default since 0.192.39)
         State st;
         Set set = Step(st, in);
         const Orb& mana = set.orb[kMana];   // (the mana ball on the right wrist)

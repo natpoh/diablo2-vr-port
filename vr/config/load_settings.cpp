@@ -3,6 +3,7 @@
 // (vr/vrcam_headers.h) and the names of vrcam.cpp it sets (vr/vrcam_internal.h). Its place in the update thread is the same.
 #include "../vrcam_headers.h"
 #include "../../shared/draw_distance.h"
+#include "../bone_cap.h"
 
 using namespace D2RL;
 
@@ -11,6 +12,19 @@ namespace vrc {
 FILETIME g_iniTime{};
 
 void LoadSettings() {
+    {   // [render] bench_bare: read first - every key below it forces reads as off (settings.cpp BenchForced)
+        const bool bench = IniB(L"render", L"bench_bare", false);
+        if (g_benchBare.exchange(bench) != bench)
+            LogF("vrcam: bench_bare %s - %s", bench ? "ON" : "OFF",
+                 bench ? "stopped: our whole effect (D2R_DepthFog.fx, its overlays and interface passes - medallions, labels, toolbar, "
+                         "phantoms), our sky, fog, ceiling and distance blur; the game's fog as the game ships it (game_fog, its height and "
+                         "mist patch, the step before the effects and the effects' depth, game_fog_match); the game's dome, its bake and both "
+                         "colour measures; the hand vitals' orbs, the monsters' bars; knock_props, grab_props / items, world_contact, "
+                         "monster_bodies / ragdolls / knock-down, npc_bodies, legs_rear and the side gait; every [debug] key. NOT live (as they "
+                         "were at the start, until the game restarts): room rings, the models' radius, big objects; the native hooks stay "
+                         "installed and idle. Kept: the picture to the headset, head and hands, input"
+                       : "everything back as set in the ini");
+    }
     g_set.platform.store(IniF(L"mode", L"platform", 1.0f) != 0.0f ? 1 : 0);
 #if D2RVR_FIRST_PERSON
     g_set.flatView.store(std::clamp((int)IniF(L"mode", L"flat_view", 3.0f), 1, 3));
@@ -109,7 +123,7 @@ void LoadSettings() {
         // (FlatVR is given "not shown", below). Its look is [hud] wrist_look (0 the glass orbs, 1 the game's own globes). The older keys (hand_vitals, hand_vitals_style)
         // still work without it.
         const bool wrists = (int)IniF(L"hud", L"bar_place", 5.0f) == 5;
-        hv.on = wrists || IniB(L"hud", L"hand_vitals", false);
+        hv.on = (wrists || IniB(L"hud", L"hand_vitals", false)) && !g_benchBare.load();   // ([render] bench_bare: none)
         hv.hand = (int)IniF(L"hud", L"hand_vitals_hand", 0.0f);
         hv.sizeCm = IniF(L"hud", L"hand_vitals_size_cm", 8.0f);
         hv.heightCm = IniF(L"hud", L"hand_vitals_height_cm", 6.0f);
@@ -167,7 +181,9 @@ void LoadSettings() {
         hv.orbMirror = IniB(L"hud", L"hand_vitals_orb_mirror", false);   // the right wrist takes the left's three numbers (and the three angles)
         // the wrist that wears a shield (the left arm, or the right one after a hand swap) turns its ball to the other side of the wrist (VR F4 only); the coefficients of that place
         hv.orbUnderShield = IniB(L"hud", L"hand_vitals_orb_under_shield", true);
-        hv.orbOnBone = IniB(L"hud", L"hand_vitals_orb_on_bone", true);   // on the forearm bone's own mesh box (handorbs::OnBone), no spot numbers
+        hv.orbOnBone = IniB(L"hud", L"hand_vitals_orb_on_bone", false);   // on the forearm bone's own mesh box (handorbs::OnBone), no spot numbers - off by default
+        // since 0.192.39: a hero's skeleton (more than 160 bones) never read before 0.192.36's 256-bone cap, so the box never placed a medallion until then -
+        // the sliders did; read, it put the medallion 10-15 cm off the wrist (Serg's bisect 0.192.34 -> 0.192.36; 0.192.37's anchor on the bone line did not mend it)
         hv.orbShield.turnDeg = IniF(L"hud", L"hand_vitals_orb_shield_turn_deg", 180.0f);
         hv.orbShield.alongCm = IniF(L"hud", L"hand_vitals_orb_shield_along_cm", 0.0f);
         hv.orbShield.sideCm = IniF(L"hud", L"hand_vitals_orb_shield_side_cm", 0.0f);
@@ -380,6 +396,7 @@ void LoadSettings() {
     g_set.pictureRing.store(IniB(L"stereo", L"picture_ring", false));
     g_set.pace.store(IniB(L"stereo", L"pace", true));
     g_set.paceFlatVrOnly.store(IniB(L"stereo", L"pace_flatvr_only", true));
+    g_set.flatvrFeed.store(IniB(L"render", L"flatvr_feed", true));
     g_set.vcache.store(IniB(L"render", L"vcache", false));
     {
         static const int kHz[5] = {72, 75, 80, 90, 120};
@@ -476,11 +493,40 @@ void LoadSettings() {
     g_set.arcaneOwnFog.store(IniB(L"fog", L"arcane_own", false));
     g_set.arcaneFogStart.store(std::clamp(IniF(L"fog", L"arcane_start", g_set.fogCaveStart.load()), 0.0f, 100000.0f));
     g_set.arcaneFogEnd.store(std::clamp(IniF(L"fog", L"arcane_end", g_set.fogCaveEnd.load()), g_set.arcaneFogStart.load() + 1.0f, 200000.0f));
+    // [fog] game_fog=1 (GameFogNumbersNow): a full fog nearer than its start (the slider lets "Full fog" go below "Fog start") is taken as the
+    // near end - the two swapped. Held to start + 1 the whole fog came in over one unit - Serg on 0.192.34, start 40 / end 10: a flat grey
+    // wall from 41 units with a hard edge where it met the sky (121.webp). Our effect's fog keeps start + 1 above (Serg 2026-10-31: "старый
+    // туман пожалуйста не трогай")
+    {
+        const auto fogRange = [](std::atomic<float>& start, std::atomic<float>& end, float s, float e, const char* name) {
+            s = std::clamp(s, 0.0f, 100000.0f);
+            e = std::clamp(e, 0.0f, 200000.0f);
+            if (e < s) {
+                LogF("vrcam: [fog] %s: full fog %.0f nearer than its start %.0f - the game's fog takes them as %.0f to %.0f", name, e, s, e, s);
+                std::swap(s, e);
+            }
+            start.store(s);
+            end.store(std::max(e, s + 1.0f));
+        };
+        fogRange(g_set.gameFogStart, g_set.gameFogEnd, IniF(L"fog", L"start", 150.0f), IniF(L"fog", L"end", 600.0f), "start / end");
+        fogRange(g_set.gameFogCaveStart, g_set.gameFogCaveEnd, IniF(L"fog", L"caves_start", g_set.gameFogStart.load()),
+                 IniF(L"fog", L"caves_end", g_set.gameFogEnd.load()), "caves_start / caves_end");
+        fogRange(g_set.gameArcaneFogStart, g_set.gameArcaneFogEnd, IniF(L"fog", L"arcane_start", g_set.gameFogCaveStart.load()),
+                 IniF(L"fog", L"arcane_end", g_set.gameFogCaveEnd.load()), "arcane_start / arcane_end");
+    }
     g_set.arcaneFogStrength.store(std::clamp(IniF(L"fog", L"arcane_strength", g_set.fogCaveStrength.load()), 0.0f, 1.0f));
     g_set.arcaneFogCurve.store(std::clamp(IniF(L"fog", L"arcane_curve", g_set.fogCurve.load()), 0.3f, 4.0f));
     g_set.arcaneFogIntoSky.store(IniB(L"fog", L"arcane_into_sky", true));
     g_set.fogBlur.store(std::clamp(IniF(L"fog", L"blur", 3.0f), 0.0f, 12.0f));
     g_set.fogLight.store(IniB(L"fog", L"light", false));
+    {   // [render] distance_blur: its distances in metres (shared/draw_distance.h: 4 world units a metre), the full blur past the start
+        g_set.distanceBlur.store(IniB(L"render", L"distance_blur", false));
+        const float startM = std::clamp(IniF(L"render", L"distance_blur_start_m", 15.0f), 1.0f, 2000.0f);
+        const float fullM = std::clamp(IniF(L"render", L"distance_blur_full_m", 50.0f), startM * 1.05f, 4000.0f);
+        g_set.distanceBlurStart.store(drawdistance::ToUnits(startM));
+        g_set.distanceBlurFull.store(drawdistance::ToUnits(fullM));
+        g_set.distanceBlurStrength.store(std::clamp(IniF(L"render", L"distance_blur_strength", 0.4f), 0.0f, 1.0f));
+    }
     g_set.gameFog.store(IniB(L"fog", L"game_fog", false));   // [fog] game_fog: the game's own fog with our numbers (VR F4)
     g_set.fogHeight.store(IniB(L"fog", L"game_fog_height", false));
     g_set.fogTop.store(std::clamp(IniF(L"fog", L"game_fog_top", 60.0f), -100.0f, 2000.0f));
@@ -492,6 +538,7 @@ void LoadSettings() {
     g_set.fogFxDepth.store(IniB(L"fog", L"game_fog_fx_depth", false));
     g_set.fogOurCurve.store(IniB(L"fog", L"game_fog_our_curve", false));
     g_set.fogMatch.store(IniB(L"fog", L"game_fog_match", false));
+    g_set.fogMeasured.store(IniB(L"fog", L"fog_colour_measured", false));
     g_set.fogIntoSky.store(IniB(L"fog", L"fog_into_sky", false));
     g_set.fogKeepsColour.store(IniB(L"fog", L"fog_keeps_colour", false));
     g_set.gameDrawnFlat.store(IniB(L"render", L"game_drawn_flat", false));
@@ -609,7 +656,11 @@ void LoadSettings() {
     g_set.summitBackdropHidden.store(IniB(L"sky", L"summit_backdrop_hidden", true));
     g_set.weatherFirstPerson.store(weatherplace::ClampMode((int)IniF(L"sky", L"weather_first_person", 0.0f)));
     g_set.domeFogHorizon.store(IniB(L"sky", L"dome_fog_horizon", true));
+    g_set.domeFogBaked.store(IniB(L"sky", L"dome_fog_baked", true));
+    g_set.domeFogBakedStrength.store(std::clamp(IniF(L"sky", L"dome_fog_baked_strength", 1.0f), 0.0f, 1.0f));
     g_set.domeTrueColour.store(IniB(L"sky", L"dome_true_colour", false));
+    g_set.domeGainOnce.store(IniB(L"sky", L"dome_gain_once", false));
+    g_set.effectWorld.store(IniB(L"render", L"effect_world", true));
     g_set.domeInGameColour.store(IniB(L"sky", L"dome_in_game_colour", true));
     g_set.domePastFar.store(IniB(L"sky", L"dome_past_far", false));
     g_set.gameSkyTest.store(std::clamp((int)IniF(L"debug", L"game_sky_test", 0.0f), 0, 4));   // another model for the dome (draws only)
@@ -635,6 +686,12 @@ void LoadSettings() {
     {   // [sky] bright_<period>: Serg's own, one a period of the game's day (the game's order, env::Now)
         static const wchar_t* const kKeys[6] = {L"bright_dawn", L"bright_day_start", L"bright_day", L"bright_dusk", L"bright_night_start", L"bright_night"};
         for (int i = 0; i < 6; ++i) g_set.periodBright[i].store(std::clamp(IniF(L"sky", kKeys[i], 1.0f), 0.0f, 3.0f));
+    }
+    {   // the baked skies (vr/sky/three_skies.h: day, night, dawn / dusk; act 4 one), or the parked tinting ([sky] dome_tint)
+        g_set.domeTint.store(IniB(L"sky", L"dome_tint", false));
+        g_set.skyCrossfade.store(IniB(L"sky", L"sky_crossfade", false));
+        static const wchar_t* const kKeys[4] = {L"three_bright_day", L"three_bright_night", L"three_bright_dawn_dusk", L"three_bright_act4"};
+        for (int i = 0; i < 4; ++i) g_set.threeBright[i].store(std::clamp(IniF(L"sky", kKeys[i], 1.0f), 0.0f, 3.0f));
     }
     g_set.skyAlways.store(IniB(L"sky", L"always", false));
     g_set.arcaneSky.store(IniB(L"sky", L"arcane_sky", true));
@@ -787,7 +844,11 @@ void LoadSettings() {
     g_set.legsRearCycle.store(IniB(L"body", L"legs_rear_cycle", false));
     g_set.legsFrontConeDeg.store(std::clamp(IniF(L"body", L"legs_front_cone_deg", 90.0f), 0.0f, 360.0f));
     g_set.legsRearConeDeg.store(std::clamp(IniF(L"body", L"legs_rear_cone_deg", 90.0f), 0.0f, 360.0f));
+    g_set.legsSideGame.store(IniB(L"body", L"legs_side_game", true));
+    g_set.legsTurn.store(IniB(L"body", L"legs_turn", true));
     g_set.legsSideRagdoll.store(IniB(L"body", L"legs_side_ragdoll", false));
+    g_set.legsSideGait.store(IniB(L"body", L"legs_side_gait", false));
+    g_set.legsSideCross.store(IniB(L"body", L"legs_side_cross", true));
     headshadow::WantForPose(g_set.legsRear.load());   // ... the hero drawn from a copy of the pose as we finished it (the skinning met the game's own legs)
     g_set.underCamera.store(IniB(L"body", L"under_camera", true));
     g_set.leapCameraUp.store(IniB(L"body", L"leap_camera_up", false));
@@ -1368,7 +1429,7 @@ void LoadSettings() {
     g_set.weightMonsterRagdoll.store(IniB(L"weight", L"monster_ragdoll", false));
     meleetouch::SetSwayWanted(g_set.weightMonsterBodies.load() && g_set.weightMonsterRagdoll.load());
     meleetouch::SetPoseWanted(g_set.weightMonsterBodies.load() && g_set.weightMonsterRagdoll.load() && IniB(L"weight", L"monster_ragdoll_pose", false));   // [weight] monster_ragdoll_pose
-    meleetouch::SetOwnBodyWanted(g_set.weightMonsterBodies.load() && IniB(L"weight", L"own_body", false));   // [weight] own_body: the weapon stops on the hero's own body
+    meleetouch::SetOwnBodyWanted(IniB(L"weight", L"own_body", false));   // [weight] own_body: the weapon stops on the hero's own body (World contact; monster_bodies not needed)
     {   // [weight] knock_down: a blow, a running hit, a sweep at the legs or a shove knocks a humanoid off its feet - as drawn (its own box; the bodies of
         // monster_bodies, the town's people with npc_bodies; the knock-down library, the weight library's D2rf* exports)
         knockdown::Settings ks;
@@ -1379,13 +1440,17 @@ void LoadSettings() {
         ks.staggerPct = std::clamp(IniF(L"weight", L"knock_down_stagger_pct", 45.0f), 0.0f, 99.0f);
         ks.lieMs = std::clamp(IniF(L"weight", L"knock_down_lie_ms", 1500.0f), 0.0f, 10000.0f);
         ks.massScale = std::clamp(IniF(L"weight", L"monster_weight_pct", 100.0f), 10.0f, 400.0f) * 0.01f;
+        ks.strength = g_set.weightStrength.load() * 0.01f;
+        ks.balance = IniB(L"weight", L"grab_balance", true);   // [weight] grab_balance: a pulled humanoid steps to keep its feet (on for the test; off: it falls, as 0.192.34)   // ([weight] strength: the hands holding a body, as on the weapon and the props)
         knockdown::Configure(ks);
         if (ks.throwOn) skel::SetHeldWanted(true);   // (what the monsters hold made capsules: a hand takes a monster by its spear - Serg: «я не могу схватить монстра за оружие»)
     }
     headshadow::WantForDoll((g_set.weightMonsterBodies.load() && g_set.weightMonsterRagdoll.load() && IniB(L"weight", L"monster_ragdoll_pose", false)) ||
                             knockdown::Wanted());   // ... through the skinning composite ([weight] knock_down draws its bodies the same way)
     headshadow::SetAttachWriter(knockdown::Wanted() ? &knockdown::OnXform : nullptr);   // [weight] knock_down: a knocked-down body's weapon stays in its hand
+    headshadow::SetBeforeDraw(knockdown::Wanted() ? &knockdown::BeforeDraw : nullptr);  // ... its bounds grown again just before each draw collect of it
     skel::SetRagdollAll(g_set.weightMonsterBodies.load() && g_set.weightMonsterRagdoll.load() && IniB(L"weight", L"monster_ragdoll_all", false));   // [weight] monster_ragdoll_all
+    bonecap::Set(std::lround(IniF(L"weight", L"skeleton_bones_max", static_cast<float>(bonecap::kDefault))));   // [weight] skeleton_bones_max (vr/bone_cap.h; live: the rigs read again)
     meleetouch::SetSwayTuning(std::clamp(IniF(L"weight", L"monster_weight_pct", 100.0f), 10.0f, 400.0f), std::clamp(IniF(L"weight", L"monster_push_pct", 100.0f), 0.0f, 400.0f));
     g_set.weightGrabBodies.store(IniB(L"weight", L"grab_bodies", false));   // [weight] grab_bodies (its own box; the bodies come from hit by touch's scan)
     g_set.weightGrabReachCm.store(std::clamp(IniF(L"weight", L"grab_reach_cm", 8.0f), 0.0f, 30.0f));

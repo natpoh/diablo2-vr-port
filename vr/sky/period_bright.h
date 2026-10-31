@@ -23,9 +23,10 @@ struct State {
     float farthest = 0.0f;  // the light in it farthest from where the next one begins
 };
 
-// The multiplier now: `period` 0..5 as the game has it, `light` its light, `bright` the six sliders. A period out of range: 1.
-inline float Mul(State& s, int period, float light, const float bright[kPeriods]) {
-    if (period < 0 || period >= kPeriods) return 1.0f;
+// How far this period has gone toward the next one now, 0 (its own) .. 1 (the next one's): `period` 0..5 as the game has it, `light` its
+// light (Mul's ease; the baked skies' sky_crossfade eases its pictures by the same). A period out of range: 0.
+inline float Ease(State& s, int period, float light) {
+    if (period < 0 || period >= kPeriods) return 0.0f;
     if (period != s.period) {
         if (s.period >= 0) s.start[period] = light;   // (a turn seen: where this period begins; the first one seen may be mid-period)
         s.period = period;
@@ -39,16 +40,23 @@ inline float Mul(State& s, int period, float light, const float bright[kPeriods]
         const bool beyond = period == 2 ? light > to : light < to;
         const bool cameFromBeyond = period == 2 ? s.farthest > to : s.farthest < to;
         if (!beyond) {
-            if (cameFromBeyond) return bright[next];   // (back at where the next one begins: its own until it does)
+            if (cameFromBeyond) return 1.0f;   // (back at where the next one begins: its own until it does)
             s.farthest = light;
-            return bright[period];
+            return 0.0f;
         }
         if (!cameFromBeyond) s.farthest = light;   // (just come round to that side)
     }
     if (std::fabs(light - to) > std::fabs(s.farthest - to)) s.farthest = light;
     const float span = s.farthest - to;
     float t = std::fabs(span) > 0.5f ? (s.farthest - light) / span : 1.0f;
-    t = t < 0.0f ? 0.0f : t > 1.0f ? 1.0f : t;
+    return t < 0.0f ? 0.0f : t > 1.0f ? 1.0f : t;
+}
+
+// The multiplier now: `period` 0..5 as the game has it, `light` its light, `bright` the six sliders. A period out of range: 1.
+inline float Mul(State& s, int period, float light, const float bright[kPeriods]) {
+    if (period < 0 || period >= kPeriods) return 1.0f;
+    const float t = Ease(s, period, light);
+    const int next = (period + 1) % kPeriods;
     return bright[period] + (bright[next] - bright[period]) * t;
 }
 

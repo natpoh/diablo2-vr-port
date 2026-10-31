@@ -30,8 +30,18 @@ group.in_the_headset.help = 游戏如何进入你的头显：3D 选项（默认�
 @stereo3d.source.choice1 = FlatVR 立体
 @stereo3d.source.choice2 = FlatVR 3D 深度
 @stereo3d.source.choice3 = 原生 OpenXR - 双眼交替
+mode.flatvr_autostart.label = FlatVR：自动启动 BodyWalk 和 FlatVR
+mode.flatvr_autostart.tip = 当“头显中的3D”从原生 OpenXR 切换到某个 FlatVR 选项时，会启动 BodyWalk（如果它没有在运行；使用找到的最新版本，与“启动 BodyWalk”按钮相同），并在 BodyWalk 的 Game Link 就绪后（一分钟内）请求一次 FlatVR 的启动——你不必自己启动它们。无论此项是否开启，START 和启动器都会像以前一样在 FlatVR 中启动它们。绝不会启动第二个 BodyWalk。关闭：切换时不启动任何东西，与以前相同。
+mode.native_close_flatvr.label = 原生 OpenXR：自动停止 FlatVR（BodyWalk 保持运行）
+mode.native_close_flatvr.tip = 原生 OpenXR 不需要 FlatVR，而 FlatVR 会占用游戏所需的头显。当“头显中的3D”切换到原生 OpenXR 时，以及用它启动游戏时（START、启动器），会通过 BodyWalk 的 Game Link 停止 FlatVR；单独运行的 FlatVR（FlatVR.exe）会像它自己的关闭按钮那样被关闭（只有当它的窗口不再响应时才强制结束）。BodyWalk 本身继续运行——它的操控、手势和行走照常进行。没有 Game Link 的 BodyWalk（BodyWalk Lite）无法被告知停止 FlatVR：请自己在 BodyWalk 中停止它。设置程序的日志会记录所做的操作（d2r_vr_settings.log）。关闭：不停止任何东西，与以前相同。
 stereo.headset_rate.label = 头显刷新率
 stereo.headset_rate.tip = 设置游戏的帧率上限（在游戏自己的选项 Settings.json 中）- 下方一行会说明写入了什么以及原因：每帧一幅画面（单眼，由深度生成 3D）以及一个游戏帧生成双眼（一个通道，两幅画面：FlatVR 立体）时，写入刷新率本身；双眼交替（每个游戏帧一只眼睛，每只眼睛各按该刷新率）时写入两倍刷新率；原生 OpenXR 则不设上限（由头显自己控制游戏节奏）。画面数超过头显所显示的会使画面抖动。游戏在启动时读取它：请在游戏关闭时设置（游戏退出时会写入自己的选项），或设置后重启游戏。仅限 VR：在平面模式（游玩方式）下，游戏按你在它自己选项中设置的帧率上限运行 - 你的设置会在刷新率写入它自己的值之前保存，并在你切换到平面模式或以平面模式启动游戏时恢复。
+@run.bodywalk.label = 启动 BodyWalk
+@run.bodywalk.tip = 启动 BodyWalk - 即 D2R VR Setup 放入游戏文件夹的那个，或你自己安装的那个。
+@run.flatvr_start.label = 启动 FlatVR
+@run.flatvr_start.tip = 在 BodyWalk 中启动 FlatVR - 画面进入头显。与 BodyWalk 的 FlatVR 标签页上的 START FLATVR 相同。
+@run.flatvr_stop.label = 停止 FlatVR
+@run.flatvr_stop.tip = 在 BodyWalk 中停止 FlatVR。与 BodyWalk 的 FlatVR 标签页上的 STOP FLATVR 相同。
 @render.vr_px.label = 分辨率（VR 渲染尺寸）
 @render.vr_headset.label = 使用头显推荐的尺寸
 openxr.frame_generation.label = 帧生成（实验性；需重启游戏）
@@ -98,7 +108,7 @@ group.the_game_and_reshade.help = 检查并安装模组所需的组件：D2RLoad
 @status.reshade_note.label = 重要
 @status.arcane_sky.label = 秘法庇护所天空：尚未生成
 @status.knock_props.label = 可击飞的物件：关（[weight] knock_props，武器重量）
-# @status.world_contact.label = World contact walls: off ([weight] world_contact, Weapon Weight)
+@status.world_contact.label = 世界接触墙体：关闭（[weight] world_contact，武器重量）
 @status.kurast_boat.label = 库拉斯特码头独木舟：尚未检查
 @run.arcane_make.label = 立即生成秘法庇护所天空
 @run.arcane_make.tip = 从你游戏自己的文件中读取星层和云层（只读），生成模组绘制秘法庇护所天空所用的图片（D2R_Arcane，位于 ReShade 的 reshade-shaders\Textures：模组用的是 mods\D2R-VR\reshade），并从 mods\D2R-VR\D2R-VR.mpq 中该关卡的文件里取出游戏的平面星空卡片（游戏自己的文件保持不变）。本程序在打开时会自动完成这些；游戏更新或某张图片被删除后，请点击此处。已经正确的内容不会重写。游戏可以正在运行：它会在 2 秒内找到这些图片。
@@ -140,35 +150,34 @@ hud.headset_language.tip = 模组在头显中绘制的文字 - 技能面板、�
 @run.collect_logs.label = 收集日志以获取支持
 @run.collect_logs.tip = 在你的桌面生成一个压缩包，包含我们查找问题所需的内容：模组、D2RLoader、ReShade 和 FlatVR 的日志、设置、版本、显卡和 Windows。游戏运行时，它会先记录 10 秒钟的帧绘制情况 - 请继续游玩并转动头部。不会向任何地方发送任何内容：请把压缩包发布到我们的 Discord（#diablo-2-vr）。
 @status.collect.label = 收集日志：在桌面生成一个压缩包，可发布到我们的 Discord
-# headset_shot.on.label = Headset screenshot
-# headset_shot.on.tip = For a headset picture that is doubled, in the wrong eye, black or flat: saves exactly what the game hands to the headset - both eyes' pictures and the panels, with their sizes, angles and the eye distance - into the logs folder. Ticked: the button below and the key take one while the game runs; Collect logs packs the newest. Unticked: nothing, as before.
-# headset_shot.take.label = Screenshot of the headset picture
-# headset_shot.take.tip = With the game running in VR: the next frame that goes to the headset is saved - headset_shot_<time>_left.png, _right.png, _sbs.png (both side by side) and a .txt with the numbers, in the logs folder. Put the headset on first, so the picture is the one you see. Costs no stutter.
-# headset_shot.key.label = Headset screenshot key in the game
-# headset_shot.key.tip = A key that takes a headset screenshot in the game (while the game window has the keyboard). None: only the button above.
-# headset_shot.key.choice0 = None
-# headset_shot.key.choice1 = Scroll Lock
-# headset_shot.key.choice2 = Pause
-# @status.hshot.label = Headset screenshot: put the headset on, then press the button
-# headset_shot.video.label = Headset video (10 s)
-# headset_shot.video.tip = The same as the screenshot, as 10 seconds of video: both eyes side by side at half size, about 30 frames a second, as they go to the headset - for a picture that flickers, swims, doubles now and then or goes black. Ticked: the button below and the key record one while the game runs; Collect logs packs the newest. Unticked: nothing, as before.
-# headset_shot.video_take.label = Record 10 s video of the headset picture
-# headset_shot.video_take.tip = With the game running in VR: the next 10 seconds that go to the headset are recorded - headset_clip_<time>.mp4 and a .csv (each frame: stereo pair or flat picture, which eyes, its time) in the logs folder. Put the headset on first and play as when the problem shows. The log says what recording cost each frame.
-# headset_shot.video_key.label = Headset video key in the game
-# headset_shot.video_key.tip = A key that records 10 s of the headset picture in the game (while the game window has the keyboard). None: only the button above.
-# @status.hclip.label = Headset video: put the headset on, then press the button
-# headset_shot.grid.label = Calibration grid in the headset
-# headset_shot.grid.tip = Native OpenXR, F2 / F4: a grid over each eye's picture as it goes to the headset - a line every 10 degrees, numbered, a red cross where the eye looks straight ahead, a magenta ring at the picture's own middle, a big L or R. With the eyes right, the two grids become one and stay still on the world; seen double, tilted or swimming, a screenshot or video with it shows which eye is off. Live. Only in the headset (the window on the monitor has none).
+headset_shot.on.label = 头显截图
+headset_shot.on.tip = 用于头显画面出现重影、显示在错误的眼睛中、黑屏或变平时：把游戏交给头显的内容原样保存——双眼的画面和各面板，连同它们的尺寸、角度和眼距——保存到日志文件夹。勾选：游戏运行时，下面的按钮和按键各截取一次；“收集日志”会打包最新的一次。不勾选：无，与以前相同。
+headset_shot.take.label = 截取头显画面
+headset_shot.take.tip = 游戏在 VR 中运行时：保存下一帧送往头显的画面——headset_shot_<time>_left.png、_right.png、_sbs.png（双眼并排）以及一个记录数值的 .txt，保存在日志文件夹中。请先戴上头显，这样画面就是你看到的那一个。不会造成卡顿。
+headset_shot.key.label = 游戏中的头显截图按键
+headset_shot.key.tip = 在游戏中截取头显截图的按键（当游戏窗口拥有键盘焦点时）。无：只用上面的按钮。
+headset_shot.key.choice0 = 无
+headset_shot.key.choice1 = Scroll Lock
+headset_shot.key.choice2 = Pause
+@status.hshot.label = 头显截图：先戴上头显，再按按钮
+headset_shot.video.label = 头显视频（10 s）
+headset_shot.video.tip = 与截图相同，但为 10 秒的视频：双眼并排、一半尺寸，每秒约 30 帧，与送往头显时一致——用于画面闪烁、游动、时而重影或变黑。勾选：游戏运行时，下面的按钮和按键各录制一段；“收集日志”会打包最新的一段。不勾选：无，与以前相同。
+headset_shot.video_take.label = 录制 10 s 头显画面视频
+headset_shot.video_take.tip = 游戏在 VR 中运行时：录制接下来 10 秒送往头显的画面——headset_clip_<time>.mp4 和一个 .csv（每帧：立体对还是平面画面、哪些眼睛、时间），保存在日志文件夹中。请先戴上头显，并像问题出现时那样游玩。日志会记录录制给每帧带来的开销。
+headset_shot.video_key.label = 游戏中的头显视频按键
+headset_shot.video_key.tip = 在游戏中录制 10 s 头显画面的按键（当游戏窗口拥有键盘焦点时）。无：只用上面的按钮。
+@status.hclip.label = 头显视频：先戴上头显，再按按钮
+headset_shot.grid.label = 头显中的校准网格
+headset_shot.grid.tip = 原生 OpenXR，F2 / F4：在每只眼睛送往头显的画面上叠加一个网格——每 10 度一条线并标有数字，眼睛正前方处有一个红色十字，画面自身中心处有一个品红色圆环，还有大大的 L 或 R。双眼正确时，两个网格合而为一，并静止在世界上；若看到重影、倾斜或游动，带网格的截图或视频会显示哪只眼睛有偏差。即时生效。只在头显中显示（显示器上的窗口没有）。
+support.headset_report.label = 随日志附带头显报告
+support.headset_report.tip = 用于头显画面重影、斗鸡眼或被拉伸，或双手出现在腰部时：D2R VR Headset Report 会询问你头显的 OpenXR 运行时提供了什么——双眼的角度和距离、空间、手柄——并记录下来。勾选：出现“生成头显报告”，并且“收集日志”会先生成一份（游戏关闭且戴着头显时：约 20 s）。不会更改电脑上的任何东西。
+@run.headset_report.label = 生成头显报告
+@run.headset_report.tip = 关闭游戏，戴上头显并把两个手柄拿在身前，然后点击。约 20 s；报告会在记事本中打开，并放入“收集日志”的压缩包。游戏运行时，它只从注册表列出 OpenXR 运行时和层。
+@status.hreport.label = 头显报告：关闭游戏，戴上头显，点击按钮
 update.check.label = 打开本程序时检查更新
 update.check.tip = 向 bodywalkvr.com 询问模组的最新版本。不会下载任何内容。
 update.develop.label = 同时包含测试版（develop 频道）
 update.develop.tip = 同时提供在向所有人发布之前的测试版。
-@run.bodywalk.label = 启动 BodyWalk
-@run.bodywalk.tip = 启动 BodyWalk - 即 D2R VR Setup 放入游戏文件夹的那个，或你自己安装的那个。
-@run.flatvr_start.label = 启动 FlatVR
-@run.flatvr_start.tip = 在 BodyWalk 中启动 FlatVR - 画面进入头显。与 BodyWalk 的 FlatVR 标签页上的 START FLATVR 相同。
-@run.flatvr_stop.label = 停止 FlatVR
-@run.flatvr_stop.tip = 在 BodyWalk 中停止 FlatVR。与 BodyWalk 的 FlatVR 标签页上的 STOP FLATVR 相同。
 
 # --- Monitor (screen recording) ---
 group.monitor_screen_recording = 显示器（录屏）
@@ -186,6 +195,12 @@ render.monitor_eye_drawn_only.tip = 仅限“原生 OpenXR - 双眼交替”：�
 # ===== Tab: Performance =====
 tab.performance = 性能
 
+# --- Compare with the bare game ---
+group.compare_with_the_bare_game = 与原版游戏对比
+group.compare_with_the_bare_game.help = 一个开关，一次性停止 D2R VR 所有占用帧时间且游戏可以不需要的东西，无需重启——用于在同一地点与原版游戏对比帧率。把画面送进头显的部分保留。
+render.bench_bare.label = 关闭我们的所有功能（用于对比帧率）
+render.bench_bare.tip = 勾选：我们的效果（天空、雾和顶部、手腕徽章、标签、工具栏和幻影）、使用我们数值的游戏雾和天空、穹顶、远景模糊、怪物血条、物件、世界接触、布娃娃和躯体、双腿，以及所有调试开关会一次性停止——游戏显示它自己的天空和雾。头显、头部和双手以及操控保留。房间环和模型距离保持启动时的设置（它们需要重启）。日志会记录停止了什么，它每 10 s 的帧数行照常输出。即时生效。不勾选：一切恢复为设定值。
+
 # --- Processor ---
 group.processor = 处理器
 group.processor.help = 适用于带 3D V-Cache 的 Ryzen 处理器（X3D）：游戏运行在大缓存核心上，其绘制线程获得更高的优先级。其他处理器不受影响。
@@ -202,19 +217,20 @@ group.quality.help = 游戏绘制多少内容、画面有多好，与运行速�
 @preset.preset.choice2 = 低
 @preset.preset.choice4 = 高
 @preset.preset.choice5 = 自定义
-# English changed: No ReShade (restart the game)
-render.no_reshade.label = 无 ReShade（原生 OpenXR - 仅限双眼交替；需重启游戏）
-# English changed: The game runs without ReShade - D2R VR does not load ReShade64.dll at all and hooks the game's graphics itself. The flat game (a monitor): everything D2R VR draws there - the sky, the fog, the cave ceiling, the crosshair - comes from D2R VR itself with the box below; gone is only ReShade's own: its overlay (the Home key), its screenshots and any effect of your own in its presets. VR: only for "3D in the headset: Native OpenXR - eyes by turns" (Home): one eye drawn a frame, the other made on the graphics card with the game's depth. The sky, the fog and the cave ceiling come back drawn by D2R VR itself (the box below). Off with it: the overlays kept apart from the picture the second eye is made from (labels laid back, the wrist orbs - drawn into the picture), the lights' fix for the square window, and the menus as a panel (they show as the flat picture). On a GTX 1050 Ti the game went from about 44 to 53-60 frames a second without any effect. Read when the game starts: restart it after a change. With your own ReShade as dxgi.dll beside the game it does nothing (the game loads that one itself). Off (the default): ReShade as before.
-render.no_reshade.tip = 适用于配置较弱的 PC：游戏不用 ReShade 运行 - D2R VR 完全不加载 ReShade64.dll，而是自己挂接游戏的图形。仅适用于“头显中的3D：原生 OpenXR - 双眼交替”（主页）：每帧绘制一只眼，另一只眼由显卡借助游戏的深度生成。天空、雾和洞穴顶部由 D2R VR 自己绘制后恢复（见下方的框）。关闭它的代价：叠加层与第二只眼所源自的画面分开绘制（标签放平，手腕光球 - 绘制进画面中）、修正方形窗口下光照的补丁，以及菜单改为面板（它们显示为平面画面）。在 GTX 1050 Ti 上，不带任何特效时游戏从约 44 提高到 53-60 帧每秒。游戏启动时读取：更改后请重启游戏。如果游戏旁边有你自己的 ReShade（dxgi.dll），它不起作用（游戏会自己加载那个）。关闭（默认）：ReShade 与以前相同。
+render.no_reshade.label = 不使用 ReShade（需重启游戏）
+render.no_reshade.tip = 游戏不使用 ReShade 运行——D2R VR 完全不加载 ReShade64.dll，而是自己挂钩游戏的图形。平面游戏（显示器）：D2R VR 在其中绘制的一切——天空、雾、洞穴顶部、准星——都由 D2R VR 自己通过下面的选项框绘制；失去的只有 ReShade 自己的东西：它的覆盖界面（Home 键）、它的截图，以及你在它预设中的任何自有效果。VR：只适用于“头显中的3D：原生 OpenXR - 双眼交替”（Home）：每帧绘制一只眼睛，另一只由显卡根据游戏的深度生成。天空、雾和洞穴顶部重新由 D2R VR 自己绘制（下面的选项框）。随之关闭的有：与生成第二只眼睛的画面分开的覆盖层（向后放置的标签、手腕徽章——会被绘制进画面）、灯光针对方形窗口的修正，以及作为面板的菜单（它们显示为平面画面）。在 GTX 1050 Ti 上，不开任何效果时，游戏从每秒约 44 帧提高到 53-60 帧。FlatVR 也可配合使用，需勾选下面的“FlatVR 的画面不经 ReShade”（其立体对分两遍绘制：一遍两幅画面需要 ReShade）。在游戏启动时读取：更改后请重启游戏。如果游戏旁边有你自己作为 dxgi.dll 的 ReShade，此项无效（游戏会自己加载那个）。关闭（默认）：ReShade 与以前相同。
+render.flatvr_feed.label = FlatVR 的画面不经 ReShade（由 D2R VR 自己交付）
+render.flatvr_feed.tip = 在“不使用 ReShade”下 FlatVR 没有画面：它从 ReShade 的附加组件（FlatVR_DepthProvider）获取游戏的画面和深度，BodyWalk 的 FlatVR 会显示 "No picture from the ReShade addon"。开启：D2R VR 自己把同样的内容交给 FlatVR，方式与该附加组件相同——游戏窗口的每一幅画面（立体对为双眼并排，只交付完整的对）、用于 FlatVR 深度 3D 的场景深度，以及每只眼睛对应的视图。仅在 FlatVR 运行且原生 OpenXR 未占用头显时。即时生效。关闭：不交付任何东西，与以前相同。
 render.native_effects.label = 无 ReShade 的天空与雾（由 D2R VR 自己绘制；需重启游戏）
 render.native_effects.tip = 开启“无 ReShade”时：D2R VR 自己绘制它的特效 - 室外的天空、远处的雾、洞穴顶部，以及 ReShade 原本画在画面中的其余内容（本标签页以及天空 / 顶部标签页上的开关仍决定绘制哪些）。它的着色器在游戏启动时以及每次画面尺寸变化时在后台构建 - 第一次需要一会儿（几秒；在此之前画面没有天空），之后从 d2r_vr.ini 旁边的缓存中立即载入。它占用显卡多少，每 10 s 写入日志。关闭：完全没有特效 - 最轻。游戏启动时读取。
+render.effect_world.label = 绘制效果的天空和雾（即时）
+render.effect_world.tip = 不勾选时，完全不绘制效果自己的天空、雾和洞穴顶部——也不绘制对游戏雾和天空的修正、它们的颜色测量和远景模糊——而手腕徽章、标签、工具栏、幻影和界面保持不变。用于查看天空和雾的开销（日志中 "native effects, 10 s" 一行给出每一遍的耗时）。游戏自己的天空和雾仍是游戏的。即时生效。勾选：与以前相同。
 render.rings.label = 英雄周围的房间环
 render.rings.tip = 英雄周围额外的房间环。有雾的情况下，4-6 就够了。
 render.model_radius.label = 模型可见半径
 render.model_radius.tip = 游戏自带的是 150。
 @skyfog.way.label = 天空与雾由谁绘制
-# English changed: Who draws the sky and the distance fog, both at once. The game (new): its own fog pass with our numbers and a sky dome of ours the game draws itself - no frame time of ours (VR F4; without ReShade for its fog's options below). Our effect (old): the fog shader's sky and fog (ReShade's, or D2R VR's own without ReShade). Writes [sky] game_sky and [fog] game_fog together. Live - the game's sky dome's files are made by this program at its start: the first time after an install or an update, restart a game already running.
-@skyfog.way.tip = 由谁同时绘制天空和远景雾。游戏（新）：游戏自己的雾通道，使用我们的数值，以及一个由游戏自己绘制的我们的天穹 - 不占用我们的帧时间（VR F4；下方雾的选项需要无 ReShade）。我们的效果（旧）：雾着色器绘制的天空和雾（ReShade 的，或无 ReShade 时 D2R VR 自己的）。同时写入 [sky] game_sky 和 [fog] game_fog。即时生效。
+@skyfog.way.tip = 由谁绘制天空和远处的雾，两者一起决定。由游戏绘制（新）：游戏自己的雾渲染遍使用我们的数值，以及由游戏自己绘制的我们的天空穹顶——不占用我们的帧时间（VR F4；其雾的下列选项需不使用 ReShade）。我们的效果（旧）：雾着色器的天空和雾（ReShade 的，或不使用 ReShade 时 D2R VR 自己的）。同时写入 [sky] game_sky 和 [fog] game_fog。即时生效——游戏天空穹顶的文件由本程序在启动时生成：安装或更新后的第一次，请重启已在运行的游戏。
 @skyfog.way.choice0 = 由游戏绘制（新）
 @skyfog.way.choice1 = 我们的效果（旧）
 fog.enabled.label = 远景雾
@@ -224,7 +240,7 @@ fog.light.tip = 我们效果的雾走捷径：每像素只读一次深度，按�
 fog.start.label = 雾起始距离
 fog.start.tip = 雾开始的位置。世界单位（英雄约高 7.5）。
 fog.end.label = 全雾距离
-fog.end.tip = 雾完全浓密的位置。世界单位（英雄约高 7.5）。近处的雾会遮住较短渲染距离所漏掉的部分。
+fog.end.tip = 雾完全覆盖的位置。世界单位（英雄约高 7.5）。近处的雾可以遮住较短绘制距离漏掉的东西。使用游戏的雾时，若低于雾起始距离，两者会对调（我们效果的雾：刚过雾起始距离即为全雾）。
 fog.caves_start.label = 洞穴中的雾起始距离
 fog.caves_start.tip = 洞穴、地牢和墓穴中雾开始的位置。世界单位（英雄约高 7.5）。
 fog.caves_end.label = 洞穴中的全雾距离
@@ -233,10 +249,8 @@ sky.enabled.label = 室外天空
 sky.enabled.tip = 室外黑色虚空上方的手绘天空。由谁绘制见上方的选项：我们的效果，或游戏的天穹。
 @reshade.generic_depth.label = ReShade 深度图（Generic Depth）
 @reshade.generic_depth.tip = ReShade 的 Generic Depth 附加组件每帧都会找到游戏的深度缓冲。关闭可节省 GPU 时间，但雾、天空、顶部和由深度生成的 3D 都需要它。游戏再次启动时生效。
-# English changed: Ceiling in caves and dungeons
-ceiling.enabled.label = 洞穴顶部（通过 ReShade）
-# English changed: A ceiling over the black void in caves and dungeons, first person only (the Ceiling tab: who draws it, each room's height).
-ceiling.enabled.tip = 地牢中黑色虚空上方的石质穹顶，仅限第一人称。
+ceiling.enabled.label = 洞穴和地下城的顶部
+ceiling.enabled.tip = 在洞穴和地下城的黑色虚空上方加一个顶部，仅第一人称（“顶部”选项卡：由谁绘制、每个房间的高度）。
 ceiling.game_ceiling.label = 由谁绘制顶部
 ceiling.game_ceiling.tip = 我们的效果：通过雾着色器绘制的拱顶 - ReShade 的，或无 ReShade 时 D2R VR 自己的。游戏：一块游戏自己的洞穴岩石板，用你的游戏文件制作，由游戏自己绘制和照明 - 它的火把和你的光照在上面，它的雾罩在上面，火焰和法术在它前面 - 每帧铺在你头顶，不占用我们的帧时间（测试：仅限 VR F4）。每个房间使用与为其所选图片相匹配的游戏自有石材：洞穴里是岩石，墓穴里是高大的石板，兵营、地下墓穴和大教堂里是平滑的石头，宫殿里是带纹饰的大理石；没有图片的房间使用与它自己地板相匹配的石材（第二幕的下水道、腐化的后宫、宫殿地窖）。下方其他顶部设置属于我们的效果；图块大小也决定岩石的尺寸。即时生效。
 ceiling.game_ceiling.choice0 = 我们的效果（ReShade / D2R VR 自己的）
@@ -255,13 +269,13 @@ group.what_the_slider_sets = 滑块设置的内容
 group.what_the_slider_sets.help = “绘制距离”滑块写入的每个数值，可手动设置。远景雾关闭时雾的数值变灰，游戏不绘制天空时（天空页：“天空与雾由谁绘制”）天空穹顶的数值变灰，洞穴穹顶关闭时它的数值变灰。
 render.big_radius.label = 大型物体：树木、房屋、墙壁绘制得更远（0 = 关）
 render.big_radius.tip = 树木、房屋和墙壁绘制得比模型可见半径更远 - 越大越远（其高度的 30 倍或宽度的一半），最远到这么多单位（300 - 1000；100 和 200 按 300 计）。石头、草和怪物保持模型可见半径。需要 3 个或更多房间环（游戏构建的房间之外没有可绘制的东西），并需要其外的全雾距离和天穹才能看见。在森林和城镇中会降低帧率。来自 D2R VR Unleashed（bearstonem）。仅影响画面。即时生效。0 = 关，与以前一样。
-sky.game_sky_radius.label = 游戏的天空：天穹半径（单位）
-sky.game_sky_radius.tip = 游戏的天穹放在你周围多远处，以游戏单位计（即时生效）。200：近处的地平线 - 天穹把远处的世界截成一个整齐的圆，游戏的雾覆盖其上。更远时，天空会从雾中露出来。每次更改时日志会记下正在使用的半径。
+sky.game_sky_radius_m.label = 游戏的天空：穹顶半径，m
+sky.game_sky_radius_m.tip = 游戏的天空穹顶铺在你周围多远处，单位为米（游戏单位 4 = 1 米；即时生效）。50 m：近处的地平线——穹顶在一个干净的圆处切掉远处的世界，游戏的雾覆盖在其上。更远时，天空会从雾中显露出来。每次更改时，日志会记录所用的半径。
 fog.enabled.tip#2 = 远景雾。由谁绘制见“天空”标签页的选项：我们的效果，或游戏自己。天空开启时，雾会与天空融合。
 sky.game_dome_caves.label = 洞穴中围绕你的黑色穹顶
 sky.game_dome_caves.tip = 在地下，游戏会在你头部周围、模型可见半径处绘制一个黑色穹顶：顶部边缘之外没有虚空，游戏的雾渐变为黑色的墙 - 火焰后面没有光晕。使用天穹自己的文件（由本程序在启动时生成）。VR F4。即时生效。
-sky.game_dome_caves_size.label = 洞穴穹顶：半径 x 模型可见半径
-sky.game_dome_caves_size.tip = 1：穹顶位于模型可见半径（[render] model_radius）处；0.5：其一半（把半径当作直径）。即时生效。
+sky.game_dome_caves_radius_m.label = 洞穴穹顶：半径，m
+sky.game_dome_caves_radius_m.tip = 在地下时，黑色穹顶铺在你周围多远处，单位为米（游戏单位 4 = 1 米；模型可见半径 210 为 52.5 m）。默认 200。“绘制距离”滑块保持它在模型可见半径中的份额。即时生效。
 
 # ===== Tab: Camera =====
 tab.camera = 摄像机
@@ -450,16 +464,24 @@ body.walk_back_reverse.label = ……用游戏自己的行走倒放
 body.walk_back_reverse.tip = 开启：他的骨盆和双腿完全按游戏在他行走时绘制的样子（保留他最近 2.5 秒的行走，站立时也保留），按相反顺序播放 - 脚跟在身后抬起，脚趾向后伸出落地，每个关节都是游戏自己的；躯干随这个骨盆移动（用“骨盆以上无游戏动画”可保持不动）。关闭：和 0.185 一样 - 每只脚的位置前后镜像，膝盖重新解算：脚在他身前抬得很高，脚趾朝上落在身后，看起来仍像双腿交叉。仅影响绘制的双腿。实时。
 body.doll_feet.label = 脚由人偶控制，而非游戏（测试）
 body.doll_feet.tip = 他的脚不再跟随游戏的行走动画：每只脚都踩在落下的位置，当身体前移一步或转身过多时才随身体迈步——向后走时脚向后迈，镜头绕着他转时脚会转身踏步，左脚始终是左脚。游戏只提供他的位置、朝向和移动速度；髋部和躯干仍由游戏控制。适用于游戏的行走、奔跑和站立；任何其他动作（攻击、跳跃、击退）期间腿部会暂时交还给游戏。适用于所有由我们摆姿势的视角；取代“向后走时腿向后迈步”。仅影响绘制的腿。即时生效。
-# body.legs_rear.label = Legs held still while the hero moves (test)
-# body.legs_rear.tip = While the hero walks or runs between the two cones below - sideways, diagonally - his hips and legs stand in the game's own standing pose and he glides: no step that could cross. Within the cone ahead the game's own walk and run; within the cone straight back the game's own forward walk and run played backwards. Standing, and turning on the spot, they are the game's own stance. Any other move (a blow, a cast, a hit) is the game's own. The trunk and the arms stay the game's. With the whole hero turned to your look. Instead of "Walking backwards, the legs step backwards". The drawn legs only. Live.
-# body.legs_front_cone_deg.label = ... the game's own legs within this cone ahead, ° (its whole width)
-# body.legs_front_cone_deg.tip = With the box above: going within this cone straight ahead (90: 45° either side of where the body faces) the legs are the game's own walk and run; outside it they are held. A short blend at the edge. 0: held whenever he goes; 360: never held. Live.
-# body.legs_rear_cone_deg.label = ... the game's walk played backwards within this cone straight back, ° (its whole width)
-# body.legs_rear_cone_deg.tip = With the box above: going within this cone straight back (90: 45° either side of straight back) the legs play the game's own forward walk backwards - running, its run - at the pace he goes, facing with the body, never crossed; between it and the cone ahead they are held. A short blend at each edge. 0: never played backwards. Live.
-# body.legs_side_ragdoll.label = ... between the cones the hips and legs the ragdoll's gait
-# body.legs_side_ragdoll.tip = With the box above: going between the two cones - sideways, diagonally - instead of standing held, his pelvis and both legs are the ragdoll library's own gait (d2r_vr_weight.dll): its walk, run and sprint cycles at the stride and cadence of his speed, the hips bobbing and swaying with them, a flight running, the feet's path turned the way he goes - never across the middle, never crossed. The trunk is the game's. A short blend into the cones. Without the library (or an older one) the legs are held, as before. Live.
-# body.legs_rear_cycle.label = ... instead: going backwards, the game's walk and run played backwards (test)
-# body.legs_rear_cycle.tip = With the box above: instead of holding the legs, going into the rear half - more than 90° from where the body faces - they play the game's own forward walk backwards, running its run, at the pace you go, facing with the body; ahead they are the game's own walk. Crossing 90° the step changes direction on the pose drawn. The drawn legs only. Live.
+body.legs_rear.label = 英雄移动时双腿保持不动（测试）
+body.legs_rear.tip = 当英雄在下面两个锥形范围之间行走或奔跑时——横向、斜向——他的臀部和双腿保持游戏自己的站立姿势并滑行：不会出现可能交叉的步伐。在前方锥形内为游戏自己的行走和奔跑；在正后方锥形内为游戏自己的向前行走和奔跑的倒放。站立和原地转身时为游戏自己的站姿。其他任何动作（攻击、施法、受击）都是游戏自己的。躯干和双臂保持游戏的。整个英雄转向你的视线方向。替代“向后走时，双腿向后迈步”。只影响绘制出的双腿。即时生效。
+body.legs_front_cone_deg.label = ……在前方此锥形内用游戏自己的双腿，°（整个宽度）
+body.legs_front_cone_deg.tip = 配合上面的选项框：在正前方此锥形内移动时（90：身体朝向两侧各 45°），双腿为游戏自己的行走和奔跑；在锥形外则保持不动。边缘处有短暂过渡。0：只要移动就保持不动；360：从不保持不动。即时生效。
+body.legs_rear_cone_deg.label = ……在正后方此锥形内倒放游戏的行走，°（整个宽度）
+body.legs_rear_cone_deg.tip = 配合上面的选项框：在正后方此锥形内移动时（90：正后方两侧各 45°），双腿倒放游戏自己的向前行走——奔跑时为它的奔跑——速度与他的移动一致，朝向与身体一致，从不交叉；在它与前方锥形之间保持不动。每个边缘都有短暂过渡。0：从不倒放。即时生效。
+body.legs_side_game.label = ……分两半：前方和侧向用游戏的行走，后方倒放
+body.legs_side_game.tip = 配合上面的选项框：在偏离身体朝向不超过 90° 移动时——前方、斜前方、正侧方——双腿为游戏自己的行走和奔跑，与 0.191 的绘制相同；超过 90° 时——斜后方、正后方——则倒放它的行走和奔跑。不保持不动，也没有我们的步伐。关闭：使用两个锥形（legs_front_cone_deg、legs_rear_cone_deg），在它们之间双腿保持不动，或按下面的选项框迈步。即时生效。
+body.legs_turn.label = ……臀部和双腿转向你前进的方向
+body.legs_turn.tip = 配合上面的选项框：臀部和双腿转向英雄前进的方向，而躯干和头部保持朝向你的视线——斜前方时双腿朝那个方向走，正侧方时双腿指向侧面并向前走，后退时双腿背朝前进方向向后走。与躯干的夹角从不超过 90°，扭转分布在脊柱上并平滑过渡；到 90° 时立刻切换。关闭：双腿朝向躯干。即时生效。
+body.legs_side_ragdoll.label = ……在两个锥形之间，臀部和双腿用布娃娃的步态
+body.legs_side_ragdoll.tip = 配合上面的选项框：在两个锥形之间移动时——横向、斜向——他的双脚不再保持不动，而是由布娃娃库（d2r_vr_weight.dll）跟着他迈步：每只脚落在哪里就踩在哪里（不打滑），并朝他前进的方向放下，他走得越快步伐越快，从而保持步幅窄小，领先的脚迈出，后面的脚跟上，从不交叉，骨盆保持水平。躯干是游戏的。F1 或 F3 中从不使用。没有该库（或库较旧）时，双腿保持不动，与以前相同。即时生效。
+body.legs_side_gait.label = ……改为：布娃娃的步态，小步（0.192.34）
+body.legs_side_gait.tip = 配合上面的选项框：不用踩实的步伐，双腿按布娃娃的步态周期以他的速度移动，骨盆保持水平——每只脚从原位向侧面迈一小步；双脚随他滑行。用于对比的选项。即时生效。
+body.legs_side_cross.label = ……踩实的步伐交替进行，会交叉（测试）
+body.legs_side_cross.tip = 使用踩实的步伐时：双脚交替，总有一只着地，前后错开一点互相越过——侧向奔跑。关闭：与 0.192.36 相同，后面的脚从不越过领先的脚，快速移动时双脚同时离地（跳跃）。即时生效。
+body.legs_rear_cycle.label = ……改为：后退时倒放游戏的行走和奔跑（测试）
+body.legs_rear_cycle.tip = 配合上面的选项框：不再保持双腿不动，进入后半区时——偏离身体朝向超过 90°——双腿倒放游戏自己的向前行走，奔跑时为它的奔跑，速度与你的移动一致，朝向与身体一致；前方为游戏自己的行走。越过 90° 时，步伐在已绘制的姿势上改变方向。只影响绘制出的双腿。即时生效。
 body.yaw.label = 身体转向修正，°
 body.yaw.tip = 加在英雄朝向上（手臂也一样），如果他侧着站：试试 90、-90 或 180。
 
@@ -703,6 +725,8 @@ screen.menu_distance_m.label = 打开面板（物品栏、交易……）时的�
 screen.menu_distance_m.tip = 游戏中打开物品栏、商人、储物箱或其他面板时，平面画面会平滑地移远这么多，关闭时再移回。使用方形窗口时，游戏界面与画面一样宽：更远时，它的左右边缘会进入视野。0 = 上方的距离。与 FlatVR 的“打开面板时的屏幕距离”（界面：F4 身体）是同一个设置。
 openxr.busy_guard.label = 头显繁忙时绝不卡死（原生 OpenXR）
 openxr.busy_guard.tip = 运行时会无限等待一个被另一个应用长期占用的头显：FlatVR 通过 BodyWalk Lite，再回到原生，游戏就一直卡着，直到用任务管理器结束。开启：运行时的两个阻塞调用（等待帧和会话启动）在它们自己的线程上运行，游戏最多等待它们几分之一秒；如果它们没有返回，头显在这一帧得不到画面，游戏继续以平面方式运行（日志会说明，以及头显何时应答）。并且不会在一个占用着头显、又无法停止的 FlatVR 之上启动头显会话（BodyWalk Lite 没有 Game Link）：“状态”栏会提示关闭 BodyWalk 并重启 SteamVR，FlatVR 运行期间会再次尝试。需要重启游戏。关闭：与以前一样。（d2r_vr.ini：wait_frame_ms。）
+openxr.stop_flatvr_watch.label = 如果 FlatVR 在原生会话期间启动，则再次停止它
+openxr.stop_flatvr_watch.tip = 原生会话开始时，BodyWalk 的 FlatVR 会通过其 Game Link 被停止——但只限当时正在运行的 FlatVR。之后启动的（在游戏之后打开的 BodyWalk、等到 SteamVR 就绪才启动的、它的 START 按钮）会在游戏剩余时间里与原生会话并行运行：两者都在头显中，共享它的帧。开启：会话运行期间，每秒检查一次 FlatVR，如果它在运行就再次通过 Game Link 停止它（原生 OpenXR 结束时会重新启动，与开始时被停止的那个一样）。没有 Game Link 的 BodyWalk（BodyWalk Lite）无法被告知：日志会说明。即时生效。关闭：只在会话开始时停止，与以前相同。
 openxr.reap_drain_max_ms.label = 旧交换链：释放前的最长等待，毫秒（原生 OpenXR）
 openxr.reap_drain_max_ms.tip = 我们重新创建的交换链（新的鼠标指针、另一尺寸的菜单面板）会在显卡完成游戏的工作后才被释放：先等 20 毫秒，每次不够就加倍，最多到这个值。显卡繁忙时（头显的推荐尺寸）20 毫秒从来不够，旧交换链越积越多，SteamVR 便拒绝创建新的（XR_ERROR_LIMIT_REACHED）：物品栏打开时没有面板、指针消失、画面变黑。20 = 和以前一样。实时。
 openxr.menus_wait_tracking.label = 仅在头显被追踪时才放置菜单
@@ -1054,8 +1078,8 @@ openxr.hand_inventory_front.label = 物品栏在面前以全尺寸打开
 openxr.hand_inventory_front.tip = 离开城镇时，物品栏在面前以全尺寸打开，而不是在左手上。物品栏旁边的按钮也能设置这一项：它会按你上次离开时的方式打开，重启后也一样。实时。
 openxr.headset_settings.label = 头显中的设置面板（原型）
 openxr.headset_settings.tip = 原生 OpenXR 且没有 BodyWalk 的菜单时：按住右摇杆按下（长按），一个小的设置面板就会在你面前打开 - 平面画面的距离和宽度、亮度、你的身高、激光、VR 渲染尺寸（视频页：预设和一个滑块；应用它会让游戏重建画面，冻结几秒钟）、校准身体（身体页：从头显中开始的 T 字姿势测量）以及游戏视角 F1 - F4（F1 - F3 会关闭面板；用 F4 键、D2R VR Authentic 设置 > 主页，或 BodyWalk 映射中的视角动作可回到 F4）。把手柄指向它并扣动扳机；“应用”只会把你改过的内容写入 d2r_vr.ini（原文件会保存一份 d2r_vr.ini.before-headset-menu；其间在别处做的更改会被显示出来，而不会被覆盖）。当技能面板采用方块样式时（技能面板样式：方块），这些页面是它的设置标签页，位于技能旁：右摇杆的长按会打开上次停留的标签页上的窗口。它打开期间，两个手柄都属于面板：它们的任何操作都不会到达游戏，并且它从不向游戏发送点击。再次长按、B / Y 或 Menu 可关闭它。同时按住两个握把没有任何作用（旧的双握把 + 按下方式在调试标签页上）。关闭：没有面板。仅限 F4。
-# openxr.headset_players.label = Players from the headset
-# openxr.headset_players.tip = The headset settings' Options page gets a working Players (difficulty) row: the game's own players count, 1 - 8, as the chat command /players N sets it (the game's Options > Gameplay "Offline Difficulty Scaling"). - and + send the game that very line, no keyboard needed; the game checks it, keeps it and says so, and the row shows the count read back from the game. The game takes it only in a game of your own: single player, or as the host of a TCP/IP game. Off: the row only shows the game's count, nothing is sent. Live.
+openxr.headset_players.label = 从头显设置玩家数
+openxr.headset_players.tip = 头显设置的“选项”页面获得一个可用的“玩家数（难度）”行：游戏自己的玩家数，1 - 8，与聊天命令 /players N 的设置相同（游戏的“选项 > 游戏玩法”中的“离线难度调整”）。- 和 + 会把这行命令发给游戏，无需键盘；游戏会检查、保留并给出提示，该行显示从游戏读回的数值。游戏只在你自己的游戏中接受：单人游戏，或作为 TCP/IP 游戏的主机。关闭：该行只显示游戏的数值，不发送任何东西。即时生效。
 
 # --- Belt potions ---
 group.belt_potions = 腰带药水
@@ -1198,20 +1222,19 @@ hud.monster_height.tip = 仅限第一人称（F4），且上面的“怪物头�
 hud.monster_depth_body.label = 怪物头顶名称：位于其怪物处，%
 hud.monster_depth_body.tip = 立体中的第一人称（F4）。游戏把名称牌画在双眼中的同一位置，所以在头显里它漂在远处，而不在它的怪物上。这里按怪物离你的距离，把它设在它的怪物的深度上，与物品标签相同（物品标签：位于其物品处）：100 = 恰好在那里，0 = 游戏留下它的位置（下方的立体深度）。即时生效。
 hud.monster_near_body.label = 怪物头顶名称：立体深度
-# English changed: First person (F4) in stereo: the name and bar over the monster you target nearer (+) or farther (-), % of the half screen - its own, apart from the item labels' ("Item labels: stereo depth on top" above does not move it). Replaced by the two depths below while "stereo depth by distance" is ticked. Live.
-hud.monster_near_body.tip = 立体中的第一人称（F4）：你所瞄准的怪物头顶的名称和血条更近（+）或更远（-），占半个屏幕的 % - 它自己的设置，与物品标签的无关（上方的“物品标签：立体深度置顶”不会移动它）。即时生效。
-# hud.monster_stereo_by_distance.label = Name over a monster: stereo depth by distance
-# hud.monster_stereo_by_distance.tip = First person (F4) in stereo. The plate's stereo depth follows the monster's distance from your eyes: the near depth for a monster close by, the far depth for one far off, smoothly in between, and a new target glides to its depth rather than jumping. Off: one depth for every monster (the slider above). Live.
-# hud.monster_stereo_near.label = Stereo depth: near monster
-# hud.monster_stereo_near.tip = The plate's stereo depth (% of the half screen, + nearer) for a monster at the near distance below or closer. Live.
-# hud.monster_stereo_far.label = Stereo depth: far monster
-# hud.monster_stereo_far.tip = The plate's stereo depth for a monster at the far distance below or farther. Live.
-# hud.monster_stereo_near_m.label = Stereo depth: near up to, m
-# hud.monster_stereo_near_m.tip = From your eyes. 1.5 m = the plate's own "near" (the size far away above uses the same). Live.
-# hud.monster_stereo_far_m.label = Stereo depth: far from, m
-# hud.monster_stereo_far_m.tip = From your eyes. 10 m = the plate's own "far" (the size far away above uses the same); never past the edge of the drawn world (Draw distance). Live.
-# hud.monster_plate_smooth.label = Name over a monster: steady
-# hud.monster_plate_smooth.tip = First person (F4). The plate no longer shakes with its monster's animation (the bob of a walk, the shake of a blow) or the game's steps: it hangs on the monster's head held by a spring - still at rest, close behind a monster that runs - and its distance (its size far away, its stereo depth) is held the same way. A turn of your head moves it with the world. Off: the plate on the game's own head point, every frame. Live.
+hud.monster_near_body.tip = 立体模式下的第一人称（F4）：你瞄准的怪物上方的名称和血条更近（+）或更远（-），以半屏的 % 计——这是它自己的设置，与物品标签的分开（上面的“物品标签：立体深度置顶”不会移动它）。勾选“按距离的立体深度”时，由下面两个深度代替。即时生效。
+hud.monster_stereo_by_distance.label = 怪物头顶名称：按距离的立体深度
+hud.monster_stereo_by_distance.tip = 立体模式下的第一人称（F4）。名牌的立体深度跟随怪物与你双眼的距离：近处的怪物用近深度，远处的用远深度，中间平滑过渡；新目标会滑向它的深度而不是跳变。关闭：所有怪物用同一个深度（上面的滑块）。即时生效。
+hud.monster_stereo_near.label = 立体深度：近处怪物
+hud.monster_stereo_near.tip = 位于下面的近距离或更近处的怪物，其名牌的立体深度（半屏的 %，+ 为更近）。即时生效。
+hud.monster_stereo_far.label = 立体深度：远处怪物
+hud.monster_stereo_far.tip = 位于下面的远距离或更远处的怪物，其名牌的立体深度。即时生效。
+hud.monster_stereo_near_m.label = 立体深度：近处直到，m
+hud.monster_stereo_near_m.tip = 从你的双眼算起。1.5 m = 名牌自己的“近”（上面的“远处大小”也使用这个值）。即时生效。
+hud.monster_stereo_far_m.label = 立体深度：远处起于，m
+hud.monster_stereo_far_m.tip = 从你的双眼算起。10 m = 名牌自己的“远”（上面的“远处大小”也使用这个值）；从不超过已绘制世界的边缘（绘制距离）。即时生效。
+hud.monster_plate_smooth.label = 怪物头顶名称：稳定
+hud.monster_plate_smooth.tip = 第一人称（F4）。名牌不再随怪物的动画（行走的起伏、攻击的抖动）或游戏的步伐而晃动：它由一个弹簧挂在怪物头上——静止时不动，紧跟奔跑的怪物——它的距离（远处大小、立体深度）也以同样方式保持。转头时它随世界移动。关闭：名牌每帧都位于游戏自己的头部点。即时生效。
 
 # --- Low life: red heartbeat vignette ---
 group.low_life_red_heartbeat_vignette = 低生命：红色心跳暗角
@@ -1387,8 +1410,8 @@ hud.hand_vitals_orb_size_cm.label = 大小，cm
 hud.hand_vitals_orb_size_cm.tip = 球的直径。5 是徽章的大小。即时生效。
 hud.hand_vitals_orb_mirror.label = 右手腕与左手腕镜像
 hud.hand_vitals_orb_mirror.tip = 右手腕的球采用左手腕的三个数值（沿手臂相同、朝拇指横跨相同、向上相同），使两者呈镜像。右手腕自己的滑块保留各自的值，显示为灰色，取消勾选时再起作用。即时生效。
-hud.hand_vitals_orb_on_bone.label = 直接在前臂骨骼上（无数值）
-hud.hand_vitals_orb_on_bone.tip = 勾选：每个球都位于其前臂骨骼上 - 在前臂自身网格的表面（从英雄的模型读取，更换护甲时重新读取），在手腕背面靠近手的位置，随骨骼转动 - 无论手臂如何被绘制：由你的控制器、抓住一个身体时、由游戏的动画。下面的位置和转向数值以及职业深度不被使用（盾牌仍会把它滚到内侧）。网格没有给出尺寸的前臂：使用数值，与以前相同（日志会说明是哪一个）。不勾选：使用数值。VR F4。实时。
+hud.hand_vitals_orb_on_bone.label = 直接在前臂骨骼上（无数值，测试）
+hud.hand_vitals_orb_on_bone.tip = 勾选：每个球都位于它的前臂骨骼上——在前臂自身网格的表面（从英雄的模型读取，换护甲时重新读取），从手腕背面伸出、靠近手，随骨骼转动——无论手臂由什么绘制：你的手柄、固定在身体上、游戏的动画。不使用下面的位置和转动数值以及各职业的深度（持盾时仍会把它转到内侧）。前臂网格给不出尺寸时：使用数值，与以前相同（日志会说明是哪个）。不勾选：使用数值。VR F4。即时生效。测试：默认关闭——英雄的前臂网格在 0.192.36 才首次被读取，它放置的徽章离手腕 10-15 cm。
 hud.hand_vitals_orb_drawn_hand.label = 跟随绘制出的手
 hud.hand_vitals_orb_drawn_hand.tip = 勾选：球完全按照英雄的手被绘制的样子放在手上 - 贴在你的手抓住的身体或物品上、贴合在武器上 - 因此在手抓住、而你的真实手移动时，球仍留在手上。手掌中握着的瓶子也同样跟随。不勾选：控制器最初放置的手，在这些步骤之前，与以前相同（抓住NPC时，球保持控制器的转向）。VR F4。实时。
 hud.hand_vitals_orb_left_along_cm.label = 左手腕 X，沿手臂，cm
@@ -1610,17 +1633,17 @@ fog.game_fog_caves_black.tip = 在地下，无论洞穴的雾色如何设置，�
 fog.game_fog_our_curve.label = 游戏的雾使用我们的曲线
 fog.game_fog_our_curve.tip = 游戏自己的雾通道像我们的效果一样让雾渐浓 - 从“雾起始距离”到“全雾距离”，按下方的“衰减”（洞穴中使用洞穴自己的起始、结束和强度）- 而不是它自己的指数曲线，那种曲线把几乎所有的雾都堆在起点之后，远处只剩一片灰色。只改动它通道中的几条指令，不额外增加任何东西。仅限无 ReShade。实时。
 fog.fog_keeps_colour.label = 游戏的雾在夜晚保持该幕的颜色
-fog.fog_keeps_colour.tip = 由游戏绘制雾时：它的颜色在任何时刻都是该幕自己的（上方的颜色）- 远处渐隐成它的一层淡淡薄雾，从不变黑。我们自己效果的雾不变。关闭：它随游戏的光照变暗，与以前一样。即时生效。
+fog.fog_keeps_colour.tip = 游戏绘制雾时：它的颜色在每个时刻都是该幕自己的（上面的颜色）——远处渐隐成它淡淡的薄雾，从不变黑。我们自己效果的雾不变。关闭：它像天空一样随游戏的光线变暗——夜晚变为“夜晚的天空”，并按每个时段的天空亮度变化。使用天空的颜色时（不勾选“雾的颜色：从游戏测量”）：每个时刻都用白天天空在地平线处的颜色；关闭时，夜晚用夜空的颜色——接近黑色。即时生效。
 fog.fog_into_sky.label = 游戏的雾让远处渐隐入其后的天空
 fog.fog_into_sky.tip = 在露天，每一点的雾颜色就是它正后方的天空，就像秘法庇护所中那样：远处的大地、世界的边缘和高大的远处建筑渐隐入天空，而不是一种单调的颜色（天空的下部就是该幕的雾颜色，按其绘制的样子）。远处的物体会透出天空。仅限游戏的雾（配合“游戏的雾与我们的一样浓、一样有颜色”）；我们自己效果的雾不变。地下与以前一样。即时生效。关闭：单一的雾颜色，与以前一样。
+fog.fog_colour_measured.label = 雾的颜色：从游戏测量
+fog.fog_colour_measured.tip = 勾选：雾的颜色从游戏显示的内容中测量（配合“游戏的雾与我们的一样浓、一样有颜色”）——与以前相同。不勾选：雾的颜色取自天空自己在地平线处的颜色——那里烘焙的画面，按其亮度滑块——这样远处的大地无缝融入天空；这是一个数值，在时段或滑块改变时设定：不测量，效果中也没有它的部分。在地下、秘法庇护所中以及使用染色天空时：使用设定的该幕或洞穴颜色。即时生效。
 fog.game_fog_match.label = 游戏的雾与我们的一样浓、一样有颜色
-fog.game_fog_match.tip = 游戏的雾比该幕的雾颜色更暗（该区域的调色），也比我们的更薄（它在视线之上变薄，没有我们的曲线时用的是游戏自己的）：在第四幕，远处的大地成了一片暗色剪影，什么也遮不住。勾选：效果测量游戏的雾在完全浓密处显示的内容，按游戏的份额把每个有雾的像素移向该幕的颜色，并把游戏漏掉的份额补足到我们自己雾的程度 - 远处的大地、世界的边缘和远处的平面像我们旧的雾那样被遮住。从不作用于游戏的天空。是我们效果的通道，它本来就为天空运行。即时生效。关闭：按游戏铺设的样子。
-# English changed: The fog before smoke and fire
-fog.game_fog_before_fx.label = 游戏的雾先于烟和火
-# English changed: The fog laid on the scene before the game adds its smoke, mist, fire and spells, so they lie over the fogged world unfogged - without it the fog is laid over them by the wall behind them (haze cut into black holes in front of far walls, a fire spell fading as it flies past a far wall). The game's fog or our effect's, whichever draws it. One pass of ours on the graphics card (its cost in the log's 10 s line). With ReShade: our effect's fog only, VR first person only. Applies when the game is started again.
-fog.game_fog_before_fx.tip = 雾在游戏加入烟、薄雾和火焰之前铺到场景上，这样它们就不带雾地盖在有雾的世界之上 - 没有它时，游戏的雾通道会按它们后面的墙给它们加雾（远处墙前的雾气被切出黑洞）。是我们在显卡上多做的一个通道（其开销见日志中每 10 s 的一行）。仅限无 ReShade。游戏再次启动时生效。
-# fog.game_fog_fx_depth.label = Far smoke and fire fade into the fog
-# fog.game_fog_fx_depth.tip = With the fog before smoke and fire: the smoke, mist, fire and spells fogged too, each by its own distance - near ones as they are, far ones fading into the fog with the world behind them. Without it a far camp fire stands at full light in full fog and the see-through edges of far fences show as specks on the horizon. The game's effects are drawn once more for their depth alone (the cost in the log's 10 s lines). Without ReShade only. Live. Off: the effects never fogged.
+fog.game_fog_match.tip = 游戏的雾比该幕的雾颜色更暗（区域的调色），也比我们的更稀薄（它在眼睛上方变稀，没有我们的曲线时就是游戏自己的）：在第四幕中，远处的大地成了一道暗色剪影，什么也遮不住。勾选后，效果会补上游戏漏掉的部分，达到我们自己雾的程度——远处的大地、世界边缘和远处的平面像我们的旧雾那样被遮住——使用雾的颜色；配合“雾的颜色：从游戏测量”时，它还会测量游戏的雾在全雾处显示的颜色，并按游戏的份额把每个被雾覆盖的像素移向该幕的颜色（从不超过）。从不作用于游戏的天空。这是我们效果的渲染遍，它本来就会为天空运行。即时生效。关闭：按游戏铺设的样子。
+fog.game_fog_before_fx.label = 雾在烟和火之前
+fog.game_fog_before_fx.tip = 在游戏加上烟、薄雾、火焰和法术之前把雾铺到场景上，这样它们会以未被雾化的样子位于雾化的世界之上——否则雾会按它们后面的墙铺在它们上面（远墙前的雾气被切出黑洞，火焰法术飞过远墙时逐渐消失）。无论由游戏的雾还是我们效果的雾绘制都适用。在显卡上增加我们的一遍渲染（开销见日志的 10 s 行）。使用 ReShade 时：只限我们效果的雾，只限 VR 第一人称。重新启动游戏后生效。
+fog.game_fog_fx_depth.label = 远处的烟和火渐隐入雾中
+fog.game_fog_fx_depth.tip = 配合“雾在烟和火之前”：烟、薄雾、火焰和法术也会被雾化，每个按它自己的距离——近处的保持原样，远处的与后面的世界一起渐隐入雾中。否则远处的营火会在浓雾中以全亮度显示，远处栅栏的透明边缘会在地平线上显示为斑点。游戏的效果会为了深度再绘制一次：开销很大——在 Quest 3 上每眼 2048 x 2048 时，它占用了约每秒 30 帧（72 -> 42）；开销见日志的 10 s 行。仅在不使用 ReShade 时。即时生效。关闭：效果从不被雾化。
 fog.game_fog_height.label = 游戏的雾随高度变薄
 fog.game_fog_height.tip = 游戏自己的雾通道让天空保持清晰：雾保持原样直到雾顶减去其柔和度，在此之上渐隐，雾顶以上没有雾（世界单位，相对于你的视线高度）。用于游戏的天穹，使其天空显示在有雾的地平线之上。是它自己的通道，不增加任何内容。仅限室外（地下没有需要保持清晰的天空）。仅限无 ReShade。关闭：游戏的雾保持原样。即时生效。
 fog.game_fog_top.label = 游戏的雾：雾顶，眼睛上方的单位数
@@ -1629,7 +1652,7 @@ fog.game_fog_soft.label = 游戏的雾：雾顶的柔和度，单位
 fog.game_fog_soft.tip = 游戏的雾在雾顶以下多远处渐隐：小则边缘锐利；大则是长而柔和的渐变。即时生效。
 fog.game_fog_top_from_floor.label = 游戏的雾：雾顶从英雄的地板算起
 fog.game_fog_top_from_floor.tip = 上方的雾顶从英雄所站的地板算起，而不是从你的眼睛：英雄上方高处的摄像机（第三人称、俯视视角）不再改变雾结束的位置，眼睛以下的大地也不会整片带雾、在眼睛高度留下一条线。关闭：从眼睛算起，与以前一样。若改为取消勾选“随高度变薄”，雾就只按距离计算，与我们自己的雾一样。即时生效。
-fog.end.tip#2 = 雾完全浓密的位置。世界单位（英雄约高 7.5）。
+fog.end.tip#2 = 雾完全覆盖的位置。世界单位（英雄约高 7.5）。使用游戏的雾时，若低于雾起始距离，两者会对调（我们效果的雾：刚过雾起始距离即为全雾）。
 fog.curve.label = 衰减
 fog.curve.tip = 1 = 线性；更大 = 中间距离更清晰。
 fog.blur.label = 深度模糊，px（0 = 关）
@@ -1639,8 +1662,7 @@ fog.spare_effects.tip = 火焰、法术、烟雾和光芒只被雾遮蔽到其�
 render.fog_in_frame.label = 雾绘制在游戏的帧内（测试）
 render.fog_in_frame.tip = 雾被绘制到游戏自己的画面中，位于火焰、法术和烟雾之前，然后游戏再把它们叠加到有雾的场景上：远处墙前的火把、火焰弹或烈焰不会像墙那样被雾遮住。天空和世界之外的黑色仍按以前的方式带雾。配合某一幕自己的雾颜色（世界 > 天空）；仅限 VR F4。下次启动游戏时生效；关闭 = 雾和以前一样。两者都开启时，优先于“雾不遮蔽火焰、法术和烟雾”。
 fog.caves.label = 洞穴和地牢中的雾
-# English changed: Off: no fog underground (every area that is not outdoors) - neither our effect's nor the game's own fog, and nothing laid before the smoke and fire there; the open air keeps it. The Arcane Sanctuary has its own switch (Sky > Arcane Sanctuary: fog fades into its sky): on, it keeps its fog with either fog. Live.
-fog.caves.tip = 关闭：地下（所有非室外区域）没有雾；露天仍保留雾。秘法庇护所有自己的开关（天空 > 秘法庇护所：雾渐隐入它的天空）。
+fog.caves.tip = 关闭：地下（所有非室外区域）没有雾——既没有我们效果的雾，也没有游戏自己的雾，那里也不会在烟和火之前铺雾；露天仍保留雾。秘法庇护所有自己的开关（天空 > 秘法庇护所：雾渐隐入它的天空）：开启时，无论哪种雾它都保留自己的雾。即时生效。
 fog.ease_in.label = 雾渐入，没有硬环
 fog.ease_in.tip = 雾在其起始处之后的前 40 个单位内柔和地渐入：你脚下清晰的地面周围没有锐利的边缘。凡是由我们的曲线绘制雾的地方：我们的效果，以及开启“游戏的雾使用我们的曲线”时游戏的雾（不是游戏自己的曲线）。来自 D2R VR Unleashed（bearstonem）。即时生效。关闭：雾与以前一样。
 fog.no_fog_river.label = 火焰之河中没有雾
@@ -1651,24 +1673,36 @@ fog.color_caves.label = 洞穴中的雾颜色
 fog.color_caves.tip = 洞穴、地牢、墓穴：所有不在室外的区域。留空（x）= 该幕的颜色。
 fog.color_caves.empty = 与该幕相同
 
+# --- Distance blur ---
+group.distance_blur = 远景模糊
+group.distance_blur.help = 远处的画面被模糊，就像透过一块立在你前方一定距离处的磨砂玻璃：比玻璃更近的东西不受影响；在它后面，世界越远越模糊。设置玻璃所在的位置、模糊最强的位置以及最强时的程度。与雾分开：没有自己的颜色，雾保持原样。
+render.distance_blur.label = 远处模糊
+render.distance_blur.tip = 远处的世界在一块磨砂玻璃后被模糊（来自 Serg 的分形游戏）：近处的地面、怪物和你的武器保持清晰，越远越柔和。天空、虚空和界面不被模糊。由我们效果的渲染遍绘制（无论是否使用 ReShade），第一人称，无论由谁绘制雾；不使用 ReShade 时，它在显卡上的开销见日志的 10 s 行（"distance blur on, ... ms"）。即时生效。关闭：省去这一遍。
+render.distance_blur_start_m.label = 模糊起始于，m
+render.distance_blur_start_m.tip = 玻璃所在的位置，距你双眼的米数（世界单位 4 = 1 米）：更近的东西不被模糊。请把它放在你战斗的范围之外。即时生效。
+render.distance_blur_full_m.label = 完全模糊于，m
+render.distance_blur_full_m.tip = 模糊最强的位置，单位为米（至少比起始处远 5 %）。在两者之间，它随距离的平方增长：中间距离保持清晰。50 m：默认绘制距离下世界的边缘。即时生效。
+render.distance_blur_strength.label = 模糊强度
+render.distance_blur_strength.tip = 模糊最强时的程度：1 = 画面高度的 2.5 %（在 2000 行的眼睛画面上约 50 像素），0.4 与分形游戏相同。0 = 不模糊。即时生效。
+
 # --- Arcane Sanctuary ---
-# group.arcane_sanctuary = Arcane Sanctuary
-# group.arcane_sanctuary.help = The fog in the Arcane Sanctuary (act 2), set apart from the caves': it is not outdoors, so it takes the caves' fog until "Its own fog" is ticked. Whether there is fog under its own sky at all is on the Sky tab (Arcane Sanctuary: fog fades into its sky).
-# fog.arcane_own.label = Arcane Sanctuary: its own fog
-# fog.arcane_own.tip = The fog in the Arcane Sanctuary set on its own, with the values below; the caves keep theirs. Live. Off: it takes the caves' start, end, strength and colour, as before.
-# fog.arcane_start.label = Arcane Sanctuary: fog start
-# fog.arcane_start.tip = Where the fog begins in the Arcane Sanctuary. World units (the hero is ~7.5 tall). Live.
-# fog.arcane_end.label = Arcane Sanctuary: full fog
-# fog.arcane_end.tip = Where the fog is complete in the Arcane Sanctuary. World units (the hero is ~7.5 tall). Live.
-# fog.arcane_strength.label = Arcane Sanctuary: fog strength
-# fog.arcane_strength.tip = How much the full fog covers there: 1 = the far platforms are gone in the fog, less = they show through. Live.
-# fog.arcane_curve.label = Arcane Sanctuary: fog curve
-# fog.arcane_curve.tip = How the fog grows from its start to full: 1 = evenly, more = it stays thin longer and thickens near the end, less = it thickens soon after the start. Live.
-# fog.arcane_color.label = Arcane Sanctuary: fog colour
-# fog.arcane_color.tip = The fog's colour in the Arcane Sanctuary. Empty (x) = the caves' colour (with the game's fog never black there). Live.
-# fog.arcane_color.empty = same as caves
-# fog.arcane_into_sky.label = Arcane Sanctuary: fog fades into the sky behind
-# fog.arcane_into_sky.tip = Under its own sky (Sky tab) the fog is the sky straight behind each point: the far platforms dissolve into the void. Off: they fade into the fog colour above instead. Live.
+group.arcane_sanctuary = 秘法庇护所
+group.arcane_sanctuary.help = 秘法庇护所（第二幕）中的雾，与洞穴的分开设置：它不是室外，所以在勾选“它自己的雾”之前使用洞穴的雾。在它自己的天空下是否有雾，在“天空”选项卡中设置（秘法庇护所：雾渐隐入它的天空）。
+fog.arcane_own.label = 秘法庇护所：它自己的雾
+fog.arcane_own.tip = 秘法庇护所中的雾单独设置，使用下面的数值；洞穴保留它们自己的。即时生效。关闭：使用洞穴的起始、全雾、强度和颜色，与以前相同。
+fog.arcane_start.label = 秘法庇护所：雾起始距离
+fog.arcane_start.tip = 秘法庇护所中雾开始的位置。世界单位（英雄约高 7.5）。即时生效。
+fog.arcane_end.label = 秘法庇护所：全雾距离
+fog.arcane_end.tip = 秘法庇护所中雾完全覆盖的位置。世界单位（英雄约高 7.5）。即时生效。
+fog.arcane_strength.label = 秘法庇护所：雾强度
+fog.arcane_strength.tip = 全雾在那里的覆盖程度：1 = 远处的平台消失在雾中，更小 = 它们会透出来。即时生效。
+fog.arcane_curve.label = 秘法庇护所：雾曲线
+fog.arcane_curve.tip = 雾从起始到全雾的增长方式：1 = 均匀，更大 = 它保持稀薄更久并在接近末端时变浓，更小 = 它在起始后不久就变浓。即时生效。
+fog.arcane_color.label = 秘法庇护所：雾颜色
+fog.arcane_color.tip = 秘法庇护所中雾的颜色。空（x）= 洞穴的颜色（使用游戏的雾时那里从不为黑色）。即时生效。
+fog.arcane_color.empty = 与洞穴相同
+fog.arcane_into_sky.label = 秘法庇护所：雾渐隐入后面的天空
+fog.arcane_into_sky.tip = 在它自己的天空下（“天空”选项卡），雾就是每个点正后方的天空：远处的平台溶入虚空。关闭：它们改为渐隐成上面的雾颜色。即时生效。
 render.game_height_fog.label = 游戏自带的高度雾
 render.game_height_fog.tip = 只有第二幕的城镇有它。从我们的摄像机看，它的边缘是横贯画面的一条硬线，上方还有一层淡淡的薄雾（游戏自己的摄像机永远看不到这条边缘）。关闭：vrcam 将其设为 0。
 render.game_depth_fog.label = 游戏自带的深度雾
@@ -1732,14 +1766,20 @@ sky.drift.label = 天空缓慢转动（云飘移）
 sky.drift.tip = 绘制的天空缓慢地绕着你转。关闭：它静止不动——夜空中绘制的星星原本会随云一起转动。
 sky.cover_rims.label = 天空覆盖屋顶和树木周围的暗边
 sky.cover_rims.tip = 游戏绘制天空前的任何物体时，会比其深度大一个像素，其边缘与黑色混合，而天空没有画到那里：每个屋顶、树梢和远处建筑周围都有一圈细细的暗色轮廓，双眼交替时它还会每隔一帧移开。勾选：当该像素较暗时，天空会覆盖它（光芒的亮边保留）；轮廓会变细一个像素。仅限第一人称（F4）。取消勾选：和以前一样。即时生效。请同时安装 DLL 和 D2R_DepthFog.fx。来自 bearstonem/d2r-pcvr。
-# sky.dome_past_far.label = The game's sky: past the game's haze in the flat game
-# sky.dome_past_far.tip = The game's own passes read the depth only to the far end of its range (about 1060 units) and take what lies past it as the sky. In the flat game's views the dome, nearer than that on part of the screen, got the game's distance haze there and none past it: a darker disc in a light veil, its size changing with the radius. Ticked, outside VR first person the dome is laid at least as far as that range's end at the screen's farthest corner, so all of it is past the haze - one sky; a larger radius stays as set. VR first person keeps the radius as set. Live.
-# sky.dome_true_colour.label = The game's sky: our sky's colours
-# sky.dome_true_colour.tip = The game draws our painted sky in its own scene, through its tone map and the area's colour grading - darker than our effect's sky, which is drawn in the picture's own colours. Ticked, our effect measures what the game shows of the dome against the painted sky it was made from and brings the dome to it, every area by its own numbers. A multiply in the effect's pass, which runs anyway for the dome's horizon. With "Sky follows the game's day and night" the dome follows the game's time of day as our sky does. Off: as the game shows it. Live.
-# sky.dome_in_game_colour.label = The game's sky: its colours drawn by the game
-# sky.dome_in_game_colour.tip = Our effect recoloured the game-drawn sky after the game had drawn the trees, the palisade and the roofs over it: their edges, blended into the sky as the game drew it, kept its old colour - a light outline round every branch at night. Ticked, the game draws the sky from a picture of ours instead, made from its own with the night picture, the day and night dimming, the brightness of each period of the day and the measured colours in it - every edge blends into the right sky. Without ReShade only (our own effects). Counts from the game's next start; unticked live, the sky goes back to the game's own colours at once and our effect recolours it as before.
+sky.dome_past_far.label = 游戏的天空：在平面游戏中位于游戏的薄雾之外
+sky.dome_past_far.tip = 游戏自己的渲染遍只读取到其范围远端（约 1060 单位）的深度，并把更远的部分当作天空。在平面游戏的视图中，穹顶在屏幕的部分区域比这更近，在那里获得了游戏的远景薄雾，而更远处没有：浅色薄纱中的一个较暗的圆盘，其大小随半径变化。勾选后，在 VR 第一人称之外，穹顶至少铺到屏幕最远角处该范围的末端，这样它全部位于薄雾之外——一个统一的天空；更大的半径保持设定值。VR 第一人称保持设定的半径。即时生效。
+sky.dome_true_colour.label = 游戏的天空：我们天空的颜色
+sky.dome_true_colour.tip = 游戏在它自己的场景中绘制我们画的天空，经过它的色调映射和区域调色——比我们效果的天空更暗，后者以画面自身的颜色绘制。勾选后，我们的效果会把游戏显示的穹顶与生成它的绘制天空进行测量对比，并把穹顶调整过去，每个区域用它自己的数值。这是效果渲染遍中的一次乘法，这一遍本来就会为穹顶的地平线运行。配合“天空跟随游戏的白天和黑夜”时，穹顶像我们的天空一样跟随游戏的时段。关闭：按游戏显示的样子。即时生效。
+sky.dome_gain_once.label = 游戏的天空：颜色只测量一次
+sky.dome_gain_once.tip = 配合“颜色由游戏绘制”：游戏天空与我们天空的对比测量对每个区域和时段只进行一次，并保存在设置旁边的 d2r_vr_dome_gain.txt 中（删除它可重新测量）。之后，只有当光线、时段或滑块改变时，才根据这些数值烘焙天空——游玩时不再测量或烘焙。即时生效。关闭：一直测量，与以前相同。
+sky.dome_in_game_colour.label = 游戏的天空：颜色由游戏绘制
+sky.dome_in_game_colour.tip = 我们的效果在游戏已把树木、栅栏和屋顶画在天空上之后，才给游戏绘制的天空重新着色：它们的边缘是按游戏绘制时的天空混合的，保留了旧颜色——夜晚每根树枝周围都有一圈亮边。勾选后，游戏改为用我们的一幅画面绘制天空，该画面由它自己的画面加上夜晚画面、昼夜变暗、每个时段的亮度和测得的颜色制成——每条边缘都融入正确的天空。仅在不使用 ReShade 时（我们自己的效果）。从游戏下次启动时起生效；不勾选则即时生效，天空立刻恢复为游戏自己的颜色，我们的效果像以前一样为它重新着色。
 sky.dome_fog_horizon.label = 游戏的天空：地平线融入雾中
 sky.dome_fog_horizon.tip = 游戏绘制的天空下部沉入该幕的雾颜色，就像我们自己的天空那样：有雾的大地与天空相接处没有硬边，相接处颜色一致。仅在绘制雾时。关闭：天空按游戏绘制的样子。即时生效。
+sky.dome_fog_baked.label = 游戏的天空：低处为雾的颜色
+sky.dome_fog_baked.tip = 使用游戏的雾时，天空的低处在天空画面本身中就铺成雾自己的颜色，就像我们旧天空的低处融入雾中一样：地平线前的树木和灌木立在雾的颜色上，周围没有画面地平线的亮边。与此同时，上面的“天空的地平线融入雾中”暂不起作用。关闭：画面保持原样。即时生效。
+sky.dome_fog_baked_strength.label = 游戏的天空：雾的颜色占多少
+sky.dome_fog_baked_strength.tip = 1：地平线完全是雾的颜色，在 11 度内向上渐变到画面；更小：透出部分画面。即时生效。
 sky.game_sky_closed.label = 游戏的天空：完整的球体，下方单色
 sky.game_sky_closed.tip = 游戏绘制的天空在地平线以下 12 度处结束：在悬崖边缘之外，它的边缘是一条硬线，下方有个洞，透出虚空和雾。勾选：它闭合成完整的球体，下半部分是单一颜色 - 天空自己在地平线处的颜色（绘制雾时则是雾的颜色：两者以同一种颜色相接）。适用于每一幕，VR 和平面均可。本程序会立即重新制作天穹的模型；游戏在下次启动时采用它们。关闭：开口的天穹，与以前一样。
 sky.game_skybox.label = 亚瑞特山顶：天穹放到远处
@@ -1767,18 +1807,38 @@ sky.light_day.label = 视为完全白天的游戏光照
 sky.light_day.tip = 游戏的光照在 0..255 之间变化（vrcam 的日志会在其变化时写出）。从此值往上：完全白天。
 sky.light_night.label = 视为完全黑夜的游戏光照
 sky.light_night.tip = 从此值往下：完全黑夜。介于两者之间时，天空从一种平滑过渡到另一种。
-# sky.bright_dawn.label = Sky brightness: end of night, dawn
-# sky.bright_dawn.tip = The sky's brightness as dawn begins - the game's dome and our effect's sky alike, times what the day and night above gives (1: as it is). It eases to the next period's by the game's own light. The game names its periods (debug_mode's time key shows them). Live.
-# sky.bright_day_start.label = Sky brightness: end of dawn, start of day
-# sky.bright_day_start.tip = The sky's brightness as the day begins - the game's dome and our effect's sky alike, times what the day and night above gives (1: as it is). It eases to the next period's by the game's own light. The game names its periods (debug_mode's time key shows them). Live.
-# sky.bright_day.label = Sky brightness: day
-# sky.bright_day.tip = The sky's brightness through the day, until the light falls toward dusk - the game's dome and our effect's sky alike, times what the day and night above gives (1: as it is). It eases to the next period's by the game's own light. The game names its periods (debug_mode's time key shows them). Live.
-# sky.bright_dusk.label = Sky brightness: end of day, dusk
-# sky.bright_dusk.tip = The sky's brightness as dusk begins - the game's dome and our effect's sky alike, times what the day and night above gives (1: as it is). It eases to the next period's by the game's own light. The game names its periods (debug_mode's time key shows them). Live.
-# sky.bright_night_start.label = Sky brightness: end of dusk, start of night
-# sky.bright_night_start.tip = The sky's brightness as the night begins - the game's dome and our effect's sky alike, times what the day and night above gives (1: as it is). It eases to the next period's by the game's own light. The game names its periods (debug_mode's time key shows them). Live.
-# sky.bright_night.label = Sky brightness: night
-# sky.bright_night.tip = The sky's brightness through the night, until the light rises toward dawn - the game's dome and our effect's sky alike, times what the day and night above gives (1: as it is). It eases to the next period's by the game's own light. The game names its periods (debug_mode's time key shows them). Live.
+sky.bright_dawn.label = 天空亮度：夜晚结束，黎明
+sky.bright_dawn.tip = 黎明开始时的天空亮度——游戏的穹顶和我们效果的天空都一样，乘以上面昼夜设置给出的值（1：保持原样）。它按游戏自己的光线平滑过渡到下一个时段的值。时段由游戏命名（debug_mode 的时间键会显示它们）。即时生效。
+sky.bright_day_start.label = 天空亮度：黎明结束，白天开始
+sky.bright_day_start.tip = 白天开始时的天空亮度——游戏的穹顶和我们效果的天空都一样，乘以上面昼夜设置给出的值（1：保持原样）。它按游戏自己的光线平滑过渡到下一个时段的值。时段由游戏命名（debug_mode 的时间键会显示它们）。即时生效。
+sky.bright_day.label = 天空亮度：白天
+sky.bright_day.tip = 整个白天、直到光线向黄昏减弱时的天空亮度——游戏的穹顶和我们效果的天空都一样，乘以上面昼夜设置给出的值（1：保持原样）。它按游戏自己的光线平滑过渡到下一个时段的值。时段由游戏命名（debug_mode 的时间键会显示它们）。即时生效。
+sky.bright_dusk.label = 天空亮度：白天结束，黄昏
+sky.bright_dusk.tip = 黄昏开始时的天空亮度——游戏的穹顶和我们效果的天空都一样，乘以上面昼夜设置给出的值（1：保持原样）。它按游戏自己的光线平滑过渡到下一个时段的值。时段由游戏命名（debug_mode 的时间键会显示它们）。即时生效。
+sky.bright_night_start.label = 天空亮度：黄昏结束，夜晚开始
+sky.bright_night_start.tip = 夜晚开始时的天空亮度——游戏的穹顶和我们效果的天空都一样，乘以上面昼夜设置给出的值（1：保持原样）。它按游戏自己的光线平滑过渡到下一个时段的值。时段由游戏命名（debug_mode 的时间键会显示它们）。即时生效。
+sky.bright_night.label = 天空亮度：夜晚
+sky.bright_night.tip = 整个夜晚、直到光线向黎明升起时的天空亮度——游戏的穹顶和我们效果的天空都一样，乘以上面昼夜设置给出的值（1：保持原样）。它按游戏自己的光线平滑过渡到下一个时段的值。时段由游戏命名（debug_mode 的时间键会显示它们）。即时生效。
+
+# --- The sky's pictures ---
+group.the_sky_s_pictures = 天空的画面
+group.the_sky_s_pictures.help = 游戏的天空是该幕自己的画面，只烘焙一次——白天的、夜晚的，以及一张用于黎明和黄昏的（第四幕没有夜晚，只有一张）——每张有自己的亮度，按游戏的时段选择。不重新着色，也不测量。
+sky.three_bright_day.label = 天空亮度：白天画面
+sky.three_bright_day.tip = 白天画面的亮度（1：保持画面原样）。改变时重新烘焙一次。即时生效。
+sky.three_bright_night.label = 天空亮度：夜晚画面
+sky.three_bright_night.tip = 夜晚画面的亮度（1：保持画面原样）。没有夜晚画面的幕会以此亮度显示白天的画面。即时生效。
+sky.three_bright_dawn_dusk.label = 天空亮度：黎明和黄昏画面
+sky.three_bright_dawn_dusk.tip = 黎明和黄昏画面的亮度——目前使用白天的画面，直到各幕有自己的画面为止（1：保持画面原样）。即时生效。
+sky.three_bright_act4.label = 天空亮度：第四幕
+sky.three_bright_act4.tip = 第四幕（地狱）没有夜晚：只有一个天空，即它的白天画面，无论什么时段都用这个亮度。即时生效。
+sky.sky_crossfade.label = 天空：画面之间交叉渐变
+sky.sky_crossfade.tip = 不勾选：游戏的时段变化时，天空立即变为下一个时段的画面——此时烘焙一次，中间没有过渡。勾选：在黎明和黄昏期间，每张画面按游戏自己的光线渐变到下一张——此时在光线的每一步重新烘焙天空（对天空画面的一遍处理，每次黎明或黄昏几十次），中间从不烘焙。即时生效。
+
+# --- Sky tinting (parked) ---
+group.sky_tinting_parked = 天空染色（搁置）
+group.sky_tinting_parked.help = 我们旧的对游戏天空的重新着色，从游戏显示的内容中测量。搁置到它能染色而不在树木周围留下亮边为止；在此期间天空使用烘焙的画面。
+sky.dome_tint.label = 游戏的天空：染色（搁置）
+sky.dome_tint.tip = 勾选：游戏的天空像以前一样被重新着色——它的颜色与我们的进行测量对比（“我们天空的颜色”、“颜色只测量一次”），白天和黑夜按上面的时段滑块——代替烘焙的画面。只有当此项和“我们天空的颜色”都勾选时，测量才会编译进效果（效果会重新构建）。它在每棵树周围留下了一圈亮边；等它能染色而不留亮边时我们再回来处理。不勾选：使用烘焙的画面，不测量。即时生效。
 
 # --- Act 1 (night, storm) ---
 group.act_1_night_storm = 第一幕（夜晚，风暴）
@@ -1816,10 +1876,8 @@ tab.ceiling = 顶部
 
 # --- Cave ceiling ---
 group.cave_ceiling = 洞穴顶部
-# English changed: A ceiling over the black void in caves and dungeons, first person only: who draws it, the game's own ceiling's parts (its rim, the barracks' beams, the cathedral's and the Worldstone's domes) and each room's height below.
-group.cave_ceiling.help = 在洞穴中绘制于黑色虚空之上的石质穹顶，在双眼中都处于真实深度；仅限第一人称。可设置图块大小和浮雕、用来封住虚空的远墙和下方的地板、石头的对比度、细节和潮湿光泽，以及火把和带火的怪物如何照亮它。
-# English changed: A ceiling over the black void in caves and dungeons, first person only - the game's own (its lit stone) or our effect's vault, as "Who draws the ceiling" says; each room's height below.
-ceiling.enabled.tip#2 = 洞穴中黑色虚空之上的石质穹顶，在双眼中都处于真实深度。仅限第一人称；目前支持第一幕的洞穴、墓穴、兵营、地下墓穴和大教堂，以及第二幕的下水道和宫殿。
+group.cave_ceiling.help = 在洞穴和地下城的黑色虚空上方加一个顶部，仅第一人称：由谁绘制、游戏自己顶部的各部分（它的边缘、兵营的木梁、大教堂和世界之石的穹顶），以及下面每个房间的高度。
+ceiling.enabled.tip#2 = 在洞穴和地下城的黑色虚空上方加一个顶部，仅第一人称——游戏自己的（它被照亮的石头）或我们效果的拱顶，按“由谁绘制顶部”的设置；每个房间的高度在下面。
 ceiling.game_ceiling_wall.label = 游戏的顶部：在边缘向下弯成墙
 ceiling.game_ceiling_wall.tip = 在游戏的顶部结束处（图块大小 10 时约 215 单位远），用同样受光照的岩石围成一圈，从顶部一直延伸到地板之下（地板的深度）：顶部边缘之外的黑色虚空 - 它与远处地板之间由火焰后面的雾照亮的一条亮带 - 被石头封住，就像我们效果的远墙封住它一样。关闭：平的顶部。即时生效。
 ceiling.game_ceiling_beams.label = 游戏的顶部：兵营自己的木梁
@@ -1836,10 +1894,8 @@ ceiling.game_ceiling_worldstone_dome_wider_m.label = 世界之石的穹顶：加
 ceiling.game_ceiling_worldstone_dome_wider_m.tip = 在从游戏构件测得的宽度之上，为世界之石的穹顶横向加宽的米数（四周各加一半）- 这是它自己的设置，大教堂穹顶的大小不变。它的高度随之变化，所以仍然越过水晶；比柱子更宽时，它的边缘会越过柱子落到平坦的顶部上，柱子止于弧面之下。按相机的米计算（英雄眼睛高度与你的之比）。VR F4。即时生效。
 ceiling.height_from_walls.label = 顶部高度取自房间的墙壁
 ceiling.height_from_walls.tip = 下方没有设置自身高度（0）的房间，顶部放在它自己的墙上：游戏用来构建该房间的墙壁结束之处（其墙壁、柱子和悬崖构件顶端的中间值，从你的游戏文件中测得）。房间自己的高度一旦设置，始终优先。我们效果的拱顶和游戏的顶部都适用；游戏垂得更低的岩石以其最低点搁在墙上。关闭，或房间没有这类墙壁：未设置高度时离地 18。日志会写出每个房间的高度及其来源。在下次切换区域时生效。
-# English changed: The rim's wall: how far below the floor (0 = none)
-ceiling.floor_depth.label = 地板下方的底面（0 = 无）
-# English changed: How far under the hero's floor the game's ceiling's rim wall reaches, world units: looking down past the drawn floor's edge shows that stone, not the void.
-ceiling.floor_depth.tip = 在英雄的地板下方这么远的地方放置石头，单位为世界单位：向下越过所绘地板边缘看时会看到它，而不是虚空。
+ceiling.floor_depth.label = 边缘的墙：在地板下方多深（0 = 无）
+ceiling.floor_depth.tip = 游戏顶部的边缘墙在英雄地板下方伸到多深，世界单位：越过已绘制地板的边缘向下看时，看到的是那块石头，而不是虚空。
 
 # --- Light in caves ---
 group.light_in_caves = 洞穴中的光照
@@ -1859,113 +1915,92 @@ cave_light.ambient_min.tip = 无论地牢本身是多少，至少达到这么多
 
 # --- Ceiling: act 1 caves (levels 8-16) ---
 group.ceiling_act_1_caves_levels_8_16 = 顶部：第一幕洞穴（关卡 8-16）
-# English changed: The ceiling's height over this room's floor - 0: on its own walls' top ("Ceiling height from the room's walls"), else 18. Levels: Den of Evil (8), Cave Level 1 (9), Underground Passage Level 1 (10), Hole Level 1 (11), Pit Level 1 (12), Cave Level 2 (13), Underground Passage Level 2 (14), Hole Level 2 (15), Pit Level 2 (16).
-group.ceiling_act_1_caves_levels_8_16.help = 第一幕洞穴的顶部：它离地板的高度、亮度、英雄的光在其上照及的距离、浮雕，以及石头图片及其大小、对比度、细节和潮湿光泽。关卡：邪恶洞窟（8）、洞穴一层（9）、地下通道一层（10）、地洞一层（11）、地穴一层（12）、洞穴二层（13）、地下通道二层（14）、地洞二层（15）、地穴二层（16）。
+group.ceiling_act_1_caves_levels_8_16.help = 该房间地板上方的顶部高度——0：位于它自己墙壁的顶端（“顶部高度取自房间的墙壁”），否则为 18。关卡：邪恶洞窟（8）、洞穴 第 1 层（9）、地下通道 第 1 层（10）、地洞 第 1 层（11）、地穴 第 1 层（12）、洞穴 第 2 层（13）、地下通道 第 2 层（14）、地洞 第 2 层（15）、地穴 第 2 层（16）。
 ceiling.height_act1_caves.label = 离地高度（0 = 取自墙壁）
 ceiling.height_act1_caves.tip = 世界单位（英雄约高 7.5）。低于墙顶时，墙会穿出顶部。0：放在从你的游戏文件中测得的房间墙顶（配合“顶部高度取自房间的墙壁”），否则为 18。
 
 # --- Ceiling: act 1 crypts and tower (levels 18-25, 133) ---
 group.ceiling_act_1_crypts_and_tower_levels_18_25_133 = 顶部：第一幕墓穴和塔（关卡 18-25、133）
-# English changed: The ceiling's height over this room's floor - 0: on its own walls' top ("Ceiling height from the room's walls"), else 18. Levels: Crypt (18), Mausoleum (19), Forgotten Tower (20), Tower Cellar Level 1 (21), Tower Cellar Level 2 (22), Tower Cellar Level 3 (23), Tower Cellar Level 4 (24), Tower Cellar Level 5 (25), Pandemonium Run 1 (133).
-group.ceiling_act_1_crypts_and_tower_levels_18_25_133.help = 第一幕墓穴的顶部：高度、亮度、英雄的光照及距离、凹凸不平的砖石垂下多远，以及它的图片。关卡：墓穴（18）、陵墓（19）、遗忘之塔（20）、塔底一层（21）、塔底二层（22）、塔底三层（23）、塔底四层（24）、塔底五层（25）、Pandemonium Run 1（133）。
+group.ceiling_act_1_crypts_and_tower_levels_18_25_133.help = 该房间地板上方的顶部高度——0：位于它自己墙壁的顶端（“顶部高度取自房间的墙壁”），否则为 18。关卡：墓穴（18）、陵墓（19）、被遗忘的高塔（20）、高塔地窖 第 1 层（21）、高塔地窖 第 2 层（22）、高塔地窖 第 3 层（23）、高塔地窖 第 4 层（24）、高塔地窖 第 5 层（25）、Pandemonium Run 1（133）。
 
 # --- Ceiling: act 1 barracks and jail (levels 28-31) ---
 group.ceiling_act_1_barracks_and_jail_levels_28_31 = 顶部：第一幕兵营和监牢（关卡 28-31）
-# English changed: The ceiling's height over this room's floor - 0: on its own walls' top ("Ceiling height from the room's walls"), else 18. Levels: Barracks (28), Jail Level 1 (29), Jail Level 2 (30), Jail Level 3 (31).
-group.ceiling_act_1_barracks_and_jail_levels_28_31.help = 第一幕兵营的顶部：高度、亮度、英雄的光照及距离、浮雕和图片。关卡：兵营（28）、监牢一层（29）、监牢二层（30）、监牢三层（31）。
+group.ceiling_act_1_barracks_and_jail_levels_28_31.help = 该房间地板上方的顶部高度——0：位于它自己墙壁的顶端（“顶部高度取自房间的墙壁”），否则为 18。关卡：兵营（28）、监牢 第 1 层（29）、监牢 第 2 层（30）、监牢 第 3 层（31）。
 
 # --- Ceiling: act 1 barracks' courtyard (level 28) ---
 group.ceiling_act_1_barracks_courtyard_level_28 = 顶部：第一幕兵营的庭院（关卡 28）
-# English changed: The ceiling's height over this room's floor - 0: on its own walls' top ("Ceiling height from the room's walls"), else 18. Levels: Barracks (28).
-group.ceiling_act_1_barracks_courtyard_level_28.help = 第一幕兵营庭院下方的顶部：VR F4 中是游戏的顶部（它自己的鹅卵石），平面 F3 中是我们的拱顶；它离地板的高度。关卡：兵营（28）。
+group.ceiling_act_1_barracks_courtyard_level_28.help = 该房间地板上方的顶部高度——0：位于它自己墙壁的顶端（“顶部高度取自房间的墙壁”），否则为 18。关卡：兵营（28）。
 ceiling.height_act1_court_to_barracks.tip = 世界单位（英雄约高 7.5）。0：放在从你的游戏文件中测得的房间墙顶（配合“顶部高度取自房间的墙壁”），否则为 18。
 
 # --- Ceiling: act 1 cathedral (level 33) ---
 group.ceiling_act_1_cathedral_level_33 = 顶部：第一幕大教堂（关卡 33）
-# English changed: The ceiling's height over this room's floor - 0: on its own walls' top ("Ceiling height from the room's walls"), else 18. Levels: Cathedral (33).
-group.ceiling_act_1_cathedral_level_33.help = 第一幕大教堂的顶部。除了高度、亮度和图片，还有穹顶：让顶部在更高的物体（祭坛的华盖）之上像球面一样升起，而不是把它截去；可设置从多高开始、多宽以及升到多高。关卡：大教堂（33）。
+group.ceiling_act_1_cathedral_level_33.help = 该房间地板上方的顶部高度——0：位于它自己墙壁的顶端（“顶部高度取自房间的墙壁”），否则为 18。关卡：大教堂（33）。
 
 # --- Ceiling: act 1 catacombs (levels 34-37) ---
 group.ceiling_act_1_catacombs_levels_34_37 = 顶部：第一幕地下墓穴（关卡 34-37）
-# English changed: The ceiling's height over this room's floor - 0: on its own walls' top ("Ceiling height from the room's walls"), else 18. Levels: Catacombs Level 1 (34), Catacombs Level 2 (35), Catacombs Level 3 (36), Catacombs Level 4 (37).
-group.ceiling_act_1_catacombs_levels_34_37.help = 第一幕地下墓穴的顶部：高度（游戏绘制得更高的部分会被截去）、亮度、英雄的光照及距离、浮雕和图片。关卡：地下墓穴一层（34）、地下墓穴二层（35）、地下墓穴三层（36）、地下墓穴四层（37）。
+group.ceiling_act_1_catacombs_levels_34_37.help = 该房间地板上方的顶部高度——0：位于它自己墙壁的顶端（“顶部高度取自房间的墙壁”），否则为 18。关卡：地下墓穴 第 1 层（34）、地下墓穴 第 2 层（35）、地下墓穴 第 3 层（36）、地下墓穴 第 4 层（37）。
 ceiling.height_act1_catacombs.tip = 世界单位（英雄约高 7.5）。游戏绘制得更高的部分会被顶部截去。
 
 # --- Ceiling: act 2 sewers (levels 47-49, 65) ---
 group.ceiling_act_2_sewers_levels_47_49_65 = 顶部：第二幕下水道（关卡 47-49、65）
-# English changed: The ceiling's height over this room's floor - 0: on its own walls' top ("Ceiling height from the room's walls"), else 18. Levels: Sewers Level 1 (47), Sewers Level 2 (48), Sewers Level 3 (49), Ancient Tunnels (65).
-group.ceiling_act_2_sewers_levels_47_49_65.help = 第二幕下水道的顶部：高度、亮度、英雄的光照及距离、浮雕和图片。关卡：下水道一层（47）、下水道二层（48）、下水道三层（49）、古代通道（65）。
+group.ceiling_act_2_sewers_levels_47_49_65.help = 该房间地板上方的顶部高度——0：位于它自己墙壁的顶端（“顶部高度取自房间的墙壁”），否则为 18。关卡：下水道 第 1 层（47）、下水道 第 2 层（48）、下水道 第 3 层（49）、古代通道（65）。
 
 # --- Ceiling: act 2 harem (level 50) ---
 group.ceiling_act_2_harem_level_50 = 顶部：第二幕后宫（关卡 50）
-# English changed: The ceiling's height over this room's floor - 0: on its own walls' top ("Ceiling height from the room's walls"), else 18. Levels: Harem Level 1 (50).
-group.ceiling_act_2_harem_level_50.help = 第二幕后宫下方的顶部：高度、亮度、英雄的光照及距离、浮雕和图片。关卡：后宫一层（50）。
+group.ceiling_act_2_harem_level_50.help = 该房间地板上方的顶部高度——0：位于它自己墙壁的顶端（“顶部高度取自房间的墙壁”），否则为 18。关卡：后宫 第 1 层（50）。
 
 # --- Ceiling: act 2 corrupt harem (level 51) ---
 group.ceiling_act_2_corrupt_harem_level_51 = 顶部：第二幕腐化的后宫（关卡 51）
-# English changed: The ceiling's height over this room's floor - 0: on its own walls' top ("Ceiling height from the room's walls"), else 18. Levels: Harem Level 2 (51).
-group.ceiling_act_2_corrupt_harem_level_51.help = 第二幕腐化的后宫下方的顶部：VR F4 中是用它自己地板石材做的游戏的顶部，平面 F3 中是我们的拱顶；它离地板的高度。关卡：后宫二层（51）。
+group.ceiling_act_2_corrupt_harem_level_51.help = 该房间地板上方的顶部高度——0：位于它自己墙壁的顶端（“顶部高度取自房间的墙壁”），否则为 18。关卡：后宫 第 2 层（51）。
 
 # --- Ceiling: act 2 palace cellar (levels 52-54) ---
 group.ceiling_act_2_palace_cellar_levels_52_54 = 顶部：第二幕宫殿地窖（关卡 52-54）
-# English changed: The ceiling's height over this room's floor - 0: on its own walls' top ("Ceiling height from the room's walls"), else 18. Levels: Palace Cellar Level 1 (52), Palace Cellar Level 2 (53), Palace Cellar Level 3 (54).
-group.ceiling_act_2_palace_cellar_levels_52_54.help = 第二幕宫殿地窖下方的顶部：VR F4 中是平滑深色石头（地下墓穴的，不是地板的瓷砖）做的游戏的顶部，平面 F3 中是我们的拱顶；它离地板的高度。关卡：宫殿地窖一层（52）、宫殿地窖二层（53）、宫殿地窖三层（54）。
+group.ceiling_act_2_palace_cellar_levels_52_54.help = 该房间地板上方的顶部高度——0：位于它自己墙壁的顶端（“顶部高度取自房间的墙壁”），否则为 18。关卡：宫殿地窖 第 1 层（52）、宫殿地窖 第 2 层（53）、宫殿地窖 第 3 层（54）。
 
 # --- Ceiling: act 2 tombs (levels 55-61, 66-73) ---
 group.ceiling_act_2_tombs_levels_55_61_66_73 = 顶部：第二幕古墓（关卡 55-61、66-73）
-# English changed: The ceiling's height over this room's floor - 0: on its own walls' top ("Ceiling height from the room's walls"), else 18. Levels: Stony Tomb Level 1 (55), Halls of the Dead Level 1 (56), Halls of the Dead Level 2 (57), Claw Viper Temple Level 1 (58), Stony Tomb Level 2 (59), Halls of the Dead Level 3 (60), Claw Viper Temple Level 2 (61), Tal Rasha's Tomb (66), Tal Rasha's Tomb (67), Tal Rasha's Tomb (68), Tal Rasha's Tomb (69), Tal Rasha's Tomb (70), Tal Rasha's Tomb (71), Tal Rasha's Tomb (72), Duriel's Lair (73).
-group.ceiling_act_2_tombs_levels_55_61_66_73.help = 第二幕古墓下方的顶部：VR F4 中是游戏的顶部（平滑深色石头，地下墓穴的），平面 F3 中是我们的拱顶；它离地板的高度。关卡：石墓一层（55）、死亡大厅一层（56）、死亡大厅二层（57）、利爪蝮蛇神殿一层（58）、石墓二层（59）、死亡大厅三层（60）、利爪蝮蛇神殿二层（61）、塔拉夏的古墓（66）、塔拉夏的古墓（67）、塔拉夏的古墓（68）、塔拉夏的古墓（69）、塔拉夏的古墓（70）、塔拉夏的古墓（71）、塔拉夏的古墓（72）、都瑞尔的巢穴（73）。
+group.ceiling_act_2_tombs_levels_55_61_66_73.help = 该房间地板上方的顶部高度——0：位于它自己墙壁的顶端（“顶部高度取自房间的墙壁”），否则为 18。关卡：岩石墓穴 第 1 层（55）、死亡大厅 第 1 层（56）、死亡大厅 第 2 层（57）、利爪蝮蛇神殿 第 1 层（58）、岩石墓穴 第 2 层（59）、死亡大厅 第 3 层（60）、利爪蝮蛇神殿 第 2 层（61）、塔拉夏的古墓（66）、塔拉夏的古墓（67）、塔拉夏的古墓（68）、塔拉夏的古墓（69）、塔拉夏的古墓（70）、塔拉夏的古墓（71）、塔拉夏的古墓（72）、都瑞尔的巢穴（73）。
 
 # --- Ceiling: act 2 maggot lair (levels 62-64) ---
 group.ceiling_act_2_maggot_lair_levels_62_64 = 顶部：第二幕蛆虫巢穴（关卡 62-64）
-# English changed: The ceiling's height over this room's floor - 0: on its own walls' top ("Ceiling height from the room's walls"), else 18. Levels: Maggot Lair Level 1 (62), Maggot Lair Level 2 (63), Maggot Lair Level 3 (64).
-group.ceiling_act_2_maggot_lair_levels_62_64.help = 第二幕蛆虫巢穴上方的游戏的顶部（它自己的洞穴岩石；我们的效果在这里不绘制拱顶）：它离地板的高度。关卡：蛆虫巢穴一层（62）、蛆虫巢穴二层（63）、蛆虫巢穴三层（64）。
+group.ceiling_act_2_maggot_lair_levels_62_64.help = 该房间地板上方的顶部高度——0：位于它自己墙壁的顶端（“顶部高度取自房间的墙壁”），否则为 18。关卡：蛆虫巢穴 第 1 层（62）、蛆虫巢穴 第 2 层（63）、蛆虫巢穴 第 3 层（64）。
 ceiling.height_act2_maggot.tip = 世界单位（英雄约高 7.5）：游戏的岩石顶部在这里悬挂的位置；它的岩石垂得比这稍低一些。
 
 # --- Ceiling: act 3 spider caves (levels 84-85) ---
 group.ceiling_act_3_spider_caves_levels_84_85 = 顶部：第三幕蜘蛛洞穴（关卡 84-85）
-# English changed: The ceiling's height over this room's floor - 0: on its own walls' top ("Ceiling height from the room's walls"), else 18. Levels: Spider Cave (84), Spider Cavern (85).
-group.ceiling_act_3_spider_caves_levels_84_85.help = 第三幕蜘蛛洞穴上方的游戏的顶部（它自己的洞穴岩石；我们的效果在这里不绘制拱顶）：它离地板的高度。关卡：蜘蛛洞穴（84）、蜘蛛洞窟（85）。
+group.ceiling_act_3_spider_caves_levels_84_85.help = 该房间地板上方的顶部高度——0：位于它自己墙壁的顶端（“顶部高度取自房间的墙壁”），否则为 18。关卡：蜘蛛洞穴（84）、蜘蛛巢穴（85）。
 
 # --- Ceiling: act 3 jungle dungeons (levels 86-91) ---
 group.ceiling_act_3_jungle_dungeons_levels_86_91 = 顶部：第三幕丛林地牢（关卡 86-91）
-# English changed: The ceiling's height over this room's floor - 0: on its own walls' top ("Ceiling height from the room's walls"), else 18. Levels: Swampy Pit Level 1 (86), Swampy Pit Level 2 (87), Flayer Dungeon Level 1 (88), Flayer Dungeon Level 2 (89), Swampy Pit Level 3 (90), Flayer Dungeon Level 3 (91).
-group.ceiling_act_3_jungle_dungeons_levels_86_91.help = 第三幕丛林地牢上方的游戏的顶部（它自己的洞穴岩石；我们的效果在这里不绘制拱顶）：它离地板的高度。关卡：沼泽地洞一层（86）、沼泽地洞二层（87）、剥皮魔地牢一层（88）、剥皮魔地牢二层（89）、沼泽地洞三层（90）、剥皮魔地牢三层（91）。
+group.ceiling_act_3_jungle_dungeons_levels_86_91.help = 该房间地板上方的顶部高度——0：位于它自己墙壁的顶端（“顶部高度取自房间的墙壁”），否则为 18。关卡：沼泽地穴 第 1 层（86）、沼泽地穴 第 2 层（87）、剥皮魔地牢 第 1 层（88）、剥皮魔地牢 第 2 层（89）、沼泽地穴 第 3 层（90）、剥皮魔地牢 第 3 层（91）。
 
 # --- Ceiling: act 3 sewers (level 93) ---
 group.ceiling_act_3_sewers_level_93 = 顶部：第三幕下水道（关卡 93）
-# English changed: The ceiling's height over this room's floor - 0: on its own walls' top ("Ceiling height from the room's walls"), else 18. Levels: Sewers Level 2 (93).
-group.ceiling_act_3_sewers_level_93.help = 第三幕下水道下方的顶部：VR F4 中是游戏的顶部（它自己的岩石地板，平铺），平面 F3 中是我们的拱顶；它离地板的高度。关卡：下水道二层（93）。
+group.ceiling_act_3_sewers_level_93.help = 该房间地板上方的顶部高度——0：位于它自己墙壁的顶端（“顶部高度取自房间的墙壁”），否则为 18。关卡：下水道 第 2 层（93）。
 
 # --- Ceiling: act 3 temples (levels 94-99) ---
 group.ceiling_act_3_temples_levels_94_99 = 顶部：第三幕神殿（关卡 94-99）
-# English changed: The ceiling's height over this room's floor - 0: on its own walls' top ("Ceiling height from the room's walls"), else 18. Levels: Ruined Temple (94), Disused Fane (95), Forgotten Reliquary (96), Forgotten Temple (97), Ruined Fane (98), Disused Reliquary (99).
-group.ceiling_act_3_temples_levels_94_99.help = 第三幕神殿下方的顶部：VR F4 中是游戏的顶部（它们自己的石头），平面 F3 中是我们的拱顶；它离地板的高度。关卡：毁坏的神殿（94）、废弃的寺院（95）、遗忘的圣骨箱（96）、遗忘的神殿（97）、毁坏的寺院（98）、废弃的圣骨箱（99）。
+group.ceiling_act_3_temples_levels_94_99.help = 该房间地板上方的顶部高度——0：位于它自己墙壁的顶端（“顶部高度取自房间的墙壁”），否则为 18。关卡：毁坏的神殿（94）、废弃的寺院（95）、被遗忘的圣骨堂（96）、被遗忘的神殿（97）、毁坏的寺院（98）、废弃的圣骨堂（99）。
 
 # --- Ceiling: act 3 Durance of Hate (level 102) ---
 group.ceiling_act_3_durance_of_hate_level_102 = 顶部：第三幕憎恨囚牢（关卡 102）
-# English changed: The ceiling's height over this room's floor - 0: on its own walls' top ("Ceiling height from the room's walls"), else 18. Levels: Durance of Hate Level 3 (102).
-group.ceiling_act_3_durance_of_hate_level_102.help = 第三幕憎恨囚牢下方的顶部：VR F4 中是游戏的顶部（它自己的石头），平面 F3 中是我们的拱顶；它离地板的高度。关卡：憎恨囚牢三层（102）。
+group.ceiling_act_3_durance_of_hate_level_102.help = 该房间地板上方的顶部高度——0：位于它自己墙壁的顶端（“顶部高度取自房间的墙壁”），否则为 18。关卡：憎恨囚牢 第 3 层（102）。
 
 # --- Ceiling: act 5 ice caves (levels 113-116, 118-119) ---
 group.ceiling_act_5_ice_caves_levels_113_116_118_119 = 顶部：第五幕冰洞（关卡 113-116、118-119）
-# English changed: The ceiling's height over this room's floor - 0: on its own walls' top ("Ceiling height from the room's walls"), else 18. Levels: Crystalized Cavern Level 1 (113), Cellar of Pity (114), Crystalized Cavern Level 2 (115), Echo Chamber (116), Glacial Caves Level 1 (118), Glacial Caves Level 2 (119).
-group.ceiling_act_5_ice_caves_levels_113_116_118_119.help = 第五幕冰洞上方的游戏的顶部（它自己的洞穴岩石；我们的效果在这里不绘制拱顶）：它离地板的高度。关卡：水晶通道一层（113）、怜悯地窖（114）、水晶通道二层（115）、回音之室（116）、冰河洞穴一层（118）、冰河洞穴二层（119）。
+group.ceiling_act_5_ice_caves_levels_113_116_118_119.help = 该房间地板上方的顶部高度——0：位于它自己墙壁的顶端（“顶部高度取自房间的墙壁”），否则为 18。关卡：水晶洞窟 第 1 层（113）、怜悯地窖（114）、水晶洞窟 第 2 层（115）、回音之室（116）、冰川洞穴 第 1 层（118）、冰川洞穴 第 2 层（119）。
 
 # --- Ceiling: act 5 Nihlathak's halls (levels 122-124) ---
 group.ceiling_act_5_nihlathak_s_halls_levels_122_124 = 顶部：第五幕尼拉塞克的大厅（关卡 122-124）
-# English changed: The ceiling's height over this room's floor - 0: on its own walls' top ("Ceiling height from the room's walls"), else 18. Levels: Halls of Anguish (122), Halls of Death's Calling (123), Halls of Vaught (124).
-group.ceiling_act_5_nihlathak_s_halls_levels_122_124.help = 第五幕尼拉塞克的大厅下方的顶部：VR F4 中是游戏的顶部（它们自己的洞穴岩石），平面 F3 中是我们的拱顶；它离地板的高度。关卡：痛苦大厅（122）、死亡召唤大厅（123）、维特大厅（124）。
+group.ceiling_act_5_nihlathak_s_halls_levels_122_124.help = 该房间地板上方的顶部高度——0：位于它自己墙壁的顶端（“顶部高度取自房间的墙壁”），否则为 18。关卡：苦痛大厅（122）、死亡召唤大厅（123）、沃特大厅（124）。
 
 # --- Ceiling: act 5 Worldstone Keep (levels 128-130) ---
 group.ceiling_act_5_worldstone_keep_levels_128_130 = 顶部：第五幕世界之石要塞（关卡 128-130）
-# English changed: The ceiling's height over this room's floor - 0: on its own walls' top ("Ceiling height from the room's walls"), else 18. Levels: The Worldstone Keep Level 1 (128), The Worldstone Keep Level 2 (129), The Worldstone Keep Level 3 (130).
-group.ceiling_act_5_worldstone_keep_levels_128_130.help = 第五幕世界之石要塞下方的顶部：VR F4 中是游戏的顶部（它自己的地板），平面 F3 中是我们的拱顶；它离地板的高度。关卡：世界之石要塞一层（128）、世界之石要塞二层（129）、世界之石要塞三层（130）。
+group.ceiling_act_5_worldstone_keep_levels_128_130.help = 该房间地板上方的顶部高度——0：位于它自己墙壁的顶端（“顶部高度取自房间的墙壁”），否则为 18。关卡：世界之石要塞 第 1 层（128）、世界之石要塞 第 2 层（129）、世界之石要塞 第 3 层（130）。
 
 # --- Ceiling: act 5 throne of destruction (levels 128-132) ---
 group.ceiling_act_5_throne_of_destruction_levels_128_132 = 顶部：第五幕毁灭王座（关卡 128-132）
-# English changed: The ceiling's height over this room's floor - 0: on its own walls' top ("Ceiling height from the room's walls"), else 18. Levels: The Worldstone Keep Level 1 (128), The Worldstone Keep Level 2 (129), The Worldstone Keep Level 3 (130), Throne of Destruction (131), The Worldstone Chamber (132).
-group.ceiling_act_5_throne_of_destruction_levels_128_132.help = 第五幕毁灭王座下方的顶部：VR F4 中是游戏的顶部（要塞自己的地板），平面 F3 中是我们的拱顶；它离地板的高度。关卡：世界之石要塞一层（128）、世界之石要塞二层（129）、世界之石要塞三层（130）、毁灭王座（131）、世界之石大殿（132）。
+group.ceiling_act_5_throne_of_destruction_levels_128_132.help = 该房间地板上方的顶部高度——0：位于它自己墙壁的顶端（“顶部高度取自房间的墙壁”），否则为 18。关卡：世界之石要塞 第 1 层（128）、世界之石要塞 第 2 层（129）、世界之石要塞 第 3 层（130）、毁灭王座（131）、世界之石大殿（132）。
 
 # ===== Tab: Weapon Adjust =====
 tab.weapon_adjust = 武器调整
@@ -2824,8 +2859,8 @@ group.monsters_bodies_f4 = 怪物的躯体（F4）
 group.monsters_bodies_f4.help = 给怪物赋予你的武器无法穿过的躯体的测试：武器会停在它们上面，尖头武器可以扎入，怪物的盾牌和武器会挡住它，两件武器会相撞，能感到格挡，躯体按其重量让开。需要开启接触命中；命中本身仍是游戏的。
 weight.monster_bodies.label = 武器被怪物的躯体挡住（测试）
 weight.monster_bodies.tip = 勾选：游戏称为敌对的怪物拥有一个你手中的武器无法穿过的躯体——刺击或劈砍会停在它上面，锐口（剑、斧、矛）以浅角度会沿着它滑开，钝器（锤、权杖、长杖）则停在击中处；击中时手中有一次脉冲。你的手继续前进，武器（以及按它绘制的手）停在躯体处，直到手回来。躯体就是怪物自己的骨骼：游戏摆出的每个肢体上一个胶囊体，与其模型一样粗（读不到时，用游戏给该怪物的胶囊体）。命中本身仍然是接触命中按下的游戏攻击：需要开启接触命中——它的扫描才能找到怪物。取消勾选：武器穿过它们，一如既往。
-weight.own_body.label = 武器不会穿过你自己的身体
-weight.own_body.tip = 勾选，并启用上面的躯体：你手中的武器会停在你自己的躯干和腿上，就像停在怪物的躯体上一样 - 不再穿过你的英雄。你的手臂和头部不算在内（你的手握着武器；你的头是你自己的）。绝不会对自己造成击中、刺入或抓取。取消勾选：它会穿过你，与以前一样。
+weight.skeleton_bones_max.label = 怪物的骨架：最多读取的骨骼数
+weight.skeleton_bones_max.tip = 即时生效。骨架的骨骼数超过此值的怪物不会获得肢体：它保持为游戏的单个胶囊体——你的武器会停在上面，抓取能抓住它，但它从不会被击倒、举起或扔出，也不会有任何肢体被推开。超过时，日志会记录它的骨骼数（"the skeleton has more bones than [weight] skeleton_bones_max reads"，N 根骨骼）。更高的值能读取更长的骨架（亚瑞特山顶的远古英灵有超过 160 根），每个怪物也会占用更多处理器时间——每个模型的骨架只读取一次，之后每次扫描读取它的肢体；更低的值更省，但会让更多大型怪物保持为单个胶囊体。默认 256。
 weight.stab_in.label = 尖头武器会扎进躯体（测试）
 weight.stab_in.tip = 勾选，并配合上面的躯体：带尖的武器（剑——单手或双手——匕首、矛、标枪、投掷武器、长柄武器、爪）以尖端在前（偏离笔直在 60 度以内）、0.5 m/s 或更快的速度刺入怪物躯体时，会扎入，而不是停在表面。它只沿自身长度滑动：躯体会拖住它——最初几厘米是较硬的皮肤，然后是较软的肉——深度不超过它的刃；静止时它会锁定在原处，持续的拉力会再次放开它。沿它的长度向后拉出，超过扎入的位置，它就脱出。扎入时侧向挥动或转动，它被保持在自己的线上——随怪物拖动和转动，不会切穿；把手拉得很远，它就脱开。走动的怪物会带着它，死去的怪物会放开它。只有尖端在前的运动才算（沿刃，不转动）——对任何尖头武器都如此，无论接触命中是否把它算作刺击。用刃口的劈砍、锤、斧、长杖或拳头仍像以前一样停在表面。只是你看得见的武器：命中仍是接触命中按下的游戏攻击（剑的扎刺仍按它原来的挥击命中，除非为剑勾选了刺击）。取消勾选：每件武器都停在表面。需要重量库（d2rloader\d2r_vr_libs 中的 d2r_vr_weight.dll 1.1 或更新）：扎刺是它的功能——没有它，每件武器都停在表面（日志会说明）。
 weight.stab_min_speed.label = 扎刺：扎入所需的最低速度，m/s
@@ -2842,10 +2877,12 @@ weight.stab_unlock_n.label = 扎刺：使静止扎入的武器脱出的拉力，
 weight.stab_unlock_n.tip = 即时生效。静止的扎刺会锁定在原处；沿武器方向持续四分之一秒大于此值的拉力会使它再次滑动。更低：轻轻一拉就滑出；0 = 永不锁定。
 weight.monster_shields.label = 怪物的盾牌和武器会挡住你的武器（测试）
 weight.monster_shields.tip = 即时生效。勾选：怪物拿着的东西——它的盾牌、武器——像它的肢体一样挡住你的武器，你的刃沿着它们滑开（盾牌是横跨其正面的四个胶囊体，武器是沿其长度的一个；调试：接触命中的盒子把它们画成紫色和橙色）。被它们挡住的一击不算命中：接触命中只在你的武器到达怪物躯体后才按下攻击——游戏自己对落下的打击的格挡判定仍是游戏的。它们不推动布娃娃，也不接受扎刺。取消勾选：它们对你的武器是透明的，与以前相同。
-# weight.world_contact.label = Walls stop your weapon (a test)
-# weight.world_contact.tip = Live. VR first person (F4) only. Ticked: the weapon in your hands strikes the level's walls, pillars, trees and big props instead of passing through them - it stops on the surface with a small bounce and a pulse in the hand, a slash slides along, and your controller goes on into the wall while the weapon (and your hand on it) stays outside; it follows again when the controller comes back. Push the controller far past the wall and the weapon goes back into your hand through it. Only what you see: the game's attacks, its hits and your hero's movement are the game's as ever. The walls are made from the game's own meshes when this program starts with the box ticked (about a minute, once per game build; the status says when): a doorway stays open, a tree stops the weapon at its trunk, not its leaves, and bushes, grass and other small plants never stop it (Debug: "World contact: draw the walls" shows them). Unticked: the weapon passes through walls, as before.
-# weight.world_contact_hands.label = Walls stop your bare hands (a test)
-# weight.world_contact_hands.tip = Live. VR first person (F4) only. Ticked: an empty hand (or one with a bow, a shield, a potion) is held at the surface of the level's walls, pillars, trees and big props while your controller goes on into them, sliding along as you move; it comes back with the controller. Push the controller more than 45 cm past the surface and the hand goes back to it, through the wall. The same walls as the weapon's, made from the game's meshes (bushes and grass never stop a hand). Only the drawing: nothing of the game changes. Unticked: the hands pass through walls, as before.
+weight.world_contact.label = 墙壁挡住你的武器（实验性）
+weight.world_contact.tip = 即时生效。仅限 VR 第一人称（F4）。勾选：你手中的武器会撞上关卡的墙壁、柱子、树木和大型物件，而不是穿过它们——它停在表面上，带有小小的反弹和手中的一次振动，劈砍会沿表面滑动，你的手柄继续进入墙内，而武器（以及握着它的手）留在外面；手柄回来时它会再次跟随。把手柄推到远超墙壁的位置，武器会穿过墙回到你手中。只影响你看到的：游戏的攻击、命中和你英雄的移动始终是游戏的。墙体在本程序勾选此项启动时由游戏自己的网格生成（约一分钟，每个游戏版本一次；状态栏会提示）：门洞保持敞开，树在树干处挡住武器而不是在树叶处，灌木、草和其他小植物从不阻挡它（调试：“世界接触：绘制墙体”会显示它们）。不勾选：武器穿过墙壁，与以前相同。实验性：默认关闭，可能仍有异常。
+weight.world_contact_hands.label = 墙壁挡住你的空手（实验性）
+weight.world_contact_hands.tip = 即时生效。仅限 VR 第一人称（F4）。勾选：空手（或拿着弓、盾牌、药水的手）会被挡在关卡墙壁、柱子、树木和大型物件的表面，而你的手柄继续进入其中，随你移动沿表面滑动；它随手柄回来。把手柄推过表面 45 cm 以上，手会穿过墙回到手柄处。墙体与武器的相同，由游戏的网格生成（灌木和草从不阻挡手）。只影响绘制：游戏没有任何改变。不勾选：双手穿过墙壁，与以前相同。实验性：默认关闭，可能仍有异常。
+weight.own_body.label = 武器不会穿过你自己的身体（实验性）
+weight.own_body.tip = 即时生效。仅限 VR 第一人称（F4）。勾选：你手中的武器会像停在墙上一样停在你自己的英雄身上——他的躯干、臀部、双腿和头部——并沿表面滑动。你的手柄继续前进；它回来时武器会再次跟随。从不妨碍：你的手臂和双手及其所持的一切（双手握持、在两手之间传递武器、盾牌）、从背后或腰间拔出或召回手中的武器（在它进来的片刻），以及一只手在肩后拔出或收起武器时。只影响绘制：从不会对你自己造成命中、刺击或抓取，游戏的攻击仍是游戏的。不勾选：它会穿过你，与以前相同。实验性：默认关闭，可能仍有异常。
 weight.dual_collide.label = 每只手一件武器：两者互相撞击（钢铁相击）
 weight.dual_collide.tip = 即时生效。双手各持一件武器时，两件武器会相遇：各自停在对方上面并沿其滑开，如同在怪物的武器上；与一击一样重的撞击会在双手中都感觉到（配合下面的相击声音还能听到），一件轻靠在另一件上则没有声音。勾选“头部作为独立体积”（接触命中）后，斧的刃、锤的锤面、大锤的头部在游戏模型有它的地方是杆身旁独立的钢：剑也会停在它上面。仅影响它们如何移动、感觉和发声——没有命中，不涉及游戏的任何东西。取消勾选：它们互相穿过，与以前相同。
 weight.clash_sound.label = 钢铁相击的声音：撞得越重，声音越大
@@ -2872,14 +2909,14 @@ weight.monster_ragdoll_pose.label = 所绘制的怪物也会让开（探测）
 weight.monster_ragdoll_pose.tip = 勾选：被击中的人形怪物会按游戏绘制的样子让开——你击中的肢体绕其关节转动，身体向后倾，恢复时它自己的动画重新接管。只是绘制：它站在哪里、做什么以及游戏知道的一切仍属于游戏。取消勾选：只有你的武器碰到的躯体会移动（调试：接触命中的盒子会显示它们）。
 weight.monster_ragdoll_all.label = 所有怪物都会被推动，不只是人形怪物（探索）
 weight.monster_ragdoll_all.tip = 勾选：你的武器推到的每个怪物都会按其重量被推开 - 动物、昆虫、恶魔、飞行怪物，不只是人形怪物。模型中没有可读取身体部位的怪物，用它的骨骼来获得肢体。尸体永远不会移动。仅影响绘制。取消勾选：只有人形怪物，和以前一样。
-# weight.knock_down.label = A hard blow knocks a humanoid off its feet (a test)
-# weight.knock_down.tip = Ticked: a hard blow of your weapon, a running hit, a sweep at the legs or a shove knocks a humanoid monster or a town NPC (with "Town NPCs and allies have bodies too") off its feet as you see it: it falls as a ragdoll, lies a moment and gets up again, then its own animation takes over. Only the drawing: where it stands, what it does, its hits and its talk stay the game's - a monster the game has attack gets up at once. A blow knocks it down when it would give the body the speed below; a sweep low at the legs needs half of it. Needs the weight library with the knock-down (d2r_vr_weight.dll in d2rloader\d2r_vr_libs; the log says when it is missing). F4. Unticked: nothing falls.
-# weight.knock_down_cms.label = Knock-down: how hard, cm/s the blow gives the body
-# weight.knock_down_cms.tip = Live. A blow knocks a body down when its push (your weapon and arm, their speed, your run) would move the body this fast: the push over the body's weight (a man of 1.75 m about 50 kg). 70: a hard swing of a sword fells a man, a light one does not; lower: easier. The log tells each blow's speed against it.
-# weight.knock_down_lie_ms.label = Knock-down: lies for, ms
-# weight.knock_down_lie_ms.tip = Live. How long a body knocked down lies still on the ground before it gets up, then walks back to its place.
-# weight.knock_down_stagger_pct.label = Knock-down: a stagger from, % of a knock-down
-# weight.knock_down_stagger_pct.tip = Live. A blow too light to knock the body down but at least this share of it staggers it: a step or two back, it catches its balance and walks back to its place. 0: no stagger.
+weight.knock_down.label = 重击会把人形怪物打倒（测试）
+weight.knock_down.tip = 勾选：你武器的重击、奔跑中的命中、扫腿或推搡会把人形怪物或城镇 NPC（配合“城镇 NPC 和盟友也有身体”）在你眼中打倒：它作为布娃娃倒下，躺一会儿再站起来，然后由它自己的动画接管。只影响绘制：它站在哪里、做什么、它的命中和对话仍是游戏的——游戏让其攻击的怪物会立刻站起来。当一击会让身体获得下面的速度时就会把它打倒；低位扫腿只需一半。需要带击倒功能的重量库（d2rloader\d2r_vr_libs 中的 d2r_vr_weight.dll；缺失时日志会说明）。F4。不勾选：什么都不会倒下。
+weight.knock_down_cms.label = 击倒：力度，一击给身体的 cm/s
+weight.knock_down_cms.tip = 即时生效。当一击的推力（你的武器和手臂、它们的速度、你的奔跑）会让身体以这个速度移动时，就会把它打倒：推力除以身体的重量（身高 1.75 m 的人约 50 kg）。70：用剑重重一挥能击倒一个人，轻轻一下不能；更低：更容易。日志会记录每一击的速度并与它对比。
+weight.knock_down_lie_ms.label = 击倒：躺地时长，ms
+weight.knock_down_lie_ms.tip = 即时生效。被击倒的身体在地上静躺多久才站起来，然后走回原位。
+weight.knock_down_stagger_pct.label = 击倒：踉跄起于击倒的 %
+weight.knock_down_stagger_pct.tip = 即时生效。太轻而不足以击倒、但至少达到其这一比例的一击会让身体踉跄：后退一两步，恢复平衡后走回原位。0：没有踉跄。
 weight.npc_bodies.label = 城镇 NPC 和盟友也有身体
 weight.npc_bodies.tip = 勾选后，配合上面的身体：城镇的 NPC、雇佣兵以及游戏不视为敌对的其他单位也有身体——按它们自己的骨骼，每个肢体一个胶囊体，与怪物相同。你的武器会停在它们身上、滑开、刺入（配合“尖锐武器刺入身体”），它们会按体重让开（配合“怪物身体按体重让开”）——无需战斗即可全部体验。它们只是你看到的武器的身体：触碰攻击从不攻击它们——仍然只打游戏视为敌对的怪物。不勾选：武器像以前一样穿过它们（抓取仍可抓住它们）。即时生效。F4。
 
@@ -2888,8 +2925,12 @@ group.grab_bodies_f4 = 抓取躯体（F4）
 group.grab_bodies_f4.help = 一项测试：用空手握紧握把按在怪物或盟友的躯体上，你的手就抓住它。只有你看到的会动；游戏中没有任何东西被攻击或移动。需要接触命中、另一只手持有武器以及重量库。
 weight.grab_bodies.label = 用手的握把抓取怪物和盟友（测试）
 weight.grab_bodies.tip = 即时生效。勾选：用掌心有力地贴着怪物或盟友（雇佣兵、城镇居民）的躯体，握紧空手（手中没有武器、盾牌、弓或药瓶）的握把，手就在那里抓住它（一次脉冲）。抓取是 VR 工具包自己的，位于重量库中：握紧握把期间，你的手抓住那个位置——人形的肢体被你手的力量拉动，对抗它的重量（需勾选“怪物的躯体按其重量让开”——轻的会跟着来，重的会拖住你的手，它的肌肉把它拉回去；“所绘制的怪物也会让开”会显示这一点），其他任何东西都不会让开，你的手被它固定住，随怪物移动而移动。松开握把即放手；把手拉离抓住的位置超过下面的挣脱距离，就会扯开（最初 2 s 内不会）。只有你看到的会动：怪物停留在游戏所在的位置，游戏中没有任何东西被攻击、伤害或移动。持弓或弩时，拉弦的那只手负责抓取（不在弦上）。需要重量库 1.4（d2rloader\d2r_vr_libs 中的 d2r_vr_weight.dll）——没有它什么也抓不到。取消勾选：空手的握把只合拢拳头，与以前相同。
-# weight.grab_throw.label = Lift and throw a humanoid you grab (a test)
-# weight.grab_throw.tip = Ticked, with the grab: a humanoid monster or a town NPC your hand's grip takes hangs from your hand as a ragdoll. It stands while its feet bear it; lift it or pull it out of its place and it is off its feet; let go while you swing and it flies, lands, lies a moment, gets up and walks back to where the game has it. Two hands hold it together. Only the drawing: where it stands, what it does and its talk stay the game's. Needs the weight library with the knock-down (d2r_vr_weight.dll in d2rloader\d2r_vr_libs). F4. Unticked: the grab holds a limb as before.
+weight.grab_throw.label = 举起并扔出你抓住的人形怪物（测试）
+weight.grab_throw.tip = 勾选，配合抓取：被你手的握把抓住的人形怪物或城镇 NPC 会作为布娃娃挂在你手上。只要双脚支撑得住它就站着；把它举起或拉离原位，它就会离地；在挥动时松手，它就会飞出去、落地、躺一会儿、站起来并走回游戏中它所在的位置。双手可以一起抓住它。只影响绘制：它站在哪里、做什么和它的对话仍是游戏的。需要带击倒功能的重量库（d2rloader\d2r_vr_libs 中的 d2r_vr_weight.dll）。F4。不勾选：抓取像以前一样抓住一个肢体。
+weight.grab_balance.label = 被拉的人形怪物会迈步保持站立（测试）
+weight.grab_balance.tip = 勾选，配合“举起并扔出”：抓住人形怪物的手或手臂拉动，它会跟着你迈步保持站立——与它的双腿迈步一样快；只有比这更快的拉动才会让它离地。松手后，它会走回游戏中它所在的位置。只影响绘制：它站在哪里、做什么仍是游戏的。F4。不勾选：被拉离原位 30 cm 就会倒下，与以前相同。
+weight.impale_drag.label = 用你的长矛刺穿并拖动人形怪物（测试）
+weight.impale_drag.tip = 勾选，配合刺击：用长矛（或任何以尖端在前的武器）冲向人形怪物或城镇 NPC，尖端以 2 m/s 或更快刺入（刺击加上你沿刃方向的奔跑）——它作为布娃娃被挂在刃上，在你继续前进时被拖着走。当你停下、把刃拉回或向下倾斜时，它会滑落、倒下、站起来并走回游戏中它所在的位置。只影响绘制：游戏的伤害、它站在哪里和做什么仍是游戏的。需要带击倒功能的重量库。F4。不勾选：尖端像以前一样停在身体里。
 weight.grab_reach_cm.label = 抓取：手掌须离躯体多近，cm
 weight.grab_reach_cm.tip = 即时生效。握把合拢时，掌心离躯体表面（或在其中）这么近，就会抓住它。更高：更容易抓；更低：只有掌心正好贴着它时。
 weight.grab_break_cm.label = 抓取：手离开这么远即挣脱，cm
@@ -3193,11 +3234,11 @@ group.warlock_ticked_the_game_s_auto_target.help = 术士的瘴气弹：勾选�
 autotarget.s395.label = 瘴气弹
 
 # ===== Tab: Vibration =====
-# tab.vibration = Vibration
+tab.vibration = 振动
 
 # --- Controller vibration ---
-# group.controller_vibration = Controller vibration
-# group.controller_vibration.help = Pulses in the controllers on what happens in the game (native OpenXR, VR first person F4). They only watch the game: nothing of it is changed. Every box below needs Controller vibration ticked.
+group.controller_vibration = 手柄振动
+group.controller_vibration.help = 根据游戏中发生的事情在手柄中产生振动（原生 OpenXR，VR 第一人称 F4）。它们只是观察游戏：游戏没有任何改变。下面每个选项框都需要勾选“手柄振动”。
 openxr.haptics.tip = 当你的一击命中、取用或喝下腰带药水、激光点击菜单、或你拾取或打开某物时，手中会有一个短促的脉冲。游戏本身不会被改动 - 脉冲只是旁观。仅限原生 OpenXR（由头显的运行时驱动马达）；关闭：无声，与以前一样。即时生效。仅限 F4。
 openxr.haptics_scale.label = 振动：强度
 openxr.haptics_scale.tip = 所有脉冲变强或变弱；1 = 通常强度（命中的一击约为马达强度的 70%）。即时生效。
@@ -3205,42 +3246,42 @@ openxr.haptics_hand_actions.label = 振动：每只手各有独立通道
 openxr.haptics_hand_actions.tip = 每个手柄的马达都有自己专属的振动动作，这样脉冲只会送到它所属的那只手（有些运行时曾把共用动作的脉冲送到了错误的手）。在头显会话启动时生效。关闭：双手共用一个动作，与以前一样。
 openxr.haptics_stop.label = 振动：每次脉冲按时停止
 openxr.haptics_stop.tip = 每个脉冲在时间到时由它自己的调用停止，即使游戏正在加载或卡顿 - 有些手柄（Steam Frame 的）在短促脉冲之后仍持续嗡嗡作响。即时生效。关闭：由运行时自行结束脉冲，与以前一样。
-# openxr.haptics_motor.label = Vibration: the controllers' motor
-# openxr.haptics_motor.tip = A PlayStation VR2's Sense controllers under SteamVR do not show short, gentle pulses (a Quest's do): the low-life heartbeat, the low mana alert, a cast's pulse and the game's soft rumble are lifted for them to a strength they show, in the same order (stronger stays stronger). By the headset's name: weak for a PlayStation VR2, plain for the rest (the log says which). Plain: every pulse as it is made. Live.
-# openxr.haptics_motor.choice0 = By the headset's name
-# openxr.haptics_motor.choice1 = Plain
-# openxr.haptics_motor.choice2 = Weak (PlayStation VR2 Sense)
+openxr.haptics_motor.label = 振动：手柄的马达
+openxr.haptics_motor.tip = PlayStation VR2 的 Sense 手柄在 SteamVR 下无法表现短而轻柔的振动（Quest 的可以）：低生命心跳、低法力警报、施法振动和游戏的轻微震动会为它们提升到能感觉到的强度，顺序不变（更强的仍然更强）。按头显名称：PlayStation VR2 为弱，其余为普通（日志会说明是哪个）。普通：每个振动按原样产生。即时生效。
+openxr.haptics_motor.choice0 = 按头显名称
+openxr.haptics_motor.choice1 = 普通
+openxr.haptics_motor.choice2 = 弱（PlayStation VR2 Sense）
 
 # --- Blows ---
-# group.blows = Blows
-# group.blows.help = How a blow feels. Hit by touch (Strikes) counts a contact when the blade meets a monster fast enough; the game then rolls the blow.
-# openxr.haptics_touch.label = A pulse on every counted touch, landed or not
-# openxr.haptics_touch.tip = Hit by touch: the blade's hand buzzes the moment a contact is counted, whether the game then lands the blow, misses it or refuses it - you feel the monster you struck. The landed hit that follows gives no second pulse. Off: a pulse only for a blow the game says landed, as before. After bearstonem/d2r-pcvr (MIT). Live. F4 only.
-# openxr.haptics_hit_long.label = A longer, stronger tap for a blow
-# openxr.haptics_hit_long.tip = A blow's tap (and a touch's, with the box above) is 95% of the motor for 90 ms instead of 72% for 45 ms: easier to feel in a fast swing. d2r-pcvr's weapon tap (MIT). Live. F4 only.
+group.blows = 击打
+group.blows.help = 一击的手感。接触命中（打击）在刃以足够快的速度碰到怪物时计为一次接触；然后由游戏判定这一击。
+openxr.haptics_touch.label = 每次计数的接触都振动，无论是否命中
+openxr.haptics_touch.tip = 接触命中：一旦计为接触，持刃的手就会振动，无论游戏随后让这一击命中、未命中还是拒绝——你能感觉到你击中的怪物。随后的命中不会再振动第二次。关闭：只有游戏判定命中的一击才振动，与以前相同。参考 bearstonem/d2r-pcvr（MIT）。即时生效。仅限 F4。
+openxr.haptics_hit_long.label = 一击时更长、更强的轻触振动
+openxr.haptics_hit_long.tip = 一击的轻触振动（配合上面的选项框时，接触的振动也一样）为马达的 95%、持续 90 ms，而不是 72%、45 ms：在快速挥动中更容易感觉到。d2r-pcvr 的武器振动（MIT）。即时生效。仅限 F4。
 
 # --- Spells and mana ---
-# group.spells_and_mana = Spells and mana
-# openxr.haptics_spell.label = A pulse when a cast starts
-# openxr.haptics_spell.tip = A pulse in the aiming hand when the hero's casting animation starts - a cast the game took (spells, warcries and the other cast skills); a cast it refused (no mana, not ready) has none. A held cast whose animations follow one another without a break is one pulse. After bearstonem/d2r-pcvr (MIT). Live. F4 only.
-# openxr.haptics_low_mana.label = Low mana alert in the left hand
-# openxr.haptics_low_mana.tip = A pulse in the left hand when your mana falls under the share below, again every 10 seconds while it stays under. The mana is only read. After bearstonem/d2r-pcvr (MIT). Live. F4 only.
-# openxr.haptics_low_mana_pct.label = Low mana: under, % of your mana
-# openxr.haptics_low_mana_pct.tip = The alert comes when the mana falls under this share of its maximum, and is ready again a little above it. Live.
+group.spells_and_mana = 法术与法力
+openxr.haptics_spell.label = 开始施法时振动
+openxr.haptics_spell.tip = 英雄的施法动画开始时，瞄准的手会振动一下——仅限游戏接受的施法（法术、战吼和其他施放类技能）；游戏拒绝的施法（法力不足、未就绪）不会振动。动画一个接一个不间断的持续施法只振动一次。参考 bearstonem/d2r-pcvr（MIT）。即时生效。仅限 F4。
+openxr.haptics_low_mana.label = 左手的低法力警报
+openxr.haptics_low_mana.tip = 当你的法力降到下面的比例以下时，左手振动一下，在低于该比例期间每 10 秒再振动一次。法力只被读取。参考 bearstonem/d2r-pcvr（MIT）。即时生效。仅限 F4。
+openxr.haptics_low_mana_pct.label = 低法力：低于法力的 %
+openxr.haptics_low_mana_pct.tip = 当法力降到其最大值的这一比例以下时发出警报，回到略高于此值时再次就绪。即时生效。
 
 # --- The game's own rumble ---
-# group.the_game_s_own_rumble = The game's own rumble
-# group.the_game_s_own_rumble.help = The game rumbles a gamepad on its own events - a hit taken, a skill used - when its Controller Rumble option is on.
-# openxr.haptics_game_rumble.label = Feel the game's rumble in the controllers
-# openxr.haptics_game_rumble.tip = What the game sends to a gamepad's two motors is followed in both controllers, as the game asks for it (the game's own events: a hit taken, a skill used...). Needs the game's own Controller Rumble option on. The call still goes to a pad if one is plugged in (the box below keeps it from it). Live. F4 only.
-# openxr.haptics_game_rumble_scale.label = The game's rumble: strength
-# openxr.haptics_game_rumble_scale.tip = The game's rumble in the controllers stronger or weaker (1 = as the game asks, Vibration: strength on top). Live.
-# openxr.haptics_pad_mute.label = Keep the game's rumble from a plugged-in gamepad
-# openxr.haptics_pad_mute.tip = While the controllers are the game's (VR first person F4), the game's rumble does not reach a gamepad that is plugged in - a pad left rumbling is stopped once. In the other views and in flat play the pad rumbles as ever. After bearstonem/d2r-pcvr (MIT). Live.
+group.the_game_s_own_rumble = 游戏自己的震动
+group.the_game_s_own_rumble.help = 当游戏的“手柄震动”选项开启时，游戏会在它自己的事件上让游戏手柄震动——受到攻击、使用技能。
+openxr.haptics_game_rumble.label = 在手柄中感受游戏的震动
+openxr.haptics_game_rumble.tip = 游戏发给游戏手柄两个马达的内容会在两个手柄中跟随，按游戏的要求（游戏自己的事件：受到攻击、使用技能……）。需要开启游戏自己的“手柄震动”选项。如果插着游戏手柄，调用仍会发给它（下面的选项框可以阻止）。即时生效。仅限 F4。
+openxr.haptics_game_rumble_scale.label = 游戏的震动：强度
+openxr.haptics_game_rumble_scale.tip = 手柄中游戏的震动更强或更弱（1 = 按游戏的要求，另外再乘以“振动：强度”）。即时生效。
+openxr.haptics_pad_mute.label = 不让插着的游戏手柄接收游戏的震动
+openxr.haptics_pad_mute.tip = 当手柄由游戏使用时（VR 第一人称 F4），游戏的震动不会传到插着的游戏手柄——还在震动的游戏手柄会被停止一次。在其他视角和平面游戏中，游戏手柄照常震动。参考 bearstonem/d2r-pcvr（MIT）。即时生效。
 
 # --- Pulses set on other tabs ---
-# group.pulses_set_on_other_tabs = Pulses set on other tabs
-# group.pulses_set_on_other_tabs.help = The same settings as on their own tabs (UI: F4 body > Low life; Weapon Weight): a change here is a change there.
+group.pulses_set_on_other_tabs = 在其他选项卡中设置的振动
+group.pulses_set_on_other_tabs.help = 与它们自己选项卡中的设置相同（UI：F4 身体 > 低生命；武器重量）：在这里更改就是在那里更改。
 
 # ===== Tab: Multiplayer =====
 tab.multiplayer = 多人游戏
@@ -3299,8 +3340,8 @@ debug.knock_props_trace.label = 被击飞的物件：对每次击飞和每次扫
 debug.knock_props_trace.tip = 开启武器重量的“杯子、盘子、花瓶、书和凳子会被你的武器击飞”时：你的武器或拳头使每个物件动起来，日志都有一行（它的种类、哪只手、刃有多快、物件被击得多重），你附近的物件的每次扫描也有一行（有多少、目录中有多少在附近、有多少站在地板上、另一个物件上、家具上、猜测的壁架上，以及扫描的开销）。仅限日志——击飞的任何东西都不变。即时生效。
 debug.knock_props_glow.label = 被击飞的物件：点亮找到的物件
 debug.knock_props_glow.tip = 开启武器重量的“杯子、盘子、花瓶、书和凳子会被你的武器击飞”时：你附近（3 m 以内）目录中已知的每个物件——你的武器或拳头能击飞的那些——都会以游戏自己的高亮（就像指针下的物品那样）绘制得更亮。用于看出一处场所的哪些物件被找到、哪些没有。只是绘制。即时生效。
-# debug.world_contact_draw.label = World contact: draw the walls
-# debug.world_contact_draw.tip = With "Walls stop your weapon" or "Walls stop your bare hands" on: the walls nearest your hands are drawn as yellow boxes (red: the one a hand or the weapon rests on), each controller as a blue ball, the hand or weapon as drawn as a green ball, a red line between them while the wall holds it back, and an orange ball where the weapon or a hand struck a wall. Only the drawing. Live.
+debug.world_contact_draw.label = 世界接触：绘制墙体
+debug.world_contact_draw.tip = 开启“墙壁挡住你的武器”或“墙壁挡住你的空手”时：离你双手最近的墙体绘制为黄色方框（红色：手或武器靠着的那个），每个手柄为蓝色球，绘制出的手或武器为绿色球，墙挡住它时两者之间有一条红线，武器或手撞到墙的位置有一个橙色球。只影响绘制。即时生效。
 debug.replay_marks.label = 重放：右眼的列表如何送往 GPU
 debug.replay_marks.tip = 单通道立体：游戏重放的命令列表如何送往右眼的 GPU。1（默认）：每个列表各自提交，后面带一个信号，因此卡死的日志会指出 GPU 停在哪个列表；每对约 35 次单独提交（游戏线程约 0.4 ms）。0：每个队列的一串列表合并成一次提交——2026-10-18 那次，图形队列运行了一个永不结束的列表，在 30 s 到 3 min 之后。2：每个列表各自提交，没有信号。3：与游戏所做的相同的列表、相同的调用，没有标记——游戏自己的提交次数（第一次需重启游戏）。4：同上，每次调用后带一个信号。即时生效。
 debug.replay_marks.choice0 = 0 - 每个队列一批（会卡死，test-60..62）
@@ -3328,8 +3369,8 @@ debug.pose_share_legs_self.label = 多人游戏的头部和双手：你自己英
 debug.pose_share_legs_self.tip = 你自己英雄的双腿按与其他玩家英雄相同的步态迈步（“他们的双腿按其移动方式迈步”），用他自己的朝向——在一台 PC 上查看双腿：在 F2 或 F3（平面或 VR）中看着他，向前、后退和侧移行走。日志每 5 s 说明它们做了什么（“legs: ...”）。需要步态库。即时生效。
 debug.walk_back_dump.label = 向后走：把双腿写入文件
 debug.walk_back_dump.tip = 英雄移动时，逐个姿势记录他的双腿 - 游戏画出的样子，以及开启“向后走时，双腿向后迈步”后画出的样子 - 每次向后走的最后 6 秒（以及摄像机绕他转过来时站立的 3 s）写入 d2rloader\logs\d2r_vr_walkback.txt（每次会话最多 30 次），供 walk_legs 工具画成火柴人。日志还会每 5 s 写出英雄的网格是从哪个姿势蒙皮的（我们摆的那个，或另一个）。只写文件和日志行；游戏中什么都不变。即时生效。
-# debug.body_dump.label = Write the hero's drawn bones and the camera to a file
-# debug.body_dump.tip = 30 times a second the hero's joints as they go to the game - after everything the mod changes - and where the camera is and looks (your eyes in VR first person, behind him in third person) go to d2rloader\logs\d2r_vr_body.txt, for the walk_legs tool that films the skeleton from your camera. About a megabyte a minute. Writes a file only; nothing in the game changes. Live.
+debug.body_dump.label = 把英雄绘制出的骨骼和摄像机写入文件
+debug.body_dump.tip = 每秒 30 次，把英雄送往游戏的关节——在模组做出所有更改之后——以及摄像机的位置和朝向（VR 第一人称时为你的双眼，第三人称时在他身后）写入 d2rloader\logs\d2r_vr_body.txt，供 walk_legs 工具从你的摄像机拍摄骨架。约每分钟 1 MB。只写入文件；游戏中没有任何改变。即时生效。
 debug.phantom_ray.label#2 = 绘制左手所取的线
 debug.phantom_ray.tip#2 = 一条红线，左手沿着它拿取手中的武器并滑动（长杖、矛、长柄武器、双手剑）；对十字弩，也是弩箭飞行的位置（十字弩：射击线滑块可转动它）。“绘制手中武器的轴”也会画出它。
 debug.xbow_barrel_line.label = 十字弩：按建模绘制枪管
@@ -3532,9 +3573,14 @@ vr.hset.page.belt = 腰带
 vr.hset.page.melee = 近战
 vr.hset.page.left = 左手
 vr.hset.page.right = 右手
-# vr.hset.page.co_op = Co-op
-# vr.hset.page.vibration = Vibration
+vr.hset.page.co_op = 合作
+vr.hset.page.vibration = 振动
+vr.hset.page.contact = 接触
+vr.hset.page.monsters_react = 怪物反应
+vr.hset.page.grab = 抓取
+vr.hset.page.more = 更多
 vr.hset.page.guide = 指南
+vr.hset.page.world = 世界
 vr.hset.screen.menu_distance_m.label = 面板距离
 vr.hset.screen.menu_distance_m.detail = 游戏中打开的面板：物品栏、储物箱、商人
 vr.hset.openxr.flat_distance_m.label = 屏幕距离
@@ -3561,8 +3607,8 @@ vr.hset.turn.snap.label = 快速转向角度
 vr.hset.turn.snap.detail = 每次拨动的度数，平滑转向关闭时
 vr.hset.turn.speed.label = 平滑转向速度
 vr.hset.turn.speed.detail = 每秒的度数，平滑转向开启时
-# vr.hset.game.players.label = Players (difficulty)
-# vr.hset.game.players.detail = As /players: tougher monsters, more experience and drops
+vr.hset.game.players.label = 玩家数（难度）
+vr.hset.game.players.detail = 如同 /players：怪物更强，经验和掉落更多
 vr.hset.hud.low_hp_vignette.label = 低生命：红色暗角
 vr.hset.hud.low_hp_vignette.detail = 生命低时边缘跳动变红（F4）
 vr.hset.hud.low_hp_threshold.label = 低于此值出现
@@ -3627,24 +3673,68 @@ vr.hset.direct.right_b.label = 右 B
 vr.hset.direct.right_stick.label = 右摇杆按下
 vr.hset.direct.right_stick_hold.label = 右摇杆，长按
 vr.hset.direct.right_menu.label = 右菜单键
-# vr.hset.openxr.haptics.label = Controller vibration
-# vr.hset.openxr.haptics.detail = Pulses in the controllers on what happens (F4)
-# vr.hset.openxr.haptics_scale.label = Strength
-# vr.hset.openxr.haptics_scale.detail = Every pulse stronger or weaker, 1 = the usual
-# vr.hset.openxr.haptics_touch.label = Pulse on every touch
-# vr.hset.openxr.haptics_touch.detail = Hit by touch: landed or not, the blade's hand buzzes
-# vr.hset.openxr.haptics_hit_long.label = Longer tap for a blow
-# vr.hset.openxr.haptics_hit_long.detail = 95% for 90 ms instead of 72% for 45 ms
-# vr.hset.openxr.haptics_spell.label = Pulse when a cast starts
-# vr.hset.openxr.haptics_spell.detail = The aiming hand, for a cast the game took
-# vr.hset.openxr.haptics_low_mana.label = Low mana alert
-# vr.hset.openxr.haptics_low_mana.detail = The left hand, again every 10 s while it is low
-# vr.hset.openxr.haptics_game_rumble.label = The game's own rumble
-# vr.hset.openxr.haptics_game_rumble.detail = A hit taken, a skill used: as the game rumbles a pad
+vr.hset.openxr.haptics.label = 手柄振动
+vr.hset.openxr.haptics.detail = 根据发生的事情在手柄中振动（F4）
+vr.hset.openxr.haptics_scale.label = 强度
+vr.hset.openxr.haptics_scale.detail = 所有振动更强或更弱，1 = 通常
+vr.hset.openxr.haptics_touch.label = 每次接触都振动
+vr.hset.openxr.haptics_touch.detail = 接触命中：无论是否命中，持刃的手都会振动
+vr.hset.openxr.haptics_hit_long.label = 一击时更长的轻触振动
+vr.hset.openxr.haptics_hit_long.detail = 95%、90 ms，而不是 72%、45 ms
+vr.hset.openxr.haptics_spell.label = 开始施法时振动
+vr.hset.openxr.haptics_spell.detail = 瞄准的手，仅限游戏接受的施法
+vr.hset.openxr.haptics_low_mana.label = 低法力警报
+vr.hset.openxr.haptics_low_mana.detail = 左手，法力低时每 10 s 再次振动
+vr.hset.openxr.haptics_game_rumble.label = 游戏自己的震动
+vr.hset.openxr.haptics_game_rumble.detail = 受到攻击、使用技能：如同游戏让游戏手柄震动
+vr.hset.weight.world_contact.label = 墙壁挡住你的武器（实验性）
+vr.hset.weight.world_contact.detail = 墙壁、柱子、树木和大型物件会挡住它（F4）
+vr.hset.weight.world_contact_hands.label = 墙壁挡住你的空手（实验性）
+vr.hset.weight.world_contact_hands.detail = 空手停在墙壁表面（F4）
+vr.hset.weight.own_body.label = 你自己的身体会挡住武器（实验性）
+vr.hset.weight.own_body.detail = 它停在你的躯干和双腿上；从不会命中你
+vr.hset.weight.monster_bodies.label = 武器会停在怪物的躯体上
+vr.hset.weight.monster_bodies.detail = 劈砍或刺击会停在躯体上；刃口会擦过
+vr.hset.weight.monster_shields.label = 怪物的盾牌和武器会挡住你的武器
+vr.hset.weight.monster_shields.detail = 还有它们的盾牌和武器：被挡住的一击不算命中
+vr.hset.weight.strike_by_force.label = 按打击的力道命中，而非刃速
+vr.hset.weight.strike_by_force.detail = 不按刃速：轻轻一碰不算命中
+vr.hset.weight.monster_ragdoll.label = 怪物的躯体按其重量让开
+vr.hset.weight.monster_ragdoll.detail = 推力会移动它碰到的肢体（人形怪物）
+vr.hset.weight.monster_ragdoll_all.label = 所有怪物都会让开，不只是人形怪物
+vr.hset.weight.monster_ragdoll_all.detail = 动物、昆虫、恶魔也会，不只是人形怪物
+vr.hset.weight.knock_down.label = 重击会把人形怪物打倒
+vr.hset.weight.knock_down.detail = 它作为布娃娃倒下，然后再站起来
+vr.hset.weight.stab_in.label = 尖头武器会扎进躯体
+vr.hset.weight.stab_in.detail = 尖端在前刺入躯体，0.5 m/s 或更快
+vr.hset.weight.impale_drag.label = 用你的长矛刺穿并拖动人形怪物
+vr.hset.weight.impale_drag.detail = 尖端在前冲向人形怪物：它会被挂着走
+vr.hset.weight.grab_bodies.label = 用手的握把抓取怪物和盟友
+vr.hset.weight.grab_bodies.detail = 空手的握把会抓住躯体
+vr.hset.weight.npc_bodies.label = 城镇 NPC 和盟友也有身体
+vr.hset.weight.npc_bodies.detail = 你的武器像停在怪物身上一样停在他们身上
+vr.hset.weight.grab_throw.label = 举起并扔出你抓住的人形怪物
+vr.hset.weight.grab_throw.detail = 在挥动时松手，它就会飞出去
+vr.hset.weight.grab_balance.label = 被拉的人形怪物会迈步保持站立
+vr.hset.weight.grab_balance.detail = 它跟着你迈步；只有更快的拉动才会让它倒下
+vr.hset.weight.grab_items.label = 用手的握把从地上捡起物品
+vr.hset.weight.grab_items.detail = 游戏自己的拾取，在你的掌心
+vr.hset.weight.grab_props.label = 把物件拿在手中
+vr.hset.weight.grab_props.detail = 杯子、书、凳子：用你的握把拿着
+vr.hset.weight.knock_props.label = 物件会被你的武器击飞
+vr.hset.weight.knock_props.detail = 杯子、盘子、花瓶、书和凳子（F4）
+vr.hset.weight.strength.label = 双手的力量，%
+vr.hset.weight.strength.detail = 双手跟随手柄拉动武器的力度
+vr.hset.weight.skeleton_bones_max.label = 怪物的骨架：最多读取的骨骼数
+vr.hset.weight.skeleton_bones_max.detail = 更高能读取更长的骨架，开销也更大
+vr.hset.hands.throw_gesture.label = 用投掷动作投出标枪
+vr.hset.hands.throw_gesture.detail = 标枪：按住扳机，挥动，松开
+vr.hset.gameplay.shield_smite.label = 盾击施放惩戒
+vr.hset.gameplay.shield_smite.detail = 圣骑士：用力挥动盾牌即可施放
 vr.hset.openxr.direct_input.label = 无需 BodyWalk 的操控
 vr.hset.openxr.direct_input.detail = 插件自行读取手柄
-# vr.hset.openxr.headset_players.label = Players from the headset
-# vr.hset.openxr.headset_players.detail = The Options page's Players row asks the game
+vr.hset.openxr.headset_players.label = 从头显设置玩家数
+vr.hset.openxr.headset_players.detail = “选项”页面的“玩家数”行会询问游戏
 vr.hset.hands.belt_models.label = 腰带上的药水
 vr.hset.hands.belt_models.detail = 游戏自带的药水模型挂在英雄髋部
 vr.hset.render.vr_resolution.label = VR 渲染尺寸：模式
@@ -3837,7 +3927,7 @@ button.pick_picture = 选择图片
 button.clear = 清除
 status.draw_distance.stop = {n} / {count}：
 status.draw_distance.custom = 自定义（有数值被手动改过）：
-status.draw_distance.values = {rings} 环房间，模型到 {model}，雾 {fs} 到 {fe}（洞穴中 {cs} 到 {ce}），游戏的天空穹顶在 {sky}。全部实时生效 - 无需重启。
+status.draw_distance.values = {rings} 个房间环，模型到 {model}，雾 {fs} 到 {fe}（洞穴中 {cs} 到 {ce}），游戏的天空穹顶在 {sky} m。全部即时生效——无需重启。
 status.draw_distance.fog_off = 雾已关闭（性能）：绘制的世界止于虚空。
 status.draw_distance.no_game_sky = 天空穹顶只在游戏绘制天空时才有效（天空页）。
 res.tip = 游戏画面在头显中的大小：一个正方形，以像素为单位的边长，与游戏窗口的大小无关——窗口保持自己的大小。拖动到 1024 至 4096 之间的任何大小（步长 64）；最左端“窗口大小”是桌面：画面取窗口的大小，与以前相同。\n\n越大越清晰，也越贵，按像素计——对比 2048 x 2048：
@@ -4003,6 +4093,7 @@ status.reshade.code = 无法安装 ReShade（代码 {code}）
 status.reshade.installed = ReShade 已安装 - 请用 D2RLoader.exe 启动游戏
 status.reshade.looking = 正在 reshade.me 上查找当前的 ReShade...
 status.collect.recording = 正在记录帧的绘制方式：{s} s - 请继续游玩并转动头部
+status.collect.headset_report = 正在生成头显报告：请保持戴着头显（约 20 s）……
 status.collect.packing = 正在打包日志...
 status.collect.no_script = 无法将打包脚本写入 TEMP 文件夹
 status.collect.no_powershell = 无法启动 PowerShell 来打包日志
@@ -4058,12 +4149,12 @@ status.arcane_sky.not_started = 秘法庇护所天空：无法启动
 status.knock_props.result = 可击飞的物件：{text}
 status.knock_props.making = 可击飞的物件：正在根据游戏文件生成它们的目录...
 status.knock_props.not_started = 可击飞的物件：无法启动
-# status.world_contact.result = World contact walls: {text}
-# status.world_contact.making = World contact walls: making them from the game's meshes (about a minute)...
-# status.world_contact.not_started = World contact walls: could not be started
+status.world_contact.result = 世界接触墙体：{text}
+status.world_contact.making = 世界接触墙体：正在由游戏的网格生成（约一分钟）……
+status.world_contact.not_started = 世界接触墙体：无法启动
 boat.restart = 游戏正在运行：重启游戏才能看到更改
 status.kurast_boat.result = 库拉斯特码头独木舟：{text}
-# dome.restart = the game running now: restart it for the game-drawn sky
+dome.restart = 游戏正在运行：请重启它以使用游戏绘制的天空
 status.kurast_boat.reading = 库拉斯特码头独木舟：正在从游戏文件读取城镇...
 status.kurast_boat.not_started = 库拉斯特码头独木舟：无法启动
 data_mods.running_none = 没有可合并的
@@ -4072,16 +4163,21 @@ data_mods.running_off = 关；已找到：{mods}
 status.data_mods.result = 其他模组：{text}
 status.data_mods.looking = 其他模组：正在查看游戏的模组文件夹...
 status.data_mods.not_started = 其他模组：无法启动
-# status.hclip.no_game = Headset video: start the game in VR first - the button asks the running game for one
-# status.hshot.no_game = Headset screenshot: start the game in VR first - the button asks the running game for one
-# status.hclip.asked = Recording 10 s of the headset picture - keep the headset on and play...
-# status.hshot.asked = Headset screenshot asked for - keep the headset on...
-# status.hshot.saved = Headset screenshot saved: {file} and its pictures - Collect logs packs the newest
-# status.hshot.none = No headset screenshot came in 20 s: is the game running in VR? The mod's log (d2r_vr) says why
-# status.hclip.saved = Headset video saved: {file} - Collect logs packs the newest
-# status.hclip.none = No headset video came in 60 s: is the game running in VR? The mod's log (d2r_vr) says why
+status.hclip.no_game = 头显视频：请先在 VR 中启动游戏——按钮会向正在运行的游戏请求一段
+status.hshot.no_game = 头显截图：请先在 VR 中启动游戏——按钮会向正在运行的游戏请求一张
+status.hclip.asked = 正在录制 10 s 头显画面——请保持戴着头显并继续游玩……
+status.hshot.asked = 已请求头显截图——请保持戴着头显……
+status.hshot.saved = 头显截图已保存：{file} 及其画面——“收集日志”会打包最新的
+status.hshot.none = 20 s 内没有收到头显截图：游戏在 VR 中运行吗？模组的日志（d2r_vr）会说明原因
+status.hclip.saved = 头显视频已保存：{file}——“收集日志”会打包最新的
+status.hclip.none = 60 s 内没有收到头显视频：游戏在 VR 中运行吗？模组的日志（d2r_vr）会说明原因
 status.collect.collecting = 正在收集日志...
 status.collect.not_started = 无法开始收集日志
+status.hreport.running = 正在生成头显报告：请保持戴着头显，并把两个手柄拿在身前（约 20 s）……
+status.hreport.saved = 头显报告已保存：{path}——“收集日志”会打包它
+status.hreport.missing = 在本程序旁边找不到 D2R_VR_Headset_Report.exe——请重新安装 D2R VR
+status.hreport.failed = 头显报告失败（代码 {code}）
+status.hreport.not_started = 无法启动头显报告
 status.framegen.on = OFXR Bridge {version} 已安装（d2rloader\d2r_vr_libs\ofxr）——帧生成已开启（日志会说明它做了什么）
 status.framegen.off = OFXR Bridge {version} 已安装（d2rloader\d2r_vr_libs\ofxr）- 帧生成已关闭
 status.framegen.missing_on = 帧生成已开启，但未安装 OFXR Bridge - 上方的按钮可安装它
@@ -4225,52 +4321,52 @@ vr.body.span_auto = {span} m（自动）
 vr.body.auto = 自动
 vr.body.why_seated = 坐姿：校准只读取你的臂展。“重新居中视角”把英雄的眼睛设在你头部所在处。
 vr.body.why = 你真实的眼睛高度决定世界的比例，你的臂展决定英雄的手臂。
-# vr.coop.enabled = Co-op bridge
-# vr.coop.mode = Go through a relay
-# vr.coop.use = Host my rooms on
-# vr.coop.enabled.on = CREATE GAME lists your room; a relay when friends cannot reach you
-# vr.coop.enabled.off = CREATE GAME is D2RLoader's alone: no list, no relay
-# vr.coop.mode.always_detail = Every room you host goes through a relay
-# vr.coop.mode.never_detail = Friends connect straight to you: your port open
-# vr.coop.mode.auto_detail = Only when your port cannot be reached from outside
-# vr.coop.use.detail = Tried first; joining uses the host's relay
-# vr.coop.mode.always = Always
-# vr.coop.mode.never = Never
-# vr.coop.mode.auto = Auto
-# vr.coop.use.first = First that answers
-# vr.coop.use.missing = {name} (not listed)
-# vr.coop.state.active = takes rooms
-# vr.coop.state.near_limit = near its limit
-# vr.coop.state.limit = limit reached
-# vr.coop.state.no_answer = not answering
-# vr.coop.state.unknown = not checked yet
-# vr.coop.age.unknown = at a time not known
-# vr.coop.age.now = just now
-# vr.coop.age.min = {n} min ago
-# vr.coop.age.h = {n} h ago
-# vr.coop.use.first_lower = the first that answers
-# vr.coop.in_force_on = In force until your next CREATE GAME: bridge on, {mode}, {use}.
-# vr.coop.in_force_off = In force until your next CREATE GAME: bridge off.
-# vr.coop.reading = Reading D2R Rooms' files...
-# vr.coop.missing = The D2R Rooms plugin is not installed: no d2rl-d2r-rooms.dll in this folder:
-# vr.coop.missing_how = D2R VR Authentic's Setup installs it (its D2R Rooms task). Nothing to choose until then.
-# vr.coop.plugin = D2R Rooms {version}: its last word {age}.
-# vr.coop.plugin_no_status = D2R Rooms is installed; it writes what it knows while the game runs (nothing yet).
-# vr.coop.relay_usage = {name}: {state}, {pct}% of its quota used
-# vr.coop.relay = {name}: {state}
-# vr.coop.first = tried first
-# vr.coop.hosting_direct = You host room {code}: friends connect straight to you.
-# vr.coop.hosting_relay = You host room {code} through {relay}.
-# vr.coop.rooms_none = No open rooms in the list.
-# vr.coop.rooms = Open rooms: {n}
-# vr.coop.when = Read again on every CREATE GAME: a change counts from your next one, no restart. A room open now keeps its way.
+vr.coop.enabled = 合作桥接
+vr.coop.mode = 通过中继
+vr.coop.use = 我的房间托管于
+vr.coop.enabled.on = CREATE GAME 会列出你的房间；朋友连不上你时使用中继
+vr.coop.enabled.off = CREATE GAME 只属于 D2RLoader：没有列表，没有中继
+vr.coop.mode.always_detail = 你托管的每个房间都通过中继
+vr.coop.mode.never_detail = 朋友直接连接到你：你的端口需开放
+vr.coop.mode.auto_detail = 只在外部无法访问你的端口时
+vr.coop.use.detail = 优先尝试；加入时使用主机的中继
+vr.coop.mode.always = 总是
+vr.coop.mode.never = 从不
+vr.coop.mode.auto = 自动
+vr.coop.use.first = 第一个响应的
+vr.coop.use.missing = {name}（未列出）
+vr.coop.state.active = 接受房间
+vr.coop.state.near_limit = 接近上限
+vr.coop.state.limit = 已达上限
+vr.coop.state.no_answer = 无响应
+vr.coop.state.unknown = 尚未检查
+vr.coop.age.unknown = 时间未知
+vr.coop.age.now = 刚刚
+vr.coop.age.min = {n} 分钟前
+vr.coop.age.h = {n} 小时前
+vr.coop.use.first_lower = 第一个响应的
+vr.coop.in_force_on = 在你下次 CREATE GAME 之前有效：桥接开启，{mode}，{use}。
+vr.coop.in_force_off = 在你下次 CREATE GAME 之前有效：桥接关闭。
+vr.coop.reading = 正在读取 D2R Rooms 的文件……
+vr.coop.missing = 未安装 D2R Rooms 插件：此文件夹中没有 d2rl-d2r-rooms.dll：
+vr.coop.missing_how = D2R VR Authentic 的安装程序会安装它（其 D2R Rooms 任务）。在此之前没有可选择的。
+vr.coop.plugin = D2R Rooms {version}：它最后一次报告在 {age}。
+vr.coop.plugin_no_status = D2R Rooms 已安装；它会在游戏运行时写入它所知道的（目前还没有）。
+vr.coop.relay_usage = {name}：{state}，已用配额的 {pct}%
+vr.coop.relay = {name}：{state}
+vr.coop.first = 优先尝试
+vr.coop.hosting_direct = 你托管房间 {code}：朋友直接连接到你。
+vr.coop.hosting_relay = 你通过 {relay} 托管房间 {code}。
+vr.coop.rooms_none = 列表中没有开放的房间。
+vr.coop.rooms = 开放的房间：{n}
+vr.coop.when = 每次 CREATE GAME 时重新读取：更改从你的下一次开始生效，无需重启。现在开放的房间保持原来的方式。
 vr.keys.custom = 自定义（ini）
-# vr.coop.status.reading = Reading D2R Rooms' files...
-# vr.coop.status.missing = Nothing to choose: the D2R Rooms plugin is not installed.
-# vr.coop.status.saving = Writing d2r-rooms.ini...
-# vr.coop.status.saved = Saved in d2r-rooms.ini. It counts from your next CREATE GAME.
-# vr.coop.status.failed = Could not write d2r-rooms.ini. Nothing changed.
-# vr.coop.status.idle = Each change is written to d2r-rooms.ini at once (the plugin's own file).
+vr.coop.status.reading = 正在读取 D2R Rooms 的文件……
+vr.coop.status.missing = 没有可选择的：未安装 D2R Rooms 插件。
+vr.coop.status.saving = 正在写入 d2r-rooms.ini……
+vr.coop.status.saved = 已保存在 d2r-rooms.ini 中。从你的下一次 CREATE GAME 开始生效。
+vr.coop.status.failed = 无法写入 d2r-rooms.ini。没有任何更改。
+vr.coop.status.idle = 每次更改都会立即写入 d2r-rooms.ini（插件自己的文件）。
 vr.hset.status.no_ini = 未找到 d2r_vr.ini。无法更改任何内容。
 vr.hset.status.saving = 正在保存...
 vr.hset.status.saved_video = 已保存。游戏马上会重建画面：冻结几秒钟。
@@ -4285,6 +4381,7 @@ vr.hset.status.body_idle = “校准身体”会隐藏此面板；测量完成�
 vr.hset.status.keys_idle = 选择按键的功能，然后“应用”。组合键和其他长按：D2R VR Authentic Settings。
 vr.hset.status.keys_off = “无需 BodyWalk 的操控”已关闭：这些按键不起作用（操控由 BodyWalk 的映射负责）。
 vr.hset.status.melee_direct_full = 直接命中已完全开启（D2R VR Authentic Settings > Strikes）；此处的勾选对应“按规则”。
+vr.hset.status.world_idle = 每次更改自动生效（F4）。它们需要手臂在手柄上；其余的在 D2R VR Authentic Settings 中。
 vr.hset.status.melee_idle = 每项改动都会自行生效。仅限第一人称（F4）。
 vr.hset.status.melee_off = “接触命中”已关闭：勾选它，下方各行才生效。
 vr.hset.status.belt_needs_direct = 需要“无需 BodyWalk 的操控”（现在关闭）：在此之前，单独的握把就能拿药水。
@@ -4294,11 +4391,11 @@ vr.hset.status.idle_window = 指向并扣动扳机。B、“关闭”或长按�
 vr.hset.status.idle = 指向并扣动扳机。B 或长按右摇杆关闭它。
 vr.hset.custom_empty = （列表中没有名称的一行）
 vr.hset.second_row_off = - 第二排（LT）已关闭
-# vr.hset.players.off = Off: D2R VR Authentic Settings, Players from the headset
-# vr.hset.players.unknown = The game's count is read once your hero is in a game
-# vr.hset.players.not_here = Only in a game of your own: single player or a TCP/IP host
-# vr.hset.players.took = The game set players to {n} (as /players {n}): monsters met from now on.
-# vr.hset.players.refused = The game did not take it: only in single player, or as the host of a TCP/IP game.
+vr.hset.players.off = 关闭：D2R VR Authentic Settings，从头显设置玩家数
+vr.hset.players.unknown = 你的英雄进入游戏后会读取游戏的数值
+vr.hset.players.not_here = 只在你自己的游戏中：单人游戏或 TCP/IP 主机
+vr.hset.players.took = 游戏已把玩家数设为 {n}（如同 /players {n}）：从现在起遇到的怪物生效。
+vr.hset.players.refused = 游戏没有接受：只在单人游戏中，或作为 TCP/IP 游戏的主机。
 vr.hset.title = 头显设置
 vr.video.title = 渲染尺寸
 vr.video.note = “应用”会重建画面：游戏冻结几秒钟（约 7 秒）。
@@ -4411,6 +4508,10 @@ vr.map.on = 开
 vr.map.off = 关
 
 # ===== Keys of this file that en.txt does not list (an English used under several keys, worded here for one of them) =====
+sky.game_sky_radius.label = 游戏的天空：天穹半径（单位）
+sky.game_sky_radius.tip = 游戏的天穹放在你周围多远处，以游戏单位计（即时生效）。200：近处的地平线 - 天穹把远处的世界截成一个整齐的圆，游戏的雾覆盖其上。更远时，天空会从雾中露出来。每次更改时日志会记下正在使用的半径。
+sky.game_dome_caves_size.label = 洞穴穹顶：半径 x 模型可见半径
+sky.game_dome_caves_size.tip = 1：穹顶位于模型可见半径（[render] model_radius）处；0.5：其一半（把半径当作直径）。即时生效。
 openxr.haptics.label = 手柄振动
 ceiling.steps.label = 顶部浮雕层数
 ceiling.steps.tip = 穿过岩石的射线步数：越多 = 浮雕越细，一帧的开销越大。

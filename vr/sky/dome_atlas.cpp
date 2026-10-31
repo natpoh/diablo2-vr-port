@@ -24,7 +24,6 @@ namespace {
 constexpr D3D12_RESOURCE_STATES kRead = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
 constexpr int kCave = 5;            // the cave dome's band (shared/sky_atlas.h kBands): black, cleared once its tiles are mapped
 constexpr int kBands = 6;
-constexpr int kGainEvery = 12;      // presents between bakes while the effect measures the gain (it eases slowly)
 constexpr int kSets = 16, kSetSize = 4;   // the shader-visible views: a set a bake, kSets in turn (a bake still on the card keeps its own)
 constexpr int kRetireFrames = 300;
 constexpr ULONGLONG kStandInMs = 3000;   // our bake ran this lately: the next view of the atlas made on ours
@@ -46,8 +45,12 @@ template <class T> void Free(T*& p) { if (p) { p->Release(); p = nullptr; } }
 // tools/game_sky/make_sky_dome.py lays the day ones (panorama(): column = azimuth, row = elevation 90 .. -12; the band two turns round, 65
 // degrees up to 8 under; the cap one tile overhead from 40 to 62 degrees; under the horizon into its 0 degree row's mean, all of it from -6)
 // in its scene units (sRGB -> linear -> Rec.2020: scene_values), mixed by the night's share, times the brightness and the measured gain.
+// Then ([sky] dome_fog_baked) its low part into the game's fog colour as our old sky's low part goes into the fog's (D2R_DepthFog.fx
+// SkyFogHorizon) - Serg on 0.192.40, 127 / 128.webp: the old fog "прекрасно ложится поверх жёлтого фона", the game's left the dome's light
+// yellow low band bare, and it showed through every tree's and bush's soft edge as a light rim. Baked, the trees' edges are blended over the
+// fog's colour by the game itself.
 const char kShader[] = R"(
-cbuffer C : register(b0) { float4 c0; float4 c1; float4 c2; };   // c0: band, its rows, width, mip; c1: night, mul, cap on, gain on; c2: zenith
+cbuffer C : register(b0) { float4 c0; float4 c1; float4 c2; float4 c3; float4 c4; };   // c0: band, its rows, width, mip; c1: night, mul, cap on, gain on; c2: zenith; c3: a fixed gain, on; c4: the fog's colour, its band's strength
 Texture2D<float4> Day : register(t0);
 Texture2D<float4> NightBand : register(t1);
 Texture2D<float4> NightCap : register(t2);
@@ -79,6 +82,7 @@ float3 NightAt(float az, float el)
 }
 float3 GainNow()
 {
+    if (c3.w > 0.5) return c3.rgb;   // ([sky] dome_gain_once: measured once for this area and period)
     if (c1.w < 0.5) return 1.0;
     const float4 g = Gain.Load(int3(0, 0, 0));
     return g.a > 0.5 ? g.rgb : 1.0;
@@ -91,9 +95,9 @@ void VS(uint id : SV_VertexID, out float4 pos : SV_Position)
 float4 PS(float4 pos : SV_Position) : SV_Target
 {
     float3 c = Day.Load(int3((int2)pos.xy, (int)c0.w)).rgb;
+    const float el = 90.0 - (pos.y - c0.x * c0.y) / c0.y * 102.0;
     [branch] if (c1.x > 0.0) {
         const float az = pos.x / c0.z * 6.28318531;
-        const float el = 90.0 - (pos.y - c0.x * c0.y) / c0.y * 102.0;
         float3 n = NightAt(az, el);
         [branch] if (el < 0.0) {
             float3 m = 0.0;
@@ -102,7 +106,9 @@ float4 PS(float4 pos : SV_Position) : SV_Target
         }
         c = lerp(c, n, saturate(c1.x));
     }
-    return float4(c * c1.y * GainNow(), 1.0);
+    c *= c1.y * GainNow();
+    if (c4.w > 0.0) c = lerp(c, c4.rgb, saturate(c4.w) * (1.0 - smoothstep(-0.03, 0.2, sin(radians(el)))));
+    return float4(c, 1.0);
 }
 float4 PSGain(float4 pos : SV_Position) : SV_Target { return float4(GainNow(), 1.0); }
 )";
@@ -131,6 +137,18 @@ D3D12_TILE_SHAPE g_shape{};
 D3D12_SUBRESOURCE_TILING g_tiling[16] = {};
 ID3D12Resource* g_gain = nullptr;    // 1 x 1 RGBA16F: the gain the last bake used
 bool g_gainCleared = false;
+// [sky] dome_gain_once: the gain a bake with the effect's measured texture used, copied out and read back kGainReadAfter presents on
+ID3D12Resource* g_gainRead = nullptr;   // readback, 256 bytes (one RGBA16F texel, the footprint's row pitch)
+const uint16_t* g_gainMapped = nullptr;
+int g_gainPending = -1;                 // presents left until the copy is surely done; -1 none in flight
+float g_gainLast[3] = {1.0f, 1.0f, 1.0f};
+uint32_t g_gainReads = 0;
+constexpr int kGainReadAfter = 4;
+float Half(uint16_t h) {
+    const uint32_t s = (h >> 15) & 1u, e = (h >> 10) & 0x1Fu, m = h & 0x3FFu;
+    float v = e == 0 ? std::ldexp((float)m, -24) : e == 31 ? 65504.0f : std::ldexp((float)(m | 0x400u), (int)e - 25);
+    return s ? -v : v;
+}
 ID3D12DescriptorHeap* g_rtvs = nullptr;   // our texture's mips, then the gain's
 ID3D12DescriptorHeap* g_srvs = nullptr;   // shader-visible, kSets sets of kSetSize
 UINT g_rtvInc = 0, g_srvInc = 0, g_set = 0;
@@ -188,7 +206,7 @@ bool MakePipeline(ID3D12Device* dev) {
     rp[0].DescriptorTable = {1, &range};
     rp[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     rp[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-    rp[1].Constants = {0, 0, 12};
+    rp[1].Constants = {0, 0, 20};
     rp[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     D3D12_STATIC_SAMPLER_DESC smp[2] = {};
     for (int i = 0; i < 2; ++i) {
@@ -455,8 +473,10 @@ void Bake(ID3D12Device* dev, ID3D12GraphicsCommandList* l, const BakeIn& in) {
     l->SetGraphicsRootDescriptorTable(0, g);
     l->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     const bool night = in.night > 0.0f && in.nightBand;
-    float k[12] = {(float)in.band, 0.0f, 0.0f, 0.0f, night ? in.night : 0.0f, in.mul, in.capOn && in.nightCap ? 1.0f : 0.0f, in.gain ? 1.0f : 0.0f,
-                   in.zenith[0], in.zenith[1], in.zenith[2], 0.0f};
+    float k[20] = {(float)in.band, 0.0f, 0.0f, 0.0f, night ? in.night : 0.0f, in.mul, in.capOn && in.nightCap ? 1.0f : 0.0f, in.gain ? 1.0f : 0.0f,
+                   in.zenith[0], in.zenith[1], in.zenith[2], 0.0f,
+                   in.gainRgb[0], in.gainRgb[1], in.gainRgb[2], in.gainFixed ? 1.0f : 0.0f,
+                   in.fog[0], in.fog[1], in.fog[2], in.fogBand};
     l->SetPipelineState(g_pso);
     for (uint32_t m = 0; m < g_mips; ++m) {
         uint32_t from = 0, to = 0;
@@ -466,7 +486,7 @@ void Bake(ID3D12Device* dev, ID3D12GraphicsCommandList* l, const BakeIn& in) {
         k[1] = (float)(to - from);
         k[2] = (float)mw;
         k[3] = (float)m;
-        l->SetGraphicsRoot32BitConstants(1, 12, k, 0);
+        l->SetGraphicsRoot32BitConstants(1, 20, k, 0);
         const D3D12_CPU_DESCRIPTOR_HANDLE rt = Rtv(m);
         l->OMSetRenderTargets(1, &rt, FALSE, nullptr);
         const D3D12_VIEWPORT vp{0.0f, (float)from, (float)mw, (float)(to - from), 0.0f, 1.0f};
@@ -477,7 +497,7 @@ void Bake(ID3D12Device* dev, ID3D12GraphicsCommandList* l, const BakeIn& in) {
     }
     {   // the gain it used, for the effect's next measure
         l->SetPipelineState(g_psoGain);
-        l->SetGraphicsRoot32BitConstants(1, 12, k, 0);
+        l->SetGraphicsRoot32BitConstants(1, 20, k, 0);
         const D3D12_CPU_DESCRIPTOR_HANDLE rt = Rtv(g_mips);
         l->OMSetRenderTargets(1, &rt, FALSE, nullptr);
         const D3D12_VIEWPORT vp{0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 1.0f};
@@ -488,13 +508,46 @@ void Bake(ID3D12Device* dev, ID3D12GraphicsCommandList* l, const BakeIn& in) {
     }
     for (D3D12_RESOURCE_BARRIER& b : br) std::swap(b.Transition.StateBefore, b.Transition.StateAfter);
     l->ResourceBarrier(2, br);
+    // [sky] dome_gain_once: the measured gain this bake used, copied out (read kGainReadAfter presents on: MeasuredGain)
+    if (in.gain && !in.gainFixed && g_gainPending < 0) {
+        if (!g_gainRead) {
+            D3D12_HEAP_PROPERTIES rb{D3D12_HEAP_TYPE_READBACK};
+            D3D12_RESOURCE_DESC bd{};
+            bd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+            bd.Width = 256;
+            bd.Height = bd.DepthOrArraySize = bd.MipLevels = 1;
+            bd.SampleDesc.Count = 1;
+            bd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+            void* mapped = nullptr;
+            if (FAILED(dev->CreateCommittedResource(&rb, D3D12_HEAP_FLAG_NONE, &bd, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&g_gainRead))) ||
+                FAILED(g_gainRead->Map(0, nullptr, &mapped))) {
+                if (g_gainRead) g_gainRead->Release();
+                g_gainRead = nullptr;
+                return;
+            }
+            g_gainMapped = (const uint16_t*)mapped;
+        }
+        D3D12_RESOURCE_BARRIER cb{};
+        cb.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+        cb.Transition = {g_gain, 0, kRead, D3D12_RESOURCE_STATE_COPY_SOURCE};
+        l->ResourceBarrier(1, &cb);
+        D3D12_TEXTURE_COPY_LOCATION dst{g_gainRead, D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT}, src{g_gain, D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX};
+        dst.PlacedFootprint.Footprint = {DXGI_FORMAT_R16G16B16A16_FLOAT, 1, 1, 1, 256};
+        src.SubresourceIndex = 0;
+        l->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+        std::swap(cb.Transition.StateBefore, cb.Transition.StateAfter);
+        l->ResourceBarrier(1, &cb);
+        g_gainPending = kGainReadAfter;
+    }
 }
 
 bool Differs(const BakeIn& a, const BakeIn& b) {
     auto off = [](float x, float y) { return std::fabs(x - y) > 0.002f * std::max(1.0f, std::fabs(y)); };
     return a.band != b.band || off(a.night, b.night) || off(a.mul, b.mul) || a.capOn != b.capOn || a.nightBand != b.nightBand ||
+           a.gainFixed != b.gainFixed || off(a.gainRgb[0], b.gainRgb[0]) || off(a.gainRgb[1], b.gainRgb[1]) || off(a.gainRgb[2], b.gainRgb[2]) ||
            a.nightCap != b.nightCap || (a.gain != nullptr) != (b.gain != nullptr) || off(a.zenith[0], b.zenith[0]) ||
-           off(a.zenith[1], b.zenith[1]) || off(a.zenith[2], b.zenith[2]);
+           off(a.zenith[1], b.zenith[1]) || off(a.zenith[2], b.zenith[2]) || (a.fogBand > 0.0f) != (b.fogBand > 0.0f) ||
+           (b.fogBand > 0.0f && (std::fabs(a.fogBand - b.fogBand) > 0.01f || off(a.fog[0], b.fog[0]) || off(a.fog[1], b.fog[1]) || off(a.fog[2], b.fog[2])));
 }
 
 }  // namespace
@@ -539,6 +592,11 @@ bool StandIn(ID3D12Device* dev, ID3D12Resource* atlas, const D3D12_SHADER_RESOUR
 
 void Present(ID3D12Device* dev, ID3D12CommandQueue* q, ID3D12GraphicsCommandList* l, const BakeIn& in) {
     std::lock_guard<std::mutex> lock(g_mx);
+    if (g_gainPending > 0 && --g_gainPending == 0 && g_gainMapped) {   // ([sky] dome_gain_once: the copied gain, surely done by now)
+        for (int c = 0; c < 3; ++c) g_gainLast[c] = Half(g_gainMapped[c]);
+        ++g_gainReads;
+        g_gainPending = -1;
+    }
     for (auto it = g_retired.begin(); it != g_retired.end();) {
         if (--it->second <= 0) { it->first->Release(); it = g_retired.erase(it); }
         else ++it;
@@ -573,16 +631,24 @@ void Present(ID3D12Device* dev, ID3D12CommandQueue* q, ID3D12GraphicsCommandList
         now.gain = nullptr;
     }
     ++g_sinceBake;
-    if (must || Differs(now, g_last) || (now.gain && g_sinceBake >= kGainEvery)) {
+    if (must || Differs(now, g_last) || RebakeForGain(now.gain != nullptr, in.band, g_sinceBake)) {   // (in.band: -1 in caves - no re-bake for the gain)
         Bake(dev, l, now);
         if (!g_baked)
             Line("vrcam: game sky - the dome's colours in the game: baked, act %d's band, night %.2f, x%.2f, %s", band + 1, now.night, now.mul,
                  !g_on ? "the game's own picture as it is ([sky] dome_in_game_colour unticked)"
-                 : now.gain ? "times the effect's measured gain" : "no gain measured ([sky] dome_true_colour=0: the game's own tone)");
+                 : now.gain ? "times the effect's measured gain - baked again for it every 120 presents, only where an act's sky is shown (never in caves)"
+                            : "no gain measured ([sky] dome_true_colour=0: the game's own tone)");
         g_baked = true;
         g_last = now;
         g_sinceBake = 0;
     }
+}
+
+bool MeasuredGain(float rgb[3], uint32_t* reads) {
+    std::lock_guard<std::mutex> lock(g_mx);
+    for (int c = 0; c < 3; ++c) rgb[c] = g_gainLast[c];
+    *reads = g_gainReads;
+    return g_gainReads > 0;
 }
 
 bool Live() {

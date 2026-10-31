@@ -19,6 +19,8 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <array>
+#include <unordered_map>
 #include <vector>
 
 #include "knock_props.h"
@@ -38,6 +40,7 @@ constexpr float kScanRadiusM = 5.0f;       // m round the hero: the pieces read
 constexpr float kNearHeadM = 2.8f;         // m: the walls given to the hands and the weapon (from the eyes, across the ground and up)
 constexpr float kHandRadiusM = 0.045f;     // a bare hand: a capsule from the controller 9 cm on along its pointing, this thick
 constexpr float kHandLengthM = 0.09f;
+constexpr float kSteadyUnits = 0.01f;      // render units: a piece that moved more than this since the last scan is not steady (worldwalls::Entity::steady)
 constexpr uint64_t kReportMs = 30000;      // the status line
 constexpr uint64_t kMarkMs = 600;          // [debug] world_contact_draw: a strike's ball stays this long
 
@@ -103,6 +106,8 @@ struct Result {
     const char* why = "";
     std::vector<worldwalls::Box> walls;   // render metres
     worldwalls::Counts counts;
+    unsigned own = 0;                     // pieces hanging on the hero, left out
+    unsigned units = 0, unitsKnown = 0;   // pieces of units (an NPC, a monster, a merc, an item), left out; the units' skeletons known
     float feet[3] = {};                   // render metres
     double ms = 0;
 };
@@ -116,7 +121,14 @@ Result Work(const Request& r) {
     }
     std::vector<knockprops::LevelEntity> es;
     const char* why = "";
-    if (!knockprops::LevelBoxes(r.hero, r.upm, kScanRadiusM, &KnowsPreset, &es, &why)) {
+    skel::HeroXform hx;   // (the hero: all that hangs on him is left out - his weapon is never a wall of his own)
+    const char* heroWhy = "";
+    const uint32_t ownRoot = skel::HeroTransform(&hx, &heroWhy) ? hx.entity : 0u;
+    static std::vector<uint32_t> units;   // (the units' skeletons: nor they nor what hangs on them are walls - an NPC standing still; the scan's worker only)
+    const char* unitsWhy = "";
+    if (!skel::UnitEntities(&units, &unitsWhy)) units.clear();
+    res.unitsKnown = (unsigned)units.size();
+    if (!knockprops::LevelBoxes(r.hero, r.upm, kScanRadiusM, &KnowsPreset, &es, &why, ownRoot, &res.own, &units, &res.units)) {
         res.why = why;
         return res;
     }
@@ -128,6 +140,16 @@ Result Work(const Request& r) {
         std::memcpy(in[i].hi, es[i].hi, sizeof in[i].hi);
         in[i].preset = es[i].preset;
         std::memcpy(in[i].local, es[i].local, sizeof in[i].local);
+        // steady: where it stood a scan ago (its axes and place within kSteadyUnits)
+        static std::unordered_map<uint32_t, std::array<float, 12>> lastPlace;   // (the scan's worker only)
+        std::array<float, 12> now;
+        for (int k = 0; k < 3; ++k) { for (int c = 0; c < 3; ++c) now[(size_t)(k * 3 + c)] = es[i].world[k * 4 + c]; now[(size_t)(9 + k)] = es[i].world[12 + k]; }
+        const auto it = lastPlace.find(es[i].id);
+        bool steady = it != lastPlace.end();
+        for (size_t q = 0; steady && q < 12; ++q) steady = std::fabs(it->second[q] - now[q]) <= (q < 9 ? 1e-3f : kSteadyUnits);
+        in[i].steady = steady;
+        if (lastPlace.size() > 20000) lastPlace.clear();
+        lastPlace[es[i].id] = now;
     }
     for (int k = 0; k < 3; ++k) res.feet[k] = r.hero[k] / r.upm;
     res.walls = worldwalls::Choose(in, g_solids, r.upm, res.feet, &res.counts, &knockprops::IsMovable);
@@ -196,6 +218,8 @@ uint64_t g_scanAt = 0, g_reportAt = 0;
 unsigned g_scans = 0, g_failed = 0;
 double g_scanMs = 0, g_scanWorst = 0;
 worldwalls::Counts g_lastCounts;
+unsigned g_lastOwn = 0;   // the last scan's pieces hanging on the hero (left out)
+unsigned g_lastUnits = 0, g_lastUnitsKnown = 0;   // the last scan's pieces of units (left out), the units' skeletons it knew
 const char* g_lastWhy = "";
 
 // ---- the hands (the hook's thread) ----
@@ -307,6 +331,9 @@ void Tick(const Frame& f) {
         g_lastWhy = res.why;
         if (res.ok) {
             g_lastCounts = res.counts;
+            g_lastOwn = res.own;
+            g_lastUnits = res.units;
+            g_lastUnitsKnown = res.unitsKnown;
             AcquireSRWLockExclusive(&g_wallsLock);
             g_walls = std::move(res.walls);
             g_wallsAt = nowMs;
@@ -335,10 +362,10 @@ void Tick(const Frame& f) {
         using worldwalls::Why;
         LogF("world contact: half a minute - %u scans (%.1f ms each, worst %.1f%s%s); the last: %u pieces near, %u of them in the solids catalogue (%u prefabs' by their id alone, %u laid stretched: "
              "the renderer's box not the mesh's), %u laid by their own box (game objects not in it %u, no mesh %u), %u parts -> %u walls in %u bodies (%u of them pieces joined) "
-             "(left out: movable props %u, foliage %u, big and not in the catalogue %u, tiny %u; parts low %u, high %u, round the hero %u, not boxes %u, beyond the nearest %u); "
+             "(left out: the hero's own gear %u, units' (NPCs, monsters, mercs, items: %u skeletons) %u, movable props %u, foliage %u, not in the catalogue and big %u or moving %u, tiny %u; parts low %u, high %u, round the hero %u, not boxes %u, beyond the nearest %u); "
              "the weapon %u steps with walls (%.1f us each, worst %.0f), %u strikes, %u back into the hand; the bare hands %u steps (%.1f us each), %u held at a wall, %u back to the controller",
              g_scans, g_scans ? g_scanMs / g_scans : 0.0, g_scanWorst, g_failed ? ", failed: " : "", g_failed ? g_lastWhy : "", k.seen, k.matched, k.byId, k.stretched, k.objects,
-             k.why[(int)Why::kUnknown], k.why[(int)Why::kNoParts], k.parts, k.kept, k.bodies, k.joined, k.why[(int)Why::kMovable], k.why[(int)Why::kFoliage], k.why[(int)Why::kBig],
+             k.why[(int)Why::kUnknown], k.why[(int)Why::kNoParts], k.parts, k.kept, k.bodies, k.joined, g_lastOwn, g_lastUnitsKnown, g_lastUnits, k.why[(int)Why::kMovable], k.why[(int)Why::kFoliage], k.why[(int)Why::kBig], k.why[(int)Why::kMoving],
              k.why[(int)Why::kTiny], k.why[(int)Why::kLow], k.why[(int)Why::kHigh], k.why[(int)Why::kRound], k.why[(int)Why::kBad], k.beyond, c.steps, c.steps ? c.us / c.steps : 0.0,
              c.worst, c.strikes, c.returns, c.handSteps, c.handSteps ? c.handUs / c.handSteps : 0.0, c.handStops, c.handReturns);
         g_scans = g_failed = 0;
@@ -375,7 +402,7 @@ void BlockHands(skel::Input* in, const bool holds[2]) {
     monsterbodies::View v;
     for (int k = 0; k < 3; ++k) { v.eye[k] = in->grabEye[k]; v.camR[k] = in->grabCamR[k]; v.camF[k] = in->grabCamF[k]; }
     v.upm = std::clamp(in->grabUpm, 1.0f, 12.0f);
-    hw::Wall walls[hw::kMaxWalls];
+    static hw::Wall walls[hw::kMaxWalls];   // (32 KB: not on the pose thread's stack - called from skel's Arms only, as weight.cpp's walls)
     const int n = Walls(v, walls, hw::kMaxWalls);
     const uint64_t nowMs = GetTickCount64();
     hw::Params p;

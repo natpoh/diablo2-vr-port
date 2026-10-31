@@ -41,7 +41,7 @@ bool Paint(const Model& m, const Hit& hover, std::vector<uint32_t>& rgba, const 
     HFONT bold = CreateFontW(30, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                              ANTIALIASED_QUALITY, DEFAULT_PITCH, uitext::Face(L"Segoe UI"));
     HFONT tab = CreateFontW(kTabFontPx, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                            ANTIALIASED_QUALITY, DEFAULT_PITCH, uitext::Face(L"Segoe UI"));   // the page tabs (hset_defs.h kPageNameW: fourteen fit at 26)
+                            ANTIALIASED_QUALITY, DEFAULT_PITCH, uitext::Face(L"Segoe UI"));   // the page tabs (hset_defs.h kTabNameW: fifteen fit at kTabFontPx 24)
     HFONT small = CreateFontW(22, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                               ANTIALIASED_QUALITY, DEFAULT_PITCH, uitext::Face(L"Segoe UI"));
     HGDIOBJ oldFont = SelectObject(dc, normal);

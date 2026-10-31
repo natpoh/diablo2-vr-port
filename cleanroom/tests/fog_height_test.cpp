@@ -8,6 +8,7 @@
 #include <dxgi1_4.h>
 #include <windows.h>
 
+#include <cmath>
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -102,6 +103,25 @@ float4 main(float4 pos : SV_Position) : SV_Target {
     fogheight::Frame(true, 120, 30, true);
     ID3D12PipelineState* ours2 = fogheight::Swap(gameFog);
     CHECK(ours2 && ours2 != gameFog && ours2 != ours);   // a new setting: a new one
+    // the top moving with the head every frame (PC1 2026-10-31: a new pipeline nearly every frame, the frame rate halved): small moves
+    // make none, a real step none again within a second, then one; a setting (soft) at once
+    {
+        const uint32_t before = fogheight::Builds();
+        for (int f = 0; f < 200; ++f) fogheight::Frame(true, 120.0f + 2.5f * std::sin(f * 0.3f), 30, true);   // (under a step: 3 units)
+        std::printf("  the top swaying by up to 2.5 units over 200 frames: %u variant(s) made\n", fogheight::Builds() - before);
+        CHECK(fogheight::Builds() == before);
+        CHECK(fogheight::Swap(gameFog) == ours2);
+        for (int f = 0; f < 50; ++f) fogheight::Frame(true, 140, 30, true);   // (a real step, within a second of the last variant)
+        const uint32_t afterStep = fogheight::Builds();
+        Sleep(1100);
+        fogheight::Frame(true, 140, 30, true);
+        fogheight::Frame(true, 140, 30, true);
+        std::printf("  a step of 20 units: %u made at once, %u a second later\n", afterStep - before, fogheight::Builds() - afterStep);
+        CHECK(afterStep - before <= 1 && fogheight::Builds() - afterStep <= 1 && fogheight::Builds() - before == 1);
+        const uint32_t beforeSoft = fogheight::Builds();
+        fogheight::Frame(true, 140, 40, true);
+        CHECK(fogheight::Builds() - beforeSoft == 1);   // a setting: at once
+    }
     fogheight::Frame(false, 120, 30, true);
     CHECK(fogheight::Swap(gameFog) == gameFog);         // off again
     // as the game makes them (PC1 2026-10-27): from a pipeline state stream - a root signature, the shaders, the target's format, the

@@ -834,10 +834,12 @@ void RepublishBodies(ULONGLONG now, const float heroRender[3], float upm) {
         const std::string dump = skel::RigDumpTakeIn();
         if (!dump.empty()) Log(dump.c_str());
     }
-    if (g_ownBodyWanted.load() && viewgate::F4() && upm > 1e-3f) {   // [weight] own_body: the hero's own trunk and legs, as drawn now - the held weapon stops on them too
+    if (g_ownBodyWanted.load() && viewgate::F4() && upm > 1e-3f) {   // [weight] own_body: the hero's own trunk, legs, head and free arms, as drawn now - the held weapon stops on them
         monsterrig::Capsule own[monsterrig::kMaxPerRig];
         const char* why = "";
-        const int n = skel::HeroBodyCaps(own, monsterrig::kMaxPerRig, &why);
+        // (no arm: a "free" hand's forearm stood where that hand was about to take the shaft - Serg, 0.192.37, a pike: "само об себя стукается и выворачивается",
+        // "hard to pass from hand to hand"; the arms and hands are never a body of his own)
+        const int n = skel::HeroBodyCaps(own, monsterrig::kMaxPerRig, &why, true, nullptr);
         for (int i = 0; i < n && snap.n < monsterbodies::kMax; ++i) {
             monsterbodies::Body& b = snap.b[snap.n++];
             b = monsterbodies::Body{};
@@ -854,7 +856,7 @@ void RepublishBodies(ULONGLONG now, const float heroRender[3], float upm) {
         if ((n > 0) != (toldN > 0) || (n == 0 && toldWhy != why)) {   // (once a change: a line costs a millisecond)
             toldN = n;
             toldWhy = why;
-            if (n > 0) LogF("melee touch: own body - the hero's trunk and legs are %d bodies the held weapon meets (his arms and head left out)", n);
+            if (n > 0) LogF("melee touch: own body - the hero's trunk, legs and head are %d bodies the held weapon meets (his arms, hands and all they hold left out)", n);
             else LogF("melee touch: own body - none read (%s): the weapon passes through the hero as before", why);
         }
     }
@@ -1672,6 +1674,7 @@ void SetHeadVolume(bool on) {
     if (g_headVolume.exchange(on) != on) Log(on ? "melee touch: head volumes on - a headed weapon's head is a volume of its own where its model has it, its shaft as thin as the model's"
                                                 : "melee touch: head volumes off - one capsule along the weapon, as before");
 }
+bool OwnBodyWanted() { return g_ownBodyWanted.load(); }
 void SetOwnBodyWanted(bool on) {
     if (g_ownBodyWanted.exchange(on) != on) Log(on ? "melee touch: own body on - the held weapon does not pass through the hero's own trunk and legs" : "melee touch: own body off");
 }
@@ -1745,7 +1748,7 @@ bool GrabBodiesNow(monsterbodies::Snapshot* out, bool swayed) {
     return true;
 }
 void GrabTick(bool ok, const float heroRender[3], float upm) {
-    if (!g_grabWanted.load() || !ok || !viewgate::F4() || !heroRender || !std::isfinite(heroRender[0] + heroRender[1] + heroRender[2])) return;
+    if (!(g_grabWanted.load() || g_ownBodyWanted.load()) || !ok || !viewgate::F4() || !heroRender || !std::isfinite(heroRender[0] + heroRender[1] + heroRender[2])) return;   // ([weight] own_body too: his body with hit by touch off)
     const ULONGLONG now = GetTickCount64();
     if (now >= g_touchBodiesAt && now - g_touchBodiesAt < 60) return;   // the touch's tick keeps them (a melee weapon swung)
     upm = std::clamp(upm, 1.0f, 12.0f);

@@ -45,6 +45,13 @@ struct BakeIn {
     ID3D12Resource* nightBand = nullptr;   // the act's night pictures as the effect has them (RGBA8, PIXEL_SHADER_RESOURCE); null: no night
     ID3D12Resource* nightCap = nullptr;
     ID3D12Resource* gain = nullptr;   // the effect's measured gain (DomeSeenTex: 1 x 1 RGBA16F, a = measured); null: 1
+    // [sky] dome_gain_once: the gain as measured once for this area and period, not the effect's texture (gain then null)
+    bool gainFixed = false;
+    float gainRgb[3] = {1.0f, 1.0f, 1.0f};
+    // [sky] dome_fog_baked: the dome's low part laid into the game's fog colour (scene units) as our old sky's is (D2R_DepthFog.fx
+    // SkyFogHorizon: 1 - smoothstep(-0.03, 0.2, the direction's height)), times fogBand (0: none)
+    float fog[3] = {0.0f, 0.0f, 0.0f};
+    float fogBand = 0.0f;
 };
 // Each present, on our list on the game's queue `q`, before it is submitted: the tiles of the shown bands mapped (on q, so before the list),
 // then baked when anything changed (or every kGainEvery presents while the gain is measured). Recorded only on `l`.
@@ -56,6 +63,9 @@ bool Live();
 bool Ours();
 // The gain the last bake used (1 x 1 RGBA16F, a = 1 once baked; PIXEL_SHADER_RESOURCE): the effect's D2RVR_DOME_GAIN. Null before.
 ID3D12Resource* BakedGain();
+// [sky] dome_gain_once: the measured gain a bake used, read back a few presents after it (each bake with the effect's texture is copied out);
+// false before any. `reads` counts them: a new one when it grows.
+bool MeasuredGain(float rgb[3], uint32_t* reads);
 // Ours (the test reads it back; nullptr before the game's first view of the picture)
 ID3D12Resource* OurTexture();
 
@@ -66,6 +76,12 @@ inline void BandRows(int band, uint32_t bandRows, uint32_t mip, uint32_t* from, 
     *from = (uint32_t)band * r;
     *to = *from + r;
 }
+// Baked again for the effect's measured gain (it eases slowly): every kGainEvery presents, only while an act's sky is shown (`shownBand`
+// 0..4, BakeIn::band) - Serg on 0.192.18: "в пещерах не надо цвет измерять", "только там, где есть небо", "можно не 12 кадров, а в 120
+// раз". In caves and dungeons nothing is measured (the effect's DomeSeen keeps its last), the cave dome's band is black, cleared once. A
+// change of the period's numbers (night, brightness, the act) bakes at once, as before.
+constexpr int kGainEvery = 120;
+inline bool RebakeForGain(bool gainOn, int shownBand, int sinceBake) { return gainOn && shownBand >= 0 && shownBand < 5 && sinceBake >= kGainEvery; }
 // ... and the tile rows they touch, tiles `tileRows` texels high: [*from, *to)
 inline void BandTileRows(int band, uint32_t bandRows, uint32_t mip, uint32_t tileRows, uint32_t* from, uint32_t* to) {
     uint32_t a = 0, b = 0;

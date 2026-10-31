@@ -26,7 +26,7 @@
 namespace monsterhumanoid {
 
 constexpr int kMaxWords = 12, kWordLen = 16;
-constexpr int kMaxBones = 256;      // a skeleton longer than this is not judged
+constexpr int kMaxBones = bonecap::kCeiling;   // the arrays; a skeleton longer than bonecap::Max() ([weight] skeleton_bones_max) is not judged
 constexpr int kMaxPerSide = 2;      // limbs of a kind on a side
 constexpr int kUprightRun = 5;      // reads running that must be upright
 
@@ -311,7 +311,7 @@ inline void MapJoints(const char* const* names, Verdict& v) {
 // ancestors.
 inline Verdict Judge(const char* const* names, const int* parent, int n) {
     Verdict v;
-    if (n <= 0 || n > kMaxBones) { v.why = n > kMaxBones ? "too many bones to judge" : "no skeleton"; return v; }
+    if (n <= 0 || n > bonecap::Max()) { v.why = n > 0 ? "too many bones to judge ([weight] skeleton_bones_max)" : "no skeleton"; return v; }
     v.bones = n;
     for (int i = 0; i < n; ++i) v.parent[i] = static_cast<int16_t>(parent[i] >= 0 && parent[i] < n && parent[i] != i ? parent[i] : -1);
     Bone bone[kMaxBones];
@@ -443,18 +443,26 @@ inline bool Upright(const Verdict& v, const float (*pos)[3], int n, const char**
     return true;
 }
 
-// [weight] own_body: the hero's bones his held weapon may not pass through - his trunk and legs. Left out: each arm from its first bone down (the hands that
-// hold the weapon, and all they carry), the head and all under it (in F4 it is the player's own, hidden from his eyes), and the bones that are no limbs
-// (NotLimbName: weapons' attach points, fingers, helpers). keep[i] 1: bone i is his body. False when the verdict found no arms or no head to leave out.
-inline bool OwnBodyBones(const Verdict& v, uint8_t* keep) {
+// [weight] own_body: the hero's bones his held weapon may not pass through - his trunk and legs; with head, his head too (Serg, 0.192.36: "чтобы оружие не
+// проходило сквозь собственное тело"); with arm[side] (0 left, 1 right: a FREE hand - not on the weapon, no shield, no second weapon), that arm down to its
+// wrist (the hand itself and all it carries left out: the joints' wrist, MapJoints; not found - the whole arm left out). Left out always: the hands that hold
+// the weapon and all they carry, and the bones that are no limbs (NotLimbName: weapons' attach points, fingers, helpers). keep[i] 1: bone i is his body. False
+// when the verdict found no arms or no head to leave out.
+inline bool OwnBodyBones(const Verdict& v, uint8_t* keep, bool head = false, const bool* arm = nullptr) {
     const int n = v.bones;
     if (n <= 0 || n > kMaxBones || v.headBone < 0 || v.armsL + v.armsR == 0) return false;
     static thread_local uint8_t out[kMaxBones];
     for (int i = 0; i < n; ++i) out[i] = 0;
     const auto drop = [&](int root) { if (root >= 0 && root < n) out[root] = 1; };
-    drop(v.headBone);
-    for (int s = 0; s < 2; ++s)
+    if (!head) drop(v.headBone);
+    for (int s = 0; s < 2; ++s) {
+        const int wrist = v.joints ? v.joint[s ? D2RF_R_WRIST : D2RF_L_WRIST] : -1;   // (the verdict's [0] is the left side, as the joints' L)
+        if (arm && arm[s] && wrist >= 0) {
+            drop(wrist);
+            continue;
+        }
         for (int k = 0; k < kMaxPerSide && k < (s ? v.armsR : v.armsL); ++k) drop(v.arms[s][k].root);
+    }
     for (int i = 0; i < n; ++i) {   // (parents come first: a bone under one left out is left out)
         const int p = v.parent[i];
         if (p >= 0 && p < i && out[p]) out[i] = 1;
@@ -472,10 +480,10 @@ Verdict JudgeSkeleton(Read&& read, uintptr_t skeleton) {
     uintptr_t bones = 0;
     // (the arrays below hold monsterhumanoid::kMaxBones; a skeleton longer than that is not judged. They were monsterrig's 160 while the count was let up to
     // this 256: a model of 161 - 256 bones, met on leaving the Arcane Sanctuary, wrote past them and the game died in Read - 2026-10-23)
-    if (skeleton < 0x10000 || !read(skeleton + kSkelCount, &count, sizeof count) || count < 1 || count > monsterhumanoid::kMaxBones ||
+    if (skeleton < 0x10000 || !read(skeleton + kSkelCount, &count, sizeof count) || count < 1 || count > bonecap::Max() ||
         !read(skeleton + kSkelBones, &bones, sizeof bones) || bones < 0x10000) {
         Verdict v;
-        v.why = count > monsterhumanoid::kMaxBones ? "too many bones to judge" : "its skeleton does not read";
+        v.why = count > bonecap::Max() ? "too many bones to judge ([weight] skeleton_bones_max)" : "its skeleton does not read";
         return v;
     }
     static thread_local char names[monsterhumanoid::kMaxBones][kNameLen];

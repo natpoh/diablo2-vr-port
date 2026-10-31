@@ -42,6 +42,7 @@ struct Entry {
     bool mist = false, voidAlone = false, noFog = false;
     dxbcfog::Curve curve{};
     bool failed = false;
+    ULONGLONG builtAt = 0;         // when `ours` was made (the present's clock)
 };
 constexpr int kMax = 32;
 Entry g_e[kMax];
@@ -50,6 +51,14 @@ SRWLOCK g_lock = SRWLOCK_INIT;   // (the adding of entries)
 std::atomic<bool> g_on{false};
 std::atomic<uint32_t> g_swaps{0}, g_streams{0}, g_streamsUnread{0};
 std::atomic<uint32_t> g_bound{0};   // our variant bound in the game's place, in all (never reset: Bound)
+std::atomic<uint32_t> g_builds{0}, g_moves{0};   // variants made in all (Builds); of them, since the 10 s line, for the top's move or noFog
+// The top as Frame is given it moves with every move of the head (FogTopNow: above the eye, [fog] game_fog_top_from_floor counted from
+// the hero's floor) and was baked into the pipeline: PC1 2026-10-31 on 0.192.19 - a new pipeline and a log line nearly every frame, 400 -
+// 600 in 10 s, the game's draw thread 11 -> 18 ms a pair, 65 -> 40 frames/s. A variant is made again for the top only when it moved by a
+// real step - a tenth of the fade (soft), a unit at least - and then at most once a second; noFog's flip the same. The settings (soft,
+// mist, the void, the curve) at once, as before.
+constexpr float kTopStepShare = 0.1f, kTopStepMin = 1.0f;
+constexpr ULONGLONG kMoveGapMs = 1000;
 struct Retired { ID3D12PipelineState* p; ULONGLONG at; };
 std::vector<Retired> g_retired;   // the present's: variants no longer bound, let go a few seconds on
 
@@ -120,6 +129,8 @@ bool Build(Entry& e, float top, float soft, bool mist, bool voidAlone, bool noFo
     e.voidAlone = voidAlone;
     e.noFog = noFog;
     e.curve = curve;
+    e.builtAt = GetTickCount64();
+    g_builds.fetch_add(1, std::memory_order_relaxed);
     return true;
 }
 
@@ -282,6 +293,7 @@ ID3D12PipelineState* Swap(ID3D12PipelineState* pso) {
 }
 
 uint32_t Bound() { return g_bound.load(std::memory_order_relaxed); }
+uint32_t Builds() { return g_builds.load(std::memory_order_relaxed); }
 
 void Frame(bool on, float top, float soft, bool mist, bool voidAlone, bool noFog, const Curve& oc) {
     dxbcfog::Curve curve;
@@ -289,13 +301,21 @@ void Frame(bool on, float top, float soft, bool mist, bool voidAlone, bool noFog
     curve.start = oc.start; curve.end = oc.end; curve.curve = oc.curve; curve.strength = oc.strength; curve.ease = oc.ease;
     const int n = g_n.load(std::memory_order_acquire);
     bool ready = true;
+    const ULONGLONG now0 = GetTickCount64();
+    static ULONGLONG toldMoveAt = 0;   // (the variant's line for a move of the top: at most once in 30 s)
     if (on)
         for (int i = 0; i < n; ++i) {
             Entry& e = g_e[i];
             if (e.failed) continue;
-            if (e.top != top || e.soft != soft || e.mist != mist || e.voidAlone != voidAlone || e.noFog != noFog || e.curve != curve) {
+            const bool settings = std::isnan(e.top) || e.soft != soft || e.mist != mist || e.voidAlone != voidAlone || e.curve != curve;
+            const float step = (std::max)(kTopStepMin, kTopStepShare * soft);
+            const bool moved = (top > 1.0e8f) != (e.top > 1.0e8f) || std::fabs(top - e.top) >= step || e.noFog != noFog;
+            if (settings || (moved && now0 - e.builtAt >= kMoveGapMs)) {
                 const bool curveChanged = e.curve != curve || std::isnan(e.top);   // (the first variant: which curve, once)
                 if (!Build(e, top, soft, mist, voidAlone, noFog, curve)) continue;
+                if (!settings) g_moves.fetch_add(1, std::memory_order_relaxed);
+                const bool tell = settings || now0 - toldMoveAt >= 30000;
+                if (i == 0 && tell && !settings) toldMoveAt = now0;
                 if (i == 0 && curveChanged) {
                     char c[360];
                     if (curve.on)
@@ -307,7 +327,7 @@ void Frame(bool on, float top, float soft, bool mist, bool voidAlone, bool noFog
                         snprintf(c, sizeof c, "fog height: the game's fog by its own exponential curve ([fog] game_fog_our_curve off)");
                     Say(c);
                 }
-                if (i == 0) {
+                if (i == 0 && tell) {
                     char b[420];
                     const char* v = noFog ? (voidAlone ? "; the void left alone; the distance fog's colour left to the step before the effects"
                                                        : "; the distance fog's colour left to the step before the effects")
@@ -337,8 +357,9 @@ void Frame(bool on, float top, float soft, bool mist, bool voidAlone, bool noFog
     if (on && now - toldAt > 10000) {
         toldAt = now;
         char b[260];
-        snprintf(b, sizeof b, "fog height, 10 s: %u binds of the thinned fog pass (%d of the game's fog pipelines known; %u made from streams so far%s)",
-                 g_swaps.exchange(0), n, g_streams.load(), n ? "" : " - none of the fog's: the fog stays as it is");
+        snprintf(b, sizeof b, "fog height, 10 s: %u binds of the thinned fog pass, %u variants made again for the top's move (a step, once a "
+                 "second at most) (%d of the game's fog pipelines known; %u made from streams so far%s)",
+                 g_swaps.exchange(0), g_moves.exchange(0), n, g_streams.load(), n ? "" : " - none of the fog's: the fog stays as it is");
         Say(b);
     }
 }

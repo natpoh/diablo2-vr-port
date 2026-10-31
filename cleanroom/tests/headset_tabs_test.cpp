@@ -401,6 +401,12 @@ struct World {
     }
     Step ClickSheet(const hset::Rect& r) { return ClickPx(WinX(r.x + 0.5f * r.w), WinY(r.y + 0.5f * r.h)); }
     Step ClickTab(int i) { return ClickPx(CentreX(tiles::TabRect(i)), CentreY(tiles::TabRect(i))); }
+    // a page of the Settings tab: its tab on the sheet, and a World page's button under it (World is one tab of four pages)
+    Step ClickPage(int page) {
+        Step s = ClickSheet(hset::kTab(hset::TabOf(page)));
+        if (hset::IsWorldPage(page) && page != hset::kPageWorld) s = ClickSheet(hset::kWorldSub(page - hset::kPageWorld));
+        return s;
+    }
     void Run(int frames) {
         for (int i = 0; i < frames; ++i) Next();
     }
@@ -1089,7 +1095,7 @@ static void TestSpriteSheets() {
 static void TestFlipHigh() {
     const float y0 = tiles::kSheetY + hset::kTab(0).y * tiles::kSheetScale, y1 = y0 + hset::kTab(0).h * tiles::kSheetScale;
     const float firstL = tiles::kSheetX + hset::kTab(0).x * tiles::kSheetScale;
-    const hset::Rect last = hset::kTab(hset::PageCount() - 1);
+    const hset::Rect last = hset::kTab(hset::kTabCount - 1);
     const float lastR = tiles::kSheetX + (last.x + last.w) * tiles::kSheetScale;
     const tiles::PRect l = tiles::FlipRect(0, true), r = tiles::FlipRect(1, true);
     CHECK(l.r <= firstL && r.l >= lastR);                                   // beside the row, on no tab
@@ -1138,7 +1144,7 @@ static void TestGameLook(const char* dumpDir) {
     if (dumpDir) WriteBmp(std::string(dumpDir) + "/game_skills.bmp", gameSkills, tiles::kW, tiles::kH);
     std::vector<uint32_t> pages[hset::kMaxPages];
     for (int p = 0; p < hset::PageCount(); ++p) {
-        w.ClickSheet(hset::kTab(p));
+        w.ClickPage(p);
         View high = w.c.ViewNow();
         high.flipHigh = true;   // (the game look's layout: the flip arrows at the page tabs' row)
         pages[p] = Paint(high);
@@ -1166,7 +1172,7 @@ static void TestPaint(const char* dumpDir) {
     bool belowSame = true;
     for (int y = (int)tiles::kPanel.t + 14; y < tiles::kH && belowSame; ++y)
         for (int x = 0; x < tiles::kW; ++x) {
-            const bool hint = (y > 1020 && x > 560 && x < 1040) ||                                                                    // the dots at the foot
+            const bool hint = (y > 1020 && x > 500 && x < 1100) ||                                                                    // the dots at the foot
                               (y >= 470 && y <= 690 && (x < 110 || x > 1490));                                                       // the arrows at the edges
             if (!hint && skills[(size_t)y * tiles::kW + x] != plain[(size_t)y * tiles::kW + x]) { belowSame = false; break; }
         }
@@ -1181,7 +1187,8 @@ static void TestPaint(const char* dumpDir) {
     w.ClickTab(1);
     std::vector<uint32_t> pages[hset::kMaxPages];
     for (int p = 0; p < hset::PageCount(); ++p) {
-        w.ClickSheet(hset::kTab(p));
+        w.ClickPage(p);
+        CHECK(w.c.SettingsModel().page == p);
         pages[p] = Paint(w.c.ViewNow());
         CHECK(pages[p] != skills);
         for (int q = 0; q < p; ++q) CHECK(pages[p] != pages[q]);
@@ -1296,10 +1303,10 @@ static void TestScene() {
         int tabs = 0, bottom = 0;
         for (const hset::Item& it : bare) {
             if (it.type != hset::Item::Type::Button) continue;
-            for (int i = 0; i < hset::PageCount(); ++i) if (it.text == hset::kPageNames[i] && it.r.y == hset::kTab(i).y) ++tabs;   // (in the strip: a toggle's face can be "Left")
+            for (int i = 0; i < hset::kTabCount; ++i) if (it.text == hset::kTabNames[i] && it.r.y == hset::kTab(i).y) ++tabs;   // (in the strip: a toggle's face can be "Left")
             if (it.text == "Recentre view" || it.text == "Close" || it.text == "Apply") ++bottom;
         }
-        CHECK(tabs == hset::PageCount() && bottom == 3);
+        CHECK(tabs == hset::kTabCount && bottom == 3);
     }
     // the one chosen page tab is the selected one
     hset::Model m;
@@ -1339,8 +1346,8 @@ struct Pads {   // a frame's sticks and grips for the pure flipper
 };
 
 static void TestFlipper() {
-    CHECK(kFlipPlaces == 15 && kFlipPlaces == 1 + hset::PageCount());
-    CHECK(FlipTo(0, -1) == 0 && FlipTo(0, 1) == 1 && FlipTo(2, 1) == 3 && FlipTo(2, -1) == 1 && FlipTo(14, 1) == 14 && FlipTo(14, -1) == 13 && FlipTo(2, 0) == 2);
+    CHECK(kFlipPlaces == 19 && kFlipPlaces == 1 + hset::PageCount());
+    CHECK(FlipTo(0, -1) == 0 && FlipTo(0, 1) == 1 && FlipTo(2, 1) == 3 && FlipTo(2, -1) == 1 && FlipTo(18, 1) == 18 && FlipTo(18, -1) == 17 && FlipTo(2, 0) == 2);
     auto step = [](Flipper& f, double t, const Pads& p) { return f.Step(t, p.x, p.y, p.g); };
     {   // a flick right is one step forward, left one back; the stick's coming back to the middle re-arms it
         Flipper f;
@@ -1735,6 +1742,36 @@ static void TestCoopOnWindow(const char* dumpDir) {
     std::printf("  co-op page: our look and the game's\n");
 }
 
+// The World tab on the window's Settings tab: the tab opens Contact, its buttons the other three pages, a row's switch is written by itself
+// a moment later (live), alone.
+static void TestWorldOnWindow(const char* dumpDir) {
+    World w;
+    w.LongPress();
+    w.ClickTab(1);
+    w.ClickSheet(hset::kTab(hset::kTabWorld));
+    CHECK(w.c.SettingsModel().page == hset::kPageWorld && w.c.FlipPlace() == 1 + hset::kPageWorld);
+    for (int i = 1; i < hset::kWorldPages; ++i) {
+        w.ClickSheet(hset::kWorldSub(i));
+        CHECK(w.c.SettingsModel().page == hset::kPageWorld + i && w.c.Open());
+        if (dumpDir) WriteBmp(std::string(dumpDir) + "/tabs_world" + std::to_string(i) + ".bmp", Paint(w.c.ViewNow()), tiles::kW, tiles::kH);
+    }
+    w.ClickSheet(hset::kWorldSub(2));   // Grab
+    const int grab = hset::IndexOf(L"weight", L"grab_items");
+    const Step s = w.ClickSheet(hset::kToggle(4, hset::kPageWorldGrab));
+    CHECK(s.settings.what == hset::Do::Nothing && w.c.SettingsModel().Get()[grab] == 1.0f && w.c.SettingsModel().LiveOnly());
+    bool saved = false;
+    for (int i = 0; i < 120 && !saved; ++i) {
+        const Step t = w.Next();
+        if (t.settings.what == hset::Do::Save) {
+            saved = true;
+            CHECK(t.settings.request.changed == hset::Bit(grab) && t.settings.request.values[grab] == 1.0f);
+        }
+    }
+    CHECK(saved);   // (a moment after the click, by itself)
+    w.ClickSheet(hset::kTab(hset::kPageMelee));
+    CHECK(w.c.SettingsModel().page == hset::kPageMelee);
+}
+
 static void TestFlipController() {
     {   // along the pages: Skills, View, Options, Video, Body, Life, Look, HUD - and stops at the ends
         World w;
@@ -1767,10 +1804,15 @@ static void TestFlipController() {
         CHECK(w.c.SettingsModel().page == hset::kPageCoop && w.c.FlipPlace() == 12);
         Flick(w, 1.0f);
         CHECK(w.c.SettingsModel().page == hset::kPageVibration && w.c.FlipPlace() == 13);
+        for (int i = 0; i < hset::kWorldPages; ++i) {   // the World tab's four pages, one flick each
+            Flick(w, 1.0f);
+            CHECK(w.c.SettingsModel().page == hset::kPageWorld + i && w.c.FlipPlace() == 14 + i);
+        }
         Flick(w, 1.0f);
-        CHECK(w.c.SettingsModel().page == hset::kPageGuide && w.c.FlipPlace() == 14 && w.c.SettingsModel().GuideShown());
+        CHECK(w.c.SettingsModel().page == hset::kPageGuide && w.c.FlipPlace() == 18 && w.c.SettingsModel().GuideShown());
         Flick(w, 1.0f);
-        CHECK(w.c.SettingsModel().page == hset::kPageGuide && w.c.FlipPlace() == 14 && w.c.Open());   // the end: a stop
+        CHECK(w.c.SettingsModel().page == hset::kPageGuide && w.c.FlipPlace() == 18 && w.c.Open());   // the end: a stop
+        for (int i = 0; i < hset::kWorldPages; ++i) Flick(w, -1.0f);
         Flick(w, -1.0f);
         Flick(w, -1.0f);
         Flick(w, -1.0f);
@@ -1936,12 +1978,12 @@ static void TestFlipController() {
         CHECK(w.c.FlipPlace() == 0 && w.c.Open());
         w.ClickPx(CentreX(next), CentreY(next));
         CHECK(w.c.FlipPlace() == 1 && w.c.ViewNow().tab == Tab::Settings);
-        for (int i = 0; i < 13; ++i) w.ClickPx(CentreX(next), CentreY(next));
-        CHECK(w.c.FlipPlace() == 14);
+        for (int i = 0; i < 17; ++i) w.ClickPx(CentreX(next), CentreY(next));
+        CHECK(w.c.FlipPlace() == 18);
         w.ClickPx(CentreX(next), CentreY(next));
-        CHECK(w.c.FlipPlace() == 14);
+        CHECK(w.c.FlipPlace() == 18);
         w.ClickPx(CentreX(prev), CentreY(prev));
-        CHECK(w.c.FlipPlace() == 13 && w.c.SettingsModel().page == hset::kPageVibration);
+        CHECK(w.c.FlipPlace() == 17 && w.c.SettingsModel().page == hset::kPageWorldMore);
         // the laser's click on a page tab of the sheet moves the place too, the same order
         w.ClickSheet(hset::kTab(hset::kPageView));
         CHECK(w.c.FlipPlace() == 1 && w.c.ViewNow().flipPlace == 1);
@@ -2017,7 +2059,7 @@ static void TestFlipPaint() {
         for (int y = 0; y < tiles::kH && onlyHints; ++y)
             for (int x = 0; x < tiles::kW; ++x)
                 if (a[(size_t)y * tiles::kW + x] != b[(size_t)y * tiles::kW + x]) {
-                    const bool dot = y > 1020 && x > 560 && x < 1040, arrow = y >= 470 && y <= 690 && (x < 110 || x > 1490);
+                    const bool dot = y > 1020 && x > 500 && x < 1100, arrow = y >= 470 && y <= 690 && (x < 110 || x > 1490);
                     if (!dot && !arrow) { onlyHints = false; break; }
                 }
         CHECK(onlyHints);
@@ -2127,6 +2169,7 @@ int main(int argc, char** argv) {
     TestFlipController();
     TestPreviewButton();
     TestCoopOnWindow(dump);
+    TestWorldOnWindow(dump);
     TestFlipPaint();
     std::printf("%d checks, %d failed\n", g_checks, g_failures);
     return g_failures ? 1 : 0;

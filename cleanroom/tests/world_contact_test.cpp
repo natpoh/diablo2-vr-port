@@ -14,8 +14,11 @@
 #include "hold.h"
 #include "walls.h"
 #include "../../vr/world_walls.h"
+#include "../../vr/own_body.h"
+#include "../../vr/unit_models.h"
 
 #include <algorithm>
+#include <iterator>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -475,7 +478,9 @@ void TestWorldWalls() {
 		piece(11, -1.0f, 0, 1.0f, 0.5f, 0.6f, 0.5f),     // a vase whose model the solids catalogue marks movable
 		piece(12, 3.0f, 0, 3.0f, 5, 3, 5),               // a big piece not in the catalogue (a building's shell): left out
 		piece(13, 0.75f, 0, -1.5f, 0.5f, 2.0f, 0.3f),    // a post touching the wall's right end: one body with it
+		piece(14, -1.5f, 0, -0.5f, 1, 1, 1),             // not in the catalogue and moving (a monster's weapon, a cart going by): never laid by its box
 	};
+	es[13].steady = false;
 	const float u = upm;
 	model(es[0], 0, { { { -1.5f * u, 0, -0.15f * u }, { -0.5f * u, 2.5f * u, 0.15f * u } }, { { 0.5f * u, 0, -0.15f * u }, { 1.5f * u, 2.5f * u, 0.15f * u } },
 	                  { { -0.5f * u, 2.0f * u, -0.15f * u }, { 0.5f * u, 2.5f * u, 0.15f * u } } });
@@ -500,8 +505,58 @@ void TestWorldWalls() {
 	std::printf("world walls: movable %u, laid by their own box %u (not in the catalogue %u), big %u; %u bodies, %u of them pieces joined\n", c.why[(int)Why::kMovable], c.objects,
 	            c.why[(int)Why::kUnknown], c.why[(int)Why::kBig], c.bodies, c.joined);
 	EXPECT(c.kept == 7 && c.why[(int)Why::kTiny] == 1 && c.why[(int)Why::kLow] == 1 && c.why[(int)Why::kRound] == 1 && c.why[(int)Why::kHigh] == 1 &&
-	       c.why[(int)Why::kUnknown] == 1 && c.objects == 1 && c.why[(int)Why::kFoliage] == 1 && c.stretched == 1 && c.why[(int)Why::kMovable] == 2 && c.why[(int)Why::kBig] == 1,
-	       "which are walls");
+	       c.why[(int)Why::kUnknown] == 1 && c.objects == 1 && c.why[(int)Why::kFoliage] == 1 && c.stretched == 1 && c.why[(int)Why::kMovable] == 2 && c.why[(int)Why::kBig] == 1 &&
+	       c.why[(int)Why::kMoving] == 1, "which are walls");
+	// what hangs on the hero is never a wall (Serg, 0.192.37: the pike "само об себя стукается"): his root 0x100005, a hand part under him, the pike under the part,
+	// a stowed sword under another part; a wall piece under a preset root
+	{
+		const uint32_t hero = 0x300005u;   // (the version bits apart: entities compare by their index)
+		auto parentOf = [](uint32_t index, uint32_t* parent) {
+			switch (index) {
+			case 0x00020: *parent = 0x100005u; return true;   // the hand part, under the hero
+			case 0x00021: *parent = 0x200005u; return true;   // the back part, under the hero (another version of his id)
+			case 0x00030: *parent = 0xFFFFFu; return true;    // a preset root (no parent)
+			default: return false;
+			}
+		};
+		EXPECT(ownbody::HangsOn(0x00020u, hero, parentOf), "the pike in his hand (under the hand part) hangs on him");
+		EXPECT(ownbody::HangsOn(0x00021u, hero, parentOf), "the sword on his back hangs on him");
+		EXPECT(ownbody::HangsOn(0x100005u, hero, parentOf), "his part itself hangs on him");
+		EXPECT(!ownbody::HangsOn(0x00030u, hero, parentOf), "a wall under a preset root does not");
+		EXPECT(!ownbody::HangsOn(0x00040u, hero, parentOf), "an entity of an unknown parent does not");
+		EXPECT(!ownbody::HangsOn(0x00020u, 0u, parentOf), "no hero known: nothing is his");
+	}
+	// a unit's models are never walls (Serg, 0.192.39: "НПС тоже принимается за твёрдый объект и обводится квадратной рамкой"): the paths, and the walk up
+	{
+		EXPECT(unitmodels::UnitPath("data/hd/character/npc/act2male/act2male.skeleton"), "an NPC's skeleton is a unit's");
+		EXPECT(unitmodels::UnitPath("data/hd/character/monster/fallen1/fallen1.skeleton"), "a monster's");
+		EXPECT(unitmodels::UnitPath("data/hd/character/player/barbarian/barbarian.skeleton"), "a player's");
+		EXPECT(unitmodels::UnitPath("DATA\\HD\\CHARACTER\\NPC\\AKARA\\akara.skeleton"), "whatever the case and slashes");
+		EXPECT(unitmodels::UnitPath("data/hd/items/weapon/sword/sword.skeleton"), "an item lying on the ground");
+		EXPECT(unitmodels::UnitPath("data/hd/missiles/arrow/arrow.skeleton"), "a missile");
+		EXPECT(!unitmodels::UnitPath("data/hd/objects/act1/camp_torch/torch.skeleton"), "the camp's torch (an object) is no unit");
+		EXPECT(!unitmodels::UnitPath("data/hd/objects/chest/chest.skeleton"), "nor a chest");
+		EXPECT(!unitmodels::UnitPath("data/hd/env/model/act1/outdoors/wall.model"), "nor the level");
+		EXPECT(!unitmodels::UnitPath(""), "no name: none");
+		// the rogue camp: Kashya's root 0x00050 holds her skeleton; her body part 0x00051 under her, her bow 0x00052 under the part; a wall 0x00060 under a
+		// preset root; a torch 0x00070 (an object's skeleton: not a unit) and its flame part 0x00071
+		const uint32_t unitsKnown[] = {0x00050u};
+		auto isUnit = [&](uint32_t index) { return std::binary_search(std::begin(unitsKnown), std::end(unitsKnown), index); };
+		auto parentOf = [](uint32_t index, uint32_t* parent) {
+			switch (index) {
+			case 0x00051: *parent = 0x100050u; return true;   // (another version of her id: entities compare by their index)
+			case 0x00060: *parent = 0xFFFFFu; return true;
+			case 0x00071: *parent = 0x00070u; return true;
+			default: return false;
+			}
+		};
+		EXPECT(unitmodels::OfUnit(0x00051u, 0x200050u, isUnit, parentOf), "her body part hangs on her");
+		EXPECT(unitmodels::OfUnit(0x00052u, 0x00051u, isUnit, parentOf), "her bow (under the part) hangs on her");
+		EXPECT(unitmodels::OfUnit(0x300050u, 0xFFFFFu, isUnit, parentOf), "her root itself is hers");
+		EXPECT(!unitmodels::OfUnit(0x00061u, 0x00060u, isUnit, parentOf), "a wall piece is not");
+		EXPECT(!unitmodels::OfUnit(0x00071u, 0x00070u, isUnit, parentOf), "the torch's flame is not");
+		EXPECT(!unitmodels::OfUnit(0x00081u, 0x00080u, isUnit, parentOf), "a piece of an unknown parent is not");
+	}
 	const float opening[3] = { 0, 1.0f, -1.5f }, jamb[3] = { -1.0f, 1.0f, -1.5f }, lintel[3] = { 0, 2.25f, -1.5f };
 	bool open = true, jambSolid = false, lintelSolid = false;
 	const worldwalls::Box* barrel = nullptr;

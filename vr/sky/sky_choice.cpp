@@ -37,6 +37,12 @@ bool FogWanted() {
 // missing - a fresh install - refused, no model, a view it is not drawn in: engitem::SkyCannot) - vr/sky_paths.h. g_skyPalette itself stays
 // the act's sky wanted here: the game's dome is laid by it.
 bool OurSkyWanted() { return g_skyPalette.load() >= 0 && !skypaths::GameHolds(g_set.gameSky.load(), engitem::SkyCannot()); }
+// [render] distance_blur (D2R_DepthFog.fx DistBlur*): where our fog could be - first person, in the world, not from above (the ground is
+// all one distance there), not while the effects are paused - and whoever draws the fog: the blur rides on the picture as it is
+bool DistanceBlurWanted() {
+    return g_set.distanceBlur.load() && g_set.distanceBlurStrength.load() > 0.001f && g_enabled.load() && !Overhead() && g_inWorld.load() &&
+           !EffectsPaused();
+}
 // Our effect's fixes on what the game draws find the dome and the fogged world by the scene's depth (D2R_DepthFog.fx: d <= SkyDomeDepth):
 // the dome's colours and night ([sky] dome_true_colour, day_night: DomeLook), its low part into the fog ([sky] dome_fog_horizon), the game's
 // fog in the act's colour ([fog] game_fog_match) - as effects.cpp sets them. The flat game copies the depth only for what is placed by it
@@ -44,9 +50,9 @@ bool OurSkyWanted() { return g_skyPalette.load() >= 0 && !skypaths::GameHolds(g_
 // was - Serg on 0.192.6, flat F2, fog off: "цвет купола не меняется", day or night.
 bool GameSkyFixWanted() {
     const bool dome = engitem::DomeShown() && g_skyPalette.load() >= 0 && !g_arcaneSky.load() &&
-                      (g_set.domeTrueColour.load() || g_set.skyDayNight.load() ||
+                      ((g_set.domeTint.load() && (g_set.domeTrueColour.load() || g_set.skyDayNight.load())) ||   // (the tinting: parked)
                        (g_set.domeFogHorizon.load() && (FogWanted() || gamefogvr::Active())));
-    return dome || (g_set.fogMatch.load() && gamefogvr::Active());
+    return dome || (g_set.fogMatch.load() && gamefogvr::Active());   // (its make-up of the share with the colour measured or not)
 }
 
 bool ArcaneOwnFog() { return g_set.arcaneOwnFog.load() && g_arcaneArea.load(); }
@@ -55,6 +61,13 @@ FogNumbers FogNumbersNow() {
         return {g_set.arcaneFogStart.load(), g_set.arcaneFogEnd.load(), g_set.arcaneFogCurve.load(), g_set.arcaneFogStrength.load()};
     if (g_underground.load()) return {g_set.fogCaveStart.load(), g_set.fogCaveEnd.load(), g_set.fogCurve.load(), g_set.fogCaveStrength.load()};
     return {g_set.fogStart.load(), g_set.fogEnd.load(), g_set.fogCurve.load(), 1.0f};
+}
+FogNumbers GameFogNumbersNow() {
+    FogNumbers n = FogNumbersNow();
+    if (ArcaneOwnFog()) { n.start = g_set.gameArcaneFogStart.load(); n.end = g_set.gameArcaneFogEnd.load(); }
+    else if (g_underground.load()) { n.start = g_set.gameFogCaveStart.load(); n.end = g_set.gameFogCaveEnd.load(); }
+    else { n.start = g_set.gameFogStart.load(); n.end = g_set.gameFogEnd.load(); }
+    return n;
 }
 bool ArcaneHazeFog() { return g_arcaneSky.load() && (!ArcaneOwnFog() || g_set.arcaneFogIntoSky.load()); }
 

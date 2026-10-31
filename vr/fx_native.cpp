@@ -1766,6 +1766,7 @@ Stats Runtime::TakeStats() {
             v.push_back({p.second.first / m_->tsCount, p.first.size() > 3 && p.first[1] == '_' && p.first[2] == '_' ? p.first.substr(3) : p.first,
                          p.second.second ? p.second.first / p.second.second : 0.0, (uint32_t)(100.0 * p.second.second / m_->tsCount + 0.5)});
         std::sort(v.begin(), v.end(), [](const Row& a, const Row& c) { return a.ms > c.ms; });
+        for (const Row& r : v) s.passMs.emplace_back(r.name, r.ms);
         char b[96];
         for (size_t i = 0; i < v.size() && i < 8; ++i) {
             if (v[i].share < 95) snprintf(b, sizeof b, "%s%s %.2f (%.2f in %u%%)", i ? ", " : "", v[i].name.c_str(), v[i].ms, v[i].whenRun, v[i].share);

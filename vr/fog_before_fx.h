@@ -68,11 +68,16 @@ struct Params {
     // Each draw of the game's into its weighted-blended targets or its half-size additive one is drawn again by a twin of its pipeline -
     // its vertex shaders, no pixel shader - into a depth of ours (the nearest effect at each pixel; a quad's empty corners too, where it
     // adds next to nothing); at the step the weighted-blended colour goes toward the fog's colour and the additive light down by the fog
-    // at that depth (never nearer than the scene behind); over the void they fade out by it (the sky goes there after). With the game's
-    // fog the step also fogs the pixels of no depth beside drawn ground (holes the far trees' dithered edges leave, the one-pixel rim
+    // at that depth (never nearer than the scene behind); over the void they fade out by it (the sky goes there after). Its cost (PC1
+    // 2026-10-31, 0.192.22, Quest 3 at 2048 x 2048 an eye): 72-74 -> 41-43 frames/s - the targets switched to our depth and back round each
+    // of ~1250 effect draws a pair break the GPU's passes, far more than the 1 ms its own timestamps see; off as shipped.
+    // (Whatever this says, with the game's fog the step fogs the pixels of no depth beside drawn ground (holes the far trees' dithered edges leave, the one-pixel rim
     // round anything against the void where the game lays its blended edge) by the farthest drawn neighbour - the game's pass gave them
     // its mist, the post pass leaves them to the game.
     bool fxDepth = false;
+    // [sky] game_sky: the game's dome shown - a pixel at or under this depth (reverse-Z; D2R_DepthFog.fx SkyDomeDepth) is its sky and left
+    // as the void is (the game's pass leaves it: past its linear depth's far end); 0 = no dome
+    float skyDepth = 0.0f;
 };
 void Configure(const Params& p);
 // The step ran within the last quarter second: the game's pass is to leave the fog's colour out (fog_height noFog)

@@ -23,6 +23,7 @@ std::wstring g_path;
 Status g_status = Status::NotLooked;
 HMODULE g_module = nullptr;
 std::atomic<D2rsGaitFn> g_step{nullptr};
+std::atomic<D2rsStepFn> g_feet{nullptr};   // (D2rsStep, optional)
 std::string g_name;
 ULONGLONG g_lastTry = 0;
 int g_told = -1;   // the status the log was last told
@@ -105,6 +106,7 @@ bool Ensure() {
         Tell(Status::BadAbi, "d2r_vr_weight.dll's gait speaks another interface version (stride 1.x: an older weight library): the legs are held going sideways");
         return false;
     }
+    g_feet.store((D2rsStepFn)GetProcAddress(m, "D2rsStep"));
     g_module = m;
     const char* n = name();
     g_name = n ? n : "?";
@@ -126,6 +128,19 @@ bool Gait(const D2rsGaitIn& in, D2rsGaitState* state, D2rsGaitOut* out) {
         return fn(&in, state, out) == 1;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         g_step.store(nullptr);   // a library that faults is not called again this run
+        return false;
+    }
+}
+
+bool HasSteps() { return Loaded() && g_feet.load() != nullptr; }
+
+bool Step(const D2rsLegs& in, D2rsState* state, D2rsFeet* out) {
+    const D2rsStepFn fn = g_feet.load();
+    if (!fn || !state || !out) return false;
+    __try {
+        return fn(&in, state, out) == 1;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        g_feet.store(nullptr);
         return false;
     }
 }

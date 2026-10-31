@@ -92,21 +92,25 @@ struct Rect {
 // The tabs share the 960 pixels under the title in proportion to their names' widths (hset_defs.h kPageNameW, + 16 for the tab's edges and the text's
 // margin): "Options" gets a wide one, "Life" a narrow one, so a page more does not squeeze the long names out of their tab (eleven pages at an even 87
 // pixels would not hold "Options" in either painter; fourteen by their letters held neither "Options" nor "HUD").
-constexpr int TabWeightTo(int i) {   // the weights of the first i tabs
+constexpr int TabWeightTo(int i) {   // the weights of the first i tabs (a tab is not always a page: hset_defs.h TabOf)
     int w = 0;
-    for (int k = 0; k < i; ++k) w += kPageNameW[k] + 16;
+    for (int k = 0; k < i; ++k) w += kTabNameW[k] + 16;
     return w;
 }
-constexpr int kTabX(int i) { return 32 + 960 * TabWeightTo(i) / TabWeightTo(kPageCount); }
+constexpr int kTabX(int i) { return 32 + 960 * TabWeightTo(i) / TabWeightTo(kTabCount); }
 constexpr Rect kTab(int i) { return {kTabX(i), 84, kTabX(i + 1) - kTabX(i) - 8, 52}; }
 constexpr int kRowY0 = 156, kRowStep = 66, kRowH = 56;
 // A page with more rows than kRowsPerPage (the Melee page's seven, up to kRowsMax) stands them closer, its last one still above the status line.
 // The rows' rectangles take the page (-1, as the other pages: the usual step).
 constexpr int kRowStepClose = 58, kRowHClose = 50;
-constexpr bool CloseRows(int page) { return page >= 0 && page < kPageCount && RowsOn(page) > kRowsPerPage; }
-constexpr int RowStep(int page) { return CloseRows(page) ? kRowStepClose : kRowStep; }
-constexpr int RowH(int page) { return CloseRows(page) ? kRowHClose : kRowH; }
-constexpr int RowY(int row, int page) { return kRowY0 + row * RowStep(page); }
+// The World pages: their four buttons on top (Contact, Monsters react, Grab, More: a Tab hit of that page), the rows under them closer still (seven
+// rows and the buttons above the status line: the row's name in the normal face, hset_scene.h).
+constexpr Rect kWorldSub(int i) { return {32 + i * 244, 144, 228, 42}; }
+constexpr int kWorldRowY0 = 200, kWorldRowStep = 52, kWorldRowH = 46;
+constexpr bool CloseRows(int page) { return page >= 0 && page < kPageCount && (RowsOn(page) > kRowsPerPage || IsWorldPage(page)); }
+constexpr int RowStep(int page) { return IsWorldPage(page) ? kWorldRowStep : CloseRows(page) ? kRowStepClose : kRowStep; }
+constexpr int RowH(int page) { return IsWorldPage(page) ? kWorldRowH : CloseRows(page) ? kRowHClose : kRowH; }
+constexpr int RowY(int row, int page) { return (IsWorldPage(page) ? kWorldRowY0 : kRowY0) + row * RowStep(page); }
 constexpr Rect kDec(int row, int page = -1) { return {584, RowY(row, page), 72, RowH(page)}; }
 constexpr Rect kVal(int row, int page = -1) { return {664, RowY(row, page), 248, RowH(page)}; }
 constexpr Rect kInc(int row, int page = -1) { return {920, RowY(row, page), 72, RowH(page)}; }
@@ -205,8 +209,9 @@ constexpr double kPlayersWaitMs = 1500.0;
 inline Hit HitTest(int page, float u, float v) {
     if (!std::isfinite(u) || !std::isfinite(v) || u < 0.0f || u >= 1.0f || v < 0.0f || v >= 1.0f) return {};
     const float x = u * kW, y = v * kH;
-    if (PageCount() > 1)
-        for (int i = 0; i < PageCount(); ++i) if (kTab(i).Contains(x, y)) return {Kind::Tab, i, 0};
+    for (int i = 0; i < kTabCount; ++i) if (kTab(i).Contains(x, y)) return {Kind::Tab, TabPage(i), 0};   // (a tab opens its first page)
+    if (IsWorldPage(page))
+        for (int i = 0; i < kWorldPages; ++i) if (kWorldSub(i).Contains(x, y)) return {Kind::Tab, kPageWorld + i, 0};
     if (kApply.Contains(x, y)) return {Kind::Apply, -1, 0};
     if (kClose.Contains(x, y)) return {Kind::Close, -1, 0};
     if (kRecentre.Contains(x, y)) return {Kind::Recentre, -1, 0};

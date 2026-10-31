@@ -32,6 +32,8 @@
 #include <unordered_map>
 #include <vector>
 
+#include "own_body.h"   // [weight] world_contact: what hangs on the hero is never a wall (ownbody::HangsOn)
+#include "unit_models.h"   // [weight] world_contact: nor a unit's (unitmodels::OfUnit)
 #include "belt_glow.h"   // [debug] knock_props_glow: the game's own highlight on the props found
 #include "d2r_vr_props.h"
 #include "pose_share.h"   // [multiplayer] pose_share_held: a prop's name hashed as the others hash it (poseshare::NameHash)
@@ -1288,7 +1290,10 @@ bool PresetPieces(const float (*places)[3], int n, std::vector<PresetPiece>* out
 
 bool IsMovable(uint32_t presetId, const float local[3]) { return g_catalogReady.load() && g_catalog.Find(presetId, local) >= 0; }
 
-bool LevelBoxes(const float hero[3], float upm, float radiusM, KnowsFn knows, std::vector<LevelEntity>* out, const char** why) {
+bool LevelBoxes(const float hero[3], float upm, float radiusM, KnowsFn knows, std::vector<LevelEntity>* out, const char** why, uint32_t ownRoot, unsigned* ownLeft,
+                const std::vector<uint32_t>* units, unsigned* unitLeft) {
+    if (ownLeft) *ownLeft = 0;
+    if (unitLeft) *unitLeft = 0;
     static std::atomic<int> s_boundsPool{-1}, s_idPool{-1};
     out->clear();
     *why = "";
@@ -1299,7 +1304,7 @@ bool LevelBoxes(const float hero[3], float upm, float radiusM, KnowsFn knows, st
     if (!Transforms(pools, transforms)) { *why = "no transform storage"; return false; }
     std::vector<uint32_t> ids(transforms.count);
     if (!ReadBytes(transforms.packed, ids.data(), ids.size() * 4)) { *why = "the transforms moved while read"; return false; }
-    struct E { uint32_t id; float world[16]; float local[3]; };
+    struct E { uint32_t id; uint32_t parent; float world[16]; float local[3]; };
     std::vector<E> nearby;
     std::unordered_map<uint32_t, uint32_t> at;
     std::vector<float> block(kChunk * kTransformSize / 4);
@@ -1315,6 +1320,7 @@ bool LevelBoxes(const float hero[3], float upm, float radiusM, KnowsFn knows, st
             if (!(std::hypot(dx, dz) <= radiusM * u) || !(dy >= -propscene::kBelow * u && dy <= (propscene::kAbove + 0.5f) * u)) continue;
             E e;
             e.id = ids[i0 + i];
+            e.parent = parent;
             std::memcpy(e.world, m + 16, 64);
             std::memcpy(e.local, m + 12, 12);
             if (!FiniteN(e.world, 16)) continue;
@@ -1323,6 +1329,31 @@ bool LevelBoxes(const float hero[3], float upm, float radiusM, KnowsFn knows, st
         }
     }
     if (nearby.empty()) return true;
+    // the hero's own: an entity whose parents lead up to him (by the entities' index, their low 20 bits) - his parts, his weapons, what hangs on his back;
+    // a unit's: one holding a unit's skeleton or whose parents lead up to one (an NPC standing still, its weapon)
+    const bool anyUnit = units && !units->empty();
+    if (ownRoot || anyUnit) {
+        std::unordered_map<uint32_t, uint32_t> byIndex;
+        for (size_t i = 0; i < nearby.size(); ++i) byIndex[nearby[i].id & kNoParent] = uint32_t(i);
+        std::vector<E> kept;
+        kept.reserve(nearby.size());
+        const auto parentOf = [&](uint32_t index, uint32_t* parent) {
+            const auto it = byIndex.find(index);
+            if (it == byIndex.end()) return false;
+            *parent = nearby[it->second].parent;
+            return true;
+        };
+        const auto isUnit = [&](uint32_t index) { return anyUnit && std::binary_search(units->begin(), units->end(), index); };
+        for (const E& e : nearby) {
+            if (ownbody::HangsOn(e.parent, ownRoot, parentOf)) { if (ownLeft) ++*ownLeft; continue; }
+            if (unitmodels::OfUnit(e.id, e.parent, isUnit, parentOf)) { if (unitLeft) ++*unitLeft; continue; }
+            kept.push_back(e);
+        }
+        nearby.swap(kept);
+        at.clear();
+        for (size_t i = 0; i < nearby.size(); ++i) at[nearby[i].id] = uint32_t(i);
+        if (nearby.empty()) return true;
+    }
     std::vector<uint32_t> packed;
     std::vector<float> boxes;
     // the preset ids: the 4-byte storage whose values the caller's catalogue knows most of at these entities (as Work finds the props' one)
@@ -1408,6 +1439,54 @@ bool LevelBoxes(const float hero[3], float upm, float radiusM, KnowsFn knows, st
         return false;
     }
     return true;
+}
+
+std::atomic<uintptr_t> g_entityBounds{0};
+std::atomic<int> g_entityBoundsFrom{0};
+std::atomic<uint64_t> g_entityBoundsLookAt{0};
+
+bool EntityBounds(uint32_t entity, const float world[16], float box[24]) {
+    Storage s;
+    uint32_t i = 0;
+    for (const uintptr_t obj : {g_entityBounds.load(), g_boundsObject.load()}) {
+        if (!obj || !s.Load(obj) || s.elem != kBoundsSize || !s.Dense(entity, i)) continue;
+        if (!ReadBytes(s.payload + uintptr_t(i) * kBoundsSize, box, kBoundsSize) || !FiniteN(box, 24)) continue;
+        if (!g_entityBounds.load()) { g_entityBounds.store(obj); g_entityBoundsFrom.store(1); }
+        return true;
+    }
+    const uint64_t now = GetTickCount64();
+    uint64_t was = g_entityBoundsLookAt.load();
+    if (now - was < 2000 || !g_entityBoundsLookAt.compare_exchange_strong(was, now) || !world) return false;
+    for (const uintptr_t p : Pools()) {   // the storage whose box for this entity is its local box under its matrix
+        if (!p || !s.Load(p) || s.elem != kBoundsSize || !s.Dense(entity, i)) continue;
+        float b[kBoundsSize / 4];
+        if (!ReadBytes(s.payload + uintptr_t(i) * kBoundsSize, b, sizeof b) || !FiniteN(b, 24)) continue;
+        const Box local{{b[0], b[1], b[2]}, {b[4], b[5], b[6]}}, w{{b[16], b[17], b[18]}, {b[20], b[21], b[22]}};
+        const float scale = std::max({std::fabs(w.lo.x), std::fabs(w.hi.x), std::fabs(w.lo.z), std::fabs(w.hi.z), 1.0f});
+        if (!propscene::Near(propscene::WorldBounds(local, world), w, 0.05f + scale * 1e-4f)) continue;
+        g_entityBounds.store(p);
+        g_entityBoundsFrom.store(2);
+        std::memcpy(box, b, sizeof b);
+        return true;
+    }
+    return false;
+}
+
+bool PutEntityBounds(uint32_t entity, const float box[24]) {
+    Storage s;
+    uint32_t i = 0;
+    const uintptr_t obj = g_entityBounds.load();
+    if (!obj || !s.Load(obj) || s.elem != kBoundsSize || !s.Dense(entity, i) || !FiniteN(box, 24)) return false;
+    return WriteBytes(s.payload + uintptr_t(i) * kBoundsSize, box, kBoundsSize);
+}
+
+int EntityBoundsSource() { return g_entityBoundsFrom.load(); }
+
+bool EntityWorld(uint32_t entity, float m[16]) {
+    Storage s;
+    uint32_t i = 0;
+    return s.Load(g_transformsObject.load()) && s.elem == kTransformSize && s.Dense(entity, i) && ReadBytes(s.payload + uintptr_t(i) * kTransformSize + 0x40, m, 64) &&
+           FiniteN(m, 16);
 }
 
 }  // namespace knockprops

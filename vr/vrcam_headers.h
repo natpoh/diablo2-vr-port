@@ -50,6 +50,7 @@
 #include "game_fog_vr.h"   // [fog] game_fog: the game's own distance fog with our numbers (its own pass, none of ours)
 #include "sky/dome_atlas.h"     // [sky] dome_in_game_colour: the game samples our baked picture for the dome
 #include "sky/period_bright.h"   // [sky] bright_<period>: the sky's brightness each period of the game's day (Serg's sliders)
+#include "sky/three_skies.h"     // [sky] three_skies: the dome as three pictures - day, night, dawn / dusk - at their own brightnesses
 #include "sky_dome.h"      // [sky] game_sky: our painted sky as the game's own dome (the pure parts)
 #include "game_ceiling.h"  // [ceiling] game_ceiling: the cave ceiling as the game's own lit rock slab (the pure parts, shared with Settings)
 #include "ceiling_measures.h"   // [ceiling] height_from_walls, game_ceiling_beams: the rooms measured from the game's own models

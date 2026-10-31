@@ -893,7 +893,7 @@ Col GameInk(hset::Role r) {
 // One item of the settings pages in the game look, each part by the game's own picture of it: a gold rule under a row, the lobby's inset
 // field for a value, the Options slider (track, knob, arrows), its check box for an on / off row, the Create Game difficulty buttons for a
 // row of choices, the small tabs for the pages, the front end's buttons for the rest.
-void GameItem(Canvas& cv, Fonts& fonts, const hset::Item& it, Rect r) {
+void GameItem(Canvas& cv, Fonts& fonts, const hset::Item& it, Rect r, int tabPx) {
     using P = hset::Part;
     using S = gameui::Sprite;
     const float cx = 0.5f * (r.l + r.r), cy = 0.5f * (r.t + r.b);
@@ -922,7 +922,7 @@ void GameItem(Canvas& cv, Fonts& fonts, const hset::Item& it, Rect r) {
     const bool hot = it.hot, en = it.enabled, on = it.selected;
     const Col ink = !en ? kGameOff : hot ? kGameGoldBright : GameInk(it.colour);
     switch (it.part) {
-    case P::Tab: GameTab(cv, fonts, r, it.text.c_str(), on, hot, true, 26); return;
+    case P::Tab: GameTab(cv, fonts, r, it.text.c_str(), on, hot, true, tabPx); return;
     case P::Less:
     case P::More: Fit(cv, Art(it.part == P::Less ? S::ArrowLeft : S::ArrowRight), !en ? 2 : hot ? 1 : 0, Rect{r.l + 4.0f, r.t + 4.0f, r.r - 4.0f, r.b - 4.0f}); return;
     case P::Switch: {   // the check box (0 empty, 1 lit, 2 not usable, 4 ticked, 5 ticked and lit), the word beside it
@@ -946,6 +946,44 @@ void GameItem(Canvas& cv, Fonts& fonts, const hset::Item& it, Rect r) {
     }
 }
 
+// A line's width at `px` in the font it is drawn in: ours (bold or not), or - `game` - the game's title face where it has the letters, else ours
+// in small capitals (GameWord's choice).
+float LineWidth(Fonts& fonts, const std::string& text, int px, bool bold, bool game) {
+    if (game) {
+        UseFace(fonts, true, text.c_str());
+        if (!fonts.use) return CapsWidth(fonts, text.c_str(), px, 2.0f);
+    }
+    HDC dc = CreateCompatibleDC(nullptr);
+    float width = 0.0f;
+    if (dc) {
+        const std::wstring w = Wide(text.c_str());
+        HGDIOBJ old = SelectObject(dc, fonts.Get(px, game ? false : bold));
+        SIZE sz = {};
+        GetTextExtentPoint32W(dc, w.c_str(), (int)w.size(), &sz);
+        width = float(sz.cx);
+        SelectObject(dc, old);
+        DeleteDC(dc);
+    }
+    fonts.use = nullptr;
+    return width;
+}
+// The largest size from `start` down at which a page tab's name fits its tab, not cut or wrapped (fifteen tabs share the strip since the World tab came).
+int TabFitPx(Fonts& fonts, const std::string& text, Rect r, bool game, int start) {
+    const float room = (r.r - r.l) - (game ? 20.0f : 14.0f);   // (GameTab's word box, FitLine's margin)
+    int px = start;
+    while (px > 12 && LineWidth(fonts, text, px, true, game) > room) --px;
+    return px;
+}
+// Ours: one size for all the tabs, the one every name fits at. (The game look fits each tab on its own: its capitals are wide, and the
+// longest name would make every tab's word tiny.)
+template <class Box>
+int TabPx(Fonts& fonts, const hset::Scene& scene, Box box, int start) {
+    int px = start;
+    for (const hset::Item& it : scene)
+        if (it.type == hset::Item::Type::Button && it.part == hset::Part::Tab) px = TabFitPx(fonts, it.text, box(it.r), false, px);
+    return px;
+}
+
 // The settings pages (vr/hset_scene.h) on the window: the sheet's rectangles scaled and put under the title plate, painted in the window's own
 // style - the same silver and gold, the same plates, the same font. What is drawn where is the scene's; the hit test reads the same rectangles.
 void DrawSettings(Canvas& cv, Fonts& fonts, const View& v) {
@@ -957,10 +995,11 @@ void DrawSettings(Canvas& cv, Fonts& fonts, const View& v) {
     auto box = [&](const hset::Rect& r) {
         return Rect{tiles::kSheetX + r.x * k, tiles::kSheetY + r.y * k, tiles::kSheetX + (r.x + r.w) * k, tiles::kSheetY + (r.y + r.h) * k};
     };
+    const int tabPx = g_game ? 26 : TabPx(fonts, scene, box, 34);
     for (const hset::Item& it : scene) {
         const Rect r = box(it.r);
         if (g_game) {
-            GameItem(cv, fonts, it, r);
+            GameItem(cv, fonts, it, r, it.part == hset::Part::Tab && it.type == hset::Item::Type::Button ? TabFitPx(fonts, it.text, r, true, tabPx) : tabPx);
             continue;
         }
         switch (it.type) {
@@ -982,7 +1021,7 @@ void DrawSettings(Canvas& cv, Fonts& fonts, const View& v) {
             Bar(cv, r.l + 4.0f, r.t + 4.0f, r.r - 4.0f, r.t + 9.0f, Col{255, 255, 255}, it.enabled ? 0.06f : 0.02f);
             Bar(cv, r.l + 4.0f, r.b - 8.0f, r.r - 4.0f, r.b - 4.0f, Col{0, 0, 0}, 0.30f);
             const Col ink = !it.enabled ? Col{92, 92, 100} : hot ? kGoldBright : it.colour == hset::Role::Text ? kSilver : RoleColour(it.colour);
-            FitLine(cv, fonts, it.text, Rect{r.l + 4.0f, r.t, r.r - 4.0f, r.b}, 34, true, ink, hset::Align::Center);
+            FitLine(cv, fonts, it.text, Rect{r.l + 4.0f, r.t, r.r - 4.0f, r.b}, it.part == hset::Part::Tab ? tabPx : 34, true, ink, hset::Align::Center);
             break;
         }
         }

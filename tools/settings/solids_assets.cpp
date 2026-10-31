@@ -147,18 +147,40 @@ Result Prepare(const std::wstring& game, const std::wstring& pluginDirIn, bool f
     }
     std::wstring root = game;
     if (!root.empty() && root.back() == L'\\') root.pop_back();
+    const std::wstring dir = pluginDir + L"d2r_vr_props\\";
+    const std::wstring bin = dir + L"solids.bin", made = dir + L"solids.txt";
+    // the stamp names the build and the make: a catalogue of another make is made again on the same build
+    const std::string make = "solids 4 (meshes in cells of 0.7 units, foliage but trees left out, tree crowns left out, movable props left out, solid pieces only, prefabs by id)\n";
+    // The archives are opened only to read the build's number (made.txt names it) - every start. They can be busy for a moment while the game itself starts (Serg,
+    // 0.192.19: Settings and the game started together, "could not be opened (error 2)" while the other makers opened them 0.3 s later): a few tries; and when they
+    // still do not open, a catalogue of this make that is there and reads is kept (the game reads it) - a status, not a red line.
     HANDLE storage = nullptr;
-    if (!CascOpenStorage(root.c_str(), 0, &storage)) {
-        r.text = L"the game's archives could not be opened (error " + std::to_wstring(GetLastError()) + L")";
+    DWORD openError = 0;
+    for (int attempt = 0; attempt < 4; ++attempt) {
+        if (attempt) Sleep(750);
+        if (CascOpenStorage(root.c_str(), 0, &storage)) break;
+        storage = nullptr;
+        openError = GetLastError();
+    }
+    if (!storage) {
+        std::string lastStamp, kept;
+        worldsolids::Catalog c;
+        if (!force && ReadAll(made, &lastStamp) && lastStamp.size() >= make.size() && lastStamp.compare(lastStamp.size() - make.size(), make.size(), make) == 0 &&
+            ReadAll(bin, &kept) && c.Parse((const uint8_t*)kept.data(), kept.size())) {
+            r.state = kMade;
+            r.pieces = (int)c.Rows();
+            r.models = (int)c.Models();
+            r.text = L"ready: " + std::to_wstring(r.pieces) + L" level pieces of " + std::to_wstring(r.models) + L" models, the catalogue made before kept (the game's archives did not open: "
+                     L"error " + std::to_wstring(openError) + L" at " + root + L"; looked at again at the next start)";
+            return r;
+        }
+        r.text = L"the game's archives could not be opened (error " + std::to_wstring(openError) + L", 4 tries, at " + root + L")";
         return r;
     }
     CASC_STORAGE_PRODUCT product{};
     const bool haveBuild = CascGetStorageInfo(storage, CascStorageProduct, &product, sizeof product, nullptr) && product.BuildNumber;
     const std::string build = haveBuild ? std::to_string(product.BuildNumber) : std::string("unknown");
-    const std::wstring dir = pluginDir + L"d2r_vr_props\\";
-    const std::wstring bin = dir + L"solids.bin", made = dir + L"solids.txt";
-    // the stamp names the build and the make: a catalogue of another make is made again on the same build
-    const std::string stamp = "build " + build + "\nsolids 4 (meshes in cells of 0.7 units, foliage but trees left out, tree crowns left out, movable props left out, solid pieces only, prefabs by id)\n";
+    const std::string stamp = "build " + build + "\n" + make;
     std::string last, have;
     if (!force && ReadAll(made, &last) && last == stamp && ReadAll(bin, &have)) {
         worldsolids::Catalog c;

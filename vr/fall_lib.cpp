@@ -8,6 +8,7 @@
 #include <windows.h>
 
 #include <atomic>
+#include <cmath>
 #include <cstdio>
 #include <string>
 
@@ -31,6 +32,11 @@ D2rfLetGoFn g_letGo = nullptr;
 D2rfHomeFn g_home = nullptr;
 D2rfGrabFn g_grab = nullptr;
 D2rfGrabPartFn g_grabPart = nullptr;   // (optional: fall_physics 1.7)
+D2rfSetStrengthFn g_setStrength = nullptr;   // (optional: fall_physics 1.12)
+D2rfSetHandStrengthFn g_setHandStrength = nullptr;
+D2rfSetBalanceFn g_setBalance = nullptr;   // (optional: fall_physics 1.13)
+bool g_balance = true;
+float g_strength = 1.0f;
 D2rfHandFn g_hand = nullptr;
 D2rfReleaseFn g_release = nullptr;
 D2rfHeldFn g_held = nullptr;
@@ -74,7 +80,11 @@ void Refused(int32_t r) {
 }
 
 void* World() {
-    if (!g_world && g_create) g_world = g_create();
+    if (!g_world && g_create) {
+        g_world = g_create();
+        if (g_world && g_setStrength) g_setStrength(g_world, g_strength);
+        if (g_world && g_setBalance) g_setBalance(g_world, g_balance ? 1 : 0);
+    }
     return g_world;
 }
 
@@ -144,6 +154,9 @@ bool Ensure() {
     g_home = (D2rfHomeFn)GetProcAddress(mod, "D2rfHome");
     g_grab = (D2rfGrabFn)GetProcAddress(mod, "D2rfGrab");
     g_grabPart = (D2rfGrabPartFn)GetProcAddress(mod, "D2rfGrabPart");
+    g_setStrength = (D2rfSetStrengthFn)GetProcAddress(mod, "D2rfSetStrength");
+    g_setHandStrength = (D2rfSetHandStrengthFn)GetProcAddress(mod, "D2rfSetHandStrength");
+    g_setBalance = (D2rfSetBalanceFn)GetProcAddress(mod, "D2rfSetBalance");
     g_hand = (D2rfHandFn)GetProcAddress(mod, "D2rfHand");
     g_release = (D2rfReleaseFn)GetProcAddress(mod, "D2rfRelease");
     g_held = (D2rfHeldFn)GetProcAddress(mod, "D2rfHeld");
@@ -240,6 +253,25 @@ void Reset() {
     if (!Loaded() || !g_world) return;
     g_destroy(g_world);
     g_world = nullptr;
+}
+
+void SetBalance(bool on) {
+    g_balance = on;
+    if (Loaded() && g_setBalance)
+        if (void* w = World()) g_setBalance(w, on ? 1 : 0);
+}
+
+int SetHandStrength(uint32_t id, int hand, float strength) {
+    if (!Loaded() || !g_setHandStrength) return 0;
+    void* w = World();
+    return w ? g_setHandStrength(w, id, hand, strength) : 0;
+}
+
+void SetStrength(float strength) {
+    if (!std::isfinite(strength)) return;
+    g_strength = strength;
+    if (Loaded() && g_setStrength)
+        if (void* w = World()) g_setStrength(w, strength);
 }
 
 }  // namespace falllib

@@ -28,6 +28,7 @@
 #include <cstring>
 #include <vector>
 
+#include "bone_cap.h"
 #include "granny_mesh.h"
 
 namespace monsterrig {
@@ -36,7 +37,10 @@ constexpr size_t kMeshBindingCount = 0x30, kMeshBindings = 0x34;
 constexpr size_t kBindingStride = 0x2C, kBindingName = 0x00, kBindingMin = 0x08, kBindingMax = 0x14;
 constexpr size_t kSkelCount = 0x08, kSkelBones = 0x0C, kBoneStride = 0xA4, kBoneName = 0x00, kBoneParent = 0x08;
 constexpr size_t kBoneInvWorld = 0x50;   // granny_bone::InverseWorld4x4: the bone's bind pose in the model, inverted
-constexpr int kMaxBones = 160;     // a monster's rig (the heroes' have ~100); more: not read
+constexpr int kMaxBones = bonecap::kCeiling;   // the arrays: a monster's rig (the heroes' have ~100) - read up to bonecap::Max() ([weight] skeleton_bones_max,
+                                               // 256 by default; the humanoid judge's, the doll's and the knock-down's poses the same); more: not read
+                                               // (160 until 0.192.36: Arreat Summit's ancientbarb1 / ancientbarb2 read "the skeleton's bones do not read, 0 bones" -
+                                               // only ancientbarb3, 121 bones, had limbs to grab: «почему я из этих троих только синего могу хватить»)
 constexpr int kMaxBindings = 256;  // per mesh
 // bones with a box: every one the skeleton may have - a box is one bone's (the town NPCs have 64 boxed bones and more - Kashya, Warriv: the boxes stopped at
 // 64, cut in the meshes' binding order, and whichever came after - the left shin, the author's screenshot 2026-10-24 - had none)
@@ -93,19 +97,25 @@ struct Boxes {
     int bones = 0;         // the skeleton's bone count
     int meshes = 0;        // meshes that had boxes
     const char* why = "";  // why there are none
+    void Clear() { n = 0; bones = 0; meshes = 0; why = ""; }   // (no 32 kB temporary on the stack: b[] past n is never read)
 };
 
 // The boxes of a model's meshes, by its skeleton's bones: instance is the granny_model_instance (the SkeletonInstance's +0x08), skeleton its skeleton (that +0x08).
 // False (and out->why) when nothing reads as such.
 template <class Read>
 bool BoxesOf(Read&& read, uintptr_t instance, uintptr_t skeleton, Boxes* out) {
-    *out = Boxes{};
+    out->Clear();
     uintptr_t model = 0, modelSkeleton = 0, meshes = 0, bones = 0;
     int32_t meshCount = 0, boneCount = 0;
     if (instance < 0x10000 || !read(instance + grannymesh::kInstanceModel, &model, sizeof model) || model < 0x10000) { out->why = "no model"; return false; }
     if (!read(model + grannymesh::kModelSkeleton, &modelSkeleton, sizeof modelSkeleton) || modelSkeleton != skeleton) { out->why = "the model is not its skeleton's"; return false; }
-    if (!read(skeleton + kSkelCount, &boneCount, sizeof boneCount) || boneCount < 1 || boneCount > kMaxBones || !read(skeleton + kSkelBones, &bones, sizeof bones) || bones < 0x10000) {
+    if (!read(skeleton + kSkelCount, &boneCount, sizeof boneCount) || boneCount < 1 || !read(skeleton + kSkelBones, &bones, sizeof bones) || bones < 0x10000) {
         out->why = "the skeleton's bones do not read";
+        return false;
+    }
+    if (boneCount > bonecap::Max()) {   // (its count in the log: the cap to raise)
+        out->bones = boneCount;
+        out->why = "the skeleton has more bones than [weight] skeleton_bones_max reads";
         return false;
     }
     out->bones = boneCount;
@@ -188,7 +198,7 @@ constexpr int kMaxModels = 32;   // model instances merged into one body (a unit
 // (the caller asks again); a part that does not read is passed over.
 template <class Read>
 bool BoxesOfModels(Read&& read, const uintptr_t* instances, int n, uintptr_t skeleton, Boxes* out, int* meshesOut = nullptr) {
-    *out = Boxes{};
+    out->Clear();
     if (meshesOut) *meshesOut = 0;
     uintptr_t data[kMaxModels] = {}, bones = 0;
     uint64_t count[kMaxModels] = {};
@@ -211,8 +221,13 @@ bool BoxesOfModels(Read&& read, const uintptr_t* instances, int n, uintptr_t ske
     }
     if (!reading) { out->why = "the model instance does not read"; return false; }
     if (!withMeshes) { out->why = "the model instance's meshes do not read"; return false; }
-    if (!read(skeleton + kSkelCount, &boneCount, sizeof boneCount) || boneCount < 1 || boneCount > kMaxBones || !read(skeleton + kSkelBones, &bones, sizeof bones) || bones < 0x10000) {
+    if (!read(skeleton + kSkelCount, &boneCount, sizeof boneCount) || boneCount < 1 || !read(skeleton + kSkelBones, &bones, sizeof bones) || bones < 0x10000) {
         out->why = "the skeleton's bones do not read";
+        return false;
+    }
+    if (boneCount > bonecap::Max()) {   // (its count in the log: the cap to raise)
+        out->bones = boneCount;
+        out->why = "the skeleton has more bones than [weight] skeleton_bones_max reads";
         return false;
     }
     out->bones = boneCount;
@@ -633,6 +648,7 @@ inline bool CapsuleOf(const float bone[16], const BoneBox& box, Capsule* out) {
     out->radius = r;
     out->bone = box.bone;
     out->mirror = box.mirror;
+    out->limb = false;   // (the caller marks the limbs; a reused array keeps nothing of the last monster's)
     return std::isfinite(out->a[0] + out->a[1] + out->a[2] + out->b[0] + out->b[1] + out->b[2] + r) && r >= 0.0f;
 }
 
@@ -659,6 +675,7 @@ inline bool AlongBone(const float bone[16], const float childOrigin[3], const fl
     out->radius = r;
     out->bone = box.bone;
     out->mirror = box.mirror;
+    out->limb = false;   // (the caller marks the limbs; a reused array keeps nothing of the last monster's)
     return r > 0.0f;
 }
 

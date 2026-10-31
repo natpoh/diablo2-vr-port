@@ -108,6 +108,7 @@ void AfterRender(reshade::api::effect_runtime* rt);
 }  // namespace pairfx
 namespace pace {
 void Tick();
+extern double g_heldUs;   // the presents held for the headset's rate since the 10 s line took it (the present's thread): waiting, not work
 }  // namespace pace
 }  // namespace fx
 

@@ -30,8 +30,18 @@ group.in_the_headset.help = Як гра потрапляє у ваш шолом:
 @stereo3d.source.choice1 = Стерео FlatVR
 @stereo3d.source.choice2 = 3D-глибина FlatVR
 @stereo3d.source.choice3 = Нативний OpenXR - очі по черзі
+mode.flatvr_autostart.label = FlatVR: запускати BodyWalk і FlatVR самостійно
+mode.flatvr_autostart.tip = Коли «3D у шоломі» перемикається з нативного OpenXR на варіант FlatVR, запускається BodyWalk (якщо він не працює; найновіший знайдений, як це робить кнопка «Запустити BodyWalk»), а щойно Game Link у BodyWalk на зв'язку (протягом хвилини), FlatVR один раз просять про Start - запускати їх самому не треба. ЗАПУСК і лаунчер запускають їх у FlatVR незалежно від цього, як раніше. Ніколи другого BodyWalk. Вимк.: перемикання нічого не запускає, як раніше.
+mode.native_close_flatvr.label = Нативний OpenXR: зупиняти FlatVR самостійно (BodyWalk лишається)
+mode.native_close_flatvr.tip = Нативному OpenXR FlatVR не потрібен, а FlatVR тримає шолом, який потрібен грі. Коли «3D у шоломі» перемикається на нативний OpenXR і коли гру запускають з ним (ЗАПУСК, лаунчер), FlatVR зупиняється через Game Link у BodyWalk, а FlatVR, що працює сам (FlatVR.exe), закривається так, як це робить його власна кнопка закриття (примусово - лише коли його вікно перестає відповідати). Сам BodyWalk працює далі - його керування, жести й ходьба діють. BodyWalk без Game Link (BodyWalk Lite) не можна попросити зупинити FlatVR: зупиніть його в BodyWalk самі. Журнал Settings каже, що зроблено (d2r_vr_settings.log). Вимк.: нічого не зупиняється, як раніше.
 stereo.headset_rate.label = Частота оновлення шолома
 stereo.headset_rate.tip = Задає обмеження кадрів гри (у її власних налаштуваннях, Settings.json) - рядок під ним каже, що записано і чому: сама частота для однієї картинки за кадр (моно, 3D з глибини) і для обох очей з одного кадру гри (один прохід, дві картинки: стерео FlatVR); подвоєна частота для очей по черзі (одне око за кадр гри, кожне око з цією частотою); жодного обмеження для нативного OpenXR (темп грі задає сам шолом). Більше картинок, ніж показує шолом, - і кадр тремтить. Гра читає це під час запуску: задавайте його із закритою грою (вона записує свої налаштування під час виходу) або потім перезапустіть гру. Лише VR: у пласкому режимі («Як ви граєте») гра працює з обмеженням кадрів, заданим у її власних налаштуваннях - ваше зберігається, перш ніж частота запише своє, і повертається, коли ви перемикаєтеся на плаский режим або запускаєте гру в пласкому режимі.
+@run.bodywalk.label = Запустити BodyWalk
+@run.bodywalk.tip = Запускає BodyWalk - той, що в теці гри, який поставив D2R VR Setup, або ваш встановлений.
+@run.flatvr_start.label = Запустити FlatVR
+@run.flatvr_start.tip = Запускає FlatVR у BodyWalk - картинка йде в шолом. Те саме, що START FLATVR на вкладці FlatVR у BodyWalk.
+@run.flatvr_stop.label = Зупинити FlatVR
+@run.flatvr_stop.tip = Зупиняє FlatVR у BodyWalk. Те саме, що STOP FLATVR на вкладці FlatVR у BodyWalk.
 @render.vr_px.label = Роздільність (розмір рендера VR)
 @render.vr_headset.label = Рекомендований розмір шолома
 openxr.frame_generation.label = Генерація кадрів (експериментально; перезапустіть гру)
@@ -98,7 +108,7 @@ group.the_game_and_reshade.help = Перевіряє і встановлює т�
 @status.reshade_note.label = ВАЖЛИВО
 @status.arcane_sky.label = Небо Arcane Sanctuary: ще не створено
 @status.knock_props.label = Предмети обстановки, які можна збити: вимк. ([weight] knock_props, Вага зброї)
-# @status.world_contact.label = World contact walls: off ([weight] world_contact, Weapon Weight)
+@status.world_contact.label = Стіни контакту зі світом: вимк. ([weight] world_contact, Вага зброї)
 @status.kurast_boat.label = Каное в Kurast Docks: ще не перевірено
 @run.arcane_make.label = Створити небо Arcane Sanctuary зараз
 @run.arcane_make.tip = Читає шари зірок і хмари з власних файлів вашої гри (лише читання) і створює картинки, якими мод малює небо Arcane Sanctuary (D2R_Arcane, у reshade-shaders\Textures від ReShade: mods\D2R-VR\reshade для мода), а також прибирає пласкі зоряні картки гри з файлів рівня в mods\D2R-VR\D2R-VR.mpq (власні файли гри залишаються як є). Ця програма робить це сама під час відкриття; натисніть це після оновлення гри або якщо картинку видалено. Нічого, що вже правильне, не записується знову. Гра може бути запущена: вона знаходить картинки протягом 2 секунд.
@@ -140,35 +150,34 @@ hud.headset_language.tip = Слова, які мод малює в шоломі 
 @run.collect_logs.label = Зібрати журнали для підтримки
 @run.collect_logs.tip = Створює на вашому робочому столі один zip із тим, що нам потрібно, щоб знайти проблему: журнали мода, D2RLoader, ReShade і FlatVR, налаштування, версії, відеокарта і Windows. Якщо гра запущена, спершу записуються 10 s того, як малюються кадри - продовжуйте грати й повертайте голову. Нічого нікуди не надсилається: опублікуйте zip у нашому Discord (#diablo-2-vr).
 @status.collect.label = Зібрати журнали: zip на робочому столі, щоб викласти в нашому Discord
-# headset_shot.on.label = Headset screenshot
-# headset_shot.on.tip = For a headset picture that is doubled, in the wrong eye, black or flat: saves exactly what the game hands to the headset - both eyes' pictures and the panels, with their sizes, angles and the eye distance - into the logs folder. Ticked: the button below and the key take one while the game runs; Collect logs packs the newest. Unticked: nothing, as before.
-# headset_shot.take.label = Screenshot of the headset picture
-# headset_shot.take.tip = With the game running in VR: the next frame that goes to the headset is saved - headset_shot_<time>_left.png, _right.png, _sbs.png (both side by side) and a .txt with the numbers, in the logs folder. Put the headset on first, so the picture is the one you see. Costs no stutter.
-# headset_shot.key.label = Headset screenshot key in the game
-# headset_shot.key.tip = A key that takes a headset screenshot in the game (while the game window has the keyboard). None: only the button above.
-# headset_shot.key.choice0 = None
-# headset_shot.key.choice1 = Scroll Lock
-# headset_shot.key.choice2 = Pause
-# @status.hshot.label = Headset screenshot: put the headset on, then press the button
-# headset_shot.video.label = Headset video (10 s)
-# headset_shot.video.tip = The same as the screenshot, as 10 seconds of video: both eyes side by side at half size, about 30 frames a second, as they go to the headset - for a picture that flickers, swims, doubles now and then or goes black. Ticked: the button below and the key record one while the game runs; Collect logs packs the newest. Unticked: nothing, as before.
-# headset_shot.video_take.label = Record 10 s video of the headset picture
-# headset_shot.video_take.tip = With the game running in VR: the next 10 seconds that go to the headset are recorded - headset_clip_<time>.mp4 and a .csv (each frame: stereo pair or flat picture, which eyes, its time) in the logs folder. Put the headset on first and play as when the problem shows. The log says what recording cost each frame.
-# headset_shot.video_key.label = Headset video key in the game
-# headset_shot.video_key.tip = A key that records 10 s of the headset picture in the game (while the game window has the keyboard). None: only the button above.
-# @status.hclip.label = Headset video: put the headset on, then press the button
-# headset_shot.grid.label = Calibration grid in the headset
-# headset_shot.grid.tip = Native OpenXR, F2 / F4: a grid over each eye's picture as it goes to the headset - a line every 10 degrees, numbered, a red cross where the eye looks straight ahead, a magenta ring at the picture's own middle, a big L or R. With the eyes right, the two grids become one and stay still on the world; seen double, tilted or swimming, a screenshot or video with it shows which eye is off. Live. Only in the headset (the window on the monitor has none).
+headset_shot.on.label = Знімок шолома
+headset_shot.on.tip = Для зображення в шоломі, яке подвоюється, потрапляє не в те око, чорне або пласке: зберігає в теку журналів саме те, що гра передає шолому - зображення обох очей і панелі, з їхніми розмірами, кутами й відстанню між очима. З галочкою: кнопка нижче і клавіша роблять знімок, поки гра працює; «Зібрати журнали» пакує найновіший. Без галочки: нічого, як раніше.
+headset_shot.take.label = Знімок зображення в шоломі
+headset_shot.take.tip = Коли гра працює у VR: наступний кадр, що йде в шолом, зберігається - headset_shot_<time>_left.png, _right.png, _sbs.png (обидва поруч) і .txt з числами, у теці журналів. Спершу вдягніть шолом, щоб зображення було таким, яке ви бачите. Без підвисань.
+headset_shot.key.label = Клавіша знімка шолома в грі
+headset_shot.key.tip = Клавіша, що робить знімок шолома в грі (коли клавіатура у вікна гри). Немає: лише кнопка вище.
+headset_shot.key.choice0 = Немає
+headset_shot.key.choice1 = Scroll Lock
+headset_shot.key.choice2 = Pause
+@status.hshot.label = Знімок шолома: вдягніть шолом, потім натисніть кнопку
+headset_shot.video.label = Відео шолома (10 s)
+headset_shot.video.tip = Те саме, що знімок, але як 10 секунд відео: обидва ока поруч у половинному розмірі, близько 30 кадрів на секунду, так, як вони йдуть у шолом - для зображення, що мерехтить, пливе, часом двоїться або чорніє. З галочкою: кнопка нижче і клавіша записують відео, поки гра працює; «Зібрати журнали» пакує найновіше. Без галочки: нічого, як раніше.
+headset_shot.video_take.label = Записати 10 s відео зображення в шоломі
+headset_shot.video_take.tip = Коли гра працює у VR: наступні 10 секунд, що йдуть у шолом, записуються - headset_clip_<time>.mp4 і .csv (кожен кадр: стереопара чи пласке зображення, які очі, його час) у теці журналів. Спершу вдягніть шолом і грайте так, як коли проявляється проблема. Журнал каже, скільки запис коштував кожному кадру.
+headset_shot.video_key.label = Клавіша відео шолома в грі
+headset_shot.video_key.tip = Клавіша, що записує 10 s зображення в шоломі в грі (коли клавіатура у вікна гри). Немає: лише кнопка вище.
+@status.hclip.label = Відео шолома: вдягніть шолом, потім натисніть кнопку
+headset_shot.grid.label = Калібрувальна сітка в шоломі
+headset_shot.grid.tip = Нативний OpenXR, F2 / F4: сітка поверх зображення кожного ока, як воно йде в шолом - лінія кожні 10 градусів, пронумерована, червоний хрест там, куди око дивиться прямо, пурпурове кільце посередині самого зображення, велика L або R. Коли очі правильні, дві сітки зливаються в одну й стоять нерухомо на світі; якщо вони двояться, нахилені чи пливуть, знімок або відео з нею покаже, яке око збите. Діє одразу. Лише в шоломі (у вікні на моніторі її немає).
+support.headset_report.label = Звіт шолома разом із журналами
+support.headset_report.tip = Для зображення в шоломі, що двоїться, косить або розтягнуте, чи рук на рівні пояса: D2R VR Headset Report питає OpenXR-рантайм вашого шолома, що він дає - кути й відстань між очима, простори, контролери - і записує це. З галочкою: з'являється «Створити звіт шолома», і «Зібрати журнали» спершу робить його (з закритою грою та вдягненим шоломом: близько 20 s). На ПК нічого не змінюється.
+@run.headset_report.label = Створити звіт шолома
+@run.headset_report.tip = Закрийте гру, вдягніть шолом і тримайте обидва контролери перед собою, потім натисніть. Близько 20 s; звіт відкривається в Блокноті й потрапляє в zip «Зібрати журнали». Коли гра працює, він лише перелічує OpenXR-рантайм і шари з реєстру.
+@status.hreport.label = Звіт шолома: закрийте гру, вдягніть шолом, натисніть кнопку
 update.check.label = Перевіряти оновлення під час запуску цієї програми
 update.check.tip = Запитує в bodywalkvr.com найновішу версію мода. Нічого не завантажується.
 update.develop.label = І бета-версії (канал develop)
 update.develop.tip = Також пропонує тестові збірки до того, як їх випустять для всіх.
-@run.bodywalk.label = Запустити BodyWalk
-@run.bodywalk.tip = Запускає BodyWalk - той, що в теці гри, який поставив D2R VR Setup, або ваш встановлений.
-@run.flatvr_start.label = Запустити FlatVR
-@run.flatvr_start.tip = Запускає FlatVR у BodyWalk - картинка йде в шолом. Те саме, що START FLATVR на вкладці FlatVR у BodyWalk.
-@run.flatvr_stop.label = Зупинити FlatVR
-@run.flatvr_stop.tip = Зупиняє FlatVR у BodyWalk. Те саме, що STOP FLATVR на вкладці FlatVR у BodyWalk.
 
 # --- Monitor (screen recording) ---
 group.monitor_screen_recording = Монітор (запис екрана)
@@ -186,6 +195,12 @@ render.monitor_eye_drawn_only.tip = Лише «Нативний OpenXR - очі 
 # ===== Tab: Performance =====
 tab.performance = Продуктивність
 
+# --- Compare with the bare game ---
+group.compare_with_the_bare_game = Порівняння з чистою грою
+group.compare_with_the_bare_game.help = Один перемикач, що зупиняє все з D2R VR, що коштує кадрів і без чого гра може обійтися, - одразу й без перезапуску, щоб порівняти частоту кадрів із чистою грою в тому самому місці. Те, що виводить зображення в шолом, лишається.
+render.bench_bare.label = Усе наше вимк. (щоб порівняти частоту кадрів)
+render.bench_bare.tip = З галочкою: наш ефект (небо, туман і стеля, медальйони, написи, панель інструментів і фантоми), туман і небо гри з нашими числами, купол, розмиття вдалині, смуги монстрів, предмети обстановки, контакт зі світом, регдоли й тіла, ноги та кожен перемикач налагодження зупиняються одразу - гра показує власне небо й туман. Шолом, голова й руки та керування лишаються. Кільця кімнат і відстань моделей лишаються як на старті (їм потрібен перезапуск). Журнал каже, що зупинено, а його 10-секундний рядок кадрів іде далі. Діє одразу. Без галочки: усе повертається як налаштовано.
+
 # --- Processor ---
 group.processor = Процесор
 group.processor.help = Для процесорів Ryzen з 3D V-Cache (X3D): гра працює на ядрах із великим кешем, а її потік малювання отримує вищий пріоритет. На інших процесорах нічого не змінюється.
@@ -202,19 +217,20 @@ group.quality.help = Скільки гра малює і наскільки до
 @preset.preset.choice2 = Низька
 @preset.preset.choice4 = Висока
 @preset.preset.choice5 = Власний
-# English changed: No ReShade (restart the game)
-render.no_reshade.label = Без ReShade (лише нативний OpenXR - очі по черзі; перезапустіть гру)
-# English changed: The game runs without ReShade - D2R VR does not load ReShade64.dll at all and hooks the game's graphics itself. The flat game (a monitor): everything D2R VR draws there - the sky, the fog, the cave ceiling, the crosshair - comes from D2R VR itself with the box below; gone is only ReShade's own: its overlay (the Home key), its screenshots and any effect of your own in its presets. VR: only for "3D in the headset: Native OpenXR - eyes by turns" (Home): one eye drawn a frame, the other made on the graphics card with the game's depth. The sky, the fog and the cave ceiling come back drawn by D2R VR itself (the box below). Off with it: the overlays kept apart from the picture the second eye is made from (labels laid back, the wrist orbs - drawn into the picture), the lights' fix for the square window, and the menus as a panel (they show as the flat picture). On a GTX 1050 Ti the game went from about 44 to 53-60 frames a second without any effect. Read when the game starts: restart it after a change. With your own ReShade as dxgi.dll beside the game it does nothing (the game loads that one itself). Off (the default): ReShade as before.
-render.no_reshade.tip = Для слабкого ПК: гра працює без ReShade - D2R VR зовсім не завантажує ReShade64.dll і сам перехоплює графіку гри. Лише для «3D у шоломі: Нативний OpenXR - очі по черзі» (Головна): одне око малюється за кадр, друге створюється на відеокарті з глибиною гри. Небо, туман і стеля печер повертаються, намальовані самим D2R VR (галочка нижче). Разом із цим вимикаються: оверлеї, відокремлені від картинки, з якої створюється друге око (написи, відсунуті вглиб, сфери на зап'ястях - намальовані в картинку), виправлення світла для квадратного вікна і меню як панель (вони показуються пласкою картинкою). На GTX 1050 Ti гра піднялася приблизно з 44 до 53-60 кадрів за секунду без жодного ефекту. Читається під час запуску гри: перезапустіть її після зміни. З вашим власним ReShade як dxgi.dll поруч із грою нічого не робить (гра сама завантажує той). Вимк. (за замовчуванням): ReShade як раніше.
+render.no_reshade.label = Без ReShade (перезапустіть гру)
+render.no_reshade.tip = Гра працює без ReShade - D2R VR взагалі не завантажує ReShade64.dll і сам перехоплює графіку гри. Пласка гра (монітор): усе, що D2R VR там малює - небо, туман, стелю печер, приціл - малює сам D2R VR з галочкою нижче; зникає лише власне ReShade: його оверлей (клавіша Home), його знімки й будь-які ваші ефекти в його пресетах. VR: лише для «3D у шоломі: Нативний OpenXR - очі по черзі» (Home): одне око малюється за кадр, друге будується на відеокарті з глибини гри. Небо, туман і стеля печер повертаються, намальовані самим D2R VR (галочка нижче). Разом із ним вимикаються: оверлеї, тримані окремо від зображення, з якого будується друге око (написи, відсунуті назад, сфери на зап'ястях - малюються в зображення), виправлення світла для квадратного вікна й меню як панель (вони показуються як пласке зображення). На GTX 1050 Ti гра піднялася з близько 44 до 53-60 кадрів на секунду без жодного ефекту. FlatVR теж працює з ним, з галочкою «Зображення FlatVR без ReShade» нижче (його стереопара малюється у два проходи: один прохід, два зображення - потребує ReShade). Читається під час запуску гри: перезапустіть її після зміни. З вашим власним ReShade як dxgi.dll біля гри нічого не робить (гра сама завантажує його). Вимк. (за замовчуванням): ReShade як раніше.
+render.flatvr_feed.label = Зображення FlatVR без ReShade (D2R VR передає його сам)
+render.flatvr_feed.tip = З «Без ReShade» у FlatVR не було зображення: він бере зображення й глибину гри з аддона ReShade (FlatVR_DepthProvider), і FlatVR у BodyWalk казав "No picture from the ReShade addon". Увімк.: D2R VR сам передає FlatVR те саме, тим самим способом, що й аддон - кожне зображення вікна гри (стереопару як два ока поруч, лише цілі пари), глибину сцени для 3D з глибини у FlatVR і який вигляд тримає кожне око. Лише поки FlatVR працює і нативний OpenXR не тримає шолом. Діє одразу. Вимк.: нічого не передається, як раніше.
 render.native_effects.label = Небо і туман без ReShade (малює сам D2R VR; перезапустіть гру)
 render.native_effects.tip = З «Без ReShade»: D2R VR сам малює свій ефект - небо надворі, туман на відстані, стелю печер і решту того, що ReShade малював у картинці (перемикачі на цій вкладці та на вкладках Небо / Стеля, як і раніше, вирішують, що саме). Його шейдери збираються у фоні під час запуску гри і за кожного нового розміру картинки - першого разу якийсь час (кілька секунд; до того картинка без неба), потім одразу з кешу поруч із d2r_vr.ini. Скільки це коштує відеокарті - у журналі кожні 10 s. Вимк.: зовсім без ефекту - найлегше. Читається під час запуску гри.
+render.effect_world.label = Небо й туман ефекту малюються (одразу)
+render.effect_world.tip = Без галочки власні небо, туман і стеля печер ефекту не малюються зовсім - як і виправлення туману й неба гри, їхні виміри кольору та розмиття вдалині - а медальйони, написи, панель інструментів, фантоми й інтерфейс лишаються як є. Щоб побачити, скільки коштують небо й туман (рядок журналу "native effects, 10 s" каже час кожного проходу). Власні небо й туман гри лишаються ігровими. Діє одразу. З галочкою: як раніше.
 render.rings.label = Кільця кімнат навколо героя
 render.rings.tip = Додаткові кільця кімнат навколо героя. З туманом достатньо 4-6.
 render.model_radius.label = Радіус видимості моделей
 render.model_radius.tip = Власне значення гри - 150.
 @skyfog.way.label = Небо і туман малює
-# English changed: Who draws the sky and the distance fog, both at once. The game (new): its own fog pass with our numbers and a sky dome of ours the game draws itself - no frame time of ours (VR F4; without ReShade for its fog's options below). Our effect (old): the fog shader's sky and fog (ReShade's, or D2R VR's own without ReShade). Writes [sky] game_sky and [fog] game_fog together. Live - the game's sky dome's files are made by this program at its start: the first time after an install or an update, restart a game already running.
-@skyfog.way.tip = Хто малює небо і туман на відстані, обидва одразу. Гра (нове): її власний прохід туману з нашими числами і наш купол неба, який гра малює сама - без нашого часу кадру (VR F4; без ReShade для параметрів її туману нижче). Наш ефект (старе): небо і туман шейдера туману (ReShade або власного D2R VR без ReShade). Записує [sky] game_sky і [fog] game_fog разом. Діє одразу.
+@skyfog.way.tip = Хто малює небо й туман на відстані, обидва разом. Гра (нове): її власний прохід туману з нашими числами і наш небесний купол, який гра малює сама - без нашого часу кадру (VR F4; без ReShade для параметрів її туману нижче). Наш ефект (старе): небо й туман шейдера туману (ReShade або власний D2R VR без ReShade). Записує [sky] game_sky і [fog] game_fog разом. Діє одразу - файли небесного купола гри ця програма створює на своєму старті: першого разу після встановлення чи оновлення перезапустіть гру, що вже працює.
 @skyfog.way.choice0 = Гра (нове)
 @skyfog.way.choice1 = Наш ефект (старе)
 fog.enabled.label = Туман на відстані
@@ -224,7 +240,7 @@ fog.light.tip = Туман нашого ефекту коротким шляхо
 fog.start.label = Початок туману
 fog.start.tip = Де починається туман. Одиниці світу (герой ~7.5 заввишки).
 fog.end.label = Повний туман
-fog.end.tip = Де туман стає повним. Одиниці світу (герой ~7.5 заввишки). Близький туман ховає те, що пропускає мала дальність рендера.
+fog.end.tip = Де туман повний. Одиниці світу (герой ~7.5 заввишки). Близький туман ховає те, що лишає поза кадром коротка дальність промальовування. З туманом гри нижче «Початок туману» обидва значення беруться навпаки (туман нашого ефекту: повний одразу за «Початок туману»).
 fog.caves_start.label = Початок туману в печерах
 fog.caves_start.tip = Де починається туман у печерах, підземеллях і криптах. Одиниці світу (герой ~7.5 заввишки).
 fog.caves_end.label = Повний туман у печерах
@@ -233,10 +249,8 @@ sky.enabled.label = Небо надворі
 sky.enabled.tip = Намальоване небо над чорною порожнечею надворі. Хто його малює: перемикач вище (наш ефект або купол гри).
 @reshade.generic_depth.label = Карта глибини ReShade (Generic Depth)
 @reshade.generic_depth.tip = Додаток Generic Depth від ReShade щокадру знаходить буфер глибини гри. Вимкнення заощаджує час GPU, але він потрібен туману, небу, стелі й 3D з глибини. Діє після повторного запуску гри.
-# English changed: Ceiling in caves and dungeons
-ceiling.enabled.label = Стеля в печерах (через ReShade)
-# English changed: A ceiling over the black void in caves and dungeons, first person only (the Ceiling tab: who draws it, each room's height).
-ceiling.enabled.tip = Кам'яне склепіння над чорною порожнечею в підземеллях, лише від першої особи.
+ceiling.enabled.label = Стеля в печерах і підземеллях
+ceiling.enabled.tip = Стеля над чорною порожнечею в печерах і підземеллях, лише від першої особи (вкладка Стеля: хто її малює, висота кожної кімнати).
 ceiling.game_ceiling.label = Хто малює стелю
 ceiling.game_ceiling.tip = Наш ефект: склепіння через шейдер туману - ReShade або власний D2R VR без ReShade. Гра: плита власної печерної скелі гри, створена з файлів вашої гри, яку гра сама малює й освітлює - її смолоскипи і ваше світло на ній, її туман над нею, вогонь і закляття перед нею - кладеться над вами щокадру, без нашого часу кадру (тест: лише VR F4). Для кожної кімнати - власний камінь гри, підібраний до вибраної для неї картинки: скеля в печерах, високі плити в крипті, гладкий камінь у казармах, катакомбах і соборі, орнаментований мармур у палаці; кімната без картинки отримує камінь власної підлоги (каналізація акту 2, осквернений гарем, підвал палацу). Інші налаштування стелі нижче - нашого ефекту; розмір плитки задає й розмір скелі. Діє одразу.
 ceiling.game_ceiling.choice0 = Наш ефект (ReShade / власний у D2R VR)
@@ -255,13 +269,13 @@ group.what_the_slider_sets = Що задає повзунок
 group.what_the_slider_sets.help = Кожне значення, яке записує повзунок «Дальність промальовування», щоб задати його вручну. Значення туману неактивні, поки туман на відстані вимкнено, значення купола неба - поки гра не малює небо (вкладка Небо: «Небо і туман малює»), значення купола печер - поки його вимкнено.
 render.big_radius.label = Великі об'єкти: дерева, будинки, стіни далі (0 = вимк.)
 render.big_radius.tip = Дерева, будинки й стіни малюються далі за радіус видимості моделей - що більші, то далі (30 їхніх висот або половина ширини), аж до стількох одиниць (300 - 1000; 100 і 200 рахуються як 300). Каміння, трава й монстри зберігають радіус видимості моделей. Потрібні кільця кімнат 3 або більше (за кімнатами, які там будує гра, малювати нічого), а також повний туман і купол неба за ним, щоб це було видно. Коштує кадрів у лісах і містах. З D2R VR Unleashed (bearstonem). Лише візуально. Діє одразу. 0 = вимк., як раніше.
-sky.game_sky_radius.label = Небо гри: радіус купола, одиниці
-sky.game_sky_radius.tip = Наскільки далеко навколо вас кладеться купол неба гри, в одиницях гри (діє одразу). 200: близький горизонт - купол відрізає дальній світ чистим колом, туман гри над ним. Далі - небо виходить з туману. Журнал за кожної зміни каже, який радіус використовується.
+sky.game_sky_radius_m.label = Небо гри: радіус купола, m
+sky.game_sky_radius_m.tip = Як далеко навколо вас лежить небесний купол гри, у метрах (4 одиниці гри на метр; діє одразу). 50 m: близький горизонт - купол чисто обрізає далекий світ колом, над ним туман гри. Далі небо виходить із туману. Журнал каже використаний радіус при кожній зміні.
 fog.enabled.tip#2 = Туман на відстані. Хто його малює: перемикач на вкладці Небо (наш ефект або сама гра). З увімкненим небом він переходить у небо.
 sky.game_dome_caves.label = Чорний купол навколо вас у печерах
 sky.game_dome_caves.tip = Під землею гра малює чорний купол навколо вашої голови на радіусі видимості моделей: жодної порожнечі за краєм стелі, туман гри переходить у чорні стіни - без сяйва за вогнями. Власні файли купола неба (створені цією програмою під час її запуску). VR F4. Діє одразу.
-sky.game_dome_caves_size.label = Купол печери: радіус x радіус видимості моделей
-sky.game_dome_caves_size.tip = 1: купол на радіусі видимості моделей ([render] model_radius); 0.5: половина його (радіус як діаметр). Діє одразу.
+sky.game_dome_caves_radius_m.label = Купол печер: радіус, m
+sky.game_dome_caves_radius_m.tip = Як далеко навколо вас лежить чорний купол під землею, у метрах (4 одиниці гри на метр; радіус видимості моделей 210 - це 52.5 m). 200 за замовчуванням. Повзунок «Дальність промальовування» зберігає свою частку радіуса видимості моделей. Діє одразу.
 
 # ===== Tab: Camera =====
 tab.camera = Камера
@@ -450,16 +464,24 @@ body.walk_back_reverse.label = ... власною ходьбою гри, про�
 body.walk_back_reverse.tip = Увімк.: його таз і ноги точно такі, як гра малювала їх, поки він ішов (останні 2.5 секунди його ходьби зберігаються, також і поки він стоїть), показані у зворотному порядку - п'ята піднімається позаду нього, а носок тягнеться назад, щоб стати, кожен суглоб - власний гри; корпус їде на цьому тазі (нерухомий з «lock»). Вимк.: як у 0.185 - місце кожної ступні віддзеркалене спереду назад, а коліна розраховані заново: ступня високо піднімається перед ним і стає позаду носком угору, що все одно виглядало як схрещені ноги. Лише намальовані ноги. Діє одразу.
 body.doll_feet.label = Ступні - ляльки, а не гри (тест)
 body.doll_feet.tip = Його ступні більше не слідують ходьбі гри: кожна стоїть на землі, де її поставили, і крокує слідом за тілом, коли тіло відійшло на крок уперед або надто повернулося - під час ходьби назад ступні крокують назад, коли камера обертається навколо нього, переступають по колу, ліва лишається лівою. Гра дає лише де він, куди дивиться і як швидко йде; стегна й тулуб лишаються ігровими. Під час ходьби, бігу та стоячи; будь-який інший рух (атака, стрибок, відкидання) на свою мить віддає ноги грі. У будь-якому вигляді, де поза героя наша; замість "Під час ходьби назад ноги крокують назад". Лише намальовані ноги. Діє одразу.
-# body.legs_rear.label = Legs held still while the hero moves (test)
-# body.legs_rear.tip = While the hero walks or runs between the two cones below - sideways, diagonally - his hips and legs stand in the game's own standing pose and he glides: no step that could cross. Within the cone ahead the game's own walk and run; within the cone straight back the game's own forward walk and run played backwards. Standing, and turning on the spot, they are the game's own stance. Any other move (a blow, a cast, a hit) is the game's own. The trunk and the arms stay the game's. With the whole hero turned to your look. Instead of "Walking backwards, the legs step backwards". The drawn legs only. Live.
-# body.legs_front_cone_deg.label = ... the game's own legs within this cone ahead, ° (its whole width)
-# body.legs_front_cone_deg.tip = With the box above: going within this cone straight ahead (90: 45° either side of where the body faces) the legs are the game's own walk and run; outside it they are held. A short blend at the edge. 0: held whenever he goes; 360: never held. Live.
-# body.legs_rear_cone_deg.label = ... the game's walk played backwards within this cone straight back, ° (its whole width)
-# body.legs_rear_cone_deg.tip = With the box above: going within this cone straight back (90: 45° either side of straight back) the legs play the game's own forward walk backwards - running, its run - at the pace he goes, facing with the body, never crossed; between it and the cone ahead they are held. A short blend at each edge. 0: never played backwards. Live.
-# body.legs_side_ragdoll.label = ... between the cones the hips and legs the ragdoll's gait
-# body.legs_side_ragdoll.tip = With the box above: going between the two cones - sideways, diagonally - instead of standing held, his pelvis and both legs are the ragdoll library's own gait (d2r_vr_weight.dll): its walk, run and sprint cycles at the stride and cadence of his speed, the hips bobbing and swaying with them, a flight running, the feet's path turned the way he goes - never across the middle, never crossed. The trunk is the game's. A short blend into the cones. Without the library (or an older one) the legs are held, as before. Live.
-# body.legs_rear_cycle.label = ... instead: going backwards, the game's walk and run played backwards (test)
-# body.legs_rear_cycle.tip = With the box above: instead of holding the legs, going into the rear half - more than 90° from where the body faces - they play the game's own forward walk backwards, running its run, at the pace you go, facing with the body; ahead they are the game's own walk. Crossing 90° the step changes direction on the pose drawn. The drawn legs only. Live.
+body.legs_rear.label = Ноги нерухомі, поки герой рухається (тест)
+body.legs_rear.tip = Поки герой іде чи біжить між двома конусами нижче - убік, навскіс - його стегна й ноги стоять у власній позі стояння гри, і він ковзає: жодного кроку, який міг би схреститися. У конусі попереду - власні ходьба й біг гри; у конусі прямо позаду - власні ходьба й біг гри вперед, програні задом наперед. Стоячи й повертаючись на місці - власна стійка гри. Будь-який інший рух (удар, закляття, влучання) - власний рух гри. Тулуб і руки лишаються ігровими. З усім героєм, поверненим до вашого погляду. Замість «Під час ходьби назад ноги крокують назад». Лише намальовані ноги. Діє одразу.
+body.legs_front_cone_deg.label = ... власні ноги гри в межах цього конуса попереду, ° (уся його ширина)
+body.legs_front_cone_deg.tip = З галочкою вище: рух у межах цього конуса прямо вперед (90: по 45° обабіч напрямку тіла) - ноги виконують власні ходьбу й біг гри; поза ним вони нерухомі. Коротке змішування на межі. 0: нерухомі завжди, коли він іде; 360: ніколи не нерухомі. Діє одразу.
+body.legs_rear_cone_deg.label = ... ходьба гри задом наперед у межах цього конуса прямо позаду, ° (уся його ширина)
+body.legs_rear_cone_deg.tip = З галочкою вище: рух у межах цього конуса прямо назад (90: по 45° обабіч прямо назад) - ноги програють власну ходьбу гри вперед задом наперед (на бігу - її біг) у темпі, з яким він іде, дивлячись разом із тілом, ніколи не схрещуючись; між ним і конусом попереду вони нерухомі. Коротке змішування на кожній межі. 0: ніколи задом наперед. Діє одразу.
+body.legs_side_game.label = ... дві половини: попереду й убік ходьба гри, назад - задом наперед
+body.legs_side_game.tip = З галочкою вище: рух до 90° від напрямку тіла - уперед, навскіс уперед, прямо вбік - ноги виконують власні ходьбу й біг гри, як їх малювала 0.191; понад 90° - навскіс назад, прямо назад - її ходьба й біг задом наперед. Нічого нерухомого, жодних наших кроків. Вимк.: два конуси (legs_front_cone_deg, legs_rear_cone_deg), а між ними ноги нерухомі або крокують за галочкою нижче. Діє одразу.
+body.legs_turn.label = ... стегна й ноги повертаються туди, куди ви йдете
+body.legs_turn.tip = З галочкою вище: стегна й ноги повертаються туди, куди йде герой, а тулуб і голова лишаються на вашому погляді - навскіс уперед ноги йдуть у той бік, прямо вбік вони дивляться вбік і йдуть уперед, назад вони йдуть задом наперед спиною вздовж шляху. Ніколи більше ніж 90° від тулуба, скручування розподілене по хребту, плавно; на 90° зміна відбувається одразу. Вимк.: ноги дивляться туди ж, куди тулуб. Діє одразу.
+body.legs_side_ragdoll.label = ... між конусами стегна й ноги - хода регдола
+body.legs_side_ragdoll.tip = З галочкою вище: рух між двома конусами - убік, навскіс - замість нерухомого стояння його ступні крокують за ним через бібліотеку регдола (d2r_vr_weight.dll): кожна ступня стоїть там, де стала (не ковзає), і ставиться туди, куди він іде, кроки частішають, що швидше він іде, тож лишаються вузькими, передня нога виходить уперед, а задня підтягується до неї, ніколи не схрещуючись, під рівним тазом. Тулуб - ігровий. Ніколи в F1 чи F3. Без бібліотеки (або зі старішою) ноги нерухомі, як раніше. Діє одразу.
+body.legs_side_gait.label = ... натомість: хода регдола, дрібні кроки (0.192.34)
+body.legs_side_gait.tip = З галочкою вище: замість поставлених кроків ноги рухаються за циклом ходи регдола з його швидкістю під рівним тазом - кожна ступня робить невеликий крок убік від свого місця; ступні ковзають разом із ним. Варіант для порівняння. Діє одразу.
+body.legs_side_cross.label = ... поставлені кроки по черзі, зі схрещуванням (тест)
+body.legs_side_cross.tip = З поставленими кроками: ступні ступають по черзі, одна завжди на землі, проходячи одна повз одну трохи окремо спереду назад - біг убік. Вимк.: як 0.192.36, задня ступня ніколи не обганяє передню, а на швидкості обидві ступні відриваються від землі разом (стрибок). Діє одразу.
+body.legs_rear_cycle.label = ... натомість: рухаючись назад, ходьба й біг гри задом наперед (тест)
+body.legs_rear_cycle.tip = З галочкою вище: замість нерухомих ніг, рухаючись у задню половину - більш ніж на 90° від напрямку тіла - вони програють власну ходьбу гри вперед задом наперед (на бігу - її біг) у вашому темпі, дивлячись разом із тілом; попереду - власна ходьба гри. На переході через 90° крок змінює напрямок на намальованій позі. Лише намальовані ноги. Діє одразу.
 body.yaw.label = Поправка повороту тіла, °
 body.yaw.tip = Додається до напрямку, куди дивиться герой (і до рук), якщо він стоїть боком: спробуйте 90, -90 або 180.
 
@@ -703,6 +725,8 @@ screen.menu_distance_m.label = Пласка картинка з відкрито
 screen.menu_distance_m.tip = Поки в грі відкрито інвентар, торговця, скриню чи іншу панель, пласка картинка відсувається на цю відстань - плавно - і повертається, коли панель закривається. З квадратним вікном інтерфейс гри такий широкий, як картинка: далі - і в поле зору потрапляють його лівий і правий краї. 0 = відстань вище. Те саме налаштування, що «Відстань до екрана з відкритою панеллю» для FlatVR (UI: F4 тіло).
 openxr.busy_guard.label = Ніколи не зависати на зайнятому шоломі (нативний OpenXR)
 openxr.busy_guard.tip = Середовище виконання чекає на шолом, який інша програма зайняла назавжди: FlatVR через BodyWalk Lite, потім назад на нативний, і гра стояла аж до Диспетчера завдань. Увімк.: два блокувальні виклики середовища виконання (очікування кадру і старт сеансу) виконуються в окремому потоці, а гра чекає на них частку секунди; якщо їх немає, шолом у цьому кадрі не отримує картинки, а гра йде далі пласко (журнал про це повідомляє, і коли шолом відповість). І сеанс шолома не запускається поверх FlatVR, який тримає шолом і не може бути зупинений (у BodyWalk Lite немає Game Link): стовпець Стан радить закрити BodyWalk і перезапустити SteamVR, а спроба повторюється, поки працює FlatVR. Потрібен перезапуск гри. Вимк.: як раніше. (d2r_vr.ini: wait_frame_ms.)
+openxr.stop_flatvr_watch.label = Знову зупиняти FlatVR, якщо він запуститься під час нативної сесії
+openxr.stop_flatvr_watch.tip = FlatVR у BodyWalk зупиняється через його Game Link, коли стартує нативна сесія - але лише FlatVR, що працює в цю мить. Запущений пізніше (BodyWalk відкрито після гри, його старт відкладено, доки не піднявся SteamVR, його кнопка START) працював поруч із нативною сесією до кінця гри: обидва в шоломі, ділячи його кадри. Увімк.: поки сесія працює, FlatVR перевіряється раз на секунду й знову зупиняється через Game Link, коли працює (і запускається знову, коли нативний OpenXR завершується, як той, що зупинений на старті). BodyWalk без Game Link (BodyWalk Lite) про це не попросиш: журнал так і каже. Діє одразу. Вимк.: зупиняється лише на старті сесії, як раніше.
 openxr.reap_drain_max_ms.label = Старі swapchain: найдовше очікування звільнення, ms (нативний OpenXR)
 openxr.reap_drain_max_ms.tip = Наш swapchain, створений заново (новий вказівник миші, панель меню іншого розміру), звільняється пізніше, коли відеокарта закінчить роботу гри: очікування 20 ms, щоразу подвоєне, коли цього не вистачило, аж до цього значення. З навантаженою відеокартою (рекомендований розмір шолома) 20 ms ніколи не вистачало, старі накопичувалися, і SteamVR відмовляв у нових (XR_ERROR_LIMIT_REACHED): інвентар відкривався без панелі, вказівник зникав, картинка була чорна. 20 = як раніше. Діє одразу.
 openxr.menus_wait_tracking.label = Меню ставляться лише тоді, коли шолом відстежується
@@ -1054,8 +1078,8 @@ openxr.hand_inventory_front.label = Інвентар відкривається 
 openxr.hand_inventory_front.tip = Поза містом інвентар відкривається попереду, на повний розмір, а не на лівій руці. Кнопка біля інвентарю теж це задає: він відкривається так, як ви його востаннє залишили, також після перезапуску. Діє одразу.
 openxr.headset_settings.label = Панель налаштувань у шоломі (прототип)
 openxr.headset_settings.tip = Нативний OpenXR без меню BodyWalk: утримуйте натиснутий правий стік (довге натиснення), і перед вами відкриється невелика панель налаштувань - відстань і ширина пласкої картинки, яскравість, ваш зріст, лазер, розмір рендера VR (сторінка Video: пресети й повзунок; застосування змушує гру перебудувати картинку, кілька секунд усе завмирає) і Calibrate body (сторінка Body: вимірювання в T-позі, запущене з шолома) та вигляд гри F1 - F4 (F1 - F3 закривають панель; назад до F4 - клавішею F4, через D2R VR Authentic Settings > Головна або дією вигляду в Mapping у BodyWalk). Наведіть на неї контролер і натисніть курок; Apply записує в d2r_vr.ini лише те, що ви змінили (оригінал один раз зберігається як d2r_vr.ini.before-headset-menu; зміна, зроблена тим часом деінде, показується, а не перезаписується). Коли панель навичок у вигляді «Плитки» («Стиль панелі навичок»: «Плитки»), ці сторінки - її вкладка Settings поруч зі Skills: довге натиснення правого стіка відкриває вікно на тій вкладці, де воно було востаннє. Поки вона відкрита, обидва контролери належать панелі: нічого з них не доходить до гри, і вона ніколи не надсилає грі клік. Закривають її знову довге натиснення, B / Y або Menu. Два утримані хвати нічого не означають (старий спосіб - обидва хвати + натиснення - на вкладці Налагодження). Вимк.: панелі немає. Лише F4.
-# openxr.headset_players.label = Players from the headset
-# openxr.headset_players.tip = The headset settings' Options page gets a working Players (difficulty) row: the game's own players count, 1 - 8, as the chat command /players N sets it (the game's Options > Gameplay "Offline Difficulty Scaling"). - and + send the game that very line, no keyboard needed; the game checks it, keeps it and says so, and the row shows the count read back from the game. The game takes it only in a game of your own: single player, or as the host of a TCP/IP game. Off: the row only shows the game's count, nothing is sent. Live.
+openxr.headset_players.label = Гравці з шолома
+openxr.headset_players.tip = Сторінка Options у налаштуваннях шолома отримує робочий рядок Гравці (складність): власна кількість гравців гри, 1 - 8, як її задає команда чату /players N (у грі Options > Gameplay "Offline Difficulty Scaling"). - і + надсилають грі саме цей рядок, клавіатура не потрібна; гра перевіряє його, зберігає й повідомляє, а рядок показує кількість, прочитану з гри. Гра приймає це лише у власній грі: одиночній або як хост гри TCP/IP. Вимк.: рядок лише показує кількість гри, нічого не надсилається. Діє одразу.
 
 # --- Belt potions ---
 group.belt_potions = Зілля на поясі
@@ -1198,20 +1222,19 @@ hud.monster_height.tip = Лише від першої особи (F4), поки 
 hud.monster_depth_body.label = Ім'я над монстром: біля свого монстра, %
 hud.monster_depth_body.tip = Від першої особи (F4) у стерео. Гра малює плашку в тому самому місці для обох очей, тож у шоломі вона плаває десь далеко, а не на своєму монстрі. Тут вона ставиться на глибину свого монстра, за відстанню монстра від вас, як написи предметів («Написи предметів: біля своїх предметів»): 100 = точно там, 0 = там, де її лишає гра (стерео-глибина нижче). Діє одразу.
 hud.monster_near_body.label = Ім'я над монстром: стерео-глибина
-# English changed: First person (F4) in stereo: the name and bar over the monster you target nearer (+) or farther (-), % of the half screen - its own, apart from the item labels' ("Item labels: stereo depth on top" above does not move it). Replaced by the two depths below while "stereo depth by distance" is ticked. Live.
-hud.monster_near_body.tip = Від першої особи (F4) у стерео: ім'я і смуга над монстром-ціллю ближче (+) чи далі (-), % половини екрана - власна, окремо від написів предметів («Написи предметів: стерео-глибина зверху» вище її не рухає). Діє одразу.
-# hud.monster_stereo_by_distance.label = Name over a monster: stereo depth by distance
-# hud.monster_stereo_by_distance.tip = First person (F4) in stereo. The plate's stereo depth follows the monster's distance from your eyes: the near depth for a monster close by, the far depth for one far off, smoothly in between, and a new target glides to its depth rather than jumping. Off: one depth for every monster (the slider above). Live.
-# hud.monster_stereo_near.label = Stereo depth: near monster
-# hud.monster_stereo_near.tip = The plate's stereo depth (% of the half screen, + nearer) for a monster at the near distance below or closer. Live.
-# hud.monster_stereo_far.label = Stereo depth: far monster
-# hud.monster_stereo_far.tip = The plate's stereo depth for a monster at the far distance below or farther. Live.
-# hud.monster_stereo_near_m.label = Stereo depth: near up to, m
-# hud.monster_stereo_near_m.tip = From your eyes. 1.5 m = the plate's own "near" (the size far away above uses the same). Live.
-# hud.monster_stereo_far_m.label = Stereo depth: far from, m
-# hud.monster_stereo_far_m.tip = From your eyes. 10 m = the plate's own "far" (the size far away above uses the same); never past the edge of the drawn world (Draw distance). Live.
-# hud.monster_plate_smooth.label = Name over a monster: steady
-# hud.monster_plate_smooth.tip = First person (F4). The plate no longer shakes with its monster's animation (the bob of a walk, the shake of a blow) or the game's steps: it hangs on the monster's head held by a spring - still at rest, close behind a monster that runs - and its distance (its size far away, its stereo depth) is held the same way. A turn of your head moves it with the world. Off: the plate on the game's own head point, every frame. Live.
+hud.monster_near_body.tip = Від першої особи (F4) у стерео: ім'я та смуга над монстром, на якого ви цілитеся, ближче (+) або далі (-), % від половини екрана - власне значення, окреме від написів предметів («Написи предметів: стерео-глибина зверху» вище його не зсуває). Замінюється двома глибинами нижче, поки стоїть галочка «стерео-глибина за відстанню». Діє одразу.
+hud.monster_stereo_by_distance.label = Ім'я над монстром: стерео-глибина за відстанню
+hud.monster_stereo_by_distance.tip = Від першої особи (F4) у стерео. Стерео-глибина таблички йде за відстанню монстра від ваших очей: близька глибина для близького монстра, далека - для далекого, плавно між ними, а нова ціль плавно переходить на свою глибину, а не стрибає. Вимк.: одна глибина для кожного монстра (повзунок вище). Діє одразу.
+hud.monster_stereo_near.label = Стерео-глибина: близький монстр
+hud.monster_stereo_near.tip = Стерео-глибина таблички (% від половини екрана, + ближче) для монстра на близькій відстані нижче або ближче. Діє одразу.
+hud.monster_stereo_far.label = Стерео-глибина: далекий монстр
+hud.monster_stereo_far.tip = Стерео-глибина таблички для монстра на далекій відстані нижче або далі. Діє одразу.
+hud.monster_stereo_near_m.label = Стерео-глибина: близько до, m
+hud.monster_stereo_near_m.tip = Від ваших очей. 1.5 m = власне «близько» таблички (розмір удалині вище використовує те саме). Діє одразу.
+hud.monster_stereo_far_m.label = Стерео-глибина: далеко від, m
+hud.monster_stereo_far_m.tip = Від ваших очей. 10 m = власне «далеко» таблички (розмір удалині вище використовує те саме); ніколи не далі краю намальованого світу (Дальність промальовування). Діє одразу.
+hud.monster_plate_smooth.label = Ім'я над монстром: стійке
+hud.monster_plate_smooth.tip = Від першої особи (F4). Табличка більше не труситься з анімацією свого монстра (погойдування ходи, тремтіння удару) чи кроками гри: вона висить на голові монстра, утримувана пружиною - нерухома в спокої, близько позаду монстра, що біжить - і її відстань (її розмір удалині, її стерео-глибина) утримується так само. Поворот вашої голови рухає її разом зі світом. Вимк.: табличка на власній точці голови гри, кожен кадр. Діє одразу.
 
 # --- Low life: red heartbeat vignette ---
 group.low_life_red_heartbeat_vignette = Мало життя: червона віньєтка серцебиття
@@ -1387,8 +1410,8 @@ hud.hand_vitals_orb_size_cm.label = Розмір, cm
 hud.hand_vitals_orb_size_cm.tip = Діаметр кулі. 5 - розмір медальйона. Діє одразу.
 hud.hand_vitals_orb_mirror.label = Праве зап'ястя дзеркалить ліве
 hud.hand_vitals_orb_mirror.tip = Куля правого зап'ястя бере три числа лівого зап'ястя (те саме вздовж, те саме поперек до великого пальця, те саме вгору), тож обидві розташовані дзеркально. Власні повзунки правого зап'ястя зберігають свої значення, сірі, на випадок, коли галочку знято. Діє одразу.
-hud.hand_vitals_orb_on_bone.label = На самій кістці передпліччя (без чисел)
-hud.hand_vitals_orb_on_bone.tip = З галочкою: кожна куля сидить на своїй кістці передпліччя - на поверхні власної сітки передпліччя (зчитується з моделі героя, знову при зміні обладунку), на тильному боці зап'ястя біля кисті, повернута разом із кісткою - хоч би як малювалася рука: вашими контролерами, утримувана на тілі, анімацією гри. Числа місця й повороту нижче та глибини класів не використовуються (щит усе одно перекочує її на внутрішній бік). Передпліччя, чия сітка не дає розміру: числа, як раніше (журнал каже, яке). Без галочки: числа. VR F4. Діє одразу.
+hud.hand_vitals_orb_on_bone.label = На самій кістці передпліччя (без чисел, тест)
+hud.hand_vitals_orb_on_bone.tip = З галочкою: кожна куля сидить на своїй кістці передпліччя - на поверхні власного меша передпліччя (зчитаного з моделі героя, знову при зміні обладунку), з тильного боку зап'ястя біля кисті, повернута разом із кісткою - хоч би як рука малювалася: вашими контролерами, утримана на тілі, анімацією гри. Числа місця й повороту нижче та глибини класів не використовуються (щит усе одно перекочує її на внутрішній бік). Передпліччя, чий меш не дає розміру: числа, як раніше (журнал каже, яке). Без галочки: числа. VR F4. Діє одразу. Тест: вимк. за замовчуванням - меш передпліччя героя вперше зчитано в 0.192.36, і медальйон, який він поставив, сидів за 10-15 cm від зап'ястя.
 hud.hand_vitals_orb_drawn_hand.label = Слідувати за намальованою кистю
 hud.hand_vitals_orb_drawn_hand.tip = З галочкою: кулі сидять на кисті героя точно так, як її намальовано - покладеній на тіло чи предмет обстановки, який тримає ваша рука, припасованій до зброї, - тож вони лишаються на кисті, поки вона тримається, а ваша справжня рука рухається. Пляшка, затиснута в долоні, слідує за нею так само. Без галочки: кисть, як її спершу поставив контролер, до цих кроків, як раніше (коли тримаєте NPC, кулі зберігали поворот контролера). VR F4. Діє одразу.
 hud.hand_vitals_orb_left_along_cm.label = Ліве зап'ястя X, уздовж руки, cm
@@ -1610,17 +1633,17 @@ fog.game_fog_caves_black.tip = Під землею туман гри перех�
 fog.game_fog_our_curve.label = Туман гри за нашою кривою
 fog.game_fog_our_curve.tip = Власний прохід туману гри наростає так само, як наш ефект, - від «Початок туману» до «Повний туман» за кривою «Спад» нижче (у печерах - їхні власні початок, кінець і сила) - замість власної експоненти гри, яка кладе майже весь туман одразу після початку, а дальній діапазон лишає однаково сірим. Кілька інструкцій у його проході, нічого не додано. Лише без ReShade. Діє одразу.
 fog.fog_keeps_colour.label = Туман гри вночі зберігає колір акту
-fog.fog_keeps_colour.tip = Поки туман малює гра: його колір - власний колір акту (кольори вище) о будь-якій порі - далечінь переходить у його світлий серпанок, ніколи не в чорноту. Туман нашого власного ефекту не змінюється. Вимк.: він темнішає разом зі світлом гри, як раніше. Діє одразу.
+fog.fog_keeps_colour.tip = Поки туман малює гра: його колір - власний колір акту (кольори вище) о будь-якій годині - далечінь тане в легкому серпанку цього кольору, ніколи не до чорного. Туман нашого власного ефекту не змінюється. Вимк.: він темнішає зі світлом гри, як і небо - уночі до «Небо вночі» і за яскравістю неба для кожної пори доби. З кольором неба («Колір туману: виміряний з гри» без галочки): колір денного неба на горизонті о будь-якій годині; вимк. - колір нічного неба вночі, майже чорний. Діє одразу.
 fog.fog_into_sky.label = Туман гри розчиняє далечінь у небі позаду неї
 fog.fog_into_sky.tip = Надворі колір туману в кожній точці - це небо просто позаду неї, як в Arcane Sanctuary: дальня земля, край світу й високі дальні будівлі розчиняються в небі, а не в одному пласкому кольорі (нижня частина неба - колір туману акту, як її намальовано). Крізь дальні об'єкти видно небо. Лише туман гри (з «Туман гри такий самий густий і кольоровий, як наш»); туман нашого власного ефекту не змінюється. Під землею як раніше. Діє одразу. Вимк.: один колір туману, як раніше.
+fog.fog_colour_measured.label = Колір туману: виміряний з гри
+fog.fog_colour_measured.tip = З галочкою: колір туману вимірюється з того, що показує гра (з «Туман гри такий самий густий і кольоровий, як наш») - як раніше. Без галочки: колір туману - власний колір неба на горизонті - запечене там зображення з його повзунком яскравості - тож далека земля зливається з небом без шва; число, задане при зміні пори доби чи повзунка: жодного виміру, нічого з цього в ефекті. Під землею, в Arcane Sanctuary і з тонованим небом: колір акту чи печери, як задано. Діє одразу.
 fog.game_fog_match.label = Туман гри такий самий густий і кольоровий, як наш
-fog.game_fog_match.tip = Туман гри виходив темнішим за колір туману акту (колірна корекція локації) і рідшим за наш (він рідшає над очима, а без нашої кривої він - власний туман гри): в акті 4 дальня земля стояла темним силуетом і нічого не ховала. З галочкою ефект вимірює, що показує туман гри там, де він повний, зсуває кожен затуманений піксель до кольору акту на частку гри і доповнює частку, яку гра пропустила, до частки нашого власного туману - дальня земля, край світу й дальні площини сховані, як нашим старим туманом. Ніколи на небі гри. Прохід нашого ефекту, який і так працює для неба. Діє одразу. Вимк.: як його кладе гра.
-# English changed: The fog before smoke and fire
-fog.game_fog_before_fx.label = Туман гри перед димом і вогнем
-# English changed: The fog laid on the scene before the game adds its smoke, mist, fire and spells, so they lie over the fogged world unfogged - without it the fog is laid over them by the wall behind them (haze cut into black holes in front of far walls, a fire spell fading as it flies past a far wall). The game's fog or our effect's, whichever draws it. One pass of ours on the graphics card (its cost in the log's 10 s line). With ReShade: our effect's fog only, VR first person only. Applies when the game is started again.
-fog.game_fog_before_fx.tip = Туман кладеться на сцену до того, як гра додає свої дим, імлу і вогонь, тож вони лежать поверх затуманеного світу незатуманені - без цього прохід туману гри затуманює їх за стіною позаду них (серпанок, вирізаний чорними дірами перед дальніми стінами). Один наш прохід на відеокарті (його ціна - у 10-секундному рядку журналу). Лише без ReShade. Діє після наступного запуску гри.
-# fog.game_fog_fx_depth.label = Far smoke and fire fade into the fog
-# fog.game_fog_fx_depth.tip = With the fog before smoke and fire: the smoke, mist, fire and spells fogged too, each by its own distance - near ones as they are, far ones fading into the fog with the world behind them. Without it a far camp fire stands at full light in full fog and the see-through edges of far fences show as specks on the horizon. The game's effects are drawn once more for their depth alone (the cost in the log's 10 s lines). Without ReShade only. Live. Off: the effects never fogged.
+fog.game_fog_match.tip = Туман гри виходив темнішим за колір туману акту (кольорокорекція області) і тоншим за наш (він рідшає над оком, а без нашої кривої він власний ігровий): в акті 4 далека земля стояла темним силуетом і нічого не ховала. З галочкою ефект доповнює частку, яку гра пропустила, до частки нашого власного туману - далека земля, край світу й далекі площини сховані, як нашим старим туманом - кольором туману; з «Колір туману: виміряний з гри» він ще й вимірює, що показує туман гри там, де він повний, і зсуває кожен затуманений піксель до кольору акту на частку гри (ніколи далі). Ніколи на небі гри. Прохід нашого ефекту, який і так працює для неба. Діє одразу. Вимк.: як його кладе гра.
+fog.game_fog_before_fx.label = Туман перед димом і вогнем
+fog.game_fog_before_fx.tip = Туман накладається на сцену до того, як гра додасть свій дим, імлу, вогонь і закляття, тож вони лежать над затуманеним світом незатуманеними - без цього туман кладеться поверх них за стіною позаду них (серпанок, прорізаний чорними дірами перед далекими стінами, вогняне закляття тьмяніє, пролітаючи повз далеку стіну). Туман гри чи нашого ефекту, хто б його не малював. Один наш прохід на відеокарті (його ціна в 10-секундному рядку журналу). З ReShade: лише туман нашого ефекту, лише VR від першої особи. Діє після наступного запуску гри.
+fog.game_fog_fx_depth.label = Далекі дим і вогонь тануть у тумані
+fog.game_fog_fx_depth.tip = З туманом перед димом і вогнем: дим, імла, вогонь і закляття теж затуманюються, кожне за власною відстанню - близькі як є, далекі тануть у тумані разом зі світом за ними. Без цього далеке багаття в таборі стоїть на повному світлі в повному тумані, а прозорі краї далеких парканів видно цятками на горизонті. Ефекти гри малюються ще раз лише заради їхньої глибини: ДОРОГО - на Quest 3 з 2048 x 2048 на око це забрало близько 30 кадрів на секунду (72 -> 42); ціна в 10-секундних рядках журналу. Лише без ReShade. Діє одразу. Вимк.: ефекти ніколи не затуманюються.
 fog.game_fog_height.label = Туман гри рідшає з висотою
 fog.game_fog_height.tip = Власний прохід туману гри лишає небо чистим: туман як є до верху туману мінус його м'якість, вище він зникає, а над верхом його немає зовсім (одиниці світу над вашими очима). Для купола неба гри, щоб його небо було видно над затуманеним горизонтом. Власний прохід гри, нічого не додано. Лише надворі (під землею немає неба, яке треба лишати чистим). Лише без ReShade. Вимк.: туман гри як є. Діє одразу.
 fog.game_fog_top.label = Туман гри: його верх, одиниці над очима
@@ -1629,7 +1652,7 @@ fog.game_fog_soft.label = Туман гри: м'якість його верху
 fog.game_fog_soft.tip = Як далеко під своїм верхом туман гри зникає: мало - різкий край; багато - довге м'яке згасання. Діє одразу.
 fog.game_fog_top_from_floor.label = Туман гри: його верх рахується від підлоги героя
 fog.game_fog_top_from_floor.tip = Верх вище рахується від підлоги, на якій стоїть герой, а не від ваших очей: камера високо над героєм (третя особа, вигляд згори) більше не зсуває місце, де закінчується туман, а земля нижче ваших очей не вся затуманена з лінією на висоті очей. Вимк.: від очей, як раніше. Якщо натомість зняти галочку з «рідшає з висотою», туман буде лише за відстанню, як наш власний. Діє одразу.
-fog.end.tip#2 = Де туман повний. Одиниці світу (зріст героя ~7.5).
+fog.end.tip#2 = Де туман повний. Одиниці світу (герой ~7.5 заввишки). З туманом гри нижче «Початок туману» обидва значення беруться навпаки (туман нашого ефекту: повний одразу за «Початок туману»).
 fog.curve.label = Спад
 fog.curve.tip = 1 = лінійно; більше = чистіша середня відстань.
 fog.blur.label = Розмиття за глибиною, px (0 = вимк.)
@@ -1639,8 +1662,7 @@ fog.spare_effects.tip = Вогонь, закляття, дим і сяйво з�
 render.fog_in_frame.label = Туман малюється всередині кадру гри (тест)
 render.fog_in_frame.tip = Туман малюється у власну картинку гри перед її вогнем, закляттями і димом, і гра кладе їх поверх затуманеної сцени: смолоскип, Fire Bolt чи Inferno перед дальньою стіною не затуманюється, як стіна. Небо і чорнота за межами світу зберігають туман, як раніше. З власним кольором туману акту (Світ > Небо); лише VR F4. Діє після наступного запуску гри; вимк. = туман як раніше. Має перевагу над «Туман не чіпає вогонь», коли увімкнено обидва.
 fog.caves.label = Туман у печерах і підземеллях
-# English changed: Off: no fog underground (every area that is not outdoors) - neither our effect's nor the game's own fog, and nothing laid before the smoke and fire there; the open air keeps it. The Arcane Sanctuary has its own switch (Sky > Arcane Sanctuary: fog fades into its sky): on, it keeps its fog with either fog. Live.
-fog.caves.tip = Вимк.: без туману під землею (у кожній локації, що не надворі); на відкритому повітрі він лишається. Arcane Sanctuary має власний перемикач (Небо > «Arcane Sanctuary: туман переходить у його небо»).
+fog.caves.tip = Вимк.: жодного туману під землею (у кожній області, що не надворі) - ні туману нашого ефекту, ні власного туману гри, і нічого, накладеного перед димом і вогнем там; відкрите повітря його зберігає. Arcane Sanctuary має власний перемикач (Небо > Arcane Sanctuary: туман переходить у його небо): увімк. - він зберігає свій туман з будь-яким туманом. Діє одразу.
 fog.ease_in.label = Туман наростає плавно, без різкого кільця
 fog.ease_in.tip = Туман м'яко наростає на своїх перших 40 одиницях після початку: жодного різкого краю навколо чистої землі біля ваших ніг. Скрізь, де туман малює наша крива: наш ефект і туман гри з увімкненим «Туман гри за нашою кривою» (не власна крива гри). З D2R VR Unleashed (bearstonem). Діє одразу. Вимк.: туман як раніше.
 fog.no_fog_river.label = Без туману в River of Flame
@@ -1651,24 +1673,36 @@ fog.color_caves.label = Колір туману в печерах
 fog.color_caves.tip = Печери, підземелля, крипти: кожна локація, що не надворі. Порожньо (x) = колір цього акту.
 fog.color_caves.empty = як в акті
 
+# --- Distance blur ---
+group.distance_blur = Розмиття вдалині
+group.distance_blur.help = Далеке зображення розмите, ніби крізь шибку матового скла, що стоїть на відстані перед вами: ніщо ближче за шибку не зачіпається; за нею світ розмивається тим сильніше, що він далі. Задайте, де стоїть шибка, де розмиття найширше і наскільки. Окремо від туману: жодного власного кольору, туман зберігає свій вигляд.
+render.distance_blur.label = Розмиття вдалині
+render.distance_blur.tip = Далекий світ розмитий за шибкою матового скла (з фрактальної гри Serg): близька земля, монстри й ваша зброя лишаються чіткими, далечінь м'якшає тим сильніше, що далі. Небо, порожнеча й інтерфейс не розмиваються. Малюється проходом нашого ефекту (з ReShade чи без), від першої особи, хто б не малював туман; його ціна на відеокарті - у 10-секундному рядку журналу без ReShade ("distance blur on, ... ms"). Діє одразу. Вимк.: прохід пропускається.
+render.distance_blur_start_m.label = Розмиття починається з, m
+render.distance_blur_start_m.tip = Де стоїть шибка, у метрах від ваших очей (4 одиниці світу на метр): ніщо ближче не розмивається. Тримайте її далі, ніж там, де ви б'єтеся. Діє одразу.
+render.distance_blur_full_m.label = Повне розмиття з, m
+render.distance_blur_full_m.tip = Де розмиття найширше, у метрах (щонайменше на 5 % далі за початок). Між ними воно росте з квадратом відстані: середня відстань лишається чіткою. 50 m: край світу за дальності промальовування за замовчуванням. Діє одразу.
+render.distance_blur_strength.label = Сила розмиття
+render.distance_blur_strength.tip = Наскільки широке розмиття в найширшому місці: 1 = 2.5 % висоти зображення (близько 50 пікселів на око з 2000 рядків), 0.4 - як у фрактальній грі. 0 = без розмиття. Діє одразу.
+
 # --- Arcane Sanctuary ---
-# group.arcane_sanctuary = Arcane Sanctuary
-# group.arcane_sanctuary.help = The fog in the Arcane Sanctuary (act 2), set apart from the caves': it is not outdoors, so it takes the caves' fog until "Its own fog" is ticked. Whether there is fog under its own sky at all is on the Sky tab (Arcane Sanctuary: fog fades into its sky).
-# fog.arcane_own.label = Arcane Sanctuary: its own fog
-# fog.arcane_own.tip = The fog in the Arcane Sanctuary set on its own, with the values below; the caves keep theirs. Live. Off: it takes the caves' start, end, strength and colour, as before.
-# fog.arcane_start.label = Arcane Sanctuary: fog start
-# fog.arcane_start.tip = Where the fog begins in the Arcane Sanctuary. World units (the hero is ~7.5 tall). Live.
-# fog.arcane_end.label = Arcane Sanctuary: full fog
-# fog.arcane_end.tip = Where the fog is complete in the Arcane Sanctuary. World units (the hero is ~7.5 tall). Live.
-# fog.arcane_strength.label = Arcane Sanctuary: fog strength
-# fog.arcane_strength.tip = How much the full fog covers there: 1 = the far platforms are gone in the fog, less = they show through. Live.
-# fog.arcane_curve.label = Arcane Sanctuary: fog curve
-# fog.arcane_curve.tip = How the fog grows from its start to full: 1 = evenly, more = it stays thin longer and thickens near the end, less = it thickens soon after the start. Live.
-# fog.arcane_color.label = Arcane Sanctuary: fog colour
-# fog.arcane_color.tip = The fog's colour in the Arcane Sanctuary. Empty (x) = the caves' colour (with the game's fog never black there). Live.
-# fog.arcane_color.empty = same as caves
-# fog.arcane_into_sky.label = Arcane Sanctuary: fog fades into the sky behind
-# fog.arcane_into_sky.tip = Under its own sky (Sky tab) the fog is the sky straight behind each point: the far platforms dissolve into the void. Off: they fade into the fog colour above instead. Live.
+group.arcane_sanctuary = Arcane Sanctuary
+group.arcane_sanctuary.help = Туман в Arcane Sanctuary (акт 2), заданий окремо від печер: це не відкрита місцевість, тож він бере туман печер, доки не стоїть галочка «Власний туман». Чи є туман під його власним небом узагалі - на вкладці Небо (Arcane Sanctuary: туман переходить у його небо).
+fog.arcane_own.label = Arcane Sanctuary: власний туман
+fog.arcane_own.tip = Туман в Arcane Sanctuary задається окремо, значеннями нижче; печери зберігають свої. Діє одразу. Вимк.: він бере початок, кінець, силу й колір печер, як раніше.
+fog.arcane_start.label = Arcane Sanctuary: початок туману
+fog.arcane_start.tip = Де починається туман в Arcane Sanctuary. Одиниці світу (герой ~7.5 заввишки). Діє одразу.
+fog.arcane_end.label = Arcane Sanctuary: повний туман
+fog.arcane_end.tip = Де туман повний в Arcane Sanctuary. Одиниці світу (герой ~7.5 заввишки). Діє одразу.
+fog.arcane_strength.label = Arcane Sanctuary: сила туману
+fog.arcane_strength.tip = Наскільки там покриває повний туман: 1 = далекі платформи зникають у тумані, менше = вони просвічують. Діє одразу.
+fog.arcane_curve.label = Arcane Sanctuary: крива туману
+fog.arcane_curve.tip = Як туман росте від початку до повного: 1 = рівномірно, більше = довше лишається тонким і густішає під кінець, менше = густішає незабаром після початку. Діє одразу.
+fog.arcane_color.label = Arcane Sanctuary: колір туману
+fog.arcane_color.tip = Колір туману в Arcane Sanctuary. Порожньо (x) = колір печер (з туманом гри там ніколи не чорний). Діє одразу.
+fog.arcane_color.empty = як у печерах
+fog.arcane_into_sky.label = Arcane Sanctuary: туман переходить у небо позаду
+fog.arcane_into_sky.tip = Під його власним небом (вкладка Небо) туман - це небо прямо позаду кожної точки: далекі платформи розчиняються в порожнечі. Вимк.: натомість вони тануть у кольорі туману вище. Діє одразу.
 render.game_height_fog.label = Власний висотний туман гри
 render.game_height_fog.tip = Він є лише в місті акту 2. З нашої камери його край - різка лінія через картинку з блідою завісою над нею (камера гри ніколи не бачить цього краю). Вимк.: vrcam ставить його на 0.
 render.game_depth_fog.label = Власний глибинний туман гри
@@ -1732,14 +1766,20 @@ sky.drift.label = Небо повільно обертається (хмари �
 sky.drift.tip = Намальоване небо повільно обертається навколо вас. Вимк.: воно стоїть нерухомо - зорі, намальовані в нічному небі, оберталися разом із хмарами.
 sky.cover_rims.label = Небо поверх темного обідка навколо дахів і дерев
 sky.cover_rims.tip = Гра малює все, що на тлі неба, на піксель більшим за його глибину, з краєм, змішаним із чорним, і небо там не малювалося: тонкий темний контур навколо кожного даху, верхівки дерева і дальньої будівлі, який режим «очі по черзі» до того ж зсував з них через кадр. З галочкою: небо лягає поверх цього пікселя, коли він темний (світлий край сяйва лишається); силуети стають на піксель тоншими. Лише від першої особи (F4). Без галочки: як раніше. Діє одразу. Встановлюйте DLL і D2R_DepthFog.fx разом. Від bearstonem/d2r-pcvr.
-# sky.dome_past_far.label = The game's sky: past the game's haze in the flat game
-# sky.dome_past_far.tip = The game's own passes read the depth only to the far end of its range (about 1060 units) and take what lies past it as the sky. In the flat game's views the dome, nearer than that on part of the screen, got the game's distance haze there and none past it: a darker disc in a light veil, its size changing with the radius. Ticked, outside VR first person the dome is laid at least as far as that range's end at the screen's farthest corner, so all of it is past the haze - one sky; a larger radius stays as set. VR first person keeps the radius as set. Live.
-# sky.dome_true_colour.label = The game's sky: our sky's colours
-# sky.dome_true_colour.tip = The game draws our painted sky in its own scene, through its tone map and the area's colour grading - darker than our effect's sky, which is drawn in the picture's own colours. Ticked, our effect measures what the game shows of the dome against the painted sky it was made from and brings the dome to it, every area by its own numbers. A multiply in the effect's pass, which runs anyway for the dome's horizon. With "Sky follows the game's day and night" the dome follows the game's time of day as our sky does. Off: as the game shows it. Live.
-# sky.dome_in_game_colour.label = The game's sky: its colours drawn by the game
-# sky.dome_in_game_colour.tip = Our effect recoloured the game-drawn sky after the game had drawn the trees, the palisade and the roofs over it: their edges, blended into the sky as the game drew it, kept its old colour - a light outline round every branch at night. Ticked, the game draws the sky from a picture of ours instead, made from its own with the night picture, the day and night dimming, the brightness of each period of the day and the measured colours in it - every edge blends into the right sky. Without ReShade only (our own effects). Counts from the game's next start; unticked live, the sky goes back to the game's own colours at once and our effect recolours it as before.
+sky.dome_past_far.label = Небо гри: за серпанком гри в пласкій грі
+sky.dome_past_far.tip = Власні проходи гри читають глибину лише до дальнього кінця свого діапазону (близько 1060 одиниць) і вважають те, що лежить далі, небом. У виглядах пласкої гри купол, ближчий за це на частині екрана, отримував там серпанок відстані гри, а далі - ні: темніший диск у світлій пелені, розмір якого змінювався з радіусом. З галочкою поза VR від першої особи купол кладеться щонайменше так далеко, як кінець цього діапазону в найдальшому куті екрана, тож увесь він за серпанком - одне небо; більший радіус лишається як задано. VR від першої особи зберігає радіус як задано. Діє одразу.
+sky.dome_true_colour.label = Небо гри: кольори нашого неба
+sky.dome_true_colour.tip = Гра малює наше намальоване небо у власній сцені, крізь свій тональний мапінг і кольорокорекцію області - темніше за небо нашого ефекту, яке малюється у власних кольорах зображення. З галочкою наш ефект вимірює, що гра показує з купола, порівняно з намальованим небом, з якого його зроблено, і доводить купол до нього, кожну область за її власними числами. Множення в проході ефекту, який і так працює для горизонту купола. З «Небо слідує за днем і ніччю гри» купол іде за порою доби гри, як і наше небо. Вимк.: як показує гра. Діє одразу.
+sky.dome_gain_once.label = Небо гри: його кольори виміряні один раз
+sky.dome_gain_once.tip = З «його кольори малює гра»: вимір неба гри порівняно з нашим робиться один раз для кожної області й пори доби і зберігається в d2r_vr_dome_gain.txt поруч із налаштуваннями (видаліть його, щоб виміряти знову). Після цього небо запікається з цих чисел лише тоді, коли змінюється світло, пора доби чи повзунок - під час гри нічого не вимірюється й не запікається знову. Діє одразу. Вимк.: вимірюється весь час, як раніше.
+sky.dome_in_game_colour.label = Небо гри: його кольори малює гра
+sky.dome_in_game_colour.tip = Наш ефект перефарбовував намальоване грою небо після того, як гра намалювала поверх нього дерева, частокіл і дахи: їхні краї, змішані з небом так, як гра його малювала, зберігали старий колір - світлий контур навколо кожної гілки вночі. З галочкою гра натомість малює небо з нашого зображення, зробленого з її власного з нічним зображенням, затемненням дня й ночі, яскравістю кожної пори доби й виміряними кольорами в ньому - кожен край змішується з правильним небом. Лише без ReShade (наші власні ефекти). Діє з наступного запуску гри; зняття галочки діє одразу, небо одразу повертається до власних кольорів гри, і наш ефект перефарбовує його, як раніше.
 sky.dome_fog_horizon.label = Небо гри: його горизонт у туман
 sky.dome_fog_horizon.tip = Нижня частина неба, яке малює гра, тоне в кольорі туману акту, як це робило наше власне небо: затуманена земля зустрічається з небом без різкого краю, і кольори там, де вони зустрічаються, збігаються. Лише поки малюється туман. Вимк.: небо, як його малює гра. Діє одразу.
+sky.dome_fog_baked.label = Небо гри: його нижня частина в кольорі туману
+sky.dome_fog_baked.tip = З туманом гри нижня частина неба переходить у власний колір туману в самому зображенні неба, як нижня частина нашого старого неба йде в туман: дерева й кущі на тлі горизонту стоять на кольорі туману, без світлої облямівки горизонту зображення навколо них. Горизонт неба в туман вище тим часом не діє. Вимк.: зображення як є. Діє одразу.
+sky.dome_fog_baked_strength.label = Небо гри: скільки кольору туману
+sky.dome_fog_baked_strength.tip = 1: горизонт повністю кольору туману, переходить до зображення до 11 градусів; менше: крізь нього видно частину зображення. Діє одразу.
 sky.game_sky_closed.label = Небо гри: ціла сфера, знизу один колір
 sky.game_sky_closed.tip = Небо, яке малює гра, закінчувалося на 12 градусів нижче горизонту: за краєм скелі його обідок стояв різкою лінією з дірою під ним, крізь яку видно порожнечу й туман. З галочкою воно замикається в цілу сферу, а його нижня половина - одного кольору: власного кольору неба на горизонті (коли малюється туман - кольору туману: вони зустрічаються в одному кольорі). У кожному акті, у VR і в пласкому режимі. Ця програма одразу створює моделі купола заново; гра бере їх під час наступного запуску. Вимк.: відкритий купол, як раніше.
 sky.game_skybox.label = Arreat Summit: купол неба далеко
@@ -1767,18 +1807,38 @@ sky.light_day.label = Світло гри, яке є повним днем
 sky.light_day.tip = Світло гри йде від 0 до 255 (журнал vrcam записує його, коли воно змінюється). Від цього значення і вище: повний день.
 sky.light_night.label = Світло гри, яке є повною ніччю
 sky.light_night.tip = Від цього значення і нижче: повна ніч. Між ними небо переходить від одного до іншого.
-# sky.bright_dawn.label = Sky brightness: end of night, dawn
-# sky.bright_dawn.tip = The sky's brightness as dawn begins - the game's dome and our effect's sky alike, times what the day and night above gives (1: as it is). It eases to the next period's by the game's own light. The game names its periods (debug_mode's time key shows them). Live.
-# sky.bright_day_start.label = Sky brightness: end of dawn, start of day
-# sky.bright_day_start.tip = The sky's brightness as the day begins - the game's dome and our effect's sky alike, times what the day and night above gives (1: as it is). It eases to the next period's by the game's own light. The game names its periods (debug_mode's time key shows them). Live.
-# sky.bright_day.label = Sky brightness: day
-# sky.bright_day.tip = The sky's brightness through the day, until the light falls toward dusk - the game's dome and our effect's sky alike, times what the day and night above gives (1: as it is). It eases to the next period's by the game's own light. The game names its periods (debug_mode's time key shows them). Live.
-# sky.bright_dusk.label = Sky brightness: end of day, dusk
-# sky.bright_dusk.tip = The sky's brightness as dusk begins - the game's dome and our effect's sky alike, times what the day and night above gives (1: as it is). It eases to the next period's by the game's own light. The game names its periods (debug_mode's time key shows them). Live.
-# sky.bright_night_start.label = Sky brightness: end of dusk, start of night
-# sky.bright_night_start.tip = The sky's brightness as the night begins - the game's dome and our effect's sky alike, times what the day and night above gives (1: as it is). It eases to the next period's by the game's own light. The game names its periods (debug_mode's time key shows them). Live.
-# sky.bright_night.label = Sky brightness: night
-# sky.bright_night.tip = The sky's brightness through the night, until the light rises toward dawn - the game's dome and our effect's sky alike, times what the day and night above gives (1: as it is). It eases to the next period's by the game's own light. The game names its periods (debug_mode's time key shows them). Live.
+sky.bright_dawn.label = Яскравість неба: кінець ночі, світанок
+sky.bright_dawn.tip = Яскравість неба, коли починається світанок - і купола гри, і неба нашого ефекту, помножена на те, що дає день і ніч вище (1: як є). Вона плавно переходить до значення наступної пори за власним світлом гри. Гра називає свої пори (їх показує клавіша часу debug_mode). Діє одразу.
+sky.bright_day_start.label = Яскравість неба: кінець світанку, початок дня
+sky.bright_day_start.tip = Яскравість неба, коли починається день - і купола гри, і неба нашого ефекту, помножена на те, що дає день і ніч вище (1: як є). Вона плавно переходить до значення наступної пори за власним світлом гри. Гра називає свої пори (їх показує клавіша часу debug_mode). Діє одразу.
+sky.bright_day.label = Яскравість неба: день
+sky.bright_day.tip = Яскравість неба протягом дня, доки світло не почне спадати до сутінків - і купола гри, і неба нашого ефекту, помножена на те, що дає день і ніч вище (1: як є). Вона плавно переходить до значення наступної пори за власним світлом гри. Гра називає свої пори (їх показує клавіша часу debug_mode). Діє одразу.
+sky.bright_dusk.label = Яскравість неба: кінець дня, сутінки
+sky.bright_dusk.tip = Яскравість неба, коли починаються сутінки - і купола гри, і неба нашого ефекту, помножена на те, що дає день і ніч вище (1: як є). Вона плавно переходить до значення наступної пори за власним світлом гри. Гра називає свої пори (їх показує клавіша часу debug_mode). Діє одразу.
+sky.bright_night_start.label = Яскравість неба: кінець сутінків, початок ночі
+sky.bright_night_start.tip = Яскравість неба, коли починається ніч - і купола гри, і неба нашого ефекту, помножена на те, що дає день і ніч вище (1: як є). Вона плавно переходить до значення наступної пори за власним світлом гри. Гра називає свої пори (їх показує клавіша часу debug_mode). Діє одразу.
+sky.bright_night.label = Яскравість неба: ніч
+sky.bright_night.tip = Яскравість неба протягом ночі, доки світло не почне рости до світанку - і купола гри, і неба нашого ефекту, помножена на те, що дає день і ніч вище (1: як є). Вона плавно переходить до значення наступної пори за власним світлом гри. Гра називає свої пори (їх показує клавіша часу debug_mode). Діє одразу.
+
+# --- The sky's pictures ---
+group.the_sky_s_pictures = Зображення неба
+group.the_sky_s_pictures.help = Небо гри - це власні зображення акту, запечені один раз - денне, нічне й одне для світанку та сутінків (акт 4, без ночі, - одне) - кожне зі своєю яскравістю, вибране за порою доби гри. Нічого не перефарбовується й не вимірюється.
+sky.three_bright_day.label = Яскравість неба: денне зображення
+sky.three_bright_day.tip = Яскравість денного зображення (1: як є). Запікається знову один раз, коли повзунок рухається. Діє одразу.
+sky.three_bright_night.label = Яскравість неба: нічне зображення
+sky.three_bright_night.tip = Яскравість нічного зображення (1: як є). Акт без нічного зображення показує денне з цією яскравістю. Діє одразу.
+sky.three_bright_dawn_dusk.label = Яскравість неба: зображення світанку й сутінків
+sky.three_bright_dawn_dusk.tip = Яскравість зображення світанку й сутінків - поки що денне зображення, доки в актів не з'являться власні (1: як є). Діє одразу.
+sky.three_bright_act4.label = Яскравість неба: акт 4
+sky.three_bright_act4.tip = Акт 4 (Пекло) не має ночі: одне небо, його денне зображення, з цією яскравістю незалежно від пори доби. Діє одразу.
+sky.sky_crossfade.label = Небо: плавний перехід між зображеннями
+sky.sky_crossfade.tip = Без галочки: коли пора доби гри змінюється, небо одразу стає зображенням наступної пори - запікається один раз, нічого між ними. З галочкою: кожне зображення переходить у наступне за власним світлом гри протягом світанків і сутінків - небо тоді запікається знову на кожному кроці світла (прохід по зображенню неба, кілька десятків разів за світанок чи сутінки), ніколи між ними. Діє одразу.
+
+# --- Sky tinting (parked) ---
+group.sky_tinting_parked = Тонування неба (відкладено)
+group.sky_tinting_parked.help = Наше старе перефарбовування неба гри, виміряне з того, що показує гра. Відкладено, доки воно не зможе тонувати без світлого контуру навколо дерев; тим часом небо - це запечені зображення.
+sky.dome_tint.label = Небо гри: тоноване (відкладено)
+sky.dome_tint.tip = З галочкою: небо гри перефарбовується, як раніше - його кольори вимірюються порівняно з нашими («кольори нашого неба», «виміряні один раз»), день і ніч - повзунками пір доби вище - замість запечених зображень. Вимір компілюється в ефект лише поки стоять галочки на цьому й на «кольори нашого неба» (ефект збирається знову). Воно лишало світлий контур навколо кожного дерева; ми повернемося до нього, коли воно зможе тонувати без нього. Без галочки: запечені зображення, нічого не вимірюється. Діє одразу.
 
 # --- Act 1 (night, storm) ---
 group.act_1_night_storm = Акт 1 (ніч, буря)
@@ -1816,10 +1876,8 @@ tab.ceiling = Стеля
 
 # --- Cave ceiling ---
 group.cave_ceiling = Стеля печери
-# English changed: A ceiling over the black void in caves and dungeons, first person only: who draws it, the game's own ceiling's parts (its rim, the barracks' beams, the cathedral's and the Worldstone's domes) and each room's height below.
-group.cave_ceiling.help = Кам'яне склепіння, намальоване над чорною порожнечею в печерах, на справжній глибині в обох очах; лише від першої особи. Задайте розмір плитки і рельєф, дальню стіну і підлогу внизу, що закривають порожнечу, контраст каменю, деталі й вологий блиск, а також як його освітлюють смолоскипи і монстри з вогнем.
-# English changed: A ceiling over the black void in caves and dungeons, first person only - the game's own (its lit stone) or our effect's vault, as "Who draws the ceiling" says; each room's height below.
-ceiling.enabled.tip#2 = Кам'яне склепіння над чорною порожнечею в печерах, на справжній глибині в обох очах. Лише від першої особи; поки що печери, крипти, казарми, катакомби і собор акту 1 та каналізація і палац акту 2.
+group.cave_ceiling.help = Стеля над чорною порожнечею в печерах і підземеллях, лише від першої особи: хто її малює, частини власної стелі гри (її облямівка, балки казарм, куполи собору й Worldstone) і висота кожної кімнати нижче.
+ceiling.enabled.tip#2 = Стеля над чорною порожнечею в печерах і підземеллях, лише від першої особи - власна стеля гри (її освітлений камінь) або склепіння нашого ефекту, як каже «Хто малює стелю»; висота кожної кімнати нижче.
 ceiling.game_ceiling_wall.label = Стеля гри: загнута вниз у стіну на краю
 ceiling.game_ceiling_wall.tip = Кільце з того самого освітленого каменю навколо вас там, де закінчується стеля гри (приблизно за 215 одиниць при розмірі плитки 10), від стелі донизу під підлогу (на глибину підлоги, задану нижче): чорну порожнечу за краєм стелі - смугу між нею і дальньою підлогою, освітлену туманом позаду вогнів, - закриває камінь, як її закривала дальня стіна нашого ефекту. Вимк.: пласка стеля. Діє одразу.
 ceiling.game_ceiling_beams.label = Стеля гри: власні дерев'яні балки казарм
@@ -1836,10 +1894,8 @@ ceiling.game_ceiling_worldstone_dome_wider_m.label = Купол Worldstone: ши
 ceiling.game_ceiling_worldstone_dome_wider_m.tip = Метри, додані до поперечника купола Worldstone (по половині з усіх боків), понад виміряний із деталей гри - це його власний розмір, розмір купола собору лишається. Його висота йде слідом, тож він і далі проходить над кристалом; якщо він ширший за колони, його край опускається за ними на пласку стелю, і колони закінчуються під вигином. Метри такі, як у камери (висота очей героя відносно вашої). VR F4. Діє одразу.
 ceiling.height_from_walls.label = Висота стелі за стінами кімнати
 ceiling.height_from_walls.tip = Кімната, власну висоту якої нижче не задано (0), має стелю на власних стінах: там, де закінчуються стіни, з яких гра будує цю кімнату (середнє верхів її деталей стін, колон і скель, виміряне з файлів вашої гри). Власна висота кімнати, щойно ви її задали, завжди переважає. І склепіння нашого ефекту, і стеля гри; скеля гри, що висить нижче, спирає свою найнижчу точку на стіни. Вимк. або кімната без стін такого роду: 18 над підлогою там, де висоту не задано. Журнал пише висоту кожної кімнати і звідки вона береться. Діє з наступною зміною локації.
-# English changed: The rim's wall: how far below the floor (0 = none)
-ceiling.floor_depth.label = Підлога під підлогою (0 = немає)
-# English changed: How far under the hero's floor the game's ceiling's rim wall reaches, world units: looking down past the drawn floor's edge shows that stone, not the void.
-ceiling.floor_depth.tip = Камінь на такій глибині під підлогою героя, одиниці світу: погляд униз за край намальованої підлоги показує його, а не порожнечу.
+ceiling.floor_depth.label = Стіна облямівки: наскільки нижче підлоги (0 = немає)
+ceiling.floor_depth.tip = Як глибоко під підлогу героя сягає стіна облямівки стелі гри, в одиницях світу: погляд униз за край намальованої підлоги показує цей камінь, а не порожнечу.
 
 # --- Light in caves ---
 group.light_in_caves = Світло в печерах
@@ -1859,113 +1915,92 @@ cave_light.ambient_min.tip = Хоч би скільки мало підземе�
 
 # --- Ceiling: act 1 caves (levels 8-16) ---
 group.ceiling_act_1_caves_levels_8_16 = Стеля: печери акту 1 (рівні 8-16)
-# English changed: The ceiling's height over this room's floor - 0: on its own walls' top ("Ceiling height from the room's walls"), else 18. Levels: Den of Evil (8), Cave Level 1 (9), Underground Passage Level 1 (10), Hole Level 1 (11), Pit Level 1 (12), Cave Level 2 (13), Underground Passage Level 2 (14), Hole Level 2 (15), Pit Level 2 (16).
-group.ceiling_act_1_caves_levels_8_16.help = Стеля над печерами акту 1: її висота над підлогою, яскравість, як далеко сягає на неї світло героя, рельєф, а також кам'яна картинка з її розміром, контрастом, деталями і вологим блиском. Рівні: Den of Evil (8), Cave Level 1 (9), Underground Passage Level 1 (10), Hole Level 1 (11), Pit Level 1 (12), Cave Level 2 (13), Underground Passage Level 2 (14), Hole Level 2 (15), Pit Level 2 (16).
+group.ceiling_act_1_caves_levels_8_16.help = Висота стелі над підлогою цієї кімнати - 0: по верху її власних стін («Висота стелі за стінами кімнати»), інакше 18. Рівні: Den of Evil (8), Cave Level 1 (9), Underground Passage Level 1 (10), Hole Level 1 (11), Pit Level 1 (12), Cave Level 2 (13), Underground Passage Level 2 (14), Hole Level 2 (15), Pit Level 2 (16).
 ceiling.height_act1_caves.label = Висота над підлогою (0 = за стінами)
 ceiling.height_act1_caves.tip = Одиниці світу (зріст героя ~7.5). Якщо нижче за верхи стін - вони пробивають стелю. 0: на верху стін кімнати, виміряному з файлів вашої гри (з «Висота стелі за стінами кімнати»), інакше 18.
 
 # --- Ceiling: act 1 crypts and tower (levels 18-25, 133) ---
 group.ceiling_act_1_crypts_and_tower_levels_18_25_133 = Стеля: крипти й вежа акту 1 (рівні 18-25, 133)
-# English changed: The ceiling's height over this room's floor - 0: on its own walls' top ("Ceiling height from the room's walls"), else 18. Levels: Crypt (18), Mausoleum (19), Forgotten Tower (20), Tower Cellar Level 1 (21), Tower Cellar Level 2 (22), Tower Cellar Level 3 (23), Tower Cellar Level 4 (24), Tower Cellar Level 5 (25), Pandemonium Run 1 (133).
-group.ceiling_act_1_crypts_and_tower_levels_18_25_133.help = Стеля над криптами акту 1: її висота, яскравість, досяжність світла героя, наскільки низько звисає нерівна кладка, і її картинка. Рівні: Crypt (18), Mausoleum (19), Forgotten Tower (20), Tower Cellar Level 1 (21), Tower Cellar Level 2 (22), Tower Cellar Level 3 (23), Tower Cellar Level 4 (24), Tower Cellar Level 5 (25), Pandemonium Run 1 (133).
+group.ceiling_act_1_crypts_and_tower_levels_18_25_133.help = Висота стелі над підлогою цієї кімнати - 0: по верху її власних стін («Висота стелі за стінами кімнати»), інакше 18. Рівні: Crypt (18), Mausoleum (19), Forgotten Tower (20), Tower Cellar Level 1 (21), Tower Cellar Level 2 (22), Tower Cellar Level 3 (23), Tower Cellar Level 4 (24), Tower Cellar Level 5 (25), Pandemonium Run 1 (133).
 
 # --- Ceiling: act 1 barracks and jail (levels 28-31) ---
 group.ceiling_act_1_barracks_and_jail_levels_28_31 = Стеля: казарми й в'язниця акту 1 (рівні 28-31)
-# English changed: The ceiling's height over this room's floor - 0: on its own walls' top ("Ceiling height from the room's walls"), else 18. Levels: Barracks (28), Jail Level 1 (29), Jail Level 2 (30), Jail Level 3 (31).
-group.ceiling_act_1_barracks_and_jail_levels_28_31.help = Стеля над казармами акту 1: її висота, яскравість, досяжність світла героя, рельєф і картинка. Рівні: Barracks (28), Jail Level 1 (29), Jail Level 2 (30), Jail Level 3 (31).
+group.ceiling_act_1_barracks_and_jail_levels_28_31.help = Висота стелі над підлогою цієї кімнати - 0: по верху її власних стін («Висота стелі за стінами кімнати»), інакше 18. Рівні: Barracks (28), Jail Level 1 (29), Jail Level 2 (30), Jail Level 3 (31).
 
 # --- Ceiling: act 1 barracks' courtyard (level 28) ---
 group.ceiling_act_1_barracks_courtyard_level_28 = Стеля: двір казарм акту 1 (рівень 28)
-# English changed: The ceiling's height over this room's floor - 0: on its own walls' top ("Ceiling height from the room's walls"), else 18. Levels: Barracks (28).
-group.ceiling_act_1_barracks_courtyard_level_28.help = Стеля гри над двором казарм акту 1 (його власна бруківка) у VR F4, наше склепіння в пласкому F3; її висота над підлогою. Рівні: Barracks (28).
+group.ceiling_act_1_barracks_courtyard_level_28.help = Висота стелі над підлогою цієї кімнати - 0: по верху її власних стін («Висота стелі за стінами кімнати»), інакше 18. Рівні: Barracks (28).
 ceiling.height_act1_court_to_barracks.tip = Одиниці світу (зріст героя ~7.5). 0: на верху стін кімнати, виміряному з файлів вашої гри (з «Висота стелі за стінами кімнати»), інакше 18.
 
 # --- Ceiling: act 1 cathedral (level 33) ---
 group.ceiling_act_1_cathedral_level_33 = Стеля: собор акту 1 (рівень 33)
-# English changed: The ceiling's height over this room's floor - 0: on its own walls' top ("Ceiling height from the room's walls"), else 18. Levels: Cathedral (33).
-group.ceiling_act_1_cathedral_level_33.help = Стеля над собором акту 1. Окрім висоти, яскравості й картинки, купол дає стелі піднятися сферою над тим, що стоїть вище (балдахін вівтаря), замість того щоб обрізати його; задайте, з якої висоти, наскільки широко і наскільки високо він іде. Рівні: Cathedral (33).
+group.ceiling_act_1_cathedral_level_33.help = Висота стелі над підлогою цієї кімнати - 0: по верху її власних стін («Висота стелі за стінами кімнати»), інакше 18. Рівні: Cathedral (33).
 
 # --- Ceiling: act 1 catacombs (levels 34-37) ---
 group.ceiling_act_1_catacombs_levels_34_37 = Стеля: катакомби акту 1 (рівні 34-37)
-# English changed: The ceiling's height over this room's floor - 0: on its own walls' top ("Ceiling height from the room's walls"), else 18. Levels: Catacombs Level 1 (34), Catacombs Level 2 (35), Catacombs Level 3 (36), Catacombs Level 4 (37).
-group.ceiling_act_1_catacombs_levels_34_37.help = Стеля над катакомбами акту 1: її висота (те, що гра малює вище, обрізається), яскравість, досяжність світла героя, рельєф і картинка. Рівні: Catacombs Level 1 (34), Catacombs Level 2 (35), Catacombs Level 3 (36), Catacombs Level 4 (37).
+group.ceiling_act_1_catacombs_levels_34_37.help = Висота стелі над підлогою цієї кімнати - 0: по верху її власних стін («Висота стелі за стінами кімнати»), інакше 18. Рівні: Catacombs Level 1 (34), Catacombs Level 2 (35), Catacombs Level 3 (36), Catacombs Level 4 (37).
 ceiling.height_act1_catacombs.tip = Одиниці світу (зріст героя ~7.5). Те, що гра малює вище, стеля обрізає.
 
 # --- Ceiling: act 2 sewers (levels 47-49, 65) ---
 group.ceiling_act_2_sewers_levels_47_49_65 = Стеля: каналізація акту 2 (рівні 47-49, 65)
-# English changed: The ceiling's height over this room's floor - 0: on its own walls' top ("Ceiling height from the room's walls"), else 18. Levels: Sewers Level 1 (47), Sewers Level 2 (48), Sewers Level 3 (49), Ancient Tunnels (65).
-group.ceiling_act_2_sewers_levels_47_49_65.help = Стеля над каналізацією акту 2: її висота, яскравість, досяжність світла героя, рельєф і картинка. Рівні: Sewers Level 1 (47), Sewers Level 2 (48), Sewers Level 3 (49), Ancient Tunnels (65).
+group.ceiling_act_2_sewers_levels_47_49_65.help = Висота стелі над підлогою цієї кімнати - 0: по верху її власних стін («Висота стелі за стінами кімнати»), інакше 18. Рівні: Sewers Level 1 (47), Sewers Level 2 (48), Sewers Level 3 (49), Ancient Tunnels (65).
 
 # --- Ceiling: act 2 harem (level 50) ---
 group.ceiling_act_2_harem_level_50 = Стеля: гарем акту 2 (рівень 50)
-# English changed: The ceiling's height over this room's floor - 0: on its own walls' top ("Ceiling height from the room's walls"), else 18. Levels: Harem Level 1 (50).
-group.ceiling_act_2_harem_level_50.help = Стеля над гаремом акту 2: її висота, яскравість, досяжність світла героя, рельєф і картинка. Рівні: Harem Level 1 (50).
+group.ceiling_act_2_harem_level_50.help = Висота стелі над підлогою цієї кімнати - 0: по верху її власних стін («Висота стелі за стінами кімнати»), інакше 18. Рівні: Harem Level 1 (50).
 
 # --- Ceiling: act 2 corrupt harem (level 51) ---
 group.ceiling_act_2_corrupt_harem_level_51 = Стеля: осквернений гарем акту 2 (рівень 51)
-# English changed: The ceiling's height over this room's floor - 0: on its own walls' top ("Ceiling height from the room's walls"), else 18. Levels: Harem Level 2 (51).
-group.ceiling_act_2_corrupt_harem_level_51.help = Стеля над оскверненим гаремом акту 2: стеля гри з каменю його власної підлоги у VR F4, наше склепіння в пласкому F3; її висота над підлогою. Рівні: Harem Level 2 (51).
+group.ceiling_act_2_corrupt_harem_level_51.help = Висота стелі над підлогою цієї кімнати - 0: по верху її власних стін («Висота стелі за стінами кімнати»), інакше 18. Рівні: Harem Level 2 (51).
 
 # --- Ceiling: act 2 palace cellar (levels 52-54) ---
 group.ceiling_act_2_palace_cellar_levels_52_54 = Стеля: підвал палацу акту 2 (рівні 52-54)
-# English changed: The ceiling's height over this room's floor - 0: on its own walls' top ("Ceiling height from the room's walls"), else 18. Levels: Palace Cellar Level 1 (52), Palace Cellar Level 2 (53), Palace Cellar Level 3 (54).
-group.ceiling_act_2_palace_cellar_levels_52_54.help = Стеля над підвалом палацу акту 2: стеля гри з гладкого темного каменю (з катакомб, не плитки підлоги) у VR F4, наше склепіння в пласкому F3; її висота над підлогою. Рівні: Palace Cellar Level 1 (52), Palace Cellar Level 2 (53), Palace Cellar Level 3 (54).
+group.ceiling_act_2_palace_cellar_levels_52_54.help = Висота стелі над підлогою цієї кімнати - 0: по верху її власних стін («Висота стелі за стінами кімнати»), інакше 18. Рівні: Palace Cellar Level 1 (52), Palace Cellar Level 2 (53), Palace Cellar Level 3 (54).
 
 # --- Ceiling: act 2 tombs (levels 55-61, 66-73) ---
 group.ceiling_act_2_tombs_levels_55_61_66_73 = Стеля: гробниці акту 2 (рівні 55-61, 66-73)
-# English changed: The ceiling's height over this room's floor - 0: on its own walls' top ("Ceiling height from the room's walls"), else 18. Levels: Stony Tomb Level 1 (55), Halls of the Dead Level 1 (56), Halls of the Dead Level 2 (57), Claw Viper Temple Level 1 (58), Stony Tomb Level 2 (59), Halls of the Dead Level 3 (60), Claw Viper Temple Level 2 (61), Tal Rasha's Tomb (66), Tal Rasha's Tomb (67), Tal Rasha's Tomb (68), Tal Rasha's Tomb (69), Tal Rasha's Tomb (70), Tal Rasha's Tomb (71), Tal Rasha's Tomb (72), Duriel's Lair (73).
-group.ceiling_act_2_tombs_levels_55_61_66_73.help = Стеля гри над гробницями акту 2 (гладкий темний камінь, з катакомб) у VR F4, наше склепіння в пласкому F3; її висота над підлогою. Рівні: Stony Tomb Level 1 (55), Halls of the Dead Level 1 (56), Halls of the Dead Level 2 (57), Claw Viper Temple Level 1 (58), Stony Tomb Level 2 (59), Halls of the Dead Level 3 (60), Claw Viper Temple Level 2 (61), Tal Rasha's Tomb (66), Tal Rasha's Tomb (67), Tal Rasha's Tomb (68), Tal Rasha's Tomb (69), Tal Rasha's Tomb (70), Tal Rasha's Tomb (71), Tal Rasha's Tomb (72), Duriel's Lair (73).
+group.ceiling_act_2_tombs_levels_55_61_66_73.help = Висота стелі над підлогою цієї кімнати - 0: по верху її власних стін («Висота стелі за стінами кімнати»), інакше 18. Рівні: Stony Tomb Level 1 (55), Halls of the Dead Level 1 (56), Halls of the Dead Level 2 (57), Claw Viper Temple Level 1 (58), Stony Tomb Level 2 (59), Halls of the Dead Level 3 (60), Claw Viper Temple Level 2 (61), Tal Rasha's Tomb (66), Tal Rasha's Tomb (67), Tal Rasha's Tomb (68), Tal Rasha's Tomb (69), Tal Rasha's Tomb (70), Tal Rasha's Tomb (71), Tal Rasha's Tomb (72), Duriel's Lair (73).
 
 # --- Ceiling: act 2 maggot lair (levels 62-64) ---
 group.ceiling_act_2_maggot_lair_levels_62_64 = Стеля: лігво личинок акту 2 (рівні 62-64)
-# English changed: The ceiling's height over this room's floor - 0: on its own walls' top ("Ceiling height from the room's walls"), else 18. Levels: Maggot Lair Level 1 (62), Maggot Lair Level 2 (63), Maggot Lair Level 3 (64).
-group.ceiling_act_2_maggot_lair_levels_62_64.help = Стеля гри над лігвом личинок акту 2 (її власна печерна скеля; наш ефект тут склепіння не малює): її висота над підлогою. Рівні: Maggot Lair Level 1 (62), Maggot Lair Level 2 (63), Maggot Lair Level 3 (64).
+group.ceiling_act_2_maggot_lair_levels_62_64.help = Висота стелі над підлогою цієї кімнати - 0: по верху її власних стін («Висота стелі за стінами кімнати»), інакше 18. Рівні: Maggot Lair Level 1 (62), Maggot Lair Level 2 (63), Maggot Lair Level 3 (64).
 ceiling.height_act2_maggot.tip = Одиниці світу (зріст героя ~7.5): де тут висить скельна стеля гри; її скеля висить трохи нижче.
 
 # --- Ceiling: act 3 spider caves (levels 84-85) ---
 group.ceiling_act_3_spider_caves_levels_84_85 = Стеля: павучі печери акту 3 (рівні 84-85)
-# English changed: The ceiling's height over this room's floor - 0: on its own walls' top ("Ceiling height from the room's walls"), else 18. Levels: Spider Cave (84), Spider Cavern (85).
-group.ceiling_act_3_spider_caves_levels_84_85.help = Стеля гри над павучими печерами акту 3 (її власна печерна скеля; наш ефект тут склепіння не малює): її висота над підлогою. Рівні: Spider Cave (84), Spider Cavern (85).
+group.ceiling_act_3_spider_caves_levels_84_85.help = Висота стелі над підлогою цієї кімнати - 0: по верху її власних стін («Висота стелі за стінами кімнати»), інакше 18. Рівні: Spider Cave (84), Spider Cavern (85).
 
 # --- Ceiling: act 3 jungle dungeons (levels 86-91) ---
 group.ceiling_act_3_jungle_dungeons_levels_86_91 = Стеля: підземелля джунглів акту 3 (рівні 86-91)
-# English changed: The ceiling's height over this room's floor - 0: on its own walls' top ("Ceiling height from the room's walls"), else 18. Levels: Swampy Pit Level 1 (86), Swampy Pit Level 2 (87), Flayer Dungeon Level 1 (88), Flayer Dungeon Level 2 (89), Swampy Pit Level 3 (90), Flayer Dungeon Level 3 (91).
-group.ceiling_act_3_jungle_dungeons_levels_86_91.help = Стеля гри над підземеллями джунглів акту 3 (її власна печерна скеля; наш ефект тут склепіння не малює): її висота над підлогою. Рівні: Swampy Pit Level 1 (86), Swampy Pit Level 2 (87), Flayer Dungeon Level 1 (88), Flayer Dungeon Level 2 (89), Swampy Pit Level 3 (90), Flayer Dungeon Level 3 (91).
+group.ceiling_act_3_jungle_dungeons_levels_86_91.help = Висота стелі над підлогою цієї кімнати - 0: по верху її власних стін («Висота стелі за стінами кімнати»), інакше 18. Рівні: Swampy Pit Level 1 (86), Swampy Pit Level 2 (87), Flayer Dungeon Level 1 (88), Flayer Dungeon Level 2 (89), Swampy Pit Level 3 (90), Flayer Dungeon Level 3 (91).
 
 # --- Ceiling: act 3 sewers (level 93) ---
 group.ceiling_act_3_sewers_level_93 = Стеля: каналізація акту 3 (рівень 93)
-# English changed: The ceiling's height over this room's floor - 0: on its own walls' top ("Ceiling height from the room's walls"), else 18. Levels: Sewers Level 2 (93).
-group.ceiling_act_3_sewers_level_93.help = Стеля гри над каналізацією акту 3 (її власна кам'яниста підлога, покладена пласко) у VR F4, наше склепіння в пласкому F3; її висота над підлогою. Рівні: Sewers Level 2 (93).
+group.ceiling_act_3_sewers_level_93.help = Висота стелі над підлогою цієї кімнати - 0: по верху її власних стін («Висота стелі за стінами кімнати»), інакше 18. Рівні: Sewers Level 2 (93).
 
 # --- Ceiling: act 3 temples (levels 94-99) ---
 group.ceiling_act_3_temples_levels_94_99 = Стеля: храми акту 3 (рівні 94-99)
-# English changed: The ceiling's height over this room's floor - 0: on its own walls' top ("Ceiling height from the room's walls"), else 18. Levels: Ruined Temple (94), Disused Fane (95), Forgotten Reliquary (96), Forgotten Temple (97), Ruined Fane (98), Disused Reliquary (99).
-group.ceiling_act_3_temples_levels_94_99.help = Стеля гри над храмами акту 3 (їхній власний камінь) у VR F4, наше склепіння в пласкому F3; її висота над підлогою. Рівні: Ruined Temple (94), Disused Fane (95), Forgotten Reliquary (96), Forgotten Temple (97), Ruined Fane (98), Disused Reliquary (99).
+group.ceiling_act_3_temples_levels_94_99.help = Висота стелі над підлогою цієї кімнати - 0: по верху її власних стін («Висота стелі за стінами кімнати»), інакше 18. Рівні: Ruined Temple (94), Disused Fane (95), Forgotten Reliquary (96), Forgotten Temple (97), Ruined Fane (98), Disused Reliquary (99).
 
 # --- Ceiling: act 3 Durance of Hate (level 102) ---
 group.ceiling_act_3_durance_of_hate_level_102 = Стеля: Durance of Hate акту 3 (рівень 102)
-# English changed: The ceiling's height over this room's floor - 0: on its own walls' top ("Ceiling height from the room's walls"), else 18. Levels: Durance of Hate Level 3 (102).
-group.ceiling_act_3_durance_of_hate_level_102.help = Стеля гри над Durance of Hate акту 3 (її власний камінь) у VR F4, наше склепіння в пласкому F3; її висота над підлогою. Рівні: Durance of Hate Level 3 (102).
+group.ceiling_act_3_durance_of_hate_level_102.help = Висота стелі над підлогою цієї кімнати - 0: по верху її власних стін («Висота стелі за стінами кімнати»), інакше 18. Рівні: Durance of Hate Level 3 (102).
 
 # --- Ceiling: act 5 ice caves (levels 113-116, 118-119) ---
 group.ceiling_act_5_ice_caves_levels_113_116_118_119 = Стеля: крижані печери акту 5 (рівні 113-116, 118-119)
-# English changed: The ceiling's height over this room's floor - 0: on its own walls' top ("Ceiling height from the room's walls"), else 18. Levels: Crystalized Cavern Level 1 (113), Cellar of Pity (114), Crystalized Cavern Level 2 (115), Echo Chamber (116), Glacial Caves Level 1 (118), Glacial Caves Level 2 (119).
-group.ceiling_act_5_ice_caves_levels_113_116_118_119.help = Стеля гри над крижаними печерами акту 5 (її власна печерна скеля; наш ефект тут склепіння не малює): її висота над підлогою. Рівні: Crystalized Cavern Level 1 (113), Cellar of Pity (114), Crystalized Cavern Level 2 (115), Echo Chamber (116), Glacial Caves Level 1 (118), Glacial Caves Level 2 (119).
+group.ceiling_act_5_ice_caves_levels_113_116_118_119.help = Висота стелі над підлогою цієї кімнати - 0: по верху її власних стін («Висота стелі за стінами кімнати»), інакше 18. Рівні: Crystalized Cavern Level 1 (113), Cellar of Pity (114), Crystalized Cavern Level 2 (115), Echo Chamber (116), Glacial Caves Level 1 (118), Glacial Caves Level 2 (119).
 
 # --- Ceiling: act 5 Nihlathak's halls (levels 122-124) ---
 group.ceiling_act_5_nihlathak_s_halls_levels_122_124 = Стеля: зали Nihlathak акту 5 (рівні 122-124)
-# English changed: The ceiling's height over this room's floor - 0: on its own walls' top ("Ceiling height from the room's walls"), else 18. Levels: Halls of Anguish (122), Halls of Death's Calling (123), Halls of Vaught (124).
-group.ceiling_act_5_nihlathak_s_halls_levels_122_124.help = Стеля гри над залами Nihlathak акту 5 (їхня власна печерна скеля) у VR F4, наше склепіння в пласкому F3; її висота над підлогою. Рівні: Halls of Anguish (122), Halls of Death's Calling (123), Halls of Vaught (124).
+group.ceiling_act_5_nihlathak_s_halls_levels_122_124.help = Висота стелі над підлогою цієї кімнати - 0: по верху її власних стін («Висота стелі за стінами кімнати»), інакше 18. Рівні: Halls of Anguish (122), Halls of Death's Calling (123), Halls of Vaught (124).
 
 # --- Ceiling: act 5 Worldstone Keep (levels 128-130) ---
 group.ceiling_act_5_worldstone_keep_levels_128_130 = Стеля: Worldstone Keep акту 5 (рівні 128-130)
-# English changed: The ceiling's height over this room's floor - 0: on its own walls' top ("Ceiling height from the room's walls"), else 18. Levels: The Worldstone Keep Level 1 (128), The Worldstone Keep Level 2 (129), The Worldstone Keep Level 3 (130).
-group.ceiling_act_5_worldstone_keep_levels_128_130.help = Стеля гри над Worldstone Keep акту 5 (його власна підлога) у VR F4, наше склепіння в пласкому F3; її висота над підлогою. Рівні: The Worldstone Keep Level 1 (128), The Worldstone Keep Level 2 (129), The Worldstone Keep Level 3 (130).
+group.ceiling_act_5_worldstone_keep_levels_128_130.help = Висота стелі над підлогою цієї кімнати - 0: по верху її власних стін («Висота стелі за стінами кімнати»), інакше 18. Рівні: The Worldstone Keep Level 1 (128), The Worldstone Keep Level 2 (129), The Worldstone Keep Level 3 (130).
 
 # --- Ceiling: act 5 throne of destruction (levels 128-132) ---
 group.ceiling_act_5_throne_of_destruction_levels_128_132 = Стеля: Throne of Destruction акту 5 (рівні 128-132)
-# English changed: The ceiling's height over this room's floor - 0: on its own walls' top ("Ceiling height from the room's walls"), else 18. Levels: The Worldstone Keep Level 1 (128), The Worldstone Keep Level 2 (129), The Worldstone Keep Level 3 (130), Throne of Destruction (131), The Worldstone Chamber (132).
-group.ceiling_act_5_throne_of_destruction_levels_128_132.help = Стеля гри над Throne of Destruction акту 5 (власна підлога Keep) у VR F4, наше склепіння в пласкому F3; її висота над підлогою. Рівні: The Worldstone Keep Level 1 (128), The Worldstone Keep Level 2 (129), The Worldstone Keep Level 3 (130), Throne of Destruction (131), The Worldstone Chamber (132).
+group.ceiling_act_5_throne_of_destruction_levels_128_132.help = Висота стелі над підлогою цієї кімнати - 0: по верху її власних стін («Висота стелі за стінами кімнати»), інакше 18. Рівні: The Worldstone Keep Level 1 (128), The Worldstone Keep Level 2 (129), The Worldstone Keep Level 3 (130), Throne of Destruction (131), The Worldstone Chamber (132).
 
 # ===== Tab: Weapon Adjust =====
 tab.weapon_adjust = Налаштування зброї
@@ -2824,8 +2859,8 @@ group.monsters_bodies_f4 = Тіла монстрів (F4)
 group.monsters_bodies_f4.help = Тести, що дають монстрам тіла, крізь які ваша зброя не проходить: вона зупиняється на них, гостра зброя може встромитися, щити й зброя монстрів її зупиняють, дві зброї стикаються, парирування відчуваються, а тіла піддаються за своєю вагою. Потрібен увімкнений Удар дотиком; сам удар усе одно за грою.
 weight.monster_bodies.label = Зброя зупиняється на тілах монстрів (тест)
 weight.monster_bodies.tip = З галочкою: монстр, якого гра вважає ворожим, має тіло, крізь яке зброя у ваших руках не проходить - випад чи поріз зупиняється на ньому, лезо (меч, сокира, спис) під пологим кутом ковзає вздовж нього, тупа зброя (булава, скіпетр, посох) зупиняється там, де влучила; імпульс у руці при ударі. Ваша рука рухається далі, а зброя (і рука, як її намальовано на ній) лишається біля тіла, доки рука не повернеться. Тіло - власний скелет монстра: капсула на кожній його кінцівці, як їх ставить гра, завтовшки як його модель (де це не прочитати - капсула, яку гра дає монстру). Сам удар - усе одно атака гри, натиснута ударом дотиком: потрібен увімкнений Удар дотиком - його сканування знаходить монстрів. Без галочки: зброя проходить крізь них, як завжди.
-weight.own_body.label = Зброя не проходить крізь ваше власне тіло
-weight.own_body.tip = З галочкою, разом із тілами вище: зброя у ваших руках зупиняється на вашому власному тулубі й ногах, як на тілі монстра, - вона більше не проходить крізь вашого героя. Ваші руки й голова не враховуються (руки тримають зброю; голова - ваша власна). Ніколи не буває удару, уколу чи захоплення по собі. Без галочки: вона проходить крізь вас, як раніше.
+weight.skeleton_bones_max.label = Скелети монстрів: найбільше кісток, що читаються
+weight.skeleton_bones_max.tip = Діє одразу. Монстр, чий скелет має більше кісток, ніж це, не отримує кінцівок: він лишається однією капсулою гри - ваша зброя зупиняється на ній, захват тримає її, але його ніколи не збивають з ніг, не піднімають і не кидають, і він не піддається жодною кінцівкою. Журнал називає кількість його кісток, коли їх забагато ("the skeleton has more bones than [weight] skeleton_bones_max reads", N bones). Більше значення читає довші скелети (у Ancients на Arreat Summit їх понад 160) і коштує більше процесорного часу на монстра - скелет кожної моделі читається один раз, потім його кінцівки при кожному скануванні; менше - дешевше, але лишає більше великих монстрів однією капсулою. 256 за замовчуванням.
 weight.stab_in.label = Гостра зброя встромляється в тіло (тест)
 weight.stab_in.tip = З галочкою, разом із тілами вище: зброя з вістрям (меч - одноручний чи дворучний, - кинджал, спис, дротик, метальна зброя, древкова зброя, кіготь), встромлена вістрям уперед (у межах 60 градусів від прямого) в тіло монстра зі швидкістю 0.5 m/s чи більше, входить УСЕРЕДИНУ, а не зупиняється на поверхні. Вона ковзає лише вздовж власної довжини: тіло її стримує - твердіша шкіра на перші кілька сантиметрів, далі м'якша плоть - не глибше за її лезо; залишена нерухомо, вона застрягає там, де є, а рівномірне тягнення знову її звільняє. Витягніть її назад уздовж довжини далі за місце входу, і вона вийде. Якщо махнути нею вбік чи повернути, поки вона всередині, її утримує на її лінії - вона тягнеться й обертається разом із монстром, а не прорізає його; відведіть руку далеко, і вона вивільниться. Монстр, що йде, несе її з собою, а той, що помирає, її відпускає. Зараховується лише рух вістрям уперед (уздовж леза, без повороту) - для будь-якої гострої зброї, незалежно від того, чи зараховує його Удар дотиком як випад. Поріз лезом, булава, сокира, посох чи кулак зупиняються на поверхні, як раніше. Лише зброя, яку ви бачите: сам удар - усе одно атака гри, натиснута ударом дотиком (укол мечем і далі б'є як замах, яким він був, якщо випад не позначено для мечів). Без галочки: кожна зброя зупиняється на поверхні. Потрібна бібліотека ваги (d2r_vr_weight.dll 1.1 чи новіша в d2rloader\d2r_vr_libs): укол - її робота; без неї кожна зброя зупиняється на поверхні (журнал про це каже).
 weight.stab_min_speed.label = Укол: найменша швидкість входу, m/s
@@ -2842,10 +2877,12 @@ weight.stab_unlock_n.label = Укол: тяга, що звільняє заст�
 weight.stab_unlock_n.tip = Діє одразу. Залишений нерухомо укол застрягає там, де є; рівномірне тягнення вздовж зброї, сильніше за це значення, протягом чверті секунди знову дає йому ковзати. Нижче: вислизає від легкого тягнення; 0 = ніколи не застрягає.
 weight.monster_shields.label = Щити й зброя монстрів зупиняють вашу зброю (тест)
 weight.monster_shields.tip = Діє одразу. З галочкою: те, що тримає монстр, - його щит, його зброя - зупиняє вашу зброю так само, як його кінцівки, і ваше лезо ковзає вздовж них (щит - чотири капсули поперек його лицьового боку, зброя - одна вздовж неї; налагодження «Малювати капсули Удару дотиком» показує їх фіолетовими й помаранчевими). Удар, який вони зупинили, не влучає: удар дотиком натискає атаку лише тоді, коли ваша зброя дісталася тіла монстра, - власний кидок на блок гри лишається за грою для ударів, що влучають. Вони не штовхають ляльку й не приймають уколу. Без галочки: вони прозорі для вашої зброї, як раніше.
-# weight.world_contact.label = Walls stop your weapon (a test)
-# weight.world_contact.tip = Live. VR first person (F4) only. Ticked: the weapon in your hands strikes the level's walls, pillars, trees and big props instead of passing through them - it stops on the surface with a small bounce and a pulse in the hand, a slash slides along, and your controller goes on into the wall while the weapon (and your hand on it) stays outside; it follows again when the controller comes back. Push the controller far past the wall and the weapon goes back into your hand through it. Only what you see: the game's attacks, its hits and your hero's movement are the game's as ever. The walls are made from the game's own meshes when this program starts with the box ticked (about a minute, once per game build; the status says when): a doorway stays open, a tree stops the weapon at its trunk, not its leaves, and bushes, grass and other small plants never stop it (Debug: "World contact: draw the walls" shows them). Unticked: the weapon passes through walls, as before.
-# weight.world_contact_hands.label = Walls stop your bare hands (a test)
-# weight.world_contact_hands.tip = Live. VR first person (F4) only. Ticked: an empty hand (or one with a bow, a shield, a potion) is held at the surface of the level's walls, pillars, trees and big props while your controller goes on into them, sliding along as you move; it comes back with the controller. Push the controller more than 45 cm past the surface and the hand goes back to it, through the wall. The same walls as the weapon's, made from the game's meshes (bushes and grass never stop a hand). Only the drawing: nothing of the game changes. Unticked: the hands pass through walls, as before.
+weight.world_contact.label = Стіни зупиняють вашу зброю (експериментально)
+weight.world_contact.tip = Діє одразу. Лише VR від першої особи (F4). З галочкою: зброя у ваших руках б'ється об стіни, колони, дерева й великі предмети обстановки рівня, а не проходить крізь них - вона зупиняється на поверхні з невеликим відскоком та імпульсом у руці, різаний удар ковзає вздовж, а ваш контролер іде далі в стіну, тоді як зброя (і ваша рука на ній) лишається зовні; вона знову слідує, коли контролер повертається. Заведіть контролер далеко за стіну - і зброя повертається у вашу руку крізь неї. Лише те, що ви бачите: атаки гри, її влучання й рух вашого героя - як завжди ігрові. Стіни будуються з власних мешів гри, коли ця програма стартує з галочкою (близько хвилини, раз на збірку гри; стан каже, коли): дверний отвір лишається відкритим, дерево зупиняє зброю на стовбурі, а не на листі, а кущі, трава й інші дрібні рослини ніколи її не зупиняють (Налагодження: «Контакт зі світом: малювати стіни» показує їх). Без галочки: зброя проходить крізь стіни, як раніше. Експериментально: вимк. за замовчуванням, і може ще поводитися неправильно.
+weight.world_contact_hands.label = Стіни зупиняють ваші порожні руки (експериментально)
+weight.world_contact_hands.tip = Діє одразу. Лише VR від першої особи (F4). З галочкою: порожня рука (або з луком, щитом, зіллям) утримується на поверхні стін, колон, дерев і великих предметів обстановки рівня, поки ваш контролер іде далі в них, ковзаючи вздовж, коли ви рухаєтеся; вона повертається разом із контролером. Заведіть контролер більше ніж на 45 cm за поверхню - і рука повертається до нього крізь стіну. Ті самі стіни, що й для зброї, побудовані з мешів гри (кущі й трава ніколи не зупиняють руку). Лише малювання: нічого в грі не змінюється. Без галочки: руки проходять крізь стіни, як раніше. Експериментально: вимк. за замовчуванням, і може ще поводитися неправильно.
+weight.own_body.label = Зброя не проходить крізь ваше власне тіло (експериментально)
+weight.own_body.tip = Діє одразу. Лише VR від першої особи (F4). З галочкою: зброя у ваших руках зупиняється на вашому власному герої, як на стіні - його тулубі, стегнах, ногах і голові - і ковзає вздовж. Ваш контролер іде далі; зброя знову слідує, коли він повертається. Ніколи не заважає: ваші руки й кисті та все, що вони тримають (хват двома руками, передача зброї з руки в руку, щит), зброя, вийнята зі спини чи стегна або покликана назад у руку (на мить, поки вона летить), і поки рука за плечем, щоб дістати чи сховати. Лише малювання: ніколи не удар, укол чи захват себе, а атаки гри - ігрові. Без галочки: вона проходить крізь вас, як раніше. Експериментально: вимк. за замовчуванням, і може ще поводитися неправильно.
 weight.dual_collide.label = Зброя в кожній руці: вони б'ються одна об одну (сталь об сталь)
 weight.dual_collide.tip = Діє одразу. Зі зброєю в кожній руці дві зброї стикаються: кожна зупиняється на іншій і ковзає вздовж неї, як по зброї монстра; стук, сильний як удар, відчувається обома руками (і чутний, зі звуком зіткнення нижче), а спирання однієї на іншу беззвучне. З галочкою «Навершя як окремий об'єм» (удар дотиком) лезо сокири, обух молота, навершя булави - окрема сталь поруч із древком, там, де її має модель гри: меч зупиняється й на ній. Лише те, як вони рухаються, відчуваються й звучать, - без удару, нічого з гри. Без галочки: вони проходять одна крізь одну, як раніше.
 weight.clash_sound.label = Звуки сталі об сталь: що сильніший удар, то гучніше
@@ -2872,14 +2909,14 @@ weight.monster_ragdoll_pose.label = Намальований монстр теж
 weight.monster_ragdoll_pose.tip = З галочкою: гуманоїдний монстр, якого вдарили, піддається так, як його малює гра, - кінцівка, у яку ви влучили, повертається в суглобі, тіло відхиляється, а коли він оговтується, знову береться за своє його власна анімація. Лише малювання: де він стоїть, що робить і все, що знає гра, лишається за грою. Без галочки: рухаються лише тіла, яких торкається ваша зброя («Малювати капсули Удару дотиком» у Налагодженні показує їх).
 weight.monster_ragdoll_all.label = Піддається кожен монстр, не лише гуманоїди (проба)
 weight.monster_ragdoll_all.tip = З галочкою: кожен монстр, якого штовхає ваша зброя, піддається за своєю вагою - тварини, комахи, демони, літуни, не лише гуманоїди. Монстр, у моделі якого немає частин тіла для зчитування, отримує кінцівки від своїх кісток. Труп ніколи не рухається. Лише малювання. Без галочки: лише гуманоїди, як раніше.
-# weight.knock_down.label = A hard blow knocks a humanoid off its feet (a test)
-# weight.knock_down.tip = Ticked: a hard blow of your weapon, a running hit, a sweep at the legs or a shove knocks a humanoid monster or a town NPC (with "Town NPCs and allies have bodies too") off its feet as you see it: it falls as a ragdoll, lies a moment and gets up again, then its own animation takes over. Only the drawing: where it stands, what it does, its hits and its talk stay the game's - a monster the game has attack gets up at once. A blow knocks it down when it would give the body the speed below; a sweep low at the legs needs half of it. Needs the weight library with the knock-down (d2r_vr_weight.dll in d2rloader\d2r_vr_libs; the log says when it is missing). F4. Unticked: nothing falls.
-# weight.knock_down_cms.label = Knock-down: how hard, cm/s the blow gives the body
-# weight.knock_down_cms.tip = Live. A blow knocks a body down when its push (your weapon and arm, their speed, your run) would move the body this fast: the push over the body's weight (a man of 1.75 m about 50 kg). 70: a hard swing of a sword fells a man, a light one does not; lower: easier. The log tells each blow's speed against it.
-# weight.knock_down_lie_ms.label = Knock-down: lies for, ms
-# weight.knock_down_lie_ms.tip = Live. How long a body knocked down lies still on the ground before it gets up, then walks back to its place.
-# weight.knock_down_stagger_pct.label = Knock-down: a stagger from, % of a knock-down
-# weight.knock_down_stagger_pct.tip = Live. A blow too light to knock the body down but at least this share of it staggers it: a step or two back, it catches its balance and walks back to its place. 0: no stagger.
+weight.knock_down.label = Сильний удар збиває гуманоїда з ніг (тест)
+weight.knock_down.tip = З галочкою: сильний удар вашої зброї, удар з розбігу, підсічка по ногах чи поштовх збиває гуманоїдного монстра або NPC у місті (з «У NPC в місті й союзників теж є тіла») з ніг, як ви це бачите: він падає як регдол, мить лежить і знову встає, потім береться його власна анімація. Лише малювання: де він стоїть, що робить, його удари й мова лишаються ігровими - монстр, якого гра змушує атакувати, встає одразу. Удар збиває, коли надав би тілу швидкість нижче; низькій підсічці по ногах досить половини. Потрібна бібліотека ваги зі збиванням (d2r_vr_weight.dll у d2rloader\d2r_vr_libs; журнал каже, коли її немає). F4. Без галочки: ніхто не падає.
+weight.knock_down_cms.label = Збивання: наскільки сильно, cm/s, які удар дає тілу
+weight.knock_down_cms.tip = Діє одразу. Удар збиває тіло, коли його поштовх (ваша зброя й рука, їхня швидкість, ваш біг) зрушив би тіло так швидко: поштовх, поділений на вагу тіла (людина 1.75 m - близько 50 kg). 70: сильний замах мечем валить людину, легкий - ні; менше: легше. Журнал повідомляє швидкість кожного удару порівняно з цим.
+weight.knock_down_lie_ms.label = Збивання: лежить, ms
+weight.knock_down_lie_ms.tip = Діє одразу. Скільки збите тіло лежить нерухомо на землі, перш ніж встати, а потім повертається на своє місце.
+weight.knock_down_stagger_pct.label = Збивання: похитування від, % збивання
+weight.knock_down_stagger_pct.tip = Діє одразу. Удар, надто легкий, щоб збити тіло, але щонайменше ця його частка, змушує його похитнутися: крок чи два назад, воно відновлює рівновагу й повертається на своє місце. 0: без похитування.
 weight.npc_bodies.label = NPC у місті та союзники теж мають тіла
 weight.npc_bodies.tip = З галочкою, разом із тілами вище: NPC міста, наймані та всі інші юніти, яких гра не вважає ворожими, теж мають тіла - капсулу на кожній кінцівці, з їхніх власних скелетів, так само як у монстрів. Ваша зброя зупиняється на них, ковзає по них, встромляється в них (з «Гостра зброя встромляється в тіло») і вони піддаються за своєю вагою (з «Тіла монстрів піддаються за своєю вагою») - щоб спробувати все це без бою. Вони лише тіла для зброї, яку ви бачите: Удар дотиком ніколи їх не атакує - він і далі натискає лише на монстра, якого гра вважає ворожим. Без галочки: зброя проходить крізь них, як раніше (хапання все одно їх бере). Діє одразу. F4.
 
@@ -2888,8 +2925,12 @@ group.grab_bodies_f4 = Хапання тіл (F4)
 group.grab_bodies_f4.help = Тест: стисніть хват порожньої руки на тілі монстра чи союзника, і ваша рука тримається за нього. Рухається лише те, що ви бачите; у грі ніхто не атакований і нічого не зрушено. Потрібні Удар дотиком, зброя в іншій руці та бібліотека ваги.
 weight.grab_bodies.label = Хапати монстрів і союзників хватом руки (тест)
 weight.grab_bodies.tip = Діє одразу. З галочкою: міцно стисніть хват ПОРОЖНЬОЇ руки (без зброї, щита, лука чи пляшки) долонею на тілі монстра чи союзника - найманця, мешканців міста, - і рука береться за нього в цьому місці (імпульс). Хапання - власне з VR-інструментарію, у бібліотеці ваги: поки ви тримаєте хват стиснутим, рука тримає це місце - кінцівку гуманоїда тягне сила вашої руки проти її ваги (з галочкою «Тіла монстрів піддаються за своєю вагою» легкий іде слідом, важкий утримує вашу руку, його м'язи тягнуть її назад; «Намальований монстр теж піддається» це показує), усе інше не піддається, і ваша рука тримається на ньому та йде туди, куди йде монстр. Відпустіть хват, щоб відпустити; відведіть руку від схопленого місця далі, ніж відстань зриву нижче, - і вона зривається (не в перші 2 s). Рухається лише те, що ви бачите: монстр лишається там, де його тримає гра, у грі ніхто не атакований, не поранений і не зрушений. З луком чи арбалетом хапає рука, що натягує тятиву (не за тятиву). Потрібна бібліотека ваги 1.4 (d2r_vr_weight.dll у d2rloader\d2r_vr_libs) - без неї нічого не хапається. Без галочки: хват порожньої руки лише стискає кулак, як раніше.
-# weight.grab_throw.label = Lift and throw a humanoid you grab (a test)
-# weight.grab_throw.tip = Ticked, with the grab: a humanoid monster or a town NPC your hand's grip takes hangs from your hand as a ragdoll. It stands while its feet bear it; lift it or pull it out of its place and it is off its feet; let go while you swing and it flies, lands, lies a moment, gets up and walks back to where the game has it. Two hands hold it together. Only the drawing: where it stands, what it does and its talk stay the game's. Needs the weight library with the knock-down (d2r_vr_weight.dll in d2rloader\d2r_vr_libs). F4. Unticked: the grab holds a limb as before.
+weight.grab_throw.label = Піднімати й кидати схопленого гуманоїда (тест)
+weight.grab_throw.tip = З галочкою, із захватом: гуманоїдний монстр або NPC у місті, якого бере захват вашої руки, висить у руці як регдол. Він стоїть, поки його тримають ноги; підніміть його чи витягніть із місця - і він уже не на ногах; відпустіть під час замаху - і він летить, падає, мить лежить, встає й повертається туди, де його тримає гра. Двома руками його тримають разом. Лише малювання: де він стоїть, що робить і його мова лишаються ігровими. Потрібна бібліотека ваги зі збиванням (d2r_vr_weight.dll у d2rloader\d2r_vr_libs). F4. Без галочки: захват тримає кінцівку, як раніше.
+weight.grab_balance.label = Потягнутий гуманоїд переступає, щоб устояти (тест)
+weight.grab_balance.tip = З галочкою, з «Піднімати й кидати»: візьміть гуманоїда за кисть чи руку й потягніть - і він крокує за вами, щоб устояти на ногах, так швидко, як можуть крокувати його ноги; лише ривок, швидший за це, збиває його з ніг. Відпустіть - і він повертається туди, де його тримає гра. Лише малювання: де він стоїть і що робить, лишається ігровим. F4. Без галочки: витягнутий на 30 cm зі свого місця, він падає, як раніше.
+weight.impale_drag.label = Насаджувати й тягти гуманоїда на списі (тест)
+weight.impale_drag.tip = З галочкою, з уколом: набіжіть на гуманоїдного монстра або NPC у місті зі списом (або будь-якою зброєю вістрям уперед), і вістря входить на 2 m/s або більше (випад і ваш біг уздовж леза) - його несе на лезі як регдол і тягне за вами, поки ви йдете далі. Він зісковзує, коли ви зупиняєтеся, відтягуєте лезо чи опускаєте його вістрям униз, падає, встає й повертається туди, де його тримає гра. Лише малювання: шкода гри, де він стоїть і що робить, лишаються ігровими. Потрібна бібліотека ваги зі збиванням. F4. Без галочки: вістря зупиняється в тілі, як раніше.
 weight.grab_reach_cm.label = Хапання: наскільки близько до тіла має бути долоня, cm
 weight.grab_reach_cm.tip = Діє одразу. Долоня на такій відстані від поверхні тіла (або в ньому) бере його, коли хват стискається. Більше: легше схопити; менше: лише з долонею просто на ньому.
 weight.grab_break_cm.label = Хапання: рука зривається на такій відстані, cm
@@ -3193,11 +3234,11 @@ group.warlock_ticked_the_game_s_auto_target.help = Miasma Bolt Чаклуна: �
 autotarget.s395.label = Miasma Bolt
 
 # ===== Tab: Vibration =====
-# tab.vibration = Vibration
+tab.vibration = Вібрація
 
 # --- Controller vibration ---
-# group.controller_vibration = Controller vibration
-# group.controller_vibration.help = Pulses in the controllers on what happens in the game (native OpenXR, VR first person F4). They only watch the game: nothing of it is changed. Every box below needs Controller vibration ticked.
+group.controller_vibration = Вібрація контролерів
+group.controller_vibration.help = Імпульси в контролерах на те, що відбувається в грі (нативний OpenXR, VR від першої особи F4). Вони лише стежать за грою: нічого в ній не змінюється. Кожна галочка нижче потребує увімкненої «Вібрація контролерів».
 openxr.haptics.tip = Короткий імпульс у руці, коли ваш удар влучає, зілля з пояса взято чи випито, лазер клацає по меню або ви щось підбираєте чи відкриваєте. Саму гру не змінено - імпульси лише спостерігають. Лише нативний OpenXR (моторами керує середовище виконання шолома); вимк.: тиша, як раніше. Діє одразу. Лише F4.
 openxr.haptics_scale.label = Вібрація: сила
 openxr.haptics_scale.tip = Усі імпульси сильніші чи слабші; 1 = звичайно (влучний удар - приблизно 70% сили мотора). Діє одразу.
@@ -3205,42 +3246,42 @@ openxr.haptics_hand_actions.label = Вібрація: окремий канал 
 openxr.haptics_hand_actions.tip = Мотор кожного контролера отримує власну дію вібрації, тож імпульс може піти лише до тієї руки, для якої він (деякі середовища виконання надсилали імпульс спільної дії не тій руці). Застосовується на початку сеансу шолома. Вимк.: одна дія для обох рук, як раніше.
 openxr.haptics_stop.label = Вібрація: зупиняти кожен імпульс вчасно
 openxr.haptics_stop.tip = Кожен імпульс зупиняється власним викликом, коли його час минув, навіть поки гра завантажується чи зависає - деякі контролери (Steam Frame) продовжували дзижчати після короткого імпульсу. Діє одразу. Вимк.: середовище виконання саме завершує імпульс, як раніше.
-# openxr.haptics_motor.label = Vibration: the controllers' motor
-# openxr.haptics_motor.tip = A PlayStation VR2's Sense controllers under SteamVR do not show short, gentle pulses (a Quest's do): the low-life heartbeat, the low mana alert, a cast's pulse and the game's soft rumble are lifted for them to a strength they show, in the same order (stronger stays stronger). By the headset's name: weak for a PlayStation VR2, plain for the rest (the log says which). Plain: every pulse as it is made. Live.
-# openxr.haptics_motor.choice0 = By the headset's name
-# openxr.haptics_motor.choice1 = Plain
-# openxr.haptics_motor.choice2 = Weak (PlayStation VR2 Sense)
+openxr.haptics_motor.label = Вібрація: мотор контролерів
+openxr.haptics_motor.tip = Контролери Sense від PlayStation VR2 під SteamVR не передають коротких лагідних імпульсів (у Quest передають): серцебиття при малому житті, сигнал малої мани, імпульс закляття й м'яке тремтіння гри підсилюються для них до сили, яку вони передають, у тому самому порядку (сильніший лишається сильнішим). За назвою шолома: слабкий для PlayStation VR2, звичайний для решти (журнал каже, який). Звичайний: кожен імпульс як є. Діє одразу.
+openxr.haptics_motor.choice0 = За назвою шолома
+openxr.haptics_motor.choice1 = Звичайний
+openxr.haptics_motor.choice2 = Слабкий (PlayStation VR2 Sense)
 
 # --- Blows ---
-# group.blows = Blows
-# group.blows.help = How a blow feels. Hit by touch (Strikes) counts a contact when the blade meets a monster fast enough; the game then rolls the blow.
-# openxr.haptics_touch.label = A pulse on every counted touch, landed or not
-# openxr.haptics_touch.tip = Hit by touch: the blade's hand buzzes the moment a contact is counted, whether the game then lands the blow, misses it or refuses it - you feel the monster you struck. The landed hit that follows gives no second pulse. Off: a pulse only for a blow the game says landed, as before. After bearstonem/d2r-pcvr (MIT). Live. F4 only.
-# openxr.haptics_hit_long.label = A longer, stronger tap for a blow
-# openxr.haptics_hit_long.tip = A blow's tap (and a touch's, with the box above) is 95% of the motor for 90 ms instead of 72% for 45 ms: easier to feel in a fast swing. d2r-pcvr's weapon tap (MIT). Live. F4 only.
+group.blows = Удари
+group.blows.help = Як відчувається удар. Удар дотиком (Удари) зараховує контакт, коли лезо зустрічає монстра досить швидко; потім гра розігрує удар.
+openxr.haptics_touch.label = Імпульс на кожен зарахований дотик, влучний чи ні
+openxr.haptics_touch.tip = Удар дотиком: рука з лезом вібрує в мить, коли контакт зараховано, чи влучить потім гра ударом, чи промахнеться, чи відмовить - ви відчуваєте монстра, якого вдарили. Влучний удар, що йде слідом, не дає другого імпульсу. Вимк.: імпульс лише за удар, про який гра каже, що він влучив, як раніше. За bearstonem/d2r-pcvr (MIT). Діє одразу. Лише F4.
+openxr.haptics_hit_long.label = Довший, сильніший поштовх за удар
+openxr.haptics_hit_long.tip = Поштовх за удар (і за дотик, з галочкою вище) - 95% мотора протягом 90 ms замість 72% протягом 45 ms: легше відчути у швидкому замаху. Поштовх зброї з d2r-pcvr (MIT). Діє одразу. Лише F4.
 
 # --- Spells and mana ---
-# group.spells_and_mana = Spells and mana
-# openxr.haptics_spell.label = A pulse when a cast starts
-# openxr.haptics_spell.tip = A pulse in the aiming hand when the hero's casting animation starts - a cast the game took (spells, warcries and the other cast skills); a cast it refused (no mana, not ready) has none. A held cast whose animations follow one another without a break is one pulse. After bearstonem/d2r-pcvr (MIT). Live. F4 only.
-# openxr.haptics_low_mana.label = Low mana alert in the left hand
-# openxr.haptics_low_mana.tip = A pulse in the left hand when your mana falls under the share below, again every 10 seconds while it stays under. The mana is only read. After bearstonem/d2r-pcvr (MIT). Live. F4 only.
-# openxr.haptics_low_mana_pct.label = Low mana: under, % of your mana
-# openxr.haptics_low_mana_pct.tip = The alert comes when the mana falls under this share of its maximum, and is ready again a little above it. Live.
+group.spells_and_mana = Закляття й мана
+openxr.haptics_spell.label = Імпульс, коли починається закляття
+openxr.haptics_spell.tip = Імпульс у руці, що цілиться, коли починається анімація закляття героя - закляття, яке гра прийняла (закляття, бойові кличі та інші навички з закляттям); закляття, від якого вона відмовилася (немає мани, не готове), імпульсу не дає. Утримуване закляття, анімації якого йдуть одна за одною без перерви, - один імпульс. За bearstonem/d2r-pcvr (MIT). Діє одразу. Лише F4.
+openxr.haptics_low_mana.label = Сигнал малої мани в лівій руці
+openxr.haptics_low_mana.tip = Імпульс у лівій руці, коли ваша мана падає нижче частки нижче, і знову кожні 10 секунд, поки вона лишається нижче. Мана лише читається. За bearstonem/d2r-pcvr (MIT). Діє одразу. Лише F4.
+openxr.haptics_low_mana_pct.label = Мала мана: нижче, % вашої мани
+openxr.haptics_low_mana_pct.tip = Сигнал з'являється, коли мана падає нижче цієї частки свого максимуму, і знову готовий трохи вище неї. Діє одразу.
 
 # --- The game's own rumble ---
-# group.the_game_s_own_rumble = The game's own rumble
-# group.the_game_s_own_rumble.help = The game rumbles a gamepad on its own events - a hit taken, a skill used - when its Controller Rumble option is on.
-# openxr.haptics_game_rumble.label = Feel the game's rumble in the controllers
-# openxr.haptics_game_rumble.tip = What the game sends to a gamepad's two motors is followed in both controllers, as the game asks for it (the game's own events: a hit taken, a skill used...). Needs the game's own Controller Rumble option on. The call still goes to a pad if one is plugged in (the box below keeps it from it). Live. F4 only.
-# openxr.haptics_game_rumble_scale.label = The game's rumble: strength
-# openxr.haptics_game_rumble_scale.tip = The game's rumble in the controllers stronger or weaker (1 = as the game asks, Vibration: strength on top). Live.
-# openxr.haptics_pad_mute.label = Keep the game's rumble from a plugged-in gamepad
-# openxr.haptics_pad_mute.tip = While the controllers are the game's (VR first person F4), the game's rumble does not reach a gamepad that is plugged in - a pad left rumbling is stopped once. In the other views and in flat play the pad rumbles as ever. After bearstonem/d2r-pcvr (MIT). Live.
+group.the_game_s_own_rumble = Власна вібрація гри
+group.the_game_s_own_rumble.help = Гра трясе геймпад на свої події - отриманий удар, використана навичка - коли її параметр Controller Rumble увімкнено.
+openxr.haptics_game_rumble.label = Відчувати вібрацію гри в контролерах
+openxr.haptics_game_rumble.tip = Те, що гра надсилає двом моторам геймпада, повторюється в обох контролерах, як гра цього просить (власні події гри: отриманий удар, використана навичка...). Потрібен увімкнений власний параметр гри Controller Rumble. Виклик усе одно йде на геймпад, якщо він під'єднаний (галочка нижче не пускає його туди). Діє одразу. Лише F4.
+openxr.haptics_game_rumble_scale.label = Вібрація гри: сила
+openxr.haptics_game_rumble_scale.tip = Вібрація гри в контролерах сильніша чи слабша (1 = як просить гра, «Вібрація: сила» поверх). Діє одразу.
+openxr.haptics_pad_mute.label = Не пускати вібрацію гри на під'єднаний геймпад
+openxr.haptics_pad_mute.tip = Поки контролери належать грі (VR від першої особи F4), вібрація гри не доходить до під'єднаного геймпада - геймпад, що лишився вібрувати, зупиняється один раз. В інших виглядах і в пласкій грі геймпад вібрує як завжди. За bearstonem/d2r-pcvr (MIT). Діє одразу.
 
 # --- Pulses set on other tabs ---
-# group.pulses_set_on_other_tabs = Pulses set on other tabs
-# group.pulses_set_on_other_tabs.help = The same settings as on their own tabs (UI: F4 body > Low life; Weapon Weight): a change here is a change there.
+group.pulses_set_on_other_tabs = Імпульси, задані на інших вкладках
+group.pulses_set_on_other_tabs.help = Ті самі налаштування, що й на їхніх власних вкладках (UI: F4 тіло > Мало життя; Вага зброї): зміна тут - це зміна там.
 
 # ===== Tab: Multiplayer =====
 tab.multiplayer = Мультиплеєр
@@ -3299,8 +3340,8 @@ debug.knock_props_trace.label = Збиті предмети: рядок журн
 debug.knock_props_trace.tip = Коли на вкладці Вага зброї увімкнено «Чашки, тарілки, вази... розлітаються від вашої зброї»: у журнал іде рядок на кожен предмет, який зрушила ваша зброя чи кулак (його вид, яка рука, як швидко рухалося лезо, як сильно вдарено предмет), і на кожне сканування предметів поблизу (скільки їх, скільки з каталогу поруч, скільки стоять на підлозі, на іншому предметі, на меблях, на вгаданому виступі, і вартість сканування). Лише журнал - у збиванні нічого не змінюється. Діє одразу.
 debug.knock_props_glow.label = Збиті предмети: підсвічувати знайдені предмети
 debug.knock_props_glow.tip = Коли на вкладці Вага зброї увімкнено «Чашки, тарілки, вази... розлітаються від вашої зброї»: кожен предмет поблизу (у межах 3 m), який знає каталог, - ті, що їх може збити ваша зброя чи кулак, - малюється яскравіше, власним підсвічуванням гри (як предмет під вказівником). Щоб побачити, які предмети місця знайдено, а які ні. Лише малювання. Діє одразу.
-# debug.world_contact_draw.label = World contact: draw the walls
-# debug.world_contact_draw.tip = With "Walls stop your weapon" or "Walls stop your bare hands" on: the walls nearest your hands are drawn as yellow boxes (red: the one a hand or the weapon rests on), each controller as a blue ball, the hand or weapon as drawn as a green ball, a red line between them while the wall holds it back, and an orange ball where the weapon or a hand struck a wall. Only the drawing. Live.
+debug.world_contact_draw.label = Контакт зі світом: малювати стіни
+debug.world_contact_draw.tip = З увімкненими «Стіни зупиняють вашу зброю» або «Стіни зупиняють ваші порожні руки»: найближчі до ваших рук стіни малюються жовтими коробками (червоною - та, на яку спирається рука чи зброя), кожен контролер - синьою кулею, рука чи зброя, як вона намальована, - зеленою кулею, червона лінія між ними, поки стіна її стримує, і помаранчева куля там, де зброя чи рука вдарилася об стіну. Лише малювання. Діє одразу.
 debug.replay_marks.label = Повтор: як списки правого ока йдуть на GPU
 debug.replay_marks.tip = Стерео з одного проходу: як повторені списки команд гри надсилаються на GPU для правого ока. 1 (за замовчуванням): кожен список окремо із сигналом після нього, тож журнал зависання називає список, на якому зупинився GPU; кожна пара - ~35 окремих надсилань (~0.4 ms потоку гри). 0: усі списки черги поспіль одним надсиланням - 2026-10-18 графічна черга тоді виконала список, що так і не закінчився, через 30 s - 3 min гри. 2: кожен список окремо без сигналів. 3: ті самі списки в тих самих викликах, як їх робила гра, без міток - власна кількість надсилань гри (уперше перезапустіть гру). 4: те саме із сигналом після кожного виклику. Діє одразу.
 debug.replay_marks.choice0 = 0 - один пакет на чергу (зависало, test-60..62)
@@ -3328,8 +3369,8 @@ debug.pose_share_legs_self.label = Голови й руки в мультипл�
 debug.pose_share_legs_self.tip = Ноги вашого власного героя крокують за тією ж ходою, що й герої інших гравців («Їхні ноги крокують за їхнім рухом»), за його власним напрямком - щоб побачити ноги на одному ПК: подивіться на нього в F2 чи F3 (плаский режим чи VR) і йдіть вперед, назад і вбік. Журнал кожні 5 s каже, що вони робили («legs: ...»). Потрібна бібліотека ходи. Діє одразу.
 debug.walk_back_dump.label = Ходьба назад: записувати ноги у файл
 debug.walk_back_dump.tip = Поки герой рухається, його ноги зберігаються поза за позою - як їх малювала гра і як намальовано з «Під час ходьби назад ноги крокують назад», - і останні 6 секунд кожної ходьби назад (і 3 s стояння з камерою, оберненою навколо нього) ідуть у d2rloader\logs\d2r_vr_walkback.txt (щонайбільше 30 за сеанс), для інструмента walk_legs, що малює їх як фігурки з паличок. Журнал також кожні 5 s каже, з якої пози скінуються меші героя (тієї, яку ставимо ми, чи іншої). Лише записує файл і рядки журналу; у грі нічого не змінюється. Діє одразу.
-# debug.body_dump.label = Write the hero's drawn bones and the camera to a file
-# debug.body_dump.tip = 30 times a second the hero's joints as they go to the game - after everything the mod changes - and where the camera is and looks (your eyes in VR first person, behind him in third person) go to d2rloader\logs\d2r_vr_body.txt, for the walk_legs tool that films the skeleton from your camera. About a megabyte a minute. Writes a file only; nothing in the game changes. Live.
+debug.body_dump.label = Записувати намальовані кістки героя й камеру у файл
+debug.body_dump.tip = 30 разів на секунду суглоби героя, як вони йдуть у гру - після всього, що змінює мод - і де камера та куди вона дивиться (ваші очі у VR від першої особи, позаду нього від третьої особи) записуються в d2rloader\logs\d2r_vr_body.txt для інструмента walk_legs, що знімає скелет з вашої камери. Близько мегабайта на хвилину. Лише записує файл; у грі нічого не змінюється. Діє одразу.
 debug.phantom_ray.label#2 = Малювати лінію, якою йде ліва рука
 debug.phantom_ray.tip#2 = Червона лінія, вздовж якої ліва рука бере зброю в руку й ковзає (посох, спис, древкова зброя, дворучний меч); з арбалетом - також куди летить болт (її повертають повзунки «Арбалет: лінія пострілу»). «Малювати осі зброї в руці» теж її малює.
 debug.xbow_barrel_line.label = Арбалет: малювати ствол за моделлю
@@ -3532,9 +3573,14 @@ vr.hset.page.belt = Пояс
 vr.hset.page.melee = Бій
 vr.hset.page.left = Лівий
 vr.hset.page.right = Правий
-# vr.hset.page.co_op = Co-op
-# vr.hset.page.vibration = Vibration
+vr.hset.page.co_op = Кооператив
+vr.hset.page.vibration = Вібрація
+vr.hset.page.contact = Контакт
+vr.hset.page.monsters_react = Реакція монстрів
+vr.hset.page.grab = Захват
+vr.hset.page.more = Більше
 vr.hset.page.guide = Гід
+vr.hset.page.world = Світ
 vr.hset.screen.menu_distance_m.label = Відстань панелі
 vr.hset.screen.menu_distance_m.detail = Відкрита панель гри: інвентар, скриня, торговець
 vr.hset.openxr.flat_distance_m.label = Відстань екрана
@@ -3561,8 +3607,8 @@ vr.hset.turn.snap.label = Кут повороту ривком
 vr.hset.turn.snap.detail = Градусів за рух, поки плавний поворот вимк.
 vr.hset.turn.speed.label = Швидкість плавного повороту
 vr.hset.turn.speed.detail = Градусів за секунду, поки плавний поворот увімк.
-# vr.hset.game.players.label = Players (difficulty)
-# vr.hset.game.players.detail = As /players: tougher monsters, more experience and drops
+vr.hset.game.players.label = Гравці (складність)
+vr.hset.game.players.detail = Як /players: сильніші монстри, більше досвіду й здобичі
 vr.hset.hud.low_hp_vignette.label = Мало життя: червона віньєтка
 vr.hset.hud.low_hp_vignette.detail = Краї пульсують червоним, коли мало життя (F4)
 vr.hset.hud.low_hp_threshold.label = Вмикається нижче
@@ -3627,24 +3673,68 @@ vr.hset.direct.right_b.label = Правий B
 vr.hset.direct.right_stick.label = Клік правого стіка
 vr.hset.direct.right_stick_hold.label = Правий стік, довге натиснення
 vr.hset.direct.right_menu.label = Права кнопка меню
-# vr.hset.openxr.haptics.label = Controller vibration
-# vr.hset.openxr.haptics.detail = Pulses in the controllers on what happens (F4)
-# vr.hset.openxr.haptics_scale.label = Strength
-# vr.hset.openxr.haptics_scale.detail = Every pulse stronger or weaker, 1 = the usual
-# vr.hset.openxr.haptics_touch.label = Pulse on every touch
-# vr.hset.openxr.haptics_touch.detail = Hit by touch: landed or not, the blade's hand buzzes
-# vr.hset.openxr.haptics_hit_long.label = Longer tap for a blow
-# vr.hset.openxr.haptics_hit_long.detail = 95% for 90 ms instead of 72% for 45 ms
-# vr.hset.openxr.haptics_spell.label = Pulse when a cast starts
-# vr.hset.openxr.haptics_spell.detail = The aiming hand, for a cast the game took
-# vr.hset.openxr.haptics_low_mana.label = Low mana alert
-# vr.hset.openxr.haptics_low_mana.detail = The left hand, again every 10 s while it is low
-# vr.hset.openxr.haptics_game_rumble.label = The game's own rumble
-# vr.hset.openxr.haptics_game_rumble.detail = A hit taken, a skill used: as the game rumbles a pad
+vr.hset.openxr.haptics.label = Вібрація контролерів
+vr.hset.openxr.haptics.detail = Імпульси в контролерах на те, що відбувається (F4)
+vr.hset.openxr.haptics_scale.label = Сила
+vr.hset.openxr.haptics_scale.detail = Кожен імпульс сильніший чи слабший, 1 = звичайно
+vr.hset.openxr.haptics_touch.label = Імпульс на кожен дотик
+vr.hset.openxr.haptics_touch.detail = Удар дотиком: влучний чи ні, рука з лезом вібрує
+vr.hset.openxr.haptics_hit_long.label = Довший поштовх за удар
+vr.hset.openxr.haptics_hit_long.detail = 95% протягом 90 ms замість 72% протягом 45 ms
+vr.hset.openxr.haptics_spell.label = Імпульс на початку закляття
+vr.hset.openxr.haptics_spell.detail = Рука, що цілиться, для закляття, яке гра прийняла
+vr.hset.openxr.haptics_low_mana.label = Сигнал малої мани
+vr.hset.openxr.haptics_low_mana.detail = Ліва рука, знову кожні 10 s, поки мани мало
+vr.hset.openxr.haptics_game_rumble.label = Власна вібрація гри
+vr.hset.openxr.haptics_game_rumble.detail = Отриманий удар, використана навичка: як гра трясе геймпад
+vr.hset.weight.world_contact.label = Стіни зупиняють вашу зброю (експериментально)
+vr.hset.weight.world_contact.detail = Стіни, колони, дерева й великі предмети її зупиняють (F4)
+vr.hset.weight.world_contact_hands.label = Стіни зупиняють порожні руки (експериментально)
+vr.hset.weight.world_contact_hands.detail = Порожня рука лишається на поверхні стіни (F4)
+vr.hset.weight.own_body.label = Ваше тіло зупиняє зброю (експериментально)
+vr.hset.weight.own_body.detail = Вона зупиняється на тулубі й ногах; ніколи не удар по вас
+vr.hset.weight.monster_bodies.label = Зброя зупиняється на тілах монстрів
+vr.hset.weight.monster_bodies.detail = Поріз чи випад зупиняється на тілі; лезо ковзає
+vr.hset.weight.monster_shields.label = Щити й зброя монстрів зупиняють вашу зброю
+vr.hset.weight.monster_shields.detail = Їхні щити й зброя теж: зупинений удар - не влучання
+vr.hset.weight.strike_by_force.label = Влучання за силою удару, а не за швидкістю леза
+vr.hset.weight.strike_by_force.detail = Не швидкість леза: легкий дотик - не удар
+vr.hset.weight.monster_ragdoll.label = Тіла монстрів піддаються за своєю вагою
+vr.hset.weight.monster_ragdoll.detail = Поштовх зрушує кінцівку, якої торкається (гуманоїди)
+vr.hset.weight.monster_ragdoll_all.label = Піддається кожен монстр, не лише гуманоїди
+vr.hset.weight.monster_ragdoll_all.detail = Тварини, комахи, демони теж, не лише гуманоїди
+vr.hset.weight.knock_down.label = Сильний удар збиває гуманоїда з ніг
+vr.hset.weight.knock_down.detail = Він падає як регдол і знову встає
+vr.hset.weight.stab_in.label = Гостра зброя встромляється в тіло
+vr.hset.weight.stab_in.detail = Вістрям уперед у тіло, 0.5 m/s або більше
+vr.hset.weight.impale_drag.label = Насаджувати й тягти гуманоїда на списі
+vr.hset.weight.impale_drag.detail = Набіжіть на гуманоїда вістрям уперед: його несе
+vr.hset.weight.grab_bodies.label = Хапати монстрів і союзників захватом руки
+vr.hset.weight.grab_bodies.detail = Захват порожньої руки бере тіло
+vr.hset.weight.npc_bodies.label = У NPC в місті й союзників теж є тіла
+vr.hset.weight.npc_bodies.detail = Ваша зброя зупиняється на них, як на монстрах
+vr.hset.weight.grab_throw.label = Піднімати й кидати схопленого гуманоїда
+vr.hset.weight.grab_throw.detail = Відпустіть під час замаху - і він летить
+vr.hset.weight.grab_balance.label = Потягнутий гуманоїд переступає, щоб устояти
+vr.hset.weight.grab_balance.detail = Він крокує за вами; валить його лише швидший ривок
+vr.hset.weight.grab_items.label = Піднімати предмети з землі захватом руки
+vr.hset.weight.grab_items.detail = Власне підбирання гри, біля вашої долоні
+vr.hset.weight.grab_props.label = Брати предмети обстановки в руку
+vr.hset.weight.grab_props.detail = Чашки, книги, табурети: носяться у захваті
+vr.hset.weight.knock_props.label = Предмети обстановки розлітаються від вашої зброї
+vr.hset.weight.knock_props.detail = Чашки, тарілки, вази, книги й табурети (F4)
+vr.hset.weight.strength.label = Сила рук, %
+vr.hset.weight.strength.detail = Як сильно руки тягнуть зброю за контролерами
+vr.hset.weight.skeleton_bones_max.label = Скелети монстрів: найбільше кісток
+vr.hset.weight.skeleton_bones_max.detail = Більше читає довші скелети й коштує більше
+vr.hset.hands.throw_gesture.label = Кидати дротик кидковим рухом
+vr.hset.hands.throw_gesture.detail = Дротик: тримайте Trigger, замахніться, відпустіть
+vr.hset.gameplay.shield_smite.label = Удар щитом застосовує Smite
+vr.hset.gameplay.shield_smite.detail = Паладин: сильний замах щитом застосовує його
 vr.hset.openxr.direct_input.label = Керування без BodyWalk
 vr.hset.openxr.direct_input.detail = Плагін сам читає контролери
-# vr.hset.openxr.headset_players.label = Players from the headset
-# vr.hset.openxr.headset_players.detail = The Options page's Players row asks the game
+vr.hset.openxr.headset_players.label = Гравці з шолома
+vr.hset.openxr.headset_players.detail = Рядок Гравці на сторінці Options питає гру
 vr.hset.hands.belt_models.label = Зілля на поясі
 vr.hset.hands.belt_models.detail = Власні моделі зілля гри на стегнах героя
 vr.hset.render.vr_resolution.label = Розмір рендера VR: режим
@@ -3837,7 +3927,7 @@ button.pick_picture = Вибрати зображення
 button.clear = Очистити
 status.draw_distance.stop = {n} з {count}:
 status.draw_distance.custom = Власне (значення змінено вручну):
-status.draw_distance.values = {rings} кілець кімнат, моделі до {model}, туман від {fs} до {fe} (у печерах від {cs} до {ce}), купол неба гри на {sky}. Усе діє одразу - без перезапуску.
+status.draw_distance.values = {rings} кілець кімнат, моделі до {model}, туман від {fs} до {fe} (у печерах від {cs} до {ce}), небесний купол гри на {sky} m. Усе діє одразу - без перезапуску.
 status.draw_distance.fog_off = Туман вимкнено (Продуктивність): намальований світ закінчується порожнечею.
 status.draw_distance.no_game_sky = Купол неба враховується, лише поки гра малює небо (вкладка Небо).
 res.tip = Розмір картинки гри в шоломі: квадрат, його сторона в пікселях, хоч би якого розміру було вікно гри - вікно зберігає свій розмір. Перетягніть до будь-якого розміру від 1024 до 4096 (кроками по 64); лівий край, «розмір вікна», - це Desktop: картинка розміром з вікно, як раніше.\n\nБільше - чіткіше й дорожче, за пікселями - порівняно з 2048 x 2048:
@@ -4003,6 +4093,7 @@ status.reshade.code = Не вдалося встановити ReShade (код {
 status.reshade.installed = ReShade встановлено - запускайте гру через D2RLoader.exe
 status.reshade.looking = Пошук поточного ReShade на reshade.me...
 status.collect.recording = Записується, як малюються кадри: {s} s - грайте далі й повертайте голову
+status.collect.headset_report = Створення звіту шолома: не знімайте шолом (близько 20 s)...
 status.collect.packing = Пакування журналів...
 status.collect.no_script = Не вдалося записати скрипт пакування в теку TEMP
 status.collect.no_powershell = Не вдалося запустити PowerShell для пакування журналів
@@ -4058,12 +4149,12 @@ status.arcane_sky.not_started = Небо Arcane Sanctuary: не вдалося �
 status.knock_props.result = Збивані предмети: {text}
 status.knock_props.making = Збивані предмети: створення їхнього каталогу з файлів гри...
 status.knock_props.not_started = Збивані предмети: не вдалося запустити
-# status.world_contact.result = World contact walls: {text}
-# status.world_contact.making = World contact walls: making them from the game's meshes (about a minute)...
-# status.world_contact.not_started = World contact walls: could not be started
+status.world_contact.result = Стіни контакту зі світом: {text}
+status.world_contact.making = Стіни контакту зі світом: будуються з мешів гри (близько хвилини)...
+status.world_contact.not_started = Стіни контакту зі світом: не вдалося запустити
 boat.restart = гра зараз запущена: перезапустіть її, щоб побачити зміну
 status.kurast_boat.result = Каное Kurast Docks: {text}
-# dome.restart = the game running now: restart it for the game-drawn sky
+dome.restart = гра зараз працює: перезапустіть її для неба, яке малює гра
 status.kurast_boat.reading = Каное Kurast Docks: читання міста з файлів гри...
 status.kurast_boat.not_started = Каное Kurast Docks: не вдалося запустити
 data_mods.running_none = нічого об'єднувати
@@ -4072,16 +4163,21 @@ data_mods.running_off = вимк.; знайдено: {mods}
 status.data_mods.result = Інші моди: {text}
 status.data_mods.looking = Інші моди: перегляд теки mods гри...
 status.data_mods.not_started = Інші моди: не вдалося запустити
-# status.hclip.no_game = Headset video: start the game in VR first - the button asks the running game for one
-# status.hshot.no_game = Headset screenshot: start the game in VR first - the button asks the running game for one
-# status.hclip.asked = Recording 10 s of the headset picture - keep the headset on and play...
-# status.hshot.asked = Headset screenshot asked for - keep the headset on...
-# status.hshot.saved = Headset screenshot saved: {file} and its pictures - Collect logs packs the newest
-# status.hshot.none = No headset screenshot came in 20 s: is the game running in VR? The mod's log (d2r_vr) says why
-# status.hclip.saved = Headset video saved: {file} - Collect logs packs the newest
-# status.hclip.none = No headset video came in 60 s: is the game running in VR? The mod's log (d2r_vr) says why
+status.hclip.no_game = Відео шолома: спершу запустіть гру у VR - кнопка просить його в запущеної гри
+status.hshot.no_game = Знімок шолома: спершу запустіть гру у VR - кнопка просить його в запущеної гри
+status.hclip.asked = Запис 10 s зображення в шоломі - не знімайте шолом і грайте...
+status.hshot.asked = Знімок шолома запитано - не знімайте шолом...
+status.hshot.saved = Знімок шолома збережено: {file} і його зображення - «Зібрати журнали» пакує найновіший
+status.hshot.none = За 20 s знімок шолома не надійшов: гра працює у VR? Журнал мода (d2r_vr) каже чому
+status.hclip.saved = Відео шолома збережено: {file} - «Зібрати журнали» пакує найновіше
+status.hclip.none = За 60 s відео шолома не надійшло: гра працює у VR? Журнал мода (d2r_vr) каже чому
 status.collect.collecting = Збирання журналів...
 status.collect.not_started = Не вдалося почати збирання журналів
+status.hreport.running = Створення звіту шолома: не знімайте шолом і тримайте обидва контролери перед собою (близько 20 s)...
+status.hreport.saved = Звіт шолома збережено: {path} - «Зібрати журнали» пакує його
+status.hreport.missing = D2R_VR_Headset_Report.exe не знайдено поруч із цією програмою - встановіть D2R VR знову
+status.hreport.failed = Звіт шолома не вдався (код {code})
+status.hreport.not_started = Не вдалося запустити звіт шолома
 status.framegen.on = OFXR Bridge {version} встановлено (d2rloader\d2r_vr_libs\ofxr) - генерацію кадрів увімкнено (журнал каже, що вона робить)
 status.framegen.off = OFXR Bridge {version} встановлено (d2rloader\d2r_vr_libs\ofxr) - генерацію кадрів вимкнено
 status.framegen.missing_on = Генерацію кадрів увімкнено, але OFXR Bridge не встановлено - кнопка вище встановлює його
@@ -4225,52 +4321,52 @@ vr.body.span_auto = {span} m (авто)
 vr.body.auto = Авто
 vr.body.why_seated = Сидячи: калібрування зчитує лише розмах рук. «Перецентрувати вигляд» ставить очі героя туди, де ваша голова.
 vr.body.why = Справжня висота ваших очей задає масштаб світу, розмах рук - руки героя.
-# vr.coop.enabled = Co-op bridge
-# vr.coop.mode = Go through a relay
-# vr.coop.use = Host my rooms on
-# vr.coop.enabled.on = CREATE GAME lists your room; a relay when friends cannot reach you
-# vr.coop.enabled.off = CREATE GAME is D2RLoader's alone: no list, no relay
-# vr.coop.mode.always_detail = Every room you host goes through a relay
-# vr.coop.mode.never_detail = Friends connect straight to you: your port open
-# vr.coop.mode.auto_detail = Only when your port cannot be reached from outside
-# vr.coop.use.detail = Tried first; joining uses the host's relay
-# vr.coop.mode.always = Always
-# vr.coop.mode.never = Never
-# vr.coop.mode.auto = Auto
-# vr.coop.use.first = First that answers
-# vr.coop.use.missing = {name} (not listed)
-# vr.coop.state.active = takes rooms
-# vr.coop.state.near_limit = near its limit
-# vr.coop.state.limit = limit reached
-# vr.coop.state.no_answer = not answering
-# vr.coop.state.unknown = not checked yet
-# vr.coop.age.unknown = at a time not known
-# vr.coop.age.now = just now
-# vr.coop.age.min = {n} min ago
-# vr.coop.age.h = {n} h ago
-# vr.coop.use.first_lower = the first that answers
-# vr.coop.in_force_on = In force until your next CREATE GAME: bridge on, {mode}, {use}.
-# vr.coop.in_force_off = In force until your next CREATE GAME: bridge off.
-# vr.coop.reading = Reading D2R Rooms' files...
-# vr.coop.missing = The D2R Rooms plugin is not installed: no d2rl-d2r-rooms.dll in this folder:
-# vr.coop.missing_how = D2R VR Authentic's Setup installs it (its D2R Rooms task). Nothing to choose until then.
-# vr.coop.plugin = D2R Rooms {version}: its last word {age}.
-# vr.coop.plugin_no_status = D2R Rooms is installed; it writes what it knows while the game runs (nothing yet).
-# vr.coop.relay_usage = {name}: {state}, {pct}% of its quota used
-# vr.coop.relay = {name}: {state}
-# vr.coop.first = tried first
-# vr.coop.hosting_direct = You host room {code}: friends connect straight to you.
-# vr.coop.hosting_relay = You host room {code} through {relay}.
-# vr.coop.rooms_none = No open rooms in the list.
-# vr.coop.rooms = Open rooms: {n}
-# vr.coop.when = Read again on every CREATE GAME: a change counts from your next one, no restart. A room open now keeps its way.
+vr.coop.enabled = Міст кооперативу
+vr.coop.mode = Через ретранслятор
+vr.coop.use = Хостити мої кімнати на
+vr.coop.enabled.on = CREATE GAME додає вашу кімнату до списку; ретранслятор, коли друзі не можуть до вас достукатися
+vr.coop.enabled.off = CREATE GAME - лише D2RLoader: без списку, без ретранслятора
+vr.coop.mode.always_detail = Кожна ваша кімната йде через ретранслятор
+vr.coop.mode.never_detail = Друзі під'єднуються прямо до вас: ваш порт відкритий
+vr.coop.mode.auto_detail = Лише коли ваш порт недосяжний ззовні
+vr.coop.use.detail = Пробується першим; приєднання використовує ретранслятор хоста
+vr.coop.mode.always = Завжди
+vr.coop.mode.never = Ніколи
+vr.coop.mode.auto = Авто
+vr.coop.use.first = Перший, що відповість
+vr.coop.use.missing = {name} (немає в списку)
+vr.coop.state.active = приймає кімнати
+vr.coop.state.near_limit = близько до ліміту
+vr.coop.state.limit = ліміт вичерпано
+vr.coop.state.no_answer = не відповідає
+vr.coop.state.unknown = ще не перевірено
+vr.coop.age.unknown = у невідомий час
+vr.coop.age.now = щойно
+vr.coop.age.min = {n} хв тому
+vr.coop.age.h = {n} год тому
+vr.coop.use.first_lower = перший, що відповість
+vr.coop.in_force_on = Діє до вашого наступного CREATE GAME: міст увімк., {mode}, {use}.
+vr.coop.in_force_off = Діє до вашого наступного CREATE GAME: міст вимк.
+vr.coop.reading = Читання файлів D2R Rooms...
+vr.coop.missing = Плагін D2R Rooms не встановлено: немає d2rl-d2r-rooms.dll у цій теці:
+vr.coop.missing_how = Його встановлює Setup D2R VR Authentic (його завдання D2R Rooms). До того вибирати нічого.
+vr.coop.plugin = D2R Rooms {version}: його останнє слово {age}.
+vr.coop.plugin_no_status = D2R Rooms встановлено; він записує, що знає, поки гра працює (поки нічого).
+vr.coop.relay_usage = {name}: {state}, використано {pct}% його квоти
+vr.coop.relay = {name}: {state}
+vr.coop.first = пробується першим
+vr.coop.hosting_direct = Ви хостите кімнату {code}: друзі під'єднуються прямо до вас.
+vr.coop.hosting_relay = Ви хостите кімнату {code} через {relay}.
+vr.coop.rooms_none = У списку немає відкритих кімнат.
+vr.coop.rooms = Відкритих кімнат: {n}
+vr.coop.when = Читається знову при кожному CREATE GAME: зміна діє з наступного, без перезапуску. Кімната, відкрита зараз, зберігає свій спосіб.
 vr.keys.custom = Власне (ini)
-# vr.coop.status.reading = Reading D2R Rooms' files...
-# vr.coop.status.missing = Nothing to choose: the D2R Rooms plugin is not installed.
-# vr.coop.status.saving = Writing d2r-rooms.ini...
-# vr.coop.status.saved = Saved in d2r-rooms.ini. It counts from your next CREATE GAME.
-# vr.coop.status.failed = Could not write d2r-rooms.ini. Nothing changed.
-# vr.coop.status.idle = Each change is written to d2r-rooms.ini at once (the plugin's own file).
+vr.coop.status.reading = Читання файлів D2R Rooms...
+vr.coop.status.missing = Вибирати нічого: плагін D2R Rooms не встановлено.
+vr.coop.status.saving = Запис d2r-rooms.ini...
+vr.coop.status.saved = Збережено в d2r-rooms.ini. Діє з вашого наступного CREATE GAME.
+vr.coop.status.failed = Не вдалося записати d2r-rooms.ini. Нічого не змінено.
+vr.coop.status.idle = Кожна зміна одразу записується в d2r-rooms.ini (власний файл плагіна).
 vr.hset.status.no_ini = d2r_vr.ini не знайдено. Нічого не можна змінити.
 vr.hset.status.saving = Збереження...
 vr.hset.status.saved_video = Збережено. Гра за мить перебудує картинку: кілька секунд завмирання.
@@ -4285,6 +4381,7 @@ vr.hset.status.body_idle = «Калібрувати тіло» ховає цю �
 vr.hset.status.keys_idle = Виберіть, що робить кнопка, потім «Застосувати». Комбінації та інші довгі натиснення: D2R VR Authentic Settings.
 vr.hset.status.keys_off = «Керування без BodyWalk» вимкнено: ці кнопки нічого не роблять (керування - це розкладка BodyWalk).
 vr.hset.status.melee_direct_full = Direct hit увімкнено повністю (D2R VR Authentic Settings > Strikes); позначка тут - за правилами.
+vr.hset.status.world_idle = Кожна зміна застосовується сама (F4). Їм потрібні руки на контролерах; решта - у D2R VR Authentic Settings.
 vr.hset.status.melee_idle = Кожна зміна застосовується сама. Лише від першої особи (F4).
 vr.hset.status.melee_off = «Удар дотиком» вимкнено: поставте галочку, і рядки нижче діятимуть.
 vr.hset.status.belt_needs_direct = Потрібне «Керування без BodyWalk» (зараз вимк.): доти зілля бере сам хват.
@@ -4294,11 +4391,11 @@ vr.hset.status.idle_window = Наведіть і натисніть курок. 
 vr.hset.status.idle = Наведіть і натисніть курок. B або довге натиснення правого стіка закриває її.
 vr.hset.custom_empty = (рядок, якого список не називає)
 vr.hset.second_row_off = - другий ряд (LT) вимкнено
-# vr.hset.players.off = Off: D2R VR Authentic Settings, Players from the headset
-# vr.hset.players.unknown = The game's count is read once your hero is in a game
-# vr.hset.players.not_here = Only in a game of your own: single player or a TCP/IP host
-# vr.hset.players.took = The game set players to {n} (as /players {n}): monsters met from now on.
-# vr.hset.players.refused = The game did not take it: only in single player, or as the host of a TCP/IP game.
+vr.hset.players.off = Вимк.: D2R VR Authentic Settings, Гравці з шолома
+vr.hset.players.unknown = Кількість гри читається, щойно ваш герой у грі
+vr.hset.players.not_here = Лише у власній грі: одиночна або хост TCP/IP
+vr.hset.players.took = Гра задала гравців: {n} (як /players {n}): для монстрів, зустрінутих відтепер.
+vr.hset.players.refused = Гра цього не прийняла: лише в одиночній грі або як хост гри TCP/IP.
 vr.hset.title = НАЛАШТУВАННЯ ШОЛОМА
 vr.video.title = Розмір рендера
 vr.video.note = «Застосувати» перебудовує картинку: гра завмирає на кілька секунд (близько 7).
@@ -4411,6 +4508,10 @@ vr.map.on = Увімк.
 vr.map.off = Вимк.
 
 # ===== Keys of this file that en.txt does not list (an English used under several keys, worded here for one of them) =====
+sky.game_sky_radius.label = Небо гри: радіус купола, одиниці
+sky.game_sky_radius.tip = Наскільки далеко навколо вас кладеться купол неба гри, в одиницях гри (діє одразу). 200: близький горизонт - купол відрізає дальній світ чистим колом, туман гри над ним. Далі - небо виходить з туману. Журнал за кожної зміни каже, який радіус використовується.
+sky.game_dome_caves_size.label = Купол печери: радіус x радіус видимості моделей
+sky.game_dome_caves_size.tip = 1: купол на радіусі видимості моделей ([render] model_radius); 0.5: половина його (радіус як діаметр). Діє одразу.
 openxr.haptics.label = Вібрація контролерів
 ceiling.steps.label = Кроки рельєфу стелі
 ceiling.steps.tip = Кроки променя крізь скелю: більше = тонший рельєф, дорожчий кадр.

@@ -36,3 +36,5 @@ promo/
 /installer/launcher/cache/
 # fx_native_test's cache of compiled shaders and pictures (made by running it)
 fx_native_cache/
+# [sky] dome_gain_once: measured in the game, never shipped
+d2r_vr_dome_gain.txt

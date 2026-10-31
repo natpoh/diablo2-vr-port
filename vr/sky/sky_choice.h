@@ -24,10 +24,12 @@ bool FogWanted();             // our post pass's fog
 // caves_strength), or the Arcane Sanctuary's own ([fog] arcane_own: arcane_start ... arcane_curve) - every fog takes them from here
 struct FogNumbers { float start, end, curve, strength; };
 FogNumbers FogNumbersNow();
+FogNumbers GameFogNumbersNow();   // the same for the game's fog ([fog] game_fog=1): a full fog below its start taken the other way round
 bool NoFogUnderground();      // [fog] caves=0 and the area off the outdoor list (not the Arcane Sanctuary with [sky] arcane_fog): no fog at all
 bool ArcaneOwnFog();          // [fog] arcane_own, in the Arcane Sanctuary: its own numbers and colour, not the caves'
 bool ArcaneHazeFog();         // the fog's colour is the Arcane Sanctuary's sky behind each point (its sky shown; arcane_into_sky with its own fog)
 bool OurSkyWanted();          // our post pass's act sky
+bool DistanceBlurWanted();    // [render] distance_blur: the far picture blurred behind a pane (our post pass, whoever draws the fog)
 bool GameSkyFixWanted();      // a fix of ours on the game's dome or fog that reads the scene's depth (its colour, its night, its horizon, the fog's match)
 bool CeilWanted();            // a cave ceiling wanted here ([ceiling] enabled, first person, a ceiling biome, no menu)
 bool GameCeilWanted();        // ... of the game's rock ([ceiling] game_ceiling's areas)

@@ -1,5 +1,6 @@
 // vr/body/arms.cpp - cut from vr/vrcam.cpp (docs/plan_modules.md M12); what it gives: vr/body/body.h. It sees vrcam.cpp's headers.
 #include "../vrcam_headers.h"
+#include "pose_views.h"
 
 using namespace D2RL;
 using namespace vrc;   // as in vrcam.cpp
@@ -101,17 +102,22 @@ void PushArms() {
     }
     // third person, the game on the floor and F1 in perspective: the whole hero as the game
     // animates him, head included (on the floor he stood headless, 2026-10-05)
-    const bool own = on && !ThirdPerson() && !Overhead();
+    // VR F1 (from above) and F3 (the floor): the game's own hero, nothing of ours on him - whether or not the view is drawn in 3D (Overhead). Drawn as a flat
+    // window F1 counted as first person: the whole hero turned to the look, his head hidden (Serg on 0.192.39: "in F1 the doll is still taken over")
+    const int view = ViewNow(), platform = g_set.platform.load();
+    const bool vrVanilla = poseviews::Vanilla(platform, view);
+    skel::SetPoseView(poseviews::AnyAllowed(platform, view));   // (the pose thread and the skinning: every writer, vr/body/pose_views.h)
+    const bool own = on && !ThirdPerson() && !Overhead() && !vrVanilla;
     in.mode = own ? ArmsMode() : 0;
     // From behind the game animates all of him, but he still turns with the
     // camera: else the right stick only swung the camera round a hero who
     // kept facing wherever he last walked.
     // Without the body the hero is turned whole, about the vertical only, and seen from his eyes.
-    in.bodyTurn = own ? (FullBody() ? g_set.bodyTurn.load() : 2) : on && ThirdPerson() && !Overhead() && g_set.thirdTurn.load() ? 2 : 0;
+    in.bodyTurn = own ? (FullBody() ? g_set.bodyTurn.load() : 2) : on && ThirdPerson() && !Overhead() && !vrVanilla && g_set.thirdTurn.load() ? 2 : 0;
 #if D2RVR_FIRST_PERSON
     {   // [body] gait_legs_third / gait_legs_f4: our own hero's legs by the gait (the library loaded here, the update thread, never in the pose hook). From behind
         // only while the whole hero turns with the camera ([body] turn_third); in F4 the whole body is turned with the look for it (the pelvis faces where you do).
-        const bool third = on && ThirdPerson() && !Overhead() && g_set.gaitThird.load() && in.bodyTurn == 2;
+        const bool third = on && ThirdPerson() && !Overhead() && !vrVanilla && g_set.gaitThird.load() && in.bodyTurn == 2;
         const bool f4 = own && FullBody() && g_set.gaitF4.load();
         in.gaitLegs = (third || f4) && gaitlib::Ensure();
         if (in.gaitLegs && f4) in.bodyTurn = 2;
@@ -430,6 +436,7 @@ void PushArms() {
             w.takeHaptic = g_set.weightTakeHaptic.load() ? g_set.weightTakeHapticPct.load() * 0.01f : 0.0f;
             w.recallAny = g_set.weightRecallAny.load();
             w.monsterBodies = g_set.weightMonsterBodies.load() && viewgate::F4();   // [weight] monster_bodies: VR first person only
+            w.ownBody = meleetouch::OwnBodyWanted() && viewgate::F4();               // [weight] own_body: the same, on its own
             w.worldContact = worldcontact::WeaponWanted() && viewgate::F4();         // [weight] world_contact: the same
             w.stabIn = g_set.weightStabIn.load() && viewgate::F4();                 // [weight] stab_in: the same
             w.stabMinSpeed = g_set.stabMinSpeed.load();
@@ -737,12 +744,18 @@ void PushArms() {
     in.holdTrunk = own && g_set.platform.load() == 0 && g_set.flatHoldTrunk.load();
     in.walkBack = g_set.walkBack.load();
     in.walkBackReverse = g_set.walkBackReverse.load();
-    in.dollFeet = g_set.dollFeet.load();
-    in.legsRear = g_set.legsRear.load();
+    in.dollFeet = g_set.dollFeet.load() && !vrVanilla;   // (in every other view; VR F1 / F3 the game's)
+    // [body] legs_rear and all it carries (the hold, the cones, the side walk): never in F1 (from above) or F3 (the floor), VR or flat - the game's own
+    // animation there, as vanilla (Serg, 0.192.35: "in F1 and F3 don't freeze the doll at all")
+    in.legsRear = g_set.legsRear.load() && poseviews::Allowed(poseviews::kHeroLegs, platform, view);
     in.legsRearCycle = g_set.legsRearCycle.load();
     in.legsFrontConeDeg = g_set.legsFrontConeDeg.load();
     in.legsRearConeDeg = g_set.legsRearConeDeg.load();
-    in.legsSideRagdoll = in.legsRear && g_set.legsSideRagdoll.load() && stridelib::Ensure();   // (the library loaded here, never in the pose hook)
+    in.legsSideGame = g_set.legsSideGame.load();
+    in.legsTurn = in.legsSideGame && g_set.legsTurn.load();
+    in.legsSideRagdoll = in.legsRear && !in.legsSideGame && g_set.legsSideRagdoll.load() && stridelib::Ensure();   // (the library loaded here, never in the pose hook)
+    in.legsSideSteps = in.legsSideRagdoll && !g_set.legsSideGait.load() && stridelib::HasSteps();   // (the steps the default since 0.192.36)
+    in.legsSideCross = in.legsSideSteps && g_set.legsSideCross.load();   // (a library older than stride 2.2 reads no stagger: its bound)
     in.heroAnimMode = HeroAnimMode();   // (walk_back_reverse keeps the game's walk and run only - not a Whirlwind, a Leap, a knockback)
     in.followJump = own && g_set.followJump.load();
     in.jumpFrom = g_set.jumpFrom.load();

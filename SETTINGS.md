@@ -28,7 +28,8 @@ the headset-only ones.
 
 - **START** - starts the game under D2RLoader, the way the mod runs (greyed
   while the game runs). With native OpenXR and *Controls without BodyWalk* it
-  starts nothing else; with BodyWalk and FlatVR it starts BodyWalk too.
+  starts nothing else (and stops FlatVR, see *Native OpenXR: stop FlatVR by
+  itself* below); with BodyWalk and FlatVR it starts BodyWalk too.
 - **How you play** - *Flat* (the monitor, mouse and keyboard, no headset) or
   *VR* (the headset).
 - **In the headset** - *3D in the headset*: **Native OpenXR** (the default: the
@@ -128,6 +129,18 @@ the headset-only ones.
   With the eyes right the two grids fuse into one and stay still on the world.
 - **Start BodyWalk / Start FlatVR / Stop FlatVR** - start BodyWalk, then FlatVR,
   right from here. Each button shows only when it can do something.
+- **FlatVR: start BodyWalk and FlatVR by themselves** (`[mode] flatvr_autostart`,
+  on) - switching *3D in the headset* from Native OpenXR to a FlatVR choice
+  starts BodyWalk (when none runs) and FlatVR once BodyWalk's Game Link is up.
+  START and the launcher start them in FlatVR either way. Off: the switch starts
+  nothing.
+- **Native OpenXR: stop FlatVR by itself (BodyWalk stays)**
+  (`[mode] native_close_flatvr`, on) - switching to Native OpenXR, and starting
+  the game with it, stops FlatVR (it holds the headset) through BodyWalk's Game
+  Link; a FlatVR running on its own (FlatVR.exe) is closed as its own close
+  button does it, ended by force only when its window stops answering. BodyWalk
+  keeps running. A BodyWalk without Game Link (Lite) cannot be told: stop its
+  FlatVR yourself. Off: nothing stopped.
 - **Status** - everything the VR chain needs, top to bottom: ReShade and the
   mod's effect, FlatVR's depth add-on, BodyWalk, the Xbox controller driver, the
   Game Link plugin, BodyWalk's settings for the mod, FlatVR running, head
@@ -714,6 +727,15 @@ once, kept until it goes away or the window or render size changes, copied for e
 effects and bound once, so ReShade does not wait for the graphics card at every
 effect pass - or **ReShade's own** (Generic Depth picks it; fine in a window that is
 not square). A line under it says which buffer, how big and why it was last picked.
+- **Distance blur** (off; `[render] distance_blur`) - the far picture blurred as
+  through a pane of frosted glass (from Serg's fractal game): nothing nearer than
+  *Blur starts at* (15 m) is touched, behind it the blur grows with the distance
+  squared to its widest at *Full blur at* (50 m); *Blur strength* 1 = 2.5 % of the
+  picture's height (0.4 by default). A tap nearer than the pixel is never taken in,
+  so near edges stay sharp; the sky, the void and the interface are not blurred. It
+  has no colour of its own: the fog keeps its look. Our effect's pass, with ReShade
+  or without, whoever draws the fog; its cost is in the log's 10 s line without
+  ReShade.
 - **Render distance** - how many rings of rooms round the hero are drawn, and
   how far models stay visible.
 

@@ -110,7 +110,7 @@ void Update() {
     }
     const bool under = g_underground.load();
     Ours o{};
-    const fx::FogNumbers n = fx::FogNumbersNow();   // ([fog] arcane_own: the Arcane Sanctuary's own)
+    const fx::FogNumbers n = fx::GameFogNumbersNow();   // ([fog] arcane_own: the Arcane Sanctuary's own)
     o.start = n.start;
     o.end = n.end;
     o.strength = n.strength;
@@ -161,7 +161,9 @@ void Update() {
         const bool height = g_set.fogHeight.load() && !under;
         LogF("vrcam: game fog - the share by distance (%s): %s; %s; %s", curve ? "the game's pass by our curve, while its patched pass is bound" : "the game's exponential",
              line, height ? "the game's pass thinned above the eye from game_fog_top - game_fog_soft, none above game_fog_top" : "no height thinning",
-             g_set.fogMatch.load() ? "[fog] game_fog_match makes up the rest to ours on the world's pixels (the dome untouched)" : "[fog] game_fog_match off: as the game lays it");
+             g_set.fogMatch.load() && g_set.fogMeasured.load() ? "[fog] game_fog_match makes up the rest to ours on the world's pixels (the dome untouched)"
+             : g_set.fogMatch.load() ? "[fog] game_fog_match makes up the rest to ours on the world's pixels in the sky's colour (fog_colour_measured off: "
+                                       "no measure, the game's fogged pixels not recoloured)" : "[fog] game_fog_match off: as the game lays it");
     }
     told = 1;
     toldFog = f;

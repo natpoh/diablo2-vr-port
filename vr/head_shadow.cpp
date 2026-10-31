@@ -145,11 +145,13 @@ OurPose g_ours[2];   // (under g_oursLock) [0] the last finished, [1] the one be
 std::atomic<uintptr_t> g_oursSkel{0}, g_oursCur{0}, g_oursPrev{0};
 std::atomic<uint64_t> g_oursGen{0};
 std::atomic<ULONGLONG> g_oursAt{0};
+std::atomic<bool> g_poseView{true};   // vr/body/pose_views.h AnyAllowed (SetPoseView): VR F1 / F3 none of our poses to the skinning
 std::atomic<unsigned> g_oursSubs[3];   // skinnings handed our pose: the eyes' passes, the shadows', outside a draw collect
 
 // Our pose for this world pose of the hero's skeleton (its matrices into m, n of them): true when there is a fresh one; *gen its gen.
 bool OursInto(uintptr_t skeleton, uintptr_t pose, float (*m)[16], int n, uint64_t* gen) {
-    if (!g_oursWanted.load(std::memory_order_relaxed) || !pose || skeleton != g_oursSkel.load(std::memory_order_relaxed)) return false;
+    if (!g_oursWanted.load(std::memory_order_relaxed) || !g_poseView.load(std::memory_order_relaxed) || !pose || skeleton != g_oursSkel.load(std::memory_order_relaxed))
+        return false;
     if (GetTickCount64() - g_oursAt.load(std::memory_order_relaxed) > kOursMs) return false;
     const int which = pose == g_oursCur.load(std::memory_order_relaxed) ? 0 : pose == g_oursPrev.load(std::memory_order_relaxed) ? 1 : -1;
     if (which < 0) return false;
@@ -168,6 +170,9 @@ bool OursInto(uintptr_t skeleton, uintptr_t pose, float (*m)[16], int n, uint64_
 thread_local std::unique_ptr<Copy> t_ours[2];
 thread_local int t_oursNext = 0;
 uintptr_t OursPose(uintptr_t skeleton, uintptr_t pose) {
+    // fresh and in its views first, the thread's copies after: once our poses stop coming (VR F1 / F3) the gen stands still, and a copy kept for a pose buffer
+    // the game hands again was drawn - the last F4 pose, turned to the look, a frame now and then (Serg's Rec 0103 on 0.192.42: "in F1 the doll still shakes")
+    if (!g_poseView.load(std::memory_order_relaxed) || GetTickCount64() - g_oursAt.load(std::memory_order_relaxed) > kOursMs) return 0;
     const uint64_t gen = g_oursGen.load(std::memory_order_acquire);
     for (auto& c : t_ours)
         if (c && c->pose == pose && c->ours == gen && gen) return reinterpret_cast<uintptr_t>(c->header);
@@ -289,6 +294,8 @@ void CountSkin(uintptr_t skeleton, uintptr_t pose, int pass) {
     }
 }
 
+std::atomic<void (*)(uint32_t, bool)> g_beforeDraw{nullptr};   // [weight] knock_down (SetBeforeDraw)
+
 // [weight] monster_ragdoll_pose: the turned monsters' poses (DollSkinFn), this thread's copy - made afresh for each skinning (a frame is a few of them)
 std::atomic<bool> g_dollWanted{false};
 std::atomic<DollSkinFn> g_dollSkin{nullptr};
@@ -315,7 +322,9 @@ int DollPose(uintptr_t skeleton, uintptr_t pose, uintptr_t* out) {
 __declspec(noinline) uintptr_t HookComposite(uintptr_t skeleton, uintptr_t pose, uintptr_t indices, uintptr_t count, uintptr_t out) {
     const int pass = t_pass;
     CountSkin(skeleton, pose, pass);
-    if (g_dollWanted.load(std::memory_order_relaxed) && g_dollFaults.load(std::memory_order_relaxed) == 0 && pose && pose != g_cur.load(std::memory_order_relaxed) &&
+    if (!g_poseView.load(std::memory_order_relaxed)) return g_origComposite(skeleton, pose, indices, count, out);   // VR F1 / F3: the game's own, whole
+    if (g_dollWanted.load(std::memory_order_relaxed) && g_poseView.load(std::memory_order_relaxed) && g_dollFaults.load(std::memory_order_relaxed) == 0 && pose &&
+        pose != g_cur.load(std::memory_order_relaxed) &&
         pose != g_prev.load(std::memory_order_relaxed)) {   // [weight] monster_ragdoll_pose: a struck monster, drawn turned
         uintptr_t turned = 0;
         const int r = DollPose(skeleton, pose, &turned);
@@ -353,7 +362,9 @@ __declspec(noinline) uintptr_t HookComposite(uintptr_t skeleton, uintptr_t pose,
 __declspec(noinline) uintptr_t HookDraw(uintptr_t a1, uintptr_t a2, uintptr_t a3, uintptr_t entity, uintptr_t a5, uintptr_t a6, uintptr_t a7, uintptr_t a8,
                                         uintptr_t a9, uintptr_t a10, uintptr_t a11) {
     const int pass = (int)(uint32_t)a11;
-    if (EyesPass(pass) && g_marked.Live() != 0 && g_cur.load(std::memory_order_relaxed) && g_marked.Has((uint32_t)entity, GetTickCount64())) {
+    if (const auto before = g_beforeDraw.load(std::memory_order_relaxed)) before((uint32_t)entity, EyesPass(pass));   // [weight] knock_down: its bounds, last
+    if (EyesPass(pass) && g_poseView.load(std::memory_order_relaxed) && g_marked.Live() != 0 && g_cur.load(std::memory_order_relaxed) &&
+        g_marked.Has((uint32_t)entity, GetTickCount64())) {
         g_skips.fetch_add(1, std::memory_order_relaxed);
         return 0;   // as the game's own early return for a model faded to nothing: no draw call made for this pass
     }
@@ -386,7 +397,8 @@ int ReadAttachment(uint32_t entity, uintptr_t component, uint32_t* parent, bool*
 
 void OnXform(uint32_t entity, uintptr_t component, uintptr_t) {
     const uintptr_t self = g_self.load(std::memory_order_relaxed);
-    if (!self || !g_cur.load(std::memory_order_relaxed) || g_faulted.load(std::memory_order_relaxed) || component < 0x10000) return;
+    if (!self || !g_cur.load(std::memory_order_relaxed) || g_faulted.load(std::memory_order_relaxed) || component < 0x10000 || !g_poseView.load(std::memory_order_relaxed))
+        return;
     const uint64_t now = GetTickCount64();
     if (now - g_pubAt.load(std::memory_order_relaxed) > kPublishedMs) return;
     uint32_t parent = 0xFFFFFFFFu;
@@ -423,8 +435,11 @@ void WantForPose(bool on) {
     if (g_oursWanted.exchange(on) != on && on) Log("hero pose: the game's skinning composite is asked for - the hero is drawn from a copy of his pose holding the bones as we "
                                                  "finished them ([body] legs_rear)");
 }
+void SetPoseView(bool allowed) {
+    if (g_poseView.exchange(allowed) != allowed) LogF("hero pose: %s", allowed ? "our poses to the skinning again" : "VR F1 / F3 - the skinning gets the game's own poses only");
+}
 void PublishOurPose(uintptr_t skeleton, uintptr_t pose, uintptr_t prevPose, const float* m, int n) {
-    if (!g_oursWanted.load(std::memory_order_relaxed) || !m || n <= 0 || n > kMaxBones || pose < 0x10000) return;
+    if (!g_oursWanted.load(std::memory_order_relaxed) || !g_poseView.load(std::memory_order_relaxed) || !m || n <= 0 || n > kMaxBones || pose < 0x10000) return;
     AcquireSRWLockExclusive(&g_oursLock);
     g_ours[1].pose = g_ours[0].pose;
     g_ours[1].n = g_ours[0].n;
@@ -448,6 +463,7 @@ bool AttachmentOf(uint32_t entity, uintptr_t component, uintptr_t* skeletonInsta
     return ReadAttachment(entity, component, &parent, &has, skeletonInstance, bone) > 0 && has && *skeletonInstance > 0x10000;
 }
 void SetAttachWriter(void (*fn)(uint32_t entity, uintptr_t component, uintptr_t out)) { g_attachWriter.store(fn); }
+void SetBeforeDraw(void (*fn)(uint32_t entity, bool eyes)) { g_beforeDraw.store(fn); }
 
 void WantForDoll(bool on) {
     if (g_dollWanted.exchange(on) != on && on) Log("monster ragdoll pose: the game's skinning composite is asked for - a struck monster is drawn from a turned copy of its pose");

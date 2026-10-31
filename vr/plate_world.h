@@ -81,6 +81,38 @@ inline bool BoxOf(const int32_t r[4], float s, uint32_t w, uint32_t h, float box
     return std::isfinite(box[0] + box[1] + box[2] + box[3]);
 }
 
+// ---- the box from where the game hung the plate ---------------------------------------------------------------------------------
+// (Serg, PC2, 2026-11: "the plates over the monsters were cut in the middle, one part small and one part big": native OpenXR, no ReShade, render
+// 1152 then 1216.) The box came from the plate's rect read off the top middle of the interface (its x, y in the layout's units) made pixels by the
+// interface scale: r[0] * s + half the screen. The plate stands far from that middle (hundreds of units), so a scale a few percent off - another render
+// size since it was asked, the label code's last one, the fallback - moved the box off the plate by much more than the plate's size errs: the half of
+// the plate inside the box was drawn smaller, the other half where the game drew it, at its own size. Now the box is set where the game hung the
+// plate (the hook's answer at the read, px of the viewport: the anchor widget stands exactly there) and only the plate's offset from that anchor (some
+// 100 units) and its size are made pixels: a scale off by a few percent moves the box by a pixel or two.
+// The scale itself is measured there too when the plate hangs well off the middle across: the anchor widget's x in the layout's units is
+// (px - viewport / 2) / s (AnchorAtFixed below, checked against the game).
+constexpr int32_t kScaleMinUnits = 150;   // the anchor this far off the middle across, or the measure is not taken (the helper's own few units)
+inline bool ScaleFromAnchor(int32_t anchorX, float pxX, float viewW, float* s) {
+    if (anchorX > -kScaleMinUnits && anchorX < kScaleMinUnits) return false;
+    if (!(viewW >= 100.0f && viewW <= 20000.0f) || !std::isfinite(pxX)) return false;
+    const float v = (pxX - 0.5f * viewW) / static_cast<float>(anchorX);
+    if (!(v > 0.05f && v < 20.0f)) return false;
+    *s = v;
+    return true;
+}
+// The box (uv) of rect r (layout) whose anchor widget stood at `anchor` (layout) when the game hung it at atPx (px of a viewW x viewH viewport), scale s:
+// the same margins as BoxOf.
+inline bool BoxAtAnchor(const int32_t r[4], const int32_t anchor[2], float s, const float atPx[2], float viewW, float viewH, float uv[4]) {
+    if (!(viewW >= 1.0f && viewH >= 1.0f) || r[2] <= 0 || r[3] <= 0 || !(s > 0.05f && s < 20.0f) || !std::isfinite(atPx[0]) || !std::isfinite(atPx[1])) return false;
+    const float mx = kMarginX * static_cast<float>(r[3]) * s, my = kMarginY * static_cast<float>(r[3]) * s;
+    const float x0 = atPx[0] + static_cast<float>(r[0] - anchor[0]) * s - mx, y0 = atPx[1] + static_cast<float>(r[1] - anchor[1]) * s - my;
+    uv[0] = x0 / viewW;
+    uv[1] = y0 / viewH;
+    uv[2] = (x0 + static_cast<float>(r[2]) * s + 2.0f * mx) / viewW;
+    uv[3] = (y0 + static_cast<float>(r[3]) * s + 2.0f * my) / viewH;
+    return std::isfinite(uv[0] + uv[1] + uv[2] + uv[3]);
+}
+
 // ---- the box follows the plate ----------------------------------------------------------------------------------------------
 // The plate's widgets are read on the UI thread every 10 ms (vr/gamestate.cpp ReadPlate) and the box is set as the effect draws. In a headset the
 // plate moves on the screen with every turn of the head - 20 px a frame is nothing - and a box placed by the last read trailed it: the plate's edge
