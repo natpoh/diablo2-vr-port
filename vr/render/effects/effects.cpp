@@ -2125,6 +2125,16 @@ template <class RT> void EffectsBegin(RT* rt, reshade::api::command_list* cl) {
         }
         SetBool(rt, i ? "GameMapOn" : "GameBarOn", on && srv == g_pieceBound[i]);
         if (on) SetFloats(rt, i ? "GameMapBox" : "GameBarBox", box, 4);
+        if (i == 1) {   // [hud] map_rotate_flat: the map round about the hero, turned (vr/map_turn.h RoundOnScreen); an older effect has no such uniform
+            float circle[4], hero[2], m[4];
+            const bool turn = on && hud::PictureMapTurn(circle, hero, m);
+            SetBool(rt, "GameMapTurnOn", turn);
+            if (turn) {
+                SetFloats(rt, "GameMapTurnCircle", circle, 4);
+                SetFloats(rt, "GameMapTurnHero", hero, 2);
+                SetFloats(rt, "GameMapTurnM", m, 4);
+            }
+        }
     }
     // the left eye's HUD moves right, the right eye's left: nearer than the screen
     SetFloat(rt, "HudShift", HudWanted() ? g_set.uiShift.load() * 0.005f : 0.0f);

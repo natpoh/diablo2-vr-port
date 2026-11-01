@@ -52,6 +52,26 @@ void MapDirectionTick() {
     hud::SetMapDirection(want, want && gamestate::AutoMapOpen() && gamestate::MapMode() == 0);
 }
 
+// [hud] map_rotate_flat (vr/map_turn.h RoundOnScreen), every tick: the corner map in the picture round about the hero and turned so our camera's
+// way is up - where our camera turns and the map is in the picture: flat F2 / F3, VR F2 with [hud_third] classic 0. Not F1 (the game's camera
+// from above never turns: north stays up the screen anyway), not the floor (VR F3), not F4 (its map in the hand has [hud] map_rotate). The log
+// names the mode at every change.
+void MapRotateFlatTick() {
+    const bool key = g_set.mapRotateFlat.load();
+    const int view = ViewNow();
+    const bool want = key && g_enabled.load() && g_inWorld.load() && view != 1 && !TableView() && !FullBody() && ClassicNow();
+    hud::SetMapRotateFlat(want);
+    static int told = -1;
+    const int mode = !key ? 0 : want ? 1 : 2;
+    if (mode == told) return;
+    told = mode;
+    const char* where = g_set.platform.load() == 1 ? "VR" : "flat";
+    if (mode == 0) LogF("vrcam: map on the screen as the game draws it ([hud] map_rotate_flat=0)");
+    else if (mode == 1) LogF("vrcam: map on the screen turned with the camera ([hud] map_rotate_flat=1): %s F%d, round about the hero, the camera's way up", where, view);
+    else LogF("vrcam: map on the screen not turned here ([hud] map_rotate_flat=1, %s F%d%s): flat F2 / F3 and VR F2 with the map in the picture only", where, view,
+              !g_enabled.load() ? ", our camera off" : !g_inWorld.load() ? ", not in a game" : "");
+}
+
 // [openxr] hand_inventory (vr/hand_inventory.h, "the walk with the inventory up"): the game's walk is locked while its controller inventory
 // is up, so the stick's own command is sent for it - 0xFEFE0 "move in this direction" (as the stick's walk sends it, and as
 // move_while_attacking does), with the game's own strength, Run toggle, stamina and forced walk; let go, the stick's own stop (the map click

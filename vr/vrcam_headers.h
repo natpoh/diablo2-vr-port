@@ -125,6 +125,7 @@ int FindHeroMatrices(const float hero[3], uintptr_t* out, int max);
 #include "weight_lib.h"    // the weight-physics library (d2r_vr_weight.dll beside the plugin), when there is one: [weight] hands_model 1
 #include "doll_lib.h"   // [weight] monster_ragdoll: the doll library
 #include "knock_down.h"   // [weight] knock_down: a struck humanoid drawn falling, lying and getting up (the weight library's D2rf* exports)
+#include "grab_move_wire.h"   // [weight] grab_moves_unit: a carried or thrown body put by the game's own knockback on the cell under it
 #include "grip_lib.h"      // the grip library (d2r_vr_grip.dll beside the plugin), when there is one: [weight] grip_model 1
 #include "hero_strength.h"  // [weight] hero_strength: the default class multipliers
 #include "stick_strength.h"  // [weight] stick_by_strength, stick_pct: how hard a weapon sticks
@@ -142,7 +143,7 @@ namespace memdiff { void Step(uintptr_t base, const std::wstring& outPath, void 
 namespace hud { void Register(); void SetHide(int mode); void SetInterfaceScale(float s); void SetToolbarCut(float upPct, float downPct, bool tint); void SetMenuOpen(bool open); void SetPanelOut(bool out); void PollMenuReader(); bool FlatVrTakesMenu(); void SetMenuPlace(float widthM, float distanceM, float belowM, uint32_t laser, uint32_t window); int FlatVrLaserState(); void SetMapMode(int mode); bool LayerFound(); void SetLogger(void (*log)(const char*)); void SetLook(const FlatVRGameHudLook& look); void SetMapCorner(int corner); void SetMapDirection(bool want, bool wholeScreen); void SetMapHeading(float x, float y); void SetMapTurnHeading(float x, float y); bool ToggleMapShown();
                 void SetPointer(uint32_t mode); void SetPointerDepth(float base, float tilt, float curve, float topScale); int Anchor(int panel); void SetForearm(int panel, bool valid, const float elbow[3], const float wrist[3], const float across[3]);
                 void SetClassicView(bool on); void SetPictureZoom(float bar, float map); bool PictureWanted(); void SetPictureReady(bool ready);
-                bool PictureNow(int i, float box[4], uint64_t* srv); void SetPictureBarMoved(bool moved); void SetPictureBarOffset(float x, float y); void SetPictureMapMoved(bool moved); void SetPictureMapOffset(float x, float y);
+                bool PictureNow(int i, float box[4], uint64_t* srv); void SetMapRotateFlat(bool on); void SetMapFlatHeading(float x, float y); bool PictureMapTurn(float circle[4], float hero[2], float m[4]); void SetPictureBarMoved(bool moved); void SetPictureBarOffset(float x, float y); void SetPictureMapMoved(bool moved); void SetPictureMapOffset(float x, float y);
                 void SetLabels(bool on); bool LabelsNow(float keepBar[4], float keepMap[4], uint64_t* srv); void SetUiMask(bool on); void SetUiMaskInMenu(bool on); bool UiMaskNow();
                 void SetGlobes(bool want); bool GlobesNow(float* fit, uint64_t* srv); int GlobesWhy(); }
 #include "d2rcam.h"
@@ -150,6 +151,7 @@ namespace hud { void Register(); void SetHide(int mode); void SetInterfaceScale(
 #include "mat4.h"
 namespace gamecmd { void Init(const D2RL::PluginContext* ctx); void Tick(); void Tap(uint32_t cmd); bool Pressed(uint32_t cmd); }   // the game's key commands from BodyWalk (gamecmd.cpp)
 namespace playerscmd { void Init(const D2RL::PluginContext* ctx); void Tick(); }   // the headset's Players row: the game's own /players N (players_cmd.cpp)
+namespace partycmd { void Init(const D2RL::PluginContext* ctx); void Tick(); }   // the headset's Party page: the game's roster and Party panel buttons (party_cmd.cpp)
 namespace skillwheel { void Init(const D2RL::PluginContext* ctx); void Tick(); void Shutdown(); }   // [openxr] skill_wheel (skill_wheel.cpp)
 namespace skillwheel { bool Enabled(); }
 namespace wheelgame { void Tick(bool on, bool open); }   // the wheel's reads of the controller's skill slots (wheel_game.cpp): a throw by gesture keeps them going for the Throw slot

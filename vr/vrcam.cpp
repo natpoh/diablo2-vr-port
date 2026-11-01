@@ -79,9 +79,9 @@ void Say(const char* text) {
 // each present of our effect (EffectsBegin), the lines on the update thread. Counted only while the key is on.
 health::Body g_healthBody;
 health::Sky g_healthSky;
-void HealthPushBody(const monsterbodies::Snapshot& snap, int i, const float impulse[3], const float point[3]) {
+void HealthPushBody(const monsterbodies::Snapshot& snap, int i, const float impulse[3], const float point[3], float swingMs, float heftKg) {
     g_healthBody.pushes.Add();
-    meleetouch::PushBody(snap, i, impulse, point);
+    meleetouch::PushBody(snap, i, impulse, point, swingMs, heftKg);
 }
 bool HealthMonsterPose(uintptr_t self, dollpose::Pose* out) {
     const bool given = meleetouch::MonsterPose(self, out);
@@ -921,7 +921,7 @@ int D2rvrHoverSpheres(float (*out)[8], int max) { return engitem::HoverSpheres(o
 
 // ReShade's loading (LoadReShade, LoadOurAddonForDxgiReShade): vr/plugin/reshade_load.cpp
 
-static const char g_info_version[] = "0.194.0";
+static const char g_info_version[] = "0.195.0";
 
 // Who this is. D2RLoader prints "<name> <version> by <author>" for every plugin, and d2r-pcvr (a fork of our 0.152) carries the
 // same id, name and author as we did - "vrcam ... by BodyWalkVR" told a support log nothing. The id stays (the log file
@@ -1141,7 +1141,8 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     gamestate::Init(ctx);
     crash::Step("game commands");
     gamecmd::Init(ctx);
-    playerscmd::Init(ctx);   // the headset's Players row: the game's own /players N (vr/players_cmd.cpp)
+    playerscmd::Init(ctx);
+    partycmd::Init(ctx);     // the headset's Party page: the game's roster and its Party panel's buttons (vr/party_cmd.cpp)   // the headset's Players row: the game's own /players N (vr/players_cmd.cpp)
     beltdrop::Init(ctx);   // [hands] belt_drop_ground
     beltglow::Init(ctx);   // [hands] belt_inner_glow
 #if D2RVR_FIRST_PERSON
@@ -1184,6 +1185,7 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     doubleswing::Init(ctx);
     meleearm::Init(ctx);   // [gameplay] melee_skill_armed: the log
     meleetouch::Init(ctx);
+    grabmove::Init(ctx);   // [weight] grab_moves_unit (vr/grab_move.cpp)
     meleedirectclient::InitNet(ctx, IniB(L"gameplay", L"melee_direct_client_cleave", false) &&
                                         (IniF(L"gameplay", L"melee_direct_client", 0.0f) >= 0.5f || IniF(L"gameplay", L"melee_direct", 0.0f) >= 1.5f));   // the channel now or never this run
     skillwheel::Init(ctx);

@@ -93,6 +93,7 @@ int D2rvrHoverSpheres(float (*out)[8], int max);
 #include "render_resolution.h"
 #include "hset_ray.h"   // vectors, a ray against a panel, the pad values, the release gate: for any panel hung in the headset
 #include "hset_view.h"   // the settings' view buttons F1 - F4: the controller's own view path
+#include "party_cmd.h"     // the settings' Party page: the game's roster and its Party panel's buttons ([openxr] headset_party)
 #include "players_cmd.h"   // the settings' Players row: the game's own /players N ([openxr] headset_players)
 #include "skill_wheel.h"   // [openxr] skill_wheel: the skill wheel in the headset (vr/xr_skill_wheel.h is its layer)
 #include "game_ui.h"       // [openxr] skill_panel_game_look: the skill panel drawn with the game's own art (vr/tiles_paint.cpp)
@@ -174,6 +175,7 @@ struct Cfg {
     float brightness = 1.0f;  // brightness: everything in the headset times this (the runtime's colour scale), 1 = as drawn
     bool laser = false;       // laser: a controller pointing at the flat picture's menus is the mouse (docs/plan_laser_menus.md)
     int laserHand = 1;        // laser_hand: 0 left, 1 right; the other hand's trigger and grip are Ctrl and Shift
+    bool laserCompareHold = true;   // laser_compare_hold: ... the comparison only while the other hand's trigger is held
     bool laserTooltips = false;   // laser_tooltips: under the laser the game's item tooltip shows at once, with its comparison (vr/laser_tooltip.h)
     bool laserGripTap = true;     // laser_grip_tap: a grip the laser took, tapped over a menu, is the game's bumper - the tabbed menu's page (vr/laser_grip_tap.h)
     bool pointer3d = true;    // pointer_3d: the game's mouse pointer drawn on F1's and F3's ground in 3D (vr/pointer3d.h); clicks and the mouse are not touched
@@ -3848,6 +3850,7 @@ void LaserStep(D2RVR_XrInput& in, bool focused) {
         }
     // the game's own item tooltip and comparison, without their waits ([openxr] laser_tooltips; panel_input.cpp)
     panelinput::ItemHover(lasertip::Hovering(g_cfg.laserTooltips && viewgate::F4(), acts, L.hit, L.button[0] || L.button[1]));   // (F4 only: elsewhere the game's own delay)
+    panelinput::CompareHeld(want[0]);   // ([openxr] laser_compare_hold: the comparison while the other hand's trigger - Ctrl - is held)
 }
 
 // The beam (soft across, fading to its far end, which is the image's top) and the dot, premultiplied:
@@ -5939,6 +5942,7 @@ void LoadSettings(const wchar_t* ini) {
         }
         // the game's item tooltip at once under the laser: its hooks go in with the laser's (panelinput::Install), unticked they pass through
         g_cfg.laserTooltips = f(L"laser_tooltips", 0.0f) != 0.0f;
+        g_cfg.laserCompareHold = f(L"laser_compare_hold", 1.0f) != 0.0f;
         {   // [hud] map_top_down / map_rotate / map_compass: the map in the hand (F4), live
             g_cfg.mapTopDown = GetPrivateProfileIntW(L"hud", L"map_top_down", 0, ini) != 0;
             g_cfg.mapRotate = GetPrivateProfileIntW(L"hud", L"map_rotate", 0, ini) != 0;
@@ -5999,6 +6003,7 @@ void LoadSettings(const wchar_t* ini) {
             }
         }
         panelinput::WantTooltips(g_cfg.laserTooltips);
+        panelinput::WantCompareHold(g_cfg.laserCompareHold);
         static int saidTip = 0;
         if (on && g_cfg.laser && (int)g_cfg.laserTooltips != saidTip) {
             saidTip = g_cfg.laserTooltips;

@@ -705,6 +705,10 @@ bool VrViewInner(const d2rcam::WorldView& in, float out[16]) {
         const mapdir::Dir md = mapdir::OnGround(f.camF, f.scrR, f.scrU, f.mirX, f.mirY);   // (hud lays the arrow on the map: mapdir::IsoArrow)
         if (md.ok) hud::SetMapHeading(md.x, md.y);
     }
+    if (g_set.mapRotateFlat.load() && !FullBody()) {   // [hud] map_rotate_flat: the corner map on the screen turned so this way is up (F4 has its own)
+        const mapdir::Dir md = mapdir::OnGround(f.camF, f.scrR, f.scrU, f.mirX, f.mirY);
+        if (md.ok) hud::SetMapFlatHeading(md.x, md.y);
+    }
     if (mapAheadOk) {   // [hud] map_rotate / map_compass: the same way for the map in the hand, held while looking down at it (xr.cpp turns it)
         const float a[3] = {mapAhead.x, mapAhead.y, mapAhead.z};
         const mapdir::Dir md = mapdir::OnGround(a, f.scrR, f.scrU, f.mirX, f.mirY);

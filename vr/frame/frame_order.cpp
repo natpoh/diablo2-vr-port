@@ -525,6 +525,7 @@ DWORD WINAPI UpdateThread(void*) {
         // the picture, at their own size; on the hands only in first person.
         hud::SetClassicView(ClassicNow());
         MapDirectionTick();   // [hud] map_direction
+        MapRotateFlatTick();  // [hud] map_rotate_flat
         if (g_inWorld.load()) {   // the corner map's box follows the game's own interface scale: a window, render size or interface size of any kind
             static ULONGLONG nextScale = 0;
             if (nowMs >= nextScale) { nextScale = nowMs + 250; hud::SetGameInterfaceScale(GameUiScaleNow()); }
@@ -579,6 +580,7 @@ DWORD WINAPI UpdateThread(void*) {
         directinput::SetMenuNow(gamestate::MenuOpen() || !g_inWorld.load());   // [openxr] direct_input: the layer in force against the game's
         gamecmd::Tick();   // skills, potions, Alt... held in BodyWalk: pressed on the UI thread
         playerscmd::Tick();   // the headset's Players row: "/players N" on the UI thread
+        partycmd::Tick();     // the headset's Party page: the roster read, a party button pressed, on the UI thread
         beltdrop::Tick();  // [hands] belt_drop_ground: a drop of a belt potion under way, on the UI thread
         PauseKeyTick();    // [direct] action:pause - the pause menu: Esc, tapped (F4 only)
         if (shieldsmite::Watching()) {   // [gameplay] shield_smite: a hard bash of the left shield casts the game's own Smite (and [debug] melee_boxes draws it)

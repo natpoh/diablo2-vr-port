@@ -53,6 +53,7 @@ struct Settings {
     std::atomic<int>   hudMap{0};           // [hud] map: 0 in the picture, 1 out of it, into its own texture
     std::atomic<bool>  mapDirection{true};  // [hud] map_direction: an arrow on the hero's marker of the game's map, the way our camera looks (vr/map_direction.h)
     std::atomic<bool>  mapTurn{false};      // [hud] map_rotate or map_compass: the way the head looks, for the map in the hand (vr/map_turn.h, xr.cpp)
+    std::atomic<bool>  mapRotateFlat{false};   // [hud] map_rotate_flat: the corner map in the picture round and turned, the camera's way up (MapRotateFlatTick)
     // Per view since the Home page (2026-10-05): [hud_top], [hud_third], [hud_floor], [hud_inside]
     // - the Interface tab of each view - falling back to [hud] where unset.
     std::atomic<float> barNearTop{0.0f}, barNearThird{0.0f}, barNearInside{0.0f};   // bar_near per view
@@ -521,6 +522,8 @@ struct Settings {
     std::atomic<bool>  leapCameraUp{false}; // [body] leap_camera_up: with it, the camera rises with the leap's arc (off: it stays, the body is kept down with it)
     std::atomic<bool>  crouch{false};       // [body] crouch: the hero crouches when you crouch (F4 only; vr/crouch.h)
     std::atomic<float> crouchCm{20.0f};     // [body] crouch_cm: the head this far below its height at the recentre is a crouch
+    std::atomic<bool>  formsFirstPerson{false};   // [shapeshift] forms_first_person: a druid's werewolf / werebear grafted under the camera (F4 only; vr/unleashed_shapeshift_form.h)
+    std::atomic<float> formHeight[2] = {1.0f, 1.0f};   // [shapeshift] wolf_height / bear_height: % of the form's own eye height, as a fraction (0.5 - 1.5)
     std::atomic<float> bodyYawDeg{0.0f};    // added to the hero's facing: fixes a body that stands sideways
     std::atomic<bool>  thirdTurn{true};     // [body] turn_third: from behind too the whole hero faces where the camera looks (the right stick turns him)
     std::atomic<bool>  gaitThird{false};    // [body] gait_legs_third: from behind, his legs step along his travel (the gait library) - back steps, side steps

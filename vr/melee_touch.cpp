@@ -108,6 +108,7 @@ std::atomic<bool> g_noAttack{false};   // [debug] melee_touch_no_attack: a touch
 std::atomic<ULONGLONG> g_liveAt{0};   // the last time Tick had a weapon it swings (melee, bare hands, a throwing weapon) posed and striking: GetTickCount64
 std::atomic<uint32_t> g_liveKind{0};  // ... and its D2RVR_WeaponType
 std::atomic<bool> g_throwWanted{false};   // [hands] throw_autoaim_deg: the monsters near the hero are wanted for a throw's auto-aim
+std::atomic<bool> g_moveWanted{false};    // [weight] grab_moves_unit: the server's game is wanted for the knockback (vr/grab_move.cpp)
 std::atomic<bool> g_bowWanted{false};     // [bow] pitch_aim: ... and for a bow's or crossbow's shot aimed by its line (vr/bow_pitch_wire.cpp)
 std::atomic<bool> g_leapWanted{false};    // [gameplay] leap_by_gaze: ... and for the monster a Barbarian's Leap Attack looks at
 // [gameplay] melee_touch_thrown: a javelin, throwing knife or throwing axe is swung too (a point-blank throw by the game's own attack), and what
@@ -215,6 +216,9 @@ struct Scan {
     struct Player { uint32_t id = 0; float x = 0.0f, z = 0.0f; };
     std::array<Player, playerbodies::kTouchPlayers> p;
     size_t np = 0;
+    // [weight] death_ragdoll: the monsters within the scan's reach the game has dying or dead, with their rows' flags (only while it is on)
+    std::array<knockdown::Dead, 32> dead;
+    size_t nd = 0;
 };
 
 unitscan::RowCache g_rows;   // (unit_scan.h) the timer's thread only: hit by touch's scan and the shield bash's are both made on it
@@ -222,10 +226,14 @@ unitscan::RowCache g_rows;   // (unit_scan.h) the timer's thread only: hit by to
 // A class's MonStats row as the game's own getter gives it, read now (any thread; the reads and the call guarded).
 bool RowNow(uint8_t bank, uint32_t cls, meleetouch::MonsterRow* out) {
     uintptr_t row = 0;
-    uint8_t f[16] = {};
+    uint8_t f[0x40] = {};
     const uintptr_t fn = d2rsig::Addr(RVA_MONSTATS);
     if (!fn || cls > 4095 || bank > 3 || !CallStats(fn, bank, static_cast<int>(cls), &row) || !Read(f, row, sizeof f)) return false;
     *out = {f[8], f[9], f[13]};
+    uint16_t rowId = 0;
+    std::memcpy(&rowId, f, sizeof rowId);
+    std::memcpy(&out->flags, f + 0x3C, sizeof out->flags);   // ([weight] death_ragdoll: a boss's, a prime evil's, a bursting one's death stays the game's)
+    out->flagsOk = rowId == cls;
     return f[8] >= 1 && f[8] <= 8 && f[9] >= 1 && f[9] <= 8;
 }
 
@@ -279,6 +287,17 @@ bool ScanUnits(float heroX, float heroZ, float upm, float floorM, Scan* out) {
         out->c[i].body = found[i].body;
     }
     out->n = n;
+    out->nd = 0;
+    if (knockdown::DeathWanted()) {   // [weight] death_ragdoll: the dying and the dead near (unit_scan.h DyingNear - the walk the living's scan makes)
+        unitscan::Dying dying[std::tuple_size<decltype(Scan::dead)>::value];
+        const size_t nd = unitscan::DyingNear([](void* d, uintptr_t s, size_t bytes) { return Read(d, s, bytes); }, d2rsig::Addr(RVA_UNITS), heroX, heroZ, 24.0f,
+                                              dying, std::size(dying));
+        for (size_t i = 0; i < nd; ++i) {
+            meleetouch::MonsterRow row;
+            const bool rowRead = RowFor(dying[i].bank, dying[i].cls, &row);
+            out->dead[out->nd++] = {dying[i].id, static_cast<int>(dying[i].mode), rowRead && row.flagsOk, row.flags};
+        }
+    }
     return true;
 }
 
@@ -577,6 +596,8 @@ ULONGLONG g_bodiesScanAt = 0, g_rigsAt = 0;
 ULONGLONG g_touchBodiesAt = 0;   // [weight] grab_bodies: when the touch's own tick last kept the bodies (GrabTick scans for the grab when it does not)
 monsterbodies::Body g_hostile[monsterbodies::kMax];   // the last scan's hostile monsters (the touch's capsules of them), the timer's thread only
 int g_nHostile = 0;
+knockdown::Dead g_dead[std::tuple_size<decltype(Scan::dead)>::value];   // [weight] death_ragdoll: the last scan's dying and dead (the timer's thread only)
+int g_nDead = 0;
 
 std::atomic<bool> g_grabWanted{false};      // [weight] grab_bodies (SetGrabWanted): the bodies made for it too, the non-hostile ones kept for it alone
 
@@ -662,7 +683,7 @@ void PublishPoses(const skel::MonsterRig* rigs, size_t nr, const int* rigOf, ULO
         knockdown::Unit units[monsterbodies::kMax];
         const int nu = std::min(g_nHostile, monsterbodies::kMax);
         for (int m = 0; m < nu; ++m) units[m] = {g_hostile[m].id, g_hostile[m].mode, g_hostile[m].hostile};
-        n = knockdown::Tick(rigs, nr, units, nu, rigOf, now, upm, g_knockHero, made, n, 16);
+        n = knockdown::Tick(rigs, nr, units, nu, rigOf, now, upm, g_knockHero, made, n, 16, g_dead, g_nDead);
     }
     AcquireSRWLockExclusive(&g_posesLock);
     n = dollpose::Carry(made, n, 16, g_poses, g_nPoses, now, kPoseEaseMs);   // the ones let go of this time: kept, easing back (dollpose::Faded), for kPoseEaseMs
@@ -699,7 +720,7 @@ void RepublishBodies(ULONGLONG now, const float heroRender[3], float upm) {
     LARGE_INTEGER t0, t1, qf;
     QueryPerformanceCounter(&t0);
     static skel::MonsterRig rigs[16];   // (the timer's thread only)
-    const size_t nr = g_nHostile ? skel::MonsterRigs(heroRender[0], heroRender[2], 6.0f * upm, rigs, std::size(rigs)) : 0;
+    const size_t nr = g_nHostile || g_nDead ? skel::MonsterRigs(heroRender[0], heroRender[2], 6.0f * upm, rigs, std::size(rigs)) : 0;   // ([weight] death_ragdoll: the corpses' skeletons too)
     monsterbodies::Snapshot snap;
     snap.tickMs = now;
     snap.upm = upm;
@@ -882,6 +903,8 @@ void PublishBodies(const Scan& s, ULONGLONG now, const float heroRender[3], floa
         order[n++] = i;
     }
     std::sort(order, order + n, [&](size_t a, size_t b) { return s.c[a].d2 < s.c[b].d2; });
+    g_nDead = 0;
+    for (size_t k = 0; k < s.nd && g_nDead < (int)std::size(g_dead); ++k) g_dead[g_nDead++] = s.dead[k];
     g_nHostile = 0;
     for (size_t k = 0; k < n && g_nHostile < monsterbodies::kMax; ++k) {
         const Cand& c = s.c[order[k]];
@@ -1451,10 +1474,12 @@ void PushWithBlades(ULONGLONG now, const SideBlade (&sb)[2], bool weightHolds) {
             const stroke::Blade& bl = s.s.blade;
             const bladepush::Blade blade{{bl.base.x, bl.base.y, bl.base.z}, {bl.tip.x, bl.tip.y, bl.tip.z}, bl.radius};
             bladepush::Push p[4];
-            const int np = g_bladePush[side].Step(true, blade, (double)now * 0.001, bladepush::SteelKg(strikedir::KindIndex(s.kind)), bodies, n, p, 4);
+            const float steelKg = bladepush::SteelKg(strikedir::KindIndex(s.kind));
+            const int np = g_bladePush[side].Step(true, blade, (double)now * 0.001, steelKg, bodies, n, p, 4);
             for (int k = 0; k < np; ++k) {
                 const float imp[3] = {p[k].impulse.x, p[k].impulse.y, p[k].impulse.z}, at[3] = {p[k].point.x, p[k].point.y, p[k].point.z};
-                PushBody(snap, p[k].body, imp, at);
+                // (the drawn blade's speed is the render world's: the hero's run carries it too - the swing is the hands' alone)
+                PushBody(snap, p[k].body, imp, at, std::max(0.0f, p[k].speed - knockdown::RunAlong(imp)), steelKg + bladepush::kArmKg);
             }
         }
     }
@@ -1906,10 +1931,10 @@ int PosedTurns(uint32_t id) {
     return n;
 }
 bool SwayView() { return g_swayView.load() && g_swayWanted.load(); }
-void PushBody(const monsterbodies::Snapshot& snap, int i, const float impulse[3], const float point[3]) {
+void PushBody(const monsterbodies::Snapshot& snap, int i, const float impulse[3], const float point[3], float swingMs, float heftKg) {
     if (i < 0 || i >= snap.n || !snap.b[i].doll) return;   // (humanoids only)
     if (knockdown::Wanted()) {   // [weight] knock_down: does it knock the body off its feet? (one knocked down already: no sway of its limbs either)
-        knockdown::NotePush(snap.b[i].id, impulse, point);
+        knockdown::NotePush(snap.b[i].id, impulse, point, swingMs, heftKg);
         if (knockdown::IsDown(snap.b[i].id)) return;
     }
     if (!g_swayWanted.load() || !dolllib::Loaded()) return;
@@ -3010,7 +3035,9 @@ bool PressDown() {
 void Install() {
     static ULONGLONG retryAt = 0;
     static unsigned tries = 0;
-    if ((!g_wanted.load() && !g_throwWanted.load() && !g_bowWanted.load() && !g_leapWanted.load() && !g_statusWanted.load()) || g_serverHook.load() == 1 || !g_ctx || GetTickCount64() < retryAt) return;
+    if ((!g_wanted.load() && !g_throwWanted.load() && !g_bowWanted.load() && !g_leapWanted.load() && !g_statusWanted.load() && !g_moveWanted.load()) || g_serverHook.load() == 1 || !g_ctx ||
+        GetTickCount64() < retryAt)
+        return;
     retryAt = GetTickCount64() + (tries < 30 ? 2000 : 30000);   // the server's code is decrypted as it runs: tried again
     if (!d2rsig::Addr(RVA_LOOKUP) || !d2rsig::Addr(RVA_RELATION) || !d2rsig::Addr(RVA_LINE) || !d2rsig::Addr(RVA_UNITS) ||
         !d2rsig::Addr(RVA_FIND_UNIT) || !d2rsig::Addr(RVA_MONSTATS))
@@ -3035,6 +3062,7 @@ ULONGLONG g_thrScanAt = 0;   // the timer's thread only
 }  // namespace
 
 void SetThrowWanted(bool on) { g_throwWanted.store(on); }
+void SetMoveWanted(bool on) { g_moveWanted.store(on); }
 bool ThrowWanted() { return g_throwWanted.load(); }
 void SetBowWanted(bool on) { g_bowWanted.store(on); }
 bool BowWanted() { return g_bowWanted.load(); }

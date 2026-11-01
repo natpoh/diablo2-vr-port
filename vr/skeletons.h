@@ -22,6 +22,11 @@ struct Input {
     bool hideHead = false;      // shrink the hero's head away (first person)
     bool lockUpper = false;     // nothing above the pelvis follows the game's animation: bind pose, then ours
     bool legsUnder = false;     // with lockUpper: pelvis and legs kept under that body - no lunge ahead, no hip turn
+    // [shapeshift] forms_first_person (F4 only): a druid's werewolf / werebear rig is ours - grafted under the camera, its eyes at the
+    // form's height (vr/unleashed_shapeshift_form.h); off, or another view: the game's own beast, as before. formHeight: [shapeshift]
+    // wolf_height / bear_height as fractions of the form's own height.
+    bool formGraft = false;
+    float formHeight[2] = {1.0f, 1.0f};
     // [body] flat_hold_trunk (flat F3, without lockUpper): the trunk's axis - spine_01 up to the head - in the bind pose and the hips held under it
     // (as legsUnder), the arms, hands and what they hold keeping the game's animation on that still chest: a swing no longer takes the torso out
     // from under the camera. Drawn bones only.

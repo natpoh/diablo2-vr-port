@@ -55,6 +55,8 @@ Third-party parts, each under its own licence:
     cleanroom/tests/unleashed_far_objects_test.cpp - Big objects ([render] big_radius; 9e9c241)
     shared/unleashed_fog.h, reshade/D2R_FogEase_Unleashed.fxh - the fog eased in ([fog] ease_in; 843b3a4)
     and no fog in the River of Flame ([fog] no_fog_river; d799f93)
+    vr/unleashed_shapeshift_form.h, cleanroom/tests/unleashed_shapeshift_form_test.cpp - the druid's werewolf and
+    werebear in first person ([shapeshift] forms_first_person; steamvr/shapeshift_form.h at 3d83a31)
 - MinHook - BSD 2-clause, Copyright (C) 2009-2017 Tsuda Kageyu.
 - ReShade SDK headers - BSD 3-clause, Copyright (C) 2014 Patrick Mours.
 - ReShade FX compiler (reshadefx, third_party/reshadefx: the effect's preprocessor, parser and HLSL generator, linked into the plugin

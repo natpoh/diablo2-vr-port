@@ -28,7 +28,7 @@
 
 namespace hset {
 
-constexpr int kMaxPages = 18;
+constexpr int kMaxPages = 19;
 constexpr int kRowsPerPage = 6;
 constexpr int kRowsMax = 7;   // a page with a row more than kRowsPerPage stands its rows closer (the Melee page; hset_model.h RowStep)
 // A page is a line more here, in kPageNames and in kMaxPages / kPageCount (the tabs share the panel's width in proportion to their names:
@@ -37,17 +37,19 @@ constexpr int kRowsMax = 7;   // a page with a row more than kRowsPerPage stands
 // World (Serg, 2026-10-31: the basic world-interaction switches on one page, "выноси весь список") is one TAB of four pages - Contact,
 // Monsters react, Grab, More - that follow each other like any pages (a flick, a grip's tap) and are picked by a row of four buttons on top
 // (hset_model.h kWorldSub). So a page is not always a tab: kTabCount tabs, TabOf / TabPage between the two.
+// Party (Serg, 2026-11-01: invite to a party from the headset, vr/hset_party.h) has no tab either: it is the Co-op tab's second page, reached by
+// the Co-op page's Party button (the bottom bar) and back by its Relay button; a flick passes it between World's pages and the Guide.
 enum Page : int {
     kPageView = 0, kPageOptions = 1, kPageVideo = 2, kPageBody = 3, kPageLife = 4, kPageLook = 5, kPageHud = 6,
     kPageBelt = 7, kPageMelee = 8, kPageKeysL = 9, kPageKeysR = 10, kPageCoop = 11, kPageVibration = 12,
-    kPageWorld = 13, kPageWorldReact = 14, kPageWorldGrab = 15, kPageWorldMore = 16, kPageGuide = 17
+    kPageWorld = 13, kPageWorldReact = 14, kPageWorldGrab = 15, kPageWorldMore = 16, kPageParty = 17, kPageGuide = 18
 };
-constexpr int kPageCount = 18;
+constexpr int kPageCount = 19;
 constexpr int kWorldPages = 4;   // kPageWorld .. kPageWorldMore
 constexpr bool IsWorldPage(int page) { return page >= kPageWorld && page < kPageWorld + kWorldPages; }
 constexpr int kTabWorld = kPageWorld, kTabGuide = kPageWorld + 1, kTabCount = kTabGuide + 1;
 // The tab a page is under, and the page a tab opens.
-constexpr int TabOf(int page) { return IsWorldPage(page) ? kTabWorld : page == kPageGuide ? kTabGuide : page; }
+constexpr int TabOf(int page) { return IsWorldPage(page) ? kTabWorld : page == kPageGuide ? kTabGuide : page == kPageParty ? kPageCoop : page; }
 constexpr int TabPage(int tab) { return tab == kTabWorld ? kPageWorld : tab == kTabGuide ? kPageGuide : tab; }
 constexpr int kNoPage = -1;   // a key with no row of its own: a hand-drawn page reads and writes it
 
@@ -301,6 +303,10 @@ inline constexpr Def kDefs[] = {
     {L"openxr", L"direct_input", "Controls without BodyWalk", "The plugin reads the controllers itself",
      0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kNoPage},
     // -- no row: the Options page's Players row works ([openxr] headset_players, D2R VR Settings beside the panel's own tick); off, the row only shows the game's count.
+    // -- no row: the Party page ([openxr] headset_party, vr/hset_party.h): the Co-op page's Party button and the game's party buttons for the players
+    //    in the game. On as shipped (a menu button: nothing happens until it is pressed); off, the page only says so.
+    {L"openxr", L"headset_party", "Party in the headset", "The players in the game and the game's party buttons",
+     1.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kNoPage},
     {L"openxr", L"headset_players", "Players from the headset", "The Options page's Players row asks the game",
      0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kNoPage},
     // -- no row: the Belt page's note - the potions on the belt are off in D2R VR Settings, so its sliders do nothing.
@@ -385,6 +391,8 @@ static_assert(kKeySmooth >= 0 && kKeySnap >= 0, "the turn keys are in the table"
 static_assert(kKeyBeltOn >= 0 && kKeyBeltUp >= 0 && kKeyGrabTrigger >= 0 && kKeyMeleeTouch >= 0 && kKeyMeleeArmed >= 0, "the belt's and the melee page's keys are in the table");
 constexpr int kKeyPlayers = IndexOf(L"game", L"players");                 // the Options page's Players row: the game's count (DefType::Game)
 constexpr int kKeyPlayersOn = IndexOf(L"openxr", L"headset_players");    // ... and its switch
+constexpr int kKeyPartyOn = IndexOf(L"openxr", L"headset_party");        // the Party page's switch
+static_assert(kKeyPartyOn >= 0, "the Party page's switch is in the table");
 static_assert(kKeyPlayers >= 0 && kKeyPlayersOn >= 0, "the Players row's keys are in the table");
 constexpr int kKeyDirectOn = IndexOf(L"openxr", L"direct_input");   // the Keys pages' note
 constexpr int kKeyBindFirst = IndexOf(L"direct", L"left_trigger");  // the twelve binding keys, one after the other (vr/hset_keys.h kSlots)
@@ -409,7 +417,7 @@ constexpr bool IsToggle(const Def& d) { return d.min == 0.0f && d.max == 1.0f &&
 constexpr int PageCount() { return kPageCount; }
 // The pages' names: a tab's for its page, the World pages' their own (the buttons of the row on top of them, hset_scene.h).
 constexpr const char* kPageNames[kMaxPages] = {"View", "Options", "Video", "Body", "Life", "Look", "HUD", "Belt", "Melee", "Left", "Right", "Co-op", "Vibration",
-                                               "Contact", "Monsters react", "Grab", "More", "Guide"};
+                                               "Contact", "Monsters react", "Grab", "More", "Party", "Guide"};
 constexpr const char* kTabNames[kTabCount] = {"View", "Options", "Video", "Body", "Life", "Look", "HUD", "Belt", "Melee", "Left", "Right", "Co-op", "Vibration",
                                               "World", "Guide"};
 // The tabs' font (vr/hset_paint.cpp: Segoe UI, semibold, GDI) and the English names' widths in it, pixels: the strip is shared by them (hset_model.h kTab).

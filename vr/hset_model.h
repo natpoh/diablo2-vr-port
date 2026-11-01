@@ -15,6 +15,7 @@
 #include "hset_coop.h"      // the Co-op page: D2R Rooms' relay bridge, its own d2r-rooms.ini
 #include "hset_defs.h"
 #include "hset_keys.h"
+#include "hset_party.h"     // the Party page: the players in the game, the game's own party buttons
 #include "hset_video.h"
 #include "first_start.h"    // the Guide page: how many pages the first-start guide has
 #include "toolbar_type.h"   // the HUD page's toolbar type: a step over bar_place and hide (shared/)
@@ -163,6 +164,16 @@ constexpr Rect kBodyStep(int i) { return {48, 446 + i * 29, 944, 27}; }
 // up to coop::kLines lines of what the plugin knows, above the status line.
 constexpr int kCoopRows = coop::kWhatCount;
 constexpr Rect kCoopLine(int i) { return {48, 358 + i * 26, 944, 26}; }
+// The Party page (hset_party.h): a title line, a row a player (name, level and class, state, the game's button for him), Leave party and Open Party
+// panel under them. The Co-op page's Party button and the Party page's Relay button stand where the low-life pages' Preview does (kPreviewBtn).
+constexpr Rect kPartyTitle = {32, 148, 960, 34};
+constexpr Rect kPartyRow(int i) { return {32, 188 + i * 44, 960, 40}; }
+constexpr Rect kPartyName(int i) { return {48, 188 + i * 44, 330, 40}; }
+constexpr Rect kPartyInfo(int i) { return {384, 188 + i * 44, 250, 40}; }
+constexpr Rect kPartyState(int i) { return {640, 188 + i * 44, 160, 40}; }
+constexpr Rect kPartyBtn(int i) { return {808, 190 + i * 44, 184, 36}; }
+constexpr Rect kPartyLeave = {32, 504, 300, 52};
+constexpr Rect kPartyOpen = {344, 504, 400, 52};
 constexpr Rect kRecentre = {32, 620, 280, 68};
 // The two low-life pages' own button, between Recentre and Close: the vignette and the beat in the controllers for five seconds, with the rows as they stand.
 constexpr Rect kPreviewBtn = {324, 620, 200, 68};
@@ -172,11 +183,12 @@ constexpr Rect kApply = {772, 620, 220, 68};
 constexpr float kWidthM = 1.2f, kHeightM = kWidthM * kH / kW;
 constexpr float kAheadM = 1.0f, kBelowM = 0.05f;
 
-enum class Kind { None, Tab, Change, Apply, Close, Recentre, Preset, Slider, Calibrate, Forget, View, Preview, Guide, GuideBack, GuideNext, Span, Coop };
+enum class Kind { None, Tab, Change, Apply, Close, Recentre, Preset, Slider, Calibrate, Forget, View, Preview, Guide, GuideBack, GuideNext, Span, Coop,
+                  Party, PartyLeave, PartyOpen };
 struct Hit {
     Kind kind = Kind::None;
     int index = -1;   // a tab's page, a Change's key, a Preset's number, a Slider's side along the track (-1: a stepper at its end), a View's number (1 = F1 ... 4 = F4),
-                      // a Coop row's choice (coop::What)
+                      // a Coop row's choice (coop::What), a Party row's player (0 .. party::kMaxOthers - 1)
     int delta = 0;    // -1 / +1 (a toggle: 1; a Slider's stepper)
     bool operator==(const Hit& o) const { return kind == o.kind && index == o.index && delta == o.delta; }
     bool operator!=(const Hit& o) const { return !(*this == o); }
@@ -225,6 +237,13 @@ inline Hit HitTest(int page, float u, float v) {
         if (kSlTrack.Contains(x, y)) return SliderAt(x);
         return {};
     }
+    if ((page == kPageCoop || page == kPageParty) && kPreviewBtn.Contains(x, y)) return {Kind::Tab, page == kPageCoop ? kPageParty : kPageCoop, 0};   // Party / Relay
+    if (page == kPageParty) {   // a player's button, Leave party, Open Party panel (the model takes none while the page is off or the game says nothing)
+        for (int i = 0; i < party::kMaxOthers; ++i) if (kPartyBtn(i).Contains(x, y)) return {Kind::Party, i, 0};
+        if (kPartyLeave.Contains(x, y)) return {Kind::PartyLeave, -1, 0};
+        if (kPartyOpen.Contains(x, y)) return {Kind::PartyOpen, -1, 0};
+        return {};
+    }
     if (page == kPageCoop) {   // the bridge's switch, then the two choices' < and > (the model takes none while the plugin is not there)
         if (kToggle(coop::kEnabled).Contains(x, y)) return {Kind::Coop, coop::kEnabled, 1};
         for (int r = coop::kMode; r < kCoopRows; ++r) {
@@ -260,14 +279,15 @@ inline Hit HitTest(int page, float u, float v) {
 
 // -- the panel's state ---------------------------------------------------------------------------
 // GuideDone: the last page's Done - the window closes, the guide is over. Players: the game's own "/players N" (vr/players_cmd.h), nothing of the ini.
-// Coop: a [relay] line of d2r-rooms.ini to write (the store's SubmitCoop), at once.
-enum class Do { Nothing, Save, Close, Recentre, Calibrate, View, Preview, GuideDone, Players, Coop };
+// Coop: a [relay] line of d2r-rooms.ini to write (the store's SubmitCoop), at once. Party: a press of the game's party buttons (vr/party_cmd.h).
+enum class Do { Nothing, Save, Close, Recentre, Calibrate, View, Preview, GuideDone, Players, Coop, Party };
 struct Action {
     Do what = Do::Nothing;
     Request request;   // with Save
     int view = 0;      // with View: 1 = F1 ... 4 = F4
     int players = 0;   // with Players: the count to ask the game for, 1 - 8
     coop::Edit coop;   // with Coop
+    party::Request party;   // with Party
 };
 
 class Model {
@@ -287,6 +307,9 @@ class Model {
     int asked_ = 0;                     // the count the row asked the game for and the game does not show yet (0: none)
     double askedAt_ = 0, clock_ = 0;    // when it was asked; the last clock SetPlayers was given (ms)
     int answer_ = 0;                    // the last ask's answer: 1 the game took it, -1 it did not (in time), 0 none since the panel opened
+    party::View party_;                 // the Party page: the game's roster as the plugin read it
+    party::Request partyAsked_;         // a press on its way to the game (what None: none)
+    double partyAskedAt_ = 0, partyClock_ = 0;
     std::shared_ptr<const coop::State> coop_;   // the Co-op page: D2R Rooms' files as last read
     std::optional<coop::Edit> coopPending_;      // a [relay] line on its way to d2r-rooms.ini (shown at once)
     uint64_t coopSerial_ = 0;
@@ -397,6 +420,23 @@ public:
     bool PlayersAsked() const { return asked_ != 0; }
     int PlayersAnswer() const { return answer_; }
 
+    // The Party page: the game's roster as the plugin read it (every frame the page is up) and a clock (ms). A press waits for the game's answer -
+    // the player's state moves, our party changes - or party::kWaitMs, before the buttons take another.
+    void SetParty(const party::View& v, double ms) {
+        partyClock_ = ms;
+        if (v != party_) {
+            const bool answered = partyAsked_.what != party::Ask::None && (v.inParty != party_.inParty || v.others != party_.others);
+            party_ = v;
+            if (answered) partyAsked_ = {};
+            ++revision;
+        }
+        if (partyAsked_.what != party::Ask::None && ms - partyAskedAt_ > party::kWaitMs) { partyAsked_ = {}; ++revision; }
+    }
+    const party::View& Party() const { return party_; }
+    bool PartyOn() const { return draft_[kKeyPartyOn] > 0.5f; }   // [openxr] headset_party
+    bool PartyBusy() const { return partyAsked_.what != party::Ask::None; }
+    const party::Request& PartyAsked() const { return partyAsked_; }
+
     // The Co-op page: what was read of D2R Rooms' files (null: nothing yet), its choices as shown (an edit on its way in place), and that edit's fate.
     const coop::State* Coop() const { return coop_.get(); }
     roomsbridge::Config CoopShown() const { return coop_ ? coop::Shown(coop_->cfg, coopPending_ ? &*coopPending_ : nullptr) : roomsbridge::Config{}; }
@@ -434,6 +474,7 @@ public:
         liveSeen_ = draft_;
         editAt_ = firstAt_ = 0;
         asked_ = answer_ = 0;
+        partyAsked_ = {};
         coopPending_.reset();   // (one still on its way is the thread's: the file shows it when it is done)
         coopResult_ = Result::None;
         Seen(s);
@@ -543,11 +584,37 @@ public:
                 ++revision;
                 return a;
             case Kind::Tab:
+                if (hit.index == kPageParty && !PartyOn()) return a;   // the Co-op page's Party button is not there while the page is off
                 if (hit.index >= 0 && hit.index < PageCount() && hit.index != page) {
                     page = hit.index;
                     if (page == kPageGuide) guideShown_ = true;
                     ++revision;
                 }
+                return a;
+            case Kind::Party: {   // a player's button: what the game's Party panel's button does by the state the game keeps for him
+                if (page != kPageParty || !PartyOn() || !party_.known || PartyBusy() || hit.index < 0 || hit.index >= (int)party_.others.size()) return a;
+                const party::Member& p = party_.others[(size_t)hit.index];
+                const party::Act act = party::ActFor(p.state);
+                if (act == party::Act::None) return a;
+                partyAsked_ = {party::Ask::Player, p.id, p.state, act};
+                partyAskedAt_ = partyClock_;
+                ++revision;
+                a.what = Do::Party;
+                a.party = partyAsked_;
+                return a;
+            }
+            case Kind::PartyLeave:   // the game's Party panel's Leave button: only while we are in a party
+                if (page != kPageParty || !PartyOn() || !party_.known || !party_.inParty || PartyBusy()) return a;
+                partyAsked_ = {party::Ask::Leave, 0, 0, party::Act::None};
+                partyAskedAt_ = partyClock_;
+                ++revision;
+                a.what = Do::Party;
+                a.party = partyAsked_;
+                return a;
+            case Kind::PartyOpen:   // the game's own Party key command (P): its panel, for the laser (the game opens it in a multiplayer game only)
+                if (page != kPageParty || !PartyOn() || !party_.known) return a;
+                a.what = Do::Party;
+                a.party = {party::Ask::OpenPanel, 0, 0, party::Act::None};
                 return a;
             case Kind::Change: {
                 if (hit.index == kKeyPlayers) {   // the game's players count: one "/players N" a press, nothing of the draft (the game keeps it)

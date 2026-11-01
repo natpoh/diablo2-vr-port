@@ -472,6 +472,24 @@ static void TestHoldTapLayout() {
         o = At(L, Mode::World, 2000, {});
         CHECK(o.actions == 0 && o.commands[0] == 0);
     }
+    // a menu: the left stick click is L3 at once, its hold closes the inventory; at a vendor it is L3 held all the time (repair all), nothing else
+    {
+        Layout L;
+        At(L, Mode::Menu, 0, {});
+        At(L, Mode::Menu, 10, {{kLStick, 1.0f}});
+        Outputs o = At(L, Mode::Menu, 1500, {{kLStick, 1.0f}});
+        CHECK(o.actions == act::kInventory);
+        At(L, Mode::Menu, 2000, {});
+        At(L, Mode::Vendor, 2100, {});
+        o = At(L, Mode::Vendor, 2110, {{kLStick, 1.0f}});
+        CHECK(o.pad.buttons == pad::kLeftStick && o.actions == 0);
+        for (uint64_t t = 2200; t <= 4200; t += 100) {
+            o = At(L, Mode::Vendor, t, {{kLStick, 1.0f}});
+            CHECK(o.pad.buttons == pad::kLeftStick && o.actions == 0);   // held 2 s: still L3 alone, no inventory
+        }
+        o = At(L, Mode::Vendor, 4300, {});
+        CHECK(o.pad.buttons == 0 && o.actions == 0);
+    }
     // [direct] hold_stick_max_pct (70 %): the left stick pushed and held in a fight - no inventory; a quick click is the map at any lean, at its
     // release (the author: "if I run and need to look at the map, I must not stop"); 70 % still opens the inventory, past it not; a stick the
     // gate or a gesture hides (it reads centred) still leans by Controls::lean; 0 = no limit

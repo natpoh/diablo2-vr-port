@@ -52,6 +52,7 @@
 #include "notice_card.h"   // [hud] notice_card: the game's quest / level-up notice, counted and its panel's rect read here
 
 namespace skel { int HeroClass(); }   // the hero's class from the posed model's folder (vr/skeletons.cpp): -1 not known
+namespace directinput { void SetVendorOpen(bool open); }   // a vendor's panel: the left stick's hold is the vendor's repair all (direct_input.h)
 
 using namespace D2RL;
 
@@ -981,6 +982,11 @@ SharedEvents::UiMessageAction __cdecl OnUiMessage(const PluginContext*, const Sh
             if (IsMenuPanel(n)) { menu = true; if (!handinv::IsInventoryPanel(n.c_str())) invOnly = false; }
         g_menu.store(menu ? 1 : 0);
         g_invOnly.store(menu && invOnly);   // [openxr] hand_inventory: every menu open is the inventory
+        {   // a vendor's panel (VendorPanelLayout, the smith's and every trader's): the left stick's hold is the game's own there (repair all)
+            bool vendor = false;
+            for (const std::string& n : g_panels) if (n.find("Vendor") != std::string::npos) vendor = true;
+            directinput::SetVendorOpen(vendor);
+        }
         {   // an NPC's small box (NpcDialogPanel: Talk / Trade / Cancel) and no other menu: the toolbar need not go with it (hud.cpp)
             bool npc = false, other = false;
             for (const std::string& n : g_panels) {

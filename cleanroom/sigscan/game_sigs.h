@@ -429,6 +429,16 @@ inline constexpr Sig kSigs[] = {
     {"PlayersSetting", 0xE19E0, Kind::Code, "48 83 EC 58 65 48 8B 04 25 58 00 00 00 8B 0D ?? ?? ?? ?? 41 B8 6C 12 00 00 48 8B 14 C8 41 8B 04 10 39 05 ?? ?? ?? ?? 7F 39 BA 01 00 00 00", 0xE19E0, 0, 0, 0, 0, "48 83 EC 58 65 48 8B 04 25 58 00 00 00 8B 0D ?? ?? ?? ??", nullptr, "Players in the headset", "Players in the headset"},
     // the game's mode (0 offline; /players is taken in 0, 5 and 7 only), called read-only
     {"GameMode", 0x8AF90, Kind::Ref, "E8 ?? ?? ?? ?? 85 C0 8B DD 0F 95 C3 66 81 C3 91 0E EB 2A", 0x16B92E, 0, 1, 5, 0, "8B 05 ?? ?? ?? ?? C3 CC", nullptr, "Players in the headset", "Players in the headset"},
+    // the server's monster mode event (unit, mode, event 0x30): mode, unit, the rest cleared, called
+    {"MonModeEvent", 0x4471E0, Kind::Code, "48 89 5C 24 20 55 56 57 48 83 EC 20 49 8B F8 8B EA 48 8B F1", 0x4471E0, 0, 0, 0, 0, "48 89 5C 24 20 55 56 57 48 83 EC 20 49 8B F8 8B EA", nullptr, "grab moves the unit", "Grab moves the unit"},
+    // the server's monster mode change (game, event, 1): the target point into the path, the mode's own start (13: the knockback), called
+    {"MonModeSet", 0x4475C0, Kind::Code, "40 53 55 56 41 55 48 83 EC 38 48 8B 5A 08 48 8B E9 48 8B CB", 0x4475C0, 0, 0, 0, 0, "40 53 55 56 41 55 48 83 EC 38 48 8B 5A 08 48 8B E9", nullptr, "grab moves the unit", "Grab moves the unit"},
+    // the party roster's entry of a unit id (id) - its first instruction names the roster, called (the panel's handler does)
+    {"PartyEntry", 0x136200, Kind::Code, "48 8B 15 ?? ?? ?? ?? 83 F9 FF 74 2E 48 85 D2 74 29 39 4A 48 74 20 48 8B 42 78 48 85 C0 74 0E 90 39 08 74 12 48 8B 40 08 48 85 C0 75 F3 48 8B 92 48 01 00 00 EB D6 48 8B C2 C3", 0x136200, 0, 0, 0, 0, "48 8B 15 ?? ?? ?? ?? 83 F9 FF 74 2E 48 85 D2", nullptr, "Party in the headset", "Party in the headset"},
+    // the Party panel's ProcessInviteButton (entry): invite / accept / cancel by the entry's state, called
+    {"PartyInvite", 0x136CB0, Kind::Code, "48 85 C9 0F 84 ?? ?? ?? ?? 48 89 5C 24 10 48 89 7C 24 18 55", 0x136CB0, 0, 0, 0, 0, "48 85 C9 0F 84 ?? ?? ?? ?? 48 89 5C 24 10", nullptr, "Party in the headset", "Party in the headset"},
+    // the Party panel's LeaveParty (), called
+    {"PartyLeave", 0x1367E0, Kind::Code, "48 83 EC 28 E8 ?? ?? ?? ?? B9 07 00 00 00 8B 50 48 48 83 C4 28", 0x1367E0, 0, 0, 0, 0, "48 83 EC 28 E8 ?? ?? ?? ?? B9 07 00 00 00", nullptr, "Party in the headset", "Party in the headset"},
 };
 
 }   // namespace d2rsig

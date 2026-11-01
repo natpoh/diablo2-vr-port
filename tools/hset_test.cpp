@@ -93,6 +93,7 @@ struct Rig {
     bool gripTaken[2] = {false, false};   // [weight] weapon_grip_no_chord: the grip holds the weapon
     bool chordOn = true;           // [debug] settings_two_grip_chord (the plugin passes it; off by default - the chord tests below keep it on)
     bool toggle = false;           // the long press of the right stick click
+    party::View party;             // the game's roster (the Party page)
     FrameOut last;
     FrameOut Step(double dt = 11.0) {
         FrameIn f;
@@ -110,6 +111,7 @@ struct Rig {
         f.toggle = toggle;
         toggle = false;   // (a request: one frame)
         f.snapshot = snap;
+        f.party = party;
         last = c.Step(f);
         if (last.action.what == Do::Calibrate) calibrating = true;   // the glue asks the plugin, whose measurement is running from the next frame
         return last;
@@ -186,7 +188,7 @@ static void TestDefs() {
     CHECK(RowsOn(kPageView) > 0 && RowsOn(kPageOptions) > 0, "the two table pages have rows");
     CHECK(RowsOn(kPageVideo) == 0 && RowsOn(kPageGuide) == 0 && RowsOn(kPageCoop) == 0, "the Video, Co-op and Guide pages have no table rows (they draw their own)");
     CHECK(RowsOn(kPageBody) == 1 && KeyAt(kPageBody, 0) == kKeySeated, "the Body page: one table row on top, how you play ([calibration] seated)");
-    CHECK(PageCount() == 18 && PageCount() <= kMaxPages && kTabCount == 15, "eighteen pages under fifteen tabs (View ... Vibration, World's four, Guide)");
+    CHECK(PageCount() == 19 && PageCount() <= kMaxPages && kTabCount == 15, "nineteen pages under fifteen tabs (View ... Vibration, World's four, Party under Co-op, Guide)");
     CHECK(RowsOn(kPageVibration) == 7 && CloseRows(kPageVibration) && !std::strcmp(kPageNames[kPageVibration], "Vibration"), "the Vibration page: seven rows, stood closer");
     // the keys the hand-drawn pages work on are in the table, with no row, named as the plugin reads them
     const int hidden[6] = {kKeyMode, kKeyPx, kKeyUse, kKeyVersion, kKeyEye, kKeySpan};
@@ -3072,7 +3074,7 @@ static void TestLowLife() {
     }
     CHECK(kDefs[KeyAt(kPageLife, 0)].key == std::wstring(L"low_hp_vignette"), "the first row of the Life page is the tick that switches it on");
     CHECK(RowsOn(kPageLife) == 6 && RowsOn(kPageLook) == 5, "six rows on Life, five on Look: all eleven keys");
-    CHECK(!std::strcmp(kPageNames[kPageLife], "Life") && !std::strcmp(kPageNames[kPageLook], "Look") && !std::strcmp(kPageNames[kPageHud], "HUD") && PageCount() == 18, "the tabs");
+    CHECK(!std::strcmp(kPageNames[kPageLife], "Life") && !std::strcmp(kPageNames[kPageLook], "Look") && !std::strcmp(kPageNames[kPageHud], "HUD") && PageCount() == 19, "the tabs");
     CHECK(IsLifePage(kPageLife) && IsLifePage(kPageLook) && !IsLifePage(kPageView) && !IsLifePage(kPageOptions) && !IsLifePage(kPageVideo) && !IsLifePage(kPageBody) &&
               !IsLifePage(-1) && !IsLifePage(99),
           "only those two pages ask for the preview");
@@ -4208,8 +4210,174 @@ static void DumpCoop(const std::string& dir) {
     WriteBmp(dir + "/hset_page_coop_missing.bmp", px);
 }
 
+// -- 17. The Party page: the players in the game and the game's own Party panel buttons (vr/hset_party.h, vr/party_cmd.h) ---------------------
+// No tab of its own: the Co-op page's Party button (the bottom bar) opens it, Relay goes back. A player's button is what the game's panel shows
+// for the state the game keeps (0 Invite, 2 Accept, 4 Cancel invite; none in a party); a press is one Do::Party for the plugin, then the buttons
+// wait for the game's answer. [openxr] headset_party (on as shipped) switches it.
+static party::Member Mate(uint32_t id, const char* name, uint32_t state, bool same = false) {
+    party::Member m;
+    m.id = id;
+    m.name = name;
+    m.cls = 3;
+    m.level = 24;
+    m.state = state;
+    m.sameParty = same;
+    return m;
+}
+static party::View Roster(bool inParty, std::initializer_list<party::Member> others) {
+    party::View v;
+    v.known = true;
+    v.inParty = inParty;
+    v.others = others;
+    return v;
+}
+static Model PartyPage(bool on = true) {
+    Model m = OnPage(SnapWith({{kKeyPartyOn, on ? 1.0 : 0.0}}), kPageCoop);
+    m.Click({Kind::Tab, kPageParty, 0});
+    return m;
+}
+static bool HasLabel(const Scene& sc, const std::string& t, Item* got = nullptr) {
+    for (const Item& it : sc)
+        if (it.type != Item::Type::Fill && it.text == t) { if (got) *got = it; return true; }
+    return false;
+}
+static void TestParty() {
+    // the page and its place: under the Co-op tab, no tab of its own
+    CHECK(!std::strcmp(kPageNames[kPageParty], "Party") && TabOf(kPageParty) == kPageCoop && TabPage(TabOf(kPageParty)) == kPageCoop && kPageGuide == kPageCount - 1,
+          "the Party page is the Co-op tab's second page; the Guide stays the last");
+    const Def& key = kDefs[kKeyPartyOn];
+    CHECK(!wcscmp(key.section, L"openxr") && !wcscmp(key.key, L"headset_party") && IsToggle(key) && key.def == 1.0f && key.page == kNoPage,
+          "[openxr] headset_party: on as shipped, no row");
+    for (int i = 0; i < party::kMaxOthers; ++i) {
+        CHECK(Inside(kPartyRow(i)) && kPartyRow(i).y >= kPartyTitle.y + kPartyTitle.h && kPartyRow(i).y + kPartyRow(i).h <= kPartyLeave.y, "a player's row under the title, above Leave");
+        CHECK(!Overlap(kPartyBtn(i), kPartyName(i)) && !Overlap(kPartyBtn(i), kPartyInfo(i)) && !Overlap(kPartyBtn(i), kPartyState(i)), "its button clear of its words");
+        if (i + 1 < party::kMaxOthers) CHECK(!Overlap(kPartyBtn(i), kPartyBtn(i + 1)), "the buttons apart");
+        float u, v;
+        Centre(kPartyBtn(i), &u, &v);
+        CHECK((HitTest(kPageParty, u, v) == Hit{Kind::Party, i, 0}) && HitTest(kPageCoop, u, v).kind != Kind::Party, "a player's button is hit on the Party page only");
+    }
+    CHECK(kPartyLeave.y + kPartyLeave.h <= kStatus.y && !Overlap(kPartyLeave, kPartyOpen) && Inside(kPartyOpen), "Leave and Open above the status line, apart");
+    float u, v;
+    Centre(kPartyLeave, &u, &v);
+    CHECK((HitTest(kPageParty, u, v) == Hit{Kind::PartyLeave, -1, 0}), "Leave party is hit");
+    Centre(kPartyOpen, &u, &v);
+    CHECK((HitTest(kPageParty, u, v) == Hit{Kind::PartyOpen, -1, 0}), "Open Party panel is hit");
+    Centre(kPreviewBtn, &u, &v);
+    CHECK((HitTest(kPageCoop, u, v) == Hit{Kind::Tab, kPageParty, 0}) && (HitTest(kPageParty, u, v) == Hit{Kind::Tab, kPageCoop, 0}), "Party on the Co-op page, Relay back");
+    Centre(kTab(TabOf(kPageCoop)), &u, &v);
+    CHECK((HitTest(kPageParty, u, v) == Hit{Kind::Tab, kPageCoop, 0}), "the Co-op tab from the Party page: the relay's page");
+
+    // off: no Party button, the page cannot be opened by it, says so if a flick brings it
+    {
+        Model m = OnPage(SnapWith({{kKeyPartyOn, 0.0}}), kPageCoop);
+        CHECK(!HasLabel(Compose(m, {}), "Party"), "off: the Co-op page has no Party button");
+        m.Click({Kind::Tab, kPageParty, 0});
+        CHECK(m.page == kPageCoop, "off: the button's place takes nothing");
+        m.page = kPageParty;   // (a flick goes along every page)
+        m.SetParty(Roster(false, {Mate(5, "Ann", party::kNone)}), 1000.0);
+        CHECK(std::string(StatusText(m)).find("off") != std::string::npos && !HasLabel(Compose(m, {}), "Invite"), "off: the page says so and shows no button");
+        CHECK(m.Click({Kind::Party, 0, 0}).what == Do::Nothing && m.Click({Kind::PartyOpen, -1, 0}).what == Do::Nothing, "off: nothing pressed");
+    }
+    // on, the Co-op page's button goes there
+    {
+        Model m = OnPage(SnapWith({{kKeyPartyOn, 1.0}}), kPageCoop);
+        Item go;
+        CHECK(HasLabel(Compose(m, {}), "Party", &go) && go.type == Item::Type::Button && go.r.x == kPreviewBtn.x, "on: the Co-op page's Party button");
+        m.Click({Kind::Tab, kPageParty, 0});
+        CHECK(m.page == kPageParty && HasLabel(Compose(m, {}), "Relay"), "it opens the Party page; Relay goes back");
+    }
+    // not in a multiplayer game: nothing known, nothing to press
+    Model m = PartyPage();
+    CHECK(std::string(StatusText(m)).find("multiplayer") != std::string::npos, "not known: parties are in a multiplayer game");
+    CHECK(m.Click({Kind::Party, 0, 0}).what == Do::Nothing && m.Click({Kind::PartyOpen, -1, 0}).what == Do::Nothing && m.Click({Kind::PartyLeave, -1, 0}).what == Do::Nothing,
+          "not known: nothing pressed");
+    // a game of three others
+    double t = 1000.0;
+    m.SetParty(Roster(false, {Mate(11, "Serg", party::kNone), Mate(12, "Bear", party::kInvitedUs), Mate(13, "Pony", party::kWeInvited)}), t);
+    const Scene sc = Compose(m, {});
+    Item b0, b1, b2;
+    CHECK(HasLabel(sc, "Serg") && HasLabel(sc, "Bear") && HasLabel(sc, "Pony") && HasLabel(sc, "Level 24 Paladin"), "the players with their level and class");
+    CHECK(HasLabel(sc, "Invite", &b0) && b0.r.y == kPartyBtn(0).y && b0.enabled, "Serg: Invite");
+    CHECK(HasLabel(sc, "Accept", &b1) && b1.r.y == kPartyBtn(1).y && HasLabel(sc, "Invites you"), "Bear invites us: Accept");
+    CHECK(HasLabel(sc, "Cancel", &b2) && b2.r.y == kPartyBtn(2).y && HasLabel(sc, "Invited"), "Pony is invited: Cancel invite");
+    Item leave;
+    CHECK(HasLabel(sc, "Leave party", &leave) && !leave.enabled && HasLabel(sc, "You are in no party"), "in no party: Leave greyed");
+    Action a = m.Click({Kind::Party, 1, 0});
+    CHECK(a.what == Do::Party && a.party.what == party::Ask::Player && a.party.id == 12 && a.party.state == party::kInvitedUs && a.party.act == party::Act::Accept,
+          "Accept: the game's button for Bear, in the state it was pressed in");
+    CHECK(!m.Dirty() && m.result == Result::None, "nothing of the ini");
+    CHECK(m.PartyBusy() && m.Click({Kind::Party, 0, 0}).what == Do::Nothing, "one press at a time");
+    {
+        Item w;
+        CHECK(HasLabel(Compose(m, {}), "Accept", &w) && w.colour == Role::Warn && !w.enabled, "the pressed one amber while the game answers");
+    }
+    t += 300.0;
+    m.SetParty(Roster(true, {Mate(11, "Serg", party::kNone), Mate(12, "Bear", party::kInParty, true), Mate(13, "Pony", party::kWeInvited)}), t);
+    CHECK(!m.PartyBusy() && HasLabel(Compose(m, {}), "In your party") && HasLabel(Compose(m, {}), "You are in a party"), "the game answered: Bear in our party, no button for him");
+    Centre(kPartyBtn(1), &u, &v);
+    CHECK(m.Click({Kind::Party, 1, 0}).what == Do::Nothing, "a player in our party: no button, no press");
+    a = m.Click({Kind::Party, 2, 0});
+    CHECK(a.what == Do::Party && a.party.act == party::Act::Cancel && a.party.id == 13, "Cancel invite for Pony");
+    m.SetParty(Roster(true, {Mate(11, "Serg", party::kNone), Mate(12, "Bear", party::kInParty, true), Mate(13, "Pony", party::kWeInvited)}), t + 100.0);
+    CHECK(m.PartyBusy(), "the game not there yet");
+    m.SetParty(Roster(true, {Mate(11, "Serg", party::kNone), Mate(12, "Bear", party::kInParty, true), Mate(13, "Pony", party::kWeInvited)}), t + 200.0 + party::kWaitMs);
+    CHECK(!m.PartyBusy(), "no answer in time: the buttons take presses again");
+    a = m.Click({Kind::PartyLeave, -1, 0});
+    CHECK(a.what == Do::Party && a.party.what == party::Ask::Leave, "in a party: Leave party");
+    m.SetParty(Roster(false, {Mate(11, "Serg", party::kNone), Mate(12, "Bear", party::kNone), Mate(13, "Pony", party::kWeInvited)}), t + 3000.0);
+    CHECK(!m.PartyBusy() && m.Click({Kind::PartyLeave, -1, 0}).what == Do::Nothing, "out of it: Leave does nothing");
+    a = m.Click({Kind::PartyOpen, -1, 0});
+    CHECK(a.what == Do::Party && a.party.what == party::Ask::OpenPanel, "Open Party panel: the game's P");
+    CHECK(m.Click({Kind::Party, 6, 0}).what == Do::Nothing, "a row with no player: nothing");
+    m.SetParty(Roster(false, {}), t + 4000.0);
+    CHECK(HasLabel(Compose(m, {}), "No one else is in this game yet."), "alone in the game: says so");
+    m.Open(SnapWith({{kKeyPartyOn, 1.0}}));
+    CHECK(!m.PartyBusy(), "opened again: nothing waits");
+
+    // the panel: Open Party panel closes ours (the laser is the game's then); a player's press keeps it
+    {
+        Rig r;
+        r.snap = SnapWith({{kKeyPartyOn, 1.0}});
+        r.party = Roster(false, {Mate(21, "Ann", party::kNone)});
+        r.Open();
+        r.Click(1, kTab(TabOf(kPageCoop)));
+        r.Click(1, kPreviewBtn);
+        CHECK(r.c.model.page == kPageParty, "the panel: Co-op, then Party");
+        FrameOut o = r.Click(1, kPartyBtn(0));
+        CHECK(o.open && o.action.what == Do::Party && o.action.party.id == 21 && o.action.party.act == party::Act::Invite, "Invite from the panel; it stays open");
+        r.party = Roster(false, {Mate(21, "Ann", party::kWeInvited)});
+        r.Step();
+        o = r.Click(1, kPartyOpen);
+        CHECK(!o.open && o.action.what == Do::Party && o.action.party.what == party::Ask::OpenPanel, "Open Party panel: ours closes, the game's opens");
+    }
+    // both painters' page: the panel's own paints it
+    std::vector<uint32_t> px;
+    Model pm = PartyPage();
+    pm.SetParty(Roster(true, {Mate(1, "Abcdefghijklmno", party::kNone), Mate(2, "B", party::kInParty, true), Mate(3, "C", party::kInvitedUs), Mate(4, "D", party::kWeInvited),
+                              Mate(5, "E", party::kNone), Mate(6, "F", party::kNone), Mate(7, "G", party::kNone)}), 1000.0);
+    CHECK(Paint(pm, {}, px) && px.size() == (size_t)kW * kH, "the Party page with seven players paints");
+    CHECK(GdiWidth("Abcdefghijklmno", 30, FW_SEMIBOLD) <= kPartyName(0).w + 40 && GdiWidth(party::ActText(party::Act::Cancel), 30, FW_SEMIBOLD) <= kPartyBtn(0).w,
+          "a long name and Cancel fit their places");
+}
+
+// --dump: the Party page in the panel's own painter (a game of four others, an invite on its way; not in a game).
+static void DumpParty(const std::string& dir) {
+    std::vector<uint32_t> px;
+    Model m = PartyPage();
+    m.SetParty(Roster(true, {Mate(11, "Bear", party::kInParty, true), Mate(12, "Pony", party::kInvitedUs), Mate(13, "Ann", party::kNone), Mate(14, "Rivas", party::kWeInvited)}), 1000.0);
+    float u, v;
+    Centre(kPartyBtn(2), &u, &v);
+    Paint(m, HitTest(kPageParty, u, v), px);
+    WriteBmp(dir + "/hset_page_party.bmp", px);
+    m.Click({Kind::Party, 1, 0});
+    Paint(m, {}, px);
+    WriteBmp(dir + "/hset_page_party_pending.bmp", px);
+    Paint(PartyPage(), {}, px);
+    WriteBmp(dir + "/hset_page_party_nogame.bmp", px);
+}
+
 int main(int argc, char** argv) {
-    if (argc == 3 && !strcmp(argv[1], "--dump")) { Dump(argv[2]); DumpCoop(argv[2]); return 0; }
+    if (argc == 3 && !strcmp(argv[1], "--dump")) { Dump(argv[2]); DumpCoop(argv[2]); DumpParty(argv[2]); return 0; }
     wchar_t tmp[MAX_PATH];
     GetTempPathW(MAX_PATH, tmp);
     g_dir = std::wstring(tmp) + L"hset_test_" + std::to_wstring(GetCurrentProcessId());
@@ -4249,6 +4417,7 @@ int main(int argc, char** argv) {
     TestCoopScene();
     TestCoopStore();
     TestWorld();
+    TestParty();
 
     // the temp folder's files go
     WIN32_FIND_DATAW fd;

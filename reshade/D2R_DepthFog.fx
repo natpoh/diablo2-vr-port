@@ -2127,6 +2127,12 @@ uniform float GameBarShift < hidden = true; > = 0.0;   // uv, the toolbar alone:
 uniform bool GameMapOn < hidden = true; > = false;
 uniform float4 GameMapBox < hidden = true; > = float4(0.0, 0.0, 0.0, 0.0);
 uniform float GameMapShift < hidden = true; > = 0.0;   // uv, the map alone: + nearer, - farther (F3 [hud_floor] map_near)
+// [hud] map_rotate_flat (vrcam vr/map_turn.h RoundOnScreen): the map drawn round about the hero, seen from above and turned so the camera's
+// way is up. A screen point p: q = (p - Circle.xy) / Circle.zw (|q| > 1 outside: nothing), the share's uv = Hero + M q (M row-major 2 x 2).
+uniform bool GameMapTurnOn < hidden = true; > = false;
+uniform float4 GameMapTurnCircle < hidden = true; > = float4(0.0, 0.0, 1.0, 1.0);
+uniform float2 GameMapTurnHero < hidden = true; > = float2(0.5, 0.5);
+uniform float4 GameMapTurnM < hidden = true; > = float4(0.0, 0.0, 0.0, 0.0);
 texture2D GameBarTex : D2R_GAME_BAR;
 texture2D GameMapTex : D2R_GAME_MAP;
 sampler2D GameBarSmp { Texture = GameBarTex; AddressU = CLAMP; AddressV = CLAMP; };
@@ -2296,6 +2302,19 @@ float4 GamePiece(sampler2D s, float4 box, float2 uv)
     return tex2Dlod(s, float4(t, 0, 0));
 }
 
+// [hud] map_rotate_flat: the map's piece round and turned; its last 3 % of the radius fades out (premultiplied: colour and cover alike).
+float4 GameMapRound(float2 uv)
+{
+    const float2 q = (uv - GameMapTurnCircle.xy) / GameMapTurnCircle.zw;
+    const float r2 = dot(q, q);
+    if (r2 > 1.0) return float4(0.0, 0.0, 0.0, 1.0);
+    const float2 t = GameMapTurnHero + float2(dot(GameMapTurnM.xy, q), dot(GameMapTurnM.zw, q));
+    if (t.x < 0.0 || t.y < 0.0 || t.x > 1.0 || t.y > 1.0) return float4(0.0, 0.0, 0.0, 1.0);
+    const float4 c = tex2Dlod(GameMapSmp, float4(t, 0, 0));
+    const float k = saturate((1.0 - sqrt(r2)) / 0.03);
+    return float4(c.rgb * k, 1.0 - (1.0 - c.a) * k);
+}
+
 // The toolbar and the map drawn back, as one premultiplied layer (alpha = the world through).
 // GameBarBox may be anywhere on the screen: [hud_*] bar_x / bar_y move it.
 float4 GamePieces(float2 uvIn, float eyeSign)
@@ -2306,7 +2325,8 @@ float4 GamePieces(float2 uvIn, float eyeSign)
     [branch] if (GameBarOn) p = GamePiece(GameBarSmp, GameBarBox, src - float2(eyeSign * GameBarShift, 0.0));
     [branch] if (GameMapOn)
     {
-        const float4 m = GamePiece(GameMapSmp, GameMapBox, src - float2(eyeSign * GameMapShift, 0.0));   // the map over the toolbar where they meet
+        const float2 at = src - float2(eyeSign * GameMapShift, 0.0);
+        const float4 m = GameMapTurnOn ? GameMapRound(at) : GamePiece(GameMapSmp, GameMapBox, at);   // the map over the toolbar where they meet
         p = float4(m.rgb + p.rgb * m.a, p.a * m.a);
     }
     return p;

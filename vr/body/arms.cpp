@@ -739,6 +739,11 @@ void PushArms() {
     }
 #endif
     in.legsUnder = g_set.legsUnder.load();
+    // [shapeshift] forms_first_person: a druid's werewolf / werebear as our body (skeletons.cpp Learn / PoseBody), VR F4 only; off, or in
+    // F1, F2, F3 and the flat views, the form's rig is never ours and the game draws its own beast, as before
+    in.formGraft = own && g_set.formsFirstPerson.load() && viewgate::F4();
+    in.formHeight[0] = g_set.formHeight[0].load();
+    in.formHeight[1] = g_set.formHeight[1].load();
     // [body] flat_hold_trunk: flat first person (F3), the game's own animation - a swing took the torso out from under the camera. As F4
     // holds the body under the head: the trunk's axis in the bind pose, the hips under it, the arms still the game's (skeletons.cpp PoseBody)
     in.holdTrunk = own && g_set.platform.load() == 0 && g_set.flatHoldTrunk.load();

@@ -409,7 +409,9 @@ void SetThrowSide(ThrowSideFn side) { g_throwSide.store(side); }
 // behind it into the body: their momentum along the way in, (the steel + kStrikeArmKg) x the speed in - the contact's own impulse takes only what the weapon's step
 // loses at the point, a few tenths of a newton-second (the first headset test: 0.2 - 2.5 N s at 1 - 7 m/s). While it rests on the body the steady push is the
 // contact's - only while the weapon still goes INTO it (kPushInMs): a weapon resting in or on a body (the second test: "the capsules rattle") pushes nothing, so
-// the body's sway does not fight the weapon it just moved.
+// the body's sway does not fight the weapon it just moved. The knock-down is told the weapon's own speed into the body too (the closing speed less the body's
+// own motion along the normal - with [gameplay] melee_thrust_with_run the bodies move in the room: their walk, the hero's run, a co-op client's jumps).
+extern heft::contact::Capsule g_monsterCaps[monsterbodies::kMax];   // (below: this step's capsules, their velocities)
 void PushBack(const hh::Hold& h, const Head& head, uint32_t was, int nBodies) {
     constexpr double kStrikeArmKg = 3.5;   // a man's forearm and hand and part of his upper arm (an arm is about 5 % of him)
     constexpr double kPushInMs = 0.3;      // m/s into the body: slower is resting on it
@@ -418,15 +420,18 @@ void PushBack(const hh::Hold& h, const Head& head, uint32_t was, int nBodies) {
     if (!push || c.bodies <= 0 || c.body < 0 || c.body >= nBodies) return;
     if (c.body < monsterbodies::kMax && g_capHeld[c.body]) return;   // ([weight] monster_shields: a shield or a weapon it holds pushes no doll)
     const bool strike = c.id != was;
-    const double j = c.approach < kPushInMs ? 0.0 : strike ? std::max(c.impulse, (h.SteelKg() + kStrikeArmKg) * c.approach) : c.impulse;
+    const double heftKg = h.SteelKg() + kStrikeArmKg;
+    const double j = c.approach < kPushInMs ? 0.0 : strike ? std::max(c.impulse, heftKg * c.approach) : c.impulse;
     if (!(j > 0.0)) return;
+    const double own = c.body < monsterbodies::kMax ? c.approach - heft::Dot(g_monsterCaps[c.body].vel, c.normal) : c.approach;
+    const float swing = std::isfinite(own) ? (float)std::max(0.0, own) : 0.0f;
     const Q inv = heft::QConj(head.yaw);
     const V3 n = heft::Rotate(inv, c.normal), p = heft::Rotate(inv, heft::Sub(c.point, head.pos));
     const float nh[3] = {(float)(-n.x * j), (float)(-n.y * j), (float)(-n.z * j)}, ph[3] = {(float)p.x, (float)p.y, (float)p.z};
     float imp[3], at[3];
     dollview::HeadDirToRender(g_capView, nh, imp);
     dollview::HeadToRender(g_capView, ph, at);
-    push(g_capSnap, g_capOf[c.body], imp, at);
+    push(g_capSnap, g_capOf[c.body], imp, at, swing, (float)heftKg);
 }
 
 // [debug] strike_measure: what each strike of a held weapon delivered into a body (vr/strike_measure.h; docs/notes/strike_force.md) - every monster it touched this

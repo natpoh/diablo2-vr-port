@@ -37,6 +37,10 @@ void Typed(uintptr_t extra);
 // The draw thread, every laser frame: the laser is the mouse, points at the picture and holds no button
 // (lasertip::Hovering). A lease of 300 ms; a frame that does not hover ends it.
 void ItemHover(bool hovering);
+// [openxr] laser_compare_hold: the other hand's trigger is held this frame - under the laser the equipped-item comparison shows only then
+// (WantCompareHold(true), the default); off, a hover alone shows it as before. Draw thread / config.
+void CompareHeld(bool held);
+void WantCompareHold(bool on);
 
 // The UI thread (gamestate's read, 5 times a second): a game entered or a panel closed in the
 // keyboard-and-mouse layout right after the laser was the mouse - the controller layout asked

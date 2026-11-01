@@ -76,6 +76,7 @@
 #include "body_calibration.h"
 #include "crouch.h"         // [body] crouch: the hero crouches when you do (F4)
 #include "trunk_hold.h"     // [body] lock (F4) and flat_hold_trunk (flat F3): which pose each bone above the pelvis takes
+#include "unleashed_shapeshift_form.h"   // [shapeshift] forms_first_person: the druid's werewolf / werebear grafted under the camera (MPL, from Unleashed)
 #include "sigscan.h"
 #include "weapon_back.h"
 #include "weapon_shaft.h"
@@ -359,6 +360,13 @@ struct Hero {
     struct Twist { int bone; float t; };
     std::vector<Twist> twist[2];
     std::string twistNote;   // what was found, for the log (once per rig)
+    // [shapeshift] forms_first_person: a druid shapeshift form's rig (unleashed::shapeshift: 1 werewolf, 2 werebear; enemy models,
+    // /character/enemy/wolf|bear/). In F4 its torso is tipped upright about the spine root (upright, a rotation about the model's x),
+    // the whole body moved across the floor so the upright shoulders stand under the camera as a person's do (graftX, graftZ), and
+    // drawn at a uniform scale so its eyes stand at the form's height. eyeY is then the rig's eye for those shoulders (RigEye).
+    int form = 0;
+    Mat upright{{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}};
+    float shoulderUp = 0.0f, graftX = 0.0f, graftZ = 0.0f;
 };
 
 std::atomic<int> g_lockState{0};
@@ -385,6 +393,14 @@ std::atomic<float> g_eyeY{0.0f}, g_lift{0.0f}, g_rawLift{0.0f};
 // (1 both, 0 not, -1 not asked yet)
 std::atomic<float> g_crouchApplied{0.0f};
 std::atomic<int> g_crouchLegs{-1};
+// [shapeshift] forms_first_person: the camera's eye height eases when the hero's rig changes (a shapeshift), and a grafted form's
+// hips, legs and tail are held while it stands (vr/unleashed_shapeshift_form.h). g_personWorldScale: the druid's own rig's
+// model-to-world scale as last posed (0.95; a form's model is drawn at 1.0) - the form's height is in her units.
+SRWLOCK g_formLock = SRWLOCK_INIT;
+unleashed::shapeshift::EyeEase g_eyeEase;   // g_formLock
+unleashed::shapeshift::LegHold g_legHold;   // g_formLock
+std::atomic<float> g_personWorldScale{0.0f};
+std::atomic<ULONGLONG> g_rigPosedAt[3] = {};   // when each rig was last posed as ours: [0] a person's, [1] the werewolf's, [2] the werebear's
 #if D2RVR_FIRST_PERSON
 // [gameplay] shield_smite: the left weapon attach bone in the render world, as last posed (only while asked for)
 ShieldPose g_shieldPose{};
@@ -733,7 +749,7 @@ bool BodyPlace(uintptr_t self, float* x, float* z, bool* noEntity = nullptr, ULO
 }
 }  // namespace ecs
 
-// player: the model is a player's (/character/player/), learned or not.
+// player: the model is a player's (/character/player/) or a druid's form's, learned or not.
 bool Learn(uintptr_t self, Hero* h, bool* player = nullptr) {
     if (player) *player = false;
     uintptr_t modelInst = 0, skel = 0, nameObj = 0, nameP = 0;
@@ -741,11 +757,16 @@ bool Learn(uintptr_t self, Hero* h, bool* player = nullptr) {
     Get(self, &nameObj); Get(nameObj + 8, &nameP);
     const std::string model = Str(nameP);
     const size_t at = model.find("/character/player/");
-    if (at == std::string::npos) return false;
+    // [shapeshift] forms_first_person: a druid's shapeshift form is drawn with an enemy model (Unleashed's F10 capture, 2026-10-21).
+    // Its rig is learned here; Arms takes it as ours only with forms_first_person on, in F4, while our hero is a druid.
+    const int form = unleashed::shapeshift::FromModel(model);
+    if (at == std::string::npos && !form) return false;
     if (player) *player = true;
-    h->cls = -1;
-    for (int c = 0; c < 8; ++c)
-        if (model.compare(at + 18, strlen(kHeroClasses[c]) + 1, std::string(kHeroClasses[c]) + "/") == 0) h->cls = c;
+    h->form = form;
+    h->cls = form ? 5 : -1;   // (kHeroClasses: 5 the druid)
+    if (!form)
+        for (int c = 0; c < 8; ++c)
+            if (model.compare(at + 18, strlen(kHeroClasses[c]) + 1, std::string(kHeroClasses[c]) + "/") == 0) h->cls = c;
     int32_t count = 0; uintptr_t bones = 0;
     if (!Get(skel + 8, &count) || !Get(skel + 0xC, &bones) || count <= 0 || count > 1024) return false;
     h->skel = skel; h->count = count; h->parent.assign(count, -1); h->inHead.assign(count, 0); h->upper.assign(count, 0);
@@ -791,7 +812,28 @@ bool Learn(uintptr_t self, Hero* h, bool* player = nullptr) {
             {&h->shield, {"shield_attach", "shield_attach", "shield_attach"}},
             {&h->twoHand, {"two_hand_weapon_attach", "two_hand_weapon_attach", "two_hand_weapon_attach"}},
         };
-        for (const Alias& a : kAliases) {
+        // The shapeshift forms (Unleashed's F10 capture, 2026-10-21): werewolf, werebear. Sorceress-style names, the bear's with an
+        // R_Arm_ prefix; their own spine and head names; no weapon or shield bones.
+        const Alias kFormAliases[] = {
+            {&h->upr[0], {"R_UpperArm", "R_Arm_UpperArm", "R_Arm_UpperArm"}},
+            {&h->upr[1], {"L_UpperArm", "L_Arm_UpperArm", "L_Arm_UpperArm"}},
+            {&h->lwr[0], {"R_ForeArm", "R_Arm_ForeArm", "R_Arm_ForeArm"}},
+            {&h->lwr[1], {"L_ForeArm", "L_Arm_ForeArm", "L_Arm_ForeArm"}},
+            {&h->hand[0], {"R_Wrist", "R_Arm_Wrist", "R_Arm_Wrist"}},
+            {&h->hand[1], {"L_Wrist", "L_Arm_Wrist", "L_Arm_Wrist"}},
+            {&h->ind[0], {"R_finger_A_A", "R_Arm_finger_A_A", "R_Arm_finger_A_A"}},
+            {&h->ind[1], {"L_finger_A_A", "L_Arm_finger_A_A", "L_Arm_finger_A_A"}},
+            {&h->mid[0], {"R_finger_B_A", "R_Arm_finger_B_A", "R_Arm_finger_B_A"}},
+            {&h->mid[1], {"L_finger_B_A", "L_Arm_finger_B_A", "L_Arm_finger_B_A"}},
+            {&h->pnk[0], {"R_finger_D_A", "R_Arm_finger_D_A", "R_Arm_finger_D_A"}},
+            {&h->pnk[1], {"L_finger_D_A", "L_Arm_finger_D_A", "L_Arm_finger_D_A"}},
+            {&h->head, {"C_NeckHead_head", "head", "head"}},
+            {&h->spine, {"C_spine1", "C_Spine_spine1", "C_Spine_spine1"}},
+        };
+        const Alias* table = form ? kFormAliases : kAliases;
+        const size_t tableSize = form ? std::size(kFormAliases) : std::size(kAliases);
+        for (size_t t = 0; t < tableSize; ++t) {
+            const Alias& a = table[t];
             if (*a.slot >= 0) continue;
             if (n == a.names[0] || n == a.names[1] || n == a.names[2]) { *a.slot = i; break; }
         }
@@ -808,10 +850,19 @@ bool Learn(uintptr_t self, Hero* h, bool* player = nullptr) {
         if (h->spine >= 0 && (i == h->spine || (p >= 0 && h->upper[p]))) h->upper[i] = 1;
     }
     const bool arms = h->upr[0] > 0 && h->lwr[0] > 0 && h->hand[0] > 0 && h->upr[1] > 0 && h->lwr[1] > 0 && h->hand[1] > 0;
+    if (!arms && form) {   // [shapeshift] a form's rig named otherwise than Unleashed's capture: the game's own beast stays (said once per skeleton)
+        static std::atomic<uintptr_t> told[2];
+        if (told[form - 1].exchange(skel) != skel) {
+            char line[200];
+            snprintf(line, sizeof line, "shapeshift: %s rig (%d bones) not learned - its arm bones are not found by name: the game's own %s is drawn",
+                     unleashed::shapeshift::Name(form), count, unleashed::shapeshift::Name(form));
+            weight::Say(line);
+        }
+    }
     if (!arms) return false;
     {   // what a held weapon or shield could hang on in this rig, told for the first few heroes: every bone named weapon / attach / shield / buckler / hold, with its parent
         static std::atomic<int> told{0};
-        if (told.fetch_add(1) < 6) {
+        if (!form && told.fetch_add(1) < 6) {   // (a form's rig has none: only claws)
             std::string list;
             for (int i = 0; i < count; ++i) {
                 std::string lo = names[i];
@@ -931,11 +982,12 @@ bool Learn(uintptr_t self, Hero* h, bool* player = nullptr) {
         }
     }
     uintptr_t world = 0, mats = 0; float headNow[16] = {};
+    // A form's idle hunches far from its rest pose (the werewolf's head 5.25 up as drawn).
     if (ok && Get(self + 0x20, &world) && Get(world + 4, &mats) && SafeCopy(headNow, (const void*)(mats + h->head * 64), 64))
-        ok = fabsf(h->bind[h->head].m[13] - headNow[13]) < 1.5f && h->bind[h->head].m[13] > 2.0f;
+        ok = fabsf(h->bind[h->head].m[13] - headNow[13]) < (form ? 4.0f : 1.5f) && h->bind[h->head].m[13] > 2.0f;
     else ok = false;
     h->bindOk = ok;
-    g_lockState.store(ok ? 1 : -1);
+    if (!form) g_lockState.store(ok ? 1 : -1);   // (a summon on a form's rig must not touch the hero's state)
     for (int side = 0; side < 2; ++side) {
         const V3 E = Pos(h->bind[h->lwr[side]]), W = Pos(h->bind[h->hand[side]]), EW = Sub(W, E);
         const float ll = Dot(EW, EW);
@@ -957,6 +1009,21 @@ bool Learn(uintptr_t self, Hero* h, bool* player = nullptr) {
         for (int e : h->eyes) if (e >= 0) { sum += h->bind[e].m[13]; ++k; }
         h->eyeY = k ? sum / k : h->bind[h->head].m[13] + 0.25f;
         if (h->pelvis >= 0) h->pelvisY = h->bind[h->pelvis].m[13];
+        // [shapeshift] a form: its torso tipped upright about the spine root (the lateral axis only), its eye height taken as a
+        // person's for where its shoulders then stand, and the shoulders' middle put under the camera across the floor.
+        if (form) {
+            const V3 p = Pos(h->bind[h->spine]);
+            const V3 a = Pos(h->bind[h->upr[0]]), b = Pos(h->bind[h->upr[1]]);
+            const V3 mid = {(a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f, (a.z + b.z) * 0.5f};
+            const float tilt = unleashed::shapeshift::UprightTilt(p.y, p.z, mid.y, mid.z);
+            h->upright = Mat{{1, 0, 0, 0, 0, cosf(tilt), sinf(tilt), 0, 0, -sinf(tilt), cosf(tilt), 0, 0, 0, 0, 1}};
+            h->shoulderUp = unleashed::shapeshift::UprightShoulders(p.y, p.z, mid.y, mid.z);
+            h->eyeY = unleashed::shapeshift::RigEye(h->shoulderUp);
+            float x = 0.0f, z = 0.0f;
+            unleashed::shapeshift::PlaceShoulders(h->eyeY, &x, &z);
+            h->graftX = x - mid.x;   // (tipped about x, the shoulders' middle keeps its x and comes over the root's z)
+            h->graftZ = z - p.z;
+        }
         if (!(h->eyeY > 3.0f && h->eyeY < 12.0f)) h->eyeY = 0.0f;   // not a standing body: no height from it
         // [body] crouch: the legs, by the rig's own hierarchy and bind pose, not by class (bearstonem/d2r-pcvr's way, MIT,
         // vr/skeletons.cpp Learn): a bone named foot or ankle (not a toe, not an _end marker, not above the pelvis), its parent
@@ -990,6 +1057,19 @@ bool Learn(uintptr_t self, Hero* h, bool* player = nullptr) {
                 NoteDoll("hero rig %s: its legs found by its bones' places, not their names (%s - %s - %s, %s - %s - %s)", h->cls >= 0 ? kHeroClasses[h->cls] : "?",
                          names[h->leg[0][0]].c_str(), names[h->leg[0][1]].c_str(), names[h->leg[0][2]].c_str(), names[h->leg[1][0]].c_str(), names[h->leg[1][1]].c_str(),
                          names[h->leg[1][2]].c_str());
+        }
+    }
+    if (form) {   // [shapeshift] once per form skeleton: what the graft is built from
+        static std::atomic<uintptr_t> told[2];
+        if (told[form - 1].exchange(skel) != skel) {
+            const float leanDeg = ok ? acosf(std::clamp(h->upright.m[5], -1.0f, 1.0f)) * 57.2958f : 0.0f;
+            char line[320];
+            snprintf(line, sizeof line, "shapeshift: %s rig, %d bones, bind %s, head %s (bind %.2f, drawn %.2f), spine lean %.0f deg, upright shoulders %.2f, "
+                     "rig eye %.2f, shoulders moved %.2f %.2f under the camera, legs %d %d, fingers %d %d",
+                     unleashed::shapeshift::Name(form), count, ok ? "read" : "NOT read", h->head >= 0 ? names[h->head].c_str() : "NOT FOUND",
+                     h->head >= 0 && ok ? h->bind[h->head].m[13] : 0.0f, headNow[13], leanDeg, h->shoulderUp, h->eyeY, h->graftX, h->graftZ,
+                     h->leg[0][2], h->leg[1][2], int(h->fingers[0].size()), int(h->fingers[1].size()));
+            weight::Say(line);
         }
     }
     return true;
@@ -3127,12 +3207,77 @@ std::atomic<bool> g_poseView{true};   // vr/body/pose_views.h AnyAllowed (SetPos
 std::atomic<bool> g_walkBackDumpOn{false};   // [debug] walk_back_dump (below)
 std::atomic<bool> g_bodyDumpOn{false};       // [debug] body_dump (below)
 #endif
-void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out& wo) {
+// [shapeshift] forms_first_person: a form's rig (h.form) as ours. Its eyes stand at the form's own height ([shapeshift] wolf_height /
+// bear_height), eased in over half a second when it is taken; a person's at their rig's, at once. The druid's model is drawn at another
+// world scale than a form's (0.95 / 1.0): her units, taken into this rig's. Grafted (the body held, [body] lock), the rig is drawn at a
+// uniform scale about the model's origin (its feet stay on the ground) so its eyes stand there: it is posed in its own units - the
+// camera's eye, the room-scale move and the crouch taken back by that scale here - and scaled as it is written. Returns the scale.
+struct FormEyeOut { float scale = 1.0f, shown = 0.0f, target = 0.0f, units = 1.0f; };
+FormEyeOut FormEye(uintptr_t self, const Hero& h, const Input& in, bool graft) {
+    FormEyeOut o;
+    float worldScale = 0.0f;
+    {
+        HeroXform hx;
+        Mat m;
+        if (HeroTransform(&hx) && hx.self == self && SafeCopy(m.m, reinterpret_cast<const void*>(hx.comp), sizeof m)) worldScale = Len({m.m[0], m.m[1], m.m[2]});
+    }
+    if (!h.form && !in.along && worldScale > 0.2f && worldScale < 5.0f) g_personWorldScale.store(worldScale);
+    o.units = h.form ? unleashed::shapeshift::PersonUnits(g_personWorldScale.load(), worldScale) : 1.0f;
+    o.target = h.form ? unleashed::shapeshift::TargetEye(h.form, in.formHeight[h.form - 1]) * o.units : h.eyeY;
+    if (in.along) o.shown = o.target;   // (nothing of ours is stepped by a rig posed along)
+    else {
+        AcquireSRWLockExclusive(&g_formLock);
+        o.shown = g_eyeEase.Step(o.target, GetTickCount64(), h.form != 0);
+        ReleaseSRWLockExclusive(&g_formLock);
+    }
+    if (!graft) return o;
+    o.scale = unleashed::shapeshift::Scale(o.shown, h.eyeY);
+    o.shown = o.scale * h.eyeY;   // as drawn, should the scale be bounded
+    return o;
+}
+std::atomic<int> g_formTold{0};   // the form the log last said ours is in
+
+void PoseBody(uintptr_t self, const Hero& h, const Input& given, const weight::Out& wo) {
     uintptr_t world = 0, mats = 0; int32_t n = 0;
     if (!Get(self + 0x20, &world) || !Get(world, &n) || !Get(world + 4, &mats) || n != h.count) return;
     std::vector<Mat> oldW(n);
     if (!SafeCopy(oldW.data(), (const void*)mats, sizeof(Mat) * n)) return;
     std::vector<Mat> newW = oldW;
+    // [shapeshift] forms_first_person: grafted under the camera with the body held ([body] lock); the eye height every rig of ours
+    // steps while it is on (a person's too, so a shift eases from it), the draw scale a grafted form's
+    const bool graft = h.form && given.lockUpper && h.bindOk && h.eyeY > 0.0f;
+    FormEyeOut fe;
+    if (h.eyeY > 0.0f && given.formGraft) fe = FormEye(self, h, given, graft);
+    const float drawScale = fe.scale;
+    Input formIn;
+    if (h.form) {
+        formIn = given;
+        for (float& e : formIn.eyeModel) e /= drawScale;
+        for (float& r : formIn.roomShift) r /= drawScale;
+        formIn.crouchDrop /= drawScale;
+    }
+    const Input& in = h.form ? formIn : given;
+    float legHold = 1.0f;
+    if (graft && !in.along) {
+        float L[3];
+        AcquireSRWLockExclusive(&g_formLock);
+        legHold = HeroPos(L) ? g_legHold.Step(GetTickCount64(), L[0], L[2]) : 1.0f;
+        ReleaseSRWLockExclusive(&g_formLock);
+        // the log: the form and its scale, whenever ours takes a form (a shift; the height setting changed)
+        static float toldTarget = 0.0f;
+        if (g_formTold.exchange(h.form) != h.form || fabsf(fe.target - toldTarget) > 0.02f) {
+            toldTarget = fe.target;
+            const ULONGLONG person = g_rigPosedAt[0].load(), now = GetTickCount64();
+            char line[320];
+            snprintf(line, sizeof line, "shapeshift: %s grafted under the camera (F4) - eyes at %.2f of its units (%.0f %% of the form's height; the druid's units %.3f of "
+                     "its), rig eye %.2f, draw scale %.3f, spine tipped %.0f deg upright; the druid's own rig last posed %llu ms before",
+                     unleashed::shapeshift::Name(h.form), fe.target, in.formHeight[h.form - 1] * 100.0f, fe.units, h.eyeY, drawScale,
+                     acosf(std::clamp(h.upright.m[5], -1.0f, 1.0f)) * 57.2958f, person ? (unsigned long long)(now - std::min(now, person)) : 0ull);
+            weight::Say(line);
+        }
+    } else if (!h.form && !in.along && given.formGraft && g_formTold.exchange(0) != 0) {
+        weight::Say("shapeshift: back in the druid's own rig - the eyes at its own height, drawn unscaled");
+    }
 #if D2RVR_FIRST_PERSON
     g_fullReachPose = in.fullReach && in.mode == 2;   // [arms] full_reach: every Reach of this pose
     if (g_fullReachPose) NoteFullReach();
@@ -3152,10 +3297,11 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
         const float raw = h.pelvis >= 0 && h.pelvisY > 0.0f ? oldW[h.pelvis].m[13] - h.pelvisY : 0.0f;
         const float a = std::max(in.jumpFrom, 0.01f);
         const float t = std::clamp((raw - a) / a, 0.0f, 1.0f);
-        lift = in.followJump ? raw * t * t * (3.0f - 2.0f * t) : 0.0f;
-        g_eyeY.store(h.eyeY);
+        // [shapeshift] a form's idle hunches below its rest pose and never jumps: no lift. Its eyes the form's height (FormEye).
+        lift = in.followJump && !h.form ? raw * t * t * (3.0f - 2.0f * t) : 0.0f;
+        g_eyeY.store(given.formGraft && fe.shown > 0.0f ? fe.shown : h.eyeY);
         g_lift.store(lift);
-        g_rawLift.store(raw);
+        g_rawLift.store(h.form ? 0.0f : raw);
         g_eyeAt.store(GetTickCount64());
     }
 
@@ -3174,11 +3320,53 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
         for (int i = 0; i < n; ++i) {
             const int p = h.parent[i];
             switch (trunkhold::For(h.upper[i] != 0, i == h.spine || p < 0, h.inHand[i] != 0, in.lockUpper, holdTrunk, holdTrunk && axis[i])) {
-                case trunkhold::Pose::Root: newW[i] = h.bind[i]; newW[i].m[13] += lift; break;   // up with the hips in a jump
+                case trunkhold::Pose::Root:   // up with the hips in a jump; [shapeshift] a grafted form's torso tipped upright
+                    newW[i] = h.bind[i];
+                    if (graft && i == h.spine) TurnAboutSelf(newW[i], h.upright);
+                    newW[i].m[13] += lift;
+                    break;
                 case trunkhold::Pose::Anim: newW[i] = Mul(Mul(oldW[i], InvAffine(oldW[p])), newW[p]); break;
                 case trunkhold::Pose::Bind: newW[i] = Mul(Mul(h.bind[i], InvAffine(h.bind[p])), newW[p]); break;
                 case trunkhold::Pose::Game: break;
             }
+        }
+        // [shapeshift] a grafted form (Unleashed's): its hips are held at rest under the upright torso - the idle sways, and the player
+        // moves the body. Standing still (legHold 1) the legs and tail are held at rest too; walking or running (0) they take the game's
+        // stride, hung from the held hips, the feet kept at the stride's height by the legs' own lengths. Blended. Then the whole body is
+        // moved across the floor so the upright shoulders stand under the camera (Hero::graftX, graftZ) - the legs under them.
+        if (graft) {
+            const float w = std::clamp(legHold, 0.0f, 1.0f);
+            const std::vector<Mat> anim = oldW;
+            std::vector<char> hips(n, 0);
+            for (int b = h.spine >= 0 ? h.parent[h.spine] : -1; b >= 0; b = h.parent[b]) hips[b] = 1;
+            for (int i = 0; i < n; ++i) if (!h.upper[i] && h.parent[i] >= 0 && h.parent[i] == h.pelvis) hips[i] = 1;
+            for (int i = 0; i < n; ++i) {
+                if (h.upper[i]) continue;
+                const int p = h.parent[i];
+                if (hips[i] || p < 0) { newW[i] = h.bind[i]; continue; }
+                const Mat la = Mul(anim[i], InvAffine(anim[p])), lb = Mul(h.bind[i], InvAffine(h.bind[p]));
+                Mat local = BlendRot(la, lb, w);
+                for (int j = 12; j < 15; ++j) local.m[j] = la.m[j] + (lb.m[j] - la.m[j]) * w;
+                newW[i] = Mul(local, newW[p]);
+            }
+            if (w < 0.999f && h.leg[0][2] >= 0 && h.leg[1][2] >= 0)
+                for (int side = 0; side < 2; ++side) {
+                    const int hip = h.leg[side][0], knee = h.leg[side][1], foot = h.leg[side][2];
+                    const V3 a = Pos(newW[hip]), b = Pos(newW[knee]), z = Pos(newW[foot]);
+                    const float thigh = Len(Sub(b, a)), shin = Len(Sub(z, b));
+                    crouch::V end{z.x, anim[foot].m[13] + (h.bind[foot].m[13] - anim[foot].m[13]) * w, z.z}, bend;
+                    const crouch::V pole{b.x - a.x, b.y - a.y, b.z - a.z};   // (toward its own knee: a beast's leg need not bend ahead)
+                    if (!crouch::Knee({a.x, a.y, a.z}, thigh, shin, end, pole, bend)) continue;
+                    const std::vector<Mat> base = newW;
+                    AimChain(h, hip, knee, foot, {bend.x, bend.y, bend.z}, {end.x, end.y, end.z}, base, newW);
+                    const V3 at = Pos(newW[foot]);   // the foot keeps its own turn, its toes with it
+                    newW[foot] = base[foot];
+                    newW[foot].m[12] = at.x; newW[foot].m[13] = at.y; newW[foot].m[14] = at.z;
+                    std::vector<char> moved(n, 0);
+                    moved[foot] = 1;
+                    Propagate(h, base, newW, moved, foot);
+                }
+            for (int i = 0; i < n; ++i) { newW[i].m[12] += h.graftX; newW[i].m[14] += h.graftZ; }
         }
         // [body] legs_under_body: the trunk now stands in its bind place, but
         // the hips are still the game's - and a blow lunges them ahead and
@@ -3187,7 +3375,7 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
         // stands where the bind pose has it across the floor, and turned so it
         // faces the bind pose's way. Its height stays the animation's (a
         // crouch, a jump), and the legs still step under it.
-        if ((in.legsUnder || holdTrunk) && h.pelvis >= 0) {
+        else if ((in.legsUnder || holdTrunk) && h.pelvis >= 0) {   // (a grafted form's held above)
             const Mat& a = oldW[h.pelvis];
             const Mat& b = h.bind[h.pelvis];
             // The turn taking the bind pelvis to the animation's, in model
@@ -3212,8 +3400,8 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
     const bool turn = in.bodyTurn > 0 && in.haveYaw && in.yawInModel != 0.0f && (in.bodyTurn == 2 || h.spine >= 0);
     if (turn) {
         Mat T{}; T.m[0] = c; T.m[2] = -s; T.m[5] = 1; T.m[8] = s; T.m[10] = c; T.m[15] = 1;
-        if (in.bodyTurn == 1) {   // pivot p: p - p*R
-            const V3 p = Pos(oldW[h.spine]);
+        if (in.bodyTurn == 1) {   // pivot p: p - p*R ([shapeshift] a grafted form's torso stands where the graft put it)
+            const V3 p = Pos(graft ? newW[h.spine] : oldW[h.spine]);
             T.m[12] = p.x - (p.x * c + p.z * s); T.m[14] = p.z - (-p.x * s + p.z * c);
         }
         for (int i = 0; i < n; ++i) if (in.bodyTurn == 2 || h.upper[i]) newW[i] = Mul(newW[i], T);
@@ -3292,7 +3480,10 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
     if (in.mode == 2 && armSpanM > 0.0f && h.bindOk && h.upr[0] >= 0 && h.upr[1] >= 0) {
         // the same eye height the hands are placed by (ControllerPoint)
         const float modelEye = in.haveEye ? in.eyeModel[1] : h.head >= 0 ? Pos(newW[h.head]).y : h.eyeY;
-        const float shoulderWidth = Len(Sub(Pos(h.bind[h.upr[0]]), Pos(h.bind[h.upr[1]])));
+        float shoulderWidth = Len(Sub(Pos(h.bind[h.upr[0]]), Pos(h.bind[h.upr[1]])));
+        // [shapeshift] a grafted form's arms reach as far as the player's own, from a person's shoulders (the werebear's are 3.11 apart:
+        // fitted from those, its arms were cut to half and a forward reach fell short of the hands - Unleashed's)
+        if (graft) shoulderWidth = unleashed::shapeshift::ArmFitShoulders(shoulderWidth, modelEye);
         for (int side = 0; side < 2; ++side) {
             const int u = h.upr[side], l = h.lwr[side], k = h.hand[side];
             if (u < 0 || l < 0 || k < 0) continue;
@@ -5620,6 +5811,14 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
         for (int i = 0; i < n; ++i) newW[i].m[13] += t_poseUp;
     t_poseUp = 0.0f;
 #endif
+    // [shapeshift] a grafted form: posed in its rig's own units, drawn at drawScale about the model's origin (the feet stay on the ground) -
+    // its eyes at the form's height (FormEye). Everything after reads the pose as it is drawn.
+    if (graft && drawScale != 1.0f)
+        for (int i = 0; i < n; ++i) {
+            for (int r = 0; r < 3; ++r)
+                for (int c2 = 0; c2 < 3; ++c2) newW[i].m[r * 4 + c2] *= drawScale;
+            newW[i].m[12] *= drawScale; newW[i].m[13] *= drawScale; newW[i].m[14] *= drawScale;
+        }
     // A bone that is not a number (a NaN carried down a chain by some turn that had no direction) would take its whole subtree out of the picture; the game's own pose of it stands in.
     {
         int nan = 0;
@@ -5744,7 +5943,8 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& in, const weight::Out&
         // fitted onto the weapon later, or a strapped shield, went to the others where it was not drawn.
         DrawnAttachOut da;
         da.main = axesSide;
-        const V3 eye = in.haveEye ? V3{in.eyeModel[0], in.eyeModel[1], in.eyeModel[2]} : Pos(newW[h.head >= 0 ? h.head : 0]);
+        // ([shapeshift] a grafted form's camera eye is in its rig's units, its bones drawn at drawScale: the eye as drawn)
+        const V3 eye = in.haveEye ? Scale(V3{in.eyeModel[0], in.eyeModel[1], in.eyeModel[2]}, graft ? drawScale : 1.0f) : Pos(newW[h.head >= 0 ? h.head : 0]);
         const float e3[3] = {eye.x, eye.y, eye.z};
         da.upm = std::clamp(eye.y / std::max(0.8f, in.userHeadM), 2.0f, 8.0f) * in.scale;   // model units per metre
         const auto read = [&](int bone, float origin[3], float rows[3][3]) {
@@ -5920,9 +6120,12 @@ Doll OursNow(uintptr_t self, const Hero& hero, char* why = nullptr, size_t whyCa
     const bool rebuildHold = g_dollRebuild.load(std::memory_order_relaxed);
     uintptr_t world = 0, mats = 0;
     float head[16];
-    const float standing = hero.head >= 0 && hero.head < (int)hero.bind.size() ? hero.bind[hero.head].m[13] : 0.0f;
+    // [shapeshift] a form stands by its hips' height: the game's werewolf bites low (its head under a third of its rest height through
+    // each attack), and those frames left to the game drew its unscaled beast lunging out ahead of the eyes (Unleashed's finding)
+    const int stand = hero.form && hero.pelvis >= 0 && hero.pelvisY > 2.0f ? hero.pelvis : hero.head;
+    const float standing = stand >= 0 && stand < (int)hero.bind.size() ? hero.bind[stand].m[13] : 0.0f;
     if (standing > 2.0f && Get(self + 0x20, &world) && Get(world + 4, &mats) &&
-        SafeCopy(head, (const void*)(mats + (uintptr_t)hero.head * 64), sizeof head) &&
+        SafeCopy(head, (const void*)(mats + (uintptr_t)stand * 64), sizeof head) &&
         !(std::isfinite(head[13]) && head[13] > 0.35f * standing)) {
         AcquireSRWLockExclusive(&g_bodiesLock); g_bodies.erase(self); ReleaseSRWLockExclusive(&g_bodiesLock);
         return say(Doll::Not, "its head is down - posed at %.2f of the standing %.2f (under 35%%: lying, a corpse, a fall)", head[13], standing);
@@ -8579,6 +8782,9 @@ void Arms(uintptr_t self) {
         ReleaseSRWLockExclusive(&g_heroLock);
     }
     if (!hero) return;   // not a hero
+    // [shapeshift] forms_first_person: a form's rig is ours only with it on, in F4, while our hero is a druid. A summon's wolf, another
+    // player's werebear, F1 - F3 and flat: the game's own beast, as before.
+    if (hero->form && !(in.formGraft && g_heroClass.load() == 5)) return;
     char why[320] = "";
     const Doll doll = OursNow(self, *hero, in.dollTrace || in.mode == 2 ? why : nullptr, sizeof why, in.dollTrace);
     if (doll == Doll::Not) {   // another player, our corpse
@@ -8586,7 +8792,7 @@ void Arms(uintptr_t self) {
         // [multiplayer] pose_share_hero: another player posed from his pose (none unless asked); with none, his legs alone ([multiplayer] pose_share_legs). Not a corpse
         // (its head down, OursNow's first test). (His body for our weapon is hit by touch's: melee_touch.cpp PublishBodies, [multiplayer] pose_share_bodies.)
         const bool down = HeadDown(self, *hero);
-        if (!down) {
+        if (!down && !hero->form) {   // ([shapeshift] another druid's form: the game's own)
             if (g_poseView.load(std::memory_order_relaxed) && !PoseRemoteHero(self, *hero, in) && g_otherLegs.load(std::memory_order_relaxed)) PoseLegsOnly(self, *hero);
         }
 #endif
@@ -8618,13 +8824,14 @@ void Arms(uintptr_t self) {
             NoteDoll("doll: taken again after %llu ms - rig %p%s", (unsigned long long)(GetTickCount64() - g_dollLetGoAt.load()), (void*)self,
                      self == g_heroSelf.load() ? " (the same rig)" : " (a new rig: the model rebuilt - a weapon swap, an area, a load - or another one nearer the look-at)");
         NoteHero(self);
+        g_rigPosedAt[std::clamp(hero->form, 0, 2)].store(GetTickCount64());   // [shapeshift] which body ours is in (the log of a swap)
         // the hero's class, from OUR rig only (the per-class wrist depth and D2R VR Settings read it): Learn met every player's rig and a second player's Amazon
         // took our class for hers (the 2026-10-26 two-PC test's log learned amazon, barbarian, druid, necromancer rigs)
         if (hero->cls >= 0) g_heroClass.store(hero->cls);
     }
 #if D2RVR_FIRST_PERSON
     if (!g_poseView.load(std::memory_order_relaxed)) return;   // VR F1 / F3: nothing of ours on the hero (vr/body/pose_views.h)
-    const bool selfLegs = doll == Doll::Ours && g_selfLegs.load(std::memory_order_relaxed);   // [debug] pose_share_legs_self: after our own pose, if any
+    const bool selfLegs = doll == Doll::Ours && !hero->form && g_selfLegs.load(std::memory_order_relaxed);   // [debug] pose_share_legs_self: after our own pose, if any
     if (!active) { if (selfLegs) PoseLegsOnly(self, *hero); return; }
 #else
     if (!active) return;
@@ -8652,6 +8859,15 @@ void Arms(uintptr_t self) {
         in.staff = false;
         in.gunStock = false;
         in.bowAim = in.bowAxis = in.bowRest = in.bowRig = in.bowString = in.bowStave = in.bowHandPose = false;
+    }
+    // [shapeshift] a form's rig draws only claws: nothing is held, both paws are free. Its hips and legs are the graft's (held standing,
+    // the game's stride walking): none of the legs' own passes, which would step the beast's legs by a person's gait.
+    if (hero->form) {
+        in.staff = in.staffFreeLeft = in.leftHilt = in.gunStock = in.bothAttach = in.holdGrip = in.rangedStowed = false;
+        in.bowAim = in.bowAxis = in.bowRest = in.bowRig = in.bowString = in.bowStave = in.bowHandPose = false;
+        in.weaponType = 0;
+        in.handFree[0] = in.handFree[1] = true;
+        in.walkBack = in.walkBackReverse = in.dollFeet = in.legsRear = in.gaitLegs = false;
     }
     // [weight]: the weapon stepped (once per head sample) and the hands on it moved to where it has them
     weight::Out wo;

@@ -358,6 +358,9 @@ void HideTaken(D2RVR_XrInput* in, const uint32_t take[2]) {
 // own, in the menu layer while a panel is open - minus the skill panel's long press. Its pad takes the left stick from FeedWalk (the walk's own gate and the
 // belt's hold: while the left trigger is held for a flick the sticks are the flick's, not the game's); the actions and the game's key commands it holds go the
 // way BodyWalk's would (link::ActionsHeld / CommandsHeld). Called by Feed in a flat view, after FeedWalk; nothing of the F4 world is touched.
+std::atomic<bool> g_vendor{false};   // a vendor's panel is open (SetVendorOpen)
+// The menu layer's mode: a vendor's own while its panel is open.
+Mode MenuMode() { return g_vendor.load() ? Mode::Vendor : Mode::Menu; }
 void FeedFlatController(const D2RVR_XrInput& in, bool focused, bool menu) {
     FeedState& s = g_fs;
     if (!g_flatCtl.load()) {   // off: nothing published, and it starts fresh when it comes back
@@ -372,7 +375,7 @@ void FeedFlatController(const D2RVR_XrInput& in, bool focused, bool menu) {
     const uint32_t ctx = (focused ? 1u : 0u) | (menu ? 2u : 0u);
     if (ctx != s.flatCtx) { s.flatCtx = ctx; s.flatLayout.Cancel(); }   // (a press under way is not a tap, nor a hold)
     const Controls c = s.flatGate.Step(ctx, ControlsOf(in));
-    Outputs o = s.flatLayout.Step(menu ? Mode::Menu : Mode::World, c, GetTickCount64(), false, 0);
+    Outputs o = s.flatLayout.Step(menu ? MenuMode() : Mode::World, c, GetTickCount64(), false, 0);
     if (!menu) {   // the world: the left stick is the walk's (or nothing, with the walk off)
         o.pad.lx = s.walkLX;
         o.pad.ly = s.walkLY;
@@ -486,6 +489,12 @@ void SetHandInventoryAway(bool away) {
         Log(away ? "vrcam: direct input - away from town with the inventory on the hand ([openxr] hand_inventory): the left stick walks on through the inventory "
                    "opening and closing, and its click's long press is never refused for its lean"
                  : "vrcam: direct input - the left stick and its click as before (in town, or [openxr] hand_inventory not in force)");
+}
+
+void SetVendorOpen(bool open) {
+    if (g_vendor.exchange(open) != open)
+        Log(open ? "vrcam: direct input - a vendor's panel: the left stick click is the game's L3 alone (held: the vendor's repair all)"
+                 : "vrcam: direct input - no vendor's panel: the left stick click's long press closes the inventory again");
 }
 
 bool SecondRowOn() { return g_secondRow.load(); }
@@ -802,7 +811,7 @@ void Feed(D2RVR_XrInput* in, bool menu, const uint32_t touches[2]) {
     s.gate.SetStickFree(0, away);
     s.layout.SetLeanFree(0, away);
     const Controls c = s.gate.Step(s.epoch, raw, taken);
-    const Mode mode = menu ? Mode::Menu : Mode::World;
+    const Mode mode = menu ? MenuMode() : Mode::World;
     const Outputs o = s.layout.Step(mode, c, GetTickCount64(), (f.flags & kUiUp) != 0, NoShotMask(take));   // (a bow's draw-only mode: shots dropped, the rest as bound)
     for (int h = 0; h < 2; ++h) {   // [direct] hold_stick_max_pct: a stick's click refused because the stick leaned (a push in a fight) - said, a few times
         static int saidLean = 0;

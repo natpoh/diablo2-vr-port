@@ -49,6 +49,8 @@ void SetStatusWanted(bool on);
 bool StatusWanted();
 void SetStatusHero(uint32_t id);
 bool ServerLookup(uintptr_t* game, uintptr_t* lookup);
+// [weight] grab_moves_unit (vr/grab_move.cpp): the lookup hook is put in for it too - the server's game is what its knockback is asked of.
+void SetMoveWanted(bool on);
 // The server's game learned is dropped: leaving a game frees it, and the next game is another one. Called when the client's own player read
 // finds no hero; the lookup hook learns the next game again. `why` goes to the log.
 void ForgetServerGame(const char* why);
@@ -178,7 +180,7 @@ void GrabSways(const D2rgbSway* sways, int n);
 void GrabLinks(const D2rgbLink* links, int n);
 // ... the doll's numbers the library holds a monster by (its springs, limits and the weight slider: the same as the doll's own).
 void GrabDollTuning(float* limbHz, float* bodyHz, float* damping, float* maxLimbM, float* maxBodyM, float* massScale);
-void PushBody(const monsterbodies::Snapshot& snap, int i, const float impulse[3], const float point[3]);
+void PushBody(const monsterbodies::Snapshot& snap, int i, const float impulse[3], const float point[3], float swingMs, float heftKg);
 // [debug] melee_boxes: the bodies drawn (monsterbodies::Pack: a monster's limbs pink, a monster on the game's capsule blue, the capsule the weapon is on white), into
 // the effect's capsules a / b (world units from where the hands hang), up to max; how many. touchedId / touchedBone: weight::LastContact's (0: none). Wanted by
 // melee_boxes alone - [weight] monster_bodies need not be on. The render thread.

@@ -129,6 +129,8 @@ std::atomic<bool> g_tipWanted{false};     // [openxr] laser_tooltips
 std::atomic<bool> g_tipReady{false};      // the hooks are in and g_delaySite / g_compareSite are known
 uintptr_t g_delaySite = 0, g_compareSite = 0;   // the two queries' return addresses; written before g_tipReady
 lasertip::HoverLease g_hover;             // the draw thread's: the laser points at the menus' picture, holding nothing
+lasertip::HoverLease g_compareHeld;       // ... and the other hand's trigger is held ([openxr] laser_compare_hold)
+std::atomic<bool> g_compareHold{true};    // [openxr] laser_compare_hold
 std::atomic<bool> g_typingWanted{true};   // [openxr] laser_typing
 typedkeys::Typing g_typing;               // the player's own keys: the keyboard layout let in for a moment
 
@@ -186,9 +188,11 @@ bool HookIsController() {
 // The key-state query: Shift is down for the equipped-item comparison while the laser hovers, nowhere else.
 int HookKeyState(int vk) {
     const bool at = g_tipReady.load(std::memory_order_acquire) && viewgate::F4() && lasertip::AtSite((uintptr_t)_ReturnAddress(), g_compareSite);   // (F4 only)
-    if (at && lasertip::ShiftDown(g_hover.Active(GetTickCount64()), at, vk)) {
+    const uint64_t now = GetTickCount64();
+    if (at && lasertip::ShiftDown(g_hover.Active(now), at, vk, !g_compareHold.load() || g_compareHeld.Active(now))) {
         static std::atomic<bool> told{false};
-        TellFirst(told, "vrcam: laser - the equipped-item comparison shown with no Shift held (the comparison's Shift query answered 'down' under the laser)");
+        TellFirst(told, g_compareHold.load() ? "vrcam: laser - the equipped-item comparison shown while the other hand's trigger is held ([openxr] laser_compare_hold)"
+                                             : "vrcam: laser - the equipped-item comparison shown with no Shift held (the comparison's Shift query answered 'down' under the laser)");
         return 1;
     }
     return g_origKey(vk);
@@ -343,6 +347,8 @@ void Typed(uintptr_t extra) {
         Log("vrcam: laser - a key typed on the keyboard: the game may take its keyboard layout for its text boxes ([openxr] laser_typing)");
 }
 void ItemHover(bool hovering) { g_hover.Update(GetTickCount64(), hovering); }
+void CompareHeld(bool held) { g_compareHeld.Update(GetTickCount64(), held); }
+void WantCompareHold(bool on) { g_compareHold.store(on); }
 
 // [hud] monster_bar_room: the monster's plate hangs on the anchor the game is given only in its controller layout; in the mouse layout it sits at the
 // top and ignores it (a test of test-54: "the bar stays at the top"). While the world bar is on and the game has been in the mouse layout for half a second

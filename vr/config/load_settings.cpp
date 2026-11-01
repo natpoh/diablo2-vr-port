@@ -218,6 +218,7 @@ void LoadSettings() {
     hud::SetMapCorner((int)IniF(L"hud", L"map_corner", 0.0f));
     g_set.mapDirection.store(IniB(L"hud", L"map_direction", true));   // the arrow on the game's map in our camera's views: MapDirectionTick
     g_set.mapTurn.store(IniB(L"hud", L"map_rotate", false) || IniB(L"hud", L"map_compass", false));   // the head's way for the map in the hand (xr.cpp reads the keys itself)
+    g_set.mapRotateFlat.store(IniB(L"hud", L"map_rotate_flat", false));   // the corner map on the screen turned with the camera: MapRotateFlatTick
     // The same while the game runs: the game's map put back in the middle (its options) is put in a corner again, by the game's own
     // setter (vr/minimap_side.h) - the start's Settings.json rewrite (MiniMapForHand) holds only when the plugin runs before the game reads it.
     gamestate::SetMapSide(g_set.platform.load() == 1 && g_set.hudMap.load() == 1 ? std::clamp((int)IniF(L"hud", L"map_corner", 0.0f), 0, 2) : -1);
@@ -854,6 +855,11 @@ void LoadSettings() {
     g_set.leapCameraUp.store(IniB(L"body", L"leap_camera_up", false));
     g_set.crouch.store(IniB(L"body", L"crouch", false));
     g_set.crouchCm.store(std::clamp(IniF(L"body", L"crouch_cm", 20.0f), 5.0f, 60.0f));
+    if (const bool forms = IniB(L"shapeshift", L"forms_first_person", false); forms != g_set.formsFirstPerson.exchange(forms))
+        Log(forms ? "vrcam: a druid's werewolf / werebear drawn as our body in F4, grafted under the camera ([shapeshift] forms_first_person)"
+                  : "vrcam: a druid's werewolf / werebear left to the game ([shapeshift] forms_first_person=0)");
+    g_set.formHeight[0].store(std::clamp(IniF(L"shapeshift", L"wolf_height", 100.0f), 50.0f, 150.0f) * 0.01f);
+    g_set.formHeight[1].store(std::clamp(IniF(L"shapeshift", L"bear_height", 100.0f), 50.0f, 150.0f) * 0.01f);
     g_set.handUp.store(std::clamp(IniF(L"arms", L"up", 0.0f), -50.0f, 50.0f));
     g_set.handFwd.store(std::clamp(IniF(L"arms", L"forward", 0.0f), -50.0f, 50.0f));
     g_set.handSide.store(std::clamp(IniF(L"arms", L"side", 0.0f), -50.0f, 50.0f));
@@ -1436,13 +1442,16 @@ void LoadSettings() {
         ks.on = g_set.weightMonsterBodies.load() && IniB(L"weight", L"knock_down", false);
         ks.throwOn = IniB(L"weight", L"grab_bodies", false) && IniB(L"weight", L"grab_throw", false);   // [weight] grab_throw: the hands take, lift and throw a humanoid
         ks.impaleOn = g_set.weightMonsterBodies.load() && g_set.weightStabIn.load() && IniB(L"weight", L"impale_drag", false);   // [weight] impale_drag: a charge with a spear carries it
-        ks.needCms = std::clamp(IniF(L"weight", L"knock_down_cms", 70.0f), 10.0f, 500.0f);
+        ks.needCms = std::clamp(IniF(L"weight", L"knock_down_cms", 80.0f), 10.0f, 500.0f);
+        ks.minSwingMs = std::clamp(IniF(L"weight", L"knock_down_min_speed", 5.0f), 0.0f, 30.0f);
         ks.staggerPct = std::clamp(IniF(L"weight", L"knock_down_stagger_pct", 45.0f), 0.0f, 99.0f);
         ks.lieMs = std::clamp(IniF(L"weight", L"knock_down_lie_ms", 1500.0f), 0.0f, 10000.0f);
         ks.massScale = std::clamp(IniF(L"weight", L"monster_weight_pct", 100.0f), 10.0f, 400.0f) * 0.01f;
         ks.strength = g_set.weightStrength.load() * 0.01f;
+        ks.deathOn = g_set.weightMonsterBodies.load() && IniB(L"weight", L"death_ragdoll", false);   // [weight] death_ragdoll: a kill falls as our ragdoll (vr/death_ragdoll.h)
         ks.balance = IniB(L"weight", L"grab_balance", true);   // [weight] grab_balance: a pulled humanoid steps to keep its feet (on for the test; off: it falls, as 0.192.34)   // ([weight] strength: the hands holding a body, as on the weapon and the props)
         knockdown::Configure(ks);
+        grabmove::SetWanted(ks.throwOn && IniB(L"weight", L"grab_moves_unit", false));   // [weight] grab_moves_unit: what grab_throw carries and throws, moved by the game (host / single player)
         if (ks.throwOn) skel::SetHeldWanted(true);   // (what the monsters hold made capsules: a hand takes a monster by its spear - Serg: «я не могу схватить монстра за оружие»)
     }
     headshadow::WantForDoll((g_set.weightMonsterBodies.load() && g_set.weightMonsterRagdoll.load() && IniB(L"weight", L"monster_ragdoll_pose", false)) ||

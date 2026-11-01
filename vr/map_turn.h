@@ -14,6 +14,9 @@
 // (t.x - t.y, (t.x + t.y) / 2). The map's own up is then the up-left diagonal of the view from above: a bearing (clockwise from the map's
 // up, as the compass reads it) is 45 degrees less there (kTopDownTurn).
 //
+// [hud] map_rotate_flat (RoundOnScreen): the same turn for the corner map on the screen - flat F2 / F3, VR F2 with the map in the picture -
+// where D2R_DepthFog.fx draws it back from the share (hud.cpp PictureNow), round about the hero, the camera's way up.
+//
 // Visual only: the map and all on it are the game's, nothing it draws is changed or left out.
 
 #include <algorithm>
@@ -51,6 +54,18 @@ inline Turn For(bool topDownKey, bool rotateKey, bool headingKnown, float bearin
 // the game drew it (hud's g_mapStretchNow, 1 = its own shape); zoom: the orb's map zoom (1 = as fits). The circle |q| = 1 holds the
 // ellipse inside the box about the hero (the box's height and width both reached; past the box nothing is drawn).
 struct Map { float hero[2] = {0.5f, 0.5f}; float m[4] = {0.5f, 0.0f, 0.0f, 0.5f}; bool ok = false; };
+// q -> the view from above (turned by the heading) -> the map's isometric -> the share's uv, |q| = 1 at `reach` pixels of the view from above.
+inline void TurnMatrix(const Turn& t, float w, float h, float stretch, float reach, float m[4]) {
+    const float c = t.turning ? std::cos(t.heading) : 1.0f, s = t.turning ? std::sin(t.heading) : 0.0f;
+    const float rot[4] = {c, -s, s, c};             // R(h): q's up comes from the heading's way
+    const float iso[4] = {1.0f, -1.0f, 0.5f, 0.5f};  // (x - y, (x + y) / 2)
+    float a[4];
+    for (int i = 0; i < 2; ++i)
+        for (int j = 0; j < 2; ++j) a[2 * i + j] = iso[2 * i] * rot[j] + iso[2 * i + 1] * rot[2 + j];
+    const float toUv[2] = {stretch / w, 1.0f / h};
+    for (int i = 0; i < 2; ++i)
+        for (int j = 0; j < 2; ++j) m[2 * i + j] = toUv[i] * a[2 * i + j] * reach;
+}
 // The same about any point of the share: the hero at uv (heroU, heroV), the map reaching halfW share pixels left and right of it and halfH
 // up and down (the nearer edge each way). [hud] map_click_big's big map: the game's whole-screen map, centred on the hero, its rows above
 // the toolbar's strip only (MapFor is the corner map's: its box, the hero's marker a little above its middle).
@@ -69,16 +84,7 @@ inline Map MapAround(const Turn& t, float w, float h, float stretch, float heroU
     const float s2 = 1.41421356f;
     const float across = halfW / stretch / s2, upDown = halfH * s2;   // (across in the map's own pixels: the stretch narrowed back)
     const float reach = std::max(across, upDown) / zoom;
-    // q -> the view from above (turned by the heading) -> the map's isometric -> the share's uv
-    const float c = t.turning ? std::cos(t.heading) : 1.0f, s = t.turning ? std::sin(t.heading) : 0.0f;
-    const float rot[4] = {c, -s, s, c};             // R(h): q's up comes from the heading's way
-    const float iso[4] = {1.0f, -1.0f, 0.5f, 0.5f};  // (x - y, (x + y) / 2)
-    float a[4];
-    for (int i = 0; i < 2; ++i)
-        for (int j = 0; j < 2; ++j) a[2 * i + j] = iso[2 * i] * rot[j] + iso[2 * i + 1] * rot[2 + j];
-    const float toUv[2] = {stretch / w, 1.0f / h};
-    for (int i = 0; i < 2; ++i)
-        for (int j = 0; j < 2; ++j) r.m[2 * i + j] = toUv[i] * a[2 * i + j] * reach;
+    TurnMatrix(t, w, h, stretch, reach, r.m);
     r.ok = std::isfinite(r.m[0]) && std::isfinite(r.m[1]) && std::isfinite(r.m[2]) && std::isfinite(r.m[3]);
     return r;
 }
@@ -88,6 +94,41 @@ inline Map MapFor(const Turn& t, float w, float h, float stretch, float zoom = 1
 inline void Apply(const Map& m, float qx, float qy, float* u, float* v) {
     *u = m.hero[0] + m.m[0] * qx + m.m[1] * qy;
     *v = m.hero[1] + m.m[2] * qx + m.m[3] * qy;
+}
+
+// [hud] map_rotate_flat: the corner map on the SCREEN (flat F2 / F3, VR F2 with the map in the picture), drawn back by D2R_DepthFog.fx
+// from the share as a round map about the hero, seen from above and turned so the camera's way is up. box: where the share is drawn on the
+// screen (uv l, t, r, b - hud's g_pic box, the map's size and place in the picture already in it); w x h: the share's pixels. The circle:
+// as big as the box holds about the hero's marker (half its width, or the rows above or below the marker), and the view from above at the
+// map's own scale (|q| = 1 is that many pixels of it: what the corner map showed stays the size it was). A screen point p is q =
+// (p - centre) / radius, |q| > 1 outside; the share's uv = map applied to q.
+struct Round { float centre[2] = {0.0f, 0.0f}, radius[2] = {0.0f, 0.0f}; Map map; bool ok = false; };
+inline Round RoundOnScreen(const Turn& t, const float box[4], float w, float h) {
+    Round r;
+    if (!t.Any() || !box || !(w >= 16.0f) || !(h >= 16.0f) || !std::isfinite(w) || !std::isfinite(h)) return r;
+    for (int i = 0; i < 4; ++i) if (!std::isfinite(box[i])) return r;
+    const float bw = box[2] - box[0], bh = box[3] - box[1];
+    if (!(bw > 1e-4f) || !(bh > 1e-4f)) return r;
+    const float heroV = 0.5f - mapdir::kMarkerUp;
+    const float reach = std::min(0.5f * w, std::min(heroV, 1.0f - heroV) * h);   // share pixels
+    r.map.hero[0] = 0.5f;
+    r.map.hero[1] = heroV;
+    TurnMatrix(t, w, h, 1.0f, reach, r.map.m);
+    r.map.ok = std::isfinite(r.map.m[0]) && std::isfinite(r.map.m[1]) && std::isfinite(r.map.m[2]) && std::isfinite(r.map.m[3]);
+    r.centre[0] = box[0] + 0.5f * bw;
+    r.centre[1] = box[1] + heroV * bh;
+    r.radius[0] = reach * bw / w;   // (the box's uv per share pixel: the same screen pixels both ways while the box is the share grown evenly)
+    r.radius[1] = reach * bh / h;
+    r.ok = r.map.ok && r.radius[0] > 0.0f && r.radius[1] > 0.0f;
+    return r;
+}
+// The share's uv for a screen point p (uv), as the effect does it; false outside the circle.
+inline bool RoundAt(const Round& r, float px, float py, float* u, float* v) {
+    if (!r.ok) return false;
+    const float qx = (px - r.centre[0]) / r.radius[0], qy = (py - r.centre[1]) / r.radius[1];
+    if (qx * qx + qy * qy > 1.0f) return false;
+    Apply(r.map, qx, qy, u, v);
+    return true;
 }
 
 // The way the head looks, for the map in the hand: its turn in the room held while it looks (nearly) straight down - at the hand - where

@@ -86,6 +86,7 @@ struct SettingsIn {
     int openGuide = -1;           // the first-start guide asks for the window on Settings > Guide (vr/first_start.h): the guide's page to start on, -1 none
     float spanInUse = 0.0f;       // the span the hero's arms are fitted to now (calib::SpanInUseM), for the Body page's Arm span
     hset::Players players;        // the game's players count and whether it takes /players now (vr/players_cmd.h), for the Options page's Players row
+    hset::party::View party;      // the game's roster (vr/party_cmd.h), for the Party page
 };
 
 constexpr float kBeamM = 1.5f;   // the beam's length where it hits nothing
@@ -319,6 +320,7 @@ public:
             settings_.SetView(host->view);
             settings_.SetSpanInUse(host->spanInUse);
             settings_.SetPlayers(host->players, f.time * 1000.0);
+            settings_.SetParty(host->party, f.time * 1000.0);
             settings_.Observe(host->ini);
             if (tabNow == Tab::Settings && !toggle) {
                 float su = 0.0f, sv = 0.0f;
@@ -326,7 +328,7 @@ public:
                 if (pointer) settingsHover = hset::HitTest(settings_.page, su, sv);
                 settingsAct = clicker_.Step(settings_, settingsHover, pointer, click, trig, ph.dist > 0.0f, su * float(tiles::kSheetW), f.time * 1000.0);
                 if (settingsAct.what == hset::Do::Close || settingsAct.what == hset::Do::Calibrate || settingsAct.what == hset::Do::View ||
-                    settingsAct.what == hset::Do::GuideDone)
+                    settingsAct.what == hset::Do::GuideDone || (settingsAct.what == hset::Do::Party && settingsAct.party.what == hset::party::Ask::OpenPanel))
                     closeAsked = true;
                 if (settingsAct.what == hset::Do::Calibrate) resume_ = true;
             }
@@ -403,6 +405,7 @@ public:
                 settings_.SetView(host->view);
                 settings_.SetSpanInUse(host->spanInUse);
                 settings_.SetPlayers(host->players, f.time * 1000.0);
+                settings_.SetParty(host->party, f.time * 1000.0);
                 clicker_.Reset();
             } else if (!open && wasOpen) {
                 if (settings_.GuideShown() && !resume_) out.guideEnd = settings_.GuideFinished() ? 1 : 2;   // (the measurement's hiding is no end: it comes back)

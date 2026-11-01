@@ -180,8 +180,10 @@ void SetStabNoteSink(StabNoteFn fn);
 using StabEnterFn = void (*)(uint32_t id, int side, float speed);
 void SetStabEnterSink(StabEnterFn fn);
 // [weight] monster_ragdoll (probe, the doll library vr/doll_lib.h): each step the weapon rests on or strikes a body, the push it gave that body - body i of the snapshot
-// the step met (render world): impulse N s into the body, at point (metres). vrcam registers meleetouch::PushBody; Input::Weight::monsterRagdoll off: never called.
-using BodyPushFn = void (*)(const monsterbodies::Snapshot& snap, int i, const float impulse[3], const float point[3]);
+// the step met (render world): impulse N s into the body, at point (metres). swingMs: the weapon's own speed into the body there (m/s, the room - the hands' swing,
+// never the body's own motion: its walk, the hero's run, a network jump); heftKg: the steel and the arm behind it ([weight] knock_down, vr/knock_trigger.h).
+// vrcam registers meleetouch::PushBody; Input::Weight::monsterRagdoll off: never called.
+using BodyPushFn = void (*)(const monsterbodies::Snapshot& snap, int i, const float impulse[3], const float point[3], float swingMs, float heftKg);
 void SetBodyPushSink(BodyPushFn fn);
 // What the held weapon met on the last step, for the log and the tests: bodies 0 when nothing.
 struct ContactNote {

@@ -1,5 +1,30 @@
 # What's new in D2R VR
 
+## 0.195.0 (develop)
+
+A develop build for testing; the new parts are tests, each behind its own key, off unless named on.
+
+- **Repair all at a vendor**: holding the left stick click in a vendor's window is the game's own repair all again, and nothing else
+  (it closed part of the smith's window).
+- **Item comparison under the laser only while the other hand's trigger is held** (`[openxr] laser_compare_hold=1`, on): the tooltip still
+  shows at once; the comparison forced on every hover could hang the game on some setups.
+- **Knock-down only from a strong and fast blow** (`[weight] knock_down`): a lighter blow or a shove makes the monster step back; the
+  hero's run no longer counts twice and co-op network jumps never count. New sliders: least swing speed (5 m/s) and how hard (80).
+- **Druid werewolf / werebear as your body in F4** (a test, `[shapeshift] forms_first_person`, off): the beast's body under you, its eyes
+  at the form's height, no view from inside it (after D2R VR Unleashed).
+- **A killed humanoid falls as a ragdoll** (a test, `[weight] death_ragdoll`, off): only the drawing.
+- **The corner map turns with the camera on the flat screen** (a test, `[hud] map_rotate_flat`, off): F2 / F3 flat and VR F2.
+- **Party page in the headset** (`[openxr] headset_party`): the players in the game, invite / accept / leave by the game's own buttons.
+- **Co-op poses smoother on slow links**: the host learns what the link holds; the receiver plays each player as far behind as needed.
+
+
+- **The game moves what you carry and throw** (a test, `[weight] grab_moves_unit`, off; with `grab_throw`): a humanoid your hands carry or
+  throw is put by the game itself on the spot under the body you hold, and where it lands - the server's own knockback, the one a
+  Knockback hit starts, sent to that spot - so it fights from there instead of walking back to its old place, and everyone in the game sees
+  it. Whatever the game's knockback refuses (bosses, big monsters) stays where it is. Single player or the host of a game only (a joined
+  player's stays drawn only). The log says for each knockback where the unit stood, where it was sent and where it ended up. F4.
+  Test: grab_move_test.
+
 ## 0.194.0
 
 The co-op fix release, from the test builds 0.193.1 - 0.193.3.

@@ -67,7 +67,11 @@ void HsStep(D2RVR_XrInput& in, bool focused) {
     f.spanInUse = calib::SpanInUseM();   // the Body page's Arm span shows it while nothing is stored
     f.openGuide = on ? firststart::OpenRequest() : -1;
     f.view = on ? 4 : 0;   // the panel is F4's: the view it stands in is F4 (viewgate has no number)
-    if (on && g_hs.model.open && g_hs.model.page == hset::kPageOptions) f.players = playerscmd::Now();   // the Options page's Players row: the game's count (read, cheap)
+    if (on && g_hs.model.open && g_hs.model.page == hset::kPageOptions) f.players = playerscmd::Now();
+    if (on && g_hs.model.open && g_hs.model.page == hset::kPageParty) {   // the Party page: the game's roster, read on while it is up
+        partycmd::Watch();
+        f.party = partycmd::Now();
+    }   // the Options page's Players row: the game's count (read, cheap)
     bool grips = true;
     for (int h = 0; h < 2; ++h) {
         const D2RVR_XrHand& o = in.hand[h];
@@ -152,6 +156,9 @@ void HsStep(D2RVR_XrInput& in, bool focused) {
             break;
         case hset::Do::Players:   // the Options page's Players row: "/players N" into the game's own chat commands, on the UI thread (vr/players_cmd.cpp logs it)
             playerscmd::Ask(out.action.players);
+            break;
+        case hset::Do::Party:   // the Party page: the game's Party panel's own button (or its P key command; then the panel has closed), on the UI thread
+            partycmd::Ask(out.action.party);
             break;
         default: break;
     }

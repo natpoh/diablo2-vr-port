@@ -26,6 +26,7 @@
 #include "hset_view.h"
 #include "hset_life.h"
 #include "low_hp_game.h"   // the Settings tab's vignette pages show the vignette as a preview
+#include "party_cmd.h"     // the Settings tab's Party page: the game's roster and its Party panel's buttons ([openxr] headset_party)
 #include "players_cmd.h"   // the Settings tab's Players row: the game's own /players N ([openxr] headset_players)
 #include "skill_wheel.h"
 #include "tiles_labels.h"
@@ -149,6 +150,9 @@ void SettingsAct(const wheel::Step& s) {
     case hset::Do::Players:     // the Options page's Players row: "/players N" into the game's own chat commands, on the UI thread (vr/players_cmd.cpp logs it)
         playerscmd::Ask(s.settings.players);
         break;
+    case hset::Do::Party:       // the Party page: the game's Party panel's own button (or its P key command; then the window has closed), on the UI thread
+        partycmd::Ask(s.settings.party);
+        break;
     case hset::Do::Preview:     // "Preview 5 s" on the Life and Look pages: the vignette and the beat for five seconds with the rows as they stand (vr/low_hp.h PreviewWindow)
         lowhp::PlayPreview();
         break;
@@ -208,6 +212,8 @@ void OnFrame(const directinput::Frame& f, void*) {
         host.view = 4;   // (the window is F4's)
         host.spanInUse = calib::SpanInUseM();   // the Body page's Arm span, while nothing is stored
         host.players = playerscmd::Now();       // the Options page's Players row: the game's count (read, cheap)
+        if (g_ctl.SettingsModel().open && g_ctl.SettingsModel().page == hset::kPageParty) partycmd::Watch();   // the Party page: the roster read on
+        host.party = partycmd::Now();
         host.calibrating = calib::Running();
         host.openGuide = firststart::OpenRequest();   // the first-start guide asks for the window on its Guide tab (vr/first_start.cpp)
         host.chordOn = g_twoGripChord.load();         // the author: "no combinations with the two grips" - off unless [debug] settings_two_grip_chord

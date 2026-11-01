@@ -62,8 +62,9 @@ inline stroke::Vec RenderGround(stroke::Vec grid, float height) {
 // meets ([weight] monster_bodies, monster_bodies.h) are the capsule without it.
 inline constexpr float kTouchSlackM = 0.05f;
 
-// What the monster's row in the game's MonStats table says (bytes 8, 9 and 13 of the row).
-struct MonsterRow { uint8_t footprintA = 0, footprintB = 0, height = 0; };
+// What the monster's row in the game's MonStats table says (bytes 8, 9 and 13 of the row); flags: its dword at 0x3C (boss, prime evil, NPC, deathDmg...:
+// vr/mob_bars.h, vr/death_ragdoll.h), flagsOk when the row's own id (its first u16) is the class asked for.
+struct MonsterRow { uint8_t footprintA = 0, footprintB = 0, height = 0; uint32_t flags = 0; bool flagsOk = false; };
 
 // A monster's capsule in render metres. gridX / gridZ: its place on the game's grid in game WORLD units (twice the
 // cell), floorM: the height of the ground it stands on in metres (the hero's own, a flat ground is assumed), upm:

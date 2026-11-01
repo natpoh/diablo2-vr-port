@@ -55,7 +55,9 @@ constexpr bool AtSite(uintptr_t caller, uintptr_t site) { return site && caller 
 constexpr bool NoDelay(bool hover, bool atDelaySite) { return hover && atDelaySite; }
 
 // The key-state query asked by the comparison: Shift is "down" while the laser hovers; every other key,
-// and Shift asked anywhere else, is the native state.
-constexpr bool ShiftDown(bool hover, bool atCompareSite, int vk) { return hover && atCompareSite && vk == kVkShift; }
+// and Shift asked anywhere else, is the native state. asked: [openxr] laser_compare_hold - the comparison
+// only while the other hand's trigger is held (a hover alone opened it, and on one player's game it hung
+// there, 2026-11-01); true when that is off.
+constexpr bool ShiftDown(bool hover, bool atCompareSite, int vk, bool asked = true) { return hover && asked && atCompareSite && vk == kVkShift; }
 
 }  // namespace lasertip

@@ -251,7 +251,15 @@ inline Table MenuTable() {
     return t;
 }
 
-enum class Mode { World, Menu };
+// The same at a vendor (VendorPanelLayout open): the left stick click is the game's L3 alone, held as long as it is held - the vendor's own
+// "hold left stick: repair all" (Serg, 2026-11-01: holding it closed part of the smith's menu instead). No long press of ours there.
+inline Table VendorMenuTable() {
+    Table t = MenuTable();
+    t.hold[kLStick] = Binding{};
+    return t;
+}
+
+enum class Mode { World, Menu, Vendor };
 
 struct Outputs {
     Pad pad;
@@ -265,7 +273,7 @@ struct Outputs {
 // The layout. One per session; Step once per headset frame with the controls AFTER the gate.
 class Layout {
 public:
-    Layout() : world_(DefaultTable()), menu_(MenuTable()) {}
+    Layout() : world_(DefaultTable()), menu_(MenuTable()), vendor_(VendorMenuTable()) {}
     void SetWorld(const Table& t) { world_ = t; }
     // Was a stick's long press (hand 0 left, 1 right) refused for its stick's lean since the last call? (for the log) kLeanPressed: the stick
     // leaned past [direct] hold_stick_max before the hold - no inventory / skill panel. Its tap is never refused: the map at any lean (the author,
@@ -300,7 +308,7 @@ public:
             (h ? r.pad.rx : r.pad.lx) = axis(x);
             (h ? r.pad.ry : r.pad.ly) = axis(y);
         }
-        const Table& t = mode == Mode::Menu ? menu_ : world_;
+        const Table& t = mode == Mode::Menu ? menu_ : mode == Mode::Vendor ? vendor_ : world_;
         if (mode != mode_) { mode_ = mode; Cancel(); }   // (a latched binding is the other table's)
         bool now[kCtlCount];
         for (int i = 0; i < kCtlCount; ++i) {
@@ -403,7 +411,7 @@ private:
         }
     }
 
-    Table world_, menu_;
+    Table world_, menu_, vendor_;
     Mode mode_ = Mode::World;
     bool down_[kCtlCount] = {};
     int latch_[kCtlCount] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1};

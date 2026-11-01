@@ -108,6 +108,42 @@ size_t Monsters(Read&& read, uintptr_t table, float px, float pz, float reach, f
     return n;
 }
 
+// [weight] death_ragdoll: the monsters within `reach` game WORLD units of (px, pz) the game has dying or dead (mode 0, 12 - Monsters leaves them out),
+// the nearest `cap` when more are there. bank: the unit's MonStats bank (its row's flags say whose death stays the game's: vr/death_ragdoll.h).
+struct Dying {
+    uintptr_t unit = 0;
+    uint32_t id = 0, cls = 0, mode = 0;
+    uint8_t bank = 0;
+    float x = 0.0f, z = 0.0f, d2 = 0.0f;
+};
+template <class Read>
+size_t DyingNear(Read&& read, uintptr_t table, float px, float pz, float reach, Dying* out, size_t cap) {
+    if (!table || !out || !cap || !std::isfinite(px + pz + reach) || reach < 0.0f) return 0;
+    size_t n = 0;
+    EachUnit(read, table, kMonster, [&](uintptr_t at, const Unit& u) {
+        const uint32_t mode = Field32(u, kOffMode);
+        if (mode != 0 && mode != 12) return true;
+        Dying c;
+        if (!Place(read, u, &c.x, &c.z)) return true;
+        c.d2 = (c.x - px) * (c.x - px) + (c.z - pz) * (c.z - pz);
+        if (c.d2 > reach * reach) return true;
+        c.unit = at;
+        c.id = Field32(u, kOffId);
+        c.cls = Field32(u, kOffClass);
+        c.mode = mode;
+        c.bank = u.b[kOffBank];
+        if (n < cap) {
+            out[n++] = c;
+            return true;
+        }
+        size_t farthest = 0;   // full: the farthest goes
+        for (size_t i = 1; i < n; ++i) if (out[i].d2 > out[farthest].d2) farthest = i;
+        if (c.d2 < out[farthest].d2) out[farthest] = c;
+        return true;
+    });
+    return n;
+}
+
 // The MonStats rows, asked of the game once per class. A row that read stays for good; one that did not (the table was not ready, a
 // call that faulted) is asked again after kRetryMs - never remembered as "no row" for the rest of the session, which would leave that
 // kind of monster out of every scan until the game restarted. ask(bank, class, &MonsterRow) -> bool is the game's getter.

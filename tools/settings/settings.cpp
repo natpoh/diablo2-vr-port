@@ -326,6 +326,13 @@ constexpr const wchar_t* kMapDirectionTip =
     L"show which way you look. Ticked: a small gold arrow beside your hero's marker in the middle of the game's mini map (and of the "
     L"whole-screen map) points where the camera looks - in the picture, and on the map in the hand. Drawn over the game's map only; the map "
     L"and what is on it are the game's. F1 and the floor (VR F3) as before. Unticked: the map as before. Live.";
+// [hud] map_rotate_flat (vr/map_turn.h RoundOnScreen): the corner map on the screen turned with the camera, flat F2 / F3 and VR F2
+constexpr const wchar_t* kMapRotateFlatTip =
+    L"The game's corner map on the screen in your own camera's views (flat F2 and F3, VR F2 with the map in the picture): drawn round about "
+    L"your hero, seen from straight above, and turned so the way the camera looks is up - turn the mouse and the map turns with you. The "
+    L"gold arrow (Arrow on the map) then always points up. Only the corner map: the whole-screen map (Tab) stays as the game draws it. Not "
+    L"F1 (the game's camera never turns there) and not VR F4 (its map in the hand has its own Turns with you). Needs D2R_DepthFog.fx on "
+    L"(it draws the map back). Unticked: the map as the game draws it. Live.";
 // [hud] map_top_down / map_rotate / map_compass (vr/map_turn.h, after bearstonem/d2r-pcvr's wrist map): the map in the hand, VR F4
 constexpr const wchar_t* kMapTopDownTip =
     L"The map in your hand (Corner map: out of the picture), VR F4: seen from straight above instead of slanted - the game's isometric map "
@@ -1090,6 +1097,19 @@ std::vector<Item> g_items = {
            L"back within half of this. The standing eye height is your measured one over the floor (\"Use the measured height "
            L"and arm span\", native OpenXR); without it, or seated (\"How you play\"), your head's height at the last recenter: "
            L"recenter as you play (standing upright, or sitting)."))),
+    Only(kVr, Toggle(L"shapeshift", L"forms_first_person", L"Druid: werewolf and werebear in first person (F4)", 0,
+           L"A druid in Werewolf or Werebear form is drawn by the game as the beast, and in first person its head and back stood in front "
+           L"of your eyes. On: the beast becomes your body as the druid's is - its torso held upright under the camera, its own head and "
+           L"neck hidden, its arms on the controllers, its eyes at the form's own height (eased in over half a second when you shift); "
+           L"standing still its legs and tail are held, walking they take the game's stride. Only the drawn body and the camera: the form, "
+           L"its attacks and its speed stay the game's. VR first person (F4) only, and only for your own druid. Off: the game's own beast, "
+           L"as before. Idea and numbers from D2R VR Unleashed (bearstonem/d2r-pcvr). Live.")),
+    Needs(L"shapeshift", L"forms_first_person", 1, Only(kVr, Slider(L"shapeshift", L"wolf_height", L"Werewolf: eye height, %", 50, 150, 1, 100,
+           L"The werewolf's eyes at this share of its own height (100: 98 % of the druid's). Lower: you stand lower in the world, and it "
+           L"looks bigger. Live."))),
+    Needs(L"shapeshift", L"forms_first_person", 1, Only(kVr, Slider(L"shapeshift", L"bear_height", L"Werebear: eye height, %", 50, 150, 1, 100,
+           L"The werebear's eyes at this share of its own height (100: 112 % of the druid's). Higher: you stand higher in the world, and "
+           L"it looks smaller. Live."))),
     Only(kVr, Choice(L"body", L"turn", L"Hero turns to where you look (F4)", 2, {L"No (the game's facing)", L"Above the pelvis", L"Whole body"},
            L"In the other first-person views the whole hero always turns with you.")),
     Toggle(L"body", L"turn_third", L"From behind too (the right stick turns him)", 1,
@@ -1861,6 +1881,7 @@ std::vector<Item> g_items = {
            L"In the picture: the map as the game draws it, the toolbar at the bottom of the screen at the depth below. "
            L"Hung in the room: where the F4 tab puts them (forearm, hand)."),
     Toggle(L"hud", L"map_direction", L"Arrow on the map: where you look", 1, kMapDirectionTip),
+    Needs(L"hud_third", L"classic", 0, Toggle(L"hud", L"map_rotate_flat", L"Map turns with the camera", 0, kMapRotateFlatTip)),
     Needs(L"hud_third", L"classic", 0, Slider(L"hud_third", L"bar_size", L"Toolbar size, %", 30, 200, 1, 100,
            L"The toolbar in the picture, smaller or larger, about the middle of its bottom edge (then moved by the sliders below).")),
     Needs(L"hud_third", L"classic", 0, Slider(L"hud_third", L"bar_near", L"Toolbar nearer / farther", -10, 10, 0.1f, 0,
@@ -1943,6 +1964,7 @@ std::vector<Item> g_items = {
     Only(kFlat, Tab(L"UI: F3 eyes")),
     Group(L"Toolbar and map (F2, F3)", L"The toolbar and the map in your own camera's views (F2 and F3): tick the arrow to see on the map which way you look."),
     Toggle(L"hud", L"map_direction", L"Arrow on the map: where you look", 1, kMapDirectionTip),
+    Toggle(L"hud", L"map_rotate_flat", L"Map turns with the camera", 0, kMapRotateFlatTip),
     // Flat F1 and F2 draw the toolbar at [hud_top] / [hud_third] bar_size (vrcam BarSizeNow, whatever the platform), whose sliders are on
     // the VR-only tabs UI: F1 above / UI: F2 behind: a flat player had the shipped 74 / 71 % and no way to change them (2026-10-28).
     Group(L"Toolbar size (F1, F2)", L"How big the toolbar at the bottom of the screen is drawn in F1 (the game's own camera) and F2 (third person). 100 = the game's own size. Needs D2R_DepthFog.fx on in ReShade (it draws the toolbar back); with a panel open the game's own toolbar is back."),
@@ -1986,6 +2008,10 @@ std::vector<Item> g_items = {
            L"wear beside it - no 1000 ms wait for the tooltip and no Shift held for the comparison. It is the game's tooltip "
            L"and the game's comparison, only earlier; Shift still buys stacks and moves items as before. Off: the game's "
            L"delay, and Shift for the comparison. F4 only.")),
+    Needs(L"openxr", L"laser_tooltips", 1, Toggle(L"openxr", L"laser_compare_hold", L"Comparison while the other hand's trigger is held", 1,
+           L"Under the laser the comparison against the item you wear shows only while the trigger of the hand without the laser is "
+           L"held (the left one with the laser in the right hand); the tooltip itself still shows at once. Off: the comparison "
+           L"shows on every hover, as before. F4 only.")),
     Needs(L"openxr", L"laser", 1, Toggle(L"openxr", L"laser_typing", L"Typing on the keyboard works under the laser", 1,
            L"While the laser points at a menu the game is held in its controller layout, and in that layout its text boxes take no "
            L"letters - nothing could be typed into D2RLoader's Host Game and Browse Games, a character's name or a password, even "
@@ -2046,6 +2072,11 @@ std::vector<Item> g_items = {
            L"controllers are the panel's: nothing of them reaches the game, and it never sends the game a click. The long press "
            L"again, B / Y or Menu close it. Two grips held mean nothing (the old both-grips + click way is on the Debug tab). "
            L"Off: no panel. F4 only."),
+    Needs(L"openxr", L"headset_settings", 1, Toggle(L"openxr", L"headset_party", L"Party in the headset", 1,
+           L"The headset settings' Co-op page gets a Party button: a page with the players in this game and the game's own party button "
+           L"for each - Invite, Accept or Cancel invite, as the game's Party panel shows it - plus Leave party and Open Party panel (P). "
+           L"The buttons run the game's own Party panel code, so no keyboard and no P key are needed; the game answers in its own words. "
+           L"Only in a multiplayer game (TCP/IP or online). Off: no Party button. Live.")),
     Needs(L"openxr", L"headset_settings", 1, Toggle(L"openxr", L"headset_players", L"Players from the headset", 0,
            L"The headset settings' Options page gets a working Players (difficulty) row: the game's own players count, 1 - 8, as the "
            L"chat command /players N sets it (the game's Options > Gameplay \"Offline Difficulty Scaling\"). - and + send the game that "
@@ -4642,19 +4673,32 @@ std::vector<Item> g_items = {
            L"model has no body parts to read gets its limbs from its bones. A corpse never moves. Only the drawing. Unticked: humanoids only, as before."))))),
     // [weight] knock_down: a blow knocks a humanoid off its feet - as drawn (vr/knock_down.h; the weight library's knock-down, shared/d2r_vr_fall.h)
     Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Needs(L"weight", L"monster_bodies", 1, Toggle(L"weight", L"knock_down", L"A hard blow knocks a humanoid off its feet (a test)", 0,
-           L"Ticked: a hard blow of your weapon, a running hit, a sweep at the legs or a shove knocks a humanoid monster or a town NPC (with \"Town NPCs and allies have "
-           L"bodies too\") off its feet as you see it: it falls as a ragdoll, lies a moment and gets up again, then its own animation takes over. Only the drawing: "
-           L"where it stands, what it does, its hits and its talk stay the game's - a monster the game has attack gets up at once. A blow knocks it down when it would "
-           L"give the body the speed below; a sweep low at the legs needs half of it. Needs the weight library with the knock-down (d2r_vr_weight.dll in "
-           L"d2rloader\\d2r_vr_libs; the log says when it is missing). F4. Unticked: nothing falls.")))),
-    Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Needs(L"weight", L"monster_bodies", 1, Needs(L"weight", L"knock_down", 1, Slider(L"weight", L"knock_down_cms", L"Knock-down: how hard, cm/s the blow gives the body", 10, 300, 5, 70,
-           L"Live. A blow knocks a body down when its push (your weapon and arm, their speed, your run) would move the body this fast: the push over the body's weight "
-           L"(a man of 1.75 m about 50 kg). 70: a hard swing of a sword fells a man, a light one does not; lower: easier. The log tells each blow's speed against it."))))),
+           L"Ticked: a strong and fast blow of your weapon knocks a humanoid monster or a town NPC (with \"Town NPCs and allies have bodies too\") off its feet as "
+           L"you see it: it falls as a ragdoll, lies a moment and gets up again, then its own animation takes over. A blow knocks it down when your weapon swings at "
+           L"least as fast as the speed below AND its push gives the body the force below (your run adds to the push; a sweep low at the legs needs half of it). "
+           L"A lighter blow, or the weapon pressed on, makes it stagger a step back instead. Only the drawing: where it stands, what it does, its hits and its talk "
+           L"stay the game's - a monster the game has attack gets up at once. In co-op the monsters' motion from the host never counts as a push. Needs the weight "
+           L"library with the knock-down (d2r_vr_weight.dll in d2rloader\\d2r_vr_libs; the log says when it is missing). F4. Unticked: nothing falls.")))),
+    Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Needs(L"weight", L"monster_bodies", 1, Needs(L"weight", L"knock_down", 1, Slider(L"weight", L"knock_down_min_speed", L"Knock-down: the least swing speed, m/s", 1.0f, 15.0f, 0.5f, 5.0f,
+           L"Live. A blow knocks a body down only when your weapon itself moves into the body at least this fast where it lands - your hands' swing; the monster's "
+           L"own walk, your run and co-op network jumps never count. 5: a real swing (a poke or a light push is about 1 - 2 m/s); higher: only the fastest swings. "
+           L"The log tells each blow's swing against it."))))),
+    Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Needs(L"weight", L"monster_bodies", 1, Needs(L"weight", L"knock_down", 1, Slider(L"weight", L"knock_down_cms", L"Knock-down: how hard, cm/s the blow gives the body", 10, 300, 5, 80,
+           L"Live. The force a blow needs too: its push (your weapon and arm at the swing's speed, your run) would move the body this fast - the push over the body's "
+           L"weight (a fallen about 30 kg, a man of 1.75 m about 63 kg). 80: a fast sword swing fells a fallen, a man needs a very hard one or a running blow; "
+           L"lower: easier. The log tells each blow's speed against it."))))),
     Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Needs(L"weight", L"monster_bodies", 1, Needs(L"weight", L"knock_down", 1, Slider(L"weight", L"knock_down_lie_ms", L"Knock-down: lies for, ms", 0, 5000, 100, 1500,
            L"Live. How long a body knocked down lies still on the ground before it gets up, then walks back to its place."))))),
     Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Needs(L"weight", L"monster_bodies", 1, Needs(L"weight", L"knock_down", 1, Slider(L"weight", L"knock_down_stagger_pct", L"Knock-down: a stagger from, % of a knock-down", 0, 99, 5, 45,
-           L"Live. A blow too light to knock the body down but at least this share of it staggers it: a step or two back, it catches its balance and walks back "
-           L"to its place. 0: no stagger."))))),
+           L"Live. A blow too light or too slow to knock the body down but with at least this share of both (the swing speed and the force) staggers it: a step or "
+           L"two back, it catches its balance and walks back to its place. The weapon pressed on and on staggers it too, never knocks it down. 0: no stagger."))))),
+    // [weight] death_ragdoll: a humanoid the game kills falls as our ragdoll instead of its death animation (vr/death_ragdoll.h, vr/knock_down.cpp)
+    Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Needs(L"weight", L"monster_bodies", 1, Toggle(L"weight", L"death_ragdoll", L"A killed humanoid falls as a ragdoll (a test)", 0,
+           L"Ticked: when the game kills a humanoid monster near you, its body falls as a ragdoll instead of playing its own death animation - from the pose it "
+           L"died in, pushed by your blow if your weapon struck it a moment before, else a little away from you - and stays lying as it fell for as long as the "
+           L"game keeps the corpse. Bosses and monsters that burst when they die keep the game's own death. Only the drawing: the kill, the loot and where the "
+           L"corpse is stay the game's. A corpse farther than about 6 m is drawn as the game has it. Works without the knock-down above. Needs the weight library "
+           L"with the knock-down (d2r_vr_weight.dll in d2rloader\\d2r_vr_libs). F4. Unticked: the game's own death animation.")))),
     // [weight] npc_bodies (until 0.183 [debug] npc_bodies - a debug key only draws or logs): the non-hostile units are bodies for the weapon too
     Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Needs(L"weight", L"monster_bodies", 1, Toggle(L"weight", L"npc_bodies", L"Town NPCs and allies have bodies too", 0,
            L"Ticked, with the bodies above: the town's NPCs, hirelings and every other unit the game does not call hostile have bodies too - a capsule on each limb, from "
@@ -4679,6 +4723,12 @@ std::vector<Item> g_items = {
            L"lift it or pull it out of its place and it is off its feet; let go while you swing and it flies, lands, lies a moment, gets up and walks back to where "
            L"the game has it. Two hands hold it together. Only the drawing: where it stands, what it does and its talk stay the game's. Needs the weight library "
            L"with the knock-down (d2r_vr_weight.dll in d2rloader\\d2r_vr_libs). F4. Unticked: the grab holds a limb as before."))),
+    // [weight] grab_moves_unit: what grab_throw carries and throws is moved by the game's own knockback (vr/grab_move.h; single player / host)
+    Needs(L"arms", L"mode", 2, Needs(L"weight", L"grab_throw", 1, Toggle(L"weight", L"grab_moves_unit", L"The game moves what you carry and throw (a test)", 0,
+           L"Live. Ticked: a humanoid you carry or throw is moved by the game itself - its own knockback puts it on the spot under the body you hold, and where it "
+           L"lands - so it fights from there and does not walk back to its old place, and everyone in the game sees it. Whatever the game's knockback refuses "
+           L"(bosses, big monsters) stays where it is. Only in single player or when you host the game; a joined player's stays drawn only. F4. "
+           L"Unticked: only the drawing moves, the game keeps it where it was, as before."))),
     // [weight] grab_balance: a humanoid held standing and pulled steps after the pull and keeps its feet (vr/knock_down.h, fall_physics 1.13)
     Needs(L"arms", L"mode", 2, Needs(L"weight", L"grab_throw", 1, Toggle(L"weight", L"grab_balance", L"A pulled humanoid steps to keep its feet (a test)", 1,
            L"Ticked, with Lift and throw: take a humanoid by the hand or the arm and pull, and it steps after you to keep its feet - as fast as its legs can step; "

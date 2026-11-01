@@ -137,6 +137,10 @@ void SetUiUp(bool up);
 // from its timer; false = as before. Any thread.
 void SetHandInventoryAway(bool away);
 
+// A vendor's panel is open (gamestate: VendorPanelLayout): in the menu layer the left stick click is the game's L3 alone, held while it is
+// held - the vendor's "hold left stick: repair all" - with no long press of ours (Layout's Mode::Vendor). Any thread.
+void SetVendorOpen(bool open);
+
 // A long press of a stick click asked for the skill panel (the wheel, the tiles; [direct] right_stick_hold = action:skillpanel):
 // true ONCE per request, then false until the next. The panel's owner asks every frame it runs (and only when
 // its own open gesture is the long press, [openxr] skill_wheel_open=1). A request older than a second is dropped, so a

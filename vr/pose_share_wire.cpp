@@ -113,6 +113,11 @@ struct RemoteSlot {
     ps::SeqStats seq;
     uint64_t loggedAt = 0;
     int64_t ageMin = INT64_MAX, ageMax = INT64_MIN;   // arrival - sent over the 5 s line (our clock - theirs: on one PC the real delay)
+    // the playback delay (Track::FitDelay, eased: up within a third of a second, down over two - so the shown pose never jumps) and the arrivals for the log
+    float delayMs = 0.0f;
+    uint64_t delayAt = 0;
+    uint32_t arrived = 0;   // poses taken since the last 5 s line
+    uint64_t arrivedSince = 0;
 };
 std::array<RemoteSlot, ps::kMaxPeers> g_remotes;
 
@@ -257,8 +262,11 @@ void __cdecl OnHost(const PluginContext* ctx, nw::ChannelHandle, nw::PeerHandle 
         else if (ev == ps::RelayPace::kSlower || ev == ps::RelayPace::kFaster)
             Line("host: relays to peer %llu now %d a second (it had %u of the last %u sent to it)", (unsigned long long)peer, hz, lastGot, lastSent);
         else if (ev == ps::RelayPace::kStalled)
-            Line("host: peer %llu has had NOTHING more of ours for %.0f s (it had %u relays and %u pongs of %u relays sent; stall %u): relays to it paused %.0f s, then slow "
-                 "again", (unsigned long long)peer, ps::kStallMs / 1000.0, had, (unsigned)pongsGot, stalledAt, stalls, ps::kPauseMs / 1000.0);
+            Line("host: peer %llu has had NOTHING more of ours for %.0f s (it had %u relays and %u pongs of %u relays sent; stall %u): relays to it paused %.0f s, then held "
+                 "at %d a second (three quarters of the most it had)", (unsigned long long)peer, ps::kStallMs / 1000.0, had, (unsigned)pongsGot, stalledAt, stalls,
+                 ps::kPauseMs / 1000.0, hz);
+        else if (ev == ps::RelayPace::kProbe)
+            Line("host: the link to peer %llu held %.0f s at its ceiling: tried at %d a second", (unsigned long long)peer, ps::kProbeMs / 1000.0, hz);
         (void)sent;
         return;
     }
@@ -318,6 +326,8 @@ void __cdecl OnClient(const PluginContext*, nw::ChannelHandle, uint16_t id, cons
             RemoteSlot* r = RemoteFor(e[i].unit);
             if (!r || !e[i].unit || !r->seq.Add(e[i].pose.seq)) continue;
             r->track.Add(now, e[i].pose);
+            if (!r->arrivedSince) r->arrivedSince = now;
+            ++r->arrived;
             const int64_t age = (int64_t)(uint32_t)now - (int64_t)e[i].pose.ms;
             r->ageMin = std::min(r->ageMin, age);
             r->ageMax = std::max(r->ageMax, age);
@@ -563,6 +573,13 @@ void Report() {
             if (!r.unit) continue;
             ++players;
             add("; unit %u: got %u lost %u late %u", r.unit, r.seq.got, r.seq.lost, r.seq.late);
+            {   // how they come, and how far behind they are played (Track::FitDelay)
+                const uint64_t t = NowMs();
+                const float secs = r.arrivedSince && t > r.arrivedSince ? (float)(t - r.arrivedSince) / 1000.0f : 0.0f;
+                add(", arriving %.1f a second (%u ms apart), played %.0f ms behind", secs > 0.0f ? (float)r.arrived / secs : 0.0f, r.track.Spacing(), r.delayMs);
+                r.arrived = 0;
+                r.arrivedSince = t;
+            }
             if (r.ageMin != INT64_MAX) add(", arrival - sent %lld..%lld ms", (long long)r.ageMin, (long long)r.ageMax);
             r.ageMin = INT64_MAX; r.ageMax = INT64_MIN;
         }
@@ -583,8 +600,9 @@ void Report() {
                 const ps::RelayPace& pc = g_host.pace[i];
                 if (!g_host.seen[i] || !pc.sent) continue;
                 const uint64_t t = NowMs();
-                if (pc.told) add("; to peer %llu: %u relays sent, it had %u (%.0f %%), %d a second%s%s", (unsigned long long)g_host.seen[i], pc.sent, pc.got,
-                                 100.0 * pc.got / pc.sent, pc.Rate(t, g_hz.load()), pc.stalls ? ", stalls " : "", pc.stalls ? std::to_string(pc.stalls).c_str() : "");
+                if (pc.told) add("; to peer %llu: %u relays sent, it had %u (%.0f %%), %d a second (the link held %.1f a second at most, ceiling %d)%s%s",
+                                 (unsigned long long)g_host.seen[i], pc.sent, pc.got, 100.0 * pc.got / pc.sent, pc.Rate(t, g_hz.load()), pc.bestHz, pc.ceil,
+                                 pc.stalls ? ", stalls " : "", pc.stalls ? std::to_string(pc.stalls).c_str() : "");
                 else add("; to peer %llu: %u relays sent, no receipt from it (an older build)", (unsigned long long)g_host.seen[i], pc.sent);
                 if (t < pc.pauseUntil) add(" (paused)");
             }
@@ -702,13 +720,20 @@ void Tick(bool inGame, const ps::Pose* own, uint32_t ownUnit) {
 size_t Remotes(Remote* out, size_t max) {
     if (!out || !max || !g_on.load(std::memory_order_relaxed)) return 0;
     const uint64_t now = NowMs();
-    const uint32_t delay = g_delayMs.load();
+    const uint32_t floor = g_delayMs.load();
     size_t k = 0;
     std::lock_guard<std::mutex> lock(g_lock);
-    for (const auto& r : g_remotes) {
+    for (auto& r : g_remotes) {
         if (!r.unit || k >= max) continue;
+        {   // the playback delay these poses need, eased (Track::FitDelay): a pose after the shown one when the playback gets there - smooth at 4 a second too
+            const float want = (float)r.track.FitDelay(floor);
+            const float dt = r.delayAt ? (float)std::min<uint64_t>(now - r.delayAt, 250) / 1000.0f : 1.0f;
+            if (r.delayMs <= 0.0f) r.delayMs = want;
+            else r.delayMs += (want - r.delayMs) * (1.0f - std::exp(-dt / (want > r.delayMs ? 0.3f : 2.0f)));
+            r.delayAt = now;
+        }
         ps::Pose p;
-        if (!r.track.Sample(now, delay, &p) || !ps::Plausible(p)) continue;
+        if (!r.track.Sample(now, (uint32_t)std::lround(r.delayMs), &p) || !ps::Plausible(p)) continue;
         out[k].unit = r.unit;
         out[k].pose = p;
         ++k;

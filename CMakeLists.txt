@@ -189,6 +189,11 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/knock_trigger_test.cpp") 
     target_include_directories(knock_trigger_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared)
     target_compile_options(knock_trigger_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/death_ragdoll_test.cpp")   # [weight] death_ragdoll: which kills fall as our ragdoll, by what push, kept as they lie (vr/death_ragdoll.h)
+    add_executable(death_ragdoll_test cleanroom/tests/death_ragdoll_test.cpp)
+    target_include_directories(death_ragdoll_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared)
+    target_compile_options(death_ragdoll_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/doll_view_test.cpp")   # [weight] monster_ragdoll (probe): what goes to the doll library and what is drawn of it (vr/doll_view.h)
     add_executable(doll_view_test cleanroom/tests/doll_view_test.cpp)
     target_include_directories(doll_view_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared)
@@ -351,6 +356,8 @@ target_compile_options(arm_reach_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # [arms] full_reach (vr/full_reach.h): the hand always reaches its controller - the collarbone's least turn, then the stretch, pure.
 add_executable(full_reach_test cleanroom/tests/full_reach_test.cpp)
 target_compile_options(full_reach_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+add_executable(grab_move_test cleanroom/tests/grab_move_test.cpp)   # [weight] grab_moves_unit: the cells apart, when a knockback is asked, the cell it goes to (vr/grab_move.h)
+target_compile_options(grab_move_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # Where a staff's aim comes from (vr/aim_source.h): the controllers, never the weapon as the weight model draws it, pure.
 add_executable(aim_source_test cleanroom/tests/aim_source_test.cpp)
 target_compile_options(aim_source_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
@@ -508,7 +515,7 @@ target_include_directories(world_anchor_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
 target_compile_options(world_anchor_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 
 
-add_library(d2rl-vrcam SHARED vr/vrcam.cpp vr/ui_lang.cpp vr/xr.cpp vr/link.cpp vr/reshade_shield.cpp vr/dlss_mv.cpp vr/skeletons.cpp vr/weight.cpp vr/gamestate.cpp vr/gamecmd.cpp vr/players_cmd.cpp vr/direct_input.cpp vr/panel_input.cpp vr/throw_gesture_wire.cpp vr/throw_born.cpp vr/potion_hide.cpp vr/probe.cpp vr/uitrace.cpp vr/light_bounds.cpp vr/fog_spare.cpp vr/fog_in_frame.cpp vr/hud.cpp vr/memdiff.cpp vr/writewatch.cpp vr/hset_paint.cpp vr/hset_store.cpp shared/ini_txn.cpp vr/render_resolution.cpp vr/melee_touch.cpp vr/melee_direct.cpp vr/melee_direct_client.cpp vr/skill_wheel.cpp vr/wheel_game.cpp vr/wheel_paint.cpp vr/tiles_paint.cpp vr/game_ui.cpp vr/wheel_icons.cpp vr/stand_still_wire.cpp vr/move_attack_wire.cpp vr/room_walk_wire.cpp vr/stray_walk_wire.cpp vr/shot_trace_wire.cpp vr/hset_view.cpp vr/gpu_fault.cpp vr/ecl_hook.cpp vr/native_d3d12.cpp vr/native_rsapi.cpp vr/fx_native.cpp vr/vrcam.rc vr/quiver_wire.cpp vr/vcache.cpp vr/fog_height.cpp vr/fog_before_fx.cpp)
+add_library(d2rl-vrcam SHARED vr/vrcam.cpp vr/ui_lang.cpp vr/xr.cpp vr/link.cpp vr/reshade_shield.cpp vr/dlss_mv.cpp vr/skeletons.cpp vr/weight.cpp vr/gamestate.cpp vr/gamecmd.cpp vr/players_cmd.cpp vr/party_cmd.cpp vr/direct_input.cpp vr/panel_input.cpp vr/throw_gesture_wire.cpp vr/throw_born.cpp vr/potion_hide.cpp vr/probe.cpp vr/uitrace.cpp vr/light_bounds.cpp vr/fog_spare.cpp vr/fog_in_frame.cpp vr/hud.cpp vr/memdiff.cpp vr/writewatch.cpp vr/hset_paint.cpp vr/hset_store.cpp shared/ini_txn.cpp vr/render_resolution.cpp vr/melee_touch.cpp vr/melee_direct.cpp vr/melee_direct_client.cpp vr/skill_wheel.cpp vr/wheel_game.cpp vr/wheel_paint.cpp vr/tiles_paint.cpp vr/game_ui.cpp vr/wheel_icons.cpp vr/stand_still_wire.cpp vr/move_attack_wire.cpp vr/room_walk_wire.cpp vr/stray_walk_wire.cpp vr/shot_trace_wire.cpp vr/hset_view.cpp vr/gpu_fault.cpp vr/ecl_hook.cpp vr/native_d3d12.cpp vr/native_rsapi.cpp vr/fx_native.cpp vr/vrcam.rc vr/quiver_wire.cpp vr/vcache.cpp vr/fog_height.cpp vr/fog_before_fx.cpp)
 target_include_directories(d2rl-vrcam PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared ${FLATVR_SHARED_DIR} ${RESHADE_SDK_INCLUDE} ${BODYWALK_SRC} ${BODYWALK_SDK_INCLUDE})
 target_sources(d2rl-vrcam PRIVATE vr/shoulder_swap_wire.cpp vr/shield_arm_wire.cpp vr/ranged_hand_wire.cpp)   # [hands] shoulder_swap (wired to vr/direct_input.h)
 target_sources(d2rl-vrcam PRIVATE vr/turn_warp.cpp vr/effects_layer.cpp)   # [stereo] turn_warp: eyes by turns, the eye not drawn made on the GPU from pictures already drawn (bearstonem/d2r-pcvr's, MIT)
@@ -522,6 +529,7 @@ target_sources(d2rl-vrcam PRIVATE vr/weight_wire.cpp)   # [weight]: a grip on th
 target_sources(d2rl-vrcam PRIVATE vr/belt_trigger_wire.cpp)   # [belt] hold_takes_trigger: the triggers while a belt bottle is in a hand (the game reads the left one as Shift)
 target_sources(d2rl-vrcam PRIVATE vr/weight_lib.cpp)    # [weight] hands_model 1: the weight-physics library d2r_vr_weight.dll, when it is beside the plugin (shared/d2r_vr_weight.h)
 target_sources(d2rl-vrcam PRIVATE vr/doll_lib.cpp)      # [weight] monster_ragdoll: the doll library d2r_vr_doll.dll, when it is in d2r_vr_libs (shared/d2r_vr_doll.h)
+target_sources(d2rl-vrcam PRIVATE vr/grab_move.cpp)   # [weight] grab_moves_unit: a carried or thrown body put by the game's own knockback on the cell under it (vr/grab_move.h)
 target_sources(d2rl-vrcam PRIVATE vr/fall_lib.cpp vr/knock_down.cpp)   # [weight] knock_down: a struck humanoid drawn falling, lying and getting up - the weight library's knock-down (D2rf* exports, shared/d2r_vr_fall.h)
 target_sources(d2rl-vrcam PRIVATE vr/grab_wire.cpp vr/grab_lib.cpp)   # [weight] grab_bodies: an empty hand's grip holds a body - the weight library's grab (d2r_vr_weight.dll 1.4, shared/d2r_vr_grab.h)
 target_sources(d2rl-vrcam PRIVATE vr/props_lib.cpp vr/knock_props.cpp vr/world_contact.cpp)   # [weight] knock_props: the weight library's props world (shared/d2r_vr_props.h), the level's props near the hero, the physics thread
@@ -1031,6 +1039,12 @@ add_executable(players_cmd_test tools/players_cmd_test.cpp)
 target_include_directories(players_cmd_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr ${CMAKE_CURRENT_SOURCE_DIR}/shared ${BODYWALK_SDK_INCLUDE})
 target_compile_definitions(players_cmd_test PRIVATE D2RVR_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 target_compile_options(players_cmd_test PRIVATE /utf-8 /W4 /EHsc /permissive- /D_CRT_SECURE_NO_WARNINGS)
+# The headset's Party page: the game's party roster and its Party panel's own buttons (vr/party_cmd.cpp; its pure part vr/party_cmd_core.h), checked
+# against the game's image snapshot when there is one (dump_loader/D2R_image.bin). Run: party_cmd_test.exe [<snapshot>]
+add_executable(party_cmd_test tools/party_cmd_test.cpp)
+target_include_directories(party_cmd_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr ${CMAKE_CURRENT_SOURCE_DIR}/shared ${BODYWALK_SDK_INCLUDE})
+target_compile_definitions(party_cmd_test PRIVATE D2RVR_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+target_compile_options(party_cmd_test PRIVATE /utf-8 /W4 /EHsc /permissive- /D_CRT_SECURE_NO_WARNINGS)
 # The T-pose measurement of the eye height and arm span (vr/body_calibration.h is its pure detector, tested below)
 target_sources(d2rl-vrcam PRIVATE vr/calibration.cpp vr/calibration_panel.cpp vr/calibration_input.cpp)
 # [onboarding] the first-start guide in the headset: when it asks the settings window for its Guide tab (the flow vr/first_start.h, tested: first_start_test; the page
@@ -1114,6 +1128,11 @@ endif()
 # far_objects_test), the fog's ease and no fog in the River of Flame (unleashed_fog_test). Run: unleashed_far_objects_test.exe, unleashed_fog_test.exe
 add_executable(unleashed_far_objects_test cleanroom/tests/unleashed_far_objects_test.cpp)
 target_compile_options(unleashed_far_objects_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# [shapeshift] forms_first_person (vr/unleashed_shapeshift_form.h, MPL, from Unleashed's steamvr/shapeshift_form.h): the druid's forms in F4.
+# Run: unleashed_shapeshift_form_test.exe
+add_executable(unleashed_shapeshift_form_test cleanroom/tests/unleashed_shapeshift_form_test.cpp)
+target_include_directories(unleashed_shapeshift_form_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_options(unleashed_shapeshift_form_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 add_executable(unleashed_fog_test cleanroom/tests/unleashed_fog_test.cpp)
 target_compile_definitions(unleashed_fog_test PRIVATE UNLEASHED_FXH_PATH="${CMAKE_CURRENT_SOURCE_DIR}/reshade/D2R_FogEase_Unleashed.fxh"
                            DEPTHFOG_FX_PATH="${CMAKE_CURRENT_SOURCE_DIR}/reshade/D2R_DepthFog.fx" _CRT_SECURE_NO_WARNINGS)

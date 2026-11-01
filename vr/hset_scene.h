@@ -46,6 +46,12 @@ using Scene = std::vector<Item>;
 // button or the long press of the right stick click, not by the grips and a click).
 inline const char* StatusText(const Model& m, bool window = false) {
     if (m.page == kPageGuide) return firststart::Nav(std::clamp(m.guide, 0, firststart::kPageCount - 1));   // the guide's own foot, whatever else is going on
+    if (m.page == kPageParty) {   // the game's party: nothing of d2r_vr.ini
+        if (!m.PartyOn()) return uitext::Tr("vr.party.status.off", "Party is off: D2R VR Authentic Settings, Party in the headset.");
+        if (!m.Party().known) return uitext::Tr("vr.party.status.no_game", "Parties are in a multiplayer game (TCP/IP or online): here there is no one to invite.");
+        if (m.PartyBusy()) return uitext::Tr("vr.party.status.sent", "Sent to the game: it answers in its own words.");
+        return uitext::Tr("vr.party.status.idle", "Each button is the game's own Party panel button. Open Party panel: the game's panel (P).");
+    }
     if (m.page == kPageCoop) {   // D2R Rooms' own file, written at once: d2r_vr.ini (there or not, edited or not) is not this page's
         if (!m.Coop()) return uitext::Tr("vr.coop.status.reading", "Reading D2R Rooms' files...");
         if (!m.Coop()->installed) return uitext::Tr("vr.coop.status.missing", "Nothing to choose: the D2R Rooms plugin is not installed.");
@@ -345,6 +351,29 @@ inline Scene Compose(const Model& m, const Hit& hover, const ComposeOptions& opt
             b.Text(l.text, kCoopLine(first + i), l.tone == coop::Tone::Head ? Face::Bold : Face::Small, ink);
         }
     }
+    if (m.page == kPageParty) {
+        // -- the players in the game and the game's own party buttons (vr/hset_party.h) ----------------------------------------------------------
+        const party::View& pv = m.Party();
+        const bool on = m.PartyOn(), free = on && pv.known && !m.PartyBusy();
+        b.Text(uitext::Tr("vr.party.title", "Players in this game"), kPartyTitle, Face::Bold, Role::Text);
+        if (on && pv.known)
+            b.Text(pv.inParty ? uitext::Tr("vr.party.you_in_party", "You are in a party") : uitext::Tr("vr.party.you_alone", "You are in no party"), kPartyTitle,
+                   Face::Small, pv.inParty ? Role::Accent : Role::Quiet, Align::Right);
+        if (on && pv.known && pv.others.empty()) b.Text(uitext::Tr("vr.party.nobody", "No one else is in this game yet."), kPartyName(0), Face::Small, Role::Quiet);
+        for (int i = 0; on && pv.known && i < (int)pv.others.size() && i < party::kMaxOthers; ++i) {
+            const party::Member& p = pv.others[(size_t)i];
+            const party::Act act = party::ActFor(p.state);
+            const bool asked = m.PartyAsked().what == party::Ask::Player && m.PartyAsked().id == p.id;
+            b.Fill(kPartyRow(i), i % 2 ? Role::RowB : Role::RowA, Part::Row);
+            b.Text(p.name, kPartyName(i), Face::Bold, Role::Text);
+            b.Text(party::InfoText(p), kPartyInfo(i), Face::Small, Role::Quiet);
+            b.Text(party::StateText(p), kPartyState(i), Face::Small, p.sameParty || p.state == party::kInParty ? Role::Accent : Role::Quiet);
+            if (act != party::Act::None)
+                b.Button(kPartyBtn(i), party::ActText(act), {Kind::Party, i, 0}, act == party::Act::Accept, free, asked ? Role::Warn : Role::Text, Part::Action);
+        }
+        b.Button(kPartyLeave, uitext::Tr("vr.party.leave", "Leave party"), {Kind::PartyLeave, -1, 0}, false, free && pv.inParty);
+        b.Button(kPartyOpen, uitext::Tr("vr.party.open", "Open Party panel (P)"), {Kind::PartyOpen, -1, 0}, false, on && pv.known);
+    }
     if (m.page == kPageGuide) {
         // -- the first-start guide (vr/first_start.h): a page of its words, Back and Next under it -----------------------------------------
         const int sub = std::clamp(m.guide, 0, firststart::kPageCount - 1);
@@ -419,6 +448,9 @@ inline Scene Compose(const Model& m, const Hit& hover, const ComposeOptions& opt
 
     // -- the low-life pages' own button: the vignette and the beat for five seconds with the rows as they stand (opening a page shows and plays nothing) ----------
     if (IsLifePage(m.page)) b.Button(kPreviewBtn, uitext::Tr("vr.hset.preview", "Preview 5 s"), {Kind::Preview, -1, 0}, false, true, Role::Accent);
+    // the Co-op tab's two pages: Party from the relay's, Relay back ([openxr] headset_party off: no Party button; the page, reached by a flick, says so)
+    if (m.page == kPageCoop && m.PartyOn()) b.Button(kPreviewBtn, uitext::Tr("vr.party.go", "Party"), {Kind::Tab, kPageParty, 0}, false, true, Role::Accent);
+    if (m.page == kPageParty) b.Button(kPreviewBtn, uitext::Tr("vr.party.back", "Relay"), {Kind::Tab, kPageCoop, 0});
 
     const std::string line = opt.status ? std::string(opt.status) : StatusLine(m, opt.window);
     const bool warn = m.page == kPageCoop ? !opt.status && m.Coop() && (!m.Coop()->installed || m.CoopResult() == Result::Failed)

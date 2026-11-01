@@ -316,6 +316,25 @@ static void TestModelTabs() {
 
 // -- the controller with the Settings tab ---------------------------------------------------------------------------------------------------
 
+// A game's roster as the plugin reads it (vr/party_cmd.h), for the Party page's pictures: one in our party, one inviting us, one to invite, one invited.
+static hset::party::View SampleRoster() {
+    hset::party::View r;
+    r.known = r.inParty = true;
+    const char* names[4] = {"Bear", "Pony", "Ann", "Rivas"};
+    const uint32_t states[4] = {hset::party::kInParty, hset::party::kInvitedUs, hset::party::kNone, hset::party::kWeInvited};
+    for (int i = 0; i < 4; ++i) {
+        hset::party::Member m;
+        m.id = 10 + i;
+        m.name = names[i];
+        m.cls = i * 2;
+        m.level = 20 + i;
+        m.state = states[i];
+        m.sameParty = i == 0;
+        r.others.push_back(m);
+    }
+    return r;
+}
+
 struct World {
     Controller c;
     Snapshot snap;
@@ -405,6 +424,7 @@ struct World {
     Step ClickPage(int page) {
         Step s = ClickSheet(hset::kTab(hset::TabOf(page)));
         if (hset::IsWorldPage(page) && page != hset::kPageWorld) s = ClickSheet(hset::kWorldSub(page - hset::kPageWorld));
+        if (page == hset::kPageParty) s = ClickSheet(hset::kPreviewBtn);   // the Co-op page's Party button (Party is that tab's second page)
         return s;
     }
     void Run(int frames) {
@@ -1142,6 +1162,7 @@ static void TestGameLook(const char* dumpDir) {
     const std::vector<uint32_t> gameSkills = Paint(skills);
     CHECK(gameSkills != ourSkills);
     if (dumpDir) WriteBmp(std::string(dumpDir) + "/game_skills.bmp", gameSkills, tiles::kW, tiles::kH);
+    w.host.party = SampleRoster();
     std::vector<uint32_t> pages[hset::kMaxPages];
     for (int p = 0; p < hset::PageCount(); ++p) {
         w.ClickPage(p);
@@ -1172,7 +1193,7 @@ static void TestPaint(const char* dumpDir) {
     bool belowSame = true;
     for (int y = (int)tiles::kPanel.t + 14; y < tiles::kH && belowSame; ++y)
         for (int x = 0; x < tiles::kW; ++x) {
-            const bool hint = (y > 1020 && x > 500 && x < 1100) ||                                                                    // the dots at the foot
+            const bool hint = (y > 1020 && x > 480 && x < 1120) ||                                                                    // the dots at the foot
                               (y >= 470 && y <= 690 && (x < 110 || x > 1490));                                                       // the arrows at the edges
             if (!hint && skills[(size_t)y * tiles::kW + x] != plain[(size_t)y * tiles::kW + x]) { belowSame = false; break; }
         }
@@ -1185,6 +1206,7 @@ static void TestPaint(const char* dumpDir) {
 
     // the Settings tab: a picture per page, each its own, none the Skills tab's
     w.ClickTab(1);
+    w.host.party = SampleRoster();   // the Party page shows a game's roster
     std::vector<uint32_t> pages[hset::kMaxPages];
     for (int p = 0; p < hset::PageCount(); ++p) {
         w.ClickPage(p);
@@ -1346,8 +1368,8 @@ struct Pads {   // a frame's sticks and grips for the pure flipper
 };
 
 static void TestFlipper() {
-    CHECK(kFlipPlaces == 19 && kFlipPlaces == 1 + hset::PageCount());
-    CHECK(FlipTo(0, -1) == 0 && FlipTo(0, 1) == 1 && FlipTo(2, 1) == 3 && FlipTo(2, -1) == 1 && FlipTo(18, 1) == 18 && FlipTo(18, -1) == 17 && FlipTo(2, 0) == 2);
+    CHECK(kFlipPlaces == 20 && kFlipPlaces == 1 + hset::PageCount());
+    CHECK(FlipTo(0, -1) == 0 && FlipTo(0, 1) == 1 && FlipTo(2, 1) == 3 && FlipTo(2, -1) == 1 && FlipTo(19, 1) == 19 && FlipTo(19, -1) == 18 && FlipTo(2, 0) == 2);
     auto step = [](Flipper& f, double t, const Pads& p) { return f.Step(t, p.x, p.y, p.g); };
     {   // a flick right is one step forward, left one back; the stick's coming back to the middle re-arms it
         Flipper f;
@@ -1809,9 +1831,12 @@ static void TestFlipController() {
             CHECK(w.c.SettingsModel().page == hset::kPageWorld + i && w.c.FlipPlace() == 14 + i);
         }
         Flick(w, 1.0f);
-        CHECK(w.c.SettingsModel().page == hset::kPageGuide && w.c.FlipPlace() == 18 && w.c.SettingsModel().GuideShown());
+        CHECK(w.c.SettingsModel().page == hset::kPageParty && w.c.FlipPlace() == 18);   // the Party page (the Co-op tab's second page): a flick passes it too
         Flick(w, 1.0f);
-        CHECK(w.c.SettingsModel().page == hset::kPageGuide && w.c.FlipPlace() == 18 && w.c.Open());   // the end: a stop
+        CHECK(w.c.SettingsModel().page == hset::kPageGuide && w.c.FlipPlace() == 19 && w.c.SettingsModel().GuideShown());
+        Flick(w, 1.0f);
+        CHECK(w.c.SettingsModel().page == hset::kPageGuide && w.c.FlipPlace() == 19 && w.c.Open());   // the end: a stop
+        Flick(w, -1.0f);
         for (int i = 0; i < hset::kWorldPages; ++i) Flick(w, -1.0f);
         Flick(w, -1.0f);
         Flick(w, -1.0f);
@@ -1978,12 +2003,12 @@ static void TestFlipController() {
         CHECK(w.c.FlipPlace() == 0 && w.c.Open());
         w.ClickPx(CentreX(next), CentreY(next));
         CHECK(w.c.FlipPlace() == 1 && w.c.ViewNow().tab == Tab::Settings);
-        for (int i = 0; i < 17; ++i) w.ClickPx(CentreX(next), CentreY(next));
-        CHECK(w.c.FlipPlace() == 18);
+        for (int i = 0; i < 18; ++i) w.ClickPx(CentreX(next), CentreY(next));
+        CHECK(w.c.FlipPlace() == 19);
         w.ClickPx(CentreX(next), CentreY(next));
-        CHECK(w.c.FlipPlace() == 18);
+        CHECK(w.c.FlipPlace() == 19);
         w.ClickPx(CentreX(prev), CentreY(prev));
-        CHECK(w.c.FlipPlace() == 17 && w.c.SettingsModel().page == hset::kPageWorldMore);
+        CHECK(w.c.FlipPlace() == 18 && w.c.SettingsModel().page == hset::kPageParty);
         // the laser's click on a page tab of the sheet moves the place too, the same order
         w.ClickSheet(hset::kTab(hset::kPageView));
         CHECK(w.c.FlipPlace() == 1 && w.c.ViewNow().flipPlace == 1);
@@ -2059,7 +2084,7 @@ static void TestFlipPaint() {
         for (int y = 0; y < tiles::kH && onlyHints; ++y)
             for (int x = 0; x < tiles::kW; ++x)
                 if (a[(size_t)y * tiles::kW + x] != b[(size_t)y * tiles::kW + x]) {
-                    const bool dot = y > 1020 && x > 500 && x < 1100, arrow = y >= 470 && y <= 690 && (x < 110 || x > 1490);
+                    const bool dot = y > 1020 && x > 480 && x < 1120, arrow = y >= 470 && y <= 690 && (x < 110 || x > 1490);
                     if (!dot && !arrow) { onlyHints = false; break; }
                 }
         CHECK(onlyHints);

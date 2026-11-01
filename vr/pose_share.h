@@ -508,30 +508,38 @@ inline bool ParsePingReceipt(const void* data, uint32_t size, uint32_t* relaysGo
     return true;
 }
 
-// The host's pace of relays to ONE peer, by its receipts (0.193.3: on 0.193.2 the receipts showed a joiner over the internet had the host's first 52 relays and
-// 3 pongs in its first second or two, then NOTHING for minutes - at any pace, down to 4 a second - while what it sent came through). So a peer starts slow
-// (kPaceStartHz) and is sped up only as its receipts say what was sent arrives: every kPaceWindowMs, nine tenths or more of the window's relays had - twice the
-// pace (to the full rate); under half - half (not under kPaceMinHz). A STALL - its receipts come (it is there) but say nothing more arrived for kStallMs while
-// relays went to it - pauses the relays to it for kPauseMs (whatever is queued on the way may drain), then probes it at the least pace. A peer that sends no receipt
-// within kNoReceiptMs of its first relay (an older build) gets the full rate, as before. Due: whether a relay may go to it now.
-constexpr uint64_t kPaceWindowMs = 5000, kStallMs = 4000, kPauseMs = 8000, kNoReceiptMs = 3000;
+// The host's pace of relays to ONE peer, by its receipts. 0.193.2: a joiner over the internet had the host's first 52 relays in a second or two, then nothing for
+// minutes - D2RLoader said Success to every send. 0.193.3 started slow and paused on a stall: the link then carried about 8 a second for half a minute, stalled when
+// the pace went past it, and every stall (8 s pause, slow restart) left the joiner 2 - 4 poses a second ("his moves are seen slow"). Now the pace LEARNS the link:
+// it starts at kPaceStartHz and goes twice as fast for each kPaceWindowMs it has nine tenths of; more than a tenth lost - down to what it had a second (not under
+// kPaceMinHz), and that is its ceiling; a STALL - its
+// receipts come, nothing more had for kStallMs while relays went to it - sets a ceiling at three quarters of the most it was seen to have a second
+// (bestHz, measured from its receipts), pauses kPauseMs and goes on at the ceiling; held kProbeMs without trouble at the ceiling, the ceiling is tried one higher.
+// Stalls in a row with nothing had between them (a dead link) halve the ceiling and double the pause each (to kPaceMinHz, 16 s): a trickle, never a flood.
+// A peer that sends no receipt within kNoReceiptMs of its first relay (an older build) gets the full rate, as before. Due: whether a relay may go to it now.
+constexpr uint64_t kPaceWindowMs = 5000, kStallMs = 4000, kPauseMs = 2000, kNoReceiptMs = 3000, kProbeMs = 30000;
 constexpr int kPaceMinHz = 2, kPaceStartHz = 4;
 struct RelayPace {
-    enum Event { kNone, kSlower, kFaster, kStalled, kFirst };
+    enum Event { kNone, kSlower, kFaster, kStalled, kFirst, kProbe };
     bool told = false;               // a receipt came
     int hz = kPaceStartHz;           // the pace (0: the full rate)
+    int ceil = 0;                    // the most this link was learned to hold (0: none learned)
+    float bestHz = 0.0f;             // the most it was seen to have a second (a window's had / its length)
     uint32_t sent = 0;               // relays sent to it (all along)
     uint32_t got = 0;                // its last receipt (all along)
     uint32_t sentAtLook = 0, gotAtLook = 0;
     uint64_t firstAt = 0, lookAt = 0, nextAt = 0;
     uint64_t growAt = 0;             // when its receipt last grew (or the pace started again)
     uint32_t sentAtGrow = 0;         // relays sent by then
-    uint64_t pauseUntil = 0;
-    uint32_t stalls = 0, stalledAt = 0;   // how many stalls; relays sent when the last began (what had arrived up to then: got)
-    uint32_t lastSent = 0, lastGot = 0;   // the last window's, for the log
+    uint64_t pauseUntil = 0, calmSince = 0;   // ... and since when it has held at its ceiling
+    uint32_t stalls = 0, stalledAt = 0;       // how many stalls; relays sent when the last began
+    int inRow = 0;                            // stalls with nothing had between them (a dead link: each halves the ceiling, doubles the pause)
+    bool grew = true;                         // its receipt grew since the last pause ended
+    uint32_t lastSent = 0, lastGot = 0;       // the last window's, for the log
+    int Cap(int maxHz) const { return ceil > 0 ? std::min(ceil, maxHz) : maxHz; }
     int Rate(uint64_t now, int maxHz) const {
         if (!told) return firstAt && now - firstAt >= kNoReceiptMs ? maxHz : kPaceStartHz;   // no receipt yet: slow, then (an older build) the full rate
-        return hz > 0 ? std::min(hz, maxHz) : maxHz;
+        return std::min(hz > 0 ? hz : maxHz, Cap(maxHz));
     }
     void Sent(uint64_t now, int maxHz) {
         if (!firstAt) firstAt = now;
@@ -548,26 +556,53 @@ struct RelayPace {
             hz = kPaceStartHz;
             return kFirst;
         }
-        if (relaysGot != got) { growAt = now; sentAtGrow = sent; }
+        if (relaysGot != got) { growAt = now; sentAtGrow = sent; if (now >= pauseUntil) grew = true; }
         got = relaysGot;
         if (now >= pauseUntil && now - growAt >= kStallMs && sent - sentAtGrow >= 4) {   // it is there, and nothing of ours arrives
             ++stalls;
             stalledAt = sent;
-            pauseUntil = now + kPauseMs;
-            hz = kPaceMinHz;   // (probed again at the least pace)
+            inRow = grew ? 1 : inRow + 1;
+            grew = false;
+            if (inRow == 1) {   // the first: three quarters of the most it was seen to have
+                const float overall = now > firstAt ? (float)got * 1000.0f / (float)(now - firstAt) : 0.0f;   // (no window measured yet: what it had all along)
+                ceil = std::clamp((int)(std::max(bestHz, overall) * 0.75f), kPaceMinHz, maxHz);
+            } else {            // again with nothing had between: half of that, a longer pause
+                ceil = std::max(kPaceMinHz, ceil / 2);
+            }
+            hz = ceil;
+            pauseUntil = now + std::min<uint64_t>(kPauseMs << std::min(inRow - 1, 3), 16000);
             growAt = pauseUntil;          // (judged again from when the pause ends)
             sentAtGrow = sent;
             sentAtLook = sent; gotAtLook = got; lookAt = pauseUntil;
+            calmSince = pauseUntil;
             return kStalled;
         }
         if (now < lookAt || now - lookAt < kPaceWindowMs) return kNone;
         const uint32_t s = sent - sentAtLook, g = got - gotAtLook;
+        const float secs = (float)(now - lookAt) / 1000.0f;
         lastSent = s; lastGot = g;
         sentAtLook = sent; gotAtLook = got; lookAt = now;
         if (s < 8) return kNone;   // (too few to tell)
+        if (g * 2 >= s) bestHz = std::max(bestHz, (float)g / secs);   // (what it had, while most of it came)
         const int cur = Rate(now, maxHz);
-        if (g * 2 < s) { hz = std::max(kPaceMinHz, cur / 2); return kSlower; }
-        if (g * 10 >= s * 9 && hz > 0) { hz = hz * 2 >= maxHz ? 0 : hz * 2; return kFaster; }
+        if (g * 10 < s * 9) {   // more than a tenth lost: down to what it had a second - the link's measure - and that is its ceiling for now
+            hz = std::max(kPaceMinHz, std::min(cur - 1, (int)((float)g / secs)));
+            ceil = hz;
+            calmSince = now;
+            return kSlower;
+        }
+        if (g * 10 >= s * 9) {
+            if (ceil > 0 && cur >= ceil) {   // at the learned ceiling: one higher once it has held long enough
+                if (now - calmSince >= kProbeMs && ceil < maxHz) { ++ceil; hz = ceil; calmSince = now; return kProbe; }
+                return kNone;
+            }
+            if (hz > 0) {
+                const int next = std::min(hz * 2, Cap(maxHz));
+                hz = next >= maxHz ? 0 : next;
+                calmSince = now;
+                return kFaster;
+            }
+        }
         return kNone;
     }
 };
@@ -710,9 +745,10 @@ public:
 // behind the newest moment it can be sure of: the sender's clock is put on ours by the smallest (arrival - sent) seen, the poses
 // either side of that moment are blended. Nothing newer than the newest pose is made up (no extrapolation); a player not heard of for
 // kStaleMs is gone.
-constexpr int kTrackSamples = 8;
+constexpr int kTrackSamples = 32;   // (a second of poses at 30 a second: enough for the longest playback delay, kMaxDelayMs)
 constexpr uint32_t kDelayMsDefault = 100;
 constexpr uint64_t kStaleMs = 1000;
+constexpr uint32_t kMaxDelayMs = 700;   // the most the playback is held behind (Track::FitDelay)
 
 inline void Slerp(const float a[4], const float b0[4], float t, float out[4]) {
     float b[4] = {b0[0], b0[1], b0[2], b0[3]};
@@ -815,6 +851,27 @@ public:
         n_ = std::min(n_ + 1, kTrackSamples);
     }
     bool Empty() const { return n_ == 0; }
+    // The playback delay these poses need (0.193.4: a joiner over the internet had 4 - 8 poses a second, 125 - 250 ms apart and late by different amounts; at the
+    // ini's 100 ms the playback ran past the newest pose and held it until the next - "his moves are seen slow", in steps): as late as the latest of them came
+    // (against the fastest) plus their spacing, so that there is a pose after the one being shown when the playback reaches it; not under floorMs, not over
+    // kMaxDelayMs. Steady 30 a second on a LAN: about floorMs, as before.
+    uint32_t FitDelay(uint32_t floorMs) const {
+        if (n_ < 2) return floorMs;
+        int64_t offset = INT64_MAX;
+        for (int i = 0; i < n_; ++i) offset = std::min(offset, (int64_t)At(i).recvMs - At(i).sentMs);
+        int64_t late = 0;
+        for (int i = 0; i < n_; ++i) late = std::max(late, (int64_t)At(i).recvMs - At(i).sentMs - offset);
+        const int64_t span = At(n_ - 1).sentMs - At(0).sentMs;
+        const int64_t gap = span > 0 ? span / (n_ - 1) : 0;
+        const int64_t want = late + gap + 20;
+        return (uint32_t)std::clamp<int64_t>(want, (int64_t)floorMs, (int64_t)kMaxDelayMs);
+    }
+    // The poses' spacing as they came, ms (their sender's clock): 0 with fewer than two.
+    uint32_t Spacing() const {
+        if (n_ < 2) return 0;
+        const int64_t span = At(n_ - 1).sentMs - At(0).sentMs;
+        return span > 0 ? (uint32_t)(span / (n_ - 1)) : 0;
+    }
     uint64_t NewestRecv() const { return n_ ? At(n_ - 1).recvMs : 0; }
 
     // The pose to show now, delayMs behind. False: nothing (none yet, or stale).

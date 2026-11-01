@@ -121,6 +121,46 @@ int main() {
         Check(inside, "the big map: the ellipse to the nearer edges inside the circle");
         Check(!MapAround(For(true, false, true, 0.0f), w, h, 1.0f, hu, hv, 0.0f, halfH).ok, "no room about the hero: no map");
     }
+    {   // [hud] map_rotate_flat: the corner map on the screen, round about the hero - the camera's way up, the circle on the hero's marker, round
+        // in screen pixels (a 1920 x 1080 screen, the 640 x 400 box at 1.3 times its size), the map's own scale, all of it inside the box
+        const float sw = 1920.0f, sh = 1080.0f, w = 640.0f, h = 400.0f, z = 1.3f;
+        const float box[4] = {40.0f / sw, 50.0f / sh, (40.0f + w * z) / sw, (50.0f + h * z) / sh};
+        Check(!RoundOnScreen(For(false, false, true, 0.0f), box, w, h).ok, "flat round: no turn, nothing");
+        const float noBox[4] = {0.2f, 0.2f, 0.2f, 0.5f};
+        Check(!RoundOnScreen(For(false, true, true, 0.0f), noBox, w, h).ok, "flat round: a box with no width, nothing");
+        Check(!RoundOnScreen(For(false, true, true, 0.0f), box, 0.0f, h).ok, "flat round: no share, nothing");
+        const Round n = RoundOnScreen(For(false, true, false, 0.0f), box, w, h);
+        Check(n.ok && !For(false, true, false, 0.0f).turning, "flat round, no heading yet: from above, north up");
+        int badUp = 0, badIn = 0, badRound = 0;
+        for (int deg = -180; deg < 180; deg += 15) {
+            const float b = (float)deg * kPi / 180.0f;
+            const Round r = RoundOnScreen(For(false, true, true, b), box, w, h);
+            if (!r.ok) { ++badUp; continue; }
+            const float hx = box[0] + 0.5f * (box[2] - box[0]), hy = box[1] + (0.5f - mapdir::kMarkerUp) * (box[3] - box[1]);
+            if (!Near(r.centre[0], hx, 1e-5f) || !Near(r.centre[1], hy, 1e-5f)) ++badUp;
+            if (!Near(r.radius[0] * sw, r.radius[1] * sh, 0.01f)) ++badRound;   // round in pixels
+            float u, v;
+            if (!RoundAt(r, r.centre[0], r.centre[1] - 0.5f * r.radius[1], &u, &v)) { ++badUp; continue; }   // halfway up the screen's circle
+            const mapdir::Dir want = mapdir::ToMap(mapdir::Dir{std::sin(b), std::cos(b), true});
+            const float x = (u - r.map.hero[0]) * w, y = (v - r.map.hero[1]) * h, l = std::sqrt(x * x + y * y);
+            if (!(l > 0.0f) || !Near(x / l, want.x, 2e-3f) || !Near(y / l, want.y, 2e-3f)) ++badUp;
+            for (int a = 0; a < 360; a += 5) {   // the circle's edge: inside the share
+                const float ca = std::cos((float)a * kPi / 180.0f), sa = std::sin((float)a * kPi / 180.0f);
+                if (!RoundAt(r, r.centre[0] + 0.999f * r.radius[0] * ca, r.centre[1] + 0.999f * r.radius[1] * sa, &u, &v) ||
+                    u < 0.0f || u > 1.0f || v < 0.0f || v > 1.0f) ++badIn;
+            }
+            float u2, v2;
+            if (RoundAt(r, r.centre[0] + 1.01f * r.radius[0], r.centre[1], &u2, &v2)) ++badIn;   // past the edge: nothing
+        }
+        Check(badUp == 0, "flat round: the camera's way is up on the screen, about the hero's marker");
+        Check(badIn == 0, "flat round: the circle reads only the share, nothing past its edge");
+        Check(badRound == 0, "flat round: round in screen pixels");
+        // the map's own scale: a tile's area on the screen as on the game's map (the view from above keeps the iso's area, det = 1)
+        const Round r = RoundOnScreen(For(false, true, true, 0.7f), box, w, h);
+        const float det = (r.map.m[0] * w) * (r.map.m[3] * h) - (r.map.m[1] * w) * (r.map.m[2] * h);   // share px per q, squared
+        const float qPx = r.radius[0] * sw / z;                                                             // share px per q on the screen
+        Check(Near(std::fabs(det), qPx * qPx, 0.5f), "flat round: the map at its own scale");
+    }
     {   // a bad box or stretch: no map, or a clamped one
         Check(!MapFor(For(true, false, true, 0.0f), 0.0f, H, 1.0f).ok, "no width: no map");
         Check(MapFor(For(true, false, true, 0.0f), W, H, NAN).ok, "a stretch that is not a number: taken as 1");

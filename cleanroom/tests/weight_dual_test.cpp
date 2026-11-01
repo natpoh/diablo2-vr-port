@@ -50,7 +50,7 @@ bool Bodies(monsterbodies::Snapshot* out) {
 }
 float g_pushed[16] = {};   // N s per monster id (under 16)
 int g_pushes[16] = {};
-void Push(const monsterbodies::Snapshot& snap, int i, const float imp[3], const float*) {
+void Push(const monsterbodies::Snapshot& snap, int i, const float imp[3], const float*, float, float) {
 	const uint32_t id = snap.b[i].id;
 	if (id < 16) {
 		g_pushed[id] += std::sqrt(imp[0] * imp[0] + imp[1] * imp[1] + imp[2] * imp[2]);

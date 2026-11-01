@@ -1,8 +1,11 @@
 // Offline checks of vr/pose_share.h ([multiplayer] pose_share): the pose message's packing and quantizing, the relay and ping messages, the
 // host's relay table, the stats, the receiver's playback buffer and the frame maths. Run: pose_share_test.exe (exit 0 = all passed).
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <utility>
+#include <vector>
 
 #include "pose_share.h"
 
@@ -534,66 +537,130 @@ int main() {
         CHECK(!ParsePingReceipt(m, kPingBytes, &relays, &pongs));           // a ping without a receipt: none
         CHECK(BuildPingReceipt(9, 1, 2, 3, m, kPingBytes) == 0);
 
-        // the host's pace to one peer (0.193.3): slow from the start, twice as fast for each window it has nine tenths of, half as fast under half (not under the
-        // least); a stall - receipts come, nothing more had - pauses it, then slow again; no receipt at all (an older build): the full rate after a moment
+        // the host's pace to one peer (0.193.4): a link like the 0.193.3 joiner's - it carries up to 8 relays a second; pushed past 10 for two seconds it stalls
+        // (has nothing) until it is left alone a second and a half. Before, the pace climbed into the stall, paused 8 s and began again at 2 - "his moves seen
+        // slow". Now it learns the link: after a stall or two it holds under it, and over two minutes most of what goes arrives at a steady 5 - 8 a second.
         const int full = 30;
         uint64_t now = 1000;
-        RelayPace p;
-        uint32_t had = 0;   // what the peer has had, all along
-        // `ms` of relays at the pace, `share` of them arriving, a receipt every second (its pings); returns the relays sent
-        auto run = [&](uint64_t ms, double share, RelayPace::Event* last = nullptr, int* stalls = nullptr) {
+        struct Link {
+            uint32_t had = 0;
+            uint64_t overSince = 0, quietSince = 0, lastSend = 0;
+            bool dead = false, stalled = false;
+            int inSecond = 0, overSeconds = 0;
+            uint64_t second = 0;
+            void Send(uint64_t t) {
+                if (t / 1000 != second) {   // a second gone: was it over the link's 10?
+                    overSeconds = inSecond > 10 ? overSeconds + 1 : 0;
+                    if (overSeconds >= 2) stalled = true;
+                    second = t / 1000;
+                    inSecond = 0;
+                }
+                ++inSecond;
+                lastSend = t;
+                if (!stalled && !dead && inSecond <= 8) ++had;
+            }
+            void Tick(uint64_t t) { if (stalled && t - lastSend >= 1500) { stalled = false; overSeconds = 0; } }
+        };
+        auto drive = [&](RelayPace& p, Link& l, uint64_t ms, int* stalls) {
             const uint64_t end = now + ms;
-            uint32_t sentHere = 0;
-            double owed = 0.0;
             uint64_t nextPing = now + 1000;
-            for (; now <= end; now += 1) {
-                if (p.Due(now)) { p.Sent(now, full); ++sentHere; owed += share; }
+            uint32_t sentHere = 0;
+            for (; now <= end; ++now) {
+                l.Tick(now);
+                if (p.Due(now)) { p.Sent(now, full); l.Send(now); ++sentHere; }
                 if (now >= nextPing) {
                     nextPing = now + 1000;
-                    had += (uint32_t)owed;
-                    owed -= (uint32_t)owed;
-                    const RelayPace::Event e = p.Receipt(had, now, full);
-                    if (last && e != RelayPace::kNone) *last = e;
-                    if (stalls && e == RelayPace::kStalled) ++*stalls;
+                    if (p.Receipt(l.had, now, full) == RelayPace::kStalled && stalls) ++*stalls;
                 }
             }
             return sentHere;
         };
-        CHECK(p.Rate(now, full) == kPaceStartHz && p.Due(now));
-        RelayPace::Event ev = RelayPace::kNone;
-        const uint32_t first = run(1001, 1.0, &ev);
-        CHECK(ev == RelayPace::kFirst && first >= 4 && first <= 5);   // the first second at the start pace, then its first receipt
-        run(5000, 1.0);
-        CHECK(p.hz == 2 * kPaceStartHz);       // all of it had: twice as fast
-        run(5000, 1.0); run(5000, 1.0);
-        CHECK(p.hz == 0 && p.Rate(now, full) == full);   // 8, 16, then the full rate
-        const uint32_t atFull = run(5000, 1.0);
-        CHECK(atFull >= 145 && atFull <= 152);
-        run(5000, 0.3);
-        CHECK(p.hz == full / 2);               // under half had: half as fast
-        run(5000, 0.2); run(5000, 0.2); run(5000, 0.2); run(5000, 0.2);
-        CHECK(p.hz == kPaceMinHz);             // never under the least
-        // a stall: its receipts come, nothing more arrives (the 0.193.2 joiner) - paused, then slow again, paused again while it stays dead
-        int stalls = 0;
-        const uint32_t beforeStall = p.sent;
-        run(5000, 0.0, nullptr, &stalls);
-        CHECK(stalls == 1 && now < p.pauseUntil && !p.Due(now) && p.stalledAt > beforeStall);
-        const uint32_t inPause = run(p.pauseUntil - now - 1, 0.0);
-        CHECK(inPause == 0);                   // nothing sent while paused
-        run(30000, 0.0, nullptr, &stalls);
-        CHECK(stalls >= 2 && stalls <= 4);     // dead: a few relays, a pause, a few more - never a flood
-        const uint32_t dead = p.sent;
-        run(60000, 0.0);
-        CHECK(p.sent - dead <= 60);            // a minute of a dead pipe: a few dozen relays to it, not 1800
-        // it comes back: the receipts grow again, the pace with them
-        while (now < p.pauseUntil) ++now;
-        run(5000, 1.0); run(5000, 1.0); run(5000, 1.0); run(5000, 1.0);
-        CHECK(p.Rate(now, full) >= 16);
+        {
+            RelayPace p;
+            Link l;
+            int stalls = 0;
+            drive(p, l, 60000, &stalls);   // a minute to learn it
+            const uint32_t had0 = l.had, sent0 = p.sent;
+            drive(p, l, 60000, &stalls);   // the next minute: what it does once learned
+            const float rate = (float)(l.had - had0) / 60.0f, share = (float)(l.had - had0) / (float)std::max<uint32_t>(1, p.sent - sent0);
+            std::printf("pace on an 8 a second link: %.1f a second had in the second minute (%.0f %% of what went), ceiling %d, stalls %d\n", rate, 100.0f * share, p.ceil,
+                        stalls);
+            CHECK(rate >= 5.0f && share >= 0.85f && p.ceil >= 4 && p.ceil <= 9 && stalls >= 1 && stalls <= 4);
+        }
+        {   // a dead link (it has nothing ever after its first second): a trickle - a pause longer each time, the ceiling down to the least
+            RelayPace p;
+            Link l;
+            drive(p, l, 1500, nullptr);
+            l.dead = true;
+            int stalls = 0;
+            const uint32_t sent0 = p.sent;
+            drive(p, l, 120000, &stalls);
+            CHECK(p.sent - sent0 <= 150 && p.ceil == kPaceMinHz && stalls >= 3);   // two minutes: about a relay a second at most, not 3600
+            l.dead = false;   // it comes back: the receipts grow, the pace goes up again
+            drive(p, l, 40000, nullptr);
+            CHECK(p.Rate(now, full) >= 3);
+        }
+        {   // a good link (all of it, at any pace): to the full rate and kept there, no ceiling
+            RelayPace p;
+            uint32_t had = 0;
+            uint64_t nextPing = now + 1000;
+            for (const uint64_t end = now + 30000; now <= end; ++now) {
+                if (p.Due(now)) { p.Sent(now, full); ++had; }
+                if (now >= nextPing) { nextPing = now + 1000; p.Receipt(had, now, full); }
+            }
+            CHECK(p.Rate(now, full) == full && p.ceil == 0 && p.stalls == 0);
+        }
         // no receipt ever (an older build): slow for kNoReceiptMs after its first relay, then the full rate
         RelayPace q;
         q.Sent(now, full);
         CHECK(q.Rate(now + 10, full) == kPaceStartHz && !q.Due(now + 10) && q.Due(now + 251));
         CHECK(q.Rate(now + kNoReceiptMs, full) == full);
+    }
+
+    // the playback delay fitted to how the poses come (0.193.4): 30 a second, steady - the ini's 100 ms; 4 a second and late by up to 300 ms - enough that the
+    // playback never runs past the newest pose: a hero walking evenly is shown walking evenly, not in steps
+    {
+        Track lan;
+        for (int i = 0; i < 40; ++i) {
+            Pose p = Sample((uint16_t)i, 1000u + 33u * (uint32_t)i, 0.0f);
+            lan.Add(5000u + 33u * (uint64_t)i + (uint64_t)(i % 3) * 3u, p);
+        }
+        CHECK(lan.FitDelay(100) == 100 && lan.Spacing() == 33);
+        Track wan;
+        uint32_t jitter = 12345;
+        auto rnd = [&]() { jitter = jitter * 1103515245u + 12345u; return (jitter >> 16) % 300u; };
+        std::vector<std::pair<uint64_t, Pose>> wire;   // (arrival, pose) - 4 a second, a metre a second along x, late 0 - 300 ms
+        for (int i = 0; i < 60; ++i) {
+            Pose p = Sample((uint16_t)i, 1000u + 250u * (uint32_t)i, 0.0f);
+            p.head.p[0] = 0.25f * (float)i;
+            wire.push_back({20000u + 250u * (uint64_t)i + rnd(), p});
+        }
+        std::sort(wire.begin(), wire.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+        size_t next = 0;
+        float worstStep = 0.0f, lastX = -1.0f;
+        uint32_t fitted = 0;
+        int held = 0, heldMax = 0;
+        for (uint64_t t = 20000; t < 20000 + 250 * 58; t += 11) {   // drawn 90 times a second
+            while (next < wire.size() && wire[next].first <= t) { wan.Add(wire[next].first, wire[next].second); ++next; }
+            if (wan.Empty() || t < 23000) continue;   // (a few seconds in)
+            fitted = wan.FitDelay(100);
+            Pose out;
+            if (!wan.Sample(t, fitted, &out)) continue;
+            const float x = out.head.p[0];
+            if (lastX >= 0.0f) {
+                worstStep = std::max(worstStep, x - lastX);
+                held = x == lastX ? held + 1 : 0;
+                heldMax = std::max(heldMax, held);
+                CHECK(x >= lastX - 1e-4f);   // never back
+            }
+            lastX = x;
+        }
+        std::printf("playback at 4 a second, late up to 300 ms: %u ms behind, the biggest step %.1f cm a frame (even: 1.1), held at most %d frames\n", fitted,
+                    worstStep * 100.0f, heldMax);
+        CHECK(fitted >= 450 && fitted <= kMaxDelayMs && worstStep < 0.03f && heldMax <= 2);
+        Track one;
+        one.Add(100, Sample(1, 100, 0.0f));
+        CHECK(one.FitDelay(100) == 100 && one.Spacing() == 0);
     }
 
     std::printf("pose_share_test: %d checks, %d failed\n", g_checks, g_failures);

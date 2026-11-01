@@ -131,6 +131,27 @@ void WhatIsLeftOut() {
     Check(n == 1 && out[0].id == 1, "only the live monster in reach is listed (not dying, not dead, not far)");
 }
 
+// [weight] death_ragdoll: the dying and the dead, the very units Monsters leaves out - and only those, in reach, the nearest kept when full.
+void TheDyingAndTheDead() {
+    Game g;
+    g.Add(unitscan::kMonster, 1, 5, 1, 101.0f, 200.0f);      // alive: not listed
+    g.Add(unitscan::kMonster, 2, 5, 0, 101.0f, 201.0f);      // dying
+    g.Add(unitscan::kMonster, 3, 63, 12, 102.0f, 199.0f);    // dead
+    g.Add(unitscan::kMonster, 4, 5, 12, 160.0f, 200.0f);     // dead, 60 cells away
+    g.Add(unitscan::kPlayer, 5, 0, 0, 101.0f, 200.0f);       // a player's row (a dead hero's mode 0 too): not a monster
+    unitscan::Dying out[8];
+    size_t n = unitscan::DyingNear(g, Game::kTable, 200.0f, 400.0f, 3.0f * kUpm, out, 8);
+    Check(n == 2, "the dying and the dead in reach are listed, the living and the far ones are not");
+    const unitscan::Dying* dying = out[0].id == 2 ? &out[0] : &out[1];
+    const unitscan::Dying* deadOne = out[0].id == 3 ? &out[0] : &out[1];
+    Check(dying->id == 2 && dying->mode == 0 && dying->cls == 5, "the dying one: its id, its mode 0, its class");
+    Check(deadOne->id == 3 && deadOne->mode == 12 && deadOne->cls == 63, "the dead one: its id, its mode 12, its class");
+    Check(Near1(deadOne->x, 204.0f) && Near1(deadOne->z, 398.0f), "its place is read as the living's");
+    n = unitscan::DyingNear(g, Game::kTable, 200.0f, 400.0f, 3.0f * kUpm, out, 1);
+    Check(n == 1 && out[0].id == 2, "full: the nearest is kept");
+    Check(unitscan::DyingNear(g, 0, 200.0f, 400.0f, 3.0f * kUpm, out, 8) == 0, "no table: none");
+}
+
 void OtherRowsAreNotMonsters() {
     Game g;
     g.Add(unitscan::kPlayer, 7, 1, 1, 100.5f, 200.0f);       // the hero himself: the player row
@@ -228,6 +249,7 @@ int main() {
     OneMonster();
     AtTheEndOfALongChain();
     WhatIsLeftOut();
+    TheDyingAndTheDead();
     OtherRowsAreNotMonsters();
     AFailedRowIsAskedAgain();
     TheNearestAreKept();

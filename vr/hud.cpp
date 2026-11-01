@@ -81,6 +81,7 @@
 #include "notice_card.h"  // [hud] notice_card: the box of the game's quest / level-up notice in that layer
 #include "minimap_box.h"  // which scissor box is the corner map, at any layer size, shape and interface size
 #include "map_direction.h"   // [hud] map_direction: the arrow on the hero's marker of the game's map (rows of pixels)
+#include "map_turn.h"        // [hud] map_rotate_flat: the corner map on the screen, round about the hero and turned (RoundOnScreen)
 #include "hud_native.h"
 #include "plate_world.h"   // [hud] monster_bar_room: where the plate stands in the layer (BoxOf)
 
@@ -115,7 +116,13 @@ bool BarZoomed() { return std::abs(g_barZoom.load() - 1.0f) > 0.005f || g_barMov
 std::atomic<bool> g_mapMoved{false};   // [hud_floor] map_near: the map nearer or farther in stereo (the shader shifts it per eye)
 std::atomic<float> g_mapOffX{0.0f}, g_mapOffY{0.0f};   // [hud_floor] map_x / map_y: the map elsewhere on the screen, uv (+y down)
 bool MapOffset() { return std::abs(g_mapOffX.load()) > 0.0005f || std::abs(g_mapOffY.load()) > 0.0005f; }
-bool MapZoomed() { return std::abs(g_mapZoom.load() - 1.0f) > 0.005f || g_mapMoved.load() || MapOffset(); }
+// [hud] map_rotate_flat (vr/map_turn.h RoundOnScreen): the corner map in the picture turned so the camera's way is up - taken out and drawn
+// back round by the effect, as for a size of its own. vrcam says when (MapRotateFlatTick: flat F2 / F3, VR F2 with the map in the picture);
+// the way from each of our camera's views (SetMapFlatHeading), stale after half a second.
+std::atomic<bool> g_mapTurnFlat{false};
+std::atomic<float> g_flatX{0.0f}, g_flatY{1.0f};
+std::atomic<ULONGLONG> g_flatAt{0};
+bool MapZoomed() { return std::abs(g_mapZoom.load() - 1.0f) > 0.005f || g_mapMoved.load() || MapOffset() || g_mapTurnFlat.load(); }
 // What is taken out of the picture now: for FlatVR in first person, to be drawn back at another size otherwise.
 int HideNow() { return g_classic.load() ? (g_picReady.load() && BarZoomed() ? 1 : 0) : g_hide.load(); }
 int MapNow() { return g_classic.load() ? (g_picReady.load() && MapZoomed() ? 1 : 0) : g_mapMode.load(); }
@@ -489,7 +496,8 @@ bool CopyOut(command_list* cl, resource src, const rect& r, int i) {
 }
 
 // The pieces to draw back into the picture (classic views), from the last Publish. Under g_lock.
-struct Picture { bool on[kShares] = {}; float box[kShares][4] = {}; ULONGLONG at = 0; };
+// round: [hud] map_rotate_flat's turn of the map's piece (vr/map_turn.h RoundOnScreen), ok false = drawn straight.
+struct Picture { bool on[kShares] = {}; float box[kShares][4] = {}; ULONGLONG at = 0; mapturn::Round round; };
 Picture g_pic;
 
 // r grown z times about (ax, ay), in uv of a w x h screen: l, t, r, b.
@@ -769,6 +777,23 @@ void Publish(command_list* cl, resource layer, uint32_t w, uint32_t h, int hide)
         const float dx = g_mapOffX.load(), dy = g_mapOffY.load();   // then moved, whole
         g_pic.box[kMap][0] += dx; g_pic.box[kMap][2] += dx;
         g_pic.box[kMap][1] += dy; g_pic.box[kMap][3] += dy;
+    }
+    g_pic.round = mapturn::Round{};
+    if (g_pic.on[kMap] && g_mapTurnFlat.load()) {   // [hud] map_rotate_flat: round about the hero, the camera's way up (north up until a way came)
+        const ULONGLONG at = g_flatAt.load(), now = GetTickCount64();
+        const bool known = at && now >= at && now - at <= 500;
+        const float bearing = known ? mapturn::Bearing(g_flatX.load(), g_flatY.load()) : 0.0f;
+        g_pic.round = mapturn::RoundOnScreen(mapturn::For(false, true, known, bearing), g_pic.box[kMap], (float)(mapBox.right - mapBox.left),
+                                             (float)(mapBox.bottom - mapBox.top));
+        static bool told = false;
+        if (g_pic.round.ok && !told) {
+            told = true;
+            char line[260];
+            snprintf(line, sizeof line, "hud: the corner map drawn back turned ([hud] map_rotate_flat): round about the hero, %.0f px across "
+                     "on the screen, from the map's %dx%d box, %s", 2.0f * g_pic.round.radius[1] * (float)h, mapBox.right - mapBox.left, mapBox.bottom - mapBox.top,
+                     known ? "the camera's way up" : "north up until our camera's way comes");
+            Log(line);
+        }
     }
     g_outNow[kBar].store(bar && !classic);
     g_outNow[kMap].store(map && !classic && g_mapShown.load());
@@ -1058,6 +1083,23 @@ bool PictureNow(int i, float box[4], uint64_t* srv) {
     const bool on = g_pic.on[i] && g_classic.load() && GetTickCount64() - g_pic.at < 250;
     for (int k = 0; k < 4; ++k) box[k] = g_pic.box[i][k];
     return on && *srv;
+}
+// [hud] map_rotate_flat: vrcam's tick says whether the corner map in the picture is to turn (MapRotateFlatTick), each of our views its way on
+// the ground (mapdir::OnGround).
+void SetMapRotateFlat(bool on) { g_mapTurnFlat.store(on); }
+void SetMapFlatHeading(float x, float y) {
+    if (!std::isfinite(x) || !std::isfinite(y)) return;
+    g_flatX.store(x); g_flatY.store(y); g_flatAt.store(GetTickCount64());
+}
+// For D2R_DepthFog.fx, with PictureNow(1): the map's piece drawn round and turned - circle = centre uv, radius uv (x, y), hero = the share's
+// uv of the hero, m = the share's uv per q (row-major 2 x 2). False: drawn straight, as the box says.
+bool PictureMapTurn(float circle[4], float hero[2], float m[4]) {
+    std::lock_guard<std::mutex> g(g_lock);
+    const mapturn::Round& r = g_pic.round;
+    circle[0] = r.centre[0]; circle[1] = r.centre[1]; circle[2] = r.radius[0]; circle[3] = r.radius[1];
+    hero[0] = r.map.hero[0]; hero[1] = r.map.hero[1];
+    for (int k = 0; k < 4; ++k) m[k] = r.map.m[k];
+    return r.ok && g_pic.on[kMap] && g_mapTurnFlat.load();
 }
 // The wrists' medallions from the game's own globes (vr/hud_globes.h): vrcam asks while the look is on and the effect runs; the effect gets the texture
 // (the life globe's square on its left half, the mana globe's on the right) and the disc's radius over half a square. False until a cut came, and a
