@@ -64,6 +64,29 @@ inline constexpr size_t kPoseHeader = 0x20;      // what of the struct is copied
 inline constexpr size_t kSelfPose = 0x20, kSelfPrevPose = 0x28;   // SkeletonInstance: this frame's world pose, the last frame's (motion vectors)
 inline constexpr size_t kAttachBone = 0x0, kAttachSkeleton = 0xC8;   // the bone attachment component (0xD8 bytes): the bone index, the SkeletonInstance
 inline constexpr size_t kTransformParent = 0xC0;                     // TransformComponent: the parent entity (0xFFFFF in the low 20 bits: none)
+
+// [multiplayer] pose_share_hero: the other players' rigs as PoseRemoteHero posed them, handed to their skinning as our own hero's is (PublishRemotePose). A rig is
+// known by its two world poses (this frame's, the last frame's - the game may swap them frame to frame); a slot holds its last two finished poses.
+struct RigSlot { uintptr_t cur = 0, prev = 0; uint64_t at = 0; };
+inline constexpr int kRemoteRigs = 8;
+inline constexpr uint64_t kRemoteFreshMs = 250;
+// The slot a rig's publish goes in: the one that knew either of its poses, else an empty or the oldest one.
+inline int SlotFor(const RigSlot* s, int n, uintptr_t cur, uintptr_t prev) {
+    for (int i = 0; i < n; ++i)
+        if (s[i].cur && (s[i].cur == cur || s[i].cur == prev || (prev && s[i].prev == cur))) return i;
+    int oldest = 0;
+    for (int i = 0; i < n; ++i) {
+        if (!s[i].cur) return i;
+        if (s[i].at < s[oldest].at) oldest = i;
+    }
+    return oldest;
+}
+// Which of a slot's poses a skinning of `pose` is handed: 0 the last finished (for this frame's pose), 1 the one before (the last frame's), -1 none (not this
+// rig's, or not fresh).
+inline int PoseOf(const RigSlot& s, uintptr_t pose, uint64_t now, uint64_t freshMs = kRemoteFreshMs) {
+    if (!pose || !s.cur || now - s.at > freshMs) return -1;
+    return pose == s.cur ? 0 : pose == s.prev ? 1 : -1;
+}
 inline constexpr int kMaxBones = 512;            // a hero rig has 150-250; more: not handled (the head is shrunk in the pose as before)
 
 // The pass a ModelDrawCollect call makes takes the head out of the eyes' skinning (every pass but the shadows'). kPassNone: not in such a call.
@@ -154,6 +177,12 @@ void WantForPose(bool on);
 // vr/body/pose_views.h AnyAllowed (skel::SetPoseView): false - the composite hands the game's own poses on, ours (the hero's) and the monsters' turned not
 void SetPoseView(bool allowed);
 void PublishOurPose(uintptr_t skeleton, uintptr_t pose, uintptr_t prevPose, const float* m, int n);
+// [multiplayer] pose_share_hero (0.193.0, Serg: the other player saw his hero "with the game's standard animations" - "on 185 it was fine"): another player's
+// rig as PoseRemoteHero (or PoseLegsOnly) finished it - the skinning met the game's own pose there, not ours written into it, as it did our own hero's
+// (PublishOurPose above). The composite hands that rig's skinning a copy of the pose holding these matrices while they are fresh (kRemoteFreshMs).
+// WantForOthers: the composite hook is put in for it too ([arms] head_shadow and [body] legs_rear off).
+void WantForOthers(bool on);
+void PublishRemotePose(uintptr_t pose, uintptr_t prevPose, const float* m, int n);
 // [weight] monster_ragdoll_pose: a struck monster drawn as its doll turns it - the skinning composite hands the game's skinning a copy of the monster's world
 // pose turned (skel::DollSkin, the callback: true when it turned the copy's matrices), the way the eyes get the hero's head shrunk. 0.188.6, Serg: "the
 // ragdoll moves but the animation doesn't" - the turns written into the pose at +0x20 after ComputeSelfWorldPose were published, and not what the game

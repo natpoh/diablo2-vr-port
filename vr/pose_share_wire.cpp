@@ -102,6 +102,8 @@ struct Client {
     ps::RttStats rtt;
     ps::RateWindow sends, pings;
     uint32_t burstGot = 0;   // the host's burst messages that came
+    uint32_t relaysGot = 0;  // relay messages from the host, all along (the ping's receipt: the host knows what arrives)
+    uint16_t pongsGot = 0;
 };
 Client g_cl;
 
@@ -114,6 +116,7 @@ struct RemoteSlot {
 };
 std::array<RemoteSlot, ps::kMaxPeers> g_remotes;
 
+int SeenSlot(uint64_t peer, bool add);   // (below)
 struct Host {
     bool is = false;   // a hostMessage came: we are the host
     ps::HostTable table;
@@ -123,8 +126,26 @@ struct Host {
     std::array<uint64_t, ps::kMaxPeers> burstQ{};     // new peers to burst to ([debug] pose_share_burst)
     std::array<uint64_t, ps::kMaxPeers> seen{};       // every peer ever heard of (each is resolved once)
     std::array<uint32_t, ps::kMaxPeers> burstGot{};   // the burst messages each peer's burst got through, by seen[] slot
+    std::array<ps::RelayPace, ps::kMaxPeers> pace{};  // the relays' pace to each peer by its receipts, by seen[] slot
+    // what D2RLoader answered our sends to each peer since the last 5 s line (relays and pongs), by seen[] slot: ok, RateLimited, Busy, other (the last other's code)
+    struct Sends { uint32_t ok = 0, limited = 0, busy = 0, other = 0; nw::Result lastOther = nw::Result::Success; };
+    std::array<Sends, ps::kMaxPeers> sends{};
+    // the pongs to send, from the UI job - not from inside D2RLoader's host message callback (0.193.3: the downstream stalled after the first second; a send
+    // made inside its own callback was always an open question)
+    struct Pong { uint64_t peer = 0; uint16_t seq = 0; uint32_t clientMs = 0; uint64_t at = 0; };
+    std::array<Pong, 16> pongQ{};
+    int nPong = 0;
 };
 Host g_host;
+void CountSend(uint64_t peer, nw::Result r) {   // (under g_lock)
+    const int slot = SeenSlot(peer, false);
+    if (slot < 0) return;
+    Host::Sends& s = g_host.sends[slot];
+    if (r == nw::Result::Success) ++s.ok;
+    else if (r == nw::Result::RateLimited) ++s.limited;
+    else if (r == nw::Result::Busy) ++s.busy;
+    else { ++s.other; s.lastOther = r; }
+}
 
 struct ThreadIds { std::atomic<DWORD> ui{0}, hostCb{0}, clientCb{0}, connCb{0}, tick{0}; };
 ThreadIds g_tid;
@@ -211,10 +232,34 @@ void __cdecl OnHost(const PluginContext* ctx, nw::ChannelHandle, nw::PeerHandle 
         uint16_t seq;
         uint32_t clientMs;
         if (!ps::ParsePing(data, size, &seq, &clientMs)) return;
-        uint8_t b[ps::kPongBytes];
-        const uint32_t n = ps::BuildPong(seq, clientMs, (uint32_t)now, b, sizeof b);
-        const nw::Result r = g_net->sendToClient(ctx, g_channel, peer, ps::kMsgPong, b, n);
-        if (r != nw::Result::Success && g_toldPong.Once(r)) Line("host: a pong to peer %llu - %s", (unsigned long long)peer, ResultName(r));
+        uint32_t relaysGot = 0;
+        uint16_t pongsGot = 0;
+        ps::RelayPace::Event ev = ps::RelayPace::kNone;
+        int hz = 0;
+        uint32_t lastGot = 0, lastSent = 0, had = 0, sent = 0, stalledAt = 0, stalls = 0;
+        {
+            std::lock_guard<std::mutex> lock(g_lock);
+            if (ps::ParsePingReceipt(data, size, &relaysGot, &pongsGot)) {   // what of ours it has had: the relays' pace to it
+                const int slot = SeenSlot(peer, true);
+                if (slot >= 0) {
+                    ps::RelayPace& pc = g_host.pace[slot];
+                    ev = pc.Receipt(relaysGot, now, g_hz.load());
+                    hz = pc.Rate(now, g_hz.load());
+                    lastGot = pc.lastGot; lastSent = pc.lastSent;
+                    had = pc.got; sent = pc.sent; stalledAt = pc.stalledAt; stalls = pc.stalls;
+                }
+            }
+            if (g_host.nPong < (int)g_host.pongQ.size()) g_host.pongQ[g_host.nPong++] = {peer, seq, clientMs, now};   // (sent from the UI job)
+        }
+        if (ev == ps::RelayPace::kFirst)
+            Line("host: peer %llu's first receipt (it had %u relays and %u pongs of ours): relays to it start at %d a second and go faster as it has them", (unsigned long long)peer,
+                 relaysGot, (unsigned)pongsGot, hz);
+        else if (ev == ps::RelayPace::kSlower || ev == ps::RelayPace::kFaster)
+            Line("host: relays to peer %llu now %d a second (it had %u of the last %u sent to it)", (unsigned long long)peer, hz, lastGot, lastSent);
+        else if (ev == ps::RelayPace::kStalled)
+            Line("host: peer %llu has had NOTHING more of ours for %.0f s (it had %u relays and %u pongs of %u relays sent; stall %u): relays to it paused %.0f s, then slow "
+                 "again", (unsigned long long)peer, ps::kStallMs / 1000.0, had, (unsigned)pongsGot, stalledAt, stalls, ps::kPauseMs / 1000.0);
+        (void)sent;
         return;
     }
     bool newPeer = false;
@@ -257,10 +302,12 @@ void __cdecl OnClient(const PluginContext*, nw::ChannelHandle, uint16_t id, cons
         if (!ps::ParsePong(data, size, &seq, &clientMs, &hostMs)) return;
         std::lock_guard<std::mutex> lock(g_lock);
         g_cl.rtt.Add(clientMs, (uint32_t)now);
+        ++g_cl.pongsGot;
         return;
     }
     if (id == ps::kMsgBurst) { std::lock_guard<std::mutex> lock(g_lock); ++g_cl.burstGot; return; }
     if (id != ps::kMsgRelay) return;
+    { std::lock_guard<std::mutex> lock(g_lock); ++g_cl.relaysGot; }
     ps::RelayEntry e[ps::kRelayMax];
     const int n = ps::ParseRelay(data, size, e, ps::kRelayMax);
     char lines[ps::kRelayMax][1200];
@@ -388,8 +435,12 @@ void __cdecl UiJob(const PluginContext* ctx, void* user) noexcept {
     uint32_t n = 0;
     bool ping = false, burst = false;
     uint16_t pingSeq = 0;
+    uint32_t relaysGot = 0;
+    uint16_t pongsGot = 0;
     {
         std::lock_guard<std::mutex> lock(g_lock);
+        relaysGot = g_cl.relaysGot;
+        pongsGot = g_cl.pongsGot;
         if (g_cl.state == nw::ConnectionState::Connected) {
             if (g_cl.ownFresh && g_cl.ownUnit) {
                 n = ps::BuildPoseMsg(g_cl.ownUnit, g_cl.own, b, sizeof b);
@@ -410,8 +461,8 @@ void __cdecl UiJob(const PluginContext* ctx, void* user) noexcept {
         if (r != nw::Result::Success && g_toldSend.Once(r)) Line("sendToHost (pose): %s", ResultName(r));
     }
     if (ping) {
-        uint8_t pb[ps::kPingBytes];
-        const nw::Result r = g_net->sendToHost(ctx, g_channel, ps::kMsgPing, pb, ps::BuildPing(pingSeq, (uint32_t)NowMs(), pb, sizeof pb));
+        uint8_t pb[ps::kPingBytes + ps::kReceiptBytes];
+        const nw::Result r = g_net->sendToHost(ctx, g_channel, ps::kMsgPing, pb, ps::BuildPingReceipt(pingSeq, (uint32_t)NowMs(), relaysGot, pongsGot, pb, sizeof pb));
         std::lock_guard<std::mutex> lock(g_lock);
         if (r == nw::Result::Success) ++g_cl.pings.ok;
         else if (r == nw::Result::RateLimited) ++g_cl.pings.limited;
@@ -433,10 +484,29 @@ void __cdecl UiJob(const PluginContext* ctx, void* user) noexcept {
             g_host.table.Forget(now, 5000);   // silent for 5 s (no pose, no ping): no longer relayed to or from
             for (const auto& s : g_host.table.p) {
                 if (!s.peer) continue;
+                const int slot = SeenSlot(s.peer, false);
+                if (slot >= 0 && !g_host.pace[slot].Due(now)) continue;   // (its pace: what its receipts say arrives)
                 nEntries[nd] = g_host.table.Build(s.peer, g_echo.load(), perDest[nd], ps::kMaxPeers);
                 dests[nd++] = s.peer;
             }
             g_host.table.Flush();
+        }
+    }
+    {   // the pongs queued by the host callback (their host time now: the round trip is still the transport's within a frame or two)
+        Host::Pong q[16];
+        int nq = 0;
+        {
+            std::lock_guard<std::mutex> lock(g_lock);
+            nq = g_host.nPong;
+            for (int i = 0; i < nq; ++i) q[i] = g_host.pongQ[i];
+            g_host.nPong = 0;
+        }
+        for (int i = 0; i < nq; ++i) {
+            uint8_t pb[ps::kPongBytes];
+            const uint32_t pn = ps::BuildPong(q[i].seq, q[i].clientMs, (uint32_t)now, pb, sizeof pb);
+            const nw::Result r = g_net->sendToClient(ctx, g_channel, q[i].peer, ps::kMsgPong, pb, pn);
+            { std::lock_guard<std::mutex> lock(g_lock); CountSend(q[i].peer, r); }
+            if (r != nw::Result::Success && g_toldPong.Once(r)) Line("host: a pong to peer %llu - %s", (unsigned long long)q[i].peer, ResultName(r));
         }
     }
     for (int d = 0; d < nd; ++d)
@@ -448,6 +518,8 @@ void __cdecl UiJob(const PluginContext* ctx, void* user) noexcept {
             const nw::Result res = g_net->sendToClient(ctx, g_channel, dests[d], ps::kMsgRelay, b, sz);
             {
                 std::lock_guard<std::mutex> lock(g_lock);
+                if (const int slot = SeenSlot(dests[d], false); slot >= 0 && res == nw::Result::Success) g_host.pace[slot].Sent(now, g_hz.load());
+                CountSend(dests[d], res);
                 if (res == nw::Result::Success) ++g_host.relays.ok;
                 else if (res == nw::Result::RateLimited) ++g_host.relays.limited;
                 else ++g_host.relays.other;
@@ -485,6 +557,7 @@ void Report() {
         if (g_cl.rtt.n) add("%.0f ms (least %.0f, average %.0f, %u pongs)", g_cl.rtt.last, g_cl.rtt.least, g_cl.rtt.avg, g_cl.rtt.n);
         else add("none yet");
         if (g_cl.burstGot) add("; the host's burst: %u came", g_cl.burstGot);
+        if (g_cl.relaysGot || g_cl.pongsGot) add("; from the host %u relays and %u pongs all along", g_cl.relaysGot, (unsigned)g_cl.pongsGot);
         int players = 0;
         for (auto& r : g_remotes) {
             if (!r.unit) continue;
@@ -499,6 +572,22 @@ void Report() {
                 g_host.relays.lastOk, g_host.relays.lastLimited, g_host.relays.lastOther, g_host.inOk, g_host.inOld, g_host.inWrongUnit, g_host.inFull, g_host.inBad);
             for (int i = 0; i < ps::kMaxPeers; ++i)
                 if (g_host.burstGot[i]) add("; peer %llu's burst: %u came", (unsigned long long)g_host.seen[i], g_host.burstGot[i]);
+            for (int i = 0; i < ps::kMaxPeers; ++i) {   // what D2RLoader answered our sends to each peer (relays and pongs), since the last line
+                Host::Sends& s = g_host.sends[i];
+                if (!g_host.seen[i] || !(s.ok + s.limited + s.busy + s.other)) continue;
+                add("; sends to peer %llu: ok %u, RateLimited %u, Busy %u, other %u", (unsigned long long)g_host.seen[i], s.ok, s.limited, s.busy, s.other);
+                if (s.other) add(" (%s)", ResultName(s.lastOther));
+                s = Host::Sends{};
+            }
+            for (int i = 0; i < ps::kMaxPeers; ++i) {   // what each peer says it had of the relays sent to it (its pings' receipts)
+                const ps::RelayPace& pc = g_host.pace[i];
+                if (!g_host.seen[i] || !pc.sent) continue;
+                const uint64_t t = NowMs();
+                if (pc.told) add("; to peer %llu: %u relays sent, it had %u (%.0f %%), %d a second%s%s", (unsigned long long)g_host.seen[i], pc.sent, pc.got,
+                                 100.0 * pc.got / pc.sent, pc.Rate(t, g_hz.load()), pc.stalls ? ", stalls " : "", pc.stalls ? std::to_string(pc.stalls).c_str() : "");
+                else add("; to peer %llu: %u relays sent, no receipt from it (an older build)", (unsigned long long)g_host.seen[i], pc.sent);
+                if (t < pc.pauseUntil) add(" (paused)");
+            }
         }
     }
     Line("%s", b);

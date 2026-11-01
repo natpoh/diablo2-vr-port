@@ -646,11 +646,16 @@ void TellOverlays(float upm, float gapCm) {
     if (!t.since) t.since = now;
     if (now - t.since < 10000) return;
     const float cm = upm > 0.0f ? 100.0f / upm : 0.0f;
-    char camLine[256] = "";
+    char camLine[512] = "";
+    char missLine[256] = "";
+    if (t.viewMissing[0] || t.viewMissing[1])
+        snprintf(missLine, sizeof missLine, " - an eye's own view not there in %u / %u presents (left / right; its axes missing %u / %u, its projection %u / %u): "
+                 "built from the other eye's moved across the gap", t.viewMissing[0], t.viewMissing[1], t.axesMissing[0], t.axesMissing[1],
+                 t.projMissing[0], t.projMissing[1]);
     if (t.cams)
         snprintf(camLine, sizeof camLine, "; their cameras off the pictures' by up to %.1f / %.1f cm and %.3f / %.3f rad (left / right; 0 = on the picture, "
-                 "the eyes' gap %.1f cm = the other eye's place, shown twice)%s", t.gapAt[0] * cm, t.gapAt[1] * cm, t.gapTurn[0], t.gapTurn[1], gapCm,
-                 t.camFallback ? " - an eye's view not there, the left one's taken" : "");
+                 "the eyes' gap %.1f cm = the other eye's place, shown twice)%s%s", t.gapAt[0] * cm, t.gapAt[1] * cm, t.gapTurn[0], t.gapTurn[1], gapCm,
+                 t.camFallback ? " - an eye's view not there, the left one's taken" : "", missLine);
     LogF("vrcam: eyes by turns - overlays, 10 s: %u presents; the effect left them out of the picture the warp moves %u, drew them into it %u%s%s; "
          "drawn on the eye drawn %u, on the eye made %u of %u made%s; nothing to draw (no HUD shift, toolbar, labels, orbs, lines or vignette on: "
          "both skipped) %u; the eye the effects took as drawn not the present's %u%s",

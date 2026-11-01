@@ -521,6 +521,81 @@ int main() {
         CHECK(Markers(p, feet, NAN, eye, k, a, b, 8) == 0);
     }
 
+    // the ping's receipt (0.193.1: a joiner got 8 relays and one pong while the host sent 26 a second): what the client has had rides on its ping, a ping
+    // without one is read as before; the host's pace to that peer halves while under half arrives, comes back step by step at nine tenths, never under the
+    // least, and a relay goes only when due at it
+    {
+        uint8_t m[kPingBytes + kReceiptBytes];
+        CHECK(BuildPingReceipt(9, 4242u, 123456u, 77, m, sizeof m) == kPingBytes + kReceiptBytes);
+        uint16_t seq = 0, pongs = 0;
+        uint32_t c = 0, relays = 0;
+        CHECK(ParsePing(m, sizeof m, &seq, &c) && seq == 9 && c == 4242u);   // (an older host reads the ping as ever)
+        CHECK(ParsePingReceipt(m, sizeof m, &relays, &pongs) && relays == 123456u && pongs == 77);
+        CHECK(!ParsePingReceipt(m, kPingBytes, &relays, &pongs));           // a ping without a receipt: none
+        CHECK(BuildPingReceipt(9, 1, 2, 3, m, kPingBytes) == 0);
+
+        // the host's pace to one peer (0.193.3): slow from the start, twice as fast for each window it has nine tenths of, half as fast under half (not under the
+        // least); a stall - receipts come, nothing more had - pauses it, then slow again; no receipt at all (an older build): the full rate after a moment
+        const int full = 30;
+        uint64_t now = 1000;
+        RelayPace p;
+        uint32_t had = 0;   // what the peer has had, all along
+        // `ms` of relays at the pace, `share` of them arriving, a receipt every second (its pings); returns the relays sent
+        auto run = [&](uint64_t ms, double share, RelayPace::Event* last = nullptr, int* stalls = nullptr) {
+            const uint64_t end = now + ms;
+            uint32_t sentHere = 0;
+            double owed = 0.0;
+            uint64_t nextPing = now + 1000;
+            for (; now <= end; now += 1) {
+                if (p.Due(now)) { p.Sent(now, full); ++sentHere; owed += share; }
+                if (now >= nextPing) {
+                    nextPing = now + 1000;
+                    had += (uint32_t)owed;
+                    owed -= (uint32_t)owed;
+                    const RelayPace::Event e = p.Receipt(had, now, full);
+                    if (last && e != RelayPace::kNone) *last = e;
+                    if (stalls && e == RelayPace::kStalled) ++*stalls;
+                }
+            }
+            return sentHere;
+        };
+        CHECK(p.Rate(now, full) == kPaceStartHz && p.Due(now));
+        RelayPace::Event ev = RelayPace::kNone;
+        const uint32_t first = run(1001, 1.0, &ev);
+        CHECK(ev == RelayPace::kFirst && first >= 4 && first <= 5);   // the first second at the start pace, then its first receipt
+        run(5000, 1.0);
+        CHECK(p.hz == 2 * kPaceStartHz);       // all of it had: twice as fast
+        run(5000, 1.0); run(5000, 1.0);
+        CHECK(p.hz == 0 && p.Rate(now, full) == full);   // 8, 16, then the full rate
+        const uint32_t atFull = run(5000, 1.0);
+        CHECK(atFull >= 145 && atFull <= 152);
+        run(5000, 0.3);
+        CHECK(p.hz == full / 2);               // under half had: half as fast
+        run(5000, 0.2); run(5000, 0.2); run(5000, 0.2); run(5000, 0.2);
+        CHECK(p.hz == kPaceMinHz);             // never under the least
+        // a stall: its receipts come, nothing more arrives (the 0.193.2 joiner) - paused, then slow again, paused again while it stays dead
+        int stalls = 0;
+        const uint32_t beforeStall = p.sent;
+        run(5000, 0.0, nullptr, &stalls);
+        CHECK(stalls == 1 && now < p.pauseUntil && !p.Due(now) && p.stalledAt > beforeStall);
+        const uint32_t inPause = run(p.pauseUntil - now - 1, 0.0);
+        CHECK(inPause == 0);                   // nothing sent while paused
+        run(30000, 0.0, nullptr, &stalls);
+        CHECK(stalls >= 2 && stalls <= 4);     // dead: a few relays, a pause, a few more - never a flood
+        const uint32_t dead = p.sent;
+        run(60000, 0.0);
+        CHECK(p.sent - dead <= 60);            // a minute of a dead pipe: a few dozen relays to it, not 1800
+        // it comes back: the receipts grow again, the pace with them
+        while (now < p.pauseUntil) ++now;
+        run(5000, 1.0); run(5000, 1.0); run(5000, 1.0); run(5000, 1.0);
+        CHECK(p.Rate(now, full) >= 16);
+        // no receipt ever (an older build): slow for kNoReceiptMs after its first relay, then the full rate
+        RelayPace q;
+        q.Sent(now, full);
+        CHECK(q.Rate(now + 10, full) == kPaceStartHz && !q.Due(now + 10) && q.Due(now + 251));
+        CHECK(q.Rate(now + kNoReceiptMs, full) == full);
+    }
+
     std::printf("pose_share_test: %d checks, %d failed\n", g_checks, g_failures);
     return g_failures ? 1 : 0;
 }

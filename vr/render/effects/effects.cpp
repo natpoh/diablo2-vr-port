@@ -2150,9 +2150,26 @@ template <class RT> void EffectsBegin(RT* rt, reshade::api::command_list* cl) {
             // gap, an orb on the wrist lies where the other eye sees it and shows twice (replay::TellOverlays; turn_math_test: overlay camera)
             const xr::TurnView tv = replay::OverlaysWanted() ? xr::TurnViewNow() : xr::TurnView{};
             if (tv.ok) ++replay::g_ovTell.cams;
+            SkyView built[2];
             for (int e = 0; e < 2; ++e) {
                 const bool ownView = sv[e].axes_ok && sv[e].proj_ok;
-                const SkyView& s = ownView ? sv[e] : sv[0];
+                const SkyView& other = sv[e ^ 1];
+                // an eye's own view not there: the other eye's moved across the gap, its projection mirrored (turnwarp::EyeFromOther) - the
+                // other's as it is put every overlay of this eye where the other eye sees it: shown twice (0.193.2, "the texts are doubled")
+                const bool fromOther = !ownView && other.axes_ok && other.proj_ok;
+                if (!ownView) {
+                    ++replay::g_ovTell.viewMissing[e];
+                    if (!sv[e].axes_ok) ++replay::g_ovTell.axesMissing[e];
+                    if (!sv[e].proj_ok) ++replay::g_ovTell.projMissing[e];
+                }
+                if (fromOther) {
+                    built[e] = other;
+                    const turnwarp::EyeView v = turnwarp::EyeFromOther({other.eyeRel[0], other.eyeRel[1], other.eyeRel[2]},
+                                                                       {other.axes[0], other.axes[1], other.axes[2]}, other.proj, g_eyeHalf.load(), e ^ 1);
+                    built[e].eyeRel[0] = v.at.x; built[e].eyeRel[1] = v.at.y; built[e].eyeRel[2] = v.at.z;
+                    for (int i = 0; i < 4; ++i) built[e].proj[i] = v.proj[i];
+                }
+                const SkyView& s = ownView ? sv[e] : fromOther ? built[e] : sv[0];
                 float off[3];
                 for (int i = 0; i < 3; ++i) off[i] = s.eyeRel[i] - g_eyeFromLook[i].load();
                 if (tv.ok) {
@@ -2162,7 +2179,7 @@ template <class RT> void EffectsBegin(RT* rt, reshade::api::command_list* cl) {
                                                                   {s.axes[6], s.axes[7], s.axes[8]});
                     replay::g_ovTell.gapAt[e] = std::max(replay::g_ovTell.gapAt[e], g.at);
                     replay::g_ovTell.gapTurn[e] = std::max(replay::g_ovTell.gapTurn[e], g.turn);
-                    if (!ownView) ++replay::g_ovTell.camFallback;
+                    if (!ownView && !fromOther) ++replay::g_ovTell.camFallback;
                 }
                 // eyes by turns: each eye's overlays (the wrist medallions, the bow's orbs, the lines) from the camera its picture shows
                 // (the warp's, now) - not that eye's last pass, a frame old (or the left eye's where its own view was missing): drawn so,

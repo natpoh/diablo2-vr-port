@@ -191,6 +191,28 @@ void TestHangsOnHead() {
     EXPECT(!HangsOnHead(false, true, hero, kHelm, hero, nullptr, kBones), "no flags: stays");
 }
 
+// [multiplayer] pose_share_hero: the other players' rigs handed to their skinning as posed (PublishRemotePose) - a rig is kept in its slot as the game swaps its two
+// world poses frame to frame, another rig gets another slot (an empty one, else the oldest), and a skinning of a pose is handed the last finished matrices for this
+// frame's pose, the ones before for the last frame's, nothing for a pose no rig of ours has, nothing stale.
+void TestRemoteRigs() {
+    RigSlot s[kRemoteRigs] = {};
+    const uintptr_t a0 = 0x1000, a1 = 0x2000, b0 = 0x3000, b1 = 0x4000;
+    int i = SlotFor(s, kRemoteRigs, a0, a1);
+    EXPECT(i == 0, "a first rig: the first slot (%d)", i);
+    s[i] = {a0, a1, 100};
+    EXPECT(SlotFor(s, kRemoteRigs, a1, a0) == 0, "the game swapped his two poses: the same slot");
+    EXPECT(SlotFor(s, kRemoteRigs, a0, a1) == 0, "the same poses again: the same slot");
+    i = SlotFor(s, kRemoteRigs, b0, b1);
+    EXPECT(i == 1, "another rig: an empty slot (%d)", i);
+    s[i] = {b0, b1, 120};
+    EXPECT(PoseOf(s[0], a0, 200) == 0 && PoseOf(s[0], a1, 200) == 1, "this frame's pose the last finished, the last frame's the one before");
+    EXPECT(PoseOf(s[0], b0, 200) == -1 && PoseOf(s[0], 0x9000, 200) == -1 && PoseOf(s[0], 0, 200) == -1, "not his pose: nothing");
+    EXPECT(PoseOf(s[0], a0, 100 + kRemoteFreshMs + 1) == -1, "stale (no pose of ours for him lately): the game's own");
+    for (int k = 2; k < kRemoteRigs; ++k) s[k] = {0x10000u + 0x100u * (uintptr_t)k, 0, 300u + (uint64_t)k};
+    i = SlotFor(s, kRemoteRigs, 0x7000, 0x7100);
+    EXPECT(i == 0, "all full: the oldest goes (%d)", i);
+}
+
 }  // namespace
 
 int main() {
@@ -199,6 +221,7 @@ int main() {
     TestDecide();
     TestPasses();
     TestHangsOnHead();
+    TestRemoteRigs();
     std::printf("head_shadow_test: %d checks, %d failed\n", g_checks, g_fails);
     return g_fails ? 1 : 0;
 }

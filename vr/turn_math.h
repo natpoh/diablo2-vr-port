@@ -255,6 +255,21 @@ inline OverlayDepthFrom OverlayDepthOf(bool apart, bool madeBound, int drawnEye,
 // The eye not drawn's camera for its overlays (vrcam VrViewInner: g_skyView of that eye): the eye drawn's moved across the eyes'
 // gap - `half` of it each side of the head, along the head's `right`; the left eye (0) is the one at -right.
 inline Vec OtherEyeAt(Vec drawnAt, Vec right, float half, int drawnEye) { return drawnAt + right * (drawnEye == 0 ? 2.0f * half : -2.0f * half); }
+// An eye whose own view is not there (its axes or its projection never set - the effect's SkyView): the other eye's moved across the eyes' gap,
+// its projection the other's with the off-axis term mirrored (the headsets' fovs mirror, each eye wider on its outer side) - not the other
+// eye's camera as it is: 2 x half off, every overlay of that eye (item labels laid back, plates, orbs) where the other eye sees it, shown
+// twice (Serg, 0.193.2 eyes by turns, 2026-11-01: "the texts are doubled"; the 10 s line: "off by 0.0 / 6.4 cm ... the left one's taken").
+// proj: x scale, y scale, x off-axis, y off-axis (the effect's SkyProj).
+struct EyeView { Vec at; float proj[4] = {}; };
+inline EyeView EyeFromOther(Vec otherAt, Vec otherRight, const float otherProj[4], float half, int otherEye) {
+    EyeView v;
+    v.at = OtherEyeAt(otherAt, otherRight, half, otherEye);
+    v.proj[0] = otherProj[0];
+    v.proj[1] = otherProj[1];
+    v.proj[2] = -otherProj[2];
+    v.proj[3] = otherProj[3];
+    return v;
+}
 
 // How far the camera an eye's overlays are drawn from (the effect's PhantomEye / CamRight / CamUp / CamBack of that eye) is off the
 // camera its picture shows (the eye drawn's, or the one the warp made the other for): `at` in world units, `turn` the largest of the

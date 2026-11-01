@@ -1,5 +1,20 @@
 # What's new in D2R VR
 
+## 0.194.0
+
+The co-op fix release, from the test builds 0.193.1 - 0.193.3.
+
+- **Fixed: in co-op the other players' heroes moved with the game's animation, not as their players move** (0.193.0 regression;
+  Serg: on 0.185 the same two PCs saw each other's hands). Their poses arrived but the skinning was handed a copy of the game's own pose
+  for them since 0.192.8 - their heads, arms on their controllers and weapons are drawn again. Tests: head_shadow_test, remote_pose_test.
+- **Fixed: the host's poses to a player stopped after the first second** (a slow link, ~630 ms: 52 of 4235 arrived). Every ping now
+  carries what the player has had; the host starts each player's relays slowly, speeds up as they arrive, pauses on a stall and
+  starts again, sends its pongs outside D2RLoader's callback, and logs per player what went and what came ("to peer N: ... it had ...").
+  On a very slow link the moves still arrive at a few a second. Test: pose_share_test.
+- **Fixed: eyes by turns drew our labels and overlays twice in one eye** when an eye's view was missing a moment: that eye's overlay
+  camera is now built from the other eye moved across the gap (it took the left eye's as it was, 6.3 cm off), and the log says what was
+  missing.
+
 ## 0.193.0
 
 The release after 0.192.0, from the test builds 0.192.1 - 0.192.43. It ships our old sky and our old fog (`[sky] game_sky=0`, `[fog]

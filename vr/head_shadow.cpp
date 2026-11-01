@@ -294,6 +294,41 @@ void CountSkin(uintptr_t skeleton, uintptr_t pose, int pass) {
     }
 }
 
+// [multiplayer] pose_share_hero: the other players' rigs as PoseRemoteHero finished them (PublishRemotePose) - handed to their skinning as our own hero's is
+std::atomic<bool> g_othersWanted{false};
+struct OtherPose { RigSlot slot; int n = 0; float m[2][kMaxBones][16]; };   // [0] the last finished (this frame's pose), [1] the one before
+SRWLOCK g_othersLock = SRWLOCK_INIT;
+std::unique_ptr<OtherPose[]> g_others;   // kRemoteRigs, made at the first publish (under g_othersLock)
+std::atomic<ULONGLONG> g_othersAt{0};    // the last publish (none fresh: the composite does not look)
+std::atomic<unsigned> g_othersSubs{0}, g_othersPublished{0};
+thread_local std::unique_ptr<Copy> t_other;
+
+// A copy of `pose` holding the matrices its rig was last posed with by us (0: not another player's rig we posed lately - the game's own is handed on).
+uintptr_t OthersPose(uintptr_t pose) {
+    const ULONGLONG now = GetTickCount64();
+    if (now - g_othersAt.load(std::memory_order_relaxed) > kRemoteFreshMs) return 0;
+    if (!t_other) t_other.reset(new (std::nothrow) Copy());
+    if (!t_other) return 0;
+    int n = 0;
+    bool have = false;
+    AcquireSRWLockShared(&g_othersLock);
+    for (int i = 0; g_others && i < kRemoteRigs && !have; ++i) {
+        const OtherPose& o = g_others[i];
+        const int which = PoseOf(o.slot, pose, now);
+        if (which < 0) continue;
+        int got = 0;
+        if (ReadPose(t_other.get(), pose, &got) <= 0 || got != o.n) break;
+        std::memcpy(t_other->m, o.m[which], sizeof(float) * 16 * (size_t)got);
+        n = got;
+        have = true;
+    }
+    ReleaseSRWLockShared(&g_othersLock);
+    if (!have || n <= 0) return 0;
+    const uintptr_t ours = reinterpret_cast<uintptr_t>(t_other->m);
+    std::memcpy(t_other->header + kPoseMatrices, &ours, sizeof ours);
+    return reinterpret_cast<uintptr_t>(t_other->header);
+}
+
 std::atomic<void (*)(uint32_t, bool)> g_beforeDraw{nullptr};   // [weight] knock_down (SetBeforeDraw)
 
 // [weight] monster_ragdoll_pose: the turned monsters' poses (DollSkinFn), this thread's copy - made afresh for each skinning (a frame is a few of them)
@@ -354,6 +389,12 @@ __declspec(noinline) uintptr_t HookComposite(uintptr_t skeleton, uintptr_t pose,
         if (const uintptr_t ours = OursPose(skeleton, pose)) {
             g_oursSubs[pass == kPassNone ? 2 : EyesPass(pass) ? 0 : 1].fetch_add(1, std::memory_order_relaxed);
             return g_origComposite(skeleton, ours, indices, count, out);
+        }
+    }
+    if (g_othersWanted.load(std::memory_order_relaxed) && pose) {   // [multiplayer] pose_share_hero: another player's hero drawn as his pose posed him
+        if (const uintptr_t theirs = OthersPose(pose)) {
+            g_othersSubs.fetch_add(1, std::memory_order_relaxed);
+            return g_origComposite(skeleton, theirs, indices, count, out);
         }
     }
     return g_origComposite(skeleton, pose, indices, count, out);
@@ -465,6 +506,34 @@ bool AttachmentOf(uint32_t entity, uintptr_t component, uintptr_t* skeletonInsta
 void SetAttachWriter(void (*fn)(uint32_t entity, uintptr_t component, uintptr_t out)) { g_attachWriter.store(fn); }
 void SetBeforeDraw(void (*fn)(uint32_t entity, bool eyes)) { g_beforeDraw.store(fn); }
 
+void WantForOthers(bool on) {
+    if (g_othersWanted.exchange(on) != on && on)
+        Log("other heroes' pose: the game's skinning composite is asked for - another player's hero is drawn from a copy of his pose holding the bones as his pose posed "
+            "them ([multiplayer] pose_share_hero)");
+}
+void PublishRemotePose(uintptr_t pose, uintptr_t prevPose, const float* m, int n) {
+    if (!g_othersWanted.load(std::memory_order_relaxed) || !g_poseView.load(std::memory_order_relaxed) || !m || n <= 0 || n > kMaxBones || pose < 0x10000) return;
+    const ULONGLONG now = GetTickCount64();
+    AcquireSRWLockExclusive(&g_othersLock);
+    if (!g_others) g_others.reset(new (std::nothrow) OtherPose[kRemoteRigs]);
+    if (g_others) {
+        RigSlot slots[kRemoteRigs];
+        for (int i = 0; i < kRemoteRigs; ++i) slots[i] = g_others[i].slot;
+        OtherPose& o = g_others[SlotFor(slots, kRemoteRigs, pose, prevPose >= 0x10000 ? prevPose : 0)];
+        const bool same = o.slot.cur && o.n == n;
+        if (same) std::memcpy(o.m[1], o.m[0], sizeof(float) * 16 * (size_t)n);   // the one before: for the last frame's pose (its motion vectors)
+        std::memcpy(o.m[0], m, sizeof(float) * 16 * (size_t)n);
+        if (!same) std::memcpy(o.m[1], m, sizeof(float) * 16 * (size_t)n);
+        o.n = n;
+        o.slot.cur = pose;
+        o.slot.prev = prevPose >= 0x10000 ? prevPose : 0;
+        o.slot.at = now;
+    }
+    ReleaseSRWLockExclusive(&g_othersLock);
+    g_othersAt.store(now, std::memory_order_relaxed);
+    g_othersPublished.fetch_add(1, std::memory_order_relaxed);
+}
+
 void WantForDoll(bool on) {
     if (g_dollWanted.exchange(on) != on && on) Log("monster ragdoll pose: the game's skinning composite is asked for - a struck monster is drawn from a turned copy of its pose");
 }
@@ -486,6 +555,17 @@ void Install() {
     static int whyTold = -1, whySeen = -1;
     const ULONGLONG now = GetTickCount64();
     if (g_marked.Live() != 0) g_marked.Prune(now);   // (what no longer hangs on the head: out of the set, so the draw hook's gate closes again)
+    if (g_othersWanted.load()) {   // [multiplayer] pose_share_hero: the other players' heroes handed their posed pose, every 5 s while any is posed
+        static ULONGLONG othersAt = 0;
+        if (now - othersAt >= 5000) {
+            othersAt = now;
+            const unsigned published = g_othersPublished.exchange(0), subs = g_othersSubs.exchange(0);
+            if (published)
+                LogF("other heroes' pose: the last 5 s - %u poses of other players' heroes finished, %u skinnings handed them%s", published, subs,
+                     g_state.load() == 1 ? (subs ? "" : " - NONE: their skinning met another pose than their rig's (or none was drawn)")
+                                         : " - the composite hook is not in: they are drawn as the game posed them");
+        }
+    }
     if (g_dollWanted.load() && g_state.load() == 1) {   // [weight] monster_ragdoll_pose: what the composite handed turned, every 5 s while it does
         static ULONGLONG dollAt = 0;
         if (now - dollAt >= 5000) {
@@ -527,7 +607,7 @@ void Install() {
         }
         potionhide::Install();
     }
-    if (!(g_wanted.load() || g_dollWanted.load() || g_oursWanted.load()) || g_state.load() != 0 || !g_ctx || now < retryAt) return;
+    if (!(g_wanted.load() || g_dollWanted.load() || g_oursWanted.load() || g_othersWanted.load()) || g_state.load() != 0 || !g_ctx || now < retryAt) return;
     retryAt = now + (tries < 30 ? 2000 : 30000);
     if (!d2rsig::Addr(RVA_DRAW_COLLECT) || !d2rsig::Addr(RVA_COMPOSITE) || !d2rsig::Addr(RVA_ATTACHMENT_OF) || !d2rsig::Addr(RVA_ECS_REGISTRY)) {
         if (++tries == 30) Log("head shadow: the renderer's functions are not found (another build?) - the head is shrunk in the pose as before");

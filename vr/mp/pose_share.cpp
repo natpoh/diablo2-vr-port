@@ -52,6 +52,8 @@ void PoseShareConfigure() {
         if (g_poseHero.exchange(hero) != hero)
             LogF("vrcam: pose share - the other players' heroes %s ([multiplayer] pose_share_hero: their heads, their arms on their controllers, their weapons in hand)",
                  hero ? "posed from their poses" : "as the game animates them");
+        // ... drawn as posed: their skinning handed a copy of the pose holding our bones (it met the game's own pose in the rig, as our hero's did - 0.193.0)
+        headshadow::WantForOthers(IniB(L"multiplayer", L"pose_share", true) && (hero || g_poseLegs.load()));
     }
     {
         const bool bodies = IniB(L"multiplayer", L"pose_share_bodies", true);

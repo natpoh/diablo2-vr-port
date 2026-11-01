@@ -8188,6 +8188,15 @@ std::atomic<ULONGLONG> g_heroYawAt{0};
 // The rig of a player who is not us: if a target's hero stands where it does, its upper body turned to the look (PoseBody's turn about spine_01), each arm
 // to its controller (Elbow / AimChain, the wrist as the controller holds it: PlanWrist / ApplyWrist - the weapon in hand comes along, it hangs under
 // the wrist), the head as the headset is held. `base`: our own Input, for the wrist's settings only.
+// [multiplayer] pose_share_hero (0.193.0, Serg: the joiner saw his hero "with the game's standard animations" - "on 185 it was fine"): what we write into another
+// player's rig's world pose is not what his skinning draws - it meets the game's own pose there, as our own hero's did until 0.192.8 (ff6e2d6d). So the finished
+// pose goes to the skinning composite too (headshadow::PublishRemotePose), which hands his skinning a copy holding it, as it does our hero's.
+void PublishRemoteRig(uintptr_t self, const std::vector<Mat>& newW) {
+    uintptr_t cur = 0, prev = 0;
+    if (!newW.empty() && Get(self + headshadow::kSelfPose, &cur) && Get(self + headshadow::kSelfPrevPose, &prev))
+        headshadow::PublishRemotePose(cur, prev, newW[0].m, (int)newW.size());
+}
+
 bool PoseRemoteHero(uintptr_t self, const Hero& h, const Input& base) {
     remotepose::Target t[remotepose::kMaxHeroes];
     int nt = 0;
@@ -8414,6 +8423,7 @@ bool PoseRemoteHero(uintptr_t self, const Hero& h, const Input& base) {
         for (int j = 0; j < 16; ++j)
             if (!std::isfinite(newW[i].m[j])) { newW[i] = oldW[i]; break; }
     SafeWrite((void*)mats, newW.data(), sizeof(Mat) * n);
+    PublishRemoteRig(self, newW);   // (what the skinning draws: the copy, not the pose written into)
     g_remotePosed.fetch_add(1, std::memory_order_relaxed);
     if (placed) {   // [multiplayer] pose_share_held: his hands as drawn here, in the world - what his hands have is hung on them (RemoteHandWorld)
         RemoteHands rh;
@@ -8512,6 +8522,7 @@ void PoseLegsOnly(uintptr_t self, const Hero& h) {
         for (int j = 0; j < 16; ++j)
             if (!std::isfinite(newW[i].m[j])) { newW[i] = oldW[i]; break; }
     SafeWrite((void*)mats, newW.data(), sizeof(Mat) * n);
+    PublishRemoteRig(self, newW);
     g_otherLegsNoPose.fetch_add(1, std::memory_order_relaxed);
 }
 

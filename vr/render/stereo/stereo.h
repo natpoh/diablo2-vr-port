@@ -23,6 +23,7 @@ enum { kWaitPrev, kWaitRestore, kHold, kWaitLeft, kPatch, kSubmit, kPresentR, kC
 struct OverlayTell {
     uint32_t presents = 0, apart = 0, inPicture = 0, drawn = 0, made = 0, madeDrawn = 0, madeSkipped = 0, empty = 0, eyeOff = 0, cams = 0, camFallback = 0;
     float gapAt[2] = {}, gapTurn[2] = {};   // the largest miss of each eye's overlay camera this window: world units, about radians
+    uint32_t viewMissing[2] = {}, axesMissing[2] = {}, projMissing[2] = {};   // presents an eye's own view was not there (built from the other's), and what lacked
     const char* why = "";                   // why not apart, the last time
     ULONGLONG since = 0;
 };

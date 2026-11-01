@@ -490,6 +490,88 @@ inline bool ParsePing(const void* data, uint32_t size, uint16_t* seq, uint32_t* 
     *clientMs = Get32(b + 4);
     return true;
 }
+// The ping's receipt (0.193.1: a joiner over the internet got the host's first 8 relays and one pong, then none, while the host's sendToClient said Success
+// 26 times a second - D2RLoader "limits traffic from each plugin/peer pair" and drops past it without a word): every ping also says how many relays and pongs
+// the client has had from the host, so the host knows what arrives (RelayPace) and the log says it. 6 bytes after the ping's 8; a ping without them is as before.
+constexpr uint32_t kReceiptBytes = 6;
+inline uint32_t BuildPingReceipt(uint16_t seq, uint32_t clientMs, uint32_t relaysGot, uint16_t pongsGot, uint8_t* out, uint32_t cap) {
+    if (cap < kPingBytes + kReceiptBytes || !BuildPing(seq, clientMs, out, cap)) return 0;
+    Put32(out + kPingBytes, relaysGot);
+    Put16(out + kPingBytes + 4, pongsGot);
+    return kPingBytes + kReceiptBytes;
+}
+inline bool ParsePingReceipt(const void* data, uint32_t size, uint32_t* relaysGot, uint16_t* pongsGot) {
+    const uint8_t* b = static_cast<const uint8_t*>(data);
+    if (!b || size < kPingBytes + kReceiptBytes || b[0] != kVersion) return false;
+    *relaysGot = Get32(b + kPingBytes);
+    *pongsGot = Get16(b + kPingBytes + 4);
+    return true;
+}
+
+// The host's pace of relays to ONE peer, by its receipts (0.193.3: on 0.193.2 the receipts showed a joiner over the internet had the host's first 52 relays and
+// 3 pongs in its first second or two, then NOTHING for minutes - at any pace, down to 4 a second - while what it sent came through). So a peer starts slow
+// (kPaceStartHz) and is sped up only as its receipts say what was sent arrives: every kPaceWindowMs, nine tenths or more of the window's relays had - twice the
+// pace (to the full rate); under half - half (not under kPaceMinHz). A STALL - its receipts come (it is there) but say nothing more arrived for kStallMs while
+// relays went to it - pauses the relays to it for kPauseMs (whatever is queued on the way may drain), then probes it at the least pace. A peer that sends no receipt
+// within kNoReceiptMs of its first relay (an older build) gets the full rate, as before. Due: whether a relay may go to it now.
+constexpr uint64_t kPaceWindowMs = 5000, kStallMs = 4000, kPauseMs = 8000, kNoReceiptMs = 3000;
+constexpr int kPaceMinHz = 2, kPaceStartHz = 4;
+struct RelayPace {
+    enum Event { kNone, kSlower, kFaster, kStalled, kFirst };
+    bool told = false;               // a receipt came
+    int hz = kPaceStartHz;           // the pace (0: the full rate)
+    uint32_t sent = 0;               // relays sent to it (all along)
+    uint32_t got = 0;                // its last receipt (all along)
+    uint32_t sentAtLook = 0, gotAtLook = 0;
+    uint64_t firstAt = 0, lookAt = 0, nextAt = 0;
+    uint64_t growAt = 0;             // when its receipt last grew (or the pace started again)
+    uint32_t sentAtGrow = 0;         // relays sent by then
+    uint64_t pauseUntil = 0;
+    uint32_t stalls = 0, stalledAt = 0;   // how many stalls; relays sent when the last began (what had arrived up to then: got)
+    uint32_t lastSent = 0, lastGot = 0;   // the last window's, for the log
+    int Rate(uint64_t now, int maxHz) const {
+        if (!told) return firstAt && now - firstAt >= kNoReceiptMs ? maxHz : kPaceStartHz;   // no receipt yet: slow, then (an older build) the full rate
+        return hz > 0 ? std::min(hz, maxHz) : maxHz;
+    }
+    void Sent(uint64_t now, int maxHz) {
+        if (!firstAt) firstAt = now;
+        ++sent;
+        nextAt = now + 1000 / (uint64_t)std::max(1, Rate(now, maxHz));
+    }
+    bool Due(uint64_t now) const { return now >= nextAt && now >= pauseUntil; }
+    Event Receipt(uint32_t relaysGot, uint64_t now, int maxHz) {
+        if (!told) {
+            told = true;
+            got = gotAtLook = relaysGot;
+            sentAtLook = sentAtGrow = sent;
+            lookAt = growAt = now;
+            hz = kPaceStartHz;
+            return kFirst;
+        }
+        if (relaysGot != got) { growAt = now; sentAtGrow = sent; }
+        got = relaysGot;
+        if (now >= pauseUntil && now - growAt >= kStallMs && sent - sentAtGrow >= 4) {   // it is there, and nothing of ours arrives
+            ++stalls;
+            stalledAt = sent;
+            pauseUntil = now + kPauseMs;
+            hz = kPaceMinHz;   // (probed again at the least pace)
+            growAt = pauseUntil;          // (judged again from when the pause ends)
+            sentAtGrow = sent;
+            sentAtLook = sent; gotAtLook = got; lookAt = pauseUntil;
+            return kStalled;
+        }
+        if (now < lookAt || now - lookAt < kPaceWindowMs) return kNone;
+        const uint32_t s = sent - sentAtLook, g = got - gotAtLook;
+        lastSent = s; lastGot = g;
+        sentAtLook = sent; gotAtLook = got; lookAt = now;
+        if (s < 8) return kNone;   // (too few to tell)
+        const int cur = Rate(now, maxHz);
+        if (g * 2 < s) { hz = std::max(kPaceMinHz, cur / 2); return kSlower; }
+        if (g * 10 >= s * 9 && hz > 0) { hz = hz * 2 >= maxHz ? 0 : hz * 2; return kFaster; }
+        return kNone;
+    }
+};
+
 inline uint32_t BuildPong(uint16_t seq, uint32_t clientMs, uint32_t hostMs, uint8_t* out, uint32_t cap) {
     if (cap < kPongBytes || !BuildPing(seq, clientMs, out, cap)) return 0;
     Put32(out + 8, hostMs);

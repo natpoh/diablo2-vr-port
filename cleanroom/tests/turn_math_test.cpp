@@ -241,6 +241,18 @@ void OverlayCameraCases() {
         Check(See(unmoved, kNear, wrist, &u1, &v1, &d1) && std::fabs(u0 - u1) > 0.05f,
               "overlay camera: from the eye drawn's camera it lands a tenth of the picture away - shown twice");
     }
+    // an eye whose own view is missing: built from the other's (EyeFromOther) it is on its picture; the other's camera as it is, off by the gap
+    for (int have = 0; have < 2; ++have) {
+        const int missing = have ^ 1;
+        const float proj[4] = {1.1f, 1.2f, have == 0 ? 0.08f : -0.08f, 0.01f};   // (the headset's fov: the eye's own off-axis, mirrored for the other)
+        const EyeView v = EyeFromOther(at[have], right, proj, half, have);
+        const Camera picture{at[missing], head.turn, t, true};
+        Check(GapOf(picture, v.at, right, up, back).at < 1e-3f, "missing eye view: built from the other eye's, on its own picture");
+        Check(Near(GapOf(picture, at[have], right, up, back).at, 2.0f * half, 1e-3f),
+              "missing eye view: the other eye's camera as it is - off by the gap, shown twice (0.193.2)");
+        Check(Near(v.proj[0], proj[0]) && Near(v.proj[1], proj[1]) && Near(v.proj[2], -proj[2]) && Near(v.proj[3], proj[3]),
+              "missing eye view: the projection's off-axis term mirrored");
+    }
     const CameraGap turned = GapOf(head, head.at, Rotate(Yaw(0.1f), right), Rotate(Yaw(0.1f), up), Rotate(Yaw(0.1f), back));
     Check(turned.at < 1e-4f && Near(turned.turn, 2.0f * std::sin(0.05f), 1e-3f), "overlay camera: a turned camera's miss, as its angle");
 }
