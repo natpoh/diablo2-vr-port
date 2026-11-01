@@ -234,6 +234,15 @@ void TestNearest() {
 	EXPECT(dp::NearestPose(near, kBones, cands, 3) == 1, "a near one found");
 	const float (*twins[2])[16] = {a, a};
 	EXPECT(dp::NearestPose(a, kBones, twins, 2) == -1, "two monsters in the same pose: no answer");
+	// [weight] death_ragdoll, 0.196.1 (Serg: a corpse twitching toward the game's place): a candidate's this frame's and last frame's pose are one candidate
+	// (group 2) - a corpse lying still has both equal, and was refused as two monsters alike (drawn as the game has it in those frames)
+	EXPECT(dp::NearestPose(a, kBones, twins, 2, nullptr, 2) == 0, "one still corpse's two equal frames: it, not a tie");
+	const float (*two[4])[16] = {b, b, a, a};   // two candidates, each still
+	EXPECT(dp::NearestPose(a, kBones, two, 4, nullptr, 2) == 2, "two candidates, each with two frames: the right one's");
+	const float (*alike[4])[16] = {a, a, a, a};
+	EXPECT(dp::NearestPose(a, kBones, alike, 4, nullptr, 2) == -1, "two corpses lying alike: still no answer");
+	const float (*half[4])[16] = {nullptr, a, b, nullptr};
+	EXPECT(dp::NearestPose(a, kBones, half, 4, nullptr, 2) == 1, "a frame not read: the other frame of the candidate");
 	float far[kBones][16];
 	Mats(far);
 	for (int i = 0; i < kBones; ++i) far[i][14] += 2.0f;

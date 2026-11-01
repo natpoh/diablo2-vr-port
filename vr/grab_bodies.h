@@ -130,6 +130,19 @@ inline int FindHeld(const monsterbodies::Snapshot& s, uint32_t id, int bone) {
     return -1;
 }
 
+// [weight] grab_wrap: where the palm is laid on what it holds, never farther from the hand than `reach` (the hand's own length, wrist to the middle knuckle
+// - the hero's bones): a held part drawn farther (a humanoid hanging from the hand swings and lags under its weight) is not reached for. The hand was moved
+// all the way onto it and [arms] full_reach turned the shoulder and lengthened the arm after it - 0.196.1, Serg's video: the upper arm and its shoulder pad
+// swept through the eye while he held a fallen up ("full reach: the left hand ... at most 488 % of the arm's length past it"). True when it was held short.
+inline bool LayWithin(const float palm[3], float to[3], float reach) {
+    if (!(reach > 0.0f) || !std::isfinite(reach)) return false;
+    const float d[3] = {to[0] - palm[0], to[1] - palm[1], to[2] - palm[2]};
+    const float l = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+    if (!(l > reach) || !std::isfinite(l)) return false;
+    for (int k = 0; k < 3; ++k) to[k] = palm[k] + d[k] * (reach / l);
+    return true;
+}
+
 // [weight] grab_wrap without the grip library: the hand laid on a capsule by our own frame. palm: the palm's middle; fingers: the hand's axis toward the fingers (unit);
 // the capsule a..b, radius r; depth: the palm's middle to its surface (the hook: a fifth of the knuckles' span). Out: where the palm's middle goes - a palm's depth off the
 // surface, over the point of the axis nearest the palm - and the hand's new frame as rows (x toward the fingers, as near the old as the palm allows; y = z x x; z out of the

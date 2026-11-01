@@ -223,56 +223,71 @@ int main() {
 		EXPECT(!t.Has(1) && t.Has(dr::Told::kMax + 1), "full: the oldest makes room");
 	}
 	{   // the same skeleton
-		const float root[3] = {100.0f, 0.0f, 200.0f}, near[3] = {101.0f, 0.0f, 200.0f}, far[3] = {103.0f, 0.0f, 200.0f};
-		const float upm = 4.0f;   // half a metre: 2 units
+		const float root[3] = {100.0f, 0.0f, 200.0f}, near[3] = {101.0f, 0.0f, 200.0f}, cell[3] = {105.0f, 0.0f, 202.0f}, far[3] = {110.0f, 0.0f, 200.0f};
+		const float upm = 4.0f;   // two metres: 8 units
 		EXPECT(dr::SameSkeleton(0x1000, root, 60, 0x1000, near, 60, upm), "the instance, its bones, a unit from where it stood");
-		EXPECT(!dr::SameSkeleton(0x1000, root, 60, 0x1000, far, 60, upm), "the instance standing elsewhere: another unit's now");
+		EXPECT(dr::SameSkeleton(0x1000, root, 60, 0x1000, cell, 60, upm),
+		       "the game eased its model 1.35 m to its cell: still its skeleton (0.196.1: at 0.5 m the corpse was lost there, drawn as the game's)");
+		EXPECT(!dr::SameSkeleton(0x1000, root, 60, 0x1000, far, 60, upm), "the instance standing 2.5 m elsewhere: another unit's now");
 		EXPECT(!dr::SameSkeleton(0x1000, root, 60, 0x2000, root, 60, upm), "another instance");
 		EXPECT(!dr::SameSkeleton(0x1000, root, 60, 0x1000, root, 61, upm), "another bone count");
 		EXPECT(!dr::SameSkeleton(0, root, 60, 0, root, 60, upm), "no instance");
 	}
 	{   // 0.195.3, Serg: a zombie's torso lay on the ground, an arm and a hand floated where they had stood - parts hung on its bones, which the game stops
-		// making once its death animation is over. Each one on a dead body is kept with the game's matrix and its bone, put on the bone as drawn while the
-		// body is ours, given the game's matrix back when the body is the game's again.
-		EXPECT(dr::HangNext(true, true, false) == dr::HangDo::Carry, "dead, drawn: carried with its bone");
-		EXPECT(dr::HangNext(true, true, true) == dr::HangDo::Carry, "dead, drawn, ours in it already: carried still (the fall goes on)");
-		EXPECT(dr::HangNext(true, false, true) == dr::HangDo::PutBack, "dead but no pose this frame (out of reach): the game's matrix back");
-		EXPECT(dr::HangNext(false, false, true) == dr::HangDo::PutBack, "the body the game's again: the game's matrix back");
-		EXPECT(dr::HangNext(false, true, false) == dr::HangDo::Nothing && dr::HangNext(true, false, false) == dr::HangDo::Nothing, "the game's in it: nothing to do");
-		dr::Hangs h;
+		// making once its death animation is over. 0.196.1: a zombie killed while held - its pieces still in the air: the part was forgotten the first tick
+		// its corpse was not drawn, and the storage refused its write. Kept while the body is a dead one we have (drawn or not), written through its own
+		// component while that still holds it, a part on a part goes with it.
+		const auto act = [](bool known, bool poseNow, bool ours) { return dr::HangNext(known, poseNow, ours).act; };
+		EXPECT(act(true, true, false) == dr::HangDo::Carry && act(true, true, true) == dr::HangDo::Carry, "a dead body drawn: carried with it");
+		EXPECT(act(true, false, true) == dr::HangDo::PutBack && !dr::HangNext(true, false, true).drop,
+		       "a dead body not drawn this moment (out of reach): the game's matrix back - and KEPT (0.196.1: it was forgotten here)");
+		EXPECT(act(true, false, false) == dr::HangDo::Nothing && !dr::HangNext(true, false, false).drop, "not drawn, the game's in it: nothing, kept");
+		EXPECT(act(false, false, true) == dr::HangDo::PutBack && dr::HangNext(false, false, true).drop, "the body gone: the game's matrix back, forgotten");
+		EXPECT(act(false, true, false) == dr::HangDo::Nothing && dr::HangNext(false, true, false).drop, "not a dead body of ours: nothing, forgotten");
+
+		const float I[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
 		const float game[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 5, 6, 7, 1}, bone[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1, 0, 1};
-		h.Note(100, 0x5000, 40, game, bone);
-		EXPECT(h.Count() == 1 && h.At(0) && h.At(0)->entity == 100 && h.At(0)->bone == 40 && h.At(0)->game[12] == 5.0f && !h.At(0)->ours, "a part noted as the game made it");
-		h.At(0)->ours = true;
+		const float local[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0.1f, 0.2f, 0.3f, 1};
+		dr::Hangs h;
+		dr::Hang* a = h.Note(0x300064, 0x5000, 40, 0, game, bone, local, 0x00000999u, 0xABC000);
+		EXPECT(a && h.Count() == 1 && a->entity == 0x300064 && a->bone == 40 && a->onEntity == 0 && a->game[12] == 5.0f && !a->ours && a->component == 0xABC000,
+		       "a part on a bone noted as the game made it, with its component");
+		a->ours = true;
 		const float game2[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 8, 6, 7, 1};
-		h.Note(100, 0x5000, 40, game2, bone);
-		EXPECT(h.Count() == 1 && h.At(0)->game[12] == 8.0f && !h.At(0)->ours, "the game made it again: its matrix replaces ours, nothing owed");
-		h.Note(0, 0x5000, 40, game, bone);
-		h.Note(101, 0, 40, game, bone);
-		h.Note(102, 0x5000, -1, game, bone);
-		EXPECT(h.Count() == 1, "no entity, no body, no bone: not noted");
-		for (uint32_t e = 200; e < 200 + dr::Hangs::kMax; ++e) {
-			h.Note(e, 0x6000, 3, game, bone);
-			for (int i = 0; i < dr::Hangs::kMax; ++i)
-				if (dr::Hang* x = h.At(i); x && x->entity == e) x->ours = true;
-		}
-		EXPECT(h.Count() == dr::Hangs::kMax, "full");
-		const uint32_t gives = h.At(0)->entity;
-		h.At(0)->ours = false;   // (one part: the game's matrix in it)
-		h.Note(999, 0x6000, 3, game, bone);
-		bool has999 = false, hasGives = false;
-		for (int i = 0; i < dr::Hangs::kMax; ++i) {
-			has999 = has999 || (h.At(i) && h.At(i)->entity == 999);
-			hasGives = hasGives || (h.At(i) && h.At(i)->entity == gives);
-		}
-		EXPECT(has999 && !hasGives && h.Count() == dr::Hangs::kMax, "full: the part with the game's matrix in it makes room, never one owed its matrix back");
-		for (int i = 0; i < dr::Hangs::kMax; ++i) if (dr::Hang* x = h.At(i)) x->ours = true;
-		h.Note(1000, 0x6000, 3, game, bone);
-		bool has1000 = false;
-		for (int i = 0; i < dr::Hangs::kMax; ++i) has1000 = has1000 || (h.At(i) && h.At(i)->entity == 1000);
-		EXPECT(!has1000, "full of parts owed back: the new one waits");
-		h.Drop(*h.At(0));
-		EXPECT(h.Count() == dr::Hangs::kMax - 1 && !h.At(0), "dropped");
+		a = h.Note(0x300064, 0x5000, 40, 0, game2, bone, local, 0x00000999u, 0xABC000);
+		EXPECT(h.Count() == 1 && a->game[12] == 8.0f && !a->ours, "the game made it again: its matrix replaces ours, nothing owed");
+		EXPECT(!h.Note(0, 0x5000, 40, 0, game, bone, local, 0, 0) && !h.Note(101, 0, 40, 0, game, bone, local, 0, 0) &&
+		           !h.Note(102, 0x5000, -1, 0, game, bone, local, 0, 0) && !h.Note(103, 0x5000, 40, 0, game, bone, nullptr, 0, 0) && h.Count() == 1,
+		       "no entity, no body, neither a bone nor a part to hang on, no local matrix: not noted");
+		// a forearm piece on the upper arm's part: its parent field names the part's slot (the low 20 bits)
+		EXPECT(h.OfSlot(0x10000064u) == h.Of(0x300064) && !h.OfSlot(0xFFFFFu) && !h.OfSlot(0x65u), "the part hung on is found by its slot");
+		dr::Hang* c = h.Note(0x300070, 0x5000, -1, 0x300064, game, I, local, 0x10000064u, 0xABD000);
+		EXPECT(c && c->bone == -1 && c->onEntity == 0x300064 && h.Count() == 2, "a part on a part noted, no bone of its own");
+		float w[16];
+		const float parentWorld[16] = {0, 0, -1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 10, 0, 20, 1};   // turned a quarter about y, at (10, 0, 20)
+		dr::ChildWorld(local, parentWorld, w);
+		EXPECT(std::fabs(w[12] - (10.0f + 0.3f)) < 1e-5f && std::fabs(w[13] - 0.2f) < 1e-5f && std::fabs(w[14] - (20.0f - 0.1f)) < 1e-5f && w[2] == -1.0f,
+		       "a part on a part: its local matrix times the parent's world (%.2f %.2f %.2f)", w[12], w[13], w[14]);
+		// its own component still its own: the same parent field and local matrix
+		EXPECT(dr::SameComponent(*a, local, 0x00000999u), "the component still holds the part");
+		float moved[16];
+		std::memcpy(moved, local, sizeof moved);
+		moved[12] += 0.5f;
+		EXPECT(!dr::SameComponent(*a, moved, 0x00000999u) && !dr::SameComponent(*a, local, 0x00000998u) && !dr::SameComponent(*a, nullptr, 0x00000999u),
+		       "another local matrix or parent there: another part's component now - not written");
+		// full
+		for (uint32_t e = 200; h.Count() < dr::Hangs::kMax; ++e)
+			if (dr::Hang* x = h.Note(e, 0x6000, 3, 0, game, bone, local, 0, 0)) x->ours = true;
+		dr::Hang* free1 = h.Of(0x300070);
+		const uint32_t gives = free1->entity;
+		free1->ours = false;   // (the game's matrix in it)
+		h.Of(0x300064)->ours = true;
+		EXPECT(h.Note(999, 0x6000, 3, 0, game, bone, local, 0, 0) && !h.Of(gives) && h.Of(999) && h.Count() == dr::Hangs::kMax,
+		       "full: the part with the game's matrix in it makes room, never one owed its matrix back");
+		h.Of(999)->ours = true;
+		EXPECT(!h.Note(1000, 0x6000, 3, 0, game, bone, local, 0, 0) && !h.Of(1000), "full of parts owed back: the new one waits");
+		h.Drop(*h.Of(999));
+		EXPECT(h.Count() == dr::Hangs::kMax - 1 && !h.Of(999), "dropped");
 	}
 	std::printf(g_fails ? "death_ragdoll_test: %d FAILED\n" : "death_ragdoll_test: all passed\n", g_fails);
 	return g_fails ? 1 : 0;

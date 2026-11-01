@@ -96,6 +96,8 @@ std::mutex g_mutex;
 std::array<Ask, kAsks> g_asks;          // one per unit, the newest
 std::array<Last, 16> g_last;            // when each unit was last asked for (the timer's thread)
 std::array<Watch, kWatches> g_watch;    // (the game's thread only)
+constexpr uint64_t kRefusedMs = 3000;
+std::array<Last, 8> g_refused;          // (under g_mutex) units the game just refused: not asked again for kRefusedMs (an NPC it will not move walks home)
 uiticket::Ticket g_ticket;
 struct Counters { unsigned asked = 0, runs = 0, refused = 0, dead = 0, gone = 0, stale = 0, landed = 0, short_ = 0, rounded = 0, inWay = 0; } g_n;   // (the game's thread; read for the report)
 unsigned g_told = 0, g_toldLand = 0;
@@ -166,6 +168,13 @@ void Act(const Ask& a, uintptr_t game, uintptr_t lookup, uint64_t now) {
         ++g_n.dead;
     } else {
         ++g_n.refused;
+        std::lock_guard<std::mutex> lock(g_mutex);
+        Last* slot = &g_refused[0];
+        for (Last& r : g_refused) {
+            if (r.id == a.id) { slot = &r; break; }
+            if (r.atMs < slot->atMs) slot = &r;
+        }
+        *slot = Last{a.id, now};
     }
     if (++g_told <= 24 || (o == Outcome::Refused && g_told <= 40))
         LogF("grab moves unit: %s %u on cell %d,%d - the game's knockback asked to cell %d,%d (%+.1f,%+.1f cells drawn off%s; the hero on %d,%d): %s (returned %d, mode %u -> %u)",
@@ -246,6 +255,8 @@ void Note(uint32_t id, float dx, float dy, bool hostile, uint64_t nowMs) {
     if (!Wanted() || !viewgate::F4() || !d2rsig::Addr(RVA_MODE_EVENT) || !d2rsig::Addr(RVA_MODE_SET) || !ServerHere()) return;
     {
         std::lock_guard<std::mutex> lock(g_mutex);
+        for (const Last& r : g_refused)
+            if (r.id == id && nowMs >= r.atMs && nowMs - r.atMs < kRefusedMs) return;   // (refused lately: not asked again yet)
         Last* last = &g_last[0];
         for (Last& l : g_last) {
             if (l.id == id) { last = &l; break; }

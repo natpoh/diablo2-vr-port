@@ -46,6 +46,7 @@ struct Knock {
     int16_t parent[kMaxBones] = {};
     float m3[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1};   // the model -> the world (rows) and where it stands (world units): what hangs on its bones is carried with them
     float root[3] = {};
+    bool frozen = false;   // [weight] death_ragdoll: a corpse kept as it lies - drawn from its bones as they were when it came to rest (skel::SetFrozenPoseSource)
 };
 
 struct Pose {
@@ -216,28 +217,37 @@ inline bool Build(const Rig& rig, float upm, const float* bodyOff, const LimbOff
 // +0x20 / +0x28, then none: the game skins from copies of them). Which monster's is it? Its bones' origins (model space) against each candidate's own pose
 // as it is now: the nearest, if near - within kMatchShare of the pose's spread - and clearly nearer than any other (half the next one's distance), else -1.
 // mats: the pose skinned (n bones); cands[i]: a candidate's pose (at least min(n, kMatchBones) bones; null: skipped). *dist: the nearest one's mean distance.
+// group: how many of cands are one candidate's in a row (its this frame's and last frame's pose: 2) - the nearer of them is that candidate's distance, and only
+// another candidate's can make it unclear (a corpse lying still has two equal poses: it was refused as two monsters alike, drawn as the game has it in the
+// frames the skinning did not hand its own pose - Serg's corpse twitching toward the game's place, 0.196.1).
 constexpr int kMatchBones = 32;
 constexpr float kMatchShare = 0.03f;
-inline int NearestPose(const float (*mats)[16], int n, const float (*const* cands)[16], int k, float* dist = nullptr) {
+inline int NearestPose(const float (*mats)[16], int n, const float (*const* cands)[16], int k, float* dist = nullptr, int group = 1) {
     const int m = std::min(n, kMatchBones);
     if (m <= 0 || k <= 0) return -1;
     float lo[3] = {1e30f, 1e30f, 1e30f}, hi[3] = {-1e30f, -1e30f, -1e30f};
     for (int b = 0; b < m; ++b)
         for (int q = 0; q < 3; ++q) { lo[q] = std::min(lo[q], mats[b][12 + q]); hi[q] = std::max(hi[q], mats[b][12 + q]); }
     const float spread = std::max(hi[0] - lo[0], std::max(hi[1] - lo[1], hi[2] - lo[2]));
+    if (group < 1) group = 1;
     int best = -1;
     float d1 = 1e30f, d2 = 1e30f;
-    for (int c = 0; c < k; ++c) {
-        if (!cands[c]) continue;
-        float sum = 0.0f;
-        for (int b = 0; b < m; ++b) {
-            const float dx = mats[b][12] - cands[c][b][12], dy = mats[b][13] - cands[c][b][13], dz = mats[b][14] - cands[c][b][14];
-            sum += std::sqrt(dx * dx + dy * dy + dz * dz);
+    for (int g = 0; g * group < k; ++g) {   // each candidate: the nearest of its poses
+        int bestIn = -1;
+        float dg = 1e30f;
+        for (int c = g * group; c < std::min(k, (g + 1) * group); ++c) {
+            if (!cands[c]) continue;
+            float sum = 0.0f;
+            for (int b = 0; b < m; ++b) {
+                const float dx = mats[b][12] - cands[c][b][12], dy = mats[b][13] - cands[c][b][13], dz = mats[b][14] - cands[c][b][14];
+                sum += std::sqrt(dx * dx + dy * dy + dz * dz);
+            }
+            const float d = sum / static_cast<float>(m);
+            if (std::isfinite(d) && d < dg) { dg = d; bestIn = c; }
         }
-        const float d = sum / static_cast<float>(m);
-        if (!std::isfinite(d)) continue;
-        if (d < d1) { d2 = d1; d1 = d; best = c; }
-        else if (d < d2) d2 = d;
+        if (bestIn < 0) continue;
+        if (dg < d1) { d2 = d1; d1 = dg; best = bestIn; }
+        else if (dg < d2) d2 = dg;
     }
     if (dist) *dist = d1;
     if (best < 0 || !(spread > 0.0f) || d1 > kMatchShare * spread || (d2 < 1e29f && d1 >= 0.5f * d2)) return -1;

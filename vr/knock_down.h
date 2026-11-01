@@ -62,6 +62,9 @@ void OnStabEntered(uint32_t id, int side, float speed);
 bool Impaled(uint32_t id);
 // Is body id drawn out of the game's pose now (the doll's sway leaves it alone)?
 bool IsDown(uint32_t id);
+// Where the units of the bodies drawn out of the game's pose last stood (x, z: their rigs' roots, world units), up to max: the scans keep them in reach
+// (vr/scan_reach.h) - a body whose unit leaves the scans is let go of, its drawing back at the unit far off (0.196.0: «монстры исчезают»). How many.
+int FarPlaces(float (*out)[2], int max);
 
 // The grab's (vr/grab_wire.cpp, the pose's thread): hand `side` (0 right, 1 left) took body id at `point`, its palm at `palm` (render world) - the
 // library holds it from now on; false: not a body it can (not a humanoid read lately, the library absent or full). HandAt each step while the grip holds;
@@ -81,6 +84,9 @@ void OnXform(uint32_t entity, uintptr_t component, uintptr_t out);
 // grown again here - after whatever made them again this frame, before the pass decides on it (Serg, 0.192.39: «когда беру за руку нпс, он по-прежнему
 // мерцает»: the game made each entity's box again about every frame, and the hook's and the timer's growth came before that in about 40 % of them).
 void BeforeDraw(uint32_t entity, bool eyes);
+// [weight] death_ragdoll (skel::SetFrozenPoseSource; the render workers): a kept corpse's bones as they came to rest - kept in the world, given in the model's
+// frame for the model standing at m3 / root now (n bones). False: none kept for that skeleton.
+bool FrozenBonesOf(uintptr_t self, const float m3[9], const float root[3], float (*mats)[16], int n);
 
 // The touch's timer, every tick the bodies are made: the scan's units (ids, their game modes), the rigs read and which rig each unit is (rigOf), the hero
 // (world units). Puts a pose for every body drawn out of the game's pose into made[n..cap) (replacing one for the same skeleton) and returns the new count.

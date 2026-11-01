@@ -161,6 +161,19 @@ void TestPastArm() {
 	EXPECT(!gb::PastArm(shoulder, arm, bad, at60), "a held point not finite: holds");
 }
 
+// [weight] grab_wrap: the palm laid on what it holds never farther than a hand's length - a swinging body is not reached for (0.196.1: the arm swept through the eye).
+void TestLayWithin() {
+	const float palm[3] = {0.0f, 1.0f, 0.0f};
+	float near_[3] = {0.05f, 1.0f, 0.0f};
+	EXPECT(!gb::LayWithin(palm, near_, 0.09f) && near_[0] == 0.05f, "a part 5 cm off: laid on as it is");
+	float far_[3] = {3.0f, 1.0f, 4.0f};   // 5 m off (the log's 488 % of the arm)
+	EXPECT(gb::LayWithin(palm, far_, 0.09f), "a part 5 m off: held short");
+	const float l = std::sqrt(far_[0] * far_[0] + (far_[1] - 1.0f) * (far_[1] - 1.0f) + far_[2] * far_[2]);
+	EXPECT(std::fabs(l - 0.09f) < 1e-5f && std::fabs(far_[0] / far_[2] - 0.75f) < 1e-4f, "... a hand's length toward it, the direction kept (%.4f)", l);
+	float any[3] = {1.0f, 2.0f, 3.0f};
+	EXPECT(!gb::LayWithin(palm, any, 0.0f) && any[0] == 1.0f && !gb::LayWithin(palm, any, NAN), "no hand length: as it is");
+}
+
 // [weight] grab_bodies' active ragdoll: each limb linked to the limb above it up its skeleton (monsterbodies::LinkParents), handed over with the library's indices.
 void TestParents() {
 	Snapshot s;
@@ -437,6 +450,7 @@ int main(int argc, char** argv) {
 	TestBusy();
 	TestNearest();
 	TestPastArm();
+	TestLayWithin();
 	TestLayPalm();
 	TestParents();
 	TestPutLinks();

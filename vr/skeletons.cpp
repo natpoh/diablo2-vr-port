@@ -46,6 +46,7 @@
 #include "bow_hand.h"
 #include "bow_rig.h"
 #include "granny_mesh.h"   // [bow] arrow_fx: the arrow mesh's box off the model in memory
+#include "scan_reach.h"    // [weight] knock_down: the bodies drawn away keep their skeletons in MonsterRigs
 #include "guarded_text.h"  // Str: a name read a page at a time
 #include "bone_guard.h"
 #include "bow_touch.h"
@@ -5509,6 +5510,16 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& given, const weight::O
             const float pa[3] = {palm.x, palm.y, palm.z}, fx[3] = {x0.x, x0.y, x0.z}, ca[3] = {amU.x, amU.y, amU.z}, cb[3] = {bmU.x, bmU.y, bmU.z};
             float to[3], rows9[9];
             if (!grabbodies::LayPalm(pa, fx, ca, cb, rad * upmM, depth, to, rows9)) continue;
+            if (grabbodies::LayWithin(pa, to, Len(Sub(midP, wristP)))) {   // the part drawn past a hand's length: not reached for (the arm is never pulled after it)
+                static ULONGLONG toldAt = 0;
+                if (GetTickCount64() - toldAt >= 5000) {
+                    toldAt = GetTickCount64();
+                    char b[200];
+                    snprintf(b, sizeof b, "grab - the %s hand's held part is drawn past a hand's length from it: the hand is laid toward it a hand's length, not pulled "
+                             "onto it (the arm is not stretched after a swinging body)", side ? "left" : "right");
+                    weight::Say(b);
+                }
+            }
             const V3 pm = {to[0], to[1], to[2]};
             grippose::M3 et;
             for (int i = 0; i < 9; ++i) et.m[i] = rows9[i];
@@ -9541,6 +9552,7 @@ void Set(const Input& in) {
 using ComputeFn = void (*)(uintptr_t self, float a, float b, bool c);
 ComputeFn g_orig = nullptr;
 std::atomic<MonsterPoseFn> g_monsterPose{nullptr};   // [weight] monster_ragdoll_pose: meleetouch::MonsterPose (vrcam)
+std::atomic<FrozenPoseFn> g_frozenPose{nullptr};   // [weight] death_ragdoll: a resting corpse's bones (SetFrozenPoseSource)
 std::atomic<MonsterPoseByWorldFn> g_monsterPoseByWorld{nullptr};   // ... and by the world pose the skinning is handed (meleetouch::MonsterPosesForSkin)
 // ... the game's own pose of each monster the hook turned, as the game made it this frame: the bodies are read from it (MonsterRigs), not from the turned
 // one - else the doll would push a limb its own turn has already moved, and again
@@ -9609,13 +9621,18 @@ bool DollSkin(uintptr_t skeleton, uintptr_t pose, float (*mats)[16], int n) {
                     ptrs[c * 2 + w] = now[c * 2 + w];
             }
         }
-        const int best = dollpose::NearestPose(mats, n, ptrs, std::min(k, 8) * 2);
+        const int best = dollpose::NearestPose(mats, n, ptrs, std::min(k, 8) * 2, nullptr, 2);   // (a candidate's two frames are one candidate: a still corpse's are equal)
         pick = best >= 0 ? best / 2 : -1;
     }
     if (pick < 0) { g_dollUnmatched.fetch_add(1, std::memory_order_relaxed); return false; }
     (exact ? g_dollByPointer : g_dollByMatch).fetch_add(1, std::memory_order_relaxed);
     bool done = cands[pick].bones == n && dollpose::Apply(cands[pick], mats, n);
-    if (cands[pick].knock.weight > 0.0f && cands[pick].bones == n) {   // [weight] knock_down: the copy laid on the knock-down's joints (vr/knock_pose.h)
+    const FrozenPoseFn frozen = g_frozenPose.load(std::memory_order_relaxed);
+    if (cands[pick].knock.frozen && cands[pick].knock.weight >= 0.999f && cands[pick].bones == n && frozen &&
+        frozen(cands[pick].self, cands[pick].knock.m3, cands[pick].knock.root, mats, n)) {   // [weight] death_ragdoll: a resting corpse, its bones as they came to rest
+        done = true;
+        g_knockSkinned.fetch_add(1, std::memory_order_relaxed);
+    } else if (cands[pick].knock.weight > 0.0f && cands[pick].bones == n) {   // [weight] knock_down: the copy laid on the knock-down's joints (vr/knock_pose.h)
         if (knockpose::Apply(mats, n, cands[pick].knock.parent, cands[pick].knock.joint, cands[pick].knock.at, cands[pick].knock.weight)) {
             done = true;
             g_knockSkinned.fetch_add(1, std::memory_order_relaxed);
@@ -9693,6 +9710,7 @@ void SetPoseView(bool allowed) {
     headshadow::SetPoseView(allowed);
 #endif
 }
+void SetFrozenPoseSource(FrozenPoseFn fn) { g_frozenPose.store(fn); }
 void SetMonsterPoseByWorldSource(MonsterPoseByWorldFn fn) {
     g_monsterPoseByWorld.store(fn);
     headshadow::SetDollSkin(fn ? &DollSkin : nullptr);
@@ -10076,7 +10094,7 @@ int HeroBodyCaps(monsterrig::Capsule* out, int cap, const char** why, bool head,
     return k;
 }
 
-size_t MonsterRigs(float x, float z, float reach, MonsterRig* out, size_t cap) {
+size_t MonsterRigs(float x, float z, float reach, MonsterRig* out, size_t cap, const float (*keep)[2], int nKeep, float upm) {
     if (!out || !cap || !std::isfinite(x + z + reach)) return 0;
     {   // [weight] skeleton_bones_max changed (live): every model read again under the new cap (a read is a few ms once a model)
         static int capWas = bonecap::Max();
@@ -10140,7 +10158,12 @@ size_t MonsterRigs(float x, float z, float reach, MonsterRig* out, size_t cap) {
         Model c{self, comp, packed[i], 0.0f, {}};
         if (!SafeCopy(c.t, (const void*)(comp + 12 * 4), sizeof c.t) || !std::isfinite(c.t[0] + c.t[1] + c.t[2])) continue;
         c.d2 = (c.t[0] - x) * (c.t[0] - x) + (c.t[2] - z) * (c.t[2] - z);
-        if (c.d2 <= reach * reach) nearby.push_back(c);
+        if (scanreach::Kept(c.t[0], c.t[2], keep, nKeep, upm)) {   // a body drawn away: its skeleton first, however far (vr/scan_reach.h)
+            c.d2 = -1.0f;
+            nearby.push_back(c);
+        } else if (c.d2 <= reach * reach) {
+            nearby.push_back(c);
+        }
     }
     std::sort(nearby.begin(), nearby.end(), [](const Model& a, const Model& b) { return a.d2 < b.d2; });
     const auto read = [](uintptr_t a, void* d, size_t bytes) { return a > 0x10000 && SafeCopy(d, (const void*)a, bytes); };

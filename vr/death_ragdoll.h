@@ -41,7 +41,8 @@ constexpr float kAwayMs = 1.0f;           // a death by no blow of the hand: pus
 constexpr float kLieS = 30.0f;            // how long the library is told it lies (the most it takes): it is taken off the library long before
 constexpr uint64_t kGoneMs = 1000;        // a dead unit not in the scan this long: gone (the game took its corpse away, or it is out of the scan's reach)
 constexpr uint64_t kEaseMs = 300;         // a kept corpse back in reach eases in over this (vr/melee_touch.cpp kPoseEaseMs eases it out)
-constexpr float kSameRootM = 0.5f;        // its skeleton is the one it died in: the same instance, standing within this of where it stood (metres)
+constexpr float kSameRootM = 2.0f;        // its skeleton is the one it died in: the same instance, standing within this of where it was last read (metres; the
+                                          // game eases a dead unit's model to its cell - 0.5 m lost the corpse there and it was drawn as the game's, 0.196.1)
 
 // A monster unit's MonStats flags, read the way the game's own plate code does (vr/mob_bars.h HidesPlate, confirmed in the image): unit + 0x00 its type (1),
 // + 0x04 its class, + 0x10 its monster data; data + 0x00 its MonStats row; the row's id (u16 at + 0x00) must be the class, its flags at + 0x3C. False: a
@@ -185,15 +186,15 @@ inline float Weight(uint64_t nowMs, uint64_t backMs) {
     return std::clamp(w, 0.0f, 1.0f);
 }
 
-// The corpses kept as they lie: each a dead unit's skeleton (its instance and where it stood, world units), its bone count, and its joints in the model's own
-// frame (as dollpose::Knock::at has them). Up to kMax; a new one when full takes the place of the one seen longest ago.
+// The corpses kept as they lie: each a dead unit's skeleton (its instance and where its model was last read, world units), its bone count, and its joints in
+// the world (vr/knock_down.cpp keeps its bones as they came to rest, in the world too, and draws it from them: still, wherever the game's model goes). Up to kMax; a new one when full takes the place of the one seen longest ago.
 constexpr int kMaxCorpses = 24;
 struct Corpse {
     uint32_t id = 0;
     uintptr_t self = 0;
     float root[3] = {};
     int bones = 0;
-    float at[D2RF_JOINTS][3] = {};
+    float at[D2RF_JOINTS][3] = {};   // its joints as it lies, the render world (metres) - not the model's frame: the game moving its model moves nothing of ours
     uint64_t seenMs = 0;     // last in the scan's dead
     uint64_t drawnMs = 0;    // last drawn (its skeleton read)
     uint64_t backMs = 0;     // came back into reach (eased in from here); 0 never away
@@ -294,43 +295,94 @@ inline void Drawn(Corpse& c, uint64_t nowMs) {
 // OnXform carries it to the bone as drawn each time the game makes it). The game makes it only while the body animates: once its death animation is over it
 // stops - our fall goes on, and the part stayed where the last carry put it. So each part met on a dead body is kept with its world matrix as the game last
 // made it and its bone then (the model's frame); once a frame (the same hook) it is put on its bone as drawn now (knockpose::Carry), while its body is dead
-// and drawn by us; when the body is the game's again (out of reach, gone, the key off) the game's matrix is put back once - the game will not.
+// and drawn by us; when the body is not drawn by us (out of reach this moment) the game's matrix is put back, and the part kept for when it is drawn again; when
+// the body is gone (the corpse taken, the key off) it is put back and forgotten.
+// 0.196.1 (Serg: a zombie killed while held - its arm pieces still in the air): the write went through the props' transform storage alone and failed for the
+// zombie's part (506 times in 5 s), and the part was forgotten the first tick its corpse was not drawn (5 s later "0 parts known") - left where the live
+// carry had last put it while the hand held the body. Now a part is kept while its body is a known dead one (drawn or not); a write the storage refuses goes
+// to the part's own transform component, as the hook handed it, if that still holds this part (SameComponent: its parent and its local matrix as noted); and
+// a part hung on another part (Hang::onEntity - a forearm piece on the upper arm's) goes with it: its local matrix times its parent's world (the game's own
+// rule, docs/doll_binding.md "local x parentWorld").
 struct Hang {
     uint32_t entity = 0;
-    uintptr_t self = 0;          // the SkeletonInstance it hangs on
-    int bone = -1;
+    uintptr_t self = 0;          // the SkeletonInstance its body is drawn from
+    int bone = -1;               // the bone it hangs on (-1: on another part, onEntity)
+    uint32_t onEntity = 0;       // ... that part's entity
     float game[16] = {};         // its world matrix as the game last made it
     float boneGame[16] = {};     // ... from its bone as the game had it then (the model's frame)
+    float local[16] = {};        // its transform's local matrix (+0x00) and parent (+0xC0) as noted: its component is still its own while they hold
+    uint32_t parentField = 0;
+    uintptr_t component = 0;     // its TransformComponent as the hook handed it
     bool ours = false;           // our matrix is in it now: the game's is owed back
+    uint32_t pass = 0;           // (the pass that last put our matrix in it, and that matrix: the parts on it go from there)
+    float now[16] = {};
 };
 enum class HangDo { Nothing, Carry, PutBack };
-// selfDead: its body is a dead one drawn by us (falling or kept); poseNow: that pose is there to lay it on this frame.
-inline HangDo HangNext(bool selfDead, bool poseNow, bool ours) {
-    if (selfDead && poseNow) return HangDo::Carry;
-    return ours ? HangDo::PutBack : HangDo::Nothing;
+struct HangStep { HangDo act = HangDo::Nothing; bool drop = false; };
+// known: its body is a dead one we have (falling or kept); poseNow: that body is drawn by us this frame (its pose there to lay the part on).
+inline HangStep HangNext(bool known, bool poseNow, bool ours) {
+    HangStep s;
+    if (known && poseNow) s.act = HangDo::Carry;
+    else if (ours) s.act = HangDo::PutBack;
+    s.drop = !known;
+    return s;
 }
+// Is the component read now (its local matrix, its parent field) still the part noted (h)? Within a hair (the local matrix of a rigid part does not change).
+inline bool SameComponent(const Hang& h, const float local[16], uint32_t parentField) {
+    if (!local || parentField != h.parentField) return false;
+    for (int i = 0; i < 16; ++i)
+        if (!(std::fabs(local[i] - h.local[i]) <= 1e-4f + 1e-5f * std::fabs(h.local[i]))) return false;
+    return true;
+}
+// A part's world from its parent's (row vectors, the game's: local x parentWorld).
+inline void ChildWorld(const float local[16], const float parent[16], float out[16]) {
+    for (int r = 0; r < 4; ++r)
+        for (int c = 0; c < 4; ++c) {
+            float v = 0.0f;
+            for (int k = 0; k < 4; ++k) v += local[r * 4 + k] * parent[k * 4 + c];
+            out[r * 4 + c] = v;
+        }
+}
+// Two entity ids are the same entity's slot (the parent field holds its low 20 bits).
+inline bool SameSlot(uint32_t a, uint32_t b) { return (a & 0xFFFFFu) == (b & 0xFFFFFu) && (a & 0xFFFFFu) != 0xFFFFFu; }
 class Hangs {
 public:
     static constexpr int kMax = 64;
-    // The game made part `entity`'s world matrix (game) from bone `bone` of self (boneGame). A new one when full: the slot of a part not ours now, else none.
-    void Note(uint32_t entity, uintptr_t self, int bone, const float game[16], const float boneGame[16]) {
-        if (!entity || !self || bone < 0 || !game || !boneGame) return;
-        Hang* slot = nullptr;
-        for (Hang& h : h_)
-            if (h.entity == entity) { slot = &h; break; }
+    // The game made part `entity`'s world matrix (game), hung on bone `bone` of self (boneGame) - or, bone < 0, on part onEntity; local / parentField /
+    // component: its transform as the hook handed it. A new one when full: the slot of a part not ours now, else none. Returns the slot, null when not kept.
+    Hang* Note(uint32_t entity, uintptr_t self, int bone, uint32_t onEntity, const float game[16], const float boneGame[16], const float local[16],
+               uint32_t parentField, uintptr_t component) {
+        if (!entity || !self || (bone < 0 && !onEntity) || !game || !boneGame || !local) return nullptr;
+        Hang* slot = Of(entity);
         if (!slot)
             for (Hang& h : h_)
                 if (!h.entity) { slot = &h; break; }
         if (!slot)
             for (Hang& h : h_)
                 if (!h.ours) { slot = &h; break; }
-        if (!slot) return;
+        if (!slot) return nullptr;
         slot->entity = entity;
         slot->self = self;
-        slot->bone = bone;
+        slot->bone = bone < 0 ? -1 : bone;
+        slot->onEntity = bone < 0 ? onEntity : 0;
         std::memcpy(slot->game, game, sizeof slot->game);
         std::memcpy(slot->boneGame, boneGame, sizeof slot->boneGame);
+        std::memcpy(slot->local, local, sizeof slot->local);
+        slot->parentField = parentField;
+        slot->component = component;
         slot->ours = false;   // (the game just made it: its own matrix is in it)
+        return slot;
+    }
+    Hang* Of(uint32_t entity) {
+        for (Hang& h : h_)
+            if (entity && h.entity == entity) return &h;
+        return nullptr;
+    }
+    // The part whose slot the parent field names (a part hung on it), null none.
+    Hang* OfSlot(uint32_t parentField) {
+        for (Hang& h : h_)
+            if (h.entity && SameSlot(h.entity, parentField)) return &h;
+        return nullptr;
     }
     Hang* At(int i) { return i >= 0 && i < kMax && h_[i].entity ? &h_[i] : nullptr; }
     void Drop(Hang& h) { h = Hang{}; }

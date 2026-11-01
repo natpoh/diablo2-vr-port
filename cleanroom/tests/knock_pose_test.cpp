@@ -387,6 +387,31 @@ void TestFrames() {
 
 }  // namespace
 
+// [weight] death_ragdoll: a resting corpse's bones kept in the world and given back in the model's frame (knockpose::ModelToWorld / WorldToModel): the same
+// model gives the same bones; the game moving its model (eased to its cell, turned) leaves the bone where it was in the world.
+void TestWorldBones() {
+	const float m3[9] = {0, 0, -2, 0, 2, 0, 2, 0, 0}, root[3] = {100, 5, 200};   // turned a quarter about y, scaled 2
+	const float bone[16] = {1, 0, 0, 0, 0, 0, 1, 0, 0, -1, 0, 0, 0.3f, 0.9f, -0.2f, 1};
+	float w[16], back[16];
+	kp::ModelToWorld(bone, m3, root, w);
+	EXPECT(std::fabs(w[12] - (100.0f - 0.4f)) < 1e-4f && std::fabs(w[13] - (5.0f + 1.8f)) < 1e-4f && std::fabs(w[14] - (200.0f - 0.6f)) < 1e-4f,
+	       "a bone in the world: %.3f %.3f %.3f", w[12], w[13], w[14]);
+	EXPECT(kp::WorldToModel(w, m3, root, back), "back to the model");
+	float worst = 0.0f;
+	for (int i = 0; i < 16; ++i) worst = std::max(worst, std::fabs(back[i] - bone[i]));
+	EXPECT(worst < 1e-4f, "the same model: the same bone (%.6f off)", worst);
+	const float root2[3] = {103, 5, 201};   // the game eased its model 3 units to its cell
+	float m2[16], w2[16];
+	EXPECT(kp::WorldToModel(w, m3, root2, m2), "into the moved model");
+	kp::ModelToWorld(m2, m3, root2, w2);
+	worst = 0.0f;
+	for (int i = 0; i < 16; ++i) worst = std::max(worst, std::fabs(w2[i] - w[i]));
+	EXPECT(worst < 1e-3f, "the model moved: the bone drawn where it was in the world (%.6f off)", worst);
+	float flat[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1};
+	flat[4] = w[3];   // (0, read at run time: a model flattened to nothing)
+	EXPECT(!kp::WorldToModel(w, flat, root, back), "a model that does not invert: none");
+}
+
 int main() {
 	TestMap();
 	TestApply();
@@ -394,6 +419,7 @@ int main() {
 	TestFacing();
 	TestHeldBounds();
 	TestFrames();
+	TestWorldBones();
 	std::printf(g_fails ? "knock_pose_test: %d FAILED\n" : "knock_pose_test: all passed\n", g_fails);
 	return g_fails ? 1 : 0;
 }

@@ -63,6 +63,7 @@
 #include "doll_lib.h"     // [weight] monster_ragdoll: the weight library's monsters' weight (d2r_vr_weight.dll's D2rd* exports) moves the bodies
 #include "doll_view.h"
 #include "knock_down.h"   // [weight] knock_down: a struck humanoid drawn falling, lying and getting up (the weight library's D2rf* exports)
+#include "scan_reach.h"   // ... and the bodies it draws away keep their units in the scans
 #include "death_ragdoll.h" // [weight] death_ragdoll: the dying monsters' MonStats flags (UnitRowFlags)
 #include "grab_bodies.h"   // [weight] grab_bodies: the held limbs put into the bodies (PutLinks)
 #include "item_grab.h"     // [weight] grab_items: the items on the ground near the hero (GroundItems)
@@ -256,6 +257,8 @@ template <class F> void EachUnit(int type, F&& fn) {
     unitscan::EachUnit([](void* d, uintptr_t s, size_t n) { return Read(d, s, n); }, d2rsig::Addr(RVA_UNITS), type, fn);
 }
 
+// The monsters' scan reach (game units; the timer's thread): 24, or as far as the bodies [weight] knock_down draws away need (RepublishBodies, vr/scan_reach.h)
+float g_unitReach = 24.0f;
 // The hero's own client unit (the player near the hero's feet on the grid) and the monsters within reach of the swing.
 bool ScanUnits(float heroX, float heroZ, float upm, float floorM, Scan* out) {
     out->n = 0;
@@ -276,8 +279,8 @@ bool ScanUnits(float heroX, float heroZ, float upm, float floorM, Scan* out) {
     if (!out->heroId) return false;
     for (size_t i = 0; i < na && out->np < out->p.size(); ++i)   // [multiplayer] pose_share_bodies: the others, our hero not among them
         if (all[i].id && all[i].id != out->heroId) out->p[out->np++] = all[i];
-    unitscan::Near found[std::tuple_size<decltype(Scan::c)>::value];   // the monsters within 24 game units: unit_scan.h, the walk the shield bash shares
-    const size_t n = MonstersNear(heroX, heroZ, 24.0f, upm, floorM, found, std::tuple_size<decltype(Scan::c)>::value);
+    unitscan::Near found[std::tuple_size<decltype(Scan::c)>::value];   // the monsters within 24 game units (more for a body drawn away): unit_scan.h, the walk the shield bash shares
+    const size_t n = MonstersNear(heroX, heroZ, g_unitReach, upm, floorM, found, std::tuple_size<decltype(Scan::c)>::value);
     for (size_t i = 0; i < n; ++i) {
         out->c[i].id = found[i].id;
         out->c[i].cls = found[i].cls;
@@ -719,7 +722,25 @@ void RepublishBodies(ULONGLONG now, const float heroRender[3], float upm) {
     LARGE_INTEGER t0, t1, qf;
     QueryPerformanceCounter(&t0);
     static skel::MonsterRig rigs[16];   // (the timer's thread only)
-    const size_t nr = g_nHostile || g_nDead ? skel::MonsterRigs(heroRender[0], heroRender[2], 6.0f * upm, rigs, std::size(rigs)) : 0;   // ([weight] death_ragdoll: the corpses' skeletons too)
+    // [weight] knock_down: the bodies drawn away keep their units in reach, wherever the hands took them - out of both scans the library lets a body go
+    // and its drawing goes back to the unit far off (0.196.0: «монстры исчезают, когда я их поднимаю»; vr/scan_reach.h)
+    float keep[8][2];
+    const int nKeep = knockdown::FarPlaces(keep, 8);
+    g_unitReach = scanreach::Reach(24.0f, heroRender[0], heroRender[2], keep, nKeep, upm);
+    {   // said when the scans first reach out for a body drawn away, and how far at most (once a second at most while it lasts)
+        static float most = 0.0f;
+        static ULONGLONG toldAt = 0;
+        if (g_unitReach > 24.01f) {
+            most = std::max(most, g_unitReach);
+            if (now - toldAt >= 1000) {
+                toldAt = now;
+                LogF("knock down: the scans reach %.1f m (%.0f game units) for %d body(ies) drawn away - their units stay in the scans, wherever the hands took them",
+                     most / std::max(upm, 1e-3f), most, nKeep);
+                most = 0.0f;
+            }
+        }
+    }
+    const size_t nr = g_nHostile || g_nDead ? skel::MonsterRigs(heroRender[0], heroRender[2], 6.0f * upm, rigs, std::size(rigs), keep, nKeep, upm) : 0;   // ([weight] death_ragdoll: the corpses' skeletons too)
     monsterbodies::Snapshot snap;
     snap.tickMs = now;
     snap.upm = upm;
@@ -901,7 +922,9 @@ void PublishBodies(const Scan& s, ULONGLONG now, const float heroRender[3], floa
         hostile[i] = yes;
         order[n++] = i;
     }
-    std::sort(order, order + n, [&](size_t a, size_t b) { return s.c[a].d2 < s.c[b].d2; });
+    bool down[std::tuple_size<decltype(Scan::c)>::value];   // [weight] knock_down: the bodies drawn away first, however far (vr/scan_reach.h) - the nearest after
+    for (size_t k = 0; k < n; ++k) down[order[k]] = knockdown::IsDown(s.c[order[k]].id);
+    std::sort(order, order + n, [&](size_t a, size_t b) { return down[a] != down[b] ? down[a] : s.c[a].d2 < s.c[b].d2; });
     g_nDead = 0;
     for (size_t k = 0; k < s.nd && g_nDead < (int)std::size(g_dead); ++k) g_dead[g_nDead++] = s.dead[k];
     g_nHostile = 0;

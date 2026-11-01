@@ -16,6 +16,7 @@
 
 #include "death_ragdoll.h"     // [weight] death_ragdoll: a humanoid the game kills falls as our ragdoll and lies as it fell
 #include "fall_lib.h"
+#include "walk_home.h"        // a body home again goes back to the game's own animation
 #include "grab_move.h"        // [weight] grab_moves_unit: a carried or thrown body moved by the game's own knockback
 #include "grab_move_wire.h"
 #include "head_shadow.h"
@@ -89,6 +90,8 @@ struct DownBody {
     int kind = 0;
     bool swap = false;     // (Info::swap when the library took it: every joint to and from the library goes through SwapSides)
     bool grabbed = false;  // a hand took it ([weight] grab_moves_unit moves only what the hands carry or throw)
+    float place[3] = {};   // where its unit stood when last seen (its rig's root, world units) - the scans keep it in reach (FarPlaces, vr/scan_reach.h)
+    bool placeOk = false;
     // [weight] death_ragdoll: the game killed it - its skeleton found by the instance it died in (its rig is the scan's no more), kept once it lies
     bool death = false, fellAgain = false;
     uintptr_t self = 0;
@@ -119,10 +122,23 @@ constexpr float kImpaleStrength = 20.0f;  // the blade's hold: 20 hands' pull (t
 std::atomic<uint32_t> g_downIds[D2RF_MAX_DOWN];
 std::atomic<uintptr_t> g_downSelves[kMaxSelves];   // the SkeletonInstances drawn out of the game's pose now (what hangs on their bones goes with them: OnXform)
 std::atomic<uintptr_t> g_deadSelves[kMaxSelves];   // [weight] death_ragdoll: ... those of them dead (falling or kept): their parts put on them once a frame (PutHangs)
+std::atomic<uintptr_t> g_deadKnown[kMaxSelves];    // ... every dead body we have, drawn this tick or not (its parts kept while it is: deathragdoll::HangNext)
 SRWLOCK g_hangLock = SRWLOCK_INIT;
 deathragdoll::Hangs g_hangs;                        // (under g_hangLock) what hangs on the dead bodies' bones
 std::atomic<int> g_nHangs{0};
-std::atomic<unsigned> g_hangPut{0}, g_hangBack{0}, g_hangNoStore{0}, g_hangNoPose{0};   // (the 1 s line's)
+std::atomic<unsigned> g_hangPut{0}, g_hangBack{0}, g_hangNoStore{0}, g_hangNoPose{0};   // (the 5 s line's)
+// [weight] death_ragdoll: each kept corpse's bones as they came to rest, in the world (render units): drawn so from then on - not laid on the game's pose
+// again each frame (the bones the joints do not fix followed the game's death animation under ours: Serg's corpse twitching, 0.196.1), never moved with the
+// game's model (eased to its cell after the death: our corpse went with it). The skinning reads them (skel::SetFrozenPoseSource -> FrozenBonesOf).
+struct FrozenBones { uintptr_t self = 0; int n = 0; float w[knockpose::kMaxBones][16]; };
+SRWLOCK g_frozenLock = SRWLOCK_INIT;
+FrozenBones g_frozen[deathragdoll::kMaxCorpses];   // (under g_frozenLock)
+// ... and what drawing a kept corpse needs of its skeleton, kept from its last read (the timer's thread): a tick its skeleton is not among the bodies' (the
+// nearest 16 of them, a scan missed) it is drawn from this - never eased to the game's pose and back for it (the corpse pulled toward the game's place)
+struct CorpseSkel { uint32_t id = 0; uintptr_t self = 0; int bones = 0; int16_t joint[D2RF_JOINTS] = {}; int16_t parent[dollpose::kMaxBones] = {}; float m3[9] = {}, root[3] = {}; };
+CorpseSkel g_corpseSkel[deathragdoll::kMaxCorpses];
+std::atomic<unsigned> g_frozenDrawn{0}, g_corpseUnread{0};
+std::atomic<unsigned> g_hangByComponent{0}, g_hangChildren{0}, g_hangMoved{0};          // ... written through its own component; parts on parts; components no longer its
 std::atomic<unsigned> g_carried{0}, g_carryMissed{0};
 std::atomic<int> g_downPhase[D2RF_MAX_DOWN];
 // Each model's facing for the library, from the game's own walking (knockpose::FacesGoing: the game walks a unit toward its front): the ticks the game moved
@@ -231,6 +247,10 @@ void ResetLocked() {
     g_any = false;
     g_corpses.Reset();   // (back in F4 the corpses are the game's: none taken again - Decide finds them dead already)
     g_told.Reset();
+    for (auto& k : g_corpseSkel) k = CorpseSkel{};
+    AcquireSRWLockExclusive(&g_frozenLock);
+    for (auto& f : g_frozen) { f.self = 0; f.n = 0; }
+    ReleaseSRWLockExclusive(&g_frozenLock);
 }
 
 bool Busy(int phase) { return phase == D2RF_FALLING || phase == D2RF_LYING || phase == D2RF_GETTING_UP || phase == D2RF_HELD; }
@@ -331,6 +351,19 @@ bool Impaled(uint32_t id) {
     for (auto& b : g_bladeIds)
         if (b.load(std::memory_order_relaxed) == id) return true;
     return false;
+}
+
+int FarPlaces(float (*out)[2], int max) {
+    if (!out || max <= 0 || !Wanted()) return 0;
+    std::lock_guard<std::mutex> lock(g_lib);
+    int n = 0;
+    for (const DownBody& d : g_down)
+        if (d.id && d.placeOk && !d.death && n < max) {
+            out[n][0] = d.place[0];
+            out[n][1] = d.place[2];
+            ++n;
+        }
+    return n;
 }
 
 bool IsDown(uint32_t id) {
@@ -499,6 +532,55 @@ uint32_t Holding(int side) {
     return g_hold[side].id;
 }
 
+namespace {
+// [weight] death_ragdoll: a corpse coming to rest - its bones as drawn now (the game's pose laid on its joints, atModel), kept in the world. False: not read.
+bool FreezeBones(const skel::MonsterRig& g, const float (*atModel)[3]) {
+    static float game[knockpose::kMaxBones][16], drawn[knockpose::kMaxBones][16];   // (the timer's thread)
+    const int nb = skel::PoseNow(g.self, game, knockpose::kMaxBones);
+    if (nb != g.bones || nb <= 0 || nb > dollpose::kMaxBones) return false;
+    std::memcpy(drawn, game, sizeof(float) * 16 * static_cast<size_t>(nb));
+    if (!knockpose::Apply(drawn, nb, g.parent, g.joint, atModel, 1.0f)) return false;
+    AcquireSRWLockExclusive(&g_frozenLock);
+    FrozenBones* slot = nullptr;
+    for (auto& f : g_frozen)
+        if (f.self == g.self) slot = &f;
+    for (auto& f : g_frozen)
+        if (!slot && !f.self) slot = &f;
+    if (slot) {
+        for (int b = 0; b < nb; ++b) knockpose::ModelToWorld(drawn[b], g.m3, g.root, slot->w[b]);
+        slot->n = nb;
+        slot->self = g.self;
+    }
+    ReleaseSRWLockExclusive(&g_frozenLock);
+    return slot != nullptr;
+}
+// ... the frozen bones of corpses no longer kept let go of (keep: the selves of the corpses kept now)
+void ForgetFrozen(const uintptr_t* keep, int nKeep) {
+    AcquireSRWLockExclusive(&g_frozenLock);
+    for (auto& f : g_frozen) {
+        bool kept = false;
+        for (int i = 0; i < nKeep && !kept; ++i) kept = f.self && keep[i] == f.self;
+        if (!kept) { f.self = 0; f.n = 0; }
+    }
+    ReleaseSRWLockExclusive(&g_frozenLock);
+}
+}  // namespace
+
+bool FrozenBonesOf(uintptr_t self, const float m3[9], const float root[3], float (*mats)[16], int n) {
+    if (!self || !mats || !m3 || !root || n <= 0) return false;
+    bool ok = false;
+    AcquireSRWLockShared(&g_frozenLock);
+    for (const auto& f : g_frozen)
+        if (f.self == self && f.n == n) {
+            ok = true;
+            for (int b = 0; b < n && ok; ++b) ok = knockpose::WorldToModel(f.w[b], m3, root, mats[b]);
+            break;
+        }
+    ReleaseSRWLockShared(&g_frozenLock);
+    if (ok) g_frozenDrawn.fetch_add(1, std::memory_order_relaxed);
+    return ok;
+}
+
 int Tick(const skel::MonsterRig* rigs, size_t nr, const Unit* units, int nUnits, const int* rigOf, uint64_t nowMs, float upm, const float heroRender[3],
          dollpose::Pose* made, int n, int cap, const Dead* dead, int nDead) {
     static uint64_t lastMs = 0;
@@ -520,6 +602,7 @@ int Tick(const skel::MonsterRig* rigs, size_t nr, const Unit* units, int nUnits,
         std::lock_guard<std::mutex> lock(g_lib);
         for (auto& s : g_downSelves) s.store(0);
         for (auto& s : g_deadSelves) s.store(0);
+        for (auto& s : g_deadKnown) s.store(0);
         if (g_any) ResetLocked();   // switched off, another view: every body let go of (the game's own animation at once)
         heroRun.Feed(nullptr, 0.0f);
         return n;
@@ -881,6 +964,7 @@ int Tick(const skel::MonsterRig* rigs, size_t nr, const Unit* units, int nUnits,
     }
     if (!g_any && g_corpses.Count() == 0) {
         for (auto& s : g_deadSelves) s.store(0);   // (no dead body drawn: what hung on one gets the game's matrix back - PutHangs)
+        for (auto& s : g_deadKnown) s.store(0);
         return n;
     }
     for (const DownBody& d : g_down) {   // home: where the game has each body now
@@ -946,6 +1030,10 @@ int Tick(const skel::MonsterRig* rigs, size_t nr, const Unit* units, int nUnits,
             for (int k = 0; k < g->nParts && l.nEntity < (int)std::size(l.entity); ++k) l.entity[l.nEntity++] = g->parts[k];
         }
     };
+    const auto markFrozen = [&](uintptr_t self) {   // [weight] death_ragdoll: the pose made for a kept corpse is drawn from its frozen bones (FrozenBonesOf)
+        for (int s = 0; s < n; ++s)
+            if (made[s].self == self) made[s].knock.frozen = true;
+    };
     // [weight] death_ragdoll: the skeleton a dead body died in, as read now - the instance, standing where it stood (the dead are not the scan's units)
     const auto deadRig = [&](uintptr_t self, const float root[3], int bones) -> const skel::MonsterRig* {
         for (size_t r = 0; r < nr; ++r)
@@ -984,6 +1072,7 @@ int Tick(const skel::MonsterRig* rigs, size_t nr, const Unit* units, int nUnits,
                 continue;
             }
             d->seenMs = nowMs;
+            std::memcpy(d->rootW, dg->root, sizeof d->rootW);   // (the game may ease its model to the cell: the same instance, found where it is now)
             const deathragdoll::Next next = deathragdoll::OnPhase(p.phase);
             if (next == deathragdoll::Next::Fell && !d->fellAgain) {   // it died on its feet (staggering, walking home): it falls anew from where it is drawn
                 d->fellAgain = true;
@@ -1017,11 +1106,24 @@ int Tick(const skel::MonsterRig* rigs, size_t nr, const Unit* units, int nUnits,
                 c.self = dg->self;
                 std::memcpy(c.root, dg->root, sizeof c.root);
                 c.bones = dg->bones;
-                std::memcpy(c.at, atModel, sizeof c.at);
+                std::memcpy(c.at, p.joint, sizeof c.at);   // (the world: the game moving its model moves nothing of ours)
                 c.seenMs = c.drawnMs = nowMs;
+                if (FreezeBones(*dg, atModel) && p.weight >= 0.999f) markFrozen(dg->self);
                 const float dx = p.joint[D2RF_PELVIS][0] - dg->root[0] / upm, dz = p.joint[D2RF_PELVIS][2] - dg->root[2] / upm;
                 c.offM = std::sqrt(dx * dx + dz * dz);
                 const uint32_t out = g_corpses.Keep(c);
+                for (int k = 0; k < deathragdoll::kMaxCorpses; ++k) {   // its skeleton kept for the ticks it is not read (the slot of the corpse it is, by its place in the table)
+                    const deathragdoll::Corpse* kc = g_corpses.At(k);
+                    if (!kc || kc->id != p.id) continue;
+                    CorpseSkel& sk = g_corpseSkel[k];
+                    sk.id = p.id;
+                    sk.self = dg->self;
+                    sk.bones = dg->bones;
+                    std::memcpy(sk.joint, dg->joint, sizeof sk.joint);
+                    std::memcpy(sk.parent, dg->parent, sizeof(int16_t) * static_cast<size_t>(std::min(dg->bones, dollpose::kMaxBones)));
+                    std::memcpy(sk.m3, dg->m3, sizeof sk.m3);
+                    std::memcpy(sk.root, dg->root, sizeof sk.root);
+                }
                 falllib::LetGo(p.id, 0);
                 ++kept;
                 char room[120] = "";
@@ -1042,13 +1144,15 @@ int Tick(const skel::MonsterRig* rigs, size_t nr, const Unit* units, int nUnits,
             continue;
         }
         d->seenMs = nowMs;
+        std::memcpy(d->place, g->root, sizeof d->place);
+        d->placeOk = true;
         if (mode == 0 || mode == 12) {   // the game killed it: its own death from here (the corpse is the game's)
             falllib::LetGo(p.id, 0);
             LogF("knock down: %u died %s - the game's own death from here", p.id, PhaseName(p.phase));
             continue;
         }
         if (d->grabbed && grabmove::Wanted()) {   // [weight] grab_moves_unit: the unit put by the game's knockback on the cell under the drawn body (its pelvis)
-            for (int i = 0; i < nf && grabmove::PhaseMoves(p.phase); ++i)
+            for (int i = 0; i < nf && (grabmove::PhaseMoves(p.phase) || p.phase == walkhome::kWalking); ++i)   // (up again too: the unit brought under it before it is let go)
                 if (fresh[i].id == p.id) {
                     float dx = 0.0f, dy = 0.0f;
                     if (grabmove::CellsApart(p.joint[D2RF_PELVIS], fresh[i].joint[D2RF_PELVIS], upm, &dx, &dy)) grabmove::Note(p.id, dx, dy, hostile, nowMs);
@@ -1063,6 +1167,17 @@ int Tick(const skel::MonsterRig* rigs, size_t nr, const Unit* units, int nUnits,
             d->hurried = true;
             falllib::LetGo(p.id, 1);
             LogF("knock down: %u gets up now - the game %s (mode %d)", p.id, attacks ? "has it attack" : "walked it off", mode);
+        }
+        if (walkhome::BackNow(p.phase, p.off)) {   // up again and the game has it where it is drawn: let go wholly, the game's own from this cell (vr/walk_home.h)
+            float dx = 0.0f, dy = 0.0f;
+            float gamePelvis[3] = {g->root[0] / upm, p.joint[D2RF_PELVIS][1], g->root[2] / upm};   // (the game's cell: its root; the drawn pelvis's height, no shear)
+            grabmove::CellsApart(p.joint[D2RF_PELVIS], gamePelvis, upm, &dx, &dy);
+            falllib::LetGo(p.id, 0);
+            LogF("knock down: %u released %.1f s after it got up - drawn on cell %.0f,%.0f, the game has it on %.0f,%.0f (%.2f m apart): the game's own animation, AI "
+                 "and walk from this cell%s", p.id, p.t, (g->root[0] + dx * grabmove::kUnitsPerCell) / grabmove::kUnitsPerCell,
+                 (g->root[2] + dy * grabmove::kUnitsPerCell) / grabmove::kUnitsPerCell, g->root[0] / grabmove::kUnitsPerCell, g->root[2] / grabmove::kUnitsPerCell,
+                 p.off, attacks ? " (it attacks)" : "");
+            continue;
         }
         if (n >= cap) continue;
         float atModel[D2RF_JOINTS][3];
@@ -1082,16 +1197,46 @@ int Tick(const skel::MonsterRig* rigs, size_t nr, const Unit* units, int nUnits,
         if (g_corpses.Count()) g_corpses.Reset();
     } else {
         gone += static_cast<unsigned>(g_corpses.Forget(deadIds, nDeadIds, nowMs));
+        static skel::MonsterRig unread;   // (the timer's thread) a kept corpse's skeleton as last read, for a tick it is not among the bodies'
+        uintptr_t keep[deathragdoll::kMaxCorpses] = {};
+        int nKeep = 0;
         for (int i = 0; i < deathragdoll::kMaxCorpses; ++i) {
             deathragdoll::Corpse* c = g_corpses.At(i);
-            if (!c || c->drawnMs == nowMs) continue;   // (kept this tick: drawn above)
+            CorpseSkel& sk = g_corpseSkel[i];
+            if (!c) { sk = CorpseSkel{}; continue; }
+            if (sk.id != c->id) sk = CorpseSkel{};   // (another corpse in this slot now)
+            keep[nKeep++] = c->self;
+            if (c->drawnMs == nowMs) continue;   // (kept this tick: drawn above)
             const skel::MonsterRig* g = deadRig(c->self, c->root, c->bones);
+            if (g) {   // read: where its model is now, for the next tick it is not
+                std::memcpy(c->root, g->root, sizeof c->root);
+                std::memcpy(sk.m3, g->m3, sizeof sk.m3);
+                std::memcpy(sk.root, g->root, sizeof sk.root);
+            } else if (sk.id == c->id && sk.self == c->self && listedDead(c->id)) {
+                unread.self = sk.self;   // (its unit still the game's dead: its skeleton is there, only not among the nearest read)
+                unread.bones = sk.bones;
+                std::memcpy(unread.joint, sk.joint, sizeof unread.joint);
+                std::memcpy(unread.parent, sk.parent, sizeof(int16_t) * static_cast<size_t>(std::min(sk.bones, dollpose::kMaxBones)));
+                std::memcpy(unread.m3, sk.m3, sizeof unread.m3);
+                std::memcpy(unread.root, sk.root, sizeof unread.root);
+                unread.entity = 0;
+                unread.nParts = 0;
+                g = &unread;
+                g_corpseUnread.fetch_add(1, std::memory_order_relaxed);
+            }
             if (!g) continue;
+            float atModel[D2RF_JOINTS][3];
+            bool ok = true;
+            for (int j = 0; j < D2RF_JOINTS && ok; ++j) ok = knockpose::ToModel(g->m3, g->root, upm, c->at[j], atModel[j]);
+            if (!ok) continue;
             deathragdoll::Drawn(*c, nowMs);
-            emit(g, c->id, deathragdoll::Weight(nowMs, c->backMs), c->at, false);
+            const float w = deathragdoll::Weight(nowMs, c->backMs);
+            emit(g, c->id, w, atModel, false);
+            if (w >= 0.999f) markFrozen(g->self);
             if (nDeadSelves < kMaxSelves) deadSelves[nDeadSelves++] = g->self;
             ++corpsesDrawn;
         }
+        ForgetFrozen(keep, nKeep);
         static uint64_t deathToldAt = 0;
         if (nowMs - deathToldAt >= 5000) {
             deathToldAt = nowMs;
@@ -1101,10 +1246,16 @@ int Tick(const skel::MonsterRig* rigs, size_t nr, const Unit* units, int nUnits,
                      "hostile, %u with no room in the library", fell, kept, gone, g_corpses.Count(), corpsesDrawn, leftBoss, leftNotSeen, leftNotHostile, leftFull);
             fell = kept = gone = leftBoss = leftNotSeen = leftNotHostile = leftFull = 0;
             const unsigned hangPut = g_hangPut.exchange(0), hangBack = g_hangBack.exchange(0), hangNoStore = g_hangNoStore.exchange(0), hangNoPose = g_hangNoPose.exchange(0);
+            const unsigned frozenDrawn = g_frozenDrawn.exchange(0), corpseUnread = g_corpseUnread.exchange(0);
+            if (g_corpses.Count())
+                LogF("death ragdoll - the last 5 s: the kept corpses drawn from their bones as they came to rest %u times (skinnings), %u ticks drawn from their "
+                     "skeleton as last read (not among the bodies read then)", frozenDrawn, corpseUnread);
+            const unsigned hangByComponent = g_hangByComponent.exchange(0), hangChildren = g_hangChildren.exchange(0), hangMoved = g_hangMoved.exchange(0);
             if (hangPut + hangBack + hangNoStore + hangNoPose || g_nHangs.load())
-                LogF("death ragdoll - the last 5 s: what hangs on the dead's bones (%d parts known) put on them as drawn %u times (the game no longer moves them "
-                     "once its death animation is over), the game's matrix put back %u; not put - no transform storage %u, no pose %u", g_nHangs.load(), hangPut,
-                     hangBack, hangNoStore, hangNoPose);
+                LogF("death ragdoll - the last 5 s: what hangs on the bodies (%d parts known, the dead's and those drawn away) put on the dead as drawn %u times "
+                     "(%u of them through the part's own component - the storage refused it; %u parts hung on parts), the game's matrix put back %u; not put - "
+                     "not written %u (%u components no longer the part's), no pose %u", g_nHangs.load(), hangPut, hangByComponent, hangChildren, hangBack, hangNoStore,
+                     hangMoved, hangNoPose);
         }
     }
     // the bodies the library no longer has: free their slots (and a hand that held one)
@@ -1125,6 +1276,15 @@ int Tick(const skel::MonsterRig* rigs, size_t nr, const Unit* units, int nUnits,
     g_any = nPoses > 0;
     for (int s = 0; s < kMaxSelves; ++s) g_downSelves[s].store(s < nSelves ? selves[s] : 0);
     for (int s = 0; s < kMaxSelves; ++s) g_deadSelves[s].store(s < nDeadSelves ? deadSelves[s] : 0);
+    {   // [weight] death_ragdoll: every dead body we have - falling in the library or kept as it lies - drawn this tick or not
+        uintptr_t known[kMaxSelves] = {};
+        int nk = 0;
+        for (const DownBody& d : g_down)
+            if (d.id && d.death && d.self && nk < kMaxSelves) known[nk++] = d.self;
+        for (int i = 0; i < deathragdoll::kMaxCorpses && nk < kMaxSelves; ++i)
+            if (const deathragdoll::Corpse* c = g_corpses.At(i)) known[nk++] = c->self;
+        for (int s = 0; s < kMaxSelves; ++s) g_deadKnown[s].store(s < nk ? known[s] : 0);
+    }
     lib.unlock();
     if (tell && at) {
         toldAt = nowMs;
@@ -1355,71 +1515,121 @@ void BeforeDraw(uint32_t entity, bool eyes) {
 }
 
 namespace {
-bool DeadSelf(uintptr_t self) {
+bool In(const std::atomic<uintptr_t>* set, uintptr_t self) {
     if (!self) return false;
-    for (auto& s : g_deadSelves)
-        if (s.load(std::memory_order_relaxed) == self) return true;
+    for (int s = 0; s < kMaxSelves; ++s)
+        if (set[s].load(std::memory_order_relaxed) == self) return true;
     return false;
 }
+bool DeadSelf(uintptr_t self) { return In(g_deadSelves, self); }    // a dead body drawn by us this tick
+bool DeadKnown(uintptr_t self) { return In(g_deadKnown, self); }    // ... a dead body we have, drawn or not
+bool DownSelf(uintptr_t self) { return In(g_downSelves, self); }    // any body drawn out of the game's pose (its parts noted before it dies)
 
-// [weight] death_ragdoll, once a frame from the world-matrix hook (any entity's): each part hung on a dead body's bone put on that bone as drawn now - the
-// game makes its matrix no more once the death animation is over (deathragdoll::Hangs); a body that is the game's again gets the game's matrix back.
+// A body's bones as drawn: a kept corpse's frozen ones (FrozenBonesOf), else the game's pose laid on the pose's joints.
+bool DrawnBones(uintptr_t self, const dollpose::Pose& pose, float (*game)[16], float (*drawn)[16], int n) {
+    if (pose.knock.frozen && pose.knock.weight >= 0.999f && FrozenBonesOf(self, pose.knock.m3, pose.knock.root, drawn, n)) return true;
+    std::memcpy(drawn, game, sizeof(float) * 16 * static_cast<size_t>(n));
+    return knockpose::Apply(drawn, n, pose.knock.parent, pose.knock.joint, pose.knock.at, pose.knock.weight);
+}
+
+int ReadU32(uintptr_t at, uint32_t* v) noexcept {
+    __try {
+        std::memcpy(v, reinterpret_cast<const void*>(at), sizeof *v);
+        return 1;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return -1;
+    }
+}
+
+// A part's world matrix written: through the props' transform storage (its entity's own slot), else through its component as the hook handed it - if
+// that still holds this part (its parent and its local matrix as noted: a storage that moved its components would hold another one there). 1 the storage,
+// 2 its component, 0 not written.
+int WriteHang(const deathragdoll::Hang& h, const float w[16]) {
+    if (knockprops::PutEntityWorld(h.entity, w)) return 1;
+    float local[16], old[16];
+    uint32_t parentField = 0;
+    if (!h.component || ReadM(h.component, local) <= 0 || ReadU32(h.component + 0xC0, &parentField) <= 0) return 0;
+    if (!deathragdoll::SameComponent(h, local, parentField)) { g_hangMoved.fetch_add(1, std::memory_order_relaxed); return 0; }
+    if (ReadM(h.component + 0x40, old) > 0) WriteM(h.component + 0x80, old);   // (the one drawn until now: the last frame's slot - no motion vector left behind)
+    return WriteM(h.component + 0x40, w) > 0 ? 2 : 0;
+}
+
+// [weight] death_ragdoll, once a frame from the world-matrix hook (any entity's): each part hung on a dead body put on its bone as drawn now - the game makes
+// its matrix no more once the death animation is over (deathragdoll::Hangs) - and each part hung on such a part after it (its local matrix times the parent's
+// world); a body not drawn by us now gets the game's matrices back (its parts kept while the body is ours), a body gone gets them back and is forgotten.
 void PutHangs() {
     if (g_nHangs.load(std::memory_order_relaxed) == 0) return;
     static std::atomic<int64_t> passAt{0};
     static std::atomic<bool> passing{false};
+    static uint32_t passNo = 0;
     LARGE_INTEGER t, f;
     QueryPerformanceCounter(&t);
     QueryPerformanceFrequency(&f);
     if (t.QuadPart - passAt.load(std::memory_order_relaxed) < f.QuadPart / 200 || passing.exchange(true, std::memory_order_acquire)) return;   // (once a frame: 5 ms)
     passAt.store(t.QuadPart, std::memory_order_relaxed);
+    ++passNo;
     static dollpose::Pose pose;   // (one pass at a time: `passing`)
     static float game[knockpose::kMaxBones][16], drawn[knockpose::kMaxBones][16];
     uintptr_t posed = 0;   // the body `drawn` holds now (0: none read)
     int n = 0;
     AcquireSRWLockExclusive(&g_hangLock);
-    for (int i = 0; i < deathragdoll::Hangs::kMax; ++i) {
-        deathragdoll::Hang* h = g_hangs.At(i);
-        if (!h) continue;
-        const bool dead = DeadSelf(h->self);
-        bool poseNow = false;
-        if (dead) {
-            if (posed != h->self) {
-                posed = h->self;
-                n = 0;
-                if (meleetouch::MonsterPose(h->self, &pose) && pose.knock.weight > 0.0f) {
-                    const int got = skel::PoseNow(h->self, game, knockpose::kMaxBones);
-                    if (got == pose.bones && got > 0) {
-                        std::memcpy(drawn, game, sizeof(float) * 16 * static_cast<size_t>(got));
-                        if (knockpose::Apply(drawn, got, pose.knock.parent, pose.knock.joint, pose.knock.at, pose.knock.weight)) n = got;
+    const auto put = [&](deathragdoll::Hang& h, const float w[16]) {
+        const int how = WriteHang(h, w);
+        if (!how) { g_hangNoStore.fetch_add(1, std::memory_order_relaxed); return; }
+        if (how == 2) g_hangByComponent.fetch_add(1, std::memory_order_relaxed);
+        h.ours = true;
+        h.pass = passNo;
+        std::memcpy(h.now, w, sizeof h.now);
+        g_hangPut.fetch_add(1, std::memory_order_relaxed);
+    };
+    const auto back = [&](deathragdoll::Hang& h) {
+        if (WriteHang(h, h.game)) g_hangBack.fetch_add(1, std::memory_order_relaxed);
+        h.ours = false;
+    };
+    // the parts on the bones first (level 0), then the parts on parts, each after the one it hangs on (a few levels down)
+    bool done[deathragdoll::Hangs::kMax] = {};
+    for (int level = 0; level < 4; ++level)
+        for (int i = 0; i < deathragdoll::Hangs::kMax; ++i) {
+            deathragdoll::Hang* h = g_hangs.At(i);
+            if (!h || done[i] || (level == 0) != (h->bone >= 0)) continue;
+            const bool known = DeadKnown(h->self);
+            if (!known && DownSelf(h->self)) { done[i] = true; continue; }   // (a living body drawn away: the hook carries its parts each time the game makes them)
+            bool poseNow = false;
+            const deathragdoll::Hang* on = nullptr;
+            if (known && DeadSelf(h->self)) {
+                if (h->bone >= 0) {
+                    if (posed != h->self) {
+                        posed = h->self;
+                        n = 0;
+                        if (meleetouch::MonsterPose(h->self, &pose) && pose.knock.weight > 0.0f) {
+                            const int got = skel::PoseNow(h->self, game, knockpose::kMaxBones);
+                            if (got == pose.bones && got > 0 && DrawnBones(h->self, pose, game, drawn, got)) n = got;
+                        }
                     }
-                }
-            }
-            poseNow = n > 0 && h->bone < n;
-            if (!poseNow) g_hangNoPose.fetch_add(1, std::memory_order_relaxed);
-        }
-        switch (deathragdoll::HangNext(dead, poseNow, h->ours)) {
-            case deathragdoll::HangDo::Carry: {
-                float o[16];
-                if (!knockpose::Carry(h->game, h->boneGame, drawn[h->bone], pose.knock.m3, pose.knock.root, o)) break;
-                if (knockprops::PutEntityWorld(h->entity, o)) {
-                    h->ours = true;
-                    g_hangPut.fetch_add(1, std::memory_order_relaxed);
+                    poseNow = n > 0 && h->bone < n;
                 } else {
-                    g_hangNoStore.fetch_add(1, std::memory_order_relaxed);
+                    on = g_hangs.Of(h->onEntity);
+                    if (on && on->pass != passNo && on->ours && level < 3) continue;   // (its parent not put yet this pass: the next level)
+                    poseNow = on && on->pass == passNo;
                 }
-                break;
+                if (!poseNow) g_hangNoPose.fetch_add(1, std::memory_order_relaxed);
             }
-            case deathragdoll::HangDo::PutBack:
-                if (knockprops::PutEntityWorld(h->entity, h->game)) g_hangBack.fetch_add(1, std::memory_order_relaxed);
-                h->ours = false;
-                if (!dead) g_hangs.Drop(*h);
-                break;
-            case deathragdoll::HangDo::Nothing:
-                if (!dead) g_hangs.Drop(*h);
-                break;
+            done[i] = true;
+            const deathragdoll::HangStep step = deathragdoll::HangNext(known, poseNow, h->ours);
+            if (step.act == deathragdoll::HangDo::Carry) {
+                float o[16];
+                if (h->bone >= 0) {
+                    if (knockpose::Carry(h->game, h->boneGame, drawn[h->bone], pose.knock.m3, pose.knock.root, o)) put(*h, o);
+                } else {
+                    deathragdoll::ChildWorld(h->local, on->now, o);
+                    put(*h, o);
+                    g_hangChildren.fetch_add(1, std::memory_order_relaxed);
+                }
+            } else if (step.act == deathragdoll::HangDo::PutBack) {
+                back(*h);
+            }
+            if (step.drop && !DownSelf(h->self)) g_hangs.Drop(*h);   // (a living body drawn away keeps its parts noted: it may die)
         }
-    }
     g_nHangs.store(g_hangs.Count(), std::memory_order_relaxed);
     ReleaseSRWLockExclusive(&g_hangLock);
     passing.store(false, std::memory_order_release);
@@ -1433,6 +1643,20 @@ void OnXform(uint32_t entity, uintptr_t component, uintptr_t out) {
     bool any = false;
     for (auto& s : g_downSelves) any = any || s.load(std::memory_order_relaxed) != 0;
     if (!any) return;
+    float m[16], local[16];
+    uint32_t parentField = 0;
+    if (g_nHangs.load(std::memory_order_relaxed) > 0 && component > 0x10000 && ReadU32(component + 0xC0, &parentField) > 0 && (parentField & 0xFFFFFu) != 0xFFFFFu) {
+        // [weight] death_ragdoll: a part hung on a part we keep (a forearm piece on the upper arm's) - noted to go with it (no bone of its own)
+        AcquireSRWLockExclusive(&g_hangLock);
+        if (const deathragdoll::Hang* on = g_hangs.OfSlot(parentField); on && on->entity != entity && ReadM(out, m) > 0 && ReadM(component, local) > 0) {
+            const uintptr_t onSelf = on->self;
+            const uint32_t onEntity = on->entity;
+            const float none[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+            g_hangs.Note(entity, onSelf, -1, onEntity, m, none, local, parentField, component);   // (the game just made it: its own matrix is in it)
+            g_nHangs.store(g_hangs.Count(), std::memory_order_relaxed);
+        }
+        ReleaseSRWLockExclusive(&g_hangLock);
+    }
     uintptr_t self = 0;
     int32_t bone = -1;
     if (!headshadow::AttachmentOf(entity, component, &self, &bone)) return;
@@ -1442,22 +1666,19 @@ void OnXform(uint32_t entity, uintptr_t component, uintptr_t out) {
     static thread_local dollpose::Pose pose;
     static thread_local float game[knockpose::kMaxBones][16], drawn[knockpose::kMaxBones][16];
     const int n = skel::PoseNow(self, game, knockpose::kMaxBones);
-    float m[16], o[16];
+    float o[16];
     if (n <= 0 || bone < 0 || bone >= n || ReadM(out, m) <= 0) { g_carryMissed.fetch_add(1, std::memory_order_relaxed); return; }
-    const bool dead = DeadSelf(self);
-    const auto note = [&](bool carried) {   // [weight] death_ragdoll: a dead body's part as the game just made it, for PutHangs (carried: ours is in it now)
-        if (!dead) return;
+    // [weight] death_ragdoll: every part of a body drawn away noted as the game just made it - the game may make it no more once the body dies (a zombie held
+    // when it was killed: its parts' matrices were made only now and then) - for PutHangs; carried: ours is in it now
+    const auto note = [&](bool carried) {
+        if (ReadM(component, local) <= 0 || ReadU32(component + 0xC0, &parentField) <= 0) return;
         AcquireSRWLockExclusive(&g_hangLock);
-        g_hangs.Note(entity, self, bone, m, game[bone]);
-        if (carried)
-            for (int i = 0; i < deathragdoll::Hangs::kMax; ++i)
-                if (deathragdoll::Hang* h = g_hangs.At(i); h && h->entity == entity) h->ours = true;
+        if (deathragdoll::Hang* h = g_hangs.Note(entity, self, bone, 0, m, game[bone], local, parentField, component)) h->ours = carried;
         g_nHangs.store(g_hangs.Count(), std::memory_order_relaxed);
         ReleaseSRWLockExclusive(&g_hangLock);
     };
     if (!meleetouch::MonsterPose(self, &pose) || !(pose.knock.weight > 0.0f) || n != pose.bones) { note(false); g_carryMissed.fetch_add(1, std::memory_order_relaxed); return; }
-    std::memcpy(drawn, game, sizeof(float) * 16 * static_cast<size_t>(n));
-    if (!knockpose::Apply(drawn, n, pose.knock.parent, pose.knock.joint, pose.knock.at, pose.knock.weight)) { note(false); g_carryMissed.fetch_add(1, std::memory_order_relaxed); return; }
+    if (!DrawnBones(self, pose, game, drawn, n)) { note(false); g_carryMissed.fetch_add(1, std::memory_order_relaxed); return; }
     if (!knockpose::Carry(m, game[bone], drawn[bone], pose.knock.m3, pose.knock.root, o) || WriteM(out, o) <= 0) { note(false); return; }
     WriteM(component + 0x40, o);   // (the transform's own world matrix, as potion_hide's writes do)
     note(true);

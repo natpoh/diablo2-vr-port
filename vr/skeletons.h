@@ -852,7 +852,8 @@ struct MonsterRig {
     uint32_t parts[kMaxParts] = {};
     int nParts = 0;
 };
-size_t MonsterRigs(float x, float z, float reach, MonsterRig* out, size_t cap);
+// keep / nKeep: places (x, z, world units) whose skeleton is taken first and whatever the reach - the bodies drawn away ([weight] knock_down's FarPlaces).
+size_t MonsterRigs(float x, float z, float reach, MonsterRig* out, size_t cap, const float (*keep)[2] = nullptr, int nKeep = 0, float upm = 0.0f);
 // [weight] monster_shields: MonsterRigs reads the held parts too (MonsterRig::held). Off: none read.
 void SetHeldWanted(bool on);
 // [weight] monster_ragdoll_all: every monster gets a doll, not only the humanoids (MonsterRig::doll 1 for any that is not still), a skeleton with no part
@@ -869,6 +870,10 @@ void SetPoseView(bool allowed);
 // monster from a turned copy of its pose (headshadow::SetDollSkin; vr/head_shadow.h) - the pose hook then leaves the game's pose as it made it.
 using MonsterPoseByWorldFn = int (*)(uintptr_t skeleton, uintptr_t worldPose, dollpose::Pose* out, int max, bool* exact);
 void SetMonsterPoseByWorldSource(MonsterPoseByWorldFn fn);
+// [weight] death_ragdoll: a corpse kept as it lies (dollpose::Knock::frozen) is drawn from its bones as they were when it came to rest - fn fills mats (n bones,
+// the model's frame, the model standing at m3 / root now) for SkeletonInstance self; false: none kept for it (laid on the game's pose then). Null: none.
+using FrozenPoseFn = bool (*)(uintptr_t self, const float m3[9], const float root[3], float (*mats)[16], int n);
+void SetFrozenPoseSource(FrozenPoseFn fn);
 // A SkeletonInstance's world poses: this frame's (+0x20) and the last's (+0x28). False when they do not read.
 bool WorldPoses(uintptr_t self, uintptr_t* cur, uintptr_t* prev, uintptr_t* skeleton = nullptr);
 // [weight] knock_down: a SkeletonInstance's world pose as the game made it (the model's frame) into m - its bone count, 0 when it does not read or has more

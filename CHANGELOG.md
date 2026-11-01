@@ -1,5 +1,18 @@
 # What's new in D2R VR
 
+## 0.197.0
+
+From the test builds 0.196.1 - 0.196.2: monsters you grab, throw and kill behave better (still being worked on).
+
+- **Lifted monsters no longer vanish**: a body you hold or knock away keeps its game unit within the scans around the hero (it dropped out
+  of them and the drawn body went with it).
+- **A thrown monster lets go once the game has it where it lies**: after it gets up it is handed back to the game's own animation and AI
+  only when the game's unit stands under the drawn body (the knockback is asked again until it does) - it no longer walks back from there.
+- **The hand never reaches for a swinging body past a hand's length**, and a body back on its spot goes back to the game's animation at
+  once (flicker in the grab).
+- A test, off: **a killed humanoid falls as a ragdoll** (`[weight] death_ragdoll`): a corpse at rest now lies frozen where it fell (no twitch,
+  no pull back), and a zombie's pieces stay with its body instead of hanging in the air.
+
 ## 0.196.0
 
 From the develop build 0.195.0 and the test builds 0.195.1 - 0.195.3.

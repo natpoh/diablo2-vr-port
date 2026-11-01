@@ -334,6 +334,29 @@ inline bool Carry(const float world[16], const float game[16], const float drawn
     return true;
 }
 
+// A bone's matrix in the model's frame to the world (model x X) and back (world x X^-1), X the model's place (m3 rows, root; world units) - [weight]
+// death_ragdoll keeps a resting corpse's bones in the world, so the game moving its model (the corpse eased to its cell) moves nothing of ours.
+inline void ModelToWorld(const float model[16], const float m3[9], const float root[3], float out[16]) {
+    float x[16] = {};
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j) x[i * 4 + j] = m3[i * 3 + j];
+    for (int j = 0; j < 3; ++j) x[12 + j] = root[j];
+    x[15] = 1.0f;
+    detail::MulM(model, x, out);
+}
+inline bool WorldToModel(const float world[16], const float m3[9], const float root[3], float out[16]) {
+    float x[16] = {}, xi[16];
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j) x[i * 4 + j] = m3[i * 3 + j];
+    for (int j = 0; j < 3; ++j) x[12 + j] = root[j];
+    x[15] = 1.0f;
+    if (!detail::InvAffine(x, xi)) return false;
+    detail::MulM(world, xi, out);
+    for (int i = 0; i < 16; ++i)
+        if (!std::isfinite(out[i])) return false;
+    return true;
+}
+
 // ... and a point (world units) that goes with a bone - a limb's capsule end: p x X^-1 x game^-1 x drawn x X. False when a matrix does not invert.
 inline bool CarryPoint(const float p[3], const float game[16], const float drawn[16], const float m3[9], const float root[3], float out[3]) {
     float w[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, p[0], p[1], p[2], 1}, o[16];
