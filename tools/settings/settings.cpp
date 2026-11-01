@@ -1101,15 +1101,30 @@ std::vector<Item> g_items = {
            L"A druid in Werewolf or Werebear form is drawn by the game as the beast, and in first person its head and back stood in front "
            L"of your eyes. On: the beast becomes your body as the druid's is - its torso held upright under the camera, its own head and "
            L"neck hidden, its arms on the controllers, its eyes at the form's own height (eased in over half a second when you shift); "
-           L"standing still its legs and tail are held, walking they take the game's stride. Only the drawn body and the camera: the form, "
-           L"its attacks and its speed stay the game's. VR first person (F4) only, and only for your own druid. Off: the game's own beast, "
+           L"standing still its legs and tail are held, walking they take the game's stride. Its claws close and open with your grips, and "
+           L"with Grab bodies on the paws are free hands: they take, carry and throw at their palms as your hands do. Only the drawn body, "
+           L"the camera and the grab: the form, its attacks and its speed stay the game's. VR first person (F4) only, and only for your own druid. Off: the game's own beast, "
            L"as before. Idea and numbers from D2R VR Unleashed (bearstonem/d2r-pcvr). Live.")),
+    Needs(L"shapeshift", L"forms_first_person", 1, Only(kVr, Toggle(L"shapeshift", L"claw_hits", L"Druid: werewolf and werebear strike with their claws (F4)", 0,
+           L"The forms hold no weapon, so hit by touch had nothing to strike with. On: each paw strikes by touch as a weapon does - from its "
+           L"wrist to its claws, as the form's own bones have them - and a fast enough swing into a monster is the game's own attack (with "
+           L"Direct hit by its rules, or the armed skill: Fury, Feral Rage, Maul, Hunger ...). The game decides the hit, the damage and the "
+           L"speed. The two paws are one weapon: after either one attacks, both wait as long as the hero's attack takes, so two paws never "
+           L"attack twice as often. The least speed is the unarmed one (Strikes). Needs Hit by touch on. VR first person (F4) only. Live."))),
     Needs(L"shapeshift", L"forms_first_person", 1, Only(kVr, Slider(L"shapeshift", L"wolf_height", L"Werewolf: eye height, %", 50, 150, 1, 100,
            L"The werewolf's eyes at this share of its own height (100: 98 % of the druid's). Lower: you stand lower in the world, and it "
            L"looks bigger. Live."))),
     Needs(L"shapeshift", L"forms_first_person", 1, Only(kVr, Slider(L"shapeshift", L"bear_height", L"Werebear: eye height, %", 50, 150, 1, 100,
            L"The werebear's eyes at this share of its own height (100: 112 % of the druid's). Higher: you stand higher in the world, and "
            L"it looks smaller. Live."))),
+    Needs(L"shapeshift", L"forms_first_person", 1, Only(kVr, Slider(L"shapeshift", L"wolf_strength_pct", L"Werewolf: paw strength in the grab, %", 100, 600, 10, 300,
+           L"How strong the werewolf's paws are when they take, lift and throw a body (Grab bodies, Throw), as a share of your hands' Strength: "
+           L"a heavier body follows the paw and flies farther. Only the drawn grab and throw - what the game does to the monster stays the game's "
+           L"(its knockback, its life). Live."))),
+    Needs(L"shapeshift", L"forms_first_person", 1, Only(kVr, Slider(L"shapeshift", L"bear_strength_pct", L"Werebear: paw strength in the grab, %", 100, 600, 10, 500,
+           L"How strong the werebear's paws are when they take, lift and throw a body (Grab bodies, Throw), as a share of your hands' Strength: "
+           L"a heavier body follows the paw and flies farther. Only the drawn grab and throw - what the game does to the monster stays the game's "
+           L"(its knockback, its life). Live."))),
     Only(kVr, Choice(L"body", L"turn", L"Hero turns to where you look (F4)", 2, {L"No (the game's facing)", L"Above the pelvis", L"Whole body"},
            L"In the other first-person views the whole hero always turns with you.")),
     Toggle(L"body", L"turn_third", L"From behind too (the right stick turns him)", 1,

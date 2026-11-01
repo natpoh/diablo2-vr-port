@@ -84,6 +84,9 @@ struct Input {
     // The posed weapon for PosedWeapon() below (melee by touch): wanted only when asked, so nothing is done for it otherwise.
     bool posedWeapon = false;
     bool dualBlades = false;    // a melee weapon in each hand's slot: PosedWeapon() then keeps the other hand's weapon bone too (blade[])
+    // [shapeshift] claw_hits (with posedWeapon and formGraft): a grafted werewolf / werebear's two paws are PosedWeapon()'s blades - each from its wrist to the farthest bone
+    // under it (vr/claw_strike.h), PosedWeaponPose::paws set. Its rig has no weapon bones.
+    bool clawHits = false;
     uint32_t poseStamp = 0;     // the stamp of the hand sample this pose is made from (sampleStamp of the shared block)
     bool havePoseStamp = false;
     uint32_t worldEpoch = 0;    // bumped whenever the world frame turns under a still hand (a snap turn, a recenter, a view change)
@@ -533,6 +536,12 @@ void SetWorldHands(WorldHandsFn fn);
 // ... where the last pose drew a holding hand's palm (the middle of it, in the hands' frame: metres from the head) and how it was laid on the body ("the grip library",
 // "our own frame", or why not); false when that hand held nothing in the last 200 ms. For grab_wire's log of a held grip.
 bool GrabPalmDrawn(int side, float head[3], const char** how);
+// [shapeshift] a grafted werewolf / werebear (F4, forms_first_person): the paw's grip point - its palm's middle, from the form's own wrist and middle knuckle - against the
+// controller's point (Input::hand + handOffset), in the CONTROLLER's own frame (turn it by Input::rot to the head's), as the last pose with that hand empty drew it.
+// False when the hero is not in a grafted form now. For [weight] grab_bodies: a paw takes and holds at its palm.
+bool PawGrip(int side, float local[3]);
+// ... the hero's grafted form drawn now: 1 the werewolf, 2 the werebear, 0 none (a person, another view, the key off).
+int GraftedForm();
 void SetFresh(FreshFn fn);
 // [openxr] roomscale_body: at the hero's pose, right after the fresh facing, the drawn body's move across the floor (Input::roomShift, model
 // units, from the matrix that facing was read with), with [body] under_camera's move under the camera. False: none (off, not room
@@ -640,6 +649,9 @@ struct PosedBlade {
     static constexpr int kMoreBalls = 3;
     int moreBalls = 0;
     float moreCentre[kMoreBalls][3]{}, moreDir[kMoreBalls][3]{};
+    // [shapeshift] claw_hits: this blade is a form's paw - origin its wrist, axis[1] toward its claw's tip, pawLength and pawRadius in metres (vr/claw_strike.h PawFrom)
+    bool paw = false;
+    float pawLength = 0.0f, pawRadius = 0.0f;
 };
 struct PosedWeaponPose {
     float origin[3]{}, axis[3]{}, hero[3]{};
@@ -647,6 +659,7 @@ struct PosedWeaponPose {
     uint32_t weaponType = 0;
     PosedBlade blade[2];
     int side = 0;   // the hero's hand slot the bone belongs to (0 right, 1 left)
+    bool paws = false;   // [shapeshift] claw_hits: blade[0] and blade[1] are a form's right and left paws (no weapon)
 };
 bool PosedWeapon(PosedWeaponPose& out);
 #endif

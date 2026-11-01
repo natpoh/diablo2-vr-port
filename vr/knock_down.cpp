@@ -118,6 +118,11 @@ constexpr uint64_t kMaxOnBladeMs = 8000;
 constexpr float kImpaleStrength = 20.0f;  // the blade's hold: 20 hands' pull (the hero's run carries the body, D2RF_HAND_MAX_FORCE x 20 = 6000 N)
 std::atomic<uint32_t> g_downIds[D2RF_MAX_DOWN];
 std::atomic<uintptr_t> g_downSelves[kMaxSelves];   // the SkeletonInstances drawn out of the game's pose now (what hangs on their bones goes with them: OnXform)
+std::atomic<uintptr_t> g_deadSelves[kMaxSelves];   // [weight] death_ragdoll: ... those of them dead (falling or kept): their parts put on them once a frame (PutHangs)
+SRWLOCK g_hangLock = SRWLOCK_INIT;
+deathragdoll::Hangs g_hangs;                        // (under g_hangLock) what hangs on the dead bodies' bones
+std::atomic<int> g_nHangs{0};
+std::atomic<unsigned> g_hangPut{0}, g_hangBack{0}, g_hangNoStore{0}, g_hangNoPose{0};   // (the 1 s line's)
 std::atomic<unsigned> g_carried{0}, g_carryMissed{0};
 std::atomic<int> g_downPhase[D2RF_MAX_DOWN];
 // Each model's facing for the library, from the game's own walking (knockpose::FacesGoing: the game walks a unit toward its front): the ticks the game moved
@@ -238,6 +243,22 @@ void SetLog(LogFn fn) {
     falllib::SetLog(fn);
 }
 
+std::atomic<float> g_formStrength{1.0f};   // [shapeshift] a grafted form's paws: the factor on Settings::strength (SetFormStrength)
+void SetFormStrength(float factor) {
+    if (!std::isfinite(factor) || !(factor > 0.0f)) factor = 1.0f;
+    if (g_formStrength.exchange(factor) == factor) return;
+    float base = 1.0f;
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        base = g_set.strength;
+    }
+    {
+        std::lock_guard<std::mutex> lock(g_lib);
+        falllib::SetStrength(base * factor);
+    }
+    if (g_throwOn.load()) LogF("knock down: the hands' strength %.2f (%s)", base * factor, factor != 1.0f ? "a form's paws, [shapeshift] wolf/bear_strength_pct" : "a person's hands again");
+}
+
 void Configure(const Settings& s) {
     const bool was = g_on.exchange(s.on), wasThrow = g_throwOn.exchange(s.throwOn), wasImpale = g_impaleOn.exchange(s.impaleOn), wasDeath = g_deathOn.exchange(s.deathOn);
     {
@@ -246,7 +267,7 @@ void Configure(const Settings& s) {
     }
     {
         std::lock_guard<std::mutex> lock(g_lib);
-        falllib::SetStrength(s.strength);
+        falllib::SetStrength(s.strength * g_formStrength.load());   // ([shapeshift] a form's paws: SetFormStrength)
         falllib::SetBalance(s.balance);
     }
     if (s.on != was) {
@@ -498,6 +519,7 @@ int Tick(const skel::MonsterRig* rigs, size_t nr, const Unit* units, int nUnits,
     if (!Wanted() || !viewgate::F4() || !(upm > 1e-3f) || !rigs || !units || !rigOf) {
         std::lock_guard<std::mutex> lock(g_lib);
         for (auto& s : g_downSelves) s.store(0);
+        for (auto& s : g_deadSelves) s.store(0);
         if (g_any) ResetLocked();   // switched off, another view: every body let go of (the game's own animation at once)
         heroRun.Feed(nullptr, 0.0f);
         return n;
@@ -616,7 +638,8 @@ int Tick(const skel::MonsterRig* rigs, size_t nr, const Unit* units, int nUnits,
                 const deathragdoll::Start s = deathragdoll::Decide(u.rowOk, u.rowFlags, was != nullptr, was ? nowMs - was->atMs : ~0ull, was && was->hostile, &why);
                 if (s == deathragdoll::Start::LeftToGame) {
                     ++leftBoss;
-                    if (was) LogF("death ragdoll: %u ('%s') died - left to the game: %s", u.id, was->model, why ? why : "-");
+                    if (was) LogF("death ragdoll: %u ('%s') died - left to the game: %s (its MonStats flags 0x%08X%s)", u.id, was->model, why ? why : "-", u.rowFlags,
+                                  u.rowOk ? "" : ", the row not read");
                     continue;
                 }
                 if (s == deathragdoll::Start::NotSeenAlive) { ++leftNotSeen; continue; }
@@ -856,7 +879,10 @@ int Tick(const skel::MonsterRig* rigs, size_t nr, const Unit* units, int nUnits,
         LogF("death ragdoll: %u ('%s', %.0f kg, %.2f m) killed (mode %d) - falls as a ragdoll from the pose it died in, pushed %.1f m/s %s%s%s", f.id, f.model,
              f.body.massKg, f.body.height, deaths[i].mode, push.gaveMs, by, was ? " - it was " : "", was ? PhaseName(g_downPhase[was - g_down].load()) : "");
     }
-    if (!g_any && g_corpses.Count() == 0) return n;
+    if (!g_any && g_corpses.Count() == 0) {
+        for (auto& s : g_deadSelves) s.store(0);   // (no dead body drawn: what hung on one gets the game's matrix back - PutHangs)
+        return n;
+    }
     for (const DownBody& d : g_down) {   // home: where the game has each body now
         if (!d.id) continue;
         for (int i = 0; i < nf; ++i)
@@ -880,6 +906,8 @@ int Tick(const skel::MonsterRig* rigs, size_t nr, const Unit* units, int nUnits,
     g_nPosesNow = std::max(0, nPoses);
     uintptr_t selves[kMaxSelves] = {};
     int nSelves = 0;
+    uintptr_t deadSelves[kMaxSelves] = {};   // [weight] death_ragdoll: the dead among them (their parts put on them: PutHangs)
+    int nDeadSelves = 0;
     static uint64_t toldAt = 0;
     const bool tell = nowMs - toldAt >= 1000;
     char said[700];
@@ -982,6 +1010,7 @@ int Tick(const skel::MonsterRig* rigs, size_t nr, const Unit* units, int nUnits,
             for (int j = 0; j < D2RF_JOINTS && ok; ++j) ok = knockpose::ToModel(dg->m3, dg->root, upm, p.joint[j], atModel[j]);
             if (!ok) continue;
             emit(dg, p.id, p.weight, atModel, true);
+            if (nDeadSelves < kMaxSelves) deadSelves[nDeadSelves++] = dg->self;
             if (next == deathragdoll::Next::Keep) {
                 deathragdoll::Corpse c;
                 c.id = p.id;
@@ -1060,6 +1089,7 @@ int Tick(const skel::MonsterRig* rigs, size_t nr, const Unit* units, int nUnits,
             if (!g) continue;
             deathragdoll::Drawn(*c, nowMs);
             emit(g, c->id, deathragdoll::Weight(nowMs, c->backMs), c->at, false);
+            if (nDeadSelves < kMaxSelves) deadSelves[nDeadSelves++] = g->self;
             ++corpsesDrawn;
         }
         static uint64_t deathToldAt = 0;
@@ -1070,6 +1100,11 @@ int Tick(const skel::MonsterRig* rigs, size_t nr, const Unit* units, int nUnits,
                      "out of reach: drawn as the game has them); left to the game: %u bosses or bursting, %u not humanoids read alive a moment before, %u not "
                      "hostile, %u with no room in the library", fell, kept, gone, g_corpses.Count(), corpsesDrawn, leftBoss, leftNotSeen, leftNotHostile, leftFull);
             fell = kept = gone = leftBoss = leftNotSeen = leftNotHostile = leftFull = 0;
+            const unsigned hangPut = g_hangPut.exchange(0), hangBack = g_hangBack.exchange(0), hangNoStore = g_hangNoStore.exchange(0), hangNoPose = g_hangNoPose.exchange(0);
+            if (hangPut + hangBack + hangNoStore + hangNoPose || g_nHangs.load())
+                LogF("death ragdoll - the last 5 s: what hangs on the dead's bones (%d parts known) put on them as drawn %u times (the game no longer moves them "
+                     "once its death animation is over), the game's matrix put back %u; not put - no transform storage %u, no pose %u", g_nHangs.load(), hangPut,
+                     hangBack, hangNoStore, hangNoPose);
         }
     }
     // the bodies the library no longer has: free their slots (and a hand that held one)
@@ -1089,6 +1124,7 @@ int Tick(const skel::MonsterRig* rigs, size_t nr, const Unit* units, int nUnits,
     }
     g_any = nPoses > 0;
     for (int s = 0; s < kMaxSelves; ++s) g_downSelves[s].store(s < nSelves ? selves[s] : 0);
+    for (int s = 0; s < kMaxSelves; ++s) g_deadSelves[s].store(s < nDeadSelves ? deadSelves[s] : 0);
     lib.unlock();
     if (tell && at) {
         toldAt = nowMs;
@@ -1318,9 +1354,82 @@ void BeforeDraw(uint32_t entity, bool eyes) {
     GrowOneLocked(want.entity, m, &want, g_boundsGrewDraw, &g_drawHeld, &g_drawRebuilt);
 }
 
+namespace {
+bool DeadSelf(uintptr_t self) {
+    if (!self) return false;
+    for (auto& s : g_deadSelves)
+        if (s.load(std::memory_order_relaxed) == self) return true;
+    return false;
+}
+
+// [weight] death_ragdoll, once a frame from the world-matrix hook (any entity's): each part hung on a dead body's bone put on that bone as drawn now - the
+// game makes its matrix no more once the death animation is over (deathragdoll::Hangs); a body that is the game's again gets the game's matrix back.
+void PutHangs() {
+    if (g_nHangs.load(std::memory_order_relaxed) == 0) return;
+    static std::atomic<int64_t> passAt{0};
+    static std::atomic<bool> passing{false};
+    LARGE_INTEGER t, f;
+    QueryPerformanceCounter(&t);
+    QueryPerformanceFrequency(&f);
+    if (t.QuadPart - passAt.load(std::memory_order_relaxed) < f.QuadPart / 200 || passing.exchange(true, std::memory_order_acquire)) return;   // (once a frame: 5 ms)
+    passAt.store(t.QuadPart, std::memory_order_relaxed);
+    static dollpose::Pose pose;   // (one pass at a time: `passing`)
+    static float game[knockpose::kMaxBones][16], drawn[knockpose::kMaxBones][16];
+    uintptr_t posed = 0;   // the body `drawn` holds now (0: none read)
+    int n = 0;
+    AcquireSRWLockExclusive(&g_hangLock);
+    for (int i = 0; i < deathragdoll::Hangs::kMax; ++i) {
+        deathragdoll::Hang* h = g_hangs.At(i);
+        if (!h) continue;
+        const bool dead = DeadSelf(h->self);
+        bool poseNow = false;
+        if (dead) {
+            if (posed != h->self) {
+                posed = h->self;
+                n = 0;
+                if (meleetouch::MonsterPose(h->self, &pose) && pose.knock.weight > 0.0f) {
+                    const int got = skel::PoseNow(h->self, game, knockpose::kMaxBones);
+                    if (got == pose.bones && got > 0) {
+                        std::memcpy(drawn, game, sizeof(float) * 16 * static_cast<size_t>(got));
+                        if (knockpose::Apply(drawn, got, pose.knock.parent, pose.knock.joint, pose.knock.at, pose.knock.weight)) n = got;
+                    }
+                }
+            }
+            poseNow = n > 0 && h->bone < n;
+            if (!poseNow) g_hangNoPose.fetch_add(1, std::memory_order_relaxed);
+        }
+        switch (deathragdoll::HangNext(dead, poseNow, h->ours)) {
+            case deathragdoll::HangDo::Carry: {
+                float o[16];
+                if (!knockpose::Carry(h->game, h->boneGame, drawn[h->bone], pose.knock.m3, pose.knock.root, o)) break;
+                if (knockprops::PutEntityWorld(h->entity, o)) {
+                    h->ours = true;
+                    g_hangPut.fetch_add(1, std::memory_order_relaxed);
+                } else {
+                    g_hangNoStore.fetch_add(1, std::memory_order_relaxed);
+                }
+                break;
+            }
+            case deathragdoll::HangDo::PutBack:
+                if (knockprops::PutEntityWorld(h->entity, h->game)) g_hangBack.fetch_add(1, std::memory_order_relaxed);
+                h->ours = false;
+                if (!dead) g_hangs.Drop(*h);
+                break;
+            case deathragdoll::HangDo::Nothing:
+                if (!dead) g_hangs.Drop(*h);
+                break;
+        }
+    }
+    g_nHangs.store(g_hangs.Count(), std::memory_order_relaxed);
+    ReleaseSRWLockExclusive(&g_hangLock);
+    passing.store(false, std::memory_order_release);
+}
+}  // namespace
+
 void OnXform(uint32_t entity, uintptr_t component, uintptr_t out) {
     if (!Wanted() || out < 0x10000) return;
     GrowBounds(entity, out);
+    PutHangs();   // [weight] death_ragdoll
     bool any = false;
     for (auto& s : g_downSelves) any = any || s.load(std::memory_order_relaxed) != 0;
     if (!any) return;
@@ -1332,15 +1441,26 @@ void OnXform(uint32_t entity, uintptr_t component, uintptr_t out) {
     if (!ours) return;
     static thread_local dollpose::Pose pose;
     static thread_local float game[knockpose::kMaxBones][16], drawn[knockpose::kMaxBones][16];
-    if (!meleetouch::MonsterPose(self, &pose) || !(pose.knock.weight > 0.0f)) { g_carryMissed.fetch_add(1, std::memory_order_relaxed); return; }
     const int n = skel::PoseNow(self, game, knockpose::kMaxBones);
-    if (n != pose.bones || bone < 0 || bone >= n) { g_carryMissed.fetch_add(1, std::memory_order_relaxed); return; }
-    std::memcpy(drawn, game, sizeof(float) * 16 * static_cast<size_t>(n));
-    if (!knockpose::Apply(drawn, n, pose.knock.parent, pose.knock.joint, pose.knock.at, pose.knock.weight)) { g_carryMissed.fetch_add(1, std::memory_order_relaxed); return; }
     float m[16], o[16];
-    if (ReadM(out, m) <= 0 || !knockpose::Carry(m, game[bone], drawn[bone], pose.knock.m3, pose.knock.root, o)) return;
-    if (WriteM(out, o) <= 0) return;
+    if (n <= 0 || bone < 0 || bone >= n || ReadM(out, m) <= 0) { g_carryMissed.fetch_add(1, std::memory_order_relaxed); return; }
+    const bool dead = DeadSelf(self);
+    const auto note = [&](bool carried) {   // [weight] death_ragdoll: a dead body's part as the game just made it, for PutHangs (carried: ours is in it now)
+        if (!dead) return;
+        AcquireSRWLockExclusive(&g_hangLock);
+        g_hangs.Note(entity, self, bone, m, game[bone]);
+        if (carried)
+            for (int i = 0; i < deathragdoll::Hangs::kMax; ++i)
+                if (deathragdoll::Hang* h = g_hangs.At(i); h && h->entity == entity) h->ours = true;
+        g_nHangs.store(g_hangs.Count(), std::memory_order_relaxed);
+        ReleaseSRWLockExclusive(&g_hangLock);
+    };
+    if (!meleetouch::MonsterPose(self, &pose) || !(pose.knock.weight > 0.0f) || n != pose.bones) { note(false); g_carryMissed.fetch_add(1, std::memory_order_relaxed); return; }
+    std::memcpy(drawn, game, sizeof(float) * 16 * static_cast<size_t>(n));
+    if (!knockpose::Apply(drawn, n, pose.knock.parent, pose.knock.joint, pose.knock.at, pose.knock.weight)) { note(false); g_carryMissed.fetch_add(1, std::memory_order_relaxed); return; }
+    if (!knockpose::Carry(m, game[bone], drawn[bone], pose.knock.m3, pose.knock.root, o) || WriteM(out, o) <= 0) { note(false); return; }
     WriteM(component + 0x40, o);   // (the transform's own world matrix, as potion_hide's writes do)
+    note(true);
     g_carried.fetch_add(1, std::memory_order_relaxed);
 }
 

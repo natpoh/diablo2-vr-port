@@ -59,9 +59,11 @@
 #include "melee_direct.h"
 #include "melee_direct_client.h"   // [gameplay] melee_direct_client: a joined TCP/IP player's touch sent as the game's own command for the monster
 #include "melee_press.h"
+#include "claw_strike.h"   // [shapeshift] claw_hits: a form's two paws strike as one weapon (one shared recovery)
 #include "doll_lib.h"     // [weight] monster_ragdoll: the weight library's monsters' weight (d2r_vr_weight.dll's D2rd* exports) moves the bodies
 #include "doll_view.h"
 #include "knock_down.h"   // [weight] knock_down: a struck humanoid drawn falling, lying and getting up (the weight library's D2rf* exports)
+#include "death_ragdoll.h" // [weight] death_ragdoll: the dying monsters' MonStats flags (UnitRowFlags)
 #include "grab_bodies.h"   // [weight] grab_bodies: the held limbs put into the bodies (PutLinks)
 #include "item_grab.h"     // [weight] grab_items: the items on the ground near the hero (GroundItems)
 #include "barrel_touch.h"  // [gameplay] melee_touch_barrels: a swing through a barrel / pot presses the game's own interact on it
@@ -114,6 +116,7 @@ std::atomic<bool> g_leapWanted{false};    // [gameplay] leap_by_gaze: ... and fo
 // [gameplay] melee_touch_thrown: a javelin, throwing knife or throwing axe is swung too (a point-blank throw by the game's own attack), and what
 // the touch needs of the throw by gesture (vr/throw_gesture_wire.h), by function pointers so this module does not depend on it (vrcam wires them).
 std::atomic<bool> g_thrownTouch{true};
+std::atomic<bool> g_clawHits{false};     // [shapeshift] claw_hits: a grafted werewolf / werebear's paws are the blades (skel::PosedWeaponPose::paws)
 std::atomic<bool> g_thrownHeld{false};   // [gameplay] melee_touch_thrown_held: a thrown weapon is in the hand from the equip, like a sword (vr/thrown_touch.h)
 std::atomic<GripIsThrowsFn> g_gripIsThrows{nullptr};
 std::atomic<GripHeldFn> g_gripHeld{nullptr};
@@ -226,14 +229,10 @@ unitscan::RowCache g_rows;   // (unit_scan.h) the timer's thread only: hit by to
 // A class's MonStats row as the game's own getter gives it, read now (any thread; the reads and the call guarded).
 bool RowNow(uint8_t bank, uint32_t cls, meleetouch::MonsterRow* out) {
     uintptr_t row = 0;
-    uint8_t f[0x40] = {};
+    uint8_t f[16] = {};
     const uintptr_t fn = d2rsig::Addr(RVA_MONSTATS);
     if (!fn || cls > 4095 || bank > 3 || !CallStats(fn, bank, static_cast<int>(cls), &row) || !Read(f, row, sizeof f)) return false;
     *out = {f[8], f[9], f[13]};
-    uint16_t rowId = 0;
-    std::memcpy(&rowId, f, sizeof rowId);
-    std::memcpy(&out->flags, f + 0x3C, sizeof out->flags);   // ([weight] death_ragdoll: a boss's, a prime evil's, a bursting one's death stays the game's)
-    out->flagsOk = rowId == cls;
     return f[8] >= 1 && f[8] <= 8 && f[9] >= 1 && f[9] <= 8;
 }
 
@@ -292,10 +291,10 @@ bool ScanUnits(float heroX, float heroZ, float upm, float floorM, Scan* out) {
         unitscan::Dying dying[std::tuple_size<decltype(Scan::dead)>::value];
         const size_t nd = unitscan::DyingNear([](void* d, uintptr_t s, size_t bytes) { return Read(d, s, bytes); }, d2rsig::Addr(RVA_UNITS), heroX, heroZ, 24.0f,
                                               dying, std::size(dying));
-        for (size_t i = 0; i < nd; ++i) {
-            meleetouch::MonsterRow row;
-            const bool rowRead = RowFor(dying[i].bank, dying[i].cls, &row);
-            out->dead[out->nd++] = {dying[i].id, static_cast<int>(dying[i].mode), rowRead && row.flagsOk, row.flags};
+        for (size_t i = 0; i < nd; ++i) {   // its MonStats row's flags through its own monster data (the chain the plates read: deathragdoll::UnitRowFlags)
+            uint32_t flags = 0;
+            const bool rowOk = deathragdoll::UnitRowFlags(dying[i].unit, [](uintptr_t a, auto& v) { return Read(&v, a, sizeof v); }, &flags);
+            out->dead[out->nd++] = {dying[i].id, static_cast<int>(dying[i].mode), rowOk, flags};
         }
     }
     return true;
@@ -1288,9 +1287,35 @@ void ApproveDual(uint32_t id, int hand, const doubleswing::Press& p) {
 float g_sweepSpeed[2] = {};          // the last sweep each hand's engine made, for the log
 ULONGLONG g_sweepAt[2] = {};
 
+// [shapeshift] claw_hits (vr/claw_strike.h): the two paws are one weapon - each its own strokes, one recovery for both, as long as the hero's own attack (measured on his
+// unit: the game's speed). The timer's thread only.
+clawstrike::Lanes g_claws;
+meleedirectclient::AttackClock g_clawClock;
+unsigned g_clawTold = 0;   // the claws' lines told this game (each strike, each refusal once per stroke and monster): the first kClawLines
+constexpr unsigned kClawLines = 400;
+uint64_t g_clawToldKey[2] = {};   // per paw: the stroke and monster last told refused (one line per stroke and monster and reason)
+bool ClawTellOnce(int paw, uint64_t stroke, uint32_t monster, clawstrike::Why why) {
+    const uint64_t key = (stroke * 1000003ull) ^ (static_cast<uint64_t>(monster) << 3) ^ static_cast<uint64_t>(why);
+    if (g_clawToldKey[paw & 1] == key || g_clawTold >= kClawLines) return false;
+    g_clawToldKey[paw & 1] = key;
+    ++g_clawTold;
+    return true;
+}
+// A paw's blade (skel::PosedBlade paw: pawLength, pawRadius): its wrist to its claw's tip, as thick as the paw's bones spread - no butt, no head of its own.
+bladeshape::Shape PawShape(float lengthM, float radiusM) {
+    bladeshape::Shape s;
+    s.length = lengthM;
+    s.butt = 0.0f;
+    s.radius = radiusM;
+    s.tipSign = 1;
+    s.axis = 1;
+    return s;
+}
+
 // One blade of this pose, with the hand sample it was made from: [0] the primary (the hand slot PosedWeapon names), [1] the other hand's.
 struct SideBlade {
     bool ok = false;
+    bool paw = false;           // [shapeshift] claw_hits: a form's paw (PawShape), not a weapon
     int side = 0;
     uint32_t kind = 0;
     uint32_t code = 0;          // the item's code (bladeshape::Code)
@@ -1983,6 +2008,7 @@ void SetThrownTouch(bool on) {
     if (g_thrownTouch.exchange(on) != on && g_wanted.load()) Log(on ? "melee touch: thrown weapons (javelin, throwing knife and axe) hit by touch too" : "melee touch: thrown weapons are not swung");
 }
 bool ThrownTouch() { return g_thrownTouch.load(); }
+void SetClawHits(bool on) { g_clawHits.store(on); }
 void SetThrownHeld(bool on) {
     if (g_thrownHeld.exchange(on) != on && g_wanted.load())
         Log(on ? "melee touch: a thrown weapon is in the hand from the equip, like a sword (melee_touch_thrown_held) - an open grip does not stop its touch"
@@ -2152,8 +2178,34 @@ void Tick(const Frame& f) {
         if (g_wanted.load()) meleedirect::Flush();
         if (g_wanted.load()) meleedirectclient::Flush();
     }
+    // [shapeshift] claw_hits (vr/claw_strike.h): a grafted werewolf / werebear's two paws are the blades, whatever the druid's slots hold (a staff, a bow, nothing) -
+    // skeletons.cpp makes them only for that rig in F4 with the key on
+#if D2RVR_FIRST_PERSON
+    skel::PosedWeaponPose pawPose;
+    const bool paws = g_clawHits.load() && g_wanted.load() && skel::PosedWeapon(pawPose) && pawPose.paws;
+#else
+    const bool paws = false;
+#endif
+    {
+        static uint64_t clawSession = 0;
+        static bool toldPaws = false;
+        if (f.session != clawSession || !view) {   // another game or hero, another view: nothing of the paws' recovery carries over
+            clawSession = f.session;
+            g_claws.Reset();
+            g_clawTold = 0;
+        }
+        if (paws != toldPaws) {
+            toldPaws = paws;
+            Log(paws ? "claw: the form's paws are the blades now - each strikes by touch, one recovery for both ([shapeshift] claw_hits)" : "claw: no paws to strike with (no grafted form now)");
+        }
+        if (paws) {   // the hero's attack time, measured on his unit: the paws' shared recovery
+            uint32_t mode = 0;
+            const uintptr_t unit = ClientUnit(g_heroId.load(), 0);
+            g_clawClock.Sample(unit && Read(&mode, unit + 0xC, 4), mode, now);
+        }
+    }
     // A javelin, throwing knife or axe is swung too ([gameplay] melee_touch_thrown), a throwing potion (the same kind) never: its item code is checked below
-    const bool thrown = meleetouch::ThrownKind(f.weaponType);
+    const bool thrown = !paws && meleetouch::ThrownKind(f.weaponType);
     // Why the touch does not start, said once per weapon and reason (vr/touch_why.h): "the spear does not work" has to leave a line in the log
     static meleetouch::WhyTold whyTold;
     const uint32_t weaponKey = meleetouch::WeaponKey(f.weaponType, f.code[0], f.code[1]);
@@ -2163,7 +2215,7 @@ void Tick(const Frame& f) {
         const auto ch = [&](int i) { const char c = static_cast<char>((code >> (8 * i)) & 255); return c ? c : ' '; };
         LogF("melee touch: not started for '%c%c%c%c' (kind %u) - %s", code ? ch(0) : '?', ch(1), ch(2), ch(3), f.weaponType, meleetouch::WhyText(why));
     };
-    if (!g_wanted.load() || !f.ok || !view || !(meleetouch::MeleeKind(f.weaponType) || (thrown && g_thrownTouch.load()))) {
+    if (!g_wanted.load() || !f.ok || !view || !(paws || meleetouch::MeleeKind(f.weaponType) || (thrown && g_thrownTouch.load()))) {
         if (g_wanted.load())
             skip(!view ? meleetouch::Why::NotF4 : !f.ok ? meleetouch::Why::NotOk : thrown ? meleetouch::Why::ThrownOff : meleetouch::Why::KindNotSwung);
         if (g_press.Down()) ReleasePress(now, true);
@@ -2172,7 +2224,9 @@ void Tick(const Frame& f) {
     }
 #if D2RVR_FIRST_PERSON
     skel::PosedWeaponPose pose;
-    if (!skel::PosedWeapon(pose) || pose.worldEpoch != f.epoch) { skip(meleetouch::Why::NoPose); Cancel(); return; }
+    if (paws) pose = pawPose;
+    if ((!paws && !skel::PosedWeapon(pose)) || pose.worldEpoch != f.epoch) { skip(meleetouch::Why::NoPose); Cancel(); return; }
+    if (!paws && pose.paws) { skip(meleetouch::Why::NoBlade); Cancel(); return; }   // (the key turned off this very tick)
     if (thrown && !bladeshape::TouchKind(f.weaponType, f.code[pose.side & 1], true)) { skip(meleetouch::Why::Potion); Cancel(); return; }   // a throwing potion (or an item not read yet)
 #else
     Cancel();   // the public build has no first-person body: no weapon to swing
@@ -2180,10 +2234,10 @@ void Tick(const Frame& f) {
 #endif
 #if D2RVR_FIRST_PERSON
     // [weight]: the hand that carries the weapon drives the stroke; a weapon no hand holds (falling, lying, flying back) strikes nothing.
-    const Drive drive = DrivingHand(f.weightPlaced, f.weightCarrying, pose.side);
+    const Drive drive = paws ? Drive{true, pose.side & 1} : DrivingHand(f.weightPlaced, f.weightCarrying, pose.side);   // (a paw is the hand that swings it)
     // A weapon in each hand: the one let go strikes nothing, the other strikes on (the user, 2026-10-24: «если я грипом выбросил первое оружие то со второго пропадает
     // хитбокс») - the pose goes on with only the blade still in a hand
-    const bool dualHeld = bladeshape::DualWield(f.kind[0], f.kind[1]) && (drive.strikes || !f.secondLetGo);
+    const bool dualHeld = paws || (bladeshape::DualWield(f.kind[0], f.kind[1]) && (drive.strikes || !f.secondLetGo));
     if (!drive.strikes && !dualHeld) { skip(meleetouch::Why::LetGo); Cancel(); return; }
     if (thrown) {   // the touch and the throw by gesture must not both fire for one swing (vr/thrown_touch.h)
         const GripIsThrowsFn owns = g_gripIsThrows.load();
@@ -2208,7 +2262,7 @@ void Tick(const Frame& f) {
             return;
         }
     }
-    g_liveKind.store(f.weaponType);     // [gameplay] melee_touch_only: a weapon the touch swings (melee, bare hands, a throwing weapon with its touch on) is in a hand, posed and striking -
+    g_liveKind.store(paws ? static_cast<uint32_t>(D2RVR_TYPE_UNARMED) : f.weaponType);     // [gameplay] melee_touch_only: a weapon the touch swings (melee, bare hands, a throwing weapon with its touch on) is in a hand, posed and striking -
     g_liveAt.store(now);                // the trigger need not attack (vr/melee_trigger_wire.cpp asks Live; a bow or a crossbow is never here)
     if (pose.poseStamp == g_lastPoseStamp) return;   // nothing new since the last time
     g_lastPoseStamp = pose.poseStamp;
@@ -2223,19 +2277,19 @@ void Tick(const Frame& f) {
         head.ok = f.headOk;
         for (int i = 0; i < 3; ++i) { head.right[i] = f.camR[i]; head.fwd[i] = f.camF[i]; head.eyeWorld[i] = f.eyeWorld[i]; }
         head.upm = upm;
-        const bool dual = bladeshape::DualWield(f.kind[0], f.kind[1]);
+        const bool dual = paws || bladeshape::DualWield(f.kind[0], f.kind[1]);   // ([shapeshift] claw_hits: both paws)
         int nb = 0;
         for (int k = 0; k < (dual ? 2 : 1); ++k) {
             const int side = (pose.side & 1) ^ k;            // the wrist slot the bone is on
-            const int hand = k == 0 ? drive.hand : f.secondHand >= 0 ? f.secondHand : side;     // the controller that swings it ([weight]: the hand that carries it)
+            const int hand = paws ? side : k == 0 ? drive.hand : f.secondHand >= 0 ? f.secondHand : side;     // the controller that swings it ([weight]: the hand that carries it; a paw: its own)
             const skel::PosedBlade& pb = pose.blade[side];
             if (!pb.ok) continue;
-            if ((k == 0 && !drive.strikes) || (k == 1 && f.secondLetGo)) continue;   // (let go: falling, lying, flying back - it strikes nothing)
-            const uint32_t kind = k == 0 ? f.weaponType : f.kind[side];
-            const bool two = k == 0 && f.twoHandsOn;
+            if (!paws && ((k == 0 && !drive.strikes) || (k == 1 && f.secondLetGo))) continue;   // (let go: falling, lying, flying back - it strikes nothing)
+            const uint32_t kind = paws ? static_cast<uint32_t>(D2RVR_TYPE_UNARMED) : k == 0 ? f.weaponType : f.kind[side];   // (a paw strikes by the unarmed kind's numbers and rules)
+            const bool two = !paws && k == 0 && f.twoHandsOn;
             // [flail] chain: a flail's ball on its chain strikes, not its handle - a ball as thick as the model's, where the chain has it
-            const bool ball = pb.ball && head.ok;
-            const bladeshape::Shape shape = ball ? bladeshape::BallShape(pb.ballRadius) : TunedShape(f.code[side], kind, two, pb.unitM);   // (the model's own ends or the kind's, the general sliders, a thrown kind's own on top)
+            const bool ball = !paws && pb.ball && head.ok;
+            const bladeshape::Shape shape = paws ? PawShape(pb.pawLength, pb.pawRadius) : ball ? bladeshape::BallShape(pb.ballRadius) : TunedShape(f.code[side], kind, two, pb.unitM);   // (the model's own ends or the kind's, the general sliders, a thrown kind's own on top)
             SideBlade& sb = blades[nb];
             bladeshape::RoomFrame roomFrame;
             bool haveRoomFrame = false;
@@ -2261,7 +2315,7 @@ void Tick(const Frame& f) {
                     sb.heads[sb.nHeads++] = {bladeshape::PointToRender(head, a), bladeshape::PointToRender(head, b), pb.ballRadius};
                 }
                 metalhead::Volume vol;
-                if (!ball && g_headVolume.load() && pb.unitM > 0.0f && shape.axis != 2 && metalhead::VolumeOf(f.code[side], strikedir::KindIndex(kind), &vol)) {
+                if (!ball && !paws && g_headVolume.load() && pb.unitM > 0.0f && shape.axis != 2 && metalhead::VolumeOf(f.code[side], strikedir::KindIndex(kind), &vol)) {
                     float ha[3], hb[3];
                     if (metalhead::ModelPoint(pb.origin, pb.axis, pb.unitM, vol.a, ha) && metalhead::ModelPoint(pb.origin, pb.axis, pb.unitM, vol.b, hb)) {
                         sb.heads[0] = {bladeshape::PointToRender(head, ha), bladeshape::PointToRender(head, hb), vol.r * pb.unitM};
@@ -2288,14 +2342,15 @@ void Tick(const Frame& f) {
                 sb.s.lever = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]) + pb.ballRadius;
             }
             sb.ball = ball;
+            sb.paw = paws;
             sb.ok = true;
             sb.side = hand;
             sb.kind = kind;
-            sb.code = f.code[side];
+            sb.code = paws ? 0u : f.code[side];
             sb.shape = shape;
             sb.unitM = ball ? 0.0f : pb.unitM;
             sb.zSign = pb.zSign;
-            sb.thrustClass = f.thrustClass[side];
+            sb.thrustClass = paws ? 0 : f.thrustClass[side];   // (a paw swings: a poke only by the unarmed kind's own Thrust tick)
             sb.slot = side;
             sb.headFrom = metalhead::Source::None;
             sb.headAlong = ball ? -1.0f : metalhead::Along(sb.code, strikedir::KindIndex(kind), shape.butt, shape.length, sb.unitM, &sb.headFrom);
@@ -2335,7 +2390,8 @@ void Tick(const Frame& f) {
                 for (const SideBlade& sb : blades)
                     if (sb.ok && w > 0 && static_cast<size_t>(w) < sizeof b) {
                         char src[360] = "";   // where the two ends come from: the weapon model's own bounds (and the metres of its unit), or the kind's constants
-                        if (!sb.ball) {
+                        if (sb.paw) snprintf(src, sizeof src, " (a paw of the form: its wrist to the farthest bone under it, the form's own skeleton)");
+                        else if (!sb.ball) {
                             weaponextent::Reach rr;
                             if (sb.unitM > 0.0f && weaponextent::ReachOf(sb.code, &rr)) snprintf(src, sizeof src, " (the model's own: tip %.2f + butt %.2f units of %.3f m)", rr.tip, rr.butt, sb.unitM);
                             else snprintf(src, sizeof src, " (the kind's constants%s)", sb.unitM > 0.0f ? ": no model row for the item" : ": no unit measured");
@@ -2624,7 +2680,7 @@ void Tick(const Frame& f) {
         // first 150 ms, an edge's cut - against a threshold from its own steel, not by the blade's speed (its sweeps are not judged). The rules in front stay: the head
         // (melee_metal_head) and the butt (melee_not_butt) by where along the weapon it met the body, the verdict (hostile, no wall), the monster's shield or weapon
         // (ShieldStops); the press is the game's own attack, once per strike per monster.
-        if (force.on && f.weightPlaced && (forceSlots & (1u << (sb.slot & 1)))) {
+        if (!sb.paw && force.on && f.weightPlaced && (forceSlots & (1u << (sb.slot & 1)))) {
             weight::LiveStrike ls[8];
             const int nl = weight::LiveStrikes(ls, 8);
             strikeforce::Strike ks[8];
@@ -2832,6 +2888,8 @@ void Tick(const Frame& f) {
             const float at = touch.speed;
             if (at < least) {
                 ++g_n.slowPart;
+                if (sb.paw && ClawTellOnce(side, sweep.stroke, c.id, clawstrike::Why::Slow))
+                    LogF("claw: %c paw, stroke %llu on monster %u refused - too slow: %.1f m/s where it touched, the least is %.1f", side ? 'L' : 'R', static_cast<unsigned long long>(sweep.stroke), c.id, at, least);
                 // [debug] melee_boxes: an amber ball (and the arrow, the line, the tint) where the blade met the monster too slowly, and a line (kind, speed, the way)
                 MarkContact(jd, c.id, c.body, meleeboxes::kCAmber, true, now);
                 if (TellRefusal(3, now, false))
@@ -2844,6 +2902,8 @@ void Tick(const Frame& f) {
             if (jd.why != strikedir::Why::Counts) {
                 const int reason = jd.why == strikedir::Why::Away || jd.why == strikedir::Why::Backward ? 0 : jd.why == strikedir::Why::NotHead || jd.why == strikedir::Why::Butt || jd.why == strikedir::Why::Shaft ? 1 : 2;
                 (reason == 0 ? g_n.away : reason == 1 ? g_n.notHead : g_n.small)++;
+                if (sb.paw && ClawTellOnce(side, sweep.stroke, c.id, clawstrike::Why::Slow))
+                    LogF("claw: %c paw, stroke %llu on monster %u refused - %s (%.1f m/s where it touched)", side ? 'L' : 'R', static_cast<unsigned long long>(sweep.stroke), c.id, strikedir::WhyText(jd.why), at);
                 const int colour = reason == 0 ? meleeboxes::kCBlue : reason == 1 ? meleeboxes::kCGrey : meleeboxes::kCAmber;
                 MarkContact(jd, c.id, c.body, colour, true, now);   // [debug] melee_boxes: the marks, the monster tinted
                 static unsigned told = 0;
@@ -2875,6 +2935,20 @@ void Tick(const Frame& f) {
         if (touchedAny) {   // [flail] chain: once a stroke - the look only (vr/flail_chain.h); nothing of the attack
             static uint64_t kickedStroke[2] = {~0ull, ~0ull};
             if (kickedStroke[side] != sweep.stroke) { kickedStroke[side] = sweep.stroke; skel::FlailHit(side); }
+        }
+        if (first && sb.paw) {   // [shapeshift] claw_hits: the two paws' one recovery - a paw that touches while either paw's attack recovers is refused, the monster not used up
+            const uint64_t strokeId = byThrust ? tsweep.stroke : sweep.stroke;
+            const clawstrike::Contact cc{side, strokeId, first->id, firstSpeed, now};
+            uint64_t since = 0;
+            const uint64_t rec = clawstrike::RecoveryMs(g_clawClock.Ms());
+            const clawstrike::Why why = g_claws.Judge(cc, byThrust ? 0.0f : least, rec, &since);
+            if (why != clawstrike::Why::Counts) {
+                if (why != clawstrike::Why::Struck && ClawTellOnce(side, strokeId, first->id, why))
+                    LogF("claw: %c paw, stroke %llu on monster %u refused - %s (%llu ms of %llu, the %s paw's; the hero's attack time %s) at %.1f m/s", side ? 'L' : 'R',
+                         static_cast<unsigned long long>(strokeId), first->id, clawstrike::WhyText(why), static_cast<unsigned long long>(since), static_cast<unsigned long long>(rec),
+                         g_claws.LastPaw() == side ? "same" : "other", g_clawClock.Measured() ? "measured" : "not measured yet - its default", firstSpeed);
+                first = nullptr;
+            }
         }
         if (first) {
             ++g_n.touched;
@@ -2909,12 +2983,24 @@ void Tick(const Frame& f) {
             std::lock_guard<std::mutex> lock(g_histMutex);
             for (int h = 0; h < 2; ++h) t.hand[h] = g_handPath[h].Since(since);
         }
-        t.length = f.twoHanded ? std::max(t.hand[0], t.hand[1]) : t.hand[side];
+        t.length = f.twoHanded && !paws ? std::max(t.hand[0], t.hand[1]) : t.hand[side];
         return t;
     };
     for (int i = 0; i < npend; ++i) {
         const Pending& p = pend[i];
         if (p.c->id == approvedId) continue;   // (the other blade's contact with this monster was pressed in this pass)
+        const clawstrike::Contact claw{p.side, p.stroke, p.c->id, p.speed, now};
+        if (paws) {   // [shapeshift] claw_hits: both paws struck in this one pass - the second waits for the first's recovery
+            uint64_t since = 0;
+            const uint64_t rec = clawstrike::RecoveryMs(g_clawClock.Ms());
+            const clawstrike::Why why = g_claws.Judge(claw, 0.0f, rec, &since);
+            if (why != clawstrike::Why::Counts) {
+                if (why != clawstrike::Why::Struck && ClawTellOnce(p.side, p.stroke, p.c->id, why))
+                    LogF("claw: %c paw, stroke %llu on monster %u refused - %s (%llu ms of %llu)", p.side ? 'L' : 'R', static_cast<unsigned long long>(p.stroke), p.c->id,
+                         clawstrike::WhyText(why), static_cast<unsigned long long>(since), static_cast<unsigned long long>(rec));
+                continue;
+            }
+        }
         ++g_n.pressed;
         if (p.thrust) ++g_n.thrusts;
         approvedId = p.c->id;
@@ -2922,7 +3008,7 @@ void Tick(const Frame& f) {
         doubleswing::Press dual;
         int hand = p.side;
 #ifdef MELEE_TOUCH_DIRECT
-        if (doubleswing::On()) {
+        if (doubleswing::On() && !paws) {
             const Pending* next = i + 1 < npend && pend[i + 1].c->id == p.c->id ? &pend[i + 1] : nullptr;
             if (next && dualBlades) {
                 doubleswing::Note(p.side, p.c->id, now);
@@ -2934,7 +3020,16 @@ void Tick(const Frame& f) {
         }
 #endif
         if (dual.dual) ApproveDual(p.c->id, hand, dual);
-        else Approve(p.c->id, !thrown, p.side, TouchOf(p), f.twoHanded, f.twoHandsOn);   // ([gameplay] melee_direct_client: its speed, force and the hands' paths)
+        else Approve(p.c->id, !thrown, p.side, TouchOf(p), f.twoHanded && !paws, f.twoHandsOn && !paws);   // ([gameplay] melee_direct_client: its speed, force and the hands' paths)
+        if (paws) {   // [shapeshift] claw_hits: the one recovery starts - the hero's attack time (the game's speed), for both paws
+            g_claws.Struck(claw);
+            if (g_clawTold < kClawLines) {
+                ++g_clawTold;
+                LogF("claw: %c paw, stroke %llu struck monster %u (class %u) at %.1f m/s where it touched (the paw at %.1f) - the game's attack asked; both paws recover %llu ms (the hero's attack time%s)",
+                     p.side ? 'L' : 'R', static_cast<unsigned long long>(p.stroke), p.c->id, p.c->cls, p.speed, p.sweepSpeed,
+                     static_cast<unsigned long long>(clawstrike::RecoveryMs(g_clawClock.Ms())), g_clawClock.Measured() ? ", measured" : ": not measured yet, its default");
+            }
+        }
         if (!thrown) haptics::Touched(haptics::FromSkel(hand));   // [openxr] haptics_touch: the blade's hand buzzes now, landed or not (a no-op when off)
         if (thrown)   // one throw per swing: the throw by gesture's release of this swing is dropped (the touch's press is the throw)
             if (const HoldOffFn hold = g_holdOff.load()) hold(meleetouch::HoldOffUntil(now));
@@ -3063,6 +3158,7 @@ ULONGLONG g_thrScanAt = 0;   // the timer's thread only
 
 void SetThrowWanted(bool on) { g_throwWanted.store(on); }
 void SetMoveWanted(bool on) { g_moveWanted.store(on); }
+uint32_t HeroId() { return g_heroId.load(); }
 bool ThrowWanted() { return g_throwWanted.load(); }
 void SetBowWanted(bool on) { g_bowWanted.store(on); }
 bool BowWanted() { return g_bowWanted.load(); }

@@ -66,6 +66,39 @@ inline bool Target(int ux, int uy, float dx, float dy, int* tx, int* ty) {
     return true;
 }
 
+// The hero is in the way. The game's knockback stops at another unit's body (its own collision): a body held in front of the hero and pulled in is drawn
+// over the hero's own cells, and a knockback asked there - or across him - ran and moved the unit nothing (0.195.1, Serg's log: monster 28 on 5008,6192 asked
+// to 5005,6193 with the hero on 5007,6194 - "moved +0,+0"; every one asked sideways or away from him landed on its cell). So the cell asked is kept
+// kHeroClearCells from the hero (out along the hero -> cell line), and a step that would pass within kHeroPassCells of him goes round him instead: to the
+// cell kHeroClearCells off him, turned from the unit's side at most 90 degrees toward the asked side (the next steps go on round).
+constexpr float kHeroClearCells = 2.5f;   // the hero's body and the unit's (a fallen is one cell across, a zombie two)
+constexpr float kHeroPassCells = 1.5f;
+// hx, hy: the hero's cell (his server path), ux, uy the unit's, *tx, *ty the cell asked (in: Target's; out: clear of the hero). False: nothing left to move.
+inline bool ClearOfHero(float hx, float hy, int ux, int uy, int* tx, int* ty) {
+    if (!tx || !ty || !std::isfinite(hx) || !std::isfinite(hy)) return tx && ty && (*tx != ux || *ty != uy);
+    const float px = static_cast<float>(*tx) - hx, py = static_cast<float>(*ty) - hy;   // the cell asked, from the hero
+    const float vx = static_cast<float>(ux) - hx, vy = static_cast<float>(uy) - hy;     // the unit, from the hero
+    const float sx = px - vx, sy = py - vy, l2 = sx * sx + sy * sy;
+    const float t = l2 > 1e-6f ? std::clamp(-(vx * sx + vy * sy) / l2, 0.0f, 1.0f) : 0.0f;
+    const float pass = std::hypot(vx + sx * t, vy + sy * t), d = std::hypot(px, py), du = std::hypot(vx, vy);
+    const bool across = pass < kHeroPassCells && t > 0.0f && pass < du - 0.25f;   // (nearer him on the way than where it starts: a unit held by him may step off)
+    if (d >= kHeroClearCells && !across) return *tx != ux || *ty != uy;   // clear: as asked
+    float a = d > 1e-3f ? std::atan2(py, px) : std::atan2(vy, vx);   // the side asked (on the hero himself: the unit's side)
+    if (across && du > 1e-3f) {   // across him: round him from the unit's side, a quarter turn at most
+        const float au = std::atan2(vy, vx);
+        float turn = a - au;
+        while (turn > 3.14159265f) turn -= 6.28318531f;
+        while (turn < -3.14159265f) turn += 6.28318531f;
+        a = au + std::clamp(turn, -1.57079633f, 1.57079633f);
+    }
+    const int x = std::clamp(static_cast<int>(std::lround(hx + kHeroClearCells * std::cos(a))), 1, 0xFFFE);
+    const int y = std::clamp(static_cast<int>(std::lround(hy + kHeroClearCells * std::sin(a))), 1, 0xFFFE);
+    if (x == ux && y == uy) return false;
+    *tx = x;
+    *ty = y;
+    return true;
+}
+
 // What the game did with an asked knockback, from the unit's mode right after the call: 13 - it runs; anything else - the game refused it (a monster that
 // cannot be knocked back, one dead or dying by then).
 enum class Outcome { Runs, Refused, Dead };

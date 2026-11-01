@@ -97,7 +97,7 @@ std::array<Ask, kAsks> g_asks;          // one per unit, the newest
 std::array<Last, 16> g_last;            // when each unit was last asked for (the timer's thread)
 std::array<Watch, kWatches> g_watch;    // (the game's thread only)
 uiticket::Ticket g_ticket;
-struct Counters { unsigned asked = 0, runs = 0, refused = 0, dead = 0, gone = 0, stale = 0, landed = 0, short_ = 0; } g_n;   // (the game's thread; read for the report)
+struct Counters { unsigned asked = 0, runs = 0, refused = 0, dead = 0, gone = 0, stale = 0, landed = 0, short_ = 0, rounded = 0, inWay = 0; } g_n;   // (the game's thread; read for the report)
 unsigned g_told = 0, g_toldLand = 0;
 uint64_t g_reportAt = 0;
 
@@ -115,7 +115,7 @@ void CheckWatches(uintptr_t game, uintptr_t lookup, uint64_t now) {
         if (miss <= 1) ++g_n.landed; else ++g_n.short_;
         if (++g_toldLand <= 24)
             LogF("grab moves unit: %s %u's knockback ran - it stands on cell %d,%d: moved %+d,%+d of the %+d,%+d asked (%s, after %.2f s, mode %u now)",
-                 w.hostile ? "monster" : "NPC", w.id, x, y, gotX, gotY, wantX, wantY, miss <= 1 ? "on the cell asked" : "short of it - the game's collision or the knockback's length",
+                 w.hostile ? "monster" : "NPC", w.id, x, y, gotX, gotY, wantX, wantY, miss <= 1 ? "on the cell asked" : "short of it - a wall or a unit in its way (the game's collision), or the knockback's length",
                  (now - w.atMs) / 1000.0f, head[3]);
         w = Watch{};
     }
@@ -131,6 +131,20 @@ void Act(const Ask& a, uintptr_t game, uintptr_t lookup, uint64_t now) {
     if (!ModeAllows(static_cast<int>(head[3]))) return;   // dead or dying, or its last knockback still runs: the next note asks again
     int ux = 0, uy = 0, tx = 0, ty = 0;
     if (!CellOf(unit, &ux, &uy) || !Target(ux, uy, a.dx, a.dy, &tx, &ty)) return;
+    // the hero in the way: the game's knockback stops at his body - the cell asked kept clear of him, a step across him taken round him (ClearOfHero)
+    const int askedX = tx, askedY = ty;
+    uintptr_t hero = 0;
+    uint32_t heroHead[4] = {};
+    int hx = 0, hy = 0;
+    const uint32_t heroId = meleetouch::HeroId();
+    const bool heroOk = heroId && CallLookup(lookup, game, 0, heroId, &hero) && hero && Read(heroHead, hero, sizeof heroHead) && heroHead[0] == 0 &&
+                        heroHead[2] == heroId && CellOf(hero, &hx, &hy);
+    if (heroOk && !ClearOfHero(static_cast<float>(hx), static_cast<float>(hy), ux, uy, &tx, &ty)) {
+        ++g_n.inWay;
+        return;
+    }
+    const bool rounded = tx != askedX || ty != askedY;
+    if (rounded) ++g_n.rounded;
     int result = 0;
     if (!CallKnockback(eventFn, setFn, game, unit, tx, ty, &result)) {
         g_faulted.store(true);
@@ -154,8 +168,8 @@ void Act(const Ask& a, uintptr_t game, uintptr_t lookup, uint64_t now) {
         ++g_n.refused;
     }
     if (++g_told <= 24 || (o == Outcome::Refused && g_told <= 40))
-        LogF("grab moves unit: %s %u on cell %d,%d - the game's knockback asked to cell %d,%d (%+.1f,%+.1f cells drawn off): %s (returned %d, mode %u -> %u)",
-             a.hostile ? "monster" : "NPC", a.id, ux, uy, tx, ty, a.dx, a.dy,
+        LogF("grab moves unit: %s %u on cell %d,%d - the game's knockback asked to cell %d,%d (%+.1f,%+.1f cells drawn off%s; the hero on %d,%d): %s (returned %d, mode %u -> %u)",
+             a.hostile ? "monster" : "NPC", a.id, ux, uy, tx, ty, a.dx, a.dy, rounded ? ", kept clear of the hero" : "", hx, hy,
              o == Outcome::Runs ? "it runs" : o == Outcome::Dead ? "dead or dying - nothing" : "REFUSED by the game (its MonStats row: not knocked back - a boss, a big one)",
              result, head[3], after[3]);
 }
@@ -164,8 +178,9 @@ void Report(uint64_t now) {
     if (now - g_reportAt < 10000) return;
     g_reportAt = now;
     if (!g_n.asked) return;
-    LogF("grab moves unit (10 s): %u asked, %u knockbacks ran (%u landed on the cell asked, %u short), %u refused by the game, %u dead, %u gone, %u too old",
-         g_n.asked, g_n.runs, g_n.landed, g_n.short_, g_n.refused, g_n.dead, g_n.gone, g_n.stale);
+    LogF("grab moves unit (10 s): %u asked, %u knockbacks ran (%u landed on the cell asked, %u short; %u kept clear of the hero, %u not asked - only the hero's "
+         "cells left), %u refused by the game, %u dead, %u gone, %u too old",
+         g_n.asked, g_n.runs, g_n.landed, g_n.short_, g_n.rounded, g_n.inWay, g_n.refused, g_n.dead, g_n.gone, g_n.stale);
     g_n = {};
 }
 

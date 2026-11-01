@@ -523,7 +523,9 @@ struct Settings {
     std::atomic<bool>  crouch{false};       // [body] crouch: the hero crouches when you crouch (F4 only; vr/crouch.h)
     std::atomic<float> crouchCm{20.0f};     // [body] crouch_cm: the head this far below its height at the recentre is a crouch
     std::atomic<bool>  formsFirstPerson{false};   // [shapeshift] forms_first_person: a druid's werewolf / werebear grafted under the camera (F4 only; vr/unleashed_shapeshift_form.h)
+    std::atomic<bool>  clawHits{false};   // [shapeshift] claw_hits: in a grafted form the paws strike by touch, one shared recovery (F4, with melee_touch; vr/claw_strike.h)
     std::atomic<float> formHeight[2] = {1.0f, 1.0f};   // [shapeshift] wolf_height / bear_height: % of the form's own eye height, as a fraction (0.5 - 1.5)
+    std::atomic<float> formStrengthPct[2] = {300.0f, 500.0f};   // [shapeshift] wolf_strength_pct / bear_strength_pct: the paws' strength in the weight model's grab, % of [weight] strength (vr/form_strength.h)
     std::atomic<float> bodyYawDeg{0.0f};    // added to the hero's facing: fixes a body that stands sideways
     std::atomic<bool>  thirdTurn{true};     // [body] turn_third: from behind too the whole hero faces where the camera looks (the right stick turns him)
     std::atomic<bool>  gaitThird{false};    // [body] gait_legs_third: from behind, his legs step along his travel (the gait library) - back steps, side steps

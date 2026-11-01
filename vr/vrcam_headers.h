@@ -124,6 +124,7 @@ int FindHeroMatrices(const float hero[3], uintptr_t* out, int max);
 #include "grab_bodies.h"   // ... which hand may take a body (BusyWhy)
 #include "weight_lib.h"    // the weight-physics library (d2r_vr_weight.dll beside the plugin), when there is one: [weight] hands_model 1
 #include "doll_lib.h"   // [weight] monster_ragdoll: the doll library
+#include "form_strength.h"   // [shapeshift] wolf/bear_strength_pct: a grafted form's paws stronger in the grab
 #include "knock_down.h"   // [weight] knock_down: a struck humanoid drawn falling, lying and getting up (the weight library's D2rf* exports)
 #include "grab_move_wire.h"   // [weight] grab_moves_unit: a carried or thrown body put by the game's own knockback on the cell under it
 #include "grip_lib.h"      // the grip library (d2r_vr_grip.dll beside the plugin), when there is one: [weight] grip_model 1

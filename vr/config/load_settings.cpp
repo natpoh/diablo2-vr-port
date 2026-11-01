@@ -858,8 +858,13 @@ void LoadSettings() {
     if (const bool forms = IniB(L"shapeshift", L"forms_first_person", false); forms != g_set.formsFirstPerson.exchange(forms))
         Log(forms ? "vrcam: a druid's werewolf / werebear drawn as our body in F4, grafted under the camera ([shapeshift] forms_first_person)"
                   : "vrcam: a druid's werewolf / werebear left to the game ([shapeshift] forms_first_person=0)");
+    if (const bool claws = IniB(L"shapeshift", L"claw_hits", false); claws != g_set.clawHits.exchange(claws))
+        Log(claws ? "vrcam: a werewolf / werebear's paws strike by touch in F4 - the game's own attack, one recovery for both paws ([shapeshift] claw_hits; needs forms_first_person and melee_touch)"
+                  : "vrcam: a werewolf / werebear's paws do not strike by touch ([shapeshift] claw_hits=0)");
     g_set.formHeight[0].store(std::clamp(IniF(L"shapeshift", L"wolf_height", 100.0f), 50.0f, 150.0f) * 0.01f);
     g_set.formHeight[1].store(std::clamp(IniF(L"shapeshift", L"bear_height", 100.0f), 50.0f, 150.0f) * 0.01f);
+    g_set.formStrengthPct[0].store(formstrength::ClampPct(IniF(L"shapeshift", L"wolf_strength_pct", formstrength::kWolfDefaultPct)));   // the paws in the grab (vr/form_strength.h)
+    g_set.formStrengthPct[1].store(formstrength::ClampPct(IniF(L"shapeshift", L"bear_strength_pct", formstrength::kBearDefaultPct)));
     g_set.handUp.store(std::clamp(IniF(L"arms", L"up", 0.0f), -50.0f, 50.0f));
     g_set.handFwd.store(std::clamp(IniF(L"arms", L"forward", 0.0f), -50.0f, 50.0f));
     g_set.handSide.store(std::clamp(IniF(L"arms", L"side", 0.0f), -50.0f, 50.0f));
@@ -1105,6 +1110,7 @@ void LoadSettings() {
     meleetouch::SetWanted(g_set.meleeTouch.load());
     meleetouch::SetThrownTouch(IniB(L"gameplay", L"melee_touch_thrown", true));   // javelins, throwing knives and axes hit by touch too (a point-blank throw; vr/thrown_touch.h)
     meleetouch::SetThrownHeld(IniB(L"gameplay", L"melee_touch_thrown_held", false));   // ... from the equip, like a sword - not only while the throw's grip is squeezed
+    meleetouch::SetClawHits(g_set.clawHits.load());   // [shapeshift] claw_hits: the form's paws strike by touch
     meleetouch::SetBarrelsWanted(IniB(L"gameplay", L"melee_touch_barrels", false));   // a swing through a barrel / pot presses the game's own interact on it (vr/barrel_touch.h)
     standstill::SetWanted(IniB(L"gameplay", L"attack_in_place", true));   // F4: the plugin's attack presses never walk the hero (vr/stand_still.h)
     moveattack::SetWanted(IniB(L"gameplay", L"move_while_attacking", true));   // F4, EXPERIMENTAL: a spear / bow hero walks on once the blow is out (vr/move_attack.h)

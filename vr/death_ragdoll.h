@@ -26,7 +26,9 @@
 
 namespace deathragdoll {
 
-// The MonStats row's flags (row + 0x3C; vr/mob_bars.h has the same layout: enabled 25, killable 15)
+// The MonStats row's flags (row + 0x3C; vr/mob_bars.h has the same layout: enabled 25, killable 15). The row is the one the unit's own monster data points
+// at (UnitRowFlags) - NOT the row the touch's getter (melee_touch.cpp RowNow, RVA 0x975B0) hands: that one holds the footprint and the pixel height, a
+// MonStats2 row, and its 0x3C had bit 7 set for every monster (0.195.1, Serg's log: zombie1, fallen1, quillrat1 all "a prime evil", nothing fell).
 constexpr uint32_t kRowBoss = 1u << 6, kRowPrimeEvil = 1u << 7, kRowNpc = 1u << 8, kRowInTown = 1u << 10, kRowDeathDmg = 1u << 20;
 constexpr int kModeDying = 0, kModeDead = 12;
 inline bool Dead(int mode) { return mode == kModeDying || mode == kModeDead; }
@@ -40,6 +42,25 @@ constexpr float kLieS = 30.0f;            // how long the library is told it lie
 constexpr uint64_t kGoneMs = 1000;        // a dead unit not in the scan this long: gone (the game took its corpse away, or it is out of the scan's reach)
 constexpr uint64_t kEaseMs = 300;         // a kept corpse back in reach eases in over this (vr/melee_touch.cpp kPoseEaseMs eases it out)
 constexpr float kSameRootM = 0.5f;        // its skeleton is the one it died in: the same instance, standing within this of where it stood (metres)
+
+// A monster unit's MonStats flags, read the way the game's own plate code does (vr/mob_bars.h HidesPlate, confirmed in the image): unit + 0x00 its type (1),
+// + 0x04 its class, + 0x10 its monster data; data + 0x00 its MonStats row; the row's id (u16 at + 0x00) must be the class, its flags at + 0x3C. False: a
+// read failed or the chain is not as expected (the death stays the game's). read(address, value) fills a uint16_t / uint32_t / uintptr_t.
+template <class Read>
+bool UnitRowFlags(uintptr_t unit, Read read, uint32_t* flags) {
+    constexpr uintptr_t kMinPointer = 0x10000;
+    uint32_t type = 0, cls = 0, f = 0;
+    uintptr_t data = 0, row = 0;
+    uint16_t rowId = 0;
+    if (!flags || unit < kMinPointer || !read(unit + 0x00, type) || type != 1u) return false;
+    if (!read(unit + 0x04, cls) || cls > 0xFFFFu) return false;
+    if (!read(unit + 0x10, data) || data < kMinPointer) return false;
+    if (!read(data + 0x00, row) || row < kMinPointer) return false;
+    if (!read(row + 0x00, rowId) || rowId != cls) return false;
+    if (!read(row + 0x3C, f)) return false;
+    *flags = f;
+    return true;
+}
 
 // Why the game keeps this death as its own (the log's word), null: ours. rowOk: the row read and is the unit's own (its id the unit's class).
 inline const char* LeftToGame(bool rowOk, uint32_t flags) {
@@ -267,5 +288,60 @@ inline void Drawn(Corpse& c, uint64_t nowMs) {
     if (c.drawnMs && nowMs - c.drawnMs > kBackGapMs) c.backMs = nowMs;
     c.drawnMs = nowMs;
 }
+
+// What hangs on a dead body's bones - a zombie's arm pieces, a weapon (0.195.3, Serg: the torso lay on the ground, an arm and a hand floated where they had
+// stood). Such a part is no skinned mesh: it is its own entity hung on a bone, and its world matrix is the game's world-matrix function's (vr/knock_down.cpp
+// OnXform carries it to the bone as drawn each time the game makes it). The game makes it only while the body animates: once its death animation is over it
+// stops - our fall goes on, and the part stayed where the last carry put it. So each part met on a dead body is kept with its world matrix as the game last
+// made it and its bone then (the model's frame); once a frame (the same hook) it is put on its bone as drawn now (knockpose::Carry), while its body is dead
+// and drawn by us; when the body is the game's again (out of reach, gone, the key off) the game's matrix is put back once - the game will not.
+struct Hang {
+    uint32_t entity = 0;
+    uintptr_t self = 0;          // the SkeletonInstance it hangs on
+    int bone = -1;
+    float game[16] = {};         // its world matrix as the game last made it
+    float boneGame[16] = {};     // ... from its bone as the game had it then (the model's frame)
+    bool ours = false;           // our matrix is in it now: the game's is owed back
+};
+enum class HangDo { Nothing, Carry, PutBack };
+// selfDead: its body is a dead one drawn by us (falling or kept); poseNow: that pose is there to lay it on this frame.
+inline HangDo HangNext(bool selfDead, bool poseNow, bool ours) {
+    if (selfDead && poseNow) return HangDo::Carry;
+    return ours ? HangDo::PutBack : HangDo::Nothing;
+}
+class Hangs {
+public:
+    static constexpr int kMax = 64;
+    // The game made part `entity`'s world matrix (game) from bone `bone` of self (boneGame). A new one when full: the slot of a part not ours now, else none.
+    void Note(uint32_t entity, uintptr_t self, int bone, const float game[16], const float boneGame[16]) {
+        if (!entity || !self || bone < 0 || !game || !boneGame) return;
+        Hang* slot = nullptr;
+        for (Hang& h : h_)
+            if (h.entity == entity) { slot = &h; break; }
+        if (!slot)
+            for (Hang& h : h_)
+                if (!h.entity) { slot = &h; break; }
+        if (!slot)
+            for (Hang& h : h_)
+                if (!h.ours) { slot = &h; break; }
+        if (!slot) return;
+        slot->entity = entity;
+        slot->self = self;
+        slot->bone = bone;
+        std::memcpy(slot->game, game, sizeof slot->game);
+        std::memcpy(slot->boneGame, boneGame, sizeof slot->boneGame);
+        slot->ours = false;   // (the game just made it: its own matrix is in it)
+    }
+    Hang* At(int i) { return i >= 0 && i < kMax && h_[i].entity ? &h_[i] : nullptr; }
+    void Drop(Hang& h) { h = Hang{}; }
+    int Count() const {
+        int n = 0;
+        for (const Hang& h : h_) n += h.entity ? 1 : 0;
+        return n;
+    }
+
+private:
+    Hang h_[kMax];
+};
 
 }  // namespace deathragdoll

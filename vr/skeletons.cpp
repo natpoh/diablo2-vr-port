@@ -76,6 +76,7 @@
 #include "body_calibration.h"
 #include "crouch.h"         // [body] crouch: the hero crouches when you do (F4)
 #include "trunk_hold.h"     // [body] lock (F4) and flat_hold_trunk (flat F3): which pose each bone above the pelvis takes
+#include "claw_strike.h"   // [shapeshift] claw_hits: a form's paws as the touch's blades
 #include "unleashed_shapeshift_form.h"   // [shapeshift] forms_first_person: the druid's werewolf / werebear grafted under the camera (MPL, from Unleashed)
 #include "sigscan.h"
 #include "weapon_back.h"
@@ -2240,8 +2241,29 @@ void PoseModel(Mat& model) {
     for (int k = 0; k < 3; ++k) model.m[12 + k] += t_poseUp * model.m[4 + k];   // (0, up, 0) through the model's own rows
 }
 
-void NotePosedWeapon(uintptr_t self, const Mat& w, int side, const Input& in, const PosedBlade (&blades)[2]) {
+// [shapeshift] a grafted form's paw grip point against the controller (PawGrip): in the controller's own frame, so the grab adds it to wherever the controller is
+// and however it is turned. Taken only while the hand holds nothing - a holding hand is drawn where the grab has it, not at the controller.
+SRWLOCK g_pawGripLock = SRWLOCK_INIT;
+struct PawGripOut { float local[3] = {}; ULONGLONG at = 0; uint32_t gen = 0; } g_pawGrip[2];
+void NotePawGrip(int side, const Input& in, const V3& palm, bool holding) {
+    if (holding || !(in.handsValid & (1u << side))) return;
+    const float* q = in.rot[side];
+    const V3 d = {palm.x - (in.hand[side][0] + in.handOffset[0]), palm.y - (in.hand[side][1] + in.handOffset[1]), palm.z - (in.hand[side][2] + in.handOffset[2])};
+    const float dv[3] = {d.x, d.y, d.z};
+    float lv[3];
+    clawstrike::Turn(q, dv, true, lv);   // (into the controller's own frame)
+    const V3 l = {lv[0], lv[1], lv[2]};
+    if (!std::isfinite(l.x + l.y + l.z) || Len(l) > 0.5f) return;   // (a controller lost, the arm not on it: not a paw's grip)
+    AcquireSRWLockExclusive(&g_pawGripLock);
+    g_pawGrip[side & 1].local[0] = l.x; g_pawGrip[side & 1].local[1] = l.y; g_pawGrip[side & 1].local[2] = l.z;
+    g_pawGrip[side & 1].at = GetTickCount64();
+    g_pawGrip[side & 1].gen = HeroGen();
+    ReleaseSRWLockExclusive(&g_pawGripLock);
+}
+
+void NotePosedWeapon(uintptr_t self, const Mat& w, int side, const Input& in, const PosedBlade (&blades)[2], bool paws = false) {
     PosedWeaponPose out;
+    out.paws = paws;
     out.blade[0] = blades[0]; out.blade[1] = blades[1];
     bool ok = false;
     HeroXform hx; Mat model;
@@ -5288,6 +5310,49 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& given, const weight::O
             NotePosedWeapon(self, w, axesSide, in, blades);
         }
     }
+    // [shapeshift] a grafted werewolf / werebear has no weapon bones: each paw gets one of its own (PawBoneOf, vr/claw_strike.h) - from its wrist (the arm chain's hand
+    // bone, where the controller has it) to the farthest bone under it (a claw's tip), as thick as those bones spread about that line, its grip point the palm's middle
+    // (the wrist and the middle knuckle, as [weight] grab_wrap's palm): the form's own skeleton as posed now, in the frame and metres of the weapon bones above (the
+    // eye's model point, model units per metre from its height). claw_hits: the paws are the touch's blades. The grab: the grip point against the controller (PawGrip).
+    else if (graft && in.mode == 2 && h.hand[0] >= 0 && h.hand[1] >= 0) {
+        auto back = [&](V3 d) { const V3 m = {d.x * c - d.z * s, d.y, d.x * s + d.z * c}; return V3{-m.x, m.y, -m.z}; };
+        const V3 head = in.haveEye ? V3{in.eyeModel[0], in.eyeModel[1], in.eyeModel[2]} : Pos(newW[h.head >= 0 ? h.head : 0]);
+        const float upm = std::clamp(head.y / std::max(0.8f, in.userHeadM), 2.0f, 8.0f) * in.scale;   // model units per metre
+        auto toHead = [&](const V3& p) { return back(Scale(Sub(p, head), 1.0f / upm)); };
+        PosedBlade blades[2];
+        for (int side = 0; side < 2; ++side) {
+            const int hb = h.hand[side];
+            std::vector<float> ends;
+            for (int i = 0; i < n; ++i) {   // the bones under the hand: its fingers, its claws
+                int up = h.parent[i];
+                while (up >= 0 && up != hb) up = h.parent[up];
+                if (up != hb) continue;
+                const V3 e = toHead(Pos(newW[i]));
+                ends.insert(ends.end(), {e.x, e.y, e.z});
+            }
+            const V3 wrist = toHead(Pos(newW[hb]));
+            const float wr[3] = {wrist.x, wrist.y, wrist.z};
+            const clawstrike::Paw paw = clawstrike::PawFrom(wr, ends.data(), static_cast<int>(ends.size() / 3));
+            if (!paw.ok || !std::isfinite(wrist.x + wrist.y + wrist.z)) continue;
+            // the paw's grip point: the palm's middle (the middle knuckle where the rig names one, else a third of the way to the claws' tip)
+            const V3 palm = h.mid[side] >= 0 ? Scale(Add(wrist, toHead(Pos(newW[h.mid[side]]))), 0.5f)
+                                             : Add(wrist, Scale(V3{paw.dir[0], paw.dir[1], paw.dir[2]}, paw.length / 3.0f));
+            NotePawGrip(side, in, palm, in.grabHolding[side]);
+            if (!(in.posedWeapon && in.clawHits) || in.grabHolding[side]) continue;   // (a paw that holds a body strikes nothing with it)
+            PosedBlade& b = blades[side];
+            b.origin[0] = wrist.x; b.origin[1] = wrist.y; b.origin[2] = wrist.z;
+            for (int i = 0; i < 3; ++i) {
+                const V3 d = back(Norm(V3{newW[hb].m[i * 4], newW[hb].m[i * 4 + 1], newW[hb].m[i * 4 + 2]}));
+                b.axis[i][0] = d.x; b.axis[i][1] = d.y; b.axis[i][2] = d.z;
+            }
+            b.axis[1][0] = paw.dir[0]; b.axis[1][1] = paw.dir[1]; b.axis[1][2] = paw.dir[2];   // the paw's bone lies along the paw, as a weapon's +Y along its blade
+            b.paw = true;
+            b.pawLength = paw.length;
+            b.pawRadius = paw.radius;
+            b.ok = true;
+        }
+        if (blades[0].ok || blades[1].ok) NotePosedWeapon(self, newW[h.hand[blades[0].ok ? 0 : 1]], blades[0].ok ? 0 : 1, in, blades, true);
+    }
 
     // [hands] fist: free hands close and open with the controllers' grips.
     if (h.cls >= 0) g_heroClass.store(h.cls);
@@ -5552,14 +5617,15 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& given, const weight::O
             told[side] = 1;
         }
     }
-    if ((in.fist || ((in.weight.gripFit || wo.gripLib) && wo.on)) && in.mode == 2)
+    // ([shapeshift] a grafted form's paws close and open with the grips whatever [hands] fist says: its claws are the form's finger chains - visual only)
+    if ((in.fist || graft || ((in.weight.gripFit || wo.gripLib) && wo.on)) && in.mode == 2)
         for (int side = 0; side < 2; ++side) {
             if (poseE[side] >= 1.0f) continue;   // fully in the game's grip pose: the squeeze does not drive it
             const bool onWeapon = wo.on && wo.holds[side] && side != wo.slot;
             // (shoulder_draw handles the shield: the left hand is tied to the game's left slot only while the shield is on the left arm)
             const bool freeSide = in.handFree[side] || (in.shieldHolster && in.shieldArm >= 0 && side == 1 && in.shieldArm != 1);
             const bool free = wo.on ? (side == wo.slot ? !wo.holds[side] : freeSide || onWeapon) : freeSide;
-            if (!in.fist && !onWeapon) continue;   // (fist off: only a hand on the weapon, by grip_fit)
+            if (!in.fist && !graft && !onWeapon) continue;   // (fist off: only a hand on the weapon, by grip_fit; a form's paw always)
             if (free && (in.handsValid & (1u << side)) && (in.grip[side] >= 0.0f || onWeapon) && !(side == 1 && leftOnStaff)) {   // on a shaft: the game's grip, not our fist (it wraps better, 2026-10-06)
                 const float squeeze = in.weight.haveRawGrip ? in.weight.rawGrip[side] : in.grip[side];
                 Fist(h, side, onWeapon ? ((in.weight.gripFit || wo.gripLib) ? gripfit::Close(squeeze) : 1.0f) : in.grip[side],
@@ -10544,6 +10610,27 @@ void SetFreshRoomShift(RoomShiftFn fn) { g_freshShift.store(fn); }
 void SetFreshHands(FreshHandsFn fn) { g_freshHands.store(fn); }
 void SetGrabHands(GrabHandsFn fn) { g_grabHands.store(fn); }
 void SetWorldHands(WorldHandsFn fn) { g_worldHands.store(fn); }
+bool PawGrip(int side, float local[3]) {
+#if !D2RVR_FIRST_PERSON
+    (void)side; (void)local;
+    return false;
+#else
+    AcquireSRWLockShared(&g_pawGripLock);
+    const PawGripOut g = g_pawGrip[side & 1];
+    ReleaseSRWLockShared(&g_pawGripLock);
+    const ULONGLONG now = GetTickCount64();
+    if (!g.at || g.gen != HeroGen()) return false;   // (kept as it was while the paw holds: the grip point does not jump in the hold)
+    const ULONGLONG form = std::max(g_rigPosedAt[1].load(), g_rigPosedAt[2].load());
+    if (now - form > 150 || g_rigPosedAt[0].load() > form) return false;   // the hero is a person again (or not posed lately): no paw
+    for (int k = 0; k < 3; ++k) local[k] = g.local[k];
+    return true;
+#endif
+}
+int GraftedForm() {
+    const ULONGLONG now = GetTickCount64(), at[3] = {g_rigPosedAt[0].load(), g_rigPosedAt[1].load(), g_rigPosedAt[2].load()};
+    const int rig = unleashed::shapeshift::PosedRig(now, at);
+    return rig == 1 || rig == 2 ? rig : 0;
+}
 bool GrabPalmDrawn(int side, float head[3], const char** how) {
     AcquireSRWLockShared(&g_grabPalmLock);
     const bool ok = g_grabPalmAt[side & 1] && GetTickCount64() - g_grabPalmAt[side & 1] < 200;

@@ -1489,4 +1489,15 @@ bool EntityWorld(uint32_t entity, float m[16]) {
            FiniteN(m, 16);
 }
 
+bool PutEntityWorld(uint32_t entity, const float m[16]) {
+    Storage s;
+    uint32_t i = 0;
+    if (!m || !FiniteN(m, 16) || !s.Load(g_transformsObject.load()) || s.elem != kTransformSize || !s.Dense(entity, i)) return false;
+    const uintptr_t component = s.payload + uintptr_t(i) * kTransformSize;
+    float out[32];   // the new world matrix, and the one drawn until now into the last frame's slot (the write pass's own way: no motion vector left behind)
+    if (!ReadBytes(component + 0x40, out + 16, 64)) return false;
+    std::memcpy(out, m, 64);
+    return WriteBytes(component + 0x40, out, sizeof out);
+}
+
 }  // namespace knockprops

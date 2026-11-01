@@ -51,6 +51,8 @@ void SetStatusHero(uint32_t id);
 bool ServerLookup(uintptr_t* game, uintptr_t* lookup);
 // [weight] grab_moves_unit (vr/grab_move.cpp): the lookup hook is put in for it too - the server's game is what its knockback is asked of.
 void SetMoveWanted(bool on);
+// The hero's unit id as the scan last read it (0: none) - the server's unit of the hero is looked up by it (grab_move: the hero in a knockback's way).
+uint32_t HeroId();
 // The server's game learned is dropped: leaving a game frees it, and the next game is another one. Called when the client's own player read
 // finds no hero; the lookup hook learns the next game again. `why` goes to the log.
 void ForgetServerGame(const char* why);
@@ -194,6 +196,10 @@ bool ThrownTouch();
 // equipped, like a sword - its touch does not wait for the grip to be squeezed (the weight model's "a hand holds it" still decides). Off: as before,
 // the touch counts only while the throw's grip is squeezed (vr/thrown_touch.h). The throw by gesture is the same either way.
 void SetThrownHeld(bool on);
+// [shapeshift] claw_hits, from the ini (every read; default off): a druid's werewolf / werebear grafted in F4 ([shapeshift] forms_first_person) strikes with its two paws
+// (vr/claw_strike.h) - each paw a blade from the form's own bones, the unarmed kind's numbers and rules, the game's own attack (the key, Direct hit by its rules, the armed
+// skill); the two paws one weapon: one recovery for both, as long as the hero's own attack. Needs hit by touch on (SetWanted). F4 only.
+void SetClawHits(bool on);
 // What the touch needs of the throw by gesture (vr/throw_gesture_wire.h, [hands] throw_by_grip / throw_gesture), given once by vrcam: GripIsThrows (the grip
 // gesture owns the right grip: the weapon is "in the hand" while it is squeezed), LastThrowTickMs (the touch stands down 0.7 s after a released throw) and
 // HoldOffRelease(until): after a touch pressed the attack with a thrown weapon the gesture's release of that swing throws nothing until then (vr/thrown_touch.h).

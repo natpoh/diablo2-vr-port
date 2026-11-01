@@ -742,6 +742,8 @@ void PushArms() {
     // [shapeshift] forms_first_person: a druid's werewolf / werebear as our body (skeletons.cpp Learn / PoseBody), VR F4 only; off, or in
     // F1, F2, F3 and the flat views, the form's rig is never ours and the game draws its own beast, as before
     in.formGraft = own && g_set.formsFirstPerson.load() && viewgate::F4();
+    // [shapeshift] claw_hits: the grafted form's paws are the touch's blades (skel::PosedWeapon paws; melee_touch.cpp judges them)
+    in.clawHits = in.formGraft && in.posedWeapon && g_set.clawHits.load();
     in.formHeight[0] = g_set.formHeight[0].load();
     in.formHeight[1] = g_set.formHeight[1].load();
     // [body] flat_hold_trunk: flat first person (F3), the game's own animation - a swing took the torso out from under the camera. As F4
@@ -815,6 +817,17 @@ void PushArms() {
         const uint32_t wc = gamestate::WeaponClass();
         const bool ranged = wc == 3 || wc == 4;   // D2RVR_WEAPON_BOW, D2RVR_WEAPON_CROSSBOW: the bow hand holds it, the string hand is free (grabbodies::BusyWhy)
         const int bowHand = ranged ? AimHand() : -1;
+        // [shapeshift] a grafted werewolf / werebear holds nothing: the druid's weapon is in her slots, not in the paws - both paws are free for the grab, as empty hands
+        // (the gestures that own a grip - a bottle, the throw, a shoulder - still keep it). Its grip point is the paw's palm (grab_wire, skel::PawGrip).
+        const bool paws = in.formGraft && skel::GraftedForm() != 0;
+        {
+            static bool told = false;
+            if (paws != told && in.grabOn) {
+                told = paws;
+                Log(paws ? "vrcam: grab - the form's paws are free hands: they take and throw at their palms ([weight] grab_bodies / grab_throw, F4)"
+                         : "vrcam: grab - a person's hands again");
+            }
+        }
         for (int side = 0; side < 2; ++side) {
             grabbodies::HandCase c;
             c.weightOn = in.weight.on;
@@ -824,13 +837,17 @@ void PushArms() {
             c.slotFree = in.handFree[side];   // (the staff in both hands too: vrcam's own word)
             c.ranged = ranged;
             c.bowHand = side == bowHand;
+            if (paws) {   // (a paw: no weapon in it, none of the weight model's, no bow)
+                c.weightHolds = c.secondHere = c.weightSlot = c.ranged = c.bowHand = false;
+                c.slotFree = true;
+            }
             c.bottle = engitem::BeltBusy(side);
             c.shoulder = shoulderwire::Claims(side);
             c.bowString = bowdrawwire::HoldsGrip(side);
             c.throwGrip = throwwire::GripIsThrowsAt(throwhand::XrOfSide(side));
             {   // the weapon taken first only where the grip takes it in reach - its shaft (1) or the back (2); its call from afar (3) gives way to a body under the palm
                 const int zone = in.weight.on ? weight::TakeZone(side, nullptr) : 0;
-                c.takeZone = zone == 1 || zone == 2;
+                c.takeZone = !paws && (zone == 1 || zone == 2);
             }
             in.grabBusy[side] = grabbodies::BusyWhy(c);
             in.grabFree[side] = in.grabOn && in.grabBusy[side] == 0;
@@ -844,7 +861,14 @@ void PushArms() {
     in.grabArmReach = g_set.weightGrabArmReach.load();   // [weight] grab_arm_reach
     in.armWorldLate = g_set.orbDrawnHand.load();   // [hud] hand_vitals_orb_drawn_hand
     in.armBox = handvitals::OrbsOn() && handvitals::Settings().orbOnBone;   // [hud] hand_vitals_orb_on_bone: the forearms' boxes only while the balls want them
-    in.grabStrength = g_set.weightStrength.load() * 0.01f;   // ([weight] strength: the hands' strength, as on the weapon)
+    // ([weight] strength: the hands' strength, as on the weapon; [shapeshift] wolf_strength_pct / bear_strength_pct: a grafted form's paws stronger - the grab's hand and
+    // the knock-down's hold and throw, the weight model only: vr/form_strength.h)
+    {
+        const int form = in.formGraft ? skel::GraftedForm() : 0;
+        const float factor = formstrength::Factor(form, g_set.formStrengthPct[0].load(), g_set.formStrengthPct[1].load());
+        in.grabStrength = formstrength::Hands(g_set.weightStrength.load() * 0.01f, form, g_set.formStrengthPct[0].load(), g_set.formStrengthPct[1].load());
+        knockdown::SetFormStrength(factor);
+    }
     in.grabWrap = in.grabOn && g_set.weightGrabWrap.load();   // [weight] grab_wrap (with grab_bodies or grab_props)
     in.grabMuscle = g_set.weightGrabMusclePct.load() * 0.01f;   // [weight] grab_muscle_pct
 #endif

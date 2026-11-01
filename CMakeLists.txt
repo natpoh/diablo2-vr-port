@@ -1133,6 +1133,14 @@ target_compile_options(unleashed_far_objects_test PRIVATE /utf-8 /W4 /EHsc /perm
 add_executable(unleashed_shapeshift_form_test cleanroom/tests/unleashed_shapeshift_form_test.cpp)
 target_include_directories(unleashed_shapeshift_form_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
 target_compile_options(unleashed_shapeshift_form_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# [shapeshift] claw_hits (vr/claw_strike.h): a form's paw from its bones, the two paws one weapon (one shared recovery). Run: claw_strike_test.exe
+add_executable(claw_strike_test cleanroom/tests/claw_strike_test.cpp)
+target_include_directories(claw_strike_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_options(claw_strike_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# [shapeshift] wolf_strength_pct / bear_strength_pct (vr/form_strength.h): a grafted form's paws stronger in the grab. Run: form_strength_test.exe
+add_executable(form_strength_test cleanroom/tests/form_strength_test.cpp)
+target_include_directories(form_strength_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_options(form_strength_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 add_executable(unleashed_fog_test cleanroom/tests/unleashed_fog_test.cpp)
 target_compile_definitions(unleashed_fog_test PRIVATE UNLEASHED_FXH_PATH="${CMAKE_CURRENT_SOURCE_DIR}/reshade/D2R_FogEase_Unleashed.fxh"
                            DEPTHFOG_FX_PATH="${CMAKE_CURRENT_SOURCE_DIR}/reshade/D2R_DepthFog.fx" _CRT_SECURE_NO_WARNINGS)

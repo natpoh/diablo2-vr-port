@@ -87,6 +87,9 @@ bool PutEntityBounds(uint32_t entity, const float box[24]);
 int EntityBoundsSource();
 // ... an entity's world matrix as the renderer has it (its transform +0x40) - the transform storage this module found for the props. False: not found.
 bool EntityWorld(uint32_t entity, float m[16]);
+// ... and written ([weight] death_ragdoll: what hangs on a dead body's bones, which the game no longer moves once its death animation is over): m into its
+// transform +0x40, the matrix drawn until now into +0x80 (the last frame's). False: the storage not found, the entity not in it. Any thread; guarded writes.
+bool PutEntityWorld(uint32_t entity, const float m[16]);
 
 // [multiplayer] pose_share_held: a prop as drawn now, for the other players - one our hand holds or threw: its catalogue name, where it stood when first found this
 // session (render units: the level's own place of it, the same on every PC), its world matrix as drawn (render units) and whether it is moving. False: not tracked.

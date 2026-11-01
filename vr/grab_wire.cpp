@@ -16,6 +16,7 @@
 #include <mutex>
 
 #include "grab_bodies.h"
+#include "claw_strike.h"   // [shapeshift] a paw's grip point (Turn)
 #include "grab_lib.h"
 #include "grip_lib.h"   // [weight] grab_wrap: the grip library lays the holding hand on the body
 #include "haptics.h"
@@ -265,6 +266,18 @@ void StepProps(skel::Input* in, const monsterbodies::View& view, const D2rgbHand
 
 // [weight] grab_arm_reach: a hand whose held point (the last step's: a body's, or a prop's) went past its arm's reach lets go - its grip is handed to the grabs as
 // open until the real grip opens (gb::PastArm says why). The shoulder and the arm as the last pose drew them (skel::ArmReach), the hands' frame. Before each step.
+// [shapeshift] a grafted werewolf / werebear: each paw takes and holds at its palm (skel::PawGrip, from the form's own wrist and middle knuckle), not at the
+// controller's point - the controller's point plus this, in the hands' frame (metres from the head), for this step. Zero for a person's hand.
+float g_pawOff[2][3] = {};
+void PawOffsets(const skel::Input* in) {
+    for (int side = 0; side < 2; ++side) {
+        float l[3];
+        if (!skel::PawGrip(side, l)) { g_pawOff[side][0] = g_pawOff[side][1] = g_pawOff[side][2] = 0.0f; continue; }
+        clawstrike::Turn(in->rot[side], l, false, g_pawOff[side]);   // (out of the controller's own frame, as it is turned now)
+        if (!std::isfinite(g_pawOff[side][0] + g_pawOff[side][1] + g_pawOff[side][2])) g_pawOff[side][0] = g_pawOff[side][1] = g_pawOff[side][2] = 0.0f;
+    }
+}
+
 void CheckArmReach(const skel::Input* in, const monsterbodies::View& view) {
     for (int side = 0; side < 2; ++side) {
         if (g_pastArm[side] && !(in->grip[side] >= kTryOff)) g_pastArm[side] = false;
@@ -273,7 +286,8 @@ void CheckArmReach(const skel::Input* in, const monsterbodies::View& view) {
         if (!in->grabArmReach || g_pastArm[side] || !(body || prop) || !(in->handsValid & (1u << side))) continue;
         float shoulder[3], arm = 0.0f, held[3];
         if (!skel::ArmReach(side, shoulder, &arm) || !monsterbodies::RenderToHead(view, body ? g_last[side].pos : g_prop[side].pos, held)) continue;
-        const float ctrl[3] = {in->hand[side][0] + in->handOffset[0], in->hand[side][1] + in->handOffset[1], in->hand[side][2] + in->handOffset[2]};
+        const float ctrl[3] = {in->hand[side][0] + in->handOffset[0] + g_pawOff[side][0], in->hand[side][1] + in->handOffset[1] + g_pawOff[side][1],
+                               in->hand[side][2] + in->handOffset[2] + g_pawOff[side][2]};   // ([shapeshift] a paw's palm)
         if (!gb::PastArm(shoulder, arm, held, ctrl, in->grabReachM)) continue;
         g_pastArm[side] = true;
         LogF("grab: the %s hand lets go of %s - the point held is %.0f cm from the shoulder, the arm reaches %.0f cm (the controller %.0f cm): an arm never lengthens "
@@ -461,6 +475,7 @@ void Apply(skel::Input* in) {
         return;
     }
     g_wasOn = true;
+    PawOffsets(in);
     const bool bodiesOn = in->grabBodies && grablib::Ensure();   // (no library 1.4: the log has said so; no body is grabbed)
     if (!bodiesOn && g_bodiesWere) {   // [weight] grab_bodies unticked while the props' grab goes on
         if (grablib::Loaded() && grablib::ReleaseAll() > 0) LogF("grab: every hand let go of the bodies - [weight] grab_bodies is off");
@@ -489,7 +504,7 @@ void Apply(skel::Input* in) {
         for (int side = 0; side < 2; ++side) {
             D2rgbHand& h = hands[side];
             float head[3];
-            for (int k = 0; k < 3; ++k) head[k] = in->hand[side][k] + in->handOffset[k];
+            for (int k = 0; k < 3; ++k) head[k] = in->hand[side][k] + in->handOffset[k] + g_pawOff[side][k];   // ([shapeshift] a paw takes at its palm)
             h.tracked = (in->handsValid & (1u << side)) && monsterbodies::HeadToRender(view, head, h.pos) ? 1 : 0;
             h.mayTake = in->grabFree[side] && g_prop[side].state < D2RP_HAND_TAKING && !g_pastArm[side] && !knockdown::Holding(side) ? 1 : 0;   // (a hand that holds a prop takes no body; [weight] grab_throw: nor one that holds one for the knock-down)
             h.grip = g_pastArm[side] ? 0.0f : in->grip[side];   // ([weight] grab_arm_reach: let go past the arm's reach)
@@ -559,7 +574,7 @@ void Apply(skel::Input* in) {
                     g_shiftAt[side] = GetTickCount64();
                 }
             }
-            for (int k = 0; k < 3; ++k) in->hand[side][k] = head[k] - in->handOffset[k];
+            for (int k = 0; k < 3; ++k) in->hand[side][k] = head[k] - in->handOffset[k] - g_pawOff[side][k];   // ([shapeshift] the paw's palm where the grab holds)
             if (propHeld ? g_propCapOk[side] : g_capOk[side]) {
                 in->grabHolding[side] = true;
                 for (int k = 0; k < 3; ++k) {

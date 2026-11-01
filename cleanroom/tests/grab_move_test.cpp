@@ -2,6 +2,7 @@
 // is asked, the cell it is sent to (held to the step's length, the direction kept), which knock-down phases move a unit and what the unit's mode says after.
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 
 #include "../../vr/grab_move.h"
 
@@ -60,6 +61,32 @@ int main() {
         Check(!Target(5000, 4000, 0.4f, -0.3f, &tx, &ty), "under half a cell: no move");
         Check(Target(2, 2, -10.0f, -10.0f, &tx, &ty) && tx == 1 && ty == 1, "held to the map's edge");
         Check(!Target(5000, 4000, NAN, 1.0f, &tx, &ty), "not a number: nothing");
+    }
+
+    // -- the hero in the way (0.195.1, Serg's log): the cases as they came
+    {
+        const auto dist = [](float hx, float hy, int x, int y) { return std::hypot(x - hx, y - hy); };
+        // monster 28 on 5008,6192 asked to 5005,6193, the hero on 5007,6194 (world 10014.7, 12387.4 / 2): across him - moved +0,+0
+        int tx = 5005, ty = 6193;
+        Check(ClearOfHero(5007.0f, 6194.0f, 5008, 6192, &tx, &ty), "across the hero: still a cell to go to");
+        Check(dist(5007.0f, 6194.0f, tx, ty) >= kHeroClearCells - 0.75f, "across the hero: the cell asked is clear of him");
+        Check((tx - 5008) * (5007 - 5008) + (ty - 6192) * (6194 - 6192) <= 0 || dist(5007.0f, 6194.0f, tx, ty) >= 2.0f, "across the hero: not into him");
+        // "NPC 100" (a fallen) on 4614,5736, asked to 4613,5734, the hero on 4614,5736 itself (9227 / 2, 11471 / 2)
+        tx = 4613; ty = 5734;
+        Check(ClearOfHero(4613.5f, 5735.5f, 4614, 5736, &tx, &ty) && dist(4613.5f, 5735.5f, tx, ty) >= kHeroClearCells - 0.75f, "on the hero's own cell: out of him");
+        // monster 59 on 4914,6236 asked to 4915,6238, the hero on 4914,6235 (it landed): away from him - as asked
+        tx = 4915; ty = 6238;
+        Check(ClearOfHero(4914.0f, 6235.0f, 4914, 6236, &tx, &ty) && tx == 4915 && ty == 6238, "away from the hero: as asked");
+        // monster 89 on 4971,5946 asked to 4974,5948, the hero on 4972,5950 (it landed): sideways - as asked
+        tx = 4974; ty = 5948;
+        Check(ClearOfHero(4971.75f, 5950.2f, 4971, 5946, &tx, &ty) && tx == 4974 && ty == 5948, "sideways past the hero, clear of him: as asked");
+        // a cell asked behind the hero, the unit 3 cells in front: round him a quarter turn at most, never through
+        tx = 5000; ty = 4997;
+        Check(ClearOfHero(5000.0f, 5000.0f, 5000, 5003, &tx, &ty), "behind him: a cell round him");
+        Check(std::abs(ty - 5000) <= 1 && std::abs(tx - 5000) >= 2, "behind him: the step goes to his side (a quarter turn), not across");
+        // no hero read: as asked
+        tx = 10; ty = 10;
+        Check(ClearOfHero(NAN, NAN, 5, 5, &tx, &ty) && tx == 10 && ty == 10, "no hero: as asked");
     }
 
     // -- which phases move the unit (shared/d2r_vr_fall.h: 1 falling, 2 lying, 3 getting up, 4 back, 5 held, 6 staggering, 7 walking home)

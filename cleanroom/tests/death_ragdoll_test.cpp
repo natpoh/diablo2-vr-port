@@ -12,6 +12,8 @@
 
 #include <cmath>
 #include <cstdio>
+#include <cstring>
+#include <map>
 
 namespace {
 
@@ -32,6 +34,35 @@ namespace dr = deathragdoll;
 constexpr uint32_t kEnabled = 1u << 25, kKillable = 1u << 15;   // an ordinary monster's row
 float Len(const float v[3]) { return std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]); }
 
+// A made-up game memory, byte by byte: a monster unit (type, class, its monster data), the data's row pointer, the MonStats row (its id, its flags at 0x3C).
+struct Mem {
+	std::map<uintptr_t, uint8_t> b;
+	template <class T> void Put(uintptr_t a, T v) {
+		uint8_t raw[sizeof v];
+		std::memcpy(raw, &v, sizeof v);
+		for (size_t i = 0; i < sizeof v; ++i) b[a + i] = raw[i];
+	}
+	template <class T> bool operator()(uintptr_t a, T& v) const {
+		uint8_t raw[sizeof(T)];
+		for (size_t i = 0; i < sizeof(T); ++i) {
+			const auto it = b.find(a + i);
+			if (it == b.end()) return false;
+			raw[i] = it->second;
+		}
+		std::memcpy(&v, raw, sizeof v);
+		return true;
+	}
+	// A monster unit at `unit` of class cls, its data at unit + 0x1000, its row at row (id rowId, flags).
+	void Monster(uintptr_t unit, uint32_t cls, uintptr_t row, uint16_t rowId, uint32_t flags) {
+		Put<uint32_t>(unit + 0x00, 1u);
+		Put<uint32_t>(unit + 0x04, cls);
+		Put<uintptr_t>(unit + 0x10, unit + 0x1000);
+		Put<uintptr_t>(unit + 0x1000, row);
+		Put<uint16_t>(row + 0x00, rowId);
+		Put<uint32_t>(row + 0x3C, flags);
+	}
+};
+
 }  // namespace
 
 int main() {
@@ -50,6 +81,34 @@ int main() {
 		EXPECT(dr::Decide(true, kEnabled, true, 20, false, &why) == dr::Start::NotHostile, "not hostile: the game's");
 		EXPECT(dr::Decide(true, kEnabled | dr::kRowBoss, false, 0, false, nullptr) == dr::Start::LeftToGame, "no why asked: still decided (the row first)");
 		EXPECT(dr::Dead(0) && dr::Dead(12) && !dr::Dead(1) && !dr::Dead(17), "modes 0 and 12 are death");
+	}
+	{   // 0.195.1, Serg's log: zombie1, fallen1, quillrat1 - plain monsters - were all "a prime evil" (the flags read from the touch getter's row, a
+		// MonStats2 row, whose 0x3C had bit 7 for every monster) and nothing fell. The flags come from the unit's own MonStats row now.
+		constexpr uint32_t kSpawn = 1u << 0, kMelee = 1u << 1, kDoors = 1u << 3, kLUndead = 1u << 11;
+		Mem m;
+		m.Monster(0x100000, 2, 0x900000, 2, kEnabled | kKillable | kSpawn | kMelee | kLUndead);   // zombie1
+		m.Monster(0x200000, 19, 0x901000, 19, kEnabled | kKillable | kSpawn | kMelee | kDoors);    // fallen1
+		m.Monster(0x300000, 156, 0x902000, 156, kEnabled | kKillable | dr::kRowBoss | dr::kRowPrimeEvil);   // andariel
+		m.Monster(0x400000, 2, 0x903000, 7, kEnabled | kKillable);        // a row that is not the unit's own (another class's id)
+		m.Monster(0x500000, 5, 0x904000, 5, kEnabled | dr::kRowDeathDmg);
+		uint32_t f = 0;
+		const char* why = nullptr;
+		EXPECT(dr::UnitRowFlags(0x100000, m, &f) && !(f & (dr::kRowBoss | dr::kRowPrimeEvil)), "zombie1's own row: read, no boss bits (0x%08X)", f);
+		EXPECT(dr::Decide(true, f, true, 20, true, &why) == dr::Start::Ours, "zombie1 falls as ours (%s)", why ? why : "-");
+		EXPECT(dr::UnitRowFlags(0x200000, m, &f) && dr::Decide(true, f, true, 20, true, &why) == dr::Start::Ours, "fallen1 falls as ours (%s)", why ? why : "-");
+		EXPECT(dr::UnitRowFlags(0x300000, m, &f) && dr::Decide(true, f, true, 20, true, &why) == dr::Start::LeftToGame, "Andariel stays the game's");
+		EXPECT(dr::UnitRowFlags(0x500000, m, &f) && dr::Decide(true, f, true, 20, true, nullptr) == dr::Start::LeftToGame, "one that bursts stays the game's");
+		EXPECT(!dr::UnitRowFlags(0x400000, m, &f), "a row whose id is another class's is not read as this unit's");
+		EXPECT(!dr::UnitRowFlags(0x600000, m, &f), "no unit there: not read");
+		Mem p;
+		p.Monster(0x100000, 2, 0x900000, 2, kEnabled);
+		p.Put<uint32_t>(0x100000, 0u);   // a player's type
+		EXPECT(!dr::UnitRowFlags(0x100000, p, &f), "not a monster: not read");
+		Mem z;
+		z.Monster(0x100000, 2, 0x900000, 2, kEnabled);
+		z.Put<uintptr_t>(0x101000, 0);   // no row behind the data
+		EXPECT(!dr::UnitRowFlags(0x100000, z, &f), "a null row pointer: not read");
+		EXPECT(!dr::UnitRowFlags(0x100000, m, nullptr), "no flags to fill: not read");
 	}
 	const float chest[3] = {10.0f, 1.3f, 20.0f};
 	{   // the push of the strike that killed it
@@ -171,6 +230,49 @@ int main() {
 		EXPECT(!dr::SameSkeleton(0x1000, root, 60, 0x2000, root, 60, upm), "another instance");
 		EXPECT(!dr::SameSkeleton(0x1000, root, 60, 0x1000, root, 61, upm), "another bone count");
 		EXPECT(!dr::SameSkeleton(0, root, 60, 0, root, 60, upm), "no instance");
+	}
+	{   // 0.195.3, Serg: a zombie's torso lay on the ground, an arm and a hand floated where they had stood - parts hung on its bones, which the game stops
+		// making once its death animation is over. Each one on a dead body is kept with the game's matrix and its bone, put on the bone as drawn while the
+		// body is ours, given the game's matrix back when the body is the game's again.
+		EXPECT(dr::HangNext(true, true, false) == dr::HangDo::Carry, "dead, drawn: carried with its bone");
+		EXPECT(dr::HangNext(true, true, true) == dr::HangDo::Carry, "dead, drawn, ours in it already: carried still (the fall goes on)");
+		EXPECT(dr::HangNext(true, false, true) == dr::HangDo::PutBack, "dead but no pose this frame (out of reach): the game's matrix back");
+		EXPECT(dr::HangNext(false, false, true) == dr::HangDo::PutBack, "the body the game's again: the game's matrix back");
+		EXPECT(dr::HangNext(false, true, false) == dr::HangDo::Nothing && dr::HangNext(true, false, false) == dr::HangDo::Nothing, "the game's in it: nothing to do");
+		dr::Hangs h;
+		const float game[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 5, 6, 7, 1}, bone[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1, 0, 1};
+		h.Note(100, 0x5000, 40, game, bone);
+		EXPECT(h.Count() == 1 && h.At(0) && h.At(0)->entity == 100 && h.At(0)->bone == 40 && h.At(0)->game[12] == 5.0f && !h.At(0)->ours, "a part noted as the game made it");
+		h.At(0)->ours = true;
+		const float game2[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 8, 6, 7, 1};
+		h.Note(100, 0x5000, 40, game2, bone);
+		EXPECT(h.Count() == 1 && h.At(0)->game[12] == 8.0f && !h.At(0)->ours, "the game made it again: its matrix replaces ours, nothing owed");
+		h.Note(0, 0x5000, 40, game, bone);
+		h.Note(101, 0, 40, game, bone);
+		h.Note(102, 0x5000, -1, game, bone);
+		EXPECT(h.Count() == 1, "no entity, no body, no bone: not noted");
+		for (uint32_t e = 200; e < 200 + dr::Hangs::kMax; ++e) {
+			h.Note(e, 0x6000, 3, game, bone);
+			for (int i = 0; i < dr::Hangs::kMax; ++i)
+				if (dr::Hang* x = h.At(i); x && x->entity == e) x->ours = true;
+		}
+		EXPECT(h.Count() == dr::Hangs::kMax, "full");
+		const uint32_t gives = h.At(0)->entity;
+		h.At(0)->ours = false;   // (one part: the game's matrix in it)
+		h.Note(999, 0x6000, 3, game, bone);
+		bool has999 = false, hasGives = false;
+		for (int i = 0; i < dr::Hangs::kMax; ++i) {
+			has999 = has999 || (h.At(i) && h.At(i)->entity == 999);
+			hasGives = hasGives || (h.At(i) && h.At(i)->entity == gives);
+		}
+		EXPECT(has999 && !hasGives && h.Count() == dr::Hangs::kMax, "full: the part with the game's matrix in it makes room, never one owed its matrix back");
+		for (int i = 0; i < dr::Hangs::kMax; ++i) if (dr::Hang* x = h.At(i)) x->ours = true;
+		h.Note(1000, 0x6000, 3, game, bone);
+		bool has1000 = false;
+		for (int i = 0; i < dr::Hangs::kMax; ++i) has1000 = has1000 || (h.At(i) && h.At(i)->entity == 1000);
+		EXPECT(!has1000, "full of parts owed back: the new one waits");
+		h.Drop(*h.At(0));
+		EXPECT(h.Count() == dr::Hangs::kMax - 1 && !h.At(0), "dropped");
 	}
 	std::printf(g_fails ? "death_ragdoll_test: %d FAILED\n" : "death_ragdoll_test: all passed\n", g_fails);
 	return g_fails ? 1 : 0;

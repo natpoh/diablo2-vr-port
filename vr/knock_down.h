@@ -41,6 +41,9 @@ struct Settings {
     bool deathOn = false;       // [weight] death_ragdoll: a humanoid the game kills falls as our ragdoll and lies as it fell (vr/death_ragdoll.h; and the bodies)
 };
 void Configure(const Settings& s);
+// [shapeshift] wolf_strength_pct / bear_strength_pct (vr/form_strength.h): the hands' strength times this while the hero is a grafted werewolf / werebear (1 a person) -
+// the hold and the throw of a lifted body (the library's strength is Settings::strength x it). Any thread; cheap when it does not change.
+void SetFormStrength(float factor);
 bool Wanted();        // either of them on
 bool ThrowWanted();
 bool DeathWanted();   // [weight] death_ragdoll: the touch's scan lists the dying and the dead (Tick's dead)
