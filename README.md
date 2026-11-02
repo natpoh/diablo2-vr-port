@@ -13,6 +13,9 @@ prototype).
 the ready installer, always the latest version. It sets up everything,
 including a free BodyWalk Lite if you don't have BodyWalk.
 
+**[Download from GitHub Releases](https://github.com/natpoh/diablo2-vr-port/releases/latest)** - the same
+installer, every version with its SHA-256 file next to it.
+
 **[Open the mod's page on BodyWalkVR](https://bodywalkvr.com/mods/d2r-vr)** - the
 four views in video, the controls and the setup.
 
