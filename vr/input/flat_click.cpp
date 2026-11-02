@@ -277,6 +277,161 @@ uintptr_t VrHandTarget(vrbody::Ask ask) {
     return unit;
 }
 
+// [input] point_pickup (vr/unleashed_loot_aim.h, MPL 2.0, D2R VR Unleashed's loot pick): F4, the dropped item the aiming hand points at (HandRay, the arm
+// held out from the head) is the one interact takes - the game's own interact lookups are answered with it (InteractTarget and the Interact skill's
+// target), then the game's own pick-up: its walk up, its checks, its command. The items on the floor round the hero: the client's unit hash, type 4, on
+// the ground or dropping, each at its static path's cell (the middle, as the objects' and grab_items'), on the hero's floor as drawn; read again at most
+// ten times a second. Handed over: the live unit of the chosen id now (the game's FindUnit, still on the floor), never a kept address.
+struct FlatItems { unleashed::lootaim::Item it[unleashed::lootaim::MaxItems]; int n = 0; ULONGLONG at = 0; float floorY = 0.0f; };
+FlatItems g_flatItems;   // the game's UI thread (its interact lookups)
+void FlatItemScan() {
+    namespace la = unleashed::lootaim;
+    FlatItems& s = g_flatItems;
+    const ULONGLONG now = GetTickCount64();
+    if (now - s.at < 100) return;
+    s.at = now;
+    s.n = 0;
+    float look[3];
+    const uintptr_t table = d2rsig::Addr(RVA_FLAT_UNITS);
+    if (!table || !LookAtNow(look)) return;
+    const float floorY = look[1], gx = look[0] - floorY * flatground::kShear, gz = look[2] - floorY * flatground::kShear;
+    s.floorY = floorY;
+    auto read = [](void* d, uintptr_t src, size_t n) { return src >= 0x10000 && SafeRead(d, (const void*)src, n); };
+    unitscan::EachUnit(read, table, 4, [&](uintptr_t, const unitscan::Unit& u) {
+        if (!la::OnFloor(unitscan::Field32(u, unitscan::kOffType), unitscan::Field32(u, unitscan::kOffMode))) return true;
+        uint32_t cell[2] = {};
+        if (!read(cell, unitscan::Field64(u, unitscan::kOffPath) + 0x10, sizeof cell) || !cell[0] || !cell[1] || cell[0] > 200000u || cell[1] > 200000u) return true;
+        const float x = la::CellUnits * cell[0] + 1.0f, z = la::CellUnits * cell[1] + 1.0f;
+        const float heroCells = std::hypot(x - gx, z - gz) / la::CellUnits;
+        if (!(heroCells <= la::ReachCells)) return true;
+        la::Item& it = s.it[s.n++];
+        it.id = unitscan::Field32(u, unitscan::kOffId);
+        it.at = {x + floorY * flatground::kShear, floorY, z + floorY * flatground::kShear};
+        it.heroCells = heroCells;
+        return s.n < la::MaxItems;
+    });
+}
+
+// [debug] point_pickup_ray (vr/render/effects/effects.cpp): the ray the pick used last, world units - the game's UI thread writes, the render thread reads
+PointRayDebug g_pointRayDbg;
+SRWLOCK g_pointRayDbgLock = SRWLOCK_INIT;
+bool PointRayDebugNow(PointRayDebug* out) {
+    AcquireSRWLockShared(&g_pointRayDbgLock);
+    *out = g_pointRayDbg;
+    ReleaseSRWLockShared(&g_pointRayDbgLock);
+    return (out->hand[0].valid || out->hand[1].valid) && GetTickCount64() - out->at < 300;
+}
+uintptr_t PointPickupAnswer(uintptr_t game) {
+    namespace la = unleashed::lootaim;
+    if (!g_set.pointPickup.load() || !viewgate::F4() || !g_enabled.load() || gamestate::MenuOpen()) return game;
+    if (itemgrabwire::Pressing() || meleetouch::BarrelPressTarget()) return game;   // a grip's pick-up or a swing through a barrel in flight: theirs
+    // the trigger's pick-up (vr/point_pickup_wire.cpp: the pointing hand's grip held + its trigger) answers its item until it has left the floor
+    if (const uint32_t press = pointpickup::PressId()) {
+        if (const uintptr_t u = meleetouch::GroundItemUnit(press)) return u;
+        pointpickup::PressEnd("the item left the floor (taken)");
+    }
+    struct Last { ULONGLONG at = 0; uint32_t id = 0; float cells = -1.0f, off = 0.0f; bool pointing = false; int n = 0, hand = -1; };
+    static Last last;   // the game's UI thread
+    const ULONGLONG now = GetTickCount64();
+    // While A is held the press's pick stays (still on the floor): the hand moves as the button goes down, and a pick lost in the press's first
+    // frames let A go ([input] interact_one_press: "the target changed during the press" - Serg's 0.198.1 log).
+    const bool pressKept = g_interactHeld.load() && last.id && meleetouch::GroundItemUnit(last.id);
+    if (!pressKept && now - last.at >= 30) {   // (the interact target is asked every frame)
+        last.at = now;
+        // Either hand points (Serg: "from either hand"): each its own ray, its own arm out, its own item kept (lootaim::Select); the lit pick is the
+        // hand that has one - with both, the one that had it keeps it (pointtrigger::PickOwner). The arm held out from the head: [input]
+        // point_pickup_arm_cm (Unleashed's 12 cm; let go 6 cm nearer).
+        struct HandPick { bool pointing = false; uint32_t id = 0; float off = 0.0f; };
+        static HandPick hp[2];   // 0 right, 1 left
+        static int owner = -1;
+        const float armM = g_set.pointPickupArmCm.load() * 0.01f;
+        FlatItemScan();
+        last.n = g_flatItems.n;
+        PointRayDebug dbg;
+        uint32_t ids[2] = {};
+        float offs[2] = {};
+        for (int h = 0; h < 2; ++h) {
+            la::Ray ray, raw;
+            float o[3], d[3], reachM = 0.0f;
+            int src = kRayNone;
+            if (PointRay(h, o, d, &reachM, &src)) {
+                hp[h].pointing = std::isfinite(reachM) && reachM >= (hp[h].pointing ? std::max(0.0f, armM - la::ArmReleaseM) : armM);
+                raw = {{o[0], o[1], o[2]}, {d[0], d[1], d[2]}, true};
+                if (hp[h].pointing) ray = raw;
+                PointRayDebug::Hand& dh = dbg.hand[h];
+                dh.valid = true; dh.pointing = hp[h].pointing; dh.src = src;
+                for (int i = 0; i < 3; ++i) { dh.o[i] = o[i]; dh.d[i] = d[i]; }
+            } else {
+                hp[h].pointing = false;
+            }
+            if (raw.valid && !ray.valid) {   // the ray is on an item but the arm is not held out: said, so a test tells why nothing lights
+                static ULONGLONG toldArm = 0;
+                if (now - toldArm >= 3000)
+                    if (const la::Choice r = la::Select(g_flatItems.it, g_flatItems.n, raw, 0); r.id) {
+                        toldArm = now;
+                        LogF("vrcam: F4: the %s hand's ray is on item %u but the arm is not held out (%.0f cm from the head, %.0f needed: [input] "
+                             "point_pickup_arm_cm) - nothing highlighted", h == 0 ? "right" : "left", r.id, reachM * 100.0f, armM * 100.0f);
+                    }
+            }
+            const la::Choice c = la::Select(g_flatItems.it, g_flatItems.n, ray, hp[h].id);
+            hp[h].id = c.id;
+            hp[h].off = c.distance;
+            ids[h] = c.id;
+            offs[h] = c.distance;
+        }
+        owner = pointtrigger::PickOwner(ids, offs, owner);
+        const uint32_t was = last.id;
+        last.id = owner >= 0 ? ids[owner] : 0;
+        last.off = owner >= 0 ? offs[owner] : 0.0f;
+        last.pointing = owner >= 0;
+        last.hand = owner == 0 ? 1 : owner == 1 ? 0 : -1;   // (direct_input's / haptics' order: 0 left, 1 right)
+        last.cells = -1.0f;
+        for (int i = 0; i < g_flatItems.n && last.id; ++i)
+            if (g_flatItems.it[i].id == last.id) {
+                last.cells = g_flatItems.it[i].heroCells;
+                dbg.item = true; dbg.itemAt[0] = g_flatItems.it[i].at.x; dbg.itemAt[1] = g_flatItems.it[i].at.y; dbg.itemAt[2] = g_flatItems.it[i].at.z;
+            }
+        if (g_set.pointPickupRay.load()) {   // [debug] point_pickup_ray: what this choice used, for the drawing
+            dbg.at = now;
+            dbg.owner = owner;
+            dbg.floorY = g_flatItems.floorY;
+            AcquireSRWLockExclusive(&g_pointRayDbgLock);
+            g_pointRayDbg = dbg;
+            ReleaseSRWLockExclusive(&g_pointRayDbgLock);
+        }
+        static ULONGLONG told = 0;
+        if (last.id && last.id != was && now - told >= 1000) {
+            told = now;
+            LogF("vrcam: F4: the %s hand points at item %u - highlighted; grip + trigger or A picks it up (%d items round the hero, %.2f cells off the "
+                 "pointed spot, %.1f cells from the hero%s; [input] point_pickup)", owner == 0 ? "right" : "left", last.id, last.n, last.off / la::CellUnits,
+                 last.cells, la::InReach(last.cells, g_set.pointPickupReach.load()) ? "" : ", past point_pickup_reach_cells: nothing is taken");
+        }
+    }
+    const uintptr_t pick = last.id ? meleetouch::GroundItemUnit(last.id) : 0;   // (taken or gone since: none - the game's own answer)
+    const bool inReach = la::InReach(last.cells, g_set.pointPickupReach.load());
+    {   // the highlight (vr/point_pickup_wire.h): its name's rim in its rarity colour (item data +0x10: quality +0x00, flags +0x18), the tick, the trigger
+        static uintptr_t toned = 0;
+        static uint32_t tonedId = 0;
+        static float rgb[3] = {1.0f, 1.0f, 1.0f};
+        if (pick && (pick != toned || last.id != tonedId)) {
+            toned = pick;
+            tonedId = last.id;
+            uintptr_t data = 0;
+            uint32_t quality = 0, flags = 0;
+            rgb[0] = rgb[1] = rgb[2] = 1.0f;
+            if (SafeRead(&data, (const void*)(pick + 0x10), sizeof data) && data >= 0x10000 && SafeRead(&quality, (const void*)data, sizeof quality) &&
+                SafeRead(&flags, (const void*)(data + 0x18), sizeof flags))
+                la::RarityColor(quality, flags, rgb);
+        }
+        // a crossbow's hand (Serg: "the hand that holds the crossbow picks up only by A"): its trigger shoots (AimHand: the hand that holds it)
+        const bool xbowHand = gamestate::WeaponClass() == D2RVR_WEAPON_CROSSBOW && last.hand == (AimHand() == 0 ? 1 : 0);
+        pointpickup::Publish(pick ? last.id : 0, pick, last.hand, inReach, rgb, g_labelPaintIn.load() && g_labelSizeIn.load(), !xbowHand);
+    }
+    uint32_t type = ~0u;
+    const bool gameIsItem = game && SafeRead(&type, (const void*)game, sizeof type) && type == 4;
+    return la::Answer(game, gameIsItem, pick, inReach);
+}
+
 bool HookMouseGround(void* mgr, float* x, float* y, uint64_t pixel) {
     const bool gameOk = OrigMouseGround(mgr, x, y, pixel);
     if (g_portalForce.load(std::memory_order_acquire) && x && y && g_set.platform.load() == 0 && g_enabled.load()) {

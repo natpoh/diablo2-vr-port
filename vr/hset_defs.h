@@ -228,7 +228,8 @@ inline constexpr Def kDefs[] = {
     // tick: on = By the rules (melee_direct 2, melee_direct_client 1), off = Off (0, 0). The store reads and writes the two keys together (hset_store.cpp);
     // Fully on stays in D2R VR Settings (the tick shows off then, the page's line says so, ticking it is By the rules). The seventh row: the page's rows
     // stand closer (hset_model.h RowStep). Live, F4 only.
-    {L"gameplay", L"melee_direct", "Direct hit by the rules", "The first touch on a monster, then real swings (F4)",
+    // Serg (2026-11-02): Direct hit changes the game's own logic - the detail says so, and the page's line warns while it is on (hset_scene.h StatusText).
+    {L"gameplay", L"melee_direct", "Direct hit by the rules", "Changes the game's own logic: hits go to the server (F4)",
      0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageMelee, true},
     // -- no row: Direct hit's other key. The panel's value is the mode the two keys say (0 Off, 1 By the rules, 2 Fully on), the file's what it has.
     {L"gameplay", L"melee_direct_client", "Direct hit as the file has it", "0 off, 1 by the rules, 2 fully on",

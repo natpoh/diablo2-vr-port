@@ -12,6 +12,7 @@
 #include <cstdint>
 
 #include "d2r_vr_shared.h"
+#include "skill_link_abi.h"
 #include "d2r_vr_state.h"
 
 namespace link {
@@ -71,5 +72,14 @@ uint32_t VrZones(BW_LinkVrZone* out, uint32_t max);
 // own layout; vr/rune_geom.h reads it). Nothing outside VR first person (F4), with the plugin as the input (direct_input), when the
 // block is not BodyWalk's version 1, holds none or has not been written for half a second.
 uint32_t VrRunes(BW_LinkVrRune* out, uint32_t max);
+
+// [gestures] skill_link (vr/skill_link_wire.cpp): the hero's skills to BodyWalk (the Skills block, whole), and BodyWalk's Casts back - a
+// consistent copy; false when no BodyWalk writes it (none running, its Game skills off, or the block still for 2 s).
+void PublishSkills(const BW_LinkSkills& s);
+// skill_link on: with the plugin as the input ([openxr] direct_input) BodyWalk is still given the head and hands (controls zeroed, as for
+// [openxr] direct_bodywalk_walk) and its runes are drawn - it recognises the gestures by them; recording: the controls too, its trigger
+// starts and ends the take.
+void SetSkillLink(bool on, bool recording);
+bool Casts(BW_LinkCasts* out);
 
 }  // namespace link

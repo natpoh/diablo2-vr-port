@@ -82,6 +82,10 @@ void ShotTimes(double* releaseS, double* pressS);
 // (the skill wheel's cast on the trigger asks). False when the box is unticked or in any other view; stale after a quarter of a second.
 bool KeepsTrigger(int hand);
 
+// [input] point_pickup: this hand (direct_input's: 0 left, 1 right) is the string hand at the string, or drawing - its grip + trigger draw
+// there, never pick up. False with the draw off or in any other view; stale after a quarter of a second.
+bool AtString(int hand);
+
 // The string hand's GRIP is the draw's now (vrcam's hand: 0 right, 1 left): the belt's potions must not take it from the hip.
 bool HoldsGrip(int hand);
 

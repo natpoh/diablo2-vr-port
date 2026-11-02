@@ -13,7 +13,6 @@ namespace vrc {
 // is not known: it tells [weight] when the game's own throw animation is over (weight::SetHeroModeSource). The same unit the shield's smite uses.
 int HeroAnimMode() {
     uintptr_t hero = (uintptr_t)g_heroUnit.load();
-    if (!hero || !IsHeroUnit((void*)hero)) hero = (uintptr_t)g_heroSeen.load();
     if (!hero || !IsHeroUnit((void*)hero)) {
         const uintptr_t p = (uintptr_t)gamestate::LocalPlayer();   // the SDK's handle of the local player, when it is the unit itself
         if (p > 0x10000 && IsHeroUnit((void*)p)) hero = p;
@@ -26,8 +25,6 @@ int HeroAnimMode() {
 // [weight] clash_sound: the hero's client unit the game's block sound sounds at (the same one HeroAnimMode reads), nullptr when not known. The game's thread.
 void* HeroUnitForSound() {
     void* hero = g_heroUnit.load();
-    if (hero && IsHeroUnit(hero)) return hero;
-    hero = g_heroSeen.load();
     if (hero && IsHeroUnit(hero)) return hero;
     const uintptr_t p = (uintptr_t)gamestate::LocalPlayer();
     return p > 0x10000 && IsHeroUnit((void*)p) ? (void*)p : nullptr;
@@ -182,7 +179,7 @@ void BowLatencyTick() {
     }
     if (tr.NeedClientAnim() && bowlatency::IsActionMode(HeroAnimMode())) {   // the hero's unit has gone into its attack: the animation record it points at (+0x70)
         uintptr_t hero = (uintptr_t)g_heroUnit.load();
-        if (!hero || !IsHeroUnit((void*)hero)) hero = (uintptr_t)g_heroSeen.load();
+        if (hero && !IsHeroUnit((void*)hero)) hero = 0;
         uintptr_t rec = 0;
         uint8_t bytes[bowlatency::kAnimRecordSize];
         bowlatency::AnimInfo anim;
@@ -208,7 +205,7 @@ void BowLatencyTick() {
 size_t MeleeAnimNote(char* out, size_t n) {
     if (!g_set.bowLatency.load()) return 0;
     uintptr_t hero = (uintptr_t)g_heroUnit.load();
-    if (!hero || !IsHeroUnit((void*)hero)) hero = (uintptr_t)g_heroSeen.load();
+    if (hero && !IsHeroUnit((void*)hero)) hero = 0;
     uintptr_t rec = 0;
     uint8_t bytes[bowlatency::kAnimRecordSize];
     bowlatency::AnimInfo anim;
@@ -244,7 +241,7 @@ void PressTraceDue(ULONGLONG now) {
 }
 bool HeroAnimRow(bowlatency::AnimInfo* anim) {
     uintptr_t hero = (uintptr_t)g_heroUnit.load();
-    if (!hero || !IsHeroUnit((void*)hero)) hero = (uintptr_t)g_heroSeen.load();
+    if (hero && !IsHeroUnit((void*)hero)) hero = 0;
     uintptr_t rec = 0;
     uint8_t bytes[bowlatency::kAnimRecordSize];
     if (!hero || !SafeRead(&rec, (const void*)(hero + 0x70), sizeof rec) || rec <= 0x10000 || !SafeRead(bytes, (const void*)rec, sizeof bytes)) return false;

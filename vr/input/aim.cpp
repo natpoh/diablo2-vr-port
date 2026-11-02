@@ -214,6 +214,8 @@ void NoteSpellModel(const spellmodel::Out& m) {
 #endif
 
 bool ShooterActive();
+thread_local bool t_handRayController = false;   // HandRayController: the controller's own line, never [hands] spell_aim_model's drawn one
+thread_local int t_handRayHand = -1;               // ... and the hand HandRay's line came from (0 right, 1 left; -1 none)
 // dRaw (optional): the same ray as the pointing hand gives it, before [bow] aim_yaw turns it and before it is tipped toward the ground - what [bow] aim_distance_by_arm measures the arm along.
 bool HandRay(float* o, float* d, float* dRaw = nullptr) {
     // Mouse look and W A S D (flat first person): no hands - the blow or the
@@ -230,7 +232,7 @@ bool HandRay(float* o, float* d, float* dRaw = nullptr) {
 #if D2RVR_FIRST_PERSON
     // [hands] spell_aim_model: the line from the hero as drawn - the staff, wand or orb, else the hand - with no correction on top. Into the world as
     // below (the head frame along the camera's own right and forward), tipped to meet the ground as below. No fresh pose: the old aim below.
-    if (SpellModelWanted()) {
+    if (SpellModelWanted() && !t_handRayController) {
         const spellmodel::Out m = SpellModelAim();
         NoteSpellModel(m);
         AcquireSRWLockShared(&g_stickLock); const StickFrame f = g_stickFrame; ReleaseSRWLockShared(&g_stickLock);
@@ -257,6 +259,7 @@ bool HandRay(float* o, float* d, float* dRaw = nullptr) {
     const aimsource::Out source = StaffAimChoice();
     const bool staff = source.aims;
     const int hand = staff ? source.hand : AimHand();
+    t_handRayHand = hand;
     if (!sh || sh->version != D2RVR_SHARED_VERSION || !sh->headValid || !(sh->handsValid & (1u << hand)) || !g_eyeOk.load()) return false;
     AcquireSRWLockShared(&g_stickLock); const StickFrame f = g_stickFrame; ReleaseSRWLockShared(&g_stickLock);
     if (!f.valid) return false;
@@ -337,6 +340,87 @@ bool HandRay(float* o, float* d, float* dRaw = nullptr) {
         o[i] = g_eyeWorld[i].load() + upm * (p[0] * f.camR[i] - p[2] * f.camF[i]);
     }
     o[1] += upm * p[1];
+    return true;
+}
+
+// [input] point_pickup: HandRay without [hands] spell_aim_model - the drawn hand's fingers curl as A is pressed (the drawn hand follows the
+// controller's buttons) and its line swung off the item pointed at in the press's first frames (Serg's 0.198.1 log: the pick lost 25 ms into it).
+bool HandRayController(float* o, float* d, int* hand) {
+    t_handRayController = true;
+    t_handRayHand = -1;
+    const bool ok = HandRay(o, d);
+    t_handRayController = false;
+    if (hand) *hand = ok ? t_handRayHand : -1;
+    return ok;
+}
+
+// [input] point_pickup: one hand's pointing ray in the world (h: 0 right, 1 left). Serg (0.199.1): "the ray comes out of the hand and looks ALONG THE
+// ARM" - pointing is stretching the arm toward the item; not the controller's forward, never the weapon held. So, first: the hero's forearm AS DRAWN
+// (skel::HeroForearm: the elbow and wrist bones of this pose, in the shared hands' head frame) - from the wrist, along elbow -> wrist. No posed arm
+// (no full body, the arms not posed for a quarter of a second): the controller's AIM pose (where the menu laser comes out, its -Z), taken relative to
+// the grip in direct input's latest frame and put on the shared grip (the shared block carries the grip only). *src: kRayArm / kRayAim. *reachM: the
+// origin's level distance from the head (metres) - the arm held out.
+bool PointRay(int h, float* o, float* d, float* reachM, int* src) {
+    *src = kRayNone;
+    const D2RVR_Shared* sh = Shared();
+    if ((h != 0 && h != 1) || ShooterActive() || !sh || sh->version != D2RVR_SHARED_VERSION || !sh->headValid || !(sh->handsValid & (1u << h)) ||
+        !g_eyeOk.load())
+        return false;
+    AcquireSRWLockShared(&g_stickLock); const StickFrame f = g_stickFrame; ReleaseSRWLockShared(&g_stickLock);
+    if (!f.valid) return false;
+    float p[3], dir[3];
+    float elbow[3], wrist[3], across[3];
+#if D2RVR_FIRST_PERSON
+    const bool arm = skel::HeroForearm(h, elbow, wrist, across);
+#else
+    const bool arm = false;
+#endif
+    if (arm) {
+        for (int i = 0; i < 3; ++i) { p[i] = wrist[i]; dir[i] = wrist[i] - elbow[i]; }
+        *src = kRayArm;
+    } else {
+        directinput::Frame fr;
+        const int x = h == 0 ? 1 : 0;   // direct_input's hand: 0 left, 1 right
+        if (!directinput::Latest(&fr) || fr.hand[x].grip.valid != 1 || fr.hand[x].aim.valid != 1) return false;
+        using Q = const float*;
+        auto rot = [](Q q, const float* v, float* r) {   // q v q*
+            const float tx = 2 * (q[1]*v[2] - q[2]*v[1]), ty = 2 * (q[2]*v[0] - q[0]*v[2]), tz = 2 * (q[0]*v[1] - q[1]*v[0]);
+            r[0] = v[0] + q[3]*tx + (q[1]*tz - q[2]*ty);
+            r[1] = v[1] + q[3]*ty + (q[2]*tx - q[0]*tz);
+            r[2] = v[2] + q[3]*tz + (q[0]*ty - q[1]*tx);
+        };
+        const directinput::Pose& grip = fr.hand[x].grip;
+        const directinput::Pose& aimP = fr.hand[x].aim;
+        const float gInv[4] = {-grip.rot[0], -grip.rot[1], -grip.rot[2], grip.rot[3]};
+        const float offRoom[3] = {aimP.pos[0] - grip.pos[0], aimP.pos[1] - grip.pos[1], aimP.pos[2] - grip.pos[2]};
+        const float fwd[3] = {0.0f, 0.0f, -1.0f};
+        float offGrip[3], dirRoom[3], dirGrip[3], off[3];
+        rot(gInv, offRoom, offGrip);   // the aim pose's place and way in the grip's own frame
+        rot(aimP.rot, fwd, dirRoom);
+        rot(gInv, dirRoom, dirGrip);
+        Q qs = h == 0 ? sh->rightRot : sh->leftRot;
+        Q ps = h == 0 ? sh->rightHand : sh->leftHand;
+        rot(qs, offGrip, off);         // ... onto the shared grip: the head's turn-only frame (x right, y up, z back), metres
+        rot(qs, dirGrip, dir);
+        for (int i = 0; i < 3; ++i) p[i] = ps[i] + off[i];
+        *src = kRayAim;
+    }
+    float dw[3];   // head frame -> world: right, up, forward (as HandRay)
+    for (int i = 0; i < 3; ++i) dw[i] = dir[0] * f.camR[i] - dir[2] * f.camF[i];
+    dw[1] += dir[1];
+    const float l = sqrtf(dw[0]*dw[0] + dw[1]*dw[1] + dw[2]*dw[2]);
+    if (!(l > 1e-4f) || !std::isfinite(l + p[0] + p[1] + p[2])) { *src = kRayNone; return false; }
+    const float upm = std::max(1.0f, ViewHeight()) / UserEyeHeightM();
+    for (int i = 0; i < 3; ++i) {
+        d[i] = dw[i] / l;
+        o[i] = g_eyeWorld[i].load() + upm * (p[0] * f.camR[i] - p[2] * f.camF[i]);
+    }
+    o[1] += upm * p[1];
+    *reachM = std::hypot(p[0], p[2]);   // (the head frame's origin is the head)
+    static std::atomic<int> told[2] = {-1, -1};
+    if (told[h].exchange(*src) != *src)
+        LogF("vrcam: F4: point_pickup - the %s hand's ray %s ([input] point_pickup)", h == 0 ? "right" : "left",
+             *src == kRayArm ? "out of the drawn hand, along the drawn forearm (elbow -> wrist)" : "from the controller's aim pose (no arm posed)");
     return true;
 }
 
@@ -615,12 +699,7 @@ bool GestureHeroId(uint32_t* id) {
         return false;
     }
 }
-// The hero unit found without an attack, for the cave ceiling's torches (worldobj): while
-// it is wanted, every unit the game asks the facing of is tried - a player (type 0)
-// whose place on its path, times 2, is the look-at (2026-10-07: "on entering the cave").
-std::atomic<void*> g_heroSeen{nullptr};
-std::atomic<bool> g_heroWanted{false};
-
+// A player unit (type 0) whose place on its path, times 2, is the look-at: the hero.
 bool IsHeroUnit(const void* unit) {
     float L[3];
     AcquireSRWLockShared(&g_lookLock); memcpy(L, g_lookAt, sizeof L); ReleaseSRWLockShared(&g_lookLock);
@@ -663,7 +742,6 @@ void HookUnitFacing(void* unit, float* out) {
     trace.Pause();
     OrigUnitFacing(unit, out);
     trace.Resume();
-    if (unit && g_heroWanted.load() && !g_heroSeen.load() && IsHeroUnit(unit)) g_heroSeen.store(unit);   // until one is found
     if (out && unit && unit == g_heroUnit.load()) {
         g_logicFacingDeg.store(atan2f(out[1], out[0]) * 57.2957795f);
         g_logicFacingAt.store(QpcUs());

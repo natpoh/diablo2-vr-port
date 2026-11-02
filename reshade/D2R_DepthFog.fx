@@ -746,7 +746,6 @@ uniform float CeilFireNearer < hidden = true; > = 0.0;
 uniform float CeilTorchBright < hidden = true; > = 0.6;     // [ceiling] torch_brightness
 uniform float CeilTorchMemory < hidden = true; > = 8.0;     // seconds a torch out of sight still lights
 uniform float CeilFireGone < hidden = true; > = 0.3;        // seconds a fire that went out in plain view still lights (a spell's)
-uniform float CeilTorchWarm < hidden = true; > = 0.6;      // [ceiling] torch_warmth: the game's pale torch colour toward fire's orange
 uniform float CeilHalo < hidden = true; > = 1.0;            // [ceiling] torch_halo: how much of the game's glow round a flame shows in a cave (1 = all)
 uniform float FrameTime < source = "frametime"; >;
 static const int kFireW = BUFFER_WIDTH / 16;
@@ -798,40 +797,6 @@ float4 TorchLight(float3 wh, float3 nrm, float3 v)
         const float k = dist / max(CeilTorchRadius, 1.0);
         const float fall = Falloff(k) * L.w * saturate(C.w * 3.0);
         sum += C.rgb * fall * (0.35 + 0.65 * saturate(dot(nrm, l)));
-        glint += fall * Glint(nrm, l, v);
-    }
-    return float4(sum, glint);
-}
-
-// The lit objects the game itself has near the hero (vrcam reads them from the game's
-// rooms; their light from its Objects table): xyz less the hero (his feet), w the
-// game's light radius (Lit: a torch 19). With them the fire in the picture is not
-// looked for: the picture's depth at a flame was the wall behind it.
-uniform bool GameLightsOn < hidden = true; > = false;
-uniform float4 GameLightPos[16] < hidden = true; >;
-uniform float4 GameLightCol[16] < hidden = true; >;
-
-// Their light on a point of the ceiling (p: less the hero), as TorchLight; a torch's
-// reach is CeilTorchRadius, the others' by their radius against a torch's 19. A slow
-// flicker of a few percent, each its own, as a flame's light breathes.
-float4 GameLight(float3 p, float3 nrm, float3 v)
-{
-    float3 sum = float3(0.0, 0.0, 0.0);
-    float glint = 0.0;
-    [loop] for (int i = 0; i < 16; ++i) {
-        const float4 L = GameLightPos[i];
-        if (L.w <= 0.0) continue;
-        const float3 dv = L.xyz - p;
-        const float dist = length(dv);
-        const float3 l = dv / max(dist, 1e-3);
-        const float k = dist / max(CeilTorchRadius * L.w / 19.0, 1.0);
-        const float flicker = 0.93 + 0.07 * sin(Timer * 0.011 + i * 2.3) * sin(Timer * 0.0037 + i * 1.1);
-        // gone at 2 radii (Falloff), and with the light's distance from the hero (GameLightCol.w, vrcam [ceiling] torch_distance)
-        const float fall = Falloff(k) * flicker * GameLightCol[i].w;
-        // the game's light colours are pale (a torch's 255/236/176): on grey stone they only
-        // brightened it - "not yellow enough" (the user, 2026-10-07); fire's orange mixed in
-        const float3 col = lerp(GameLightCol[i].rgb, float3(1.0, 0.58, 0.22), saturate(CeilTorchWarm));
-        sum += col * fall * (0.35 + 0.65 * saturate(dot(nrm, l)));
         glint += fall * Glint(nrm, l, v);
     }
     return float4(sum, glint);
@@ -1152,8 +1117,7 @@ bool Ceiling(float3 dir, int eye, out float3 c, float tMax)
     float3 light = lit.xxx;
     float glint = 0.8 * fall * Glint(nrm, lHero, toEye);
     if (CeilTorches) {
-        const float4 tl = CeilTorchBright * (GameLightsOn ? GameLight(hit, nrm, toEye)
-                                                          : TorchLight(float3(hit.x + hero.x, hit.y, hit.z + hero.y), nrm, toEye));
+        const float4 tl = CeilTorchBright * TorchLight(float3(hit.x + hero.x, hit.y, hit.z + hero.y), nrm, toEye);
         light += tl.rgb;
         glint += tl.w;
     }
@@ -1247,7 +1211,7 @@ float Fireness(float3 c) { return saturate((c.r - 0.65) * 4.0) * saturate((c.r -
 // out: the bottom of the screen, and the game's own layer's letters.
 float4 PS_Fire(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
 {
-    if (!CeilOn || !CeilTorches || GameLightsOn) return 0.0;
+    if (!CeilOn || !CeilTorches) return 0.0;
     const float2 corner = floor(pos.xy) * 16.0;
     float best = 0.0, sum = 0.0;
     float2 at = float2(0.0, 0.0);
@@ -1267,7 +1231,7 @@ float4 PS_Fire(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
 // right under it (the brazier) is nearer than what is behind it, and is taken instead.
 float4 TorchCands(float4 pos, int eye)
 {
-    if (!CeilOn || !CeilTorches || GameLightsOn) return 0.0;
+    if (!CeilOn || !CeilTorches) return 0.0;
     const int idx = (int)pos.x, row = (int)pos.y;
     const int cw = (kFireW + 7) / 8, ch = (kFireH + 3) / 4;
     const int gx = idx % 8, gy = idx / 8;
@@ -1361,7 +1325,7 @@ float2 FireInView(float3 w, int eye)
 // every place picks a different one). Two torches that came together keep the first.
 float4 TorchMerge(float4 pos, int eye)
 {
-    if (!CeilOn || !CeilTorches || GameLightsOn) return 0.0;
+    if (!CeilOn || !CeilTorches) return 0.0;
     const int i = (int)pos.x, row = (int)pos.y;
     const float near = 4.0;   // world units: the same torch
     const float4 p0 = Texel(TorchOldSmp, i, 0, 16.0, 2.0), c0 = Texel(TorchOldSmp, i, 1, 16.0, 2.0);

@@ -234,17 +234,12 @@ struct Settings {
     std::atomic<float> ceilRelief{6.0f};    // [ceiling] relief: how far the rock hangs down, world units (0 = flat)
     std::atomic<int>   ceilSteps{12};       // [ceiling] steps: the ray's steps through the rock (the frame's cost)
     std::atomic<float> ceilLight{25.0f};    // [ceiling] light_radius: world units from the hero where his light is down to half
-    std::atomic<bool>  ceilTorches{false};  // [ceiling] torches: the game's own lights (found by the memory scan) light the ceiling
-    std::atomic<bool>  ceilPictureFire{false};   // [ceiling] fire_from_picture: fire seen in the picture lights it instead - any fire, no scan
+    std::atomic<bool>  ceilPictureFire{false};   // [ceiling] fire_from_picture: fire seen in the picture lights it - any fire
     std::atomic<float> ceilTorchBright{0.6f};   // [ceiling] torch_brightness
     std::atomic<float> ceilTorchRadius{20.0f};  // [ceiling] torch_radius: world units where a torch's light is down to half
     std::atomic<float> ceilFireNearer{0.0f};    // [ceiling] fire_nearer: world units a fire found in the picture is put nearer the eye
-    std::atomic<float> ceilTorchDist{80.0f};    // [ceiling] torch_distance: torches farther from the hero fade out (behind walls)
-    std::atomic<bool>  ceilMonsters{false};      // [ceiling] monster_lights: the Fallen's torches light the ceiling (off: their units are not even read)
-    std::atomic<float> ceilMonsterBright{0.35f}; // [ceiling] monster_brightness: the Fallen's torches, times the torches' glow
     std::atomic<float> ceilWall{200.0f};         // [ceiling] wall_distance: the stone wall round the hero closing the void past the floor (0 = none)
     std::atomic<float> ceilFloor{5.0f};          // [ceiling] floor_depth: stone this far under the hero's floor past the drawn floor's edge (0 = none)
-    std::atomic<float> ceilTorchWarm{0.6f};      // [ceiling] torch_warmth: the game's pale torch colour toward fire's orange, 0..1
     std::atomic<float> ceilHalo{1.0f};          // [ceiling] torch_halo: the game's glow round a flame over the ceiling, 0..1
     std::atomic<float> ceilWet{0.35f};      // [ceiling] wet: how much the rock shines, like the walls
     std::atomic<float> ceilDetail{0.8f};    // [ceiling] detail: world units the picture's light parts stand out of the rock
@@ -273,6 +268,11 @@ struct Settings {
     std::atomic<bool>  flatBodyPick{true};   // [input] flat_body_pick: flat F2 / F3, a unit or object clicked by its body (vr/flat_body.h)
     std::atomic<bool>  vrBodyPick{true};     // [input] vr_body_pick: VR, the game's mouse point (F1 - F3's pointer and crosshair, F4's shift + click aim) by the body too (vr/vr_body_pick.h)
     std::atomic<bool>  vrBodyPickHand{false};   // [input] vr_body_pick_hand: VR F4, the pad's attack and interact go to the unit the aiming hand points at (vr/vr_body_pick.h)
+    std::atomic<bool>  pointPickup{true};       // [input] point_pickup: VR F4, A picks up the item on the floor the aiming hand points at (vr/unleashed_loot_aim.h)
+    std::atomic<float> pointPickupLabelPct{250.0f}; // [input] point_pickup_label_pct: the pointed item's name, % of the game's label size (live)
+    std::atomic<bool>  pointPickupRay{false};       // [debug] point_pickup_ray: the ray the pick uses drawn (to the floor, a dot there, a ring at the item)
+    std::atomic<float> pointPickupArmCm{12.0f}; // [input] point_pickup_arm_cm: the hand this far (level) from the head points; nearer, nothing is highlighted
+    std::atomic<float> pointPickupReach{0.0f};  // [input] point_pickup_reach_cells: past this from the hero A takes no item (0 = any distance: the hero walks up)
     std::atomic<bool>  flatPortalNoOval{true};   // [input] flat_portal_no_oval: flat F2 / F3, the town portal's black oval not drawn (vr/portal_oval.h)
     std::atomic<bool>  portalNoOval{false};      // [render] portal_no_oval: the same in VR, F2 / F3 / F4 (F1 from above keeps it)
     std::atomic<bool>  portalLookHorizon{false}; // [input] portal_look_horizon: flat F3, the look back to the horizon after a portal or waypoint (vr/portal_auto.h)

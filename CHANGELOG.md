@@ -1,5 +1,24 @@
 # What's new in D2R VR
 
+## 0.199.0
+
+- **Direct hit is on as the mod comes** ("By the rules", with the two-handed swing through a group): a touch of your weapon is a hit at once,
+  no waiting for the game's attack animation or walking up. It and "the game moves what you carry and throw" are now in one block,
+  *Strikes > Attention: these change the game's own logic*, with a warning: they make the game's server do what its own rules would not.
+  Untick them to play by the game's own rules. Everything else in the mod (hit by touch, weapon weight, ragdolls) is only another way of
+  input - the game decides.
+- **Pick up by pointing** (`[input] point_pickup`, on; after D2R VR Unleashed v0.3.31): stretch either arm toward an item on the floor -
+  the line runs out of your hand along the forearm, up to 2 - 3 m - and its name lights up with a rim (bigger, *UI: F4 body > Item labels on
+  the ground > the pointed item's size*) and the hand gives a soft pulse. Then grip held + trigger of that hand, or A, picks up exactly
+  that item. With a bow the hand at the string still draws; the hand holding a crossbow picks up by A.
+- Settings: checkboxes and buttons far down the list (the end of the Debug tab, the Status tab) did nothing when clicked - fixed.
+- **Skills to BodyWalk** (`[gestures] skill_link`, off): your character's skills go to BodyWalk, which can cast one from a body action -
+  a jump casts the Barbarian's Leap, for example - or from a gesture. The game casts it its own way. Needs a BodyWalk with Game skills
+  (coming).
+- The shield put away behind the shoulder is off and out of Settings.
+- The old cave light from torches is gone: the cave ceiling is drawn and lit by the game itself.
+- Settings: the new texts in all 7 languages.
+
 ## 0.198.0
 
 From the test builds 0.197.1 - 0.197.6.

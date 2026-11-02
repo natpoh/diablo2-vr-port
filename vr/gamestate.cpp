@@ -709,9 +709,7 @@ void Publish() {
 }
 
 std::atomic<uint64_t> g_player{0};   // the local player's handle, as the SDK gives it (vrcam tries it as the hero unit)
-void CalibrateObjectLights();   // the Objects table's light fields, below
 void ReadSkills();              // which skills fly along the hand, below
-extern int g_objLitOffset;
 
 // The belt's bottom row: the item code in each of its four columns (0 = empty), what the potion
 // keys 1-4 drink. Each belt item comes as x 0..15 (column x % 4, row x / 4) with y 0, or as
@@ -835,7 +833,6 @@ void __cdecl ReadItems(const PluginContext* ctx, void* user) noexcept {
     if (g_typeOffset == -2) CalibrateTypes();
     if (!g_classKindsBuilt && g_typeOffset >= 0) BuildClassKinds();
     if (!g_classCodesBuilt && g_typeOffset >= 0) BuildClassCodes();   // (g_bank is the one the types were found in)
-    if (g_objLitOffset == -2) CalibrateObjectLights();
     if (g_twoOffset == -2 && g_typeOffset >= 0) CalibrateTwoHanded();
     if (g_classOffset == -2 && g_typeOffset >= 0) CalibrateWeaponClass();
     for (int side = 0; side < 2; ++side) g_thrustSide[side].store(ThrustOf(code[side]));   // hit by touch's thrust: each hand's weapon's class (vr/thrust_stroke.h)
@@ -1021,64 +1018,6 @@ SharedEvents::UiMessageAction __cdecl OnUiMessage(const PluginContext*, const Sh
     return SharedEvents::UiMessageAction::Continue;
 }
 
-// Which objects give light, from the game's own Objects table (Objects.txt): Lit0..Lit7,
-// the light's radius in each of the object's modes (a torch: 0 unlit, 19 burning), and
-// Red/Green/Blue, its colour. The compiled row's offsets are not named by the SDK: found
-// once, on the UI thread, as the bytes that read Objects.txt's values for five objects
-// at once - a brazier, a tiki torch, a bonfire, a small fire and hellfire (2026-10-07).
-struct ObjLight { uint8_t lit[8]; uint8_t rgb[3]; };
-constexpr uint32_t kObjMax = 1024;
-ObjLight g_objLight[kObjMax];
-std::atomic<uint32_t> g_objCount{0};   // rows known; 0 = not (yet)
-int g_objLitOffset = -2;                // -2 not tried yet, -1 failed (declared above ReadItems)
-
-void CalibrateObjectLights() {
-    g_objLitOffset = -1;
-    if (!g_tables || !g_tables->getTable) return;
-    static const struct { uint32_t id; uint8_t lit[8]; uint8_t rgb[3]; } kProbe[] = {
-        {29, {0, 19, 18, 0, 0, 0, 0, 0}, {255, 236, 176}},   // Brazier
-        {37, {0, 19, 19, 0, 0, 0, 0, 0}, {255, 236, 176}},   // TikiTorch1
-        {39, {0, 19, 19, 0, 0, 0, 0, 0}, {255, 236, 176}},   // RogueBonfire
-        {160, {0, 16, 17, 0, 0, 0, 0, 0}, {255, 255, 255}},  // FireSmall
-        {345, {6, 0, 0, 0, 0, 0, 0, 0}, {255, 100, 100}}};   // Hellfire1
-    for (DataTables::Bank bank : {DataTables::Bank::Lod, DataTables::Bank::Rotw, DataTables::Bank::Classic}) {
-        DataTables::TableView v{};
-        v.structSize = DataTables::TableViewSize;
-        if (g_tables->getTable(g_ctx, bank, DataTables::TableId::Objects, &v) != DataTables::Result::Success || !v.rows || v.rowCount <= 345 || !v.rowSize)
-            continue;
-        const uint8_t* rows = (const uint8_t*)v.rows;
-        int lit = -1, rgb = -1;
-        for (uint32_t o = 0; o + 8 <= v.rowSize && (lit < 0 || rgb < 0); ++o) {
-            bool l = lit < 0, c = rgb < 0 && o + 3 <= v.rowSize;
-            for (const auto& p : kProbe) {
-                const uint8_t* r = rows + (size_t)p.id * v.rowSize;
-                l = l && memcmp(r + o, p.lit, 8) == 0;
-                c = c && memcmp(r + o, p.rgb, 3) == 0;
-            }
-            if (l) lit = (int)o;
-            if (c) rgb = (int)o;
-        }
-        char b[160];
-        snprintf(b, sizeof b, "gamestate: object lights - bank %u, %u rows of %u bytes, Lit at %d, colour at %d", (unsigned)bank, v.rowCount, v.rowSize, lit, rgb);
-        Log(b);
-        if (lit < 0 || rgb < 0) continue;
-        const uint32_t n = std::min(v.rowCount, kObjMax);
-        uint32_t lights = 0;
-        for (uint32_t i = 0; i < n; ++i) {
-            const uint8_t* r = rows + (size_t)i * v.rowSize;
-            memcpy(g_objLight[i].lit, r + lit, 8);
-            memcpy(g_objLight[i].rgb, r + rgb, 3);
-            for (uint8_t x : g_objLight[i].lit) if (x) { ++lights; break; }
-        }
-        g_objLitOffset = lit;
-        g_objCount.store(n);
-        snprintf(b, sizeof b, "gamestate: object lights - %u of %u objects give light", lights, n);
-        Log(b);
-        return;
-    }
-    Log("gamestate: object lights NOT found in the Objects table - the ceiling's torches stay as seen in the picture");
-}
-
 // Which skills fly along the hand (vrcam, [hands] spell_aim), from the game's own Skills table:
 // a missile that leaves the hero - Skills.txt srvmissile, or one of the server functions that
 // send their own (Charged Bolt, Teeth, Chain Lightning, the streams, Guided Arrow and Bone
@@ -1257,13 +1196,6 @@ void SetStickBits(uint32_t bits) { g_stickBits.store(bits & (7u << 13)); }
 void SetLaserPanels(bool on) { g_laserPanels.store(on); }   // from the next panel message on
 uint64_t TitleScreenAt() { return g_titleAt.load(); }
 uint64_t LocalPlayer() { return g_player.load(); }
-// An object's light in a mode: its radius (Objects.txt Lit, 0 = none) and colour 0..1.
-int ObjectLight(uint32_t txt, uint32_t mode, float rgb[3]) {
-    if (txt >= g_objCount.load() || mode > 7) return 0;
-    const ObjLight& o = g_objLight[txt];
-    for (int c = 0; c < 3; ++c) rgb[c] = o.rgb[c] / 255.0f;
-    return o.lit[mode];
-}
 
 bool AutoMapOpen() { return g_autoMap.load() != 0; }
 int MapMode() { g_mapModeAskedAt.store(GetTickCount64()); return g_mapModeLast.load(); }   // [hud] map_direction: the whole-screen map (0) or a corner (1, 2); -1 not known

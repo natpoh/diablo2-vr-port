@@ -35,7 +35,6 @@ void SkyTick() {
     roofhook::Tick();
     engitem::weather::Tick();   // [sky] weather_first_person: the log lines
     prophook::Tick();
-    worldobj::Gather();
     gamefog::Tick();
     depthsrc::Tick();   // [render] depth_fix_mode 2: what became of the frames, every 20 s
     static uint32_t seenGen = ~0u;

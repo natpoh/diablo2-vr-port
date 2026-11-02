@@ -311,8 +311,8 @@ mark, nor BodyWalk / FlatVR, which are separate products.
 Third-party: the parts from D2R VR Unleashed up to 0.3.28 (MIT, Copyright (c)
 2026 bearstonem - the notice is in `LICENSE`), the parts from its later versions
 (MPL 2.0, Copyright (c) 2026 bearstonem and the D2R VR Unleashed contributors -
-files of their own, `shared/unleashed_*.h`, `cleanroom/drawdist/unleashed_*.cpp`,
-`reshade/D2R_FogEase_Unleashed.fxh`, each with its notice), the weight library's props world
+files of their own, `shared/unleashed_*.h`, `vr/unleashed_*.h`, `cleanroom/drawdist/unleashed_*.cpp`,
+`cleanroom/tests/unleashed_*_test.cpp`, `reshade/D2R_FogEase_Unleashed.fxh`, each with its notice), the weight library's props world
 (`external/weight_props`, MIT, natpoh and bearstonem; on Box3D by Erin Catto,
 MIT), MinHook (BSD 2-clause, `third_party/minhook`), the ReShade SDK headers and
 FX compiler (BSD 3-clause, `external/reshade`, `third_party/reshadefx`), the

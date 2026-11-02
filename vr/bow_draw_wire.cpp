@@ -93,6 +93,8 @@ std::atomic<bool> g_recentre{false};
 std::atomic<ULONGLONG> g_ownedAt{0};
 std::atomic<ULONGLONG> g_keepAt{0};       // the string hand's trigger is kept from the layout (the draw's, or bow_draw_only's), when
 std::atomic<int> g_keepHand{-1};          // ... and whose (direct_input's: 0 left, 1 right)
+std::atomic<ULONGLONG> g_stringAt{0};     // the string hand at the string or drawing, when ([input] point_pickup: AtString)
+std::atomic<int> g_stringHand{-1};        // ... and whose (direct_input's: 0 left, 1 right)
 std::atomic<ULONGLONG> g_gripAt{0};       // the string hand's grip is the draw's, when
 std::atomic<int> g_gripHand{-1};          // ... and whose (vrcam's: 0 right, 1 left)
 
@@ -326,6 +328,9 @@ void OnFrame(const directinput::Frame& f, void*) {
         if (keep.trigger || keep.noShotTrigger) { g_keepHand.store(strX); g_keepAt.store(GetTickCount64()); }
         else g_keepAt.store(0);
     }
+    // [input] point_pickup: the string hand at the string (or drawing) - its grip + trigger there draw, never pick up (AtString)
+    if (o.atString || o.drawing || o.owned) { g_stringHand.store(strX); g_stringAt.store(GetTickCount64()); }
+    else g_stringAt.store(0);
     if (o.owned) {
         g_ownedAt.store(o.hold == 1 ? 0 : GetTickCount64());   // vrcam's BodyWalk-pad mask is the attack's: the trigger's
         if (o.hold == 1) { g_gripHand.store(strX ? 0 : 1); g_gripAt.store(GetTickCount64()); }
@@ -581,6 +586,12 @@ void ShotTimes(double* releaseS, double* pressS) {
 bool KeepsTrigger(int hand) {
     if (!Active() || hand != g_keepHand.load()) return false;
     const ULONGLONG at = g_keepAt.load();
+    return at && GetTickCount64() - at < kFreshMs;
+}
+
+bool AtString(int hand) {
+    if (!Active() || hand != g_stringHand.load()) return false;
+    const ULONGLONG at = g_stringAt.load();
     return at && GetTickCount64() - at < kFreshMs;
 }
 

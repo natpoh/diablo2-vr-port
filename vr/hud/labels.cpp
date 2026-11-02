@@ -134,10 +134,58 @@ float GameUiScaleNow() noexcept {
 bool LabelUnitIsItem(void* unit) {
     return platelook::IsLabelOfItem(unit, [](const unsigned char* at, unsigned& type) { return SafeRead(&type, at, sizeof type); });
 }
+// [input] point_pickup (vr/unleashed_loot_aim.h, MPL 2.0 from D2R VR Unleashed's loot pick): the item the pointing hand's ray is on
+// (pointpickup::Lit) gets its name always shown, a rim round its label in its rarity colour (red out of reach), a dark shade of that colour
+// behind it and the name larger; while Show items is held for it (pointpickup::OnlyLit) every other name is cut. Which unit a paint is:
+// the label owners, kept from the layouts (lootaim::LabelOwners has the rule and why). The game's UI thread, both hooks.
+bool PointHighlightWanted() { return g_set.pointPickup.load() && viewgate::F4(); }
+unleashed::lootaim::LabelOwners<64> g_labelOwners;
+SRWLOCK g_labelOwnersLock = SRWLOCK_INIT;
+uintptr_t LabelOwner(const void* box, const void* name) {
+    AcquireSRWLockShared(&g_labelOwnersLock);
+    const uintptr_t unit = g_labelOwners.Unit(box, name);
+    ReleaseSRWLockShared(&g_labelOwnersLock);
+    return unit;
+}
+float LabelScaleOf(const void* name, const void* box, float fallback);
+uintptr_t PaintPointed(const int32_t* box, const char* name, const float* colour) {
+    namespace la = unleashed::lootaim;
+    const la::NameLook& look = la::LookFor(pointpickup::LitInReach());
+    float rarity[3], rim[4], c[4];
+    pointpickup::LitRarity(rarity);
+    la::RimRgba(look, rarity, GetTickCount64(), rim);
+    int32_t ring[4][4];
+    const int strips = la::Ring(box, la::RimPx, ring);
+    for (int i = 0; i < strips; ++i) OrigLabelPaint(ring[i], "", rim);
+    la::BoxRgba(look, colour, rarity, c);
+    const float keep = t_labelScale;
+    t_labelScale = LabelScaleOf(name, box, LabelSizeNow());   // (the layout made room for the larger name: HookLabelLayout)
+    const uintptr_t r = OrigLabelPaint(box, name, c);
+    t_labelScale = keep;
+    return r;
+}
+
 bool HookLabelLayout(void* unit, char* name, int32_t* box, int32_t minX, int32_t maxX, uint8_t flag) {
-    const bool shown = OrigLabelLayout(unit, name, box, minX, maxX, flag);
+    bool shown = OrigLabelLayout(unit, name, box, minX, maxX, flag);
     const bool item = LabelUnitIsItem(unit);
-    const float k = item ? LabelSizeNow() * LabelDistanceK(unit) : 1.0f;
+    const uintptr_t lit = item && PointHighlightWanted() ? pointpickup::Lit() : 0;
+    if (lit && (uintptr_t)unit == lit) {
+        pointpickup::NoteLaidOut();
+        if (!shown && box && name && name[0]) shown = true;   // the pointed item always shows its name: the game laid it out but hid it (at the hero's feet)
+    } else if (shown && item && pointpickup::OnlyLit()) {
+        return false;   // Show items is held for the pointed item alone: every other name cut
+    }
+    if (shown && box && name && item && PointHighlightWanted()) {
+        AcquireSRWLockExclusive(&g_labelOwnersLock);
+        g_labelOwners.Remember(box, name, (uintptr_t)unit);
+        ReleaseSRWLockExclusive(&g_labelOwnersLock);
+    }
+    float k = item ? LabelSizeNow() * LabelDistanceK(unit) : 1.0f;
+    if (lit && (uintptr_t)unit == lit) {   // [input] point_pickup_label_pct (Serg, 0.199.1: "bigger"): its size, live - in place of Unleashed's 180% (130% out of reach)
+        namespace la = unleashed::lootaim;
+        const float pct = g_set.pointPickupLabelPct.load() * 0.01f * (pointpickup::LitInReach() ? 1.0f : la::OutOfReachLook.nameScale / la::InReachLook.nameScale);
+        k = std::min(4.0f, k * pct);
+    }
     if (shown && name) NoteLabelScale(name, box, item ? k : -1.0f);
     if (shown && box && name && item && std::abs(k - 1.0f) >= 0.005f) ResizeLabelBox(name, box, k);
     if (shown && box && item) NoteLabelDepth(unit, box);
@@ -166,6 +214,8 @@ bool ResizeLabelBox(char* name, int32_t* box, float k) {
 }
 
 uintptr_t HookLabelPaint(const int32_t* box, const char* name, const float* colour) {
+    if (box && PointHighlightWanted())   // [input] point_pickup: the pointed item's label
+        if (const uintptr_t lit = pointpickup::Lit(); lit && LabelOwner(box, name) == lit) return PaintPointed(box, name, colour);
     float alpha, size;
     LabelLookNow(&alpha, &size);
     if (LabelIsOtherThanItem(name, box)) return OrigLabelPaint(box, name, colour);   // not an item's label: the game's own
@@ -206,7 +256,7 @@ void InstallLabelHooks() {
     float alpha, size;
     LabelLookNow(&alpha, &size);   // the view now: the hooks go in the first time any view wants them
     const bool wantBox = alpha < 0.995f;
-    const bool wantSize = std::abs(size - 1.0f) > 0.005f || LabelsByDistance() || LabelDepthWanted();
+    const bool wantSize = std::abs(size - 1.0f) > 0.005f || LabelsByDistance() || LabelDepthWanted() || PointHighlightWanted();   // (point_pickup: whose label)
     if (!wantBox && !wantSize) return;
     if (!g_labelPaintIn.load()) {
         if (paintFailed) return;

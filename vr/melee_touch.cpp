@@ -67,6 +67,7 @@
 #include "death_ragdoll.h" // [weight] death_ragdoll: the dying monsters' MonStats flags (UnitRowFlags)
 #include "grab_bodies.h"   // [weight] grab_bodies: the held limbs put into the bodies (PutLinks)
 #include "item_grab.h"     // [weight] grab_items: the items on the ground near the hero (GroundItems)
+#include "unleashed_loot_aim.h"   // [input] point_pickup: an item on the floor (GroundItemUnit)
 #include "barrel_touch.h"  // [gameplay] melee_touch_barrels: a swing through a barrel / pot presses the game's own interact on it
 #include "blade_push.h"   // [weight] monster_ragdoll: a blade the weight model does not hold (a weapon in each hand) pushes the doll itself
 #include "room_pose.h"
@@ -3224,6 +3225,11 @@ uintptr_t MonsterUnit(uint32_t id) { return id ? ClientUnit(id, 1) : 0; }
 void SetPickWanted(bool on) { g_pickWanted.store(on); }
 bool PickWanted() { return g_pickWanted.load(); }
 uintptr_t ObjectUnit(uint32_t id) { return id ? ClientUnit(id, 2) : 0; }
+uintptr_t GroundItemUnit(uint32_t id) {
+    const uintptr_t u = id ? ClientUnit(id, 4) : 0;
+    uint32_t mode = 0;
+    return u && Read(&mode, u + 0xC, sizeof mode) && unleashed::lootaim::OnFloor(4, mode) ? u : 0;
+}
 int Hostile(uint32_t id) {
     const Know k = Verdicted(id, GetTickCount64());
     return k == Know::Yes ? 1 : k == Know::No ? 0 : -1;

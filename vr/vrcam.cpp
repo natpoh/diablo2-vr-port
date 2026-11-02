@@ -904,8 +904,6 @@ void StartProbe() {
 
 // [render] solid_walls, keep_roofs, [stereo] props_once_a_pair (solidwalls, roofhook, prophook): vr/render/render_switches.cpp
 
-// The lights near the hero from the game's objects (worldobj): vr/sky/lights.cpp
-
 // [render] depth_fix_mode 2: the depth range at its source (depthsrc): vr/render/depth/depth_fix.cpp
 
 // The area judged on the timer: in world, underground, the act, the ceiling biome, the sky and why (SkyTick): vr/sky/sky_tick.cpp
@@ -921,7 +919,7 @@ int D2rvrHoverSpheres(float (*out)[8], int max) { return engitem::HoverSpheres(o
 
 // ReShade's loading (LoadReShade, LoadOurAddonForDxgiReShade): vr/plugin/reshade_load.cpp
 
-static const char g_info_version[] = "0.198.0";
+static const char g_info_version[] = "0.199.0";
 
 // Who this is. D2RLoader prints "<name> <version> by <author>" for every plugin, and d2r-pcvr (a fork of our 0.152) carries the
 // same id, name and author as we did - "vrcam ... by BodyWalkVR" told a support log nothing. The id stays (the log file
@@ -1155,6 +1153,7 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     owneffects::Init(ctx);     // [render] dim_own_effects: the hero's own effects fainter (its two hooks only look, so they are in whether it is ticked or not)
     owneffects::SetHeroSource(+[]() -> uintptr_t { return (uintptr_t)g_heroUnit.load(); }, &GestureHeroId);   // the hero as the aim function knows him, besides the game's own getter
     owneffects::SetScaleSource(+[]() -> float { return std::max(1.0f, ViewHeight()) / UserEyeHeightM(); });   // [render] lower_own_effects: cm as world units, as the view's own scale
+    pointpickup::Init(ctx);    // [input] point_pickup: grip held + trigger on the highlighted item picks it up, Show items held for its name
     belttrigger::Init(ctx);    // [belt] hold_takes_trigger: and the triggers of a hand that holds a belt bottle
     shoulderwire::SetWeaponSource([]() -> bool { return weight::Placed() || (g_set.shieldStow.load() && shieldarmwire::Arm() >= 0) || rangedwire::Side() >= 0; });   // [hands] shoulder_draw claims the grip behind a shoulder only while the weight model has a weapon or the shield can be put away
     shieldarmwire::SetHaptic([](int side, float amplitude, int ms) { haptics::Pulse(haptics::FromSkel(side), amplitude, ms); });   // the left shoulder, with the shield put away
@@ -1200,6 +1199,7 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     bowdrawwire::Init(ctx, &AimHand, &FullBody);   // the bow draw listens to direct_input's frames, in F4 only
     bowpitchwire::Init(ctx);   // [bow] pitch_aim
     pointwire::Init(ctx);   // [gameplay] teleport_circle
+    skilllinkwire::Init(ctx);   // [gestures] skill_link: the skills to BodyWalk, its casts back
     arrowflightwire::Init(ctx);   // [bow] arrow_flight: on the potion hide's two renderer hooks
     arrowflightwire::SetHeroIdSource(&GestureHeroId);   // ... whose arrows are the hero's
     bowquiverwire::Init(ctx, &AimHand);            // [bow] quiver rides on the draw's frames (after its listener)

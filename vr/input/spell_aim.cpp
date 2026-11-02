@@ -479,6 +479,10 @@ void* HookSpellTarget(void* mgr, int skill) {
     const uintptr_t ret = (uintptr_t)_ReturnAddress();
     t_touchAnswer = false;
     void* t = SpellTargetFor(mgr, skill, ret);
+    // [input] point_pickup (F4): A on an item casts Interact, whose target is asked here too (the game's answer: the nearest item) - the pointed item
+    // instead, as InteractTarget answers it, so the prompt and the press agree. An object or NPC the hand points at ([input] vr_body_pick_hand) comes first.
+    if (skill == kInteractSkill && (pointpickup::PressId() || !VrHandTarget(vrbody::Ask::Interact)))
+        t = reinterpret_cast<void*>(PointPickupAnswer(reinterpret_cast<uintptr_t>(t)));
     if (g_ptActive.load(std::memory_order_relaxed))
         if (const int which = LookupOf(ret); which >= 0) PressTraceLookup(which, t, t_touchAnswer);   // [debug] melee_press_trace
     return t;
@@ -668,7 +672,7 @@ void InstallSlotSkillHook() {
 }
 
 void InstallSpellAimHooks() {
-    if (!g_ctx || g_spellAimHook.load() != 0 || !(g_set.spellAim.load() || g_set.bowAim.load() || g_set.throwAim.load() || g_set.throwGesture.load() || bowdrawwire::On() || shieldsmite::On() || g_set.meleeTouch.load() || g_set.vrBodyPickHand.load()) || !OrigAttackPoint) return;   // the point's hook in first
+    if (!g_ctx || g_spellAimHook.load() != 0 || !(g_set.spellAim.load() || g_set.bowAim.load() || g_set.throwAim.load() || g_set.throwGesture.load() || bowdrawwire::On() || shieldsmite::On() || g_set.meleeTouch.load() || g_set.vrBodyPickHand.load() || g_set.pointPickup.load()) || !OrigAttackPoint) return;   // the point's hook in first
     if (!Matches(RVA_SPELL_RESOLVE, kSigSpellResolve, sizeof kSigSpellResolve) || !Matches(RVA_SPELL_TARGET, kSigSpellTarget, sizeof kSigSpellTarget) ||
         !Matches(RVA_HOVER_UNIT, kSigHoverUnit, sizeof kSigHoverUnit) || !Matches(RVA_CLIENT_INDEX, kSigClientIndex, sizeof kSigClientIndex) ||
         !Matches(RVA_CTRL_HANDLER, kSigCtrlHandler, sizeof kSigCtrlHandler) || !Matches(RVA_CTRL_SKILL, kSigCtrlSkill, sizeof kSigCtrlSkill) ||

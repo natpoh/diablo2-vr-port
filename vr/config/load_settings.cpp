@@ -716,16 +716,11 @@ void LoadSettings() {
     g_set.ceilRelief.store(std::clamp(IniF(L"ceiling", L"relief", 6.0f), 0.0f, 100.0f));
     g_set.ceilSteps.store(std::clamp((int)IniF(L"ceiling", L"steps", 12.0f), 1, 64));
     g_set.ceilLight.store(std::clamp(IniF(L"ceiling", L"light_radius", 25.0f), 1.0f, 1000.0f));
-    g_set.ceilTorches.store(IniB(L"ceiling", L"torches", false));
     g_set.ceilPictureFire.store(IniB(L"ceiling", L"fire_from_picture", false));
     g_set.ceilTorchBright.store(std::clamp(IniF(L"ceiling", L"torch_brightness", 0.6f), 0.0f, 5.0f));
     g_set.ceilTorchRadius.store(std::clamp(IniF(L"ceiling", L"torch_radius", 20.0f), 1.0f, 500.0f));
     g_set.ceilFireNearer.store(std::clamp(IniF(L"ceiling", L"fire_nearer", 0.0f), 0.0f, 200.0f));
-    g_set.ceilTorchDist.store(std::clamp(IniF(L"ceiling", L"torch_distance", 80.0f), 5.0f, 1000.0f));
-    g_set.ceilMonsters.store(IniB(L"ceiling", L"monster_lights", false));
-    g_set.ceilMonsterBright.store(std::clamp(IniF(L"ceiling", L"monster_brightness", 0.35f), 0.0f, 3.0f));
     g_set.ceilHalo.store(std::clamp(IniF(L"ceiling", L"torch_halo", 1.0f), 0.0f, 1.0f));
-    g_set.ceilTorchWarm.store(std::clamp(IniF(L"ceiling", L"torch_warmth", 0.6f), 0.0f, 1.0f));
     g_set.ceilWall.store(std::clamp(IniF(L"ceiling", L"wall_distance", 200.0f), 0.0f, 5000.0f));
     g_set.ceilFloor.store(std::clamp(IniF(L"ceiling", L"floor_depth", 5.0f), 0.0f, 500.0f));
     g_set.ceilWet.store(std::clamp(IniF(L"ceiling", L"wet", 0.35f), 0.0f, 3.0f));
@@ -812,6 +807,11 @@ void LoadSettings() {
     g_set.vrBodyPick.store(IniB(L"input", L"vr_body_pick", true));
     g_set.vrBodyPickHand.store(IniB(L"input", L"vr_body_pick_hand", false));
     meleetouch::SetPickWanted(g_set.vrBodyPickHand.load());   // vr_body_pick_hand: the monsters near the hero and the server's verdicts (F4)
+    g_set.pointPickup.store(IniB(L"input", L"point_pickup", true));
+    g_set.pointPickupLabelPct.store(std::clamp(IniF(L"input", L"point_pickup_label_pct", 250.0f), 100.0f, 400.0f));
+    g_set.pointPickupRay.store(IniB(L"debug", L"point_pickup_ray", false));
+    g_set.pointPickupArmCm.store(std::clamp(IniF(L"input", L"point_pickup_arm_cm", 12.0f), 0.0f, 40.0f));
+    g_set.pointPickupReach.store(std::clamp(IniF(L"input", L"point_pickup_reach_cells", 0.0f), 0.0f, unleashed::lootaim::ReachCells));
     g_set.flatPortalNoOval.store(IniB(L"input", L"flat_portal_no_oval", true));
     g_set.portalNoOval.store(IniB(L"render", L"portal_no_oval", false));
     g_set.portalLookHorizon.store(IniB(L"input", L"portal_look_horizon", false));
@@ -1078,6 +1078,9 @@ void LoadSettings() {
     animcut::Configure(animcut::Kind::Melee, IniB(L"hands", L"quick_strike", false), std::max(2, (int)std::lround(IniF(L"hands", L"quick_strike_frame", 2.0f))));   // (2 at the earliest: the author, 2026-10-20 - at 1 the Amazon's one-hand swing AMA11HS attacked and never hit; at 2 it hits)   // the melee blow made earlier inside the attack animation
     animcut::Configure(animcut::Kind::Throw, IniB(L"hands", L"quick_throw", false), (int)std::lround(IniF(L"hands", L"quick_throw_frame", 1.0f)));   // the thrown missile made earlier inside the throw animation   // the arrow made earlier inside the same attack (a change of the game's timing)
     shieldsmite::Configure(IniB(L"gameplay", L"shield_smite", false));
+    // the hero's skills to BodyWalk and a button or a recorded gesture per skill cast back (F4); the spare slot a skill on none is put on first
+    skilllinkwire::Configure(IniB(L"gestures", L"skill_link", false),
+                             (int)std::lround(IniF(L"gestures", L"skill_link_slot", (float)skilllink::kDefaultSpareSlot)));
     shieldsmite::SetTuning(IniF(L"gameplay", L"shield_smite_min_speed", 0.8f), IniF(L"gameplay", L"shield_smite_stroke_cm", 8.0f));   // the shield bash's own speed and start distance (vr/shield_smite.h BashParams), live
     skilltriggers::SetWanted(IniB(L"debug", L"skill_triggers", false));   // what casts a skill drawn (vr/skill_triggers.h)
     skilltriggers::SetMarkMs((uint32_t)std::clamp(IniF(L"debug", L"skill_mark_ms", 800.0f), 0.0f, (float)skilltriggers::kMaxMarkMs));   // how long its speed marks and trail stay

@@ -1,0 +1,205 @@
+// skill_link_wire.cpp - [gestures] skill_link, the wiring: see skill_link_wire.h. The decisions are vr/skill_link.h's (pure, tested).
+#define WIN32_LEAN_AND_MEAN
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+
+#include <atomic>
+#include <cstdarg>
+#include <cstdio>
+#include <mutex>
+
+#include <D2RLPlugin/api.h>
+
+#include "direct_input.h"
+#include "link.h"
+#include "log_async.h"
+#include "skill_link.h"
+#include "skill_link_wire.h"
+#include "skill_wheel.h"
+#include "view_gate.h"
+#include "wheel_game.h"
+
+namespace skilllinkwire {
+namespace {
+
+const D2RL::PluginContext* g_ctx = nullptr;
+std::atomic<bool> g_on{false};
+std::atomic<int> g_spare{skilllink::kDefaultSpareSlot};
+std::mutex g_lock;   // the tick's state below and the record wish (RequestRecord: any thread)
+uint32_t g_recordSeq = 0;
+int32_t g_recordSkill = -1;
+uint32_t g_recState = BW_LINK_REC_NONE;
+int32_t g_recStateSkill = -1;
+
+void Log(const char* text) {
+    if (g_ctx) logasync::Info(g_ctx, text);
+}
+void LogF(const char* fmt, ...) {
+    char b[512];
+    va_list a;
+    va_start(a, fmt);
+    vsnprintf(b, sizeof b, fmt, a);
+    va_end(a);
+    Log(b);
+}
+
+// The tick's own (vrcam's timer thread only).
+wheel::Snapshot g_snap;   // 12 KB each: not on the stack
+uint32_t g_snapRev = 0;
+BW_LinkSkills g_out, g_sent;
+bool g_haveSent = false;
+uint64_t g_sentAt = 0;
+uint32_t g_revision = 0;
+BW_LinkCasts g_casts;
+skilllink::CastReader g_reader;
+skilllink::Caster g_caster;
+uint64_t g_assignSeq = 0;      // our setter request's sequence (wheelgame's channel is shared with the panel's editor)
+uint64_t g_heldAt = 0;         // the held skills' presses renewed last
+bool g_wasOn = false;
+
+const char* SlotName(int slot) { return slot >= 0 && slot < wheel::kSlotCount ? wheel::kSlotDefs[slot].label : "?"; }
+
+void Press(int slot, uint32_t ms) {
+    const skilllink::Press p = skilllink::SlotPress(slot);
+    directinput::PadPulse({p.buttons, p.lt, p.rt}, ms ? ms : p.ms);
+}
+
+void Reset() {
+    g_reader.Reset();
+    g_caster.Reset();
+    g_haveSent = false;
+    g_assignSeq = 0;
+}
+
+}  // namespace
+
+void Init(const D2RL::PluginContext* ctx) { g_ctx = ctx; }
+
+void Configure(bool on, int spareSlot) {
+    const bool was = g_on.exchange(on);
+    g_spare.store(spareSlot >= -1 && spareSlot < wheel::kSlotCount ? spareSlot : skilllink::kDefaultSpareSlot);
+    if (on != was)
+        LogF("vrcam: skill link - %s ([gestures] skill_link; the spare slot %s)", on ? "on: the hero's skills go to BodyWalk, its casts come back (F4)" : "off",
+             spareSlot < 0 ? "none: only skills on a slot are cast" : SlotName(spareSlot));
+}
+
+bool On() { return g_on.load(); }
+
+void RequestRecord(int32_t skill) {
+    std::lock_guard<std::mutex> lock(g_lock);
+    g_recordSkill = skill;
+    ++g_recordSeq;
+}
+
+uint32_t RecordState(int32_t* skill) {
+    std::lock_guard<std::mutex> lock(g_lock);
+    if (skill) *skill = g_recStateSkill;
+    return g_recState;
+}
+
+void Tick(bool play) {
+    const bool on = g_on.load();
+    if (!on) {
+        if (g_wasOn) {   // the list emptied for BodyWalk: no set, nothing to bind or cast
+            g_wasOn = false;
+            std::memset((char*)&g_out + sizeof(BW_LinkHeader), 0, sizeof g_out - sizeof(BW_LinkHeader));
+            g_out.revision = ++g_revision;
+            link::PublishSkills(g_out);
+            link::SetSkillLink(false, false);
+            Reset();
+        }
+        return;
+    }
+    g_wasOn = true;
+    const uint64_t now = GetTickCount64();
+    // the skill panel's reads of the game (its UI thread): kept going while the panel itself is off
+    if (!skillwheel::Enabled()) wheelgame::Tick(true, false);
+    wheelgame::Latest(&g_snap, &g_snapRev);
+
+    // the list: written when it changed, and once a second (BodyWalk takes 3 s of stillness for a game gone)
+    {
+        std::lock_guard<std::mutex> lock(g_lock);
+        g_out.recordSequence = g_recordSeq;
+        g_out.recordSkill = g_recordSkill;
+    }
+    skilllink::Fill(g_snap, nullptr, &g_out);
+    const bool changed = !g_haveSent || !skilllink::SameList(g_out, g_sent);
+    if (changed) g_out.revision = ++g_revision;
+    if (changed || now - g_sentAt >= skilllink::kPublishMs || g_out.recordSequence != g_sent.recordSequence) {
+        link::PublishSkills(g_out);
+        if (changed)
+            LogF("vrcam: skill link - the skills to BodyWalk: %s, %u skills (revision %u)", g_out.setKey[0] ? g_out.setKey : "no hero", g_out.count,
+                 g_out.revision);
+        g_sent = g_out;
+        g_haveSent = true;
+        g_sentAt = now;
+    }
+
+    // BodyWalk's casts
+    const bool haveCasts = link::Casts(&g_casts);
+    {
+        std::lock_guard<std::mutex> lock(g_lock);
+        g_recState = haveCasts ? g_casts.recordState : BW_LINK_REC_NONE;
+        g_recStateSkill = haveCasts ? g_casts.recordSkill : -1;
+    }
+    // BodyWalk is given the hands (and, while it records, the controls) also with the plugin as the input
+    link::SetSkillLink(haveCasts, haveCasts && (g_casts.recordState == BW_LINK_REC_READY || g_casts.recordState == BW_LINK_REC_DRAWING));
+    if (haveCasts) {
+        BW_LinkCast fresh[BW_LINK_CASTS_RING];
+        const int n = g_reader.Step(g_casts, D2RVRStampNow(), fresh, (int)BW_LINK_CASTS_RING);
+        for (int i = 0; i < n; ++i) {
+            if (!play || !g_snap.ready) {
+                LogF("vrcam: skill link - BodyWalk's cast of skill %d dropped: %s", fresh[i].skill,
+                     !viewgate::F4() ? "not in VR first person (F4)" : !g_snap.ready ? "the game's skills are not read" : "a menu is open");
+                continue;
+            }
+            g_caster.Start(fresh[i].skill, now);
+        }
+    }
+
+    // the cast under way: the slot pressed, or the skill put on the spare slot first
+    if (g_caster.Busy()) {
+        bool refused = false;
+        if (g_assignSeq) {
+            const wheel::Reply r = wheelgame::ReplyNow();
+            if (r.sequence == g_assignSeq && r.result == wheel::Result::Refused) refused = true;
+            if (r.sequence == g_assignSeq && r.result != wheel::Result::Pending) g_assignSeq = 0;
+        }
+        const int32_t skill = g_caster.Skill();
+        const skilllink::Plan p = g_caster.Step(g_snap, now, g_spare.load(), refused);
+        switch (p.what) {
+            case skilllink::Plan::Do::Press:
+                if (play) {
+                    Press(p.slot, 0);
+                    LogF("vrcam: skill link - skill %d cast: the game's %s pressed", skill, SlotName(p.slot));
+                }
+                break;
+            case skilllink::Plan::Do::Assign: {
+                static uint64_t seq = 0x5C11000000000000ull;   // apart from the panel's editor's own numbers
+                wheel::Request r = p.assign;
+                r.sequence = ++seq;
+                g_assignSeq = r.sequence;
+                wheelgame::Submit(r);
+                LogF("vrcam: skill link - skill %d is on no slot: put on %s by the game's setter, then pressed", skill, SlotName(p.slot));
+                break;
+            }
+            case skilllink::Plan::Do::GiveUp:
+                LogF("vrcam: skill link - skill %d not cast: %s", skill, p.why);
+                break;
+            default: break;
+        }
+    }
+
+    // the held ones (a button held in BodyWalk): their slots' presses renewed while held
+    if (haveCasts && play && g_snap.ready && g_casts.heldCount && now - g_heldAt >= 20) {
+        g_heldAt = now;
+        for (uint32_t i = 0; i < g_casts.heldCount && i < BW_LINK_CASTS_HELD; ++i) {
+            const int slot = skilllink::SlotOf(g_snap, g_casts.held[i]);
+            if (slot >= 0) Press(slot, skilllink::kHeldMs);
+        }
+    }
+}
+
+}  // namespace skilllinkwire

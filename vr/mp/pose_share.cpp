@@ -94,11 +94,10 @@ SRWLOCK g_poseSpotsLock = SRWLOCK_INIT;
 PoseSpots g_poseSpots;
 std::atomic<uint32_t> g_poseDrawn{0}, g_poseAway{0};   // remotes drawn / not in our area, since the last line
 
-// Our hero's client unit id: the unit the aim works on, else the one seen at the look-at, else the SDK's local player when it is the
+// Our hero's client unit id: the unit the aim works on, else the SDK's local player when it is the
 // unit itself (as HeroAnimMode). 0 = not known.
 uint32_t OwnHeroUnitId() {
     uintptr_t hero = (uintptr_t)g_heroUnit.load();
-    if (!hero || !IsHeroUnit((void*)hero)) hero = (uintptr_t)g_heroSeen.load();
     if (!hero || !IsHeroUnit((void*)hero)) {
         const uintptr_t p = (uintptr_t)gamestate::LocalPlayer();
         hero = p > 0x10000 && IsHeroUnit((void*)p) ? p : 0;

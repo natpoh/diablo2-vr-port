@@ -2666,6 +2666,20 @@ static void TestBelt() {
         CHECK(std::string(StatusText(OnPage(on, kPageBelt))).find("Each change applies by itself") != std::string::npos, "and with them on, the usual line");
     }
 
+    // the Melee page's line warns while Direct hit is on (Serg, 2026-11-02: it changes the game's own logic), not while it is off
+    {
+        Snapshot on = Snap();
+        on.values[kKeyMeleeTouch] = on.file[kKeyMeleeTouch] = 1.0f;
+        CHECK(!DirectHitWarns(OnPage(on, kPageMelee)) && std::string(StatusText(OnPage(on, kPageMelee))).find("game's own logic") == std::string::npos,
+              "Direct hit off: no warning");
+        on.values[kKeyMeleeDirect] = on.file[kKeyMeleeDirect] = 1.0f;
+        CHECK(DirectHitWarns(OnPage(on, kPageMelee)) && std::string(StatusText(OnPage(on, kPageMelee))).find("game's own logic") != std::string::npos,
+              "Direct hit by the rules: the page warns");
+        CHECK(!DirectHitWarns(OnPage(on, kPageBelt)), "only on the Melee page");
+        on.values[kKeyMeleeTouch] = on.file[kKeyMeleeTouch] = 0.0f;
+        CHECK(!DirectHitWarns(OnPage(on, kPageMelee)), "hit by touch off: Direct hit does nothing, no warning");
+    }
+
     // the pictures: every page painted, all different; the Belt page's line says its changes apply by themselves
     {
         std::vector<std::vector<uint32_t>> pages(kPageCount);

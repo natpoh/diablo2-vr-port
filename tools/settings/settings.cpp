@@ -121,6 +121,7 @@ struct Item {
     unsigned soonMask = 0;                   // Radio: these choices (bit k = choice k) are coming soon as well, wherever they sit
     COLORREF color = 0;                      // Status: the line's colour now
     mutable int lines = 0;                   // Status: the lines LayoutPage gave it (a new text that needs more or fewer lays the page out again)
+    bool warn = false;                       // Status: a fixed warning (Warning) - its label in bold orange, never set by SetStatus
     bool hidden = false;                     // left out of the page for now (the update row until there is one)
     int col = -1;                            // Group: the column it goes in (0 left); -1 = the shortest column so far (LayoutPage)
     bool sub = false;                        // Group: a sub-heading inside the group above it (Sub) - it stays in that group's column
@@ -240,6 +241,8 @@ Item Button(const wchar_t* section, const wchar_t* key, const wchar_t* label, co
 Item Soon(int from, Item i) { i.soon = from; return i; }
 Item SoonChoice(int k, Item i) { i.soonMask |= 1u << k; return i; }
 Item Status(const wchar_t* key, const wchar_t* label) { Item i = Slider(L"@status", key, label, 0, 0, 0, 0); i.kind = Kind::Status; return i; }
+// A warning on top of a block: its words as they are, in bold orange (the Strikes tab's Attention block, Serg 2026-11-02).
+Item Warning(const wchar_t* key, const wchar_t* label) { Item i = Status(key, label); i.warn = true; return i; }
 // Shown only in flat (kFlat) or only in VR (kVr): a tab, a group or a single item.
 Item Only(int modes, Item i) { i.modes = modes; return i; }
 // A slider that took over from an older key: until its own key is written, it shows (and the plugin uses) the older one's value.
@@ -814,7 +817,7 @@ std::vector<Item> g_items = {
            L"On a Ryzen with 3D V-Cache on one of its two core groups (7900X3D, 7950X3D, 9900X3D, 9950X3D) the game's threads "
            L"are asked to run on the cores with the big L3 cache, and its drawing thread gets a higher priority - D2R's frame is "
            L"bound by that one thread. Other processors: nothing changes. The log says which cores were taken. Live."),
-    Group(L"Quality", L"How much the game draws and how good it looks against how fast it runs. A preset (Potato to High) sets everything here at once: room rings, model radius, fog, sky, cave ceiling and its torch light. Room rings, models and the frame cap need a game restart."),
+    Group(L"Quality", L"How much the game draws and how good it looks against how fast it runs. A preset (Potato to High) sets everything here at once: room rings, model radius, fog, sky, cave ceiling. Room rings, models and the frame cap need a game restart."),
     Choice(L"@preset", L"preset", L"Quality preset", 3, {L"Light: no ReShade (native, eyes by turns)", L"Potato", L"Low", L"Medium", L"High", L"Custom"},
            L"Sets the settings below at once. Light (a weak PC): no ReShade at all - the game in the headset with Native OpenXR, the eyes by "
            L"turns (one eye drawn a frame, the other made from it with the depth, the cheaper way: no rims, no strip filling, no sharper read, "
@@ -824,8 +827,8 @@ std::vector<Item> g_items = {
            L"Potato: as Low, but no ceiling, the 3D made from ReShade's depth instead of real stereo "
            L"(one frame a picture, not two) and the headset at 72 Hz, the game capped at it; the others 90 Hz. "
            L"Low: 1 room ring, models out to 150, near fog (30 to 100; in caves 60 to 100), ceiling on with coarse relief (8 steps). "
-           L"Medium: 2 rings, 200, fog 30 to 200 (in caves 100 to 200), ceiling on. High: 3 rings, 400, fog 30 to 250, finer ceiling relief and torches lighting "
-           L"the ceiling (heavy on the CPU). Every preset also sets the 3D in the headset: FlatVR stereo (Low, Medium, High) or FlatVR 3D depth "
+           L"Medium: 2 rings, 200, fog 30 to 200 (in caves 100 to 200), ceiling on. High: 3 rings, 400, fog 30 to 250, finer ceiling relief. "
+           L"Every preset also sets the 3D in the headset: FlatVR stereo (Low, Medium, High) or FlatVR 3D depth "
            L"(Potato) - it switches Native OpenXR off (set it again on the Home page). With Native OpenXR on this shows Custom. "
            L"Changing any of them by hand shows Custom."),
     // [render] no_reshade (docs/plan_no_reshade.md): ReShade64.dll not loaded; vrcam hooks D3D12 itself - the flat game, and native OpenXR eyes by
@@ -1360,6 +1363,14 @@ std::vector<Item> g_items = {
            L"The pointer while the mouse looks: your own picture (png, jpg, bmp), its middle is where you aim; it is "
            L"fitted into 32-64 pixels by the window's height. A picture with no transparency: its black is see-through. "
            L"A bare name is looked for in reshade-shaders\\Textures; a full path works too. Empty (x) = the built-in one."),
+    Only(kVr, Group(L"Pick up by pointing", L"First person (F4): stretch an arm toward an item on the floor - its name lights up - and pick it up with that hand's "
+                    L"grip + trigger, or A. From D2R VR Unleashed.")),
+    // [input] point_pickup (vr/unleashed_loot_aim.h, from D2R VR Unleashed's loot pick): F4, A picks up the item the hand points at
+    Only(kVr, Toggle(L"input", L"point_pickup", L"VR F4: pick up the item your hand points at (grip + trigger, or A)", 1,
+           L"First person with the controllers: stretch either arm out toward an item on the floor (the line runs out of the hand along the forearm) - "
+           L"its name lights up with a rim and that hand gives a soft pulse. Then, with that hand's grip held (as when holding a weapon), press its trigger - or press A - and that item "
+           L"is picked up, not the game's nearest; farther away the hero walks up to it. The trigger without the grip, or with nothing lit: as before. "
+           L"With a bow, the hand at the string draws; the hand holding a crossbow picks up by A only. From D2R VR Unleashed. Unticked: A takes the game's nearest item.")),
     Only(kVr, Group(L"Input", L"How BodyWalk's controls reach the game: the gamepad and the walk straight from BodyWalk, which pad button \"D2R: Inventory\" presses, whether A only attacks, and picking up one thing per press.")),
     Toggle(L"input", L"bodywalk_pad", L"Gamepad straight from BodyWalk", 1,
            L"The game's gamepad is BodyWalk's own report, read directly: no virtual gamepad (ViGEm) needed."),
@@ -2296,6 +2307,10 @@ std::vector<Item> g_items = {
            L"Every label (and the rest of the interface left in the picture, chat) nearer (+) or "
            L"farther (-) by the same amount, on top of the slider above. The name and bar over a monster have a depth of their own "
            L"(Monster plates, below) - none of the item labels' settings touch them."),
+    // [input] point_pickup_label_pct (Serg: beside the other labels' sizes): the name of the item the hand points at ([input] point_pickup, Controls)
+    Slider(L"input", L"point_pickup_label_pct", L"Item labels: the pointed item's size, %", 100, 400, 10, 250,
+           L"The name of the item your hand points at (Controls: Pick up by pointing), in % of the other item labels' size above - its rim "
+           L"and colour stay. 100 = as the other names. Live."),
     Group(L"Monster plates", L"The name and health bar over the monster you target: opacity, size, smaller far away, height and stereo depth, so in F4 it sits at its monster. Plate over the monster's head keeps it a set gap over the head at any distance."),
     // [hud] monster_alpha, monster_size: the plate over the monster - HUDMonsterHealth's TargetAttached with a pad (gamestate ReadPlate)
     Slider(L"hud", L"monster_alpha", L"Name over a monster: opacity", 0, 1, 0.05f, 1,
@@ -4169,47 +4184,6 @@ std::vector<Item> g_items = {
     // Strikes (2026-10-16, the user's wish): every setting that decides whether, and how, a touch of the blade becomes an attack, in one place. Moved here from Weapon Adjust (hit by touch, direct hit, quick
     // strike, the shield bash) and the Debug tab's touch ticks (duplicated in the group at the bottom). The ini keys are the same as ever, only the place changed; the blade's geometry stays in Weapon Adjust.
     Only(kVr, Tab(L"Strikes")),
-    Group(L"Direct hit", L"How a touch that counts becomes a hit. Off: the touch presses the game's own attack. By the rules: a direct hit for the first touch on a monster and for a real swing after the hero's attack time, otherwise the game's own attack. Fully on: every touch is a direct hit (the old experimental way). One place for single player, the host and a player who joined someone's game."),
-    Needs(L"gameplay", L"melee_touch", 1, Choice(L"@directhit", L"mode", L"Direct hit", 0, {L"Off", L"By the rules", L"Fully on (not recommended)"},
-           L"Off: the touch presses the game's own attack (its animation, its attack rate, its reach). "
-           L"BY THE RULES: the FIRST touch on a monster is a direct hit. Then a touch on the SAME monster sooner than your hero's attack takes "
-           L"(measured from his own attack animation, so it follows his attack speed) is the game's own attack - poking fast wins nothing. After "
-           L"that, a touch on it is a direct hit again only for a real swing: the least speed, force and swing length (your controller's own "
-           L"path) below. Another monster is never too soon. A TWO-HANDED weapon needs both hands on it (the two-hand grip): in one hand its "
-           L"touch is the game's own attack. A touch that fails a rule still attacks: the game's own attack, never nothing. The two-handed "
-           L"cleave only with its own box below. "
-           L"FULLY ON (not recommended): every accepted touch is a direct hit, as the old experimental box did. "
-           L"What a direct hit is: in single player and as the host, the plugin calls the game's server attack itself (the hit roll, the damage "
-           L"and the wear are the game's; no animation, no wait for the attack rate, no walking up). As a player who JOINED someone's TCP/IP game, "
-           L"it sends the game's own command \"attack this monster\" - the one a click on it sends - and the host's server does the whole attack "
-           L"(the host needs nothing for that). Only while the skill on your attack slot is the one in the hero's hand and no melee skill is armed. "
-           L"Writes [gameplay] melee_direct and melee_direct_client. Live. F4 only, like hit by touch.")),
-    Needs(L"gameplay", L"melee_touch", 1, ShowFor(L"@directhit", L"mode", 1u << 2, Slider(L"gameplay", L"melee_direct_min_ms", L"Direct hit (fully on): min gap between hits, ms", 0, 1500, 50, 0,
-           L"Single player and the host, fully on: 0 = no limit beyond \"a monster is hit once per stroke\". More: after a direct hit, the touches "
-           L"within this time do nothing - to keep the rate near the game's own if hits come too fast. Live."))),
-    Needs(L"gameplay", L"melee_touch", 1, ShowFor(L"@directhit", L"mode", 1u << 1, Slider(L"gameplay", L"melee_direct_client_min_speed", L"Direct hit: least swing speed, m/s", 0.0f, 6.0f, 0.1f, 2.5f,
-           L"How fast the blade must move where it touched for the touch to be a direct hit. Real swings are 2 - 6 m/s, pokes about "
-           L"1. A strike judged by force counts its arrival's speed. For a repeat on the same monster, and for the cleave. A slower touch is the "
-           L"normal attack (the button). 0: no least speed. Live."))),
-    Needs(L"gameplay", L"melee_touch", 1, ShowFor(L"@directhit", L"mode", 1u << 1, Slider(L"gameplay", L"melee_direct_client_min_force", L"Direct hit: least strike force, N s", 0.0f, 10.0f, 0.1f, 1.5f,
-           L"How hard the strike must land: the weight model's strike score (the impulse in its first 150 ms, an edge's cut - the same measure as "
-           L"\"Hit by the strike's force\"). Needs the weapon's weight and the monster bodies on; not measured, it counts as too weak. For a repeat on the "
-           L"same monster, and for the cleave. A weaker touch is the normal attack. 0: no least force. Live."))),
-    Needs(L"gameplay", L"melee_touch", 1, ShowFor(L"@directhit", L"mode", 1u << 1, Slider(L"gameplay", L"melee_direct_client_min_length", L"Direct hit: least swing length (the controller's path), m", 0.0f, 1.5f, 0.05f, 0.2f,
-           L"How far your CONTROLLER itself must have travelled in this swing - its own path, not the blade's tip, so a flick of the wrist that "
-           L"sweeps a long blade a long way does not pass it. A real swing, not a poke. A two-handed weapon: either controller's path counts. "
-           L"For a repeat on the same monster (the first touch on a monster is direct anyway). A shorter swing is the normal attack. 0: no "
-           L"least length. Live."))),
-    Needs(L"gameplay", L"melee_touch", 1, ShowFor(L"@directhit", L"mode", 1u << 1, Toggle(L"gameplay", L"melee_direct_client_cleave",
-           L"Direct hit: a two-handed swing through a group hits each monster (past the game's rules)", 0,
-           L"GOES PAST THE GAME'S RULE OF ONE ATTACK AT A TIME. The game runs one attack at a time, so a swing through several monsters "
-           L"normally lands on the first only. On, with a TWO-HANDED weapon: the first monster gets the direct hit as above; every other monster "
-           L"the same swing touches while that attack plays, with the least speed AND force above, gets the game's server attack for your hero, "
-           L"once (the hit roll, the damage and the weapon's wear are the game's; no animation of its own) - in single player and as the host on "
-           L"this PC, as a joined player asked of the HOST over D2RLoader's network. No repeat on the same monster sooner than your attack takes. "
-           L"A one-handed weapon, or a touch too slow or too weak: the normal attack. JOINED: THE HOST MUST SET \"By the rules\" AND TICK THIS BOX "
-           L"TOO - it strikes only on its own say-so; with it off, those hits are dropped as without the box. Takes effect at the game's next "
-           L"start (the network channel). Off: as before."))),
     Group(L"Hit by touch", L"The main switch for hitting by swinging your weapon in F4: the blade passing through a monster presses the game's own attack at it. The sliders set how fast and how far the blade must move to count; you can also let thrown weapons hit by touch and stop the trigger from attacking."),
     Toggle(L"gameplay", L"melee_touch", L"Hit by touch", 0,
            L"First person (F4), the arms on the controllers, a melee weapon (or bare fists) in hand: the blade you swing through a "
@@ -4457,6 +4431,78 @@ std::vector<Item> g_items = {
            L"A movement is a bash - and can cast - only after the shield has moved this far within about a tenth of a second, and fast "
            L"enough (above). Smaller: a short thrust counts; larger: only a long swing does. Default 8 as it always was; the bash's own number, "
            L"apart from \"Hit by touch: how far the blade moves to start a stroke\". Live. F4 only.")),
+    // Attention (Serg, 2026-11-02: «директ хит и переброска монстров через клетку - это ломание оригинальной логики ... чтобы люди нажимали их с осознанностью»): the two options
+    // that make the game's server do what its own rules would not - Direct hit (from the top of this tab) and the grab's move by the game's knockback (from Weapon Weight >
+    // Grab bodies) - in one block of their own under a warning. Both on as shipped (Serg: «оставляем включенными по умолчанию»); off is the game's own logic. The ini keys are the same as ever.
+    Group(L"Attention: these change the game's own logic", L"The options in this block go past Diablo II's own rules on purpose: they have the game's server do what its own "
+          L"attack and movement rules would not. Both are on as the mod comes (Direct hit by the rules); off (unticked) is the game's own logic, as it plays without the mod. Direct hit: a touch of your weapon becomes the "
+          L"server's attack at once - no animation, no attack rate, no walking up. The game moves what you carry and throw: a monster you carry or throw is put on "
+          L"another cell by the game's own knockback. Single player and the host change the game for everyone in it. Everything else in the mod - hit by "
+          L"touch, weapon weight, ragdolls, grabbing a monster without this move - is only another way to give the game its input: the game still decides."),
+    Warning(L"game_logic", L"On by default. These two make the game do what its own rules wouldn't: attacks and positions are sent to the game server directly. They "
+            L"change how the game plays, and in co-op everyone is affected. Turn them off to play by the game's own rules. (Everything else in the mod is another way of "
+            L"input: the game decides.)"),
+    Needs(L"gameplay", L"melee_touch", 1, Choice(L"@directhit", L"mode", L"Direct hit", 0, {L"Off", L"By the rules", L"Fully on (not recommended)"},
+           L"Off: the touch presses the game's own attack (its animation, its attack rate, its reach). "
+           L"BY THE RULES: the FIRST touch on a monster is a direct hit. Then a touch on the SAME monster sooner than your hero's attack takes "
+           L"(measured from his own attack animation, so it follows his attack speed) is the game's own attack - poking fast wins nothing. After "
+           L"that, a touch on it is a direct hit again only for a real swing: the least speed, force and swing length (your controller's own "
+           L"path) below. Another monster is never too soon. A TWO-HANDED weapon needs both hands on it (the two-hand grip): in one hand its "
+           L"touch is the game's own attack. A touch that fails a rule still attacks: the game's own attack, never nothing. The two-handed "
+           L"cleave only with its own box below. "
+           L"FULLY ON (not recommended): every accepted touch is a direct hit, as the old experimental box did. "
+           L"What a direct hit is: in single player and as the host, the plugin calls the game's server attack itself (the hit roll, the damage "
+           L"and the wear are the game's; no animation, no wait for the attack rate, no walking up). As a player who JOINED someone's TCP/IP game, "
+           L"it sends the game's own command \"attack this monster\" - the one a click on it sends - and the host's server does the whole attack "
+           L"(the host needs nothing for that). Only while the skill on your attack slot is the one in the hero's hand and no melee skill is armed. "
+           L"Writes [gameplay] melee_direct and melee_direct_client. Live. F4 only, like hit by touch.")),
+    Needs(L"gameplay", L"melee_touch", 1, ShowFor(L"@directhit", L"mode", 1u << 2, Slider(L"gameplay", L"melee_direct_min_ms", L"Direct hit (fully on): min gap between hits, ms", 0, 1500, 50, 0,
+           L"Single player and the host, fully on: 0 = no limit beyond \"a monster is hit once per stroke\". More: after a direct hit, the touches "
+           L"within this time do nothing - to keep the rate near the game's own if hits come too fast. Live."))),
+    Needs(L"gameplay", L"melee_touch", 1, ShowFor(L"@directhit", L"mode", 1u << 1, Slider(L"gameplay", L"melee_direct_client_min_speed", L"Direct hit: least swing speed, m/s", 0.0f, 6.0f, 0.1f, 2.5f,
+           L"How fast the blade must move where it touched for the touch to be a direct hit. Real swings are 2 - 6 m/s, pokes about "
+           L"1. A strike judged by force counts its arrival's speed. For a repeat on the same monster, and for the cleave. A slower touch is the "
+           L"normal attack (the button). 0: no least speed. Live."))),
+    Needs(L"gameplay", L"melee_touch", 1, ShowFor(L"@directhit", L"mode", 1u << 1, Slider(L"gameplay", L"melee_direct_client_min_force", L"Direct hit: least strike force, N s", 0.0f, 10.0f, 0.1f, 1.5f,
+           L"How hard the strike must land: the weight model's strike score (the impulse in its first 150 ms, an edge's cut - the same measure as "
+           L"\"Hit by the strike's force\"). Needs the weapon's weight and the monster bodies on; not measured, it counts as too weak. For a repeat on the "
+           L"same monster, and for the cleave. A weaker touch is the normal attack. 0: no least force. Live."))),
+    Needs(L"gameplay", L"melee_touch", 1, ShowFor(L"@directhit", L"mode", 1u << 1, Slider(L"gameplay", L"melee_direct_client_min_length", L"Direct hit: least swing length (the controller's path), m", 0.0f, 1.5f, 0.05f, 0.2f,
+           L"How far your CONTROLLER itself must have travelled in this swing - its own path, not the blade's tip, so a flick of the wrist that "
+           L"sweeps a long blade a long way does not pass it. A real swing, not a poke. A two-handed weapon: either controller's path counts. "
+           L"For a repeat on the same monster (the first touch on a monster is direct anyway). A shorter swing is the normal attack. 0: no "
+           L"least length. Live."))),
+    Needs(L"gameplay", L"melee_touch", 1, ShowFor(L"@directhit", L"mode", 1u << 1, Toggle(L"gameplay", L"melee_direct_client_cleave",
+           L"Direct hit: a two-handed swing through a group hits each monster (past the game's rules)", 0,
+           L"GOES PAST THE GAME'S RULE OF ONE ATTACK AT A TIME. The game runs one attack at a time, so a swing through several monsters "
+           L"normally lands on the first only. On, with a TWO-HANDED weapon: the first monster gets the direct hit as above; every other monster "
+           L"the same swing touches while that attack plays, with the least speed AND force above, gets the game's server attack for your hero, "
+           L"once (the hit roll, the damage and the weapon's wear are the game's; no animation of its own) - in single player and as the host on "
+           L"this PC, as a joined player asked of the HOST over D2RLoader's network. No repeat on the same monster sooner than your attack takes. "
+           L"A one-handed weapon, or a touch too slow or too weak: the normal attack. JOINED: THE HOST MUST SET \"By the rules\" AND TICK THIS BOX "
+           L"TOO - it strikes only on its own say-so; with it off, those hits are dropped as without the box. Takes effect at the game's next "
+           L"start (the network channel). Off: as before."))),
+    Sub(L"Monsters you carry and throw (Weapon Weight > Grab bodies)"),
+    // [weight] grab_moves_unit: what grab_throw carries and throws is moved by the game's own knockback (vr/grab_move.h; single player / host)
+    Needs(L"arms", L"mode", 2, Needs(L"weight", L"grab_throw", 1, Toggle(L"weight", L"grab_moves_unit", L"The game moves what you carry and throw (a test)", 0,
+           L"Needs Weapon Weight > Grab bodies > \"Lift and throw a humanoid you grab\". Live. Ticked: a humanoid you carry or throw is moved by the game itself - its own knockback puts it on the spot under the body you hold, and where it "
+           L"lands - so it fights from there and does not walk back to its old place, and everyone in the game sees it. Whatever the game's knockback refuses "
+           L"(bosses, big monsters) stays where it is. Only in single player or when you host the game; a joined player's stays drawn only. F4. "
+           L"Unticked: only the drawing moves, the game keeps it where it was, as before."))),
+    Group(L"Skills to BodyWalk", L"Your character's skills go to BodyWalk (Mapping > Game skills): give each one a gesture you record or a button there, and BodyWalk tells the game which skill to cast. The game casts it its own way, from its skill buttons."),
+    Toggle(L"gestures", L"skill_link", L"Skills to BodyWalk: a gesture or a button per skill", 0,
+           L"Your character's learned skills (their names in your game's language, their trees, which of the game's skill buttons each is on) go to "
+           L"BodyWalk through Game Link. In BodyWalk (Mapping > Game skills, its own tick there) you record a gesture for a skill - drawn in the air, "
+           L"shown in the headset as you draw it - or give it a button. Kept in your BodyWalk profile, per class. When BodyWalk recognises the "
+           L"gesture or the button, the game casts that skill ITS OWN WAY: the game's skill button it sits on is pressed (the left trigger with it "
+           L"for the second row), and mana, cooldown, animation and target stay the game's. A skill on none of the buttons is first put on the spare "
+           L"slot below by the game's own skill setter, as the skill panel's EDIT does - that slot's skill changes. Needs BodyWalk with Game skills. "
+           L"Casts only in VR first person (F4), never in a menu. Off: nothing goes to BodyWalk and nothing is cast. Live."),
+    Needs(L"gestures", L"skill_link", 1, Choice(L"gestures", L"skill_link_slot", L"Skills to BodyWalk: the spare slot for a skill on no button", 7,
+           {L"B", L"X", L"Y", L"RB", L"LT + B", L"LT + X", L"LT + Y", L"LT + RB", L"A", L"RT", L"LT + A", L"LT + RT"},
+           L"A skill whose gesture or button fires while it sits on none of the game's skill buttons is put on this slot first (the game's own "
+           L"setter, as the skill panel's EDIT), then this slot is pressed. Whatever was on the slot is replaced. LT + RB by default - the "
+           L"one players use least. Live.")),
     Group(L"Debug (the same ticks as on the Debug tab)", L"Drawings and tests for tuning Hit by touch and the shield bash: draw the blade and monster capsules, colour refused contacts, try touches without attacking, and fit the blade's length, butt and thickness to the weapon you see."),
     Toggle(L"debug", L"melee_touch_client_verdict", L"Hit by touch: decide hostile / wall from the client's own units", 0,
            L"What a player who JOINED a TCP/IP game gets (the game's server runs on the host's PC there, so it cannot be asked), tried "
@@ -4785,12 +4831,8 @@ std::vector<Item> g_items = {
            L"lift it or pull it out of its place and it is off its feet; let go while you swing and it flies, lands, lies a moment, gets up and walks back to where "
            L"the game has it. Two hands hold it together. Only the drawing: where it stands, what it does and its talk stay the game's. Needs the weight library "
            L"with the knock-down (d2r_vr_weight.dll in d2rloader\\d2r_vr_libs). F4. Unticked: the grab holds a limb as before."))),
-    // [weight] grab_moves_unit: what grab_throw carries and throws is moved by the game's own knockback (vr/grab_move.h; single player / host)
-    Needs(L"arms", L"mode", 2, Needs(L"weight", L"grab_throw", 1, Toggle(L"weight", L"grab_moves_unit", L"The game moves what you carry and throw (a test)", 0,
-           L"Live. Ticked: a humanoid you carry or throw is moved by the game itself - its own knockback puts it on the spot under the body you hold, and where it "
-           L"lands - so it fights from there and does not walk back to its old place, and everyone in the game sees it. Whatever the game's knockback refuses "
-           L"(bosses, big monsters) stays where it is. Only in single player or when you host the game; a joined player's stays drawn only. F4. "
-           L"Unticked: only the drawing moves, the game keeps it where it was, as before."))),
+    // [weight] grab_moves_unit moved to the Strikes tab's Attention block (it changes the game's own logic, Serg 2026-11-02): a line here says where it went
+    Status(L"grab_moves_moved", L"\"The game moves what you carry and throw\" is on the Strikes tab now, in its Attention block (it changes the game's own logic)."),
     // [weight] grab_balance: a humanoid held standing and pulled steps after the pull and keeps its feet (vr/knock_down.h, fall_physics 1.13)
     Needs(L"arms", L"mode", 2, Needs(L"weight", L"grab_throw", 1, Toggle(L"weight", L"grab_balance", L"A pulled humanoid steps to keep its feet (a test)", 1,
            L"Ticked, with Lift and throw: take a humanoid by the hand or the arm and pull, and it steps after you to keep its feet - as fast as its legs can step; "
@@ -5054,17 +5096,19 @@ std::vector<Item> g_items = {
            L"the hand that wears the shield - drawn into it, taken up by it, passed into it - the shield jumps to the other forearm (mirrored on the right, where it blocks and "
            L"bashes (Smite) as well). A sword let go leaves it where it is. Nothing changes in the game's slots. Off: the shield stays on the left arm, and the hand that wears "
            L"it cannot take the weapon. Live."))),
-    Needs(L"arms", L"mode", 2, Needs(L"hands", L"shoulder_draw", 1, Toggle(L"hands", L"shoulder_draw_shield_stow", L"... and the shield can be put away and drawn from behind the left shoulder", 0,
+    // The shield put away, and its no-block (a server rule): hidden, off as shipped - Serg, 2026-11-02: «уборку щита можно вообще отключить, она не имеет значения».
+    // The keys still work from the ini.
+    Hide(Needs(L"arms", L"mode", 2, Needs(L"hands", L"shoulder_draw", 1, Toggle(L"hands", L"shoulder_draw_shield_stow", L"... and the shield can be put away and drawn from behind the left shoulder", 0,
            L"A grip squeezed behind the LEFT shoulder by a hand that holds nothing PUTS THE SHIELD AWAY (it is not drawn and bashes nothing; it is still your equipped shield) - or, as with a "
            L"weapon, carry it there: the hand that wears the shield holds its grip (squeezed anywhere, or held already) and LETS GO behind the left shoulder. The "
            L"same grip while it is away DRAWS it onto the arm of the hand that reached - the right hand puts it on the right forearm, mirrored. Independent of the tick above: "
            L"with both, a shield drawn while the sword is in the other hand sits opposite it. With this on the left shoulder is the shield's and the weapon is drawn from the "
-           L"right one only. A short pulse in a hand that enters the left shoulder while the shield is away. Live."))),
-    Needs(L"arms", L"mode", 2, Needs(L"hands", L"shoulder_draw", 1, Needs(L"hands", L"shoulder_draw_shield_stow", 1, Toggle(L"hands", L"shield_stow_no_block",
+           L"right one only. A short pulse in a hand that enters the left shoulder while the shield is away. Live.")))),
+    Hide(Needs(L"arms", L"mode", 2, Needs(L"hands", L"shoulder_draw", 1, Needs(L"hands", L"shoulder_draw_shield_stow", 1, Toggle(L"hands", L"shield_stow_no_block",
            L"... and a shield put away does not block", 0,
            L"While the shield is away behind the left shoulder the game rolls no block for you: it treats the hero as one with no shield and goes on to its own dodge check. "
            L"Drawn onto an arm, the shield blocks as ever - the game's own chance, roll, animation and Faster Block Rate; nothing is decided by where you hold it. The shield's "
-           L"Defense stays (it is still equipped), and the character screen still shows its block chance. Off: a shield put away still blocks, as the game has it. Live.")))),
+           L"Defense stays (it is still equipped), and the character screen still shows its block chance. Off: a shield put away still blocks, as the game has it. Live."))))),
     Needs(L"arms", L"mode", 2, Needs(L"hands", L"shoulder_draw", 1, Toggle(L"hands", L"shoulder_draw_ranged", L"A bow or crossbow can be put away and drawn from behind a shoulder", 0,
            L"A grip squeezed behind EITHER shoulder by a hand that is not holding the string (or a potion) PUTS THE BOW OR CROSSBOW AWAY (it is not drawn, no string, no aim; it is still "
            L"your equipped weapon); the same grip while it is away draws it back, into its own hand. Independent of the shield ticks. A short pulse in a hand that enters a shoulder "
@@ -5674,6 +5718,11 @@ std::vector<Item> g_items = {
            L"\"Aim spells by the drawn hand or staff\") - it should lie along the staff, wand or orb, or along the hand's fingers. Orange: the old line "
            L"(the controller and the aim correction sliders) - unticked, or no fresh pose. The game aims by its heading on the ground. Needs the shader "
            L"D2R_DepthFog.fx of the same build. Live."),
+    Toggle(L"debug", L"point_pickup_ray", L"Pick-up by pointing: draw the hand's ray", 0,
+           L"VR first person (F4), \"pick up the item your hand points at\" on: each hand's ray as the pick really uses it - from where it starts (a white "
+           L"ball: the drawn wrist, the line along the drawn forearm) to the floor (a full ball there) or 8 m out (a ring). The right hand green, the left "
+           L"cyan; the hand whose item is lit bright, the other dim, an arm not held out dimmer still. A yellow ring round the lit item. Needs the shader "
+           L"D2R_DepthFog.fx of the same build. Live."),
     Toggle(L"debug", L"bow_aim_ray", L"Bow: draw where the arrow goes (a ray from the bow)", 0,
            L"Native OpenXR, \"Bow: draw the string with both hands\" on, a bow in hand (first person, F4). While the string is drawn - and for a moment after the shot - a long ray in the "
            L"headset: from the arrow's release point (the bow model's own arrow rest point when it is read, else the bow hand's point) along the line the bow code shoots along (the string "
@@ -5722,8 +5771,14 @@ int g_platform = 1;   // [mode] platform: 0 flat, 1 VR
 int PlatformBit() { return g_platform == 1 ? kVr : kFlat; }
 bool ShownNow(const struct Item& it);
 int g_contentH = 0, g_viewH = 0, g_scrollY = 0;
-constexpr int kFirstId = 100, kBrowseId = 2000, kClearId = 3000, kValueId = 4000, kRadioId = 5000;   // radios: kRadioId + item * 8 + value
-constexpr int kHelpId = 40000;   // a block's "?" (Item::help): kHelpId + item - above the radios' ids, below 65536
+// Each item's controls by its place in g_items, every range kMaxItems wide and none overlapping: an item's own control (kFirstId + item), its
+// "..." and "x" (a picture or colour), its number box, its block's "?", its radios (kRadioId + item * 8 + value), the last below 65536 (WM_COMMAND's
+// id is a WORD). 0.199.2 (Serg: "Pick-up by pointing: draw the hand's ray" unticked and nothing written): the ranges were 2000 apart at 100, and
+// with over 1900 items an item's own id ran into the "..." range - its click was taken for another item's Browse, nothing written. Build checks it.
+constexpr int kMaxItems = 4000;
+constexpr int kFirstId = 100, kBrowseId = kFirstId + kMaxItems, kClearId = kBrowseId + kMaxItems, kValueId = kClearId + kMaxItems,
+              kHelpId = kValueId + kMaxItems, kRadioId = kHelpId + kMaxItems;   // radios: kRadioId + item * 8 + value
+static_assert(kRadioId + kMaxItems * 8 <= 65536, "the controls' ids are WORDs");
 constexpr int kRowH = 30;   // at 96 DPI, zoom 1
 
 int S(float v) { return (int)std::lround(v * g_scale); }
@@ -5971,7 +6026,6 @@ const PresetKey kPreset[] = {
     {L"@reshade", L"generic_depth", {1, 1, 1, 1, 1}},
     {L"ceiling", L"enabled", {0, 0, 1, 1, 1}},   // Low too (8 relief steps): players on Low had no ceilings at all
     {L"ceiling", L"steps", {8, 8, 8, 12, 20}},
-    {L"ceiling", L"torches", {0, 0, 0, 0, 1}},
     // Light: native OpenXR with the eyes by turns (the only mode without ReShade); Potato: FlatVR 3D depth (ReShade's depth, one frame a picture);
     // the others FlatVR stereo (as before)
     {L"@stereo3d", L"source", {3, 2, 1, 1, 1}},
@@ -6850,6 +6904,8 @@ void AddTip(HWND ctl, const wchar_t* text) {
 }
 
 void Build(HWND page) {
+    if (g_items.size() > (size_t)kMaxItems)   // (a developer's build only: every id range must hold every item - see kMaxItems)
+        MessageBoxW(nullptr, L"More Settings items than kMaxItems: raise it (tools/settings/settings.cpp) - clicks would go to the wrong item.", L"D2R VR Settings", MB_ICONERROR);
     int tab = -1, tabModes = kBoth, groupModes = kBoth;
     for (size_t i = 0; i < g_items.size(); ++i) {
         Item& it = g_items[i];
@@ -6896,7 +6952,7 @@ void Build(HWND page) {
             // the weapon list's rows take clicks (SS_NOTIFY): one picks that kind for the sliders
             it.ctl = Make(page, L"STATIC", it.label, SS_LEFT | SS_NOPREFIX | ((it.key[0] == L'w' && it.key[1] == L'k') || it.cell >= 0 ? SS_NOTIFY : 0),
                           it.key[0] == L'w' && it.key[1] == L'k' ? id : -1);   // wraps to two lines
-            it.color = GetSysColor(it.cell >= 0 ? COLOR_WINDOWTEXT : COLOR_GRAYTEXT);   // (a table's cells are plain text)
+            it.color = it.warn ? RGB(205, 80, 0) : GetSysColor(it.cell >= 0 ? COLOR_WINDOWTEXT : COLOR_GRAYTEXT);   // (a table's cells are plain text)
             break;
         case Kind::File:
         case Kind::Color:
@@ -7111,7 +7167,8 @@ int LinesAt(HWND h, int width, int most = 3) {
     const int n = GetWindowTextW(h, text, 512);
     if (n == 0 || width <= 0) return 1;
     HDC dc = GetDC(h);
-    HGDIOBJ old = SelectObject(dc, g_font);
+    const bool bold = (HFONT)SendMessageW(h, WM_GETFONT, 0, 0) == g_bold;   // (a warning's words are bold: wider)
+    HGDIOBJ old = SelectObject(dc, bold ? g_bold : g_font);
     TEXTMETRICW tm{};
     GetTextMetricsW(dc, &tm);
     RECT r{0, 0, width, 0};
@@ -7209,8 +7266,8 @@ void LayoutPage() {
                     y += more + (k + 1 < it.radios.size() ? rowH : 0);
                 }
                 break;
-            case Kind::Status: {   // two lines, or as many as its words take (up to five)
-                it.lines = LinesAt(it.ctl, colW, 5);
+            case Kind::Status: {   // two lines, or as many as its words take (up to five; a warning all it takes)
+                it.lines = LinesAt(it.ctl, colW, it.warn ? 12 : 5);
                 const int more = (std::max(2, it.lines) - 2) * lineH;
                 places.push_back({it.ctl, x, y + S(4), colW, S(40) + more});
                 y += S(46) - rowH + more;
@@ -7333,6 +7390,7 @@ void ApplyScale() {
     for (const Item& it : g_items) {
         if (it.kind == Kind::Group) SendMessageW(it.name, WM_SETFONT, (WPARAM)g_bold, TRUE);
         if (it.helpMark) SendMessageW(it.helpMark, WM_SETFONT, (WPARAM)g_bold, TRUE);
+        if (it.kind == Kind::Status && it.warn) SendMessageW(it.ctl, WM_SETFONT, (WPARAM)g_bold, TRUE);
         if (it.kind == Kind::Button && it.big) SendMessageW(it.ctl, WM_SETFONT, (WPARAM)g_big, TRUE);
         if (it.kind == Kind::Slider) SendMessageW(it.ctl, TBM_SETTHUMBLENGTH, S(20), 0);
     }

@@ -129,6 +129,7 @@ const uint8_t kSigInteractTarget[16] = {0x40,0x53,0x55,0x56,0x57,0x41,0x55,0x48,
 std::atomic<uintptr_t> g_interactTarget{0};
 std::atomic<ULONGLONG> g_interactTargetAt{0};
 std::atomic<bool> g_interactHooked{false};   // = g_h.interact, which is declared further down
+std::atomic<bool> g_interactHeld{false};     // the layout's interact (pad A) held now, as ApplyActions reads it ([input] point_pickup keeps its pick)
 uintptr_t HookInteractTarget(uintptr_t mgr, uint32_t player);
 
 bool InteractTargetNow() {
@@ -247,6 +248,7 @@ void GrabHandsStep(skel::Input* in) {
 void ApplyActions(XINPUT_STATE* s) {
     static link::Presses presses;   // the game's pad polls only (index 0)
     uint32_t held = link::ActionsHeld(presses);
+    g_interactHeld.store((held & D2RVR_ACT_INTERACT) != 0);
     if (bowdrawwire::Owned()) held &= ~D2RVR_ACT_ATTACK;   // [hands] bow_draw: the string hand's trigger is the draw's, not an attack
     {   // BodyWalk's actions as they are pressed - its gestures among them - for the input log
         static uint32_t was = 0;
@@ -275,6 +277,7 @@ void ApplyActions(XINPUT_STATE* s) {
         }
     }
     if (itemgrabwire::Pressing()) interact = true;   // [weight] grab_items: the hand's grip on an item on the ground is the press of interact (its target answered below)
+    if (viewgate::F4() && pointpickup::PressId()) interact = true;   // [input] point_pickup: grip held + trigger on the highlighted item is the press of interact (target below)
     if (viewgate::F4() && meleetouch::BarrelPressTarget()) interact = true;   // [gameplay] melee_touch_barrels: a swing through a barrel / pot is the press of interact on it
     if ((held & D2RVR_ACT_INTERACT) && !interact) {
         if (!toldMiss) { toldMiss = true; Log("vrcam: pick up - nothing to pick up or open here, A not pressed"); }
@@ -367,12 +370,27 @@ uintptr_t HookInteractTarget(uintptr_t mgr, uint32_t player) {
         g_interactTargetAt.store(GetTickCount64());
         return ours;
     }
+    if (viewgate::F4() && pointpickup::PressId()) {   // [input] point_pickup: the trigger's pick-up in flight - its item before the hand's body pick
+        if (const uintptr_t point = PointPickupAnswer(t); point && pointpickup::PressId()) {   // (still in flight: not taken / gone meanwhile)
+            g_interactTarget.store(point);
+            g_interactTargetAt.store(GetTickCount64());
+            return point;
+        }
+    }
     // [input] vr_body_pick_hand (vr/vr_body_pick.h, F4): the object or NPC the aiming hand points at. Where A only attacks the game is still
     // answered its own (none): only our interact press (ApplyActions) is told there is a target.
     if (const uintptr_t hand = VrHandTarget(vrbody::Ask::Interact)) {
         g_interactTarget.store(hand);
         g_interactTargetAt.store(GetTickCount64());
         return f == 0 ? r : hand;
+    }
+    // [input] point_pickup (vr/unleashed_loot_aim.h, F4): the item on the floor the aiming hand points at, in place of the game's nearest - for its
+    // "(A)" prompt and for the press. Past the reach no item at all (a door, a waypoint, an NPC stays). Where A only attacks the game keeps its own.
+    if (const uintptr_t point = PointPickupAnswer(t); point != t) {
+        g_interactTarget.store(point);
+        g_interactTargetAt.store(GetTickCount64());
+        if (f == 0) return r;
+        return point;
     }
     g_interactTarget.store(t);
     g_interactTargetAt.store(GetTickCount64());

@@ -67,6 +67,10 @@ Block<BW_LinkXrInput> g_xrInput{BW_LINK_XRINPUT_NAME};
 Block<BW_LinkVrZones> g_vrZones{BW_LINK_VRZONES_NAME};
 Block<BW_LinkVrRunes> g_vrRunes{BW_LINK_VRRUNES_NAME};
 Block<BW_LinkWalk> g_walk{BW_LINK_WALK_NAME};
+Block<BW_LinkSkills> g_skills{BW_LINK_SKILLS_NAME};
+Block<BW_LinkCasts> g_casts{BW_LINK_CASTS_NAME};
+
+std::atomic<bool> g_skillPoses{false}, g_skillRecording{false};   // SetSkillLink
 
 std::atomic<uint32_t> g_manifestSeq{0};   // our Manifest's sequence: Actions of any other are not ours
 
@@ -335,7 +339,10 @@ void PublishXr(const D2RVR_XrInput& in, bool ended) {
     // through: it walks by the body's motion, which it reads from the head and hand poses, so it is given those, and no control (it presses
     // nothing a second time: its pad's buttons, actions and commands are ignored anyway, and the controller's own thumbstick is the plugin's).
     const bool direct = directinput::Active() && !ended;
-    if (direct && !directinput::BodyWalkWalks()) return;
+    // ([gestures] skill_link: BodyWalk recognises the skills' gestures by the hands, so it is given them as for its walking; and while it
+    // records one, the controls too - its trigger starts and ends the take)
+    const bool skillPoses = g_skillPoses.load(), skillRecording = skillPoses && g_skillRecording.load();
+    if (direct && !directinput::BodyWalkWalks() && !skillPoses) return;
     BW_LinkXrInput* blk = g_xrInput.Get();
     if (!blk) return;
     BW_LinkXrInput x{};
@@ -345,7 +352,7 @@ void PublishXr(const D2RVR_XrInput& in, bool ended) {
     x.head = in.head;
     x.hand[0] = in.hand[0];
     x.hand[1] = in.hand[1];
-    if (direct) { walkpath::ZeroControls(x.hand[0]); walkpath::ZeroControls(x.hand[1]); }
+    if (direct && !skillRecording) { walkpath::ZeroControls(x.hand[0]); walkpath::ZeroControls(x.hand[1]); }
     memcpy(x.profile, in.profile, sizeof x.profile);
     bw::link::Write(blk, x, BW_LINK_XRINPUT_VERSION);
     if (direct) {
@@ -382,7 +389,7 @@ uint32_t VrZones(BW_LinkVrZone* out, uint32_t max) {
 
 uint32_t VrRunes(BW_LinkVrRune* out, uint32_t max) {
     // F4 only (vr/view_gate.h); and with the plugin as the input BodyWalk has no hands, so no gestures: none, as the zones
-    if (!viewgate::F4() || directinput::Active()) return 0;
+    if (!viewgate::F4() || (directinput::Active() && !g_skillPoses.load())) return 0;   // ([gestures] skill_link: it has them then)
     const BW_LinkVrRunes* blk = g_vrRunes.Get();
     if (!blk || blk->header.magic != BW_LINK_MAGIC) return 0;
     // One reader: xr.cpp's draw, under its lock. A read that cannot get a whole copy (the writer was mid-write all through its tries -
@@ -405,6 +412,23 @@ uint32_t VrRunes(BW_LinkVrRune* out, uint32_t max) {
     if (!n) return 0;
     memcpy(out, r.rune, n * sizeof *out);
     return n;
+}
+
+void SetSkillLink(bool on, bool recording) {
+    g_skillPoses.store(on);
+    g_skillRecording.store(on && recording);
+}
+
+void PublishSkills(const BW_LinkSkills& s) {
+    if (BW_LinkSkills* blk = g_skills.Get()) bw::link::Write(blk, s, BW_LINK_SKILLS_VERSION);
+}
+
+bool Casts(BW_LinkCasts* out) {
+    const BW_LinkCasts* blk = g_casts.Get();
+    if (!blk || blk->header.magic != BW_LINK_MAGIC) return false;
+    static bw::link::Pulse pulse;   // one reader: skill_link_wire's tick
+    if (!pulse.Alive(&blk->header, 2000)) return false;
+    return bw::link::Read(blk, out) && out->header.version >= 1;
 }
 
 }  // namespace link

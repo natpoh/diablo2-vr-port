@@ -583,9 +583,13 @@ DWORD WINAPI UpdateThread(void*) {
         partycmd::Tick();     // the headset's Party page: the roster read, a party button pressed, on the UI thread
         beltdrop::Tick();  // [hands] belt_drop_ground: a drop of a belt potion under way, on the UI thread
         PauseKeyTick();    // [direct] action:pause - the pause menu: Esc, tapped (F4 only)
+        {   // [gestures] skill_link: the skills to BodyWalk, its casts back - every ~10 ms, the casts are pad presses (off: the list emptied once, then nothing)
+            static ULONGLONG linkAt = 0;
+            const ULONGLONG t = GetTickCount64();
+            if (t - linkAt >= 10) { linkAt = t; skilllinkwire::Tick(FullBody() && g_enabled.load() && g_inWorld.load() && !gamestate::MenuOpen()); }
+        }
         if (shieldsmite::Watching()) {   // [gameplay] shield_smite: a hard bash of the left shield casts the game's own Smite (and [debug] melee_boxes draws it)
             uintptr_t hero = (uintptr_t)g_heroUnit.load();
-            if (!hero || !IsHeroUnit((void*)hero)) hero = (uintptr_t)g_heroSeen.load();
             if (hero && !IsHeroUnit((void*)hero)) hero = 0;
             if (!hero) {   // the SDK's handle of the local player, when it is the unit itself
                 const uintptr_t p = (uintptr_t)gamestate::LocalPlayer();

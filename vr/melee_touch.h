@@ -323,6 +323,8 @@ void SetPickWanted(bool on);
 bool PickWanted();
 // Inside one of the game's lookups (its UI thread): the live client object of this id now, 0 for none.
 uintptr_t ObjectUnit(uint32_t id);
+// [input] point_pickup (vr/unleashed_loot_aim.h): the same for an item, only while it is still on the ground or dropping (unleashed::lootaim::OnFloor).
+uintptr_t GroundItemUnit(uint32_t id);
 // The server's verdict on a polled monster, any thread: 1 hostile and nothing between, 0 not (or a wall), -1 not known (not polled, or too old).
 int Hostile(uint32_t id);
 size_t PolledMonsters(PolledMonster* out, size_t max, bool* polled = nullptr);

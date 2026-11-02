@@ -101,8 +101,10 @@ constexpr uint64_t RVA_INTERACT_TARGET = 0x18D960;
 extern const uint8_t kSigInteractTarget[16];
 extern InteractTargetFn OrigInteractTarget;
 extern std::atomic<bool> g_interactHooked;
+extern std::atomic<bool> g_interactHeld;
 uintptr_t HookInteractTarget(uintptr_t mgr, uint32_t player);
 void GrabHandsStep(skel::Input* in);
+namespace itemgrabwire { bool Pressing(); }   // [weight] grab_items: a grip's pick-up press in flight (F4), its item the interact target
 
 // vr/input/flat_click.cpp: the flat game's clicks - the map click's hook, the mouse on raised ground, the body under the pointer, the
 // town portal's oval
@@ -112,6 +114,24 @@ void InstallMouseGroundHook();   // [input] flat_aim_ground (flat), [input] vr_b
 // [input] vr_body_pick_hand (vr/vr_body_pick.h): F4, the unit the aiming hand points at that answers the controller's lookup `ask`, 0 none (the game's
 // answer stays). The game's UI thread, inside its lookups.
 uintptr_t VrHandTarget(vrbody::Ask ask);
+// [input] point_pickup (vr/unleashed_loot_aim.h): F4, the controller's interact answered with the item on the floor the aiming hand points at.
+// game: the game's own answer; returns what the lookup gets (the game's own when no item is pointed at). The game's UI thread, inside its lookups.
+uintptr_t PointPickupAnswer(uintptr_t game);
+// [debug] point_pickup_ray: the ray the pick used last (world units: o, d unit), whether the arm was out (the pick's ray) and the aim pose its
+// source, the hero's floor height, the picked item's floor point. False when none in the last 300 ms. Any thread.
+struct PointRayDebug {
+    struct Hand { bool valid = false, pointing = false; int src = 0; float o[3] = {}, d[3] = {}; };
+    Hand hand[2];   // 0 right, 1 left
+    int owner = -1;   // the hand whose pick is lit (0 right, 1 left; -1 none)
+    bool item = false;
+    ULONGLONG at = 0;
+    float floorY = 0.0f, itemAt[3] = {};
+};
+// [input] point_pickup: one hand's pointing ray in the world (vr/input/aim.cpp; hand 0 right, 1 left): out of the drawn hand along the drawn forearm
+// (kRayArm), else the controller's aim pose (kRayAim); *reachM the origin's level distance from the head (m).
+constexpr int kRayNone = 0, kRayArm = 1, kRayAim = 2;
+bool PointRay(int hand, float* o, float* d, float* reachM, int* src);
+bool PointRayDebugNow(PointRayDebug* out);
 void PortalOvalTick();           // [input] flat_portal_no_oval (flat), [render] portal_no_oval (VR)
 bool PortalClass(uint32_t cls);
 extern std::atomic<bool> g_portalForce, g_portalHover;

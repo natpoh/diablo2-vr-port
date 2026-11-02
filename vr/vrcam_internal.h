@@ -325,12 +325,10 @@ uintptr_t SewerHero() noexcept;
 int SewerLevel(uintptr_t hero) noexcept;
 namespace replay { bool OverlaysWanted(); }
 
-// ---- what vr/sky/lights.cpp (M8) reads of vrcam.cpp: the hero unit and the look-at ----
+// ---- what the modules read of vrcam.cpp: the hero unit and the look-at ----
 LONGLONG QpcUs();
 bool IsHeroUnit(const void* unit);
-extern std::atomic<bool> g_heroWanted;
 extern std::atomic<void*> g_heroUnit;
-extern std::atomic<void*> g_heroSeen;
 extern SRWLOCK g_lookLock;
 extern float g_lookAt[3];
 

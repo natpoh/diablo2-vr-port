@@ -57,6 +57,8 @@ Third-party parts, each under its own licence:
     and no fog in the River of Flame ([fog] no_fog_river; d799f93)
     vr/unleashed_shapeshift_form.h, cleanroom/tests/unleashed_shapeshift_form_test.cpp - the druid's werewolf and
     werebear in first person ([shapeshift] forms_first_person; steamvr/shapeshift_form.h at 3d83a31)
+    vr/unleashed_loot_aim.h, cleanroom/tests/unleashed_loot_aim_test.cpp - A picks up the item the hand points at
+    ([input] point_pickup; steamvr/loot_aim.h and loot_aim_test.cpp at 0701680, on by default as in f096e76, v0.3.31)
 - MinHook - BSD 2-clause, Copyright (C) 2009-2017 Tsuda Kageyu.
 - ReShade SDK headers - BSD 3-clause, Copyright (C) 2014 Patrick Mours.
 - ReShade FX compiler (reshadefx, third_party/reshadefx: the effect's preprocessor, parser and HLSL generator, linked into the plugin

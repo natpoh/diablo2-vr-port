@@ -42,6 +42,11 @@ struct Item {
 };
 using Scene = std::vector<Item>;
 
+// The Melee page with hit by touch and Direct hit on (by the rules, or Fully on as the file has it): its line warns, in amber - Direct hit
+// changes the game's own logic (D2R VR Settings > Strikes > Attention).
+inline bool DirectHitWarns(const Model& m) {
+    return m.page == kPageMelee && m.Get()[kKeyMeleeTouch] > 0.5f && (m.Get()[kKeyMeleeDirect] > 0.5f || m.Get()[kKeyMeleeDirectClient] > 1.5f);
+}
 // The line under the rows for a model's state. `window`: the pages are the skill panel's Settings tab (it is closed by B, its Close
 // button or the long press of the right stick click, not by the grips and a click).
 inline const char* StatusText(const Model& m, bool window = false) {
@@ -83,6 +88,8 @@ inline const char* StatusText(const Model& m, bool window = false) {
                                             : uitext::Tr("vr.hset.status.keys_off", "Controls without BodyWalk is off: these buttons do nothing (BodyWalk's mapping is the controls).");
     if (m.page == kPageMelee && m.Get()[kKeyMeleeTouch] > 0.5f && m.Get()[kKeyMeleeDirect] < 0.5f && m.Get()[kKeyMeleeDirectClient] > 1.5f)   // the file says Fully on
         return uitext::Tr("vr.hset.status.melee_direct_full", "Direct hit is Fully on (D2R VR Authentic Settings > Strikes); its tick here is By the rules.");
+    if (DirectHitWarns(m))   // Serg (2026-11-02): the same warning as D2R VR Settings' Attention block
+        return uitext::Tr("vr.hset.status.melee_direct_on", "Attention: Direct hit changes the game's own logic - hits go to the server directly; in co-op everyone is affected.");
     if (IsWorldPage(m.page))
         return uitext::Tr("vr.hset.status.world_idle", "Each change applies by itself (F4). They need the arms on the controllers; the rest is in D2R VR Authentic Settings.");
     if (m.page == kPageMelee)
@@ -456,7 +463,8 @@ inline Scene Compose(const Model& m, const Hit& hover, const ComposeOptions& opt
 
     const std::string line = opt.status ? std::string(opt.status) : StatusLine(m, opt.window);
     const bool warn = m.page == kPageCoop ? !opt.status && m.Coop() && (!m.Coop()->installed || m.CoopResult() == Result::Failed)
-                                          : m.Dirty() && !opt.status && !m.LiveOnly() && m.page != kPageGuide;
+                                          : !opt.status && ((m.Dirty() && !m.LiveOnly() && m.page != kPageGuide)
+                                                            || (m.ready && m.result == Result::None && !m.Dirty() && DirectHitWarns(m)));   // (its warning line)
     b.Text(line, kStatus, Face::Normal, warn ? Role::Warn : Role::Quiet);
     b.Button(kRecentre, uitext::Tr("vr.hset.recentre", "Recentre view"), {Kind::Recentre, -1, 0});
     b.Button(kClose, uitext::Tr("vr.hset.close", "Close"), {Kind::Close, -1, 0});

@@ -2,7 +2,6 @@
 //   env        the game's day and night (vr/sky/day_night.cpp, with DayNightK / DayNightMul)
 //   gamefog    the game's height and depth fog taken out of its areas' definitions (vr/sky/game_fog.cpp)
 //   cavelight  [cave_light]: the light that fills caves and dungeons (vr/sky/lights.cpp)
-//   worldobj   the lights near the hero, from the game's own objects (vr/sky/lights.cpp)
 // (gamefogvr, [fog] game_fog, is still vrcam.cpp's: seen from vrcam.cpp's top its names would hide vr/game_fog_vr.h's.)
 #pragma once
 
@@ -33,13 +32,5 @@ void Load();
 void Install();
 void Tick(const std::string& biome, bool underground);
 }  // namespace cavelight
-
-namespace worldobj {
-struct Light { float x, y, z, lit, rgb[3]; bool monster = false; };   // world point (vrcam's, absolute); Objects.txt Lit; colour; a monster's
-constexpr int kMaxLights = 16;
-extern std::atomic<bool> g_known;   // the walk worked last time: the shader takes these, not the picture's fire
-void Gather();
-int Lights(Light* out);
-}  // namespace worldobj
 
 }  // namespace vrc

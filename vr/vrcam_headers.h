@@ -90,6 +90,7 @@ int FindHeroMatrices(const float hero[3], uintptr_t* out, int max);
 #include "flat_shift.h"    // [camera] flat_shift_x / _y: the flat picture moved on the screen, and where the hero is on it (pure part, tested)
 #include "flat_body.h"     // [input] flat_body_pick: a body or an object clicked by its body in flat F2 / F3 (pure part, tested)
 #include "vr_body_pick.h"  // [input] vr_body_pick, vr_body_pick_hand: the same in VR, along each view's ray (pure part, tested)
+#include "unleashed_loot_aim.h"  // [input] point_pickup: F4, A picks up the pointed item (MPL 2.0, from D2R VR Unleashed; pure part, tested)
 #include "unit_scan.h"     // ... the client's unit hash, the walk hit by touch uses
 #include "portal_oval.h"   // [render] flat_portal_no_oval: the town portal's black oval not drawn in flat F2 / F3 (pure part, tested)
 #include "portal_auto.h"   // [input] portal_look_horizon / portal_auto: flat, after a portal and into one (pure part, tested)
@@ -157,7 +158,7 @@ namespace partycmd { void Init(const D2RL::PluginContext* ctx); void Tick(); }  
 namespace skillwheel { void Init(const D2RL::PluginContext* ctx); void Tick(); void Shutdown(); }   // [openxr] skill_wheel (skill_wheel.cpp)
 namespace skillwheel { bool Enabled(); }
 namespace wheelgame { void Tick(bool on, bool open); }   // the wheel's reads of the controller's skill slots (wheel_game.cpp): a throw by gesture keeps them going for the Throw slot
-namespace gamestate { void Init(const D2RL::PluginContext* ctx); void Tick(); uint32_t WeaponClass(); uint32_t WeaponSet(); uint32_t WeaponType(); uint32_t HandsHeld(); uint32_t TwoHanded(); uint32_t WeaponHand(); uint32_t HandKind(int side); uint32_t HandCode(int side); void SetWantHeroStrength(bool on); int HeroStrength(); int HandRequiredStrength(int side); uint32_t HandsKey(); bool MenuOpen(); void SetLaserPanels(bool on); uint64_t TitleScreenAt(); int ObjectLight(uint32_t txt, uint32_t mode, float rgb[3]); uint64_t LocalPlayer(); void SetViewMode(uint32_t mode); bool AutoMapOpen(); int MapMode(); bool SetAutoMap(bool open); void SetMapSide(int corner); void PollPlate(); bool PlateRect(int32_t out[4]); bool PlateReadAt(uintptr_t* unit, float px[2]); bool PlateAnchor(int32_t out[2]); void PollDurability(); bool DurabilityRect(int32_t panel[4], int32_t widget[4], bool* widgetRead); void PollNotice(); bool NoticeRect(int32_t out[4]); bool SkillAimed(int skill); void BeltCodes(uint32_t out[4]); void BeltIds(uint32_t out[4]); }
+namespace gamestate { void Init(const D2RL::PluginContext* ctx); void Tick(); uint32_t WeaponClass(); uint32_t WeaponSet(); uint32_t WeaponType(); uint32_t HandsHeld(); uint32_t TwoHanded(); uint32_t WeaponHand(); uint32_t HandKind(int side); uint32_t HandCode(int side); void SetWantHeroStrength(bool on); int HeroStrength(); int HandRequiredStrength(int side); uint32_t HandsKey(); bool MenuOpen(); void SetLaserPanels(bool on); uint64_t TitleScreenAt(); uint64_t LocalPlayer(); void SetViewMode(uint32_t mode); bool AutoMapOpen(); int MapMode(); bool SetAutoMap(bool open); void SetMapSide(int corner); void PollPlate(); bool PlateRect(int32_t out[4]); bool PlateReadAt(uintptr_t* unit, float px[2]); bool PlateAnchor(int32_t out[2]); void PollDurability(); bool DurabilityRect(int32_t panel[4], int32_t widget[4], bool* widgetRead); void PollNotice(); bool NoticeRect(int32_t out[4]); bool SkillAimed(int skill); void BeltCodes(uint32_t out[4]); void BeltIds(uint32_t out[4]); }
 namespace gamestate { int HandThrust(int side); }   // hit by touch's thrust: the item's class in the game's data, 1 a thrust (1ht, 2ht), 0 not, -1 not known
 namespace gamestate { bool HandIsThrowPotion(int side); }   // the held item is one of the six throwing potions (gamestate.cpp)
 namespace gamestate { bool InventoryOnly(); }   // [openxr] hand_inventory: every menu open is the inventory (gamestate.cpp)
@@ -228,6 +229,8 @@ namespace gamestate { int HeadSide(); }   // [shield] heads_hang: the hand slot 
 #include "aim_point.h"
 #include "leap_gaze.h"     // [gameplay] leap_by_gaze: Leap and Leap Attack where the head looks
 #include "under_camera.h"  // [body] under_camera: the drawn body under the camera while the game's camera trails the hero
+#include "skill_link.h"        // [gestures] skill_link: kDefaultSpareSlot
+#include "skill_link_wire.h"   // [gestures] skill_link: the hero's skills to BodyWalk, a button or a recorded gesture per skill cast back
 #include "point_cast_wire.h"   // [gameplay] teleport_circle: the skills cast onto a point aimed with an arc and a circle (vr/point_cast.h)
 #include "weapon_extents.h"    // ... the arc leaves the staff's tip as the game's own model has it
 #include "arm_reach.h"
@@ -251,6 +254,8 @@ namespace gamestate { int HeadSide(); }   // [shield] heads_hang: the hand slot 
 #include "shoulder_swap.h"
 #include "weight_floor.h"         // [weight]: the floor a let-go weapon falls to is the game's ground under the hero
 #include "weight_wire.h"          // [weight]: the grips that hold the weapon are taken from the layout, read as they really are
+#include "point_trigger.h"         // [input] point_pickup: grip + trigger, which hand's pick is lit (pure, tested)
+#include "point_pickup_wire.h"    // [input] point_pickup: the pointed item's highlight, grip + trigger picks it up (F4)
 #include "belt_trigger_wire.h"    // [belt] hold_takes_trigger: the triggers while a belt bottle is in a hand (the game reads the left one as Shift: the drink must be a plain one)
 #include "bow_draw.h"
 #include "bow_draw_wire.h"   // [hands] bow_draw: a released draw's shot along its line

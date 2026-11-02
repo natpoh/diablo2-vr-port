@@ -599,6 +599,8 @@ bool BoneAxesWanted() { return g_set.boneAxes.load() && g_enabled.load() && g_in
 bool XbowBarrelWanted() { return g_set.xbowBarrelLine.load() && g_enabled.load() && g_inWorld.load() && FullBody() && !ThirdPerson() && XbowLikeStaff(); }
 // [debug] spell_aim_ray: the ray a spell is aimed along, VR first person (F4), no bow, crossbow or thrown weapon in hand (vr/spell_aim_model.h)
 bool SpellRayWanted() { return g_set.spellAimRay.load() && g_enabled.load() && g_inWorld.load() && FullBody() && !ThirdPerson() && !BowInHand() && !ThrownInHand(); }
+// [debug] point_pickup_ray: the ray [input] point_pickup picks along, VR first person (F4)
+bool PointRayWanted() { return g_set.pointPickupRay.load() && g_set.pointPickup.load() && g_enabled.load() && g_inWorld.load() && FullBody() && !ThirdPerson(); }
 // [debug] melee_boxes: the capsules hit by touch tests, only in VR first person (F4)
 bool MeleeBoxesWanted() { return meleeboxes::Wanted() && g_enabled.load() && g_inWorld.load() && FullBody() && !ThirdPerson(); }
 // [multiplayer] pose_share: our pose out, the other players' drawn and met (PoseShareTick, BodiesWithPlayers, ...): vr/mp/pose_share.cpp
@@ -643,6 +645,7 @@ bool PhantomWanted() { return false; }
 bool BoneAxesWanted() { return false; }
 bool XbowBarrelWanted() { return false; }
 bool SpellRayWanted() { return false; }
+bool PointRayWanted() { return false; }
 bool BowVectorsWanted() { return false; }
 bool BowAimRayWanted() { return false; }
 bool BowQuiverWanted() { return false; }
@@ -846,7 +849,7 @@ template <class RT> void EffectsFinish(RT* rt) {
     if (!g_tech[0].handle) { hud::SetPictureReady(false); return; }
     // Off while a menu is open: the fog lies over the whole picture, the
     // inventory and trade panels included, and darkened them.
-    const bool want = FogWanted() || OurSkyWanted() || g_arcaneSky.load() || CeilWanted() || HudWanted() || StampWanted() || hud::PictureWanted() || TableKeyWanted() || PhantomWanted() || BoneAxesWanted() || BowVectorsWanted() || BowQuiverWanted() || MercTintWanted() || BowAimRayWanted() || XbowBarrelWanted() || SpellRayWanted() || MeleeBoxesWanted() || SkillTriggersWanted() || HandOrbsWanted() || LowHpWanted() || BowOrbsWanted() || BowArrowFxWanted() || DistanceBlurWanted();
+    const bool want = FogWanted() || OurSkyWanted() || g_arcaneSky.load() || CeilWanted() || HudWanted() || StampWanted() || hud::PictureWanted() || TableKeyWanted() || PhantomWanted() || BoneAxesWanted() || BowVectorsWanted() || BowQuiverWanted() || MercTintWanted() || BowAimRayWanted() || XbowBarrelWanted() || SpellRayWanted() || PointRayWanted() || MeleeBoxesWanted() || SkillTriggersWanted() || HandOrbsWanted() || LowHpWanted() || BowOrbsWanted() || BowArrowFxWanted() || DistanceBlurWanted();
     // The toolbar and the map are taken out of the game's picture to be drawn
     // back at their own size only while this effect runs, and is new enough to.
     {
@@ -1963,43 +1966,15 @@ template <class RT> void EffectsBegin(RT* rt, reshade::api::command_list* cl) {
             SetFloat(rt, "CeilLightRadius", light);
             // [ceiling] fire_from_picture (2026-10-11, "any fire gives light, as at the start"): the
             // shader's own search of the picture for fire - torches, braziers, spells, burning
-            // monsters - in place of the game's lights; it is what ran before those were found.
-            const bool pictureFire = g_set.ceilPictureFire.load();
-            SetBool(rt, "CeilTorches", g_set.ceilTorches.load() || pictureFire);
+            // monsters. (The game's own torches found in its memory lit it too until 0.198: gone,
+            // the game draws the cave ceiling and lights it itself.)
+            SetBool(rt, "CeilTorches", g_set.ceilPictureFire.load());
             SetFloat(rt, "CeilTorchBright", g_set.ceilTorchBright.load());
             SetFloat(rt, "CeilTorchRadius", g_set.ceilTorchRadius.load());
             SetFloat(rt, "CeilFireNearer", g_set.ceilFireNearer.load());
             SetFloat(rt, "CeilHalo", g_set.ceilHalo.load());
-            SetFloat(rt, "CeilTorchWarm", g_set.ceilTorchWarm.load());
             SetFloat(rt, "CeilWallDist", g_set.ceilWall.load());
             SetFloat(rt, "CeilFloorDepth", g_set.ceilFloor.load());
-            {   // the lit objects the game has near the hero, relative to him; the flame ~7 units up
-                worldobj::Light l[worldobj::kMaxLights];
-                const int n = worldobj::g_known.load() ? worldobj::Lights(l) : 0;
-                float pos[worldobj::kMaxLights * 4] = {}, col[worldobj::kMaxLights * 4] = {};
-                for (int i = 0; i < n; ++i) {
-                    pos[i * 4 + 0] = l[i].x - sv[0].hero[0];
-                    pos[i * 4 + 1] = l[i].y - floorY;   // over the area's floor, as the ceiling
-                    pos[i * 4 + 2] = l[i].z - sv[0].hero[2];
-                    pos[i * 4 + 3] = l[i].lit;
-                    for (int c = 0; c < 3; ++c) col[i * 4 + c] = l[i].rgb[c];
-                    // farther than [ceiling] torch_distance from the hero: gone, fading over its last quarter -
-                    // the torches of the next hall lit the ceiling over the walls between (2026-10-07)
-                    const float d = sqrtf(pos[i * 4] * pos[i * 4] + pos[i * 4 + 2] * pos[i * 4 + 2]), reach = g_set.ceilTorchDist.load();
-                    col[i * 4 + 3] = std::clamp((reach - d) / (0.25f * reach), 0.0f, 1.0f) * (l[i].monster ? g_set.ceilMonsterBright.load() : 1.0f);
-                }
-                SetBool(rt, "GameLightsOn", worldobj::g_known.load() && !pictureFire);
-                SetFloats(rt, "GameLightPos", pos, worldobj::kMaxLights * 4);
-                SetFloats(rt, "GameLightCol", col, worldobj::kMaxLights * 4);
-                static ULONGLONG told = 0;   // what goes to the shader, every 5 s: the nearest light, as the hero sees it
-                if (GetTickCount64() - told > 5000) {
-                    told = GetTickCount64();
-                    const bool hasPos = rt->find_uniform_variable("D2R_DepthFog.fx", "GameLightPos").handle != 0;
-                    LogF("worldobj: to the shader %d lights (uniform %s), nearest at %.1f %.1f %.1f radius %.0f colour %.2f %.2f %.2f; hero %.1f %.1f %.1f, eye %.1f %.1f %.1f, ceiling %.0f",
-                         n, hasPos ? "found" : "MISSING", pos[0], pos[1], pos[2], pos[3], col[0], col[1], col[2],
-                         sv[0].hero[0], sv[0].hero[1], sv[0].hero[2], sv[0].eyeRel[0], sv[0].eyeRel[1], sv[0].eyeRel[2], height);
-                }
-            }
             float wet, detail, contrast;
             CeilVaultCfg vault;
             CeilingLookNow(&wet, &detail, &contrast, &vault);
@@ -2678,6 +2653,51 @@ template <class RT> void EffectsBegin(RT* rt, reshade::api::command_list* cl) {
                     hit.c = ray.b; hit.r = 0.06f;
                     for (int k = 0; k < 3; ++k) hit.rgb[k] = rgb[k];
                     hit.fill = floor ? 1.0f : 0.0f;
+                    on = true;
+                }
+            }
+            // [debug] point_pickup_ray: each hand's pointing ray as the pointed pick-up really uses it (vr/input/flat_click.cpp PointPickupAnswer) - from
+            // its own origin (a small white ball: the drawn wrist, or the controller's aim pose with no arm posed) along its own direction to the hero's
+            // floor (a full ball there) or 8 m out; the right hand green, the left cyan, the hand whose pick is lit bright, the other dim, a hand whose
+            // arm is not held out (point_pickup_arm_cm) dimmer still; a yellow ring round the lit item.
+            PointRayDebug pr;
+            if (PointRayWanted() && f.valid && g_eyeOk.load() && PointRayDebugNow(&pr)) {
+                const float upm = std::max(1.0f, ViewHeight()) / UserEyeHeightM();
+                auto head = [&](const float* w, float* h) {   // a world point -> the head's turn-only frame, from the eye, metres
+                    float v[3];
+                    for (int k = 0; k < 3; ++k) v[k] = (w[k] - g_eyeWorld[k].load()) / upm;
+                    h[0] = v[0] * f.camR[0] + v[2] * f.camR[2];
+                    h[1] = v[1];
+                    h[2] = -(v[0] * f.camF[0] + v[2] * f.camF[2]);
+                };
+                static const float kHandRgb[2][3] = {{0.2f, 1.0f, 0.3f}, {0.2f, 0.85f, 1.0f}};   // right green, left cyan
+                for (int h = 0; h < 2; ++h) {
+                    const PointRayDebug::Hand& ph = pr.hand[h];
+                    if (!ph.valid || vs.nseg >= bowtouch::kMaxSegs || vs.nball + 2 > bowtouch::kMaxBalls) continue;
+                    float end[3];
+                    bool floor = false;
+                    float t = 8.0f * upm;
+                    if (ph.d[1] < -1e-4f && ph.o[1] > pr.floorY) { const float tf = (pr.floorY - ph.o[1]) / ph.d[1]; if (tf < t) { t = tf; floor = true; } }
+                    for (int k = 0; k < 3; ++k) end[k] = ph.o[k] + ph.d[k] * t;
+                    float A[3], B[3];
+                    head(ph.o, A); head(end, B);
+                    const float k = pr.owner == h ? 1.0f : ph.pointing ? 0.45f : 0.2f;
+                    bowtouch::Seg& ray = vs.seg[vs.nseg++];
+                    ray.a = {A[0], A[1], A[2]}; ray.b = {B[0], B[1], B[2]};
+                    for (int c = 0; c < 3; ++c) ray.rgb[c] = kHandRgb[h][c] * k;
+                    bowtouch::Ball& from = vs.ball[vs.nball++];
+                    from.c = ray.a; from.r = 0.015f; from.rgb[0] = from.rgb[1] = from.rgb[2] = pr.owner == h ? 1.0f : 0.5f; from.fill = 1.0f;
+                    bowtouch::Ball& hit = vs.ball[vs.nball++];
+                    hit.c = ray.b; hit.r = pr.owner == h ? 0.05f : 0.035f; hit.fill = floor ? 1.0f : 0.0f;
+                    for (int c = 0; c < 3; ++c) hit.rgb[c] = kHandRgb[h][c] * k;
+                    on = true;
+                }
+                if (pr.item && vs.nball < bowtouch::kMaxBalls) {
+                    float I[3];
+                    head(pr.itemAt, I);
+                    bowtouch::Ball& ring = vs.ball[vs.nball++];
+                    ring.c = {I[0], I[1], I[2]}; ring.r = 0.15f; ring.fill = 0.0f;
+                    ring.rgb[0] = 1.0f; ring.rgb[1] = 0.9f; ring.rgb[2] = 0.1f;
                     on = true;
                 }
             }
